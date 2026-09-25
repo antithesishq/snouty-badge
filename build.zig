@@ -31,9 +31,13 @@ fn build_cart_assets(b: *Build, cart: *Build.Module, cart_api: *Build.Module, st
     const gen_gfx = b.addRunArtifact(convert);
     // Args per image: -i <png> <palette bits> <transparency>.
     // Transparency reserves palette index 0 as magenta (31,0,31), which the
-    // flattened #FF00FF backgrounds of the run strip and the Iris map onto.
+    // flattened #FF00FF backgrounds of the run and jump strips and the Iris map onto.
     gen_gfx.addArg("-i");
     gen_gfx.addFileArg(b.path("assets/gen/snouty_run.png"));
+    gen_gfx.addArg("4");
+    gen_gfx.addArg("true");
+    gen_gfx.addArg("-i");
+    gen_gfx.addFileArg(b.path("assets/gen/snouty_jump.png"));
     gen_gfx.addArg("4");
     gen_gfx.addArg("true");
     gen_gfx.addArg("-i");
