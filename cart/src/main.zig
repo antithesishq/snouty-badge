@@ -139,9 +139,26 @@ fn draw_snouty(index: u32, pos_x: i32, pos_y: comptime_int) void {
 /// simulator reads a legacy framebuffer at linear address 0x20 (see
 /// simulator/src/constants.ts ADDR_FRAMEBUFFER; add_os_cart reserves it via
 /// global_base). Copy our frame there and emulate clear_full_frame.
-/// Hardware builds do not compile this.
+///
+/// The simulator's compositor (compositor.ts) also un-swaps the bytes and
+/// uploads the u16 as GL RGB565 with red in the high bits, but DisplayColor
+/// keeps red in the low bits (the legacy badge-v1 API had blue there, which
+/// is what the simulator was written for). Swap r and b in the copy so the
+/// browser shows the colors the hardware will. Hardware builds do not compile
+/// any of this.
+const sim_swap_rb = true;
+
 fn present_wasm() void {
     const sim_framebuffer: *cart.Framebuffer = @ptrFromInt(0x20);
-    sim_framebuffer.* = cart.framebuffer.*;
+    if (sim_swap_rb) {
+        for (cart.framebuffer, sim_framebuffer) |*src_column, *dst_column| {
+            for (src_column, dst_column) |src, *dst| {
+                const c = src.to_color();
+                dst.* = .from_color(.{ .r = c.b, .g = c.g, .b = c.r });
+            }
+        }
+    } else {
+        sim_framebuffer.* = cart.framebuffer.*;
+    }
     for (cart.framebuffer) |*column| @memset(column, .from_color(sky));
 }

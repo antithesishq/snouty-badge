@@ -2,6 +2,15 @@
 
 Owner: Adrian Hatch (Antithesis). Target: SYCL Badge V2, 160x128 RGB565.
 
+## Status
+
+- 2026-09-25: v1 built and verified headless (`docs/preview_v1.gif`). Not yet
+  flashed to a badge. Awaiting Adrian's review of size, speed and colors.
+- Found while building: upstream's wasm platform never presents frames and the
+  simulator reads a legacy framebuffer at 0x20 with red/blue in the legacy
+  order, so `present_wasm()` in the cart copies and color-swaps each frame for
+  the simulator only. Hardware path is untouched.
+
 ## Goal for v1
 
 Snouty runs slowly from the left edge to the right edge of the badge, over and

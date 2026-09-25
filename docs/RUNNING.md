@@ -84,9 +84,11 @@ Known upstream simulator quirks (current sycl-badge `main`):
   `dvd.wasm` show a blank or garbage screen.
 - Buttons are written to an address the current cart API no longer reads, so
   input probably does nothing in the simulator. v1 takes no input.
-- The WebGL compositor appears to swap red and blue for current-API carts. If
-  the sky looks orange, that is the simulator, not the cart.
-  `tools/preview.mjs --swap-rb` renders what the simulator shows.
+- The WebGL compositor reads red from the bits where the current cart API
+  stores blue, so it shows current-API carts with red and blue swapped. Our
+  `present_wasm()` pre-swaps when it copies the frame to 0x20, so the browser
+  shows the intended colors. If the sky ever looks orange, that swap and the
+  simulator have gotten out of step (`sim_swap_rb` in `cart/src/main.zig`).
 
 ## 5. Headless preview (no browser)
 
@@ -102,7 +104,8 @@ framebuffer address and source, warnings). Other options:
 - `--start-skip S`: skip the first S updates
 - `--fb-addr auto|dwarf|sim|0xADDR`: choose which framebuffer to dump
 - `--seed N`: seed for `rand()`
-- `--swap-rb`: render with red and blue swapped, as the simulator shows it
+- `--raw-colors`: decode colors as the cart API defines them instead of as the
+  simulator displays them (only matters for carts that do not pre-swap)
 
 The tool exits non-zero if the cart traps or does not export
 `start`/`update`. `make_gif.py` scales frames with nearest-neighbor. One

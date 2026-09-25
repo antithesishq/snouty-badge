@@ -3,7 +3,7 @@
 //
 //   node tools/preview.mjs <cart.wasm> --frames N [--every K] [--out DIR]
 //                          [--start-skip S] [--fb-addr auto|dwarf|sim|0xADDR]
-//                          [--seed N] [--controls BITS] [--swap-rb]
+//                          [--seed N] [--controls BITS] [--raw-colors]
 //
 // Runs start(), then N x update(). Every K-th update after the first S updates,
 // the displayed framebuffer is decoded and written to DIR/frame_XXXX.png
@@ -61,13 +61,15 @@
 //
 // Pixel format: column-major framebuffer[x][y], u16 each. On wasm
 // Pixel.from_color() byte-swaps DisplayColor (packed r:u5 g:u6 b:u5, r in the
-// low bits), so memory holds the DisplayColor big-endian. We decode with the
-// inverse (Pixel.to_color), i.e. the colors the cart author asked for.
-// Caveat: the upstream simulator's WebGL compositor un-swaps the bytes and
-// uploads as UNSIGNED_SHORT_5_6_5, which takes red from bits 15..11, where
-// DisplayColor keeps blue. So the simulator should show red and blue swapped
-// (from reading compositor.ts; not checked in a browser). --swap-rb renders
-// what it would show.
+// low bits), so memory holds the DisplayColor big-endian. The upstream
+// simulator's WebGL compositor un-swaps the bytes and uploads the u16 as
+// UNSIGNED_SHORT_5_6_5, which takes red from bits 15..11, where DisplayColor
+// keeps blue: the browser shows DisplayColor's r and b swapped (the legacy
+// badge-v1 API had b in the low bits, which the simulator was written for).
+// By default this tool renders exactly what the simulator shows, so a cart
+// that wants correct browser colors must pre-swap when it copies to 0x20 (our
+// present_wasm() does). --raw-colors instead decodes DisplayColor as the cart
+// wrote it, i.e. what the hardware shows for a cart's own framebuffer.
 
 import fs from "node:fs";
 import path from "node:path";
@@ -84,11 +86,11 @@ const OPTIONAL_COLOR_NONE = -1;
 function usage(msg) {
     if (msg) console.error(`preview: ${msg}`);
     console.error("usage: node tools/preview.mjs <cart.wasm> --frames N [--every K] [--out DIR] [--start-skip S]\n" +
-        "                          [--fb-addr auto|dwarf|sim|0xADDR] [--seed N] [--controls BITS] [--swap-rb]");
+        "                          [--fb-addr auto|dwarf|sim|0xADDR] [--seed N] [--controls BITS] [--raw-colors]");
     process.exit(2);
 }
 const argv = process.argv.slice(2);
-const opts = { frames: null, every: 1, out: "out", startSkip: 0, fbAddr: "auto", seed: 1, controls: 0, swapRB: false };
+const opts = { frames: null, every: 1, out: "out", startSkip: 0, fbAddr: "auto", seed: 1, controls: 0, rawColors: false };
 let wasmPath = null;
 for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
@@ -102,7 +104,7 @@ for (let i = 0; i < argv.length; i++) {
         case "--fb-addr": opts.fbAddr = val(); break;
         case "--seed": opts.seed = int(); break;
         case "--controls": opts.controls = int(); break;
-        case "--swap-rb": opts.swapRB = true; break;
+        case "--raw-colors": opts.rawColors = true; break;
         case "-h": case "--help": usage();
         default:
             if (a.startsWith("--") || wasmPath) usage(`unexpected argument '${a}'`);
@@ -383,7 +385,7 @@ function decode(addr) {
         const o = addr + (x * HEIGHT + y) * 2;
         const c = (m[o] << 8) | m[o + 1]; // byte-swapped on wasm: memory is big-endian DisplayColor
         let r = c & 0x1f, g = (c >> 5) & 0x3f, b = (c >> 11) & 0x1f;
-        if (opts.swapRB) [r, b] = [b, r];
+        if (!opts.rawColors) [r, b] = [b, r]; // GL 5_6_5 reads red from the high bits
         const i = (y * WIDTH + x) * 3;
         rgb[i] = (r << 3) | (r >> 2); rgb[i + 1] = (g << 2) | (g >> 4); rgb[i + 2] = (b << 3) | (b >> 2);
     }
@@ -439,7 +441,7 @@ if (written.length && !changed) warn(`framebuffer region at 0x${fbBase.toString(
 
 const meta = {
     cart: path.resolve(wasmPath), width: WIDTH, height: HEIGHT, format: "rgb565 column-major, wasm byte-swapped",
-    updates: opts.frames, every: opts.every, startSkip: opts.startSkip, seed: opts.seed, controls: opts.controls, swapRB: opts.swapRB,
+    updates: opts.frames, every: opts.every, startSkip: opts.startSkip, seed: opts.seed, controls: opts.controls, rawColors: opts.rawColors,
     imports: imports.map((i) => `${i.module}.${i.name}`), exports: exportNames,
     framebuffer: { source: fbSource, base: `0x${fbBase.toString(16)}`, buffer1: fbSource === "dwarf" || fbSource === "export" ? `0x${(fbBase + FB_BYTES).toString(16)}` : null, drawPointer: hasPtr ? `0x${ptrVar.addr.toString(16)}` : null },
     dataSegments: dataSegs.map((d) => ({ off: d.off === null ? null : `0x${d.off.toString(16)}`, size: d.size })),

@@ -89,9 +89,12 @@ which includes `.rodata`, plus `.data`), well under the 256 KB cart RAM limit.
 
 Upstream's wasm platform never presents a frame and the simulator reads a legacy
 framebuffer at linear address 0x20, so `main.zig` has a wasm-only
-`present_wasm()` that copies the frame there and re-clears to sky. Without it the
-optimizer drops all framebuffer writes and the simulator shows nothing (upstream
-`dvd.wasm` has the same problem).
+`present_wasm()` that copies the frame there (swapping r and b, because the
+simulator's compositor reads red from the bits where `DisplayColor` keeps blue)
+and re-clears to sky. Without it the optimizer drops all framebuffer writes and
+the simulator shows nothing (upstream `dvd.wasm` has the same problem).
+`tools/preview.mjs` renders what the simulator shows; `--raw-colors` shows what
+the cart API defines.
 
 Flash by copying the UF2 onto the badge's USB mass-storage drive over
 `CURRENT.UF2`.
