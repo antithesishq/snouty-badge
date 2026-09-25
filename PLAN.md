@@ -6,7 +6,8 @@ Owner: Adrian Hatch (Antithesis). Target: SYCL Badge V2, 160x128 RGB565.
 
 - 2026-09-25: v1 built, reviewed by Adrian (speed and size approved), tagged
   `v1.0.0`. v2 (panel waterfall) built then superseded. v3 (real GHZ backdrop,
-  clean panel) built and verified headless. Nothing flashed to hardware yet.
+  clean panel) built, reviewed by Adrian, tagged `v2.0.0`. Nothing flashed to
+  hardware yet.
 - Found while building: upstream's wasm platform never presents frames and the
   simulator reads a legacy framebuffer at 0x20 with red/blue in the legacy
   order, so `present_wasm()` in the cart copies and color-swaps each frame for
