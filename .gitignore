@@ -5,3 +5,4 @@ node_modules/
 *.elf
 *.wasm
 .DS_Store
+zig-pkg/

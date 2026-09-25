@@ -60,26 +60,41 @@ roughly 48-64 px tall reads well from a lanyard.
 
 ## Building
 
-Upstream pins Zig `0.17.0-dev.1936+5a625d5f3` (see `sycl-badge/build.zig.zon`).
-Zig is not installed yet. The exact build is still available at
-`https://ziglang.org/builds/zig-x86_64-linux-0.17.0-dev.1936+5a625d5f3.tar.xz`;
-unpack it into
-`~/.local/zig/` and put it on PATH. Nightly builds rotate off ziglang.org, so if the
-download 404s try the machengine.org mirror or the `zigup` tool.
+Zig `0.17.0-dev.1936+5a625d5f3` (upstream's pin) is installed at
+`~/.local/bin/zig`; `export PATH="$HOME/.local/bin:$PATH"`.
 
-Two ways to build the cart, in order of preference:
+```
+zig build        # from the repo root
+```
 
-1. **As a Zig package depending on sycl-badge.** `add_os_cart` in
-   `sycl-badge/build.zig` is `pub` and takes a `*Build.Dependency`, so a
-   `build.zig.zon` with `.sycl_badge = .{ .path = "../sycl-badge" }` plus
-   `.microzig`/`.zigimg` should work. If `add_os_cart` resolves paths via `b.path`
-   instead of `dep.builder.path` (the wasm tracy_protocol import does), fall back to 2.
-2. **In-tree.** Symlink `sycl-badge/showcase/carts/snouty -> ../../../snouty-badge/cart`
-   and add an `add_os_cart` entry with `.custom_builder` to `sycl-badge/build.zig`.
-   Keep that patch small and never commit it upstream.
+produces `zig-out/firmware/snouty.uf2`, `zig-out/firmware/snouty.elf` and
+`zig-out/bin/snouty.wasm`. A clean build takes about 1.5 min once the global zig
+cache is warm.
 
-Outputs land in `zig-out/firmware/*.uf2`. Flash by copying the UF2 onto the badge's
-USB mass-storage drive over `CURRENT.UF2`.
+This repo is a Zig package: `build.zig.zon` has a path dependency
+`.sycl_badge = .{ .path = "../sycl-badge" }` plus `.microzig`/`.zigimg` entries
+copied from upstream's `build.zig.zon`. `build.zig` calls upstream's
+`add_os_cart` with a `custom_builder` that runs `cart/build/convert_gfx.zig` on
+`assets/gen/*.png` to make the `gfx` module. Nothing in `sycl-badge` is patched.
+
+Wrinkle: `add_os_cart` resolves `src/os/system/tracy_protocol.zig` with the
+consumer's `b.path`, so `src/os/system/tracy_protocol.zig` here is a committed
+symlink to `../../../../sycl-badge/src/os/system/tracy_protocol.zig`. It
+requires sycl-badge to be checked out as a sibling (as the path dep does).
+
+Zig fetches dependencies into `zig-pkg/` in the repo root (gitignored).
+
+The cart links to about 78 KB (`size -A zig-out/firmware/snouty.elf`: `.text`,
+which includes `.rodata`, plus `.data`), well under the 256 KB cart RAM limit.
+
+Upstream's wasm platform never presents a frame and the simulator reads a legacy
+framebuffer at linear address 0x20, so `main.zig` has a wasm-only
+`present_wasm()` that copies the frame there and re-clears to sky. Without it the
+optimizer drops all framebuffer writes and the simulator shows nothing (upstream
+`dvd.wasm` has the same problem).
+
+Flash by copying the UF2 onto the badge's USB mass-storage drive over
+`CURRENT.UF2`.
 
 ## Simulator
 
