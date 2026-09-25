@@ -1,4 +1,4 @@
-//! Snouty running badge (v1). See PLAN.md for layout and motion.
+//! Snouty running badge (v2). See PLAN.md for layout and motion.
 const cart = @import("cart-api");
 const gfx = @import("gfx");
 
@@ -22,6 +22,32 @@ const name_y = 110;
 const company_y = 119;
 const name = "Adrian Hatch";
 const company = "Antithesis";
+
+// Iris marks at both ends of the panel (PLAN.md v2). The text is centered in
+// the 112 px between them.
+const iris_y = 110;
+const iris_left_x = 8;
+const iris_right_x = cart.screen_width - iris_left_x - gfx.iris_16.width; // 136
+
+// Waterfall over the panel (PLAN.md v2). The tile scrolls down
+// water_px_per_tick px per tick and is drawn through a checkerboard mask whose
+// phase flips every tick, so at 60 Hz it blends to ~50% translucency.
+const water_px_per_tick = 1;
+const foam_height = 2;
+const water_tile = gfx.waterfall;
+comptime {
+    if (water_tile.width != 16 or water_tile.height != 16) @compileError("unexpected waterfall tile size");
+}
+/// Lightest color of the waterfall tile palette, used for the foam row.
+const foam_color = blk: {
+    var best = water_tile.colors[0];
+    for (water_tile.colors) |c| {
+        const sum = @as(u32, c.r) * 2 + c.g + @as(u32, c.b) * 2;
+        const best_sum = @as(u32, best.r) * 2 + best.g + @as(u32, best.b) * 2;
+        if (sum > best_sum) best = c;
+    }
+    break :blk best;
+};
 
 // Run cycle strip: 16 cells of 96x96 side by side. The cell's origin is
 // (48, 88): x centered, y on the ground baseline. Putting the baseline on the
@@ -49,6 +75,9 @@ var tick: u32 = 0;
 var frame: u32 = 0;
 var snouty_x: i32 = start_x;
 var pause_left: u32 = 0;
+/// Ticks since boot. Unlike `tick` it never resets; drives the waterfall mask
+/// phase and scroll. Wraps after ~2.3 years at 60 Hz, harmlessly.
+var tick_total: u32 = 0;
 
 pub fn start() void {
     cart.set_vsync_enabled(1000.0 / 60.0);
@@ -61,12 +90,14 @@ pub fn start() void {
 pub fn update() void {
     draw_ground();
     draw_panel();
+    draw_waterfall();
     if (snouty_x < end_x) draw_snouty(frame, snouty_x, cell_y);
     advance();
     if (cart.is_wasm) present_wasm();
 }
 
 fn advance() void {
+    tick_total +%= 1;
     if (pause_left > 0) {
         pause_left -= 1;
         if (pause_left == 0) {
@@ -104,6 +135,8 @@ fn draw_panel() void {
         .height = panel_height,
         .fill_color = anti_black,
     });
+    draw_sprite_keyed(gfx.iris_16, iris_left_x, iris_y);
+    draw_sprite_keyed(gfx.iris_16, iris_right_x, iris_y);
     draw_centered_text(name, name_y, anti_white);
     draw_centered_text(company, company_y, coral);
 }
@@ -111,6 +144,48 @@ fn draw_panel() void {
 fn draw_centered_text(comptime str: []const u8, y: i32, color: cart.DisplayColor) void {
     const x = (cart.screen_width - str.len * cart.font_width) / 2;
     cart.text(.{ .str = str, .x = x, .y = y, .text_color = color });
+}
+
+/// Draws a whole sprite with its top-left at (x, y), skipping palette index 0
+/// (transparent). The sprite must lie fully on screen; no clipping.
+fn draw_sprite_keyed(comptime sprite: type, x: comptime_int, y: comptime_int) void {
+    comptime {
+        if (x < 0 or y < 0 or x + sprite.width > cart.screen_width or y + sprite.height > cart.screen_height)
+            @compileError("draw_sprite_keyed: sprite not fully on screen");
+    }
+    for (0..sprite.width) |col| {
+        const column = &cart.framebuffer[x + col];
+        for (0..sprite.height) |row| {
+            const idx = sprite.indices.get(row * sprite.width + col);
+            if (idx == 0) continue;
+            column[y + row] = .from_color(sprite.colors[idx]);
+        }
+    }
+}
+
+/// Draws the scrolling waterfall tile over the whole panel (y panel_y..127)
+/// through a checkerboard mask, with a foam row along the ledge on top.
+fn draw_waterfall() void {
+    const size = water_tile.width; // 16, square
+    // Water falls DOWN: as tick_total grows the pattern must move toward
+    // larger screen y. A feature at tile row r appears at screen row
+    // y = r + scroll, so screen row y samples tile row (y - scroll) mod 16.
+    // Computed as (y + 16 - scroll % 16) % 16 to stay in unsigned arithmetic.
+    // Sampling (y + scroll) instead would make the water climb.
+    const scroll = (tick_total *% water_px_per_tick) % size;
+    const phase = tick_total & 1;
+    for (0..cart.screen_width) |x| {
+        const column = &cart.framebuffer[x];
+        const tx = x % size;
+        for (panel_y..cart.screen_height) |y| {
+            if (((x + y + phase) & 1) != 0) continue;
+            const color = if (y < panel_y + foam_height)
+                foam_color
+            else
+                water_tile.colors[water_tile.indices.get(((y + size - scroll) % size) * size + tx)];
+            column[y] = .from_color(color);
+        }
+    }
 }
 
 /// Draws cell `index` of the run strip with its top-left at (pos_x, pos_y),
