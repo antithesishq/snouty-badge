@@ -28,6 +28,8 @@ run in the web simulator on their own machine.
 - Planted toe travels 6 px per animation frame, so Snouty must move exactly
   6 px right per frame or the feet slide. Speed is set by frame duration only.
 - Jump study exists (12 frames). Not used in v1.
+- 2026-09-25: Run Study 05 replaces Study 04. Identical except the chest emblem,
+  which is now an Iris-style mark. Direct swap; 42 px differ per frame.
 
 ## Screen layout (v1)
 

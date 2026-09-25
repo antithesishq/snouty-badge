@@ -14,7 +14,7 @@ from pathlib import Path
 from PIL import Image
 
 ROOT = Path(__file__).resolve().parent.parent
-SRC = ROOT / "assets" / "Snouty_Run_Study_04" / "snouty_run_strip.png"
+SRC = ROOT / "assets" / "Snouty_Run_Study_05" / "snouty_run_strip.png"  # Study 05: revised chest emblem
 OUT = ROOT / "assets" / "gen"
 KEY = (255, 0, 255)  # upstream convert_gfx maps this to palette index 0 (skip)
 

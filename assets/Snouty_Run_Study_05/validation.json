@@ -1,0 +1,131 @@
+{
+  "status": "passed",
+  "frame_count": 16,
+  "distinct_frame_count": 16,
+  "native_frame_size": [
+    96,
+    96
+  ],
+  "visible_color_count": 15,
+  "alpha_values": [
+    0,
+    255
+  ],
+  "all_sprites_inside_cell": true,
+  "all_atlas_cells_match_individual_frames": true,
+  "native_transparent_gif_matches_png_pixels_exactly": true,
+  "normal_cycle_duration_ms": 640,
+  "duplicate_terminal_frame": false,
+  "grounded_toe_travel_px_per_frame": -6,
+  "changed_pixels_per_adjacent_pair_including_loop": [
+    1950,
+    1269,
+    1513,
+    1748,
+    1814,
+    2096,
+    1865,
+    1917,
+    1806,
+    1656,
+    1685,
+    2096,
+    1448,
+    1698,
+    1848,
+    1600
+  ],
+  "last_to_first_changed_pixels": 1600,
+  "largest_adjacent_change_pixels": 2096,
+  "note": "Pixel-difference checks describe the seam; they do not certify subjective motion quality.",
+  "gifs": {
+    "snouty_run_preview.gif": {
+      "frames": 16,
+      "duration_ms": [
+        40,
+        40,
+        40,
+        40,
+        40,
+        40,
+        40,
+        40,
+        40,
+        40,
+        40,
+        40,
+        40,
+        40,
+        40,
+        40
+      ],
+      "loop": "infinite"
+    },
+    "snouty_run_isolated.gif": {
+      "frames": 16,
+      "duration_ms": [
+        40,
+        40,
+        40,
+        40,
+        40,
+        40,
+        40,
+        40,
+        40,
+        40,
+        40,
+        40,
+        40,
+        40,
+        40,
+        40
+      ],
+      "loop": "infinite"
+    },
+    "snouty_run_native_transparent.gif": {
+      "frames": 16,
+      "duration_ms": [
+        40,
+        40,
+        40,
+        40,
+        40,
+        40,
+        40,
+        40,
+        40,
+        40,
+        40,
+        40,
+        40,
+        40,
+        40,
+        40
+      ],
+      "loop": "infinite"
+    },
+    "snouty_run_slow.gif": {
+      "frames": 16,
+      "duration_ms": [
+        100,
+        100,
+        100,
+        100,
+        100,
+        100,
+        100,
+        100,
+        100,
+        100,
+        100,
+        100,
+        100,
+        100,
+        100,
+        100
+      ],
+      "loop": "infinite"
+    }
+  }
+}
