@@ -117,7 +117,9 @@ def write_ground() -> None:
     gif = Image.open(REF / "Sonic-1-Waterfall.gif")
     gif.seek(0)
     native = np.array(gif.convert("RGB"))[::2, ::2]   # 320x224
-    strip = native[191:203, 120:216].astype(np.uint16)  # 96x12, grass only, period 96
+    # 96x12 grass, period 96. Window starts at x=157: from 144..156 on row 191
+    # the pixels are Sonic's shoe soles, which showed up as black marks.
+    strip = native[191:203, 157:253].astype(np.uint16)
     # Screenshot uses the 0..238 (step 34) Genesis ramp; the rips use 0..252
     # (step 36). Rescale so the grass matches the backdrop's ramp.
     strip = (strip * 36 // 34).clip(0, 255).astype(np.uint8)
