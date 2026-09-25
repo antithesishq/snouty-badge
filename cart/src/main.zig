@@ -174,11 +174,22 @@ fn draw_waterfall() void {
     // Sampling (y + scroll) instead would make the water climb.
     const scroll = (tick_total *% water_px_per_tick) % size;
     const phase = tick_total & 1;
+    const panel_px: cart.Pixel = .from_color(anti_black);
     for (0..cart.screen_width) |x| {
         const column = &cart.framebuffer[x];
         const tx = x % size;
         for (panel_y..cart.screen_height) |y| {
-            if (((x + y + phase) & 1) != 0) continue;
+            // Translucency by ordered dithering, phase-flipped every tick so
+            // the eye blends it at 60 Hz. Over the bare panel the water covers
+            // 1 in 2 pixels (checkerboard). Over content (text, Iris marks,
+            // anything not panel-colored) it covers only 1 in 4, cycling over
+            // four ticks, so the 1 px font strokes stay legible.
+            const over_content = column[y] != panel_px;
+            const masked = if (over_content)
+                ((x + 2 * y + tick_total) & 3) != 0
+            else
+                ((x + y + phase) & 1) != 0;
+            if (masked) continue;
             const color = if (y < panel_y + foam_height)
                 foam_color
             else

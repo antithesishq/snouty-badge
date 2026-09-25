@@ -97,6 +97,14 @@ node tools/preview.mjs zig-out/bin/snouty.wasm --frames 240 --every 4 --out out/
 python3 tools/make_gif.py out/ preview.gif --scale 3 --ms 66
 ```
 
+The waterfall flips its dither mask every tick, so single frames look like a
+checkerboard. To see what the eye sees at 60 Hz, dump every tick and blend:
+
+```sh
+node tools/preview.mjs zig-out/bin/snouty.wasm --frames 400 --every 1 --out out/
+python3 tools/make_gif.py out/ preview.gif --blend 4 --ms 66
+```
+
 `preview.mjs` runs `start()` and then `update()` N times, writing every K-th
 frame to `out/frame_XXXX.png` along with `out/frames.json` (metadata:
 framebuffer address and source, warnings). Other options:

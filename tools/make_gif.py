@@ -2,6 +2,11 @@
 """Stitch DIR/frame_*.png (from tools/preview.mjs) into an animated GIF.
 
     python3 tools/make_gif.py out/ preview.gif --scale 3 --ms 66
+    python3 tools/make_gif.py out/ preview.gif --blend 4 --ms 66   # every-tick dump
+
+--blend N averages each run of N consecutive frames into one GIF frame. Use it
+on an every-tick dump (preview.mjs --every 1) to approximate what the eye sees
+at 60 Hz when the cart flips a dither mask every tick (the waterfall does).
 
 Frames are upscaled by an integer factor with nearest-neighbor so pixels stay
 crisp. --ms is the per-frame duration (GIF stores centiseconds, so values are
@@ -22,7 +27,10 @@ def main() -> int:
     ap.add_argument("--scale", type=int, default=3, help="integer upscale factor (default 3)")
     ap.add_argument("--ms", type=int, default=66, help="frame duration in ms (default 66)")
     ap.add_argument("--loop", type=int, default=0, help="GIF loop count, 0 = forever (default)")
+    ap.add_argument("--blend", type=int, default=1, help="average each run of N consecutive frames (default 1)")
     args = ap.parse_args()
+    if args.blend < 1:
+        ap.error("--blend must be >= 1")
 
     if args.scale < 1:
         ap.error("--scale must be >= 1")
@@ -34,9 +42,20 @@ def main() -> int:
         print(f"make_gif: no frame_*.png in {args.frames_dir}", file=sys.stderr)
         return 1
 
+    if args.blend > 1:
+        import numpy as np
+
+        blended = []
+        for i in range(0, len(paths) - args.blend + 1, args.blend):
+            stack = [np.asarray(Image.open(q).convert("RGB"), dtype=np.float32) for q in paths[i : i + args.blend]]
+            blended.append(Image.fromarray(np.mean(stack, axis=0).round().astype(np.uint8)))
+        sources = blended
+    else:
+        sources = [Image.open(q) for q in paths]
+
     frames = []
-    for p in paths:
-        with Image.open(p) as im:
+    for src in sources:
+        with src as im:
             im = im.convert("RGB")
             if args.scale != 1:
                 im = im.resize((im.width * args.scale, im.height * args.scale), Image.NEAREST)

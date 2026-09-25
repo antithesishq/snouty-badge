@@ -129,7 +129,7 @@ symlink under `sycl-badge/showcase/carts/`.
   and I will hand-pixel a 16x16 or 20x20 version for the panel. v1 uses text.
 - Speed and size taste calls after the first preview GIF.
 
-## v2: Iris logo behind a translucent waterfall (in progress, 2026-09-25)
+## v2: Iris logo behind a translucent waterfall (built 2026-09-25, awaiting review)
 
 Adrian approved v1 speed and size and tagged it `v1.0.0`. v2 adds the Iris and
 the deferred waterfall, both confined to the name panel so Snouty and the
@@ -155,8 +155,13 @@ Assets: `tools/prepare_assets.py` now also writes `iris_16.png` and
 `waterfall.png`; `build.zig` converts both (4-bit; iris with transparency).
 
 Verification: headless preview GIF plus a single-frame check that the text is
-still legible through the mask. If it is not, the fallback is a sparser mask
-(draw water on 1 of 3 pixels) or skipping water over the glyph rows.
+still legible through the mask.
+
+Outcome: at 50% everywhere, "Antithesis" in coral was hard to read in the
+60 Hz blend. Fix kept: water covers 1 in 2 pixels over the bare panel but
+only 1 in 4 (cycling over four ticks) over content pixels, i.e. anything not
+panel-colored (text and Iris marks). `docs/preview_v2.gif` is rendered with
+`make_gif.py --blend 4` from an every-tick dump to approximate the eye.
 
 ## Deferred (v3+)
 
