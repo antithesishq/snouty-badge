@@ -82,8 +82,10 @@ Known upstream simulator quirks (current sycl-badge `main`):
   cart API draws somewhere else, so our cart copies each frame to 0x20 itself
   (`present_wasm()` in `cart/src/main.zig`). Upstream demo carts such as
   `dvd.wasm` show a blank or garbage screen.
-- Buttons are written to an address the current cart API no longer reads, so
-  input probably does nothing in the simulator. v1 takes no input.
+- Buttons are written to an address (0x04) the current cart API no longer
+  reads, so upstream carts get no input in the simulator. Our cart reads that
+  address itself in wasm builds (`read_controls()` in `cart/src/main.zig`), so
+  Z or K (the A button) makes Snouty jump in the simulator as on hardware.
 - The WebGL compositor reads red from the bits where the current cart API
   stores blue, so it shows current-API carts with red and blue swapped. Our
   `present_wasm()` pre-swaps when it copies the frame to 0x20, so the browser
@@ -112,6 +114,8 @@ framebuffer address and source, warnings). Other options:
 - `--start-skip S`: skip the first S updates
 - `--fb-addr auto|dwarf|sim|0xADDR`: choose which framebuffer to dump
 - `--seed N`: seed for `rand()`
+- `--press 60-63,140-143`: hold the A button during those update ranges
+  (inclusive), e.g. to trigger jumps
 - `--raw-colors`: decode colors as the cart API defines them instead of as the
   simulator displays them (only matters for carts that do not pre-swap)
 

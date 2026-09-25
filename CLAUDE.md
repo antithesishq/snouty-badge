@@ -19,6 +19,8 @@ animated on the badge screen.
 - Framebuffer is column-major: `cart.framebuffer[x][y]`, type `Pixel`, write with
   `Pixel.from_color(color)` (handles wasm vs hardware byte order).
 - Inputs: `cart.controls.*` (start, select, a, b, click, up, down, left, right).
+  On wasm the simulator writes the button word to address 0x04 and upstream's
+  platform never reads it, so `main.zig` has a wasm-only `read_controls()`.
 - 5 neopixels (`cart.neopixels`, GRB, very bright; scale to ~10/255), one user LED,
   light sensor, battery level, speaker (`tone2`).
 - Flash: 8000 pages of 256 bytes available via the cart API (`Zone`).

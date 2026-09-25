@@ -210,7 +210,7 @@ Option kept in the script: set `CURTAIN = False` to skip the foreground chunk
 overlay and show only the calmer background strips (cliff-gap waterfall and
 lake still shimmer). Faithful curtain is the default per Adrian's request.
 
-## v4: jump on A (in progress, 2026-09-25)
+## v4: jump on A (built 2026-09-25, awaiting review)
 
 Adrian: "make Snouty jump when I press an input (the Z key in the simulator)".
 Z and K map to the A button (bit 2) in the simulator; on hardware it is the A
@@ -251,6 +251,13 @@ phase, not from a fixed per-frame duration:
 
 Tunables in one place: `jump_height_px`, `jump_air_ticks`, `land_ticks`,
 `recover_ticks`, and the phase table.
+
+Outcome: feet trace the parabola exactly (verified per tick), run cycle is
+pixel-identical when A is not pressed, a press while airborne is ignored, and
+a second press after landing jumps again. At `jump_height_px = 40` the net rim
+clips 4-12 px at the top edge around the apex and the ear tip 2-3 px for two
+ticks; the face never clips. About 28 px would keep everything on screen.
+Preview: `docs/preview_v4.gif` (press at update 60). Firmware about 147 KB.
 
 ## Deferred (v5+)
 
