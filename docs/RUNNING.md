@@ -19,8 +19,12 @@ The two repos must be siblings. `build.zig.zon` points at `../sycl-badge`, and
 ```
 work/
   sycl-badge/     git clone https://github.com/ZigEmbeddedGroup/sycl-badge.git
-  snouty-badge/   this repo
+  snouty-badge/   git clone git@github.com:antithesishq/snouty-badge.git
 ```
+
+Releases are annotated tags (`git tag -n1`); `git checkout v3.0.0` builds that
+release. From the exe.dev VM the remote is reached through the GitHub
+integration host `github.int.exe.xyz`.
 
 ## 3. Build
 
