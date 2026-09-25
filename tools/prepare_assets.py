@@ -4,8 +4,9 @@
 Outputs:
   assets/gen/snouty_run.png   16-frame run strip, transparency flattened to #FF00FF
   assets/gen/snouty_jump.png  12-frame jump strip, transparency flattened to #FF00FF
+  assets/gen/iris_16.png      16x16 pixel Iris, magenta key
+  assets/gen/iris_spin.png    24-frame coin-spin strip of the Iris (16x16 cells)
   assets/gen/iris_16.png      16x16 pixel version of the Antithesis Iris, magenta key
-  assets/gen/waterfall.png    16x16 Genesis-style waterfall tile (scrolls vertically)
 
 Run from anywhere: python3 tools/prepare_assets.py
 """
@@ -134,32 +135,37 @@ def draw_iris() -> None:
     print("iris_16.png 16x16")
 
 
-# Waterfall: Genesis-style vertical streaks in 4 blues. The cart scrolls this
-# tile downward and draws it through a checkerboard mask for translucency.
-WATER_DEEP = (0x20, 0x60, 0xD0)
-WATER_MID = (0x48, 0x98, 0xF0)
-WATER_LIGHT = (0x90, 0xD0, 0xFF)
-WATER_FOAM = (0xE8, 0xF8, 0xFF)
+# Coin spin: the Iris rotates about its vertical axis. Frame k of SPIN_FRAMES is
+# angle k*360/N; the visible width is 16*|cos| (never below 1), sampled with
+# nearest-neighbor from the 16 px art. Between 90 and 270 degrees we see the
+# back face: mirrored and drawn in brand Grey 2 so the two faces read apart.
+SPIN_FRAMES = 24
+GREY_2 = (0xD3, 0xCD, 0xD4)
 
 
-def draw_waterfall(width: int = 16, height: int = 16) -> None:
-    img = Image.new("RGB", (width, height), WATER_MID)
-    px = img.load()
-    # column pattern: deep, mid, mid, light, mid, deep, light, foam-ish streak
-    cols = [WATER_DEEP, WATER_MID, WATER_MID, WATER_LIGHT, WATER_MID, WATER_DEEP,
-            WATER_LIGHT, WATER_MID, WATER_MID, WATER_FOAM, WATER_MID, WATER_DEEP,
-            WATER_MID, WATER_LIGHT, WATER_MID, WATER_DEEP]
-    for x in range(width):
-        for y in range(height):
-            c = cols[x % len(cols)]
-            # break streaks into dashes so vertical scroll reads as falling water
-            if c in (WATER_LIGHT, WATER_FOAM) and (y + x * 3) % 8 in (5, 6):
-                c = WATER_MID
-            if c == WATER_DEEP and (y + x * 5) % 11 == 0:
-                c = WATER_MID
-            px[x, y] = c
-    img.save(OUT / "waterfall.png", optimize=True)
-    print(f"waterfall.png {img.size} {len(img.getcolors())} colors")
+def draw_iris_spin() -> None:
+    import math
+
+    src = [[ch == "#" for ch in row] for row in IRIS_16]
+    strip = Image.new("RGB", (16 * SPIN_FRAMES, 16), KEY)
+    px = strip.load()
+    for k in range(SPIN_FRAMES):
+        theta = 2 * math.pi * k / SPIN_FRAMES
+        c = math.cos(theta)
+        width = max(1, round(16 * abs(c)))
+        back = c < 0
+        color = GREY_2 if back else WHITE
+        x0 = k * 16 + (16 - width) // 2
+        for y in range(16):
+            for x in range(width):
+                # source column for this output column (nearest), mirrored on the back face
+                sx = min(15, (x * 16) // width)
+                if back:
+                    sx = 15 - sx
+                if src[y][sx]:
+                    px[x0 + x, y] = color
+    strip.save(OUT / "iris_spin.png", optimize=True)
+    print(f"iris_spin.png {strip.size} {len(strip.getcolors())} colors incl. key")
 
 
 if __name__ == "__main__":
@@ -167,4 +173,4 @@ if __name__ == "__main__":
     flatten_strip()
     snap_jump_strip()
     draw_iris()
-    draw_waterfall()
+    draw_iris_spin()

@@ -259,7 +259,27 @@ clips 4-12 px at the top edge around the apex and the ear tip 2-3 px for two
 ticks; the face never clips. About 28 px would keep everything on screen.
 Preview: `docs/preview_v4.gif` (press at update 60). Firmware about 147 KB.
 
-## Deferred (v5+)
+## v5: Iris coin spin (built 2026-09-25)
+
+Adrian: the two Iris marks should spin like a coin in pseudo-3D, spin then
+pause, at the same pacing as the other animations.
+
+- `tools/prepare_assets.py` renders `assets/gen/iris_spin.png`: 24 cells of
+  16x16, one full turn. Frame k is angle k*15 degrees; visible width is
+  16*|cos| (minimum 1), sampled nearest-neighbor from the hand-pixelled Iris.
+  From 90 to 270 degrees the back face shows: mirrored and drawn in brand
+  Grey 2 (`#D3CDD4`) so the two faces read apart. Front face stays Anti-White.
+- Cart: 4 ticks per frame (same as the run cycle), so a turn takes 96 ticks
+  (1.6 s), then 120 ticks (2 s) resting on the front face. Both marks spin in
+  step. Frame = `(tick_total % 216) / 4` during the spin, else 0.
+- `draw_cell` now takes its cell size from the strip height, so it serves the
+  96 px Snouty strips and the 16 px Iris strip. The static `iris_16.png` is
+  no longer built (still generated as the design source).
+
+Preview: `docs/preview_v5.gif` (includes a jump at update 60). Firmware about
+150 KB.
+
+## Deferred (v6+)
 
 - Parallax clouds and background hills in the sky.
 - Jump frames with the Study 05 Iris emblem (needs a regenerated jump sheet).

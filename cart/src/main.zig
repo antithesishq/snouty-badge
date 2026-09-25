@@ -25,7 +25,17 @@ const company = "Antithesis";
 // the 112 px between them.
 const iris_y = 110;
 const iris_left_x = 8;
-const iris_right_x = cart.screen_width - iris_left_x - gfx.iris_16.width; // 136
+const iris_size = gfx.iris_spin.height; // 16, square cells
+const iris_right_x = cart.screen_width - iris_left_x - iris_size; // 136
+
+// Iris coin spin: the strip holds one full 360-degree turn in 24 frames
+// (front face white, back face grey, widths follow |cos|). Both marks spin in
+// step at the run cycle's pace, then rest on the front face.
+const iris_spin_frames = gfx.iris_spin.width / iris_size; // 24
+const iris_ticks_per_frame = ticks_per_frame; // 4: same pacing as the run
+const iris_spin_ticks = iris_spin_frames * iris_ticks_per_frame; // 96 = 1.6 s
+const iris_pause_ticks = 120; // 2 s on the front face
+const iris_cycle_ticks = iris_spin_ticks + iris_pause_ticks;
 
 // Animated Green Hill Zone backdrop behind Snouty (y 0..95, full width). The
 // four images are palette-cycle frames of the same picture; the original game
@@ -271,8 +281,10 @@ fn draw_panel() void {
         .height = panel_height,
         .fill_color = anti_black,
     });
-    draw_sprite_keyed(gfx.iris_16, iris_left_x, iris_y);
-    draw_sprite_keyed(gfx.iris_16, iris_right_x, iris_y);
+    const t = tick_total % iris_cycle_ticks;
+    const iris_frame: u32 = if (t < iris_spin_ticks) t / iris_ticks_per_frame else 0;
+    draw_cell(gfx.iris_spin, iris_frame, iris_left_x, iris_y);
+    draw_cell(gfx.iris_spin, iris_frame, iris_right_x, iris_y);
     draw_centered_text(name, name_y, anti_white);
     draw_centered_text(company, company_y, coral);
 }
@@ -282,33 +294,17 @@ fn draw_centered_text(comptime str: []const u8, y: i32, color: cart.DisplayColor
     cart.text(.{ .str = str, .x = x, .y = y, .text_color = color });
 }
 
-/// Draws a whole sprite with its top-left at (x, y), skipping palette index 0
-/// (transparent). The sprite must lie fully on screen; no clipping.
-fn draw_sprite_keyed(comptime sprite: type, x: comptime_int, y: comptime_int) void {
-    comptime {
-        if (x < 0 or y < 0 or x + sprite.width > cart.screen_width or y + sprite.height > cart.screen_height)
-            @compileError("draw_sprite_keyed: sprite not fully on screen");
-    }
-    for (0..sprite.width) |col| {
-        const column = &cart.framebuffer[x + col];
-        for (0..sprite.height) |row| {
-            const idx = sprite.indices.get(row * sprite.width + col);
-            if (idx == 0) continue;
-            column[y + row] = .from_color(sprite.colors[idx]);
-        }
-    }
-}
-
-/// Draws cell `index` (cell_size square) of a horizontal strip with its
+/// Draws cell `index` of a horizontal strip of square cells (side = height) with its
 /// top-left at (pos_x, pos_y), skipping palette index 0 (transparent) and
 /// clipping to the screen on all sides. The visible column and row ranges
 /// are computed once per cell.
 fn draw_cell(comptime sprite: type, index: u32, pos_x: i32, pos_y: i32) void {
-    const src_x: usize = index * cell_size;
+    const cell: usize = sprite.height;
+    const src_x: usize = index * cell;
     const col_begin: usize = @intCast(@max(0, -pos_x));
-    const col_end: usize = @intCast(@max(0, @min(cell_size, @as(i32, cart.screen_width) - pos_x)));
+    const col_end: usize = @intCast(@max(0, @min(cell, @as(i32, cart.screen_width) - pos_x)));
     const row_begin: usize = @intCast(@max(0, -pos_y));
-    const row_end: usize = @intCast(@max(0, @min(cell_size, @as(i32, cart.screen_height) - pos_y)));
+    const row_end: usize = @intCast(@max(0, @min(cell, @as(i32, cart.screen_height) - pos_y)));
     if (col_begin >= col_end or row_begin >= row_end) return;
     const dst_y0: usize = @intCast(pos_y + @as(i32, @intCast(row_begin)));
     var col = col_begin;

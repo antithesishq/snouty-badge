@@ -45,7 +45,7 @@ fn build_cart_assets(b: *Build, cart: *Build.Module, cart_api: *Build.Module, st
     gen_gfx.addArg("4");
     gen_gfx.addArg("false");
     gen_gfx.addArg("-i");
-    gen_gfx.addFileArg(b.path("assets/gen/iris_16.png"));
+    gen_gfx.addFileArg(b.path("assets/gen/iris_spin.png"));
     gen_gfx.addArg("4");
     gen_gfx.addArg("true");
     gen_gfx.addArg("-i");
