@@ -210,9 +210,50 @@ Option kept in the script: set `CURTAIN = False` to skip the foreground chunk
 overlay and show only the calmer background strips (cliff-gap waterfall and
 lake still shimmer). Faithful curtain is the default per Adrian's request.
 
-## Deferred (v4+)
+## v4: jump on A (in progress, 2026-09-25)
+
+Adrian: "make Snouty jump when I press an input (the Z key in the simulator)".
+Z and K map to the A button (bit 2) in the simulator; on hardware it is the A
+button.
+
+Input plumbing: upstream's wasm platform never reads the simulator's button
+word, so on wasm the cart reads the u16 at address 0x04 itself (same bit
+layout as `Controls`); on hardware it reads `cart.controls`. `tools/preview.mjs
+--press T1-T2` holds A during those updates for headless testing.
+
+Asset: the jump study's `snouty_jump_indexed.png` has a broken palette and the
+RGBA frames are smooth-shaded, so `prepare_assets.py` snaps each RGBA frame to
+the run palette with a hard alpha cut. Result `assets/gen/snouty_jump.png`,
+12 cells of 96x96. Known mismatch: the jump frames still carry the old
+crosshair chest emblem, not the Iris (Study 05 fixed only the run cycle).
+
+Timing design. The study's poses: 0 stand, 1 dip, 2 crouch, 3 coiled, 4 takeoff,
+5 fast rise, 6 apex hang, 7 late apex, 8 descent, 9 pre-landing reach,
+10 landing compression, 11 recovery. Running jump uses 4..11. Frames must
+hold while Snouty moves through the air, so the pose is chosen from the arc
+phase, not from a fixed per-frame duration:
+
+- Horizontal speed is unchanged during the jump (1.5 px/tick, so feet never
+  need to match the ground).
+- Arc: `h = 40` px, airborne `T = 40` ticks (0.67 s):
+  `arc(t) = 4*h*t*(T-t) / (T*T)`, integer math.
+- Pose by phase t/T: [0, .10) takeoff 4, [.10, .35) rise 5, [.35, .55) apex 6,
+  [.55, .70) late apex 7, [.70, .88) descent 8, [.88, 1) reach 9. Then on the
+  ground: landing 10 for 6 ticks, recovery 11 for 6 ticks, then back into the
+  run cycle at frame 0.
+- Vertical placement aligns each frame's feet row (lowest opaque row,
+  printed by prepare_assets.py: run [88 ...], jump [93,93,93,93,93,87,72,77,85,88,88,88])
+  to `ground_y - arc(t)`, so the feet trace the parabola exactly regardless of
+  how much lift the artist baked into a pose. Cell y can go negative at the
+  apex, so the sprite draw clips vertically as well as horizontally.
+- A press is edge-triggered and only accepted while running on the ground. If
+  Snouty leaves the right edge mid-jump, the normal off-screen pause takes over.
+
+Tunables in one place: `jump_height_px`, `jump_air_ticks`, `land_ticks`,
+`recover_ticks`, and the phase table.
+
+## Deferred (v5+)
 
 - Parallax clouds and background hills in the sky.
-- Jump on button press (jump study is ready). Needs simulator input fix
-  upstream to test in the browser; testable on hardware.
+- Jump frames with the Study 05 Iris emblem (needs a regenerated jump sheet).
 - Coral neopixel pulse on foot contact frames (0 and 8), dimmed hard.

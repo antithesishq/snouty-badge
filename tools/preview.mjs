@@ -3,7 +3,7 @@
 //
 //   node tools/preview.mjs <cart.wasm> --frames N [--every K] [--out DIR]
 //                          [--start-skip S] [--fb-addr auto|dwarf|sim|0xADDR]
-//                          [--seed N] [--controls BITS] [--raw-colors]
+//                          [--seed N] [--controls BITS] [--press T1-T2[,T3-T4...]] [--raw-colors]
 //
 // Runs start(), then N x update(). Every K-th update after the first S updates,
 // the displayed framebuffer is decoded and written to DIR/frame_XXXX.png
@@ -86,11 +86,11 @@ const OPTIONAL_COLOR_NONE = -1;
 function usage(msg) {
     if (msg) console.error(`preview: ${msg}`);
     console.error("usage: node tools/preview.mjs <cart.wasm> --frames N [--every K] [--out DIR] [--start-skip S]\n" +
-        "                          [--fb-addr auto|dwarf|sim|0xADDR] [--seed N] [--controls BITS] [--raw-colors]");
+        "                          [--fb-addr auto|dwarf|sim|0xADDR] [--seed N] [--controls BITS] [--press T1-T2[,T3-T4...]] [--raw-colors]");
     process.exit(2);
 }
 const argv = process.argv.slice(2);
-const opts = { frames: null, every: 1, out: "out", startSkip: 0, fbAddr: "auto", seed: 1, controls: 0, rawColors: false };
+const opts = { frames: null, every: 1, out: "out", startSkip: 0, fbAddr: "auto", seed: 1, controls: 0, press: [], rawColors: false };
 let wasmPath = null;
 for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
@@ -104,6 +104,7 @@ for (let i = 0; i < argv.length; i++) {
         case "--fb-addr": opts.fbAddr = val(); break;
         case "--seed": opts.seed = int(); break;
         case "--controls": opts.controls = int(); break;
+        case "--press": opts.press = val().split(",").map((r) => { const [a, b] = r.split("-").map(Number); if (!Number.isInteger(a) || !Number.isInteger(b) || b < a) usage(`bad --press range '${r}'`); return [a, b]; }); break;
         case "--raw-colors": opts.rawColors = true; break;
         case "-h": case "--help": usage();
         default:
@@ -415,8 +416,12 @@ const sp0 = instance.exports.__stack_pointer instanceof WebAssembly.Global ? ins
 const probeLo = Math.max(SIM_ADDR_FRAMEBUFFER, sp0), probeHi = SIM_ADDR_FRAMEBUFFER + FB_BYTES;
 const probeInitial = probeLo + 256 <= probeHi ? Buffer.from(mem8().slice(probeLo, probeHi)) : null;
 const canSwitchToShim = mode === "auto" && fbSource !== "export" && fbSource !== "sim" && probeInitial !== null;
-const setControls = () => dv().setUint16(ADDR_CONTROLS, opts.controls, true); // simulator's address; current API ignores it
-setControls();
+// Simulator's controls address. Upstream's API ignores it; our cart reads it on wasm.
+// --press holds the A button (bit 2, CONTROLS_A) during the given update ranges, inclusive.
+const CONTROLS_A = 4;
+const pressedAt = (i) => opts.press.some(([a, b]) => i >= a && i <= b);
+const setControls = (i) => dv().setUint16(ADDR_CONTROLS, opts.controls | (pressedAt(i) ? CONTROLS_A : 0), true);
+setControls(-1);
 for (const init of ["_start", "_initialize"]) if (exportNames.includes(init)) { try { instance.exports[init](); } catch (e) { trap(init, e); } }
 try { instance.exports.start(); } catch (e) { trap("start()", e); }
 
@@ -425,7 +430,7 @@ let changed = false;
 const t0 = Date.now();
 for (let i = 0; i < opts.frames; i++) {
     let addr = displayedBufferAddr();
-    setControls();
+    setControls(i);
     try { instance.exports.update(); } catch (e) { trap(`update() #${i}`, e); }
     if (i === 0 && canSwitchToShim && Buffer.compare(probeInitial, Buffer.from(mem8().slice(probeLo, probeHi))) !== 0) {
         console.error(`preview: cart copies its frame to the simulator region at 0x20; showing that (use --fb-addr dwarf for ${fbSource} @ 0x${fbBase.toString(16)})`);
@@ -441,7 +446,7 @@ if (written.length && !changed) warn(`framebuffer region at 0x${fbBase.toString(
 
 const meta = {
     cart: path.resolve(wasmPath), width: WIDTH, height: HEIGHT, format: "rgb565 column-major, wasm byte-swapped",
-    updates: opts.frames, every: opts.every, startSkip: opts.startSkip, seed: opts.seed, controls: opts.controls, rawColors: opts.rawColors,
+    updates: opts.frames, every: opts.every, startSkip: opts.startSkip, seed: opts.seed, controls: opts.controls, press: opts.press, rawColors: opts.rawColors,
     imports: imports.map((i) => `${i.module}.${i.name}`), exports: exportNames,
     framebuffer: { source: fbSource, base: `0x${fbBase.toString(16)}`, buffer1: fbSource === "dwarf" || fbSource === "export" ? `0x${(fbBase + FB_BYTES).toString(16)}` : null, drawPointer: hasPtr ? `0x${ptrVar.addr.toString(16)}` : null },
     dataSegments: dataSegs.map((d) => ({ off: d.off === null ? null : `0x${d.off.toString(16)}`, size: d.size })),

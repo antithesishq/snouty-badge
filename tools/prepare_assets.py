@@ -3,7 +3,7 @@
 
 Outputs:
   assets/gen/snouty_run.png   16-frame run strip, transparency flattened to #FF00FF
-  assets/gen/ghz_ground.png   original 32x12 Green-Hill-Zone-style ground tile
+  assets/gen/snouty_jump.png  12-frame jump strip, transparency flattened to #FF00FF
   assets/gen/iris_16.png      16x16 pixel version of the Antithesis Iris, magenta key
   assets/gen/waterfall.png    16x16 Genesis-style waterfall tile (scrolls vertically)
 
@@ -11,24 +11,39 @@ Run from anywhere: python3 tools/prepare_assets.py
 """
 from pathlib import Path
 
+import numpy as np
 from PIL import Image
 
 ROOT = Path(__file__).resolve().parent.parent
 SRC = ROOT / "assets" / "Snouty_Run_Study_05" / "snouty_run_strip.png"  # Study 05: revised chest emblem
+JUMP_DIR = ROOT / "assets" / "Snouty_Jump_Study_04" / "frames"
+# The jump study's indexed PNG has a broken palette and its RGBA frames are
+# smooth-shaded (thousands of colors, soft alpha). We snap each frame to the
+# run palette (snouty_palette.gpl, same 15 colors) with a hard alpha cut.
+RUN_PALETTE = [
+    (23, 18, 30), (41, 35, 47), (66, 54, 75), (70, 33, 116), (102, 43, 184),
+    (142, 66, 222), (190, 122, 243), (244, 239, 223), (149, 141, 157),
+    (238, 69, 60), (145, 50, 47), (96, 57, 31), (153, 98, 47), (205, 147, 75),
+    (240, 195, 124),
+]
 OUT = ROOT / "assets" / "gen"
 KEY = (255, 0, 255)  # upstream convert_gfx maps this to palette index 0 (skip)
 
 
-def flatten_strip() -> None:
-    strip = Image.open(SRC).convert("RGBA")
+def flatten_strip(src: Path = SRC, name: str = "snouty_run.png", cell: int = 96) -> None:
+    strip = Image.open(src).convert("RGBA")
     bg = Image.new("RGBA", strip.size, KEY + (255,))
     bg.alpha_composite(strip)
     rgb = bg.convert("RGB")
     colors = rgb.getcolors(maxcolors=256)
     assert colors is not None and len(colors) <= 16, f"too many colors: {len(colors)}"
-    assert KEY not in {c for _, c in colors if c != KEY} or True
-    rgb.save(OUT / "snouty_run.png", optimize=True)
-    print(f"snouty_run.png {rgb.size} {len(colors)} colors incl. key")
+    rgb.save(OUT / name, optimize=True)
+    print(f"{name} {rgb.size} {len(colors)} colors incl. key")
+    # Lowest opaque row per cell: the cart aligns these rows to the ground or
+    # to the jump arc, so paste the printed table into cart/src/main.zig.
+    alpha = np.array(strip)[:, :, 3]
+    feet = [int(np.nonzero(alpha[:, i * cell : (i + 1) * cell])[0].max()) for i in range(strip.width // cell)]
+    print(f"  feet rows: {feet}")
 
 
 # Green Hill Zone style palette (original pixels, drawn here, not ripped).
@@ -61,6 +76,27 @@ def draw_ground(width: int = 32, height: int = 12) -> None:
             px[x, y] = color
     img.save(OUT / "ghz_ground.png", optimize=True)
     print(f"ghz_ground.png {img.size} {len(img.getcolors())} colors")
+
+
+def snap_jump_strip(cell: int = 96, frames: int = 12) -> None:
+    pal = np.array(RUN_PALETTE, dtype=np.int32)
+    strip = np.zeros((cell, cell * frames, 3), np.uint8)
+    strip[:, :] = KEY
+    feet = []
+    for i in range(frames):
+        f = np.array(Image.open(JUMP_DIR / f"snouty_jump_{i:02d}.png").convert("RGBA")).astype(np.int32)
+        opaque = f[:, :, 3] >= 128
+        d = ((f[:, :, None, :3] - pal[None, None, :, :]) ** 2).sum(axis=3)
+        nearest = pal[d.argmin(axis=2)].astype(np.uint8)
+        cellimg = strip[:, i * cell : (i + 1) * cell]
+        cellimg[opaque] = nearest[opaque]
+        feet.append(int(np.nonzero(opaque)[0].max()))
+    img = Image.fromarray(strip)
+    colors = img.getcolors(maxcolors=256)
+    assert colors is not None and len(colors) <= 16, len(colors)
+    img.save(OUT / "snouty_jump.png", optimize=True)
+    print(f"snouty_jump.png {img.size} {len(colors)} colors incl. key")
+    print(f"  feet rows: {feet}")
 
 
 # Hand-pixelled from assets/logo/White Logo Mark.png (288 px, 280 visible):
@@ -129,6 +165,6 @@ def draw_waterfall(width: int = 16, height: int = 16) -> None:
 if __name__ == "__main__":
     OUT.mkdir(parents=True, exist_ok=True)
     flatten_strip()
-    draw_ground()
+    snap_jump_strip()
     draw_iris()
     draw_waterfall()
