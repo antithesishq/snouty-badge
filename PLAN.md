@@ -224,8 +224,9 @@ layout as `Controls`); on hardware it reads `cart.controls`. `tools/preview.mjs
 Asset: the jump study's `snouty_jump_indexed.png` has a broken palette and the
 RGBA frames are smooth-shaded, so `prepare_assets.py` snaps each RGBA frame to
 the run palette with a hard alpha cut. Result `assets/gen/snouty_jump.png`,
-12 cells of 96x96. Known mismatch: the jump frames still carry the old
-crosshair chest emblem, not the Iris (Study 05 fixed only the run cycle).
+12 cells of 96x96. Jump Study 05 (2026-09-25) replaced the crosshair chest
+emblem with the Iris mark; poses and feet rows are unchanged, so it was a
+direct swap of the source directory.
 
 Timing design. The study's poses: 0 stand, 1 dip, 2 crouch, 3 coiled, 4 takeoff,
 5 fast rise, 6 apex hang, 7 late apex, 8 descent, 9 pre-landing reach,
@@ -282,5 +283,4 @@ Preview: `docs/preview_v5.gif` (includes a jump at update 60). Firmware about
 ## Deferred (v6+)
 
 - Parallax clouds and background hills in the sky.
-- Jump frames with the Study 05 Iris emblem (needs a regenerated jump sheet).
 - Coral neopixel pulse on foot contact frames (0 and 8), dimmed hard.

@@ -1,0 +1,224 @@
+{
+  "name": "Snouty_Jump_Study_05",
+  "frame_size": [
+    96,
+    96
+  ],
+  "frame_count": 12,
+  "source_sheet": "pixel_anteater_jump_animation_sheet.png",
+  "operation": "Deterministic pixel edit of chest logo only",
+  "reference_logo": "Antithesis logo supplied by user",
+  "reference_run_sprite": "User-supplied revised run sprite with corrected pixel logo",
+  "logo_overlay_bbox_in_run_sprite": [
+    49,
+    54,
+    59,
+    64
+  ],
+  "frames": [
+    {
+      "index": 0,
+      "old_logo_centroid": [
+        56,
+        69
+      ],
+      "new_logo_top_left": [
+        51,
+        63
+      ],
+      "bbox": [
+        43,
+        55,
+        61,
+        74
+      ]
+    },
+    {
+      "index": 1,
+      "old_logo_centroid": [
+        55,
+        75
+      ],
+      "new_logo_top_left": [
+        50,
+        70
+      ],
+      "bbox": [
+        51,
+        71,
+        58,
+        78
+      ]
+    },
+    {
+      "index": 2,
+      "old_logo_centroid": [
+        55,
+        80
+      ],
+      "new_logo_top_left": [
+        50,
+        75
+      ],
+      "bbox": [
+        51,
+        76,
+        59,
+        83
+      ]
+    },
+    {
+      "index": 3,
+      "old_logo_centroid": [
+        56,
+        81
+      ],
+      "new_logo_top_left": [
+        51,
+        76
+      ],
+      "bbox": [
+        52,
+        78,
+        60,
+        85
+      ]
+    },
+    {
+      "index": 4,
+      "old_logo_centroid": [
+        57,
+        61
+      ],
+      "new_logo_top_left": [
+        52,
+        56
+      ],
+      "bbox": [
+        53,
+        57,
+        60,
+        65
+      ]
+    },
+    {
+      "index": 5,
+      "old_logo_centroid": [
+        56,
+        57
+      ],
+      "new_logo_top_left": [
+        51,
+        52
+      ],
+      "bbox": [
+        43,
+        42,
+        61,
+        61
+      ]
+    },
+    {
+      "index": 6,
+      "old_logo_centroid": [
+        57,
+        50
+      ],
+      "new_logo_top_left": [
+        52,
+        45
+      ],
+      "bbox": [
+        53,
+        46,
+        61,
+        54
+      ]
+    },
+    {
+      "index": 7,
+      "old_logo_centroid": [
+        57,
+        56
+      ],
+      "new_logo_top_left": [
+        51,
+        51
+      ],
+      "bbox": [
+        53,
+        52,
+        60,
+        60
+      ]
+    },
+    {
+      "index": 8,
+      "old_logo_centroid": [
+        57,
+        61
+      ],
+      "new_logo_top_left": [
+        51,
+        56
+      ],
+      "bbox": [
+        53,
+        57,
+        61,
+        65
+      ]
+    },
+    {
+      "index": 9,
+      "old_logo_centroid": [
+        54,
+        65
+      ],
+      "new_logo_top_left": [
+        49,
+        60
+      ],
+      "bbox": [
+        50,
+        61,
+        58,
+        69
+      ]
+    },
+    {
+      "index": 10,
+      "old_logo_centroid": [
+        56,
+        75
+      ],
+      "new_logo_top_left": [
+        51,
+        70
+      ],
+      "bbox": [
+        53,
+        71,
+        60,
+        79
+      ]
+    },
+    {
+      "index": 11,
+      "old_logo_centroid": [
+        57,
+        65
+      ],
+      "new_logo_top_left": [
+        52,
+        60
+      ],
+      "bbox": [
+        43,
+        51,
+        62,
+        70
+      ]
+    }
+  ]
+}

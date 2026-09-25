@@ -17,7 +17,7 @@ from PIL import Image
 
 ROOT = Path(__file__).resolve().parent.parent
 SRC = ROOT / "assets" / "Snouty_Run_Study_05" / "snouty_run_strip.png"  # Study 05: revised chest emblem
-JUMP_DIR = ROOT / "assets" / "Snouty_Jump_Study_04" / "frames"
+JUMP_DIR = ROOT / "assets" / "Snouty_Jump_Study_05" / "frames"  # Study 05: Iris chest emblem
 # The jump study's indexed PNG has a broken palette and its RGBA frames are
 # smooth-shaded (thousands of colors, soft alpha). We snap each frame to the
 # run palette (snouty_palette.gpl, same 15 colors) with a hard alpha cut.
