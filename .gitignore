@@ -1,0 +1,7 @@
+.zig-cache/
+zig-out/
+node_modules/
+*.uf2
+*.elf
+*.wasm
+.DS_Store
