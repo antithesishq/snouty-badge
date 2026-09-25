@@ -46,6 +46,14 @@ asset pipeline), `zeroman` (sprite atlases with palettes + transparency),
 
 ## Asset pipeline
 
+Two generator scripts write build inputs into `assets/gen/` (committed):
+`tools/prepare_assets.py` (Snouty strip with magenta key, Iris 16x16) and
+`tools/prepare_background.py` (four Green Hill Zone backdrop frames from the
+rips in `assets/ref/`, plus the grass strip). PLAN.md v3 explains the palette
+cycle and the column-dither waterfall. Backdrop frames are 8-bit, everything
+else 4-bit.
+
+
 Upstream converts PNGs to Zig at build time with `build/convert_gfx.zig` (uses the
 `zigimg` dependency). Each input takes `bits` (1/2/4/8 palette bits per pixel) and a
 `transparency` flag; output is a `gfx.zig` module exposing
@@ -84,14 +92,15 @@ requires sycl-badge to be checked out as a sibling (as the path dep does).
 
 Zig fetches dependencies into `zig-pkg/` in the repo root (gitignored).
 
-The cart links to about 78 KB (`size -A zig-out/firmware/snouty.elf`: `.text`,
-which includes `.rodata`, plus `.data`), well under the 256 KB cart RAM limit.
+The cart links to about 94 KB (`size -A zig-out/firmware/snouty.elf`: `.text`,
+which includes `.rodata`, plus `.data`), under the 256 KB cart RAM limit. The
+sprite strip is 72 KB; the four 8-bit backdrop frames share one merged 15 KB
+index array and differ only in palette. Watch this if more art is added.
 
 Upstream's wasm platform never presents a frame and the simulator reads a legacy
 framebuffer at linear address 0x20, so `main.zig` has a wasm-only
 `present_wasm()` that copies the frame there (swapping r and b, because the
-simulator's compositor reads red from the bits where `DisplayColor` keeps blue)
-and re-clears to sky. Without it the optimizer drops all framebuffer writes and
+simulator's compositor reads red from the bits where `DisplayColor` keeps blue). Without it the optimizer drops all framebuffer writes and
 the simulator shows nothing (upstream `dvd.wasm` has the same problem).
 `tools/preview.mjs` renders what the simulator shows; `--raw-colors` shows what
 the cart API defines.

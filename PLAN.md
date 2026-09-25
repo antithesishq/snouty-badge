@@ -4,8 +4,9 @@ Owner: Adrian Hatch (Antithesis). Target: SYCL Badge V2, 160x128 RGB565.
 
 ## Status
 
-- 2026-09-25: v1 built and verified headless (`docs/preview_v1.gif`). Not yet
-  flashed to a badge. Awaiting Adrian's review of size, speed and colors.
+- 2026-09-25: v1 built, reviewed by Adrian (speed and size approved), tagged
+  `v1.0.0`. v2 (panel waterfall) built then superseded. v3 (real GHZ backdrop,
+  clean panel) built and verified headless. Nothing flashed to hardware yet.
 - Found while building: upstream's wasm platform never presents frames and the
   simulator reads a legacy framebuffer at 0x20 with red/blue in the legacy
   order, so `present_wasm()` in the cart copies and color-swaps each frame for
@@ -129,7 +130,7 @@ symlink under `sycl-badge/showcase/carts/`.
   and I will hand-pixel a 16x16 or 20x20 version for the panel. v1 uses text.
 - Speed and size taste calls after the first preview GIF.
 
-## v2: Iris logo behind a translucent waterfall (built 2026-09-25, awaiting review)
+## v2: Iris logo behind a translucent waterfall (built 2026-09-25, superseded by v3)
 
 Adrian approved v1 speed and size and tagged it `v1.0.0`. v2 adds the Iris and
 the deferred waterfall, both confined to the name panel so Snouty and the
@@ -163,7 +164,52 @@ only 1 in 4 (cycling over four ticks) over content pixels, i.e. anything not
 panel-colored (text and Iris marks). `docs/preview_v2.gif` is rendered with
 `make_gif.py --blend 4` from an every-tick dump to approximate the eye.
 
-## Deferred (v3+)
+## v3: real Green Hill Zone waterfall backdrop, clean name panel (built 2026-09-25)
+
+Adrian's direction after seeing v2: keep the name panel clean (no overlay) and
+make the sky behind Snouty a direct copy of the famous Sonic 1 Green Hill Zone
+waterfall backdrop (rasterscroll.com's Sonic-1-Waterfall.gif). Adrian's asset
+hunt supplied the Spriters Resource rips, which is what we build from; the
+screenshot GIF is used for the grass strip and to derive exact water colors.
+
+Sources, saved under `assets/ref/`: GHZ background strips rip, GHZ chunks rip
+(has the 192x192 waterfall chunk), the 2x 4-frame screenshot GIF, and the
+disassembly's `GHZ Waterfall.bin` (kept for reference, not decoded; the chunk
+rip already contains the same tiles).
+
+How the original effect works and how we reproduce it (`tools/prepare_background.py`):
+
+- Background strips (small clouds, mountains, cliffs with bushes, lake) are
+  stacked into a 160x96 window: 16 + 28 + 40 + 12 rows, all from x offset 56 of
+  each strip.
+- The waterfall is a FOREGROUND chunk with about half its columns transparent.
+  That column dither is the Genesis "translucency". We overlay the chunk over
+  the whole window exactly as the game does, no alpha.
+- Water shimmer is palette cycling: four palette entries (purple placeholders
+  in the rips) rotate through four blues every 100 ms. We emit four PNGs, one
+  per cycle step, with the mapping derived by aligning the chunk pattern to the
+  screenshot: at step k, level i shows BLUES[(i - k) % 4]. Two extra purples the
+  rip uses for lake shimmer are aliased onto levels 0 and 2.
+- The strips span several Genesis palette lines, so a frame has about 20
+  colors and is converted at 8 bits (15,360 B per frame). Because the cycle
+  only permutes colors, all four frames produce identical index arrays and
+  differ only in their 20-entry palettes; the linker merges the arrays, so the
+  four frames cost about 15 KB in total, not 61 KB.
+- Grass strip: 96x12 from the screenshot's ground rows 191..203 (period 96),
+  rescaled from the 0..238 ramp to the rips' 0..252 ramp so it matches.
+
+Cart: `draw_background(comptime sprite)` draws the full 160x96 frame chosen by
+`(tick_total / 6) % 4`, then ground, panel (Irises + text, no water), Snouty.
+Double buffering is `.no_copy_full_frame` since every pixel is redrawn.
+
+Result: `docs/preview_v3.gif` (sampled every 3 ticks at 50 ms so the 100 ms
+palette cycle is visible). Firmware about 94 KB of the 256 KB cart limit.
+
+Option kept in the script: set `CURTAIN = False` to skip the foreground chunk
+overlay and show only the calmer background strips (cliff-gap waterfall and
+lake still shimmer). Faithful curtain is the default per Adrian's request.
+
+## Deferred (v4+)
 
 - Parallax clouds and background hills in the sky.
 - Jump on button press (jump study is ready). Needs simulator input fix

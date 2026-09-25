@@ -6,3 +6,4 @@ node_modules/
 *.wasm
 .DS_Store
 zig-pkg/
+__pycache__/
