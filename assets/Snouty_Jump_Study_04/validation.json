@@ -1,0 +1,17 @@
+{
+  "status": "ok",
+  "checks": {
+    "frame_count": true,
+    "frame_size_all_96x96": true,
+    "strip_size": [
+      1152,
+      96
+    ],
+    "sheet_size": [
+      576,
+      192
+    ],
+    "standing_preview_created": true,
+    "running_preview_created": true
+  }
+}

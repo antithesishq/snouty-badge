@@ -1,0 +1,300 @@
+{
+  "name": "snouty_jump_study_02",
+  "direction": "right",
+  "frame_size": [
+    96,
+    96
+  ],
+  "frame_count": 12,
+  "review_duration_ms_native": 60,
+  "origin_px": [
+    48,
+    88
+  ],
+  "ground_baseline_y": 88,
+  "visible_palette": [
+    "#17121e",
+    "#29232f",
+    "#42364b",
+    "#462174",
+    "#662bb8",
+    "#8e42de",
+    "#be7af3",
+    "#f4efdf",
+    "#958d9d",
+    "#ee453c",
+    "#91322f",
+    "#60391f",
+    "#99622f",
+    "#cd934b",
+    "#f0c37c"
+  ],
+  "transparent_index": 0,
+  "strip": {
+    "file": "snouty_jump_strip.png",
+    "columns": 12,
+    "rows": 1,
+    "margin": 0,
+    "spacing": 0
+  },
+  "grid": {
+    "file": "snouty_jump_sheet.png",
+    "columns": 6,
+    "rows": 2,
+    "margin": 0,
+    "spacing": 0
+  },
+  "indexed_strip": {
+    "file": "snouty_jump_indexed.png",
+    "columns": 12,
+    "rows": 1,
+    "transparent_palette_index": 0
+  },
+  "standing_jump_order": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10,
+    11
+  ],
+  "running_jump_insert_order": [
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10,
+    11
+  ],
+  "frames": [
+    {
+      "index": 0,
+      "file": "frames/snouty_jump_00.png",
+      "duration_ms": 60,
+      "grid_rect": [
+        0,
+        0,
+        96,
+        96
+      ],
+      "label": "00  NEUTRAL STAND"
+    },
+    {
+      "index": 1,
+      "file": "frames/snouty_jump_01.png",
+      "duration_ms": 60,
+      "grid_rect": [
+        96,
+        0,
+        96,
+        96
+      ],
+      "label": "01  ANTICIPATION DIP"
+    },
+    {
+      "index": 2,
+      "file": "frames/snouty_jump_02.png",
+      "duration_ms": 60,
+      "grid_rect": [
+        192,
+        0,
+        96,
+        96
+      ],
+      "label": "02  DEEP CROUCH"
+    },
+    {
+      "index": 3,
+      "file": "frames/snouty_jump_03.png",
+      "duration_ms": 60,
+      "grid_rect": [
+        288,
+        0,
+        96,
+        96
+      ],
+      "label": "03  COILED PRE-LAUNCH"
+    },
+    {
+      "index": 4,
+      "file": "frames/snouty_jump_04.png",
+      "duration_ms": 60,
+      "grid_rect": [
+        384,
+        0,
+        96,
+        96
+      ],
+      "label": "04  TAKEOFF"
+    },
+    {
+      "index": 5,
+      "file": "frames/snouty_jump_05.png",
+      "duration_ms": 60,
+      "grid_rect": [
+        480,
+        0,
+        96,
+        96
+      ],
+      "label": "05  FAST RISE"
+    },
+    {
+      "index": 6,
+      "file": "frames/snouty_jump_06.png",
+      "duration_ms": 60,
+      "grid_rect": [
+        0,
+        96,
+        96,
+        96
+      ],
+      "label": "06  APEX HANG"
+    },
+    {
+      "index": 7,
+      "file": "frames/snouty_jump_07.png",
+      "duration_ms": 60,
+      "grid_rect": [
+        96,
+        96,
+        96,
+        96
+      ],
+      "label": "07  LATE APEX"
+    },
+    {
+      "index": 8,
+      "file": "frames/snouty_jump_08.png",
+      "duration_ms": 60,
+      "grid_rect": [
+        192,
+        96,
+        96,
+        96
+      ],
+      "label": "08  DESCENT"
+    },
+    {
+      "index": 9,
+      "file": "frames/snouty_jump_09.png",
+      "duration_ms": 60,
+      "grid_rect": [
+        288,
+        96,
+        96,
+        96
+      ],
+      "label": "09  PRE-LANDING REACH"
+    },
+    {
+      "index": 10,
+      "file": "frames/snouty_jump_10.png",
+      "duration_ms": 60,
+      "grid_rect": [
+        384,
+        96,
+        96,
+        96
+      ],
+      "label": "10  LANDING COMPRESSION"
+    },
+    {
+      "index": 11,
+      "file": "frames/snouty_jump_11.png",
+      "duration_ms": 60,
+      "grid_rect": [
+        480,
+        96,
+        96,
+        96
+      ],
+      "label": "11  RECOVERY"
+    }
+  ],
+  "notes": "Study 02 uses a larger, more legible jump arc with a true standing start, slower preview timing, and a clearer apex / landing sequence.",
+  "preview_revision": "study_03_timing_fix",
+  "standing_preview_sequence": [
+    0,
+    0,
+    1,
+    1,
+    2,
+    2,
+    3,
+    3,
+    4,
+    5,
+    6,
+    6,
+    7,
+    8,
+    9,
+    10,
+    10,
+    11,
+    11,
+    0,
+    0
+  ],
+  "standing_preview_durations_ms": [
+    220,
+    220,
+    160,
+    160,
+    160,
+    160,
+    160,
+    160,
+    130,
+    130,
+    180,
+    180,
+    160,
+    160,
+    160,
+    190,
+    190,
+    170,
+    170,
+    220,
+    220
+  ],
+  "running_preview_durations_ms": [
+    90,
+    90,
+    90,
+    90,
+    90,
+    90,
+    90,
+    90,
+    130,
+    140,
+    190,
+    190,
+    170,
+    170,
+    190,
+    150,
+    90,
+    90,
+    90,
+    90,
+    90,
+    90,
+    90,
+    90
+  ],
+  "study": "04",
+  "art_correction": "Corrected the far/rear eye so it remains a distinct white eye in the standing and jump frames, consistent with the original approved run loop.",
+  "patch_method": "Deterministic pixel edit: small far-eye patch added relative to the detected main eye in each jump frame."
+}
