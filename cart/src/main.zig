@@ -6,9 +6,7 @@ comptime {
     cart.export_start_code();
 }
 
-// Colors. Sky is a Green Hill Zone style blue; the panel colors come from the
-// Antithesis brand guide.
-const sky = cart.DisplayColor.rgb(0x2468F0);
+// Panel colors from the Antithesis brand guide.
 const anti_black = cart.DisplayColor.rgb(0x16031B);
 const anti_white = cart.DisplayColor.rgb(0xFCFBF9);
 const coral = cart.DisplayColor.rgb(0xF18271);
@@ -29,25 +27,11 @@ const iris_y = 110;
 const iris_left_x = 8;
 const iris_right_x = cart.screen_width - iris_left_x - gfx.iris_16.width; // 136
 
-// Waterfall over the panel (PLAN.md v2). The tile scrolls down
-// water_px_per_tick px per tick and is drawn through a checkerboard mask whose
-// phase flips every tick, so at 60 Hz it blends to ~50% translucency.
-const water_px_per_tick = 1;
-const foam_height = 2;
-const water_tile = gfx.waterfall;
-comptime {
-    if (water_tile.width != 16 or water_tile.height != 16) @compileError("unexpected waterfall tile size");
-}
-/// Lightest color of the waterfall tile palette, used for the foam row.
-const foam_color = blk: {
-    var best = water_tile.colors[0];
-    for (water_tile.colors) |c| {
-        const sum = @as(u32, c.r) * 2 + c.g + @as(u32, c.b) * 2;
-        const best_sum = @as(u32, best.r) * 2 + best.g + @as(u32, best.b) * 2;
-        if (sum > best_sum) best = c;
-    }
-    break :blk best;
-};
+// Animated Green Hill Zone backdrop behind Snouty (y 0..95, full width). The
+// four images are palette-cycle frames of the same picture; the original game
+// advances its waterfall cycle every 6 ticks (100 ms at 60 Hz).
+const bg_height = ground_y; // 96
+const bg_ticks_per_frame = 6;
 
 // Run cycle strip: 16 cells of 96x96 side by side. The cell's origin is
 // (48, 88): x centered, y on the ground baseline. Putting the baseline on the
@@ -75,22 +59,29 @@ var tick: u32 = 0;
 var frame: u32 = 0;
 var snouty_x: i32 = start_x;
 var pause_left: u32 = 0;
-/// Ticks since boot. Unlike `tick` it never resets; drives the waterfall mask
-/// phase and scroll. Wraps after ~2.3 years at 60 Hz, harmlessly.
+/// Ticks since boot. Unlike `tick` it never resets; drives the backdrop's
+/// palette cycle. Wraps after ~2.3 years at 60 Hz (2^32 is not a multiple of
+/// 24, so the cycle skips a step once on wrap, harmlessly).
 var tick_total: u32 = 0;
 
 pub fn start() void {
     cart.set_vsync_enabled(1000.0 / 60.0);
-    cart.set_double_buffer_mode(.{ .clear_full_frame = sky });
-    // clear_full_frame clears the *next* back buffer inside present(), so the
-    // very first frame would otherwise start from uninitialised memory.
-    for (cart.framebuffer) |*column| @memset(column, .from_color(sky));
+    // update() redraws every pixel (backdrop rows 0..95, ground 96..107,
+    // panel 108..127), so neither a clear nor a copy-forward is needed.
+    cart.set_double_buffer_mode(.no_copy_full_frame);
 }
 
 pub fn update() void {
+    // Select the comptime sprite once per update; each arm is a separate
+    // instantiation of draw_background with its own tight loop.
+    switch ((tick_total / bg_ticks_per_frame) % 4) {
+        0 => draw_background(gfx.ghz_bg_0),
+        1 => draw_background(gfx.ghz_bg_1),
+        2 => draw_background(gfx.ghz_bg_2),
+        else => draw_background(gfx.ghz_bg_3),
+    }
     draw_ground();
     draw_panel();
-    draw_waterfall();
     if (snouty_x < end_x) draw_snouty(frame, snouty_x, cell_y);
     advance();
     if (cart.is_wasm) present_wasm();
@@ -113,6 +104,27 @@ fn advance() void {
     frame = (frame + 1) % frame_count;
     snouty_x += step_px;
     if (snouty_x >= end_x) pause_left = pause_ticks;
+}
+
+/// Copies a full-width, bg_height-tall opaque sprite into rows 0..bg_height-1.
+/// The palette is converted to Pixels at comptime, so the inner loop is an
+/// index fetch plus a table lookup.
+fn draw_background(comptime sprite: type) void {
+    comptime {
+        if (sprite.width != cart.screen_width or sprite.height != bg_height)
+            @compileError("draw_background: sprite must be 160x96");
+    }
+    const palette = comptime blk: {
+        var p: [sprite.colors.len]cart.Pixel = undefined;
+        for (sprite.colors, &p) |c, *px| px.* = .from_color(c);
+        break :blk p;
+    };
+    for (0..sprite.width) |x| {
+        const column = &cart.framebuffer[x];
+        for (0..sprite.height) |y| {
+            column[y] = palette[sprite.indices.get(y * sprite.width + x)];
+        }
+    }
 }
 
 /// Tiles the ground image across the full width at y = ground_y.
@@ -163,42 +175,6 @@ fn draw_sprite_keyed(comptime sprite: type, x: comptime_int, y: comptime_int) vo
     }
 }
 
-/// Draws the scrolling waterfall tile over the whole panel (y panel_y..127)
-/// through a checkerboard mask, with a foam row along the ledge on top.
-fn draw_waterfall() void {
-    const size = water_tile.width; // 16, square
-    // Water falls DOWN: as tick_total grows the pattern must move toward
-    // larger screen y. A feature at tile row r appears at screen row
-    // y = r + scroll, so screen row y samples tile row (y - scroll) mod 16.
-    // Computed as (y + 16 - scroll % 16) % 16 to stay in unsigned arithmetic.
-    // Sampling (y + scroll) instead would make the water climb.
-    const scroll = (tick_total *% water_px_per_tick) % size;
-    const phase = tick_total & 1;
-    const panel_px: cart.Pixel = .from_color(anti_black);
-    for (0..cart.screen_width) |x| {
-        const column = &cart.framebuffer[x];
-        const tx = x % size;
-        for (panel_y..cart.screen_height) |y| {
-            // Translucency by ordered dithering, phase-flipped every tick so
-            // the eye blends it at 60 Hz. Over the bare panel the water covers
-            // 1 in 2 pixels (checkerboard). Over content (text, Iris marks,
-            // anything not panel-colored) it covers only 1 in 4, cycling over
-            // four ticks, so the 1 px font strokes stay legible.
-            const over_content = column[y] != panel_px;
-            const masked = if (over_content)
-                ((x + 2 * y + tick_total) & 3) != 0
-            else
-                ((x + y + phase) & 1) != 0;
-            if (masked) continue;
-            const color = if (y < panel_y + foam_height)
-                foam_color
-            else
-                water_tile.colors[water_tile.indices.get(((y + size - scroll) % size) * size + tx)];
-            column[y] = .from_color(color);
-        }
-    }
-}
-
 /// Draws cell `index` of the run strip with its top-left at (pos_x, pos_y),
 /// skipping palette index 0 (transparent) and clipping to the screen
 /// horizontally. The cell always fits vertically (rows 8..103).
@@ -224,7 +200,7 @@ fn draw_snouty(index: u32, pos_x: i32, pos_y: comptime_int) void {
 /// present()), so on wasm the framebuffer is never cleared, and the web
 /// simulator reads a legacy framebuffer at linear address 0x20 (see
 /// simulator/src/constants.ts ADDR_FRAMEBUFFER; add_os_cart reserves it via
-/// global_base). Copy our frame there and emulate clear_full_frame.
+/// global_base). Copy our frame there.
 ///
 /// The simulator's compositor (compositor.ts) also un-swaps the bytes and
 /// uploads the u16 as GL RGB565 with red in the high bits, but DisplayColor
@@ -246,5 +222,6 @@ fn present_wasm() void {
     } else {
         sim_framebuffer.* = cart.framebuffer.*;
     }
-    for (cart.framebuffer) |*column| @memset(column, .from_color(sky));
+    // No re-clear: like .no_copy_full_frame on hardware, the next update()
+    // overwrites every pixel of cart.framebuffer before it is presented.
 }
