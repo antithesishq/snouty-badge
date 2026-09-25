@@ -127,13 +127,38 @@ symlink under `sycl-badge/showcase/carts/`.
   and I will hand-pixel a 16x16 or 20x20 version for the panel. v1 uses text.
 - Speed and size taste calls after the first preview GIF.
 
-## Deferred (v2+)
+## v2: Iris logo behind a translucent waterfall (in progress, 2026-09-25)
 
-- Sega Genesis style translucent waterfall over the name panel. Plan: a
-  2-frame or 4-frame 16-wide tile column of light blues, drawn with 50%
-  ordered dithering (checkerboard skip) so the text shows through, the way
-  Genesis games faked alpha. Animate by scrolling the tile downward 1-2 px
-  per tick. Cheap, no blending math.
+Adrian approved v1 speed and size and tagged it `v1.0.0`. v2 adds the Iris and
+the deferred waterfall, both confined to the name panel so Snouty and the
+ground are untouched.
+
+Layout of the panel (y 108..127), back to front:
+
+1. Panel background, Anti-Black, as before.
+2. Two 16x16 Iris marks in Anti-White at (8, 110) and (136, 110). The text is
+   centered in the 112 px between them, so "Adrian Hatch" (96 px) still fits.
+   Source: `assets/gen/iris_16.png`, hand-pixelled from the 288 px logo mark
+   (3 px brackets, rounded outer corner, 7 px diamond). Magenta key.
+3. Text, unchanged.
+4. Waterfall: `assets/gen/waterfall.png` (16x16, 4 blues) tiled across the
+   panel and scrolled downward `water_px_per_tick` (start at 1) so it reads
+   as water falling off the ground ledge. Drawn through a checkerboard mask
+   `((x + y + tick) & 1) == 0` whose phase flips every tick. At 60 Hz the eye
+   blends it to 50% translucency, the same trick Genesis games used. In the
+   GIF preview (every 4th frame) the checkerboard is visible; that is expected.
+   A 2 px foam row in the lightest blue at y 108..109 marks the ledge.
+
+Assets: `tools/prepare_assets.py` now also writes `iris_16.png` and
+`waterfall.png`; `build.zig` converts both (4-bit; iris with transparency).
+
+Verification: headless preview GIF plus a single-frame check that the text is
+still legible through the mask. If it is not, the fallback is a sparser mask
+(draw water on 1 of 3 pixels) or skipping water over the glyph rows.
+
+## Deferred (v3+)
+
 - Parallax clouds and background hills in the sky.
-- Iris logo in the panel, jump on button press (jump study is ready).
+- Jump on button press (jump study is ready). Needs simulator input fix
+  upstream to test in the browser; testable on hardware.
 - Coral neopixel pulse on foot contact frames (0 and 8), dimmed hard.

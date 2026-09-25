@@ -4,6 +4,8 @@
 Outputs:
   assets/gen/snouty_run.png   16-frame run strip, transparency flattened to #FF00FF
   assets/gen/ghz_ground.png   original 32x12 Green-Hill-Zone-style ground tile
+  assets/gen/iris_16.png      16x16 pixel version of the Antithesis Iris, magenta key
+  assets/gen/waterfall.png    16x16 Genesis-style waterfall tile (scrolls vertically)
 
 Run from anywhere: python3 tools/prepare_assets.py
 """
@@ -61,7 +63,72 @@ def draw_ground(width: int = 32, height: int = 12) -> None:
     print(f"ghz_ground.png {img.size} {len(img.getcolors())} colors")
 
 
+# Hand-pixelled from assets/logo/White Logo Mark.png (288 px, 280 visible):
+# two 3 px brackets with a rounded outer corner around a 7 px diamond.
+IRIS_16 = [
+    "...##########...",
+    "..###########...",
+    ".############...",
+    "###.............",
+    "###.............",
+    "###.....#....###",
+    "###....###...###",
+    "###...#####..###",
+    "###..#######.###",
+    "###...#####..###",
+    "###....###...###",
+    "........#....###",
+    ".............###",
+    "...############.",
+    "...###########..",
+    "...##########...",
+]
+WHITE = (0xFC, 0xFB, 0xF9)
+
+
+def draw_iris() -> None:
+    assert len(IRIS_16) == 16 and all(len(r) == 16 for r in IRIS_16)
+    img = Image.new("RGB", (16, 16), KEY)
+    px = img.load()
+    for y, row in enumerate(IRIS_16):
+        for x, ch in enumerate(row):
+            if ch == "#":
+                px[x, y] = WHITE
+    img.save(OUT / "iris_16.png", optimize=True)
+    print("iris_16.png 16x16")
+
+
+# Waterfall: Genesis-style vertical streaks in 4 blues. The cart scrolls this
+# tile downward and draws it through a checkerboard mask for translucency.
+WATER_DEEP = (0x20, 0x60, 0xD0)
+WATER_MID = (0x48, 0x98, 0xF0)
+WATER_LIGHT = (0x90, 0xD0, 0xFF)
+WATER_FOAM = (0xE8, 0xF8, 0xFF)
+
+
+def draw_waterfall(width: int = 16, height: int = 16) -> None:
+    img = Image.new("RGB", (width, height), WATER_MID)
+    px = img.load()
+    # column pattern: deep, mid, mid, light, mid, deep, light, foam-ish streak
+    cols = [WATER_DEEP, WATER_MID, WATER_MID, WATER_LIGHT, WATER_MID, WATER_DEEP,
+            WATER_LIGHT, WATER_MID, WATER_MID, WATER_FOAM, WATER_MID, WATER_DEEP,
+            WATER_MID, WATER_LIGHT, WATER_MID, WATER_DEEP]
+    for x in range(width):
+        for y in range(height):
+            c = cols[x % len(cols)]
+            # break streaks into dashes so vertical scroll reads as falling water
+            if c in (WATER_LIGHT, WATER_FOAM) and (y + x * 3) % 8 in (5, 6):
+                c = WATER_MID
+            if c == WATER_DEEP and (y + x * 5) % 11 == 0:
+                c = WATER_MID
+            px[x, y] = c
+    img.save(OUT / "waterfall.png", optimize=True)
+    print(f"waterfall.png {img.size} {len(img.getcolors())} colors")
+
+
 if __name__ == "__main__":
     OUT.mkdir(parents=True, exist_ok=True)
     flatten_strip()
     draw_ground()
+    draw_iris()
+    draw_waterfall()
