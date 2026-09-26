@@ -445,3 +445,17 @@ with the bullet pool near full. Fallbacks in SPEC.md 13.1.
 - 2026-09-26: M2 step 0 done: `world.zig` landed, all 400 M1 frames
   byte-identical before and after, `@sizeOf(World)` = 3160 bytes, ELF
   text+data 36 KB. M2 tracks A, B1, B2, C planned above and started.
+- 2026-09-26: M2 done and tagged `m2`. All four tracks landed as planned;
+  `tools/check.sh` runs six scripts green; 18,000-tick soak clean. ELF
+  text+data 46.7 KB, `@sizeOf(World)` 4132 bytes (M4 keyframe ring of 4 =
+  16.5 KB). Deviations from the M2 numbers: the spider pair at 22 s is
+  spaced 60 ticks (SPEC gave none); the wasp stops at x 119.5 (no snap);
+  the moth counts its 600 ticks from entering the screen and fires only
+  once on screen; the bomb resolves after all movement, just before
+  collisions; no graze while invulnerable; DYING runs no collisions.
+  Harness: frames are captured before per-tick export calls because the
+  wasm shadow stack overlaps the simulator framebuffer at 0x20 (a
+  `--call-at` used to paint a black band over columns 49..57). Balance is
+  untested by a human: an idle ship is hit by the beetle every 130 ticks;
+  the scripted sweep survives a loop with two bombs. Next: M3 stages and
+  boss.

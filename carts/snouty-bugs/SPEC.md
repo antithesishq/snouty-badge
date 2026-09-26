@@ -525,3 +525,8 @@ brief so the real sheets drop in without code changes.
 - 2026-09-26: Rewind mechanic designed (section 5.1, 13.1): lives become
   rewinds, a hit names the bug and replays the last two seconds backward.
   Milestones renumbered: M4 Rewind, M5 Attract, M6 Polish.
+- 2026-09-26: M2 built and tagged `m2`: `World` refactor, all five enemy
+  kinds with their patterns, enemy bullets that record their source, bombs,
+  graze, rewind stock in the HUD (a hit spends one; the sequence itself is
+  M4), death, looping stage-1 spawner, `tools/check.sh` regression gate
+  (`docs/preview_m2.gif`). See PLAN.md.
