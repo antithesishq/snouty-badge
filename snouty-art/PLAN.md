@@ -49,12 +49,16 @@ Rendering is deterministic: `python3 tools/build.py all` regenerates `out/`.
 
 ## Milestones
 
-- M0: repo, references, rig parts, plan. (this commit)
+- M0: repo, references, rig parts, plan. Done 2026-09-26.
 - M1: core library (palette, rig, limbs, export, validate, preview) and a
-  first-pass run cycle that renders and validates.
+  first-pass run cycle that renders and validates. Done 2026-09-26.
 - M2: run cycle polished as an alternative to Study 05 (more lean, stride and
-  follow-through on ears/tail/net), and the jump sheet, developed in parallel.
-- M3: hand-off. Copy `out/run` and `out/jump` into `snouty-badge/assets/` as
+  follow-through on tail/net), and the jump sheet, developed in parallel by
+  two agents. Done 2026-09-26; awaiting Adrian's review of `out/`.
+  Open taste questions: both run legs emerge from under the shirt (Study 05
+  crosses the near thigh in front); head nod is only +-1 degree because
+  larger nearest-neighbour rotations break up the pixels.
+- M3 (next): hand-off. `python3 tools/install_badge.py` copies `out/run` and `out/jump` into `snouty-badge/assets/` as
   study packs, point `tools/prepare_assets.py` at them, update feet tables,
   verify in the simulator.
 
