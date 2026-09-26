@@ -748,3 +748,21 @@ the FPS overlay during a rewind with the bullet pool near full must read
   still off screen. Balance: under constant fire the loop-0 boss lasts
   about 9 s; a human has not played it. The spare debug hooks (`debug_god`,
   `debug_warp`) are wasm-only. Next: M4 rewind (history.zig, rewind.zig).
+- 2026-09-26: M4 done and tagged `m4`. Twelve scripts green;
+  `debug_history_check` returned 0 on every recorded frame of m2_play,
+  m3_boss, m1_pause, m2_hit and m4_early (track A checked every frame, the
+  scripts pin a sample). ELF text 52.6 KB + data 4.3 KB; .bss 17.6 KB (the
+  keyframes). `@sizeOf(World)` 4252. Changes beyond the contract, all in
+  PLAN.md terms: the World's input edge detector is stepped only on
+  simulated ticks and a meta detector (`input.meta`) drives title and
+  pause, so a button held through a pause cannot desync a replay;
+  `history.checkpoint()` saves a between-ticks keyframe at resume (and
+  after `debug_warp`) so a later restore across the resume sees the
+  invulnerability grant; restoring to a keyframe tick undoes that tick's
+  input step from the log; the check returns 2 on title, dying and the 20
+  bug-report frames; floats compare by bit pattern. The bug-report bar
+  dodges the ship (SPEC.md 5.1 note). Resume invulnerability is 60 ticks.
+  An idle ship replays its fate exactly (same hit, same tick), which is
+  the mechanic working as designed. Needs Adrian: FPS overlay during a
+  rewind on the badge; feel of the 20 + 60 tick timing. Next: M5 attract
+  mode (title, autopilot, takeover, game over).

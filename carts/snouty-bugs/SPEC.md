@@ -119,7 +119,9 @@ is touched and a rewind is in stock:
    with its hitbox as a red dot, the offending bullet or enemy flashes
    white. A centered 8x8-font message in Coral on an Anti-Black bar at y=56
    names the bug, chosen from the kind of enemy that fired the bullet (or
-   rammed the ship):
+   rammed the ship). (M4: the bar moves to y 88..103 or y 20..35 when the
+   ship's sprite would be under it, and keeps that row for the whole
+   sequence; `GO!` uses the same row.)
 
    | Hit by                          | Message              |
    |---------------------------------|----------------------|
@@ -539,3 +541,9 @@ brief so the real sheets drop in without code changes.
   the Heisenbug with its three fire phases and teleport, boss HP bar, +500
   and STAGE n pops, god/warp test hooks, nine regression scripts
   (`docs/preview_m3.gif`). See PLAN.md.
+- 2026-09-26: M4 built and tagged `m4`: history keyframes (4 x World every
+  60 ticks) and a 256-tick input log, exact restore, the bug-report /
+  reverse-playback / `GO!` sequence, field-by-field identity check green on
+  every frame of every script, twelve regression scripts
+  (`docs/preview_m4.gif`). Bomb stock moved into the World (13.1). Hardware
+  FPS check during a rewind still to do on the badge.
