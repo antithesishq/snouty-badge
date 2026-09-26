@@ -152,9 +152,11 @@ The M2 scripts:
 - `m2_bomb.json`: starts at 30, then sits still without firing so the 8 s
   beetle survives and fires; presses B at 720. There must be bullets at 719,
   none at 720, and one bomb left.
-- `m2_hit.json`: starts at 30 and does nothing else for 1000 ticks; the
-  beetle's aimed spreads hit the still ship at about 750 and 900, spending
-  rewinds (one left, still playing).
+- `m2_hit.json`: starts at 30 and does nothing else for 1000 ticks. The
+  beetle's spread hits the idle ship at update 748: the game enters REWIND
+  (state 4) for 80 updates, then resumes at 828 with the game tick back to
+  598 and the score of that tick; the idle ship then meets the same fate
+  again at 948.
 - `m2_death.json`: the same input for 6000 ticks; every rewind is spent, the
   ship dies and the game is back on the title at the end.
 
@@ -169,6 +171,18 @@ the 66 s WARNING so the boss arrives about 6 s later.
   again (the 8 s beetle at about 1670, now with 5 HP).
 - `m3_bomb_boss.json`: god and warp, fire until 440, bomb at 480: the boss
   loses exactly 8 HP on the press tick and one bomb is spent.
+
+The M4 scripts check the rewind itself. `debug_history_check` restores the
+world from the newest keyframe and the input log and compares it field by
+field with the live world: 0 means identical (2 means the check is refused on
+that frame: title, dying, or the 20 bug-report frames).
+
+- `m4_identity.json`: `m2_play`'s input with identity checks at six ticks,
+  one right after a bomb.
+- `m4_identity_boss.json`: `m3_boss`'s input (god + warp) with checks through
+  the boss fight, a teleport, the death sequence and the stage clear.
+- `m4_early.json`: flies into the first gnat string at update 84, before 120
+  ticks of history exist; the rewind goes back to tick 0 and resumes.
 
 ```sh
 node tools/preview.mjs zig-out/bin/snouty-bugs.wasm --frames 1800 --every 6 --out out/ \

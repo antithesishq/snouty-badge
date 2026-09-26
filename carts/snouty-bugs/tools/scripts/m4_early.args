@@ -1,0 +1,4 @@
+# m4_early: A at 30, then UP briefly and RIGHT into the y-40 gnat string: hit at update 84
+# (game tick 54), less than 120 ticks of history, so the rewind goes back to tick 0 and resumes
+# at update 164 with rewinds 2.
+--frames 400 --dump-exports debug_state,debug_rewinds,debug_game_tick --at "84 debug_state == 4" --at "84 debug_rewind_target == 0" --at "163 debug_state == 4" --at "164 debug_state == 1" --at "164 debug_game_tick == 0" --at "164 debug_rewinds == 2" --at "250 debug_history_check == 0" --expect "debug_state == 1"

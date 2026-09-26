@@ -1,0 +1,3 @@
+# m4_identity: m2_play's input; debug_history_check restores the world from the newest
+# keyframe + input log and compares field by field: 0 = identical. 2241 is the tick after a bomb.
+--frames 4000 --dump-exports debug_state,debug_score,debug_world_size --at "300 debug_history_check == 0" --at "777 debug_history_check == 0" --at "1500 debug_history_check == 0" --at "2241 debug_history_check == 0" --at "3333 debug_history_check == 0" --at "3999 debug_history_check == 0" --expect "debug_state == 1"
