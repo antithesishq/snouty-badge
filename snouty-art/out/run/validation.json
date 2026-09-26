@@ -1,0 +1,43 @@
+{
+ "status": "passed",
+ "errors": [],
+ "frame_count": 16,
+ "distinct_frame_count": 16,
+ "visible_color_count": 15,
+ "feet_rows": [
+  88,
+  88,
+  88,
+  88,
+  88,
+  88,
+  85,
+  86,
+  88,
+  88,
+  88,
+  88,
+  88,
+  88,
+  85,
+  86
+ ],
+ "changed_pixels_per_adjacent_pair_including_loop": [
+  2067,
+  1575,
+  1346,
+  851,
+  1662,
+  1917,
+  1845,
+  1813,
+  2134,
+  1648,
+  1494,
+  986,
+  1694,
+  1889,
+  1802,
+  1807
+ ]
+}
