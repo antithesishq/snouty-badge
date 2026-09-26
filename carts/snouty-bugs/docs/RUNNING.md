@@ -104,18 +104,47 @@ python3 tools/make_gif.py out/ preview.gif --scale 3 --ms 66
 
 `preview.mjs` runs `start()` and then `update()` N times, writing every K-th
 frame to `out/frame_XXXX.png` along with `out/frames.json` (metadata:
-framebuffer address and source, warnings). Other options:
+framebuffer address and source, inputs, export values, expectation results,
+warnings). Other options:
 
 - `--start-skip S`: skip the first S updates
 - `--fb-addr auto|dwarf|sim|0xADDR`: choose which framebuffer to dump
 - `--seed N`: seed for `rand()`
-- `--press 60-63,140-143`: hold the A button during those update ranges
-  (inclusive), e.g. to fire
+- `--controls BITS`: raw `cart.Controls` bits held for the whole run
+- `--press A:30-31,UP:60-99,START:300-301`: hold buttons during those update
+  ranges (inclusive). Buttons are `A B START SELECT UP DOWN LEFT RIGHT`, any
+  case; a bare `60-63` means A. `CLICK` is refused (the OS owns it).
+- `--script FILE.json`: a JSON array of
+  `{ "from": 60, "to": 99, "hold": ["A", "UP"] }` entries, inclusive. Inputs
+  from `--controls`, `--press` and `--script` are OR-ed per tick.
+- `--dump-exports debug_state,debug_score`: after the last update, call these
+  zero-argument exports and record the results (as i32) in `frames.json`
+  under `exports` and on stderr
+- `--expect "debug_score > 0"` (repeatable; `== != < <= > >=`, integer value):
+  checked against those exports at the end (the name is dumped
+  automatically); prints PASS/FAIL, and any failure exits 3
+- `--quiet`: write no PNGs, only `frames.json` (fast soak runs)
 - `--raw-colors`: decode colors as the cart API defines them instead of as the
   simulator displays them (only matters for carts that do not pre-swap)
 
-The tool exits non-zero if the cart traps or does not export
-`start`/`update`. `make_gif.py` scales frames with nearest-neighbor. One
+Input scripts live in `tools/scripts/`: `m1_play.json` presses A on the title
+at tick 30, then from tick 60 to 1800 holds A while sweeping up 40 ticks,
+nothing 20, down 40, nothing 20. `m1_pause.json` starts the game, fires
+60-300, presses START at 300 and 420 (pause, unpause), then fires 430-600.
+
+```sh
+node tools/preview.mjs zig-out/bin/snouty-bugs.wasm --frames 1800 --every 6 --out out/ \
+  --script tools/scripts/m1_play.json \
+  --dump-exports debug_state,debug_score,debug_lives,debug_enemies \
+  --expect "debug_state == 1" --expect "debug_score > 0"
+node tools/preview.mjs zig-out/bin/snouty-bugs.wasm --frames 18000 --quiet --out out/soak/ \
+  --script tools/scripts/m1_play.json --dump-exports debug_state,debug_score
+```
+
+An unknown or non-zero-argument export name is an error that lists the
+exports the cart has. Exit codes: 1 the cart cannot be loaded or does not
+export `start`/`update`, 2 usage or script error, 3 the cart trapped or an
+expectation failed. `make_gif.py` scales frames with nearest-neighbor. One
 update is one 60 Hz tick, so `--every 4 --ms 66` plays at about real speed.
 
 ## 6. Flash the badge
