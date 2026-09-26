@@ -3,7 +3,12 @@ const Build = std.Build;
 
 const sycl_badge = @import("sycl_badge");
 
+/// Set in build() and read by build_cart_assets, which add_os_cart calls
+/// without a context argument.
+var name: []const u8 = undefined;
+
 pub fn build(b: *Build) void {
+    name = b.option([]const u8, "name", "Name shown in the panel (at most 14 characters)") orelse "Adrian Hatch";
     const sycl_badge_dep = b.dependency("sycl_badge", .{});
 
     sycl_badge.add_os_cart(b, sycl_badge_dep, .{
@@ -81,4 +86,8 @@ fn build_cart_assets(b: *Build, cart: *Build.Module, cart_api: *Build.Module, st
     gfx_mod.addImport("cart-api", cart_api);
     step.dependOn(&gen_gfx.step);
     cart.addImport("gfx", gfx_mod);
+
+    const options = b.addOptions();
+    options.addOption([]const u8, "name", name);
+    cart.addOptions("build_options", options);
 }
