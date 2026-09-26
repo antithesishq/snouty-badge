@@ -387,4 +387,6 @@ brief so the real sheets drop in without code changes.
 
 ## Status
 
-- 2026-09-26: M0 scaffolded. Build verified on the VM. Nothing tagged yet.
+- 2026-09-26: M0 scaffolded. Build verified on the VM.
+- 2026-09-26: M1 built and tagged `m1`: flying, zapper, gnats, collisions,
+  score, pause, placeholder art (`docs/preview_m1.gif`). See PLAN.md.

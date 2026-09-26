@@ -163,3 +163,11 @@ line, and the "pull and run" note in the final message.
 
 - 2026-09-26: M0 scaffold committed. M1 plan written; stand-in sheets
   committed so the code track compiles from the first minute.
+- 2026-09-26: M1 done and tagged `m1`. All three tracks landed as planned.
+  ELF text+data 31 KB. `m1_play.json` scores 570 in 1800 ticks; an 18,000
+  tick soak does not trap (the scripted ship idles after tick 1800, loses
+  its lives and returns to the title, as designed). Deviations from the M1
+  numbers: stars scroll every 3 and 2 ticks (grey, white); the five gnats
+  of a string share a spawn and appear 12 ticks apart; doubled strings
+  draw y from [16, 72]; lives 0 returns to TITLE immediately. Art notes
+  for the brief are in ASSETS.md section 10. Next: M2 bullet hell.

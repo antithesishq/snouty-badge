@@ -168,3 +168,25 @@ before drawing all sheets, so the sizes can be approved at badge scale.
 - No semi-transparency, glow, or blur. If a glow is wanted, draw it as a
   1 px lighter rim.
 - No gutters, padding rows, or multi-row sheets. One strip per file.
+
+## 10. Notes from the M1 placeholder pass (2026-09-26)
+
+Found while drawing placeholder sheets to this brief; the code and
+`tools/prepare_assets.py` follow the values below.
+
+- Thruster offset: the code attaches the 8x8 flame cell at (-6, 8) from the
+  ship cell origin (section 7 says "(e.g. (-6, 10))" as an example). Report
+  the real offset in the metadata JSON; the script fails loudly if it differs
+  from the code so it gets updated deliberately.
+- Snouty's snout is purple in Run Study 05, only the eye is cream. Keep that.
+- At 32x24 the cockpit rim hides Snouty's chest, so the Iris goes on the hull
+  (section 7 already says so); do not expect a chest emblem on the ship.
+- The 1 px empty border rule (section 4) cannot apply to the thruster's
+  attach edge, which must touch the nozzle. State the attach column instead.
+- Explosion last frames as "dark outline-only debris" vanish on a navy
+  background; use mid-dark or grey debris.
+- Backgrounds: give the far layer a value ceiling (nothing brighter than
+  about `#5866a0`) and make the near layer's fill darker than the far
+  planet so the two layers separate.
+- The 8x8 Snouty-head life icon is at the limit of legibility: a profile
+  silhouette with a single cream eye pixel is about what fits.
