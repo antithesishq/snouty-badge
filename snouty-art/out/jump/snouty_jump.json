@@ -1,0 +1,761 @@
+{
+ "name": "snouty_jump",
+ "direction": "right",
+ "frame_size": [
+  96,
+  96
+ ],
+ "frame_count": 12,
+ "cycle_duration_ms": 720,
+ "playback": "forward, once per jump; hold 0 when idle",
+ "origin_px": [
+  48,
+  88
+ ],
+ "coordinate_system": "top-left, x right, y down",
+ "ground_baseline_y": 88,
+ "step_px_per_frame": null,
+ "visible_palette": [
+  "#17121e",
+  "#29232f",
+  "#42364b",
+  "#462174",
+  "#662bb8",
+  "#8e42de",
+  "#be7af3",
+  "#f4efdf",
+  "#958d9d",
+  "#ee453c",
+  "#91322f",
+  "#60391f",
+  "#99622f",
+  "#cd934b",
+  "#f0c37c"
+ ],
+ "transparent_index": 0,
+ "strip": {
+  "file": "snouty_jump_strip.png",
+  "columns": 12,
+  "rows": 1
+ },
+ "grid": {
+  "file": "snouty_jump_sheet.png",
+  "columns": 6,
+  "rows": 2
+ },
+ "indexed_strip": {
+  "file": "snouty_jump_indexed.png",
+  "indexed_bits_per_pixel": 4,
+  "transparent_palette_index": 0
+ },
+ "key_strip": {
+  "file": "snouty_jump_key.png",
+  "key": "#ff00ff"
+ },
+ "feet_rows": [
+  88,
+  88,
+  88,
+  88,
+  88,
+  84,
+  83,
+  84,
+  86,
+  85,
+  88,
+  88
+ ],
+ "frames": [
+  {
+   "index": 0,
+   "file": "frames/snouty_jump_00.png",
+   "label": "NEUTRAL STAND",
+   "duration_ms": 60,
+   "strip_rect": [
+    0,
+    0,
+    96,
+    96
+   ],
+   "feet_row": 88,
+   "grounded": true,
+   "lift": 0,
+   "body_offset": [
+    0,
+    0
+   ],
+   "near": {
+    "hip": [
+     50,
+     69
+    ],
+    "knee": [
+     53.42,
+     74.53
+    ],
+    "ankle": [
+     54,
+     81
+    ],
+    "toe": [
+     59,
+     84
+    ]
+   },
+   "far": {
+    "hip": [
+     52,
+     69
+    ],
+    "knee": [
+     49.72,
+     76.14
+    ],
+    "ankle": [
+     44,
+     81
+    ],
+    "toe": [
+     49,
+     84
+    ]
+   }
+  },
+  {
+   "index": 1,
+   "file": "frames/snouty_jump_01.png",
+   "label": "ANTICIPATION DIP",
+   "duration_ms": 60,
+   "strip_rect": [
+    96,
+    0,
+    96,
+    96
+   ],
+   "feet_row": 88,
+   "grounded": true,
+   "lift": 0,
+   "body_offset": [
+    1,
+    3
+   ],
+   "near": {
+    "hip": [
+     51,
+     72
+    ],
+    "knee": [
+     56.88,
+     74.78
+    ],
+    "ankle": [
+     55,
+     81
+    ],
+    "toe": [
+     60,
+     84
+    ]
+   },
+   "far": {
+    "hip": [
+     53,
+     72
+    ],
+    "knee": [
+     52.34,
+     79.47
+    ],
+    "ankle": [
+     45,
+     81
+    ],
+    "toe": [
+     50,
+     84
+    ]
+   }
+  },
+  {
+   "index": 2,
+   "file": "frames/snouty_jump_02.png",
+   "label": "DEEP CROUCH",
+   "duration_ms": 60,
+   "strip_rect": [
+    192,
+    0,
+    96,
+    96
+   ],
+   "feet_row": 88,
+   "grounded": true,
+   "lift": 0,
+   "body_offset": [
+    2,
+    6
+   ],
+   "near": {
+    "hip": [
+     52,
+     75
+    ],
+    "knee": [
+     57.46,
+     75.7
+    ],
+    "ankle": [
+     56,
+     81
+    ],
+    "toe": [
+     61,
+     84
+    ]
+   },
+   "far": {
+    "hip": [
+     54,
+     75
+    ],
+    "knee": [
+     53.48,
+     81.48
+    ],
+    "ankle": [
+     47,
+     81
+    ],
+    "toe": [
+     52,
+     84
+    ]
+   }
+  },
+  {
+   "index": 3,
+   "file": "frames/snouty_jump_03.png",
+   "label": "COILED PRE-LAUNCH",
+   "duration_ms": 60,
+   "strip_rect": [
+    288,
+    0,
+    96,
+    96
+   ],
+   "feet_row": 88,
+   "grounded": true,
+   "lift": 0,
+   "body_offset": [
+    2,
+    8
+   ],
+   "near": {
+    "hip": [
+     52,
+     77
+    ],
+    "knee": [
+     57.42,
+     76.06
+    ],
+    "ankle": [
+     55,
+     81
+    ],
+    "toe": [
+     60,
+     84
+    ]
+   },
+   "far": {
+    "hip": [
+     54,
+     77
+    ],
+    "knee": [
+     53.66,
+     82.99
+    ],
+    "ankle": [
+     48,
+     81
+    ],
+    "toe": [
+     53,
+     84
+    ]
+   }
+  },
+  {
+   "index": 4,
+   "file": "frames/snouty_jump_04.png",
+   "label": "TAKEOFF",
+   "duration_ms": 60,
+   "strip_rect": [
+    384,
+    0,
+    96,
+    96
+   ],
+   "feet_row": 88,
+   "grounded": true,
+   "lift": 0,
+   "body_offset": [
+    1,
+    -6
+   ],
+   "near": {
+    "hip": [
+     51,
+     63
+    ],
+    "knee": [
+     56.27,
+     70.29
+    ],
+    "ankle": [
+     54,
+     79
+    ],
+    "toe": [
+     53,
+     84
+    ]
+   },
+   "far": {
+    "hip": [
+     53,
+     63
+    ],
+    "knee": [
+     55.27,
+     71.71
+    ],
+    "ankle": [
+     50,
+     79
+    ],
+    "toe": [
+     48,
+     84
+    ]
+   }
+  },
+  {
+   "index": 5,
+   "file": "frames/snouty_jump_05.png",
+   "label": "FAST RISE",
+   "duration_ms": 60,
+   "strip_rect": [
+    480,
+    0,
+    96,
+    96
+   ],
+   "feet_row": 84,
+   "grounded": false,
+   "lift": 10,
+   "body_offset": [
+    0,
+    -6
+   ],
+   "near": {
+    "hip": [
+     50,
+     63
+    ],
+    "knee": [
+     59.42,
+     64.2
+    ],
+    "ankle": [
+     54,
+     72
+    ],
+    "toe": [
+     53,
+     76
+    ]
+   },
+   "far": {
+    "hip": [
+     52,
+     63
+    ],
+    "knee": [
+     52.47,
+     71.49
+    ],
+    "ankle": [
+     46,
+     77
+    ],
+    "toe": [
+     42,
+     80
+    ]
+   }
+  },
+  {
+   "index": 6,
+   "file": "frames/snouty_jump_06.png",
+   "label": "APEX HANG",
+   "duration_ms": 60,
+   "strip_rect": [
+    576,
+    0,
+    96,
+    96
+   ],
+   "feet_row": 83,
+   "grounded": false,
+   "lift": 26,
+   "body_offset": [
+    0,
+    -5
+   ],
+   "near": {
+    "hip": [
+     50,
+     64
+    ],
+    "knee": [
+     59.39,
+     62.58
+    ],
+    "ankle": [
+     55,
+     71
+    ],
+    "toe": [
+     54,
+     75
+    ]
+   },
+   "far": {
+    "hip": [
+     52,
+     64
+    ],
+    "knee": [
+     53.44,
+     72.88
+    ],
+    "ankle": [
+     45,
+     76
+    ],
+    "toe": [
+     41,
+     79
+    ]
+   }
+  },
+  {
+   "index": 7,
+   "file": "frames/snouty_jump_07.png",
+   "label": "LATE APEX",
+   "duration_ms": 60,
+   "strip_rect": [
+    672,
+    0,
+    96,
+    96
+   ],
+   "feet_row": 84,
+   "grounded": false,
+   "lift": 36,
+   "body_offset": [
+    0,
+    -3
+   ],
+   "near": {
+    "hip": [
+     50,
+     66
+    ],
+    "knee": [
+     58.86,
+     64.43
+    ],
+    "ankle": [
+     54,
+     72
+    ],
+    "toe": [
+     54,
+     77
+    ]
+   },
+   "far": {
+    "hip": [
+     52,
+     66
+    ],
+    "knee": [
+     55.57,
+     74.26
+    ],
+    "ankle": [
+     47,
+     77
+    ],
+    "toe": [
+     43,
+     80
+    ]
+   }
+  },
+  {
+   "index": 8,
+   "file": "frames/snouty_jump_08.png",
+   "label": "DESCENT",
+   "duration_ms": 60,
+   "strip_rect": [
+    768,
+    0,
+    96,
+    96
+   ],
+   "feet_row": 86,
+   "grounded": false,
+   "lift": 34,
+   "body_offset": [
+    0,
+    -5
+   ],
+   "near": {
+    "hip": [
+     50,
+     64
+    ],
+    "knee": [
+     56.03,
+     69.26
+    ],
+    "ankle": [
+     54,
+     77
+    ],
+    "toe": [
+     55,
+     82
+    ]
+   },
+   "far": {
+    "hip": [
+     52,
+     64
+    ],
+    "knee": [
+     55.91,
+     70.98
+    ],
+    "ankle": [
+     49,
+     75
+    ],
+    "toe": [
+     47,
+     80
+    ]
+   }
+  },
+  {
+   "index": 9,
+   "file": "frames/snouty_jump_09.png",
+   "label": "PRE-LANDING REACH",
+   "duration_ms": 60,
+   "strip_rect": [
+    864,
+    0,
+    96,
+    96
+   ],
+   "feet_row": 85,
+   "grounded": false,
+   "lift": 20,
+   "body_offset": [
+    0,
+    -7
+   ],
+   "near": {
+    "hip": [
+     50,
+     62
+    ],
+    "knee": [
+     58.92,
+     67.54
+    ],
+    "ankle": [
+     58,
+     78
+    ],
+    "toe": [
+     62,
+     81
+    ]
+   },
+   "far": {
+    "hip": [
+     52,
+     62
+    ],
+    "knee": [
+     47.08,
+     70.05
+    ],
+    "ankle": [
+     42,
+     78
+    ],
+    "toe": [
+     45,
+     81
+    ]
+   }
+  },
+  {
+   "index": 10,
+   "file": "frames/snouty_jump_10.png",
+   "label": "LAND",
+   "duration_ms": 60,
+   "strip_rect": [
+    960,
+    0,
+    96,
+    96
+   ],
+   "feet_row": 88,
+   "grounded": true,
+   "lift": 0,
+   "body_offset": [
+    2,
+    6
+   ],
+   "near": {
+    "hip": [
+     52,
+     75
+    ],
+    "knee": [
+     57.48,
+     75.52
+    ],
+    "ankle": [
+     57,
+     81
+    ],
+    "toe": [
+     62,
+     84
+    ]
+   },
+   "far": {
+    "hip": [
+     54,
+     75
+    ],
+    "knee": [
+     54.0,
+     81.0
+    ],
+    "ankle": [
+     48,
+     81
+    ],
+    "toe": [
+     53,
+     84
+    ]
+   }
+  },
+  {
+   "index": 11,
+   "file": "frames/snouty_jump_11.png",
+   "label": "RECOVER",
+   "duration_ms": 60,
+   "strip_rect": [
+    1056,
+    0,
+    96,
+    96
+   ],
+   "feet_row": 88,
+   "grounded": true,
+   "lift": 0,
+   "body_offset": [
+    1,
+    2
+   ],
+   "near": {
+    "hip": [
+     51,
+     71
+    ],
+    "knee": [
+     57.15,
+     74.34
+    ],
+    "ankle": [
+     55,
+     81
+    ],
+    "toe": [
+     60,
+     84
+    ]
+   },
+   "far": {
+    "hip": [
+     53,
+     71
+    ],
+    "knee": [
+     52.05,
+     78.44
+    ],
+    "ankle": [
+     45,
+     81
+    ],
+    "toe": [
+     50,
+     84
+    ]
+   }
+  }
+ ],
+ "grounded_frames": [
+  0,
+  1,
+  2,
+  3,
+  4,
+  10,
+  11
+ ],
+ "airborne_frames": [
+  5,
+  6,
+  7,
+  8,
+  9
+ ],
+ "lift_px": [
+  0,
+  0,
+  0,
+  0,
+  0,
+  10,
+  26,
+  36,
+  34,
+  20,
+  0,
+  0
+ ]
+}
