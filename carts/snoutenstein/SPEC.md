@@ -472,24 +472,23 @@ tracks go to Opus subagents with disjoint files, as before.
   LEDs, final art drop-in, Heisenbug tuning, hardware balance pass,
   optional fourth weapon.
 
-## 18. Open questions for Adrian
+## 18. Decisions and open questions
 
-1. Name: "Snoutenstein 3D" is the working title and repo name; happy to
-   rename before the remote is created.
-2. Strafing: tank controls only (as spec'd), or hold A + left/right to
-   strafe (costs the ability to fire while sidestepping)? Recommendation:
-   tank controls; the maze is designed for them.
-3. Rewind semantics: fully consistent (kills are undone when you rewind
-   past them) as spec'd, or Braid-style "kills stick"? Recommendation:
-   consistent; it is simpler and it is what makes the meter a resource.
-4. No lives at all, rewind is the only recovery (as spec'd)? Or keep a
-   3-lives fallback for people who never discover B?
-5. Sound toggle on the title screen only (Select is weapon-cycle in game).
-   Fine, or should Select cycle weapons and a long-press toggle sound?
-6. Heisenbug as the boss again (same joke in first person: it teleports
-   when watched) or a new boss?
-7. Textures 32x32 (spec) or 64x64 walls (4x the wall art, ~16 KB more)?
-8. Tag line "powered by deterministic replay" on the title: yes/no?
+Decided by Adrian on 2026-09-26:
+
+1. Name: Snoutenstein 3D. Repo `snoutenstein`.
+2. Controls: tank controls only, no strafe.
+3. Rewind: fully consistent; rewinding past a kill un-does it.
+4. No lives. Death freezes time and the only way out is B.
+5. Sound and LEDs toggle with Select on the title screen only.
+6. Boss design (Heisenbug again or new) is deferred to M3/M5.
+8. Title tag line "powered by deterministic replay": yes.
+Level grid 64x64 with Wolf3D import (section 6.1): yes.
+
+Still open:
+
+7. Textures 32x32 (spec) or 64x64 walls. The reasoning for 32 is in the
+   status notes; either is a comptime constant per sheet.
 9. Imported Wolf3D levels: the spec treats conversions of the id Software
    maps (shareware included) as a local-only experiment and commits only
    free mapsets or levels you build in a Wolf3D editor. Agree, or do you
@@ -502,5 +501,5 @@ tracks go to Opus subagents with disjoint files, as before.
 
 - 2026-09-26: spec drafted, nothing built yet. Same day: level grid set
   to 64x64 and the Wolf3D `GAMEMAPS` importer added (section 6.1) at
-  Adrian's request; pools and memory budget updated. Next: answers to
-  section 18, then M0 scaffold.
+  Adrian's request; pools and memory budget updated. Adrian settled
+  questions 1 to 6 and 8 (section 18). Next: texture size, then M0.
