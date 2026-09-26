@@ -385,5 +385,12 @@ ships the text changes).
 
 ## Status
 
-- 2026-09-26: spec drafted, nothing built yet. Next: answers to section
-  17, then M0 scaffold copied from `snouty-bugs`.
+- 2026-09-26: spec drafted. Adrian confirmed none of section 17 blocks a
+  first version; plan approved.
+- 2026-09-26: M0 scaffold (tag `m0`) and M1 tracer (tag `m1`) built. The
+  sunset scene renders in the simulator and matches `tools/reference.py`
+  on frames 0 and 300; ELF `.text` 13.7 KB, no soft-float symbols. Hardware
+  fps and `render_us` not yet measured: that is the M1 gate (section 10).
+  Known tuning item: ripple moiré near the horizon; the distance fade in
+  PLAN.md is too weak and should be strengthened in M2 (plan, tracer and
+  reference together).

@@ -20,6 +20,15 @@ pub fn build(b: *Build) void {
         .root_source_file = b.path("cart/src/main.zig"),
         .custom_builder = &add_options,
     });
+
+    // `zig build check-float`: install, then fail if the cart ELF links any
+    // soft-float or libm routine (f64 math, or f32 work the M33 FPU cannot do).
+    const check_float = b.addSystemCommand(&.{"node"});
+    check_float.addFileArg(b.path("tools/check_float.mjs"));
+    check_float.addFileArg(b.graph.path(.install_prefix, "firmware/snouty-reflections.elf"));
+    check_float.step.dependOn(b.getInstallStep());
+    check_float.has_side_effects = true;
+    b.step("check-float", "Fail if the cart ELF contains soft-float routines").dependOn(&check_float.step);
 }
 
 var build_options: ?*Build.Step.Options = null;

@@ -1,5 +1,4 @@
-//! Snouty on the Water: M0 scaffold. Fills the screen with a sky gradient so
-//! the toolchain, simulator shims and debug exports can be verified. See
+//! Snouty on the Water: real-time ray-traced sunset lake (trace.zig). See
 //! SPEC.md for the design, PLAN.md for the M1 contract, CLAUDE.md for the
 //! toolchain.
 const cart = @import("cart-api");
@@ -7,6 +6,7 @@ const input = @import("input.zig");
 const math = @import("math.zig");
 const dither = @import("dither.zig");
 const overlay = @import("overlay.zig");
+const trace = @import("trace.zig");
 const build_options = @import("build_options");
 
 comptime {
@@ -30,24 +30,12 @@ pub fn update() void {
 
     const t0 = cart.micros_since_boot();
     dither.begin_frame(frame);
-    render();
+    trace.render_frame(frame);
     render_us = @truncate(cart.micros_since_boot() - t0);
     if (build_options.debug_overlay) overlay.draw(render_us, frame);
 
     frame +%= 1;
     if (cart.is_wasm) present_wasm();
-}
-
-fn render() void {
-    const phase: f32 = @as(f32, @floatFromInt(frame)) / 120.0;
-    for (cart.framebuffer, 0..) |*column, x| {
-        const fx: f32 = @floatFromInt(x);
-        for (column, 0..) |*px, y| {
-            const fy: f32 = @floatFromInt(y);
-            const v = 0.5 + 0.5 * math.sin_turns(fx / 160.0 + phase) * math.sin_turns(fy / 128.0);
-            px.* = dither.quantise(@intCast(x), @intCast(y), math.vec3(v, 1.0 - v, fy / 128.0));
-        }
-    }
 }
 
 // Debug exports for the headless harness (wasm only).

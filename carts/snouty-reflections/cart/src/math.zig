@@ -104,3 +104,11 @@ test "sin table" {
     try std.testing.expectApproxEqAbs(@as(f32, -1.0), sin_turns(0.75), 1e-4);
     try std.testing.expectApproxEqAbs(@as(f32, 1.0), cos_turns(3.0), 1e-4);
 }
+
+/// Fractional part, x - floor(x), in [0, 1). Keeps turn-valued phases small
+/// so f32 precision does not degrade as time grows.
+pub inline fn fract(x: f32) f32 {
+    return x - @floor(x);
+}
+
+pub const inf_f32: f32 = std.math.inf(f32);
