@@ -1,4 +1,6 @@
 """Procedural limbs: outlined capsules through joints, shaded on the lower-left."""
+import math
+
 import numpy as np
 from PIL import Image, ImageDraw
 
@@ -58,11 +60,51 @@ def capsule_layer(size, polylines, widths, z, fill=palette.PURPLE,
     return Layer(z, Image.fromarray(img, "RGBA"))
 
 
-def leg(rig, hip, knee, ankle, toe, z, spec=None, **kw) -> Layer:
-    """Leg: thigh+shin capsule of width w, foot capsule from ankle to toe."""
+def leg(rig, hip, knee, ankle, toe, z, spec=None, foot=None, sole=None,
+        toe_bump=0, **kw) -> Layer:
+    """Leg: thigh+shin capsule of width w, foot capsule from ankle to toe.
+
+    Optional (defaults keep the original round-foot look):
+      foot="flat": the foot is a thinner capsule (spec["foot_height"], default
+        width-2) from a heel point just behind the ankle to the toe, so it
+        reads as a flat foot rather than a ball.
+      toe_bump: radius in px of a small bump on top of the toe end (0 = none).
+      sole: colour for the 1 px underside of the foot (pixels whose neighbour
+        below is empty, within the foot region)."""
     s = spec or rig.limbs["leg"]
-    return capsule_layer(rig.cell, [[hip, knee, ankle], [ankle, toe]],
-                         [s["width"], s["foot_width"]], z, **kw)
+    if foot != "flat":
+        lay = capsule_layer(rig.cell, [[hip, knee, ankle], [ankle, toe]],
+                            [s["width"], s["foot_width"]], z, **kw)
+        return lay
+    fh = s.get("foot_height", max(3, s["width"] - 2))
+    ax, ay = ankle
+    tx, ty = toe
+    L = math.hypot(tx - ax, ty - ay) or 1.0
+    ux, uy = (tx - ax) / L, (ty - ay) / L
+    back = s.get("heel", 1.5)
+    heel = (ax - ux * back, ay - uy * back)
+    polys = [[hip, knee, ankle], [heel, toe]]
+    widths = [s["width"], fh]
+    if toe_bump:
+        # on top of the foot (perpendicular toward "up" relative to the foot)
+        px, py = uy, -ux
+        if py > 0:
+            px, py = -px, -py
+        bx = tx - ux * toe_bump + px * (fh / 2.0 - 0.5)
+        by = ty - uy * toe_bump + py * (fh / 2.0 - 0.5)
+        polys.append([(bx, by)])
+        widths.append(int(round(2 * toe_bump)))
+    lay = capsule_layer(rig.cell, polys, widths, z, **kw)
+    if sole is not None:
+        a = np.array(lay.image)
+        op = a[:, :, 3] > 0
+        body = op & ~np.all(a[:, :, :3] == np.array(kw.get("outline", palette.OUTLINE),
+                                                   dtype=np.uint8), axis=-1)
+        fm = _mask(rig.cell, [[heel, toe]], [fh + 2])
+        below_rim = body & ~_shift(body, 0, -1)  # pixel below is not body
+        a[below_rim & fm] = sole + (255,)
+        lay = Layer(z, Image.fromarray(a, "RGBA"))
+    return lay
 
 
 def arm(rig, shoulder, elbow, wrist, z, spec=None, **kw) -> Layer:
