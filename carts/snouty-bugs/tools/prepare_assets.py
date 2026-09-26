@@ -77,9 +77,9 @@ MANIFEST: dict[str, Sheet] = {
         # Later milestones (ASSETS.md section 7). Accepted from a study but
         # only useful once build.zig lists them.
         Sheet("bugs.png", 160, 16, 16, 16, 10, True),
-        Sheet("boss.png", 240, 48, 48, 48, 5, True, in_build=False),
+        Sheet("boss.png", 240, 48, 48, 48, 5, True),
         Sheet("fx_big.png", 192, 32, 32, 32, 6, True),
-        Sheet("title.png", 128, 40, 128, 40, 1, True, in_build=False),
+        Sheet("title.png", 128, 40, 128, 40, 1, True),
     ]
 }
 PLACEHOLDER_SHEETS = [n for n, s in MANIFEST.items() if s.in_build]

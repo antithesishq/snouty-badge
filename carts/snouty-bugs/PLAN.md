@@ -404,6 +404,144 @@ needles, a bomb and a death for clipping, draw order and palette mistakes.
 Balance pass: if the 14 s to 54 s stretch is unsurvivable without bombs in
 the lead's hands, halve bullet speeds before tagging and note it.
 
+## M3 Stages and boss (started 2026-09-26)
+
+Goal: the stage loop and the Heisenbug. At 66 s the table goes quiet and
+"WARNING" flashes for 3 s; at 72 s the boss enters; when it dies the stage
+is cleared (+500, +1 bomb, "STAGE n"), the table restarts with the loop
+modifiers from SPEC.md section 9. Stand-in `boss.png` (240x48, 5 cells)
+and `title.png` (128x40, for M5) are committed with this plan; track A
+redraws them in place.
+
+### Tracks (run in parallel, disjoint files)
+
+| Track  | Owner        | Files                                                                                  |
+|--------|--------------|----------------------------------------------------------------------------------------|
+| A art  | Opus agent   | `tools/prepare_assets.py` (draw_boss, draw_title), `assets/gen/boss.png`, `assets/gen/title.png`, `docs/placeholders.png`, ASSETS.md section 10 |
+| B1 boss| Opus agent   | `cart/src/enemies.zig`, `cart/src/patterns.zig`, `cart/src/waves.zig`                  |
+| B2 flow| Opus agent   | `cart/src/main.zig`, `hud.zig`, `player.zig`, `collide.zig`, `fx.zig`, `bullets.zig`, `world.zig` (fields only) |
+| C tools| Opus agent   | `tools/scripts/m3_*.json` + `.args`, `docs/RUNNING.md` section 5 (preview.mjs only if needed) |
+| lead   | this session | `build.zig` (done), `PLAN.md`, `SPEC.md` status, `docs/preview_m3.gif`, commits, tag `m3` |
+
+### Interfaces between B1 and B2
+
+Owned by B1, read or called by B2:
+
+```zig
+// enemies.zig
+pub const DamageResult = enum(u8) { alive, killed, boss_dying };
+/// Applies `amount` HP of damage. `.killed`: the caller runs collide.kill
+/// (explosion, score, deactivate). `.boss_dying`: B1 has started the boss
+/// death sequence itself (60 ticks; explosions, +500 via player.add_score,
+/// waves stage clear at the end); the caller does nothing more.
+pub fn damage(e: *Enemy, amount: u8) DamageResult;
+pub fn boss() ?*Enemy;            // the boss while active (entering, fighting, teleporting or dying), else null
+pub fn boss_max_hp() u32;         // 60 + 20 * loop
+// Enemy.hittable(): false while the boss flickers, is vanished, or is dying.
+
+// waves.zig
+pub const StagePhase = enum(u8) { waves, warning, boss, cleared };
+pub const State = struct {
+    t: u32 = 0, next: u8 = 0,
+    loop: u8 = 0,                  // completed stages (drives the modifiers)
+    phase: StagePhase = .waves,
+    stage_clears: u8 = 0,          // monotonic; B2 awards a bomb when it grows
+    clear_tick: u32 = 0,           // game_tick when the last boss died (0 = never)
+};
+pub fn warp_to_warning() void;     // debug: jump t to the 66 s mark (wasm test hook, called by B2's debug export)
+pub fn speed_mul() f32;            // 1.1^loop capped so speed * mul <= 2.0 is the caller's job: use `bullet_speed(base)`
+pub fn bullet_speed(base: f32) f32;   // base * 1.1^loop, capped at 2.0
+pub fn fire_interval(base: u32) u32;  // base * 0.9^loop, floored at base / 2
+pub fn extra_hp() u8;              // = loop, added to beetle and spider HP at spawn
+```
+
+Owned by B2, called by B1: nothing new. B1 keeps using `bullets.spawn_enemy_bullet`,
+`fx.spawn(.explosion | .big_explosion, cx, cy)` and `player.add_score`.
+
+Owned by B2 (`collide.zig`, `player.zig`): every place that removes HP now
+calls `enemies.damage` and switches on the result (`.alive` -> flash 2,
+`.killed` -> `kill`, `.boss_dying` -> nothing). The bomb calls `damage(boss, 8)`
+and kills every other live enemy as before. A ramming boss is never killed.
+
+### Gameplay numbers for M3 (SPEC.md 7 and 9)
+
+Stage flow (B1, `waves.zig`): the table runs as in M2. At t = 3960 (66 s)
+`phase = .warning`; at t = 4320 (72 s) `phase = .boss` and
+`enemies.spawn(.boss, 168, 40, 0)`. While `phase == .boss`, `t` keeps
+counting but nothing spawns. When the boss death sequence ends B1 sets
+`stage_clears += 1`, `clear_tick = game_tick`, `loop += 1`, `phase =
+.cleared`, and after 120 ticks of `.cleared` (a breather) resets `t = 0`,
+`next = 0`, `phase = .waves`. Loop modifiers: `bullet_speed`, `fire_interval`
+and `extra_hp` above, applied at spawn/fire time by every fire program
+(gnat/wasp have none). Use a comptime table of 8 multipliers, no `pow`.
+
+Boss (B1, `enemies.zig`, kind `.boss`, cell 48x48, HP `60 + 20 * loop`,
+500 pts): enters from x 168 at 1.0 px/tick to x = 104, then bobs: cell y =
+`base_y + 32 * sin(2 pi * age / 240)` with `base_y` = 40 (center y 64),
+clamped so the cell stays within y in [8, 80]. Every 300 ticks of fighting:
+`.flicker` 20 ticks (drawn as cell 4 with `skip_odd`, not hittable, no
+fire), then `.vanished` 20 ticks (not drawn, not hittable), then reappears
+at x in [96, 112] and `base_y` in [24, 56] from the rng and resumes. Fire,
+three phases of 240 fighting ticks each, cycling, paused while not
+fighting:
+
+1. Ring: `ring(12, phase, bullet_speed(0.8), round)` every
+   `fire_interval(40)` ticks; `phase += 11` (about 15 degrees) per volley.
+2. Aimed stream: every `fire_interval(60)` ticks, 3 `aimed(bullet_speed(1.5),
+   needle)` shots 8 ticks apart; plus `spread(5, 12, bullet_speed(0.6), round)`
+   every `fire_interval(90)` ticks.
+3. Spiral: one round bullet every `fire_interval(4)` ticks at angle
+   `spiral_angle`, `spiral_angle += 8` (about 11 degrees) per shot,
+   `bullet_speed(1.0)`. Needs a single-shot helper in `patterns.zig`:
+   `pub fn shot(x, y, angle_256: u32, speed, shape, source)`.
+
+Boss idle animation: cells 0..3, 6 ticks per frame. Emitter = cell center.
+Death (B1): `.dying` 60 ticks: not hittable, no fire, no movement; every 10
+ticks a small explosion at a rng offset inside the body (6 in total); at
+tick 60 the big explosion at the center, `player.add_score(500)`, the enemy
+deactivates and the stage clear above fires. Boss bullets in flight are
+untouched (the player still has to dodge them; the bomb clears them).
+
+Flow, HUD, hooks (B2):
+
+- `main.zig` meta-state `stage_clears_awarded: u8`; when `w.waves.stage_clears`
+  exceeds it, `bombs = @min(bombs + 1, 3)` and it catches up. Reset in
+  `new_game`.
+- `hud.zig`: while `phase == .warning`, "WARNING" centered at y 56 in
+  Coral, visible 20 ticks of every 40. Boss HP bar while `enemies.boss()`
+  is non-null and not dying: a 2 px bar at y 8..9 from x 8 to 151 (144 px),
+  Anti-Black track, Coral fill `144 * hp / boss_max_hp()` from the left.
+  After a clear: "+500" centered at y 56 in Anti-White for 60 ticks from
+  `clear_tick`, then "STAGE n" (n = loop + 1) for the next 60 ticks.
+- Debug exports (wasm only): `debug_stage` (= loop), `debug_boss_hp` (0 when
+  no boss), `debug_stage_clears`, `debug_phase` (StagePhase as int), and two
+  test hooks: `debug_god()` toggles a meta flag that makes `on_hit` ignore
+  hits (bullets still vanish on contact), `debug_warp()` calls
+  `waves.warp_to_warning()`. Both return the new value (god flag / t).
+- Bomb: `damage(boss, 8)`; everything else as M2.
+
+### Harness (C)
+
+- `m3_boss.json` + `.args`: A at 30, `--call-at "31 debug_god"`, `--call-at
+  "32 debug_warp"`, then the m2_play sweep holding A. Expect `debug_phase ==
+  1` (warning) shortly after the warp, `debug_boss_hp > 0` once the boss has
+  entered (about 72 s mark + 64 ticks of entry), `debug_stage_clears == 1`
+  and `debug_stage == 1` by the end, `debug_bombs == 3` (2 + the clear).
+  Frames of the ring, stream and spiral phases and of the death sequence.
+- `m3_loop.json` + `.args`: continue past the clear; expect `debug_enemies
+  > 0` again after the 120-tick breather and `debug_phase == 0`.
+- `m3_bomb_boss.json`: god + warp, wait for the boss, press B; expect
+  `debug_boss_hp` to drop by 8 across the press tick (two `--call-at`s).
+- Update `docs/RUNNING.md` section 5 and keep `tools/check.sh` green.
+
+### Verification for M3
+
+`tools/check.sh` green (nine scripts); `docs/preview_m3.gif` from
+`m3_boss.json` around the boss (frames 4300..6000, every 6); ELF text+data;
+`debug_world_size`; a look at the three fire phases, a teleport and the
+death sequence for clipping and readability (the boss must never hide a
+bullet: bullets draw above it). Boss HP bar and warning legible at 3x.
+
 ## M4 Rewind (not started, after M3)
 
 Sketch of the tracks so M2 and M3 leave the hooks in place:

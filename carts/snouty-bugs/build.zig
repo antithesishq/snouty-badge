@@ -25,12 +25,14 @@ const images = [_]Image{
     .{ .file = "bolt.png", .bits = 4, .transparent = true },
     .{ .file = "bugs_small.png", .bits = 4, .transparent = true },
     .{ .file = "bugs.png", .bits = 4, .transparent = true },
+    .{ .file = "boss.png", .bits = 4, .transparent = true },
     .{ .file = "fx_small.png", .bits = 4, .transparent = true },
     .{ .file = "fx_big.png", .bits = 4, .transparent = true },
     .{ .file = "hud.png", .bits = 4, .transparent = true },
     .{ .file = "bg_far.png", .bits = 4, .transparent = false },
     .{ .file = "bg_near.png", .bits = 4, .transparent = true },
     .{ .file = "iris_16.png", .bits = 4, .transparent = true },
+    .{ .file = "title.png", .bits = 4, .transparent = true },
 };
 
 /// Converts the PNGs in assets/gen/ into a `gfx` module at build time,
