@@ -109,7 +109,8 @@ test "post-boot state matches DMG values" {
         }
     }
     // STAT mode bits belong to the PPU; the stored value is the post-boot one.
-    try std.testing.expectEqual(@as(u8, 0x85), gb.io[core.Reg.stat]);
+    // Documented post-boot STAT is 0x85; our PPU starts line 0 in mode 2 (0x86).
+    try std.testing.expectEqual(@as(u8, 0x86), gb.io[core.Reg.stat]);
     // Cart RAM is disabled after reset on an MBC1.
     try std.testing.expectEqual(@as(u8, 0xFF), gb.read8(0xA000));
 }
