@@ -422,3 +422,9 @@ except the ROM, which he will provide.
   (zlib, 32 KB MBC1) plays in the simulator as the development ROM.
   Sizes with that ROM: fast .text 65 KB / .bss 26 KB, small .text 52 KB.
   Waiting on the M1 gate: Adrian flashes and reports FPS + microseconds.
+- 2026-09-26: M3 done (tag `m3`): Select-hold menu (palette, scale, sound,
+  debug, reset, about), boot splash with chime, APU register model for
+  ch1-3 reduced to one `tone2` voice. 47 host tests. Fast build with
+  2048-gb: .text 78 KB, .bss 26 KB. Note: 2048-gb writes no sound
+  registers, so the audio path is unheard until a ROM with music arrives.
+  Next: M4 scrubber; hardware check of the frozen-frame menu and the chime.

@@ -14,6 +14,7 @@ const input = @import("frontend/input.zig");
 const debug = @import("frontend/debug.zig");
 const menu = @import("frontend/menu.zig");
 const splash = @import("frontend/splash.zig");
+const audio = @import("frontend/audio.zig");
 
 comptime {
     cart.export_start_code();
@@ -40,8 +41,21 @@ pub fn update() void {
     const t0 = cart.micros_since_boot();
     debug.frame_tick(t0);
 
+    // Sound follows the menu toggle; the tone holds while the core is paused
+    // and stops at once when sound is switched off (audio.update handles it).
+    audio.enabled = menu.sound_enabled;
+
     switch (state) {
         .splash => {
+            if (splash.request_chime) {
+                splash.request_chime = false;
+                audio.chime(0);
+                chime_second_at = frames_seen + 4;
+            }
+            if (chime_second_at != 0 and frames_seen == chime_second_at) {
+                chime_second_at = 0;
+                audio.chime(1);
+            }
             if (splash.update(controls_state.edge.any_pressed())) {
                 controls_state.suppress_held();
                 state = .running;
@@ -50,6 +64,7 @@ pub fn update() void {
         },
         .running => run_frame(t0),
         .menu => {
+            audio.update(&gb);
             if (menu.update(&gb, controls_state.edge) == .resume_game) {
                 menu.close();
                 controls_state.suppress_held();
@@ -59,8 +74,13 @@ pub fn update() void {
         },
     }
 
+    frames_seen +%= 1;
     if (cart.is_wasm) present_wasm();
 }
+
+/// Badge frames since boot; paces the second chime note.
+var frames_seen: u32 = 0;
+var chime_second_at: u32 = 0;
 
 /// One game frame, or opening the menu instead of stepping. `t1` is a fresh
 /// `micros_since_boot` reading taken just before.
@@ -76,7 +96,7 @@ fn run_frame(t1: u64) void {
     gb.step_frame(in.pad);
     const t2 = cart.micros_since_boot();
 
-    // TODO(M3 integrator): audio.update(&gb); // frontend/audio.zig, gated on menu.sound_enabled; also consume splash.request_chime
+    audio.update(&gb);
 
     video.finish_frame();
     debug.record(@truncate(t2 -% t1));
