@@ -104,15 +104,19 @@ pub fn draw_bolts(tick: u32) void {
 
 pub fn draw_enemy_bullets() void {
     for (world.w.enemy_bullets) |b| {
-        if (!b.active) continue;
-        const x: i32 = @intFromFloat(@floor(b.x));
-        const y: i32 = @intFromFloat(@floor(b.y));
-        switch (b.shape) {
-            // 8x8 cell: top-left = center - (4, 4).
-            .round => draw.draw_sprite(gfx.bugs_small, 8, 8, 2 + (b.age / 4) % 2, x - 4, y - 4, .{}),
-            // The 8x4 needle sits centered in a 16x16 cell: top-left = center - (8, 8).
-            .needle => draw.draw_sprite(gfx.bugs, 16, 16, 8, x - 8, y - 8, .{}),
-        }
+        if (b.active) draw_enemy_bullet(b, .{});
+    }
+}
+
+/// One enemy bullet (also redrawn in flash-white by the bug report).
+pub fn draw_enemy_bullet(b: EnemyBullet, opts: draw.SpriteOpts) void {
+    const x: i32 = @intFromFloat(@floor(b.x));
+    const y: i32 = @intFromFloat(@floor(b.y));
+    switch (b.shape) {
+        // 8x8 cell: top-left = center - (4, 4).
+        .round => draw.draw_sprite(gfx.bugs_small, 8, 8, 2 + (b.age / 4) % 2, x - 4, y - 4, opts),
+        // The 8x4 needle sits centered in a 16x16 cell: top-left = center - (8, 8).
+        .needle => draw.draw_sprite(gfx.bugs, 16, 16, 8, x - 8, y - 8, opts),
     }
 }
 

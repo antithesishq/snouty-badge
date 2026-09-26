@@ -511,27 +511,34 @@ fn boss_fire(e: *Enemy) void {
 
 pub fn draw_enemies() void {
     for (world.w.enemies) |e| {
-        if (!e.live()) continue;
-        const x: i32 = @intFromFloat(@floor(e.x));
-        const y: i32 = @intFromFloat(@floor(e.y));
-        const opts: draw.SpriteOpts = .{ .flash_white = e.flash > 0 };
-        const frame = (e.age / bug_frame_ticks) % 2;
-        switch (e.kind) {
-            .gnat => draw.draw_sprite(gfx.bugs_small, 8, 8, (e.age / 4) % 2, x, y, opts),
-            .wasp => draw.draw_sprite(gfx.bugs, 16, 16, 0 + frame, x, y, opts),
-            .beetle => draw.draw_sprite(gfx.bugs, 16, 16, 2 + frame, x, y, opts),
-            .spider => {
-                if (y > thread_top) {
-                    cart.vline(.{ .x = x + 8, .y = thread_top, .len = @intCast(y - thread_top), .color = draw.star_dim });
-                }
-                draw.draw_sprite(gfx.bugs, 16, 16, 4 + frame, x, y, opts);
-            },
-            .moth => draw.draw_sprite(gfx.bugs, 16, 16, 6 + frame, x, y, opts),
-            .boss => switch (e.phase) {
-                .flicker => draw.draw_sprite(gfx.boss, 48, 48, boss_flicker_cell, x, y, .{ .skip_odd = true }),
-                else => draw.draw_sprite(gfx.boss, 48, 48, (e.age / boss_frame_ticks) % boss_idle_frames, x, y, opts),
-            },
-        }
+        if (e.live()) draw_enemy(e, .{});
+    }
+}
+
+/// One enemy with its thread (also redrawn in flash-white by the bug
+/// report). `opts` is merged with the enemy's own hit flash and the boss
+/// flicker ghost.
+pub fn draw_enemy(e: Enemy, opts: draw.SpriteOpts) void {
+    const x: i32 = @intFromFloat(@floor(e.x));
+    const y: i32 = @intFromFloat(@floor(e.y));
+    const own: draw.SpriteOpts = .{ .flash_white = opts.flash_white or e.flash > 0, .skip_odd = opts.skip_odd };
+    const frame = (e.age / bug_frame_ticks) % 2;
+    switch (e.kind) {
+        .gnat => draw.draw_sprite(gfx.bugs_small, 8, 8, (e.age / 4) % 2, x, y, own),
+        .wasp => draw.draw_sprite(gfx.bugs, 16, 16, 0 + frame, x, y, own),
+        .beetle => draw.draw_sprite(gfx.bugs, 16, 16, 2 + frame, x, y, own),
+        .spider => {
+            if (y > thread_top) {
+                cart.vline(.{ .x = x + 8, .y = thread_top, .len = @intCast(y - thread_top), .color = draw.star_dim });
+            }
+            draw.draw_sprite(gfx.bugs, 16, 16, 4 + frame, x, y, own);
+        },
+        .moth => draw.draw_sprite(gfx.bugs, 16, 16, 6 + frame, x, y, own),
+        .boss => switch (e.phase) {
+            // The flicker ghost ignores the hit flash.
+            .flicker => draw.draw_sprite(gfx.boss, 48, 48, boss_flicker_cell, x, y, .{ .flash_white = opts.flash_white, .skip_odd = true }),
+            else => draw.draw_sprite(gfx.boss, 48, 48, (e.age / boss_frame_ticks) % boss_idle_frames, x, y, own),
+        },
     }
 }
 

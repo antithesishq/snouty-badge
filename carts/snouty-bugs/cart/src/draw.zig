@@ -9,6 +9,7 @@ pub const coral = cart.DisplayColor.rgb(0xF18271);
 pub const cream = cart.DisplayColor.rgb(0xF4EFDF);
 pub const black = cart.DisplayColor.rgb(0x000000);
 pub const star_dim = cart.DisplayColor.rgb(0x958D9D);
+pub const red = cart.DisplayColor.rgb(0xEE453C);
 
 pub const hud_height: i32 = 8;
 pub const near_y: i32 = 104;
@@ -158,6 +159,15 @@ pub fn darken_checker() void {
     const b: cart.Pixel = comptime .from_color(black);
     for (cart.framebuffer, 0..) |*column, x| {
         var y: usize = x & 1;
+        while (y < cart.screen_height) : (y += 2) column[y] = b;
+    }
+}
+
+/// Sets every odd screen row to black, full width: the rewind playback.
+pub fn darken_scanlines() void {
+    const b: cart.Pixel = comptime .from_color(black);
+    for (cart.framebuffer) |*column| {
+        var y: usize = 1;
         while (y < cart.screen_height) : (y += 2) column[y] = b;
     }
 }
