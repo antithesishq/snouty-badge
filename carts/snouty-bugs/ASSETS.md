@@ -194,3 +194,33 @@ Found while drawing placeholder sheets to this brief; the code and
   head, keeps that HUD slot for now. If a legible 8x8 rewind glyph (a
   counter-clockwise arrow in Coral) turns out possible, offer it as an extra
   frame; not required.
+
+Notes from the M2 placeholder pass (`bugs.png`, `fx_big.png`):
+
+- Needle: the code always draws it horizontally, whatever direction it
+  travels (moth needles are aimed, so usually diagonal). Keep it symmetric
+  and 8x4 including its outline, centred in its 16x16 cell at x 4..11,
+  y 6..9; the code draws the cell at bullet centre - (8, 8) and collides
+  8x4 centred. A rotated needle would need more cells and code; not asked.
+- Round bullet pulse frames are in `bugs_small.png` cells 2-3 (8x8, drawn at
+  centre - (4, 4)); the needle is in `bugs.png` cell 8. Two bullet shapes,
+  two sheets: keep both cores in the same cream/white so they read as one
+  "enemy bullet" family.
+- Bullet contrast: on the placeholder navy backgrounds a white core with
+  the `#17121e` outline is the brightest thing on screen except the fx and
+  the pale moth wings; do not make moth wings as white as bullet cores
+  (placeholder moth is cream with light-tan edges for that reason).
+- Wasp and moth both point left and both read as "arrow" shapes; the brief
+  says wasp = arrow, moth = triangle with big wings. The placeholder keeps
+  them apart by size and colour (thin yellow chevron vs. cell-filling pale
+  delta). The real art should push the difference in silhouette too.
+- Spider: the cart draws the thread at cell x 8 down to the cell top. The
+  body sits centred on x 7.5 with a 3 px thread stub at x 8, rows 1..3;
+  leg tips reach x 1 and x 14, so the spider uses the full cell width.
+- Beetle and spider legs are single pixels; beetle legs are outline colour
+  (they read as part of the silhouette), spider legs grey so they survive
+  on the dark background.
+- fx_big: brief section 6 says the last frame is "dark outline-only
+  debris", section 7 says "dark debris"; as with `fx_small`, the placeholder
+  uses grey and mid-dark smoke (frame 4 a broken ring, frame 5 a small puff
+  with two orange embers) because outline-dark pixels vanish on navy.

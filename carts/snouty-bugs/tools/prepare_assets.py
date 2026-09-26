@@ -4,7 +4,7 @@
 Two modes:
 
   python3 tools/prepare_assets.py --placeholders
-      Procedurally draws every M1 sheet (PLAN.md "Asset contract") as
+      Procedurally draws every in-build sheet (PLAN.md "Asset contract") as
       readable Genesis-style placeholder art, straight into assets/gen/.
 
   python3 tools/prepare_assets.py --study assets/Bugs_Study_NN [--snap FILE.gpl]
@@ -12,6 +12,9 @@ Two modes:
       <study>/sheets/<name>.png RGBA strips, <study>/assets.json metadata),
       applies a hard alpha cut, optionally snaps to a GIMP palette, flattens
       alpha 0 to the #FF00FF key and writes assets/gen/<name>.png.
+
+Either mode (or neither) can add `--contact docs/placeholders.png`, which
+tiles every sheet in assets/gen at 4x with labels plus a 160x128 mockup.
 
 Both modes validate every written sheet against the manifest below (exact
 size, cell grid, <= 15 opaque colors after RGB565 quantisation, 16 for the
@@ -718,6 +721,255 @@ def draw_bg_near() -> np.ndarray:
     return a
 
 
+# --------------------------------------------------------------------------
+# bugs.png (10 cells 16x16, all enemies face left): 0-1 wasp, 2-3 beetle,
+# 4-5 spider, 6-7 moth, 8 needle bullet, 9 bomb pickup. Five distinct
+# silhouettes (ASSETS.md section 5): arrow, dome, round-with-legs, delta.
+# --------------------------------------------------------------------------
+DKGREEN = hx("24552a")  # beetle shell shadow (placeholder mix, bug greens)
+BUGS_CMAP = {"o": OUTLINE, "m": MIDDARK, "g": GREY, "c": CREAM, "w": WHITE,
+             "y": YELLOW, "L": LIGHTTAN, "t": TAN, "G": GREEN, "l": LIGHTGREEN,
+             "D": DKGREEN, "p": PURPLE2, "P": PURPLE3, "r": RED, "C": CORAL}
+
+
+def grid(fn, size: int = 16) -> list[str]:
+    """Rows from fn(x, y) -> char ('.' = empty), 1 px border kept empty."""
+    return ["".join("." if x in (0, size - 1) or y in (0, size - 1) else fn(x, y)
+                    for x in range(size)) for y in range(size)]
+
+
+def over(base: list[str], top: list[str]) -> list[str]:
+    """Overlay rows: non-empty chars of `top` win."""
+    return ["".join(t if t != "." else b for b, t in zip(br, tr)) for br, tr in zip(base, top)]
+
+
+def plot(rows: list[str], pts, ch: str) -> list[str]:
+    out = [list(r) for r in rows]
+    for x, y in pts:
+        if 0 < x < len(out[0]) - 1 and 0 < y < len(out) - 1:
+            out[y][x] = ch
+    return ["".join(r) for r in out]
+
+
+WASP_H = {2: 1.5, 3: 1.5, 4: 1.5, 5: 0.5, 6: 1.5, 7: 1.5, 8: 0.5,
+          9: 2.5, 10: 2.5, 11: 2.5, 12: 1.5, 13: 0.5}  # body half-height per column
+
+
+def seg_dist(x: float, y: float, a: tuple, b: tuple) -> float:
+    (ax, ay), (bx, by) = a, b
+    t = max(0.0, min(1.0, ((x - ax) * (bx - ax) + (y - ay) * (by - ay)) / ((bx - ax) ** 2 + (by - ay) ** 2)))
+    return math.hypot(x - ax - t * (bx - ax), y - ay - t * (by - ay))
+
+
+def wasp(frame: int) -> list[str]:
+    # Top-down chevron pointing left: yellow head with a red eye, pinched
+    # waist, black-banded abdomen ending in a stinger; two pale wings swept
+    # back like arrowhead barbs, wide (0) and folded in (1).
+    def body(x, y):
+        h = WASP_H.get(x)
+        if h is None or abs(y - 7.5) > h:
+            return "."
+        if x in (10, 12):
+            return "o"
+        return "L" if y < 7.5 and abs(y - 7.5) > h - 1 else "y"
+    tip = [(11, 2), (11, 13)] if frame == 0 else [(12, 4), (12, 11)]
+    def wing(x, y):
+        d = min(seg_dist(x, y, (6, 6 if t[1] < 7 else 9), t) for t in tip)
+        if d > 1.1:
+            return "."
+        return "c" if d < 0.6 else "g"
+    rows = over(grid(wing), grid(body))
+    rows = plot(rows, [(3, 7)], "r")
+    rows = outline_rows(rows)
+    return plot(rows, [(14, 7), (14, 8)], "o")  # stinger
+
+
+def beetle(frame: int) -> list[str]:
+    # Tall green dome (shield), tan belly, small dark head with a cream eye
+    # on the left; three legs that alternate between frames.
+    def shell(x, y):
+        if y > 10:
+            return "."
+        d = ((x - 8.5) / 5.5) ** 2 + ((y - 10.5) / 7.0) ** 2
+        if d > 1:
+            return "."
+        if ((x - 7) / 3.5) ** 2 + ((y - 6) / 2.5) ** 2 < 0.35:
+            return "l"
+        return "D" if d > 0.62 and x > 8 else "G"
+    rows = grid(shell)
+    rows = over(rows, grid(lambda x, y: "t" if y == 11 and 4 <= x <= 13 else "."))
+    rows = over(rows, grid(lambda x, y: "D" if (x - 2.5) ** 2 + (y - 9.5) ** 2 <= 2.3 else "."))
+    rows = plot(rows, [(2, 9)], "c")
+    rows = outline_rows(rows)
+    legs = [(5, 13), (8, 13), (11, 13)] if frame == 0 else [(4, 13), (7, 13), (12, 13)]
+    rows = plot(rows, legs, "o")
+    return plot(rows, [(1, 7)] if frame == 0 else [(1, 8)], "o")  # antenna
+
+
+SPIDER_LEGS = [  # left side, per frame; the right side mirrors about x = 7.5
+    [[(4, 6), (3, 5), (2, 5), (1, 6)], [(4, 8), (3, 7), (2, 7), (1, 8)],
+     [(4, 9), (3, 10), (2, 10), (1, 11)], [(5, 11), (4, 12), (3, 13), (3, 14)]],
+    [[(4, 6), (3, 4), (2, 4), (1, 5)], [(4, 8), (3, 8), (2, 8), (1, 9)],
+     [(4, 9), (3, 10), (2, 11), (1, 12)], [(5, 11), (4, 13), (4, 14)]],
+]
+
+
+def spider(frame: int) -> list[str]:
+    # Round purple body hanging from the thread (the cart's vline at cell
+    # x 8), two red eyes, eight grey legs drawn after the outline so they
+    # stay thin; the leg tips twitch between frames.
+    def body(x, y):
+        d = math.hypot(x - 7.5, y - 8)
+        if d > 3.2:
+            return "."
+        return "P" if math.hypot(x - 6.5, y - 6.5) < 1.5 else "p"
+    rows = outline_rows(grid(body))
+    rows = plot(rows, [(6, 10), (9, 10)], "r")
+    for leg in SPIDER_LEGS[frame]:
+        rows = plot(rows, leg + [(15 - x, y) for x, y in leg], "g")
+    return plot(rows, [(8, 1), (8, 2), (8, 3)], "g")  # thread stub meets the vline
+
+
+def moth(frame: int) -> list[str]:
+    # Big pale delta pointing left with a swallowtail notch: cream wings,
+    # light-tan leading edges, purple eye spots, a short tan body and
+    # antennae. Frame 1 raises the wings (narrower span).
+    spread = 0.75 if frame == 0 else 0.5
+    def wings(x, y):
+        dy = abs(y - 7.5)
+        h = 0.5 + (x - 3) * spread
+        rear = 13 if dy > 2 else 11  # small tail notch, the body fills it
+        if x < 3 or dy > h or x > rear:
+            return "."
+        if dy > h - 1.2 or x == rear:
+            return "L"
+        if x in (9, 10) and abs(dy - h * 0.55) < 0.7:
+            return "P"
+        if x == 7 and dy > 1:
+            return "g"  # vein
+        return "c"
+    rows = grid(wings)
+    rows = over(rows, grid(lambda x, y: "t" if y in (7, 8) and 2 <= x <= 11 else "."))
+    rows = outline_rows(rows)
+    return plot(rows, [(2, 5), (1, 4)] if frame == 0 else [(2, 6), (1, 5)], "L")
+
+
+NEEDLE = [  # 8x4 visible at x 4..11, y 6..9: centered, cell top-left = center - (8, 8)
+    "................",
+    "................",
+    "................",
+    "................",
+    "................",
+    "................",
+    ".....oooooo.....",
+    "....ocwwwwco....",
+    "....ocwwwwco....",
+    ".....oooooo.....",
+    "................",
+    "................",
+    "................",
+    "................",
+    "................",
+    "................",
+]
+
+
+def bomb_pickup() -> list[str]:
+    # hud.png's bomb icon at 16x16: cream ring, dark gap, Coral iris with a
+    # red pupil and a cream catch-light.
+    def f(x, y):
+        d = math.hypot(x - 7.5, y - 7.5)
+        if d > 6.4:
+            return "."
+        if d > 5.0:
+            return "c"
+        if d > 3.9:
+            return "o"
+        if d > 1.6:
+            return "C"
+        return "r"
+    rows = outline_rows(grid(f))
+    return plot(rows, [(6, 6)], "c")
+
+
+def draw_bugs() -> np.ndarray:
+    a = new_sheet(MANIFEST["bugs.png"])
+    cells = [wasp(0), wasp(1), beetle(0), beetle(1), spider(0), spider(1),
+             moth(0), moth(1), NEEDLE, bomb_pickup()]
+    for i, f in enumerate(cells):
+        paint(a, f, i * 16, 0, BUGS_CMAP)
+    return a
+
+
+# --------------------------------------------------------------------------
+# fx_big.png (6 cells 32x32): player death and boss. Compact white/yellow
+# core, orange and red at full size, breaking up into grey/mid-dark smoke,
+# then a small puff so the pop reads.
+# --------------------------------------------------------------------------
+FXB = {"o": OUTLINE, "m": MIDDARK, "g": GREY, "w": WHITE, "y": FXYELLOW,
+       "n": ORANGE, "r": RED, "R": DARKRED, "c": CREAM, "P": PURPLE3}
+
+
+def fire_frame(rng: random.Random, radius: float, bands: list[tuple[float, str]],
+               holes: float = 0.0, ring_inner: float = 0.0,
+               blobs: list[tuple[float, float, float]] = ()) -> list[str]:
+    """32x32 version of disc_frame with extra off-centre fireballs (dx, dy,
+    r) unioned into the main disc so the silhouette is not a circle."""
+    c = 15.5
+    rows = []
+    for y in range(32):
+        row = ""
+        for x in range(32):
+            ch = "."
+            if not (x in (0, 31) or y in (0, 31)):
+                d = math.hypot(x - c, y - c)
+                ang = math.atan2(y - c, x - c)
+                r = radius * (1 + 0.1 * math.sin(ang * 7 + radius) + 0.06 * math.sin(ang * 3))
+                inside = ring_inner <= d <= r
+                frac = d / r
+                for bx, by, br in blobs:
+                    db = math.hypot(x - c - bx, y - c - by)
+                    if db <= br and d >= ring_inner:
+                        inside = True
+                        frac = min(frac, max(db / br, 0.5))
+                if inside:
+                    ch = bands[-1][1]
+                    for f, col in bands:
+                        if frac <= f:
+                            ch = col
+                            break
+                    if holes and rng.random() < holes:
+                        ch = "."
+            row += ch
+        rows.append(row)
+    return rows
+
+
+def draw_fx_big() -> np.ndarray:
+    rng = random.Random(11)
+    a = new_sheet(MANIFEST["fx_big.png"])
+    frames = [
+        outline_rows(fire_frame(rng, 5.0, [(0.6, "w"), (1.0, "y")])),
+        outline_rows(fire_frame(rng, 8.5, [(0.35, "w"), (0.7, "y"), (1.0, "n")],
+                                blobs=[(6, -5, 3.0), (-6, 4, 3.0)])),
+        outline_rows(fire_frame(rng, 11.5, [(0.25, "y"), (0.6, "n"), (1.0, "r")], holes=0.05,
+                                blobs=[(8, -7, 4.0), (-8, 6, 4.0), (-7, -8, 3.0)])),
+        outline_rows(fire_frame(rng, 12.5, [(0.55, "n"), (0.8, "r"), (1.0, "R")], holes=0.25,
+                                ring_inner=5.0, blobs=[(9, -8, 3.5), (-9, 7, 3.5)])),
+        fire_frame(rng, 13.0, [(0.75, "g"), (1.0, "m")], holes=0.4, ring_inner=8.0,
+                   blobs=[(9, -8, 3.0), (-9, 7, 3.0)]),
+        fire_frame(rng, 6.5, [(0.5, "g"), (1.0, "m")], holes=0.3, ring_inner=1.5,
+                   blobs=[(4, -4, 2.0), (-4, 3, 2.0)]),
+    ]
+    # a few embers in the smoke frames so they are not a flat grey ring
+    frames[4] = plot(frames[4], [(8, 9), (23, 20), (21, 7), (9, 22)], "n")
+    frames[4] = plot(frames[4], [(15, 4), (27, 15)], "P")
+    frames[5] = plot(frames[5], [(13, 14), (18, 17)], "n")
+    for i, f in enumerate(frames):
+        paint(a, f, i * 32, 0, FXB)
+    return a
+
+
 PLACEHOLDER_DRAW = {
     "ship.png": draw_ship,
     "thruster.png": draw_thruster,
@@ -727,6 +979,8 @@ PLACEHOLDER_DRAW = {
     "hud.png": draw_hud,
     "bg_far.png": draw_bg_far,
     "bg_near.png": draw_bg_near,
+    "bugs.png": draw_bugs,
+    "fx_big.png": draw_fx_big,
 }
 
 
@@ -838,6 +1092,122 @@ def validate(sheet: Sheet, a: np.ndarray, hitbox=SHIP_HITBOX) -> list[str]:
 
 
 # --------------------------------------------------------------------------
+# Contact sheet (--contact): every sheet in assets/gen at 4x nearest-neighbour
+# on a checkerboard, labelled, plus a 160x128 mockup frame.
+# --------------------------------------------------------------------------
+CONTACT_SCALE = 4
+CONTACT_BG = (22, 20, 28)
+CONTACT_INK = (220, 216, 228)
+
+
+def load_gen(name: str) -> tuple[np.ndarray, np.ndarray]:
+    """(rgb, opaque mask) of assets/gen/<name>."""
+    a = np.array(Image.open(OUT / name).convert("RGB"))
+    return a, ~(a == KEY).all(axis=2)
+
+
+def checker(h: int, w: int, cell: int = 8) -> np.ndarray:
+    yy, xx = np.mgrid[0:h, 0:w]
+    on = ((yy // cell + xx // cell) % 2).astype(bool)
+    out = np.empty((h, w, 3), np.uint8)
+    out[:] = (46, 42, 56)
+    out[on] = (60, 56, 72)
+    return out
+
+
+def blit(dst: np.ndarray, src: np.ndarray, mask: np.ndarray, x: int, y: int) -> None:
+    """Paste src at (x, y) where mask is set, clipped to dst."""
+    h, w = src.shape[:2]
+    x0, y0 = max(0, -x), max(0, -y)
+    x1, y1 = min(w, dst.shape[1] - x), min(h, dst.shape[0] - y)
+    if x0 >= x1 or y0 >= y1:
+        return
+    d = dst[y + y0 : y + y1, x + x0 : x + x1]
+    m = mask[y0:y1, x0:x1]
+    d[m] = src[y0:y1, x0:x1][m]
+
+
+def cell_of(name: str, i: int) -> tuple[np.ndarray, np.ndarray]:
+    a, m = load_gen(name)
+    s = MANIFEST[name]
+    return a[:, i * s.cell_w : (i + 1) * s.cell_w], m[:, i * s.cell_w : (i + 1) * s.cell_w]
+
+
+def mockup() -> np.ndarray:
+    """One 160x128 frame in the game's draw order, for contrast checks."""
+    f = np.zeros((128, 160, 3), np.uint8)
+    far, _ = load_gen("bg_far.png")
+    f[8:128] = far[:, :160]
+    near, nm = load_gen("bg_near.png")
+    blit(f, near[:, :160], nm[:, :160], 0, 104)
+    f[:8] = ANTIBLACK
+    put = lambda name, i, x, y: blit(f, *cell_of(name, i), x, y)
+    for i, (x, y) in enumerate([(84, 24), (116, 40)]):
+        put("bugs_small.png", i, x, y)
+    put("bugs.png", 0, 124, 18)   # wasp
+    put("bugs.png", 2, 112, 64)   # beetle
+    f[8:36, 104] = STAR_DIM       # spider thread (draw.star_dim)
+    put("bugs.png", 4, 96, 36)    # spider
+    put("bugs.png", 6, 136, 86)   # moth
+    put("ship.png", 0, 16, 52)
+    put("thruster.png", 0, 10, 60)
+    for x in (52, 76):
+        put("bolt.png", 0, x, 60)
+    for cx, cy in [(100, 76), (92, 82), (108, 70), (72, 40), (64, 92)]:
+        put("bugs_small.png", 2 + (cx // 4) % 2, cx - 4, cy - 4)
+    for cx, cy in [(120, 90), (104, 94), (88, 98), (60, 30)]:
+        put("bugs.png", 8, cx - 8, cy - 8)  # needle: center - (8, 8)
+    put("bugs.png", 9, 140, 60)   # bomb pickup
+    put("fx_small.png", 2, 126, 100)
+    put("fx_big.png", 2, 40, 12)
+    put("hud.png", 1, 68, 0)
+    put("hud.png", 2, 76, 0)
+    for i in range(3):
+        put("hud.png", 0, 152 - i * 8, 0)
+    return f
+
+
+def write_contact(path: Path) -> None:
+    from PIL import ImageDraw, ImageFont
+    k = CONTACT_SCALE
+    items = []
+    for name, s in MANIFEST.items():
+        if not (OUT / name).exists():
+            continue
+        a, m = load_gen(name)
+        img = checker(a.shape[0] * k, a.shape[1] * k)
+        big = a.repeat(k, 0).repeat(k, 1)
+        bm = m.repeat(k, 0).repeat(k, 1)
+        img[bm] = big[bm]
+        # thin cell dividers so frame boundaries are visible
+        for i in range(1, s.frames):
+            img[:, i * s.cell_w * k] = CONTACT_BG
+        items.append((f"{name}  {s.frames} x {s.cell_w}x{s.cell_h} cells, shown {k}x", img))
+    mk = mockup()
+    items.append(("mockup 160x128", mk.repeat(k, 0).repeat(k, 1)))
+    pad, label_h = 12, 20
+    width = max(i.shape[1] for _, i in items) + 2 * pad
+    height = sum(i.shape[0] + label_h + pad for _, i in items) + pad
+    out = np.zeros((height, width, 3), np.uint8)
+    out[:] = CONTACT_BG
+    y = pad
+    labels = []
+    for label, img in items:
+        labels.append((y, label))
+        y += label_h
+        out[y : y + img.shape[0], pad : pad + img.shape[1]] = img
+        y += img.shape[0] + pad
+    im = Image.fromarray(out, "RGB")
+    d = ImageDraw.Draw(im)
+    font = ImageFont.load_default(size=14)
+    for ly, label in labels:
+        d.text((pad, ly), label, fill=CONTACT_INK, font=font)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    im.save(path, optimize=True)
+    print(f"contact sheet {path} {width}x{height}")
+
+
+# --------------------------------------------------------------------------
 # Modes
 # --------------------------------------------------------------------------
 def run_placeholders() -> int:
@@ -914,16 +1284,25 @@ def run_study(study: Path, snap_gpl: Path | None) -> int:
 
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    g = ap.add_mutually_exclusive_group(required=True)
+    g = ap.add_mutually_exclusive_group()
     g.add_argument("--placeholders", action="store_true", help="draw placeholder art into assets/gen/")
     g.add_argument("--study", type=Path, help="import a delivered Bugs_Study_NN folder")
     ap.add_argument("--snap", type=Path, help="GIMP .gpl palette to snap study colors to")
+    ap.add_argument("--contact", type=Path, metavar="PNG",
+                    help="afterwards (or alone) write a 4x labelled contact sheet of assets/gen, "
+                         "e.g. docs/placeholders.png")
     args = ap.parse_args()
+    if not (args.placeholders or args.study or args.contact):
+        ap.error("one of --placeholders, --study or --contact is required")
     OUT.mkdir(parents=True, exist_ok=True)
+    status = 0
     if args.placeholders:
-        return run_placeholders()
-    return run_study(args.study, args.snap)
-
+        status = run_placeholders()
+    elif args.study:
+        status = run_study(args.study, args.snap)
+    if args.contact:
+        write_contact(args.contact)
+    return status
 
 if __name__ == "__main__":
     sys.exit(main())
