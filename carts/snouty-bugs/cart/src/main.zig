@@ -1,34 +1,135 @@
-//! Snouty vs. the Bugs: M0 scaffold. Shows a title card so the build,
-//! simulator shim and preview harness can be verified before gameplay lands.
-//! See SPEC.md for the game and CLAUDE.md for the toolchain.
+//! Snouty vs. the Bugs: M1 "Flying". Title card, then a playable flight
+//! with parallax, the zapper, gnat strings, collisions, score and lives.
+//! See SPEC.md for the game, PLAN.md for the M1 contract and CLAUDE.md for
+//! the toolchain.
 const cart = @import("cart-api");
-const gfx = @import("gfx");
+const draw = @import("draw.zig");
+const input = @import("input.zig");
+const rng = @import("rng.zig");
+const player = @import("player.zig");
+const bullets = @import("bullets.zig");
+const enemies = @import("enemies.zig");
+const waves = @import("waves.zig");
+const collide = @import("collide.zig");
+const fx = @import("fx.zig");
+const hud = @import("hud.zig");
 
 comptime {
     cart.export_start_code();
 }
 
-const anti_black = cart.DisplayColor.rgb(0x16031B);
-const anti_white = cart.DisplayColor.rgb(0xFCFBF9);
-const coral = cart.DisplayColor.rgb(0xF18271);
+pub const State = enum(u32) { title = 0, playing = 1, paused = 2 };
 
+var state: State = .title;
+/// Ticks since boot (drives title blink).
 var tick_total: u32 = 0;
+/// Ticks of simulated play (frozen while paused; drives animations).
+var game_tick: u32 = 0;
 
 pub fn start() void {
     cart.set_vsync_enabled(1000.0 / 60.0);
-    cart.set_double_buffer_mode(.{ .clear_full_frame = anti_black });
+    cart.set_double_buffer_mode(.no_copy_full_frame);
+    draw.init_bg();
 }
 
 pub fn update() void {
-    draw_centered_text("SNOUTY", 40, anti_white);
-    draw_centered_text("vs. THE BUGS", 52, coral);
-    if ((tick_total / 30) % 2 == 0) draw_centered_text("PRESS A", 96, anti_white);
-    const c = read_controls();
-    if (c.a) draw_centered_text("A!", 112, coral);
-    // Exercise the asset pipeline: the 8x8 placeholder marker.
-    draw_cell(gfx.hud, 0, 76, 72);
+    input.update(read_controls());
+
+    switch (state) {
+        .title => {
+            if (input.pressed(.a) or input.pressed(.b) or input.pressed(.start)) {
+                new_game();
+            } else {
+                draw.tick_bg();
+            }
+        },
+        .playing => {
+            if (input.pressed(.start)) {
+                state = .paused;
+            } else {
+                simulate();
+            }
+        },
+        .paused => {
+            if (input.pressed(.start)) state = .playing;
+        },
+    }
+
+    switch (state) {
+        .title => {
+            draw.draw_bg();
+            hud.draw_title(tick_total);
+        },
+        .playing => draw_scene(),
+        .paused => {
+            draw_scene();
+            hud.draw_pause();
+        },
+    }
+
     tick_total +%= 1;
     if (cart.is_wasm) present_wasm();
+}
+
+fn new_game() void {
+    const t: u32 = @truncate(cart.micros_since_boot());
+    rng.seed(if (t == 0) 0x5EED else t);
+    player.reset();
+    bullets.reset();
+    enemies.reset();
+    waves.reset();
+    fx.reset();
+    game_tick = 0;
+    state = .playing;
+}
+
+/// One tick of play, in the PLAN.md update order.
+fn simulate() void {
+    waves.update();
+    player.update();
+    enemies.update();
+    bullets.update();
+    const dead = collide.run();
+    fx.update();
+    draw.tick_bg();
+    game_tick +%= 1;
+    if (dead) state = .title;
+}
+
+fn draw_scene() void {
+    draw.draw_bg();
+    enemies.draw_enemies();
+    player.draw_ship(game_tick);
+    bullets.draw_bolts(game_tick);
+    fx.draw_fx();
+    hud.draw_hud();
+}
+
+// Debug exports for the headless harness (wasm only).
+comptime {
+    if (cart.is_wasm) {
+        @export(&debug_state, .{ .name = "debug_state" });
+        @export(&debug_score, .{ .name = "debug_score" });
+        @export(&debug_lives, .{ .name = "debug_lives" });
+        @export(&debug_enemies, .{ .name = "debug_enemies" });
+        @export(&debug_bolts, .{ .name = "debug_bolts" });
+    }
+}
+
+fn debug_state() callconv(.c) u32 {
+    return @backingInt(state);
+}
+fn debug_score() callconv(.c) u32 {
+    return player.score;
+}
+fn debug_lives() callconv(.c) u32 {
+    return player.lives;
+}
+fn debug_enemies() callconv(.c) u32 {
+    return enemies.live_count();
+}
+fn debug_bolts() callconv(.c) u32 {
+    return bullets.live_bolts();
 }
 
 /// Button state. Upstream's platform_wasm.zig exposes `controls` but never
@@ -38,36 +139,6 @@ pub fn update() void {
 pub fn read_controls() cart.Controls {
     if (cart.is_wasm) return @bitCast(@as(*const volatile u16, @ptrFromInt(0x04)).*);
     return cart.controls.*;
-}
-
-fn draw_centered_text(comptime str: []const u8, y: i32, color: cart.DisplayColor) void {
-    const x = (cart.screen_width - str.len * cart.font_width) / 2;
-    cart.text(.{ .str = str, .x = x, .y = y, .text_color = color });
-}
-
-/// Draws cell `index` of a horizontal strip of square cells (side = height)
-/// with its top-left at (pos_x, pos_y), skipping palette index 0 (transparent)
-/// and clipping to the screen. Copied from snouty-badge; the game will
-/// generalise this to non-square cells (see SPEC.md "Rendering").
-fn draw_cell(comptime sprite: type, index: u32, pos_x: i32, pos_y: i32) void {
-    const cell: usize = sprite.height;
-    const src_x: usize = index * cell;
-    const col_begin: usize = @intCast(@max(0, -pos_x));
-    const col_end: usize = @intCast(@max(0, @min(cell, @as(i32, cart.screen_width) - pos_x)));
-    const row_begin: usize = @intCast(@max(0, -pos_y));
-    const row_end: usize = @intCast(@max(0, @min(cell, @as(i32, cart.screen_height) - pos_y)));
-    if (col_begin >= col_end or row_begin >= row_end) return;
-    const dst_y0: usize = @intCast(pos_y + @as(i32, @intCast(row_begin)));
-    var col = col_begin;
-    while (col < col_end) : (col += 1) {
-        const dst_x: usize = @intCast(pos_x + @as(i32, @intCast(col)));
-        const column = cart.framebuffer[dst_x][dst_y0..];
-        for (row_begin..row_end, 0..) |row, dy| {
-            const idx = sprite.indices.get(row * sprite.width + src_x + col);
-            if (idx == 0) continue;
-            column[dy] = .from_color(sprite.colors[idx]);
-        }
-    }
 }
 
 /// Simulator shim, copied from snouty-badge (see its CLAUDE.md for the full
