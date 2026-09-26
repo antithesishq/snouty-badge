@@ -970,6 +970,297 @@ def draw_fx_big() -> np.ndarray:
     return a
 
 
+# --------------------------------------------------------------------------
+# boss.png (5 cells 48x48): the Heisenbug, a beetle/roach hybrid in side
+# view facing left. Cells 0-3 idle loop (wings, legs, antennae move; body
+# fixed), cell 4 the teleport silhouette. Built from layered masks back to
+# front; every layer gets its own 1 px outline, so later parts are outlined
+# against earlier ones (Genesis-style internal lines).
+# --------------------------------------------------------------------------
+BOSS_CMAP = {"o": OUTLINE, "m": MIDDARK, "1": PURPLE1, "2": PURPLE2, "3": PURPLE3,
+             "4": PURPLE4, "g": GREY, "r": RED, "R": DARKRED, "b": BROWN1,
+             "B": BROWN2, "t": TAN, "y": YELLOW, "G": GREEN, "l": LIGHTGREEN}
+BOSS_N = 48
+
+# The "?" on the shell, drawn over the elytra; '.' keeps the shell.
+BOSS_QMARK = [
+    "..ooooo..",
+    ".oyyyyyo.",
+    "oyylllyyo",
+    "oyyoooyyo",
+    ".ooo.oyyo",
+    "....oyyGo",
+    "...oyyGo.",
+    "...oyyo..",
+    "...oooo..",
+    "...oyyo..",
+    "...oyGo..",
+    "...oooo..",
+]
+BOSS_QMARK_AT = (20, 17)  # centre about (24, 23): the cell centre, where the code emits bullets
+
+# Per idle frame: near wing tip, far wing tip, leg phase shift, antenna tip.
+BOSS_POSES = [
+    ((37, 3), (31, 4), 0, (3, 7)),
+    ((43, 6), (38, 3), 1, (2, 8)),
+    ((45, 12), (43, 6), 2, (3, 9)),
+    ((40, 4), (44, 10), 3, (4, 8)),
+]
+BOSS_LEG_SWING = [-1, 0, 1, 0]  # knee/foot x shift by (phase + leg) % 4
+BOSS_LEGS = [  # hip, knee, foot of the near legs; far legs are offset
+    [(18, 34), (14, 38), (11, 43)],
+    [(26, 35), (24, 40), (22, 44)],
+    [(34, 35), (38, 39), (41, 44)],
+]
+
+
+def _mgrid() -> tuple[np.ndarray, np.ndarray]:
+    ys, xs = np.mgrid[0:BOSS_N, 0:BOSS_N]
+    return xs.astype(float), ys.astype(float)
+
+
+def _seg_mask(pts: list[tuple[float, float]], r: float) -> np.ndarray:
+    """Pixels within r of the polyline through pts."""
+    m = np.zeros((BOSS_N, BOSS_N), bool)
+    for y in range(BOSS_N):
+        for x in range(BOSS_N):
+            m[y, x] = min(seg_dist(x, y, a, b) for a, b in zip(pts, pts[1:])) <= r
+    return m
+
+
+def _wing(root: tuple[float, float], tip: tuple[float, float], width: float) -> tuple[np.ndarray, np.ndarray]:
+    """Membrane mask (widest at 45 % of the span) and its centre vein."""
+    m = np.zeros((BOSS_N, BOSS_N), bool)
+    vein = np.zeros_like(m)
+    (ax, ay), (bx, by) = root, tip
+    L2 = (bx - ax) ** 2 + (by - ay) ** 2
+    for y in range(BOSS_N):
+        for x in range(BOSS_N):
+            t = ((x - ax) * (bx - ax) + (y - ay) * (by - ay)) / L2
+            if not 0.0 <= t <= 1.0:
+                continue
+            d = seg_dist(x, y, root, tip)
+            w = 0.8 + width * math.sin(math.pi * min(1.0, t / 0.9)) ** 0.7
+            m[y, x] = d <= w
+            vein[y, x] = d <= 0.5 and 0.15 < t < 0.85
+    return m, vein
+
+
+def _dilate4(m: np.ndarray) -> np.ndarray:
+    d = m.copy()
+    d[1:] |= m[:-1]
+    d[:-1] |= m[1:]
+    d[:, 1:] |= m[:, :-1]
+    d[:, :-1] |= m[:, 1:]
+    return d
+
+
+def _layer(canvas: np.ndarray, mask: np.ndarray, fill, outline: bool = True) -> None:
+    """Outline ring then fill; `fill` is a char or a char array."""
+    if outline:
+        canvas[_dilate4(mask) & ~mask] = "o"
+    canvas[mask] = fill[mask] if isinstance(fill, np.ndarray) else fill
+
+
+def boss_frame(frame: int) -> list[str]:
+    near_tip, far_tip, phase, ant_tip = BOSS_POSES[frame]
+    xs, ys = _mgrid()
+    c = np.full((BOSS_N, BOSS_N), ".", "<U1")
+
+    # Far wing (behind everything): darker membrane.
+    fw, fv = _wing((25, 15), far_tip, 3.0)
+    fcol = np.where(fv, "1", "m")
+    _layer(c, fw, fcol)
+
+    # Far legs, behind the belly: thin, dark brown, shifted back and up.
+    far_legs = np.zeros((BOSS_N, BOSS_N), bool)
+    for i, pts in enumerate(BOSS_LEGS):
+        sw = BOSS_LEG_SWING[(phase + i + 2) % 4]
+        far_legs |= _seg_mask([(x + 3 + (sw if j else 0), y - (1 if j else 0))
+                               for j, (x, y) in enumerate(pts)], 0.55)
+    _layer(c, far_legs, "b")
+
+    # Belly: segmented tan abdomen under the shell, with cerci at the rear.
+    belly = (((xs - 29) / 14.0) ** 2 + ((ys - 31) / 5.2) ** 2 <= 1) & (ys >= 30)
+    bcol = np.where(((xs.astype(int) - 17) % 4 == 0) | (ys >= 35), "B", "t")
+    _layer(c, belly, bcol)
+    cerci = _seg_mask([(41, 33), (45, 35)], 0.6)
+    _layer(c, cerci, "B")
+
+    # Near legs: splayed like a roach (front leg forward, back leg back).
+    near_legs = np.zeros((BOSS_N, BOSS_N), bool)
+    for i, pts in enumerate(BOSS_LEGS):
+        sw = BOSS_LEG_SWING[(phase + i) % 4]
+        near_legs |= _seg_mask([(x + (sw * j), y) for j, (x, y) in enumerate(pts)], 0.8)
+    _layer(c, near_legs, "B")
+
+    # Shell (elytra): dome, lit from the upper left.
+    u, v = (xs - 28.5) / 15.5, (ys - 24.5) / 11.0
+    shell = (u ** 2 + v ** 2 <= 1) & (ys <= 32)
+    scol = np.full(shell.shape, "2", "<U1")
+    scol[(u * 0.45 + v * 0.8) > 0.5] = "1"
+    scol[(u + 0.3) ** 2 + (v + 0.55) ** 2 < 0.10] = "3"
+    scol[(u + 0.35) ** 2 * 1.6 + (v + 0.72) ** 2 < 0.012] = "4"
+    scol[(ys == 31) | (ys == 32)] = "1"
+    _layer(c, shell, scol)
+
+    # Pronotum: the roach shield over the head, a darker purple with a lit rim.
+    pu, pv = (xs - 14.5) / 6.5, (ys - 24.0) / 8.5
+    pron = pu ** 2 + pv ** 2 <= 1
+    pcol = np.where(pv < -0.55, "3", np.where(pu * 0.3 + pv > 0.45, "1", "2"))
+    _layer(c, pron, pcol)
+
+    # Head: brown, big red compound eye with a yellow glint, tan mandibles.
+    head = (xs - 8.5) ** 2 + (ys - 30.0) ** 2 <= 4.6 ** 2
+    _layer(c, head, np.where(ys > 32, "b", "B"))
+    eye = (xs - 7.5) ** 2 / 2.4 ** 2 + (ys - 28.5) ** 2 / 2.6 ** 2 <= 1
+    ecol = np.where(ys >= 29.5, "R", "r")
+    _layer(c, eye, ecol, outline=False)
+    mand = _seg_mask([(5, 33), (3, 35), (4, 36)], 0.55)
+    _layer(c, mand, "t")
+
+    # Near wing on top, rooted on the shell top: grey membrane, dark vein.
+    nw, nv = _wing((29, 15), near_tip, 4.0)
+    _layer(c, nw, np.where(nv, "m", "g"))
+
+    rows = ["".join(r) for r in c]
+    rows = plot(rows, [(7, 27)], "y")  # eye glint
+    # Antennae: thin lines, no outline (like the bugs' legs), curving
+    # forward and up from the head; the tips wiggle per frame.
+    def curve(p0, p1, p2, n=24):
+        return [(round((1 - t) ** 2 * p0[0] + 2 * (1 - t) * t * p1[0] + t * t * p2[0]),
+                 round((1 - t) ** 2 * p0[1] + 2 * (1 - t) * t * p1[1] + t * t * p2[1]))
+                for t in (k / n for k in range(1, n + 1))]
+    ax, ay = ant_tip
+    rows = plot(rows, curve((10, 25), (8, 13), (ax + 7, ay - 3)), "B")  # far antenna
+    rows = plot(rows, curve((7, 25), (0, 20), (ax, ay)), "t")
+    # keep the 1 px empty cell border
+    return ["." * BOSS_N if y in (0, BOSS_N - 1) else "." + r[1:-1] + "."
+            for y, r in enumerate(rows)]
+
+
+def boss_silhouette(rows: list[str]) -> list[str]:
+    """Teleport cell: the same shape as flat purple 3 with a purple 4 rim."""
+    m = np.array([[ch != "." for ch in r] for r in rows])
+    rim = m & ~(np.roll(m, 1, 0) & np.roll(m, -1, 0) & np.roll(m, 1, 1) & np.roll(m, -1, 1))
+    return ["".join("4" if rim[y, x] else "3" if m[y, x] else "." for x in range(BOSS_N))
+            for y in range(BOSS_N)]
+
+
+def draw_boss() -> np.ndarray:
+    a = new_sheet(MANIFEST["boss.png"])
+    cells = [boss_frame(i) for i in range(4)]
+    cells.append(boss_silhouette(cells[0]))
+    for i, f in enumerate(cells):
+        paint(a, f, i * BOSS_N, 0, BOSS_CMAP)
+        if i < 4:
+            paint(a, BOSS_QMARK, i * BOSS_N + BOSS_QMARK_AT[0], BOSS_QMARK_AT[1], BOSS_CMAP)
+    return a
+
+
+# --------------------------------------------------------------------------
+# title.png (128x40): "SNOUTY" / "vs THE BUGS" logo from a 5x7 block font,
+# scaled 3x (line 1) and 2x (line 2) with rounded outer corners, banded
+# purple fill, cream top highlight, 1 px dark outline. "vs" in Coral.
+# --------------------------------------------------------------------------
+TITLE_CMAP = {"o": OUTLINE, "1": PURPLE1, "2": PURPLE2, "3": PURPLE3, "4": PURPLE4,
+              "c": CREAM, "C": CORAL, "r": RED, "R": DARKRED}
+FONT5X7 = {
+    "S": [".####", "#....", "#....", ".###.", "....#", "....#", "####."],
+    "N": ["#...#", "##..#", "#.#.#", "#..##", "#...#", "#...#", "#...#"],
+    "O": [".###.", "#...#", "#...#", "#...#", "#...#", "#...#", ".###."],
+    "U": ["#...#", "#...#", "#...#", "#...#", "#...#", "#...#", ".###."],
+    "T": ["#####", "..#..", "..#..", "..#..", "..#..", "..#..", "..#.."],
+    "Y": ["#...#", "#...#", ".#.#.", "..#..", "..#..", "..#..", "..#.."],
+    "H": ["#...#", "#...#", "#...#", "#####", "#...#", "#...#", "#...#"],
+    "E": ["#####", "#....", "#....", "####.", "#....", "#....", "#####"],
+    "B": ["####.", "#...#", "#...#", "####.", "#...#", "#...#", "####."],
+    "G": [".###.", "#...#", "#....", "#.###", "#...#", "#...#", ".###."],
+    "v": [".....", ".....", "#...#", "#...#", "#...#", ".#.#.", "..#.."],
+    "s": [".....", ".....", ".####", "#....", ".###.", "....#", "####."],
+}
+
+
+def glyph_mask(ch: str, k: int) -> np.ndarray:
+    """5x7 glyph scaled k x k. Every diagonal step (a font cell that is empty
+    with both neighbours toward one corner set, and the cell between them
+    empty) gets a triangle fill, so round letters come out as chamfered
+    octagons and diagonals as solid 45-degree strokes."""
+    g = np.array([[c == "#" for c in r] for r in FONT5X7[ch]])
+    on = lambda i, j: 0 <= i < 7 and 0 <= j < 5 and g[i, j]
+    m = g.repeat(k, 0).repeat(k, 1)
+    for i in range(7):
+        for j in range(5):
+            if g[i, j]:
+                continue
+            for di, dj in ((-1, -1), (-1, 1), (1, -1), (1, 1)):
+                if on(i + di, j) and on(i, j + dj) and not on(i + di, j + dj):
+                    for py in range(k):
+                        for px in range(k):
+                            # distance from the corner that faces (di, dj)
+                            cy = py if di < 0 else k - 1 - py
+                            cx = px if dj < 0 else k - 1 - px
+                            if cx + cy <= k - 2:
+                                m[i * k + py, j * k + px] = True
+    return m
+
+
+def _logo_line(text: str, k: int, gap: int, space: int) -> tuple[np.ndarray, list[tuple[int, int, str]]]:
+    """Mask of one line and the (x0, x1, char) span of each glyph."""
+    parts, spans, x = [], [], 0
+    for ch in text:
+        if ch == " ":
+            parts.append(np.zeros((7 * k, space), bool))
+            x += space
+            continue
+        if parts and not (parts[-1].shape[1] == space and not parts[-1].any()):
+            parts.append(np.zeros((7 * k, gap), bool))
+            x += gap
+        gm = glyph_mask(ch, k)
+        spans.append((x, x + gm.shape[1], ch))
+        parts.append(gm)
+        x += gm.shape[1]
+    return np.concatenate(parts, axis=1), spans
+
+
+def draw_title() -> np.ndarray:
+    a = new_sheet(MANIFEST["title.png"])
+    W_, H_ = 128, 40
+    c = np.full((H_, W_), ".", "<U1")
+    lines = [("SNOUTY", 3, 3, 0, 1), ("vs THE BUGS", 2, 2, 6, 23)]  # text, scale, gap, space, outlined top y
+    for text, k, gap, space, top in lines:
+        m, spans = _logo_line(text, k, gap, space)
+        h, w = m.shape
+        x0 = (W_ - w) // 2
+        full = np.zeros((H_, W_), bool)
+        full[top + 1 : top + 1 + h, x0 : x0 + w] = m
+        coral = np.zeros_like(full)
+        for sx0, sx1, ch in spans:
+            if ch in "vs" and text.startswith("vs"):
+                coral[top + 1 : top + 1 + h, x0 + sx0 : x0 + sx1] = True
+        coral &= full
+        ring = _dilate4(full) & ~full
+        # outline stays under a letter already drawn (lines share one row)
+        c[ring & (c == ".")] = "o"
+        yy = np.arange(H_)[:, None] - (top + 1)
+        rel = yy / h  # 0 at the glyph top, 1 at the bottom
+        above = np.zeros_like(full)
+        above[1:] = full[:-1]
+        below = np.zeros_like(full)
+        below[:-1] = full[1:]
+        right = np.zeros_like(full)
+        right[:, :-1] = full[:, 1:]
+        fill = np.where(rel < 0.34, "4", np.where(rel < 0.67, "3", "2"))
+        fill = np.where(~below, "1", fill)  # shadow on the bottom edges
+        fill = np.where(~above, "c", fill)  # cream top highlight
+        cfill = np.where(~below, "R", np.where(~above, "c", "C"))
+        cfill = np.where(rel > 0.7, np.where(cfill == "C", "r", cfill), cfill)
+        fill = np.where(coral, cfill, fill)
+        c[full] = fill[full]
+    paint(a, ["".join(r) for r in c], 0, 0, TITLE_CMAP)
+    return a
+
+
 PLACEHOLDER_DRAW = {
     "ship.png": draw_ship,
     "thruster.png": draw_thruster,
@@ -981,6 +1272,8 @@ PLACEHOLDER_DRAW = {
     "bg_near.png": draw_bg_near,
     "bugs.png": draw_bugs,
     "fx_big.png": draw_fx_big,
+    "boss.png": draw_boss,
+    "title.png": draw_title,
 }
 
 

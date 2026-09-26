@@ -224,3 +224,33 @@ Notes from the M2 placeholder pass (`bugs.png`, `fx_big.png`):
   debris", section 7 says "dark debris"; as with `fx_small`, the placeholder
   uses grey and mid-dark smoke (frame 4 a broken ring, frame 5 a small puff
   with two orange embers) because outline-dark pixels vanish on navy.
+
+Notes from the M3 placeholder pass (`boss.png`, `title.png`):
+
+- Boss layout in its 48x48 cell (placeholder, side view facing left): the
+  body (shell, pronotum, head, belly) sits at about x 4..44, y 13..37; legs
+  hang to y 45, antennae and raised wings reach up to y 2. The whole drawing
+  stays inside x 2..46, y 2..45 (so about 45x44 with appendages, 41x25 for
+  the body), identically placed in all five cells. Keep the body fixed
+  across cells 0-3; only wings, legs and antenna tips move.
+- Emitter: the code fires every pattern from the cell centre (24, 24). The
+  placeholder puts the "?" there (x 20..28, y 17..28), so bullets appear to
+  come out of the question mark. The head and red compound eye are at the
+  far left (eye about (5..10, 26..31)); if the real art wants bullets to
+  come from the mouth, report an emitter offset instead of moving the body.
+- Collision is a rectangle chosen by the code; report the body rectangle
+  (not wings or antennae) in the metadata JSON.
+- Teleport cell 4: flat `#8e42de` with a 1 px `#be7af3` rim, no outline
+  colour and no interior detail at all (the code's per-pixel flicker and
+  `skip_odd` only read on a flat fill). Its silhouette is cell 0's exactly.
+- Boss palette is at the 15-colour limit (master outline, mid-dark, purples
+  1-4, grey, red, dark red, browns 1-2, tan, plus bug yellow, green and
+  light green for the "?"). The brightest pixels are the yellow "?" and the
+  grey wing; nothing is cream or white, so round bullets and needles stay
+  the brightest thing when they cross it. Keep it that way.
+- Title: hand-placed 5x7 block glyphs scaled 3x ("SNOUTY") and 2x
+  ("vs THE BUGS") with 45-degree chamfers on every diagonal step, banded
+  purple 4/3/2 fill, cream top edge, purple 1 bottom edge, 1 px outline;
+  "vs" is lowercase Coral with red/dark-red shading. The two lines share
+  one outline row (y 23) to fit 40 px. 9 colours. Never render the logo
+  with a font rasteriser: its anti-aliasing blows the 15-colour budget.
