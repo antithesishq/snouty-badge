@@ -483,12 +483,12 @@ Decided by Adrian on 2026-09-26:
 5. Sound and LEDs toggle with Select on the title screen only.
 6. Boss design (Heisenbug again or new) is deferred to M3/M5.
 8. Title tag line "powered by deterministic replay": yes.
+7. Wall textures 32x32. Independent of map import: Wolf3D maps carry wall
+   codes, not textures, and the importer maps codes onto our eight sheets.
 Level grid 64x64 with Wolf3D import (section 6.1): yes.
 
 Still open:
 
-7. Textures 32x32 (spec) or 64x64 walls. The reasoning for 32 is in the
-   status notes; either is a comptime constant per sheet.
 9. Imported Wolf3D levels: the spec treats conversions of the id Software
    maps (shareware included) as a local-only experiment and commits only
    free mapsets or levels you build in a Wolf3D editor. Agree, or do you
@@ -502,4 +502,4 @@ Still open:
 - 2026-09-26: spec drafted, nothing built yet. Same day: level grid set
   to 64x64 and the Wolf3D `GAMEMAPS` importer added (section 6.1) at
   Adrian's request; pools and memory budget updated. Adrian settled
-  questions 1 to 6 and 8 (section 18). Next: texture size, then M0.
+  questions 1 to 8 (section 18). Next: M0 scaffold.
