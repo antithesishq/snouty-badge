@@ -73,11 +73,12 @@ DMG (original Game Boy), no Game Boy Color in scope (section 18, item 8).
 - Timer: 16-bit DIV counter, TIMA/TMA/TAC with the four clock rates and the
   overflow interrupt. Serial: stub that captures bytes (test ROMs print
   through it). Joypad register with the interrupt on press.
-- Memory bank controllers: none (32 KB), MBC1, MBC3 (no RTC), MBC5.
-  Because the ROM is embedded at comptime, the header bytes `0x147`
-  (MBC type), `0x148` (ROM size) and `0x149` (RAM size) are read at
-  comptime: the MBC switch and the cart RAM array are specialized for the
-  one ROM shipped. Unused MBC code is not even compiled.
+- Memory bank controllers: none (32 KB), MBC1, MBC3 (no RTC), MBC5,
+  selected at reset from header byte `0x147`. Bank switches are rare, so a
+  runtime `switch` costs nothing measurable; reads go through a cached bank
+  offset. Cart RAM is a fixed 8 KB array (`tools/romcheck.py` rejects ROMs
+  that declare more), which keeps the core one concrete type for host tests
+  and gives keyframes a fixed size.
 - Boot ROM: not emulated. Registers start at post-boot DMG values
   (AF=01B0, BC=0013, DE=00D8, HL=014D, SP=FFFE, PC=0100) and the I/O
   registers are set to their documented post-boot values. Section 12 has

@@ -1,5 +1,13 @@
-zig-out/
 .zig-cache/
-zig-pkg/
-tests/roms/
+zig-out/
 node_modules/
+*.uf2
+*.elf
+*.wasm
+.DS_Store
+zig-pkg/
+__pycache__/
+out/
+tests/roms/
+roms/*.gb
+!roms/.keep
