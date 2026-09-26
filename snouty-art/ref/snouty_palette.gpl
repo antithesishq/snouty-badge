@@ -1,0 +1,19 @@
+GIMP Palette
+Name: Snouty Run Study 04
+Columns: 5
+# 15 opaque colors; transparency is index 0 in the indexed PNG.
+ 23  18  30  #17121e
+ 41  35  47  #29232f
+ 66  54  75  #42364b
+ 70  33 116  #462174
+102  43 184  #662bb8
+142  66 222  #8e42de
+190 122 243  #be7af3
+244 239 223  #f4efdf
+149 141 157  #958d9d
+238  69  60  #ee453c
+145  50  47  #91322f
+ 96  57  31  #60391f
+153  98  47  #99622f
+205 147  75  #cd934b
+240 195 124  #f0c37c
