@@ -1,0 +1,3 @@
+# m2_hit: start at 30, then no input. The 8 s beetle's aimed spreads hit the still ship at
+# ~750, ~900 and ~1020 (one hit per 120-tick invulnerability window). At 999 one rewind is left.
+--frames 1000 --dump-exports debug_state,debug_rewinds,debug_bombs,debug_score --at "100 debug_rewinds == 3" --expect "debug_rewinds < 3" --expect "debug_rewinds > 0" --expect "debug_state == 1"

@@ -4,7 +4,8 @@
 //   node tools/preview.mjs <cart.wasm> --frames N [--every K] [--out DIR]
 //                          [--start-skip S] [--fb-addr auto|dwarf|sim|0xADDR]
 //                          [--seed N] [--controls BITS] [--press [BTN:]T1-T2[,...]] [--script FILE.json]
-//                          [--dump-exports NAME[,NAME...]] [--expect "NAME OP VALUE"]... [--quiet] [--raw-colors]
+//                          [--dump-exports NAME[,NAME...]] [--expect "NAME OP VALUE"]...
+//                          [--at "T NAME OP VALUE"]... [--call-at "T NAME"]... [--quiet] [--raw-colors]
 //
 // Runs start(), then N x update(). Every K-th update after the first S updates,
 // the displayed framebuffer is decoded and written to DIR/frame_XXXX.png
@@ -25,9 +26,16 @@
 // (OP in == != < <= > >=, integer VALUE; implies dumping NAME) prints PASS or
 // FAIL per expectation; any FAIL exits 3 after frames.json is written. Values
 // are what the export returns to JS: a u32 >= 2^31 reads as negative (i32).
+// --at T NAME OP VALUE is the same check made right after update #T (0-based;
+// with --frames 1800, T = 1799 is the moment the end-of-run exports are read);
+// results go to frames.json "at", and a FAIL also exits 3. --call-at T NAME
+// calls NAME right after update #T and records {tick, name, value} under
+// "calls". Both accept either separate arguments (--at 1799 debug_score '>' 0)
+// or one quoted string (--at "1799 debug_score > 0"), are repeatable, and run
+// in command-line order when they share a tick. T must be < N.
 // --quiet writes no PNGs and skips framebuffer decoding (soak runs).
 //
-// Exit codes: 0 ok, 1 cart/load error, 2 usage error, 3 wasm trap or failed --expect.
+// Exit codes: 0 ok, 1 cart/load error, 2 usage error, 3 wasm trap or failed --expect/--at.
 //
 // ---------------------------------------------------------------------------
 // Where is the framebuffer? (read this before trusting a preview)
@@ -107,8 +115,10 @@ function usage(msg) {
     console.error("usage: node tools/preview.mjs <cart.wasm> --frames N [--every K] [--out DIR] [--start-skip S]\n" +
         "                          [--fb-addr auto|dwarf|sim|0xADDR] [--seed N] [--controls BITS]\n" +
         "                          [--press [BTN:]T1-T2[,...]] [--script FILE.json] [--dump-exports NAME[,NAME...]]\n" +
-        "                          [--expect \"NAME OP VALUE\"]... [--quiet] [--raw-colors]\n" +
-        "  BTN: A B START SELECT UP DOWN LEFT RIGHT (bare T1-T2 = A); OP: == != < <= > >=");
+        "                          [--expect \"NAME OP VALUE\"]... [--at \"T NAME OP VALUE\"]... [--call-at \"T NAME\"]...\n" +
+        "                          [--quiet] [--raw-colors]\n" +
+        "  BTN: A B START SELECT UP DOWN LEFT RIGHT (bare T1-T2 = A); OP: == != < <= > >=\n" +
+        "  --at/--call-at: T is the 0-based update index (< N); also as separate args: --at T NAME OP VALUE, --call-at T NAME");
     process.exit(2);
 }
 // cart.Controls bit positions (sycl-badge src/os/cart/api.zig). CLICK (bit 4) is OS-owned and never set.
@@ -134,12 +144,28 @@ function parseExpect(s) {
     if (!m) usage(`bad --expect '${s}' (want "NAME OP VALUE", OP in == != < <= > >=, integer VALUE)`);
     return { expr: `${m[1]} ${m[2]} ${m[3]}`, name: m[1], op: m[2], value: Number(m[3]) };
 }
+// --at / --call-at take several words, either as one quoted argument or as
+// separate arguments: consume arguments until the joined text parses (at most
+// `max`), never swallowing the next --flag.
+const AT_RE = /^\s*(\d+)\s+([A-Za-z_$][\w$.]*)\s*(==|!=|<=|>=|<|>)\s*(-?\d+)\s*$/;
+const CALL_AT_RE = /^\s*(\d+)\s+([A-Za-z_$][\w$.]*)\s*$/;
+function takeWords(flag, re, max, want) {
+    const words = [];
+    while (words.length < max && argIndex + 1 < argv.length && !argv[argIndex + 1].startsWith("--")) {
+        words.push(argv[++argIndex]);
+        const m = re.exec(words.join(" "));
+        if (m) return m;
+    }
+    usage(words.length ? `bad ${flag} '${words.join(" ")}' (want ${want})` : `${flag} needs a value (${want})`);
+}
+let argIndex = 0;
 const argv = process.argv.slice(2);
 const opts = { frames: null, every: 1, out: "out", startSkip: 0, fbAddr: "auto", seed: 1, controls: 0, press: [], rawColors: false,
-    script: null, dumpExports: [], expect: [], quiet: false };
+    script: null, dumpExports: [], expect: [], quiet: false, timed: [] };
 let wasmPath = null;
 for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
+    argIndex = i;
     const val = () => { if (i + 1 >= argv.length) usage(`${a} needs a value`); return argv[++i]; };
     const int = () => { const s = val(); const n = Number(s); if (!Number.isInteger(n) || n < 0) usage(`${a}: bad integer '${s}'`); return n; };
     switch (a) {
@@ -154,6 +180,16 @@ for (let i = 0; i < argv.length; i++) {
         case "--script": opts.script = val(); break;
         case "--dump-exports": for (const n of val().split(",").map((s) => s.trim())) { if (!n) usage("--dump-exports: empty name"); if (!opts.dumpExports.includes(n)) opts.dumpExports.push(n); } break;
         case "--expect": opts.expect.push(parseExpect(val())); break;
+        case "--at": {
+            const m = takeWords(a, AT_RE, 4, '"T NAME OP VALUE", OP in == != < <= > >=, integer T and VALUE'); i = argIndex;
+            opts.timed.push({ kind: "at", tick: Number(m[1]), expr: `${m[2]} ${m[3]} ${m[4]}`, name: m[2], op: m[3], value: Number(m[4]) });
+            break;
+        }
+        case "--call-at": {
+            const m = takeWords(a, CALL_AT_RE, 2, '"T NAME", integer T'); i = argIndex;
+            opts.timed.push({ kind: "call", tick: Number(m[1]), name: m[2] });
+            break;
+        }
         case "--quiet": opts.quiet = true; break;
         case "--raw-colors": opts.rawColors = true; break;
         case "-h": case "--help": usage();
@@ -166,6 +202,10 @@ if (!wasmPath) usage("missing <cart.wasm>");
 if (opts.frames === null) usage("missing --frames N");
 if (opts.controls > 0xffff) usage(`--controls ${opts.controls} does not fit in 16 bits`);
 for (const e of opts.expect) if (!opts.dumpExports.includes(e.name)) opts.dumpExports.push(e.name);
+for (const t of opts.timed) if (t.tick >= opts.frames) usage(`--${t.kind === "at" ? "at" : "call-at"} ${t.tick} ${t.name}: tick ${t.tick} is beyond the run (--frames ${opts.frames} runs updates 0..${opts.frames - 1})`);
+// Items per tick, in command-line order.
+const timedAt = new Map();
+for (const t of opts.timed) { if (!timedAt.has(t.tick)) timedAt.set(t.tick, []); timedAt.get(t.tick).push(t); }
 
 // ---------------------------------------------------------------- input script
 function loadScript(file) {
@@ -424,16 +464,18 @@ let instance;
 try { instance = new WebAssembly.Instance(module, { env }); }
 catch (e) { console.error(`preview: instantiation failed: ${e.message}`); process.exit(1); }
 
-// --dump-exports / --expect names must be zero-arg function exports; check before running.
+// --dump-exports / --expect / --at / --call-at names must be zero-arg function exports; check before running.
 {
+    const wanted = [...opts.dumpExports];
+    for (const t of opts.timed) if (!wanted.includes(t.name)) wanted.push(t.name);
     const callable = exportNames.filter((n) => typeof instance.exports[n] === "function" && instance.exports[n].length === 0 && n !== "start" && n !== "update" && n !== "_start" && n !== "_initialize");
-    const bad = opts.dumpExports.filter((n) => !callable.includes(n));
+    const bad = wanted.filter((n) => !callable.includes(n));
     if (bad.length) {
         const why = bad.map((n) => !exportNames.includes(n) ? `'${n}' is not exported`
             : typeof instance.exports[n] !== "function" ? `'${n}' is not a function`
             : ["start", "update", "_start", "_initialize"].includes(n) ? `'${n}' is an entry point, not a query`
             : `'${n}' takes ${instance.exports[n].length} argument(s)`).join("; ");
-        console.error(`preview: --dump-exports/--expect: ${why}. Zero-arg function exports in ${wasmPath}: ${callable.join(", ") || "none"} (all exports: ${exportNames.join(", ") || "none"})`);
+        console.error(`preview: --dump-exports/--expect/--at/--call-at: ${why}. Zero-arg function exports in ${wasmPath}: ${callable.join(", ") || "none"} (all exports: ${exportNames.join(", ") || "none"})`);
         process.exit(2);
     }
 }
@@ -529,6 +571,29 @@ try { instance.exports.start(); } catch (e) { trap("start()", e); }
 
 const written = [];
 let changed = false;
+const OPS = { "==": (a, b) => a === b, "!=": (a, b) => a !== b, "<": (a, b) => a < b, "<=": (a, b) => a <= b, ">": (a, b) => a > b, ">=": (a, b) => a >= b };
+// Calls a checked zero-arg export and returns its integer result (as JS sees it).
+function callExport(n, flag) {
+    let v;
+    try { v = instance.exports[n](); } catch (e) { trap(`${n}()`, e); }
+    if (typeof v === "bigint") v = Number(v);
+    if (typeof v !== "number") { console.error(`preview: ${flag}: ${n}() returned nothing (it must return an integer)`); process.exit(2); }
+    return v;
+}
+const atResults = [], callResults = [];
+function runTimed(i) {
+    for (const t of timedAt.get(i)) {
+        const actual = callExport(t.name, t.kind === "at" ? "--at" : "--call-at");
+        if (t.kind === "call") {
+            callResults.push({ tick: i, name: t.name, value: actual });
+            console.error(`preview: call after update #${i}: ${t.name} = ${actual}`);
+        } else {
+            const pass = OPS[t.op](actual, t.value);
+            atResults.push({ tick: i, expr: t.expr, name: t.name, op: t.op, value: t.value, actual, pass });
+            console.error(`preview: ${pass ? "PASS" : "FAIL"} after update #${i}: ${t.expr} (${t.name} = ${actual})`);
+        }
+    }
+}
 const t0 = Date.now();
 for (let i = 0; i < opts.frames; i++) {
     let addr = opts.quiet ? 0 : displayedBufferAddr();
@@ -538,32 +603,31 @@ for (let i = 0; i < opts.frames; i++) {
         console.error(`preview: cart copies its frame to the simulator region at 0x20; showing that (use --fb-addr dwarf for ${fbSource} @ 0x${fbBase.toString(16)})`);
         fbSource = "sim-shim"; fbBase = SIM_ADDR_FRAMEBUFFER; hasPtr = false; initial = initialSim; addr = fbBase;
     }
-    if (opts.quiet || i < opts.startSkip || (i - opts.startSkip) % opts.every !== 0) continue;
-    if (!changed && Buffer.compare(initial, Buffer.from(mem8().slice(fbBase, fbBase + initial.length))) !== 0) changed = true;
-    const name = `frame_${String(i).padStart(4, "0")}.png`;
-    fs.writeFileSync(path.join(opts.out, name), encodePNG(decode(addr), WIDTH, HEIGHT));
-    written.push({ file: name, update: i, buffer: (addr - fbBase) / FB_BYTES | 0 });
+    // Capture the frame BEFORE any per-tick export call: the wasm shadow stack
+    // (0x0..0x39a0) overlaps the simulator region at 0x20, so calling an export
+    // after update() scribbles a black band over columns ~49..57 of the frame.
+    if (!(opts.quiet || i < opts.startSkip || (i - opts.startSkip) % opts.every !== 0)) {
+        if (!changed && Buffer.compare(initial, Buffer.from(mem8().slice(fbBase, fbBase + initial.length))) !== 0) changed = true;
+        const name = `frame_${String(i).padStart(4, "0")}.png`;
+        fs.writeFileSync(path.join(opts.out, name), encodePNG(decode(addr), WIDTH, HEIGHT));
+        written.push({ file: name, update: i, buffer: (addr - fbBase) / FB_BYTES | 0 });
+    }
+    if (timedAt.has(i)) runTimed(i);
 }
 const runMs = Date.now() - t0;
 if (written.length && !changed) warn(`framebuffer region at 0x${fbBase.toString(16)} never changed since instantiation; frames are blank`);
 
 // Query exports after the last update().
 const exportValues = {};
-for (const n of opts.dumpExports) {
-    let v;
-    try { v = instance.exports[n](); } catch (e) { trap(`${n}()`, e); }
-    if (typeof v === "bigint") v = Number(v);
-    if (typeof v !== "number") { console.error(`preview: --dump-exports: ${n}() returned nothing (it must return an integer)`); process.exit(2); }
-    exportValues[n] = v;
-}
+for (const n of opts.dumpExports) exportValues[n] = callExport(n, "--dump-exports");
 if (opts.dumpExports.length) console.error(`preview: exports after update #${opts.frames - 1}: ${opts.dumpExports.map((n) => `${n}=${exportValues[n]}`).join(" ")}`);
-const OPS = { "==": (a, b) => a === b, "!=": (a, b) => a !== b, "<": (a, b) => a < b, "<=": (a, b) => a <= b, ">": (a, b) => a > b, ">=": (a, b) => a >= b };
 const expectResults = opts.expect.map((e) => {
     const actual = exportValues[e.name], pass = OPS[e.op](actual, e.value);
     console.error(`preview: ${pass ? "PASS" : "FAIL"} ${e.expr} (${e.name} = ${actual})`);
     return { ...e, actual, pass };
 });
-const failed = expectResults.filter((r) => !r.pass).length;
+const failed = expectResults.filter((r) => !r.pass).length + atResults.filter((r) => !r.pass).length;
+const checks = expectResults.length + atResults.length;
 
 const meta = {
     cart: path.resolve(wasmPath), width: WIDTH, height: HEIGHT, format: "rgb565 column-major, wasm byte-swapped",
@@ -572,11 +636,16 @@ const meta = {
     script: opts.script ? { file: path.resolve(opts.script), entries: scriptEntries.map(({ from, to, hold }) => ({ from, to, hold })) } : null,
     quiet: opts.quiet, rawColors: opts.rawColors,
     imports: imports.map((i) => `${i.module}.${i.name}`), moduleExports: exportNames,
-    exports: exportValues, expect: expectResults,
+    exports: exportValues, expect: expectResults, at: atResults, calls: callResults,
     framebuffer: { source: fbSource, base: `0x${fbBase.toString(16)}`, buffer1: fbSource === "dwarf" || fbSource === "export" ? `0x${(fbBase + FB_BYTES).toString(16)}` : null, drawPointer: hasPtr ? `0x${ptrVar.addr.toString(16)}` : null },
     dataSegments: dataSegs.map((d) => ({ off: d.off === null ? null : `0x${d.off.toString(16)}`, size: d.size })),
     warnings, frames: written,
 };
 fs.writeFileSync(path.join(opts.out, "frames.json"), JSON.stringify(meta, null, 2) + "\n");
 console.error(`preview: ${written.length} frame(s) from ${opts.frames} update(s) -> ${opts.out}/ (framebuffer ${fbSource} @ 0x${fbBase.toString(16)}, ${runMs} ms)`);
-if (failed) { console.error(`preview: ${failed} of ${expectResults.length} expectation(s) failed`); process.exit(3); }
+if (failed) {
+    const list = [...atResults.filter((r) => !r.pass).map((r) => `${r.expr} after update #${r.tick} (got ${r.actual})`),
+        ...expectResults.filter((r) => !r.pass).map((r) => `${r.expr} at the end (got ${r.actual})`)];
+    console.error(`preview: ${failed} of ${checks} expectation(s) failed: ${list.join("; ")}`);
+    process.exit(3);
+}

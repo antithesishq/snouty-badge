@@ -1,0 +1,4 @@
+# m2_play: the preview GIF script. A on the title at 30, hold still and fire through the
+# opening gnat strings (60-239), then sweep up 40 / hold 20 / down 40 / hold 20 to 3960 with
+# bombs at 2240 (moth + beetle wave) and 3380 (54 s wave). Survives the loop with all 3 rewinds.
+--frames 4000 --dump-exports debug_state,debug_score,debug_rewinds,debug_bombs,debug_grazes --expect "debug_score > 570" --expect "debug_state == 1" --expect "debug_rewinds == 3" --at "2239 debug_bombs == 2" --at "2240 debug_bombs == 1" --at "3380 debug_bombs == 0"

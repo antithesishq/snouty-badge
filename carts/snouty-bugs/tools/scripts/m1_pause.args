@@ -1,0 +1,2 @@
+# m1_pause: start, fire, pause at 300, unpause at 420, fire to 600; still playing at the end.
+--frames 600 --dump-exports debug_state,debug_score,debug_lives --expect "debug_state == 1" --at "350 debug_state == 2"
