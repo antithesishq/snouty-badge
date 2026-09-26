@@ -73,9 +73,9 @@ MANIFEST: dict[str, Sheet] = {
         Sheet("bg_near.png", 256, 24, 256, 24, 1, True, tile_x=True),
         # Later milestones (ASSETS.md section 7). Accepted from a study but
         # only useful once build.zig lists them.
-        Sheet("bugs.png", 160, 16, 16, 16, 10, True, in_build=False),
+        Sheet("bugs.png", 160, 16, 16, 16, 10, True),
         Sheet("boss.png", 240, 48, 48, 48, 5, True, in_build=False),
-        Sheet("fx_big.png", 192, 32, 32, 32, 6, True, in_build=False),
+        Sheet("fx_big.png", 192, 32, 32, 32, 6, True),
         Sheet("title.png", 128, 40, 128, 40, 1, True, in_build=False),
     ]
 }
