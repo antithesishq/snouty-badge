@@ -1,6 +1,7 @@
 //! Snouty running badge (v4: jumps on A). See PLAN.md for layout and motion.
 const cart = @import("cart-api");
 const gfx = @import("gfx");
+const build_options = @import("build_options");
 
 comptime {
     cart.export_start_code();
@@ -18,7 +19,8 @@ const panel_y = ground_y + ground_height; // 108
 const panel_height = cart.screen_height - panel_y; // 20
 const name_y = 110;
 const company_y = 119;
-const name = "Adrian Hatch";
+/// Set with `zig build -Dname=...`.
+const name = build_options.name;
 const company = "Antithesis";
 
 // Iris marks at both ends of the panel (PLAN.md v2). The text is centered in
@@ -27,6 +29,10 @@ const iris_y = 110;
 const iris_left_x = 8;
 const iris_size = gfx.iris_spin.height; // 16, square cells
 const iris_right_x = cart.screen_width - iris_left_x - iris_size; // 136
+comptime {
+    if (name.len * cart.font_width > iris_right_x - (iris_left_x + iris_size))
+        @compileError("-Dname is too long to fit between the Iris marks");
+}
 
 // Iris coin spin: the strip holds one full 360-degree turn in 24 frames
 // (front face white, back face grey, widths follow |cos|). Both marks spin in
