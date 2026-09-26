@@ -28,12 +28,20 @@ var show_debug: bool = build_options.debug_overlay;
 var random: rng.Xorshift = undefined;
 var world: maze.Maze = .{};
 var maze_size: u8 = 12;
+/// Seed of the current rng stream, so debug_set_size and debug_set_seed
+/// give the same maze whichever order the harness calls them in.
+var seed: u32 = 0;
 
 pub fn start() void {
     cart.set_vsync_enabled(1000.0 / 60.0);
     cart.set_double_buffer_mode(.no_copy_full_frame);
     textures.init();
-    random = rng.Xorshift.init(cart.rand());
+    reseed(cart.rand());
+}
+
+fn reseed(s: u32) void {
+    seed = s;
+    random = rng.Xorshift.init(s);
     new_maze();
 }
 
@@ -47,7 +55,8 @@ pub fn update() void {
 
     if (input.pressed(.select)) show_debug = !show_debug;
     if (input.pressed(.start)) camera.reset(&world);
-    if (input.pressed(.a) and input.held(.b) or input.pressed(.b) and input.held(.a)) new_maze();
+    // A+B: new maze, once per chord (the tick the second button goes down).
+    if (input.held(.a) and input.held(.b) and (input.pressed(.a) or input.pressed(.b))) new_maze();
     camera.debug_fly(.{
         .up = input.held(.up),
         .down = input.held(.down),
@@ -88,6 +97,10 @@ comptime {
         @export(&debug_set_seed, .{ .name = "debug_set_seed" });
         @export(&debug_cell_x, .{ .name = "debug_cell_x" });
         @export(&debug_cell_z, .{ .name = "debug_cell_z" });
+        @export(&debug_set_size, .{ .name = "debug_set_size" });
+        @export(&debug_finish_x, .{ .name = "debug_finish_x" });
+        @export(&debug_finish_z, .{ .name = "debug_finish_z" });
+        @export(&debug_run_count, .{ .name = "debug_run_count" });
     }
 }
 
@@ -120,9 +133,23 @@ fn debug_set_camera(x: f32, y: f32, z: f32, yaw_deg: f32, pitch_deg: f32, roll_d
     };
 }
 /// Reseeds and regenerates the maze (call before the first update()).
-fn debug_set_seed(seed: u32) callconv(.c) void {
-    random = rng.Xorshift.init(seed);
-    new_maze();
+fn debug_set_seed(s: u32) callconv(.c) void {
+    reseed(s);
+}
+/// Sets the maze to n x n (clamped to 4..16) and regenerates it from the
+/// current seed, so set_size then set_seed or the reverse agree.
+fn debug_set_size(n: u32) callconv(.c) void {
+    maze_size = @intCast(std.math.clamp(n, 4, maze.max_size));
+    reseed(seed);
+}
+fn debug_finish_x() callconv(.c) u32 {
+    return world.finish[0];
+}
+fn debug_finish_z() callconv(.c) u32 {
+    return world.finish[1];
+}
+fn debug_run_count() callconv(.c) u32 {
+    return world.run_count;
 }
 fn debug_cell_x() callconv(.c) u32 {
     return @intFromFloat(@max(0.0, camera.cam.pos[0]));

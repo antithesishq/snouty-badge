@@ -1,0 +1,9 @@
+[
+  { "name": "start",          "seed": 1, "pose": null },
+  { "name": "near_wall",      "seed": 1, "pose": "0.5,0.5,0.09,35,0,0" },
+  { "name": "ceiling_edge",   "seed": 1, "pose": "0.5,1.0,0.5,0,45,0" },
+  { "name": "overhead",       "seed": 1, "pose": "6,13.5,6,0,90,0" },
+  { "name": "rolled",         "seed": 1, "pose": "0.5,0.5,0.5,90,0,180" },
+  { "name": "outside_corner", "seed": 1, "pose": "-3,3,-3,135,35,0" },
+  { "name": "overhead_16",    "seed": 1, "pose": "8,17.5,8,0,90,0", "calls": ["debug_set_size:16"] }
+]

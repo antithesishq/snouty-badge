@@ -489,4 +489,7 @@ added to 9):
   rasterizer; rasterizer chosen so the rise can be real). Placeholder art
   for v1 per Adrian.
 - 2026-09-26: section 18 decided (all defaults, 20 s cap on the flip).
-  M0 and M1 started; contracts in `PLAN.md`.
+  M0 tagged `m0`.
+- 2026-09-26: M1 tagged `m1`: real rasterizer, maze generator, fly
+  camera, placeholders, golden tests, `docs/preview_m1.gif`. Hardware gate
+  (section 16) pending Adrian's flash. Deviations recorded in PLAN.md.

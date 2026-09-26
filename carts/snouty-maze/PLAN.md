@@ -232,3 +232,29 @@ exports; Track C relies on the ones listed.
 3. `docs/preview_m1.gif` from `m1_fly.json`.
 4. Tag `m1`, hand-off note; Adrian flashes and reports fps and `render_us`
    at the `overhead` and `start` poses (SPEC section 16 table).
+
+## M1 result (2026-09-26, tag `m1`)
+
+All done criteria met on the simulator: build, `zig build test` (16 host
+tests), `check-float` PASS, `.text` 35 KB, `.bss` 50 KB, seven goldens
+committed and passing, `docs/preview_m1.gif` from `m1_fly.json`. Hardware
+gate pending. Deviations from this plan, all kept:
+
+- Finish tile is drawn before the floor (the 0.002 lift is below one z
+  unit at overhead range, and the greater-than test keeps the first draw).
+- Faces are shaded by facing direction (north/south lit, east/west dark),
+  which equals "x-runs lit, z-runs dark" for long sides and makes end caps
+  match the walls they are parallel to.
+- Guard band clamps column ranges and span rows, not vertices (clamping a
+  vertex bends the edge through it).
+- Runs stay sorted between frames; per-polygon plane gradients give exact
+  1/z, u/z, v/z without depending on the clipper. Segments are z-tested
+  before the divide and skipped when fully hidden.
+- Placeholder bricks are 4 courses of 2 in running bond (upright 8x16
+  bricks did not read as bricks). `overhead_16` pose is `8,17.5,8,0,90,0`
+  so the whole 16x16 maze fits. `near_wall` pose is `0.5,0.5,0.09,35,0,0`
+  (the original put the face entirely behind the near plane).
+- Track A's cycle estimate: overhead 12x12 ~4.9 ms, overhead 16x16 ~5.9 ms,
+  start pose ~6.4 ms (pixel fill dominates). Both inside 16.7 ms on paper.
+- Extra wasm exports: `debug_set_size`, `debug_finish_x/z`,
+  `debug_run_count`, `debug_raster_*` counters.

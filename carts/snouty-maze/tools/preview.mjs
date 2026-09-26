@@ -5,6 +5,7 @@
 //                          [--start-skip S] [--fb-addr auto|dwarf|sim|0xADDR]
 //                          [--seed N] [--controls BITS] [--press [BTN:]T1-T2[,...]] [--script FILE.json]
 //                          [--dump-exports NAME[,NAME...]] [--expect "NAME OP VALUE"]... [--quiet] [--raw-colors]
+//                          [--call NAME[:ARG]]... [--pose x,y,z,yaw,pitch,roll]
 //
 // Runs start(), then N x update(). Every K-th update after the first S updates,
 // the displayed framebuffer is decoded and written to DIR/frame_XXXX.png
@@ -26,6 +27,12 @@
 // FAIL per expectation; any FAIL exits 3 after frames.json is written. Values
 // are what the export returns to JS: a u32 >= 2^31 reads as negative (i32).
 // --quiet writes no PNGs and skips framebuffer decoding (soak runs).
+//
+// Setup calls: after start() and before the first update(), each --call NAME
+// or NAME:ARG (ARG an integer, e.g. debug_set_size:16 or debug_set_seed:7) is
+// called in command-line order, then --pose x,y,z,yaw,pitch,roll (six floats,
+// angles in degrees) calls debug_set_camera(x, y, z, yaw, pitch, roll). A
+// missing export, or one taking a different number of arguments, exits 2.
 //
 // Exit codes: 0 ok, 1 cart/load error, 2 usage error, 3 wasm trap or failed --expect.
 //
@@ -108,6 +115,7 @@ function usage(msg) {
         "                          [--fb-addr auto|dwarf|sim|0xADDR] [--seed N] [--controls BITS]\n" +
         "                          [--press [BTN:]T1-T2[,...]] [--script FILE.json] [--dump-exports NAME[,NAME...]]\n" +
         "                          [--expect \"NAME OP VALUE\"]... [--quiet] [--raw-colors]\n" +
+        "                          [--call NAME[:ARG]]... [--pose x,y,z,yaw,pitch,roll]\n" +
         "  BTN: A B START SELECT UP DOWN LEFT RIGHT (bare T1-T2 = A); OP: == != < <= > >=");
     process.exit(2);
 }
@@ -134,9 +142,19 @@ function parseExpect(s) {
     if (!m) usage(`bad --expect '${s}' (want "NAME OP VALUE", OP in == != < <= > >=, integer VALUE)`);
     return { expr: `${m[1]} ${m[2]} ${m[3]}`, name: m[1], op: m[2], value: Number(m[3]) };
 }
+function parseCall(s) {
+    const m = /^\s*([A-Za-z_$][\w$]*)\s*(?::\s*(-?\d+)\s*)?$/.exec(s);
+    if (!m) usage(`bad --call '${s}' (want NAME or NAME:INT)`);
+    return { name: m[1], arg: m[2] === undefined ? null : Number(m[2]), text: m[2] === undefined ? m[1] : `${m[1]}:${m[2]}` };
+}
+function parsePose(s) {
+    const v = s.split(",").map((t) => t.trim());
+    if (v.length !== 6 || v.some((t) => t === "" || !Number.isFinite(Number(t)))) usage(`bad --pose '${s}' (want six numbers x,y,z,yaw,pitch,roll)`);
+    return v.map(Number);
+}
 const argv = process.argv.slice(2);
 const opts = { frames: null, every: 1, out: "out", startSkip: 0, fbAddr: "auto", seed: 1, controls: 0, press: [], rawColors: false,
-    script: null, dumpExports: [], expect: [], quiet: false };
+    script: null, dumpExports: [], expect: [], quiet: false, calls: [], pose: null };
 let wasmPath = null;
 for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
@@ -155,6 +173,8 @@ for (let i = 0; i < argv.length; i++) {
         case "--dump-exports": for (const n of val().split(",").map((s) => s.trim())) { if (!n) usage("--dump-exports: empty name"); if (!opts.dumpExports.includes(n)) opts.dumpExports.push(n); } break;
         case "--expect": opts.expect.push(parseExpect(val())); break;
         case "--quiet": opts.quiet = true; break;
+        case "--call": opts.calls.push(parseCall(val())); break;
+        case "--pose": opts.pose = parsePose(val()); break;
         case "--raw-colors": opts.rawColors = true; break;
         case "-h": case "--help": usage();
         default:
@@ -438,6 +458,20 @@ catch (e) { console.error(`preview: instantiation failed: ${e.message}`); proces
     }
 }
 
+// --call / --pose exports must exist with the right arity; check before running.
+{
+    const setup = opts.calls.map((c) => ({ name: c.name, argc: c.arg === null ? 0 : 1, what: `--call ${c.text}` }));
+    if (opts.pose) setup.push({ name: "debug_set_camera", argc: 6, what: "--pose" });
+    for (const c of setup) {
+        const f = instance.exports[c.name];
+        if (typeof f !== "function") {
+            console.error(`preview: ${c.what}: '${c.name}' is ${exportNames.includes(c.name) ? "not a function" : "not exported"} by ${wasmPath} (function exports: ${exportNames.filter((n) => typeof instance.exports[n] === "function").join(", ") || "none"})`);
+            process.exit(2);
+        }
+        if (f.length !== c.argc) { console.error(`preview: ${c.what}: '${c.name}' takes ${f.length} argument(s), not ${c.argc}`); process.exit(2); }
+    }
+}
+
 // Resolve framebuffer location.
 let dwarf = null, dwarfError = null;
 try { dwarf = dwarfVariables(custom); } catch (e) { dwarfError = e.message; }
@@ -526,6 +560,8 @@ const setControls = (i) => dv().setUint16(ADDR_CONTROLS, i < 0 ? opts.controls :
 setControls(-1);
 for (const init of ["_start", "_initialize"]) if (exportNames.includes(init)) { try { instance.exports[init](); } catch (e) { trap(init, e); } }
 try { instance.exports.start(); } catch (e) { trap("start()", e); }
+for (const c of opts.calls) { try { if (c.arg === null) instance.exports[c.name](); else instance.exports[c.name](c.arg); } catch (e) { trap(`--call ${c.text}`, e); } }
+if (opts.pose) { try { instance.exports.debug_set_camera(...opts.pose); } catch (e) { trap("--pose debug_set_camera()", e); } }
 
 const written = [];
 let changed = false;
@@ -570,7 +606,7 @@ const meta = {
     updates: opts.frames, every: opts.every, startSkip: opts.startSkip, seed: opts.seed, controls: opts.controls,
     press: opts.press.map((p) => `${p.button}:${p.from}-${p.to}`).join(",") || null, pressItems: opts.press,
     script: opts.script ? { file: path.resolve(opts.script), entries: scriptEntries.map(({ from, to, hold }) => ({ from, to, hold })) } : null,
-    quiet: opts.quiet, rawColors: opts.rawColors,
+    quiet: opts.quiet, rawColors: opts.rawColors, calls: opts.calls.map((c) => c.text), pose: opts.pose,
     imports: imports.map((i) => `${i.module}.${i.name}`), moduleExports: exportNames,
     exports: exportValues, expect: expectResults,
     framebuffer: { source: fbSource, base: `0x${fbBase.toString(16)}`, buffer1: fbSource === "dwarf" || fbSource === "export" ? `0x${(fbBase + FB_BYTES).toString(16)}` : null, drawPointer: hasPtr ? `0x${ptrVar.addr.toString(16)}` : null },
