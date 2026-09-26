@@ -1,6 +1,7 @@
 //! Memory map and memory bank controllers. Owner in M1: track A.
 //! PPU registers 0xFF40..0xFF4B are delegated to core/ppu.zig
 //! (`ppu.write_reg` / `ppu.read_reg`) so their side effects live with the PPU.
+//! APU registers and wave RAM 0xFF10..0xFF3F likewise go to core/apu.zig.
 const gb_mod = @import("gb.zig");
 const Gb = gb_mod.Gb;
 const Reg = gb_mod.Reg;
@@ -8,6 +9,7 @@ const ppu = @import("ppu.zig");
 const timer = @import("timer.zig");
 const serial = @import("serial.zig");
 const joypad = @import("joypad.zig");
+const apu = @import("apu.zig");
 
 pub const MbcKind = enum(u8) { none, mbc1, mbc3, mbc5 };
 
@@ -193,8 +195,7 @@ fn read_io(gb: *Gb, reg: u8) u8 {
         Reg.div, Reg.tima, Reg.tma => gb.io[reg],
         Reg.tac => gb.io[Reg.tac] | 0xF8,
         Reg.if_ => gb.io[Reg.if_] | 0xE0,
-        // APU registers and wave RAM: raw until M3.
-        0x10...0x14, 0x16...0x1E, 0x20...0x26, 0x30...0x3F => gb.io[reg],
+        0x10...0x3F => apu.read_reg(gb, reg),
         Reg.dma => gb.io[Reg.dma],
         0x40...0x45, 0x47...0x4B => ppu.read_reg(gb, reg),
         else => 0xFF,
@@ -239,7 +240,7 @@ fn write_io(gb: *Gb, reg: u8, v: u8) void {
         Reg.tima, Reg.tma => gb.io[reg] = v,
         Reg.tac => timer.write_tac(gb, v),
         Reg.if_ => gb.io[Reg.if_] = v | 0xE0,
-        0x10...0x14, 0x16...0x1E, 0x20...0x26, 0x30...0x3F => gb.io[reg] = v,
+        0x10...0x3F => apu.write_reg(gb, reg, v),
         Reg.dma => {
             oam_dma(gb, v);
             ppu.write_reg(gb, reg, v);

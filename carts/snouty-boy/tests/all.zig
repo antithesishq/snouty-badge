@@ -6,4 +6,5 @@ test {
     _ = @import("blargg.zig");
     _ = @import("acid2.zig");
     _ = @import("ppu_unit.zig");
+    _ = @import("apu_unit.zig");
 }
