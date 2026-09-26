@@ -158,6 +158,18 @@ The M2 scripts:
 - `m2_death.json`: the same input for 6000 ticks; every rewind is spent, the
   ship dies and the game is back on the title at the end.
 
+The M3 scripts use two wasm-only test hooks through `--call-at`: `debug_god`
+toggles god mode (hits are ignored) and `debug_warp` jumps the wave clock to
+the 66 s WARNING so the boss arrives about 6 s later.
+
+- `m3_boss.json`: the M2 sweep without bombs, god at 31, warp at 32; the boss
+  spawns at about 393, dies under constant fire at about 1008; then "+500",
+  "STAGE 2", one extra bomb, and the table restarts at about 1190.
+- `m3_loop.json`: the same input for 2000 ticks; the stage-2 table spawns
+  again (the 8 s beetle at about 1670, now with 5 HP).
+- `m3_bomb_boss.json`: god and warp, fire until 440, bomb at 480: the boss
+  loses exactly 8 HP on the press tick and one bomb is spent.
+
 ```sh
 node tools/preview.mjs zig-out/bin/snouty-bugs.wasm --frames 1800 --every 6 --out out/ \
   --script tools/scripts/m1_play.json \

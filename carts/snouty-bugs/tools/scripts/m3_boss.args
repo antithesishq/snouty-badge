@@ -1,0 +1,4 @@
+# m3_boss: the M2 sweep with no bombs, plus the wasm test hooks: god mode at 31 (hits are
+# ignored) and warp at 32 (waves jump to the 66 s WARNING). Boss spawns ~393, fights from
+# ~457, dies ~1008 under constant fire, "+500" then "STAGE 2", +1 bomb, waves resume ~1190.
+--frames 1400 --call-at "31 debug_god" --call-at "32 debug_warp" --dump-exports debug_state,debug_stage,debug_stage_clears,debug_bombs,debug_boss_hp,debug_phase,debug_score --at "100 debug_phase == 1" --at "500 debug_boss_hp > 0" --at "500 debug_phase == 2" --expect "debug_stage_clears == 1" --expect "debug_stage == 1" --expect "debug_bombs == 3" --expect "debug_state == 1" --expect "debug_score > 500"
