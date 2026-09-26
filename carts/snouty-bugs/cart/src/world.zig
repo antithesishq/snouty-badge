@@ -1,9 +1,11 @@
 //! The World: every piece of mutable play state in one plain struct, and
 //! the one global instance (SPEC.md section 13.1). No pointers, no slices,
-//! no undefined bytes, so a snapshot is a struct copy and two worlds compare
-//! with `std.mem.eql` on their bytes. Every field has a default, so `.{}`
-//! is a fresh game. Meta-state (state machine, lives, tick_total) lives
-//! outside, in `main.zig` and `player.zig`, and is never rewound.
+//! no undefined bytes, so a snapshot is a struct copy; two worlds compare
+//! field by field with `history.worlds_equal` (not by bytes: the pool
+//! structs have padding). Every field has a default, so `.{}` is a fresh
+//! game. Meta-state (state machine, rewind stock, tick_total, history)
+//! lives outside, in `main.zig`, `input.zig` and `history.zig`, and is
+//! never rewound.
 const input = @import("input.zig");
 const rng = @import("rng.zig");
 const player = @import("player.zig");
@@ -14,7 +16,8 @@ const waves = @import("waves.zig");
 const draw = @import("draw.zig");
 
 /// How `simulate()` runs a tick: `.live` emits audio and neopixel effects,
-/// `.silent` (rewind catch-up, M4) runs the same simulation without them.
+/// `.silent` (`history.restore` catch-up) runs the same world-side
+/// simulation without them and without touching meta-state.
 pub const Mode = enum { live, silent };
 
 pub const World = struct {

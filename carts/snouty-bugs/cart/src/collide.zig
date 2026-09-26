@@ -38,7 +38,9 @@ pub fn kill(e: *enemies.Enemy) void {
 }
 
 /// Runs all passes. Returns the first contact with the ship this tick
-/// (bullets before enemies), or `.none` if unhurt or invulnerable.
+/// (bullets before enemies), or `.none` if unhurt or invulnerable. The
+/// offender is left alive: `main` decides (a rewind restores the world
+/// anyway; god mode and death remove it with `remove_offender`).
 pub fn run() Hit {
     bolts_vs_enemies();
     if (player.invulnerable()) return .{};
@@ -48,7 +50,6 @@ pub fn run() Hit {
         if (!b.active) continue;
         const bb = bullets.hitbox(b.*);
         if (overlap(hb[0], hb[1], hb[2], hb[3], bb[0], bb[1], bb[2], bb[3])) {
-            b.active = false;
             return .{ .by = .bullet, .kind = b.source, .index = @intCast(i) };
         }
         if (b.grazed) continue;
@@ -66,12 +67,22 @@ pub fn run() Hit {
         if (!e.live() or !e.hittable()) continue;
         const s = e.size();
         if (!overlap(hb[0], hb[1], hb[2], hb[3], e.x, e.y, s[0], s[1])) continue;
-        const kind = e.kind;
-        // The boss survives a ram (M3); everything else dies.
-        if (kind != .boss) kill(e);
-        return .{ .by = .enemy, .kind = kind, .index = @intCast(i) };
+        return .{ .by = .enemy, .kind = e.kind, .index = @intCast(i) };
     }
     return .{};
+}
+
+/// The M3 aftermath of a hit: the bullet vanishes, a rammer dies (the
+/// boss survives a ram).
+pub fn remove_offender(hit: Hit) void {
+    switch (hit.by) {
+        .none => {},
+        .bullet => world.w.enemy_bullets[hit.index].active = false,
+        .enemy => {
+            const e = &world.w.enemies[hit.index];
+            if (e.kind != .boss) kill(e);
+        },
+    }
 }
 
 fn bolts_vs_enemies() void {
