@@ -7,6 +7,7 @@ const draw = @import("draw.zig");
 const input = @import("input.zig");
 const bullets = @import("bullets.zig");
 const collide = @import("collide.zig");
+const enemies = @import("enemies.zig");
 const world = @import("world.zig");
 
 pub const cell_w = 32;
@@ -30,6 +31,8 @@ const bank_hold: u32 = 6;
 pub const invuln_ticks: u32 = 120;
 /// Length of the bomb effect and of its invulnerability.
 pub const bomb_ticks: u32 = 30;
+/// HP a bomb takes off the boss (SPEC.md section 5).
+const bomb_boss_damage: u8 = 8;
 const score_cap: u32 = 999_999;
 
 pub const Pose = enum(u32) { level = 0, up = 1, down = 2 };
@@ -94,8 +97,9 @@ pub fn hitbox() [4]f32 {
 
 /// Fires a bomb if B was pressed this tick, `stock` > 0 and no bomb is
 /// active: clears every enemy bullet, kills every live non-boss enemy (with
-/// score) and grants 30 ticks of invulnerability. `stock` is main.zig's
-/// bomb count. Returns true when a bomb went off.
+/// score), deals 8 damage to a hittable boss and grants 30 ticks of
+/// invulnerability. `stock` is main.zig's bomb count. Returns true when a
+/// bomb went off.
 pub fn try_bomb(stock: *u32) bool {
     const p = &world.w.player;
     if (!input.pressed(.b) or stock.* == 0 or p.bomb_timer != 0) return false;
@@ -105,6 +109,16 @@ pub fn try_bomb(stock: *u32) bool {
     for (&world.w.enemies) |*e| {
         if (!e.live() or e.kind == .boss) continue;
         collide.kill(e);
+    }
+    if (enemies.boss()) |b| {
+        if (b.live() and b.hittable()) {
+            switch (enemies.damage(b, bomb_boss_damage)) {
+                .alive, .boss_dying => {},
+                // Not expected for the boss (it dies through its own
+                // sequence), but handled like any other kill.
+                .killed => collide.kill(b),
+            }
+        }
     }
     p.invuln = @max(p.invuln, bomb_ticks);
     return true;

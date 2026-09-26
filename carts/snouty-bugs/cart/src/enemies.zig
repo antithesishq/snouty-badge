@@ -1,23 +1,26 @@
 //! Enemy pool (`world.w.enemies`) and the per-kind movement and fire
-//! programs (SPEC.md section 6, PLAN.md "Gameplay numbers for M2"). Every
-//! program is plain data in `Enemy`; the only randomness is the world rng,
-//! drawn in `spawn` (spider hang y) and in `update` (moth targets, pool
-//! order), so the rng call order per tick is deterministic.
+//! programs (SPEC.md sections 6 and 7, PLAN.md "Gameplay numbers for M2"
+//! and "for M3"). Every program is plain data in `Enemy`; the only
+//! randomness is the world rng, drawn in `spawn` (spider hang y) and in
+//! `update` (moth targets, boss teleport and death explosions, in pool
+//! order), so the rng call order per tick is deterministic. Fire programs
+//! read the loop modifiers from `waves` at fire time.
 const cart = @import("cart-api");
 const gfx = @import("gfx");
 const draw = @import("draw.zig");
+const fx = @import("fx.zig");
 const patterns = @import("patterns.zig");
 const player = @import("player.zig");
 const rng = @import("rng.zig");
+const waves = @import("waves.zig");
 const world = @import("world.zig");
 
-/// `boss` is reserved for M3.
 pub const Kind = enum(u8) { gnat, wasp, beetle, spider, moth, boss };
 
 /// Where an enemy is in its movement program. Which values a kind uses:
 /// wasp enter/pause/charge, beetle enter/sit/leave, spider drop/hang/climb,
-/// moth wander, gnat none.
-pub const Phase = enum(u8) { enter, pause, charge, sit, leave, drop, hang, climb, wander };
+/// moth wander, boss enter/fight/flicker/vanished/dying, gnat none.
+pub const Phase = enum(u8) { enter, pause, charge, sit, leave, drop, hang, climb, wander, fight, flicker, vanished, dying };
 
 pub const Enemy = struct {
     active: bool = false,
@@ -27,7 +30,7 @@ pub const Enemy = struct {
     /// Cell top-left.
     x: f32 = 0,
     y: f32 = 0,
-    /// Gnat: wobble center line.
+    /// Gnat: wobble center line. Boss: bob center line.
     base_y: f32 = 0,
     /// Ticks since it appeared (animation, gnat wobble, moth fire clock).
     age: u32 = 0,
@@ -35,7 +38,8 @@ pub const Enemy = struct {
     /// Ticks of white hit flash left.
     flash: u8 = 0,
     phase: Phase = .enter,
-    /// Ticks spent in the current phase (moth: ticks since first on screen).
+    /// Ticks spent in the current phase (moth: ticks since first on screen;
+    /// boss: also the bob clock while fighting).
     timer: u32 = 0,
     /// Wasp charge velocity.
     vx: f32 = 0,
@@ -46,10 +50,15 @@ pub const Enemy = struct {
     /// Has overlapped the screen at least once; off-screen culling only
     /// applies after that.
     entered: bool = false,
+    /// Boss: fighting ticks so far (drives the fire phase), and the ring
+    /// and spiral angles in 1/256 turns.
+    fire_tick: u32 = 0,
+    ring_phase: u8 = 0,
+    spiral_angle: u8 = 0,
 
-    /// Spawned and on the field (collidable, drawn).
+    /// Spawned and on the field (collidable, drawn). A vanished boss is not.
     pub fn live(e: Enemy) bool {
-        return e.active and e.delay == 0;
+        return e.active and e.delay == 0 and !(e.kind == .boss and e.phase == .vanished);
     }
 
     pub fn size(e: Enemy) [2]f32 {
@@ -70,10 +79,14 @@ pub const Enemy = struct {
         };
     }
 
-    /// Whether player shots can hit it (false while the boss flickers, M3).
+    /// Whether player shots can hit it: false while the boss flickers, is
+    /// vanished or is dying.
     pub fn hittable(e: Enemy) bool {
-        _ = e;
-        return true;
+        if (e.kind != .boss) return true;
+        return switch (e.phase) {
+            .flicker, .vanished, .dying => false,
+            else => true,
+        };
     }
 
     /// Cell center: the emitter position for its bullets.
@@ -142,6 +155,47 @@ const moth_exit_x: f32 = -40;
 const moth_fire_every: u32 = 20;
 const moth_bullet_speed: f32 = 1.5;
 
+// Boss (SPEC.md section 7, PLAN.md "Gameplay numbers for M3").
+const boss_base_hp: u32 = 60;
+const boss_hp_per_loop: u32 = 20;
+const boss_speed: f32 = 1.0;
+const boss_stop_x: f32 = 104;
+const boss_bob_amplitude: f32 = 32;
+const boss_bob_period: u32 = 240;
+const boss_min_y: f32 = 8;
+const boss_max_y: f32 = 80;
+const boss_teleport_every: u32 = 300;
+const boss_flicker: u32 = 20;
+const boss_vanish: u32 = 20;
+const boss_min_x = 96;
+const boss_max_x = 112;
+const boss_min_base_y = 24;
+const boss_max_base_y = 56;
+const boss_fire_phase_len: u32 = 240;
+const boss_fire_phases = 3;
+const boss_ring_n = 12;
+const boss_ring_every: u32 = 40;
+const boss_ring_step: u8 = 11;
+const boss_ring_speed: f32 = 0.8;
+const boss_stream_every: u32 = 60;
+const boss_stream_n = 3;
+const boss_stream_gap: u32 = 8;
+const boss_stream_speed: f32 = 1.5;
+const boss_spread_every: u32 = 90;
+const boss_spread_n = 5;
+const boss_spread_step = 12;
+const boss_spread_speed: f32 = 0.6;
+const boss_spiral_every: u32 = 4;
+const boss_spiral_step: u8 = 8;
+const boss_spiral_speed: f32 = 1.0;
+const boss_dying: u32 = 60;
+const boss_blast_every: u32 = 10;
+/// Small death explosions are centered this far inside the 48x48 cell.
+const boss_blast_margin = 8;
+const boss_frame_ticks = 6;
+const boss_idle_frames = 4;
+const boss_flicker_cell = 4;
+
 /// Off-screen cull bounds for the cell top-left (after having entered).
 const cull_min: f32 = -16;
 const cull_max_x: f32 = 176;
@@ -163,8 +217,13 @@ fn start_hp(kind: Kind) u8 {
         .beetle => beetle_hp,
         .spider => spider_hp,
         .moth => moth_hp,
-        .boss => 60,
+        .boss => @intCast(@min(boss_max_hp(), 255)),
     };
+}
+
+/// Boss HP for the current loop: 60 + 20 per completed stage.
+pub fn boss_max_hp() u32 {
+    return boss_base_hp + boss_hp_per_loop * @as(u32, world.w.waves.loop);
 }
 
 /// Spawns one enemy of `kind` with its cell top-left at (x, y), appearing
@@ -182,6 +241,10 @@ pub fn spawn(kind: Kind, x: f32, y: f32, delay: u32) ?*Enemy {
         .base_y = y,
         .hp = start_hp(kind),
     };
+    switch (kind) {
+        .beetle, .spider => e.hp +|= waves.extra_hp(),
+        else => {},
+    }
     switch (kind) {
         .spider => {
             e.y = spider_start_y;
@@ -226,13 +289,13 @@ pub fn update() void {
             .beetle => update_beetle(e),
             .spider => update_spider(e),
             .moth => update_moth(e),
-            .boss => {},
+            .boss => update_boss(e),
         }
         e.age += 1;
         if (!e.active) continue;
         if (!e.entered) {
             e.entered = on_screen(e);
-        } else if (off_field(e)) {
+        } else if (e.kind != .boss and off_field(e)) {
             e.active = false;
         }
     }
@@ -288,9 +351,9 @@ fn update_beetle(e: *Enemy) void {
         },
         .sit => {
             e.timer += 1;
-            if (e.timer % beetle_fire_every == 0) {
+            if (e.timer % waves.fire_interval(beetle_fire_every) == 0) {
                 const c = e.center();
-                patterns.spread(c[0], c[1], beetle_spread_n, beetle_spread_step, beetle_bullet_speed, .round, .beetle);
+                patterns.spread(c[0], c[1], beetle_spread_n, beetle_spread_step, waves.bullet_speed(beetle_bullet_speed), .round, .beetle);
             }
             if (e.timer >= beetle_sit) {
                 e.phase = .leave;
@@ -314,9 +377,9 @@ fn update_spider(e: *Enemy) void {
         },
         .hang => {
             e.timer += 1;
-            if (e.timer % spider_fire_every == 0) {
+            if (e.timer % waves.fire_interval(spider_fire_every) == 0) {
                 const c = e.center();
-                patterns.arc(c[0], c[1], spider_arc_n, spider_arc_span, spider_bullet_speed, .round, .spider);
+                patterns.arc(c[0], c[1], spider_arc_n, spider_arc_span, waves.bullet_speed(spider_bullet_speed), .round, .spider);
             }
             if (e.timer >= spider_hang) {
                 e.phase = .climb;
@@ -349,10 +412,100 @@ fn update_moth(e: *Enemy) void {
     }
     if (e.entered) {
         e.timer += 1;
-        if (e.age % moth_fire_every == 0 and e.age > 0) {
+        if (e.age % waves.fire_interval(moth_fire_every) == 0 and e.age > 0) {
             const c = e.center();
-            patterns.aimed(c[0], c[1], moth_bullet_speed, .needle, .moth);
+            patterns.aimed(c[0], c[1], waves.bullet_speed(moth_bullet_speed), .needle, .moth);
         }
+    }
+}
+
+/// Enter to x 104, then fight: bob on the sine table, fire, and every 300
+/// fighting ticks teleport (flicker 20, vanished 20, reappear at a random
+/// x and bob line). Dying: 60 ticks of small explosions, then the big one.
+fn update_boss(e: *Enemy) void {
+    switch (e.phase) {
+        .enter => {
+            e.x -= boss_speed;
+            if (e.x <= boss_stop_x) {
+                e.x = boss_stop_x;
+                e.phase = .fight;
+                e.timer = 0;
+            }
+        },
+        .fight => {
+            const i = (e.timer % boss_bob_period) * 256 / boss_bob_period;
+            const y = e.base_y + boss_bob_amplitude * sin_table[i];
+            e.y = @min(@max(y, boss_min_y), boss_max_y);
+            boss_fire(e);
+            e.fire_tick += 1;
+            e.timer += 1;
+            if (e.timer >= boss_teleport_every) {
+                e.phase = .flicker;
+                e.timer = 0;
+            }
+        },
+        .flicker => {
+            e.timer += 1;
+            if (e.timer >= boss_flicker) {
+                e.phase = .vanished;
+                e.timer = 0;
+            }
+        },
+        .vanished => {
+            e.timer += 1;
+            if (e.timer >= boss_vanish) {
+                e.x = @floatFromInt(rng.range(boss_min_x, boss_max_x));
+                e.base_y = @floatFromInt(rng.range(boss_min_base_y, boss_max_base_y));
+                e.y = e.base_y;
+                e.phase = .fight;
+                e.timer = 0;
+            }
+        },
+        .dying => {
+            if (e.timer >= boss_dying) {
+                const c = e.center();
+                fx.spawn(.big_explosion, @intFromFloat(@floor(c[0])), @intFromFloat(@floor(c[1])));
+                player.add_score(e.points());
+                e.active = false;
+                waves.boss_cleared();
+                return;
+            }
+            if (e.timer % boss_blast_every == 0) {
+                const ox = rng.range(boss_blast_margin, 48 - boss_blast_margin);
+                const oy = rng.range(boss_blast_margin, 48 - boss_blast_margin);
+                const bx: i32 = @intFromFloat(@floor(e.x));
+                const by: i32 = @intFromFloat(@floor(e.y));
+                fx.spawn(.explosion, bx + ox, by + oy);
+                e.flash = 2;
+            }
+            e.timer += 1;
+        },
+        else => {},
+    }
+}
+
+/// The three fire phases, 240 fighting ticks each, cycling.
+fn boss_fire(e: *Enemy) void {
+    const c = e.center();
+    const local = e.fire_tick % boss_fire_phase_len;
+    switch ((e.fire_tick / boss_fire_phase_len) % boss_fire_phases) {
+        0 => if (local % waves.fire_interval(boss_ring_every) == 0) {
+            patterns.ring(c[0], c[1], boss_ring_n, e.ring_phase, waves.bullet_speed(boss_ring_speed), .round, .boss);
+            e.ring_phase +%= boss_ring_step;
+        },
+        1 => {
+            const k = local % waves.fire_interval(boss_stream_every);
+            if (k % boss_stream_gap == 0 and k / boss_stream_gap < boss_stream_n) {
+                patterns.aimed(c[0], c[1], waves.bullet_speed(boss_stream_speed), .needle, .boss);
+            }
+            if (local % waves.fire_interval(boss_spread_every) == 0) {
+                patterns.spread(c[0], c[1], boss_spread_n, boss_spread_step, waves.bullet_speed(boss_spread_speed), .round, .boss);
+            }
+        },
+        else => if (local % waves.fire_interval(boss_spiral_every) == 0) {
+            patterns.shot(c[0], c[1], e.spiral_angle, waves.bullet_speed(boss_spiral_speed), .round, .boss);
+            e.spiral_angle +%= boss_spiral_step;
+        },
     }
 }
 
@@ -374,9 +527,38 @@ pub fn draw_enemies() void {
                 draw.draw_sprite(gfx.bugs, 16, 16, 4 + frame, x, y, opts);
             },
             .moth => draw.draw_sprite(gfx.bugs, 16, 16, 6 + frame, x, y, opts),
-            .boss => {},
+            .boss => switch (e.phase) {
+                .flicker => draw.draw_sprite(gfx.boss, 48, 48, boss_flicker_cell, x, y, .{ .skip_odd = true }),
+                else => draw.draw_sprite(gfx.boss, 48, 48, (e.age / boss_frame_ticks) % boss_idle_frames, x, y, opts),
+            },
         }
     }
+}
+
+pub const DamageResult = enum(u8) { alive, killed, boss_dying };
+
+/// Applies `amount` HP of damage. `.killed`: the caller runs collide.kill
+/// (explosion, score, deactivate). `.boss_dying`: the boss has started (or
+/// is already in) its death sequence, which does its own explosions, score
+/// and stage clear; the caller does nothing more. Damage is applied whatever
+/// the boss phase (bolts are gated by `hittable`; the bomb is not).
+pub fn damage(e: *Enemy, amount: u8) DamageResult {
+    if (e.kind == .boss and e.phase == .dying) return .boss_dying;
+    e.hp -|= amount;
+    if (e.hp > 0) return .alive;
+    if (e.kind != .boss) return .killed;
+    e.phase = .dying;
+    e.timer = 0;
+    e.flash = 0;
+    return .boss_dying;
+}
+
+/// The boss while active (entering, fighting, teleporting or dying).
+pub fn boss() ?*Enemy {
+    for (&world.w.enemies) |*e| {
+        if (e.active and e.kind == .boss) return e;
+    }
+    return null;
 }
 
 pub fn live_count() u32 {

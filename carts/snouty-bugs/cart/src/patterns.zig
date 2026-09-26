@@ -84,3 +84,10 @@ pub fn arc(x: f32, y: f32, n: u32, span_256: u32, speed: f32, shape: Shape, sour
         fire_rotated(x, y, dir, off, speed, shape, source);
     }
 }
+
+/// One bullet from (x, y) at the absolute angle `angle_256` (0 = right,
+/// 64 = down, as in `ring`). Not aimed.
+pub fn shot(x: f32, y: f32, angle_256: u32, speed: f32, shape: Shape, source: Kind) void {
+    const a: i32 = @intCast(angle_256 % 256);
+    _ = bullets.spawn_enemy_bullet(x, y, cos256(a) * speed, sin256(a) * speed, shape, source);
+}

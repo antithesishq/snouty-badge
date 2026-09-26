@@ -1,5 +1,5 @@
-//! Snouty vs. the Bugs: M2 "Bullet hell". Title card, then a flight
-//! against five enemy kinds and their bullets, with bombs, graze, the
+//! Snouty vs. the Bugs: M3 "Stages and boss". Title card, then stages
+//! against five enemy kinds and the Heisenbug, with bombs, graze, the
 //! rewind stock (a hit spends one; the real rewind is M4) and death.
 //! See SPEC.md for the game, PLAN.md for the M1 contract and CLAUDE.md for
 //! the toolchain.
@@ -34,6 +34,11 @@ var next_bomb_score: u32 = first_bomb_score;
 var next_rewind_score: u32 = first_rewind_score;
 /// Ticks left in DYING before the title.
 var dying_ticks: u32 = 0;
+/// Stage clears already paid out as a bomb (catches up with
+/// `world.w.waves.stage_clears`).
+var stage_clears_awarded: u8 = 0;
+/// Test hook (wasm `debug_god`): hits are ignored.
+var god: bool = false;
 
 const start_rewinds: u32 = 3;
 const max_rewinds: u32 = 5;
@@ -110,6 +115,7 @@ fn new_game() void {
     bombs = start_bombs;
     next_bomb_score = first_bomb_score;
     next_rewind_score = first_rewind_score;
+    stage_clears_awarded = 0;
     state = .playing;
 }
 
@@ -136,6 +142,8 @@ fn simulate(mode: world.Mode) void {
 
 /// The ship was touched. `hit.kind` names the bug for M4's message.
 fn on_hit(hit: collide.Hit) void {
+    // The bullet has already vanished; the ship is simply unhurt.
+    if (god) return;
     if (rewinds > 0) {
         // M4: rewind sequence starts here (bug report for `hit.kind`,
         // reverse playback, resume); M2 only spends the stock.
@@ -150,8 +158,9 @@ fn on_hit(hit: collide.Hit) void {
     }
 }
 
-/// Extra bomb every 5,000 points (max 3); extra rewind at 10,000 and every
-/// 20,000 after (max 5). A threshold crossed at the cap is still consumed.
+/// Extra bomb every 5,000 points and per stage clear (max 3); extra rewind
+/// at 10,000 and every 20,000 after (max 5). A threshold crossed or a
+/// clear made at the cap is still consumed.
 fn award_extras() void {
     const score = world.w.player.score;
     while (score >= next_bomb_score) {
@@ -161,6 +170,10 @@ fn award_extras() void {
     while (score >= next_rewind_score) {
         rewinds = @min(rewinds + 1, max_rewinds);
         next_rewind_score += rewind_score_step;
+    }
+    while (world.w.waves.stage_clears > stage_clears_awarded) {
+        bombs = @min(bombs + 1, max_bombs);
+        stage_clears_awarded += 1;
     }
 }
 
@@ -174,7 +187,7 @@ fn simulate_dying() void {
 }
 
 /// Draw order: bg (or bomb flash), enemies, ship, bolts, enemy bullets,
-/// fx, bomb ring, HUD. The ship is hidden while DYING.
+/// fx, bomb ring, HUD, stage text. The ship is hidden while DYING.
 fn draw_scene() void {
     fx.draw_bg_or_flash();
     enemies.draw_enemies();
@@ -184,6 +197,7 @@ fn draw_scene() void {
     fx.draw_fx();
     fx.draw_bomb_ring();
     hud.draw_hud(rewinds, bombs);
+    hud.draw_stage_text();
 }
 
 // Debug exports for the headless harness (wasm only).
@@ -200,6 +214,12 @@ comptime {
         @export(&debug_bullets, .{ .name = "debug_bullets" });
         @export(&debug_grazes, .{ .name = "debug_grazes" });
         @export(&debug_bomb_timer, .{ .name = "debug_bomb_timer" });
+        @export(&debug_stage, .{ .name = "debug_stage" });
+        @export(&debug_boss_hp, .{ .name = "debug_boss_hp" });
+        @export(&debug_stage_clears, .{ .name = "debug_stage_clears" });
+        @export(&debug_phase, .{ .name = "debug_phase" });
+        @export(&debug_god, .{ .name = "debug_god" });
+        @export(&debug_warp, .{ .name = "debug_warp" });
     }
 }
 
@@ -236,6 +256,30 @@ fn debug_grazes() callconv(.c) u32 {
 }
 fn debug_bomb_timer() callconv(.c) u32 {
     return world.w.player.bomb_timer;
+}
+/// Completed stages (`waves.State.loop`).
+fn debug_stage() callconv(.c) u32 {
+    return world.w.waves.loop;
+}
+fn debug_boss_hp() callconv(.c) u32 {
+    const b = enemies.boss() orelse return 0;
+    return b.hp;
+}
+fn debug_stage_clears() callconv(.c) u32 {
+    return world.w.waves.stage_clears;
+}
+fn debug_phase() callconv(.c) u32 {
+    return @backingInt(world.w.waves.phase);
+}
+/// Test hook: toggles god mode (hits ignored). Returns the new flag.
+fn debug_god() callconv(.c) u32 {
+    god = !god;
+    return @intFromBool(god);
+}
+/// Test hook: jumps the stage clock to the 66 s warning. Returns the new t.
+fn debug_warp() callconv(.c) u32 {
+    waves.warp_to_warning();
+    return world.w.waves.t;
 }
 
 /// Button state. Upstream's platform_wasm.zig exposes `controls` but never

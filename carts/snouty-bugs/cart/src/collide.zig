@@ -61,7 +61,9 @@ pub fn run() Hit {
     }
 
     for (&world.w.enemies, 0..) |*e, i| {
-        if (!e.live()) continue;
+        // A flickering, vanished or dying boss is a ghost: it neither takes
+        // nor gives hits.
+        if (!e.live() or !e.hittable()) continue;
         const s = e.size();
         if (!overlap(hb[0], hb[1], hb[2], hb[3], e.x, e.y, s[0], s[1])) continue;
         const kind = e.kind;
@@ -81,11 +83,10 @@ fn bolts_vs_enemies() void {
             if (!overlap(b.x, b.y, bullets.bolt_w, bullets.bolt_h, e.x, e.y, s[0], s[1])) continue;
             b.active = false;
             fx.spawn(.spark, @intFromFloat(@floor(b.x + bullets.bolt_w)), @intFromFloat(@floor(b.y + bullets.bolt_h / 2)));
-            e.hp -|= 1;
-            if (e.hp == 0) {
-                kill(e);
-            } else {
-                e.flash = 2;
+            switch (enemies.damage(e, 1)) {
+                .alive => e.flash = if (e.kind == .boss) 1 else 2,
+                .killed => kill(e),
+                .boss_dying => {},
             }
             break;
         }

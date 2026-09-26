@@ -1,6 +1,9 @@
-//! Spawner: the SPEC.md section 9 stage-1 table as data, through the 54 s
-//! entry. At 66 s (3960 ticks) the table wraps to t = 0; M3 inserts the
-//! warning and the boss there and adds a loop counter.
+//! Spawner and stage flow: the SPEC.md section 9 stage-1 table as data,
+//! then the stage phases (PLAN.md "Gameplay numbers for M3"): at 66 s the
+//! table goes quiet (`.warning`), at 72 s the boss enters (`.boss`), its
+//! death clears the stage (`.cleared`, a 120-tick breather) and the table
+//! starts over with `loop` one higher. The loop modifiers (bullet speed,
+//! fire interval, extra HP) are read by the fire programs in `enemies.zig`.
 const enemies = @import("enemies.zig");
 const rng = @import("rng.zig");
 const world = @import("world.zig");
@@ -57,13 +60,23 @@ pub const stage1 = [_]Entry{
 /// columns from dropping on top of each other at the same moment.
 const spider_stagger = 60;
 
-/// 66 s: the table starts over (boss slot in M3).
+/// 66 s: the table is done; "WARNING" until the boss enters.
 pub const stage_len: u32 = s(66);
+pub const warning_at: u32 = stage_len;
+/// 72 s: the boss enters.
+pub const boss_at: u32 = s(72);
+/// Ticks of `.cleared` between the boss death and the table restarting.
+pub const breather: u32 = 120;
+/// Boss spawn point (cell top-left).
+const boss_x: f32 = 168;
+const boss_y: f32 = 40;
 
 const min_y = 16;
 const max_y = 104;
 const spider_min_x = 64;
 const spider_max_x = 136;
+
+pub const StagePhase = enum(u8) { waves, warning, boss, cleared };
 
 /// Spawner state, stored in `world.w.waves`.
 pub const State = struct {
@@ -71,16 +84,96 @@ pub const State = struct {
     t: u32 = 0,
     /// Index of the next entry of `stage1` to run.
     next: u8 = 0,
+    /// Completed stages (drives the loop modifiers).
+    loop: u8 = 0,
+    phase: StagePhase = .waves,
+    /// Monotonic count of boss kills; `main` awards a bomb when it grows.
+    stage_clears: u8 = 0,
+    /// `game_tick` when the last boss died (0 = never).
+    clear_tick: u32 = 0,
 };
 
 pub fn update() void {
     const st = &world.w.waves;
-    while (st.next < stage1.len and stage1[st.next].at <= st.t) {
-        run(stage1[st.next]);
-        st.next += 1;
+    if (st.phase == .cleared and world.w.game_tick -% st.clear_tick >= breather) {
+        st.t = 0;
+        st.next = 0;
+        st.phase = .waves;
+    }
+    if (st.phase == .waves and st.t >= warning_at) st.phase = .warning;
+    if (st.phase == .warning and st.t >= boss_at) {
+        // A full pool delays the boss by a tick rather than losing it.
+        if (enemies.spawn(.boss, boss_x, boss_y, 0) != null) st.phase = .boss;
+    }
+    if (st.phase == .waves) {
+        while (st.next < stage1.len and stage1[st.next].at <= st.t) {
+            run(stage1[st.next]);
+            st.next += 1;
+        }
     }
     st.t += 1;
-    if (st.t >= stage_len) st.* = .{};
+}
+
+/// Called by the boss on the last tick of its death sequence.
+pub fn boss_cleared() void {
+    const st = &world.w.waves;
+    st.stage_clears +%= 1;
+    st.clear_tick = world.w.game_tick;
+    st.loop +|= 1;
+    st.phase = .cleared;
+}
+
+/// Debug hook: jump to the 66 s mark (the rest of the table is skipped).
+/// Only acts while the table is running, so it can never spawn a second
+/// boss.
+pub fn warp_to_warning() void {
+    const st = &world.w.waves;
+    if (st.phase != .waves) return;
+    st.t = warning_at;
+    st.next = stage1.len;
+    st.phase = .warning;
+}
+
+// Loop modifiers (SPEC.md section 9). The tables hold 1.1^k and 0.9^k for
+// k in 0..8, built at comptime by repeated multiplication (no pow); later
+// loops use the last entry, which the caps have already reached.
+const loop_table_len = 8;
+const speed_table: [loop_table_len]f32 = power_table(1.1);
+const interval_table: [loop_table_len]f32 = power_table(0.9);
+const max_bullet_speed: f32 = 2.0;
+
+fn power_table(comptime base: f32) [loop_table_len]f32 {
+    var t: [loop_table_len]f32 = @splat(1.0);
+    for (1..loop_table_len) |k| t[k] = t[k - 1] * base;
+    return t;
+}
+
+fn loop_index() usize {
+    return @min(world.w.waves.loop, loop_table_len - 1);
+}
+
+/// 1.1^loop (uncapped); use `bullet_speed` for a capped speed.
+pub fn speed_mul() f32 {
+    return speed_table[loop_index()];
+}
+
+/// `base` * 1.1^loop, capped at 2.0 px/tick. Loop 0 returns `base`.
+pub fn bullet_speed(base: f32) f32 {
+    if (world.w.waves.loop == 0) return base;
+    return @min(base * speed_mul(), max_bullet_speed);
+}
+
+/// `base` * 0.9^loop rounded, floored at `base` / 2 (and at 1). Loop 0
+/// returns `base`.
+pub fn fire_interval(base: u32) u32 {
+    if (world.w.waves.loop == 0) return base;
+    const scaled: u32 = @intFromFloat(@round(@as(f32, @floatFromInt(base)) * interval_table[loop_index()]));
+    return @max(scaled, base / 2, 1);
+}
+
+/// Extra HP for beetles and spiders at spawn: one per completed stage.
+pub fn extra_hp() u8 {
+    return world.w.waves.loop;
 }
 
 fn pick(lo: i32, hi: i32, y: i16) f32 {
