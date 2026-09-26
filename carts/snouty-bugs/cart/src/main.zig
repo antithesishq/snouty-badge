@@ -1,5 +1,6 @@
-//! Snouty vs. the Bugs: M1 "Flying". Title card, then a playable flight
-//! with parallax, the zapper, gnat strings, collisions, score and lives.
+//! Snouty vs. the Bugs: M2 "Bullet hell". Title card, then a flight
+//! against five enemy kinds and their bullets, with bombs, graze, the
+//! rewind stock (a hit spends one; the real rewind is M4) and death.
 //! See SPEC.md for the game, PLAN.md for the M1 contract and CLAUDE.md for
 //! the toolchain.
 const cart = @import("cart-api");
@@ -19,12 +20,30 @@ comptime {
     cart.export_start_code();
 }
 
-pub const State = enum(u32) { title = 0, playing = 1, paused = 2 };
+pub const State = enum(u32) { title = 0, playing = 1, paused = 2, dying = 3 };
 
 // Meta-state, outside the World (never rewound). Play state is `world.w`.
 var state: State = .title;
 /// Ticks since boot (drives title blink).
 var tick_total: u32 = 0;
+/// Rewind stock (replaces lives; SPEC.md 5.1).
+var rewinds: u32 = start_rewinds;
+var bombs: u32 = start_bombs;
+/// Score at which the next extra bomb / extra rewind is granted.
+var next_bomb_score: u32 = first_bomb_score;
+var next_rewind_score: u32 = first_rewind_score;
+/// Ticks left in DYING before the title.
+var dying_ticks: u32 = 0;
+
+const start_rewinds: u32 = 3;
+const max_rewinds: u32 = 5;
+const first_rewind_score: u32 = 10_000;
+const rewind_score_step: u32 = 20_000;
+const start_bombs: u32 = 2;
+const max_bombs: u32 = 3;
+const first_bomb_score: u32 = 5_000;
+const bomb_score_step: u32 = 5_000;
+const dying_len: u32 = 60;
 
 pub fn start() void {
     cart.set_vsync_enabled(1000.0 / 60.0);
@@ -52,6 +71,11 @@ pub fn update() void {
         .paused => {
             if (input.pressed(.start)) state = .playing;
         },
+        .dying => {
+            simulate_dying();
+            dying_ticks -|= 1;
+            if (dying_ticks == 0) state = .title;
+        },
     }
 
     switch (state) {
@@ -59,7 +83,7 @@ pub fn update() void {
             draw.draw_bg();
             hud.draw_title(tick_total);
         },
-        .playing => draw_scene(),
+        .playing, .dying => draw_scene(),
         .paused => {
             draw_scene();
             hud.draw_pause();
@@ -82,7 +106,10 @@ fn new_game() void {
     w.input = in;
     const t: u32 = @truncate(cart.micros_since_boot());
     rng.seed(if (t == 0) 0x5EED else t);
-    player.lives = player.start_lives;
+    rewinds = start_rewinds;
+    bombs = start_bombs;
+    next_bomb_score = first_bomb_score;
+    next_rewind_score = first_rewind_score;
     state = .playing;
 }
 
@@ -93,22 +120,70 @@ fn simulate(mode: world.Mode) void {
     player.update();
     enemies.update();
     bullets.update();
-    const dead = collide.run();
+    bullets.update_enemy_bullets();
+    // After everything moved, so the bomb tick ends with no enemy bullets
+    // and its invulnerability covers this tick's collisions.
+    _ = player.try_bomb(&bombs);
+    const hit = collide.run();
     // audio/neopixel effects check `mode` here (M4)
     _ = mode;
     fx.update();
     draw.tick_bg();
     world.w.game_tick +%= 1;
-    if (dead) state = .title;
+    award_extras();
+    if (hit.by != .none) on_hit(hit);
 }
 
+/// The ship was touched. `hit.kind` names the bug for M4's message.
+fn on_hit(hit: collide.Hit) void {
+    if (rewinds > 0) {
+        // M4: rewind sequence starts here (bug report for `hit.kind`,
+        // reverse playback, resume); M2 only spends the stock.
+        _ = hit;
+        rewinds -= 1;
+        world.w.player.invuln = player.invuln_ticks;
+    } else {
+        state = .dying;
+        dying_ticks = dying_len;
+        const c = player.hitbox_center();
+        fx.spawn(.big_explosion, c[0], c[1]);
+    }
+}
+
+/// Extra bomb every 5,000 points (max 3); extra rewind at 10,000 and every
+/// 20,000 after (max 5). A threshold crossed at the cap is still consumed.
+fn award_extras() void {
+    const score = world.w.player.score;
+    while (score >= next_bomb_score) {
+        bombs = @min(bombs + 1, max_bombs);
+        next_bomb_score += bomb_score_step;
+    }
+    while (score >= next_rewind_score) {
+        rewinds = @min(rewinds + 1, max_rewinds);
+        next_rewind_score += rewind_score_step;
+    }
+}
+
+/// A DYING tick: enemies, enemy bullets and the spawner are frozen (so
+/// nothing fires); bolts, fx and the background keep running.
+fn simulate_dying() void {
+    bullets.update();
+    fx.update();
+    draw.tick_bg();
+    world.w.game_tick +%= 1;
+}
+
+/// Draw order: bg (or bomb flash), enemies, ship, bolts, enemy bullets,
+/// fx, bomb ring, HUD. The ship is hidden while DYING.
 fn draw_scene() void {
-    draw.draw_bg();
+    fx.draw_bg_or_flash();
     enemies.draw_enemies();
-    player.draw_ship(world.w.game_tick);
+    if (state != .dying) player.draw_ship(world.w.game_tick);
     bullets.draw_bolts(world.w.game_tick);
+    bullets.draw_enemy_bullets();
     fx.draw_fx();
-    hud.draw_hud();
+    fx.draw_bomb_ring();
+    hud.draw_hud(rewinds, bombs);
 }
 
 // Debug exports for the headless harness (wasm only).
@@ -120,6 +195,11 @@ comptime {
         @export(&debug_enemies, .{ .name = "debug_enemies" });
         @export(&debug_bolts, .{ .name = "debug_bolts" });
         @export(&debug_world_size, .{ .name = "debug_world_size" });
+        @export(&debug_rewinds, .{ .name = "debug_rewinds" });
+        @export(&debug_bombs, .{ .name = "debug_bombs" });
+        @export(&debug_bullets, .{ .name = "debug_bullets" });
+        @export(&debug_grazes, .{ .name = "debug_grazes" });
+        @export(&debug_bomb_timer, .{ .name = "debug_bomb_timer" });
     }
 }
 
@@ -129,8 +209,9 @@ fn debug_state() callconv(.c) u32 {
 fn debug_score() callconv(.c) u32 {
     return world.w.player.score;
 }
+/// Kept from M1; the lives are the rewind stock now.
 fn debug_lives() callconv(.c) u32 {
-    return player.lives;
+    return rewinds;
 }
 fn debug_enemies() callconv(.c) u32 {
     return enemies.live_count();
@@ -140,6 +221,21 @@ fn debug_bolts() callconv(.c) u32 {
 }
 fn debug_world_size() callconv(.c) u32 {
     return @sizeOf(world.World);
+}
+fn debug_rewinds() callconv(.c) u32 {
+    return rewinds;
+}
+fn debug_bombs() callconv(.c) u32 {
+    return bombs;
+}
+fn debug_bullets() callconv(.c) u32 {
+    return bullets.live_enemy_bullets();
+}
+fn debug_grazes() callconv(.c) u32 {
+    return world.w.player.grazes;
+}
+fn debug_bomb_timer() callconv(.c) u32 {
+    return world.w.player.bomb_timer;
 }
 
 /// Button state. Upstream's platform_wasm.zig exposes `controls` but never

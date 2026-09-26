@@ -26,7 +26,7 @@ pub const World = struct {
     player: player.State = .{},
     enemies: [24]enemies.Enemy = @splat(.{}),
     bolts: [24]bullets.Bolt = @splat(.{}),
-    /// Unused in M1 (SPEC.md section 6: pool of 96).
+    /// SPEC.md section 6: pool of 96.
     enemy_bullets: [96]bullets.EnemyBullet = @splat(.{}),
     fx: [16]fx.Fx = @splat(.{}),
     waves: waves.State = .{},

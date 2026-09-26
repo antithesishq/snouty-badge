@@ -1,10 +1,12 @@
-//! Ship: movement, banking, zapper, invulnerability, lives, score. The
-//! ship state is `world.w.player`; `lives` is meta-state kept here.
+//! Ship: movement, banking, zapper, bomb, invulnerability, score. The
+//! ship state is `world.w.player`; the rewind and bomb stocks are
+//! meta-state kept in `main.zig`.
 const cart = @import("cart-api");
 const gfx = @import("gfx");
 const draw = @import("draw.zig");
 const input = @import("input.zig");
 const bullets = @import("bullets.zig");
+const collide = @import("collide.zig");
 const world = @import("world.zig");
 
 pub const cell_w = 32;
@@ -25,8 +27,9 @@ const spawn_y: f32 = 64 - cell_h / 2;
 
 const fire_interval: u32 = 6;
 const bank_hold: u32 = 6;
-const invuln_ticks: u32 = 120;
-pub const start_lives: u32 = 3;
+pub const invuln_ticks: u32 = 120;
+/// Length of the bomb effect and of its invulnerability.
+pub const bomb_ticks: u32 = 30;
 const score_cap: u32 = 999_999;
 
 pub const Pose = enum(u32) { level = 0, up = 1, down = 2 };
@@ -40,14 +43,15 @@ pub const State = struct {
     fire_cooldown: u32 = 0,
     invuln: u32 = 0,
     score: u32 = 0,
+    /// Ticks of bomb effect left (30 on the tick it goes off, 0 when idle).
+    bomb_timer: u32 = 0,
+    /// Bullets grazed this game (debug export; each also scored 1 point).
+    grazes: u32 = 0,
 };
-
-/// Meta-state outside the World (becomes the rewind stock in M2); reset by
-/// `new_game` in `main.zig`.
-pub var lives: u32 = start_lives;
 
 pub fn update() void {
     const p = &world.w.player;
+    if (p.bomb_timer > 0) p.bomb_timer -= 1;
     if (input.held(.left)) p.x -= speed;
     if (input.held(.right)) p.x += speed;
     if (input.held(.up)) p.y -= speed;
@@ -88,13 +92,28 @@ pub fn hitbox() [4]f32 {
     return .{ p.x + hitbox_off[0], p.y + hitbox_off[1], hitbox_size, hitbox_size };
 }
 
-/// Takes a hit. Returns true when that was the last life.
-pub fn hit() bool {
+/// Fires a bomb if B was pressed this tick, `stock` > 0 and no bomb is
+/// active: clears every enemy bullet, kills every live non-boss enemy (with
+/// score) and grants 30 ticks of invulnerability. `stock` is main.zig's
+/// bomb count. Returns true when a bomb went off.
+pub fn try_bomb(stock: *u32) bool {
     const p = &world.w.player;
-    if (p.invuln > 0) return false;
-    lives -|= 1;
-    p.invuln = invuln_ticks;
-    return lives == 0;
+    if (!input.pressed(.b) or stock.* == 0 or p.bomb_timer != 0) return false;
+    stock.* -= 1;
+    p.bomb_timer = bomb_ticks;
+    bullets.clear_enemy_bullets();
+    for (&world.w.enemies) |*e| {
+        if (!e.live() or e.kind == .boss) continue;
+        collide.kill(e);
+    }
+    p.invuln = @max(p.invuln, bomb_ticks);
+    return true;
+}
+
+/// Center of the hitbox, in whole pixels.
+pub fn hitbox_center() [2]i32 {
+    const hb = hitbox();
+    return .{ @intFromFloat(@floor(hb[0] + hb[2] / 2)), @intFromFloat(@floor(hb[1] + hb[3] / 2)) };
 }
 
 pub fn add_score(points: u32) void {

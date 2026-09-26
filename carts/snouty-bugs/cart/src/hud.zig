@@ -2,12 +2,16 @@
 const cart = @import("cart-api");
 const gfx = @import("gfx");
 const draw = @import("draw.zig");
-const player = @import("player.zig");
 const world = @import("world.zig");
 
-const max_life_icons = 3;
+const max_rewind_icons = 5;
+const bomb_slots = 3;
+/// Top-left x of the first bomb slot (slots centered at x 68, 76, 84).
+const bomb_slot_x: i32 = 64;
 
-pub fn draw_hud() void {
+/// HUD row: score, bomb slots (filled from the left) and the rewind stock.
+/// `rewinds` and `bombs` are main.zig's meta-state.
+pub fn draw_hud(rewinds: u32, bombs: u32) void {
     cart.rect(.{ .x = 0, .y = 0, .width = cart.screen_width, .height = draw.hud_height, .fill_color = draw.anti_black });
     var buf: [6]u8 = undefined;
     var v = world.w.player.score;
@@ -18,7 +22,11 @@ pub fn draw_hud() void {
         v /= 10;
     }
     draw.text(&buf, 0, 0, draw.anti_white);
-    const n = @min(player.lives, max_life_icons);
+    for (0..bomb_slots) |k| {
+        const x = bomb_slot_x + 8 * @as(i32, @intCast(k));
+        draw.draw_sprite(gfx.hud, 8, 8, if (k < bombs) 1 else 2, x, 0, .{});
+    }
+    const n = @min(rewinds, max_rewind_icons);
     for (0..n) |k| {
         const x: i32 = @as(i32, cart.screen_width) - 8 * @as(i32, @intCast(k + 1));
         draw.draw_sprite(gfx.hud, 8, 8, 0, x, 0, .{});
