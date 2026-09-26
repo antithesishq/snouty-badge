@@ -416,4 +416,9 @@ except the ROM, which he will provide.
 
 - 2026-09-26: spec drafted, nothing built yet.
 - 2026-09-26: section 18 decided (recommendations accepted, Adrian supplies
-  the ROM). Next: M0 scaffold copied from `snouty-bugs`, then M1.
+  the ROM).
+- 2026-09-26: M0 and M1 done (tag `m1`). Core passes Blargg cpu_instrs (all
+  11 + combined) and instr_timing, and dmg-acid2 byte for byte; 2048-gb
+  (zlib, 32 KB MBC1) plays in the simulator as the development ROM.
+  Sizes with that ROM: fast .text 65 KB / .bss 26 KB, small .text 52 KB.
+  Waiting on the M1 gate: Adrian flashes and reports FPS + microseconds.

@@ -54,7 +54,10 @@ pub fn reset(gb: *Gb) void {
 pub fn step(gb: *Gb) u8 {
     const c = &gb.cpu;
     if (c.halted) {
-        if ((gb.ie & gb.io[Reg.if_] & 0x1F) == 0) return 1;
+        // Nothing can change until a subsystem raises an interrupt, so skip
+        // ahead 4 M-cycles per step. Timer and PPU handle batched ticks
+        // exactly; interrupt latency out of HALT grows by at most 3 M-cycles.
+        if ((gb.ie & gb.io[Reg.if_] & 0x1F) == 0) return 4;
         c.halted = false;
     }
     if (c.ime) {

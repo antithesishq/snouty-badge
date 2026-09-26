@@ -16,7 +16,7 @@ milestone: who owns which files, what the interfaces are, what "done" means.
 - `tools/fetch_test_roms.sh` (Blargg, dmg-acid2), `tools/romcheck.py`,
   `tests/acid2_reference.bin` (160x144 shades, 0 = lightest, row-major).
 
-## M1 Core on hardware: contract
+## M1 Core on hardware: contract (merged 2026-09-26, tag `m1`; gate pending)
 
 Three tracks in parallel, each in its own git worktree and branch, disjoint
 files. Nobody edits another track's files; if you need a change there,

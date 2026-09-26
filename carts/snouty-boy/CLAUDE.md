@@ -58,8 +58,8 @@ Zig `0.17.0-dev.1936+5a625d5f3` at `~/.local/bin/zig`
 The wasm platform never presents and the web simulator reads a legacy
 framebuffer at 0x20 with red/blue swapped; buttons arrive at 0x04.
 `main.zig` has `present_wasm()` and `read_controls()` shims for wasm only.
-`micros_since_boot` is a constant in wasm, so the debug overlay's numbers
-mean nothing in the simulator; only hardware numbers count.
+`micros_since_boot` advances a fixed 1000 per call in wasm, so the overlay
+always reads 1000 us / 500 fps in the simulator; only hardware numbers count.
 
 ## Conventions
 
