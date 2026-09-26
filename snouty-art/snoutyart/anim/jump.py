@@ -9,7 +9,7 @@ above 88; the cart adds its own parabolic lift, and each frame's meta carries a
 suggested "lift" (px up) used by the scrolling preview.
 
 Cell coordinates (96x96, origin (48,88), y down). Per frame: body offset, part
-rotations, near/far toe and ankle, and a per-frame segment length for the leg
+rotations, near/far hip x, toe and ankle, and a per-frame segment length for the leg
 IK (shorter than the rig's 14 px when the leg should read as straightened,
 since the full 28 px leg never fits between hip and ground in this cell).
 """
@@ -27,38 +27,47 @@ GROUNDED = [True] * 5 + [False] * 5 + [True] * 2
 LIFT = [0, 0, 0, 0, 0, 10, 26, 36, 34, 20, 0, 0]
 
 # name: per-frame values, index = frame
-# body (dx, dy): torso/hips/tail. Positive dy = down.
-BODY = [(0, 0), (1, 3), (2, 6), (2, 8), (1, -6), (0, -6), (0, -5), (0, -3),
-        (0, -5), (0, -7), (2, 6), (1, 2)]
+# body (dx, dy): torso/tail. Positive dy = down.
+BODY = [(0, 0), (1, 3), (1, 5), (2, 8), (1, -6), (0, -6), (0, -5), (0, -3),
+        (0, -5), (0, -7), (1, 7), (1, 2)]
 # head and net follow the body with an extra (dx, dy) lag/lead
-HEAD_OFF = [(0, 0), (1, 1), (1, 1), (1, 2), (1, -1), (1, 0), (1, 1), (0, 1),
-            (0, 0), (0, -1), (1, 2), (1, 1)]
-NET_OFF = [(0, 0), (0, 1), (0, 2), (0, 1), (0, -1), (0, -1), (0, 1), (0, 2),
-           (0, 1), (0, -1), (0, 3), (0, 1)]
-HEAD_ROT = [0, -2, -3, -4, 2, 3, 4, 2, 0, 1, -4, -1]
-TAIL_ROT = [0, -4, -8, -12, 4, 10, 12, 8, 2, -2, -12, -4]
-NET_ROT = [0, 3, 6, 8, -4, -6, -4, 0, 4, 2, 8, 2]
+HEAD_OFF = [(0, 0), (1, 1), (1, 1), (2, 2), (1, -1), (1, 0), (1, 1), (0, 1),
+            (0, 0), (0, -1), (0, -1), (1, 1)]
+NET_OFF = [(0, 0), (0, 1), (0, 2), (0, 2), (0, -1), (0, -1), (0, 1), (0, 2),
+           (0, 1), (0, -1), (2, 3), (0, 1)]
+HEAD_ROT = [0, -2, -2, -4, 2, 3, 4, 0, 0, 1, 0, -1]
+TAIL_ROT = [0, -4, -7, -12, 4, 10, 12, 6, 2, -2, -12, -4]
+# coil drops the net a further 4 degrees than the crouch; the land throws it
+# forward/down with the bag's momentum (+12, dx +2).
+NET_ROT = [0, 3, 4, 8, -4, -6, -4, -2, 4, 2, 12, 2]
 # free (far) hand offset from its reference pivot, relative to the body
 HAND = [(0, 0), (0, 2), (-1, 3), (-4, 3), (4, -5), (6, -8), (7, -9), (6, -7),
-        (4, -4), (3, -2), (3, 3), (0, 1)]
+        (4, -4), (3, -2), (4, 1), (0, 1)]
 
-# legs: toe (x rel hip, y rel ground where 0 = planted), ankle offset from toe,
-# IK segment length (thigh = shin).
-NEAR_TOE = [(9, 0), (9, 0), (9, 0), (8, 0), (2, 0), (3, -8), (4, -9), (4, -7),
-            (5, -2), (12, -3), (10, 0), (9, 0)]
+# hip x offsets from the body (near leg, far leg). The near hip moves 1-2 px
+# back where the thigh would otherwise cover the Iris emblem (moving it right
+# covered more, because the knee then rises across the belly). The far hip sits
+# 4 px behind the near hip in the air so the dark trailing leg shows.
+NEAR_HIP_DX = [0, 0, -2, -2, 0, -2, -2, -1, 0, 0, -2, 0]
+FAR_HIP_DX = [2, 2, 2, 2, 2, -6, -6, -4, -4, -1, 2, 2]
+
+# legs: toe (x rel own hip, y rel ground where 0 = planted), ankle offset from
+# toe, IK segment length (thigh = shin).
+NEAR_TOE = [(9, 0), (9, 0), (8, 0), (4, 0), (2, 0), (6, -7), (8, -8), (5, -5),
+            (5, -3), (12, -3), (14, 0), (9, 0)]
 NEAR_ANK = [(-5, -3), (-5, -3), (-5, -3), (-5, -3), (1, -5), (1, -4), (1, -4), (0, -5),
-            (-1, -5), (-4, -3), (-5, -3), (-5, -3)]
-FAR_TOE = [(-3, 0), (-3, 0), (-2, 0), (-1, 0), (-5, 0), (-10, -4), (-11, -5), (-9, -4),
-           (-5, -4), (-7, -3), (-1, 0), (-3, 0)]
+            (-1, -5), (-4, -3), (-6, -2), (-5, -3)]
+FAR_TOE = [(-3, 0), (-3, 0), (-2, 0), (-1, 0), (-5, 0), (-8, -3), (-8, -4), (-8, -3),
+           (-4, -2), (-7, -3), (-7, 0), (-3, 0)]
 FAR_ANK = [(-5, -3), (-5, -3), (-5, -3), (-5, -3), (2, -5), (4, -3), (4, -3), (4, -3),
-           (2, -5), (-3, -3), (-5, -3), (-5, -3)]
-NEAR_SEG = [6.5, 6.5, 5.5, 5.5, 9, 9.5, 9.5, 9, 8, 10.5, 5.5, 7]
-FAR_SEG = [7.5, 7.5, 6.5, 6, 9, 8.5, 9, 9, 8, 9, 6, 7.5]
+           (2, -5), (-3, -3), (-4, -2), (-5, -3)]
+NEAR_SEG = [6.5, 6.5, 6, 5.5, 9, 6, 6, 7, 8, 10.5, 5.5, 7]
+FAR_SEG = [7.5, 7.5, 7, 6, 9, 9, 9, 9, 8, 9, 7, 7.5]
 
 
 def _leg(rig, i, near):
     bx, by = BODY[i]
-    hx, hy = rig.joint("hip", bx + (0 if near else 2), by)
+    hx, hy = rig.joint("hip", bx + (NEAR_HIP_DX if near else FAR_HIP_DX)[i], by)
     ground = rig.origin[1] - (rig.limbs["leg"]["foot_width"] // 2 + 1)
     tx, ty = (NEAR_TOE if near else FAR_TOE)[i]
     ax, ay = (NEAR_ANK if near else FAR_ANK)[i]
@@ -71,7 +80,8 @@ def _leg(rig, i, near):
 
 def build(rig) -> Cycle:
     assert all(len(t) == 12 for t in (BODY, HEAD_OFF, NET_OFF, HEAD_ROT, TAIL_ROT, NET_ROT,
-                                      HAND, NEAR_TOE, NEAR_ANK, FAR_TOE, FAR_ANK, NEAR_SEG, FAR_SEG))
+                                      HAND, NEAR_TOE, NEAR_ANK, FAR_TOE, FAR_ANK, NEAR_SEG, FAR_SEG,
+                                      NEAR_HIP_DX, FAR_HIP_DX))
     frames = []
     for i in range(12):
         bx, by = BODY[i]
