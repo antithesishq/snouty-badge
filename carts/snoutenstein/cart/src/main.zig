@@ -37,7 +37,9 @@ pub fn update() void {
 
     switch (mode) {
         .title => {
-            if (pressed(b, .a) or pressed(b, .b) or pressed(b, .start)) new_game();
+            // M1 debug: A starts the test level, B the imported Wolf3D E1M1.
+            if (pressed(b, .a) or pressed(b, .start)) new_game(0);
+            if (pressed(b, .b)) new_game(1);
         },
         .playing => {
             if (pressed(b, .start)) {
@@ -65,8 +67,8 @@ pub fn update() void {
     if (cart.is_wasm) present_wasm();
 }
 
-fn new_game() void {
-    level_index = 0;
+fn new_game(index: u8) void {
+    level_index = index;
     level = &levels.all[level_index];
     sim.init(&game, level, level_index, @truncate(cart.micros_since_boot()));
     mode = .playing;

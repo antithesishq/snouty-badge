@@ -59,6 +59,7 @@ pub const Level = struct {
 
 pub const all = [_]Level{
     parse("test", @embedFile("levels/test.txt"), 0),
+    parse("wolf_e1m1", @embedFile("levels/wolf_e1m1.txt"), 0),
 };
 
 fn is_wall_char(ch: u8) bool {
