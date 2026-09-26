@@ -1,6 +1,8 @@
-//! Enemy pool and per-kind movement programs. M1 has only the gnat.
+//! Enemy pool (`world.w.enemies`) and per-kind movement programs. M1 has
+//! only the gnat.
 const gfx = @import("gfx");
 const draw = @import("draw.zig");
+const world = @import("world.zig");
 
 pub const Kind = enum { gnat };
 
@@ -35,8 +37,6 @@ pub const Enemy = struct {
     }
 };
 
-pub var pool: [24]Enemy = @splat(.{});
-
 /// sin(2 pi i / 256) for i in 0..256, built at comptime (no libm at runtime).
 pub const sin_table: [256]f32 = blk: {
     @setEvalBranchQuota(100_000);
@@ -56,12 +56,8 @@ pub const gnat_spawn_x: f32 = 168.0;
 const string_len = 5;
 const string_spacing = 12;
 
-pub fn reset() void {
-    pool = @splat(.{});
-}
-
 fn alloc() ?*Enemy {
-    for (&pool) |*e| {
+    for (&world.w.enemies) |*e| {
         if (!e.active) return e;
     }
     return null;
@@ -84,7 +80,7 @@ pub fn spawn_gnat_string(y: f32) void {
 }
 
 pub fn update() void {
-    for (&pool) |*e| {
+    for (&world.w.enemies) |*e| {
         if (!e.active) continue;
         if (e.delay > 0) {
             e.delay -= 1;
@@ -104,7 +100,7 @@ pub fn update() void {
 }
 
 pub fn draw_enemies() void {
-    for (pool) |e| {
+    for (world.w.enemies) |e| {
         if (!e.live()) continue;
         const x: i32 = @intFromFloat(@floor(e.x));
         const y: i32 = @intFromFloat(@floor(e.y));
@@ -116,6 +112,6 @@ pub fn draw_enemies() void {
 
 pub fn live_count() u32 {
     var n: u32 = 0;
-    for (pool) |e| n += @intFromBool(e.live());
+    for (world.w.enemies) |e| n += @intFromBool(e.live());
     return n;
 }

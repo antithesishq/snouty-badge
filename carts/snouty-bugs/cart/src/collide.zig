@@ -3,6 +3,7 @@ const bullets = @import("bullets.zig");
 const enemies = @import("enemies.zig");
 const player = @import("player.zig");
 const fx = @import("fx.zig");
+const world = @import("world.zig");
 
 pub fn overlap(ax: f32, ay: f32, aw: f32, ah: f32, bx: f32, by: f32, bw: f32, bh: f32) bool {
     return ax < bx + bw and bx < ax + aw and ay < by + bh and by < ay + ah;
@@ -20,9 +21,9 @@ fn kill(e: *enemies.Enemy) void {
 
 /// Runs both passes. Returns true when the player lost their last life.
 pub fn run() bool {
-    for (&bullets.bolts) |*b| {
+    for (&world.w.bolts) |*b| {
         if (!b.active) continue;
-        for (&enemies.pool) |*e| {
+        for (&world.w.enemies) |*e| {
             if (!e.live()) continue;
             const s = e.size();
             if (!overlap(b.x, b.y, bullets.bolt_w, bullets.bolt_h, e.x, e.y, s[0], s[1])) continue;
@@ -42,7 +43,7 @@ pub fn run() bool {
     var dead = false;
     if (!player.invulnerable()) {
         const hb = player.hitbox();
-        for (&enemies.pool) |*e| {
+        for (&world.w.enemies) |*e| {
             if (!e.live()) continue;
             const s = e.size();
             if (!overlap(hb[0], hb[1], hb[2], hb[3], e.x, e.y, s[0], s[1])) continue;

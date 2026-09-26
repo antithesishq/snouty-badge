@@ -1,6 +1,7 @@
 //! M1 spawner: an intro, then a looping table of gnat strings.
 const enemies = @import("enemies.zig");
 const rng = @import("rng.zig");
+const world = @import("world.zig");
 
 const Placement = enum {
     /// String at the entry's fixed y.
@@ -33,13 +34,14 @@ const min_y = 16;
 const max_y = 104;
 const double_gap = 32;
 
-var t: u32 = 0;
-
-pub fn reset() void {
-    t = 0;
-}
+/// Spawner state, stored in `world.w.waves`.
+pub const State = struct {
+    /// Ticks since the start of the game.
+    t: u32 = 0,
+};
 
 pub fn update() void {
+    const t = world.w.waves.t;
     for (intro) |e| {
         if (e.at == t) run(e);
     }
@@ -49,7 +51,7 @@ pub fn update() void {
             if (e.at == lt) run(e);
         }
     }
-    t += 1;
+    world.w.waves.t = t + 1;
 }
 
 fn run(e: Entry) void {

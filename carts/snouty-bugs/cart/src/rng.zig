@@ -1,21 +1,21 @@
 //! xorshift32, seeded per game. Gameplay randomness comes only from here
 //! (never `cart.rand()`), so a run is reproducible from its seed.
+//! The state is `world.w.rng`.
+const world = @import("world.zig");
 
-const fallback_seed: u32 = 0x2545F491;
-
-var state: u32 = fallback_seed;
+pub const fallback_seed: u32 = 0x2545F491;
 
 /// Seeds the generator. Zero is a fixed point of xorshift, so it is remapped.
 pub fn seed(s: u32) void {
-    state = if (s == 0) fallback_seed else s;
+    world.w.rng = if (s == 0) fallback_seed else s;
 }
 
 pub fn next() u32 {
-    var x = state;
+    var x = world.w.rng;
     x ^= x << 13;
     x ^= x >> 17;
     x ^= x << 5;
-    state = x;
+    world.w.rng = x;
     return x;
 }
 

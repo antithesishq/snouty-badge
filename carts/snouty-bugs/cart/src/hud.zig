@@ -3,13 +3,14 @@ const cart = @import("cart-api");
 const gfx = @import("gfx");
 const draw = @import("draw.zig");
 const player = @import("player.zig");
+const world = @import("world.zig");
 
 const max_life_icons = 3;
 
 pub fn draw_hud() void {
     cart.rect(.{ .x = 0, .y = 0, .width = cart.screen_width, .height = draw.hud_height, .fill_color = draw.anti_black });
     var buf: [6]u8 = undefined;
-    var v = player.score;
+    var v = world.w.player.score;
     var i: usize = buf.len;
     while (i > 0) {
         i -= 1;

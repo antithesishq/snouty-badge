@@ -1,6 +1,7 @@
 //! Sprite, background and text drawing on top of the cart API.
 const cart = @import("cart-api");
 const gfx = @import("gfx");
+const world = @import("world.zig");
 
 pub const anti_black = cart.DisplayColor.rgb(0x16031B);
 pub const anti_white = cart.DisplayColor.rgb(0xFCFBF9);
@@ -73,14 +74,19 @@ pub fn draw_sprite(
 const Star = struct { x: u8, y: u8, fast: bool };
 const star_count = 24;
 
-var stars: [star_count]Star = undefined;
-var bg_tick: u32 = 0;
+/// Background scroll state, stored in `world.w.bg`. It is carried across
+/// `new_game` so the sky scrolls on continuously from the title.
+pub const BgState = struct {
+    tick: u32 = 0,
+    stars: [star_count]Star = initial_stars,
+};
 
-/// Scatters the stars with a fixed local generator (independent of the
-/// gameplay rng so the sky looks the same every boot).
-pub fn init_bg() void {
+/// The stars scattered at comptime with a fixed local generator
+/// (independent of the gameplay rng so the sky looks the same every boot).
+const initial_stars: [star_count]Star = blk: {
+    var out: [star_count]Star = @splat(.{ .x = 0, .y = 0, .fast = false });
     var s: u32 = 0x51A25;
-    for (&stars, 0..) |*star, i| {
+    for (&out, 0..) |*star, i| {
         s ^= s << 13;
         s ^= s >> 17;
         s ^= s << 5;
@@ -90,23 +96,26 @@ pub fn init_bg() void {
             .fast = i % 2 == 0,
         };
     }
-}
+    break :blk out;
+};
 
 pub fn tick_bg() void {
-    bg_tick +%= 1;
+    const bg = &world.w.bg;
+    bg.tick +%= 1;
     // Slow stars 1 px every 3 ticks, fast ones 1 px every 2 ticks: faster
     // than the far layer (1 px / 4 ticks), at most as fast as the near one.
-    for (&stars) |*star| {
+    for (&bg.stars) |*star| {
         const period: u32 = if (star.fast) 2 else 3;
-        if (bg_tick % period == 0) {
+        if (bg.tick % period == 0) {
             star.x = if (star.x == 0) @intCast(cart.screen_width - 1) else star.x - 1;
         }
     }
 }
 
 pub fn draw_bg() void {
-    draw_far((bg_tick / 4) % gfx.bg_far.width);
-    for (stars) |star| {
+    const bg = &world.w.bg;
+    draw_far((bg.tick / 4) % gfx.bg_far.width);
+    for (bg.stars) |star| {
         cart.hline(.{
             .x = star.x,
             .y = star.y,
@@ -114,7 +123,7 @@ pub fn draw_bg() void {
             .color = if (star.fast) anti_white else star_dim,
         });
     }
-    draw_near((bg_tick / 2) % gfx.bg_near.width);
+    draw_near((bg.tick / 2) % gfx.bg_near.width);
 }
 
 fn draw_far(scroll: u32) void {
