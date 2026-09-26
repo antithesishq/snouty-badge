@@ -381,8 +381,12 @@ edge-detector's current and previous controls, and `game_tick`. Gameplay
 modules keep their functions but operate on fields of the one global
 `World`. Nothing in `World` is a pointer, so a snapshot is a struct copy and
 two worlds compare with `std.mem.eql` on their bytes. Outside the world, and
-therefore not rewound: the state machine, the rewind count and bomb stock
-(meta-state, like lives), best score, `tick_total`, the sound toggle.
+therefore not rewound: the state machine, the rewind count (meta-state,
+like lives), best score, `tick_total`, the sound toggle. The bomb stock is
+*inside* the world (decided in M4, PLAN.md): the bomb action is simulated
+from the input log, so the stock must replay with it; a bomb used inside
+the rewound two seconds is therefore refunded together with the bullets it
+cleared.
 
 History (`history.zig`), the Antithesis part:
 

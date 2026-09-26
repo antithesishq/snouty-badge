@@ -542,28 +542,168 @@ Flow, HUD, hooks (B2):
 death sequence for clipping and readability (the boss must never hide a
 bullet: bullets draw above it). Boss HP bar and warning legible at 3x.
 
-## M4 Rewind (not started, after M3)
+## M4 Rewind (started 2026-09-26)
 
-Sketch of the tracks so M2 and M3 leave the hooks in place:
+Goal: SPEC.md 5.1 and 13.1. A hit with a rewind in stock freezes the game
+for 20 ticks with a bug report naming the enemy kind, plays the last 120
+game ticks backward over 60 frames, restores the world 120 ticks before
+the hit, grants 60 ticks of invulnerability and a `GO!` pop, and hands
+control back. The identity test proves restore is exact.
 
-| Track | Files                                         | Contents                                                              |
-|-------|-----------------------------------------------|-----------------------------------------------------------------------|
-| A core| `history.zig`, `main.zig` (state machine)     | keyframe ring (4), input log (256), `record()`, `restore(tick)`, REWIND state, `debug_history_check`, `debug_rewinds` |
-| B show| `rewind.zig`, `hud.zig`, `audio.zig`          | bug-report bar and messages, scanline dim, `<<` and `GO!`, red dot on the hitbox, retriggered rewind tone, LED chase |
-| C tools| `tools/preview.mjs`, `tools/scripts/rewind_*.json` | identity check at several ticks, a script that flies into a bullet and asserts the rewind, GIF of one rewind for `docs/` |
+### Decisions fixed here (deviations from SPEC.md 13.1, to be reflected there)
 
-Hooks M2/M3 must leave: `simulate(mode)`, `EnemyBullet.source`, the
-collision result reporting *what* hit the player (kind + which pool index,
-so track B can flash it), and `World` staying plain data.
+- **Bomb stock moves into the World** (`player.State.bombs`, and the
+  `next_bomb_score` threshold with it). The bomb *action* is simulated
+  inside the world (B pressed is in the input log), so with the stock
+  outside, a catch-up replay would re-spend a bomb that was already spent
+  live and the identity test would fail. Consequence, which we accept and
+  will tell Adrian: a bomb used inside the rewound two seconds is refunded
+  along with the bullets it cleared. The stage-clear bomb award and the
+  5,000-point award also happen inside the world (`award_extras` for
+  bombs moves into the simulation). `god` stays meta.
+- **Rewind stock stays meta** (a rewind can never refund itself), so the
+  10,000/20,000-point rewind grants happen only in `.live` mode and only
+  once per threshold: `next_rewind_score` lives in the World (so replays
+  are deterministic) and `main.zig` keeps `rewind_award_high_water: u32`
+  (meta): grant when the world crosses a threshold that is above the high
+  water, then raise it. Crossing the same threshold again after a rewind
+  grants nothing.
+- **A hit leaves the offender alive.** `collide.run` no longer deactivates
+  the bullet that hit the ship or kills the enemy that rammed it; it only
+  reports `Hit { by, kind, index }`. `main.on_hit` decides: rewind (the
+  restore wipes everything anyway), or death / god mode (then main
+  deactivates the bullet or `kill`s the non-boss enemy exactly as M3 did,
+  so the M3 scripts keep their values).
+- Input during REWIND is ignored except Select and the OS combos; Start
+  cannot pause a rewind.
 
-Padding note from the step-0 refactor: the pool structs use auto layout,
-so `Bolt`, `Fx`, `Enemy` and `EnemyBullet` have padding bytes that a
-whole-struct store does not guarantee. Before the M4 identity test relies
-on a byte compare, either make the pool structs `extern struct` with
-explicit field order or write the compare field by field.
+### Tracks (run in parallel, disjoint files)
 
-Hardware check at the end of M4: FPS overlay during a rewind must read 60
-with the bullet pool near full. Fallbacks in SPEC.md 13.1.
+| Track  | Owner        | Files                                                                                  |
+|--------|--------------|----------------------------------------------------------------------------------------|
+| A core | Opus agent   | `cart/src/history.zig` (new), `main.zig`, `world.zig`, `player.zig`, `collide.zig`, `input.zig`, `rng.zig` |
+| B show | Opus agent   | `cart/src/rewind.zig` (new), `hud.zig`, `draw.zig`, `bullets.zig`, `enemies.zig` (draw-only additions), `fx.zig` |
+| C tools| lead         | `tools/scripts/m4_*.json` + `.args`, `docs/RUNNING.md`, `docs/preview_m4.gif`         |
+| lead   | this session | `PLAN.md`, `SPEC.md` (13.1 bombs note, status), commits, tag `m4`                       |
+
+### Interface A -> B (A calls, B implements; B draws only, never simulates)
+
+```zig
+// rewind.zig (B)
+pub const report_ticks: u32 = 20;       // hit-stop with the bug report
+pub const playback_frames: u32 = 60;    // frames of reverse playback
+pub const ticks_per_frame: u32 = 2;     // game ticks stepped back per frame (120 total)
+pub const resume_invuln: u32 = 60;
+pub const go_ticks: u32 = 30;
+pub fn message(kind: enemies.Kind) []const u8;   // OFF BY ONE, RACE CONDITION, OUT OF MEMORY, DEADLOCK, ACCESS VIOLATION, UNDEFINED BEHAVIOR
+/// Over the frozen, fully drawn scene + HUD: red dot on the hitbox, the
+/// offender (w.enemy_bullets[hit.index] or w.enemies[hit.index]) drawn
+/// again in flash-white, the Anti-Black bar y 52..67 with `message(hit.kind)`
+/// centered at y 56 in Coral. `age` is 0..report_ticks-1.
+pub fn draw_report(hit: collide.Hit, age: u32) void;
+/// Over the restored, fully drawn scene + HUD, frame 1..playback_frames:
+/// every other scanline black (`draw.darken_scanlines`), the same bar and
+/// message, and `<<` blinking (on 8 of every 16 frames) over the HUD
+/// center (cover x 60..99 of the HUD row in Anti-Black first).
+pub fn draw_playback(hit: collide.Hit, frame: u32) void;
+/// The bar and message only (used by DYING and, in M5, GAME OVER).
+pub fn draw_bar(kind: enemies.Kind) void;
+/// "GO!" centered at y 56 in Anti-White; `ticks_left` counts go_ticks down.
+pub fn draw_go(ticks_left: u32) void;
+
+// draw.zig (B)
+pub fn darken_scanlines() void;         // every odd screen row black, full width
+// bullets.zig (B): pub fn draw_enemy_bullet(b: EnemyBullet, opts: draw.SpriteOpts) void
+// enemies.zig (B): pub fn draw_enemy(e: Enemy, opts: draw.SpriteOpts) void  (used by draw_enemies too)
+```
+
+`player.State.go_pop: u32` (A adds, decremented in `player.update`); main
+calls `rewind.draw_go(w.player.go_pop)` while it is > 0. A's `main.zig`
+draws the scene and the HUD, then calls the B overlay for the current
+phase. B does not touch `world.w` except to read it.
+
+### Interface A (history.zig) used by main.zig and the harness
+
+```zig
+pub const keyframe_count = 4;
+pub const keyframe_every: u32 = 60;
+pub const log_len = 256;
+pub const State = struct {                 // module-level `var`, NOT in the World (history is not rewound)
+    keyframes: [keyframe_count]world.World, // slot = (tick / 60) % 4
+    keyframe_tick: [keyframe_count]u32,    // invalid = 0xFFFF_FFFF
+    log: [log_len]u16,                     // controls used for tick t at log[t % 256]
+};
+pub fn reset() void;                       // new game: all keyframes invalid
+/// Called at the top of `simulate(.live)`: log[game_tick] = current controls;
+/// if game_tick % 60 == 0, keyframes[slot] = w, keyframe_tick[slot] = game_tick.
+pub fn record() void;
+/// Oldest tick a restore can reach (the oldest valid keyframe's tick).
+pub fn earliest_tick() u32;
+/// Copies the newest valid keyframe at or before `tick` into w, then for t
+/// in kf.tick+1 .. tick-1: input.update(log[t]); simulate(.silent); ends
+/// with w.game_tick == tick. Requires earliest_tick() <= tick <= w.game_tick
+/// and tick - kf.tick <= 255 (log coverage); returns false if impossible.
+pub fn restore(tick: u32) bool;
+/// Drops keyframes with tick > `tick` (the future that was rewound away).
+pub fn invalidate_after(tick: u32) void;
+/// Field-by-field comparison (comptime reflection over structs, arrays,
+/// enums, bools, ints, floats). Padding bytes are NOT compared.
+pub fn worlds_equal(a: *const world.World, b: *const world.World) bool;
+```
+
+The keyframe at tick K is saved after `input.update` for tick K, so the
+replay applies `input.update(log[t])` only for t > K. `simulate` must be
+callable from history.zig: A moves the per-tick simulation into a
+`pub fn simulate(mode)` (in `main.zig`, imported by history, or into a
+new `sim.zig` if the import cycle is awkward). In `.silent` mode:
+no `history.record`, no `on_hit`, no rewind grants, no audio (M6).
+
+State machine (`main.zig`, A): `State` gains `rewind = 4`. Meta:
+`rewind_hit: collide.Hit`, `rewind_hit_tick: u32`, `rewind_target: u32`,
+`rewind_age: u32`. `on_hit` with `rewinds > 0`: `rewinds -= 1`,
+`rewind_hit_tick = w.game_tick` (the tick just simulated + 1, i.e. the
+current game_tick), `rewind_target = @max(hit_tick -| 120, earliest_tick())`,
+`state = .rewind`, `rewind_age = 0`. Each REWIND tick: age < 20: freeze
+(no simulate), draw scene + HUD + `draw_report`; 20 <= age < 80: frame k =
+age - 19 (1..60), `history.restore(@max(hit_tick - 2k, target))`, draw
+scene + HUD + `draw_playback`; age == 80: `history.restore(target)` (a
+no-op if already there), `history.invalidate_after(target)`, `w.player.invuln
+= resume_invuln`, `w.player.go_pop = go_ticks`, `state = .playing`. The
+resumed tick reads live controls as usual. DYING draws `rewind.draw_bar`
+with the fatal kind.
+
+Debug exports (A, wasm only): `debug_history_check() u32` (copy w aside,
+`restore(w.game_tick)`, `worlds_equal` -> 0 if identical, 1 if not, 2 if
+restore refused), `debug_game_tick`, `debug_rewind_target`,
+`debug_earliest_tick`. `debug_state`: 4 = REWIND. Keep every existing
+export; `debug_bombs` reads the world now.
+
+### Harness (C, lead)
+
+- `m4_identity`: `m2_play.json` with `--at "T debug_history_check == 0"` at
+  T = 300, 777, 1500, 2241 (just after a bomb), 3333, 3999; and the same on
+  `m3_boss.json` (boss, teleport, death in history).
+- `m4_rewind`: `m2_hit.json` input (idle ship; the beetle's spread hits at
+  about 750): `--at` checks that `debug_state == 4` shortly after the hit,
+  `debug_rewinds == 2`, `debug_state == 1` 80 ticks later, `debug_game_tick`
+  after the resume == hit tick - 120 (pinned value), and the score after
+  the resume equals the score 120 ticks before the hit (pinned via
+  `--call-at`). Then a second hit after the invulnerability ends rewinds
+  again (rewinds 1) with a target inside the previous replayed segment.
+- `m4_early`: a hit before tick 120 (a script that flies straight into the
+  first gnat string) rewinds to tick 0 and resumes.
+- `m4_god_bomb`: the M3 scripts keep passing unchanged (god path unchanged;
+  bombs read from the world).
+- GIF of one rewind (ticks 700..900 of `m4_rewind`, every 2) in
+  `docs/preview_m4.gif`.
+
+### Verification for M4
+
+`tools/check.sh` green (all scripts, including the identity checks);
+`docs/preview_m4.gif`; ELF text+data (the four keyframes are RAM, not
+flash: check `.bss` grows by about 17 KB and nothing else); hardware:
+the FPS overlay during a rewind with the bullet pool near full must read
+60 (Adrian, on the badge; fallbacks in SPEC.md 13.1).
 
 ## Status
 
