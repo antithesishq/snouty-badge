@@ -9,6 +9,7 @@ const math = @import("math.zig");
 const rng = @import("rng.zig");
 const maze = @import("maze.zig");
 const camera = @import("camera.zig");
+const autopilot = @import("autopilot.zig");
 const raster = @import("render/raster.zig");
 const textures = @import("render/textures.zig");
 const scene = @import("render/scene.zig");
@@ -18,9 +19,11 @@ comptime {
     cart.export_start_code();
 }
 
-pub const State = enum(u32) { walk, turn, pause, rise, overhead, descend, teleport, fly };
+/// walk = 0, turn = 1, pause = 2, rise = 3, overhead = 4, descend = 5,
+/// teleport = 6, fly = 7 (stable: debug_state returns these). The state
+/// itself lives in autopilot.zig.
+pub const State = autopilot.State;
 
-var state: State = .fly;
 var tick: u32 = 0;
 var render_us: u32 = 0;
 var fps_x10: u32 = 0;
@@ -31,6 +34,8 @@ var maze_size: u8 = 12;
 /// Seed of the current rng stream, so debug_set_size and debug_set_seed
 /// give the same maze whichever order the harness calls them in.
 var seed: u32 = 0;
+/// debug_fade level applied after the overlays (M3 teleport test hook).
+var fade_level: u8 = 0;
 
 pub fn start() void {
     cart.set_vsync_enabled(1000.0 / 60.0);
@@ -43,6 +48,7 @@ fn reseed(s: u32) void {
     seed = s;
     random = rng.Xorshift.init(s);
     new_maze();
+    autopilot.begin_walk(&world);
 }
 
 fn new_maze() void {
@@ -53,18 +59,33 @@ fn new_maze() void {
 pub fn update() void {
     input.update(read_controls());
 
-    if (input.pressed(.select)) show_debug = !show_debug;
-    if (input.pressed(.start)) camera.reset(&world);
-    // A+B: new maze, once per chord (the tick the second button goes down).
-    if (input.held(.a) and input.held(.b) and (input.pressed(.a) or input.pressed(.b))) new_maze();
-    camera.debug_fly(.{
-        .up = input.held(.up),
-        .down = input.held(.down),
-        .left = input.held(.left),
-        .right = input.held(.right),
-        .a = input.held(.a),
-        .b = input.held(.b),
-    });
+    // B+Select (either order) toggles fly; Select alone the debug overlay.
+    if ((input.pressed(.select) and input.held(.b)) or (input.pressed(.b) and input.held(.select))) {
+        autopilot.toggle_fly(&world);
+    } else if (input.pressed(.select)) {
+        show_debug = !show_debug;
+    }
+
+    if (autopilot.state == .fly) {
+        if (input.pressed(.start)) camera.reset(&world);
+        // A+B: new maze, once per chord (the tick the second button goes down).
+        if (input.held(.a) and input.held(.b) and (input.pressed(.a) or input.pressed(.b))) new_maze();
+        camera.debug_fly(.{
+            .up = input.held(.up),
+            .down = input.held(.down),
+            .left = input.held(.left),
+            .right = input.held(.right),
+            .a = input.held(.a),
+            .b = input.held(.b),
+        });
+    } else {
+        if (input.pressed(.start)) autopilot.name_strip_forced = !autopilot.name_strip_forced;
+        if (input.pressed(.a)) {
+            autopilot.skip();
+        } else {
+            autopilot.step(&world, &random, raster.focal);
+        }
+    }
 
     const t0 = cart.micros_since_boot();
     raster.begin_frame();
@@ -73,10 +94,16 @@ pub fn update() void {
     const dt: u32 = @truncate(cart.micros_since_boot() - t0);
     render_us = dt;
     fps_x10 = if (dt > 0) @min(999, 10_000_000 / @max(dt, 16_667)) else 0;
+    if (name_strip_on()) overlay.draw_name_strip();
     if (show_debug) overlay.draw_debug(render_us, fps_x10);
+    if (fade_level != 0) overlay.fade(fade_level);
 
     tick +%= 1;
     if (cart.is_wasm) present_wasm();
+}
+
+fn name_strip_on() bool {
+    return autopilot.state != .fly and (autopilot.name_strip_visible or autopilot.name_strip_forced);
 }
 
 /// Background for pixels no polygon covers (only visible when the camera
@@ -101,6 +128,14 @@ comptime {
         @export(&debug_finish_x, .{ .name = "debug_finish_x" });
         @export(&debug_finish_z, .{ .name = "debug_finish_z" });
         @export(&debug_run_count, .{ .name = "debug_run_count" });
+        @export(&debug_cycles, .{ .name = "debug_cycles" });
+        @export(&debug_state_tick, .{ .name = "debug_state_tick" });
+        @export(&debug_heading, .{ .name = "debug_heading" });
+        @export(&debug_set_roll, .{ .name = "debug_set_roll" });
+        @export(&debug_skip, .{ .name = "debug_skip" });
+        @export(&debug_name_strip, .{ .name = "debug_name_strip" });
+        @export(&debug_fade, .{ .name = "debug_fade" });
+        @export(&debug_actors, .{ .name = "debug_actors" });
     }
 }
 
@@ -108,7 +143,7 @@ fn debug_tick() callconv(.c) u32 {
     return tick;
 }
 fn debug_state() callconv(.c) u32 {
-    return @backingInt(state);
+    return @backingInt(autopilot.state);
 }
 fn debug_render_us() callconv(.c) u32 {
     return render_us;
@@ -124,7 +159,7 @@ fn debug_pixel_checksum() callconv(.c) u32 {
 /// Places the camera; angles in degrees. Switches to the fly state so the
 /// autopilot does not move it.
 fn debug_set_camera(x: f32, y: f32, z: f32, yaw_deg: f32, pitch_deg: f32, roll_deg: f32) callconv(.c) void {
-    state = .fly;
+    autopilot.state = .fly;
     camera.cam = .{
         .pos = math.vec3(x, y, z),
         .yaw = deg_to_angle(yaw_deg),
@@ -156,6 +191,38 @@ fn debug_cell_x() callconv(.c) u32 {
 }
 fn debug_cell_z() callconv(.c) u32 {
     return @intFromFloat(@max(0.0, camera.cam.pos[2]));
+}
+
+/// Mazes completed (bumped when OVERHEAD swaps in the new maze).
+fn debug_cycles() callconv(.c) u32 {
+    return autopilot.cycles;
+}
+fn debug_state_tick() callconv(.c) u32 {
+    return autopilot.state_tick;
+}
+/// Autopilot heading (n = 0, e, s, w); in fly, the camera's compass quadrant.
+fn debug_heading() callconv(.c) u32 {
+    const d = if (autopilot.state == .fly) camera.heading(camera.cam.yaw) else autopilot.dir;
+    return @backingInt(d);
+}
+/// Sets the camera roll in degrees and restarts the roll-cap timer.
+fn debug_set_roll(roll_deg: f32) callconv(.c) void {
+    autopilot.set_roll(deg_to_angle(roll_deg));
+}
+/// Same as pressing A: WALK/TURN jump to PAUSE.
+fn debug_skip() callconv(.c) void {
+    autopilot.skip();
+}
+fn debug_name_strip() callconv(.c) u32 {
+    return @intFromBool(name_strip_on());
+}
+/// Applies overlay.fade(level) (0..16) to every following frame, for
+/// testing the teleport dissolve; 0 turns it off.
+fn debug_fade(level: u32) callconv(.c) void {
+    fade_level = @intCast(@min(level, 16));
+}
+fn debug_actors(on: u32) callconv(.c) void {
+    scene.debug_actors = on != 0;
 }
 
 fn deg_to_angle(d: f32) math.Angle {

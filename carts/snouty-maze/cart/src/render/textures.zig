@@ -10,6 +10,9 @@ pub const Texture = struct {
     /// u is the image column, v the image row.
     texels: *const [size * size]u8,
     palette: *const [16]cart.Pixel,
+    /// Extent of the image in the grid, in texture units: sprite quads map
+    /// u, v over [0, uv_max]. 0.5 for the 16x16 snouty_top.
+    uv_max: f32 = 1.0,
 };
 
 var wall_texels: [size * size]u8 = undefined;
@@ -30,6 +33,29 @@ pub var floor: Texture = .{ .texels = &floor_texels, .palette = &floor_pal };
 pub var ceiling: Texture = .{ .texels = &ceiling_texels, .palette = &ceiling_pal };
 pub var finish: Texture = .{ .texels = &finish_texels, .palette = &finish_pal };
 
+var snouty_texels: [4][size * size]u8 = undefined;
+var snouty_top_texels: [size * size]u8 = undefined;
+var smiley_texels: [size * size]u8 = undefined;
+var logo_texels: [size * size]u8 = undefined;
+var snouty_pal: [16]cart.Pixel = undefined;
+var snouty_top_pal: [16]cart.Pixel = undefined;
+var smiley_pal: [16]cart.Pixel = undefined;
+var logo_pal: [16]cart.Pixel = undefined;
+
+/// Actor sprites. Palette index 0 is the transparent magenta key, skipped
+/// by `Fill.sprite`. Snouty's four 32x32 walk frames share one palette.
+pub var snouty: [4]Texture = .{
+    .{ .texels = &snouty_texels[0], .palette = &snouty_pal },
+    .{ .texels = &snouty_texels[1], .palette = &snouty_pal },
+    .{ .texels = &snouty_texels[2], .palette = &snouty_pal },
+    .{ .texels = &snouty_texels[3], .palette = &snouty_pal },
+};
+/// 16x16 top view in the top-left of a 32x32 grid (rest transparent): use
+/// u, v in [0, 0.5).
+pub var snouty_top: Texture = .{ .texels = &snouty_top_texels, .palette = &snouty_top_pal, .uv_max = 0.5 };
+pub var smiley: Texture = .{ .texels = &smiley_texels, .palette = &smiley_pal };
+pub var logo: Texture = .{ .texels = &logo_texels, .palette = &logo_pal };
+
 /// Flat colour for wall tops.
 pub var top_color: cart.Pixel = undefined;
 
@@ -44,6 +70,29 @@ pub fn init() void {
     palette(gfx.ceiling, &ceiling_pal, 10);
     palette(gfx.finish, &finish_pal, 10);
     top_color = .from_color(.rgb(0x808080));
+
+    for (&snouty_texels, 0..) |*t, f| unpack_region(gfx.snouty, f * size, size, t);
+    unpack_region(gfx.snouty_top, 0, 16, &snouty_top_texels);
+    unpack(gfx.smiley, &smiley_texels);
+    unpack(gfx.logo, &logo_texels);
+    palette(gfx.snouty, &snouty_pal, 10);
+    palette(gfx.snouty_top, &snouty_top_pal, 10);
+    palette(gfx.smiley, &smiley_pal, 10);
+    palette(gfx.logo, &logo_pal, 10);
+}
+
+/// Copies an n x n block starting at sheet column x0 into the top-left of a
+/// 32x32 grid; texels outside the block are 0 (transparent for sprites).
+fn unpack_region(comptime sheet: type, x0: usize, comptime n: usize, out: *[size * size]u8) void {
+    comptime {
+        if (sheet.height < n or n > size) @compileError("sprite region out of range");
+    }
+    @memset(out, 0);
+    for (0..n) |v| {
+        for (0..n) |u| {
+            out[(u << 5) | v] = sheet.indices.get(v * sheet.width + x0 + u);
+        }
+    }
 }
 
 fn unpack(comptime sheet: type, out: *[size * size]u8) void {

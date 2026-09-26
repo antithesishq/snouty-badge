@@ -6,6 +6,8 @@ const maze = @import("../maze.zig");
 const camera = @import("../camera.zig");
 const raster = @import("raster.zig");
 const textures = @import("textures.zig");
+const sprite = @import("sprite.zig");
+const mesh = @import("mesh.zig");
 
 pub const wall_half: f32 = 0.05;
 pub const wall_height: f32 = 1.0;
@@ -19,6 +21,11 @@ const vec3 = math.vec3;
 var order: [maze.max_runs]u16 = undefined;
 var order_n: u16 = 0;
 var keys: [maze.max_runs]u16 = undefined;
+
+/// Debug: draw one of each actor in fixed cells after the maze (M3 prep).
+pub var debug_actors: bool = false;
+/// Frame counter for the debug actors' animation, bumped in `draw`.
+pub var debug_frame: u32 = 0;
 
 pub fn draw(m: *const maze.Maze, cam: *const camera.Camera) void {
     const b = cam.basis();
@@ -41,6 +48,19 @@ pub fn draw(m: *const maze.Maze, cam: *const camera.Camera) void {
 
     if (pos[1] > 0) horizontal(cam, b, 0, 0, w, h, 0, .{ .textured = &textures.floor });
     if (pos[1] < wall_height) horizontal(cam, b, 0, 0, w, h, wall_height, .{ .textured = &textures.ceiling });
+
+    if (debug_actors) {
+        const f = debug_frame;
+        debug_frame +%= 1;
+        // One bob per 2 s, one spin per 2 s (65536 / 120 per tick).
+        const bob = 0.05 * math.sin_turns(@as(f32, @floatFromInt(f % 120)) * (1.0 / 120.0));
+        const spin: math.Angle = @truncate(f *% 546);
+        mesh.draw_sphere(cam, b, vec3(1.5, 0.5 + bob, 1.5), 0.25, .{ 0xc0, 0xc0, 0xc0 });
+        mesh.draw_spin_quad(cam, b, vec3(2.5, camera.eye_height, 1.5), 0.2, spin, &textures.smiley);
+        mesh.draw_spin_quad(cam, b, vec3(3.5, camera.eye_height, 1.5), 0.2, spin, &textures.logo);
+        sprite.draw_billboard(cam, b, vec3(1.5, 0, 2.5), 0.6, &textures.snouty[(f / 8) % 4]);
+        sprite.draw_floor_sprite(cam, b, vec3(2.5, 0, 2.5), 0.6, &textures.snouty_top);
+    }
 }
 
 /// Axis-aligned horizontal quad, u = x, v = z (one repeat per cell).

@@ -493,3 +493,7 @@ added to 9):
 - 2026-09-26: M1 tagged `m1`: real rasterizer, maze generator, fly
   camera, placeholders, golden tests, `docs/preview_m1.gif`. Hardware gate
   (section 16) pending Adrian's flash. Deviations recorded in PLAN.md.
+- 2026-09-26: M2 tagged `m2`: autopilot, finish sequence, maze swap, name
+  strip, `check_cycle.mjs`, `docs/preview_m2.gif`. The M3 actor renderer
+  (`render/mesh.zig`, `render/sprite.zig`) landed early behind
+  `debug_actors`. Review point: the rise GIF and the walk/pivot speeds.

@@ -411,3 +411,29 @@ FLY                              debug, entered/left by B+Select
    A-skip run shows OVERHEAD with the name strip at tick 300.
 3. `docs/preview_m2.gif` from `m2_cycle.json`.
 4. Tag `m2`, hand-off note.
+
+## M2 result (2026-09-26, tag `m2`)
+
+Done criteria met: build, 24 host tests, check-float PASS, 7 goldens
+(`start` re-baselined: the cart now boots in WALK, so frame 0 is one step
+in), `check_cycle.mjs` 3/3, `docs/preview_m2.gif`. `.text` 40 KB, `.bss`
+50 KB. Deviations, all kept:
+
+- Overhead framing fits the wall tops (y = 1), not the floor: `h = 1 +
+  max(w, h) / 2 * focal / 48`, shift `12 (h - 1) / focal`. Floor-fitted
+  framing let the tops overrun the top edge.
+- `check_cycle` run B samples tick 240, not 300: OVERHEAD covers ticks
+  180..299 exactly.
+- If A interrupts a TURN, RISE also finishes the yaw to the nearest
+  quadrant so the plan view stays axis-aligned.
+- `debug_fade(level)` is sticky (applied every frame until set to 0).
+- Floor sprites lift by `max(0.003, 1.5 d^2 / 2048)` capped at 0.3 so the
+  strict z test does not eat them at overhead range.
+- Sprite texel lookups clamp instead of wrapping at quad edges.
+- Sphere is 8 bands x 12 segments (72 quads + 24 triangles); the spec's
+  "96 quads" was wrong for 8 rings.
+- The first maze on seed 1 finishes near tick 6900; the follower can need
+  up to ~8900 on other seeds, so unattended checks use 9000 frames for
+  seed 1 and should use 12000 for arbitrary seeds.
+- `m1_fly.json` only works on the `m1` tag now (autopilot ignores the
+  stick; B+Select enters fly mode instead).

@@ -60,17 +60,19 @@ pub var cam: Camera = .{};
 pub fn reset(m: *const maze.Maze) void {
     const sx = m.start[0];
     const sz = m.start[1];
-    var yaw: Angle = 0;
-    for ([_]maze.Dir{ .n, .e, .s, .w }) |d| {
-        if (!m.has_wall(sx, sz, d)) {
-            yaw = dir_yaw(d);
-            break;
-        }
-    }
     cam = .{
         .pos = math.vec3(@as(f32, @floatFromInt(sx)) + 0.5, eye_height, @as(f32, @floatFromInt(sz)) + 0.5),
-        .yaw = yaw,
+        .yaw = dir_yaw(start_facing(m)),
     };
+}
+
+/// The start cell's first open side in N, E, S, W order (what `reset`
+/// faces and where the autopilot's DESCEND ends).
+pub fn start_facing(m: *const maze.Maze) maze.Dir {
+    for ([_]maze.Dir{ .n, .e, .s, .w }) |d| {
+        if (!m.has_wall(m.start[0], m.start[1], d)) return d;
+    }
+    return .n;
 }
 
 /// Yaw that faces `d` (n = 0, e = deg(90), ...).
@@ -112,6 +114,13 @@ pub fn debug_fly(f: Fly) void {
         const s = axis * walk_step;
         cam.pos[0] += math.sin_angle(cam.yaw) * s;
         cam.pos[2] -= math.cos_angle(cam.yaw) * s;
+    }
+}
+
+test {
+    // autopilot.zig is host-testable but host_tests.zig does not list it.
+    comptime {
+        _ = @import("autopilot.zig");
     }
 }
 

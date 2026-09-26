@@ -351,6 +351,17 @@ inline fn sample_uv(iz: f32, bu: f32, bv: f32, g: *const Grad, fy: f32) Uv {
     };
 }
 
+/// Sprites clamp instead of wrapping: samples lie inside the polygon, but
+/// rounding can put an edge sample a hair outside [0, 32), and the & 31
+/// wrap would then fetch the opposite border (a sprite whose feet touch
+/// row 31 would grow stray pixels above its head). Clamping both segment
+/// ends keeps every interpolated texel inside too.
+const uv_edge: f32 = @as(f32, textures.size) - 1.0 / 2048.0;
+inline fn sprite_clamp(comptime sprite: bool, s: Uv) Uv {
+    if (!sprite) return s;
+    return .{ .u = @min(uv_edge, @max(0.0, s.u)), .v = @min(uv_edge, @max(0.0, s.v)) };
+}
+
 /// Textured span in segments of `seg` pixels. The z value needs no divide,
 /// so each segment is first z-tested alone; a segment hidden behind nearer
 /// geometry (floor behind walls, far walls) costs no divide and no texel
@@ -379,8 +390,8 @@ fn span_tex(comptime sprite: bool, x: u32, y0: u32, y1: u32, g: *const Grad, tex
         const q_start = to_fixed(qs, q_frac);
         const dq = to_fixed((clamp_q(iz_e) - qs) * scale, q_frac);
         if (any_visible(zc, len, q_start, dq)) {
-            if (!s_valid) s = sample_uv(iz_s, bu, bv, g, fy);
-            const e = sample_uv(iz_e, bu, bv, g, fy_e);
+            if (!s_valid) s = sprite_clamp(sprite, sample_uv(iz_s, bu, bv, g, fy));
+            const e = sprite_clamp(sprite, sample_uv(iz_e, bu, bv, g, fy_e));
             if (collect_stats) stats.segments += 1;
             const uv = pack_uv(s.u, s.v);
             const duv = pack_uv((e.u - s.u) * scale, (e.v - s.v) * scale);
