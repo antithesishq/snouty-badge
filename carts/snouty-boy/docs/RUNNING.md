@@ -119,21 +119,38 @@ work with the same watcher in Chrome; if it does not load, use the local UI.
 
 Keys (from `sycl-badge/simulator/README.md`) and what they do here:
 
-| Keyboard           | Badge          | Game Boy                          |
-|--------------------|----------------|-----------------------------------|
-| Arrow keys or WASD | Joystick       | D-pad                             |
-| Z or K             | A              | A                                 |
-| X or J             | B              | B                                 |
-| Enter or Y         | Start          | Start                             |
-| Backspace or T     | Select         | Select                            |
-| Shift              | Joystick click | nothing (the OS owns it)          |
-| Escape             | System menu    | leaves the cart                   |
+| Keyboard           | Badge          | Game Boy / emulator                         |
+|--------------------|----------------|---------------------------------------------|
+| Arrow keys or WASD | Joystick       | D-pad                                       |
+| Z or K             | A              | A                                           |
+| X or J             | B              | B                                           |
+| Enter or Y         | Start          | Start                                       |
+| Backspace or T     | Select, tap    | Select, delivered on release (3 frames)     |
+| Backspace or T     | Select, hold 0.5 s | opens the emulator menu, game paused    |
+| Shift              | Joystick click | nothing (the OS owns it)                    |
+| Escape             | System menu    | leaves the cart                             |
 
-Holding Start and Select together for 250 ms exits the cart on the badge (the
-OS owns that chord), so Game Boy soft-reset combos do not work. From M3,
-holding Select for 500 ms opens the emulator menu (SPEC.md section 5).
+Select is never passed straight through (SPEC.md section 5): while it is
+held the game sees nothing; released within 500 ms (30 frames) the game gets
+a short Select press; held 500 ms, the emulator menu opens instead. Holding
+Start and Select together for 250 ms exits the cart on the badge (the OS
+owns that chord), so Game Boy soft-reset combos do not work; Start pressed
+during a Select hold cancels both the tap and the menu.
 
-What you should see: the embedded ROM's screen, 144 Game Boy lines squeezed
+In the menu (drawn over the frozen game frame):
+
+| Key            | Action                                                     |
+|----------------|------------------------------------------------------------|
+| Up / Down      | move                                                       |
+| A              | choose: Resume, cycle Palette / Scale / Sound / Debug overlay, Reset (restart the ROM), About |
+| Left / Right   | cycle the highlighted setting (reserved for the M4 time scrubber elsewhere) |
+| B, Select tap  | resume (B also leaves About)                               |
+
+Buttons still held when the menu closes (or the splash is skipped) reach
+the game only after being released and pressed again. The boot splash
+(1.2 s) is skipped by any button.
+
+What you should see: the Snouty splash, then the embedded ROM's screen, 144 Game Boy lines squeezed
 to the badge's 128 rows by dropping every ninth line, in DMG green, with the
 debug overlay in the top-left corner:
 
@@ -179,6 +196,9 @@ Useful options (the header of `tools/preview.mjs` has the full list):
     LCD on, 0 with it off)
   - `debug_step_us`: the last `step_frame` time (always 1000 in wasm)
   - `debug_palette`: the current palette index
+  - `debug_state`: frontend state, 0 splash, 1 running, 2 menu
+  - `debug_pad`: the pad byte the game was last stepped with
+    (Select = 64, Start = 128)
 - `--expect "debug_lines == 144"` (repeatable): checked at the end; a
   failure exits 3. `--at "T NAME OP VALUE"` checks right after update T.
 - `--quiet`: no PNGs, only `frames.json`.
@@ -186,9 +206,12 @@ Useful options (the header of `tools/preview.mjs` has the full list):
 A quick smoke test:
 
 ```sh
-node tools/preview.mjs zig-out/bin/snouty-boy.wasm --frames 60 --quiet --out out/ \
+node tools/preview.mjs zig-out/bin/snouty-boy.wasm --frames 132 --quiet --out out/ \
   --expect "debug_frame_count == 60" --expect "debug_lines == 144"
 ```
+
+The first 72 updates are the boot splash, during which the core is not
+stepped, hence 132 updates for 60 Game Boy frames.
 
 Exit codes: 1 the cart cannot be loaded, 2 usage error, 3 the cart trapped or
 an expectation failed. One update is one 60 Hz badge frame, which is one Game

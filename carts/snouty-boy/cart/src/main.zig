@@ -1,19 +1,29 @@
 //! Snouty Boy: Game Boy emulator cart. Runs the core one frame per badge
 //! frame and shows its lines through frontend/video.zig, with the debug
 //! overlay (frontend/debug.zig) on top.
-//! See SPEC.md (design), PLAN.md (M1 contract), CLAUDE.md (toolchain).
+//!
+//! States: splash (frontend/splash.zig) -> running -> menu
+//! (frontend/menu.zig, opened by a 500 ms Select hold, frontend/input.zig)
+//! -> running. The core is stepped only while running.
+//! See SPEC.md (design), PLAN.md (milestone contract), CLAUDE.md (toolchain).
 const cart = @import("cart-api");
 const core = @import("core");
 const rom = @import("rom");
 const video = @import("frontend/video.zig");
 const input = @import("frontend/input.zig");
 const debug = @import("frontend/debug.zig");
+const menu = @import("frontend/menu.zig");
+const splash = @import("frontend/splash.zig");
 
 comptime {
     cart.export_start_code();
 }
 
 var gb: core.Gb = undefined;
+
+pub const State = enum(u32) { splash = 0, running = 1, menu = 2 };
+var state: State = .splash;
+var controls_state: input.State = .{};
 
 pub fn start() void {
     cart.set_vsync_enabled(1000.0 / 60.0);
@@ -24,21 +34,53 @@ pub fn start() void {
 }
 
 pub fn update() void {
-    const controls = read_controls();
-    const pad = input.pad_from_controls(controls);
+    controls_state.poll(read_controls());
+    // Timestamp every badge frame (paused or not) so the FPS counter sees
+    // real frame intervals; `debug.record` below only measures step_frame.
+    const t0 = cart.micros_since_boot();
+    debug.frame_tick(t0);
 
-    // One clock read serves as both the frame timestamp for the FPS counter
-    // and the start of the step_frame measurement.
-    const t1 = cart.micros_since_boot();
-    debug.frame_tick(t1);
-    gb.step_frame(pad);
+    switch (state) {
+        .splash => {
+            if (splash.update(controls_state.edge.any_pressed())) {
+                controls_state.suppress_held();
+                state = .running;
+                run_frame(t0);
+            }
+        },
+        .running => run_frame(t0),
+        .menu => {
+            if (menu.update(&gb, controls_state.edge) == .resume_game) {
+                menu.close();
+                controls_state.suppress_held();
+                state = .running;
+                run_frame(cart.micros_since_boot());
+            }
+        },
+    }
+
+    if (cart.is_wasm) present_wasm();
+}
+
+/// One game frame, or opening the menu instead of stepping. `t1` is a fresh
+/// `micros_since_boot` reading taken just before.
+fn run_frame(t1: u64) void {
+    const in = controls_state.game_frame();
+    if (in.open_menu) {
+        state = .menu;
+        menu.open();
+        _ = menu.update(&gb, controls_state.edge);
+        return;
+    }
+
+    gb.step_frame(in.pad);
     const t2 = cart.micros_since_boot();
+
+    // TODO(M3 integrator): audio.update(&gb); // frontend/audio.zig, gated on menu.sound_enabled; also consume splash.request_chime
 
     video.finish_frame();
     debug.record(@truncate(t2 -% t1));
     debug.draw();
-
-    if (cart.is_wasm) present_wasm();
 }
 
 pub fn read_controls() cart.Controls {
@@ -75,6 +117,8 @@ comptime {
         @export(&debug_step_us, .{ .name = "debug_step_us" });
         @export(&debug_lines, .{ .name = "debug_lines" });
         @export(&debug_palette, .{ .name = "debug_palette" });
+        @export(&debug_state, .{ .name = "debug_state" });
+        @export(&debug_pad, .{ .name = "debug_pad" });
     }
 }
 
@@ -93,4 +137,12 @@ fn debug_lines() callconv(.c) u32 {
 /// Current palette index into `video.palettes`.
 fn debug_palette() callconv(.c) u32 {
     return @intCast(video.palette_index);
+}
+/// Frontend state: 0 splash, 1 running, 2 menu.
+fn debug_state() callconv(.c) u32 {
+    return @backingInt(state);
+}
+/// Pad byte the game was last stepped with (`core.Pad` bits; Select = 64).
+fn debug_pad() callconv(.c) u32 {
+    return gb.pad;
 }

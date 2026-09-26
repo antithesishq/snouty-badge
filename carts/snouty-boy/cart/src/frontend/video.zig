@@ -185,3 +185,31 @@ pub fn finish_frame() void {
     last_frame_lines = lines_this_frame;
     lines_this_frame = 0;
 }
+
+/// Shade `s` of the current palette as a `DisplayColor`, for overlays drawn
+/// with the cart API (menu, splash) so they follow the palette.
+pub fn shade_color(s: u2) cart.DisplayColor {
+    return .rgb(palettes[palette_index].rgb[s]);
+}
+
+/// Recolor a frozen frame in place: every pixel equal to shade k of palette
+/// `old` becomes shade k of palette `new`. Other pixels (overlay text) stay.
+/// Used by the menu when the palette changes while the core is paused; costs
+/// one pass over the 20,480 pixels, only on a key press.
+pub fn remap_palette(old: usize, new: usize) void {
+    const from = &pixel_tables[old % palettes.len];
+    const to = &pixel_tables[new % palettes.len];
+    const fb: *[fb_w * fb_h]cart.Pixel = @ptrCast(cart.framebuffer);
+    for (fb) |*px| {
+        const b = px.bits;
+        if (b == from[0].bits) {
+            px.* = to[0];
+        } else if (b == from[1].bits) {
+            px.* = to[1];
+        } else if (b == from[2].bits) {
+            px.* = to[2];
+        } else if (b == from[3].bits) {
+            px.* = to[3];
+        }
+    }
+}
