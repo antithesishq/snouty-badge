@@ -4,7 +4,7 @@ Owner: Adrian Hatch (Antithesis). Target: SYCL Badge V2, 160x128 RGB565, 60 Hz.
 Sixth cart for the badge, alongside `snouty-badge` (running Snouty),
 `snouty-bugs` (bullet hell), `snoutenstein` (raycaster FPS, spec only),
 `snouty-reflections` (ray tracer demo) and `snouty-boy` (Game Boy emulator,
-spec only). "Snouty Maze" is a working title; see section 18.
+spec only). Name decided; see section 18.
 Status and milestones are at the bottom.
 
 ## 1. One paragraph
@@ -464,35 +464,29 @@ Parallel tracks go to Opus subagents with disjoint files.
 
 ## 18. Decisions and open questions
 
-None of these blocks M0 or M1; defaults are stated so work can start.
+All decided by Adrian on 2026-09-26 (the recommended defaults, with a cap
+added to 9):
 
-1. Name and repo. Default "Snouty Maze", repo `snouty-maze`.
-2. Maze size. Default 12x12; 16x16 if the M1 numbers allow and you prefer
-   the longer walk.
-3. Walk: left-hand wall follower (faithful, wanders into dead ends) or
-   follow the BFS solution with occasional detours (shorter loops)?
-   Default wall follower.
-4. Ceiling on or off? The original had one by default. Default on.
-5. Name strip: overhead-only (default), always on, or never.
-6. Snouty fully replaces the rat (default), or keep a rat and give Snouty a
-   cameo elsewhere.
-7. Logo: Iris mark (default, asset exists), a Zig logo for the SYCL crowd,
-   or an Antithesis wordmark.
-8. Sound and LEDs default off, Select toggles both (default, matches the
-   other carts).
-9. Smiley flip persists until the finish (default) or auto-unflips after
-   10 s.
-10. Takeover in scope for M4 (default yes) or keep the cart a pure
-    screensaver.
-11. Textures 32x32 (default) or 64x64 (4x the bytes, softer look up close).
-12. An Antithesis gag on the logo: touching it rewinds the last few seconds
-    of the walk backwards (we have the deterministic-replay machinery
-    designed twice already). Default no; it is a screensaver.
-13. Walk speed 2 cells/s and pivot 20 ticks are guesses at the original's
-    feel; tune from the M2 GIF.
+1. Name "Snouty Maze", repo `snouty-maze`.
+2. Maze 12x12 by default; 16x16 is allowed only if the M1 numbers permit.
+3. Left-hand wall follower. If the loop feels long, raise the walk speed.
+4. Ceiling on.
+5. Name strip overhead-only; Start toggles it permanently on or off.
+6. Snouty fully replaces the rat.
+7. Logo: Iris mark for v1; revisit at M4 (Antithesis wordmark if one
+   survives at 32 px).
+8. Sound and LEDs default off, Select toggles both.
+9. Smiley flip persists until the finish, capped at 20 s: if no finish
+   comes within 20 s the view unrolls on its own.
+10. Joystick takeover is in scope, as the last item of M4.
+11. Textures 32x32.
+12. No rewind gag in this cart.
+13. Walk 2 cells/s, pivot 20 ticks; tune from the M2 GIF.
 
 ## Status
 
 - 2026-09-26: spec drafted after the feasibility discussion (raycaster vs
   rasterizer; rasterizer chosen so the rise can be real). Placeholder art
-  for v1 per Adrian. No code yet. Next: M0 scaffold.
+  for v1 per Adrian.
+- 2026-09-26: section 18 decided (all defaults, 20 s cap on the flip).
+  M0 and M1 started; contracts in `PLAN.md`.

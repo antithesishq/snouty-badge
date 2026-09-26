@@ -1,0 +1,234 @@
+# Plan: M0 scaffold and M1 "Rasterizer on hardware"
+
+Companion to `SPEC.md`. This file is the contract between the parallel
+tracks; when it and the spec disagree, this file wins for M1 and the spec is
+updated afterwards.
+
+## M0 Scaffold (done 2026-09-26)
+
+Toolchain copied from `snouty-reflections` (build options, `check-float`,
+`input.zig`, `math.zig`, wasm shims, `preview.mjs`, `serve-cart.mjs`,
+`make_gif.py`) and `snouty-bugs` (PNG -> `gfx` module asset pipeline,
+`convert_gfx.zig`, `packed_int_array.zig`). `ReleaseFast`. New: `rng.zig`,
+`maze.zig` (types + boundary-only stub), `camera.zig` (basis convention,
+tested), `render/{clip,raster,textures,scene,overlay}.zig` stubs with the
+interfaces below, `main.zig` with the debug exports, crude placeholder PNGs
+at manifest sizes, `zig build test` via `cart/src/host_tests.zig`.
+Verified: uf2/elf/wasm build (incremental 2 s, clean ~4 min), `.text` 12 KB,
+`.bss` 41 KB (the z buffer), `check_float` PASS, preview renders the stub.
+
+## M1 goal
+
+Fly through a real maze on hardware. Perfect maze with merged wall runs,
+textured walls with orientation shading, textured floor and ceiling, wall
+tops and the finish tile, z buffer, near clipping, full yaw/pitch/roll
+camera with debug fly controls, timing overlay, golden-image tests. Adrian
+flashes it and reports fps and `render_us` at the two SPEC section 16 poses.
+
+## Tracks
+
+Each track owns the files listed and touches nothing else. A needed change
+to another track's file goes into the final report as a request, with the
+exact diff. `math.zig`, `rng.zig`, `input.zig`, `build.zig` and this file
+are frozen for M1 (private helpers go in the track's own files).
+
+| Track | Owner | Files |
+|-------|-------|-------|
+| A rasterizer | Opus agent | `cart/src/render/clip.zig`, `raster.zig`, `textures.zig`, `scene.zig` |
+| B world and camera | Opus agent | `cart/src/maze.zig`, `camera.zig`, `main.zig`, `render/overlay.zig` |
+| C tools and docs | Opus agent | `tools/prepare_assets.py`, `tools/preview.mjs`, `tools/check_golden.mjs`, `tools/scripts/*.json`, `tests/golden/poses.json`, `assets/gen/*.png`, `docs/RUNNING.md`, `docs/placeholders.png` |
+
+Integration (me): build, generate the golden PNGs, run `check_golden`,
+GIF from the fly script, `size -A`, `check-float`, tag `m1`, hand-off note.
+
+## Fixed conventions (already in the M0 code; do not change)
+
+**World.** Units are cells. x east, z south, y up. Cell `(cx, cz)` spans
+`[cx, cx+1) x [cz, cz+1)`. Walls: height 1.0, half thickness
+`scene.wall_half = 0.05`. Floor y = 0, ceiling y = 1, eye height 0.5.
+`maze.Dir`: n = -z, e = +x, s = +z, w = -x. `maze.Cell` bits are
+"wall present". `maze.Run { x, z, len, axis }` is a panel from grid vertex
+`(x, z)` running `len` cells along `axis`; the renderer extends it by
+`wall_half` at both ends and gives it `+-wall_half` thickness so
+perpendicular runs meet cleanly at corners.
+
+**Camera.** `camera.Camera { pos, yaw, pitch, roll }`, angles `math.Angle`
+(u16, 65,536 per turn). yaw 0 faces north (-z), `deg(90)` faces east.
+Positive pitch looks down; `deg(90)` is straight down. roll `deg(180)` is
+upside down. `basis()` is the world-to-view rotation, view space +x right,
++y up, +z forward; `to_view(b, p) = b.apply(p - pos)`. Tested in
+`camera.zig`.
+
+**Projection.** `raster.focal = 123.2` (66 degree horizontal FOV),
+`sx = 80 + focal * x / z`, `sy = 64 - focal * y / z`, near plane
+`clip.near = 0.05`. Z buffer stores `u16(1/z * raster.z_scale)`,
+`z_scale = 2048`, cleared to 0, test is greater-than.
+
+**Textures.** 32x32, `textures.Texture { texels: *const [1024]u8, palette:
+*const [16]Pixel }`, texels indexed `[(u << 5) | v]` (u along the wall or
+world x, v vertical or world z). Track A may add fields but not remove
+these.
+
+## Interfaces
+
+```zig
+// render/raster.zig (Track A)
+pub const Vertex = clip.Vertex;                   // { p: Vec3 (view space), u: f32, v: f32 } u, v in cells
+pub const Fill = union(enum) { textured: *const Texture, flat: cart.Pixel, sprite: *const Texture };
+pub fn begin_frame() void;                        // clears the z buffer
+pub fn draw_polygon(verts: []const Vertex, fill: Fill) void;  // 3 or 4 verts, any winding, near clip inside
+
+// render/textures.zig (Track A)
+pub fn init() void;                               // unpack gfx sheets, build palettes
+pub var wall_lit, wall_dark, floor, ceiling, finish: Texture;
+pub var top_color: cart.Pixel;
+
+// render/scene.zig (Track A)
+pub fn draw(m: *const maze.Maze, cam: *const camera.Camera) void;  // whole maze, no actors
+
+// maze.zig (Track B)
+pub fn Maze.generate(m: *Maze, w: u8, h: u8, r: *rng.Xorshift) void;  // perfect maze, start, finish, runs
+pub fn Maze.cell(m, x, z) Cell;  pub fn Maze.has_wall(m, x, z, dir) bool;
+
+// camera.zig (Track B)
+pub var cam: Camera;
+pub fn reset(m: *const maze.Maze) void;           // start cell centre, eye height, facing the open side
+pub fn debug_fly(f: Fly) void;                    // one tick of debug controls
+
+// render/overlay.zig (Track B)
+pub fn draw_debug(render_us: u32, fps_x10: u32) void;
+```
+
+`main.zig` (Track B) per update: `input.update` -> Select toggles the
+overlay, Start resets the camera, A+B regenerates -> `camera.debug_fly` ->
+`raster.begin_frame` -> clear to the background colour -> `scene.draw` ->
+timing -> overlay -> `present_wasm` on wasm. Debug exports already wired:
+`debug_tick`, `debug_state`, `debug_render_us`, `debug_pixel_checksum`,
+`debug_set_camera(x, y, z, yaw_deg, pitch_deg, roll_deg)`,
+`debug_set_seed(seed)`, `debug_cell_x`, `debug_cell_z`. Track B may add
+exports; Track C relies on the ones listed.
+
+## Track A: rasterizer details
+
+- `clip.clip_near`: Sutherland-Hodgman against `z = near`, attributes
+  interpolated linearly in view space. Host tests: fully in front, fully
+  behind, one vertex behind (5 out), two behind (4 out), vertex exactly on
+  the plane.
+- `draw_polygon`: project, then iterate screen columns from the leftmost
+  to the rightmost projected x (clamped to 0..159). For each column find
+  the top and bottom edge crossings and the endpoint values of `1/z, u/z,
+  v/z` (all linear in screen space). Fill the vertical span in segments of
+  8 pixels: divide at segment ends, affine `u, v` inside, 16.16 fixed
+  point, `& 31` wrap. Textured, flat and sprite variants; make the inner
+  loops separate functions so each stays tight. Top-left style fill rule so
+  shared edges neither crack nor double-draw.
+- Guard band: projected coordinates clamped to `[-4096, 4096]` before
+  `i32`; columns and rows clamped to the screen; never index outside the
+  framebuffer or z buffer.
+- `scene.draw`: floor and ceiling quads over the maze footprint (`u = x`,
+  `v = z`, one repeat per cell), single-sided (floor faces up, ceiling
+  faces down; cull in world space by comparing `cam.pos[1]` with the plane
+  height). Wall runs as boxes: side faces culled in world space by sign
+  (`+x` face visible iff `cam.pos[0] > face_x`), end caps likewise, top
+  face only when `cam.pos[1] > 1`, flat `top_color`. x-axis runs use
+  `wall_lit`, z-axis runs `wall_dark`. Finish tile: `textures.finish` quad
+  over the finish cell at `y = 0.002`. Sort runs front to back by the
+  squared distance from the camera to the run midpoint (insertion sort on
+  a `u16` key array is fine at 300 runs) before submitting.
+- Frustum reject before clipping: drop a polygon when all vertices are
+  behind the near plane, or all have `x > z * 0.65 + slack`, etc. (the
+  six view-space half-space tests; slack for the 0.05 thickness is not
+  needed since a fully outside polygon is invisible anyway).
+- `textures.init`: unpack `gfx.wall`, `gfx.floor`, `gfx.ceiling`,
+  `gfx.finish` into `[1024]u8`; palettes to `Pixel` via `from_color`;
+  `wall_dark` is the wall palette at about 70% brightness; `top_color` a
+  mid grey. The sheets may still be the crude M0 placeholders when you
+  start; Track C replaces the PNGs at the same sizes and names.
+- Performance rules: `f32` only, no `f64`, no `@sin`/`std.math` at runtime
+  (use `math.sin_angle`), hardware divide is fine but keep it to one per
+  8-pixel segment, inner loops over `y` inside a column so stores are
+  stride-1. `zig build check-float` must PASS.
+- Report the worst-case polygon count and your own cycle estimate; the
+  wasm `debug_render_us` is a fake (the harness has no timer).
+
+## Track B: world and camera details
+
+- `maze.generate`: iterative recursive backtracker on a stack in `.bss`
+  (max 256 entries), carve by clearing the shared wall bits on both cells.
+  Start `(0, 0)`. Finish = the cell with the largest BFS distance from the
+  start (BFS queue of 256 in `.bss`). Runs: sweep every grid line, merge
+  consecutive present wall segments along each line into one `Run`. Runs
+  along x come from the n/s bits of the cells on each row line; runs along
+  z from the e/w bits. Each wall segment must appear in exactly one run
+  (host test). Host tests: perfect maze for seeds 0..99 (all reachable,
+  `w*h - 1` passages, both 12x12 and 16x16); runs cover every segment once;
+  finish differs from start; `Dir` helpers.
+- `camera.reset`: start cell centre, eye height, yaw facing the start
+  cell's open side (there is exactly one for a corner cell in a perfect
+  maze unless it is a junction; if several, prefer north, east, south,
+  west in that order).
+- `camera.debug_fly` (SPEC section 3, M1 column): Up/Down move along the
+  horizontal heading at 2 cells/s (1/30 cell per tick), Left/Right turn at
+  90 degrees/s (`deg(1.5)` per tick), A held makes Up/Down pitch at 60
+  degrees/s instead of moving, B held makes Up/Down move vertically at 1
+  cell/s. No collision. Clamp `pos[1]` to `[0.1, 40]` and pitch to
+  `[-90, 90]` degrees (pitch is a u16; keep a signed shadow or clamp via
+  the sign of `sin_angle`).
+- `main.zig`: the M0 skeleton is yours; keep the debug exports and the
+  call order above. Add the A+B "new maze" as already sketched. The
+  background colour behind everything is a dark sky `0x101018`; leave it.
+- `overlay.draw_debug`: as stubbed (black box, white 8x8 text), plus the
+  camera cell and heading (`x,z  N/E/S/W`) on a second line, so a photo of
+  the badge says where the camera was.
+
+## Track C: tools and docs details
+
+- `tools/prepare_assets.py --placeholders`: the eight sheets of SPEC
+  section 10 at exact sizes into `assets/gen/`, validated (size, cell grid,
+  <= 15 opaque colours after RGB565 quantisation, 16 for opaque sheets,
+  magenta key only where transparent, transparent sheets keep a 1 px empty
+  border per cell). Model on `../snouty-bugs/tools/prepare_assets.py`
+  (numpy + Pillow are installed). Make the bricks read as bricks at 4x
+  magnification (they fill the screen when a wall is 0.5 cells away):
+  2 rows of 4 bricks per 32 px with 1 px mortar, slight per-brick tint
+  variation. `--contact docs/placeholders.png` tiles the sheets at 4x with
+  labels. Overwrite the crude M0 PNGs.
+- `tools/preview.mjs`: add `--pose x,y,z,yaw,pitch,roll` (floats; calls
+  `debug_set_camera` after `start()` and before the first `update()`), and
+  `--call NAME[:ARG]` for zero/one-integer-argument exports such as
+  `debug_set_seed:7` (also after `start()`). Keep every existing option
+  working. Update the usage header.
+- `tools/check_golden.mjs [--update] [--tolerance N]`: reads
+  `tests/golden/poses.json` (array of `{ name, seed, pose, frames }`),
+  runs preview for each pose with `--frames 1` (or the given count) into
+  `out/golden/<name>/`, compares the last frame with
+  `tests/golden/<name>.png` exactly (default tolerance 0 differing pixels;
+  print the count and the first differing coordinate), `--update`
+  overwrites the goldens. Exit 3 on any FAIL. No npm dependencies (PNG via
+  `node:zlib`, as `preview.mjs` does; you may import its encoder/decoder
+  if you export them without changing behaviour).
+- `tests/golden/poses.json`: at least these poses, seed 1, 12x12 maze:
+  `start` (no pose), `near_wall` = `0.5,0.5,0.08,0,0,0` (the north wall
+  face straddles the near plane), `ceiling_edge` = `0.5,1.0,0.5,0,45,0`,
+  `overhead` = `6,13.5,6,0,90,0`, `rolled` = `0.5,0.5,0.5,90,0,180`,
+  `outside_corner` = `-3,3,-3,135,35,0`, `overhead_16` = same as overhead
+  with `--call debug_set_seed:1` after the maze size is 16 (add a
+  `debug_set_size:16` export request to Track B if you want it; otherwise
+  drop this pose and say so).
+- `tools/scripts/m1_fly.json`: a 600-tick script that walks forward,
+  turns, climbs with B+Up while pitching with A+Down, and ends at an
+  overhead view, for the milestone GIF.
+- `docs/RUNNING.md`: adapt `../snouty-bugs/docs/RUNNING.md` (repo names,
+  the debug controls table, `zig build test`, `zig build check-float`,
+  `check_golden.mjs`, flashing = copy the uf2 to the badge's USB drive,
+  reading fps via the OS overlay on joystick click or our Select overlay).
+
+## Done criteria for M1
+
+1. `zig build`, `zig build test`, `zig build check-float` all clean; ELF
+   `.text` under 120 KB, `.bss` under 100 KB.
+2. `check_golden.mjs` PASS on all poses (goldens generated at integration
+   and committed).
+3. `docs/preview_m1.gif` from `m1_fly.json`.
+4. Tag `m1`, hand-off note; Adrian flashes and reports fps and `render_us`
+   at the `overhead` and `start` poses (SPEC section 16 table).
