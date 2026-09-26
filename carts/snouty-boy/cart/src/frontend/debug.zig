@@ -1,45 +1,81 @@
 //! FPS and step_frame microseconds overlay (SPEC.md section 14). Owner: track C.
+//! Allocation-free and std.fmt-free. Line 1: average and maximum
+//! `step_frame` time over the last 60 frames; line 2: frames per second from
+//! `micros_since_boot` deltas between `update()` calls, over 60 frames.
+//! In wasm builds `micros_since_boot` is an upstream stub that adds 1000 per
+//! call (so the overlay shows 1000us and 500 fps in the simulator and in
+//! preview.mjs); only hardware numbers mean anything.
 const cart = @import("cart-api");
 
 pub var enabled: bool = true;
 
-var samples: [60]u32 = @splat(0);
-var idx: usize = 0;
-var count: u32 = 0;
-var last_us: u32 = 0;
+const window = 60;
 
+var step_samples: [window]u32 = @splat(0);
+var step_idx: usize = 0;
+var step_count: u32 = 0;
+/// Last `step_frame` duration in microseconds.
+pub var last_step_us: u32 = 0;
+
+var frame_deltas: [window]u32 = @splat(0);
+var frame_idx: usize = 0;
+var frame_count: u32 = 0;
+var last_frame_us: u64 = 0;
+var have_last_frame: bool = false;
+
+/// Call once at the top of every `update()`.
+pub fn frame_tick(now_us: u64) void {
+    if (have_last_frame) {
+        frame_deltas[frame_idx] = @truncate(now_us -% last_frame_us);
+        frame_idx = (frame_idx + 1) % window;
+        frame_count +|= 1;
+    }
+    last_frame_us = now_us;
+    have_last_frame = true;
+}
+
+/// Record one `step_frame` duration.
 pub fn record(step_us: u32) void {
-    samples[idx] = step_us;
-    idx = (idx + 1) % samples.len;
-    count +|= 1;
-    last_us = step_us;
+    step_samples[step_idx] = step_us;
+    step_idx = (step_idx + 1) % window;
+    step_count +|= 1;
+    last_step_us = step_us;
+}
+
+/// Frames per second over the window, rounded; 0 until a delta is known.
+pub fn fps() u32 {
+    const n = @min(frame_count, window);
+    if (n == 0) return 0;
+    var sum: u64 = 0;
+    for (frame_deltas[0..n]) |d| sum += d;
+    if (sum == 0) return 0;
+    return @intCast((@as(u64, n) * 1_000_000 + sum / 2) / sum);
 }
 
 pub fn draw() void {
     if (!enabled) return;
-    var min: u32 = 0xFFFF_FFFF;
+    const n = @min(step_count, window);
+    if (n == 0) return;
     var max: u32 = 0;
     var sum: u64 = 0;
-    const n = @min(count, samples.len);
-    if (n == 0) return;
-    for (samples[0..n]) |s| {
-        min = @min(min, s);
+    for (step_samples[0..n]) |s| {
         max = @max(max, s);
         sum += s;
     }
-    var buf: [32]u8 = undefined;
-    const text = fmt_line(&buf, @intCast(sum / n), max);
-    cart.text(.{ .str = text, .x = 1, .y = 1, .text_color = .rgb(0xFFFFFF), .background_color = .rgb(0x000000) });
-}
+    const avg: u32 = @intCast(sum / n);
 
-/// "avg 1234us max 5678us" without std.fmt (keeps the cart small).
-fn fmt_line(buf: *[32]u8, avg: u32, max: u32) []const u8 {
+    // "avg NNNN max NNNNus": the font is 8 px wide, so 20 characters fill
+    // the 160 px screen; the unit is written once to keep 4-digit values
+    // on screen.
+    var buf: [40]u8 = undefined;
     var i: usize = 0;
     i += put(buf[i..], "avg ");
     i += put_num(buf[i..], avg);
     i += put(buf[i..], " max ");
     i += put_num(buf[i..], max);
-    return buf[0..i];
+    i += put(buf[i..], "us\nfps ");
+    i += put_num(buf[i..], fps());
+    cart.text(.{ .str = buf[0..i], .x = 0, .y = 0, .text_color = .rgb(0xFFFFFF), .background_color = .rgb(0x000000) });
 }
 
 fn put(dst: []u8, s: []const u8) usize {

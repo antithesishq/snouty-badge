@@ -1,44 +1,97 @@
-# Running the Snouty Boy cart
+# Running Snouty Boy
+
+Build the cart, run the host tests, play it in the web simulator or headless,
+and flash it to a SYCL Badge V2.
 
 ## 1. Prerequisites
 
-- git
-- Zig **0.17.0-dev.1936+5a625d5f3** exactly (upstream sycl-badge pins it). Nightly
-  tarballs are named `zig-<arch>-<os>-<version>.tar.xz`; the Linux x86_64 one is
-  <https://ziglang.org/builds/zig-x86_64-linux-0.17.0-dev.1936+5a625d5f3.tar.xz>.
-  Nightlies rotate off ziglang.org; if the URL 404s, try the machengine.org
-  mirror or `zigup`. Unpack it and put the `zig` binary on `PATH`.
-- Node.js 20 or newer (for the simulator and the tools in `tools/`)
-- Optional, for GIF previews: Python 3 with Pillow
+- git and curl
+- Zig **0.17.0-dev.1936+5a625d5f3** exactly (upstream sycl-badge pins it).
+  Nightly tarballs are named `zig-<arch>-<os>-<version>.tar.xz`, e.g.
+  <https://ziglang.org/builds/zig-x86_64-linux-0.17.0-dev.1936+5a625d5f3.tar.xz>
+  or `zig-aarch64-macos-...` on Apple silicon. Nightlies rotate off
+  ziglang.org; if the URL 404s, try the machengine.org mirror or `zigup`.
+  Unpack it and put `zig` on `PATH`.
+- Node.js 20 or newer (web simulator, `tools/serve-cart.mjs`,
+  `tools/preview.mjs`; none of the tools need npm packages)
+- Optional: Python 3 for `tools/romcheck.py`, plus Pillow for
+  `tools/make_gif.py`
 
 ## 2. Checkout layout
 
-The two repos must be siblings. `build.zig.zon` points at `../sycl-badge`, and
-`src/os/system/tracy_protocol.zig` is a symlink into it.
+Snouty Boy and the badge SDK must be siblings: `build.zig.zon` points at
+`../sycl-badge`, and `src/os/system/tracy_protocol.zig` is a symlink into it.
 
 ```
 work/
-  sycl-badge/     git clone https://github.com/ZigEmbeddedGroup/sycl-badge.git
-  snouty-boy/   git clone git@github.com:antithesishq/snouty-boy.git
+  sycl-badge/    git clone https://github.com/ZigEmbeddedGroup/sycl-badge.git
+  snouty-boy/    this repo
 ```
 
-Milestones are annotated tags (`git tag -n1`). From the exe.dev VM the remote is reached through the GitHub
-integration host `github.int.exe.xyz`.
+The repo has no public remote yet; it lives on the exe.dev VM:
 
-## 3. Build
+```sh
+cd work
+git clone animated-badge.exe.xyz:/home/exedev/snouty-boy
+```
+
+Milestones are annotated tags (`git tag -n1`); work in progress is on
+`m<N>-*` branches.
+
+## 3. Test ROMs
+
+The emulator embeds one Game Boy ROM at build time; the default is
+`tests/roms/dmg-acid2.gb`. The test ROMs are freely redistributable but not
+committed (`tests/roms/` is gitignored), so fetch them once:
 
 ```sh
 cd snouty-boy
+tools/fetch_test_roms.sh
+```
+
+This downloads Blargg's `cpu_instrs` (whole and the 11 individual tests),
+`instr_timing` and `mem_timing`, plus `dmg-acid2.gb` and its reference PNG.
+`python3 tools/romcheck.py some.gb` prints a ROM's header (title, MBC, sizes)
+and whether Snouty Boy can ship it.
+
+## 4. Build
+
+```sh
 zig build
 ```
 
 This writes:
 
-- `zig-out/firmware/snouty-boy.uf2` (for the badge)
-- `zig-out/firmware/snouty-boy.elf`
-- `zig-out/bin/snouty-boy.wasm` (for the simulator)
+- `zig-out/firmware/snouty-boy.uf2` for the badge
+- `zig-out/firmware/snouty-boy.elf` (same program, for `size` and debugging)
+- `zig-out/bin/snouty-boy.wasm` for the simulator and `preview.mjs`
 
-## 4. Web simulator
+Options:
+
+- `-Drom=path/to/game.gb`: the ROM to embed (default
+  `tests/roms/dmg-acid2.gb`). The shipped game goes in `roms/` with its
+  license next to it.
+- `-Dcart-optimize=fast|small|safe|debug`: optimize mode for the cart
+  (default `fast`, SPEC.md section 8).
+
+A clean build takes a couple of minutes; incremental rebuilds take seconds.
+`size zig-out/firmware/snouty-boy.elf` shows `.text` (code plus the embedded
+ROM), `.data` and `.bss` against the cart RAM budget in SPEC.md section 13.
+
+## 5. Host tests
+
+```sh
+zig build test                        # all core tests, natively
+zig build test -Dtest-filter=acid     # only tests whose name contains "acid"
+```
+
+The core (`core/`) is badge-agnostic and runs on the host: Blargg's CPU tests
+(pass when the serial output says "Passed"), the dmg-acid2 image compared
+byte for byte with `tests/acid2_reference.bin`, and PPU unit tests. They need
+`tools/fetch_test_roms.sh` first. `-Dtest-optimize=` sets their optimize mode
+(default `safe`).
+
+## 6. Web simulator
 
 Terminal 1 serves the cart and live-reloads it:
 
@@ -49,8 +102,8 @@ node tools/serve-cart.mjs            # serves zig-out/bin/snouty-boy.wasm on :24
 ```
 
 This serves `http://localhost:2468/cart.wasm` (with CORS) and
-`ws://localhost:2468/ws`. When the file changes, which happens after every
-`zig build`, it sends `reload` to the page.
+`ws://localhost:2468/ws`. Whenever the file changes, which happens after
+every `zig build`, it sends `reload` to the page.
 
 Terminal 2 runs the simulator UI:
 
@@ -60,141 +113,103 @@ npm install
 npm run dev
 ```
 
-Then open <http://localhost:1234>.
+Then open <http://localhost:1234>. The hosted simulator at
+<https://badgesim.microzig.tech/> also fetches from `localhost:2468` and should
+work with the same watcher in Chrome; if it does not load, use the local UI.
 
-Hosted alternative: <https://badgesim.microzig.tech/> also fetches from
-`localhost:2468`, so it should work with the watcher from terminal 1 (Chrome
-treats `localhost` as secure). This has not been verified; if it doesn't
-load, use the local UI.
+Keys (from `sycl-badge/simulator/README.md`) and what they do here:
 
-Simulator keys (from `sycl-badge/simulator/README.md`):
+| Keyboard           | Badge          | Game Boy                          |
+|--------------------|----------------|-----------------------------------|
+| Arrow keys or WASD | Joystick       | D-pad                             |
+| Z or K             | A              | A                                 |
+| X or J             | B              | B                                 |
+| Enter or Y         | Start          | Start                             |
+| Backspace or T     | Select         | Select                            |
+| Shift              | Joystick click | nothing (the OS owns it)          |
+| Escape             | System menu    | leaves the cart                   |
 
-| Badge            | Keyboard           |
-|------------------|--------------------|
-| Joystick         | Arrow keys or WASD |
-| Joystick click   | Shift              |
-| A                | Z or K             |
-| B                | X or J             |
-| Start            | Enter or Y         |
-| Select           | Backspace or T     |
-| System menu      | Escape             |
+Holding Start and Select together for 250 ms exits the cart on the badge (the
+OS owns that chord), so Game Boy soft-reset combos do not work. From M3,
+holding Select for 500 ms opens the emulator menu (SPEC.md section 5).
 
-Known upstream simulator quirks (current sycl-badge `main`):
+What you should see: the embedded ROM's screen, 144 Game Boy lines squeezed
+to the badge's 128 rows by dropping every ninth line, in DMG green, with the
+debug overlay in the top-left corner:
 
-- The simulator only shows a fixed region of wasm memory (address 0x20). The
-  cart API draws somewhere else, so our cart copies each frame to 0x20 itself
-  (`present_wasm()` in `cart/src/main.zig`). Upstream demo carts such as
-  `dvd.wasm` show a blank or garbage screen.
-- Buttons are written to an address (0x04) the current cart API no longer
-  reads, so upstream carts get no input in the simulator. Our cart reads that
-  address itself in wasm builds (`read_controls()` in `cart/src/main.zig`), so
-  Z or K (the A button) fires in the simulator as on hardware.
-- The WebGL compositor reads red from the bits where the current cart API
-  stores blue, so it shows current-API carts with red and blue swapped. Our
-  `present_wasm()` pre-swaps when it copies the frame to 0x20, so the browser
-  shows the intended colors. If the Coral title text ever looks blue, that swap and the
-  simulator have gotten out of step (`sim_swap_rb` in `cart/src/main.zig`).
+```
+avg NNNN max NNNNus     step_frame time, average and maximum over 60 frames
+fps NN                  frames per second over 60 frames
+```
 
-## 5. Headless preview (no browser)
+In wasm the upstream `micros_since_boot` is a stub that adds 1000 on every
+call, so the simulator always shows `avg 1000 max 1000us` and `fps 500`. Only
+the numbers on the badge mean anything.
+
+Upstream simulator quirks (current sycl-badge `main`) and how the cart copes,
+all in `cart/src/main.zig` and compiled only into the wasm:
+
+- The simulator shows a fixed region of wasm memory (address 0x20), not the
+  cart API's framebuffer, so `present_wasm()` copies each frame there.
+- Buttons are written to 0x04, which the cart API no longer reads, so
+  `read_controls()` reads that address itself.
+- The simulator's compositor swaps red and blue relative to the cart API, so
+  `present_wasm()` pre-swaps while copying (`sim_swap_rb`). If the DMG green
+  ever looks teal-blue, that swap and the simulator have gotten out of step.
+
+## 7. Headless preview (no browser)
 
 ```sh
-node tools/preview.mjs zig-out/bin/snouty-boy.wasm --frames 240 --every 4 --out out/
-python3 tools/make_gif.py out/ preview.gif --scale 3 --ms 66
+node tools/preview.mjs zig-out/bin/snouty-boy.wasm --frames 60 --every 10 --out out/
+python3 tools/make_gif.py out/ preview.gif --scale 3 --ms 166
 ```
 
 `preview.mjs` runs `start()` and then `update()` N times, writing every K-th
-frame to `out/frame_XXXX.png` along with `out/frames.json` (metadata:
-framebuffer address and source, inputs, export values, expectation results,
-warnings). Other options:
+frame to `out/frame_XXXX.png` (160x128) and metadata to `out/frames.json`.
+Useful options (the header of `tools/preview.mjs` has the full list):
 
-- `--start-skip S`: skip the first S updates
-- `--fb-addr auto|dwarf|sim|0xADDR`: choose which framebuffer to dump
-- `--seed N`: seed for `rand()`
-- `--controls BITS`: raw `cart.Controls` bits held for the whole run
 - `--press A:30-31,UP:60-99,START:300-301`: hold buttons during those update
-  ranges (inclusive). Buttons are `A B START SELECT UP DOWN LEFT RIGHT`, any
-  case; a bare `60-63` means A. `CLICK` is refused (the OS owns it).
-- `--script FILE.json`: a JSON array of
-  `{ "from": 60, "to": 99, "hold": ["A", "UP"] }` entries, inclusive. Inputs
-  from `--controls`, `--press` and `--script` are OR-ed per tick.
-- `--dump-exports debug_state,debug_score`: after the last update, call these
-  zero-argument exports and record the results (as i32) in `frames.json`
-  under `exports` and on stderr
-- `--expect "debug_score > 0"` (repeatable; `== != < <= > >=`, integer value):
-  checked against those exports at the end (the name is dumped
-  automatically); prints PASS/FAIL, and any failure exits 3
-- `--at "1799 debug_score > 0"` (repeatable): the same check, made right after
-  update T (0-based, so with `--frames 1800` tick 1799 is the moment the
-  end-of-run exports are read) instead of at the end. Results go to
-  `frames.json` under `at` (`tick, name, op, value, actual, pass`); any
-  failure exits 3 after `frames.json` is written
-- `--call-at "900 debug_score"` (repeatable): call the export right after
-  update T and record `{tick, name, value}` under `calls` in `frames.json` and
-  on stderr (for comparing two runs tick by tick). Items that share a tick run
-  in command-line order. Both flags also take separate arguments
-  (`--at 1799 debug_score '>' 0`, `--call-at 900 debug_score`); the quoted form
-  saves quoting the operator. A T at or beyond N is a usage error
-- `--quiet`: write no PNGs, only `frames.json` (fast soak runs)
-- `--raw-colors`: decode colors as the cart API defines them instead of as the
-  simulator displays them (only matters for carts that do not pre-swap)
+  ranges (inclusive). Buttons are `A B START SELECT UP DOWN LEFT RIGHT`;
+  `CLICK` is refused.
+- `--script FILE.json`: `[{ "from": 60, "to": 99, "hold": ["A", "UP"] }]`.
+- `--dump-exports NAME,...`: call zero-argument exports after the last
+  update and record them. This cart exports:
+  - `debug_frame_count`: frames stepped since reset (`gb.frame_count`)
+  - `debug_lines`: lines the core emitted in the last frame (144 with the
+    LCD on, 0 with it off)
+  - `debug_step_us`: the last `step_frame` time (always 1000 in wasm)
+  - `debug_palette`: the current palette index
+- `--expect "debug_lines == 144"` (repeatable): checked at the end; a
+  failure exits 3. `--at "T NAME OP VALUE"` checks right after update T.
+- `--quiet`: no PNGs, only `frames.json`.
 
-Input scripts live in `tools/scripts/`: `m1_play.json` presses A on the title
-at tick 30, then from tick 60 to 1800 holds A while sweeping up 40 ticks,
-nothing 20, down 40, nothing 20. `m1_pause.json` starts the game, fires
-60-300, presses START at 300 and 420 (pause, unpause), then fires 430-600.
-The M2 scripts:
-
-- `m2_play.json`: the preview GIF script. A on the title at 30, then holds A
-  without moving through the opening gnat strings (60 to 239), then sweeps up
-  40 ticks / holds 20 / down 40 / holds 20 until 3960, with B (bomb) at 2240
-  and 3380. It must still be playing at 4000 with all three rewinds and both
-  bombs spent, and the score must beat M1's 570.
-- `m2_bomb.json`: starts at 30, then sits still without firing so the 8 s
-  beetle survives and fires; presses B at 720. There must be bullets at 719,
-  none at 720, and one bomb left.
-- `m2_hit.json`: starts at 30 and does nothing else for 1000 ticks; the
-  beetle's aimed spreads hit the still ship at about 750 and 900, spending
-  rewinds (one left, still playing).
-- `m2_death.json`: the same input for 6000 ticks; every rewind is spent, the
-  ship dies and the game is back on the title at the end.
+A quick smoke test:
 
 ```sh
-node tools/preview.mjs zig-out/bin/snouty-boy.wasm --frames 1800 --every 6 --out out/ \
-  --script tools/scripts/m1_play.json \
-  --dump-exports debug_state,debug_score,debug_lives,debug_enemies \
-  --expect "debug_state == 1" --expect "debug_score > 0"
-node tools/preview.mjs zig-out/bin/snouty-boy.wasm --frames 18000 --quiet --out out/soak/ \
-  --script tools/scripts/m1_play.json --dump-exports debug_state,debug_score
+node tools/preview.mjs zig-out/bin/snouty-boy.wasm --frames 60 --quiet --out out/ \
+  --expect "debug_frame_count == 60" --expect "debug_lines == 144"
 ```
 
-An unknown or non-zero-argument export name is an error that lists the
-exports the cart has. Exit codes: 1 the cart cannot be loaded or does not
-export `start`/`update`, 2 usage or script error, 3 the cart trapped or an
-expectation (`--expect` or `--at`) failed. `make_gif.py` scales frames with
-nearest-neighbor. One update is one 60 Hz tick, so `--every 4 --ms 66` plays
-at about real speed.
+Exit codes: 1 the cart cannot be loaded, 2 usage error, 3 the cart trapped or
+an expectation failed. One update is one 60 Hz badge frame, which is one Game
+Boy frame.
 
-### Regression gate: `tools/check.sh`
+## 8. Flash the badge
 
-```sh
-tools/check.sh                 # zig build, then every tools/scripts/*.json
-tools/check.sh --no-build --only m2_bomb
-CART_WASM=path/to/other.wasm tools/check.sh --no-build
-```
+Carts go onto the badge's own USB drive; this is not the RP2350 bootloader
+(from the sycl-badge README "Flash a UF2 to the Badge" and the user manual,
+<https://zigembeddedgroup.github.io/sycl-badge/>):
 
-Each `tools/scripts/NAME.json` runs as
-`node tools/preview.mjs zig-out/bin/snouty-boy.wasm --script NAME.json --quiet --out out/check/NAME ...`,
-where `...` comes from the sidecar `NAME.args`: preview arguments (`--frames`,
-`--dump-exports`, `--expect`, `--at`, `--call-at`) quoted as on a command line.
-Lines starting with `#` are comments (each M2 sidecar has a `# tune` line
-saying which of its numbers are still guesses); the other lines are joined. A
-script without a sidecar runs with `--frames 600`. It prints one line per
-script, PASS or FAIL with the exported values and any failed checks, keeps the
-full stderr in `out/check/NAME/preview.log`, and exits 1 if any script failed.
-`CART_WASM` points it at another build. From M2 on this is the gate before a
-commit: add a script and its sidecar for every new behaviour worth keeping.
+1. Plug the badge into your computer over USB-C and switch it on. It mounts
+   as a mass-storage drive named `SYCLBADGE`.
+2. Copy `zig-out/firmware/snouty-boy.uf2` onto the drive, replacing
+   `CURRENT.UF2`. The badge shows a progress indicator while it copies.
+3. The cart starts when the copy finishes.
 
-## 6. Flash the badge
+Holding the `RESET` and `BOOT_SEL` buttons (releasing `RESET` first) mounts
+the RP2350 bootloader drive instead; that is for flashing the badge OS
+(`sycl-os-kernel.uf2`), not carts.
 
-1. Connect the badge over USB-C. It shows up as a USB mass-storage drive.
-2. Copy `zig-out/firmware/snouty-boy.uf2` onto the drive, replacing `CURRENT.UF2`.
+On the badge the overlay's numbers are real: `avg`/`max` are the
+microseconds `gb.step_frame` takes per Game Boy frame (M1 target under
+14,000, SPEC.md section 8, goal 8,000), and `fps` should read 60.
