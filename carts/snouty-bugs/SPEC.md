@@ -530,3 +530,8 @@ brief so the real sheets drop in without code changes.
   graze, rewind stock in the HUD (a hit spends one; the sequence itself is
   M4), death, looping stage-1 spawner, `tools/check.sh` regression gate
   (`docs/preview_m2.gif`). See PLAN.md.
+- 2026-09-26: M3 built and tagged `m3`: stage flow (WARNING at 66 s, boss
+  at 72 s, clear, 120-tick breather, loop with the section 9 modifiers),
+  the Heisenbug with its three fire phases and teleport, boss HP bar, +500
+  and STAGE n pops, god/warp test hooks, nine regression scripts
+  (`docs/preview_m3.gif`). See PLAN.md.

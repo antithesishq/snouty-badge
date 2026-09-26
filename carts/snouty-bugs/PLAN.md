@@ -597,3 +597,14 @@ with the bullet pool near full. Fallbacks in SPEC.md 13.1.
   untested by a human: an idle ship is hit by the beetle every 130 ticks;
   the scripted sweep survives a loop with two bombs. Next: M3 stages and
   boss.
+- 2026-09-26: M3 done and tagged `m3`. Nine scripts green; 18,000-tick
+  god-mode soak clean; ELF text+data 55.4 KB; `@sizeOf(World)` 4232 bytes.
+  Deviations: the boss bob clock restarts at each reappearance (so the
+  rng-chosen base_y is where it reappears); `live()` is false while the
+  boss is vanished; `damage()` is not gated by the boss phase but the bomb
+  and the ram pass are (a flickering, vanished or dying boss neither takes
+  nor gives hits); the boss hit flash is 1 tick (2 was a third of the
+  frames white). Boss HP bar shows from the spawn tick, while the boss is
+  still off screen. Balance: under constant fire the loop-0 boss lasts
+  about 9 s; a human has not played it. The spare debug hooks (`debug_god`,
+  `debug_warp`) are wasm-only. Next: M4 rewind (history.zig, rewind.zig).
