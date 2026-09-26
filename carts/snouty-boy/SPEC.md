@@ -55,7 +55,7 @@ Checked in `../sycl-badge` (`src/os/cart/api.zig`, `src/cart/cart_ram.ld`,
 
 ## 3. The machine being emulated
 
-DMG (original Game Boy), no Game Boy Color in scope (section 18, Q8).
+DMG (original Game Boy), no Game Boy Color in scope (section 18, item 8).
 
 - CPU: Sharp SM83, 4.194304 MHz, 1 M-cycle = 4 T-cycles. One frame is
   70,224 T-cycles (17,556 M-cycles) at 59.73 Hz. The emulator runs exactly
@@ -117,7 +117,7 @@ behind a Select long-hold so that no Game Boy button is stolen.
 | In menu: Right   | Step time forward 0.5 s, as far as the log reaches          |
 
 Deferred Select delivery adds latency of up to the release time on one
-button that games use for menus and pause, which is acceptable (Q4 asks).
+button that games use for menus and pause, which is acceptable (section 18, item 4).
 Menu items: Resume, Palette, Scale (squeeze / crop), Sound (on / off),
 Reset, About (version, ROM title from the header, "verified by
 deterministic replay").
@@ -220,7 +220,7 @@ The buzzer has one voice, so the frontend chooses one channel per frame:
   changes, with infinite duration; `Tone2Options.stop` when nothing is
   audible. Update rate is once per badge frame (16.7 ms), which is coarse
   for arpeggios but fine for melodies and effects.
-- Menu toggle, default on (Q6). Global volume left to the OS.
+- Menu toggle, default on (section 18, item 6). Global volume left to the OS.
 
 ## 10. Time scrubbing (the Antithesis feature)
 
