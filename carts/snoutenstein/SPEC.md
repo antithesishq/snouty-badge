@@ -11,7 +11,9 @@ A Wolfenstein 3D style first-person shooter. Snouty walks through a maze of
 textured walls (a server room, drawn 16-bit style), swatting and zapping
 software bugs drawn as insects. Doors slide open when walked into; some
 need a colored key. Three weapons with their own ammo, a Doom-style status
-bar with Snouty's portrait reacting to damage, three short levels. The
+bar with Snouty's portrait reacting to damage, three short levels of our
+own plus an importer for Wolfenstein 3D map files, so any Wolf3D level or
+fan mapset can be dropped in. The
 twist, and the Antithesis joke: holding B rewinds time. The world runs
 backwards, kills un-happen, damage un-happens, and when B is released play
 continues from that moment. There are no lives: dying freezes time and asks
@@ -32,7 +34,7 @@ pitch, so the badge can say so on the title screen.
   or in `start()`, so inner loops do a table lookup and a store, nothing else.
 - Cart RAM is 307 KB (`0x20035100..0x20080000`), binary at most 256 KB.
   Budget for this cart: ELF `.text`+`.data` at most 140 KB, `.bss` at most
-  100 KB, measured with `size -A` every milestone. Section 13 has the table.
+  120 KB, measured with `size -A` every milestone. Section 13 has the table.
 - Inputs: joystick 4-way, A, B, Start, Select. Start+Select (250 ms) and
   joystick click are OS-owned; never bound.
 - Audio: `tone2`, one voice. Neopixels: 5, keep every channel at or below 10/255.
@@ -87,7 +89,9 @@ column, 160 columns, FOV 66 degrees.
   table too; each frame rotates them with two multiply-adds per column.
 - Rendering may use `f32` (the M33 has an FPU). The simulation may not
   (section 9.3).
-- Walls: DDA through the `u8` cell grid until a solid cell. Perpendicular
+- Walls: DDA through the `u8` cell grid until a solid cell or the range
+  cap of 24 cells (beyond it the column is filled with the darkest shade:
+  fog, which is also why 64x64 maps do not raise the ray cost). Perpendicular
   distance -> slice height `h = 104 / dist`. Texture x from the hit
   fraction; texture y stepped in 16.16 fixed point. Inner loop:
   `column[y] = shade[idx_tex[tx][ty >> 16]]`, where wall textures are
@@ -124,8 +128,12 @@ detail settings), then drop the distance shading, then render at 30 fps.
 
 ## 6. World and levels
 
-- Grid up to 32x32 cells, one `u8` per cell: 0 floor, 1..8 wall texture,
-  16..31 door variants (plain, three locked colors, exit), 32+ reserved.
+- Grid 64x64 cells (the Wolf3D size; smaller maps are padded), one `u8`
+  per cell: 0 floor, 1..8 wall texture, 16..31 door variants (plain,
+  three locked colors, exit), 32+ reserved. 4 KB per level. There is no
+  aesthetic reason to stay at 32: the range cap in section 5 fogs far
+  walls, so a long corridor looks better, not worse. The 64 limit is a
+  maximum; our own levels stay compact.
 - Levels are ASCII files in `levels/*.txt`, parsed at comptime into cell
   arrays and spawn lists (`@embedFile` + `@setEvalBranchQuota`). Legend:
 
@@ -138,7 +146,10 @@ g  gnat   w wasp   b beetle   s spider   H Heisenbug (boss)
 +  hotfix (health +25)   %  ammo for the zapper   $ ammo for the spray   *  rewind battery (+3 s)
 ```
 
-- Three levels, 2 to 4 minutes each: **Build Farm** (learn walking,
+- Levels come from two sources, both ending up as the ASCII format above:
+  hand-written files, and `tools/import_wolf.py` (section 6.1) for
+  Wolfenstein 3D maps.
+- Three levels of our own, 2 to 4 minutes each: **Build Farm** (learn walking,
   doors, one key, gnats), **Staging** (two keys, wasps and spiders,
   first rewind-battery hunt), **Production** (three keys, all enemies,
   the Heisenbug behind the Gold door). Level end: an intermission card
@@ -148,6 +159,40 @@ g  gnat   w wasp   b beetle   s spider   H Heisenbug (boss)
   close unless something stands in them. Locked doors need the matching
   key; bumping one without it flashes the key slot in the HUD and plays a
   buzz.
+
+### 6.1 Wolfenstein 3D map import
+
+`tools/import_wolf.py MAPHEAD.WL1 GAMEMAPS.WL1 --level 0 --difficulty medium
+--out levels/wolf_e1m1.txt` reads the original format: `MAPHEAD` holds the
+RLEW tag and 100 level offsets, `GAMEMAPS` holds per-level headers (three
+plane offsets and sizes, 64x64, 16-byte name) and planes that are
+Carmack-compressed then RLEW-compressed. Plane 0 is walls and doors,
+plane 1 is objects and actors, plane 2 is unused. The code tables are
+those of `WL_GAME.C` (`ScanInfoPlane`) in the released source; the same
+files are produced by every Wolf3D editor (WDC, ChaosEdit, HWE), so this is
+also the "real editor" path for our own levels.
+
+Mapping, in the direction Wolf3D -> ours:
+
+| Wolf3D                                             | Ours                                                    |
+|----------------------------------------------------|---------------------------------------------------------|
+| Wall codes 1..63 (each is a light/dark texture pair)| Textures 1..8 via a mapping file (`levels/wolf_walls.json`), default groups by Wolf3D texture family; unmapped codes fall back to texture 1 |
+| Doors 90/91 (plain), 92/93 (gold lock), 94/95 (silver lock) | `D`, `G` (Gold), `I` (Iris); Coral is only used by our own levels |
+| Elevator doors 100/101, elevator switch wall       | `E` exit door                                           |
+| Player start 19..22 (N/E/S/W)                      | `S^` `S>` `Sv` `S<`                                     |
+| Gold key 43, silver key 44                         | `g`, `i`                                                |
+| Food 47, medkit 48                                 | `+` (hotfix)                                            |
+| Ammo clip 49, machine gun 50, chaingun 51          | `%` zapper charge, `$` spray can, `$`                   |
+| Treasure 52..55, extra life 56                     | `*` rewind battery for the extra life; treasure dropped (no score) |
+| Guard, dog, SS, officer, mutant (per difficulty)   | gnat, wasp, beetle, spider (officers, so a turret sits where a patrol was), beetle |
+| Hans Grosse and the other bosses                   | Heisenbug                                               |
+| Pushwalls (object 98), ambush tiles, floor codes   | Ignored: the wall stays solid; areas are not used (we wake enemies by sight and gunfire) |
+
+The importer applies one difficulty tier so enemy counts stay sane and
+warns when a level exceeds the pools in section 8 (it then drops the
+lowest-value enemies farthest from the start). The original `.WL1`/`.WL6`
+files are never committed and neither are levels converted from them
+(section 18); converted free mapsets and our own editor-made levels are.
 
 ## 7. Weapons
 
@@ -178,7 +223,9 @@ enemy always faces the camera. HP, speeds in cells per tick.
 AI is Wolf3D-simple and deterministic: a state machine (idle, alert,
 chase, attack, pain, dead) with line of sight by grid ray, movement toward
 the player with wall sliding and an eight-direction fallback when blocked.
-No pathfinding. Pool of 16 enemies per level, 12 projectiles.
+No pathfinding. Pools sized for imported Wolf3D levels: 40 enemies, 12
+projectiles, 64 doors, 256 pickups. Dormant (never woken) enemies cost
+one line-of-sight check every 8 ticks and nothing else.
 
 Damage to the player: HP 100, no armor. Damage flashes the view red for 4
 ticks (palette set swap, free) and sets the portrait's "ouch" frame for
@@ -207,8 +254,8 @@ ticks (palette set swap, free) and sets the portrait's "ouch" frame for
 ### 9.2 Implementation: keyframes plus deterministic replay
 
 The simulation is a pure function `step(state, controls) -> state` on a
-plain-data `GameState` (no pointers, about 1 KB: player, 16 enemies, 12
-projectiles, 32 doors, 64-bit pickup mask, PRNG, tick, stats).
+plain-data `GameState` (no pointers, about 1.4 KB: player, 40 enemies, 12
+projectiles, 64 doors, 256-bit pickup mask, PRNG, tick, stats).
 
 - Every 30 ticks the live state is copied into a ring of 21 keyframes
   (10.5 s). Every tick the `Controls` word goes into a ring of 640.
@@ -219,7 +266,7 @@ projectiles, 32 doors, 64-bit pickup mask, PRNG, tick, stats).
   cache from the previous keyframe.
 - Releasing at tick R: the cached state at R becomes live, keyframes and
   inputs after R are dropped, play continues.
-- Memory: 21 KB keyframes + 30 KB span cache + 1.3 KB inputs. Section 13.
+- Memory: 30 KB keyframes + 42 KB span cache + 1.3 KB inputs. Section 13.
 - This is the same machinery as the attract-mode demo (section 11): a
   demo is a keyframe (the level start) plus an input log.
 
@@ -303,17 +350,19 @@ key in game).
 |----------------------------------------|---------|----------|
 | Code (est. 4k lines of Zig)            | .text   | ~45 KB   |
 | Art (section 14)                       | .text   | ~39 KB   |
-| Levels (3 x 32x32 + spawns), tables    | .text   | ~5 KB    |
+| Levels (3 x 64x64 + spawns), tables    | .text   | ~15 KB   |
 | Demo input log                         | .text   | ~3 KB    |
 | Wall + door textures unpacked, 13 x 1 KB | .bss  | 13 KB    |
 | Shade palettes 13 tex x 5 sets x 32 B  | .bss    | 2 KB     |
 | Depth buffer, sprite sort scratch      | .bss    | 1 KB     |
-| Live GameState + render state          | .bss    | 2 KB     |
-| Rewind: 21 keyframes + 30 span + inputs| .bss    | 53 KB    |
-| Total                                  |         | ~163 KB  |
+| Live GameState + render state          | .bss    | 3 KB     |
+| Rewind: 21 keyframes + 30 span + inputs| .bss    | 74 KB    |
+| Total                                  |         | ~195 KB  |
 
-Well inside 307 KB even with stack. If `GameState` grows past 1 KB, the
-keyframe ring shrinks first (15 keyframes = 7.5 s is still fine).
+Well inside 307 KB even with stack. If `GameState` grows past 1.4 KB, the
+keyframe ring shrinks first (15 keyframes = 7.5 s is still fine). Extra
+imported levels cost 4 KB each of `.text`; about 15 fit before the ELF
+budget matters.
 
 ## 14. Asset manifest
 
@@ -363,10 +412,11 @@ cart/src/
   audio.zig       tone2 priority wrapper, neopixels
   input.zig       Controls source: hardware/sim, demo replay; edge detection
   packed_int_array.zig  (upstream copy)
-levels/           build_farm.txt, staging.txt, production.txt
+levels/           build_farm.txt, staging.txt, production.txt, wolf_walls.json,
+                  imported Wolf3D levels (free mapsets or our own editor output only)
 demos/            build_farm.bin (recorded inputs)
-tools/            prepare_assets.py, preview.mjs (+ --record, --dump-exports, --expect),
-                  serve-cart.mjs, make_gif.py, check_determinism.mjs
+tools/            prepare_assets.py, import_wolf.py (section 6.1), preview.mjs (+ --record,
+                  --dump-exports, --expect), serve-cart.mjs, make_gif.py, check_determinism.mjs
 ```
 
 Per tick: read controls -> top-level state machine -> (PLAYING) log input,
@@ -411,6 +461,9 @@ tracks go to Opus subagents with disjoint files, as before.
   flashes it and reports FPS and the microsecond readout.
 - **M2 World**: doors and keys, pickups, sprites with depth clipping,
   status bar with portrait, swatter and zapper, level exit and intermission.
+  Parallel tools track: `import_wolf.py` with a unit test on a hand-built
+  Carmack/RLEW fixture, verified by walking an imported shareware level in
+  the simulator (locally, not committed).
 - **M3 Bugs**: all five enemies, AI, projectiles, damage, death freeze,
   bug spray, the three levels roughed out.
 - **M4 Rewind**: keyframes, input log, span cache, B-hold rewind, death
@@ -437,8 +490,17 @@ tracks go to Opus subagents with disjoint files, as before.
    when watched) or a new boss?
 7. Textures 32x32 (spec) or 64x64 walls (4x the wall art, ~16 KB more)?
 8. Tag line "powered by deterministic replay" on the title: yes/no?
+9. Imported Wolf3D levels: the spec treats conversions of the id Software
+   maps (shareware included) as a local-only experiment and commits only
+   free mapsets or levels you build in a Wolf3D editor. Agree, or do you
+   want a converted shareware level in the shipped cart anyway?
+10. Wolf3D levels are longer than ours and walking is 2.7 cells/s; for
+    imported levels the importer can pass a per-level walk speed (say
+    3.5 cells/s). Worth it, or keep one speed everywhere?
 
 ## Status
 
-- 2026-09-26: spec drafted, nothing built yet. Next: answers to section
-  18, then M0 scaffold.
+- 2026-09-26: spec drafted, nothing built yet. Same day: level grid set
+  to 64x64 and the Wolf3D `GAMEMAPS` importer added (section 6.1) at
+  Adrian's request; pools and memory budget updated. Next: answers to
+  section 18, then M0 scaffold.
