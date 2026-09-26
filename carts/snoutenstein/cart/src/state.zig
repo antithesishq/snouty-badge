@@ -40,6 +40,8 @@ pub const Player = struct {
     rewind_meter: u16 = 600, // ticks, max 600
     rewind_regen: u8 = 0,
     prev: Buttons = .{},
+    /// Set by the first spray-can pickup (which also selects the spray).
+    has_spray: bool = false,
 };
 
 pub const EnemyKind = enum(u8) { gnat = 0, wasp = 1, beetle = 2, spider = 3, boss = 4 };
@@ -55,6 +57,8 @@ pub const Enemy = struct {
     frame: u8 = 0,
     dir: fixed.Angle = 0,
     flash: u8 = 0,
+    /// Explicit padding so `sim.hash` sees no undefined bytes.
+    _pad: [3]u8 = @splat(0),
 };
 
 pub const Projectile = struct {
@@ -64,6 +68,8 @@ pub const Projectile = struct {
     vy: Fixed = 0,
     kind: u8 = 0, // 0 none, 1 spit, 2 web
     ttl: u8 = 0,
+    /// Explicit padding so `sim.hash` sees no undefined bytes.
+    _pad: [2]u8 = @splat(0),
 };
 
 pub const Door = struct {
@@ -90,7 +96,27 @@ pub const GameState = struct {
     rewinds: u16 = 0,
     /// Set by `step` when the player walks into the exit door.
     finished: bool = false,
+    /// Door kind (1 coral, 2 iris, 3 gold) the player bumped this tick
+    /// without the key, 0 = none. Cleared at the start of every `step`.
+    last_locked: u8 = 0,
+    /// Explicit padding so `sim.hash` sees no undefined bytes.
+    _pad: u8 = 0,
 };
+
+/// `sim.hash` runs FNV-1a over the raw bytes of GameState, so no struct
+/// in it may contain compiler padding (its bytes would be undefined).
+fn assert_no_padding(comptime T: type) void {
+    var n: usize = 0;
+    for (@typeInfo(T).@"struct".field_types) |ft| n += @sizeOf(ft);
+    if (n != @sizeOf(T)) @compileError(@typeName(T) ++ " has padding; add an explicit _pad field");
+}
+comptime {
+    assert_no_padding(Player);
+    assert_no_padding(Enemy);
+    assert_no_padding(Projectile);
+    assert_no_padding(Door);
+    assert_no_padding(GameState);
+}
 
 pub fn pickup_present(s: *const GameState, i: usize) bool {
     return (s.pickups[i / 32] >> @intCast(i % 32)) & 1 == 1;

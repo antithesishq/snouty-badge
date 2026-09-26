@@ -7,3 +7,5 @@ node_modules/
 .DS_Store
 zig-pkg/
 __pycache__/
+*.WL1
+*.WL6
