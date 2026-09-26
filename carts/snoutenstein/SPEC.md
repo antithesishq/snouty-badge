@@ -129,12 +129,14 @@ detail settings), then drop the distance shading, then render at 30 fps.
 ## 6. World and levels
 
 - Grid 64x64 cells (the Wolf3D size; smaller maps are padded), one `u8`
-  per cell: 0 floor, 1..8 wall texture, 16..31 door variants (plain,
-  three locked colors, exit), 32+ reserved. 4 KB per level. There is no
+  per cell: 0 floor, 1..8 wall texture, 64..127 door number into the
+  level's door table (kind and orientation live there), the rest
+  reserved. 4 KB per level. PLAN.md M0 has the exact encoding. There is no
   aesthetic reason to stay at 32: the range cap in section 5 fogs far
   walls, so a long corridor looks better, not worse. The 64 limit is a
   maximum; our own levels stay compact.
-- Levels are ASCII files in `levels/*.txt`, parsed at comptime into cell
+- Levels are ASCII files in `cart/src/levels/*.txt` (under the module root so
+  `@embedFile` can see them), parsed at comptime into cell
   arrays and spawn lists (`@embedFile` + `@setEvalBranchQuota`). Legend:
 
 ```
@@ -411,7 +413,7 @@ cart/src/
   audio.zig       tone2 priority wrapper, neopixels
   input.zig       Controls source: hardware/sim, demo replay; edge detection
   packed_int_array.zig  (upstream copy)
-levels/           build_farm.txt, staging.txt, production.txt, wolf_walls.json,
+cart/src/levels/  build_farm.txt, staging.txt, production.txt, wolf_walls.json,
                   imported Wolf3D levels (free mapsets or our own editor output only)
 demos/            build_farm.bin (recorded inputs)
 tools/            prepare_assets.py, import_wolf.py (section 6.1), preview.mjs (+ --record,
