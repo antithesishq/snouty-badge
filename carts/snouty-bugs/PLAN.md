@@ -159,6 +159,75 @@ look at every 60th frame for clipping or palette mistakes.
 Tag `m1`, `docs/preview_m1.gif`, `docs/RUNNING.md` updated, SPEC.md status
 line, and the "pull and run" note in the final message.
 
+## M2 Bullet hell (not started)
+
+Full track split when M2 starts. One decision is fixed now so it happens
+before the code grows: the first M2 commit is the `World` refactor from
+SPEC.md section 13.1, done as a single track on its own, and only then do
+the enemy/bullet/bomb tracks fan out against the new layout.
+
+### World refactor contract (step 0 of M2)
+
+- New `cart/src/world.zig`:
+
+  ```zig
+  pub const World = struct {
+      game_tick: u32,
+      rng: u32,
+      input: struct { current: cart.Controls, previous: cart.Controls },
+      player: player.State,     // x, y, pose, pose_age, fire_cooldown, invuln, score
+      enemies: [24]enemies.Enemy,
+      bolts: [24]bullets.Bolt,
+      enemy_bullets: [96]bullets.EnemyBullet,
+      fx: [16]fx.Fx,
+      waves: waves.State,       // cursor t, stage/loop counters
+      bg: draw.BgState,         // scroll tick, star positions
+  };
+  pub var w: World = .{ ... };
+  ```
+
+  Plain data only: no pointers, no slices, no `undefined` padding that
+  would break a byte compare (use `= 0` defaults everywhere; the identity
+  test compares bytes). Fields may be added freely in later milestones as
+  long as they are plain data.
+- Modules keep their names and functions; module-level `var`s move into
+  the sub-structs above and the functions read `world.w.<field>`. `reset()`
+  functions become default values on the struct, so `new_game` is
+  `w = .{}` plus the seed.
+- Kept outside `World` (in `main.zig`): `state`, `tick_total`, `rewinds`,
+  `bombs`, best score, sound toggle. These are meta-state a rewind must not
+  touch.
+- `simulate()` gains a `Mode` parameter, `.live` or `.silent`; audio and
+  neopixel calls check it. M2 has no audio yet, so this is one enum and a
+  guard in the one place effects will be emitted.
+- Behaviour is unchanged: the M1 scripts must produce identical
+  `frames.json` export values and the `m1_play.json` GIF must be pixel
+  identical before and after the refactor. That is the whole test.
+- `@sizeOf(World)` is printed by a wasm debug export `debug_world_size()`
+  so the keyframe budget in SPEC.md 13.1 is checked against reality.
+
+The rest of M2 (all five enemies, `patterns.zig`, enemy bullets with a
+`source: Kind` field, bombs, graze, HUD rewind stock, hit = spend a rewind
+and grant invulnerability) is planned in the usual three tracks once step 0
+has landed.
+
+## M4 Rewind (not started, after M3)
+
+Sketch of the tracks so M2 and M3 leave the hooks in place:
+
+| Track | Files                                         | Contents                                                              |
+|-------|-----------------------------------------------|-----------------------------------------------------------------------|
+| A core| `history.zig`, `main.zig` (state machine)     | keyframe ring (4), input log (256), `record()`, `restore(tick)`, REWIND state, `debug_history_check`, `debug_rewinds` |
+| B show| `rewind.zig`, `hud.zig`, `audio.zig`          | bug-report bar and messages, scanline dim, `<<` and `GO!`, red dot on the hitbox, retriggered rewind tone, LED chase |
+| C tools| `tools/preview.mjs`, `tools/scripts/rewind_*.json` | identity check at several ticks, a script that flies into a bullet and asserts the rewind, GIF of one rewind for `docs/` |
+
+Hooks M2/M3 must leave: `simulate(mode)`, `EnemyBullet.source`, the
+collision result reporting *what* hit the player (kind + which pool index,
+so track B can flash it), and `World` staying plain data.
+
+Hardware check at the end of M4: FPS overlay during a rewind must read 60
+with the bullet pool near full. Fallbacks in SPEC.md 13.1.
+
 ## Status
 
 - 2026-09-26: M0 scaffold committed. M1 plan written; stand-in sheets
@@ -171,3 +240,6 @@ line, and the "pull and run" note in the final message.
   of a string share a spawn and appear 12 ticks apart; doubled strings
   draw y from [16, 72]; lives 0 returns to TITLE immediately. Art notes
   for the brief are in ASSETS.md section 10. Next: M2 bullet hell.
+- 2026-09-26: Rewind mechanic designed (SPEC.md 5.1, 13.1). Milestones
+  renumbered: M4 Rewind, M5 Attract, M6 Polish. M2 now opens with the
+  `World` refactor (contract above) before any new entities land.

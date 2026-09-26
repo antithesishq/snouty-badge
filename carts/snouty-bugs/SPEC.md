@@ -11,8 +11,11 @@ screen, flying right over a scrolling parallax background. Bugs (the software
 kind, drawn as the insect kind) fly in from the right in scripted waves and
 fill the screen with slow, dense, readable bullet patterns. A fires the zapper,
 B drops a bomb that clears every enemy and bullet on screen, the joystick
-moves the ship. Left alone, the cart plays itself in an attract/demo loop; the
-moment anyone touches a button, the ship is theirs, mid-flight, no reset.
+moves the ship. Getting hit does not kill you: the game names the bug that
+got you, rewinds the last two seconds in front of your eyes, and hands the
+ship back so you can dodge it this time (section 5.1). Left alone, the cart
+plays itself in an attract/demo loop; the moment anyone touches a button, the
+ship is theirs, mid-flight, no reset.
 
 ## 2. Hardware and platform facts the design leans on
 
@@ -49,7 +52,9 @@ moment anyone touches a button, the ship is theirs, mid-flight, no reset.
 | Click             | OS: FPS overlay              | OS: FPS overlay                          | OS: FPS overlay               |
 | Start+Select 250ms| OS: exit to menu             | OS: exit to menu                         | OS: exit to menu              |
 
-Select does not count as "interaction" for the demo takeover. Sound and
+During a REWIND (section 5.1) the game ignores every input except Select and
+the OS combos; a takeover request made during a demo rewind is applied when
+the rewind ends. Select does not count as "interaction" for the demo takeover. Sound and
 neopixels are off by default so the badge is quiet on a lanyard; the setting
 is not persisted (the flash save API returns 0 bytes upstream).
 
@@ -92,13 +97,65 @@ y   8..127   Play area, 160x120. Background layers fill it.
   3. Neopixels: all five white at 8/255 for 6 ticks, then back to bomb stock.
   Stock starts at 2, max 3. +1 at the end of each stage and every 5,000
   points. Bombs are the intended escape hatch, so they are cheap.
-- Lives: 3. Losing one: ship explodes (32x32, 6 frames), 60-tick pause with
-  no enemy fire and bullets frozen, then respawn at (16, 64) with 120 ticks of
-  invulnerability (ship drawn every other tick). All enemy bullets are cleared
-  on respawn, bombs refill to at least 1.
+- Rewinds: 3 (they replace lives). Getting hit with a rewind in stock
+  spends it and runs the rewind sequence in section 5.1: the world goes back
+  two seconds and play resumes from there. Getting hit with none left is
+  death: ship explodes (32x32, 6 frames), 60 ticks of frozen bullets and no
+  enemy fire, then GAME OVER. Extra rewind at 10,000 points and every 20,000
+  after, max 5.
 - Score: points per enemy (section 6), +1 per graze (an enemy bullet passing
-  within 4 px of the hitbox without touching it, once per bullet). Extra life
-  at 10,000 and every 20,000 after. Score caps at 999,999.
+  within 4 px of the hitbox without touching it, once per bullet). Score caps
+  at 999,999. Score is part of the world, so a rewind takes it back too, along
+  with the kills and grazes of those two seconds.
+
+### 5.1 Getting hit: the rewind
+
+The Antithesis mechanic. The game is fully deterministic (section 13), so it
+can keep snapshots of the world and replay from recorded input, exactly the
+way Antithesis rewinds a system to the moment before a bug. When the hitbox
+is touched and a rewind is in stock:
+
+1. **Bug report, 20 ticks.** Hit-stop: nothing moves, the ship is drawn
+   with its hitbox as a red dot, the offending bullet or enemy flashes
+   white. A centered 8x8-font message in Coral on an Anti-Black bar at y=56
+   names the bug, chosen from the kind of enemy that fired the bullet (or
+   rammed the ship):
+
+   | Hit by                          | Message              |
+   |---------------------------------|----------------------|
+   | Off-by-one (gnat)               | `OFF BY ONE`         |
+   | Race Condition (wasp)           | `RACE CONDITION`     |
+   | Memory Leak (beetle) bullet     | `OUT OF MEMORY`      |
+   | Deadlock (spider) bullet        | `DEADLOCK`           |
+   | Segfault (moth) bullet          | `ACCESS VIOLATION`   |
+   | Heisenbug (boss) or its bullets | `UNDEFINED BEHAVIOR` |
+
+   Enemy bullets carry the `Kind` of their emitter for this. The longest
+   message is 18 characters, 144 px, which fits the 160 px screen.
+2. **Reverse playback, 60 ticks.** The world plays backward 120 game ticks
+   at two ticks per frame. Everything reverses: bullets retreat, dead bugs
+   un-explode, the score counts down, the background scrolls right. The
+   message bar stays, `<<` blinks in the HUD center where the bombs are, and
+   the frame is dimmed by drawing every other scanline black (the pause
+   look, so it reads as "not live"). Inputs are ignored.
+3. **Resume.** The world is restored to exactly its state 120 ticks before
+   the hit, including every enemy bullet then in flight (that is the point:
+   you have seen what comes next). The player gets 60 ticks of
+   invulnerability and a `GO!` pop for 30 ticks. Human input drives from the
+   first resumed tick. Recorded input after the resume point is discarded, so
+   the future is the player's to change.
+
+If less than 120 ticks of history exist (early in a game, or a second hit
+soon after a rewind), the rewind goes back as far as it can. The rewind
+count is not part of the rewound world, so a rewind cannot refund itself.
+Bombs pressed during a rewind do nothing. In DEMO the autopilot's input is
+recorded like a human's, so the demo shows death-rewinds too; that is the
+best advertisement the mechanic gets.
+
+Why the score rewinds: honesty. The snapshot is the whole world, and a rule
+that says "everything goes back except the number in the corner" is the kind
+of special case that makes replays diverge. It also means a rewind is never
+free, even with stock left.
 
 ## 6. Enemies (the bugs)
 
@@ -116,7 +173,8 @@ flavor and appear on the title-screen bestiary (optional, M5).
 | Heisenbug (boss)       | 48x48  | 60 | see below     | Section 7.                                                        | Section 7.                                                          | 500 |
 
 Enemy bullets: pool of 96. Two kinds: round 6x6 (cell 8x8, 2 frames) and
-needle 8x4 (cell 8x8, 1 frame, drawn from the round sheet). Speeds 0.6 to
+needle 8x4 (cell 8x8, 1 frame, drawn from the round sheet). Each bullet
+records the `Kind` of the enemy that fired it (section 5.1). Speeds 0.6 to
 1.5 px/tick. Bullets die off screen (4 px margin) or on the bomb. Max speed
 is deliberately low: on a 160 px screen, 1.5 px/tick crosses in ~1.8 s, which
 is the fastest thing a player can read at lanyard scale.
@@ -157,22 +215,26 @@ one, then a 500 pt score pop, +1 bomb, next stage.
 boot -> TITLE (10 s, "PRESS A" blinking)
      -> DEMO (autopilot plays, "DEMO" flashes in the HUD center)
          -> any A/B/Start/joystick input -> PLAYING (takeover, see below)
-         -> autopilot loses all lives -> TITLE
+         -> autopilot is hit with no rewinds left -> TITLE
          -> 5 minutes elapsed -> TITLE (so the loop shows the title again)
 TITLE -> A/B/Start -> PLAYING (fresh game, seeded from micros_since_boot)
-PLAYING -> lives = 0 -> GAME OVER (score, "PRESS A", 8 s) -> TITLE
+PLAYING -> hit, rewinds > 0 -> REWIND (80 ticks, section 5.1) -> PLAYING
+PLAYING -> hit, rewinds = 0 -> GAME OVER (score, "PRESS A", 8 s) -> TITLE
 PLAYING -> Start -> PAUSED -> Start -> PLAYING
+DEMO    -> hit, rewinds > 0 -> REWIND -> DEMO (takeover input is queued)
 ```
 
 Takeover: the ship, enemies and bullets stay exactly where they are. The
-score resets to 0, lives to 3, bombs to 2, the "DEMO" tag is replaced by a
+score resets to 0, rewinds to 3, bombs to 2, the "DEMO" tag is replaced by a
 "GO!" pop for 60 ticks, and 60 ticks of invulnerability are granted so the
 first frame is fair. Human input starts driving on the very next tick. This is
 deliberately not a restart: the whole point is that the screen already looks
 alive and the player just joins it.
 
 Idle: a human game never falls back to demo mid-game (a paused game stays
-paused). Only TITLE and GAME OVER time out into DEMO.
+paused). Only TITLE and GAME OVER time out into DEMO. The rewind history
+(section 13) keeps recording across a takeover; the human simply continues
+the world the autopilot was flying.
 
 ### 8.1 Autopilot (preferred)
 
@@ -235,13 +297,19 @@ table, or if `y == random` from the PRNG within [16, 104].
 ## 10. HUD, title, game over
 
 - HUD (y 0..7): score as 6 digits in the built-in 8x8 font at x=0; bomb
-  icons 8x8 centered (up to 3); lives as Snouty-head icons 8x8 right-aligned
-  (up to 5 shown). Background Anti-Black. In DEMO, "DEMO" replaces the bombs
-  every other half second; in the first 60 ticks after takeover, "GO!".
+  icons 8x8 centered (up to 3); rewinds as Snouty-head icons 8x8
+  right-aligned (up to 5 shown). Background Anti-Black. In DEMO, "DEMO"
+  replaces the bombs every other half second; in the first 60 ticks after a
+  takeover or a rewind, "GO!"; during reverse playback, "<<" blinking.
+- Rewind overlay (section 5.1): Anti-Black bar y 52..67 across the screen,
+  bug message centered in Coral at y=56; frame dimmed every other scanline
+  during playback. Game over after a hit with no rewinds shows the same bug
+  message above "GAME OVER".
 - Title: title logo image 128x40 at (16, 20) over a slowly scrolling
   background; "PRESS A" 8x8 font blinking at y=96; small "Antithesis" in
   Coral at y=116 with Iris marks (reuse `iris_16.png` from snouty-badge).
-- Game over: "GAME OVER" 8x8 font, score, best score this boot, then title.
+- Game over: the fatal bug message, "GAME OVER" 8x8 font, score, best score
+  this boot, then title.
 - Pause: "PAUSED" over the frozen frame, dimmed by drawing every other pixel
   black (cheap, looks intentional).
 
@@ -258,13 +326,17 @@ plays on every third bolt so it does not drown everything.
 | Enemy hit     | triangle | 1200 Hz                            | 0.03 s   |
 | Enemy death   | square   | 220 Hz                             | 0.10 s   |
 | Player death  | sawtooth | 110 Hz                             | 0.50 s   |
+| Bug report    | sawtooth | 220 Hz                             | 0.30 s   |
+| Rewind        | triangle | 110 to 880 Hz, retriggered every 4 ticks in 15 steps (no sweep in `tone2`) | 0.07 s each |
 | Bomb          | minor    | 55 Hz                              | 0.60 s   |
 | Extra life    | major    | 660 Hz                             | 0.30 s   |
 | Boss enters   | minor    | 82 Hz                              | 0.80 s   |
 
 Neopixels (GRB, max 10/255): the five LEDs show bomb stock (Coral, one LED
-per bomb, from the left). Bomb: all white 8/255 for 6 ticks. Player hit: all
-red 10/255 for 10 ticks. Boss death: chase pattern for 60 ticks. Off when
+per bomb, from the left). Bomb: all white 8/255 for 6 ticks. Bug report: all
+red 10/255 for the 20-tick freeze. Reverse playback: one Coral LED chasing
+right to left, 12 ticks per step. Player death: all red 10/255 for 60 ticks.
+Boss death: chase pattern for 60 ticks. Off when
 sound is off (Select).
 
 ## 12. Asset manifest
@@ -300,6 +372,41 @@ runtime (a 256-entry sin table is built at comptime). f32 for positions and
 velocities is fine: the RP2354's Cortex-M33 has an FPU and upstream's
 `space-shooter` does the same.
 
+### 13.1 The World and its history
+
+Every piece of mutable play state lives in one plain struct, `World`, owned
+by `world.zig`: player, enemy pool, bolt and bullet pools, fx pool, boss,
+wave cursor, PRNG state, background scroll and star positions, the input
+edge-detector's current and previous controls, and `game_tick`. Gameplay
+modules keep their functions but operate on fields of the one global
+`World`. Nothing in `World` is a pointer, so a snapshot is a struct copy and
+two worlds compare with `std.mem.eql` on their bytes. Outside the world, and
+therefore not rewound: the state machine, the rewind count and bomb stock
+(meta-state, like lives), best score, `tick_total`, the sound toggle.
+
+History (`history.zig`), the Antithesis part:
+
+- Keyframes: a ring of 4 `World` copies, one saved every 60 game ticks just
+  before that tick is simulated. At about 5 KB per `World` after M2 that is
+  20 KB, and 240 ticks of coverage for a 120-tick rewind.
+- Input log: a ring of 256 `u16` controls words, one per tick, written from
+  whatever source drove the tick (hardware, autopilot, replay).
+- `restore(tick)`: copy the newest keyframe at or before `tick` into the
+  world, then feed the logged controls through `input.update` and run
+  `simulate(.silent)` until `game_tick == tick`. Silent means no `tone2`
+  and no neopixel writes; everything else (fx, score, spawns) runs, because
+  it is all in the world. At most 59 catch-up ticks per restore.
+- Reverse playback displays the world at `hit_tick - 2k` for k = 1..60, one
+  `restore` per frame. Simulation without drawing is a few hundred entity
+  updates and AABB checks, so 60 silent ticks should cost low single-digit
+  milliseconds on the badge; the FPS overlay during a rewind is the check.
+  Fallbacks if it dips: play back 3 or 4 ticks per frame, or save keyframes
+  every 30 ticks (8 keyframes, ~40 KB).
+- Determinism rules that make this work, already in force: tick-based
+  timing, one seeded PRNG, no `cart.rand()`, no wall clock during play, and
+  side effects (audio, LEDs) derived from the world rather than stored in it.
+  New code must keep to them; the identity test in section 14 catches slips.
+
 ```
 cart/src/
   main.zig        start/update, game-state machine (TITLE/DEMO/PLAYING/PAUSED/GAME_OVER),
@@ -314,6 +421,9 @@ cart/src/
   waves.zig       stage tables and the spawner
   collide.zig     AABB checks: bolts vs enemies, bullets/enemies vs hitbox, graze
   fx.zig          explosion/spark pool, bomb ring, screen flash, hit-stop
+  world.zig       the World struct and the one global instance (section 13.1)
+  history.zig     keyframe ring, input log, restore(tick)
+  rewind.zig      the hit -> bug report -> reverse playback -> resume sequence
   autopilot.zig   section 8.1
   replay.zig      section 8.2 (only if needed)
   audio.zig       tone2 wrappers with the priority rule; neopixels
@@ -326,8 +436,9 @@ tools/
   make_gif.py        as in snouty-badge
 ```
 
-Update order per tick: read controls -> state machine -> spawner ->
-player -> enemies (move, fire) -> bullets/bolts move -> collisions -> fx ->
+Update order per tick: read controls -> state machine -> history (log the
+controls, keyframe if due) -> spawner -> player -> enemies (move, fire) ->
+bullets/bolts move -> collisions -> fx ->
 draw (bg, near layer, bullets under sprites? no: enemies, ship, bolts, enemy
 bullets on top so they are always visible, fx, HUD) -> audio/neopixels ->
 present.
@@ -347,6 +458,14 @@ Readability of bullets is the game.
   HUD lives area, scripted in `tools/check_demo.mjs`).
 - Input scripts: `--script inputs.json` drives all buttons per tick range
   so the takeover, pause and bomb paths are exercised headlessly.
+- Rewind identity: a wasm-only export `debug_history_check()` copies the
+  current world aside, runs `history.restore(game_tick)` from the newest
+  keyframe and the input log, and returns 0 only if the restored world is
+  byte-identical. The harness calls it at several ticks of a scripted run
+  and expects 0 every time. A second script flies the ship into a bullet and
+  expects `debug_rewinds` to drop by one, `debug_state` to pass through
+  REWIND and back to PLAYING, and the score after the rewind to equal the
+  score 120 ticks before the hit.
 - Hardware: FPS overlay (joystick click) must read 60 during the boss with
   the bullet pool near full. If it dips, first drop the far layer to 4-bit,
   then halve the starfield, then reduce the bullet pool to 64.
@@ -363,12 +482,19 @@ subagents, as with `snouty-badge`.
   brief. `zig build` works.
 - **M1 Flying**: parallax background (placeholder tiles), ship movement with
   banking, zapper, gnats, collisions, score. Playable in the simulator.
-- **M2 Bullet hell**: all five enemy kinds, patterns, enemy bullets, bombs,
-  lives, HUD, explosions, graze. Balance pass on speeds.
+- **M2 Bullet hell**: first the `World` refactor (section 13.1) while the
+  code is still small, then all five enemy kinds, patterns, enemy bullets
+  with their source kind, bombs, rewind stock in the HUD, explosions, graze.
+  Getting hit spends a rewind but only grants invulnerability until M4.
+  Balance pass on speeds.
 - **M3 Stages and boss**: wave tables, the Heisenbug, stage loop, warning.
-- **M4 Attract mode**: title, autopilot demo, takeover, game over, pause,
-  deterministic soak test. Decide autopilot vs replay here.
-- **M5 Polish**: final art drop-in, audio, neopixels, Select toggle, title
+- **M4 Rewind**: history (keyframes, input log, restore), the bug-report
+  and reverse-playback sequence, messages per enemy, the identity test,
+  hardware timing check.
+- **M5 Attract mode**: title, autopilot demo, takeover, game over, pause,
+  deterministic soak test. Decide autopilot vs replay here. The demo shows
+  rewinds.
+- **M6 Polish**: final art drop-in, audio, neopixels, Select toggle, title
   bestiary, tuning from hardware play.
 
 Parallel tracks: art (external agent, per `ASSETS.md`) runs alongside M1 to
@@ -384,9 +510,18 @@ brief so the real sheets drop in without code changes.
   with plain insect names on screen?
 - Graze scoring: keep (bullet-hell tradition, teaches the small hitbox) or
   drop for simplicity?
+- Rewind takes the score back with everything else (section 5.1). Agree, or
+  should score be exempt?
+- Bombs stay on B alongside automatic rewinds. Revisit after M4: a manual
+  hold-B rewind could replace the bomb entirely (one button, one theme, and
+  it keeps the patterns on screen instead of wiping them).
+- The bug messages in section 5.1: happy with the six, or different ones?
 
 ## Status
 
 - 2026-09-26: M0 scaffolded. Build verified on the VM.
 - 2026-09-26: M1 built and tagged `m1`: flying, zapper, gnats, collisions,
   score, pause, placeholder art (`docs/preview_m1.gif`). See PLAN.md.
+- 2026-09-26: Rewind mechanic designed (section 5.1, 13.1): lives become
+  rewinds, a hit names the bug and replays the last two seconds backward.
+  Milestones renumbered: M4 Rewind, M5 Attract, M6 Polish.

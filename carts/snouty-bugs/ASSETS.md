@@ -190,3 +190,7 @@ Found while drawing placeholder sheets to this brief; the code and
   planet so the two layers separate.
 - The 8x8 Snouty-head life icon is at the limit of legibility: a profile
   silhouette with a single cream eye pixel is about what fits.
+- Lives are now "rewinds" (SPEC.md 5.1): `hud.png` frame 0, the Snouty
+  head, keeps that HUD slot for now. If a legible 8x8 rewind glyph (a
+  counter-clockwise arrow in Coral) turns out possible, offer it as an extra
+  frame; not required.
