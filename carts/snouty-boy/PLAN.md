@@ -110,6 +110,22 @@ write it down in your final report and stub around it locally.
 4. Tag `m1`, GIF in `docs/`, pull-and-run note. Gate: Adrian flashes the
    uf2 and reports FPS and the overlay's microseconds.
 
+## M3 and M4 (merged 2026-09-26, tags `m3`, `m4`)
+
+M3: Select-hold menu, splash + chime, APU ch1-3 model to one `tone2` voice.
+M4: keyframe ring (N = 7 for 2048-gb, 3.5 s), input log, Left/Right scrub
+with a bottom-bar view, neopixel history meter, `tests/determinism.zig`.
+Frozen frame on scrub: restore k, step one frame through the sink, restore k
+again (documented in `cart/src/frontend/rewind.zig`).
+
+## Hardware checklist (Adrian)
+
+- M1 gate: overlay avg/max microseconds and FPS with 2048-gb.
+- Menu: game shows through around the panel; resume is clean.
+- Scrub: step feels instant; Right back to live takes well under a second;
+  restored frame visible under the bar; neopixels dim in menu, off after.
+- Chime audible on the splash.
+
 ## Later milestones
 
 See SPEC.md section 17. M2 needs the ROM Adrian supplies (or a homebrew
