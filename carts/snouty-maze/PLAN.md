@@ -258,3 +258,156 @@ gate pending. Deviations from this plan, all kept:
   start pose ~6.4 ms (pixel fill dominates). Both inside 16.7 ms on paper.
 - Extra wasm exports: `debug_set_size`, `debug_finish_x/z`,
   `debug_run_count`, `debug_raster_*` counters.
+
+# Plan: M2 "Screensaver loop" (+ M3 renderer pieces in parallel)
+
+M2 makes the cart a screensaver: autopilot, finish sequence, maze swap,
+name strip. Because the M3 actors need new renderer modules that touch no
+M2 file, Track A builds them now. Integration and the M2 GIF are mine.
+
+## Tracks
+
+| Track | Owner | Files |
+|-------|-------|-------|
+| A2 actor renderer (M3 prep) | Opus agent | `cart/src/render/mesh.zig` (new), `render/sprite.zig` (new), `render/textures.zig`, `render/scene.zig` (debug hook only), `render/raster.zig` (sprite fill fixes only) |
+| B2 autopilot and states | Opus agent | `cart/src/autopilot.zig` (new), `cart/src/camera.zig`, `cart/src/main.zig` |
+| C2 overlay and harness | Opus agent | `cart/src/render/overlay.zig`, `tools/scripts/m2_*.json`, `tools/check_cycle.mjs` (new), `docs/RUNNING.md`, `tests/golden/poses.json` (additions only) |
+
+Frozen: `math.zig`, `rng.zig`, `input.zig`, `maze.zig`, `render/clip.zig`,
+`build.zig`, `tools/preview.mjs`, `tools/check_golden.mjs`.
+
+## Controls in M2 (replaces SPEC section 3 for this milestone)
+
+| Input | Autopilot states | Fly (debug) |
+|-------|------------------|-------------|
+| Select | Toggle debug overlay | same |
+| Start | Toggle name strip permanently on/off | Reset camera to start cell |
+| A | Skip to PAUSE (finish sequence) | + Up/Down: pitch |
+| B + Select | Toggle fly mode | Toggle back to autopilot (resumes WALK from the nearest cell centre, heading = nearest quadrant) |
+| Stick | ignored | walk / turn (M1 controls) |
+
+B+Select is a debug chord removed in M4 when takeover lands.
+
+## State machine (B2 owns; SPEC section 8 with these exact numbers)
+
+```
+WALK -> TURN -> WALK ...         autopilot
+WALK at finish centre -> PAUSE   30 ticks
+PAUSE -> RISE                    150 ticks
+RISE -> OVERHEAD                 120 ticks; maze regenerated at tick 0 of OVERHEAD
+OVERHEAD -> DESCEND              150 ticks
+DESCEND -> WALK                  at the new start cell
+FLY                              debug, entered/left by B+Select
+```
+
+- WALK: heading is a `maze.Dir`; move 1/30 cell per tick along it. Cell
+  centre reached when the coordinate along the heading crosses `c + 0.5`;
+  snap to the centre exactly (no drift). Then, at the centre: if this is
+  the finish cell -> PAUSE. Else choose the next heading by the left-hand
+  wall follower relative to the current heading: left if open, else
+  straight, else right, else back. If the heading changes -> TURN, else
+  keep walking.
+- TURN: stationary. 90 degrees over 20 ticks, 180 over 36 ticks, yaw
+  interpolated with `math.smoothstep01` from the old to the new
+  `camera.dir_yaw(dir)` along the short way (180 turns go clockwise). Then
+  WALK.
+- Roll cap (SPEC decision 9): if `roll != 0` for 1200 ticks, unroll over
+  30 ticks with smoothstep. M2 has no smiley yet, so implement the timer
+  and the unroll path and expose `debug_set_roll(deg)` to test it.
+- PAUSE: hold pose.
+- RISE: `t = smoothstep01(tick / 150)`. Position lerps from the finish
+  centre at eye height to the overhead point; pitch from its current value
+  to `deg(90)`; roll to 0 (short way); yaw unchanged. Overhead point: the
+  maze must occupy a 96 px square on screen, axis-aligned (yaw is always a
+  multiple of 90 degrees in autopilot), sitting in `y = 4..100` so the name
+  strip has the bottom 24 px. Height `h = (max(w, h_cells) / 2) *
+  raster.focal / 48`, i.e. 15.4 cells for 12x12, 20.5 for 16x16. Camera
+  x,z = maze centre shifted 12 px worth toward the viewer's screen-down
+  direction: `centre - forward_h * (12 * h / focal)`, where `forward_h` is
+  the unit horizontal heading vector for the current yaw (with pitch 90,
+  screen-up is the heading direction, so moving the camera against the
+  heading moves the maze up the screen). Do the arithmetic once at PAUSE
+  end and store the target.
+- OVERHEAD: hold the pose. At tick 0 regenerate the maze from `random`
+  (same size) and call nothing on the camera. Set `name_strip_visible =
+  true` for the phase (overlay reads a pub flag).
+- DESCEND: reverse: from the overhead point to the new start centre at eye
+  height, pitch `deg(90)` -> 0, yaw from the current to
+  `dir_yaw(start_facing)` along the short way, over 150 ticks with
+  smoothstep. `start_facing` = what `camera.reset` would choose. Then
+  WALK with that heading.
+- A in WALK/TURN: jump to PAUSE from the current position (RISE then
+  starts from wherever the camera is; only the pose lerp changes).
+- Exports (add): `debug_cycles` (mazes completed), `debug_state_tick`,
+  `debug_heading`, `debug_set_roll`, `debug_skip` (same as pressing A),
+  `debug_name_strip` (0/1). Keep every existing export.
+
+## Overlay (C2 owns `render/overlay.zig`)
+
+- Keep `draw_debug` as is (Track B wrote it in M1).
+- `pub fn draw_name_strip() void`: `ADRIAN HATCH` centred at y = 106 and
+  `ANTITHESIS` centred at y = 116, built-in 8x8 font, white text with a
+  1 px black drop shadow (draw black at +1,+1 first), no box. main calls it
+  when `autopilot.name_strip_visible or name_strip_forced`.
+- `pub fn fade(level: u8) void`: darkens the finished frame through a
+  4x4 Bayer mask, `level` 0..16 = fraction of pixels blacked (16 = all).
+  For M3's teleport; test it in the preview via a `debug_fade(level)`
+  export you ask B2 to add (or skip the runtime test and unit-test the mask
+  order; say which).
+- `check_cycle.mjs`: runs the wasm with no input for N updates
+  (`--frames`, default 9000), sampling `debug_state`, `debug_cycles`,
+  `debug_cell_x/z` every 30 ticks through `preview.mjs --dump-exports`
+  cadence (extend nothing in preview.mjs: run preview several times with
+  increasing `--frames` if you need a timeline, or, better, one run with
+  `--expect "debug_cycles >= 1"`). Also run with `--press A:300-300` and
+  `--expect "debug_cycles >= 1"` at 1000 frames. Report PASS/FAIL; exit 3.
+- `tools/scripts/m2_cycle.json`: press A at tick 240 so a 1000-tick
+  preview shows walk -> pause -> rise -> overhead (name strip) -> descend
+  -> walk in the new maze. `--every 10` for the GIF.
+- Goldens: add `overhead_strip` = pose `null`, `calls:
+  ["debug_skip", ...]` is not possible before the first update, so
+  instead add a pose entry `{ "name": "overhead_strip", "seed": 1, "pose":
+  null, "press": "A:0-0", "frames": 301 }` only if `check_golden.mjs`
+  already supports `press`; it does not, so leave goldens alone and put
+  the frame check into `check_cycle.mjs` (state must be OVERHEAD and
+  `debug_name_strip == 1` at tick 300 after A at tick 0: 30 + 150 = 180
+  ticks to OVERHEAD, so tick 300 is inside it).
+- `docs/RUNNING.md`: update the controls table to the M2 table above.
+
+## Actor renderer (A2 owns; nothing in M2 calls it yet)
+
+- `textures.zig`: unpack `gfx.snouty` (4 frames of 32x32) into four
+  `Texture`s with palette index 0 transparent, plus `gfx.smiley`,
+  `gfx.logo`, `gfx.snouty_top` (16x16: store it in a 32x32 grid, use
+  `u, v` in [0, 0.5)). Export `snouty: [4]Texture`, `snouty_top`, `smiley`,
+  `logo`.
+- `sprite.zig`: `pub fn draw_billboard(cam, basis, pos: Vec3 /* feet
+  centre on the floor */, size: f32 /* cells, square */, tex) void`: a
+  view-plane-aligned quad standing on the floor, drawn with `Fill.sprite`.
+  `pub fn draw_floor_sprite(cam, basis, pos, size, tex)`: same texture on a
+  quad lying on the floor at y = 0.003 for the overhead phases.
+- `mesh.zig`: comptime UV sphere, 8 rings x 12 segments, quads plus pole
+  triangles, `pub fn draw_sphere(cam, basis, centre, radius, base: [3]u8
+  rgb) void` flat-shaded per face with light direction `normalize(0.4,
+  0.8, -0.45)` and 8 grey levels via a comptime table of Pixels; backface
+  cull per face by the view-space normal. `pub fn draw_spin_quad(cam,
+  basis, centre, half_size, angle: Angle, tex)`: two-sided textured quad
+  (draw both windings or disable culling: the raster has no culling, so
+  one submission suffices) rotating about the vertical axis.
+- Debug hook in `scene.zig`: `pub var debug_actors: bool = false`; when
+  true, `draw` also draws a sphere at cell (1,1), a spinning smiley at
+  (2,1), a spinning logo at (3,1) and a Snouty billboard at (1,2), angle
+  = frame count from a `pub var debug_frame: u32` you bump inside `draw`.
+  Ask B2 (in your report) for a `debug_actors(on)` export; until then test
+  by flipping the default locally and reverting before you finish.
+- Fix anything the untested `Fill.sprite` path gets wrong. Keep the
+  goldens passing (`node tools/check_golden.mjs`), since they render with
+  `debug_actors = false`.
+
+## Done criteria for M2
+
+1. `zig build`, `zig build test`, `check-float`, `check_golden` all clean.
+2. `check_cycle.mjs` PASS: unattended run completes at least one maze;
+   A-skip run shows OVERHEAD with the name strip at tick 300.
+3. `docs/preview_m2.gif` from `m2_cycle.json`.
+4. Tag `m2`, hand-off note.
