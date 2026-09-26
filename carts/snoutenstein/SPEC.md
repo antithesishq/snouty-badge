@@ -191,8 +191,7 @@ Mapping, in the direction Wolf3D -> ours:
 The importer applies one difficulty tier so enemy counts stay sane and
 warns when a level exceeds the pools in section 8 (it then drops the
 lowest-value enemies farthest from the start). The original `.WL1`/`.WL6`
-files are never committed and neither are levels converted from them
-(section 18); converted free mapsets and our own editor-made levels are.
+files are never committed; converted levels are (section 18, item 9).
 
 ## 7. Weapons
 
@@ -487,19 +486,16 @@ Decided by Adrian on 2026-09-26:
    codes, not textures, and the importer maps codes onto our eight sheets.
 Level grid 64x64 with Wolf3D import (section 6.1): yes.
 
-Still open:
-
-9. Imported Wolf3D levels: the spec treats conversions of the id Software
-   maps (shareware included) as a local-only experiment and commits only
-   free mapsets or levels you build in a Wolf3D editor. Agree, or do you
-   want a converted shareware level in the shipped cart anyway?
-10. Wolf3D levels are longer than ours and walking is 2.7 cells/s; for
-    imported levels the importer can pass a per-level walk speed (say
-    3.5 cells/s). Worth it, or keep one speed everywhere?
+9. Imported Wolf3D levels: free mapsets and editor-made levels are
+   committed. One converted shareware level may ship as a one-off demo
+   (this cart runs on Adrian's own badge only); the `.WL1` files
+   themselves are never committed.
+10. One walk speed everywhere for now; revisit after playing an imported
+    level on hardware.
 
 ## Status
 
 - 2026-09-26: spec drafted, nothing built yet. Same day: level grid set
   to 64x64 and the Wolf3D `GAMEMAPS` importer added (section 6.1) at
   Adrian's request; pools and memory budget updated. Adrian settled
-  questions 1 to 8 (section 18). Next: M0 scaffold.
+  all of section 18. M0 scaffold started.
