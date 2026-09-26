@@ -26,7 +26,7 @@ pub fn update() void {
     const c = read_controls();
     if (c.a) draw_centered_text("A!", 112, coral);
     // Exercise the asset pipeline: the 8x8 placeholder marker.
-    draw_cell(gfx.placeholder, 0, 76, 72);
+    draw_cell(gfx.hud, 0, 76, 72);
     tick_total +%= 1;
     if (cart.is_wasm) present_wasm();
 }

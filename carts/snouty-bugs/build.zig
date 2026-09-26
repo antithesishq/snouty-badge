@@ -19,9 +19,16 @@ pub fn build(b: *Build) void {
 /// magenta #FF00FF, which tools/prepare_assets.py flattens alpha 0 to.
 const Image = struct { file: []const u8, bits: u8, transparent: bool };
 const images = [_]Image{
-    // M0 placeholder so the pipeline is exercised. Real sheets are listed in
-    // SPEC.md "Asset manifest" and get added here as they are delivered.
-    .{ .file = "placeholder.png", .bits = 4, .transparent = true },
+    // Sizes and frame counts: PLAN.md "Asset contract" / SPEC.md section 12.
+    .{ .file = "ship.png", .bits = 4, .transparent = true },
+    .{ .file = "thruster.png", .bits = 4, .transparent = true },
+    .{ .file = "bolt.png", .bits = 4, .transparent = true },
+    .{ .file = "bugs_small.png", .bits = 4, .transparent = true },
+    .{ .file = "fx_small.png", .bits = 4, .transparent = true },
+    .{ .file = "hud.png", .bits = 4, .transparent = true },
+    .{ .file = "bg_far.png", .bits = 4, .transparent = false },
+    .{ .file = "bg_near.png", .bits = 4, .transparent = true },
+    .{ .file = "iris_16.png", .bits = 4, .transparent = true },
 };
 
 /// Converts the PNGs in assets/gen/ into a `gfx` module at build time,
