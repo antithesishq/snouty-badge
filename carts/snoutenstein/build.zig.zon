@@ -1,0 +1,28 @@
+.{
+    .name = .snoutenstein,
+    .fingerprint = 0x79175b9eff4c40ed,
+    .version = "0.0.0",
+    .minimum_zig_version = "0.17.0-dev.1936+5a625d5f3",
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "cart",
+        "assets/gen",
+    },
+    .dependencies = .{
+        .sycl_badge = .{
+            .path = "../sycl-badge",
+        },
+        // Mirrors sycl-badge/build.zig.zon. Our build.zig calls
+        // b.dependency("zigimg") for the asset converter, and add_os_cart
+        // initialises MicroBuild on our builder.
+        .microzig = .{
+            .url = "https://github.com/ZigEmbeddedGroup/microzig/releases/download/0.17.7/microzig.tar.gz",
+            .hash = "microzig-0.17.7-D20YSb7KAAAdJvjGJpx-9NG8th__5s2OaJbug645qrgM",
+        },
+        .zigimg = .{
+            .url = "git+https://github.com/SpexGuy/zigimg?ref=sycl_badge#9db3abb43ad18dd45512d83d812816dc8840b7e1",
+            .hash = "zigimg-0.1.0-8_eo2tTaFwBecfCKenltx5ud0R_0jZwzC84RQGM-xkpM",
+        },
+    },
+}

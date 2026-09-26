@@ -142,7 +142,7 @@ detail settings), then drop the distance shading, then render at 30 fps.
 .  floor                                       S    player start, facing the arrow after it (^v<>)
 D  door                                        C I G   door locked with Coral / Iris / Gold key
 E  exit door (walk in to finish the level)     c i g   key pickups
-g  gnat   w wasp   b beetle   s spider   H Heisenbug (boss)
+a  gnat   w wasp   b beetle   s spider   H Heisenbug (boss)
 +  hotfix (health +25)   %  ammo for the zapper   $ ammo for the spray   *  rewind battery (+3 s)
 ```
 

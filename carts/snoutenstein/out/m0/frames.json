@@ -1,0 +1,116 @@
+{
+  "cart": "/home/exedev/snoutenstein/zig-out/bin/snoutenstein.wasm",
+  "width": 160,
+  "height": 128,
+  "format": "rgb565 column-major, wasm byte-swapped",
+  "updates": 200,
+  "every": 50,
+  "startSkip": 0,
+  "seed": 1,
+  "controls": 0,
+  "press": "A:10-11,UP:20-199,RIGHT:60-100",
+  "pressItems": [
+    {
+      "button": "A",
+      "from": 10,
+      "to": 11
+    },
+    {
+      "button": "UP",
+      "from": 20,
+      "to": 199
+    },
+    {
+      "button": "RIGHT",
+      "from": 60,
+      "to": 100
+    }
+  ],
+  "script": null,
+  "quiet": false,
+  "rawColors": false,
+  "imports": [
+    "env.memory"
+  ],
+  "moduleExports": [
+    "__stack_pointer",
+    "update",
+    "start",
+    "debug_mode",
+    "debug_tick",
+    "debug_px",
+    "debug_py",
+    "debug_angle",
+    "debug_render_us",
+    "debug_state_size"
+  ],
+  "exports": {
+    "debug_mode": 1,
+    "debug_tick": 189,
+    "debug_px": 349502,
+    "debug_py": 598008,
+    "debug_angle": 18655,
+    "debug_state_size": 1368
+  },
+  "expect": [
+    {
+      "expr": "debug_mode == 1",
+      "name": "debug_mode",
+      "op": "==",
+      "value": 1,
+      "actual": 1,
+      "pass": true
+    },
+    {
+      "expr": "debug_tick == 189",
+      "name": "debug_tick",
+      "op": "==",
+      "value": 189,
+      "actual": 189,
+      "pass": true
+    }
+  ],
+  "framebuffer": {
+    "source": "sim-shim",
+    "base": "0x20",
+    "buffer1": null,
+    "drawPointer": null
+  },
+  "dataSegments": [
+    {
+      "off": "0xa020",
+      "size": 7060
+    },
+    {
+      "off": "0xbbb4",
+      "size": 4
+    },
+    {
+      "off": "0xc000",
+      "size": 90112
+    }
+  ],
+  "warnings": [],
+  "frames": [
+    {
+      "file": "frame_0000.png",
+      "update": 0,
+      "buffer": 0
+    },
+    {
+      "file": "frame_0050.png",
+      "update": 50,
+      "buffer": 0
+    },
+    {
+      "file": "frame_0100.png",
+      "update": 100,
+      "buffer": 0
+    },
+    {
+      "file": "frame_0150.png",
+      "update": 150,
+      "buffer": 0
+    }
+  ]
+}
