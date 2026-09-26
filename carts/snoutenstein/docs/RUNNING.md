@@ -127,14 +127,31 @@ warnings). Other options:
 - `--raw-colors`: decode colors as the cart API defines them instead of as the
   simulator displays them (only matters for carts that do not pre-swap)
 
-Input scripts live in `tools/scripts/`; the M1 plan (PLAN.md) lists them
-and the expectations each one checks, for example:
+Input scripts live in `tools/scripts/` (A at tick 10 leaves the title
+screen; turns are 36 ticks = 90 degrees, walking 0.045 cells per tick):
+
+- `m1_walk.json` (2,151 ticks, run 2,160 frames): through the plain door
+  (7,4), up the x 8 corridor, east along row 1, down x 16, west along
+  row 8, down x 1, then stands 60 ticks at (1.5, 22.5) facing east down
+  the long bottom corridor (the render-time gate view), walks 18 cells of
+  it, turns around and walks back. `debug_px > 393216` already holds from
+  tick 250 on; at 2,160 frames expect px about 14.3 cells, py about 22.6.
+- `m1_doors.json` (600 frames): lines up with the door row, walks into the
+  closed door at (7,4), stands 40 ticks while it opens, walks through to
+  (8.5, 4.5), turns around, waits 200 ticks for it to close, bumps it once
+  from the corridor side and watches it reopen. Ends at px 8.25 (540672).
+- `m1_pause.json` (600 frames): walks 30 ticks, START at 41, holds UP for 60
+  paused ticks (nothing may move), START at 102, walks and turns again.
+  Ends playing at px about 6.2; without a working pause the wall would stop
+  it at 6.75, so `--expect "debug_px < 425984"` checks the pause.
 
 ```sh
-node tools/preview.mjs zig-out/bin/snoutenstein.wasm --frames 600 --every 6 --out out/ \
+node tools/preview.mjs zig-out/bin/snoutenstein.wasm --frames 2160 --every 6 --out out/walk \
   --script tools/scripts/m1_walk.json \
   --dump-exports debug_mode,debug_tick,debug_px,debug_py,debug_render_us \
-  --expect "debug_mode == 1"
+  --expect "debug_mode == 1" --expect "debug_px > 393216"
+node tools/preview.mjs zig-out/bin/snoutenstein.wasm --frames 600 --quiet --out out/pause \
+  --script tools/scripts/m1_pause.json --expect "debug_mode == 1" --expect "debug_px < 425984"
 ```
 
 An unknown or non-zero-argument export name is an error that lists the

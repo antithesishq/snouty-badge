@@ -188,3 +188,15 @@ overlay (joystick click) must read 60 and RENDER must stay under 8,000 us.
 ## Status
 
 - 2026-09-26: M0 scaffold committed. M1 plan written; four tracks launched.
+- 2026-09-26: M1 done and tagged `m1`. All four tracks landed as planned.
+  ELF text 30.6 KB, bss 15.1 KB (13.3 KB unpacked textures). GameState is
+  1,368 bytes with explicit padding so the FNV hash is stable. Sim: 12 host
+  tests. Render: inner loop is texel load, palette load, store; estimated
+  under 1 ms per frame on the M33 from the generated assembly, unmeasured
+  on hardware (the gate). Importer: 10 tests, shareware E1M1 converted
+  and embedded as level 1 (B on the title starts it). Deviations: floor
+  and ceiling fills use volatile 32-bit stores instead of memset
+  (ReleaseSmall memcpy is byte-wise); a closing door reopens if stepped
+  into; doors are passable at open >= 198 (22 ticks). Brief notes for the
+  art agent are in ASSETS.md section 10. `tools/check.sh` runs the whole
+  M1 verification. Next: hardware gate, then M2.

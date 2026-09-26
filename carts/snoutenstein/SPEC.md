@@ -500,4 +500,6 @@ Level grid 64x64 with Wolf3D import (section 6.1): yes.
 - 2026-09-26: spec drafted, nothing built yet. Same day: level grid set
   to 64x64 and the Wolf3D `GAMEMAPS` importer added (section 6.1) at
   Adrian's request; pools and memory budget updated. Adrian settled
-  all of section 18. M0 scaffold started.
+  all of section 18. M0 scaffold tagged `m0`; M1 (raycaster, sim with
+  doors and pickups, placeholder art, Wolf3D importer with E1M1) tagged
+  `m1` the same day, `docs/preview_m1.gif`. Awaiting the hardware gate.
