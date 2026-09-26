@@ -1,5 +1,6 @@
-//! Snouty Boy: Game Boy emulator cart. M0 scaffold: runs the core one frame
-//! per badge frame and shows its lines through frontend/video.zig.
+//! Snouty Boy: Game Boy emulator cart. Runs the core one frame per badge
+//! frame and shows its lines through frontend/video.zig, with the debug
+//! overlay (frontend/debug.zig) on top.
 //! See SPEC.md (design), PLAN.md (M1 contract), CLAUDE.md (toolchain).
 const cart = @import("cart-api");
 const core = @import("core");
@@ -26,12 +27,15 @@ pub fn update() void {
     const controls = read_controls();
     const pad = input.pad_from_controls(controls);
 
-    const t0 = cart.micros_since_boot();
-    gb.step_frame(pad);
+    // One clock read serves as both the frame timestamp for the FPS counter
+    // and the start of the step_frame measurement.
     const t1 = cart.micros_since_boot();
+    debug.frame_tick(t1);
+    gb.step_frame(pad);
+    const t2 = cart.micros_since_boot();
 
     video.finish_frame();
-    debug.record(@intCast(t1 - t0));
+    debug.record(@truncate(t2 -% t1));
     debug.draw();
 
     if (cart.is_wasm) present_wasm();
@@ -60,4 +64,33 @@ fn present_wasm() void {
     } else {
         sim_framebuffer.* = cart.framebuffer.*;
     }
+}
+
+// Zero-argument exports for `tools/preview.mjs --dump-exports` (wasm only).
+// In wasm micros_since_boot is a stub that adds 1000 per call, so
+// debug_step_us reads 1000 there and means nothing.
+comptime {
+    if (cart.is_wasm) {
+        @export(&debug_frame_count, .{ .name = "debug_frame_count" });
+        @export(&debug_step_us, .{ .name = "debug_step_us" });
+        @export(&debug_lines, .{ .name = "debug_lines" });
+        @export(&debug_palette, .{ .name = "debug_palette" });
+    }
+}
+
+/// Frames stepped since reset (`gb.frame_count`).
+fn debug_frame_count() callconv(.c) u32 {
+    return gb.frame_count;
+}
+/// Microseconds the last `step_frame` took.
+fn debug_step_us() callconv(.c) u32 {
+    return debug.last_step_us;
+}
+/// Lines the core emitted during the last frame (144 with the LCD on).
+fn debug_lines() callconv(.c) u32 {
+    return video.last_frame_lines;
+}
+/// Current palette index into `video.palettes`.
+fn debug_palette() callconv(.c) u32 {
+    return @intCast(video.palette_index);
 }
