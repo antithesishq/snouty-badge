@@ -3,7 +3,7 @@
 Owner: Adrian Hatch (Antithesis). Target: SYCL Badge V2, 160x128 RGB565, 60 Hz.
 Fifth cart for the badge, alongside `snouty-badge` (running Snouty),
 `snouty-bugs` (bullet hell), `snoutenstein` (raycaster) and
-`snouty-reflections` (ray tracer). Working title only; see section 18.
+`snouty-reflections` (ray tracer). Working title; decisions are in section 18.
 Status and milestones are at the bottom.
 
 ## 1. One paragraph
@@ -268,17 +268,18 @@ that is cheap.
 
 ## 11. The ROM
 
-The cart ships exactly one ROM, chosen in M0 and locked before M2.
+The cart ships exactly one ROM. Adrian provides it (decided 2026-09-26);
+it is needed by M2, and M1 runs on `dmg-acid2` and the Blargg ROMs.
 
-- Rights: only ROMs Adrian may redistribute: open-licensed homebrew or
-  something we write. Commercial ROMs never enter the repo or the cart.
-  Test ROMs (Blargg, `dmg-acid2`, Mooneye) are freely redistributable and
-  fetched by `tools/fetch_test_roms.sh` into `tests/roms/` (gitignored).
-- Candidates to verify (license, MBC, size) in M0 with `tools/romcheck.py`:
-  Tobu Tobu Girl (Tangram Games, code MIT), 2048-gb (Sanqui, zlib, 32 KB),
-  Flappy Boy (bitnenfer, MIT, 32 KB), uCity (AntonioND, GPL). Preference:
-  a 32 to 64 KB MBC1 or no-MBC game with real play value, because ROM size
-  trades directly against scrub depth (section 13).
+- Rights: Adrian supplies a ROM he may redistribute. Commercial ROMs never
+  enter the repo or the cart. Test ROMs (Blargg, `dmg-acid2`, Mooneye) are
+  freely redistributable and fetched by `tools/fetch_test_roms.sh` into
+  `tests/roms/` (gitignored).
+- What the ROM must be, checked by `tools/romcheck.py` before it is
+  accepted: DMG or DMG-compatible (not Color-only), MBC none, MBC1, MBC3
+  without RTC use, or MBC5; at most 128 KB, ideally 32 to 64 KB because ROM
+  size trades directly against scrub depth (section 13); cart RAM at most
+  8 KB. Sizes outside that are possible but shrink the scrubber.
 - Alternative for M5: an original Antithesis mini-game built with
   GBDK-2020, starring Snouty, so the emulator runs "our" software.
 - Selected via build option `-Drom=roms/<name>.gb`; default is the
@@ -389,31 +390,29 @@ tracks go to Opus subagents with disjoint files, as before.
   small ROMs in one cart with a picker, smooth reverse playback, Game Boy
   Color.
 
-## 18. Open questions for Adrian
+## 18. Decisions
 
-1. Name: "Snouty Boy" is the working title and repo name; rename before
-   the remote is created?
-2. ROM: verify the section 11 candidates and pick one, or go straight to
-   writing an original GBDK game? Recommendation: ship a verified
-   homebrew for M2 so the emulator is judged on a real game; the original
-   ROM is M5.
-3. Default scale mode: squeeze (every ninth line dropped) or crop (top and
-   bottom 8 lines lost)? Recommendation: squeeze; crop stays in the menu.
-4. Select long-hold at 500 ms with deferred delivery of short presses, as
-   spec'd? Alternative: a Select+B chord opens the menu with no delay, at
-   the cost of games that use that chord.
-5. Scrub depth versus ROM size: is 2.5 to 5 s of history enough, or should
-   keyframe compression (section 10.4) be in M4 regardless?
-6. Sound approximation on by default, or off until toggled? The single
-   voice can sound odd on games with busy bass lines.
-7. Keyframes every 30 frames (0.5 s steps) or every 60 (1 s steps, twice
-   the depth)?
-8. Game Boy Color: out of scope as spec'd. The CPU can do it; VRAM banks,
-   color palettes and double-speed mode add about a third more work and
-   4 KB more state per keyframe. Leave for M5?
-9. Tag line "verified by deterministic replay" on the menu title: yes/no?
+Decided 2026-09-26. Adrian asked for the recommendation on every point
+except the ROM, which he will provide.
+
+1. Name: "Snouty Boy" stays as the working title and repo name until the
+   remote is created.
+2. ROM: Adrian provides it; section 11 lists what it must be. Until then
+   development runs on `dmg-acid2` and the Blargg ROMs.
+3. Default scale mode: squeeze (every ninth line dropped). Crop stays in
+   the menu.
+4. Menu key: Select held 500 ms, with short presses delivered to the game
+   on release, as spec'd in section 5.
+5. Scrub depth: build the keyframe ring uncompressed in M4, measure the
+   depth with the real ROM, add section 10.4 compression only if it is
+   under 3 s.
+6. Sound approximation on by default, toggle in the menu.
+7. Keyframes every 30 frames (0.5 s steps).
+8. Game Boy Color out of scope; M5 stretch at most.
+9. Tag line "verified by deterministic replay" on the menu title: yes.
 
 ## Status
 
-- 2026-09-26: spec drafted, nothing built yet. Next: answers to section
-  18, then M0 scaffold copied from `snouty-bugs`.
+- 2026-09-26: spec drafted, nothing built yet.
+- 2026-09-26: section 18 decided (recommendations accepted, Adrian supplies
+  the ROM). Next: M0 scaffold copied from `snouty-bugs`, then M1.
