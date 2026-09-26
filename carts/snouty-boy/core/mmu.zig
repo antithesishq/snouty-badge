@@ -13,6 +13,19 @@ const apu = @import("apu.zig");
 
 pub const MbcKind = enum(u8) { none, mbc1, mbc3, mbc5 };
 
+/// Bytes of `Gb.cart_ram` a ROM can ever touch, from header byte 0x149: 0
+/// without RAM, 2 KB for code 1 (mirrored, see `Mbc.ram_mask`), else the
+/// full 8 KB (larger RAMs are capped, SPEC.md 11). Comptime-callable, so the
+/// frontend sizes its keyframes to the embedded ROM.
+pub fn cart_ram_len(rom: []const u8) usize {
+    if (rom.len < 0x150) return 0;
+    return switch (rom[0x149]) {
+        0 => 0,
+        1 => 0x800,
+        else => 0x2000,
+    };
+}
+
 pub const Mbc = struct {
     kind: MbcKind = .none,
     /// Raw bank register as written (MBC1: low 5 bits; MBC3: 7 bits;
@@ -23,6 +36,10 @@ pub const Mbc = struct {
     ram_enabled: bool = false,
     /// Header declares cart RAM (0x149 != 0).
     has_ram: bool = false,
+    /// Cart RAM address mask: a 2 KB RAM (header 0x149 == 1) mirrors every
+    /// 2 KB as on hardware, so only `cart_ram[0..0x800]` is ever touched and
+    /// the scrubber's keyframes need store no more (`cart_ram_len`).
+    ram_mask: u16 = 0x1FFF,
     /// MBC1 banking mode bit.
     mode: u8 = 0,
     /// ROM size in 16 KB banks minus one, rounded up to a power of two.
@@ -52,6 +69,7 @@ pub const Mbc = struct {
             else => .none,
         };
         m.has_ram = rom[0x149] != 0;
+        m.ram_mask = @intCast(@max(cart_ram_len(rom), 1) - 1);
         // No controller: RAM (if any) is always mapped.
         if (m.kind == .none) m.ram_enabled = true;
         m.update();
@@ -169,7 +187,7 @@ pub fn read8(gb: *Gb, addr: u16) u8 {
         0x8, 0x9 => return gb.vram[addr - 0x8000],
         0xA, 0xB => {
             if (!gb.mbc.ram_active) return 0xFF;
-            return gb.cart_ram[gb.mbc.ram_bank_offset + (addr - 0xA000)];
+            return gb.cart_ram[(gb.mbc.ram_bank_offset + (addr - 0xA000)) & gb.mbc.ram_mask];
         },
         0xC, 0xD => return gb.wram[addr - 0xC000],
         0xE => return gb.wram[addr - 0xE000],
@@ -207,7 +225,7 @@ pub fn write8(gb: *Gb, addr: u16, v: u8) void {
         0x0...0x7 => gb.mbc.write(addr, v),
         0x8, 0x9 => gb.vram[addr - 0x8000] = v,
         0xA, 0xB => {
-            if (gb.mbc.ram_active) gb.cart_ram[gb.mbc.ram_bank_offset + (addr - 0xA000)] = v;
+            if (gb.mbc.ram_active) gb.cart_ram[(gb.mbc.ram_bank_offset + (addr - 0xA000)) & gb.mbc.ram_mask] = v;
         },
         0xC, 0xD => gb.wram[addr - 0xC000] = v,
         0xE => gb.wram[addr - 0xE000] = v,

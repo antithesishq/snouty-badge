@@ -9,6 +9,11 @@ const cart = @import("cart-api");
 
 pub var enabled: bool = true;
 
+/// Set by the rewind self-check (frontend/rewind.zig, `self_check`) when a
+/// replayed keyframe differs from the recorded one. The overlay is then
+/// drawn on red, even when disabled in the menu.
+pub var alarm: bool = false;
+
 const window = 60;
 
 var step_samples: [window]u32 = @splat(0);
@@ -53,7 +58,7 @@ pub fn fps() u32 {
 }
 
 pub fn draw() void {
-    if (!enabled) return;
+    if (!enabled and !alarm) return;
     const n = @min(step_count, window);
     if (n == 0) return;
     var max: u32 = 0;
@@ -75,7 +80,7 @@ pub fn draw() void {
     i += put_num(buf[i..], max);
     i += put(buf[i..], "us\nfps ");
     i += put_num(buf[i..], fps());
-    cart.text(.{ .str = buf[0..i], .x = 0, .y = 0, .text_color = .rgb(0xFFFFFF), .background_color = .rgb(0x000000) });
+    cart.text(.{ .str = buf[0..i], .x = 0, .y = 0, .text_color = .rgb(0xFFFFFF), .background_color = .rgb(if (alarm) 0xFF0000 else 0x000000) });
 }
 
 fn put(dst: []u8, s: []const u8) usize {

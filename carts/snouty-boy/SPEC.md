@@ -428,3 +428,7 @@ except the ROM, which he will provide.
   2048-gb: .text 78 KB, .bss 26 KB. Note: 2048-gb writes no sound
   registers, so the audio path is unheard until a ROM with music arrives.
   Next: M4 scrubber; hardware check of the frozen-frame menu and the chime.
+- 2026-09-26: M4 scrubber implemented on `m4-scrub`: 7-keyframe ring
+  (keyframes sized to the ROM's cart RAM, 18.9 KB with 2048-gb) plus input
+  log, 3.0 to 3.5 s of history, uncompressed (section 10.4 not needed).
+  Determinism test green. Fast build with 2048-gb: .text 80 KB, .bss 159 KB.

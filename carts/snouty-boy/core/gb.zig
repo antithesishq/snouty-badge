@@ -11,6 +11,7 @@ pub const timer = @import("timer.zig");
 pub const apu = @import("apu.zig");
 pub const serial = @import("serial.zig");
 pub const joypad = @import("joypad.zig");
+pub const ring = @import("ring.zig");
 
 pub const screen_w = 160;
 pub const screen_h = 144;
@@ -175,25 +176,46 @@ pub const Gb = struct {
     // ---- Keyframes (SPEC.md section 10) ----
 
     /// Everything but `rom` (immutable) and `line_sink` (not console state).
-    pub const Keyframe = struct {
-        cpu: cpu.Cpu,
-        mbc: mmu.Mbc,
-        vram: [0x2000]u8,
-        wram: [0x2000]u8,
-        oam: [0xA0]u8,
-        hram: [0x7F]u8,
-        cart_ram: [0x2000]u8,
-        io: [0x80]u8,
-        ie: u8,
-        ppu: ppu.Ppu,
-        timer: timer.Timer,
-        apu: apu.Apu,
-        serial: serial.Serial,
-        pad: u8,
-        frame_count: u32,
-    };
+    /// Cart RAM is stored in full (8 KB); see `KeyframeWith` for a smaller
+    /// keyframe when the ROM header declares no cart RAM.
+    pub const Keyframe = KeyframeWith(0x2000);
 
-    pub fn snapshot(gb: *const Gb, out: *Keyframe) void {
+    /// A keyframe holding the first `ram_len` bytes of cart RAM. The
+    /// frontend knows the ROM at compile time and uses
+    /// `KeyframeWith(mmu.cart_ram_len(rom))`: a game without RAM never
+    /// touches `cart_ram` (`Mbc.ram_active` needs `has_ram`) and a 2 KB RAM
+    /// is mirrored (`Mbc.ram_mask`), so the bytes past `ram_len` never
+    /// change and up to 8 KB per keyframe is saved (SPEC.md 13). `restore`
+    /// leaves bytes past `ram_len` untouched.
+    ///
+    /// Auto-layout struct: padding bytes are undefined, so compare two
+    /// keyframes field by field (`std.meta.eql`), never as raw bytes.
+    pub fn KeyframeWith(comptime ram_len: usize) type {
+        if (ram_len > 0x2000) @compileError("cart RAM is at most 8 KB");
+        return struct {
+            pub const cart_ram_len = ram_len;
+
+            cpu: cpu.Cpu,
+            mbc: mmu.Mbc,
+            vram: [0x2000]u8,
+            wram: [0x2000]u8,
+            oam: [0xA0]u8,
+            hram: [0x7F]u8,
+            cart_ram: [ram_len]u8,
+            io: [0x80]u8,
+            ie: u8,
+            ppu: ppu.Ppu,
+            timer: timer.Timer,
+            apu: apu.Apu,
+            serial: serial.Serial,
+            pad: u8,
+            frame_count: u32,
+        };
+    }
+
+    /// Copy the console into `out`, a `*Keyframe` or `*KeyframeWith(n)`.
+    pub fn snapshot(gb: *const Gb, out: anytype) void {
+        const K = @typeInfo(@TypeOf(out)).pointer.child;
         out.* = .{
             .cpu = gb.cpu,
             .mbc = gb.mbc,
@@ -201,7 +223,7 @@ pub const Gb = struct {
             .wram = gb.wram,
             .oam = gb.oam,
             .hram = gb.hram,
-            .cart_ram = gb.cart_ram,
+            .cart_ram = gb.cart_ram[0..K.cart_ram_len].*,
             .io = gb.io,
             .ie = gb.ie,
             .ppu = gb.ppu,
@@ -213,14 +235,16 @@ pub const Gb = struct {
         };
     }
 
-    pub fn restore(gb: *Gb, k: *const Keyframe) void {
+    /// Put a keyframe (`*const Keyframe` or `*const KeyframeWith(n)`) back.
+    pub fn restore(gb: *Gb, k: anytype) void {
+        const K = @typeInfo(@TypeOf(k)).pointer.child;
         gb.cpu = k.cpu;
         gb.mbc = k.mbc;
         gb.vram = k.vram;
         gb.wram = k.wram;
         gb.oam = k.oam;
         gb.hram = k.hram;
-        gb.cart_ram = k.cart_ram;
+        gb.cart_ram[0..K.cart_ram_len].* = k.cart_ram;
         gb.io = k.io;
         gb.ie = k.ie;
         gb.ppu = k.ppu;

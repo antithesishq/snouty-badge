@@ -15,6 +15,7 @@ const debug = @import("frontend/debug.zig");
 const menu = @import("frontend/menu.zig");
 const splash = @import("frontend/splash.zig");
 const audio = @import("frontend/audio.zig");
+const rewind = @import("frontend/rewind.zig");
 
 comptime {
     cart.export_start_code();
@@ -32,6 +33,7 @@ pub fn start() void {
     video.init();
     gb = core.Gb.init(rom.data);
     gb.line_sink = video.sink();
+    rewind.reset(&gb);
 }
 
 pub fn update() void {
@@ -95,6 +97,7 @@ fn run_frame(t1: u64) void {
 
     gb.step_frame(in.pad);
     const t2 = cart.micros_since_boot();
+    rewind.record_frame(&gb, in.pad);
 
     audio.update(&gb);
 
@@ -139,6 +142,12 @@ comptime {
         @export(&debug_palette, .{ .name = "debug_palette" });
         @export(&debug_state, .{ .name = "debug_state" });
         @export(&debug_pad, .{ .name = "debug_pad" });
+        @export(&debug_scrub_depth, .{ .name = "debug_scrub_depth" });
+        @export(&debug_history, .{ .name = "debug_history" });
+        @export(&debug_keyframes, .{ .name = "debug_keyframes" });
+        @export(&debug_leds, .{ .name = "debug_leds" });
+        @export(&debug_led_max, .{ .name = "debug_led_max" });
+        @export(&debug_alarm, .{ .name = "debug_alarm" });
     }
 }
 
@@ -165,4 +174,38 @@ fn debug_state() callconv(.c) u32 {
 /// Pad byte the game was last stepped with (`core.Pad` bits; Select = 64).
 fn debug_pad() callconv(.c) u32 {
     return gb.pad;
+}
+/// Frames the scrubber is parked behind the live position (0 = live).
+fn debug_scrub_depth() callconv(.c) u32 {
+    return rewind.depth_frames();
+}
+/// Frames of history in the keyframe ring.
+fn debug_history() callconv(.c) u32 {
+    return rewind.history_frames();
+}
+/// Valid keyframes in the ring.
+fn debug_keyframes() callconv(.c) u32 {
+    return @intCast(rewind.keyframe_count());
+}
+/// Neopixels currently lit (any channel non-zero).
+fn debug_leds() callconv(.c) u32 {
+    var n: u32 = 0;
+    for (0..cart.neopixels.len) |i| {
+        const c = cart.neopixels[i];
+        if (c.r != 0 or c.g != 0 or c.b != 0) n += 1;
+    }
+    return n;
+}
+/// Largest neopixel channel value (must stay <= 10).
+fn debug_led_max() callconv(.c) u32 {
+    var m: u8 = 0;
+    for (0..cart.neopixels.len) |i| {
+        const c = cart.neopixels[i];
+        m = @max(m, c.r, c.g, c.b);
+    }
+    return m;
+}
+/// 1 if the rewind self-check found a mismatch.
+fn debug_alarm() callconv(.c) u32 {
+    return @intFromBool(debug.alarm);
 }

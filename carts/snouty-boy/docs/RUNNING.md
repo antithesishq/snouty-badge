@@ -87,8 +87,24 @@ zig build test -Dtest-filter=acid     # only tests whose name contains "acid"
 
 The core (`core/`) is badge-agnostic and runs on the host: Blargg's CPU tests
 (pass when the serial output says "Passed"), the dmg-acid2 image compared
-byte for byte with `tests/acid2_reference.bin`, and PPU unit tests. They need
-`tools/fetch_test_roms.sh` first. `-Dtest-optimize=` sets their optimize mode
+byte for byte with `tests/acid2_reference.bin`, PPU and APU unit tests, the
+scrubber ring logic (`tests/ring_unit.zig`) and the determinism check. They
+need `tools/fetch_test_roms.sh` first.
+
+`tests/determinism.zig` (SPEC.md 10.2, `-Dtest-filter=determinism`) reads
+`roms/2048.gb` at run time (skipped if it is missing), plays 600 frames with
+a scripted pseudo-random pad stream, keyframes every 30 frames, then for
+each keyframe restores it into a fresh console, replays the 30 logged pads
+and requires the next keyframe field for field. Keyframes are compared
+with `std.meta.eql` per field, not as raw bytes: the struct has auto layout
+and its padding is undefined.
+
+The same check can run inside the cart: set `const self_check = true;` in
+`cart/src/frontend/rewind.zig` and rebuild. Every new keyframe is then
+re-derived from the previous one in a spare console; a mismatch paints the
+debug overlay red (and `debug_alarm` reads 1). It costs a second console
+in RAM (the ring shrinks to 5 keyframes) and doubles the CPU per frame, so
+it is off by default. `-Dtest-optimize=` sets their optimize mode
 (default `safe`).
 
 ## 6. Web simulator
@@ -143,8 +159,26 @@ In the menu (drawn over the frozen game frame):
 |----------------|------------------------------------------------------------|
 | Up / Down      | move                                                       |
 | A              | choose: Resume, cycle Palette / Scale / Sound / Debug overlay, Reset (restart the ROM), About |
-| Left / Right   | cycle the highlighted setting (reserved for the M4 time scrubber elsewhere) |
+| Left / Right   | on Palette / Scale / Sound / Debug overlay: cycle it. On Resume, Reset, About: time scrubber, back / forward 0.5 s (repeats 4 times a second while held) |
 | B, Select tap  | resume (B also leaves About)                               |
+
+Time scrubber (SPEC.md section 10). The cart keeps a keyframe of the whole
+console every 30 frames plus the pad byte of every frame. With 2048-gb the
+ring holds 7 keyframes, 3.0 to 3.5 s of history. The menu opens on Resume,
+so Left right away steps back: the menu folds into a bar at the bottom
+(`Scrub: -1.5 / 3.5s`, how far back you are / how much history there is)
+over the restored frame. Left/Right keep stepping, Right past the newest
+keyframe returns to `live`, Up/Down/A bring the full menu back, and B or a
+Select tap resumes play from the shown point. Resuming from a scrubbed
+point throws away the future after it (no branching history). In the full
+menu the bottom line shows the same readout. While the menu is open the
+five neopixels show how full the history is, one LED per fifth (dim, every
+channel at most 10/255); they go off when the menu closes. Reset in the
+menu also clears the history.
+
+The picture shown after a step is the frame the game drew 1/60 s after the
+keyframe (the cart steps one frame to draw it and restores the keyframe
+again), so the state you resume from is exactly the keyframe.
 
 Buttons still held when the menu closes (or the splash is skipped) reach
 the game only after being released and pressed again. The boot splash
@@ -199,6 +233,11 @@ Useful options (the header of `tools/preview.mjs` has the full list):
   - `debug_state`: frontend state, 0 splash, 1 running, 2 menu
   - `debug_pad`: the pad byte the game was last stepped with
     (Select = 64, Start = 128)
+  - `debug_scrub_depth`: frames the scrubber is parked behind live (0 live)
+  - `debug_history`: frames of history in the keyframe ring
+  - `debug_keyframes`: valid keyframes in the ring
+  - `debug_leds`, `debug_led_max`: neopixels lit, largest channel value
+  - `debug_alarm`: 1 if the rewind self-check found a mismatch
 - `--expect "debug_lines == 144"` (repeatable): checked at the end; a
   failure exits 3. `--at "T NAME OP VALUE"` checks right after update T.
 - `--quiet`: no PNGs, only `frames.json`.
@@ -212,6 +251,16 @@ node tools/preview.mjs zig-out/bin/snouty-boy.wasm --frames 132 --quiet --out ou
 
 The first 72 updates are the boot splash, during which the core is not
 stepped, hence 132 updates for 60 Game Boy frames.
+
+A scrubber check with 2048-gb (start the game, play, hold Select for the
+menu, step back twice, resume):
+
+```sh
+node tools/preview.mjs zig-out/bin/snouty-boy.wasm --frames 380 --every 10 --out out/ \
+  --press START:150-152,LEFT:170-175,UP:190-195,SELECT:260-300,LEFT:310-310,LEFT:320-320,B:340-341 \
+  --at "310 debug_scrub_depth == 7" --at "320 debug_frame_count == 180" \
+  --at "330 debug_leds == 5" --at "379 debug_frame_count > 200"
+```
 
 Exit codes: 1 the cart cannot be loaded, 2 usage error, 3 the cart trapped or
 an expectation failed. One update is one 60 Hz badge frame, which is one Game
