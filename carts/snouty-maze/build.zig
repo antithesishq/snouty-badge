@@ -55,6 +55,7 @@ const images = [_]Image{
     .{ .file = "logo.png", .bits = 4, .transparent = true },
     .{ .file = "wall_pic.png", .bits = 4, .transparent = false },
     .{ .file = "start.png", .bits = 4, .transparent = true },
+    .{ .file = "iris.png", .bits = 4, .transparent = true },
 };
 
 /// Converts the PNGs in assets/gen/ into a `gfx` module at build time

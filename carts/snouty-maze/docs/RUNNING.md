@@ -234,16 +234,19 @@ heading, plus preview's error lines on a FAIL. Options `--wasm FILE`,
 ### Art
 
 ```sh
-python3 tools/prepare_assets.py --from-w95 assets/src/w95 --contact docs/w95_assets.png
+python3 tools/prepare_assets.py --from-w95 assets/src/w95 --art ../snouty-art/out/maze \
+  --contact docs/w95_assets.png                 # what assets/gen/ is built from
 python3 tools/prepare_assets.py --placeholders --contact docs/placeholders.png
 python3 tools/prepare_assets.py --check       # validate delivered art in assets/gen/
 ```
 
 `--from-w95` (the committed default since A1) downsamples the textures
 extracted from the original screensaver (`assets/src/w95/SOURCE.md`) to
-the ten 32x32 4-bit sheets in `assets/gen/` (Snouty, the Iris logo and
-the finish tile stay procedural); `--placeholders` draws them all
-procedurally instead. Both validate (sizes, cell grid, colour counts after
+the 32x32 4-bit sheets in `assets/gen/`; `--art DIR` takes Snouty, the
+Zig mark (`logo`), the Iris mark (`iris`) and the Start button from the
+snouty-art maze pack (`python3 tools/build_maze.py` there, output in
+`out/maze/`); the finish tile and `snouty_top` stay procedural.
+`--placeholders` draws every sheet procedurally instead. Both validate (sizes, cell grid, colour counts after
 RGB565, magenta key, 1 px empty border); `zig build` converts the PNGs into
 the `gfx` module. Goldens in `tests/golden/` are baselined on the w95 art.
 

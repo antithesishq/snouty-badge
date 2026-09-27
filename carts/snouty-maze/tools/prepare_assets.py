@@ -5,13 +5,13 @@
       Procedurally draws the eight sheets of SPEC.md section 10 as
       Genesis-style placeholder art, validates them and writes assets/gen/.
 
-  python3 tools/prepare_assets.py --from-w95 assets/src/w95
+  python3 tools/prepare_assets.py --from-w95 assets/src/w95 [--art ../snouty-art/out/maze]
       Downsamples the textures extracted from the original screensaver
       (the ibid-11962 WebGL recreation, copied into assets/src/w95/) to the
       manifest sizes, quantises them to the 4-bit palettes and writes
-      assets/gen/. finish, snouty, snouty_top and logo (the Iris mark) keep
-      their procedural drawing (Adrian: Snouty not the rat, Iris not the
-      OpenGL word).
+      assets/gen/. With --art, snouty, logo (Zig mark), iris and start come
+      from the snouty-art pipeline's maze pack instead (Adrian's art
+      guidance 2026-09-27); finish and snouty_top are always procedural.
 
   python3 tools/prepare_assets.py --check
       Validates the sheets already in assets/gen/ (e.g. delivered art).
@@ -75,6 +75,7 @@ MANIFEST: dict[str, Sheet] = {
         Sheet("logo.png", 32, 32, 32, 32, 1, True),
         Sheet("wall_pic.png", 32, 32, 32, 32, 1, False),
         Sheet("start.png", 32, 32, 32, 32, 1, True),
+        Sheet("iris.png", 32, 32, 32, 32, 1, True),
     ]
 }
 
@@ -424,6 +425,7 @@ DRAW = {
     "logo.png": draw_logo,
     "wall_pic.png": draw_wall_pic,
     "start.png": draw_start,
+    "iris.png": draw_logo,
 }
 
 
@@ -637,7 +639,10 @@ def sprite_from_cells(cells: list[np.ndarray], s: Sheet) -> np.ndarray:
 
 
 
-def run_w95(src: Path) -> int:
+ART_SHEETS = ("snouty.png", "logo.png", "iris.png", "start.png")
+
+
+def run_w95(src: Path, art: Path | None) -> int:
     M = MANIFEST
     made: dict[str, np.ndarray] = {
         "wall.png": texture_from(src / "wall.bmp", M["wall.png"]),
@@ -652,6 +657,10 @@ def run_w95(src: Path) -> int:
     }
     made["snouty.png"] = draw_snouty()
     made["snouty_top.png"] = draw_snouty_top()
+    made["iris.png"] = draw_logo()
+    if art is not None:
+        for name in ART_SHEETS:
+            made[name] = np.array(Image.open(art / name).convert("RGB"))
     errors = 0
     for name in M:
         errs = validate(M[name], made[name])
@@ -697,6 +706,8 @@ def main() -> int:
     grp.add_argument("--check", action="store_true", help="validate the sheets in assets/gen/ only")
     grp.add_argument("--from-w95", type=Path, metavar="DIR",
                      help="convert the extracted screensaver assets in DIR (assets/src/w95) into assets/gen/")
+    ap.add_argument("--art", type=Path, metavar="DIR",
+                    help="with --from-w95: take snouty, logo, iris and start from the snouty-art maze pack in DIR")
     ap.add_argument("--contact", type=Path, metavar="PNG",
                     help="afterwards (or alone) write a 4x labelled contact sheet, e.g. docs/placeholders.png")
     args = ap.parse_args()
@@ -709,7 +720,7 @@ def main() -> int:
     elif args.check:
         status = run_check()
     elif args.from_w95:
-        status = run_w95(args.from_w95)
+        status = run_w95(args.from_w95, args.art)
     if args.contact:
         write_contact(args.contact)
     return status

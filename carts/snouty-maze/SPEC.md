@@ -45,8 +45,8 @@ used: the geometry is well known and the textures are ours.
   100 KB, measured with `size -A` every milestone (section 13).
 - Inputs: joystick 4-way, A, B, Start, Select. Start+Select (250 ms) and
   joystick click (FPS overlay) are OS-owned; never bound.
-- Audio: `tone2`, one buzzer voice. Neopixels: 5, every channel at or below
-  10/255.
+- Audio: none (Adrian, 2026-09-27: "it'll be annoying"). Neopixels: 5,
+  every channel at or below 10/255.
 - Rendering: `.no_copy_full_frame`, full redraw every frame,
   `set_vsync_enabled(1000.0 / 60.0)`.
 
@@ -61,7 +61,7 @@ the M1 debug camera and, from M4, for taking the camera over.
 | Left / Right | (starts takeover)                | Pivot 90 degrees                        | Turn                                |
 | A            | Skip to the finish sequence      | Skip to the finish sequence             | Hold + Up/Down: pitch               |
 | B            | (nothing)                        | (nothing)                               | Hold + Up/Down: rise / sink         |
-| Select       | Toggle sound and LEDs            | Toggle sound and LEDs                   | Toggle render-microseconds overlay  |
+| Select       | Toggle LEDs                      | Toggle LEDs                             | Toggle render-microseconds overlay  |
 | Start        | Toggle name strip                | Toggle name strip                       | Reset camera to the start cell      |
 
 Takeover: any stick input hands the camera to the viewer; movement is
@@ -281,13 +281,12 @@ any WALK/TURN, teleport trigger -> TELEPORT (12 ticks) -> WALK
 - A in any walking state jumps to PAUSE (a demo shortcut, also handy for
   M1 timing).
 
-## 9. Audio and neopixels
+## 9. Neopixels (no audio)
 
-The original is silent. Default off, Select toggles sound and LEDs
-together (same convention as the other carts, pending section 18).
+The original is silent and so is this cart: Adrian dropped audio on
+2026-09-27 ("we don't need audio support for this, it'll be annoying").
+LEDs default off, Select toggles them.
 
-- Turn: 40 ms blip at 220 Hz. Teleport: 120 ms descending sweep.
-  Smiley: 3-note rising arpeggio. Finish: short chime as RISE begins.
 - Neopixels: dim brick colour while walking, a purple pulse on smiley
   (Iris purple, the badge's brand colour), white flash on teleport, slow
   breathing during OVERHEAD. All channels at or below 10/255.
@@ -299,8 +298,10 @@ screensaver's textures (`assets/src/w95/SOURCE.md`, via
 `tools/prepare_assets.py --from-w95`); two extra sheets `wall_pic.png`
 (the picture the original hangs on odd panels, 32x32 opaque) and
 `start.png` (the Start button floating in the first cell, 32x32
-transparent) wait for M3 code. Adrian kept Snouty (not the rat) and the
-Iris mark (not the OpenGL word).
+transparent) wait for M3 code. Adrian kept Snouty (not the rat). With
+`--art ../snouty-art/out/maze` the Snouty, logo (Zig mark), iris and start
+sheets come from the art pipeline (`../snouty-art/tools/build_maze.py`);
+the committed `assets/gen/` is built that way.
 The placeholder mode below still exists.
 
 Adrian asked for placeholders in v1; real art comes later through the same
@@ -318,7 +319,8 @@ below procedurally at the exact size so code never waits on art, as in
 | `snouty.png`      | 32x32 | 4      | yes         | blob with an "S", left x2 / right x2, legs alternate |
 | `snouty_top.png`  | 16x16 | 1      | yes         | top-down blob (M4)                                |
 | `smiley.png`      | 32x32 | 1      | yes         | yellow disc, two eyes, a smile                    |
-| `logo.png`        | 32x32 | 1      | yes         | `iris_16` from snouty-badge scaled 2x             |
+| `logo.png`        | 32x32 | 1      | yes         | iris-like mark (real: Zig mark via `--art`)       |
+| `iris.png`        | 32x32 | 1      | yes         | same drawing (real: Iris mark via `--art`)        |
 
 Textures are unpacked to `u8` 32x32 grids at `start()` (1 KB each). Wall
 tops and the sphere are flat colours in code and need no sheet.
@@ -344,7 +346,7 @@ cart/src/
     sprite.zig      billboards with z test, floor-aligned top sprite
     textures.zig    unpack sheets at start(), palette variants (lit/dark/floor/ceiling)
     overlay.zig     name strip, Bayer fade, debug readouts
-  audio.zig         tone2 wrapper, neopixels
+  leds.zig          neopixels
   input.zig         edge detection, takeover and idle timer
   packed_int_array.zig  (upstream copy)
 tools/              prepare_assets.py (--placeholders), preview.mjs (+ --script, --pose,
@@ -354,7 +356,7 @@ tests/golden/       PNGs for fixed seed + fixed poses (section 15)
 
 Per tick: read controls -> state machine (autopilot or takeover) ->
 actors -> clear z buffer -> scene list -> rasterize -> actors -> overlay ->
-audio/LEDs -> present.
+LEDs -> present.
 
 `maze.zig`, `math.zig`, `camera.zig` and `render/raster.zig`'s clipper do
 not touch the cart API, so they have host unit tests (`zig build test`).
@@ -370,7 +372,7 @@ dead-end wandering, the smiley flip, the sphere teleport, a spinning logo,
 the rise to a plan view, the maze swapping while overhead. Things changed:
 Snouty for the rat (a billboard rather than a mesh), the finish marker (the
 original had none visible; ours helps a viewer follow along), the name
-strip (it is a badge), and sound. Not cloned: the "walk through walls"
+strip (it is a badge). Not cloned: the "walk through walls"
 option and custom texture options. Textures are original work.
 
 ## 13. Memory budget
@@ -465,8 +467,8 @@ Parallel tracks go to Opus subagents with disjoint files.
   finish detection, PAUSE/RISE/OVERHEAD/DESCEND, maze swap, finish
   marker, name strip, A shortcut. Review point: the rise GIF.
 - **M3 Inhabitants**: Snouty billboard wanderer, smiley with roll flip,
-  sphere mesh with flat shading and teleport fade, logo quad, sound and
-  LEDs with the Select toggle.
+  sphere mesh with flat shading and teleport fade, logo quad, LEDs with
+  the Select toggle.
 - **M4 Polish**: joystick takeover with idle return, `snouty_top` during
   the rise, animated maze carving in OVERHEAD, real art drop-in, hardware
   tuning pass.
@@ -482,9 +484,10 @@ added to 9):
 4. Ceiling on.
 5. Name strip overhead-only; Start toggles it permanently on or off.
 6. Snouty fully replaces the rat.
-7. Logo: Iris mark for v1; revisit at M4 (Antithesis wordmark if one
-   survives at 32 px).
-8. Sound and LEDs default off, Select toggles both.
+7. Logo: the Zig mark spins in the OpenGL word's place (Adrian,
+   2026-09-27); the Iris mark is its own sheet `iris.png` for the Start
+   button and the overhead strip.
+8. No audio. LEDs default off, Select toggles them.
 9. Smiley flip persists until the finish, capped at 20 s: if no finish
    comes within 20 s the view unrolls on its own.
 10. Joystick takeover is in scope, as the last item of M4.
