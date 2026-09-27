@@ -1,0 +1,3 @@
+# m4_identity_boss: m3_boss's input (god + warp): identity through the boss fight, a teleport
+# (about 757..797), the death sequence (1008..1068) and the stage clear.
+--frames 1400 --call-at "31 debug_god" --call-at "32 debug_warp" --dump-exports debug_state,debug_stage_clears --at "500 debug_history_check == 0" --at "800 debug_history_check == 0" --at "1030 debug_history_check == 0" --at "1100 debug_history_check == 0" --at "1300 debug_history_check == 0" --expect "debug_stage_clears == 1"

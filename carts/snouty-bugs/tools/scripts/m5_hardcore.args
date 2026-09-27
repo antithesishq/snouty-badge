@@ -1,0 +1,10 @@
+# m5_hardcore: B at 30 on the title starts a hardcore game (state 1 on that update, hardcore
+# 1, rewinds 0, fuel 180), then the ship idles into the 8 s beetle's spread as in m2_hit.
+# First hit at 748 (game tick 718): the rewind is paid from the bar, depth min(120, 180) =
+# 120, fuel 180 -> 60, target 598, 20 + 60 frames, resume at 828 with game tick 598. The idle
+# ship replays its fate. The graze at game tick 714 paid nothing the second time (graze high
+# water), so the fuel is 60 + 12 refills = 72 at 947. Second hit at 948: depth 72, target 646,
+# fuel 0, (72 + 1) / 2 = 36 playback frames, resume at 1004 with game tick 646. Third hit at
+# 1076 with fuel 8 (7 refills, plus the one on the hit tick) < the floor of 45: DYING (state
+# 3), then TITLE at 1136 (60 updates later).
+--frames 1200 --dump-exports debug_state,debug_hardcore,debug_rewinds,debug_fuel --at "30 debug_state == 1" --at "30 debug_hardcore == 1" --at "30 debug_rewinds == 0" --at "30 debug_fuel == 180" --at "747 debug_state == 1" --at "748 debug_state == 4" --at "748 debug_game_tick == 718" --at "748 debug_rewind_target == 598" --at "748 debug_fuel == 60" --at "748 debug_rewinds == 0" --at "827 debug_state == 4" --at "828 debug_state == 1" --at "828 debug_game_tick == 598" --at "900 debug_history_check == 0" --at "947 debug_fuel == 72" --at "948 debug_state == 4" --at "948 debug_rewind_target == 646" --at "948 debug_fuel == 0" --at "1003 debug_state == 4" --at "1004 debug_state == 1" --at "1004 debug_game_tick == 646" --at "1075 debug_state == 1" --at "1076 debug_state == 3" --at "1076 debug_fuel == 8" --at "1135 debug_state == 3" --at "1136 debug_state == 0" --expect "debug_state == 0" --expect "debug_hardcore == 1"

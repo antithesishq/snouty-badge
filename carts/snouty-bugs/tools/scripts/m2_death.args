@@ -1,0 +1,3 @@
+# m2_death: m2_hit's input for 6000 ticks: the beetle spends every rewind by ~1020, the fourth
+# hit (~1494) kills the ship (DYING, 60 ticks) and the game returns to TITLE, where it stays.
+--frames 6000 --dump-exports debug_state,debug_rewinds,debug_score --at "100 debug_rewinds == 3" --at "3000 debug_rewinds == 0" --expect "debug_state == 0"

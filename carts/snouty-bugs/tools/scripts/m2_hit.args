@@ -1,0 +1,5 @@
+# m2_hit: start at 30, then no input. The 8 s beetle's aimed spread hits the idle ship at
+# update 748 (game tick 718): REWIND for 80 updates (bug report 20 + playback 60), resume at
+# 828 with game_tick 598 (= hit - 120) and the score of that earlier tick, rewinds 3 -> 2.
+# The idle ship replays the same fate: second hit at 948 (rewinds 1), third at 1148.
+--frames 1000 --dump-exports debug_state,debug_rewinds,debug_game_tick,debug_score --at "747 debug_state == 1" --at "747 debug_game_tick == 717" --at "748 debug_state == 4" --at "748 debug_rewinds == 2" --at "748 debug_game_tick == 718" --at "748 debug_rewind_target == 598" --at "827 debug_state == 4" --at "828 debug_state == 1" --at "828 debug_game_tick == 598" --at "828 debug_score == 0" --at "948 debug_state == 4" --at "948 debug_rewinds == 1" --at "948 debug_rewind_target == 598" --at "900 debug_history_check == 0" --expect "debug_state == 4"

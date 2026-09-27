@@ -1,0 +1,6 @@
+# m4_identity: m2_play's input (the sweep with its two hold-B rewinds);
+# debug_history_check restores the world from the newest keyframe + input log and compares
+# field by field: 0 = identical. 2090 and 3333 are during a hold (state 5, the world is a
+# restored history state), 2095 and 3336 the first live ticks after a release (history
+# invalidated after the resume point, then a checkpoint).
+--frames 4000 --dump-exports debug_state,debug_score,debug_world_size --at "300 debug_history_check == 0" --at "777 debug_history_check == 0" --at "1500 debug_history_check == 0" --at "2090 debug_state == 5" --at "2090 debug_history_check == 0" --at "2095 debug_history_check == 0" --at "2241 debug_history_check == 0" --at "3333 debug_state == 5" --at "3333 debug_history_check == 0" --at "3336 debug_history_check == 0" --at "3999 debug_history_check == 0" --expect "debug_state == 1"

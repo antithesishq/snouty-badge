@@ -1,0 +1,2 @@
+# m1_play: the docs/RUNNING.md section 5 example (1800 ticks; against the M1 build: score 570, lives 2).
+--frames 1800 --dump-exports debug_state,debug_score,debug_lives,debug_enemies --expect "debug_state == 1" --expect "debug_score > 0"

@@ -1,0 +1,13 @@
+# m2_play: the preview GIF script. A on the title at 30, hold still and fire through the
+# opening gnat strings (60-239), then sweep up 40 / hold 20 / down 40 / hold 20 to 3960.
+# Since M5 there is no bomb; two short hold-B rewinds do its job. Without them the sweep is
+# hit by the moth + beetle wave at update 2242 (game tick 2212) and, replaying the same
+# fate, spends every rewind and dies at game tick 2212 again (update 2842).
+# - B 2084..2093 (10 frames = 20 ticks): game tick 2053 -> 2033, fuel 180 -> 160. The
+#   inputs keep their update indices, so after the release the sweep runs 30 ticks ahead of
+#   the world (10 frames not simulated + 20 ticks undone) and slips through that wave.
+# - B 3320..3334 (15 frames = 30 ticks) in the 54 s wave: game tick 3258 -> 3228, fuel
+#   180 -> 150 (the refill had topped it up again), score 653 -> 573 (it rewinds too).
+# The press frame is already MANUAL (state 5); the release frame is PLAYING without a tick.
+# Survives the loop with all 3 rewinds, score 834, 4 grazes, fuel back to 180 at the end.
+--frames 4000 --dump-exports debug_state,debug_score,debug_rewinds,debug_fuel,debug_grazes --expect "debug_score > 570" --expect "debug_state == 1" --expect "debug_rewinds == 3" --at "2083 debug_state == 1" --at "2084 debug_state == 5" --at "2093 debug_fuel == 160" --at "2094 debug_state == 1" --at "2094 debug_game_tick == 2033" --at "3320 debug_state == 5" --at "3335 debug_state == 1" --at "3335 debug_fuel == 150"
