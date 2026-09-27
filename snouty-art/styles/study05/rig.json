@@ -1,0 +1,26 @@
+{
+  "reference": "ref/reference_on_grid.png",
+  "reference_size": [80, 86],
+  "reference_ground_y": 81,
+  "cell_size": [96, 96],
+  "cell_origin": [48, 88],
+  "ref_to_cell_offset": [8, 7],
+  "parts": {
+    "tail":         {"file": "tail.png",         "pivot": [27, 56], "z": 10},
+    "torso":        {"file": "torso.png",        "pivot": [42, 62], "z": 30},
+    "head":         {"file": "head.png",         "pivot": [44, 42], "z": 50},
+    "net":          {"file": "net.png",          "pivot": [36, 45], "z": 60},
+    "holding_hand": {"file": "holding_hand.png", "pivot": [6, 6],   "z": 70, "ref_pos": [36, 45]},
+    "free_hand":    {"file": "free_hand.png",    "pivot": [5, 5],   "z": 40, "ref_pos": [61, 53]}
+  },
+  "joints_ref": {
+    "hip": [42, 62],
+    "shoulder_near": [38, 46],
+    "shoulder_far": [48, 46],
+    "neck": [44, 42]
+  },
+  "limbs": {
+    "leg":  {"thigh": 14, "shin": 14, "width": 7, "foot_len": 8, "foot_width": 7},
+    "arm":  {"upper": 9, "fore": 9, "width": 5}
+  }
+}

@@ -1,0 +1,1071 @@
+{
+  "name": "snouty_run_study_05",
+  "direction": "right",
+  "frame_size": [
+    96,
+    96
+  ],
+  "frame_count": 16,
+  "duration_ms": 40,
+  "cycle_duration_ms": 640,
+  "fps": 25.0,
+  "playback": "forward, loop; never ping-pong",
+  "origin_px": [
+    48,
+    88
+  ],
+  "coordinate_system": "top-left, x right, y down",
+  "ground_baseline_y": 88,
+  "suggested_world_speed_px_s": 150.0,
+  "visible_palette": [
+    "#17121e",
+    "#29232f",
+    "#42364b",
+    "#462174",
+    "#662bb8",
+    "#8e42de",
+    "#be7af3",
+    "#f4efdf",
+    "#958d9d",
+    "#ee453c",
+    "#91322f",
+    "#60391f",
+    "#99622f",
+    "#cd934b",
+    "#f0c37c"
+  ],
+  "transparent_index": 0,
+  "strip": {
+    "file": "snouty_run_strip.png",
+    "columns": 16,
+    "rows": 1,
+    "margin": 0,
+    "spacing": 0
+  },
+  "grid": {
+    "file": "snouty_run_sheet.png",
+    "columns": 8,
+    "rows": 2,
+    "margin": 0,
+    "spacing": 0
+  },
+  "indexed_strip": {
+    "file": "snouty_run_indexed.png",
+    "columns": 16,
+    "rows": 1,
+    "indexed_bits_per_pixel": 4,
+    "transparent_palette_index": 0
+  },
+  "loop_order": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10,
+    11,
+    12,
+    13,
+    14,
+    15
+  ],
+  "frames": [
+    {
+      "index": 0,
+      "file": "frames/snouty_run_00.png",
+      "duration_ms": 40,
+      "strip_rect": [
+        0,
+        0,
+        96,
+        96
+      ],
+      "grid_rect": [
+        0,
+        0,
+        96,
+        96
+      ],
+      "near": {
+        "phase": 0,
+        "grounded": true,
+        "hip": [
+          50.0,
+          67.0
+        ],
+        "knee": [
+          60.849,
+          73.21
+        ],
+        "ankle": [
+          65.0,
+          85.0
+        ],
+        "toe": [
+          70.0,
+          88.0
+        ]
+      },
+      "far": {
+        "phase": 8,
+        "grounded": false,
+        "hip": [
+          52.0,
+          67.0
+        ],
+        "knee": [
+          53.256,
+          79.437
+        ],
+        "ankle": [
+          42.0,
+          74.0
+        ],
+        "toe": [
+          42.061,
+          79.831
+        ]
+      },
+      "body_offset": [
+        0,
+        0
+      ],
+      "net_degrees": -2
+    },
+    {
+      "index": 1,
+      "file": "frames/snouty_run_01.png",
+      "duration_ms": 40,
+      "strip_rect": [
+        96,
+        0,
+        96,
+        96
+      ],
+      "grid_rect": [
+        96,
+        0,
+        96,
+        96
+      ],
+      "near": {
+        "phase": 1,
+        "grounded": true,
+        "hip": [
+          50.0,
+          69.0
+        ],
+        "knee": [
+          61.896,
+          72.84
+        ],
+        "ankle": [
+          59.0,
+          85.0
+        ],
+        "toe": [
+          64.0,
+          88.0
+        ]
+      },
+      "far": {
+        "phase": 9,
+        "grounded": false,
+        "hip": [
+          52.0,
+          69.0
+        ],
+        "knee": [
+          59.051,
+          79.322
+        ],
+        "ankle": [
+          47.0,
+          76.0
+        ],
+        "toe": [
+          48.725,
+          81.57
+        ]
+      },
+      "body_offset": [
+        0,
+        2
+      ],
+      "net_degrees": -1
+    },
+    {
+      "index": 2,
+      "file": "frames/snouty_run_02.png",
+      "duration_ms": 40,
+      "strip_rect": [
+        192,
+        0,
+        96,
+        96
+      ],
+      "grid_rect": [
+        192,
+        0,
+        96,
+        96
+      ],
+      "near": {
+        "phase": 2,
+        "grounded": true,
+        "hip": [
+          50.0,
+          69.0
+        ],
+        "knee": [
+          60.824,
+          75.252
+        ],
+        "ankle": [
+          53.0,
+          85.0
+        ],
+        "toe": [
+          58.0,
+          88.0
+        ]
+      },
+      "far": {
+        "phase": 10,
+        "grounded": false,
+        "hip": [
+          52.0,
+          69.0
+        ],
+        "knee": [
+          63.08,
+          74.787
+        ],
+        "ankle": [
+          51.0,
+          78.0
+        ],
+        "toe": [
+          54.294,
+          82.811
+        ]
+      },
+      "body_offset": [
+        0,
+        2
+      ],
+      "net_degrees": 0
+    },
+    {
+      "index": 3,
+      "file": "frames/snouty_run_03.png",
+      "duration_ms": 40,
+      "strip_rect": [
+        288,
+        0,
+        96,
+        96
+      ],
+      "grid_rect": [
+        288,
+        0,
+        96,
+        96
+      ],
+      "near": {
+        "phase": 3,
+        "grounded": true,
+        "hip": [
+          50.0,
+          68.0
+        ],
+        "knee": [
+          57.66,
+          77.878
+        ],
+        "ankle": [
+          47.189,
+          84.706
+        ],
+        "toe": [
+          52.0,
+          88.0
+        ]
+      },
+      "far": {
+        "phase": 11,
+        "grounded": false,
+        "hip": [
+          52.0,
+          68.0
+        ],
+        "knee": [
+          64.5,
+          68.0
+        ],
+        "ankle": [
+          57.0,
+          78.0
+        ],
+        "toe": [
+          61.605,
+          81.577
+        ]
+      },
+      "body_offset": [
+        0,
+        1
+      ],
+      "net_degrees": 2
+    },
+    {
+      "index": 4,
+      "file": "frames/snouty_run_04.png",
+      "duration_ms": 40,
+      "strip_rect": [
+        384,
+        0,
+        96,
+        96
+      ],
+      "grid_rect": [
+        384,
+        0,
+        96,
+        96
+      ],
+      "near": {
+        "phase": 4,
+        "grounded": true,
+        "hip": [
+          51.0,
+          67.0
+        ],
+        "knee": [
+          53.783,
+          79.186
+        ],
+        "ankle": [
+          42.11,
+          83.656
+        ],
+        "toe": [
+          46.0,
+          88.0
+        ]
+      },
+      "far": {
+        "phase": 12,
+        "grounded": false,
+        "hip": [
+          53.0,
+          67.0
+        ],
+        "knee": [
+          65.459,
+          65.988
+        ],
+        "ankle": [
+          62.0,
+          78.0
+        ],
+        "toe": [
+          67.323,
+          80.38
+        ]
+      },
+      "body_offset": [
+        1,
+        0
+      ],
+      "net_degrees": 3
+    },
+    {
+      "index": 5,
+      "file": "frames/snouty_run_05.png",
+      "duration_ms": 40,
+      "strip_rect": [
+        480,
+        0,
+        96,
+        96
+      ],
+      "grid_rect": [
+        480,
+        0,
+        96,
+        96
+      ],
+      "near": {
+        "phase": 5,
+        "grounded": true,
+        "hip": [
+          51.0,
+          66.0
+        ],
+        "knee": [
+          50.256,
+          78.478
+        ],
+        "ankle": [
+          38.386,
+          82.397
+        ],
+        "toe": [
+          40.0,
+          88.0
+        ]
+      },
+      "far": {
+        "phase": 13,
+        "grounded": false,
+        "hip": [
+          53.0,
+          66.0
+        ],
+        "knee": [
+          65.49,
+          66.51
+        ],
+        "ankle": [
+          66.0,
+          79.0
+        ],
+        "toe": [
+          71.435,
+          81.111
+        ]
+      },
+      "body_offset": [
+        1,
+        -1
+      ],
+      "net_degrees": 2
+    },
+    {
+      "index": 6,
+      "file": "frames/snouty_run_06.png",
+      "duration_ms": 40,
+      "strip_rect": [
+        576,
+        0,
+        96,
+        96
+      ],
+      "grid_rect": [
+        576,
+        0,
+        96,
+        96
+      ],
+      "near": {
+        "phase": 6,
+        "grounded": false,
+        "hip": [
+          51.0,
+          64.0
+        ],
+        "knee": [
+          47.5,
+          76.0
+        ],
+        "ankle": [
+          35.0,
+          76.0
+        ],
+        "toe": [
+          34.886,
+          81.83
+        ]
+      },
+      "far": {
+        "phase": 14,
+        "grounded": false,
+        "hip": [
+          53.0,
+          64.0
+        ],
+        "knee": [
+          64.567,
+          68.739
+        ],
+        "ankle": [
+          67.0,
+          81.0
+        ],
+        "toe": [
+          72.249,
+          83.538
+        ]
+      },
+      "body_offset": [
+        1,
+        -3
+      ],
+      "net_degrees": 0
+    },
+    {
+      "index": 7,
+      "file": "frames/snouty_run_07.png",
+      "duration_ms": 40,
+      "strip_rect": [
+        672,
+        0,
+        96,
+        96
+      ],
+      "grid_rect": [
+        672,
+        0,
+        96,
+        96
+      ],
+      "near": {
+        "phase": 7,
+        "grounded": false,
+        "hip": [
+          50.0,
+          65.0
+        ],
+        "knee": [
+          46.905,
+          77.111
+        ],
+        "ankle": [
+          36.0,
+          71.0
+        ],
+        "toe": [
+          34.73,
+          76.691
+        ]
+      },
+      "far": {
+        "phase": 15,
+        "grounded": false,
+        "hip": [
+          52.0,
+          65.0
+        ],
+        "knee": [
+          63.044,
+          70.854
+        ],
+        "ankle": [
+          66.0,
+          83.0
+        ],
+        "toe": [
+          71.059,
+          85.899
+        ]
+      },
+      "body_offset": [
+        0,
+        -2
+      ],
+      "net_degrees": -2
+    },
+    {
+      "index": 8,
+      "file": "frames/snouty_run_08.png",
+      "duration_ms": 40,
+      "strip_rect": [
+        768,
+        0,
+        96,
+        96
+      ],
+      "grid_rect": [
+        0,
+        96,
+        96,
+        96
+      ],
+      "near": {
+        "phase": 8,
+        "grounded": false,
+        "hip": [
+          50.0,
+          67.0
+        ],
+        "knee": [
+          50.0,
+          79.5
+        ],
+        "ankle": [
+          40.0,
+          72.0
+        ],
+        "toe": [
+          39.304,
+          77.789
+        ]
+      },
+      "far": {
+        "phase": 0,
+        "grounded": true,
+        "hip": [
+          52.0,
+          67.0
+        ],
+        "knee": [
+          63.213,
+          72.525
+        ],
+        "ankle": [
+          64.0,
+          85.0
+        ],
+        "toe": [
+          69.0,
+          88.0
+        ]
+      },
+      "body_offset": [
+        0,
+        0
+      ],
+      "net_degrees": -3
+    },
+    {
+      "index": 9,
+      "file": "frames/snouty_run_09.png",
+      "duration_ms": 40,
+      "strip_rect": [
+        864,
+        0,
+        96,
+        96
+      ],
+      "grid_rect": [
+        96,
+        96,
+        96,
+        96
+      ],
+      "near": {
+        "phase": 9,
+        "grounded": false,
+        "hip": [
+          50.0,
+          68.0
+        ],
+        "knee": [
+          57.051,
+          78.322
+        ],
+        "ankle": [
+          45.0,
+          75.0
+        ],
+        "toe": [
+          46.046,
+          80.736
+        ]
+      },
+      "far": {
+        "phase": 1,
+        "grounded": true,
+        "hip": [
+          52.0,
+          68.0
+        ],
+        "knee": [
+          63.167,
+          73.618
+        ],
+        "ankle": [
+          58.0,
+          85.0
+        ],
+        "toe": [
+          63.0,
+          88.0
+        ]
+      },
+      "body_offset": [
+        0,
+        1
+      ],
+      "net_degrees": -1
+    },
+    {
+      "index": 10,
+      "file": "frames/snouty_run_10.png",
+      "duration_ms": 40,
+      "strip_rect": [
+        960,
+        0,
+        96,
+        96
+      ],
+      "grid_rect": [
+        192,
+        96,
+        96,
+        96
+      ],
+      "near": {
+        "phase": 10,
+        "grounded": false,
+        "hip": [
+          50.0,
+          69.0
+        ],
+        "knee": [
+          61.843,
+          73.0
+        ],
+        "ankle": [
+          50.0,
+          77.0
+        ],
+        "toe": [
+          52.95,
+          82.03
+        ]
+      },
+      "far": {
+        "phase": 2,
+        "grounded": true,
+        "hip": [
+          52.0,
+          69.0
+        ],
+        "knee": [
+          61.605,
+          77.0
+        ],
+        "ankle": [
+          52.0,
+          85.0
+        ],
+        "toe": [
+          57.0,
+          88.0
+        ]
+      },
+      "body_offset": [
+        0,
+        2
+      ],
+      "net_degrees": 1
+    },
+    {
+      "index": 11,
+      "file": "frames/snouty_run_11.png",
+      "duration_ms": 40,
+      "strip_rect": [
+        1056,
+        0,
+        96,
+        96
+      ],
+      "grid_rect": [
+        288,
+        96,
+        96,
+        96
+      ],
+      "near": {
+        "phase": 11,
+        "grounded": false,
+        "hip": [
+          51.0,
+          68.0
+        ],
+        "knee": [
+          63.457,
+          66.968
+        ],
+        "ankle": [
+          56.0,
+          77.0
+        ],
+        "toe": [
+          60.676,
+          80.484
+        ]
+      },
+      "far": {
+        "phase": 3,
+        "grounded": true,
+        "hip": [
+          53.0,
+          68.0
+        ],
+        "knee": [
+          57.608,
+          79.62
+        ],
+        "ankle": [
+          46.189,
+          84.706
+        ],
+        "toe": [
+          51.0,
+          88.0
+        ]
+      },
+      "body_offset": [
+        1,
+        1
+      ],
+      "net_degrees": 2
+    },
+    {
+      "index": 12,
+      "file": "frames/snouty_run_12.png",
+      "duration_ms": 40,
+      "strip_rect": [
+        1152,
+        0,
+        96,
+        96
+      ],
+      "grid_rect": [
+        384,
+        96,
+        96,
+        96
+      ],
+      "near": {
+        "phase": 12,
+        "grounded": false,
+        "hip": [
+          51.0,
+          66.0
+        ],
+        "knee": [
+          63.419,
+          64.581
+        ],
+        "ankle": [
+          62.0,
+          77.0
+        ],
+        "toe": [
+          67.496,
+          78.947
+        ]
+      },
+      "far": {
+        "phase": 4,
+        "grounded": true,
+        "hip": [
+          53.0,
+          66.0
+        ],
+        "knee": [
+          52.492,
+          78.49
+        ],
+        "ankle": [
+          41.11,
+          83.656
+        ],
+        "toe": [
+          45.0,
+          88.0
+        ]
+      },
+      "body_offset": [
+        1,
+        -1
+      ],
+      "net_degrees": 2
+    },
+    {
+      "index": 13,
+      "file": "frames/snouty_run_13.png",
+      "duration_ms": 40,
+      "strip_rect": [
+        1248,
+        0,
+        96,
+        96
+      ],
+      "grid_rect": [
+        480,
+        96,
+        96,
+        96
+      ],
+      "near": {
+        "phase": 13,
+        "grounded": false,
+        "hip": [
+          51.0,
+          65.0
+        ],
+        "knee": [
+          63.331,
+          67.051
+        ],
+        "ankle": [
+          67.0,
+          79.0
+        ],
+        "toe": [
+          72.534,
+          80.837
+        ]
+      },
+      "far": {
+        "phase": 5,
+        "grounded": true,
+        "hip": [
+          53.0,
+          65.0
+        ],
+        "knee": [
+          48.492,
+          76.659
+        ],
+        "ankle": [
+          37.386,
+          82.397
+        ],
+        "toe": [
+          39.0,
+          88.0
+        ]
+      },
+      "body_offset": [
+        1,
+        -2
+      ],
+      "net_degrees": 1
+    },
+    {
+      "index": 14,
+      "file": "frames/snouty_run_14.png",
+      "duration_ms": 40,
+      "strip_rect": [
+        1344,
+        0,
+        96,
+        96
+      ],
+      "grid_rect": [
+        576,
+        96,
+        96,
+        96
+      ],
+      "near": {
+        "phase": 14,
+        "grounded": false,
+        "hip": [
+          51.0,
+          64.0
+        ],
+        "knee": [
+          61.924,
+          70.076
+        ],
+        "ankle": [
+          68.0,
+          81.0
+        ],
+        "toe": [
+          73.323,
+          83.38
+        ]
+      },
+      "far": {
+        "phase": 6,
+        "grounded": false,
+        "hip": [
+          53.0,
+          64.0
+        ],
+        "knee": [
+          48.425,
+          75.633
+        ],
+        "ankle": [
+          36.0,
+          77.0
+        ],
+        "toe": [
+          36.177,
+          82.828
+        ]
+      },
+      "body_offset": [
+        1,
+        -3
+      ],
+      "net_degrees": -1
+    },
+    {
+      "index": 15,
+      "file": "frames/snouty_run_15.png",
+      "duration_ms": 40,
+      "strip_rect": [
+        1440,
+        0,
+        96,
+        96
+      ],
+      "grid_rect": [
+        672,
+        96,
+        96,
+        96
+      ],
+      "near": {
+        "phase": 15,
+        "grounded": false,
+        "hip": [
+          50.0,
+          66.0
+        ],
+        "knee": [
+          60.924,
+          72.076
+        ],
+        "ankle": [
+          67.0,
+          83.0
+        ],
+        "toe": [
+          72.144,
+          85.746
+        ]
+      },
+      "far": {
+        "phase": 7,
+        "grounded": false,
+        "hip": [
+          52.0,
+          66.0
+        ],
+        "knee": [
+          49.359,
+          78.218
+        ],
+        "ankle": [
+          38.0,
+          73.0
+        ],
+        "toe": [
+          37.478,
+          78.808
+        ]
+      },
+      "body_offset": [
+        0,
+        -1
+      ],
+      "net_degrees": -2
+    }
+  ]
+}
