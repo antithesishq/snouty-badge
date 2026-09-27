@@ -9,4 +9,5 @@ test {
     _ = @import("maze.zig");
     _ = @import("camera.zig");
     _ = @import("render/clip.zig");
+    _ = @import("actors.zig");
 }

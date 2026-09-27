@@ -511,3 +511,233 @@ colours), Zig mark (1), Iris mark (1), Start button with the Iris mark
 12, 17, decision 8). Build, 24 host tests, check-float PASS, goldens
 unchanged (7 pass), `.text` 39.8 KB. Adrian: keep the w95 textures, no
 look-alikes. M3 next, in a fresh session.
+
+# Plan: M3 "Inhabitants" (2026-09-27)
+
+M3 puts the actors into the screensaver: Snouty wandering the corridors,
+the smiley that flips the view, the sphere that teleports, the spinning
+Zig mark, the Start button in the first cell, the original's pictures on
+the walls, and the neopixels with the Select toggle. The renderer calls
+(`render/mesh.zig`, `render/sprite.zig`) exist since M2; M3 is the logic,
+the scene hook-up, the LEDs and the harness. No audio (Adrian).
+
+## Tracks
+
+| Track | Owner | Files |
+|-------|-------|-------|
+| A3 scene and textures | Opus agent | `cart/src/render/scene.zig`, `render/textures.zig`, `render/sprite.zig`, `render/mesh.zig` (fixes only) |
+| B3 actor logic and state | Opus agent | `cart/src/actors.zig`, `cart/src/autopilot.zig`, `cart/src/main.zig`, `cart/src/host_tests.zig` |
+| C3 LEDs, harness, docs | Opus agent | `cart/src/leds.zig`, `tools/check_cycle.mjs`, `tools/scripts/m3_*.json`, `tests/golden/poses.json` (additions only), `docs/RUNNING.md` |
+
+Frozen: `math.zig`, `rng.zig`, `input.zig`, `maze.zig`, `camera.zig`,
+`render/clip.zig`, `render/raster.zig`, `render/overlay.zig`, `build.zig`,
+`tools/preview.mjs`, `tools/check_golden.mjs`, `tools/prepare_assets.py`,
+`assets/gen/*`. A change to another track's file goes into the final
+report as a request with the exact diff.
+
+The stubs committed with this plan (`actors.zig`, `leds.zig`) are the
+contract: A3 reads `actors` pub data, B3 fills it in, B3 calls `leds`,
+C3 implements it. Nobody changes a pub declaration in the stubs without
+saying so in the report.
+
+## Controls in M3 (SPEC section 3, screensaver column)
+
+| Input | Autopilot states | Fly (debug) |
+|-------|------------------|-------------|
+| Select | Toggle the neopixels (default off) | Toggle the debug overlay |
+| Start | Toggle name strip permanently on/off | Reset camera to start cell |
+| A | Skip to PAUSE | + Up/Down: pitch |
+| B + Select | Toggle fly mode | Back to autopilot |
+| Stick | ignored | walk / turn |
+
+The overlay flag persists across the mode switch, so to read `render_us`
+during the screensaver: B+Select, Select, B+Select. `-Ddebug_overlay=true`
+still starts with it on.
+
+## Actors (B3 owns `actors.zig`; SPEC section 7 with these numbers)
+
+All positions are world cells, y up. `actors.reset(m, r, avoid)` places
+everything for a fresh maze; `actors.step(m, r, cam_cell, triggers)` runs
+one tick; `actors.place(kind, x, z)` is the debug hook. The pub data the
+renderer reads is in the stub. Spawn rule for every actor: a random cell
+that is not the start, not the finish, not `avoid` (the camera's cell) and
+not another actor's cell; collect candidates into a `.bss` array and pick
+with `r.below(n)`. Preferences: smiley in a dead end (exactly three
+walls), logo in a junction (at most one wall), fall back to any cell when
+the preferred set is empty.
+
+- **Snouty**: `wanderer` with feet centre `pos`, direction `dir`, walk
+  phase. 1.5 cells/s = 40 ticks per cell, `phase` toggles every 10 ticks.
+  At every cell centre pick a random open direction, never the reverse
+  unless the cell is a dead end. He may cross the camera's, the start's
+  and the finish's cells; the spawn rule is for placement only. Keeps
+  walking in every state, fly included, and moves into the new maze at
+  `reset`.
+- **Smiley**: `Spinner` at eye height in a dead end, `angle += 546` per
+  tick (1 turn per 2 s). Trigger: `triggers` is true (state WALK or TURN)
+  and the camera's cell equals its cell. Then `autopilot.flip()`,
+  `flips += 1`, respawn (rule above, the camera's cell excluded).
+- **Sphere**: `Bobber`, centre at eye height plus `0.05 * sin_turns(t /
+  120)`, radius 0.25. Trigger as the smiley: pick a destination cell (rule
+  above; also not the finish, so the walk continues) and a random open
+  direction of it, call `autopilot.begin_teleport(dest, dir)`,
+  `teleports += 1`, respawn (excluding the destination).
+- **Logo**: `Spinner` in a junction, `angle += 364` per tick (1 turn per
+  3 s). Decorative.
+- **Start button**: `start_button` = start centre shifted 0.3 cells
+  against `camera.start_facing(m)` (behind the camera when it starts), at
+  eye height; drawn as a spin quad at 1 turn per 4 s (angle from
+  `start_angle`).
+
+Host tests in `actors.zig` (add it to `host_tests.zig`): spawns respect
+the exclusion rule for seeds 1..50 (no two actors share a cell, none on
+start/finish/avoid, smiley in a dead end when one exists, logo in a
+junction when one exists); Snouty never walks through a wall over 5000
+ticks and never reverses outside a dead end; the smiley trigger fires
+exactly once when the camera cell matches and the smiley moves away; the
+sphere trigger enters TELEPORT and the camera lands on the destination
+centre at eye height with the yaw of an open direction.
+
+## Autopilot additions (B3 owns `autopilot.zig`)
+
+- `pub fn flip() void`: roll animation from the current roll to roll + 180
+  over `flip_ticks = 30` with smoothstep. Generalise the existing unroll
+  path into one roll animation (from, delta, tick, dur); the cap timer
+  (1200 ticks, decision 9) counts only while no animation runs and roll is
+  non-zero, and a flip while rolled 180 goes back to 0 (the view rights
+  itself). Roll animates in WALK, TURN and PAUSE as today; RISE lerps it
+  to 0 as today; a flip request outside WALK/TURN is ignored.
+- `pub fn begin_teleport(dest: [2]u8, d: Dir) void` (only from WALK/TURN):
+  enter TELEPORT (state 6), `teleport_ticks = 12`. Ticks 1..6 fade out
+  (`fade_level = tick * 16 / 6`, so 16 at tick 6); at tick 6 the camera
+  moves to `cell_centre(dest)` at eye height with `yaw = dir_yaw(d)`,
+  pitch 0, roll unchanged, `cell = dest`, `dir = d`, `walk_tick = 0`;
+  ticks 7..12 fade in (`16 - (tick - 6) * 16 / 6`); at tick 12 WALK via
+  `decide` (may TURN at once). `pub fn fade_level() u8` returns the level
+  (0 outside TELEPORT); main applies `overlay.fade(@max(debug_fade_level,
+  autopilot.fade_level()))`.
+- `enter_overhead` calls `actors.reset(m, r, camera cell)` right after
+  `m.generate`; `main.new_maze` does the same. `autopilot` importing
+  `actors` and `actors` importing `autopilot` is fine in Zig.
+- A during TELEPORT is ignored (skip only from WALK/TURN, as now).
+- Tests: flip reaches exactly `deg(180)` after 30 ticks and the cap timer
+  then unrolls after 1200 more; a second flip at 180 ends at 0; teleport
+  fade levels are 0, 2, 5, 8, 10, 13, 16 (ticks 0..6) and back to 0 at
+  tick 12 with the state WALK or TURN.
+
+## main.zig (B3)
+
+Per tick: `input.update` -> chords as today, but Select alone toggles
+`leds.enabled` in autopilot states and `show_debug` in fly -> autopilot
+step / fly -> `actors.step(&world, &random, cam_cell, triggers)` where
+`triggers = state == .walk or state == .turn` -> render (`scene.draw`
+draws the actors itself) -> overlays -> fade -> `leds.update(state,
+actors.flips, actors.teleports)` -> present. New exports: `debug_snouty_x/z`,
+`debug_smiley_x/z`, `debug_sphere_x/z`, `debug_logo_x/z` (cells),
+`debug_flips`, `debug_teleports`, `debug_roll_deg` (0..359),
+`debug_leds` (1 when enabled), `debug_led_max` (largest channel value),
+`debug_place(code)` with `code = kind * 10000 + x * 100 + z`, kind 0
+Snouty, 1 smiley, 2 sphere, 3 logo (one integer so `preview.mjs --call`
+can drive it), `debug_fade_level`. Remove `debug_actors` (the hook is
+gone). Keep every other export.
+
+## Scene (A3 owns `render/scene.zig`, `textures.zig`)
+
+- `textures.init` also unpacks `gfx.wall_pic` (opaque, `wall_pic`),
+  `gfx.start` and `gfx.iris` (transparent, `start`, `iris`). Palette
+  brightness 10 for all.
+- `scene.draw` order: finish tile, **wall pictures**, wall runs, floor,
+  ceiling, **actors**. Pictures go before the walls for the same reason
+  the finish tile goes before the floor: they sit 0.005 out from the face
+  and the strict greater-than z test keeps the first draw where the two
+  quantise equal.
+- Pictures: for every run and every cell-length segment `k` of it, hash
+  `h = (x + k*dx) * 7 + (z + k*dz) * 13 + axis * 3` (any cheap mix);
+  when `h % 8 == 0` hang a 0.5 x 0.5 `wall_pic` quad centred on the
+  segment at height 0.55, on the face picked by `(h / 8) & 1` (north or
+  south for x-runs, west or east for z-runs), 0.005 out from the face,
+  only when the camera is on that side (same sign test as the face) and
+  below `wall_height`. u increases to the viewer's right, v = 0 at the
+  top, so the picture is never mirrored. About one segment in eight;
+  the frustum test drops the rest.
+- Actors, after the ceiling, reading `actors` pub data:
+  - Snouty: `cam.pos[1] < wall_height` -> `sprite.draw_billboard(cam, b,
+    snouty.pos, actors.snouty_size, frame)`; otherwise
+    `sprite.draw_floor_sprite` with the same frame. Frame: the sheet's
+    cells 0, 1 face left, 2, 3 face right (`../snouty-art/tools/
+    build_maze.py`); with `right = (cos yaw, 0, sin yaw)` and `mv =
+    (dir.dx, 0, dir.dz)`, `dot(right, mv) >= 0` picks the right-facing
+    pair, then `phase` picks the frame within the pair.
+  - Smiley and logo: `mesh.draw_spin_quad(cam, b, pos, 0.2, angle, tex)`.
+  - Sphere: `mesh.draw_sphere(cam, b, sphere.pos, actors.sphere_radius,
+    .{ 0xc0, 0xc0, 0xc0 })`.
+  - Start button: `mesh.draw_spin_quad(cam, b, actors.start_button, 0.2,
+    actors.start_angle, &textures.start)`.
+- Remove the `debug_actors` hook and `debug_frame`.
+- Fix whatever the sprite path gets wrong when a billboard straddles the
+  near plane (Snouty walks through the camera's cell) or lies under the
+  camera from above; `check_golden` will be rebaselined at integration
+  because actors now appear in the fixed poses, so report the before and
+  after PNGs of any pose you touched rather than relying on it.
+- Cost report: extra polygons at the start pose and the overhead pose.
+
+## LEDs (C3 owns `leds.zig`)
+
+`pub var enabled: bool = false`; `pub fn update(state: autopilot.State,
+flips: u32, teleports: u32) void` writes all five `cart.neopixels` every
+tick (GRB struct, every channel at most 10):
+
+- disabled: all zero.
+- WALK, TURN, PAUSE, RISE, DESCEND, FLY: dim brick `(r 6, g 2, b 1)`.
+- `flips` changed since the last tick: start a purple pulse, 90 ticks,
+  `(r 6, g 0, b 10)` scaled by `1 - t`, on top of the base (clamp each
+  channel to 10).
+- TELEPORT: white `(10, 10, 10)`.
+- OVERHEAD: breathing, level `1 + 9 * (0.5 + 0.5 * sin_turns(tick /
+  180))` in the brick hue.
+- Keep it integer where you can; `math.sin_turns` is fine. No cart API
+  beyond `cart.neopixels`.
+
+## Harness and docs (C3)
+
+- `check_cycle.mjs`: keep A, B, C; add
+  - D flip: `--call debug_place:10100` (smiley in cell (1, 0), the first
+    cell the seed 1 camera enters, heading east from (0, 0)), 100
+    frames, expect `debug_flips == 1`, `debug_roll_deg == 180`,
+    `debug_smiley_x != 1 || debug_smiley_z != 0` (it moved; if `--expect`
+    cannot express "or", check x and z through two runs or accept a
+    weaker check and say so).
+  - E teleport: `--call debug_place:20100`, 100 frames, expect
+    `debug_teleports == 1`, `debug_state < 2` (WALK or TURN),
+    `debug_fade_level == 0`.
+  - F leds: `--press SELECT:0-0`, 10 frames, expect `debug_leds == 1`,
+    `debug_led_max <= 10`, `debug_led_max > 0`.
+  - Run A may need more frames now that teleports restart the walk:
+    measure the first-finish tick for seeds 1..5 (`--expect
+    "debug_cycles >= 1"` with increasing `--frames`) and set the default
+    so seed 1 passes with margin; record the numbers in RUNNING.md.
+- Goldens: add `actors` = seed 1, pose `0.5,0.5,0.5,90,0,0` (start cell
+  looking east down the first corridor, cells (1, 0) and (2, 0) in
+  view), calls `debug_place:0200` (Snouty at (2, 0)), `debug_place:10100`
+  (smiley at (1, 0); poses run in FLY, where triggers are off, so
+  nothing fires), plus the sphere and the logo in cells the pose can
+  see (check the seed 1 map with `maze.dump` or a preview). Add
+  `overhead_actors` = `6,13.5,6,0,90,0` with the same calls, so the
+  floor sprite and the spin quads from above are covered. Both are
+  generated at integration (`--update`); you add the entries and confirm
+  they render something sensible.
+- `tools/scripts/m3_tour.json`: A at tick 700, for a 1000-frame,
+  `--every 10` GIF run with `--call debug_place:10100 --call
+  debug_place:20401` (sphere at (4, 1), on the path after the flip).
+  Document the exact preview command in RUNNING.md.
+- `docs/RUNNING.md`: controls table above, the new exports, runs D..F,
+  the M3 GIF command, LEDs note (dim on purpose; Select toggles).
+
+## Done criteria for M3
+
+1. `zig build`, `zig build test`, `check-float` clean; `.text` under
+   120 KB, `.bss` under 100 KB.
+2. `check_golden` PASS after rebaselining (all poses inspected).
+3. `check_cycle` PASS on A..F.
+4. `docs/preview_m3.gif` from `m3_tour.json`.
+5. Tag `m3`, hand-off note.
