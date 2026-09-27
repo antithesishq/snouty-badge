@@ -10,8 +10,8 @@ A horizontal bullet-hell shooter. Snouty pilots a small ship on the left of the
 screen, flying right over a scrolling parallax background. Bugs (the software
 kind, drawn as the insect kind) fly in from the right in scripted waves and
 fill the screen with slow, dense, readable bullet patterns. A fires the zapper,
-B drops a bomb that clears every enemy and bullet on screen, the joystick
-moves the ship. Getting hit does not kill you: the game names the bug that
+holding B rewinds time for as long as you can afford it (section 5.2), the
+joystick moves the ship. Getting hit does not kill you: the game names the bug that
 got you, rewinds the last two seconds in front of your eyes, and hands the
 ship back so you can dodge it this time (section 5.1). Left alone, the cart
 plays itself in an attract/demo loop; the moment anyone touches a button, the
@@ -28,7 +28,7 @@ ship is theirs, mid-flight, no reset.
 - Audio: `tone2`, one voice, six wave shapes, cancels whatever was playing.
   Sound design is therefore one channel of short effects, no music.
 - 5 neopixels, very bright; anything above ~10/255 is uncomfortable at
-  lanyard distance. Used for bomb stock and event flashes only.
+  lanyard distance. Used for the rewind fuel level and event flashes only.
 - Cart RAM: upstream reserves a 384 KB process region; `snouty-badge` runs
   comfortably at 94 KB. Budget for this cart: 160 KB total, of which art
   is at most 80 KB. The asset manifest in section 12 sums to well under that.
@@ -46,7 +46,7 @@ ship is theirs, mid-flight, no reset.
 |-------------------|------------------------------|------------------------------------------|-------------------------------|
 | Joystick          | (nothing)                    | Move ship, 8 directions                  | Take over (see section 8)     |
 | A                 | Start a game                 | Zapper. Hold for autofire                | Take over                     |
-| B                 | Start a game                 | Bomb (if stock > 0)                      | Take over                     |
+| B                 | Start a hardcore game        | Hold: rewind time (spends fuel)          | Take over                     |
 | Start             | Start a game                 | Pause / unpause                          | Take over                     |
 | Select            | Toggle sound + neopixels     | Toggle sound + neopixels                 | Toggle sound + neopixels      |
 | Click             | OS: FPS overlay              | OS: FPS overlay                          | OS: FPS overlay               |
@@ -61,7 +61,7 @@ is not persisted (the flash save API returns 0 bytes upstream).
 ## 4. Screen layout
 
 ```
-y   0..7     HUD: score (left), bomb icons (center), lives (right). 8 px.
+y   0..7     HUD: score (left), rewind fuel bar (center), rewinds (right). 8 px.
 y   8..127   Play area, 160x120. Background layers fill it.
 ```
 
@@ -87,24 +87,19 @@ y   8..127   Play area, 160x120. Background layers fill it.
 - Zapper: A. While held, fires one bolt every 6 ticks (10/s). Bolt travels
   4 px/tick, cell 16x8, 2-frame flicker. Damage 1. Pool of 24 bolts. Bolts
   vanish at x >= 160 or on hit.
-- Bomb: B, when stock > 0 and no bomb is active. Effect over 30 ticks:
-  1. tick 0: every enemy bullet on screen is deleted; every non-boss enemy
-     dies with its explosion; the boss takes 8 damage. Player is
-     invulnerable until tick 30 ends.
-  2. ticks 0..30: an expanding ring (procedural `oval` outline, 2 colors)
-     from the ship out past the screen corners; the screen background is
-     replaced by a flat flash color for ticks 0..3.
-  3. Neopixels: all five white at 8/255 for 6 ticks, then back to bomb stock.
-  Stock starts at 2, max 3. +1 at the end of each stage and every 5,000
-  points. Bombs are the intended escape hatch, so they are cheap.
-- Rewinds: 3 (they replace lives). Getting hit with a rewind in stock
-  spends it and runs the rewind sequence in section 5.1: the world goes back
-  two seconds and play resumes from there. Getting hit with none left is
+- Hold-B rewind: see section 5.2. There is no bomb (dropped 2026-09-27: the
+  rewind is the better escape hatch and the better show, and it keeps the
+  pattern on screen instead of wiping it).
+- Rewinds: 3 (they replace lives; none in hardcore, section 5.3). Getting
+  hit with a rewind in stock spends it and runs the rewind sequence in
+  section 5.1: the world goes back two seconds and play resumes from there.
+  The auto rewind costs no fuel in normal mode. Getting hit with none left is
   death: ship explodes (32x32, 6 frames), 60 ticks of frozen bullets and no
   enemy fire, then GAME OVER. Extra rewind at 10,000 points and every 20,000
   after, max 5.
 - Score: points per enemy (section 6), +1 per graze (an enemy bullet passing
-  within 4 px of the hitbox without touching it, once per bullet). Score caps
+  within 4 px of the hitbox without touching it, once per bullet). A graze
+  also adds 2 fuel (section 5.2). Score caps
   at 999,999. Score is part of the world, so a rewind takes it back too, along
   with the kills and grazes of those two seconds.
 
@@ -137,7 +132,7 @@ is touched and a rewind is in stock:
 2. **Reverse playback, 60 ticks.** The world plays backward 120 game ticks
    at two ticks per frame. Everything reverses: bullets retreat, dead bugs
    un-explode, the score counts down, the background scrolls right. The
-   message bar stays, `<<` blinks in the HUD center where the bombs are, and
+   message bar stays, `<<` blinks in the HUD status slot (x 48..63), and
    the frame is dimmed by drawing every other scanline black (the pause
    look, so it reads as "not live"). Inputs are ignored.
 3. **Resume.** The world is restored to exactly its state 120 ticks before
@@ -148,9 +143,10 @@ is touched and a rewind is in stock:
    the future is the player's to change.
 
 If less than 120 ticks of history exist (early in a game, or a second hit
-soon after a rewind), the rewind goes back as far as it can. The rewind
-count is not part of the rewound world, so a rewind cannot refund itself.
-Bombs pressed during a rewind do nothing. In DEMO the autopilot's input is
+soon after a rewind), the rewind goes back as far as it can and the
+playback is proportionally shorter (2 ticks per frame). The rewind count is
+not part of the rewound world, so a rewind cannot refund itself. B during a
+rewind does nothing. In DEMO the autopilot's input is
 recorded like a human's, so the demo shows death-rewinds too; that is the
 best advertisement the mechanic gets.
 
@@ -158,6 +154,43 @@ Why the score rewinds: honesty. The snapshot is the whole world, and a rule
 that says "everything goes back except the number in the corner" is the kind
 of special case that makes replays diverge. It also means a rewind is never
 free, even with stock left.
+
+### 5.2 Hold-B rewind and the fuel bar
+
+The same machinery, under the player's thumb. While B is held in PLAYING the
+world runs backward 2 game ticks per frame (half a second of holding undoes
+a full second), enemies and bullets included; nothing is wiped, the last
+second simply un-happens and the player threads the pattern differently.
+Joystick, A and Start are ignored during the hold. On release the history
+after the resume point is discarded and live input drives the next tick.
+No invulnerability, no `GO!`: the player chose the moment. A press with no
+fuel, or with no history to go back to, does nothing.
+
+Fuel is a bar of 180 ticks (3 s), full at the start of a game, spent 2 per
+frame while rewinding. It refills 1 tick per 10 ticks of live play (empty to
+full in 30 s), never during a pause, freeze, playback or rewind; a graze adds
+2; a stage clear fills it. Fuel is meta-state, outside the World: a rewind
+moves the World's clock, so fuel kept inside it would be restored along with
+everything else and rewinds would be free.
+
+Look: the frame dims every other scanline and `<<` blinks in the HUD status
+slot, as in reverse playback, but there is no message bar and the fuel bar
+stays visible so the player can watch it drain. Sound: the rewind sweep of
+section 11 while held. Neopixels: the five LEDs show the fuel level.
+
+### 5.3 Hardcore mode
+
+B on the title starts a hardcore game: no rewind stock (the HUD shows `HARD`
+where the icons would be), so a hit is paid from the fuel bar. The bug
+report runs as in 5.1, then the world rewinds as far as fuel allows, up to
+120 ticks, and that much fuel is spent. If fuel is below the fatal floor of
+45 ticks when the hit lands, the hit is fatal: the report names the bug,
+then reads `UNRECOVERABLE`, and the game is over. The bar fill turns red
+below the floor. The floor is what makes a death loop impossible: every hit
+costs at least 45 or ends the game, and the bar refills far slower than
+that between one resume and the next hit, so a player who keeps getting hit
+runs out within a few hits instead of rewinding one frame forever. There
+is no consolation refill after a hit.
 
 ## 6. Enemies (the bugs)
 
@@ -177,7 +210,7 @@ flavor and appear on the title-screen bestiary (optional, M5).
 Enemy bullets: pool of 96. Two kinds: round 6x6 (cell 8x8, 2 frames) and
 needle 8x4 (cell 8x8, 1 frame, drawn from the round sheet). Each bullet
 records the `Kind` of the enemy that fired it (section 5.1). Speeds 0.6 to
-1.5 px/tick. Bullets die off screen (4 px margin) or on the bomb. Max speed
+1.5 px/tick. Bullets die off screen (4 px margin). Max speed
 is deliberately low: on a 160 px screen, 1.5 px/tick crosses in ~1.8 s, which
 is the fastest thing a player can read at lanyard scale.
 
@@ -209,7 +242,7 @@ Fire, cycling through three phases of 240 ticks:
    shot, 1.0 px/tick. Classic, dense, dodgeable by circling.
 
 Death: 60-tick sequence of 6 small explosions across the body, then the big
-one, then a 500 pt score pop, +1 bomb, next stage.
+one, then a 500 pt score pop, the fuel bar fills, next stage.
 
 ## 8. Game flow, demo mode and takeover
 
@@ -227,7 +260,7 @@ DEMO    -> hit, rewinds > 0 -> REWIND -> DEMO (takeover input is queued)
 ```
 
 Takeover: the ship, enemies and bullets stay exactly where they are. The
-score resets to 0, rewinds to 3, bombs to 2, the "DEMO" tag is replaced by a
+score resets to 0, rewinds to 3, fuel to full, the "DEMO" tag is replaced by a
 "GO!" pop for 60 ticks, and 60 ticks of invulnerability are granted so the
 first frame is fair. Human input starts driving on the very next tick. This is
 deliberately not a restart: the whole point is that the screen already looks
@@ -250,9 +283,10 @@ the game reads through the same path as real input. It is a small heuristic:
 2. Choose the lowest-danger y within 24 px of the current y (bias toward the
    vertical center when tied). Move toward it; also drift x toward 24.
 3. Fire: A is held always.
-4. Bomb: press B when the sum of danger at the current y exceeds a threshold,
-   or when a bullet will hit the hitbox within 6 ticks and no candidate y
-   escapes it, or when the boss is at full HP in phase 3.
+4. Rewind: hold B (section 5.2) when a bullet will hit the hitbox within 6
+   ticks and no candidate y escapes it, for as long as the danger at the
+   current y stays above a threshold or fuel runs out, then release and
+   pick a new y. The demo therefore shows both kinds of rewind.
 5. Add jitter: every 20 ticks, 25% chance to hold a random direction for 10
    ticks, so the demo looks alive rather than robotic.
 
@@ -298,17 +332,20 @@ table, or if `y == random` from the PRNG within [16, 104].
 
 ## 10. HUD, title, game over
 
-- HUD (y 0..7): score as 6 digits in the built-in 8x8 font at x=0; bomb
-  icons 8x8 centered (up to 3); rewinds as Snouty-head icons 8x8
-  right-aligned (up to 5 shown). Background Anti-Black. In DEMO, "DEMO"
-  replaces the bombs every other half second; in the first 60 ticks after a
-  takeover or a rewind, "GO!"; during reverse playback, "<<" blinking.
+- HUD (y 0..7): score as 6 digits in the built-in 8x8 font at x=0; a
+  status slot at x 48..63 (`<<` blinking during any rewind playback); the
+  fuel bar at x 68..99 (1 px Anti-White frame, y 1..6; Coral fill 30x4
+  inside, red below the hardcore floor); rewinds as Snouty-head icons 8x8
+  right-aligned (up to 5 shown), or `HARD` in Coral in hardcore.
+  Background Anti-Black. In DEMO, "DEMO" is drawn over the fuel bar every
+  other half second; in the first 60 ticks after a takeover or an auto
+  rewind, "GO!" on the message line.
 - Rewind overlay (section 5.1): Anti-Black bar y 52..67 across the screen,
   bug message centered in Coral at y=56; frame dimmed every other scanline
   during playback. Game over after a hit with no rewinds shows the same bug
   message above "GAME OVER".
 - Title: title logo image 128x40 at (16, 20) over a slowly scrolling
-  background; "PRESS A" 8x8 font blinking at y=96; small "Antithesis" in
+  background; "A PLAY" (y 92) and "B HARDCORE" (y 104, Coral) blinking; small "Antithesis" in
   Coral at y=116 with Iris marks (reuse `iris_16.png` from snouty-badge).
 - Game over: the fatal bug message, "GAME OVER" 8x8 font, score, best score
   this boot, then title.
@@ -318,8 +355,8 @@ table, or if `y == random` from the PRNG within [16, 104].
 ## 11. Audio and neopixels
 
 All effects through `tone2`; each call cancels the previous one, so priority
-order (later wins in the same tick): bomb > player death > extra life > enemy
-death > player hit spark > zapper. The zapper is quiet (volume 0.3) and only
+order (later wins in the same tick): player death > rewind > extra life >
+enemy death > player hit spark > zapper. The zapper is quiet (volume 0.3) and only
 plays on every third bolt so it does not drown everything.
 
 | Event         | Shape    | Frequency                          | Duration |
@@ -330,14 +367,13 @@ plays on every third bolt so it does not drown everything.
 | Player death  | sawtooth | 110 Hz                             | 0.50 s   |
 | Bug report    | sawtooth | 220 Hz                             | 0.30 s   |
 | Rewind        | triangle | 110 to 880 Hz, retriggered every 4 ticks in 15 steps (no sweep in `tone2`) | 0.07 s each |
-| Bomb          | minor    | 55 Hz                              | 0.60 s   |
 | Extra life    | major    | 660 Hz                             | 0.30 s   |
 | Boss enters   | minor    | 82 Hz                              | 0.80 s   |
 
-Neopixels (GRB, max 10/255): the five LEDs show bomb stock (Coral, one LED
-per bomb, from the left). Bomb: all white 8/255 for 6 ticks. Bug report: all
-red 10/255 for the 20-tick freeze. Reverse playback: one Coral LED chasing
-right to left, 12 ticks per step. Player death: all red 10/255 for 60 ticks.
+Neopixels (GRB, max 10/255): the five LEDs show the fuel level (Coral, one
+LED per 36 fuel, from the left). Bug report: all red 10/255 for the 20-tick
+freeze. Reverse playback, auto or hold-B: one Coral LED chasing right to
+left, 12 ticks per step. Player death: all red 10/255 for 60 ticks.
 Boss death: chase pattern for 60 ticks. Off when
 sound is off (Select).
 
@@ -353,18 +389,18 @@ is what the code expects. Sizes in bytes are the packed 4-bit index arrays.
 | `thruster.png`        | 8x8    | 4      | 32x8      | 128    | flame loop                                       |
 | `bolt.png`            | 16x8   | 2      | 32x8      | 128    | zapper bolt flicker                              |
 | `bugs_small.png`      | 8x8    | 4      | 32x8      | 128    | gnat 2-frame wing loop, bullet round 2 frames    |
-| `bugs.png`            | 16x16  | 10     | 160x16    | 1,280  | wasp x2, beetle x2, spider x2, moth x2, needle bullet, bomb pickup |
+| `bugs.png`            | 16x16  | 10     | 160x16    | 1,280  | wasp x2, beetle x2, spider x2, moth x2, needle bullet, spare (was bomb pickup) |
 | `boss.png`            | 48x48  | 5      | 240x48    | 5,760  | 4 idle wing frames + 1 flicker/teleport frame    |
 | `fx_small.png`        | 16x16  | 8      | 128x16    | 1,024  | explosion x5, spark x3                           |
 | `fx_big.png`          | 32x32  | 6      | 192x32    | 3,072  | big explosion                                    |
-| `hud.png`             | 8x8    | 4      | 32x8      | 128    | Snouty head (life), bomb, bomb (empty), heart    |
+| `hud.png`             | 8x8    | 4      | 32x8      | 128    | Snouty head (life), spare, spare (were bomb icons), heart |
 | `title.png`           | 128x40 | 1      | 128x40    | 2,560  | logo lettering                                   |
 | `bg_far.png`          | 256x120| 1      | 256x120   | 15,360 | tileable horizontally; opaque, 8-bit allowed (30,720 B) |
 | `bg_near.png`         | 256x24 | 1      | 256x24    | 3,072  | tileable horizontally; transparent over far layer |
 | `iris_16.png`         | 16x16  | 1      | 16x16     | 128    | from snouty-badge, already exists                 |
 | Total                 |        |        |           | ~34 KB | (~49 KB with an 8-bit far layer)                 |
 
-Bullets and the bomb ring are the only things drawn procedurally besides text
+Bullets and the fuel bar are the only things drawn procedurally besides text
 and the starfield. Everything else is art.
 
 ## 13. Architecture
@@ -384,11 +420,11 @@ modules keep their functions but operate on fields of the one global
 `World`. Nothing in `World` is a pointer, so a snapshot is a struct copy and
 two worlds compare with `std.mem.eql` on their bytes. Outside the world, and
 therefore not rewound: the state machine, the rewind count (meta-state,
-like lives), best score, `tick_total`, the sound toggle. The bomb stock is
-*inside* the world (decided in M4, PLAN.md): the bomb action is simulated
-from the input log, so the stock must replay with it; a bomb used inside
-the rewound two seconds is therefore refunded together with the bullets it
-cleared.
+like lives), the rewind fuel (section 5.2: a rewind moves the World's
+clock, so fuel inside it would be refunded by the rewind it paid for), best
+score, `tick_total`, the sound toggle. Grants that come from world events
+(graze fuel, the stage-clear refill, score rewinds) use a meta high-water
+mark so a rewound-and-repeated event pays only once.
 
 History (`history.zig`), the Antithesis part:
 
@@ -420,13 +456,13 @@ cart/src/
   input.zig       Controls source: hardware/sim, autopilot, or replay; edge detection
   draw.zig        draw_sprite (any cell size, index-0 transparency, optional white flash,
                   optional every-other-pixel skip), draw_bg (two scrolling layers), text helpers
-  player.zig      ship state, movement, zapper, bombs, lives, invulnerability
+  player.zig      ship state, movement, zapper, invulnerability, score
   enemies.zig     enemy pool, per-kind movement + fire programs, boss
   bullets.zig     enemy bullet pool + player bolt pool, movement, off-screen cull
   patterns.zig    ring/spread/aimed/spiral emitters writing into the bullet pool
   waves.zig       stage tables and the spawner
   collide.zig     AABB checks: bolts vs enemies, bullets/enemies vs hitbox, graze
-  fx.zig          explosion/spark pool, bomb ring, screen flash, hit-stop
+  fx.zig          explosion/spark pool
   world.zig       the World struct and the one global instance (section 13.1)
   history.zig     keyframe ring, input log, restore(tick)
   rewind.zig      the hit -> bug report -> reverse playback -> resume sequence
@@ -463,7 +499,7 @@ Readability of bullets is the game.
   and the final frame must not be GAME OVER (a tiny pixel check against the
   HUD lives area, scripted in `tools/check_demo.mjs`).
 - Input scripts: `--script inputs.json` drives all buttons per tick range
-  so the takeover, pause and bomb paths are exercised headlessly.
+  so the takeover, pause and hold-B paths are exercised headlessly.
 - Rewind identity: a wasm-only export `debug_history_check()` copies the
   current world aside, runs `history.restore(game_tick)` from the newest
   keyframe and the input log, and returns 0 only if the restored world is
@@ -497,10 +533,12 @@ subagents, as with `snouty-badge`.
 - **M4 Rewind**: history (keyframes, input log, restore), the bug-report
   and reverse-playback sequence, messages per enemy, the identity test,
   hardware timing check.
-- **M5 Attract mode**: title, autopilot demo, takeover, game over, pause,
+- **M5 Rewind bar**: the bomb goes; hold-B rewind paid from the fuel bar
+  (5.2), hardcore mode (5.3), fuel HUD, title mode select.
+- **M6 Attract mode**: title, autopilot demo, takeover, game over, pause,
   deterministic soak test. Decide autopilot vs replay here. The demo shows
-  rewinds.
-- **M6 Polish**: final art drop-in, audio, neopixels, Select toggle, title
+  both rewinds.
+- **M7 Polish**: final art drop-in, audio, neopixels, Select toggle, title
   bestiary, tuning from hardware play.
 
 Parallel tracks: art (external agent, per `ASSETS.md`) runs alongside M1 to
@@ -514,13 +552,10 @@ brief so the real sheets drop in without code changes.
 - Sound default off, on-badge toggle on Select: agree?
 - Boss flavor name "Heisenbug" and the software-bug enemy names: keep, or go
   with plain insect names on screen?
-- Graze scoring: keep (bullet-hell tradition, teaches the small hitbox) or
-  drop for simplicity?
-- Rewind takes the score back with everything else (section 5.1). Agree, or
-  should score be exempt?
-- Bombs stay on B alongside automatic rewinds. Revisit after M4: a manual
-  hold-B rewind could replace the bomb entirely (one button, one theme, and
-  it keeps the patterns on screen instead of wiping them).
+- Graze scoring: kept (2026-09-27); a graze also refills fuel (5.2).
+- Rewind takes the score back with everything else (section 5.1): agreed
+  2026-09-27.
+- Bombs: dropped 2026-09-27 for the hold-B rewind (5.2) and hardcore (5.3).
 - The bug messages in section 5.1: happy with the six, or different ones?
 
 ## Status
@@ -547,3 +582,7 @@ brief so the real sheets drop in without code changes.
   every frame of every script, twelve regression scripts
   (`docs/preview_m4.gif`). Bomb stock moved into the World (13.1). Hardware
   FPS check during a rewind still to do on the badge.
+- 2026-09-27: Adrian played m4 locally and confirmed the rewind timing. The
+  bomb is dropped for a hold-B rewind paid from a fuel bar (5.2) and a
+  hardcore mode (5.3). Milestones renumbered: M5 Rewind bar, M6 Attract,
+  M7 Polish.

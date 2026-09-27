@@ -705,6 +705,203 @@ flash: check `.bss` grows by about 17 KB and nothing else); hardware:
 the FPS overlay during a rewind with the bullet pool near full must read
 60 (Adrian, on the badge; fallbacks in SPEC.md 13.1).
 
+## M5 Rewind bar (started 2026-09-27)
+
+Goal: SPEC.md 5.2 and 5.3. The bomb is gone. B held in PLAYING rewinds the
+world live, 2 game ticks per frame, paid from a fuel bar that refills slowly
+during live play, a little per graze, and fully on a stage clear. A hardcore
+mode, chosen with B on the title, has no rewind stock: a hit auto-rewinds as
+far as fuel allows, and a hit with fuel under the fatal floor is death.
+Adrian confirmed the M4 timing (20 freeze + 60 playback + 60 invulnerable)
+on 2026-09-27; it does not change. Attract mode moves to M6, polish to M7,
+because the autopilot must drive the hold-B rewind instead of a bomb.
+
+### Decisions fixed here
+
+- **Fuel is meta** (`main.zig`), never in the World. A manual rewind moves
+  the World's clock, so fuel inside the World would be restored with it and
+  every rewind would be free. Same reasoning as the rewind stock. Grants
+  from world events use the high-water pattern of `award_rewinds`:
+  `graze_high_water` and `clear_high_water` in main; a grant happens live
+  only, for a world count above the high water, then the high water rises.
+  This also dissolves the M4 bomb-refund question: nothing in the World
+  spends anything any more.
+- **Refill only on live simulated ticks** (PLAYING). Never in pause, the
+  bug-report freeze, playback, a manual rewind, or DYING.
+- **The B press frame does not simulate a tick.** B (meta rising edge) in
+  PLAYING enters MANUAL and performs its first step in the same frame, so a
+  tap is exactly 2 ticks. The hold continues while B is held. Running out
+  of fuel or history mid-hold resumes with B still down; a fresh press is
+  needed to rewind again, so fuel trickling back cannot jitter the world.
+- **Resume from MANUAL**: `history.invalidate_after(game_tick)`,
+  `history.checkpoint()`, no invulnerability, no `GO!`. The player chose
+  the moment. Joystick, A and Start are ignored during the hold.
+- **Fuel charged = ticks actually rewound.** Manual: 2 per frame; a step
+  needs `fuel >= 2` and `game_tick - 2 >= history.earliest_tick()`, so an
+  odd remnant of 1 fuel stays and refills.
+- **Hardcore on a hit**: `fuel < fatal_floor` is death (DYING as today; the
+  dying bar names the bug, then says `UNRECOVERABLE`). Otherwise `depth =
+  min(120, fuel, hit_tick - earliest_tick())`, `fuel -= depth`, and the
+  rewind runs as in M4 with that depth. No death loop is possible: every
+  iteration costs at least the floor, and the only refill between a resume
+  and the next hit is 1 per 10 live ticks, so a player who is hit again
+  right after the invulnerability has strictly less fuel each time and dies
+  within a few hits. A player who lasts long enough to refill 45 is not
+  looping.
+- **Playback length follows depth**: `rewind_frames = (depth + 1) / 2`, so
+  a 120-tick rewind still plays 60 frames (m2_hit pins hold) and the
+  54-tick rewind of m4_early plays 27 (its pins move). Normal mode is
+  otherwise unchanged: the auto rewind is free of fuel, lives and fuel are
+  independent resources.
+- **Title**: A or Start starts a normal game, B a hardcore one. `hardcore`
+  is meta, set by `new_game`.
+- **HUD layout** (B): score x 0..47; a status slot x 48..63 (`<<` during
+  any rewind playback, auto or manual); the fuel bar x 68..99 (Anti-White
+  1 px frame x 68..99, y 1..6; inner fill 30x4 at x 69..98, y 2..5, Coral,
+  width `fuel * 30 / fuel_max` rounded down but at least 1 px while fuel
+  > 0; in hardcore the fill is red while `fuel < fatal_floor`); rewinds as
+  right-aligned icons as before, or `HARD` in Coral at x 128 in hardcore.
+  `<<` leaves the HUD center so the bar stays visible during playback.
+- **Bombs removed everywhere**: player stock, timer, awards and
+  `try_bomb`; the fx ring and flash; `bullets.clear_enemy_bullets`; HUD
+  slots; exports `debug_bombs` and `debug_bomb_timer`; scripts `m2_bomb`
+  and `m3_bomb_boss`; the B entries in `m2_play` and `m4_identity`.
+  `hud.png` frames 1 and 2 stay in the sheet unused (ASSETS.md notes them
+  free for reuse). The boss loses nothing: bolts were always the main
+  damage source.
+
+### Numbers (SPEC.md 5.2, 5.3)
+
+| Quantity               | Value                                  |
+|------------------------|----------------------------------------|
+| `fuel_max`, start fuel | 180 ticks (3 s)                        |
+| Refill                 | +1 fuel per 10 live ticks (`fuel_refill_every`) |
+| Graze                  | +2 fuel per graze (`graze_fuel`)       |
+| Stage clear            | fuel = `fuel_max`                      |
+| Manual step            | 2 ticks per frame (`rewind.ticks_per_frame`) |
+| Auto depth, normal     | 120, free                              |
+| Auto depth, hardcore   | min(120, fuel), charged                |
+| `fatal_floor`          | 45 ticks                               |
+
+### Tracks (run in parallel, disjoint files)
+
+| Track   | Owner        | Files                                                                                     |
+|---------|--------------|-------------------------------------------------------------------------------------------|
+| A core  | Opus agent   | `cart/src/main.zig`, `player.zig`, `fx.zig`, `bullets.zig`, comment lines in `world.zig`, `enemies.zig`, `waves.zig` |
+| B show  | Opus agent   | `cart/src/hud.zig`, `rewind.zig`, `draw.zig` (helpers only)                               |
+| C tools | Opus agent, after A and B land | `tools/scripts/*` (delete, re-pin, add m5_*), `docs/RUNNING.md`, `docs/preview_m5.gif` |
+| lead    | this session | `PLAN.md`, `SPEC.md`, `ASSETS.md`, `README.md`, commits, tag `m5`                          |
+
+### Interface A -> B (A calls, B implements; B draws only, never simulates)
+
+```zig
+// hud.zig (B)
+/// HUD row per the layout above. `rewinds` is ignored when `hardcore`.
+pub fn draw_hud(rewinds: u32, fuel: u32, fuel_max: u32, fatal_floor: u32, hardcore: bool) void;
+/// Title card: "A PLAY" at y 92 and "B HARDCORE" at y 104 (both blinking
+/// like the old "PRESS A", B line in Coral) replace "PRESS A"; the rest as M0.
+pub fn draw_title(tick: u32) void;
+
+// rewind.zig (B)
+pub const report_ticks: u32 = 20;       // unchanged
+pub const playback_frames: u32 = 60;    // now the MAXIMUM; main passes the actual count
+pub const ticks_per_frame: u32 = 2;     // shared by auto playback and the manual hold
+pub const resume_invuln: u32 = 60;
+pub const go_ticks: u32 = 30;
+pub fn draw_report(hit: collide.Hit, age: u32) void;      // unchanged
+/// As M4, but `<<` blinks in the status slot (Anti-Black patch x 48..63,
+/// then "<<" at x 48, y 0 in Coral); the fuel bar is left visible.
+pub fn draw_playback(hit: collide.Hit, frame: u32) void;
+/// Over the restored scene + HUD during a hold-B rewind, `frame` 1.. since
+/// the hold began: `draw.darken_scanlines` and the same `<<` blink. No bar.
+pub fn draw_manual(frame: u32) void;
+/// DYING bar. `age` 0..59: `message(kind)` while age < 30, then
+/// "UNRECOVERABLE" (13 chars) in the same bar and colour. Normal mode keeps
+/// calling `draw_bar(kind)`.
+pub fn draw_fatal_bar(kind: enemies.Kind, age: u32) void;
+pub fn draw_bar(kind: enemies.Kind) void;                 // unchanged
+pub fn draw_go(ticks_left: u32) void;                     // unchanged
+```
+
+`fx.draw_bg_or_flash` and `fx.draw_bomb_ring` go away (A); `draw_scene`
+calls `draw.draw_bg()` directly. B must not reference `player.bombs`,
+`bomb_timer` or `gfx.hud` frames 1 and 2.
+
+### State machine and meta-state (A, `main.zig`)
+
+`State` gains `manual = 5`. New meta: `fuel: u32`, `fuel_acc: u32` (live
+ticks toward the next refill), `graze_high_water: u32`,
+`clear_high_water: u32`, `hardcore: bool`, `manual_frame: u32`,
+`rewind_frames: u32` (playback frames of the auto rewind in progress).
+`new_game(hardcore)` resets them (fuel full) and sets `rewinds` to
+`start_rewinds` in normal mode, 0 in hardcore.
+
+- TITLE: A or Start -> `new_game(false)`; B -> `new_game(true)`.
+- PLAYING: Start -> PAUSED. Else if `input.meta_pressed(.b)` and
+  `can_step()` -> `state = .manual`, `manual_frame = 0`, `manual_step()`.
+  Else `input.update(c)`, `simulate(.live)`.
+- MANUAL: if `input.meta.current.b` and `can_step()` -> `manual_step()`;
+  else `manual_resume()`.
+- `can_step()`: `fuel >= ticks_per_frame and game_tick >=
+  history.earliest_tick() + ticks_per_frame`.
+- `manual_step()`: `history.restore(game_tick - ticks_per_frame)` (a false
+  return resumes instead), `fuel -= ticks_per_frame`, `manual_frame += 1`.
+- `manual_resume()`: `history.invalidate_after(game_tick)`,
+  `history.checkpoint()`, `state = .playing`.
+- `simulate(.live)`, after the tick: refill (`fuel_acc += 1`; at
+  `fuel_refill_every` reset it and `fuel = min(fuel + 1, fuel_max)`), graze
+  grant (`fuel += graze_fuel * (grazes - graze_high_water)` capped, then
+  raise the high water) and the clear refill (`stage_clears >
+  clear_high_water` -> `fuel = fuel_max`, raise). All three live only.
+- `on_hit`, normal mode: as M4 (`rewinds > 0` -> rewind of depth 120, else
+  DYING). Hardcore: as decided above; `rewinds` stays 0.
+- `step_rewind` uses `rewind_frames` in place of `rewind.playback_frames`.
+- DYING draws `rewind.draw_fatal_bar(fatal_kind, dying_len - dying_ticks)`
+  in hardcore, `rewind.draw_bar` otherwise. MANUAL draws the scene, then
+  `rewind.draw_manual(manual_frame)`.
+- `debug_history_check` treats `.manual` like `.playing` (the world is a
+  restored history state, so 0 is expected).
+
+Exports (wasm): keep every existing one except `debug_bombs` and
+`debug_bomb_timer`; add `debug_fuel`, `debug_hardcore` (0/1),
+`debug_manual_frame`. `debug_state`: 5 = MANUAL.
+
+### Harness (C, after A and B)
+
+- Delete `m2_bomb` and `m3_bomb_boss`. Strip the B entries from
+  `m2_play.json` and `m4_identity.json`, drop `debug_bombs` from every
+  `.args`, and re-pin the values that moved (the runs change: the bombs
+  used to clear the 2240 and 3380 waves). Keep the identity samples.
+  `m3_boss.args` loses its `debug_bombs == 3` expectation. Re-pin
+  `m4_early` for the 27-frame playback (resume at update 84 + 20 + 27 =
+  131, `debug_game_tick == 0`, `debug_rewinds == 2`).
+- `m5_manual`: the `m2_hit` input plus B held for 20 updates starting
+  around 700 (before the beetle spread hits at 748). Pins: state 1 the
+  frame before, 5 on the press frame, `debug_game_tick` 40 lower and
+  `debug_fuel == 140` on release, state 1 the frame after release, and a
+  `debug_history_check == 0` sample during the hold and one after. The
+  idle ship then meets the spread again later (state 4 at a pinned tick).
+- `m5_empty`: B held for 200 updates from 400: fuel reaches 0 after 90
+  frames, state returns to 1 while B is still down, `debug_game_tick` is
+  180 lower than at the press, and 100 updates later `debug_fuel == 10`.
+- `m5_hardcore`: B at 30 on the title, `debug_hardcore == 1`,
+  `debug_rewinds == 0`, idle. First hit at 748: state 4, `debug_fuel ==
+  60` after the hit. The idle ship replays its fate: second hit rewinds by
+  the fuel left (about 80 with refills), fuel 0; third hit, fuel under 45:
+  state 3 then 0. Pin the ticks by running.
+- `m5_graze`: hold B briefly early (fuel 160), then fly the `m2_play`
+  sweep; pin `debug_fuel` at a tick where `debug_grazes > 0` and show it
+  exceeds 160 plus the refill alone.
+- `docs/preview_m5.gif`: a manual rewind, updates 690..760 of `m5_manual`,
+  every 2 frames.
+
+### Verification for M5
+
+`tools/check.sh` green (all scripts, including the re-pinned M2..M4
+ones); `docs/preview_m5.gif`; `@sizeOf(World)` shrinks (bomb fields gone);
+ELF text within a few KB of M4. Adrian on hardware: the hold-B feel (2
+ticks per frame), the refill rate, the hardcore floor.
+
 ## Status
 
 - 2026-09-26: M0 scaffold committed. M1 plan written; stand-in sheets
@@ -766,3 +963,8 @@ the FPS overlay during a rewind with the bullet pool near full must read
   the mechanic working as designed. Needs Adrian: FPS overlay during a
   rewind on the badge; feel of the 20 + 60 tick timing. Next: M5 attract
   mode (title, autopilot, takeover, game over).
+- 2026-09-27: Adrian played m4 locally: "rewind feels great" (timing
+  confirmed). Adrian's call: drop the bomb, add a hold-B rewind paid from a
+  slowly refilling fuel bar, plus a hardcore mode with no lives where the
+  auto rewind spends fuel and a near-empty bar is fatal (floor 45, no
+  consolation refill). M5 planned above; attract mode becomes M6, polish M7.
