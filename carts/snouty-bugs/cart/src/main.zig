@@ -61,18 +61,27 @@ var graze_high_water: u32 = 0;
 var clear_high_water: u32 = 0;
 /// Frames spent in the current hold-B rewind (1 on the press frame).
 var manual_frame: u32 = 0;
+/// Hardcore game (SPEC.md 5.3, chosen with B on the title): no rewind
+/// stock; a hit rewinds as far as the fuel allows, or is fatal under
+/// `fatal_floor`.
+var hardcore: bool = false;
+/// Playback frames of the auto rewind in progress: half its depth,
+/// rounded up (60 for a full 120-tick rewind).
+var rewind_frames: u32 = rewind.playback_frames;
 
 const start_rewinds: u32 = 3;
 const max_rewinds: u32 = 5;
 const rewind_score_step: u32 = 20_000;
 const dying_len: u32 = 60;
-/// Game ticks a rewind goes back (SPEC.md 5.1).
+/// Game ticks an auto rewind goes back at most (SPEC.md 5.1).
 const rewind_depth: u32 = rewind.playback_frames * rewind.ticks_per_frame;
 /// Fuel numbers (PLAN.md M5 "Numbers"): 3 s of rewind, full at the start;
 /// +1 per 10 live ticks (empty to full in 30 s), +2 per graze.
 const fuel_max: u32 = 180;
 const fuel_refill_every: u32 = 10;
 const graze_fuel: u32 = 2;
+/// Hardcore: a hit met with less fuel than this is death (SPEC.md 5.3).
+const fatal_floor: u32 = 45;
 
 pub fn start() void {
     cart.set_vsync_enabled(1000.0 / 60.0);
@@ -86,8 +95,10 @@ pub fn update() void {
 
     switch (state) {
         .title => {
-            if (input.meta_pressed(.a) or input.meta_pressed(.b) or input.meta_pressed(.start)) {
-                new_game();
+            if (input.meta_pressed(.a) or input.meta_pressed(.start)) {
+                new_game(false);
+            } else if (input.meta_pressed(.b)) {
+                new_game(true);
             } else {
                 draw.tick_bg();
             }
@@ -135,7 +146,11 @@ pub fn update() void {
         },
         .dying => {
             draw_scene();
-            rewind.draw_bar(fatal_kind);
+            if (hardcore) {
+                rewind.draw_fatal_bar(fatal_kind, dying_len - dying_ticks);
+            } else {
+                rewind.draw_bar(fatal_kind);
+            }
         },
         .paused => {
             draw_scene();
@@ -161,8 +176,9 @@ pub fn update() void {
 
 /// A fresh World, except that the background and the input edge detector
 /// carry over so the sky scrolls on from the title and the button that
-/// started the game is not seen as a new press.
-fn new_game() void {
+/// started the game is not seen as a new press. Meta-state is reset for
+/// a normal or a hardcore game (no rewind stock), fuel full.
+fn new_game(hard: bool) void {
     const w = &world.w;
     const bg = w.bg;
     w.* = .{};
@@ -170,7 +186,8 @@ fn new_game() void {
     w.input = input.meta;
     const t: u32 = @truncate(cart.micros_since_boot());
     rng.seed(if (t == 0) 0x5EED else t);
-    rewinds = start_rewinds;
+    hardcore = hard;
+    rewinds = if (hard) 0 else start_rewinds;
     rewind_award_high_water = 0;
     fuel = fuel_max;
     fuel_acc = 0;
@@ -194,11 +211,12 @@ pub fn simulate(mode: world.Mode) void {
     bullets.update();
     bullets.update_enemy_bullets();
     const hit = collide.run();
-    // A live hit with a rewind in stock leaves the world as it is (the
+    // A live hit that will be rewound leaves the world as it is (the
     // restore replaces it); any other hit (god mode, death, or one met
     // while replaying history, which can only be a god-mode hit) removes
-    // the offender now, exactly where M3 did.
-    const rewinding = hit.by != .none and mode == .live and !god and rewinds > 0;
+    // the offender now, exactly where M3 did. Decided here, with the fuel
+    // the hit meets (before this tick's refill).
+    const rewinding = hit.by != .none and mode == .live and !god and can_auto_rewind();
     if (hit.by != .none and !rewinding) collide.remove_offender(hit);
     // audio/neopixel effects check `mode` here (M6)
     fx.update();
@@ -209,15 +227,32 @@ pub fn simulate(mode: world.Mode) void {
     if (mode == .live and hit.by != .none) on_hit(hit, rewinding);
 }
 
+/// A hit now would rewind rather than kill: a rewind in stock, or in
+/// hardcore fuel at or above the fatal floor.
+fn can_auto_rewind() bool {
+    return if (hardcore) fuel >= fatal_floor else rewinds > 0;
+}
+
 /// The ship was touched (live only). `rewinding` was decided in
-/// `simulate`: rewind stock, not god mode.
+/// `simulate` (`can_auto_rewind`, not god mode). Normal mode spends a
+/// rewind and goes back up to 120 ticks, fuel untouched; hardcore goes
+/// back as far as the fuel allows (at most 120) and spends that much.
 fn on_hit(hit: collide.Hit, rewinding: bool) void {
     if (god) return;
     if (rewinding) {
-        rewinds -= 1;
         rewind_hit = hit;
         rewind_hit_tick = world.w.game_tick;
-        rewind_target = @max(rewind_hit_tick -| rewind_depth, history.earliest_tick());
+        const reach = rewind_hit_tick - history.earliest_tick();
+        if (hardcore) {
+            const depth = @min(rewind_depth, fuel, reach);
+            fuel -= depth;
+            rewind_target = rewind_hit_tick - depth;
+        } else {
+            rewinds -= 1;
+            rewind_target = rewind_hit_tick - @min(rewind_depth, reach);
+        }
+        const tpf = rewind.ticks_per_frame;
+        rewind_frames = (rewind_hit_tick - rewind_target + tpf - 1) / tpf;
         rewind_age = 0;
         state = .rewind;
     } else {
@@ -229,14 +264,15 @@ fn on_hit(hit: collide.Hit, rewinding: bool) void {
     }
 }
 
-/// Extra rewind at 10,000 points and every 20,000 after (max 5). The
+/// Extra rewind at 10,000 points and every 20,000 after (max 5; never in
+/// hardcore, which has no stock). The
 /// threshold walks in the World in both modes; the stock is granted only
 /// live and only for a threshold above the high water, so a threshold
 /// crossed again after a rewind pays nothing.
 fn award_rewinds(mode: world.Mode) void {
     const p = &world.w.player;
     while (p.score >= p.next_rewind_score) {
-        if (mode == .live and p.next_rewind_score > rewind_award_high_water) {
+        if (mode == .live and !hardcore and p.next_rewind_score > rewind_award_high_water) {
             rewinds = @min(rewinds + 1, max_rewinds);
             rewind_award_high_water = p.next_rewind_score;
         }
@@ -293,13 +329,15 @@ fn manual_resume() void {
     state = .playing;
 }
 
-/// One REWIND frame (PLAN.md M4 state machine). Age 1..19: frozen bug
-/// report. 20..79: reverse playback frame k = age - 19, showing the world
-/// at hit_tick - 2k. 80: resume at the target with the invulnerability
-/// and the GO! pop, and a checkpoint so later restores see that grant.
+/// One REWIND frame (PLAN.md M4 state machine, M5 playback length).
+/// Age 1..19: frozen bug report. 20 .. 19 + rewind_frames: reverse
+/// playback frame k = age - 19, showing the world at hit_tick - 2k (never
+/// past the target). 20 + rewind_frames (80 for a full rewind): resume at
+/// the target with the invulnerability and the GO! pop, and a checkpoint
+/// so later restores see that grant.
 fn step_rewind() void {
     rewind_age += 1;
-    const playback_end = rewind.report_ticks + rewind.playback_frames;
+    const playback_end = rewind.report_ticks + rewind_frames;
     if (rewind_age < rewind.report_ticks) return;
     if (rewind_age < playback_end) {
         const k = rewind_age - rewind.report_ticks + 1;
@@ -332,7 +370,7 @@ fn draw_scene() void {
     bullets.draw_bolts(world.w.game_tick);
     bullets.draw_enemy_bullets();
     fx.draw_fx();
-    hud.draw_hud(rewinds, fuel, fuel_max, 0, false);
+    hud.draw_hud(rewinds, fuel, fuel_max, fatal_floor, hardcore);
     hud.draw_stage_text();
 }
 
@@ -360,6 +398,7 @@ comptime {
         @export(&debug_earliest_tick, .{ .name = "debug_earliest_tick" });
         @export(&debug_fuel, .{ .name = "debug_fuel" });
         @export(&debug_manual_frame, .{ .name = "debug_manual_frame" });
+        @export(&debug_hardcore, .{ .name = "debug_hardcore" });
     }
 }
 
@@ -450,6 +489,9 @@ fn debug_fuel() callconv(.c) u32 {
 }
 fn debug_manual_frame() callconv(.c) u32 {
     return manual_frame;
+}
+fn debug_hardcore() callconv(.c) u32 {
+    return @intFromBool(hardcore);
 }
 
 /// Button state. Upstream's platform_wasm.zig exposes `controls` but never
