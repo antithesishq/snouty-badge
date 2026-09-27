@@ -23,13 +23,18 @@ const face_count = rings * segs;
 /// Light levels: intensity (level + 1) / 8.
 const levels = 8;
 
+/// Plain `[3]f32`, not `Vec3`: on the thumb target Zig lays a struct with
+/// `@Vector(3, f32)` fields out as 40 bytes while LLVM emits the comptime
+/// table with a 48-byte stride, so every face after the first was read
+/// from the wrong offset (found by badge-bench, 2026-09-27). Arrays have one
+/// layout everywhere.
 const Face = struct {
     idx: [4]u8,
     n: u8,
     /// Unit plane normal (outward).
-    normal: Vec3,
+    normal: [3]f32,
     /// A point on the face plane (unit sphere), for the backface test.
-    point: Vec3,
+    point: [3]f32,
     level: u8,
 };
 
@@ -130,7 +135,9 @@ pub fn draw_sphere(cam: *const camera.Camera, b: math.Mat3, centre: Vec3, radius
     const rel = centre - cam.pos;
     for (sphere.faces) |face| {
         // Visible when the eye is on the outer side of the face plane.
-        if (math.dot(face.normal, rel + face.point * splat(radius)) >= 0) continue;
+        const normal: Vec3 = face.normal;
+        const point: Vec3 = face.point;
+        if (math.dot(normal, rel + point * splat(radius)) >= 0) continue;
         var pv: [4]raster.Vertex = undefined;
         for (0..4) |i| pv[i] = .{ .p = vv[face.idx[i]], .u = 0, .v = 0 };
         raster.draw_polygon(pv[0..face.n], .{ .flat = pal[face.level] });

@@ -71,6 +71,12 @@ node tools/check_golden.mjs            # golden-image regression
 - Zig style follows upstream: snake_case functions, 4-space indent, `zig fmt`.
 - No allocation, no libm at runtime (`math.sin_angle`), no `f64` in the cart.
   Array repetition `**` does not parse in this Zig build; use `@splat`.
+- No `@Vector` fields in structs that live in comptime tables (arrays of
+  structs in `.rodata`): on thumb, Zig sizes such a struct differently
+  from the layout LLVM emits for the constant (40 vs 48 bytes for the
+  sphere `Face`), so every entry after the first is read misaligned. The
+  wasm build agrees with itself, so the simulator hides it. Use `[3]f32`
+  fields and convert at the use site (`render/mesh.zig`).
 - Randomness only through `rng.zig`, seeded once from `cart.rand()` in
   `start()`, so `preview.mjs --seed` reproduces runs exactly.
 - Never commit the generated `gfx.zig`; do commit `assets/gen/*.png`.

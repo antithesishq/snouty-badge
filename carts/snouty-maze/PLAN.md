@@ -774,3 +774,11 @@ four more unpacked sheets, spawn scratch). Deviations, all kept:
 - `textures.iris` is unpacked but nothing draws it yet (M4 polish).
 - Snouty placed by `debug_place` heads along the cell's first open side
   (the hook has no rng).
+- **Fix after the first `m3` tag** (badge-bench found it, same day): the
+  comptime sphere face table used `Vec3` fields; on the thumb target the
+  code stepped 40 bytes per face over a table emitted at 48, so faces
+  1..95 read garbage indices (past the stack into SRAM8/9, no fault, a
+  garbage sphere on hardware). Fields are `[3]f32` now; the table is
+  96 x 32 bytes, wasm output identical (goldens unchanged), `m3` re-tagged.
+  badge-bench's modelled cost: mean 11.3 ms, worst 15.4 ms of 16.7, so the
+  hardware fps numbers matter more than ever.
