@@ -57,8 +57,9 @@ pub const Enemy = struct {
     frame: u8 = 0,
     dir: fixed.Angle = 0,
     flash: u8 = 0,
-    /// Explicit padding so `sim.hash` sees no undefined bytes.
-    _pad: [3]u8 = @splat(0),
+    /// AI scratch bytes (ai.zig documents their meaning per kind); they
+    /// double as explicit padding so `sim.hash` sees no undefined bytes.
+    aux: [3]u8 = @splat(0),
 };
 
 pub const Projectile = struct {
@@ -68,8 +69,8 @@ pub const Projectile = struct {
     vy: Fixed = 0,
     kind: u8 = 0, // 0 none, 1 spit, 2 web
     ttl: u8 = 0,
-    /// Explicit padding so `sim.hash` sees no undefined bytes.
-    _pad: [2]u8 = @splat(0),
+    /// projectiles.zig scratch; doubles as explicit padding.
+    aux: [2]u8 = @splat(0),
 };
 
 pub const Door = struct {
@@ -99,9 +100,14 @@ pub const GameState = struct {
     /// Door kind (1 coral, 2 iris, 3 gold) the player bumped this tick
     /// without the key, 0 = none. Cleared at the start of every `step`.
     last_locked: u8 = 0,
-    /// Explicit padding so `sim.hash` sees no undefined bytes.
-    _pad: u8 = 0,
+    /// Ticks of red "hurt" flash left (set by `sim.damage_player`).
+    hurt: u8 = 0,
+    /// Tick of the player's last zapper/spray shot (enemies wake on
+    /// gunfire within 8 cells), `no_shot` if none yet.
+    last_shot: u32 = no_shot,
 };
+
+pub const no_shot: u32 = 0xFFFF_FFFF;
 
 /// `sim.hash` runs FNV-1a over the raw bytes of GameState, so no struct
 /// in it may contain compiler padding (its bytes would be undefined).

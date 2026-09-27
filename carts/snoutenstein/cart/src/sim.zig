@@ -2,14 +2,16 @@
 //! Pure over GameState, 16.16 fixed point only, no cart-api import, so
 //! `zig test cart/src/sim.zig` runs on the host and replays are
 //! bit-identical between the simulator and the badge (SPEC.md 9.3).
-//! M1: turning, walking with sliding collision, doors, pickups, rewind
-//! meter regeneration. M2: weapons (swatter, zapper, spray) and hit
-//! reactions on standing enemies. Enemy AI and projectiles are M3.
+//! Movement with sliding collision, doors, pickups, weapons, player damage
+//! and the rewind meter live here; enemy behaviour is ai.zig and
+//! projectiles are projectiles.zig, both called from `step`.
 const std = @import("std");
 const fixed = @import("fixed.zig");
 const state = @import("state.zig");
 const levels = @import("levels.zig");
 const level_parse = @import("level_parse.zig");
+const ai = @import("ai.zig");
+const projectiles = @import("projectiles.zig");
 
 pub const GameState = state.GameState;
 const Fixed = fixed.Fixed;
@@ -33,6 +35,10 @@ pub const door_open = 2;
 pub const door_closing = 3;
 
 pub const max_hp = 100;
+/// Ticks the view flashes red after the player is hurt.
+pub const hurt_ticks: u8 = 4;
+/// Enemies wake on gunfire within this many cells (SPEC.md section 8).
+pub const gunfire_radius: Fixed = fixed.from_int(8);
 pub const max_zapper = 99;
 pub const max_spray = 30;
 pub const max_rewind = 600;
@@ -117,21 +123,27 @@ pub fn init(s: *GameState, level: *const Level, level_index: u8, seed: u32) void
 
 pub fn step(s: *GameState, level: *const Level, b: state.Buttons) void {
     s.last_locked = 0;
+    if (s.hurt > 0) s.hurt -= 1;
     const p = &s.player;
     if (b.left) p.angle -%= turn_speed;
     if (b.right) p.angle +%= turn_speed;
     var move: Fixed = 0;
     if (b.up) move = walk_speed;
     if (b.down) move = -back_speed;
+    // A spider web freezes movement, not turning (SPEC.md section 8).
+    if (p.frozen > 0) {
+        p.frozen -= 1;
+        move = 0;
+    }
     if (move != 0) {
-        move_x(s, level, fixed.mul(fixed.cos(p.angle), move));
-        move_y(s, level, fixed.mul(fixed.sin(p.angle), move));
+        _ = move_circle(s, level, &p.x, &p.y, fixed.mul(fixed.cos(p.angle), move), fixed.mul(fixed.sin(p.angle), move), radius, .player);
     }
     update_doors(s, level);
     enter_cell(s, level);
     // Enemies first: a hit this tick shows its flash/pain/dying frame at
     // full length (dying lasts exactly `dying_ticks` steps after the hit).
-    update_enemies(s);
+    ai.update(s, level);
+    projectiles.update(s, level);
     update_weapon(s, level, b);
     regen_rewind(s);
     p.prev = b;
@@ -146,55 +158,66 @@ pub fn is_solid(s: *const GameState, level: *const Level, cx: i32, cy: i32) bool
     return c != 0; // reserved values count as solid
 }
 
-/// Move along x by `dx` (|dx| < radius), then push the player's box back
-/// out of the column it entered if any overlapped cell there is solid.
-fn move_x(s: *GameState, level: *const Level, dx: Fixed) void {
-    if (dx == 0) return;
-    const p = &s.player;
-    var nx = p.x + dx;
-    // Rows overlapped by the box [y - r, y + r) (the upper edge is exclusive).
-    const r0 = fixed.to_int(p.y - radius);
-    const r1 = fixed.to_int(p.y + radius - 1);
-    const col = if (dx > 0) fixed.to_int(nx + radius - 1) else fixed.to_int(nx - radius);
+/// Who is moving: the player opens any door it has the key for and flags
+/// locked ones; enemies open plain doors only.
+pub const Mover = enum { player, enemy };
+
+/// Move the circle at (x, y) of half-size `r` by (dx, dy) with sliding:
+/// x first, then y, each axis pushing the box back out of a solid cell it
+/// entered (|dx|, |dy| < r). Bumped doors are opened per `who`. Returns
+/// true if either axis was blocked.
+pub fn move_circle(s: *GameState, level: *const Level, x: *Fixed, y: *Fixed, dx: Fixed, dy: Fixed, r: Fixed, who: Mover) bool {
     var blocked = false;
-    var row = r0;
-    while (row <= r1) : (row += 1) {
-        if (is_solid(s, level, col, row)) {
-            blocked = true;
-            bump(s, level, col, row);
+    if (dx != 0) {
+        var nx = x.* + dx;
+        // Rows overlapped by the box [y - r, y + r) (the upper edge is exclusive).
+        const r0 = fixed.to_int(y.* - r);
+        const r1 = fixed.to_int(y.* + r - 1);
+        const col = if (dx > 0) fixed.to_int(nx + r - 1) else fixed.to_int(nx - r);
+        var hit = false;
+        var row = r0;
+        while (row <= r1) : (row += 1) {
+            if (is_solid(s, level, col, row)) {
+                hit = true;
+                bump(s, level, col, row, who);
+            }
         }
+        if (hit) nx = if (dx > 0) fixed.from_int(col) - r else fixed.from_int(col + 1) + r;
+        x.* = nx;
+        blocked = blocked or hit;
     }
-    if (blocked) nx = if (dx > 0) fixed.from_int(col) - radius else fixed.from_int(col + 1) + radius;
-    p.x = nx;
+    if (dy != 0) {
+        var ny = y.* + dy;
+        const c0 = fixed.to_int(x.* - r);
+        const c1 = fixed.to_int(x.* + r - 1);
+        const row = if (dy > 0) fixed.to_int(ny + r - 1) else fixed.to_int(ny - r);
+        var hit = false;
+        var col = c0;
+        while (col <= c1) : (col += 1) {
+            if (is_solid(s, level, col, row)) {
+                hit = true;
+                bump(s, level, col, row, who);
+            }
+        }
+        if (hit) ny = if (dy > 0) fixed.from_int(row) - r else fixed.from_int(row + 1) + r;
+        y.* = ny;
+        blocked = blocked or hit;
+    }
+    return blocked;
 }
 
-fn move_y(s: *GameState, level: *const Level, dy: Fixed) void {
-    if (dy == 0) return;
-    const p = &s.player;
-    var ny = p.y + dy;
-    const c0 = fixed.to_int(p.x - radius);
-    const c1 = fixed.to_int(p.x + radius - 1);
-    const row = if (dy > 0) fixed.to_int(ny + radius - 1) else fixed.to_int(ny - radius);
-    var blocked = false;
-    var col = c0;
-    while (col <= c1) : (col += 1) {
-        if (is_solid(s, level, col, row)) {
-            blocked = true;
-            bump(s, level, col, row);
-        }
-    }
-    if (blocked) ny = if (dy > 0) fixed.from_int(row) - radius else fixed.from_int(row + 1) + radius;
-    p.y = ny;
-}
-
-/// The player walked into a solid cell; if it is a door, try to open it.
-fn bump(s: *GameState, level: *const Level, cx: i32, cy: i32) void {
+/// Something walked into a solid cell; if it is a door, try to open it.
+fn bump(s: *GameState, level: *const Level, cx: i32, cy: i32, who: Mover) void {
     const c = level.cell(cx, cy);
     if (!Level.is_door(c)) return;
     const i = Level.door_index(c);
     const d = &s.doors[i];
     if (d.phase != door_closed and d.phase != door_closing) return;
     const kind = level.doors[i].kind;
+    if (who == .enemy) {
+        if (kind == .plain) d.phase = door_opening;
+        return;
+    }
     const need: u8 = switch (kind) {
         .coral => 1,
         .iris => 2,
@@ -292,40 +315,11 @@ fn regen_rewind(s: *GameState) void {
 
 // ---------------------------------------------------------------- combat
 
-fn living(e: *const state.Enemy) bool {
+pub fn living(e: *const state.Enemy) bool {
     return e.hp > 0 and switch (e.state) {
         .dying, .dead => false,
         else => true,
     };
-}
-
-/// Advance hit reactions and own `frame`. M2 enemies stand still.
-fn update_enemies(s: *GameState) void {
-    for (&s.enemies) |*e| {
-        if (e.flash > 0) e.flash -= 1;
-        switch (e.state) {
-            // Frame set on the dying -> dead transition; unused slots stay 0.
-            .dead => {},
-            .dying => {
-                if (e.timer > 0) e.timer -= 1;
-                if (e.timer == 0) {
-                    e.state = .dead;
-                    e.frame = frame_dead;
-                } else {
-                    e.frame = frame_dying + (dying_ticks - e.timer) / dying_frame_ticks;
-                }
-            },
-            .pain => {
-                if (e.timer > 0) e.timer -= 1;
-                if (e.timer == 0) {
-                    e.state = .idle;
-                    e.frame = frame_idle;
-                } else e.frame = frame_pain;
-            },
-            .attack => e.frame = frame_attack,
-            .dormant, .idle, .alert, .chase => e.frame = frame_idle,
-        }
-    }
 }
 
 /// Apply `d` damage to enemy `i`: flash, pain, or dying (counts the kill).
@@ -346,7 +340,28 @@ pub fn damage_enemy(s: *GameState, i: usize, d: i16) void {
     }
 }
 
-fn next_rand(s: *GameState) u32 {
+/// Hurt the player: HP floors at 0 (death is the caller's business: main
+/// freezes time at hp 0) and the view flashes red for `hurt_ticks`.
+pub fn damage_player(s: *GameState, amount: i16) void {
+    const p = &s.player;
+    if (p.hp <= 0) return;
+    p.hp = @max(0, p.hp - amount);
+    s.hurt = hurt_ticks;
+}
+
+/// Straight-line visibility between two points: no wall or shut door on
+/// the segment and the segment shorter than `max_ray`.
+pub fn line_of_sight(s: *const GameState, level: *const Level, x0: Fixed, y0: Fixed, x1: Fixed, y1: Fixed) bool {
+    const rx = x1 - x0;
+    const ry = y1 - y0;
+    const d2 = @as(i64, rx) * rx + @as(i64, ry) * ry;
+    const w = @as(i64, wall_distance(s, level, x0, y0, fixed.atan2(ry, rx)));
+    if (w >= max_ray) return d2 < w * w;
+    return d2 < w * w;
+}
+
+/// The simulation's xorshift32 (SPEC.md 9.3: never cart.rand).
+pub fn next_rand(s: *GameState) u32 {
     var x = s.rng;
     x ^= x << 13;
     x ^= x >> 17;
@@ -387,12 +402,14 @@ fn update_weapon(s: *GameState, level: *const Level, b: state.Buttons) void {
         .zapper => {
             if (p.ammo_zapper == 0) return;
             p.ammo_zapper -= 1;
+            s.last_shot = s.tick;
             const ray = cast(s, level, p.angle, max_ray);
             if (ray) |i| damage_enemy(s, i, zapper_damage);
         },
         .spray => {
             if (p.ammo_spray == 0) return;
             p.ammo_spray -= 1;
+            s.last_shot = s.tick;
             const span: u32 = 2 * @as(u32, spray_jitter) + 1;
             for (0..spray_pellets) |_| {
                 const j: i32 = @as(i32, @intCast(next_rand(s) % span)) - spray_jitter;
