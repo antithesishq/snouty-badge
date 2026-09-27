@@ -507,3 +507,9 @@ Level grid 64x64 with Wolf3D import (section 6.1): yes.
   portrait, first-person weapon, intermission and victory, rewind core
   module with host tests) tagged `m2`, `docs/preview_m2.gif`. Hardware
   gate still pending.
+- 2026-09-27: M3 (enemy AI for all five bugs, projectiles, player damage,
+  death freeze with a placeholder restart, Build Farm / Staging /
+  Production, audio and neopixels, determinism harness) tagged `m3`,
+  `docs/preview_m3.gif`. Levels are generated on the host now (the comptime
+  parser broke the macOS compiler). Hardware gate still pending; the
+  emulated benchmark shows 23% of the frame budget used at worst.

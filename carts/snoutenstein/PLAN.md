@@ -621,3 +621,16 @@ unreachable secrets: print, do not fail, for `wolf_*`).
   parse mini-levels at run time; the comptime nibble checks became a
   runtime `debug_nibble_ok`. Adrian pulls artifacts from the VM meanwhile.
 - 2026-09-27: M3 plan written; pre-work committed; four tracks launched.
+- 2026-09-27: M3 done and tagged `m3`. All four tracks landed. ELF text
+  89.2 KB, bss 16.9 KB, GameState still 1,368 bytes. Host tests: sim 22,
+  ai 9, projectiles 5, rewind 7, level_parse 4 (49 in the largest
+  aggregate run). Bench (modelled): Build Farm opening mean 2.61 ms,
+  worst 3.85 ms of 16.7 (23%); see the gnat run below. Deviations: enemies
+  spawn `.idle` and AI treats "idle without the awake bit" as dormant;
+  `Enemy.dir` holds attack cooldowns except for wasps; per-kind stop
+  distances; melee and teleport require line of sight; the boss spit fan
+  deals 8 (the spit kind), not 10; `#` noise shapes play as sawtooth and
+  sweeps step every 3 ticks (tone2 has neither). Balance is untuned: three
+  gnats take 65 HP in 7 s in the Build Farm opening (SPEC values); tune in
+  M5 from play, the knobs are the `tuning` table in ai.zig. Test level key
+  chain fixed (coral -> iris -> gold). Next: M4 rewind wiring.

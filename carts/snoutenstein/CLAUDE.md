@@ -11,9 +11,11 @@ CLAUDE.md files have the long explanations, this one summarises.
 ## Layout
 
 - `cart/src/main.zig` — entry, top-level modes, wasm shims, debug exports.
-- `cart/src/fixed.zig`, `state.zig`, `sim.zig`, `levels.zig` — the simulation.
-  Pure Zig, no cart-api import, `zig test cart/src/sim.zig` runs on the host.
-- `cart/src/render/` — raycaster, textures, sprites, HUD (cart-api users).
+- `cart/src/fixed.zig`, `state.zig`, `sim.zig`, `ai.zig`, `projectiles.zig`,
+  `rewind.zig`, `levels.zig` — the simulation. Pure Zig, no cart-api import,
+  `zig test cart/src/<file>.zig` runs on the host.
+- `cart/src/render/` — raycaster, textures, sprites, HUD (cart-api users);
+  `cart/src/audio.zig` — tone2 and neopixels, driven by diffing GameState.
 - `cart/src/levels/*.txt` — ASCII levels, the source of truth. They are NOT
   parsed at comptime: `tools/gen_levels.sh` (runs `cart/src/gen_levels.zig`
   on the host through `cart/src/level_parse.zig`) writes
@@ -24,7 +26,11 @@ CLAUDE.md files have the long explanations, this one summarises.
 - `cart/build/convert_gfx.zig`, `cart/src/packed_int_array.zig` — upstream copies.
 - `assets/gen/*.png` — build inputs (committed); `tools/prepare_assets.py` writes them.
 - `tools/` — `preview.mjs` (headless wasm -> PNG + export assertions),
-  `serve-cart.mjs`, `make_gif.py`, `import_wolf.py`, input scripts in `tools/scripts/`.
+  `check_determinism.mjs`, `check_level.py`, `gen_levels.sh`, `serve-cart.mjs`,
+  `make_gif.py`, `import_wolf.py`, input scripts in `tools/scripts/`;
+  `tools/check.sh` runs everything. Performance: `../badge-bench/bench.sh
+  zig-out/firmware/snoutenstein.elf --script tools/scripts/X.json --symbols`
+  (modelled floor; tune knobs with headroom, see PLAN.md status lines).
 - `../sycl-badge/` — upstream SDK, read-only path dependency.
 
 ## Hardware (SYCL Badge V2)
