@@ -185,6 +185,214 @@ Gate (Adrian, on hardware): flash the UF2, press A, walk the long
 corridor at the bottom of the test level, photograph the debug bar. FPS
 overlay (joystick click) must read 60 and RENDER must stay under 8,000 us.
 
+## M2 World (started 2026-09-27)
+
+Goal: the game loop without enemies that fight back. Sprites (pickups,
+standing enemies, projectiles) drawn as depth-clipped billboards, the real
+status bar with the portrait, the first-person weapon, swatter and zapper
+(and spray, since it is the same hitscan code) that hurt and kill the
+standing bugs, exit door -> intermission -> next level -> victory. The
+rewind core (`rewind.zig`) starts early as a host-tested module because it
+is pure sim-side code; wiring B-hold into `main.zig` stays M4. Nothing here
+depends on the M1 hardware gate: if the gate forces the 80-ray fallback,
+only `view.zig`'s column loop changes.
+
+### Tracks (parallel, disjoint files; agents do not commit)
+
+| Track | Owner       | Files                                                                                  |
+|-------|-------------|----------------------------------------------------------------------------------------|
+| A sprites | Opus agent | new `cart/src/render/sprites.zig`, `render/view.zig` (call sprites after walls), `render/textures.zig` (additions: sprite palettes) |
+| B combat  | Opus agent | `cart/src/sim.zig`, `state.zig` (append only), `fixed.zig` (additions), new `cart/src/combat.zig` if wanted |
+| C hud     | Opus agent | `cart/src/render/hud.zig`, new `render/blit.zig`, new `render/weapon.zig`, new `render/portrait.zig` if wanted |
+| D rewind  | Opus agent | new `cart/src/rewind.zig` (pure, host tests), `tools/check_determinism.mjs` stub is M4 |
+| lead      | this session | `main.zig`, `levels.zig`, `levels/test.txt`, `tools/scripts/m2_*.json`, `tools/check.sh`, `PLAN.md`, `SPEC.md` status, `docs/*.gif`, commits, tag |
+
+Concurrency note: all tracks share one working tree. A `zig build` may
+fail in another track's half-edited file; wait and retry, and lean on
+`zig test` for the sim-side modules. `zig test cart/src/sim.zig` and
+`zig test cart/src/rewind.zig` never need cart-api.
+
+### Contract: sprites (track A)
+
+- `sprites.draw(s: *const GameState, level: *const Level, px: f32, py: f32,
+  dx: f32, dy: f32)` is called by `view.draw` after the wall pass; it reads
+  `view.depth` (perpendicular wall distance per column) and clips every
+  sprite column where `z >= depth[x]`. `view.draw`'s signature is unchanged.
+- Camera transform as in Lode's tutorial: `rel = (sx - px, sy - py)`,
+  `z = rel . dir` (perpendicular distance), `tx = rel . plane / tan(fov/2)`
+  normalised so screen x = `80 * (1 + tx / z)`. Skip sprites with `z < 0.2`
+  or `z > raycast.range` or fully off-screen. Sort visible sprites back to
+  front (insertion sort over a fixed 64-slot scratch array; drop the
+  farthest when over).
+- Screen height of a sprite with world size `size` (cells) is
+  `104 * size / z`; width the same. Anchors (confirms ASSETS.md section 10):
+  enemies size 1.0, bottom on the floor line (`52 + 52 / z`), so they fill
+  floor to ceiling like walls; boss size 1.5, bottom-anchored (its top
+  clips); spider size 1.0 top-anchored at the ceiling line (`52 - 52 / z`);
+  pickups size 0.5, bottom on the floor; projectiles size 0.25, centred on
+  the horizon (y 52).
+- Sources: enemies `gfx.bug_<kind>` cell `e.frame` (the sim owns `frame`;
+  sheet order walk, walk, attack, pain, death x3, boss +1 flicker); every
+  enemy is drawn whatever its `state`, including `.dead` (corpse frame is
+  whatever `frame` says) but not when `hp == 0 and state == .dead and
+  frame == 0` (an unused slot: `level.enemies.len` bounds the loop anyway,
+  use that). Pickups `gfx.pickups` cell `@intFromEnum(kind)` for each
+  `level.pickups[i]` with the present bit set. Projectiles `gfx.projectiles`
+  cell `0/1` (spit, alternate every 4 ticks) or `2/3` (web) for `kind 1/2`.
+- Texels: never `PackedIntSlice.get` per pixel. Read nibbles straight from
+  `sheet.indices.bytes` (`bytes[i >> 1]`, low nibble = even index; verify
+  the order once against `indices.get` in a test or comptime assert).
+  Per column: fixed source column `u`, step `v` in 16.16. Index 0 is
+  transparent. `e.flash > 0` draws every opaque texel Anti-White.
+- Palettes: per sheet `[16]Pixel` normal plus rewind and hurt tints built
+  in `textures.init()` with its existing `tint` helper; pick by
+  `view.shade_override` (null/0..3 -> normal, 4 -> rewind, 5 -> hurt).
+  Sprites are not distance-shaded (Wolf3D did not either).
+- Budget: no new `.bss` beyond palettes and the 64-slot scratch; the sheets
+  stay packed in `.text`.
+- Verification: `zig build`, then `preview.mjs --script tools/scripts/m1_walk.json`
+  frames show the pickups in the corridor rooms; a frame looking at the gnat
+  from the start (lead adds one at (6,3), see below) shows a 32 px-ish sprite
+  scaled down with distance and correctly hidden behind a wall when walking
+  past the doorway. Export `pub var drawn: u32` (sprites drawn last frame)
+  for `debug_sprites`.
+
+### Contract: combat (track B)
+
+- Enemy stats table `pub const enemy_stats: [5]EnemyStats` (hp per SPEC.md
+  section 8, `radius` 0.3 cells for hit tests) in `state.zig` or `sim.zig`.
+  `init` gives enemies their real `hp` and state `.idle` (M2: standing
+  targets; no AI). The sim owns `Enemy.frame` at all times: idle/alert/chase
+  frame 0 (M3 animates), pain 3, dying 4 -> 5 -> 6 over 8 ticks each, dead 6.
+- Hit reaction: damage -> `hp -= d`, `flash = 2`, `state = .pain`, `timer = 12`
+  (then back to `.idle`); `hp <= 0` -> `.dying` (`timer` drives the three
+  frames), then `.dead`; `s.kills += 1` on the dying transition. Dead
+  enemies are not targets and do not hold doors open (check
+  `door_occupied`).
+- Weapons (SPEC.md section 7). `A` held fires when `fire_cooldown == 0`;
+  cooldown = rate (swatter 24, zapper 12, spray 36); `pub fn fire_rate(w) u8`.
+  Zapper costs 1 charge, spray 1 can; with no ammo A does nothing. Select
+  (edge on `p.prev`) cycles swatter -> zapper -> spray -> swatter skipping
+  weapons with zero ammo (swatter never skipped; spray also needs `has_spray`).
+- Hitscan: `pub fn wall_distance(s, level, x, y, angle) Fixed`: fixed-point
+  DDA along the angle until a solid cell (walls; doors count solid while
+  `open < door_passable`), capped at 24 cells. Zapper: for each living
+  enemy compute the along-ray distance `t` and lateral offset; hit if
+  `t > 0`, `|lateral| < radius`, `t < wall_distance`; the smallest `t` takes
+  3 damage. Swatter: nearest living enemy with centre distance <= 1.2 and
+  within +-15 degrees of the facing (angle compare via `Angle` wrap), LOS by
+  the same wall check, 4 damage. Spray: 5 pellets, each at facing +
+  `rng` jitter in +-10 degrees (xorshift32 on `s.rng`), reach 6, 2 damage
+  each, same hit test. Nothing new uses f32.
+- Add to `Player`: nothing required beyond the existing fields; append new
+  fields with defaults only, keep `assert_no_padding` green, keep
+  `GameState` under 1.5 KB (say the new size in your report).
+- Tests (host): zapper kills a gnat in one shot and spends a charge;
+  cooldown blocks the next shot for 12 ticks; a wall between blocks the
+  shot; swatter hits at 1.0 cells and misses at 1.5 or 30 degrees off;
+  Select cycles and skips empty; spray spends one can and hits a beetle
+  at 3 cells for at least 2 damage; dying takes 24 ticks and increments
+  `kills`; the 600-tick script hash test still passes with firing added.
+
+### Contract: HUD, weapon overlay, blit (track C)
+
+- `blit.zig`: `pub fn cell(comptime sheet: type, comptime cw: u32,
+  comptime ch: u32, index: u32, x: i32, y: i32, opts: Opts) void`, palette
+  index 0 transparent, clipped, `Opts { dim: bool, white: bool }` (dim =
+  half brightness palette for missing keys). Nibble reads from
+  `indices.bytes` as in track A; the palette `[16]Pixel` per sheet at
+  comptime.
+- `hud.draw_bar(s: *const GameState)`: SPEC.md section 4 exactly, y 104..127
+  Anti-Black. x 0..31 HP `"{d}%"` in the 8x8 font over a 30x4 bar (green >
+  60, Coral > 25, red below); x 32..63 ammo icon (`hud.png` cell 3 zapper,
+  4 spray; swatter shows a dash) and number; x 64..95 portrait 24x24 with
+  a 2 px frame; x 96..119 three key slots (`hud.png` cells 0..2, dim when
+  missing); x 120..159 rewind meter 36x6 Iris fill over a dark trough,
+  `hud.png` cell 5 clock glyph left of it.
+- Portrait (`face.png`, SPEC.md section 10) frames: 0 healthy, 1 hurt (< 60),
+  2 critical (< 25), 3 ouch, 4 grin, 5 glance left, 6 glance right,
+  7 rewind, 8 dead. `hud.tick(s: *const GameState)` once per displayed
+  tick advances render-only state: hp dropped since last tick -> ouch 30
+  ticks; keys grew or `has_spray` flipped -> grin 45 ticks; idle glance
+  every 180..300 ticks for 40 ticks (own tiny LCG, not `s.rng`). Ouch beats
+  grin beats glance beats health tier. `hp <= 0` -> dead frame.
+- `hud.draw_title(tick)`: `title.png` (128x40) at (16, 16), tag line
+  "powered by deterministic replay" in Iris, blinking "PRESS A", small
+  "B: E1M1 demo" line while the M1 debug shortcut exists.
+- `hud.draw_intermission(s, level_name: []const u8, ticks: u32)`: full-screen
+  Anti-Black card: "LEVEL CLEAR", the level name, kills `x/y` (y from
+  `level.enemies.len`, passed in), time `mm:ss` from `s.tick / 60`, "PRESS A"
+  after 60 ticks. `hud.draw_victory(s, ticks)`: same shape, "ALL BUGS FIXED".
+- `hud.draw_render_us(us: u32)`: the M1 gate readout, 8x8 Coral text at the
+  top-left of the view (kept until the gate passes).
+- `weapon.draw(s: *const GameState, moving: bool)`: `weapons.png` 48x32 cell
+  `weapon * 3 + frame`, drawn before the status bar at x 56, bottom at
+  y 104 (+ bob). Fire frame: `fire_cooldown > rate * 2 / 3` -> frame 1,
+  `> rate / 3` -> frame 2, else 0, with `rate = sim.fire_rate(w)`. Bob:
+  render-only phase advanced while `moving`, y offset `+-2` on a 32-tick
+  cycle; never lifts the sleeve off the bottom edge (see ASSETS.md 10).
+- Verification: build, `preview.mjs` with the walk script shows the bar,
+  the weapon bobbing while walking and still when not, the portrait
+  glancing; with the combat script (lead) the zapper fire frames appear
+  and the ammo count drops.
+
+### Contract: rewind core (track D)
+
+`cart/src/rewind.zig`, pure (imports `state.zig`, `sim.zig`, `levels.zig`
+only; `zig test cart/src/rewind.zig` on the host). SPEC.md 9.2:
+
+- Constants `keyframe_every = 30`, `keyframe_count = 21`, `input_len = 640`,
+  `span = keyframe_every`. Storage: `[keyframe_count]GameState` ring keyed
+  by tick, `[input_len]Buttons` ring indexed by `tick % input_len`,
+  `[span]GameState` span cache. Comptime assert the total is <= 80 KB and
+  report the exact bytes.
+- Forward play API: `reset(s: *const GameState)` clears everything and
+  stores `s` as the first keyframe; `log_input(tick: u32, b: Buttons)`
+  before each `step` (the input applied at `tick`); `after_step(s)` stores
+  a keyframe when `s.tick % keyframe_every == 0`. `earliest() u32` is the
+  oldest tick still reachable (bounded by both rings).
+- Rewind API: `begin(s: *const GameState, level) void` enters rewind at
+  `s.tick` (fills the span cache by replaying from the keyframe at or
+  before `s.tick` with the logged inputs); `back(level) ?*const GameState`
+  returns the state one tick earlier, refilling the cache across keyframe
+  boundaries, `null` once `earliest()` is reached (caller then stays on the
+  last returned state); `current() *const GameState`; `commit(s: *GameState)`
+  copies the current cached state into `s` and drops keyframes and inputs
+  after it so forward play continues cleanly.
+- Self-check (SPEC.md 9.3): `check(s: *const GameState, level) bool` at a
+  keyframe tick re-simulates from the previous keyframe with the logged
+  inputs and compares `sim.hash`; `pub var desyncs: u32` counts failures.
+- Tests: 300 scripted ticks, rewind 100, commit, replay the same inputs
+  forward and match the hash of a straight 300-tick run; rewind across at
+  least two keyframe boundaries; `back` returns null exactly at
+  `earliest()`; a run of 700 ticks (ring wrap) still rewinds 600 and no
+  further; `check` is true on a clean run and false after poking a byte.
+
+### Lead work
+
+- `levels/test.txt`: one gnat at (6,3) in the start room so the combat
+  script is "press A". Update the parse test.
+- `main.zig`: modes `title, playing, paused, intermission, victory`;
+  `finished` -> intermission (5 s or A) -> `new_game(level + 1)` or victory
+  -> title. Calls `hud.tick`, `view.draw`, `weapon.draw`, `hud.draw_bar`,
+  `hud.draw_render_us` in that order. Debug exports add `debug_hp`,
+  `debug_kills`, `debug_weapon`, `debug_ammo`, `debug_level`,
+  `debug_sprites`, `debug_state_hash`.
+- Scripts: `m2_combat.json` (A from the start kills the gnat, Select
+  cycles, fire again), `m2_exit.json` (walk to the exit at the east side,
+  through the intermission into E1M1). `tools/check.sh` runs both with
+  `--expect "debug_kills == 1"` and `--expect "debug_level == 1"`.
+- GIF `docs/preview_m2.gif`, tag `m2`, pull-and-run note.
+
+### Verification for M2
+
+```
+tools/check.sh
+zig test cart/src/rewind.zig
+```
+plus the two new scripted runs inside `check.sh`.
+
+
 ## Status
 
 - 2026-09-26: M0 scaffold committed. M1 plan written; four tracks launched.
@@ -200,3 +408,4 @@ overlay (joystick click) must read 60 and RENDER must stay under 8,000 us.
   into; doors are passable at open >= 198 (22 ticks). Brief notes for the
   art agent are in ASSETS.md section 10. `tools/check.sh` runs the whole
   M1 verification. Next: hardware gate, then M2.
+- 2026-09-27: M2 plan written while the M1 hardware gate is pending; four tracks launched.
