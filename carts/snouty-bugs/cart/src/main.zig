@@ -1,8 +1,9 @@
-//! Snouty vs. the Bugs: M4 "Rewind". Title card, then stages against five
-//! enemy kinds and the Heisenbug, with graze, death, and the
-//! rewind: a hit with a rewind in stock shows the bug report, plays the
-//! last 120 ticks backward from `history.zig` and resumes 120 ticks before
-//! the hit. See SPEC.md for the game, PLAN.md for the contracts and
+//! Snouty vs. the Bugs: M5 "Rewind bar". Title card, then stages against
+//! five enemy kinds and the Heisenbug, with graze, death, and the rewind:
+//! a hit with a rewind in stock shows the bug report, plays the last 120
+//! ticks backward from `history.zig` and resumes 120 ticks before the hit;
+//! B held in play rewinds the world live, 2 ticks per frame, paid from a
+//! fuel bar. See SPEC.md for the game, PLAN.md for the contracts and
 //! CLAUDE.md for the toolchain.
 const cart = @import("cart-api");
 const draw = @import("draw.zig");
@@ -23,7 +24,7 @@ comptime {
     cart.export_start_code();
 }
 
-pub const State = enum(u32) { title = 0, playing = 1, paused = 2, dying = 3, rewind = 4 };
+pub const State = enum(u32) { title = 0, playing = 1, paused = 2, dying = 3, rewind = 4, manual = 5 };
 
 // Meta-state, outside the World (never rewound). Play state is `world.w`.
 var state: State = .title;
@@ -47,6 +48,19 @@ var rewind_hit: collide.Hit = .{};
 var rewind_hit_tick: u32 = 0;
 var rewind_target: u32 = 0;
 var rewind_age: u32 = 0;
+/// Rewind fuel in game ticks (SPEC.md 5.2). Meta, never in the World: a
+/// rewind moves the World's clock, so fuel kept inside it would be
+/// restored along with everything else and every rewind would be free.
+var fuel: u32 = fuel_max;
+/// Live ticks toward the next +1 refill.
+var fuel_acc: u32 = 0;
+/// Highest `w.player.grazes` / `w.waves.stage_clears` already paid out as
+/// fuel this game: a graze or clear rewound away and made again pays
+/// nothing (the `rewind_award_high_water` pattern).
+var graze_high_water: u32 = 0;
+var clear_high_water: u32 = 0;
+/// Frames spent in the current hold-B rewind (1 on the press frame).
+var manual_frame: u32 = 0;
 
 const start_rewinds: u32 = 3;
 const max_rewinds: u32 = 5;
@@ -54,6 +68,11 @@ const rewind_score_step: u32 = 20_000;
 const dying_len: u32 = 60;
 /// Game ticks a rewind goes back (SPEC.md 5.1).
 const rewind_depth: u32 = rewind.playback_frames * rewind.ticks_per_frame;
+/// Fuel numbers (PLAN.md M5 "Numbers"): 3 s of rewind, full at the start;
+/// +1 per 10 live ticks (empty to full in 30 s), +2 per graze.
+const fuel_max: u32 = 180;
+const fuel_refill_every: u32 = 10;
+const graze_fuel: u32 = 2;
 
 pub fn start() void {
     cart.set_vsync_enabled(1000.0 / 60.0);
@@ -76,10 +95,22 @@ pub fn update() void {
         .playing => {
             if (input.meta_pressed(.start)) {
                 state = .paused;
+            } else if (input.meta_pressed(.b) and can_step()) {
+                // The press frame rewinds instead of simulating, so a tap
+                // is exactly one step.
+                state = .manual;
+                manual_frame = 0;
+                manual_step();
             } else {
                 input.update(c);
                 simulate(.live);
             }
+        },
+        // The hold continues while B is down and fuel and history last;
+        // then play resumes (with B possibly still down: only a fresh
+        // press rewinds again). Joystick, A and Start are ignored.
+        .manual => {
+            if (input.meta.current.b and can_step()) manual_step() else manual_resume();
         },
         .paused => {
             if (input.meta_pressed(.start)) state = .playing;
@@ -110,6 +141,10 @@ pub fn update() void {
             draw_scene();
             hud.draw_pause();
         },
+        .manual => {
+            draw_scene();
+            rewind.draw_manual(manual_frame);
+        },
         .rewind => {
             draw_scene();
             if (rewind_age < rewind.report_ticks) {
@@ -137,14 +172,19 @@ fn new_game() void {
     rng.seed(if (t == 0) 0x5EED else t);
     rewinds = start_rewinds;
     rewind_award_high_water = 0;
+    fuel = fuel_max;
+    fuel_acc = 0;
+    graze_high_water = 0;
+    clear_high_water = 0;
+    manual_frame = 0;
     history.reset();
     state = .playing;
 }
 
 /// One tick of play, in the PLAN.md update order; the caller has already
 /// run `input.update` for it. `.live` ticks are logged (and keyframed) by
-/// `history.record` and may change meta-state (the rewind stock, the state
-/// machine). `.silent` ticks are `history.restore`'s catch-up replay: the
+/// `history.record` and may change meta-state (the rewind stock, the fuel,
+/// the state machine). `.silent` ticks are `history.restore`'s catch-up replay: the
 /// same world-side simulation with no history, meta-state, audio or light.
 pub fn simulate(mode: world.Mode) void {
     if (mode == .live) history.record();
@@ -165,6 +205,7 @@ pub fn simulate(mode: world.Mode) void {
     draw.tick_bg();
     world.w.game_tick +%= 1;
     award_rewinds(mode);
+    if (mode == .live) award_fuel();
     if (mode == .live and hit.by != .none) on_hit(hit, rewinding);
 }
 
@@ -201,6 +242,55 @@ fn award_rewinds(mode: world.Mode) void {
         }
         p.next_rewind_score += rewind_score_step;
     }
+}
+
+/// Fuel grants, live ticks only (so never in pause, freeze, playback, a
+/// hold or DYING): +1 per `fuel_refill_every` ticks, `graze_fuel` per
+/// graze above the high water, and a full bar for a stage clear above it.
+fn award_fuel() void {
+    fuel_acc += 1;
+    if (fuel_acc >= fuel_refill_every) {
+        fuel_acc = 0;
+        fuel = @min(fuel + 1, fuel_max);
+    }
+    const grazes = world.w.player.grazes;
+    if (grazes > graze_high_water) {
+        fuel = @min(fuel + graze_fuel * (grazes - graze_high_water), fuel_max);
+        graze_high_water = grazes;
+    }
+    const clears = world.w.waves.stage_clears;
+    if (clears > clear_high_water) {
+        fuel = fuel_max;
+        clear_high_water = clears;
+    }
+}
+
+/// A hold-B step is possible: fuel for a whole step (an odd 1 stays and
+/// refills) and history that reaches that far back.
+fn can_step() bool {
+    return fuel >= rewind.ticks_per_frame and
+        world.w.game_tick >= history.earliest_tick() + rewind.ticks_per_frame;
+}
+
+/// One hold-B frame: the world as it was `ticks_per_frame` ticks ago, paid
+/// for tick by tick.
+fn manual_step() void {
+    if (!history.restore(world.w.game_tick - rewind.ticks_per_frame)) {
+        manual_resume();
+        return;
+    }
+    fuel -= rewind.ticks_per_frame;
+    manual_frame += 1;
+}
+
+/// B released (or fuel or history ran out): the rewound-away future is
+/// dropped and play goes on from here with live input on the next frame.
+/// No invulnerability and no `GO!`: the player chose the moment. The
+/// checkpoint keeps later restores from replaying across the resume.
+fn manual_resume() void {
+    history.invalidate_after(world.w.game_tick);
+    history.checkpoint();
+    state = .playing;
 }
 
 /// One REWIND frame (PLAN.md M4 state machine). Age 1..19: frozen bug
@@ -242,7 +332,7 @@ fn draw_scene() void {
     bullets.draw_bolts(world.w.game_tick);
     bullets.draw_enemy_bullets();
     fx.draw_fx();
-    hud.draw_hud(rewinds, 0, 1, 0, false);
+    hud.draw_hud(rewinds, fuel, fuel_max, 0, false);
     hud.draw_stage_text();
 }
 
@@ -268,6 +358,8 @@ comptime {
         @export(&debug_game_tick, .{ .name = "debug_game_tick" });
         @export(&debug_rewind_target, .{ .name = "debug_rewind_target" });
         @export(&debug_earliest_tick, .{ .name = "debug_earliest_tick" });
+        @export(&debug_fuel, .{ .name = "debug_fuel" });
+        @export(&debug_manual_frame, .{ .name = "debug_manual_frame" });
     }
 }
 
@@ -335,7 +427,8 @@ fn debug_history_check() callconv(.c) u32 {
     switch (state) {
         .title, .dying => return 2,
         .rewind => if (rewind_age < rewind.report_ticks) return 2,
-        .playing, .paused => {},
+        // A hold-B frame shows a restored history state: 0 expected.
+        .playing, .paused, .manual => {},
     }
     history_aside = world.w;
     if (!history.restore(world.w.game_tick)) return 2;
@@ -351,6 +444,12 @@ fn debug_rewind_target() callconv(.c) u32 {
 }
 fn debug_earliest_tick() callconv(.c) u32 {
     return history.earliest_tick();
+}
+fn debug_fuel() callconv(.c) u32 {
+    return fuel;
+}
+fn debug_manual_frame() callconv(.c) u32 {
+    return manual_frame;
 }
 
 /// Button state. Upstream's platform_wasm.zig exposes `controls` but never
