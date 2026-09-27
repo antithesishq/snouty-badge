@@ -8,4 +8,4 @@ press a button.
 - `ASSETS.md`: brief for the pixel-art agent.
 - `docs/RUNNING.md`: build, simulate, flash.
 
-Companion cart: [snouty-badge](https://github.com/antithesishq/snouty-badge).
+Companion cart: [snouty-run](../snouty-run), in the same repository.

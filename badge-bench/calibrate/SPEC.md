@@ -114,7 +114,7 @@ over USB captures the console; the OS prefixes `[CART]`. If no console is
 attached, the photo of page 1 and 2 is enough for the fit (the fitter
 accepts hand-typed numbers).
 
-**Emulator side.** `badge-bench calibrate/zig-out/firmware/badge-calibrate.elf
+**Emulator side.** `badge-bench zig-out/firmware/badge-calibrate.elf
 --frames 100 --json` produces the modelled count per frame; a small
 `calibrate/fit.py` pairs each frame with its kernel (frame order is fixed
 and also printed in the trace) and computes:
@@ -142,9 +142,9 @@ time). The README gains a "Calibrated on <date> against <badge id>" line.
 ```
 badge-bench/calibrate/
   SPEC.md            this file
-  build.zig, build.zig.zon   copied from snouty-reflections (path dep ../../sycl-badge),
-                     ReleaseFast, no assets, no options
-  src/os/system/tracy_protocol.zig -> ../../../../../sycl-badge/src/os/system/tracy_protocol.zig
+  build.zig          a cart module (`pub fn add`) copied from carts/snouty-reflections,
+                     added to the root build.zig's cart list; ReleaseFast, no assets,
+                     no options (the root package supplies the SDK and tracy symlink)
   cart/src/main.zig  schedule, pages, trace output, input
   cart/src/kernels.zig  K0..K19, each noinline with a comptime N
   cart/src/harness.zig  timing wrapper, min/median, checksum
@@ -157,7 +157,7 @@ script none.
 
 ## 7. Verification
 
-- `zig build` in `calibrate/`; `badge-bench` runs the ELF for 100 frames
+- `zig build -Dcart=badge-calibrate` at the repository root; `badge-bench` runs the ELF for 100 frames
   without fault and the per-frame modelled counts differ by kernel as
   expected (K4 about 14x K1 per op, etc.). This checks the harness before
   any hardware.
@@ -178,7 +178,7 @@ script none.
   badge-bench. Gate: emulator run clean, listings look right.
 - **C1**: K7 to K19, pages 2 and 3, `fit.py` with selftest,
   `--calibrate` in badge-bench, `dist/badge-calibrate.uf2` committed with
-  a one-paragraph tester note like `snouty-reflections/dist/README.md`.
+  a one-paragraph tester note like `carts/snouty-reflections/dist/README.md`.
 - **C2** (after a badge run): fitted table checked in, README updated,
   reflections timing-overlay number compared with the calibrated model,
   residual reported.

@@ -3,8 +3,8 @@
 Fifth badge cart for the Software You Can Love (SYCL) conference, built for
 Antithesis: a Game Boy (DMG) emulator in Zig with one embedded ROM and a
 time scrubber. `SPEC.md` is the design; `PLAN.md` is the current
-milestone's file ownership and interface contract. Sibling repos
-`../snouty-bugs` and `../snouty-badge` hold the toolchain history; their
+milestone's file ownership and interface contract. Sibling carts
+`../snouty-bugs` and `../snouty-run` hold the toolchain history; their
 CLAUDE.md files have the long explanations, this one summarises.
 
 ## Layout
@@ -18,13 +18,14 @@ CLAUDE.md files have the long explanations, this one summarises.
 - `tests/` — host tests (`zig build test`). `tests/roms/` is gitignored;
   run `tools/fetch_test_roms.sh` first. `tests/acid2_reference.bin` is the
   dmg-acid2 reference as 160x144 shade bytes.
-- `roms/` — the shipped game ROM (gitignored `*.gb`; add its LICENSE).
+- `roms/` — the shipped game ROM (`*.gb` gitignored except the committed
+  `2048.gb`, the build's fallback ROM; its LICENSE sits next to it).
 - `tools/` — `fetch_test_roms.sh`, `romcheck.py`, `preview.mjs` (headless
   wasm runner to PNGs), `serve-cart.mjs` (serves the wasm on :2468),
   `make_gif.py`.
-- `../sycl-badge/` — upstream badge repo, read-only SDK. Path dependency;
-  the repos must be siblings (also for the `src/os/system/tracy_protocol.zig`
-  symlink).
+- `../../sycl-badge/` — upstream badge repo, read-only SDK, a git submodule
+  at the repository root. Path dependency of the root `build.zig.zon`; the
+  one `src/os/system/tracy_protocol.zig` symlink is at the root too.
 
 ## Target hardware (SYCL Badge V2)
 
@@ -36,20 +37,29 @@ CLAUDE.md files have the long explanations, this one summarises.
   right. The OS owns Start+Select (exit) and click; never bind click.
 - Audio `cart.tone2(...)`, one voice, each call cancels the previous.
 - `read_flash`/`write_flash_page` are stubs on hardware: the ROM is
-  embedded at build time (`-Drom=path`, default `tests/roms/dmg-acid2.gb`).
+  embedded at build time (`-Drom=path`, default `tests/roms/dmg-acid2.gb`,
+  `roms/2048.gb` when that is not fetched).
 
 ## Building
 
 Zig `0.17.0-dev.1936+5a625d5f3` at `~/.local/bin/zig`
 (`export PATH="$HOME/.local/bin:$PATH"`). Zig 0.17 spells optimize modes
-`.debug/.safe/.fast/.small`.
+`.debug/.safe/.fast/.small`. Commands here run from this cart's directory
+(`carts/snouty-boy/`) unless noted; only `zig build` runs from the repository
+root (`../..`), whose `build.zig` calls this cart's `build.zig` module
+(`pub fn add`) and owns the one `build.zig.zon`.
 
-- `zig build` → `zig-out/firmware/snouty-boy.uf2`, `.elf`,
-  `zig-out/bin/snouty-boy.wasm`. Clean build about 2 min.
-  `-Dcart-optimize=small|fast` (default fast), `-Drom=roms/x.gb`.
-- `zig build test` → native core tests, about 15 s. `-Dtest-filter=acid`.
-- `size zig-out/firmware/snouty-boy.elf` for the memory budget (SPEC.md 13).
-- Headless: `node tools/preview.mjs zig-out/bin/snouty-boy.wasm --frames 60 --every 10 --out out/`
+- `zig build -Dcart=snouty-boy` (root) → `zig-out/firmware/snouty-boy.uf2`,
+  `.elf`, `zig-out/bin/snouty-boy.wasm` in the root `zig-out/` (from here
+  `../../zig-out/...`). Clean build about 2 min; plain `zig build` builds
+  every cart (several minutes). `-Dcart-optimize=small|fast` (default fast),
+  `-Drom=carts/snouty-boy/roms/x.gb` (or `-Drom=roms/x.gb`, relative to
+  this cart). Without `tests/roms/dmg-acid2.gb` the build prints a note and
+  embeds `roms/2048.gb`.
+- `zig build test` (root) → every cart's host tests, this cart's native core
+  tests among them (about 15 s of it). `-Dtest-filter=acid`.
+- `size ../../zig-out/firmware/snouty-boy.elf` for the memory budget (SPEC.md 13).
+- Headless: `node tools/preview.mjs ../../zig-out/bin/snouty-boy.wasm --frames 60 --every 10 --out out/`
   then look at `out/frame_XXXX.png`. Buttons via `--press A:30-40`.
 - `zig fmt core cart tests build.zig` before committing.
 

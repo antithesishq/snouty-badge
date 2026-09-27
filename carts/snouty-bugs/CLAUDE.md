@@ -4,7 +4,7 @@ Second badge cart for the Software You Can Love (SYCL) conference, built for
 Antithesis: a horizontal bullet-hell shooter starring Snouty, with an attract
 mode that plays itself until someone presses a button. `SPEC.md` is the game
 design and milestone plan; `ASSETS.md` is the brief for the pixel-art agent.
-The sibling repo `../snouty-badge` (the running/jumping Snouty cart) is where
+The sibling cart `../snouty-run` (the running/jumping Snouty cart) is where
 the toolchain wrinkles were first solved; its CLAUDE.md has the long
 explanations and this file only summarises them.
 
@@ -19,7 +19,8 @@ explanations and this file only summarises them.
   upstream's dvd cart; do not import across repos.
 - `tools/` — `preview.mjs` (headless wasm runner to PNGs), `serve-cart.mjs`
   (serves the wasm on :2468 for the simulator), `make_gif.py`.
-- `../sycl-badge/` — upstream badge repo, read-only SDK. Path dependency.
+- `../../sycl-badge/` — upstream badge repo, read-only SDK: a git submodule at the
+  repository root and the root package's path dependency.
 
 ## Target hardware (SYCL Badge V2)
 
@@ -56,11 +57,16 @@ sizes and frame counts are in SPEC.md section 12 / ASSETS.md section 7.
 ## Building
 
 Zig `0.17.0-dev.1936+5a625d5f3` at `~/.local/bin/zig`
-(`export PATH="$HOME/.local/bin:$PATH"`). `zig build` writes
-`zig-out/firmware/snouty-bugs.uf2`, `.elf` and `zig-out/bin/snouty-bugs.wasm`.
-Clean build about 2 min. `src/os/system/tracy_protocol.zig` is a committed
-symlink into `../sycl-badge` that `add_os_cart` needs; the two repos must be
-siblings. Zig fetches packages into `zig-pkg/` (gitignored).
+(`export PATH="$HOME/.local/bin:$PATH"`). Commands in this file run from this
+cart's directory (`carts/snouty-bugs/`) unless noted; `zig build` runs from the
+repository root, two levels up. There `zig build -Dcart=snouty-bugs` (or plain
+`zig build` for every cart) writes `zig-out/firmware/snouty-bugs.uf2`, `.elf`
+and `zig-out/bin/snouty-bugs.wasm` (`../../zig-out/` from here). A clean build
+of every cart takes several minutes; `-Dcart=` keeps it short. This cart's
+`build.zig` is a module with `pub fn add(...)` that the root `build.zig` calls;
+there is no per-cart `build.zig.zon`, and the `src/os/system/tracy_protocol.zig`
+symlink that `add_os_cart` needs lives once at the repository root. Zig fetches
+packages into `zig-pkg/` at the repository root (gitignored).
 
 ## Simulator and preview
 
@@ -70,13 +76,13 @@ the API no longer reads. `main.zig` has `present_wasm()` and `read_controls()`
 shims for wasm builds only. Headless:
 
 ```
-node tools/preview.mjs zig-out/bin/snouty-bugs.wasm --frames 600 --every 6 --out out/
+node tools/preview.mjs ../../zig-out/bin/snouty-bugs.wasm --frames 600 --every 6 --out out/
 python3 tools/make_gif.py out/ preview.gif --scale 3 --ms 100
 ```
 
 `--press A-B` holds the A button over tick ranges; the game milestones extend
 this to all buttons and an input script (SPEC.md section 14). Browser:
-`node tools/serve-cart.mjs` plus `npm run dev` in `../sycl-badge/simulator`.
+`node tools/serve-cart.mjs` plus `npm run dev` in `../../sycl-badge/simulator`.
 
 ## Conventions
 

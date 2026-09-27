@@ -432,7 +432,7 @@ M1's timing check is one photo of the badge).
 
 ## 16. Verification
 
-- `zig build` gives `zig-out/firmware/snoutenstein.uf2` and
+- `zig build` (at the repository root) gives `zig-out/firmware/snoutenstein.uf2` and
   `zig-out/bin/snoutenstein.wasm`; `size -A` against section 13.
 - Headless: `preview.mjs --script tools/scripts/*.json --dump-exports ...
   --expect "debug_desync == 0"` for walk-through, door/key, combat,

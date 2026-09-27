@@ -1,38 +1,40 @@
 # Running the Snouty vs. the Bugs cart
 
+Commands below run from this cart's directory (`carts/snouty-bugs/`) unless
+noted; `zig build` runs from the repository root, two levels up, and writes its
+outputs to `../../zig-out/`.
+
 ## 1. Prerequisites
 
-- git
-- Zig **0.17.0-dev.1936+5a625d5f3** exactly (upstream sycl-badge pins it). Nightly
-  tarballs are named `zig-<arch>-<os>-<version>.tar.xz`; the Linux x86_64 one is
-  <https://ziglang.org/builds/zig-x86_64-linux-0.17.0-dev.1936+5a625d5f3.tar.xz>.
-  Nightlies rotate off ziglang.org; if the URL 404s, try the machengine.org
-  mirror or `zigup`. Unpack it and put the `zig` binary on `PATH`.
-- Node.js 20 or newer (for the simulator and the tools in `tools/`)
-- Optional, for GIF previews: Python 3 with Pillow
+See `../../docs/RUNNING.md` at the repository root (Zig version and download,
+Node.js, Python with Pillow for GIF previews).
 
 ## 2. Checkout layout
 
-The two repos must be siblings. `build.zig.zon` points at `../sycl-badge`, and
-`src/os/system/tracy_protocol.zig` is a symlink into it.
+This cart lives in `carts/snouty-bugs/` of the snouty-badge repository; the
+upstream SDK is the `sycl-badge/` submodule at the repository root. See
+`../../docs/RUNNING.md` for cloning with the submodule. To review a milestone
+from the exe.dev VM on another machine:
 
-```
-work/
-  sycl-badge/     git clone https://github.com/ZigEmbeddedGroup/sycl-badge.git
-  snouty-bugs/   git clone git@github.com:antithesishq/snouty-bugs.git
+```sh
+git clone -b monorepo exedev@animated-badge.exe.xyz:/home/exedev/snouty-badge
+cd snouty-badge && git submodule update --init
 ```
 
-Milestones are annotated tags (`git tag -n1`). From the exe.dev VM the remote is reached through the GitHub
+Milestones are annotated tags `snouty-bugs/m1`..`snouty-bugs/m5`
+(`git tag -n1 'snouty-bugs/*'`). From the exe.dev VM the GitHub remote
+(`git@github.com:antithesishq/snouty-badge.git`) is reached through the GitHub
 integration host `github.int.exe.xyz`.
 
 ## 3. Build
 
+From the repository root:
+
 ```sh
-cd snouty-bugs
-zig build
+zig build -Dcart=snouty-bugs    # or plain `zig build` for every cart
 ```
 
-This writes:
+This writes, at the repository root:
 
 - `zig-out/firmware/snouty-bugs.uf2` (for the badge)
 - `zig-out/firmware/snouty-bugs.elf`
@@ -43,8 +45,8 @@ This writes:
 Terminal 1 serves the cart and live-reloads it:
 
 ```sh
-cd snouty-bugs
-node tools/serve-cart.mjs            # serves zig-out/bin/snouty-bugs.wasm on :2468
+cd carts/snouty-bugs                 # from the repository root
+node tools/serve-cart.mjs            # serves ../../zig-out/bin/snouty-bugs.wasm on :2468
 # or: node tools/serve-cart.mjs path/to/other.wasm --port 2468
 ```
 
@@ -55,7 +57,7 @@ This serves `http://localhost:2468/cart.wasm` (with CORS) and
 Terminal 2 runs the simulator UI:
 
 ```sh
-cd ../sycl-badge/simulator
+cd ../../sycl-badge/simulator
 npm install
 npm run dev
 ```
@@ -104,7 +106,7 @@ Known upstream simulator quirks (current sycl-badge `main`):
 ## 5. Headless preview (no browser)
 
 ```sh
-node tools/preview.mjs zig-out/bin/snouty-bugs.wasm --frames 240 --every 4 --out out/
+node tools/preview.mjs ../../zig-out/bin/snouty-bugs.wasm --frames 240 --every 4 --out out/
 python3 tools/make_gif.py out/ preview.gif --scale 3 --ms 66
 ```
 
@@ -218,17 +220,17 @@ bomb exports `debug_bombs` and `debug_bomb_timer` are gone.
 `docs/preview_m5.gif` is one hold-B rewind, updates 690..760 of `m5_manual`:
 
 ```sh
-node tools/preview.mjs zig-out/bin/snouty-bugs.wasm --script tools/scripts/m5_manual.json \
+node tools/preview.mjs ../../zig-out/bin/snouty-bugs.wasm --script tools/scripts/m5_manual.json \
   --frames 761 --start-skip 690 --every 2 --out out/gif_m5/
 python3 tools/make_gif.py out/gif_m5/ docs/preview_m5.gif --scale 3 --ms 66
 ```
 
 ```sh
-node tools/preview.mjs zig-out/bin/snouty-bugs.wasm --frames 1800 --every 6 --out out/ \
+node tools/preview.mjs ../../zig-out/bin/snouty-bugs.wasm --frames 1800 --every 6 --out out/ \
   --script tools/scripts/m1_play.json \
   --dump-exports debug_state,debug_score,debug_lives,debug_enemies \
   --expect "debug_state == 1" --expect "debug_score > 0"
-node tools/preview.mjs zig-out/bin/snouty-bugs.wasm --frames 18000 --quiet --out out/soak/ \
+node tools/preview.mjs ../../zig-out/bin/snouty-bugs.wasm --frames 18000 --quiet --out out/soak/ \
   --script tools/scripts/m1_play.json --dump-exports debug_state,debug_score
 ```
 
@@ -242,13 +244,13 @@ at about real speed.
 ### Regression gate: `tools/check.sh`
 
 ```sh
-tools/check.sh                 # zig build, then every tools/scripts/*.json
+tools/check.sh                 # zig build -Dcart=snouty-bugs (at the root), then every tools/scripts/*.json
 tools/check.sh --no-build --only m5_manual
 CART_WASM=path/to/other.wasm tools/check.sh --no-build
 ```
 
 Each `tools/scripts/NAME.json` runs as
-`node tools/preview.mjs zig-out/bin/snouty-bugs.wasm --script NAME.json --quiet --out out/check/NAME ...`,
+`node tools/preview.mjs ../../zig-out/bin/snouty-bugs.wasm --script NAME.json --quiet --out out/check/NAME ...`,
 where `...` comes from the sidecar `NAME.args`: preview arguments (`--frames`,
 `--dump-exports`, `--expect`, `--at`, `--call-at`) quoted as on a command line.
 Lines starting with `#` are comments (each M2 sidecar has a `# tune` line
@@ -262,4 +264,4 @@ commit: add a script and its sidecar for every new behaviour worth keeping.
 ## 6. Flash the badge
 
 1. Connect the badge over USB-C. It shows up as a USB mass-storage drive.
-2. Copy `zig-out/firmware/snouty-bugs.uf2` onto the drive, replacing `CURRENT.UF2`.
+2. Copy `zig-out/firmware/snouty-bugs.uf2` (at the repository root) onto the drive, replacing `CURRENT.UF2`.

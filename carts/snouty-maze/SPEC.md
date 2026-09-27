@@ -308,8 +308,8 @@ screensaver's textures (`assets/src/w95/SOURCE.md`, via
 (the picture the original hangs on odd panels, 32x32 opaque) and
 `start.png` (the Start button floating in the first cell, 32x32
 transparent) wait for M3 code. Adrian kept Snouty (not the rat). With
-`--art ../snouty-art/out/maze` the Snouty, logo (Zig mark), iris and start
-sheets come from the art pipeline (`../snouty-art/tools/build_maze.py`);
+`--art ../../snouty-art/out/maze` the Snouty, logo (Zig mark), iris and start
+sheets come from the art pipeline (`../../snouty-art/tools/build_maze.py`);
 the committed `assets/gen/` is built that way.
 The placeholder mode below still exists.
 

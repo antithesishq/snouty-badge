@@ -4,7 +4,7 @@ Sixth badge cart for the Software You Can Love (SYCL) conference, built for
 Antithesis: a from-scratch clone of the Windows 3D Maze screensaver drawn by
 a small software rasterizer with a z buffer. `SPEC.md` is the design and
 milestone list, `PLAN.md` the current milestone's contract between parallel
-tracks. Toolchain copied from `../snouty-reflections` and `../snouty-bugs`;
+tracks. Toolchain copied from the sibling carts `../snouty-reflections` and `../snouty-bugs`;
 their CLAUDE.md files have the long explanations of the simulator quirks.
 
 ## Layout
@@ -15,7 +15,7 @@ their CLAUDE.md files have the long explanations of the simulator quirks.
   for `zig build test`.
 - `assets/gen/` — build-input PNGs (committed), produced by
   `tools/prepare_assets.py --from-w95 assets/src/w95 --art
-  ../snouty-art/out/maze` from the original screensaver textures in
+  ../../snouty-art/out/maze` from the original screensaver textures in
   `assets/src/w95/` plus the snouty-art maze pack (Snouty, Zig mark, Iris
   mark, Start button); `--placeholders` draws procedural stand-ins instead.
 - `tools/` — `preview.mjs` (headless wasm runner to PNGs), `serve-cart.mjs`
@@ -23,7 +23,8 @@ their CLAUDE.md files have the long explanations of the simulator quirks.
   `check_float.mjs`, `check_golden.mjs`, `prepare_assets.py`.
 - `tests/golden/` — golden PNGs and `poses.json` for `check_golden.mjs`.
 - `docs/` — `RUNNING.md`, milestone GIFs.
-- `../sycl-badge/` — upstream badge repo, read-only SDK. Path dependency.
+- `../../sycl-badge/` — upstream badge repo, read-only SDK, a git submodule
+  at the repository root. Path dependency of the root `build.zig.zon`.
 
 ## Target hardware (SYCL Badge V2)
 
@@ -44,13 +45,19 @@ their CLAUDE.md files have the long explanations of the simulator quirks.
 ## Building
 
 Zig `0.17.0-dev.1936+5a625d5f3` at `~/.local/bin/zig`
-(`export PATH="$HOME/.local/bin:$PATH"`). `zig build` writes
-`zig-out/firmware/snouty-maze.uf2`, `.elf` and `zig-out/bin/snouty-maze.wasm`.
-Clean build about 4 min, incremental seconds. `-Ddebug_overlay=true` turns
-the timing overlay on at start (Select toggles it anyway).
-`src/os/system/tracy_protocol.zig` is a committed symlink into
-`../sycl-badge`; the repos must be siblings. Zig fetches packages into
-`zig-pkg/` (gitignored). Assets: `build.zig` has an `images` table, one row
+(`export PATH="$HOME/.local/bin:$PATH"`). Commands here run from this cart's
+directory (`carts/snouty-maze/`) unless noted; only `zig build` runs from the
+repository root (`../..`). `zig build` there writes
+`zig-out/firmware/snouty-maze.uf2`, `.elf` and `zig-out/bin/snouty-maze.wasm`
+in the root `zig-out/` (from here `../../zig-out/...`);
+`zig build -Dcart=snouty-maze` builds only this cart. Clean build about
+4 min (all carts: several), incremental seconds. `-Ddebug_overlay=true` turns
+the timing overlay on at start (Select toggles it anyway). `zig build test`
+and `zig build check-float` at the root include this cart's host tests and
+float check. This cart's `build.zig` is a module (`pub fn add`) called by the
+root `build.zig`; the root has the one `build.zig.zon` and the one
+`src/os/system/tracy_protocol.zig` symlink into the `sycl-badge/`
+submodule. Zig fetches packages into the root `zig-pkg/` (gitignored). Assets: `build.zig` has an `images` table, one row
 per PNG in `assets/gen/`; the converter emits a `gfx` module
 (`gfx.<name>.width/.height/.colors/.indices`).
 
@@ -61,7 +68,7 @@ red/blue swapped for the web simulator; `read_controls()` reads the
 simulator's button word at 0x04. Headless:
 
 ```
-node tools/preview.mjs zig-out/bin/snouty-maze.wasm --frames 600 --every 6 --out out/
+node tools/preview.mjs ../../zig-out/bin/snouty-maze.wasm --frames 600 --every 6 --out out/
 python3 tools/make_gif.py out/ preview.gif --scale 3 --ms 100
 node tools/check_golden.mjs            # golden-image regression
 ```

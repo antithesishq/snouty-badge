@@ -11,61 +11,62 @@ Controls (M1): B cycles the dither mode (`bayer_temporal`, `none`). Start+Select
 returns to the badge menu and the joystick click toggles the OS FPS overlay;
 both belong to the OS.
 
+The cart lives in `carts/snouty-reflections/` of the snouty-badge repository.
+Commands below run from that directory unless noted; only `zig build` runs
+from the repository root (`../..`), and its outputs are in the root
+`zig-out/` (`../../zig-out/...` from here).
+
 ## 1. Prerequisites
 
-- git
-- Zig **0.17.0-dev.1936+5a625d5f3** exactly (upstream sycl-badge pins it). Nightly
-  tarballs are named `zig-<arch>-<os>-<version>.tar.xz`; the Linux x86_64 one is
-  <https://ziglang.org/builds/zig-x86_64-linux-0.17.0-dev.1936+5a625d5f3.tar.xz>.
-  Nightlies rotate off ziglang.org; if the URL 404s, try the machengine.org
-  mirror or `zigup`. Unpack it and put the `zig` binary on `PATH`.
-- Node.js 20 or newer (for the simulator and the tools in `tools/`)
-- Python 3 with numpy (for `tools/reference.py`) and Pillow (for GIF previews)
+Zig, Node.js, Python with Pillow and git: see `../../docs/RUNNING.md` at the
+repository root. This cart also needs:
+
+- numpy (for `tools/reference.py`)
 - For the emulated cycle benchmark (`tools/emu/`, section 8): Python 3.9 or newer
   with the `venv` module (Debian/Ubuntu: `apt install python3-venv`); it
   installs its own packages, numpy included, into `tools/emu/.venv`
 
 ## 2. Checkout layout
 
-The two repos must be siblings. `build.zig.zon` points at `../sycl-badge`,
-and `src/os/system/tracy_protocol.zig` is a symlink into it.
+Cloning the repository with its `sycl-badge/` submodule is described in
+`../../docs/RUNNING.md` at the repository root.
 
-```
-work/
-  sycl-badge/     git clone https://github.com/ZigEmbeddedGroup/sycl-badge.git
-  snouty-reflections/   git clone git@github.com:antithesishq/snouty-reflections.git
-```
-
-Milestones are annotated tags (`git tag -n1`). From the exe.dev VM the remote is reached through the GitHub
+Milestones are annotated tags (`git tag -n1 'snouty-reflections/*'`:
+`snouty-reflections/m0`, `/m1`, `/m1.1`). From the exe.dev VM the remote is reached through the GitHub
 integration host `github.int.exe.xyz`.
 
 ## 3. Build
 
+From the repository root:
+
 ```sh
-cd snouty-reflections
-zig build
+zig build -Dcart=snouty-reflections   # only this cart; plain `zig build` builds every cart
 ```
 
 `-Ddebug_overlay=true` draws the render time (`render_us`) and frame counter
 over the picture; use it on the badge to read the M1 timing:
 
 ```sh
-zig build -Ddebug_overlay=true
+zig build -Dcart=snouty-reflections -Ddebug_overlay=true
 ```
 
-A clean build takes about 2 minutes. This writes:
+A clean build of this cart takes about 2 minutes (all carts: several). This
+writes, in the root `zig-out/`:
 
 - `zig-out/firmware/snouty-reflections.uf2` (for the badge)
 - `zig-out/firmware/snouty-reflections.elf`
 - `zig-out/bin/snouty-reflections.wasm` (for the simulator)
+
+`zig build check-float` (also from the root) runs `tools/check_float.mjs` on
+the ELF.
 
 ## 4. Web simulator
 
 Terminal 1 serves the cart and live-reloads it:
 
 ```sh
-cd snouty-reflections
-node tools/serve-cart.mjs zig-out/bin/snouty-reflections.wasm   # serves it on :2468
+cd carts/snouty-reflections
+node tools/serve-cart.mjs   # serves ../../zig-out/bin/snouty-reflections.wasm on :2468
 # or: node tools/serve-cart.mjs path/to/other.wasm --port 2468
 ```
 
@@ -76,13 +77,12 @@ This serves `http://localhost:2468/cart.wasm` (with CORS) and
 Terminal 2 runs the simulator UI:
 
 ```sh
-cd ../sycl-badge/simulator
+cd ../../sycl-badge/simulator
 npm install
 npm run dev
 ```
 
-Then open <http://localhost:1234>. Pass the wasm path explicitly: the
-script's built-in default still names the snouty-bugs file.
+Then open <http://localhost:1234>.
 
 Hosted alternative: <https://badgesim.microzig.tech/> also fetches from
 `localhost:2468`, so it should work with the watcher from terminal 1 (Chrome
@@ -121,7 +121,7 @@ Known upstream simulator quirks (current sycl-badge `main`):
 ## 5. Headless preview (no browser)
 
 ```sh
-node tools/preview.mjs zig-out/bin/snouty-reflections.wasm --frames 600 --every 6 --out out/
+node tools/preview.mjs ../../zig-out/bin/snouty-reflections.wasm --frames 600 --every 6 --out out/
 python3 tools/make_gif.py out/ preview.gif --scale 3 --ms 50
 ```
 
@@ -182,7 +182,7 @@ channel and no pixel differs by more than 6 units. Frame F of the reference
 is the same camera angle and water time as `frame_F.png` from `preview.mjs`.
 
 ```sh
-node tools/preview.mjs zig-out/bin/snouty-reflections.wasm --frames 301 --every 300 --script tools/scripts/m1_nodither.json --out out/
+node tools/preview.mjs ../../zig-out/bin/snouty-reflections.wasm --frames 301 --every 300 --script tools/scripts/m1_nodither.json --out out/
 python3 tools/reference.py --frame 0 --frame 300 --out out/
 node tools/check_render.mjs out/frame_0000.png out/ref_0000.png
 node tools/check_render.mjs out/frame_0300.png out/ref_0300.png
@@ -204,11 +204,11 @@ landed. To make sure, add
 
 1. Put the badge in bootloader mode and connect it over USB-C. It shows up
    as a USB mass-storage drive.
-2. Copy `zig-out/firmware/snouty-reflections.uf2` onto the drive.
+2. Copy `zig-out/firmware/snouty-reflections.uf2` (repository root) onto the drive.
 3. The cart lives alongside the other carts in the badge menu; pick it
    there. Start+Select returns to the menu.
 
-To read the M1 timing, flash a `zig build -Ddebug_overlay=true` build (render
+To read the M1 timing, flash a `zig build -Dcart=snouty-reflections -Ddebug_overlay=true` build (render
 time drawn on screen) or press the joystick to show the OS FPS overlay.
 
 ## 8. Emulated cycle benchmark
@@ -229,7 +229,7 @@ skip that step.
 ```sh
 tools/emu/run.sh                              # bench ELF, frames 0 and 300 (~10 s)
 tools/emu/run.sh --sweep                      # plus the orbit, frames 0..575 step 25 (~35 s)
-zig build && tools/emu/run.sh --real --sweep --listing   # plus the flashed ELF and listings (~1 min)
+(cd ../.. && zig build -Dcart=snouty-reflections) && tools/emu/run.sh --real --sweep --listing   # plus the flashed ELF and listings (~1 min)
 ```
 
 The default run rebuilds `tools/emu/build/bench.elf` from `cart/src`,
@@ -237,8 +237,8 @@ emulates frames 0 and 300 in dither mode `none`, checks them against
 `tools/reference.py` with `tools/check_render.mjs`, and prints a summary
 table (instructions and modelled cycles per frame, cycles per pixel, ms at
 150 MHz, uncapped fps) and the cost per ray-path class. `--real` also runs
-`zig-out/firmware/snouty-reflections.elf` from `_start` with a faked OS
-(run `zig build` first). `--sweep` adds the whole orbit and prints the
+`../../zig-out/firmware/snouty-reflections.elf` from `_start` with a faked OS
+(run `zig build` at the repository root first). `--sweep` adds the whole orbit and prints the
 min, max and worst frame. `--listing` writes annotated disassembly to
 `tools/emu/out/`. All outputs, including `summary.txt`, land in
 `tools/emu/out/`.

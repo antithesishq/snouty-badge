@@ -10,20 +10,20 @@ frame order. It is not a style target.
 
 ## 1. Attach with the brief
 
-1. `snouty-badge/assets/Snouty_Run_Study_05/` (or `Snouty_Run_Study_FINAL.zip`
+1. `../snouty-run/assets/Snouty_Run_Study_05/` (or `Snouty_Run_Study_FINAL.zip`
    next to it): the approved Snouty, a purple anteater in a black shirt
    with the Coral Iris on the chest. The HUD portrait and the paw on
    the weapons must read as this character: same purples, cream eye with
    a dark pupil, long snout, round ears.
-2. `snouty-badge/assets/Snouty_Run_Study_05/snouty_palette.gpl`: the
+2. `../snouty-run/assets/Snouty_Run_Study_05/snouty_palette.gpl`: the
    15-colour master palette, listed in section 3.
-3. `snouty-badge/assets/logo/White Logo Mark.png`, `Black Logo Mark.png`,
+3. `../snouty-run/assets/logo/White Logo Mark.png`, `Black Logo Mark.png`,
    `Coral Logo Mark.png`: the Antithesis Iris mark, for the mural wall, the
    title and any emblem. `assets/gen/iris_16.png` in this repo is the
    existing 16x16 pixel version.
 4. Brand colours: Anti-Black `#16031B`, Anti-White `#FCFBF9`, Coral
    `#F18271`, Iris purple `#8E42DE` (purple 3 of the master palette).
-5. `snouty-bugs/docs/preview_m3.gif` and `snouty-badge/docs/preview_v5.gif`:
+5. `../snouty-bugs/docs/preview_m3.gif` and `../snouty-run/docs/preview_v5.gif`:
    the tone of the two carts already on the badge.
 6. `docs/placeholders.png` from this repo: the stand-ins and mockups.
 

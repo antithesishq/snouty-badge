@@ -1,7 +1,8 @@
 # badge-bench: emulated cycle benchmark for SYCL Badge V2 carts
 
-Owner: Adrian Hatch (Antithesis). Sibling repo to the carts and to
-`sycl-badge`. Generalises `snouty-reflections/tools/emu/` so any cart built
+Owner: Adrian Hatch (Antithesis). Lives next to the carts (`carts/`) and
+the `sycl-badge` submodule in the carts' repository. Generalises
+`carts/snouty-reflections/tools/emu/` so any cart built
 with the SDK's OS-cart path can be costed without hardware.
 
 ## 1. What it does
@@ -74,7 +75,7 @@ badge-bench/
 
 ## 4. Cycle model
 
-Same as `snouty-reflections/tools/emu/model.py`: 1 cycle for most
+Same as `carts/snouty-reflections/tools/emu/model.py`: 1 cycle for most
 integer and VFP instructions; VDIV.F32 and VSQRT.F32 14; loads and stores
 2; LDRD/STRD 3; PUSH/POP/VPUSH/VPOP 1+N; VFMA 3; taken branch +1;
 integer UDIV/SDIV 3 to 12 (use 8). Blind spots, documented: SRAM bus
@@ -83,12 +84,12 @@ instruction fetch over the S-AHB from SRAM. Treat the ms as a floor.
 
 ## 5. Validation
 
-1. `snouty-reflections` at tag `m1.1`, no script, 24 frames 0..575 step 25
-   with `--poke dither.mode=1`: must reproduce its `tools/emu` real-ELF
+1. `snouty-reflections` at tag `snouty-reflections/m1.1`, no script, 24
+   frames 0..575 step 25 with `--poke dither.mode=1`: must reproduce its `tools/emu` real-ELF
    numbers exactly (frame 0: 4,121,645 insns, 5,076,056 cycles; worst
    frame 550: 5,230,991 cycles, 34.87 ms).
-2. `snouty-bugs` with `tools/scripts/m1_play.json`: runs 600 frames without
-   a fault, PNG dumps show gameplay (title -> flying -> enemies), report
+2. `snouty-bugs` with `carts/snouty-bugs/tools/scripts/m1_play.json`: runs
+   600 frames without a fault, PNG dumps show gameplay (title -> flying -> enemies), report
    shows ms per frame against a 16.7 ms budget and a plausible hot list.
 3. `snouty-boy`, `snouty-maze`, `snoutenstein`: run with their scripts if
    present, else no input; record the numbers in `README.md` as a first
@@ -98,7 +99,7 @@ instruction fetch over the S-AHB from SRAM. Treat the ms as a floor.
 ## 6. Out of scope
 
 Per-pixel ray-path classification and reference-image comparison stay in
-`snouty-reflections/tools/emu/` (they are specific to that cart). Cycle
+`carts/snouty-reflections/tools/emu/` (they are specific to that cart). Cycle
 model calibration against real hardware waits for the first badge
 measurement; when it arrives, add a `--calibrate` factor.
 

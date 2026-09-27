@@ -12,15 +12,18 @@ dmg-acid2 test ROM with a microseconds/FPS overlay).
 
 ```sh
 tools/fetch_test_roms.sh     # test ROMs into tests/roms/
-zig build                    # zig-out/firmware/snouty-boy.uf2, zig-out/bin/snouty-boy.wasm
-zig build test               # core tests on the host
-node tools/serve-cart.mjs    # then the web simulator from ../sycl-badge/simulator
+(cd ../.. && zig build -Dcart=snouty-boy)   # ../../zig-out/firmware/snouty-boy.uf2, ../../zig-out/bin/snouty-boy.wasm
+(cd ../.. && zig build test)                # core tests on the host (plus the other carts' host tests)
+node tools/serve-cart.mjs    # then the web simulator from ../../sycl-badge/simulator
 ```
+
+Run from this cart's directory, `carts/snouty-boy/`; `zig build` runs from
+the repository root.
 
 - `docs/RUNNING.md`: prerequisites, build options, tests, simulator,
   headless preview, flashing.
 - `SPEC.md`: design, architecture, milestones, decisions.
 - `PLAN.md`: current milestone contract.
 
-Companion carts: [snouty-badge](https://github.com/antithesishq/snouty-badge),
-[snouty-bugs](https://github.com/antithesishq/snouty-bugs).
+Companion carts: the sibling directories `../snouty-run` and
+`../snouty-bugs` in this repository.

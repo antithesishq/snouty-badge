@@ -13,5 +13,5 @@ Pixel art pipeline for Snouty (Antithesis mascot) badge carts. Read PLAN.md.
 - Cells are 96x96, origin (48,88), character faces right, ground baseline y=88.
 - Review art by rendering the contact sheet or preview GIF and looking at it
   (the Read tool shows PNGs); do not judge frames from pixel diffs alone.
-- Keep frame counts and semantics from PLAN.md so `../snouty-badge` can swap
+- Keep frame counts and semantics from PLAN.md so `../carts/snouty-run` can swap
   packs without cart code changes beyond the feet-row tables.

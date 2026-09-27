@@ -3,49 +3,41 @@
 Build the cart, run the host tests, play it in the web simulator or headless,
 and flash it to a SYCL Badge V2.
 
+The cart lives in `carts/snouty-boy/` of the snouty-badge repository.
+Commands below run from that directory unless noted; only `zig build` runs
+from the repository root (`../..`), and its outputs are in the root
+`zig-out/` (`../../zig-out/...` from here).
+
 ## 1. Prerequisites
 
-- git and curl
-- Zig **0.17.0-dev.1936+5a625d5f3** exactly (upstream sycl-badge pins it).
-  Nightly tarballs are named `zig-<arch>-<os>-<version>.tar.xz`, e.g.
-  <https://ziglang.org/builds/zig-x86_64-linux-0.17.0-dev.1936+5a625d5f3.tar.xz>
-  or `zig-aarch64-macos-...` on Apple silicon. Nightlies rotate off
-  ziglang.org; if the URL 404s, try the machengine.org mirror or `zigup`.
-  Unpack it and put `zig` on `PATH`.
-- Node.js 20 or newer (web simulator, `tools/serve-cart.mjs`,
-  `tools/preview.mjs`; none of the tools need npm packages)
-- Optional: Python 3 for `tools/romcheck.py`, plus Pillow for
-  `tools/make_gif.py`
+Zig, Node.js, Python with Pillow and git: see `../../docs/RUNNING.md` at the
+repository root. This cart also needs curl (for `tools/fetch_test_roms.sh`);
+`tools/romcheck.py` needs only Python 3.
 
 ## 2. Checkout layout
 
-Snouty Boy and the badge SDK must be siblings: `build.zig.zon` points at
-`../sycl-badge`, and `src/os/system/tracy_protocol.zig` is a symlink into it.
-
-```
-work/
-  sycl-badge/    git clone https://github.com/ZigEmbeddedGroup/sycl-badge.git
-  snouty-boy/    this repo
-```
-
-The repo has no public remote yet; it lives on the exe.dev VM:
+Cloning the repository with its `sycl-badge/` submodule is described in
+`../../docs/RUNNING.md` at the repository root. Until the `monorepo` branch
+is on GitHub it lives on the exe.dev VM:
 
 ```sh
-cd work
-git clone animated-badge.exe.xyz:/home/exedev/snouty-boy
+git clone -b monorepo exedev@animated-badge.exe.xyz:/home/exedev/snouty-badge
+cd snouty-badge && git submodule update --init
+cd carts/snouty-boy
 ```
 
-Milestones are annotated tags (`git tag -n1`); work in progress is on
-`m<N>-*` branches.
+Milestones are annotated tags (`git tag -n1 'snouty-boy/*'`: `snouty-boy/m1`,
+`/m3`, `/m4`); work in progress is on `m<N>-*` branches.
 
 ## 3. Test ROMs
 
 The emulator embeds one Game Boy ROM at build time; the default is
 `tests/roms/dmg-acid2.gb`. The test ROMs are freely redistributable but not
-committed (`tests/roms/` is gitignored), so fetch them once:
+committed (`tests/roms/` is gitignored), so fetch them once (without them
+the build prints a note and embeds the committed `roms/2048.gb` instead):
 
 ```sh
-cd snouty-boy
+cd carts/snouty-boy
 tools/fetch_test_roms.sh
 ```
 
@@ -56,11 +48,13 @@ and whether Snouty Boy can ship it.
 
 ## 4. Build
 
+From the repository root:
+
 ```sh
-zig build
+zig build -Dcart=snouty-boy   # only this cart; plain `zig build` builds every cart
 ```
 
-This writes:
+This writes, in the root `zig-out/`:
 
 - `zig-out/firmware/snouty-boy.uf2` for the badge
 - `zig-out/firmware/snouty-boy.elf` (same program, for `size` and debugging)
@@ -69,19 +63,24 @@ This writes:
 Options:
 
 - `-Drom=path/to/game.gb`: the ROM to embed (default
-  `tests/roms/dmg-acid2.gb`). The shipped game goes in `roms/` with its
-  license next to it.
+  `tests/roms/dmg-acid2.gb`, falling back to `roms/2048.gb`). The path is
+  relative to the repository root, e.g. `-Drom=carts/snouty-boy/roms/2048.gb`;
+  a path relative to this cart such as `-Drom=roms/2048.gb` also works. The
+  shipped game goes in `roms/` with its license next to it.
 - `-Dcart-optimize=fast|small|safe|debug`: optimize mode for the cart
   (default `fast`, SPEC.md section 8).
 
-A clean build takes a couple of minutes; incremental rebuilds take seconds.
-`size zig-out/firmware/snouty-boy.elf` shows `.text` (code plus the embedded
+A clean build of this cart takes a couple of minutes (all carts: several);
+incremental rebuilds take seconds.
+`size ../../zig-out/firmware/snouty-boy.elf` shows `.text` (code plus the embedded
 ROM), `.data` and `.bss` against the cart RAM budget in SPEC.md section 13.
 
 ## 5. Host tests
 
+From the repository root:
+
 ```sh
-zig build test                        # all core tests, natively
+zig build test                        # all core tests, natively (and every other cart's host tests)
 zig build test -Dtest-filter=acid     # only tests whose name contains "acid"
 ```
 
@@ -112,8 +111,8 @@ it is off by default. `-Dtest-optimize=` sets their optimize mode
 Terminal 1 serves the cart and live-reloads it:
 
 ```sh
-cd snouty-boy
-node tools/serve-cart.mjs            # serves zig-out/bin/snouty-boy.wasm on :2468
+cd carts/snouty-boy
+node tools/serve-cart.mjs            # serves ../../zig-out/bin/snouty-boy.wasm on :2468
 # or: node tools/serve-cart.mjs path/to/other.wasm --port 2468
 ```
 
@@ -124,7 +123,7 @@ every `zig build`, it sends `reload` to the page.
 Terminal 2 runs the simulator UI:
 
 ```sh
-cd ../sycl-badge/simulator
+cd ../../sycl-badge/simulator
 npm install
 npm run dev
 ```
@@ -211,7 +210,7 @@ all in `cart/src/main.zig` and compiled only into the wasm:
 ## 7. Headless preview (no browser)
 
 ```sh
-node tools/preview.mjs zig-out/bin/snouty-boy.wasm --frames 60 --every 10 --out out/
+node tools/preview.mjs ../../zig-out/bin/snouty-boy.wasm --frames 60 --every 10 --out out/
 python3 tools/make_gif.py out/ preview.gif --scale 3 --ms 166
 ```
 
@@ -245,7 +244,7 @@ Useful options (the header of `tools/preview.mjs` has the full list):
 A quick smoke test:
 
 ```sh
-node tools/preview.mjs zig-out/bin/snouty-boy.wasm --frames 132 --quiet --out out/ \
+node tools/preview.mjs ../../zig-out/bin/snouty-boy.wasm --frames 132 --quiet --out out/ \
   --expect "debug_frame_count == 60" --expect "debug_lines == 144"
 ```
 
@@ -256,7 +255,7 @@ A scrubber check with 2048-gb (start the game, play, hold Select for the
 menu, step back twice, resume):
 
 ```sh
-node tools/preview.mjs zig-out/bin/snouty-boy.wasm --frames 380 --every 10 --out out/ \
+node tools/preview.mjs ../../zig-out/bin/snouty-boy.wasm --frames 380 --every 10 --out out/ \
   --press START:150-152,LEFT:170-175,UP:190-195,SELECT:260-300,LEFT:310-310,LEFT:320-320,B:340-341 \
   --at "310 debug_scrub_depth == 7" --at "320 debug_frame_count == 180" \
   --at "330 debug_leds == 5" --at "379 debug_frame_count > 200"
@@ -274,7 +273,7 @@ Carts go onto the badge's own USB drive; this is not the RP2350 bootloader
 
 1. Plug the badge into your computer over USB-C and switch it on. It mounts
    as a mass-storage drive named `SYCLBADGE`.
-2. Copy `zig-out/firmware/snouty-boy.uf2` onto the drive, replacing
+2. Copy `zig-out/firmware/snouty-boy.uf2` (repository root) onto the drive, replacing
    `CURRENT.UF2`. The badge shows a progress indicator while it copies.
 3. The cart starts when the copy finishes.
 

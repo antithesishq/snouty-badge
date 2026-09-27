@@ -8,12 +8,12 @@ disagree, this file wins and the code adapts.
 
 ## 1. Attach with the brief
 
-1. `Snouty_Run_Study_05` (zip from `snouty-badge/assets/`): the approved
+1. `Snouty_Run_Study_05` (zip from `../snouty-run/assets/`): the approved
    Snouty. The ship's pilot must read as this character: same head, ears,
    snout, eye, purple fur shades, the Iris chest emblem where visible.
 2. `snouty_palette.gpl` from that study (the 15-color master palette, listed
    in section 3).
-3. `snouty-badge/assets/logo/*.png`: the Antithesis Iris logo marks (white,
+3. `../snouty-run/assets/logo/*.png`: the Antithesis Iris logo marks (white,
    black, coral), for the HUD, title and any emblem.
 4. Brand colors: Anti-Black `#16031B`, Anti-White `#FCFBF9`, Coral `#F18271`.
 5. A screenshot or GIF of the v3 `snouty-badge` cart for the tone of the

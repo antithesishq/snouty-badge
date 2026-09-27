@@ -544,7 +544,7 @@ unreachable secrets: print, do not fail, for `wolf_*`).
   a door `phase` went 0 -> 1 -> door; `last_locked != 0` -> locked buzz;
   `fire_cooldown` jumped to `sim.fire_rate(weapon)` -> weapon sound by
   weapon) and plays the highest-priority one through the cart's tone API
-  (read `../sycl-badge/src/os/cart/api.zig` for the exact call; SPEC.md
+  (read `../../sycl-badge/src/os/cart/api.zig` for the exact call; SPEC.md
   section 12 has shapes, frequencies, durations and the priority order).
   `play(event: Event)` for main-driven events (`death_freeze`; `rewind`
   loop retrigger comes in M4). Neopixels: HP as a green-to-red bar over

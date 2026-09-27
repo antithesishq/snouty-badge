@@ -1,0 +1,126 @@
+# Snouty carts (repository notes)
+
+One repository for Antithesis's SYCL Badge V2 carts and the tools around them.
+This file holds what every cart shares: the hardware, the cart API, how the
+build is wired, and the working conventions. Each `carts/<cart>/CLAUDE.md`
+adds that cart's specifics (its modules, asset tables, gates). Read `PLAN.md`
+at the root for the repository plan and each cart's `PLAN.md` / `SPEC.md` for
+its design and milestone status.
+
+## Layout
+
+- `carts/<cart>/` — one directory per cart: `cart/src/main.zig` exports
+  `start()` and `update()`; `cart/build/convert_gfx.zig` and
+  `cart/src/packed_int_array.zig` are per-cart copies of upstream's asset
+  converter (do not import across carts); `assets/gen/` are committed build
+  inputs; `tools/` has `preview.mjs`, `serve-cart.mjs`, `make_gif.py`,
+  `prepare_assets.py` and per-cart checks; `docs/RUNNING.md`, `PLAN.md`,
+  `SPEC.md`, `ASSETS.md`. `build.zig` is a module with `pub fn add(...)`
+  called by the root build.zig. Carts: `snouty-run` (binary `snouty`),
+  `snouty-bugs`, `snoutenstein`, `snouty-reflections`, `snouty-boy`,
+  `snouty-maze`.
+- `build.zig`, `build.zig.zon`, `build/common.zig` — the one Zig package.
+  Shared options (`-Dcart`, `-Ddebug_overlay`, `-Drom`, ...) and the shared
+  `test` and `check-float` steps are declared here and passed to each cart.
+- `sycl-badge/` — upstream SDK as a git submodule, pinned. Read-only; do not
+  patch it. `src/os/system/tracy_protocol.zig` at the root is a symlink into
+  it that `add_os_cart` needs.
+- `badge-bench/` — emulated cycle benchmark (`bench.sh <elf>`); its own
+  `carts/<binary>.toml` files hold per-cart defaults (a different `carts/`).
+- `snouty-art/` — code-driven sprite pipeline; `tools/install_badge.py` and
+  `tools/build_maze.py` write into the carts' `assets/`.
+- Zig `0.17.0-dev.1936+5a625d5f3` at `~/.local/bin/zig`
+  (`export PATH="$HOME/.local/bin:$PATH"`). Node 22 and Python 3 are installed.
+
+## Target hardware (SYCL Badge V2)
+
+- MCU: RP2354B. Core 0 runs the OS kernel, Core 1 runs the cart.
+- Screen: 160x128, RGB565 (`DisplayColor` is packed r:u5 g:u6 b:u5; use
+  `DisplayColor.rgb(0xRRGGBB)`).
+- Framebuffer is column-major: `cart.framebuffer[x][y]`, type `Pixel`, write with
+  `Pixel.from_color(color)` (handles wasm vs hardware byte order).
+- Inputs: `cart.controls.*` (start, select, a, b, click, up, down, left, right).
+  The OS owns Start+Select (exit to menu) and joystick click (FPS overlay);
+  never bind click.
+- 5 neopixels (`cart.neopixels`, GRB, very bright; keep channels at or below
+  10/255), one user LED, light sensor, battery level, speaker (`tone2`, one
+  voice, each call cancels the previous).
+- Flash: 8000 pages of 256 bytes available via the cart API (`Zone`).
+- Cart RAM limit 256 KB; keep ELF `.text` + `.data` well under it
+  (`size -A zig-out/firmware/<binary>.elf`).
+
+## Cart API (from `sycl-badge/src/os/cart/api.zig`)
+
+Import as `@import("cart-api")`. Every cart must contain
+`comptime { cart.export_start_code(); }`. Key calls:
+
+- Frame pacing: `set_vsync_enabled(1000.0 / 60.0)`, `set_vsync_disabled()`,
+  `set_vsync_dynamic()`. `present()` is called automatically after `update()`.
+- Double buffering: `set_double_buffer_mode(.copy_forward | .no_copy_dirty_rect |
+  .no_copy_full_frame | .{ .clear_full_frame = color })`. Full-screen carts use
+  `.no_copy_full_frame` and redraw everything each frame.
+- Drawing: `blit(BlitOptions)` (no transparency: skip a key color manually or
+  write pixels directly), `rect`, `oval`, `line`, `hline`, `vline`, `text`
+  (8x8 font). `mark_dirty_rect` if you write the framebuffer directly and use
+  dirty-rect modes.
+- `rand()`, `micros_since_boot()`, `trace()` for debug output.
+
+Reference carts: `sycl-badge/showcase/carts/dvd` (simplest asset pipeline),
+`zeroman` (atlases with palettes + transparency), `plasma`/`lcd-text` (minimal).
+
+## Building
+
+```
+zig build                      # every cart, from the repository root
+zig build -Dcart=snouty-maze   # one cart
+zig build test                 # host tests (snouty-boy, snouty-maze)
+zig build check-float          # soft-float check (snouty-reflections, snouty-maze)
+```
+
+Outputs `zig-out/firmware/<binary>.uf2`, `.elf` and `zig-out/bin/<binary>.wasm`
+at the root. `add_os_cart` (upstream `build.zig`) builds the thumb firmware and
+the wasm from the same module; a cart's `custom_builder` adds its `gfx` or
+other modules. `build.zig.zon` mirrors upstream's `microzig` and `zigimg`
+entries because the converters call `b.dependency("zigimg")` on this builder.
+Packages land in `zig-pkg/` (gitignored). Never commit generated `gfx.zig`;
+do commit `assets/gen/*.png`.
+
+Adrian builds on an Apple-silicon Mac with the same Zig, where heavy comptime
+(big comptime loops over arrays, comptime reinterpretation of const bytes)
+fails inside the compiler with `error: OutOfMemory`. Put data through
+build-time host programs (like `convert_gfx`) or committed generated files
+and keep comptime light.
+
+## Simulator and headless preview
+
+Upstream's wasm platform never presents a frame; the web simulator reads a
+legacy framebuffer at 0x20 with red and blue swapped and writes buttons to
+0x04, which the API no longer reads. Every cart's `main.zig` has wasm-only
+`present_wasm()` and `read_controls()` shims for this. Per cart:
+`node tools/serve-cart.mjs` (serves the wasm on :2468) plus `npm run dev` in
+`sycl-badge/simulator`; headless `node tools/preview.mjs
+../../zig-out/bin/<binary>.wasm ...` and `tools/make_gif.py`. Details and
+per-cart options in `docs/RUNNING.md` at the root and in each cart.
+
+## Performance
+
+Tune against `badge-bench/bench.sh zig-out/firmware/<binary>.elf --symbols`
+before and after a milestone and record the numbers in the cart's PLAN.md
+status. The cycle model is a floor (SRAM contention and FP stalls are not
+modelled); expose knobs as adjustable constants in one place and leave
+headroom. Budget is 16.7 ms per `update()` for 60 fps carts.
+
+## Conventions
+
+- Zig style follows upstream: snake_case functions, 4-space indent, `zig fmt`.
+- Per-frame work stays cheap: no allocation, no float-heavy loops over the
+  whole screen unless the cart is built for it. Precompute at `start()` or in
+  a host generator. Tick-based timing, 1 tick = 1/60 s; deterministic given a seed.
+- Code-drawn placeholder art (`tools/prepare_assets.py` style) counts as final
+  unless Adrian swaps a sheet; make new assets the same way or through
+  `snouty-art/`.
+- Plan first: update the cart's `PLAN.md` before building a milestone. Hand
+  off with an annotated tag `<cart>/<milestone>`, a preview GIF in the cart's
+  `docs/`, and a short "how to pull and run this" section (Adrian reviews
+  locally in the simulator and on the badge).
+- Commit messages: short imperative subject, body explains why.

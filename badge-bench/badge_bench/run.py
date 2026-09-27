@@ -12,7 +12,7 @@ update(). Every frame boundary is that loop read (same block address each
 time), so frame i is exactly one loop iteration: cycles(), update() #i and
 the whole present() that follows it (dirty-rect scan, FIFO handshake, the
 copy_forward memcpy or clear, buffer swap). This is the same cost as the
-window between two present() messages that snouty-reflections/tools/emu
+window between two present() messages that carts/snouty-reflections/tools/emu
 uses, shifted by the tail of present(); unlike that window it gives update
 #0 without the cost of start(). start() (and everything before it) is
 reported separately.

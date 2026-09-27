@@ -1,6 +1,6 @@
 """The Cortex-M33 cycle model and the unicorn/capstone setup.
 
-Copied from snouty-reflections/tools/emu/model.py so the two tools price
+Copied from carts/snouty-reflections/tools/emu/model.py so the two tools price
 instructions identically (tests/test_reflections.sh checks that). The model
 counts issue cycles only, with code and data in zero-wait SRAM; see the
 README for its blind spots. Change it here and every report picks it up.

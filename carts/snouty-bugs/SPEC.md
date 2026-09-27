@@ -490,9 +490,9 @@ Readability of bullets is the game.
 
 ## 14. Verification
 
-- `zig build` produces `zig-out/firmware/snouty-bugs.uf2` and
+- `zig build` (at the repository root) produces `zig-out/firmware/snouty-bugs.uf2` and
   `zig-out/bin/snouty-bugs.wasm`.
-- `node tools/preview.mjs zig-out/bin/snouty-bugs.wasm --frames 3600 --every 6 --out out/`
+- `node tools/preview.mjs ../../zig-out/bin/snouty-bugs.wasm --frames 3600 --every 6 --out out/`
   then `python3 tools/make_gif.py out/ demo.gif --scale 3 --ms 100` gives a
   one-minute GIF of the demo. Every milestone ships one in `docs/`.
 - Autopilot soak: `preview.mjs --frames 18000 --seed 1 --quiet` must not trap

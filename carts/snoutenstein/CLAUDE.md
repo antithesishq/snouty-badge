@@ -4,8 +4,8 @@ Third badge cart for the Software You Can Love (SYCL) conference, built for
 Antithesis: a Wolfenstein-style raycaster starring Snouty, with keyed doors,
 three weapons, a Doom-style portrait HUD and a time rewind implemented as
 deterministic replay. `SPEC.md` is the design, `PLAN.md` the per-milestone
-execution plan and contracts, `ASSETS.md` the pixel-art brief. Sibling repos
-`../snouty-badge` and `../snouty-bugs` solved the toolchain first; their
+execution plan and contracts, `ASSETS.md` the pixel-art brief. Sibling carts
+`../snouty-run` and `../snouty-bugs` solved the toolchain first; their
 CLAUDE.md files have the long explanations, this one summarises.
 
 ## Layout
@@ -28,10 +28,11 @@ CLAUDE.md files have the long explanations, this one summarises.
 - `tools/` — `preview.mjs` (headless wasm -> PNG + export assertions),
   `check_determinism.mjs`, `check_level.py`, `gen_levels.sh`, `serve-cart.mjs`,
   `make_gif.py`, `import_wolf.py`, input scripts in `tools/scripts/`;
-  `tools/check.sh` runs everything. Performance: `../badge-bench/bench.sh
-  zig-out/firmware/snoutenstein.elf --script tools/scripts/X.json --symbols`
+  `tools/check.sh` runs everything. Performance: `../../badge-bench/bench.sh
+  ../../zig-out/firmware/snoutenstein.elf --script tools/scripts/X.json --symbols`
   (modelled floor; tune knobs with headroom, see PLAN.md status lines).
-- `../sycl-badge/` — upstream SDK, read-only path dependency.
+- `../../sycl-badge/` — upstream SDK, a git submodule at the repository root;
+  read-only path dependency of the root package.
 
 ## Hardware (SYCL Badge V2)
 
@@ -68,19 +69,25 @@ voice. Neopixels at or below 10/255 per channel.
 ## Building and previewing
 
 Zig `0.17.0-dev.1936+5a625d5f3` at `~/.local/bin/zig`
-(`export PATH="$HOME/.local/bin:$PATH"`). `zig build` writes
-`zig-out/firmware/snoutenstein.{uf2,elf}` and `zig-out/bin/snoutenstein.wasm`.
-Cold build about 4 min, warm seconds. `src/os/system/tracy_protocol.zig`
-is a symlink into `../sycl-badge` (repos must be siblings).
+(`export PATH="$HOME/.local/bin:$PATH"`). Commands in this file run from this
+cart's directory (`carts/snoutenstein/`) unless noted; `zig build` runs from
+the repository root, two levels up. There `zig build -Dcart=snoutenstein` (or
+plain `zig build` for every cart) writes `zig-out/firmware/snoutenstein.{uf2,elf}`
+and `zig-out/bin/snoutenstein.wasm` (`../../zig-out/` from here). A cold build
+of every cart takes several minutes; `-Dcart=` keeps it short. This cart's
+`build.zig` is a module with `pub fn add(...)` that the root `build.zig`
+calls; there is no per-cart `build.zig.zon`, and the one
+`src/os/system/tracy_protocol.zig` symlink into the `sycl-badge` submodule is
+at the repository root. Zig fetches packages into `zig-pkg/` there.
 
 ```
-node tools/preview.mjs zig-out/bin/snoutenstein.wasm --frames 600 --every 6 --out out/ \
+node tools/preview.mjs ../../zig-out/bin/snoutenstein.wasm --frames 600 --every 6 --out out/ \
   --script tools/scripts/m1_walk.json --dump-exports debug_mode,debug_render_us --expect "debug_mode == 1"
 python3 tools/make_gif.py out/ preview.gif --scale 3 --ms 100
 ```
 
 Browser: `node tools/serve-cart.mjs` plus `npm run dev` in
-`../sycl-badge/simulator` (docs/RUNNING.md). Simulator quirks (framebuffer
+`../../sycl-badge/simulator` (docs/RUNNING.md). Simulator quirks (framebuffer
 at 0x20, buttons at 0x04, red/blue swap) are handled by `present_wasm` and
 `read_controls` in `main.zig`.
 

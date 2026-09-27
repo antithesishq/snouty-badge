@@ -1,39 +1,35 @@
 # Running the Snouty badge cart
 
+Commands below run from this cart's directory (`carts/snouty-run/`) unless
+noted; `zig build` runs from the repository root, two levels up, and writes its
+outputs to `../../zig-out/`.
+
 ## 1. Prerequisites
 
-- git
-- Zig **0.17.0-dev.1936+5a625d5f3** exactly (upstream sycl-badge pins it). Nightly
-  tarballs are named `zig-<arch>-<os>-<version>.tar.xz`; the Linux x86_64 one is
-  <https://ziglang.org/builds/zig-x86_64-linux-0.17.0-dev.1936+5a625d5f3.tar.xz>.
-  Nightlies rotate off ziglang.org; if the URL 404s, try the machengine.org
-  mirror or `zigup`. Unpack it and put the `zig` binary on `PATH`.
-- Node.js 20 or newer (for the simulator and the tools in `tools/`)
-- Optional, for GIF previews: Python 3 with Pillow
+See `../../docs/RUNNING.md` at the repository root (Zig version and download,
+Node.js, Python with Pillow for GIF previews).
 
 ## 2. Checkout layout
 
-The two repos must be siblings. `build.zig.zon` points at `../sycl-badge`, and
-`src/os/system/tracy_protocol.zig` is a symlink into it.
+This cart lives in `carts/snouty-run/` of the snouty-badge repository; the
+upstream SDK is the `sycl-badge/` submodule at the repository root. See
+`../../docs/RUNNING.md` for cloning with the submodule.
 
-```
-work/
-  sycl-badge/     git clone https://github.com/ZigEmbeddedGroup/sycl-badge.git
-  snouty-badge/   git clone git@github.com:antithesishq/snouty-badge.git
-```
-
-Releases are annotated tags (`git tag -n1`); `git checkout v3.0.0` builds that
-release. From the exe.dev VM the remote is reached through the GitHub
-integration host `github.int.exe.xyz`.
+Releases of this cart are annotated tags (`git tag -n1`); `git checkout v3.0.0`
+builds that release (those tags predate the monorepo and check out the old
+single-cart layout, with `../sycl-badge` as a sibling checkout). From the
+exe.dev VM the remote is reached through the GitHub integration host
+`github.int.exe.xyz`.
 
 ## 3. Build
 
+From the repository root:
+
 ```sh
-cd snouty-badge
-zig build
+zig build -Dcart=snouty-run     # or plain `zig build` for every cart
 ```
 
-This writes:
+This writes, at the repository root:
 
 - `zig-out/firmware/snouty.uf2` (for the badge)
 - `zig-out/firmware/snouty.elf`
@@ -44,8 +40,8 @@ This writes:
 Terminal 1 serves the cart and live-reloads it:
 
 ```sh
-cd snouty-badge
-node tools/serve-cart.mjs            # serves zig-out/bin/snouty.wasm on :2468
+cd carts/snouty-run                  # from the repository root
+node tools/serve-cart.mjs            # serves ../../zig-out/bin/snouty.wasm on :2468
 # or: node tools/serve-cart.mjs path/to/other.wasm --port 2468
 ```
 
@@ -56,7 +52,7 @@ This serves `http://localhost:2468/cart.wasm` (with CORS) and
 Terminal 2 runs the simulator UI:
 
 ```sh
-cd ../sycl-badge/simulator
+cd ../../sycl-badge/simulator
 npm install
 npm run dev
 ```
@@ -99,7 +95,7 @@ Known upstream simulator quirks (current sycl-badge `main`):
 ## 5. Headless preview (no browser)
 
 ```sh
-node tools/preview.mjs zig-out/bin/snouty.wasm --frames 240 --every 4 --out out/
+node tools/preview.mjs ../../zig-out/bin/snouty.wasm --frames 240 --every 4 --out out/
 python3 tools/make_gif.py out/ preview.gif --scale 3 --ms 66
 ```
 
@@ -107,7 +103,7 @@ The waterfall flips its dither mask every tick, so single frames look like a
 checkerboard. To see what the eye sees at 60 Hz, dump every tick and blend:
 
 ```sh
-node tools/preview.mjs zig-out/bin/snouty.wasm --frames 400 --every 1 --out out/
+node tools/preview.mjs ../../zig-out/bin/snouty.wasm --frames 400 --every 1 --out out/
 python3 tools/make_gif.py out/ preview.gif --blend 4 --ms 66
 ```
 
@@ -130,4 +126,4 @@ update is one 60 Hz tick, so `--every 4 --ms 66` plays at about real speed.
 ## 6. Flash the badge
 
 1. Connect the badge over USB-C. It shows up as a USB mass-storage drive.
-2. Copy `zig-out/firmware/snouty.uf2` onto the drive, replacing `CURRENT.UF2`.
+2. Copy `zig-out/firmware/snouty.uf2` (at the repository root) onto the drive, replacing `CURRENT.UF2`.

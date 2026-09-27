@@ -1,59 +1,60 @@
 # Running the Snouty Maze cart
 
+The cart lives in `carts/snouty-maze/` of the snouty-badge repository.
+Commands below run from that directory unless noted; only `zig build` runs
+from the repository root (`../..`), and its outputs are in the root
+`zig-out/` (`../../zig-out/...` from here).
+
 ## 1. Prerequisites
 
-- git
-- Zig **0.17.0-dev.1936+5a625d5f3** exactly (upstream sycl-badge pins it). Nightly
-  tarballs are named `zig-<arch>-<os>-<version>.tar.xz`; the Linux x86_64 one is
-  <https://ziglang.org/builds/zig-x86_64-linux-0.17.0-dev.1936+5a625d5f3.tar.xz>.
-  Nightlies rotate off ziglang.org; if the URL 404s, try the machengine.org
-  mirror or `zigup`. Unpack it and put the `zig` binary on `PATH`.
-- Node.js 20 or newer (for the simulator and the tools in `tools/`)
-- Optional: Python 3 with Pillow (GIF previews) and numpy (placeholder art)
+Zig, Node.js, Python with Pillow and git: see `../../docs/RUNNING.md` at the
+repository root. This cart also uses numpy (optional, for the placeholder
+art in `tools/prepare_assets.py --placeholders`).
 
 ## 2. Getting the code
 
-There is no git remote yet. The repo lives on the exe.dev VM
-`animated-badge.exe.xyz` at `/home/exedev/snouty-maze`. Copy it next to a
-checkout of `sycl-badge` (the two must be siblings: `build.zig.zon` points at
-`../sycl-badge`, and `src/os/system/tracy_protocol.zig` is a symlink into it):
+Cloning the repository with its `sycl-badge/` submodule is described in
+`../../docs/RUNNING.md` at the repository root. Until the `monorepo` branch
+is on GitHub it lives on the exe.dev VM `animated-badge.exe.xyz` at
+`/home/exedev/snouty-badge`:
 
 ```sh
-mkdir -p work && cd work
-git clone https://github.com/ZigEmbeddedGroup/sycl-badge.git
-scp -r exedev@animated-badge.exe.xyz:/home/exedev/snouty-maze .
-# later, to update: rsync -a --exclude zig-out --exclude .zig-cache --exclude zig-pkg \
-#   exedev@animated-badge.exe.xyz:/home/exedev/snouty-maze/ snouty-maze/
+git clone -b monorepo exedev@animated-badge.exe.xyz:/home/exedev/snouty-badge
+cd snouty-badge && git submodule update --init
+# later, to update: git pull (or rsync -a --exclude zig-out --exclude .zig-cache --exclude zig-pkg \
+#   exedev@animated-badge.exe.xyz:/home/exedev/snouty-badge/ snouty-badge/)
 ```
 
-```
-work/
-  sycl-badge/
-  snouty-maze/
-```
-
-Milestones are annotated tags (`git tag -n1`); `git checkout m1` gives the
-M1 build.
+Milestones are annotated tags (`git tag -n1 'snouty-maze/*'`:
+`snouty-maze/a1`, `/a2`, `/m0`..`/m3`); `git checkout snouty-maze/m1` gives
+the M1 build.
 
 ## 3. Build and test
 
+From the repository root:
+
 ```sh
-cd snouty-maze
-zig build                  # firmware + wasm
-zig build test             # host tests: maze generator, run merging, clipper, camera, autopilot, actors
+zig build -Dcart=snouty-maze   # firmware + wasm (plain `zig build` builds every cart)
+zig build test             # host tests: maze generator, run merging, clipper, camera, autopilot, actors (and the other carts')
 zig build check-float      # fails if f64 soft-float code reached the firmware
+```
+
+Then from `carts/snouty-maze/`:
+
+```sh
 node tools/check_golden.mjs   # golden-image regression (needs zig build first)
 node tools/check_cycle.mjs    # screensaver loop, actor triggers and LEDs (runs A..F)
 ```
 
-`zig build` writes:
+`zig build` writes, in the root `zig-out/`:
 
 - `zig-out/firmware/snouty-maze.uf2` (for the badge)
 - `zig-out/firmware/snouty-maze.elf`
 - `zig-out/bin/snouty-maze.wasm` (for the simulator and the headless tools)
 
-A clean build takes about 4 minutes; incremental builds take seconds.
-`zig build -Ddebug_overlay=true` starts with the timing overlay on (Select
+A clean build of this cart takes about 4 minutes (all carts: several);
+incremental builds take seconds.
+`zig build -Dcart=snouty-maze -Ddebug_overlay=true` starts with the timing overlay on (Select
 in fly mode toggles it either way; see section 4).
 
 ## 4. Controls (M3 screensaver)
@@ -104,7 +105,7 @@ overlay); the cart never binds either.
 Terminal 1 serves the cart and live-reloads it:
 
 ```sh
-node tools/serve-cart.mjs            # serves zig-out/bin/snouty-maze.wasm on :2468
+node tools/serve-cart.mjs            # serves ../../zig-out/bin/snouty-maze.wasm on :2468
 # or: node tools/serve-cart.mjs path/to/other.wasm --port 2468
 ```
 
@@ -114,7 +115,7 @@ This serves `http://localhost:2468/cart.wasm` (with CORS) and
 Terminal 2 runs the simulator UI:
 
 ```sh
-cd ../sycl-badge/simulator
+cd ../../sycl-badge/simulator
 npm install
 npm run dev
 ```
@@ -144,7 +145,7 @@ The simulator's frame rate says nothing about the badge's.
 ## 6. Headless preview (no browser)
 
 ```sh
-node tools/preview.mjs zig-out/bin/snouty-maze.wasm --frames 600 --every 6 --out out/
+node tools/preview.mjs ../../zig-out/bin/snouty-maze.wasm --frames 600 --every 6 --out out/
 python3 tools/make_gif.py out/ preview.gif --scale 3 --ms 100
 ```
 
@@ -173,17 +174,17 @@ frame to `out/frame_XXXX.png` plus `out/frames.json` (metadata). Options:
 Fixed views, e.g. the hardware-gate overhead pose of a 16x16 maze:
 
 ```sh
-node tools/preview.mjs zig-out/bin/snouty-maze.wasm --frames 1 --out out/pose \
+node tools/preview.mjs ../../zig-out/bin/snouty-maze.wasm --frames 1 --out out/pose \
   --call debug_set_size:16 --pose 8,17.5,8,0,90,0
 ```
 
 The M1 fly-through (walks 3 cells, turns right, walks 3, then climbs with B+Up
 while pitching down with A+Down, ending overhead). It drives the M1 debug
-camera, so from M2 on it only does this on the `m1` tag (the autopilot
+camera, so from M2 on it only does this on the `snouty-maze/m1` tag (the autopilot
 ignores the stick):
 
 ```sh
-node tools/preview.mjs zig-out/bin/snouty-maze.wasm --script tools/scripts/m1_fly.json \
+node tools/preview.mjs ../../zig-out/bin/snouty-maze.wasm --script tools/scripts/m1_fly.json \
   --frames 600 --every 6 --out out/fly
 python3 tools/make_gif.py out/fly docs/preview_m1.gif --scale 3 --ms 100
 ```
@@ -225,7 +226,7 @@ sequence: pause, rise, overhead with the name strip, descend into the new
 maze, walk):
 
 ```sh
-node tools/preview.mjs zig-out/bin/snouty-maze.wasm --script tools/scripts/m2_cycle.json \
+node tools/preview.mjs ../../zig-out/bin/snouty-maze.wasm --script tools/scripts/m2_cycle.json \
   --frames 1000 --every 10 --out out/m2
 python3 tools/make_gif.py out/m2 docs/preview_m2.gif --scale 3 --ms 100
 ```
@@ -315,7 +316,7 @@ the sphere in (4, 0), which teleports it at tick 340, then A at tick 700
 skips to the finish sequence):
 
 ```sh
-node tools/preview.mjs zig-out/bin/snouty-maze.wasm --script tools/scripts/m3_tour.json \
+node tools/preview.mjs ../../zig-out/bin/snouty-maze.wasm --script tools/scripts/m3_tour.json \
   --frames 1000 --every 10 --out out/m3 --call debug_place:10100 --call debug_place:20400
 python3 tools/make_gif.py out/m3 docs/preview_m3.gif --scale 3 --ms 100
 ```
@@ -323,7 +324,7 @@ python3 tools/make_gif.py out/m3 docs/preview_m3.gif --scale 3 --ms 100
 ### Art
 
 ```sh
-python3 tools/prepare_assets.py --from-w95 assets/src/w95 --art ../snouty-art/out/maze \
+python3 tools/prepare_assets.py --from-w95 assets/src/w95 --art ../../snouty-art/out/maze \
   --contact docs/w95_assets.png                 # what assets/gen/ is built from
 python3 tools/prepare_assets.py --placeholders --contact docs/placeholders.png
 python3 tools/prepare_assets.py --check       # validate delivered art in assets/gen/
@@ -342,7 +343,7 @@ the `gfx` module. Goldens in `tests/golden/` are baselined on the w95 art.
 ## 7. Flash the badge
 
 1. Connect the badge over USB-C. It shows up as a USB mass-storage drive.
-2. Copy `zig-out/firmware/snouty-maze.uf2` onto the drive (replacing
+2. Copy `zig-out/firmware/snouty-maze.uf2` (repository root) onto the drive (replacing
    `CURRENT.UF2`). The badge reboots into the cart.
 
 ## 8. Reading performance on the badge
@@ -354,7 +355,7 @@ the `gfx` module. Goldens in `tests/golden/` are baselined on the w95 art.
   so a photo of the screen records where the camera was. From M3, Select
   in the autopilot states toggles the LEDs instead, so the overlay is
   toggled in fly mode: B+Select (fly), Select (overlay on), B+Select (back
-  to the screensaver; the overlay stays on). `zig build
+  to the screensaver; the overlay stays on). `zig build -Dcart=snouty-maze
   -Ddebug_overlay=true` starts with it on.
 
 For the M1 hardware gate (SPEC.md section 16), report fps and render

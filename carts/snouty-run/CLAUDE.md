@@ -8,8 +8,9 @@ animated on the badge screen.
 
 - `assets/` — source art (PNG sprite sheets, reference images). Dropped in via scp.
 - `cart/` — the Zig cart: `cart/src/main.zig` exports `start()` and `update()`.
-- `../sycl-badge/` — upstream badge repo (ZigEmbeddedGroup/sycl-badge), cloned as a
-  sibling. Treat it as read-only reference and SDK; do not commit changes there.
+- `../../sycl-badge/` — upstream badge repo (ZigEmbeddedGroup/sycl-badge), a git
+  submodule at the repository root. Treat it as read-only reference and SDK; do not
+  commit changes there.
 
 ## Target hardware (SYCL Badge V2)
 
@@ -73,28 +74,33 @@ roughly 48-64 px tall reads well from a lanyard.
 Zig `0.17.0-dev.1936+5a625d5f3` (upstream's pin) is installed at
 `~/.local/bin/zig`; `export PATH="$HOME/.local/bin:$PATH"`.
 
+Commands in this file run from this cart's directory (`carts/snouty-run/`)
+unless noted; `zig build` runs from the repository root, two levels up.
+
 ```
-zig build        # from the repo root
+zig build                    # from the repository root: every cart
+zig build -Dcart=snouty-run  # only this one (`-Dcart=snouty` works too)
 ```
 
 produces `zig-out/firmware/snouty.uf2`, `zig-out/firmware/snouty.elf` and
-`zig-out/bin/snouty.wasm`. A clean build takes about 1.5 min once the global zig
-cache is warm.
+`zig-out/bin/snouty.wasm` at the repository root (`../../zig-out/` from here).
+A clean build of every cart takes several minutes; `-Dcart=` keeps it short.
 
-This repo is a Zig package: `build.zig.zon` has a path dependency
-`.sycl_badge = .{ .path = "../sycl-badge" }` plus `.microzig`/`.zigimg` entries
-copied from upstream's `build.zig.zon`. `build.zig` calls upstream's
+The repository root is one Zig package: its `build.zig.zon` has the path
+dependency `.sycl_badge = .{ .path = "sycl-badge" }` (the submodule) plus
+`.microzig`/`.zigimg` entries, and its `build.zig` calls this cart's
+`build.zig`, which is a module with `pub fn add(...)`. That calls upstream's
 `add_os_cart` with a `custom_builder` that runs `cart/build/convert_gfx.zig` on
 `assets/gen/*.png` to make the `gfx` module. Nothing in `sycl-badge` is patched.
 
 Wrinkle: `add_os_cart` resolves `src/os/system/tracy_protocol.zig` with the
-consumer's `b.path`, so `src/os/system/tracy_protocol.zig` here is a committed
-symlink to `../../../../sycl-badge/src/os/system/tracy_protocol.zig`. It
-requires sycl-badge to be checked out as a sibling (as the path dep does).
+consumer's `b.path`, so the repository root has one committed symlink
+`src/os/system/tracy_protocol.zig` into the `sycl-badge` submodule (there is no
+per-cart copy any more).
 
-Zig fetches dependencies into `zig-pkg/` in the repo root (gitignored).
+Zig fetches dependencies into `zig-pkg/` at the repository root (gitignored).
 
-The cart links to about 94 KB (`size -A zig-out/firmware/snouty.elf`: `.text`,
+The cart links to about 94 KB (`size -A ../../zig-out/firmware/snouty.elf`: `.text`,
 which includes `.rodata`, plus `.data`), under the 256 KB cart RAM limit. The
 sprite strip is 72 KB; the four 8-bit backdrop frames share one merged 15 KB
 index array and differ only in palette. Watch this if more art is added.
@@ -112,7 +118,7 @@ Flash by copying the UF2 onto the badge's USB mass-storage drive over
 
 ## Simulator
 
-`sycl-badge/simulator` is a Parcel/TypeScript web app (Node 22 is installed). The
+`sycl-badge/simulator` (at the repository root) is a Parcel/TypeScript web app (Node 22 is installed). The
 same build also emits a `.wasm` of the cart; `api.zig` switches to wasm externs at
 comptime. Run `npm install && npm run dev` there, and serve `cart.wasm` on
 `http://localhost:2468`. Hosted fallback: https://badgesim.microzig.tech/.

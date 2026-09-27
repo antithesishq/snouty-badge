@@ -6,7 +6,7 @@ from pathlib import Path
 import numpy as np
 from PIL import Image
 
-KEY = (255, 0, 255)  # magenta key used by snouty-badge's converter for index 0
+KEY = (255, 0, 255)  # magenta key used by snouty-run's converter for index 0
 
 
 def _hex(h):
@@ -65,7 +65,7 @@ class Palette:
 
     @staticmethod
     def flatten_key(img: Image.Image) -> Image.Image:
-        """Transparency -> magenta key, RGB (what snouty-badge's converter wants)."""
+        """Transparency -> magenta key, RGB (what snouty-run's converter wants)."""
         bg = Image.new("RGBA", img.size, KEY + (255,))
         bg.alpha_composite(img.convert("RGBA"))
         return bg.convert("RGB")

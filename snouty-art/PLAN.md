@@ -1,8 +1,8 @@
 # Snouty art pipeline: plan
 
 Owner: Adrian Hatch (Antithesis). Started 2026-09-26.
-Consumers: `../snouty-badge` (run + jump strips, 96x96 cells, origin (48,88)),
-later `../snouty-bugs` and the other carts.
+Consumers: `../carts/snouty-run` (run + jump strips, 96x96 cells, origin (48,88)),
+later `../carts/snouty-bugs` and the other carts.
 
 ## Goal
 
@@ -47,7 +47,7 @@ The Study 04/05 frames were built the same way, so we own that process here:
 4. `snoutyart/anim/*.py` are the animations: one Python file per cycle, each
    frame a small dict of joint positions and part offsets. These are the
    "source files" of the art and are meant to be edited and re-rendered.
-5. `snoutyart/export.py` writes the Study-pack layout the badge repo already
+5. `snoutyart/export.py` writes the Study-pack layout the snouty-run cart already
    consumes: `frames/*.png`, horizontal strip, grid sheet, 4-bit indexed strip
    (index 0 transparent), `.json` metadata (origin, timing, feet rows, gait),
    `.gpl` palette, contact sheet and preview GIFs (isolated and scrolling ground).
@@ -82,7 +82,7 @@ Rendering is deterministic: `python3 tools/build.py all` regenerates `out/`.
 - M2b: multi-style refactor (kept) and a `glean` style with its own run and
   jump (2026-09-27, reviewed and scrapped; see Styles). Decision: the
   `study05` revision is the version to carry forward.
-- M3 (next): hand-off. `python3 tools/install_badge.py` copies `out/run` and `out/jump` into `snouty-badge/assets/` as
+- M3 (next): hand-off. `python3 tools/install_badge.py` copies `out/run` and `out/jump` into `../carts/snouty-run/assets/` as
   study packs, point `tools/prepare_assets.py` at them, update feet tables,
   verify in the simulator.
 
@@ -94,7 +94,7 @@ export, the emblem is symmetric enough).
 
 ## Maze pack (2026-09-27)
 
-Adrian's art guidance for `../snouty-maze`: Snouty from the study05 run
+Adrian's art guidance for `../carts/snouty-maze`: Snouty from the study05 run
 frames (with the net), a Zig mark where the original had the OpenGL word,
 the Start button with the Iris mark in place of the Windows flag, and a
 pixel version of the Iris mark itself (`ref/iris-logo-ref.png`, placed by
@@ -116,6 +116,7 @@ gains a generic downscaler rather than new rig work:
   contact sheet. All cells keep a 1 px empty border as the maze validator
   requires. Sources: `ref/zig-mark.svg` (ziglang/logo, CC BY-SA 4.0,
   rasterised with ImageMagick), `ref/iris-logo-ref.png`,
-  `../snouty-maze/assets/src/w95/start2.png`, `out/study05/run/frames/`.
-- The maze's `prepare_assets.py --from-w95 ... --art ../snouty-art/out/maze`
-  takes these sheets instead of its procedural Snouty and Iris mark.
+  `../carts/snouty-maze/assets/src/w95/start2.png`, `out/study05/run/frames/`.
+- The maze's `prepare_assets.py --from-w95 assets/src/w95 --art
+  ../../snouty-art/out/maze` (run from `carts/snouty-maze/`) takes these
+  sheets instead of its procedural Snouty and Iris mark.

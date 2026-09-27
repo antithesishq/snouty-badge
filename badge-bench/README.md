@@ -15,7 +15,7 @@ and trust relative changes (before/after an edit) more than absolute
 numbers. The badge's own timing (a cart's debug overlay) is the only real
 number.
 
-This generalises `snouty-reflections/tools/emu/real.py` to any cart built
+This generalises `carts/snouty-reflections/tools/emu/real.py` to any cart built
 with the SDK's OS-cart path (`sycl-badge/src/cart/cart_ram.ld`,
 `platform_cart_ram.zig`), and reproduces that tool's numbers exactly
 (see [Validation](#validation)).
@@ -26,8 +26,12 @@ Needs `python3` 3.9 or newer with the `venv` module. Nothing else: no zig,
 no node.
 
 ```sh
-./bench.sh path/to/zig-out/firmware/snouty-bugs.elf --frames 600 --every 60 --symbols
+./bench.sh ../zig-out/firmware/snouty-bugs.elf --frames 600 --every 60 --symbols
 ```
+
+(from this directory, after `zig build` at the repository root, which
+writes every cart's ELF to the root `zig-out/firmware/`; from the root the
+same run is `badge-bench/bench.sh zig-out/firmware/snouty-bugs.elf ...`).
 
 The first run creates `.venv/` next to `bench.sh` and installs
 `requirements.txt` (unicorn 2.1.4, capstone 5.0.7, pyelftools; tomli on
@@ -125,7 +129,7 @@ buffer swap). Everything before the first loop read (`os_align_cycles`,
 `start()`) is reported separately as start-up.
 
 This is the same work as the window between two present() messages that
-`snouty-reflections/tools/emu/real.py` uses, shifted by the tail of
+`carts/snouty-reflections/tools/emu/real.py` uses, shifted by the tail of
 `present()`, with one real difference: update #0's `present()` has no
 frame in flight, so it skips one FIFO drain iteration (7 instructions, 10
 cycles). `--frames N` runs updates #0..#N-1, matching the carts'
@@ -141,7 +145,7 @@ is the CPU work of one update.
 
 ## The cycle model
 
-`badge_bench/model.py`, copied from `snouty-reflections/tools/emu/model.py`
+`badge_bench/model.py`, copied from `carts/snouty-reflections/tools/emu/model.py`
 (the validation proves they agree). Issue cycles per instruction, code and
 data in zero-wait SRAM:
 
@@ -211,19 +215,22 @@ executions and cycles per frame: search it for the hot inner loop.
 
 Nothing is needed for a cart built with the SDK's OS-cart path: pass its
 ELF. For defaults, add `carts/<elf basename>.toml` (chosen by the ELF's
-file name without `.elf`):
+file name without `.elf`; this is `badge-bench/carts/`, which holds only
+these toml files, not the repository's top-level `carts/<name>/` with the
+cart sources):
 
 ```toml
 budget_ms = 16.7                        # frame budget
 frames = 600                            # updates to run
-script = "tools/scripts/m1_play.json"   # relative to the cart repo root
+script = "carts/snouty-bugs/tools/scripts/m1_play.json"   # relative to the repository root
 pokes = ["dither.mode=1"]               # --poke items
 press = ["START:30-31"]                 # --press items
 note = "shown in the report header"
 ```
 
-The cart repo root is the directory above `zig-out/` when the ELF is in
-`<repo>/zig-out/firmware/`, else the ELF's own directory. Every
+Relative script paths resolve against the directory above `zig-out/` when
+the ELF is in `<dir>/zig-out/firmware/` (for the root build, the repository
+root, hence the `carts/<name>/` prefix), else the ELF's own directory. Every
 command-line flag overrides its key. Python 3.11+ reads the file with
 `tomllib`, older Pythons with `tomli` (installed by `bench.sh`) or, failing
 that, a tiny built-in parser that understands exactly the syntax above.
@@ -234,15 +241,19 @@ check the SDK for what it should return) rather than to the cart.
 
 ## Validation
 
-Run on 2026-09-27 against the ELFs in the sibling repos (sha256 prefixes
-below; the report header prints the full ELF hash of every run).
+Run on 2026-09-27 against the ELFs in the carts' then-separate repos
+(sha256 prefixes below; the report header prints the full ELF hash of
+every run). The commit hashes quoted here and in the first-look table refer
+to each cart's history before it was imported into this repository; the
+imported commits have new hashes, the ELF hashes are unchanged.
 
 ### 1. snouty-reflections reproduces tools/emu exactly
 
 `tests/test_reflections.sh` (about 80 s). ELF `snouty-reflections.elf` at
-tag `m1.1`, sha256 `7c76be7bd522`, the same file `tools/emu/out/real.elf`
-snapshots. Reference: `tools/emu/real.py --frames 0 25 ... 575 --mode none`
-(its `out/sweep/result_real_*.json`), which runs each listed frame as its
+tag `snouty-reflections/m1.1`, sha256 `7c76be7bd522`, the same file
+`carts/snouty-reflections/tools/emu/out/real.elf` snapshots. Reference:
+`tools/emu/real.py --frames 0 25 ... 575 --mode none` (its
+`out/sweep/result_real_*.json`), which runs each listed frame as its
 own window by poking `main.frame` and `dither.mode = 1` before it, after a
 discarded warm-up update. badge-bench runs 576 consecutive updates with
 `--poke dither.mode=1`; update #N renders `main.frame = N`, so it is the
@@ -269,8 +280,8 @@ frames).
 
 ### 2. snouty-bugs plays
 
-`./bench.sh ../snouty-bugs/zig-out/firmware/snouty-bugs.elf --every 60 --png --symbols --json --listing`
-(defaults from `carts/snouty-bugs.toml`: `tools/scripts/m1_play.json`, 600
+`./bench.sh ../zig-out/firmware/snouty-bugs.elf --every 60 --png --symbols --json --listing`
+(defaults from `carts/snouty-bugs.toml`: `carts/snouty-bugs/tools/scripts/m1_play.json`, 600
 frames, 16.7 ms). ELF sha256 `f05b25c584fd` (commit `fb52bd8`). No fault.
 The PNGs show the title screen (frame 0), flying with shots (60, 120),
 enemies (180), a hit and the "OFF BY ONE" rewind report (180, 240), and
@@ -349,14 +360,16 @@ Notes and oddities:
   nothing beyond what snouty-reflections uses except `cart.rand()` (ROSC,
   used by snouty-maze's seed) and the SRAM8/9 mapping above.
 
-Reproduce (from this directory, sibling repos next to it):
+Reproduce (from this directory, after `zig build` at the repository root;
+`tests/test_reflections.sh` expects the reflections ELF built at tag
+`snouty-reflections/m1.1`):
 
 ```sh
 tests/test_reflections.sh
-./bench.sh ../snouty-bugs/zig-out/firmware/snouty-bugs.elf   --every 60 --png --symbols --json --listing
-./bench.sh ../snouty-boy/zig-out/firmware/snouty-boy.elf     --every 60 --png --symbols --json --listing
-./bench.sh ../snouty-maze/zig-out/firmware/snouty-maze.elf   --every 60 --png --symbols --json --listing
-./bench.sh ../snoutenstein/zig-out/firmware/snoutenstein.elf --every 60 --png --symbols --json --listing
+./bench.sh ../zig-out/firmware/snouty-bugs.elf   --every 60 --png --symbols --json --listing
+./bench.sh ../zig-out/firmware/snouty-boy.elf     --every 60 --png --symbols --json --listing
+./bench.sh ../zig-out/firmware/snouty-maze.elf   --every 60 --png --symbols --json --listing
+./bench.sh ../zig-out/firmware/snoutenstein.elf --every 60 --png --symbols --json --listing
 ```
 
 ## Layout
@@ -367,7 +380,7 @@ badge_bench/        cli.py (arguments), run.py (emulation and frame windows), os
                     (the fake OS), model.py (cycle model, unicorn/capstone setup), elf.py
                     (ELF, symbols, DWARF lines), script.py (input), config.py (toml),
                     report.py (tables, stats, hot list, JSON), png.py, listing.py
-carts/<name>.toml   per-cart defaults
+carts/<name>.toml   per-cart defaults (not the repository's carts/ sources)
 tests/              test_reflections.sh (validation 1)
 out/                default output directory (gitignored)
 ```

@@ -4,8 +4,8 @@ Fourth badge cart for the Software You Can Love (SYCL) conference, built for
 Antithesis: a real-time ray tracer demo (rippling water, chrome and glass
 spheres, dithered sunset). `SPEC.md` is the design and milestone list,
 `PLAN.md` the current milestone's contract between parallel tracks. The
-sibling repo `../snouty-bugs` is where this toolchain was copied from; its
-CLAUDE.md and `../snouty-badge/CLAUDE.md` have the long explanations of the
+sibling cart `../snouty-bugs` is where this toolchain was copied from; its
+CLAUDE.md and `../snouty-run/CLAUDE.md` have the long explanations of the
 simulator quirks.
 
 ## Layout
@@ -17,7 +17,8 @@ simulator quirks.
   `reference.py` (numpy reference renderer), `check_render.mjs`,
   `check_float.mjs`.
 - `docs/` — `RUNNING.md`, milestone GIFs.
-- `../sycl-badge/` — upstream badge repo, read-only SDK. Path dependency.
+- `../../sycl-badge/` — upstream badge repo, read-only SDK, a git submodule
+  at the repository root. Path dependency of the root `build.zig.zon`.
 
 ## Target hardware (SYCL Badge V2)
 
@@ -36,12 +37,18 @@ simulator quirks.
 ## Building
 
 Zig `0.17.0-dev.1936+5a625d5f3` at `~/.local/bin/zig`
-(`export PATH="$HOME/.local/bin:$PATH"`). `zig build` writes
+(`export PATH="$HOME/.local/bin:$PATH"`). Commands here run from this cart's
+directory (`carts/snouty-reflections/`) unless noted; only `zig build` runs
+from the repository root (`../..`). `zig build` there writes
 `zig-out/firmware/snouty-reflections.uf2`, `.elf` and
-`zig-out/bin/snouty-reflections.wasm`. Clean build about 2 min.
-`-Ddebug_overlay=true` draws render timing on screen. `src/os/system/
-tracy_protocol.zig` is a committed symlink into `../sycl-badge`; the repos
-must be siblings. Zig fetches packages into `zig-pkg/` (gitignored).
+`zig-out/bin/snouty-reflections.wasm` in the root `zig-out/` (from here:
+`../../zig-out/...`); `zig build -Dcart=snouty-reflections` builds only this
+cart, which keeps it to about 2 min clean (all carts take several minutes).
+`-Ddebug_overlay=true` draws render timing on screen; `zig build check-float`
+runs the float check. This cart's `build.zig` is a module (`pub fn add`)
+called by the root `build.zig`; the root has the one `build.zig.zon` and the
+one `src/os/system/tracy_protocol.zig` symlink into the `sycl-badge/`
+submodule. Zig fetches packages into the root `zig-pkg/` (gitignored).
 
 ## Simulator and preview
 
@@ -50,7 +57,7 @@ red/blue swapped for the web simulator; `read_controls()` reads the
 simulator's button word at 0x04. Headless:
 
 ```
-node tools/preview.mjs zig-out/bin/snouty-reflections.wasm --frames 600 --every 6 --out out/
+node tools/preview.mjs ../../zig-out/bin/snouty-reflections.wasm --frames 600 --every 6 --out out/
 python3 tools/make_gif.py out/ preview.gif --scale 3 --ms 50
 ```
 

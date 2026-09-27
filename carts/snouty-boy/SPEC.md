@@ -23,7 +23,7 @@ bit. The title can honestly say "verified by deterministic replay".
 
 ## 2. Hardware facts the design leans on
 
-Checked in `../sycl-badge` (`src/os/cart/api.zig`, `src/cart/cart_ram.ld`,
+Checked in `../../sycl-badge` (`src/os/cart/api.zig`, `src/cart/cart_ram.ld`,
 `src/os/cart/platform_cart_xip.zig`, `src/os/loader/*`).
 
 - RP2354B, Cortex-M33 at 150 MHz, hardware divide, single-cycle multiply.
@@ -332,7 +332,7 @@ small, not any CPU limit.
 
 Copied from `snouty-bugs`: `build.zig` shape (`add_os_cart` with a
 `custom_builder` that adds nothing yet), `build.zig.zon` pointing at
-`../sycl-badge`, `tools/serve-cart.mjs`, `tools/preview.mjs`,
+`../../sycl-badge`, `tools/serve-cart.mjs`, `tools/preview.mjs`,
 `tools/make_gif.py`, `docs/RUNNING.md` structure, `CLAUDE.md`.
 
 ```
