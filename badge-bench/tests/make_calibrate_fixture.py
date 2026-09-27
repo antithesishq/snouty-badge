@@ -89,14 +89,25 @@ def main():
                     cyc_per_frame=123.45, taken=100, mnemonics={'bl': 100}, class_cyc={'alu': 12245}))
     hot.sort(key=lambda h: -h['cyc'])
 
+    def fnv(vals):
+        """The cart's checksum (harness.zig checksum_of, fit.checksum)."""
+        h = 0x811c9dc5
+        for v in vals:
+            for byte in int(v).to_bytes(4, 'little'):
+                h = ((h ^ byte) * 0x01000193) & 0xffffffff
+        return h
+
     def lines(which, pfx, passes, partial):
         L = []
         for p in range(1, passes + 1):
+            hashed = []
             for k, n, ops, run, hi, hb in rows:
                 i, b = (run, run) if which == 'emu' else (hi, hb)
+                sink = 0x1234abcd ^ k
                 L.append(f"{pfx(p)}CAL k={k} n={n} ops={ops} idle_min={i} idle_med={i} "
-                         f"busy_min={b} busy_med={b} sink={0x1234abcd ^ k:08x}")
-            L.append(f"{pfx(p)}CAL done pass={p} sum=deadbeef")
+                         f"busy_min={b} busy_med={b} sink={sink:08x}")
+                hashed += [k, n, ops, i, i, b, b, sink]
+            L.append(f"{pfx(p)}CAL done pass={p} sum={fnv(hashed):08x}")
         if partial:
             k, n, ops, run, hi, hb = rows[0]
             L.append(f"{pfx(passes + 1)}CAL k={k} n={n} ops={ops} idle_min=1 idle_med=1 busy_min=1 "
