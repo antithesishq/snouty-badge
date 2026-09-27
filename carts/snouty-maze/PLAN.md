@@ -509,5 +509,5 @@ Done as planned. `assets/gen/` is built with `--from-w95 assets/src/w95
 colours), Zig mark (1), Iris mark (1), Start button with the Iris mark
 (9). New `iris.png` row. Audio removed from SPEC (sections 2, 3, 9, 11,
 12, 17, decision 8). Build, 24 host tests, check-float PASS, goldens
-unchanged (7 pass), `.text` 39.8 KB. Still open: the w95 textures are
-Microsoft's.
+unchanged (7 pass), `.text` 39.8 KB. Adrian: keep the w95 textures, no
+look-alikes. M3 next, in a fresh session.

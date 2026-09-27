@@ -373,7 +373,9 @@ the rise to a plan view, the maze swapping while overhead. Things changed:
 Snouty for the rat (a billboard rather than a mesh), the finish marker (the
 original had none visible; ours helps a viewer follow along), the name
 strip (it is a badge). Not cloned: the "walk through walls"
-option and custom texture options. Textures are original work.
+option and custom texture options. Wall, floor, ceiling and picture
+textures are the originals (extracted by the ibid-11962 recreation);
+Adrian decided on 2026-09-27 to keep them, no look-alikes.
 
 ## 13. Memory budget
 
