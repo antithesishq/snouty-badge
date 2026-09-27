@@ -292,7 +292,15 @@ together (same convention as the other carts, pending section 18).
   (Iris purple, the badge's brand colour), white flash on teleport, slow
   breathing during OVERHEAD. All channels at or below 10/255.
 
-## 10. Placeholder assets (v1)
+## 10. Assets
+
+Since 2026-09-27 (tag `a1`) the sheets are downsampled from the original
+screensaver's textures (`assets/src/w95/SOURCE.md`, via
+`tools/prepare_assets.py --from-w95`); two extra sheets `wall_pic.png`
+(the picture the original hangs on odd panels, 32x32 opaque) and
+`start.png` (the Start button floating in the first cell, 32x32
+transparent) wait for M3 code. `--rat` swaps Snouty for the original rat.
+The placeholder mode below still exists.
 
 Adrian asked for placeholders in v1; real art comes later through the same
 manifest sizes. `tools/prepare_assets.py --placeholders` draws every sheet

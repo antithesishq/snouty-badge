@@ -5,6 +5,14 @@
       Procedurally draws the eight sheets of SPEC.md section 10 as
       Genesis-style placeholder art, validates them and writes assets/gen/.
 
+  python3 tools/prepare_assets.py --from-w95 assets/src/w95 [--rat]
+      Downsamples the textures extracted from the original screensaver
+      (the ibid-11962 WebGL recreation, copied into assets/src/w95/) to the
+      manifest sizes, quantises them to the 4-bit palettes and writes
+      assets/gen/. Sheets without a source (finish, snouty, snouty_top)
+      keep their procedural drawing; --rat swaps the Snouty sheet for the
+      original rat.
+
   python3 tools/prepare_assets.py --check
       Validates the sheets already in assets/gen/ (e.g. delivered art).
 
@@ -65,6 +73,8 @@ MANIFEST: dict[str, Sheet] = {
         Sheet("snouty_top.png", 16, 16, 16, 16, 1, True),
         Sheet("smiley.png", 32, 32, 32, 32, 1, True),
         Sheet("logo.png", 32, 32, 32, 32, 1, True),
+        Sheet("wall_pic.png", 32, 32, 32, 32, 1, False),
+        Sheet("start.png", 32, 32, 32, 32, 1, True),
     ]
 }
 
@@ -373,6 +383,36 @@ def draw_logo() -> np.ndarray:
     return a
 
 
+# --------------------------------------------------------------------------
+# wall_pic.png: a framed picture (the original hangs a render on the odd
+# wall panel). start.png: a grey button with a green flag (the Start button
+# floating in the first cell).
+# --------------------------------------------------------------------------
+def draw_wall_pic() -> np.ndarray:
+    a = draw_wall()
+    a[3:29, 3:29] = g(2, 1, 0)
+    a[4:28, 4:28] = g(1, 3, 6)
+    yy, xx = grid(32, 32)
+    a[(yy > 18) & (yy < 28) & (xx > 4) & (xx < 28)] = g(1, 4, 1)
+    a[ellipse(32, 32, 10, 22, 3, 3)] = g(7, 6, 1)
+    return a
+
+
+def draw_start() -> np.ndarray:
+    s = MANIFEST["start.png"]
+    a = new_sheet(s)
+    a[8:24, 1:31] = BLACK
+    a[8:23, 1:30] = g(5, 5, 5)
+    a[9:22, 2:29] = g(6, 6, 6)
+    a[11:20, 4:12] = g(7, 0, 0)
+    a[11:15, 8:12] = g(0, 5, 0)
+    a[15:20, 4:8] = g(0, 0, 7)
+    a[15:20, 8:12] = g(7, 7, 0)
+    for i, x in enumerate(range(14, 28, 3)):
+        a[12:19, x:x + 2] = BLACK
+    return a
+
+
 DRAW = {
     "wall.png": draw_wall,
     "floor.png": draw_floor,
@@ -382,6 +422,8 @@ DRAW = {
     "snouty_top.png": draw_snouty_top,
     "smiley.png": draw_smiley,
     "logo.png": draw_logo,
+    "wall_pic.png": draw_wall_pic,
+    "start.png": draw_start,
 }
 
 
@@ -505,6 +547,171 @@ def write_contact(path: Path) -> None:
     print(f"contact sheet {path} {width}x{height}")
 
 
+
+# --------------------------------------------------------------------------
+# Conversion from the Windows 95 3D Maze recreation's extracted assets
+# (assets/src/w95/, see SOURCE.md there). Each source is resized to the
+# manifest cell with Lanczos (alpha resized separately so the RGB does not
+# bleed the transparent background into the edge), quantised by median cut
+# over the opaque pixels only, and the palette is snapped to RGB565 and
+# re-merged so the count that convert_gfx sees is the count validated here.
+# --------------------------------------------------------------------------
+def load_rgba(path: Path) -> np.ndarray:
+    return np.array(Image.open(path).convert("RGBA"))
+
+
+def resize_rgba(a: np.ndarray, w: int, h: int) -> tuple[np.ndarray, np.ndarray]:
+    """(rgb uint8 h x w x 3, opaque mask h x w). Colour under transparent
+    pixels is replaced by the mean opaque colour before filtering."""
+    rgb = a[..., :3].astype(np.float32)
+    alpha = a[..., 3].astype(np.float32) / 255.0
+    if (alpha < 1).any():
+        mean = (rgb * alpha[..., None]).sum((0, 1)) / max(alpha.sum(), 1.0)
+        rgb = rgb * alpha[..., None] + mean * (1 - alpha[..., None])
+    rgb_im = Image.fromarray(rgb.round().clip(0, 255).astype(np.uint8), "RGB").resize((w, h), Image.LANCZOS)
+    al_im = Image.fromarray((alpha * 255).round().astype(np.uint8), "L").resize((w, h), Image.LANCZOS)
+    return np.array(rgb_im), np.array(al_im) >= 128
+
+
+def quantize(rgb: np.ndarray, mask: np.ndarray, max_colors: int) -> np.ndarray:
+    """Median-cut palette over the masked pixels, snapped to RGB565 and kept
+    away from the key. Returns rgb with masked pixels replaced; others
+    untouched."""
+    pts = rgb[mask]
+    if pts.size == 0:
+        return rgb
+    n = max_colors
+    while True:
+        strip = Image.fromarray(pts.reshape(1, -1, 3), "RGB")
+        q = strip.quantize(colors=n, method=Image.Quantize.MEDIANCUT, dither=Image.Dither.NONE)
+        pal = np.array(q.getpalette()[: 3 * n], np.int32).reshape(-1, 3)
+        idx = np.array(q, np.uint8).reshape(-1)
+        # snap to RGB565 (what the display keeps) and dedupe
+        snapped = np.stack([(pal[:, 0] >> 3) * 255 // 31, (pal[:, 1] >> 2) * 255 // 63, (pal[:, 2] >> 3) * 255 // 31], axis=1).astype(np.uint8)
+        for c in snapped:
+            if tuple(c) == KEY:
+                c[1] = 8  # nudge a magenta off the key
+        uniq = np.unique(snapped[idx], axis=0)
+        if len(uniq) <= max_colors:
+            break
+        n -= 1
+    out = rgb.copy()
+    out[mask] = snapped[idx]
+    return out
+
+
+def bbox(mask: np.ndarray) -> tuple[int, int, int, int]:
+    ys, xs = np.where(mask)
+    return int(xs.min()), int(ys.min()), int(xs.max()) + 1, int(ys.max()) + 1
+
+
+def fit_sprite(a: np.ndarray, box: int = 30) -> np.ndarray:
+    """Crops an RGBA image to its opaque bounding box and fits it inside a
+    box x box square, centred in a 32x32 RGBA cell with a 1 px empty border."""
+    x0, y0, x1, y1 = bbox(a[..., 3] >= 128)
+    crop = a[y0:y1, x0:x1]
+    h, w = crop.shape[:2]
+    k = box / max(w, h)
+    nw, nh = max(1, round(w * k)), max(1, round(h * k))
+    rgb, m = resize_rgba(crop, nw, nh)
+    cell = np.zeros((32, 32, 4), np.uint8)
+    ox, oy = (32 - nw) // 2, (32 - nh) // 2
+    cell[oy:oy + nh, ox:ox + nw, :3] = rgb
+    cell[oy:oy + nh, ox:ox + nw, 3] = m * 255
+    return cell
+
+
+def texture_from(path: Path, s: Sheet) -> np.ndarray:
+    rgb, _ = resize_rgba(load_rgba(path), s.width, s.height)
+    return quantize(rgb, np.ones(rgb.shape[:2], bool), s.max_colors)
+
+
+def sprite_from_cells(cells: list[np.ndarray], s: Sheet) -> np.ndarray:
+    """Cells are 32x32 RGBA; all frames share one palette."""
+    rgb = np.concatenate([c[..., :3] for c in cells], axis=1)
+    mask = np.concatenate([c[..., 3] >= 128 for c in cells], axis=1)
+    out = new_sheet(s)
+    q = quantize(rgb, mask, s.max_colors)
+    out[mask] = q[mask]
+    return out
+
+
+def logo_from(path: Path, s: Sheet) -> np.ndarray:
+    """gl.png is a 205x25 'OpenGL' word: too wide for a square sprite, so
+    it is split at the widest gap in its right half ('Open' / 'GL') and the
+    two halves are stacked."""
+    a = load_rgba(path)
+    x0, y0, x1, y1 = bbox(a[..., 3] >= 128)
+    word = a[y0:y1, x0:x1]
+    cols = (word[..., 3] >= 128).any(axis=0)
+    gaps = [x for x in range(word.shape[1] // 2, word.shape[1]) if not cols[x]]
+    split = gaps[len(gaps) // 2] if gaps else word.shape[1] // 2
+    halves = [word[:, :split], word[:, split:]]
+    cell = np.zeros((32, 32, 4), np.uint8)
+    y = 2
+    for hf in halves:
+        bx0, by0, bx1, by1 = bbox(hf[..., 3] >= 128)
+        hf = hf[by0:by1, bx0:bx1]
+        h, w = hf.shape[:2]
+        k = min(30 / w, 13 / h)
+        nw, nh = max(1, round(w * k)), max(1, round(h * k))
+        rgb, m = resize_rgba(hf, nw, nh)
+        ox = (32 - nw) // 2
+        cell[y:y + nh, ox:ox + nw, :3] = rgb
+        cell[y:y + nh, ox:ox + nw, 3] = m * 255
+        y += nh + 1
+    return sprite_from_cells([cell], s)
+
+
+def rat_from(path: Path, s: Sheet) -> np.ndarray:
+    """One side view in the source (facing right): frames 0,1 left (mirror),
+    frames 2,3 right, no leg animation."""
+    right = fit_sprite(load_rgba(path))
+    left = right[:, ::-1]
+    return sprite_from_cells([left, left, right, right], s)
+
+
+def rat_top_from(path: Path, s: Sheet) -> np.ndarray:
+    """No top view in the source: the side view squeezed into 16x16."""
+    a = load_rgba(path)
+    x0, y0, x1, y1 = bbox(a[..., 3] >= 128)
+    rgb, m = resize_rgba(a[y0:y1, x0:x1], 14, 8)
+    out = new_sheet(s)
+    mask = np.zeros((16, 16), bool)
+    out[4:12, 1:15][m] = rgb[m]
+    mask[4:12, 1:15] = m
+    return quantize(out, mask, s.max_colors) if mask.any() else out
+
+
+def run_w95(src: Path, rat: bool) -> int:
+    M = MANIFEST
+    made: dict[str, np.ndarray] = {
+        "wall.png": texture_from(src / "wall.bmp", M["wall.png"]),
+        "floor.png": texture_from(src / "floor.bmp", M["floor.png"]),
+        # ceiling2.bmp is one cell of the original's 3x3-tiled 33x33 pebbles
+        "ceiling.png": texture_from(src / "ceiling2.bmp", M["ceiling.png"]),
+        "wall_pic.png": texture_from(src / "pic.bmp", M["wall_pic.png"]),
+        "smiley.png": sprite_from_cells([fit_sprite(load_rgba(src / "fin.png"))], M["smiley.png"]),
+        "logo.png": logo_from(src / "gl.png", M["logo.png"]),
+        "start.png": sprite_from_cells([fit_sprite(load_rgba(src / "start2.png"))], M["start.png"]),
+        "finish.png": draw_finish(),
+    }
+    if rat:
+        made["snouty.png"] = rat_from(src / "rat.png", M["snouty.png"])
+        made["snouty_top.png"] = rat_top_from(src / "rat.png", M["snouty_top.png"])
+    else:
+        made["snouty.png"] = draw_snouty()
+        made["snouty_top.png"] = draw_snouty_top()
+    errors = 0
+    for name in M:
+        errs = validate(M[name], made[name])
+        errors += len(errs)
+        if not errs:
+            save(made[name], name)
+    print(f"{'w95 sheets written to ' + str(OUT) if not errors else f'{errors} violation(s); failing sheets not written'}")
+    return 1 if errors else 0
+
+
 # --------------------------------------------------------------------------
 # Modes
 # --------------------------------------------------------------------------
@@ -538,17 +745,22 @@ def main() -> int:
     grp = ap.add_mutually_exclusive_group()
     grp.add_argument("--placeholders", action="store_true", help="draw placeholder art into assets/gen/")
     grp.add_argument("--check", action="store_true", help="validate the sheets in assets/gen/ only")
+    grp.add_argument("--from-w95", type=Path, metavar="DIR",
+                     help="convert the extracted screensaver assets in DIR (assets/src/w95) into assets/gen/")
+    ap.add_argument("--rat", action="store_true", help="with --from-w95: use the original rat instead of Snouty")
     ap.add_argument("--contact", type=Path, metavar="PNG",
                     help="afterwards (or alone) write a 4x labelled contact sheet, e.g. docs/placeholders.png")
     args = ap.parse_args()
-    if not (args.placeholders or args.check or args.contact):
-        ap.error("one of --placeholders, --check or --contact is required")
+    if not (args.placeholders or args.check or args.from_w95 or args.contact):
+        ap.error("one of --placeholders, --check, --from-w95 or --contact is required")
     OUT.mkdir(parents=True, exist_ok=True)
     status = 0
     if args.placeholders:
         status = run_placeholders()
     elif args.check:
         status = run_check()
+    elif args.from_w95:
+        status = run_w95(args.from_w95, args.rat)
     if args.contact:
         write_contact(args.contact)
     return status

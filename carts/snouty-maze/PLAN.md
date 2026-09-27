@@ -467,3 +467,15 @@ logo, smiley, rat, Start button). Use them instead of the placeholders.
   would be a rasterizer change, not an asset change.
 - Rebaseline `tests/golden/*.png` (pixel content changes, geometry does
   not), `docs/w95_assets.png` contact sheet, `docs/preview_a1.gif`.
+
+## A1 result (2026-09-27, tag `a1`)
+
+Done as planned. `wall`, `floor`, `ceiling`, `smiley`, `logo`,
+`wall_pic`, `start` come from the w95 sources; `finish`, `snouty`,
+`snouty_top` stay procedural (`--rat` swaps the last two). Colour counts
+9..16 of 16. Build, 24 host tests, check-float PASS, 7 goldens
+rebaselined (texture content only), `check_cycle` 3/3, `.text` 39.8 KB
+(+0), `.bss` 50 KB. `docs/w95_assets.png`, `docs/w95_assets_rat.png`,
+`docs/preview_a1.gif`. Open for Adrian: keep Snouty or take the rat;
+whether the stacked "Open/GL" logo reads at 32x32 or the Iris mark should
+stay; the source textures are Microsoft's, fine for a badge demo?

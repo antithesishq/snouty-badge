@@ -231,16 +231,21 @@ It prints PASS/FAIL per run with the final state, cycle count, cell and
 heading, plus preview's error lines on a FAIL. Options `--wasm FILE`,
 `--seed S` (default 1). Exit 0 all pass, 2 usage error, 3 any failure.
 
-### Placeholder art
+### Art
 
 ```sh
+python3 tools/prepare_assets.py --from-w95 assets/src/w95 --contact docs/w95_assets.png
+python3 tools/prepare_assets.py --from-w95 assets/src/w95 --rat   # original rat instead of Snouty
 python3 tools/prepare_assets.py --placeholders --contact docs/placeholders.png
 python3 tools/prepare_assets.py --check       # validate delivered art in assets/gen/
 ```
 
-Draws and validates the eight sheets in `assets/gen/` (sizes, cell grid,
-colour counts after RGB565, magenta key, 1 px empty border); `zig build`
-converts them into the `gfx` module.
+`--from-w95` (the committed default since A1) downsamples the textures
+extracted from the original screensaver (`assets/src/w95/SOURCE.md`) to
+the ten 32x32 4-bit sheets in `assets/gen/`; `--placeholders` draws them
+procedurally instead. Both validate (sizes, cell grid, colour counts after
+RGB565, magenta key, 1 px empty border); `zig build` converts the PNGs into
+the `gfx` module. Goldens in `tests/golden/` are baselined on the w95 art.
 
 ## 7. Flash the badge
 

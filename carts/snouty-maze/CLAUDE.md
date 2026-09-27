@@ -14,7 +14,9 @@ their CLAUDE.md files have the long explanations of the simulator quirks.
   debug exports. `render/` is the rasterizer. `host_tests.zig` is the root
   for `zig build test`.
 - `assets/gen/` — build-input PNGs (committed), produced by
-  `tools/prepare_assets.py --placeholders` until real art arrives.
+  `tools/prepare_assets.py --from-w95 assets/src/w95` from the original
+  screensaver textures in `assets/src/w95/` (`--placeholders` draws
+  procedural stand-ins instead).
 - `tools/` — `preview.mjs` (headless wasm runner to PNGs), `serve-cart.mjs`
   (serves the wasm on :2468 for the simulator), `make_gif.py`,
   `check_float.mjs`, `check_golden.mjs`, `prepare_assets.py`.
