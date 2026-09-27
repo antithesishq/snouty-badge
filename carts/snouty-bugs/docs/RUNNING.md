@@ -79,6 +79,12 @@ Simulator keys (from `sycl-badge/simulator/README.md`):
 | Select           | Backspace or T     |
 | System menu      | Escape             |
 
+In the game, A fires, the joystick flies and Start pauses. B held during play
+rewinds the world 2 ticks per frame, paid from the fuel bar in the HUD (it
+refills slowly, and a little per graze). On the title, A or Start starts a
+normal game and B starts a hardcore one (no rewind stock: a hit is paid from
+the fuel bar, and a hit with less than 45 fuel ends the game).
+
 Known upstream simulator quirks (current sycl-badge `main`):
 
 - The simulator only shows a fixed region of wasm memory (address 0x20). The
@@ -146,12 +152,13 @@ The M2 scripts:
 
 - `m2_play.json`: the preview GIF script. A on the title at 30, then holds A
   without moving through the opening gnat strings (60 to 239), then sweeps up
-  40 ticks / holds 20 / down 40 / holds 20 until 3960, with B (bomb) at 2240
-  and 3380. It must still be playing at 4000 with all three rewinds and both
-  bombs spent, and the score must beat M1's 570.
-- `m2_bomb.json`: starts at 30, then sits still without firing so the 8 s
-  beetle survives and fires; presses B at 720. There must be bullets at 719,
-  none at 720, and one bomb left.
+  40 ticks / holds 20 / down 40 / holds 20 until 3960. Since M5 (no bomb) two
+  short hold-B rewinds get it through the waves the bombs used to clear: B
+  2084..2093 (20 ticks back, fuel 180 to 160) before the moth + beetle wave,
+  and B 3320..3334 (30 ticks, fuel 180 to 150) in the 54 s wave. The inputs
+  keep their update indices, so after a hold the sweep runs ahead of the
+  world and threads the pattern differently. It must still be playing at
+  4000 with all three rewinds, and the score must beat M1's 570 (834).
 - `m2_hit.json`: starts at 30 and does nothing else for 1000 ticks. The
   beetle's spread hits the idle ship at update 748: the game enters REWIND
   (state 4) for 80 updates, then resumes at 828 with the game tick back to
@@ -164,25 +171,57 @@ The M3 scripts use two wasm-only test hooks through `--call-at`: `debug_god`
 toggles god mode (hits are ignored) and `debug_warp` jumps the wave clock to
 the 66 s WARNING so the boss arrives about 6 s later.
 
-- `m3_boss.json`: the M2 sweep without bombs, god at 31, warp at 32; the boss
-  spawns at about 393, dies under constant fire at about 1008; then "+500",
-  "STAGE 2", one extra bomb, and the table restarts at about 1190.
+- `m3_boss.json`: the M2 sweep without the B holds, god at 31, warp at 32;
+  the boss spawns at about 393, dies under constant fire at about 1008; then
+  "+500", "STAGE 2", and the table restarts at about 1190.
 - `m3_loop.json`: the same input for 2000 ticks; the stage-2 table spawns
   again (the 8 s beetle at about 1670, now with 5 HP).
-- `m3_bomb_boss.json`: god and warp, fire until 440, bomb at 480: the boss
-  loses exactly 8 HP on the press tick and one bomb is spent.
 
 The M4 scripts check the rewind itself. `debug_history_check` restores the
 world from the newest keyframe and the input log and compares it field by
 field with the live world: 0 means identical (2 means the check is refused on
 that frame: title, dying, or the 20 bug-report frames).
 
-- `m4_identity.json`: `m2_play`'s input with identity checks at six ticks,
-  one right after a bomb.
+- `m4_identity.json`: `m2_play`'s input with identity checks at eight ticks,
+  two of them during a hold-B rewind and two on the first live tick after a
+  release.
 - `m4_identity_boss.json`: `m3_boss`'s input (god + warp) with checks through
   the boss fight, a teleport, the death sequence and the stage clear.
 - `m4_early.json`: flies into the first gnat string at update 84, before 120
-  ticks of history exist; the rewind goes back to tick 0 and resumes.
+  ticks of history exist; the rewind goes back to tick 0 and, since the
+  playback length follows the depth (54 ticks, 27 frames), resumes at 131.
+
+The M5 scripts check the hold-B rewind, the fuel bar and hardcore mode. The
+exports they read: `debug_fuel` (0..180), `debug_hardcore` (0 or 1),
+`debug_manual_frame` (frames since the hold began) and `debug_state` (0
+title, 1 playing, 2 paused, 3 dying, 4 auto rewind, 5 hold-B rewind). The
+bomb exports `debug_bombs` and `debug_bomb_timer` are gone.
+
+- `m5_manual.json`: `m2_hit`'s input plus B held for updates 700..719. The
+  press frame is already a rewind step; after 20 frames the game tick is 40
+  lower and the fuel 140; the release frame is PLAYING without a tick. The
+  idle ship then meets the beetle's spread 60 updates later than in `m2_hit`
+  (809) and the free normal-mode auto rewind runs as usual.
+- `m5_empty.json`: B held for 200 updates from 400. The bar is empty after 90
+  frames (game tick 180 lower), play resumes while B is still down and stays
+  live until a fresh press, and the refill brings the fuel to 10 by 590.
+- `m5_hardcore.json`: B on the title at 30 starts a hardcore game (rewinds 0),
+  then the ship idles. The first hit rewinds 120 ticks for 120 fuel (60
+  left), the second 72 for the 72 it has by then (fuel 0, 36 playback
+  frames), and the third, with fuel 8 under the floor of 45, is fatal: DYING
+  at 1076, title at 1136.
+- `m5_graze.json`: the `m2_play` sweep with a 20-frame hold at 1964 (fuel 140)
+  instead of its two holds; the shifted sweep grazes a bullet at 2121
+  without being hit and the fuel reads 156, above the 154 refill alone could
+  give.
+
+`docs/preview_m5.gif` is one hold-B rewind, updates 690..760 of `m5_manual`:
+
+```sh
+node tools/preview.mjs zig-out/bin/snouty-bugs.wasm --script tools/scripts/m5_manual.json \
+  --frames 761 --start-skip 690 --every 2 --out out/gif_m5/
+python3 tools/make_gif.py out/gif_m5/ docs/preview_m5.gif --scale 3 --ms 66
+```
 
 ```sh
 node tools/preview.mjs zig-out/bin/snouty-bugs.wasm --frames 1800 --every 6 --out out/ \
@@ -204,7 +243,7 @@ at about real speed.
 
 ```sh
 tools/check.sh                 # zig build, then every tools/scripts/*.json
-tools/check.sh --no-build --only m2_bomb
+tools/check.sh --no-build --only m5_manual
 CART_WASM=path/to/other.wasm tools/check.sh --no-build
 ```
 
