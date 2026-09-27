@@ -1,0 +1,10 @@
+[
+  {"from": 10, "to": 10, "hold": ["START"]},
+  {"from": 11, "to": 40, "hold": ["UP"]},
+  {"from": 41, "to": 41, "hold": ["START"]},
+  {"from": 42, "to": 101, "hold": ["UP"]},
+  {"from": 102, "to": 102, "hold": ["START"]},
+  {"from": 103, "to": 132, "hold": ["UP"]},
+  {"from": 133, "to": 168, "hold": ["RIGHT"]},
+  {"from": 169, "to": 190, "hold": ["UP"]}
+]
