@@ -8,9 +8,18 @@ until Adrian has reviewed.
 
 ## Status
 
-- M1 (this plan): import every sibling repo with its history, one root
-  `zig build` that builds all carts, one pinned SDK checkout, docs and
-  scripts repointed, verified against the pre-move binaries. In progress.
+- M1 (this plan): built 2026-09-27 on branch `monorepo`, awaiting Adrian's
+  review; not pushed. Verified: every cart's uf2 and wasm code is identical
+  to the pre-move build of its old repo (the only two differing bytes are
+  the ELF header's section-table offset, which also differs between two
+  clean builds of the same old repo); `zig build test`, `zig build
+  check-float`, badge-bench `tests/test_reflections.sh` (24 reference frames
+  exact), snouty-bugs and snoutenstein `tools/check.sh`, snouty-maze
+  `check_golden.mjs`, one headless preview per cart and a fresh
+  `git clone --recursive` + `zig build -Dcart=snouty-run` all pass.
+  Judgment calls to confirm: `snouty-art/` folded in too (its scripts write
+  into the carts' assets); `carts/snouty-boy/roms/2048.gb` committed as the
+  fallback ROM; the running cart's directory is `carts/snouty-run`.
 - M2 (later): one shared `tools/` (the per-cart `preview.mjs`,
   `serve-cart.mjs`, `make_gif.py` copies have drifted apart), one shared
   CLAUDE.md with the per-cart files trimmed to cart specifics.
@@ -78,9 +87,9 @@ Build outputs land in the root `zig-out/`: `zig-out/firmware/<cart>.uf2`,
 - The old sibling repos under `/home/exedev` are left untouched until Adrian
   accepts this branch; then they can be deleted.
 
-## Work breakdown
+## Work breakdown (all done in M1)
 
-1. Move this repo's files into `carts/snouty-run/`, commit with this plan. (done)
+1. Move this repo's files into `carts/snouty-run/`, commit with this plan.
 2. Import the seven sibling repos with rewritten paths and tags.
 3. Root `build.zig` + `build.zig.zon` + `build/common.zig`; convert the six
    cart build files; one root symlink; submodule.
