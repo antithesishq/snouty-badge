@@ -33,5 +33,14 @@ node tools/preview.mjs $W --frames 1400 --every 10 --out out/exit \
   --script tools/scripts/m2_exit.json \
   --dump-exports debug_mode,debug_level,debug_tick,debug_px,debug_py \
   --expect "debug_mode == 1" --expect "debug_level == 4"
+# M3: a gnat wakes and bites; death freeze, hold B, level restarts; Build Farm opens.
+node tools/preview.mjs $W --frames 360 --quiet --out out/gnat --script tools/scripts/m3_gnat.json \
+  --dump-exports debug_mode,debug_hp,debug_tick --expect "debug_mode == 1" --expect "debug_hp < 100" --expect "debug_hp > 0"
+node tools/preview.mjs $W --frames 1100 --every 25 --out out/death --script tools/scripts/m3_death.json \
+  --dump-exports debug_mode,debug_hp,debug_tick --expect "debug_mode == 1" --expect "debug_tick < 300" --expect "debug_hp > 0"
+node tools/preview.mjs $W --frames 420 --every 10 --out out/buildfarm --script tools/scripts/m3_buildfarm.json \
+  --dump-exports debug_mode,debug_level,debug_hp,debug_px,debug_kills \
+  --expect "debug_level == 0" --expect "debug_px > 720896" --expect "debug_hp > 0"
+node tools/check_determinism.mjs $W --script tools/scripts/m3_buildfarm.json --frames 420
 node tools/check_determinism.mjs $W --script tools/scripts/m2_combat.json --frames 240
 echo "check: all passed"
