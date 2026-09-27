@@ -393,6 +393,196 @@ zig test cart/src/rewind.zig
 plus the two new scripted runs inside `check.sh`.
 
 
+## M3 Bugs (started 2026-09-27)
+
+Goal: the bugs fight back and the campaign exists. Enemy AI for all five
+kinds, projectiles, damage to the player, the death freeze (placeholder
+exit until M4 rewinds), three hand-made levels, audio and neopixels, and
+the first half of the determinism harness. Adrian's policy (2026-09-27):
+placeholder art is final for now; build everything that does not need
+hardware tuning; tune what does against `badge-bench` with adjustable
+constants and headroom. Baseline (M2, modelled): mean 2.5 ms, worst 3.0 ms
+of 16.7 ms per frame; `api.text` and `api.rect` are a quarter of that.
+
+Pre-work landed in `2313930` so the tracks are disjoint: `sim.move_circle`
+(sliding move for any circle; enemies open plain doors only),
+`sim.damage_player` (HP floors at 0, sets `s.hurt`), `sim.line_of_sight`,
+`sim.next_rand`/`sim.living` public, web freeze skips movement,
+`s.last_shot` records zapper/spray shots, `Enemy.aux[3]` and
+`Projectile.aux[2]` scratch bytes, and stub `ai.zig` / `projectiles.zig`
+called from `step` (enemies, then projectiles, then the weapon).
+
+### Tracks (parallel, disjoint files; agents do not commit)
+
+| Track | Owner       | Files                                                                                  |
+|-------|-------------|----------------------------------------------------------------------------------------|
+| A ai       | Opus agent | `cart/src/ai.zig` (replace the stub)                                                 |
+| B shots    | Opus agent | `cart/src/projectiles.zig` (replace the stub)                                        |
+| C levels   | Opus agent | new `cart/src/levels/build_farm.txt`, `staging.txt`, `production.txt`, `cart/src/gen_levels.zig` (manifest), `cart/src/levels/gen.zig` (regenerated), `cart/src/levels.zig` (index consts), `cart/src/level_parse.zig` (freshness test rows), new `tools/check_level.py` |
+| D audio+harness | Opus agent | new `cart/src/audio.zig`, new `tools/check_determinism.mjs`, `docs/RUNNING.md` section 5 additions |
+| lead       | this session | `main.zig`, `render/hud.zig` (death overlay, title lines), `render/sprites.zig` (spider range), `tools/scripts/*.json`, `tools/check.sh`, `PLAN.md`, `SPEC.md` status, GIF, bench, commits, tag |
+
+Concurrency: one working tree; a `zig build` failing in a file you do not
+own is another track mid-edit, wait and retry. `zig test cart/src/ai.zig`,
+`projectiles.zig`, `sim.zig`, `level_parse.zig` need no cart-api.
+
+### Contract: enemy AI (track A)
+
+`ai.update(s, level)` is called once per tick from `sim.step` (after doors
+and pickups, before the player's weapon). It owns every `Enemy` field
+once the level starts; `sim.damage_enemy` (pain/dying/flash) is the only
+outside writer. Fixed point, `sim.next_rand` only, no f32, no cart-api.
+
+- Per-kind constant table at the top of the file, every number named
+  (speeds, ranges, damages, cooldowns), so they can be tuned later:
+  SPEC.md section 8 values. Wake radius 8 cells (`sim.gunfire_radius`).
+- States (`state.EnemyState`): `dormant` (never seen anything) checks
+  line of sight once every 8 ticks, staggered by `index % 8`, and also
+  wakes when `s.tick - s.last_shot < 8` and the player is within 8 cells.
+  `alert` is a short 12-tick startle (frame 0), then `chase`. `chase`
+  moves toward the player with `sim.move_circle(.., radius 0.3, .enemy)`;
+  when blocked, try the eight compass directions in a deterministic order
+  and keep the chosen one in `aux[0]` for 16 ticks (Wolf3D-style). Walk
+  frames 0/1 alternate every 8 ticks while moving. `attack` plays frame 2
+  for its windup then applies the attack; `pain` and `dying` as in the
+  stub (keep those transitions exactly: tests in sim.zig depend on them).
+- Behaviours: **gnat** zig-zags (heading = toward player +- 30 degrees,
+  flipping every 20 ticks), bites 5 every 30 ticks within 0.8 cells.
+  **wasp** waits in `idle`; on sight charges in a straight line at 0.07
+  for up to 40 ticks or until it overshoots the player's position by 1.5
+  cells or hits a wall, then turns (12 ticks) and charges again; contact
+  (< 0.5 cells) during a charge deals 10 once per charge. **beetle**
+  walks straight at the player at 0.02, spits (`projectiles.spawn(s, x, y,
+  angle_to_player, projectiles.kind_spit)`) every 90 ticks when it has
+  line of sight within 8 cells. **spider** never moves; when the player is
+  within 6 cells with line of sight it webs (`kind_web`) every 120 ticks;
+  attack frame 2 for 10 ticks first. **boss** (Heisenbug) chases at 0.04,
+  melee 15 within 0.9 cells every 45 ticks, spit fan of three (angle
+  -12/0/+12 degrees) every 100 ticks when it has line of sight; if the
+  player has faced it (|angle_diff(facing, angle to boss)| < 20 degrees
+  with line of sight) for 90 consecutive ticks (`aux[1]` counts), it shows
+  frame 7 (flicker) for 8 ticks then teleports to a floor cell 3 to 5
+  cells behind the player (search the cell ring around the player's
+  position minus 4 cells along the facing, first free cell in a
+  deterministic spiral; stay put if none), resets the counter.
+- Damage to the player goes through `sim.damage_player`; webs through
+  projectiles (track B sets `player.frozen`).
+- Enemies do not collide with each other in M3 (noted for M5 polish).
+  Dead and dying enemies do nothing. Dormant enemies cost one LOS check
+  per 8 ticks, nothing else.
+- Tests (host, in ai.zig, mini-levels via `level_parse.parse_level`): a
+  gnat 5 cells away in an open room wakes within 8 ticks and reaches
+  biting range in under 120 ticks, and the player's HP drops by 5 then by
+  5 again 30 ticks later; a gnat behind a wall stays dormant for 300
+  ticks; a shot within 8 cells wakes a gnat with no line of sight; a wasp
+  charge covers ground at 0.07 and deals 10 once; a beetle spits (the
+  projectile pool gains an entry); a spider at 4 cells webs, at 7 does
+  not; the boss teleports after 90 ticks of being faced and not before;
+  a 600-tick scripted run with 6 enemies produces the same `sim.hash`
+  twice.
+
+### Contract: projectiles (track B)
+
+`projectiles.update(s, level)` after `ai.update`; `spawn(s, x, y, angle,
+kind) bool` for the AI. Pool `s.projectiles[12]`, `kind` 0 free.
+
+- Speeds: spit 0.08 cells/tick, web 0.06. `vx/vy` set at spawn from the
+  angle; `ttl` 180 ticks. Start the projectile 0.4 cells ahead of the
+  spawner so it does not hit the enemy's own cell.
+- Each tick: move; if the new cell is solid (`sim.is_solid`) the
+  projectile dies; if within 0.35 cells of the player centre: spit deals
+  8 via `sim.damage_player`; web deals 4 and sets `player.frozen = 45`
+  (turning still works, `step` already skips movement); then it dies.
+- Tests: spawn fills a slot and returns false when 12 are live; a spit
+  flying at a wall dies on the wall cell; a spit aimed at the player from
+  3 cells hits within the expected tick count and takes 8 HP; a web freezes
+  for 45 ticks (`frozen` counts down in `step`); ttl expiry frees the slot.
+
+### Contract: levels (track C)
+
+Three campaign levels in the ASCII format (CLAUDE.md legend), designed
+per SPEC.md section 6, compact (Build Farm about 24x20, Staging about
+32x28, Production about 40x36, all within 64x64), each 2 to 4 minutes:
+
+- **Build Farm**: teach walking, doors, one Coral key (`c`) behind a plain
+  door, gnats only (8 to 10), a hotfix and two charges, exit behind the
+  Coral door. Start facing a short safe corridor.
+- **Staging**: Coral and Iris keys, wasps (5 to 7) in open rooms, spiders
+  (4 to 6) guarding corridors (their 6-cell range matters: put them where
+  the player must pass within range), the first spray can (`$`) plus 2
+  more, two rewind batteries (`*`) as a small hunt, a few gnats.
+- **Production**: all three keys, all enemy kinds (about 22 total), the
+  Heisenbug (`H`) alone in a large room behind the Gold door with the exit
+  beyond it, batteries and hotfixes rationed. Rooms of 6 to 10 cells so
+  the boss teleport has floor behind the player.
+
+Rules: every wall texture 1-8 used somewhere per level with a theme per
+area; doors only between two walls (the parser derives orientation);
+enemies never inside a door cell; no more than 40 enemies, 64 doors,
+256 pickups per level (tunable caps: keep enemies at or below 25 so the
+sprite pass stays cheap; the benchmark says we have room, but leave it).
+Level order in `gen_levels.zig`'s manifest and `levels.all`: build_farm,
+staging, production, test, wolf_e1m1; add to `levels.zig`
+`pub const campaign_len = 3; pub const test_index = 3; pub const e1m1_index = 4;`.
+Extend the freshness test in `level_parse.zig` to all five. New
+`tools/check_level.py FILE.txt`: parses the same legend in Python and
+runs a key-aware flood fill from the start (collect reachable keys, open
+their doors, repeat) and reports unreachable cells, pickups, enemies and
+whether the exit is reachable; counts per kind; exits 1 on any
+unreachable item. Run it on all five levels (the imported E1M1 may report
+unreachable secrets: print, do not fail, for `wolf_*`).
+
+### Contract: audio, neopixels, determinism harness (track D)
+
+- `cart/src/audio.zig` (cart-api user, render-side, never touched by the
+  sim): `pub var enabled: bool = false` (Adrian: sound and LEDs default
+  off, Select on the title toggles both); `reset(s)` takes a baseline;
+  `tick(s: *const GameState, level: *const Level)` once per displayed
+  tick while playing: derives events by diffing against the last state
+  (hp dropped -> hurt; kills grew -> enemy death; an enemy's `flash`
+  became 2 -> enemy hit; keys grew, `ammo_*` grew or hp grew -> pickup;
+  a door `phase` went 0 -> 1 -> door; `last_locked != 0` -> locked buzz;
+  `fire_cooldown` jumped to `sim.fire_rate(weapon)` -> weapon sound by
+  weapon) and plays the highest-priority one through the cart's tone API
+  (read `../sycl-badge/src/os/cart/api.zig` for the exact call; SPEC.md
+  section 12 has shapes, frequencies, durations and the priority order).
+  `play(event: Event)` for main-driven events (`death_freeze`; `rewind`
+  loop retrigger comes in M4). Neopixels: HP as a green-to-red bar over
+  the five LEDs at or below 10/255 per channel, a white flash for 6 ticks
+  on key pickup, all off when disabled. Diffing must survive a jump
+  backwards in `s.tick` or a level change (take a fresh baseline, play
+  nothing), like the portrait does.
+- `tools/check_determinism.mjs <cart.wasm> --script FILE.json --frames N
+  [--exports debug_state_hash,debug_tick]`: runs `tools/preview.mjs` twice
+  (`--quiet`, `--dump-exports`) via child_process, parses both
+  `frames.json`, asserts every listed export equal, prints them, exits 0/3.
+  Reserve and document `--rewind-at T --rewind-for N` for M4 (parse it,
+  print "not implemented until M4", exit 2). Document in
+  `docs/RUNNING.md` section 5.
+
+### Lead work
+
+- `main.zig`: mode `.dead` when `hp == 0` after a step: view drawn with
+  `shade_override = 5`, "HOLD B TO REWIND" overlay (`hud.draw_dead`),
+  holding B for 60 ticks restarts the level (M4 replaces this with the
+  real rewind); `s.hurt > 0` also sets `shade_override = 5`. Title: A
+  starts the campaign (level 0), B starts E1M1, Start starts the test
+  level (debug, for the scripts), Select toggles `audio.enabled` and the
+  title shows "SOUND ON/OFF". Calls `audio.reset` / `audio.tick`.
+  Campaign end after `levels.campaign_len` -> victory. Debug exports add
+  `debug_frozen`, `debug_projectiles`.
+- `hud.zig`: `draw_dead(ticks_held)`, title sound line and "START: test
+  level" hint; `sprites.zig`: spiders are skipped beyond 6 cells.
+- Scripts: all existing scripts start the test level with START instead
+  of A; `m3_gnat.json` (stand still, get bitten, HP drops), `m3_death.json`
+  (die to gnats, hold B, level restarts, `debug_hp == 100`),
+  `m3_buildfarm.json` (walk the first corridor of Build Farm from A on the
+  title). `check.sh` adds them, `check_level.py` on all levels, and
+  `check_determinism.mjs` on the combat script.
+- Bench after integration on `m3_gnat.json` and `m3_buildfarm.json`; record
+  mean/worst in the status line. GIF, tag `m3`, pull-and-run note.
+
+
 ## Status
 
 - 2026-09-26: M0 scaffold committed. M1 plan written; four tracks launched.
@@ -430,3 +620,4 @@ plus the two new scripted runs inside `check.sh`.
   `cart/src/levels/gen.zig` (committed) by `tools/gen_levels.sh`; tests
   parse mini-levels at run time; the comptime nibble checks became a
   runtime `debug_nibble_ok`. Adrian pulls artifacts from the VM meanwhile.
+- 2026-09-27: M3 plan written; pre-work committed; four tracks launched.
