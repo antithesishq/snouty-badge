@@ -1,0 +1,23 @@
+.{
+    .name = .snouty_boy,
+    .fingerprint = 0xaa3e326336e369ef,
+    .version = "0.0.0",
+    .minimum_zig_version = "0.17.0-dev.1936+5a625d5f3",
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "cart",
+        "core",
+    },
+    .dependencies = .{
+        .sycl_badge = .{
+            .path = "../sycl-badge",
+        },
+        // Mirrors sycl-badge/build.zig.zon; add_os_cart initialises MicroBuild
+        // on our builder and needs microzig resolvable from here.
+        .microzig = .{
+            .url = "https://github.com/ZigEmbeddedGroup/microzig/releases/download/0.17.7/microzig.tar.gz",
+            .hash = "microzig-0.17.7-D20YSb7KAAAdJvjGJpx-9NG8th__5s2OaJbug645qrgM",
+        },
+    },
+}
