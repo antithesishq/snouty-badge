@@ -166,7 +166,7 @@ screen; turns are 36 ticks = 90 degrees, walking 0.045 cells per tick):
 - `m2_exit.json` (1,400 frames): lines up with the door row, through the
   plain door (7,4), up the x 8 corridor, east along row 1 to x 31, south
   into the exit door at (31,8). The level ends, the intermission card shows
-  for 60 ticks, A at 1300 starts level 1 (E1M1). Expect `debug_level == 1`
+  for 60 ticks, A at 1300 starts E1M1 (level index 4). Expect `debug_level == 4`
   and `debug_mode == 1`.
 
 ```sh
