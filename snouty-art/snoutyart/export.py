@@ -7,7 +7,7 @@ from pathlib import Path
 import numpy as np
 from PIL import Image, ImageDraw
 
-from . import ROOT, palette
+from . import ROOT
 from .cycle import Cycle
 from .validate import validate
 
@@ -93,9 +93,10 @@ def preview_gifs(cycle: Cycle, out: Path, k=4):
     _gif(out / f"{cycle.name}_slow.gif", iso, [max(d, 1) * 3 for d in durs])
 
 
-def write_pack(cycle: Cycle, out_dir: Path | None = None, origin=(48, 88)) -> dict:
-    out = out_dir or ROOT / "out" / cycle.name.replace("snouty_", "")
-    report = validate(cycle)
+def write_pack(cycle: Cycle, rig, out_dir: Path | None = None, origin=(48, 88)) -> dict:
+    pal = rig.pal
+    out = out_dir or ROOT / "out" / rig.style / cycle.name.replace("snouty_", "")
+    report = validate(cycle, pal)
     if report["status"] != "passed":
         raise SystemExit(f"{cycle.name} failed validation:\n  " + "\n  ".join(report["errors"]))
     if out.exists():
@@ -109,9 +110,9 @@ def write_pack(cycle: Cycle, out_dir: Path | None = None, origin=(48, 88)) -> di
     strip = _grid(cycle.frames, n, cell)
     strip.save(out / f"{cycle.name}_strip.png", optimize=True)
     _grid(cycle.frames, cols, cell).save(out / f"{cycle.name}_sheet.png", optimize=True)
-    palette.to_indexed(strip).save(out / f"{cycle.name}_indexed.png", optimize=True, transparency=0)
-    palette.flatten_key(strip).save(out / f"{cycle.name}_key.png", optimize=True)
-    (out / "snouty_palette.gpl").write_text(palette.gpl(cycle.name))
+    pal.to_indexed(strip).save(out / f"{cycle.name}_indexed.png", optimize=True, transparency=0)
+    pal.flatten_key(strip).save(out / f"{cycle.name}_key.png", optimize=True)
+    (out / "snouty_palette.gpl").write_text(pal.gpl(f"{rig.style} {cycle.name}"))
     contact_sheet(cycle, cols=min(cols, 8)).save(out / f"{cycle.name}_contact_sheet.png")
     preview_gifs(cycle, out)
     total = sum(f.duration_ms for f in cycle.frames)
@@ -126,7 +127,9 @@ def write_pack(cycle: Cycle, out_dir: Path | None = None, origin=(48, 88)) -> di
         "coordinate_system": "top-left, x right, y down",
         "ground_baseline_y": origin[1],
         "step_px_per_frame": cycle.step_px,
-        "visible_palette": palette.hexes(),
+        "style": rig.style,
+        "visible_palette": pal.hexes(),
+        "palette_roles": pal.roles,
         "transparent_index": 0,
         "strip": {"file": f"{cycle.name}_strip.png", "columns": n, "rows": 1},
         "grid": {"file": f"{cycle.name}_sheet.png", "columns": cols, "rows": -(-n // cols)},
@@ -142,6 +145,6 @@ def write_pack(cycle: Cycle, out_dir: Path | None = None, origin=(48, 88)) -> di
     }
     (out / f"{cycle.name}.json").write_text(json.dumps(meta, indent=1))
     (out / "validation.json").write_text(json.dumps(report, indent=1))
-    print(f"{cycle.name}: {n} frames, {report['visible_color_count']} colours, feet rows {report['feet_rows']}")
+    print(f"{rig.style}/{cycle.name}: {n} frames, {report['visible_color_count']} colours, feet rows {report['feet_rows']}")
     print(f"  -> {out}")
     return report

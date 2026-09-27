@@ -1,0 +1,20 @@
+{
+  "name": "Snouty Study 05",
+  "roles": [
+    ["OUTLINE",    "#17121e", "near-black outlines"],
+    ["SHIRT_DARK", "#29232f", "shirt shadow"],
+    ["SHIRT",      "#42364b", "shirt"],
+    ["FUR_DEEP",   "#462174", "fur deep shadow"],
+    ["FUR_DARK",   "#662bb8", "fur shadow"],
+    ["FUR",        "#8e42de", "fur"],
+    ["FUR_LIGHT",  "#be7af3", "fur highlight"],
+    ["WHITE",      "#f4efdf", "eye"],
+    ["GREY",       "#958d9d", "glasses"],
+    ["RED",        "#ee453c", "Iris emblem"],
+    ["RED_DARK",   "#91322f", "emblem shadow"],
+    ["NET_DARK",   "#60391f", "net shadow"],
+    ["NET",        "#99622f", "net"],
+    ["NET_LIGHT",  "#cd934b", "net light"],
+    ["NET_PALE",   "#f0c37c", "net highlight"]
+  ]
+}

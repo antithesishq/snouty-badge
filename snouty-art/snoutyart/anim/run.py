@@ -12,7 +12,6 @@ import math
 
 import numpy as np
 
-from .. import palette
 from ..cycle import Cycle, Frame
 from ..limbs import arm, leg
 from ..rig import Placed, ik2
@@ -81,10 +80,10 @@ def _points(rig, i, near, bob, lean, dy_fix=0.0):
 def _leg_layer(rig, pts, z, far):
     kw = dict(foot="flat", toe_bump=0, spec=LEG)
     if far:
-        return leg(rig, *pts[:4], z=z, fill=palette.PURPLE_DARK,
-                   shade=palette.PURPLE_DEEP, shade_px=2, sole=palette.PURPLE_DEEP, **kw)
-    return leg(rig, *pts[:4], z=z, shade_px=2, sole=palette.PURPLE_DEEP,
-               light=palette.PURPLE_LIGHT, **kw)
+        return leg(rig, *pts[:4], z=z, fill=rig.pal.FUR_DARK,
+                   shade=rig.pal.FUR_DEEP, shade_px=2, sole=rig.pal.FUR_DEEP, **kw)
+    return leg(rig, *pts[:4], z=z, shade_px=2, sole=rig.pal.FUR_DEEP,
+               light=rig.pal.FUR_LIGHT, **kw)
 
 
 def _lowest(layer):
@@ -121,8 +120,8 @@ def build(rig) -> Cycle:
         sh = rig.joint("shoulder_far", lean, bob)
         spec = rig.limbs["arm"]
         elbow = ik2(sh, hand, spec["upper"], spec["fore"], bend=-1)
-        layers.append(arm(rig, sh, elbow, hand, z=25, fill=palette.PURPLE_DARK,
-                          shade=palette.PURPLE_DEEP, shade_px=1))
+        layers.append(arm(rig, sh, elbow, hand, z=25, fill=rig.pal.FUR_DARK,
+                          shade=rig.pal.FUR_DEEP, shade_px=1))
         hand_z = 40 if s > -0.2 else 24
         # parts
         layers.append(rig.render_part(Placed("tail", lean, bob, TAIL_ROT[i])))

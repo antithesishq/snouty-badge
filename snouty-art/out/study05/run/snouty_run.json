@@ -15,6 +15,7 @@
  "coordinate_system": "top-left, x right, y down",
  "ground_baseline_y": 88,
  "step_px_per_frame": 6,
+ "style": "study05",
  "visible_palette": [
   "#17121e",
   "#29232f",
@@ -31,6 +32,23 @@
   "#99622f",
   "#cd934b",
   "#f0c37c"
+ ],
+ "palette_roles": [
+  "OUTLINE",
+  "SHIRT_DARK",
+  "SHIRT",
+  "FUR_DEEP",
+  "FUR_DARK",
+  "FUR",
+  "FUR_LIGHT",
+  "WHITE",
+  "GREY",
+  "RED",
+  "RED_DARK",
+  "NET_DARK",
+  "NET",
+  "NET_LIGHT",
+  "NET_PALE"
  ],
  "transparent_index": 0,
  "strip": {

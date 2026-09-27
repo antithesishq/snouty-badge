@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Copy rendered packs into ../snouty-badge/assets/ and print what the cart needs.
 
-    python3 tools/install_badge.py [--dry-run]
+    python3 tools/install_badge.py [--style NAME] [--dry-run]   (default style: study05)
 
 Copies out/run -> ../snouty-badge/assets/Snouty_Art_Run and out/jump ->
 .../Snouty_Art_Jump, then prints the feet-row tables for cart/src/main.zig and
@@ -17,9 +17,10 @@ ROOT = Path(__file__).resolve().parent.parent
 BADGE = ROOT.parent / "snouty-badge"
 PACKS = {"run": "Snouty_Art_Run", "jump": "Snouty_Art_Jump"}
 
-def main(dry: bool):
+def main(dry: bool, style: str):
     for cycle, dest_name in PACKS.items():
-        src = ROOT / "out" / cycle
+        dest_name = f"{dest_name}_{style}"
+        src = ROOT / "out" / style / cycle
         meta_path = src / f"snouty_{cycle}.json"
         if not meta_path.exists():
             print(f"skip {cycle}: not rendered")
@@ -37,4 +38,6 @@ def main(dry: bool):
               f"(or the pre-keyed snouty_{cycle}_key.png)")
 
 if __name__ == "__main__":
-    main("--dry-run" in sys.argv)
+    a = sys.argv[1:]
+    style = a[a.index("--style") + 1] if "--style" in a else "study05"
+    main("--dry-run" in a, style)

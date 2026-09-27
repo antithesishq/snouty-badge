@@ -4,7 +4,6 @@ import math
 import numpy as np
 from PIL import Image, ImageDraw
 
-from . import palette
 from .rig import Layer
 
 
@@ -34,8 +33,8 @@ def _dilate4(m):
     return m | _shift(m, 1, 0) | _shift(m, -1, 0) | _shift(m, 0, 1) | _shift(m, 0, -1)
 
 
-def capsule_layer(size, polylines, widths, z, fill=palette.PURPLE,
-                  shade=palette.PURPLE_DARK, shade_px=2, outline=palette.OUTLINE,
+def capsule_layer(size, polylines, widths, z, fill,
+                  shade, shade_px=2, outline=(0, 0, 0),
                   light=None, light_dir=(1, -1)) -> Layer:
     """Draw thick polylines (one per entry) merged into one outlined blob.
     shade_px pixels along the lower-left rim get the shade colour; if light is
@@ -60,6 +59,15 @@ def capsule_layer(size, polylines, widths, z, fill=palette.PURPLE,
     return Layer(z, Image.fromarray(img, "RGBA"))
 
 
+def _defaults(rig, kw):
+    """Fill/shade/outline default to the style's fur and outline roles."""
+    kw = dict(kw)
+    kw.setdefault("fill", rig.pal.FUR)
+    kw.setdefault("shade", rig.pal.FUR_DARK)
+    kw.setdefault("outline", rig.pal.OUTLINE)
+    return kw
+
+
 def leg(rig, hip, knee, ankle, toe, z, spec=None, foot=None, sole=None,
         toe_bump=0, **kw) -> Layer:
     """Leg: thigh+shin capsule of width w, foot capsule from ankle to toe.
@@ -72,6 +80,7 @@ def leg(rig, hip, knee, ankle, toe, z, spec=None, foot=None, sole=None,
       sole: colour for the 1 px underside of the foot (pixels whose neighbour
         below is empty, within the foot region)."""
     s = spec or rig.limbs["leg"]
+    kw = _defaults(rig, kw)
     if foot != "flat":
         lay = capsule_layer(rig.cell, [[hip, knee, ankle], [ankle, toe]],
                             [s["width"], s["foot_width"]], z, **kw)
@@ -98,7 +107,7 @@ def leg(rig, hip, knee, ankle, toe, z, spec=None, foot=None, sole=None,
     if sole is not None:
         a = np.array(lay.image)
         op = a[:, :, 3] > 0
-        body = op & ~np.all(a[:, :, :3] == np.array(kw.get("outline", palette.OUTLINE),
+        body = op & ~np.all(a[:, :, :3] == np.array(kw.get("outline", rig.pal.OUTLINE),
                                                    dtype=np.uint8), axis=-1)
         fm = _mask(rig.cell, [[heel, toe]], [fh + 2])
         below_rim = body & ~_shift(body, 0, -1)  # pixel below is not body
@@ -109,4 +118,5 @@ def leg(rig, hip, knee, ankle, toe, z, spec=None, foot=None, sole=None,
 
 def arm(rig, shoulder, elbow, wrist, z, spec=None, **kw) -> Layer:
     s = spec or rig.limbs["arm"]
+    kw = _defaults(rig, kw)
     return capsule_layer(rig.cell, [[shoulder, elbow, wrist]], [s["width"]], z, **kw)

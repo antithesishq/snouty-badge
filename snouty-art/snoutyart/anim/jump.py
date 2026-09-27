@@ -13,7 +13,6 @@ rotations, near/far hip x, toe and ankle, and a per-frame segment length for the
 IK (shorter than the rig's 14 px when the leg should read as straightened,
 since the full 28 px leg never fits between hip and ground in this cell).
 """
-from .. import palette
 from ..cycle import Cycle, Frame
 from ..limbs import arm, leg
 from ..rig import Placed, ik2
@@ -88,16 +87,16 @@ def build(rig) -> Cycle:
         layers = []
         far = _leg(rig, i, False)
         near = _leg(rig, i, True)
-        layers.append(leg(rig, *far, z=20, fill=palette.PURPLE_DARK,
-                          shade=palette.PURPLE_DEEP, shade_px=2))
+        layers.append(leg(rig, *far, z=20, fill=rig.pal.FUR_DARK,
+                          shade=rig.pal.FUR_DEEP, shade_px=2))
         layers.append(leg(rig, *near, z=35))
         hdx, hdy = HAND[i]
         hand = rig.anchor("free_hand", bx + hdx, by + hdy)
         sh = rig.joint("shoulder_far", bx, by)
         spec = rig.limbs["arm"]
         elbow = ik2(sh, hand, spec["upper"], spec["fore"], bend=-1)
-        layers.append(arm(rig, sh, elbow, hand, z=25, fill=palette.PURPLE_DARK,
-                          shade=palette.PURPLE_DEEP, shade_px=1))
+        layers.append(arm(rig, sh, elbow, hand, z=25, fill=rig.pal.FUR_DARK,
+                          shade=rig.pal.FUR_DEEP, shade_px=1))
         hx_, hy_ = HEAD_OFF[i]
         nx, ny = NET_OFF[i]
         layers.append(rig.render_part(Placed("tail", bx, by, TAIL_ROT[i])))

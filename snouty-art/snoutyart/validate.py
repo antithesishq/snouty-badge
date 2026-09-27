@@ -1,13 +1,9 @@
 """Hard checks a pack must pass before it is written."""
 import numpy as np
 
-from . import palette
 from .cycle import Cycle
 
-_PAL = {c for c in palette.PALETTE}
-
-
-def validate(cycle: Cycle, cell=(96, 96)) -> dict:
+def validate(cycle: Cycle, pal, cell=(96, 96)) -> dict:
     report = {"status": "passed", "errors": [], "frame_count": len(cycle.frames)}
     hashes = set()
     colours = set()
@@ -24,7 +20,7 @@ def validate(cycle: Cycle, cell=(96, 96)) -> dict:
             report["errors"].append(f"frame {i}: empty")
             continue
         cols = {tuple(c) for c in np.unique(a[op][:, :3], axis=0).tolist()}
-        bad = cols - _PAL
+        bad = {c for c in cols if c not in pal}
         if bad:
             report["errors"].append(f"frame {i}: off-palette colours {sorted(bad)[:4]}")
         colours |= cols

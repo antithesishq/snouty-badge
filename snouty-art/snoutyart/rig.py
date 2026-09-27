@@ -6,7 +6,8 @@ from pathlib import Path
 
 from PIL import Image
 
-from . import ROOT, palette
+from . import ROOT
+from .palette import Palette
 
 
 @dataclass
@@ -38,8 +39,11 @@ class Layer:
 
 
 class Rig:
-    def __init__(self, path: Path = ROOT / "rig" / "rig.json"):
-        self.spec = json.loads(Path(path).read_text())
+    def __init__(self, style: str = "study05"):
+        self.style = style
+        self.dir = ROOT / "styles" / style
+        self.spec = json.loads((self.dir / "rig.json").read_text())
+        self.pal = Palette(self.dir / "palette.json")
         self.cell = tuple(self.spec["cell_size"])
         self.origin = tuple(self.spec["cell_origin"])
         self.off = tuple(self.spec["ref_to_cell_offset"])
@@ -47,7 +51,7 @@ class Rig:
         self.limbs = self.spec["limbs"]
         self.parts: dict[str, Part] = {}
         for name, p in self.spec["parts"].items():
-            img = palette.snap(Image.open(ROOT / "rig" / "parts" / p["file"]))
+            img = self.pal.snap(Image.open(self.dir / "parts" / p["file"]))
             pivot = tuple(p["pivot"])
             ref_pos = tuple(p.get("ref_pos", pivot))
             self.parts[name] = Part(name, img, pivot, p["z"], ref_pos)
@@ -86,13 +90,13 @@ class Rig:
         ax, ay = self.anchor(pl.part, pl.dx, pl.dy)
         layer = Image.new("RGBA", self.cell, (0, 0, 0, 0))
         layer.alpha_composite(img, (ax - px, ay - py))
-        return Layer(part.z if pl.z is None else pl.z, palette.snap(layer))
+        return Layer(part.z if pl.z is None else pl.z, self.pal.snap(layer))
 
     def compose(self, layers: list[Layer]) -> Image.Image:
         out = Image.new("RGBA", self.cell, (0, 0, 0, 0))
         for layer in sorted(layers, key=lambda l: l.z):
             out.alpha_composite(layer.image)
-        return palette.snap(out)
+        return self.pal.snap(out)
 
 
 def ik2(root, target, l1, l2, bend=1):

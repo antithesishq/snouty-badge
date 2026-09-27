@@ -1,0 +1,19 @@
+GIMP Palette
+Name: study05 snouty_jump
+Columns: 5
+# 15 opaque colors; transparency is index 0 in the indexed PNG.
+ 23  18  30  #17121e OUTLINE
+ 41  35  47  #29232f SHIRT_DARK
+ 66  54  75  #42364b SHIRT
+ 70  33 116  #462174 FUR_DEEP
+102  43 184  #662bb8 FUR_DARK
+142  66 222  #8e42de FUR
+190 122 243  #be7af3 FUR_LIGHT
+244 239 223  #f4efdf WHITE
+149 141 157  #958d9d GREY
+238  69  60  #ee453c RED
+145  50  47  #91322f RED_DARK
+ 96  57  31  #60391f NET_DARK
+153  98  47  #99622f NET
+205 147  75  #cd934b NET_LIGHT
+240 195 124  #f0c37c NET_PALE
