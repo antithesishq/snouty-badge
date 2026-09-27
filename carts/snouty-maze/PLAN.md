@@ -437,3 +437,33 @@ in), `check_cycle.mjs` 3/3, `docs/preview_m2.gif`. `.text` 40 KB, `.bss`
   seed 1 and should use 12000 for arbitrary seeds.
 - `m1_fly.json` only works on the `m1` tag now (autopilot ignores the
   stick; B+Select enters fly mode instead).
+
+# Plan: A1 "Real textures from the Windows 95 3D Maze recreation" (2026-09-27)
+
+Adrian found <https://github.com/ibid-11962/Windows-95-3D-Maze-Screensaver>,
+a WebGL recreation whose textures were extracted from the original
+screensaver (brick wall, wood floor, pebble ceiling, wall picture, OpenGL
+logo, smiley, rat, Start button). Use them instead of the placeholders.
+
+- Copy the source files unchanged into `assets/src/w95/` with a
+  `SOURCE.md` (provenance, dimensions, what each becomes).
+- `tools/prepare_assets.py --from-w95 assets/src/w95` downsamples each
+  source to the manifest size (Lanczos, alpha resized separately, opaque
+  pixels only in the quantiser), median-cut quantises to 15/16 colours,
+  snaps the palette to RGB565, re-merges duplicates, and runs the same
+  `validate` as `--placeholders`. Sheets that have no source (`finish`,
+  `snouty`, `snouty_top`) keep their procedural drawings so one run
+  produces a complete `assets/gen/`.
+- `--rat` swaps the Snouty sheet for the rat (mirrored for the left
+  frames, two identical frames per side; the source has one pose). Default
+  stays Snouty (SPEC decision 6). `--placeholders` keeps working.
+- New manifest rows `wall_pic.png` (32x32 opaque) and `start.png` (32x32
+  transparent) so M3 can hang the picture on a wall panel and float the
+  Start button in the first cell, as the original does. `build.zig`
+  `images` gets the two rows; nothing draws them yet (unreferenced `gfx`
+  data is dropped by the linker).
+- Texture size stays 32 texels: the inner loop packs u, v as 5.11 fixed
+  point so the wrap is free (`raster.zig` `tex_pixel`). 64-texel textures
+  would be a rasterizer change, not an asset change.
+- Rebaseline `tests/golden/*.png` (pixel content changes, geometry does
+  not), `docs/w95_assets.png` contact sheet, `docs/preview_a1.gif`.
