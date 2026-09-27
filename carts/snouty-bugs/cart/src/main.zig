@@ -101,10 +101,14 @@ pub fn update() void {
         .playing => {
             draw_scene();
             if (world.w.player.go_pop > 0) rewind.draw_go(world.w.player.go_pop);
+            if (m5_manual > 0) { // M5 temporary: track A owns main.zig
+                m5_manual += 1;
+                rewind.draw_manual(m5_manual - 1);
+            }
         },
         .dying => {
             draw_scene();
-            rewind.draw_bar(fatal_kind);
+            if (m5_hard) rewind.draw_fatal_bar(fatal_kind, dying_len - dying_ticks) else rewind.draw_bar(fatal_kind); // M5 temporary: track A owns main.zig
         },
         .paused => {
             draw_scene();
@@ -247,7 +251,7 @@ fn draw_scene() void {
     bullets.draw_enemy_bullets();
     fx.draw_fx();
     fx.draw_bomb_ring();
-    hud.draw_hud(rewinds, world.w.player.bombs);
+    hud.draw_hud(rewinds, m5_fuel, 180, 45, m5_hard); // M5 temporary: track A owns main.zig
     hud.draw_stage_text();
 }
 
@@ -392,5 +396,41 @@ fn present_wasm() void {
         }
     } else {
         sim_framebuffer.* = cart.framebuffer.*;
+    }
+}
+
+// M5 temporary: track A owns main.zig. Preview knobs for track B's HUD
+// and overlays, set with preview.mjs --call-at.
+var m5_fuel: u32 = 180;
+var m5_hard: bool = false;
+var m5_manual: u32 = 0;
+fn m5_fuel_90() callconv(.c) u32 {
+    m5_fuel = 90;
+    return 0;
+}
+fn m5_fuel_30_hard() callconv(.c) u32 {
+    m5_fuel = 30;
+    m5_hard = true;
+    return 0;
+}
+fn m5_fuel_0() callconv(.c) u32 {
+    m5_fuel = 0;
+    return 0;
+}
+fn m5_fuel_1() callconv(.c) u32 {
+    m5_fuel = 1;
+    return 0;
+}
+fn m5_manual_on() callconv(.c) u32 {
+    m5_manual = 1;
+    return 0;
+}
+comptime {
+    if (cart.is_wasm) {
+        @export(&m5_fuel_90, .{ .name = "m5_fuel_90" });
+        @export(&m5_fuel_30_hard, .{ .name = "m5_fuel_30_hard" });
+        @export(&m5_fuel_0, .{ .name = "m5_fuel_0" });
+        @export(&m5_fuel_1, .{ .name = "m5_fuel_1" });
+        @export(&m5_manual_on, .{ .name = "m5_manual_on" });
     }
 }
