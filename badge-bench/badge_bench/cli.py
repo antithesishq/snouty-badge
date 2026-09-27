@@ -71,6 +71,9 @@ def build_parser():
     ap.add_argument('--config', metavar='FILE.toml', help='per-cart defaults file (default carts/<cart>.toml)')
     ap.add_argument('--no-config', action='store_true', help='ignore carts/<cart>.toml')
     ap.add_argument('--progress', action='store_true', help='print a line per frame as it finishes')
+    ap.add_argument('--calibrate', metavar='FILE.toml',
+                    help='use the fitted class costs of calibrate/fit.py\'s calibration.toml and '
+                         'report idle-bus and DMA-busy ms per frame')
     ap.add_argument('--version', action='version', version=f'badge-bench {__version__}')
     return ap
 
@@ -115,6 +118,12 @@ def _main(a):
                 budget_ms=budget, config=cfg_path, note=cfg.get('note'),
                 clock_mhz=M.CLOCK_HZ / 1e6)
 
+    cal = None
+    if a.calibrate:
+        cal = C.load_calibration(a.calibrate)
+        cal['costs'] = M.set_costs(cal['costs'])
+        meta['calibration'] = cal
+
     printed = [0]
 
     def on_trace(f, s):
@@ -131,8 +140,16 @@ def _main(a):
     res = RUN.run(elf, frames, controls, pokes, seed=a.seed, png_every=png_every,
                   max_frame_ms=a.max_frame_ms, on_trace=on_trace,
                   log=progress if a.progress else None)
-    st = R.stats(res.frames, budget)
+    if cal:
+        add_busy(res.frames, cal)
+        st = R.stats(res.frames, budget, key='busy_ms')
+        if st:
+            st['idle'] = R.stats(res.frames, budget)
+    else:
+        st = R.stats(res.frames, budget)
     hot = R.hot_functions(elf, res.blocks, len(res.frames)) if (a.symbols or a.listing or a.json) else []
+    if a.json:
+        R.add_mix(elf, hot, res.blocks)
     txt = R.text(meta, res, st, hot, a.every, a.top, a.symbols)
     print(txt, end='')
 
@@ -165,3 +182,13 @@ def _main(a):
     if res.hang:
         return EXIT_HANG
     return EXIT_OK
+
+
+def add_busy(frames, cal):
+    """busy ms = idle ms + memory-class cycles x (factor - 1) x the share of
+    the frame that overlaps the DMA window (min(1, dma_ms / idle ms))."""
+    k = cal['factor'] - 1.0
+    for f in frames:
+        idle = f['ms']
+        share = min(1.0, cal['dma_ms'] / idle) if idle > 0 else 1.0
+        f['busy_ms'] = idle + f['mem_cyc'] * k * share / M.CYCLES_PER_MS

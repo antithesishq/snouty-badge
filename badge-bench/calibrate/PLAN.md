@@ -173,6 +173,48 @@ badge-bench README (new section, new flag, JSON keys), the root README row,
 `calibrate/dist/badge-calibrate.uf2` plus a tester note (force-added; the
 repository ignores `*.uf2`), memory of the status.
 
+## Deviations found while building (the code is authoritative)
+
+- Trace lines go out **one per frame** from a snapshot taken when a pass
+  completes (frames 20..39 for pass 1; the `done` line shares row 19's
+  frame but is sent after that frame's kernel runs). Back-to-back
+  `trace()` calls would overwrite the single shared trace buffer before
+  core 0 prints it. `carts/badge-calibrate.toml` therefore runs 40 frames.
+- `hot[]` JSON entries also carry `class_cyc` ({class: cycles over the
+  run}) so `fit.py` can charge `multi` at its real 1 + regs cost.
+- The contention `factor` is per memory-class cycle: `1 + sum(busy - idle)
+  / sum(fitted memory-class cycles)` over K7..K11, which is how `busy ms`
+  applies it; the plain whole-kernel busy/idle ratio is written next to it
+  as `whole_kernel_ratio`.
+- No fitted intercept: the cycles outside the kernel function per run come
+  from the emulator (`meta.call_overhead`, 14 cycles, warned if it varies),
+  because a free constant made the system ill-conditioned.
+- `fit.py` verifies the `CAL done sum` (FNV-1a-32 over k, n, ops, idle_min,
+  idle_med, busy_min, busy_med, sink as little-endian u32s, kernels in id
+  order) and refuses a capture whose rows do not hash to it.
+- `Kernel` has a `short` name for the 20-column pages; K19 has
+  `ops_per_iter = 60`; K13 and K10 are inline asm (LLVM hoisted the bit
+  tests of K13 so every branch was taken, and copies floats through core
+  registers); each loop holds an empty `asm volatile` against unrolling.
+- No kernel exercises `vfma` or `ldrd_strd`; the fit keeps their defaults
+  and says so. VLDR and VSTR are only separable through K19.
+- `ldmdb` stays in `alu` (the old table never priced it as multi; the
+  exactness test requires bit-identity).
+
 ## Status
 
 - 2026-09-27: plan written; A and B start in parallel, C after.
+- 2026-09-27: **C0 and C1 built.** Cart builds (thumb + wasm), 102 KB;
+  emulator run clean, 21 lines, every kernel body reviewed in the listing;
+  `tests/test_calibrate_selftest.sh` PASS (ratios 1.000, residual 0.000,
+  defaults reproduced, `--calibrate` reproduces the model); `tests/
+  test_reflections.sh` still exact after the model refactor;
+  `dist/badge-calibrate.uf2` committed with a tester note. Modelled per-op
+  costs from the emulator, for reference: empty 0.19 (loop overhead 3
+  cycles per 16 ops), vmul 1.19, vdiv 14.19, vsqrt 15.19, ldr/str 2.38,
+  vldr/vstr 2.44, framebuffer ldrh/strh 2.50, branch_taken 4.00, udiv 6.19,
+  vcmp_vmrs 4.25, table_lerp 14.19, mixed_tracer 1.55.
+- Next, **C2**: a tester flashes `dist/badge-calibrate.uf2`, captures the
+  console (or photographs the pages), `fit.py` writes `calibration.toml`,
+  and `tests/test_reflections.sh --calibrate` is compared with the timing
+  build's on-screen number.

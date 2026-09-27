@@ -3,7 +3,12 @@
 # carts/snouty-reflections/tools/emu's real-ELF numbers for the m1.1 cart to the
 # instruction and the cycle.
 #
-#   tests/test_reflections.sh [path/to/snouty-reflections.elf]
+#   tests/test_reflections.sh [--calibrate calibration.toml] [path/to/snouty-reflections.elf]
+#
+# With --calibrate, after the exact checks pass, the sweep is run again with
+# that calibration and the calibrated idle/busy ms of the reference frames
+# are printed next to the model's (informational, no assertions; compare
+# with the timing build's measured overlay number).
 #
 # Default ELF: ../zig-out/firmware/snouty-reflections.elf (the repository root's build output;
 # run `zig build -Dcart=snouty-reflections` at the root at tag snouty-reflections/m1.1 first).
@@ -21,6 +26,12 @@
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+CAL=
+if [ "${1:-}" = "--calibrate" ]; then
+    [ -n "${2:-}" ] || { echo "test_reflections: --calibrate needs a FILE" >&2; exit 2; }
+    CAL="$(cd "$(dirname "$2")" && pwd)/$(basename "$2")"
+    shift 2
+fi
 ELF="${1:-$HERE/../zig-out/firmware/snouty-reflections.elf}"
 OUT="$HERE/out/tests/reflections"
 M11_SHA=7c76be7bd522f09c800aace3120c1ea89a8e269cfc1442b411b1f87352085cce
@@ -80,4 +91,27 @@ if fails:
     print(f"test_reflections: FAIL ({fails} mismatches)")
     sys.exit(3)
 print("test_reflections: PASS (all 24 reference frames reproduced exactly)")
+PY
+
+[ -n "$CAL" ] || exit 0
+echo "test_reflections: the same 576 updates with --calibrate $CAL (informational)"
+mkdir -p "$OUT/calibrated"
+"$HERE/bench.sh" "$ELF" --no-config --frames 576 --every 25 --budget-ms 50 \
+    --poke dither.mode=1 --calibrate "$CAL" --json --out "$OUT/calibrated" > "$OUT/calibrated.txt"
+"$HERE/.venv/bin/python" - "$OUT" <<'PY'
+import json, sys
+out = sys.argv[1]
+mod = {f['frame']: f for f in json.load(open(f"{out}/sweep/bench.json"))['frames']}
+j = json.load(open(f"{out}/calibrated/bench.json"))
+cal = {f['frame']: f for f in j['frames']}
+c = j['meta']['calibration']
+print(f"calibration {c['file']} (fitted {c['date']}, residual {c['residual_rms']:.3f} cycles/op, "
+      f"factor {c['factor']:.3f} over the first {c['dma_ms']:g} ms)")
+print(f"{'frame':>5} {'model ms':>9} {'idle ms':>9} {'busy ms':>9} {'busy/model':>11}")
+for fr in range(0, 576, 25):
+    m, f = mod[fr], cal[fr]
+    print(f"{fr:5d} {m['ms']:9.2f} {f['ms']:9.2f} {f['busy_ms']:9.2f} {f['busy_ms'] / m['ms']:11.3f}")
+s = j['summary']
+print(f"whole run: idle mean {s['idle']['mean_ms']:.2f} max {s['idle']['max_ms']:.2f} ms; "
+      f"busy mean {s['mean_ms']:.2f} max {s['max_ms']:.2f} ms (frame {s['worst_frame']})")
 PY

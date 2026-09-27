@@ -6,7 +6,7 @@ from . import model as M
 def instruction_counts(cs, mu_read, blocks):
     """{address: executions} from per-block counts."""
     out = {}
-    for addr, size, _n, _c, count, _t in blocks.values():
+    for addr, size, _n, _c, count, _t, _m in blocks.values():
         code = mu_read(addr, size)
         if code is None:
             continue

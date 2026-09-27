@@ -60,7 +60,7 @@ class Result:
         self.unknown_msgs = []  # (frame, word)
         self.status_words = []
         self.pngs = {}          # frame -> framebuffer bytes
-        self.blocks = {}        # key -> [addr, size, ninsn, cyc, count, taken] over the frames
+        self.blocks = {}        # key -> [addr, size, ninsn, cyc, count, taken, mem_cyc] over the frames
         self.warnings = []
         self.vsync = None
         self.os = None
@@ -88,8 +88,8 @@ def run(elf, frames, controls, pokes=(), seed=1, png_every=0, max_frame_ms=1000.
     res = Result()
     mu = M.make_uc()
     cs = M.make_cs()
-    blocks = {}                         # (addr << 16 | size) -> [addr, size, ninsn, cyc, count, taken]
-    insn = cyc = taken = 0
+    blocks = {}                         # (addr << 16 | size) -> [addr, size, ninsn, cyc, count, taken, mem_cyc]
+    insn = cyc = taken = mem = 0        # mem: memory-class cycles (classes.MEMORY_CLASSES)
     prev_end = None
     cur_block = 0
     max_frame_cyc = int(max_frame_ms * M.CYCLES_PER_MS)
@@ -100,7 +100,7 @@ def run(elf, frames, controls, pokes=(), seed=1, png_every=0, max_frame_ms=1000.
         phase = 'boot'      # boot -> align -> start -> run
         armed = False
         frame = -1          # frame currently executing (-1 = start-up)
-        win = None          # (insn, cyc, taken) at the start of the window
+        win = None          # (insn, cyc, taken, mem) at the start of the window
         presents = 0
         present_idx = None
         tone_count = 0
@@ -109,7 +109,7 @@ def run(elf, frames, controls, pokes=(), seed=1, png_every=0, max_frame_ms=1000.
         extra_reads = 0
 
         def cycles(self):
-            return cyc
+            return int(cyc)             # DWT_CYCCNT is an integer (cyc is a float when calibrated)
 
         def current_block(self):
             return cur_block
@@ -189,14 +189,14 @@ def run(elf, frames, controls, pokes=(), seed=1, png_every=0, max_frame_ms=1000.
                 res.vsync = fake.vsync()
                 self.startup_blocks = {key: (b[4], b[5]) for key, b in blocks.items()}
             else:
-                w_insn, w_cyc, w_taken = self.win
+                w_insn, w_cyc, w_taken, w_mem = self.win
                 d = cyc - w_cyc
                 res.frames.append(dict(
                     frame=self.frame, insn=insn - w_insn, cyc=d, taken=taken - w_taken,
                     ms=d / M.CYCLES_PER_MS, presents=self.presents,
                     fb=self.present_idx, controls=controls[self.frame],
                     neopixels=fake.neopixels(), user_led=fake.user_led(),
-                    tones=len(res.tones) - self.tone_count))
+                    tones=len(res.tones) - self.tone_count, mem_cyc=mem - w_mem))
                 if log:
                     log(res.frames[-1])
             if k >= frames:
@@ -207,7 +207,7 @@ def run(elf, frames, controls, pokes=(), seed=1, png_every=0, max_frame_ms=1000.
             self.frame = k
             self.presents = 0
             self.tone_count = len(res.tones)
-            self.win = (insn, cyc, taken)
+            self.win = (insn, cyc, taken, mem)
             limit = cyc + max_frame_cyc
 
     host = Host()
@@ -234,17 +234,17 @@ def run(elf, frames, controls, pokes=(), seed=1, png_every=0, max_frame_ms=1000.
     start = elf.need('_start')[0]
 
     def hook_block(uc, addr, size, _):
-        nonlocal insn, cyc, taken, prev_end, cur_block
+        nonlocal insn, cyc, taken, mem, prev_end, cur_block
         key = (addr << 16) | size
         b = blocks.get(key)
         if b is None:
             try:
-                n, c = M.decode_block(cs, bytes(uc.mem_read(addr, size)), addr)
+                n, c, mc = M.decode_block(cs, bytes(uc.mem_read(addr, size)), addr)
             except M.DecodeError as e:
                 decode_err.append(str(e))
                 uc.emu_stop()
                 return
-            b = blocks[key] = [addr, size, n, c, 0, 0]
+            b = blocks[key] = [addr, size, n, c, 0, 0, mc]
         if addr != prev_end and prev_end is not None:
             cyc += M.TAKEN_EXTRA
             taken += 1
@@ -253,6 +253,7 @@ def run(elf, frames, controls, pokes=(), seed=1, png_every=0, max_frame_ms=1000.
         cur_block = addr
         insn += b[2]
         cyc += b[3]
+        mem += b[6]
         b[4] += 1
         if cyc > limit:
             uc.emu_stop()
@@ -317,7 +318,7 @@ def run(elf, frames, controls, pokes=(), seed=1, png_every=0, max_frame_ms=1000.
     for key, b in blocks.items():
         c0, t0 = sb.get(key, (0, 0))
         if b[4] - c0:
-            res.blocks[key] = [b[0], b[1], b[2], b[3], b[4] - c0, b[5] - t0]
+            res.blocks[key] = [b[0], b[1], b[2], b[3], b[4] - c0, b[5] - t0, b[6]]
     for (rw, blk), (n, first, fr) in sorted(fake.scratch_log.items(), key=lambda kv: kv[1][2]):
         res.warnings.append(
             f"cart {rw}s SRAM8/9 scratch above its stack top: {n} accesses from block {blk:#010x} "

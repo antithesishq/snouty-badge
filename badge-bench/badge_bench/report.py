@@ -1,6 +1,7 @@
 """Text and JSON reports: per-frame table, statistics, hot functions."""
 import math
 
+from . import classes as K
 from . import model as M
 from . import os_fake as OS
 from .script import names
@@ -14,18 +15,21 @@ def percentile(sorted_vals, p):
     return sorted_vals[k - 1]
 
 
-def stats(frames, budget_ms):
+def stats(frames, budget_ms, key='ms'):
+    """Summary of the per-frame `key` milliseconds ('ms', or 'busy_ms' when
+    calibrated)."""
     if not frames:
         return None
-    ms = [f['ms'] for f in frames]
+    ms = [f[key] for f in frames]
     s = sorted(ms)
-    worst = max(frames, key=lambda f: f['cyc'])
-    best = min(frames, key=lambda f: f['cyc'])
-    over = [f['frame'] for f in frames if f['ms'] > budget_ms]
+    rank = (lambda f: f['cyc']) if key == 'ms' else (lambda f: f[key])
+    worst = max(frames, key=rank)
+    best = min(frames, key=rank)
+    over = [f['frame'] for f in frames if f[key] > budget_ms]
     mean = sum(ms) / len(ms)
     return dict(
-        frames=len(frames), min_ms=best['ms'], min_frame=best['frame'], mean_ms=mean,
-        p95_ms=percentile(s, 95), max_ms=worst['ms'], worst_frame=worst['frame'],
+        frames=len(frames), min_ms=best[key], min_frame=best['frame'], mean_ms=mean,
+        p95_ms=percentile(s, 95), max_ms=worst[key], worst_frame=worst['frame'],
         mean_insn=sum(f['insn'] for f in frames) / len(frames),
         mean_cyc=sum(f['cyc'] for f in frames) / len(frames),
         max_cyc=worst['cyc'], max_insn=worst['insn'],
@@ -50,21 +54,50 @@ def hot_functions(elf, blocks, nframes):
     A block is charged to the sized function containing its first
     instruction; the taken-branch cycle goes to the block entered."""
     acc = {}
-    for addr, size, n, c, count, taken in blocks.values():
+    for addr, size, n, c, count, taken, _m in blocks.values():
         i = elf.func_index(addr)
         if i is not None:
             fa, _z, name = elf.funcs[i]
         else:
             fa, name = None, f"[outside any function: {elf.describe_code(addr)}]"
-        a = acc.setdefault(name, [0, 0, 0, fa])
+        a = acc.setdefault(name, [0, 0, 0, fa, 0])
         a[0] += c * count + taken * M.TAKEN_EXTRA
         a[1] += n * count
         if fa is not None and addr == fa:
             a[2] += count
+        a[4] += taken
     out = [dict(name=k, cyc=v[0], insn=v[1], entries=v[2], addr=v[3],
-                cyc_per_frame=v[0] / max(nframes, 1)) for k, v in acc.items()]
+                cyc_per_frame=v[0] / max(nframes, 1), taken=v[4]) for k, v in acc.items()]
     out.sort(key=lambda d: -d['cyc'])
     return out
+
+
+def add_mix(elf, hot, blocks, top=50):
+    """Give the first `top` hot entries `mnemonics` ({base name: executions
+    over the run}) and `class_cyc` ({model class: modelled issue cycles over
+    the run}, taken-branch cycles not included) from the counted blocks."""
+    want = {h['name']: h for h in hot[:top]}
+    for h in want.values():
+        h['mnemonics'], h['class_cyc'] = {}, {}
+    cs = M.make_cs()
+    for addr, size, _n, _c, count, _t, _m in blocks.values():
+        i = elf.func_index(addr)
+        name = elf.funcs[i][2] if i is not None else f"[outside any function: {elf.describe_code(addr)}]"
+        h = want.get(name)
+        if h is None:
+            continue
+        code = elf.code_bytes(addr, size)
+        if code is None:
+            continue
+        mn, cc = h['mnemonics'], h['class_cyc']
+        for ins in cs.disasm(code, addr):
+            m = M.base_name(ins)
+            mn[m] = mn.get(m, 0) + count
+            k = K.classify(m)
+            cc[k] = cc.get(k, 0) + M.cycles_of(ins, m) * count
+    for h in want.values():
+        h['mnemonics'] = dict(sorted(h['mnemonics'].items(), key=lambda kv: -kv[1]))
+        h['class_cyc'] = {k: h['class_cyc'][k] for k in K.CLASSES if k in h['class_cyc']}
 
 
 def fmt_frame_row(f, budget_ms):
@@ -72,6 +105,14 @@ def fmt_frame_row(f, budget_ms):
     fps = 1000.0 / ms if ms else float('inf')
     tag = 'OVER' if ms > budget_ms else 'ok'
     return (f"{f['frame']:6d} {f['insn']:12,d} {f['cyc']:12,d} {ms:8.2f} {fps:7.1f}  "
+            f"{tag:<4} {names(f['controls'])}")
+
+
+def fmt_frame_row_cal(f, budget_ms):
+    ms, busy = f['ms'], f['busy_ms']
+    fps = 1000.0 / busy if busy else float('inf')
+    tag = 'OVER' if busy > budget_ms else 'ok'
+    return (f"{f['frame']:6d} {f['insn']:12,d} {f['cyc']:12,.0f} {ms:8.2f} {busy:8.2f} {fps:7.1f}  "
             f"{tag:<4} {names(f['controls'])}")
 
 
@@ -84,6 +125,10 @@ def text(meta, res, st, hot, every, top, show_symbols):
              + f", seed {meta['seed']}" + (f", config {meta['config']}" if meta['config'] else ''))
     if meta.get('note'):
         L.append(f"  note: {meta['note']}")
+    cal = meta.get('calibration')
+    if cal:
+        L.append(f"  calibrated: {cal['file']} (fitted {cal['date']}, residual "
+                 f"{cal['residual_rms']:.3f} cycles/op)")
     if res.vsync:
         fl, vms = res.vsync
         L.append(f"  cart asks for vsync {'on' if fl & 1 else 'off'}"
@@ -92,15 +137,20 @@ def text(meta, res, st, hot, every, top, show_symbols):
     if res.startup:
         s = res.startup
         L.append(f"  start-up (reset to the first update): {s['insn']:,} insns, "
-                 f"{s['cyc']:,} cycles, {s['ms']:.2f} ms")
+                 + (f"{s['cyc']:,.0f}" if isinstance(s['cyc'], float) else f"{s['cyc']:,}")
+                 + f" cycles, {s['ms']:.2f} ms")
     L.append('')
     if res.frames:
-        L.append(f"{'frame':>6} {'insns':>12} {'cycles':>12} {'ms':>8} {'fps':>7}  {'':4} input")
+        if cal:
+            L.append(f"{'frame':>6} {'insns':>12} {'cycles':>12} {'idle ms':>8} {'busy ms':>8} "
+                     f"{'fps':>7}  {'':4} input")
+        else:
+            L.append(f"{'frame':>6} {'insns':>12} {'cycles':>12} {'ms':>8} {'fps':>7}  {'':4} input")
         worst = st['worst_frame'] if st else None
         shown = 0
         for f in res.frames:
             if f['frame'] % every == 0 or f['frame'] == worst:
-                row = fmt_frame_row(f, meta['budget_ms'])
+                row = (fmt_frame_row_cal if cal else fmt_frame_row)(f, meta['budget_ms'])
                 if f['frame'] == worst:
                     row += '   <- worst'
                 L.append(row)
@@ -110,15 +160,27 @@ def text(meta, res, st, hot, every, top, show_symbols):
         L.append('')
     if st:
         L.append(f"summary over {st['frames']} frames (update #0..#{st['frames'] - 1}):")
-        L.append(f"  ms/frame  min {st['min_ms']:.2f} (frame {st['min_frame']})  mean {st['mean_ms']:.2f}"
-                 f"  p95 {st['p95_ms']:.2f}  max {st['max_ms']:.2f} (frame {st['worst_frame']})")
-        L.append(f"  mean {st['mean_insn']:,.0f} insns, {st['mean_cyc']:,.0f} cycles per frame;"
-                 f" worst {st['max_insn']:,} insns, {st['max_cyc']:,} cycles")
+        if cal:
+            for label, t in (('idle ms ', st['idle']), ('busy ms ', st)):
+                L.append(f"  {label} min {t['min_ms']:.2f} (frame {t['min_frame']})  mean {t['mean_ms']:.2f}"
+                         f"  p95 {t['p95_ms']:.2f}  max {t['max_ms']:.2f} (frame {t['worst_frame']})")
+            L.append(f"  mean {st['mean_insn']:,.0f} insns, {st['mean_cyc']:,.0f} cycles per frame;"
+                     f" worst (busy) {st['max_insn']:,} insns, {st['max_cyc']:,.0f} cycles")
+        else:
+            L.append(f"  ms/frame  min {st['min_ms']:.2f} (frame {st['min_frame']})  mean {st['mean_ms']:.2f}"
+                     f"  p95 {st['p95_ms']:.2f}  max {st['max_ms']:.2f} (frame {st['worst_frame']})")
+            L.append(f"  mean {st['mean_insn']:,.0f} insns, {st['mean_cyc']:,.0f} cycles per frame;"
+                     f" worst {st['max_insn']:,} insns, {st['max_cyc']:,} cycles")
         L.append(f"  budget {st['budget_ms']:g} ms: {st['over_budget']} of {st['frames']} frames over"
                  + (f" (first: frame {st['first_over']})" if st['first_over'] is not None else '')
                  + f"; worst-case fps {1000.0 / st['max_ms']:.1f}, mean-case fps {1000.0 / st['mean_ms']:.1f}")
         L.append(f"  verdict: {st['verdict']}")
-        L.append("  (a model: issue cycles only, zero-wait SRAM, no bus contention; treat as a floor)")
+        if cal:
+            L.append(f"  (calibrated against hardware on {cal['date']}; residual {cal['residual_rms']:.3f} "
+                     f"cycles/op; busy ms adds DMA contention to the first {cal['dma_ms']:g} ms of "
+                     "memory traffic)")
+        else:
+            L.append("  (a model: issue cycles only, zero-wait SRAM, no bus contention; treat as a floor)")
         L.append('')
     # Side channels.
     if res.frames:

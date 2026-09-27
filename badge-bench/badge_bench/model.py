@@ -12,6 +12,8 @@ from capstone.arm import ARM_CC_AL, ARM_CC_INVALID, ARM_OP_REG
 from unicorn import UC_ARCH_ARM, UC_MODE_MCLASS, UC_MODE_THUMB, Uc, UcError
 from unicorn.arm_const import UC_CPU_ARM_CORTEX_M33
 
+from .classes import CLASSES, DEFAULT_COSTS, MEMORY_CLASSES, MULTI_WITH_BASE, classify
+
 CLOCK_HZ = 150_000_000
 CYCLES_PER_US = CLOCK_HZ // 1_000_000
 CYCLES_PER_MS = CLOCK_HZ / 1000.0
@@ -39,32 +41,43 @@ def _reglist_len(ins):
     return sum(1 for op in ins.operands if op.type == ARM_OP_REG)
 
 
-_MULTI = ('vpush', 'vpop', 'push', 'pop', 'ldm', 'stm', 'vldmia', 'vstmia',
-          'vldmdb', 'vstmdb', 'ldmia', 'stmia', 'stmdb')
-_MULTI_BASE = ('ldm', 'stm', 'vldmia', 'vstmia', 'vldmdb', 'vstmdb', 'ldmia', 'stmia', 'stmdb')
+# Cost per class (classes.py). The defaults are ints so an uncalibrated run
+# counts integer cycles exactly as it always has; set_costs (--calibrate)
+# installs floats rounded to 0.25 cycle, which sum exactly in a double.
+_COST = dict(DEFAULT_COSTS)
 
 
 def cycles_of(ins, m):
     """Modelled issue cycles of one instruction (m = base_name(ins))."""
-    if m in ('vdiv', 'vsqrt'):
-        return 14
-    if m in ('vfma', 'vfms', 'vfnma', 'vfnms', 'vmla', 'vmls', 'vnmla', 'vnmls'):
-        return 3
-    if m in _MULTI:
-        n = _reglist_len(ins) - (1 if m in _MULTI_BASE else 0)
+    c = classify(m)
+    if c == 'multi':
+        n = _reglist_len(ins) - (1 if m in MULTI_WITH_BASE else 0)
         return 1 + max(n, 1)
-    if m in ('ldrd', 'strd'):
-        return 3
-    if m.startswith('ldr') or m.startswith('str') or m in ('vldr', 'vstr'):
-        return 2
-    if m in ('sdiv', 'udiv'):
-        return 6
-    return 1
+    return _COST[c]
 
 
 # A taken branch (any block entry that is not a fall-through from the
 # previous block) costs one extra cycle: the M33 has no branch predictor.
-TAKEN_EXTRA = 1
+TAKEN_EXTRA = DEFAULT_COSTS['taken']
+
+
+def set_costs(costs):
+    """Replace the class costs (dict class -> cycles; missing classes keep
+    their default, `multi` is never replaced). Values are rounded to the
+    nearest 0.25 cycle. Must be called before any block is decoded."""
+    global TAKEN_EXTRA
+    for k, v in costs.items():
+        if k not in DEFAULT_COSTS:
+            raise ValueError(f"unknown cost class '{k}' (known: {', '.join(CLASSES)})")
+        if k == 'multi':
+            continue
+        _COST[k] = round(float(v) * 4) / 4
+    TAKEN_EXTRA = _COST['taken']
+    return dict(_COST)
+
+
+def costs():
+    return dict(_COST)
 
 
 class DecodeError(Exception):
@@ -72,14 +85,22 @@ class DecodeError(Exception):
 
 
 def decode_block(cs, code, addr):
-    """(instruction count, modelled cycles) of one unicorn translation block."""
+    """(instruction count, modelled cycles, memory-class cycles) of one unicorn
+    translation block."""
     ins = list(cs.disasm(code, addr))
     got = sum(i.size for i in ins)
     if got != len(code):
         raise DecodeError(f"capstone decoded {got} of {len(code)} bytes of the block at "
                           f"{addr:#010x}; the instruction at {addr + got:#010x} is not "
                           f"understood by the cycle model")
-    return len(ins), sum(cycles_of(i, base_name(i)) for i in ins)
+    cyc = mem = 0
+    for i in ins:
+        m = base_name(i)
+        c = cycles_of(i, m)
+        cyc += c
+        if classify(m) in MEMORY_CLASSES:
+            mem += c
+    return len(ins), cyc, mem
 
 
 def make_cs():

@@ -53,7 +53,7 @@ badge-bench <cart.elf> [--script FILE.json] [--press BTN:T1-T2 ...] [--frames N]
             [--every K] [--budget-ms 16.7] [--out DIR] [--png [K]] [--listing]
             [--symbols] [--top N] [--poke SYM=VALUE ...] [--json] [--seed N]
             [--max-frame-ms 1000] [--traces N] [--config FILE | --no-config]
-            [--progress]
+            [--progress] [--calibrate FILE.toml]
 ```
 
 Put the ELF first (`--png` takes an optional number and would otherwise
@@ -71,12 +71,13 @@ try to read the ELF path as one).
 | `--listing` | Write `DIR/listing.lst`: capstone disassembly of the 5 hottest functions, each instruction annotated with executions and modelled cycles per frame. |
 | `--symbols` | Print the hot-function table (top 20, `--top N`). |
 | `--poke SYM=VALUE` | Write VALUE into global SYM (its ELF symbol size if 1, 2 or 4 bytes, else a u32) after loading and before `_start`, like the reflections runner did for `dither.mode`. Repeatable. `start()` runs after the poke and may overwrite it. |
-| `--json` | Write `DIR/bench.json`: every frame (insns, cycles, ms, taken branches, presents, framebuffer index, controls, neopixels, user LED, tone count), the summary, the top 50 functions, traces, tones, warnings, crash/hang. |
+| `--json` | Write `DIR/bench.json`: every frame (insns, cycles, ms, taken branches, memory-class cycles `mem_cyc`, presents, framebuffer index, controls, neopixels, user LED, tone count; `busy_ms` when calibrated), the summary, the top 50 functions (each with `taken`, `mnemonics` = {base mnemonic: executions over the run} and `class_cyc` = {model class: cycles over the run}), traces, tones, warnings, crash/hang; `meta.calibration` when calibrated. |
 | `--seed N` | Seed of the PRNG behind `cart.rand()` (default 1). |
 | `--max-frame-ms MS` | A frame that runs longer than this (modelled) without reaching the next loop iteration is a hang (default 1000). |
 | `--traces N` | Print at most N `cart.trace()` strings live (default 20; all of them go to the JSON). |
 | `--config FILE`, `--no-config` | Use another per-cart defaults file, or none. |
 | `--progress` | One stderr line per finished frame. |
+| `--calibrate FILE.toml` | Price the model classes with the fitted `[costs]` of a `calibrate/fit.py` calibration file (rounded to 0.25 cycle) and report two numbers per frame: `idle ms` (the calibrated count) and `busy ms` = idle + memory-class cycles x (factor - 1) x min(1, dma_ms / idle ms), the DMA contention of `[contention]`. Verdict and over-budget count use busy ms. Without it the output is unchanged. See Calibration. |
 
 Exit status: 0 all frames ran; 1 setup error (unreadable or non-ARM ELF,
 missing symbol, bad script or config); 2 usage error; 4 the cart crashed
@@ -147,7 +148,14 @@ is the CPU work of one update.
 
 `badge_bench/model.py`, copied from `carts/snouty-reflections/tools/emu/model.py`
 (the validation proves they agree). Issue cycles per instruction, code and
-data in zero-wait SRAM:
+data in zero-wait SRAM. `badge_bench/classes.py` (pure Python, shared with
+`calibrate/fit.py`) maps each base mnemonic to a class (`alu`, `vmul`,
+`vaddsub`, `vcmp`, `vdiv`, `vsqrt`, `vfma`, `ldr`, `str`, `vldr`, `vstr`,
+`ldrd_strd`, `multi`, `udiv`, plus `taken`) and holds the default cost per
+class; `--calibrate` swaps in fitted costs (`multi` always stays 1 +
+registers). The memory classes (`ldr`, `str`, `vldr`, `vstr`, `ldrd_strd`,
+`multi`) are also counted separately per frame (`mem_cyc`) for the DMA
+contention term. The defaults:
 
 | Instruction | Cycles |
 |---|---|
@@ -181,8 +189,34 @@ Known blind spots, all of which make hardware slower than the model:
   core 0). Not modelled: fetch is free.
 - **The LCD flush and vsync wait** are not part of a frame (see Frames).
 
-Treat the absolute milliseconds as a lower bound until the first hardware
-measurement calibrates them (PLAN.md section 6: a `--calibrate` factor).
+Treat the absolute milliseconds as a lower bound unless the run is
+calibrated (`--calibrate`, see Calibration).
+
+## Calibration
+
+`calibrate/` holds the badge-calibrate cart (`zig build -Dcart=badge-calibrate`
+at the root) and `calibrate/fit.py`. The cart times 20 `noinline`
+micro-kernels with DWT_CYCCNT, each isolating one class of the model
+(VMUL chains, VDIV, VSQRT, loads, stores, framebuffer stores, branches,
+UDIV, fetch, VCMP/VMRS, a table lerp, a ray-tracer mix), once while core 0's
+LCD DMA is streaming the framebuffer ("busy") and twice after it ("idle"),
+and prints one `CAL k=<id> ... idle_min=... busy_min=...` line per kernel on
+the OS console. Run through badge-bench (`carts/badge-calibrate.toml`, 40
+frames, `harness.skip_wait=1` poked so the emulator skips the 8 ms wait)
+the same lines carry the modelled counts. `fit.py --hardware CAPTURE
+--emulator bench.json` pairs the two by kernel id, checks the cart's
+checksum on the `CAL done` line, solves least squares for the class costs
+over the kernels' per-call instruction mixes (`hot[].mnemonics`,
+`class_cyc`, `taken` from the JSON), derives the DMA contention factor from
+the memory kernels, and writes `calibration.toml`. `fit.py --selftest
+bench.json` feeds the emulator's own lines back and must reproduce the
+default table; `tests/test_calibrate_selftest.sh` runs that end to end and
+checks `--calibrate` on the result reproduces the uncalibrated ms. How to
+flash the cart, capture its output and fit is in `calibrate/README.md`; the
+design in `calibrate/SPEC.md`, the contract in `calibrate/PLAN.md`.
+
+No badge has been measured yet: there is no `calibrate/calibration.toml`
+and every number in this file is still the uncalibrated floor.
 
 ## Reading the per-function attribution
 
@@ -379,8 +413,11 @@ bench.sh            entry point: creates .venv, installs requirements.txt, runs 
 badge_bench/        cli.py (arguments), run.py (emulation and frame windows), os_fake.py
                     (the fake OS), model.py (cycle model, unicorn/capstone setup), elf.py
                     (ELF, symbols, DWARF lines), script.py (input), config.py (toml),
-                    report.py (tables, stats, hot list, JSON), png.py, listing.py
+                    report.py (tables, stats, hot list, JSON), png.py, listing.py,
+                    classes.py (model classes and default costs, no emulator imports)
 carts/<name>.toml   per-cart defaults (not the repository's carts/ sources)
-tests/              test_reflections.sh (validation 1)
+calibrate/          badge-calibrate cart, fit.py (hardware fit -> calibration.toml)
+tests/              test_reflections.sh (validation 1, --calibrate FILE for calibrated ms),
+                    test_calibrate_selftest.sh + make_calibrate_fixture.py (fit.py gate)
 out/                default output directory (gitignored)
 ```

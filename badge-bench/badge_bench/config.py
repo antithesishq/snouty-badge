@@ -36,9 +36,10 @@ def _strip_comment(line):
 
 
 def _tiny_toml(text, path):
-    """Enough TOML for this file: key = number | "string" | [strings] (arrays
-    may span lines), # comments."""
-    out = {}
+    """Enough TOML for this file and calibration.toml: key = number | "string"
+    | true/false | [strings] (arrays may span lines), [table] and [[array of
+    tables]] headers, # comments."""
+    root = out = {}
     pending, start = '', 0
     for n, line in enumerate(text.splitlines(), 1):
         s = _strip_comment(line).strip()
@@ -51,6 +52,17 @@ def _tiny_toml(text, path):
             continue
         else:
             start = n
+        h = re.match(r'^(\[\[?)\s*([A-Za-z_][A-Za-z0-9_]*)\s*(\]\]?)$', s)
+        if h and len(h.group(1)) == len(h.group(3)):
+            if h.group(1) == '[[':
+                lst = root.setdefault(h.group(2), [])
+                if not isinstance(lst, list):
+                    raise BenchError(f"{path}:{start}: '{h.group(2)}' is both a table and an array")
+                lst.append({})
+                out = lst[-1]
+            else:
+                out = root.setdefault(h.group(2), {})
+            continue
         m = re.match(r'^([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.+?)\s*$', s)
         if not m:
             raise BenchError(f"{path}:{start}: cannot parse '{s}' (tiny TOML parser)")
@@ -62,6 +74,8 @@ def _tiny_toml(text, path):
             out[k] = re.findall(r'"((?:[^"\\]|\\.)*)"', v)
         elif v.startswith('"') and v.endswith('"'):
             out[k] = v[1:-1]
+        elif v in ('true', 'false'):
+            out[k] = v == 'true'
         else:
             try:
                 out[k] = int(v, 0)
@@ -72,7 +86,7 @@ def _tiny_toml(text, path):
                     raise BenchError(f"{path}:{start}: bad value '{v}'")
     if pending:
         raise BenchError(f"{path}:{start}: unterminated array")
-    return out
+    return root
 
 
 def _parse(path):
@@ -120,3 +134,30 @@ def load(elf_path, explicit=None):
     if 'script' in cfg and not os.path.isabs(cfg['script']):
         cfg['script'] = os.path.join(cart_root(elf_path), cfg['script'])
     return cfg, path
+
+
+def load_calibration(path):
+    """calibration.toml written by calibrate/fit.py -> dict(file, date,
+    residual_rms, costs, factor, dma_ms, elf_sha256). Unknown sections
+    ([[kernels]], per-class contention ratios) are ignored."""
+    from .classes import DEFAULT_COSTS
+    if not os.path.isfile(path):
+        raise BenchError(f"calibration file {path} not found")
+    t = _parse(path)
+    meta, costs, cont = t.get('meta', {}), t.get('costs'), t.get('contention', {})
+    if not isinstance(costs, dict) or not costs:
+        raise BenchError(f"{path}: no [costs] table")
+    for k, v in costs.items():
+        if k not in DEFAULT_COSTS:
+            raise BenchError(f"{path}: [costs] has unknown class '{k}' (known: {', '.join(DEFAULT_COSTS)})")
+        if isinstance(v, bool) or not isinstance(v, (int, float)) or v < 0:
+            raise BenchError(f"{path}: [costs] {k} must be a non-negative number")
+    factor, dma_ms = cont.get('factor', 1.0), cont.get('dma_ms', 5.24)
+    for k, v in (('factor', factor), ('dma_ms', dma_ms)):
+        if isinstance(v, bool) or not isinstance(v, (int, float)) or v < 0:
+            raise BenchError(f"{path}: [contention] {k} must be a non-negative number")
+    return dict(file=path, date=str(meta.get('date', 'unknown date')),
+                residual_rms=float(meta.get('residual_rms', 0.0)),
+                elf_sha256=meta.get('elf_sha256'),
+                costs={k: float(v) for k, v in costs.items()},
+                factor=float(factor), dma_ms=float(dma_ms))
