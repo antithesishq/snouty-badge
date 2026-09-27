@@ -10,6 +10,7 @@ const fixed = @import("../fixed.zig");
 const raycast = @import("raycast.zig");
 const floor = @import("floor.zig");
 const textures = @import("textures.zig");
+const sprites = @import("sprites.zig");
 
 pub const view_h: u32 = 104;
 pub const view_w: u32 = cart.screen_width;
@@ -96,4 +97,6 @@ pub fn draw(s: *const state.GameState, level: *const levels.Level) void {
             ty +%= step;
         }
     }
+
+    sprites.draw(s, level, px, py, dx, dy);
 }

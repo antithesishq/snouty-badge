@@ -43,6 +43,7 @@ pub fn init() void {
     unpack(gfx.doors, door_count, door_tex_base, door_pal_base);
     build_palettes(gfx.walls.colors, 0);
     build_palettes(gfx.doors.colors, door_pal_base);
+    init_sprites();
 }
 
 fn unpack(comptime sheet: type, comptime cells: usize, comptime first: usize, comptime pal_base: u8) void {
@@ -97,4 +98,52 @@ pub fn rgb_pixel(r: u32, g: u32, b: u32) cart.Pixel {
     const gg: u32 = @min(g, 255);
     const bb: u32 = @min(b, 255);
     return .from_color(.rgb((rr << 16) | (gg << 8) | bb));
+}
+
+// Sprite palettes (PLAN.md M2 track A). One 16-entry table per sprite
+// sheet and tint; sprites are not distance-shaded, so only three sets:
+// normal, rewind (Iris) and hurt (red), built with the same `tint` as the
+// walls so both move together.
+
+/// Sprite sheets in palette order; enemies map by `@intFromEnum(kind)`.
+pub const SpriteSheet = enum(u8) { gnat = 0, wasp, beetle, spider, boss, pickups, projectiles };
+pub const sprite_sheet_count = 7;
+pub const SpriteTint = enum(u8) { normal = 0, rewind = 1, hurt = 2 };
+pub const sprite_tint_count = 3;
+/// `sprite_pal[sheet][tint][index]`, 7 x 3 x 16 x 2 = 672 bytes.
+pub var sprite_pal: [sprite_sheet_count][sprite_tint_count][16]cart.Pixel = undefined;
+
+/// Tint for sprites from `view.shade_override`: null/0..3 normal, 4 rewind, 5 hurt.
+pub fn sprite_tint(override: ?u8) SpriteTint {
+    const o = override orelse return .normal;
+    return switch (o) {
+        4 => .rewind,
+        5 => .hurt,
+        else => .normal,
+    };
+}
+
+pub fn init_sprites() void {
+    build_sprite_palette(.gnat, gfx.bug_gnat.colors);
+    build_sprite_palette(.wasp, gfx.bug_wasp.colors);
+    build_sprite_palette(.beetle, gfx.bug_beetle.colors);
+    build_sprite_palette(.spider, gfx.bug_spider.colors);
+    build_sprite_palette(.boss, gfx.bug_boss.colors);
+    build_sprite_palette(.pickups, gfx.pickups.colors);
+    build_sprite_palette(.projectiles, gfx.projectiles.colors);
+}
+
+fn build_sprite_palette(sheet: SpriteSheet, colors: anytype) void {
+    const p = &sprite_pal[@backingInt(sheet)];
+    for (0..16) |i| {
+        // Short palettes: pad with the first color (index 0 is transparent anyway).
+        const c = if (i < colors.len) colors[i] else colors[0];
+        const r: u32 = @as(u32, c.r) * 255 / 31;
+        const g: u32 = @as(u32, c.g) * 255 / 63;
+        const b: u32 = @as(u32, c.b) * 255 / 31;
+        const lum = (r * 77 + g * 150 + b * 29) >> 8;
+        p[0][i] = px(r, g, b, 256);
+        p[1][i] = tint(r, g, b, lum, iris_rgb);
+        p[2][i] = tint(r, g, b, lum, hurt_rgb);
+    }
 }
