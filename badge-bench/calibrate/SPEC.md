@@ -25,10 +25,14 @@ instead of "a floor".
   (`sycl-badge/src/os/cart.zig`), read via `cart.cycles()` (i64, wraps
   handled). Reading it costs a load; the harness subtracts an empty-kernel
   baseline.
-- `present()` returns after core 0 acknowledges; the LCD DMA then reads
-  the just-presented framebuffer for about 5.2 ms. The cart can therefore
-  choose "DMA busy" by timing immediately, and "DMA idle" by first
-  spinning until `cycles()` has advanced 1.2 M cycles (8 ms).
+- `present()` for frame N blocks until core 0 reports frame N-1's LCD
+  flush finished (`FRAMEBUFFER_DONE` is sent after the transfer, see
+  kernel.zig), then sends frame N and returns; core 0 starts frame N's
+  DMA on its next poll and reads that framebuffer for about 5.2 ms
+  (40 KB over SPI at 62.5 MHz). The cart can therefore choose "DMA busy"
+  by timing right after `update()` begins, and "DMA idle" by first
+  spinning until `cycles()` has advanced 1.2 M cycles (8 ms). (Corrected
+  2026-09-27 from an earlier reading; see PLAN.md.)
 - Cart code and data live in SRAM (0x20035100 up); striped banks 0..7.
   SRAM8/9 at 0x20080000 are non-striped and belong to the OS, so the cart
   must not use them. Bank placement is therefore tested only within the
@@ -196,6 +200,7 @@ script none.
 
 ## Status
 
-- 2026-09-27: spec written. Nothing built. Adrian plans to implement it in
-  a fresh session; start at C0 with `../PLAN.md`, this file and
-  `snouty-reflections/build.zig` open.
+- 2026-09-27: spec written.
+- 2026-09-27: build started; `PLAN.md` next to this file is the working
+  contract and lists the corrections made to this spec (DMA timing, no chip
+  id, trace-based pairing, emulator skips the DMA wait, K19 self-contained).
