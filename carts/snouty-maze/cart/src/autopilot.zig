@@ -1,13 +1,15 @@
 //! Screensaver state machine (SPEC section 8, PLAN.md M2 "State machine"):
 //! left-hand wall follower walk with eased turns, then the finish sequence
-//! PAUSE -> RISE -> OVERHEAD (maze swap) -> DESCEND -> WALK. Drives
-//! `camera.cam`. No cart API: host-testable (tests below, pulled in from a
-//! test block in camera.zig).
+//! PAUSE -> RISE -> OVERHEAD (maze swap) -> DESCEND -> WALK, plus the M3
+//! actor effects: the smiley's 180 degree roll (`flip`) and the sphere's
+//! TELEPORT (fade out, move, fade in). Drives `camera.cam`. No cart API:
+//! host-testable (tests below, pulled in through camera.zig and actors.zig).
 const std = @import("std");
 const math = @import("math.zig");
 const rng = @import("rng.zig");
 const maze = @import("maze.zig");
 const camera = @import("camera.zig");
+const actors = @import("actors.zig");
 const Vec3 = math.Vec3;
 const Angle = math.Angle;
 const Dir = maze.Dir;
@@ -26,6 +28,10 @@ pub const overhead_ticks = 120;
 pub const descend_ticks = 150;
 pub const roll_cap_ticks = 1200;
 pub const unroll_ticks = 30;
+pub const flip_ticks = 30;
+pub const teleport_ticks = 12;
+/// TELEPORT tick at which the camera moves (end of the fade out).
+pub const teleport_move_tick = 6;
 
 pub var state: State = .walk;
 /// Ticks spent in the current state (0 on the tick it was entered).
@@ -53,11 +59,19 @@ var from_pitch: i32 = 0;
 var to_pitch: i32 = 0;
 var from_roll: i32 = 0;
 
-// Roll cap (SPEC decision 9).
+// Roll animation (smiley flip, cap unroll): from `anim_from` by
+// `anim_delta` over `anim_dur` ticks, smoothstep. Cap timer (SPEC decision
+// 9) counts only while no animation runs and the roll is non-zero.
 var roll_ticks: u32 = 0;
-var unrolling: bool = false;
-var unroll_tick: u32 = 0;
-var unroll_from: i32 = 0;
+var animating: bool = false;
+var anim_tick: u32 = 0;
+var anim_dur: u32 = 1;
+var anim_from: Angle = 0;
+var anim_delta: i32 = 0;
+
+// TELEPORT destination.
+var tele_dest: [2]u8 = .{ 0, 0 };
+var tele_dir: Dir = .n;
 
 pub fn cell_centre(x: u8, z: u8) Vec3 {
     return math.vec3(@as(f32, @floatFromInt(x)) + 0.5, camera.eye_height, @as(f32, @floatFromInt(z)) + 0.5);
@@ -116,7 +130,7 @@ pub fn resume_walk(m: *const maze.Maze) void {
     dir = camera.heading(c.yaw);
     c.* = .{ .pos = cell_centre(cell[0], cell[1]), .yaw = camera.dir_yaw(dir) };
     walk_tick = 0;
-    unrolling = false;
+    animating = false;
     roll_ticks = 0;
     enter(.walk);
     decide(m);
@@ -139,7 +153,47 @@ pub fn skip() void {
 pub fn set_roll(r: Angle) void {
     camera.cam.roll = r;
     roll_ticks = 0;
-    unrolling = false;
+    animating = false;
+}
+
+fn start_roll(to: Angle, ticks: u32) void {
+    anim_from = camera.cam.roll;
+    anim_delta = short_delta(anim_from, to);
+    anim_dur = ticks;
+    anim_tick = 0;
+    animating = true;
+    roll_ticks = 0;
+}
+
+/// Smiley: roll the view by +180 degrees over flip_ticks (a flip while
+/// rolled 180 rights the view again). Only in WALK and TURN; a flip during
+/// a running roll animation adds 180 to where that animation was heading.
+pub fn flip() void {
+    if (state != .walk and state != .turn) return;
+    const target = if (animating) anim_from +% @as(Angle, @truncate(@as(u32, @bitCast(anim_delta)))) else camera.cam.roll;
+    start_roll(target +% math.deg(180), flip_ticks);
+}
+
+/// Sphere: fade out, move the camera to `dest` facing `d`, fade in, WALK.
+/// Only from WALK and TURN.
+pub fn begin_teleport(dest: [2]u8, d: Dir) void {
+    if (state != .walk and state != .turn) return;
+    tele_dest = dest;
+    tele_dir = d;
+    enter(.teleport);
+}
+
+pub fn teleport_dest() [2]u8 {
+    return tele_dest;
+}
+
+/// Frame dissolve level 0..16 for overlay.fade: ramps up over TELEPORT
+/// ticks 1..6 and back down over 7..12; 0 in every other state.
+pub fn fade_level() u8 {
+    if (state != .teleport) return 0;
+    const t: u32 = @min(state_tick, teleport_ticks);
+    const v = if (t <= teleport_move_tick) t * 16 / teleport_move_tick else 16 - (t - teleport_move_tick) * 16 / (teleport_ticks - teleport_move_tick);
+    return @intCast(v);
 }
 
 /// At a cell centre: finish -> PAUSE, else pick the next heading.
@@ -211,9 +265,24 @@ pub fn step(m: *maze.Maze, r: *rng.Xorshift, focal: f32) void {
             state_tick += 1;
             if (state_tick >= overhead_ticks) enter_descend(m);
         },
-        .teleport, .fly => {},
+        .teleport => {
+            state_tick += 1;
+            if (state_tick == teleport_move_tick) {
+                cell = tele_dest;
+                dir = tele_dir;
+                walk_tick = 0;
+                c.pos = cell_centre(cell[0], cell[1]);
+                c.yaw = camera.dir_yaw(dir);
+                c.pitch = 0;
+            }
+            if (state_tick >= teleport_ticks) {
+                enter(.walk);
+                decide(m);
+            }
+        },
+        .fly => {},
     }
-    if (state == .walk or state == .turn or state == .pause) roll_cap();
+    if (state == .walk or state == .turn or state == .pause or state == .teleport) roll_cap();
 }
 
 /// Where RISE ends: the wall tops (y = 1, the nearest and so largest part
@@ -230,7 +299,7 @@ pub fn overhead_point(m: *const maze.Maze, y: Angle, focal: f32) Vec3 {
 
 fn enter_rise(m: *const maze.Maze, focal: f32) void {
     const c = &camera.cam;
-    unrolling = false;
+    animating = false;
     roll_ticks = 0;
     from_pos = c.pos;
     from_pitch = signed(c.pitch);
@@ -248,6 +317,7 @@ fn enter_rise(m: *const maze.Maze, focal: f32) void {
 
 fn enter_overhead(m: *maze.Maze, r: *rng.Xorshift) void {
     m.generate(m.w, m.h, r);
+    actors.reset(m, r, actors.cell_of(camera.cam.pos));
     cycles += 1;
     name_strip_visible = true;
     enter(.overhead);
@@ -268,17 +338,18 @@ fn enter_descend(m: *const maze.Maze) void {
     enter(.descend);
 }
 
-/// If roll has been non-zero for roll_cap_ticks, unroll over unroll_ticks
+/// Runs the roll animation; with none running, counts the ticks the roll
+/// has been non-zero and after roll_cap_ticks unrolls over unroll_ticks
 /// (short way, smoothstep).
 fn roll_cap() void {
     const c = &camera.cam;
-    if (unrolling) {
-        unroll_tick += 1;
-        const t = math.smoothstep01(@as(f32, @floatFromInt(unroll_tick)) / @as(f32, unroll_ticks));
-        c.roll = signed_at(unroll_from, 0, t);
-        if (unroll_tick >= unroll_ticks) {
-            c.roll = 0;
-            unrolling = false;
+    if (animating) {
+        anim_tick += 1;
+        const t = math.smoothstep01(@as(f32, @floatFromInt(anim_tick)) / @as(f32, @floatFromInt(anim_dur)));
+        c.roll = angle_at(anim_from, anim_delta, t);
+        if (anim_tick >= anim_dur) {
+            c.roll = anim_from +% @as(Angle, @truncate(@as(u32, @bitCast(anim_delta))));
+            animating = false;
             roll_ticks = 0;
         }
         return;
@@ -288,11 +359,7 @@ fn roll_cap() void {
         return;
     }
     roll_ticks += 1;
-    if (roll_ticks >= roll_cap_ticks) {
-        unrolling = true;
-        unroll_tick = 0;
-        unroll_from = signed(c.roll);
-    }
+    if (roll_ticks >= roll_cap_ticks) start_roll(0, unroll_ticks);
 }
 
 // ---------------------------------------------------------------------------
@@ -444,7 +511,79 @@ test "roll cap unrolls after 1200 ticks" {
     try testing.expectEqual(math.deg(180), camera.cam.roll);
     for (0..unroll_ticks + 1) |_| roll_cap();
     try testing.expectEqual(@as(Angle, 0), camera.cam.roll);
-    try testing.expect(!unrolling);
+    try testing.expect(!animating);
+}
+
+test "flip reaches 180 in 30 ticks, the cap unrolls 1200 later, a second flip rights it" {
+    var m = test_maze(1, 12);
+    var r = rng.Xorshift.init(5);
+    camera.reset(&m);
+    begin_walk(&m);
+    set_roll(0);
+    flip();
+    for (0..flip_ticks - 1) |_| step(&m, &r, test_focal);
+    try testing.expect(camera.cam.roll != math.deg(180));
+    step(&m, &r, test_focal);
+    try testing.expectEqual(math.deg(180), camera.cam.roll);
+    // Isolate the cap timer from the walk (which may reach PAUSE/RISE).
+    state = .walk;
+    for (0..roll_cap_ticks - 1) |_| roll_cap();
+    try testing.expectEqual(math.deg(180), camera.cam.roll);
+    for (0..unroll_ticks + 1) |_| roll_cap();
+    try testing.expectEqual(@as(Angle, 0), camera.cam.roll);
+
+    // Flip, then flip again at 180: back to 0 after another 30 ticks.
+    flip();
+    for (0..flip_ticks) |_| roll_cap();
+    try testing.expectEqual(math.deg(180), camera.cam.roll);
+    flip();
+    for (0..flip_ticks - 1) |_| roll_cap();
+    try testing.expect(camera.cam.roll != 0);
+    roll_cap();
+    try testing.expectEqual(@as(Angle, 0), camera.cam.roll);
+    try testing.expect(!animating);
+
+    // Ignored outside WALK/TURN.
+    state = .pause;
+    flip();
+    try testing.expect(!animating);
+}
+
+test "teleport fades out, moves at tick 6, fades in and walks on" {
+    var m = test_maze(1, 12);
+    var r = rng.Xorshift.init(5);
+    camera.reset(&m);
+    begin_walk(&m);
+    for (0..7) |_| step(&m, &r, test_focal);
+    set_roll(math.deg(180));
+    const dest: [2]u8 = .{ 5, 6 };
+    var d: Dir = .n;
+    for ([_]Dir{ .n, .e, .s, .w }) |o| {
+        if (!m.has_wall(dest[0], dest[1], o)) d = o;
+    }
+    begin_teleport(dest, d);
+    try testing.expectEqual(State.teleport, state);
+    const want = [_]u8{ 0, 2, 5, 8, 10, 13, 16 };
+    try testing.expectEqual(want[0], fade_level());
+    for (want[1..], 1..) |lvl, t| {
+        step(&m, &r, test_focal);
+        try testing.expectEqual(lvl, fade_level());
+        if (t < teleport_move_tick) try testing.expect(!std.meta.eql(cell_centre(dest[0], dest[1]), camera.cam.pos));
+    }
+    try testing.expectEqual(cell_centre(dest[0], dest[1]), camera.cam.pos);
+    try testing.expectEqual(camera.dir_yaw(d), camera.cam.yaw);
+    try testing.expectEqual(@as(Angle, 0), camera.cam.pitch);
+    try testing.expectEqual(math.deg(180), camera.cam.roll);
+    for (0..5) |_| step(&m, &r, test_focal);
+    try testing.expectEqual(State.teleport, state);
+    try testing.expectEqual(@as(u8, 3), fade_level());
+    step(&m, &r, test_focal);
+    try testing.expectEqual(@as(u8, 0), fade_level());
+    try testing.expect(state == .walk or state == .turn);
+    // A teleport request outside WALK/TURN is ignored.
+    state = .pause;
+    begin_teleport(dest, d);
+    try testing.expectEqual(State.pause, state);
 }
 
 test "fly resume snaps to a centre and quadrant" {

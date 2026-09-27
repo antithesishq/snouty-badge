@@ -228,14 +228,22 @@ If hardware disagrees, section 16 has the decision table.
   degrees over 30 ticks (smoothstep) and the smiley respawns in another
   dead end. The roll stays until the next smiley or the finish, which
   undoes it during the rise.
-- **Sphere**. Comptime UV sphere, 8 rings x 12 segments (96 quads plus
+- **Sphere**. Comptime UV sphere, 8 bands x 12 segments (72 quads plus
   24 pole triangles), radius 0.25, at eye height in a random cell, bobbing
   0.05 up and down. Entering its cell fades the frame to black over 6
-  ticks, teleports the camera to a random cell centre with a random
-  facing, fades back over 6 ticks, and respawns the sphere.
-- **Logo**. A 32x32 two-sided quad with the Iris mark (from
-  `snouty-badge`), spinning about its vertical axis in a random junction
-  cell. Decorative only. Section 18 offers alternatives.
+  ticks, teleports the camera forward along the wall follower's remaining
+  path (a random point in its second half, never the finish, so every hop
+  shortens the walk; M3 found that random destinations made a 12x12 maze
+  take 11 minutes), fades back over 6 ticks, and respawns the sphere.
+- **Logo**. A 32x32 two-sided quad with the Zig mark (decision 7),
+  spinning about its vertical axis in a random junction cell. Decorative
+  only.
+- **Start button**. The original's Start button as a spinning two-sided
+  quad at eye height, 0.3 cells behind the camera's starting pose in the
+  start cell (seen on the descent and whenever the follower comes back).
+- **Wall pictures**. The original's picture (`wall_pic.png`) hangs on
+  about one wall segment in eight (a hash of the segment's grid position),
+  0.5 x 0.5 at height 0.55, on one face of the panel.
 - **Finish marker**. The finish cell's floor texture, so the viewer sees
   it coming.
 
@@ -511,3 +519,9 @@ added to 9):
   strip, `check_cycle.mjs`, `docs/preview_m2.gif`. The M3 actor renderer
   (`render/mesh.zig`, `render/sprite.zig`) landed early behind
   `debug_actors`. Review point: the rise GIF and the walk/pivot speeds.
+- 2026-09-27: tags `a1`, `a2` (original textures, art from the pipeline,
+  no audio). M3 tagged `m3`: Snouty wanderer, smiley flip, sphere teleport
+  (forward hop), Zig mark, Start button, wall pictures, LEDs with the
+  Select toggle, `check_cycle` runs D..F, `docs/preview_m3.gif`. Hardware
+  gate still pending Adrian's flash. Next: M4 polish (takeover, animated
+  carving, tuning).

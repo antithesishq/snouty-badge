@@ -10,6 +10,8 @@ const rng = @import("rng.zig");
 const maze = @import("maze.zig");
 const camera = @import("camera.zig");
 const autopilot = @import("autopilot.zig");
+const actors = @import("actors.zig");
+const leds = @import("leds.zig");
 const raster = @import("render/raster.zig");
 const textures = @import("render/textures.zig");
 const scene = @import("render/scene.zig");
@@ -34,7 +36,7 @@ var maze_size: u8 = 12;
 /// Seed of the current rng stream, so debug_set_size and debug_set_seed
 /// give the same maze whichever order the harness calls them in.
 var seed: u32 = 0;
-/// debug_fade level applied after the overlays (M3 teleport test hook).
+/// debug_fade level; the frame gets max(this, autopilot.fade_level()).
 var fade_level: u8 = 0;
 
 pub fn start() void {
@@ -54,16 +56,18 @@ fn reseed(s: u32) void {
 fn new_maze() void {
     world.generate(maze_size, maze_size, &random);
     camera.reset(&world);
+    actors.reset(&world, &random, actors.cell_of(camera.cam.pos));
 }
 
 pub fn update() void {
     input.update(read_controls());
 
-    // B+Select (either order) toggles fly; Select alone the debug overlay.
+    // B+Select (either order) toggles fly; Select alone toggles the
+    // neopixels in the screensaver states and the debug overlay in fly.
     if ((input.pressed(.select) and input.held(.b)) or (input.pressed(.b) and input.held(.select))) {
         autopilot.toggle_fly(&world);
     } else if (input.pressed(.select)) {
-        show_debug = !show_debug;
+        if (autopilot.state == .fly) show_debug = !show_debug else leds.toggle();
     }
 
     if (autopilot.state == .fly) {
@@ -86,6 +90,10 @@ pub fn update() void {
             autopilot.step(&world, &random, raster.focal);
         }
     }
+    // Actors tick in every state; the smiley and sphere fire only while
+    // walking (WALK/TURN).
+    const triggers = autopilot.state == .walk or autopilot.state == .turn;
+    actors.step(&world, &random, actors.cell_of(camera.cam.pos), triggers);
 
     const t0 = cart.micros_since_boot();
     raster.begin_frame();
@@ -96,7 +104,9 @@ pub fn update() void {
     fps_x10 = if (dt > 0) @min(999, 10_000_000 / @max(dt, 16_667)) else 0;
     if (name_strip_on()) overlay.draw_name_strip();
     if (show_debug) overlay.draw_debug(render_us, fps_x10);
-    if (fade_level != 0) overlay.fade(fade_level);
+    const fade = @max(fade_level, autopilot.fade_level());
+    if (fade != 0) overlay.fade(fade);
+    leds.update(autopilot.state, actors.flips, actors.teleports);
 
     tick +%= 1;
     if (cart.is_wasm) present_wasm();
@@ -135,7 +145,21 @@ comptime {
         @export(&debug_skip, .{ .name = "debug_skip" });
         @export(&debug_name_strip, .{ .name = "debug_name_strip" });
         @export(&debug_fade, .{ .name = "debug_fade" });
-        @export(&debug_actors, .{ .name = "debug_actors" });
+        @export(&debug_snouty_x, .{ .name = "debug_snouty_x" });
+        @export(&debug_snouty_z, .{ .name = "debug_snouty_z" });
+        @export(&debug_smiley_x, .{ .name = "debug_smiley_x" });
+        @export(&debug_smiley_z, .{ .name = "debug_smiley_z" });
+        @export(&debug_sphere_x, .{ .name = "debug_sphere_x" });
+        @export(&debug_sphere_z, .{ .name = "debug_sphere_z" });
+        @export(&debug_logo_x, .{ .name = "debug_logo_x" });
+        @export(&debug_logo_z, .{ .name = "debug_logo_z" });
+        @export(&debug_flips, .{ .name = "debug_flips" });
+        @export(&debug_teleports, .{ .name = "debug_teleports" });
+        @export(&debug_roll_deg, .{ .name = "debug_roll_deg" });
+        @export(&debug_leds, .{ .name = "debug_leds" });
+        @export(&debug_led_max, .{ .name = "debug_led_max" });
+        @export(&debug_place, .{ .name = "debug_place" });
+        @export(&debug_fade_level, .{ .name = "debug_fade_level" });
     }
 }
 
@@ -217,12 +241,75 @@ fn debug_name_strip() callconv(.c) u32 {
     return @intFromBool(name_strip_on());
 }
 /// Applies overlay.fade(level) (0..16) to every following frame, for
-/// testing the teleport dissolve; 0 turns it off.
+/// testing the teleport dissolve; 0 turns it off. The teleport's own fade
+/// is combined with it by max.
 fn debug_fade(level: u32) callconv(.c) void {
     fade_level = @intCast(@min(level, 16));
 }
-fn debug_actors(on: u32) callconv(.c) void {
-    scene.debug_actors = on != 0;
+
+// Actor cells (floor of x, z).
+fn debug_snouty_x() callconv(.c) u32 {
+    return actors.cell_of(actors.snouty.pos)[0];
+}
+fn debug_snouty_z() callconv(.c) u32 {
+    return actors.cell_of(actors.snouty.pos)[1];
+}
+fn debug_smiley_x() callconv(.c) u32 {
+    return actors.cell_of(actors.smiley.pos)[0];
+}
+fn debug_smiley_z() callconv(.c) u32 {
+    return actors.cell_of(actors.smiley.pos)[1];
+}
+fn debug_sphere_x() callconv(.c) u32 {
+    return actors.cell_of(actors.sphere.pos)[0];
+}
+fn debug_sphere_z() callconv(.c) u32 {
+    return actors.cell_of(actors.sphere.pos)[1];
+}
+fn debug_logo_x() callconv(.c) u32 {
+    return actors.cell_of(actors.logo.pos)[0];
+}
+fn debug_logo_z() callconv(.c) u32 {
+    return actors.cell_of(actors.logo.pos)[1];
+}
+/// Smiley flips and sphere teleports since boot.
+fn debug_flips() callconv(.c) u32 {
+    return actors.flips;
+}
+fn debug_teleports() callconv(.c) u32 {
+    return actors.teleports;
+}
+/// Camera roll in whole degrees, 0..359.
+fn debug_roll_deg() callconv(.c) u32 {
+    const r: u32 = camera.cam.roll;
+    return ((r * 360 + 32768) >> 16) % 360;
+}
+/// 1 when the neopixels are enabled (Select in the screensaver states).
+fn debug_leds() callconv(.c) u32 {
+    return @intFromBool(leds.enabled);
+}
+/// Largest channel value across the five neopixels (must stay <= 10).
+fn debug_led_max() callconv(.c) u32 {
+    var hi: u32 = 0;
+    for (0..cart.neopixels.len) |i| {
+        const p = cart.neopixels[i];
+        hi = @max(hi, @max(p.r, @max(p.g, p.b)));
+    }
+    return hi;
+}
+/// Moves an actor: code = kind * 10000 + x * 100 + z, kind 0 Snouty,
+/// 1 smiley, 2 sphere, 3 logo (one integer so `preview.mjs --call` can
+/// drive it). Unknown kinds are ignored.
+fn debug_place(code: u32) callconv(.c) void {
+    const kind = code / 10000;
+    if (kind > 3) return;
+    const x: u8 = @intCast((code / 100) % 100);
+    const z: u8 = @intCast(code % 100);
+    actors.place(&world, @fromBackingInt(@intCast(kind)), x, z);
+}
+/// The fade level applied to the last frame (0..16).
+fn debug_fade_level() callconv(.c) u32 {
+    return @max(fade_level, autopilot.fade_level());
 }
 
 fn deg_to_angle(d: f32) math.Angle {

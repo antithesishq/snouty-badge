@@ -1,6 +1,7 @@
 //! Builds the frame's polygon list from the maze and camera: finish tile,
 //! wall runs (sorted front to back, world-space backface culling), floor,
-//! ceiling. Frustum rejection and near clipping happen in raster.
+//! ceiling, then the actors (M3); wall pictures go in just before the walls.
+//! Frustum rejection and near clipping happen in raster.
 const math = @import("../math.zig");
 const maze = @import("../maze.zig");
 const camera = @import("../camera.zig");
@@ -8,6 +9,7 @@ const raster = @import("raster.zig");
 const textures = @import("textures.zig");
 const sprite = @import("sprite.zig");
 const mesh = @import("mesh.zig");
+const actors = @import("../actors.zig");
 
 pub const wall_half: f32 = 0.05;
 pub const wall_height: f32 = 1.0;
@@ -22,10 +24,10 @@ var order: [maze.max_runs]u16 = undefined;
 var order_n: u16 = 0;
 var keys: [maze.max_runs]u16 = undefined;
 
-/// Debug: draw one of each actor in fixed cells after the maze (M3 prep).
-pub var debug_actors: bool = false;
-/// Frame counter for the debug actors' animation, bumped in `draw`.
-pub var debug_frame: u32 = 0;
+/// Wall pictures: half size, centre height, offset out from the face.
+pub const pic_half: f32 = 0.25;
+pub const pic_height: f32 = 0.55;
+pub const pic_offset: f32 = 0.005;
 
 pub fn draw(m: *const maze.Maze, cam: *const camera.Camera) void {
     const b = cam.basis();
@@ -41,6 +43,11 @@ pub fn draw(m: *const maze.Maze, cam: *const camera.Camera) void {
         horizontal(cam, b, fx, fz, fx + 1, fz + 1, finish_lift, .{ .textured = &textures.finish });
     }
 
+    // Pictures before the walls, for the same reason.
+    if (pos[1] < wall_height) {
+        for (m.runs[0..m.run_count]) |run| draw_pictures(cam, b, run);
+    }
+
     // Walls, nearest first so the z test rejects hidden floor and far walls
     // before texturing.
     sort_runs(m, pos);
@@ -49,19 +56,92 @@ pub fn draw(m: *const maze.Maze, cam: *const camera.Camera) void {
     if (pos[1] > 0) horizontal(cam, b, 0, 0, w, h, 0, .{ .textured = &textures.floor });
     if (pos[1] < wall_height) horizontal(cam, b, 0, 0, w, h, wall_height, .{ .textured = &textures.ceiling });
 
-    if (debug_actors) {
-        const f = debug_frame;
-        debug_frame +%= 1;
-        // One bob per 2 s, one spin per 2 s (65536 / 120 per tick).
-        const bob = 0.05 * math.sin_turns(@as(f32, @floatFromInt(f % 120)) * (1.0 / 120.0));
-        const spin: math.Angle = @truncate(f *% 546);
-        mesh.draw_sphere(cam, b, vec3(1.5, 0.5 + bob, 1.5), 0.25, .{ 0xc0, 0xc0, 0xc0 });
-        mesh.draw_spin_quad(cam, b, vec3(2.5, camera.eye_height, 1.5), 0.2, spin, &textures.smiley);
-        mesh.draw_spin_quad(cam, b, vec3(3.5, camera.eye_height, 1.5), 0.2, spin, &textures.logo);
-        sprite.draw_billboard(cam, b, vec3(1.5, 0, 2.5), 0.6, &textures.snouty[(f / 8) % 4]);
-        // From above Snouty is the same walk frame lying on the floor (Adrian, 2026-09-27).
-        sprite.draw_floor_sprite(cam, b, vec3(2.5, 0, 2.5), 0.6, &textures.snouty[2]);
+    draw_actors(cam, b);
+}
+
+/// Snouty (billboard below the ceiling, floor sprite above it), the sphere,
+/// the smiley, the logo and the Start button, from `actors` state.
+fn draw_actors(cam: *const camera.Camera, b: math.Mat3) void {
+    const s = actors.snouty;
+    // Sheet cells 0, 1 face left, 2, 3 face right: pick the pair from the
+    // movement against the camera's right, then the walk phase.
+    const right = vec3(math.cos_angle(cam.yaw), 0, math.sin_angle(cam.yaw));
+    const mv = vec3(@floatFromInt(s.dir.dx()), 0, @floatFromInt(s.dir.dz()));
+    const pair: usize = if (math.dot(right, mv) >= 0) 2 else 0;
+    const frame = &textures.snouty[pair + s.phase];
+    if (cam.pos[1] < wall_height) {
+        sprite.draw_billboard(cam, b, s.pos, actors.snouty_size, frame);
+    } else {
+        sprite.draw_floor_sprite(cam, b, s.pos, actors.snouty_size, frame);
     }
+
+    mesh.draw_sphere(cam, b, actors.sphere.pos, actors.sphere_radius, .{ 0xc0, 0xc0, 0xc0 });
+    mesh.draw_spin_quad(cam, b, actors.smiley.pos, actors.quad_half, actors.smiley.angle, &textures.smiley);
+    mesh.draw_spin_quad(cam, b, actors.logo.pos, actors.quad_half, actors.logo.angle, &textures.logo);
+    mesh.draw_spin_quad(cam, b, actors.start_button, actors.quad_half, actors.start_angle, &textures.start);
+}
+
+/// Hangs a wall picture on about one cell-length segment in eight of a run
+/// (a cheap hash of the segment picks it and the face), 0.005 out from the
+/// face, only when the camera is on that side. u runs to the viewer's
+/// right and v = 0 is the top, as on the walls, so it is never mirrored.
+fn draw_pictures(cam: *const camera.Camera, b: math.Mat3, run: maze.Run) void {
+    const pos = cam.pos;
+    const x: u32 = run.x;
+    const z: u32 = run.z;
+    const along_x = run.axis == .x;
+    const axis: u32 = if (along_x) 0 else 1;
+    const y0 = pic_height - pic_half;
+    const y1 = pic_height + pic_half;
+    var k: u32 = 0;
+    while (k < run.len) : (k += 1) {
+        const sx = if (along_x) x + k else x;
+        const sz = if (along_x) z else z + k;
+        const hash = sx * 7 + sz * 13 + axis * 3;
+        if (hash % 8 != 0) continue;
+        const second = (hash / 8) & 1 != 0;
+        const fx: f32 = @floatFromInt(sx);
+        const fz: f32 = @floatFromInt(sz);
+        if (along_x) {
+            // Segment from x = sx to sx + 1 on grid line z = sz.
+            const a = fx + 0.5 - pic_half;
+            const c = fx + 0.5 + pic_half;
+            if (second) {
+                const pz = fz + wall_half + pic_offset; // south face, seen looking north
+                if (pos[2] <= pz) continue;
+                picture(cam, b, vec3(a, y0, pz), vec3(c, y0, pz), vec3(c, y1, pz), vec3(a, y1, pz));
+            } else {
+                const pz = fz - wall_half - pic_offset; // north face, seen looking south
+                if (pos[2] >= pz) continue;
+                picture(cam, b, vec3(c, y0, pz), vec3(a, y0, pz), vec3(a, y1, pz), vec3(c, y1, pz));
+            }
+        } else {
+            const a = fz + 0.5 - pic_half;
+            const c = fz + 0.5 + pic_half;
+            if (second) {
+                const px = fx + wall_half + pic_offset; // east face, seen looking west
+                if (pos[0] <= px) continue;
+                picture(cam, b, vec3(px, y0, c), vec3(px, y0, a), vec3(px, y1, a), vec3(px, y1, c));
+            } else {
+                const px = fx - wall_half - pic_offset; // west face, seen looking east
+                if (pos[0] >= px) continue;
+                picture(cam, b, vec3(px, y0, a), vec3(px, y0, c), vec3(px, y1, c), vec3(px, y1, a));
+            }
+        }
+    }
+}
+
+/// World-space corners bottom-left, bottom-right, top-right, top-left as
+/// seen by the viewer.
+fn picture(cam: *const camera.Camera, b: math.Mat3, bl: Vec3, br: Vec3, tr: Vec3, tl: Vec3) void {
+    const m = textures.wall_pic.uv_max;
+    const v = [4]raster.Vertex{
+        .{ .p = cam.to_view(b, bl), .u = 0, .v = m },
+        .{ .p = cam.to_view(b, br), .u = m, .v = m },
+        .{ .p = cam.to_view(b, tr), .u = m, .v = 0 },
+        .{ .p = cam.to_view(b, tl), .u = 0, .v = 0 },
+    };
+    raster.draw_polygon(&v, .{ .textured = &textures.wall_pic });
 }
 
 /// Axis-aligned horizontal quad, u = x, v = z (one repeat per cell).

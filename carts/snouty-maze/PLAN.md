@@ -741,3 +741,36 @@ tick (GRB struct, every channel at most 10):
 3. `check_cycle` PASS on A..F.
 4. `docs/preview_m3.gif` from `m3_tour.json`.
 5. Tag `m3`, hand-off note.
+
+## M3 result (2026-09-27, tag `m3`)
+
+Done criteria met: build, 30 host tests, check-float PASS, 9 goldens
+(`overhead`, `overhead_16`, `outside_corner` re-baselined for the spawned
+actors; `actors` and `overhead_actors` new), `check_cycle` 6/6,
+`docs/preview_m3.gif`. `.text` 61.6 KB (+22 KB, mostly the actor drawing
+and the sphere mesh inlined into the frame function), `.bss` 59 KB (+9 KB:
+four more unpacked sheets, spawn scratch). Deviations, all kept:
+
+- **Teleport hops forward along the follower's path** instead of to a
+  random cell. B3's first version restarted the walk from a random cell,
+  and seed 1 then took 39,000 ticks (11 minutes) to reach its first
+  finish. Now the destination is a random point in the second half of the
+  remaining wall-follower path (never the finish), so every hop shortens
+  the walk. First finish: seed 1 at tick 2622, seeds 2..5 within 5307.
+  `check_cycle` run A stays at 9000 frames. Landing heading is the
+  follower's arrival heading, so the camera may face a dead-end wall for a
+  moment and turn, as the follower would have.
+- The roll animation also runs during TELEPORT, so a flip in progress does
+  not freeze during the dissolve.
+- Golden pose `actors` is `11.88,0.95,0.08,190,14,0` looking down the
+  x = 11 corridor with the actors placed at (11, 1..5): the plan's
+  start-cell pose could not see cell (2, 0) (the preview's `--seed 1` maps
+  to `cart.rand() = 270369`, a different maze from `Xorshift.init(1)`).
+- Tour script puts the sphere at (4, 0), not (4, 1): with the smiley flip
+  at (1, 0) the follower only reaches (4, 1) at tick 700.
+- LEDs: the white flash follows the TELEPORT state rather than the
+  `teleports` counter; the pulse remembers the last `flips` value while
+  off, so enabling the LEDs later does not replay an old pulse.
+- `textures.iris` is unpacked but nothing draws it yet (M4 polish).
+- Snouty placed by `debug_place` heads along the cell's first open side
+  (the hook has no rng).

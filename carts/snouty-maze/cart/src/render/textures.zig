@@ -51,6 +51,19 @@ pub var snouty: [4]Texture = .{
 pub var smiley: Texture = .{ .texels = &smiley_texels, .palette = &smiley_pal };
 pub var logo: Texture = .{ .texels = &logo_texels, .palette = &logo_pal };
 
+var wall_pic_texels: [size * size]u8 = undefined;
+var start_texels: [size * size]u8 = undefined;
+var iris_texels: [size * size]u8 = undefined;
+var wall_pic_pal: [16]cart.Pixel = undefined;
+var start_pal: [16]cart.Pixel = undefined;
+var iris_pal: [16]cart.Pixel = undefined;
+
+/// The picture hung on about one wall segment in eight (opaque).
+pub var wall_pic: Texture = .{ .texels = &wall_pic_texels, .palette = &wall_pic_pal };
+/// Start button and Iris mark (index 0 transparent).
+pub var start: Texture = .{ .texels = &start_texels, .palette = &start_pal };
+pub var iris: Texture = .{ .texels = &iris_texels, .palette = &iris_pal };
+
 /// Flat colour for wall tops.
 pub var top_color: cart.Pixel = undefined;
 
@@ -72,6 +85,13 @@ pub fn init() void {
     palette(gfx.snouty, &snouty_pal, 10);
     palette(gfx.smiley, &smiley_pal, 10);
     palette(gfx.logo, &logo_pal, 10);
+
+    unpack(gfx.wall_pic, &wall_pic_texels);
+    unpack(gfx.start, &start_texels);
+    unpack(gfx.iris, &iris_texels);
+    palette(gfx.wall_pic, &wall_pic_pal, 10);
+    palette(gfx.start, &start_pal, 10);
+    palette(gfx.iris, &iris_pal, 10);
 }
 
 /// Copies an n x n block starting at sheet column x0 into the top-left of a

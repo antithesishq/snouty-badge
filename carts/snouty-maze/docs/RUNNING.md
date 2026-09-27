@@ -40,10 +40,10 @@ M1 build.
 ```sh
 cd snouty-maze
 zig build                  # firmware + wasm
-zig build test             # host tests: maze generator, run merging, clipper, camera
+zig build test             # host tests: maze generator, run merging, clipper, camera, autopilot, actors
 zig build check-float      # fails if f64 soft-float code reached the firmware
 node tools/check_golden.mjs   # golden-image regression (needs zig build first)
-node tools/check_cycle.mjs    # screensaver loop: finishes a maze, shows the overhead name strip
+node tools/check_cycle.mjs    # screensaver loop, actor triggers and LEDs (runs A..F)
 ```
 
 `zig build` writes:
@@ -54,22 +54,45 @@ node tools/check_cycle.mjs    # screensaver loop: finishes a maze, shows the ove
 
 A clean build takes about 4 minutes; incremental builds take seconds.
 `zig build -Ddebug_overlay=true` starts with the timing overlay on (Select
-toggles it either way).
+in fly mode toggles it either way; see section 4).
 
-## 4. Controls (M2 screensaver)
+## 4. Controls (M3 screensaver)
 
 From M2 the cart is a screensaver: the autopilot walks the maze with a
 left-hand wall follower, and at the finish cell pauses, rises to an overhead
 view (with the name strip in the bottom 24 px), swaps in a new maze and
-descends to its start cell. The M1 debug camera survives as fly mode.
+descends to its start cell. The M1 debug camera survives as fly mode. From
+M3 the maze is inhabited: Snouty wanders the corridors, the smiley flips the
+view upside down (a second one rights it) when the camera walks into its
+cell, the sphere teleports the camera to a random cell, the Zig mark spins
+in a junction and the Start button spins in the first cell.
 
 | Input        | Autopilot states                                  | Fly (debug)                        |
 |--------------|---------------------------------------------------|------------------------------------|
-| Select       | Toggle the debug overlay                          | same                               |
+| Select       | Toggle the neopixels (default off)                | Toggle the debug overlay           |
 | Start        | Toggle the name strip permanently on/off          | Reset the camera to the start cell |
-| A            | Skip to PAUSE (start the finish sequence now)     | + Up/Down: pitch                   |
+| A            | Skip to PAUSE (start the finish sequence now; ignored during TELEPORT) | + Up/Down: pitch |
 | B + Select   | Toggle fly mode                                   | Back to autopilot (resumes WALK from the nearest cell centre, heading = nearest quadrant) |
 | Stick        | ignored                                           | Walk / turn (M1 controls: 2 cells/s, 90 degrees/s; B + Up/Down rises/sinks) |
+
+The overlay flag persists across the mode switch, so to read `render_us`
+during the screensaver press B+Select, Select, B+Select (into fly, overlay
+on, back to autopilot). `zig build -Ddebug_overlay=true` still starts with
+it on.
+
+### LEDs
+
+The five neopixels are off at start; Select (in any autopilot state)
+toggles them. They are dim on purpose: every channel stays at or below
+10/255, because the badge LEDs are painfully bright above that. All five
+show the same colour:
+
+| When | Colour |
+|------|--------|
+| WALK, TURN, PAUSE, RISE, DESCEND, FLY | dim brick (r 6, g 2, b 1) |
+| smiley flip | purple (r 6, b 10) added on top, fading out over 90 ticks (1.5 s) |
+| TELEPORT | white (10, 10, 10) |
+| OVERHEAD | brick hue breathing, red 1..10, one breath per 3 s |
 
 B+Select is a debug chord; it goes away in M4 when takeover lands.
 
@@ -187,6 +210,16 @@ Exit 0 all pass, 1 a golden is missing (run `--update`), 3 any failure.
 Only run `--update` after looking at the new frames: it is how a deliberate
 rendering change is accepted.
 
+The M3 poses `actors` and `overhead_actors` place all four actors with
+`debug_place` in the seed 1 corridor at x = 11 (cells (11, 0)-(11, 6), the
+longest straight run of that maze): Snouty in (11, 1), the logo in (11, 2),
+the smiley in (11, 3), the sphere in (11, 5). `actors` looks south down
+that corridor from its north end, raised and off to one side
+(`11.88,0.95,0.08,190,14,0`) so the four stack up the screen (the sphere
+shows only above the smiley); `overhead_actors` is the overhead pose with
+the same calls (Snouty as the floor sprite, the quads edge-on). Poses run
+in fly mode, where the smiley and sphere triggers are off.
+
 The M2 screensaver loop (A pressed at tick 240 skips to the finish
 sequence: pause, rise, overhead with the name strip, descend into the new
 maze, walk):
@@ -207,29 +240,85 @@ Debug knobs (wasm exports for `--call`):
 - `--call debug_skip`: same as pressing A (only acts once updates run)
 - `--dump-exports debug_state,debug_state_tick,debug_cycles,debug_heading,debug_name_strip`:
   autopilot state (0 WALK, 1 TURN, 2 PAUSE, 3 RISE, 4 OVERHEAD, 5 DESCEND,
-  6 TELEPORT (M3), 7 FLY), ticks in it, mazes completed, heading (0 N, 1 E, 2 S, 3 W), and
+  6 TELEPORT, 7 FLY), ticks in it, mazes completed, heading (0 N, 1 E, 2 S, 3 W), and
   whether the name strip is showing
+
+M3 actor and LED exports:
+
+- `--call debug_place:CODE`: move an actor to a cell, `CODE = kind * 10000
+  + x * 100 + z` with kind 0 Snouty, 1 smiley, 2 sphere, 3 logo; e.g.
+  `debug_place:10100` puts the smiley in (1, 0), `debug_place:20400` the
+  sphere in (4, 0), `debug_place:200` Snouty in (2, 0)
+- `debug_snouty_x/z`, `debug_smiley_x/z`, `debug_sphere_x/z`,
+  `debug_logo_x/z`: the actors' cells
+- `debug_flips`, `debug_teleports`: smiley and sphere triggers so far
+- `debug_roll_deg`: camera roll, 0..359 (180 after one flip)
+- `debug_fade_level`: current dissolve level, 0..16 (the larger of
+  `debug_fade` and the teleport fade)
+- `debug_leds` (1 when the LEDs are on), `debug_led_max` (largest channel
+  written this tick, never above 10)
 
 ### Screensaver loop: `tools/check_cycle.mjs`
 
 ```sh
-node tools/check_cycle.mjs                # runs A, B and C
-node tools/check_cycle.mjs --only B       # just the overhead/name-strip check
+node tools/check_cycle.mjs                # runs A..F
+node tools/check_cycle.mjs --only B,D     # just the overhead and flip checks
 node tools/check_cycle.mjs --frames 20000 # longer unattended run for A
 ```
 
-Each run is one `preview.mjs --quiet` with `--expect`s:
+Each run is one `preview.mjs --quiet` with `--call`s, `--press`es and
+`--expect`s:
 
-- A: no input for 9000 ticks; `debug_cycles >= 1` (walked a maze to the
-  finish and went round the finish sequence)
+- A: no input for 9000 ticks; `debug_cycles >= 1` (walked a maze to
+  the finish and went round the finish sequence)
 - B: A at tick 0, 241 ticks; `debug_state == 4` (OVERHEAD: after 30 pause
   and 150 rise ticks it runs from tick 180 to 299, so tick 240 is its
   middle) and `debug_name_strip == 1`
 - C: A at tick 0, 1000 ticks; `debug_cycles >= 1`
+- D flip: `--call debug_place:10100` (smiley in (1, 0), the first cell the
+  seed 1 camera walks into), 100 ticks; `debug_flips == 1`,
+  `debug_roll_deg == 180`, and the smiley has left (1, 0) (checked by
+  check_cycle itself, since `--expect` cannot say "x != 1 or z != 0")
+- E teleport: `--call debug_place:20100` (sphere in (1, 0)), 100 ticks;
+  `debug_teleports == 1`, `debug_state < 2` (walking again) and
+  `debug_fade_level == 0`
+- F leds: Select at tick 0, 10 ticks; `debug_leds == 1` and
+  `0 < debug_led_max <= 10`
 
 It prints PASS/FAIL per run with the final state, cycle count, cell and
-heading, plus preview's error lines on a FAIL. Options `--wasm FILE`,
-`--seed S` (default 1). Exit 0 all pass, 2 usage error, 3 any failure.
+heading (plus the run's own exports), and preview's error lines on a
+FAIL. Options `--wasm FILE`, `--seed S` (default 1). Exit 0 all pass, 2
+usage error, 3 any failure. D and E place the actor in (1, 0) because that
+is the first cell the seed 1 camera walks into; with other seeds they are
+not meaningful (seed 4, for one, never enters (1, 0) in 100 ticks).
+
+Teleports restart the walk from a random cell, so the unattended finish
+time now varies more than in M2. First tick with `debug_cycles >= 1`
+(the walk, the 450-tick finish sequence and the descent all done), no
+input, measured on the M3 build (smallest N for which `preview.mjs --quiet
+--seed S --frames N --expect "debug_cycles >= 1"` passes):
+
+| Seed | Ticks | Minutes |
+|------|-------|---------|
+| 1 | 2622 | 0.7 |
+| 2 | 3277 | 0.9 |
+| 3 | 5307 | 1.5 |
+| 4 | 3193 | 0.9 |
+| 5 | 3811 | 1.1 |
+
+Run A keeps its 9000-tick default (3.4x the seed 1 time, 1.7x the slowest
+of these five); `--frames` raises it for other seeds.
+
+The M3 tour (seed 1: the smiley in (1, 0) flips the view on the first step
+(tick 20), the camera walks the (2, 0)-(6, 0) corridor upside down towards
+the sphere in (4, 0), which teleports it at tick 340, then A at tick 700
+skips to the finish sequence):
+
+```sh
+node tools/preview.mjs zig-out/bin/snouty-maze.wasm --script tools/scripts/m3_tour.json \
+  --frames 1000 --every 10 --out out/m3 --call debug_place:10100 --call debug_place:20400
+python3 tools/make_gif.py out/m3 docs/preview_m3.gif --scale 3 --ms 100
+```
 
 ### Art
 
@@ -260,11 +349,17 @@ the `gfx` module. Goldens in `tests/golden/` are baselined on the w95 art.
 
 - Joystick click shows the OS FPS overlay (the OS draws it; it works in any
   cart).
-- Select toggles the cart's overlay: render time in microseconds and fps on
-  the first line, the camera cell and heading (`x,z  N/E/S/W`) on the second,
-  so a photo of the screen records where the camera was.
+- The cart's own overlay shows render time in microseconds and fps on the
+  first line, the camera cell and heading (`x,z  N/E/S/W`) on the second,
+  so a photo of the screen records where the camera was. From M3, Select
+  in the autopilot states toggles the LEDs instead, so the overlay is
+  toggled in fly mode: B+Select (fly), Select (overlay on), B+Select (back
+  to the screensaver; the overlay stays on). `zig build
+  -Ddebug_overlay=true` starts with it on.
 
 For the M1 hardware gate (SPEC.md section 16), report fps and render
 microseconds at the start cell looking down the longest corridor and at the
 overhead view (B+Up to about height 13, A+Down until looking straight down;
-with a 16x16 maze if the build offers one).
+with a 16x16 maze if the build offers one). For M3, also report the
+screensaver's render microseconds while an actor is in view (Snouty close
+up is the worst case) and during the overhead view.
