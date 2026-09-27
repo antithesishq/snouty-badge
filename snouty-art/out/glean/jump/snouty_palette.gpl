@@ -1,0 +1,19 @@
+GIMP Palette
+Name: glean snouty_jump
+Columns: 5
+# 15 opaque colors; transparency is index 0 in the indexed PNG.
+ 10   8  16  #0a0810 OUTLINE
+ 20  20  24  #141418 SHIRT_DARK
+ 42  42  48  #2a2a30 SHIRT
+ 78  20 148  #4e1494 FUR_DEEP
+122  48 204  #7a30cc FUR_DARK
+160  96 232  #a060e8 FUR
+208 160 244  #d0a0f4 FUR_LIGHT
+248 248 248  #f8f8f8 WHITE
+154 140 176  #9a8cb0 GREY
+238  69  60  #ee453c RED
+145  50  47  #91322f RED_DARK
+122  74   6  #7a4a06 NET_DARK
+192 120  16  #c07810 NET
+232 176  64  #e8b040 NET_LIGHT
+200 184 240  #c8b8f0 NET_PALE
