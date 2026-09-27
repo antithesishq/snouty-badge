@@ -91,3 +91,31 @@ Rendering is deterministic: `python3 tools/build.py all` regenerates `out/`.
 Idle, slide, land-hard, hurt cycles. Small enemies and bullets for snouty-bugs
 (authored directly in code). Palette swaps. Left-facing variants (flip at
 export, the emblem is symmetric enough).
+
+## Maze pack (2026-09-27)
+
+Adrian's art guidance for `../snouty-maze`: Snouty from the study05 run
+frames (with the net), a Zig mark where the original had the OpenGL word,
+the Start button with the Iris mark in place of the Windows flag, and a
+pixel version of the Iris mark itself (`ref/iris-logo-ref.png`, placed by
+Adrian). Everything is a downscale of an existing image, so the pipeline
+gains a generic downscaler rather than new rig work:
+
+- `snoutyart/downscale.py`: crop to the opaque bounding box (optionally
+  keying a white background), fit inside a box preserving aspect, area
+  average with the alpha resized separately, threshold alpha at 0.5, then
+  snap every opaque pixel to the nearest colour of a given palette (the
+  style palette for Snouty, the mark's own colour for the flat logos) or
+  median-cut to at most 15 colours; the palette is RGB565-snapped so the
+  cart sees the same count we validate.
+- `tools/build_maze.py` writes `out/maze/`: `snouty.png` (128x32, frames
+  0,1 face left = mirror, 2,3 face right, from run frames 0 and 8),
+  `logo.png` (Zig mark, 32x32), `iris.png` (Iris mark, 32x32),
+  `start.png` (Start button with the flag region repainted and the Iris
+  mark composited at source resolution before the downscale), plus a 4x
+  contact sheet. All cells keep a 1 px empty border as the maze validator
+  requires. Sources: `ref/zig-mark.svg` (ziglang/logo, CC BY-SA 4.0,
+  rasterised with ImageMagick), `ref/iris-logo-ref.png`,
+  `../snouty-maze/assets/src/w95/start2.png`, `out/study05/run/frames/`.
+- The maze's `prepare_assets.py --from-w95 ... --art ../snouty-art/out/maze`
+  takes these sheets instead of its procedural Snouty and Iris mark.
