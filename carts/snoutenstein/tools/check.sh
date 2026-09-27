@@ -22,8 +22,8 @@ node tools/preview.mjs $W --frames 600 --quiet --out out/pause \
 # through the intermission into level 1.
 node tools/preview.mjs $W --frames 240 --every 6 --out out/combat \
   --script tools/scripts/m2_combat.json \
-  --dump-exports debug_mode,debug_kills,debug_weapon,debug_ammo,debug_hp,debug_state_hash \
-  --expect "debug_kills == 1" --expect "debug_weapon == 1" --expect "debug_ammo == 38"
+  --dump-exports debug_mode,debug_kills,debug_weapon,debug_ammo,debug_hp,debug_state_hash,debug_nibble_ok \
+  --expect "debug_nibble_ok == 1" --expect "debug_kills == 1" --expect "debug_weapon == 1" --expect "debug_ammo == 38"
 node tools/preview.mjs $W --frames 1400 --every 10 --out out/exit \
   --script tools/scripts/m2_exit.json \
   --dump-exports debug_mode,debug_level,debug_tick,debug_px,debug_py \

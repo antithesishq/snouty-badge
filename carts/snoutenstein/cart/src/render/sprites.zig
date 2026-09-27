@@ -50,20 +50,9 @@ var scratch: [max_visible]Entry = undefined;
 var count: usize = 0;
 
 // The texel reads below assume PackedIntSlice(u4) little-endian layout:
-// element i lives in bytes[i >> 1], low nibble for even i. Checked against
-// `indices.get` over a whole sheet at comptime.
-comptime {
-    @setEvalBranchQuota(100000);
-    const sheet = gfx.projectiles;
-    if (sheet.indices.bit_offset != 0) @compileError("sprite sheet indices not byte-aligned");
-    var nonzero = false;
-    for (0..sheet.width * sheet.height) |i| {
-        const got = nibble(sheet.indices.bytes, i);
-        if (got != sheet.indices.get(i)) @compileError("sprite nibble order does not match PackedIntSlice");
-        if (got != 0 and i & 1 == 1) nonzero = true;
-    }
-    if (!nonzero) @compileError("nibble check saw no odd-index texels");
-}
+// element i lives in bytes[i >> 1], low nibble for even i. Verified at run
+// time by `blit.nibble_order_ok` (a comptime check here made the compiler
+// fail with OutOfMemory on macOS).
 
 inline fn nibble(bytes: []const u8, i: usize) u4 {
     return @truncate(bytes[i >> 1] >> @intCast((i & 1) << 2));

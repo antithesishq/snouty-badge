@@ -2,7 +2,8 @@
 //! title). Palette index 0 is transparent; clipped to the screen. Texels
 //! are read straight from `sheet.indices.bytes` (never
 //! `PackedIntSlice.get` per pixel): index `i` lives in `bytes[i >> 1]`,
-//! low nibble for even `i` (little-endian PackedIntSlice, asserted below).
+//! low nibble for even `i` (little-endian PackedIntSlice; `nibble_order_ok`
+//! verifies it at run time).
 const cart = @import("cart-api");
 const gfx = @import("gfx");
 
@@ -34,14 +35,23 @@ inline fn nibble(bytes: []const u8, i: usize) u4 {
     return @truncate(if (i & 1 == 0) b else b >> 4);
 }
 
-// Verify the nibble order once against PackedIntSlice.get.
-comptime {
-    @setEvalBranchQuota(20000);
-    const s = gfx.face;
-    for (0..2 * 216) |i| {
-        if (nibble(s.indices.bytes, i) != s.indices.get(i))
-            @compileError("gfx nibble order is not low-nibble-first");
+/// Nibble-order self-check at run time (the wasm harness asserts it via
+/// `debug_nibble_ok`). It used to be a comptime loop calling
+/// `PackedIntSlice.get`, which reinterprets the const byte array inside
+/// the comptime interpreter; that failed with a spurious OutOfMemory in
+/// the compiler on macOS, so it is a runtime check now.
+pub fn nibble_order_ok() bool {
+    inline for (.{ gfx.face, gfx.projectiles }) |sheet| {
+        if (sheet.indices.bit_offset != 0) return false;
+        var odd_nonzero = false;
+        for (0..sheet.width * sheet.height) |i| {
+            const got = nibble(sheet.indices.bytes, i);
+            if (got != sheet.indices.get(i)) return false;
+            if (got != 0 and i & 1 == 1) odd_nonzero = true;
+        }
+        if (!odd_nonzero) return false;
     }
+    return true;
 }
 
 /// Draws cell `index` (`cw` x `ch`, source x = index * cw) of a horizontal

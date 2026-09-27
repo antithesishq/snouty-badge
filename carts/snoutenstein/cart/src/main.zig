@@ -12,6 +12,7 @@ const view = @import("render/view.zig");
 const sprites = @import("render/sprites.zig");
 const weapon = @import("render/weapon.zig");
 const hud = @import("render/hud.zig");
+const blit = @import("render/blit.zig");
 
 comptime {
     cart.export_start_code();
@@ -133,6 +134,7 @@ comptime {
         @export(&debug_level, .{ .name = "debug_level" });
         @export(&debug_sprites, .{ .name = "debug_sprites" });
         @export(&debug_state_hash, .{ .name = "debug_state_hash" });
+        @export(&debug_nibble_ok, .{ .name = "debug_nibble_ok" });
     }
 }
 fn debug_mode() callconv(.c) u32 {
@@ -182,6 +184,10 @@ fn debug_sprites() callconv(.c) u32 {
 }
 fn debug_state_hash() callconv(.c) u32 {
     return sim.hash(&game);
+}
+/// 1 when the sprite/blit nibble reads agree with PackedIntSlice.get.
+fn debug_nibble_ok() callconv(.c) u32 {
+    return @intFromBool(blit.nibble_order_ok());
 }
 
 /// Button state. Upstream's platform_wasm.zig exposes `controls` but never
