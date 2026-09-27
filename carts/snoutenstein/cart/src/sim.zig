@@ -3,7 +3,8 @@
 //! `zig test cart/src/sim.zig` runs on the host and replays are
 //! bit-identical between the simulator and the badge (SPEC.md 9.3).
 //! M1: turning, walking with sliding collision, doors, pickups, rewind
-//! meter regeneration. Enemies, projectiles and weapons are M2/M3.
+//! meter regeneration. M2: weapons (swatter, zapper, spray) and hit
+//! reactions on standing enemies. Enemy AI and projectiles are M3.
 const std = @import("std");
 const fixed = @import("fixed.zig");
 const state = @import("state.zig");
@@ -36,6 +37,58 @@ pub const max_spray = 30;
 pub const max_rewind = 600;
 pub const rewind_regen_ticks = 6;
 
+pub const EnemyStats = struct {
+    hp: i16,
+    /// Hit-test radius in cells (the sprite is drawn 1 cell wide).
+    radius: Fixed,
+};
+
+/// Indexed by `@intFromEnum(EnemyKind)` (SPEC.md section 8).
+pub const enemy_stats = [5]EnemyStats{
+    .{ .hp = 3, .radius = fixed.from_float(0.3) }, // gnat
+    .{ .hp = 6, .radius = fixed.from_float(0.3) }, // wasp
+    .{ .hp = 20, .radius = fixed.from_float(0.3) }, // beetle
+    .{ .hp = 8, .radius = fixed.from_float(0.3) }, // spider
+    .{ .hp = 80, .radius = fixed.from_float(0.3) }, // boss
+};
+
+pub fn stats(kind: state.EnemyKind) EnemyStats {
+    return enemy_stats[@backingInt(kind)];
+}
+
+/// Enemy sprite sheet cells (walk, walk, attack, pain, death x3).
+pub const frame_idle: u8 = 0;
+pub const frame_attack: u8 = 2;
+pub const frame_pain: u8 = 3;
+pub const frame_dying: u8 = 4; // 4, 5, 6
+pub const frame_dead: u8 = 6;
+
+pub const flash_ticks: u8 = 2;
+pub const pain_ticks: u8 = 12;
+pub const dying_frame_ticks: u8 = 8;
+pub const dying_ticks: u8 = 3 * dying_frame_ticks;
+
+/// Weapons (SPEC.md section 7).
+pub const swatter_damage: i16 = 4;
+pub const swatter_reach: Fixed = fixed.from_float(1.2);
+pub const swatter_cone: fixed.Angle = fixed.deg(15); // half-angle
+pub const zapper_damage: i16 = 3;
+pub const spray_damage: i16 = 2;
+pub const spray_pellets = 5;
+pub const spray_reach: Fixed = fixed.from_int(6);
+pub const spray_jitter: fixed.Angle = fixed.deg(10); // +- per pellet
+/// Hitscan rays stop here even in open space.
+pub const max_ray: Fixed = fixed.from_int(24);
+
+/// Ticks between shots.
+pub fn fire_rate(w: state.Weapon) u8 {
+    return switch (w) {
+        .swatter => 24,
+        .zapper => 12,
+        .spray => 36,
+    };
+}
+
 /// Fresh state at the start of `level`.
 pub fn init(s: *GameState, level: *const Level, level_index: u8, seed: u32) void {
     // Every field has a default and no struct has padding (state.zig
@@ -54,8 +107,9 @@ pub fn init(s: *GameState, level: *const Level, level_index: u8, seed: u32) void
             .x = fixed.from_int(e.x) + fixed.half,
             .y = fixed.from_int(e.y) + fixed.half,
             .kind = e.kind,
-            .state = .dormant,
-            .hp = 1,
+            .state = .idle,
+            .hp = stats(e.kind).hp,
+            .frame = frame_idle,
         };
     }
 }
@@ -74,6 +128,10 @@ pub fn step(s: *GameState, level: *const Level, b: state.Buttons) void {
     }
     update_doors(s, level);
     enter_cell(s, level);
+    // Enemies first: a hit this tick shows its flash/pain/dying frame at
+    // full length (dying lasts exactly `dying_ticks` steps after the hit).
+    update_enemies(s);
+    update_weapon(s, level, b);
     regen_rewind(s);
     p.prev = b;
     s.tick +%= 1;
@@ -228,6 +286,203 @@ fn regen_rewind(s: *GameState) void {
     if (p.rewind_regen >= rewind_regen_ticks) {
         p.rewind_regen = 0;
         if (p.rewind_meter < max_rewind) p.rewind_meter += 1;
+    }
+}
+
+// ---------------------------------------------------------------- combat
+
+fn living(e: *const state.Enemy) bool {
+    return e.hp > 0 and switch (e.state) {
+        .dying, .dead => false,
+        else => true,
+    };
+}
+
+/// Advance hit reactions and own `frame`. M2 enemies stand still.
+fn update_enemies(s: *GameState) void {
+    for (&s.enemies) |*e| {
+        if (e.flash > 0) e.flash -= 1;
+        switch (e.state) {
+            // Frame set on the dying -> dead transition; unused slots stay 0.
+            .dead => {},
+            .dying => {
+                if (e.timer > 0) e.timer -= 1;
+                if (e.timer == 0) {
+                    e.state = .dead;
+                    e.frame = frame_dead;
+                } else {
+                    e.frame = frame_dying + (dying_ticks - e.timer) / dying_frame_ticks;
+                }
+            },
+            .pain => {
+                if (e.timer > 0) e.timer -= 1;
+                if (e.timer == 0) {
+                    e.state = .idle;
+                    e.frame = frame_idle;
+                } else e.frame = frame_pain;
+            },
+            .attack => e.frame = frame_attack,
+            .dormant, .idle, .alert, .chase => e.frame = frame_idle,
+        }
+    }
+}
+
+/// Apply `d` damage to enemy `i`: flash, pain, or dying (counts the kill).
+pub fn damage_enemy(s: *GameState, i: usize, d: i16) void {
+    const e = &s.enemies[i];
+    if (!living(e)) return;
+    e.hp -= d;
+    e.flash = flash_ticks;
+    if (e.hp <= 0) {
+        e.state = .dying;
+        e.timer = dying_ticks;
+        e.frame = frame_dying;
+        s.kills +%= 1;
+    } else {
+        e.state = .pain;
+        e.timer = pain_ticks;
+        e.frame = frame_pain;
+    }
+}
+
+fn next_rand(s: *GameState) u32 {
+    var x = s.rng;
+    x ^= x << 13;
+    x ^= x >> 17;
+    x ^= x << 5;
+    s.rng = x;
+    return x;
+}
+
+fn has_ammo(p: *const state.Player, w: state.Weapon) bool {
+    return switch (w) {
+        .swatter => true,
+        .zapper => p.ammo_zapper > 0,
+        .spray => p.has_spray and p.ammo_spray > 0,
+    };
+}
+
+/// Select cycles swatter -> zapper -> spray -> swatter, skipping empty ones.
+fn next_weapon(p: *const state.Player) state.Weapon {
+    var w = p.weapon;
+    for (0..3) |_| {
+        w = switch (w) {
+            .swatter => .zapper,
+            .zapper => .spray,
+            .spray => .swatter,
+        };
+        if (has_ammo(p, w)) return w;
+    }
+    return p.weapon;
+}
+
+fn update_weapon(s: *GameState, level: *const Level, b: state.Buttons) void {
+    const p = &s.player;
+    if (b.select and !p.prev.select) p.weapon = next_weapon(p);
+    if (p.fire_cooldown > 0) p.fire_cooldown -= 1;
+    if (!b.a or p.fire_cooldown != 0) return;
+    switch (p.weapon) {
+        .swatter => swat(s, level),
+        .zapper => {
+            if (p.ammo_zapper == 0) return;
+            p.ammo_zapper -= 1;
+            const ray = cast(s, level, p.angle, max_ray);
+            if (ray) |i| damage_enemy(s, i, zapper_damage);
+        },
+        .spray => {
+            if (p.ammo_spray == 0) return;
+            p.ammo_spray -= 1;
+            const span: u32 = 2 * @as(u32, spray_jitter) + 1;
+            for (0..spray_pellets) |_| {
+                const j: i32 = @as(i32, @intCast(next_rand(s) % span)) - spray_jitter;
+                const a: fixed.Angle = p.angle +% @as(u16, @bitCast(@as(i16, @intCast(j))));
+                if (cast(s, level, a, spray_reach)) |i| damage_enemy(s, i, spray_damage);
+            }
+        },
+    }
+    p.fire_cooldown = fire_rate(p.weapon);
+}
+
+/// Hitscan from the player along `angle`: the living enemy with the
+/// smallest along-ray distance `t` such that `0 < t < reach`, `t` short of
+/// the first wall, and the enemy centre within its radius of the ray.
+fn cast(s: *const GameState, level: *const Level, angle: fixed.Angle, reach: Fixed) ?usize {
+    const p = &s.player;
+    const dx = fixed.cos(angle);
+    const dy = fixed.sin(angle);
+    const limit = @min(reach, wall_distance(s, level, p.x, p.y, angle));
+    var best: ?usize = null;
+    var best_t: Fixed = limit;
+    for (&s.enemies, 0..) |*e, i| {
+        if (!living(e)) continue;
+        const rx = e.x - p.x;
+        const ry = e.y - p.y;
+        const t = fixed.mul(rx, dx) + fixed.mul(ry, dy);
+        if (t <= 0 or t >= best_t) continue;
+        const lat = fixed.mul(rx, dy) - fixed.mul(ry, dx);
+        if (fixed.abs(lat) >= stats(e.kind).radius) continue;
+        best = i;
+        best_t = t;
+    }
+    return best;
+}
+
+/// Swatter: nearest living enemy within reach and the facing cone, in sight.
+fn swat(s: *GameState, level: *const Level) void {
+    const p = &s.player;
+    const reach_sq = @as(i64, swatter_reach) * swatter_reach;
+    var best: ?usize = null;
+    var best_d: i64 = reach_sq + 1;
+    for (&s.enemies, 0..) |*e, i| {
+        if (!living(e)) continue;
+        const rx = e.x - p.x;
+        const ry = e.y - p.y;
+        const d = @as(i64, rx) * rx + @as(i64, ry) * ry;
+        if (d >= best_d) continue;
+        const a = fixed.atan2(ry, rx);
+        const off = fixed.angle_diff(a, p.angle);
+        if (off > @as(i32, swatter_cone) or off < -@as(i32, swatter_cone)) continue;
+        const w = @as(i64, wall_distance(s, level, p.x, p.y, a));
+        if (d >= w * w) continue;
+        best = i;
+        best_d = d;
+    }
+    if (best) |i| damage_enemy(s, i, swatter_damage);
+}
+
+/// Distance from (x, y) along `angle` to the first solid cell (walls, and
+/// doors while less than `door_passable` open), capped at `max_ray`.
+/// Fixed-point DDA over grid lines; 0 if (x, y) is itself inside a solid cell.
+pub fn wall_distance(s: *const GameState, level: *const Level, x: Fixed, y: Fixed, angle: fixed.Angle) Fixed {
+    var cx = fixed.to_int(x);
+    var cy = fixed.to_int(y);
+    if (is_solid(s, level, cx, cy)) return 0;
+    const dx: i64 = fixed.cos(angle);
+    const dy: i64 = fixed.sin(angle);
+    const cap: i64 = max_ray;
+    // Ray length per cell crossed on each axis (16.16), "infinite" if parallel.
+    const never: i64 = cap * 4;
+    const delta_x: i64 = if (dx == 0) never else @min(never, @divTrunc(@as(i64, fixed.one) << 16, @as(i64, @intCast(@abs(dx)))));
+    const delta_y: i64 = if (dy == 0) never else @min(never, @divTrunc(@as(i64, fixed.one) << 16, @as(i64, @intCast(@abs(dy)))));
+    const step_x: i32 = if (dx < 0) -1 else 1;
+    const step_y: i32 = if (dy < 0) -1 else 1;
+    const fx: i64 = fixed.frac(x);
+    const fy: i64 = fixed.frac(y);
+    var side_x: i64 = ((if (dx < 0) fx else fixed.one - fx) * delta_x) >> 16;
+    var side_y: i64 = ((if (dy < 0) fy else fixed.one - fy) * delta_y) >> 16;
+    while (true) {
+        var t: i64 = undefined;
+        if (side_x < side_y) {
+            t = side_x;
+            side_x += delta_x;
+            cx += step_x;
+        } else {
+            t = side_y;
+            side_y += delta_y;
+            cy += step_y;
+        }
+        if (t >= cap) return max_ray;
+        if (is_solid(s, level, cx, cy)) return @intCast(t);
     }
 }
 
@@ -479,6 +734,8 @@ fn script(seed: u32, tick: u32) state.Buttons {
         .down = x & 3 == 0 and x & 4 != 0,
         .left = x & 0x30 == 0x10,
         .right = x & 0x30 == 0x20,
+        .a = x & 0x40 != 0,
+        .select = x & 0x380 == 0x380,
     };
 }
 
@@ -500,6 +757,292 @@ test "same 600-tick script gives the same hash, a different one does not" {
     try testing.expect(std.mem.eql(u8, std.mem.asBytes(&a), std.mem.asBytes(&b)));
     const h3 = run_script(&b, 0x00, 2);
     try testing.expect(h1 != h3);
+    // The script fired: the zapper spent charge.
+    try testing.expect(a.player.ammo_zapper < 40 or a.player.weapon != .zapper);
     // The script actually moved the player somewhere.
     try testing.expect(a.player.x != fixed.from_int(3) + fixed.half or a.player.y != fixed.from_int(3) + fixed.half);
+}
+
+// ---------------------------------------------------------------- combat tests
+
+const arena = levels.parse("arena",
+    \\111111111111
+    \\1S>........1
+    \\1..........1
+    \\1..........1
+    \\1.....a....1
+    \\111111111111
+, 0);
+
+/// Fresh arena with enemy 0 turned into `kind` at (x, y) and the player
+/// at the start (1.5, 1.5) facing east.
+fn arena_with(s: *GameState, kind: state.EnemyKind, x: Fixed, y: Fixed) void {
+    init(s, &arena, 0, 1);
+    s.enemies[0].kind = kind;
+    s.enemies[0].hp = stats(kind).hp;
+    s.enemies[0].x = x;
+    s.enemies[0].y = y;
+}
+
+const px0 = fixed.from_int(1) + fixed.half;
+
+test "init gives enemies their real hp, idle, frame 0" {
+    var s: GameState = undefined;
+    init(&s, &arena, 0, 1);
+    try testing.expectEqual(state.EnemyState.idle, s.enemies[0].state);
+    try testing.expectEqual(@as(i16, 3), s.enemies[0].hp);
+    try testing.expectEqual(@as(u8, 0), s.enemies[0].frame);
+    try testing.expectEqual(state.EnemyState.dead, s.enemies[1].state); // unused slot
+    try testing.expectEqual(@as(i16, 20), stats(.beetle).hp);
+    try testing.expectEqual(@as(i16, 80), stats(.boss).hp);
+}
+
+test "zapper kills a gnat in one shot and spends a charge" {
+    var s: GameState = undefined;
+    arena_with(&s, .gnat, fixed.from_int(5) + fixed.half, px0);
+    step(&s, &arena, .{ .a = true });
+    try testing.expectEqual(state.EnemyState.dying, s.enemies[0].state);
+    try testing.expectEqual(@as(i16, 0), s.enemies[0].hp);
+    try testing.expectEqual(@as(u8, 39), s.player.ammo_zapper);
+    try testing.expectEqual(@as(u16, 1), s.kills);
+    try testing.expectEqual(@as(u8, 12), s.player.fire_cooldown);
+    // A ray that passes beside the gnat (lateral 0.35 > radius 0.3) misses.
+    arena_with(&s, .gnat, fixed.from_int(5) + fixed.half, px0 + fixed.from_float(0.35));
+    step(&s, &arena, .{ .a = true });
+    try testing.expectEqual(@as(i16, 3), s.enemies[0].hp);
+    try testing.expectEqual(@as(u8, 39), s.player.ammo_zapper);
+    // Behind the player: no hit either.
+    arena_with(&s, .gnat, px0, px0);
+    s.player.x = fixed.from_int(3) + fixed.half;
+    step(&s, &arena, .{ .a = true });
+    try testing.expectEqual(@as(i16, 3), s.enemies[0].hp);
+}
+
+test "zapper cooldown blocks the next shot for 12 ticks" {
+    var s: GameState = undefined;
+    arena_with(&s, .wasp, fixed.from_int(5) + fixed.half, px0);
+    step(&s, &arena, .{ .a = true });
+    try testing.expectEqual(@as(i16, 3), s.enemies[0].hp);
+    try testing.expectEqual(state.EnemyState.pain, s.enemies[0].state);
+    for (0..11) |_| {
+        step(&s, &arena, .{ .a = true });
+        try testing.expectEqual(@as(i16, 3), s.enemies[0].hp);
+    }
+    try testing.expectEqual(@as(u8, 39), s.player.ammo_zapper);
+    step(&s, &arena, .{ .a = true }); // 12 ticks after the first shot
+    try testing.expectEqual(@as(i16, 0), s.enemies[0].hp);
+    try testing.expectEqual(state.EnemyState.dying, s.enemies[0].state);
+    try testing.expectEqual(@as(u8, 38), s.player.ammo_zapper);
+}
+
+test "zapper with no charge does nothing" {
+    var s: GameState = undefined;
+    arena_with(&s, .gnat, fixed.from_int(5) + fixed.half, px0);
+    s.player.ammo_zapper = 0;
+    run(&s, &arena, .{ .a = true }, 30);
+    try testing.expectEqual(@as(i16, 3), s.enemies[0].hp);
+    try testing.expectEqual(@as(u8, 0), s.player.fire_cooldown);
+}
+
+test "pain flashes 2 ticks, shows frame 3 for 12 ticks, then idles" {
+    var s: GameState = undefined;
+    arena_with(&s, .beetle, fixed.from_int(5) + fixed.half, px0);
+    step(&s, &arena, .{ .a = true });
+    try testing.expectEqual(@as(u8, 2), s.enemies[0].flash);
+    try testing.expectEqual(@as(u8, 3), s.enemies[0].frame);
+    step(&s, &arena, .{});
+    try testing.expectEqual(@as(u8, 1), s.enemies[0].flash);
+    step(&s, &arena, .{});
+    try testing.expectEqual(@as(u8, 0), s.enemies[0].flash);
+    run(&s, &arena, .{}, 9);
+    try testing.expectEqual(state.EnemyState.pain, s.enemies[0].state);
+    try testing.expectEqual(@as(u8, 3), s.enemies[0].frame);
+    step(&s, &arena, .{});
+    try testing.expectEqual(state.EnemyState.idle, s.enemies[0].state);
+    try testing.expectEqual(@as(u8, 0), s.enemies[0].frame);
+    try testing.expectEqual(@as(i16, 17), s.enemies[0].hp);
+}
+
+const wall_level = levels.parse("wall",
+    \\1111111111
+    \\1S>..1.a.1
+    \\1111111111
+, 0);
+
+test "a wall between blocks the shot" {
+    var s: GameState = undefined;
+    init(&s, &wall_level, 0, 1);
+    try testing.expectEqual(fixed.from_float(3.5), wall_distance(&s, &wall_level, s.player.x, s.player.y, 0));
+    step(&s, &wall_level, .{ .a = true });
+    try testing.expectEqual(@as(i16, 3), s.enemies[0].hp);
+    try testing.expectEqual(@as(u8, 39), s.player.ammo_zapper); // the shot still costs
+}
+
+const long = levels.parse("long",
+    \\1111111111111111111111111111111111
+    \\1S>..............................1
+    \\1111111111111111111111111111111111
+, 0);
+
+test "wall_distance: doors, cap, directions" {
+    var s: GameState = undefined;
+    const L = &door_level;
+    init(&s, L, 0, 1);
+    const x = s.player.x;
+    const y = s.player.y;
+    try testing.expectEqual(fixed.from_float(2.5), wall_distance(&s, L, x, y, 0));
+    s.doors[0].open = door_passable - 1;
+    try testing.expectEqual(fixed.from_float(2.5), wall_distance(&s, L, x, y, 0));
+    s.doors[0].open = door_passable;
+    try testing.expectEqual(fixed.from_float(5.5), wall_distance(&s, L, x, y, 0));
+    try testing.expectEqual(fixed.half, wall_distance(&s, L, x, y, fixed.deg(180)));
+    try testing.expectEqual(fixed.half, wall_distance(&s, L, x, y, fixed.angle_quarter));
+    try testing.expectEqual(fixed.half, wall_distance(&s, L, x, y, 3 * fixed.angle_quarter));
+    // Inside a wall: 0. Long open line: capped.
+    try testing.expectEqual(@as(Fixed, 0), wall_distance(&s, L, fixed.half, y, 0));
+    init(&s, &long, 0, 1);
+    try testing.expectEqual(max_ray, wall_distance(&s, &long, s.player.x, s.player.y, 0));
+    // A diagonal in the 5x5 room: from (1.5, 1.5) at 45 degrees the ray
+    // reaches the far corner region, about 4.5 * sqrt(2) = 6.36 cells.
+    init(&s, &room, 0, 1);
+    const d = wall_distance(&s, &room, s.player.x, s.player.y, fixed.deg(45));
+    try testing.expect(d > fixed.from_float(6.2) and d < fixed.from_float(6.5));
+}
+
+test "swatter hits at 1.0 cells, misses at 1.5 or 30 degrees off" {
+    var s: GameState = undefined;
+    const cx = fixed.from_int(3) + fixed.half;
+    const cy = fixed.from_int(2) + fixed.half;
+    const cases = [_]struct { dist: Fixed, deg: fixed.Angle, hit: bool }{
+        .{ .dist = fixed.one, .deg = 0, .hit = true },
+        .{ .dist = fixed.from_float(1.15), .deg = 0, .hit = true },
+        .{ .dist = fixed.one, .deg = fixed.deg(10), .hit = true },
+        .{ .dist = fixed.one, .deg = 0 -% fixed.deg(10), .hit = true },
+        .{ .dist = fixed.from_float(1.5), .deg = 0, .hit = false },
+        .{ .dist = fixed.one, .deg = fixed.deg(30), .hit = false },
+        .{ .dist = fixed.one, .deg = 0 -% fixed.deg(30), .hit = false },
+        .{ .dist = fixed.one, .deg = fixed.deg(180), .hit = false },
+    };
+    for (cases) |c| {
+        // Facing north-west-ish too, so the cone test crosses angle 0 wrap.
+        for ([_]fixed.Angle{ 0, fixed.deg(5) }) |facing| {
+            const a = facing +% c.deg;
+            arena_with(&s, .wasp, cx + fixed.mul(fixed.cos(a), c.dist), cy + fixed.mul(fixed.sin(a), c.dist));
+            s.player.x = cx;
+            s.player.y = cy;
+            s.player.angle = facing;
+            s.player.weapon = .swatter;
+            step(&s, &arena, .{ .a = true });
+            try testing.expectEqual(@as(i16, if (c.hit) 2 else 6), s.enemies[0].hp);
+            try testing.expectEqual(@as(u8, 24), s.player.fire_cooldown);
+            try testing.expectEqual(@as(u8, 40), s.player.ammo_zapper);
+        }
+    }
+}
+
+test "Select cycles weapons and skips empty ones" {
+    var s: GameState = undefined;
+    init(&s, &arena, 0, 1);
+    const sel: state.Buttons = .{ .select = true };
+    try testing.expectEqual(state.Weapon.zapper, s.player.weapon);
+    step(&s, &arena, sel); // no spray yet: skip to swatter
+    try testing.expectEqual(state.Weapon.swatter, s.player.weapon);
+    run(&s, &arena, sel, 10); // held: one cycle per press
+    try testing.expectEqual(state.Weapon.swatter, s.player.weapon);
+    step(&s, &arena, .{});
+    step(&s, &arena, sel);
+    try testing.expectEqual(state.Weapon.zapper, s.player.weapon);
+    // With the spray and cans: zapper -> spray -> swatter.
+    s.player.has_spray = true;
+    s.player.ammo_spray = 5;
+    step(&s, &arena, .{});
+    step(&s, &arena, sel);
+    try testing.expectEqual(state.Weapon.spray, s.player.weapon);
+    step(&s, &arena, .{});
+    step(&s, &arena, sel);
+    try testing.expectEqual(state.Weapon.swatter, s.player.weapon);
+    // Zapper empty: swatter -> spray.
+    s.player.ammo_zapper = 0;
+    step(&s, &arena, .{});
+    step(&s, &arena, sel);
+    try testing.expectEqual(state.Weapon.spray, s.player.weapon);
+    // Everything empty: the swatter is never skipped.
+    s.player.ammo_spray = 0;
+    step(&s, &arena, .{});
+    step(&s, &arena, sel);
+    try testing.expectEqual(state.Weapon.swatter, s.player.weapon);
+    step(&s, &arena, .{});
+    step(&s, &arena, sel);
+    try testing.expectEqual(state.Weapon.swatter, s.player.weapon);
+}
+
+test "spray spends one can and hits a beetle at 3 cells" {
+    var s: GameState = undefined;
+    for ([_]u32{ 1, 2, 3, 99, 0xDEADBEEF }) |seed| {
+        arena_with(&s, .beetle, fixed.from_int(4) + fixed.half, fixed.from_int(2) + fixed.half);
+        s.rng = seed;
+        s.player.y = fixed.from_int(2) + fixed.half;
+        s.player.has_spray = true;
+        s.player.ammo_spray = 5;
+        s.player.weapon = .spray;
+        step(&s, &arena, .{ .a = true });
+        try testing.expectEqual(@as(u8, 4), s.player.ammo_spray);
+        try testing.expectEqual(@as(u8, 36), s.player.fire_cooldown);
+        try testing.expect(s.rng != seed);
+        try testing.expect(s.enemies[0].hp <= 18);
+        try testing.expect(@rem(s.enemies[0].hp, 2) == 0);
+    }
+    // Out of reach (7 cells): nothing.
+    arena_with(&s, .beetle, fixed.from_int(8) + fixed.half, px0);
+    s.player.has_spray = true;
+    s.player.ammo_spray = 1;
+    s.player.weapon = .spray;
+    step(&s, &arena, .{ .a = true });
+    try testing.expectEqual(@as(i16, 20), s.enemies[0].hp);
+    try testing.expectEqual(@as(u8, 0), s.player.ammo_spray);
+    // No cans: A does nothing.
+    run(&s, &arena, .{ .a = true }, 60);
+    try testing.expectEqual(@as(u8, 0), s.player.ammo_spray);
+}
+
+test "dying takes 24 ticks, increments kills, frames 4 5 6, corpse is no target" {
+    var s: GameState = undefined;
+    arena_with(&s, .gnat, fixed.from_int(4) + fixed.half, px0);
+    // A second gnat right behind the first, on the same ray.
+    s.enemies[1] = .{ .x = fixed.from_int(6) + fixed.half, .y = px0, .kind = .gnat, .state = .idle, .hp = 3 };
+    step(&s, &arena, .{ .a = true });
+    try testing.expectEqual(@as(u16, 1), s.kills);
+    try testing.expectEqual(@as(i16, 3), s.enemies[1].hp); // nearest took it
+    // The hit tick plus 23 more show dying frames, 8 ticks each ...
+    for (0..24) |i| {
+        if (i > 0) step(&s, &arena, .{});
+        try testing.expectEqual(state.EnemyState.dying, s.enemies[0].state);
+        try testing.expectEqual(@as(u8, 4 + @as(u8, @intCast(i / 8))), s.enemies[0].frame);
+    }
+    // ... and the 24th step after the hit lands on dead.
+    step(&s, &arena, .{});
+    try testing.expectEqual(state.EnemyState.dead, s.enemies[0].state);
+    try testing.expectEqual(@as(u8, 6), s.enemies[0].frame);
+    try testing.expectEqual(@as(u16, 1), s.kills);
+    // Dying and dead gnats are no longer targets: the next shot passes through.
+    step(&s, &arena, .{ .a = true });
+    try testing.expectEqual(@as(i16, 0), s.enemies[1].hp);
+    try testing.expectEqual(@as(u16, 2), s.kills);
+    run(&s, &arena, .{ .a = true }, 100);
+    try testing.expectEqual(@as(u16, 2), s.kills);
+    try testing.expectEqual(@as(u8, 6), s.enemies[0].frame);
+}
+
+test "a dead enemy in a doorway does not hold the door open" {
+    const L = &door_level;
+    var s: GameState = undefined;
+    init(&s, L, 0, 1);
+    s.enemies[0] = .{ .x = fixed.from_int(4) + fixed.half, .y = fixed.from_int(1) + fixed.half, .kind = .gnat, .state = .idle, .hp = 3 };
+    s.doors[0] = .{ .open = 255, .timer = 1, .phase = door_open };
+    run(&s, L, .{}, 5);
+    try testing.expectEqual(@as(u8, door_open), s.doors[0].phase); // living: held
+    s.enemies[0].state = .dead;
+    s.enemies[0].hp = 0;
+    run(&s, L, .{}, 40);
+    try testing.expectEqual(@as(u8, door_closed), s.doors[0].phase);
 }
