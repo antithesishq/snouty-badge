@@ -46,8 +46,8 @@ Terminal 1 serves the cart and live-reloads it:
 
 ```sh
 cd carts/snouty-bugs                 # from the repository root
-node tools/serve-cart.mjs            # serves ../../zig-out/bin/snouty-bugs.wasm on :2468
-# or: node tools/serve-cart.mjs path/to/other.wasm --port 2468
+node ../../tools/serve-cart.mjs            # serves ../../zig-out/bin/snouty-bugs.wasm on :2468
+# or: node ../../tools/serve-cart.mjs path/to/other.wasm --port 2468
 ```
 
 This serves `http://localhost:2468/cart.wasm` (with CORS) and
@@ -106,8 +106,8 @@ Known upstream simulator quirks (current sycl-badge `main`):
 ## 5. Headless preview (no browser)
 
 ```sh
-node tools/preview.mjs ../../zig-out/bin/snouty-bugs.wasm --frames 240 --every 4 --out out/
-python3 tools/make_gif.py out/ preview.gif --scale 3 --ms 66
+node ../../tools/preview.mjs ../../zig-out/bin/snouty-bugs.wasm --frames 240 --every 4 --out out/
+python3 ../../tools/make_gif.py out/ preview.gif --scale 3 --ms 66
 ```
 
 `preview.mjs` runs `start()` and then `update()` N times, writing every K-th
@@ -220,17 +220,17 @@ bomb exports `debug_bombs` and `debug_bomb_timer` are gone.
 `docs/preview_m5.gif` is one hold-B rewind, updates 690..760 of `m5_manual`:
 
 ```sh
-node tools/preview.mjs ../../zig-out/bin/snouty-bugs.wasm --script tools/scripts/m5_manual.json \
+node ../../tools/preview.mjs ../../zig-out/bin/snouty-bugs.wasm --script tools/scripts/m5_manual.json \
   --frames 761 --start-skip 690 --every 2 --out out/gif_m5/
-python3 tools/make_gif.py out/gif_m5/ docs/preview_m5.gif --scale 3 --ms 66
+python3 ../../tools/make_gif.py out/gif_m5/ docs/preview_m5.gif --scale 3 --ms 66
 ```
 
 ```sh
-node tools/preview.mjs ../../zig-out/bin/snouty-bugs.wasm --frames 1800 --every 6 --out out/ \
+node ../../tools/preview.mjs ../../zig-out/bin/snouty-bugs.wasm --frames 1800 --every 6 --out out/ \
   --script tools/scripts/m1_play.json \
   --dump-exports debug_state,debug_score,debug_lives,debug_enemies \
   --expect "debug_state == 1" --expect "debug_score > 0"
-node tools/preview.mjs ../../zig-out/bin/snouty-bugs.wasm --frames 18000 --quiet --out out/soak/ \
+node ../../tools/preview.mjs ../../zig-out/bin/snouty-bugs.wasm --frames 18000 --quiet --out out/soak/ \
   --script tools/scripts/m1_play.json --dump-exports debug_state,debug_score
 ```
 
@@ -250,7 +250,7 @@ CART_WASM=path/to/other.wasm tools/check.sh --no-build
 ```
 
 Each `tools/scripts/NAME.json` runs as
-`node tools/preview.mjs ../../zig-out/bin/snouty-bugs.wasm --script NAME.json --quiet --out out/check/NAME ...`,
+`node ../../tools/preview.mjs ../../zig-out/bin/snouty-bugs.wasm --script NAME.json --quiet --out out/check/NAME ...`,
 where `...` comes from the sidecar `NAME.args`: preview arguments (`--frames`,
 `--dump-exports`, `--expect`, `--at`, `--call-at`) quoted as on a command line.
 Lines starting with `#` are comments (each M2 sidecar has a `# tune` line

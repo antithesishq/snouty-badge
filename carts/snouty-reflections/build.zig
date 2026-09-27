@@ -1,7 +1,7 @@
 const std = @import("std");
 const Build = std.Build;
 
-const sycl_badge = @import("sycl_badge");
+const os_cart = @import("../../build/os_cart.zig");
 // A module of the root build.zig, not a package root. If Zig says "import of
 // file outside module path" here, `zig build` was run in this directory: run
 // `zig build -Dcart=snouty-reflections` from the repository root instead.
@@ -19,7 +19,8 @@ pub fn add(b: *Build, sycl_badge_dep: *Build.Dependency, opts: common.Options) v
     // Set before add_os_cart: the custom builder runs inside that call.
     build_options = options;
 
-    sycl_badge.add_os_cart(b, sycl_badge_dep, .{
+    os_cart.add(b, sycl_badge_dep, .{
+        .mode = opts.cart_mode,
         .name = "snouty-reflections",
         .optimize = .ReleaseFast,
         .root_source_file = b.path(dir ++ "cart/src/main.zig"),
@@ -29,7 +30,7 @@ pub fn add(b: *Build, sycl_badge_dep: *Build.Dependency, opts: common.Options) v
     // `zig build check-float` (shared step): install, then fail if the cart ELF links any
     // soft-float or libm routine (f64 math, or f32 work the M33 FPU cannot do).
     const check_float = b.addSystemCommand(&.{"node"});
-    check_float.addFileArg(b.path(dir ++ "tools/check_float.mjs"));
+    check_float.addFileArg(b.path("tools/check_float.mjs"));
     check_float.addFileArg(b.graph.path(.install_prefix, "firmware/snouty-reflections.elf"));
     check_float.step.dependOn(b.getInstallStep());
     check_float.has_side_effects = true;

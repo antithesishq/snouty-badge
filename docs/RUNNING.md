@@ -50,7 +50,10 @@ Outputs, one set per cart:
 - `zig-out/bin/<binary>.wasm` (for the simulator)
 
 Binaries: `snouty`, `snouty-bugs`, `snoutenstein`, `snouty-reflections`,
-`snouty-boy`, `snouty-maze`. `zig build test` runs the host tests (snouty-boy
+`snouty-boy`, `snouty-maze`. `zig build -Dcart-mode=xip` (or `both`) adds
+the execute-in-place variant `zig-out/firmware/<binary>-xip.uf2` and `.elf`,
+which runs code from the cart flash window and keeps all cart RAM for data;
+section 8 below. `zig build test` runs the host tests (snouty-boy
 core, snouty-maze modules); `zig build check-float` fails if a float-heavy cart
 links soft-float or libm routines. Zig fetches packages into `zig-pkg/` at the
 root (gitignored).
@@ -65,8 +68,11 @@ Terminal 1, from the cart's directory, serves its wasm and live-reloads it:
 
 ```sh
 cd carts/snouty-bugs
-node tools/serve-cart.mjs            # serves ../../zig-out/bin/snouty-bugs.wasm on :2468
+node ../../tools/serve-cart.mjs      # serves ../../zig-out/bin/snouty-bugs.wasm on :2468
 ```
+
+The shared tool picks the cart from the directory it is run in; `--cart NAME`
+or a wasm path override that.
 
 Terminal 2 runs upstream's simulator UI:
 
@@ -94,17 +100,19 @@ blue swapped and writes buttons to 0x04; the carts' CLAUDE.md files explain.
 
 ## 5. Headless preview
 
-Each cart has `tools/preview.mjs` (runs `start()` then `update()` N times and
-writes PNG frames plus `frames.json`) and `tools/make_gif.py`. From a cart's
-directory:
+The shared `tools/preview.mjs` runs `start()` then `update()` N times and
+writes PNG frames plus `frames.json`; `tools/make_gif.py` stitches them. From
+a cart's directory:
 
 ```sh
-node tools/preview.mjs ../../zig-out/bin/snouty-bugs.wasm --frames 240 --every 4 --out out/
-python3 tools/make_gif.py out/ preview.gif --scale 3 --ms 66
+node ../../tools/preview.mjs ../../zig-out/bin/snouty-bugs.wasm --frames 240 --every 4 --out out/
+python3 ../../tools/make_gif.py out/ preview.gif --scale 3 --ms 66
 ```
 
-Options differ slightly per cart (`--press`, `--script`, `--seed`, expectation
-checks); see that cart's RUNNING.md.
+One tool serves every cart: `--press [BTN:]T1-T2`, `--script FILE.json`,
+`--seed`, `--dump-exports`, `--expect`, `--at`, `--call-at` (bugs, boy),
+`--call`, `--pose` (maze); `--help` lists them. Each cart's RUNNING.md has
+its scripts and gates.
 
 ## 6. Benchmark before flashing
 
@@ -120,3 +128,22 @@ leave headroom. `badge-bench/README.md` has the details.
 
 1. Connect the badge over USB-C. It shows up as a USB mass-storage drive.
 2. Copy `zig-out/firmware/<binary>.uf2` onto the drive, replacing `CURRENT.UF2`.
+
+## 8. XIP carts
+
+```sh
+zig build -Dcart=snouty-boy -Dcart-mode=xip     # or -Dcart-mode=both
+python3 tools/uf2_info.py zig-out/firmware/snouty-boy-xip.uf2
+```
+
+The XIP build links the same cart source with the SDK's `cart_xip.ld`: code
+and read-only data at `0x101C0000..0x10200000` (the badge's 256 KB cart flash
+window), `.data` and `.bss` in the 307 KB cart RAM window, and a vector table
+at the flash origin that the OS jumps through. The reset handler in
+`build/xip/entry.zig` enables the FPU and cycle counter, copies `.data` from
+flash, zeroes `.bss` and enters the SDK's usual start/update/present loop.
+`uf2_info.py` must report every block inside the flash window: the OS loader
+refuses a UF2 that mixes flash and RAM blocks. Flash it like any other cart.
+Untested on hardware as of 2026-09-27: whether the current OS menu accepts an
+XIP UF2, the erase-and-program time per launch, and the frame time versus the
+RAM build (the fps overlay shows the XIP cache hit rate). Root `PLAN.md` M3.

@@ -5,7 +5,7 @@
 //                                    [--exports debug_state_hash,debug_tick]
 //                                    [--rewind-at T --rewind-for N]   (M4)
 //
-// Runs tools/preview.mjs twice (--quiet --dump-exports) into a temp dir,
+// Runs the shared ../../tools/preview.mjs twice (--quiet --dump-exports) into a temp dir,
 // reads both frames.json "exports" and asserts every listed export equal.
 // Prints one line: PASS/FAIL, then NAME=VALUE (NAME=RUN1|RUN2 when they differ).
 // Exit codes: 0 match, 2 usage (or --rewind-* before M4), 3 mismatch or a
@@ -17,7 +17,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
-const preview = path.join(here, "preview.mjs");
+const preview = path.join(here, "../../../tools/preview.mjs"); // the shared tool at the repository root
 
 function usage(msg) {
     if (msg) console.error(`check_determinism: ${msg}`);

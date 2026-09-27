@@ -105,8 +105,8 @@ overlay); the cart never binds either.
 Terminal 1 serves the cart and live-reloads it:
 
 ```sh
-node tools/serve-cart.mjs            # serves ../../zig-out/bin/snouty-maze.wasm on :2468
-# or: node tools/serve-cart.mjs path/to/other.wasm --port 2468
+node ../../tools/serve-cart.mjs            # serves ../../zig-out/bin/snouty-maze.wasm on :2468
+# or: node ../../tools/serve-cart.mjs path/to/other.wasm --port 2468
 ```
 
 This serves `http://localhost:2468/cart.wasm` (with CORS) and
@@ -145,8 +145,8 @@ The simulator's frame rate says nothing about the badge's.
 ## 6. Headless preview (no browser)
 
 ```sh
-node tools/preview.mjs ../../zig-out/bin/snouty-maze.wasm --frames 600 --every 6 --out out/
-python3 tools/make_gif.py out/ preview.gif --scale 3 --ms 100
+node ../../tools/preview.mjs ../../zig-out/bin/snouty-maze.wasm --frames 600 --every 6 --out out/
+python3 ../../tools/make_gif.py out/ preview.gif --scale 3 --ms 100
 ```
 
 `preview.mjs` runs `start()` and then `update()` N times, writing every K-th
@@ -174,7 +174,7 @@ frame to `out/frame_XXXX.png` plus `out/frames.json` (metadata). Options:
 Fixed views, e.g. the hardware-gate overhead pose of a 16x16 maze:
 
 ```sh
-node tools/preview.mjs ../../zig-out/bin/snouty-maze.wasm --frames 1 --out out/pose \
+node ../../tools/preview.mjs ../../zig-out/bin/snouty-maze.wasm --frames 1 --out out/pose \
   --call debug_set_size:16 --pose 8,17.5,8,0,90,0
 ```
 
@@ -184,9 +184,9 @@ camera, so from M2 on it only does this on the `snouty-maze/m1` tag (the autopil
 ignores the stick):
 
 ```sh
-node tools/preview.mjs ../../zig-out/bin/snouty-maze.wasm --script tools/scripts/m1_fly.json \
+node ../../tools/preview.mjs ../../zig-out/bin/snouty-maze.wasm --script tools/scripts/m1_fly.json \
   --frames 600 --every 6 --out out/fly
-python3 tools/make_gif.py out/fly docs/preview_m1.gif --scale 3 --ms 100
+python3 ../../tools/make_gif.py out/fly docs/preview_m1.gif --scale 3 --ms 100
 ```
 
 Exit codes: 1 the cart cannot be loaded, 2 usage error (including a `--call`
@@ -226,9 +226,9 @@ sequence: pause, rise, overhead with the name strip, descend into the new
 maze, walk):
 
 ```sh
-node tools/preview.mjs ../../zig-out/bin/snouty-maze.wasm --script tools/scripts/m2_cycle.json \
+node ../../tools/preview.mjs ../../zig-out/bin/snouty-maze.wasm --script tools/scripts/m2_cycle.json \
   --frames 1000 --every 10 --out out/m2
-python3 tools/make_gif.py out/m2 docs/preview_m2.gif --scale 3 --ms 100
+python3 ../../tools/make_gif.py out/m2 docs/preview_m2.gif --scale 3 --ms 100
 ```
 
 Debug knobs (wasm exports for `--call`):
@@ -316,9 +316,9 @@ the sphere in (4, 0), which teleports it at tick 340, then A at tick 700
 skips to the finish sequence):
 
 ```sh
-node tools/preview.mjs ../../zig-out/bin/snouty-maze.wasm --script tools/scripts/m3_tour.json \
+node ../../tools/preview.mjs ../../zig-out/bin/snouty-maze.wasm --script tools/scripts/m3_tour.json \
   --frames 1000 --every 10 --out out/m3 --call debug_place:10100 --call debug_place:20400
-python3 tools/make_gif.py out/m3 docs/preview_m3.gif --scale 3 --ms 100
+python3 ../../tools/make_gif.py out/m3 docs/preview_m3.gif --scale 3 --ms 100
 ```
 
 ### Art

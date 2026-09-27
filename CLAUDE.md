@@ -13,15 +13,22 @@ its design and milestone status.
   `start()` and `update()`; `cart/build/convert_gfx.zig` and
   `cart/src/packed_int_array.zig` are per-cart copies of upstream's asset
   converter (do not import across carts); `assets/gen/` are committed build
-  inputs; `tools/` has `preview.mjs`, `serve-cart.mjs`, `make_gif.py`,
-  `prepare_assets.py` and per-cart checks; `docs/RUNNING.md`, `PLAN.md`,
+  inputs; `tools/` has `prepare_assets.py`, input `scripts/` and the cart's
+  own checks (the generic tools are in the root `tools/`); `docs/RUNNING.md`, `PLAN.md`,
   `SPEC.md`, `ASSETS.md`. `build.zig` is a module with `pub fn add(...)`
   called by the root build.zig. Carts: `snouty-run` (binary `snouty`),
   `snouty-bugs`, `snoutenstein`, `snouty-reflections`, `snouty-boy`,
   `snouty-maze`.
 - `build.zig`, `build.zig.zon`, `build/common.zig` — the one Zig package.
-  Shared options (`-Dcart`, `-Ddebug_overlay`, `-Drom`, ...) and the shared
-  `test` and `check-float` steps are declared here and passed to each cart.
+  Shared options (`-Dcart`, `-Dcart-mode`, `-Ddebug_overlay`, `-Drom`, ...)
+  and the shared `test` and `check-float` steps are declared here and passed
+  to each cart. `build/os_cart.zig` builds a cart in RAM mode (upstream's
+  `add_os_cart`) or XIP mode (`build/xip/entry.zig` as root, `cart_xip.ld`,
+  artifact `<binary>-xip`); `-Dcart-mode=ram|xip|both`.
+- `tools/` — the shared cart tools: `preview.mjs` (headless wasm runner: PNG
+  frames, `frames.json`, input scripts, export checks), `serve-cart.mjs` (wasm
+  server for the simulator, picks the cart from the cwd), `make_gif.py`,
+  `check_float.mjs`, `uf2_info.py`. Cart docs call them as `../../tools/x`.
 - `sycl-badge/` — upstream SDK as a git submodule, pinned. Read-only; do not
   patch it. `src/os/system/tracy_protocol.zig` at the root is a symlink into
   it that `add_os_cart` needs.
@@ -46,8 +53,12 @@ its design and milestone status.
   10/255), one user LED, light sensor, battery level, speaker (`tone2`, one
   voice, each call cancels the previous).
 - Flash: 8000 pages of 256 bytes available via the cart API (`Zone`).
-- Cart RAM limit 256 KB; keep ELF `.text` + `.data` well under it
-  (`size -A zig-out/firmware/<binary>.elf`).
+- Cart RAM window 307 KB (`0x20035100..0x20080000`, 32 KB of it stack). A RAM
+  cart holds code, read-only data and state there; keep `size -A` of `.text`
+  + `.data` + `.bss` well under it. An XIP cart (`-Dcart-mode=xip`) runs code
+  and read-only data from the 256 KB cart flash window instead and keeps the
+  whole RAM window for `.data`/`.bss`; the route for carts whose ROM plus
+  state exceeds ~250 KB.
 
 ## Cart API (from `sycl-badge/src/os/cart/api.zig`)
 
@@ -96,10 +107,11 @@ and keep comptime light.
 Upstream's wasm platform never presents a frame; the web simulator reads a
 legacy framebuffer at 0x20 with red and blue swapped and writes buttons to
 0x04, which the API no longer reads. Every cart's `main.zig` has wasm-only
-`present_wasm()` and `read_controls()` shims for this. Per cart:
-`node tools/serve-cart.mjs` (serves the wasm on :2468) plus `npm run dev` in
-`sycl-badge/simulator`; headless `node tools/preview.mjs
-../../zig-out/bin/<binary>.wasm ...` and `tools/make_gif.py`. Details and
+`present_wasm()` and `read_controls()` shims for this. From a cart
+directory: `node ../../tools/serve-cart.mjs` (serves that cart's wasm on
+:2468) plus `npm run dev` in `sycl-badge/simulator`; headless `node
+../../tools/preview.mjs ../../zig-out/bin/<binary>.wasm ...` and
+`../../tools/make_gif.py`. Details and
 per-cart options in `docs/RUNNING.md` at the root and in each cart.
 
 ## Performance

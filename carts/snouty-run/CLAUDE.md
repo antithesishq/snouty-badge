@@ -110,7 +110,7 @@ framebuffer at linear address 0x20, so `main.zig` has a wasm-only
 `present_wasm()` that copies the frame there (swapping r and b, because the
 simulator's compositor reads red from the bits where `DisplayColor` keeps blue). Without it the optimizer drops all framebuffer writes and
 the simulator shows nothing (upstream `dvd.wasm` has the same problem).
-`tools/preview.mjs` renders what the simulator shows; `--raw-colors` shows what
+The shared `../../tools/preview.mjs` renders what the simulator shows; `--raw-colors` shows what
 the cart API defines.
 
 Flash by copying the UF2 onto the badge's USB mass-storage drive over

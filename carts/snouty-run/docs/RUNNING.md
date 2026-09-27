@@ -41,8 +41,8 @@ Terminal 1 serves the cart and live-reloads it:
 
 ```sh
 cd carts/snouty-run                  # from the repository root
-node tools/serve-cart.mjs            # serves ../../zig-out/bin/snouty.wasm on :2468
-# or: node tools/serve-cart.mjs path/to/other.wasm --port 2468
+node ../../tools/serve-cart.mjs            # serves ../../zig-out/bin/snouty.wasm on :2468
+# or: node ../../tools/serve-cart.mjs path/to/other.wasm --port 2468
 ```
 
 This serves `http://localhost:2468/cart.wasm` (with CORS) and
@@ -95,16 +95,16 @@ Known upstream simulator quirks (current sycl-badge `main`):
 ## 5. Headless preview (no browser)
 
 ```sh
-node tools/preview.mjs ../../zig-out/bin/snouty.wasm --frames 240 --every 4 --out out/
-python3 tools/make_gif.py out/ preview.gif --scale 3 --ms 66
+node ../../tools/preview.mjs ../../zig-out/bin/snouty.wasm --frames 240 --every 4 --out out/
+python3 ../../tools/make_gif.py out/ preview.gif --scale 3 --ms 66
 ```
 
 The waterfall flips its dither mask every tick, so single frames look like a
 checkerboard. To see what the eye sees at 60 Hz, dump every tick and blend:
 
 ```sh
-node tools/preview.mjs ../../zig-out/bin/snouty.wasm --frames 400 --every 1 --out out/
-python3 tools/make_gif.py out/ preview.gif --blend 4 --ms 66
+node ../../tools/preview.mjs ../../zig-out/bin/snouty.wasm --frames 400 --every 1 --out out/
+python3 ../../tools/make_gif.py out/ preview.gif --blend 4 --ms 66
 ```
 
 `preview.mjs` runs `start()` and then `update()` N times, writing every K-th
@@ -118,6 +118,9 @@ framebuffer address and source, warnings). Other options:
   (inclusive), e.g. to trigger jumps
 - `--raw-colors`: decode colors as the cart API defines them instead of as the
   simulator displays them (only matters for carts that do not pre-swap)
+
+The shared tool has more (`BTN:T1-T2` presses for any button, `--script`,
+`--dump-exports`, `--expect`, ...): `node ../../tools/preview.mjs --help`.
 
 The tool exits non-zero if the cart traps or does not export
 `start`/`update`. `make_gif.py` scales frames with nearest-neighbor. One

@@ -174,11 +174,11 @@ never add `.WL1` files to the repo (they are gitignored).
 ```
 zig build && size -A zig-out/firmware/snoutenstein.elf | grep -E "^\.text|^\.data|^\.bss"
 zig test cart/src/sim.zig && zig test cart/src/levels.zig
-node tools/preview.mjs zig-out/bin/snoutenstein.wasm --frames 900 --every 6 --out out/ \
+node ../../tools/preview.mjs zig-out/bin/snoutenstein.wasm --frames 900 --every 6 --out out/ \
   --script tools/scripts/m1_walk.json \
   --dump-exports debug_mode,debug_tick,debug_px,debug_py,debug_angle,debug_render_us \
   --expect "debug_mode == 1" --expect "debug_px > 393216"
-python3 tools/make_gif.py out/ docs/preview_m1.gif --scale 3 --ms 100
+python3 ../../tools/make_gif.py out/ docs/preview_m1.gif --scale 3 --ms 100
 ```
 
 Gate (Adrian, on hardware): flash the UF2, press A, walk the long

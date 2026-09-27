@@ -14,7 +14,7 @@ dmg-acid2 test ROM with a microseconds/FPS overlay).
 tools/fetch_test_roms.sh     # test ROMs into tests/roms/
 (cd ../.. && zig build -Dcart=snouty-boy)   # ../../zig-out/firmware/snouty-boy.uf2, ../../zig-out/bin/snouty-boy.wasm
 (cd ../.. && zig build test)                # core tests on the host (plus the other carts' host tests)
-node tools/serve-cart.mjs    # then the web simulator from ../../sycl-badge/simulator
+node ../../tools/serve-cart.mjs    # then the web simulator from ../../sycl-badge/simulator
 ```
 
 Run from this cart's directory, `carts/snouty-boy/`; `zig build` runs from

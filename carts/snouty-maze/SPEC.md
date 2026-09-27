@@ -357,8 +357,8 @@ cart/src/
   leds.zig          neopixels
   input.zig         edge detection, takeover and idle timer
   packed_int_array.zig  (upstream copy)
-tools/              prepare_assets.py (--placeholders), preview.mjs (+ --script, --pose,
-                    --dump-exports, --expect), serve-cart.mjs, make_gif.py, check_golden.mjs
+tools/              prepare_assets.py (--placeholders), check_golden.mjs
+                    (preview.mjs, serve-cart.mjs, make_gif.py: shared, in ../../tools/)
 tests/golden/       PNGs for fixed seed + fixed poses (section 15)
 ```
 

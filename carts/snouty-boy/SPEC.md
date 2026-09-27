@@ -332,8 +332,8 @@ small, not any CPU limit.
 
 Copied from `snouty-bugs`: `build.zig` shape (`add_os_cart` with a
 `custom_builder` that adds nothing yet), `build.zig.zon` pointing at
-`../../sycl-badge`, `tools/serve-cart.mjs`, `tools/preview.mjs`,
-`tools/make_gif.py`, `docs/RUNNING.md` structure, `CLAUDE.md`.
+`../../sycl-badge`, `docs/RUNNING.md` structure, `CLAUDE.md`. `preview.mjs`,
+`serve-cart.mjs` and `make_gif.py` are the shared ones in `../../tools/`.
 
 ```
 SPEC.md  PLAN.md  README.md  CLAUDE.md  docs/RUNNING.md

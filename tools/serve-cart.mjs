@@ -1,16 +1,17 @@
 #!/usr/bin/env node
 // Cart watcher for the SYCL Badge web simulator (no npm dependencies).
 //
-//   node tools/serve-cart.mjs [path/to/cart.wasm] [--port 2468]
+//   node ../../tools/serve-cart.mjs [path/to/cart.wasm] [--cart NAME] [--port 2468]
 //
 // The simulator (sycl-badge/simulator/src/ui/app.ts) fetches
 // http://localhost:2468/cart.wasm and opens ws://localhost:2468/ws; when it
 // receives the text message "reload" it re-fetches the cart. It sends "spam"
 // every 100 ms as a keepalive, which we read and ignore.
 //
-// Default cart: zig-out/bin/snouty-reflections.wasm in the repository root (two levels
-// above this cart). The file is
-// polled every 500 ms; when its mtime or size changes, all clients get "reload".
+// Default cart: the cart of the directory this is run from (carts/<cart>/ ->
+// zig-out/bin/<binary>.wasm at the repository root; snouty-run's binary is
+// snouty), or --cart NAME, or a wasm path. The file is polled every 500 ms;
+// when its mtime or size changes, all clients get "reload".
 
 import http from "node:http";
 import fs from "node:fs";
@@ -18,17 +19,29 @@ import path from "node:path";
 import crypto from "node:crypto";
 import { fileURLToPath } from "node:url";
 
-const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
-let cartPath = path.join(repoRoot, "zig-out/bin/snouty-reflections.wasm");
+const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+// Cart directory name -> binary name where they differ (see the root build.zig).
+const binaryOf = (cart) => ({ "snouty-run": "snouty" })[cart] ?? cart;
+const cwdCart = () => {
+    const rel = path.relative(path.join(repoRoot, "carts"), process.cwd()).split(path.sep)[0];
+    return rel && rel !== ".." && !path.isAbsolute(rel) ? rel : null;
+};
+let cartPath = null;
+let cartName = cwdCart();
 let port = 2468;
 const args = process.argv.slice(2);
 for (let i = 0; i < args.length; i++) {
     if (args[i] === "--port") port = Number(args[++i]);
-    else if (args[i] === "-h" || args[i] === "--help") { console.log("usage: node tools/serve-cart.mjs [path/to/cart.wasm] [--port 2468]"); process.exit(0); }
+    else if (args[i] === "--cart") cartName = args[++i];
+    else if (args[i] === "-h" || args[i] === "--help") { console.log("usage: node ../../tools/serve-cart.mjs [path/to/cart.wasm] [--cart NAME] [--port 2468]"); process.exit(0); }
     else if (args[i].startsWith("--")) { console.error(`serve-cart: unknown option ${args[i]}`); process.exit(2); }
     else cartPath = path.resolve(args[i]);
 }
 if (!Number.isInteger(port) || port <= 0 || port > 65535) { console.error("serve-cart: bad --port"); process.exit(2); }
+if (cartPath === null) {
+    if (!cartName) { console.error("serve-cart: run from a carts/<cart>/ directory, or pass --cart NAME or a wasm path"); process.exit(2); }
+    cartPath = path.join(repoRoot, "zig-out/bin", `${binaryOf(cartName)}.wasm`);
+}
 
 const log = (m) => console.log(`[${new Date().toISOString().slice(11, 19)}] ${m}`);
 const baseHeaders = {

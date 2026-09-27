@@ -12,10 +12,10 @@ simulator quirks.
 
 - `cart/src/` — the Zig cart, one module per concern (SPEC.md section 9).
   `main.zig` exports `start()` and `update()` and holds the wasm shims.
-- `tools/` — `preview.mjs` (headless wasm runner to PNGs), `serve-cart.mjs`
-  (serves the wasm on :2468 for the simulator), `make_gif.py`,
-  `reference.py` (numpy reference renderer), `check_render.mjs`,
-  `check_float.mjs`.
+- `tools/` — `reference.py` (numpy reference renderer), `check_render.mjs`.
+  The headless runner (`preview.mjs`), `serve-cart.mjs` (serves the wasm on
+  :2468 for the simulator), `make_gif.py` and `check_float.mjs` are shared, in
+  `../../tools/`.
 - `docs/` — `RUNNING.md`, milestone GIFs.
 - `../../sycl-badge/` — upstream badge repo, read-only SDK, a git submodule
   at the repository root. Path dependency of the root `build.zig.zon`.
@@ -57,8 +57,8 @@ red/blue swapped for the web simulator; `read_controls()` reads the
 simulator's button word at 0x04. Headless:
 
 ```
-node tools/preview.mjs ../../zig-out/bin/snouty-reflections.wasm --frames 600 --every 6 --out out/
-python3 tools/make_gif.py out/ preview.gif --scale 3 --ms 50
+node ../../tools/preview.mjs ../../zig-out/bin/snouty-reflections.wasm --frames 600 --every 6 --out out/
+python3 ../../tools/make_gif.py out/ preview.gif --scale 3 --ms 50
 ```
 
 Debug exports (wasm): `debug_frame`, `debug_render_us`,

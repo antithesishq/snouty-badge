@@ -141,11 +141,11 @@ export fn debug_bolts() u32     // live bolts
 
 ```
 zig build
-node tools/preview.mjs zig-out/bin/snouty-bugs.wasm --frames 1800 --every 6 --out out/ \
+node ../../tools/preview.mjs zig-out/bin/snouty-bugs.wasm --frames 1800 --every 6 --out out/ \
   --script tools/scripts/m1_play.json \
   --dump-exports debug_state,debug_score,debug_lives,debug_enemies \
   --expect "debug_state == 1" --expect "debug_score > 0"
-python3 tools/make_gif.py out/ docs/preview_m1.gif --scale 3 --ms 100
+python3 ../../tools/make_gif.py out/ docs/preview_m1.gif --scale 3 --ms 100
 ```
 
 `tools/scripts/m1_play.json` presses A on the title at tick 30, then holds A

@@ -13,6 +13,7 @@ tools.
 | `carts/snouty-reflections/` | `snouty-reflections` | Real-time ray tracer demo over water (tags `snouty-reflections/m0`..`m1.1`). |
 | `carts/snouty-boy/` | `snouty-boy` | Game Boy emulator with an embedded ROM and a time scrubber (tags `snouty-boy/m1`..`m4`). |
 | `carts/snouty-maze/` | `snouty-maze` | Windows 3D Maze screensaver clone on a small software rasterizer (tags `snouty-maze/m0`..`m3`). |
+| `tools/` | | Shared cart tools: `preview.mjs` (headless wasm runner with input scripts and checks), `serve-cart.mjs` (feeds the web simulator), `make_gif.py`, `check_float.mjs`, `uf2_info.py`. |
 | `badge-bench/` | | Emulated Cortex-M33 cycle benchmark for any cart ELF, with per-cart defaults and hot-function lists. |
 | `snouty-art/` | | Code-driven pixel-art pipeline (parts rig, procedural limbs) that produces the carts' sprite sheets. |
 | `sycl-badge/` | | Upstream badge SDK and simulator, a git submodule pinned to the commit the carts are built against. |
@@ -28,12 +29,26 @@ zig build                        # every cart
 zig build -Dcart=snouty-bugs     # one cart (any directory or binary name above)
 zig build test                   # every cart's host tests
 zig build check-float            # no soft-float in the FPU carts' ELFs
+zig build -Dcart-mode=xip        # execute-in-place carts: <binary>-xip.uf2 (see below)
 ```
 
 Outputs: `zig-out/firmware/<binary>.uf2` (copy onto the badge over
 `CURRENT.UF2`), `zig-out/firmware/<binary>.elf` (for badge-bench) and
 `zig-out/bin/<binary>.wasm` (for the simulator). Zig
 `0.17.0-dev.1936+5a625d5f3` exactly, as pinned by upstream.
+
+## RAM carts and XIP carts
+
+By default a cart is a RAM cart: the OS copies the whole image into the
+307 KB cart RAM window and code, read-only data and state share it. With
+`-Dcart-mode=xip` (or `both`) the same source is also linked as an
+execute-in-place cart: code and read-only data live in the badge's 256 KB
+cart flash window and run from there through the XIP cache, and all of cart
+RAM is left for `.data` and `.bss`. That roughly doubles what a cart can hold,
+which is what the emulator carts need. The XIP build is
+`zig-out/firmware/<binary>-xip.uf2`, flashed the same way. `tools/uf2_info.py`
+shows which window a UF2 targets (the loader refuses a mix). Root `PLAN.md`
+section M3 has the design and the open hardware questions.
 
 ## Where to read next
 

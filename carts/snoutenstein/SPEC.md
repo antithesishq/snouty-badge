@@ -416,8 +416,8 @@ cart/src/
 cart/src/levels/  build_farm.txt, staging.txt, production.txt, wolf_walls.json,
                   imported Wolf3D levels (free mapsets or our own editor output only)
 demos/            build_farm.bin (recorded inputs)
-tools/            prepare_assets.py, import_wolf.py (section 6.1), preview.mjs (+ --record,
-                  --dump-exports, --expect), serve-cart.mjs, make_gif.py, check_determinism.mjs
+tools/            prepare_assets.py, import_wolf.py (section 6.1), check_determinism.mjs
+                  (preview.mjs, serve-cart.mjs, make_gif.py: shared, in ../../tools/)
 ```
 
 Per tick: read controls -> top-level state machine -> (PLAYING) log input,

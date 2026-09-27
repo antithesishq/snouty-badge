@@ -18,9 +18,10 @@ their CLAUDE.md files have the long explanations of the simulator quirks.
   ../../snouty-art/out/maze` from the original screensaver textures in
   `assets/src/w95/` plus the snouty-art maze pack (Snouty, Zig mark, Iris
   mark, Start button); `--placeholders` draws procedural stand-ins instead.
-- `tools/` — `preview.mjs` (headless wasm runner to PNGs), `serve-cart.mjs`
-  (serves the wasm on :2468 for the simulator), `make_gif.py`,
-  `check_float.mjs`, `check_golden.mjs`, `prepare_assets.py`.
+- `tools/` — `check_golden.mjs`, `check_cycle.mjs`, `prepare_assets.py`. The
+  headless runner (`preview.mjs`), `serve-cart.mjs` (serves the wasm on :2468
+  for the simulator), `make_gif.py` and `check_float.mjs` are shared, in
+  `../../tools/`.
 - `tests/golden/` — golden PNGs and `poses.json` for `check_golden.mjs`.
 - `docs/` — `RUNNING.md`, milestone GIFs.
 - `../../sycl-badge/` — upstream badge repo, read-only SDK, a git submodule
@@ -68,8 +69,8 @@ red/blue swapped for the web simulator; `read_controls()` reads the
 simulator's button word at 0x04. Headless:
 
 ```
-node tools/preview.mjs ../../zig-out/bin/snouty-maze.wasm --frames 600 --every 6 --out out/
-python3 tools/make_gif.py out/ preview.gif --scale 3 --ms 100
+node ../../tools/preview.mjs ../../zig-out/bin/snouty-maze.wasm --frames 600 --every 6 --out out/
+python3 ../../tools/make_gif.py out/ preview.gif --scale 3 --ms 100
 node tools/check_golden.mjs            # golden-image regression
 ```
 

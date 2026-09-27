@@ -112,8 +112,8 @@ Terminal 1 serves the cart and live-reloads it:
 
 ```sh
 cd carts/snouty-boy
-node tools/serve-cart.mjs            # serves ../../zig-out/bin/snouty-boy.wasm on :2468
-# or: node tools/serve-cart.mjs path/to/other.wasm --port 2468
+node ../../tools/serve-cart.mjs            # serves ../../zig-out/bin/snouty-boy.wasm on :2468
+# or: node ../../tools/serve-cart.mjs path/to/other.wasm --port 2468
 ```
 
 This serves `http://localhost:2468/cart.wasm` (with CORS) and
@@ -210,13 +210,13 @@ all in `cart/src/main.zig` and compiled only into the wasm:
 ## 7. Headless preview (no browser)
 
 ```sh
-node tools/preview.mjs ../../zig-out/bin/snouty-boy.wasm --frames 60 --every 10 --out out/
-python3 tools/make_gif.py out/ preview.gif --scale 3 --ms 166
+node ../../tools/preview.mjs ../../zig-out/bin/snouty-boy.wasm --frames 60 --every 10 --out out/
+python3 ../../tools/make_gif.py out/ preview.gif --scale 3 --ms 166
 ```
 
 `preview.mjs` runs `start()` and then `update()` N times, writing every K-th
 frame to `out/frame_XXXX.png` (160x128) and metadata to `out/frames.json`.
-Useful options (the header of `tools/preview.mjs` has the full list):
+Useful options (the header of the shared `../../tools/preview.mjs` has the full list):
 
 - `--press A:30-31,UP:60-99,START:300-301`: hold buttons during those update
   ranges (inclusive). Buttons are `A B START SELECT UP DOWN LEFT RIGHT`;
@@ -244,7 +244,7 @@ Useful options (the header of `tools/preview.mjs` has the full list):
 A quick smoke test:
 
 ```sh
-node tools/preview.mjs ../../zig-out/bin/snouty-boy.wasm --frames 132 --quiet --out out/ \
+node ../../tools/preview.mjs ../../zig-out/bin/snouty-boy.wasm --frames 132 --quiet --out out/ \
   --expect "debug_frame_count == 60" --expect "debug_lines == 144"
 ```
 
@@ -255,7 +255,7 @@ A scrubber check with 2048-gb (start the game, play, hold Select for the
 menu, step back twice, resume):
 
 ```sh
-node tools/preview.mjs ../../zig-out/bin/snouty-boy.wasm --frames 380 --every 10 --out out/ \
+node ../../tools/preview.mjs ../../zig-out/bin/snouty-boy.wasm --frames 380 --every 10 --out out/ \
   --press START:150-152,LEFT:170-175,UP:190-195,SELECT:260-300,LEFT:310-310,LEFT:320-320,B:340-341 \
   --at "310 debug_scrub_depth == 7" --at "320 debug_frame_count == 180" \
   --at "330 debug_leds == 5" --at "379 debug_frame_count > 200"

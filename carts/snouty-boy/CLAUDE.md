@@ -20,9 +20,9 @@ CLAUDE.md files have the long explanations, this one summarises.
   dmg-acid2 reference as 160x144 shade bytes.
 - `roms/` — the shipped game ROM (`*.gb` gitignored except the committed
   `2048.gb`, the build's fallback ROM; its LICENSE sits next to it).
-- `tools/` — `fetch_test_roms.sh`, `romcheck.py`, `preview.mjs` (headless
-  wasm runner to PNGs), `serve-cart.mjs` (serves the wasm on :2468),
-  `make_gif.py`.
+- `tools/` — `fetch_test_roms.sh`, `romcheck.py`. The headless wasm runner
+  (`preview.mjs`), `serve-cart.mjs` (serves the wasm on :2468) and
+  `make_gif.py` are shared, in `../../tools/`.
 - `../../sycl-badge/` — upstream badge repo, read-only SDK, a git submodule
   at the repository root. Path dependency of the root `build.zig.zon`; the
   one `src/os/system/tracy_protocol.zig` symlink is at the root too.
@@ -59,7 +59,7 @@ root (`../..`), whose `build.zig` calls this cart's `build.zig` module
 - `zig build test` (root) → every cart's host tests, this cart's native core
   tests among them (about 15 s of it). `-Dtest-filter=acid`.
 - `size ../../zig-out/firmware/snouty-boy.elf` for the memory budget (SPEC.md 13).
-- Headless: `node tools/preview.mjs ../../zig-out/bin/snouty-boy.wasm --frames 60 --every 10 --out out/`
+- Headless: `node ../../tools/preview.mjs ../../zig-out/bin/snouty-boy.wasm --frames 60 --every 10 --out out/`
   then look at `out/frame_XXXX.png`. Buttons via `--press A:30-40`.
 - `zig fmt core cart tests build.zig` before committing.
 

@@ -3,12 +3,49 @@
 //
 //   node tools/preview.mjs <cart.wasm> --frames N [--every K] [--out DIR]
 //                          [--start-skip S] [--fb-addr auto|dwarf|sim|0xADDR]
-//                          [--seed N] [--controls BITS] [--press T1-T2[,T3-T4...]] [--raw-colors]
+//                          [--seed N] [--controls BITS] [--press [BTN:]T1-T2[,...]] [--script FILE.json]
+//                          [--dump-exports NAME[,NAME...]] [--expect "NAME OP VALUE"]...
+//                          [--at "T NAME OP VALUE"]... [--call-at "T NAME"]... [--quiet] [--raw-colors]
+//                          [--call NAME[:ARG]]... [--pose x,y,z,yaw,pitch,roll]
 //
 // Runs start(), then N x update(). Every K-th update after the first S updates,
 // the displayed framebuffer is decoded and written to DIR/frame_XXXX.png
 // (XXXX = update index, 0-based). DIR/frames.json gets metadata.
 // No npm dependencies (PNG is encoded with node:zlib).
+//
+// Input: the u16 at 0x04 (cart.Controls bits: start 0, select 1, a 2, b 3,
+// click 4, up 5, down 6, left 7, right 8) is set before every update() to
+//   --controls | every --press item covering the tick | every --script entry covering it.
+// --press items are BTN:T1-T2 (BTN in A B START SELECT UP DOWN LEFT RIGHT, any
+// case; bare T1-T2 means A), inclusive tick ranges; --press may be repeated.
+// --script is a JSON array of { "from": T1, "to": T2, "hold": ["A", "UP"] },
+// also inclusive. CLICK is refused (the OS owns it).
+//
+// Assertions: after the last update(), each --dump-exports name (a zero-arg
+// function export, e.g. debug_state) is called and its result is recorded in
+// frames.json "exports" and printed on stderr. --expect "debug_score > 0"
+// (OP in == != < <= > >=, integer VALUE; implies dumping NAME) prints PASS or
+// FAIL per expectation; any FAIL exits 3 after frames.json is written. Values
+// are what the export returns to JS: a u32 >= 2^31 reads as negative (i32).
+// --at T NAME OP VALUE is the same check made right after update #T (0-based;
+// with --frames 1800, T = 1799 is the moment the end-of-run exports are read);
+// results go to frames.json "at", and a FAIL also exits 3. --call-at T NAME
+// calls NAME right after update #T and records {tick, name, value} under
+// "calls". Both accept either separate arguments (--at 1799 debug_score '>' 0)
+// or one quoted string (--at "1799 debug_score > 0"), are repeatable, and run
+// in command-line order when they share a tick. T must be < N.
+// --quiet writes no PNGs and skips framebuffer decoding (soak runs).
+//
+// Setup calls: after start() and before the first update(), each --call NAME
+// or NAME:ARG (ARG an integer, e.g. debug_set_size:16 or debug_set_seed:7) is
+// called in command-line order, then --pose x,y,z,yaw,pitch,roll (six floats,
+// angles in degrees) calls debug_set_camera(x, y, z, yaw, pitch, roll). A
+// missing export, or one taking a different number of arguments, exits 2.
+//
+// Exit codes: 0 ok, 1 cart/load error, 2 usage error, 3 wasm trap or failed --expect/--at.
+//
+// This is the one preview tool for every cart in carts/; each cart's docs run it
+// as `node ../../tools/preview.mjs ../../zig-out/bin/<binary>.wasm ...`.
 //
 // ---------------------------------------------------------------------------
 // Where is the framebuffer? (read this before trusting a preview)
@@ -86,14 +123,69 @@ const OPTIONAL_COLOR_NONE = -1;
 function usage(msg) {
     if (msg) console.error(`preview: ${msg}`);
     console.error("usage: node tools/preview.mjs <cart.wasm> --frames N [--every K] [--out DIR] [--start-skip S]\n" +
-        "                          [--fb-addr auto|dwarf|sim|0xADDR] [--seed N] [--controls BITS] [--press T1-T2[,T3-T4...]] [--raw-colors]");
+        "                          [--fb-addr auto|dwarf|sim|0xADDR] [--seed N] [--controls BITS]\n" +
+        "                          [--press [BTN:]T1-T2[,...]] [--script FILE.json] [--dump-exports NAME[,NAME...]]\n" +
+        "                          [--expect \"NAME OP VALUE\"]... [--at \"T NAME OP VALUE\"]... [--call-at \"T NAME\"]...\n" +
+        "                          [--quiet] [--raw-colors] [--call NAME[:ARG]]... [--pose x,y,z,yaw,pitch,roll]\n" +
+        "  BTN: A B START SELECT UP DOWN LEFT RIGHT (bare T1-T2 = A); OP: == != < <= > >=\n" +
+        "  --at/--call-at: T is the 0-based update index (< N); also as separate args: --at T NAME OP VALUE, --call-at T NAME");
     process.exit(2);
 }
+// cart.Controls bit positions (sycl-badge src/os/cart/api.zig). CLICK (bit 4) is OS-owned and never set.
+const BUTTONS = { START: 1 << 0, SELECT: 1 << 1, A: 1 << 2, B: 1 << 3, UP: 1 << 5, DOWN: 1 << 6, LEFT: 1 << 7, RIGHT: 1 << 8 };
+const buttonBit = (name, where) => {
+    const n = typeof name === "string" ? name.trim().toUpperCase() : null;
+    if (n === "CLICK") return { error: `${where}: CLICK cannot be pressed (the OS owns the joystick click)` };
+    if (n === null || !(n in BUTTONS)) return { error: `${where}: unknown button ${JSON.stringify(name)} (use ${Object.keys(BUTTONS).join(" ")})` };
+    return { name: n, bit: BUTTONS[n] };
+};
+const isTick = (v) => Number.isInteger(v) && v >= 0;
+function parsePressItem(item) {
+    const m = /^\s*(?:([A-Za-z]+)\s*:)?\s*(\d+)\s*-\s*(\d+)\s*$/.exec(item);
+    if (!m) usage(`bad --press item '${item}' (want BTN:T1-T2 or T1-T2)`);
+    const btn = buttonBit(m[1] ?? "A", `--press '${item}'`);
+    if (btn.error) usage(btn.error);
+    const from = Number(m[2]), to = Number(m[3]);
+    if (to < from) usage(`bad --press item '${item}': end ${to} < start ${from}`);
+    return { button: btn.name, from, to };
+}
+function parseExpect(s) {
+    const m = /^\s*([A-Za-z_$][\w$.]*)\s*(==|!=|<=|>=|<|>)\s*(-?\d+)\s*$/.exec(s);
+    if (!m) usage(`bad --expect '${s}' (want "NAME OP VALUE", OP in == != < <= > >=, integer VALUE)`);
+    return { expr: `${m[1]} ${m[2]} ${m[3]}`, name: m[1], op: m[2], value: Number(m[3]) };
+}
+// --at / --call-at take several words, either as one quoted argument or as
+// separate arguments: consume arguments until the joined text parses (at most
+// `max`), never swallowing the next --flag.
+const AT_RE = /^\s*(\d+)\s+([A-Za-z_$][\w$.]*)\s*(==|!=|<=|>=|<|>)\s*(-?\d+)\s*$/;
+const CALL_AT_RE = /^\s*(\d+)\s+([A-Za-z_$][\w$.]*)\s*$/;
+function takeWords(flag, re, max, want) {
+    const words = [];
+    while (words.length < max && argIndex + 1 < argv.length && !argv[argIndex + 1].startsWith("--")) {
+        words.push(argv[++argIndex]);
+        const m = re.exec(words.join(" "));
+        if (m) return m;
+    }
+    usage(words.length ? `bad ${flag} '${words.join(" ")}' (want ${want})` : `${flag} needs a value (${want})`);
+}
+function parseCall(s) {
+    const m = /^\s*([A-Za-z_$][\w$]*)\s*(?::\s*(-?\d+)\s*)?$/.exec(s);
+    if (!m) usage(`bad --call '${s}' (want NAME or NAME:INT)`);
+    return { name: m[1], arg: m[2] === undefined ? null : Number(m[2]), text: m[2] === undefined ? m[1] : `${m[1]}:${m[2]}` };
+}
+function parsePose(s) {
+    const v = s.split(",").map((t) => t.trim());
+    if (v.length !== 6 || v.some((t) => t === "" || !Number.isFinite(Number(t)))) usage(`bad --pose '${s}' (want six numbers x,y,z,yaw,pitch,roll)`);
+    return v.map(Number);
+}
+let argIndex = 0;
 const argv = process.argv.slice(2);
-const opts = { frames: null, every: 1, out: "out", startSkip: 0, fbAddr: "auto", seed: 1, controls: 0, press: [], rawColors: false };
+const opts = { frames: null, every: 1, out: "out", startSkip: 0, fbAddr: "auto", seed: 1, controls: 0, press: [], rawColors: false,
+    script: null, dumpExports: [], expect: [], quiet: false, timed: [], calls: [], pose: null };
 let wasmPath = null;
 for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
+    argIndex = i;
     const val = () => { if (i + 1 >= argv.length) usage(`${a} needs a value`); return argv[++i]; };
     const int = () => { const s = val(); const n = Number(s); if (!Number.isInteger(n) || n < 0) usage(`${a}: bad integer '${s}'`); return n; };
     switch (a) {
@@ -104,7 +196,23 @@ for (let i = 0; i < argv.length; i++) {
         case "--fb-addr": opts.fbAddr = val(); break;
         case "--seed": opts.seed = int(); break;
         case "--controls": opts.controls = int(); break;
-        case "--press": opts.press = val().split(",").map((r) => { const [a, b] = r.split("-").map(Number); if (!Number.isInteger(a) || !Number.isInteger(b) || b < a) usage(`bad --press range '${r}'`); return [a, b]; }); break;
+        case "--press": opts.press.push(...val().split(",").map(parsePressItem)); break;
+        case "--script": opts.script = val(); break;
+        case "--dump-exports": for (const n of val().split(",").map((s) => s.trim())) { if (!n) usage("--dump-exports: empty name"); if (!opts.dumpExports.includes(n)) opts.dumpExports.push(n); } break;
+        case "--expect": opts.expect.push(parseExpect(val())); break;
+        case "--at": {
+            const m = takeWords(a, AT_RE, 4, '"T NAME OP VALUE", OP in == != < <= > >=, integer T and VALUE'); i = argIndex;
+            opts.timed.push({ kind: "at", tick: Number(m[1]), expr: `${m[2]} ${m[3]} ${m[4]}`, name: m[2], op: m[3], value: Number(m[4]) });
+            break;
+        }
+        case "--call-at": {
+            const m = takeWords(a, CALL_AT_RE, 2, '"T NAME", integer T'); i = argIndex;
+            opts.timed.push({ kind: "call", tick: Number(m[1]), name: m[2] });
+            break;
+        }
+        case "--quiet": opts.quiet = true; break;
+        case "--call": opts.calls.push(parseCall(val())); break;
+        case "--pose": opts.pose = parsePose(val()); break;
         case "--raw-colors": opts.rawColors = true; break;
         case "-h": case "--help": usage();
         default:
@@ -114,6 +222,49 @@ for (let i = 0; i < argv.length; i++) {
 }
 if (!wasmPath) usage("missing <cart.wasm>");
 if (opts.frames === null) usage("missing --frames N");
+if (opts.controls > 0xffff) usage(`--controls ${opts.controls} does not fit in 16 bits`);
+for (const e of opts.expect) if (!opts.dumpExports.includes(e.name)) opts.dumpExports.push(e.name);
+for (const t of opts.timed) if (t.tick >= opts.frames) usage(`--${t.kind === "at" ? "at" : "call-at"} ${t.tick} ${t.name}: tick ${t.tick} is beyond the run (--frames ${opts.frames} runs updates 0..${opts.frames - 1})`);
+// Items per tick, in command-line order.
+const timedAt = new Map();
+for (const t of opts.timed) { if (!timedAt.has(t.tick)) timedAt.set(t.tick, []); timedAt.get(t.tick).push(t); }
+
+// ---------------------------------------------------------------- input script
+function loadScript(file) {
+    const fail = (m) => { console.error(`preview: --script ${file}: ${m}`); process.exit(2); };
+    let text, list;
+    try { text = fs.readFileSync(file, "utf8"); } catch (e) { fail(`cannot read: ${e.message}`); }
+    try { list = JSON.parse(text); } catch (e) { fail(`invalid JSON: ${e.message}`); }
+    if (!Array.isArray(list)) fail(`top level must be a JSON array of { "from", "to", "hold" } entries, got ${typeof list}`);
+    return list.map((ent, k) => {
+        const at = `entry ${k}`;
+        if (ent === null || typeof ent !== "object" || Array.isArray(ent)) fail(`${at}: must be an object { "from", "to", "hold" }`);
+        for (const key of Object.keys(ent)) if (!["from", "to", "hold"].includes(key)) fail(`${at}: unknown field "${key}" (allowed: from, to, hold)`);
+        for (const key of ["from", "to"]) {
+            if (!(key in ent)) fail(`${at}: missing field "${key}"`);
+            if (!isTick(ent[key])) fail(`${at}: field "${key}" must be a non-negative integer tick, got ${JSON.stringify(ent[key])}`);
+        }
+        if (ent.to < ent.from) fail(`${at}: field "to" (${ent.to}) is before "from" (${ent.from})`);
+        if (!("hold" in ent)) fail(`${at}: missing field "hold"`);
+        if (!Array.isArray(ent.hold)) fail(`${at}: field "hold" must be an array of button names, got ${JSON.stringify(ent.hold)}`);
+        const hold = [];
+        let bits = 0;
+        ent.hold.forEach((b, j) => {
+            const r = buttonBit(b, `${at}: field "hold"[${j}]`);
+            if (r.error) fail(r.error);
+            if (!hold.includes(r.name)) hold.push(r.name);
+            bits |= r.bit;
+        });
+        return { from: ent.from, to: ent.to, hold, bits };
+    });
+}
+const scriptEntries = opts.script ? loadScript(opts.script) : [];
+
+// Per-tick controls, computed once: controlsAt[i] is the u16 written to 0x04 before update() #i.
+const controlsAt = new Uint16Array(opts.frames).fill(opts.controls);
+const orRange = (from, to, bits) => { for (let i = from, end = Math.min(to, opts.frames - 1); i <= end; i++) controlsAt[i] |= bits; };
+for (const p of opts.press) orRange(p.from, p.to, BUTTONS[p.button]);
+for (const s of scriptEntries) orRange(s.from, s.to, s.bits);
 
 // ---------------------------------------------------------------- wasm file parsing
 function readWasmInfo(buf) {
@@ -335,6 +486,22 @@ let instance;
 try { instance = new WebAssembly.Instance(module, { env }); }
 catch (e) { console.error(`preview: instantiation failed: ${e.message}`); process.exit(1); }
 
+// --dump-exports / --expect / --at / --call-at names must be zero-arg function exports; check before running.
+{
+    const wanted = [...opts.dumpExports];
+    for (const t of opts.timed) if (!wanted.includes(t.name)) wanted.push(t.name);
+    const callable = exportNames.filter((n) => typeof instance.exports[n] === "function" && instance.exports[n].length === 0 && n !== "start" && n !== "update" && n !== "_start" && n !== "_initialize");
+    const bad = wanted.filter((n) => !callable.includes(n));
+    if (bad.length) {
+        const why = bad.map((n) => !exportNames.includes(n) ? `'${n}' is not exported`
+            : typeof instance.exports[n] !== "function" ? `'${n}' is not a function`
+            : ["start", "update", "_start", "_initialize"].includes(n) ? `'${n}' is an entry point, not a query`
+            : `'${n}' takes ${instance.exports[n].length} argument(s)`).join("; ");
+        console.error(`preview: --dump-exports/--expect/--at/--call-at: ${why}. Zero-arg function exports in ${wasmPath}: ${callable.join(", ") || "none"} (all exports: ${exportNames.join(", ") || "none"})`);
+        process.exit(2);
+    }
+}
+
 // Resolve framebuffer location.
 let dwarf = null, dwarfError = null;
 try { dwarf = dwarfVariables(custom); } catch (e) { dwarfError = e.message; }
@@ -417,40 +584,106 @@ const probeLo = Math.max(SIM_ADDR_FRAMEBUFFER, sp0), probeHi = SIM_ADDR_FRAMEBUF
 const probeInitial = probeLo + 256 <= probeHi ? Buffer.from(mem8().slice(probeLo, probeHi)) : null;
 const canSwitchToShim = mode === "auto" && fbSource !== "export" && fbSource !== "sim" && probeInitial !== null;
 // Simulator's controls address. Upstream's API ignores it; our cart reads it on wasm.
-// --press holds the A button (bit 2, CONTROLS_A) during the given update ranges, inclusive.
-const CONTROLS_A = 4;
-const pressedAt = (i) => opts.press.some(([a, b]) => i >= a && i <= b);
-const setControls = (i) => dv().setUint16(ADDR_CONTROLS, opts.controls | (pressedAt(i) ? CONTROLS_A : 0), true);
+// controlsAt (see "input script" above) holds --controls | --press | --script per tick;
+// before start() only --controls is set.
+const setControls = (i) => dv().setUint16(ADDR_CONTROLS, i < 0 ? opts.controls : controlsAt[i], true);
 setControls(-1);
 for (const init of ["_start", "_initialize"]) if (exportNames.includes(init)) { try { instance.exports[init](); } catch (e) { trap(init, e); } }
+// --call / --pose exports must exist with the right arity; check before running.
+{
+    const setup = opts.calls.map((c) => ({ name: c.name, argc: c.arg === null ? 0 : 1, what: `--call ${c.text}` }));
+    if (opts.pose) setup.push({ name: "debug_set_camera", argc: 6, what: "--pose" });
+    for (const c of setup) {
+        const f = instance.exports[c.name];
+        if (typeof f !== "function") {
+            console.error(`preview: ${c.what}: '${c.name}' is ${exportNames.includes(c.name) ? "not a function" : "not exported"} by ${wasmPath} (function exports: ${exportNames.filter((n) => typeof instance.exports[n] === "function").join(", ") || "none"})`);
+            process.exit(2);
+        }
+        if (f.length !== c.argc) { console.error(`preview: ${c.what}: '${c.name}' takes ${f.length} argument(s), not ${c.argc}`); process.exit(2); }
+    }
+}
+
 try { instance.exports.start(); } catch (e) { trap("start()", e); }
+for (const c of opts.calls) { try { if (c.arg === null) instance.exports[c.name](); else instance.exports[c.name](c.arg); } catch (e) { trap(`--call ${c.text}`, e); } }
+if (opts.pose) { try { instance.exports.debug_set_camera(...opts.pose); } catch (e) { trap("--pose debug_set_camera()", e); } }
 
 const written = [];
 let changed = false;
+const OPS = { "==": (a, b) => a === b, "!=": (a, b) => a !== b, "<": (a, b) => a < b, "<=": (a, b) => a <= b, ">": (a, b) => a > b, ">=": (a, b) => a >= b };
+// Calls a checked zero-arg export and returns its integer result (as JS sees it).
+function callExport(n, flag) {
+    let v;
+    try { v = instance.exports[n](); } catch (e) { trap(`${n}()`, e); }
+    if (typeof v === "bigint") v = Number(v);
+    if (typeof v !== "number") { console.error(`preview: ${flag}: ${n}() returned nothing (it must return an integer)`); process.exit(2); }
+    return v;
+}
+const atResults = [], callResults = [];
+function runTimed(i) {
+    for (const t of timedAt.get(i)) {
+        const actual = callExport(t.name, t.kind === "at" ? "--at" : "--call-at");
+        if (t.kind === "call") {
+            callResults.push({ tick: i, name: t.name, value: actual });
+            console.error(`preview: call after update #${i}: ${t.name} = ${actual}`);
+        } else {
+            const pass = OPS[t.op](actual, t.value);
+            atResults.push({ tick: i, expr: t.expr, name: t.name, op: t.op, value: t.value, actual, pass });
+            console.error(`preview: ${pass ? "PASS" : "FAIL"} after update #${i}: ${t.expr} (${t.name} = ${actual})`);
+        }
+    }
+}
 const t0 = Date.now();
 for (let i = 0; i < opts.frames; i++) {
-    let addr = displayedBufferAddr();
+    let addr = opts.quiet ? 0 : displayedBufferAddr();
     setControls(i);
     try { instance.exports.update(); } catch (e) { trap(`update() #${i}`, e); }
     if (i === 0 && canSwitchToShim && Buffer.compare(probeInitial, Buffer.from(mem8().slice(probeLo, probeHi))) !== 0) {
         console.error(`preview: cart copies its frame to the simulator region at 0x20; showing that (use --fb-addr dwarf for ${fbSource} @ 0x${fbBase.toString(16)})`);
         fbSource = "sim-shim"; fbBase = SIM_ADDR_FRAMEBUFFER; hasPtr = false; initial = initialSim; addr = fbBase;
     }
-    if (i < opts.startSkip || (i - opts.startSkip) % opts.every !== 0) continue;
-    if (!changed && Buffer.compare(initial, Buffer.from(mem8().slice(fbBase, fbBase + initial.length))) !== 0) changed = true;
-    const name = `frame_${String(i).padStart(4, "0")}.png`;
-    fs.writeFileSync(path.join(opts.out, name), encodePNG(decode(addr), WIDTH, HEIGHT));
-    written.push({ file: name, update: i, buffer: (addr - fbBase) / FB_BYTES | 0 });
+    // Capture the frame BEFORE any per-tick export call: the wasm shadow stack
+    // (0x0..0x39a0) overlaps the simulator region at 0x20, so calling an export
+    // after update() scribbles a black band over columns ~49..57 of the frame.
+    if (!(opts.quiet || i < opts.startSkip || (i - opts.startSkip) % opts.every !== 0)) {
+        if (!changed && Buffer.compare(initial, Buffer.from(mem8().slice(fbBase, fbBase + initial.length))) !== 0) changed = true;
+        const name = `frame_${String(i).padStart(4, "0")}.png`;
+        fs.writeFileSync(path.join(opts.out, name), encodePNG(decode(addr), WIDTH, HEIGHT));
+        written.push({ file: name, update: i, buffer: (addr - fbBase) / FB_BYTES | 0 });
+    }
+    if (timedAt.has(i)) runTimed(i);
 }
+const runMs = Date.now() - t0;
 if (written.length && !changed) warn(`framebuffer region at 0x${fbBase.toString(16)} never changed since instantiation; frames are blank`);
+
+// Query exports after the last update().
+const exportValues = {};
+for (const n of opts.dumpExports) exportValues[n] = callExport(n, "--dump-exports");
+if (opts.dumpExports.length) console.error(`preview: exports after update #${opts.frames - 1}: ${opts.dumpExports.map((n) => `${n}=${exportValues[n]}`).join(" ")}`);
+const expectResults = opts.expect.map((e) => {
+    const actual = exportValues[e.name], pass = OPS[e.op](actual, e.value);
+    console.error(`preview: ${pass ? "PASS" : "FAIL"} ${e.expr} (${e.name} = ${actual})`);
+    return { ...e, actual, pass };
+});
+const failed = expectResults.filter((r) => !r.pass).length + atResults.filter((r) => !r.pass).length;
+const checks = expectResults.length + atResults.length;
 
 const meta = {
     cart: path.resolve(wasmPath), width: WIDTH, height: HEIGHT, format: "rgb565 column-major, wasm byte-swapped",
-    updates: opts.frames, every: opts.every, startSkip: opts.startSkip, seed: opts.seed, controls: opts.controls, press: opts.press, rawColors: opts.rawColors,
-    imports: imports.map((i) => `${i.module}.${i.name}`), exports: exportNames,
+    updates: opts.frames, every: opts.every, startSkip: opts.startSkip, seed: opts.seed, controls: opts.controls,
+    press: opts.press.map((p) => `${p.button}:${p.from}-${p.to}`).join(",") || null, pressItems: opts.press,
+    script: opts.script ? { file: path.resolve(opts.script), entries: scriptEntries.map(({ from, to, hold }) => ({ from, to, hold })) } : null,
+    quiet: opts.quiet, rawColors: opts.rawColors, setupCalls: opts.calls.map((c) => c.text), pose: opts.pose,
+    imports: imports.map((i) => `${i.module}.${i.name}`), moduleExports: exportNames,
+    exports: exportValues, expect: expectResults, at: atResults, calls: callResults,
     framebuffer: { source: fbSource, base: `0x${fbBase.toString(16)}`, buffer1: fbSource === "dwarf" || fbSource === "export" ? `0x${(fbBase + FB_BYTES).toString(16)}` : null, drawPointer: hasPtr ? `0x${ptrVar.addr.toString(16)}` : null },
     dataSegments: dataSegs.map((d) => ({ off: d.off === null ? null : `0x${d.off.toString(16)}`, size: d.size })),
     warnings, frames: written,
 };
 fs.writeFileSync(path.join(opts.out, "frames.json"), JSON.stringify(meta, null, 2) + "\n");
-console.error(`preview: ${written.length} frame(s) from ${opts.frames} update(s) -> ${opts.out}/ (framebuffer ${fbSource} @ 0x${fbBase.toString(16)}, ${Date.now() - t0} ms)`);
+console.error(`preview: ${written.length} frame(s) from ${opts.frames} update(s) -> ${opts.out}/ (framebuffer ${fbSource} @ 0x${fbBase.toString(16)}, ${runMs} ms)`);
+if (failed) {
+    const list = [...atResults.filter((r) => !r.pass).map((r) => `${r.expr} after update #${r.tick} (got ${r.actual})`),
+        ...expectResults.filter((r) => !r.pass).map((r) => `${r.expr} at the end (got ${r.actual})`)];
+    console.error(`preview: ${failed} of ${checks} expectation(s) failed: ${list.join("; ")}`);
+    process.exit(3);
+}

@@ -95,8 +95,8 @@ cart/build/convert_gfx.zig   copied from upstream dvd cart
 assets/                      delivered art (zips + unpacked studies)
 assets/gen/                  build inputs produced by prepare_assets.py
 tools/prepare_assets.py      asset prep
-tools/preview.mjs            headless Node runner: cart.wasm -> PNG frames
-tools/serve-cart.mjs         serves cart.wasm on :2468 with CORS + ws reload
+../../tools/preview.mjs      headless Node runner: cart.wasm -> PNG frames (shared)
+../../tools/serve-cart.mjs   serves cart.wasm on :2468 with CORS + ws reload (shared)
 docs/RUNNING.md              how to build, preview, flash
 ```
 
@@ -108,11 +108,11 @@ symlink under `sycl-badge/showcase/carts/`.
 
 ## Verification
 
-- `tools/preview.mjs` instantiates the WASM with the same `env` imports as
+- `../../tools/preview.mjs` (shared) instantiates the WASM with the same `env` imports as
   `simulator/src/runtime.ts`, calls `start()`, then `update()` N times, and
   dumps the framebuffer to PNGs. A Pillow script stitches them into a GIF.
   This is how we review frames on the VM without a browser.
-- The user runs the real simulator locally: `node tools/serve-cart.mjs` plus
+- The user runs the real simulator locally: `node ../../tools/serve-cart.mjs` plus
   `npm run dev` in `sycl-badge/simulator`, or the hosted simulator at
   badgesim.microzig.tech, which also fetches from localhost:2468.
 - Hardware: copy `zig-out/firmware/snouty.uf2` over `CURRENT.UF2`.
@@ -219,7 +219,7 @@ button.
 
 Input plumbing: upstream's wasm platform never reads the simulator's button
 word, so on wasm the cart reads the u16 at address 0x04 itself (same bit
-layout as `Controls`); on hardware it reads `cart.controls`. `tools/preview.mjs
+layout as `Controls`); on hardware it reads `cart.controls`. `../../tools/preview.mjs
 --press T1-T2` holds A during those updates for headless testing.
 
 Asset: the jump study's `snouty_jump_indexed.png` has a broken palette and the

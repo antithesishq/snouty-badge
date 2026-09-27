@@ -8,7 +8,7 @@
 //   { "name": "overhead", "seed": 1, "pose": "6,13.5,6,0,90,0" | null,
 //     "calls": ["debug_set_size:16"], "frames": 1 }
 // (calls and frames optional; frames defaults to 1). For each entry it runs
-//   node tools/preview.mjs <wasm> --seed S [--call C]... [--pose P]
+//   node ../../tools/preview.mjs <wasm> --seed S [--call C]... [--pose P]
 //        --frames F --start-skip F-1 --out out/golden/<name>/
 // so only the last frame is written, and compares that PNG pixel-exactly with
 // tests/golden/<name>.png. --tolerance N allows up to N differing pixels
@@ -28,7 +28,7 @@ import { fileURLToPath } from "node:url";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), ".."); // this cart
 const REPO = path.resolve(ROOT, "../.."); // repository root, where zig build writes zig-out/
-const PREVIEW = path.join(ROOT, "tools", "preview.mjs");
+const PREVIEW = path.join(REPO, "tools", "preview.mjs");
 const POSES = path.join(ROOT, "tests", "golden", "poses.json");
 const GOLDEN_DIR = path.join(ROOT, "tests", "golden");
 const OUT_DIR = path.join(ROOT, "out", "golden");

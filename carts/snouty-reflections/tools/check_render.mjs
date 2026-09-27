@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Compare a cart frame (tools/preview.mjs) against a reference frame
+// Compare a cart frame (../../tools/preview.mjs) against a reference frame
 // (tools/reference.py) in RGB565 units.
 //
 //   node tools/check_render.mjs <preview.png> <ref.png> [--diff out.png]

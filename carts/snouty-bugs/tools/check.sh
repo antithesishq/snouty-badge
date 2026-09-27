@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Regression gate: build the cart, then run every tools/scripts/*.json through
-# tools/preview.mjs headlessly with its expectations, one line per script.
+# the shared ../../tools/preview.mjs headlessly with its expectations, one line
+# per script.
 #
 #   tools/check.sh [--no-build] [--only NAME]
 #
@@ -55,7 +56,7 @@ for f in "${scripts[@]}"; do
     mkdir -p "$out"
     rm -f "$out/frames.json"
     rc=0
-    node tools/preview.mjs "$wasm" --script "$f" --quiet --out "$out" "${args[@]}" 2>"$out/preview.log" || rc=$?
+    node ../../tools/preview.mjs "$wasm" --script "$f" --quiet --out "$out" "${args[@]}" 2>"$out/preview.log" || rc=$?
     if [ -f "$out/frames.json" ]; then
         summary="$(node -e '
             const m = require(require("path").resolve(process.argv[1]));

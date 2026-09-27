@@ -17,8 +17,9 @@ explanations and this file only summarises them.
   `main.zig` exports `start()` and `update()`.
 - `cart/build/convert_gfx.zig`, `cart/src/packed_int_array.zig` — copied from
   upstream's dvd cart; do not import across repos.
-- `tools/` — `preview.mjs` (headless wasm runner to PNGs), `serve-cart.mjs`
-  (serves the wasm on :2468 for the simulator), `make_gif.py`.
+- `tools/` — `check.sh`, `prepare_assets.py`, input scripts in `tools/scripts/`.
+  The headless runner (`preview.mjs`), `serve-cart.mjs` (serves the wasm on
+  :2468 for the simulator) and `make_gif.py` are shared, in `../../tools/`.
 - `../../sycl-badge/` — upstream badge repo, read-only SDK: a git submodule at the
   repository root and the root package's path dependency.
 
@@ -76,13 +77,13 @@ the API no longer reads. `main.zig` has `present_wasm()` and `read_controls()`
 shims for wasm builds only. Headless:
 
 ```
-node tools/preview.mjs ../../zig-out/bin/snouty-bugs.wasm --frames 600 --every 6 --out out/
-python3 tools/make_gif.py out/ preview.gif --scale 3 --ms 100
+node ../../tools/preview.mjs ../../zig-out/bin/snouty-bugs.wasm --frames 600 --every 6 --out out/
+python3 ../../tools/make_gif.py out/ preview.gif --scale 3 --ms 100
 ```
 
 `--press A-B` holds the A button over tick ranges; the game milestones extend
 this to all buttons and an input script (SPEC.md section 14). Browser:
-`node tools/serve-cart.mjs` plus `npm run dev` in `../../sycl-badge/simulator`.
+`node ../../tools/serve-cart.mjs` plus `npm run dev` in `../../sycl-badge/simulator`.
 
 ## Conventions
 

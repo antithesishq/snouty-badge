@@ -20,11 +20,31 @@ until Adrian has reviewed.
   Judgment calls to confirm: `snouty-art/` folded in too (its scripts write
   into the carts' assets); `carts/snouty-boy/roms/2048.gb` committed as the
   fallback ROM; the running cart's directory is `carts/snouty-run`.
-- M2: one shared `tools/` for the drifted per-cart copies of `preview.mjs`,
-  `serve-cart.mjs`, `make_gif.py` and `check_float.mjs`. In progress
-  (2026-09-27, asked for by Adrian together with M3).
-- M3: build carts in execute-in-place (XIP) mode as well as RAM mode, and
-  run XIP ELFs under badge-bench. In progress.
+- M2: one shared `tools/` (2026-09-27, done). The shared `preview.mjs`
+  writes byte-identical frames for all six carts (18 frames compared against
+  the old per-cart tools), and every gate passes with it: bugs and
+  snoutenstein `check.sh`, maze `check_golden.mjs`, snoutenstein
+  determinism, `zig build check-float`.
+- M3: XIP builds done for every cart (2026-09-27); badge-bench support for
+  XIP ELFs pending, because another session is editing badge-bench's runner
+  for the calibration cart right now and asked that the flash mapping go in
+  after their push. Numbers below. Hardware questions open.
+
+  | cart | RAM uf2 blocks | XIP uf2 blocks | XIP flash use | .bss (RAM) |
+  |---|---|---|---|---|
+  | snouty | 601 | 599 | 153,344 | 48 |
+  | snouty-bugs | 294 | 224 | 57,344 | 17,560 |
+  | snoutenstein | 421 | 354 | 90,624 | 16,872 |
+  | snouty-reflections | 383 | 382 | 97,792 | 40 |
+  | snouty-boy | 968 | 322 | 82,432 | 165,304 |
+  | snouty-maze | 481 | 249 | 63,744 | 59,296 |
+
+  A UF2 block carries 256 bytes; the RAM image also ships its zero-filled
+  `.bss`, which is why snouty-boy's RAM cart is three times the XIP one on
+  the cart store. Every XIP image has its vector table at the flash origin
+  (SP `0x20080000`, reset in flash with the Thumb bit) and every block inside
+  the flash window (`tools/uf2_info.py`). Code and data sizes per mode are
+  within a few hundred bytes of each other, as expected.
 
 ## Layout after M1
 
@@ -180,7 +200,8 @@ Design, without patching the submodule:
   `--flash-cycles N` knob adds N cycles per instruction fetched from flash
   (default 0, to be calibrated against the OS overlay's XIP hit rate on
   hardware). Frame boundaries still come from the `_start` loop.
-- Verification without hardware: build snouty-boy in both modes;
+- Verification without hardware (done except the badge-bench run, see
+  Status): build snouty-boy in both modes;
   `readelf -l` shows text at the flash origin and `.data` with a RAM address
   and a flash load address; `tools/uf2_info.py` shows every block inside
   the flash window (what the loader requires); the XIP ELF runs under

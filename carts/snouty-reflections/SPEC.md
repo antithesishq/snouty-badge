@@ -244,7 +244,7 @@ cart/src/
 tools/
   gen_shore.py    shore texture from assets/ (Snouty + text + trees)
   gen_bluenoise.py void-and-cluster table -> Zig source
-  preview.mjs, make_gif.py, serve-cart.mjs   copied from snouty-bugs
+  (preview.mjs, make_gif.py, serve-cart.mjs: shared, in ../../tools/)
 ```
 
 `Vec3` is `@Vector(3, f32)` so Zig emits scalar VFP code without struct

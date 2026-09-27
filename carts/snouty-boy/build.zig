@@ -1,7 +1,7 @@
 const std = @import("std");
 const Build = std.Build;
 
-const sycl_badge = @import("sycl_badge");
+const os_cart = @import("../../build/os_cart.zig");
 // A module of the root build.zig, not a package root. If Zig says "import of
 // file outside module path" here, `zig build` was run in this directory: run
 // `zig build -Dcart=snouty-boy` from the repository root instead.
@@ -28,7 +28,8 @@ pub fn add(b: *Build, sycl_badge_dep: *Build.Dependency, opts: common.Options) v
     }
     const cart_optimize = opts.cart_optimize;
 
-    sycl_badge.add_os_cart(b, sycl_badge_dep, .{
+    os_cart.add(b, sycl_badge_dep, .{
+        .mode = opts.cart_mode,
         .name = "snouty-boy",
         .optimize = cart_optimize,
         .root_source_file = b.path(dir ++ "cart/src/main.zig"),

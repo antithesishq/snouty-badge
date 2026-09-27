@@ -25,9 +25,10 @@ CLAUDE.md files have the long explanations, this one summarises.
   `level_parse.parse_level`.
 - `cart/build/convert_gfx.zig`, `cart/src/packed_int_array.zig` — upstream copies.
 - `assets/gen/*.png` — build inputs (committed); `tools/prepare_assets.py` writes them.
-- `tools/` — `preview.mjs` (headless wasm -> PNG + export assertions),
-  `check_determinism.mjs`, `check_level.py`, `gen_levels.sh`, `serve-cart.mjs`,
-  `make_gif.py`, `import_wolf.py`, input scripts in `tools/scripts/`;
+- `tools/` — `check_determinism.mjs`, `check_level.py`, `gen_levels.sh`,
+  `import_wolf.py`, input scripts in `tools/scripts/` (the headless runner
+  `preview.mjs`, wasm -> PNG + export assertions, and `serve-cart.mjs`,
+  `make_gif.py` are shared, in `../../tools/`);
   `tools/check.sh` runs everything. Performance: `../../badge-bench/bench.sh
   ../../zig-out/firmware/snoutenstein.elf --script tools/scripts/X.json --symbols`
   (modelled floor; tune knobs with headroom, see PLAN.md status lines).
@@ -81,12 +82,12 @@ calls; there is no per-cart `build.zig.zon`, and the one
 at the repository root. Zig fetches packages into `zig-pkg/` there.
 
 ```
-node tools/preview.mjs ../../zig-out/bin/snoutenstein.wasm --frames 600 --every 6 --out out/ \
+node ../../tools/preview.mjs ../../zig-out/bin/snoutenstein.wasm --frames 600 --every 6 --out out/ \
   --script tools/scripts/m1_walk.json --dump-exports debug_mode,debug_render_us --expect "debug_mode == 1"
-python3 tools/make_gif.py out/ preview.gif --scale 3 --ms 100
+python3 ../../tools/make_gif.py out/ preview.gif --scale 3 --ms 100
 ```
 
-Browser: `node tools/serve-cart.mjs` plus `npm run dev` in
+Browser: `node ../../tools/serve-cart.mjs` plus `npm run dev` in
 `../../sycl-badge/simulator` (docs/RUNNING.md). Simulator quirks (framebuffer
 at 0x20, buttons at 0x04, red/blue swap) are handled by `present_wasm` and
 `read_controls` in `main.zig`.

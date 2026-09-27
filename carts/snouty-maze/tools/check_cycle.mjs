@@ -1,11 +1,12 @@
 #!/usr/bin/env node
 // Screensaver-loop check (M2, extended in M3): runs the cart headless through
-// preview.mjs and asserts on the debug exports after the last update.
+// the shared ../../tools/preview.mjs and asserts on the debug exports after
+// the last update.
 //
 //   node tools/check_cycle.mjs [--wasm ../../zig-out/bin/snouty-maze.wasm] [--only A,B,C,D,E,F]
 //                              [--frames N] [--seed S]
 //
-// Runs (each one `node tools/preview.mjs <wasm> --quiet --seed S --frames F
+// Runs (each one `node ../../tools/preview.mjs <wasm> --quiet --seed S --frames F
 // [--call ...] [--press ...] --dump-exports ... --expect ...`):
 //   A  unattended: no input, F = --frames (default 9000, 2.5 minutes of
 //      60 Hz ticks); expects debug_cycles >= 1 (walked a maze to the finish,
@@ -42,7 +43,7 @@ import { fileURLToPath } from "node:url";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), ".."); // this cart
 const REPO = path.resolve(ROOT, "../.."); // repository root, where zig build writes zig-out/
-const PREVIEW = path.join(ROOT, "tools", "preview.mjs");
+const PREVIEW = path.join(REPO, "tools", "preview.mjs");
 const STATE_NAMES = ["WALK", "TURN", "PAUSE", "RISE", "OVERHEAD", "DESCEND", "TELEPORT", "FLY"];
 const DUMP = ["debug_state", "debug_state_tick", "debug_cycles", "debug_cell_x", "debug_cell_z", "debug_heading"];
 
