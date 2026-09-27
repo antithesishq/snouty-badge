@@ -105,3 +105,9 @@ measurement; when it arrives, add a `--calibrate` factor.
 ## Status
 
 - 2026-09-27: plan written; build starting.
+- 2026-09-27: built. Validation 1 passes (tests/test_reflections.sh: all 24
+  reference frames exact; update #0 is 7 insns / 10 cycles cheaper because
+  its present() has no frame in flight, explained in README). Validation 2
+  and 3 recorded in README ("Validation", "First look at the other carts
+  (unreviewed)"); snouty-maze reads past its stack top in draw_sphere (a
+  cart finding, not a tool fault). Awaiting Adrian's review.

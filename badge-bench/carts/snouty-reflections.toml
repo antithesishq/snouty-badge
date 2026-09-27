@@ -1,0 +1,4 @@
+# snouty-reflections: ray-traced lake, locked to 20 fps by its own vsync.
+budget_ms = 50.0
+frames = 576            # one full sun orbit
+note = "cart default dither (bayer); validation uses --poke dither.mode=1 (none), see tests/"

@@ -1,0 +1,4 @@
+# snouty-maze: 3D Maze screensaver clone, autopilot, 60 fps.
+budget_ms = 16.7
+frames = 600
+script = "tools/scripts/m3_tour.json"   # only presses A at update 700: a no-input run at 600 frames

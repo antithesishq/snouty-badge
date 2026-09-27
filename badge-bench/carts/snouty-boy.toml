@@ -1,0 +1,6 @@
+# snouty-boy: Game Boy emulator with an embedded ROM (2048-gb at M4), 60 fps.
+budget_ms = 16.7
+frames = 600
+# START leaves the Snouty Boy splash, START again starts 2048, then a few moves.
+press = ["START:30-31", "START:120-121", "RIGHT:200-203", "DOWN:260-263",
+         "LEFT:320-323", "UP:380-383", "RIGHT:440-443", "DOWN:500-503"]
