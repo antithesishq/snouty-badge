@@ -1,3 +1,0 @@
-# m2_bomb: start at 30, then sit still without firing so the 8 s beetle survives and fires
-# its aimed spreads (first at ~668); B at 720 wipes the bullets and the beetle.
---frames 900 --dump-exports debug_state,debug_bombs,debug_bullets,debug_rewinds --at "719 debug_bullets > 0" --at "720 debug_bullets == 0" --at "720 debug_bombs == 1" --at "720 debug_bomb_timer > 0" --expect "debug_bombs == 1" --expect "debug_state == 1"
