@@ -2,7 +2,7 @@
 // Screensaver-loop check (M2, extended in M3): runs the cart headless through
 // preview.mjs and asserts on the debug exports after the last update.
 //
-//   node tools/check_cycle.mjs [--wasm zig-out/bin/snouty-maze.wasm] [--only A,B,C,D,E,F]
+//   node tools/check_cycle.mjs [--wasm ../../zig-out/bin/snouty-maze.wasm] [--only A,B,C,D,E,F]
 //                              [--frames N] [--seed S]
 //
 // Runs (each one `node tools/preview.mjs <wasm> --quiet --seed S --frames F
@@ -40,7 +40,8 @@ import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
-const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), ".."); // this cart
+const REPO = path.resolve(ROOT, "../.."); // repository root, where zig build writes zig-out/
 const PREVIEW = path.join(ROOT, "tools", "preview.mjs");
 const STATE_NAMES = ["WALK", "TURN", "PAUSE", "RISE", "OVERHEAD", "DESCEND", "TELEPORT", "FLY"];
 const DUMP = ["debug_state", "debug_state_tick", "debug_cycles", "debug_cell_x", "debug_cell_z", "debug_heading"];
@@ -51,7 +52,7 @@ function usage(msg) {
     process.exit(2);
 }
 
-const opts = { wasm: path.join(ROOT, "zig-out", "bin", "snouty-maze.wasm"), only: null, frames: 9000, seed: 1 };
+const opts = { wasm: path.join(REPO, "zig-out", "bin", "snouty-maze.wasm"), only: null, frames: 9000, seed: 1 };
 const argv = process.argv.slice(2);
 for (let i = 0; i < argv.length; i++) {
     const a = argv[i];

@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Soft-float check for the cart ELF (ARM, ELF32 little-endian).
 //
-//   node tools/check_float.mjs zig-out/firmware/snouty-reflections.elf [--quiet]
+//   node tools/check_float.mjs ../../zig-out/firmware/snouty-reflections.elf [--quiet]
 //
 // The cart must use the Cortex-M33 single-precision FPU for all float math.
 // Any f64 operation, or an f32 operation the FPU cannot do (f32 <-> i64/u64

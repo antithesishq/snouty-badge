@@ -1,18 +1,22 @@
 #!/usr/bin/env bash
-# Full verification (PLAN.md "Verification for M1/M2"). Run from the repo root.
+# Full verification (PLAN.md "Verification for M1/M2"). Runs from this cart's
+# directory whatever the caller's cwd; zig build runs at the repository root
+# (two levels up), which is where zig-out/ lives.
 set -euo pipefail
 export PATH="$HOME/.local/bin:$PATH"
+cd "$(dirname "$0")/.."
+repo="../.."
 # Levels: every level solvable, and the generated data file matching the .txt sources.
 python3 tools/check_level.py cart/src/levels/build_farm.txt cart/src/levels/staging.txt cart/src/levels/production.txt cart/src/levels/test.txt cart/src/levels/wolf_e1m1.txt
 tools/gen_levels.sh
 git diff --exit-code -- cart/src/levels/gen.zig || { echo "check: cart/src/levels/gen.zig is stale; commit the regenerated file"; exit 1; }
-zig build
-size -A zig-out/firmware/snoutenstein.elf | grep -E "^\.text|^\.data|^\.bss"
+(cd "$repo" && zig build -Dcart=snoutenstein)
+size -A "$repo/zig-out/firmware/snoutenstein.elf" | grep -E "^\.text|^\.data|^\.bss"
 zig test cart/src/sim.zig
 zig test cart/src/levels.zig
 zig test cart/src/level_parse.zig
 zig test cart/src/rewind.zig
-W=zig-out/bin/snoutenstein.wasm
+W="$repo/zig-out/bin/snoutenstein.wasm"
 # M1: walk the long corridor, doors, pause.
 node tools/preview.mjs $W --frames 2160 --every 8 --out out/walk \
   --script tools/scripts/m1_walk.json \

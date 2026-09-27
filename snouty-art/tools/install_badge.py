@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Copy rendered packs into ../snouty-badge/assets/ and print what the cart needs.
+"""Copy rendered packs into ../carts/snouty-run/assets/ and print what the cart needs.
 
     python3 tools/install_badge.py [--style NAME] [--dry-run]   (default style: study05)
 
-Copies out/run -> ../snouty-badge/assets/Snouty_Art_Run and out/jump ->
+Copies out/run -> ../carts/snouty-run/assets/Snouty_Art_Run and out/jump ->
 .../Snouty_Art_Jump, then prints the feet-row tables for cart/src/main.zig and
 the source paths to point tools/prepare_assets.py at. Nothing in snouty-badge is
 edited automatically; the swap is a reviewed change there.
@@ -14,7 +14,7 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-BADGE = ROOT.parent / "snouty-badge"
+BADGE = ROOT.parent / "carts" / "snouty-run"
 PACKS = {"run": "Snouty_Art_Run", "jump": "Snouty_Art_Jump"}
 
 def main(dry: bool, style: str):

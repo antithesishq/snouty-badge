@@ -17,7 +17,7 @@ import path from "node:path";
 import crypto from "node:crypto";
 import { fileURLToPath } from "node:url";
 
-const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
 let cartPath = path.join(repoRoot, "zig-out/bin/snouty.wasm");
 let port = 2468;
 const args = process.argv.slice(2);

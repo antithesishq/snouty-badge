@@ -6,7 +6,7 @@
 # usage: tools/emu/run.sh [--sweep] [--real] [--listing] [--mode none|bayer]
 #   (no flags)  bench ELF frames 0 and 300 + reference check + tables
 #   --sweep     also frames 0..575 step 25 (full orbit): min/max/worst frame
-#   --real      also the real cart ELF (run `zig build` first)
+#   --real      also the real cart ELF (run `zig build` at the repo root first)
 #   --listing   annotated capstone listings in tools/emu/out/
 #
 # First run creates tools/emu/.venv and installs requirements.txt into it.

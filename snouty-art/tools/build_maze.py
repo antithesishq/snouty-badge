@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build the sheets ../snouty-maze takes from this repo into out/maze/.
+"""Build the sheets ../carts/snouty-maze takes from this directory into out/maze/.
 
     python3 tools/build_maze.py [--style study05]
 
@@ -7,8 +7,8 @@ Writes out/maze/snouty.png (128x32, 4 frames: 0,1 face left, 2,3 face
 right, run frames 0 and 8 downscaled from 96 px on the style palette),
 logo.png (Zig mark), iris.png (Iris mark), start.png (the Windows 95 Start
 button with the Iris mark in place of the flag), maze_contact.png (4x).
-Then in snouty-maze:
-    python3 tools/prepare_assets.py --from-w95 assets/src/w95 --art ../snouty-art/out/maze
+Then in carts/snouty-maze:
+    python3 tools/prepare_assets.py --from-w95 assets/src/w95 --art ../../snouty-art/out/maze
 """
 from __future__ import annotations
 
@@ -26,7 +26,7 @@ from snoutyart.downscale import (KEY, downscale, fit, hex_palette, key_white, lo
                                  rgb565_snap, snap, to_cell)
 
 OUT = ROOT / "out" / "maze"
-MAZE = ROOT.parent / "snouty-maze"
+MAZE = ROOT.parent / "carts" / "snouty-maze"
 CELL, BOX = 32, 30
 IRIS = "#ff9f91"          # the mark's coral, measured on ref/iris-logo-ref.png
 ZIG = "#f7a41d"           # ziglang/logo fill

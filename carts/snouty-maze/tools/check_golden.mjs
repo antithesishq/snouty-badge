@@ -2,7 +2,7 @@
 // Golden-image regression for the renderer.
 //
 //   node tools/check_golden.mjs [--update] [--tolerance N] [--only NAME[,NAME...]]
-//                               [--wasm zig-out/bin/snouty-maze.wasm]
+//                               [--wasm ../../zig-out/bin/snouty-maze.wasm]
 //
 // Reads tests/golden/poses.json, an array of
 //   { "name": "overhead", "seed": 1, "pose": "6,13.5,6,0,90,0" | null,
@@ -26,7 +26,8 @@ import zlib from "node:zlib";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
-const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), ".."); // this cart
+const REPO = path.resolve(ROOT, "../.."); // repository root, where zig build writes zig-out/
 const PREVIEW = path.join(ROOT, "tools", "preview.mjs");
 const POSES = path.join(ROOT, "tests", "golden", "poses.json");
 const GOLDEN_DIR = path.join(ROOT, "tests", "golden");
@@ -38,7 +39,7 @@ function usage(msg) {
     process.exit(2);
 }
 
-const opts = { update: false, tolerance: 0, only: null, wasm: path.join(ROOT, "zig-out", "bin", "snouty-maze.wasm") };
+const opts = { update: false, tolerance: 0, only: null, wasm: path.join(REPO, "zig-out", "bin", "snouty-maze.wasm") };
 const argv = process.argv.slice(2);
 for (let i = 0; i < argv.length; i++) {
     const a = argv[i];

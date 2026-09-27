@@ -8,7 +8,8 @@
 // receives the text message "reload" it re-fetches the cart. It sends "spam"
 // every 100 ms as a keepalive, which we read and ignore.
 //
-// Default cart: zig-out/bin/snouty-maze.wasm relative to the repo root. The file is
+// Default cart: zig-out/bin/snouty-maze.wasm in the repository root (two levels
+// above this cart). The file is
 // polled every 500 ms; when its mtime or size changes, all clients get "reload".
 
 import http from "node:http";
@@ -17,7 +18,7 @@ import path from "node:path";
 import crypto from "node:crypto";
 import { fileURLToPath } from "node:url";
 
-const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
 let cartPath = path.join(repoRoot, "zig-out/bin/snouty-maze.wasm");
 let port = 2468;
 const args = process.argv.slice(2);

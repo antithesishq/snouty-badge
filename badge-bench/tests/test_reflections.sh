@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 # Validation 1 (PLAN.md section 5): badge-bench must reproduce
-# snouty-reflections/tools/emu's real-ELF numbers for the m1.1 cart to the
+# carts/snouty-reflections/tools/emu's real-ELF numbers for the m1.1 cart to the
 # instruction and the cycle.
 #
 #   tests/test_reflections.sh [path/to/snouty-reflections.elf]
 #
-# Default ELF: ../snouty-reflections/zig-out/firmware/snouty-reflections.elf
-# next to this repo (run `zig build` there at tag m1.1 first).
+# Default ELF: ../zig-out/firmware/snouty-reflections.elf (the repository root's build output;
+# run `zig build -Dcart=snouty-reflections` at the root at tag snouty-reflections/m1.1 first).
 #
 # Its tool (tools/emu/real.py --frames 0 25 ... 575 --mode none) runs each
 # listed frame as its own window by poking main.frame and dither.mode=1
@@ -21,11 +21,11 @@
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-ELF="${1:-$HERE/../snouty-reflections/zig-out/firmware/snouty-reflections.elf}"
+ELF="${1:-$HERE/../zig-out/firmware/snouty-reflections.elf}"
 OUT="$HERE/out/tests/reflections"
 M11_SHA=7c76be7bd522f09c800aace3120c1ea89a8e269cfc1442b411b1f87352085cce
 
-[ -f "$ELF" ] || { echo "test_reflections: no ELF at $ELF (zig build in snouty-reflections at m1.1)" >&2; exit 1; }
+[ -f "$ELF" ] || { echo "test_reflections: no ELF at $ELF (zig build -Dcart=snouty-reflections at tag snouty-reflections/m1.1)" >&2; exit 1; }
 mkdir -p "$OUT/sweep" "$OUT/frame0"
 sha=$(sha256sum "$ELF" | cut -d' ' -f1)
 if [ "$sha" != "$M11_SHA" ]; then

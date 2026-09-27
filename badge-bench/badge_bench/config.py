@@ -3,7 +3,8 @@
 Keys (all optional):
   budget_ms = 16.7            frame budget for the report
   frames    = 600             updates to run
-  script    = "tools/scripts/m1_play.json"   relative to the cart repo root
+  script    = "carts/snouty-bugs/tools/scripts/m1_play.json"   relative to the repository root
+              (the directory above the ELF's zig-out/, see cart_root)
   pokes     = ["dither.mode=1"]
   press     = ["A:30-31"]
   note      = "free text shown in the report header"

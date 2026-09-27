@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-"""Run the real cart ELF (zig-out/firmware/snouty-reflections.elf) under
+"""Run the real cart ELF (<repository root>/zig-out/firmware/snouty-reflections.elf) under
 unicorn from its _start, faking just enough of the badge OS: the SIO FIFO
 (time sync and FRAMEBUFFER_DONE replies), TIMER0 and DWT_CYCCNT. Each window
 between two present() messages is one full update() (input, dither, render,
 present). Before each window main.frame and dither.mode are poked, so the
 frame list can be arbitrary. The first window (start-up) is discarded.
 
-usage: .venv/bin/python real.py [--elf zig-out/firmware/snouty-reflections.elf]
+usage: .venv/bin/python real.py [--elf ../../../../zig-out/firmware/snouty-reflections.elf]
                                 [--frames 0 300] [--mode none|bayer] [--out out/]
 
 Writes real_FFFF.png, real_addr_FFFF.json, real_hist_FFFF.json and
@@ -23,7 +23,8 @@ from unicorn.arm_const import UC_ARM_REG_LR, UC_ARM_REG_SP
 import model as M
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-REPO = os.path.dirname(os.path.dirname(HERE))
+REPO = os.path.dirname(os.path.dirname(HERE))  # this cart, carts/snouty-reflections
+MONO = os.path.dirname(os.path.dirname(REPO))  # repository root, where zig build writes zig-out/
 # The OS's two framebuffers (sycl-badge src/os/cart/platform_cart_ram.zig), 0xA000 each.
 FB0, FB1, FB_SIZE = 0x20020000, 0x2002A000, 0xA000
 SIO, TIMER0, DWT = 0xD0000000, 0x400b0000, 0xE0001000
@@ -141,7 +142,7 @@ def run(elf_path, frames, out, mode='none', quiet=False):
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument('--elf', default=os.path.join(REPO, 'zig-out', 'firmware', 'snouty-reflections.elf'))
+    ap.add_argument('--elf', default=os.path.join(MONO, 'zig-out', 'firmware', 'snouty-reflections.elf'))
     ap.add_argument('--frames', type=int, nargs='+', default=[0, 300])
     ap.add_argument('--mode', choices=['none', 'bayer'], default='none')
     ap.add_argument('--out', default=os.path.join(HERE, 'out'))

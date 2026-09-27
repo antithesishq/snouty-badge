@@ -5,8 +5,9 @@ which builds build/bench.elf and bootstraps the venv first.
   default   bench ELF frames 0 and 300, reference check, summary table,
             per-class pixel costs
   --sweep   also frames 0..575 step 25 (the whole orbit), min/max/worst
-  --real    also the real cart ELF (zig-out/firmware/snouty-reflections.elf,
-            needs `zig build`), same frames, same checks
+  --real    also the real cart ELF (zig-out/firmware/snouty-reflections.elf
+            at the repository root, needs `zig build` there), same frames,
+            same checks
   --listing annotated capstone listings and codegen categories of frame 0
 
 Outputs go to tools/emu/out/ (sweep frames in out/sweep/); the printed
@@ -30,9 +31,10 @@ import model as M
 import real
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-REPO = os.path.dirname(os.path.dirname(HERE))
+REPO = os.path.dirname(os.path.dirname(HERE))  # this cart, carts/snouty-reflections
+MONO = os.path.dirname(os.path.dirname(REPO))  # repository root, where zig build writes zig-out/
 BENCH_ELF = os.path.join(HERE, 'build', 'bench.elf')
-REAL_ELF = os.path.join(REPO, 'zig-out', 'firmware', 'snouty-reflections.elf')
+REAL_ELF = os.path.join(MONO, 'zig-out', 'firmware', 'snouty-reflections.elf')
 CHECK_FRAMES = [0, 300]
 SWEEP_FRAMES = list(range(0, 600, 25))
 

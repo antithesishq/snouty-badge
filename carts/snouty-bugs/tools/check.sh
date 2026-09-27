@@ -9,10 +9,12 @@
 # a command line; lines starting with # are comments, the other lines are
 # joined. A script without a sidecar runs with --frames 600. Output goes to
 # out/check/NAME/ (frames.json, preview.log). Exit status is non-zero if any
-# script fails. CART_WASM overrides the cart (default zig-out/bin/snouty-bugs.wasm).
+# script fails. CART_WASM overrides the cart (default ../../zig-out/bin/snouty-bugs.wasm,
+# the repository root's build output).
 set -euo pipefail
 export PATH="$HOME/.local/bin:$PATH"
-cd "$(dirname "$0")/.."
+cd "$(dirname "$0")/.."   # this cart's directory
+repo="../.."               # repository root: zig build and zig-out/ live there
 
 build=1
 only=""
@@ -26,8 +28,8 @@ while [ $# -gt 0 ]; do
     shift
 done
 
-wasm="${CART_WASM:-zig-out/bin/snouty-bugs.wasm}"
-if [ "$build" = 1 ]; then zig build; fi
+wasm="${CART_WASM:-$repo/zig-out/bin/snouty-bugs.wasm}"
+if [ "$build" = 1 ]; then (cd "$repo" && zig build -Dcart=snouty-bugs); fi
 [ -f "$wasm" ] || { echo "check: $wasm not found" >&2; exit 1; }
 
 scripts=()

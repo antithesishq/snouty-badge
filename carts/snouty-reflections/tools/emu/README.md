@@ -8,11 +8,14 @@ badge's debug overlay (`zig build -Ddebug_overlay=true`) is the only real
 number. Use the emulator to rank and compare changes, and hardware to
 confirm them.
 
+Run from the cart directory (`carts/snouty-reflections/`); the real cart ELF
+is built at the repository root (`../..`).
+
 ```sh
 export PATH="$HOME/.local/bin:$PATH"   # example: wherever zig lives
 tools/emu/run.sh                       # bench ELF, frames 0 and 300 (about 10 s)
 tools/emu/run.sh --sweep               # plus the whole orbit, frames 0..575 step 25
-zig build && tools/emu/run.sh --real   # plus the real cart ELF
+(cd ../.. && zig build -Dcart=snouty-reflections) && tools/emu/run.sh --real   # plus the real cart ELF
 tools/emu/run.sh --real --sweep --listing   # everything (about 1 min)
 ```
 
@@ -40,7 +43,7 @@ Two binaries, both built from the current `cart/src`:
   module that needs the OS, add it to `EXCLUDE` in `build.sh` or stub it.
   `EMU_CART_SRC=/other/cart/src tools/emu/run.sh` builds another tree
   (for example an older tag from `git archive`) for an A/B.
-- **Real ELF** (`zig-out/firmware/snouty-reflections.elf`, `--real`). The
+- **Real ELF** (`../../zig-out/firmware/snouty-reflections.elf`, `--real`). The
   exact firmware you flash, started from its `_start`. `real.py` fakes just
   enough of the OS: the SIO FIFO (time sync and `FRAMEBUFFER_DONE` replies),
   TIMER0 and DWT_CYCCNT. Each window between two present() messages is one
@@ -48,7 +51,7 @@ Two binaries, both built from the current `cart/src`:
   effects the bench cannot see, such as the render being inlined into
   `update`. `main.frame` and `dither.mode` are poked before each window.
   The ELF is snapshotted to `out/real.elf` first, so a rebuild during a run
-  does not mix binaries. Run `zig build` first.
+  does not mix binaries. Run `zig build` at the repository root first.
 
 Both render in dither mode `none` by default (`--mode bayer` for the
 default cart mode) and every frame 0 and 300 image goes through
@@ -132,7 +135,7 @@ Edit `cart/src`, run `tools/emu/run.sh` (it rebuilds the bench ELF every
 time), compare the frame 0 cycles with the previous `out/summary.txt`, and
 make sure both checks say PASS. Run `--sweep` before calling a change done:
 the worst frame of the orbit (550 at m1) is what has to fit in 50 ms. Run
-`zig build && tools/emu/run.sh --real` when the change could affect how
+`(cd ../.. && zig build -Dcart=snouty-reflections) && tools/emu/run.sh --real` when the change could affect how
 `update()` is compiled (inlining, `noinline`, globals).
 
 ## Outputs (`tools/emu/out/`, gitignored)

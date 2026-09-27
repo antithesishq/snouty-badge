@@ -5,7 +5,7 @@
       Procedurally draws the eight sheets of SPEC.md section 10 as
       Genesis-style placeholder art, validates them and writes assets/gen/.
 
-  python3 tools/prepare_assets.py --from-w95 assets/src/w95 [--art ../snouty-art/out/maze]
+  python3 tools/prepare_assets.py --from-w95 assets/src/w95 [--art ../../snouty-art/out/maze]
       Downsamples the textures extracted from the original screensaver
       (the ibid-11962 WebGL recreation, copied into assets/src/w95/) to the
       manifest sizes, quantises them to the 4-bit palettes and writes
