@@ -1,0 +1,9 @@
+# m5_graze: the m2_play sweep (without its two holds) plus B held for updates 1964..1983,
+# so the bar is spent before the ship meets bullets and a graze can show up in it (a full
+# bar would cap the grant). 1963: game tick 1933, fuel 180. 1983, the last held frame: 20
+# frames = 40 ticks, game tick 1893, fuel 140. 1984: PLAYING, no tick. The shifted sweep
+# then brushes a bullet at update 2121 (game tick 2030) without being hit: grazes 0 -> 1 and
+# fuel 153 -> 156 on that tick (the graze's 2 plus a refill). Refill alone cannot get there:
+# 137 live ticks since the release (1893 -> 2030) give at most 140 + (9 + 137) / 10 = 154
+# (9 = the most the refill counter can carry in), and the fuel is 156. No hit, rewinds 3.
+--frames 2200 --dump-exports debug_state,debug_rewinds,debug_fuel,debug_grazes --at "1963 debug_state == 1" --at "1963 debug_game_tick == 1933" --at "1963 debug_fuel == 180" --at "1964 debug_state == 5" --at "1983 debug_game_tick == 1893" --at "1983 debug_fuel == 140" --at "1984 debug_state == 1" --at "2000 debug_history_check == 0" --at "2120 debug_grazes == 0" --at "2120 debug_fuel == 153" --at "2121 debug_game_tick == 2030" --at "2121 debug_grazes == 1" --at "2121 debug_fuel == 156" --expect "debug_state == 1" --expect "debug_rewinds == 3" --expect "debug_grazes == 1"

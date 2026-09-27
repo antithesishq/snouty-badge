@@ -1,0 +1,11 @@
+# m5_manual: m2_hit's input (A at 30, then idle) plus B held for updates 700..719, before
+# the 8 s beetle's spread would hit at 748. 699: PLAYING, game tick 669, fuel 180. The press
+# frame 700 is already MANUAL (state 5) and has stepped back once: game tick 667, fuel 178,
+# manual frame 1. 719, the last held frame: manual frame 20, game tick 629 (40 lower, 2 per
+# frame), fuel 140. 720, the release: PLAYING again, no tick simulated (629); 721 is live
+# (630). The world is a restored history state during the hold and a checkpoint follows the
+# resume, so the identity check is 0 throughout. The idle ship then meets the spread again:
+# hit at 809 (game tick 718 as in m2_hit, 60 updates later: 20 frames of hold + 40 ticks
+# re-lived), rewinds 3 -> 2, target 598, resume at 889 with game tick 598. The normal-mode
+# auto rewind is free: fuel stays 151 through it (140 + 9 refills + one graze of 2).
+--frames 1000 --dump-exports debug_state,debug_game_tick,debug_fuel,debug_rewinds --at "699 debug_state == 1" --at "699 debug_game_tick == 669" --at "699 debug_fuel == 180" --at "700 debug_state == 5" --at "700 debug_game_tick == 667" --at "700 debug_fuel == 178" --at "700 debug_manual_frame == 1" --at "710 debug_history_check == 0" --at "719 debug_state == 5" --at "719 debug_manual_frame == 20" --at "719 debug_game_tick == 629" --at "719 debug_fuel == 140" --at "720 debug_state == 1" --at "720 debug_game_tick == 629" --at "720 debug_fuel == 140" --at "720 debug_history_check == 0" --at "721 debug_state == 1" --at "721 debug_game_tick == 630" --at "730 debug_history_check == 0" --at "808 debug_state == 1" --at "808 debug_fuel == 151" --at "809 debug_state == 4" --at "809 debug_game_tick == 718" --at "809 debug_rewind_target == 598" --at "809 debug_rewinds == 2" --at "888 debug_state == 4" --at "889 debug_state == 1" --at "889 debug_game_tick == 598" --at "889 debug_fuel == 151" --expect "debug_state == 1"
