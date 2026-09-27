@@ -586,3 +586,7 @@ brief so the real sheets drop in without code changes.
   bomb is dropped for a hold-B rewind paid from a fuel bar (5.2) and a
   hardcore mode (5.3). Milestones renumbered: M5 Rewind bar, M6 Attract,
   M7 Polish.
+- 2026-09-27: M5 built and tagged `m5`: the bomb is gone, hold-B rewind on
+  the fuel bar (5.2), hardcore mode (5.3), fuel HUD, A/B title
+  (`docs/preview_m5.gif`). See PLAN.md.
+

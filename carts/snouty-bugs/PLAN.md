@@ -968,3 +968,19 @@ ticks per frame), the refill rate, the hardcore floor.
   slowly refilling fuel bar, plus a hardcore mode with no lives where the
   auto rewind spends fuel and a near-empty bar is fatal (floor 45, no
   consolation refill). M5 planned above; attract mode becomes M6, polish M7.
+- 2026-09-27: M5 done and tagged `m5`. Fourteen scripts green (`m2_bomb`
+  and `m3_bomb_boss` gone; `m5_manual`, `m5_empty`, `m5_hardcore`,
+  `m5_graze` added; `m2_play`/`m4_identity` now survive the loop with two
+  short B holds instead of the bombs). `@sizeOf(World)` 4236; ELF text
+  52.6 KB, data 4.3 KB, bss 17.6 KB. Identity check 0 on every hold frame
+  and every playback frame of three sweeps. Choices beyond the contract:
+  the rewind-or-die decision is made at collision time with the fuel the
+  hit meets (before that tick's refill); the refill counter keeps running
+  while full and across a hold, so fuel can tick up on the first live tick
+  after a release; the scanline dim covers the HUD row too, so the bar is
+  visible but dimmed during a hold (SPEC 5.2 says "stays visible"; check
+  by eye). `m5_hardcore`'s second rewind is 72, not "about 80": the graze
+  rewound away does not pay again. Needs Adrian: hold-B feel at 2 ticks per
+  frame, the refill rate, the floor, and hardcore difficulty. Next: M6
+  attract mode (autopilot drives hold-B instead of a bomb).
+
