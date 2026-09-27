@@ -63,8 +63,10 @@ pub inline fn smoothstep(e0: f32, e1: f32, x: f32) f32 {
 
 /// Schlick's Fresnel approximation. `cos_theta` is the cosine between the
 /// view direction and the normal, `f0` the reflectance at normal incidence.
+/// `cos_theta` must be in [0, 1] (up to rounding), so 1 - cos_theta needs no
+/// clamp.
 pub inline fn schlick(cos_theta: f32, f0: f32) f32 {
-    const m = clamp01(1.0 - cos_theta);
+    const m = 1.0 - cos_theta;
     const m2 = m * m;
     return f0 + (1.0 - f0) * m2 * m2 * m;
 }
@@ -74,26 +76,44 @@ pub inline fn schlick(cos_theta: f32, f0: f32) f32 {
 // fract, not a modulo by pi.
 
 pub const sin_table_len = 1024;
-pub const sin_table: [sin_table_len]f32 = blk: {
+
+/// Paired sine table: entry i is { sin(i/N turns), sin((i+1)/N) - sin(i/N) },
+/// so an interpolated lookup is one 8-byte load and one multiply-add.
+/// 8 KB. Built in f64; the delta is rounded once.
+pub const sin_table: [sin_table_len][2]f32 = blk: {
     @setEvalBranchQuota(20000);
-    var t: [sin_table_len]f32 = undefined;
+    var t: [sin_table_len][2]f32 = undefined;
     for (0..sin_table_len) |i| {
-        const a: f64 = @as(f64, @floatFromInt(i)) * (2.0 * std.math.pi / @as(f64, sin_table_len));
-        t[i] = @floatCast(@sin(a));
+        const step = 2.0 * std.math.pi / @as(f64, sin_table_len);
+        const a: f64 = @sin(@as(f64, @floatFromInt(i)) * step);
+        const b: f64 = @sin(@as(f64, @floatFromInt(i + 1)) * step);
+        const a32: f32 = @floatCast(a);
+        t[i] = .{ a32, @floatCast(b - @as(f64, a32)) };
     }
     break :blk t;
 };
 
-/// sin(turns * 2*pi) with linear interpolation. Valid for any finite input.
+/// sin(turns * 2*pi) with linear interpolation. Valid for |turns| < 2^21
+/// (the scaled index must fit an i32); negative angles wrap correctly
+/// through the floor and the index mask. No fract: the floor of the scaled
+/// argument does the wrap.
 pub inline fn sin_turns(turns: f32) f32 {
-    const f = (turns - @floor(turns)) * @as(f32, sin_table_len);
-    const i: u32 = @intFromFloat(f);
-    const frac = f - @as(f32, @floatFromInt(i));
-    const a = sin_table[i & (sin_table_len - 1)];
-    const b = sin_table[(i + 1) & (sin_table_len - 1)];
-    return a + (b - a) * frac;
+    return sin_steps(turns * @as(f32, sin_table_len));
 }
 
+/// sin_turns with the argument already in table steps (turns * 1024), for
+/// callers that fold the power-of-two scale into their constants: scaling
+/// by 2^10 commutes with f32 rounding, so the result is bit-identical.
+/// Valid for |steps| < 2^31.
+pub inline fn sin_steps(steps: f32) f32 {
+    const fl = @floor(steps);
+    const i: i32 = @intFromFloat(fl);
+    const e = sin_table[@as(u32, @bitCast(i)) & (sin_table_len - 1)];
+    return e[0] + e[1] * (steps - fl);
+}
+
+/// cos(turns * 2*pi). Callers with a per-frame phase should fold the quarter
+/// turn into it and call sin_turns directly.
 pub inline fn cos_turns(turns: f32) f32 {
     return sin_turns(turns + 0.25);
 }
@@ -103,6 +123,8 @@ test "sin table" {
     try std.testing.expectApproxEqAbs(@as(f32, 1.0), sin_turns(0.25), 1e-4);
     try std.testing.expectApproxEqAbs(@as(f32, -1.0), sin_turns(0.75), 1e-4);
     try std.testing.expectApproxEqAbs(@as(f32, 1.0), cos_turns(3.0), 1e-4);
+    try std.testing.expectApproxEqAbs(@as(f32, -1.0), sin_turns(-0.25), 1e-4);
+    try std.testing.expectApproxEqAbs(@as(f32, 0.5), sin_turns(-1000.0 + 1.0 / 12.0), 1e-3);
 }
 
 /// Fractional part, x - floor(x), in [0, 1). Keeps turn-valued phases small

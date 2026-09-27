@@ -21,6 +21,9 @@ both belong to the OS.
   mirror or `zigup`. Unpack it and put the `zig` binary on `PATH`.
 - Node.js 20 or newer (for the simulator and the tools in `tools/`)
 - Python 3 with numpy (for `tools/reference.py`) and Pillow (for GIF previews)
+- For the emulated cycle benchmark (`tools/emu/`, section 8): Python 3.9 or newer
+  with the `venv` module (Debian/Ubuntu: `apt install python3-venv`); it
+  installs its own packages, numpy included, into `tools/emu/.venv`
 
 ## 2. Checkout layout
 
@@ -207,3 +210,53 @@ landed. To make sure, add
 
 To read the M1 timing, flash a `zig build -Ddebug_overlay=true` build (render
 time drawn on screen) or press the joystick to show the OS FPS overlay.
+
+## 8. Emulated cycle benchmark
+
+`tools/emu/` runs the tracer on an emulated Cortex-M33 (unicorn), counts
+every executed instruction and prices it with a simple M33 cycle model, so
+a change can be costed in seconds without a badge. It is a model: treat the
+milliseconds as a lower bound and confirm on hardware with the debug
+overlay. `tools/emu/README.md` has the model, its blind spots and how to
+read the tables.
+
+Needs `zig`, `node` and `python3` (3.9+, with `venv`) on `PATH`, for
+example `export PATH="$HOME/.local/bin:$PATH"`. The first run creates
+`tools/emu/.venv` and pip-installs `tools/emu/requirements.txt` (unicorn,
+capstone, pyelftools, numpy; needs network, under a minute), later runs
+skip that step.
+
+```sh
+tools/emu/run.sh                              # bench ELF, frames 0 and 300 (~10 s)
+tools/emu/run.sh --sweep                      # plus the orbit, frames 0..575 step 25 (~35 s)
+zig build && tools/emu/run.sh --real --sweep --listing   # plus the flashed ELF and listings (~1 min)
+```
+
+The default run rebuilds `tools/emu/build/bench.elf` from `cart/src`,
+emulates frames 0 and 300 in dither mode `none`, checks them against
+`tools/reference.py` with `tools/check_render.mjs`, and prints a summary
+table (instructions and modelled cycles per frame, cycles per pixel, ms at
+150 MHz, uncapped fps) and the cost per ray-path class. `--real` also runs
+`zig-out/firmware/snouty-reflections.elf` from `_start` with a faked OS
+(run `zig build` first). `--sweep` adds the whole orbit and prints the
+min, max and worst frame. `--listing` writes annotated disassembly to
+`tools/emu/out/`. All outputs, including `summary.txt`, land in
+`tools/emu/out/`.
+
+A good run ends with every check `PASS` and exit status 0:
+
+```
+emu: reference check
+  emu 0000: PASS  (max difference: 2 units in g at (91, 89); ...)
+  emu 0300: PASS  (max difference: 3 units in g at (66, 96); ...)
+...
+summary (modelled Cortex-M33 cycles; fps is uncapped, the cart locks to 20):
+  run   frame  insns/frame  cycles/frame  cyc/px ms@150MHz    fps vdiv/px vsqrt/px  check
+  emu       0    5,365,617     7,295,583   356.2     48.64   20.6    2.53     1.29  PASS
+  emu     300    5,169,143     7,079,328   345.7     47.20   21.2    2.54     1.29  PASS
+```
+
+(those are the m1 numbers). A frame 0 or 300 FAIL exits 3. In the sweep a
+FAIL is informational: a grazing sphere-edge pixel can exceed the 6-unit
+cap on precision alone, so look at `tools/emu/out/sweep/diff_*.png` before
+deciding.

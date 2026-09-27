@@ -394,3 +394,8 @@ ships the text changes).
   Known tuning item: ripple moiré near the horizon; the distance fade in
   PLAN.md is too weak and should be strengthened in M2 (plan, tracer and
   reference together).
+- 2026-09-27: M1.1 performance pass (tag `m1.1`). Emulated Cortex-M33
+  cycle model (`tools/emu/`) puts the worst orbit frame at ~35 ms
+  modelled, down from ~50; every change is lossless against the
+  reference. 80x64 upscale kept for a later A/B. Still awaiting the
+  hardware number.

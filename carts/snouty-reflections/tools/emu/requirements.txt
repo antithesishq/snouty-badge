@@ -1,0 +1,6 @@
+# Python packages for tools/emu (installed into tools/emu/.venv by run.sh).
+unicorn==2.1.4
+capstone==5.0.7
+pyelftools
+# tools/reference.py and the path classifier need numpy.
+numpy
