@@ -109,6 +109,20 @@ pub fn draw_playback(hit: collide.Hit, frame: u32) void {
     if ((frame / blink_frames) % 2 == 0) draw.centered_text("<<", 0, draw.coral);
 }
 
+/// Hold-B rewind overlay, `frame` 1.. since the hold began.
+// M5 stub: track B implements.
+pub fn draw_manual(frame: u32) void {
+    _ = frame;
+    draw.darken_scanlines();
+}
+
+/// DYING bar in hardcore, `age` 0..59.
+// M5 stub: track B implements.
+pub fn draw_fatal_bar(kind: enemies.Kind, age: u32) void {
+    _ = age;
+    draw_bar(kind);
+}
+
 /// `GO!` centered on the bar's text line (y 56 unless the ship is there)
 /// in Anti-White, with a Coral shadow offset by 1 px for the first ticks;
 /// `ticks_left` counts go_ticks down to 0.

@@ -55,11 +55,6 @@ pub fn spawn_enemy_bullet(x: f32, y: f32, vx: f32, vy: f32, shape: Shape, source
     return false;
 }
 
-/// Removes every enemy bullet (bomb).
-pub fn clear_enemy_bullets() void {
-    for (&world.w.enemy_bullets) |*b| b.* = .{};
-}
-
 pub fn live_enemy_bullets() u32 {
     var n: u32 = 0;
     for (world.w.enemy_bullets) |b| n += @intFromBool(b.active);

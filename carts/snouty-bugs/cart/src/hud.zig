@@ -7,13 +7,13 @@ const enemies = @import("enemies.zig");
 const world = @import("world.zig");
 
 const max_rewind_icons = 5;
-const bomb_slots = 3;
-/// Top-left x of the first bomb slot (slots centered at x 68, 76, 84).
-const bomb_slot_x: i32 = 64;
 
-/// HUD row: score, bomb slots (filled from the left) and the rewind stock.
-/// `rewinds` and `bombs` are main.zig's meta-state.
-pub fn draw_hud(rewinds: u32, bombs: u32) void {
+/// HUD row: score and the rewind stock.
+// M5 stub: track B implements (status slot, fuel bar, HARD).
+pub fn draw_hud(rewinds: u32, fuel: u32, fuel_max: u32, fatal_floor: u32, hardcore: bool) void {
+    _ = fuel;
+    _ = fuel_max;
+    _ = fatal_floor;
     cart.rect(.{ .x = 0, .y = 0, .width = cart.screen_width, .height = draw.hud_height, .fill_color = draw.anti_black });
     var buf: [6]u8 = undefined;
     var v = world.w.player.score;
@@ -24,10 +24,7 @@ pub fn draw_hud(rewinds: u32, bombs: u32) void {
         v /= 10;
     }
     draw.text(&buf, 0, 0, draw.anti_white);
-    for (0..bomb_slots) |k| {
-        const x = bomb_slot_x + 8 * @as(i32, @intCast(k));
-        draw.draw_sprite(gfx.hud, 8, 8, if (k < bombs) 1 else 2, x, 0, .{});
-    }
+    if (hardcore) return;
     const n = @min(rewinds, max_rewind_icons);
     for (0..n) |k| {
         const x: i32 = @as(i32, cart.screen_width) - 8 * @as(i32, @intCast(k + 1));

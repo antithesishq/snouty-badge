@@ -548,7 +548,7 @@ pub const DamageResult = enum(u8) { alive, killed, boss_dying };
 /// (explosion, score, deactivate). `.boss_dying`: the boss has started (or
 /// is already in) its death sequence, which does its own explosions, score
 /// and stage clear; the caller does nothing more. Damage is applied whatever
-/// the boss phase (bolts are gated by `hittable`; the bomb is not).
+/// the boss phase (bolts are gated by `hittable`).
 pub fn damage(e: *Enemy, amount: u8) DamageResult {
     if (e.kind == .boss and e.phase == .dying) return .boss_dying;
     e.hp -|= amount;

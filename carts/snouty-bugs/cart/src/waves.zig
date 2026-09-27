@@ -87,7 +87,8 @@ pub const State = struct {
     /// Completed stages (drives the loop modifiers).
     loop: u8 = 0,
     phase: StagePhase = .waves,
-    /// Monotonic count of boss kills; `main` awards a bomb when it grows.
+    /// Monotonic count of boss kills; `main` refills the rewind fuel when
+    /// it passes its high water.
     stage_clears: u8 = 0,
     /// `game_tick` when the last boss died (0 = never).
     clear_tick: u32 = 0,

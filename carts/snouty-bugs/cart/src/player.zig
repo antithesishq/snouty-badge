@@ -1,14 +1,12 @@
-//! Ship: movement, banking, zapper, bomb, invulnerability, score. The
-//! ship state is `world.w.player`, bomb stock included (PLAN.md M4: the
-//! bomb is simulated from the input log, so its stock must replay with
-//! it); the rewind stock is meta-state kept in `main.zig`.
+//! Ship: movement, banking, zapper, invulnerability, score. The ship
+//! state is `world.w.player`; the rewind stock and the rewind fuel are
+//! meta-state kept in `main.zig` (PLAN.md M5: a rewind moves the World's
+//! clock, so anything spent from inside the World would be refunded).
 const cart = @import("cart-api");
 const gfx = @import("gfx");
 const draw = @import("draw.zig");
 const input = @import("input.zig");
 const bullets = @import("bullets.zig");
-const collide = @import("collide.zig");
-const enemies = @import("enemies.zig");
 const world = @import("world.zig");
 
 pub const cell_w = 32;
@@ -30,13 +28,7 @@ const spawn_y: f32 = 64 - cell_h / 2;
 const fire_interval: u32 = 6;
 const bank_hold: u32 = 6;
 pub const invuln_ticks: u32 = 120;
-/// Length of the bomb effect and of its invulnerability.
-pub const bomb_ticks: u32 = 30;
-/// HP a bomb takes off the boss (SPEC.md section 5).
-const bomb_boss_damage: u8 = 8;
 const score_cap: u32 = 999_999;
-const max_bombs: u32 = 3;
-const bomb_score_step: u32 = 5_000;
 
 pub const Pose = enum(u32) { level = 0, up = 1, down = 2 };
 
@@ -49,17 +41,9 @@ pub const State = struct {
     fire_cooldown: u32 = 0,
     invuln: u32 = 0,
     score: u32 = 0,
-    /// Ticks of bomb effect left (30 on the tick it goes off, 0 when idle).
-    bomb_timer: u32 = 0,
-    /// Bullets grazed this game (debug export; each also scored 1 point).
+    /// Bullets grazed this game (each also scored 1 point). Rewound with
+    /// the World; `main.zig` pays fuel for it against a meta high water.
     grazes: u32 = 0,
-    /// Bomb stock (SPEC.md 5: starts at 2, max 3).
-    bombs: u32 = 2,
-    /// Score at which the next extra bomb is granted.
-    next_bomb_score: u32 = 5_000,
-    /// Stage clears already paid out as a bomb (catches up with
-    /// `world.w.waves.stage_clears`).
-    stage_clears_awarded: u8 = 0,
     /// Score at which the next extra rewind is due. The stock itself is
     /// meta (`main.zig` grants it, live only), but the threshold replays.
     next_rewind_score: u32 = 10_000,
@@ -69,7 +53,6 @@ pub const State = struct {
 
 pub fn update() void {
     const p = &world.w.player;
-    if (p.bomb_timer > 0) p.bomb_timer -= 1;
     if (input.held(.left)) p.x -= speed;
     if (input.held(.right)) p.x += speed;
     if (input.held(.up)) p.y -= speed;
@@ -109,48 +92,6 @@ pub fn invulnerable() bool {
 pub fn hitbox() [4]f32 {
     const p = &world.w.player;
     return .{ p.x + hitbox_off[0], p.y + hitbox_off[1], hitbox_size, hitbox_size };
-}
-
-/// Fires a bomb if B was pressed this tick, the stock is > 0 and no bomb
-/// is active: clears every enemy bullet, kills every live non-boss enemy
-/// (with score), deals 8 damage to a hittable boss and grants 30 ticks of
-/// invulnerability. Returns true when a bomb went off.
-pub fn try_bomb() bool {
-    const p = &world.w.player;
-    if (!input.pressed(.b) or p.bombs == 0 or p.bomb_timer != 0) return false;
-    p.bombs -= 1;
-    p.bomb_timer = bomb_ticks;
-    bullets.clear_enemy_bullets();
-    for (&world.w.enemies) |*e| {
-        if (!e.live() or e.kind == .boss) continue;
-        collide.kill(e);
-    }
-    if (enemies.boss()) |b| {
-        if (b.live() and b.hittable()) {
-            switch (enemies.damage(b, bomb_boss_damage)) {
-                .alive, .boss_dying => {},
-                // Not expected for the boss (it dies through its own
-                // sequence), but handled like any other kill.
-                .killed => collide.kill(b),
-            }
-        }
-    }
-    p.invuln = @max(p.invuln, bomb_ticks);
-    return true;
-}
-
-/// Extra bomb every 5,000 points and per stage clear (max 3). A threshold
-/// crossed or a clear made at the cap is still consumed.
-pub fn award_bombs() void {
-    const p = &world.w.player;
-    while (p.score >= p.next_bomb_score) {
-        p.bombs = @min(p.bombs + 1, max_bombs);
-        p.next_bomb_score += bomb_score_step;
-    }
-    while (world.w.waves.stage_clears > p.stage_clears_awarded) {
-        p.bombs = @min(p.bombs + 1, max_bombs);
-        p.stage_clears_awarded += 1;
-    }
 }
 
 /// Center of the hitbox, in whole pixels.

@@ -1,5 +1,5 @@
 //! Snouty vs. the Bugs: M4 "Rewind". Title card, then stages against five
-//! enemy kinds and the Heisenbug, with bombs, graze, death, and the
+//! enemy kinds and the Heisenbug, with graze, death, and the
 //! rewind: a hit with a rewind in stock shows the bug report, plays the
 //! last 120 ticks backward from `history.zig` and resumes 120 ticks before
 //! the hit. See SPEC.md for the game, PLAN.md for the contracts and
@@ -153,9 +153,6 @@ pub fn simulate(mode: world.Mode) void {
     enemies.update();
     bullets.update();
     bullets.update_enemy_bullets();
-    // After everything moved, so the bomb tick ends with no enemy bullets
-    // and its invulnerability covers this tick's collisions.
-    _ = player.try_bomb();
     const hit = collide.run();
     // A live hit with a rewind in stock leaves the world as it is (the
     // restore replaces it); any other hit (god mode, death, or one met
@@ -167,7 +164,6 @@ pub fn simulate(mode: world.Mode) void {
     fx.update();
     draw.tick_bg();
     world.w.game_tick +%= 1;
-    player.award_bombs();
     award_rewinds(mode);
     if (mode == .live and hit.by != .none) on_hit(hit, rewinding);
 }
@@ -237,17 +233,16 @@ fn simulate_dying() void {
     world.w.game_tick +%= 1;
 }
 
-/// Draw order: bg (or bomb flash), enemies, ship, bolts, enemy bullets,
-/// fx, bomb ring, HUD, stage text. The ship is hidden while DYING.
+/// Draw order: bg, enemies, ship, bolts, enemy bullets, fx, HUD, stage
+/// text. The ship is hidden while DYING.
 fn draw_scene() void {
-    fx.draw_bg_or_flash();
+    draw.draw_bg();
     enemies.draw_enemies();
     if (state != .dying) player.draw_ship(world.w.game_tick);
     bullets.draw_bolts(world.w.game_tick);
     bullets.draw_enemy_bullets();
     fx.draw_fx();
-    fx.draw_bomb_ring();
-    hud.draw_hud(rewinds, world.w.player.bombs);
+    hud.draw_hud(rewinds, 0, 1, 0, false);
     hud.draw_stage_text();
 }
 
@@ -261,10 +256,8 @@ comptime {
         @export(&debug_bolts, .{ .name = "debug_bolts" });
         @export(&debug_world_size, .{ .name = "debug_world_size" });
         @export(&debug_rewinds, .{ .name = "debug_rewinds" });
-        @export(&debug_bombs, .{ .name = "debug_bombs" });
         @export(&debug_bullets, .{ .name = "debug_bullets" });
         @export(&debug_grazes, .{ .name = "debug_grazes" });
-        @export(&debug_bomb_timer, .{ .name = "debug_bomb_timer" });
         @export(&debug_stage, .{ .name = "debug_stage" });
         @export(&debug_boss_hp, .{ .name = "debug_boss_hp" });
         @export(&debug_stage_clears, .{ .name = "debug_stage_clears" });
@@ -300,17 +293,11 @@ fn debug_world_size() callconv(.c) u32 {
 fn debug_rewinds() callconv(.c) u32 {
     return rewinds;
 }
-fn debug_bombs() callconv(.c) u32 {
-    return world.w.player.bombs;
-}
 fn debug_bullets() callconv(.c) u32 {
     return bullets.live_enemy_bullets();
 }
 fn debug_grazes() callconv(.c) u32 {
     return world.w.player.grazes;
-}
-fn debug_bomb_timer() callconv(.c) u32 {
-    return world.w.player.bomb_timer;
 }
 /// Completed stages (`waves.State.loop`).
 fn debug_stage() callconv(.c) u32 {
