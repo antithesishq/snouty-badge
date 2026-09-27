@@ -222,11 +222,20 @@ fn expect_same(want: *const levels.Level, got: *const levels.Level) !void {
 // If this fails, a .txt changed without rerunning tools/gen_levels.sh.
 test "levels/gen.zig matches the .txt sources" {
     var p: Parsed = undefined;
-    const t = try parse_level(&p, "test", @embedFile("levels/test.txt"), 0);
-    try expect_same(&levels.all[0], &t);
-    const w = try parse_level(&p, "wolf_e1m1", @embedFile("levels/wolf_e1m1.txt"), 0);
-    try expect_same(&levels.all[1], &w);
-    try testing.expectEqual(@as(usize, 2), levels.all.len);
+    const sources = [_]struct { name: []const u8, src: []const u8 }{
+        .{ .name = "build_farm", .src = @embedFile("levels/build_farm.txt") },
+        .{ .name = "staging", .src = @embedFile("levels/staging.txt") },
+        .{ .name = "production", .src = @embedFile("levels/production.txt") },
+        .{ .name = "test", .src = @embedFile("levels/test.txt") },
+        .{ .name = "wolf_e1m1", .src = @embedFile("levels/wolf_e1m1.txt") },
+    };
+    for (sources, 0..) |e, i| {
+        const l = try parse_level(&p, e.name, e.src, 0);
+        try expect_same(&levels.all[i], &l);
+    }
+    try testing.expectEqual(sources.len, levels.all.len);
+    try testing.expectEqualStrings("test", levels.all[levels.test_index].name);
+    try testing.expectEqualStrings("wolf_e1m1", levels.all[levels.e1m1_index].name);
 }
 
 test "parse errors" {

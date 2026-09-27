@@ -12,6 +12,9 @@ const Entry = struct { name: []const u8, file: []const u8, default_wall: u8 };
 
 /// Order matters: `levels.all[i]` is manifest[i].
 const manifest = [_]Entry{
+    .{ .name = "build_farm", .file = "build_farm.txt", .default_wall = 0 },
+    .{ .name = "staging", .file = "staging.txt", .default_wall = 0 },
+    .{ .name = "production", .file = "production.txt", .default_wall = 0 },
     .{ .name = "test", .file = "test.txt", .default_wall = 0 },
     .{ .name = "wolf_e1m1", .file = "wolf_e1m1.txt", .default_wall = 0 },
 };

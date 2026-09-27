@@ -2,7 +2,8 @@
 # Full verification (PLAN.md "Verification for M1/M2"). Run from the repo root.
 set -euo pipefail
 export PATH="$HOME/.local/bin:$PATH"
-# Levels: the generated data file must match the .txt sources.
+# Levels: every level solvable, and the generated data file matching the .txt sources.
+python3 tools/check_level.py cart/src/levels/build_farm.txt cart/src/levels/staging.txt cart/src/levels/production.txt cart/src/levels/test.txt cart/src/levels/wolf_e1m1.txt
 tools/gen_levels.sh
 git diff --exit-code -- cart/src/levels/gen.zig || { echo "check: cart/src/levels/gen.zig is stale; commit the regenerated file"; exit 1; }
 zig build

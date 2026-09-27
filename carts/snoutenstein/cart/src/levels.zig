@@ -60,5 +60,10 @@ pub const Level = struct {
     }
 };
 
+/// The campaign is `all[0..campaign_len]`; the debug levels follow it.
+pub const campaign_len = 3;
+pub const test_index = 3;
+pub const e1m1_index = 4;
+
 /// Generated from `levels/*.txt`; order is the manifest in `gen_levels.zig`.
 pub const all = @import("levels/gen.zig").all;

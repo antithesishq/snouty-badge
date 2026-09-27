@@ -1,0 +1,26 @@
+# Build Farm (campaign level 1): learn walking, doors, one key, gnats.
+# Racks (1) at the start and a safe corridor east to the first door, a
+# cable-tray room (2) with three gnats, a brick hub (3), the vent closet (4)
+# with the Coral key behind a plain door, then the Coral door into the pipe
+# hall (7) with monitor pillars (6), an Iris mural (5) and the exit strip (8).
+# Legend: SPEC.md section 6. Lines starting with # are comments.
+111111111111222222222222
+1....1111111...........2
+1....1111111...a.......2
+1..S>......D........a..2
+1....1111111....%......2
+1....1111111.a.........2
+111111111111...........2
+44444444333333332D222222
+4......4...............3
+4..c...4a..............3
+4......D...............3
+4.+....4.........a.....3
+4..a...4...............3
+444444443333333C33333333
+7......................7
+7..66....66....a.......8
+7....%....a............E
+7..66....66..........a.8
+7......................7
+777777755555555777777777
