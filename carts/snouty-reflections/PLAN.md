@@ -208,3 +208,46 @@ reference compares only in mode `none`, linear.
 4. Tag `m1`, hand-off note with pull-and-run steps; Adrian flashes and
    reports fps and `render_us` (`-Ddebug_overlay=true` build, or the OS FPS
    overlay via joystick click).
+
+## M1.1 Performance pass (2026-09-27)
+
+Adrian approved applying every lossless optimisation found by the emulated
+cycle model (docs/M1.md "Emulated cost" once written) and keeping the
+80x64 upscale path for a later A/B. "Lossless" means `check_render.mjs`
+still passes against the unchanged `tools/reference.py`; the scene
+definition above does not change.
+
+Tracks:
+
+| Track | Files |
+|-------|-------|
+| D optimise | `cart/src/trace.zig`, `water.zig`, `scene.zig`, `camera.zig`, `math.zig`, `main.zig` (noinline only) |
+| E emulator tool | `tools/emu/**`, `docs/RUNNING.md` (new section only), `docs/M1.md` (append only) |
+
+Changes for D, in the measured order of payoff (baseline 356 modelled
+cycles per pixel at frame 0):
+
+1. Analytic primary-ray length: |dir|^2 = 1 + u^2 + v^2 for an orthonormal
+   basis; one rsqrt Newton step per row from a per-column seed. -16 cyc/px.
+2. Paired sine table (value, delta) so `sin_turns`/`cos_turns` is one
+   load pair and one multiply-add; fold the cosine quarter turn into the
+   per-frame phases. -15 cyc/px, +8 KB `.text` (budget allows).
+3. One reciprocal for the water hit distance and the fade. -6 cyc/px.
+4. `@min(1, c)` instead of full saturate: colour is never negative. -4 cyc/px.
+5. Fold constant products at comptime (`0.5*sun_col`, `tint*sun_col`), sky
+   lerps in affine form to cut literal-pool loads. Estimated a few cyc/px.
+6. Turn the `ts != inf` compare into a bool hit flag. 1-2 cyc/px.
+7. Branchless, register-resident sky gradient endpoints. 2-4 cyc/px.
+8. `noinline` on `render_frame` so `update` stops shuffling FP registers. ~1%.
+9. Per-frame screen bounding box of the sphere (column range, per-column
+   row range); primary rays outside it skip the sphere test. ~10 cyc/px.
+
+Each step: build, `check_render` frames 0 and 300, emulator run; keep the
+step only if the modelled cycles drop and the check passes. Target: at or
+under 40 ms modelled per frame, worst frame of the orbit.
+
+Track E moves the scratch benchmark into `tools/emu/` with a venv
+bootstrap (`unicorn`, `capstone`, `pyelftools`), paths relative to the
+repo, a single `tools/emu/run.sh` that builds the bench ELF, runs frames 0
+and 300 plus an orbit sweep, checks against the reference, and prints the
+per-class table and modelled ms. Documented in `docs/RUNNING.md`.
