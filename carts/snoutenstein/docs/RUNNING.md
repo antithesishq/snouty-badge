@@ -144,6 +144,17 @@ screen; turns are 36 ticks = 90 degrees, walking 0.045 cells per tick):
   paused ticks (nothing may move), START at 102, walks and turns again.
   Ends playing at px about 6.2; without a working pause the wall would stop
   it at 6.75, so `--expect "debug_px < 425984"` checks the pause.
+- `m2_combat.json` (240 frames): from the start, holds A at 30..45 so the
+  zapper fires twice (cooldown 12): the first shot kills the gnat three
+  cells ahead, the second hits nothing. SELECT at 90 skips the empty spray
+  and lands on the swatter, A at 110..125 swings it at nothing, SELECT at
+  150 goes back to the zapper, then a short walk. Expect `debug_kills == 1`,
+  `debug_weapon == 1`, `debug_ammo == 38`.
+- `m2_exit.json` (1,400 frames): lines up with the door row, through the
+  plain door (7,4), up the x 8 corridor, east along row 1 to x 31, south
+  into the exit door at (31,8). The level ends, the intermission card shows
+  for 60 ticks, A at 1300 starts level 1 (E1M1). Expect `debug_level == 1`
+  and `debug_mode == 1`.
 
 ```sh
 node tools/preview.mjs zig-out/bin/snoutenstein.wasm --frames 2160 --every 6 --out out/walk \

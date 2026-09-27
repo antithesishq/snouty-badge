@@ -1,16 +1,17 @@
 # M1 test level: long corridor for the render-time gate, rooms with all
-# eight textures, one of each door kind (doors are M2; solid until then).
+# eight textures, one of each door kind, and a gnat three cells ahead of the
+# start so the M2 combat script is just "press A".
 # Legend: SPEC.md section 6. Lines starting with # are comments.
 111111111111111111111111111111111
 1......1........................1
 1......1.2222222.3333333.44444..1
-1..S>..1.2.....2.3.....3.4...4..1
+1..S>.a1.2.....2.3.....3.4...4..1
 1......D.2.....2.3.....3.4...4..1
 1......1.2..g..2.3..i..3.4.c.4..1
 1......1.222D222.333I333.444C44.1
 1111111111......................1
-1..........................55555E
-1.66666666666666666666666666....1
+1..........................5555E1
+1.66666666666666666666666666...11
 1.6........................6....1
 1.6.7777777777777777777777.6....1
 1.6.7....................7.6....1

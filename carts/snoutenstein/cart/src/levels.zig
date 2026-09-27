@@ -201,4 +201,9 @@ test "test level parses" {
     try std.testing.expect(Level.is_wall(l.cell(0, 0)));
     try std.testing.expect(Level.is_wall(l.cell(63, 63)));
     try std.testing.expectEqual(@as(u8, 0), l.cell(1, 1));
+    // The M2 combat target: a gnat directly ahead of the start.
+    try std.testing.expectEqual(@as(usize, 5), l.enemies.len);
+    try std.testing.expectEqual(state.EnemyKind.gnat, l.enemies[0].kind);
+    try std.testing.expectEqual(@as(u8, 6), l.enemies[0].x);
+    try std.testing.expectEqual(@as(u8, 3), l.enemies[0].y);
 }
