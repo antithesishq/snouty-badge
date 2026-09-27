@@ -11,3 +11,4 @@ out/
 tests/roms/
 roms/*.gb
 !roms/.keep
+!roms/2048.gb

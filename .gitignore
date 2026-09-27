@@ -1,9 +1,11 @@
 .zig-cache/
 zig-out/
+zig-pkg/
 node_modules/
+.venv/
+__pycache__/
+*.pyc
 *.uf2
 *.elf
 *.wasm
 .DS_Store
-zig-pkg/
-__pycache__/

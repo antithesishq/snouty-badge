@@ -2,14 +2,19 @@ const std = @import("std");
 const Build = std.Build;
 
 const sycl_badge = @import("sycl_badge");
+// A module of the root build.zig, not a package root. If Zig says "import of
+// file outside module path" here, `zig build` was run in this directory: run
+// `zig build -Dcart=snouty-reflections` from the repository root instead.
+const common = @import("../../build/common.zig");
 
-pub fn build(b: *Build) void {
-    const sycl_badge_dep = b.dependency("sycl_badge", .{});
+/// This cart's directory, relative to the repository root that build.zig runs from.
+const dir = "carts/snouty-reflections/";
 
-    // -Ddebug_overlay=true draws frame timing in the top-left corner.
-    const debug_overlay = b.option(bool, "debug_overlay", "Draw render timing on screen") orelse false;
+pub fn add(b: *Build, sycl_badge_dep: *Build.Dependency, opts: common.Options) void {
+
+    // -Ddebug_overlay=true draws frame timing in the top-left corner (declared by the root build.zig).
     const options = b.addOptions();
-    options.addOption(bool, "debug_overlay", debug_overlay);
+    options.addOption(bool, "debug_overlay", opts.debug_overlay);
 
     // Set before add_os_cart: the custom builder runs inside that call.
     build_options = options;
@@ -17,18 +22,18 @@ pub fn build(b: *Build) void {
     sycl_badge.add_os_cart(b, sycl_badge_dep, .{
         .name = "snouty-reflections",
         .optimize = .ReleaseFast,
-        .root_source_file = b.path("cart/src/main.zig"),
+        .root_source_file = b.path(dir ++ "cart/src/main.zig"),
         .custom_builder = &add_options,
     });
 
-    // `zig build check-float`: install, then fail if the cart ELF links any
+    // `zig build check-float` (shared step): install, then fail if the cart ELF links any
     // soft-float or libm routine (f64 math, or f32 work the M33 FPU cannot do).
     const check_float = b.addSystemCommand(&.{"node"});
-    check_float.addFileArg(b.path("tools/check_float.mjs"));
+    check_float.addFileArg(b.path(dir ++ "tools/check_float.mjs"));
     check_float.addFileArg(b.graph.path(.install_prefix, "firmware/snouty-reflections.elf"));
     check_float.step.dependOn(b.getInstallStep());
     check_float.has_side_effects = true;
-    b.step("check-float", "Fail if the cart ELF contains soft-float routines").dependOn(&check_float.step);
+    opts.check_float_step.dependOn(&check_float.step);
 }
 
 var build_options: ?*Build.Step.Options = null;

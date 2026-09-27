@@ -2,14 +2,21 @@ const std = @import("std");
 const Build = std.Build;
 
 const sycl_badge = @import("sycl_badge");
+// A module of the root build.zig, not a package root. If Zig says "import of
+// file outside module path" here, `zig build` was run in this directory: run
+// `zig build -Dcart=snouty-run` from the repository root instead.
+const common = @import("../../build/common.zig");
 
-pub fn build(b: *Build) void {
-    const sycl_badge_dep = b.dependency("sycl_badge", .{});
+/// This cart's directory, relative to the repository root that build.zig runs from.
+const dir = "carts/snouty-run/";
+
+pub fn add(b: *Build, sycl_badge_dep: *Build.Dependency, opts: common.Options) void {
+    _ = opts; // no host tests or shared options
 
     sycl_badge.add_os_cart(b, sycl_badge_dep, .{
         .name = "snouty",
         .optimize = .ReleaseSmall,
-        .root_source_file = b.path("cart/src/main.zig"),
+        .root_source_file = b.path(dir ++ "cart/src/main.zig"),
         .custom_builder = &build_cart_assets,
     });
 }
@@ -20,7 +27,7 @@ fn build_cart_assets(b: *Build, cart: *Build.Module, cart_api: *Build.Module, st
     const convert = b.addExecutable(.{
         .name = "convert_gfx",
         .root_module = b.createModule(.{
-            .root_source_file = b.path("cart/build/convert_gfx.zig"),
+            .root_source_file = b.path(dir ++ "cart/build/convert_gfx.zig"),
             .target = b.graph.host,
             .optimize = .ReleaseSafe,
             .link_libc = true,
@@ -33,35 +40,35 @@ fn build_cart_assets(b: *Build, cart: *Build.Module, cart_api: *Build.Module, st
     // Transparency reserves palette index 0 as magenta (31,0,31), which the
     // flattened #FF00FF backgrounds of the run and jump strips and the Iris map onto.
     gen_gfx.addArg("-i");
-    gen_gfx.addFileArg(b.path("assets/gen/snouty_run.png"));
+    gen_gfx.addFileArg(b.path(dir ++ "assets/gen/snouty_run.png"));
     gen_gfx.addArg("4");
     gen_gfx.addArg("true");
     gen_gfx.addArg("-i");
-    gen_gfx.addFileArg(b.path("assets/gen/snouty_jump.png"));
+    gen_gfx.addFileArg(b.path(dir ++ "assets/gen/snouty_jump.png"));
     gen_gfx.addArg("4");
     gen_gfx.addArg("true");
     gen_gfx.addArg("-i");
-    gen_gfx.addFileArg(b.path("assets/gen/ghz_ground.png"));
+    gen_gfx.addFileArg(b.path(dir ++ "assets/gen/ghz_ground.png"));
     gen_gfx.addArg("4");
     gen_gfx.addArg("false");
     gen_gfx.addArg("-i");
-    gen_gfx.addFileArg(b.path("assets/gen/iris_spin.png"));
+    gen_gfx.addFileArg(b.path(dir ++ "assets/gen/iris_spin.png"));
     gen_gfx.addArg("4");
     gen_gfx.addArg("true");
     gen_gfx.addArg("-i");
-    gen_gfx.addFileArg(b.path("assets/gen/ghz_bg_0.png"));
+    gen_gfx.addFileArg(b.path(dir ++ "assets/gen/ghz_bg_0.png"));
     gen_gfx.addArg("8");
     gen_gfx.addArg("false");
     gen_gfx.addArg("-i");
-    gen_gfx.addFileArg(b.path("assets/gen/ghz_bg_1.png"));
+    gen_gfx.addFileArg(b.path(dir ++ "assets/gen/ghz_bg_1.png"));
     gen_gfx.addArg("8");
     gen_gfx.addArg("false");
     gen_gfx.addArg("-i");
-    gen_gfx.addFileArg(b.path("assets/gen/ghz_bg_2.png"));
+    gen_gfx.addFileArg(b.path(dir ++ "assets/gen/ghz_bg_2.png"));
     gen_gfx.addArg("8");
     gen_gfx.addArg("false");
     gen_gfx.addArg("-i");
-    gen_gfx.addFileArg(b.path("assets/gen/ghz_bg_3.png"));
+    gen_gfx.addFileArg(b.path(dir ++ "assets/gen/ghz_bg_3.png"));
     gen_gfx.addArg("8");
     gen_gfx.addArg("false");
     gen_gfx.addArg("-o");
@@ -73,7 +80,7 @@ fn build_cart_assets(b: *Build, cart: *Build.Module, cart_api: *Build.Module, st
             .{
                 .name = "packed_int_array",
                 .module = b.createModule(.{
-                    .root_source_file = b.path("cart/src/packed_int_array.zig"),
+                    .root_source_file = b.path(dir ++ "cart/src/packed_int_array.zig"),
                 }),
             },
         },

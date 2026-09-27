@@ -2,39 +2,45 @@ const std = @import("std");
 const Build = std.Build;
 
 const sycl_badge = @import("sycl_badge");
+// A module of the root build.zig, not a package root. If Zig says "import of
+// file outside module path" here, `zig build` was run in this directory: run
+// `zig build -Dcart=snouty-maze` from the repository root instead.
+const common = @import("../../build/common.zig");
 
-pub fn build(b: *Build) void {
-    const sycl_badge_dep = b.dependency("sycl_badge", .{});
+/// This cart's directory, relative to the repository root that build.zig runs from.
+const dir = "carts/snouty-maze/";
 
-    // -Ddebug_overlay=true draws render timing in the top-left corner (Select toggles it).
-    const debug_overlay = b.option(bool, "debug_overlay", "Draw render timing on screen") orelse false;
+pub fn add(b: *Build, sycl_badge_dep: *Build.Dependency, opts: common.Options) void {
+
+    // -Ddebug_overlay=true draws render timing in the top-left corner (Select toggles it;
+    // the option is declared by the root build.zig).
     const options = b.addOptions();
-    options.addOption(bool, "debug_overlay", debug_overlay);
+    options.addOption(bool, "debug_overlay", opts.debug_overlay);
     build_options = options;
 
     sycl_badge.add_os_cart(b, sycl_badge_dep, .{
         .name = "snouty-maze",
         .optimize = .ReleaseFast,
-        .root_source_file = b.path("cart/src/main.zig"),
+        .root_source_file = b.path(dir ++ "cart/src/main.zig"),
         .custom_builder = &build_cart_assets,
     });
 
-    // `zig build check-float`: fail if the cart ELF links soft-float or libm routines.
+    // `zig build check-float` (shared step): fail if the cart ELF links soft-float or libm routines.
     const check_float = b.addSystemCommand(&.{"node"});
-    check_float.addFileArg(b.path("tools/check_float.mjs"));
+    check_float.addFileArg(b.path(dir ++ "tools/check_float.mjs"));
     check_float.addFileArg(b.graph.path(.install_prefix, "firmware/snouty-maze.elf"));
     check_float.step.dependOn(b.getInstallStep());
     check_float.has_side_effects = true;
-    b.step("check-float", "Fail if the cart ELF contains soft-float routines").dependOn(&check_float.step);
+    opts.check_float_step.dependOn(&check_float.step);
 
-    // `zig build test`: host unit tests for the modules that do not touch the
-    // cart API (cart/src/host_tests.zig lists them).
+    // `zig build test` (shared step): host unit tests for the modules that do not
+    // touch the cart API (cart/src/host_tests.zig lists them).
     const tests = b.addTest(.{ .root_module = b.createModule(.{
-        .root_source_file = b.path("cart/src/host_tests.zig"),
+        .root_source_file = b.path(dir ++ "cart/src/host_tests.zig"),
         .target = b.graph.host,
         .optimize = .Debug,
     }) });
-    b.step("test", "Run host unit tests").dependOn(&b.addRunArtifact(tests).step);
+    opts.test_step.dependOn(&b.addRunArtifact(tests).step);
 }
 
 var build_options: ?*Build.Step.Options = null;
@@ -65,7 +71,7 @@ fn build_cart_assets(b: *Build, cart: *Build.Module, cart_api: *Build.Module, st
     const convert = b.addExecutable(.{
         .name = "convert_gfx",
         .root_module = b.createModule(.{
-            .root_source_file = b.path("cart/build/convert_gfx.zig"),
+            .root_source_file = b.path(dir ++ "cart/build/convert_gfx.zig"),
             .target = b.graph.host,
             .optimize = .ReleaseSafe,
             .link_libc = true,
@@ -76,7 +82,7 @@ fn build_cart_assets(b: *Build, cart: *Build.Module, cart_api: *Build.Module, st
     const gen_gfx = b.addRunArtifact(convert);
     for (images) |img| {
         gen_gfx.addArg("-i");
-        gen_gfx.addFileArg(b.path(b.fmt("assets/gen/{s}", .{img.file})));
+        gen_gfx.addFileArg(b.path(b.fmt(dir ++ "assets/gen/{s}", .{img.file})));
         gen_gfx.addArg(b.fmt("{d}", .{img.bits}));
         gen_gfx.addArg(if (img.transparent) "true" else "false");
     }
@@ -89,7 +95,7 @@ fn build_cart_assets(b: *Build, cart: *Build.Module, cart_api: *Build.Module, st
             .{
                 .name = "packed_int_array",
                 .module = b.createModule(.{
-                    .root_source_file = b.path("cart/src/packed_int_array.zig"),
+                    .root_source_file = b.path(dir ++ "cart/src/packed_int_array.zig"),
                 }),
             },
         },

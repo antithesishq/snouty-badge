@@ -1,0 +1,63 @@
+const std = @import("std");
+const Build = std.Build;
+
+const common = @import("build/common.zig");
+
+/// Every cart in carts/. `dir` is the directory under carts/, `binary` the
+/// name of the uf2/elf/wasm it produces. Either matches -Dcart.
+const Cart = struct { dir: []const u8, binary: []const u8, add: common.AddFn };
+const carts = [_]Cart{
+    .{ .dir = "snouty-run", .binary = "snouty", .add = &@import("carts/snouty-run/build.zig").add },
+    .{ .dir = "snouty-bugs", .binary = "snouty-bugs", .add = &@import("carts/snouty-bugs/build.zig").add },
+    .{ .dir = "snoutenstein", .binary = "snoutenstein", .add = &@import("carts/snoutenstein/build.zig").add },
+    .{ .dir = "snouty-reflections", .binary = "snouty-reflections", .add = &@import("carts/snouty-reflections/build.zig").add },
+    .{ .dir = "snouty-boy", .binary = "snouty-boy", .add = &@import("carts/snouty-boy/build.zig").add },
+    .{ .dir = "snouty-maze", .binary = "snouty-maze", .add = &@import("carts/snouty-maze/build.zig").add },
+};
+
+pub fn build(b: *Build) void {
+    const sycl_badge_dep = b.dependency("sycl_badge", .{});
+
+    const only = b.option([]const u8, "cart", "Comma-separated list of carts to build (default: all). Names: " ++ cart_names);
+
+    const opts = common.Options{
+        .debug_overlay = b.option(bool, "debug_overlay", "Draw render timing on screen (snouty-reflections, snouty-maze)") orelse false,
+        .rom = b.option([]const u8, "rom", "snouty-boy: Game Boy ROM to embed (default carts/snouty-boy/tests/roms/dmg-acid2.gb, or roms/2048.gb when that is absent)"),
+        .cart_optimize = b.option(std.builtin.OptimizeMode, "cart-optimize", "snouty-boy: optimize mode for the cart (default fast; its SPEC.md section 8)") orelse .fast,
+        .test_optimize = b.option(std.builtin.OptimizeMode, "test-optimize", "snouty-boy: optimize mode for host tests (default safe)") orelse .safe,
+        .test_filter = b.option([]const u8, "test-filter", "snouty-boy: only run tests whose name contains this"),
+        .test_step = b.step("test", "Run every cart's host tests"),
+        .check_float_step = b.step("check-float", "Fail if any cart ELF contains soft-float or libm routines"),
+    };
+
+    if (only) |list| check_names(list);
+    for (carts) |c| {
+        if (only) |list| if (!listed(list, c)) continue;
+        c.add(b, sycl_badge_dep, opts);
+    }
+}
+
+fn listed(list: []const u8, c: Cart) bool {
+    var it = std.mem.splitScalar(u8, list, ',');
+    while (it.next()) |raw| {
+        const name = std.mem.trim(u8, raw, " ");
+        if (std.mem.eql(u8, name, c.dir) or std.mem.eql(u8, name, c.binary)) return true;
+    }
+    return false;
+}
+
+fn check_names(list: []const u8) void {
+    var it = std.mem.splitScalar(u8, list, ',');
+    while (it.next()) |raw| {
+        const name = std.mem.trim(u8, raw, " ");
+        var ok = false;
+        for (carts) |c| ok = ok or std.mem.eql(u8, name, c.dir) or std.mem.eql(u8, name, c.binary);
+        if (!ok) std.debug.panic("-Dcart: unknown cart '{s}'; known: {s}", .{ name, cart_names });
+    }
+}
+
+const cart_names: []const u8 = blk: {
+    var s: []const u8 = "";
+    for (carts, 0..) |c, i| s = s ++ (if (i == 0) "" else ", ") ++ c.dir;
+    break :blk s;
+};
