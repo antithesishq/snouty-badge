@@ -1,0 +1,7 @@
+# Installed into .venv by bench.sh (reinstalled when this file changes).
+unicorn==2.1.4
+capstone==5.0.7
+pyelftools
+# Python < 3.11 has no tomllib; carts/*.toml then use tomli (a tiny built-in
+# parser is the last resort).
+tomli; python_version < "3.11"
