@@ -11,6 +11,24 @@ keeps the approved Snouty design (Run Study 05) and produces every derived
 asset on-palette by construction. First deliverables: an alternative 16-frame
 run cycle and a 12-frame jump sheet, drop-in compatible with the badge cart.
 
+## Styles: several looks for the same requirements
+
+Adrian wants to keep and compare multiple visual takes on the same animation
+requirements. Each look is a directory `styles/<name>/` holding `rig.json`
+(parts, pivots, joints, limb lengths), `palette.json` (up to 15 colours bound
+to role names: FUR, SHIRT, NET, OUTLINE ...), `parts/`, and optional
+`anim/<cycle>.py` overrides. The shared animations in `snoutyart/anim/` are
+written against roles and joints only, so a new style renders with them
+unchanged; a style overrides a cycle when its proportions need different keys.
+Output is `out/<style>/<cycle>/`; `tools/compare_styles.py` renders all styles
+side by side for review. Adding a style must never change another's output.
+
+Styles so far:
+- `study05`: the approved ChatGPT Study 05 Snouty (carved parts).
+- `glean`: the lavender, big-headed Snouty from Claude's Glean test render
+  (2026-09-26), resampled to its true pixel grid and carved by
+  `styles/glean/make_parts.py`; tee and fists redrawn in code, Iris ring added.
+
 ## Approach: parts rig + procedural limbs
 
 The Study 04/05 frames were built the same way, so we own that process here:
@@ -58,6 +76,8 @@ Rendering is deterministic: `python3 tools/build.py all` regenerates `out/`.
   Open taste questions: both run legs emerge from under the shirt (Study 05
   crosses the near thigh in front); head nod is only +-1 degree because
   larger nearest-neighbour rotations break up the pixels.
+- M2b: multi-style refactor and the `glean` style with its own run and jump
+  (2026-09-27; run/jump tuning by two agents in `styles/glean/anim/`).
 - M3 (next): hand-off. `python3 tools/install_badge.py` copies `out/run` and `out/jump` into `snouty-badge/assets/` as
   study packs, point `tools/prepare_assets.py` at them, update feet tables,
   verify in the simulator.
