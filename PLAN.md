@@ -20,9 +20,11 @@ until Adrian has reviewed.
   Judgment calls to confirm: `snouty-art/` folded in too (its scripts write
   into the carts' assets); `carts/snouty-boy/roms/2048.gb` committed as the
   fallback ROM; the running cart's directory is `carts/snouty-run`.
-- M2 (later): one shared `tools/` (the per-cart `preview.mjs`,
-  `serve-cart.mjs`, `make_gif.py` copies have drifted apart), one shared
-  CLAUDE.md with the per-cart files trimmed to cart specifics.
+- M2: one shared `tools/` for the drifted per-cart copies of `preview.mjs`,
+  `serve-cart.mjs`, `make_gif.py` and `check_float.mjs`. In progress
+  (2026-09-27, asked for by Adrian together with M3).
+- M3: build carts in execute-in-place (XIP) mode as well as RAM mode, and
+  run XIP ELFs under badge-bench. In progress.
 
 ## Layout after M1
 
@@ -111,3 +113,79 @@ Build outputs land in the root `zig-out/`: `zig-out/firmware/<cart>.uf2`,
   picks up `carts/snouty-bugs.toml` and its script.
 - One headless preview per cart via its `tools/preview.mjs` from the root.
 - A fresh `git clone --recursive` of the branch builds.
+
+## M2: shared tools
+
+The six `preview.mjs` copies form a tree: snouty-run (base) -> snouty-reflections
+and snoutenstein (+ `--script`, `--dump-exports`, `--expect`, `--quiet`) ->
+snouty-bugs and snouty-boy (+ `--at`, `--call-at`) and snouty-maze (+ `--call`,
+`--pose`). Every option set is a superset of its parent, so one file with the
+union of snouty-bugs and snouty-maze serves every cart unchanged. The six
+`serve-cart.mjs` differ only in the default wasm name; `make_gif.py` is
+identical everywhere; the two `check_float.mjs` differ in a usage comment.
+
+- `tools/preview.mjs`: snouty-bugs' file plus snouty-maze's `--call` and
+  `--pose`. Same exit codes, same `frames.json` (with the union of fields).
+- `tools/serve-cart.mjs`: defaults to the cart of the directory it is run
+  from (`carts/<cart>/` -> `zig-out/bin/<binary>.wasm`, snouty-run -> snouty);
+  `--cart NAME` or a wasm path override it.
+- `tools/make_gif.py`, `tools/check_float.mjs`: moved.
+- `tools/uf2_info.py` (new, for M3): block count, address ranges, flash vs RAM.
+- Per-cart copies deleted. Callers repointed: `check.sh` (bugs, snoutenstein),
+  `check_determinism.mjs`, `check_cycle.mjs`, `check_golden.mjs`, the root
+  `build.zig` check-float step, and the docs (`node ../../tools/preview.mjs`
+  from a cart directory).
+- Stays per cart: `prepare_assets.py` (the drawings are the cart), the maze
+  and reflections checkers, snoutenstein's determinism check, `tools/emu`.
+- Verification: every existing gate passes with the shared tool (bugs and
+  snoutenstein `check.sh`, maze `check_golden.mjs`, snoutenstein determinism),
+  and for each cart a preview run with the old per-cart tool and with the
+  shared tool writes byte-identical PNGs and the same export values.
+
+## M3: XIP carts
+
+Background is in the SDK, not written down there: `sycl-badge/src/cart/cart_xip.ld`
+links code and read-only data into the 256 KB flash window `0x101C0000..0x10200000`
+with `.data` at RAM addresses loaded from flash, and leaves the whole 307 KB cart
+RAM window for `.data`/`.bss`. The OS loader routes UF2 blocks by target
+address, erases and programs the flash window, refuses a UF2 that mixes flash
+and RAM blocks, and on launch reads `[SP, entry]` from the vector table at the
+start of the window, sets VTOR and jumps. Unlike the RAM path it does not enable
+the FPU or the cycle counter or mask interrupts before jumping, and nothing
+copies `.data` or clears `.bss`: the cart must. Upstream's
+`platform_cart_xip.zig` is dead code that would not link (its microzig startup
+exports `_start`, and the RAM platform that `api.zig` hardcodes exports another).
+
+Design, without patching the submodule:
+
+- `build/os_cart.zig`: our `add(b, sycl_badge_dep, .{ name, optimize,
+  root_source_file, custom_builder, mode })`. `mode = .ram` calls upstream's
+  `add_os_cart` unchanged. `mode = .xip` mirrors it with the firmware root
+  set to `build/xip/entry.zig`, the linker script `cart_xip.ld`, the artifact
+  named `<binary>-xip` (so `zig-out/firmware/<binary>-xip.uf2` sits next to
+  the RAM one) and the same custom builder applied to the user cart module.
+  The wasm is built once, from the user module, whichever modes are on.
+- `build/xip/entry.zig`: a two-entry vector table in `.microzig_flash_start`
+  (`__stack_top__`, reset handler) and the reset handler: mask interrupts,
+  enable the FPU (CPACR, FPCCR) and DWT_CYCCNT, copy `.data` from its flash
+  load address, zero `.bss`, then call the RAM platform's `_start`, which is
+  the usual start/update/present loop. No microzig startup, so no duplicate
+  symbol; the cart source is untouched and still calls `export_start_code()`
+  (its 12-byte descriptor lands in an orphan section, harmless).
+- Root option `-Dcart-mode=ram|xip|both`, default `ram`. Passed to every
+  cart through `common.Options`.
+- badge-bench: map the flash window, load segments by their load address,
+  and when a segment lives in flash start from the vector table instead of
+  `_start` with SP from it too; `describe_addr` names flash; a
+  `--flash-cycles N` knob adds N cycles per instruction fetched from flash
+  (default 0, to be calibrated against the OS overlay's XIP hit rate on
+  hardware). Frame boundaries still come from the `_start` loop.
+- Verification without hardware: build snouty-boy in both modes;
+  `readelf -l` shows text at the flash origin and `.data` with a RAM address
+  and a flash load address; `tools/uf2_info.py` shows every block inside
+  the flash window (what the loader requires); the XIP ELF runs under
+  badge-bench with the same scripted input as the RAM ELF and writes the
+  same frame PNGs, which proves the `.data` copy and `.bss` clear; sizes
+  per mode recorded here. The hardware questions (does today's menu accept
+  an XIP UF2, erase time per launch, XIP cache hit rate, ms per frame RAM
+  vs XIP) stay open for Adrian's badge session.
