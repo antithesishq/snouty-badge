@@ -503,3 +503,7 @@ Level grid 64x64 with Wolf3D import (section 6.1): yes.
   all of section 18. M0 scaffold tagged `m0`; M1 (raycaster, sim with
   doors and pickups, placeholder art, Wolf3D importer with E1M1) tagged
   `m1` the same day, `docs/preview_m1.gif`. Awaiting the hardware gate.
+- 2026-09-27: M2 (sprites, combat against standing bugs, status bar with
+  portrait, first-person weapon, intermission and victory, rewind core
+  module with host tests) tagged `m2`, `docs/preview_m2.gif`. Hardware
+  gate still pending.

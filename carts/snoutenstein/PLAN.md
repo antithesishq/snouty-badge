@@ -409,3 +409,15 @@ plus the two new scripted runs inside `check.sh`.
   art agent are in ASSETS.md section 10. `tools/check.sh` runs the whole
   M1 verification. Next: hardware gate, then M2.
 - 2026-09-27: M2 plan written while the M1 hardware gate is pending; four tracks launched.
+- 2026-09-27: M2 done and tagged `m2`. All four tracks landed as planned.
+  ELF text 72.2 KB (the sprite sheets are now referenced), bss 16.8 KB;
+  GameState still 1,368 bytes (enemy stats live in `sim.zig`, no new
+  fields). Sim: 25 host tests (weapons, hit reactions, wall_distance,
+  Select cycling). Rewind core: 7 host tests, 71,132 bytes of pools, not
+  yet wired into `main.zig` (M4). Deviations: portrait frame is 2 px on
+  the sides only and the clock glyph sits above the meter bar (a 24 px
+  bar cannot fit them beside a 24 px face); the tag line is two lines;
+  sprites keep square texels (a 1-cell sprite is 0.85 of a cell's screen
+  width); a missed shot still spends ammo. `tools/check.sh` runs the M1
+  and M2 scripted runs plus all host tests. Next: hardware gate (still
+  pending), then M3 bugs (AI, projectiles, damage, death freeze).

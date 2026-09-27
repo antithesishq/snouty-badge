@@ -1,6 +1,7 @@
 //! Snoutenstein 3D: entry point, top-level state machine, wasm shims.
 //! SPEC.md is the design, PLAN.md the current milestone, CLAUDE.md the
-//! toolchain. M0: title card and a walkable stub view.
+//! toolchain. M2: title -> playing (sprites, weapons, status bar) ->
+//! intermission -> next level -> victory. Rewind wiring is M4.
 const std = @import("std");
 const cart = @import("cart-api");
 const fixed = @import("fixed.zig");
@@ -8,16 +9,26 @@ const state = @import("state.zig");
 const levels = @import("levels.zig");
 const sim = @import("sim.zig");
 const view = @import("render/view.zig");
+const sprites = @import("render/sprites.zig");
+const weapon = @import("render/weapon.zig");
 const hud = @import("render/hud.zig");
 
 comptime {
     cart.export_start_code();
 }
 
-pub const Mode = enum(u32) { title = 0, playing = 1, paused = 2 };
+pub const Mode = enum(u32) { title = 0, playing = 1, paused = 2, intermission = 3, victory = 4 };
+
+/// Intermission card: skippable with A after `card_min`, auto-advances at `card_max`.
+const card_min: u32 = 60;
+const card_max: u32 = 300;
+const victory_max: u32 = 600;
+/// M1 gate readout stays on screen until Adrian has photographed it.
+const show_render_us = true;
 
 var mode: Mode = .title;
 var tick_total: u32 = 0;
+var card_ticks: u32 = 0;
 var game: state.GameState = undefined;
 var level: *const levels.Level = &levels.all[0];
 var level_index: u8 = 0;
@@ -37,7 +48,7 @@ pub fn update() void {
 
     switch (mode) {
         .title => {
-            // M1 debug: A starts the test level, B the imported Wolf3D E1M1.
+            // M1 debug shortcut kept: A starts the test level, B the imported E1M1.
             if (pressed(b, .a) or pressed(b, .start)) new_game(0);
             if (pressed(b, .b)) new_game(1);
         },
@@ -46,22 +57,47 @@ pub fn update() void {
                 mode = .paused;
             } else {
                 sim.step(&game, level, b);
+                hud.tick(&game);
+                if (game.finished) {
+                    mode = .intermission;
+                    card_ticks = 0;
+                }
             }
         },
         .paused => {
             if (pressed(b, .start)) mode = .playing;
+        },
+        .intermission => {
+            card_ticks += 1;
+            if (card_ticks >= card_max or (card_ticks >= card_min and (pressed(b, .a) or pressed(b, .start)))) {
+                if (level_index + 1 < levels.all.len) {
+                    new_game(level_index + 1);
+                } else {
+                    mode = .victory;
+                    card_ticks = 0;
+                }
+            }
+        },
+        .victory => {
+            card_ticks += 1;
+            if (card_ticks >= victory_max or (card_ticks >= card_min and (pressed(b, .a) or pressed(b, .start)))) mode = .title;
         },
     }
 
     switch (mode) {
         .title => hud.draw_title(tick_total),
         .playing, .paused => {
+            const moving = mode == .playing and (b.up or b.down);
             const t0 = cart.micros_since_boot();
             view.draw(&game, level);
+            weapon.draw(&game, moving);
+            hud.draw_bar(&game);
             render_us = @intCast(cart.micros_since_boot() - t0);
-            hud.draw_debug_bar(&game, render_us);
-            if (mode == .paused) cart.text(.{ .str = "PAUSED", .x = 56, .y = 48, .text_color = hud.anti_white });
+            if (show_render_us) hud.draw_render_us(render_us);
+            if (mode == .paused) hud.draw_pause();
         },
+        .intermission => hud.draw_intermission(&game, level.name, @intCast(level.enemies.len), card_ticks),
+        .victory => hud.draw_victory(&game, card_ticks),
     }
 
     if (cart.is_wasm) present_wasm();
@@ -71,6 +107,7 @@ fn new_game(index: u8) void {
     level_index = index;
     level = &levels.all[level_index];
     sim.init(&game, level, level_index, @truncate(cart.micros_since_boot()));
+    hud.tick(&game);
     mode = .playing;
 }
 
@@ -89,6 +126,13 @@ comptime {
         @export(&debug_angle, .{ .name = "debug_angle" });
         @export(&debug_render_us, .{ .name = "debug_render_us" });
         @export(&debug_state_size, .{ .name = "debug_state_size" });
+        @export(&debug_hp, .{ .name = "debug_hp" });
+        @export(&debug_kills, .{ .name = "debug_kills" });
+        @export(&debug_weapon, .{ .name = "debug_weapon" });
+        @export(&debug_ammo, .{ .name = "debug_ammo" });
+        @export(&debug_level, .{ .name = "debug_level" });
+        @export(&debug_sprites, .{ .name = "debug_sprites" });
+        @export(&debug_state_hash, .{ .name = "debug_state_hash" });
     }
 }
 fn debug_mode() callconv(.c) u32 {
@@ -112,6 +156,32 @@ fn debug_render_us() callconv(.c) u32 {
 }
 fn debug_state_size() callconv(.c) u32 {
     return @sizeOf(state.GameState);
+}
+fn debug_hp() callconv(.c) u32 {
+    return @bitCast(@as(i32, game.player.hp));
+}
+fn debug_kills() callconv(.c) u32 {
+    return game.kills;
+}
+fn debug_weapon() callconv(.c) u32 {
+    return @backingInt(game.player.weapon);
+}
+/// Ammo of the current weapon (swatter: 0).
+fn debug_ammo() callconv(.c) u32 {
+    return switch (game.player.weapon) {
+        .swatter => 0,
+        .zapper => game.player.ammo_zapper,
+        .spray => game.player.ammo_spray,
+    };
+}
+fn debug_level() callconv(.c) u32 {
+    return level_index;
+}
+fn debug_sprites() callconv(.c) u32 {
+    return sprites.drawn;
+}
+fn debug_state_hash() callconv(.c) u32 {
+    return sim.hash(&game);
 }
 
 /// Button state. Upstream's platform_wasm.zig exposes `controls` but never
