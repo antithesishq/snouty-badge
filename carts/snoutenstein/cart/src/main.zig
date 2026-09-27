@@ -13,6 +13,7 @@ const sprites = @import("render/sprites.zig");
 const weapon = @import("render/weapon.zig");
 const hud = @import("render/hud.zig");
 const blit = @import("render/blit.zig");
+const audio = @import("audio.zig");
 
 comptime {
     cart.export_start_code();
@@ -45,7 +46,6 @@ var level_index: u8 = 0;
 var prev_buttons: state.Buttons = .{};
 var render_us: u32 = 0;
 var held_b: u32 = 0;
-var sound_on: bool = false;
 
 pub fn start() void {
     cart.set_vsync_enabled(1000.0 / 60.0);
@@ -65,7 +65,10 @@ pub fn update() void {
             if (pressed(b, .a)) new_game(0);
             if (pressed(b, .b)) new_game(e1m1_index);
             if (pressed(b, .start)) new_game(test_index);
-            if (pressed(b, .select)) sound_on = !sound_on;
+            if (pressed(b, .select)) {
+                audio.enabled = !audio.enabled;
+                audio.reset(&game); // LEDs off at once when disabled
+            }
         },
         .playing => {
             if (pressed(b, .start)) {
@@ -73,9 +76,11 @@ pub fn update() void {
             } else {
                 sim.step(&game, level, b);
                 hud.tick(&game);
+                audio.tick(&game, level);
                 if (game.player.hp <= 0) {
                     mode = .dead;
                     held_b = 0;
+                    audio.play(.death_freeze);
                 } else if (game.finished) {
                     mode = .intermission;
                     card_ticks = 0;
@@ -108,7 +113,7 @@ pub fn update() void {
     }
 
     switch (mode) {
-        .title => hud.draw_title(tick_total, sound_on),
+        .title => hud.draw_title(tick_total, audio.enabled),
         .playing, .paused, .dead => {
             const moving = mode == .playing and (b.up or b.down);
             const t0 = cart.micros_since_boot();
@@ -141,6 +146,7 @@ fn new_game(index: u8) void {
     level = &levels.all[level_index];
     sim.init(&game, level, level_index, @truncate(cart.micros_since_boot()));
     hud.tick(&game);
+    audio.reset(&game);
     mode = .playing;
 }
 

@@ -184,6 +184,24 @@ export `start`/`update`, 2 usage or script error, 3 the cart trapped or an
 expectation failed. `make_gif.py` scales frames with nearest-neighbor. One
 update is one 60 Hz tick, so `--every 4 --ms 66` plays at about real speed.
 
+### Determinism check
+
+`tools/check_determinism.mjs` runs the same scripted game twice through
+`preview.mjs --quiet` and asserts that the listed exports (default
+`debug_state_hash,debug_tick`; `debug_state_hash` is the FNV-1a hash of the
+whole `GameState`) are identical after the last update. It prints one line,
+`NAME=VALUE` per export (`NAME=RUN1|RUN2` where they differ), and exits 0 on
+a match, 3 on a mismatch or a failed run, 2 on a usage error.
+`--rewind-at T --rewind-for N` (rewind at tick T for N ticks, then replay
+forward and compare) is reserved for M4 and currently exits 2 with "not
+implemented until M4".
+
+```sh
+node tools/check_determinism.mjs zig-out/bin/snoutenstein.wasm \
+  --script tools/scripts/m2_combat.json --frames 240 --exports debug_state_hash,debug_tick,debug_kills
+# check_determinism: PASS m2_combat.json x240: debug_state_hash=... debug_tick=229 debug_kills=1
+```
+
 ## 6. Flash the badge
 
 1. Connect the badge over USB-C. It shows up as a USB mass-storage drive.
