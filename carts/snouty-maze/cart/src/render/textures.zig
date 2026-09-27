@@ -11,7 +11,7 @@ pub const Texture = struct {
     texels: *const [size * size]u8,
     palette: *const [16]cart.Pixel,
     /// Extent of the image in the grid, in texture units: sprite quads map
-    /// u, v over [0, uv_max]. 0.5 for the 16x16 snouty_top.
+    /// u, v over [0, uv_max] (1.0 for every current sheet).
     uv_max: f32 = 1.0,
 };
 
@@ -34,11 +34,9 @@ pub var ceiling: Texture = .{ .texels = &ceiling_texels, .palette = &ceiling_pal
 pub var finish: Texture = .{ .texels = &finish_texels, .palette = &finish_pal };
 
 var snouty_texels: [4][size * size]u8 = undefined;
-var snouty_top_texels: [size * size]u8 = undefined;
 var smiley_texels: [size * size]u8 = undefined;
 var logo_texels: [size * size]u8 = undefined;
 var snouty_pal: [16]cart.Pixel = undefined;
-var snouty_top_pal: [16]cart.Pixel = undefined;
 var smiley_pal: [16]cart.Pixel = undefined;
 var logo_pal: [16]cart.Pixel = undefined;
 
@@ -50,9 +48,6 @@ pub var snouty: [4]Texture = .{
     .{ .texels = &snouty_texels[2], .palette = &snouty_pal },
     .{ .texels = &snouty_texels[3], .palette = &snouty_pal },
 };
-/// 16x16 top view in the top-left of a 32x32 grid (rest transparent): use
-/// u, v in [0, 0.5).
-pub var snouty_top: Texture = .{ .texels = &snouty_top_texels, .palette = &snouty_top_pal, .uv_max = 0.5 };
 pub var smiley: Texture = .{ .texels = &smiley_texels, .palette = &smiley_pal };
 pub var logo: Texture = .{ .texels = &logo_texels, .palette = &logo_pal };
 
@@ -72,11 +67,9 @@ pub fn init() void {
     top_color = .from_color(.rgb(0x808080));
 
     for (&snouty_texels, 0..) |*t, f| unpack_region(gfx.snouty, f * size, size, t);
-    unpack_region(gfx.snouty_top, 0, 16, &snouty_top_texels);
     unpack(gfx.smiley, &smiley_texels);
     unpack(gfx.logo, &logo_texels);
     palette(gfx.snouty, &snouty_pal, 10);
-    palette(gfx.snouty_top, &snouty_top_pal, 10);
     palette(gfx.smiley, &smiley_pal, 10);
     palette(gfx.logo, &logo_pal, 10);
 }

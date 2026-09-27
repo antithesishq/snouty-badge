@@ -59,7 +59,8 @@ pub fn draw(m: *const maze.Maze, cam: *const camera.Camera) void {
         mesh.draw_spin_quad(cam, b, vec3(2.5, camera.eye_height, 1.5), 0.2, spin, &textures.smiley);
         mesh.draw_spin_quad(cam, b, vec3(3.5, camera.eye_height, 1.5), 0.2, spin, &textures.logo);
         sprite.draw_billboard(cam, b, vec3(1.5, 0, 2.5), 0.6, &textures.snouty[(f / 8) % 4]);
-        sprite.draw_floor_sprite(cam, b, vec3(2.5, 0, 2.5), 0.6, &textures.snouty_top);
+        // From above Snouty is the same walk frame lying on the floor (Adrian, 2026-09-27).
+        sprite.draw_floor_sprite(cam, b, vec3(2.5, 0, 2.5), 0.6, &textures.snouty[2]);
     }
 }
 

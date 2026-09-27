@@ -50,7 +50,6 @@ const images = [_]Image{
     .{ .file = "ceiling.png", .bits = 4, .transparent = false },
     .{ .file = "finish.png", .bits = 4, .transparent = false },
     .{ .file = "snouty.png", .bits = 4, .transparent = true },
-    .{ .file = "snouty_top.png", .bits = 4, .transparent = true },
     .{ .file = "smiley.png", .bits = 4, .transparent = true },
     .{ .file = "logo.png", .bits = 4, .transparent = true },
     .{ .file = "wall_pic.png", .bits = 4, .transparent = false },

@@ -495,8 +495,8 @@ is downscaled to pixel art. No audio support at all ("it'll be annoying").
   Snouty and Iris fill in as before. `logo.png` is now the Zig mark.
 - New manifest row `iris.png` (32x32 transparent) for the overhead name
   strip and wherever M3/M4 wants the mark; `build.zig` gets the row.
-- `snouty_top.png` (16x16, M4 overhead) stays procedural: no top view
-  exists in the pipeline.
+- `snouty_top.png` dropped 2026-09-27: from above Snouty is the walk frame
+  on the floor-aligned quad (Adrian: "just billboard snouty").
 - Audio removed from the design: SPEC section 9 becomes neopixels only,
   `audio.zig` leaves the M3 list, decision 9 updated. Select keeps the
   LED toggle.

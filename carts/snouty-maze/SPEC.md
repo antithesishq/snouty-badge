@@ -218,9 +218,10 @@ If hardware disagrees, section 16 has the decision table.
   in a dead end. Two walk frames per facing (left, right), facing chosen
   from the movement direction relative to the camera. Drawn with the
   per-pixel z test so walls hide him properly. During the rise and overhead
-  phases the billboard is replaced by `snouty_top`, a 16x16 sprite on a
-  floor-aligned quad, so he still reads from above (M4; in v1 he simply
-  hides when the eye passes y = 1).
+  phases the same walk frame lies on a floor-aligned quad
+  (`sprite.draw_floor_sprite`) so he still reads from above; there is no
+  separate top-down drawing (Adrian, 2026-09-27: "just billboard snouty for
+  the top down view"). M4; in v1 he simply hides when the eye passes y = 1.
 - **Smiley**. A 32x32 two-sided textured quad with transparency at eye
   height in a random dead-end cell, spinning about its vertical axis at
   1 turn per 2 s. When the camera enters its cell the view rolls 180
@@ -317,7 +318,6 @@ below procedurally at the exact size so code never waits on art, as in
 | `ceiling.png`     | 32x32 | 1      | no          | pale tiles with a dark grid                       |
 | `finish.png`      | 32x32 | 1      | no          | black and white 8x8 checker                       |
 | `snouty.png`      | 32x32 | 4      | yes         | blob with an "S", left x2 / right x2, legs alternate |
-| `snouty_top.png`  | 16x16 | 1      | yes         | top-down blob (M4)                                |
 | `smiley.png`      | 32x32 | 1      | yes         | yellow disc, two eyes, a smile                    |
 | `logo.png`        | 32x32 | 1      | yes         | iris-like mark (real: Zig mark via `--art`)       |
 | `iris.png`        | 32x32 | 1      | yes         | same drawing (real: Iris mark via `--art`)        |
@@ -408,7 +408,7 @@ per-column depth only for the sprites.
 - **The rise looking wrong** (too fast, too high, maze too small on
   screen). Constants live in one place in `camera.zig` and the M2 GIF is
   the review point.
-- **Snouty as a billboard from above.** Hidden in v1, `snouty_top` in M4.
+- **Snouty from above.** Hidden in v1; in M4 the walk frame lies on the floor quad.
 - **Boredom.** A perfect wall follower can spend a long time in a 16x16
   maze. The default is 12x12 and the A shortcut exists; section 18 asks
   about the solution-path alternative.
@@ -471,8 +471,8 @@ Parallel tracks go to Opus subagents with disjoint files.
 - **M3 Inhabitants**: Snouty billboard wanderer, smiley with roll flip,
   sphere mesh with flat shading and teleport fade, logo quad, LEDs with
   the Select toggle.
-- **M4 Polish**: joystick takeover with idle return, `snouty_top` during
-  the rise, animated maze carving in OVERHEAD, real art drop-in, hardware
+- **M4 Polish**: joystick takeover with idle return, Snouty on the floor
+  quad during the rise, animated maze carving in OVERHEAD, real art drop-in, hardware
   tuning pass.
 
 ## 18. Decisions and open questions

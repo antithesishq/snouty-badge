@@ -11,7 +11,7 @@
       manifest sizes, quantises them to the 4-bit palettes and writes
       assets/gen/. With --art, snouty, logo (Zig mark), iris and start come
       from the snouty-art pipeline's maze pack instead (Adrian's art
-      guidance 2026-09-27); finish and snouty_top are always procedural.
+      guidance 2026-09-27); finish is always procedural.
 
   python3 tools/prepare_assets.py --check
       Validates the sheets already in assets/gen/ (e.g. delivered art).
@@ -70,7 +70,6 @@ MANIFEST: dict[str, Sheet] = {
         Sheet("ceiling.png", 32, 32, 32, 32, 1, False),
         Sheet("finish.png", 32, 32, 32, 32, 1, False),
         Sheet("snouty.png", 128, 32, 32, 32, 4, True),
-        Sheet("snouty_top.png", 16, 16, 16, 16, 1, True),
         Sheet("smiley.png", 32, 32, 32, 32, 1, True),
         Sheet("logo.png", 32, 32, 32, 32, 1, True),
         Sheet("wall_pic.png", 32, 32, 32, 32, 1, False),
@@ -313,32 +312,6 @@ def draw_snouty() -> np.ndarray:
     return a
 
 
-# --------------------------------------------------------------------------
-# snouty_top.png: 16x16 top-down Snouty, snout pointing up (north).
-# --------------------------------------------------------------------------
-def draw_snouty_top() -> np.ndarray:
-    s = MANIFEST["snouty_top.png"]
-    a = new_sheet(s)
-    body = ellipse(16, 16, 9.5, 8.0, 4.8, 4.2)
-    snout = ellipse(16, 16, 4.0, 8.0, 2.8, 1.6)
-    ears = ellipse(16, 16, 6.2, 4.5, 1.3, 1.3) | ellipse(16, 16, 6.2, 11.5, 1.3, 1.3)
-    tail = np.zeros((16, 16), bool)
-    tail[14, 8] = True
-    sil = body | snout | ears | tail
-    out = dilate(sil) & ~sil
-    out[0, :] = out[-1, :] = out[:, 0] = out[:, -1] = False
-    a[out] = OUTLINE
-    a[body] = PURPLE2
-    a[body & ellipse(16, 16, 8.5, 7.0, 3.0, 2.4)] = PURPLE3
-    a[snout] = PURPLE3
-    a[2, 8] = PINK
-    a[2, 7] = PINK
-    a[ears] = PINK_DARK
-    a[tail] = PINK_DARK
-    a[6, 6] = BLACK
-    a[6, 9] = BLACK
-    return a
-
 
 # --------------------------------------------------------------------------
 # smiley.png: yellow disc, two eyes, a smile.
@@ -420,7 +393,6 @@ DRAW = {
     "ceiling.png": draw_ceiling,
     "finish.png": draw_finish,
     "snouty.png": draw_snouty,
-    "snouty_top.png": draw_snouty_top,
     "smiley.png": draw_smiley,
     "logo.png": draw_logo,
     "wall_pic.png": draw_wall_pic,
@@ -656,7 +628,6 @@ def run_w95(src: Path, art: Path | None) -> int:
         "finish.png": draw_finish(),
     }
     made["snouty.png"] = draw_snouty()
-    made["snouty_top.png"] = draw_snouty_top()
     made["iris.png"] = draw_logo()
     if art is not None:
         for name in ART_SHEETS:

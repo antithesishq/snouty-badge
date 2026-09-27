@@ -245,7 +245,7 @@ extracted from the original screensaver (`assets/src/w95/SOURCE.md`) to
 the 32x32 4-bit sheets in `assets/gen/`; `--art DIR` takes Snouty, the
 Zig mark (`logo`), the Iris mark (`iris`) and the Start button from the
 snouty-art maze pack (`python3 tools/build_maze.py` there, output in
-`out/maze/`); the finish tile and `snouty_top` stay procedural.
+`out/maze/`); the finish tile stays procedural.
 `--placeholders` draws every sheet procedurally instead. Both validate (sizes, cell grid, colour counts after
 RGB565, magenta key, 1 px empty border); `zig build` converts the PNGs into
 the `gfx` module. Goldens in `tests/golden/` are baselined on the w95 art.
