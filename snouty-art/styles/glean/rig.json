@@ -1,0 +1,26 @@
+{
+  "reference": "styles/glean/src/native_q.png",
+  "reference_size": [83, 84],
+  "reference_ground_y": 73,
+  "cell_size": [96, 96],
+  "cell_origin": [48, 88],
+  "ref_to_cell_offset": [10, 14],
+  "parts": {
+    "tail":         {"file": "tail.png",         "pivot": [30, 50], "z": 10},
+    "torso":        {"file": "torso.png",        "pivot": [40, 55], "z": 30},
+    "head":         {"file": "head.png",         "pivot": [44, 38], "z": 50},
+    "net":          {"file": "net.png",          "pivot": [49, 46], "z": 60},
+    "holding_hand": {"file": "holding_hand.png", "pivot": [5, 5],   "z": 70, "ref_pos": [51, 46]},
+    "free_hand":    {"file": "free_hand.png",    "pivot": [4, 4],   "z": 40, "ref_pos": [50, 52]}
+  },
+  "joints_ref": {
+    "hip": [40, 55],
+    "shoulder_near": [32, 42],
+    "shoulder_far": [44, 42],
+    "neck": [44, 38]
+  },
+  "limbs": {
+    "leg":  {"thigh": 10, "shin": 10, "width": 7, "foot_len": 8, "foot_width": 8, "foot_height": 5, "heel": 2},
+    "arm":  {"upper": 10, "fore": 10, "width": 5}
+  }
+}

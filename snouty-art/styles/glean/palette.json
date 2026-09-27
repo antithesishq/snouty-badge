@@ -1,0 +1,20 @@
+{
+  "name": "Snouty Glean-test style (lavender, black tee, white net)",
+  "roles": [
+    ["OUTLINE",    "#0a0810", "near-black outlines"],
+    ["SHIRT_DARK", "#141418", "shirt shadow"],
+    ["SHIRT",      "#2a2a30", "shirt"],
+    ["FUR_DEEP",   "#4e1494", "fur deep shadow"],
+    ["FUR_DARK",   "#7a30cc", "fur shadow"],
+    ["FUR",        "#a060e8", "fur"],
+    ["FUR_LIGHT",  "#d0a0f4", "fur highlight"],
+    ["WHITE",      "#f8f8f8", "eye, net mesh"],
+    ["GREY",       "#9a8cb0", "glasses"],
+    ["RED",        "#ee453c", "Iris emblem"],
+    ["RED_DARK",   "#91322f", "emblem shadow"],
+    ["NET_DARK",   "#7a4a06", "handle shadow"],
+    ["NET",        "#c07810", "handle / hoop"],
+    ["NET_LIGHT",  "#e8b040", "handle light"],
+    ["NET_PALE",   "#c8b8f0", "mesh tint"]
+  ]
+}
