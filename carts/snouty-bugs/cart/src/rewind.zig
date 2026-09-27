@@ -1,7 +1,8 @@
-//! The rewind's visuals (SPEC.md 5.1, 10): the frozen bug report, the
-//! reverse playback overlay and the `GO!` pop. Draw only: main.zig runs
-//! the state machine and history.zig restores the world; this module only
-//! reads `world.w`.
+//! The rewind's visuals (SPEC.md 5.1, 5.2, 5.3, 10): the frozen bug
+//! report, the reverse playback overlay, the hold-B (manual) rewind
+//! overlay, the dying bar (with hardcore's `UNRECOVERABLE`) and the `GO!`
+//! pop. Draw only: main.zig runs the state machine and history.zig
+//! restores the world; this module only reads `world.w`.
 const cart = @import("cart-api");
 const draw = @import("draw.zig");
 const world = @import("world.zig");
@@ -9,12 +10,15 @@ const bullets = @import("bullets.zig");
 const enemies = @import("enemies.zig");
 const collide = @import("collide.zig");
 const player = @import("player.zig");
+const hud = @import("hud.zig");
 
 /// Hit-stop with the bug report.
 pub const report_ticks: u32 = 20;
-/// Frames of reverse playback.
+/// The MAXIMUM frames of an auto rewind's reverse playback (120 ticks);
+/// main.zig passes the actual count, `(depth + 1) / 2`.
 pub const playback_frames: u32 = 60;
-/// Game ticks stepped back per playback frame (120 in total).
+/// Game ticks stepped back per frame, by the auto playback and by the
+/// hold-B rewind alike.
 pub const ticks_per_frame: u32 = 2;
 pub const resume_invuln: u32 = 60;
 pub const go_ticks: u32 = 30;
@@ -29,11 +33,11 @@ const text_dy: i32 = 4;
 const bar_mid: i32 = 52;
 const bar_low: i32 = 88;
 const bar_high: i32 = 20;
-/// The `<<` patch over the HUD center, x 60..99.
-const hud_patch_x: i32 = 60;
-const hud_patch_w: u32 = 40;
-/// `<<` is on 8 of every 16 playback frames.
+/// `<<` is on 8 of every 16 rewind frames, in the HUD status slot.
 const blink_frames: u32 = 8;
+/// Hardcore's dying bar names the bug for this many ticks, then reads
+/// `UNRECOVERABLE`.
+const fatal_message_ticks: u32 = 30;
 /// The offender blinks 2 ticks on, 2 off during the report.
 const offender_blink: u32 = 2;
 /// `GO!` gets its Coral shadow for its first ticks.
@@ -55,8 +59,20 @@ fn bar_top() i32 {
 }
 
 fn draw_bar_at(y: i32, kind: enemies.Kind) void {
+    draw_bar_text_at(y, message(kind));
+}
+
+fn draw_bar_text_at(y: i32, str: []const u8) void {
     cart.rect(.{ .x = 0, .y = y, .width = cart.screen_width, .height = bar_h, .fill_color = draw.anti_black });
-    draw.centered_text(message(kind), y + text_dy, draw.coral);
+    draw.centered_text(str, y + text_dy, draw.coral);
+}
+
+/// `<<` in the HUD status slot (x 48..63), blinking on 8 of every 16
+/// frames. The slot is patched Anti-Black first so the scanline dim does
+/// not stripe it; the fuel bar next to it is left alone.
+fn draw_rewind_mark(frame: u32) void {
+    cart.rect(.{ .x = hud.status_x, .y = 0, .width = hud.status_w, .height = @intCast(draw.hud_height), .fill_color = draw.anti_black });
+    if ((frame / blink_frames) % 2 == 0) draw.text("<<", hud.status_x, 0, draw.coral);
 }
 
 pub fn message(kind: enemies.Kind) []const u8 {
@@ -70,10 +86,20 @@ pub fn message(kind: enemies.Kind) []const u8 {
     };
 }
 
-/// The bar and message only (used by DYING and, in M5, GAME OVER).
+/// The bar and message only (DYING in normal mode, later GAME OVER).
 /// Placed clear of the ship (see `bar_mid`).
 pub fn draw_bar(kind: enemies.Kind) void {
     draw_bar_at(bar_top(), kind);
+}
+
+/// Hardcore's DYING bar, `age` 0..59 since the fatal hit: the bug message
+/// while age < 30, then `UNRECOVERABLE`, same placement and colour.
+pub fn draw_fatal_bar(kind: enemies.Kind, age: u32) void {
+    if (age < fatal_message_ticks) {
+        draw_bar_at(bar_top(), kind);
+    } else {
+        draw_bar_text_at(bar_top(), "UNRECOVERABLE");
+    }
 }
 
 /// Over the frozen, fully drawn scene + HUD: the bar, then over it the
@@ -99,14 +125,22 @@ pub fn draw_report(hit: collide.Hit, age: u32) void {
     cart.hline(.{ .x = c[0], .y = c[1], .len = 1, .color = draw.red });
 }
 
-/// Over the restored, fully drawn scene + HUD, `frame` 1..playback_frames:
-/// scanlines, the bar (where the report put it), and `<<` blinking over
-/// the HUD center.
+/// Over the restored, fully drawn scene + HUD, `frame` 1..the playback
+/// length (at most playback_frames): scanlines, the bar (where the report
+/// put it), and `<<` blinking in the HUD status slot. The fuel bar stays
+/// visible.
 pub fn draw_playback(hit: collide.Hit, frame: u32) void {
     draw.darken_scanlines();
     draw_bar_at(report_bar_y, hit.kind);
-    cart.rect(.{ .x = hud_patch_x, .y = 0, .width = hud_patch_w, .height = @intCast(draw.hud_height), .fill_color = draw.anti_black });
-    if ((frame / blink_frames) % 2 == 0) draw.centered_text("<<", 0, draw.coral);
+    draw_rewind_mark(frame);
+}
+
+/// Over the restored, fully drawn scene + HUD during a hold-B rewind,
+/// `frame` 1.. since the hold began: scanlines and the same `<<` blink.
+/// No message bar; the fuel bar stays visible as it drains.
+pub fn draw_manual(frame: u32) void {
+    draw.darken_scanlines();
+    draw_rewind_mark(frame);
 }
 
 /// `GO!` centered on the bar's text line (y 56 unless the ship is there)
