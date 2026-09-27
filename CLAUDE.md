@@ -34,6 +34,8 @@ its design and milestone status.
   it that `add_os_cart` needs.
 - `badge-bench/` — emulated cycle benchmark (`bench.sh <elf>`); its own
   `carts/<binary>.toml` files hold per-cart defaults (a different `carts/`).
+  `badge-bench/calibrate/` is a cart too (`-Dcart=badge-calibrate`): the
+  hardware calibration kernels and `fit.py`; see its SPEC.md and PLAN.md.
 - `snouty-art/` — code-driven sprite pipeline; `tools/install_badge.py` and
   `tools/build_maze.py` write into the carts' `assets/`.
 - Zig `0.17.0-dev.1936+5a625d5f3` at `~/.local/bin/zig`

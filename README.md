@@ -15,6 +15,7 @@ tools.
 | `carts/snouty-maze/` | `snouty-maze` | Windows 3D Maze screensaver clone on a small software rasterizer (tags `snouty-maze/m0`..`m3`). |
 | `tools/` | | Shared cart tools: `preview.mjs` (headless wasm runner with input scripts and checks), `serve-cart.mjs` (feeds the web simulator), `make_gif.py`, `check_float.mjs`, `uf2_info.py`. |
 | `badge-bench/` | | Emulated Cortex-M33 cycle benchmark for any cart ELF, with per-cart defaults and hot-function lists. |
+| `badge-bench/calibrate/` | `badge-calibrate` | Hardware calibration cart: times 20 micro-kernels with the cycle counter during and after the LCD DMA; `fit.py` turns a console capture into badge-bench's `--calibrate` table. |
 | `snouty-art/` | | Code-driven pixel-art pipeline (parts rig, procedural limbs) that produces the carts' sprite sheets. |
 | `sycl-badge/` | | Upstream badge SDK and simulator, a git submodule pinned to the commit the carts are built against. |
 

@@ -1,0 +1,8 @@
+# badge-calibrate: hardware calibration kernels (badge-bench/calibrate/). One
+# pass = 20 frames (one kernel each); its 21 CAL trace lines then go out one
+# per frame (row 19 and the done line share a frame), so pass 1 completes at
+# frame 19 and its lines appear in frames 20..39.
+frames = 40
+budget_ms = 1000
+pokes = ["harness.skip_wait=1"]   # skip the 1.2 M-cycle DMA wait (PLAN.md correction 5)
+note = "calibration cart: pass 1's CAL trace lines (frames 20..39) are the modelled per-kernel counts for fit.py"

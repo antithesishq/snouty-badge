@@ -3,7 +3,8 @@ const Build = std.Build;
 
 const common = @import("build/common.zig");
 
-/// Every cart in carts/. `dir` is the directory under carts/, `binary` the
+/// Every cart. `dir` is the -Dcart name (the directory under carts/, except
+/// badge-calibrate, which lives in badge-bench/calibrate/), `binary` the
 /// name of the uf2/elf/wasm it produces. Either matches -Dcart.
 const Cart = struct { dir: []const u8, binary: []const u8, add: common.AddFn };
 const carts = [_]Cart{
@@ -13,6 +14,7 @@ const carts = [_]Cart{
     .{ .dir = "snouty-reflections", .binary = "snouty-reflections", .add = &@import("carts/snouty-reflections/build.zig").add },
     .{ .dir = "snouty-boy", .binary = "snouty-boy", .add = &@import("carts/snouty-boy/build.zig").add },
     .{ .dir = "snouty-maze", .binary = "snouty-maze", .add = &@import("carts/snouty-maze/build.zig").add },
+    .{ .dir = "badge-calibrate", .binary = "badge-calibrate", .add = &@import("badge-bench/calibrate/build.zig").add },
 };
 
 pub fn build(b: *Build) void {
