@@ -77,6 +77,9 @@ head = box(35, 17, 73, 42) & op & ~(handle | handle_outline) & ~fist_src
 head &= ~(black & box(26, 33, 46, 60) & ~nb8(fur & box(35, 17, 73, 33)))
 head |= is_("WHITE", "GREY") & box(44, 18, 60, 32)
 head &= ~(box(35, 39, 43, 42) & black)
+# the neck below the jaw line sits on the shirt; drop it (it read as a stray
+# lavender wedge on the tee) along with the collar outline under the chin
+head &= ~box(30, 39, 46, 45)
 # fill where the handle crossed the head (rows between head extents in the head box)
 head_img = np.zeros_like(im)
 head_img[head] = im[head]
@@ -91,18 +94,22 @@ save(head_img, "head")
 # --- tail: fur left of the body, clipped so the shoulder fur stays with the torso
 tail_box = box(8, 38, 29, 56) | box(8, 47, 31, 56)
 tail = tail_box & (fur | (black & nb8(fur & tail_box)))
+tail &= ~box(27, 38, 31, 41)          # shoulder fur speck above the tail
 save(tail, "tail")
 
 # --- torso: drawn, not carved. The source shirt is a black blob whose black is
 # indistinguishable from outline, so we redraw it: a round tee with a sleeve
 # bump at the near shoulder, SHIRT_DARK on the lower-left, 1px OUTLINE, lavender
 # hips under the hem for the legs to attach to, and a 7px Iris ring on the chest.
-def ellipse(cx, cy, rx, ry):
-    return ((X - cx) / rx) ** 2 + ((Y - cy) / ry) ** 2 <= 1.0
+def ellipse(cx, cy, rx, ry, p=2.0):
+    return np.abs((X - cx) / rx) ** p + np.abs((Y - cy) / ry) ** p <= 1.0
 
 
-shirt = ellipse(39.5, 44, 10.5, 10) | ellipse(33, 40, 5, 5.5)
-hips = ellipse(39, 53, 8.5, 4.5) & (Y >= 49)
+# boxy tee (superellipse) so the hem stays wide like the source, a rounded
+# front and a sleeve bump at the near shoulder
+shirt = ellipse(40.5, 46, 11, 11, 2.6) | ellipse(34, 40, 5, 5)
+shirt &= Y <= 57
+hips = ellipse(40, 56, 9, 4.5) & (Y >= 51)
 torso = np.zeros_like(im)
 hip_fill = hips & ~shirt
 torso[hip_fill] = pal["FUR"] + (255,)
@@ -114,11 +121,13 @@ torso[interior] = pal["SHIRT"] + (255,)
 rim = interior & ~np.roll(np.roll(shirt, -1, 0), 1, 1)
 rim |= interior & ~np.roll(np.roll(shirt, -2, 0), 2, 1)
 torso[rim] = pal["SHIRT_DARK"] + (255,)
-# Iris ring: radius 3 centred (42, 47), gap at the upper right like the mark
-ring = ellipse(42, 47, 3.4, 3.4) & ~ellipse(42, 47, 1.9, 1.9)
-gap = (X >= 43) & (Y <= 45)
+# Iris ring: radius 3, gap at the upper right like the mark
+# sits low on the chest so the near arm crossing above it does not hide it
+RX, RY = 44, 52
+ring = ellipse(RX, RY, 3.4, 3.4) & ~ellipse(RX, RY, 1.9, 1.9)
+gap = (X >= RX + 1) & (Y <= RY - 2)
 torso[ring & ~gap & interior] = pal["RED"] + (255,)
-torso[ring & ~gap & interior & (X <= 41) & (Y >= 48)] = pal["RED_DARK"] + (255,)
+torso[ring & ~gap & interior & (X <= RX - 1) & (Y >= RY + 1)] = pal["RED_DARK"] + (255,)
 save(torso, "torso")
 
 
