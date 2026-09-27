@@ -2,10 +2,14 @@
 # Full verification (PLAN.md "Verification for M1/M2"). Run from the repo root.
 set -euo pipefail
 export PATH="$HOME/.local/bin:$PATH"
+# Levels: the generated data file must match the .txt sources.
+tools/gen_levels.sh
+git diff --exit-code -- cart/src/levels/gen.zig || { echo "check: cart/src/levels/gen.zig is stale; commit the regenerated file"; exit 1; }
 zig build
 size -A zig-out/firmware/snoutenstein.elf | grep -E "^\.text|^\.data|^\.bss"
 zig test cart/src/sim.zig
 zig test cart/src/levels.zig
+zig test cart/src/level_parse.zig
 zig test cart/src/rewind.zig
 W=zig-out/bin/snoutenstein.wasm
 # M1: walk the long corridor, doors, pause.

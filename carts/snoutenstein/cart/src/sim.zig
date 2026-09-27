@@ -9,6 +9,7 @@ const std = @import("std");
 const fixed = @import("fixed.zig");
 const state = @import("state.zig");
 const levels = @import("levels.zig");
+const level_parse = @import("level_parse.zig");
 
 pub const GameState = state.GameState;
 const Fixed = fixed.Fixed;
@@ -512,7 +513,7 @@ test "init places the player at the start cell centre" {
     try testing.expect(s.player.x > fixed.from_int(3) + fixed.half);
 }
 
-const room = levels.parse("room",
+const room_src =
     \\1111111
     \\1S>...1
     \\1.....1
@@ -520,9 +521,11 @@ const room = levels.parse("room",
     \\1.....1
     \\1.....1
     \\1111111
-, 0);
+;
 
 test "walking into a wall stops at the radius" {
+    var room_st: level_parse.Parsed = undefined;
+    const room = try level_parse.parse_level(&room_st, "room", room_src, 0);
     var s: GameState = undefined;
     init(&s, &room, 0, 1);
     run(&s, &room, .{ .up = true }, 200);
@@ -534,6 +537,8 @@ test "walking into a wall stops at the radius" {
 }
 
 test "sliding along a wall keeps the tangential movement" {
+    var room_st: level_parse.Parsed = undefined;
+    const room = try level_parse.parse_level(&room_st, "room", room_src, 0);
     var s: GameState = undefined;
     init(&s, &room, 0, 1);
     s.player.angle = fixed.deg(20); // mostly east, a little south
@@ -552,13 +557,15 @@ test "sliding along a wall keeps the tangential movement" {
     try testing.expectEqual(fixed.from_int(6) - radius, s.player.y);
 }
 
-const door_level = levels.parse("door",
+const door_level_src =
     \\11111111
     \\1S>.D..1
     \\11111111
-, 0);
+;
 
 test "a door opens over 30 ticks, is passable at 192, then closes" {
+    var door_level_st: level_parse.Parsed = undefined;
+    const door_level = try level_parse.parse_level(&door_level_st, "door", door_level_src, 0);
     const L = &door_level;
     var s: GameState = undefined;
     init(&s, L, 0, 1);
@@ -603,6 +610,8 @@ test "a door opens over 30 ticks, is passable at 192, then closes" {
 }
 
 test "a door holds open for 180 ticks and reopens if entered while closing" {
+    var door_level_st: level_parse.Parsed = undefined;
+    const door_level = try level_parse.parse_level(&door_level_st, "door", door_level_src, 0);
     const L = &door_level;
     var s: GameState = undefined;
     init(&s, L, 0, 1);
@@ -622,13 +631,15 @@ test "a door holds open for 180 ticks and reopens if entered while closing" {
     try testing.expectEqual(@as(u8, 246), s.doors[0].open);
 }
 
-const locked_level = levels.parse("locked",
+const locked_level_src =
     \\11111111
     \\1S>.C..1
     \\11111111
-, 0);
+;
 
 test "a locked door stays shut without the key and opens with it" {
+    var locked_level_st: level_parse.Parsed = undefined;
+    const locked_level = try level_parse.parse_level(&locked_level_st, "locked", locked_level_src, 0);
     const L = &locked_level;
     var s: GameState = undefined;
     init(&s, L, 0, 1);
@@ -651,13 +662,15 @@ test "a locked door stays shut without the key and opens with it" {
     try testing.expect(s.player.x > fixed.from_int(5));
 }
 
-const exit_level = levels.parse("exit",
+const exit_level_src =
     \\111111
     \\1S>.E1
     \\111111
-, 0);
+;
 
 test "the exit door opens and finishes the level when entered" {
+    var exit_level_st: level_parse.Parsed = undefined;
+    const exit_level = try level_parse.parse_level(&exit_level_st, "exit", exit_level_src, 0);
     const L = &exit_level;
     var s: GameState = undefined;
     init(&s, L, 0, 1);
@@ -667,13 +680,15 @@ test "the exit door opens and finishes the level when entered" {
     try testing.expectEqual(@as(i32, 4), fixed.to_int(s.player.x));
 }
 
-const pickup_level = levels.parse("pickups",
+const pickup_level_src =
     \\111111111111
     \\1S>cig+%$*$1
     \\111111111111
-, 0);
+;
 
 test "pickups clear their bit and clamp" {
+    var pickup_level_st: level_parse.Parsed = undefined;
+    const pickup_level = try level_parse.parse_level(&pickup_level_st, "pickups", pickup_level_src, 0);
     const L = &pickup_level;
     var s: GameState = undefined;
     init(&s, L, 0, 1);
@@ -712,6 +727,8 @@ test "pickups clear their bit and clamp" {
 }
 
 test "rewind meter regenerates 1 per 6 ticks up to 600" {
+    var room_st: level_parse.Parsed = undefined;
+    const room = try level_parse.parse_level(&room_st, "room", room_src, 0);
     var s: GameState = undefined;
     init(&s, &room, 0, 1);
     s.player.rewind_meter = 590;
@@ -765,19 +782,19 @@ test "same 600-tick script gives the same hash, a different one does not" {
 
 // ---------------------------------------------------------------- combat tests
 
-const arena = levels.parse("arena",
+const arena_src =
     \\111111111111
     \\1S>........1
     \\1..........1
     \\1..........1
     \\1.....a....1
     \\111111111111
-, 0);
+;
 
 /// Fresh arena with enemy 0 turned into `kind` at (x, y) and the player
 /// at the start (1.5, 1.5) facing east.
-fn arena_with(s: *GameState, kind: state.EnemyKind, x: Fixed, y: Fixed) void {
-    init(s, &arena, 0, 1);
+fn arena_with(s: *GameState, L: *const Level, kind: state.EnemyKind, x: Fixed, y: Fixed) void {
+    init(s, L, 0, 1);
     s.enemies[0].kind = kind;
     s.enemies[0].hp = stats(kind).hp;
     s.enemies[0].x = x;
@@ -787,6 +804,8 @@ fn arena_with(s: *GameState, kind: state.EnemyKind, x: Fixed, y: Fixed) void {
 const px0 = fixed.from_int(1) + fixed.half;
 
 test "init gives enemies their real hp, idle, frame 0" {
+    var arena_st: level_parse.Parsed = undefined;
+    const arena = try level_parse.parse_level(&arena_st, "arena", arena_src, 0);
     var s: GameState = undefined;
     init(&s, &arena, 0, 1);
     try testing.expectEqual(state.EnemyState.idle, s.enemies[0].state);
@@ -798,8 +817,10 @@ test "init gives enemies their real hp, idle, frame 0" {
 }
 
 test "zapper kills a gnat in one shot and spends a charge" {
+    var arena_st: level_parse.Parsed = undefined;
+    const arena = try level_parse.parse_level(&arena_st, "arena", arena_src, 0);
     var s: GameState = undefined;
-    arena_with(&s, .gnat, fixed.from_int(5) + fixed.half, px0);
+    arena_with(&s, &arena, .gnat, fixed.from_int(5) + fixed.half, px0);
     step(&s, &arena, .{ .a = true });
     try testing.expectEqual(state.EnemyState.dying, s.enemies[0].state);
     try testing.expectEqual(@as(i16, 0), s.enemies[0].hp);
@@ -807,20 +828,22 @@ test "zapper kills a gnat in one shot and spends a charge" {
     try testing.expectEqual(@as(u16, 1), s.kills);
     try testing.expectEqual(@as(u8, 12), s.player.fire_cooldown);
     // A ray that passes beside the gnat (lateral 0.35 > radius 0.3) misses.
-    arena_with(&s, .gnat, fixed.from_int(5) + fixed.half, px0 + fixed.from_float(0.35));
+    arena_with(&s, &arena, .gnat, fixed.from_int(5) + fixed.half, px0 + fixed.from_float(0.35));
     step(&s, &arena, .{ .a = true });
     try testing.expectEqual(@as(i16, 3), s.enemies[0].hp);
     try testing.expectEqual(@as(u8, 39), s.player.ammo_zapper);
     // Behind the player: no hit either.
-    arena_with(&s, .gnat, px0, px0);
+    arena_with(&s, &arena, .gnat, px0, px0);
     s.player.x = fixed.from_int(3) + fixed.half;
     step(&s, &arena, .{ .a = true });
     try testing.expectEqual(@as(i16, 3), s.enemies[0].hp);
 }
 
 test "zapper cooldown blocks the next shot for 12 ticks" {
+    var arena_st: level_parse.Parsed = undefined;
+    const arena = try level_parse.parse_level(&arena_st, "arena", arena_src, 0);
     var s: GameState = undefined;
-    arena_with(&s, .wasp, fixed.from_int(5) + fixed.half, px0);
+    arena_with(&s, &arena, .wasp, fixed.from_int(5) + fixed.half, px0);
     step(&s, &arena, .{ .a = true });
     try testing.expectEqual(@as(i16, 3), s.enemies[0].hp);
     try testing.expectEqual(state.EnemyState.pain, s.enemies[0].state);
@@ -836,8 +859,10 @@ test "zapper cooldown blocks the next shot for 12 ticks" {
 }
 
 test "zapper with no charge does nothing" {
+    var arena_st: level_parse.Parsed = undefined;
+    const arena = try level_parse.parse_level(&arena_st, "arena", arena_src, 0);
     var s: GameState = undefined;
-    arena_with(&s, .gnat, fixed.from_int(5) + fixed.half, px0);
+    arena_with(&s, &arena, .gnat, fixed.from_int(5) + fixed.half, px0);
     s.player.ammo_zapper = 0;
     run(&s, &arena, .{ .a = true }, 30);
     try testing.expectEqual(@as(i16, 3), s.enemies[0].hp);
@@ -845,8 +870,10 @@ test "zapper with no charge does nothing" {
 }
 
 test "pain flashes 2 ticks, shows frame 3 for 12 ticks, then idles" {
+    var arena_st: level_parse.Parsed = undefined;
+    const arena = try level_parse.parse_level(&arena_st, "arena", arena_src, 0);
     var s: GameState = undefined;
-    arena_with(&s, .beetle, fixed.from_int(5) + fixed.half, px0);
+    arena_with(&s, &arena, .beetle, fixed.from_int(5) + fixed.half, px0);
     step(&s, &arena, .{ .a = true });
     try testing.expectEqual(@as(u8, 2), s.enemies[0].flash);
     try testing.expectEqual(@as(u8, 3), s.enemies[0].frame);
@@ -863,13 +890,15 @@ test "pain flashes 2 ticks, shows frame 3 for 12 ticks, then idles" {
     try testing.expectEqual(@as(i16, 17), s.enemies[0].hp);
 }
 
-const wall_level = levels.parse("wall",
+const wall_level_src =
     \\1111111111
     \\1S>..1.a.1
     \\1111111111
-, 0);
+;
 
 test "a wall between blocks the shot" {
+    var wall_level_st: level_parse.Parsed = undefined;
+    const wall_level = try level_parse.parse_level(&wall_level_st, "wall", wall_level_src, 0);
     var s: GameState = undefined;
     init(&s, &wall_level, 0, 1);
     try testing.expectEqual(fixed.from_float(3.5), wall_distance(&s, &wall_level, s.player.x, s.player.y, 0));
@@ -878,13 +907,19 @@ test "a wall between blocks the shot" {
     try testing.expectEqual(@as(u8, 39), s.player.ammo_zapper); // the shot still costs
 }
 
-const long = levels.parse("long",
+const long_src =
     \\1111111111111111111111111111111111
     \\1S>..............................1
     \\1111111111111111111111111111111111
-, 0);
+;
 
 test "wall_distance: doors, cap, directions" {
+    var door_level_st: level_parse.Parsed = undefined;
+    const door_level = try level_parse.parse_level(&door_level_st, "door", door_level_src, 0);
+    var long_st: level_parse.Parsed = undefined;
+    const long = try level_parse.parse_level(&long_st, "long", long_src, 0);
+    var room_st: level_parse.Parsed = undefined;
+    const room = try level_parse.parse_level(&room_st, "room", room_src, 0);
     var s: GameState = undefined;
     const L = &door_level;
     init(&s, L, 0, 1);
@@ -910,6 +945,8 @@ test "wall_distance: doors, cap, directions" {
 }
 
 test "swatter hits at 1.0 cells, misses at 1.5 or 30 degrees off" {
+    var arena_st: level_parse.Parsed = undefined;
+    const arena = try level_parse.parse_level(&arena_st, "arena", arena_src, 0);
     var s: GameState = undefined;
     const cx = fixed.from_int(3) + fixed.half;
     const cy = fixed.from_int(2) + fixed.half;
@@ -927,7 +964,7 @@ test "swatter hits at 1.0 cells, misses at 1.5 or 30 degrees off" {
         // Facing north-west-ish too, so the cone test crosses angle 0 wrap.
         for ([_]fixed.Angle{ 0, fixed.deg(5) }) |facing| {
             const a = facing +% c.deg;
-            arena_with(&s, .wasp, cx + fixed.mul(fixed.cos(a), c.dist), cy + fixed.mul(fixed.sin(a), c.dist));
+            arena_with(&s, &arena, .wasp, cx + fixed.mul(fixed.cos(a), c.dist), cy + fixed.mul(fixed.sin(a), c.dist));
             s.player.x = cx;
             s.player.y = cy;
             s.player.angle = facing;
@@ -941,6 +978,8 @@ test "swatter hits at 1.0 cells, misses at 1.5 or 30 degrees off" {
 }
 
 test "Select cycles weapons and skips empty ones" {
+    var arena_st: level_parse.Parsed = undefined;
+    const arena = try level_parse.parse_level(&arena_st, "arena", arena_src, 0);
     var s: GameState = undefined;
     init(&s, &arena, 0, 1);
     const sel: state.Buttons = .{ .select = true };
@@ -977,9 +1016,11 @@ test "Select cycles weapons and skips empty ones" {
 }
 
 test "spray spends one can and hits a beetle at 3 cells" {
+    var arena_st: level_parse.Parsed = undefined;
+    const arena = try level_parse.parse_level(&arena_st, "arena", arena_src, 0);
     var s: GameState = undefined;
     for ([_]u32{ 1, 2, 3, 99, 0xDEADBEEF }) |seed| {
-        arena_with(&s, .beetle, fixed.from_int(4) + fixed.half, fixed.from_int(2) + fixed.half);
+        arena_with(&s, &arena, .beetle, fixed.from_int(4) + fixed.half, fixed.from_int(2) + fixed.half);
         s.rng = seed;
         s.player.y = fixed.from_int(2) + fixed.half;
         s.player.has_spray = true;
@@ -993,7 +1034,7 @@ test "spray spends one can and hits a beetle at 3 cells" {
         try testing.expect(@rem(s.enemies[0].hp, 2) == 0);
     }
     // Out of reach (7 cells): nothing.
-    arena_with(&s, .beetle, fixed.from_int(8) + fixed.half, px0);
+    arena_with(&s, &arena, .beetle, fixed.from_int(8) + fixed.half, px0);
     s.player.has_spray = true;
     s.player.ammo_spray = 1;
     s.player.weapon = .spray;
@@ -1006,8 +1047,10 @@ test "spray spends one can and hits a beetle at 3 cells" {
 }
 
 test "dying takes 24 ticks, increments kills, frames 4 5 6, corpse is no target" {
+    var arena_st: level_parse.Parsed = undefined;
+    const arena = try level_parse.parse_level(&arena_st, "arena", arena_src, 0);
     var s: GameState = undefined;
-    arena_with(&s, .gnat, fixed.from_int(4) + fixed.half, px0);
+    arena_with(&s, &arena, .gnat, fixed.from_int(4) + fixed.half, px0);
     // A second gnat right behind the first, on the same ray.
     s.enemies[1] = .{ .x = fixed.from_int(6) + fixed.half, .y = px0, .kind = .gnat, .state = .idle, .hp = 3 };
     step(&s, &arena, .{ .a = true });
@@ -1034,6 +1077,8 @@ test "dying takes 24 ticks, increments kills, frames 4 5 6, corpse is no target"
 }
 
 test "a dead enemy in a doorway does not hold the door open" {
+    var door_level_st: level_parse.Parsed = undefined;
+    const door_level = try level_parse.parse_level(&door_level_st, "door", door_level_src, 0);
     const L = &door_level;
     var s: GameState = undefined;
     init(&s, L, 0, 1);

@@ -38,6 +38,19 @@ This writes:
 - `zig-out/firmware/snoutenstein.elf`
 - `zig-out/bin/snoutenstein.wasm` (for the simulator)
 
+Levels live in `cart/src/levels/*.txt` and are compiled into
+`cart/src/levels/gen.zig` by `tools/gen_levels.sh`, which is committed. After
+editing or importing a level, run the script and commit both files.
+
+Without a local toolchain, the VM's build artifacts can be pulled into the
+same locations and everything below works unchanged:
+
+```sh
+mkdir -p zig-out/firmware zig-out/bin
+scp exedev@animated-badge.exe.xyz:snoutenstein/zig-out/firmware/snoutenstein.uf2 zig-out/firmware/
+scp exedev@animated-badge.exe.xyz:snoutenstein/zig-out/bin/snoutenstein.wasm zig-out/bin/
+```
+
 ## 4. Web simulator
 
 Terminal 1 serves the cart and live-reloads it:

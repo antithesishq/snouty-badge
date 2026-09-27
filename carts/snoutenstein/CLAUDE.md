@@ -14,8 +14,13 @@ CLAUDE.md files have the long explanations, this one summarises.
 - `cart/src/fixed.zig`, `state.zig`, `sim.zig`, `levels.zig` — the simulation.
   Pure Zig, no cart-api import, `zig test cart/src/sim.zig` runs on the host.
 - `cart/src/render/` — raycaster, textures, sprites, HUD (cart-api users).
-- `cart/src/levels/*.txt` — ASCII levels, embedded at comptime (must live
-  under the module root, hence not a top-level `levels/`).
+- `cart/src/levels/*.txt` — ASCII levels, the source of truth. They are NOT
+  parsed at comptime: `tools/gen_levels.sh` (runs `cart/src/gen_levels.zig`
+  on the host through `cart/src/level_parse.zig`) writes
+  `cart/src/levels/gen.zig`, plain literal data that is committed. Edit a
+  `.txt`, rerun the script, commit both. `tools/check.sh` fails if `gen.zig`
+  is stale. Tests parse mini-levels at run time with
+  `level_parse.parse_level`.
 - `cart/build/convert_gfx.zig`, `cart/src/packed_int_array.zig` — upstream copies.
 - `assets/gen/*.png` — build inputs (committed); `tools/prepare_assets.py` writes them.
 - `tools/` — `preview.mjs` (headless wasm -> PNG + export assertions),
@@ -45,6 +50,12 @@ voice. Neopixels at or below 10/255 per channel.
   never used.
 - This Zig (`0.17.0-dev.1936`) has no `**` array repetition (use `@splat`),
   `std.mem.trimEnd` not `trimRight`, `@export(&fn, .{ .name })`.
+- Keep comptime light. The macOS build of this Zig fails with a
+  compiler-internal `error: OutOfMemory` on heavy comptime (the old comptime
+  level parser triggered it; comptime `PackedIntSlice.get` loops are
+  suspect too). Anything data-like goes through a host-side generator
+  (`convert_gfx`, `gen_levels`) or a runtime check, never a big comptime
+  loop. Adrian builds on a Mac, so this is a hard rule.
 - Levels: `#`/`1`-`8` walls, `.` floor, `D C I G E` doors, `S>` start with
   facing, `c i g + % $ *` pickups, `a w b s H` enemies (a = gnat).
 

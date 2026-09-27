@@ -421,3 +421,12 @@ plus the two new scripted runs inside `check.sh`.
   width); a missed shot still spends ammo. `tools/check.sh` runs the M1
   and M2 scripted runs plus all host tests. Next: hardware gate (still
   pending), then M3 bugs (AI, projectiles, damage, death freeze).
+- 2026-09-27: Adrian's Mac cannot compile the cart (`error: OutOfMemory`
+  from the compiler, m0 through m2, same pinned Zig; the bugs cart builds).
+  Bisected on the `mac-bisect` branch to the comptime level parser (inlining
+  the text instead of `@embedFile` did not help; a literal level did). The
+  Linux compile peaks at 350 MB virtual either way, so it is a macOS
+  compiler defect, not memory. Fix: levels are generated on the host into
+  `cart/src/levels/gen.zig` (committed) by `tools/gen_levels.sh`; tests
+  parse mini-levels at run time; the comptime nibble checks became a
+  runtime `debug_nibble_ok`. Adrian pulls artifacts from the VM meanwhile.

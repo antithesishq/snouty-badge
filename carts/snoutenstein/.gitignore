@@ -9,3 +9,4 @@ zig-pkg/
 __pycache__/
 *.WL1
 *.WL6
+out/
