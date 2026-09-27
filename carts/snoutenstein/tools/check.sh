@@ -32,6 +32,6 @@ node tools/preview.mjs $W --frames 240 --every 6 --out out/combat \
 node tools/preview.mjs $W --frames 1400 --every 10 --out out/exit \
   --script tools/scripts/m2_exit.json \
   --dump-exports debug_mode,debug_level,debug_tick,debug_px,debug_py \
-  --expect "debug_mode == 1" --expect "debug_level == 1"
+  --expect "debug_mode == 1" --expect "debug_level == 4"
 node tools/check_determinism.mjs $W --script tools/scripts/m2_combat.json --frames 240
 echo "check: all passed"
