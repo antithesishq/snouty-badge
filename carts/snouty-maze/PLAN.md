@@ -476,6 +476,6 @@ Done as planned. `wall`, `floor`, `ceiling`, `smiley`, `logo`,
 9..16 of 16. Build, 24 host tests, check-float PASS, 7 goldens
 rebaselined (texture content only), `check_cycle` 3/3, `.text` 39.8 KB
 (+0), `.bss` 50 KB. `docs/w95_assets.png`, `docs/w95_assets_rat.png`,
-`docs/preview_a1.gif`. Open for Adrian: keep Snouty or take the rat;
-whether the stacked "Open/GL" logo reads at 32x32 or the Iris mark should
-stay; the source textures are Microsoft's, fine for a badge demo?
+`docs/preview_a1.gif`. Adrian reviewed in the emulator the same day:
+keep Snouty and the Iris mark, so the OpenGL word, the rat and `--rat` were
+removed (commit after `a1`). Still open: the textures are Microsoft's.

@@ -5,13 +5,13 @@
       Procedurally draws the eight sheets of SPEC.md section 10 as
       Genesis-style placeholder art, validates them and writes assets/gen/.
 
-  python3 tools/prepare_assets.py --from-w95 assets/src/w95 [--rat]
+  python3 tools/prepare_assets.py --from-w95 assets/src/w95
       Downsamples the textures extracted from the original screensaver
       (the ibid-11962 WebGL recreation, copied into assets/src/w95/) to the
       manifest sizes, quantises them to the 4-bit palettes and writes
-      assets/gen/. Sheets without a source (finish, snouty, snouty_top)
-      keep their procedural drawing; --rat swaps the Snouty sheet for the
-      original rat.
+      assets/gen/. finish, snouty, snouty_top and logo (the Iris mark) keep
+      their procedural drawing (Adrian: Snouty not the rat, Iris not the
+      OpenGL word).
 
   python3 tools/prepare_assets.py --check
       Validates the sheets already in assets/gen/ (e.g. delivered art).
@@ -636,54 +636,8 @@ def sprite_from_cells(cells: list[np.ndarray], s: Sheet) -> np.ndarray:
     return out
 
 
-def logo_from(path: Path, s: Sheet) -> np.ndarray:
-    """gl.png is a 205x25 'OpenGL' word: too wide for a square sprite, so
-    it is split at the widest gap in its right half ('Open' / 'GL') and the
-    two halves are stacked."""
-    a = load_rgba(path)
-    x0, y0, x1, y1 = bbox(a[..., 3] >= 128)
-    word = a[y0:y1, x0:x1]
-    cols = (word[..., 3] >= 128).any(axis=0)
-    gaps = [x for x in range(word.shape[1] // 2, word.shape[1]) if not cols[x]]
-    split = gaps[len(gaps) // 2] if gaps else word.shape[1] // 2
-    halves = [word[:, :split], word[:, split:]]
-    cell = np.zeros((32, 32, 4), np.uint8)
-    y = 2
-    for hf in halves:
-        bx0, by0, bx1, by1 = bbox(hf[..., 3] >= 128)
-        hf = hf[by0:by1, bx0:bx1]
-        h, w = hf.shape[:2]
-        k = min(30 / w, 13 / h)
-        nw, nh = max(1, round(w * k)), max(1, round(h * k))
-        rgb, m = resize_rgba(hf, nw, nh)
-        ox = (32 - nw) // 2
-        cell[y:y + nh, ox:ox + nw, :3] = rgb
-        cell[y:y + nh, ox:ox + nw, 3] = m * 255
-        y += nh + 1
-    return sprite_from_cells([cell], s)
 
-
-def rat_from(path: Path, s: Sheet) -> np.ndarray:
-    """One side view in the source (facing right): frames 0,1 left (mirror),
-    frames 2,3 right, no leg animation."""
-    right = fit_sprite(load_rgba(path))
-    left = right[:, ::-1]
-    return sprite_from_cells([left, left, right, right], s)
-
-
-def rat_top_from(path: Path, s: Sheet) -> np.ndarray:
-    """No top view in the source: the side view squeezed into 16x16."""
-    a = load_rgba(path)
-    x0, y0, x1, y1 = bbox(a[..., 3] >= 128)
-    rgb, m = resize_rgba(a[y0:y1, x0:x1], 14, 8)
-    out = new_sheet(s)
-    mask = np.zeros((16, 16), bool)
-    out[4:12, 1:15][m] = rgb[m]
-    mask[4:12, 1:15] = m
-    return quantize(out, mask, s.max_colors) if mask.any() else out
-
-
-def run_w95(src: Path, rat: bool) -> int:
+def run_w95(src: Path) -> int:
     M = MANIFEST
     made: dict[str, np.ndarray] = {
         "wall.png": texture_from(src / "wall.bmp", M["wall.png"]),
@@ -692,16 +646,12 @@ def run_w95(src: Path, rat: bool) -> int:
         "ceiling.png": texture_from(src / "ceiling2.bmp", M["ceiling.png"]),
         "wall_pic.png": texture_from(src / "pic.bmp", M["wall_pic.png"]),
         "smiley.png": sprite_from_cells([fit_sprite(load_rgba(src / "fin.png"))], M["smiley.png"]),
-        "logo.png": logo_from(src / "gl.png", M["logo.png"]),
+        "logo.png": draw_logo(),
         "start.png": sprite_from_cells([fit_sprite(load_rgba(src / "start2.png"))], M["start.png"]),
         "finish.png": draw_finish(),
     }
-    if rat:
-        made["snouty.png"] = rat_from(src / "rat.png", M["snouty.png"])
-        made["snouty_top.png"] = rat_top_from(src / "rat.png", M["snouty_top.png"])
-    else:
-        made["snouty.png"] = draw_snouty()
-        made["snouty_top.png"] = draw_snouty_top()
+    made["snouty.png"] = draw_snouty()
+    made["snouty_top.png"] = draw_snouty_top()
     errors = 0
     for name in M:
         errs = validate(M[name], made[name])
@@ -747,7 +697,6 @@ def main() -> int:
     grp.add_argument("--check", action="store_true", help="validate the sheets in assets/gen/ only")
     grp.add_argument("--from-w95", type=Path, metavar="DIR",
                      help="convert the extracted screensaver assets in DIR (assets/src/w95) into assets/gen/")
-    ap.add_argument("--rat", action="store_true", help="with --from-w95: use the original rat instead of Snouty")
     ap.add_argument("--contact", type=Path, metavar="PNG",
                     help="afterwards (or alone) write a 4x labelled contact sheet, e.g. docs/placeholders.png")
     args = ap.parse_args()
@@ -760,7 +709,7 @@ def main() -> int:
     elif args.check:
         status = run_check()
     elif args.from_w95:
-        status = run_w95(args.from_w95, args.rat)
+        status = run_w95(args.from_w95)
     if args.contact:
         write_contact(args.contact)
     return status

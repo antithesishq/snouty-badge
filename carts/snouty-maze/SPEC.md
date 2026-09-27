@@ -299,7 +299,8 @@ screensaver's textures (`assets/src/w95/SOURCE.md`, via
 `tools/prepare_assets.py --from-w95`); two extra sheets `wall_pic.png`
 (the picture the original hangs on odd panels, 32x32 opaque) and
 `start.png` (the Start button floating in the first cell, 32x32
-transparent) wait for M3 code. `--rat` swaps Snouty for the original rat.
+transparent) wait for M3 code. Adrian kept Snouty (not the rat) and the
+Iris mark (not the OpenGL word).
 The placeholder mode below still exists.
 
 Adrian asked for placeholders in v1; real art comes later through the same
