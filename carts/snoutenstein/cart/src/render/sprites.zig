@@ -58,6 +58,9 @@ inline fn nibble(bytes: []const u8, i: usize) u4 {
     return @truncate(bytes[i >> 1] >> @intCast((i & 1) << 2));
 }
 
+/// Spiders (ceiling turrets) are drawn only within this perpendicular distance.
+pub const spider_range: f32 = 6.0;
+
 pub fn draw(s: *const state.GameState, level: *const levels.Level, px: f32, py: f32, dx: f32, dy: f32) void {
     count = 0;
     drawn = 0;
@@ -66,6 +69,12 @@ pub fn draw(s: *const state.GameState, level: *const levels.Level, px: f32, py: 
     const n_enemies = @min(level.enemies.len, state.max_enemies);
     for (s.enemies[0..n_enemies]) |e| {
         const kind = e.kind;
+        if (kind == .spider) {
+            // Deadlock is only visible from within 6 cells (SPEC.md section 8).
+            const ex = fixed.to_f32(e.x) - px;
+            const ey = fixed.to_f32(e.y) - py;
+            if (ex * dx + ey * dy > spider_range) continue;
+        }
         const sheet: textures.SpriteSheet = @fromBackingInt(@intCast(@backingInt(kind)));
         const size: f32 = if (kind == .boss) 1.5 else 1.0;
         const anchor: Anchor = if (kind == .spider) .top else .bottom;

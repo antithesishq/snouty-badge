@@ -105,13 +105,25 @@ pub fn draw_bar(s: *const state.GameState) void {
     if (mfill > 0) cart.rect(.{ .x = meter_x, .y = row2_y, .width = mfill, .height = meter_h, .fill_color = iris });
 }
 
-pub fn draw_title(tick_n: u32) void {
+pub fn draw_title(tick_n: u32, sound_on: bool) void {
     cart.rect(.{ .x = 0, .y = 0, .width = 160, .height = 128, .fill_color = anti_black });
     blit.cell(gfx.title, 128, 40, 0, 16, 16, .{});
     centered("powered by", 62, iris);
     centered("deterministic replay", 72, iris);
-    if ((tick_n / 30) % 2 == 0) centered("PRESS A", 94, anti_white);
-    centered("B: E1M1 demo", 116, grey);
+    if ((tick_n / 30) % 2 == 0) centered("PRESS A", 90, anti_white);
+    centered(if (sound_on) "SELECT: SOUND ON" else "SELECT: SOUND OFF", 106, grey);
+    centered("B: E1M1  START: TEST", 118, grey);
+}
+
+/// Death freeze (SPEC.md 9.1): the view is drawn red underneath; this is
+/// the prompt plus a bar for how long B has been held (M3 placeholder:
+/// holding B restarts the level; M4 turns it into the real rewind).
+pub fn draw_dead(held: u32, needed: u32) void {
+    cart.rect(.{ .x = 20, .y = 40, .width = 120, .height = 28, .fill_color = anti_black });
+    centered("HOLD B TO REWIND", 46, coral);
+    const w: u32 = @min(116, held * 116 / @max(needed, 1));
+    cart.rect(.{ .x = 22, .y = 58, .width = 116, .height = 6, .fill_color = trough });
+    if (w > 0) cart.rect(.{ .x = 22, .y = 58, .width = w, .height = 6, .fill_color = iris });
 }
 
 pub fn draw_intermission(s: *const state.GameState, level_name: []const u8, total_enemies: u32, ticks: u32) void {
