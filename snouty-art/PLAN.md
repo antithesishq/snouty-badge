@@ -25,9 +25,12 @@ side by side for review. Adding a style must never change another's output.
 
 Styles so far:
 - `study05`: the approved ChatGPT Study 05 Snouty (carved parts).
-- `glean`: the lavender, big-headed Snouty from Claude's Glean test render
-  (2026-09-26), resampled to its true pixel grid and carved by
-  `styles/glean/make_parts.py`; tee and fists redrawn in code, Iris ring added.
+- `glean` (scrapped 2026-09-27): the lavender, big-headed Snouty from Claude's
+  Glean test render. Adrian reviewed it in motion and rejected it: the arms
+  did not work and the character was less cute than Study 05. Removed from the
+  tree; recoverable from git history (commits efa066e..c701f36) if a similar
+  approach is wanted later. Lessons kept: the resample-to-true-grid carve and
+  the redraw-the-tee approach both worked mechanically.
 
 ## Approach: parts rig + procedural limbs
 
@@ -76,8 +79,9 @@ Rendering is deterministic: `python3 tools/build.py all` regenerates `out/`.
   Open taste questions: both run legs emerge from under the shirt (Study 05
   crosses the near thigh in front); head nod is only +-1 degree because
   larger nearest-neighbour rotations break up the pixels.
-- M2b: multi-style refactor and the `glean` style with its own run and jump
-  (2026-09-27; run/jump tuning by two agents in `styles/glean/anim/`).
+- M2b: multi-style refactor (kept) and a `glean` style with its own run and
+  jump (2026-09-27, reviewed and scrapped; see Styles). Decision: the
+  `study05` revision is the version to carry forward.
 - M3 (next): hand-off. `python3 tools/install_badge.py` copies `out/run` and `out/jump` into `snouty-badge/assets/` as
   study packs, point `tools/prepare_assets.py` at them, update feet tables,
   verify in the simulator.
