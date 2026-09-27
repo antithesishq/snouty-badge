@@ -479,3 +479,25 @@ rebaselined (texture content only), `check_cycle` 3/3, `.text` 39.8 KB
 `docs/preview_a1.gif`. Adrian reviewed in the emulator the same day:
 keep Snouty and the Iris mark, so the OpenGL word, the rat and `--rat` were
 removed (commit after `a1`). Still open: the textures are Microsoft's.
+
+# Plan: A2 "Art from the pipeline; no audio" (2026-09-27)
+
+Adrian's guidance after seeing `a1` in the emulator: a Zig mark takes the
+OpenGL word's role (the spinning logo actor), Snouty comes from the
+study05 run frames (with the net) in `../snouty-art`, the Start button
+gets the Iris mark in place of the Windows flag, and the Iris mark itself
+is downscaled to pixel art. No audio support at all ("it'll be annoying").
+
+- `../snouty-art/tools/build_maze.py` produces `out/maze/{snouty,logo,
+  iris,start}.png` (see that repo's PLAN.md). `prepare_assets.py
+  --from-w95 assets/src/w95 --art ../snouty-art/out/maze` takes them,
+  validates, and writes `assets/gen/`; without `--art` the procedural
+  Snouty and Iris fill in as before. `logo.png` is now the Zig mark.
+- New manifest row `iris.png` (32x32 transparent) for the overhead name
+  strip and wherever M3/M4 wants the mark; `build.zig` gets the row.
+- `snouty_top.png` (16x16, M4 overhead) stays procedural: no top view
+  exists in the pipeline.
+- Audio removed from the design: SPEC section 9 becomes neopixels only,
+  `audio.zig` leaves the M3 list, decision 9 updated. Select keeps the
+  LED toggle.
+- Goldens: unchanged unless a pose shows an actor (none does yet).
