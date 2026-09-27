@@ -175,10 +175,16 @@ def crash_lines(c):
     where = 'start-up' if c.get('frame', -1) < 0 else f"frame {c['frame']}"
     L = [f"CRASH in {where}: {c['detail']}"]
     L.append(f"  pc {c['pc']:#010x} ({c['pc_sym']}); last block {c['block']:#010x} ({c['block_sym']})")
+    if c.get('pc_line'):
+        L.append(f"  source {c['pc_line']}")
     if 'addr' in c:
         L.append(f"  faulting address {c['addr']:#010x}: {c['addr_sym']}")
     if 'lr' in c:
         L.append(f"  lr {c['lr']:#010x}, sp {c['sp']:#010x}")
+    if 'regs' in c:
+        r = c['regs']
+        L.append('  ' + ' '.join(f"r{i}={r[i]:08x}" for i in range(7)))
+        L.append('  ' + ' '.join(f"r{i}={r[i]:08x}" for i in range(7, 13)))
     if c.get('unicorn'):
         L.append(f"  unicorn: {c['unicorn']}")
     return L
@@ -194,5 +200,5 @@ def to_json(meta, res, st, hot, top=50):
         tones=[dict(frame=f, **t) for f, t in res.tones],
         volumes=[dict(frame=f, volume=v) for f, v in res.volumes],
         unknown_fifo=[dict(frame=f, word=w) for f, w in res.unknown_msgs],
-        warnings=res.warnings, crash=res.crash, hang=res.hang,
+        warnings=res.warnings, scratch_accesses=res.scratch, crash=res.crash, hang=res.hang,
         model=dict(clock_hz=M.CLOCK_HZ, ipc_base=OS.IPC_BASE))

@@ -91,3 +91,50 @@ class CartElf:
             if base <= addr and addr + size <= base + len(data):
                 return data[addr - base: addr - base + size]
         return None
+
+    # ------------------------------------------------------------ DWARF lines
+    _lines = None
+
+    def _line_table(self):
+        if self._lines is None:
+            rows = []
+            try:
+                if self.elf.has_dwarf_info():
+                    dw = self.elf.get_dwarf_info()
+                    for cu in dw.iter_CUs():
+                        lp = dw.line_program_for_CU(cu)
+                        if lp is None:
+                            continue
+                        files = lp['file_entry']
+                        v5 = lp.header.version >= 5
+                        prev = None
+                        for ent in lp.get_entries():
+                            st = ent.state
+                            if st is None:
+                                continue
+                            if prev is not None and not prev.end_sequence and st.address > prev.address:
+                                fi = prev.file if v5 else prev.file - 1
+                                name = files[fi].name.decode(errors='replace') if 0 <= fi < len(files) else '?'
+                                rows.append((prev.address, st.address, name, prev.line))
+                            prev = None if st.end_sequence else st
+            except Exception:
+                rows = []
+            rows.sort()
+            self._lines = (rows, [r[0] for r in rows])
+        return self._lines
+
+    def source_line(self, addr):
+        """'file.zig:line' for a code address from .debug_line, or None."""
+        rows, starts = self._line_table()
+        i = bisect.bisect_right(starts, addr) - 1
+        while i >= 0 and rows[i][0] <= addr:
+            if addr < rows[i][1]:
+                return f"{rows[i][2]}:{rows[i][3]}"
+            i -= 1
+            if i >= 0 and rows[i][1] <= addr and rows[i][0] < addr - 0x10000:
+                break
+        return None
+
+    def source_suffix(self, addr):
+        s = self.source_line(addr)
+        return f", {s}" if s else ''

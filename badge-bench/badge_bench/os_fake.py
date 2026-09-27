@@ -7,6 +7,9 @@ os/ipc/mailbox.zig (message ids). If the SDK changes, change it here.
 Memory map served to the cart:
 
   0x20000000..0x20080000  SRAM, plain RAM (kernel RAM, IPC block, cart RAM)
+  0x20080000..0x20082000  SRAM8/9 (SCRATCH_X/Y): RAM, but every access is
+                          logged; above the cart's stack top, so a cart
+                          touching it is reading past the end of something
   0xD0000000 page         SIO: CPUID, FIFO_ST/WR/RD, spinlocks
   0x400B0000 page         TIMER0: TIMEHR/TIMELR/TIMERAWH/TIMERAWL, from modelled cycles
   0x40060000 page         ROSC: STATUS.RANDOMBIT (cart.rand()), seeded PRNG
@@ -21,6 +24,7 @@ import struct
 from . import model as M
 
 SRAM_BASE, SRAM_SIZE = 0x20000000, 0x80000
+SCRATCH_BASE, SCRATCH_SIZE = 0x20080000, 0x2000
 CART_RAM_BASE, CART_RAM_END = 0x20035100, 0x20080000
 STACK_TOP = CART_RAM_END
 
@@ -83,7 +87,10 @@ class FakeOS:
         self.cyccnt_offset = 0
         self.unknown = {}            # (peripheral, offset, 'r'/'w') -> count
         self.status_words = []
+        self.scratch = bytearray(SCRATCH_SIZE)
+        self.scratch_log = {}        # (rw, block) -> [count, first addr, frame]
         mu.mem_map(SRAM_BASE, SRAM_SIZE)
+        mu.mmio_map(SCRATCH_BASE, SCRATCH_SIZE, self._scratch_read, None, self._scratch_write, None)
         mu.mmio_map(SIO_BASE, 0x1000, self._sio_read, None, self._sio_write, None)
         mu.mmio_map(TIMER0_BASE, 0x1000, self._timer_read, None, self._ignore_write('TIMER0'), None)
         mu.mmio_map(ROSC_BASE, 0x1000, self._rosc_read, None, self._ignore_write('ROSC'), None)
@@ -129,6 +136,22 @@ class FakeOS:
         def w(uc, off, size, value, _):
             self._note(periph, off, 'w')
         return w
+
+    def _scratch_note(self, rw, off):
+        k = (rw, self.host.current_block())
+        e = self.scratch_log.get(k)
+        if e is None:
+            self.scratch_log[k] = [1, SCRATCH_BASE + off, self.host.current_frame()]
+        else:
+            e[0] += 1
+
+    def _scratch_read(self, uc, off, size, _):
+        self._scratch_note('read', off)
+        return int.from_bytes(self.scratch[off:off + size], 'little')
+
+    def _scratch_write(self, uc, off, size, value, _):
+        self._scratch_note('write', off)
+        self.scratch[off:off + size] = (value & ((1 << (8 * size)) - 1)).to_bytes(size, 'little')
 
     def _sio_read(self, uc, off, size, _):
         if off == SIO_FIFO_ST:

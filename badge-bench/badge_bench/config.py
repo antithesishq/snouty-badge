@@ -23,22 +23,44 @@ KEYS = {'budget_ms': (int, float), 'frames': (int,), 'script': (str,), 'pokes': 
         'press': (list,), 'note': (str,)}
 
 
+def _strip_comment(line):
+    """Drop a # comment that is not inside a "string"."""
+    q = False
+    for i, ch in enumerate(line):
+        if ch == '"' and (i == 0 or line[i - 1] != '\\'):
+            q = not q
+        elif ch == '#' and not q:
+            return line[:i]
+    return line
+
+
 def _tiny_toml(text, path):
-    """Enough TOML for this file: key = number | "string" | [strings], comments."""
+    """Enough TOML for this file: key = number | "string" | [strings] (arrays
+    may span lines), # comments."""
     out = {}
+    pending, start = '', 0
     for n, line in enumerate(text.splitlines(), 1):
-        s = line.split('#', 1)[0].strip() if '"' not in line else line.strip()
-        if not s or s.startswith('#'):
+        s = _strip_comment(line).strip()
+        if pending:
+            pending += ' ' + s
+            if not pending.rstrip().endswith(']'):
+                continue
+            s, pending = pending, ''
+        elif not s:
             continue
-        m = re.match(r'^([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.+?)\s*(#.*)?$', s)
+        else:
+            start = n
+        m = re.match(r'^([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.+?)\s*$', s)
         if not m:
-            raise BenchError(f"{path}:{n}: cannot parse '{line}' (tiny TOML parser)")
+            raise BenchError(f"{path}:{start}: cannot parse '{s}' (tiny TOML parser)")
         k, v = m.group(1), m.group(2)
+        if v.startswith('[') and not v.endswith(']'):
+            pending = s
+            continue
         if v.startswith('['):
-            items = re.findall(r'"((?:[^"\\]|\\.)*)"', v)
-            out[k] = items
-        elif v.startswith('"'):
-            out[k] = v.strip('"')
+            out[k] = re.findall(r'"((?:[^"\\]|\\.)*)"', v)
+        elif v.startswith('"') and v.endswith('"'):
+            out[k] = v[1:-1]
         else:
             try:
                 out[k] = int(v, 0)
@@ -46,7 +68,9 @@ def _tiny_toml(text, path):
                 try:
                     out[k] = float(v)
                 except ValueError:
-                    raise BenchError(f"{path}:{n}: bad value '{v}'")
+                    raise BenchError(f"{path}:{start}: bad value '{v}'")
+    if pending:
+        raise BenchError(f"{path}:{start}: unterminated array")
     return out
 
 

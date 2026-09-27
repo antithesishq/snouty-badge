@@ -26,6 +26,7 @@ import struct
 from unicorn import (UC_HOOK_BLOCK, UC_HOOK_INTR, UC_HOOK_MEM_FETCH_UNMAPPED,
                      UC_HOOK_MEM_READ_UNMAPPED, UC_HOOK_MEM_WRITE_UNMAPPED, UC_MEM_FETCH_UNMAPPED,
                      UC_MEM_READ_UNMAPPED, UC_MEM_WRITE_UNMAPPED, UcError)
+from unicorn import arm_const as A
 from unicorn.arm_const import UC_ARM_REG_LR, UC_ARM_REG_PC, UC_ARM_REG_SP
 
 from . import model as M
@@ -63,6 +64,7 @@ class Result:
         self.warnings = []
         self.vsync = None
         self.os = None
+        self.scratch = []       # SRAM8/9 accesses (out of bounds of the cart's RAM)
 
 
 def poke_value(elf, spec):
@@ -108,6 +110,12 @@ def run(elf, frames, controls, pokes=(), seed=1, png_every=0, max_frame_ms=1000.
 
         def cycles(self):
             return cyc
+
+        def current_block(self):
+            return cur_block
+
+        def current_frame(self):
+            return self.frame
 
         def on_message(self, kind, *a):
             f = self.frame
@@ -286,7 +294,9 @@ def run(elf, frames, controls, pokes=(), seed=1, png_every=0, max_frame_ms=1000.
             c['unicorn'] = str(uc_err)
         c.update(frame=host.frame, pc=pc, block=cur_block,
                  pc_sym=elf.describe_code(pc & ~1), block_sym=elf.describe_code(cur_block),
-                 lr=mu.reg_read(UC_ARM_REG_LR), sp=mu.reg_read(UC_ARM_REG_SP))
+                 pc_line=elf.source_line(pc & ~1),
+                 lr=mu.reg_read(UC_ARM_REG_LR), sp=mu.reg_read(UC_ARM_REG_SP),
+                 regs=[mu.reg_read(getattr(A, f'UC_ARM_REG_R{i}')) for i in range(13)])
         if 'addr' in c:
             c['addr_sym'] = describe_addr(elf, c['addr'])
         res.crash = c
@@ -308,6 +318,13 @@ def run(elf, frames, controls, pokes=(), seed=1, png_every=0, max_frame_ms=1000.
         c0, t0 = sb.get(key, (0, 0))
         if b[4] - c0:
             res.blocks[key] = [b[0], b[1], b[2], b[3], b[4] - c0, b[5] - t0]
+    for (rw, blk), (n, first, fr) in sorted(fake.scratch_log.items(), key=lambda kv: kv[1][2]):
+        res.warnings.append(
+            f"cart {rw}s SRAM8/9 scratch above its stack top: {n} accesses from block {blk:#010x} "
+            f"({elf.describe_code(blk)}{elf.source_suffix(blk)}), first {first:#010x} in frame {fr}; "
+            "on hardware this is OS stack memory: an out-of-bounds access in the cart")
+        res.scratch.append(dict(rw=rw, block=blk, count=n, first_addr=first, frame=fr,
+                                sym=elf.describe_code(blk), line=elf.source_line(blk)))
     if host.extra_reads:
         res.warnings.append(f"the cart read DWT_CYCCNT {host.extra_reads} times inside update() "
                             "(cart.cycles() or tracy zones); harmless, frames still cut at the loop")
@@ -330,8 +347,6 @@ def describe_addr(elf, a):
         return "low memory (null pointer or small offset from one?)"
     if 0x10000000 <= a < 0x20000000:
         return "XIP flash (not available to RAM carts here)"
-    if 0x20080000 <= a < 0x20082000:
-        return "SRAM8/9 scratch (not mapped)"
     if 0x40000000 <= a < 0x60000000:
         return "APB/AHB peripheral not faked by badge-bench"
     if 0xD0000000 <= a < 0xE0000000:
