@@ -125,6 +125,11 @@ def text(meta, res, st, hot, every, top, show_symbols):
              + f", seed {meta['seed']}" + (f", config {meta['config']}" if meta['config'] else ''))
     if meta.get('note'):
         L.append(f"  note: {meta['note']}")
+    if meta.get('xip'):
+        fc = meta.get('flash_cycles', 0)
+        L.append("  XIP cart: image in the cart flash window, started through its vector table; "
+                 + (f"{fc} extra cycle(s) per instruction fetched from flash" if fc else
+                    "no flash-fetch penalty modelled (--flash-cycles N)"))
     cal = meta.get('calibration')
     if cal:
         L.append(f"  calibrated: {cal['file']} (fitted {cal['date']}, residual "

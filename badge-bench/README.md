@@ -53,7 +53,7 @@ badge-bench <cart.elf> [--script FILE.json] [--press BTN:T1-T2 ...] [--frames N]
             [--every K] [--budget-ms 16.7] [--out DIR] [--png [K]] [--listing]
             [--symbols] [--top N] [--poke SYM=VALUE ...] [--json] [--seed N]
             [--max-frame-ms 1000] [--traces N] [--config FILE | --no-config]
-            [--progress] [--calibrate FILE.toml]
+            [--progress] [--calibrate FILE.toml] [--flash-cycles N]
 ```
 
 Put the ELF first (`--png` takes an optional number and would otherwise
@@ -77,6 +77,7 @@ try to read the ELF path as one).
 | `--traces N` | Print at most N `cart.trace()` strings live (default 20; all of them go to the JSON). |
 | `--config FILE`, `--no-config` | Use another per-cart defaults file, or none. |
 | `--progress` | One stderr line per finished frame. |
+| `--flash-cycles N` | XIP carts only: add N cycles per instruction fetched from the cart flash window. Default 0, so the output of an XIP ELF matches its RAM twin; set it once the OS overlay's XIP hit and stall rates give a real number. |
 | `--calibrate FILE.toml` | Price the model classes with the fitted `[costs]` of a `calibrate/fit.py` calibration file (rounded to 0.25 cycle) and report two numbers per frame: `idle ms` (the calibrated count) and `busy ms` = idle + memory-class cycles x (factor - 1) x min(1, dma_ms / idle ms), the DMA contention of `[contention]`. Verdict and over-budget count use busy ms. Without it the output is unchanged. See Calibration. |
 
 Exit status: 0 all frames ran; 1 setup error (unreadable or non-ARM ELF,
@@ -86,6 +87,25 @@ not an error.
 
 Output: the report on stdout; with `--png`, `--listing` or `--json` also
 `DIR/report.txt`.
+
+## RAM carts and XIP carts
+
+A RAM cart ELF (`cart_ram.ld`, the default build) is loaded into SRAM by
+segment, its `.bss` zeroed, SP set to the cart RAM top and execution started
+at `_start`, exactly what the OS does. An XIP cart ELF (`cart_xip.ld`, built
+with `zig build -Dcart-mode=xip`, named `<cart>-xip.elf`) is detected by a
+loadable segment stored in the cart flash window `0x101C0000..0x10200000`:
+the window is mapped, every segment is written at its load address (so the
+XIP `.data` lands in flash, where the cart copies it from), and execution
+starts through the vector table at the flash origin, SP from word 0 and the
+reset handler from word 1, as the OS's XIP launch does. The cart's reset
+handler (`build/xip/entry.zig`) then copies `.data`, zeroes `.bss` and calls
+`_start`, so frame windows are cut the same way in both modes and the
+start-up line includes that work. The same `carts/<cart>.toml` applies when
+passed with `--config` (the defaults are keyed by ELF basename, and the XIP
+name has the `-xip` suffix). Flash is modelled as zero-wait like SRAM unless
+`--flash-cycles` says otherwise; the real part runs through a 16 KB XIP cache
+shared with Core 0, which the OS fps overlay measures (hit and stall rates).
 
 ## What the fake OS does
 

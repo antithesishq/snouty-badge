@@ -71,6 +71,9 @@ def build_parser():
     ap.add_argument('--config', metavar='FILE.toml', help='per-cart defaults file (default carts/<cart>.toml)')
     ap.add_argument('--no-config', action='store_true', help='ignore carts/<cart>.toml')
     ap.add_argument('--progress', action='store_true', help='print a line per frame as it finishes')
+    ap.add_argument('--flash-cycles', type=int, default=0, metavar='N',
+                    help='XIP carts: add N cycles per instruction fetched from the cart flash window '
+                         '(default 0, no penalty; calibrate against the OS overlay\'s XIP hit rate)')
     ap.add_argument('--calibrate', metavar='FILE.toml',
                     help='use the fitted class costs of calibrate/fit.py\'s calibration.toml and '
                          'report idle-bus and DMA-busy ms per frame')
@@ -116,7 +119,7 @@ def _main(a):
     meta = dict(tool=f'badge-bench {__version__}', elf=a.elf, sha256=hashlib.sha256(elf.raw).hexdigest(),
                 frames=frames, script=script, press=press, pokes=pokes_s, seed=a.seed,
                 budget_ms=budget, config=cfg_path, note=cfg.get('note'),
-                clock_mhz=M.CLOCK_HZ / 1e6)
+                clock_mhz=M.CLOCK_HZ / 1e6, xip=elf.is_xip(), flash_cycles=a.flash_cycles)
 
     cal = None
     if a.calibrate:
@@ -139,7 +142,7 @@ def _main(a):
 
     res = RUN.run(elf, frames, controls, pokes, seed=a.seed, png_every=png_every,
                   max_frame_ms=a.max_frame_ms, on_trace=on_trace,
-                  log=progress if a.progress else None)
+                  log=progress if a.progress else None, flash_cycles=a.flash_cycles)
     if cal:
         add_busy(res.frames, cal)
         st = R.stats(res.frames, budget, key='busy_ms')

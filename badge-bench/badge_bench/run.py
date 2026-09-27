@@ -30,6 +30,7 @@ from unicorn import arm_const as A
 from unicorn.arm_const import UC_ARM_REG_LR, UC_ARM_REG_PC, UC_ARM_REG_SP
 
 from . import model as M
+from . import elf as E
 from . import os_fake as OS
 from .elf import BenchError
 
@@ -83,9 +84,19 @@ def poke_value(elf, spec):
 
 
 def run(elf, frames, controls, pokes=(), seed=1, png_every=0, max_frame_ms=1000.0,
-        on_trace=None, log=None):
-    """Emulate `frames` updates. controls: list of u16 per frame."""
+        on_trace=None, log=None, flash_cycles=0):
+    """Emulate `frames` updates. controls: list of u16 per frame.
+
+    A RAM cart (cart_ram.ld) is loaded into SRAM and started at _start with
+    the OS stack top, as the OS does. An XIP cart (cart_xip.ld, built with
+    -Dcart-mode=xip) has its image placed at the flash load addresses and is
+    started through the vector table at the flash origin (SP, reset handler),
+    as the OS does; the cart's reset copies .data, zeroes .bss and calls
+    _start, so frame windows are found the same way. flash_cycles adds that
+    many cycles per instruction fetched from flash (0: no XIP penalty modelled;
+    calibrate against the OS overlay's XIP hit rate)."""
     res = Result()
+    res.xip = elf.is_xip()
     mu = M.make_uc()
     cs = M.make_cs()
     blocks = {}                         # (addr << 16 | size) -> [addr, size, ninsn, cyc, count, taken, mem_cyc]
@@ -215,15 +226,25 @@ def run(elf, frames, controls, pokes=(), seed=1, png_every=0, max_frame_ms=1000.
     res.os = fake
 
     # ---- load the cart the way the OS does: segments, zeroed .bss, SP, _start
-    for vaddr, data, memsz in elf.segments():
-        if not (OS.SRAM_BASE <= vaddr and vaddr + memsz <= OS.SRAM_BASE + OS.SRAM_SIZE):
-            raise BenchError(f"{elf.path}: PT_LOAD segment at {vaddr:#010x} is outside SRAM; "
-                             "is this a RAM cart built with cart_ram.ld?")
+    # (RAM cart), or the flash image and the vector table (XIP cart).
+    if res.xip:
+        mu.mem_map(E.FLASH_BASE, E.FLASH_END - E.FLASH_BASE)
+    in_sram = lambda a, n: OS.SRAM_BASE <= a and a + n <= OS.SRAM_BASE + OS.SRAM_SIZE
+    in_flash = lambda a, n: E.FLASH_BASE <= a and a + n <= E.FLASH_END
+    for vaddr, paddr, data, memsz in elf.segments():
+        if data and not (in_sram(paddr, len(data)) or (res.xip and in_flash(paddr, len(data)))):
+            raise BenchError(f"{elf.path}: PT_LOAD segment stored at {paddr:#010x} is outside SRAM"
+                             + (" and the cart flash window" if res.xip else
+                                "; is this a cart built with cart_ram.ld or cart_xip.ld?"))
+        if not in_sram(vaddr, memsz) and not (res.xip and in_flash(vaddr, memsz)):
+            raise BenchError(f"{elf.path}: PT_LOAD segment at {vaddr:#010x} is outside SRAM"
+                             + (" and the cart flash window" if res.xip else ""))
         if data:
-            mu.mem_write(vaddr, data)
-        if memsz > len(data):
+            mu.mem_write(paddr, data)      # == vaddr except an XIP cart's .data
+        if memsz > len(data) and not res.xip:
             mu.mem_write(vaddr + len(data), bytes(memsz - len(data)))
-    if '__bss_start__' in elf.syms and '__bss_end__' in elf.syms:
+    if not res.xip and '__bss_start__' in elf.syms and '__bss_end__' in elf.syms:
+        # The OS clears a RAM cart's .bss; an XIP cart's reset handler does its own.
         b0, b1 = elf.syms['__bss_start__'][0], elf.syms['__bss_end__'][0]
         if b1 > b0:
             mu.mem_write(b0, bytes(b1 - b0))
@@ -231,7 +252,17 @@ def run(elf, frames, controls, pokes=(), seed=1, png_every=0, max_frame_ms=1000.
     fake.set_controls(0)
     for name, addr, width, v in pokes:
         mu.mem_write(addr, v.to_bytes(width, 'little'))
-    start = elf.need('_start')[0]
+    start = elf.need('_start')[0]        # the SDK loop; frame windows key off it in both modes
+    if res.xip:
+        vt = mu.mem_read(E.FLASH_BASE, 8)
+        xip_sp, xip_entry = int.from_bytes(vt[:4], 'little'), int.from_bytes(vt[4:], 'little')
+        if xip_sp & 7 or not (OS.CART_RAM_BASE < xip_sp <= OS.CART_RAM_END):
+            raise BenchError(f"{elf.path}: XIP vector table SP {xip_sp:#010x} is not an 8-aligned cart RAM address")
+        if not (xip_entry & 1) or not in_flash(xip_entry & ~1, 2):
+            raise BenchError(f"{elf.path}: XIP vector table entry {xip_entry:#010x} is not a Thumb address in the flash window")
+        entry, initial_sp = xip_entry & ~1, xip_sp
+    else:
+        entry, initial_sp = start, OS.STACK_TOP
 
     def hook_block(uc, addr, size, _):
         nonlocal insn, cyc, taken, mem, prev_end, cur_block
@@ -254,6 +285,8 @@ def run(elf, frames, controls, pokes=(), seed=1, png_every=0, max_frame_ms=1000.
         insn += b[2]
         cyc += b[3]
         mem += b[6]
+        if flash_cycles and addr >= E.FLASH_BASE:
+            cyc += flash_cycles * b[2]   # XIP fetch penalty, per instruction executed from flash
         b[4] += 1
         if cyc > limit:
             uc.emu_stop()
@@ -276,13 +309,13 @@ def run(elf, frames, controls, pokes=(), seed=1, png_every=0, max_frame_ms=1000.
     mu.hook_add(UC_HOOK_MEM_READ_UNMAPPED | UC_HOOK_MEM_WRITE_UNMAPPED | UC_HOOK_MEM_FETCH_UNMAPPED,
                 hook_unmapped)
     mu.hook_add(UC_HOOK_INTR, hook_intr)
-    mu.reg_write(UC_ARM_REG_SP, OS.STACK_TOP)
+    mu.reg_write(UC_ARM_REG_SP, initial_sp)
     mu.reg_write(UC_ARM_REG_LR, 0xFFFFFFFF)
-    prev_end = start & ~1
+    prev_end = entry & ~1
 
     uc_err = None
     try:
-        mu.emu_start(start | 1, 0xFFFFFFFE)
+        mu.emu_start(entry | 1, 0xFFFFFFFE)
     except UcError as e:
         uc_err = e
     pc = mu.reg_read(UC_ARM_REG_PC)
@@ -346,8 +379,10 @@ def describe_addr(elf, a):
         return elf.describe_data(a)
     if a < 0x10000000:
         return "low memory (null pointer or small offset from one?)"
+    if E.FLASH_BASE <= a < E.FLASH_END:
+        return elf.describe_data(a) if elf.is_xip() else "cart flash window (not available to RAM carts here)"
     if 0x10000000 <= a < 0x20000000:
-        return "XIP flash (not available to RAM carts here)"
+        return "XIP flash outside the cart window"
     if 0x40000000 <= a < 0x60000000:
         return "APB/AHB peripheral not faked by badge-bench"
     if 0xD0000000 <= a < 0xE0000000:

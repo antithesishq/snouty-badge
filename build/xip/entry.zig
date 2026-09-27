@@ -35,10 +35,10 @@ extern fn _start() callconv(.c) void;
 
 // Linker-script symbols (cart_xip.ld). Only their addresses are used.
 extern var __stack_top__: u8;
-extern var microzig_data_start: u8;
+extern var microzig_data_start: u32;
 extern var microzig_data_end: u8;
-extern var microzig_data_load_start: u8;
-extern var microzig_bss_start: u8;
+extern var microzig_data_load_start: u32;
+extern var microzig_bss_start: u32;
 extern var microzig_bss_end: u8;
 
 const VectorTable = extern struct {
@@ -73,16 +73,18 @@ fn xip_reset() callconv(.c) noreturn {
     DWT_CTRL.* = DWT_CTRL.* | 1;
     asm volatile ("dsb\n isb");
 
-    // .data lives in RAM but is stored in flash; .bss starts zeroed.
+    // .data lives in RAM but is stored in flash; .bss starts zeroed. Both are
+    // 4-byte aligned by cart_xip.ld, so copy and clear by words (the cart RAM
+    // of a big cart is 165 KB of .bss; bytes would take 4 ms at start-up).
     const data_len = @intFromPtr(&microzig_data_end) - @intFromPtr(&microzig_data_start);
-    const data_dst: [*]volatile u8 = @ptrCast(&microzig_data_start);
-    const data_src: [*]const volatile u8 = @ptrCast(&microzig_data_load_start);
+    const data_dst: [*]volatile u32 = @ptrCast(&microzig_data_start);
+    const data_src: [*]const volatile u32 = @ptrCast(&microzig_data_load_start);
     var i: usize = 0;
-    while (i < data_len) : (i += 1) data_dst[i] = data_src[i];
+    while (i < data_len / 4) : (i += 1) data_dst[i] = data_src[i];
     const bss_len = @intFromPtr(&microzig_bss_end) - @intFromPtr(&microzig_bss_start);
-    const bss: [*]volatile u8 = @ptrCast(&microzig_bss_start);
+    const bss: [*]volatile u32 = @ptrCast(&microzig_bss_start);
     i = 0;
-    while (i < bss_len) : (i += 1) bss[i] = 0;
+    while (i < bss_len / 4) : (i += 1) bss[i] = 0;
     asm volatile ("dsb\n isb");
 
     _start();

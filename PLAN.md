@@ -25,10 +25,15 @@ until Adrian has reviewed.
   the old per-cart tools), and every gate passes with it: bugs and
   snoutenstein `check.sh`, maze `check_golden.mjs`, snoutenstein
   determinism, `zig build check-float`.
-- M3: XIP builds done for every cart (2026-09-27); badge-bench support for
-  XIP ELFs pending, because another session is editing badge-bench's runner
-  for the calibration cart right now and asked that the flash mapping go in
-  after their push. Numbers below. Hardware questions open.
+- M3: done 2026-09-27 apart from hardware. XIP builds for every cart;
+  badge-bench loads an XIP ELF at its flash load addresses and starts it
+  through the vector table (`--flash-cycles N`, default 0). snouty-boy under
+  the same scripted input in both modes: identical frame PNGs (so the
+  `.data` copy and `.bss` clear are right), per-frame cycles within 3
+  instructions (the start/update forwarding in `build/xip/entry.zig`),
+  start-up 1.03 ms in XIP mode versus 0.21 ms in RAM mode (the cart clears
+  its own 165 KB `.bss`, by words). `tests/test_reflections.sh` still exact.
+  Numbers below. Hardware questions open.
 
   | cart | RAM uf2 blocks | XIP uf2 blocks | XIP flash use | .bss (RAM) |
   |---|---|---|---|---|
@@ -200,8 +205,7 @@ Design, without patching the submodule:
   `--flash-cycles N` knob adds N cycles per instruction fetched from flash
   (default 0, to be calibrated against the OS overlay's XIP hit rate on
   hardware). Frame boundaries still come from the `_start` loop.
-- Verification without hardware (done except the badge-bench run, see
-  Status): build snouty-boy in both modes;
+- Verification without hardware (done, see Status): build snouty-boy in both modes;
   `readelf -l` shows text at the flash origin and `.data` with a RAM address
   and a flash load address; `tools/uf2_info.py` shows every block inside
   the flash window (what the loader requires); the XIP ELF runs under

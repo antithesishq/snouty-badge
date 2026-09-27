@@ -3,6 +3,10 @@ import bisect
 
 from elftools.elf.elffile import ELFFile
 
+# Cart flash window of sycl-badge/src/cart/cart_xip.ld: an XIP cart's code and
+# read-only data live here and its .data is loaded from here.
+FLASH_BASE, FLASH_END = 0x101C0000, 0x10200000
+
 SHF_EXECINSTR = 0x4
 
 
@@ -49,9 +53,15 @@ class CartElf:
                               if s['sh_flags'] & SHF_EXECINSTR and s['sh_type'] == 'SHT_PROGBITS']
 
     def segments(self):
-        """[(vaddr, data, memsz)] of the PT_LOAD segments."""
-        return [(seg['p_vaddr'], seg.data(), seg['p_memsz']) for seg in self.elf.iter_segments()
+        """[(vaddr, paddr, data, memsz)] of the PT_LOAD segments. vaddr is where
+        the code expects the bytes at run time, paddr where the image stores
+        them; they differ only for an XIP cart's .data (RAM vaddr, flash paddr)."""
+        return [(seg['p_vaddr'], seg['p_paddr'], seg.data(), seg['p_memsz']) for seg in self.elf.iter_segments()
                 if seg['p_type'] == 'PT_LOAD']
+
+    def is_xip(self):
+        """True when any loadable bytes are stored in the cart flash window."""
+        return any(FLASH_BASE <= paddr < FLASH_END for _v, paddr, data, _m in self.segments() if data)
 
     def need(self, name):
         if name not in self.syms:
