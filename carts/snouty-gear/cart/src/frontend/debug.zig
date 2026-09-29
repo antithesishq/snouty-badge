@@ -8,6 +8,7 @@
 //! call (so the overlay shows 1000us and 500 fps in the simulator and in
 //! preview.mjs); only hardware numbers mean anything.
 const cart = @import("cart-api");
+const text = @import("text.zig");
 
 pub var enabled: bool = true;
 
@@ -82,7 +83,7 @@ pub fn draw() void {
     i += put_num(buf[i..], max);
     i += put(buf[i..], "us\nfps ");
     i += put_num(buf[i..], fps());
-    cart.text(.{ .str = buf[0..i], .x = 0, .y = 0, .text_color = .rgb(0xFFFFFF), .background_color = .rgb(if (alarm) 0xFF0000 else 0x000000) });
+    text.draw(buf[0..i], 0, 0, .rgb(0xFFFFFF), .rgb(if (alarm) 0xFF0000 else 0x000000));
 }
 
 pub fn put(dst: []u8, s: []const u8) usize {
