@@ -8,4 +8,5 @@ test {
     _ = core;
     _ = core.rom;
     _ = @import("smoke.zig");
+    _ = @import("vdp_unit.zig");
 }
