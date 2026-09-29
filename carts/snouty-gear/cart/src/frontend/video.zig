@@ -66,9 +66,13 @@ fn rebuild(cram: *const [32]u16) void {
     cram_rebuilds +%= 1;
 }
 
+/// Compared as 16 words, no early exit (branches cost more than the
+/// loads). The CRAM is only halfword aligned, hence align(1).
 inline fn cram_changed(cram: *const [32]u16) bool {
-    var diff: u16 = 0;
-    for (cram, &cram_seen) |x, y| diff |= x ^ y;
+    const a: *align(1) const [16]u32 = @ptrCast(cram);
+    const b: *align(1) const [16]u32 = @ptrCast(&cram_seen);
+    var diff: u32 = 0;
+    inline for (0..16) |i| diff |= a[i] ^ b[i];
     return diff != 0;
 }
 
@@ -101,12 +105,16 @@ fn on_line(_: *anyopaque, y: u8, line: *const [gg_w]u5, cram: *const [32]u16) vo
 
 /// One Game Gear line to framebuffer row `row`: 160 halfword stores with a
 /// stride of `fb_h` pixels, unrolled by 8 so the stores use immediate offsets.
+/// The indices are read as bytes (a u5 load would mask every one) and used
+/// unchecked: the core only emits 0..31.
 inline fn store_line(row: u8, line: *const [gg_w]u5) void {
     var dst: [*]cart.Pixel = @as([*]cart.Pixel, @ptrCast(cart.framebuffer)) + row;
+    const src: [*]const u8 = @ptrCast(line);
+    const pix: [*]const cart.Pixel = &pixels;
     var x: usize = 0;
     while (x < gg_w) : (x += 8) {
         inline for (0..8) |k| {
-            dst[k * fb_h] = pixels[line[x + k]];
+            dst[k * fb_h] = pix[src[x + k]];
         }
         dst += 8 * fb_h;
     }
