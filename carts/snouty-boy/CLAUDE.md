@@ -72,7 +72,8 @@ root (`../..`), whose `build.zig` calls this cart's `build.zig` module
   "<name>-xip assets"); `frontend/rewind.zig` turns it into the page-store
   size and refuses RAM builds that leave less than one full keyframe
   (e.g. rebound.gbc, 128 KB: use XIP). Sizes with the store (fast):
-  2048-gb RAM text 92.5 KB / bss 171 KB, XIP bss 270 KB.
+  2048-gb RAM text 96 KB / bss 166 KB, XIP bss 264 KB
+  (knobs incl. the code estimate: `cart/src/frontend/tuning.zig`).
 - Headless: `node ../../tools/preview.mjs ../../zig-out/bin/snouty-boy.wasm --frames 60 --every 10 --out out/`
   then look at `out/frame_XXXX.png`. Buttons via `--press A:30-40`.
 - Keyframe sizes per ROM: `tests/determinism.zig` prints a `kstore ...`

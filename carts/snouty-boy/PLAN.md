@@ -252,6 +252,56 @@ cart fallback. Build and bench both in M7; Adrian picks the default.
 Rejected: Tobu Tobu Girl DX (256 KB), uCity/Geometrix (GPL-3), Shock Lobster
 (DMG only), Petris (NC), Tuff (assets reserved).
 
+### M7 performance pass (2026-09-29)
+
+Branch `snouty-boy-color`, badge-bench calibrated `busy ms` (the model is
+a floor). Press scripts: Rebound `badge-bench/carts/snouty-boy-color.toml`
+(pass it with `--config`; XIP cart, 1800 frames), Rex Runner `--frames 900
+--press START:200-202 --press A:400-402 ... A:700-702` (RAM cart), 2048-gb
+`badge-bench/carts/snouty-boy.toml` (RAM cart, 600 frames).
+
+| ROM | Mode | Before mean / p95 / max | After mean / p95 / max |
+|---|---|---:|---:|
+| Rebound | CGB, double speed, HDMA, XIP | 13.39 / 20.43 / 42.54 | 5.28 / 10.30 / 22.20 |
+| Rex Runner | CGB, RAM | 8.38 / 13.70 / 20.65 | 3.50 / 6.77 / 10.26 |
+| 2048-gb | DMG, RAM | 7.67 / 11.02 / 17.81 | 3.92 / 6.02 / 9.48 |
+
+"Before" is 91141d4 (after the CGB mid-instruction LY sync). Per step
+(mean / p95 / max, Rebound then Rex):
+
+| Step | Rebound | Rex |
+|---|---|---|
+| inline tick fast paths | 11.11 / 17.26 / 35.29 | 7.33 / 11.04 / 18.01 |
+| VRAM/WRAM last in `Gb`, CGB renderer (nibble decode, masked word pass, sprite spans), `lines_wanted` (16 dropped lines skip pixel work) | 9.77 / 16.19 / 32.83 | 5.93 / 10.70 / 16.17 |
+| halted fast-forward to the next event (`Gb.halt_m`) | 7.25 / 14.84 / 32.58 | 4.54 / 10.59 / 16.02 |
+| inline ROM fetch (`mmu.fetch8`) | 6.82 / 13.77 / 30.27 | 4.38 / 9.56 / 14.77 |
+| event-driven catch-up (`Gb.tick_lazy`) + direct overlay blitter | 6.02 / 12.04 / 34.31 | 3.73 / 9.16 / 13.05 |
+| opcode switch inlined into `cpu.step` (size only) | 6.04 / 12.01 / 34.11 | 3.78 / 9.09 / 12.97 |
+| lazy LY/STAT/APU reads, `cpu.step` inlined into the frame loop | 5.28 / 10.30 / 22.20 | 3.50 / 6.77 / 10.26 |
+
+Every core step is exact: a host harness hashing console state and every
+emitted line per frame (2048-gb, rex, rebound, both acid2) matched 91141d4
+byte for byte after each step, and `zig build test` stays green.
+
+Frames still over 13.4 ms, Rebound only: frame 85 (20.1, the game's boot
+with the LCD off in double speed), 976-989 (13.6 to 22.2, the level load:
+LCD off, the CPU running flat out in double speed, and at 978 the LCD
+switched on mid-frame, so `step_frame` runs until the next VBlank, about
+1.8 frames of emulation). No pixel work happens there, so frame skip would
+not help; lever 6 (auto frame skip) was not built. Rex's worst (608, 10.3)
+is a CPU-bound game frame.
+
+Sizes (fast, text / bss bytes), before -> after: rex-runner RAM 100,988 /
+171,840 -> 101,688 / 169,696; 2048-gb RAM 98,308 / 171,376 -> 98,292 /
+169,496; Rebound XIP 199,808 / 270,000 -> 199,888 / 270,128. The RAM
+page pool is about 2 KB smaller (`tuning.code_estimate` 64 -> 66 KB).
+
+Knobs: `cart/src/frontend/tuning.zig` (keyframe interval 30, page size
+512, typical pages per keyframe 8, code estimate 66 KB, overlay on).
+Open: XIP flash-fetch stalls are not modelled (`--flash-cycles 0`), so the
+Rebound XIP numbers are the most optimistic; hardware overlay numbers
+decide.
+
 ## Hardware checklist (Adrian)
 
 - M1 gate: overlay avg/max microseconds and FPS with 2048-gb.

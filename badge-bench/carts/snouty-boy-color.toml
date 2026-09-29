@@ -1,0 +1,13 @@
+# snouty-boy Color mode with Rebound (tests/roms/rebound.gbc, CGB, double
+# speed + HDMA), XIP cart. Not picked by ELF name (the ELF is
+# snouty-boy-xip.elf); pass it explicitly:
+#   badge-bench/bench.sh zig-out/firmware/snouty-boy-xip.elf \
+#       --config badge-bench/carts/snouty-boy-color.toml --symbols
+budget_ms = 16.7
+frames = 1800
+# START leaves the Snouty Boy splash, START on the DevEd license screen, START
+# on the title starts the level; then run right and jump. More START presses
+# would pause the game.
+press = ["START:200-203", "START:350-353", "START:900-903", "RIGHT:1100-1300",
+         "A:1400-1405"]
+note = "Rebound (CGB); build with -Drom=carts/snouty-boy/tests/roms/rebound.gbc -Dcart-mode=xip"
