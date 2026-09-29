@@ -36,9 +36,18 @@ const per_update = 2;
 /// muted), up-left, idle at the end.
 const checkpoints = [_]u32{ 20, 80, 140, 170, 186, 206, 230, 300 };
 /// Hashes at `checkpoints` from the reviewed run (empty: print only).
-const golden_hashes = [_]u64{};
+const golden_hashes = [_]u64{
+    0x47D4BB45A56859D8, // frame 20: display just on, backdrop blue, PSG only
+    0xB84A549DDF672C51, // frame 80: Right held, sprite moving
+    0x38DCDECF549DF3DC, // frame 140: Down+B done, sprite low right
+    0x10739FD1D602DE48, // frame 170: Start re-centred the sprite
+    0xF10A37C41544CE94, // frame 186: badge A (Genesis C) held
+    0x6FC6BB307FC883E7, // frame 206: after the Select tap (Genesis A muted the PSG)
+    0x21AF403195CA431B, // frame 230: Up+Left moving
+    0x856E31A5493A6DE7, // frame 300: end of the script
+};
 /// Hash of the `tone()` change list over the run (0: print only).
-const golden_tone_hash: u64 = 0;
+const golden_tone_hash: u64 = 0x036397CFD28EAF56; // 11 changes: PSG 220 Hz at 18, FM 440/659 toggling every 30 from 19
 
 /// Updates a Select tap sends Genesis A for (input.zig: tap_frames 4).
 const tap_updates = 2;
