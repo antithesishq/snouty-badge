@@ -11,4 +11,5 @@ test {
     _ = @import("sound_unit.zig");
     _ = @import("bus_unit.zig");
     _ = @import("golden.zig");
+    _ = @import("vdp_unit.zig");
 }
