@@ -1032,3 +1032,31 @@ Report the final hash, `T`, the ELF `.text` delta from the runs.
   exists), balance, polish.
 - 2026-09-29: M5 plan written; worktree branch `snoutenstein-m5`; tracks B
   and C launched, A follows B.
+- 2026-09-29: M5 done and tagged `snoutenstein/m5`. All three tracks landed.
+  ELF text 92.7 KB (+0.6 KB: demo player, takeover, 48 runs = 192 bytes of
+  log), bss 90.7 KB unchanged, GameState still 1,368 bytes. Host tests: ai
+  48 (gnat opening x2, Heisenbug duel, separation x2 new), demo 3, rewind 56
+  in the aggregate run. Demo: 3,644 ticks (60.7 s) of Build Farm, all nine
+  gnats, the Coral key, a 240-tick rewind from 36 HP, ends at 60 HP facing
+  the exit; final hash 0xFAB416D6; the cart shows DEMO OK on the title after
+  replaying it (DEMO DESYNC would mean the badge's sim diverged from the
+  simulator: that readout is the SPEC 9.3 hardware test, Adrian reads it
+  off the badge). Bench (calibrated): Build Farm opening unchanged at mean
+  2.45 ms, worst 3.56 ms (21%); title idle plus the first 900 demo ticks (`m5_attract.json`, 1,500 frames) mean 2.78 ms, worst 5.08 ms (30%) at frame 1,240, the cable-tray fight. XIP build links.
+  Balance (host-measured, hardware feel pass deferred): gnats 2 HP every 60
+  ticks at 0.04 (standing among three: 68 HP after 7 s; zapping: 88);
+  Heisenbug takes no pain state (its 12-tick pain matched the zapper
+  cooldown, so a held A stunlocked it: the duel test found it), spits only
+  beyond 2.5 cells, melee 10 every 60 (stand-and-shoot player wins at 52 HP,
+  15/45 left 17); chasers keep 0.5 cells apart (about 13 us per tick for
+  nine gnats, 0.2 ms worst with 40 awake). Deviations: the demo rewind is
+  240 ticks, not 180 (the slower gnats cannot take enough HP for a 3 s
+  rewind to show a recovery); the demo skips the hotfix; the takeover
+  press is consumed (a held button is not an edge on the next tick, so B
+  out of a demo death needs a second press); the neopixel gate is the
+  cart-local `neopixels_allowed` constant, not yet the shared `-Dneopixels`
+  option (docs/NEOPIXELS.md awaits Adrian's go; that file lives in the main
+  checkout, not on this branch); the death scripts now die at tick 3028 and
+  run 3,300/3,710 frames. Deferred (needs a badge): boss and gnat feel, the
+  fourth weapon, the M1 render readout. Fragile: any sim change moves the
+  demo (re-record with `tools/record_demo.sh`; `check.sh` fails until then).

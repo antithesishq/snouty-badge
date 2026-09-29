@@ -532,3 +532,8 @@ Level grid 64x64 with Wolf3D import (section 6.1): yes.
   builds, `check_determinism.mjs --rewind-at`) tagged `snoutenstein/m4`,
   `docs/preview_m4.gif`. Section 9.1's restart-on-empty-meter is a
   fallback only (note there). Hardware gate still pending.
+- 2026-09-29: M5 (attract demo of Build Farm with takeover, DEMO OK /
+  DESYNC hash readout on the title, gnat and Heisenbug tuning, enemy
+  separation, neopixels off) tagged `snoutenstein/m5`, `docs/preview_m5.gif`.
+  Hardware gate still pending; the demo readout is the first hardware
+  determinism test once flashed.
