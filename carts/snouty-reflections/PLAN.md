@@ -720,3 +720,19 @@ close-up of the logo, updates SPEC status and RUNNING.md, and tags
 ### M2.2 status
 
 - 2026-09-29: plan written; tracks A, B, C started.
+- 2026-09-29: tracks A, B, C merged (untagged, pending Adrian). Art: Vancouver
+  skyline, "ADRIAN HATCH" over "ANTITHESIS", palette reshuffled (B's report in
+  gen_shore.py). Tracer: iris.zig, per-column pre-planned spans (lossless,
+  paid for the logo's overhead), inv_len mirrored in y (comptime 80x64,
+  unfolded into .bss at init). Per step, cut20 calibrated worst / mean:
+  taller shore 46.65 / 43.37; + logo primary K=4 46.46 / 43.70; + water
+  reflections 52.95 / 46.80; + chrome 54.01 / 47.90; K=3 53.77; chrome off
+  52.84; water off 46.33 / 43.69 (shipped). Final: full20 73.88 (over,
+  baseline), cut20 46.33, full15 58.05 (67.30 with the logo everywhere),
+  half30 22.57 with the logo everywhere. full20/cut20/full15 ship iris_cut
+  (no logo in water or chrome, K=3); half30 all on. `.text + .data`: 101608 /
+  89976 / 99672 / 119576; check-float passes; check_render PASS on all
+  variants incl. logo frames 279 (edge-on), 393 (largest), 597 (chrome).
+  Open for Adrian: the logo only reflects in half30; a badge capture
+  (branch reflections/hw-trace) will say whether cut20 can afford the water
+  reflection.

@@ -26,6 +26,26 @@ const gz: [3]f32 = blk: {
     break :blk g;
 };
 
+/// Upper bound on the ripple gradient |(dh/dx, dh/dz)| before the fade.
+/// The gradient is sum_i g_i c_i with fixed vectors g_i = A_i k_i 2 pi and
+/// c_i in [-1, 1]; its norm is convex in c, so the maximum is at a vertex of
+/// the cube: the largest |sum_i +-g_i| (0.220, against 0.269 for sum |g_i|).
+/// normal() tilts the normal by atan(fade * |gradient|).
+pub const max_slope: f32 = blk: {
+    var best: f64 = 0.0;
+    for (0..8) |m| {
+        var x: f64 = 0.0;
+        var z: f64 = 0.0;
+        for (0..3) |i| {
+            const sgn: f64 = if ((m >> i) & 1 == 1) -1.0 else 1.0;
+            x += sgn * gx[i];
+            z += sgn * gz[i];
+        }
+        best = @max(best, @sqrt(x * x + z * z));
+    }
+    break :blk @floatCast(best);
+};
+
 /// Distance fade of the ripples: g * g with g = 1 / (1 + fade_k * dist)
 /// (M2; the square cuts the horizon moire).
 pub const fade_k = 0.05;
