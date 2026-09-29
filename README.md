@@ -38,6 +38,55 @@ Outputs: `zig-out/firmware/<binary>.uf2` (copy onto the badge over
 `zig-out/bin/<binary>.wasm` (for the simulator). Zig
 `0.17.0-dev.1936+5a625d5f3` exactly, as pinned by upstream.
 
+## Run in the simulator
+
+The upstream web simulator (`sycl-badge/simulator/`) runs any cart's wasm
+build in a browser on your own machine. It needs Node.js 20 or newer and two
+terminals, both started from the repository root.
+
+Terminal 1 builds the cart and serves it on `localhost:2468`, where the
+simulator looks for it:
+
+```sh
+zig build -Dcart=snouty-bugs
+node tools/serve-cart.mjs --cart snouty-bugs
+```
+
+`--cart` takes a cart directory or binary name from the table above
+(`snouty-run` and `snouty` are the same cart). Run from inside
+`carts/<cart>/`, the script picks that cart without `--cart`; a wasm path
+instead of `--cart` serves any other file. The watcher reloads the page
+whenever the wasm changes, so leave it running and re-run `zig build` in
+another terminal to see a change. Keep the default port: the simulator only
+tries 2468.
+
+Terminal 2 starts the simulator UI (the first run installs its packages):
+
+```sh
+cd sycl-badge/simulator
+npm install
+npm run dev
+```
+
+Then open <http://localhost:1234>. To switch carts, stop the watcher, start
+it again with another `--cart`, and refresh the browser tab. The simulator
+does not reconnect by itself: it shows "Watcher was disconnected" until you
+refresh, or "Watcher not found" if the page opened before the watcher started.
+
+| Badge            | Keyboard           |
+|------------------|--------------------|
+| Joystick         | Arrow keys or WASD |
+| Joystick click   | Shift              |
+| A                | Z or K             |
+| B                | X or J             |
+| Start            | Enter or Y         |
+| Select           | Backspace or T     |
+| System menu      | Escape             |
+
+Each cart's `carts/<cart>/docs/RUNNING.md` lists its own controls, and
+`tools/preview.mjs` runs a cart headless in the terminal with no browser,
+writing PNG frames (`docs/RUNNING.md` section 5).
+
 ## RAM carts and XIP carts
 
 By default a cart is a RAM cart: the OS copies the whole image into the
