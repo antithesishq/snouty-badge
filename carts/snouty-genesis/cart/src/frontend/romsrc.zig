@@ -5,7 +5,9 @@
 //!
 //! Badge build with `rom.source == .drive`: open the FAT12 volume at
 //! `romfs.base_addr`, list the root's `.gen`/`.md`/`.bin` files, take the
-//! first whose word at 0x100 reads "SEGA", map its clusters and build a
+//! first that `core.rom.check` accepts (a "SEGA" header, not SMD, no
+//! mapper or SVP; a refused file's reason reaches the report line), map
+//! its clusters and build a
 //! `core.RomSource`: the flash pointer when the file is one contiguous run
 //! (`Mapped.contiguous`), else the cluster table over the volume's data
 //! area. Any error, or no such file, falls back to the embedded ROM. The
@@ -69,7 +71,14 @@ fn from_drive() core.RomSource {
             continue;
         };
         const src = source_of(&m);
-        if (!core.rom.is_genesis(&src)) continue;
+        // SPEC.md section 11's load-time refusals; files with no header at
+        // all are not Genesis ROMs and are skipped silently.
+        const verdict = core.rom.check(&src);
+        if (verdict == .no_header) continue;
+        if (verdict != .ok) {
+            last_err = verdict.text();
+            continue;
+        }
         genesis += 1;
         if (pick == null) pick = i;
     }
@@ -107,10 +116,12 @@ fn source_of(m: *const romfs.Mapped) core.RomSource {
 }
 
 /// The embedded ROM; `why` says why the drive was not used (null: it was
-/// not asked for). `none` when it has no Genesis header (a bad -Dmd-rom).
+/// not asked for). `none` when `rom.check` refuses it (a bad -Dmd-rom:
+/// no header, SMD, mapper, SVP), with the reason on the report line.
 fn embedded(why: ?[]const u8) core.RomSource {
     const src = core.RomSource.from_slice(rom.data);
-    const ok = core.rom.is_genesis(&src);
+    const verdict = core.rom.check(&src);
+    const ok = verdict == .ok;
     origin = if (ok) .embedded else .none;
     var w: Writer = .{};
     if (ok) {
@@ -122,7 +133,9 @@ fn embedded(why: ?[]const u8) core.RomSource {
     } else {
         w.put("ROM: none (");
         w.put(rom.name);
-        w.put(" has no SEGA header)");
+        w.put(": ");
+        w.put(verdict.text());
+        w.put(")");
     }
     if (why) |s| {
         w.put(", drive: ");
