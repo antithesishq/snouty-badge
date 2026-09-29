@@ -41,9 +41,12 @@ pub fn draw_name_strip() void {
     shadow_text_centred(name_line2, tx, 116);
 }
 
-/// Nearest-neighbour 32 -> 24 blit of textures.iris with the same 1 px
-/// black drop shadow as the text; palette index 0 is transparent. 2D only,
-/// no z test.
+/// 1:1 blit of the Iris mark, which the art pipeline renders at 24x24
+/// centred in the 32x32 iris sheet (texels 4..27 either way), with the same
+/// 1 px black drop shadow as the text; palette index 0 is transparent. 2D
+/// only, no z test.
+const icon_inset = (textures.size - icon_size) / 2;
+
 fn draw_iris(x0: usize, y0: usize) void {
     const t = &textures.iris;
     const black: cart.Pixel = .{ .bits = 0 };
@@ -52,11 +55,11 @@ fn draw_iris(x0: usize, y0: usize) void {
             const x = x0 + i + off;
             if (x >= cart.screen_width) continue;
             const col = &cart.framebuffer[x];
-            const u = (i * 4 + 1) / 3;
+            const u = i + icon_inset;
             for (0..icon_size) |j| {
                 const y = y0 + j + off;
                 if (y >= cart.screen_height) continue;
-                const idx = t.texels[(u << 5) | ((j * 4 + 1) / 3)];
+                const idx = t.texels[(u << 5) | (j + icon_inset)];
                 if (idx == 0) continue;
                 col[y] = if (off == 1) black else t.palette[idx];
             }

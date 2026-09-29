@@ -363,7 +363,7 @@ python3 ../../tools/make_gif.py out/m3 docs/preview_m3.gif --scale 3 --ms 100
 ### Art
 
 ```sh
-python3 tools/prepare_assets.py --from-w95 assets/src/w95 --art ../../snouty-art/out/maze \
+python3 tools/prepare_assets.py --from-w95 assets/src/w95 --art ../../../snouty-art/out/maze \
   --contact docs/w95_assets.png                 # what assets/gen/ is built from
 python3 tools/prepare_assets.py --placeholders --contact docs/placeholders.png
 python3 tools/prepare_assets.py --check       # validate delivered art in assets/gen/

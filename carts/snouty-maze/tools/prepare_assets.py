@@ -336,25 +336,31 @@ def draw_smiley() -> np.ndarray:
 
 # --------------------------------------------------------------------------
 # logo.png: an iris-like mark: a diamond frame around a round iris with a
-# pupil and a highlight.
+# pupil and a highlight. iris.png is the same drawing at 24 px, centred in
+# the 32 cell, because the overhead name strip blits texels 4..27 1:1.
 # --------------------------------------------------------------------------
-def draw_logo() -> np.ndarray:
+def draw_logo(scale: float = 1.0) -> np.ndarray:
     s = MANIFEST["logo.png"]
     a = new_sheet(s)
     yy, xx = grid(32, 32)
-    d = np.abs(yy - 16) + np.abs(xx - 16)
+    d = (np.abs(yy - 16) + np.abs(xx - 16)) / scale
     diamond = d <= 14.6
     a[diamond] = OUTLINE
     a[(d <= 13.4)] = PURPLE1
     a[(d <= 12.4) & (d > 10.0)] = PURPLE3
     a[(d <= 10.0)] = g(1, 1, 3)
-    r = np.hypot(yy - 16, xx - 16)
+    r = np.hypot(yy - 16, xx - 16) / scale
     a[r <= 8.2] = PURPLE2
     a[(r <= 8.2) & (r > 7.0)] = PURPLE4
     a[r <= 5.6] = g(4, 3, 7)
     a[r <= 3.2] = BLACK
-    a[ellipse(32, 32, 13.5, 13.5, 1.3, 1.3)] = WHITE
+    hl = 16 - 2.5 * scale
+    a[ellipse(32, 32, hl, hl, 1.3 * scale, 1.3 * scale)] = WHITE
     return a
+
+
+def draw_iris() -> np.ndarray:
+    return draw_logo(24 / 32)
 
 
 # --------------------------------------------------------------------------
@@ -397,7 +403,7 @@ DRAW = {
     "logo.png": draw_logo,
     "wall_pic.png": draw_wall_pic,
     "start.png": draw_start,
-    "iris.png": draw_logo,
+    "iris.png": draw_iris,
 }
 
 
@@ -628,7 +634,7 @@ def run_w95(src: Path, art: Path | None) -> int:
         "finish.png": draw_finish(),
     }
     made["snouty.png"] = draw_snouty()
-    made["iris.png"] = draw_logo()
+    made["iris.png"] = draw_iris()
     if art is not None:
         for name in ART_SHEETS:
             made[name] = np.array(Image.open(art / name).convert("RGB"))

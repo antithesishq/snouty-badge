@@ -994,7 +994,8 @@ teleport from MANUAL returns to MANUAL with the idle timer restarted.
 - `scene.zig` (one hunk + the `draw_actors` call): while carving no finish
   tile and no actors; the carve head is a flat Iris-pink tile
   (`textures.carve_head_color`, one extra quad).
-- `overlay.zig`: Iris mark blitted 32 -> 24 nearest-neighbour at y =
+- `overlay.zig`: Iris mark blitted 32 -> 24 nearest-neighbour (replaced by
+  a 1:1 blit of a 24 px mark after M4, see "M4 fix" below) at y =
   104..127 with the text's 1 px black drop shadow (clipped at the screen
   edge), then the two lines, each centred in a 96 px text block; icon (24)
   + gap (4) + text (96) centred, x = 18. Checked on OVERHEAD frames and on
@@ -1134,3 +1135,16 @@ views from above are the limit, so the default stays 12x12 and
 `-Dmaze_size=16` is the switch. Fix folded in: `1910d2f` had put three
 wasm debug exports (`debug_led_max`, `debug_place`, `debug_fade_level`)
 in the badge branch; C4 moved them back.
+
+## M4 fix: Iris mark in the name strip (2026-09-29)
+
+Adrian: the Iris mark beside the name looked distorted. Cause: the 32 -> 24
+nearest-neighbour blit dropped every fourth row and column, so the arcs
+varied between 4 and 5 px and the diamond came out lopsided. Fix: the art
+pack renders the mark at 24 px centred in the 32 cell (snouty-art
+`tools/build_maze.py`, `IRIS_BOX`; the sheet contract is unchanged) and
+`overlay.zig` copies texels 4..27 1:1. The placeholder `iris.png` is the
+same 24 px scaling of the procedural mark. No golden shows the strip;
+`check_golden` 9/9, `check_cycle` 9/9, `zig build test`, `check-float`
+PASS; `docs/preview_m4.gif` and `docs/w95_assets.png` regenerated.
+

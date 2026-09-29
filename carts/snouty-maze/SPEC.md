@@ -341,7 +341,7 @@ below procedurally at the exact size so code never waits on art, as in
 | `snouty.png`      | 32x32 | 4      | yes         | blob with an "S", left x2 / right x2, legs alternate |
 | `smiley.png`      | 32x32 | 1      | yes         | yellow disc, two eyes, a smile                    |
 | `logo.png`        | 32x32 | 1      | yes         | iris-like mark (real: Zig mark via `--art`)       |
-| `iris.png`        | 32x32 | 1      | yes         | same drawing (real: Iris mark via `--art`)        |
+| `iris.png`        | 32x32 | 1      | yes         | same drawing at 24 px, centred (real: Iris mark via `--art`); the name strip blits texels 4..27 1:1 |
 
 Textures are unpacked to `u8` 32x32 grids at `start()` (1 KB each). Wall
 tops and the sphere are flat colours in code and need no sheet.
