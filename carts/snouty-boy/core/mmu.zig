@@ -322,9 +322,13 @@ pub fn read8(gb: *Gb, addr: u16) u8 {
 }
 
 fn read_io(gb: *Gb, reg: u8) u8 {
-    // Registers whose value the timer, PPU or APU change on their own.
+    // PPU (LY, STAT) and APU registers change only at the events that
+    // `Gb.tick_lazy` flushes on, so they are current as they are. TIMA
+    // counts between events: catch up. DIV is computed from the pending
+    // cycles (it is the counter's high byte, 4 counts per M-cycle).
     switch (reg) {
-        Reg.div, Reg.tima, 0x10...0x3F, Reg.stat, Reg.ly => gb.sync(),
+        Reg.tima => gb.sync(),
+        Reg.div => return @truncate((gb.timer.div +% @as(u16, @truncate(gb.pend_m *% 4))) >> 8),
         else => {},
     }
     return switch (reg) {

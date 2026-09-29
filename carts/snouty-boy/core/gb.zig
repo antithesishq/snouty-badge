@@ -245,7 +245,7 @@ pub const Gb = struct {
     /// the M-cycles `sync_for_read` has not ticked yet, then any DMA or
     /// speed-switch stall it caused.
     pub inline fn step_instruction(gb: *Gb) void {
-        var m = cpu.step(gb);
+        var m = @call(.always_inline, cpu.step, .{gb});
         if (gb.pre_m != 0) {
             m -= gb.pre_m;
             gb.pre_m = 0;
@@ -306,7 +306,9 @@ pub const Gb = struct {
         if (done > 3 or done <= gb.pre_m) return;
         const n: u8 = @intCast(done - gb.pre_m);
         gb.pre_m = @intCast(done);
-        gb.tick(n);
+        // Lazily: LY and STAT only change at PPU events, and `tick_lazy`
+        // flushes when the read's M-cycle reaches one.
+        gb.tick_lazy(n);
     }
 
     /// Advance every subsystem by `m` CPU M-cycles now (tests, mid-
