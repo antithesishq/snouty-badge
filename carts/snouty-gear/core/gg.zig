@@ -132,17 +132,20 @@ pub const Gg = struct {
         gg.pad = pad;
         const sink = gg.line_sink;
         var b = gg.bus_for();
-        var ft: u32 = 0;
+        // T-states run, from the VDP position: the loop ends on the first
+        // wrap to line 0 (a step never crosses two lines), so it ran from
+        // (line0, lt0) to (262, lt1). Saves a running sum per instruction.
+        const line0: u32 = gg.vdp.line;
+        const lt0: u32 = gg.vdp.line_tstates;
         while (true) {
             const iff1 = gg.cpu.iff1;
             const t = @call(.always_inline, Cpu.step, .{ &gg.cpu, &b });
-            ft += t;
             // Acceptance clears IFF1 and lands on RST 38h (IM 1). A DI at
             // 0037 would be miscounted; nothing does that.
             if (iff1 and !gg.cpu.iff1 and gg.cpu.pc == 0x0038) gg.count_irq();
             if (gg.vdp.tick(t, sink)) break;
         }
-        gg.frame_t = ft;
+        gg.frame_t = (vdp.lines_per_frame - line0) * vdp.tstates_per_line + gg.vdp.line_tstates - lt0;
         gg.frame_count +%= 1;
     }
 
