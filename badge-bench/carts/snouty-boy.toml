@@ -1,6 +1,11 @@
-# snouty-boy: Game Boy emulator with an embedded ROM (2048-gb at M4), 60 fps.
+# snouty-boy: Game Boy emulator, 60 fps. Without a drive image the cart runs
+# its embedded fallback ROM (2048-gb); M5 reads a .gb from the badge drive.
 budget_ms = 16.7
 frames = 600
 # START leaves the Snouty Boy splash, START again starts 2048, then a few moves.
 press = ["START:30-31", "START:120-121", "RIGHT:200-203", "DOWN:260-263",
          "LEFT:320-323", "UP:380-383", "RIGHT:440-443", "DOWN:500-503"]
+# Drive ROM run, once badge-bench has the --romfs option (Snouty Gear M0,
+# docs/ROM_DRIVE.md section 6): a FAT12 image from tools/make_romfs.py
+# holding the ROM, mapped at 0x10080000.
+# romfs = "../out/snouty-boy-romfs.img"

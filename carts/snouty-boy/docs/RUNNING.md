@@ -69,11 +69,20 @@ Options:
   shipped game goes in `roms/` with its license next to it.
 - `-Dcart-optimize=fast|small|safe|debug`: optimize mode for the cart
   (default `fast`, SPEC.md section 8).
+- `-Drom-source=drive|embed`: where the badge build gets its ROM (default
+  `drive`: a file on the badge's USB drive, the embedded ROM as fallback;
+  `embed`: the embedded ROM only, as before M5). See section 9. The wasm
+  build always runs the embedded ROM. `pack` belongs to Snouty Gear and is
+  refused here.
 
 A clean build of this cart takes a couple of minutes (all carts: several);
 incremental rebuilds take seconds.
 `size ../../zig-out/firmware/snouty-boy.elf` shows `.text` (code plus the embedded
 ROM), `.data` and `.bss` against the cart RAM budget in SPEC.md section 13.
+The keyframe pool is not in any of them: at `start()` the cart takes the RAM
+between the end of `.bss` and the stack (less 1 KB), so the number of
+keyframe slots on the badge is `(0x20078000 - 1024 - align8(end of .bss)) /
+slot size`, capped at 12, and shows in the debug overlay's third line.
 
 ## 5. Host tests
 
@@ -229,7 +238,8 @@ Useful options (the header of the shared `../../tools/preview.mjs` has the full 
     LCD on, 0 with it off)
   - `debug_step_us`: the last `step_frame` time (always 1000 in wasm)
   - `debug_palette`: the current palette index
-  - `debug_state`: frontend state, 0 splash, 1 running, 2 menu
+  - `debug_state`: frontend state, 0 splash, 1 running, 2 menu, 3 ROM
+    picker (badge only), 4 halted (fewer than 2 keyframe slots fit)
   - `debug_pad`: the pad byte the game was last stepped with
     (Select = 64, Start = 128)
   - `debug_scrub_depth`: frames the scrubber is parked behind live (0 live)
@@ -237,6 +247,12 @@ Useful options (the header of the shared `../../tools/preview.mjs` has the full 
   - `debug_keyframes`: valid keyframes in the ring
   - `debug_leds`, `debug_led_max`: neopixels lit, largest channel value
   - `debug_alarm`: 1 if the rewind self-check found a mismatch
+  - `debug_slots`: keyframe slots the pool holds for this ROM (wasm: a
+    static 160 KB pool; 8 with 2048-gb)
+  - `debug_rom_source`: 0 embedded, 1 drive (always 0 in wasm)
+  - `debug_rom_size`, `debug_rom_crc`: size and CRC32 of the running ROM,
+    as on the About screen
+  Exports that read the console return 0 while the ROM picker is up.
 - `--expect "debug_lines == 144"` (repeatable): checked at the end; a
   failure exits 3. `--at "T NAME OP VALUE"` checks right after update T.
 - `--quiet`: no PNGs, only `frames.json`.
@@ -284,3 +300,59 @@ the RP2350 bootloader drive instead; that is for flashing the badge OS
 On the badge the overlay's numbers are real: `avg`/`max` are the
 microseconds `gb.step_frame` takes per Game Boy frame (M1 target under
 14,000, SPEC.md section 8, goal 8,000), and `fps` should read 60.
+
+## 9. ROMs from the badge drive
+
+Since M5 the badge build (`-Drom-source=drive`, the default) looks for Game
+Boy ROM files on the badge's own USB drive and reads the chosen one in
+place from flash, so the ROM costs no cart RAM and may be up to 1 MB.
+Design and its open questions: `docs/ROM_DRIVE.md` at the repository root;
+SPEC.md section 11.1.
+
+1. Mount the badge drive (section 8) and copy `snouty-boy.uf2` onto it if
+   it is not there yet.
+2. Copy one or more `.gb` (or DMG-compatible `.gbc`) files onto the drive,
+   next to `snouty-boy.uf2`, in the top directory. For best speed copy them
+   onto a freshly wiped drive so each file is contiguous.
+3. **Eject the drive** before playing: the OS may write flash while a host
+   still has it mounted, and the cart reads the file from that flash.
+4. Run Snouty Boy from the OS menu.
+
+What happens:
+
+- One playable file: it starts after the splash.
+- Several: a picker follows the splash, listing up to 8 files with their
+  size. Files that cannot be played are dimmed with the reason under the
+  list ("too small", "over 1 MB", "bad checksum" for the header checksum at
+  0x14D, or the drive error). Playable files may carry hints: "CGB only"
+  (a Game Boy Color game; this is a DMG, it may not run), "no RTC" (MBC3
+  clock not emulated), "mapper?" (a mapper the core does not know), "RAM>8K"
+  (cart RAM over 8 KB is cut). Up/Down move, A plays, B runs the embedded
+  ROM.
+- None, no readable drive, or a file that cannot be mapped: the embedded
+  ROM (`-Drom`, `roms/2048.gb` or the acid2 test ROM) runs, as before.
+
+Menu > About shows the ROM's header title, mapper and size, "Source:
+drive" with the file name (cut to 18 characters) or "Source: embedded"
+with the embedded file's name, its CRC32, "fragmented: N banks" when a
+drive file is not contiguous (those banks go through a slower per-sector
+path), and "drive: <reason>" when the drive was tried and the embedded ROM
+runs instead. The debug overlay's third line is the keyframe slot count and
+`D` (drive) or `E` (embedded).
+
+The ROM file also shows in the OS cart menu, where picking it fails to load;
+that is cosmetic. Cart RAM (saves) is not kept between runs.
+
+Build options: `-Drom-source=embed` builds the pre-M5 behaviour (the drive
+is never looked at); `-Drom=...` still picks the fallback ROM. The web
+simulator and `preview.mjs` always run the embedded ROM, so the drive path
+is only exercised on the badge (and, once it gains a `--romfs` option, in
+badge-bench).
+
+Still open on hardware (docs/ROM_DRIVE.md section 6): until the Snouty Gear
+branch lands the real FAT12 reader in `lib/romfs.zig`, the badge build finds
+no volume and About reads "drive: NoVolume". After that: that reading a
+file by pointer through the XIP flash window works and is fast enough (FPS
+with the ROM in flash, cache misses on bank reads), how long finding and
+mapping takes at start, and that the drive still mounts and the OS menu
+still works with ROM files on it.
