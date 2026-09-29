@@ -109,8 +109,19 @@ pub fn draw_bar(s: *const state.GameState) void {
     if (mfill > 0) cart.rect(.{ .x = meter_x, .y = row2_y, .width = mfill, .height = meter_h, .fill_color = iris });
 }
 
-pub fn draw_title(tick_n: u32, sound_on: bool) void {
+/// Outcome of the last attract-mode demo that ran to the end of its log
+/// (main.zig compares `sim.hash_gameplay` against the recorded hash).
+pub const DemoResult = enum(u8) { none = 0, ok = 1, desync = 2 };
+
+/// `demo_result`: "DEMO OK" (grey) or "DEMO DESYNC" (Coral) at the top
+/// left once a demo has replayed its whole log; nothing for `.none`.
+pub fn draw_title(tick_n: u32, sound_on: bool, demo_result: DemoResult) void {
     cart.rect(.{ .x = 0, .y = 0, .width = 160, .height = 128, .fill_color = anti_black });
+    switch (demo_result) {
+        .none => {},
+        .ok => cart.text(.{ .str = "DEMO OK", .x = 2, .y = 2, .text_color = grey }),
+        .desync => cart.text(.{ .str = "DEMO DESYNC", .x = 2, .y = 2, .text_color = coral }),
+    }
     blit.cell(gfx.title, 128, 40, 0, 16, 16, .{});
     centered("powered by", 62, iris);
     centered("deterministic replay", 72, iris);
@@ -136,6 +147,14 @@ const reserve_ticks: u32 = 180;
 /// While rewinding: "<<" at the top left of the view.
 pub fn draw_rewind_marker() void {
     cart.text(.{ .str = "<<", .x = 0, .y = 0, .text_color = iris, .background_color = anti_black });
+}
+
+/// While the attract demo drives: "DEMO" centred at the top of the view
+/// (x 64..95, y 0), on for 40 of every 60 ticks. Stays clear of the `<<`
+/// marker (x < 16) and the render readout (x >= 104).
+pub fn draw_demo_marker(tick_n: u32) void {
+    if (tick_n % 60 >= 40) return;
+    cart.text(.{ .str = "DEMO", .x = 64, .y = 0, .text_color = anti_white, .background_color = anti_black });
 }
 
 pub fn draw_intermission(s: *const state.GameState, level_name: []const u8, total_enemies: u32, ticks: u32) void {

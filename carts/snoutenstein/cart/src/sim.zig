@@ -333,6 +333,10 @@ pub fn damage_enemy(s: *GameState, i: usize, d: i16) void {
         e.timer = dying_ticks;
         e.frame = frame_dying;
         s.kills +%= 1;
+    } else if (e.kind == .boss) {
+        // Bosses do not flinch (Wolf3D rule): a pain state as long as the
+        // zapper cooldown would let a held A stunlock the Heisenbug (found
+        // by the M5 duel test). The white flash still marks the hit.
     } else {
         e.state = .pain;
         e.timer = pain_ticks;

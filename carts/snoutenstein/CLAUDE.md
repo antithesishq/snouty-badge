@@ -43,7 +43,7 @@ RP2354B, Cortex-M33 at 150 MHz with FPU, Core 1 runs the cart. Screen
 bitcast). Cart RAM 307 KB, binary at most 256 KB; our budget ELF
 `.text`+`.data` <= 140 KB, `.bss` <= 120 KB (`size -A`). Inputs
 `cart.controls`; the OS owns Start+Select and joystick click. `tone2` one
-voice. Neopixels at or below 10/255 per channel.
+voice. Neopixels never lit (docs/NEOPIXELS.md).
 
 ## Rules that matter here
 

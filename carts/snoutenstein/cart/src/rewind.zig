@@ -260,6 +260,20 @@ pub fn commit(s: *GameState, meter: u16, count_rewind: bool) void {
     active = false;
 }
 
+/// Out-of-band meter change while playing (the attract-mode takeover
+/// refills it, PLAN.md M5): recorded as the patch of `s.tick` so a replay
+/// reproduces it and the keyframe self-check keeps agreeing. Keeps an
+/// existing patch's `count_rewind` (a commit at this very tick). Only
+/// valid when not rewinding and `s.tick == head`.
+pub fn set_meter(s: *GameState, meter: u16) void {
+    std.debug.assert(!active and s.tick == head);
+    const i = s.tick % input_len;
+    const count = patch_tick[i] == s.tick and patch[i].count_rewind;
+    patch[i] = .{ .meter = meter, .count_rewind = count };
+    patch_tick[i] = s.tick;
+    apply_patch(s);
+}
+
 pub fn rewinding() bool {
     return active;
 }

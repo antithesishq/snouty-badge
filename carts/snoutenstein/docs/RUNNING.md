@@ -218,6 +218,92 @@ node tools/check_determinism.mjs ../../zig-out/bin/snoutenstein.wasm \
 # check_determinism: PASS m1_walk.json x600 rewind@200+90: rewound from tick 189 to tick 99, 90 ticks; debug_gameplay_hash=... debug_rewinds=1 debug_desync=0|0
 ```
 
+### Attract mode and the recorded demo
+
+Left alone on the title for 10 s (600 ticks), the cart plays a recorded
+demo of Build Farm: `sim.init` of level 0 with a fixed seed, driven by an
+input log baked into the cart (`cart/src/demos/build_farm.zig`) instead of
+the pad. A blinking "DEMO" sits at the top of the view while it runs. Any
+edge on A, B, Start or the joystick (up, down, left, right) takes over on
+the spot: the demo stops without stepping that tick, the rewind meter is
+refilled, and the controls are live from the next tick. Select is ignored
+during the demo. The demo returns to the title when the log runs out, after
+3 minutes, after 2 s dead, or once an intermission or victory card has
+shown.
+
+When the log runs to the end, the cart compares `sim.hash_gameplay` of the
+final state with the hash recorded in the simulator and shows the result
+at the top left of the title: "DEMO OK" (grey) means the badge replayed the
+log bit-identically to the simulator, "DEMO DESYNC" (Coral) means it did
+not (a determinism bug; SPEC.md 9.3). Nothing is shown before a demo has
+finished, or when the data file has no recorded hash (`final_hash` 0).
+
+Exports: `debug_demo` (1 while the demo drives), `debug_demo_result` (0
+none, 1 ok, 2 desync), `debug_title_ticks` (ticks idled on the title). Two
+setup calls for `preview.mjs --call`: `--call debug_start_demo` starts the
+demo at update 0 (scripts and the bench), `--call debug_new_game_seeded`
+starts Build Farm with the demo seed in normal play, tick 0 = update 0
+(authoring the log).
+
+```sh
+# replay the embedded demo headless; T = total_ticks in cart/src/demos/build_farm.zig
+T=$(sed -n 's/.*total_ticks: u32 = \([0-9]*\);.*/\1/p' cart/src/demos/build_farm.zig)
+node ../../tools/preview.mjs ../../zig-out/bin/snoutenstein.wasm --call debug_start_demo \
+  --frames $((T + 5)) --every 60 --out out/ --expect "debug_demo_result == 1"
+```
+
+Recording a demo: the playthrough is authored as a normal input script,
+`tools/scripts/demo_build_farm.json` (`{from, to, hold}` entries, tick 0 is
+the first `sim.step` of the level; the demo ends after `max(to)`, or after
+`"tail": K` idle ticks when the file is `{"tail": K, "runs": [...]}`).
+Iterate on it with `preview.mjs --call debug_new_game_seeded --script
+tools/scripts/demo_build_farm.json`, no rebuild needed. Then:
+
+```sh
+tools/record_demo.sh     # plays the script on the built wasm, reads debug_gameplay_hash, regenerates the data file with --hash
+cd ../.. && zig build -Dcart=snoutenstein && cd carts/snoutenstein
+tools/check.sh           # proves the embedded demo reproduces the hash in demo mode
+```
+
+`tools/record_demo.sh` builds nothing: it runs `preview.mjs` on the
+existing wasm and calls the generator, which can also be run by hand:
+`python3 tools/gen_demo.py IN.json --out cart/src/demos/build_farm.zig
+[--hash 0x...]`. It encodes the script with the same button bits as
+`preview.mjs`, merges identical ticks into `Run { buttons, ticks }` and
+writes plain literal data (`level_index`, `seed`, `total_ticks`,
+`final_hash`, `runs`); without `--hash` the hash is 0 (unrecorded). Commit
+the JSON and the regenerated `.zig` together.
+
+Demo content: 3,644 ticks (60.7 s), Build Farm with the zapper. Snouty
+walks the rack corridor east, opens the plain door at (11,3) and zaps the
+three cable-tray gnats from the doorway (taking a few bites on purpose),
+picks up the zapper charge at (16,4), clears the two hub gnats from the
+door at (17,7), crosses the hub, opens the vent closet door at (7,10),
+grabs the Coral key at (3,9) (the portrait grins) and zaps the closet
+gnat, then walks back across the hub (Select to the swatter and back on
+the way) and through the Coral door at (15,13) into the pipe hall. There it stands in
+the open while the three pipe-hall gnats bite it down to 36 HP, holds B
+for updates 2410-2649 (240 ticks, 4 s of Iris rewind; game tick 2410 back
+to 2170, HP 60), backs into the Coral doorway and zaps all three as they
+line up, then tours the hall (the zapper charge at (5,16)) and ends
+standing at (19.0,16.5) facing the exit strip, alive, 60 HP, 9 kills, not
+touching the exit. Recorded hash `0xFAB416D6` (final game tick 3163).
+The rewind is 240 rather than 180 ticks because gnat bites are slow after
+the M5 tuning (6 HP/s with all three biting): a shorter rewind cannot both
+start under 40 HP and land above 50. After any change that moves the
+simulation (balance, AI, map, rewind), the gnats wake and move
+differently and the log goes stale: edit `tools/scripts/demo_build_farm.json`
+(author with `--call debug_new_game_seeded` and `--call-at T debug_px`
+etc. as above, check HP, kills and position at the milestones), run
+`tools/record_demo.sh`, rebuild, then `tools/check.sh` (the attract,
+demo and takeover runs must pass). Changing an early segment reshuffles
+every fight after it, so re-check the whole run, not just the edit.
+
+Neopixels are off in every build (docs/NEOPIXELS.md at the repository
+root): the cart never writes an LED byte; the old HP bar, key flash and
+rewind pulse stay dormant in `cart/src/audio.zig` behind
+`neopixels_allowed`.
+
 ## 6. Flash the badge
 
 1. Connect the badge over USB-C. It shows up as a USB mass-storage drive.

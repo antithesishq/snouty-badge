@@ -47,8 +47,10 @@ pub const KindTuning = struct {
     melee_every: u8,
     melee_windup: u8,
     /// Ranged attack through `projectiles.spawn` (0 range = none); needs
-    /// line of sight.
+    /// line of sight and the player farther than `shot_min` (the boss
+    /// bites up close instead of spitting its fan point-blank, M5).
     shot_range: Fixed,
+    shot_min: Fixed = 0,
     shot_every: u8,
     shot_windup: u8,
     shot_kind: u8,
@@ -56,8 +58,9 @@ pub const KindTuning = struct {
 
 /// Indexed by `@intFromEnum(EnemyKind)`; SPEC.md section 8 values.
 pub const tuning = [5]KindTuning{
-    // gnat: zig-zags in, bites.
-    .{ .speed = fixed.from_float(0.05), .stop = fixed.from_float(0.6), .melee_range = fixed.from_float(0.8), .melee_damage = 5, .melee_every = 30, .melee_windup = 6, .shot_range = 0, .shot_every = 0, .shot_windup = 0, .shot_kind = projectiles.kind_none },
+    // gnat: zig-zags in, bites. Tuned M5 (was 0.05 / bite 5 every 30,
+    // windup 6): see the Build Farm opening tests below.
+    .{ .speed = fixed.from_float(0.04), .stop = fixed.from_float(0.6), .melee_range = fixed.from_float(0.8), .melee_damage = 2, .melee_every = 60, .melee_windup = 10, .shot_range = 0, .shot_every = 0, .shot_windup = 0, .shot_kind = projectiles.kind_none },
     // wasp: straight charges, contact damage once per charge.
     .{ .speed = fixed.from_float(0.07), .stop = 0, .melee_range = fixed.from_float(0.5), .melee_damage = 10, .melee_every = 0, .melee_windup = 0, .shot_range = 0, .shot_every = 0, .shot_windup = 0, .shot_kind = projectiles.kind_none },
     // beetle: slow walker, spits.
@@ -65,7 +68,7 @@ pub const tuning = [5]KindTuning{
     // spider: turret, webs.
     .{ .speed = 0, .stop = 0, .melee_range = 0, .melee_damage = 0, .melee_every = 0, .melee_windup = 0, .shot_range = fixed.from_int(6), .shot_every = 120, .shot_windup = 10, .shot_kind = projectiles.kind_web },
     // boss: chases, melee, spit fan (range = line of sight).
-    .{ .speed = fixed.from_float(0.04), .stop = fixed.from_float(0.7), .melee_range = fixed.from_float(0.9), .melee_damage = 15, .melee_every = 45, .melee_windup = 10, .shot_range = sim.max_ray, .shot_every = 100, .shot_windup = 10, .shot_kind = projectiles.kind_spit },
+    .{ .speed = fixed.from_float(0.04), .stop = fixed.from_float(0.7), .melee_range = fixed.from_float(0.9), .melee_damage = 10, .melee_every = 60, .melee_windup = 10, .shot_range = sim.max_ray, .shot_min = fixed.from_float(2.5), .shot_every = 100, .shot_windup = 10, .shot_kind = projectiles.kind_spit },
 };
 
 pub fn tune(kind: state.EnemyKind) KindTuning {
@@ -85,6 +88,10 @@ pub const fallback_ticks: u8 = 16;
 pub const walk_frame_ticks: u32 = 8;
 pub const gnat_zig: Angle = fixed.deg(30);
 pub const gnat_zig_ticks: u32 = 20;
+/// Centre-to-centre distance a chasing or charging enemy keeps from every
+/// other enemy that blocks (`blocks`); a move that would end closer (and
+/// closer than it started) counts as a wall hit.
+pub const separation: Fixed = fixed.from_float(0.5);
 pub const wasp_charge_ticks: u8 = 40;
 pub const wasp_overshoot: Fixed = fixed.from_float(1.5);
 pub const wasp_turn_ticks: u8 = 12;
@@ -242,7 +249,7 @@ fn chase(s: *GameState, level: *const Level, e: *Enemy, i: usize) void {
         begin(e, act_melee, t.melee_windup);
         return;
     }
-    if (t.shot_range > 0 and shot_cd == 0 and d2 < sq(t.shot_range) and
+    if (t.shot_range > 0 and shot_cd == 0 and d2 < sq(t.shot_range) and d2 >= sq(t.shot_min) and
         sim.line_of_sight(s, level, e.x, e.y, p.x, p.y))
     {
         e.dir = (e.dir & 0x00FF) | @as(u16, t.shot_every) << 8;
@@ -276,7 +283,12 @@ fn walk(s: *GameState, level: *const Level, e: *Enemy, desired: Angle, speed: Fi
     }
     const x0 = e.x;
     const y0 = e.y;
-    const blocked = sim.move_circle(s, level, &e.x, &e.y, fixed.mul(fixed.cos(h), speed), fixed.mul(fixed.sin(h), speed), move_radius, .enemy);
+    var blocked = sim.move_circle(s, level, &e.x, &e.y, fixed.mul(fixed.cos(h), speed), fixed.mul(fixed.sin(h), speed), move_radius, .enemy);
+    if (crowds(s, level, e, x0, y0, e.x, e.y)) {
+        e.x = x0;
+        e.y = y0;
+        blocked = true;
+    }
     if (blocked) pick_fallback(s, level, e, desired, speed);
     return e.x != x0 or e.y != y0;
 }
@@ -295,12 +307,32 @@ fn pick_fallback(s: *const GameState, level: *const Level, e: *Enemy, desired: A
         const a = compass(d);
         const nx = e.x + fixed.mul(fixed.cos(a), speed);
         const ny = e.y + fixed.mul(fixed.sin(a), speed);
-        if (box_free(s, level, nx, ny, move_radius)) {
+        if (box_free(s, level, nx, ny, move_radius) and !crowds(s, level, e, e.x, e.y, nx, ny)) {
             e.aux[0] = fallback_ticks << 3 | d;
             return;
         }
     }
     e.aux[0] = 0;
+}
+
+/// Does another enemy stand in the way of this one's move? True if some
+/// blocking enemy is closer than `separation` to (nx, ny) and the move
+/// from (x0, y0) brings the two closer, so overlapping enemies can still
+/// step apart. One pass over the level's enemies.
+fn crowds(s: *const GameState, level: *const Level, e: *const Enemy, x0: Fixed, y0: Fixed, nx: Fixed, ny: Fixed) bool {
+    for (s.enemies[0..level.enemies.len]) |*o| {
+        if (o == e or !blocks(o)) continue;
+        const d = dist2(nx - o.x, ny - o.y);
+        if (d < sq(separation) and d < dist2(x0 - o.x, y0 - o.y)) return true;
+    }
+    return false;
+}
+
+/// Enemies that others keep their distance from: alive, woken, not a
+/// spider (a ceiling turret).
+fn blocks(o: *const Enemy) bool {
+    const dormant = o.aux[2] & awake_bit == 0 and (o.state == .dormant or o.state == .idle);
+    return o.kind != .spider and !dormant and sim.living(o);
 }
 
 /// True if a box of half-size `r` at (x, y) overlaps no solid cell.
@@ -336,6 +368,11 @@ fn charge(s: *GameState, level: *const Level, e: *Enemy) void {
     const x0 = e.x;
     const y0 = e.y;
     _ = sim.move_circle(s, level, &e.x, &e.y, fixed.mul(fixed.cos(h), t.speed), fixed.mul(fixed.sin(h), t.speed), move_radius, .enemy);
+    // Running into another enemy ends the charge like a wall.
+    if (crowds(s, level, e, x0, y0, e.x, e.y)) {
+        e.x = x0;
+        e.y = y0;
+    }
     // Sliding along a wall still counts as progress; a wall hit is when
     // less than half the step was made.
     const hit_wall = dist2(e.x - x0, e.y - y0) < sq(t.speed >> 1);
@@ -466,7 +503,8 @@ const open_src =
     \\1111111111111111
 ;
 
-test "a gnat 5 cells away wakes, closes in and bites 5 every 30 ticks" {
+test "a gnat 5 cells away wakes, closes in and bites on its cooldown" {
+    const g = tune(.gnat);
     var st: level_parse.Parsed = undefined;
     const L = try level_parse.parse_level(&st, "open", open_src, 0);
     var s: GameState = undefined;
@@ -477,23 +515,23 @@ test "a gnat 5 cells away wakes, closes in and bites 5 every 30 ticks" {
         try testing.expect(t < 8);
         sim.step(&s, &L, .{});
     }
-    const reach = sq(tune(.gnat).melee_range);
+    const reach = sq(g.melee_range);
     while (dist2(s.player.x - s.enemies[0].x, s.player.y - s.enemies[0].y) >= reach) : (t += 1) {
-        try testing.expect(t < 120);
+        try testing.expect(t < 150);
         sim.step(&s, &L, .{});
     }
     try testing.expectEqual(@as(i16, 100), s.player.hp);
     while (s.player.hp == 100) : (t += 1) {
-        try testing.expect(t < 200);
+        try testing.expect(t < 250);
         sim.step(&s, &L, .{});
     }
-    try testing.expectEqual(@as(i16, 95), s.player.hp);
-    for (0..29) |_| {
+    try testing.expectEqual(100 - g.melee_damage, s.player.hp);
+    for (0..g.melee_every - 1) |_| {
         sim.step(&s, &L, .{});
-        try testing.expectEqual(@as(i16, 95), s.player.hp);
+        try testing.expectEqual(100 - g.melee_damage, s.player.hp);
     }
     sim.step(&s, &L, .{});
-    try testing.expectEqual(@as(i16, 90), s.player.hp);
+    try testing.expectEqual(100 - 2 * g.melee_damage, s.player.hp);
 }
 
 const walled_src =
@@ -765,4 +803,148 @@ test "600 scripted ticks with 6 enemies hash the same twice" {
     }
     try testing.expect(woke >= 3);
     try testing.expect(a.player.hp < 30000);
+}
+
+// ---------------------------------------------------------------- M5 balance
+
+/// The Build Farm opening: the real level from `sim.init`, the player
+/// standing in the first cell of the cable-tray room (just past the plain
+/// door at x = 11, which a player standing at `S` never opens) facing east,
+/// so its three gnats see them. Returns HP after 420 ticks.
+fn farm_opening_hp(fire: bool) !i16 {
+    var st: level_parse.Parsed = undefined;
+    const L = try level_parse.parse_level(&st, "build_farm", @embedFile("levels/build_farm.txt"), 0);
+    var s: GameState = undefined;
+    sim.init(&s, &L, 0, 1);
+    try testing.expectEqual(@as(u8, 0), s.player.angle >> 8); // facing east
+    s.player.x = fixed.from_int(12) + fixed.half;
+    for (0..420) |_| sim.step(&s, &L, .{ .a = fire });
+    return s.player.hp;
+}
+
+test "Build Farm opening: three gnats leave a player standing still at 55..75 HP after 420 ticks" {
+    const hp = try farm_opening_hp(false);
+    try testing.expect(hp >= 55 and hp <= 75);
+}
+
+test "Build Farm opening: holding A with the zapper facing east ends above 85 HP" {
+    try testing.expect(try farm_opening_hp(true) > 85);
+}
+
+const arena_src =
+    \\11111111111111
+    \\1............1
+    \\1............1
+    \\1............1
+    \\1............1
+    \\1............1
+    \\1.S>..H......1
+    \\1............1
+    \\1............1
+    \\1............1
+    \\1............1
+    \\1............1
+    \\1............1
+    \\11111111111111
+;
+
+/// Heisenbug duel: 12x12 open room, boss 4 cells east, 99 charges, the
+/// player holds A and turns to face the boss every tick. Returns
+/// .{ ticks to kill (the tick the boss starts dying), player HP left };
+/// ticks is null if the player died first or 3000 ticks ran out.
+fn boss_duel() !struct { ?usize, i16 } {
+    var st: level_parse.Parsed = undefined;
+    const L = try level_parse.parse_level(&st, "arena", arena_src, 0);
+    var s: GameState = undefined;
+    sim.init(&s, &L, 0, 1);
+    try testing.expectEqual(fixed.from_int(4), s.enemies[0].x - s.player.x);
+    s.player.ammo_zapper = 99;
+    const e = &s.enemies[0];
+    for (0..3000) |t| {
+        s.player.angle = fixed.atan2(e.y - s.player.y, e.x - s.player.x);
+        sim.step(&s, &L, .{ .a = true });
+        if (!sim.living(e)) return .{ t + 1, s.player.hp };
+        if (s.player.hp <= 0) return .{ null, 0 };
+    }
+    return .{ null, s.player.hp };
+}
+
+// Measured M5: the boss dies on tick 313 (27 shots, one per 12-tick zapper
+// cooldown). With the SPEC numbers it never fought back: each hit's 12-tick
+// pain outlasted the cooldown gap (stunlock). Bosses therefore take no pain
+// state (sim.damage_enemy), spit only beyond `shot_min` (2.5 cells; the
+// point-blank fan did 24 a volley) and melee 10 every 60 ticks: the
+// stand-and-shoot player ends at 52 HP (15/45 left 17). Hardware feel pass
+// deferred; the `tuning` row is the knob.
+test "Heisenbug duel: facing and zapping the boss wins with 20+ HP" {
+    const r = try boss_duel();
+    try testing.expect(r[0] != null);
+    try testing.expect(r[1] >= 20);
+}
+
+const pair_src =
+    \\1111111111111111
+    \\1..............1
+    \\1..............1
+    \\1S>.......a....1
+    \\1.........a....1
+    \\1..............1
+    \\1111111111111111
+;
+
+const file_src =
+    \\1111111111111111
+    \\1..............1
+    \\1..............1
+    \\1S>.......aa...1
+    \\1..............1
+    \\1..............1
+    \\1111111111111111
+;
+
+test "two gnats from adjacent cells never end a tick closer than the separation" {
+    for ([_][]const u8{ pair_src, file_src }) |src| {
+        var st: level_parse.Parsed = undefined;
+        const L = try level_parse.parse_level(&st, "pair", src, 0);
+        var s: GameState = undefined;
+        sim.init(&s, &L, 0, 1);
+        s.player.hp = 30000;
+        for (s.enemies[0..2]) |*e| {
+            e.aux[2] |= awake_bit;
+            e.state = .chase;
+        }
+        var closest: i64 = std.math.maxInt(i64);
+        for (0..300) |_| {
+            sim.step(&s, &L, .{});
+            const a = &s.enemies[0];
+            const b = &s.enemies[1];
+            const d = dist2(a.x - b.x, a.y - b.y);
+            closest = @min(closest, d);
+            try testing.expect(d >= sq(separation));
+        }
+        // They did close in on the player (and bit).
+        try testing.expect(s.player.hp < 30000);
+        try testing.expect(closest < sq(fixed.from_float(0.75)));
+    }
+}
+
+test "a dormant or dying enemy does not block, a spider neither" {
+    var st: level_parse.Parsed = undefined;
+    const L = try level_parse.parse_level(&st, "file", file_src, 0);
+    var s: GameState = undefined;
+    sim.init(&s, &L, 0, 1);
+    const a = &s.enemies[0];
+    const b = &s.enemies[1];
+    try testing.expect(!blocks(a)); // dormant
+    b.aux[2] |= awake_bit;
+    b.state = .chase;
+    try testing.expect(blocks(b));
+    try testing.expect(crowds(&s, &L, a, a.x + fixed.from_float(0.6), a.y, a.x + fixed.from_float(0.7), a.y));
+    // Moving apart while already too close is allowed.
+    try testing.expect(!crowds(&s, &L, a, b.x - fixed.from_float(0.2), a.y, b.x - fixed.from_float(0.3), a.y));
+    b.state = .dying;
+    try testing.expect(!blocks(b));
+    b.state = .chase;
+    b.kind = .spider;
+    try testing.expect(!blocks(b));
 }

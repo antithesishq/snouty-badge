@@ -747,6 +747,215 @@ script rewriting, then run the real thing.
 rewind determinism check passes on the walk script; GIF shows the Iris
 tint, scanlines and the clock counting down.
 
+## M5 Attract and polish (started 2026-09-29)
+
+Goal: the cart is a finished conference build. The title idles into a
+recorded demo of Build Farm that anybody can take over mid-run (SPEC.md
+11), the gnats stop being lethal, enemies stop stacking, and the demo
+doubles as the hardware determinism test that SPEC.md 9.3 asks for: the
+badge replays the log recorded in the simulator and compares the final
+hash. Adrian's rules apply: placeholder art is final; anything that needs
+a physical badge is deferred or gets a conservative default (listed at the
+end). Work happens in the worktree `/home/exedev/snouty-badge-snoutenstein`
+on branch `snoutenstein-m5`; it merges into `main` at the tag.
+
+### Demo = seed + input log (lead)
+
+A demo is exactly what SPEC.md 9.2 says: a keyframe plus an input log.
+The keyframe is `sim.init` of Build Farm with a fixed seed, the log is a
+run-length list of button words. Nothing is recorded on the badge; the log
+is authored in the simulator and baked into `.text`.
+
+- `tools/scripts/demo_build_farm.json`: the authored playthrough in the
+  usual script format (a JSON array of `{from, to, hold}` entries, so
+  `preview.mjs --script` runs it as is; tick 0 is the first `sim.step`
+  of the level, no title press; an entry with an empty `hold` pads idle
+  ticks). The demo ends after tick `max(to)`: total ticks `T = max(to) + 1`.
+- `tools/gen_demo.py IN.json --out cart/src/demos/build_farm.zig
+  [--hash 0x...]`: runs the script through the same button-bit layout as
+  `preview.mjs`, merges consecutive identical ticks into `Run { buttons:
+  u16, ticks: u16 }`, and writes a plain literal data file:
+  `pub const level_index: u8 = 0; pub const seed: u32 = demo_seed;
+  pub const total_ticks: u32 = T; pub const final_hash: u32 = H;
+  pub const runs = [_]Run{...};` (`final_hash` 0 = unrecorded). No
+  comptime work in the cart (Mac rule).
+- `tools/record_demo.sh`: builds nothing; runs `preview.mjs` on the wasm
+  with `--call debug_new_game_seeded` (see exports) and the JSON as the
+  script for `T` frames, reads `debug_gameplay_hash` after update `T-1`
+  from `frames.json`, and regenerates the data file with `--hash`. After a
+  rebuild, `check.sh` proves the embedded demo reproduces that hash in
+  demo mode.
+- `cart/src/demo.zig` (pure, host tests): cursor over `demos/build_farm.zig`:
+  `reset()`, `next() ?Buttons` (null once `total_ticks` inputs were
+  handed out), `finished() bool`, `ticks_played() u32`. Test: the runs sum
+  to `total_ticks`; `next` returns exactly `total_ticks` values and
+  decodes a two-run fixture correctly.
+- `main.zig`: `demo_active`, `title_ticks`, `demo_result: enum { none,
+  ok, desync }`.
+  - Title: `title_ticks` counts up; at `attract_after = 600` (10 s)
+    `start_demo()`: `new_game(demo.level_index)` with `demo.seed` instead
+    of the clock, `demo.reset()`, `demo_active = true`. Any title button
+    press still starts a game and resets the counter.
+  - While `demo_active`, the mode machine runs unchanged (`playing`,
+    `rewinding`, `dead`, `intermission` all reachable) with `b =
+    demo.next()` instead of the pad. The pad is only watched for a
+    takeover: an edge on A, B, Start, up, down, left or right (`pressed`)
+    ends the demo *this* tick without stepping: `demo_active = false`,
+    `rewind.set_meter(&game, sim.max_rewind)` (refill, recorded as a
+    patch so the keyframe self-check keeps agreeing), if `mode ==
+    .rewinding` first `end_rewind()`. Controls are live from the next
+    tick (SPEC.md 11 "hands the controls over on the next tick"). Select
+    is ignored during the demo (weapon key in game, sound toggle only on
+    the title).
+  - Demo ends and returns to the title (`title_ticks = 0`) when: the log
+    is exhausted (`next` returned null: then `demo_result = if
+    (sim.hash_gameplay(&game) == demo.final_hash) .ok else .desync`, only
+    when `final_hash != 0`), or `demo_ticks >= demo_max = 3 * 3600`, or
+    the demo sits in `.dead` for 120 ticks, or it reaches `.intermission`
+    or `.victory` and the card has shown for `card_min` ticks. The 3 min
+    cap and the death exit set no result.
+  - HUD: `hud.draw_demo_marker(tick_total)` after the bar while
+    `demo_active` in a view mode; `hud.draw_title(.., demo_result)`.
+  - `rewind.set_meter(s, meter)`: new, tiny: records `{meter,
+    count_rewind = existing or false}` as the patch of `s.tick` and
+    applies it (only valid when not rewinding and `s.tick == head`).
+  - Exports: `debug_demo` (1 while the demo drives), `debug_demo_result`
+    (0 none, 1 ok, 2 desync), `debug_title_ticks`; setup calls
+    `debug_start_demo` (start the demo at update 0, for scripts and the
+    bench) and `debug_new_game_seeded` (Build Farm with `demo.seed` in
+    normal play, for authoring and `record_demo.sh`).
+- Scripts and checks: `m5_attract.json` (no input at all; `--at 598
+  debug_mode == 0`, `--at 599 debug_demo == 1`: the 600th title tick
+  starts the demo, `--at 600 debug_tick == 1`, back on the title with
+  `debug_demo_result == 1` once the log ends), `m5_takeover.json` (idle into the demo, UP edge at update 700:
+  `--at 700 debug_demo == 0`, `--at 700 debug_mode == 1`, `--at 700
+  debug_meter == 600`, the tick does not advance on the takeover update,
+  `debug_desync == 0` at the end), the demo replay
+  itself (`--call debug_start_demo --frames T+5`, expect
+  `debug_demo_result == 1`, `debug_mode == 0`, `debug_desync == 0`), and
+  `check_determinism.mjs` on the takeover script. Every M3/M4 expectation
+  that encodes a death tick is re-derived after track B lands.
+
+### Tracks (parallel, disjoint files; agents do not commit)
+
+| Track | Owner | Files |
+|-------|-------|-------|
+| A demo author | Opus agent, after B lands | `tools/scripts/demo_build_farm.json`, `cart/src/demos/build_farm.zig` (regenerated), `docs/RUNNING.md` demo paragraph |
+| B balance | Opus agent | `cart/src/ai.zig`, `cart/src/sim.zig` (enemy separation helper only, if needed), tests in those files |
+| C presentation | Opus agent | `cart/src/render/hud.zig`, `cart/src/audio.zig`, `docs/RUNNING.md` ("Attract mode" section skeleton), `SPEC.md` section 12 wording |
+| lead | this session | `main.zig`, `demo.zig`, `rewind.zig` (`set_meter`), `tools/gen_demo.py`, `tools/record_demo.sh`, `tools/scripts/m5_*.json`, `tools/check.sh`, `PLAN.md`, GIF, bench, commits, tag, merge |
+
+### Contract: balance and enemy separation (track B)
+
+Everything through the named constants at the top of `ai.zig`; report
+the before/after numbers, do not touch `main.zig` or the scripts.
+
+- Gnats: today three gnats take 65 HP in 7 s from a player standing in
+  the Build Farm opening (M3 status). Target, measured with a host test
+  that parses the Build Farm text and stands still at the start facing
+  east from tick 0: HP after 420 ticks between 55 and 75; the same player
+  holding A (zapper, facing east) for 420 ticks ends above 85 HP. Turn
+  `melee_damage`, `melee_every`, `melee_windup`, `speed` and
+  `gnat_zig*`; keep SPEC.md section 8's shape (zig-zag, bite). Update the
+  table in SPEC.md 8 to the values chosen with "(tuned M5)" once.
+- Wasps, beetles, spiders: unchanged unless a test shows something
+  absurd; say so.
+- Heisenbug: write a host test on a 12x12 open room: a player 4 cells
+  away with 99 charges who holds A and turns to face the boss every tick
+  (LOS always) kills it; report the ticks it takes and the HP the player
+  has left with the current numbers (spit fan, melee, teleport). If the
+  player dies before the boss, lower `melee_damage` or lengthen
+  `shot_every` until they win with 20+ HP; a hardware balance pass is
+  deferred (see the deferred list), so leave headroom, not a knife edge.
+- Enemy separation (M3 left it): a chasing or charging enemy does not
+  end a move within `separation = 0.5` cells (centre to centre) of
+  another enemy that is alive and not dormant; treat it like a wall hit
+  (fallback direction for chasers, end of charge for wasps). Spiders and
+  dying/dead enemies do not block or get blocked. Fixed point,
+  deterministic, O(n) per moving enemy over `level.enemies.len` (the
+  bench has room; note the cost). Test: two gnats released from adjacent
+  cells toward the player never end a tick closer than 0.5 to each other
+  over 300 ticks; the six-enemy 600-tick hash test still passes twice.
+- Keep every existing test in `ai.zig`, `projectiles.zig`, `sim.zig`
+  green (numbers inside tests may move with the tuning; say which).
+
+### Contract: presentation, neopixels, docs (track C)
+
+`hud.zig`:
+- `pub fn draw_demo_marker(tick_n: u32) void`: "DEMO" centred at the top
+  of the view (x 64..95, y 0) in Anti-White on Anti-Black, on for 40 of
+  every 60 ticks; must not touch x < 16 (the `<<` marker) or x >= 104
+  (the render readout).
+- `draw_title(tick_n, sound_on, demo_result: DemoResult)` where `pub
+  const DemoResult = enum(u8) { none = 0, ok = 1, desync = 2 }` lives in
+  `hud.zig` (main re-exports or converts). `.ok` prints "DEMO OK" in grey
+  at the top left (x 2, y 2), `.desync` prints "DEMO DESYNC" in Coral
+  there; `.none` prints nothing. Keep every existing title line.
+- Nothing else in `draw_bar` changes.
+
+`audio.zig` (docs/NEOPIXELS.md at the repository root, approved by Adrian
+2026-09-29: carts never write a non-zero neopixel value):
+- One function `write_pixels(c: [5]cart.NeopixelColor)` is the only
+  writer of `cart.neopixels`; `write_leds` and `rewind_tick` go through
+  it. It returns at once unless `const neopixels_allowed = false` is
+  flipped (comment: the shared `-Dneopixels` build option from
+  docs/NEOPIXELS.md replaces this constant when that change lands; the
+  effects stay dormant behind it). No LED byte is ever written in the
+  shipped build. Sound is untouched.
+- Update the module doc comment and the "10/255" remark accordingly.
+
+Docs:
+- `docs/RUNNING.md`: new section "Attract mode and the recorded demo"
+  after "Determinism check": the title idles 10 s into the demo, takeover
+  keys, what "DEMO OK / DEMO DESYNC" on the title means (the badge
+  replayed the log recorded in the simulator and compared
+  `sim.hash_gameplay`), the setup calls `--call debug_start_demo` and
+  `--call debug_new_game_seeded`, `tools/record_demo.sh` and
+  `tools/gen_demo.py` usage as specified above, and a placeholder line
+  "Demo content: (track A fills in)". Also mention that neopixels are
+  off in every build.
+- `SPEC.md` section 12: replace the neopixel sentences with "Neopixels
+  are off (docs/NEOPIXELS.md); the HP bar, purple pulse and key flash are
+  dormant behind `neopixels_allowed`", and section 3/CLAUDE.md line about
+  "at or below 10/255" in this cart's CLAUDE.md becomes "never lit".
+
+Verify with `zig build -Dcart=snoutenstein` at the repository root (both
+wasm and firmware) and `tools/check.sh` minus the new M5 runs.
+
+### Contract: demo content (track A, after B lands)
+
+Author `tools/scripts/demo_build_farm.json` against the wasm with
+`--call debug_new_game_seeded` (no rebuild per iteration: the game is
+Build Farm with the demo seed in normal play, tick 0 = update 0, so
+`--call-at N debug_px` etc. sample the run). Turns are 36 ticks per 90
+degrees (455 units/tick), walking 0.045 cells/tick, backing 0.03. Aim for
+60 to 90 s (3,600 to 5,400 ticks) that shows, in order: the corridor
+walk, the plain door, the cable-tray room with gnats zapped, a bite or
+two taken, the vent closet and Coral key (portrait grin), the Coral door,
+then deliberately taking damage (HP under 40) and holding B for about 3 s
+so the Iris rewind is on screen, zapping the gnats on the second try,
+and ending in the pipe hall in sight of the exit strip with HP above 50.
+Do not enter the exit (the log end returns to the title). Weapon: zapper
+throughout; a Select cycle to the swatter and back is a nice touch, not
+required. Death mid-demo is fine only if the log rewinds out of it.
+Then `tools/record_demo.sh`, rebuild, `tools/check.sh` green (the lead
+adds the demo replay run; you may extend its `--at` samples), a GIF via
+`preview.mjs --call debug_start_demo --every 6` +
+`tools/make_gif.py` to `docs/preview_m5.gif`, and the "Demo content"
+paragraph in `docs/RUNNING.md` (route, length, where the rewind is).
+Report the final hash, `T`, the ELF `.text` delta from the runs.
+
+### Deferred or defaulted (needs a badge)
+
+- Hardware balance pass and Heisenbug feel: conservative defaults from
+  the host tests above; the `tuning` table is the knob.
+- Optional fourth weapon ("the Debugger", SPEC.md 7): not built.
+- Final art drop-in: placeholders are final (Adrian, 2026-09-27).
+- M1 render readout stays on screen (`show_render_us`) until the gate.
+- Demo hash on the badge: the cart shows DEMO OK / DEMO DESYNC on the
+  title after the demo has run once; Adrian reads it off the badge.
+- Neopixels: off; dormant code behind `neopixels_allowed`.
+
 ## Status
 
 - 2026-09-26: M0 scaffold committed. M1 plan written; four tracks launched.
@@ -821,3 +1030,33 @@ tint, scanlines and the clock counting down.
   rewind harness on the walk script. Hardware gate still pending. Next:
   M5 attract/demo (a demo is a keyframe plus an input log, the machinery
   exists), balance, polish.
+- 2026-09-29: M5 plan written; worktree branch `snoutenstein-m5`; tracks B
+  and C launched, A follows B.
+- 2026-09-29: M5 done and tagged `snoutenstein/m5`. All three tracks landed.
+  ELF text 92.7 KB (+0.6 KB: demo player, takeover, 48 runs = 192 bytes of
+  log), bss 90.7 KB unchanged, GameState still 1,368 bytes. Host tests: ai
+  48 (gnat opening x2, Heisenbug duel, separation x2 new), demo 3, rewind 56
+  in the aggregate run. Demo: 3,644 ticks (60.7 s) of Build Farm, all nine
+  gnats, the Coral key, a 240-tick rewind from 36 HP, ends at 60 HP facing
+  the exit; final hash 0xFAB416D6; the cart shows DEMO OK on the title after
+  replaying it (DEMO DESYNC would mean the badge's sim diverged from the
+  simulator: that readout is the SPEC 9.3 hardware test, Adrian reads it
+  off the badge). Bench (calibrated): Build Farm opening unchanged at mean
+  2.45 ms, worst 3.56 ms (21%); title idle plus the first 900 demo ticks (`m5_attract.json`, 1,500 frames) mean 2.78 ms, worst 5.08 ms (30%) at frame 1,240, the cable-tray fight. XIP build links.
+  Balance (host-measured, hardware feel pass deferred): gnats 2 HP every 60
+  ticks at 0.04 (standing among three: 68 HP after 7 s; zapping: 88);
+  Heisenbug takes no pain state (its 12-tick pain matched the zapper
+  cooldown, so a held A stunlocked it: the duel test found it), spits only
+  beyond 2.5 cells, melee 10 every 60 (stand-and-shoot player wins at 52 HP,
+  15/45 left 17); chasers keep 0.5 cells apart (about 13 us per tick for
+  nine gnats, 0.2 ms worst with 40 awake). Deviations: the demo rewind is
+  240 ticks, not 180 (the slower gnats cannot take enough HP for a 3 s
+  rewind to show a recovery); the demo skips the hotfix; the takeover
+  press is consumed (a held button is not an edge on the next tick, so B
+  out of a demo death needs a second press); the neopixel gate is the
+  cart-local `neopixels_allowed` constant, not yet the shared `-Dneopixels`
+  option (docs/NEOPIXELS.md awaits Adrian's go; that file lives in the main
+  checkout, not on this branch); the death scripts now die at tick 3028 and
+  run 3,300/3,710 frames. Deferred (needs a badge): boss and gnat feel, the
+  fourth weapon, the M1 render readout. Fragile: any sim change moves the
+  demo (re-record with `tools/record_demo.sh`; `check.sh` fails until then).
