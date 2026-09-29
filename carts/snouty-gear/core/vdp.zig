@@ -135,9 +135,8 @@ pub const Vdp = struct {
             const l: u8 = @intCast(line);
             if (line >= window_y0 and line < window_y0 + screen_h) {
                 if (sink) |s| {
-                    var out: [screen_w]u5 = undefined;
-                    v.render_line(l, window_x0, &out);
-                    s.emit(@intCast(line - window_y0), &out, &v.cram);
+                    var buf: LineBuf align(4) = undefined;
+                    s.emit(@intCast(line - window_y0), v.render_buf(l, window_x0, &buf), &v.cram);
                 } else v.sprite_flags(l);
             } else v.sprite_flags(l);
         }
@@ -252,12 +251,18 @@ pub const Vdp = struct {
     /// Evaluates the line's sprites, so the overflow and collision flags
     /// update as a side effect. Uses the latched vertical scroll.
     pub fn render_line(v: *Vdp, line: u8, x0: u8, out: *[screen_w]u5) void {
+        var buf: LineBuf align(4) = undefined;
+        out.* = v.render_buf(line, x0, &buf).*;
+    }
+
+    /// `render_line` without the copy: renders into the scratch `buf` and
+    /// returns the line's 160 pixels inside it.
+    fn render_buf(v: *Vdp, line: u8, x0: u8, buf: *align(4) LineBuf) *const [screen_w]u5 {
         const bd = v.backdrop();
         if (!v.display_on()) {
-            @memset(out, bd);
-            return;
+            @memset(buf[0..screen_w], bd);
+            return @ptrCast(buf[0..screen_w]);
         }
-        var buf: LineBuf align(4) = undefined;
         // Per column counter: opaque pixels of priority tiles (bit 7 = left).
         var prio: [32]u8 = @splat(0);
 
@@ -278,27 +283,28 @@ pub const Vdp = struct {
         // Column counters 24..31 ignore the vertical scroll with the lock.
         const lock: u8 = if (r0 & 0x80 != 0) 24 else 32;
         const split = @min(@max(lock, n_lo), n_end);
-        bg_tiles(v, &buf, &prio, n_lo, split, nt + (ys >> 3) * 64, ys & 7, coarse);
-        bg_tiles(v, &buf, &prio, split, n_end, nt + @as(u16, line >> 3) * 64, line & 7, coarse);
+        bg_tiles(v, buf, &prio, n_lo, split, nt + (ys >> 3) * 64, ys & 7, coarse);
+        bg_tiles(v, buf, &prio, split, n_end, nt + @as(u16, line >> 3) * 64, line & 7, coarse);
 
-        var list: LineSprites = .{};
+        var list: LineSprites = undefined;
+        list.n = 0;
         v.find_sprites(line, &list);
-        if (list.n != 0) v.sprites(&list, &buf, &prio, fine, x0, true);
+        if (list.n != 0) v.sprites(&list, buf, &prio, fine, x0, true);
 
         // Left-column blank: VDP columns 0..7, sprites included.
         if (r0 & 0x20 != 0 and x0 < 8) {
             for (x0..8) |c| buf[c + 8 - fine] = bd;
         }
         // Every byte written above is 0..31, so it reads back as a valid u5.
-        const dst: *[screen_w]u8 = @ptrCast(out);
-        @memcpy(dst, buf[@as(u16, x0) + 8 - fine ..][0..screen_w]);
+        return @ptrCast(buf[@as(u16, x0) + 8 - fine ..][0..screen_w]);
     }
 
     /// Sprite evaluation for an active line that is not rendered: sets the
     /// overflow and collision flags only.
     pub fn sprite_flags(v: *Vdp, line: u8) void {
         if (!v.display_on()) return;
-        var list: LineSprites = .{};
+        var list: LineSprites = undefined;
+        list.n = 0;
         v.find_sprites(line, &list);
         if (list.n >= 2 and v.status & status_collision == 0) {
             v.sprites(&list, undefined, undefined, 0, 0, false);
