@@ -18,7 +18,9 @@ CLAUDE.md files have the long explanations, this one summarises.
   overlay, menu, audio, rewind, the ROM source (`romsrc.zig`) and the ROM
   picker (`picker.zig`).
 - `tests/` — host tests (`zig build test`). `tests/roms/` is gitignored;
-  run `tools/fetch_test_roms.sh` first. `tests/acid2_reference.bin` is the
+  run `tools/fetch_test_roms.sh` first. Only `tests/*.zig` run: a `test`
+  block inside `core/*.zig` is never built (the test root is `tests/all.zig`
+  and `_ = core` does not pull them in), so put core tests in `tests/`. `tests/acid2_reference.bin` is the
   dmg-acid2 reference as 160x144 shade bytes.
 - `roms/` — the shipped game ROM (`*.gb` gitignored except the committed
   `2048.gb`, the build's fallback ROM; its LICENSE sits next to it).

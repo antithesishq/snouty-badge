@@ -255,6 +255,24 @@ About screen shows "drive"; FPS with the ROM in flash (XIP cache misses on
 ROM fetches are the open question, docs/ROM_DRIVE.md section 6); the drive
 still mounts with the ROM on it.
 
+### M5 status (2026-09-29, tag `snouty-boy/m5`)
+
+Both tracks merged. Host tests 77 (was 56; the 2048-based determinism and
+APU tests had been skipping because they read `roms/2048.gb` relative to
+the cwd, fixed). badge-bench with the embedded 2048-gb: 879 k cycles per
+frame against 891 k on `main` (the pointer cache is 1.3% faster than the
+slice bounds check). Fast build with 2048-gb embedded, stub reader:
+`.text` 92.8 KB, `.bss` 28.4 KB, UF2 245 KB (was 497 KB; the keyframe pool
+left `.bss`). With the real reader (scratch merge with `gear/m0`): `.text`
+98 KB, `.bss` 41.8 KB (13 KB of romfs tables), pool 124.6 KB: 6 slots with
+2048-gb (2 KB cart RAM), 7 without cart RAM, 5 with 8 KB; wasm 8. Drive
+path verified in badge-bench with `--romfs` (docs/RUNNING.md 9.1): one
+file starts, two files show the picker, a fragmented file plays through the
+per-sector path and About shows the right CRC. Not done: hardware (the gate
+above); merging `gear/m0` (the gear session's), after which the stub in
+`lib/romfs.zig` disappears in the merge. Follow-up idea: put the 13 KB of
+romfs tables into the pool arena to win the seventh slot back.
+
 ## Hardware checklist (Adrian)
 
 - M1 gate: overlay avg/max microseconds and FPS with 2048-gb.

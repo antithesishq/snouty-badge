@@ -349,10 +349,44 @@ simulator and `preview.mjs` always run the embedded ROM, so the drive path
 is only exercised on the badge (and, once it gains a `--romfs` option, in
 badge-bench).
 
-Still open on hardware (docs/ROM_DRIVE.md section 6): until the Snouty Gear
-branch lands the real FAT12 reader in `lib/romfs.zig`, the badge build finds
-no volume and About reads "drive: NoVolume". After that: that reading a
-file by pointer through the XIP flash window works and is fast enough (FPS
-with the ROM in flash, cache misses on bank reads), how long finding and
-mapping takes at start, and that the drive still mounts and the OS menu
-still works with ROM files on it.
+### 9.1 Exercising the drive path without a badge (badge-bench)
+
+badge-bench maps a drive image at the romfs address with `--romfs` (Snouty
+Gear M0 added it together with `tools/make_romfs.py`; both are on `gear/m0`
+until that branch reaches `main`). A drive build needs the option in the
+bench: without an image the region is unmapped and the bench reports a read
+fault in `romfs.geometry` during start-up. On the badge the flash is always
+there, so this is a bench artefact, not a cart bug; `-Drom-source=embed`
+builds bench without it.
+
+```
+# one contiguous ROM, and two ROMs stored in 8-cluster runs (fragmented)
+python3 tools/make_romfs.py out/one.img carts/snouty-boy/roms/2048.gb=2048.gb
+python3 tools/make_romfs.py out/two.img carts/snouty-boy/roms/2048.gb=2048-gb.gb \
+    carts/snouty-boy/tests/roms/cpu_instrs.gb="Blargg cpu_instrs.gb" --fragment 8
+python3 tools/make_romfs.py --list out/two.img
+cd badge-bench
+./bench.sh ../zig-out/firmware/snouty-boy.elf --romfs ../out/one.img --frames 300 --png 60 --out ../out/one \
+    --press START:30-31,START:120-121,SELECT:200-240
+./bench.sh ../zig-out/firmware/snouty-boy.elf --romfs ../out/two.img --frames 300 --png 10 --out ../out/two \
+    --press START:30-31,A:60-61,START:120-121,SELECT:180-220,DOWN:230-231,DOWN:235-236,DOWN:240-241,DOWN:245-246,DOWN:250-251,DOWN:255-256,A:265-266
+```
+
+The first run's frame 180 shows 2048 with the overlay line `slots 6 D`; the
+second shows the picker at frame 50 (`docs/m5_picker.png`) and the About
+screen at frame 280 (`docs/m5_about.png`: Source drive, CRC 4380CC7A, which
+is `zlib.crc32` of `roms/2048.gb`, "fragmented: 2 banks"). Picking the
+second file (`--press START:30-31,DOWN:45-46,A:60-61`) runs Blargg's
+`cpu_instrs` from a fragmented 64 KB MBC1 file through the per-sector path.
+This was done on 2026-09-29 in a scratch merge of this branch with
+`gear/m0`; the numbers above are from that build.
+
+Still open on hardware (docs/ROM_DRIVE.md section 6): that reading a file
+by pointer through the XIP flash window works and is fast enough (FPS with
+the ROM in flash, cache misses on bank reads; the bench models flash loads
+as zero-wait unless `--flash-read-cycles N` is given), how long finding and
+mapping takes at start (the bench's modelled start-up is 1.5 ms with one
+file), and that the drive still mounts and the OS menu still works with ROM
+files on it. Until `gear/m0` is merged into `main`, a build from `main`
+plus this branch has the stub reader, finds no volume and About reads
+"drive: NoVolume".

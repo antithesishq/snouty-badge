@@ -469,3 +469,7 @@ Gear; recommendations taken without a separate round):
 - 2026-09-29: M5 ROM loader started on `boy/rom-loader` (PLAN.md M5): ROMs
   from the badge drive through the shared `lib/romfs.zig`, `Rom` bank table
   in the core, run-time keyframe pool.
+- 2026-09-29: M5 done (tag `snouty-boy/m5`): picker, About and overlay
+  report the drive ROM; UF2 245 KB (from 497); 77 host tests; drive path
+  proven in badge-bench against the gear branch's reader, hardware pending
+  (PLAN.md "M5 status").
