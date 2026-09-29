@@ -133,6 +133,11 @@ def text(meta, res, st, hot, every, top, show_symbols):
         L.append("  XIP cart: image in the cart flash window, started through its vector table; "
                  + (f"{fc} extra cycle(s) per instruction fetched from flash" if fc else
                     "no flash-fetch penalty modelled (--flash-cycles N)"))
+    if meta.get('romfs'):
+        frc = meta.get('flash_read_cycles', 0)
+        L.append(f"  romfs: {meta['romfs']} ({meta.get('romfs_bytes', 0):,} bytes) at 0x10080000, "
+                 + (f"{frc} extra cycle(s) per data load from it" if frc else
+                    "no flash-read penalty (--flash-read-cycles N)"))
     cal = meta.get('calibration')
     if cal:
         L.append(f"  calibrated: {cal['file']} (fitted {cal['date']}, residual "

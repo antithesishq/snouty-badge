@@ -1,6 +1,8 @@
 # ROMs from the badge drive (shared design for the emulator carts)
 
-Status: design, 2026-09-29. Not built, not yet tried on hardware. Used by
+Status: 2026-09-29, host side built (`lib/romfs.zig`, `tools/make_romfs.py`,
+badge-bench `--romfs` / `--flash-read-cycles`; section 6 checks 1-2 done).
+Not yet tried on hardware. Used by
 `carts/snouty-gear` and `carts/snouty-lynx`; `carts/snouty-genesis` came
 to the same design independently (its `docs/ROM_STREAMING.md` is the
 original investigation, with the 2 MB-and-up and firmware-change
