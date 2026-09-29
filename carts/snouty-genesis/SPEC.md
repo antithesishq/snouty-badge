@@ -262,8 +262,9 @@ and the badge's one `tone2` voice plays one note chosen from them.
 - **The one voice**: once per emulated frame `Md.tone()` picks the
   channel to play: among keyed-on FM channels (channel 6 skipped when its
   DAC is enabled) the one whose carrier operators have the lowest total
-  level; frequency from F-number and block
-  (`f = fnum * 2^(block-1) * 53693175 / (144 * 2^20)` in integer math), against the
+  level; frequency from F-number and block (YM2612 clock is master / 7:
+  `f = fnum * 2^(block-1) * 53693175 / (7 * 144 * 2^20)`, so fnum 1082
+  block 4 is 439.7 Hz; integer math), against the
   loudest PSG tone channel (attenuation below 15, period above 6); FM wins
   ties. The frontend issues `tone2` on change and stops it when nothing
   is keyed on. Noise, DAC samples, envelopes and vibrato are lost by
