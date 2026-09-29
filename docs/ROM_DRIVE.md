@@ -43,10 +43,20 @@ decode table).
 
 ## 3. Capacity
 
-Cart UF2 files cost twice their payload on the drive. With one emulator
-RAM cart of about 150 KB (300 KB of UF2), about 950 KB of the 1280 KB
-drive is left for ROM files: 512 KB ROMs fit, 1 MB does not in practice.
-Every other cart on the drive eats into this.
+Cart UF2 files cost twice their payload on the drive, and a RAM cart's
+UF2 also carries its zero-filled `.bss` (root PLAN.md: snouty-boy's RAM
+UF2 is 484 KB against 161 KB for XIP, because of its 165 KB keyframe
+ring). An emulator RAM cart with ~100 KB of code and ~130 KB of console
+state and rewind ring in `.bss` is therefore a ~460 KB UF2, leaving about
+810 KB of the 1280 KB drive for ROM files. An XIP cart's UF2 holds only
+its flash image (Snouty Genesis: 236-380 KB). Either way 512 KB ROMs fit
+with room to spare, 1 MB does not in practice, and every other cart on
+the drive eats into this.
+
+Keeping big buffers (the rewind ring) out of `.bss` would shrink a RAM
+cart's UF2 by their size, for example by placing them in the free RAM
+between the end of `.bss` and the stack at `start()`. Worth checking in
+the first cart's M0; not needed for Sonic-sized ROMs.
 
 ## 4. Cart side (`lib/romfs.zig`, shared)
 
