@@ -93,6 +93,9 @@ Options:
   cart too little RAM, and such a build links but shows "Not enough RAM
   for the time scrubber" at start. A drive ROM is read from flash in any
   mode.
+- `-Dneopixels=true` (shared with every cart, default off): compiles the
+  menu's dormant neopixel history meter back in (section 6). Development
+  only; the LEDs are too bright for normal use.
 
 The three builds that must always link:
 
@@ -246,10 +249,16 @@ over the restored frame. Left/Right keep stepping, Right past the newest
 keyframe returns to `live`, Up/Down/A bring the full menu back, and B or a
 Select tap resumes play from the shown point. Resuming from a scrubbed
 point throws away the future after it (no branching history). In the full
-menu the bottom line shows the same readout. While the menu is open the
-five neopixels show how full the history is, one LED per fifth (dim, every
-channel at most 10/255); they go off when the menu closes. Reset in the
-menu also clears the history.
+menu the bottom line shows the same readout. Reset in the menu also clears
+the history.
+
+Neopixels are off: the cart never writes a non-zero value (a coworker's
+badge showed the LEDs are unusably bright even at 1%, 2026-09-29; see
+docs/NEOPIXELS.md at the repository root). The menu's history meter (one
+LED per fifth while the menu is open) is compiled out; build with
+`zig build -Dcart=snouty-boy -Dneopixels=true` to re-enable it for
+development, and build that way once after touching `frontend/menu.zig` so
+the dormant path keeps compiling.
 
 The picture shown after a step is the frame the game drew 1/60 s after the
 keyframe (the cart steps one frame to draw it and restores the keyframe
@@ -315,7 +324,9 @@ Useful options (the header of the shared `../../tools/preview.mjs` has the full 
   - `debug_keyframes`: valid keyframes in the ring
   - `debug_pool_bytes`: page-store pool bytes in use
   - `debug_cgb`: 1 when the ROM runs in CGB mode
-  - `debug_leds`, `debug_led_max`: neopixels lit, largest channel value
+  - `debug_leds`, `debug_led_max`: neopixels lit, largest channel value;
+    both must be 0 in the default build (with `-Dneopixels=true` the menu
+    lights up to 5, channel at most 10)
   - `debug_alarm`: 1 if the rewind self-check found a mismatch
   - `debug_slots`: keyframes the store can hold at most for this ROM
     (wasm: a static 256 KB arena)
@@ -345,7 +356,7 @@ menu, step back twice, resume):
 node ../../tools/preview.mjs ../../zig-out/bin/snouty-boy.wasm --frames 380 --every 10 --out out/ \
   --press START:150-152,LEFT:170-175,UP:190-195,SELECT:260-300,LEFT:310-310,LEFT:320-320,B:340-341 \
   --at "310 debug_scrub_depth == 7" --at "320 debug_frame_count == 180" \
-  --at "330 debug_leds == 2" --at "379 debug_frame_count > 200"
+  --at "330 debug_leds == 0" --at "330 debug_led_max == 0" --at "379 debug_frame_count > 200"
 ```
 
 Exit codes: 1 the cart cannot be loaded, 2 usage error, 3 the cart trapped or

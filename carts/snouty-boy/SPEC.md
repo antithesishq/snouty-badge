@@ -316,9 +316,18 @@ for a single-game cart: `-Drom-source=embed -Drom=...`, with
   (1 kHz then 2 kHz, 60 ms each), then the game. Select-hold skips.
 - Title bar in the menu: "SNOUTY BOY" in the badge font, the ROM's header
   title, and the tag line "verified by deterministic replay".
-- Neopixels: off by default; in the menu the five LEDs show how much
-  history is in the ring (one LED per fifth), channel values at most
-  10/255 as in the other carts.
+- Neopixels: off. The cart never writes a non-zero value to the strip: a
+  coworker's badge showed the LEDs are unusably bright even at 1%
+  (2026-09-29, docs/NEOPIXELS.md at the repository root). The history
+  meter below is compiled out; `-Dneopixels=true` re-enables it for
+  development.
+
+### Dormant neopixel meter (behind -Dneopixels)
+
+Built with `-Dneopixels=true`, the five LEDs show how much history is in
+the ring while the menu is open (one LED per fifth, every channel at most
+10/255, enforced by a compileError in `frontend/menu.zig`) and go off when
+it closes. In the default build `set_leds` returns at once.
 
 ## 13. Memory budget
 
@@ -418,7 +427,8 @@ tracks go to Opus subagents with disjoint files, as before.
 - **M3 Frontend**: Select-hold state machine, menu, palettes, sound
   approximation, boot splash, reset, About screen.
 - **M4 Scrub**: keyframe ring, input log, Left/Right stepping, neopixel
-  history meter, `tests/determinism.zig`, in-cart determinism assertion,
+  history meter (now dormant behind `-Dneopixels`, section 12),
+  `tests/determinism.zig`, in-cart determinism assertion,
   keyframe compression if the depth is under 3 s.
 - **M5 Stretch** (pick with Adrian): original GBDK Snouty ROM, several
   small ROMs in one cart with a picker, smooth reverse playback, Game Boy

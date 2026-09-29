@@ -115,6 +115,8 @@ write it down in your final report and stub around it locally.
 M3: Select-hold menu, splash + chime, APU ch1-3 model to one `tone2` voice.
 M4: keyframe ring (N = 7 for 2048-gb, 3.5 s), input log, Left/Right scrub
 with a bottom-bar view, neopixel history meter, `tests/determinism.zig`.
+The meter is compiled out since 2026-09-29 (neopixels off, SPEC.md section
+12); `-Dneopixels=true` re-enables it for development.
 Frozen frame on scrub: restore k, step one frame through the sink, restore k
 again (documented in `cart/src/frontend/rewind.zig`).
 
@@ -634,7 +636,7 @@ M5 only, nothing under `carts/snouty-boy`, `lib`, `build` or
 - M1 gate: overlay avg/max microseconds and FPS with 2048-gb.
 - Menu: game shows through around the panel; resume is clean.
 - Scrub: step feels instant; Right back to live takes well under a second;
-  restored frame visible under the bar; neopixels dim in menu, off after.
+  restored frame visible under the bar; neopixels stay dark (default build).
 - Chime audible on the splash.
 - M5: a `.gb` copied to the drive runs; the About screen says "drive"; FPS
   with the ROM in flash; several files show the picker.

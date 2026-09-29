@@ -39,6 +39,11 @@ pub fn add(b: *Build, sycl_badge_dep: *Build.Dependency, opts: common.Options) v
         .pack => std.process.fatal("snouty-boy: -Drom-source=pack is not supported for this cart; use drive (default) or embed", .{}),
     };
     const cart_optimize = opts.cart_optimize;
+    // -Dneopixels=true (root build.zig) re-enables the menu's history meter,
+    // compiled out by default (docs/NEOPIXELS.md).
+    const options = b.addOptions();
+    options.addOption(bool, "neopixels", opts.neopixels);
+    build_options = options;
     font_path = sycl_badge_dep.path("src/font.zig");
 
     os_cart.add(b, sycl_badge_dep, .{
@@ -71,6 +76,9 @@ pub fn add(b: *Build, sycl_badge_dep: *Build.Dependency, opts: common.Options) v
     opts.test_step.dependOn(&run_tests.step);
 }
 
+/// The `build_options` module's contents, set by `add` for `build_cart_modules`.
+var build_options: ?*Build.Step.Options = null;
+
 /// `sycl-badge/src/font.zig`, set by `add` for `build_cart_modules`.
 var font_path: ?Build.LazyPath = null;
 
@@ -79,13 +87,14 @@ fn exists(b: *Build, rel: []const u8) bool {
     return true;
 }
 
-/// Adds the `core`, `romfs` and `rom` modules to the cart. `rom.data` is the
+/// Adds the `core`, `romfs`, `rom` and `build_options` modules to the cart. `rom.data` is the
 /// embedded ROM (the file is copied next to a generated rom.zig so @embedFile
 /// can see it), `rom.name` its file name for the About screen, `rom.source`
 /// the `-Drom-source` choice. The same module serves the badge and the wasm
 /// build; the frontend ignores `source` in wasm, which has no drive.
 fn build_cart_modules(b: *Build, cart: *Build.Module, cart_api: *Build.Module, step: *Build.Step) void {
     _ = cart_api;
+    cart.addImport("build_options", build_options.?.createModule());
     const core_mod = b.createModule(.{ .root_source_file = b.path(dir ++ "core/gb.zig") });
     cart.addImport("core", core_mod);
     // The FAT12 reader shared with Snouty Gear (docs/ROM_DRIVE.md section 4).

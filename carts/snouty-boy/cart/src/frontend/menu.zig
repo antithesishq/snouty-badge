@@ -32,11 +32,12 @@
 //! position plays on from there and drops the future. After a scrub step the
 //! menu collapses to that line in a bar at the bottom so the restored frame
 //! is visible; Left/Right keep scrubbing, B or a Select tap resume, and
-//! Up/Down/A bring the full menu back. While the menu is
-//! open the five neopixels show how full the history is, one LED per fifth.
+//! Up/Down/A bring the full menu back. A neopixel history meter (one LED per
+//! fifth) is dormant behind -Dneopixels=true (docs/NEOPIXELS.md).
 const std = @import("std");
 const cart = @import("cart-api");
 const core = @import("core");
+const build_options = @import("build_options");
 const video = @import("video.zig");
 const debug = @import("debug.zig");
 const input = @import("input.zig");
@@ -105,8 +106,10 @@ fn on_scrub(gb: *core.Gb, dir: i2) void {
     if (rewind.step(gb, dir)) scrub_view = true;
 }
 
-/// Light the first `lit` of the five neopixels.
+/// Light the first `lit` of the five neopixels. Compiled out unless built
+/// with -Dneopixels=true (docs/NEOPIXELS.md): the badge LEDs are painfully bright.
 fn set_leds(lit: u8) void {
+    if (!build_options.neopixels) return; // the OS zeroes the strip at cart start
     for (0..cart.neopixels.len) |i| cart.neopixels[i] = if (i < lit) led_on else led_off;
 }
 
