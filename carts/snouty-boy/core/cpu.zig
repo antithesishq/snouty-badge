@@ -61,9 +61,10 @@ pub fn step(gb: *Gb) u8 {
     const c = &gb.cpu;
     if (c.halted) {
         // Nothing can change until a subsystem raises an interrupt, so skip
-        // ahead 4 M-cycles per step. Timer and PPU handle batched ticks
-        // exactly; interrupt latency out of HALT grows by at most 3 M-cycles.
-        if ((gb.ie & gb.io[Reg.if_] & 0x1F) == 0) return 4;
+        // ahead in 4 M-cycle chunks (`Gb.halt_m`: as many as cannot contain
+        // an interrupt source). Timer and PPU handle batched ticks exactly;
+        // interrupt latency out of HALT grows by at most 3 M-cycles.
+        if ((gb.ie & gb.io[Reg.if_] & 0x1F) == 0) return gb.halt_m();
         c.halted = false;
     }
     if (c.ime) {

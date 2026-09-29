@@ -52,6 +52,17 @@ inline fn inc_tima(gb: *Gb) void {
     }
 }
 
+/// M-cycles until TIMA next overflows (the timer interrupt), rounded up,
+/// with TAC enabled: the (0x100 - TIMA)-th falling edge from now. Used by
+/// `Gb.halt_m`.
+pub fn m_to_overflow(gb: *const Gb) u32 {
+    const tac = gb.io[Reg.tac];
+    const s: u5 = @as(u5, tac_shift[tac & 3]) + 1;
+    const div: u32 = gb.timer.div;
+    const target = ((div >> s) + (0x100 - @as(u32, gb.io[Reg.tima]))) << s;
+    return (target - div + 3) >> 2;
+}
+
 inline fn selected_bit_high(gb: *const Gb) bool {
     const tac = gb.io[Reg.tac];
     if ((tac & 0x04) == 0) return false;

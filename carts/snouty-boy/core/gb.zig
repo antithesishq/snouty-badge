@@ -249,6 +249,39 @@ pub const Gb = struct {
         }
     }
 
+    /// M-cycles a halted CPU skips in one step (`cpu.step`). The CPU used
+    /// to step 4 M-cycles at a time while halted, waking at the first
+    /// 4-cycle boundary after an interrupt flag rose. This returns whole
+    /// 4-cycle chunks up to and including the chunk in which the next
+    /// thing that can end the halt or the frame happens: a PPU mode or line
+    /// change (the VBlank/STAT sources, HBlank DMA, the frame's VBlank),
+    /// the next TIMA overflow, or the frame loop's dot limit. Nothing else
+    /// changes while halted, and the timer, PPU and APU tick batches
+    /// exactly, so the result is identical to stepping by 4. Capped at
+    /// `max_halt_m`, which also keeps each tick under one APU sequencer
+    /// step (8192 dots).
+    pub fn halt_m(gb: *const Gb) u8 {
+        const sh: u5 = gb.dot_shift;
+        const dpm: u32 = @as(u32, 1) << sh; // dots per M-cycle
+        // M-cycles until the event, rounded up: the event happens during
+        // that M-cycle.
+        var e: u32 = max_halt_m;
+        const lcd = ppu.lcd_on(gb);
+        const limit: u32 = if (lcd) frame_dots * 2 else frame_dots;
+        if (gb.frame_dots < limit) e = @min(e, (limit - gb.frame_dots + dpm - 1) >> sh);
+        if (lcd) {
+            const d: u32 = gb.ppu.next_t -| gb.ppu.line_t;
+            e = @min(e, (d + dpm - 1) >> sh);
+        }
+        const tac = gb.io[Reg.tac];
+        if (tac & 0x04 != 0) e = @min(e, timer.m_to_overflow(gb));
+        // Whole chunks, at least one.
+        return @intCast(@max(4, (e + 3) & ~@as(u32, 3)));
+    }
+
+    /// Upper bound of `halt_m` (a multiple of 4).
+    pub const max_halt_m: u32 = 252;
+
     /// Bring the subsystems up to the M-cycle of a CPU read in the middle
     /// of an instruction (CGB mode, LY and STAT only). `step_frame` ticks
     /// after each whole instruction, so without this `cp [hl]` on LY sees
