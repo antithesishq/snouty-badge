@@ -5,7 +5,7 @@
 //!   position: 1 on the left, 2 on the right), Start to Start.
 //! - The Game Gear has no Select. A Select tap is reserved and does nothing.
 //! - Select held for `hold_frames` (30 frames, 500 ms): `GameInput.open_menu`
-//!   is set once. The menu is M2; until then main.zig ignores it.
+//!   is set once and main.zig opens the emulator menu (frontend/menu.zig).
 //! - Start pressed while Select is held is the OS exit chord: the hold is
 //!   cancelled. Start itself still goes to the game.
 //!
@@ -18,14 +18,23 @@ const Pad = core.Pad;
 /// Select held this long (frames at 60 Hz) opens the emulator menu.
 pub const hold_frames = 30;
 
+/// Menu setting ("Buttons" row, SPEC.md section 5): false = badge B is button 1 and A is
+/// button 2 (physical position); true = swapped.
+pub var swap_ab: bool = false;
+
 pub fn pad_from_controls(c: cart.Controls) u8 {
+    return pad_mapped(c, swap_ab);
+}
+
+/// The mapping with the swap given explicitly (the comptime check below).
+fn pad_mapped(c: cart.Controls, swap: bool) u8 {
     var pad: u8 = 0;
     if (c.up) pad |= Pad.up;
     if (c.down) pad |= Pad.down;
     if (c.left) pad |= Pad.left;
     if (c.right) pad |= Pad.right;
-    if (c.b) pad |= Pad.b1;
-    if (c.a) pad |= Pad.b2;
+    if (c.b) pad |= if (swap) Pad.b2 else Pad.b1;
+    if (c.a) pad |= if (swap) Pad.b1 else Pad.b2;
     if (c.start) pad |= Pad.start;
     return pad;
 }
@@ -75,7 +84,7 @@ pub const Edge = struct {
 pub const GameInput = struct {
     /// Pad byte for `Gg.step_frame`.
     pad: u8,
-    /// Select reached `hold_frames` this frame (the M2 menu opens here).
+    /// Select reached `hold_frames` this frame (the menu opens here).
     open_menu: bool,
 };
 
@@ -136,6 +145,9 @@ comptime {
     c.b = true;
     c.left = true;
     c.select = true;
-    if (pad_from_controls(c) != Pad.b1 | Pad.b2 | Pad.left) @compileError("pad mapping");
+    if (pad_mapped(c, false) != Pad.b1 | Pad.b2 | Pad.left) @compileError("pad mapping");
+    c.a = false;
+    if (pad_mapped(c, false) != Pad.b1 | Pad.left) @compileError("badge B is button 1");
+    if (pad_mapped(c, true) != Pad.b2 | Pad.left) @compileError("swapped: badge B is button 2");
     if ((all_buttons & (1 << 4)) != 0) @compileError("click must not be a cart button");
 }

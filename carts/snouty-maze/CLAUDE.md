@@ -15,7 +15,7 @@ their CLAUDE.md files have the long explanations of the simulator quirks.
   for `zig build test`.
 - `assets/gen/` — build-input PNGs (committed), produced by
   `tools/prepare_assets.py --from-w95 assets/src/w95 --art
-  ../../snouty-art/out/maze` from the original screensaver textures in
+  ../../../snouty-art/out/maze` from the original screensaver textures in
   `assets/src/w95/` plus the snouty-art maze pack (Snouty, Zig mark, Iris
   mark, Start button); `--placeholders` draws procedural stand-ins instead.
 - `tools/` — `check_golden.mjs`, `check_cycle.mjs`, `prepare_assets.py`. The
