@@ -428,28 +428,36 @@ const LineBuf = [8 + 256]u8;
 
 /// Background tiles for column counters `from .. to` on name table row
 /// base `rbase`, fine row `fy`: two word stores per tile, and the opaque
-/// pixel mask of priority tiles into `prio`.
+/// pixel mask of priority tiles into `prio`. The four plane bytes of a
+/// pattern row are one (possibly unaligned) word load.
 inline fn bg_tiles(v: *const Vdp, buf: *align(4) LineBuf, prio: *[32]u8, from: u8, to: u8, rbase: u16, fy: u16, coarse: u8) void {
-    var n = from;
-    while (n < to) : (n += 1) {
-        const ea = rbase + @as(u16, (n -% coarse) & 31) * 2;
-        const entry: u16 = @as(u16, v.vram[ea]) | (@as(u16, v.vram[ea + 1]) << 8);
-        const r: u16 = if (entry & 0x400 != 0) 7 - fy else fy;
-        const pa = (entry & 0x1FF) * 32 + r * 4;
-        const p0 = v.vram[pa];
-        const p1 = v.vram[pa + 1];
-        const p2 = v.vram[pa + 2];
-        const p3 = v.vram[pa + 3];
+    if (from >= to) return;
+    const vram: [*]const u8 = &v.vram;
+    const row = vram + rbase;
+    const r4: u16 = fy * 4;
+    const r4_flip: u16 = (7 - fy) * 4;
+    const out: [*]align(4) u32 = @ptrCast(@alignCast(buf[8 + @as(u16, from) * 8 ..]));
+    var col: u16 = (from -% coarse) & 31;
+    var n: u16 = from;
+    var k: usize = 0;
+    while (n < to) : ({
+        n += 1;
+        k += 2;
+    }) {
+        const entry: u16 = std.mem.readInt(u16, row[col * 2 ..][0..2], .little);
+        col = (col + 1) & 31;
+        const pa = (entry & 0x1FF) * 32 + (if (entry & 0x400 != 0) r4_flip else r4);
+        const w = std.mem.readInt(u32, vram[pa..][0..4], .little);
         const hflip = entry & 0x200 != 0;
-        const row = decode(p0, p1, p2, p3, hflip);
+        const t = if (hflip) &tables.spread_rev else &tables.spread;
+        const px = t[w & 0xFF] | (t[(w >> 8) & 0xFF] << 1) | (t[(w >> 16) & 0xFF] << 2) | (t[w >> 24] << 3);
         if (entry & 0x1000 != 0) {
-            const m = p0 | p1 | p2 | p3;
+            const m: u8 = @truncate(w | (w >> 8) | (w >> 16) | (w >> 24));
             prio[n] = if (hflip) @bitReverse(m) else m;
         }
-        const pal: u32 = if (entry & 0x800 != 0) 0x10101010 else 0;
-        const words: *[2]u32 = @ptrCast(@alignCast(buf[8 + @as(u16, n) * 8 ..][0..8]));
-        words[0] = (row & 0x0F0F0F0F) | pal;
-        words[1] = ((row >> 4) & 0x0F0F0F0F) | pal;
+        const pal: u32 = @as(u32, (entry >> 11) & 1) * 0x10101010;
+        out[k] = (px & 0x0F0F0F0F) | pal;
+        out[k + 1] = ((px >> 4) & 0x0F0F0F0F) | pal;
     }
 }
 
