@@ -92,15 +92,30 @@ pub fn Z80(comptime BusT: type) type {
         /// T-states.
         pub fn step(self: *Self, bus: *BusT) u32 {
             if (self.iff1 and !self.ei_delay and bus.irq_line()) return self.interrupt(bus);
+            const ei_was_set = self.ei_delay;
             self.ei_delay = false;
             self.q_prev = self.q;
             self.q = 0;
             if (self.halted) {
-                // HALT executes NOPs at the same PC until an interrupt.
+                // HALT executes NOPs at the same PC until an interrupt. A
+                // bus that knows when the interrupt line can next change
+                // (`halt_steps`) gets all the NOPs until then in one call.
+                if (@hasDecl(BusT, "halt_steps") and !ei_was_set) return self.halt_nops(bus.halt_steps());
                 self.inc_r();
                 return 4;
             }
             return self.exec(bus, self.fetch_op(bus));
+        }
+
+        /// `n` (1..255) steps of a halted CPU with no interrupt accepted,
+        /// in one go: exactly what `n` calls of `step` would do then (R
+        /// counts every NOP, Q ends clear). `step` calls it only when no
+        /// interrupt can be taken in between. Returns the T-states.
+        fn halt_nops(self: *Self, n: u8) u32 {
+            self.q_prev = if (n == 1) self.q else 0;
+            self.q = 0;
+            self.r = (self.r & 0x80) | ((self.r +% n) & 0x7F);
+            return @as(u32, n) * 4;
         }
 
         /// Non-maskable interrupt (unused on the Game Gear; untested).

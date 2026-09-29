@@ -157,6 +157,15 @@ pub const Bus = struct {
         }
     }
 
+    /// Steps a halted CPU can run before the interrupt line can change: the
+    /// 4 T-state NOPs until the next line start, where the VDP raises its
+    /// interrupts (nothing else does while the CPU is halted). Z80.step
+    /// calls it after `irq_line` said no.
+    pub inline fn halt_steps(self: *Bus) u8 {
+        const left: u32 = gg_mod.vdp.tstates_per_line - self.gg.vdp.line_tstates;
+        return @intCast((left + 3) / 4);
+    }
+
     /// The VDP's interrupt output, sampled by the Z80 between instructions.
     pub inline fn irq_line(self: *Bus) bool {
         return self.gg.vdp.irq_line();
