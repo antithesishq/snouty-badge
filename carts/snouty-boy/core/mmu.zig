@@ -277,6 +277,18 @@ const reg_ff75: u8 = 0x75;
 const reg_pcm12: u8 = 0x76;
 const reg_pcm34: u8 = 0x77;
 
+/// `read8` for opcode and immediate fetches, inlined at the few fetch
+/// sites: code almost always runs from ROM, so that is one select and one
+/// load; anything else (HRAM, WRAM routines) takes the out-of-line path.
+pub inline fn fetch8(gb: *Gb, addr: u16) u8 {
+    if (addr < 0x8000) {
+        const base = if (addr < 0x4000) gb.mbc.rom0_offset else gb.mbc.rom_bank_offset - 0x4000;
+        const off = base + addr;
+        return if (off < gb.rom.len) gb.rom[off] else 0xFF;
+    }
+    return read8(gb, addr);
+}
+
 pub fn read8(gb: *Gb, addr: u16) u8 {
     if (addr < 0x4000) {
         const off = gb.mbc.rom0_offset + addr;

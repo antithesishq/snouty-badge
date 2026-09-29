@@ -9,6 +9,7 @@ const gb_mod = @import("gb.zig");
 const Gb = gb_mod.Gb;
 const Reg = gb_mod.Reg;
 const timer = @import("timer.zig");
+const mmu = @import("mmu.zig");
 
 const FZ: u8 = 0x80;
 const FN: u8 = 0x40;
@@ -85,7 +86,7 @@ pub fn step(gb: *Gb) u8 {
         c.ime = true;
     }
     gb.op_pc = c.pc;
-    const op = gb.read8(c.pc);
+    const op = mmu.fetch8(gb, c.pc);
     if (c.halt_bug) {
         c.halt_bug = false;
     } else {
@@ -102,7 +103,7 @@ pub fn step(gb: *Gb) u8 {
 
 inline fn fetch8(gb: *Gb) u8 {
     const c = &gb.cpu;
-    const v = gb.read8(c.pc);
+    const v = mmu.fetch8(gb, c.pc);
     c.pc +%= 1;
     return v;
 }

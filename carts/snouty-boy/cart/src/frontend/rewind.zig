@@ -72,7 +72,7 @@ pub const xip = options.xip;
 const usable_ram = 0x4AF00 - 32 * 1024;
 /// Code, constants and .data, not counting the ROM (M4 fast build: about
 /// 52 KB; the CGB renderer, DMA and page store add some), with headroom.
-const code_estimate = 64 * 1024;
+const code_estimate = 68 * 1024;
 const flash_window = 256 * 1024;
 const cart_ram_len = core.mmu.cart_ram_len(rom.data);
 /// Other .bss: the live console, its cart RAM, and frontend statics (colour
