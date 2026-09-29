@@ -205,6 +205,147 @@ report and is stubbed locally.
 5. Tag `snouty-gear/m1`; pull-and-run notes. Gate: Adrian flashes and
    reports the overlay numbers.
 
+## M2 Frontend: contract
+
+Two Opus agents in their own git worktrees and branches, disjoint files,
+as for M1. Nobody edits another track's files; a needed change goes in the
+final report and is stubbed locally. Everything is adapted from
+`../snouty-boy/cart/src/frontend/` (SPEC.md section 7: copy now, share in
+M5), minus the scrubber (M3), the palette row and the picker.
+
+The prep commit on `gear/m2` already holds `cart/src/main.zig` with the
+state machine (splash -> running -> menu -> running, the chime pacing, the
+`debug_*` exports below) and compiling stubs of the three new modules with
+the public shape frozen here. The report line is now drawn only while the
+debug overlay is on; About shows the same information.
+
+### Frozen for M2
+
+```zig
+// frontend/menu.zig (Track A)
+pub const version = "0.2.0-m2";
+pub var sound_enabled: bool = true;           // main.zig copies it into audio.enabled each frame
+pub const Result = enum { stay, resume_game };
+pub fn open() void;                           // frozen-frame copy + .copy_forward, cursor to Resume
+pub fn close() void;                          // back to .no_copy_full_frame
+pub fn update(gg: *core.Gg, e: input.Edge) Result;
+
+// frontend/input.zig (Track A; already in the prep commit)
+pub var swap_ab: bool = false;                // false: badge B = button 1, A = button 2
+
+// frontend/splash.zig (Track B)
+pub const frames = 72;                        // 1.2 s
+pub const land_frame = 48;                    // request_chime is raised on this frame
+pub var request_chime: bool = false;          // main.zig plays chime(0), then chime(1) 4 frames later
+pub fn update(skip: bool) bool;               // true = over (finished or skipped); draws nothing then
+
+// frontend/audio.zig (Track B)
+pub var enabled: bool = true;
+pub var playing: bool = false;                // for debug_tone_hz
+pub var last_hz: u32 = 0;
+pub fn update(gg: *const core.Gg) void;       // once per frame after step_frame, and every menu frame
+pub fn chime(step: u8) void;                  // 0 first note, 1 second note
+```
+
+`main.zig` (owner: integration) calls, per badge frame: `audio.enabled =
+menu.sound_enabled`; in `.splash` `splash.update(any_pressed)`, then
+`suppress_held` and a game frame when it returns true; in `.running`
+`game_frame` -> on `open_menu`: `menu.open()` + one `menu.update`; else
+`step_frame`, `audio.update`, `video.finish_frame`, overlay; in `.menu`
+`audio.update`, `menu.update` -> on `.resume_game`: `menu.close()`,
+`suppress_held`, a game frame in the same frame. Exports added:
+`debug_menu_opens`, `debug_tone_hz` (0 when stopped), `debug_settings`
+(bit 0 sound, 1 crop, 2 A/B swapped, 3 overlay); `debug_state` is 0
+splash, 1 running, 2 menu.
+
+### Track A: menu (files `cart/src/frontend/menu.zig`, `cart/src/frontend/input.zig`, `cart/src/frontend/romsrc.zig`, `docs/RUNNING.md` menu/controls text, `tools/scripts/m2_menu.json`)
+
+- Snouty Boy's `menu.zig` adapted: the frozen-frame trick (`open` copies
+  `cart.frontbuffer` into the back buffer and switches to `.copy_forward`,
+  `close` switches back), an opaque panel redrawn every frame, Up/Down
+  move, A chooses, B or a Select tap (a press that began inside the menu)
+  resumes. Left/Right (or A) cycle a setting row; on other rows they do
+  nothing in M2 (M3 gives them the scrubber), so leave the bottom line of
+  the panel free for M3's "Scrub: ..." line.
+- Rows: `Resume`, `Buttons: B=1 A=2` / `Buttons: A=1 B=2` (toggles
+  `input.swap_ab`), `Scale: Squeeze` / `Scale: Crop` (`video.set_scale`;
+  takes effect on the first frame after resuming, which redraws in full),
+  `Sound: On/Off` (`sound_enabled`), `Debug overlay: On/Off`
+  (`debug.enabled`), `Reset` (`gg.reset()`, resume), `About`.
+- Title band (SPEC.md 12): "SNOUTY GEAR", the ROM name (the file name:
+  the drive entry or the embedded `rom.name`; a Game Gear header has no
+  title), "verified by" / "deterministic replay". Colours: the cart has no
+  palette, so pick a fixed scheme in the file (a Game Gear-ish dark
+  blue/black band with white text is fine; placeholder art is final).
+- About: version, ROM name, size in KB and bank count, source
+  (`Source: drive` / `Source: embedded`), CRC32 (drive), mapper slots as
+  written, "fragmented" when `!gg.rom.all_direct()`, and the drive
+  fallback reason for an embedded ROM. `romsrc.zig` grows small accessors
+  for this (`name()`, `size`, the fallback reason); keep `report()` as is.
+- Buttons still held when the menu closes reach the game only after a
+  release (`suppress_held`, already in main.zig); keep the M1 Select-hold
+  state machine unchanged.
+- `tools/scripts/m2_menu.json`: a preview script that lets Waternet start
+  (the splash takes 72 frames: shift M1's presses by 72 or skip the splash
+  with an early tap), opens the menu with a 35-frame Select hold, walks
+  every row, toggles each setting once and back, opens About, resumes.
+  Check with `--dump-exports debug_state,debug_settings,debug_menu_opens`
+  and the PNGs. In wasm `menu.open`'s frontbuffer copy is skipped as in
+  Snouty Boy (nothing is ever presented there).
+- No new host tests (the frontend imports cart-api); comptime checks for
+  the fixed strings' widths as Snouty Boy does. `zig fmt`, both targets
+  build, no comptime loops.
+
+### Track B: splash and audio (files `cart/src/frontend/splash.zig`, `cart/src/frontend/audio.zig`, `tools/scripts/m2_play.json`, `badge-bench/carts/snouty-gear.toml`)
+
+- `splash.zig`: Snouty Boy's splash recolored (SPEC.md 12): the 16x16
+  Snouty mark at 3x and "SNOUTY GEAR" scroll down from above the screen
+  to the centre over `land_frame` frames, hold to `frames`, any button
+  skips. Fixed colours chosen in the file (dark background, light mark;
+  Game Gear-ish accent welcome). `request_chime` once on `land_frame`.
+  `video.blank(c)` takes a 12-bit CRAM colour; `cart.rect`/`cart.text`
+  for the rest.
+- `audio.zig` (SPEC.md 9): `core.psg.Psg.voice()` picks the channel (it
+  already drops noise and periods < 2 and breaks ties toward channel 0);
+  frequency `v.hz`; treat anything outside 20..16000 Hz as silence
+  (period 2 is 56 kHz; period 7 is the first audible one); volume from
+  the attenuation, 0 -> 1.0 down to 14 -> 0.2 (linear in the 2 dB steps
+  is fine, as Snouty Boy is linear in its envelope volume); square shape.
+  Call `cart.tone2` only when hz or volume changes, `duration = -1.0`;
+  `Tone2Options.stop` once when nothing is audible or `enabled` is false.
+  `chime(0)` = 1046 Hz, `chime(1)` = 2093 Hz, 60 ms, volume 1.0, and mark
+  `playing = false` afterwards as Snouty Boy does (so the next `update`
+  re-issues the game's voice rather than stopping the chime). Keep
+  `playing`/`last_hz` current for `debug_tone_hz`.
+- Verify in the headless preview: `debug_tone_hz` becomes non-zero once
+  Waternet's title music plays and follows `debug_psg_voice` (its low 24
+  bits), 0 during the splash before the chime and while the game is
+  silent. Report a few (frame, psg_voice, tone_hz) samples.
+- `tools/scripts/m2_play.json`: M1's `m1_play.json` with every frame
+  number shifted by +72 (the splash runs in the bench: it is what boots on
+  the badge), then a menu pass appended after frame 672: Select held 35
+  frames, two Down presses, B to resume, about 90 frames in all. Mirror it
+  in `badge-bench/carts/snouty-gear.toml` (`press` list, `frames = 760`,
+  comment updated). Run badge-bench (`badge-bench/bench.sh
+  zig-out/firmware/snouty-gear.elf --symbols`, romfs image per the toml
+  comment) and report mean/p95/worst busy and the top symbols; the menu
+  and splash frames must stay far under budget and the game frames must
+  match M1 (3.67 ms mean, 6.86 worst) within noise.
+- No host tests; `zig fmt`, both targets build, no comptime loops, no
+  floats outside the frontend.
+
+### Integration (me, after the two merge)
+
+1. Merge both tracks into `gear/m2`; `zig build test` green (golden
+   frames are core-level and must be unchanged); both targets build.
+2. Preview run of `m2_menu.json` and `m2_play.json`; eyeball the splash,
+   menu, About and the crop mode; GIF in `docs/` (`m2_menu.gif`), RUNNING.md
+   merged (Track B's notes folded in).
+3. badge-bench numbers with the M2 toml recorded here; sizes (`size -A`).
+4. Tag `snouty-gear/m2`; pull-and-run notes. Gate unchanged: Adrian's
+   hardware run (M0/M1 drive checks still pending) now also confirms the
+   buzzer and the splash.
+
 ## Status
 
 - 2026-09-29: SPEC.md and this plan drafted; section 18 decided. Next: M0.
@@ -308,3 +449,7 @@ report and is stubbed locally.
     live in `Gg` (IFF1 edge + PC 0038 heuristic); `frame_t` is the last
     frame's T-states, diagnostic only; port C0-FF fully decoded (only
     C0/DC pad, C1/DD FF); golden reads the ROM and script at run time.
+- 2026-09-29: M2 started on branch `gear/m2`: prep commit with the
+  `main.zig` state machine, `input.swap_ab` and compiling stubs of
+  `menu.zig`, `splash.zig`, `audio.zig` (contract above); tracks A (menu)
+  and B (splash + audio) in worktrees `-menu` and `-audio`.
