@@ -6,11 +6,12 @@ const PickupDef = levels.PickupDef;
 const EnemyDef = levels.EnemyDef;
 
 const build_farm_doors = [_]DoorDef{
-    .{ .x = 11, .y = 3, .kind = .plain, .vertical = true },
-    .{ .x = 17, .y = 7, .kind = .plain, .vertical = false },
-    .{ .x = 7, .y = 10, .kind = .plain, .vertical = true },
-    .{ .x = 15, .y = 13, .kind = .coral, .vertical = false },
-    .{ .x = 23, .y = 16, .kind = .exit, .vertical = true },
+    .{ .x = 11, .y = 3, .kind = .plain, .vertical = true, .tex = 0 },
+    .{ .x = 17, .y = 7, .kind = .plain, .vertical = false, .tex = 0 },
+    .{ .x = 7, .y = 10, .kind = .plain, .vertical = true, .tex = 0 },
+    .{ .x = 15, .y = 13, .kind = .coral, .vertical = false, .tex = 0 },
+    .{ .x = 23, .y = 16, .kind = .exit, .vertical = true, .tex = 0 },
+    .{ .x = 11, .y = 19, .kind = .secret, .vertical = false, .tex = 4 },
 };
 
 const build_farm_pickups = [_]PickupDef{
@@ -18,6 +19,7 @@ const build_farm_pickups = [_]PickupDef{
     .{ .x = 3, .y = 9, .kind = .key_coral },
     .{ .x = 2, .y = 11, .kind = .hotfix },
     .{ .x = 5, .y = 16, .kind = .charge },
+    .{ .x = 11, .y = 20, .kind = .spray_can },
 };
 
 const build_farm_enemies = [_]EnemyDef{
@@ -33,15 +35,15 @@ const build_farm_enemies = [_]EnemyDef{
 };
 
 const staging_doors = [_]DoorDef{
-    .{ .x = 6, .y = 3, .kind = .plain, .vertical = true },
-    .{ .x = 15, .y = 3, .kind = .plain, .vertical = true },
-    .{ .x = 9, .y = 4, .kind = .plain, .vertical = false },
-    .{ .x = 23, .y = 9, .kind = .plain, .vertical = false },
-    .{ .x = 15, .y = 16, .kind = .coral, .vertical = true },
-    .{ .x = 28, .y = 18, .kind = .plain, .vertical = true },
-    .{ .x = 7, .y = 20, .kind = .iris, .vertical = false },
-    .{ .x = 28, .y = 22, .kind = .plain, .vertical = false },
-    .{ .x = 0, .y = 25, .kind = .exit, .vertical = true },
+    .{ .x = 6, .y = 3, .kind = .plain, .vertical = true, .tex = 0 },
+    .{ .x = 15, .y = 3, .kind = .plain, .vertical = true, .tex = 0 },
+    .{ .x = 9, .y = 4, .kind = .plain, .vertical = false, .tex = 0 },
+    .{ .x = 23, .y = 9, .kind = .plain, .vertical = false, .tex = 0 },
+    .{ .x = 15, .y = 16, .kind = .coral, .vertical = true, .tex = 0 },
+    .{ .x = 28, .y = 18, .kind = .plain, .vertical = true, .tex = 0 },
+    .{ .x = 7, .y = 20, .kind = .iris, .vertical = false, .tex = 0 },
+    .{ .x = 28, .y = 22, .kind = .plain, .vertical = false, .tex = 0 },
+    .{ .x = 0, .y = 25, .kind = .exit, .vertical = true, .tex = 0 },
 };
 
 const staging_pickups = [_]PickupDef{
@@ -77,15 +79,15 @@ const staging_enemies = [_]EnemyDef{
 };
 
 const production_doors = [_]DoorDef{
-    .{ .x = 7, .y = 3, .kind = .plain, .vertical = true },
-    .{ .x = 12, .y = 3, .kind = .plain, .vertical = true },
-    .{ .x = 23, .y = 5, .kind = .plain, .vertical = true },
-    .{ .x = 14, .y = 10, .kind = .coral, .vertical = false },
-    .{ .x = 15, .y = 16, .kind = .iris, .vertical = true },
-    .{ .x = 22, .y = 21, .kind = .gold, .vertical = false },
-    .{ .x = 5, .y = 22, .kind = .plain, .vertical = false },
-    .{ .x = 32, .y = 28, .kind = .plain, .vertical = true },
-    .{ .x = 39, .y = 28, .kind = .exit, .vertical = true },
+    .{ .x = 7, .y = 3, .kind = .plain, .vertical = true, .tex = 0 },
+    .{ .x = 12, .y = 3, .kind = .plain, .vertical = true, .tex = 0 },
+    .{ .x = 23, .y = 5, .kind = .plain, .vertical = true, .tex = 0 },
+    .{ .x = 14, .y = 10, .kind = .coral, .vertical = false, .tex = 0 },
+    .{ .x = 15, .y = 16, .kind = .iris, .vertical = true, .tex = 0 },
+    .{ .x = 22, .y = 21, .kind = .gold, .vertical = false, .tex = 0 },
+    .{ .x = 5, .y = 22, .kind = .plain, .vertical = false, .tex = 0 },
+    .{ .x = 32, .y = 28, .kind = .plain, .vertical = true, .tex = 0 },
+    .{ .x = 39, .y = 28, .kind = .exit, .vertical = true, .tex = 0 },
 };
 
 const production_pickups = [_]PickupDef{
@@ -130,14 +132,15 @@ const production_enemies = [_]EnemyDef{
 };
 
 const test_doors = [_]DoorDef{
-    .{ .x = 7, .y = 4, .kind = .plain, .vertical = true },
-    .{ .x = 12, .y = 6, .kind = .plain, .vertical = false },
-    .{ .x = 20, .y = 6, .kind = .iris, .vertical = false },
-    .{ .x = 28, .y = 6, .kind = .coral, .vertical = false },
-    .{ .x = 31, .y = 8, .kind = .exit, .vertical = false },
-    .{ .x = 19, .y = 17, .kind = .plain, .vertical = false },
-    .{ .x = 17, .y = 19, .kind = .plain, .vertical = false },
-    .{ .x = 13, .y = 21, .kind = .plain, .vertical = false },
+    .{ .x = 7, .y = 4, .kind = .plain, .vertical = true, .tex = 0 },
+    .{ .x = 12, .y = 6, .kind = .plain, .vertical = false, .tex = 0 },
+    .{ .x = 20, .y = 6, .kind = .iris, .vertical = false, .tex = 0 },
+    .{ .x = 28, .y = 6, .kind = .coral, .vertical = false, .tex = 0 },
+    .{ .x = 3, .y = 7, .kind = .secret, .vertical = false, .tex = 0 },
+    .{ .x = 31, .y = 8, .kind = .exit, .vertical = false, .tex = 0 },
+    .{ .x = 19, .y = 17, .kind = .plain, .vertical = false, .tex = 0 },
+    .{ .x = 17, .y = 19, .kind = .plain, .vertical = false, .tex = 0 },
+    .{ .x = 13, .y = 21, .kind = .plain, .vertical = false, .tex = 0 },
 };
 
 const test_pickups = [_]PickupDef{
@@ -159,28 +162,28 @@ const test_enemies = [_]EnemyDef{
 };
 
 const wolf_e1m1_doors = [_]DoorDef{
-    .{ .x = 28, .y = 4, .kind = .plain, .vertical = true },
-    .{ .x = 40, .y = 4, .kind = .plain, .vertical = true },
-    .{ .x = 34, .y = 8, .kind = .plain, .vertical = false },
-    .{ .x = 15, .y = 10, .kind = .plain, .vertical = true },
-    .{ .x = 10, .y = 14, .kind = .plain, .vertical = false },
-    .{ .x = 2, .y = 16, .kind = .plain, .vertical = false },
-    .{ .x = 10, .y = 21, .kind = .plain, .vertical = false },
-    .{ .x = 34, .y = 21, .kind = .plain, .vertical = false },
-    .{ .x = 5, .y = 26, .kind = .plain, .vertical = true },
-    .{ .x = 43, .y = 26, .kind = .plain, .vertical = true },
-    .{ .x = 53, .y = 26, .kind = .plain, .vertical = true },
-    .{ .x = 10, .y = 31, .kind = .plain, .vertical = false },
-    .{ .x = 34, .y = 31, .kind = .plain, .vertical = false },
-    .{ .x = 50, .y = 37, .kind = .plain, .vertical = true },
-    .{ .x = 17, .y = 40, .kind = .plain, .vertical = true },
-    .{ .x = 24, .y = 40, .kind = .exit, .vertical = true },
-    .{ .x = 34, .y = 43, .kind = .plain, .vertical = false },
-    .{ .x = 11, .y = 44, .kind = .exit, .vertical = true },
-    .{ .x = 32, .y = 45, .kind = .plain, .vertical = true },
-    .{ .x = 36, .y = 45, .kind = .plain, .vertical = true },
-    .{ .x = 32, .y = 50, .kind = .plain, .vertical = true },
-    .{ .x = 36, .y = 50, .kind = .plain, .vertical = true },
+    .{ .x = 28, .y = 4, .kind = .plain, .vertical = true, .tex = 0 },
+    .{ .x = 40, .y = 4, .kind = .plain, .vertical = true, .tex = 0 },
+    .{ .x = 34, .y = 8, .kind = .plain, .vertical = false, .tex = 0 },
+    .{ .x = 15, .y = 10, .kind = .plain, .vertical = true, .tex = 0 },
+    .{ .x = 10, .y = 14, .kind = .plain, .vertical = false, .tex = 0 },
+    .{ .x = 2, .y = 16, .kind = .plain, .vertical = false, .tex = 0 },
+    .{ .x = 10, .y = 21, .kind = .plain, .vertical = false, .tex = 0 },
+    .{ .x = 34, .y = 21, .kind = .plain, .vertical = false, .tex = 0 },
+    .{ .x = 5, .y = 26, .kind = .plain, .vertical = true, .tex = 0 },
+    .{ .x = 43, .y = 26, .kind = .plain, .vertical = true, .tex = 0 },
+    .{ .x = 53, .y = 26, .kind = .plain, .vertical = true, .tex = 0 },
+    .{ .x = 10, .y = 31, .kind = .plain, .vertical = false, .tex = 0 },
+    .{ .x = 34, .y = 31, .kind = .plain, .vertical = false, .tex = 0 },
+    .{ .x = 50, .y = 37, .kind = .plain, .vertical = true, .tex = 0 },
+    .{ .x = 17, .y = 40, .kind = .plain, .vertical = true, .tex = 0 },
+    .{ .x = 24, .y = 40, .kind = .exit, .vertical = true, .tex = 0 },
+    .{ .x = 34, .y = 43, .kind = .plain, .vertical = false, .tex = 0 },
+    .{ .x = 11, .y = 44, .kind = .exit, .vertical = true, .tex = 0 },
+    .{ .x = 32, .y = 45, .kind = .plain, .vertical = true, .tex = 0 },
+    .{ .x = 36, .y = 45, .kind = .plain, .vertical = true, .tex = 0 },
+    .{ .x = 32, .y = 50, .kind = .plain, .vertical = true, .tex = 0 },
+    .{ .x = 36, .y = 50, .kind = .plain, .vertical = true, .tex = 0 },
 };
 
 const wolf_e1m1_pickups = [_]PickupDef{
@@ -238,7 +241,7 @@ pub const all = [_]Level{
     .{
         .name = "build_farm",
         .width = 24,
-        .height = 20,
+        .height = 22,
         .cells = .{
             .{ 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1 },
             .{ 1, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1 },
@@ -259,9 +262,9 @@ pub const all = [_]Level{
             .{ 7, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 68, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1 },
             .{ 7, 0, 0, 6, 6, 0, 0, 0, 0, 6, 6, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 8, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1 },
             .{ 7, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 7, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1 },
+            .{ 7, 7, 7, 7, 7, 7, 7, 5, 5, 5, 5, 69, 5, 5, 5, 7, 7, 7, 7, 7, 7, 7, 7, 7, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1 },
+            .{ 7, 7, 7, 7, 7, 7, 7, 5, 5, 5, 5, 0, 5, 5, 5, 7, 7, 7, 7, 7, 7, 7, 7, 7, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1 },
             .{ 7, 7, 7, 7, 7, 7, 7, 5, 5, 5, 5, 5, 5, 5, 5, 7, 7, 7, 7, 7, 7, 7, 7, 7, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1 },
-            .{ 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1 },
-            .{ 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1 },
             .{ 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1 },
             .{ 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1 },
             .{ 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1 },
@@ -481,8 +484,8 @@ pub const all = [_]Level{
             .{ 1, 0, 0, 0, 0, 0, 0, 64, 0, 2, 0, 0, 0, 0, 0, 2, 0, 3, 0, 0, 0, 0, 0, 3, 0, 4, 0, 0, 0, 4, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1 },
             .{ 1, 0, 0, 0, 0, 0, 0, 1, 0, 2, 0, 0, 0, 0, 0, 2, 0, 3, 0, 0, 0, 0, 0, 3, 0, 4, 0, 0, 0, 4, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1 },
             .{ 1, 0, 0, 0, 0, 0, 0, 1, 0, 2, 2, 2, 65, 2, 2, 2, 0, 3, 3, 3, 66, 3, 3, 3, 0, 4, 4, 4, 67, 4, 4, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1 },
-            .{ 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1 },
-            .{ 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 5, 5, 5, 5, 68, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1 },
+            .{ 1, 1, 1, 68, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1 },
+            .{ 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 5, 5, 5, 5, 69, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1 },
             .{ 1, 0, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1 },
             .{ 1, 0, 6, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 6, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1 },
             .{ 1, 0, 6, 0, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 0, 6, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1 },
@@ -491,11 +494,11 @@ pub const all = [_]Level{
             .{ 1, 0, 6, 0, 7, 0, 8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 8, 0, 7, 0, 6, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1 },
             .{ 1, 0, 6, 0, 7, 0, 8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 8, 0, 7, 0, 6, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1 },
             .{ 1, 0, 6, 0, 7, 0, 8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 8, 0, 7, 0, 6, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1 },
-            .{ 1, 0, 6, 0, 7, 0, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 69, 8, 8, 8, 8, 0, 7, 0, 6, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1 },
+            .{ 1, 0, 6, 0, 7, 0, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 70, 8, 8, 8, 8, 0, 7, 0, 6, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1 },
             .{ 1, 0, 6, 0, 7, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 7, 0, 6, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1 },
-            .{ 1, 0, 6, 0, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 70, 7, 7, 7, 7, 7, 7, 7, 7, 0, 6, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1 },
+            .{ 1, 0, 6, 0, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 71, 7, 7, 7, 7, 7, 7, 7, 7, 0, 6, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1 },
             .{ 1, 0, 6, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 6, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1 },
-            .{ 1, 0, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 71, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1 },
+            .{ 1, 0, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 72, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1 },
             .{ 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1 },
             .{ 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1 },
             .{ 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1 },

@@ -3,6 +3,8 @@
 # cable-tray room (2) with three gnats, a brick hub (3), the vent closet (4)
 # with the Coral key behind a plain door, then the Coral door into the pipe
 # hall (7) with monitor pillars (6), an Iris mural (5) and the exit strip (8).
+# Secret (X, looks like the mural): a one-cell nook under the mural with the
+# level's single spray can (Adrian, 2026-09-29).
 # Legend: SPEC.md section 6. Lines starting with # are comments.
 111111111111222222222222
 1....1111111...........2
@@ -23,4 +25,6 @@
 7....%....a............E
 7..66....66..........a.8
 7......................7
+77777775555X555777777777
+77777775555$555777777777
 777777755555555777777777

@@ -22,6 +22,22 @@ pub var origin: Origin = .embedded;
 pub var drive_matches: u32 = 0;
 /// CRC32 of the drive file (0 for the embedded ROM).
 pub var crc: u32 = 0;
+/// Size in bytes of the running ROM: the drive file's directory size, or
+/// the embedded ROM's length (the core's `Rom.size` is capped at 256 banks).
+pub var size: u32 = 0;
+/// Why the drive was tried and the embedded ROM runs instead (a romfs
+/// error name or "no .gg/.sms file"); null when the drive ROM runs or the
+/// drive was never tried (simulator, `-Dgg-rom-source=embed`).
+pub var fallback: ?[]const u8 = null;
+/// The chosen drive entry; `name` points into it. Static, as `entries`.
+var drive_entry: romfs.Entry = .{};
+
+/// File name of the running ROM for the menu and About: the drive entry
+/// (long name if the host wrote one, up to 64 bytes) or the embedded
+/// ROM's file name. A Game Gear header carries no title.
+pub fn name() []const u8 {
+    return if (origin == .drive) drive_entry.slice() else rom.name;
+}
 
 var report_buf: [160]u8 = undefined;
 var report_len: usize = 0;
@@ -52,6 +68,7 @@ fn from_drive() core.Rom {
     drive_matches = @intCast(n);
     if (n == 0) return embedded("no .gg/.sms file");
     const e = entries[0];
+    drive_entry = e;
     mapped = vol.map(e, &clusters) catch |err| return embedded(@errorName(err));
     crc = mapped.crc32();
 
@@ -68,6 +85,7 @@ fn from_drive() core.Rom {
         if (off + core.rom.bank_size <= r.size) r.banks[i] = mapped.chunk(off, core.rom.bank_size);
     }
     origin = .drive;
+    size = mapped.size;
 
     var w: Writer = .{};
     w.put("ROM: drive ");
@@ -95,6 +113,8 @@ fn read_mapped(ctx: *const anyopaque, offset: u32) u8 {
 /// not asked for).
 fn embedded(why: ?[]const u8) core.Rom {
     origin = .embedded;
+    size = @intCast(rom.data.len);
+    fallback = why;
     var w: Writer = .{};
     w.put("ROM: embedded ");
     w.put(rom.name);

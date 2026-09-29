@@ -71,7 +71,7 @@ def main():
     ap.add_argument("script")
     ap.add_argument("--out", required=True)
     ap.add_argument("--hash", default="0", help="expected debug_gameplay_hash after the last tick (0 = unrecorded)")
-    ap.add_argument("--level", type=int, default=0, help="level index (0 = Build Farm)")
+    ap.add_argument("--level", type=int, default=0, help="level index (0 Build Farm, 1 Staging, 2 Production; the attract demo uses 2)")
     a = ap.parse_args()
     entries, total = load(a.script)
     if total == 0:

@@ -33,7 +33,6 @@ pub const sphere_bob: f32 = 0.05;
 /// Bob period in ticks (sin_turns(t / 120)).
 pub const sphere_bob_ticks: u32 = 120;
 /// How far the Start button sits behind the start camera, in cells.
-pub const start_button_back: f32 = 0.3;
 
 pub const Kind = enum(u8) { snouty, smiley, sphere, logo };
 
@@ -198,19 +197,21 @@ fn update_sphere_pos() void {
 
 /// Place every actor for a fresh maze. `avoid` is the camera's cell.
 pub fn reset(m: *const maze.Maze, r: *rng.Xorshift, avoid: [2]u8) void {
-    const s = spawn(m, r, .any, &.{avoid});
+    // The Start button floats in the cell the camera faces at the start
+    // (the original's SX1, SY1), so it is the first thing seen as the maze
+    // rises and the walker passes through it; no other actor spawns there.
+    const sb = m.neighbour(m.start[0], m.start[1], camera.start_facing(m)) orelse m.start;
+    start_button = centre(sb, camera.eye_height);
+    const s = spawn(m, r, .any, &.{ avoid, sb });
     set_snouty(s, random_open(m, r, s));
     phase_tick = 0;
     snouty.phase = 0;
-    const sm = spawn(m, r, .dead_end, &.{ avoid, s });
+    const sm = spawn(m, r, .dead_end, &.{ avoid, sb, s });
     smiley.pos = centre(sm, camera.eye_height);
-    const sp = spawn(m, r, .any, &.{ avoid, s, sm });
+    const sp = spawn(m, r, .any, &.{ avoid, sb, s, sm });
     set_sphere(sp);
-    const lg = spawn(m, r, .junction, &.{ avoid, s, sm, sp });
+    const lg = spawn(m, r, .junction, &.{ avoid, sb, s, sm, sp });
     logo.pos = centre(lg, camera.eye_height);
-    const f = camera.start_facing(m);
-    const back = math.vec3(@floatFromInt(f.dx()), 0, @floatFromInt(f.dz())) * math.splat(start_button_back);
-    start_button = centre(m.start, camera.eye_height) - back;
 }
 
 /// One tick. `cam_cell` is the camera's cell; `triggers` is true only in
@@ -364,11 +365,11 @@ test "spawns respect the exclusion rule and preferences" {
         const lg = cells[3];
         if (any_cell(&m, .junction, &.{ avoid, cells[0], cells[1], cells[2] })) try testing.expect(wall_count(&m, lg[0], lg[1]) <= 1);
         try testing.expect(!m.has_wall(snouty_cell[0], snouty_cell[1], snouty.dir));
-        // Start button 0.3 behind the start camera, at eye height.
-        const f = camera.start_facing(&m);
-        const sc = centre(m.start, camera.eye_height);
-        try testing.expectApproxEqAbs(sc[0] - 0.3 * @as(f32, @floatFromInt(f.dx())), start_button[0], 1e-6);
-        try testing.expectApproxEqAbs(sc[2] - 0.3 * @as(f32, @floatFromInt(f.dz())), start_button[2], 1e-6);
+        // Start button at eye height in the centre of the cell the camera
+        // faces at the start, and no actor spawned there.
+        const sb = m.neighbour(m.start[0], m.start[1], camera.start_facing(&m)).?;
+        try testing.expectEqual(centre(sb, camera.eye_height), start_button);
+        for (cells) |c| try testing.expect(!eq(c, sb));
         try testing.expectEqual(camera.eye_height, start_button[1]);
     }
 }

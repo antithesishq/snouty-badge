@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Prepare the build inputs in assets/gen/ for Snouty vs. the Bugs.
+"""Prepare the build inputs in assets/gen/ for Snouty Bughunt (Snouty vs. the Bugs).
 
 Two modes:
 
@@ -71,7 +71,7 @@ MANIFEST: dict[str, Sheet] = {
         Sheet("bolt.png", 32, 8, 16, 8, 2, True),
         Sheet("bugs_small.png", 32, 8, 8, 8, 4, True),
         Sheet("fx_small.png", 128, 16, 16, 16, 8, True),
-        Sheet("hud.png", 32, 8, 8, 8, 4, True),
+        Sheet("hud.png", 48, 8, 12, 8, 4, True),
         Sheet("bg_far.png", 256, 120, 256, 120, 1, False, tile_x=True),
         Sheet("bg_near.png", 256, 24, 256, 24, 1, True, tile_x=True),
         # Later milestones (ASSETS.md section 7). Accepted from a study but
@@ -512,20 +512,26 @@ def draw_fx_small() -> np.ndarray:
 
 
 # --------------------------------------------------------------------------
-# hud.png (4 cells 8x8, 1 px transparent border): Snouty head, bomb (Coral
-# Iris mark in a cream ring), empty bomb slot (grey ring), heart.
+# hud.png (4 cells 12x8, 1 px transparent border): Snouty head (rewind
+# stock), two spares (were the bomb icons), heart. The head cell went from
+# 8x8 to 12x8 on 2026-09-29: at 6x6 visible the profile read as a rat (a
+# tapering snout and a 1 px ear). 10x6 fits the real features: a round 2 px
+# ear on the back of the dome, a 2x2 cream eye with a forward pupil and a
+# blunt 3 px thick snout tube that droops at the tip, like the ship's head.
 # --------------------------------------------------------------------------
 HUD_CMAP = {"o": OUTLINE, "3": PURPLE3, "4": PURPLE4, "2": PURPLE2, "c": CREAM,
             "C": CORAL, "r": RED, "g": GREY, "m": MIDDARK, "w": ANTIWHITE}
-HUD = [
-    ["........",
-     ".4......",
-     ".333....",
-     ".3co3o..",
-     ".233334.",
-     ".22233o.",
-     "..22....",
-     "........"],
+HUD_HEAD = [
+    "............",
+    "..44........",
+    ".43333......",
+    ".333cc3.....",
+    ".333co34444.",
+    ".2333333333.",
+    ".2222...222.",
+    "............",
+]
+HUD_SMALL = [  # 8x8 designs, centred in the 12x8 cell
     ["........",
      "..cccc..",
      ".cooooc.",
@@ -554,11 +560,11 @@ HUD = [
 
 
 def draw_hud() -> np.ndarray:
-    a = new_sheet(MANIFEST["hud.png"])
-    # The head icon's snout would touch the right cell edge; keep col 7 empty.
-    for i, f in enumerate(HUD):
-        f = [r[:7] + "." for r in f]
-        paint(a, f, i * 8, 0, HUD_CMAP)
+    sheet = MANIFEST["hud.png"]
+    a = new_sheet(sheet)
+    paint(a, HUD_HEAD, 0, 0, HUD_CMAP)
+    for i, f in enumerate(HUD_SMALL):
+        paint(a, f, (i + 1) * sheet.cell_w + 2, 0, HUD_CMAP)
     return a
 
 
@@ -1159,9 +1165,10 @@ def draw_boss() -> np.ndarray:
 
 
 # --------------------------------------------------------------------------
-# title.png (128x40): "SNOUTY" / "vs THE BUGS" logo from a 5x7 block font,
+# title.png (128x40): "SNOUTY" / "BUGHUNT" logo from a 5x7 block font,
 # scaled 3x (line 1) and 2x (line 2) with rounded outer corners, banded
-# purple fill, cream top highlight, 1 px dark outline. "vs" in Coral.
+# purple fill, cream top highlight, 1 px dark outline. Line 2 in Coral
+# (the title was "SNOUTY vs THE BUGS" until 2026-09-29).
 # --------------------------------------------------------------------------
 TITLE_CMAP = {"o": OUTLINE, "1": PURPLE1, "2": PURPLE2, "3": PURPLE3, "4": PURPLE4,
               "c": CREAM, "C": CORAL, "r": RED, "R": DARKRED}
@@ -1227,7 +1234,7 @@ def draw_title() -> np.ndarray:
     a = new_sheet(MANIFEST["title.png"])
     W_, H_ = 128, 40
     c = np.full((H_, W_), ".", "<U1")
-    lines = [("SNOUTY", 3, 3, 0, 1), ("vs THE BUGS", 2, 2, 6, 23)]  # text, scale, gap, space, outlined top y
+    lines = [("SNOUTY", 3, 3, 0, 1), ("BUGHUNT", 2, 2, 6, 23)]  # text, scale, gap, space, outlined top y
     for text, k, gap, space, top in lines:
         m, spans = _logo_line(text, k, gap, space)
         h, w = m.shape
@@ -1235,9 +1242,8 @@ def draw_title() -> np.ndarray:
         full = np.zeros((H_, W_), bool)
         full[top + 1 : top + 1 + h, x0 : x0 + w] = m
         coral = np.zeros_like(full)
-        for sx0, sx1, ch in spans:
-            if ch in "vs" and text.startswith("vs"):
-                coral[top + 1 : top + 1 + h, x0 + sx0 : x0 + sx1] = True
+        if text == "BUGHUNT":
+            coral[:] = True
         coral &= full
         ring = _dilate4(full) & ~full
         # outline stays under a letter already drawn (lines share one row)
@@ -1453,10 +1459,10 @@ def mockup() -> np.ndarray:
     put("bugs.png", 9, 140, 60)   # bomb pickup
     put("fx_small.png", 2, 126, 100)
     put("fx_big.png", 2, 40, 12)
-    put("hud.png", 1, 68, 0)
-    put("hud.png", 2, 76, 0)
+    f[1:7, 68:100] = ANTIWHITE      # fuel bar frame (drawn in code)
+    f[2:6, 69:89] = CORAL
     for i in range(3):
-        put("hud.png", 0, 152 - i * 8, 0)
+        put("hud.png", 0, 160 - 12 * (i + 1), 0)
     return f
 
 

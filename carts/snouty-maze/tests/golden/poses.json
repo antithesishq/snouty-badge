@@ -1,5 +1,7 @@
 [
   { "name": "start",          "seed": 1, "pose": null },
+  { "name": "grow_half",      "seed": 1, "pose": null, "frames": 31 },
+  { "name": "walk_start",     "seed": 1, "pose": null, "frames": 61 },
   { "name": "near_wall",      "seed": 1, "pose": "0.5,0.5,0.09,35,0,0" },
   { "name": "ceiling_edge",   "seed": 1, "pose": "0.5,1.0,0.5,0,45,0" },
   { "name": "overhead",       "seed": 1, "pose": "6,13.5,6,0,90,0" },

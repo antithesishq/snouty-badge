@@ -77,7 +77,10 @@ The whole 160x128 is the 3D view. There is no HUD.
 - Name strip: `ADRIAN HATCH` / `ANTITHESIS` in the built-in 8x8 font, two
   lines centred, drawn only during the overhead hold (section 8), where the
   view has empty margin around the maze. Start toggles it permanently on
-  (bottom-left corner, one line) or off.
+  (bottom-left corner, one line) or off. The Iris mark beside the lines
+  flips like a coin about its vertical axis (columns squeezed to
+  24 |cos| px, mirrored darker back face, one turn in 30 ticks) 45 ticks
+  after the strip appears and every 5 s after that while it stays on.
 - Debug builds: `render us` and fps in the top-left corner (Select toggles
   in M1), so the M1 timing check is one photo of the badge.
 
@@ -240,8 +243,10 @@ If hardware disagrees, section 16 has the decision table.
   spinning about its vertical axis in a random junction cell. Decorative
   only.
 - **Start button**. The original's Start button as a spinning two-sided
-  quad at eye height, 0.3 cells behind the camera's starting pose in the
-  start cell (seen on the descent and whenever the follower comes back).
+  quad at eye height in the centre of the cell the camera faces at the
+  start (the original's `SX1, SY1`): it grows with the maze during GROW and
+  the walker passes through it, as in the original. No other actor spawns
+  in that cell.
 - **Wall pictures**. The original's picture (`wall_pic.png`) hangs on
   about one wall segment in eight (a hash of the segment's grid position),
   0.5 x 0.5 at height 0.55, on one face of the panel.
@@ -255,14 +260,24 @@ Actors never occupy the start, the finish or each other's cells.
 State machine in `main.zig`:
 
 ```
+(boot) -> GROW                      60 ticks, the maze rises out of the floor
+GROW -> WALK
 WALK -> TURN -> WALK ...            walking the maze
 WALK (finish reached) -> PAUSE      30 ticks
 PAUSE -> RISE                       150 ticks
 RISE -> OVERHEAD                    120 ticks, name strip on, new maze generated at tick 0
 OVERHEAD -> DESCEND                 150 ticks
-DESCEND -> WALK                     at the start cell of the new maze
+DESCEND -> GROW                     at the start cell of the new maze
 any WALK/TURN, teleport trigger -> TELEPORT (12 ticks) -> WALK
 ```
+
+- **GROW**: the camera stands at eye height in the start cell facing the
+  open direction while everything above the floor (walls, ceiling,
+  pictures, actors) is scaled vertically from 0 to 1, linearly over 60
+  ticks, as the original scaled its world by `height` in 0.02 steps. For
+  the first half the eye is above the ceiling and sees the wall tops rise
+  over the whole maze; then the walls pass the eye and the ceiling closes
+  in. The stick is ignored; A cuts the intro short (to PAUSE).
 
 - **WALK**: move along the heading at 2 cells/s (1/30 cell per tick). On
   reaching a cell centre choose the next heading by the left-hand wall
@@ -287,7 +302,7 @@ any WALK/TURN, teleport trigger -> TELEPORT (12 ticks) -> WALK
   animate the carving over the 120 ticks instead of swapping.
 - **DESCEND**: the reverse path into the new maze's start cell, ending at
   eye height facing the only open direction (start is a corner; if two
-  directions are open, pick by the wall follower).
+  directions are open, pick by the wall follower). Then GROW.
 - A in any walking state jumps to PAUSE (a demo shortcut, also handy for
   M1 timing).
 
@@ -341,7 +356,7 @@ below procedurally at the exact size so code never waits on art, as in
 | `snouty.png`      | 32x32 | 4      | yes         | blob with an "S", left x2 / right x2, legs alternate |
 | `smiley.png`      | 32x32 | 1      | yes         | yellow disc, two eyes, a smile                    |
 | `logo.png`        | 32x32 | 1      | yes         | iris-like mark (real: Zig mark via `--art`)       |
-| `iris.png`        | 32x32 | 1      | yes         | same drawing (real: Iris mark via `--art`)        |
+| `iris.png`        | 32x32 | 1      | yes         | same drawing at 24 px, centred (real: Iris mark via `--art`); the name strip blits texels 4..27 1:1 |
 
 Textures are unpacked to `u8` 32x32 grids at `start()` (1 KB each). Wall
 tops and the sphere are flat colours in code and need no sheet.

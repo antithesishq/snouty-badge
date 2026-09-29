@@ -1,12 +1,13 @@
 //! Snouty Gear: Game Gear emulator cart. Runs the core one frame per badge
 //! frame and shows its lines through frontend/video.zig, with the debug
-//! overlay (frontend/debug.zig) on top and the ROM report line
-//! (frontend/romsrc.zig) at the bottom.
+//! overlay (frontend/debug.zig) on top and, while the overlay is on, the
+//! ROM report line (frontend/romsrc.zig) at the bottom.
 //!
-//! M1: the core emulates the Game Gear (Z80, VDP, mapper, PSG registers);
-//! there is no splash, menu, audio or rewind yet (M2). A Select hold is
-//! detected but does nothing. See SPEC.md (design), PLAN.md (milestone contract),
-//! CLAUDE.md (toolchain).
+//! States: splash (frontend/splash.zig) -> running -> menu
+//! (frontend/menu.zig, opened by a 500 ms Select hold, frontend/input.zig)
+//! -> running. The core is stepped only while running. Sound is one tone2
+//! voice from the PSG (frontend/audio.zig). The time scrubber is M3.
+//! See SPEC.md (design), PLAN.md (milestone contract), CLAUDE.md (toolchain).
 const cart = @import("cart-api");
 const core = @import("core");
 const video = @import("frontend/video.zig");
@@ -14,6 +15,9 @@ const input = @import("frontend/input.zig");
 const debug = @import("frontend/debug.zig");
 const romsrc = @import("frontend/romsrc.zig");
 const text = @import("frontend/text.zig");
+const menu = @import("frontend/menu.zig");
+const splash = @import("frontend/splash.zig");
+const audio = @import("frontend/audio.zig");
 
 comptime {
     cart.export_start_code();
@@ -23,12 +27,16 @@ comptime {
 /// the stack (32 KB on the badge, 14.7 KB in wasm).
 var gg: core.Gg = undefined;
 
-pub const State = enum(u32) { running = 1 };
-var state: State = .running;
+pub const State = enum(u32) { splash = 0, running = 1, menu = 2 };
+var state: State = .splash;
 var controls_state: input.State = .{};
 
-/// Select holds seen (the M2 menu will open there).
-var menu_requests: u32 = 0;
+/// Menu opens since boot.
+var menu_opens: u32 = 0;
+
+/// Badge frames since boot; paces the second chime note.
+var frames_seen: u32 = 0;
+var chime_second_at: u32 = 0;
 
 pub fn start() void {
     cart.set_vsync_enabled(1000.0 / 60.0);
@@ -41,24 +49,68 @@ pub fn start() void {
 
 pub fn update() void {
     controls_state.poll(read_controls());
+    // Timestamp every badge frame (paused or not) so the FPS counter sees
+    // real frame intervals; `debug.record` below only measures step_frame.
     const t0 = cart.micros_since_boot();
     debug.frame_tick(t0);
+
+    // Sound follows the menu toggle; the tone holds while the core is paused
+    // and stops at once when sound is switched off (audio.update handles it).
+    audio.enabled = menu.sound_enabled;
+
     switch (state) {
+        .splash => {
+            if (splash.request_chime) {
+                splash.request_chime = false;
+                audio.chime(0);
+                chime_second_at = frames_seen + 4;
+            }
+            if (chime_second_at != 0 and frames_seen == chime_second_at) {
+                chime_second_at = 0;
+                audio.chime(1);
+            }
+            if (splash.update(controls_state.edge.any_pressed())) {
+                controls_state.suppress_held();
+                state = .running;
+                run_frame(t0);
+            }
+        },
         .running => run_frame(t0),
+        .menu => {
+            audio.update(&gg);
+            if (menu.update(&gg, controls_state.edge) == .resume_game) {
+                menu.close();
+                controls_state.suppress_held();
+                state = .running;
+                run_frame(cart.micros_since_boot());
+            }
+        },
     }
+
+    frames_seen +%= 1;
     if (cart.is_wasm) present_wasm();
 }
 
+/// One game frame, or opening the menu instead of stepping. `t1` is a fresh
+/// `micros_since_boot` reading taken just before.
 fn run_frame(t1: u64) void {
     const in = controls_state.game_frame();
-    if (in.open_menu) menu_requests += 1;
+    if (in.open_menu) {
+        menu_opens += 1;
+        state = .menu;
+        menu.open();
+        _ = menu.update(&gg, controls_state.edge);
+        return;
+    }
 
     gg.step_frame(in.pad);
     const t2 = cart.micros_since_boot();
 
+    audio.update(&gg);
+
     video.finish_frame();
     debug.record(@truncate(t2 -% t1));
-    romsrc.draw_report();
+    if (debug.enabled) romsrc.draw_report();
     debug.draw();
 }
 
@@ -101,7 +153,9 @@ comptime {
         @export(&debug_rom_banks, .{ .name = "debug_rom_banks" });
         @export(&debug_rom_crc, .{ .name = "debug_rom_crc" });
         @export(&debug_cram_rebuilds, .{ .name = "debug_cram_rebuilds" });
-        @export(&debug_menu_requests, .{ .name = "debug_menu_requests" });
+        @export(&debug_menu_opens, .{ .name = "debug_menu_opens" });
+        @export(&debug_tone_hz, .{ .name = "debug_tone_hz" });
+        @export(&debug_settings, .{ .name = "debug_settings" });
         @export(&debug_pc, .{ .name = "debug_pc" });
         @export(&debug_sp, .{ .name = "debug_sp" });
         @export(&debug_iff1, .{ .name = "debug_iff1" });
@@ -114,6 +168,8 @@ comptime {
         @export(&debug_irq_line, .{ .name = "debug_irq_line" });
         @export(&debug_frame_t, .{ .name = "debug_frame_t" });
         @export(&debug_psg_voice, .{ .name = "debug_psg_voice" });
+        @export(&debug_psg_atten, .{ .name = "debug_psg_atten" });
+        @export(&debug_psg_tones, .{ .name = "debug_psg_tones" });
     }
 }
 
@@ -129,7 +185,7 @@ fn debug_step_us() callconv(.c) u32 {
 fn debug_lines() callconv(.c) u32 {
     return video.last_frame_lines;
 }
-/// Frontend state: 1 running (splash 0 and menu 2 arrive in M2).
+/// Frontend state: 0 splash, 1 running, 2 menu.
 fn debug_state() callconv(.c) u32 {
     return @backingInt(state);
 }
@@ -157,9 +213,23 @@ fn debug_rom_crc() callconv(.c) u32 {
 fn debug_cram_rebuilds() callconv(.c) u32 {
     return video.cram_rebuilds;
 }
-/// Select holds that would have opened the menu.
-fn debug_menu_requests() callconv(.c) u32 {
-    return menu_requests;
+/// Times the menu opened since boot.
+fn debug_menu_opens() callconv(.c) u32 {
+    return menu_opens;
+}
+/// Frequency the buzzer was last told to play, 0 when stopped.
+fn debug_tone_hz() callconv(.c) u32 {
+    return if (audio.playing) audio.last_hz else 0;
+}
+/// Menu settings: bit 0 sound on, bit 1 crop scale, bit 2 A/B swapped,
+/// bit 3 debug overlay on.
+fn debug_settings() callconv(.c) u32 {
+    var v: u32 = 0;
+    if (menu.sound_enabled) v |= 1;
+    if (video.scale == .crop) v |= 2;
+    if (input.swap_ab) v |= 4;
+    if (debug.enabled) v |= 8;
+    return v;
 }
 
 // ---- Boot diagnostics: what a game that does not start is doing ----
@@ -211,9 +281,20 @@ fn debug_irq_line() callconv(.c) u32 {
 fn debug_frame_t() callconv(.c) u32 {
     return gg.frame_t;
 }
-/// The PSG voice M2's audio would play: hz | atten << 24 | channel << 28,
-/// 0 when silent.
+/// The PSG voice audio plays: hz | atten << 24 | channel << 28, 0 when
+/// silent.
 fn debug_psg_voice() callconv(.c) u32 {
     const v = gg.psg.voice() orelse return 0;
     return (v.hz & 0xFFFFFF) | @as(u32, v.atten) << 24 | @as(u32, v.channel) << 28;
+}
+/// PSG attenuations as written: ch0 | ch1 << 4 | ch2 << 8 | noise << 12
+/// (15 = silent), then the noise control << 16 and the latch << 20.
+fn debug_psg_atten() callconv(.c) u32 {
+    const p = gg.psg;
+    return @as(u32, p.atten[0]) | @as(u32, p.atten[1]) << 4 | @as(u32, p.atten[2]) << 8 | @as(u32, p.atten[3]) << 12 | @as(u32, p.noise) << 16 | @as(u32, p.latch) << 20;
+}
+/// PSG 10-bit tone periods: ch0 | ch1 << 10 | ch2 << 20.
+fn debug_psg_tones() callconv(.c) u32 {
+    const p = gg.psg;
+    return @as(u32, p.tone[0]) | @as(u32, p.tone[1]) << 10 | @as(u32, p.tone[2]) << 20;
 }

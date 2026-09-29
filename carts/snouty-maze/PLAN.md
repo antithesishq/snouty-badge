@@ -994,7 +994,8 @@ teleport from MANUAL returns to MANUAL with the idle timer restarted.
 - `scene.zig` (one hunk + the `draw_actors` call): while carving no finish
   tile and no actors; the carve head is a flat Iris-pink tile
   (`textures.carve_head_color`, one extra quad).
-- `overlay.zig`: Iris mark blitted 32 -> 24 nearest-neighbour at y =
+- `overlay.zig`: Iris mark blitted 32 -> 24 nearest-neighbour (replaced by
+  a 1:1 blit of a 24 px mark after M4, see "M4 fix" below) at y =
   104..127 with the text's 1 px black drop shadow (clipped at the screen
   edge), then the two lines, each centred in a 96 px text block; icon (24)
   + gap (4) + text (96) centred, x = 18. Checked on OVERHEAD frames and on
@@ -1134,3 +1135,84 @@ views from above are the limit, so the default stays 12x12 and
 `-Dmaze_size=16` is the switch. Fix folded in: `1910d2f` had put three
 wasm debug exports (`debug_led_max`, `debug_place`, `debug_fade_level`)
 in the badge branch; C4 moved them back.
+
+## M4 fix: Iris mark in the name strip (2026-09-29)
+
+Adrian: the Iris mark beside the name looked distorted. Cause: the 32 -> 24
+nearest-neighbour blit dropped every fourth row and column, so the arcs
+varied between 4 and 5 px and the diamond came out lopsided. Fix: the art
+pack renders the mark at 24 px centred in the 32 cell (snouty-art
+`tools/build_maze.py`, `IRIS_BOX`; the sheet contract is unchanged) and
+`overlay.zig` copies texels 4..27 1:1. The placeholder `iris.png` is the
+same 24 px scaling of the procedural mark. No golden shows the strip;
+`check_golden` 9/9, `check_cycle` 9/9, `zig build test`, `check-float`
+PASS; `docs/preview_m4.gif` and `docs/w95_assets.png` regenerated.
+
+## M4 fix 2: coin flip (2026-09-29)
+
+Adrian: make the Iris mark rotate in 3D occasionally, coin style, about
+every 5 s. `overlay.zig` keeps a strip-local tick (reset by
+`name_strip_hidden()` from `main.zig`); at tick 45 and every 300 after it
+the mark turns once in 30 ticks: `draw_iris(x0, y0, angle)` squeezes the
+columns to 24 |cos angle| px about the centre (nearest source column,
+never under 2 px) and past 90 degrees draws the mirrored back face in
+`textures.iris_back` (70% palette). The OVERHEAD hold is 120 ticks, so a
+normal cycle gets one flip 0.75 s in; the 5 s period only matters with
+Start holding the strip on. `debug_iris_width` export; `check_cycle` runs
+J (edge-on, width 3 at OVERHEAD tick 52) and K (back face, width 24 at
+tick 60). OVERHEAD starts at tick 180 after A at tick 0 (pause 30 + rise
+150), not 240 as run B's label suggests.
+
+## Plan: M4 fix 3, visible Start button and the rising maze (2026-09-29)
+
+Adrian: the Start button is never seen (it sits 0.3 cells behind the
+camera's start pose, so the walker leaves it behind at once), and the
+original's opening, where the maze rises out of the floor, is missing.
+Reference: the WebGL port (ibid-11962) places the button in the cell the
+camera faces at the start (`SX1, SY1`, the "don't start facing a wall"
+block) and scales the whole world by `height` from 0 to 3/4 in 0.02 steps
+with the eye fixed at 1/3, so the walker first sees the maze from above
+and the walls grow past the eye; the finish sinks it back the same way.
+
+1. `actors.zig`: the Start button floats at eye height in the centre of
+   the neighbour cell the camera faces at the start (the walker passes
+   through it, as in the original); that cell joins the actors' avoid
+   list. `start_button_back` goes.
+2. `autopilot.zig`: new state GROW (`debug_state` 9, appended so the
+   numbers stay stable), `grow_ticks` 60. Entered from `begin_walk` (boot,
+   reseed) and at the end of DESCEND, camera at eye height in the start
+   cell facing `start_facing`; leaves to WALK. `grow_scale()` is
+   `state_tick / grow_ticks`, linear like the original. A (`skip`) works
+   from GROW too, so the check_cycle timings that press A at tick 0 hold.
+   The stick is ignored during GROW (takeover stays WALK/TURN).
+3. `scene.zig`: `height_scale` (1 outside GROW, set by `main.update`)
+   scales wall tops, the ceiling, the picture band, the run sort midpoint
+   and the actors (y position; billboard and spin quad vertical extent via
+   a `y_scale` argument; sphere radius). Floor, finish tile and carve head
+   are unchanged. The `pos[1] < wall_height` tests use the scaled height,
+   so the camera is above the ceiling for the first half of GROW and sees
+   the wall tops rise.
+4. Tests: `check_cycle` STATE_NAMES gets GROW; runs D, E, G, H start their
+   input or count 60 ticks later; new run L (GROW at tick 30, WALK at 60).
+   Goldens: `start` becomes the first GROW frame (flat maze), new
+   `grow_half` at frame 31. Bench m2_cycle seeds 1..10 for the GROW frames
+   (a grazing view over the whole maze; budget stays 12.0 ms worst).
+5. Docs: SPEC sections 7 (Start button) and 8 (state machine), RUNNING
+   run list, `preview_m4.gif` regenerated (it opens on the rise).
+
+## M4 fix 3 result (2026-09-29)
+
+Done as planned. GROW is `debug_state` 9; `scene.height_scale` squashes
+walls, ceiling, pictures and actors (`draw_billboard` / `draw_spin_quad`
+take a `y_scale`); the Start button sits in the faced neighbour cell and
+is passed through at tick 60..90 of the walk. Host tests use
+`begin_walk_now` (GROW skipped) plus a GROW test; `check_cycle` 13/13
+(D, E, G, H shifted by 60 ticks, L/M new); goldens: `start` is now the
+flat maze at tick 0, `grow_half` (tick 30) and `walk_start` (tick 60)
+added, and the five poses that see the start area rebaselined for the
+moved Start button and the actor spawns it displaces (6..57 px each).
+Calibrated bench, ticks 0..74, seeds 1..3: GROW frames peak at 8.8 ms,
+the worst frame in the range is the walk into the Start button at tick
+73 (9.4 / 8.4 / 9.5 ms), budget 12.0. `preview_m4.gif` now opens on the
+rise (A at tick 90, takeover script from tick 600).
+

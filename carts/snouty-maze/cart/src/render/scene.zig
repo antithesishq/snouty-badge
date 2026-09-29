@@ -13,6 +13,10 @@ const actors = @import("../actors.zig");
 
 pub const wall_half: f32 = 0.05;
 pub const wall_height: f32 = 1.0;
+/// Vertical scale of everything above the floor (walls, ceiling, pictures,
+/// actors): 1 normally, 0 -> 1 while the maze rises out of the floor
+/// (autopilot GROW; main.update sets it every tick).
+pub var height_scale: f32 = 1.0;
 pub const finish_lift: f32 = 0.002;
 
 const Vec3 = math.Vec3;
@@ -40,6 +44,7 @@ pub fn draw(m: *const maze.Maze, cam: *const camera.Camera) void {
     // the new maze (C4) the finish tile and the actors wait for the end,
     // and the carve head cell is a flat tile instead.
     const carving = m.revealed < m.carve_count;
+    const top = wall_height * height_scale;
     if (pos[1] > finish_lift) {
         if (!carving) {
             const fx: f32 = @floatFromInt(m.finish[0]);
@@ -53,7 +58,7 @@ pub fn draw(m: *const maze.Maze, cam: *const camera.Camera) void {
     }
 
     // Pictures before the walls, for the same reason.
-    if (pos[1] < wall_height) {
+    if (pos[1] < top) {
         for (m.runs[0..m.run_count]) |run| draw_pictures(cam, b, run);
     }
 
@@ -65,7 +70,7 @@ pub fn draw(m: *const maze.Maze, cam: *const camera.Camera) void {
     for (order[0..m.run_count]) |i| draw_run(cam, b, m.runs[i]);
 
     if (pos[1] > 0) horizontal(cam, b, 0, 0, w, h, 0, .{ .textured = &textures.floor });
-    if (pos[1] < wall_height) horizontal(cam, b, 0, 0, w, h, wall_height, .{ .textured = &textures.ceiling });
+    if (pos[1] < top) horizontal(cam, b, 0, 0, w, h, top, .{ .textured = &textures.ceiling });
 
     if (!carving) draw_actors(cam, b);
 }
@@ -80,16 +85,22 @@ fn draw_actors(cam: *const camera.Camera, b: math.Mat3) void {
     const mv = vec3(@floatFromInt(s.dir.dx()), 0, @floatFromInt(s.dir.dz()));
     const pair: usize = if (math.dot(right, mv) >= 0) 2 else 0;
     const frame = &textures.snouty[pair + s.phase];
-    if (cam.pos[1] < wall_height) {
-        sprite.draw_billboard(cam, b, s.pos, actors.snouty_size, frame);
+    const hs = height_scale;
+    if (cam.pos[1] < wall_height * hs) {
+        sprite.draw_billboard(cam, b, s.pos, actors.snouty_size, hs, frame);
     } else {
         sprite.draw_floor_sprite(cam, b, s.pos, actors.snouty_size, frame);
     }
 
-    mesh.draw_sphere(cam, b, actors.sphere.pos, actors.sphere_radius, .{ 0xc0, 0xc0, 0xc0 });
-    mesh.draw_spin_quad(cam, b, actors.smiley.pos, actors.quad_half, actors.smiley.angle, &textures.smiley);
-    mesh.draw_spin_quad(cam, b, actors.logo.pos, actors.quad_half, actors.logo.angle, &textures.logo);
-    mesh.draw_spin_quad(cam, b, actors.start_button, actors.quad_half, actors.start_angle, &textures.start);
+    mesh.draw_sphere(cam, b, squash(actors.sphere.pos), actors.sphere_radius * hs, .{ 0xc0, 0xc0, 0xc0 });
+    mesh.draw_spin_quad(cam, b, squash(actors.smiley.pos), actors.quad_half, hs, actors.smiley.angle, &textures.smiley);
+    mesh.draw_spin_quad(cam, b, squash(actors.logo.pos), actors.quad_half, hs, actors.logo.angle, &textures.logo);
+    mesh.draw_spin_quad(cam, b, squash(actors.start_button), actors.quad_half, hs, actors.start_angle, &textures.start);
+}
+
+/// An actor position with its height scaled by `height_scale`.
+fn squash(p: Vec3) Vec3 {
+    return vec3(p[0], p[1] * height_scale, p[2]);
 }
 
 /// Hangs a wall picture on about one cell-length segment in eight of a run
@@ -102,8 +113,8 @@ fn draw_pictures(cam: *const camera.Camera, b: math.Mat3, run: maze.Run) void {
     const z: u32 = run.z;
     const along_x = run.axis == .x;
     const axis: u32 = if (along_x) 0 else 1;
-    const y0 = pic_height - pic_half;
-    const y1 = pic_height + pic_half;
+    const y0 = (pic_height - pic_half) * height_scale;
+    const y1 = (pic_height + pic_half) * height_scale;
     var k: u32 = 0;
     while (k < run.len) : (k += 1) {
         const sx = if (along_x) x + k else x;
@@ -182,12 +193,13 @@ fn draw_run(cam: *const camera.Camera, b: math.Mat3, run: maze.Run) void {
     const x1 = if (run.axis == .x) x + len + wall_half else x + wall_half;
     const z1 = if (run.axis == .z) z + len + wall_half else z + wall_half;
     const pos = cam.pos;
+    const top = wall_height * height_scale;
 
     // Corners in view space, index = xi | yi << 1 | zi << 2.
     var c: [8]Vec3 = undefined;
     for (0..8) |i| {
         const px = if (i & 1 != 0) x1 else x0;
-        const py: f32 = if (i & 2 != 0) wall_height else 0;
+        const py: f32 = if (i & 2 != 0) top else 0;
         const pz = if (i & 4 != 0) z1 else z0;
         c[i] = cam.to_view(b, vec3(px, py, pz));
     }
@@ -200,7 +212,7 @@ fn draw_run(cam: *const camera.Camera, b: math.Mat3, run: maze.Run) void {
     if (pos[2] > z1) face(c[4], c[5], c[7], c[6], x0, x1, lit); // south face, looking north
     if (pos[0] < x0) face(c[0], c[4], c[6], c[2], z0, z1, dark); // west face, looking east
     if (pos[0] > x1) face(c[5], c[1], c[3], c[7], -z1, -z0, dark); // east face, looking west
-    if (pos[1] > wall_height) {
+    if (pos[1] > top) {
         const v = [4]raster.Vertex{
             .{ .p = c[2], .u = 0, .v = 0 },
             .{ .p = c[3], .u = 0, .v = 0 },
@@ -234,7 +246,7 @@ fn sort_runs(m: *const maze.Maze, pos: Vec3) void {
         var mx: f32 = @floatFromInt(run.x);
         var mz: f32 = @floatFromInt(run.z);
         if (run.axis == .x) mx += half else mz += half;
-        const d = vec3(mx, wall_height * 0.5, mz) - pos;
+        const d = vec3(mx, wall_height * height_scale * 0.5, mz) - pos;
         keys[i] = @intFromFloat(@min(65535.0, math.dot(d, d) * 16.0));
     }
     var i: usize = 1;

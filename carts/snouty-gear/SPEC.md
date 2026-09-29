@@ -307,7 +307,8 @@ is Adrian's business, as with Super Mario Land on Snouty Boy).
 
 ## 12. Boot splash and presentation
 
-Snouty Boy's splash, recolored: the Snouty mark slides in, then a two-note
+Snouty Boy's splash, recolored: the Antithesis Iris mark (the shared 1-bit
+24x24 bitmap in `lib/iris_mark.zig`, at 2x) slides in, then a two-note
 chime, then the game. The menu title reads "SNOUTY GEAR", the ROM name, and
 "verified by deterministic replay". The
 neopixels are off: the cart never writes non-zero values (root
@@ -504,3 +505,7 @@ Decided 2026-09-29: Adrian accepted every recommendation.
   the ROM from a drive image (after the perf pass: Waternet mean 3.67 ms,
   worst 6.86; Sonic 5.72 / 7.40).
   Numbers in PLAN.md. Hardware checks pending (M0's too).
+- 2026-09-29: M2 done (tag `snouty-gear/m2`): boot splash with the chime,
+  the PSG as one tone2 voice, the emulator menu (button swap, squeeze/crop,
+  sound, overlay, Reset, About). Numbers in PLAN.md. Hardware checks
+  pending (M0/M1's too; the buzzer and splash join the list).

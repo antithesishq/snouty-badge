@@ -75,7 +75,8 @@ node tools/check_determinism.mjs $W --script tools/scripts/m1_walk.json --frames
 # ends; the embedded log replays to the recorded hash (DEMO OK); UP at
 # update 700 takes the demo over without stepping and refills the meter.
 demo_hash=$(grep -o 'final_hash: u32 = 0x[0-9A-F]*' cart/src/demos/build_farm.zig | sed 's/.*= //')
-python3 tools/gen_demo.py tools/scripts/demo_build_farm.json --out out/demo_check.zig --hash "$demo_hash" >/dev/null
+demo_level=$(grep -o 'level_index: u8 = [0-9]*' cart/src/demos/build_farm.zig | sed 's/.*= //')
+python3 tools/gen_demo.py tools/scripts/demo_build_farm.json --out out/demo_check.zig --hash "$demo_hash" --level "$demo_level" >/dev/null
 diff -q out/demo_check.zig cart/src/demos/build_farm.zig >/dev/null || { echo "check: cart/src/demos/build_farm.zig is stale; run tools/record_demo.sh and rebuild"; exit 1; }
 [ "$demo_hash" != "0x00000000" ] || { echo "check: demo hash not recorded; run tools/record_demo.sh"; exit 1; }
 demo_ticks=$(python3 -c 'import json; print(max(e["to"] for e in json.load(open("tools/scripts/demo_build_farm.json")))+1)')
@@ -92,4 +93,8 @@ node ../../tools/preview.mjs $W --frames 900 --quiet --out out/takeover --script
   --at "699 debug_demo == 1" --at "700 debug_demo == 0" --at "700 debug_mode == 1" --at "700 debug_meter == 600" \
   --expect "debug_mode == 1" --expect "debug_desync == 0"
 node tools/check_determinism.mjs $W --script tools/scripts/m5_takeover.json --frames 900
+# M5.2: the secret door in the test level's start room looks like the wall
+# until walked into, then slides open into the corridor below (py > 8).
+node ../../tools/preview.mjs $W --frames 340 --quiet --out out/secret --script tools/scripts/m5_secret.json \
+  --dump-exports debug_mode,debug_px,debug_py --at "129 debug_py < 262144" --expect "debug_mode == 1" --expect "debug_py > 524288"
 echo "check: all passed"

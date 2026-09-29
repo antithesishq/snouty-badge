@@ -20,10 +20,11 @@ const max_lift: f32 = 0.3;
 /// heading (parallel to the view plane at pitch 0) and stays vertical in
 /// the world, so it pitches and rolls with the maze, not with the screen.
 /// Image top (v = 0) is up, image left (u = 0) on the viewer's left.
-pub fn draw_billboard(cam: *const camera.Camera, b: math.Mat3, pos: Vec3, size: f32, tex: *const textures.Texture) void {
+/// `y_scale` squashes the height (the maze rising at the start).
+pub fn draw_billboard(cam: *const camera.Camera, b: math.Mat3, pos: Vec3, size: f32, y_scale: f32, tex: *const textures.Texture) void {
     const hs = size * 0.5;
     const r = vec3(math.cos_angle(cam.yaw), 0, math.sin_angle(cam.yaw)) * splat(hs);
-    const up = vec3(0, size, 0);
+    const up = vec3(0, size * y_scale, 0);
     const m = tex.uv_max;
     const v = [4]raster.Vertex{
         .{ .p = cam.to_view(b, pos - r), .u = 0, .v = m },
