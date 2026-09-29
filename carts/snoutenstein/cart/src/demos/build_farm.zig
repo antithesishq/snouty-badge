@@ -5,14 +5,58 @@ pub const Run = struct { buttons: u16, ticks: u16 };
 
 pub const level_index: u8 = 0;
 pub const seed: u32 = 0x5EED0001;
-pub const total_ticks: u32 = 180;
+pub const total_ticks: u32 = 3644;
 /// sim.hash_gameplay of the state after the last tick as recorded in the
 /// simulator; 0 = not recorded yet (tools/record_demo.sh).
-pub const final_hash: u32 = 0x0E80BADF;
+pub const final_hash: u32 = 0xFAB416D6;
 
 pub const runs = [_]Run{
+    .{ .buttons = 0x0000, .ticks = 30 },
+    .{ .buttons = 0x0020, .ticks = 210 },
     .{ .buttons = 0x0000, .ticks = 60 },
+    .{ .buttons = 0x0004, .ticks = 12 },
+    .{ .buttons = 0x0000, .ticks = 228 },
+    .{ .buttons = 0x0004, .ticks = 61 },
+    .{ .buttons = 0x0104, .ticks = 20 },
+    .{ .buttons = 0x0080, .ticks = 15 },
+    .{ .buttons = 0x0020, .ticks = 103 },
+    .{ .buttons = 0x0100, .ticks = 18 },
+    .{ .buttons = 0x0020, .ticks = 40 },
+    .{ .buttons = 0x0100, .ticks = 13 },
+    .{ .buttons = 0x0020, .ticks = 20 },
+    .{ .buttons = 0x0000, .ticks = 130 },
+    .{ .buttons = 0x0004, .ticks = 24 },
+    .{ .buttons = 0x0020, .ticks = 80 },
     .{ .buttons = 0x0100, .ticks = 36 },
-    .{ .buttons = 0x0080, .ticks = 36 },
-    .{ .buttons = 0x0000, .ticks = 48 },
+    .{ .buttons = 0x0020, .ticks = 232 },
+    .{ .buttons = 0x0000, .ticks = 10 },
+    .{ .buttons = 0x0100, .ticks = 5 },
+    .{ .buttons = 0x0020, .ticks = 103 },
+    .{ .buttons = 0x0000, .ticks = 40 },
+    .{ .buttons = 0x0080, .ticks = 41 },
+    .{ .buttons = 0x0084, .ticks = 16 },
+    .{ .buttons = 0x0000, .ticks = 20 },
+    .{ .buttons = 0x0080, .ticks = 15 },
+    .{ .buttons = 0x0020, .ticks = 100 },
+    .{ .buttons = 0x0022, .ticks = 1 },
+    .{ .buttons = 0x0020, .ticks = 79 },
+    .{ .buttons = 0x0022, .ticks = 1 },
+    .{ .buttons = 0x0020, .ticks = 114 },
+    .{ .buttons = 0x0100, .ticks = 31 },
+    .{ .buttons = 0x0020, .ticks = 62 },
+    .{ .buttons = 0x0000, .ticks = 440 },
+    .{ .buttons = 0x0008, .ticks = 240 },
+    .{ .buttons = 0x0044, .ticks = 30 },
+    .{ .buttons = 0x0000, .ticks = 20 },
+    .{ .buttons = 0x0020, .ticks = 72 },
+    .{ .buttons = 0x0100, .ticks = 36 },
+    .{ .buttons = 0x0020, .ticks = 222 },
+    .{ .buttons = 0x0000, .ticks = 20 },
+    .{ .buttons = 0x0100, .ticks = 72 },
+    .{ .buttons = 0x0020, .ticks = 300 },
+    .{ .buttons = 0x0000, .ticks = 60 },
+    .{ .buttons = 0x0080, .ticks = 18 },
+    .{ .buttons = 0x0100, .ticks = 36 },
+    .{ .buttons = 0x0080, .ticks = 18 },
+    .{ .buttons = 0x0000, .ticks = 90 },
 };
