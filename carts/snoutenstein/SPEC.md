@@ -247,7 +247,10 @@ ticks (palette set swap, free) and sets the portrait's "ouch" frame for
   is topped up to at least 3 s (an emergency reserve, granted once per
   death). While frozen only B works. Releasing B at a moment where HP > 0
   resumes play. If the meter empties while still dead, the level restarts
-  (the only "game over" in the game). No lives.
+  (the only "game over" in the game). No lives. (M4 note: with the
+  reserve, one tick back always reaches HP > 0, so the restart only
+  triggers when there is no history at all; it is kept as a safety net,
+  holding B for one second while dead with nothing to rewind into.)
 - Tension: rewinding to dodge a hit also un-does the kills you made since,
   so the meter is a resource, not a free undo. Combined with the spider's
   freeze web and the wasp's charge, that is the game.
