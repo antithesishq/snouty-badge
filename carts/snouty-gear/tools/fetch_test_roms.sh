@@ -85,7 +85,7 @@ if [ "$single_step_all" = 1 ]; then
     mkdir -p z80/batch
     while IFS= read -r f; do fetch_one "$f" z80/batch; done < "$part"
     echo "batch $(basename "$part"): $(ls z80/batch | wc -l) files, $(du -sh z80/batch | cut -f1)"
-    (cd "$root" && GEAR_SST_DIR="$cart/tests/roms/z80/batch" "$work/sst_test" 2>&1) \
+    (cd "$root" && GEAR_SST_VERBOSE=1 GEAR_SST_DIR="$cart/tests/roms/z80/batch" "$work/sst_test" 2>&1) \
       | tee -a z80/results.txt | grep -E '^(FAIL|z80:)' || true
     rm -rf z80/batch
   done

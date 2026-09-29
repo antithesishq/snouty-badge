@@ -8,11 +8,12 @@
 //! passes the low byte), and the T-state count (`cycles.len`).
 //!
 //! The directory is optional: `tools/fetch_test_roms.sh --single-step`
-//! leaves a representative subset on disk (about 40 files); the full suite
+//! leaves a representative subset on disk (36 files); the full suite
 //! (1604 files, 1.2 GB) is streamed through in batches by
 //! `tools/fetch_test_roms.sh --single-step-all`, which points this test at
 //! each batch with `GEAR_SST_DIR` and collects the per-file lines it prints
-//! (`GEAR_SST_QUIET=1` prints only the failures and the summary).
+//! (PASS lines only with `GEAR_SST_VERBOSE=1`; failures and the summary
+//! always print).
 const std = @import("std");
 const core = @import("core");
 
@@ -257,7 +258,7 @@ test "z80: SingleStepTests (tests/roms/z80/v1/*.json)" {
     const io = std.testing.io;
     const gpa = std.testing.allocator;
     const env_dir = std.testing.environ.getPosix("GEAR_SST_DIR");
-    const quiet = std.testing.environ.getPosix("GEAR_SST_QUIET") != null;
+    const quiet = std.testing.environ.getPosix("GEAR_SST_VERBOSE") == null;
     var dir: std.Io.Dir = undefined;
     var found = false;
     if (env_dir) |p| {
