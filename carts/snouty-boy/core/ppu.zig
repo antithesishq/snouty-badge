@@ -10,6 +10,7 @@ const gb_mod = @import("gb.zig");
 const Gb = gb_mod.Gb;
 const Reg = gb_mod.Reg;
 const Irq = gb_mod.Irq;
+const mmu = @import("mmu.zig");
 
 pub const Mode = enum(u2) { hblank = 0, vblank = 1, oam_scan = 2, drawing = 3 };
 
@@ -35,9 +36,21 @@ pub const Ppu = struct {
     /// colour indices, see `gb_mod.LineSink`).
     line: [gb_mod.screen_w]u8 = @splat(0),
     /// CGB palette RAM, 8 palettes x 4 colours x RGB555 little endian
-    /// (BCPD / OCPD). Owner: track B.
-    bg_pal: [64]u8 = @splat(0xFF),
-    obj_pal: [64]u8 = @splat(0xFF),
+    /// (BCPD / OCPD), indexed by BCPS / OCPS bits 0..5. The CGB boot ROM
+    /// leaves every BG colour white (0x7FFF); OBJ palette RAM is undefined
+    /// after boot, white here too.
+    bg_pal: [64]u8 = white_pal,
+    obj_pal: [64]u8 = white_pal,
+};
+
+/// 32 colours of 0x7FFF, little endian.
+const white_pal: [64]u8 = blk: {
+    var t: [64]u8 = undefined;
+    for (0..32) |i| {
+        t[i * 2] = 0xFF;
+        t[i * 2 + 1] = 0x7F;
+    }
+    break :blk t;
 };
 
 // ---- STAT register bits ----
@@ -72,9 +85,13 @@ pub fn tick(gb: *Gb, dots: u16) void {
         switch (p.mode) {
             .oam_scan => {
                 set_mode(gb, .drawing, t_hblank);
-                render_line(gb, gb.io[Reg.ly]);
+                if (gb.is_cgb()) render_line_cgb(gb, gb.io[Reg.ly]) else render_line(gb, gb.io[Reg.ly]);
             },
-            .drawing => set_mode(gb, .hblank, t_line),
+            .drawing => {
+                // Mode 3 only happens on visible lines 0..143.
+                set_mode(gb, .hblank, t_line);
+                if (gb.is_cgb()) mmu.hdma_hblank(gb);
+            },
             .hblank, .vblank => next_line(gb),
         }
     }
@@ -179,13 +196,36 @@ pub fn write_reg(gb: *Gb, reg: u8, v: u8) void {
             compose_stat(gb);
             if (lcd_on(gb)) update_stat_irq(gb);
         },
+        // CGB palette registers (the MMU only dispatches these in CGB
+        // mode). Real hardware ignores BCPD/OCPD access during mode 3; the
+        // core does not model that lock (the scanline renderer has already
+        // drawn the line by then).
+        Reg.bcps, Reg.ocps => gb.io[reg] = v & 0xBF,
+        Reg.bcpd => pal_write(gb, Reg.bcps, &gb.ppu.bg_pal, v),
+        Reg.ocpd => pal_write(gb, Reg.ocps, &gb.ppu.obj_pal, v),
+        Reg.opri => gb.io[Reg.opri] = v & 1,
         else => gb.io[reg] = v,
     }
 }
 
 pub fn read_reg(gb: *Gb, reg: u8) u8 {
-    if (reg == Reg.stat) return gb.io[Reg.stat] | 0x80;
-    return gb.io[reg];
+    return switch (reg) {
+        Reg.stat => gb.io[Reg.stat] | 0x80,
+        Reg.bcps, Reg.ocps => gb.io[reg] | 0x40,
+        Reg.bcpd => gb.ppu.bg_pal[gb.io[Reg.bcps] & 0x3F],
+        Reg.ocpd => gb.ppu.obj_pal[gb.io[Reg.ocps] & 0x3F],
+        Reg.opri => gb.io[Reg.opri] | 0xFE,
+        else => gb.io[reg],
+    };
+}
+
+/// BCPD/OCPD write: store at the index in the spec register, then advance
+/// the index (bits 0..5, wrapping) if its auto-increment bit 7 is set.
+fn pal_write(gb: *Gb, spec_reg: u8, pal: *[64]u8, v: u8) void {
+    const s = gb.io[spec_reg];
+    pal[s & 0x3F] = v;
+    if (s & 0x80 != 0) gb.io[spec_reg] = 0x80 | ((s + 1) & 0x3F);
+    gb.pal_dirty = true;
 }
 
 // ---- Renderer ----
@@ -335,6 +375,147 @@ fn draw_sprites(gb: *const Gb, ly: u8, lcdc: u8, obj: *[buf_len]u8) void {
         inline for (0..8) |k| {
             const c: u8 = @truncate((w >> (14 - 2 * k)) & 3);
             if (c != 0 and dst[k] == 0) dst[k] = flags | ((pal >> @intCast(c * 2)) & 3);
+        }
+    }
+}
+
+// ---- CGB renderer (SPEC.md 19.1, 19.2) ----
+//
+// BG/window buffer byte: bit 7 = BG-to-OAM priority (map attribute bit 7),
+// bits 4..2 = palette, bits 1..0 = colour, so `b & 0x1F` is the output
+// index. OBJ buffer byte: 0 = none, else bit 7 = OBJ-behind-BG (OAM
+// attribute bit 7) and bits 5..0 = 32 + palette * 4 + colour (never 0).
+
+/// Eight pixels of a tile row, each `base | colour`.
+inline fn put8_attr(buf: *[buf_len]u8, pos: usize, w: u16, base: u8) void {
+    inline for (0..8) |k| buf[pos + k] = base | @as(u8, @truncate((w >> (14 - 2 * k)) & 3));
+}
+
+/// One BG/window tile row: `map_off` is the map entry's offset in bank 0;
+/// its attributes sit at the same offset in bank 1 (+0x2000).
+inline fn cgb_tile_row(gb: *const Gb, map_off: usize, lcdc: u8, fine_y: u8, base: *u8) u16 {
+    const idx = gb.vram[map_off];
+    const attr = gb.vram[map_off + 0x2000];
+    const row: usize = if (attr & 0x40 != 0) 7 - fine_y else fine_y;
+    const bank: usize = @as(usize, attr & 0x08) << 10; // bit 3 -> 0x2000
+    const addr = bank + bg_tile_addr(idx, lcdc) + row * 2;
+    var lo = gb.vram[addr];
+    var hi = gb.vram[addr + 1];
+    if (attr & 0x20 != 0) {
+        lo = @bitReverse(lo);
+        hi = @bitReverse(hi);
+    }
+    base.* = (attr & 0x80) | ((attr & 7) << 2);
+    return spread[lo] | (spread[hi] << 1);
+}
+
+fn render_line_cgb(gb: *Gb, ly: u8) void {
+    if (ly >= gb_mod.screen_h) return;
+    const p = &gb.ppu;
+    const io = &gb.io;
+    const lcdc = io[Reg.lcdc];
+    if (ly == io[Reg.wy]) p.wy_hit = true;
+
+    // Background: always drawn in CGB mode (LCDC.0 is master priority).
+    var ci: [buf_len]u8 = undefined;
+    {
+        const scx = io[Reg.scx];
+        const y = ly +% io[Reg.scy];
+        const map: usize = (if (lcdc & 0x08 != 0) @as(usize, 0x1C00) else 0x1800) + @as(usize, y >> 3) * 32;
+        const col0: usize = scx >> 3;
+        const start: usize = buf_off - @as(usize, scx & 7);
+        for (0..21) |t| {
+            var base: u8 = 0;
+            const w = cgb_tile_row(gb, map + ((col0 + t) & 31), lcdc, y & 7, &base);
+            put8_attr(&ci, start + t * 8, w, base);
+        }
+    }
+
+    // Window: LCDC.5 alone enables it in CGB mode.
+    const wx = io[Reg.wx];
+    if (lcdc & 0x20 != 0 and p.wy_hit and wx <= 166) {
+        const wl = p.window_line;
+        const wmap: usize = (if (lcdc & 0x40 != 0) @as(usize, 0x1C00) else 0x1800) + @as(usize, wl >> 3) * 32;
+        var pos: usize = @as(usize, wx) + 1;
+        var t: usize = 0;
+        while (pos < buf_off + gb_mod.screen_w) : ({
+            pos += 8;
+            t += 1;
+        }) {
+            var base: u8 = 0;
+            const w = cgb_tile_row(gb, wmap + t, lcdc, wl & 7, &base);
+            put8_attr(&ci, pos, w, base);
+        }
+        p.window_line = wl + 1;
+    }
+
+    if (lcdc & 0x02 == 0) {
+        for (&p.line, ci[buf_off..][0..gb_mod.screen_w]) |*px, c| px.* = c & 0x1F;
+    } else {
+        var obj: [buf_len]u8 = @splat(0);
+        draw_sprites_cgb(gb, ly, lcdc, &obj);
+        // LCDC.0 = 0: sprites always win. Otherwise BG colour 0 loses to
+        // any sprite, BG colours 1..3 win if either priority bit is set.
+        const pm: u8 = if (lcdc & 0x01 != 0) 0x80 else 0;
+        for (&p.line, ci[buf_off..][0..gb_mod.screen_w], obj[buf_off..][0..gb_mod.screen_w]) |*px, c, o| {
+            px.* = if (o != 0 and (c & 3 == 0 or (c | o) & pm == 0)) o & 0x3F else c & 0x1F;
+        }
+    }
+
+    if (gb.line_sink) |sink| sink.emit(ly, &p.line);
+}
+
+fn draw_sprites_cgb(gb: *const Gb, ly: u8, lcdc: u8, obj: *[buf_len]u8) void {
+    const h: u8 = if (lcdc & 0x04 != 0) 16 else 8;
+
+    // OAM scan: first 10 sprites covering this line, in OAM order.
+    var sel: [10]u8 = undefined;
+    var n: usize = 0;
+    for (0..40) |i| {
+        const row = ly +% 16 -% gb.oam[i * 4];
+        if (row < h) {
+            sel[n] = @intCast(i);
+            n += 1;
+            if (n == 10) break;
+        }
+    }
+    // OPRI bit 0 = 0 (CGB default): OAM order is the priority, as selected.
+    // OPRI bit 0 = 1: DMG coordinate priority, stable sort by X.
+    if (gb.io[Reg.opri] & 1 != 0) {
+        var i: usize = 1;
+        while (i < n) : (i += 1) {
+            const s = sel[i];
+            const sx = gb.oam[@as(usize, s) * 4 + 1];
+            var j = i;
+            while (j > 0 and gb.oam[@as(usize, sel[j - 1]) * 4 + 1] > sx) : (j -= 1) sel[j] = sel[j - 1];
+            sel[j] = s;
+        }
+    }
+
+    for (sel[0..n]) |s| {
+        const o = @as(usize, s) * 4;
+        const sx = gb.oam[o + 1];
+        if (sx == 0 or sx >= 168) continue;
+        const attr = gb.oam[o + 3];
+        var row = ly +% 16 -% gb.oam[o];
+        if (attr & 0x40 != 0) row = h - 1 - row;
+        var tile = gb.oam[o + 2];
+        if (h == 16) tile &= 0xFE;
+        const bank: usize = @as(usize, attr & 0x08) << 10;
+        const addr = bank + @as(usize, tile) * 16 + @as(usize, row) * 2;
+        var lo = gb.vram[addr];
+        var hi = gb.vram[addr + 1];
+        if (attr & 0x20 != 0) {
+            lo = @bitReverse(lo);
+            hi = @bitReverse(hi);
+        }
+        const w = spread[lo] | (spread[hi] << 1);
+        if (w == 0) continue;
+        const base: u8 = (attr & 0x80) | 32 | ((attr & 7) << 2);
+        const dst = obj[sx..][0..8];
+        inline for (0..8) |k| {
+            const c: u8 = @truncate((w >> (14 - 2 * k)) & 3);
+            if (c != 0 and dst[k] == 0) dst[k] = base | c;
         }
     }
 }
