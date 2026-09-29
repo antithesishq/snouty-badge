@@ -798,3 +798,26 @@ tint, scanlines and the clock counting down.
   gnats take 65 HP in 7 s in the Build Farm opening (SPEC values); tune in
   M5 from play, the knobs are the `tuning` table in ai.zig. Test level key
   chain fixed (coral -> iris -> gold). Next: M4 rewind wiring.
+- 2026-09-29: M4 plan written; worktree `snouty-badge-snoutenstein`, two
+  tracks launched.
+- 2026-09-29: M4 done and tagged `snoutenstein/m4`. Both tracks landed.
+  ELF text 92.1 KB, bss 90.7 KB (the rewind pools are referenced now:
+  74 KB, incl. 3.8 KB of commit patches). Host tests: rewind 8 (51 in the
+  aggregate run). Bench (calibrated, `m4_rewind.json`, 360 frames): mean
+  2.21 ms, worst 5.48 ms (33% of budget) at frame 289, a keyframe-boundary
+  refill during the rewind (29 `step`s); the entry burst at frame 240 is
+  4.53 ms. Bug found by the scripts and fixed in the core (deviation from
+  "rewind.zig used as is"): a commit's meter drain and rewind-count bump
+  were written into the live state after `commit`, so the first keyframe
+  self-check after every rewind fired. `commit(s, meter, count_rewind)`
+  now records them as a patch keyed by tick on the input log; replay
+  applies patches, keyframes stay pre-patch, and a commit drops the
+  patches of the abandoned future. Other deviations: the B press itself
+  steps back one tick (a tap out of death lands on the last living tick);
+  `debug_tick`/`debug_gameplay_hash` report the shown state while
+  rewinding; the death rewind in `m4_death.json` is meter-bound (600 of
+  642 ticks), not history-bound; the rewind sweep cuts the death-freeze
+  sting. `check.sh` asserts `debug_desync == 0` on every run and runs the
+  rewind harness on the walk script. Hardware gate still pending. Next:
+  M5 attract/demo (a demo is a keyframe plus an input log, the machinery
+  exists), balance, polish.
