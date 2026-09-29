@@ -19,3 +19,9 @@ __pycache__/
 
 # The shipped Snouty Gear ROM (MIT, roms/LICENSE-waternet) is the one exception.
 !carts/snouty-gear/roms/waternet.gg
+
+# Snouty Genesis shipped ROMs (roms/LICENSE-*). These exceptions must stay
+# BELOW the Genesis ROM ignore patterns (*.gen, *.smd and the roms/*.bin,
+# roms/*.md, tests/roms/ path rules of SPEC.md section 11), since the last
+# matching line wins.
+!carts/snouty-genesis/roms/snouty-test.bin
