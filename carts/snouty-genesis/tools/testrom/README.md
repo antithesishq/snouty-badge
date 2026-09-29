@@ -1,6 +1,6 @@
 # Snouty test ROM
 
-`roms/snouty-test.bin` (16384 bytes, header checksum `BCA2`) is an original
+`roms/snouty-test.bin` (16384 bytes, header checksum `00B2`) is an original
 Genesis program written for this cart: the golden-test and badge-bench
 target of M1, and the ROM embedded by default (`-Dmd-rom`). It uses no DMA,
 no window, no plane B, no scrolling and no sprites beyond one, so every

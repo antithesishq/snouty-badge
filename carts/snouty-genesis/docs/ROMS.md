@@ -42,7 +42,7 @@ roms/snouty-test.bin
   system     "SEGA GENESIS"   copyright "(C)SNTY 2026.SEP"
   domestic   "SNOUTY TEST"
   product    "GM SNOUTY01-00"   region "JUE"
-  checksum   declared BCA2, computed BCA2 over 0x200-EOF (match)
+  checksum   declared 00B2, computed 00B2 over 0x200-EOF (match)
   SRAM       none declared
   Z80        BUSREQ A11100 x3, RESET A11200 x3, A00000 x1 (1 as lea/movea base)
   verdict    OK: drive (romfs) and -Dmd-rom
