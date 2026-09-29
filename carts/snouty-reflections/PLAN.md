@@ -1,8 +1,8 @@
-# Plan: M0 scaffold and M1 "Tracer on hardware"
+# Plan: M0 scaffold, M1 "Tracer on hardware", M2 "Materials and shore"
 
 Companion to `SPEC.md`. This file is the contract between the parallel
-tracks; when it and the spec disagree, this file wins for M1 and the spec
-is updated afterwards.
+tracks; when it and the spec disagree, this file wins for the current
+milestone and the spec is updated afterwards.
 
 ## M0 Scaffold (done 2026-09-26)
 
@@ -251,3 +251,216 @@ bootstrap (`unicorn`, `capstone`, `pyelftools`), paths relative to the
 repo, a single `tools/emu/run.sh` that builds the bench ELF, runs frames 0
 and 300 plus an orbit sweep, checks against the reference, and prints the
 per-class table and modelled ms. Documented in `docs/RUNNING.md`.
+
+## M2 Materials and shore (2026-09-29)
+
+Adrian's decisions (2026-09-29): lock 20 fps at full resolution (SPEC
+section 17 question 2), and let the benchmark decide real against fake
+refraction, behind one switch (question 5). The M1 hardware gate is
+replaced by the calibrated badge-bench model (worst orbit frame 42.19 ms
+at m1.1, frame 557; mean 38.1 ms).
+
+**Budget.** The worst frame of 600, default Bayer dither, calibrated busy
+ms from `badge-bench/bench.sh zig-out/firmware/snouty-reflections.elf
+--frames 600` (run from the repository root), must be **at most 47.0 ms**.
+That leaves 3 ms under the 50 ms frame for model drift. If the full
+feature set does not fit, the knobs below are turned in the listed order
+until it does, and the result is recorded in the status at the end of this
+section.
+
+### Tracks
+
+| Track | Owner | Files |
+|-------|-------|-------|
+| A tracer | Opus agent | `cart/src/trace.zig`, `scene.zig`, `water.zig`, `camera.zig`, `math.zig`, `main.zig` (render loop only) |
+| B shore art | Opus agent | `tools/gen_shore.py`, `cart/src/shore_data.zig`, `cart/src/shore_texels.bin`, `tools/shore_palette.json`, `docs/shore_texture.png` |
+| C reference and harness | Opus agent | `tools/reference.py`, `tools/check_render.mjs`, `tools/scripts/*.json`, `docs/RUNNING.md` |
+
+Integration (me): merge, `check_render` on the check frames, badge-bench
+before/after, knob decisions, SPEC update, GIF, tag `snouty-reflections/m2`.
+The plan commit ships a stub `shore_data.zig` + `shore_texels.bin` in the
+final format so A and C can work before B lands.
+
+### The M2 scene, exactly
+
+Everything in "The M1 scene, exactly" holds unless changed here. The
+chrome sphere, camera, sun, sky and ripple waves are unchanged.
+
+**Materials.**
+
+| Object | Definition |
+|--------|------------|
+| Chrome sphere | centre `(0, 1.0, 0)`, radius 1.0, tint `(0.95, 0.93, 0.90)`, shadow opacity 1.0 |
+| Glass sphere | centre `G = (-1.9, 0.75, 1.3)`, radius `rg = 0.7`, IOR 1.5, tint `glass_tint = (0.90, 0.96, 1.00)`, `f0 = 0.04`, shadow opacity 0.55 |
+| Shore | plane `z = 14`, facing `-z`, covering `x` in `(-16, 16]`, `y` in `[0, 4)`, textured, alpha by index 0 |
+| Water | as M1, plus shadows and a scatter term (below), and the new fade |
+
+Spheres never contain the camera (orbit radius 4.5, glass extends to 3.0
+from the axis) and are always nearer than the shore along any ray (all
+ray origins and both spheres have `z < 5`), so the visibility order is:
+nearest sphere, then shore, then water, then sky.
+
+**Shore hit.** Only for `d.z > 0`:
+
+```
+ts = (14 - o.z) / d.z;  xs = o.x + d.x * ts;  ys = o.y + d.y * ts
+if 0 <= ys < 4 and -16 < xs <= 16:
+    u = min(255, floor((16 - xs) * 8))      # mirrored: reads left to right from the lake
+    v = min(31,  floor((4 - ys) * 8))       # row 0 is the top
+    i = texel(u, v)                         # 4-bit index, see "Shore texture format"
+    if i != 0: hit, colour = palette[i]     # linear RGB, already lit; no further shading
+```
+
+A downward ray that satisfies `ys >= 0` reaches the shore before the water
+(`ys >= 0` means the water hit lies beyond `z = 14`), so the shore test
+comes before the water test. Transparent texels and misses fall through to
+water (`d.y < 0`) or sky.
+
+**Glass shading.** At a glass hit `p` (ray from outside), `n = (p - G) / rg`,
+`c = -dot(d, n)` (> 0):
+
+```
+refract(I, N, eta, c):  k = max(0, 1 - eta^2 (1 - c^2));  return eta I + (eta c - sqrt(k)) N
+
+F   = schlick(c, 0.04)
+r   = reflect(d, n)
+d1  = refract(d, n, 1/1.5, c)                           # entering
+t1  = -2 dot(p - G, d1);  q = p + d1 t1                 # exit point, second chord end
+n2  = (q - G) / rg;  c2 = dot(d1, n2)
+d2  = refract(d1, -n2, 1.5, c2)                         # leaving; a sphere has no TIR on exit
+glass(depth < 2)  = F * trace(p, r, depth+1) + (1 - F) * glass_tint * trace(q, d2, depth+1)
+glass(depth == 2) = glass_far = (0.45, 0.33, 0.35)      # constant, only ever a few pixels
+```
+
+Internal reflection at the exit is dropped (the transmitted part keeps
+`1 - F`). `d2` is renormalised if the implementation drifts; the reference
+uses exact normalise. The reflected ray cannot hit the glass again and the
+exit ray cannot either (convex), so neither tests it.
+
+**Fake glass** (`glass_mode = .fake`, knob 1): no exit intersection;
+`d2 = normalize(d1)` traced from `p`, the rest identical. The reference
+implements both (`--glass real|fake`), default matching the cart.
+
+**Water shading** (replaces the M1 water rule; only `base` and the shadow
+are new):
+
+```
+sh    = product over spheres S (centre c, radius rs, opacity a):
+            oc = c - p;  b = dot(oc, L)
+            if b <= 0: 1
+            else:      q2 = dot(oc, oc) - b*b
+                       1 - a * (1 - smoothstep(0.72 rs^2, 1.21 rs^2, q2))
+base  = water_deep + water_scatter * sh          water_scatter = 0.08 * sun_col = (0.08, 0.068, 0.048)
+spec  = max(0, dot(r, L))^64 * sh
+return lerp(base, refl, f) + sun_col * (0.5 * spec)
+```
+
+Shadows apply to every water hit at every depth (knob 2 narrows this).
+`refl` at depth 2 is now `env(r)`: shore if the shore test hits, else
+`sky(r)`. The same `env` rule applies to every sky lookup, so a depth-2
+water reflection shows the shore.
+
+**Chrome** at depth 2 is unchanged (lambert, no shadow). A chrome
+reflection at depth < 2 now can hit the glass, the shore, the water or the
+sky.
+
+**Ripple fade** (the horizon moiré fix): `g = 1 / (1 + fade_k * dist)`,
+`fade = g * g`, `fade_k = 0.05`. `dist` is as in M1. The integrator may
+retune `fade_k` alone, in both implementations together.
+
+### Shore texture format
+
+`cart/src/shore_texels.bin`: 256 x 32 texels, 4-bit palette indices, two
+per byte, row-major from the top row: texel `(u, v)` is in byte
+`v * 128 + u / 2`, low nibble for even `u`, high nibble for odd `u`
+(4096 bytes). Index 0 is transparent.
+
+`cart/src/shore_data.zig` (generated, do not edit):
+
+```zig
+pub const width = 256;
+pub const height = 32;
+pub const palette: [16][3]f32 = .{ ... };     // linear RGB in [0, 1]; entry 0 unused
+pub const texels: *const [4096]u8 = @embedFile("shore_texels.bin");
+```
+
+`tools/shore_palette.json`: the same palette as `[[r, g, b], ...]`, for
+`reference.py`. `tools/gen_shore.py` writes all three plus
+`docs/shore_texture.png` (4x preview, transparent shown as magenta);
+`python3 tools/gen_shore.py` from the cart directory regenerates them
+deterministically. Generated art only, per the art policy: no external
+downloads, Snouty derived from the existing run-cycle standing frame in
+`../snouty-run/assets/` and recoloured to the palette.
+
+Content, left to right as seen from the lake: a jetty with Snouty standing
+on it (about 24 to 28 texels tall), "ANTITHESIS" in a chunky 8x12 font,
+a treeline silhouette along the top edge of the whole band with varying
+height (its sky gaps are index 0). The shore is on the +z side and faces
+the sun (which lies toward -z), so it is front-lit whenever it is in view,
+with the sun behind the camera: the palette is warm and sunset-lit, and
+the glitter half of the orbit and the shore half alternate. The bottom rows meet the water
+(a shoreline strip of 2 to 3 texels) so the reflection joins up.
+
+### Knobs
+
+All in `scene.zig` under one `// M2 knobs` block, each with a comment
+stating its modelled cost as measured:
+
+1. `glass_mode: enum { real, fake }` (default real).
+2. `water_shadows: enum { all, primary_only, off }` (default all):
+   `primary_only` shadows only depth-0 water hits.
+3. `glass_secondary: enum { full, env }` (default full): `env` makes the
+   glass at depth 1 return `F * env(r) + (1 - F) * glass_tint * env(d2)`
+   instead of tracing the two rays.
+
+The reference takes the same knobs as flags; the integrator runs it with
+the cart's final settings.
+
+### Rules for Track A
+
+- Keep M1's structure: comptime-instantiated `trace` per (depth, from),
+  per-frame screen spans so primary rays skip impossible tests. Extend the
+  sphere span to the glass sphere (two spans per column; rows in either run
+  the full test), and add whatever per-frame bounds pay for themselves
+  (for example a world-space box around each shadow on the water: spheres
+  and sun are static in M2, so this box can be comptime).
+- New `From` values as needed (reflection off glass, glass exit ray).
+  Every ray type tests only what it can hit.
+- Keep `hit_sphere`'s `stable` and `on_water` forms for the chrome sphere;
+  write the glass test the same way (`on_water` generalises to
+  `oc = (o.x - Gx, -Gy, o.z - Gz)`).
+- Add `const bench_split = false;` in `trace.zig`: when true, the shading
+  functions for glass, shore and water shadow are `noinline` so
+  `bench.sh --symbols` attributes their cycles. Report the split with it on,
+  ship it off.
+- `.text + .data` must stay under 120 KB (m1.1: 97 KB). If glass
+  instantiation per depth pushes it over, mirror the `inv_len` table in y
+  (saves ~20 KB, PLAN M1.1 notes).
+- Measure after each feature (shore, then shadows, then glass): worst and
+  mean over 600 frames. Report the numbers per step.
+- No `f64`, no runtime `std.math`; `zig build check-float` passes.
+
+### Check frames
+
+`check_render.mjs` against `reference.py` in dither mode `none` on frames
+0, 150, 300, 450 and the bench's worst frame. The M1 rule gains an
+outlier allowance for nearest-texel shore edges, the shadow edge and
+grazing glass silhouettes, where f32 and f64 legitimately pick different
+sides: PASS if at most 1% of pixels differ by more than 1 unit and at most
+0.25% (51 pixels) by more than 6 units. The report prints both counts and
+writes a diff PNG with the >6 outliers marked, so they can be eyeballed.
+
+### Done criteria for M2
+
+1. `zig build -Dcart=snouty-reflections` clean; `.text + .data` < 120 KB;
+   `zig build check-float` passes.
+2. `check_render` PASS on the check frames with the shipped knobs.
+3. Worst frame at most 47.0 ms calibrated busy (600 frames, default
+   dither); before/after table and per-feature split recorded below.
+4. `docs/preview_m2.gif` (600 frames every 6), `docs/shore_texture.png`.
+5. SPEC status and section 17 answers updated; tag `snouty-reflections/m2`;
+   pull-and-run note.
+
+### M2 status
+
+- 2026-09-29: plan written; tracks A, B, C started.

@@ -399,3 +399,8 @@ ships the text changes).
   modelled, down from ~50; every change is lossless against the
   reference. 80x64 upscale kept for a later A/B. Still awaiting the
   hardware number.
+- 2026-09-29: calibrated badge-bench (fitted on a real badge) puts m1.1's
+  worst orbit frame at 42.19 ms: the "20 to 29 fps" row of section 10, so
+  lock 20 at full resolution. Adrian's answers: question 2 full res at
+  20 fps; question 5 let the benchmark decide, one switch. M2 planned in
+  PLAN.md with a 47 ms worst-frame budget.
