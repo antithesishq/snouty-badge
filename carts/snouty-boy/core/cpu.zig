@@ -95,7 +95,7 @@ pub fn step(gb: *Gb) u8 {
     } else {
         c.pc +%= 1;
     }
-    const m = execute(gb, op);
+    const m = @call(.always_inline, execute, .{ gb, op });
     // Reads after the instruction (frontend, tests) see PC == op_pc and so
     // never tick from `Gb.sync_for_read`.
     gb.op_pc = c.pc;
