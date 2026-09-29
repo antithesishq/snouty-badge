@@ -320,9 +320,17 @@ PLAYING -> Start -> PAUSED -> Start -> PLAYING
 ```
 
 Takeover keeps the world as is and hands the controls over on the next
-tick, with the meter refilled, as in `snouty-bugs`. The demo log is
-recorded in the simulator with `preview.mjs --record` (already planned as
-the fallback in the bugs cart) and committed as `demos/build_farm.bin`.
+tick, with the meter refilled (recorded as a rewind patch so the keyframe
+self-check keeps agreeing). Select does not take over. The demo is a
+fixed seed plus a run-length input log: authored as a `preview.mjs`
+script (`tools/scripts/demo_build_farm.json`), baked into `.text` by
+`tools/gen_demo.py` as `cart/src/demos/build_farm.zig` together with the
+`sim.hash_gameplay` the simulator recorded after the last tick
+(`tools/record_demo.sh`). When the log runs out the cart compares its own
+hash with the recorded one and the title shows "DEMO OK" or "DEMO
+DESYNC": the attract mode doubles as the hardware determinism test of
+section 9.3. The demo also ends on a 3 min cap, after 2 s dead without a
+rewind in the log, or once the level ends (no result in those cases).
 
 ## 12. Audio and neopixels
 
@@ -442,8 +450,9 @@ M1's timing check is one photo of the badge).
   --expect "debug_desync == 0"` for walk-through, door/key, combat,
   rewind-past-death and takeover scripts. Every milestone ships a GIF.
 - `check_determinism.mjs`: runs a script twice with a rewind inserted in
-  the second run and asserts equal `debug_state_hash` at the end, and
-  replays `demos/build_farm.bin` asserting the recorded final hash.
+  the second run and asserts equal `debug_state_hash` at the end;
+  `check.sh` replays the embedded demo (`--call debug_start_demo`) and
+  asserts `debug_demo_result == 1` (the recorded final hash matched).
 - Hardware, M1 gate: FPS overlay reads 60 and `debug_render_us` stays under
   8,000 while facing the longest corridor in the test level with 6 sprites
   in view. Anything worse triggers the section 5 fallbacks before M2.
