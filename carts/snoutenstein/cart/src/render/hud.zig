@@ -47,6 +47,10 @@ const meter_w: u32 = 36;
 const meter_h: u32 = 6;
 const max_rewind: u32 = 600;
 
+/// While rewinding: the meter the bar shows (clock text and fill) instead
+/// of `s.player.rewind_meter`, so the clock counts down the budget.
+pub var meter_override: ?u16 = null;
+
 /// Once per displayed tick: advances the portrait's render-only state.
 pub fn tick(s: *const state.GameState) void {
     portrait.tick(s);
@@ -94,7 +98,7 @@ pub fn draw_bar(s: *const state.GameState) void {
 
     // x 120..159: clock glyph and seconds left over the 36x6 meter.
     // (8 + 36 px do not fit side by side in 40, so the glyph sits above.)
-    const meter: u32 = @min(p.rewind_meter, max_rewind);
+    const meter: u32 = @min(meter_override orelse p.rewind_meter, max_rewind);
     const glyph: u32 = if (portrait.rewinding) icon_rewind else icon_clock;
     blit.cell(gfx.hud, 8, 8, glyph, meter_x, row1_y, .{});
     var mbuf: [6]u8 = undefined;
@@ -116,14 +120,22 @@ pub fn draw_title(tick_n: u32, sound_on: bool) void {
 }
 
 /// Death freeze (SPEC.md 9.1): the view is drawn red underneath; this is
-/// the prompt plus a bar for how long B has been held (M3 placeholder:
-/// holding B restarts the level; M4 turns it into the real rewind).
-pub fn draw_dead(held: u32, needed: u32) void {
+/// the prompt plus the rewind available. `meter_ticks` is the budget the
+/// lead passes; it is floored to the 3 s once-per-death reserve here too.
+pub fn draw_dead(meter_ticks: u16) void {
     cart.rect(.{ .x = 20, .y = 40, .width = 120, .height = 28, .fill_color = anti_black });
     centered("HOLD B TO REWIND", 46, coral);
-    const w: u32 = @min(116, held * 116 / @max(needed, 1));
-    cart.rect(.{ .x = 22, .y = 58, .width = 116, .height = 6, .fill_color = trough });
-    if (w > 0) cart.rect(.{ .x = 22, .y = 58, .width = w, .height = 6, .fill_color = iris });
+    const m: u32 = @max(meter_ticks, reserve_ticks);
+    var buf: [16]u8 = undefined;
+    centered(fmt(&buf, "{d}s OF REWIND", .{(m + 59) / 60}), 57, iris);
+}
+
+/// SPEC.md 9.1: dying always leaves at least 3 s of rewind.
+const reserve_ticks: u32 = 180;
+
+/// While rewinding: "<<" at the top left of the view.
+pub fn draw_rewind_marker() void {
+    cart.text(.{ .str = "<<", .x = 0, .y = 0, .text_color = iris, .background_color = anti_black });
 }
 
 pub fn draw_intermission(s: *const state.GameState, level_name: []const u8, total_enemies: u32, ticks: u32) void {
@@ -150,10 +162,13 @@ pub fn draw_pause() void {
     cart.text(.{ .str = "PAUSED", .x = 56, .y = 48, .text_color = anti_white, .background_color = anti_black });
 }
 
-/// M1 gate readout: render microseconds, top-left of the view.
+/// M1 gate readout: render microseconds, top right of the view
+/// (right-aligned, last column x 159) so it never covers the rewind marker.
 pub fn draw_render_us(us: u32) void {
     var buf: [12]u8 = undefined;
-    cart.text(.{ .str = fmt(&buf, "{d}us", .{us}), .x = 0, .y = 0, .text_color = coral, .background_color = anti_black });
+    const str = fmt(&buf, "{d}us", .{us});
+    const x: i32 = @as(i32, cart.screen_width) - @as(i32, @intCast(str.len * cart.font_width));
+    cart.text(.{ .str = str, .x = x, .y = 0, .text_color = coral, .background_color = anti_black });
 }
 
 fn stats_time(s: *const state.GameState, y: i32) void {

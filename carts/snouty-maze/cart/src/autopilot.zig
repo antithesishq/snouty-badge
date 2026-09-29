@@ -2,7 +2,9 @@
 //! left-hand wall follower walk with eased turns, then the finish sequence
 //! PAUSE -> RISE -> OVERHEAD (maze swap) -> DESCEND -> WALK, plus the M3
 //! actor effects: the smiley's 180 degree roll (`flip`) and the sphere's
-//! TELEPORT (fade out, move, fade in). Drives `camera.cam`. No cart API:
+//! TELEPORT (fade out, move, fade in), and the M4 joystick takeover
+//! (MANUAL: grid-locked moves, idle return to WALK). Drives `camera.cam`.
+//! No cart API: main feeds the stick through `stick()`, so this stays
 //! host-testable (tests below, pulled in through camera.zig and actors.zig).
 const std = @import("std");
 const math = @import("math.zig");
@@ -16,8 +18,9 @@ const Dir = maze.Dir;
 
 /// Values are stable: `debug_state` returns them and the harness scripts
 /// compare against them. walk = 0, turn = 1, pause = 2, rise = 3,
-/// overhead = 4, descend = 5, teleport = 6 (M3), fly = 7 (debug).
-pub const State = enum(u32) { walk, turn, pause, rise, overhead, descend, teleport, fly };
+/// overhead = 4, descend = 5, teleport = 6 (M3), fly = 7 (debug),
+/// manual = 8 (M4 takeover). Append new states only.
+pub const State = enum(u32) { walk, turn, pause, rise, overhead, descend, teleport, fly, manual };
 
 pub const walk_ticks_per_cell = 30; // 1/30 cell per tick
 pub const turn90_ticks = 20;
@@ -25,6 +28,9 @@ pub const turn180_ticks = 36;
 pub const pause_ticks = 30;
 pub const rise_ticks = 150;
 pub const overhead_ticks = 120;
+/// OVERHEAD ticks over which the new maze is carved (C4); the rest of
+/// OVERHEAD shows it finished.
+pub const carve_ticks = 90;
 pub const descend_ticks = 150;
 pub const roll_cap_ticks = 1200;
 pub const unroll_ticks = 30;
@@ -32,6 +38,9 @@ pub const flip_ticks = 30;
 pub const teleport_ticks = 12;
 /// TELEPORT tick at which the camera moves (end of the fade out).
 pub const teleport_move_tick = 6;
+/// MANUAL: ticks without any stick held, at rest, before the autopilot
+/// takes over again (5 s).
+pub const manual_idle_ticks = 300;
 
 pub var state: State = .walk;
 /// Ticks spent in the current state (0 on the tick it was entered).
@@ -69,9 +78,42 @@ var anim_dur: u32 = 1;
 var anim_from: Angle = 0;
 var anim_delta: i32 = 0;
 
-// TELEPORT destination.
+// TELEPORT destination; `tele_manual`: the teleport started in MANUAL
+// and returns there.
 var tele_dest: [2]u8 = .{ 0, 0 };
 var tele_dir: Dir = .n;
+var tele_manual: bool = false;
+
+/// Joystick directions, one snapshot per tick (main builds it from input).
+pub const Stick = struct {
+    up: bool = false,
+    down: bool = false,
+    left: bool = false,
+    right: bool = false,
+
+    fn first(s: Stick) ?Command {
+        if (s.up) return .up;
+        if (s.down) return .down;
+        if (s.left) return .left;
+        if (s.right) return .right;
+        return null;
+    }
+};
+const Command = enum { up, down, left, right };
+
+// MANUAL (M4 takeover). `cell` / `walk_tick` / `dir` are shared with WALK;
+// `dir` is the facing, `move_dir` the direction of motion (dir, or its
+// opposite when Down walks back). Turns reuse from_yaw / yaw_delta / dur
+// with `mtick` as the counter.
+const Phase = enum { rest, walk, turn };
+var phase: Phase = .rest;
+var move_dir: Dir = .n;
+var mtick: u32 = 0;
+/// A stick press during a move or pivot, run at the next rest (one slot).
+var queued: ?Command = null;
+var stick_held: Stick = .{};
+/// Ticks since a stick direction was last held (every state; saturates).
+pub var manual_idle: u32 = 0;
 
 pub fn cell_centre(x: u8, z: u8) Vec3 {
     return math.vec3(@as(f32, @floatFromInt(x)) + 0.5, camera.eye_height, @as(f32, @floatFromInt(z)) + 0.5);
@@ -147,7 +189,13 @@ pub fn toggle_fly(m: *const maze.Maze) void {
 
 /// A / debug_skip: jump to PAUSE from wherever the camera is.
 pub fn skip() void {
-    if (state == .walk or state == .turn) enter(.pause);
+    if (walking()) enter(.pause);
+}
+
+/// WALK, TURN or MANUAL: the states where A skips and the smiley and the
+/// sphere trigger.
+pub fn walking() bool {
+    return state == .walk or state == .turn or state == .manual;
 }
 
 pub fn set_roll(r: Angle) void {
@@ -166,21 +214,155 @@ fn start_roll(to: Angle, ticks: u32) void {
 }
 
 /// Smiley: roll the view by +180 degrees over flip_ticks (a flip while
-/// rolled 180 rights the view again). Only in WALK and TURN; a flip during
-/// a running roll animation adds 180 to where that animation was heading.
+/// rolled 180 rights the view again). Only in WALK, TURN and MANUAL; a flip
+/// during a running roll animation adds 180 to where that animation was
+/// heading.
 pub fn flip() void {
-    if (state != .walk and state != .turn) return;
+    if (!walking()) return;
     const target = if (animating) anim_from +% @as(Angle, @truncate(@as(u32, @bitCast(anim_delta)))) else camera.cam.roll;
     start_roll(target +% math.deg(180), flip_ticks);
 }
 
-/// Sphere: fade out, move the camera to `dest` facing `d`, fade in, WALK.
-/// Only from WALK and TURN.
+/// Sphere: fade out, move the camera to `dest` facing `d`, fade in, then
+/// WALK (or MANUAL at rest if it started in MANUAL). Only from WALK, TURN
+/// and MANUAL.
 pub fn begin_teleport(dest: [2]u8, d: Dir) void {
-    if (state != .walk and state != .turn) return;
+    if (!walking()) return;
     tele_dest = dest;
     tele_dir = d;
+    tele_manual = state == .manual;
     enter(.teleport);
+}
+
+/// Feeds this tick's stick (`held`, and `pressed` = went down this tick);
+/// call before `step`, in every state but FLY. A press in WALK or TURN
+/// takes over (MANUAL); in PAUSE, RISE, OVERHEAD, DESCEND and TELEPORT the
+/// stick is ignored.
+pub fn stick(m: *const maze.Maze, held: Stick, pressed: Stick) void {
+    stick_held = held;
+    if (held.first() != null) manual_idle = 0 else manual_idle +|= 1;
+    const cmd = pressed.first() orelse return;
+    switch (state) {
+        .walk, .turn => enter_manual(m, cmd),
+        .manual => manual_press(m, cmd),
+        else => {},
+    }
+}
+
+/// Takeover. From TURN the pivot finishes first; from WALK mid-cell the
+/// camera keeps going to the next centre (Down reverses it back to the
+/// cell it left, Up needs nothing more); at a centre the press runs at once.
+fn enter_manual(m: *const maze.Maze, cmd: Command) void {
+    const was = state;
+    const t = state_tick;
+    enter(.manual);
+    queued = null;
+    manual_idle = 0;
+    if (was == .turn) {
+        phase = .turn;
+        mtick = t;
+    } else if (walk_tick > 0) {
+        phase = .walk;
+        move_dir = dir;
+        if (cmd == .up) return;
+    } else {
+        phase = .rest;
+    }
+    manual_press(m, cmd);
+}
+
+/// A press in MANUAL: while walking, the opposite of the motion reverses
+/// it back to the cell it came from; anything else waits for the next rest.
+fn manual_press(m: *const maze.Maze, cmd: Command) void {
+    if (phase == .walk) {
+        const fwd = move_dir == dir;
+        if ((cmd == .down and fwd) or (cmd == .up and !fwd)) {
+            cell = m.neighbour(cell[0], cell[1], move_dir) orelse cell;
+            move_dir = move_dir.opposite();
+            walk_tick = walk_ticks_per_cell - walk_tick;
+            queued = null;
+            return;
+        }
+    }
+    queued = cmd;
+}
+
+/// MANUAL at a cell centre, level on a quadrant: run the queued press or
+/// the held direction (held buttons repeat), a wall in the way is no move;
+/// with nothing to do and `manual_idle_ticks` idle, back to WALK.
+fn manual_rest(m: *const maze.Maze) void {
+    phase = .rest;
+    const cmd = queued orelse stick_held.first() orelse {
+        if (manual_idle >= manual_idle_ticks) {
+            walk_tick = 0;
+            enter(.walk);
+            decide(m);
+        }
+        return;
+    };
+    queued = null;
+    switch (cmd) {
+        .up, .down => {
+            const md = if (cmd == .up) dir else dir.opposite();
+            if (m.has_wall(cell[0], cell[1], md)) return;
+            move_dir = md;
+            walk_tick = 0;
+            phase = .walk;
+        },
+        .left, .right => {
+            const nd = if (cmd == .left) dir.left() else dir.right();
+            from_yaw = camera.cam.yaw;
+            yaw_delta = short_delta(from_yaw, camera.dir_yaw(nd));
+            dur = turn90_ticks;
+            dir = nd;
+            mtick = 0;
+            phase = .turn;
+        },
+    }
+}
+
+/// Reached a centre in MANUAL (walk, or teleport): finish -> PAUSE.
+fn manual_arrive(m: *const maze.Maze) void {
+    if (cell[0] == m.finish[0] and cell[1] == m.finish[1]) {
+        enter(.pause);
+        return;
+    }
+    manual_rest(m);
+}
+
+fn step_manual(m: *const maze.Maze) void {
+    const c = &camera.cam;
+    state_tick += 1;
+    // A move started at rest takes its first step on the same tick, so a
+    // press moves the camera at once and held moves never stall.
+    if (phase == .rest) {
+        manual_rest(m);
+        if (state != .manual or phase == .rest) return;
+    }
+    switch (phase) {
+        .walk => {
+            walk_tick += 1;
+            const s = @as(f32, @floatFromInt(walk_tick)) * (1.0 / @as(f32, walk_ticks_per_cell));
+            const base = cell_centre(cell[0], cell[1]);
+            c.pos = base + math.vec3(@floatFromInt(move_dir.dx()), 0, @floatFromInt(move_dir.dz())) * @as(Vec3, @splat(s));
+            if (walk_tick >= walk_ticks_per_cell) {
+                cell = m.neighbour(cell[0], cell[1], move_dir) orelse cell;
+                c.pos = cell_centre(cell[0], cell[1]);
+                walk_tick = 0;
+                manual_arrive(m);
+            }
+        },
+        .turn => {
+            mtick += 1;
+            const t = math.smoothstep01(@as(f32, @floatFromInt(mtick)) / @as(f32, @floatFromInt(dur)));
+            c.yaw = angle_at(from_yaw, yaw_delta, t);
+            if (mtick >= dur) {
+                c.yaw = camera.dir_yaw(dir);
+                manual_rest(m);
+            }
+        },
+        .rest => {},
+    }
 }
 
 pub fn teleport_dest() [2]u8 {
@@ -263,6 +445,7 @@ pub fn step(m: *maze.Maze, r: *rng.Xorshift, focal: f32) void {
         },
         .overhead => {
             state_tick += 1;
+            m.reveal(@intCast(@min(@as(u32, m.carve_count), @as(u32, m.carve_count) * state_tick / carve_ticks)));
             if (state_tick >= overhead_ticks) enter_descend(m);
         },
         .teleport => {
@@ -276,13 +459,21 @@ pub fn step(m: *maze.Maze, r: *rng.Xorshift, focal: f32) void {
                 c.pitch = 0;
             }
             if (state_tick >= teleport_ticks) {
-                enter(.walk);
-                decide(m);
+                if (tele_manual) {
+                    enter(.manual);
+                    queued = null;
+                    manual_idle = 0;
+                    manual_arrive(m);
+                } else {
+                    enter(.walk);
+                    decide(m);
+                }
             }
         },
+        .manual => step_manual(m),
         .fly => {},
     }
-    if (state == .walk or state == .turn or state == .pause or state == .teleport) roll_cap();
+    if (walking() or state == .pause or state == .teleport) roll_cap();
 }
 
 /// Where RISE ends: the wall tops (y = 1, the nearest and so largest part
@@ -317,6 +508,7 @@ fn enter_rise(m: *const maze.Maze, focal: f32) void {
 
 fn enter_overhead(m: *maze.Maze, r: *rng.Xorshift) void {
     m.generate(m.w, m.h, r);
+    m.reveal(0);
     actors.reset(m, r, actors.cell_of(camera.cam.pos));
     cycles += 1;
     name_strip_visible = true;
@@ -594,4 +786,200 @@ test "fly resume snaps to a centre and quadrant" {
     try testing.expect(state == .walk or state == .turn);
     try testing.expectEqual(cell_centre(3, 5), camera.cam.pos);
     try testing.expectEqual(@as(Angle, 0), camera.cam.pitch);
+}
+
+// M4 takeover (MANUAL).
+
+fn tick_stick(m: *maze.Maze, r: *rng.Xorshift, held: Stick, pressed: Stick) void {
+    stick(m, held, pressed);
+    step(m, r, test_focal);
+}
+
+/// MANUAL at rest in cell `c` facing `d`, idle timer at 0.
+fn manual_at(c: [2]u8, d: Dir) void {
+    cell = c;
+    dir = d;
+    walk_tick = 0;
+    camera.cam = .{ .pos = cell_centre(c[0], c[1]), .yaw = camera.dir_yaw(d) };
+    animating = false;
+    queued = null;
+    stick_held = .{};
+    manual_idle = 0;
+    phase = .rest;
+    enter(.manual);
+}
+
+/// Steps the autopilot (no stick) until WALK with `walk_tick == k`.
+fn walk_until(m: *maze.Maze, r: *rng.Xorshift, k: u32) void {
+    var guard: u32 = 0;
+    while (!(state == .walk and walk_tick == k)) : (guard += 1) {
+        tick_stick(m, r, .{}, .{});
+        std.debug.assert(guard < 100_000);
+    }
+}
+
+test "takeover from WALK mid-cell continues to the next centre" {
+    var m = test_maze(1, 12);
+    var r = rng.Xorshift.init(5);
+    camera.reset(&m);
+    begin_walk(&m);
+    walk_until(&m, &r, 10);
+    const d = dir;
+    const next = m.neighbour(cell[0], cell[1], d).?;
+    tick_stick(&m, &r, .{ .left = true }, .{ .left = true });
+    try testing.expectEqual(State.manual, state);
+    for (0..19) |_| tick_stick(&m, &r, .{}, .{});
+    // Arrived on tick 20 and the queued Left starts the pivot there.
+    try testing.expectEqual(next, cell);
+    try testing.expectEqual(cell_centre(next[0], next[1]), camera.cam.pos);
+    try testing.expectEqual(State.manual, state);
+    try testing.expectEqual(Phase.turn, phase);
+    for (0..turn90_ticks) |_| tick_stick(&m, &r, .{}, .{});
+    try testing.expectEqual(d.left(), dir);
+    try testing.expectEqual(camera.dir_yaw(d.left()), camera.cam.yaw);
+    try testing.expectEqual(cell_centre(next[0], next[1]), camera.cam.pos);
+    try testing.expectEqual(Phase.rest, phase);
+}
+
+test "takeover during TURN finishes the turn first" {
+    var m = test_maze(1, 12);
+    var r = rng.Xorshift.init(5);
+    camera.reset(&m);
+    begin_walk(&m);
+    var guard: u32 = 0;
+    while (!(state == .turn and state_tick == 5)) : (guard += 1) {
+        tick_stick(&m, &r, .{}, .{});
+        try testing.expect(guard < 100_000);
+    }
+    const target = dir;
+    const left = dur - 5;
+    const pos = camera.cam.pos;
+    tick_stick(&m, &r, .{ .up = true }, .{ .up = true });
+    try testing.expectEqual(State.manual, state);
+    for (1..left) |_| tick_stick(&m, &r, .{}, .{});
+    try testing.expectEqual(camera.dir_yaw(target), camera.cam.yaw);
+    try testing.expectEqual(pos, camera.cam.pos);
+    // The queued Up walks forward (the follower chose an open heading).
+    try testing.expectEqual(Phase.walk, phase);
+    try testing.expectEqual(target, move_dir);
+}
+
+test "Down while walking reverses back to the cell it left, facing forward" {
+    var m = test_maze(1, 12);
+    var r = rng.Xorshift.init(5);
+    camera.reset(&m);
+    begin_walk(&m);
+    walk_until(&m, &r, 10);
+    const c0 = cell;
+    const d = dir;
+    tick_stick(&m, &r, .{ .down = true }, .{ .down = true });
+    try testing.expectEqual(State.manual, state);
+    for (0..8) |_| tick_stick(&m, &r, .{ .down = true }, .{});
+    // Still moving: 9 of the 10 ticks back (the press tick moved one).
+    try testing.expect(!std.meta.eql(cell_centre(c0[0], c0[1]), camera.cam.pos));
+    tick_stick(&m, &r, .{}, .{});
+    try testing.expectEqual(c0, cell);
+    try testing.expectEqual(cell_centre(c0[0], c0[1]), camera.cam.pos);
+    try testing.expectEqual(camera.dir_yaw(d), camera.cam.yaw);
+    try testing.expectEqual(d, dir);
+    try testing.expectEqual(Phase.rest, phase);
+}
+
+test "a wall blocks Up; held Up repeats through open cells" {
+    var m = test_maze(1, 12);
+    var r = rng.Xorshift.init(5);
+    // A cell and heading with a wall ahead.
+    var wc: [2]u8 = .{ 0, 0 };
+    var wd: Dir = .n;
+    for ([_]Dir{ .n, .e, .s, .w }) |o| {
+        if (m.has_wall(wc[0], wc[1], o)) wd = o;
+    }
+    manual_at(wc, wd);
+    for (0..60) |_| tick_stick(&m, &r, .{ .up = true }, .{});
+    try testing.expectEqual(State.manual, state);
+    try testing.expectEqual(cell_centre(wc[0], wc[1]), camera.cam.pos);
+    try testing.expectEqual(camera.dir_yaw(wd), camera.cam.yaw);
+
+    // Find a straight run of three open cells and walk it with Up held.
+    found: for (0..12) |zi| {
+        for (0..12) |xi| {
+            for ([_]Dir{ .n, .e, .s, .w }) |o| {
+                const x: u8 = @intCast(xi);
+                const z: u8 = @intCast(zi);
+                if (m.has_wall(x, z, o)) continue;
+                const n1 = m.neighbour(x, z, o).?;
+                if (m.has_wall(n1[0], n1[1], o)) continue;
+                const n2 = m.neighbour(n1[0], n1[1], o).?;
+                if (std.meta.eql(n1, m.finish) or std.meta.eql(n2, m.finish)) continue;
+                wc = .{ x, z };
+                wd = o;
+                break :found;
+            }
+        }
+    }
+    manual_at(wc, wd);
+    for (0..2 * walk_ticks_per_cell) |_| tick_stick(&m, &r, .{ .up = true }, .{});
+    const n1 = m.neighbour(wc[0], wc[1], wd).?;
+    const n2 = m.neighbour(n1[0], n1[1], wd).?;
+    try testing.expectEqual(n2, cell);
+    try testing.expectEqual(cell_centre(n2[0], n2[1]), camera.cam.pos);
+}
+
+test "idle return: 300 ticks without the stick, back to the wall follower" {
+    var m = test_maze(1, 12);
+    var r = rng.Xorshift.init(5);
+    manual_at(m.start, camera.start_facing(&m));
+    for (0..manual_idle_ticks - 1) |_| tick_stick(&m, &r, .{}, .{});
+    try testing.expectEqual(State.manual, state);
+    try testing.expectEqual(@as(u32, manual_idle_ticks - 1), manual_idle);
+    tick_stick(&m, &r, .{}, .{});
+    try testing.expect(state == .walk or state == .turn);
+    // A held direction keeps the timer at 0.
+    manual_at(m.start, camera.start_facing(&m));
+    for (0..manual_idle_ticks + 50) |_| tick_stick(&m, &r, .{ .left = true }, .{});
+    try testing.expectEqual(State.manual, state);
+}
+
+test "walking into the finish in MANUAL starts PAUSE" {
+    var m = test_maze(1, 12);
+    var r = rng.Xorshift.init(5);
+    var o: Dir = .n;
+    for ([_]Dir{ .n, .e, .s, .w }) |c| {
+        if (!m.has_wall(m.finish[0], m.finish[1], c)) o = c;
+    }
+    const from = m.neighbour(m.finish[0], m.finish[1], o).?;
+    manual_at(from, o.opposite());
+    tick_stick(&m, &r, .{ .up = true }, .{ .up = true });
+    for (1..walk_ticks_per_cell) |_| tick_stick(&m, &r, .{}, .{});
+    try testing.expectEqual(State.pause, state);
+    try testing.expectEqual(m.finish, cell);
+    // A skips from MANUAL too.
+    manual_at(m.start, camera.start_facing(&m));
+    skip();
+    try testing.expectEqual(State.pause, state);
+}
+
+test "a teleport from MANUAL returns to MANUAL with the idle timer restarted" {
+    var m = test_maze(1, 12);
+    var r = rng.Xorshift.init(5);
+    manual_at(m.start, camera.start_facing(&m));
+    for (0..100) |_| tick_stick(&m, &r, .{}, .{});
+    const dest: [2]u8 = .{ 5, 6 };
+    var d: Dir = .n;
+    for ([_]Dir{ .n, .e, .s, .w }) |o| {
+        if (!m.has_wall(dest[0], dest[1], o)) d = o;
+    }
+    begin_teleport(dest, d);
+    try testing.expectEqual(State.teleport, state);
+    for (0..teleport_ticks) |_| tick_stick(&m, &r, .{}, .{});
+    try testing.expectEqual(State.manual, state);
+    try testing.expectEqual(dest, cell);
+    try testing.expectEqual(camera.dir_yaw(d), camera.cam.yaw);
+    try testing.expect(manual_idle < 20);
+    // The full idle wait again before the follower resumes.
+    for (0..manual_idle_ticks - 1) |_| tick_stick(&m, &r, .{}, .{});
+    try testing.expectEqual(State.manual, state);
+    // flip() works in MANUAL.
+    flip();
+    try testing.expect(animating);
 }

@@ -11,7 +11,10 @@
 //! that stepped the console from frame f to frame f + 1, stored at
 //! `log_index(f)`.
 //!
-//! Count. At most `n` keyframes, but the store may hold fewer: when its pool
+//! Count. At most `n` keyframes, `n` chosen at run time (`init`, at most
+//! the comptime `max_n` that sizes the input log): on the badge the page
+//! store is laid out at start, once the ROM and its cart RAM size are known.
+//! The store may hold fewer: when its pool
 //! runs out it evicts the oldest ones, and the caller reports the surviving
 //! count with `set_count` after every snapshot. Eviction only ever removes
 //! from the old end, so ages and frames stay consistent.
@@ -24,19 +27,21 @@
 //! of the newest keyframes to drop from the store.
 const std = @import("std");
 
-pub fn Ring(comptime n: usize, comptime interval: u32) type {
-    if (n < 2) @compileError("a keyframe ring needs at least 2 keyframes");
+pub fn Ring(comptime max_n: usize, comptime interval: u32) type {
+    if (max_n < 2) @compileError("a keyframe ring needs at least 2 keyframes");
     if (interval == 0) @compileError("interval must be positive");
     return struct {
         const Self = @This();
 
-        pub const max_keyframes = n;
+        pub const max_keyframes = max_n;
         pub const frames_per_keyframe = interval;
         /// Input log length in frames. The span from the oldest keyframe to
         /// `live` is at most (n - 1) * interval + interval - 1 frames, so a
-        /// log of n * interval never overwrites a byte still needed.
-        pub const log_len: u32 = n * interval;
+        /// log of max_n * interval never overwrites a byte still needed.
+        pub const log_len: u32 = max_n * interval;
 
+        /// Keyframes at most, 2..max_n (`init`).
+        n: usize = max_n,
         /// Valid keyframes, 1..n after `reset`.
         count: usize = 0,
         /// Newest recorded frame number.
@@ -65,10 +70,15 @@ pub fn Ring(comptime n: usize, comptime interval: u32) type {
             replay: struct { from: u32, to: u32 },
         };
 
+        /// A ring of at most `n` keyframes (clamped to 2..max_n).
+        pub fn init(n: usize) Self {
+            return .{ .n = @min(@max(n, 2), max_n) };
+        }
+
         /// Forget all history. The caller empties the store and snapshots
-        /// the current console as the only keyframe (frame 0).
+        /// the current console as the only keyframe (frame 0). Keeps `n`.
         pub fn reset(r: *Self) void {
-            r.* = .{ .count = 1, .live = 0, .cursor = null };
+            r.* = .{ .n = r.n, .count = 1, .live = 0, .cursor = null };
         }
 
         /// The store could not keep the history (kstore `error.PoolFull`) and
@@ -79,10 +89,18 @@ pub fn Ring(comptime n: usize, comptime interval: u32) type {
             r.count = 1;
         }
 
+        /// Not even the console at `live` fits the store on its own (a small
+        /// arena and a keyframe with many non-zero pages): no history until
+        /// the next keyframe that fits. Stepping is impossible at count 0.
+        pub fn lose_history(r: *Self) void {
+            std.debug.assert(r.cursor == null);
+            r.count = 0;
+        }
+
         /// After a snapshot: the store now holds `c` keyframes (it may have
         /// evicted old ones). Only shrinks.
         pub fn set_count(r: *Self, c: usize) void {
-            std.debug.assert(c >= 1 and c <= r.count);
+            std.debug.assert(c <= r.count);
             r.count = c;
         }
 
@@ -123,7 +141,7 @@ pub fn Ring(comptime n: usize, comptime interval: u32) type {
             const idx = log_index(r.live);
             r.live += 1;
             const snap = r.live % interval == 0;
-            if (snap) r.count = @min(r.count + 1, n);
+            if (snap) r.count = @min(r.count + 1, r.n);
             return .{ .drop_newest = drop, .log_index = idx, .snapshot = snap };
         }
 
@@ -177,7 +195,7 @@ pub fn Ring(comptime n: usize, comptime interval: u32) type {
         /// History as fifths of the ring's full span (n - 1 keyframe gaps),
         /// rounded up: 0 with no history, 5 when the ring is full.
         pub fn history_fraction(r: Self) u8 {
-            const full: u32 = (n - 1) * interval;
+            const full: u32 = @intCast((r.n - 1) * interval);
             const h: u32 = @min(r.history_frames(), full);
             return @intCast((h * 5 + full - 1) / full);
         }

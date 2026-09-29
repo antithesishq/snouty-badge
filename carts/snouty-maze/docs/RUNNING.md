@@ -55,9 +55,12 @@ node tools/check_cycle.mjs    # screensaver loop, actor triggers and LEDs (runs 
 A clean build of this cart takes about 4 minutes (all carts: several);
 incremental builds take seconds.
 `zig build -Dcart=snouty-maze -Ddebug_overlay=true` starts with the timing overlay on (Select
-in fly mode toggles it either way; see section 4).
+in fly mode toggles it either way; see section 4) and compiles in the
+B+Select fly chord. `-Dmaze_size=N` (4..16, default 12) sets the maze size;
+16x16 is not the default because its worst frame is 14.6 ms modelled
+(PLAN.md, "A4 result").
 
-## 4. Controls (M3 screensaver)
+## 4. Controls (M4)
 
 From M2 the cart is a screensaver: the autopilot walks the maze with a
 left-hand wall follower, and at the finish cell pauses, rises to an overhead
@@ -66,20 +69,30 @@ descends to its start cell. The M1 debug camera survives as fly mode. From
 M3 the maze is inhabited: Snouty wanders the corridors, the smiley flips the
 view upside down (a second one rights it) when the camera walks into its
 cell, the sphere teleports the camera to a random cell, the Zig mark spins
-in a junction and the Start button spins in the first cell.
+in a junction and the Start button spins in the first cell. From M4 the
+new maze carves itself during the overhead view (the pink tile is the
+carving head), the Iris mark sits beside the name strip, and the stick takes
+the camera over.
 
-| Input        | Autopilot states                                  | Fly (debug)                        |
-|--------------|---------------------------------------------------|------------------------------------|
-| Select       | Toggle the neopixels (default off)                | Toggle the debug overlay           |
-| Start        | Toggle the name strip permanently on/off          | Reset the camera to the start cell |
-| A            | Skip to PAUSE (start the finish sequence now; ignored during TELEPORT) | + Up/Down: pitch |
-| B + Select   | Toggle fly mode                                   | Back to autopilot (resumes WALK from the nearest cell centre, heading = nearest quadrant) |
-| Stick        | ignored                                           | Walk / turn (M1 controls: 2 cells/s, 90 degrees/s; B + Up/Down rises/sinks) |
+| Input        | Autopilot states                                  | Takeover (MANUAL)                  | Fly (debug builds only)            |
+|--------------|---------------------------------------------------|------------------------------------|------------------------------------|
+| Stick        | While walking or turning: take the camera over    | Up / Down: one cell forward / back (held repeats); Left / Right: pivot 90 degrees; a wall blocks the move | Walk / turn (M1 controls: 2 cells/s, 90 degrees/s; B + Up/Down rises/sinks) |
+| Select       | Toggle the neopixels (default off)                | Toggle the neopixels               | Toggle the debug overlay           |
+| Start        | Toggle the name strip permanently on/off          | Same                               | Reset the camera to the start cell |
+| A            | Skip to PAUSE (start the finish sequence now; ignored during TELEPORT) | Same         | + Up/Down: pitch                   |
+| B + Select   | Toggle fly mode (only with `-Ddebug_overlay=true`) | Same                              | Back to autopilot (resumes WALK from the nearest cell centre, heading = nearest quadrant) |
 
-The overlay flag persists across the mode switch, so to read `render_us`
-during the screensaver press B+Select, Select, B+Select (into fly, overlay
-on, back to autopilot). `zig build -Ddebug_overlay=true` still starts with
-it on.
+Takeover: a stick press during WALK or TURN starts MANUAL (other states
+ignore the stick). Mid-cell the camera finishes the step to the next cell
+centre (Down reverses it), and a turn in progress finishes first; a tap
+during a move is queued for the next cell centre. After 5 s (300 ticks)
+with no stick input the autopilot resumes from the current cell and
+heading. Walking into the finish cell starts the finish sequence; the
+smiley and sphere still work, and a teleport returns to MANUAL.
+
+The overlay flag persists across the mode switch, so in a
+`-Ddebug_overlay=true` build (which starts with it on anyway) B+Select,
+Select, B+Select toggles it during the screensaver.
 
 ### LEDs
 
@@ -91,11 +104,12 @@ show the same colour:
 | When | Colour |
 |------|--------|
 | WALK, TURN, PAUSE, RISE, DESCEND, FLY | dim brick (r 6, g 2, b 1) |
+| MANUAL (takeover) | amber (r 6, g 4, b 0) |
 | smiley flip | purple (r 6, b 10) added on top, fading out over 90 ticks (1.5 s) |
 | TELEPORT | white (10, 10, 10) |
 | OVERHEAD | brick hue breathing, red 1..10, one breath per 3 s |
 
-B+Select is a debug chord; it goes away in M4 when takeover lands.
+B+Select is a debug chord, compiled in only with `-Ddebug_overlay=true` (M4).
 
 The OS owns Start+Select (back to the menu) and the joystick click (its FPS
 overlay); the cart never binds either.
@@ -180,8 +194,8 @@ node ../../tools/preview.mjs ../../zig-out/bin/snouty-maze.wasm --frames 1 --out
 
 The M1 fly-through (walks 3 cells, turns right, walks 3, then climbs with B+Up
 while pitching down with A+Down, ending overhead). It drives the M1 debug
-camera, so from M2 on it only does this on the `snouty-maze/m1` tag (the autopilot
-ignores the stick):
+camera, so it only does this on the `snouty-maze/m1` tag (M2 and M3 ignore the
+stick; from M4 holding Up takes the camera over instead):
 
 ```sh
 node ../../tools/preview.mjs ../../zig-out/bin/snouty-maze.wasm --script tools/scripts/m1_fly.json \
@@ -262,7 +276,7 @@ M3 actor and LED exports:
 ### Screensaver loop: `tools/check_cycle.mjs`
 
 ```sh
-node tools/check_cycle.mjs                # runs A..F
+node tools/check_cycle.mjs                # runs A..I
 node tools/check_cycle.mjs --only B,D     # just the overhead and flip checks
 node tools/check_cycle.mjs --frames 20000 # longer unattended run for A
 ```
@@ -285,6 +299,12 @@ Each run is one `preview.mjs --quiet` with `--call`s, `--press`es and
   `debug_fade_level == 0`
 - F leds: Select at tick 0, 10 ticks; `debug_leds == 1` and
   `0 < debug_led_max <= 10`
+- G takeover: Up held for ticks 0..44; `debug_state == 8` (MANUAL) and
+  the camera moved to cell (1, 0)
+- H idle return: Right at tick 0, 400 ticks; back in WALK or TURN
+  (`debug_manual_idle` counts the idle ticks)
+- I carving: A at tick 0, 200 ticks (OVERHEAD tick 19); `debug_state == 4`
+  and `debug_carve_shown < debug_carve_count`
 
 It prints PASS/FAIL per run with the final state, cycle count, cell and
 heading (plus the run's own exports), and preview's error lines on a
@@ -352,15 +372,13 @@ the `gfx` module. Goldens in `tests/golden/` are baselined on the w95 art.
   cart).
 - The cart's own overlay shows render time in microseconds and fps on the
   first line, the camera cell and heading (`x,z  N/E/S/W`) on the second,
-  so a photo of the screen records where the camera was. From M3, Select
-  in the autopilot states toggles the LEDs instead, so the overlay is
-  toggled in fly mode: B+Select (fly), Select (overlay on), B+Select (back
-  to the screensaver; the overlay stays on). `zig build -Dcart=snouty-maze
-  -Ddebug_overlay=true` starts with it on.
+  so a photo of the screen records where the camera was. Build with
+  `zig build -Dcart=snouty-maze -Ddebug_overlay=true` to have it on (from
+  M4 that build is also the only one with the B+Select fly chord).
 
 For the M1 hardware gate (SPEC.md section 16), report fps and render
 microseconds at the start cell looking down the longest corridor and at the
-overhead view (B+Up to about height 13, A+Down until looking straight down;
+overhead view (in a `-Ddebug_overlay=true` build: B+Select into fly, B+Up to about height 13, A+Down until looking straight down;
 with a 16x16 maze if the build offers one). For M3, also report the
 screensaver's render microseconds while an actor is in view (Snouty close
 up is the worst case) and during the overhead view.

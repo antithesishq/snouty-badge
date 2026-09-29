@@ -1,6 +1,7 @@
 //! Neopixels (SPEC section 9): off by default, Select toggles. Dim brick
 //! while walking, a purple pulse on a smiley flip, white during a
-//! teleport, slow breathing overhead. Every channel stays at or below 10.
+//! teleport, slow breathing overhead, amber in MANUAL (M4 takeover).
+//! Every channel stays at or below 10.
 //!
 //! PLAN.md M3 "LEDs": the base colour comes from the autopilot state, a
 //! change in `flips` adds a 90-tick fading purple pulse on top, each
@@ -23,6 +24,9 @@ pub const breath_ticks: u32 = 180;
 const Rgb = struct { r: u8, g: u8, b: u8 };
 
 const brick: Rgb = .{ .r = 6, .g = 2, .b = 1 };
+/// MANUAL (joystick takeover): brick shifted to amber, so the badge shows
+/// who is driving.
+const amber: Rgb = .{ .r = 6, .g = 4, .b = 0 };
 const purple: Rgb = .{ .r = 6, .g = 0, .b = 10 };
 const white: Rgb = .{ .r = 10, .g = 10, .b = 10 };
 
@@ -59,6 +63,7 @@ fn colour(state: autopilot.State, pulse: u32) Rgb {
     var c: Rgb = switch (state) {
         .teleport => white,
         .overhead => breath(),
+        .manual => amber,
         else => brick,
     };
     if (pulse > 0) {

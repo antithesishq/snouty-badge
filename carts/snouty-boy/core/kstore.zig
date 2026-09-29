@@ -18,7 +18,8 @@
 //! the previous keyframe. A pool of at least `pages_for(lens)` pages always
 //! holds one keyframe, so `reset` + `put` cannot fail then.
 //!
-//! No allocator, no floats, fixed arrays, deterministic. Compare and copy go
+//! No allocator, no floats, deterministic. The memory is handed to `init`
+//! and sized at run time (`bytes_for`, `pages_fitting`). Compare and copy go
 //! word by word (`u32`, unaligned loads on the console side, which
 //! Cortex-M33 allows for LDR/STR); pool pages are 4-byte aligned.
 const std = @import("std");
@@ -44,27 +45,34 @@ pub const Error = error{
     PoolFull,
 };
 
-/// `page_size`: bytes per page, a multiple of 4. `pool_pages`: pages of
-/// storage. `max_keyframes`: ring capacity (at most 255, the reference
-/// count is a u8). `max_pages`: page references per keyframe, at least
-/// `pages_for(page_size, lens)` of the regions the store will see.
-pub fn Store(
-    comptime page_size: usize,
-    comptime pool_pages: usize,
-    comptime max_keyframes: usize,
-    comptime max_pages: usize,
-) type {
+/// Bytes of memory `Store.init` needs for `pool_pages` pages and tables
+/// for `max_keyframes` keyframes of `max_pages` references each: the pool,
+/// the tables, the free list and the reference counts, in that order.
+pub fn bytes_for(page_size: usize, pool_pages: usize, max_keyframes: usize, max_pages: usize) usize {
+    return pool_pages * page_size + max_keyframes * max_pages * 2 + pool_pages * 2 + pool_pages;
+}
+
+/// The most pool pages that fit `bytes` next to the tables for
+/// `max_keyframes` keyframes of `max_pages` references (0 if not even the
+/// tables fit), capped below `zero_ref`.
+pub fn pages_fitting(page_size: usize, bytes: usize, max_keyframes: usize, max_pages: usize) usize {
+    const tables = max_keyframes * max_pages * 2;
+    if (bytes <= tables) return 0;
+    return @min((bytes - tables) / (page_size + 3), zero_ref - 1);
+}
+
+/// `page_size`: bytes per page, a multiple of 4. Everything else is a run
+/// time number given to `init` with the memory to lay the store out in (on
+/// the badge the RAM above `.bss`, sized once the ROM is known, PLAN.md
+/// M8): `pool_pages` pages of storage, a ring of `max_keyframes` tables
+/// (2..255, the reference count is a u8) of `max_pages` references each, at
+/// least `pages_for(page_size, lens)` of the regions the store will see.
+pub fn Store(comptime page_size: usize) type {
     if (page_size == 0 or page_size % 4 != 0) @compileError("page_size must be a positive multiple of 4");
-    if (pool_pages == 0 or pool_pages >= zero_ref) @compileError("pool_pages out of range");
-    if (max_keyframes < 2 or max_keyframes > 255) @compileError("max_keyframes must be 2..255");
-    if (max_pages == 0) @compileError("max_pages must be positive");
     return struct {
         const Self = @This();
 
         pub const page_bytes = page_size;
-        pub const capacity_pages = pool_pages;
-        pub const capacity_keyframes = max_keyframes;
-        pub const table_pages = max_pages;
         pub const Ref = u16;
         pub const Regions = [region_count][]u8;
         pub const ConstRegions = [region_count][]const u8;
@@ -72,15 +80,18 @@ pub fn Store(
         const Page = [page_size / 4]u32;
 
         /// Page storage, 4-byte aligned by type.
-        pool: [pool_pages]Page = undefined,
+        pool: []Page = &.{},
         /// References to each pool page from keyframe tables (0 = free).
-        refs: [pool_pages]u8 = @splat(0),
+        refs: []u8 = &.{},
         /// Stack of free pool pages; `free[0..n_free]` are free.
-        free: [pool_pages]Ref = undefined,
+        free: []Ref = &.{},
         n_free: usize = 0,
-        /// Keyframe tables in a ring: slot `(head + max - age) % max` holds
-        /// the keyframe of `age` (0 = newest).
-        tables: [max_keyframes][max_pages]Ref = undefined,
+        /// Keyframe tables in a ring, `max_pages` references each: table
+        /// `(head + max_keyframes - age) % max_keyframes` holds the keyframe
+        /// of `age` (0 = newest).
+        tables: []Ref = &.{},
+        max_keyframes: usize = 0,
+        max_pages: usize = 0,
         head: usize = 0,
         count: usize = 0,
         /// Pages per keyframe, fixed by the first `put` after `reset`.
@@ -96,13 +107,45 @@ pub fn Store(
         /// Keyframes evicted to make room.
         last_evicted: usize = 0,
 
-        /// Empty store with every pool page free. Call once before use (a
-        /// `var s: Store = .{}` must be `reset` too; `undefined` + `reset`
-        /// is fine and avoids a large struct literal).
+        /// A store laid out in `mem` (4-byte aligned, at least
+        /// `bytes_for(page_size, pool_pages, max_keyframes, max_pages)`
+        /// bytes), reset.
+        /// Nothing in `mem` needs to be initialised.
+        pub fn init(mem: []align(4) u8, pool_pages: usize, max_keyframes: usize, max_pages: usize) Self {
+            std.debug.assert(pool_pages > 0 and pool_pages < zero_ref);
+            std.debug.assert(max_keyframes >= 2 and max_keyframes <= 255);
+            std.debug.assert(max_pages > 0);
+            std.debug.assert(mem.len >= bytes_for(page_size, pool_pages, max_keyframes, max_pages));
+            var off: usize = 0;
+            const pool: [*]Page = @ptrCast(mem.ptr);
+            off += pool_pages * page_size;
+            const tables: [*]Ref = @ptrCast(@alignCast(mem.ptr + off));
+            off += max_keyframes * max_pages * 2;
+            const free: [*]Ref = @ptrCast(@alignCast(mem.ptr + off));
+            off += pool_pages * 2;
+            var s: Self = .{
+                .pool = pool[0..pool_pages],
+                .tables = tables[0 .. max_keyframes * max_pages],
+                .free = free[0..pool_pages],
+                .refs = mem[off..][0..pool_pages],
+                .max_keyframes = max_keyframes,
+                .max_pages = max_pages,
+            };
+            s.reset();
+            return s;
+        }
+
+        /// Pages of storage.
+        pub fn capacity_pages(s: *const Self) usize {
+            return s.pool.len;
+        }
+
+        /// Empty store with every pool page free.
         pub fn reset(s: *Self) void {
-            s.n_free = pool_pages;
-            for (&s.free, 0..) |*f, i| f.* = @intCast(pool_pages - 1 - i);
-            @memset(&s.refs, 0);
+            const n = s.pool.len;
+            s.n_free = n;
+            for (s.free, 0..) |*f, i| f.* = @intCast(n - 1 - i);
+            @memset(s.refs, 0);
             s.head = 0;
             s.count = 0;
             s.n_pages = 0;
@@ -113,7 +156,7 @@ pub fn Store(
         }
 
         pub fn pages_in_use(s: *const Self) usize {
-            return pool_pages - s.n_free;
+            return s.pool.len - s.n_free;
         }
 
         pub fn bytes_in_use(s: *const Self) usize {
@@ -122,7 +165,12 @@ pub fn Store(
 
         fn slot_of_age(s: *const Self, age: usize) usize {
             std.debug.assert(age < s.count);
-            return (s.head + max_keyframes - age) % max_keyframes;
+            return (s.head + s.max_keyframes - age) % s.max_keyframes;
+        }
+
+        /// The first `n_pages` references of table `slot`.
+        fn table(s: *const Self, slot: usize) []Ref {
+            return s.tables[slot * s.max_pages ..][0..s.n_pages];
         }
 
         fn release(s: *Self, r: Ref) void {
@@ -143,7 +191,7 @@ pub fn Store(
         pub fn drop_oldest(s: *Self, n: usize) void {
             var k = @min(n, s.count);
             while (k > 0) : (k -= 1) {
-                s.release_table(s.tables[s.slot_of_age(s.count - 1)][0..s.n_pages]);
+                s.release_table(s.table(s.slot_of_age(s.count - 1)));
                 s.count -= 1;
             }
         }
@@ -153,8 +201,8 @@ pub fn Store(
         pub fn drop_newest(s: *Self, n: usize) void {
             var k = @min(n, s.count);
             while (k > 0) : (k -= 1) {
-                s.release_table(s.tables[s.head][0..s.n_pages]);
-                s.head = (s.head + max_keyframes - 1) % max_keyframes;
+                s.release_table(s.table(s.head));
+                s.head = (s.head + s.max_keyframes - 1) % s.max_keyframes;
                 s.count -= 1;
             }
         }
@@ -167,7 +215,7 @@ pub fn Store(
             var lens: [region_count]usize = undefined;
             for (regions, &lens) |r, *l| l.* = r.len;
             const n = pages_for(page_size, lens);
-            std.debug.assert(n <= max_pages);
+            std.debug.assert(n <= s.max_pages);
             if (s.count == 0) s.n_pages = n;
             std.debug.assert(n == s.n_pages);
 
@@ -175,13 +223,13 @@ pub fn Store(
             s.last_shared = 0;
             s.last_zero = 0;
             s.last_evicted = 0;
-            if (s.count == max_keyframes) {
+            if (s.count == s.max_keyframes) {
                 s.drop_oldest(1);
                 s.last_evicted = 1;
             }
-            const slot = (s.head + 1) % max_keyframes;
-            const prev: ?[]const Ref = if (s.count > 0) s.tables[s.head][0..n] else null;
-            const t = &s.tables[slot];
+            const slot = (s.head + 1) % s.max_keyframes;
+            const prev: ?[]const Ref = if (s.count > 0) s.table(s.head) else null;
+            const t = s.tables[slot * s.max_pages ..][0..n];
 
             var i: usize = 0;
             for (regions) |region| {
@@ -235,7 +283,7 @@ pub fn Store(
         /// Copy keyframe `age` (0 = newest) into the regions, which must have
         /// the lengths the keyframes were `put` with.
         pub fn get(s: *const Self, age: usize, regions: Regions) void {
-            const t = s.tables[s.slot_of_age(age)][0..s.n_pages];
+            const t = s.table(s.slot_of_age(age));
             var i: usize = 0;
             for (regions) |region| {
                 var off: usize = 0;
@@ -252,7 +300,7 @@ pub fn Store(
         /// True if the regions equal keyframe `age` byte for byte (the
         /// in-cart replay self check).
         pub fn matches(s: *const Self, age: usize, regions: ConstRegions) bool {
-            const t = s.tables[s.slot_of_age(age)][0..s.n_pages];
+            const t = s.table(s.slot_of_age(age));
             var i: usize = 0;
             for (regions) |region| {
                 var off: usize = 0;
@@ -270,33 +318,36 @@ pub fn Store(
         /// (reference count 1): what dropping it would free.
         pub fn pages_owned(s: *const Self, age: usize) usize {
             var c: usize = 0;
-            for (s.tables[s.slot_of_age(age)][0..s.n_pages]) |r| {
+            for (s.table(s.slot_of_age(age))) |r| {
                 if (r != zero_ref and s.refs[r] == 1) c += 1;
             }
             return c;
         }
 
         /// Recount every reference from the tables and check it against
-        /// `refs` and the free list (host tests: nothing leaks).
+        /// `refs` and the free list (host tests: nothing leaks). Quadratic,
+        /// needs no memory of its own.
         pub fn check(s: *const Self) bool {
-            var counted: [pool_pages]u16 = @splat(0);
             for (0..s.count) |a| {
-                for (s.tables[s.slot_of_age(a)][0..s.n_pages]) |r| {
-                    if (r == zero_ref) continue;
-                    if (r >= pool_pages) return false;
-                    counted[r] += 1;
+                for (s.table(s.slot_of_age(a))) |r| {
+                    if (r != zero_ref and r >= s.pool.len) return false;
                 }
             }
             var used: usize = 0;
-            for (counted, s.refs) |c, r| {
-                if (c != r) return false;
+            for (s.refs, 0..) |want, p| {
+                var c: usize = 0;
+                for (0..s.count) |a| {
+                    for (s.table(s.slot_of_age(a))) |r| {
+                        if (r == p) c += 1;
+                    }
+                }
+                if (c != want) return false;
                 if (c != 0) used += 1;
             }
             if (used != s.pages_in_use()) return false;
-            var seen: [pool_pages]bool = @splat(false);
-            for (s.free[0..s.n_free]) |f| {
-                if (s.refs[f] != 0 or seen[f]) return false;
-                seen[f] = true;
+            for (s.free[0..s.n_free], 0..) |f, i| {
+                if (f >= s.pool.len or s.refs[f] != 0) return false;
+                for (s.free[0..i]) |g| if (g == f) return false;
             }
             return true;
         }

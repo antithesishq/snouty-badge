@@ -16,20 +16,19 @@ pub const frames_per_keyframe = 30;
 /// Bytes per page-store page. Smaller pages share more but cost more
 /// table entries (2 bytes per page per keyframe).
 pub const page_size = 512;
-/// Expected pages copied per keyframe, for splitting the budget between
-/// pool pages and keyframe tables. Measured in tests/determinism.zig:
-/// 2048-gb 8, rex-runner 4, rebound 7 on average.
+/// Expected pages copied per keyframe, for splitting the arena between
+/// pool pages and keyframe tables (frontend/rewind.zig `layout`). Measured
+/// in tests/determinism.zig: 2048-gb 8, rex-runner 4, rebound 7 on average.
 pub const typical_pages_per_keyframe = 8;
 
-// ---- RAM cart budget (frontend/rewind.zig, SPEC.md 13 and 19.4) ----
-
-/// Code, constants and .data of the RAM cart, not counting the ROM; the
-/// page pool gets what is left. Too small and the link fails ("BSS
-/// overflows into stack region"); every KB above what the link needs is a
-/// KB of pool lost. 2026-09-29, fast build: code about 67.9 KB, and 66 KB
-/// here leaves about 3 KB unused (the other estimates in rewind.zig carry
-/// some slack too).
-pub const code_estimate = 66 * 1024;
+/// Keyframes at most, whatever the arena (frontend/rewind.zig lays it out
+/// at start). 64 keyframes are 32 s of history at 30 frames each, about the
+/// most the largest arena (an XIP build, about 250 KB) holds at the typical
+/// 8 pages per keyframe: 64 x (8 x 515 + 2 x 162) bytes is 284 KB. The cap
+/// also sizes the input log (`log_len` = 64 x 30 bytes in .bss), so a much
+/// higher one would cost RAM for depth no arena can fill. At most 255 (the
+/// store's reference count is a u8).
+pub const max_keyframes = 64;
 
 // ---- Debug overlay (frontend/debug.zig, SPEC.md 14) ----
 

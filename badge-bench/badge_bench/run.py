@@ -23,7 +23,8 @@ message is captured when the message is sent.
 """
 import struct
 
-from unicorn import (UC_HOOK_BLOCK, UC_HOOK_INTR, UC_HOOK_MEM_FETCH_UNMAPPED,
+from unicorn import (UC_HOOK_BLOCK, UC_HOOK_INTR, UC_HOOK_MEM_FETCH_UNMAPPED, UC_HOOK_MEM_READ,
+                     UC_PROT_EXEC, UC_PROT_READ,
                      UC_HOOK_MEM_READ_UNMAPPED, UC_HOOK_MEM_WRITE_UNMAPPED, UC_MEM_FETCH_UNMAPPED,
                      UC_MEM_READ_UNMAPPED, UC_MEM_WRITE_UNMAPPED, UcError)
 from unicorn import arm_const as A
@@ -41,6 +42,23 @@ EXCP_NAMES = {1: 'undefined instruction (UDF or unsupported)', 2: 'SVC', 3: 'pre
               17: 'NOCP (coprocessor disabled)', 18: 'INVSTATE (bad Thumb state)',
               19: 'stack limit', 20: 'lazy FP', 21: 'LSERR', 22: 'unaligned access',
               23: 'divide by zero'}
+
+
+# The OS romfs region (sycl-badge/src/os/linker.ld): the badge USB drive's
+# FAT12 volume, which carts read ROM files from by pointer (lib/romfs.zig).
+ROMFS_BASE, ROMFS_SIZE = 0x10080000, 1280 * 1024
+
+
+def load_romfs(path):
+    """The bytes of a drive image for --romfs, checked against the region size."""
+    try:
+        with open(path, 'rb') as fh:
+            data = fh.read()
+    except OSError as e:
+        raise BenchError(f"--romfs {path}: {e.strerror}")
+    if not data or len(data) > ROMFS_SIZE:
+        raise BenchError(f"--romfs {path}: {len(data)} bytes; want 1..{ROMFS_SIZE} (the 1280 KB romfs region)")
+    return data
 
 
 class Crash(Exception):
@@ -84,7 +102,7 @@ def poke_value(elf, spec):
 
 
 def run(elf, frames, controls, pokes=(), seed=1, png_every=0, max_frame_ms=1000.0,
-        on_trace=None, log=None, flash_cycles=0):
+        on_trace=None, log=None, flash_cycles=0, romfs=None, flash_read_cycles=0):
     """Emulate `frames` updates. controls: list of u16 per frame.
 
     A RAM cart (cart_ram.ld) is loaded into SRAM and started at _start with
@@ -94,7 +112,9 @@ def run(elf, frames, controls, pokes=(), seed=1, png_every=0, max_frame_ms=1000.
     as the OS does; the cart's reset copies .data, zeroes .bss and calls
     _start, so frame windows are found the same way. flash_cycles adds that
     many cycles per instruction fetched from flash (0: no XIP penalty modelled;
-    calibrate against the OS overlay's XIP hit rate)."""
+    calibrate against the OS overlay's XIP hit rate). romfs: drive image bytes
+    mapped read-only at ROMFS_BASE (zero-padded to 4 KB); flash_read_cycles
+    adds that many cycles per data load from it."""
     res = Result()
     res.xip = elf.is_xip()
     mu = M.make_uc()
@@ -229,6 +249,9 @@ def run(elf, frames, controls, pokes=(), seed=1, png_every=0, max_frame_ms=1000.
     # (RAM cart), or the flash image and the vector table (XIP cart).
     if res.xip:
         mu.mem_map(E.FLASH_BASE, E.FLASH_END - E.FLASH_BASE)
+    if romfs:
+        mu.mem_map(ROMFS_BASE, (len(romfs) + 0xFFF) & ~0xFFF, UC_PROT_READ | UC_PROT_EXEC)
+        mu.mem_write(ROMFS_BASE, bytes(romfs))
     in_sram = lambda a, n: OS.SRAM_BASE <= a and a + n <= OS.SRAM_BASE + OS.SRAM_SIZE
     in_flash = lambda a, n: E.FLASH_BASE <= a and a + n <= E.FLASH_END
     for vaddr, paddr, data, memsz in elf.segments():
@@ -291,6 +314,10 @@ def run(elf, frames, controls, pokes=(), seed=1, png_every=0, max_frame_ms=1000.
         if cyc > limit:
             uc.emu_stop()
 
+    def hook_romfs_read(uc, access, addr, size, value, _):
+        nonlocal cyc
+        cyc += flash_read_cycles     # per data load from the drive image (XIP flash)
+
     crash = {}
 
     def hook_unmapped(uc, access, addr, size, value, _):
@@ -309,6 +336,8 @@ def run(elf, frames, controls, pokes=(), seed=1, png_every=0, max_frame_ms=1000.
     mu.hook_add(UC_HOOK_MEM_READ_UNMAPPED | UC_HOOK_MEM_WRITE_UNMAPPED | UC_HOOK_MEM_FETCH_UNMAPPED,
                 hook_unmapped)
     mu.hook_add(UC_HOOK_INTR, hook_intr)
+    if romfs and flash_read_cycles:
+        mu.hook_add(UC_HOOK_MEM_READ, hook_romfs_read, None, ROMFS_BASE, ROMFS_BASE + ROMFS_SIZE - 1)
     mu.reg_write(UC_ARM_REG_SP, initial_sp)
     mu.reg_write(UC_ARM_REG_LR, 0xFFFFFFFF)
     prev_end = entry & ~1
@@ -381,6 +410,8 @@ def describe_addr(elf, a):
         return "low memory (null pointer or small offset from one?)"
     if E.FLASH_BASE <= a < E.FLASH_END:
         return elf.describe_data(a) if elf.is_xip() else "cart flash window (not available to RAM carts here)"
+    if ROMFS_BASE <= a < ROMFS_BASE + ROMFS_SIZE:
+        return "romfs (badge drive image)"
     if 0x10000000 <= a < 0x20000000:
         return "XIP flash outside the cart window"
     if 0x40000000 <= a < 0x60000000:

@@ -100,3 +100,32 @@ pub fn draw(s: *const state.GameState, level: *const levels.Level) void {
 
     sprites.draw(s, level, px, py, dx, dy);
 }
+
+/// Rewind scanlines (SPEC.md 10): halves r, g and b of every row with
+/// y % 4 == 3 in the view, 160 x 26 pixels. The native Pixel is the
+/// DisplayColor bit pattern (r bits 0..4, g 5..10, b 11..15), so halving is
+/// one shift and a mask clearing the bit each channel receives from its
+/// neighbour: `(p >> 1) & 0x7BEF`. That is cheaper than to_color/from_color
+/// (three field extracts and inserts). The wasm Pixel is byte-swapped, so
+/// there it swaps around the same trick (cost irrelevant in the simulator).
+///
+/// Cost: the 26 rows of a column are unrolled at fixed offsets from the
+/// column pointer, so each pixel is `ldrh`, `and.w rd, rmask, rs, lsr #1`,
+/// `strh` (3 instructions, mask kept in a register), plus about 3 per
+/// column for the pointer step and loop: ~160 * (26 * 3 + 3) = ~13,000
+/// instructions, about 15-20k cycles with SRAM load latency, i.e. roughly
+/// 0.1-0.13 ms at 150 MHz, under the 0.2 ms budget.
+pub fn scanlines() void {
+    const fb = cart.framebuffer;
+    for (0..view_w) |x| {
+        const col: *[cart.screen_height]cart.Pixel = &fb[x];
+        inline for (0..view_h / 4) |i| {
+            const p = &col[i * 4 + 3];
+            if (cart.is_wasm) {
+                p.bits = @byteSwap((@byteSwap(p.bits) >> 1) & 0x7BEF);
+            } else {
+                p.bits = (p.bits >> 1) & 0x7BEF;
+            }
+        }
+    }
+}

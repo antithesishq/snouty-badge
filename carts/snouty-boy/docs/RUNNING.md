@@ -69,42 +69,64 @@ This writes, in the root `zig-out/`:
 
 Options:
 
-- `-Drom=path/to/game.gb`: the ROM to embed (default
+- `-Drom=path/to/game.gb`: the ROM to embed: the drive build's fallback, or
+  with `-Drom-source=embed` the only ROM (default
   `tests/roms/dmg-acid2.gb`, falling back to `roms/2048.gb`). The path is
   relative to the repository root, e.g. `-Drom=carts/snouty-boy/roms/2048.gb`;
   a path relative to this cart such as `-Drom=roms/2048.gb` also works. The
   shipped game goes in `roms/` with its license next to it.
   A `.gbc` path works the same way, e.g.
-  `-Drom=carts/snouty-boy/tests/roms/rebound.gbc`.
+  `-Drom=carts/snouty-boy/roms/rebound.gbc`.
 - `-Dcart-optimize=fast|small|safe|debug`: optimize mode for the cart
   (default `fast`, SPEC.md section 8).
+- `-Drom-source=drive|embed`: where the badge build gets its ROM (default
+  `drive`: a `.gb`/`.gbc` file on the badge's USB drive, the embedded ROM
+  as fallback; `embed`: the embedded ROM only, as before M5). See section
+  9. The wasm build always runs the embedded ROM. `pack` belongs to Snouty
+  Gear and is refused here.
 - `-Dcart-mode=ram|xip|both` (shared with every cart): `ram` (default) is
   the usual RAM cart, `snouty-boy.uf2`; `xip` builds `snouty-boy-xip.uf2`,
-  which runs code and ROM from the 256 KB cart flash window and keeps all
-  of the cart RAM for state (unproven on hardware so far); `both` builds
-  both. The rewind budget knows which one it is building (see "Memory"
-  below). A ROM too big for the RAM cart stops the RAM build with a message
-  that says to use `-Dcart-mode=xip`; rebound.gbc (128 KB) is one.
+  which runs code and the embedded ROM from the 256 KB cart flash window
+  and keeps all of the cart RAM for state (unproven on hardware so far);
+  `both` builds both. It matters for `-Drom-source=embed` with a big ROM:
+  an embedded ROM above about 64 KB (rebound.gbc, 128 KB) leaves the RAM
+  cart too little RAM, and such a build links but shows "Not enough RAM
+  for the time scrubber" at start. A drive ROM is read from flash in any
+  mode.
 
-Memory. `cart/src/frontend/rewind.zig` sizes the page store at compile
-time from what is left of the 0x4AF00-byte cart RAM window after the 32 KB
-stack: RAM cart `268 KB - 64 KB code estimate - ROM - console (50 KB) -
-cart RAM - 6 KB statics`; XIP cart the same without code and ROM. The
-remainder is split into 512-byte pool pages and keyframe tables (a
-keyframe's table is 2 bytes per page of state). It refuses to build with
-less than one full keyframe of pool (every state page non-zero).
+The three builds that must always link:
 
-| ROM (mode) | RAM cart: pool, max keyframes | XIP cart: pool, max keyframes |
-|---|---|---|
-| 2048-gb (DMG, 32 KB, 2 KB RAM) | 215 pages (107 KB), 26 | 396 pages (198 KB), 49 |
-| rex-runner (CGB, 32 KB, 8 KB RAM) | 203 pages (101 KB), 25 | 383 pages (191 KB), 47 |
-| rebound (CGB, 128 KB) | does not fit, use XIP | 400 pages (200 KB), 50 |
+```sh
+zig build -Dcart=snouty-boy                                                        # drive (default), fallback ROM embedded
+zig build -Dcart=snouty-boy -Drom-source=embed -Drom=carts/snouty-boy/roms/rex-runner.gb
+zig build -Dcart=snouty-boy -Drom-source=embed -Drom=carts/snouty-boy/roms/rebound.gbc -Dcart-mode=xip
+```
+
+Memory (SPEC.md 19.4). Nothing is sized at compile time from the ROM.
+Once the ROM is chosen, `cart/src/frontend/rewind.zig` (`layout`) takes
+the RAM between the end of `.bss` and the stack, less 1 KB (the arena),
+and places in it the live console (50.4 KB), its cart RAM (per header, 0
+to 32 KB) and the page store: per keyframe a table (2 bytes per 512-byte
+page of state) and typically 8 pool pages, at most 64 keyframes, the pool
+gets the rest. When not even two keyframe tables and half a full keyframe
+fit, the cart shows the halted screen instead of the game. Computed from
+the linker symbols (fast, 2026-09-29):
+
+| Build | Arena | 2048-gb (DMG, 2 KB RAM) | rex-runner (CGB, 8 KB RAM) | rebound (CGB, no RAM) |
+|---|---:|---|---|---|
+| default (drive) | 136 KB | 160 pages (80 KB), 19 kf | 147 pages (74 KB), 18 kf | 164 pages (82 KB), 20 kf |
+| `embed` rex-runner (RAM) | 158 KB | - | 189 pages (95 KB), 23 kf | - |
+| `embed` rebound (XIP) | 262 KB | - | - | 404 pages (202 KB), 50 kf |
 
 A clean build of this cart takes a couple of minutes (all carts: several);
 incremental rebuilds take seconds.
 `size ../../zig-out/firmware/snouty-boy.elf` shows `.text` (code plus the embedded
 ROM), `.data` and `.bss` against the cart RAM budget in SPEC.md sections 13
 and 19.4 (`snouty-boy-xip.elf` for the XIP cart, whose `.text` is in flash).
+The arena is in none of them: it is `__stack_limit__ - 1024 -
+align4(__bss_end__)` (`nm ../../zig-out/firmware/snouty-boy.elf | grep -E
+'__bss_end__|__stack_limit__'`), and the debug overlay's third line shows
+the keyframes it currently holds.
 
 ## 5. Host tests
 
@@ -215,8 +237,9 @@ Time scrubber (SPEC.md sections 10 and 19.3). The cart keeps a keyframe of
 the whole console every 30 frames plus the pad byte of every frame.
 Keyframes live in a page store: the state is cut into 512-byte pages, a page
 unchanged since the previous keyframe is shared and an all-zero page costs
-nothing, so a 2048-gb keyframe costs about 4 KB and the RAM cart holds up to
-26 of them (12.5 s); when the pool fills, the oldest keyframes go first. The menu opens on Resume,
+nothing, so a 2048-gb keyframe costs about 4 KB and the default build holds
+up to 19 of them (9 s; up to 50 in an XIP build); when the pool fills, the
+oldest keyframes go first. The menu opens on Resume,
 so Left right away steps back: the menu folds into a bar at the bottom
 (`Scrub: -1.5 / 3.5s`, how far back you are / how much history there is)
 over the restored frame. Left/Right keep stepping, Right past the newest
@@ -242,7 +265,8 @@ debug overlay in the top-left corner:
 
 ```
 avg NNNN max NNNNus     step_frame time, average and maximum over 60 frames
-fps NN kf NN NNK        frames per second over 60 frames, keyframes held, page-store KB in use
+fps NN pool NNK         frames per second over 60 frames, page-store KB in use
+kf NN D                 keyframes held, ROM source (D drive, E embedded)
 ```
 
 In wasm the upstream `micros_since_boot` is a stub that adds 1000 on every
@@ -282,7 +306,8 @@ Useful options (the header of the shared `../../tools/preview.mjs` has the full 
     LCD on, 0 with it off)
   - `debug_step_us`: the last `step_frame` time (always 1000 in wasm)
   - `debug_palette`: the current palette index (DMG mode)
-  - `debug_state`: frontend state, 0 splash, 1 running, 2 menu
+  - `debug_state`: frontend state, 0 splash, 1 running, 2 menu, 3 ROM
+    picker (badge only), 4 halted (fewer than 2 keyframes fit)
   - `debug_pad`: the pad byte the game was last stepped with
     (Select = 64, Start = 128)
   - `debug_scrub_depth`: frames the scrubber is parked behind live (0 live)
@@ -292,6 +317,13 @@ Useful options (the header of the shared `../../tools/preview.mjs` has the full 
   - `debug_cgb`: 1 when the ROM runs in CGB mode
   - `debug_leds`, `debug_led_max`: neopixels lit, largest channel value
   - `debug_alarm`: 1 if the rewind self-check found a mismatch
+  - `debug_slots`: keyframes the store can hold at most for this ROM
+    (wasm: a static 256 KB arena)
+  - `debug_arena_bytes`: bytes of that arena
+  - `debug_rom_source`: 0 embedded, 1 drive (always 0 in wasm)
+  - `debug_rom_size`, `debug_rom_crc`: size and CRC32 of the running ROM,
+    as on the About screen
+  Exports that read the console return 0 while the ROM picker is up.
 - `--expect "debug_lines == 128"` (repeatable): checked at the end; a
   failure exits 3. `--at "T NAME OP VALUE"` checks right after update T.
 - `--quiet`: no PNGs, only `frames.json`.
@@ -331,6 +363,11 @@ Carts go onto the badge's own USB drive; this is not the RP2350 bootloader
 2. Copy `zig-out/firmware/snouty-boy.uf2` (repository root) onto the drive, replacing
    `CURRENT.UF2`. The badge shows a progress indicator while it copies.
 3. The cart starts when the copy finishes.
+4. To play a ROM from the drive, copy `.gb`/`.gbc` files next to the UF2
+   and eject before playing (section 9).
+
+An XIP build (`-Dcart-mode=xip`, section 4) is `snouty-boy-xip.uf2`; copy
+that one instead, the same way (XIP launch is still unproven on hardware).
 
 Holding the `RESET` and `BOOT_SEL` buttons (releasing `RESET` first) mounts
 the RP2350 bootloader drive instead; that is for flashing the badge OS
@@ -339,3 +376,94 @@ the RP2350 bootloader drive instead; that is for flashing the badge OS
 On the badge the overlay's numbers are real: `avg`/`max` are the
 microseconds `gb.step_frame` takes per Game Boy frame (M1 target under
 14,000, SPEC.md section 8, goal 8,000), and `fps` should read 60.
+
+## 9. ROMs from the badge drive
+
+Since M5 the badge build (`-Drom-source=drive`, the default) looks for Game
+Boy and Game Boy Color ROM files on the badge's own USB drive and reads the chosen one in
+place from flash, so the ROM costs no cart RAM and may be up to 1 MB.
+Design and its open questions: `docs/ROM_DRIVE.md` at the repository root;
+SPEC.md section 11.1.
+
+1. Mount the badge drive (section 8) and copy `snouty-boy.uf2` onto it if
+   it is not there yet.
+2. Copy one or more `.gb` or `.gbc` files onto the drive,
+   next to `snouty-boy.uf2`, in the top directory. For best speed copy them
+   onto a freshly wiped drive so each file is contiguous.
+3. **Eject the drive** before playing: the OS may write flash while a host
+   still has it mounted, and the cart reads the file from that flash.
+4. Run Snouty Boy from the OS menu.
+
+What happens:
+
+- One playable file: it starts after the splash.
+- Several: a picker follows the splash, listing up to 8 files with their
+  size. Files that cannot be played are dimmed with the reason under the
+  list ("too small", "over 1 MB", "bad checksum" for the header checksum at
+  0x14D, or the drive error). Playable files may carry hints: "Color" (the
+  header asks for a Game Boy Color, so it runs in CGB mode, M8), "no RTC"
+  (MBC3 clock not emulated), "mapper?" (a mapper the core does not know),
+  "RAM>32K" (cart RAM over 32 KB is cut). Up/Down move, A plays, B runs the
+  embedded ROM.
+- None, no readable drive, or a file that cannot be mapped: the embedded
+  ROM (`-Drom`, `roms/2048.gb` or the acid2 test ROM) runs, as before.
+
+Menu > About shows the ROM's header title, mapper and size, "Source:
+drive" with the file name (cut to 18 characters) or "Source: embedded"
+with the embedded file's name, its CRC32 and the model (DMG or CGB),
+"fragmented: N banks" when a
+drive file is not contiguous (those banks go through a slower per-sector
+path), and "drive: <reason>" when the drive was tried and the embedded ROM
+runs instead. The debug overlay's third line is the keyframe count and `D`
+(drive) or `E` (embedded).
+
+The ROM file also shows in the OS cart menu, where picking it fails to load;
+that is cosmetic. Cart RAM (saves) is not kept between runs.
+
+Build options: `-Drom-source=embed` builds the pre-M5 behaviour (the drive
+is never looked at); `-Drom=...` still picks the fallback ROM. The web
+simulator and `preview.mjs` always run the embedded ROM, so the drive path
+is only exercised on the badge and in badge-bench (9.1). An embedded ROM
+above about 64 KB needs `-Dcart-mode=xip` (section 4); flash
+`snouty-boy-xip.uf2` then (section 8).
+
+### 9.1 Exercising the drive path without a badge (badge-bench)
+
+badge-bench maps a drive image at the romfs address with `--romfs` (Snouty
+Gear M0 added it together with `tools/make_romfs.py`). A drive build needs the option in the
+bench: without an image the region is unmapped and the bench reports a read
+fault in `romfs.geometry` during start-up. On the badge the flash is always
+there, so this is a bench artefact, not a cart bug; `-Drom-source=embed`
+builds bench without it.
+
+```
+# one contiguous ROM, and two ROMs stored in 8-cluster runs (fragmented)
+python3 tools/make_romfs.py out/one.img carts/snouty-boy/roms/2048.gb=2048.gb
+python3 tools/make_romfs.py out/two.img carts/snouty-boy/roms/2048.gb=2048-gb.gb \
+    carts/snouty-boy/tests/roms/cpu_instrs.gb="Blargg cpu_instrs.gb" --fragment 8
+python3 tools/make_romfs.py --list out/two.img
+cd badge-bench
+./bench.sh ../zig-out/firmware/snouty-boy.elf --romfs ../out/one.img --frames 300 --png 60 --out ../out/one \
+    --press START:30-31,START:120-121,SELECT:200-240
+./bench.sh ../zig-out/firmware/snouty-boy.elf --romfs ../out/two.img --frames 300 --png 10 --out ../out/two \
+    --press START:30-31,A:60-61,START:120-121,SELECT:180-220,DOWN:230-231,DOWN:235-236,DOWN:240-241,DOWN:245-246,DOWN:250-251,DOWN:255-256,A:265-266
+```
+
+The first run's frame 180 shows 2048 with the overlay line `kf N D` (M5
+showed `slots 6 D`, its pool form); the
+second shows the picker at frame 50 (`docs/m5_picker.png`) and the About
+screen at frame 280 (`docs/m5_about.png`: Source drive, CRC 4380CC7A, which
+is `zlib.crc32` of `roms/2048.gb`, "fragmented: 2 banks"). Picking the
+second file (`--press START:30-31,DOWN:45-46,A:60-61`) runs Blargg's
+`cpu_instrs` from a fragmented 64 KB MBC1 file through the per-sector path.
+This was done on 2026-09-29 in a scratch merge of M5 with `gear/m0`; the
+numbers above are from that build. M8 benches the Color ROMs the same way
+(PLAN.md M8 status, `badge-bench/carts/snouty-boy-color.toml`).
+
+Still open on hardware (docs/ROM_DRIVE.md section 6): that reading a file
+by pointer through the XIP flash window works and is fast enough (FPS with
+the ROM in flash, cache misses on bank reads; the bench models flash loads
+as zero-wait unless `--flash-read-cycles N` is given), how long finding and
+mapping takes at start (the bench's modelled start-up is 1.5 ms with one
+file), and that the drive still mounts and the OS menu still works with ROM
+files on it.

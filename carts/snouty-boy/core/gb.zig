@@ -14,6 +14,8 @@ pub const serial = @import("serial.zig");
 pub const joypad = @import("joypad.zig");
 pub const ring = @import("ring.zig");
 pub const kstore = @import("kstore.zig");
+pub const rom_mod = @import("rom.zig");
+pub const Rom = rom_mod.Rom;
 
 pub const screen_w = 160;
 pub const screen_h = 144;
@@ -27,10 +29,10 @@ pub const frame_dots: u32 = 70_224;
 pub const Model = enum(u1) { dmg, cgb };
 
 /// The model a ROM boots in on a Game Boy Color: CGB if header byte 0x143
-/// has bit 7 set (0x80 CGB-enhanced, 0xC0 CGB-only). Comptime-callable.
-pub fn default_model(rom: []const u8) Model {
+/// has bit 7 set (0x80 CGB-enhanced, 0xC0 CGB-only).
+pub fn default_model(rom: *const Rom) Model {
     if (rom.len < 0x150) return .dmg;
-    return if ((rom[0x143] & 0x80) != 0) .cgb else .dmg;
+    return if ((rom.read(0x143) & 0x80) != 0) .cgb else .dmg;
 }
 
 /// Interrupt bits in IF (0xFF0F) and IE (0xFFFF).
@@ -125,8 +127,13 @@ pub const Gb = struct {
     stall_m: u16 = 0,
 
     // ---- Memory (owner: core/mmu.zig) ----
-    rom: []const u8,
     mbc: mmu.Mbc = .{},
+    /// Cached pointers to the ROM banks mapped at 0x0000 and 0x4000, from
+    /// `rom.banks` via the MBC's offsets (`mmu.remap_rom`); null sends the
+    /// read through `Rom.read` (a fragmented drive file, a partial or
+    /// missing bank). Derived state, not in keyframes.
+    rom0: ?[*]const u8 = null,
+    romn: ?[*]const u8 = null,
     /// Cached VRAM/WRAM bank offsets (VBK, SVBK). DMG mode keeps VRAM at
     /// bank 0 and D000 at WRAM bank 1.
     banks: mmu.Banks = .{},
@@ -183,6 +190,12 @@ pub const Gb = struct {
     /// excluded from keyframes (the frontend sets it itself after a restore).
     pal_dirty: bool = true,
 
+    /// The cartridge image as 16 KB bank pointers (core/rom.zig): an
+    /// embedded ROM or a file on the badge drive. Immutable, not console
+    /// state. Only the header and the slow path read it; the hot path uses
+    /// `rom0`/`romn`, so it sits past the hot fields.
+    rom: Rom,
+
     // ---- Big memories last (owner: core/mmu.zig) ----
     // Declared after every other field so the small hot fields (CPU, I/O,
     // PPU, timer) sit within the 4 KB immediate-offset reach of Thumb-2
@@ -195,12 +208,18 @@ pub const Gb = struct {
     wram: [0x8000]u8 = @splat(0),
 
     /// Construct a console around a ROM image and reset it to the post-boot
-    /// state of `model` (SPEC.md sections 3 and 19). `rom` and `cart_ram`
-    /// must outlive the Gb; `cart_ram` needs `mmu.cart_ram_len(rom)` bytes.
-    pub fn init(rom: []const u8, model: Model, cart_ram: []u8) Gb {
+    /// state of `model` (SPEC.md sections 3 and 19). The memory `rom` points
+    /// into and `cart_ram` must outlive the Gb; `cart_ram` needs
+    /// `mmu.cart_ram_len(&rom)` bytes.
+    pub fn init(rom: Rom, model: Model, cart_ram: []u8) Gb {
         var gb: Gb = .{ .rom = rom, .model = model, .cart_ram = cart_ram };
         gb.reset();
         return gb;
+    }
+
+    /// `init` around a contiguous image (host tests, an embedded ROM).
+    pub fn init_slice(bytes: []const u8, model: Model, cart_ram: []u8) Gb {
+        return init(Rom.from_slice(bytes), model, cart_ram);
     }
 
     /// Post-boot state. Memory, cart RAM included, is zeroed (SPEC.md 10.3).
@@ -212,7 +231,8 @@ pub const Gb = struct {
         const wanted = gb.lines_wanted;
         gb.* = .{ .rom = rom, .line_sink = sink, .model = model, .cart_ram = cart_ram, .lines_wanted = wanted };
         @memset(cart_ram, 0);
-        gb.mbc = mmu.Mbc.from_header(rom);
+        gb.mbc = mmu.Mbc.from_header(&gb.rom);
+        mmu.remap_rom(gb);
         cpu.reset(gb);
         mmu.reset_io(gb);
         ppu.reset(gb);
@@ -398,9 +418,9 @@ pub const Gb = struct {
     // ---- Keyframes (SPEC.md sections 10 and 19.3) ----
 
     /// Every snapshotted field except VRAM, WRAM and cart RAM, which the
-    /// page store (core/kstore.zig) keeps as their own regions. `rom`,
-    /// `model`, `cart_ram` (the slice), `line_sink` and `pal_dirty` are not
-    /// console state.
+    /// page store (core/kstore.zig) keeps as their own regions. `rom`, the
+    /// cached bank pointers, `model`, `cart_ram` (the slice), `line_sink`
+    /// and `pal_dirty` are not console state.
     pub const Small = struct {
         cpu: cpu.Cpu,
         dot_shift: u2,
@@ -435,6 +455,7 @@ pub const Gb = struct {
         inline for (@typeInfo(Small).@"struct".field_names) |name| {
             @field(gb, name) = @field(k, name);
         }
+        mmu.remap_rom(gb);
         gb.frame_dots = 0;
         gb.vblank_hit = false;
         gb.pal_dirty = true;
@@ -496,14 +517,3 @@ pub const Gb = struct {
         @memcpy(gb.cart_ram[0..n], k.cart_ram[0..n]);
     }
 };
-
-test "keyframe round trip is exact" {
-    const rom: [0x8000]u8 = @splat(0);
-    var gb = Gb.init(&rom, .dmg, &.{});
-    var k: Gb.Keyframe = undefined;
-    gb.snapshot(&k);
-    var gb2 = Gb.init(&rom, .dmg, &.{});
-    gb2.wram[5] = 0xAA;
-    gb2.restore(&k);
-    try std.testing.expectEqual(@as(u8, 0), gb2.wram[5]);
-}

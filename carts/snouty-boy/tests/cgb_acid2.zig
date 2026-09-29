@@ -85,7 +85,7 @@ test "cgb-acid2 matches reference frame" {
     const rom = load_rom() orelse return error.SkipZigTest;
     const gb = try std.testing.allocator.create(core.Gb);
     defer std.testing.allocator.destroy(gb);
-    gb.* = core.Gb.init(rom, .cgb, &.{});
+    gb.* = core.Gb.init_slice(rom, .cgb, &.{});
     const cap = try std.testing.allocator.create(Capture);
     defer std.testing.allocator.destroy(cap);
     cap.* = .{ .gb = gb };

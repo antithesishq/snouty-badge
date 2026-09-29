@@ -57,6 +57,7 @@ badge-bench <cart.elf> [--script FILE.json] [--press BTN:T1-T2 ...] [--frames N]
             [--symbols] [--top N] [--poke SYM=VALUE ...] [--json] [--seed N]
             [--max-frame-ms 1000] [--traces N] [--config FILE | --no-config]
             [--progress] [--calibrate FILE.toml] [--flash-cycles N]
+            [--romfs IMAGE] [--flash-read-cycles N]
 ```
 
 Put the ELF first (`--png` takes an optional number and would otherwise
@@ -81,6 +82,8 @@ try to read the ELF path as one).
 | `--config FILE`, `--no-config` | Use another per-cart defaults file, or none. |
 | `--progress` | One stderr line per finished frame. |
 | `--flash-cycles N` | XIP carts only: add N cycles per instruction fetched from the cart flash window. Default 0, so the output of an XIP ELF matches its RAM twin; set it once the OS overlay's XIP hit and stall rates give a real number. |
+| `--romfs IMAGE` | Map a badge drive image (FAT12, as `tools/make_romfs.py` builds it) read-only at `0x10080000`, where the OS keeps the drive. Default: the `romfs` key of `carts/<cart>.toml`, if any. See ROMs from the badge drive. |
+| `--flash-read-cycles N` | Add N cycles per data load from the `--romfs` image. Default 0 (zero-wait, like SRAM). |
 | `--calibrate FILE.toml` | Price the model classes with the fitted `[costs]` of a `calibrate/fit.py` calibration file (rounded to 0.25 cycle) and report two numbers per frame: `idle ms` (the calibrated count) and `busy ms` = idle + memory-class cycles x (factor - 1) x min(1, dma_ms / idle ms), the DMA contention of `[contention]`. Verdict and over-budget count use busy ms. Default: `calibrate/calibration.toml` when it exists (the header says so). See Calibration. |
 | `--no-calibrate` | The raw model (default costs, no stall, no contention): one `ms` column, the historical floor. `tests/test_reflections.sh` uses it. |
 
@@ -110,6 +113,25 @@ passed with `--config` (the defaults are keyed by ELF basename, and the XIP
 name has the `-xip` suffix). Flash is modelled as zero-wait like SRAM unless
 `--flash-cycles` says otherwise; the real part runs through a 16 KB XIP cache
 shared with Core 0, which the OS fps overlay measures (hit and stall rates).
+
+## ROMs from the badge drive
+
+Emulator carts can read a ROM file from the badge's USB drive in place
+(`lib/romfs.zig`, design in `docs/ROM_DRIVE.md`). The OS keeps that drive in
+the `romfs` region of internal flash, `0x10080000`, 1280 KB. `--romfs IMAGE`
+maps a drive image there (padded to 4 KB, at most 1280 KB), so the cart finds
+the file where it would on a badge. Build an image with
+`tools/make_romfs.py OUT.img ROM.gg` (`--list OUT.img` shows the layout), or
+set `romfs = "path/to/drive.img"` in `carts/<cart>.toml`, relative to the
+repository root; the command line wins. The header shows a `romfs:` line and
+out-of-range faults near the region are named "romfs (badge drive image)".
+
+Loads from the image cost zero wait cycles unless `--flash-read-cycles N`
+says otherwise. The real reads go through the same 16 KB XIP cache as XIP
+code, which is not modelled, so treat the numbers as a floor until the
+hardware checks in `docs/ROM_DRIVE.md` section 6 give a figure. The penalty
+hook is only installed when N > 0; without it a run with `--romfs` counts
+exactly the same cycles as one without (checked on snouty-boy, 60 frames).
 
 ## What the fake OS does
 

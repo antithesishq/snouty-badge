@@ -286,6 +286,29 @@ it is needed by M2, and M1 runs on `dmg-acid2` and the Blargg ROMs.
 - Selected via build option `-Drom=roms/<name>.gb`; default is the
   chosen game; `-Drom=tests/roms/dmg-acid2.gb` builds the acid cart.
 
+### 11.1 ROMs from the badge drive (M5, 2026-09-29)
+
+The embedded ROM is the fallback only. On the badge the cart looks for
+`.gb`/`.gbc` files on the USB drive (the OS `romfs` FAT12 region of the
+internal flash) and reads the chosen one in place through the XIP flash
+window, by pointer: nothing is copied into RAM, so the ROM no longer
+trades against scrub depth and may be up to 1 MB (64 banks). Shared design
+and its open hardware checks: `docs/ROM_DRIVE.md` at the repository root;
+the FAT12 reader is `lib/romfs.zig`, shared with Snouty Gear. One file
+starts directly, several show a picker after the splash, none (or a
+fragmented file's unmappable banks, an unreadable volume) fall back as
+described in PLAN.md M5. `-Drom-source=embed` restores the old behaviour;
+the web simulator always embeds. Eject the drive before playing: the OS
+may write flash while the cart runs. Cart RAM is still not saved between
+runs (no flash writes from the cart).
+
+Since M8 (section 19) the drive path and the Color core are one cart: the
+picker lists `.gb` and `.gbc` files alike, the header's 0x143 bit 7 picks
+the model (a CGB-flagged file plays in colour, the picker marks it
+"Color"), and cart RAM up to 32 KB is kept. The embedded alternative stays
+for a single-game cart: `-Drom-source=embed -Drom=...`, with
+`-Dcart-mode=xip` for ROMs above about 64 KB (section 19.4).
+
 ## 12. Boot splash and presentation
 
 - On `start()`: 1.2 s splash where the Snouty mark scrolls down from the
@@ -317,6 +340,16 @@ Usable cart RAM is about 268 KB (307 KB minus 32 KB stack). Measured with
 A 128 KB game leaves about 60 KB for keyframes, so it needs section 10.4
 to offer more than 1.5 s of history. That is the reason the ROM should be
 small, not any CPU limit.
+
+M5 changes the table: a drive ROM costs no RAM at all (only the 32 KB
+embedded fallback still does), the keyframe pool is sized at run time from
+the RAM left between `.bss` and the stack, and its slot size follows the
+running ROM's cart RAM (0, 2 or 8 KB), so a RAM-less game gets more
+keyframes than one with 8 KB of save RAM. Because that pool is no longer
+`.bss`, the UF2 shrinks by twice the pool size (RAM-cart UF2s ship their
+zero-filled `.bss`, docs/ROM_DRIVE.md section 3), which is drive space for
+ROMs. M8 keeps that arena and puts the page store (section 19.3) and the
+live console in it; the numbers are in section 19.4.
 
 ## 14. Instrumentation
 
@@ -413,6 +446,19 @@ except the ROM, which he will provide.
    Adrian asked for the Color upgrade, designed in section 19.
 9. Tag line "verified by deterministic replay" on the menu title: yes.
 
+Added 2026-09-29 (M5, Adrian asked for the drive loader planned for Snouty
+Gear; recommendations taken without a separate round):
+
+10. ROM source on the badge: drive first, embedded fallback; the picker
+    appears only with more than one playable file.
+11. Fragmented drive files are played through the per-sector slow path
+    with a hint on the About screen rather than refused.
+12. Keyframe pool outside `.bss`, sized at run time; slot count at most 12.
+    Since M8 the page store (section 19.3) takes its place in the same
+    arena, together with the live console, at most 64 keyframes.
+13. (M8, 2026-09-29) One cart for both: M5's drive loader and `core.Rom`
+    bank table, M6/M7's Color core and page store (PLAN.md M8).
+
 ## 19. Game Boy Color (M6, M7; added 2026-09-29)
 
 Adrian asked on 2026-09-29 for Snouty Boy to emulate the Game Boy Color.
@@ -470,7 +516,10 @@ slots with a page store (`core/kstore.zig`, host tested):
   else takes a page from the pool and copies it.
 - When the pool is exhausted the oldest keyframe is dropped until the new
   one fits; the ring (`core/ring.zig`) gains that eviction and a runtime
-  count, so depth adapts to how much the game changes.
+  count, so depth adapts to how much the game changes. If not even the new
+  keyframe fits alone, the history is empty until the next one that does.
+- The store's memory is handed in at run time (`Store.init`, M8): the
+  frontend lays it out in the arena of section 19.4.
 - Restore copies every page back (about 57 KB of `memcpy`, well under a
   millisecond). Snapshot compares about 57 KB against the previous
   keyframe. Both costs are flat, so no worst-case spike.
@@ -480,23 +529,33 @@ slots with a page store (`core/kstore.zig`, host tested):
 Section 10.4 (XOR + RLE) is superseded: a page store has no chain to walk
 on restore and needs no decompression buffer.
 
-### 19.4 Memory budget (RAM cart, 268 KB usable)
+### 19.4 Memory budget (M8: the run-time arena)
 
-| Item | CGB, 64 KB ROM | CGB, XIP cart |
-|---|---:|---:|
-| Code + constants | ~65 KB | flash |
-| ROM | 64 KB | flash |
-| Live console (VRAM, WRAM, rest) | ~50 KB | ~50 KB |
-| Cart RAM (per header) | 0..32 KB | 0..32 KB |
-| Frontend statics, input log | ~5 KB | ~5 KB |
-| Page pool + tables | remainder, ~80 KB | ~210 KB |
+The RAM window is 307 KB, 32 KB of it stack. `.text`/`.rodata` (code, and
+in a RAM build the embedded ROM) and a small `.bss` come first; everything
+else up to the stack, minus a 1 KB guard, is the arena that
+`frontend/rewind.zig` lays out once the ROM is chosen: the live console
+(`Gb`, 50.4 KB, mostly VRAM and WRAM), its cart RAM (0 to 32 KB, per the
+header), then the page store. The store's keyframe count is split from what
+is left like the M7 budget did: per keyframe its table (2 bytes per page)
+plus `typical_pages_per_keyframe` (8) pool pages, at most 64 keyframes;
+the pool gets the rest. Comptime only knows the maxima, nothing depends on
+the embedded ROM's size, and the arena is not `.bss`, so the UF2 does not
+ship it as zeros.
+
+| Build (fast, 2026-09-29) | .text | .bss | Arena | 2048-gb (2 KB RAM) | Rex Runner (8 KB) | Rebound (0) |
+|---|---:|---:|---:|---|---|---|
+| default: drive, 32 KB fallback embedded, RAM | 115 KB | 18 KB | 136 KB | 19 kf, 80 KB pool | 18 kf, 74 KB | 20 kf, 82 KB |
+| `embed` rex-runner, RAM | 107 KB | 4 KB | 158 KB | - | 23 kf, 95 KB | - |
+| `embed` rebound, XIP (code + ROM in flash) | flash | 4 KB | 262 KB | - | - | 50 kf, 202 KB |
 
 The first keyframe pays for every non-zero page (typically 15 to 30 KB);
 later ones pay only for pages that changed in 0.5 s (typically 2 to 8 KB).
-An 80 KB pool is therefore about 8 to 20 keyframes, 4 to 10 s. ROMs above
-64 KB need the XIP cart (`-Dcart-mode=xip`: 256 KB of flash for code and
-ROM, see the root PLAN.md M3; XIP is still unproven on hardware), so the shipped
-Color ROM should be at most 64 KB for the RAM cart.
+An 80 KB pool is therefore about 10 to 20 keyframes, 5 to 10 s. A ROM
+embedded in a RAM build costs its size in arena: above about 64 KB use the
+XIP cart. `layout` refuses (the `halted` screen) when two keyframe tables
+and half a keyframe with every page non-zero do not fit; a game with 32 KB
+of cart RAM still fits the default build (12 keyframes, 48 KB pool).
 
 ### 19.5 Performance
 
@@ -542,8 +601,19 @@ determinism is untouched), `page_size`, pool size, keyframe interval.
   (keyframes sized to the ROM's cart RAM, 18.9 KB with 2048-gb) plus input
   log, 3.0 to 3.5 s of history, uncompressed (section 10.4 not needed).
   Determinism test green. Fast build with 2048-gb: .text 80 KB, .bss 159 KB.
+- 2026-09-29: M5 ROM loader started on `boy/rom-loader` (PLAN.md M5): ROMs
+  from the badge drive through the shared `lib/romfs.zig`, `Rom` bank table
+  in the core, run-time keyframe pool.
+- 2026-09-29: M5 done (tag `snouty-boy/m5`): picker, About and overlay
+  report the drive ROM; UF2 245 KB (from 497); 77 host tests; drive path
+  proven in badge-bench against the gear branch's reader, hardware pending
+  (PLAN.md "M5 status").
 - 2026-09-29: Game Boy Color (section 19) built on branch
   `snouty-boy-color`: CGB CPU/MMU/KEY1/GDMA/HDMA, CGB renderer (cgb-acid2
   exact), 512 B page store for keyframes, colour LUT frontend. Ships
   Rebound (XIP) and Rex Runner (RAM). Calibrated busy ms mean / p95:
   Rebound 5.3 / 10.3, Rex Runner 3.5 / 6.8, 2048-gb 3.9 / 6.0.
+- 2026-09-29: M8 (PLAN.md M8): the Color branch merged onto M5. One UF2
+  plays `.gb` and `.gbc` files from the badge drive in the right model;
+  the page store and the live console live in the run-time arena
+  (section 19.4). 132 host tests.

@@ -20,7 +20,7 @@ fn blank_rom(cart: u8, ram: u8) [0x8000]u8 {
 fn new_gb(rom: []const u8, model: core.Model) !*Gb {
     // Gb is ~60 KB; keep it off the test thread's stack.
     const gb = try std.testing.allocator.create(Gb);
-    gb.* = Gb.init(rom, model, &test_ram);
+    gb.* = Gb.init_slice(rom, model, &test_ram);
     return gb;
 }
 
@@ -300,13 +300,13 @@ test "cgb HBlank DMA started with the LCD off copies one block at once" {
 
 test "mbc5 32 KB cart RAM: four banks, wrap, disable" {
     var rom = blank_rom(0x1B, 3);
-    try expectEqual(@as(usize, 0x8000), core.mmu.cart_ram_len(&rom));
+    try expectEqual(@as(usize, 0x8000), core.mmu.cart_ram_len(&core.Rom.from_slice(&rom)));
     rom[0x149] = 4;
-    try expectEqual(@as(usize, 0x8000), core.mmu.cart_ram_len(&rom));
+    try expectEqual(@as(usize, 0x8000), core.mmu.cart_ram_len(&core.Rom.from_slice(&rom)));
     rom[0x149] = 5;
-    try expectEqual(@as(usize, 0x8000), core.mmu.cart_ram_len(&rom));
+    try expectEqual(@as(usize, 0x8000), core.mmu.cart_ram_len(&core.Rom.from_slice(&rom)));
     rom[0x149] = 2;
-    try expectEqual(@as(usize, 0x2000), core.mmu.cart_ram_len(&rom));
+    try expectEqual(@as(usize, 0x2000), core.mmu.cart_ram_len(&core.Rom.from_slice(&rom)));
     rom[0x149] = 3;
     const gb = try new_gb(&rom, .cgb);
     defer std.testing.allocator.destroy(gb);

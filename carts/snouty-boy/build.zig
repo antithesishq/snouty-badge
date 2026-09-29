@@ -19,6 +19,11 @@ var rom_path: []const u8 = dir ++ "tests/roms/dmg-acid2.gb";
 /// fetched (tools/fetch_test_roms.sh), so a fresh clone still builds every cart.
 const fallback_rom = dir ++ "roms/2048.gb";
 
+/// Where the badge build looks for its ROM (`-Drom-source`, SPEC.md 11.1).
+/// Same reason as `rom_path` for being a file-level var.
+var rom_source: RomSource = .drive;
+const RomSource = enum { drive, embed };
+
 pub fn add(b: *Build, sycl_badge_dep: *Build.Dependency, opts: common.Options) void {
     if (opts.rom) |rom| {
         rom_path = if (exists(b, rom) or !exists(b, b.fmt(dir ++ "{s}", .{rom}))) rom else b.fmt(dir ++ "{s}", .{rom});
@@ -26,6 +31,13 @@ pub fn add(b: *Build, sycl_badge_dep: *Build.Dependency, opts: common.Options) v
         std.debug.print("snouty-boy: {s} not found (run carts/snouty-boy/tools/fetch_test_roms.sh); embedding {s}\n", .{ rom_path, fallback_rom });
         rom_path = fallback_rom;
     }
+    rom_source = switch (opts.rom_source) {
+        .drive => .drive,
+        .embed => .embed,
+        // `pack` is Snouty Gear's XIP bank packer (docs/ROM_DRIVE.md section 7).
+        // A Game Boy ROM small enough to pack also fits in a RAM cart as is.
+        .pack => std.process.fatal("snouty-boy: -Drom-source=pack is not supported for this cart; use drive (default) or embed", .{}),
+    };
     const cart_optimize = opts.cart_optimize;
     font_path = sycl_badge_dep.path("src/font.zig");
 
@@ -67,28 +79,27 @@ fn exists(b: *Build, rel: []const u8) bool {
     return true;
 }
 
-/// Adds the `core`, `rom` and `cart_options` modules to the cart. `rom.data`
-/// is the embedded ROM; the file is copied next to a generated rom.zig so
-/// @embedFile can see it. `cart_options.xip` tells the rewind budget whether
-/// code and ROM live in flash (frontend/rewind.zig). `build/os_cart.zig`
-/// calls this once per firmware (twice for -Dcart-mode=both) and names the
-/// XIP one's asset step "<name>-xip assets"; that name is the only thing the
-/// builder signature lets us tell the two apart by.
+/// Adds the `core`, `romfs` and `rom` modules to the cart. `rom.data` is the
+/// embedded ROM (the file is copied next to a generated rom.zig so @embedFile
+/// can see it), `rom.name` its file name for the About screen, `rom.source`
+/// the `-Drom-source` choice. The same module serves the badge and the wasm
+/// build; the frontend ignores `source` in wasm, which has no drive.
 fn build_cart_modules(b: *Build, cart: *Build.Module, cart_api: *Build.Module, step: *Build.Step) void {
     _ = cart_api;
     const core_mod = b.createModule(.{ .root_source_file = b.path(dir ++ "core/gb.zig") });
     cart.addImport("core", core_mod);
-
-    const options = b.addOptions();
-    options.addOption(bool, "xip", std.mem.endsWith(u8, step.name, "-xip assets"));
-    cart.addImport("cart_options", options.createModule());
+    // The FAT12 reader shared with Snouty Gear (docs/ROM_DRIVE.md section 4).
+    cart.addImport("romfs", b.createModule(.{ .root_source_file = b.path("lib/romfs.zig") }));
 
     const wf = b.addWriteFiles();
     _ = wf.addCopyFile(b.path(rom_path), "rom.gb");
-    const rom_zig = wf.add("rom.zig",
+    const rom_zig = wf.add("rom.zig", b.fmt(
         \\pub const data: []const u8 = @embedFile("rom.gb");
+        \\pub const name: []const u8 = "{f}";
+        \\pub const Source = enum {{ drive, embed }};
+        \\pub const source: Source = .{s};
         \\
-    );
+    , .{ std.zig.fmtString(std.fs.path.basename(rom_path)), @tagName(rom_source) }));
     cart.addImport("rom", b.createModule(.{ .root_source_file = rom_zig }));
     // The OS 8x8 font, for the debug overlay's own blitter (frontend/debug.zig).
     // A copy: the file itself already belongs to the SDK's `board` module.

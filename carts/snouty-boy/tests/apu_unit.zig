@@ -10,7 +10,7 @@ const expectEqual = std.testing.expectEqual;
 const zero_rom: [0x8000]u8 = @splat(0);
 
 fn fresh() Gb {
-    var gb = Gb.init(&zero_rom, .dmg, &.{});
+    var gb = Gb.init_slice(&zero_rom, .dmg, &.{});
     gb.write8(0xFF26, 0x00); // power cycle: clean registers, sequencer at 0
     gb.write8(0xFF26, 0x80);
     return gb;
@@ -30,7 +30,7 @@ fn steps(gb: *Gb, n: u32) void {
 }
 
 test "apu post-boot NR52 reads 0xF1" {
-    var gb = Gb.init(&zero_rom, .dmg, &.{});
+    var gb = Gb.init_slice(&zero_rom, .dmg, &.{});
     try expectEqual(@as(u8, 0xF1), nr52(&gb));
     try expectEqual(@as(u8, 0), apu.pick_voice(&gb).channel);
 }
@@ -295,7 +295,7 @@ test "apu state survives a keyframe round trip" {
     steps(&gb, 3);
     var k: Gb.Keyframe = undefined;
     gb.snapshot(&k);
-    var gb2 = Gb.init(&zero_rom, .dmg, &.{});
+    var gb2 = Gb.init_slice(&zero_rom, .dmg, &.{});
     gb2.restore(&k);
     try std.testing.expectEqualDeep(apu.pick_voice(&gb), apu.pick_voice(&gb2));
     try expectEqual(gb.apu.seq, gb2.apu.seq);
@@ -307,7 +307,7 @@ var rom_buf: [0x10000]u8 = undefined;
 
 fn load_2048() ?[]const u8 {
     const io = std.testing.io;
-    const paths = [_][]const u8{ "roms/2048.gb", "../roms/2048.gb" };
+    const paths = [_][]const u8{ "carts/snouty-boy/roms/2048.gb", "roms/2048.gb", "../roms/2048.gb" };
     for (paths) |p| {
         const data = std.Io.Dir.cwd().readFile(io, p, &rom_buf) catch continue;
         return data;
@@ -324,7 +324,7 @@ test "apu 2048.gb 600 idle frames keep the model consistent" {
     const gb = try std.testing.allocator.create(Gb);
     defer std.testing.allocator.destroy(gb);
     var ram: [0x800]u8 = undefined;
-    gb.* = Gb.init(rom, .dmg, &ram);
+    gb.* = Gb.init_slice(rom, .dmg, &ram);
     var f: u32 = 0;
     while (f < 600) : (f += 1) {
         gb.step_frame(0);

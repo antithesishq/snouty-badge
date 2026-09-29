@@ -33,10 +33,37 @@ const Bufs = struct {
     }
 };
 
+const S = kstore.Store(page);
+/// Backing memory for the synthetic stores (the tests run one at a time).
+var mem: [8192]u8 align(4) = undefined;
+
+/// A store of `pool_pages` pages and `max_keyframes` tables in `mem`, as the
+/// frontend lays one out in its arena.
+fn make(pool_pages: usize, max_keyframes: usize) S {
+    return S.init(&mem, pool_pages, max_keyframes, n_pages);
+}
+
 fn expect_same(x: *const Bufs, y: *const Bufs) !void {
     try expect(std.mem.eql(u8, &x.a, &y.a));
     try expect(std.mem.eql(u8, &x.b, &y.b));
     try expect(std.mem.eql(u8, &x.c, &y.c));
+}
+
+test "kstore: layout arithmetic" {
+    // 10 pages of 64 B, 3 tables of 8 references, 10 free entries, 10 counts.
+    try expectEqual(@as(usize, 640 + 48 + 20 + 10), kstore.bytes_for(page, 10, 3, n_pages));
+    try expectEqual(@as(usize, 10), kstore.pages_fitting(page, 718, 3, n_pages));
+    try expectEqual(@as(usize, 9), kstore.pages_fitting(page, 717, 3, n_pages));
+    try expectEqual(@as(usize, 0), kstore.pages_fitting(page, 48, 3, n_pages));
+    // The store stays inside what bytes_for asked for.
+    var s = make(10, 3);
+    const end = @intFromPtr(&mem) + kstore.bytes_for(page, 10, 3, n_pages);
+    try expect(@intFromPtr(s.refs.ptr + s.refs.len) <= end);
+    try expectEqual(@as(usize, 10), s.capacity_pages());
+    var x: Bufs = .{};
+    x.fill(4);
+    try s.put(x.const_regions());
+    try expect(s.check());
 }
 
 test "kstore: page count with tail and empty regions" {
@@ -46,9 +73,7 @@ test "kstore: page count with tail and empty regions" {
 }
 
 test "kstore: all-zero state costs no pool pages" {
-    const S = kstore.Store(page, 16, 4, n_pages);
-    var s: S = undefined;
-    s.reset();
+    var s = make(16, 4);
     var x: Bufs = .{};
     try s.put(x.const_regions());
     try expectEqual(@as(usize, 0), s.pages_in_use());
@@ -62,9 +87,7 @@ test "kstore: all-zero state costs no pool pages" {
 }
 
 test "kstore: unchanged pages are shared, changed ones copied" {
-    const S = kstore.Store(page, 32, 4, n_pages);
-    var s: S = undefined;
-    s.reset();
+    var s = make(32, 4);
     var x: Bufs = .{};
     x.fill(1);
     try s.put(x.const_regions());
@@ -102,9 +125,7 @@ test "kstore: unchanged pages are shared, changed ones copied" {
 
 test "kstore: the pool evicts the oldest keyframes first" {
     // Each keyframe is 8 distinct pages; 20 pages hold two plus change.
-    const S = kstore.Store(page, 20, 8, n_pages);
-    var s: S = undefined;
-    s.reset();
+    var s = make(20, 8);
     var x: Bufs = .{};
     for (0..5) |k| {
         x.fill(@intCast(k * 16));
@@ -125,9 +146,7 @@ test "kstore: the pool evicts the oldest keyframes first" {
 }
 
 test "kstore: max_keyframes evicts the oldest" {
-    const S = kstore.Store(page, 64, 3, n_pages);
-    var s: S = undefined;
-    s.reset();
+    var s = make(64, 3);
     var x: Bufs = .{};
     for (0..5) |k| {
         x.a[0] = @intCast(k + 1); // one page differs per keyframe
@@ -145,9 +164,7 @@ test "kstore: max_keyframes evicts the oldest" {
 
 test "kstore: PoolFull keeps the previous keyframe" {
     // 12 pages: one full keyframe (8) fits, two do not.
-    const S = kstore.Store(page, 12, 4, n_pages);
-    var s: S = undefined;
-    s.reset();
+    var s = make(12, 4);
     var x: Bufs = .{};
     x.fill(1);
     try s.put(x.const_regions());
@@ -167,9 +184,7 @@ test "kstore: PoolFull keeps the previous keyframe" {
 }
 
 test "kstore: drop_newest truncates and later puts share with the new head" {
-    const S = kstore.Store(page, 64, 8, n_pages);
-    var s: S = undefined;
-    s.reset();
+    var s = make(64, 8);
     var x: Bufs = .{};
     x.fill(3);
     for (0..5) |k| {
@@ -192,9 +207,7 @@ test "kstore: drop_newest truncates and later puts share with the new head" {
 }
 
 test "kstore: accounting never leaks over many put/evict/drop cycles" {
-    const S = kstore.Store(page, 30, 16, n_pages);
-    var s: S = undefined;
-    s.reset();
+    var s = make(30, 16);
     var x: Bufs = .{};
     var seed: u32 = 12345;
     for (0..3000) |_| {
@@ -229,7 +242,7 @@ test "kstore: accounting never leaks over many put/evict/drop cycles" {
 
 const gb_page = 512;
 const max_pages = kstore.pages_for(gb_page, .{ @sizeOf(Gb.Small), 0x4000, 0x8000, Gb.max_cart_ram });
-const GbStore = kstore.Store(gb_page, 400, 8, max_pages);
+const GbStore = kstore.Store(gb_page);
 
 fn diff(a: *const Gb.Keyframe, b: *const Gb.Keyframe) ?[]const u8 {
     inline for (@typeInfo(Gb.Small).@"struct".field_names) |name| {
@@ -245,9 +258,10 @@ var ram: [0x2000]u8 = undefined;
 
 test "kstore: a console round-trips exactly (Gb.Keyframe field by field)" {
     const gpa = std.testing.allocator;
-    const store = try gpa.create(GbStore);
-    defer gpa.destroy(store);
-    store.reset();
+    const store_mem = try gpa.alignedAlloc(u8, .@"4", kstore.bytes_for(gb_page, 400, 8, max_pages));
+    defer gpa.free(store_mem);
+    var store_v = GbStore.init(store_mem, 400, 8, max_pages);
+    const store = &store_v;
     const gb = try gpa.create(Gb);
     defer gpa.destroy(gb);
     const want = try gpa.create(Gb.Keyframe);
@@ -260,10 +274,10 @@ test "kstore: a console round-trips exactly (Gb.Keyframe field by field)" {
     var rom: [0x8000]u8 = @splat(0);
     rom[0x147] = 0x1A;
     rom[0x149] = 0x02;
-    try expectEqual(@as(usize, 0x2000), core.mmu.cart_ram_len(&rom));
+    try expectEqual(@as(usize, 0x2000), core.mmu.cart_ram_len(&core.Rom.from_slice(&rom)));
     inline for (.{ core.Model.dmg, core.Model.cgb }) |model| {
         store.reset();
-        gb.* = Gb.init(&rom, model, &ram);
+        gb.* = Gb.init_slice(&rom, model, &ram);
         for (0..3) |_| gb.step_frame(0);
         gb.vram[0x2001] = 0x11;
         gb.wram[0x7FFF] = 0x22;

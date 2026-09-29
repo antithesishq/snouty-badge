@@ -30,7 +30,7 @@ const Capture = struct {
 
 /// LCD on, BG on, 0x8000 tile data, 0x9800 BG map, identity palettes.
 fn setup(gb: *Gb, cap: *Capture) void {
-    gb.* = Gb.init(&zero_rom, .dmg, &.{});
+    gb.* = Gb.init_slice(&zero_rom, .dmg, &.{});
     gb.line_sink = cap.sink();
     ppu.write_reg(gb, Reg.lcdc, 0x91);
     gb.io[Reg.bgp] = 0xE4;
@@ -470,7 +470,7 @@ test "ppu LCD off and on" {
 
 /// CGB model, LCD on, BG on, 0x8000 tile data, 0x9800 BG map.
 fn setup_cgb(gb: *Gb, cap: *Capture) void {
-    gb.* = Gb.init(&zero_rom, .cgb, &.{});
+    gb.* = Gb.init_slice(&zero_rom, .cgb, &.{});
     gb.line_sink = cap.sink();
     ppu.write_reg(gb, Reg.lcdc, 0x91);
     gb.io[Reg.if_] = 0;
@@ -486,7 +486,7 @@ fn solid_bank(gb: *Gb, bank: usize, i: usize, c: u2) void {
 }
 
 test "cgb palette registers: auto-increment, read-back, pal_dirty" {
-    var gb = Gb.init(&zero_rom, .cgb, &.{});
+    var gb = Gb.init_slice(&zero_rom, .cgb, &.{});
     // Boot state: every colour white (0x7FFF little endian).
     for (0..32) |i| {
         try expectEqual(@as(u8, 0xFF), gb.ppu.bg_pal[i * 2]);
@@ -539,7 +539,7 @@ test "cgb palette registers: auto-increment, read-back, pal_dirty" {
     try expectEqual(@as(u8, 0xFF), gb.read8(0xFF6C));
 
     // DMG mode: the registers do not exist.
-    var dmg = Gb.init(&zero_rom, .dmg, &.{});
+    var dmg = Gb.init_slice(&zero_rom, .dmg, &.{});
     dmg.pal_dirty = false;
     dmg.write8(0xFF68, 0x80);
     dmg.write8(0xFF69, 0x00);

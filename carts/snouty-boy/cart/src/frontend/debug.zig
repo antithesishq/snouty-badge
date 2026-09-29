@@ -2,7 +2,8 @@
 //! Allocation-free and std.fmt-free. Line 1: average and maximum
 //! `step_frame` time over the last 60 frames; line 2: frames per second from
 //! `micros_since_boot` deltas between `update()` calls, over 60 frames,
-//! then the scrubber's page-store use in KB and its keyframe count.
+//! then the scrubber's page-store use in KB; line 3: the keyframes held and
+//! where the ROM came from (E embedded, D drive, frontend/romsrc.zig).
 //! In wasm builds `micros_since_boot` is an upstream stub that adds 1000 per
 //! call (so the overlay shows 1000us and 500 fps in the simulator and in
 //! preview.mjs); only hardware numbers mean anything.
@@ -19,6 +20,9 @@ pub var alarm: bool = false;
 /// frontend/rewind.zig after every keyframe.
 pub var pool_kb: u32 = 0;
 pub var keyframes: u32 = 0;
+/// ROM source letter: 'E' embedded, 'D' drive (frontend/romsrc.zig), set
+/// by main.zig.
+pub var source_letter: u8 = 'E';
 
 const window = 60;
 
@@ -78,7 +82,7 @@ pub fn draw() void {
     // "avg NNNN max NNNNus": the font is 8 px wide, so 20 characters fill
     // the 160 px screen; the unit is written once to keep 4-digit values
     // on screen.
-    var buf: [48]u8 = undefined;
+    var buf: [64]u8 = undefined;
     var i: usize = 0;
     i += put(buf[i..], "avg ");
     i += put_num(buf[i..], avg);
@@ -86,11 +90,13 @@ pub fn draw() void {
     i += put_num(buf[i..], max);
     i += put(buf[i..], "us\nfps ");
     i += put_num(buf[i..], fps());
-    i += put(buf[i..], " kf ");
-    i += put_num(buf[i..], keyframes);
-    i += put(buf[i..], " ");
+    i += put(buf[i..], " pool ");
     i += put_num(buf[i..], pool_kb);
-    i += put(buf[i..], "K");
+    i += put(buf[i..], "K\nkf ");
+    i += put_num(buf[i..], keyframes);
+    buf[i] = ' ';
+    buf[i + 1] = source_letter;
+    i += 2;
     draw_text(buf[0..i], white, if (alarm) red else black);
 }
 
