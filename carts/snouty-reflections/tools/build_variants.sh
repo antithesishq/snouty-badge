@@ -12,9 +12,29 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 cart_dir=$PWD
 root=$(cd ../.. && pwd)
-zig=${ZIG:-$HOME/.local/bin/zig}
+zig=${ZIG:-zig}   # the zig on PATH; ZIG=/path/to/zig overrides
 out=$cart_dir/dist/variants
 limit=$((120 * 1024))
+
+# .text .data .bss sizes of a 32-bit little-endian ELF (no binutils needed:
+# macOS has no GNU size).
+section_sizes() {
+    python3 - "$1" <<'PY'
+import struct, sys
+b = open(sys.argv[1], "rb").read()
+shoff, = struct.unpack_from("<I", b, 0x20)
+shentsize, shnum, shstrndx = struct.unpack_from("<HHH", b, 0x2E)
+def sh(i):
+    return struct.unpack_from("<IIIIII", b, shoff + i * shentsize)
+stroff = sh(shstrndx)[4]
+sizes = {}
+for i in range(shnum):
+    name, _, _, _, _, size = sh(i)
+    end = b.index(b"\0", stroff + name)
+    sizes[b[stroff + name:end].decode()] = size
+print(sizes.get(".text", 0), sizes.get(".data", 0), sizes.get(".bss", 0))
+PY
+}
 
 variants=("$@")
 [ ${#variants[@]} -eq 0 ] && variants=(full20 cut20 full15 half30)
@@ -34,8 +54,7 @@ for v in "${variants[@]}"; do
         float=FAIL
         fail=1
     fi
-    read -r text data bss < <(size -A "$out/$v.elf" |
-        awk '$1 == ".text" { t = $2 } $1 == ".data" { d = $2 } $1 == ".bss" { b = $2 } END { print t + 0, d + 0, b + 0 }')
+    read -r text data bss < <(section_sizes "$out/$v.elf")
     code=$((text + data))
     verdict=ok
     if [ "$code" -ge "$limit" ]; then
