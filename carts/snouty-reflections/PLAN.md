@@ -464,3 +464,87 @@ writes a diff PNG with the >6 outliers marked, so they can be eyeballed.
 ### M2 status
 
 - 2026-09-29: plan written; tracks A, B, C started.
+- 2026-09-29: first integration (cc19649): scene complete and check_render
+  PASS, but calibrated worst 74.85 ms (frame 531), mean 59.9; without glass
+  48.3 worst. Knobs 1-3 save at most 3 ms. Three ways forward offered.
+
+## M2.1 Perf variants (2026-09-29)
+
+Adrian asked for all three options built, to compare them himself on the
+emulator. One tree, one build option, three firmware images. The picture
+logic stays shared; a variant only sets knobs, frame rate and render scale.
+
+### The variants
+
+`-Dreflections_variant=<name>` (root `zig build -Dcart=snouty-reflections`);
+default `full20` is cc19649 unchanged (over budget, kept as the baseline).
+
+| name     | res         | fps | scene                                         | budget (94%) |
+|----------|-------------|-----|-----------------------------------------------|--------------|
+| `full20` | 160x128     | 20  | everything, knobs 1-4 at defaults             | 47.0 ms      |
+| `cut20`  | 160x128     | 20  | no glass sphere; water_shadows = primary_only | 47.0 ms      |
+| `full15` | 160x128     | 15  | everything; glass_primary = env (knob 4)      | 62.7 ms      |
+| `half30` | 80x64 x2    | 30  | everything, knobs at defaults                 | 31.3 ms      |
+
+Budgets are 94% of the frame period, the same margin as M2's 47 of 50.
+If a variant misses its budget, the integrator turns further knobs
+(2, then 3) within that variant and records it; it does not change the
+scene of another variant.
+
+### Shared rules
+
+- `cart/src/variant.zig` is the one place that maps the build option to
+  constants: `fps: u32`, `render_scale: u32` (1 or 2), `glass_enabled: bool`,
+  and overrides for knobs 2 and 4. `scene.zig`'s knobs read from it.
+- Animation runs on seconds, not frames: one orbit is 30 s at every fps
+  (`camera.orbit_frames = 30 * fps`, the sin/cos table sized to match, still
+  comptime), water `t = frame / fps`. So all variants show the same scene at
+  the same wall time, and a bench sweep is one orbit = `orbit_frames` frames.
+- `main.start` sets `set_vsync_enabled(1000.0 / fps)`.
+- `glass_enabled = false` removes the glass everywhere: no hit tests, no
+  screen span, no shadow caster. Not a transparent sphere.
+- `render_scale = 2`: rays only at even (x, y), using the existing
+  full-resolution camera tables at that pixel (no new tables); each ray's
+  colour is written to its 2x2 block, and each of the four pixels is
+  quantised with its own full-resolution dither threshold, so the Bayer
+  pattern stays at full resolution. Spans and shore rows keep their
+  full-resolution meaning; a block's row kind is the kind of its even row.
+  Loops step by 2; no per-pixel branch on the scale.
+- Size: `.text + .data` < 120 KB for every variant.
+- No f64, no runtime std.math; `zig build check-float` passes per variant.
+
+### Reference and check
+
+`tools/reference.py` gains `--fps`, `--no-glass`, `--glass-primary env`
+(knob 4: the glass seen by primary rays looks its reflected ray up in
+`env()` and its transmitted ray in `env_flat`, trace.zig's definition) and
+`--scale 2` (render at 80x64 on the even pixel grid, upscaled 2x2).
+`check_render.mjs --variant <name>` passes the matching flags; for `half30`
+it compares every pixel of the upscaled image (dither `none` makes each
+block uniform). Frames: 0, 1/4, 1/2, 3/4 of the orbit and each variant's
+bench worst. The M2 pass rule applies unchanged.
+
+### Tools
+
+`tools/build_variants.sh` (run from the cart directory) builds all four
+and copies them to `dist/variants/<name>.{uf2,elf,wasm}`, then prints
+sizes. `tools/bench_variants.sh` runs badge-bench (calibrated, default
+dither) over one orbit per variant and prints a table: worst frame and
+index, mean, budget, verdict.
+
+### Tracks
+
+- **A (cart)**: variant.zig, build option, seconds-based animation,
+  glass_enabled, render_scale 2, knob wiring, build_variants.sh. Owns
+  `cart/`, `build.zig`, `tools/build_variants.sh`.
+- **C (reference)**: the reference flags, check_render --variant,
+  bench_variants.sh, badge-bench frames for the variants. Owns
+  `tools/reference.py`, `tools/check_render.mjs`, `tools/bench_variants.sh`.
+
+The integrator builds, benches, checks, updates this status and
+`docs/RUNNING.md` (section on variants), writes `docs/variants.md` with the
+table and a GIF per variant, and tags `snouty-reflections/m2.1-variants`.
+
+### M2.1 status
+
+- 2026-09-29: plan written.
