@@ -261,3 +261,38 @@ report and is stubbed locally.
   in `/home/exedev/snouty-badge-genesis`; tracks A-D in worktrees
   `/home/exedev/snouty-badge-genesis-{m68k,vdp,machine,sound}` on
   `genesis/m1-{m68k,vdp,machine,sound}`.
+- 2026-09-29 (M1 tracks merged, perf pass running): all four tracks
+  landed on `genesis/m1` (A 5 commits, B 7, C 5, D 3) plus integration.
+  - Track A: 68000 complete; SingleStepTests full set 1,000,060 cases:
+    821,970 pass on state AND cycles, 178,087 address-error cases skipped
+    (SPEC 4), 3 disputed data cases, 0 failures. Two-level decode (9.25 KB)
+    chosen over the 64 K table (+55 KB flash for 2%). `code_window` on
+    the bus for direct opcode fetch. 98.8 host cycles/instruction on a
+    stub bus.
+  - Track B: VDP with 70 unit tests incl. a random-state pixel-exact
+    reference comparison; H40 stress at the 4 ms render budget, H32 and
+    shadow/highlight stress over it (5.7 / 5.0 ms; open).
+  - Track C: bus, rom refusals, frame loop, frontend, golden test
+    (hashes filled after review), `m1_play.json`.
+  - Track D: Z80 map with cached window, YM2612 register model with
+    timers (period = (1024-TA)*144 YM clocks: the datasheet's 72 is for
+    the OPN prescaler), PSG, `pick_tone`. Found the test ROM driver bug
+    (EI inside the V-int handler: 3 acceptances per line-long INT); ROM
+    fixed and rebuilt (checksum 00B2).
+  - Integration: `Z80.step` called, not inlined (85 KB function
+    otherwise); bus accessors out of line (inline they overflowed the
+    256 KB flash window by 2.3 KB). 124/124 host tests. `.text` 200,732 B,
+    `.bss` 164,828 B.
+  - Runs: the test ROM end to end (tone sequence as tools/testrom/README);
+    Miniplanets boots, title, gameplay (docs/m1_miniplanets.gif).
+  - badge-bench (calibrated, 120 updates): test ROM 22.75 ms mean / 26.30
+    worst; Miniplanets from the drive image 34.65 / 37.67, OVER the 31/33
+    targets (Z80 23.5%, 68000 handlers 47%, EA reads 13.6%, bus accessors
+    5.4%, VDP 5%). Perf pass on `genesis/m1-perf` (Opus) with those
+    targets; Z80 module at ReleaseSmall saves 21 KB flash (perf on the
+    Sona driver to be measured there).
+  - Open after M1: H32/shadow-highlight render cost; hot loops not yet in
+    RAM-text (XIP cache); Z80 writes to the VDP through 7F00 dropped;
+    menu is a placeholder (M2); a `-Dmd-rom` larger than the flash window
+    fails the firmware link although the wasm builds (wasm-only step
+    wanted); no root LICENSE (test ROM is MIT under Adrian's name).
