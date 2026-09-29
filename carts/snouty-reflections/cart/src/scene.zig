@@ -4,6 +4,7 @@
 const std = @import("std");
 const math = @import("math.zig");
 const shore_data = @import("shore_data.zig");
+const variant = @import("variant.zig");
 const Vec3 = math.Vec3;
 const vec3 = math.vec3;
 const splat = math.splat;
@@ -48,7 +49,8 @@ pub const water_f0: f32 = 0.02;
 pub const min_reflect_y: f32 = 0.02;
 
 // M2 knobs. Turned in this order if the full feature set is over budget
-// (PLAN.md "Knobs"). Costs are calibrated badge-bench busy ms on the two
+// (PLAN.md "Knobs"). Knobs 2 and 4 and the glass sphere itself are set per
+// perf variant in variant.zig (PLAN.md "M2.1 Perf variants"). Costs are calibrated badge-bench busy ms on the two
 // heaviest orbit frames, 500 (glass nearest the camera, ~5600 glass pixels)
 // and 558 (worst without glass), each knob applied on top of the ones
 // above it. Full feature set: 72.7 / 69.3 ms; without glass 46.2 / 48.3.
@@ -63,7 +65,7 @@ pub const glass_mode: GlassMode = .real;
 pub const WaterShadows = enum { all, primary_only, off };
 /// Shadows of both spheres on the water: every water hit, depth-0 hits only,
 /// or none. primary_only -2.1 / -1.7 ms, off another -1.4 / -1.3 ms.
-pub const water_shadows: WaterShadows = .all;
+pub const water_shadows: WaterShadows = variant.water_shadows;
 
 pub const GlassSecondary = enum { full, env };
 /// full: glass seen at depth 1 traces its reflected and transmitted rays.
@@ -72,11 +74,14 @@ pub const GlassSecondary = enum { full, env };
 pub const glass_secondary: GlassSecondary = .full;
 
 pub const GlassPrimary = enum { full, env };
-/// Proposed knob 4 (not in PLAN.md, reference.py lacks it): env makes the
-/// glass seen by primary rays look both rays up in env_flat (env() upward,
-/// flat unrippled water downward) instead of tracing them. With knobs 1-3
-/// at their defaults: 50.5 / 56.6 ms.
-pub const glass_primary: GlassPrimary = .full;
+/// Knob 4 (PLAN.md M2.1, full15): env makes the glass seen by primary rays
+/// look both rays up in env_flat (env() upward, flat unrippled water
+/// downward) instead of tracing them. With knobs 1-3 at their defaults:
+/// 50.5 / 56.6 ms.
+pub const glass_primary: GlassPrimary = variant.glass_primary;
+
+/// false (cut20): no glass sphere anywhere, not even as a shadow caster.
+pub const glass_enabled: bool = variant.glass_enabled;
 
 /// A sphere's shadow on the water: the sun-side cylinder of radius
 /// sqrt(1.21) * rs around the sphere, cut by y = 0, is an ellipse; x0..z1 is
@@ -121,10 +126,12 @@ fn caster(c: Vec3, rs: f32, opacity: f32) Caster {
     };
 }
 
-/// Chrome (opacity 1.0) and glass (0.55).
-pub const casters = [2]Caster{
+/// Chrome (opacity 1.0) and glass (0.55, only when glass_enabled).
+pub const casters = if (glass_enabled) [2]Caster{
     caster(sphere_centre, 1.0, 1.0),
     caster(glass_centre, glass_radius, 0.55),
+} else [1]Caster{
+    caster(sphere_centre, 1.0, 1.0),
 };
 
 /// Shore plane z = shore_z facing -z, x in (-16, 16], y in [0, 4), 8 texels

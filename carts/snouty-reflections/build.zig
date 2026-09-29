@@ -15,6 +15,10 @@ pub fn add(b: *Build, sycl_badge_dep: *Build.Dependency, opts: common.Options) v
     // -Ddebug_overlay=true draws frame timing in the top-left corner (declared by the root build.zig).
     const options = b.addOptions();
     options.addOption(bool, "debug_overlay", opts.debug_overlay);
+    // -Dreflections_variant picks frame rate, render scale and scene knobs; cart/src/variant.zig
+    // maps it to constants (PLAN.md "M2.1 Perf variants").
+    const variant = b.option(Variant, "reflections_variant", "snouty-reflections: full20 (default), cut20, full15 or half30") orelse .full20;
+    options.addOption(Variant, "reflections_variant", variant);
 
     // Set before add_os_cart: the custom builder runs inside that call.
     build_options = options;
@@ -36,6 +40,9 @@ pub fn add(b: *Build, sycl_badge_dep: *Build.Dependency, opts: common.Options) v
     check_float.has_side_effects = true;
     opts.check_float_step.dependOn(&check_float.step);
 }
+
+/// Perf variants; the table is in cart/src/variant.zig.
+const Variant = enum { full20, cut20, full15, half30 };
 
 var build_options: ?*Build.Step.Options = null;
 

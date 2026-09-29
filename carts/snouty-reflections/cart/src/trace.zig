@@ -21,6 +21,7 @@ const dither = @import("dither.zig");
 const camera = @import("camera.zig");
 const scene = @import("scene.zig");
 const water = @import("water.zig");
+const variant = @import("variant.zig");
 const Vec3 = math.Vec3;
 const splat = math.splat;
 
@@ -108,7 +109,9 @@ inline fn hit_chrome(o: Vec3, d: Vec3, comptime mode: SphereTest) f32 {
     return hit_sphere(scene.sphere_centre, 1.0, o, d, mode);
 }
 
+/// no_hit without the glass sphere (scene.glass_enabled = false).
 inline fn hit_glass(o: Vec3, d: Vec3, comptime mode: SphereTest) f32 {
+    if (!scene.glass_enabled) return no_hit;
     return hit_sphere(scene.glass_centre, scene.glass_radius, o, d, mode);
 }
 
@@ -182,13 +185,21 @@ fn water_shadow_exact(px: f32, pz: f32) f32 {
 /// smoothstep is C1 and at least 4 cells wide, so the bilinear error is
 /// below 0.05 in sh (a fraction of a colour unit through water_scatter and
 /// the specular); only the b = 0 cut near the spheres' feet blurs by a cell.
-/// 77 x 108 f32 = 33 KB of .bss.
+/// 77 x 108 u8 = 8 KB of .bss with both casters (less without the glass).
 const shadow_step: f32 = 1.0 / 32.0;
-const shadow_x0: f32 = @min(scene.casters[0].x0, scene.casters[1].x0);
-const shadow_z0: f32 = @min(scene.casters[0].z0, scene.casters[1].z0);
-const shadow_nx: usize = @as(usize, @intFromFloat(@ceil((@max(scene.casters[0].x1, scene.casters[1].x1) - shadow_x0) / shadow_step))) + 2;
-const shadow_nz: usize = @as(usize, @intFromFloat(@ceil((@max(scene.casters[0].z1, scene.casters[1].z1) - shadow_z0) / shadow_step))) + 2;
+const shadow_x0: f32 = casters_bound("x0", false);
+const shadow_z0: f32 = casters_bound("z0", false);
+const shadow_nx: usize = @as(usize, @intFromFloat(@ceil((casters_bound("x1", true) - shadow_x0) / shadow_step))) + 2;
+const shadow_nz: usize = @as(usize, @intFromFloat(@ceil((casters_bound("z1", true) - shadow_z0) / shadow_step))) + 2;
 var shadow_map: [shadow_nz][shadow_nx]u8 = undefined;
+
+/// Min (or max) of one box edge over the casters (one or two, see
+/// scene.glass_enabled), at comptime.
+fn casters_bound(comptime field: []const u8, comptime max: bool) f32 {
+    var v: f32 = @field(scene.casters[0], field);
+    for (scene.casters[1..]) |cs| v = if (max) @max(v, @field(cs, field)) else @min(v, @field(cs, field));
+    return v;
+}
 
 /// Fills shadow_map; call once before the first render_frame.
 pub fn init() void {
@@ -499,8 +510,17 @@ inline fn shore_first_row(se: ShoreEdge, base: Vec3) usize {
 /// magenta and cyan pixels (tools/preview.mjs --frames 600 --every 1).
 const debug_span = false;
 
+/// Pixels per ray along each axis (variant.zig): 1, or 2 for a ray per even
+/// (x, y) written to its 2x2 block.
+const scale = variant.render_scale;
+/// The `scale` framebuffer columns a column of rays writes.
+const Columns = *[scale][camera.height]cart.Pixel;
+
+/// Primary rays of rows [y0, y1) of column x (with scale 2: the even rows,
+/// so a block takes the row kind of its even row; runs partition the column,
+/// so each even row is in exactly one).
 inline fn render_rows(
-    column: *[camera.height]cart.Pixel,
+    columns: Columns,
     x: usize,
     base: Vec3,
     inv_len: *const [camera.height]f32,
@@ -511,7 +531,8 @@ inline fn render_rows(
     comptime from: From,
 ) void {
     const fade_col = &water.primary_fade[camera.half_column(x)];
-    for (y0..y1) |y| {
+    var y = if (scale == 1) y0 else (y0 + 1) & ~@as(usize, 1);
+    while (y < y1) : (y += scale) {
         const w = base + cam.up * splat(camera.v_table[y]);
         const d = w * splat(inv_len[y]);
         const pw = if (from == .eye_water or from == .eye_water_shore) blk: {
@@ -525,12 +546,19 @@ inline fn render_rows(
         const c = @call(.always_inline, trace, .{ cam.eye, d, 0, from, fs, pw });
         // Every shaded colour is a non-negative combination of non-negative
         // constants, so saturate reduces to the upper clamp.
-        column[y] = dither.quantise(@intCast(x), @intCast(y), @min(splat(1.0), c));
+        const cs = @min(splat(1.0), c);
+        // Each pixel of the block takes its own full-resolution dither
+        // threshold, so the Bayer pattern stays at full resolution.
+        inline for (0..scale) |i| {
+            inline for (0..scale) |j| {
+                columns[i][y + j] = dither.quantise(@intCast(x + i), @intCast(y + j), cs);
+            }
+        }
         if (debug_span and from != .eye and
             (hit_chrome(cam.eye, d, .stable) != no_hit or hit_glass(cam.eye, d, .stable) != no_hit))
-            column[y] = cart.Pixel.from_color(.{ .r = 31, .g = 0, .b = 31 });
+            columns[0][y] = cart.Pixel.from_color(.{ .r = 31, .g = 0, .b = 31 });
         if (debug_span and (from == .eye_sky or from == .eye_water) and shore(cam.eye, d, false) != null)
-            column[y] = cart.Pixel.from_color(.{ .r = 0, .g = 63, .b = 31 });
+            columns[0][y] = cart.Pixel.from_color(.{ .r = 0, .g = 63, .b = 31 });
     }
 }
 
@@ -543,7 +571,7 @@ inline fn clip(y0: usize, y1: usize, lo: usize, hi: usize) Rows {
 /// Rows [y0, y1) outside the sphere spans: sky above shore_lo, shore or sky
 /// down to first_water_row, shore or water down to shore_hi, water below.
 inline fn render_clear_rows(
-    column: *[camera.height]cart.Pixel,
+    columns: Columns,
     x: usize,
     base: Vec3,
     inv_len: *const [camera.height]f32,
@@ -559,10 +587,10 @@ inline fn render_clear_rows(
     const e = clip(y0, y1, shore_lo, fwr);
     const ws = clip(y0, y1, fwr, shore_hi);
     const wr = clip(y0, y1, shore_hi, camera.height);
-    render_rows(column, x, base, inv_len, cam, fs, s.lo, s.hi, .eye_sky);
-    render_rows(column, x, base, inv_len, cam, fs, e.lo, e.hi, .eye_env);
-    render_rows(column, x, base, inv_len, cam, fs, ws.lo, ws.hi, .eye_water_shore);
-    render_rows(column, x, base, inv_len, cam, fs, wr.lo, wr.hi, .eye_water);
+    render_rows(columns, x, base, inv_len, cam, fs, s.lo, s.hi, .eye_sky);
+    render_rows(columns, x, base, inv_len, cam, fs, e.lo, e.hi, .eye_env);
+    render_rows(columns, x, base, inv_len, cam, fs, ws.lo, ws.hi, .eye_water_shore);
+    render_rows(columns, x, base, inv_len, cam, fs, wr.lo, wr.hi, .eye_water);
 }
 
 /// Not inlined into update(): keeps the caller's register state out of the
@@ -571,24 +599,30 @@ pub noinline fn render_frame(frame: u32) void {
     const cam = camera.at_frame(frame);
     const fs = Frame{ .ph = water.phases_at_frame(frame) };
     const sp_chrome = sphere_span_at(cam, scene.sphere_centre, 1.0);
-    const sp_glass = sphere_span_at(cam, scene.glass_centre, scene.glass_radius);
+    const sp_glass = if (scene.glass_enabled) sphere_span_at(cam, scene.glass_centre, scene.glass_radius) else {};
     const se = shore_edge_at(cam);
     const fb = cart.framebuffer;
-    for (fb, 0..) |*column, x| {
+    var x: usize = 0;
+    while (x < camera.width) : (x += scale) {
+        const columns: Columns = fb[x..][0..scale];
         const u = camera.u_table[x];
         const base = cam.fwd + cam.right * splat(u);
         const inv_len = &camera.inv_len_table[camera.half_column(x)];
         const shore_lo = shore_first_row(se, base);
         const shore_hi = shore_water_end(se, base);
-        const spans = span_union(sphere_rows(sp_chrome, u), sphere_rows(sp_glass, u));
+        const rows_chrome = sphere_rows(sp_chrome, u);
+        const spans = if (scene.glass_enabled)
+            span_union(rows_chrome, sphere_rows(sp_glass, u))
+        else
+            Spans{ .r = .{ rows_chrome, rows_chrome }, .n = @intFromBool(rows_chrome.lo != rows_chrome.hi) };
         // Clear rows before each span, the span, and the clear rest; one
         // call site each keeps a single inlined copy of every row kind.
         var y: usize = 0;
         for (0..spans.n + 1) |i| {
             const end = if (i < spans.n) spans.r[i].lo else camera.height;
-            render_clear_rows(column, x, base, inv_len, &cam, &fs, y, end, shore_lo, shore_hi);
+            render_clear_rows(columns, x, base, inv_len, &cam, &fs, y, end, shore_lo, shore_hi);
             if (i == spans.n) break;
-            render_rows(column, x, base, inv_len, &cam, &fs, spans.r[i].lo, spans.r[i].hi, .eye);
+            render_rows(columns, x, base, inv_len, &cam, &fs, spans.r[i].lo, spans.r[i].hi, .eye);
             y = spans.r[i].hi;
         }
     }

@@ -7,6 +7,7 @@ const math = @import("math.zig");
 const dither = @import("dither.zig");
 const overlay = @import("overlay.zig");
 const trace = @import("trace.zig");
+const variant = @import("variant.zig");
 const build_options = @import("build_options");
 
 comptime {
@@ -19,7 +20,7 @@ var frame: u32 = 0;
 var render_us: u32 = 0;
 
 pub fn start() void {
-    cart.set_vsync_enabled(1000.0 / 20.0);
+    cart.set_vsync_enabled(1000.0 / @as(comptime_float, variant.fps));
     cart.set_double_buffer_mode(.no_copy_full_frame);
     trace.init();
 }

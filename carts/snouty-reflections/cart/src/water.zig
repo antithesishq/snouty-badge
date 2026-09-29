@@ -3,6 +3,7 @@
 const std = @import("std");
 const math = @import("math.zig");
 const camera = @import("camera.zig");
+const variant = @import("variant.zig");
 const Vec3 = math.Vec3;
 
 const Wave = struct { a: f32, kx: f32, kz: f32, w: f32 };
@@ -69,9 +70,9 @@ pub const Phases = [3]f32;
 const steps: f32 = math.sin_table_len;
 
 pub fn phases_at_frame(frame: u32) Phases {
-    // t = frame / 20 s. The f32 product is exact enough for any frame below
-    // 2^24; fract keeps the runtime phase argument small.
-    const t = @as(f32, @floatFromInt(frame)) * (1.0 / 20.0);
+    // t = frame / fps seconds. The f32 product is exact enough for any
+    // frame below 2^24; fract keeps the runtime phase argument small.
+    const t = @as(f32, @floatFromInt(frame)) * (1.0 / @as(comptime_float, variant.fps));
     var ph: Phases = undefined;
     inline for (waves, 0..) |wv, i| ph[i] = (math.fract(wv.w * t) + 0.25) * steps;
     return ph;

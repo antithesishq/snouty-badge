@@ -548,3 +548,14 @@ table and a GIF per variant, and tags `snouty-reflections/m2.1-variants`.
 ### M2.1 status
 
 - 2026-09-29: plan written.
+- 2026-09-29: tracks A and C merged. full20 renders bit-identically to
+  cc19649 (checksums on frames 0/150/300/450, both dither modes). cut20 as
+  planned was 47.97 ms (0.97 over); knob 3 does nothing without glass, so
+  water_shadows went from primary_only to off: 45.37 ms. Final, calibrated
+  busy, one orbit, bayer dither: full20 75.00 (over), cut20 45.37, full15
+  57.19, half30 20.81, all against the budgets above. `.text + .data`: full20
+  114148, cut20 103156, full15 112164, half30 117460 bytes; check-float passes
+  on all. check_render PASS for every variant on its four orbit frames and its
+  worst frame; negative controls (one variant's wasm checked as another) fail.
+  Table, montage and GIFs in docs/variants.md; RUNNING.md section 9. Tagged
+  `snouty-reflections/m2.1-variants`. Waiting on Adrian's pick.

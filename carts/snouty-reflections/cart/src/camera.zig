@@ -3,6 +3,7 @@
 //! up*v per row from the comptime tables below.
 const std = @import("std");
 const math = @import("math.zig");
+const variant = @import("variant.zig");
 const Vec3 = math.Vec3;
 const vec3 = math.vec3;
 const splat = math.splat;
@@ -15,8 +16,10 @@ pub const tan_h: f32 = 0.57735;
 
 pub const orbit_radius: f32 = 4.5;
 pub const orbit_height: f32 = 1.6;
-/// Frames per revolution (30 s at 20 fps).
-pub const orbit_frames = 600;
+/// Seconds per revolution, at every frame rate (PLAN.md M2.1).
+pub const orbit_seconds = 30;
+/// Frames per revolution: 600 at 20 fps, 450 at 15, 900 at 30.
+pub const orbit_frames = orbit_seconds * variant.fps;
 pub const target = vec3(0.0, 0.9, 0.0);
 
 /// u(x) = (x + 0.5 - 80) / 80 * tan_h, one per column.
@@ -67,13 +70,13 @@ pub const Camera = struct {
     up: Vec3,
 };
 
-/// (sin, cos) of theta = i / 600 turns for every orbit frame, rounded once
+/// (sin, cos) of theta = i / orbit_frames turns for every orbit frame, rounded once
 /// from f64. The runtime sine table's interpolation error (~5e-6) is fine
 /// for ripples but not for the camera: it tilts every primary ray by ~1e-6
 /// rad, and grazing silhouette rays (sphere, then water at ~70 units) turn
-/// that into visible colour changes. 4.8 KB.
+/// that into visible colour changes. 8 bytes per frame (4.8 KB at 20 fps).
 const orbit_sincos: [orbit_frames][2]f32 = blk: {
-    @setEvalBranchQuota(20000);
+    @setEvalBranchQuota(40 * orbit_frames);
     var t: [orbit_frames][2]f32 = undefined;
     for (0..orbit_frames) |i| {
         const a: f64 = @as(f64, @floatFromInt(i)) * (2.0 * std.math.pi / @as(f64, orbit_frames));
@@ -118,7 +121,7 @@ comptime {
 }
 
 pub fn at_frame(frame: u32) Camera {
-    // theta = frame / 600 turns.
+    // theta = frame / orbit_frames turns.
     const sc = orbit_sincos[frame % orbit_frames];
     const s = sc[0];
     const c = sc[1];

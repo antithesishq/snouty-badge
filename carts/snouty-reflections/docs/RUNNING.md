@@ -298,3 +298,32 @@ summary (modelled Cortex-M33 cycles; fps is uncapped, the cart locks to 20):
 FAIL is informational: a grazing sphere-edge pixel can exceed the 6-unit
 cap on precision alone, so look at `tools/emu/out/sweep/diff_*.png` before
 deciding.
+
+## 9. Perf variants (M2.1)
+
+`-Dreflections_variant=full20|cut20|full15|half30` (default `full20`) picks the
+resolution, frame rate and scene cuts; `docs/variants.md` has the table and
+numbers. The scene animates in seconds (one orbit is 30 s at every fps), so
+every variant shows the same scene at the same moment on hardware.
+
+```sh
+tools/build_variants.sh            # all four -> dist/variants/<name>.{uf2,elf,wasm}, sizes, check-float
+tools/build_variants.sh half30     # just one
+tools/check_render.mjs --variant cut20 [--frame F]...   # reference check (dist/variants/<name>.wasm)
+tools/bench_variants.sh [name...]  # badge-bench one orbit each; ~4 min per variant
+```
+
+To compare in the web simulator, serve one file and copy variants over it;
+the watcher reloads the page on every copy:
+
+```sh
+cp dist/variants/cut20.wasm dist/variants/current.wasm
+node ../../tools/serve-cart.mjs dist/variants/current.wasm      # terminal 1, as in section 4
+cp dist/variants/half30.wasm dist/variants/current.wasm         # switch; the page reloads
+```
+
+The simulator only fetches from port 2468 and calls `update()` 60 times a
+second whatever the cart's vsync says, so it plays full20 and cut20 3x fast,
+full15 4x and half30 2x. Judge the picture there, not the motion or frame
+rate; the timing is in `docs/variants.md` (or on the badge with
+`-Ddebug_overlay=true`).

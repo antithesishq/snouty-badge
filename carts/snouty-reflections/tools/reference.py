@@ -5,6 +5,7 @@
     python3 tools/reference.py --frame 0 --frame 150 --frame 300 --frame 450 --out out/
     python3 tools/reference.py --frame 0 --out out/ --glass fake --water-shadows primary_only
     python3 tools/reference.py --frame 0 --out out/ --dump-npy
+    python3 tools/reference.py --frame 0 --out out/ --fps 30 --scale 2       # M2.1 variant half30
 
 Renders frame F at 160x128 with exact float64 math (numpy sin/cos, exact
 normalize), saturates, quantises in dither mode `none` and writes an 8-bit RGB
@@ -18,7 +19,12 @@ Scene: chrome sphere, glass sphere (real or fake refraction), textured shore
 plane at z = 14, rippling water with sphere shadows and a scatter term, sunset
 sky. The M2 knobs are flags with the PLAN defaults (--glass real,
 --water-shadows all, --glass-secondary full, --fade-k 0.05); run with the
-cart's shipped settings. The shore texture and palette are read at run time
+cart's shipped settings. The M2.1 variant settings (PLAN.md "M2.1 Perf
+variants") are flags too: --fps N (one orbit is 30 s at every rate, so
+orbit_frames = 30 N, theta = (F mod orbit_frames) / orbit_frames turns and the
+water time is F / N s), --no-glass (the glass sphere and its shadow removed),
+--glass-primary env (knob 4, trace.zig's env_flat) and --scale 2 (rays only at
+the even pixels of the full-resolution camera, each copied to its 2x2 block). The shore texture and palette are read at run time
 from cart/src/shore_texels.bin and tools/shore_palette.json (override with
 --texels / --palette).
 
@@ -96,17 +102,28 @@ MAX_DEPTH = 2
 
 
 class Config:
-    """The M2 knobs (PLAN.md "Knobs") plus fade_k and the shore data."""
+    """The M2 knobs (PLAN.md "Knobs"), the M2.1 variant settings (frame rate,
+    glass on or off, knob 4, render scale), fade_k and the shore data."""
 
     def __init__(self, glass="real", water_shadows="all", glass_secondary="full", fade_k=FADE_K,
-                 texels_path=None, palette_path=None):
+                 texels_path=None, palette_path=None, fps=20, glass_enabled=True, glass_primary="full",
+                 scale=1):
         assert glass in ("real", "fake")
         assert water_shadows in ("all", "primary_only", "off")
         assert glass_secondary in ("full", "env")
+        assert glass_primary in ("full", "env")
+        assert fps > 0 and scale in (1, 2)
         self.glass = glass
         self.water_shadows = water_shadows
         self.glass_secondary = glass_secondary
+        self.glass_primary = glass_primary
+        self.glass_enabled = glass_enabled
+        self.fps = fps
+        self.orbit_frames = 30 * fps              # one orbit per 30 s at every frame rate
+        self.scale = scale
         self.fade_k = fade_k
+        # Shadow casters: the glass casts only while it exists.
+        self.shadow_spheres = SHADOW_SPHERES if glass_enabled else SHADOW_SPHERES[:1]
         self.texels = load_texels(texels_path or os.path.join(CART, "cart", "src", "shore_texels.bin"))
         self.palette = load_palette(palette_path or os.path.join(HERE, "shore_palette.json"))
 
@@ -199,6 +216,27 @@ def env(o, d, cfg):
     return col
 
 
+def env_flat(o, d, cfg):
+    """Knob 4's lookup (trace.zig env_flat): env() for rays with d.y >= 0; a
+    downward ray sees flat, unshadowed, unrippled water reflecting the sky (no
+    shore, no spheres). The reflected direction is (d.x, max(-d.y, 0.02), d.z),
+    not renormalised, as in the cart."""
+    col = np.empty((len(d), 3))
+    down = d[:, 1] < 0.0
+    up = ~down
+    if up.any():
+        col[up] = env(o[up], d[up], cfg)
+    if down.any():
+        dd = d[down]
+        r = np.stack([dd[:, 0], np.maximum(-dd[:, 1], 0.02), dd[:, 2]], axis=-1)
+        f = schlick(-dd[:, 1], WATER_F0)
+        spec = np.maximum(0.0, dot(r, SUN_L))
+        for _ in range(6):                      # ^64
+            spec = spec * spec
+        col[down] = lerp(DEEP + WATER_SCATTER, sky(r), f) + SUN_COL * (0.5 * spec)[:, None]
+    return col
+
+
 # ---------------------------------------------------------------- intersections
 def hit_sphere(o, d, c=SPHERE_C, r=SPHERE_R):
     """Nearest t > T_MIN of the ray against the sphere (c, r), np.inf where there is none."""
@@ -257,10 +295,10 @@ def ripple_normal(p, dist, t, fade_k=FADE_K):
     return normalize(np.stack([-dhdx, np.ones(len(p)), -dhdz], axis=-1))
 
 
-def water_shadow(p):
+def water_shadow(p, spheres=SHADOW_SPHERES):
     """Product over the spheres of the soft shadow factor at water point p."""
     sh = np.ones(len(p))
-    for c, rs, a in SHADOW_SPHERES:
+    for c, rs, a in spheres:
         oc = c - p
         b = dot(oc, SUN_L)
         q2 = dot(oc, oc) - b * b
@@ -293,6 +331,9 @@ def shade_glass(o, d, ts, depth, t, cfg):
     if depth == 1 and cfg.glass_secondary == "env":
         refl = env(p, r, cfg)
         trans = env(o2, d2, cfg)
+    elif depth == 0 and cfg.glass_primary == "env":
+        refl = env_flat(p, r, cfg)
+        trans = env_flat(o2, d2, cfg)
     else:
         refl = trace(p, r, depth + 1, t, cfg, skip_glass=True)
         trans = trace(o2, d2, depth + 1, t, cfg, skip_glass=True)
@@ -318,7 +359,7 @@ def shade_water(o, d, tw, depth, t, cfg):
     refl = trace(p, r, depth + 1, t, cfg) if depth < MAX_DEPTH else env(p, r, cfg)
     f = schlick(np.maximum(0.0, dot(-d, n)), WATER_F0)
     if cfg.water_shadows == "all" or (cfg.water_shadows == "primary_only" and depth == 0):
-        sh = water_shadow(p)
+        sh = water_shadow(p, cfg.shadow_spheres)
     else:
         sh = np.ones(len(p))
     base = DEEP + WATER_SCATTER * sh[:, None]
@@ -330,9 +371,11 @@ def shade_water(o, d, tw, depth, t, cfg):
 
 
 def trace(o, d, depth, t, cfg, skip_glass=False):
-    """Linear RGB for N rays (o, d: N x 3, d unit). depth 0..2, t = frame / 20.
+    """Linear RGB for N rays (o, d: N x 3, d unit). depth 0..2, t = frame / fps.
     skip_glass: the rays start on the glass sphere (reflection, exit or fake
-    refraction), which they cannot hit again, so it is not tested."""
+    refraction), which they cannot hit again, so it is not tested; also set
+    for every ray when the glass is disabled (--no-glass)."""
+    skip_glass = skip_glass or not cfg.glass_enabled
     n_rays = len(d)
     col = np.zeros((n_rays, 3))
     if n_rays == 0:
@@ -366,8 +409,8 @@ def trace(o, d, depth, t, cfg, skip_glass=False):
 
 
 # ---------------------------------------------------------------- camera and frame
-def camera(frame):
-    theta = frame / 600.0                       # turns; one orbit per 30 s at 20 fps
+def camera(frame, orbit_frames=600):
+    theta = (frame % orbit_frames) / orbit_frames   # turns; one orbit per 30 s
     eye = np.array([4.5 * sin_turns(theta), 1.6, 4.5 * cos_turns(theta)])
     target = np.array([0.0, 0.9, 0.0])
     fwd = target - eye
@@ -379,18 +422,24 @@ def camera(frame):
 
 
 def render(frame, cfg=None):
-    """Linear RGB image (H x W x 3, float64), before saturate."""
+    """Linear RGB image (H x W x 3, float64), before saturate. With scale 2
+    only the even (x, y) pixels are traced, with exactly the full-resolution
+    pixel's ray, and each is copied to its 2x2 block."""
     cfg = cfg or Config()
-    t = frame / 20.0
-    eye, fwd, right, up = camera(frame)
-    x = np.arange(W)
-    y = np.arange(H)
+    t = frame / cfg.fps
+    eye, fwd, right, up = camera(frame, cfg.orbit_frames)
+    s = cfg.scale
+    x = np.arange(0, W, s)
+    y = np.arange(0, H, s)
     u = (x + 0.5 - 80.0) / 80.0 * TAN_H         # (W,)
     v = -(y + 0.5 - 64.0) / 80.0 * TAN_H        # (H,)
     dirs = fwd + right * u[None, :, None] + up * v[:, None, None]   # (H, W, 3)
     d = normalize(dirs.reshape(-1, 3))
     o = np.broadcast_to(eye, d.shape).copy()
-    return trace(o, d, 0, t, cfg).reshape(H, W, 3)
+    img = trace(o, d, 0, t, cfg).reshape(len(y), len(x), 3)
+    if s > 1:
+        img = np.repeat(np.repeat(img, s, axis=0), s, axis=1)
+    return img
 
 
 def quantise_none(img):
@@ -424,15 +473,29 @@ def main():
                     help="knob 2: which water hits get sphere shadows (default all)")
     ap.add_argument("--glass-secondary", choices=["full", "env"], default="full",
                     help="knob 3: glass at depth 1 traces its rays (full) or looks up env() (default full)")
+    ap.add_argument("--glass-primary", choices=["full", "env"], default="full",
+                    help="knob 4: glass seen by primary rays traces its rays (full) or looks them up in "
+                         "env_flat (default full)")
+    ap.add_argument("--no-glass", action="store_true",
+                    help="remove the glass sphere everywhere, its shadow included (variant cut20)")
+    ap.add_argument("--fps", type=int, default=20,
+                    help="frame rate: orbit_frames = 30 * fps, water t = frame / fps (default 20)")
+    ap.add_argument("--scale", type=int, choices=[1, 2], default=1,
+                    help="render scale: 2 traces the even pixels and fills 2x2 blocks (default 1)")
     ap.add_argument("--fade-k", type=float, default=FADE_K, help=f"ripple fade constant (default {FADE_K})")
     ap.add_argument("--texels", default=None, help="shore texels (default cart/src/shore_texels.bin)")
     ap.add_argument("--palette", default=None, help="shore palette JSON (default tools/shore_palette.json)")
     ap.add_argument("--dump-npy", action="store_true", help="also save the float image as ref_FFFF.npy")
     args = ap.parse_args()
-    cfg = Config(args.glass, args.water_shadows, args.glass_secondary, args.fade_k, args.texels, args.palette)
+    if args.fps <= 0:
+        ap.error("--fps must be > 0")
+    cfg = Config(args.glass, args.water_shadows, args.glass_secondary, args.fade_k, args.texels, args.palette,
+                 fps=args.fps, glass_enabled=not args.no_glass, glass_primary=args.glass_primary,
+                 scale=args.scale)
     os.makedirs(args.out, exist_ok=True)
-    print(f"reference: glass={cfg.glass} water_shadows={cfg.water_shadows} "
-          f"glass_secondary={cfg.glass_secondary} fade_k={cfg.fade_k:g}", file=sys.stderr)
+    print(f"reference: glass={'off' if args.no_glass else cfg.glass} water_shadows={cfg.water_shadows} "
+          f"glass_secondary={cfg.glass_secondary} glass_primary={cfg.glass_primary} fade_k={cfg.fade_k:g} "
+          f"fps={cfg.fps} (orbit {cfg.orbit_frames} frames) scale={cfg.scale}", file=sys.stderr)
     for frame in args.frame:
         if frame < 0:
             ap.error("--frame must be >= 0")
