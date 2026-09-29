@@ -8,4 +8,5 @@ test {
     _ = @import("rom_unit.zig");
     _ = @import("z80_single_step.zig");
     _ = @import("z80_zex.zig");
+    _ = @import("z80_unit.zig");
 }
