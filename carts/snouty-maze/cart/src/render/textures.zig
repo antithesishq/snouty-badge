@@ -66,6 +66,8 @@ pub var iris: Texture = .{ .texels = &iris_texels, .palette = &iris_pal };
 
 /// Flat colour for wall tops.
 pub var top_color: cart.Pixel = undefined;
+/// Flat tile on the cell being carved during OVERHEAD (Iris pink).
+pub var carve_head_color: cart.Pixel = undefined;
 
 pub fn init() void {
     unpack(gfx.wall, &wall_texels);
@@ -78,6 +80,7 @@ pub fn init() void {
     palette(gfx.ceiling, &ceiling_pal, 10);
     palette(gfx.finish, &finish_pal, 10);
     top_color = .from_color(.rgb(0x808080));
+    carve_head_color = .from_color(.rgb(0xff9d94));
 
     for (&snouty_texels, 0..) |*t, f| unpack_region(gfx.snouty, f * size, size, t);
     unpack(gfx.smiley, &smiley_texels);

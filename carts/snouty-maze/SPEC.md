@@ -67,7 +67,8 @@ the M1 debug camera and, from M4, for taking the camera over.
 Takeover: any stick input hands the camera to the viewer; movement is
 grid-locked like the original (cell to cell, 90 degree pivots). After 5 s
 without input the autopilot resumes from wherever the camera is. Takeover
-is M4 and is an open question (section 18).
+landed in M4 (decision 10); a tap during a move is queued for the next
+cell centre, and B+Select fly exists only in `-Ddebug_overlay=true` builds.
 
 ## 4. Screen layout
 
@@ -525,3 +526,8 @@ added to 9):
   Select toggle, `check_cycle` runs D..F, `docs/preview_m3.gif`. Hardware
   gate still pending Adrian's flash. Next: M4 polish (takeover, animated
   carving, tuning).
+- 2026-09-29: M4 tagged `m4`: renderer perf pass (per-column occlusion,
+  batched segments, colour grids; worst modelled frame 13.6 -> 11.4 ms at
+  12x12, goldens identical), `-Dmaze_size` (default 12; 16x16 worst 14.6),
+  joystick takeover (MANUAL, 5 s idle return), animated carving in
+  OVERHEAD, Iris mark in the name strip, `docs/preview_m4.gif`.

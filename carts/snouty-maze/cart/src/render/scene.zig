@@ -36,11 +36,20 @@ pub fn draw(m: *const maze.Maze, cam: *const camera.Camera) void {
     const h: f32 = @floatFromInt(m.h);
 
     // Finish tile before the floor: where the two z values quantise to the
-    // same u16 the greater-than test keeps the tile.
+    // same u16 the greater-than test keeps the tile. While OVERHEAD carves
+    // the new maze (C4) the finish tile and the actors wait for the end,
+    // and the carve head cell is a flat tile instead.
+    const carving = m.revealed < m.carve_count;
     if (pos[1] > finish_lift) {
-        const fx: f32 = @floatFromInt(m.finish[0]);
-        const fz: f32 = @floatFromInt(m.finish[1]);
-        horizontal(cam, b, fx, fz, fx + 1, fz + 1, finish_lift, .{ .textured = &textures.finish });
+        if (!carving) {
+            const fx: f32 = @floatFromInt(m.finish[0]);
+            const fz: f32 = @floatFromInt(m.finish[1]);
+            horizontal(cam, b, fx, fz, fx + 1, fz + 1, finish_lift, .{ .textured = &textures.finish });
+        } else if (m.carve_head()) |hc| {
+            const fx: f32 = @floatFromInt(hc[0]);
+            const fz: f32 = @floatFromInt(hc[1]);
+            horizontal(cam, b, fx, fz, fx + 1, fz + 1, finish_lift, .{ .flat = textures.carve_head_color });
+        }
     }
 
     // Pictures before the walls, for the same reason.
@@ -49,14 +58,16 @@ pub fn draw(m: *const maze.Maze, cam: *const camera.Camera) void {
     }
 
     // Walls, nearest first so the z test rejects hidden floor and far walls
-    // before texturing.
+    // before texturing. Wall faces and tops go in as occluders: their
+    // per-column records let raster skip later walls, and the floor and
+    // ceiling rows, that they hide (exact, see raster.Occ).
     sort_runs(m, pos);
     for (order[0..m.run_count]) |i| draw_run(cam, b, m.runs[i]);
 
     if (pos[1] > 0) horizontal(cam, b, 0, 0, w, h, 0, .{ .textured = &textures.floor });
     if (pos[1] < wall_height) horizontal(cam, b, 0, 0, w, h, wall_height, .{ .textured = &textures.ceiling });
 
-    draw_actors(cam, b);
+    if (!carving) draw_actors(cam, b);
 }
 
 /// Snouty (billboard below the ceiling, floor sprite above it), the sphere,
@@ -196,7 +207,7 @@ fn draw_run(cam: *const camera.Camera, b: math.Mat3, run: maze.Run) void {
             .{ .p = c[7], .u = 0, .v = 0 },
             .{ .p = c[6], .u = 0, .v = 0 },
         };
-        raster.draw_polygon(&v, .{ .flat = textures.top_color });
+        raster.draw_occluder(&v, .{ .flat = textures.top_color });
     }
 }
 
@@ -207,7 +218,7 @@ fn face(bl: Vec3, br: Vec3, tr: Vec3, tl: Vec3, ua: f32, ub: f32, fill: raster.F
         .{ .p = tr, .u = ub, .v = 0 },
         .{ .p = tl, .u = ua, .v = 0 },
     };
-    raster.draw_polygon(&v, fill);
+    raster.draw_occluder(&v, fill);
 }
 
 /// Sorts `order` by squared distance from the camera to each run's
