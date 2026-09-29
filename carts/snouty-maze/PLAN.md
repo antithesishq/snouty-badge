@@ -1200,3 +1200,19 @@ and the walls grow past the eye; the finish sinks it back the same way.
 5. Docs: SPEC sections 7 (Start button) and 8 (state machine), RUNNING
    run list, `preview_m4.gif` regenerated (it opens on the rise).
 
+## M4 fix 3 result (2026-09-29)
+
+Done as planned. GROW is `debug_state` 9; `scene.height_scale` squashes
+walls, ceiling, pictures and actors (`draw_billboard` / `draw_spin_quad`
+take a `y_scale`); the Start button sits in the faced neighbour cell and
+is passed through at tick 60..90 of the walk. Host tests use
+`begin_walk_now` (GROW skipped) plus a GROW test; `check_cycle` 13/13
+(D, E, G, H shifted by 60 ticks, L/M new); goldens: `start` is now the
+flat maze at tick 0, `grow_half` (tick 30) and `walk_start` (tick 60)
+added, and the five poses that see the start area rebaselined for the
+moved Start button and the actor spawns it displaces (6..57 px each).
+Calibrated bench, ticks 0..74, seeds 1..3: GROW frames peak at 8.8 ms,
+the worst frame in the range is the walk into the Start button at tick
+73 (9.4 / 8.4 / 9.5 ms), budget 12.0. `preview_m4.gif` now opens on the
+rise (A at tick 90, takeover script from tick 600).
+

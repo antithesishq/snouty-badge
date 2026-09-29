@@ -20,7 +20,7 @@ const Dir = maze.Dir;
 /// compare against them. walk = 0, turn = 1, pause = 2, rise = 3,
 /// overhead = 4, descend = 5, teleport = 6 (M3), fly = 7 (debug),
 /// manual = 8 (M4 takeover). Append new states only.
-pub const State = enum(u32) { walk, turn, pause, rise, overhead, descend, teleport, fly, manual };
+pub const State = enum(u32) { walk, turn, pause, rise, overhead, descend, teleport, fly, manual, grow };
 
 pub const walk_ticks_per_cell = 30; // 1/30 cell per tick
 pub const turn90_ticks = 20;
@@ -32,6 +32,9 @@ pub const overhead_ticks = 120;
 /// OVERHEAD shows it finished.
 pub const carve_ticks = 90;
 pub const descend_ticks = 150;
+/// GROW: ticks over which the maze rises out of the floor around the
+/// camera at the start (boot and after DESCEND), as in the original.
+pub const grow_ticks = 60;
 pub const roll_cap_ticks = 1200;
 pub const unroll_ticks = 30;
 pub const flip_ticks = 30;
@@ -153,13 +156,19 @@ fn enter(s: State) void {
     state_tick = 0;
 }
 
-/// Start walking from the maze's start cell, camera already reset there.
+/// Begin at the maze's start cell, camera already reset there: the maze
+/// rises (GROW), then the walk starts.
 pub fn begin_walk(m: *const maze.Maze) void {
     cell = m.start;
     dir = camera.start_facing(m);
     walk_tick = 0;
-    enter(.walk);
-    decide(m);
+    enter(.grow);
+}
+
+/// Vertical scale of the maze: 0 -> 1 over GROW, 1 in every other state.
+pub fn grow_scale() f32 {
+    if (state != .grow) return 1.0;
+    return @as(f32, @floatFromInt(@min(state_tick, grow_ticks))) * (1.0 / @as(f32, grow_ticks));
 }
 
 /// Leave FLY: snap to the nearest cell centre (clamped into the maze) at
@@ -187,9 +196,10 @@ pub fn toggle_fly(m: *const maze.Maze) void {
     }
 }
 
-/// A / debug_skip: jump to PAUSE from wherever the camera is.
+/// A / debug_skip: jump to PAUSE from wherever the camera is (GROW too,
+/// so the intro can be cut short).
 pub fn skip() void {
-    if (walking()) enter(.pause);
+    if (walking() or state == .grow) enter(.pause);
 }
 
 /// WALK, TURN or MANUAL: the states where A skips and the smiley and the
@@ -435,12 +445,14 @@ pub fn step(m: *maze.Maze, r: *rng.Xorshift, focal: f32) void {
                 c.pitch = @bitCast(@as(i16, @intCast(to_pitch)));
                 c.roll = 0;
                 c.yaw = from_yaw +% @as(Angle, @truncate(@as(u32, @bitCast(yaw_delta))));
-                if (state == .rise) enter_overhead(m, r) else {
-                    cell = m.start;
-                    walk_tick = 0;
-                    enter(.walk);
-                    decide(m);
-                }
+                if (state == .rise) enter_overhead(m, r) else begin_walk(m);
+            }
+        },
+        .grow => {
+            state_tick += 1;
+            if (state_tick >= grow_ticks) {
+                enter(.walk);
+                decide(m);
             }
         },
         .overhead => {
@@ -567,6 +579,36 @@ fn test_maze(seed: u32, n: u8) maze.Maze {
     return m;
 }
 
+/// Tests: begin at the start cell with the GROW intro already over.
+fn begin_walk_now(m: *const maze.Maze) void {
+    begin_walk(m);
+    enter(.walk);
+    decide(m);
+}
+
+test "GROW: the maze rises for 60 ticks at the start, then the walk begins; A cuts it short" {
+    var m: maze.Maze = undefined;
+    var r = rng.Xorshift.init(5);
+    m.generate(8, 8, &r);
+    camera.reset(&m);
+    begin_walk(&m);
+    try testing.expectEqual(State.grow, state);
+    try testing.expectEqual(@as(f32, 0), grow_scale());
+    const p0 = camera.cam.pos;
+    for (0..grow_ticks / 2) |_| step(&m, &r, test_focal);
+    try testing.expectEqual(State.grow, state);
+    try testing.expectApproxEqAbs(@as(f32, 0.5), grow_scale(), 1e-6);
+    try testing.expectEqual(p0, camera.cam.pos);
+    for (0..grow_ticks / 2) |_| step(&m, &r, test_focal);
+    try testing.expect(state == .walk or state == .turn);
+    try testing.expectEqual(@as(f32, 1), grow_scale());
+    camera.reset(&m);
+    begin_walk(&m);
+    skip();
+    try testing.expectEqual(State.pause, state);
+    try testing.expectEqual(@as(f32, 1), grow_scale());
+}
+
 test "wall follower reaches the finish within 2*(w*h-1) moves" {
     for (1..21) |seed| {
         const m = test_maze(@intCast(seed), 12);
@@ -589,7 +631,7 @@ test "walk/turn simulation ends on the finish centre without drift" {
     var m = test_maze(1, 12);
     var r = rng.Xorshift.init(99);
     camera.reset(&m);
-    begin_walk(&m);
+    begin_walk_now(&m);
     var moves: u32 = 0;
     var ticks: u32 = 0;
     var prev = state;
@@ -633,7 +675,7 @@ test "rise and descend endpoints" {
         var m = test_maze(1, n);
         var r = rng.Xorshift.init(5);
         camera.reset(&m);
-        begin_walk(&m);
+        begin_walk_now(&m);
         var guard: u32 = 0;
         while (state != .rise) : (guard += 1) {
             step(&m, &r, test_focal);
@@ -669,7 +711,11 @@ test "rise and descend endpoints" {
         try testing.expectEqual(State.descend, state);
         try testing.expect(!name_strip_visible);
         for (0..descend_ticks) |_| step(&m, &r, test_focal);
+        try testing.expectEqual(State.grow, state);
+        try testing.expectEqual(@as(f32, 0), grow_scale());
+        for (0..grow_ticks) |_| step(&m, &r, test_focal);
         try testing.expect(state == .walk or state == .turn);
+        try testing.expectEqual(@as(f32, 1), grow_scale());
         try testing.expectEqual(c0, cycles);
         try testing.expectEqual(cell_centre(m.start[0], m.start[1]), camera.cam.pos);
         try testing.expectEqual(@as(Angle, 0), camera.cam.pitch);
@@ -681,7 +727,7 @@ test "skip during a turn settles overhead on a quadrant" {
     var m = test_maze(3, 12);
     var r = rng.Xorshift.init(5);
     camera.reset(&m);
-    begin_walk(&m);
+    begin_walk_now(&m);
     var guard: u32 = 0;
     while (state != .turn) : (guard += 1) {
         step(&m, &r, test_focal);
@@ -710,7 +756,7 @@ test "flip reaches 180 in 30 ticks, the cap unrolls 1200 later, a second flip ri
     var m = test_maze(1, 12);
     var r = rng.Xorshift.init(5);
     camera.reset(&m);
-    begin_walk(&m);
+    begin_walk_now(&m);
     set_roll(0);
     flip();
     for (0..flip_ticks - 1) |_| step(&m, &r, test_focal);
@@ -745,7 +791,7 @@ test "teleport fades out, moves at tick 6, fades in and walks on" {
     var m = test_maze(1, 12);
     var r = rng.Xorshift.init(5);
     camera.reset(&m);
-    begin_walk(&m);
+    begin_walk_now(&m);
     for (0..7) |_| step(&m, &r, test_focal);
     set_roll(math.deg(180));
     const dest: [2]u8 = .{ 5, 6 };
@@ -822,7 +868,7 @@ test "takeover from WALK mid-cell continues to the next centre" {
     var m = test_maze(1, 12);
     var r = rng.Xorshift.init(5);
     camera.reset(&m);
-    begin_walk(&m);
+    begin_walk_now(&m);
     walk_until(&m, &r, 10);
     const d = dir;
     const next = m.neighbour(cell[0], cell[1], d).?;
@@ -845,7 +891,7 @@ test "takeover during TURN finishes the turn first" {
     var m = test_maze(1, 12);
     var r = rng.Xorshift.init(5);
     camera.reset(&m);
-    begin_walk(&m);
+    begin_walk_now(&m);
     var guard: u32 = 0;
     while (!(state == .turn and state_tick == 5)) : (guard += 1) {
         tick_stick(&m, &r, .{}, .{});
@@ -868,7 +914,7 @@ test "Down while walking reverses back to the cell it left, facing forward" {
     var m = test_maze(1, 12);
     var r = rng.Xorshift.init(5);
     camera.reset(&m);
-    begin_walk(&m);
+    begin_walk_now(&m);
     walk_until(&m, &r, 10);
     const c0 = cell;
     const d = dir;

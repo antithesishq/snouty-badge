@@ -147,12 +147,13 @@ pub fn draw_sphere(cam: *const camera.Camera, b: math.Mat3, centre: Vec3, radius
 /// Square textured quad centred on `centre`, 2 * half_size across, turned
 /// by `angle` about the vertical axis (angle 0 faces +z, towards a camera
 /// south of it looking north). Two-sided: seen from behind, u is mirrored so the image
-/// still reads left to right (the logo is not shown backwards).
-pub fn draw_spin_quad(cam: *const camera.Camera, b: math.Mat3, centre: Vec3, half_size: f32, angle: math.Angle, tex: *const textures.Texture) void {
+/// still reads left to right (the logo is not shown backwards). `y_scale`
+/// squashes the height (the maze rising at the start).
+pub fn draw_spin_quad(cam: *const camera.Camera, b: math.Mat3, centre: Vec3, half_size: f32, y_scale: f32, angle: math.Angle, tex: *const textures.Texture) void {
     const ca = math.cos_angle(angle);
     const sa = math.sin_angle(angle);
     const r = vec3(ca, 0, sa) * splat(half_size);
-    const up = vec3(0, half_size, 0);
+    const up = vec3(0, half_size * y_scale, 0);
     // Front normal r x up: +z at angle 0.
     const n = vec3(-sa, 0, ca);
     const seen_front = math.dot(n, cam.pos - centre) >= 0;
