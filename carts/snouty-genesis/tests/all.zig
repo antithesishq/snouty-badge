@@ -8,4 +8,6 @@ test {
     _ = core;
     _ = core.rom;
     _ = @import("smoke.zig");
+    _ = @import("bus_unit.zig");
+    _ = @import("golden.zig");
 }
