@@ -82,6 +82,22 @@ const line_maps = blk: {
 
 var line_map: *const LineMap = &line_maps[@backingInt(Scale.squeeze)];
 
+/// `Gb.lines_wanted` for each scale: the PPU skips the pixel work of lines
+/// the map drops (16 per frame in squeeze, 16 in crop).
+const wanted_masks = blk: {
+    var t: [line_maps.len][5]u32 = undefined;
+    for (&t, line_maps) |*m, map| {
+        m.* = @splat(0);
+        for (map, 0..) |row, ly| {
+            if (row != skip) m[ly >> 5] |= 1 << (ly & 31);
+        }
+    }
+    break :blk t;
+};
+
+/// The console whose `lines_wanted` follows the scale (set by `sink`).
+var console: ?*core.Gb = null;
+
 // ---- Palettes (SPEC.md section 6), lightest shade first ----
 
 pub const Palette = struct {
@@ -124,7 +140,8 @@ var lut: [256]cart.Pixel = @splat(.{ .bits = 0 });
 
 /// Lines the core emitted since the last `finish_frame` (drawn or skipped).
 var lines_this_frame: u32 = 0;
-/// Lines emitted during the last completed frame (144 with the LCD on).
+/// Lines emitted during the last completed frame (the 128 the line map
+/// draws with the LCD on; the PPU skips the others, `Gb.lines_wanted`).
 pub var last_frame_lines: u32 = 0;
 
 pub fn init(model: core.Model) void {
@@ -242,11 +259,14 @@ comptime {
 pub fn set_scale(s: Scale) void {
     scale = s;
     line_map = &line_maps[@backingInt(s)];
+    if (console) |gb| gb.set_lines_wanted(wanted_masks[@backingInt(s)]);
 }
 
 /// The line sink for `gb` (call after `init`): in CGB mode the context is
 /// the console, whose `pal_dirty` flag is checked once per line.
 pub fn sink(gb: *core.Gb) core.LineSink {
+    console = gb;
+    set_scale(scale);
     return if (cgb)
         .{ .ctx = gb, .func = &on_line_cgb }
     else

@@ -165,7 +165,7 @@ fn debug_frame_count() callconv(.c) u32 {
 fn debug_step_us() callconv(.c) u32 {
     return debug.last_step_us;
 }
-/// Lines the core emitted during the last frame (144 with the LCD on).
+/// Lines the core emitted during the last frame (128 with the LCD on).
 fn debug_lines() callconv(.c) u32 {
     return video.last_frame_lines;
 }

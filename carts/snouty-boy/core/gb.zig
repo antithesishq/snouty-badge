@@ -166,6 +166,12 @@ pub const Gb = struct {
     /// Where rendered lines go. Not part of the console state: excluded
     /// from keyframes by `snapshot`, set once by the frontend.
     line_sink: ?LineSink = null,
+    /// Visible lines the frontend wants rendered, one bit per LY (bit
+    /// `ly & 31` of word `ly >> 5`), default all. The PPU skips the pixel
+    /// work of a cleared line (no `line_sink` call) but still does its
+    /// window-line and timing bookkeeping, so the mask never changes
+    /// console state. Not console state; `reset` keeps it.
+    lines_wanted: [5]u32 = @splat(0xFFFF_FFFF),
     /// Set by the PPU whenever CGB palette RAM is written; cleared by the
     /// frontend when it has rebuilt its colour table. Not console state:
     /// excluded from keyframes (the frontend sets it itself after a restore).
@@ -197,7 +203,8 @@ pub const Gb = struct {
         const sink = gb.line_sink;
         const model = gb.model;
         const cart_ram = gb.cart_ram;
-        gb.* = .{ .rom = rom, .line_sink = sink, .model = model, .cart_ram = cart_ram };
+        const wanted = gb.lines_wanted;
+        gb.* = .{ .rom = rom, .line_sink = sink, .model = model, .cart_ram = cart_ram, .lines_wanted = wanted };
         @memset(cart_ram, 0);
         gb.mbc = mmu.Mbc.from_header(rom);
         cpu.reset(gb);
@@ -271,6 +278,15 @@ pub const Gb = struct {
         mmu.tick_dma(gb, m);
         apu.tick(gb, dots);
         serial.tick(gb, m);
+    }
+
+    pub inline fn line_wanted(gb: *const Gb, ly: u8) bool {
+        return (gb.lines_wanted[ly >> 5] >> @as(u5, @truncate(ly))) & 1 != 0;
+    }
+
+    /// Render only the lines whose bit is set (see `lines_wanted`).
+    pub fn set_lines_wanted(gb: *Gb, mask: [5]u32) void {
+        gb.lines_wanted = mask;
     }
 
     pub inline fn request_irq(gb: *Gb, bit: u8) void {

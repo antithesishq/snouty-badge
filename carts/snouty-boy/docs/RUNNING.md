@@ -278,7 +278,7 @@ Useful options (the header of the shared `../../tools/preview.mjs` has the full 
 - `--dump-exports NAME,...`: call zero-argument exports after the last
   update and record them. This cart exports:
   - `debug_frame_count`: frames stepped since reset (`gb.frame_count`)
-  - `debug_lines`: lines the core emitted in the last frame (144 with the
+  - `debug_lines`: lines the core emitted in the last frame (128 with the
     LCD on, 0 with it off)
   - `debug_step_us`: the last `step_frame` time (always 1000 in wasm)
   - `debug_palette`: the current palette index (DMG mode)
@@ -292,7 +292,7 @@ Useful options (the header of the shared `../../tools/preview.mjs` has the full 
   - `debug_cgb`: 1 when the ROM runs in CGB mode
   - `debug_leds`, `debug_led_max`: neopixels lit, largest channel value
   - `debug_alarm`: 1 if the rewind self-check found a mismatch
-- `--expect "debug_lines == 144"` (repeatable): checked at the end; a
+- `--expect "debug_lines == 128"` (repeatable): checked at the end; a
   failure exits 3. `--at "T NAME OP VALUE"` checks right after update T.
 - `--quiet`: no PNGs, only `frames.json`.
 
@@ -300,7 +300,7 @@ A quick smoke test:
 
 ```sh
 node ../../tools/preview.mjs ../../zig-out/bin/snouty-boy.wasm --frames 132 --quiet --out out/ \
-  --expect "debug_frame_count == 60" --expect "debug_lines == 144"
+  --expect "debug_frame_count == 60" --expect "debug_lines == 128"
 ```
 
 The first 72 updates are the boot splash, during which the core is not
