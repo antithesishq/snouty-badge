@@ -414,6 +414,9 @@ fn cp_ly_144(model: core.Model, dots_left: u16) !struct { z: bool, line_t: u16, 
     gb.cpu.l = 0x44;
     gb.cpu.a = 144;
     gb.step_instruction();
+    // The frame loop hands cycles to the PPU lazily (`Gb.tick_lazy`); catch
+    // it up before looking at its internal line position.
+    gb.sync();
     return .{ .z = gb.cpu.f & 0x80 != 0, .line_t = gb.ppu.line_t, .vblank_if = gb.io[0x0F] & 1 != 0 };
 }
 

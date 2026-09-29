@@ -162,6 +162,12 @@ pub const Gb = struct {
     /// state: both are rebuilt every instruction.
     op_pc: u16 = 0x0100,
     pre_m: u8 = 0,
+    /// CPU M-cycles the timer, PPU and APU have not been given yet, and the
+    /// M-cycles after the last flush at which one of them has an event
+    /// (`tick_lazy`). Not console state: `step_frame` ends with a sync and
+    /// `load_small` clears both (`ev_m` 0 forces a flush on the next tick).
+    pend_m: u32 = 0,
+    ev_m: u32 = 0,
 
     /// Where rendered lines go. Not part of the console state: excluded
     /// from keyframes by `snapshot`, set once by the frontend.
@@ -229,6 +235,9 @@ pub const Gb = struct {
             gb.step_instruction();
             if (!ppu.lcd_on(gb) and gb.frame_dots >= frame_dots) break;
         }
+        // Everything outside the core (frontend, keyframes) sees caught-up
+        // subsystems.
+        gb.sync();
         gb.frame_count +%= 1;
     }
 
@@ -241,11 +250,11 @@ pub const Gb = struct {
             m -= gb.pre_m;
             gb.pre_m = 0;
         }
-        gb.tick(m);
+        gb.tick_lazy(m);
         while (gb.stall_m != 0) {
             const s: u8 = @intCast(@min(gb.stall_m, 0xFF));
             gb.stall_m -= s;
-            gb.tick(s);
+            gb.tick_lazy(s);
         }
     }
 
@@ -300,18 +309,68 @@ pub const Gb = struct {
         gb.tick(n);
     }
 
-    /// Advance every subsystem by `m` CPU M-cycles after an instruction.
-    /// Timer, serial and DMA run at CPU speed; the PPU and APU get dots,
-    /// which is half as many per M-cycle in double speed (SPEC.md 19.1).
-    pub inline fn tick(gb: *Gb, m: u8) void {
-        const dots = @as(u16, m) << gb.dot_shift;
-        gb.frame_dots += dots;
-        timer.tick(gb, m);
-        ppu.tick(gb, dots);
-        mmu.tick_dma(gb, m);
-        apu.tick(gb, dots);
-        serial.tick(gb, m);
+    /// Advance every subsystem by `m` CPU M-cycles now (tests, mid-
+    /// instruction reads). Timer, serial and DMA run at CPU speed; the PPU
+    /// and APU get dots, which is half as many per M-cycle in double speed
+    /// (SPEC.md 19.1).
+    pub fn tick(gb: *Gb, m: u8) void {
+        gb.frame_dots += @as(u32, m) << gb.dot_shift;
+        gb.pend_m += m;
+        gb.flush();
     }
+
+    /// The frame loop's tick (SPEC.md 8, event-driven catch-up): the
+    /// M-cycles only accumulate in `pend_m` until the next subsystem event
+    /// is due (`ev_m`, see `flush`), so a typical instruction costs two
+    /// adds and a compare. Register reads and writes that can observe or
+    /// change the subsystems call `sync` first (mmu.zig), and `flush`
+    /// runs after the instruction whose cycles reach the event, exactly
+    /// where the eager tick would have processed it, so the result is
+    /// identical to ticking everything after every instruction.
+    pub inline fn tick_lazy(gb: *Gb, m: u8) void {
+        gb.frame_dots += @as(u32, m) << gb.dot_shift;
+        gb.pend_m += m;
+        if (gb.pend_m >= gb.ev_m) gb.flush();
+    }
+
+    /// Bring the timer, PPU and APU up to date if cycles are pending.
+    pub inline fn sync(gb: *Gb) void {
+        if (gb.pend_m != 0) gb.flush();
+    }
+
+    /// Give the pending M-cycles to every subsystem, then find the next
+    /// event. `pend_m` is cleared first: a flush can re-enter through an
+    /// HBlank DMA reading I/O, which then has nothing to catch up.
+    pub fn flush(gb: *Gb) void {
+        const m = gb.pend_m;
+        gb.pend_m = 0;
+        const dots = m << gb.dot_shift;
+        timer.tick(gb, m);
+        ppu.tick(gb, @intCast(dots));
+        mmu.tick_dma(gb, m);
+        apu.tick(gb, @intCast(dots));
+        serial.tick(gb, m);
+        gb.reschedule();
+    }
+
+    /// `ev_m`: M-cycles from now to the first moment a subsystem changes
+    /// state on its own in a way the CPU could observe without reading
+    /// its registers (those reads sync): a PPU mode or line change, an
+    /// APU frame sequencer step, a TIMA overflow. Called after every
+    /// flush and every I/O write.
+    pub fn reschedule(gb: *Gb) void {
+        const sh: u5 = gb.dot_shift;
+        const dpm: u32 = @as(u32, 1) << sh;
+        var e: u32 = max_ev_m;
+        if (ppu.lcd_on(gb)) e = @min(e, ((gb.ppu.next_t -| gb.ppu.line_t) + dpm - 1) >> sh);
+        if (gb.io[Reg.nr52] & 0x80 != 0) e = @min(e, ((apu.seq_period_dots -| gb.apu.seq_t) + dpm - 1) >> sh);
+        if (gb.io[Reg.tac] & 0x04 != 0) e = @min(e, timer.m_to_overflow(gb));
+        gb.ev_m = e;
+    }
+
+    /// Cap of `ev_m`: long enough to be rare, short enough that `pend_m`
+    /// (plus one stall chunk) stays far below any tick's limits.
+    pub const max_ev_m: u32 = 4096;
 
     pub inline fn line_wanted(gb: *const Gb, ly: u8) bool {
         return (gb.lines_wanted[ly >> 5] >> @as(u5, @truncate(ly))) & 1 != 0;
@@ -379,6 +438,8 @@ pub const Gb = struct {
         gb.pal_dirty = true;
         gb.op_pc = gb.cpu.pc;
         gb.pre_m = 0;
+        gb.pend_m = 0;
+        gb.ev_m = 0;
     }
 
     /// The console state as byte regions, in a fixed order: the packed

@@ -29,7 +29,7 @@ pub fn start_transfer(gb: *Gb) void {
     gb.request_irq(gb_mod.Irq.serial);
 }
 
-pub inline fn tick(gb: *Gb, m: u8) void {
+pub inline fn tick(gb: *Gb, m: u32) void {
     _ = gb;
     _ = m;
 }

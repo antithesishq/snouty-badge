@@ -21,10 +21,10 @@ pub fn reset(gb: *Gb) void {
     gb.io[Reg.div] = 0xAB;
 }
 
-/// Inlined into the per-instruction tick; TIMA increments call out.
-pub inline fn tick(gb: *Gb, m: u8) void {
+/// Advance `m` CPU M-cycles (batched by `Gb.flush`; exact for any `m`).
+pub inline fn tick(gb: *Gb, m: u32) void {
     const old = gb.timer.div;
-    const new = old +% @as(u16, m) * 4;
+    const new = old +% @as(u16, @truncate(m *% 4));
     gb.timer.div = new;
     gb.io[Reg.div] = @truncate(new >> 8);
     const tac = gb.io[Reg.tac];
@@ -33,7 +33,7 @@ pub inline fn tick(gb: *Gb, m: u8) void {
     // crossed. Done in u32 so the u16 wrap needs no special case.
     const s: u5 = @as(u5, tac_shift[tac & 3]) + 1;
     const o32: u32 = old;
-    const edges = ((o32 + @as(u32, m) * 4) >> s) - (o32 >> s);
+    const edges = ((o32 + m * 4) >> s) - (o32 >> s);
     if (edges != 0) inc_tima_n(gb, edges);
 }
 

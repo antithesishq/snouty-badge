@@ -65,7 +65,10 @@ pub fn step(gb: *Gb) u8 {
         // ahead in 4 M-cycle chunks (`Gb.halt_m`: as many as cannot contain
         // an interrupt source). Timer and PPU handle batched ticks exactly;
         // interrupt latency out of HALT grows by at most 3 M-cycles.
-        if ((gb.ie & gb.io[Reg.if_] & 0x1F) == 0) return gb.halt_m();
+        if ((gb.ie & gb.io[Reg.if_] & 0x1F) == 0) {
+            gb.sync();
+            return gb.halt_m();
+        }
         c.halted = false;
     }
     if (c.ime) {
@@ -266,9 +269,12 @@ inline fn sp_plus_e8(c: *Cpu, e: u8) u16 {
 /// CPU does not halt; it pauses for 2050 M-cycles (Pan Docs), ticked away by
 /// the frame loop at the new speed. STOP also resets DIV.
 fn speed_switch(gb: *Gb) void {
+    // Cycles so far were at the old speed.
+    gb.sync();
     gb.dot_shift = if (gb.dot_shift == 2) 1 else 2;
     gb.io[Reg.key1] = if (gb.dot_shift == 1) 0x80 else 0x00;
     timer.write_div(gb);
+    gb.reschedule();
     gb.stall_m += 2050;
 }
 

@@ -322,6 +322,11 @@ pub fn read8(gb: *Gb, addr: u16) u8 {
 }
 
 fn read_io(gb: *Gb, reg: u8) u8 {
+    // Registers whose value the timer, PPU or APU change on their own.
+    switch (reg) {
+        Reg.div, Reg.tima, 0x10...0x3F, Reg.stat, Reg.ly => gb.sync(),
+        else => {},
+    }
     return switch (reg) {
         Reg.p1 => gb.io[Reg.p1] | 0xC0,
         Reg.sb => gb.io[Reg.sb],
@@ -383,7 +388,16 @@ pub fn write8(gb: *Gb, addr: u16, v: u8) void {
     }
 }
 
+/// Every I/O write catches the subsystems up first (their registers, and
+/// the PPU renders with the registers as they are) and reschedules the
+/// next event after (LCDC, TAC, TIMA, NR52 ... move it).
 fn write_io(gb: *Gb, reg: u8, v: u8) void {
+    gb.sync();
+    write_io_now(gb, reg, v);
+    gb.reschedule();
+}
+
+fn write_io_now(gb: *Gb, reg: u8, v: u8) void {
     switch (reg) {
         Reg.p1 => {
             gb.io[Reg.p1] = (gb.io[Reg.p1] & 0xCF) | (v & 0x30);
@@ -447,7 +461,7 @@ fn oam_dma(gb: *Gb, v: u8) void {
 
 /// OAM DMA progress (SPEC.md 4: instant copy is acceptable; this hook exists
 /// so DMA may be made cycle-accurate later). Nothing to do.
-pub inline fn tick_dma(gb: *Gb, m: u8) void {
+pub inline fn tick_dma(gb: *Gb, m: u32) void {
     _ = gb;
     _ = m;
 }

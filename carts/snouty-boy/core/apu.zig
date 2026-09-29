@@ -248,9 +248,10 @@ pub inline fn tick(gb: *Gb, dots: u16) void {
     if (!powered(gb)) return;
     const a = &gb.apu;
     a.seq_t += dots;
-    if (a.seq_t < seq_period_dots) return;
-    a.seq_t -= seq_period_dots;
-    step_sequencer(gb);
+    while (a.seq_t >= seq_period_dots) {
+        a.seq_t -= seq_period_dots;
+        step_sequencer(gb);
+    }
 }
 
 /// One 512 Hz frame sequencer step. Public for tests.
