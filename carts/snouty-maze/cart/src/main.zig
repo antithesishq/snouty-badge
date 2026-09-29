@@ -32,6 +32,8 @@ var fps_x10: u32 = 0;
 var show_debug: bool = build_options.debug_overlay;
 var random: rng.Xorshift = undefined;
 var world: maze.Maze = .{};
+/// Exported on the badge build too, so badge-bench can `--poke maze_size=16`
+/// before start() (unexported, the compiler folds it to 12).
 var maze_size: u8 = 12;
 /// Seed of the current rng stream, so debug_set_size and debug_set_seed
 /// give the same maze whichever order the harness calls them in.
@@ -157,6 +159,8 @@ comptime {
         @export(&debug_teleports, .{ .name = "debug_teleports" });
         @export(&debug_roll_deg, .{ .name = "debug_roll_deg" });
         @export(&debug_leds, .{ .name = "debug_leds" });
+    } else {
+        @export(&maze_size, .{ .name = "maze_size" });
         @export(&debug_led_max, .{ .name = "debug_led_max" });
         @export(&debug_place, .{ .name = "debug_place" });
         @export(&debug_fade_level, .{ .name = "debug_fade_level" });
