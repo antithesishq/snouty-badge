@@ -25,50 +25,59 @@ const std = @import("std");
 const core = @import("core");
 const m68k = core.m68k;
 
-const TestBus = struct {
-    mem: []u8,
-    /// Addresses written (to clear between cases).
-    dirty: [512]u32 = undefined,
-    n_dirty: usize = 0,
-    overflow: bool = false,
-    /// A word access at an odd address happened.
-    odd: bool = false,
+/// Flat 16 MB bus; `window` adds `code_window` over the whole map, the
+/// fetch path the cart uses (ROM and work RAM are windows there).
+fn TestBusT(comptime window: bool) type {
+    return struct {
+        const TestBus = @This();
+        mem: []u8,
+        /// Addresses written (to clear between cases).
+        dirty: [512]u32 = undefined,
+        n_dirty: usize = 0,
+        overflow: bool = false,
+        /// A word access at an odd address happened.
+        odd: bool = false,
 
-    pub fn read8(self: *TestBus, addr: u24) u8 {
-        return self.mem[addr];
-    }
-    pub fn read16(self: *TestBus, addr: u24) u16 {
-        if (addr & 1 != 0) self.odd = true;
-        return @as(u16, self.mem[addr]) << 8 | self.mem[addr +% 1];
-    }
-    pub fn write8(self: *TestBus, addr: u24, v: u8) void {
-        self.mark(addr);
-        self.mem[addr] = v;
-    }
-    pub fn write16(self: *TestBus, addr: u24, v: u16) void {
-        if (addr & 1 != 0) self.odd = true;
-        self.mark(addr);
-        self.mark(addr +% 1);
-        self.mem[addr] = @truncate(v >> 8);
-        self.mem[addr +% 1] = @truncate(v);
-    }
-    pub fn irq_level(self: *TestBus) u3 {
-        _ = self;
-        return 0;
-    }
-    pub fn ack_irq(self: *TestBus, level: u3) void {
-        _ = self;
-        _ = level;
-    }
-    fn mark(self: *TestBus, addr: u24) void {
-        if (self.n_dirty < self.dirty.len) {
-            self.dirty[self.n_dirty] = addr;
-            self.n_dirty += 1;
-        } else self.overflow = true;
-    }
-};
-
-const Cpu = m68k.M68k(TestBus);
+        pub fn read8(self: *TestBus, addr: u24) u8 {
+            return self.mem[addr];
+        }
+        pub fn read16(self: *TestBus, addr: u24) u16 {
+            if (addr & 1 != 0) self.odd = true;
+            return @as(u16, self.mem[addr]) << 8 | self.mem[addr +% 1];
+        }
+        pub fn write8(self: *TestBus, addr: u24, v: u8) void {
+            self.mark(addr);
+            self.mem[addr] = v;
+        }
+        pub fn write16(self: *TestBus, addr: u24, v: u16) void {
+            if (addr & 1 != 0) self.odd = true;
+            self.mark(addr);
+            self.mark(addr +% 1);
+            self.mem[addr] = @truncate(v >> 8);
+            self.mem[addr +% 1] = @truncate(v);
+        }
+        pub fn irq_level(self: *TestBus) u3 {
+            _ = self;
+            return 0;
+        }
+        pub fn ack_irq(self: *TestBus, level: u3) void {
+            _ = self;
+            _ = level;
+        }
+        fn mark(self: *TestBus, addr: u24) void {
+            if (self.n_dirty < self.dirty.len) {
+                self.dirty[self.n_dirty] = addr;
+                self.n_dirty += 1;
+            } else self.overflow = true;
+        }
+        /// A function only with `window` (the CPU checks for a function).
+        pub const code_window = if (window) window_all else {};
+        fn window_all(self: *TestBus, addr: u24) ?m68k.CodeWindow {
+            _ = addr;
+            return .{ .ptr = self.mem.ptr, .base = 0, .len = 1 << 24 };
+        }
+    };
+}
 
 const State = struct {
     d0: u32,
@@ -101,7 +110,7 @@ const Case = struct {
     length: u32,
 };
 
-fn load(cpu: *Cpu, bus: *TestBus, s: *const State) void {
+fn load(cpu: anytype, bus: anytype, s: *const State) void {
     cpu.* = .{};
     cpu.d = .{ s.d0, s.d1, s.d2, s.d3, s.d4, s.d5, s.d6, s.d7 };
     cpu.a = .{ s.a0, s.a1, s.a2, s.a3, s.a4, s.a5, s.a6, 0 };
@@ -121,7 +130,7 @@ fn load(cpu: *Cpu, bus: *TestBus, s: *const State) void {
     bus.mem[pc +% 3] = @truncate(s.prefetch[1]);
 }
 
-fn clear(bus: *TestBus, cs: *const Case) void {
+fn clear(bus: anytype, cs: *const Case) void {
     for (cs.initial.ram) |cell| bus.mem[cell[0] & 0xFFFFFF] = 0;
     for (cs.final.ram) |cell| bus.mem[cell[0] & 0xFFFFFF] = 0;
     const pc: u24 = @truncate(cs.initial.pc);
@@ -134,7 +143,7 @@ fn clear(bus: *TestBus, cs: *const Case) void {
 }
 
 /// Appends each state mismatch to `msg`; returns their count.
-fn compare_state(cpu: *const Cpu, bus: *const TestBus, want: *const State, msg: *std.ArrayList(u8), gpa: std.mem.Allocator) !u32 {
+fn compare_state(cpu: anytype, bus: anytype, want: *const State, msg: *std.ArrayList(u8), gpa: std.mem.Allocator) !u32 {
     var bad: u32 = 0;
     const Pair = struct { []const u8, u32, u32 };
     const checks = [_]Pair{
@@ -212,7 +221,7 @@ fn vector3(s: *const State) u32 {
     return v;
 }
 
-fn run_file(gpa: std.mem.Allocator, bus: *TestBus, text: []const u8, name: []const u8, show: u32) !Result {
+fn run_file(gpa: std.mem.Allocator, bus: anytype, text: []const u8, name: []const u8, show: u32) !Result {
     var arena_state: std.heap.ArenaAllocator = .init(gpa);
     defer arena_state.deinit();
     const arena = arena_state.allocator();
@@ -232,7 +241,7 @@ fn run_file(gpa: std.mem.Allocator, bus: *TestBus, text: []const u8, name: []con
         _ = arena_state.reset(.retain_capacity);
         const cs = try std.json.innerParse(Case, arena, &scanner, opts);
         res.total += 1;
-        var cpu: Cpu = .{};
+        var cpu: m68k.M68k(@TypeOf(bus.*)) = .{};
         load(&cpu, bus, &cs.initial);
         const t = cpu.step(bus);
         msg.clearRetainingCapacity();
@@ -295,7 +304,25 @@ test "m68k: decode table and two-level decode agree on every opcode" {
     }
 }
 
-test "m68k: SingleStepTests (tests/roms/68000/*.json.gz)" {
+test "m68k: SingleStepTests (tests/roms/68000/*.json.gz), fetch window" {
+    try suite(true, null);
+}
+
+/// The files whose instructions fetch the most (branches, jumps, returns,
+/// exceptions, long immediates), run again with the fetch going through
+/// `read16` (a bus without `code_window`).
+const bus_fetch_files = [_][]const u8{
+    "Bcc.json.gz",     "BSR.json.gz",  "DBcc.json.gz",  "JMP.json.gz",
+    "JSR.json.gz",     "RTS.json.gz",  "RTE.json.gz",   "RTR.json.gz",
+    "TRAP.json.gz",    "CHK.json.gz",  "DIVU.json.gz",  "MOVE.l.json.gz",
+    "MOVEM.w.json.gz", "LINK.json.gz", "ADD.l.json.gz",
+};
+
+test "m68k: SingleStepTests, bus fetch (subset)" {
+    try suite(false, &bus_fetch_files);
+}
+
+fn suite(comptime window: bool, only: ?[]const []const u8) !void {
     const io = std.testing.io;
     const gpa = std.testing.allocator;
     const env = std.testing.environ;
@@ -326,6 +353,11 @@ test "m68k: SingleStepTests (tests/roms/68000/*.json.gz)" {
     while (try it.next(io)) |entry| {
         if (entry.kind != .file or !std.mem.endsWith(u8, entry.name, ".json.gz")) continue;
         if (filter) |f| if (std.mem.indexOf(u8, entry.name, f) == null) continue;
+        if (only) |list| {
+            for (list) |o| {
+                if (std.mem.eql(u8, o, entry.name)) break;
+            } else continue;
+        }
         try names.append(gpa, try gpa.dupe(u8, entry.name));
     }
     if (names.items.len == 0) {
@@ -341,21 +373,22 @@ test "m68k: SingleStepTests (tests/roms/68000/*.json.gz)" {
     const mem = try gpa.alloc(u8, 1 << 24);
     defer gpa.free(mem);
     @memset(mem, 0);
-    var bus: TestBus = .{ .mem = mem };
+    var bus: TestBusT(window) = .{ .mem = mem };
+    const table = only == null;
 
     const start = std.Io.Timestamp.now(io, .awake);
     var total: Result = .{};
     // Families (file name before the size suffix), in file order.
     var fams: std.ArrayList(struct { []const u8, Result }) = .empty;
     defer fams.deinit(gpa);
-    std.debug.print("m68k: file                 cases   pass  addr-err  state  cycles disputed\n", .{});
+    if (table) std.debug.print("m68k: file                 cases   pass  addr-err  state  cycles disputed\n", .{});
     for (names.items) |n| {
         const gz = try dir.readFileAlloc(io, n, gpa, .limited(64 << 20));
         defer gpa.free(gz);
         const text = try gunzip(gpa, gz);
         defer gpa.free(text);
         const r = try run_file(gpa, &bus, text, n, show);
-        print_row(n[0 .. n.len - 8], r);
+        if (table) print_row(n[0 .. n.len - 8], r);
         total.add(r);
         const f = family(n);
         if (fams.items.len == 0 or !std.mem.eql(u8, fams.items[fams.items.len - 1][0], f)) {
@@ -363,10 +396,170 @@ test "m68k: SingleStepTests (tests/roms/68000/*.json.gz)" {
         }
         fams.items[fams.items.len - 1][1].add(r);
     }
-    std.debug.print("m68k: family               cases   pass  addr-err  state  cycles disputed\n", .{});
-    for (fams.items) |f| print_row(f[0], f[1]);
+    if (table) {
+        std.debug.print("m68k: family               cases   pass  addr-err  state  cycles disputed\n", .{});
+        for (fams.items) |f| print_row(f[0], f[1]);
+    }
     const ms = start.durationTo(std.Io.Timestamp.now(io, .awake)).toMilliseconds();
-    std.debug.print("m68k: SingleStepTests {d} files, {d} cases: {d} pass, {d} address-error (skipped), {d} disputed, {d} state fail, {d} cycle-only fail; {d} ms\n", .{ names.items.len, total.total, total.pass, total.addr, total.disputed, total.state, total.cycles, ms });
+    std.debug.print("m68k: SingleStepTests ({s}) {d} files, {d} cases: {d} pass, {d} address-error (skipped), {d} disputed, {d} state fail, {d} cycle-only fail; {d} ms\n", .{ if (window) "fetch window" else "bus fetch", names.items.len, total.total, total.pass, total.addr, total.disputed, total.state, total.cycles, ms });
     try std.testing.expectEqual(@as(u32, 0), total.state);
     try std.testing.expectEqual(@as(u32, 0), total.cycles);
+}
+
+// ---- Unit tests: what SingleStepTests does not cover (interrupts, STOP,
+// user mode, reset) ----
+
+/// 64 KB of RAM mirrored over the map, and an interrupt line.
+const IrqBus = struct {
+    mem: [0x10000]u8 = @splat(0),
+    level: u3 = 0,
+    acked: ?u3 = null,
+
+    pub fn read8(self: *IrqBus, addr: u24) u8 {
+        return self.mem[@as(u16, @truncate(addr))];
+    }
+    pub fn read16(self: *IrqBus, addr: u24) u16 {
+        const a: u16 = @truncate(addr);
+        return @as(u16, self.mem[a]) << 8 | self.mem[a +% 1];
+    }
+    pub fn write8(self: *IrqBus, addr: u24, v: u8) void {
+        self.mem[@as(u16, @truncate(addr))] = v;
+    }
+    pub fn write16(self: *IrqBus, addr: u24, v: u16) void {
+        const a: u16 = @truncate(addr);
+        self.mem[a] = @truncate(v >> 8);
+        self.mem[a +% 1] = @truncate(v);
+    }
+    pub fn irq_level(self: *IrqBus) u3 {
+        return self.level;
+    }
+    pub fn ack_irq(self: *IrqBus, level: u3) void {
+        self.acked = level;
+        self.level = 0;
+    }
+    fn put16(self: *IrqBus, addr: u16, v: u16) void {
+        self.write16(addr, v);
+    }
+    fn put32(self: *IrqBus, addr: u16, v: u32) void {
+        self.write16(addr, @truncate(v >> 16));
+        self.write16(addr + 2, @truncate(v));
+    }
+    fn get32(self: *IrqBus, addr: u16) u32 {
+        return @as(u32, self.read16(addr)) << 16 | self.read16(addr + 2);
+    }
+};
+
+const IrqCpu = m68k.M68k(IrqBus);
+
+/// Reset vectors SSP 8000, PC 1000; every other vector points at 0x2000 +
+/// 4 * n, where a NOP waits.
+fn irq_setup(bus: *IrqBus, cpu: *IrqCpu) void {
+    bus.put32(0, 0x8000);
+    bus.put32(4, 0x1000);
+    var v: u16 = 2;
+    while (v < 64) : (v += 1) {
+        bus.put32(v * 4, 0x2000 + @as(u32, v) * 4);
+        bus.put16(0x2000 + v * 4, 0x4E71);
+    }
+    cpu.reset(bus);
+}
+
+test "m68k: reset loads SSP and PC, supervisor, mask 7" {
+    var bus: IrqBus = .{};
+    var cpu: IrqCpu = .{};
+    irq_setup(&bus, &cpu);
+    try std.testing.expectEqual(@as(u32, 0x8000), cpu.a[7]);
+    try std.testing.expectEqual(@as(u32, 0x1000), cpu.pc);
+    try std.testing.expectEqual(@as(u16, 0x2700), cpu.get_sr());
+}
+
+test "m68k: interrupt above the mask takes the autovector, 44 cycles" {
+    var bus: IrqBus = .{};
+    var cpu: IrqCpu = .{};
+    irq_setup(&bus, &cpu);
+    bus.put16(0x1000, 0x4E71); // NOP
+    bus.put16(0x1002, 0x4E71);
+    cpu.set_sr(0x2504); // mask 5, Z
+    bus.level = 5; // not above the mask
+    try std.testing.expectEqual(@as(u32, 4), cpu.step(&bus));
+    try std.testing.expectEqual(@as(u32, 0x1002), cpu.pc);
+    bus.level = 6;
+    try std.testing.expectEqual(@as(u32, 44), cpu.step(&bus));
+    try std.testing.expectEqual(@as(?u3, 6), bus.acked);
+    try std.testing.expectEqual(@as(u32, 0x2000 + 30 * 4), cpu.pc);
+    try std.testing.expectEqual(@as(u16, 0x2604), cpu.get_sr()); // CCR kept
+    try std.testing.expectEqual(@as(u32, 0x8000 - 6), cpu.a[7]);
+    try std.testing.expectEqual(@as(u32, 0x2504), bus.read16(0x8000 - 6));
+    try std.testing.expectEqual(@as(u32, 0x1002), bus.get32(0x8000 - 4));
+}
+
+test "m68k: STOP idles until an interrupt, which stacks the next PC" {
+    var bus: IrqBus = .{};
+    var cpu: IrqCpu = .{};
+    irq_setup(&bus, &cpu);
+    bus.put16(0x1000, 0x4E72); // STOP #2300
+    bus.put16(0x1002, 0x2300);
+    _ = cpu.step(&bus);
+    try std.testing.expect(cpu.stopped);
+    try std.testing.expectEqual(@as(u32, 0x1004), cpu.pc);
+    try std.testing.expectEqual(@as(u32, 4), cpu.step(&bus));
+    try std.testing.expectEqual(@as(u32, 0x1004), cpu.pc);
+    bus.level = 3; // masked by 3
+    try std.testing.expectEqual(@as(u32, 4), cpu.step(&bus));
+    bus.level = 4;
+    try std.testing.expectEqual(@as(u32, 44), cpu.step(&bus));
+    try std.testing.expect(!cpu.stopped);
+    try std.testing.expectEqual(@as(u32, 0x1004), bus.get32(0x8000 - 4));
+    try std.testing.expectEqual(@as(u16, 0x2400), cpu.get_sr());
+}
+
+test "m68k: user mode: privilege violation, TRAP, RTE back to user, USP" {
+    var bus: IrqBus = .{};
+    var cpu: IrqCpu = .{};
+    irq_setup(&bus, &cpu);
+    // MOVE #$1234,USP is privileged-only via MOVE An,USP: set USP = 0x6000.
+    cpu.a[0] = 0x6000;
+    bus.put16(0x1000, 0x4E60); // MOVE A0,USP
+    bus.put16(0x1002, 0x46FC); // MOVE #$0000,SR (to user mode)
+    bus.put16(0x1004, 0x0000);
+    bus.put16(0x1006, 0x46FC); // MOVE #$2700,SR in user mode: privilege violation
+    bus.put16(0x1008, 0x2700);
+    _ = cpu.step(&bus);
+    _ = cpu.step(&bus);
+    try std.testing.expect(!cpu.supervisor());
+    try std.testing.expectEqual(@as(u32, 0x6000), cpu.a[7]);
+    try std.testing.expectEqual(@as(u32, 0x8000), cpu.ssp());
+    try std.testing.expectEqual(@as(u32, 34), cpu.step(&bus));
+    try std.testing.expect(cpu.supervisor());
+    try std.testing.expectEqual(@as(u32, 0x2000 + 8 * 4), cpu.pc);
+    try std.testing.expectEqual(@as(u32, 0x8000 - 6), cpu.a[7]);
+    try std.testing.expectEqual(@as(u32, 0x6000), cpu.usp());
+    try std.testing.expectEqual(@as(u32, 0x1006), bus.get32(0x8000 - 4)); // the opcode's own address
+    // RTE from the handler returns to user mode at the stacked PC.
+    bus.put16(0x2000 + 8 * 4, 0x4E73);
+    try std.testing.expectEqual(@as(u32, 20), cpu.step(&bus));
+    try std.testing.expect(!cpu.supervisor());
+    try std.testing.expectEqual(@as(u32, 0x1006), cpu.pc);
+    try std.testing.expectEqual(@as(u32, 0x6000), cpu.a[7]);
+    try std.testing.expectEqual(@as(u32, 0x8000), cpu.ssp());
+    // TRAP #5 from user mode: vector 37, stacks the next PC.
+    bus.put16(0x1006, 0x4E45);
+    try std.testing.expectEqual(@as(u32, 34), cpu.step(&bus));
+    try std.testing.expectEqual(@as(u32, 0x2000 + 37 * 4), cpu.pc);
+    try std.testing.expectEqual(@as(u32, 0x1008), bus.get32(0x8000 - 4));
+    try std.testing.expectEqual(@as(u16, 0x0000), bus.read16(0x8000 - 6));
+}
+
+test "m68k: line A and line F stack the opcode's address" {
+    var bus: IrqBus = .{};
+    var cpu: IrqCpu = .{};
+    irq_setup(&bus, &cpu);
+    bus.put16(0x1000, 0xA123);
+    try std.testing.expectEqual(@as(u32, 34), cpu.step(&bus));
+    try std.testing.expectEqual(@as(u32, 0x2000 + 10 * 4), cpu.pc);
+    try std.testing.expectEqual(@as(u32, 0x1000), bus.get32(0x8000 - 4));
+    bus.put16(0x2000 + 10 * 4, 0xF000);
+    _ = cpu.step(&bus);
+    try std.testing.expectEqual(@as(u32, 0x2000 + 11 * 4), cpu.pc);
+    try std.testing.expectEqual(@as(u32, 0x2028), bus.get32(0x8000 - 10));
 }
