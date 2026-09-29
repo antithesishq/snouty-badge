@@ -535,8 +535,8 @@ unreachable secrets: print, do not fail, for `wolf_*`).
 ### Contract: audio, neopixels, determinism harness (track D)
 
 - `cart/src/audio.zig` (cart-api user, render-side, never touched by the
-  sim): `pub var enabled: bool = false` (Adrian: sound and LEDs default
-  off, Select on the title toggles both); `reset(s)` takes a baseline;
+  sim): `pub var enabled: bool = false` (Adrian: sound defaults off,
+  Select on the title toggles it; the LED effects are also gated by it); `reset(s)` takes a baseline;
   `tick(s: *const GameState, level: *const Level)` once per displayed
   tick while playing: derives events by diffing against the last state
   (hp dropped -> hurt; kills grew -> enemy death; an enemy's `flash`
@@ -547,8 +547,10 @@ unreachable secrets: print, do not fail, for `wolf_*`).
   (read `../../sycl-badge/src/os/cart/api.zig` for the exact call; SPEC.md
   section 12 has shapes, frequencies, durations and the priority order).
   `play(event: Event)` for main-driven events (`death_freeze`; `rewind`
-  loop retrigger comes in M4). Neopixels: HP as a green-to-red bar over
-  the five LEDs at or below 10/255 per channel, a white flash for 6 ticks
+  loop retrigger comes in M4). Neopixels (dormant: neopixels are off,
+  the cart never writes non-zero values; the effects are compiled out and
+  `-Dneopixels=true` re-enables them for development, docs/NEOPIXELS.md):
+  HP as a green-to-red bar over the five LEDs, a white flash for 6 ticks
   on key pickup, all off when disabled. Diffing must survive a jump
   backwards in `s.tick` or a level change (take a fresh baseline, play
   nothing), like the portrait does.
@@ -588,7 +590,7 @@ unreachable secrets: print, do not fail, for `wolf_*`).
 Goal: the headline mechanic. Hold B and time runs backwards through the
 whole `GameState` (SPEC.md 9); the death freeze becomes the real rewind;
 Iris tint, scanlines, `<<` marker, descending sweep and purple neopixels
-while rewinding; the determinism self-check runs at every keyframe on the
+(dormant, behind `-Dneopixels`) while rewinding; the determinism self-check runs at every keyframe on the
 wasm and Debug builds and `check_determinism.mjs --rewind-at/--rewind-for`
 proves a rewound state is bit-identical to the state that was live back
 then. The rewind core (`rewind.zig`, 7 host tests, m2) is used as is.
@@ -675,7 +677,8 @@ each forward `sim.step`, `after_step(&game)` after it, `reset(&game)` in
 - `pub fn rewind_tick(s: *const state.GameState) void`: advances the
   voice, retriggers `.rewind` every 10 ticks (the table entry exists),
   and writes all five neopixels Iris purple pulsing between 3/255 and
-  8/255 over a 30-tick triangle (CLAUDE.md: never above 10/255). No
+  8/255 over a 30-tick triangle (now dormant: neopixels are off, the
+  effect is compiled out unless built with `-Dneopixels=true`). No
   event detection. Own counter, reset by `reset`. When `!enabled`,
   silence and LEDs off as `tick` does.
 - Confirm `tick` re-baselines when it next runs after a rewind
@@ -898,7 +901,7 @@ the before/after numbers, do not touch `main.zig` or the scripts.
 - One function `write_pixels(c: [5]cart.NeopixelColor)` is the only
   writer of `cart.neopixels`; `write_leds` and `rewind_tick` go through
   it. It returns at once unless `const neopixels_allowed = false` is
-  flipped (comment: the shared `-Dneopixels` build option from
+  flipped (since replaced by the shared `-Dneopixels` build option) (comment: the shared `-Dneopixels` build option from
   docs/NEOPIXELS.md replaces this constant when that change lands; the
   effects stay dormant behind it). No LED byte is ever written in the
   shipped build. Sound is untouched.
@@ -954,7 +957,7 @@ Report the final hash, `T`, the ELF `.text` delta from the runs.
 - M1 render readout stays on screen (`show_render_us`) until the gate.
 - Demo hash on the badge: the cart shows DEMO OK / DEMO DESYNC on the
   title after the demo has run once; Adrian reads it off the badge.
-- Neopixels: off; dormant code behind `neopixels_allowed`.
+- Neopixels: off; dormant code behind `-Dneopixels` (was `neopixels_allowed`).
 
 ## Status
 
@@ -1056,7 +1059,8 @@ Report the final hash, `T`, the ELF `.text` delta from the runs.
   out of a demo death needs a second press); the neopixel gate is the
   cart-local `neopixels_allowed` constant, not yet the shared `-Dneopixels`
   option (docs/NEOPIXELS.md awaits Adrian's go; that file lives in the main
-  checkout, not on this branch); the death scripts now die at tick 3028 and
+  checkout, not on this branch; since replaced by `-Dneopixels`, default
+  off); the death scripts now die at tick 3028 and
   run 3,300/3,710 frames. Deferred (needs a badge): boss and gnat feel, the
   fourth weapon, the M1 render readout. Fragile: any sim change moves the
   demo (re-record with `tools/record_demo.sh`; `check.sh` fails until then).

@@ -37,7 +37,8 @@ pitch, so the badge can say so on the title screen.
   120 KB, measured with `size -A` every milestone. Section 13 has the table.
 - Inputs: joystick 4-way, A, B, Start, Select. Start+Select (250 ms) and
   joystick click are OS-owned; never bound.
-- Audio: `tone2`, one voice. Neopixels: 5, never lit (docs/NEOPIXELS.md).
+- Audio: `tone2`, one voice. Neopixels: 5, off: the cart never writes a
+  non-zero value; the LED effects are compiled out unless built with `-Dneopixels=true` (section 12).
 - Rendering: `.no_copy_full_frame`, full redraw every frame, as in both
   existing carts. Upstream `blit` is not used at all; every pixel comes
   from our own loops.
@@ -50,7 +51,7 @@ pitch, so the badge can say so on the title screen.
 | Left / Right   | (nothing)            | Turn                                        | (nothing)                 |
 | A              | Start game           | Fire / swat                                 | (nothing)                 |
 | B              | Start game           | Hold: rewind time                           | Hold: rewind (mandatory)  |
-| Select         | Toggle sound + LEDs  | Next weapon (skips empty ones)              | (nothing)                 |
+| Select         | Toggle sound         | Next weapon (skips empty ones)              | (nothing)                 |
 | Start          | Start game           | Pause / unpause                             | (nothing)                 |
 
 Tank controls, no strafe (open question, section 17). Turn 2.5 degrees per
@@ -296,7 +297,8 @@ projectiles, 64 doors, 256-bit pickup mask, PRNG, tick, stats).
   darkened (scanlines), a `<<` glyph at the top left, the status bar clock
   counting down. Enemies, doors and projectiles simply play backwards.
 - Audio: a descending square sweep retriggered every 10 ticks. Neopixels:
-  off (section 12); the dormant effect pulses all five purple.
+  off (section 12); the dormant effect behind `-Dneopixels` pulses all
+  five purple.
 
 ## 10. HUD portrait and feedback
 
@@ -351,11 +353,24 @@ player hurt > pickup > enemy death > door > weapon.
 | Rewind (loop)  | square   | 800 -> 200 Hz | 0.17 s, retriggered |
 | Death freeze   | minor    | 55 Hz         | 0.80 s   |
 
-Neopixels are off (docs/NEOPIXELS.md); the HP bar, purple pulse and key
-flash are dormant behind `neopixels_allowed`. (Dormant effects: HP as a
-green-to-red bar over five LEDs, a purple pulse during rewind, a white
-flash on key pickup.) Sound defaults off, toggled with Select on the title
-screen only (Select is the weapon key in game).
+Sound defaults off, toggled with Select on the title screen only (Select
+is the weapon key in game).
+
+Neopixels are off (docs/NEOPIXELS.md at the repository root): the cart
+never writes a non-zero value. A coworker's badge shows the LEDs are
+unusably bright even at 1% (2026-09-29). The effects below are compiled
+out; `zig build -Dcart=snoutenstein -Dneopixels=true` re-enables them for
+development. `audio.write_pixels` is the only writer of `cart.neopixels`.
+
+### Dormant neopixel effects (behind -Dneopixels)
+
+All gated by `audio.enabled` too (Select on the title), capped at 10/255
+per channel:
+- HP as a green-to-red bar over the five LEDs (one per started 20 HP;
+  green from 60, amber from 25, red below); dead: LED 0 dim red.
+- Key pickup: all five white for 6 ticks.
+- Rewind: all five Iris purple, pulsing 3/255 to 8/255 on blue over a
+  30-tick triangle.
 
 ## 13. Memory budget
 
@@ -494,7 +509,8 @@ Decided by Adrian on 2026-09-26:
 2. Controls: tank controls only, no strafe.
 3. Rewind: fully consistent; rewinding past a kill un-does it.
 4. No lives. Death freezes time and the only way out is B.
-5. Sound and LEDs toggle with Select on the title screen only.
+5. Sound toggles with Select on the title screen only (neopixels are off,
+   section 12).
 6. Boss design (Heisenbug again or new) is deferred to M3/M5.
 8. Title tag line "powered by deterministic replay": yes.
 7. Wall textures 32x32. Independent of map import: Wolf3D maps carry wall

@@ -157,7 +157,7 @@ fn run_mode(b: state.Buttons) void {
                 new_game(test_index);
             } else if (pressed(b, .select)) {
                 audio.enabled = !audio.enabled;
-                audio.reset(&game); // LEDs off at once when disabled
+                audio.reset(&game); // silence at once when disabled
                 title_ticks = 0;
             } else if (title_ticks >= attract_after) {
                 start_demo();

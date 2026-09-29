@@ -15,7 +15,8 @@ CLAUDE.md files have the long explanations, this one summarises.
   `rewind.zig`, `levels.zig` — the simulation. Pure Zig, no cart-api import,
   `zig test cart/src/<file>.zig` runs on the host.
 - `cart/src/render/` — raycaster, textures, sprites, HUD (cart-api users);
-  `cart/src/audio.zig` — tone2 and neopixels, driven by diffing GameState.
+  `cart/src/audio.zig` — tone2 (and the dormant neopixel effects), driven
+  by diffing GameState.
 - `cart/src/levels/*.txt` — ASCII levels, the source of truth. They are NOT
   parsed at comptime: `tools/gen_levels.sh` (runs `cart/src/gen_levels.zig`
   on the host through `cart/src/level_parse.zig`) writes
@@ -43,7 +44,10 @@ RP2354B, Cortex-M33 at 150 MHz with FPU, Core 1 runs the cart. Screen
 bitcast). Cart RAM 307 KB, binary at most 256 KB; our budget ELF
 `.text`+`.data` <= 140 KB, `.bss` <= 120 KB (`size -A`). Inputs
 `cart.controls`; the OS owns Start+Select and joystick click. `tone2` one
-voice. Neopixels never lit (docs/NEOPIXELS.md).
+voice. Neopixels are off: the cart never writes a non-zero value; the LED
+effects in `audio.zig` are compiled out and `zig build -Dcart=snoutenstein
+-Dneopixels=true` re-enables them for development (docs/NEOPIXELS.md: a
+coworker's badge shows the LEDs unusably bright even at 1%).
 
 ## Rules that matter here
 

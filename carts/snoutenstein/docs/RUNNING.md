@@ -300,9 +300,11 @@ demo and takeover runs must pass). Changing an early segment reshuffles
 every fight after it, so re-check the whole run, not just the edit.
 
 Neopixels are off in every build (docs/NEOPIXELS.md at the repository
-root): the cart never writes an LED byte; the old HP bar, key flash and
-rewind pulse stay dormant in `cart/src/audio.zig` behind
-`neopixels_allowed`.
+root): the cart never writes a non-zero LED byte; the HP bar, key flash
+and rewind pulse in `cart/src/audio.zig` are compiled out.
+`zig build -Dcart=snoutenstein -Dneopixels=true` (repository root)
+re-enables them for development; `tools/check.sh` builds that variant
+once so the path keeps compiling. Never flash it to a badge you look at.
 
 ## 6. Flash the badge
 
