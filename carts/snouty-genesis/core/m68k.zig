@@ -14,14 +14,24 @@
 //! host-generated data (tools/gen_m68k.py -> core/m68k_tables.zig, no
 //! comptime loops: Adrian's Mac Zig OOMs), then one `switch` calls the
 //! handler. `decode_variant` picks the data: the 64 K x u8 table (one
-//! load) or the two-level group table (a few KB; PLAN.md asks for both).
+//! load, 64 KB) or the two-level tables (two loads, 9.25 KB; PLAN.md asks
+//! for both).
 //!
 //! Timing: every bus access charges 4 cycles as it happens (opcode, each
 //! extension word, each data word; a long is 8) and handlers add the
 //! internal cycles of the 68000 user manual's tables on top, so the
 //! effective-address costs fall out of the accesses. The result is the
-//! manual's count, and matches SingleStepTests' `length` (see
-//! tests/m68k_single_step.zig for the per-family agreement).
+//! manual's count, and matches SingleStepTests' `length` on every case
+//! (tests/m68k_single_step.zig). `cyc` is public: a bus access may add
+//! wait or DMA stall cycles to it during `step`, and `step` returns them.
+//!
+//! Fetch: if the bus has `code_window` (see `CodeWindow`), opcodes and
+//! extension words are read straight from ROM/RAM without a bus call.
+//!
+//! The dummy reads the 68000 does before CLR, Scc and MOVE from SR to
+//! memory, and MOVEM's extra word read, are charged but not performed (no
+//! read side effects on I/O). TAS writes back (the Genesis bus drops the
+//! write on real hardware; a bus may ignore it).
 //!
 //! Flags are kept apart from SR, in the cheapest form to produce: the
 //! operands of a b/w/l operation are shifted left so their top bit is bit
@@ -38,26 +48,23 @@ pub const Op = tables.Op;
 
 pub const DecodeVariant = enum { table64k, two_level };
 /// Which decode data `step` uses (both are complete and equivalent; the
-/// test suite checks they agree on every opcode).
-pub const decode_variant: DecodeVariant = .table64k;
+/// test suite checks they agree on every opcode). M1 measurement
+/// (badge-bench, calibrated, gcc-built game-logic workload, stub bus with
+/// `code_window`): two-level 98.8 host cycles per 68000 instruction and
+/// 86.5 KB cart `.text`; the 64 K table 96.6 cycles and 141.3 KB. The
+/// two-level shape costs ~2% for 55 KB of flash, so it is the default.
+pub const decode_variant: DecodeVariant = .two_level;
 
 /// Handler of `op` through the 64 K table.
 pub inline fn decode_table(op: u16) Op {
     return @fromBackingInt(@intCast(tables.decode[op]));
 }
 
-/// Handler of `op` through the two-level groups: bits 15-6 pick a group,
-/// the group's masks over bits 5-0 pick the handler.
+/// Handler of `op` through the two-level tables: bits 15-6 pick a row of
+/// 64 handler indices, bits 5-0 the entry.
 pub inline fn decode_two_level(op: u16) Op {
-    const g = tables.groups[tables.l1[op >> 6]];
-    const bit = @as(u64, 1) << @as(u6, @truncate(op));
-    var i: u16 = g.first;
-    const end = g.first + g.count;
-    while (i < end) : (i += 1) {
-        const e = tables.entries[i];
-        if (e.mask & bit != 0) return @fromBackingInt(@intCast(e.op));
-    }
-    return @fromBackingInt(@intCast(g.fallback));
+    const row: u32 = tables.l1[op >> 6];
+    return @fromBackingInt(@intCast(tables.l2[row * 64 + (op & 63)]));
 }
 
 pub inline fn decode_op(op: u16) Op {
@@ -78,6 +85,19 @@ pub const Vector = struct {
     pub const line_f = 11;
     pub const autovector = 24; // + level
     pub const trap = 32; // + n
+};
+
+/// A run of the 68000 map that instructions can be fetched from directly:
+/// bytes `base .. base + len` of the map are `ptr[0 .. len]` (big-endian
+/// words). Returned by the optional `BusT.code_window(addr: u24) ?CodeWindow`
+/// for ROM and work RAM; the CPU then fetches opcodes and extension words
+/// with one bounds check instead of a bus call, and asks again only when
+/// the PC leaves the window. Only memory without read side effects may be
+/// a window; a bus without `code_window` fetches through `read16`.
+pub const CodeWindow = struct {
+    ptr: [*]const u8,
+    base: u32,
+    len: u32,
 };
 
 const Sz = enum { b, w, l };
@@ -200,6 +220,15 @@ pub fn M68k(comptime BusT: type) type {
         stopped: bool = false,
         /// Cycles of the instruction in progress (bus accesses charge 4).
         cyc: u32 = 0,
+        /// Fetch window (`CodeWindow`); `win_len` is its length minus one
+        /// (so a word at any offset below it is inside), 0 = none.
+        win_ptr: [*]const u8 = @ptrCast(&no_window),
+        win_base: u32 = 0,
+        win_len: u32 = 0,
+
+        const has_window = @hasDecl(BusT, "code_window") and
+            @typeInfo(@TypeOf(BusT.code_window)) == .@"fn";
+        const no_window = [2]u8{ 0, 0 };
 
         /// Power-on/RESET: supervisor, interrupts masked, SSP and PC from
         /// the vectors at 000000 and 000004 (40 cycles on the real chip,
@@ -217,10 +246,41 @@ pub fn M68k(comptime BusT: type) type {
             if (lvl > self.mask()) return self.interrupt(bus, lvl);
             if (self.stopped) return 4;
             self.cyc = 4;
-            const op = bus.read16(@truncate(self.pc));
-            self.pc +%= 2;
-            self.exec(bus, op);
+            self.exec(bus, self.fetch(bus));
             return self.cyc;
+        }
+
+        /// Forget the fetch window (after the bus's memory map or backing
+        /// storage changes, e.g. a restored snapshot into another console).
+        pub fn flush_code_window(self: *Self) void {
+            self.win_len = 0;
+        }
+
+        /// The word at PC, PC += 2 (no cycles: callers charge them).
+        inline fn fetch(self: *Self, bus: *BusT) u16 {
+            const pc = self.pc;
+            self.pc = pc +% 2;
+            if (has_window) {
+                const off = (pc & 0xFF_FFFF) -% self.win_base;
+                if (off < self.win_len) {
+                    const p = self.win_ptr + off;
+                    return @as(u16, p[0]) << 8 | p[1];
+                }
+                return self.fetch_slow(bus, pc);
+            }
+            return bus.read16(@truncate(pc));
+        }
+
+        fn fetch_slow(self: *Self, bus: *BusT, pc: u32) u16 {
+            const a: u24 = @truncate(pc);
+            if (bus.code_window(a)) |w| {
+                if (w.len >= 2 and a -% w.base < w.len - 1) {
+                    self.win_ptr = w.ptr;
+                    self.win_base = w.base;
+                    self.win_len = w.len - 1;
+                }
+            }
+            return bus.read16(a);
         }
 
         /// Interrupt mask (SR bits 8-10).
@@ -281,10 +341,8 @@ pub fn M68k(comptime BusT: type) type {
         // ---- Bus access, 4 cycles per word ----
 
         inline fn ext16(self: *Self, bus: *BusT) u16 {
-            const v = bus.read16(@truncate(self.pc));
-            self.pc +%= 2;
             self.cyc += 4;
-            return v;
+            return self.fetch(bus);
         }
 
         inline fn ext32(self: *Self, bus: *BusT) u32 {
@@ -459,7 +517,11 @@ pub fn M68k(comptime BusT: type) type {
         /// step by the size (A7 by 2 for bytes). `read` charges -(An)'s 2
         /// internal cycles (source and read-modify-write operands; MOVE's
         /// destination and MOVEM do not pay them).
-        fn ea_addr(self: *Self, bus: *BusT, comptime sz: Sz, mode: u3, reg: u3, comptime read: bool) u32 {
+        noinline fn ea_addr(self: *Self, bus: *BusT, comptime sz: Sz, mode: u3, reg: u3, comptime read: bool) u32 {
+            return self.ea_addr_inl(bus, sz, mode, reg, read);
+        }
+
+        inline fn ea_addr_inl(self: *Self, bus: *BusT, comptime sz: Sz, mode: u3, reg: u3, comptime read: bool) u32 {
             const step_n: u32 = switch (sz) {
                 .b => if (reg == 7) 2 else 1,
                 .w => 2,
@@ -516,15 +578,17 @@ pub fn M68k(comptime BusT: type) type {
             };
         }
 
-        /// Source operand of any mode, low `sz` bits.
-        fn read_ea(self: *Self, bus: *BusT, comptime sz: Sz, mode: u3, reg: u3) u32 {
-            switch (mode) {
-                0 => return self.d[reg] & mask_of(sz),
-                1 => return self.a[reg] & mask_of(sz),
-                7 => if (reg == 4) return self.imm(bus, sz),
-                else => {},
-            }
-            return self.rd(bus, sz, self.ea_addr(bus, sz, mode, reg, true));
+        /// Source operand of any mode, low `sz` bits. Registers inline (the
+        /// common case pays no call), memory and immediates out of line.
+        inline fn read_ea(self: *Self, bus: *BusT, comptime sz: Sz, mode: u3, reg: u3) u32 {
+            if (mode == 0) return self.d[reg] & mask_of(sz);
+            if (mode == 1) return self.a[reg] & mask_of(sz);
+            return self.read_ea_mem(bus, sz, mode, reg);
+        }
+
+        noinline fn read_ea_mem(self: *Self, bus: *BusT, comptime sz: Sz, mode: u3, reg: u3) u32 {
+            if (mode == 7 and reg == 4) return self.imm(bus, sz);
+            return self.rd(bus, sz, self.ea_addr_inl(bus, sz, mode, reg, true));
         }
 
         /// Destination write (MOVE, Scc, CLR): Dn or memory, no -(An) cost.
