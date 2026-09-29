@@ -105,3 +105,98 @@ test "ring: the log covers the whole reachable span" {
     try expectEqual(false, r.has_pad(r.live));
     try expectEqual(false, r.has_pad(r.live - R.log_len - 1));
 }
+
+// ---- Run-time slot count (M5: the pool size is known only at start) ----
+
+/// The frontend's shape: 12 slots at most, a keyframe every 30 frames.
+const M = core.ring.Ring(12, 30);
+
+test "ring: init clamps the slot count to 2..max_slots" {
+    try expectEqual(@as(usize, 2), M.init(0).n);
+    try expectEqual(@as(usize, 2), M.init(1).n);
+    try expectEqual(@as(usize, 2), M.init(2).n);
+    try expectEqual(@as(usize, 3), M.init(3).n);
+    try expectEqual(@as(usize, 12), M.init(12).n);
+    try expectEqual(@as(usize, 12), M.init(1000).n);
+    // The default is every slot, as before M5.
+    try expectEqual(@as(usize, 12), (M{}).n);
+}
+
+test "ring: n slots in use, for n = 2, 3 and max" {
+    for ([_]usize{ 2, 3, M.max_slots }) |n| {
+        var r = M.init(n);
+        try expectEqual(@as(usize, 0), r.reset());
+        try expectEqual(n, r.n); // reset keeps the slot count
+        var snaps: usize = 0;
+        // Not a multiple of 30, so the newest keyframe is a real step back.
+        for (0..30 * 40 + 5) |_| {
+            if (r.record().snapshot_slot) |s| {
+                snaps += 1;
+                try std.testing.expect(s < n);
+                try expectEqual(snaps % n, s);
+            }
+        }
+        try expectEqual(n, r.count);
+        try expectEqual(@as(u32, @intCast((n - 1) * 30 + 5)), r.history_frames());
+        try expectEqual(@as(u8, 5), r.history_fraction());
+        // Stepping back reaches exactly n keyframes.
+        var steps: usize = 0;
+        while (r.step(-1)) |st| {
+            steps += 1;
+            try std.testing.expect(st.restore < n);
+        }
+        try expectEqual(n, steps);
+    }
+}
+
+test "ring: history fraction with fewer slots than max" {
+    // n = 3: the full span is 2 gaps = 60 frames, not 11 * 30.
+    var r = M.init(3);
+    _ = r.reset();
+    try expectEqual(@as(u8, 0), r.history_fraction());
+    for (0..12) |_| _ = r.record();
+    try expectEqual(@as(u8, 1), r.history_fraction()); // 12 of 60
+    for (0..18) |_| _ = r.record();
+    try expectEqual(@as(u8, 3), r.history_fraction()); // 30 of 60
+    for (0..30) |_| _ = r.record();
+    try expectEqual(@as(u8, 5), r.history_fraction()); // 60 of 60
+    for (0..29) |_| _ = r.record();
+    try expectEqual(@as(u8, 5), r.history_fraction()); // capped
+    // n = 2: one gap of 30 frames.
+    var t = M.init(2);
+    _ = t.reset();
+    for (0..6) |_| _ = t.record();
+    try expectEqual(@as(u8, 1), t.history_fraction());
+    for (0..9) |_| _ = t.record();
+    try expectEqual(@as(u8, 3), t.history_fraction()); // 15 of 30
+}
+
+test "ring: the log never overwrites a needed byte when n < max" {
+    // Model the frontend's log: `log[log_index(f)]` remembers which frame
+    // wrote it. After every record, every frame from the oldest reachable
+    // keyframe to live must still be there, including across truncation
+    // from a parked keyframe.
+    for ([_]usize{ 2, 3, 7, M.max_slots }) |n| {
+        var r = M.init(n);
+        _ = r.reset();
+        var log: [M.log_len]u32 = @splat(std.math.maxInt(u32));
+        var seed: u32 = @intCast(n);
+        for (0..30 * 60) |_| {
+            seed = seed *% 1_664_525 +% 1_013_904_223;
+            // Now and then park a few keyframes back and play on from there.
+            if ((seed >> 24) % 97 == 0) {
+                for (0..(seed >> 8) % 4 + 1) |_| _ = r.step(-1);
+            }
+            const f = r.position();
+            const rec = r.record();
+            log[rec.log_index] = f;
+            if (rec.snapshot_slot) |s| try std.testing.expect(s < n);
+            try std.testing.expect(r.count <= n);
+            var g = r.frame_of_age(r.count - 1);
+            while (g < r.live) : (g += 1) {
+                try std.testing.expect(r.has_pad(g));
+                try expectEqual(g, log[M.log_index(g)]);
+            }
+        }
+    }
+}

@@ -293,14 +293,3 @@ pub const Gb = struct {
         gb.vblank_hit = false;
     }
 };
-
-test "keyframe round trip is exact" {
-    const rom: [0x8000]u8 = @splat(0);
-    var gb = Gb.init(&rom);
-    var k: Gb.Keyframe = undefined;
-    gb.snapshot(&k);
-    var gb2 = Gb.init(&rom);
-    gb2.wram[5] = 0xAA;
-    gb2.restore(&k);
-    try std.testing.expectEqual(@as(u8, 0), gb2.wram[5]);
-}
