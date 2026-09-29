@@ -1,7 +1,9 @@
-//! Enemy projectiles (spit, web): movement, wall collision, player hits.
-//! Called once per tick from `sim.step` after `ai.update`. Fixed point
-//! only, no cart-api. Values from SPEC.md section 8 and PLAN.md M3
-//! "Contract: projectiles (track B)".
+//! Projectiles: enemy spit and web (movement, wall collision, player
+//! hits) and the player's Debugger bolt (M6: bursts on a wall or near an
+//! enemy, splash damage to enemies, never hurts the player) with its
+//! display-only burst. Called once per tick from `sim.step` after
+//! `ai.update`. Fixed point only, no cart-api. Values from SPEC.md
+//! sections 7 and 8, PLAN.md M3 "Contract: projectiles (track B)" and M6.
 const std = @import("std");
 const fixed = @import("fixed.zig");
 const state = @import("state.zig");
@@ -15,12 +17,31 @@ const Fixed = fixed.Fixed;
 pub const kind_none: u8 = 0;
 pub const kind_spit: u8 = 1;
 pub const kind_web: u8 = 2;
+/// The Debugger's bolt (player-owned: hurts enemies, never the player).
+pub const kind_debug: u8 = 3;
+/// A bolt's burst: display only (no movement, no damage), `burst_ticks` long.
+pub const kind_burst: u8 = 4;
 
 /// Cells per tick.
 pub const spit_speed: Fixed = fixed.from_float(0.08);
 pub const web_speed: Fixed = fixed.from_float(0.06);
-/// Ticks a projectile lives (it moves at most this many times).
+pub const debug_speed: Fixed = fixed.from_float(0.10);
+/// Ticks a spit or web lives (it moves at most this many times).
 pub const ttl_ticks: u8 = 180;
+/// Ticks a Debugger bolt lives (12 cells at `debug_speed`).
+pub const debug_ttl: u8 = 120;
+/// A bolt bursts when its centre comes within this of a living enemy centre.
+pub const debug_trigger: Fixed = fixed.from_float(0.4);
+const debug_trigger_sq: i64 = @as(i64, debug_trigger) * debug_trigger;
+/// Every living enemy centre within this of the burst point takes
+/// `burst_damage` (no line-of-sight test).
+pub const burst_radius: Fixed = fixed.from_float(1.5);
+const burst_radius_sq: i64 = @as(i64, burst_radius) * burst_radius;
+pub const burst_damage: i16 = 12;
+/// White flash ticks on each enemy a burst hits (overrides `sim.flash_ticks`).
+pub const burst_flash: u8 = 6;
+/// Display lifetime of a `kind_burst` entry.
+pub const burst_ticks: u8 = 6;
 /// Spawn offset along the angle, so a shot does not start in the
 /// spawner's own cell.
 pub const spawn_offset: Fixed = fixed.from_float(0.4);
@@ -33,7 +54,19 @@ pub const web_damage: i16 = 6;
 pub const web_freeze_ticks: u8 = 45;
 
 fn speed(kind: u8) Fixed {
-    return if (kind == kind_web) web_speed else spit_speed;
+    return switch (kind) {
+        kind_web => web_speed,
+        kind_debug => debug_speed,
+        else => spit_speed,
+    };
+}
+
+fn ttl_for(kind: u8) u8 {
+    return switch (kind) {
+        kind_debug => debug_ttl,
+        kind_burst => burst_ticks,
+        else => ttl_ticks,
+    };
 }
 
 /// Launch a projectile of `kind` from (x, y) along `angle`. Returns false
@@ -51,7 +84,7 @@ pub fn spawn(s: *GameState, x: Fixed, y: Fixed, angle: fixed.Angle, kind: u8) bo
             .vx = fixed.mul(c, v),
             .vy = fixed.mul(sn, v),
             .kind = kind,
-            .ttl = ttl_ticks,
+            .ttl = ttl_for(kind),
         };
         return true;
     }
@@ -60,28 +93,77 @@ pub fn spawn(s: *GameState, x: Fixed, y: Fixed, angle: fixed.Angle, kind: u8) bo
 
 pub fn update(s: *GameState, level: *const Level) void {
     for (&s.projectiles) |*p| {
-        if (p.kind == kind_none) continue;
-        p.x += p.vx;
-        p.y += p.vy;
-        if (sim.is_solid(s, level, fixed.to_int(p.x), fixed.to_int(p.y))) {
-            p.* = .{};
-            continue;
-        }
-        const dx: i64 = p.x - s.player.x;
-        const dy: i64 = p.y - s.player.y;
-        if (dx * dx + dy * dy < hit_radius_sq) {
-            if (p.kind == kind_web) {
-                sim.damage_player(s, web_damage);
-                s.player.frozen = web_freeze_ticks;
-            } else {
-                sim.damage_player(s, spit_damage);
-            }
-            p.* = .{};
-            continue;
+        switch (p.kind) {
+            kind_none => continue,
+            kind_burst => {},
+            kind_debug => if (update_debug(s, level, p)) continue,
+            else => if (update_enemy_shot(s, level, p)) continue,
         }
         p.ttl -= 1;
         if (p.ttl == 0) p.* = .{};
     }
+}
+
+/// Move a spit or web; true when it ended this tick (wall or player hit).
+fn update_enemy_shot(s: *GameState, level: *const Level, p: *state.Projectile) bool {
+    p.x += p.vx;
+    p.y += p.vy;
+    if (sim.is_solid(s, level, fixed.to_int(p.x), fixed.to_int(p.y))) {
+        p.* = .{};
+        return true;
+    }
+    const dx: i64 = p.x - s.player.x;
+    const dy: i64 = p.y - s.player.y;
+    if (dx * dx + dy * dy < hit_radius_sq) {
+        if (p.kind == kind_web) {
+            sim.damage_player(s, web_damage);
+            s.player.frozen = web_freeze_ticks;
+        } else {
+            sim.damage_player(s, spit_damage);
+        }
+        p.* = .{};
+        return true;
+    }
+    return false;
+}
+
+/// Move a Debugger bolt; true when it burst this tick. A wall bursts it
+/// at its position before the move (so the burst is not drawn inside the
+/// wall), a living enemy within `debug_trigger` at its new position.
+/// Never tests against the player.
+fn update_debug(s: *GameState, level: *const Level, p: *state.Projectile) bool {
+    const ox = p.x;
+    const oy = p.y;
+    p.x += p.vx;
+    p.y += p.vy;
+    if (sim.is_solid(s, level, fixed.to_int(p.x), fixed.to_int(p.y))) {
+        burst(s, p, ox, oy);
+        return true;
+    }
+    for (&s.enemies) |*e| {
+        if (!sim.living(e)) continue;
+        const dx: i64 = e.x - p.x;
+        const dy: i64 = e.y - p.y;
+        if (dx * dx + dy * dy < debug_trigger_sq) {
+            burst(s, p, p.x, p.y);
+            return true;
+        }
+    }
+    return false;
+}
+
+/// `burst_damage` to every living enemy within `burst_radius` of (x, y),
+/// a `burst_flash` on each, then the slot becomes a `kind_burst` there.
+fn burst(s: *GameState, p: *state.Projectile, x: Fixed, y: Fixed) void {
+    for (&s.enemies, 0..) |*e, i| {
+        if (!sim.living(e)) continue;
+        const dx: i64 = e.x - x;
+        const dy: i64 = e.y - y;
+        if (dx * dx + dy * dy >= burst_radius_sq) continue;
+        sim.damage_enemy(s, i, burst_damage);
+        e.flash = burst_flash;
+    }
+    p.* = .{ .x = x, .y = y, .kind = kind_burst, .ttl = burst_ticks };
 }
 
 pub fn live_count(s: *const GameState) usize {
@@ -224,4 +306,170 @@ test "ttl expiry frees the slot after 180 ticks" {
     try testing.expectEqual(kind_none, s.projectiles[0].kind);
     try testing.expectEqual(@as(usize, 0), live_count(&s));
     try testing.expect(spawn(&s, fixed.from_int(5) + cell_centre, fixed.from_int(3) + cell_centre, east, kind_web));
+}
+
+// ------------------------------------------------------- Debugger tests
+
+/// Put a living gnat (or `kind`) in enemy slot `i` at (x, y), idle.
+fn place(s: *GameState, i: usize, kind: state.EnemyKind, x: Fixed, y: Fixed) void {
+    s.enemies[i] = .{ .x = x, .y = y, .kind = kind, .state = .idle, .hp = sim.stats(kind).hp };
+}
+
+fn dist_sq(x0: Fixed, y0: Fixed, x1: Fixed, y1: Fixed) i64 {
+    const dx: i64 = x1 - x0;
+    const dy: i64 = y1 - y0;
+    return dx * dx + dy * dy;
+}
+
+test "a Debugger bolt spawns 0.4 ahead at 0.10 cells/tick with ttl 120" {
+    var st: level_parse.Parsed = undefined;
+    const lv = try hall(&st);
+    var s: GameState = undefined;
+    sim.init(&s, &lv, 0, 1);
+    try testing.expect(spawn(&s, s.player.x, s.player.y, east, kind_debug));
+    const p = s.projectiles[0];
+    try testing.expectEqual(kind_debug, p.kind);
+    try testing.expectEqual(s.player.x + spawn_offset, p.x);
+    try testing.expectEqual(debug_speed, p.vx);
+    try testing.expectEqual(@as(Fixed, 0), p.vy);
+    try testing.expectEqual(debug_ttl, p.ttl);
+}
+
+test "a Debugger bolt fired at a wall bursts in the last floor cell, burst lasts 6 updates" {
+    var st: level_parse.Parsed = undefined;
+    const lv = try hall(&st);
+    var s: GameState = undefined;
+    sim.init(&s, &lv, 0, 1);
+    const y0 = fixed.from_int(3) + cell_centre;
+    try testing.expect(spawn(&s, fixed.from_int(2) + cell_centre, y0, east, kind_debug));
+    var ticks: usize = 0;
+    var last_x: Fixed = 0;
+    while (s.projectiles[0].kind == kind_debug) : (ticks += 1) {
+        try testing.expect(ticks < debug_ttl);
+        last_x = s.projectiles[0].x;
+        update(&s, &lv);
+    }
+    // It burst on the move into x = 10 (the wall), at the pre-move point.
+    try testing.expectEqual(@as(i32, 10), fixed.to_int(last_x + debug_speed));
+    const b = s.projectiles[0];
+    try testing.expectEqual(kind_burst, b.kind);
+    try testing.expectEqual(last_x, b.x);
+    try testing.expectEqual(y0, b.y);
+    try testing.expectEqual(@as(i32, 9), fixed.to_int(b.x));
+    try testing.expectEqual(@as(Fixed, 0), b.vx);
+    try testing.expectEqual(@as(Fixed, 0), b.vy);
+    try testing.expectEqual(burst_ticks, b.ttl);
+    // Display only: it stays put for 5 updates and is gone after the 6th.
+    for (0..burst_ticks - 1) |_| {
+        update(&s, &lv);
+        try testing.expectEqual(kind_burst, s.projectiles[0].kind);
+        try testing.expectEqual(last_x, s.projectiles[0].x);
+    }
+    update(&s, &lv);
+    try testing.expectEqual(kind_none, s.projectiles[0].kind);
+    try testing.expectEqual(@as(usize, 0), live_count(&s));
+    try testing.expectEqual(@as(i16, 100), s.player.hp);
+}
+
+test "a burst 3 cells out kills two adjacent gnats, a third 2 cells away is untouched" {
+    var st: level_parse.Parsed = undefined;
+    const lv = try hall(&st);
+    var s: GameState = undefined;
+    sim.init(&s, &lv, 0, 1);
+    // Player at (1.5, 1.5) facing east. Gnat 0 on the bolt's path at
+    // x = 4.9: the bolt bursts once within 0.4 of it, near x = 4.5,
+    // 3 cells from the player. Gnat 1 one row down (about 1.08 cells from
+    // the burst), gnat 2 two rows down (about 2.04 cells).
+    const gx = fixed.from_float(4.9);
+    place(&s, 0, .gnat, gx, fixed.from_int(1) + cell_centre);
+    place(&s, 1, .gnat, gx, fixed.from_int(2) + cell_centre);
+    place(&s, 2, .gnat, gx, fixed.from_int(3) + cell_centre);
+    try testing.expect(spawn(&s, s.player.x, s.player.y, east, kind_debug));
+    var ticks: usize = 0;
+    while (s.projectiles[0].kind == kind_debug) : (ticks += 1) {
+        try testing.expect(ticks < debug_ttl);
+        update(&s, &lv);
+    }
+    const b = s.projectiles[0];
+    try testing.expectEqual(kind_burst, b.kind);
+    // Burst point: first position within 0.4 of gnat 0, about 3 cells out.
+    try testing.expect(gx - b.x < debug_trigger);
+    try testing.expect(gx - b.x > debug_trigger - debug_speed);
+    const out = b.x - s.player.x;
+    try testing.expect(out > fixed.from_float(2.9) and out < fixed.from_float(3.1));
+    try testing.expect(dist_sq(b.x, b.y, s.enemies[1].x, s.enemies[1].y) < burst_radius_sq);
+    try testing.expect(dist_sq(b.x, b.y, s.enemies[2].x, s.enemies[2].y) > @as(i64, fixed.from_int(2)) * fixed.from_int(2));
+    // Gnat hp 3 - 12 <= 0: both dying, flashing 6 ticks, two kills.
+    try testing.expectEqual(@as(i16, 3), sim.stats(.gnat).hp);
+    for (0..2) |i| {
+        try testing.expectEqual(state.EnemyState.dying, s.enemies[i].state);
+        try testing.expectEqual(@as(i16, 3 - burst_damage), s.enemies[i].hp);
+        try testing.expectEqual(burst_flash, s.enemies[i].flash);
+    }
+    try testing.expectEqual(@as(u32, 2), @as(u32, s.kills));
+    try testing.expectEqual(state.EnemyState.idle, s.enemies[2].state);
+    try testing.expectEqual(@as(i16, 3), s.enemies[2].hp);
+    try testing.expectEqual(@as(u8, 0), s.enemies[2].flash);
+    try testing.expectEqual(@as(i16, 100), s.player.hp);
+}
+
+test "a burst takes exactly 12 from a beetle and flashes it 6 ticks, not 2" {
+    var st: level_parse.Parsed = undefined;
+    const lv = try hall(&st);
+    var s: GameState = undefined;
+    sim.init(&s, &lv, 0, 1);
+    place(&s, 0, .beetle, fixed.from_int(5) + cell_centre, fixed.from_int(3) + cell_centre);
+    try testing.expect(spawn(&s, fixed.from_int(2) + cell_centre, fixed.from_int(3) + cell_centre, east, kind_debug));
+    for (0..debug_ttl) |_| {
+        if (s.projectiles[0].kind != kind_debug) break;
+        update(&s, &lv);
+    }
+    try testing.expectEqual(kind_burst, s.projectiles[0].kind);
+    try testing.expectEqual(@as(i16, 20 - 12), s.enemies[0].hp);
+    try testing.expectEqual(state.EnemyState.pain, s.enemies[0].state);
+    try testing.expectEqual(burst_flash, s.enemies[0].flash);
+    try testing.expectEqual(@as(u32, 0), @as(u32, s.kills));
+}
+
+test "the player takes no damage from a burst 0.5 cells away or a bolt passing through" {
+    var st: level_parse.Parsed = undefined;
+    const lv = try hall(&st);
+    var s: GameState = undefined;
+    sim.init(&s, &lv, 0, 1);
+    // Gnat 0.85 ahead: the bolt starts 0.4 out, its first move to 0.5
+    // puts it 0.35 from the gnat, so it bursts 0.5 cells from the player.
+    place(&s, 0, .gnat, s.player.x + fixed.from_float(0.85), s.player.y);
+    try testing.expect(spawn(&s, s.player.x, s.player.y, east, kind_debug));
+    update(&s, &lv);
+    const b = s.projectiles[0];
+    try testing.expectEqual(kind_burst, b.kind);
+    try testing.expectEqual(s.player.x + spawn_offset + debug_speed, b.x);
+    try testing.expectEqual(state.EnemyState.dying, s.enemies[0].state);
+    try testing.expectEqual(@as(i16, 100), s.player.hp);
+    try testing.expectEqual(@as(u8, 0), s.hurt);
+    // A bolt fired from behind flies straight through the player.
+    s.projectiles[0] = .{};
+    try testing.expect(spawn(&s, s.player.x - fixed.from_float(0.45), s.player.y, east, kind_debug));
+    for (0..20) |_| update(&s, &lv);
+    try testing.expectEqual(kind_debug, s.projectiles[0].kind);
+    try testing.expect(s.projectiles[0].x > s.player.x + fixed.one);
+    try testing.expectEqual(@as(i16, 100), s.player.hp);
+    try testing.expectEqual(@as(u8, 0), s.hurt);
+}
+
+test "a Debugger bolt's ttl expiry frees the slot without a burst" {
+    var st: level_parse.Parsed = undefined;
+    const lv = try hall(&st);
+    var s: GameState = undefined;
+    sim.init(&s, &lv, 0, 1);
+    try testing.expect(spawn(&s, fixed.from_int(5) + cell_centre, fixed.from_int(3) + cell_centre, east, kind_debug));
+    s.projectiles[0].vx = 0;
+    s.projectiles[0].vy = 0;
+    // A gnat 1.0 away: inside the burst radius, outside the trigger.
+    place(&s, 0, .gnat, fixed.from_int(6) + cell_centre, fixed.from_int(3) + cell_centre);
+    for (0..debug_ttl - 1) |_| update(&s, &lv);
+    try testing.expectEqual(kind_debug, s.projectiles[0].kind);
+    update(&s, &lv);
+    try testing.expectEqual(kind_none, s.projectiles[0].kind);
+    try testing.expectEqual(@as(i16, 3), s.enemies[0].hp);
 }
