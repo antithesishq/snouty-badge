@@ -24,7 +24,7 @@ pub const max_projectiles = 12;
 pub const max_doors = 64;
 pub const max_pickups = 256;
 
-pub const Weapon = enum(u8) { swatter = 0, zapper = 1, spray = 2 };
+pub const Weapon = enum(u8) { swatter = 0, zapper = 1, spray = 2, debugger = 3 };
 
 pub const Player = struct {
     x: Fixed,
@@ -42,6 +42,12 @@ pub const Player = struct {
     prev: Buttons = .{},
     /// Set by the first spray-can pickup (which also selects the spray).
     has_spray: bool = false,
+    /// The Debugger (M6): charges 0..max_debugger, and whether the first
+    /// cartridge has been picked up (which also selects the weapon).
+    ammo_debugger: u8 = 0,
+    has_debugger: bool = false,
+    /// Explicit padding to a 4-byte multiple (assert_no_padding).
+    _pad: [2]u8 = @splat(0),
 };
 
 pub const EnemyKind = enum(u8) { gnat = 0, wasp = 1, beetle = 2, spider = 3, boss = 4 };
@@ -67,7 +73,7 @@ pub const Projectile = struct {
     y: Fixed = 0,
     vx: Fixed = 0,
     vy: Fixed = 0,
-    kind: u8 = 0, // 0 none, 1 spit, 2 web
+    kind: u8 = 0, // 0 none, 1 spit, 2 web, 3 debug bolt (player), 4 debug burst (display only)
     ttl: u8 = 0,
     /// projectiles.zig scratch; doubles as explicit padding.
     aux: [2]u8 = @splat(0),

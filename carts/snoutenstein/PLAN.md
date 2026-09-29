@@ -1007,11 +1007,34 @@ Production is untouched, so the attract demo's hash is unaffected. Tests:
 parse (`tex`, orientation), sim (opens for the player, stays open 3x the
 hold time, an enemy bump does nothing).
 
-## M6 The Debugger (planned 2026-09-29, not started)
+## M6 The Debugger (planned 2026-09-29, started 2026-09-29)
 
 Adrian: "plan to implement the debugger weapon and put it behind a
 secret door in levels 2 and 3." SPEC.md 7 calls it a slow splash
-projectile. Proposal, to be confirmed before work starts:
+projectile. Confirmed 2026-09-29 ("Let's build the debugger gun");
+the proposal below stands with these contract corrections found at
+pre-work time:
+
+- `Player` grows by 4 bytes, not 2: `ammo_debugger: u8`,
+  `has_debugger: bool` and an explicit `_pad: [2]u8` (24 + 2 bytes would
+  leave compiler padding, which `assert_no_padding` rejects). GameState
+  is 1,372 bytes; the attract demo is re-recorded at the end.
+- `projectiles.png` cells are 8x8 (not 16x16): cell 4 the bolt, cell 5 the
+  burst, six cells. The burst is a display-only projectile
+  `kind_burst = 4` (no movement, no damage, ttl 6) that sprites.zig draws
+  as cell 5 at 1.0 cell, centre anchored; the bolt `kind_debug = 3` is
+  cell 4 at 0.25 like the enemy shots. The 12 damage is dealt once, in
+  the tick the bolt bursts.
+- `pickups.png` cell 7 (the spare mug) becomes the Debugger cartridge, so
+  `PickupKind.debugger = 7` needs no new pickup cell. `hud.png` gains
+  cell 8 (the heart is cell 7). `weapons.png` gains cells 9, 10, 11.
+- Legend `&` is parsed (level_parse, check_level.py) and the test level
+  gets one `&` at (5, 5), off the m1/m2/m5 script paths, for the
+  `m6_debugger.json` script.
+- Pre-work (lead, committed before the tracks): the enum members, the
+  `Player` fields, the `&` legend and compile stubs (`fire_rate` 48,
+  `has_ammo`, four-way `next_weapon`, ammo spend without a shot, the
+  pickup, `debug_ammo`, hud/audio switch arms). Tracks replace the stubs.
 
 - **Weapon 4, the Debugger.** `Weapon.debugger = 3`. Fires a player
   projectile (`projectiles.kind_debug = 3`, owner = player: it hurts

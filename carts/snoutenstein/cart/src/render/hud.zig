@@ -73,9 +73,14 @@ pub fn draw_bar(s: *const state.GameState) void {
     // x 32..63: ammo icon + count (swatter: a dash).
     switch (p.weapon) {
         .swatter => text_in("-", ammo_x, 32, mid_y, grey),
-        .zapper, .spray => {
+        .zapper, .spray, .debugger => {
+            // M6 track C: the Debugger gets its own hud.png icon cell.
             const icon: u32 = if (p.weapon == .zapper) icon_zapper else icon_spray;
-            const n: u8 = if (p.weapon == .zapper) p.ammo_zapper else p.ammo_spray;
+            const n: u8 = switch (p.weapon) {
+                .zapper => p.ammo_zapper,
+                .spray => p.ammo_spray,
+                else => p.ammo_debugger,
+            };
             blit.cell(gfx.hud, 8, 8, icon, ammo_x + 3, mid_y, .{});
             var abuf: [4]u8 = undefined;
             const a = fmt(&abuf, "{d:>2}", .{n});

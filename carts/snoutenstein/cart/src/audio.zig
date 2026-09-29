@@ -224,6 +224,7 @@ pub fn tick(s: *const state.GameState, level: *const levels.Level) void {
             .swatter => .swatter,
             .zapper => .zapper,
             .spray => .spray,
+            .debugger => .spray, // M6 track C: own rows
         } else null;
         if (ev) |e| play(e);
 

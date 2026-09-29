@@ -31,7 +31,7 @@ pub const DoorDef = struct {
     tex: u8 = 0,
 };
 
-pub const PickupKind = enum(u8) { key_coral, key_iris, key_gold, hotfix, charge, spray_can, battery };
+pub const PickupKind = enum(u8) { key_coral, key_iris, key_gold, hotfix, charge, spray_can, battery, debugger };
 
 pub const PickupDef = struct { x: u8, y: u8, kind: PickupKind };
 pub const EnemyDef = struct { x: u8, y: u8, kind: state.EnemyKind };

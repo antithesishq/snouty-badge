@@ -41,6 +41,7 @@ pub const hurt_ticks: u8 = 4;
 pub const gunfire_radius: Fixed = fixed.from_int(8);
 pub const max_zapper = 99;
 pub const max_spray = 30;
+pub const max_debugger = 9;
 pub const max_rewind = 600;
 pub const rewind_regen_ticks = 6;
 
@@ -93,6 +94,7 @@ pub fn fire_rate(w: state.Weapon) u8 {
         .swatter => 24,
         .zapper => 12,
         .spray => 36,
+        .debugger => 48,
     };
 }
 
@@ -301,6 +303,13 @@ fn enter_cell(s: *GameState, level: *const Level) void {
                 }
             },
             .battery => p.rewind_meter = @min(max_rewind, p.rewind_meter + 180),
+            .debugger => {
+                p.ammo_debugger = @min(max_debugger, @as(u16, p.ammo_debugger) + 3);
+                if (!p.has_debugger) {
+                    p.has_debugger = true;
+                    p.weapon = .debugger;
+                }
+            },
         }
         state.take_pickup(s, i);
     }
@@ -381,17 +390,19 @@ fn has_ammo(p: *const state.Player, w: state.Weapon) bool {
         .swatter => true,
         .zapper => p.ammo_zapper > 0,
         .spray => p.has_spray and p.ammo_spray > 0,
+        .debugger => p.has_debugger and p.ammo_debugger > 0,
     };
 }
 
 /// Select cycles swatter -> zapper -> spray -> swatter, skipping empty ones.
 fn next_weapon(p: *const state.Player) state.Weapon {
     var w = p.weapon;
-    for (0..3) |_| {
+    for (0..4) |_| {
         w = switch (w) {
             .swatter => .zapper,
             .zapper => .spray,
-            .spray => .swatter,
+            .spray => .debugger,
+            .debugger => .swatter,
         };
         if (has_ammo(p, w)) return w;
     }
@@ -422,6 +433,12 @@ fn update_weapon(s: *GameState, level: *const Level, b: state.Buttons) void {
                 const a: fixed.Angle = p.angle +% @as(u16, @bitCast(@as(i16, @intCast(j))));
                 if (cast(s, level, a, spray_reach)) |i| damage_enemy(s, i, spray_damage);
             }
+        },
+        .debugger => {
+            // M6 track A: fire the bolt (projectiles.kind_debug).
+            if (p.ammo_debugger == 0) return;
+            p.ammo_debugger -= 1;
+            s.last_shot = s.tick;
         },
     }
     p.fire_cooldown = fire_rate(p.weapon);

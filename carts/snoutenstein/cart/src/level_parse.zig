@@ -123,7 +123,7 @@ pub fn parse(out: *Parsed, src: []const u8, default_wall: u8) Error!void {
                     };
                     if (x + 1 < width) x += 1; // the arrow cell is floor
                 },
-                'c', 'i', 'g', '+', '%', '$', '*' => {
+                'c', 'i', 'g', '+', '%', '$', '*', '&' => {
                     if (out.pickup_count >= state.max_pickups) return error.TooManyPickups;
                     const kind: PickupKind = switch (ch) {
                         'c' => .key_coral,
@@ -132,7 +132,8 @@ pub fn parse(out: *Parsed, src: []const u8, default_wall: u8) Error!void {
                         '+' => .hotfix,
                         '%' => .charge,
                         '$' => .spray_can,
-                        else => .battery,
+                        '*' => .battery,
+                        else => .debugger,
                     };
                     out.pickups[out.pickup_count] = .{ .x = xb, .y = yb, .kind = kind };
                     out.pickup_count += 1;
