@@ -599,32 +599,7 @@ pub const Vdp = struct {
         if (r[12] & 0x08 == 0) {
             if (merged) final_pass(true, &ba, &bb, &spr, any, bd, out) else final_pass(false, &ba, &bb, &spr, any, bd, out);
         } else {
-            // Shadow/highlight: a pixel is normal when either plane's tile
-            // has priority, else shadowed (the backdrop too). Sprite
-            // palette 3 color 14 highlights (or un-shadows) what is under
-            // it, color 15 shadows it; colors 14 of palettes 0-2 are always
-            // normal; other sprite pixels are normal with priority, else
-            // take the plane's intensity.
-            for (out, 0..) |*o, i| {
-                const a = ba[pad + i];
-                const b = bb[pad + i];
-                const b_hi = b & 0x40 != 0 and b & 0x0F != 0;
-                const p = if (a & 0x0F != 0 and (a & 0x40 != 0 or !b_hi)) a else b;
-                const bc = if (p & 0x0F != 0) p & 0x3F else bd;
-                const normal = (a | b) & 0x40 != 0;
-                const s = if (any) spr[pad + i] else 0;
-                if (s & 0x0F != 0 and (s & 0x40 != 0 or !hi_opaque(p))) {
-                    const sc = s & 0x3F;
-                    o.* = if (sc == 0x3E)
-                        bc | (if (normal) tag_highlight else tag_normal)
-                    else if (sc == 0x3F)
-                        bc | tag_shadow
-                    else if (sc & 0x0F == 0x0E)
-                        sc
-                    else
-                        sc | (if (s & 0x40 != 0 or normal) tag_normal else tag_shadow);
-                } else o.* = bc | (if (normal) tag_normal else tag_shadow);
-            }
+            final_sh(&ba, &bb, &spr, any, bd, out);
         }
 
         // Register 0 bit 5: the leftmost 8 screen columns show the backdrop.
@@ -1011,6 +986,55 @@ fn final_pass(comptime merged: bool, ba: *align(4) const LayerBuf, bb: *align(4)
     }
 }
 
+/// The final pass under shadow/highlight, four pixels per step. A pixel is
+/// normal when either plane's tile has priority, else shadowed (the
+/// backdrop too). Sprite palette 3 color 14 highlights what is under it
+/// (a shadowed pixel becomes normal), color 15 shadows it; color 14 of
+/// palettes 0-2 is always normal; other sprite pixels are normal with
+/// priority, else take the plane's intensity.
+fn final_sh(ba: *align(4) const LayerBuf, bb: *align(4) const LayerBuf, spr: *align(4) const LayerBuf, any: bool, bd: u8, out: *[out_w]u8) void {
+    const bd4: u32 = @as(u32, bd) * ones;
+    var k: usize = 0;
+    while (k < out_w) : (k += 4) {
+        const a = ld32(ba[pad + k ..][0..4]);
+        const b = ld32(bb[pad + k ..][0..4]);
+        const p = over(a, b);
+        const nzp = nonzero(p);
+        const mt = expand(~nzp & highs);
+        const base = (p & 0x3F3F3F3F & ~mt) | (bd4 & mt);
+        // Bit 7 where the pixel is at normal intensity.
+        const normal = ((a | b) << 1) & highs;
+        var q = base | ((~normal & highs) >> 1);
+        if (any) {
+            const s = ld32(spr[pad + k ..][0..4]);
+            const wins = nonzero(s) & ((s << 1) | ~(nzp & (p << 1)));
+            if (wins != 0) {
+                const sc = s & 0x3F3F3F3F;
+                const hl = wins & zero_byte(sc ^ 0x3E3E3E3E);
+                const sd = wins & zero_byte(sc ^ 0x3F3F3F3F);
+                const c14 = wins & zero_byte((sc & 0x0F0F0F0F) ^ 0x0E0E0E0E) & ~hl;
+                const other = wins & ~(hl | sd | c14);
+                const lit = ((s << 1) | normal) & highs;
+                const m_hl = expand(hl);
+                const m_sd = expand(sd);
+                const m_c14 = expand(c14);
+                const m_o = expand(other);
+                q = (q & ~(m_hl | m_sd | m_c14 | m_o)) |
+                    ((base | normal) & m_hl) |
+                    ((base | 0x40404040) & m_sd) |
+                    (sc & m_c14) |
+                    ((sc | ((~lit & highs) >> 1)) & m_o);
+            }
+        }
+        st32(out[k..][0..4], q);
+    }
+}
+
+/// Bit 7 of each byte set where that byte is 0 (bytes at most 0x7F).
+inline fn zero_byte(x: u32) u32 {
+    return ~(x + 0x7F7F7F7F) & highs;
+}
+
 /// Bit 7 of each byte set where that pixel byte's color (bits 0-3) is not 0.
 inline fn nonzero(x: u32) u32 {
     return ((x & 0x0F0F0F0F) + 0x7F7F7F7F) & highs;
@@ -1045,11 +1069,6 @@ inline fn tile4(vram: *const [0x10000]u8, e: u16, r4: u16, sh: u5) u32 {
     const w = be32(vram, (e & 0x7FF) * 32 + r);
     const four = if (e & 0x0800 != 0) (w >> (4 - sh)) & 0x0F0F0F0F else @byteSwap((w >> sh) & 0x0F0F0F0F);
     return four | @as(u32, tile_attr(e)) * ones;
-}
-
-/// An opaque pixel with priority (it hides lower-priority layers).
-inline fn hi_opaque(p: u8) bool {
-    return p & 0x40 != 0 and p & 0x0F != 0;
 }
 
 /// The big-endian word at even address `a`.
