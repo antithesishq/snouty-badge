@@ -782,3 +782,126 @@ four more unpacked sheets, spawn scratch). Deviations, all kept:
   96 x 32 bytes, wasm output identical (goldens unchanged), `m3` re-tagged.
   badge-bench's modelled cost: mean 11.3 ms, worst 15.4 ms of 16.7, so the
   hardware fps numbers matter more than ever.
+
+# Plan: M4 "Polish" (2026-09-29)
+
+Adrian, 2026-09-29: agreed to the M4 list; target 12x12, keep 16x16 one
+switch away. Four pieces, three parallel Opus tracks plus integration:
+
+| Track | Owns | Delivers |
+|---|---|---|
+| A4 perf | `render/raster.zig`, `render/clip.zig`, `render/mesh.zig`, `render/sprite.zig`, `render/scene.zig` (except C4's hunk), `build.zig` | worst frame <= 12.0 ms at 12x12, `-Dmaze_size` build option, bench numbers |
+| B4 takeover | `autopilot.zig`, `main.zig`, `input.zig`, `leds.zig`, `actors.zig` (trigger hook only) | MANUAL state, idle return, B+Select chord debug-only |
+| C4 carving + Iris | `maze.zig`, `render/overlay.zig`, `render/textures.zig`, one hunk in `scene.zig`, two lines in `autopilot.zig` (`enter_overhead` / `.overhead`) | animated carving in OVERHEAD, Iris mark in the name strip |
+
+All three share one working tree (as in M1..M3): edit shared files with
+small `Edit` hunks only, never rewrite them whole, re-read before editing.
+Each track keeps `zig build test`, `check-float` and `check_golden` green
+at the end of its work. Integration (me): check_cycle, bench, GIF, docs, tag.
+
+## Baseline (calibrated badge-bench, 2026-09-29, build 1910d2f)
+
+`badge-bench/bench.sh zig-out/firmware/snouty-maze.elf --script
+carts/snouty-maze/tools/scripts/m2_cycle.json --frames 900` (seed 1,
+12x12): mean 8.47 ms, p95 11.84, worst 13.60 ms at frame 108 (walking,
+81% of 16.7). Hot: `draw_polygon` with its inlined column/span code 68.6%
+(184 polygons per frame), `inner_tex8` 19.5%, `inner_tex` 5.1%, z clear
+1.8%. 16x16 (2026-09-29 note): worst 15.90 ms.
+
+## A4 perf
+
+Goal: worst busy ms <= 12.0 (72%) at 12x12 over m2_cycle.json seeds 1..10
+and m3_tour.json, calibrated model (the default). Also report 16x16
+(`--poke maze_size=16`); if 16x16 also comes in <= 12.0, say so: Adrian
+decides the default, the code must not.
+
+- Exactness gate: every optimisation must leave `check_golden` pixel
+  identical (all 9 poses) unless a change is intended and argued in the
+  result section. Hidden-surface culling has to be conservative.
+- Profile first (`--listing`, `--symbols`) and write down where the
+  cycles go before changing code. Candidates, in the order I would try
+  them: (1) column occlusion for walls at eye height: walls are submitted
+  front to back and span floor to ceiling, so a per-column "closed" mask
+  (or near/far horizon) lets later wall polygons skip closed columns and
+  stops wall submission once all 160 columns are closed; floor and
+  ceiling then only see the open rows. (2) cheaper per-polygon setup for
+  polygons that end up covering few columns. (3) span_tex per-column
+  overhead (`sample_uv` divides, `any_visible`). Anything else the
+  profile shows.
+- Tunables in one place with comments (e.g. `seg`).
+- `-Dmaze_size=N` (default 12, clamp 4..16) in `build.zig` ->
+  `build_options.maze_size`, used as the initial value of `main.maze_size`
+  (B4 owns `main.zig`; A4 may change that one initializer line). The
+  badge export stays so `--poke` still works.
+- Record before/after tables (12x12 and 16x16, seeds 1..10, mean / p95 /
+  worst) in the M4 result section.
+
+## B4 takeover (SPEC section 3 "Takeover" column)
+
+- New state `manual = 8` (append; existing values stay stable).
+- Entering: any of Up/Down/Left/Right pressed in WALK or TURN. In other
+  states (PAUSE, RISE, OVERHEAD, DESCEND, TELEPORT) the stick is ignored.
+  From WALK mid-cell: the camera keeps moving to the next cell centre
+  (Down reverses it back to the cell it left); from TURN: the turn
+  finishes first. Grid-locked like the original.
+- In MANUAL at a cell centre: Up walks forward one cell if no wall (same
+  speed as WALK, 30 ticks), Down walks back one cell facing forward, Left
+  / Right pivot 90 degrees (`turn90_ticks`, same easing). Held buttons
+  repeat at the next cell centre / end of pivot. A wall in the way: no
+  move (no bump animation).
+- Idle return: 300 ticks (5 s) with no stick held, at rest -> WALK from
+  the current cell and heading (`decide`; the left-hand follower reaches
+  every cell of a perfect maze from anywhere).
+- Walking into the finish cell in MANUAL starts PAUSE -> the normal
+  finish sequence. A still skips to PAUSE. Select toggles the LEDs,
+  Start toggles the name strip, as in the screensaver.
+- Actors: smiley and sphere trigger in MANUAL too; a teleport from MANUAL
+  returns to MANUAL (idle timer restarted), not WALK.
+- LEDs: MANUAL gets the WALK colour (or a slight variant, B4's call).
+- B+Select fly chord: compiled in only with `-Ddebug_overlay=true`;
+  `debug_set_camera` keeps using FLY on wasm.
+- Exports: `debug_manual_idle` (ticks since the last stick input).
+- Host tests: enter from WALK mid-cell, Down reversal, wall blocks Up,
+  idle return after 300 ticks, finish from MANUAL, teleport returns to
+  MANUAL.
+- `check_cycle.mjs` runs G (Up at tick 0 for 45 ticks: state 8 and cell
+  changed) and H (Right at tick 0 then idle to tick 400: state WALK or
+  TURN).
+
+## C4 carving and the Iris mark
+
+- `maze.generate` also records the carve order (`carve_log`: w*h-1
+  entries of cell + direction, <= 255). `Maze.reveal(k)` rebuilds `runs`
+  as if only the first k carves had happened (all walls, then k removed);
+  `cells`, `start`, `finish` stay final, so the actors and the follower
+  never see a partial maze. `reveal(carve_count)` equals the normal runs.
+  The `runs` buffer bound (`max_runs`) already covers the full grid.
+- OVERHEAD: `enter_overhead` calls `reveal(0)` after `generate`; each
+  OVERHEAD tick reveals `k = carve_count * t / carve_ticks` with
+  `carve_ticks = 90` (constant in autopilot.zig), so the last 30 ticks
+  show the finished maze. DESCEND starts from the full runs.
+- Scene (C4's hunk): while carving (`m.revealed < m.carve_count`) skip the
+  finish tile and the actors; both appear when carving ends. Optional, if
+  it stays cheap: the carve head cell drawn as a flat tile.
+- Iris mark in the name strip: draw `textures.iris` (32x32, palette 0
+  transparent) as a 2D blit next to the two text lines (e.g. 16x16 at
+  2:1 or 24x24, left of the lines, the icon+text group centred), inside
+  y = 104..127 so it does not touch the maze square. Blit, not the
+  rasterizer (no z test).
+- Exports: `debug_carve_shown` (k), `debug_carve_count`.
+- Host tests: `reveal(count)` == generated runs for seeds 0..99; `reveal(0)`
+  is the full grid (2*(w+h)... one run per grid line: w+1 + h+1 runs);
+  run counts stay <= max_runs for every k.
+- `check_cycle.mjs` run I: A at tick 0, 200 updates (OVERHEAD tick 20):
+  debug_carve_shown < debug_carve_count; run B unchanged.
+
+## Integration and done criteria for M4
+
+- `zig build`, `zig build test`, `check-float`, `check_golden` 9/9 (A4
+  proves pixel identity), `check_cycle` A..I pass.
+- Calibrated bench over m2_cycle.json seeds 1..10 and m3_tour.json:
+  worst <= 12.0 ms at 12x12; 16x16 numbers recorded. A takeover bench
+  script `tools/scripts/m4_takeover.json` costed too.
+- `.text` + `.data` <= 120 KB, `.bss` <= 100 KB.
+- `docs/preview_m4.gif` (carving overhead, takeover walk, Iris strip),
+  `docs/RUNNING.md` controls, SPEC status, tag `snouty-maze/m4`.
