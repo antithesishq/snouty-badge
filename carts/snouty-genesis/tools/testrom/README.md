@@ -178,7 +178,13 @@ the line the emulator lets the CRAM write land.
   moment it is released, whether or not the 68000's V-int is enabled), so
   the toggles land on frames R + 30, R + 60, ... where R is the frame in
   which the 68000 released the Z80 (a few frames before the display comes
-  on). Between interrupts it sits in `HALT`.
+  on). Between interrupts it sits in `HALT`. The V-int INT line stays low
+  for about a scanline, so the handler returns with interrupts still
+  disabled and the main loop burns about 260 Z80 cycles before `EI; HALT`;
+  an emulator that holds INT for the whole line (this cart does, 228
+  cycles) therefore sees exactly one acceptance per frame. (The M0 build
+  had `EI` inside the handler and took three interrupts per line, toggling
+  every 10 frames: found by Track D's driver test.)
 
 Z80 driver memory: code `0000-0107`, `vcount` at `1F00`, `note` at `1F01`
 (0 = A4, 1 = E5), stack below `2000`. It writes the YM2612 only through

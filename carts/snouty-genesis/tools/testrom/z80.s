@@ -7,7 +7,10 @@
 ; operator 2; operators 3 and 4 muted), keys it on at A4 and then toggles
 ; between A4 and E5 every 30 V-ints. Interrupt mode 1: the VDP's V-int
 ; drives INT, the handler at 0038 counts it, and the main loop HALTs between
-; interrupts. Driver variables live at 1F00; the stack grows down from 2000.
+; interrupts. INT is held low for about a scanline (171-228 Z80 cycles), so
+; the handler must NOT re-enable interrupts (it would be re-entered while
+; the line is still low) and the main loop waits out the line before EI.
+; Driver variables live at 1F00; the stack grows down from 2000.
 ;
 ; Note frequencies (YM2612 clock = 68000 clock = 53693175 / 7 Hz):
 ;   f = fnum * 2^(block-1) * (53693175 / 7) / (144 * 2^20)
@@ -33,8 +36,7 @@ irq:    push af
         inc a
         ld (vcount), a
         pop af
-        ei
-        reti
+        reti                  ; no EI here: INT is still low (see above)
 
 start:  xor a
         ld (vcount), a
@@ -52,7 +54,9 @@ init_loop:
 init_done:
         call set_note         ; A4, key on
 
-loop:   ei
+loop:   ld b, 20              ; wait out the INT line: 20 x 13 T-states,
+        djnz $                ; about 260 Z80 cycles > 228
+        ei
         halt                  ; sleep until the next V-int
         ld a, (vcount)
         cp 30
