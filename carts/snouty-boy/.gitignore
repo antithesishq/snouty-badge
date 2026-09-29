@@ -12,3 +12,4 @@ tests/roms/
 roms/*.gb
 !roms/.keep
 !roms/2048.gb
+!roms/rex-runner.gb
