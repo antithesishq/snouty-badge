@@ -161,6 +161,11 @@ pub const Gb = struct {
     vblank_hit: bool = false,
     /// Total frames stepped since reset (wraps).
     frame_count: u32 = 0,
+    /// PC of the opcode `cpu.step` is executing, and the M-cycles of it
+    /// already ticked by `sync_for_read` (CGB LY/STAT reads). Not console
+    /// state: both are rebuilt every instruction.
+    op_pc: u16 = 0x0100,
+    pre_m: u8 = 0,
 
     /// Where rendered lines go. Not part of the console state: excluded
     /// from keyframes by `snapshot`, set once by the frontend.
@@ -207,16 +212,45 @@ pub const Gb = struct {
         gb.frame_dots = 0;
         gb.vblank_hit = false;
         while (!gb.vblank_hit and gb.frame_dots < frame_dots * 2) {
-            const m = cpu.step(gb);
-            gb.tick(m);
-            while (gb.stall_m != 0) {
-                const s: u8 = @intCast(@min(gb.stall_m, 0xFF));
-                gb.stall_m -= s;
-                gb.tick(s);
-            }
+            gb.step_instruction();
             if (!ppu.lcd_on(gb) and gb.frame_dots >= frame_dots) break;
         }
         gb.frame_count +%= 1;
+    }
+
+    /// One instruction (or interrupt dispatch) and everything it clocks:
+    /// the M-cycles `sync_for_read` has not ticked yet, then any DMA or
+    /// speed-switch stall it caused.
+    pub inline fn step_instruction(gb: *Gb) void {
+        var m = cpu.step(gb);
+        if (gb.pre_m != 0) {
+            m -= gb.pre_m;
+            gb.pre_m = 0;
+        }
+        gb.tick(m);
+        while (gb.stall_m != 0) {
+            const s: u8 = @intCast(@min(gb.stall_m, 0xFF));
+            gb.stall_m -= s;
+            gb.tick(s);
+        }
+    }
+
+    /// Bring the subsystems up to the M-cycle of a CPU read in the middle
+    /// of an instruction (CGB mode, LY and STAT only). `step_frame` ticks
+    /// after each whole instruction, so without this `cp [hl]` on LY sees
+    /// the line before, and a VBlank interrupt raised by the same
+    /// instruction is taken first: `wait LY == 144` loops with IME on (e.g.
+    /// Rebound before its level loop) never exit. On hardware the read is
+    /// at the operand's M-cycle, which for the reading instructions is the
+    /// number of bytes fetched so far: `cp [hl]` 1, `ldh a,[n]` 2,
+    /// `ld a,[nn]` 3, `bit b,[hl]` 2. Between instructions PC equals `op_pc`,
+    /// so reads from the frontend or tests never tick.
+    pub fn sync_for_read(gb: *Gb) void {
+        const done = gb.cpu.pc -% gb.op_pc;
+        if (done > 3 or done <= gb.pre_m) return;
+        const n: u8 = @intCast(done - gb.pre_m);
+        gb.pre_m = @intCast(done);
+        gb.tick(n);
     }
 
     /// Advance every subsystem by `m` CPU M-cycles after an instruction.
@@ -287,6 +321,8 @@ pub const Gb = struct {
         gb.frame_dots = 0;
         gb.vblank_hit = false;
         gb.pal_dirty = true;
+        gb.op_pc = gb.cpu.pc;
+        gb.pre_m = 0;
     }
 
     /// The console state as byte regions, in a fixed order: the packed

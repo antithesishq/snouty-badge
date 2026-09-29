@@ -319,7 +319,11 @@ fn read_io(gb: *Gb, reg: u8) u8 {
         Reg.if_ => gb.io[Reg.if_] | 0xE0,
         0x10...0x3F => apu.read_reg(gb, reg),
         Reg.dma => gb.io[Reg.dma],
-        0x40...0x45, 0x47...0x4B => ppu.read_reg(gb, reg),
+        Reg.stat, Reg.ly => blk: {
+            if (gb.is_cgb()) gb.sync_for_read();
+            break :blk ppu.read_reg(gb, reg);
+        },
+        0x40, 0x42, 0x43, 0x45, 0x47...0x4B => ppu.read_reg(gb, reg),
         // CGB-only registers read 0xFF on a DMG.
         Reg.key1, Reg.vbk, Reg.hdma5, Reg.rp, Reg.bcps...Reg.opri, Reg.svbk, reg_ff72...reg_pcm34 => if (gb.is_cgb()) read_cgb(gb, reg) else 0xFF,
         else => 0xFF,

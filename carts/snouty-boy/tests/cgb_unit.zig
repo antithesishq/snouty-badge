@@ -397,3 +397,88 @@ test "mooneye mbc5 rom_1Mb" {
 test "mooneye mbc5 rom_2Mb" {
     try run_mooneye("rom_2Mb", .cgb);
 }
+
+/// Run `cp [hl]` (HL = LY, A = 144) from 0xC000 with the PPU `dots_left`
+/// dots before the end of line 143 (a multiple of 4, normal speed).
+fn cp_ly_144(model: core.Model, dots_left: u16) !struct { z: bool, line_t: u16, vblank_if: bool } {
+    const rom = blank_rom(0, 0);
+    const gb = try new_gb(&rom, model);
+    defer std.testing.allocator.destroy(gb);
+    for (0..143) |_| gb.tick(114);
+    gb.tick(@intCast((456 - dots_left) / 4));
+    try expectEqual(@as(u8, 143), gb.read8(0xFF44));
+    gb.io[0x0F] = 0;
+    gb.wram[0] = 0xBE; // CP (HL)
+    gb.cpu.pc = 0xC000;
+    gb.cpu.h = 0xFF;
+    gb.cpu.l = 0x44;
+    gb.cpu.a = 144;
+    gb.step_instruction();
+    return .{ .z = gb.cpu.f & 0x80 != 0, .line_t = gb.ppu.line_t, .vblank_if = gb.io[0x0F] & 1 != 0 };
+}
+
+test "cgb LY read lands on the operand M-cycle, not the instruction start" {
+    // CP (HL) reads at its second M-cycle: 4 dots before line 144 the read
+    // already sees 144, 8 dots before it still sees 143. Either way the
+    // instruction clocks exactly 2 M-cycles (8 dots) in total.
+    const hit = try cp_ly_144(.cgb, 4);
+    try expect(hit.z);
+    try expect(hit.vblank_if);
+    try expectEqual(@as(u16, 4), hit.line_t);
+    const miss = try cp_ly_144(.cgb, 8);
+    try expect(!miss.z);
+    try expect(miss.vblank_if);
+    try expectEqual(@as(u16, 0), miss.line_t);
+    // The DMG path stays instruction-granular (byte-identical DMG runs).
+    const dmg = try cp_ly_144(.dmg, 4);
+    try expect(!dmg.z);
+    try expectEqual(@as(u16, 4), dmg.line_t);
+}
+
+test "cgb wait-for-LY-144 loop exits with the VBlank interrupt enabled" {
+    // Rebound's GM_Level: EI with IE = VBlank, then `cp [hl]` on LY until
+    // 144, while a VBlank handler longer than line 144 runs. Before the
+    // mid-instruction LY sync the handler was always taken first and the
+    // loop never exited (no sprites, no HUD). Run it in double speed.
+    var rom = blank_rom(0, 0);
+    // The handler's length changes every frame (a counter in WRAM), as a
+    // game's does, so the loop meets line 144 at every phase.
+    const handler = [_]u8{
+        0xF5, // PUSH AF
+        0xE5, // PUSH HL
+        0x21, 0x00, 0xC2, // LD HL,0xC200
+        0x34, // INC (HL)
+        0x7E, // LD A,(HL)
+        0xF6, 0x80, // OR 0x80: at least 128 x 4 M-cycles, past line 144
+        0x47, // LD B,A
+        0x05, // DEC B
+        0x20, 0xFD, // JR NZ,-3
+        0xE1, // POP HL
+        0xF1, // POP AF
+        0xD9, // RETI
+    };
+    @memcpy(rom[0x40..][0..handler.len], &handler);
+    const code = [_]u8{
+        0x3E, 0x01, // LD A,1
+        0xE0, 0x4D, // LDH (KEY1),A
+        0x10, 0x00, // STOP
+        0x3E, 0x01, // LD A,1
+        0xE0, 0xFF, // LDH (IE),A
+        0xFB, // EI
+        0x21, 0x44, 0xFF, // LD HL,LY
+        0x3E, 0x90, // LD A,144
+        0xBE, // CP (HL)
+        0x20, 0xFD, // JR NZ,-3
+        0x3E, 0x42, // LD A,0x42
+        0xEA, 0x00, 0xC1, // LD (0xC100),A
+        0x18, 0xFE, // JR -2
+    };
+    @memcpy(rom[0x100..][0..code.len], &code);
+    const gb = try new_gb(&rom, .cgb);
+    defer std.testing.allocator.destroy(gb);
+    var frame: u32 = 0;
+    while (frame < 30 and gb.wram[0x100] != 0x42) : (frame += 1) gb.step_frame(0);
+    try expectEqual(@as(u2, 1), gb.dot_shift);
+    try expectEqual(@as(u8, 0x42), gb.wram[0x100]);
+    try expect(frame < 10);
+}

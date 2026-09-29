@@ -75,6 +75,7 @@ pub fn step(gb: *Gb) u8 {
             c.ime = false;
             push16(gb, c.pc);
             c.pc = 0x40 + @as(u16, n) * 8;
+            gb.op_pc = c.pc;
             return 5;
         }
     }
@@ -82,13 +83,18 @@ pub fn step(gb: *Gb) u8 {
         c.ei_pending = false;
         c.ime = true;
     }
+    gb.op_pc = c.pc;
     const op = gb.read8(c.pc);
     if (c.halt_bug) {
         c.halt_bug = false;
     } else {
         c.pc +%= 1;
     }
-    return execute(gb, op);
+    const m = execute(gb, op);
+    // Reads after the instruction (frontend, tests) see PC == op_pc and so
+    // never tick from `Gb.sync_for_read`.
+    gb.op_pc = c.pc;
+    return m;
 }
 
 // ---- helpers ----
