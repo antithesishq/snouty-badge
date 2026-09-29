@@ -22,6 +22,9 @@ pub const Options = struct {
     /// -Dtest-optimize / -Dtest-filter: host test options (snouty-boy).
     test_optimize: std.builtin.OptimizeMode,
     test_filter: ?[]const u8,
+    /// -Drom-source: where the snouty-boy badge build gets its ROM
+    /// (carts/snouty-boy/SPEC.md section 11, docs/ROM_DRIVE.md).
+    rom_source: RomSource,
     /// -Dgg-rom: Game Gear ROM to embed (snouty-gear); -Dgg-rom-source: where
     /// the badge build gets its ROM (carts/snouty-gear/SPEC.md section 7).
     gg_rom: ?[]const u8,

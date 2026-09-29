@@ -30,6 +30,7 @@ pub fn build(b: *Build) void {
         .cart_optimize = b.option(std.builtin.OptimizeMode, "cart-optimize", "snouty-boy: optimize mode for the cart (default fast; its SPEC.md section 8)") orelse .fast,
         .test_optimize = b.option(std.builtin.OptimizeMode, "test-optimize", "snouty-boy: optimize mode for host tests (default safe)") orelse .safe,
         .test_filter = b.option([]const u8, "test-filter", "snouty-boy, snouty-gear: only run tests whose name contains this"),
+        .rom_source = b.option(common.RomSource, "rom-source", "snouty-boy: drive (default; a ROM file on the badge drive, the embedded ROM as fallback) or embed (the embedded ROM only)") orelse .drive,
         .gg_rom = b.option([]const u8, "gg-rom", "snouty-gear: Game Gear ROM to embed (default carts/snouty-gear/roms/waternet.gg)"),
         .gg_rom_source = b.option(common.RomSource, "gg-rom-source", "snouty-gear: drive (default; ROM file on the badge drive, embedded ROM as fallback), embed, pack") orelse .drive,
         .test_step = b.step("test", "Run every cart's host tests"),

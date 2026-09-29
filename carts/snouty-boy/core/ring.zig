@@ -16,19 +16,25 @@
 //! (SPEC.md 10.1: no branching history).
 const std = @import("std");
 
-pub fn Ring(comptime n: usize, comptime interval: u32) type {
-    if (n < 2) @compileError("a keyframe ring needs at least 2 slots");
+/// `max_n` sizes the input log and bounds the slot count; the slots in use,
+/// `n`, are chosen at run time (`init`), because on the badge the keyframe
+/// pool and the slot size (cart RAM per the ROM header) are only known at
+/// start. `n` defaults to `max_n`.
+pub fn Ring(comptime max_n: usize, comptime interval: u32) type {
+    if (max_n < 2) @compileError("a keyframe ring needs at least 2 slots");
     if (interval == 0) @compileError("interval must be positive");
     return struct {
         const Self = @This();
 
-        pub const slots = n;
+        pub const max_slots = max_n;
         pub const frames_per_keyframe = interval;
         /// Input log length in frames. The span from the oldest keyframe to
         /// `live` is at most (n - 1) * interval + interval - 1 frames, so a
-        /// log of n * interval never overwrites a byte still needed.
-        pub const log_len: u32 = n * interval;
+        /// log of max_n * interval never overwrites a byte still needed.
+        pub const log_len: u32 = max_n * interval;
 
+        /// Slots in use, 2..max_n.
+        n: usize = max_n,
         /// Valid keyframes, 1..n after `reset`.
         count: usize = 0,
         /// Slot of the newest keyframe.
@@ -55,10 +61,15 @@ pub fn Ring(comptime n: usize, comptime interval: u32) type {
             replay: struct { slot: usize, from: u32, to: u32 },
         };
 
+        /// A ring using `n` of the `max_n` slots (clamped to 2..max_n).
+        pub fn init(n: usize) Self {
+            return .{ .n = @min(@max(n, 2), max_n) };
+        }
+
         /// Forget all history. The caller snapshots the reset console into
         /// the returned slot (frame 0).
         pub fn reset(r: *Self) usize {
-            r.* = .{ .count = 1, .head = 0, .live = 0, .cursor = null };
+            r.* = .{ .n = r.n, .count = 1, .head = 0, .live = 0, .cursor = null };
             return 0;
         }
 
@@ -69,7 +80,7 @@ pub fn Ring(comptime n: usize, comptime interval: u32) type {
 
         pub fn slot_of_age(r: Self, age: usize) usize {
             std.debug.assert(age < r.count);
-            return (r.head + n - age) % n;
+            return (r.head + r.n - age) % r.n;
         }
 
         pub fn frame_of_age(r: Self, age: usize) u32 {
@@ -104,8 +115,8 @@ pub fn Ring(comptime n: usize, comptime interval: u32) type {
             r.live += 1;
             var snap: ?usize = null;
             if (r.live % interval == 0) {
-                r.head = (r.head + 1) % n;
-                r.count = @min(r.count + 1, n);
+                r.head = (r.head + 1) % r.n;
+                r.count = @min(r.count + 1, r.n);
                 snap = r.head;
             }
             return .{ .log_index = idx, .snapshot_slot = snap };
@@ -161,7 +172,7 @@ pub fn Ring(comptime n: usize, comptime interval: u32) type {
         /// History as fifths of the ring's full span (n - 1 keyframe gaps),
         /// rounded up: 0 with no history, 5 when the ring is full.
         pub fn history_fraction(r: Self) u8 {
-            const full: u32 = (n - 1) * interval;
+            const full: u32 = @intCast((r.n - 1) * interval);
             const h: u32 = @min(r.history_frames(), full);
             return @intCast((h * 5 + full - 1) / full);
         }

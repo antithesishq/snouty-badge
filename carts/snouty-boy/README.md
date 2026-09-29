@@ -1,14 +1,16 @@
 # Snouty Boy
 
 A Game Boy (DMG) emulator cart for the SYCL Badge V2, written in Zig for
-Antithesis. One Game Boy ROM is embedded at build time and runs full screen:
-144 lines squeezed onto the badge's 160x128 display by dropping every ninth
-line, the D-pad and A/B/Start/Select mapped straight through. Planned: an
-emulator menu behind a Select long-hold, palettes, one-voice sound, and time
-scrubbing backwards and forwards by deterministic replay.
+Antithesis. It runs a `.gb` file copied onto the badge's USB drive (read in
+place from flash, up to 1 MB, a picker when there are several) or, when there
+is none, the ROM embedded at build time, full screen: 144 lines squeezed onto
+the badge's 160x128 display by dropping every ninth line, the D-pad and
+A/B/Start/Select mapped straight through. Behind a Select long-hold: an
+emulator menu with palettes, one-voice sound, and time scrubbing backwards
+and forwards by deterministic replay.
 
-Status: M1 in progress (CPU, PPU and frontend on hardware, running the
-dmg-acid2 test ROM with a microseconds/FPS overlay).
+Status: M1, M3 and M4 tagged; M5 (ROMs from the badge drive) in progress,
+see PLAN.md. The web simulator always runs the embedded ROM.
 
 ```sh
 tools/fetch_test_roms.sh     # test ROMs into tests/roms/
@@ -21,7 +23,7 @@ Run from this cart's directory, `carts/snouty-boy/`; `zig build` runs from
 the repository root.
 
 - `docs/RUNNING.md`: prerequisites, build options, tests, simulator,
-  headless preview, flashing.
+  headless preview, flashing, ROMs from the badge drive (section 9).
 - `SPEC.md`: design, architecture, milestones, decisions.
 - `PLAN.md`: current milestone contract.
 

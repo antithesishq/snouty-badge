@@ -286,6 +286,22 @@ it is needed by M2, and M1 runs on `dmg-acid2` and the Blargg ROMs.
 - Selected via build option `-Drom=roms/<name>.gb`; default is the
   chosen game; `-Drom=tests/roms/dmg-acid2.gb` builds the acid cart.
 
+### 11.1 ROMs from the badge drive (M5, 2026-09-29)
+
+The embedded ROM is the fallback only. On the badge the cart looks for
+`.gb`/`.gbc` files on the USB drive (the OS `romfs` FAT12 region of the
+internal flash) and reads the chosen one in place through the XIP flash
+window, by pointer: nothing is copied into RAM, so the ROM no longer
+trades against scrub depth and may be up to 1 MB (64 banks). Shared design
+and its open hardware checks: `docs/ROM_DRIVE.md` at the repository root;
+the FAT12 reader is `lib/romfs.zig`, shared with Snouty Gear. One file
+starts directly, several show a picker after the splash, none (or a
+fragmented file's unmappable banks, an unreadable volume) fall back as
+described in PLAN.md M5. `-Drom-source=embed` restores the old behaviour;
+the web simulator always embeds. Eject the drive before playing: the OS
+may write flash while the cart runs. Cart RAM is still not saved between
+runs (no flash writes from the cart).
+
 ## 12. Boot splash and presentation
 
 - On `start()`: 1.2 s splash where the Snouty mark scrolls down from the
@@ -317,6 +333,15 @@ Usable cart RAM is about 268 KB (307 KB minus 32 KB stack). Measured with
 A 128 KB game leaves about 60 KB for keyframes, so it needs section 10.4
 to offer more than 1.5 s of history. That is the reason the ROM should be
 small, not any CPU limit.
+
+M5 changes the table: a drive ROM costs no RAM at all (only the 32 KB
+embedded fallback still does), the keyframe pool is sized at run time from
+the RAM left between `.bss` and the stack, and its slot size follows the
+running ROM's cart RAM (0, 2 or 8 KB), so a RAM-less game gets more
+keyframes than one with 8 KB of save RAM. Because that pool is no longer
+`.bss`, the UF2 shrinks by twice the pool size (RAM-cart UF2s ship their
+zero-filled `.bss`, docs/ROM_DRIVE.md section 3), which is drive space for
+ROMs.
 
 ## 14. Instrumentation
 
@@ -412,6 +437,15 @@ except the ROM, which he will provide.
 8. Game Boy Color out of scope; M5 stretch at most.
 9. Tag line "verified by deterministic replay" on the menu title: yes.
 
+Added 2026-09-29 (M5, Adrian asked for the drive loader planned for Snouty
+Gear; recommendations taken without a separate round):
+
+10. ROM source on the badge: drive first, embedded fallback; the picker
+    appears only with more than one playable file.
+11. Fragmented drive files are played through the per-sector slow path
+    with a hint on the About screen rather than refused.
+12. Keyframe pool outside `.bss`, sized at run time; slot count at most 12.
+
 ## Status
 
 - 2026-09-26: spec drafted, nothing built yet.
@@ -432,3 +466,10 @@ except the ROM, which he will provide.
   (keyframes sized to the ROM's cart RAM, 18.9 KB with 2048-gb) plus input
   log, 3.0 to 3.5 s of history, uncompressed (section 10.4 not needed).
   Determinism test green. Fast build with 2048-gb: .text 80 KB, .bss 159 KB.
+- 2026-09-29: M5 ROM loader started on `boy/rom-loader` (PLAN.md M5): ROMs
+  from the badge drive through the shared `lib/romfs.zig`, `Rom` bank table
+  in the core, run-time keyframe pool.
+- 2026-09-29: M5 done (tag `snouty-boy/m5`): picker, About and overlay
+  report the drive ROM; UF2 245 KB (from 497); 77 host tests; drive path
+  proven in badge-bench against the gear branch's reader, hardware pending
+  (PLAN.md "M5 status").

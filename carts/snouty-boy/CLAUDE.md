@@ -1,9 +1,10 @@
 # Snouty Boy
 
 Fifth badge cart for the Software You Can Love (SYCL) conference, built for
-Antithesis: a Game Boy (DMG) emulator in Zig with one embedded ROM and a
-time scrubber. `SPEC.md` is the design; `PLAN.md` is the current
-milestone's file ownership and interface contract. Sibling carts
+Antithesis: a Game Boy (DMG) emulator in Zig that runs a ROM file from the
+badge drive (embedded ROM as fallback) with a time scrubber. `SPEC.md` is
+the design; `PLAN.md` is the current milestone's file ownership and
+interface contract. Sibling carts
 `../snouty-bugs` and `../snouty-run` hold the toolchain history; their
 CLAUDE.md files have the long explanations, this one summarises.
 
@@ -14,9 +15,12 @@ CLAUDE.md files have the long explanations, this one summarises.
   allocator, no clock, no randomness (SPEC.md 10.3). Host-testable.
 - `cart/src/` — the badge frontend. `main.zig` exports `start()`/`update()`
   and holds the wasm simulator shims; `frontend/` maps video, input, debug
-  overlay, later menu/audio/rewind.
+  overlay, menu, audio, rewind, the ROM source (`romsrc.zig`) and the ROM
+  picker (`picker.zig`).
 - `tests/` — host tests (`zig build test`). `tests/roms/` is gitignored;
-  run `tools/fetch_test_roms.sh` first. `tests/acid2_reference.bin` is the
+  run `tools/fetch_test_roms.sh` first. Only `tests/*.zig` run: a `test`
+  block inside `core/*.zig` is never built (the test root is `tests/all.zig`
+  and `_ = core` does not pull them in), so put core tests in `tests/`. `tests/acid2_reference.bin` is the
   dmg-acid2 reference as 160x144 shade bytes.
 - `roms/` — the shipped game ROM (`*.gb` gitignored except the committed
   `2048.gb`, the build's fallback ROM; its LICENSE sits next to it).
@@ -30,15 +34,28 @@ CLAUDE.md files have the long explanations, this one summarises.
 ## Target hardware (SYCL Badge V2)
 
 - RP2354B Cortex-M33 at 150 MHz, Core 1 runs the cart from RAM. Cart RAM
-  307 KB total incl. 32 KB stack; code + ROM + state all live there.
+  307 KB total incl. 32 KB stack; code, the embedded fallback ROM and state
+  live there, a drive ROM stays in flash.
 - Screen 160x128 RGB565, framebuffer column-major `cart.framebuffer[x][y]`,
   `Pixel.from_color(DisplayColor.rgb(0xRRGGBB))`.
 - Inputs `cart.controls.*`: start, select, a, b, click, up, down, left,
   right. The OS owns Start+Select (exit) and click; never bind click.
 - Audio `cart.tone2(...)`, one voice, each call cancels the previous.
-- `read_flash`/`write_flash_page` are stubs on hardware: the ROM is
-  embedded at build time (`-Drom=path`, default `tests/roms/dmg-acid2.gb`,
-  `roms/2048.gb` when that is not fetched).
+- `read_flash`/`write_flash_page` are stubs on hardware, so the ROM is read
+  by pointer: `cart/src/frontend/romsrc.zig` finds `.gb`/`.gbc` files on the
+  badge drive (the OS `romfs` FAT12 region at 0x10080000) through the shared
+  reader `../../lib/romfs.zig` and builds `core.Rom` from one flash pointer
+  per 512-byte sector (SPEC.md 11.1, `docs/ROM_DRIVE.md` at the root). No
+  file, no volume, or a mapping error: the embedded fallback ROM
+  (`-Drom=path`, default `tests/roms/dmg-acid2.gb`, `roms/2048.gb` when that
+  is not fetched). `-Drom-source=embed` and the wasm build use only the
+  embedded ROM. Until gear/m0's real reader lands, `lib/romfs.zig` is a stub
+  and the badge always falls back.
+- Keyframe pool (`frontend/rewind.zig`): not `.bss`; at `start()` the RAM
+  from `__bss_end__` to `__stack_limit__` minus 1 KB (wasm: a static
+  160 KB array), slots of `Gb.Fixed` + the ROM's cart RAM, at most 12.
+  Every slot is written before it is read, so the OS not zeroing it is fine;
+  keep anything that must start zeroed in `.bss`.
 
 ## Building
 
@@ -59,6 +76,7 @@ root (`../..`), whose `build.zig` calls this cart's `build.zig` module
 - `zig build test` (root) → every cart's host tests, this cart's native core
   tests among them (about 15 s of it). `-Dtest-filter=acid`.
 - `size ../../zig-out/firmware/snouty-boy.elf` for the memory budget (SPEC.md 13).
+  `-Drom-source=drive|embed` (default drive) picks the badge's ROM source.
 - Headless: `node ../../tools/preview.mjs ../../zig-out/bin/snouty-boy.wasm --frames 60 --every 10 --out out/`
   then look at `out/frame_XXXX.png`. Buttons via `--press A:30-40`.
 - `zig fmt core cart tests build.zig` before committing.

@@ -307,7 +307,7 @@ var rom_buf: [0x10000]u8 = undefined;
 
 fn load_2048() ?[]const u8 {
     const io = std.testing.io;
-    const paths = [_][]const u8{ "roms/2048.gb", "../roms/2048.gb" };
+    const paths = [_][]const u8{ "carts/snouty-boy/roms/2048.gb", "roms/2048.gb", "../roms/2048.gb" };
     for (paths) |p| {
         const data = std.Io.Dir.cwd().readFile(io, p, &rom_buf) catch continue;
         return data;

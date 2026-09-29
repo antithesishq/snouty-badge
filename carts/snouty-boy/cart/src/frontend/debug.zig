@@ -1,7 +1,9 @@
 //! FPS and step_frame microseconds overlay (SPEC.md section 14). Owner: track C.
 //! Allocation-free and std.fmt-free. Line 1: average and maximum
 //! `step_frame` time over the last 60 frames; line 2: frames per second from
-//! `micros_since_boot` deltas between `update()` calls, over 60 frames.
+//! `micros_since_boot` deltas between `update()` calls, over 60 frames;
+//! line 3: keyframe slots in the rewind pool and where the ROM came from
+//! (E embedded, D drive), because both are only known at run time since M5.
 //! In wasm builds `micros_since_boot` is an upstream stub that adds 1000 per
 //! call (so the overlay shows 1000us and 500 fps in the simulator and in
 //! preview.mjs); only hardware numbers mean anything.
@@ -13,6 +15,11 @@ pub var enabled: bool = true;
 /// replayed keyframe differs from the recorded one. The overlay is then
 /// drawn on red, even when disabled in the menu.
 pub var alarm: bool = false;
+
+/// Keyframe slots in use (frontend/rewind.zig), set by main.zig.
+pub var slots: u32 = 0;
+/// ROM source letter: 'E' embedded, 'D' drive (frontend/romsrc.zig).
+pub var source_letter: u8 = 'E';
 
 const window = 60;
 
@@ -72,7 +79,7 @@ pub fn draw() void {
     // "avg NNNN max NNNNus": the font is 8 px wide, so 20 characters fill
     // the 160 px screen; the unit is written once to keep 4-digit values
     // on screen.
-    var buf: [40]u8 = undefined;
+    var buf: [64]u8 = undefined;
     var i: usize = 0;
     i += put(buf[i..], "avg ");
     i += put_num(buf[i..], avg);
@@ -80,6 +87,11 @@ pub fn draw() void {
     i += put_num(buf[i..], max);
     i += put(buf[i..], "us\nfps ");
     i += put_num(buf[i..], fps());
+    i += put(buf[i..], "\nslots ");
+    i += put_num(buf[i..], slots);
+    buf[i] = ' ';
+    buf[i + 1] = source_letter;
+    i += 2;
     cart.text(.{ .str = buf[0..i], .x = 0, .y = 0, .text_color = .rgb(0xFFFFFF), .background_color = .rgb(if (alarm) 0xFF0000 else 0x000000) });
 }
 

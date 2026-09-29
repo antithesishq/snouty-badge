@@ -11,7 +11,7 @@ tools.
 | `carts/snouty-bugs/` | `snouty-bugs` | Horizontal bullet-hell shooter with rewind-on-hit and an attract mode (tags `snouty-bugs/m1`..`m5`). |
 | `carts/snoutenstein/` | `snoutenstein` | Raycaster FPS with time rewind (tags `snoutenstein/m0`..`m3`). |
 | `carts/snouty-reflections/` | `snouty-reflections` | Real-time ray tracer demo over water (tags `snouty-reflections/m0`..`m1.1`). |
-| `carts/snouty-boy/` | `snouty-boy` | Game Boy emulator with an embedded ROM (predates the drive loader) and a time scrubber (tags `snouty-boy/m1`..`m4`). |
+| `carts/snouty-boy/` | `snouty-boy` | Game Boy emulator that runs a `.gb` file from the badge drive (a picker for several, the embedded ROM as fallback; M5 in progress) with a time scrubber (tags `snouty-boy/m1`..`m4`). |
 | `carts/snouty-maze/` | `snouty-maze` | Windows 3D Maze screensaver clone on a small software rasterizer (tags `snouty-maze/m0`..`m3`). |
 | `carts/snouty-gear/` | `snouty-gear` | Game Gear emulator reading its ROM from the badge drive, Waternet embedded as fallback (M0 scaffold: test pattern). |
 | `tools/` | | Shared cart tools: `preview.mjs` (headless wasm runner with input scripts and checks), `serve-cart.mjs` (feeds the web simulator), `make_gif.py`, `check_float.mjs`, `uf2_info.py`. |

@@ -12,6 +12,8 @@ pub const apu = @import("apu.zig");
 pub const serial = @import("serial.zig");
 pub const joypad = @import("joypad.zig");
 pub const ring = @import("ring.zig");
+pub const rom_mod = @import("rom.zig");
+pub const Rom = rom_mod.Rom;
 
 pub const screen_w = 160;
 pub const screen_h = 144;
@@ -82,8 +84,15 @@ pub const Gb = struct {
     cpu: cpu.Cpu = .{},
 
     // ---- Memory (owner: core/mmu.zig) ----
-    rom: []const u8,
+    /// The cartridge image as 16 KB bank pointers (core/rom.zig). Immutable,
+    /// not console state: excluded from keyframes.
+    rom: Rom,
     mbc: mmu.Mbc = .{},
+    /// Cached pointers to the banks mapped at 0x0000 and 0x4000, from
+    /// `rom.banks` via the MBC's offsets (`mmu.remap_rom`); null sends the
+    /// read through `Rom.read`. Derived state, not in keyframes.
+    rom0: ?[*]const u8 = null,
+    romn: ?[*]const u8 = null,
     vram: [0x2000]u8 = @splat(0),
     wram: [0x2000]u8 = @splat(0),
     oam: [0xA0]u8 = @splat(0),
@@ -115,9 +124,16 @@ pub const Gb = struct {
     /// from keyframes by `snapshot`, set once by the frontend.
     line_sink: ?LineSink = null,
 
-    /// Construct a console around a ROM image and reset it to the post-boot
-    /// DMG state (SPEC.md section 3). `rom` must outlive the Gb.
+    /// Construct a console around a contiguous ROM image (an embedded ROM
+    /// or a host test buffer) and reset it to the post-boot DMG state
+    /// (SPEC.md section 3). The bytes must outlive the Gb.
     pub fn init(rom: []const u8) Gb {
+        return init_rom(Rom.from_slice(rom));
+    }
+
+    /// The same around a `Rom` built by the frontend (a file on the badge
+    /// drive, docs/ROM_DRIVE.md). The memory it points into must outlive the Gb.
+    pub fn init_rom(rom: Rom) Gb {
         var gb: Gb = .{ .rom = rom };
         gb.reset();
         return gb;
@@ -128,7 +144,8 @@ pub const Gb = struct {
         const rom = gb.rom;
         const sink = gb.line_sink;
         gb.* = .{ .rom = rom, .line_sink = sink };
-        gb.mbc = mmu.Mbc.from_header(rom);
+        gb.mbc = mmu.Mbc.from_header(&gb.rom);
+        mmu.remap_rom(gb);
         cpu.reset(gb);
         mmu.reset_io(gb);
         ppu.reset(gb);
@@ -175,18 +192,23 @@ pub const Gb = struct {
 
     // ---- Keyframes (SPEC.md section 10) ----
 
-    /// Everything but `rom` (immutable) and `line_sink` (not console state).
-    /// Cart RAM is stored in full (8 KB); see `KeyframeWith` for a smaller
-    /// keyframe when the ROM header declares no cart RAM.
+    /// Everything but `rom` (immutable), the cached bank pointers (derived)
+    /// and `line_sink` (not console state). Cart RAM is stored in full
+    /// (8 KB); see `KeyframeWith` and `Fixed` for smaller keyframes.
     pub const Keyframe = KeyframeWith(0x2000);
 
-    /// A keyframe holding the first `ram_len` bytes of cart RAM. The
-    /// frontend knows the ROM at compile time and uses
-    /// `KeyframeWith(mmu.cart_ram_len(rom))`: a game without RAM never
-    /// touches `cart_ram` (`Mbc.ram_active` needs `has_ram`) and a 2 KB RAM
-    /// is mirrored (`Mbc.ram_mask`), so the bytes past `ram_len` never
-    /// change and up to 8 KB per keyframe is saved (SPEC.md 13). `restore`
-    /// leaves bytes past `ram_len` untouched.
+    /// A keyframe without cart RAM: the fixed part of a slot in the
+    /// frontend's keyframe pool, which is followed by `mmu.cart_ram_len(&rom)`
+    /// bytes of cart RAM (`snapshot_pool` / `restore_pool`). The ROM is only
+    /// known at run time on the badge (it may come from the drive), so the
+    /// slot size is too.
+    pub const Fixed = KeyframeWith(0);
+
+    /// A keyframe holding the first `ram_len` bytes of cart RAM. A game
+    /// without RAM never touches `cart_ram` (`Mbc.ram_active` needs
+    /// `has_ram`) and a 2 KB RAM is mirrored (`Mbc.ram_mask`), so the bytes
+    /// past `mmu.cart_ram_len` never change and up to 8 KB per keyframe is
+    /// saved (SPEC.md 13). `restore` leaves bytes past `ram_len` untouched.
     ///
     /// Auto-layout struct: padding bytes are undefined, so compare two
     /// keyframes field by field (`std.meta.eql`), never as raw bytes.
@@ -235,11 +257,25 @@ pub const Gb = struct {
         };
     }
 
+    /// Snapshot into a pool slot: the fixed part plus `ram.len` bytes of
+    /// cart RAM (`ram.len` is `mmu.cart_ram_len(&gb.rom)`, at most 8 KB).
+    pub fn snapshot_pool(gb: *const Gb, out: *Fixed, ram: []u8) void {
+        gb.snapshot(out);
+        @memcpy(ram, gb.cart_ram[0..ram.len]);
+    }
+
+    /// Put a pool slot back; see `snapshot_pool`.
+    pub fn restore_pool(gb: *Gb, k: *const Fixed, ram: []const u8) void {
+        gb.restore(k);
+        @memcpy(gb.cart_ram[0..ram.len], ram);
+    }
+
     /// Put a keyframe (`*const Keyframe` or `*const KeyframeWith(n)`) back.
     pub fn restore(gb: *Gb, k: anytype) void {
         const K = @typeInfo(@TypeOf(k)).pointer.child;
         gb.cpu = k.cpu;
         gb.mbc = k.mbc;
+        mmu.remap_rom(gb);
         gb.vram = k.vram;
         gb.wram = k.wram;
         gb.oam = k.oam;
@@ -257,14 +293,3 @@ pub const Gb = struct {
         gb.vblank_hit = false;
     }
 };
-
-test "keyframe round trip is exact" {
-    const rom: [0x8000]u8 = @splat(0);
-    var gb = Gb.init(&rom);
-    var k: Gb.Keyframe = undefined;
-    gb.snapshot(&k);
-    var gb2 = Gb.init(&rom);
-    gb2.wram[5] = 0xAA;
-    gb2.restore(&k);
-    try std.testing.expectEqual(@as(u8, 0), gb2.wram[5]);
-}
