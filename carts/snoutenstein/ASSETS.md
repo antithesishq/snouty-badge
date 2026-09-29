@@ -205,11 +205,11 @@ snouty-badge). Sizes are exact.
 | 5 | `bug_beetle.png`  | 32x32  | 7      | 224x32   | Memory Leak: wide low green dome on the floor, red eyes, tan mandibles, a small purple drip (the leak). attack = mandibles open with a green glob of spit. |
 | 6 | `bug_spider.png`  | 32x32  | 7      | 224x32   | Deadlock: round purple spider on a grey thread (column x 15, up to the top edge in frames 0-4), gold padlock on its abdomen, four red eyes, eight grey legs. attack = drops a little, front legs up, fangs open. Death 1 falls (no thread), death 2 lies on the floor. |
 | 7 | `bug_boss.png`    | 32x32  | 8      | 256x32   | Heisenbug: big purple roach head-on, yellow "?" on the shield, huge red eyes, long antennae, spiky brown legs. Drawn at 1.5x. walk 0-1, attack (spit), pain, death 0-2, 7 flicker (section 6). |
-| 8 | `pickups.png`     | 16x16  | 8      | 128x16   | 0 Coral key, 1 Iris key, 2 Gold key, 3 hotfix (health: medkit or patch), 4 zapper charge (cell with a bolt), 5 bug spray can, 6 rewind battery (Iris purple, a `<<` mark), 7 spare (placeholder: a coffee mug; free for a decoration). Standing on row 14. |
-| 9 | `projectiles.png` | 8x8    | 4      | 32x8     | 0-1 spit (green glob, pulse), 2-3 web (cream strands, spin 45 degrees). |
-|10 | `weapons.png`     | 48x32  | 9      | 432x32   | From behind/below, bottom edge touched by the arm. 0 swatter idle, 1 swing 0 (wind-up), 2 swing 1 (swat, big, streaks); 3 zapper idle, 4 fire 0 (teal bolt), 5 fire 1; 6 spray idle, 7 fire 0 (mist), 8 fire 1. |
+| 8 | `pickups.png`     | 16x16  | 8      | 128x16   | 0 Coral key, 1 Iris key, 2 Gold key, 3 hotfix (health: medkit or patch), 4 zapper charge (cell with a bolt), 5 bug spray can, 6 rewind battery (Iris purple, a `<<` mark), 7 Debugger cartridge (M6: grey cartridge, grip ridges, cream label with the red breakpoint dot). Standing on row 14. |
+| 9 | `projectiles.png` | 8x8    | 6      | 48x8     | 0-1 spit (green glob, pulse), 2-3 web (cream strands, spin 45 degrees), 4 Debugger bolt (red breakpoint dot, cream core, dark outline; drawn at 0.25 cells), 5 Debugger burst (red and cream ring with rays filling the cell; drawn at 1.0 cell, display only, no loop). |
+|10 | `weapons.png`     | 48x32  | 12     | 576x32   | From behind/below, bottom edge touched by the arm. 0 swatter idle, 1 swing 0 (wind-up), 2 swing 1 (swat, big, streaks); 3 zapper idle, 4 fire 0 (teal bolt), 5 fire 1; 6 spray idle, 7 fire 0 (mist), 8 fire 1; 9 Debugger idle (boxy steel breakpoint gun, big red dot on its back face, short wide muzzle slab), 10 fire 0 (red bolt leaving the muzzle in a Coral/cream flash), 11 fire 1 (recoil: kicked down 2 px, sparks). |
 |11 | `face.png`        | 24x24  | 9      | 216x24   | Snouty head-on, Doom-face style: 0 healthy, 1 hurt (HP < 60: bruise, plaster, worried brows), 2 critical (HP < 25: bandage, heavy lids, sweat), 3 ouch (eyes squeezed, mouth open), 4 grin (pickup: happy squint, grin), 5 glance left, 6 glance right (pupils only), 7 rewind (eyes spiralling), 8 dead (X eyes, tongue out). Same head position in all nine. |
-|12 | `hud.png`         | 8x8    | 8      | 64x8     | 0-2 keys Coral/Iris/Gold (drawn lit, the code dims missing ones), 3 zapper charge icon, 4 spray icon, 5 clock, 6 `<<` (rewind), 7 heart. 1 px border. |
+|12 | `hud.png`         | 8x8    | 9      | 72x8     | 0-2 keys Coral/Iris/Gold (drawn lit, the code dims missing ones), 3 zapper charge icon, 4 spray icon, 5 clock, 6 `<<` (rewind), 7 heart, 8 Debugger ammo (red dot in a small grey box). 1 px border. |
 |13 | `title.png`       | 128x40 | 1      | 128x40   | Logo lettering "SNOUTENSTEIN" over a big "3D", chunky 16-bit logo style, Snouty purples with cream highlights, "3D" in Coral, Iris marks optional. Transparent background; the code writes "PRESS A" and the "powered by deterministic replay" tag line itself. |
 
 ## 8. Delivery format (per study, mirrors Run Study 05)
@@ -290,13 +290,16 @@ follow these values.
   (enemies floor to ceiling, pickups half-height standing on the floor,
   projectiles centred at mid-height). The M2 sprite pass should confirm or
   change them here.
-- `pickups.png` cell 7 "spare" has no meaning in the spec. The placeholder is
-  a coffee mug (decoration). The order of cells 0-6 matches
-  `levels.zig` `PickupKind`.
+- `pickups.png` cell 7 was a "spare" coffee mug until M6; it is now the
+  Debugger cartridge (`PickupKind.debugger = 7`, legend `&`). The order of
+  cells 0-7 matches `levels.zig` `PickupKind`.
 - Colour budgets at the limit in the placeholders: `bug_boss.png` 15/15,
   `pickups.png` 15/15 (three 3-colour key ramps cost 7 entries alone),
-  `weapons.png` 15/15 (paw purples, sleeve, three weapons). Real art will
-  have to share ramps. `hud.png` 14/15.
+  `weapons.png` 15/15 (paw purples, sleeve, four weapons). Real art will
+  have to share ramps. `hud.png` 14/15. The M6 Debugger cells add no
+  colours: they reuse red `#ee453c`, dark red `#91322f`, Coral, cream,
+  steel and the greys already in each sheet (`projectiles.png` goes from
+  5 to 8 opaque colours, the others are unchanged).
 - The converter quantises with `floor(v * 31 / 255)` (f32), not `v >> 3`.
   They differ for some values, so near-identical colours can land on
   different sides. The validator counts both ways and uses the larger count.
