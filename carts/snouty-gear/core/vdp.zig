@@ -59,7 +59,10 @@ const LineSprites = struct {
 };
 
 pub const Vdp = struct {
-    vram: [0x4000]u8 = @splat(0),
+    // Small fields first: Zig keeps declaration order among fields of the
+    // same alignment, and the hot ones (status, registers, line counters)
+    // then sit within a load's 4 KB immediate offset of the console.
+
     /// 32 colors, 12 bits each: ----BBBBGGGGRRRR.
     cram: [32]u16 = @splat(0),
     /// Registers 0..10 (writes to 11..15 are ignored).
@@ -90,6 +93,8 @@ pub const Vdp = struct {
     line_counter: u8 = 0xFF,
     /// Register 9 latched at the start of the frame.
     vscroll: u8 = 0,
+
+    vram: [0x4000]u8 = @splat(0),
 
     pub fn reset(v: *Vdp) void {
         v.* = .{};
