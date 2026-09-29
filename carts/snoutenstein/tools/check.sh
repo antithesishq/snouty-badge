@@ -97,4 +97,14 @@ node tools/check_determinism.mjs $W --script tools/scripts/m5_takeover.json --fr
 # until walked into, then slides open into the corridor below (py > 8).
 node ../../tools/preview.mjs $W --frames 340 --quiet --out out/secret --script tools/scripts/m5_secret.json \
   --dump-exports debug_mode,debug_px,debug_py --at "129 debug_py < 262144" --expect "debug_mode == 1" --expect "debug_py > 524288"
+# M6: the cartridge at (5, 5) in the test level (reached at tick 97) selects the Debugger with 3
+# charges; the first bolt bursts on the gnat (one kill at tick 202); the
+# second flies 5 cells to the west wall and bursts there; the player is
+# never hurt by a burst.
+node ../../tools/preview.mjs $W --frames 340 --every 10 --out out/debugger --script tools/scripts/m6_debugger.json \
+  --dump-exports debug_mode,debug_kills,debug_weapon,debug_ammo,debug_projectiles,debug_hp,debug_desync \
+  --at "96 debug_weapon == 1" --at "97 debug_weapon == 3" --at "97 debug_ammo == 3" --at "199 debug_kills == 0" --at "202 debug_kills == 1" \
+  --at "202 debug_projectiles == 1" --at "208 debug_projectiles == 0" --at "262 debug_ammo == 1" --at "300 debug_projectiles == 1" \
+  --expect "debug_mode == 1" --expect "debug_kills == 1" --expect "debug_projectiles == 0" --expect "debug_hp == 88" --expect "debug_desync == 0"
+node tools/check_determinism.mjs $W --script tools/scripts/m6_debugger.json --frames 340
 echo "check: all passed"
