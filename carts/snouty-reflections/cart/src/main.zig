@@ -1,6 +1,7 @@
 //! Snouty on the Water: real-time ray-traced sunset lake (trace.zig). See
 //! SPEC.md for the design, PLAN.md for the M1 contract, CLAUDE.md for the
 //! toolchain.
+const std = @import("std");
 const cart = @import("cart-api");
 const input = @import("input.zig");
 const math = @import("math.zig");
@@ -35,9 +36,26 @@ pub fn update() void {
     trace.render_frame(frame);
     render_us = @truncate(cart.micros_since_boot() - t0);
     if (build_options.debug_overlay) overlay.draw(render_us, frame);
+    if (build_options.hw_trace) hw_trace();
 
     frame +%= 1;
     if (cart.is_wasm) present_wasm();
+}
+
+/// -Dreflections_hw_trace: one console line per frame, "RT <variant> f=<frame>
+/// us=<render_us>", for the first hw_trace_frames frames (two orbits), then
+/// "RT done". cart.trace() does not wait for the previous line to print, so
+/// never more than one per frame (see badge-bench/calibrate harness.zig).
+const hw_trace_frames = 2 * @import("camera.zig").orbit_frames;
+
+fn hw_trace() void {
+    if (cart.is_wasm or frame > hw_trace_frames) return;
+    var buf: [64]u8 = undefined;
+    const line = if (frame == hw_trace_frames)
+        std.fmt.bufPrint(&buf, "RT done", .{}) catch return
+    else
+        std.fmt.bufPrint(&buf, "RT {s} f={d} us={d}", .{ @tagName(@import("variant.zig").variant), frame, render_us }) catch return;
+    cart.trace(line);
 }
 
 // Debug exports for the headless harness (wasm only).

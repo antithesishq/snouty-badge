@@ -15,6 +15,9 @@ pub fn add(b: *Build, sycl_badge_dep: *Build.Dependency, opts: common.Options) v
     // -Ddebug_overlay=true draws frame timing in the top-left corner (declared by the root build.zig).
     const options = b.addOptions();
     options.addOption(bool, "debug_overlay", opts.debug_overlay);
+    // -Dreflections_hw_trace=true prints every frame's render time on the OS console
+    // (USB serial) for comparing hardware with badge-bench frame by frame.
+    options.addOption(bool, "hw_trace", b.option(bool, "reflections_hw_trace", "snouty-reflections: print render_us per frame on the console") orelse false);
     // -Dreflections_variant picks frame rate, render scale and scene knobs; cart/src/variant.zig
     // maps it to constants (PLAN.md "M2.1 Perf variants").
     const variant = b.option(Variant, "reflections_variant", "snouty-reflections: cut20 (default, shipped), full20, full15 or half30") orelse .cut20;
