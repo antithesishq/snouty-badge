@@ -77,10 +77,17 @@ pub inline fn lcd_on(gb: *const Gb) bool {
 }
 
 /// Advance `dots` dots (4 per M-cycle at normal speed, 2 in double speed).
-pub fn tick(gb: *Gb, dots: u16) void {
+/// Inlined into the per-instruction tick: only a mode change calls out.
+pub inline fn tick(gb: *Gb, dots: u16) void {
     if (!lcd_on(gb)) return;
     const p = &gb.ppu;
     p.line_t += dots;
+    if (p.line_t >= p.next_t) advance(gb);
+}
+
+/// The mode changes `tick` has passed (at least one).
+fn advance(gb: *Gb) void {
+    const p = &gb.ppu;
     while (p.line_t >= p.next_t) {
         switch (p.mode) {
             .oam_scan => {

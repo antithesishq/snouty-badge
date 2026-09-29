@@ -435,7 +435,7 @@ fn oam_dma(gb: *Gb, v: u8) void {
 
 /// OAM DMA progress (SPEC.md 4: instant copy is acceptable; this hook exists
 /// so DMA may be made cycle-accurate later). Nothing to do.
-pub fn tick_dma(gb: *Gb, m: u8) void {
+pub inline fn tick_dma(gb: *Gb, m: u8) void {
     _ = gb;
     _ = m;
 }

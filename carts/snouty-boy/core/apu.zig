@@ -82,7 +82,7 @@ pub fn reset(gb: *Gb) void {
     sync_nr52(gb);
 }
 
-fn powered(gb: *const Gb) bool {
+inline fn powered(gb: *const Gb) bool {
     return (gb.io[nr52] & 0x80) != 0;
 }
 
@@ -243,7 +243,8 @@ fn sweep_calc(gb: *Gb) u16 {
 
 /// Advance `dots` dots (4 per normal-speed M-cycle): the frame sequencer
 /// runs at 512 Hz at either CPU speed (SPEC.md 19.1).
-pub fn tick(gb: *Gb, dots: u16) void {
+/// Inlined into the per-instruction tick; a sequencer step calls out.
+pub inline fn tick(gb: *Gb, dots: u16) void {
     if (!powered(gb)) return;
     const a = &gb.apu;
     a.seq_t += dots;
