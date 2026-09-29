@@ -135,7 +135,7 @@ pub const Gg = struct {
         var ft: u32 = 0;
         while (true) {
             const iff1 = gg.cpu.iff1;
-            const t = gg.cpu.step(&b);
+            const t = @call(.always_inline, Cpu.step, .{ &gg.cpu, &b });
             ft += t;
             // Acceptance clears IFF1 and lands on RST 38h (IM 1). A DI at
             // 0037 would be miscounted; nothing does that.
