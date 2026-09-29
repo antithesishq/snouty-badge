@@ -9,6 +9,7 @@
 //! lines), line counter, frame interrupt flag (line 193). An interrupt
 //! raised at the start of line N lets its handler change registers before
 //! line N + 1 is rendered.
+const std = @import("std");
 const tables = @import("vdp_tables.zig");
 
 /// Visible Game Gear screen: VDP columns 48..207, lines 24..167.
@@ -322,8 +323,28 @@ pub const Vdp = struct {
         const h: u8 = @as(u8, if (tall) 16 else 8) << zoom;
         const pat_base: u16 = @as(u16, v.regs[6] & 0x04) << 11;
         const shift: i16 = if (v.regs[0] & 0x08 != 0) 8 else 0;
+        // Four Y bytes per word: skip the word when no byte is on the line
+        // (d = line - y - 1 below h, h a power of two) and none is the D0
+        // end marker, else look at its bytes one by one.
+        const ones: u32 = 0x01010101;
+        const highs: u32 = 0x80808080;
+        const lm1: u32 = @as(u32, line -% 1) * ones;
+        const far: u32 = @as(u32, ~(h - 1)) * ones;
+        const ys = v.vram[sat..][0..64];
         var i: u16 = 0;
         while (i < 64) : (i += 1) {
+            if (i & 3 == 0) {
+                while (i < 64) : (i += 4) {
+                    const w = std.mem.readInt(u32, ys[i..][0..4], .little);
+                    // Per-byte lm1 - w, no borrow across bytes.
+                    const d4 = ((lm1 | highs) - (w & ~highs)) ^ ((lm1 ^ ~w) & highs);
+                    const m = d4 & far;
+                    const e = w ^ 0xD0D0D0D0;
+                    const hit = ((m -% ones) & ~m) | ((e -% ones) & ~e);
+                    if (hit & highs != 0) break;
+                }
+                if (i == 64) break;
+            }
             const y = v.vram[sat + i];
             if (y == 0xD0) break;
             const d = line -% y -% 1;
