@@ -83,13 +83,14 @@ pub fn parse(out: *Parsed, src: []const u8, default_wall: u8) Error!void {
                 '.' => {},
                 '#' => out.cells[y][x] = default_wall + 1,
                 '1'...'8' => out.cells[y][x] = ch - '0',
-                'D', 'C', 'I', 'G', 'E' => {
+                'D', 'C', 'I', 'G', 'E', 'X' => {
                     if (out.door_count >= state.max_doors) return error.TooManyDoors;
                     const kind: DoorKind = switch (ch) {
                         'D' => .plain,
                         'C' => .coral,
                         'I' => .iris,
                         'G' => .gold,
+                        'X' => .secret,
                         else => .exit,
                     };
                     // Walls to the left and right: the passage runs
@@ -97,8 +98,15 @@ pub fn parse(out: *Parsed, src: []const u8, default_wall: u8) Error!void {
                     const left = if (x == 0) '#' else raw[y][x - 1];
                     const right = if (x + 1 >= width) '#' else raw[y][x + 1];
                     const vertical = !(is_wall_char(left) and is_wall_char(right));
+                    // A secret door wears the texture of the wall beside it
+                    // (above it when the panel runs north-south).
+                    const beside = if (vertical) (if (y == 0) '#' else raw[y - 1][x]) else left;
+                    const tex: u8 = if (kind != .secret) 0 else switch (beside) {
+                        '1'...'8' => beside - '1',
+                        else => default_wall,
+                    };
                     out.cells[y][x] = levels.door_base + out.door_count;
-                    out.doors[out.door_count] = .{ .x = xb, .y = yb, .kind = kind, .vertical = vertical };
+                    out.doors[out.door_count] = .{ .x = xb, .y = yb, .kind = kind, .vertical = vertical, .tex = tex };
                     out.door_count += 1;
                 },
                 'S' => {

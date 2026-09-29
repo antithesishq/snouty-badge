@@ -261,7 +261,7 @@ fn to_title() void {
 
 // ---------------------------------------------------------------- attract mode
 
-/// The title idled: play the recorded demo (Build Farm, fixed seed).
+/// The title idled: play the recorded demo (Production, fixed seed).
 fn start_demo() void {
     new_game_seeded(demo.level_index, demo.seed);
     demo.reset();
@@ -289,10 +289,11 @@ fn take_over() void {
 }
 
 /// The demo ends on its own when the log runs out (`log_done`: compare the
-/// gameplay hash with the recorded one; that is the hardware determinism
-/// test), on the 3 min cap, after sitting dead, or once a level ends.
+/// gameplay hash with the recorded one, alive or dead; that is the hardware
+/// determinism test), on the 3 min cap, after sitting dead for 2 s with no
+/// rewind in the log, or once a level ends.
 fn end_demo(log_done: bool) void {
-    if (log_done and mode == .playing and demo.final_hash != 0) {
+    if (log_done and (mode == .playing or mode == .dead) and demo.final_hash != 0) {
         demo_result = if (sim.hash_gameplay(&game) == demo.final_hash) .ok else .desync;
     }
     if (mode == .rewinding) end_rewind();
@@ -468,7 +469,7 @@ fn debug_title_ticks() callconv(.c) u32 {
 fn debug_start_demo() callconv(.c) void {
     start_demo();
 }
-/// Setup call: Build Farm with the demo seed in normal play, so a demo
+/// Setup call: the demo level with the demo seed in normal play, so a demo
 /// script can be authored and its hash recorded without a rebuild.
 fn debug_new_game_seeded() callconv(.c) void {
     new_game_seeded(demo.level_index, demo.seed);

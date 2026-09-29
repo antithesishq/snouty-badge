@@ -977,9 +977,13 @@ Host measurements: standing among the three cable-tray gnats for 7 s
 leaves 4 HP (was 68), zapping without turning 60 HP (was 88); the
 stand-and-shoot Heisenbug duel ends at 15 HP (was 52). The test bands in
 `ai.zig` encode these. Death scripts die at tick 1034 (was 3028). The
-demo was re-recorded because gnat timing changed: 3,627 ticks, hash
-0x093CA09A, bitten to 32 HP before a 240-tick rewind (game tick 1961
-back to 1721, 92 HP after), ends at 88 HP with all nine gnats.
+demo was re-recorded because gnat timing changed (3,627 ticks on Build
+Farm, hash 0x093CA09A), then again on Production at Adrian's request
+("the most interesting level", dying in the demo is fine, it loops back
+to the title): PRODUCTION_DEMO_NOTE. `record_demo.sh` keeps the level
+from the data file and accepts a log that ends dead; `main.zig` compares
+the hash when the log ends alive or dead. The file names still say
+`build_farm` (the data file is per cart, not per level).
 
 ## Status
 

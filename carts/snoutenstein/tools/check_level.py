@@ -22,7 +22,7 @@ import os
 import sys
 
 WALLS = set("#12345678")
-DOORS = {"D": "plain", "C": "coral", "I": "iris", "G": "gold", "E": "exit"}
+DOORS = {"D": "plain", "C": "coral", "I": "iris", "G": "gold", "E": "exit", "X": "secret"}
 LOCKS = {"C": "c", "I": "i", "G": "g"}
 PICKUPS = {"c": "key_coral", "i": "key_iris", "g": "key_gold", "+": "hotfix",
            "%": "charge", "$": "spray_can", "*": "battery"}

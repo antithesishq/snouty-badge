@@ -312,7 +312,8 @@ beating grin.
 
 ```
 boot -> TITLE (logo, "PRESS A", "powered by deterministic replay" tag line, 10 s)
-     -> DEMO: replay a recorded input log on Build Farm; "DEMO" blinks in the HUD
+     -> DEMO: replay a recorded input log on Production; "DEMO" blinks in the HUD
+         (Adrian, 2026-09-29: the most interesting level; dying in the demo is fine)
          -> any A/B/Start/joystick input -> PLAYING from that exact state (takeover)
          -> log ends or 3 min -> TITLE
 TITLE -> A/B/Start -> PLAYING, level 1, fresh state
@@ -332,7 +333,8 @@ script (`tools/scripts/demo_build_farm.json`), baked into `.text` by
 hash with the recorded one and the title shows "DEMO OK" or "DEMO
 DESYNC": the attract mode doubles as the hardware determinism test of
 section 9.3. The demo also ends on a 3 min cap, after 2 s dead without a
-rewind in the log, or once the level ends (no result in those cases).
+rewind in the log, or once the level ends (no result in those cases; a
+log that ends with the player dead still gets its hash compared).
 
 ## 12. Audio and neopixels
 

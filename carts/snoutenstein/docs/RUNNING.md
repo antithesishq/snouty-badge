@@ -221,7 +221,7 @@ node tools/check_determinism.mjs ../../zig-out/bin/snoutenstein.wasm \
 ### Attract mode and the recorded demo
 
 Left alone on the title for 10 s (600 ticks), the cart plays a recorded
-demo of Build Farm: `sim.init` of level 0 with a fixed seed, driven by an
+demo of Production: `sim.init` of level 2 with a fixed seed, driven by an
 input log baked into the cart (`cart/src/demos/build_farm.zig`) instead of
 the pad. A blinking "DEMO" sits at the top of the view while it runs. Any
 edge on A, B, Start or the joystick (up, down, left, right) takes over on
@@ -242,7 +242,7 @@ Exports: `debug_demo` (1 while the demo drives), `debug_demo_result` (0
 none, 1 ok, 2 desync), `debug_title_ticks` (ticks idled on the title). Two
 setup calls for `preview.mjs --call`: `--call debug_start_demo` starts the
 demo at update 0 (scripts and the bench), `--call debug_new_game_seeded`
-starts Build Farm with the demo seed in normal play, tick 0 = update 0
+starts the demo level (Production) with the demo seed in normal play, tick 0 = update 0
 (authoring the log).
 
 ```sh

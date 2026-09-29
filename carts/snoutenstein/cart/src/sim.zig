@@ -159,7 +159,7 @@ pub fn is_solid(s: *const GameState, level: *const Level, cx: i32, cy: i32) bool
 }
 
 /// Who is moving: the player opens any door it has the key for and flags
-/// locked ones; enemies open plain doors only.
+/// locked ones; enemies open plain doors only, never secret ones.
 pub const Mover = enum { player, enemy };
 
 /// Move the circle at (x, y) of half-size `r` by (dx, dy) with sliding:
@@ -222,7 +222,7 @@ fn bump(s: *GameState, level: *const Level, cx: i32, cy: i32, who: Mover) void {
         .coral => 1,
         .iris => 2,
         .gold => 4,
-        .plain, .exit => 0,
+        .plain, .exit, .secret => 0,
     };
     if (s.player.keys & need != need) {
         s.last_locked = @backingInt(kind);
@@ -259,6 +259,8 @@ fn update_doors(s: *GameState, level: *const Level) void {
                 }
             },
             door_open => {
+                // Secret doors stay open for good once found.
+                if (def.kind == .secret) continue;
                 if (d.timer > 0) d.timer -= 1;
                 if (d.timer == 0 and !door_occupied(s, def.x, def.y)) d.phase = door_closing;
             },
@@ -712,6 +714,39 @@ test "the exit door opens and finishes the level when entered" {
     while (!s.finished and n < 200) : (n += 1) step(&s, L, .{ .up = true });
     try testing.expect(s.finished);
     try testing.expectEqual(@as(i32, 4), fixed.to_int(s.player.x));
+}
+
+const secret_level_src =
+    \\1111111111
+    \\1....5...1
+    \\1S>..X$..1
+    \\1....5...1
+    \\1........1
+    \\1.a......1
+    \\1111111111
+;
+
+test "a secret door opens for the player, never closes, and enemies cannot open it" {
+    var st: level_parse.Parsed = undefined;
+    const L = try level_parse.parse_level(&st, "secret", secret_level_src, 0);
+    try testing.expectEqual(levels.DoorKind.secret, L.doors[0].kind);
+    try testing.expectEqual(@as(u8, 4), L.doors[0].tex);
+    try testing.expect(L.doors[0].vertical); // walls above and below: the panel runs north-south
+    var s: GameState = undefined;
+    init(&s, &L, 0, 1);
+    // An enemy walking into it does nothing.
+    bump(&s, &L, 5, 2, .enemy);
+    try testing.expectEqual(@as(u8, door_closed), s.doors[0].phase);
+    // The player walks east into the panel: it opens.
+    var n: usize = 0;
+    while (s.doors[0].phase == door_closed and n < 200) : (n += 1) step(&s, &L, .{ .up = true });
+    try testing.expectEqual(@as(u8, door_opening), s.doors[0].phase);
+    while (s.doors[0].phase == door_opening) step(&s, &L, .{});
+    try testing.expectEqual(@as(u8, door_open), s.doors[0].phase);
+    // Long after the plain-door hold time, still open, nobody inside it.
+    for (0..3 * @as(usize, door_hold)) |_| step(&s, &L, .{ .down = true });
+    try testing.expectEqual(@as(u8, door_open), s.doors[0].phase);
+    try testing.expectEqual(@as(u8, 255), s.doors[0].open);
 }
 
 const pickup_level_src =
