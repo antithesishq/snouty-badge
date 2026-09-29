@@ -83,6 +83,28 @@ pub const glass_primary: GlassPrimary = variant.glass_primary;
 /// false (cut20): no glass sphere anywhere, not even as a shadow caster.
 pub const glass_enabled: bool = variant.glass_enabled;
 
+// M2.2 knobs 5-7: which rays see the Iris logo (iris.zig; PLAN.md M2.2
+// "Knobs"). Primary rays always do; rays leaving the glass never. Turned
+// 7 to 3, then 5 off, then 6 off if cut20 is over budget; variant.zig sets
+// them per variant. Costs are calibrated badge-bench busy ms, cut20, one
+// orbit, worst / mean: taller shore alone 46.65 / 43.37; the logo seen by
+// primary rays 46.46 / 43.70 (K = 4); + water reflections 52.95 / 46.80;
+// + chrome reflections 54.01 / 47.90. Then K = 3: 53.77 / 47.90, chrome
+// off: 52.84 / 46.84, water off: 46.33 / 43.69 (shipped). So knob 5 costs
+// ~1.1 ms, knob 6 ~6.5 ms at its worst frame (3.1 mean), K = 4 vs 3 ~0.2.
+
+/// Knob 5: rays reflected off the chrome sphere show the logo.
+pub const iris_in_chrome: bool = variant.iris_in_chrome;
+/// Knob 6: rays reflected off the water, at any depth, show the logo.
+pub const iris_in_water: bool = variant.iris_in_water;
+/// Knob 7: K, the mask samples along the ray's path through the slab
+/// (minimum 2: the slab entry and exit).
+pub const iris_samples: u32 = variant.iris_samples;
+
+comptime {
+    if (iris_samples < 2) @compileError("iris_samples must be at least 2");
+}
+
 /// A sphere's shadow on the water: the sun-side cylinder of radius
 /// sqrt(1.21) * rs around the sphere, cut by y = 0, is an ellipse; x0..z1 is
 /// a padded box around the whole ellipse (the shadow is exactly 1 outside
@@ -134,15 +156,20 @@ pub const casters = if (glass_enabled) [2]Caster{
     caster(sphere_centre, 1.0, 1.0),
 };
 
-/// Shore plane z = shore_z facing -z, x in (-16, 16], y in [0, 4), 8 texels
-/// per unit (PLAN.md "Shore hit").
+/// Shore plane z = shore_z facing -z, x in (-16, 16], y in [0, shore_height),
+/// 8 texels per unit (PLAN.md "Shore hit"; M2.2: 48 rows, y in [0, 6)). The
+/// height follows the generated texture.
 pub const shore_z: f32 = 14.0;
 pub const shore_half_width: f32 = 16.0;
-pub const shore_height: f32 = 4.0;
 pub const shore_texels_per_unit: f32 = 8.0;
+pub const shore_rows: u32 = shore_data.height;
+pub const shore_height: f32 = @as(f32, @floatFromInt(shore_rows)) / shore_texels_per_unit;
+/// Bytes per texel row: two 4-bit indices per byte.
+const shore_stride = shore_data.width / 2;
 
 comptime {
-    if (shore_data.width != 256 or shore_data.height != 32) @compileError("shore texture must be 256 x 32");
+    if (shore_data.width != 256) @compileError("shore texture must be 256 texels wide");
+    if (shore_data.texels.len != shore_stride * shore_rows) @compileError("shore texel file does not match width x height");
 }
 
 /// shore_data.palette as vectors (linear RGB, already lit).
@@ -152,10 +179,10 @@ const shore_palette: [16]Vec3 = blk: {
     break :blk t;
 };
 
-/// Colour of shore texel (u, v), u in 0..255, v in 0..31, or null if
+/// Colour of shore texel (u, v), u in 0..255, v in 0..shore_rows - 1, or null if
 /// transparent (index 0). Two 4-bit indices per byte, low nibble even u.
 pub inline fn shore_texel(u: u32, v: u32) ?Vec3 {
-    const byte = shore_data.texels[v * 128 + (u >> 1)];
+    const byte = shore_data.texels[v * shore_stride + (u >> 1)];
     const i = (byte >> @intCast((u & 1) * 4)) & 15;
     if (i == 0) return null;
     return shore_palette[i];

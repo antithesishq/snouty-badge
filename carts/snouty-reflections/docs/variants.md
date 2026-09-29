@@ -8,6 +8,9 @@ The full M2 scene (glass, shore, water shadows) is 74.85 ms at worst, and the
 for side-by-side comparison, plus the over-budget baseline. PLAN.md "M2.1 Perf
 variants" has the contract; `cart/src/variant.zig` has the settings.
 
+M2.2 update (names, skyline, Iris logo): full20 73.88, cut20 46.33, full15
+58.05, half30 22.57 ms worst; the table below is the M2.1 measurement.
+
 | variant  | res          | fps | scene                                    | worst ms (frame) | mean ms | budget | verdict |
 |----------|--------------|-----|------------------------------------------|------------------|---------|--------|---------|
 | `full20` | 160x128      | 20  | everything (M2 baseline)                 | 75.00 (531)      | 60.09   | 47.0   | over    |

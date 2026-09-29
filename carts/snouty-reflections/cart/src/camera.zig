@@ -44,20 +44,41 @@ pub const v_table: [height]f32 = blk: {
 
 /// 1 / |fwd + right*u + up*v| = 1 / sqrt(1 + u^2 + v^2) for an orthonormal
 /// basis, so it depends only on the pixel and is folded at comptime (in f64,
-/// correctly rounded). u(159 - x) = -u(x), so only the left half is stored:
-/// index with `half_column(x)`. 80 x 128 f32 = 40 KB.
-pub const inv_len_table: [width / 2][height]f32 = blk: {
+/// correctly rounded). u(159 - x) = -u(x) and v(127 - y) = -v(y) exactly
+/// (both tables are symmetric in f32), so the image only stores the top-left
+/// quarter (80 x 64 f32 = 20 KB of .text; M2.2 mirrored it in y for the
+/// logo's code size) and init() unfolds it in y into inv_len_table in .bss,
+/// indexed with `half_column(x)`: the same values, no per-ray index fold.
+const inv_len_quarter: [width / 2][height / 2]f32 = blk: {
     @setEvalBranchQuota(200000);
-    var t: [width / 2][height]f32 = undefined;
+    var t: [width / 2][height / 2]f32 = undefined;
     for (0..width / 2) |x| {
         const u: f64 = u_table[x];
-        for (0..height) |y| {
+        for (0..height / 2) |y| {
             const v: f64 = v_table[y];
             t[x][y] = @floatCast(1.0 / @sqrt(1.0 + u * u + v * v));
         }
     }
     break :blk t;
 };
+
+/// 80 x 128 f32 (40 KB of .bss), filled by init().
+pub var inv_len_table: [width / 2][height]f32 = undefined;
+
+pub fn init() void {
+    for (&inv_len_table, &inv_len_quarter) |*col, *q| {
+        for (q, 0..) |v, y| {
+            col[y] = v;
+            col[height - 1 - y] = v;
+        }
+    }
+}
+
+comptime {
+    for (0..height / 2) |y| {
+        if (v_table[height - 1 - y] != -v_table[y]) @compileError("v_table is not symmetric");
+    }
+}
 
 pub inline fn half_column(x: usize) usize {
     return if (x < width / 2) x else width - 1 - x;
@@ -75,7 +96,7 @@ pub const Camera = struct {
 /// for ripples but not for the camera: it tilts every primary ray by ~1e-6
 /// rad, and grazing silhouette rays (sphere, then water at ~70 units) turn
 /// that into visible colour changes. 8 bytes per frame (4.8 KB at 20 fps).
-const orbit_sincos: [orbit_frames][2]f32 = blk: {
+pub const orbit_sincos: [orbit_frames][2]f32 = blk: {
     @setEvalBranchQuota(40 * orbit_frames);
     var t: [orbit_frames][2]f32 = undefined;
     for (0..orbit_frames) |i| {
