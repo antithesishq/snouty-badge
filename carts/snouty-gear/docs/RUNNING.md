@@ -52,7 +52,8 @@ for embedding.
 
 ```sh
 carts/snouty-gear/tools/fetch_test_roms.sh     # ZEXDOC/ZEXALL into tests/roms/ (M1 uses them)
-carts/snouty-gear/tools/fetch_test_roms.sh --single-step   # plus SingleStepTests Z80, ~1.2 GB
+carts/snouty-gear/tools/fetch_test_roms.sh --single-step       # plus a 36-file SingleStepTests Z80 subset (~30 MB)
+carts/snouty-gear/tools/fetch_test_roms.sh --single-step-all   # streams the whole 1.2 GB suite in batches, logs tests/roms/z80/results.txt
 zig build test                                 # every cart's host tests
 zig build test -Dtest-filter=bus               # only names containing "bus"
 ```
@@ -74,12 +75,22 @@ Test names carry a prefix per area, so `-Dtest-filter=` picks one:
   VRAM and the PSG through `step_frame`; frames are deterministic across
   snapshot/restore.
 - `golden:` `roms/waternet.gg` for 600 frames under
-  `tools/scripts/m1_play.json`, frame hashes (144 lines plus CRAM) checked
-  at frames 60, 120, 300 and 600. Until the table in `tests/golden.zig` is
-  filled in, the test prints the hashes instead of comparing.
+  `tools/scripts/m1_play.json`, frame hashes (144 lines plus CRAM) pinned
+  at frames 120 (main menu), 180 (mode select), 360 and 570 (the pipe
+  grid). Any core change that alters a pixel fails here; if the change is
+  intended, empty `expected` in `tests/golden.zig`, run the test to print
+  the new hashes, review the preview frames by eye and paste them back.
 - `keyframe` (in `core/gg.zig`): snapshot/restore round trip.
-- `z80:` and `vdp:` (Tracks A and B): SingleStepTests, ZEXDOC/ZEXALL, VDP
-  unit tests.
+- `z80:` SingleStepTests on whatever `tests/roms/z80/v1/*.json` holds (the
+  36-file subset from `--single-step`; skips with a note when absent),
+  ZEXDOC always and ZEXALL unless the test binary is a Debug build
+  (`GEAR_ZEXALL=1` forces it, `GEAR_ZEX=0` skips both), and unit tests for
+  interrupts, HALT and the EI delay. `-Dtest-optimize` defaults to `safe`,
+  where both ZEX ROMs take about 18 s together.
+- `vdp:` control-port latch and codes, read-ahead buffer, CRAM pairs,
+  status side effects, frame and line interrupts, counters, scroll and
+  both locks, flips, priority, sprite limit/overflow/collision, 8x16,
+  zoom, shift-left, backdrop, and 144 lines per frame in order.
 
 ## 4. Headless preview
 

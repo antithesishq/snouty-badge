@@ -499,3 +499,7 @@ Decided 2026-09-29: Adrian accepted every recommendation.
   test pattern, `lib/romfs.zig` FAT12 reader proven under badge-bench with
   a Waternet drive image, `tools/make_romfs.py`, badge-bench `--romfs`.
   Numbers in PLAN.md. Hardware checks (docs/ROM_DRIVE.md section 6) pending.
+- 2026-09-29: M1 done (tag `snouty-gear/m1`): the console is emulated;
+  Waternet and Sonic GG play in the simulator and under badge-bench with
+  the ROM from a drive image (mean ~9.6-9.9 ms before the perf pass).
+  Numbers in PLAN.md. Hardware checks pending (M0's too).

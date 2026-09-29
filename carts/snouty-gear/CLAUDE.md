@@ -27,8 +27,11 @@ longer explanations, this one summarises.
 - `roms/` — the shipped ROM `waternet.gg` and its license. `*.gg`/`*.sms`
   are gitignored at the root (commercial ROMs never enter the repo; Sonic
   lives at `~/sonic.gg` on the VM, read-only).
-- `tools/` — `fetch_test_roms.sh` (ZEXDOC/ZEXALL; `--single-step` adds the
-  1.2 GB SingleStepTests Z80 clone), `romcheck.py` (header, mapper, port
+- `tools/` — `fetch_test_roms.sh` (ZEXDOC/ZEXALL; `--single-step` adds a
+  36-file SingleStepTests Z80 subset, `--single-step-all` streams the whole
+  1.2 GB suite in batches and logs per-file results), `gen_tables.py` and
+  `gen_vdp_tables.py` (Z80 flag and VDP bit-spread tables -> `core/*_tables.zig`,
+  committed), `romcheck.py` (header, mapper, port
   heuristics, SPEC.md section 11 verdict), `scripts/*.json` (preview and
   badge-bench input scripts). Shared tools (`preview.mjs`, `serve-cart.mjs`,
   `make_gif.py`, `make_romfs.py`) are in `../../tools/`.
