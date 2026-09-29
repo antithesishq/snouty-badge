@@ -7,4 +7,5 @@ test {
     _ = @import("pattern.zig");
     _ = @import("rom_unit.zig");
     _ = @import("z80_single_step.zig");
+    _ = @import("z80_zex.zig");
 }
