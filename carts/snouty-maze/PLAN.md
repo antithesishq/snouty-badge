@@ -1163,3 +1163,40 @@ J (edge-on, width 3 at OVERHEAD tick 52) and K (back face, width 24 at
 tick 60). OVERHEAD starts at tick 180 after A at tick 0 (pause 30 + rise
 150), not 240 as run B's label suggests.
 
+## Plan: M4 fix 3, visible Start button and the rising maze (2026-09-29)
+
+Adrian: the Start button is never seen (it sits 0.3 cells behind the
+camera's start pose, so the walker leaves it behind at once), and the
+original's opening, where the maze rises out of the floor, is missing.
+Reference: the WebGL port (ibid-11962) places the button in the cell the
+camera faces at the start (`SX1, SY1`, the "don't start facing a wall"
+block) and scales the whole world by `height` from 0 to 3/4 in 0.02 steps
+with the eye fixed at 1/3, so the walker first sees the maze from above
+and the walls grow past the eye; the finish sinks it back the same way.
+
+1. `actors.zig`: the Start button floats at eye height in the centre of
+   the neighbour cell the camera faces at the start (the walker passes
+   through it, as in the original); that cell joins the actors' avoid
+   list. `start_button_back` goes.
+2. `autopilot.zig`: new state GROW (`debug_state` 9, appended so the
+   numbers stay stable), `grow_ticks` 60. Entered from `begin_walk` (boot,
+   reseed) and at the end of DESCEND, camera at eye height in the start
+   cell facing `start_facing`; leaves to WALK. `grow_scale()` is
+   `state_tick / grow_ticks`, linear like the original. A (`skip`) works
+   from GROW too, so the check_cycle timings that press A at tick 0 hold.
+   The stick is ignored during GROW (takeover stays WALK/TURN).
+3. `scene.zig`: `height_scale` (1 outside GROW, set by `main.update`)
+   scales wall tops, the ceiling, the picture band, the run sort midpoint
+   and the actors (y position; billboard and spin quad vertical extent via
+   a `y_scale` argument; sphere radius). Floor, finish tile and carve head
+   are unchanged. The `pos[1] < wall_height` tests use the scaled height,
+   so the camera is above the ceiling for the first half of GROW and sees
+   the wall tops rise.
+4. Tests: `check_cycle` STATE_NAMES gets GROW; runs D, E, G, H start their
+   input or count 60 ticks later; new run L (GROW at tick 30, WALK at 60).
+   Goldens: `start` becomes the first GROW frame (flat maze), new
+   `grow_half` at frame 31. Bench m2_cycle seeds 1..10 for the GROW frames
+   (a grazing view over the whole maze; budget stays 12.0 ms worst).
+5. Docs: SPEC sections 7 (Start button) and 8 (state machine), RUNNING
+   run list, `preview_m4.gif` regenerated (it opens on the rise).
+
