@@ -124,9 +124,14 @@ pub const Bus = struct {
         gg.sync_slot(@intCast(i));
     }
 
-    /// Port read (Game Gear decoding, see the file comment).
-    pub fn in(self: *Bus, port: u8) u8 {
-        const gg = self.gg;
+    /// Port read (Game Gear decoding, see the file comment). The wrappers
+    /// are inline and the work takes `gg`, so the Z80's `*Bus` never
+    /// escapes the frame loop and the console pointer stays in a register.
+    pub inline fn in(self: *Bus, port: u8) u8 {
+        return port_in(self.gg, port);
+    }
+
+    noinline fn port_in(gg: *Gg, port: u8) u8 {
         switch (port >> 6) {
             0 => {
                 if (port == 0x00) return if (gg.pad & Pad.start != 0) port00_idle & 0x7F else port00_idle;
@@ -145,8 +150,11 @@ pub const Bus = struct {
     }
 
     /// Port write (Game Gear decoding, see the file comment).
-    pub fn out(self: *Bus, port: u8, v: u8) void {
-        const gg = self.gg;
+    pub inline fn out(self: *Bus, port: u8, v: u8) void {
+        port_out(self.gg, port, v);
+    }
+
+    noinline fn port_out(gg: *Gg, port: u8, v: u8) void {
         switch (port >> 6) {
             0 => {
                 if (port <= 0x05) return; // Start port and link port.

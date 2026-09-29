@@ -134,7 +134,7 @@ pub fn Z80(comptime BusT: type) type {
         /// Maskable interrupt acceptance. IM 0 behaves as IM 1: nothing
         /// drives the data bus on this machine, so the CPU reads FF, which
         /// is RST 38h.
-        fn interrupt(self: *Self, bus: *BusT) u32 {
+        inline fn interrupt(self: *Self, bus: *BusT) u32 {
             self.halted = false;
             self.iff1 = false;
             self.iff2 = false;
@@ -778,7 +778,7 @@ pub fn Z80(comptime BusT: type) type {
                     break :sw 11;
                 },
                 0xCB => break :sw @call(.always_inline, exec_cb, .{ self, bus }),
-                0xED => break :sw self.exec_ed(bus),
+                0xED => break :sw @call(.always_inline, exec_ed, .{ self, bus }),
                 inline 0xDD, 0xFD => |o| {
                     const r = @call(.always_inline, exec_xy, .{ self, bus, if (o == 0xDD) &self.ix else &self.iy });
                     if (r < fallback) return r;
@@ -1206,7 +1206,7 @@ pub fn Z80(comptime BusT: type) type {
             self.q = self.f;
         }
 
-        fn block_ld(self: *Self, bus: *BusT, comptime up: bool, comptime repeat: bool) u32 {
+        inline fn block_ld(self: *Self, bus: *BusT, comptime up: bool, comptime repeat: bool) u32 {
             const v = bus.read(self.hl());
             bus.write(self.de(), v);
             if (up) {
@@ -1227,7 +1227,7 @@ pub fn Z80(comptime BusT: type) type {
             return 16;
         }
 
-        fn block_cp(self: *Self, bus: *BusT, comptime up: bool, comptime repeat: bool) u32 {
+        inline fn block_cp(self: *Self, bus: *BusT, comptime up: bool, comptime repeat: bool) u32 {
             const v = bus.read(self.hl());
             const r = self.a -% v;
             if (up) {
@@ -1278,7 +1278,7 @@ pub fn Z80(comptime BusT: type) type {
             self.setf(f);
         }
 
-        fn block_in(self: *Self, bus: *BusT, comptime up: bool, comptime repeat: bool) u32 {
+        inline fn block_in(self: *Self, bus: *BusT, comptime up: bool, comptime repeat: bool) u32 {
             const port = self.bc();
             const v = bus.in(self.c);
             bus.write(self.hl(), v);
@@ -1295,7 +1295,7 @@ pub fn Z80(comptime BusT: type) type {
             return 16;
         }
 
-        fn block_out(self: *Self, bus: *BusT, comptime up: bool, comptime repeat: bool) u32 {
+        inline fn block_out(self: *Self, bus: *BusT, comptime up: bool, comptime repeat: bool) u32 {
             const v = bus.read(self.hl());
             self.b -%= 1;
             bus.out(self.c, v);
