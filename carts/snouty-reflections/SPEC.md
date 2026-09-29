@@ -428,3 +428,8 @@ ships the text changes).
   a Vancouver skyline in place of the treeline, and a spinning 3D Iris logo
   near the names so it reflects (section 5a, section 12). Planned as M2.2
   in PLAN.md, before M3.
+- 2026-09-29: M2.2 on main (tag `snouty-reflections/m2.2`): Vancouver
+  skyline, both names, spinning Iris logo seen directly in cut20 (46.33 ms
+  worst); the logo also reflects in water and chrome in half30. Whether
+  cut20 gets the reflections waits on a per-frame hardware capture (branch
+  `reflections/hw-trace`).

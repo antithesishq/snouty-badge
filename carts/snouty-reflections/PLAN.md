@@ -736,3 +736,8 @@ close-up of the logo, updates SPEC status and RUNNING.md, and tags
   Open for Adrian: the logo only reflects in half30; a badge capture
   (branch reflections/hw-trace) will say whether cut20 can afford the water
   reflection.
+- 2026-09-29: Adrian approved shipping as is (logo seen directly in cut20,
+  reflections decided after the hardware capture). Merged with main (41
+  commits; main added lib/iris_mark.zig, not used here yet), re-verified:
+  cut20 46.33 / 43.69 ms, check_render PASS, all carts build. Tagged
+  `snouty-reflections/m2.2` and pushed to main.
