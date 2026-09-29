@@ -1,0 +1,276 @@
+# badge-bench cycle model calibration, written by calibrate/fit.py.
+# Use: badge-bench --calibrate this_file.toml
+
+[meta]
+date = "2026-09-29"
+elf_sha256 = "498c2b55263aca4c6ff0e286955e5782420a28f77b4648ca18cf1bff305ab5d1"
+hardware_capture = "badge-2026-09-28-pass5.txt"
+emulator_run = "bench.json"
+residual_rms = 0.1335
+call_overhead = 14
+
+[costs]
+alu = 0.756
+vmul = 0.998
+vaddsub = 0.980
+vcmp = 1.708
+vdiv = 13.879
+vsqrt = 14.051
+vfma = 3.000
+ldr = 1.095
+str = 1.091
+vldr = 1.985
+vstr = 0.132
+ldrd_strd = 3.000
+udiv = 11.864
+taken = 1.671
+fp_dep = 0.919
+
+[contention]
+dma_ms = 5.24
+factor = 1.0041
+whole_kernel_ratio = 1.0030
+ldr = 1.0041
+str = 1.0026
+vldr = 1.0063
+vstr = 1.0063
+
+[[kernels]]
+id = 0
+name = "empty"
+ops = 2097152
+modelled = 393245
+idle_min = 394515
+idle_med = 394516
+busy_min = 394033
+busy_med = 395074
+ratio_idle = 1.0032
+ratio_busy = 1.0020
+
+[[kernels]]
+id = 1
+name = "vmul_indep"
+ops = 327680
+modelled = 389162
+idle_min = 391473
+idle_med = 391566
+busy_min = 390600
+busy_med = 393452
+ratio_idle = 1.0059
+ratio_busy = 1.0037
+
+[[kernels]]
+id = 2
+name = "vmul_dep"
+ops = 327680
+modelled = 389153
+idle_min = 676028
+idle_med = 676030
+busy_min = 676296
+busy_med = 676392
+ratio_idle = 1.7372
+ratio_busy = 1.7379
+
+[[kernels]]
+id = 3
+name = "vadd_vmul_mix"
+ops = 327680
+modelled = 389158
+idle_min = 391443
+idle_med = 391478
+busy_min = 393196
+busy_med = 393347
+ratio_idle = 1.0059
+ratio_busy = 1.0104
+
+[[kernels]]
+id = 4
+name = "vdiv"
+ops = 26624
+modelled = 377761
+idle_min = 399386
+idle_med = 399386
+busy_min = 399386
+busy_med = 399386
+ratio_idle = 1.0572
+ratio_busy = 1.0572
+
+[[kernels]]
+id = 5
+name = "vsqrt"
+ops = 24576
+modelled = 373281
+idle_min = 417827
+idle_med = 417828
+busy_min = 417830
+busy_med = 417831
+ratio_idle = 1.1193
+ratio_busy = 1.1193
+
+[[kernels]]
+id = 6
+name = "vdiv_indep"
+ops = 26624
+modelled = 377770
+idle_min = 372771
+idle_med = 372771
+busy_min = 372771
+busy_med = 372771
+ratio_idle = 0.9868
+ratio_busy = 0.9868
+
+[[kernels]]
+id = 7
+name = "ldr_seq"
+ops = 163840
+modelled = 389153
+idle_min = 225657
+idle_med = 225661
+busy_min = 225632
+busy_med = 225636
+ratio_idle = 0.5799
+ratio_busy = 0.5798
+
+[[kernels]]
+id = 8
+name = "ldr_stride"
+ops = 163840
+modelled = 389153
+idle_min = 226039
+idle_med = 226106
+busy_min = 227241
+busy_med = 227289
+ratio_idle = 0.5808
+ratio_busy = 0.5839
+
+[[kernels]]
+id = 9
+name = "str_seq"
+ops = 163840
+modelled = 389156
+idle_min = 215675
+idle_med = 215805
+busy_min = 215739
+busy_med = 215766
+ratio_idle = 0.5542
+ratio_busy = 0.5544
+
+[[kernels]]
+id = 10
+name = "vldr_vstr"
+ops = 163840
+modelled = 399395
+idle_min = 237052
+idle_med = 237214
+busy_min = 238148
+busy_med = 238199
+ratio_idle = 0.5935
+ratio_busy = 0.5963
+
+[[kernels]]
+id = 11
+name = "ldrh_strh_fb"
+ops = 163840
+modelled = 409635
+idle_min = 288300
+idle_med = 288928
+busy_min = 289586
+busy_med = 289677
+ratio_idle = 0.7038
+ratio_busy = 0.7069
+
+[[kernels]]
+id = 12
+name = "branch_taken"
+ops = 98304
+modelled = 393248
+idle_min = 394765
+idle_med = 394863
+busy_min = 394872
+busy_med = 394889
+ratio_idle = 1.0039
+ratio_busy = 1.0041
+
+[[kernels]]
+id = 13
+name = "branch_pattern"
+ops = 131072
+modelled = 417824
+idle_min = 421593
+idle_med = 421785
+busy_min = 421919
+busy_med = 422043
+ratio_idle = 1.0090
+ratio_busy = 1.0098
+
+[[kernels]]
+id = 14
+name = "udiv"
+ops = 57344
+modelled = 354849
+idle_min = 691780
+idle_med = 691793
+busy_min = 691771
+busy_med = 691771
+ratio_idle = 1.9495
+ratio_busy = 1.9495
+
+[[kernels]]
+id = 15
+name = "nop_fetch"
+ops = 327680
+modelled = 389148
+idle_min = 206209
+idle_med = 206444
+busy_min = 207233
+busy_med = 207397
+ratio_idle = 0.5299
+ratio_busy = 0.5325
+
+[[kernels]]
+id = 16
+name = "nop_fetch_w"
+ops = 327680
+modelled = 389148
+idle_min = 392274
+idle_med = 392277
+busy_min = 394132
+busy_med = 394164
+ratio_idle = 1.0080
+ratio_busy = 1.0128
+
+[[kernels]]
+id = 17
+name = "vcmp_vmrs"
+ops = 81920
+modelled = 348233
+idle_min = 435294
+idle_med = 435295
+busy_min = 435350
+busy_med = 435353
+ratio_idle = 1.2500
+ratio_busy = 1.2502
+
+[[kernels]]
+id = 18
+name = "table_lerp"
+ops = 28672
+modelled = 406821
+idle_min = 439812
+idle_med = 439816
+busy_min = 440344
+busy_med = 440391
+ratio_idle = 1.0811
+ratio_busy = 1.0824
+
+[[kernels]]
+id = 19
+name = "mixed_tracer"
+ops = 245760
+modelled = 381016
+idle_min = 463334
+idle_med = 463341
+busy_min = 463624
+busy_med = 463646
+ratio_idle = 1.2160
+ratio_busy = 1.2168

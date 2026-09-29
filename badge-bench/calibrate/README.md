@@ -20,7 +20,8 @@ calibrate/
   cart/src/harness.zig  cycle timing, min/median, checksum, trace formatting
   fit.py                capture + bench.json -> calibration.toml
   dist/                 prebuilt badge-calibrate.uf2 and the tester note
-  calibration.toml      the fitted table, once a badge has been measured (C2)
+  badge-2026-09-28-pass5.txt  the first badge capture (pass 5 of 5)
+  calibration.toml      the fitted table; badge-bench applies it by default
 ```
 
 ## 1. Build and check in the emulator
@@ -46,7 +47,12 @@ badge-bench/tests/test_calibrate_selftest.sh
 ## 2. Run it on the badge
 
 1. Bootloader mode, plug in over USB-C, copy `dist/badge-calibrate.uf2`
-   onto the drive (or `zig-out/firmware/badge-calibrate.uf2`).
+   onto the drive (or `zig-out/firmware/badge-calibrate.uf2`). **The kernel
+   must include the core-1 `DEMCR.TRCENA` fix** (sycl-badge branch
+   `fix/core1-dwt-trcena`; upstream kernels up to `97c093e` lack it):
+   without it `DWT_CYCCNT` never counts on core 1 and the cart spins in its
+   first timing loop, showing nothing. Flash `sycl-badge/zig-out/firmware/
+   sycl-os-kernel.uf2` built from that branch first.
 2. Start the cart from the badge menu. It runs five passes of the 20
    kernels (about 2 s), then keeps showing the results. A = next page,
    B = start over.
@@ -84,10 +90,11 @@ cycles, and the two ratios; then the fitted cost per instruction class
 against the default table, the residual, and the DMA contention factor.
 `calibration.toml` holds all of it (layout in `PLAN.md`).
 
-Then:
+`--tie vstr=vldr` fits two classes as one unknown (see `PLAN.md` C3 for
+when that is a good idea). Then:
 
 ```sh
-badge-bench/bench.sh zig-out/firmware/snouty-bugs.elf --calibrate badge-bench/calibrate/calibration.toml
+badge-bench/bench.sh zig-out/firmware/snouty-bugs.elf          # calibrate/calibration.toml applies by default
 badge-bench/tests/test_reflections.sh --calibrate badge-bench/calibrate/calibration.toml
 ```
 
@@ -104,11 +111,17 @@ within the fit's residual is the end-to-end check (milestone C2).
   contention; on the compute kernels it should be about 1. If it is not,
   instruction fetch from SRAM is also contended and the README of
   badge-bench should say so.
-- K2 against K1 gives the VMUL result latency for dependent chains; K6
-  against K4 tells whether VDIV pipelines. Neither is a per-instruction
-  class, so they appear as residual: the report prints both ratios.
+- K2 against K1 is the VMUL result latency for dependent chains, K4
+  against K6 the same for VDIV (which does not pipeline). Since C3 the
+  model has a class for it (`fp_dep`, counted when an instruction reads
+  the FP result of the instruction just before it), so the fit prices it
+  instead of smearing it over the FP classes.
 - The emulator reports `busy == idle` because its OS never touches the bus.
 
 ## Status
 
-See `PLAN.md` ("Status") and the milestones in `SPEC.md` section 8.
+- 2026-09-28: first badge measured (a coworker's SYCL Badge V2, console
+  capture, 5 of 5 passes). It exposed the kernel's missing `TRCENA` on
+  core 1.
+- 2026-09-29: C3, `fp_dep` in the model, `calibration.toml` committed and
+  applied by default. Details in `PLAN.md` ("C3") and its status list.

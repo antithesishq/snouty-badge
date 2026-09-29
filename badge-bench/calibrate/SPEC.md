@@ -204,3 +204,9 @@ script none.
 - 2026-09-27: build started; `PLAN.md` next to this file is the working
   contract and lists the corrections made to this spec (DMA timing, no chip
   id, trace-based pairing, emulator skips the DMA wait, K19 self-contained).
+- 2026-09-28: first badge run (C2). K2's answer to "1 to 3, unknown": a
+  dependent VMUL costs 1 + a 0.9-cycle stall on the consumer, only when it
+  is the very next instruction; VDIV does not pipeline (K6 = K4 - 1).
+- 2026-09-29: C3 in `PLAN.md`: the stall is a model class (`fp_dep`), the
+  fit is applied by default. Open question 2 (a third, core-0-idle phase)
+  is moot: busy/idle is 1.004 on the memory kernels.

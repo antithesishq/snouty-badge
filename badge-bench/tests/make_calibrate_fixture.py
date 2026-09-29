@@ -79,14 +79,14 @@ def main():
         entries = 3 * PASSES
         hot.append(dict(name=f"kernels.k{k}_{name}", cyc=fn * entries, insn=sum(mn.values()) * entries,
                         entries=entries, addr=0x20040000 + 0x100 * k, cyc_per_frame=fn * entries / 100,
-                        taken=taken * entries,
+                        taken=taken * entries, fp_dep=0,
                         mnemonics={m: c * entries for m, c in mn.items()},
                         class_cyc={c: v * entries for c, v in cls.items()}))
         hw_idle = run * (1.3 if 'vdiv' in name and perturb else 1.0)
         hw_busy = hw_idle + (0.5 * mem if perturb and 7 <= k <= 11 else 0)
         rows.append((k, n, n * opi, run, round(hw_idle), round(hw_busy)))
     hot.append(dict(name='main.update', cyc=12345, insn=9000, entries=100, addr=0x20036000,
-                    cyc_per_frame=123.45, taken=100, mnemonics={'bl': 100}, class_cyc={'alu': 12245}))
+                    cyc_per_frame=123.45, taken=100, fp_dep=0, mnemonics={'bl': 100}, class_cyc={'alu': 12245}))
     hot.sort(key=lambda h: -h['cyc'])
 
     def fnv(vals):

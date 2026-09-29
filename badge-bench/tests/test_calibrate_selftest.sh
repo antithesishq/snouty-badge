@@ -45,8 +45,8 @@ if [ ! -f "$ELF" ]; then
     echo "test_calibrate: no ELF at $ELF (zig build -Dcart=badge-calibrate at the repository root); cart checks skipped" >&2
     exit 2
 fi
-echo "test_calibrate: badge-bench $ELF --json"
-"$HERE/bench.sh" "$ELF" --json --symbols --out "$OUT/model" > "$OUT/model.txt"
+echo "test_calibrate: badge-bench $ELF --no-calibrate --json"
+"$HERE/bench.sh" "$ELF" --no-calibrate --json --symbols --out "$OUT/model" > "$OUT/model.txt"
 "$PY" "$HERE/calibrate/fit.py" --selftest "$OUT/model/bench.json" --out "$OUT/selftest.toml" \
     | tee "$OUT/selftest.txt"
 [ "${PIPESTATUS[0]}" -eq 0 ] || { echo "test_calibrate: FAIL (fit.py --selftest)"; exit 3; }

@@ -8,12 +8,15 @@ executed instruction and prices each one with a per-instruction cycle model.
 Out come modelled milliseconds per `update()` at 150 MHz, a hot list of
 functions, PNGs of the frames and annotated disassembly.
 
-**It is a model, not a measurement.** Nothing runs on a badge. The model
-counts issue cycles with code and data in zero-wait SRAM and no bus
-contention, so real hardware is slower; treat the milliseconds as a floor
-and trust relative changes (before/after an edit) more than absolute
-numbers. The badge's own timing (a cart's debug overlay) is the only real
-number.
+**It is a model, calibrated against one badge.** Nothing runs on a badge
+here. Since 2026-09-29 the per-class costs, the FP result-latency stall and
+the LCD-DMA contention factor come from a hardware run of the calibration
+cart (`calibrate/calibration.toml`, applied by default; residual 0.13
+cycles per instruction over the 20 calibration kernels, see
+[Calibration](#calibration)). `--no-calibrate` gives the raw model: issue
+cycles in zero-wait SRAM, a floor. Either way trust relative changes
+(before/after an edit) more than absolute numbers; the badge's own timing
+(a cart's debug overlay) is the only real number.
 
 This generalises `carts/snouty-reflections/tools/emu/real.py` to any cart built
 with the SDK's OS-cart path (`sycl-badge/src/cart/cart_ram.ld`,
@@ -78,7 +81,8 @@ try to read the ELF path as one).
 | `--config FILE`, `--no-config` | Use another per-cart defaults file, or none. |
 | `--progress` | One stderr line per finished frame. |
 | `--flash-cycles N` | XIP carts only: add N cycles per instruction fetched from the cart flash window. Default 0, so the output of an XIP ELF matches its RAM twin; set it once the OS overlay's XIP hit and stall rates give a real number. |
-| `--calibrate FILE.toml` | Price the model classes with the fitted `[costs]` of a `calibrate/fit.py` calibration file (rounded to 0.25 cycle) and report two numbers per frame: `idle ms` (the calibrated count) and `busy ms` = idle + memory-class cycles x (factor - 1) x min(1, dma_ms / idle ms), the DMA contention of `[contention]`. Verdict and over-budget count use busy ms. Without it the output is unchanged. See Calibration. |
+| `--calibrate FILE.toml` | Price the model classes with the fitted `[costs]` of a `calibrate/fit.py` calibration file (rounded to 0.25 cycle) and report two numbers per frame: `idle ms` (the calibrated count) and `busy ms` = idle + memory-class cycles x (factor - 1) x min(1, dma_ms / idle ms), the DMA contention of `[contention]`. Verdict and over-budget count use busy ms. Default: `calibrate/calibration.toml` when it exists (the header says so). See Calibration. |
+| `--no-calibrate` | The raw model (default costs, no stall, no contention): one `ms` column, the historical floor. `tests/test_reflections.sh` uses it. |
 
 Exit status: 0 all frames ran; 1 setup error (unreadable or non-ARM ELF,
 missing symbol, bad script or config); 2 usage error; 4 the cart crashed
@@ -171,46 +175,65 @@ is the CPU work of one update.
 data in zero-wait SRAM. `badge_bench/classes.py` (pure Python, shared with
 `calibrate/fit.py`) maps each base mnemonic to a class (`alu`, `vmul`,
 `vaddsub`, `vcmp`, `vdiv`, `vsqrt`, `vfma`, `ldr`, `str`, `vldr`, `vstr`,
-`ldrd_strd`, `multi`, `udiv`, plus `taken`) and holds the default cost per
-class; `--calibrate` swaps in fitted costs (`multi` always stays 1 +
-registers). The memory classes (`ldr`, `str`, `vldr`, `vstr`, `ldrd_strd`,
-`multi`) are also counted separately per frame (`mem_cyc`) for the DMA
-contention term. The defaults:
+`ldrd_strd`, `multi`, `udiv`, plus the per-instruction events `taken` and
+`fp_dep`) and holds the default cost per class; the calibration swaps in
+fitted costs (`multi` always stays 1 + registers). The memory classes
+(`ldr`, `str`, `vldr`, `vstr`, `ldrd_strd`, `multi`) are also counted
+separately per frame (`mem_cyc`) for the DMA contention term. The defaults
+(the raw model) and the badge fit of 2026-09-28:
 
-| Instruction | Cycles |
-|---|---|
-| most ALU, FP add/mul/sub/abs/neg, VMOV, VCVT, VCMP, VMRS, VSEL, VMAXNM | 1 |
-| VDIV, VSQRT | 14 |
-| VFMA/VFMS/VFNMA/VFNMS, VMLA/VMLS/VNMLA/VNMLS | 3 |
-| LDR/STR (any width), VLDR/VSTR | 2 |
-| LDRD/STRD | 3 |
-| PUSH/POP, LDM/STM, VPUSH/VPOP, VLDM/VSTM | 1 + registers |
-| SDIV/UDIV | 6 (the M33 takes 2 to 12) |
-| taken branch (any block entry that is not a fall-through) | +1 |
+| Class | Instructions | Default | Badge fit |
+|---|---|---|---|
+| `alu` | most ALU | 1 | 0.76 |
+| `vmul` | VMUL, VNMUL | 1 | 1.00 |
+| `vaddsub` | VADD/VSUB/VABS/VNEG, VMOV, VCVT*, VSEL*, VMAXNM/VMINNM | 1 | 0.98 |
+| `vcmp` | VCMP, VCMPE, VMRS | 1 | 1.71 |
+| `vdiv` | VDIV | 14 | 13.88 |
+| `vsqrt` | VSQRT | 14 | 14.05 |
+| `vfma` | VFMA/VFMS/VFNMA/VFNMS, VMLA/VMLS/VNMLA/VNMLS | 3 | 3 (not measured) |
+| `ldr` | LDR (any width) | 2 | 1.10 |
+| `str` | STR (any width) | 2 | 1.09 |
+| `vldr` | VLDR | 2 | 1.99 |
+| `vstr` | VSTR | 2 | 0.13 (see below) |
+| `ldrd_strd` | LDRD, STRD | 3 | 3 (not measured) |
+| `multi` | PUSH/POP, LDM/STM, VPUSH/VPOP, VLDM/VSTM | 1 + registers | 1 + registers |
+| `udiv` | SDIV, UDIV | 6 | 11.86 |
+| `taken` | a taken branch (any block entry that is not a fall-through) | +1 | +1.67 |
+| `fp_dep` | an instruction that reads an FP register (or the FPSCR flags) written by the FP data-processing instruction immediately before it | +0 | +0.92 |
 
-Known blind spots, all of which make hardware slower than the model:
+What the badge said (calibration kernels, idle bus, cycles per operation):
+loads and stores pipeline to about 1.1 cycles each in sequence, half the
+old model; UDIV with a 32-bit quotient takes 12, twice the old model; VMUL,
+VDIV and VSQRT cost their nominal 1/14/14 but an instruction consuming the
+result of the FP instruction *immediately before it* stalls one cycle
+(`fp_dep`; a dependency two instructions back is free, VDIV does not
+pipeline: four independent chains still cost 14 each); a taken branch costs
+about 2.7 in total; the VCMP + VMRS + IT sequence costs 5.3. `vldr` near 2
+with `vstr` near 0 is what the kernels imply (the copy kernel pairs them at
+2.1 per pair; the tracer-shaped kernels put their VLDRs near 2), not a
+statement about VSTR alone; a store-only kernel is on the list for the
+next badge run (`calibrate/PLAN.md`, C4). The LCD DMA barely contends:
+busy runs are 1.004x idle on memory kernels, 0.998 to 1.005 on compute
+kernels (no fetch contention).
 
-- **SRAM bus contention.** Core 0 drives the LCD by DMA out of the other
-  framebuffer while core 1 runs the cart; loads, stores and literal-pool
-  reads can wait behind it. The model assumes every access gets the bus.
-- **FP pipeline stalls.** The M33 FPU has result latency beyond its issue
-  cost (a VMUL feeding the next instruction, VDIV/VSQRT blocking a later FP
-  op that depends on them). The model counts issue slots only, so
-  dependency chains are free.
-- **VCMP/VMRS.** Every float compare is VCMP then `VMRS APSR_nzcv, fpscr`
-  and a conditional; the VMRS waits for the compare. Priced at 1 + 1.
-- **Branch cost.** A taken branch costs 2 in total here. There is no
-  predictor, and targets that are unaligned 32-bit instructions, BX and
-  POP-to-PC returns can cost more. Instructions inside an IT block are
-  charged in full whether or not their condition passes, and the IT itself
-  is 1.
-- **Instruction fetch from SRAM.** RAM carts run from SRAM, so instruction
-  fetch goes over the S-AHB bus and competes with data accesses (and with
-  core 0). Not modelled: fetch is free.
+What the model still does not know, with the calibrated residual over the
+20 kernels at 0.13 cycles per instruction:
+
+- **VFMA and LDRD/STRD** keep their defaults, no kernel exercises them
+  (LDRD/STRD is 6-7% of snouty-bugs' and snouty's cycles).
+- **Framebuffer LDRH/STRH** ran 15% over the fit (1.76 vs 1.53 per op):
+  halfword access, the framebuffer's SRAM bank or the load-use pairs; not
+  separable with the current kernels.
+- **Branch targets and IT blocks.** Unaligned 32-bit targets, BX and
+  POP-to-PC returns may cost more than `taken`; instructions inside an IT
+  block are charged in full whether or not their condition passes, and the
+  IT itself is 1. The alternating-branch kernel ran 10% over the fit.
+- **NOP** is removed before it executes on the M33 (0.63 cycles per 16-bit
+  NOP measured); the model charges 1. Irrelevant outside padding.
 - **The LCD flush and vsync wait** are not part of a frame (see Frames).
+- One badge, one capture (2026-09-28, pass 5 of 5, checksum `c8c7be32`).
 
-Treat the absolute milliseconds as a lower bound unless the run is
-calibrated (`--calibrate`, see Calibration).
+`--no-calibrate` restores the raw model, a lower bound.
 
 ## Calibration
 
@@ -235,8 +258,36 @@ checks `--calibrate` on the result reproduces the uncalibrated ms. How to
 flash the cart, capture its output and fit is in `calibrate/README.md`; the
 design in `calibrate/SPEC.md`, the contract in `calibrate/PLAN.md`.
 
-No badge has been measured yet: there is no `calibrate/calibration.toml`
-and every number in this file is still the uncalibrated floor.
+**Measured 2026-09-28** on a SYCL Badge V2 by a coworker (the cart built
+from `5c1f56a`; the kernel needed the `DEMCR.TRCENA` fix on core 1, sycl-badge
+branch `fix/core1-dwt-trcena`, or the cycle counter never runs and the cart
+hangs before its first line). Capture:
+`calibrate/badge-2026-09-28-pass5.txt` (5 of 5 passes, checksum
+`c8c7be32`); fit: `calibrate/calibration.toml` (2026-09-29, after the
+`fp_dep` class was added; residual 0.133 cycles per op RMS over the 20
+kernels, down from 0.350 with per-class costs alone). `fit.py --tie
+vstr=vldr` fits VLDR and VSTR as one unknown (1.10 each) at residual 0.220,
+mostly the table-lookup kernel going 5% under; not used.
+
+What the calibration does to the carts (240 frames each, worst frame as a
+share of the budget; raw model first, calibrated busy ms second):
+
+| Cart | Budget ms | Raw model, mean / worst ms | Calibrated busy ms, mean / worst | Worst frame as share of budget | `fp_dep` share of cycles |
+|---|---|---|---|---|---|
+| snouty-reflections | 50 | 31.85 / 34.01 | 37.67 / 40.55 | 68% -> 81% | 14.9% |
+| snouty-maze | 16.7 | 10.91 / 15.44 | 9.66 / 13.61 | 92% -> 81% | 10.7% |
+| snoutenstein | 16.7 | 2.62 / 5.09 | 2.15 / 4.00 | 30% -> 24% | 1.3% |
+| snouty-bugs | 16.7 | 8.56 / 11.87 | 7.49 / 10.50 | 71% -> 63% | 0.1% |
+| snouty-boy | 16.7 | 7.42 / 15.68 | 5.04 / 11.41 | 94% -> 68% | 0.0% |
+| snouty | 16.7 | 7.32 / 8.92 | 6.40 / 7.79 | 53% -> 47% | 0.0% |
+
+Integer carts get cheaper (loads, stores and ALU cost less than the old
+model, more than the dearer taken branch costs them): snouty-boy's worst
+frame drops from 94% to 68% of budget. FP carts pay for the stalls:
+15% of snouty-reflections' calibrated cycles and 11% of snouty-maze's are
+`fp_dep`, and reflections' worst frame goes from 68% to 81% of its 50 ms.
+Run `--listing` to see which instructions stall (marked `; fp_dep stall`);
+interleaving two independent chains removes them.
 
 ## Reading the per-function attribution
 
@@ -355,9 +406,10 @@ cart ever needs time back.
 
 2026-09-27, badge-bench at the commit that added this section, run from
 this directory with `--every 60 --png --symbols --json --listing` and the
-defaults in `carts/<cart>.toml`. **Unreviewed first numbers: model
-cycles (a floor), not hardware.** Budget 16.7 ms (all four carts ask for
-60 fps vsync).
+defaults in `carts/<cart>.toml`. **Unreviewed first numbers: raw model
+cycles (a floor, what `--no-calibrate` gives today), not hardware.** Budget
+16.7 ms (all four carts ask for 60 fps vsync). The Calibration section has
+the calibrated numbers.
 
 | Cart (ELF sha256, commit) | Input | Frames | min / mean / p95 / max ms | Worst frame | Over 16.7 | Wall |
 |---|---|---|---|---|---|---|
@@ -436,7 +488,8 @@ badge_bench/        cli.py (arguments), run.py (emulation and frame windows), os
                     report.py (tables, stats, hot list, JSON), png.py, listing.py,
                     classes.py (model classes and default costs, no emulator imports)
 carts/<name>.toml   per-cart defaults (not the repository's carts/ sources)
-calibrate/          badge-calibrate cart, fit.py (hardware fit -> calibration.toml)
+calibrate/          badge-calibrate cart, fit.py, the badge capture and calibration.toml
+                    (applied by default)
 tests/              test_reflections.sh (validation 1, --calibrate FILE for calibrated ms),
                     test_calibrate_selftest.sh + make_calibrate_fixture.py (fit.py gate)
 out/                default output directory (gitignored)

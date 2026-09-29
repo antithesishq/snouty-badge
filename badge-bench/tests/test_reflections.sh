@@ -44,11 +44,11 @@ if [ "$sha" != "$M11_SHA" ]; then
     echo "  (sha256 $sha, expected $M11_SHA); expect mismatches"
 fi
 
-echo "test_reflections: 576 consecutive updates, --poke dither.mode=1 (about a minute)"
-"$HERE/bench.sh" "$ELF" --no-config --frames 576 --every 25 --budget-ms 50 \
+echo "test_reflections: 576 consecutive updates, --no-calibrate --poke dither.mode=1 (about a minute)"
+"$HERE/bench.sh" "$ELF" --no-config --no-calibrate --frames 576 --every 25 --budget-ms 50 \
     --poke dither.mode=1 --json --out "$OUT/sweep" > "$OUT/sweep.txt"
 echo "test_reflections: 2 updates, --poke dither.mode=1 --poke main.frame=0xffffffff"
-"$HERE/bench.sh" "$ELF" --no-config --frames 2 --budget-ms 50 \
+"$HERE/bench.sh" "$ELF" --no-config --no-calibrate --frames 2 --budget-ms 50 \
     --poke dither.mode=1 --poke main.frame=0xffffffff --json --out "$OUT/frame0" > "$OUT/frame0.txt"
 
 "$HERE/.venv/bin/python" - "$OUT" <<'PY'

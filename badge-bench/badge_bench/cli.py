@@ -22,8 +22,10 @@ Run a SYCL Badge V2 cart ELF (zig-out/firmware/<cart>.elf) on an emulated
 Cortex-M33 with a fake badge OS, count every instruction and report modelled
 milliseconds per update() (150 MHz) and where the cycles go.
 
-A model, not a measurement: issue cycles only, zero-wait SRAM, no bus
-contention with the LCD DMA. Treat the milliseconds as a floor.
+A model, calibrated against a badge: when calibrate/calibration.toml exists
+its fitted per-class costs, FP stall and LCD-DMA contention factor are
+applied (idle ms and busy ms per frame). --no-calibrate gives the raw
+model: issue cycles only, zero-wait SRAM, no contention, a floor.
 """
 
 EPILOG = """\
@@ -75,8 +77,11 @@ def build_parser():
                     help='XIP carts: add N cycles per instruction fetched from the cart flash window '
                          '(default 0, no penalty; calibrate against the OS overlay\'s XIP hit rate)')
     ap.add_argument('--calibrate', metavar='FILE.toml',
-                    help='use the fitted class costs of calibrate/fit.py\'s calibration.toml and '
-                         'report idle-bus and DMA-busy ms per frame')
+                    help='use the fitted class costs of this calibrate/fit.py calibration file and '
+                         'report idle-bus and DMA-busy ms per frame (default: '
+                         'calibrate/calibration.toml when it exists)')
+    ap.add_argument('--no-calibrate', action='store_true',
+                    help='the raw model (default costs, no contention), even if calibrate/calibration.toml exists')
     ap.add_argument('--version', action='version', version=f'badge-bench {__version__}')
     return ap
 
@@ -122,9 +127,14 @@ def _main(a):
                 clock_mhz=M.CLOCK_HZ / 1e6, xip=elf.is_xip(), flash_cycles=a.flash_cycles)
 
     cal = None
-    if a.calibrate:
-        cal = C.load_calibration(a.calibrate)
+    if a.calibrate and a.no_calibrate:
+        raise BenchError("--calibrate and --no-calibrate exclude each other")
+    cal_path = a.calibrate or (None if a.no_calibrate or not os.path.isfile(C.DEFAULT_CALIBRATION)
+                               else C.DEFAULT_CALIBRATION)
+    if cal_path:
+        cal = C.load_calibration(cal_path)
         cal['costs'] = M.set_costs(cal['costs'])
+        cal['default'] = not a.calibrate
         meta['calibration'] = cal
 
     printed = [0]

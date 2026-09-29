@@ -54,20 +54,21 @@ def hot_functions(elf, blocks, nframes):
     A block is charged to the sized function containing its first
     instruction; the taken-branch cycle goes to the block entered."""
     acc = {}
-    for addr, size, n, c, count, taken, _m in blocks.values():
+    for addr, size, n, c, count, taken, _m, dep in blocks.values():
         i = elf.func_index(addr)
         if i is not None:
             fa, _z, name = elf.funcs[i]
         else:
             fa, name = None, f"[outside any function: {elf.describe_code(addr)}]"
-        a = acc.setdefault(name, [0, 0, 0, fa, 0])
+        a = acc.setdefault(name, [0, 0, 0, fa, 0, 0])
         a[0] += c * count + taken * M.TAKEN_EXTRA
         a[1] += n * count
         if fa is not None and addr == fa:
             a[2] += count
         a[4] += taken
+        a[5] += dep * count
     out = [dict(name=k, cyc=v[0], insn=v[1], entries=v[2], addr=v[3],
-                cyc_per_frame=v[0] / max(nframes, 1), taken=v[4]) for k, v in acc.items()]
+                cyc_per_frame=v[0] / max(nframes, 1), taken=v[4], fp_dep=v[5]) for k, v in acc.items()]
     out.sort(key=lambda d: -d['cyc'])
     return out
 
@@ -75,12 +76,14 @@ def hot_functions(elf, blocks, nframes):
 def add_mix(elf, hot, blocks, top=50):
     """Give the first `top` hot entries `mnemonics` ({base name: executions
     over the run}) and `class_cyc` ({model class: modelled issue cycles over
-    the run}, taken-branch cycles not included) from the counted blocks."""
+    the run}, taken-branch cycles not included; `fp_dep` = the stalls' cycles)
+    from the counted blocks."""
     want = {h['name']: h for h in hot[:top]}
     for h in want.values():
         h['mnemonics'], h['class_cyc'] = {}, {}
     cs = M.make_cs()
-    for addr, size, _n, _c, count, _t, _m in blocks.values():
+    dep_cost = M.costs()['fp_dep']
+    for addr, size, _n, _c, count, _t, _m, _d in blocks.values():
         i = elf.func_index(addr)
         name = elf.funcs[i][2] if i is not None else f"[outside any function: {elf.describe_code(addr)}]"
         h = want.get(name)
@@ -90,11 +93,11 @@ def add_mix(elf, hot, blocks, top=50):
         if code is None:
             continue
         mn, cc = h['mnemonics'], h['class_cyc']
-        for ins in cs.disasm(code, addr):
-            m = M.base_name(ins)
+        for m, k, cost, stall in M.annotate(list(cs.disasm(code, addr))):
             mn[m] = mn.get(m, 0) + count
-            k = K.classify(m)
-            cc[k] = cc.get(k, 0) + M.cycles_of(ins, m) * count
+            cc[k] = cc.get(k, 0) + cost * count
+            if stall:
+                cc['fp_dep'] = cc.get('fp_dep', 0) + dep_cost * count
     for h in want.values():
         h['mnemonics'] = dict(sorted(h['mnemonics'].items(), key=lambda kv: -kv[1]))
         h['class_cyc'] = {k: h['class_cyc'][k] for k in K.CLASSES if k in h['class_cyc']}
@@ -133,7 +136,8 @@ def text(meta, res, st, hot, every, top, show_symbols):
     cal = meta.get('calibration')
     if cal:
         L.append(f"  calibrated: {cal['file']} (fitted {cal['date']}, residual "
-                 f"{cal['residual_rms']:.3f} cycles/op)")
+                 f"{cal['residual_rms']:.3f} cycles/op"
+                 + ("; the default, --no-calibrate for the raw model)" if cal.get('default') else ")"))
     if res.vsync:
         fl, vms = res.vsync
         L.append(f"  cart asks for vsync {'on' if fl & 1 else 'off'}"

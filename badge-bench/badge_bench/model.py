@@ -5,6 +5,7 @@ instructions identically (tests/test_reflections.sh checks that). The model
 counts issue cycles only, with code and data in zero-wait SRAM; see the
 README for its blind spots. Change it here and every report picks it up.
 """
+import re
 import struct
 
 from capstone import CS_ARCH_ARM, CS_MODE_MCLASS, CS_MODE_THUMB, Cs
@@ -12,7 +13,7 @@ from capstone.arm import ARM_CC_AL, ARM_CC_INVALID, ARM_OP_REG
 from unicorn import UC_ARCH_ARM, UC_MODE_MCLASS, UC_MODE_THUMB, Uc, UcError
 from unicorn.arm_const import UC_CPU_ARM_CORTEX_M33
 
-from .classes import CLASSES, DEFAULT_COSTS, MEMORY_CLASSES, MULTI_WITH_BASE, classify
+from .classes import CLASSES, DEFAULT_COSTS, FP_PRODUCERS, MEMORY_CLASSES, MULTI_WITH_BASE, classify
 
 CLOCK_HZ = 150_000_000
 CYCLES_PER_US = CLOCK_HZ // 1_000_000
@@ -84,23 +85,72 @@ class DecodeError(Exception):
     pass
 
 
+# FP result latency (calibrate/PLAN.md, C3). An instruction that reads an FP
+# register, or the FPSCR flags, written by the instruction immediately before
+# it stalls `fp_dep` cycles when that instruction is FP data processing (an
+# FP_PRODUCERS class). The badge showed the stall (about 0.9 cycles) after
+# VMUL, VDIV, VSQRT and VADD producers, none for a dependency two
+# instructions back, and none worth fitting for VLDR as a producer
+# (PLAN.md C3 records the variants tried). A pair split across a block
+# boundary is not counted: a taken branch sits between them.
+_fp_reg_cache = {}
+
+
+def _is_fp_reg(cs_ins, r):
+    """True for s0-s31, d0-d15, q* and the FPSCR (flags) registers."""
+    v = _fp_reg_cache.get(r)
+    if v is None:
+        name = cs_ins.reg_name(r) or ''
+        v = _fp_reg_cache[r] = bool(re.match(r'^(s|d|q)\d+$', name) or name.startswith('fpscr'))
+    return v
+
+
+def fp_dep_stall(prev, prev_class, ins):
+    """1 if `ins` stalls on the result of `prev` (class `prev_class`)."""
+    if prev is None or prev_class not in FP_PRODUCERS:
+        return 0
+    try:
+        w = prev.regs_access()[1]
+        if not w:
+            return 0
+        rd = ins.regs_access()[0]
+    except Exception:          # capstone without detail, or an odd encoding
+        return 0
+    return 1 if any(r in rd and _is_fp_reg(ins, r) for r in w) else 0
+
+
+def annotate(ins_list):
+    """[(base name, class, issue cycles, fp_dep stall 0/1)] for a decoded
+    block, in order. Issue cycles exclude the stall; a stall costs
+    costs()['fp_dep'] cycles."""
+    out = []
+    prev = prev_class = None
+    for i in ins_list:
+        m = base_name(i)
+        c = classify(m)
+        out.append((m, c, cycles_of(i, m), fp_dep_stall(prev, prev_class, i)))
+        prev, prev_class = i, c
+    return out
+
+
 def decode_block(cs, code, addr):
-    """(instruction count, modelled cycles, memory-class cycles) of one unicorn
-    translation block."""
+    """(instruction count, modelled cycles, memory-class cycles, fp_dep stalls)
+    of one unicorn translation block. The cycles include the stalls at the
+    current fp_dep cost."""
     ins = list(cs.disasm(code, addr))
     got = sum(i.size for i in ins)
     if got != len(code):
         raise DecodeError(f"capstone decoded {got} of {len(code)} bytes of the block at "
                           f"{addr:#010x}; the instruction at {addr + got:#010x} is not "
                           f"understood by the cycle model")
-    cyc = mem = 0
-    for i in ins:
-        m = base_name(i)
-        c = cycles_of(i, m)
-        cyc += c
-        if classify(m) in MEMORY_CLASSES:
-            mem += c
-    return len(ins), cyc, mem
+    cyc = mem = dep = 0
+    for _m, c, cost, stall in annotate(ins):
+        cyc += cost
+        if c in MEMORY_CLASSES:
+            mem += cost
+        dep += stall
+    cyc += dep * _COST['fp_dep']
+    return len(ins), cyc, mem, dep
 
 
 def make_cs():

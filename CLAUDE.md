@@ -120,9 +120,12 @@ per-cart options in `docs/RUNNING.md` at the root and in each cart.
 
 Tune against `badge-bench/bench.sh zig-out/firmware/<binary>.elf --symbols`
 before and after a milestone and record the numbers in the cart's PLAN.md
-status. The cycle model is a floor (SRAM contention and FP stalls are not
-modelled); expose knobs as adjustable constants in one place and leave
-headroom. Budget is 16.7 ms per `update()` for 60 fps carts.
+status. Since 2026-09-29 the model is calibrated against a badge by default
+(`badge-bench/calibrate/calibration.toml`: fitted class costs, an FP
+result-latency stall, LCD-DMA contention; use the `busy ms` column);
+`--no-calibrate` gives the old raw floor. Unmeasured still: VFMA, LDRD/STRD,
+framebuffer halfword access. Expose knobs as adjustable constants in one
+place and leave headroom. Budget is 16.7 ms per `update()` for 60 fps carts.
 
 ## Conventions
 

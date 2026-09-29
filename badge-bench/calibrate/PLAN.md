@@ -292,3 +292,33 @@ flash the fixed kernel first.
 Gates: `tests/test_calibrate_selftest.sh` PASS; `tests/test_reflections.sh`
 exact with `--no-calibrate`; the refit residual well under 0.350 cycles/op
 with `vstr` positive; the six carts rerun.
+
+### C3 results (2026-09-29)
+
+Stall-rule variants, each fitted against the capture:
+
+| rule | residual | notes |
+|---|---|---|
+| producer FP data processing, consumer any (**kept**) | 0.133 | vmul 1.00, vdiv 13.88, vsqrt 14.05, fp_dep 0.92, vcmp 1.71 |
+| consumer FP data processing only | 0.133 | identical here: every distance-1 consumer in the kernels is FP |
+| producer also VLDR (load-use) | 0.196 | vstr clamps to 0 again; rejected |
+| plus an `addr_dep` class (load/store whose base register the previous instruction wrote) | 0.119 | fitted 5.1 cycles from K11 alone (the only kernel with one per iteration); an overfit of the framebuffer kernel's excess, removed |
+
+Item 3, VLDR/VSTR: with `fp_dep` in the model `vstr` fits positive (0.13)
+next to `vldr` 1.99, so the clamp is gone but the split is still K19's
+choice. Tying them (`fit.py --tie vstr=vldr`, kept as an option) gives
+1.10 each at residual 0.220, with K18 table_lerp 5% under and K3 4.5% over:
+the tracer-shaped kernels really do see their VLDRs at about 2. Not tied:
+no cart stores floats in volume (snouty-maze 1% of cycles, the rest 0),
+and reflections' VLDRs (27% of its cycles) look like K18's. A store-only
+kernel (C4) settles it.
+
+Kernels the fit still misses by more than 3%: K11 ldrh_strh_fb (measured
+15% over the fit), K13 branch_pattern (10% over), K15 nop_fetch (the M33
+drops NOPs before execution, 34% under), K18 table_lerp (0.5% under), K19
+mixed_tracer (1.5% over). K1-K10, K12, K14, K16, K17 within 1%.
+
+Status: `tests/test_calibrate_selftest.sh` PASS; `tests/test_reflections.sh`
+exact with `--no-calibrate` (its calibrated pass is informational);
+`calibration.toml` committed and applied by default; the per-cart table is
+in the badge-bench README (Calibration).

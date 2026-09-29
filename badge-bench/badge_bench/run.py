@@ -61,7 +61,7 @@ class Result:
         self.unknown_msgs = []  # (frame, word)
         self.status_words = []
         self.pngs = {}          # frame -> framebuffer bytes
-        self.blocks = {}        # key -> [addr, size, ninsn, cyc, count, taken, mem_cyc] over the frames
+        self.blocks = {}        # key -> [addr, size, ninsn, cyc, count, taken, mem_cyc, fp_dep] over the frames
         self.warnings = []
         self.vsync = None
         self.os = None
@@ -99,7 +99,7 @@ def run(elf, frames, controls, pokes=(), seed=1, png_every=0, max_frame_ms=1000.
     res.xip = elf.is_xip()
     mu = M.make_uc()
     cs = M.make_cs()
-    blocks = {}                         # (addr << 16 | size) -> [addr, size, ninsn, cyc, count, taken, mem_cyc]
+    blocks = {}                         # (addr << 16 | size) -> [addr, size, ninsn, cyc, count, taken, mem_cyc, fp_dep]
     insn = cyc = taken = mem = 0        # mem: memory-class cycles (classes.MEMORY_CLASSES)
     prev_end = None
     cur_block = 0
@@ -270,12 +270,12 @@ def run(elf, frames, controls, pokes=(), seed=1, png_every=0, max_frame_ms=1000.
         b = blocks.get(key)
         if b is None:
             try:
-                n, c, mc = M.decode_block(cs, bytes(uc.mem_read(addr, size)), addr)
+                n, c, mc, dep = M.decode_block(cs, bytes(uc.mem_read(addr, size)), addr)
             except M.DecodeError as e:
                 decode_err.append(str(e))
                 uc.emu_stop()
                 return
-            b = blocks[key] = [addr, size, n, c, 0, 0, mc]
+            b = blocks[key] = [addr, size, n, c, 0, 0, mc, dep]
         if addr != prev_end and prev_end is not None:
             cyc += M.TAKEN_EXTRA
             taken += 1
@@ -351,7 +351,7 @@ def run(elf, frames, controls, pokes=(), seed=1, png_every=0, max_frame_ms=1000.
     for key, b in blocks.items():
         c0, t0 = sb.get(key, (0, 0))
         if b[4] - c0:
-            res.blocks[key] = [b[0], b[1], b[2], b[3], b[4] - c0, b[5] - t0, b[6]]
+            res.blocks[key] = [b[0], b[1], b[2], b[3], b[4] - c0, b[5] - t0, b[6], b[7]]
     for (rw, blk), (n, first, fr) in sorted(fake.scratch_log.items(), key=lambda kv: kv[1][2]):
         res.warnings.append(
             f"cart {rw}s SRAM8/9 scratch above its stack top: {n} accesses from block {blk:#010x} "

@@ -5,6 +5,11 @@ directory. Nothing to install: copy one file to the badge.
 
 ## Steps for the tester
 
+0. The badge's kernel needs the core-1 cycle-counter fix (sycl-badge
+   branch `fix/core1-dwt-trcena`, `DEMCR.TRCENA`); on a kernel without it
+   the cart starts and shows nothing forever. Flash
+   `sycl-os-kernel.uf2` built from that branch first, the same way as the
+   cart below.
 1. Put the badge in bootloader mode and plug it in over USB-C. It appears
    as a USB drive. Copy `badge-calibrate.uf2` onto it.
 2. If you can, open the badge's USB serial console **before** starting the

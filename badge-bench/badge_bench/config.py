@@ -20,6 +20,8 @@ from .elf import BenchError
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 CARTS_DIR = os.path.join(os.path.dirname(HERE), 'carts')
+# The badge fit badge-bench applies unless --no-calibrate / --calibrate FILE.
+DEFAULT_CALIBRATION = os.path.join(os.path.dirname(HERE), 'calibrate', 'calibration.toml')
 KEYS = {'budget_ms': (int, float), 'frames': (int,), 'script': (str,), 'pokes': (list,),
         'press': (list,), 'note': (str,)}
 

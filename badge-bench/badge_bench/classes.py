@@ -6,16 +6,24 @@ cost of its class; `--calibrate FILE` replaces the costs with a fitted table.
 """
 
 # Model classes, in the order of calibrate/PLAN.md (and calibration.toml).
+# `taken` and `fp_dep` are per-instruction events, not mnemonics.
 CLASSES = ['alu', 'vmul', 'vaddsub', 'vcmp', 'vdiv', 'vsqrt', 'vfma', 'ldr', 'str',
-           'vldr', 'vstr', 'ldrd_strd', 'multi', 'udiv', 'taken']
+           'vldr', 'vstr', 'ldrd_strd', 'multi', 'udiv', 'taken', 'fp_dep']
 
 # The table the model has always used. `multi` is not a flat cost: it is
 # 1 + max(registers transferred, 1) (see model.cycles_of) and is never fitted.
 # `taken` is not a mnemonic: it is the extra cycle of a block entered by a
-# taken branch.
+# taken branch. `fp_dep` is the stall of an instruction that reads an FP
+# register (or the FPSCR flags) written by the FP data-processing
+# instruction immediately before it (calibrate/PLAN.md, C3). Its default is
+# 0: the uncalibrated model never charged it, and the badge fit prices it
+# (about 1 cycle).
 DEFAULT_COSTS = {'alu': 1, 'vmul': 1, 'vaddsub': 1, 'vcmp': 1, 'vdiv': 14, 'vsqrt': 14,
                  'vfma': 3, 'ldr': 2, 'str': 2, 'vldr': 2, 'vstr': 2, 'ldrd_strd': 3,
-                 'multi': 1, 'udiv': 6, 'taken': 1}
+                 'multi': 1, 'udiv': 6, 'taken': 1, 'fp_dep': 0}
+
+# Classes whose result the next instruction may stall on (the `fp_dep` producers).
+FP_PRODUCERS = frozenset({'vmul', 'vaddsub', 'vcmp', 'vdiv', 'vsqrt', 'vfma'})
 
 # Classes that touch the data bus (the DMA contention term applies to them).
 MEMORY_CLASSES = frozenset({'ldr', 'str', 'vldr', 'vstr', 'ldrd_strd', 'multi'})

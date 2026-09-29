@@ -13,7 +13,7 @@ to `CAL ` is ignored); the last complete pass (the one ending with the last
 bench.json is `badge-bench zig-out/firmware/badge-calibrate.elf --json` from
 the same ELF: its own CAL trace lines are the modelled count per kernel run,
 and its hot[] entries `kernels.k<id>_<name>` give each kernel's instruction
-mix (mnemonics, taken branches, per-class cycles) per call.
+mix (mnemonics, taken branches, fp_dep stalls, per-class cycles) per call.
 
 The fit: one row per kernel, one unknown per model class (calibrate/PLAN.md
 order, `multi` excluded: its modelled cycles move to the right-hand side).
@@ -150,6 +150,7 @@ def load_emulator(path):
         for mn, n in h['mnemonics'].items():
             cnt[classify(mn)] += n / e
         cnt['taken'] = h.get('taken', 0) / e
+        cnt['fp_dep'] = h.get('fp_dep', 0) / e
         if 'class_cyc' in h:
             multi = h['class_cyc'].get('multi', 0) / e
         else:
@@ -251,7 +252,11 @@ def fit(rows, rhs, names, defaults):
 
 # ---------------------------------------------------------------- the fit
 
-def run_fit(emu, hw, hw_done, manual=False):
+def run_fit(emu, hw, hw_done, manual=False, ties=None):
+    """ties = {class: class it is fitted together with} (--tie vstr=vldr):
+    one unknown for both. PLAN.md C3 records why this is not the default."""
+    ties = ties or {}
+    unknowns = [c for c in UNKNOWNS if c not in ties]
     trace, mixes = emu['trace'], emu['mixes']
     ids = sorted(k for k in trace if k in mixes and k in hw)
     notes = list(emu['warnings'])
@@ -274,11 +279,14 @@ def run_fit(emu, hw, hw_done, manual=False):
     rows, rhs = [], []
     for k in ids:
         c = mixes[k]['count']
-        rows.append([c[n] for n in FITTED])
+        rows.append([c[n] + sum(c[t] for t, to in ties.items() if to == n) for n in unknowns])
         rhs.append(hw[k]['idle_min'] - mixes[k]['multi_cyc'] - call[k])
-    sol, fnotes = fit(rows, rhs, UNKNOWNS, DEFAULT_COSTS)
+    sol, fnotes = fit(rows, rhs, unknowns, DEFAULT_COSTS)
     notes += fnotes
-    pred = {k: sum(r * sol[n] for r, n in zip(row, UNKNOWNS)) + mixes[k]['multi_cyc'] + call[k]
+    for t, to in ties.items():
+        sol[t] = sol[to]
+        notes.append(f"{t}: fitted together with {to} (one unknown, --tie)")
+    pred = {k: sum(r * sol[n] for r, n in zip(row, unknowns)) + mixes[k]['multi_cyc'] + call[k]
             for k, row in zip(ids, rows)}
     per_op = [(pred[k] - hw[k]['idle_min']) / trace[k]['ops'] for k in ids if trace[k]['ops']]
     rms = math.sqrt(sum(v * v for v in per_op) / len(per_op)) if per_op else 0.0
@@ -407,7 +415,15 @@ def main(argv=None):
                     help='write the fit here (default calibrate/calibration.toml; --selftest: none)')
     ap.add_argument('--elf-sha', metavar='SHA', help='ELF sha256 for [meta] (default: bench.json meta)')
     ap.add_argument('--dma-ms', type=float, default=5.24, help='DMA window after present() (5.24)')
+    ap.add_argument('--tie', metavar='A=B', action='append', default=[],
+                    help='fit class A together with class B as one unknown (repeatable; e.g. vstr=vldr)')
     a = ap.parse_args(argv)
+    ties = {}
+    for t in a.tie:
+        x, _, y = t.partition('=')
+        if x not in UNKNOWNS or y not in UNKNOWNS or x == y or y in ties:
+            ap.error(f"--tie {t}: need two different fitted classes ({', '.join(UNKNOWNS)})")
+        ties[x] = y
     try:
         if a.selftest:
             emu_path = hw_path = a.selftest
@@ -422,7 +438,7 @@ def main(argv=None):
                 lines = fh.read().splitlines()
             hw, done = (parse_manual(lines, emu['trace'], hw_path) if a.manual
                         else parse_cal(lines, hw_path))
-        R = run_fit(emu, hw, done, manual=a.manual)
+        R = run_fit(emu, hw, done, manual=a.manual, ties=ties)
     except (FitError, OSError, ValueError, KeyError) as e:
         print(f"fit.py: error: {e}", file=sys.stderr)
         return 2
