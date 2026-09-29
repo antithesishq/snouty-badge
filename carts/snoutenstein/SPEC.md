@@ -216,11 +216,11 @@ enemy always faces the camera. HP, speeds in cells per tick.
 
 | Name (flavor)          | HP | Speed | Behaviour                                                                                          | Attack                                            |
 |------------------------|----|-------|----------------------------------------------------------------------------------------------------|---------------------------------------------------|
-| Off-by-one (gnat)      | 3  | 0.04  | Wakes on sight or gunfire within 8 cells; zig-zags toward the player                               | Melee bite 2, every 60 t within 0.8 cells (tuned M5) |
+| Off-by-one (gnat)      | 3  | 0.05  | Wakes on sight or gunfire within 8 cells; zig-zags toward the player                               | Melee bite 4, every 40 t within 0.8 cells (tuned M5.1) |
 | Race Condition (wasp)  | 6  | 0.07  | Waits; when it sees you it charges in a straight line, overshoots, turns, charges again            | Melee 10 on contact during a charge               |
-| Memory Leak (beetle)   | 20 | 0.02  | Slow, walks straight at you, soaks damage                                                          | Spits a 0.08 cells/t projectile, 8 damage, every 90 t |
-| Deadlock (spider)      | 8  | 0     | Stationary turret on the ceiling; only visible from within 6 cells                                 | Web projectile 0.06 cells/t: 4 damage and freezes your movement for 45 t (turning still works). Rewind is the counter. |
-| Heisenbug (boss)       | 80 | 0.04  | If you look at it for 90 ticks straight it flickers and teleports to a spawn point behind you; never flinches (no pain state) | Spit x3 fan, 8 damage each, only beyond 2.5 cells; melee 10, every 60 t (tuned M5) |
+| Memory Leak (beetle)   | 20 | 0.02  | Slow, walks straight at you, soaks damage                                                          | Spits a 0.08 cells/t projectile, 10 damage, every 90 t |
+| Deadlock (spider)      | 8  | 0     | Stationary turret on the ceiling; only visible from within 6 cells                                 | Web projectile 0.06 cells/t: 6 damage and freezes your movement for 45 t (turning still works). Rewind is the counter. |
+| Heisenbug (boss)       | 80 | 0.04  | If you look at it for 90 ticks straight it flickers and teleports to a spawn point behind you; never flinches (no pain state) | Spit x3 fan, 10 damage each, only beyond 2.5 cells; melee 15, every 45 t |
 
 AI is Wolf3D-simple and deterministic: a state machine (idle, alert,
 chase, attack, pain, dead) with line of sight by grid ray, movement toward
