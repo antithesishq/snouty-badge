@@ -200,7 +200,7 @@ test "test level parses at run time" {
     try testing.expectEqual(@as(u8, 24), l.height);
     try testing.expectEqual(@as(u8, 3), l.start_x);
     try testing.expectEqual(@as(u8, 3), l.start_y);
-    try testing.expectEqual(@as(usize, 8), l.doors.len);
+    try testing.expectEqual(@as(usize, 9), l.doors.len); // five kinds plus three plain plus the M5.2 secret door
     try testing.expect(Level.is_door(l.cell(7, 4)));
     try testing.expect(l.doors[Level.door_index(l.cell(7, 4))].vertical);
     try testing.expect(Level.is_wall(l.cell(0, 0)));
