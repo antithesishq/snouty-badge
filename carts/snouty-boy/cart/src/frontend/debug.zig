@@ -8,7 +8,7 @@
 //! preview.mjs); only hardware numbers mean anything.
 const cart = @import("cart-api");
 
-pub var enabled: bool = true;
+pub var enabled: bool = @import("tuning.zig").debug_overlay;
 
 /// Set by the rewind self-check (frontend/rewind.zig, `self_check`) when a
 /// replayed keyframe differs from the recorded one. The overlay is then

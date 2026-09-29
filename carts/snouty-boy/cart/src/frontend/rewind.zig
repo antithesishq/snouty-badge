@@ -40,11 +40,12 @@ const rom = @import("rom");
 const options = @import("cart_options");
 const video = @import("video.zig");
 const debug = @import("debug.zig");
+const tuning = @import("tuning.zig");
 const Gb = core.Gb;
 const kstore = core.kstore;
 
-/// SPEC.md 18 item 7: one keyframe every 0.5 s.
-pub const frames_per_keyframe = 30;
+/// SPEC.md 18 item 7: one keyframe every 0.5 s (knob in tuning.zig).
+pub const frames_per_keyframe = tuning.frames_per_keyframe;
 
 /// When true, every new keyframe is checked by replaying the previous one
 /// into a spare console (SPEC.md 10.2, last sentence); a mismatch paints the
@@ -54,13 +55,9 @@ const self_check = false;
 
 // ---- Knobs (SPEC.md 19.5) ----
 
-/// Bytes per store page. Smaller pages share more but cost more table
-/// entries (2 bytes per page per keyframe).
-pub const page_size = 512;
-/// Expected pages copied per keyframe, for splitting the budget between
-/// pool pages and keyframe tables. Measured in tests/determinism.zig:
-/// 2048-gb 8, rex-runner 4, rebound 7 on average.
-const typical_pages_per_keyframe = 8;
+/// Bytes per store page (tuning.zig).
+pub const page_size = tuning.page_size;
+const typical_pages_per_keyframe = tuning.typical_pages_per_keyframe;
 
 // ---- Memory budget (SPEC.md 13 and 19.4) ----
 
@@ -70,9 +67,8 @@ pub const xip = options.xip;
 /// Cart RAM for .text + .data + .bss: the 0x4AF00-byte RAM window minus the
 /// 32 KB stack the linker script reserves (`cart_ram.ld`, `cart_xip.ld`).
 const usable_ram = 0x4AF00 - 32 * 1024;
-/// Code, constants and .data, not counting the ROM (M4 fast build: about
-/// 52 KB; the CGB renderer, DMA and page store add some), with headroom.
-const code_estimate = 68 * 1024;
+/// Code, constants and .data, not counting the ROM (tuning.zig).
+const code_estimate = tuning.code_estimate;
 const flash_window = 256 * 1024;
 const cart_ram_len = core.mmu.cart_ram_len(rom.data);
 /// Other .bss: the live console, its cart RAM, and frontend statics (colour
