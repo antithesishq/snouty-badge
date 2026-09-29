@@ -21,6 +21,7 @@ var render_us: u32 = 0;
 pub fn start() void {
     cart.set_vsync_enabled(1000.0 / 20.0);
     cart.set_double_buffer_mode(.no_copy_full_frame);
+    trace.init();
 }
 
 pub fn update() void {
