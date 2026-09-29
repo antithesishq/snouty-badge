@@ -17,8 +17,10 @@ Genesis draws 320x224, which maps to the badge's 160x128 by rendering
 every second column and 128 of the 224 lines through a line table
 (section 6). The 68000 is emulated at full speed as
 the goal, with rendering on every second frame so the badge presents at
-30 Hz. The Z80 and the YM2612 FM chip are not emulated in M1-M4, so games
-are silent. Holding Select opens the same emulator menu and time scrubber
+30 Hz. The Z80 sound CPU runs from M1 (Snouty Gear's core) against a
+YM2612 register model, and the badge's one tone voice plays the loudest
+keyed-on channel (section 9): minimum viable sound, no FM synthesis.
+Holding Select opens the same emulator menu and time scrubber
 as Snouty Boy and Snouty Gear, backed by delta keyframes and an input log
 that replays bit for bit.
 
@@ -32,11 +34,12 @@ that replays bit for bit.
   class (Sonic 1, Streets of Rage, Columns, many homebrew titles).
 - It exercises the XIP cart mode for real: this cart cannot be a RAM cart
   (section 13).
-- Snouty Gear's Z80 core is the Genesis sound CPU, so the M5 sound
-  stretch reuses it.
+- Snouty Gear's Z80 core is the Genesis sound CPU, so sound reuses it
+  from M1.
 
-It should start after Snouty Gear M1, so that the frontend, the delta
-keyframes and the XIP numbers from the badge exist to copy from.
+Started 2026-09-29 after Snouty Gear M1 (Adrian, section 18): the Z80
+core, the frontend and the drive reader exist to copy from; the XIP
+numbers from the badge do not yet.
 
 ## 3. The machine being emulated
 
@@ -150,14 +153,24 @@ core/m68k.zig     68000 interpreter, generic over a Bus type (comptime param
                   core/m68k_tables.zig; Adrian's Mac OOMs on heavy comptime).
                   Table shape (64 K x u8 handler index in flash, or a
                   two-level decode) is chosen in M1 by size and speed
-core/bus.zig      memory map, I/O and pads, Z80 bus arbiter stub, SRAM
+core/bus.zig      68000 memory map, I/O and pads, Z80 bus arbiter
+                  (BUSREQ/RESET), SRAM, forwarding of A00000-A0FFFF to
+                  the Z80 side
 core/vdp.zig      ports, control-word latch, VRAM/CRAM/VSRAM, DMA, counters,
                   interrupts, column and line tables, line renderer,
                   line_sink callback
-core/psg.zig      SN76489 register model (68000-side writes only in M1-M4)
+core/z80bus.zig   the Z80's memory map (section 9): 8 KB RAM, YM2612 ports,
+                  bank register, PSG, the 32 KB 68000 bank window
+core/ym2612.zig   YM2612 register model (no synthesis) and the loudest
+                  keyed-on channel -> frequency pick
+core/psg.zig      SN76489 register model (written from either CPU)
 core/rom.zig      the RomSource interface (section 11), header parse,
                   byte order
 ```
+
+The Z80 interpreter is Snouty Gear's `core/z80.zig` (`Z80(comptime BusT)`),
+imported as a module by path from `carts/snouty-gear/core/`, not copied: a
+fix needed here goes into Gear's file with Gear's tests still green.
 
 Byte order: the ROM is stored exactly as the file (big-endian words), so
 the same bytes serve the embedded and the streamed source. 16-bit reads
@@ -182,21 +195,36 @@ if the 33.3 ms budget holds. Targets, measured with badge-bench
 
 | Part (per 33.3 ms update)             | Target      | Host cycles per unit        |
 |---------------------------------------|-------------|-----------------------------|
-| 68000, 2 x ~12,800 instructions       | <= 22 ms    | <= 130 per instruction      |
+| 68000, 2 x ~12,800 instructions       | <= 19 ms    | <= 110 per instruction      |
+| Z80, 2 x ~59,700 Z80 cycles           | <= 6 ms     | Snouty Gear's core as is    |
 | VDP bookkeeping, DMA, interrupts, x2  | <= 1.5 ms   |                             |
 | Render 128 lines x 160 px + sprites   | <= 4 ms     | <= 30 per output pixel      |
-| Frontend (input, overlay, rewind)     | <= 0.5 ms   |                             |
-| Total                                 | <= 28 ms    | worst update under 31 ms    |
+| Frontend (input, overlay, tone, rewind)| <= 0.5 ms  |                             |
+| Total                                 | <= 31 ms    | worst update under 33 ms    |
 
 (About 10 68000 cycles per instruction on average; measured in M1 from
-the golden run.) Tunables in one `tunables.zig`:
+the golden run.) Running the Z80 from M1 (Adrian, 2026-09-29) costs about
+a Game Gear's worth of CPU: Snouty Gear's whole frame is 3.7-5.7 ms mean
+on badge-bench with the same Z80 clock, so the Z80 alone should be under
+3 ms per Genesis frame. The 68000 target tightens from 130 to 110 host
+cycles per instruction to pay for it, and the headroom is thin: this is
+the M1 risk, measured before anything else is tuned. Fallbacks in the
+order they are tried, all tunables in one `tunables.zig`:
 
-- `render_every`: 2 by default (60/30); 1 for 60 Hz presentation if the
-  numbers allow it, 3 for 20 Hz.
-- `cpu_scale`: fraction of 128,008 cycles the 68000 gets per frame
-  (underclock before dropping emulated frames; most games slow down
-  gracefully). Default 1.0.
-- Column averaging on or off; sprite evaluation on skipped lines off.
+1. `render_every`: 2 by default (60/30); 3 presents at 20 Hz with the game
+   and the sound still at full speed (50 ms budget); 1 for 60 Hz if the
+   numbers ever allow it.
+2. `z80_scale`: fraction of the Z80's 59,659 cycles per frame it gets
+   (sound drivers idle-loop between V-ints, so most tolerate some
+   underclocking before the tempo drags). Default 1.0.
+3. `cpu_scale`: fraction of 128,008 cycles the 68000 gets per frame
+   (underclock before dropping emulated frames; most games slow down
+   gracefully). Default 1.0.
+4. A menu item turns the Z80 off entirely (arbiter stub behaviour of
+   section 9); games that hang without their sound driver say so in the
+   overlay.
+
+Also: column averaging on or off; sprite evaluation on skipped lines off.
 
 badge-bench models the embedded build with its flash as ordinary memory,
 so it misses XIP cache misses on ROM fetches. Streaming cost is measured
@@ -204,17 +232,47 @@ only on the badge (section 16).
 
 ## 9. Audio
 
-- **M1-M4: silent**, except 68000 writes to the PSG, which drive the one
-  `tone2` voice as in Snouty Gear section 9 (few games do this).
-- The Z80 is not run. The bus arbiter is stubbed so games do not hang:
-  BUSREQ reports granted immediately, RESET is recorded, Z80 RAM is plain
-  memory the 68000 can read and write, YM2612 status reads "not busy".
-  Games that wait for a Z80 driver's handshake in Z80 RAM will hang;
-  `tools/romcheck.py` cannot detect this, the golden run does.
-- **M5 stretch**: run Snouty Gear's `z80.zig` (underclocked by a tunable)
-  with a YM2612 register model and no synthesis. Pick the loudest keyed-on
-  FM channel; its F-number and block give the frequency directly. One
-  `tone2` voice, issued on change once per frame.
+Minimum viable sound from M1 (Adrian, 2026-09-29): the real sound driver
+runs on an emulated Z80, the chips are register models without synthesis,
+and the badge's one `tone2` voice plays one note chosen from them.
+
+- **Z80**: Snouty Gear's `z80.zig` at master / 15 = 3.579545 MHz, 59,659
+  cycles per frame (228 per line), run in line slices interleaved with the
+  68000 (section 7 of PLAN.md fixes the slice). Interrupt mode 1 `INT` is
+  asserted at V-int for one line. `HALT` skips straight to the next event.
+- **Z80 memory map** (`core/z80bus.zig`): `0000-1FFF` 8 KB RAM (mirror
+  `2000-3FFF`), `4000-4003` YM2612, `6000` bank register (9 bits, shifted
+  in one bit per write), `7F00-7F1F` VDP and PSG (`7F11`), `8000-FFFF` the
+  32 KB window into 68000 space selected by the bank register (ROM via
+  `RomSource`, work RAM; VDP or Z80-side addresses through the window are
+  not reachable and read `FF`).
+- **Bus arbiter** (`core/bus.zig`): `A11100` BUSREQ takes the bus from the
+  Z80 (it stops until released; reads report the state), `A11200` RESET
+  holds the Z80 and the YM2612 in reset. While the 68000 holds the bus it
+  reads and writes Z80 RAM and the YM2612 at `A00000-A0FFFF`; otherwise
+  those reads return open-bus `FF`. Games that write Z80 RAM without
+  BUSREQ get what the hardware would give them.
+- **YM2612** (`core/ym2612.zig`): the register file for both parts (6
+  channels x 4 operators, key-on, F-number and block, total level,
+  algorithm, LFO, channel 3 special mode, channel 6 DAC enable), the timer
+  A and B flags in the status byte (drivers poll them for tempo), the
+  address and data latches. No envelopes and no output.
+- **PSG** (`core/psg.zig`): SN76489 register model, tone periods and
+  attenuations, written from either CPU.
+- **The one voice**: once per emulated frame `Md.tone()` picks the
+  channel to play: among keyed-on FM channels (channel 6 skipped when its
+  DAC is enabled) the one whose carrier operators have the lowest total
+  level; frequency from F-number and block
+  (`f = fnum * 2^(block-1) * 53693175 / (144 * 2^20)` in integer math), against the
+  loudest PSG tone channel (attenuation below 15, period above 6); FM wins
+  ties. The frontend issues `tone2` on change and stops it when nothing
+  is keyed on. Noise, DAC samples, envelopes and vibrato are lost by
+  design.
+- **Z80 off** (tunable and menu item, fallback 4 of section 8): the
+  arbiter stub. BUSREQ reports granted at once, RESET is recorded, Z80 RAM
+  is plain memory, the YM2612 status reads "not busy" and the tone comes
+  from 68000-side PSG writes only. Games that wait for their driver's
+  handshake hang in this mode; the overlay shows the mode.
 
 ## 10. Time scrubbing
 
@@ -223,8 +281,9 @@ there), because a full Genesis keyframe does not fit twice in RAM.
 
 - State: work RAM 64 KB, VRAM 64 KB, CRAM/VSRAM 208 B, VDP registers and
   latch, 68000 registers, pads, PSG, counters: about 129 KB, plus
-  cartridge SRAM if any (section 11), plus 8 KB Z80 RAM (the 68000 can
-  write it even with the Z80 stopped).
+  cartridge SRAM if any (section 11), plus 8 KB Z80 RAM, the Z80
+  registers, the bank register, the arbiter state and the YM2612 register
+  file (about 600 B).
 - Work RAM, VRAM and Z80 RAM split into 64-byte blocks (2176 blocks, a
   272-byte dirty bitmap); first write to a block after a keyframe copies
   its old contents into the open undo record. Keyframe every 30 Genesis
@@ -251,13 +310,15 @@ pointer for contiguous ROMs, or a cluster table (section 1 of
   section 13 leaves in the 256 KB window, and the badge build keeps it
   small (a tiny test ROM or none) because every KB of cart flash image
   costs 2 KB of `romfs` (section 13).
-- **Streamed from `romfs`** (badge only): `cart/src/frontend/romfs.zig`
-  parses the FAT12 volume at `0x10080000` read-only and lists root files
-  with extension `.GEN`, `.MD` or `.BIN` whose word at `0x100` reads
-  "SEGA". One file starts directly; several give a picker at boot.
-  Builds the cluster table (a 1 MB ROM is 2048 u16 entries, 4 KB),
-  detects the contiguous fast path. Host-tested against FAT12 images made
-  by `tools/make_fat_image.py` (contiguous, fragmented, long names,
+- **Streamed from `romfs`** (badge only): the shared FAT12 reader
+  `lib/romfs.zig` (Snouty Gear M0; `Volume.open`, `find`, `map`,
+  `Mapped.contiguous`/`chunk`) lists root files with extension `.GEN`,
+  `.MD` or `.BIN` whose word at `0x100` reads "SEGA". One file starts
+  directly; several give a picker at boot. `cart/src/frontend/romsrc.zig`
+  (adapted from Gear's) turns the `Mapped` into a `RomSource`: the base
+  pointer when `contiguous()` succeeds, else the cluster table (a 1 MB ROM
+  is 2048 u16 entries, 4 KB). Drive images for badge-bench and host tests
+  come from the shared `tools/make_romfs.py` (contiguous, fragmented,
   deleted entries). No firmware change (`docs/ROM_STREAMING.md`).
 - Requirements, checked by `tools/romcheck.py` on the host and by the
   cart at load: raw binary (not SMD-interleaved; detected and refused),
@@ -295,27 +356,29 @@ the rewind ring. Estimates, measured with `size -A` at each milestone:
 | Flash (256 KB cart window)           | Estimate   |
 |--------------------------------------|-----------:|
 | Code + frontend                      | ~110 KB    |
+| Z80 core and tables (Snouty Gear's)  | ~24 KB     |
 | 68000 decode table                   | 0-64 KB    |
 | Render tables, fonts, splash         | ~8 KB      |
 | Embedded ROM (badge build)           | 0-8 KB     |
-| Total                                | 118-190 KB |
+| Total                                | 142-214 KB |
 
 | RAM (~275 KB of XIP data window)      | Estimate   |
 |--------------------------------------|-----------:|
-| Live console (section 10) + Z80 RAM  | ~137 KB    |
+| Live console (section 10) + Z80 side | ~138 KB    |
 | Cartridge SRAM (optional)            | 0-16 KB    |
 | Cluster table, ROM up to 1 MB        | 4 KB       |
-| RAM-text: 68000 core and line render | ~24 KB     |
+| RAM-text: 68000, Z80 and line render | ~32 KB     |
 | Frontend state, input log            | ~4 KB      |
-| Left for rewind ring and ROM cache   | ~90-106 KB |
+| Left for rewind ring and ROM cache   | ~80-96 KB  |
 
 ROM size ceiling on stock firmware: `romfs` is 1280 KB, the cart's own
-UF2 costs twice its flash image (236-380 KB), FAT and directory overhead
-is about 8 KB. That leaves **about 890-1030 KB for ROMs** if nothing else
-is on the drive: 512 KB titles fit comfortably, 1 MB titles only with the
-64 KB decode table dropped and an otherwise empty drive. This is why the
-flash image is kept small. A firmware layout change raises the ceiling
-by about 380 KB (`docs/ROM_STREAMING.md`, section 18 item 7).
+UF2 costs twice its flash image (284-428 KB), FAT and directory overhead
+is about 8 KB. That leaves **about 840-990 KB for ROMs** if nothing else
+is on the drive: 512 KB titles fit comfortably, 1 MB titles do not unless
+the decode table is dropped and the code shrinks. This is why the flash
+image is kept small. The firmware is not changed for this conference
+(Adrian, section 18 items 6 and 7); `docs/ROM_STREAMING.md` keeps the
+layout-change arithmetic for later.
 
 XIP mode has not yet been confirmed on the badge (the Snouty Gear M4 and
 this cart's M0 gate check it). The hot loops run from a RAM-text section
@@ -377,12 +440,14 @@ disjoint files.
   ROM chosen and committed with its LICENSE, badge-bench toml. Gate:
   Adrian confirms an XIP cart launches on the badge (shared with Snouty
   Gear M4 if that comes first).
-- **M1 Core** (the risk milestone), three tracks: A `m68k.zig` + table
+- **M1 Core** (the risk milestone), four tracks: A `m68k.zig` + table
   generator + ProcessorTests harness; B `vdp.zig` + unit tests; C
-  `bus.zig`, `psg.zig`, `rom.zig`, `md.zig` frame loop, frontend video and
-  input, golden test, RUNNING.md. Done when: host tests green, the shipped
-  ROM plays in the simulator, badge-bench update mean under 28 ms and
-  worst under 31 ms. Gate: Adrian flashes it and reports overlay numbers.
+  `bus.zig`, `rom.zig`, `md.zig` frame loop, frontend video, input and
+  tone, golden test, RUNNING.md; D `z80bus.zig`, `ym2612.zig`, `psg.zig`,
+  the Z80 hook-up and `Md.tone()`, sound unit tests. Done when: host
+  tests green, the shipped ROM plays in the simulator with its music's
+  lead line audible, badge-bench update mean under 31 ms and worst under
+  33 ms. Gate: Adrian flashes it and reports overlay numbers.
 - **M2 Streaming and frontend**: `romfs.zig` + FAT image tests + picker +
   no-ROM help screen; menu, splash, remap, scale and crop modes. Gate:
   Adrian copies Sonic 1 to the drive and reports update ms and XIP hit and
@@ -393,30 +458,33 @@ disjoint files.
   a RAM cache for hot ROM ranges if the XIP stall rate calls for it,
   `render_every` and `cpu_scale` defaults, decode-table choice revisited
   against the ROM ceiling.
-- **M5 Stretch** (pick with Adrian): Z80 + YM2612 register model to one
-  tone voice (section 9); the firmware layout change proposed upstream;
-  external flash if the board has it (section 18 item 6).
+- **M5 Stretch** (pick with Adrian): a second voice if the OS ever offers
+  one; the 6-button pad; a better note picker (envelope-aware). Firmware
+  work (layout change, external flash) is out for this conference.
 
-## 18. Decisions (open, 2026-09-29)
+## 18. Decisions (closed 2026-09-29, Adrian)
 
-1. Name: "Snouty Genesis" as the working title and directory name?
-2. Shipped ROM: research a licensed homebrew in M0, or build a small
-   original Snouty ROM with SGDK (MIT) if none is clean.
-3. Sound: silent in M1-M4 with Z80 + FM as the M5 stretch (recommended:
-   the Z80 costs about a Game Gear's worth of CPU the 68000 needs), or run
-   the Z80 from M1.
-4. Speed: present at 30 Hz with two emulated frames per update and
-   `cpu_scale` as the fallback (recommended), or aim for 60 Hz.
-5. Genesis A on a Select tap (recommended), or another default mapping.
-6. Does the V2 board have a second flash or PSRAM chip on QMI CS1? The
-   simulator claims 2 MB external flash; the OS does not use any. Adrian
-   checks the schematic; if yes, 2-4 MB ROMs become a firmware project.
-7. Stay on stock firmware (recommended; ROMs up to about 900 KB), or
-   propose the smaller OS region upstream for about 1.3 MB.
-8. SRAM saves: in-RAM only (recommended), or a firmware write path later.
-9. Start order: after Snouty Gear M1 (recommended), or in parallel.
+1. Name: "Snouty Genesis", directory `carts/snouty-genesis`.
+2. Shipped ROM: M0 researches licensed homebrew and, regardless, builds a
+   small original test ROM from source in the repo (m68k GNU toolchain on
+   the VM, binary committed) so the golden test and the badge build never
+   depend on a third-party licence.
+3. Sound: **minimum viable sound from M1**: the Z80 runs, the YM2612 and
+   PSG are register models, one tone voice plays the loudest keyed-on
+   channel (section 9). Not the silent M1-M4 route.
+4. Speed: present at 30 Hz with two emulated frames per update;
+   fallbacks in the order of section 8.
+5. Genesis A on a Select tap; remap in the menu (M2).
+6. External flash: not investigated; no firmware work for this conference.
+7. Stock firmware; ROM ceiling about 840-990 KB (section 13).
+8. SRAM saves: in-RAM only.
+9. Start order: now, after Snouty Gear M1 (done 2026-09-29).
 
 ## Status
 
 - 2026-09-29: spec drafted from the ROM-streaming investigation
   (`docs/ROM_STREAMING.md`); decisions in section 18 open. Nothing built.
+- 2026-09-29 (later): Adrian closed section 18: execute now, sound from
+  M1 (Z80 + register models + one voice), stock firmware. Sections 1, 2,
+  7, 8, 9, 10, 11, 13 and 17 updated to match; M0 started on branch
+  `genesis/m0`.
