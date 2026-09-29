@@ -97,8 +97,8 @@ Files: `carts/snouty-genesis/tools/{fetch_test_roms.sh,romcheck.py}`,
 2. Sizes (`size -A` of the XIP ELF) and `Md`/`Keyframe` sizes recorded in
    the status below against SPEC.md section 13.
 3. Tag `snouty-genesis/m0`, ff-merge to main, push, pull-and-run notes.
-4. Gate: Adrian confirms an XIP cart launches on the badge (this cart's
-   uf2 with the test pattern, or Snouty Gear M4 if that runs first).
+4. Hardware check (open, not a gate since 2026-09-29): Adrian confirms
+   an XIP cart launches on the badge when one is available.
 
 ## M1 Core: contract
 
@@ -214,8 +214,9 @@ report and is stubbed locally.
    apply SPEC.md section 8's fallbacks in order if it misses.
 5. Sizes (`size -A`) recorded against SPEC.md section 13, and the ROM
    ceiling recomputed from the real flash image.
-6. Tag `snouty-genesis/m1`; pull-and-run notes. Gate: Adrian flashes and
-   reports the overlay numbers.
+6. Tag `snouty-genesis/m1`; pull-and-run notes. Hardware check (open,
+   not a gate): Adrian flashes and reports the overlay numbers when a
+   badge is available.
 
 ## Status
 
@@ -253,3 +254,10 @@ report and is stubbed locally.
   - Open for Adrian: the repository has no root LICENSE; the test ROM was
     given MIT under Adrian's name. Gate: flash `snouty-genesis-xip.uf2`
     and confirm an XIP cart launches (test pattern + overlay).
+- 2026-09-29 (M1 started, Adrian: proceed). No badge is available until
+  the day of the show, so the calibrated badge-bench is the reference for
+  every milestone and the hardware checks (XIP launch, drive streaming
+  stall rates) are open items, not gates. Integration branch `genesis/m1`
+  in `/home/exedev/snouty-badge-genesis`; tracks A-D in worktrees
+  `/home/exedev/snouty-badge-genesis-{m68k,vdp,machine,sound}` on
+  `genesis/m1-{m68k,vdp,machine,sound}`.
