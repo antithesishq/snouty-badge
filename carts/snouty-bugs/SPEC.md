@@ -27,8 +27,9 @@ ship is theirs, mid-flight, no reset.
   joystick click toggles the FPS overlay. The game never binds click.
 - Audio: `tone2`, one voice, six wave shapes, cancels whatever was playing.
   Sound design is therefore one channel of short effects, no music.
-- 5 neopixels, very bright; anything above ~10/255 is uncomfortable at
-  lanyard distance. Used for the rewind fuel level and event flashes only.
+- 5 neopixels: off. The cart never writes non-zero values (root
+  `docs/NEOPIXELS.md`; a coworker's badge shows the LEDs are unusably bright
+  even at 1%, 2026-09-29).
 - Cart RAM: upstream reserves a 384 KB process region; `snouty-badge` runs
   comfortably at 94 KB. Budget for this cart: 160 KB total, of which art
   is at most 80 KB. The asset manifest in section 12 sums to well under that.
@@ -48,14 +49,14 @@ ship is theirs, mid-flight, no reset.
 | A                 | Start a game                 | Zapper. Hold for autofire                | Take over                     |
 | B                 | Start a hardcore game        | Hold: rewind time (spends fuel)          | Take over                     |
 | Start             | Start a game                 | Pause / unpause                          | Take over                     |
-| Select            | Toggle sound + neopixels     | Toggle sound + neopixels                 | Toggle sound + neopixels      |
+| Select            | Toggle sound                 | Toggle sound                             | Toggle sound                  |
 | Click             | OS: FPS overlay              | OS: FPS overlay                          | OS: FPS overlay               |
 | Start+Select 250ms| OS: exit to menu             | OS: exit to menu                         | OS: exit to menu              |
 
 During a REWIND (section 5.1) the game ignores every input except Select and
 the OS combos; a takeover request made during a demo rewind is applied when
-the rewind ends. Select does not count as "interaction" for the demo takeover. Sound and
-neopixels are off by default so the badge is quiet on a lanyard; the setting
+the rewind ends. Select does not count as "interaction" for the demo takeover. Sound is
+off by default so the badge is quiet on a lanyard; the setting
 is not persisted (the flash save API returns 0 bytes upstream).
 
 ## 4. Screen layout
@@ -176,7 +177,7 @@ everything else and rewinds would be free.
 Look: the frame dims every other scanline and `<<` blinks in the HUD status
 slot, as in reverse playback, but there is no message bar and the fuel bar
 stays visible so the player can watch it drain. Sound: the rewind sweep of
-section 11 while held. Neopixels: the five LEDs show the fuel level.
+section 11 while held.
 
 ### 5.3 Hardcore mode
 
@@ -352,7 +353,7 @@ table, or if `y == random` from the PRNG within [16, 104].
 - Pause: "PAUSED" over the frozen frame, dimmed by drawing every other pixel
   black (cheap, looks intentional).
 
-## 11. Audio and neopixels
+## 11. Audio
 
 All effects through `tone2`; each call cancels the previous one, so priority
 order (later wins in the same tick): player death > rewind > extra life >
@@ -370,12 +371,7 @@ plays on every third bolt so it does not drown everything.
 | Extra life    | major    | 660 Hz                             | 0.30 s   |
 | Boss enters   | minor    | 82 Hz                              | 0.80 s   |
 
-Neopixels (GRB, max 10/255): the five LEDs show the fuel level (Coral, one
-LED per 36 fuel, from the left). Bug report: all red 10/255 for the 20-tick
-freeze. Reverse playback, auto or hold-B: one Coral LED chasing right to
-left, 12 ticks per step. Player death: all red 10/255 for 60 ticks.
-Boss death: chase pattern for 60 ticks. Off when
-sound is off (Select).
+Select toggles sound. The neopixels stay dark (section 2).
 
 ## 12. Asset manifest
 
@@ -435,8 +431,7 @@ History (`history.zig`), the Antithesis part:
   whatever source drove the tick (hardware, autopilot, replay).
 - `restore(tick)`: copy the newest keyframe at or before `tick` into the
   world, then feed the logged controls through `input.update` and run
-  `simulate(.silent)` until `game_tick == tick`. Silent means no `tone2`
-  and no neopixel writes; everything else (fx, score, spawns) runs, because
+  `simulate(.silent)` until `game_tick == tick`. Silent means no `tone2`; everything else (fx, score, spawns) runs, because
   it is all in the world. At most 59 catch-up ticks per restore.
 - Reverse playback displays the world at `hit_tick - 2k` for k = 1..60, one
   `restore` per frame. Simulation without drawing is a few hundred entity
@@ -446,7 +441,7 @@ History (`history.zig`), the Antithesis part:
   every 30 ticks (8 keyframes, ~40 KB).
 - Determinism rules that make this work, already in force: tick-based
   timing, one seeded PRNG, no `cart.rand()`, no wall clock during play, and
-  side effects (audio, LEDs) derived from the world rather than stored in it.
+  side effects (audio) derived from the world rather than stored in it.
   New code must keep to them; the identity test in section 14 catches slips.
 
 ```
@@ -468,7 +463,7 @@ cart/src/
   rewind.zig      the hit -> bug report -> reverse playback -> resume sequence
   autopilot.zig   section 8.1
   replay.zig      section 8.2 (only if needed)
-  audio.zig       tone2 wrappers with the priority rule; neopixels
+  audio.zig       tone2 wrappers with the priority rule
   hud.zig         HUD, title, game over, pause overlay
   rng.zig         xorshift32 seeded per game
 tools/
@@ -480,7 +475,7 @@ Update order per tick: read controls -> state machine -> history (log the
 controls, keyframe if due) -> spawner -> player -> enemies (move, fire) ->
 bullets/bolts move -> collisions -> fx ->
 draw (bg, near layer, bullets under sprites? no: enemies, ship, bolts, enemy
-bullets on top so they are always visible, fx, HUD) -> audio/neopixels ->
+bullets on top so they are always visible, fx, HUD) -> audio ->
 present.
 
 Drawing order puts enemy bullets above everything except the HUD and fx.
@@ -536,7 +531,7 @@ subagents, as with `snouty-badge`.
 - **M6 Attract mode**: title, autopilot demo, takeover, game over, pause,
   deterministic soak test. Decide autopilot vs replay here. The demo shows
   both rewinds.
-- **M7 Polish**: final art drop-in, audio, neopixels, Select toggle, title
+- **M7 Polish**: final art drop-in, audio, Select sound toggle, title
   bestiary, tuning from hardware play.
 
 Parallel tracks: art (external agent, per `ASSETS.md`) runs alongside M1 to

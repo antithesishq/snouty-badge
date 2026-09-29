@@ -44,8 +44,9 @@ pixel per frame; this cart is the same idea at 20 frames per second.
   120 KB (section 13).
 - Inputs: joystick 4-way, A, B, Start, Select. Start+Select (250 ms) and
   joystick click are OS-owned; never bound.
-- Audio: `tone2`, one buzzer voice. Neopixels: 5, every channel at or below
-  10/255.
+- Audio: `tone2`, one buzzer voice. Neopixels: off; the cart never writes
+  non-zero values (root `docs/NEOPIXELS.md`; a coworker's badge shows the
+  LEDs are unusably bright even at 1%, 2026-09-29).
 - Rendering mode `.no_copy_full_frame`, full redraw every frame, vsync via
   `set_vsync_enabled(1000.0 / target_fps)` so the frame rate is steady
   rather than jittering with scene cost.
@@ -58,7 +59,7 @@ pixel per frame; this cart is the same idea at 20 frames per second.
 | Up / Down      | Enter free camera; raise / lower  | Camera height (clamped above water)    |
 | A              | Next scene preset (section 6)     | Next scene preset                      |
 | B              | Cycle dither mode (section 5.5)   | Cycle dither mode                      |
-| Select         | Toggle sound + LEDs               | Toggle sound + LEDs                    |
+| Select         | Toggle sound                      | Toggle sound                           |
 | Start          | (nothing)                         | Return to attract orbit                |
 
 Free camera returns to attract by itself after 20 s without input. The
@@ -217,15 +218,11 @@ traced colour toward black before dithering).
   under each sphere as it bobs (one extra sine term keyed to distance
   from the sphere's shadow point on the water).
 
-## 8. Audio and neopixels
+## 8. Audio
 
 - Buzzer: a slow, sparse chiptune arpeggio (single voice, `tone2`), 8-bar
   loop, tempo synced to the camera orbit so one loop is one revolution.
   Off by default? No: on, because the badge is a demo. Select toggles.
-- Neopixels: bias lighting. Every frame the dither stage accumulates the
-  sum of the 5 vertical screen strips' colours (one add per pixel into
-  five accumulators); the five LEDs show those strip averages, scaled to
-  the 10/255 cap. When the sun glitter crosses a strip, that LED brightens.
 
 ## 9. Architecture
 
@@ -238,7 +235,7 @@ cart/src/
   water.zig       ripple height/normal, Fresnel, glitter
   shore.zig       shore texture lookup, palettes
   dither.zig      Bayer/blue-noise/palette tables (comptime), quantise,
-                  upscale, neopixel accumulation
+                  upscale
   math.zig        Vec3 (@Vector(3, f32)), sin table, fast inverse sqrt
   music.zig       tone2 sequencer
 tools/
@@ -323,7 +320,7 @@ tracks go to Opus subagents with disjoint files, as before.
   shore texture with Snouty and text, reflection palette, Fresnel tuning.
 - **M3 Presets and motion**: the four presets, attract cycling with fade,
   free camera, sphere bobbing and radiating ripples, dither modes 2 to 4.
-- **M4 Polish**: neopixel bias lighting, chiptune, debug overlay option,
+- **M4 Polish**: chiptune, debug overlay option,
   hardware tuning pass, final GIFs, README.
 
 ## 14. Future options (not in this cart's scope)

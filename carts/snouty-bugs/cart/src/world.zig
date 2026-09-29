@@ -15,7 +15,7 @@ const fx = @import("fx.zig");
 const waves = @import("waves.zig");
 const draw = @import("draw.zig");
 
-/// How `simulate()` runs a tick: `.live` emits audio and neopixel effects,
+/// How `simulate()` runs a tick: `.live` emits audio effects,
 /// `.silent` (`history.restore` catch-up) runs the same world-side
 /// simulation without them and without touching meta-state.
 pub const Mode = enum { live, silent };

@@ -32,7 +32,9 @@ explanations and this file only summarises them.
   never bind click.
 - Audio `cart.tone2(.{ .frequency, .duration, .volume, .flags = .{ .shape } })`,
   one voice, each call cancels the previous. `cart.set_global_volume`.
-- 5 neopixels (`cart.neopixels`, GRB). Keep every channel at or below 10/255.
+- 5 neopixels (`cart.neopixels`): off. This cart never writes non-zero values
+  (root `docs/NEOPIXELS.md`; a coworker's badge shows the LEDs are unusably
+  bright even at 1%, 2026-09-29).
 - Cart budget: keep the ELF `.text` + `.data` under 160 KB (see SPEC.md section 2).
 
 ## Cart API essentials
