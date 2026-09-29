@@ -272,6 +272,7 @@ per-sector path and About shows the right CRC. Not done: hardware (the gate
 above); merging `gear/m0` (the gear session's), after which the stub in
 `lib/romfs.zig` disappears in the merge. Follow-up idea: put the 13 KB of
 romfs tables into the pool arena to win the seventh slot back.
+M8 (below) replaced the pool slots with the page store in the same arena.
 
 ## M6 Color core and M7 Color cart: contract (started 2026-09-29)
 
@@ -541,6 +542,83 @@ table, replace M5's keyframe pool with the page store.
    `docs/RUNNING.md` sections 4, 8, 9, SPEC 11.1 and 19.4, CLAUDE.md, the
    root README row, the M5 and M6/M7 status blocks, this section's status.
 5. Tag `snouty-boy/m6`, fast-forward main, push.
+
+### M8 status (2026-09-29, not tagged)
+
+Merged `main` (18f07bd) into `snouty-boy-color` as planned (merge commit
+40fb541 plus follow-ups). Host tests: 132 for this cart, all pass (M5 77,
+Color 101; the rest are M5's rom/ring tests, the fragmented-image store
+replays and a layout test). The Color determinism tests on Rex Runner and
+Rebound had been skipping under `zig build test` (paths relative to the cart
+directory, the test runs from the root); they now run, from `roms/`.
+
+Sizes (fast, `size -A`; arena = `__stack_limit__ - 1 KB - __bss_end__`,
+holding the live `Gb` of 50,392 bytes, its cart RAM and the page store):
+
+| Build | .text | .data | .bss | Arena | UF2 |
+|---|---:|---:|---:|---:|---:|
+| default (`drive`, dmg-acid2 fallback embedded, RAM) | 114,872 | 116 | 18,584 | 138,792 | 269,824 |
+| `embed` rex-runner (RAM) | 106,548 | 120 | 4,484 | 161,372 | 224,768 |
+| `embed` rebound, XIP (text in flash) | 205,164 | 120 | 4,484 | 268,548 | 412,160 (206 KB of the 256 KB window) |
+
+Store after the console and cart RAM (computed with `layout`'s rules; the
+bench overlay agrees, e.g. Rebound 20 keyframes): default build from the
+drive: 2048-gb 19 keyframes / 80 KB pool, Rex Runner 18 / 74 KB, Rebound
+20 / 82 KB, a 32 KB cart RAM game 12 / 48 KB; `embed` Rex 23 / 95 KB; XIP
+Rebound 50 / 202 KB. A 128 KB ROM embedded in a RAM build links (61.6 KB
+arena) and shows the halted screen, checked in badge-bench.
+
+badge-bench, calibrated busy ms (mean / p95 / max), default build ELF with
+`--romfs out/boy-m8.img` (rebound.gbc, rex-runner.gb, 2048.gb, all
+contiguous), each game picked in the picker so it starts at the same update
+as in M7; PNGs checked (right game, overlay `kf N D`):
+
+| ROM | M7 (embedded) | M8 (drive, picker) |
+|---|---:|---:|
+| Rebound (CGB, double speed, HDMA) | 5.28 / 10.30 / 22.20 (XIP) | 5.13 / 9.90 / 21.44 (RAM) |
+| Rex Runner (CGB) | 3.50 / 6.77 / 10.26; M7 build with the M8 script 3.60 / 7.58 / 10.67 | 3.55 / 7.26 / 10.39 |
+| 2048-gb (DMG) | 3.92 / 6.02 / 9.48 | 3.93 / 5.92 / 10.12 |
+
+Presses: Rebound `badge-bench/carts/snouty-boy-color.toml` (now the RAM
+ELF plus `romfs`; `A:72-73` picks the first file as the splash ends).
+Rex Runner `--frames 900 --press DOWN:66-67,A:72-73,START:200-202,A:400-402,
+A:450-452,A:500-502,A:550-552,A:600-602,A:650-652,A:700-702` (the M7 list
+was only recorded as "START:200-202, A:400-402 ... A:700-702", so the M7
+build was re-benched with this list for a like-for-like number). 2048-gb
+`carts/snouty-boy.toml` with the picker presses `START:18-19, DOWN:22-23,
+DOWN:26-27, A:30-31` in place of `START:30-31`. The Rex and 2048 maxima are
+the frame the file is picked (map, CRC32 of the ROM, layout, reset, first
+keyframe); Rebound's are the M7 ones (boot and level load in double
+speed). No regression; the drive ROM path is as fast as the embedded one.
+
+Deviations and choices:
+
+- The live `Gb` moved into the arena too, not only the store and cart RAM:
+  it was 50 KB of zero-filled `.bss` shipped in the UF2 (373 KB with it in
+  `.bss`, 270 KB now; M5's 245 KB had a 17 KB `Gb`).
+- `kstore.Store(page_size)` takes its memory and sizes at run time
+  (`init(mem, pool_pages, max_keyframes, max_pages)`, `bytes_for`,
+  `pages_fitting`); `check()` is quadratic now (test only). The keyframe
+  count is split from the arena with the M7 rule (table + 8 typical pages
+  per keyframe), capped at `tuning.max_keyframes` = 64 (32 s; the XIP arena
+  reaches about 50, and the cap sizes the 1,920-byte input log).
+- Halted threshold: two keyframe tables and half a full keyframe of pool,
+  not a whole one (a full keyframe is every page non-zero, 81 KB with 32 KB
+  of cart RAM, which would have refused such games from the drive). If a
+  keyframe does not fit even alone, the history is emptied
+  (`ring.lose_history`) until the next one fits, instead of trapping.
+- Overlay: line 2 `fps N pool NK`, line 3 `kf N D|E`. About: `CRC xxxxxxxx
+  CGB|DMG`. Picker hints: "Color" for CGB-flagged files, "RAM>32K".
+- M5's pool determinism tests became store replays from a fully fragmented
+  image with 0, 2, 8 and 32 KB of cart RAM; M5's `rom_unit` pool check goes
+  through the store.
+- `badge-bench/carts/snouty-boy.toml`: comment corrected (a drive build
+  needs `--romfs`; picker presses for the three-file image).
+
+Open: tag `snouty-boy/m6`, fast-forward main and push (Adrian); the
+hardware checklist below. `main` has moved on since 18f07bd (Snoutenstein
+M5 only, nothing under `carts/snouty-boy`, `lib`, `build` or
+`badge-bench`), so landing this needs a merge rather than a fast-forward.
 
 ### Hardware checklist after M8 (Adrian)
 

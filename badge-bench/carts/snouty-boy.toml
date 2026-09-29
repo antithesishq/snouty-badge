@@ -1,11 +1,17 @@
-# snouty-boy: Game Boy emulator, 60 fps. Without a drive image the cart runs
-# its embedded fallback ROM (2048-gb); M5 reads a .gb from the badge drive.
+# snouty-boy: Game Boy emulator, 60 fps. The default build reads its ROM from
+# the badge drive and must be benched with a drive image (--romfs, or the
+# romfs key below): without one the bench faults reading the boot sector (a
+# bench artefact). A -Drom-source=embed build runs its embedded ROM without.
 budget_ms = 16.7
 frames = 600
 # START leaves the Snouty Boy splash, START again starts 2048, then a few moves.
+# With one ROM on the drive it starts straight after the splash. With the
+# three-file M8 image (out/boy-m8.img, PLAN.md M8: rebound, rex-runner, 2048)
+# replace START:30-31 by the picker presses START:18-19, DOWN:22-23,
+# DOWN:26-27, A:30-31 so 2048 starts at the same update.
 press = ["START:30-31", "START:120-121", "RIGHT:200-203", "DOWN:260-263",
          "LEFT:320-323", "UP:380-383", "RIGHT:440-443", "DOWN:500-503"]
-# Drive ROM run, once badge-bench has the --romfs option (Snouty Gear M0,
-# docs/ROM_DRIVE.md section 6): a FAT12 image from tools/make_romfs.py
-# holding the ROM, mapped at 0x10080000.
-# romfs = "../out/snouty-boy-romfs.img"
+# A FAT12 image from tools/make_romfs.py mapped at 0x10080000, relative to
+# the directory bench.sh runs from, e.g. from the repository root:
+#   python3 tools/make_romfs.py out/one.img carts/snouty-boy/roms/2048.gb=2048.gb
+# romfs = "out/one.img"
