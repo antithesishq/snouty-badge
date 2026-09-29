@@ -16,7 +16,10 @@ SPEC.md section 18 was decided 2026-09-29; the ROM is Waternet.
   sparse checkout of `v1/`), `tools/romcheck.py`, `roms/<game>.gg` +
   `roms/LICENSE-<game>`, `badge-bench/carts/snouty-gear.toml`,
   `CLAUDE.md`, `docs/RUNNING.md`, root README row.
-- Done when: `zig build -Dcart=snouty-gear` (RAM and `-Dcart-mode=xip`)
+- ROM source per `docs/ROM_DRIVE.md`: `-Dgg-rom-source=drive|embed|pack`
+  (only `drive` and `embed` in M0), `tools/make_romfs.py`, the shared
+  romfs parser with its host tests, badge-bench `--romfs IMAGE`.
+- Done when: `zig build -Dcart=snouty-gear` (RAM; XIP only for `pack`)
   and `zig build test` pass, the test pattern shows in a headless
   preview, every other cart's uf2 is byte-identical to before.
 
@@ -89,7 +92,8 @@ report and is stubbed locally.
 
 1. `zig build test` green; ZEX and SingleStepTests numbers recorded.
 2. The shipped ROM playable in the simulator start to finish; preview GIF.
-3. badge-bench on the RAM and XIP ELFs with `tools/scripts/m1_play.json`:
+3. badge-bench on the RAM ELF with a romfs image holding the ROM and
+   `tools/scripts/m1_play.json`:
    mean under 8 ms, worst under 12 ms, calibrated. Record the table here.
 4. Sizes (`size -A`, fast and small) recorded against SPEC.md section 13.
 5. Tag `snouty-gear/m1`; pull-and-run notes. Gate: Adrian flashes and

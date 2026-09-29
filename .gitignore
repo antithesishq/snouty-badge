@@ -9,3 +9,7 @@ __pycache__/
 *.elf
 *.wasm
 .DS_Store
+
+# Game Gear / Master System ROMs: commercial ones stay outside the repo
+*.gg
+*.sms
