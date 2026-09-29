@@ -23,6 +23,10 @@ const fuel_fill_w: u32 = fuel_w - 2;
 const fuel_fill_h: u32 = fuel_h - 2;
 /// `HARD` in hardcore, in place of the rewind icons.
 const hard_x: i32 = 128;
+/// Title card ship: the 32x24 level cell centred at y 62..85 (86 when it
+/// bobs), the thruster at player.zig's (-6, 8) offset.
+const title_ship_x: i32 = 64;
+const title_ship_y: i32 = 62;
 
 /// HUD row: score (x 0..47), the status slot (x 48..63, empty here), the
 /// fuel bar (x 68..99) and, on the right, the rewind stock as up to 5
@@ -122,18 +126,20 @@ fn stage_label(buf: *[9]u8, n: u32) []const u8 {
     return buf[0 .. prefix.len + len];
 }
 
-/// Title card over the dimmed, scrolling background: the 48x48 Snouty
-/// portrait at the top (y 12..59), the two title lines under it, then
-/// "A PLAY" (normal game) and "B HARDCORE" (Coral) blinking together where
-/// M0 had "PRESS A".
+/// Title card over the dimmed, scrolling background: "SNOUTY" / "BUGHUNT",
+/// the ship (level pose, thruster looping, bobbing 1 px) where the head icon
+/// used to be, then "A PLAY" (normal game) and "B HARDCORE" (Coral) blinking
+/// together where M0 had "PRESS A".
 pub fn draw_title(tick: u32) void {
     // The background layers start at y 8; clear the HUD row too, since
     // no_copy_full_frame leaves a stale frame there otherwise.
     cart.rect(.{ .x = 0, .y = 0, .width = cart.screen_width, .height = draw.hud_height, .fill_color = draw.anti_black });
     draw.darken_checker();
-    draw.draw_sprite(gfx.portrait, 48, 48, 0, 56, 12, .{});
-    draw.centered_text("SNOUTY", 64, draw.anti_white);
-    draw.centered_text("vs. THE BUGS", 76, draw.coral);
+    draw.centered_text("SNOUTY", 40, draw.anti_white);
+    draw.centered_text("BUGHUNT", 52, draw.coral);
+    const ship_y: i32 = title_ship_y + @as(i32, @intCast((tick / 40) % 2));
+    draw.draw_sprite(gfx.thruster, 8, 8, (tick / 3) % 4, title_ship_x - 6, ship_y + 8, .{});
+    draw.draw_sprite(gfx.ship, 32, 24, 0, title_ship_x, ship_y, .{});
     if ((tick / 30) % 2 == 0) {
         draw.centered_text("A PLAY", 92, draw.anti_white);
         draw.centered_text("B HARDCORE", 104, draw.coral);

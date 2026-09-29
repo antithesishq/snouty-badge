@@ -44,7 +44,6 @@ the anchor. At most 15 opaque colors per sheet (16 for the opaque far layer).
 | `bugs_small.png` | 32x8     | 8x8    | 4      | yes         | 0-1 gnat wing loop (4 ticks/frame), 2-3 round bullet    |
 | `fx_small.png`   | 128x16   | 16x16  | 8      | yes         | 0-4 explosion (3 ticks/frame), 5-7 spark (2 ticks/frame) |
 | `hud.png`        | 48x8     | 12x8   | 4      | yes         | 0 Snouty head (rewind stock; 12x8 since 2026-09-29), 1 bomb, 2 empty bomb, 3 heart |
-| `portrait.png`   | 48x48    | 48x48  | 1      | yes         | Snouty bust for the title card (added 2026-09-29)       |
 | `bg_far.png`     | 256x120  | n/a    | 1      | no          | opaque, tiles horizontally; low contrast                |
 | `bg_near.png`    | 256x24   | n/a    | 1      | yes         | tiles horizontally; drawn over the far layer at y 104   |
 | `iris_16.png`    | 16x16    | 16x16  | 1      | yes         | already present, from snouty-badge                      |

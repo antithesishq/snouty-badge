@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Prepare the build inputs in assets/gen/ for Snouty vs. the Bugs.
+"""Prepare the build inputs in assets/gen/ for Snouty Bughunt (Snouty vs. the Bugs).
 
 Two modes:
 
@@ -72,7 +72,6 @@ MANIFEST: dict[str, Sheet] = {
         Sheet("bugs_small.png", 32, 8, 8, 8, 4, True),
         Sheet("fx_small.png", 128, 16, 16, 16, 8, True),
         Sheet("hud.png", 48, 8, 12, 8, 4, True),
-        Sheet("portrait.png", 48, 48, 48, 48, 1, True),
         Sheet("bg_far.png", 256, 120, 256, 120, 1, False, tile_x=True),
         Sheet("bg_near.png", 256, 24, 256, 24, 1, True, tile_x=True),
         # Later milestones (ASSETS.md section 7). Accepted from a study but
@@ -566,85 +565,6 @@ def draw_hud() -> np.ndarray:
     paint(a, HUD_HEAD, 0, 0, HUD_CMAP)
     for i, f in enumerate(HUD_SMALL):
         paint(a, f, (i + 1) * sheet.cell_w + 2, 0, HUD_CMAP)
-    return a
-
-
-# --------------------------------------------------------------------------
-# portrait.png (1 cell 48x48): Snouty bust for the title card, facing right,
-# in the ship head's style at about 2.3x: round ringed ear on the back of the
-# dome, big cream eye with a forward pupil at the front of the head, thick
-# snout tube sloping down to a blunt tip with a nostril, neck, and the dark
-# shirt with a Coral Iris mark. Drawn from shapes (ellipses and capsules)
-# so it stays deterministic; the 1 px outline is added last.
-# --------------------------------------------------------------------------
-PORTRAIT_CMAP = {"o": OUTLINE, "2": PURPLE2, "3": PURPLE3, "4": PURPLE4, "c": CREAM,
-                 "m": MIDDARK, "d": DARK, "C": CORAL}
-PORTRAIT_IRIS = [".CCCCC.", "C......", "C..C..C", "C.CCC.C", "C..C..C", "......C", ".CCCCC."]
-
-
-def portrait_rows() -> list[str]:
-    n = MANIFEST["portrait.png"].cell_w
-    g = [["."] * n for _ in range(n)]
-
-    def ell(x, y, cx, cy, rx, ry):
-        return ((x + 0.5 - cx) / rx) ** 2 + ((y + 0.5 - cy) / ry) ** 2 <= 1.0
-
-    def capsule(x, y, x0, y0, x1, y1, r):
-        px, py = x + 0.5, y + 0.5
-        dx, dy = x1 - x0, y1 - y0
-        t = max(0.0, min(1.0, ((px - x0) * dx + (py - y0) * dy) / (dx * dx + dy * dy)))
-        return (px - x0 - t * dx) ** 2 + (py - y0 - t * dy) ** 2 <= r * r
-
-    def fill(pred, ch):  # keeps the 1 px border empty
-        for y in range(1, n - 1):
-            for x in range(1, n - 1):
-                if pred(x, y):
-                    g[y][x] = ch
-
-    # Head: a dome, flat at the front where the eye sits.
-    head = lambda x, y: ell(x, y, 17.5, 21.0, 11.5, 11.5) and x <= 27
-    fill(head, "3")
-    fill(lambda x, y: head(x, y) and ell(x, y, 17.5, 21.0, 10.0, 10.0) and y <= 13 and x <= 20, "4")
-    fill(lambda x, y: head(x, y) and y >= 30, "2")
-    # Ear on the back of the dome, ringed so it separates from the head.
-    fill(lambda x, y: ell(x, y, 11.5, 9.0, 5.6, 5.6), "o")
-    fill(lambda x, y: ell(x, y, 11.5, 9.0, 4.6, 4.6), "4")
-    fill(lambda x, y: ell(x, y, 12.5, 10.0, 2.4, 2.4), "2")
-    # Snout: a thick tube from under the eye, sloping down to the right.
-    sn = lambda x, y: capsule(x, y, 24.0, 24.5, 40.5, 27.5, 4.6)
-    fill(sn, "3")
-    fill(lambda x, y: sn(x, y) and not capsule(x, y, 24.0, 26.0, 40.5, 29.0, 4.6), "4")
-    fill(lambda x, y: sn(x, y) and not capsule(x, y, 24.0, 22.6, 40.5, 25.6, 4.6), "2")
-    # Eye at the front of the head, ringed, pupil forward.
-    fill(lambda x, y: ell(x, y, 24.0, 17.0, 5.6, 6.0), "o")
-    fill(lambda x, y: ell(x, y, 24.0, 17.0, 4.6, 5.0), "c")
-    for y in range(15, 20):
-        for x in range(25, 28):
-            g[y][x] = "o"
-    g[15][25] = "c"
-    g[19][25] = "c"
-    # Nostril at the tip, mouth line under the snout base.
-    g[26][42] = "o"
-    g[27][42] = "o"
-    for x in range(29, 34):
-        g[31][x] = "o"
-    # Neck and shirt with the Iris mark.
-    fill(lambda x, y: 13 <= x <= 23 and 33 <= y <= 36, "2")
-    shirt = lambda x, y: (5 <= x <= 29 and 37 <= y <= 46
-                          and not (y == 37 and (x < 8 or x > 26))
-                          and not (y == 38 and (x < 6 or x > 28)))
-    fill(shirt, "m")
-    fill(lambda x, y: shirt(x, y) and x >= 24, "d")
-    for yy, row in enumerate(PORTRAIT_IRIS):
-        for xx, ch in enumerate(row):
-            if ch != ".":
-                g[39 + yy][14 + xx] = ch
-    return outline_rows(["".join(r) for r in g])
-
-
-def draw_portrait() -> np.ndarray:
-    a = new_sheet(MANIFEST["portrait.png"])
-    paint(a, portrait_rows(), 0, 0, PORTRAIT_CMAP)
     return a
 
 
@@ -1245,9 +1165,10 @@ def draw_boss() -> np.ndarray:
 
 
 # --------------------------------------------------------------------------
-# title.png (128x40): "SNOUTY" / "vs THE BUGS" logo from a 5x7 block font,
+# title.png (128x40): "SNOUTY" / "BUGHUNT" logo from a 5x7 block font,
 # scaled 3x (line 1) and 2x (line 2) with rounded outer corners, banded
-# purple fill, cream top highlight, 1 px dark outline. "vs" in Coral.
+# purple fill, cream top highlight, 1 px dark outline. Line 2 in Coral
+# (the title was "SNOUTY vs THE BUGS" until 2026-09-29).
 # --------------------------------------------------------------------------
 TITLE_CMAP = {"o": OUTLINE, "1": PURPLE1, "2": PURPLE2, "3": PURPLE3, "4": PURPLE4,
               "c": CREAM, "C": CORAL, "r": RED, "R": DARKRED}
@@ -1313,7 +1234,7 @@ def draw_title() -> np.ndarray:
     a = new_sheet(MANIFEST["title.png"])
     W_, H_ = 128, 40
     c = np.full((H_, W_), ".", "<U1")
-    lines = [("SNOUTY", 3, 3, 0, 1), ("vs THE BUGS", 2, 2, 6, 23)]  # text, scale, gap, space, outlined top y
+    lines = [("SNOUTY", 3, 3, 0, 1), ("BUGHUNT", 2, 2, 6, 23)]  # text, scale, gap, space, outlined top y
     for text, k, gap, space, top in lines:
         m, spans = _logo_line(text, k, gap, space)
         h, w = m.shape
@@ -1321,9 +1242,8 @@ def draw_title() -> np.ndarray:
         full = np.zeros((H_, W_), bool)
         full[top + 1 : top + 1 + h, x0 : x0 + w] = m
         coral = np.zeros_like(full)
-        for sx0, sx1, ch in spans:
-            if ch in "vs" and text.startswith("vs"):
-                coral[top + 1 : top + 1 + h, x0 + sx0 : x0 + sx1] = True
+        if text == "BUGHUNT":
+            coral[:] = True
         coral &= full
         ring = _dilate4(full) & ~full
         # outline stays under a letter already drawn (lines share one row)
@@ -1354,7 +1274,6 @@ PLACEHOLDER_DRAW = {
     "bugs_small.png": draw_bugs_small,
     "fx_small.png": draw_fx_small,
     "hud.png": draw_hud,
-    "portrait.png": draw_portrait,
     "bg_far.png": draw_bg_far,
     "bg_near.png": draw_bg_near,
     "bugs.png": draw_bugs,
