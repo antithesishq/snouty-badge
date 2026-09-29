@@ -134,6 +134,35 @@ As Snouty Boy (`carts/snouty-boy/docs/RUNNING.md` section 6):
 <http://localhost:1234>. Keys: arrows/WASD d-pad, X or J = badge B =
 button 1, Z or K = badge A = button 2, Enter = Start, Backspace = Select.
 
+Controls (badge / simulator key):
+
+| Badge        | In the game                  | In the menu                      |
+|--------------|------------------------------|----------------------------------|
+| D-pad        | D-pad                        | Up/Down move, Left/Right flip a setting |
+| B (X, J)     | Button 1 (2 when swapped)    | Resume, or back from About       |
+| A (Z, K)     | Button 2 (1 when swapped)    | Choose / flip a setting          |
+| Start        | Start                        | nothing                          |
+| Select tap   | nothing (reserved)           | Resume                           |
+| Select hold 500 ms | opens the menu         | -                                |
+
+Start+Select (exit to the OS menu) and the joystick click belong to the OS.
+
+### Menu
+
+Hold Select for half a second: the game pauses under the menu (the frame
+stays visible behind it) and the sound holds its note. The band reads
+SNOUTY GEAR, the ROM's file name and "verified by deterministic replay".
+Rows: Resume; Buttons (`B=1 A=2`, or swapped `A=1 B=2`); Scale (Squeeze
+drops every ninth line, Crop shows lines 8..135; seen after resuming);
+Sound On/Off; Debug overlay On/Off (FPS, `step_frame` time and the ROM
+report line); Reset (restarts the game and resumes); About. About lists
+the version, file name, size and 16 KB bank count, the source (drive or
+embedded), the mapper slots as written (`Map 00 01 02 FC=00`), and the
+drive CRC32 plus `fragmented`, or for an embedded ROM on the badge why the
+drive was not used. B or a Select tap resumes; held buttons reach the game
+only after they are released. `tools/scripts/m2_menu.json` walks it in the
+headless preview (`--dump-exports debug_state,debug_settings,debug_menu_opens`).
+
 ## 6. A ROM on the badge drive
 
 The badge's USB drive (`SYCLBADGE`, the OS romfs region) holds carts and

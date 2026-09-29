@@ -5,7 +5,7 @@
 //!   position: 1 on the left, 2 on the right), Start to Start.
 //! - The Game Gear has no Select. A Select tap is reserved and does nothing.
 //! - Select held for `hold_frames` (30 frames, 500 ms): `GameInput.open_menu`
-//!   is set once. The menu is M2; until then main.zig ignores it.
+//!   is set once and main.zig opens the emulator menu (frontend/menu.zig).
 //! - Start pressed while Select is held is the OS exit chord: the hold is
 //!   cancelled. Start itself still goes to the game.
 //!
@@ -18,7 +18,7 @@ const Pad = core.Pad;
 /// Select held this long (frames at 60 Hz) opens the emulator menu.
 pub const hold_frames = 30;
 
-/// Menu setting (SPEC.md section 5): false = badge B is button 1 and A is
+/// Menu setting ("Buttons" row, SPEC.md section 5): false = badge B is button 1 and A is
 /// button 2 (physical position); true = swapped.
 pub var swap_ab: bool = false;
 
@@ -84,7 +84,7 @@ pub const Edge = struct {
 pub const GameInput = struct {
     /// Pad byte for `Gg.step_frame`.
     pad: u8,
-    /// Select reached `hold_frames` this frame (the M2 menu opens here).
+    /// Select reached `hold_frames` this frame (the menu opens here).
     open_menu: bool,
 };
 
