@@ -27,6 +27,7 @@ pub fn add(b: *Build, sycl_badge_dep: *Build.Dependency, opts: common.Options) v
         rom_path = fallback_rom;
     }
     const cart_optimize = opts.cart_optimize;
+    font_path = sycl_badge_dep.path("src/font.zig");
 
     os_cart.add(b, sycl_badge_dep, .{
         .mode = opts.cart_mode,
@@ -58,6 +59,9 @@ pub fn add(b: *Build, sycl_badge_dep: *Build.Dependency, opts: common.Options) v
     opts.test_step.dependOn(&run_tests.step);
 }
 
+/// `sycl-badge/src/font.zig`, set by `add` for `build_cart_modules`.
+var font_path: ?Build.LazyPath = null;
+
 fn exists(b: *Build, rel: []const u8) bool {
     b.root.access(b.graph.io, rel, .{}) catch return false;
     return true;
@@ -86,5 +90,8 @@ fn build_cart_modules(b: *Build, cart: *Build.Module, cart_api: *Build.Module, s
         \\
     );
     cart.addImport("rom", b.createModule(.{ .root_source_file = rom_zig }));
+    // The OS 8x8 font, for the debug overlay's own blitter (frontend/debug.zig).
+    // A copy: the file itself already belongs to the SDK's `board` module.
+    cart.addImport("font", b.createModule(.{ .root_source_file = wf.addCopyFile(font_path.?, "font.zig") }));
     step.dependOn(&wf.step);
 }

@@ -91,7 +91,44 @@ pub fn draw() void {
     i += put(buf[i..], " ");
     i += put_num(buf[i..], pool_kb);
     i += put(buf[i..], "K");
-    cart.text(.{ .str = buf[0..i], .x = 0, .y = 0, .text_color = .rgb(0xFFFFFF), .background_color = .rgb(if (alarm) 0xFF0000 else 0x000000) });
+    draw_text(buf[0..i], white, if (alarm) red else black);
+}
+
+const white: cart.Pixel = .from_color(.rgb(0xFFFFFF));
+const black: cart.Pixel = .from_color(.rgb(0x000000));
+const red: cart.Pixel = .from_color(.rgb(0xFF0000));
+/// The OS 8x8 font (`sycl-badge/src/font.zig`): `[char - ' '][row]`, bit
+/// 7 - column, 0 = foreground. The same glyphs `cart.text` draws.
+/// Byte-identical to the table `cart.text` uses, so the linker keeps one copy.
+const font = @import("font").font;
+
+/// `cart.text` at (0, 0), scale 1, opaque background, without its generic
+/// per-pixel clipping and scaling: the overlay is drawn every frame, and
+/// `cart.text` cost about 0.65 ms of it (badge-bench). The framebuffer is
+/// column-major, so each glyph column is 8 consecutive halfword stores.
+fn draw_text(str: []const u8, fg: cart.Pixel, bg: cart.Pixel) void {
+    var cx: usize = 0;
+    var cy: usize = 0;
+    for (str) |ch| {
+        if (ch == '\n') {
+            cx = 0;
+            cy += 8;
+            continue;
+        }
+        if (cx + 8 > cart.screen_width or cy + 8 > cart.screen_height) {
+            cx += 8;
+            continue;
+        }
+        const glyph = &font[if (ch >= ' ') ch - ' ' else 0];
+        for (0..8) |col| {
+            const column = cart.framebuffer[cx + col][cy..][0..8];
+            const bit: u3 = @intCast(7 - col);
+            for (column, glyph) |*px, bits| {
+                px.* = if ((bits >> bit) & 1 == 0) fg else bg;
+            }
+        }
+        cx += 8;
+    }
 }
 
 fn put(dst: []u8, s: []const u8) usize {
