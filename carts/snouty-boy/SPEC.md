@@ -542,3 +542,8 @@ determinism is untouched), `page_size`, pool size, keyframe interval.
   (keyframes sized to the ROM's cart RAM, 18.9 KB with 2048-gb) plus input
   log, 3.0 to 3.5 s of history, uncompressed (section 10.4 not needed).
   Determinism test green. Fast build with 2048-gb: .text 80 KB, .bss 159 KB.
+- 2026-09-29: Game Boy Color (section 19) built on branch
+  `snouty-boy-color`: CGB CPU/MMU/KEY1/GDMA/HDMA, CGB renderer (cgb-acid2
+  exact), 512 B page store for keyframes, colour LUT frontend. Ships
+  Rebound (XIP) and Rex Runner (RAM). Calibrated busy ms mean / p95:
+  Rebound 5.3 / 10.3, Rex Runner 3.5 / 6.8, 2048-gb 3.9 / 6.0.

@@ -249,8 +249,27 @@ Recommendation: Rebound, because it is the only one with music and the
 only one exercising double speed and HDMA, but 128 KB leaves the RAM cart
 about 20 KB of page pool, so it wants the XIP cart. Rex Runner is the RAM
 cart fallback. Build and bench both in M7; Adrian picks the default.
+Decided 2026-09-29: ship both (`roms/rebound.gbc`, `roms/rex-runner.gb`,
+LICENSE files with source commit and sha256), `-Drom` picks.
 Rejected: Tobu Tobu Girl DX (256 KB), uCity/Geometrix (GPL-3), Shock Lobster
 (DMG only), Petris (NC), Tuff (assets reserved).
+
+### M6/M7 status (2026-09-29)
+
+- Tracks A, B, C merged (715e20f); integration found one CGB bug: Rebound
+  polls LY with the VBlank interrupt enabled, and LY only advanced after
+  whole instructions, so it never left its pre-level wait. Fixed in
+  91141d4 (CGB LY/STAT reads catch the PPU up to the operand M-cycle).
+- `zig build test`: 101 pass, 7 skipped (ROM-path tests). Blargg both
+  models, dmg-acid2 and cgb-acid2 exact, determinism through the page store.
+- Rebound (XIP) and Rex Runner (RAM) play in colour in the simulator;
+  `docs/m6_color_rebound.gif`.
+- Not tagged yet: Adrian decided the M5 ROM loader (branch
+  `boy/rom-loader`) lands on main first; this branch is then rebased onto
+  it (keep M5's bank-pointer ROM table, replace its keyframe pool with the
+  page store) and tagged `snouty-boy/m6`.
+- Hardware (Adrian): overlay ms/FPS for both ROMs, XIP launch of the
+  Rebound UF2, colours (LCD vs Raw), scrub depth.
 
 ### M7 performance pass (2026-09-29)
 
