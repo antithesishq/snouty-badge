@@ -453,3 +453,44 @@ splash, 1 running, 2 menu.
   `main.zig` state machine, `input.swap_ab` and compiling stubs of
   `menu.zig`, `splash.zig`, `audio.zig` (contract above); tracks A (menu)
   and B (splash + audio) in worktrees `-menu` and `-audio`.
+- 2026-09-29: M2 done on `gear/m2`. Track B (splash, audio, `m2_play`,
+  bench toml; `e13812d`) and Track A (menu, About, romsrc accessors,
+  `m2_menu`, RUNNING.md; `b1c8e84`) merged with no conflicts and no
+  changes to main.zig beyond the prep commit.
+  - Splash: the Snouty mark at 3x and "SNOUTY GEAR" slide in over 48
+    frames on navy, chime on frames 49/53, game at frame 72; any button
+    skips. Audio: `Psg.voice()` -> square `tone2`, 20..16000 Hz kept,
+    attenuation 0..14 -> volume 1.0..0.2, one call per change; in the
+    preview `debug_tone_hz` equalled `debug_psg_voice & 0xFFFFFF` in all
+    62 audible samples of 152 and was 0 through the splash. Waternet only
+    uses attenuation 0, so the volume ramp is unexercised by the shipped
+    ROM.
+  - Menu: frozen frame (frontbuffer copy + `.copy_forward`), rows Resume /
+    Buttons / Scale / Sound / Debug overlay / Reset / About, band with the
+    ROM file name; the panel's bottom line is kept free for M3's scrub
+    line. `m2_menu.json` preview: 20 `--at` checks pass (states, each
+    setting bit flipping and back, `debug_frame_count` 196 = 129 + 67
+    game frames around the pause, so the core does not step while paused).
+    `docs/m2_menu.gif` (every 3rd frame of that run).
+  - badge-bench (calibrated, RAM ELF, Waternet from the romfs image,
+    `m2_play`: splash + the M1 game sequence + a menu pass, 760 frames):
+    mean 3.20 ms, p95 6.51, worst 6.86 (frame 594, 41% of budget), 0
+    over; game frames 72-671 mean 3.67 / worst 6.86 as in M1; splash
+    frames 0.32 ms; menu frames 2.03 mean, 2.28 on the open frame (the
+    40 KB copy); start-up 4.61 ms (M1 2.68: `text.init`'s font capture
+    plus the first `cart.text`). 65 `CART_TONE` messages on 65 frames,
+    first on frame 49 (1046 Hz, 60 ms). Neopixels never written. Hot:
+    `step_frame` 36%, `cross_lines` 28%, `video.on_line` 14%,
+    `find_sprites` 13%, `api.text` 2.4% (the menu's `cart.text`).
+  - Sizes (fast, drive source, incl. the 64 KB embedded ROM): `.text`
+    164,988 (+10.7 KB over M1: menu 6.8 KB, splash + audio 3.5 KB),
+    `.data` 368, `.bss` 40,684; uf2 414,208 B. RAM in use 206 KB + 32 KB
+    stack of 307 KB; ~69 KB left for the M3 keyframe ring.
+  - Accepted deviations: About puts the drive fallback reason on its own
+    line under "Drive not used:" (too wide for one row); the menu's
+    Left/Right flip a setting in either direction (every setting is
+    binary); the report line is drawn only while the overlay is on.
+  Next: hardware gate for M0-M2 in one flash (drive ROM, overlay
+  numbers, font capture, splash, buzzer), then M3 scrub (delta keyframe
+  ring per SPEC.md 10, input log, Left/Right scrubbing on the free menu
+  line, determinism test).

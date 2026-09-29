@@ -4,10 +4,20 @@ Build the cart, run the host tests, preview it headless or in the web
 simulator, put a ROM on the badge drive and flash the cart. Commands run
 from the repository root unless noted; outputs land in the root `zig-out/`.
 
-Status: M1. The core emulates the Game Gear: Z80, VDP (mode 4, scanline
+Status: M2. The core emulates the Game Gear: Z80, VDP (mode 4, scanline
 renderer, interrupts), Sega mapper with cart RAM, Game Gear port decode and
-the PSG register model. There is no splash, menu, sound or rewind yet (M2,
-M3); a Select hold is counted and does nothing.
+the PSG register model. The frontend has the boot splash, one-voice sound
+and the emulator menu (section 5). Time scrubbing is M3.
+
+Boot splash: the Snouty mark and "SNOUTY GEAR" slide down onto a dark blue
+screen for 0.8 s, a two-note chime (1046 Hz, then 2093 Hz) plays as they
+land, and the game starts at 1.2 s (72 frames). Any button skips it.
+
+Sound: the buzzer plays one voice, the loudest Game Gear tone channel as a
+square wave (noise and inaudible periods dropped), louder or softer with the
+channel's attenuation. It holds while the menu is open; Sound: Off in the
+menu stops it. The simulator plays it through the browser, the badge
+through its speaker.
 
 ## 1. Prerequisites
 
@@ -96,23 +106,30 @@ Test names carry a prefix per area, so `-Dtest-filter=` picks one:
 
 ```sh
 node tools/preview.mjs zig-out/bin/snouty-gear.wasm --frames 600 --every 30 \
-  --script carts/snouty-gear/tools/scripts/m1_play.json --out carts/snouty-gear/out/ \
+  --script carts/snouty-gear/tools/scripts/m2_play.json --out carts/snouty-gear/out/ \
   --dump-exports debug_frame_count,debug_lines,debug_pc,debug_iff1,debug_mapper,debug_vdp_regs01,debug_irq_frame \
   --expect "debug_lines == 144"
 ```
 
-`tools/scripts/m1_play.json` plays Waternet: Start through the title and
-menu, then cursor moves on the d-pad and button 1 (badge B) to turn tiles.
-The same sequence is the `press` list in `badge-bench/carts/snouty-gear.toml`.
+`tools/scripts/m2_play.json` plays Waternet: the 72-frame splash, Start
+through the title and menu, cursor moves on the d-pad and button 1 (badge B)
+to turn tiles, then a Select hold opens the emulator menu, two Down presses
+and B resume (760 frames). The same sequence is the `press` list in
+`badge-bench/carts/snouty-gear.toml`. `m1_play.json` is the same game
+sequence without the splash (the golden test uses it on the core);
+`m2_menu.json` walks every menu row (section 5).
 
 `out/frame_XXXX.png` are 160x128 frames. The top-left overlay shows the
 `step_frame` time and FPS (always 1000 us / 500 fps in wasm, where the
-clock is a stub); the bottom line is the ROM report. Exports:
+clock is a stub); the bottom line is the ROM report (both only while the
+debug overlay is on). Exports:
 `debug_frame_count`, `debug_step_us`, `debug_lines` (144), `debug_state`
-(1 running), `debug_pad` (`core.Pad` bits: up 1, down 2, left 4, right 8,
+(0 splash, 1 running, 2 menu), `debug_pad` (`core.Pad` bits: up 1, down 2, left 4, right 8,
 button 1 16, button 2 32, Start 64), `debug_rom_source` (0 embedded,
 1 drive), `debug_rom_size`, `debug_rom_banks`, `debug_rom_crc` (drive only),
-`debug_cram_rebuilds`, `debug_menu_requests` (Select holds; the menu is M2).
+`debug_cram_rebuilds`, `debug_menu_opens`, `debug_tone_hz` (what the buzzer
+was last told to play, 0 when stopped) and `debug_settings` (bit 0 sound on,
+1 crop, 2 A/B swapped, 3 overlay on).
 
 Boot diagnostics, for a game that shows nothing: `debug_pc`, `debug_sp`,
 `debug_iff1` (1 = interrupts enabled), `debug_halted`, `debug_mapper`
@@ -121,8 +138,8 @@ Boot diagnostics, for a game that shows nothing: `debug_pc`, `debug_sp`,
 display on, bit 5 frame IRQ enable), `debug_vdp_status` (flags without the
 read side effect), `debug_vdp_line`, `debug_irq_frame` / `debug_irq_line`
 (interrupts the CPU accepted since reset, by source), `debug_frame_t`
-(T-states the last frame ran, about 59,736) and `debug_psg_voice` (what M2's
-buzzer would play: Hz | attenuation << 24 | channel << 28, 0 silent). A game
+(T-states the last frame ran, about 59,736) and `debug_psg_voice` (the PSG
+voice the buzzer plays: Hz | attenuation << 24 | channel << 28, 0 silent). A game
 stuck with `debug_iff1` 0 and no IRQs usually waits on something the VDP or
 a port does not deliver; a PC in RAM (`C000`+) with a wild SP is a crash.
 
