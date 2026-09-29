@@ -33,6 +33,7 @@
 //! A byte write to a VDP port writes the byte to both halves of the word.
 const md_mod = @import("md.zig");
 const rom = @import("rom.zig");
+const m68k = @import("m68k.zig");
 const tunables = @import("tunables.zig");
 const z80bus = @import("z80bus.zig");
 const Md = md_mod.Md;
@@ -46,7 +47,21 @@ pub const version: u8 = 0xA0;
 pub const Bus = struct {
     md: *Md,
 
-    pub inline fn read8(self: *Bus, addr: u24) u8 {
+    /// Direct fetch window for the 68000 (`m68k.CodeWindow`): the whole
+    /// ROM when it is contiguous, or the 64 KB work RAM (kept in bus byte
+    /// order). Anything else, including a fragmented drive ROM, fetches
+    /// through `read16`. Worth about 9 host cycles per instruction.
+    pub fn code_window(self: *Bus, addr: u24) ?m68k.CodeWindow {
+        const md = self.md;
+        if (addr < 0x400000) {
+            if (md.rom.base) |p| return .{ .ptr = p, .base = 0, .len = md.rom.size };
+            return null;
+        }
+        if (addr >= 0xE00000) return .{ .ptr = &md.work_ram, .base = addr & 0xFF0000, .len = 0x10000 };
+        return null;
+    }
+
+    pub fn read8(self: *Bus, addr: u24) u8 {
         const md = self.md;
         if (addr < 0x400000) {
             if (addr >= md.sram_active.lo and addr <= md.sram_active.hi) return md.sram[addr - md.sram_active.lo];
@@ -56,7 +71,7 @@ pub const Bus = struct {
         return read8_io(md, addr);
     }
 
-    pub inline fn read16(self: *Bus, addr: u24) u16 {
+    pub fn read16(self: *Bus, addr: u24) u16 {
         const md = self.md;
         if (addr < 0x400000) {
             if (addr >= md.sram_active.lo and addr <= md.sram_active.hi) return sram_read16(md, addr);
@@ -69,7 +84,7 @@ pub const Bus = struct {
         return read16_io(md, addr);
     }
 
-    pub inline fn write8(self: *Bus, addr: u24, v: u8) void {
+    pub fn write8(self: *Bus, addr: u24, v: u8) void {
         const md = self.md;
         if (addr >= 0xE00000) {
             md.work_ram[addr & 0xFFFF] = v;
@@ -78,7 +93,7 @@ pub const Bus = struct {
         write8_io(md, addr, v);
     }
 
-    pub inline fn write16(self: *Bus, addr: u24, v: u16) void {
+    pub fn write16(self: *Bus, addr: u24, v: u16) void {
         const md = self.md;
         if (addr >= 0xE00000) {
             const i: u16 = @truncate(addr & 0xFFFE);

@@ -205,7 +205,7 @@ fn debug_sp() callconv(.c) u32 {
 }
 /// 68000 status register.
 fn debug_sr() callconv(.c) u32 {
-    return md.cpu.sr;
+    return md.cpu.get_sr();
 }
 /// VDP line (0..261) the frame ended on.
 fn debug_vdp_line() callconv(.c) u32 {
