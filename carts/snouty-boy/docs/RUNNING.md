@@ -46,6 +46,13 @@ This downloads Blargg's `cpu_instrs` (whole and the 11 individual tests),
 `python3 tools/romcheck.py some.gb` prints a ROM's header (title, MBC, sizes)
 and whether Snouty Boy can ship it.
 
+Game Boy Color ROMs (SPEC.md 19): a ROM whose header byte 0x143 has bit 7
+set (`.gbc` files, and CGB-enhanced `.gb` files such as Rex Runner) boots
+in CGB mode; everything else runs as a DMG. The M7 candidates
+`tests/roms/rex-runner.gb` (32 KB, MIT) and `tests/roms/rebound.gbc`
+(128 KB, MIT) are copied into `tests/roms/` by hand; the tests that use
+them are skipped when they are missing.
+
 ## 4. Build
 
 From the repository root:
@@ -67,13 +74,37 @@ Options:
   relative to the repository root, e.g. `-Drom=carts/snouty-boy/roms/2048.gb`;
   a path relative to this cart such as `-Drom=roms/2048.gb` also works. The
   shipped game goes in `roms/` with its license next to it.
+  A `.gbc` path works the same way, e.g.
+  `-Drom=carts/snouty-boy/tests/roms/rebound.gbc`.
 - `-Dcart-optimize=fast|small|safe|debug`: optimize mode for the cart
   (default `fast`, SPEC.md section 8).
+- `-Dcart-mode=ram|xip|both` (shared with every cart): `ram` (default) is
+  the usual RAM cart, `snouty-boy.uf2`; `xip` builds `snouty-boy-xip.uf2`,
+  which runs code and ROM from the 256 KB cart flash window and keeps all
+  of the cart RAM for state (unproven on hardware so far); `both` builds
+  both. The rewind budget knows which one it is building (see "Memory"
+  below). A ROM too big for the RAM cart stops the RAM build with a message
+  that says to use `-Dcart-mode=xip`; rebound.gbc (128 KB) is one.
+
+Memory. `cart/src/frontend/rewind.zig` sizes the page store at compile
+time from what is left of the 0x4AF00-byte cart RAM window after the 32 KB
+stack: RAM cart `268 KB - 64 KB code estimate - ROM - console (50 KB) -
+cart RAM - 6 KB statics`; XIP cart the same without code and ROM. The
+remainder is split into 512-byte pool pages and keyframe tables (a
+keyframe's table is 2 bytes per page of state). It refuses to build with
+less than one full keyframe of pool (every state page non-zero).
+
+| ROM (mode) | RAM cart: pool, max keyframes | XIP cart: pool, max keyframes |
+|---|---|---|
+| 2048-gb (DMG, 32 KB, 2 KB RAM) | 215 pages (107 KB), 26 | 396 pages (198 KB), 49 |
+| rex-runner (CGB, 32 KB, 8 KB RAM) | 203 pages (101 KB), 25 | 383 pages (191 KB), 47 |
+| rebound (CGB, 128 KB) | does not fit, use XIP | 400 pages (200 KB), 50 |
 
 A clean build of this cart takes a couple of minutes (all carts: several);
 incremental rebuilds take seconds.
 `size ../../zig-out/firmware/snouty-boy.elf` shows `.text` (code plus the embedded
-ROM), `.data` and `.bss` against the cart RAM budget in SPEC.md section 13.
+ROM), `.data` and `.bss` against the cart RAM budget in SPEC.md sections 13
+and 19.4 (`snouty-boy-xip.elf` for the XIP cart, whose `.text` is in flash).
 
 ## 5. Host tests
 
@@ -87,8 +118,9 @@ zig build test -Dtest-filter=acid     # only tests whose name contains "acid"
 The core (`core/`) is badge-agnostic and runs on the host: Blargg's CPU tests
 (pass when the serial output says "Passed"), the dmg-acid2 image compared
 byte for byte with `tests/acid2_reference.bin`, PPU and APU unit tests, the
-scrubber ring logic (`tests/ring_unit.zig`) and the determinism check. They
-need `tools/fetch_test_roms.sh` first.
+scrubber ring logic (`tests/ring_unit.zig`), the keyframe page store
+(`tests/kstore_unit.zig`) and the determinism check. They need
+`tools/fetch_test_roms.sh` first.
 
 `tests/determinism.zig` (SPEC.md 10.2, `-Dtest-filter=determinism`) reads
 `roms/2048.gb` at run time (skipped if it is missing), plays 600 frames with
@@ -98,11 +130,22 @@ and requires the next keyframe field for field. Keyframes are compared
 with `std.meta.eql` per field, not as raw bytes: the struct has auto layout
 and its padding is undefined.
 
+The same file runs the check through the page store (the cart's real
+keyframe path) on 2048-gb and, in CGB mode, on `tests/roms/rex-runner.gb`
+and `tests/roms/rebound.gbc` when present, and prints one line per ROM with
+the keyframe sizes the memory budget rests on. To see them, run the test
+binary by hand from this directory after `zig build test`:
+
+```sh
+$(ls -t ../../.zig-cache/o/*/test | head -1) 2>&1 | grep kstore
+# kstore roms/2048.gb (dmg, ...): first keyframe 2 pages (1 KB), later min/avg/max 3/8/14 pages, ...
+```
+
 The same check can run inside the cart: set `const self_check = true;` in
 `cart/src/frontend/rewind.zig` and rebuild. Every new keyframe is then
 re-derived from the previous one in a spare console; a mismatch paints the
 debug overlay red (and `debug_alarm` reads 1). It costs a second console
-in RAM (the ring shrinks to 5 keyframes) and doubles the CPU per frame, so
+and its cart RAM (about 50 KB less pool) and doubles the CPU per frame, so
 it is off by default. `-Dtest-optimize=` sets their optimize mode
 (default `safe`).
 
@@ -157,13 +200,23 @@ In the menu (drawn over the frozen game frame):
 | Key            | Action                                                     |
 |----------------|------------------------------------------------------------|
 | Up / Down      | move                                                       |
-| A              | choose: Resume, cycle Palette / Scale / Sound / Debug overlay, Reset (restart the ROM), About |
-| Left / Right   | on Palette / Scale / Sound / Debug overlay: cycle it. On Resume, Reset, About: time scrubber, back / forward 0.5 s (repeats 4 times a second while held) |
+| A              | choose: Resume, cycle Palette (Color in CGB mode) / Scale / Sound / Debug overlay, Reset (restart the ROM), About |
+| Left / Right   | on Palette / Color / Scale / Sound / Debug overlay: cycle it. On Resume, Reset, About: time scrubber, back / forward 0.5 s (repeats 4 times a second while held) |
 | B, Select tap  | resume (B also leaves About)                               |
 
-Time scrubber (SPEC.md section 10). The cart keeps a keyframe of the whole
-console every 30 frames plus the pad byte of every frame. With 2048-gb the
-ring holds 7 keyframes, 3.0 to 3.5 s of history. The menu opens on Resume,
+Game Boy Color mode. The title band and splash read "SNOUTY BOY COLOR"
+and the menu is black on white. The Palette row becomes `Color: LCD` /
+`Color: Raw`: LCD (default) is a GBC screen approximation (colours mixed
+and slightly compressed, as on the real, paler LCD), Raw shows palette RAM
+as exact RGB555. The frozen frame keeps its colours until the next frame is
+drawn (a scrub step or resuming). With the LCD off a CGB shows white.
+
+Time scrubber (SPEC.md sections 10 and 19.3). The cart keeps a keyframe of
+the whole console every 30 frames plus the pad byte of every frame.
+Keyframes live in a page store: the state is cut into 512-byte pages, a page
+unchanged since the previous keyframe is shared and an all-zero page costs
+nothing, so a 2048-gb keyframe costs about 4 KB and the RAM cart holds up to
+26 of them (12.5 s); when the pool fills, the oldest keyframes go first. The menu opens on Resume,
 so Left right away steps back: the menu folds into a bar at the bottom
 (`Scrub: -1.5 / 3.5s`, how far back you are / how much history there is)
 over the restored frame. Left/Right keep stepping, Right past the newest
@@ -189,7 +242,7 @@ debug overlay in the top-left corner:
 
 ```
 avg NNNN max NNNNus     step_frame time, average and maximum over 60 frames
-fps NN                  frames per second over 60 frames
+fps NN kf NN NNK        frames per second over 60 frames, keyframes held, page-store KB in use
 ```
 
 In wasm the upstream `micros_since_boot` is a stub that adds 1000 on every
@@ -228,13 +281,15 @@ Useful options (the header of the shared `../../tools/preview.mjs` has the full 
   - `debug_lines`: lines the core emitted in the last frame (144 with the
     LCD on, 0 with it off)
   - `debug_step_us`: the last `step_frame` time (always 1000 in wasm)
-  - `debug_palette`: the current palette index
+  - `debug_palette`: the current palette index (DMG mode)
   - `debug_state`: frontend state, 0 splash, 1 running, 2 menu
   - `debug_pad`: the pad byte the game was last stepped with
     (Select = 64, Start = 128)
   - `debug_scrub_depth`: frames the scrubber is parked behind live (0 live)
   - `debug_history`: frames of history in the keyframe ring
   - `debug_keyframes`: valid keyframes in the ring
+  - `debug_pool_bytes`: page-store pool bytes in use
+  - `debug_cgb`: 1 when the ROM runs in CGB mode
   - `debug_leds`, `debug_led_max`: neopixels lit, largest channel value
   - `debug_alarm`: 1 if the rewind self-check found a mismatch
 - `--expect "debug_lines == 144"` (repeatable): checked at the end; a
@@ -258,7 +313,7 @@ menu, step back twice, resume):
 node ../../tools/preview.mjs ../../zig-out/bin/snouty-boy.wasm --frames 380 --every 10 --out out/ \
   --press START:150-152,LEFT:170-175,UP:190-195,SELECT:260-300,LEFT:310-310,LEFT:320-320,B:340-341 \
   --at "310 debug_scrub_depth == 7" --at "320 debug_frame_count == 180" \
-  --at "330 debug_leds == 5" --at "379 debug_frame_count > 200"
+  --at "330 debug_leds == 2" --at "379 debug_frame_count > 200"
 ```
 
 Exit codes: 1 the cart cannot be loaded, 2 usage error, 3 the cart trapped or
