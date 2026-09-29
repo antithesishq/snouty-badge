@@ -30,15 +30,22 @@ const skip: u8 = 0xFF;
 /// Row in the badge framebuffer for each Game Gear line, or `skip`. Built at
 /// runtime by `set_scale` (144 bytes; no comptime tables, see CLAUDE.md).
 var line_map: [gg_h]u8 = @splat(skip);
+/// `line_map[y] == skip` as the core's `LineSink.skip`: those lines are not
+/// rendered at all. Each frame emits `gg_h - skipped` lines.
+var skip_line: [gg_h]bool = @splat(true);
+var skipped: u32 = 0;
 
 fn build_line_map(s: Scale) void {
-    for (&line_map, 0..) |*row, y| {
+    skipped = 0;
+    for (&line_map, &skip_line, 0..) |*row, *sk, y| {
         row.* = switch (s) {
             // Drop every ninth line (y % 9 == 8): 144 - 16 = 128 rows.
             .squeeze => if (y % 9 == 8) skip else @intCast(y - y / 9),
             // Lines 8..135 to rows 0..127.
             .crop => if (y < 8 or y >= 8 + fb_h) skip else @intCast(y - 8),
         };
+        sk.* = row.* == skip;
+        if (sk.*) skipped += 1;
     }
 }
 
@@ -76,7 +83,8 @@ inline fn cram_changed(cram: *const [32]u16) bool {
     return diff != 0;
 }
 
-/// Lines the core emitted since the last `finish_frame` (drawn or skipped).
+/// Lines the core emitted since the last `finish_frame` (drawn or skipped
+/// by the line map; the core does not emit `skip_line` lines).
 var lines_this_frame: u32 = 0;
 /// Lines emitted during the last completed frame (144).
 pub var last_frame_lines: u32 = 0;
@@ -91,7 +99,7 @@ pub fn set_scale(s: Scale) void {
 }
 
 pub fn sink() core.LineSink {
-    return .{ .ctx = @ptrFromInt(@alignOf(usize)), .func = &on_line };
+    return .{ .ctx = @ptrFromInt(@alignOf(usize)), .func = &on_line, .skip = &skip_line };
 }
 
 fn on_line(_: *anyopaque, y: u8, line: *const [gg_w]u5, cram: *const [32]u16) void {
@@ -131,6 +139,7 @@ pub fn blank(c: u16) void {
 /// the back buffer still holds an old frame, so blank it.
 pub fn finish_frame() void {
     if (lines_this_frame == 0) blank(0);
-    last_frame_lines = lines_this_frame;
+    // Count the lines the core skipped for us too: 144 a frame, as before.
+    last_frame_lines = if (lines_this_frame == 0) 0 else lines_this_frame + skipped;
     lines_this_frame = 0;
 }

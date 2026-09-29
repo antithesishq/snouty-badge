@@ -33,6 +33,10 @@ pub const frame_irq_line = 193;
 pub const LineSink = struct {
     ctx: *anyopaque,
     func: *const fn (ctx: *anyopaque, y: u8, pixels: *const [screen_w]u5, cram: *const [32]u16) void,
+    /// Lines the frontend does not show (the squeeze drops every ninth):
+    /// `skip[y]` set = line y is not rendered or emitted, only its sprites
+    /// are evaluated for the overflow and collision flags. Null: emit all.
+    skip: ?*const [screen_h]bool = null,
 
     pub fn emit(self: LineSink, y: u8, pixels: *const [screen_w]u5, cram: *const [32]u16) void {
         self.func(self.ctx, y, pixels, cram);
@@ -116,7 +120,7 @@ pub const Vdp = struct {
         return v.cross_lines(lt, sink);
     }
 
-    fn cross_lines(v: *Vdp, t_in_line: u32, sink: ?LineSink) bool {
+    noinline fn cross_lines(v: *Vdp, t_in_line: u32, sink: ?LineSink) bool {
         var lt = t_in_line;
         var done = false;
         while (lt >= tstates_per_line) {
@@ -140,9 +144,14 @@ pub const Vdp = struct {
         if (line < active_lines) {
             const l: u8 = @intCast(line);
             if (line >= window_y0 and line < window_y0 + screen_h) {
+                const y: u8 = @intCast(line - window_y0);
                 if (sink) |s| {
-                    var buf: LineBuf align(4) = undefined;
-                    s.emit(@intCast(line - window_y0), v.render_buf(l, window_x0, &buf), &v.cram);
+                    if (s.skip != null and s.skip.?[y]) {
+                        v.sprite_flags(l);
+                    } else {
+                        var buf: LineBuf align(4) = undefined;
+                        s.emit(y, v.render_buf(l, window_x0, &buf), &v.cram);
+                    }
                 } else v.sprite_flags(l);
             } else v.sprite_flags(l);
         }
