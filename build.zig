@@ -15,6 +15,7 @@ const carts = [_]Cart{
     .{ .dir = "snouty-boy", .binary = "snouty-boy", .add = &@import("carts/snouty-boy/build.zig").add },
     .{ .dir = "snouty-maze", .binary = "snouty-maze", .add = &@import("carts/snouty-maze/build.zig").add },
     .{ .dir = "snouty-gear", .binary = "snouty-gear", .add = &@import("carts/snouty-gear/build.zig").add },
+    .{ .dir = "snouty-genesis", .binary = "snouty-genesis", .add = &@import("carts/snouty-genesis/build.zig").add },
     .{ .dir = "badge-calibrate", .binary = "badge-calibrate", .add = &@import("badge-bench/calibrate/build.zig").add },
 };
 
@@ -34,6 +35,9 @@ pub fn build(b: *Build) void {
         .rom_source = b.option(common.RomSource, "rom-source", "snouty-boy: drive (default; a ROM file on the badge drive, the embedded ROM as fallback) or embed (the embedded ROM only)") orelse .drive,
         .gg_rom = b.option([]const u8, "gg-rom", "snouty-gear: Game Gear ROM to embed (default carts/snouty-gear/roms/waternet.gg)"),
         .gg_rom_source = b.option(common.RomSource, "gg-rom-source", "snouty-gear: drive (default; ROM file on the badge drive, embedded ROM as fallback), embed, pack") orelse .drive,
+        .md_rom = b.option([]const u8, "md-rom", "snouty-genesis: Genesis ROM to embed (default carts/snouty-genesis/roms/snouty-test.bin, a generated placeholder while that is absent)"),
+        .md_rom_source = b.option(common.MdRomSource, "md-rom-source", "snouty-genesis: drive (default; a .gen/.md/.bin file on the badge drive, the embedded ROM as fallback) or embed") orelse .drive,
+        .only = only,
         .test_step = b.step("test", "Run every cart's host tests"),
         .check_float_step = b.step("check-float", "Fail if any cart ELF contains soft-float or libm routines"),
     };
