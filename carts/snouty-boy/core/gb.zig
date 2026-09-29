@@ -132,10 +132,6 @@ pub const Gb = struct {
     banks: mmu.Banks = .{},
     /// CGB general/HBlank DMA state (HDMA1..5).
     hdma: mmu.Hdma = .{},
-    /// Two 8 KB banks on CGB; DMG uses the first.
-    vram: [0x4000]u8 = @splat(0),
-    /// Eight 4 KB banks on CGB; DMG uses the first two.
-    wram: [0x8000]u8 = @splat(0),
     oam: [0xA0]u8 = @splat(0),
     hram: [0x7F]u8 = @splat(0),
     /// External cart RAM, owned by whoever calls `init`: at least
@@ -174,6 +170,17 @@ pub const Gb = struct {
     /// frontend when it has rebuilt its colour table. Not console state:
     /// excluded from keyframes (the frontend sets it itself after a restore).
     pal_dirty: bool = true,
+
+    // ---- Big memories last (owner: core/mmu.zig) ----
+    // Declared after every other field so the small hot fields (CPU, I/O,
+    // PPU, timer) sit within the 4 KB immediate-offset reach of Thumb-2
+    // loads from the `Gb` base: one `ldrb r, [base, #off]` instead of
+    // `movw` + `ldrb` per access (the auto layout keeps declaration order
+    // among byte-aligned fields).
+    /// Two 8 KB banks on CGB; DMG uses the first.
+    vram: [0x4000]u8 = @splat(0),
+    /// Eight 4 KB banks on CGB; DMG uses the first two.
+    wram: [0x8000]u8 = @splat(0),
 
     /// Construct a console around a ROM image and reset it to the post-boot
     /// state of `model` (SPEC.md sections 3 and 19). `rom` and `cart_ram`
