@@ -553,3 +553,6 @@ Level grid 64x64 with Wolf3D import (section 6.1): yes.
   separation, neopixels off) tagged `snoutenstein/m5`, `docs/preview_m5.gif`.
   Hardware gate still pending; the demo readout is the first hardware
   determinism test once flashed.
+- 2026-09-29: M5.1 (`snoutenstein/m5.1`): enemies hurt again at Adrian's
+  request (section 8 table: gnat 4 every 40, spit 10, web 6, boss melee
+  15 every 45); demo re-recorded.

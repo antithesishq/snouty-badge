@@ -274,23 +274,23 @@ writes plain literal data (`level_index`, `seed`, `total_ticks`,
 `final_hash`, `runs`); without `--hash` the hash is 0 (unrecorded). Commit
 the JSON and the regenerated `.zig` together.
 
-Demo content: 3,644 ticks (60.7 s), Build Farm with the zapper. Snouty
-walks the rack corridor east, opens the plain door at (11,3) and zaps the
-three cable-tray gnats from the doorway (taking a few bites on purpose),
-picks up the zapper charge at (16,4), clears the two hub gnats from the
-door at (17,7), crosses the hub, opens the vent closet door at (7,10),
-grabs the Coral key at (3,9) (the portrait grins) and zaps the closet
-gnat, then walks back across the hub (Select to the swatter and back on
-the way) and through the Coral door at (15,13) into the pipe hall. There it stands in
-the open while the three pipe-hall gnats bite it down to 36 HP, holds B
-for updates 2410-2649 (240 ticks, 4 s of Iris rewind; game tick 2410 back
-to 2170, HP 60), backs into the Coral doorway and zaps all three as they
-line up, then tours the hall (the zapper charge at (5,16)) and ends
-standing at (19.0,16.5) facing the exit strip, alive, 60 HP, 9 kills, not
-touching the exit. Recorded hash `0xFAB416D6` (final game tick 3163).
-The rewind is 240 rather than 180 ticks because gnat bites are slow after
-the M5 tuning (6 HP/s with all three biting): a shorter rewind cannot both
-start under 40 HP and land above 50. After any change that moves the
+Demo content: 3,627 ticks (60.5 s), Build Farm with the zapper (tuned
+for the post-M5 balance: gnats bite 4 HP every 40 ticks). Snouty walks
+the rack corridor east, opens the plain door at (11,3) and zaps the three
+cable-tray gnats from the doorway (one bite taken), walks past the zapper
+charge at (16,4), clears the two hub gnats from the door at (17,7),
+crosses the hub, opens the vent closet door at (7,10), grabs the Coral
+key at (3,9) (the portrait grins), zaps the closet gnat after two bites,
+takes the hotfix at (2,11) back to 100 HP, then walks back across the hub
+(Select to the swatter and back on the way) and through the Coral door at
+(15,13) into the pipe hall. There it stands in the open while the three
+pipe-hall gnats bite it down to 32 HP, holds B for updates 1961-2200 (240
+ticks, 4 s of Iris rewind; game tick 1961 back to 1721, HP 92), backs
+into the Coral doorway and zaps two gnats as they line up, steps out and
+turns east to zap the third, then tours the hall (west end, a look at the
+Iris mural on the south wall) and ends standing at (19.0,16.5) facing the
+exit strip, alive, 88 HP, 9 kills, never touching the exit. Recorded hash
+`0x093CA09A` (final game tick 3146). After any change that moves the
 simulation (balance, AI, map, rewind), the gnats wake and move
 differently and the log goes stale: edit `tools/scripts/demo_build_farm.json`
 (author with `--call debug_new_game_seeded` and `--call-at T debug_px`
