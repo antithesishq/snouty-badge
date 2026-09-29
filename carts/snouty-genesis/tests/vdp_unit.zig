@@ -144,6 +144,7 @@ fn sprite(v: *Vdp, n: u16, x: i32, y: i32, wc: u8, hc: u8, link: u8, attr: u16) 
     v.vram[e + 3] = link;
     poke16(v, e + 4, attr);
     poke16(v, e + 6, @intCast(x + 128));
+    v.spr_dirty = true; // poked behind the ports' back
 }
 
 fn render(v: *Vdp, line: u16) [160]u8 {
@@ -1390,4 +1391,270 @@ test "vdp: a frame of rendered rows through the line table" {
     }
     try expectEqual(@as(u32, vdp.out_h), s.rows);
     try expectEqual(@as(u8, vdp.out_h - 1), s.last_row);
+}
+
+// ---- Randomized check against a per-pixel reference ----
+//
+// `ref_line` is a direct, slow statement of the rules the renderer
+// implements (planes, window, sprites, priorities, shadow/highlight),
+// pixel by pixel from VRAM; random VDP states must render identically
+// through the optimized paths (H40 tile quads, the H32 full-width tiles
+// and column gather, the sprite cache and band masks).
+
+const Px = struct { c: u8, prio: bool }; // c: palette << 4 | color
+
+fn ref_pixel(v: *const Vdp, e: u16, fx0: u16, fy0: u16) Px {
+    const fx = if (e & 0x0800 != 0) 7 - fx0 else fx0;
+    const fy = if (e & 0x1000 != 0) 7 - fy0 else fy0;
+    const b = v.vram[(e & 0x7FF) * 32 + fy * 4 + fx / 2];
+    const nib: u8 = if (fx % 2 == 0) b >> 4 else b & 15;
+    return .{ .c = if (nib == 0) 0 else @as(u8, @intCast((e >> 13) & 3)) << 4 | nib, .prio = e & 0x8000 != 0 };
+}
+
+fn ref_plane(v: *const Vdp, which: u1, x: u16, line: u16) Px {
+    const r = &v.regs;
+    const wide = r[12] & 1 != 0;
+    const wcells: u16 = switch (r[16] & 3) {
+        1 => 64,
+        3 => 128,
+        else => 32,
+    };
+    const shift: u4 = switch (r[16] & 3) {
+        0 => 6,
+        1 => 7,
+        2 => 0,
+        else => 8,
+    };
+    const rmask: u16 = switch ((r[16] >> 4) & 3) {
+        0 => 0xFF,
+        1 => 0x1FF,
+        2 => 0x2FF,
+        else => 0x3FF,
+    };
+    const hs_line: u16 = switch (r[11] & 3) {
+        0 => 0,
+        1 => line & 7,
+        2 => line & ~@as(u16, 7),
+        else => line,
+    };
+    const hs = vram16(v, (@as(u16, r[13] & 0x3F) << 10) +% hs_line * 4 +% @as(u16, which) * 2) & 0x3FF;
+    var vs = v.vsram[which];
+    if (r[11] & 4 != 0) {
+        const fine = hs & 15;
+        const part: u16 = if (wide) v.vsram[38] & v.vsram[39] else 0;
+        if (x < fine) vs = part else {
+            const c = (x - fine) / 16;
+            vs = if (c < 20) v.vsram[c * 2 + which] else part;
+        }
+    }
+    const y = (line + vs) & rmask;
+    const px = (x -% hs) & (wcells * 8 - 1);
+    const nt: u16 = if (which == 0) @as(u16, r[2] & 0x38) << 10 else @as(u16, r[4] & 7) << 13;
+    const e = vram16(v, nt +% ((@as(u16, y >> 3) << shift) & 0x1FC0) +% (px >> 3) * 2);
+    return ref_pixel(v, e, px & 7, y & 7);
+}
+
+fn ref_in_window(v: *const Vdp, x: u16, line: u16) bool {
+    const r = &v.regs;
+    const wv: u16 = @as(u16, r[18] & 0x1F) * 8;
+    const whole = if (r[18] & 0x80 != 0) line >= wv else line < wv;
+    if (whole) return true;
+    const hp: u16 = @as(u16, r[17] & 0x1F) * 16;
+    if (hp == 0) return false;
+    return if (r[17] & 0x80 != 0) x >= hp else x < hp;
+}
+
+fn ref_window(v: *const Vdp, x: u16, line: u16) Px {
+    const r = &v.regs;
+    const wide = r[12] & 1 != 0;
+    const base: u16 = if (wide) @as(u16, r[3] & 0x3C) << 10 else @as(u16, r[3] & 0x3E) << 10;
+    const stride: u16 = if (wide) 128 else 64;
+    const e = vram16(v, base +% (line >> 3) * stride +% (x >> 3) * 2);
+    return ref_pixel(v, e, x & 7, line & 7);
+}
+
+/// Sprite pixels of `line` by screen x (0 = none), and the overflow flag.
+fn ref_sprites(v: *const Vdp, line: u16, out: *[320]Px) bool {
+    const r = &v.regs;
+    const wide = r[12] & 1 != 0;
+    const total: u16 = if (wide) 80 else 64;
+    const per_line: usize = if (wide) 20 else 16;
+    const max_px: u16 = if (wide) 320 else 256;
+    const sw: i32 = if (wide) 320 else 256;
+    const sat_base: u16 = @as(u16, r[5] & (if (wide) @as(u8, 0x7E) else 0x7F)) << 9;
+    for (out) |*p| p.* = .{ .c = 0, .prio = false };
+    var list: [20]u16 = undefined;
+    var n: usize = 0;
+    var overflow = false;
+    var link: u16 = 0;
+    var seen: u16 = 0;
+    while (true) {
+        const e = sat_base +% link * 8;
+        const y = vram16(v, e) & 0x1FF;
+        const h: u16 = (@as(u16, v.vram[e +% 2] & 3) + 1) * 8;
+        if (line + 128 >= y and line + 128 - y < h) {
+            if (n == per_line) {
+                overflow = true;
+                break;
+            }
+            list[n] = e;
+            n += 1;
+        }
+        link = v.vram[e +% 3] & 0x7F;
+        seen += 1;
+        if (link == 0 or link >= total or seen >= total) break;
+    }
+    var pixels: u16 = 0;
+    var nz = false;
+    for (list[0..n]) |e| {
+        const xpos = vram16(v, e +% 6) & 0x1FF;
+        if (xpos != 0) nz = true else if (nz) break;
+        const size = v.vram[e +% 2];
+        const hc: u16 = (size & 3) + 1;
+        const wc: u16 = ((size >> 2) & 3) + 1;
+        pixels += wc * 8;
+        const cut: u16 = if (pixels > max_px) pixels - max_px else 0;
+        const attr = vram16(v, e +% 4);
+        const sx: i32 = @as(i32, xpos) - 128;
+        var rr: u16 = line + 128 - (vram16(v, e) & 0x1FF);
+        if (attr & 0x1000 != 0) rr = hc * 8 - 1 - rr;
+        var dx: u16 = 0;
+        while (dx < wc * 8 - cut) : (dx += 1) {
+            const x = sx + dx;
+            if (x < 0 or x >= sw) continue;
+            const ux: usize = @intCast(x);
+            if (out[ux].c != 0) continue;
+            const tx = if (attr & 0x0800 != 0) wc * 8 - 1 - dx else dx;
+            const t = ((attr & 0x7FF) + (tx >> 3) * hc + (rr >> 3)) & 0x7FF;
+            const p = ref_pixel(v, (attr & 0xE000) | t, tx & 7, rr & 7);
+            if (p.c != 0) out[ux] = p;
+        }
+        if (pixels >= max_px) break;
+    }
+    return overflow;
+}
+
+fn ref_line(v: *const Vdp, line: u16, out: *[160]u8) bool {
+    const r = &v.regs;
+    const bd: u8 = r[7] & 0x3F;
+    if (r[1] & 0x40 == 0) {
+        @memset(out, bd);
+        return false;
+    }
+    const wide = r[12] & 1 != 0;
+    const sh = r[12] & 8 != 0;
+    var sp: [320]Px = undefined;
+    const overflow = ref_sprites(v, line, &sp);
+    for (out, 0..) |*o, i| {
+        const x: u16 = if (wide) @intCast(2 * i) else @intCast(i * 8 / 5);
+        const b = ref_plane(v, 1, x, line);
+        const a = if (ref_in_window(v, x, line)) ref_window(v, x, line) else ref_plane(v, 0, x, line);
+        const s = sp[x];
+        // Plane pixel on top.
+        const b_hi = b.c != 0 and b.prio;
+        const p: Px = if (a.c != 0 and (a.prio or !b_hi)) a else if (b.c != 0) b else .{ .c = 0, .prio = false };
+        const p_hi = p.c != 0 and p.prio;
+        const sw = s.c != 0 and (s.prio or !p_hi);
+        const base: u8 = if (p.c != 0) p.c else bd;
+        if (!sh) {
+            o.* = if (sw) s.c else base;
+        } else {
+            const normal = a.prio or b.prio;
+            if (sw) {
+                o.* = if (s.c == 0x3E)
+                    base | (if (normal) vdp.tag_highlight else vdp.tag_normal)
+                else if (s.c == 0x3F)
+                    base | vdp.tag_shadow
+                else if (s.c & 15 == 14)
+                    s.c
+                else
+                    s.c | (if (s.prio or normal) vdp.tag_normal else vdp.tag_shadow);
+            } else o.* = base | (if (normal) vdp.tag_normal else vdp.tag_shadow);
+        }
+    }
+    if (r[0] & 0x20 != 0) {
+        for (out, 0..) |*o, i| {
+            const x: usize = if (wide) 2 * i else i * 8 / 5;
+            if (x < 8) o.* = bd;
+        }
+    }
+    return overflow;
+}
+
+fn random_state(v: *Vdp, rng: std.Random) void {
+    rng.bytes(&v.vram);
+    // A third of the pixels transparent.
+    for (&v.vram) |*b| {
+        if (rng.uintLessThan(u8, 3) == 0) b.* &= 0x0F;
+        if (rng.uintLessThan(u8, 3) == 0) b.* &= 0xF0;
+    }
+    for (&v.vsram) |*e| e.* = rng.int(u16) & 0x3FF;
+    for (&v.cram) |*e| e.* = rng.int(u16) & 0x0EEE;
+    const r = &v.regs;
+    r[0] = if (rng.boolean()) 0x24 else 0x04;
+    r[1] = if (rng.uintLessThan(u8, 10) == 0) 0x04 else 0x44;
+    r[2] = rng.int(u8) & 0x38;
+    r[3] = rng.int(u8) & 0x3E;
+    r[4] = rng.int(u8) & 0x07;
+    r[5] = rng.int(u8) & 0x7F;
+    r[7] = rng.int(u8) & 0x3F;
+    r[11] = rng.int(u8) & 0x07;
+    r[12] = ([_]u8{ 0x81, 0x81, 0x00, 0x89, 0x08 })[rng.uintLessThan(usize, 5)];
+    r[13] = rng.int(u8) & 0x3F;
+    r[16] = rng.int(u8) & 0x33;
+    r[17] = if (rng.boolean()) 0 else rng.int(u8) & 0x9F;
+    r[18] = if (rng.boolean()) 0 else rng.int(u8) & 0x9F;
+    // A sprite list: a random chain through the table, sprites near the
+    // screen, a few with X = 0.
+    const wide = r[12] & 1 != 0;
+    const total: u16 = if (wide) 80 else 64;
+    const sat_base: u16 = @as(u16, r[5] & (if (wide) @as(u8, 0x7E) else 0x7F)) << 9;
+    const len = rng.uintLessThan(u16, total) + 1;
+    var k: u16 = 0;
+    var e_idx: u16 = 0;
+    while (k < len) : (k += 1) {
+        const next: u16 = if (k + 1 == len) 0 else rng.uintLessThan(u16, total - 1) + 1;
+        const e = sat_base +% e_idx * 8;
+        poke16(v, e, 128 + rng.uintLessThan(u16, 260) -% 16);
+        v.vram[e +% 2] = rng.int(u8) & 0x0F;
+        v.vram[e +% 3] = @intCast(next);
+        poke16(v, e +% 4, rng.int(u16));
+        poke16(v, e +% 6, if (rng.uintLessThan(u8, 12) == 0) 0 else 128 + rng.uintLessThan(u16, 360) -% 32);
+        e_idx = next;
+        if (next == 0) break;
+    }
+    v.spr_dirty = true;
+}
+
+test "vdp: random states render as the per-pixel reference" {
+    const v = try make();
+    defer free(v);
+    var prng = std.Random.DefaultPrng.init(0x5E6A_0001);
+    const rng = prng.random();
+    var mismatches: u32 = 0;
+    var round: u32 = 0;
+    while (round < 300) : (round += 1) {
+        random_state(v, rng);
+        var k: u32 = 0;
+        while (k < 6) : (k += 1) {
+            const line = rng.uintLessThan(u16, 224);
+            var want: [160]u8 = undefined;
+            const want_ovf = ref_line(v, line, &want);
+            v.status = 0;
+            const got = render(v, line);
+            const got_ovf = v.status & vdp.st_overflow != 0;
+            if (!std.mem.eql(u8, &want, &got) or want_ovf != got_ovf) {
+                mismatches += 1;
+                if (mismatches <= 3) {
+                    const i = std.mem.indexOfDiff(u8, &want, &got) orelse 0;
+                    std.debug.print("\nround {d} line {d} regs {any}: column {d} want {x} got {x}, overflow {} / {}\n", .{ round, line, v.regs, i, want[i], got[i], want_ovf, got_ovf });
+                    const x: u16 = if (v.regs[12] & 1 != 0) @intCast(2 * i) else @intCast(i * 8 / 5);
+                    var sp: [320]Px = undefined;
+                    _ = ref_sprites(v, line, &sp);
+                    std.debug.print("A {any} B {any} win {} S {any}\n", .{ ref_plane(v, 0, x, line), ref_plane(v, 1, x, line), ref_in_window(v, x, line), sp[x] });
+                }
+            }
+        }
+    }
+    try expectEqual(@as(u32, 0), mismatches);
 }
