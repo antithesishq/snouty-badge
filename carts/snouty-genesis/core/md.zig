@@ -4,16 +4,19 @@
 //! `step_frame`. SPEC.md sections 3, 7, 10; PLAN.md "Frozen for M1:
 //! core/md.zig" is the interface contract.
 //!
-//! M0 scaffold: every piece of console state at its real size (SPEC.md
-//! section 10), `reset`, `Keyframe` with `snapshot`/`restore`, and a stub
-//! `step_frame` that steps the VDP line counter through a frame and, when
-//! asked to render, pushes a test pattern through `line_sink`. M1 Track C
-//! replaces the stub with the frame loop of the contract (68000 per line,
-//! Z80 slice, `vdp.end_line`).
+//! `step_frame` is the frame loop of the PLAN.md timing contract: 262
+//! lines; per line the badge row is rendered at the line's start (when
+//! asked and when the line is in the line table), the 68000 runs until it
+//! has consumed the line's 488 or 489 cycles (scaled by
+//! `tunables.cpu_scale`; the overrun, DMA stalls included, is carried into
+//! the next line), then the Z80 runs its 228 cycles (scaled by
+//! `tunables.z80_scale`, remainder carried) unless BUSREQ or RESET holds it,
+//! then `vdp.end_line()`. The Z80's INT is asserted for line 224 (V-int).
+//! `tone()` is computed once at the end of each frame and cached.
 //!
-//! Byte order per array: `work_ram`, `z80_ram` and `vdp.vram` hold bytes at
-//! their bus addresses (the 68000's big-endian word order); CRAM and VSRAM
-//! are native u16 words. M1 documents any change here.
+//! Byte order per array: `work_ram`, `z80_ram`, `sram` and `vdp.vram` hold
+//! bytes at their bus addresses (the 68000's big-endian word order); CRAM
+//! and VSRAM are native u16 words.
 
 pub const m68k = @import("m68k.zig");
 pub const bus = @import("bus.zig");
@@ -77,6 +80,18 @@ pub const Md = struct {
     io: Io = .{},
     /// Current pad (`Pad` bits), set by `step_frame`.
     pad: u16 = 0,
+    /// Cartridge SRAM (SPEC.md section 11, up to 16 KB, in RAM, not saved):
+    /// byte `addr - sram_map.lo` of the header-declared range. Console
+    /// state (in keyframes). Unused when the header declares none.
+    sram: [rom.sram_max]u8 = @splat(0),
+    /// The SRAM range the bus decodes now: the declared one while visible,
+    /// else empty. A ROM that ends at or below the SRAM's start sees it
+    /// from reset; a larger one only after A130F1 bit 0 is set (the SRAM
+    /// control register of 2-4 MB SRAM cartridges).
+    sram_active: rom.SramMap = .{},
+    /// 68000 cycles owed to DMA (the VDP's charge, SPEC.md section 4),
+    /// taken out of the 68000's budget by the frame loop.
+    dma_stall: u32 = 0,
 
     // ---- Z80 side ----
     z80: Z80 = .{},
@@ -104,11 +119,14 @@ pub const Md = struct {
     rom: RomSource = .{},
     /// Where rendered rows go; set once by the frontend.
     line_sink: ?LineSink = null,
-    // Cartridge SRAM (up to 16 KB, SPEC.md section 11) is not here yet: M1
-    // Track C adds it (in `Md` and `Keyframe`) when the bus decodes 200000.
+    /// The SRAM range the header declares (derived from `rom` by `reset`).
+    sram_map: rom.SramMap = .{},
+    /// `tone()`'s answer, recomputed at the end of every frame and on
+    /// `reset`/`restore` (derived from `ym` and `psg`).
+    tone_cache: ?Tone = null,
 
     /// Build the console around `src` in place, reset to power-on. The
-    /// console is ~137 KB: always a static, never a stack temporary (32 KB
+    /// console is ~153 KB: always a static, never a stack temporary (32 KB
     /// stack on the badge, 14.7 KB in wasm).
     pub fn init_in_place(md: *Md, src: RomSource) void {
         md.rom = src;
@@ -116,14 +134,22 @@ pub const Md = struct {
         md.reset();
     }
 
-    /// Power-on state: memory zeroed, the 68000 at the reset vector, the
-    /// Z80 held in reset. Field by field so no console-sized temporary is
-    /// built. Keeps `rom` and `line_sink`.
+    /// Power-on state: memory zeroed, the 68000 at the reset vector (SSP
+    /// from 000000, PC from 000004), the VDP, YM2612 and PSG reset, the Z80
+    /// held in reset with the bus not requested (the 68000 must request the
+    /// bus to load Z80 RAM and release the reset to start it, as on
+    /// hardware). Field by field so no console-sized temporary is built.
+    /// Keeps `rom` and `line_sink`.
     pub fn reset(md: *Md) void {
         @memset(&md.work_ram, 0);
         md.vdp.reset();
         md.io = .{};
         md.pad = 0;
+        @memset(&md.sram, 0);
+        const h = rom.parse_header(&md.rom);
+        md.sram_map = if (md.rom.size >= rom.header_end) rom.sram_map(&h) else .{};
+        md.sram_active = if (md.sram_map.present() and md.rom.size <= md.sram_map.lo) md.sram_map else .{};
+        md.dma_stall = 0;
         md.z80.reset();
         @memset(&md.z80_ram, 0);
         md.z80_bank = 0;
@@ -136,24 +162,106 @@ pub const Md = struct {
         md.z80_carry = 0;
         var b = md.bus_for();
         md.cpu.reset(&b);
+        md.tone_cache = md.pick_tone();
     }
 
     /// One Genesis frame (262 lines). `pad` is held for the whole frame;
     /// `render` false skips all line rendering (the first frame of a 60/30
-    /// pair). M0 stub: steps the VDP's line counter and draws the test
-    /// pattern (`test_pattern`) when `render` is set.
+    /// pair).
     pub fn step_frame(md: *Md, pad: u16, render: bool) void {
         md.pad = pad;
-        var line: u16 = 0;
-        while (line < vdp.lines_per_frame) : (line += 1) md.vdp.end_line();
-        if (render) if (md.line_sink) |sink| md.test_pattern(sink);
+        const sink: ?LineSink = if (render) md.line_sink else null;
+        var b = md.bus_for();
+        var zb = md.z80bus_for();
+        const scaled_frame: u32 = vdp.m68k_cycles_per_frame * tunables.cpu_scale / tunables.scale_one;
+        var line: u32 = 0;
+        while (line < vdp.lines_per_frame) : (line += 1) {
+            if (sink) |s| if (row_of_line(line)) |row| {
+                var px: [out_w]u8 = undefined;
+                md.vdp.render_line(row, &px);
+                s.emit(row, &px, &md.vdp.cram);
+            };
+            if (line == vdp.vint_line) md.z80_int = true;
+            md.run_m68k(&b, line_share(line, scaled_frame));
+            md.run_z80(&zb);
+            md.z80_int = false;
+            // SHIM (Track D): the YM2612 timers advance in real 68000
+            // cycles per line; the call is compiled in once ym2612.zig has
+            // `advance(m68k_cycles: u32)`.
+            if (@hasDecl(ym2612.Ym2612, "advance")) md.ym.advance(line_share(line, vdp.m68k_cycles_per_frame));
+            md.vdp.end_line();
+        }
         md.frame_count +%= 1;
+        md.tone_cache = md.pick_tone();
     }
 
-    /// The note the badge should play now (SPEC.md section 9): FM wins
-    /// ties. M0: both pickers are stubs, so always null.
+    /// 68000 cycles of line `line` when the frame has `total`: the frame's
+    /// cycles spread evenly with no running sum (488 or 489 at full speed).
+    inline fn line_share(line: u32, total: u32) u32 {
+        return (line + 1) * total / vdp.lines_per_frame - line * total / vdp.lines_per_frame;
+    }
+
+    /// Run the 68000 until it has consumed `share` cycles of this line,
+    /// counting DMA stalls, and carry the overrun into the next line. A
+    /// STOPped 68000 with no interrupt above its mask sleeps the rest of
+    /// the line (interrupts change only between lines or by the 68000's
+    /// own writes). `vdp.line_cycles` follows the position in the line for
+    /// the HV counter.
+    fn run_m68k(md: *Md, b: *bus.Bus, share: u32) void {
+        var used: u32 = md.m68k_carry;
+        while (used < share) {
+            if (md.dma_stall != 0) {
+                used += md.dma_stall;
+                md.dma_stall = 0;
+                continue;
+            }
+            if (md.cpu.stopped and md.vdp.irq_level() <= md.cpu.mask()) {
+                used = share;
+                break;
+            }
+            used += @call(.always_inline, Cpu.step, .{ &md.cpu, b });
+            md.vdp.line_cycles = @truncate(@min(used, 0xFFFF));
+        }
+        md.m68k_carry = used - share;
+    }
+
+    /// The Z80's slice of this line, in `scale_one` units so a scaled
+    /// clock carries its fraction. Held by BUSREQ or RESET (or switched
+    /// off) it does not run and its carry waits.
+    fn run_z80(md: *Md, zb: *z80bus.Z80Bus) void {
+        if (!tunables.z80_enabled or md.arbiter.busreq or md.arbiter.z80_reset) return;
+        const share: u32 = vdp.z80_cycles_per_line * tunables.z80_scale;
+        var used: u32 = md.z80_carry;
+        while (used < share) used += @call(.always_inline, Z80.step, .{ &md.z80, zb }) * tunables.scale_one;
+        md.z80_carry = used - share;
+    }
+
+    /// The badge row Genesis line `line` is shown on, or null (SPEC.md
+    /// section 6, vertical squeeze: row r shows line r * 7 / 4).
+    /// SHIM (Track B): the line table belongs to the VDP (crop mode, M2);
+    /// replace with its lookup at integration.
+    pub fn row_of_line(line: u32) ?u8 {
+        const r = (4 * line + 6) / 7;
+        if (r >= out_h or r * 7 / 4 != line) return null;
+        return @intCast(r);
+    }
+
+    /// The note the badge should play now (SPEC.md section 9), as computed
+    /// at the end of the last frame.
     pub fn tone(md: *const Md) ?Tone {
-        return md.ym.pick() orelse md.psg.pick();
+        return md.tone_cache;
+    }
+
+    /// SPEC.md section 9: the FM pick against the PSG pick, the louder
+    /// wins, FM on a tie.
+    fn pick_tone(md: *const Md) ?Tone {
+        const fm = md.ym.pick();
+        const sq = md.psg.pick();
+        if (fm) |f| {
+            if (sq) |p| if (p.level > f.level) return p;
+            return f;
+        }
+        return sq;
     }
 
     pub fn bus_for(md: *Md) bus.Bus {
@@ -164,58 +272,21 @@ pub const Md = struct {
         return .{ .md = md };
     }
 
-    /// The M0 test pattern, 128 rows through `sink`: rows 16-87 four bands
-    /// of 16 color bars (palettes 0-3: grey, red, green, blue ramps, two
-    /// entries per level), rows 88-95 palette 0 shadowed, 96-103
-    /// highlighted, rows 104-111 a white block moving 2 px per emulated
-    /// frame, the rest black (rows 0-15 and 112-127 sit under the overlay
-    /// and the ROM report).
-    fn test_pattern(md: *const Md, sink: LineSink) void {
-        var cram: [64]u16 = undefined;
-        for (&cram, 0..) |*c, i| {
-            const l: u16 = @intCast((i & 15) / 2); // 0..7
-            c.* = switch (i >> 4) {
-                0 => l << 9 | l << 5 | l << 1,
-                1 => l << 1,
-                2 => l << 5,
-                else => l << 9,
-            };
-        }
-        const block_x: usize = (md.frame_count *% 2) % out_w;
-        var px: [out_w]u8 = undefined;
-        var r: u8 = 0;
-        while (r < out_h) : (r += 1) {
-            for (&px, 0..) |*p, x| {
-                const bar: u8 = @intCast(x / 10);
-                p.* = if (r < 16)
-                    0
-                else if (r < 88)
-                    ((r - 16) / 18) << 4 | bar
-                else if (r < 96)
-                    vdp.tag_shadow | bar
-                else if (r < 104)
-                    vdp.tag_highlight | bar
-                else if (r < 112 and (x + out_w - block_x) % out_w < 16)
-                    15
-                else
-                    0;
-            }
-            sink.emit(r, &px, &cram);
-        }
-    }
-
     // ---- Keyframes (SPEC.md section 10) ----
 
-    /// The console minus `rom` and `line_sink` (not console state). M3
-    /// replaces the full copy with delta keyframes; the shape
-    /// (`snapshot`/`restore`) stays. Auto layout: compare field by field
-    /// (`std.meta.eql`), never as raw bytes.
+    /// The console minus `rom`, `line_sink` (not console state),
+    /// `sram_map` and `tone_cache` (derived). M3 replaces the full copy
+    /// with delta keyframes; the shape (`snapshot`/`restore`) stays. Auto
+    /// layout: compare field by field (`std.meta.eql`), never as raw bytes.
     pub const Keyframe = struct {
         cpu: Cpu,
         work_ram: [0x10000]u8,
         vdp: vdp.Vdp,
         io: Io,
         pad: u16,
+        sram: [rom.sram_max]u8,
+        sram_active: rom.SramMap,
+        dma_stall: u32,
         z80: Z80,
         z80_ram: [0x2000]u8,
         z80_bank: u16,
@@ -234,6 +305,9 @@ pub const Md = struct {
         out.vdp = md.vdp;
         out.io = md.io;
         out.pad = md.pad;
+        out.sram = md.sram;
+        out.sram_active = md.sram_active;
+        out.dma_stall = md.dma_stall;
         out.z80 = md.z80;
         out.z80_ram = md.z80_ram;
         out.z80_bank = md.z80_bank;
@@ -252,6 +326,9 @@ pub const Md = struct {
         md.vdp = k.vdp;
         md.io = k.io;
         md.pad = k.pad;
+        md.sram = k.sram;
+        md.sram_active = k.sram_active;
+        md.dma_stall = k.dma_stall;
         md.z80 = k.z80;
         md.z80_ram = k.z80_ram;
         md.z80_bank = k.z80_bank;
@@ -262,5 +339,6 @@ pub const Md = struct {
         md.frame_count = k.frame_count;
         md.m68k_carry = k.m68k_carry;
         md.z80_carry = k.z80_carry;
+        md.tone_cache = md.pick_tone();
     }
 };
