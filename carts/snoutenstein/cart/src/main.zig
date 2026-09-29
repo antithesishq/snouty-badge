@@ -2,7 +2,9 @@
 //! SPEC.md is the design, PLAN.md the current milestone, CLAUDE.md the
 //! toolchain. Modes: title -> playing <-> rewinding (hold B) / dead (time
 //! frozen, B rewinds) / paused; playing -> intermission -> next level ->
-//! victory. Rewind semantics: PLAN.md M4; the core is rewind.zig.
+//! victory; the title idles into the recorded demo (attract mode, PLAN.md
+//! M5) which any pad press takes over. Rewind semantics: PLAN.md M4; the
+//! core is rewind.zig.
 const std = @import("std");
 const builtin = @import("builtin");
 const cart = @import("cart-api");
@@ -17,6 +19,7 @@ const hud = @import("render/hud.zig");
 const blit = @import("render/blit.zig");
 const audio = @import("audio.zig");
 const rewind = @import("rewind.zig");
+const demo = @import("demo.zig");
 
 comptime {
     cart.export_start_code();
@@ -46,13 +49,23 @@ const victory_max: u32 = 600;
 /// M1 gate readout stays on screen until Adrian has photographed it.
 const show_render_us = true;
 
+/// Attract mode (SPEC.md 11, PLAN.md M5): the title idles this long before
+/// the recorded demo starts; the demo gives up after `demo_max` ticks, or
+/// after sitting dead for `demo_dead_max` ticks without rewinding.
+const attract_after: u32 = 600;
+const demo_max: u32 = 3 * 3600;
+const demo_dead_max: u32 = 120;
+
 var mode: Mode = .title;
 var tick_total: u32 = 0;
 var card_ticks: u32 = 0;
 var game: state.GameState = undefined;
 var level: *const levels.Level = &levels.all[0];
 var level_index: u8 = 0;
-var prev_buttons: state.Buttons = .{};
+/// The input applied last tick (pad or demo log): edge detection for the
+/// mode machine. `prev_pad` is the pad alone, for the takeover edge.
+var prev_in: state.Buttons = .{};
+var prev_pad: state.Buttons = .{};
 var render_us: u32 = 0;
 var held_b: u32 = 0;
 /// Rewind bookkeeping (PLAN.md M4): ticks available when the rewind began
@@ -61,6 +74,12 @@ var held_b: u32 = 0;
 var budget: u16 = 0;
 var drained: u16 = 0;
 var from_dead: bool = false;
+/// Attract mode: the demo log drives the game while `demo_active`.
+var demo_active: bool = false;
+var title_ticks: u32 = 0;
+var demo_ticks: u32 = 0;
+var demo_dead: u32 = 0;
+var demo_result: hud.DemoResult = .none;
 
 pub fn start() void {
     cart.set_vsync_enabled(1000.0 / 60.0);
@@ -69,20 +88,79 @@ pub fn start() void {
 }
 
 pub fn update() void {
-    const b: state.Buttons = @bitCast(@as(u16, @bitCast(read_controls())));
-    defer prev_buttons = b;
+    const pad: state.Buttons = @bitCast(@as(u16, @bitCast(read_controls())));
+    defer prev_pad = pad;
     tick_total += 1;
 
+    // Which input drives this tick: the pad, or the demo log. A takeover
+    // edge on the pad ends the demo without stepping; the pad is live from
+    // the next tick on (SPEC.md 11).
+    var in: state.Buttons = pad;
+    if (demo_active) {
+        demo_ticks += 1;
+        if (takeover_edge(pad)) {
+            take_over();
+        } else if (demo_ticks >= demo_max) {
+            end_demo(false);
+        } else if (demo.next()) |db| {
+            in = db;
+            run_mode(in);
+            demo_exit_checks();
+        } else {
+            end_demo(true);
+        }
+    } else {
+        run_mode(in);
+    }
+    prev_in = in;
+
+    switch (mode) {
+        .title => hud.draw_title(tick_total, audio.enabled, demo_result),
+        .playing, .paused, .dead, .rewinding => {
+            const rw = mode == .rewinding;
+            const shown: *const state.GameState = if (rw) rewind.current() else &game;
+            const moving = mode == .playing and (in.up or in.down);
+            const t0 = cart.micros_since_boot();
+            view.shade_override = if (rw) 4 else if (mode == .dead or shown.hurt > 0) 5 else null;
+            hud.meter_override = if (rw) budget - drained else null;
+            view.draw(shown, level);
+            if (rw) view.scanlines();
+            weapon.draw(shown, moving);
+            hud.draw_bar(shown);
+            render_us = @intCast(cart.micros_since_boot() - t0);
+            if (rw) hud.draw_rewind_marker();
+            if (demo_active) hud.draw_demo_marker(tick_total);
+            if (show_render_us) hud.draw_render_us(render_us);
+            if (mode == .paused) hud.draw_pause();
+            if (mode == .dead) hud.draw_dead(@max(game.player.rewind_meter, death_reserve));
+        },
+        .intermission => hud.draw_intermission(&game, level.name, @intCast(level.enemies.len), card_ticks),
+        .victory => hud.draw_victory(&game, card_ticks),
+    }
+
+    if (cart.is_wasm) present_wasm();
+}
+
+/// The mode machine, one tick, driven by `b` (pad or demo log).
+fn run_mode(b: state.Buttons) void {
     switch (mode) {
         .title => {
             // A: campaign. B: the imported E1M1. Start: the test level (the
-            // scripted runs use it). Select: sound and LEDs (SPEC.md section 3).
-            if (pressed(b, .a)) new_game(0);
-            if (pressed(b, .b)) new_game(e1m1_index);
-            if (pressed(b, .start)) new_game(test_index);
-            if (pressed(b, .select)) {
+            // scripted runs use it). Select: sound (SPEC.md section 3).
+            // Nothing for `attract_after` ticks: the recorded demo.
+            title_ticks += 1;
+            if (pressed(b, .a)) {
+                new_game(0);
+            } else if (pressed(b, .b)) {
+                new_game(e1m1_index);
+            } else if (pressed(b, .start)) {
+                new_game(test_index);
+            } else if (pressed(b, .select)) {
                 audio.enabled = !audio.enabled;
                 audio.reset(&game); // LEDs off at once when disabled
+                title_ticks = 0;
+            } else if (title_ticks >= attract_after) {
+                start_demo();
             }
         },
         .playing => {
@@ -147,34 +225,9 @@ pub fn update() void {
         },
         .victory => {
             card_ticks += 1;
-            if (card_ticks >= victory_max or (card_ticks >= card_min and (pressed(b, .a) or pressed(b, .start)))) mode = .title;
+            if (card_ticks >= victory_max or (card_ticks >= card_min and (pressed(b, .a) or pressed(b, .start)))) to_title();
         },
     }
-
-    switch (mode) {
-        .title => hud.draw_title(tick_total, audio.enabled),
-        .playing, .paused, .dead, .rewinding => {
-            const rw = mode == .rewinding;
-            const shown: *const state.GameState = if (rw) rewind.current() else &game;
-            const moving = mode == .playing and (b.up or b.down);
-            const t0 = cart.micros_since_boot();
-            view.shade_override = if (rw) 4 else if (mode == .dead or shown.hurt > 0) 5 else null;
-            hud.meter_override = if (rw) budget - drained else null;
-            view.draw(shown, level);
-            if (rw) view.scanlines();
-            weapon.draw(shown, moving);
-            hud.draw_bar(shown);
-            render_us = @intCast(cart.micros_since_boot() - t0);
-            if (rw) hud.draw_rewind_marker();
-            if (show_render_us) hud.draw_render_us(render_us);
-            if (mode == .paused) hud.draw_pause();
-            if (mode == .dead) hud.draw_dead(@max(game.player.rewind_meter, death_reserve));
-        },
-        .intermission => hud.draw_intermission(&game, level.name, @intCast(level.enemies.len), card_ticks),
-        .victory => hud.draw_victory(&game, card_ticks),
-    }
-
-    if (cart.is_wasm) present_wasm();
 }
 
 /// The level after `i`: through the campaign, then victory; the test level
@@ -186,15 +239,78 @@ fn next_level(i: u8) ?u8 {
 }
 
 fn new_game(index: u8) void {
+    new_game_seeded(index, @truncate(cart.micros_since_boot()));
+}
+
+fn new_game_seeded(index: u8, seed: u32) void {
     level_index = index;
     level = &levels.all[level_index];
-    sim.init(&game, level, level_index, @truncate(cart.micros_since_boot()));
+    sim.init(&game, level, level_index, seed);
     rewind.reset(&game);
     hud.set_rewinding(false);
     hud.meter_override = null;
     hud.tick(&game);
     audio.reset(&game);
     mode = .playing;
+}
+
+fn to_title() void {
+    mode = .title;
+    title_ticks = 0;
+}
+
+// ---------------------------------------------------------------- attract mode
+
+/// The title idled: play the recorded demo (Build Farm, fixed seed).
+fn start_demo() void {
+    new_game_seeded(demo.level_index, demo.seed);
+    demo.reset();
+    demo_active = true;
+    demo_ticks = 0;
+    demo_dead = 0;
+}
+
+/// A, B, Start or the joystick pressed on the pad while the demo runs.
+fn takeover_edge(pad: state.Buttons) bool {
+    const now: u16 = @bitCast(pad);
+    const before: u16 = @bitCast(prev_pad);
+    const mask: u16 = @bitCast(state.Buttons{ .a = true, .b = true, .start = true, .up = true, .down = true, .left = true, .right = true });
+    return (now & ~before & mask) != 0;
+}
+
+/// SPEC.md 11: the world stays as it is, the meter is refilled and the pad
+/// is live from the next tick. The refill is recorded as a rewind patch so
+/// replays and the keyframe self-check reproduce it.
+fn take_over() void {
+    if (mode == .rewinding) end_rewind();
+    if (mode == .playing or mode == .dead or mode == .paused) rewind.set_meter(&game, sim.max_rewind);
+    demo_active = false;
+    hud.meter_override = null;
+}
+
+/// The demo ends on its own when the log runs out (`log_done`: compare the
+/// gameplay hash with the recorded one; that is the hardware determinism
+/// test), on the 3 min cap, after sitting dead, or once a level ends.
+fn end_demo(log_done: bool) void {
+    if (log_done and mode == .playing and demo.final_hash != 0) {
+        demo_result = if (sim.hash_gameplay(&game) == demo.final_hash) .ok else .desync;
+    }
+    if (mode == .rewinding) end_rewind();
+    demo_active = false;
+    hud.set_rewinding(false);
+    hud.meter_override = null;
+    audio.reset(&game);
+    to_title();
+}
+
+fn demo_exit_checks() void {
+    if (mode == .dead) {
+        demo_dead += 1;
+        if (demo_dead >= demo_dead_max) end_demo(false);
+    } else {
+        demo_dead = 0;
+    }
+    if ((mode == .intermission or mode == .victory) and card_ticks >= card_min) end_demo(false);
 }
 
 /// Enter rewind with `ticks` of budget (PLAN.md M4 "Rewind semantics").
@@ -229,7 +345,7 @@ fn end_rewind() void {
 
 const Button = enum { start, select, a, b, up, down, left, right };
 fn pressed(b: state.Buttons, comptime btn: Button) bool {
-    return @field(b, @tagName(btn)) and !@field(prev_buttons, @tagName(btn));
+    return @field(b, @tagName(btn)) and !@field(prev_in, @tagName(btn));
 }
 
 // Debug exports for the headless harness (wasm only).
@@ -256,6 +372,11 @@ comptime {
         @export(&debug_meter, .{ .name = "debug_meter" });
         @export(&debug_desync, .{ .name = "debug_desync" });
         @export(&debug_gameplay_hash, .{ .name = "debug_gameplay_hash" });
+        @export(&debug_demo, .{ .name = "debug_demo" });
+        @export(&debug_demo_result, .{ .name = "debug_demo_result" });
+        @export(&debug_title_ticks, .{ .name = "debug_title_ticks" });
+        @export(&debug_start_demo, .{ .name = "debug_start_demo" });
+        @export(&debug_new_game_seeded, .{ .name = "debug_new_game_seeded" });
     }
 }
 fn debug_mode() callconv(.c) u32 {
@@ -330,6 +451,27 @@ fn debug_desync() callconv(.c) u32 {
 /// `sim.hash_gameplay` of the live state (the shown one while rewinding).
 fn debug_gameplay_hash() callconv(.c) u32 {
     return sim.hash_gameplay(if (mode == .rewinding) rewind.current() else &game);
+}
+/// 1 while the demo log drives the game.
+fn debug_demo() callconv(.c) u32 {
+    return @intFromBool(demo_active);
+}
+/// 0 none, 1 ok, 2 desync: the last finished demo's hash check.
+fn debug_demo_result() callconv(.c) u32 {
+    return @backingInt(demo_result);
+}
+fn debug_title_ticks() callconv(.c) u32 {
+    return title_ticks;
+}
+/// Setup call (`preview.mjs --call debug_start_demo`): the demo starts at
+/// update 0 instead of after 10 s on the title.
+fn debug_start_demo() callconv(.c) void {
+    start_demo();
+}
+/// Setup call: Build Farm with the demo seed in normal play, so a demo
+/// script can be authored and its hash recorded without a rebuild.
+fn debug_new_game_seeded() callconv(.c) void {
+    new_game_seeded(demo.level_index, demo.seed);
 }
 /// 1 when the sprite/blit nibble reads agree with PackedIntSlice.get.
 fn debug_nibble_ok() callconv(.c) u32 {

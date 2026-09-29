@@ -767,10 +767,10 @@ run-length list of button words. Nothing is recorded on the badge; the log
 is authored in the simulator and baked into `.text`.
 
 - `tools/scripts/demo_build_farm.json`: the authored playthrough in the
-  usual script format (`{from, to, hold}` entries; tick 0 is the first
-  `sim.step` of the level, no title press). The demo ends after tick
-  `max(to)`, or after `"tail": K` idle ticks if the file is an object
-  `{"tail": K, "runs": [...]}`; total ticks `T = max(to) + 1 + tail`.
+  usual script format (a JSON array of `{from, to, hold}` entries, so
+  `preview.mjs --script` runs it as is; tick 0 is the first `sim.step`
+  of the level, no title press; an entry with an empty `hold` pads idle
+  ticks). The demo ends after tick `max(to)`: total ticks `T = max(to) + 1`.
 - `tools/gen_demo.py IN.json --out cart/src/demos/build_farm.zig
   [--hash 0x...]`: runs the script through the same button-bit layout as
   `preview.mjs`, merges consecutive identical ticks into `Run { buttons:
@@ -824,11 +824,13 @@ is authored in the simulator and baked into `.text`.
     `debug_start_demo` (start the demo at update 0, for scripts and the
     bench) and `debug_new_game_seeded` (Build Farm with `demo.seed` in
     normal play, for authoring and `record_demo.sh`).
-- Scripts and checks: `m5_attract.json` (no input at all; `--at 599
-  debug_mode == 0`, `--at 601 debug_demo == 1`, `--at 601 debug_mode ==
-  1`), `m5_takeover.json` (idle into the demo, UP edge at update 900:
-  `--at 901 debug_demo == 0`, `--at 901 debug_mode == 1`, `--at 901
-  debug_meter == 600`, `debug_desync == 0` at the end), the demo replay
+- Scripts and checks: `m5_attract.json` (no input at all; `--at 598
+  debug_mode == 0`, `--at 599 debug_demo == 1`: the 600th title tick
+  starts the demo, `--at 600 debug_tick == 1`, back on the title with
+  `debug_demo_result == 1` once the log ends), `m5_takeover.json` (idle into the demo, UP edge at update 700:
+  `--at 700 debug_demo == 0`, `--at 700 debug_mode == 1`, `--at 700
+  debug_meter == 600`, the tick does not advance on the takeover update,
+  `debug_desync == 0` at the end), the demo replay
   itself (`--call debug_start_demo --frames T+5`, expect
   `debug_demo_result == 1`, `debug_mode == 0`, `debug_desync == 0`), and
   `check_determinism.mjs` on the takeover script. Every M3/M4 expectation

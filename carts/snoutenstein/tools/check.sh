@@ -16,6 +16,7 @@ zig test cart/src/sim.zig
 zig test cart/src/levels.zig
 zig test cart/src/level_parse.zig
 zig test cart/src/rewind.zig
+zig test cart/src/demo.zig
 W="$repo/zig-out/bin/snoutenstein.wasm"
 # M1: walk the long corridor, doors, pause.
 node ../../tools/preview.mjs $W --frames 2160 --every 8 --out out/walk \
@@ -65,4 +66,26 @@ node ../../tools/preview.mjs $W --frames 1500 --quiet --out out/empty --script t
 node tools/check_determinism.mjs $W --script tools/scripts/m3_buildfarm.json --frames 420
 node tools/check_determinism.mjs $W --script tools/scripts/m2_combat.json --frames 240
 node tools/check_determinism.mjs $W --script tools/scripts/m1_walk.json --frames 600 --rewind-at 200 --rewind-for 90
+# M5: the demo data file matches its script (hash kept); the title idles
+# 600 ticks into the demo and the demo returns to the title when its log
+# ends; the embedded log replays to the recorded hash (DEMO OK); UP at
+# update 700 takes the demo over without stepping and refills the meter.
+demo_hash=$(grep -o 'final_hash: u32 = 0x[0-9A-F]*' cart/src/demos/build_farm.zig | sed 's/.*= //')
+python3 tools/gen_demo.py tools/scripts/demo_build_farm.json --out out/demo_check.zig --hash "$demo_hash" >/dev/null
+diff -q out/demo_check.zig cart/src/demos/build_farm.zig >/dev/null || { echo "check: cart/src/demos/build_farm.zig is stale; run tools/record_demo.sh and rebuild"; exit 1; }
+[ "$demo_hash" != "0x00000000" ] || { echo "check: demo hash not recorded; run tools/record_demo.sh"; exit 1; }
+demo_ticks=$(python3 -c 'import json; print(max(e["to"] for e in json.load(open("tools/scripts/demo_build_farm.json")))+1)')
+node ../../tools/preview.mjs $W --frames $((600 + demo_ticks + 30)) --quiet --out out/attract --script tools/scripts/m5_attract.json \
+  --dump-exports debug_mode,debug_demo,debug_tick,debug_demo_result,debug_desync \
+  --at "598 debug_mode == 0" --at "599 debug_demo == 1" --at "600 debug_tick == 1" --at "$((599 + demo_ticks)) debug_demo == 1" --at "$((600 + demo_ticks)) debug_demo == 0" \
+  --expect "debug_mode == 0" --expect "debug_demo_result == 1" --expect "debug_desync == 0"
+node ../../tools/preview.mjs $W --frames $((demo_ticks + 5)) --quiet --out out/demo --call debug_start_demo \
+  --dump-exports debug_mode,debug_demo,debug_demo_result,debug_tick,debug_desync \
+  --expect "debug_demo_result == 1" --expect "debug_mode == 0" --expect "debug_desync == 0"
+node ../../tools/preview.mjs $W --frames 900 --quiet --out out/takeover --script tools/scripts/m5_takeover.json \
+  --dump-exports debug_mode,debug_demo,debug_tick,debug_meter,debug_desync \
+  --call-at "699 debug_tick" --call-at "700 debug_tick" \
+  --at "699 debug_demo == 1" --at "700 debug_demo == 0" --at "700 debug_mode == 1" --at "700 debug_meter == 600" \
+  --expect "debug_mode == 1" --expect "debug_desync == 0"
+node tools/check_determinism.mjs $W --script tools/scripts/m5_takeover.json --frames 900
 echo "check: all passed"
