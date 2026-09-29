@@ -6,6 +6,8 @@ SPEC.md section 18 was decided 2026-09-29; the ROM is Waternet.
 
 ## M0 Scaffold (two Opus tracks in worktrees, then integration)
 
+**Done 2026-09-29**, tag `snouty-gear/m0`; results in Status below.
+
 Started 2026-09-29 on branch `gear/m0`. The skeleton commit already holds:
 the `carts` table line in the root `build.zig`, `-Dgg-rom` and
 `-Dgg-rom-source=drive|embed|pack` in `build/common.zig`
@@ -60,7 +62,7 @@ allocator, no floats.
 - `core/gg.zig` with the whole `Gg` struct (Z80 registers, 8 KB RAM, VDP
   state incl. 16 KB VRAM and 64 B CRAM, PSG, mapper, counters, cart RAM),
   `init(rom: Rom)`, `reset()` to the post-BIOS state, `step_frame(pad)`, the
-  `Keyframe` copy, and the `line_sink` callback (`[160]u4` indices + the
+  `Keyframe` copy, and the `line_sink` callback (`[160]u5` indices + the
   `*const [32]u16` CRAM). Subsystem files (`z80.zig`, `bus.zig`, `vdp.zig`,
   `psg.zig`, `rom.zig`) compile as stubs with their public shape. The M0
   `step_frame` fills VRAM/CRAM with a moving test pattern through the sink
@@ -140,8 +142,9 @@ report and is stubbed locally.
   `read(addr: u16) u8`, `write(addr: u16, v: u8)`, `in(port: u8) u8`,
   `out(port: u8, v: u8)`. `Z80(comptime BusT)` calls only those, plus
   `BusT.irq_line() bool` sampled between instructions.
-- `gg.line_sink` receives each rendered visible line as `[160]u4` palette
-  indices (0..31) plus the current `*const [32]u16` 12-bit CRAM, so the
+- `gg.line_sink` receives each rendered visible line as `[160]u5` palette
+  indices (0..31; sprites use 16..31, so a u4 cannot hold them) plus the
+  current `*const [32]u16` 12-bit CRAM, so the
   frontend owns color conversion.
 - Pad byte: bit set = pressed, `up down left right b1 b2 start`.
 - `Keyframe` copies `Gg` minus the ROM pointer and the sink.
@@ -207,3 +210,30 @@ report and is stubbed locally.
 - 2026-09-29: SPEC.md and this plan drafted; section 18 decided. Next: M0.
 - 2026-09-29: M0 started on branch `gear/m0` (skeleton commit, then tracks
   A and B in worktrees).
+- 2026-09-29: M0 done. Track A (cart scaffold, `cdb842e`) and Track B
+  (romfs reader, `make_romfs.py`, badge-bench `--romfs`, `073412b`) merged.
+  - `zig build` of every cart: the other seven carts' uf2 and wasm are
+    byte-identical to the pre-M0 build (097b1ab, same worktree, same SDK pin).
+  - `zig build test`: green (65 test steps incl. 8 romfs and 9 gear tests;
+    Snouty Boy's tests need `carts/snouty-boy/tools/fetch_test_roms.sh` in
+    a fresh checkout, as before).
+  - Sizes (RAM cart, fast, drive source, incl. the 64 KB embedded ROM):
+    `.text` 105,312, `.data` 220, `.bss` 39,584 (5 KB of it the cluster
+    table); uf2 291,840 B, wasm 261,030 B. Code alone is ~40 KB, against
+    SPEC.md's ~95 KB estimate for the finished cart.
+  - badge-bench, 120 frames, `romfs = carts/snouty-gear/out/romfs.img`
+    (Waternet, built by `tools/make_romfs.py`): the cart found and mapped
+    `waternet.gg` from the drive image and showed `crc 6BB36DFC` (matches
+    zlib); pattern frame 3.30 ms busy, start-up 2.68 ms. `docs/m0_drive_bench.png`.
+  - Deviations from the M0 text, all accepted: sink pixels are `[160]u5`
+    (indices reach 31); `-Dgg-rom-source=pack` prints a note and builds the
+    drive cart instead of failing; `Gg.init_in_place` because the 33 KB
+    console must not cross the 32 KB badge stack by value; the report line
+    word-wraps over up to four rows.
+  - romcheck: Waternet writes `FFFC` (cart RAM unknown, computed value) and
+    no line interrupt seen; Sonic GG writes register 10 (line IRQ likely),
+    no cart RAM. M1 tracks B and C take note.
+  - Open from docs/ROM_DRIVE.md section 3: keep the M3 keyframe ring out of
+    `.bss` (the uf2 carries `.bss` zeros) if the uf2 gets too big for the drive.
+  Next: M1 (three tracks per the contract above); gate on Adrian's hardware
+  run of this M0 uf2 with a `.gg` file on the drive.

@@ -7,6 +7,6 @@ frames = 600
 press = ["RIGHT:30-60", "DOWN:70-100", "B:120-140", "A:160-200",
          "START:220-240", "LEFT:260-300", "UP:320-340", "SELECT:360-400",
          "RIGHT:420-460", "A:480-520", "B:540-560"]
-# Track B adds the `romfs` key to badge-bench (maps the image at 0x10080000);
-# uncomment once it lands and the image is built by tools/make_romfs.py:
-# romfs = "carts/snouty-gear/out/romfs.img"
+# badge-bench maps this image at 0x10080000 (docs/ROM_DRIVE.md); build it with
+#   python3 tools/make_romfs.py carts/snouty-gear/out/romfs.img carts/snouty-gear/roms/waternet.gg
+romfs = "carts/snouty-gear/out/romfs.img"
