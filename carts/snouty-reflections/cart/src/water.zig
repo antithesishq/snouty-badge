@@ -3,6 +3,7 @@
 const std = @import("std");
 const math = @import("math.zig");
 const camera = @import("camera.zig");
+const variant = @import("variant.zig");
 const Vec3 = math.Vec3;
 
 const Wave = struct { a: f32, kx: f32, kz: f32, w: f32 };
@@ -25,8 +26,9 @@ const gz: [3]f32 = blk: {
     break :blk g;
 };
 
-/// Distance fade of the ripples: 1 / (1 + fade_k * dist).
-pub const fade_k = 0.06;
+/// Distance fade of the ripples: g * g with g = 1 / (1 + fade_k * dist)
+/// (M2; the square cuts the horizon moire).
+pub const fade_k = 0.05;
 
 /// Primary rays that go down (rows >= camera.first_water_row) hit the water
 /// at a distance that does not depend on the frame: the eye height is fixed
@@ -53,7 +55,8 @@ pub const primary_fade: [camera.width / 2][camera.water_rows]f32 = blk: {
             const dist = -@as(f64, camera.orbit_height) / (camera.basis_y64 + camera.basis_h64 * v) *
                 @sqrt(1.0 + u * u + v * v);
             if (dist > 1e5) @compileError("primary water hit beyond sin_turns range");
-            t[x][i] = @floatCast(1.0 / (1.0 + fade_k * dist));
+            const g = 1.0 / (1.0 + fade_k * dist);
+            t[x][i] = @floatCast(g * g);
         }
     }
     break :blk t;
@@ -67,17 +70,17 @@ pub const Phases = [3]f32;
 const steps: f32 = math.sin_table_len;
 
 pub fn phases_at_frame(frame: u32) Phases {
-    // t = frame / 20 s. The f32 product is exact enough for any frame below
-    // 2^24; fract keeps the runtime phase argument small.
-    const t = @as(f32, @floatFromInt(frame)) * (1.0 / 20.0);
+    // t = frame / fps seconds. The f32 product is exact enough for any
+    // frame below 2^24; fract keeps the runtime phase argument small.
+    const t = @as(f32, @floatFromInt(frame)) * (1.0 / @as(comptime_float, variant.fps));
     var ph: Phases = undefined;
     inline for (waves, 0..) |wv, i| ph[i] = (math.fract(wv.w * t) + 0.25) * steps;
     return ph;
 }
 
-/// Perturbed unit normal at water point `p`. `fade` is 1 / (1 + 0.06 * dist)
-/// for the distance from the ray origin; the tracer derives it from the same
-/// reciprocal as the hit distance.
+/// Perturbed unit normal at water point `p`. `fade` is g * g, g = 1 / (1 +
+/// fade_k * dist) for the distance from the ray origin; the tracer derives g
+/// from the same reciprocal as the hit distance.
 /// `p` must satisfy |p.x|, |p.z| < 2e5 (sin_turns range); the tracer clamps
 /// the hit distance to guarantee it.
 pub inline fn normal(p: Vec3, fade: f32, ph: Phases) Vec3 {

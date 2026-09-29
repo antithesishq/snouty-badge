@@ -27,8 +27,8 @@ pub const spawn_offset: Fixed = fixed.from_float(0.4);
 /// Hit radius around the player centre.
 pub const hit_radius: Fixed = fixed.from_float(0.35);
 const hit_radius_sq: i64 = @as(i64, hit_radius) * hit_radius;
-pub const spit_damage: i16 = 8;
-pub const web_damage: i16 = 4;
+pub const spit_damage: i16 = 10;
+pub const web_damage: i16 = 6;
 /// Ticks of movement freeze a web hit applies (`sim.step` counts it down).
 pub const web_freeze_ticks: u8 = 45;
 

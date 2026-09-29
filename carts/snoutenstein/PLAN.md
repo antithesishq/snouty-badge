@@ -959,6 +959,28 @@ Report the final hash, `T`, the ELF `.text` delta from the runs.
   title after the demo has run once; Adrian reads it off the badge.
 - Neopixels: off; dormant code behind `-Dneopixels` (was `neopixels_allowed`).
 
+### M5.1 Balance follow-up (2026-09-29)
+
+Adrian on the M5 numbers: "we can make the enemies do more damage, it'd
+be basically impossible to lose as is." Values now (all in `ai.zig`'s
+`tuning` table and `projectiles.zig`):
+
+| Enemy   | M5 default          | M5.1                                   |
+|---------|---------------------|----------------------------------------|
+| gnat    | 2 every 60, speed 0.04 | 4 every 40 (windup 8), speed 0.05   |
+| beetle  | spit 8              | spit 10                                |
+| spider  | web 4               | web 6                                  |
+| boss    | melee 10 every 60   | melee 15 every 45 (no flinch and the 2.5-cell spit minimum stay) |
+| wasp    | 10 on contact       | unchanged                              |
+
+Host measurements: standing among the three cable-tray gnats for 7 s
+leaves 4 HP (was 68), zapping without turning 60 HP (was 88); the
+stand-and-shoot Heisenbug duel ends at 15 HP (was 52). The test bands in
+`ai.zig` encode these. Death scripts die at tick 1034 (was 3028). The
+demo was re-recorded because gnat timing changed: 3,627 ticks, hash
+0x093CA09A, bitten to 32 HP before a 240-tick rewind (game tick 1961
+back to 1721, 92 HP after), ends at 88 HP with all nine gnats.
+
 ## Status
 
 - 2026-09-26: M0 scaffold committed. M1 plan written; four tracks launched.
@@ -1064,3 +1086,6 @@ Report the final hash, `T`, the ELF `.text` delta from the runs.
   run 3,300/3,710 frames. Deferred (needs a badge): boss and gnat feel, the
   fourth weapon, the M1 render readout. Fragile: any sim change moves the
   demo (re-record with `tools/record_demo.sh`; `check.sh` fails until then).
+- 2026-09-29: M5.1 balance follow-up tagged `snoutenstein/m5.1` (table
+  above): enemies hurt again at Adrian's request, demo re-recorded, bench
+  unchanged (the sim is not where the frame time goes).

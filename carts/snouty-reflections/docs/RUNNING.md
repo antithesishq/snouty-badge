@@ -175,30 +175,68 @@ value of the cart's frame counter while that frame was rendered.
 ## 6. Reference check
 
 `tools/reference.py` renders the scene defined in `PLAN.md` ("The M1 scene,
-exactly") with numpy in float64 and quantises it like dither mode `none`;
-`tools/check_render.mjs` compares a cart frame against it in RGB565 units.
-It passes when at most 1% of pixels differ by more than 1 unit in any
-channel and no pixel differs by more than 6 units. Frame F of the reference
+exactly" plus "The M2 scene, exactly": chrome and glass spheres, the
+textured shore at z = 14, water with sphere shadows and scatter) with numpy
+in float64 and quantises it like dither mode `none`; `tools/check_render.mjs`
+compares a cart frame against it in RGB565 units. Frame F of the reference
 is the same camera angle and water time as `frame_F.png` from `preview.mjs`.
+The shore texture and palette are read at run time from
+`cart/src/shore_texels.bin` and `tools/shore_palette.json`, so regenerating
+the art (`tools/gen_shore.py`) needs no change to the reference.
+
+The M2 check frames are 0, 150, 300 and 450, plus the badge-bench worst
+frame, all in dither mode `none`:
 
 ```sh
-node ../../tools/preview.mjs ../../zig-out/bin/snouty-reflections.wasm --frames 301 --every 300 --script tools/scripts/m1_nodither.json --out out/
-python3 tools/reference.py --frame 0 --frame 300 --out out/
-node tools/check_render.mjs out/frame_0000.png out/ref_0000.png
-node tools/check_render.mjs out/frame_0300.png out/ref_0300.png
+node ../../tools/preview.mjs ../../zig-out/bin/snouty-reflections.wasm --frames 451 --every 150 \
+    --script tools/scripts/m1_nodither.json \
+    --dump-exports debug_dither_mode --expect "debug_dither_mode == 1" --out out/
+python3 tools/reference.py --frame 0 --frame 150 --frame 300 --frame 450 --out out/
+for f in 0000 0150 0300 0450; do
+    node tools/check_render.mjs out/frame_$f.png out/ref_$f.png --diff out/diff_$f.png
+done
 ```
 
-`check_render.mjs` prints the number of differing pixels, the largest
-difference and where it is, and exits 0 on PASS, 3 on FAIL, 2 on a usage
-error. `--diff out/diff_0000.png` writes an amplified difference image
-(40 levels per unit). `reference.py --dump-npy` also saves the float image
-before quantisation (`out/ref_FFFF.npy`, 128x160x3) for debugging.
+For the bench's worst frame W, render just that frame with
+`--frames W+1 --every W` (for example `--frames 558 --every 557` writes
+`frame_0000.png` and `frame_0557.png`) and `reference.py --frame W`.
+`tools/scripts/m1_nodither.json` presses B on tick 0, so every frame after
+it renders in mode `none`; the `--expect` confirms the press landed (the
+tolerance alone would not show it).
 
-The tolerance is loose enough that a dithered frame also passes (the Bayer
-dither adds at most one unit), so the check does not prove the B press
-landed. To make sure, add
-`--dump-exports debug_dither_mode --expect "debug_dither_mode == 1"` to the
-`preview.mjs` command.
+**Knobs.** The reference takes the cart's `// M2 knobs` (in
+`cart/src/scene.zig`) as flags; run it with the settings the cart ships, or
+the check compares different scenes:
+
+| Flag | Values (default first) | Meaning |
+|------|------------------------|---------|
+| `--glass` | `real`, `fake` | knob 1: exit-point refraction, or one refraction traced from the entry point |
+| `--water-shadows` | `all`, `primary_only`, `off` | knob 2: which water hits get sphere shadows |
+| `--glass-secondary` | `full`, `env` | knob 3: glass at depth 1 traces its two rays, or looks them up in `env()` (shore or sky) |
+| `--fade-k` | `0.05` | ripple fade, `g = 1 / (1 + fade_k * dist)`, `fade = g * g` |
+
+For example `python3 tools/reference.py --frame 300 --out out/ --glass fake
+--water-shadows primary_only`. `--texels FILE` and `--palette FILE` override
+the shore data; `--dump-npy` also saves the float image before quantisation
+(`out/ref_FFFF.npy`, 128x160x3) for debugging. One 160x128 frame takes
+under a second.
+
+**The rule.** A pixel's difference is its largest per-channel difference in
+5/6/5 units. PASS if at most 1% of pixels (204 of 20480) differ by more
+than 1 unit **and** at most 0.25% (51) differ by more than 6 units. The
+second count is an outlier allowance for nearest-texel shore edges, the
+shadow edge and grazing glass silhouettes, where the cart's f32 and the
+reference's f64 legitimately land on different sides. `check_render.mjs`
+prints both counts (marked `OVER` when above the limit) and the largest
+difference with its position and both pixel values, and exits 0 on PASS, 3
+on FAIL, 2 on a usage error.
+
+`--diff out/diff_FFFF.png` writes the outlier map: the cart frame dimmed to
+30%, pixels off by 2 to 6 units in yellow and pixels off by more than 6
+units in magenta. Outliers that trace an edge (shore texels, the shadow
+rim, the glass silhouette) are precision; a filled region means the two
+implementations disagree about the scene. `--amp out/amp_FFFF.png` writes
+the older amplified difference image (40 levels per unit per channel).
 
 ## 7. Flashing
 
@@ -260,3 +298,32 @@ summary (modelled Cortex-M33 cycles; fps is uncapped, the cart locks to 20):
 FAIL is informational: a grazing sphere-edge pixel can exceed the 6-unit
 cap on precision alone, so look at `tools/emu/out/sweep/diff_*.png` before
 deciding.
+
+## 9. Perf variants (M2.1)
+
+`-Dreflections_variant=full20|cut20|full15|half30` (default `cut20`, the shipped one) picks the
+resolution, frame rate and scene cuts; `docs/variants.md` has the table and
+numbers. The scene animates in seconds (one orbit is 30 s at every fps), so
+every variant shows the same scene at the same moment on hardware.
+
+```sh
+tools/build_variants.sh            # all four -> dist/variants/<name>.{uf2,elf,wasm}, sizes, check-float
+tools/build_variants.sh half30     # just one
+tools/check_render.mjs --variant cut20 [--frame F]...   # reference check (dist/variants/<name>.wasm)
+tools/bench_variants.sh [name...]  # badge-bench one orbit each; ~4 min per variant
+```
+
+To compare in the web simulator, serve one file and copy variants over it;
+the watcher reloads the page on every copy:
+
+```sh
+cp dist/variants/cut20.wasm dist/variants/current.wasm
+node ../../tools/serve-cart.mjs dist/variants/current.wasm      # terminal 1, as in section 4
+cp dist/variants/half30.wasm dist/variants/current.wasm         # switch; the page reloads
+```
+
+The simulator only fetches from port 2468 and calls `update()` 60 times a
+second whatever the cart's vsync says, so it plays full20 and cut20 3x fast,
+full15 4x and half30 2x. Judge the picture there, not the motion or frame
+rate; the timing is in `docs/variants.md` (or on the badge with
+`-Ddebug_overlay=true`).

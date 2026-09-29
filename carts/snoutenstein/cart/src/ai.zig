@@ -58,9 +58,10 @@ pub const KindTuning = struct {
 
 /// Indexed by `@intFromEnum(EnemyKind)`; SPEC.md section 8 values.
 pub const tuning = [5]KindTuning{
-    // gnat: zig-zags in, bites. Tuned M5 (was 0.05 / bite 5 every 30,
-    // windup 6): see the Build Farm opening tests below.
-    .{ .speed = fixed.from_float(0.04), .stop = fixed.from_float(0.6), .melee_range = fixed.from_float(0.8), .melee_damage = 2, .melee_every = 60, .melee_windup = 10, .shot_range = 0, .shot_every = 0, .shot_windup = 0, .shot_kind = projectiles.kind_none },
+    // gnat: zig-zags in, bites. SPEC was 5 every 30 (windup 6); M5 tried 2
+    // every 60 and Adrian found the game impossible to lose, so 4 every 40:
+    // see the Build Farm opening tests below.
+    .{ .speed = fixed.from_float(0.05), .stop = fixed.from_float(0.6), .melee_range = fixed.from_float(0.8), .melee_damage = 4, .melee_every = 40, .melee_windup = 8, .shot_range = 0, .shot_every = 0, .shot_windup = 0, .shot_kind = projectiles.kind_none },
     // wasp: straight charges, contact damage once per charge.
     .{ .speed = fixed.from_float(0.07), .stop = 0, .melee_range = fixed.from_float(0.5), .melee_damage = 10, .melee_every = 0, .melee_windup = 0, .shot_range = 0, .shot_every = 0, .shot_windup = 0, .shot_kind = projectiles.kind_none },
     // beetle: slow walker, spits.
@@ -68,7 +69,7 @@ pub const tuning = [5]KindTuning{
     // spider: turret, webs.
     .{ .speed = 0, .stop = 0, .melee_range = 0, .melee_damage = 0, .melee_every = 0, .melee_windup = 0, .shot_range = fixed.from_int(6), .shot_every = 120, .shot_windup = 10, .shot_kind = projectiles.kind_web },
     // boss: chases, melee, spit fan (range = line of sight).
-    .{ .speed = fixed.from_float(0.04), .stop = fixed.from_float(0.7), .melee_range = fixed.from_float(0.9), .melee_damage = 10, .melee_every = 60, .melee_windup = 10, .shot_range = sim.max_ray, .shot_min = fixed.from_float(2.5), .shot_every = 100, .shot_windup = 10, .shot_kind = projectiles.kind_spit },
+    .{ .speed = fixed.from_float(0.04), .stop = fixed.from_float(0.7), .melee_range = fixed.from_float(0.9), .melee_damage = 15, .melee_every = 45, .melee_windup = 10, .shot_range = sim.max_ray, .shot_min = fixed.from_float(2.5), .shot_every = 100, .shot_windup = 10, .shot_kind = projectiles.kind_spit },
 };
 
 pub fn tune(kind: state.EnemyKind) KindTuning {
@@ -822,13 +823,16 @@ fn farm_opening_hp(fire: bool) !i16 {
     return s.player.hp;
 }
 
-test "Build Farm opening: three gnats leave a player standing still at 55..75 HP after 420 ticks" {
+// Measured with 4 every 40 at speed 0.05: standing still 4 HP (ignoring
+// three gnats for 7 s nearly kills you), holding A without turning 60 HP.
+test "Build Farm opening: three gnats nearly kill a player standing still for 420 ticks" {
     const hp = try farm_opening_hp(false);
-    try testing.expect(hp >= 55 and hp <= 75);
+    try testing.expect(hp > 0 and hp <= 25);
 }
 
-test "Build Farm opening: holding A with the zapper facing east ends above 85 HP" {
-    try testing.expect(try farm_opening_hp(true) > 85);
+test "Build Farm opening: holding A with the zapper facing east ends at 45..75 HP" {
+    const hp = try farm_opening_hp(true);
+    try testing.expect(hp >= 45 and hp <= 75);
 }
 
 const arena_src =
@@ -873,13 +877,14 @@ fn boss_duel() !struct { ?usize, i16 } {
 // cooldown). With the SPEC numbers it never fought back: each hit's 12-tick
 // pain outlasted the cooldown gap (stunlock). Bosses therefore take no pain
 // state (sim.damage_enemy), spit only beyond `shot_min` (2.5 cells; the
-// point-blank fan did 24 a volley) and melee 10 every 60 ticks: the
-// stand-and-shoot player ends at 52 HP (15/45 left 17). Hardware feel pass
-// deferred; the `tuning` row is the knob.
-test "Heisenbug duel: facing and zapping the boss wins with 20+ HP" {
+// point-blank fan did 24 a volley). Melee stays at the SPEC 15 every 45:
+// the stand-and-shoot player wins with 15 HP left (10/60 gave 52, which
+// Adrian judged impossible to lose). Hardware feel pass deferred; the
+// `tuning` row is the knob.
+test "Heisenbug duel: facing and zapping the boss wins, barely" {
     const r = try boss_duel();
     try testing.expect(r[0] != null);
-    try testing.expect(r[1] >= 20);
+    try testing.expect(r[1] > 0 and r[1] <= 40);
 }
 
 const pair_src =
