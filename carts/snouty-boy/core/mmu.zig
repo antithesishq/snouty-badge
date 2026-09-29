@@ -10,16 +10,22 @@ const timer = @import("timer.zig");
 const serial = @import("serial.zig");
 const joypad = @import("joypad.zig");
 const apu = @import("apu.zig");
+const Rom = @import("rom.zig").Rom;
 
 pub const MbcKind = enum(u8) { none, mbc1, mbc3, mbc5 };
 
 /// Bytes of `Gb.cart_ram` a ROM can ever touch, from header byte 0x149: 0
 /// without RAM, 2 KB for code 1 (mirrored, see `Mbc.ram_mask`), else the
-/// full 8 KB (larger RAMs are capped, SPEC.md 11). Comptime-callable, so the
-/// frontend sizes its keyframes to the embedded ROM.
-pub fn cart_ram_len(rom: []const u8) usize {
+/// full 8 KB (larger RAMs are capped, SPEC.md 11). The frontend sizes its
+/// keyframe pool slots with it at start.
+pub fn cart_ram_len(rom: *const Rom) usize {
     if (rom.len < 0x150) return 0;
-    return switch (rom[0x149]) {
+    return ram_len_for(rom.read(0x149));
+}
+
+/// `cart_ram_len` from the header byte itself; comptime-callable.
+pub fn ram_len_for(code: u8) usize {
+    return switch (code) {
         0 => 0,
         1 => 0x800,
         else => 0x2000,
@@ -56,19 +62,19 @@ pub const Mbc = struct {
     ram_active: bool = false,
 
     /// Header byte 0x147 selects the controller (SPEC.md section 3).
-    pub fn from_header(rom: []const u8) Mbc {
+    pub fn from_header(rom: *const Rom) Mbc {
         var banks: u32 = 2;
         while (banks * 0x4000 < rom.len) banks *= 2;
         var m: Mbc = .{ .rom_bank_mask = @intCast(banks - 1) };
         if (rom.len < 0x150) return m;
-        m.kind = switch (rom[0x147]) {
+        m.kind = switch (rom.read(0x147)) {
             0x00, 0x08, 0x09 => .none,
             0x01, 0x02, 0x03 => .mbc1,
             0x0F, 0x10, 0x11, 0x12, 0x13 => .mbc3,
             0x19, 0x1A, 0x1B, 0x1C, 0x1D, 0x1E => .mbc5,
             else => .none,
         };
-        m.has_ram = rom[0x149] != 0;
+        m.has_ram = rom.read(0x149) != 0;
         m.ram_mask = @intCast(@max(cart_ram_len(rom), 1) - 1);
         // No controller: RAM (if any) is always mapped.
         if (m.kind == .none) m.ram_enabled = true;
@@ -174,15 +180,23 @@ pub fn reset_io(gb: *Gb) void {
     gb.ie = 0;
 }
 
+/// Refresh `Gb.rom0` / `Gb.romn` from the MBC's bank offsets. Call after
+/// every MBC register write, on reset and on keyframe restore (the offsets
+/// are keyframe state, the pointers are derived from them).
+pub fn remap_rom(gb: *Gb) void {
+    gb.rom0 = gb.rom.bank_ptr(gb.mbc.rom0_offset / 0x4000);
+    gb.romn = gb.rom.bank_ptr(gb.mbc.rom_bank_offset / 0x4000);
+}
+
 pub fn read8(gb: *Gb, addr: u16) u8 {
     if (addr < 0x4000) {
-        const off = gb.mbc.rom0_offset + addr;
-        return if (off < gb.rom.len) gb.rom[off] else 0xFF;
+        if (gb.rom0) |p| return p[addr];
+        return gb.rom.read(gb.mbc.rom0_offset + addr);
     }
     switch (@as(u4, @truncate(addr >> 12))) {
         0x4...0x7 => {
-            const off = gb.mbc.rom_bank_offset + (addr - 0x4000);
-            return if (off < gb.rom.len) gb.rom[off] else 0xFF;
+            if (gb.romn) |p| return p[addr - 0x4000];
+            return gb.rom.read(gb.mbc.rom_bank_offset + (addr - 0x4000));
         },
         0x8, 0x9 => return gb.vram[addr - 0x8000],
         0xA, 0xB => {
@@ -222,7 +236,10 @@ fn read_io(gb: *Gb, reg: u8) u8 {
 
 pub fn write8(gb: *Gb, addr: u16, v: u8) void {
     switch (@as(u4, @truncate(addr >> 12))) {
-        0x0...0x7 => gb.mbc.write(addr, v),
+        0x0...0x7 => {
+            gb.mbc.write(addr, v);
+            remap_rom(gb);
+        },
         0x8, 0x9 => gb.vram[addr - 0x8000] = v,
         0xA, 0xB => {
             if (gb.mbc.ram_active) gb.cart_ram[(gb.mbc.ram_bank_offset + (addr - 0xA000)) & gb.mbc.ram_mask] = v;

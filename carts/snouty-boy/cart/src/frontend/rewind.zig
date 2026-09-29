@@ -47,7 +47,7 @@ pub const frames_per_keyframe = 30;
 /// RAM and doubles the CPU per frame, so it is off for the badge.
 const self_check = false;
 
-pub const Slot = Gb.KeyframeWith(core.mmu.cart_ram_len(rom.data));
+pub const Slot = Gb.KeyframeWith(core.mmu.ram_len_for(if (rom.data.len < 0x150) 0 else rom.data[0x149]));
 
 // ---- Memory budget (SPEC.md 13) ----
 
@@ -103,7 +103,7 @@ pub fn record_frame(gb: *const Gb, pad: u8) void {
     log[rec.log_index] = pad;
     if (rec.snapshot_slot) |s| {
         gb.snapshot(&keyframes[s]);
-        if (self_check) check_newest(gb.rom);
+        if (self_check) check_newest(&gb.rom);
     }
 }
 
@@ -177,12 +177,12 @@ var check_slot: Slot = undefined;
 
 /// Replay the previous keyframe with the logged pads into `spare` and
 /// compare with the keyframe just taken.
-fn check_newest(game_rom: []const u8) void {
+fn check_newest(game_rom: *const Gb.Rom) void {
     if (ring.count < 2) return;
     // No struct literals or by-value arrays here: the wasm stack is 14.7 KB
     // and a `Gb` temporary alone is 25 KB. `restore` sets every field but
     // these two.
-    spare.rom = game_rom;
+    spare.rom = game_rom.*;
     spare.line_sink = null;
     spare.restore(&keyframes[ring.slot_of_age(1)]);
     var f = ring.frame_of_age(1);

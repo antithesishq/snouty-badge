@@ -143,7 +143,7 @@ test "determinism: KeyframeWith(cart_ram_len) round trip" {
     const rom = try load_rom(gpa);
     defer gpa.free(rom);
     // 2048-gb declares 2 KB of cart RAM (MBC1+RAM+battery).
-    try std.testing.expectEqual(@as(usize, 0x800), core.mmu.cart_ram_len(rom));
+    try std.testing.expectEqual(@as(usize, 0x800), core.mmu.ram_len_for(rom[0x149]));
     const Small = Gb.KeyframeWith(0x800);
     const a = try gpa.create(Gb);
     defer gpa.destroy(a);

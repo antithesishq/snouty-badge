@@ -221,6 +221,14 @@ pub fn rom_title(rom: []const u8) []const u8 {
     return if (n == 0) "?" else raw[0..n];
 }
 
+/// The header bytes of the running ROM (`core.Rom` reads by byte), for
+/// `rom_title`. One static buffer; the menu draws one title at a time.
+var header_buf: [0x144]u8 = @splat(0);
+fn header(rom: *const core.Rom) []const u8 {
+    for (header_buf[0x134..0x144], 0x134..) |*b, off| b.* = rom.read(@intCast(off));
+    return &header_buf;
+}
+
 fn centered(s: []const u8, y: i32, color: cart.DisplayColor) void {
     const w: i32 = @intCast(@as(usize, @min(s.len, 20)) * 8); // @min(usize, 20) is a u5
     cart.text(.{ .str = s, .x = @divTrunc(@as(i32, cart.screen_width) - w, 2), .y = y, .text_color = color });
@@ -243,7 +251,7 @@ fn draw(gb: *const core.Gb) void {
     // Title band: SPEC.md 12 and 18 item 9.
     cart.rect(.{ .x = 0, .y = 0, .width = cart.screen_width, .height = band_h, .fill_color = fg });
     centered("SNOUTY BOY", 1, bg);
-    centered(rom_title(gb.rom), 10, video.shade_color(1));
+    centered(rom_title(header(&gb.rom)), 10, video.shade_color(1));
     centered("verified by", 19, bg);
     centered("deterministic replay", 27, bg);
 
@@ -253,7 +261,7 @@ fn draw(gb: *const core.Gb) void {
         const lines = [_][]const u8{
             cat(&buf, "Version ", version),
             "ROM:",
-            rom_title(gb.rom),
+            rom_title(header(&gb.rom)),
             mbc_name(gb.mbc.kind),
             "Built for",
             "Antithesis",

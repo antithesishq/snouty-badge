@@ -3,6 +3,7 @@ const core = @import("core");
 
 test {
     _ = core;
+    _ = core.rom_mod;
     _ = @import("blargg.zig");
     _ = @import("acid2.zig");
     _ = @import("ppu_unit.zig");

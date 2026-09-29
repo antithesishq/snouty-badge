@@ -29,6 +29,7 @@ pub fn build(b: *Build) void {
         .cart_optimize = b.option(std.builtin.OptimizeMode, "cart-optimize", "snouty-boy: optimize mode for the cart (default fast; its SPEC.md section 8)") orelse .fast,
         .test_optimize = b.option(std.builtin.OptimizeMode, "test-optimize", "snouty-boy: optimize mode for host tests (default safe)") orelse .safe,
         .test_filter = b.option([]const u8, "test-filter", "snouty-boy: only run tests whose name contains this"),
+        .rom_source = b.option(common.RomSource, "rom-source", "snouty-boy: drive (default; a ROM file on the badge drive, the embedded ROM as fallback) or embed (the embedded ROM only)") orelse .drive,
         .test_step = b.step("test", "Run every cart's host tests"),
         .check_float_step = b.step("check-float", "Fail if any cart ELF contains soft-float or libm routines"),
     };
@@ -38,6 +39,17 @@ pub fn build(b: *Build) void {
         if (only) |list| if (!listed(list, c)) continue;
         c.add(b, sycl_badge_dep, opts);
     }
+
+    // Shared library host tests (lib/): the romfs reader and whatever follows.
+    const lib_tests = b.addTest(.{
+        .filters = if (opts.test_filter) |f| &.{f} else &.{},
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("lib/tests.zig"),
+            .target = b.graph.host,
+            .optimize = opts.test_optimize,
+        }),
+    });
+    opts.test_step.dependOn(&b.addRunArtifact(lib_tests).step);
 }
 
 fn listed(list: []const u8, c: Cart) bool {
