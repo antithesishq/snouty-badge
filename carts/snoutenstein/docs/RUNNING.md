@@ -195,14 +195,27 @@ update is one 60 Hz tick, so `--every 4 --ms 66` plays at about real speed.
 whole `GameState`) are identical after the last update. It prints one line,
 `NAME=VALUE` per export (`NAME=RUN1|RUN2` where they differ), and exits 0 on
 a match, 3 on a mismatch or a failed run, 2 on a usage error.
-`--rewind-at T --rewind-for N` (rewind at tick T for N ticks, then replay
-forward and compare) is reserved for M4 and currently exits 2 with "not
-implemented until M4".
+`debug_desync` (the rewind self-check's mismatch count) is always compared
+too when the wasm exports it.
+
+`--rewind-at T --rewind-for N` (update indices, 0-based, `T + N < --frames`)
+proves a rewound state is the state that was live back then. Run 1 plays
+the script unchanged and samples `debug_tick` and `debug_gameplay_hash`
+after every update in `[max(0, T-1-N), T-1]`. Run 2 appends a B hold over
+updates `T..T+N-1` to a temp copy of the script (exit 2 if the script
+already holds B there) and samples after the release update `T+N`. It
+passes when run 2 is playing (`debug_mode == 1`) with `debug_rewinds >= 1`,
+its tick is one run 1 showed, the two `debug_gameplay_hash` values agree,
+and `debug_desync == 0` at the end of both runs. The line reports how far
+the rewind went (shorter than N when the meter or the history runs out).
 
 ```sh
 node tools/check_determinism.mjs ../../zig-out/bin/snoutenstein.wasm \
   --script tools/scripts/m2_combat.json --frames 240 --exports debug_state_hash,debug_tick,debug_kills
-# check_determinism: PASS m2_combat.json x240: debug_state_hash=... debug_tick=229 debug_kills=1
+# check_determinism: PASS m2_combat.json x240: debug_state_hash=... debug_tick=229 debug_kills=1 debug_desync=0
+node tools/check_determinism.mjs ../../zig-out/bin/snoutenstein.wasm \
+  --script tools/scripts/m1_walk.json --frames 600 --rewind-at 200 --rewind-for 90
+# check_determinism: PASS m1_walk.json x600 rewind@200+90: rewound from tick 189 to tick 99, 90 ticks; debug_gameplay_hash=... debug_rewinds=1 debug_desync=0|0
 ```
 
 ## 6. Flash the badge

@@ -1,0 +1,11 @@
+[
+  { "from": 0,   "to": 89,  "hold": ["UP"] },
+  { "from": 90,  "to": 90,  "hold": ["RIGHT"] },
+  { "from": 111, "to": 170, "hold": ["UP"] },
+  { "from": 171, "to": 171, "hold": ["LEFT"] },
+  { "from": 192, "to": 251, "hold": ["UP"] },
+  { "from": 252, "to": 252, "hold": ["LEFT"] },
+  { "from": 273, "to": 302, "hold": ["DOWN"] },
+  { "from": 303, "to": 342, "hold": ["RIGHT"] },
+  { "from": 343, "to": 402, "hold": ["UP"] }
+]

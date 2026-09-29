@@ -14,6 +14,7 @@ const carts = [_]Cart{
     .{ .dir = "snouty-reflections", .binary = "snouty-reflections", .add = &@import("carts/snouty-reflections/build.zig").add },
     .{ .dir = "snouty-boy", .binary = "snouty-boy", .add = &@import("carts/snouty-boy/build.zig").add },
     .{ .dir = "snouty-maze", .binary = "snouty-maze", .add = &@import("carts/snouty-maze/build.zig").add },
+    .{ .dir = "snouty-gear", .binary = "snouty-gear", .add = &@import("carts/snouty-gear/build.zig").add },
     .{ .dir = "badge-calibrate", .binary = "badge-calibrate", .add = &@import("badge-bench/calibrate/build.zig").add },
 };
 
@@ -28,8 +29,10 @@ pub fn build(b: *Build) void {
         .rom = b.option([]const u8, "rom", "snouty-boy: Game Boy ROM to embed (default carts/snouty-boy/tests/roms/dmg-acid2.gb, or roms/2048.gb when that is absent)"),
         .cart_optimize = b.option(std.builtin.OptimizeMode, "cart-optimize", "snouty-boy: optimize mode for the cart (default fast; its SPEC.md section 8)") orelse .fast,
         .test_optimize = b.option(std.builtin.OptimizeMode, "test-optimize", "snouty-boy: optimize mode for host tests (default safe)") orelse .safe,
-        .test_filter = b.option([]const u8, "test-filter", "snouty-boy: only run tests whose name contains this"),
+        .test_filter = b.option([]const u8, "test-filter", "snouty-boy, snouty-gear: only run tests whose name contains this"),
         .rom_source = b.option(common.RomSource, "rom-source", "snouty-boy: drive (default; a ROM file on the badge drive, the embedded ROM as fallback) or embed (the embedded ROM only)") orelse .drive,
+        .gg_rom = b.option([]const u8, "gg-rom", "snouty-gear: Game Gear ROM to embed (default carts/snouty-gear/roms/waternet.gg)"),
+        .gg_rom_source = b.option(common.RomSource, "gg-rom-source", "snouty-gear: drive (default; ROM file on the badge drive, embedded ROM as fallback), embed, pack") orelse .drive,
         .test_step = b.step("test", "Run every cart's host tests"),
         .check_float_step = b.step("check-float", "Fail if any cart ELF contains soft-float or libm routines"),
     };

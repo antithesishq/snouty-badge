@@ -4,24 +4,129 @@ SPEC.md is the design. This file is the working contract for the current
 milestone: who owns which files, the frozen interfaces, what "done" means.
 SPEC.md section 18 was decided 2026-09-29; the ROM is Waternet.
 
-## M0 Scaffold (one agent, then me)
+## M0 Scaffold (two Opus tracks in worktrees, then integration)
 
-- `carts/snouty-gear/` per SPEC.md section 15; one line in the root
-  `build.zig` `carts` table; `-Dgg-rom=` in `common.Options` (default the
-  shipped ROM in `roms/`); `-Dcart-optimize` shared with Snouty Boy (it is
-  already global). Host test target on `tests/all.zig`.
-- `core/gg.zig` defines the whole console state and `step_frame`; the
-  subsystem files compile as stubs; the frontend draws a test pattern.
-- `tools/fetch_test_roms.sh` (zexall-sms v0.21, SingleStepTests Z80 by
-  sparse checkout of `v1/`), `tools/romcheck.py`, `roms/<game>.gg` +
-  `roms/LICENSE-<game>`, `badge-bench/carts/snouty-gear.toml`,
-  `CLAUDE.md`, `docs/RUNNING.md`, root README row.
-- ROM source per `docs/ROM_DRIVE.md`: `-Dgg-rom-source=drive|embed|pack`
-  (only `drive` and `embed` in M0), `tools/make_romfs.py`, the shared
-  romfs parser with its host tests, badge-bench `--romfs IMAGE`.
-- Done when: `zig build -Dcart=snouty-gear` (RAM; XIP only for `pack`)
-  and `zig build test` pass, the test pattern shows in a headless
-  preview, every other cart's uf2 is byte-identical to before.
+**Done 2026-09-29**, tag `snouty-gear/m0`; results in Status below.
+
+Started 2026-09-29 on branch `gear/m0`. The skeleton commit already holds:
+the `carts` table line in the root `build.zig`, `-Dgg-rom` and
+`-Dgg-rom-source=drive|embed|pack` in `build/common.zig`
+(`common.RomSource`), a stub `carts/snouty-gear/build.zig`, the shipped ROM
+`roms/waternet.gg` (MIT, `roms/LICENSE-waternet`, Waternet v1.0 by Willems
+Davy, md5 `44d92c492caa17f298d216b9e272dd3d`, gitignore exception at the
+root), a stub `lib/romfs.zig` with the frozen interface below, and
+`lib/tests.zig` hung off `zig build test`.
+
+### Frozen for M0: `lib/romfs.zig` (docs/ROM_DRIVE.md section 4)
+
+```zig
+pub const base_addr: usize = 0x10080000; // OS linker.ld romfs origin (pinned sycl-badge)
+pub const size: usize = 1280 * 1024;
+pub const sector_size: usize = 512;
+pub const max_clusters: usize = size / sector_size; // sizes the caller's cluster table
+pub const Error = error{ NoVolume, BadGeometry, BadChain, TooManyClusters };
+pub const Entry = struct { name: [64]u8, name_len: u8, size: u32, first_cluster: u16,
+                           pub fn slice(*const Entry) []const u8 };
+pub const Volume = struct {
+    base: [*]const u8,
+    pub fn open(base: [*]const u8) Error!Volume;   // boot sector: 0xAA55, 512 B sectors,
+                                                   // "FAT12   ", 1 sector/cluster, 32 root entries
+    // Root-directory scan for files whose extension (case-insensitive, no dot)
+    // is in `exts`; skips deleted, directory and volume-label entries; the
+    // long name when the host wrote one, else the 8.3 name. Returns the count.
+    pub fn find(*const Volume, exts: []const []const u8, out: []Entry) usize;
+    // Walks the FAT chain into `clusters` (ceil(size / 512) entries needed).
+    pub fn map(*const Volume, e: Entry, clusters: []u16) Error!Mapped;
+};
+pub const Mapped = struct {
+    size: u32, clusters: []const u16, data_base: [*]const u8,
+    pub fn contiguous(*const Mapped) ?[*]const u8;          // whole file in one run
+    pub fn chunk(*const Mapped, offset: u32, len: u32) ?[*]const u8; // one run, inside the file
+    pub fn read(*const Mapped, offset: u32) u8;              // per-cluster path
+    pub fn crc32(*const Mapped) u32;                         // IEEE, over the whole file
+};
+```
+
+The reader is `const`-only over a `[*]const u8` base so host tests point it
+at an image in memory and the badge points it at `base_addr`. It never
+reads beyond the sectors it needs, so truncated test images work. No
+allocator, no floats.
+
+### Track A: cart scaffold (files `carts/snouty-gear/**` except `PLAN.md`/`SPEC.md`, `badge-bench/carts/snouty-gear.toml`, root `README.md` row)
+
+- `build.zig` per Snouty Boy's: RAM cart (XIP only when `pack`, which just
+  fails with "not built yet" for now), `core` and `rom` modules, the
+  embedded ROM from `-Dgg-rom` (default `roms/waternet.gg`, cart-relative
+  paths accepted), `-Dcart-optimize`, host tests on `tests/all.zig` with
+  `-Dtest-filter`/`-Dtest-optimize`. The wasm build always embeds.
+- `core/gg.zig` with the whole `Gg` struct (Z80 registers, 8 KB RAM, VDP
+  state incl. 16 KB VRAM and 64 B CRAM, PSG, mapper, counters, cart RAM),
+  `init(rom: Rom)`, `reset()` to the post-BIOS state, `step_frame(pad)`, the
+  `Keyframe` copy, and the `line_sink` callback (`[160]u5` indices + the
+  `*const [32]u16` CRAM). Subsystem files (`z80.zig`, `bus.zig`, `vdp.zig`,
+  `psg.zig`, `rom.zig`) compile as stubs with their public shape. The M0
+  `step_frame` fills VRAM/CRAM with a moving test pattern through the sink
+  so the video path is exercised. `core/rom.zig`: 16 KB bank pointer table
+  (`[32]?[*]const u8`, null = go through the romfs per-cluster path),
+  built from an embedded slice or a `romfs.Mapped`.
+- `cart/src/main.zig` + `frontend/{video,input,debug,romsrc}.zig` copied
+  from Snouty Boy and trimmed: video squeezes 144 -> 128 with the CRAM ->
+  `Pixel` cache, input maps SPEC.md section 5, debug overlay as is,
+  `romsrc.zig` chooses the ROM per `-Dgg-rom-source` (badge only: open the
+  volume at `romfs.base_addr`, `find(.{"gg","sms"})`, `map`, CRC; on any
+  error or no file, the embedded ROM) and reports name/size/CRC/source.
+  The M0 screen shows the test pattern plus one text line with that report.
+- `tools/fetch_test_roms.sh` (zexall-sms v0.21 `zexdoc.sms`/`zexall.sms`;
+  SingleStepTests Z80 `v1/` by sparse checkout, optional flag since it is
+  1.2 GB), `tools/romcheck.py` (GG/SMS header at `7FF0`, region, size,
+  mapper heuristics, `FFFC` writes, port `BF` register writes summary),
+  `tools/scripts/m0_pattern.json` for `../../tools/preview.mjs`.
+- `CLAUDE.md`, `README.md`, `docs/RUNNING.md`, `badge-bench/carts/snouty-gear.toml`
+  (600 frames, `budget_ms = 16.7`, a `romfs` line commented until Track B lands).
+- Done when `zig build -Dcart=snouty-gear` and `zig build test` pass, the
+  headless preview shows the pattern and "ROM: embedded waternet.gg 64 KB",
+  `size -A` of the ELF and the uf2 size are recorded in the report.
+
+### Track B: romfs reader and tooling (files `lib/romfs.zig`, `lib/tests.zig`, `lib/tests/**`, `tools/make_romfs.py`, `badge-bench/badge_bench/**`, `badge-bench/README.md`, `docs/ROM_DRIVE.md` status lines)
+
+- `lib/romfs.zig` per the frozen interface, matching
+  `sycl-badge/src/os/loader/storage.zig` (the geometry, the LFN layout the
+  OS reads, deleted entries `E5`, end of directory `00`, FAT12 12-bit
+  packing, chain end `>= 0xFF8`).
+- `tools/make_romfs.py OUT.img FILE... [--size 1280K] [--truncate] [--fragment N] [--delete NAME]`:
+  writes a FAT12 super-floppy with the OS geometry, long names plus 8.3
+  aliases as macOS/Windows write them, optional cluster interleaving to
+  fragment files and deleted entries. `--truncate` stops the image at the
+  last used sector for committed fixtures.
+- Tests in `lib/tests/romfs_unit.zig` (imported from `lib/tests.zig`): a
+  fresh image with one file (contiguous, `chunk` on every 16 KB bank),
+  fragmented (chunk null where it should be, `read` matches the file),
+  long and 8.3 names, deleted entry skipped, several matches, no volume,
+  bad geometry, `crc32` against `std.hash.Crc32`. Fixtures are generated
+  by `make_romfs.py --truncate` from small pseudo-random files and
+  committed under `lib/tests/fixtures/` (under 100 KB total), with the
+  command line in a comment; the test also checks `read` byte-for-byte
+  against the source bytes (stored in the fixture directory).
+- badge-bench: `--romfs IMAGE` maps the image at `0x10080000` (read-only,
+  any size up to 1280 KB, zero-padded to a 4 KB multiple),
+  `--flash-read-cycles N` (default 0) adds N cycles per data load from that
+  range, a `romfs = "path"` key in `carts/<cart>.toml` (relative to the
+  repository root), `describe_addr` names the region, README section.
+  Keep it that simple (Adrian: further model refinement is academic).
+- Done when `zig build test` is green with the real reader, an image with
+  `waternet.gg` built by the tool round-trips through the reader in a test,
+  and `badge-bench` runs `snouty-boy.elf` unchanged with `--romfs` given
+  (proves the mapping does not disturb a cart that ignores it).
+
+### Integration (me)
+
+1. Merge both tracks into `gear/m0`; `zig build` (all carts), every other
+   cart's uf2/wasm byte-identical to the baseline hashes taken before M0.
+2. `zig build test` green; `make_romfs.py` image with `waternet.gg`,
+   badge-bench on `snouty-gear.elf` with `--romfs`: the overlay/report line
+   must read the drive ROM (name, CRC) rather than the embedded one.
+3. Preview PNG of the pattern in `docs/`; PLAN.md status; tag `snouty-gear/m0`;
+   pull-and-run notes for Adrian.
 
 ## M1 Core: contract
 
@@ -37,8 +142,9 @@ report and is stubbed locally.
   `read(addr: u16) u8`, `write(addr: u16, v: u8)`, `in(port: u8) u8`,
   `out(port: u8, v: u8)`. `Z80(comptime BusT)` calls only those, plus
   `BusT.irq_line() bool` sampled between instructions.
-- `gg.line_sink` receives each rendered visible line as `[160]u4` palette
-  indices (0..31) plus the current `*const [32]u16` 12-bit CRAM, so the
+- `gg.line_sink` receives each rendered visible line as `[160]u5` palette
+  indices (0..31; sprites use 16..31, so a u4 cannot hold them) plus the
+  current `*const [32]u16` 12-bit CRAM, so the
   frontend owns color conversion.
 - Pad byte: bit set = pressed, `up down left right b1 b2 start`.
 - `Keyframe` copies `Gg` minus the ROM pointer and the sink.
@@ -102,3 +208,32 @@ report and is stubbed locally.
 ## Status
 
 - 2026-09-29: SPEC.md and this plan drafted; section 18 decided. Next: M0.
+- 2026-09-29: M0 started on branch `gear/m0` (skeleton commit, then tracks
+  A and B in worktrees).
+- 2026-09-29: M0 done. Track A (cart scaffold, `cdb842e`) and Track B
+  (romfs reader, `make_romfs.py`, badge-bench `--romfs`, `073412b`) merged.
+  - `zig build` of every cart: the other seven carts' uf2 and wasm are
+    byte-identical to the pre-M0 build (097b1ab, same worktree, same SDK pin).
+  - `zig build test`: green (65 test steps incl. 8 romfs and 9 gear tests;
+    Snouty Boy's tests need `carts/snouty-boy/tools/fetch_test_roms.sh` in
+    a fresh checkout, as before).
+  - Sizes (RAM cart, fast, drive source, incl. the 64 KB embedded ROM):
+    `.text` 105,312, `.data` 220, `.bss` 39,584 (5 KB of it the cluster
+    table); uf2 291,840 B, wasm 261,030 B. Code alone is ~40 KB, against
+    SPEC.md's ~95 KB estimate for the finished cart.
+  - badge-bench, 120 frames, `romfs = carts/snouty-gear/out/romfs.img`
+    (Waternet, built by `tools/make_romfs.py`): the cart found and mapped
+    `waternet.gg` from the drive image and showed `crc 6BB36DFC` (matches
+    zlib); pattern frame 3.30 ms busy, start-up 2.68 ms. `docs/m0_drive_bench.png`.
+  - Deviations from the M0 text, all accepted: sink pixels are `[160]u5`
+    (indices reach 31); `-Dgg-rom-source=pack` prints a note and builds the
+    drive cart instead of failing; `Gg.init_in_place` because the 33 KB
+    console must not cross the 32 KB badge stack by value; the report line
+    word-wraps over up to four rows.
+  - romcheck: Waternet writes `FFFC` (cart RAM unknown, computed value) and
+    no line interrupt seen; Sonic GG writes register 10 (line IRQ likely),
+    no cart RAM. M1 tracks B and C take note.
+  - Open from docs/ROM_DRIVE.md section 3: keep the M3 keyframe ring out of
+    `.bss` (the uf2 carries `.bss` zeros) if the uf2 gets too big for the drive.
+  Next: M1 (three tracks per the contract above); gate on Adrian's hardware
+  run of this M0 uf2 with a `.gg` file on the drive.

@@ -1,8 +1,10 @@
 //! Snoutenstein 3D: entry point, top-level state machine, wasm shims.
 //! SPEC.md is the design, PLAN.md the current milestone, CLAUDE.md the
-//! toolchain. Modes: title -> playing -> (dead: time frozen, hold B) /
-//! intermission -> next level -> victory. Rewind wiring is M4.
+//! toolchain. Modes: title -> playing <-> rewinding (hold B) / dead (time
+//! frozen, B rewinds) / paused; playing -> intermission -> next level ->
+//! victory. Rewind semantics: PLAN.md M4; the core is rewind.zig.
 const std = @import("std");
+const builtin = @import("builtin");
 const cart = @import("cart-api");
 const fixed = @import("fixed.zig");
 const state = @import("state.zig");
@@ -14,21 +16,28 @@ const weapon = @import("render/weapon.zig");
 const hud = @import("render/hud.zig");
 const blit = @import("render/blit.zig");
 const audio = @import("audio.zig");
+const rewind = @import("rewind.zig");
 
 comptime {
     cart.export_start_code();
 }
 
-pub const Mode = enum(u32) { title = 0, playing = 1, paused = 2, intermission = 3, victory = 4, dead = 5 };
+pub const Mode = enum(u32) { title = 0, playing = 1, paused = 2, intermission = 3, victory = 4, dead = 5, rewinding = 6 };
 
 // Level indices come from levels.zig once the campaign levels land (M3
 // track C); until then everything maps onto the levels that exist.
 const campaign_len: u8 = if (@hasDecl(levels, "campaign_len")) levels.campaign_len else 1;
 const test_index: u8 = if (@hasDecl(levels, "test_index")) levels.test_index else 0;
 const e1m1_index: u8 = if (@hasDecl(levels, "e1m1_index")) levels.e1m1_index else 1;
-/// Death freeze placeholder (M3): holding B this long restarts the level.
-/// M4 replaces it with the real rewind (SPEC.md 9.1).
+/// Death freeze safety net: with no history to rewind into (only possible
+/// at the very first tick), holding B this long restarts the level. The
+/// real exit from death is the rewind (SPEC.md 9.1, PLAN.md M4).
 const dead_hold: u32 = 60;
+/// Emergency reserve granted when rewinding out of death: 3 s.
+const death_reserve: u16 = 180;
+/// SPEC.md 9.3: re-simulate every keyframe span and compare, on builds
+/// where the extra 30 `sim.step`s per half second do not matter.
+const self_check = cart.is_wasm or builtin.mode == .debug;
 
 /// Intermission card: skippable with A after `card_min`, auto-advances at `card_max`.
 const card_min: u32 = 60;
@@ -46,6 +55,12 @@ var level_index: u8 = 0;
 var prev_buttons: state.Buttons = .{};
 var render_us: u32 = 0;
 var held_b: u32 = 0;
+/// Rewind bookkeeping (PLAN.md M4): ticks available when the rewind began
+/// (the meter, topped up to the reserve when entered from death), ticks
+/// spent so far, and whether death is where B was pressed.
+var budget: u16 = 0;
+var drained: u16 = 0;
+var from_dead: bool = false;
 
 pub fn start() void {
     cart.set_vsync_enabled(1000.0 / 60.0);
@@ -73,8 +88,13 @@ pub fn update() void {
         .playing => {
             if (pressed(b, .start)) {
                 mode = .paused;
+            } else if (pressed(b, .b) and game.player.rewind_meter > 0) {
+                begin_rewind(game.player.rewind_meter, false);
             } else {
+                rewind.log_input(game.tick, b);
                 sim.step(&game, level, b);
+                rewind.after_step(&game);
+                if (self_check and game.tick % rewind.keyframe_every == 0) _ = rewind.check(&game, level);
                 hud.tick(&game);
                 audio.tick(&game, level);
                 if (game.player.hp <= 0) {
@@ -88,9 +108,28 @@ pub fn update() void {
             }
         },
         .dead => {
-            // Time is frozen; only B does anything.
-            held_b = if (b.b) held_b + 1 else 0;
-            if (held_b >= dead_hold) new_game(level_index);
+            // Time is frozen; only B does anything. A press starts the
+            // rewind with at least the reserve; the hold counter is the
+            // no-history safety net (see `dead_hold`).
+            if (pressed(b, .b)) {
+                begin_rewind(@max(game.player.rewind_meter, death_reserve), true);
+            } else {
+                held_b = if (b.b) held_b + 1 else 0;
+                if (held_b >= dead_hold) new_game(level_index);
+            }
+        },
+        .rewinding => {
+            if (!b.b or drained >= budget) {
+                end_rewind();
+            } else if (rewind.back(level)) |_| {
+                drained += 1;
+                held_b = 0;
+            } else if (from_dead and drained == 0) {
+                // Dead at the very first tick with nothing to rewind into.
+                held_b += 1;
+                if (held_b >= dead_hold) new_game(level_index);
+            }
+            if (mode == .rewinding) audio.rewind_tick(rewind.current());
         },
         .paused => {
             if (pressed(b, .start)) mode = .playing;
@@ -114,17 +153,22 @@ pub fn update() void {
 
     switch (mode) {
         .title => hud.draw_title(tick_total, audio.enabled),
-        .playing, .paused, .dead => {
+        .playing, .paused, .dead, .rewinding => {
+            const rw = mode == .rewinding;
+            const shown: *const state.GameState = if (rw) rewind.current() else &game;
             const moving = mode == .playing and (b.up or b.down);
             const t0 = cart.micros_since_boot();
-            view.shade_override = if (mode == .dead or game.hurt > 0) 5 else null;
-            view.draw(&game, level);
-            weapon.draw(&game, moving);
-            hud.draw_bar(&game);
+            view.shade_override = if (rw) 4 else if (mode == .dead or shown.hurt > 0) 5 else null;
+            hud.meter_override = if (rw) budget - drained else null;
+            view.draw(shown, level);
+            if (rw) view.scanlines();
+            weapon.draw(shown, moving);
+            hud.draw_bar(shown);
             render_us = @intCast(cart.micros_since_boot() - t0);
+            if (rw) hud.draw_rewind_marker();
             if (show_render_us) hud.draw_render_us(render_us);
             if (mode == .paused) hud.draw_pause();
-            if (mode == .dead) hud.draw_dead(held_b, dead_hold);
+            if (mode == .dead) hud.draw_dead(@max(game.player.rewind_meter, death_reserve));
         },
         .intermission => hud.draw_intermission(&game, level.name, @intCast(level.enemies.len), card_ticks),
         .victory => hud.draw_victory(&game, card_ticks),
@@ -145,8 +189,41 @@ fn new_game(index: u8) void {
     level_index = index;
     level = &levels.all[level_index];
     sim.init(&game, level, level_index, @truncate(cart.micros_since_boot()));
+    rewind.reset(&game);
+    hud.set_rewinding(false);
+    hud.meter_override = null;
     hud.tick(&game);
     audio.reset(&game);
+    mode = .playing;
+}
+
+/// Enter rewind with `ticks` of budget (PLAN.md M4 "Rewind semantics").
+/// The death reserve is never written into `game`: the live state must
+/// keep agreeing with its replay, so `end_rewind` writes the result.
+fn begin_rewind(ticks: u16, dead: bool) void {
+    budget = ticks;
+    drained = 0;
+    from_dead = dead;
+    held_b = 0;
+    rewind.begin(&game, level);
+    // The press itself steps back once, so a tap out of death lands on
+    // the last living tick and N held frames rewind N ticks.
+    if (rewind.back(level)) |_| drained += 1;
+    hud.set_rewinding(true);
+    mode = .rewinding;
+}
+
+/// B released or budget spent. The shown state becomes live unless it is
+/// still the death tick (B tapped without stepping back): then back to dead.
+fn end_rewind() void {
+    hud.set_rewinding(false);
+    hud.meter_override = null;
+    rewind.commit(&game, budget - drained, drained > 0);
+    if (game.player.hp <= 0) {
+        mode = .dead;
+        held_b = 0;
+        return;
+    }
     mode = .playing;
 }
 
@@ -175,13 +252,18 @@ comptime {
         @export(&debug_nibble_ok, .{ .name = "debug_nibble_ok" });
         @export(&debug_frozen, .{ .name = "debug_frozen" });
         @export(&debug_projectiles, .{ .name = "debug_projectiles" });
+        @export(&debug_rewinds, .{ .name = "debug_rewinds" });
+        @export(&debug_meter, .{ .name = "debug_meter" });
+        @export(&debug_desync, .{ .name = "debug_desync" });
+        @export(&debug_gameplay_hash, .{ .name = "debug_gameplay_hash" });
     }
 }
 fn debug_mode() callconv(.c) u32 {
     return @backingInt(mode);
 }
+/// Tick of the shown state (the rewound one while rewinding).
 fn debug_tick() callconv(.c) u32 {
-    return game.tick;
+    return if (mode == .rewinding) rewind.current().tick else game.tick;
 }
 /// Player x in 16.16 fixed point (cells).
 fn debug_px() callconv(.c) u32 {
@@ -233,6 +315,21 @@ fn debug_projectiles() callconv(.c) u32 {
     var n: u32 = 0;
     for (game.projectiles) |pr| n += @intFromBool(pr.kind != 0);
     return n;
+}
+fn debug_rewinds() callconv(.c) u32 {
+    return game.rewinds;
+}
+/// The displayed rewind meter in ticks (budget left while rewinding).
+fn debug_meter() callconv(.c) u32 {
+    return if (mode == .rewinding) budget - drained else game.player.rewind_meter;
+}
+/// Keyframe self-check mismatches (SPEC.md 9.3); the harness wants 0.
+fn debug_desync() callconv(.c) u32 {
+    return rewind.desyncs;
+}
+/// `sim.hash_gameplay` of the live state (the shown one while rewinding).
+fn debug_gameplay_hash() callconv(.c) u32 {
+    return sim.hash_gameplay(if (mode == .rewinding) rewind.current() else &game);
 }
 /// 1 when the sprite/blit nibble reads agree with PackedIntSlice.get.
 fn debug_nibble_ok() callconv(.c) u32 {

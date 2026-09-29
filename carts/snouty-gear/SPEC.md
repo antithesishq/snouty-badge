@@ -132,8 +132,8 @@ the right; badge B on the left, A on the right). A menu item swaps them.
 - **Crop**: lines 8..135 to rows 0..127.
 - Line renderer: 4bpp planar tile rows are turned into eight 4-bit pixels
   with one 256-entry u32 bit-spread table per plane (1 KB total), BG
-  priority kept per pixel for sprite compositing, then the 4-bit indices
-  map through a 32-entry `Pixel` cache (12-bit CRAM converted to RGB565,
+  priority kept per pixel for sprite compositing, then the 5-bit indices
+  (palette select adds 16 for sprites) map through a 32-entry `Pixel` cache (12-bit CRAM converted to RGB565,
   rebuilt on CRAM writes), written column-major with stride stores as in
   Snouty Boy.
 - Border: the Game Gear shows no border; the backdrop color (register 7)
@@ -493,3 +493,7 @@ Decided 2026-09-29: Adrian accepted every recommendation.
 - 2026-09-29: Adrian chose ROMs read from the badge drive
   (`docs/ROM_DRIVE.md`) as the default, RAM cart, with packing the ROM
   into the cart image kept as the fallback (13.1). Section 13 redone.
+- 2026-09-29: M0 done (tag `snouty-gear/m0`): scaffold, stub core with a
+  test pattern, `lib/romfs.zig` FAT12 reader proven under badge-bench with
+  a Waternet drive image, `tools/make_romfs.py`, badge-bench `--romfs`.
+  Numbers in PLAN.md. Hardware checks (docs/ROM_DRIVE.md section 6) pending.

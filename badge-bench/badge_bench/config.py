@@ -8,6 +8,8 @@ Keys (all optional):
   pokes     = ["dither.mode=1"]
   press     = ["A:30-31"]
   note      = "free text shown in the report header"
+  romfs     = "out/drive.img"   FAT12 badge drive image (tools/make_romfs.py) mapped at
+              0x10080000, relative to the repository root like script
 
 The cart repo root is the directory above zig-out/ when the ELF lives in
 <repo>/zig-out/firmware/, else the ELF's own directory. Command-line flags
@@ -23,7 +25,7 @@ CARTS_DIR = os.path.join(os.path.dirname(HERE), 'carts')
 # The badge fit badge-bench applies unless --no-calibrate / --calibrate FILE.
 DEFAULT_CALIBRATION = os.path.join(os.path.dirname(HERE), 'calibrate', 'calibration.toml')
 KEYS = {'budget_ms': (int, float), 'frames': (int,), 'script': (str,), 'pokes': (list,),
-        'press': (list,), 'note': (str,)}
+        'press': (list,), 'note': (str,), 'romfs': (str,)}
 
 
 def _strip_comment(line):
@@ -135,6 +137,8 @@ def load(elf_path, explicit=None):
             raise BenchError(f"{path}: '{k}' has the wrong type")
     if 'script' in cfg and not os.path.isabs(cfg['script']):
         cfg['script'] = os.path.join(cart_root(elf_path), cfg['script'])
+    if 'romfs' in cfg and not os.path.isabs(cfg['romfs']):
+        cfg['romfs'] = os.path.join(cart_root(elf_path), cfg['romfs'])
     return cfg, path
 
 
