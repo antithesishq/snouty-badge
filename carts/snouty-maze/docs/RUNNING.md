@@ -43,7 +43,7 @@ Then from `carts/snouty-maze/`:
 
 ```sh
 node tools/check_golden.mjs   # golden-image regression (needs zig build first)
-node tools/check_cycle.mjs    # screensaver loop, actor triggers and LEDs (runs A..I)
+node tools/check_cycle.mjs    # screensaver loop, actor triggers and LEDs (runs A..K)
 ```
 
 `zig build` writes, in the root `zig-out/`:
@@ -284,7 +284,7 @@ M3 actor and LED exports:
 ### Screensaver loop: `tools/check_cycle.mjs`
 
 ```sh
-node tools/check_cycle.mjs                # runs A..I
+node tools/check_cycle.mjs                # runs A..K
 node tools/check_cycle.mjs --only B,D     # just the overhead and flip checks
 node tools/check_cycle.mjs --frames 20000 # longer unattended run for A
 ```

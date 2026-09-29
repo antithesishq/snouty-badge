@@ -2,6 +2,7 @@
 const std = @import("std");
 const cart = @import("cart-api");
 const camera = @import("../camera.zig");
+const math = @import("../math.zig");
 const textures = @import("textures.zig");
 
 var buf: [32]u8 = undefined;
@@ -34,28 +35,65 @@ const text_w: usize = 8 * @as(usize, @max(name_line1.len, name_line2.len));
 const group_x: usize = (cart.screen_width - (icon_size + icon_gap + text_w)) / 2;
 const icon_y = 104;
 
+/// The Iris mark flips like a coin about its vertical axis: once
+/// `flip_first` ticks after the strip appears (so the 2 s OVERHEAD hold
+/// gets one flip) and every `flip_period` ticks (5 s) after that while
+/// Start keeps the strip on. A flip is one full turn in `flip_ticks`; the
+/// back face is the mirrored mark at 70% brightness (`textures.iris_back`).
+pub const flip_first: u32 = 45;
+pub const flip_ticks: u32 = 30;
+pub const flip_period: u32 = 300;
+/// Ticks the strip has been on screen (0 on the tick it appears).
+var strip_tick: u32 = 0;
+/// Width the mark was last drawn at, `icon_size` at rest (debug export).
+pub var iris_width: u32 = icon_size;
+
+/// Call on every tick the strip is not drawn: the flip timer restarts when
+/// it next appears.
+pub fn name_strip_hidden() void {
+    strip_tick = 0;
+    iris_width = icon_size;
+}
+
 pub fn draw_name_strip() void {
-    draw_iris(group_x, icon_y);
+    const t = strip_tick;
+    strip_tick +%= 1;
+    var angle: math.Angle = 0;
+    if (t >= flip_first) {
+        const since = (t - flip_first) % flip_period;
+        if (since < flip_ticks) angle = @truncate((since << 16) / flip_ticks);
+    }
+    draw_iris(group_x, icon_y, angle);
     const tx = group_x + icon_size + icon_gap;
     shadow_text_centred(name_line1, tx, 106);
     shadow_text_centred(name_line2, tx, 116);
 }
 
-/// 1:1 blit of the Iris mark, which the art pipeline renders at 24x24
-/// centred in the 32x32 iris sheet (texels 4..27 either way), with the same
-/// 1 px black drop shadow as the text; palette index 0 is transparent. 2D
-/// only, no z test.
+/// The Iris mark, which the art pipeline renders at 24x24 centred in the
+/// 32x32 iris sheet (texels 4..27 either way), turned by `angle` about its
+/// vertical axis: the columns are squeezed to 24 |cos angle| px about the
+/// icon's centre (nearest source column, never fewer than 2 px over a
+/// 30-tick flip), 1:1 at angle 0, and past 90 degrees the mirrored back
+/// face in the darker palette. Same 1 px black drop shadow as the text;
+/// palette index 0 is transparent. 2D only, no z test.
 const icon_inset = (textures.size - icon_size) / 2;
 
-fn draw_iris(x0: usize, y0: usize) void {
-    const t = &textures.iris;
+fn draw_iris(x0: usize, y0: usize, angle: math.Angle) void {
+    const c = math.cos_angle(angle);
+    const front = c >= 0;
+    const w: usize = @intFromFloat(@round(@abs(c) * @as(f32, icon_size)));
+    iris_width = @intCast(w);
+    if (w == 0) return;
+    const t = if (front) &textures.iris else &textures.iris_back;
+    const x_left = x0 + (icon_size - w) / 2;
     const black: cart.Pixel = .{ .bits = 0 };
     inline for (.{ 1, 0 }) |off| {
-        for (0..icon_size) |i| {
-            const x = x0 + i + off;
+        for (0..w) |i| {
+            const x = x_left + i + off;
             if (x >= cart.screen_width) continue;
             const col = &cart.framebuffer[x];
-            const u = i + icon_inset;
+            const src = ((2 * i + 1) * icon_size) / (2 * w);
+            const u = (if (front) src else icon_size - 1 - src) + icon_inset;
             for (0..icon_size) |j| {
                 const y = y0 + j + off;
                 if (y >= cart.screen_height) continue;

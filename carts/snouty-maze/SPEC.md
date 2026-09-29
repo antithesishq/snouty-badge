@@ -77,7 +77,10 @@ The whole 160x128 is the 3D view. There is no HUD.
 - Name strip: `ADRIAN HATCH` / `ANTITHESIS` in the built-in 8x8 font, two
   lines centred, drawn only during the overhead hold (section 8), where the
   view has empty margin around the maze. Start toggles it permanently on
-  (bottom-left corner, one line) or off.
+  (bottom-left corner, one line) or off. The Iris mark beside the lines
+  flips like a coin about its vertical axis (columns squeezed to
+  24 |cos| px, mirrored darker back face, one turn in 30 ticks) 45 ticks
+  after the strip appears and every 5 s after that while it stays on.
 - Debug builds: `render us` and fps in the top-left corner (Select toggles
   in M1), so the M1 timing check is one photo of the badge.
 

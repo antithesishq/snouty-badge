@@ -1148,3 +1148,18 @@ same 24 px scaling of the procedural mark. No golden shows the strip;
 `check_golden` 9/9, `check_cycle` 9/9, `zig build test`, `check-float`
 PASS; `docs/preview_m4.gif` and `docs/w95_assets.png` regenerated.
 
+## M4 fix 2: coin flip (2026-09-29)
+
+Adrian: make the Iris mark rotate in 3D occasionally, coin style, about
+every 5 s. `overlay.zig` keeps a strip-local tick (reset by
+`name_strip_hidden()` from `main.zig`); at tick 45 and every 300 after it
+the mark turns once in 30 ticks: `draw_iris(x0, y0, angle)` squeezes the
+columns to 24 |cos angle| px about the centre (nearest source column,
+never under 2 px) and past 90 degrees draws the mirrored back face in
+`textures.iris_back` (70% palette). The OVERHEAD hold is 120 ticks, so a
+normal cycle gets one flip 0.75 s in; the 5 s period only matters with
+Start holding the strip on. `debug_iris_width` export; `check_cycle` runs
+J (edge-on, width 3 at OVERHEAD tick 52) and K (back face, width 24 at
+tick 60). OVERHEAD starts at tick 180 after A at tick 0 (pause 30 + rise
+150), not 240 as run B's label suggests.
+
