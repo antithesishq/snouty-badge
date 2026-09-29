@@ -14,6 +14,7 @@ tools.
 | `carts/snouty-boy/` | `snouty-boy` | Game Boy and Game Boy Color emulator that runs `.gb`/`.gbc` files from the badge drive (a picker for several, the embedded ROM as fallback) with a time scrubber (tags `snouty-boy/m1`..`m5`; Color M6-M8 built). |
 | `carts/snouty-maze/` | `snouty-maze` | Windows 3D Maze screensaver clone on a small software rasterizer (tags `snouty-maze/m0`..`m3`). |
 | `carts/snouty-gear/` | `snouty-gear` | Game Gear emulator reading its ROM from the badge drive, Waternet embedded as fallback (M1: Z80, VDP, mapper, ports; plays Waternet and Sonic GG; no sound, menu or rewind yet). |
+| `carts/snouty-genesis/` | `snouty-genesis` | Sega Genesis emulator, XIP cart only (`snouty-genesis-xip.uf2`), streaming its ROM from the badge drive (M0 scaffold: console state and stubs, test pattern; `-Dcart-mode=xip`). |
 | `tools/` | | Shared cart tools: `preview.mjs` (headless wasm runner with input scripts and checks), `serve-cart.mjs` (feeds the web simulator), `make_gif.py`, `check_float.mjs`, `uf2_info.py`. |
 | `badge-bench/` | | Emulated Cortex-M33 cycle benchmark for any cart ELF, with per-cart defaults and hot-function lists. |
 | `badge-bench/calibrate/` | `badge-calibrate` | Hardware calibration cart: times 20 micro-kernels with the cycle counter during and after the LCD DMA; `fit.py` turns a console capture into badge-bench's `--calibrate` table. |

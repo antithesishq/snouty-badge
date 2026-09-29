@@ -34,6 +34,15 @@ pub const Options = struct {
     /// the badge build gets its ROM (carts/snouty-gear/SPEC.md section 7).
     gg_rom: ?[]const u8,
     gg_rom_source: RomSource,
+    /// -Dmd-rom: Genesis ROM to embed (snouty-genesis); -Dmd-rom-source:
+    /// where its badge build gets the ROM (carts/snouty-genesis/SPEC.md
+    /// section 11).
+    md_rom: ?[]const u8,
+    md_rom_source: MdRomSource,
+    /// -Dcart as given (null: every cart is built). snouty-genesis builds
+    /// only as an XIP cart: named here without -Dcart-mode=xip it stops the
+    /// build, in an all-carts build it builds XIP regardless.
+    only: ?[]const u8,
     /// `zig build test`: every cart with host tests depends on this step.
     test_step: *Build.Step,
     /// `zig build check-float`: every cart with a float check depends on this step.
@@ -44,5 +53,10 @@ pub const Options = struct {
 /// from the badge's USB drive with the embedded ROM as fallback; `embed` uses
 /// only the embedded ROM; `pack` is the XIP bank-packer fallback (not built yet).
 pub const RomSource = enum { drive, embed, pack };
+
+/// -Dmd-rom-source (snouty-genesis): `drive` reads a `.gen`/`.md`/`.bin`
+/// file from the badge's USB drive with the embedded ROM as fallback;
+/// `embed` uses only the embedded ROM.
+pub const MdRomSource = enum { drive, embed };
 
 pub const AddFn = *const fn (b: *Build, sycl_badge_dep: *Build.Dependency, opts: Options) void;

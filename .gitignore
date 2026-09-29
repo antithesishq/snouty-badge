@@ -19,3 +19,13 @@ __pycache__/
 
 # The shipped Snouty Gear ROM (MIT, roms/LICENSE-waternet) is the one exception.
 !carts/snouty-gear/roms/waternet.gg
+
+# Genesis / Mega Drive ROMs (carts/snouty-genesis/SPEC.md section 11):
+# commercial ones stay outside the repo. `*.md` cannot be a global pattern
+# (it would ignore Markdown), so .bin and .md ROMs are ignored by path; the
+# shipped ROM's exception lines belong to M0 Track R.
+*.gen
+*.smd
+carts/snouty-genesis/roms/*.bin
+carts/snouty-genesis/roms/*.md
+carts/snouty-genesis/tests/roms/
