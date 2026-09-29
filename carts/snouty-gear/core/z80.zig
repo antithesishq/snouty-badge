@@ -1021,8 +1021,13 @@ pub fn Z80(comptime BusT: type) type {
                     self.r = (self.r & 0x80) | ((self.r -% 1) & 0x7F);
                     return 4;
                 },
-                // Everything else ignores the prefix.
-                else => return self.exec(bus, op) + 4,
+                // Everything else ignores the prefix, which counts as an
+                // instruction of its own that left the flags alone (Q = 0
+                // for SCF/CCF).
+                else => {
+                    self.q_prev = 0;
+                    return self.exec(bus, op) + 4;
+                },
             }
         }
 

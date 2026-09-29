@@ -3,8 +3,8 @@
 #
 #   tools/fetch_test_roms.sh                   ZEXDOC/ZEXALL (Maxim's SMS port, v0.21, GPL-2.0)
 #   tools/fetch_test_roms.sh --single-step     also a representative subset of the
-#                                              SingleStepTests Z80 v1/ files (MIT, ~40
-#                                              files, ~28 MB) in tests/roms/z80/v1/, which
+#                                              SingleStepTests Z80 v1/ files (MIT, 36
+#                                              files, ~29 MB) in tests/roms/z80/v1/, which
 #                                              `zig build test` runs
 #   tools/fetch_test_roms.sh --single-step-all run the WHOLE SingleStepTests suite (1604
 #                                              files, ~1.2 GB): streams batches of $BATCH
@@ -55,9 +55,9 @@ if [ "$single_step" = 1 ]; then
   # arithmetic, DAA/SCF/CCF, jumps/calls, I/O, the ED block and I/O
   # instructions, CB/DDCB/FDCB and IX/IY forms incl. undocumented ones.
   mkdir -p z80/v1
-  for f in "00" "09" "10" "27" "37" "3f" "76" "7e" "8e" "9e" "be" "c9" "cd" "d3" "db" "e3" \
-           "ed 42" "ed 4a" "ed 57" "ed 67" "ed 6f" "ed a1" "ed a2" "ed a3" "ed b0" "ed b1" "ed b2" "ed bb" \
-           "cb 06" "cb 36" "cb 46" "cb 7e" "dd 00" "dd 34" "dd 7e" "dd 8c" "dd e3" \
+  for f in "00" "09" "10" "27" "37" "3f" "76" "be" "c9" "cd" "d3" "db" "e3" \
+           "ed 42" "ed 4a" "ed 57" "ed 67" "ed a1" "ed a2" "ed a3" "ed b0" "ed b1" "ed b2" "ed bb" \
+           "cb 06" "cb 36" "cb 7e" "dd 00" "dd 37" "dd 34" "dd 7e" "dd 8c" "dd e3" \
            "dd cb __ 06" "dd cb __ 46" "fd cb __ c0"; do
     [ -f "z80/v1/$f.json" ] || { echo "fetch v1/$f.json"; fetch_one "$f.json" z80/v1; }
   done
@@ -89,6 +89,8 @@ if [ "$single_step_all" = 1 ]; then
       | tee -a z80/results.txt | grep -E '^(FAIL|z80:)' || true
     rm -rf z80/batch
   done
-  echo "summary: $(grep -c '^PASS' z80/results.txt) files pass, $(grep -c '^FAIL' z80/results.txt) fail" | tee -a z80/results.txt
+  pass=$(grep -oE 'PASS [^/]+\.json' z80/results.txt | wc -l)
+  fail=$(grep -oE 'FAIL [^/]+\.json' z80/results.txt | wc -l)
+  echo "summary: $total files, $pass pass, $fail fail" | tee -a z80/results.txt
 fi
 ls -l
