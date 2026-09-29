@@ -53,7 +53,7 @@ const LineSprites = struct {
     n: u8 = 0,
     /// Left column (shift-left-8 applied, so -8..255).
     x: [8]i16 = undefined,
-    /// The sprite's pattern row, packed: pixel i's colour in nibble i.
+    /// The sprite's pattern row, packed as in vdp_tables.zig.
     row: [8]u32 = undefined,
 };
 
@@ -257,65 +257,41 @@ pub const Vdp = struct {
             @memset(out, bd);
             return;
         }
-        // Indexed by VDP column; room for column counter 31 at fine 7.
-        var buf: [256 + 8]u5 = undefined;
+        var buf: LineBuf align(4) = undefined;
         // Per column counter: opaque pixels of priority tiles (bit 7 = left).
         var prio: [32]u8 = @splat(0);
 
         const r0 = v.regs[0];
         const hs: u8 = if (r0 & 0x40 != 0 and line < 16) 0 else v.regs[8];
-        const fine: u16 = hs & 7;
+        const fine: u8 = hs & 7;
         const coarse: u8 = hs >> 3;
-        const x_end: u16 = @as(u16, x0) + screen_w;
 
-        // Pixels left of the first column counter show the backdrop.
-        var n_lo: u16 = 0;
-        if (x0 < fine) {
-            for (x0..fine) |x| buf[x] = bd;
-        } else n_lo = (x0 - fine) >> 3;
-        const n_hi: u16 = (x_end - 1 - fine) >> 3;
+        // Pixels left of column counter 0 (VDP columns < fine) are backdrop.
+        @memset(buf[0..8], bd);
+        const n_lo: u8 = if (x0 < fine) 0 else (x0 - fine) >> 3;
+        const n_end: u8 = @intCast(((@as(u16, x0) + screen_w - 1 - fine) >> 3) + 1);
 
         const nt: u16 = @as(u16, v.regs[2] & 0x0E) << 10;
         var ys: u16 = @as(u16, line) + v.vscroll;
         if (ys >= 224) ys -= 224;
         if (ys >= 224) ys -= 224;
-        const row_scrolled: u16 = nt + (ys >> 3) * 64;
-        const row_locked: u16 = nt + @as(u16, line >> 3) * 64;
-        const lock_col: u16 = if (r0 & 0x80 != 0) 24 else 32;
-
-        var n = n_lo;
-        while (n <= n_hi) : (n += 1) {
-            const locked = n >= lock_col;
-            const rbase = if (locked) row_locked else row_scrolled;
-            const fy: u16 = if (locked) line & 7 else ys & 7;
-            const col: u16 = (n -% coarse) & 31;
-            const ea = rbase + col * 2;
-            const entry: u16 = @as(u16, v.vram[ea]) | (@as(u16, v.vram[ea + 1]) << 8);
-            const r: u16 = if (entry & 0x400 != 0) 7 - fy else fy;
-            const pa = (entry & 0x1FF) * 32 + r * 4;
-            const p0 = v.vram[pa];
-            const p1 = v.vram[pa + 1];
-            const p2 = v.vram[pa + 2];
-            const p3 = v.vram[pa + 3];
-            const hflip = entry & 0x200 != 0;
-            const row = decode(p0, p1, p2, p3, hflip);
-            if (entry & 0x1000 != 0) {
-                const m = p0 | p1 | p2 | p3;
-                prio[n] = if (hflip) @bitReverse(m) else m;
-            }
-            const pal: u32 = if (entry & 0x800 != 0) 16 else 0;
-            const px = n * 8 + fine;
-            inline for (0..8) |i| buf[px + i] = @intCast(pal | ((row >> (4 * i)) & 0xF));
-        }
+        // Column counters 24..31 ignore the vertical scroll with the lock.
+        const lock: u8 = if (r0 & 0x80 != 0) 24 else 32;
+        const split = @min(@max(lock, n_lo), n_end);
+        bg_tiles(v, &buf, &prio, n_lo, split, nt + (ys >> 3) * 64, ys & 7, coarse);
+        bg_tiles(v, &buf, &prio, split, n_end, nt + @as(u16, line >> 3) * 64, line & 7, coarse);
 
         var list: LineSprites = .{};
         v.find_sprites(line, &list);
-        if (list.n != 0) v.sprites(&list, &buf, &prio, @intCast(fine), x0, true);
+        if (list.n != 0) v.sprites(&list, &buf, &prio, fine, x0, true);
 
+        // Left-column blank: VDP columns 0..7, sprites included.
         if (r0 & 0x20 != 0 and x0 < 8) {
-            for (x0..8) |x| buf[x] = bd;
+            for (x0..8) |c| buf[c + 8 - fine] = bd;
         }
-        @memcpy(out, buf[x0..x_end]);
+        // Every byte written above is 0..31, so it reads back as a valid u5.
+        const dst: *[screen_w]u8 = @ptrCast(out);
+        @memcpy(dst, buf[@as(u16, x0) + 8 - fine ..][0..screen_w]);
     }
 
     /// Sprite evaluation for an active line that is not rendered: sets the
@@ -369,8 +345,9 @@ pub const Vdp = struct {
     /// (when `draw`), and set the collision flag when two opaque sprite
     /// pixels meet anywhere in columns 0..255. `prio` and `fine` locate the
     /// background's priority pixels; only columns `x0 .. x0 + 159` are drawn.
-    fn sprites(v: *Vdp, list: *const LineSprites, buf: *[256 + 8]u5, prio: *const [32]u8, fine: u8, x0: u8, comptime draw: bool) void {
+    fn sprites(v: *Vdp, list: *const LineSprites, buf: *LineBuf, prio: *const [32]u8, fine: u8, x0: u8, comptime draw: bool) void {
         const zoom: u4 = @intCast(v.regs[1] & 1);
+        const w: i16 = @as(i16, 1) << zoom;
         var occ: [8]u32 = @splat(0);
         var hit = false;
         const lo: i16 = x0;
@@ -378,31 +355,33 @@ pub const Vdp = struct {
         for (0..list.n) |s| {
             var row = list.row[s];
             const sx = list.x[s];
-            var i: i16 = 0;
+            // Nibble k holds pixel (k >> 1) + 4 * (k & 1) (see vdp_tables.zig).
+            var k: u4 = 0;
             while (row != 0) : ({
                 row >>= 4;
-                i += 1;
+                k += 1;
             }) {
-                const c: u5 = @intCast(row & 0xF);
+                const c: u8 = @intCast(row & 0xF);
                 if (c == 0) continue;
-                var k: i16 = 0;
-                while (k < (@as(i16, 1) << zoom)) : (k += 1) {
-                    const colx = sx + (i << zoom) + k;
+                const px: i16 = (k >> 1) | (@as(i16, k & 1) << 2);
+                var colx = sx + (px << zoom);
+                const end = colx + w;
+                while (colx < end) : (colx += 1) {
                     if (colx < 0 or colx > 255) continue;
                     const col: u16 = @intCast(colx);
-                    const w = col >> 5;
+                    const word = col >> 5;
                     const bit = @as(u32, 1) << @intCast(col & 31);
-                    if (occ[w] & bit != 0) {
+                    if (occ[word] & bit != 0) {
                         hit = true;
                         continue;
                     }
-                    occ[w] |= bit;
+                    occ[word] |= bit;
                     if (draw and colx >= lo and colx < hi) {
                         if (col >= fine) {
                             const off = col - fine;
                             if (prio[off >> 3] & (@as(u8, 0x80) >> @intCast(off & 7)) != 0) continue;
                         }
-                        buf[col] = 16 | c;
+                        buf[col + 8 - fine] = 16 | c;
                     }
                 }
             }
@@ -411,9 +390,45 @@ pub const Vdp = struct {
     }
 };
 
-/// Four plane bytes of a tile row to eight packed pixels, nibble i =
-/// pixel i from the left (mirrored when `hflip`).
+/// Line scratch indexed by `column + 8 - fine`: column counter n's tile at
+/// `8 + 8 * n` (word aligned), bytes 0..7 left of column counter 0.
+const LineBuf = [8 + 256]u8;
+
+/// Background tiles for column counters `from .. to` on name table row
+/// base `rbase`, fine row `fy`: two word stores per tile, and the opaque
+/// pixel mask of priority tiles into `prio`.
+inline fn bg_tiles(v: *const Vdp, buf: *align(4) LineBuf, prio: *[32]u8, from: u8, to: u8, rbase: u16, fy: u16, coarse: u8) void {
+    var n = from;
+    while (n < to) : (n += 1) {
+        const ea = rbase + @as(u16, (n -% coarse) & 31) * 2;
+        const entry: u16 = @as(u16, v.vram[ea]) | (@as(u16, v.vram[ea + 1]) << 8);
+        const r: u16 = if (entry & 0x400 != 0) 7 - fy else fy;
+        const pa = (entry & 0x1FF) * 32 + r * 4;
+        const p0 = v.vram[pa];
+        const p1 = v.vram[pa + 1];
+        const p2 = v.vram[pa + 2];
+        const p3 = v.vram[pa + 3];
+        const hflip = entry & 0x200 != 0;
+        const row = decode(p0, p1, p2, p3, hflip);
+        if (entry & 0x1000 != 0) {
+            const m = p0 | p1 | p2 | p3;
+            prio[n] = if (hflip) @bitReverse(m) else m;
+        }
+        const pal: u32 = if (entry & 0x800 != 0) 0x10101010 else 0;
+        const words: *[2]u32 = @ptrCast(@alignCast(buf[8 + @as(u16, n) * 8 ..][0..8]));
+        words[0] = (row & 0x0F0F0F0F) | pal;
+        words[1] = ((row >> 4) & 0x0F0F0F0F) | pal;
+    }
+}
+
+/// Four plane bytes of a tile row to eight packed pixels in the
+/// vdp_tables.zig layout (mirrored when `hflip`).
 inline fn decode(p0: u8, p1: u8, p2: u8, p3: u8, hflip: bool) u32 {
     const t = if (hflip) &tables.spread_rev else &tables.spread;
     return t[p0] | (t[p1] << 1) | (t[p2] << 2) | (t[p3] << 3);
+}
+
+comptime {
+    // bg_tiles stores four byte pixels per word, leftmost in the low byte.
+    if (@import("builtin").cpu.arch.endian() != .little) @compileError("vdp.zig assumes a little-endian target");
 }
