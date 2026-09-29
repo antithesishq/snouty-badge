@@ -19,9 +19,12 @@ longer explanations, this one summarises.
   ROM only as `rom.Rom`, a table of 16 KB bank pointers plus a per-byte
   fallback callback. Host-testable.
 - `cart/src/` — the badge frontend. `main.zig` exports `start()`/`update()`
-  and holds the wasm simulator shims; `frontend/` has video (squeeze and
-  the CRAM -> `Pixel` cache), input (pad byte, Select-hold state machine),
-  debug (overlay), romsrc (drive or embedded ROM, the report line).
+  and holds the wasm simulator shims and the splash -> running -> menu
+  state machine; `frontend/` has video (squeeze/crop and the CRAM ->
+  `Pixel` cache), input (pad byte, A/B swap, Select-hold state machine),
+  debug (overlay), romsrc (drive or embedded ROM, the report line, About
+  facts), splash, menu (settings, Reset, About), audio (`Psg.voice` ->
+  `tone2`).
 - `tests/` — host tests (`zig build test`), entry `tests/all.zig`.
   `tests/roms/` is gitignored; `tools/fetch_test_roms.sh` fills it.
 - `roms/` — the shipped ROM `waternet.gg` and its license. `*.gg`/`*.sms`
@@ -68,7 +71,7 @@ only (it calls this cart's `build.zig` `pub fn add`).
 - `zig build test` → every cart's host tests; `-Dtest-filter=bus` (test names carry an area prefix: `bus:`, `psg:`, `z80:`...),
   `-Dtest-optimize=`.
 - `size -A zig-out/firmware/snouty-gear.elf` against SPEC.md section 13.
-- Headless: `node tools/preview.mjs zig-out/bin/snouty-gear.wasm --frames 600 --every 30 --script carts/snouty-gear/tools/scripts/m1_play.json --out carts/snouty-gear/out/`
+- Headless: `node tools/preview.mjs zig-out/bin/snouty-gear.wasm --frames 760 --every 30 --script carts/snouty-gear/tools/scripts/m2_play.json --out carts/snouty-gear/out/`
   (from the root), then look at the PNGs.
 - `zig fmt carts/snouty-gear` before committing.
 

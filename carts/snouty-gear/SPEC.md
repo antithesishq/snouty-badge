@@ -504,3 +504,7 @@ Decided 2026-09-29: Adrian accepted every recommendation.
   the ROM from a drive image (after the perf pass: Waternet mean 3.67 ms,
   worst 6.86; Sonic 5.72 / 7.40).
   Numbers in PLAN.md. Hardware checks pending (M0's too).
+- 2026-09-29: M2 done (tag `snouty-gear/m2`): boot splash with the chime,
+  the PSG as one tone2 voice, the emulator menu (button swap, squeeze/crop,
+  sound, overlay, Reset, About). Numbers in PLAN.md. Hardware checks
+  pending (M0/M1's too; the buzzer and splash join the list).
