@@ -176,11 +176,7 @@ pub const Md = struct {
         const scaled_frame: u32 = vdp.m68k_cycles_per_frame * tunables.cpu_scale / tunables.scale_one;
         var line: u32 = 0;
         while (line < vdp.lines_per_frame) : (line += 1) {
-            if (sink) |s| if (row_of_line(line)) |row| {
-                var px: [out_w]u8 = undefined;
-                md.vdp.render_line(row, &px);
-                s.emit(row, &px, &md.vdp.cram);
-            };
+            if (sink) |s| if (md.vdp.row_for_line(@intCast(line))) |row| md.vdp.render_line(row, s);
             if (line == vdp.vint_line) md.z80_int = true;
             md.run_m68k(&b, line_share(line, scaled_frame));
             md.run_z80(&zb);
@@ -237,16 +233,6 @@ pub const Md = struct {
         }
         zb.left = 0;
         md.z80_carry = used - share;
-    }
-
-    /// The badge row Genesis line `line` is shown on, or null (SPEC.md
-    /// section 6, vertical squeeze: row r shows line r * 7 / 4).
-    /// SHIM (Track B): the line table belongs to the VDP (crop mode, M2);
-    /// replace with its lookup at integration.
-    pub fn row_of_line(line: u32) ?u8 {
-        const r = (4 * line + 6) / 7;
-        if (r >= out_h or r * 7 / 4 != line) return null;
-        return @intCast(r);
     }
 
     /// The note the badge should play now (SPEC.md section 9), as computed

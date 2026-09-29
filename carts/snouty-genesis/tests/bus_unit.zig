@@ -245,8 +245,10 @@ test "bus: VDP ports and mirrors, PSG writes at C00011" {
     const md = try new_md(&rom_buf);
     defer std.testing.allocator.destroy(md);
     var b = md.bus_for();
-    // Status at C00004 and its mirrors (C00006, and every 32 bytes).
-    const st = md.vdp.status;
+    // Status at C00004 and its mirrors (C00006, and every 32 bytes). The
+    // status word is computed on read (`status` holds the sticky bits only);
+    // in the reset state a read has no side effect, so reads compare equal.
+    const st = md.vdp.read_status();
     try expectEqual(st, b.read16(0xC00004));
     try expectEqual(st, b.read16(0xC00006));
     try expectEqual(st, b.read16(0xC00024));
@@ -353,6 +355,10 @@ test "bus: interrupt level and acknowledge go to the VDP" {
     const md = try new_md(&rom_buf);
     defer std.testing.allocator.destroy(md);
     var b = md.bus_for();
+    // Interrupts are masked by register 0 bit 4 (H-int) and register 1
+    // bit 5 (V-int); the test ROM's values.
+    md.vdp.write_reg(0, 0x14);
+    md.vdp.write_reg(1, 0x64);
     try expectEqual(@as(u3, 0), b.irq_level());
     md.vdp.hint_pending = true;
     try expectEqual(@as(u3, 4), b.irq_level());
@@ -436,19 +442,16 @@ test "rom: load-time checks refuse SMD, mappers, SVP and headerless files" {
     try expectEqual(rom.Refusal.ok, rom.check(&raw_src));
 }
 
-test "md: the line table shows 128 rows, in order, from lines 0..222" {
-    var rows: u32 = 0;
-    var next: u32 = 0;
-    var line: u32 = 0;
-    while (line < 262) : (line += 1) {
-        if (Md.row_of_line(line)) |r| {
-            try expectEqual(next, r);
-            try expectEqual(@as(u32, r) * 7 / 4, line);
-            next += 1;
-            rows += 1;
-        }
+test "md: the squeeze line table shows 128 rows, in order, from lines 0..222" {
+    var prev: i32 = -1;
+    var row: u8 = 0;
+    while (row < core.out_h) : (row += 1) {
+        const line = core.vdp.line_for_row(.squeeze, row);
+        try expectEqual(@as(u16, row) * 7 / 4, line);
+        try expect(@as(i32, line) > prev);
+        prev = line;
     }
-    try expectEqual(@as(u32, core.out_h), rows);
+    try expectEqual(@as(u16, 222), core.vdp.line_for_row(.squeeze, core.out_h - 1));
 }
 
 test "md: a frame runs the 68000 for 128,008 cycles, carry below one instruction" {

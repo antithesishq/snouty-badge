@@ -303,7 +303,12 @@ fn vdp_read8(md: *Md, addr: u24) u8 {
 fn vdp_write16(md: *Md, addr: u24, v: u16) void {
     switch (addr & 0x1F) {
         0x00...0x03 => md.vdp.write_data(v),
-        0x04...0x07 => md.vdp.write_control(v),
+        0x04...0x07 => {
+            // A control write may start a 68000-memory DMA: its source words
+            // come through this bus and the 68000 pays the stall next.
+            var b: Bus = .{ .md = md };
+            md.dma_stall += md.vdp.write_control(v, &b);
+        },
         0x10...0x17 => md.psg.write(@truncate(v)),
         else => {},
     }
