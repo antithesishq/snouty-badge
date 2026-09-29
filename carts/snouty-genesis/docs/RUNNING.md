@@ -35,11 +35,8 @@ Options:
 - `-Dmd-rom=PATH`: the ROM to embed (default
   `carts/snouty-genesis/roms/snouty-test.bin`). Repository-relative,
   cart-relative (`-Dmd-rom=roms/x.bin`), absolute, or `~/x.bin` (expanded
-  by the build, since the shell leaves `=~` alone). While the default file
-  does not exist and no `-Dmd-rom` is given, the build embeds a generated
-  512-byte placeholder (a valid header, "SNOUTY PLACEHOLDER", and a
-  `BRA.S *` loop); the report line then reads `ROM: embedded
-  placeholder.bin 1 KB`. Keep an embedded badge ROM small: every KB of
+  by the build, since the shell leaves `=~` alone). The report line reads
+  `ROM: embedded snouty-test.bin 16 KB`. Keep an embedded badge ROM small: every KB of
   cart image costs 2 KB of drive space (SPEC.md section 13). Commercial
   ROMs stay local (`*.gen`, `*.smd` and this cart's `roms/*.bin`,
   `roms/*.md` are gitignored).
@@ -65,7 +62,7 @@ passing test's stderr with its command line; that is not a failure).
 - `smoke:` `Md` and `Keyframe` under 140 KB and 139 KB (SPEC.md section
   13); the console built on the embedded ROM (reset vectors fetched), one
   unrendered and one rendered frame (128 rows through `line_sink`); the
-  embedded ROM's header ("SEGA" at 0x100, the placeholder's exact fields);
+  embedded ROM's header ("SEGA" at 0x100, the test ROM's exact fields);
   a Z80 program in Z80 RAM run through `Z80Bus` by Gear's core.
 - `md:` keyframe snapshot/restore round trip.
 - `rom:` a contiguous and a clustered `RomSource` over the same bytes read
@@ -137,7 +134,7 @@ any other file. With the default `drive` build:
    `(1 of N)` when several Genesis files are on the drive: the first in the
    directory wins until M2's picker). Files whose word at 0x100 is not
    "SEGA" are skipped. With no volume or no ROM file it reads
-   `ROM: embedded placeholder.bin 1 KB, drive: no .gen/.md/.bin file` (or
+   `ROM: embedded snouty-test.bin 16 KB, drive: no .gen/.md/.bin file` (or
    the romfs error name).
 
 ## 8. Flash the badge

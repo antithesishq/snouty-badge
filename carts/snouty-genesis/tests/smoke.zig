@@ -74,11 +74,12 @@ test "smoke: the embedded ROM's header parses" {
     std.debug.print("snouty-genesis: embedded {s}: \"{s}\", {d} bytes, header says {d}\n", .{
         rom_data.name, core.rom.trim(&h.domestic), src.size, h.declared_size(),
     });
-    if (rom_data.placeholder) {
-        try expectEqual(@as(u32, 512), src.size);
+    if (std.mem.eql(u8, rom_data.name, "snouty-test.bin")) {
+        // tools/testrom/README.md: 16 KB, header per crt0.s.
+        try expectEqual(@as(u32, 16384), src.size);
         try std.testing.expectEqualStrings("SEGA GENESIS", core.rom.trim(&h.system));
-        try std.testing.expectEqualStrings("SNOUTY PLACEHOLDER", core.rom.trim(&h.domestic));
-        try expectEqual(@as(u32, 512), h.declared_size());
+        try std.testing.expectEqualStrings("SNOUTY TEST", core.rom.trim(&h.domestic));
+        try expectEqual(@as(u32, 16384), h.declared_size());
         try std.testing.expectEqualStrings("JUE", &h.region);
     }
 }

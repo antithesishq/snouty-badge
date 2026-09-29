@@ -16,7 +16,6 @@ const dir = "carts/snouty-genesis/";
 const gear_core = "carts/snouty-gear/core/";
 
 /// The shipped test ROM (built from source by M0 Track R, tools/testrom/).
-/// While it is absent the build embeds a generated placeholder instead.
 const default_rom = dir ++ "roms/snouty-test.bin";
 
 /// ROM to embed and where the badge build looks for its ROM. Module-level
@@ -24,19 +23,15 @@ const default_rom = dir ++ "roms/snouty-test.bin";
 var rom_file: RomFile = undefined;
 var rom_source: common.MdRomSource = .drive;
 
-const RomFile = union(enum) {
-    /// A ROM file: its path and the name the report line shows.
-    path: struct { lazy: Build.LazyPath, name: []const u8 },
-    /// No ROM file: `placeholder_rom` bytes, named "placeholder.bin".
-    placeholder,
-};
+/// A ROM file: its path and the name the report line shows.
+const RomFile = struct { lazy: Build.LazyPath, name: []const u8 };
 
 pub fn add(b: *Build, sycl_badge_dep: *Build.Dependency, opts: common.Options) void {
     // XIP only (SPEC.md section 13): the console state and the code do not
     // both fit a RAM cart. Named on -Dcart in RAM mode, stop and say so; in
     // an all-carts build (no -Dcart) build the XIP cart anyway, so the plain
     // `zig build` keeps compiling this cart. `both` builds the XIP cart only.
-    const explicit = opts.only != null;
+    const explicit = if (opts.only) |list| std.mem.eql(u8, list, "snouty-genesis") else false;
     if (opts.cart_mode == .ram and explicit) {
         std.debug.print(
             \\snouty-genesis: this cart builds as an XIP cart only (carts/snouty-genesis/SPEC.md
@@ -99,22 +94,23 @@ pub fn add(b: *Build, sycl_badge_dep: *Build.Dependency, opts: common.Options) v
 
 /// `-Dmd-rom` as given: `~/x.bin` (expanded here, the shell leaves `=~`
 /// alone), an absolute path, a path relative to the repository root, or one
-/// relative to this cart's directory (`roms/x.bin`). No option and no
-/// `roms/snouty-test.bin`: the placeholder. A named file that is missing is
-/// an error at build time, as for any missing source file.
+/// relative to this cart's directory (`roms/x.bin`). No option: `roms/snouty-test.bin`.
+/// A named file that is missing is an error at build time, as for any
+/// missing source file.
 fn resolve_rom(b: *Build, opt: ?[]const u8) RomFile {
-    const arg = opt orelse {
-        if (!exists(b, default_rom)) return .placeholder;
-        return .{ .path = .{ .lazy = b.path(default_rom), .name = std.fs.path.basename(default_rom) } };
-    };
+    // No filesystem probe here: this Zig caches the configure phase's build
+    // graph keyed by the build files and options, so a decision taken from a
+    // file's existence would be frozen at the first configure (M0 hit this
+    // with a placeholder ROM that outlived the real one).
+    const arg = opt orelse return .{ .lazy = b.path(default_rom), .name = std.fs.path.basename(default_rom) };
     if (std.mem.startsWith(u8, arg, "~/")) {
         const home = b.graph.environ_map.get("HOME") orelse @panic("snouty-genesis: -Dmd-rom=~/...: HOME is not set");
         const abs = b.pathJoin(&.{ home, arg[2..] });
-        return .{ .path = .{ .lazy = .{ .cwd_relative = abs }, .name = std.fs.path.basename(abs) } };
+        return .{ .lazy = .{ .cwd_relative = abs }, .name = std.fs.path.basename(abs) };
     }
-    if (std.fs.path.isAbsolute(arg)) return .{ .path = .{ .lazy = .{ .cwd_relative = arg }, .name = std.fs.path.basename(arg) } };
+    if (std.fs.path.isAbsolute(arg)) return .{ .lazy = .{ .cwd_relative = arg }, .name = std.fs.path.basename(arg) };
     const rel = if (exists(b, arg) or !exists(b, b.fmt(dir ++ "{s}", .{arg}))) arg else b.fmt(dir ++ "{s}", .{arg});
-    return .{ .path = .{ .lazy = b.path(rel), .name = std.fs.path.basename(rel) } };
+    return .{ .lazy = b.path(rel), .name = std.fs.path.basename(rel) };
 }
 
 fn exists(b: *Build, rel: []const u8) bool {
@@ -124,8 +120,7 @@ fn exists(b: *Build, rel: []const u8) bool {
 
 /// The generated `rom` module (the cart and the host tests both import it):
 /// the embedded ROM (`data`, copied next to the generated rom.zig so
-/// @embedFile can see it), its file name (`name`), whether it is the
-/// placeholder (`placeholder`) and where the badge build gets its ROM
+/// @embedFile can see it), its file name (`name`) and where the badge build gets its ROM
 /// (`source`, `.drive` or `.embed`). Made once per build graph.
 var rom_zig: ?Build.LazyPath = null;
 var rom_step: *Build.Step = undefined;
@@ -133,27 +128,16 @@ var rom_step: *Build.Step = undefined;
 fn rom_module(b: *Build) Build.LazyPath {
     if (rom_zig) |p| return p;
     const wf = b.addWriteFiles();
-    const name = switch (rom_file) {
-        .path => |p| blk: {
-            _ = wf.addCopyFile(p.lazy, "rom.bin");
-            break :blk p.name;
-        },
-        .placeholder => blk: {
-            _ = wf.add("rom.bin", placeholder_rom(b));
-            break :blk "placeholder.bin";
-        },
-    };
+    _ = wf.addCopyFile(rom_file.lazy, "rom.bin");
+    const name = rom_file.name;
     const p = wf.add("rom.zig", b.fmt(
         \\//! Generated by carts/snouty-genesis/build.zig.
         \\pub const data: []const u8 = @embedFile("rom.bin");
         \\pub const name = "{f}";
-        \\/// True when `data` is the build's 512-byte placeholder (no
-        \\/// roms/snouty-test.bin and no -Dmd-rom).
-        \\pub const placeholder = {};
         \\pub const Source = enum {{ drive, embed }};
         \\pub const source: Source = .{s};
         \\
-    , .{ std.zig.fmtString(name), rom_file == .placeholder, @tagName(rom_source) }));
+    , .{ std.zig.fmtString(name), @tagName(rom_source) }));
     rom_zig = p;
     rom_step = &wf.step;
     return p;
@@ -171,47 +155,4 @@ fn build_cart_modules(b: *Build, cart: *Build.Module, cart_api: *Build.Module, s
     cart.addImport("romfs", b.createModule(.{ .root_source_file = b.path("lib/romfs.zig") }));
     cart.addImport("rom", b.createModule(.{ .root_source_file = rom_module(b) }));
     step.dependOn(rom_step);
-}
-
-/// The placeholder ROM, 512 bytes: 68000 vectors (SSP FFFE00, reset PC
-/// 0000C0), `BRA.S *` at 0000C0 (a reserved vector slot, so the program
-/// fits below the header), and a header at 0x100 with "SEGA GENESIS",
-/// domestic and overseas name "SNOUTY PLACEHOLDER", ROM 000000-0001FF, RAM
-/// FF0000-FFFFFF, region "JUE" and checksum 0 (no words past 0x200). Written
-/// by the build so nothing binary is committed and the gitignored `roms/`
-/// stays Track R's.
-fn placeholder_rom(b: *Build) []const u8 {
-    const r = b.allocator.alloc(u8, 512) catch @panic("oom");
-    @memset(r, 0);
-    const put32 = struct {
-        fn f(buf: []u8, at: usize, v: u32) void {
-            std.mem.writeInt(u32, buf[at..][0..4], v, .big);
-        }
-    }.f;
-    put32(r, 0x000, 0x00FF_FE00); // initial SSP
-    put32(r, 0x004, 0x0000_00C0); // reset PC
-    r[0x0C0] = 0x60; // BRA.S *
-    r[0x0C1] = 0xFE;
-    const text = struct {
-        fn f(buf: []u8, at: usize, len: usize, s: []const u8) void {
-            @memset(buf[at..][0..len], ' ');
-            @memcpy(buf[at..][0..s.len], s);
-        }
-    }.f;
-    text(r, 0x100, 16, "SEGA GENESIS");
-    text(r, 0x110, 16, "(C)SNOUTY 2026");
-    text(r, 0x120, 48, "SNOUTY PLACEHOLDER");
-    text(r, 0x150, 48, "SNOUTY PLACEHOLDER");
-    text(r, 0x180, 14, "GM 00000000-00");
-    // 0x18E checksum: 0.
-    text(r, 0x190, 16, "J");
-    put32(r, 0x1A0, 0x0000_0000); // ROM start
-    put32(r, 0x1A4, 0x0000_01FF); // ROM end
-    put32(r, 0x1A8, 0x00FF_0000); // RAM start
-    put32(r, 0x1AC, 0x00FF_FFFF); // RAM end
-    text(r, 0x1B0, 12, "");
-    text(r, 0x1BC, 12, "");
-    text(r, 0x1C8, 40, "");
-    text(r, 0x1F0, 16, "JUE");
-    return r;
 }

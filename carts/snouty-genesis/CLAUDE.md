@@ -69,20 +69,22 @@ only (it calls this cart's `build.zig` `pub fn add`).
 - `zig build -Dcart=snouty-genesis -Dcart-mode=xip` →
   `zig-out/firmware/snouty-genesis-xip.uf2`, `.elf`,
   `zig-out/bin/snouty-genesis.wasm`. Without `-Dcart-mode=xip` a build
-  that names this cart stops at configure time with a message (SPEC.md
-  section 13); `both` builds the XIP cart only; an all-carts `zig build`
-  (no `-Dcart`) builds it as XIP regardless of `-Dcart-mode`.
+  that names only this cart stops at configure time with a message
+  (SPEC.md section 13); `both` builds the XIP cart only; an all-carts
+  `zig build` or a `-Dcart` list with other carts builds it as XIP
+  regardless of `-Dcart-mode`.
 - `-Dmd-rom=path` picks the embedded ROM (repo-relative, cart-relative
-  `roms/x.bin`, absolute or `~/x.bin`); default `roms/snouty-test.bin`.
-  **Placeholder**: while that file does not exist (before Track R lands)
-  and no `-Dmd-rom` is given, `build.zig` writes a 512-byte placeholder
-  (`placeholder_rom`: vectors, `BRA.S *` at 0xC0, a "SEGA GENESIS" header,
-  domestic name "SNOUTY PLACEHOLDER") into the build cache and embeds that;
-  nothing binary is committed for it. `-Dmd-rom-source=drive|embed`
+  `roms/x.bin`, absolute or `~/x.bin`); default `roms/snouty-test.bin`
+  (16 KB, built from `tools/testrom/`). `-Dmd-rom-source=drive|embed`
   (default `drive`); `-Dcart-optimize=fast|small|safe|debug`.
 - The generated `rom` module (cart and host tests) has `data` (the
-  embedded ROM), `name` (its file name, `placeholder.bin` for the
-  placeholder), `placeholder` (bool) and `source` (`.drive` or `.embed`).
+  embedded ROM), `name` (its file name) and `source` (`.drive` or
+  `.embed`).
+- **Configure cache rule**: this Zig caches the configure phase's build
+  graph keyed by the build files and the options. A graph decision taken
+  from anything else (a file's existence, an environment variable) is
+  frozen at the first configure and silently reused; M0 lost an hour to a
+  placeholder ROM chosen that way. Decide from options only.
 - `zig build test-genesis -Dcart=snouty-genesis -Dcart-mode=xip` → this
   cart's host tests only; `zig build test` → every built cart's (plus
   lib/). `-Dtest-filter=smoke` (names carry an area prefix: `smoke:`,

@@ -13,7 +13,7 @@ deterministic replay, as Snouty Boy and Snouty Gear.
 Status: M0 scaffold. The core holds the whole console state at its real
 size but is a stub: every frame it draws a test pattern (color bars,
 shadow/highlight bands, a moving block). The bottom line says which ROM was
-chosen (`ROM: embedded placeholder.bin 1 KB`, or the drive file, contiguous
+chosen (`ROM: embedded snouty-test.bin 16 KB`, or the drive file, contiguous
 or fragmented, with its CRC).
 
 ```sh

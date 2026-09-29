@@ -38,7 +38,7 @@ var report_len: usize = 0;
 
 /// The report line, e.g. "ROM: embedded snouty-test.bin 16 KB",
 /// "ROM: drive contiguous SONIC.GEN 512 KB crc 1A2B3C4D" or
-/// "ROM: embedded placeholder.bin 1 KB, drive: NoVolume".
+/// "ROM: embedded snouty-test.bin 16 KB, drive: NoVolume".
 pub fn report() []const u8 {
     return report_buf[0..report_len];
 }
