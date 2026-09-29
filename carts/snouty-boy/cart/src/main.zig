@@ -22,8 +22,9 @@ comptime {
 }
 
 var gb: core.Gb = undefined;
-/// Cart RAM, sized from the embedded ROM's header.
-var cart_ram: [core.mmu.cart_ram_len(rom.data)]u8 = undefined;
+/// Cart RAM, sized from the embedded ROM's header (0 to 32 KB). Word
+/// aligned so the page store's word compares and copies are aligned.
+var cart_ram: [core.mmu.cart_ram_len(rom.data)]u8 align(4) = undefined;
 
 pub const State = enum(u32) { splash = 0, running = 1, menu = 2 };
 var state: State = .splash;
@@ -32,9 +33,10 @@ var controls_state: input.State = .{};
 pub fn start() void {
     cart.set_vsync_enabled(1000.0 / 60.0);
     cart.set_double_buffer_mode(.no_copy_full_frame);
-    video.init();
-    gb = core.Gb.init(rom.data, core.default_model(rom.data), &cart_ram);
-    gb.line_sink = video.sink();
+    const model = core.default_model(rom.data);
+    video.init(model);
+    gb = core.Gb.init(rom.data, model, &cart_ram);
+    gb.line_sink = video.sink(&gb);
     rewind.reset(&gb);
 }
 
@@ -147,6 +149,8 @@ comptime {
         @export(&debug_scrub_depth, .{ .name = "debug_scrub_depth" });
         @export(&debug_history, .{ .name = "debug_history" });
         @export(&debug_keyframes, .{ .name = "debug_keyframes" });
+        @export(&debug_pool_bytes, .{ .name = "debug_pool_bytes" });
+        @export(&debug_cgb, .{ .name = "debug_cgb" });
         @export(&debug_leds, .{ .name = "debug_leds" });
         @export(&debug_led_max, .{ .name = "debug_led_max" });
         @export(&debug_alarm, .{ .name = "debug_alarm" });
@@ -165,7 +169,7 @@ fn debug_step_us() callconv(.c) u32 {
 fn debug_lines() callconv(.c) u32 {
     return video.last_frame_lines;
 }
-/// Current palette index into `video.palettes`.
+/// Current palette index into `video.palettes` (DMG mode).
 fn debug_palette() callconv(.c) u32 {
     return @intCast(video.palette_index);
 }
@@ -188,6 +192,14 @@ fn debug_history() callconv(.c) u32 {
 /// Valid keyframes in the ring.
 fn debug_keyframes() callconv(.c) u32 {
     return @intCast(rewind.keyframe_count());
+}
+/// Page-store pool bytes in use.
+fn debug_pool_bytes() callconv(.c) u32 {
+    return @intCast(rewind.pool_bytes());
+}
+/// 1 when the console runs in CGB mode.
+fn debug_cgb() callconv(.c) u32 {
+    return @intFromBool(gb.is_cgb());
 }
 /// Neopixels currently lit (any channel non-zero).
 fn debug_leds() callconv(.c) u32 {
