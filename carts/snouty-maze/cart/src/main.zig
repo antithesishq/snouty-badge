@@ -22,8 +22,8 @@ comptime {
 }
 
 /// walk = 0, turn = 1, pause = 2, rise = 3, overhead = 4, descend = 5,
-/// teleport = 6, fly = 7, manual = 8 (stable: debug_state returns these). The state
-/// itself lives in autopilot.zig.
+/// teleport = 6, fly = 7, manual = 8, grow = 9 (stable: debug_state returns
+/// these). The state itself lives in autopilot.zig.
 pub const State = autopilot.State;
 
 var tick: u32 = 0;
@@ -113,6 +113,7 @@ pub fn update() void {
     actors.step(&world, &random, actors.cell_of(camera.cam.pos), triggers);
 
     const t0 = cart.micros_since_boot();
+    scene.height_scale = autopilot.grow_scale();
     raster.begin_frame();
     clear_screen();
     scene.draw(&world, &camera.cam);

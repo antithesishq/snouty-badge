@@ -85,7 +85,7 @@ fn exists(b: *Build, rel: []const u8) bool {
     return true;
 }
 
-/// Adds `core`, `romfs` (lib/romfs.zig, the drive reader) and `rom` to the
+/// Adds `core`, `romfs` (lib/romfs.zig, the drive reader), `iris` (lib/iris_mark.zig) and `rom` to the
 /// cart. `rom` is generated: the embedded ROM (`data`, copied next to the
 /// generated rom.zig so @embedFile can see it), its file name (`name`) and
 /// where the badge build gets its ROM (`source`, `.drive` or `.embed`).
@@ -93,6 +93,8 @@ fn build_cart_modules(b: *Build, cart: *Build.Module, cart_api: *Build.Module, s
     _ = cart_api;
     cart.addImport("core", b.createModule(.{ .root_source_file = b.path(dir ++ "core/gg.zig") }));
     cart.addImport("romfs", b.createModule(.{ .root_source_file = b.path("lib/romfs.zig") }));
+    // The Iris mark the splash draws (SPEC.md section 12), shared with Snouty Boy.
+    cart.addImport("iris", b.createModule(.{ .root_source_file = b.path("lib/iris_mark.zig") }));
 
     const wf = b.addWriteFiles();
     _ = wf.addCopyFile(rom_path, "rom.bin");

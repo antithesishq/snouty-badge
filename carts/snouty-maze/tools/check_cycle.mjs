@@ -57,7 +57,7 @@ import { fileURLToPath } from "node:url";
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), ".."); // this cart
 const REPO = path.resolve(ROOT, "../.."); // repository root, where zig build writes zig-out/
 const PREVIEW = path.join(REPO, "tools", "preview.mjs");
-const STATE_NAMES = ["WALK", "TURN", "PAUSE", "RISE", "OVERHEAD", "DESCEND", "TELEPORT", "FLY", "MANUAL"];
+const STATE_NAMES = ["WALK", "TURN", "PAUSE", "RISE", "OVERHEAD", "DESCEND", "TELEPORT", "FLY", "MANUAL", "GROW"];
 const DUMP = ["debug_state", "debug_state_tick", "debug_cycles", "debug_cell_x", "debug_cell_z", "debug_heading"];
 
 function usage(msg) {
@@ -91,14 +91,14 @@ const RUNS = [
     { name: "B", what: "A at tick 0, OVERHEAD + name strip at tick 240", frames: 241, press: ["A:0-0"], expect: ["debug_state == 4", "debug_name_strip == 1"] },
     { name: "C", what: "A at tick 0, maze done by tick 1000", frames: 1000, press: ["A:0-0"], expect: ["debug_cycles >= 1"] },
     {
-        name: "D", what: "smiley at (1,0) flips the view", frames: 100, calls: ["debug_place:10100"],
+        name: "D", what: "smiley at (1,0) flips the view (walk starts at tick 60)", frames: 160, calls: ["debug_place:10100"],
         dump: ["debug_flips", "debug_roll_deg", "debug_smiley_x", "debug_smiley_z"],
         expect: ["debug_flips == 1", "debug_roll_deg == 180"],
         check: (v) => (v.debug_smiley_x === undefined || v.debug_smiley_z === undefined) ? "smiley cell not read"
             : (v.debug_smiley_x === 1 && v.debug_smiley_z === 0) ? "smiley still in (1, 0) (did not respawn)" : null,
     },
     {
-        name: "E", what: "sphere at (1,0) teleports, walk resumes", frames: 100, calls: ["debug_place:20100"],
+        name: "E", what: "sphere at (1,0) teleports, walk resumes (walk starts at tick 60)", frames: 160, calls: ["debug_place:20100"],
         dump: ["debug_teleports", "debug_fade_level", "debug_sphere_x", "debug_sphere_z"],
         expect: ["debug_teleports == 1", "debug_state < 2", "debug_fade_level == 0"],
     },
@@ -110,14 +110,14 @@ const RUNS = [
             : ["debug_leds == 1", "debug_led_max == 0"],
     },
     {
-        name: "G", what: "Up held 45 ticks takes over and walks", frames: 45, press: ["UP:0-44"],
+        name: "G", what: "Up held ticks 60..104 takes over and walks", frames: 105, press: ["UP:60-104"],
         dump: ["debug_manual_idle"],
         expect: ["debug_state == 8"],
         check: (v) => (v.debug_cell_x === undefined || v.debug_cell_z === undefined) ? "camera cell not read"
             : (v.debug_cell_x === 0 && v.debug_cell_z === 0) ? "camera still in the start cell (0, 0)" : null,
     },
     {
-        name: "H", what: "Right at tick 0, idle return by tick 400", frames: 400, press: ["RIGHT:0-0"],
+        name: "H", what: "Right at tick 60, idle return by tick 460", frames: 460, press: ["RIGHT:60-60"],
         dump: ["debug_manual_idle"],
         expect: ["debug_state < 2", "debug_manual_idle >= 300"],
     },
@@ -138,6 +138,8 @@ const RUNS = [
         dump: ["debug_iris_width"],
         expect: ["debug_state == 4", "debug_iris_width >= 23"],
     },
+    { name: "L", what: "boot: maze rising (GROW) at tick 30", frames: 31, expect: ["debug_state == 9", "debug_cycles == 0"] },
+    { name: "M", what: "boot: walking from tick 60", frames: 61, expect: ["debug_state == 0"] },
 ];
 let runs = RUNS;
 if (opts.only) {

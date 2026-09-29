@@ -43,7 +43,7 @@ Then from `carts/snouty-maze/`:
 
 ```sh
 node tools/check_golden.mjs   # golden-image regression (needs zig build first)
-node tools/check_cycle.mjs    # screensaver loop, actor triggers and LEDs (runs A..K)
+node tools/check_cycle.mjs    # screensaver loop, actor triggers and LEDs (runs A..M)
 ```
 
 `zig build` writes, in the root `zig-out/`:
@@ -62,8 +62,9 @@ B+Select fly chord. `-Dmaze_size=N` (4..16, default 12) sets the maze size;
 
 ## 4. Controls (M4)
 
-From M2 the cart is a screensaver: the autopilot walks the maze with a
-left-hand wall follower, and at the finish cell pauses, rises to an overhead
+From M2 the cart is a screensaver: the maze rises out of the floor
+around the camera (GROW, 1 s, the Start button growing in the cell ahead),
+then the autopilot walks the maze with a left-hand wall follower, and at the finish cell pauses, rises to an overhead
 view (with the name strip in the bottom 24 px), swaps in a new maze and
 descends to its start cell. The M1 debug camera survives as fly mode. From
 M3 the maze is inhabited: Snouty wanders the corridors, the smiley flips the
@@ -79,7 +80,7 @@ the camera over.
 | Stick        | While walking or turning: take the camera over    | Up / Down: one cell forward / back (held repeats); Left / Right: pivot 90 degrees; a wall blocks the move | Walk / turn (M1 controls: 2 cells/s, 90 degrees/s; B + Up/Down rises/sinks) |
 | Select       | No-op (flips the dormant LED flag; see LEDs)      | Same                               | Toggle the debug overlay           |
 | Start        | Toggle the name strip permanently on/off          | Same                               | Reset the camera to the start cell |
-| A            | Skip to PAUSE (start the finish sequence now; ignored during TELEPORT) | Same         | + Up/Down: pitch                   |
+| A            | Skip to PAUSE (start the finish sequence now; also cuts GROW short; ignored during TELEPORT) | Same         | + Up/Down: pitch                   |
 | B + Select   | Toggle fly mode (only with `-Ddebug_overlay=true`) | Same                              | Back to autopilot (resumes WALK from the nearest cell centre, heading = nearest quadrant) |
 
 Takeover: a stick press during WALK or TURN starts MANUAL (other states
@@ -284,7 +285,7 @@ M3 actor and LED exports:
 ### Screensaver loop: `tools/check_cycle.mjs`
 
 ```sh
-node tools/check_cycle.mjs                # runs A..K
+node tools/check_cycle.mjs                # runs A..M
 node tools/check_cycle.mjs --only B,D     # just the overhead and flip checks
 node tools/check_cycle.mjs --frames 20000 # longer unattended run for A
 ```
@@ -299,22 +300,27 @@ Each run is one `preview.mjs --quiet` with `--call`s, `--press`es and
   middle) and `debug_name_strip == 1`
 - C: A at tick 0, 1000 ticks; `debug_cycles >= 1`
 - D flip: `--call debug_place:10100` (smiley in (1, 0), the first cell the
-  seed 1 camera walks into), 100 ticks; `debug_flips == 1`,
+  seed 1 camera walks into), 160 ticks (the walk starts at tick 60, after
+  GROW); `debug_flips == 1`,
   `debug_roll_deg == 180`, and the smiley has left (1, 0) (checked by
   check_cycle itself, since `--expect` cannot say "x != 1 or z != 0")
-- E teleport: `--call debug_place:20100` (sphere in (1, 0)), 100 ticks;
+- E teleport: `--call debug_place:20100` (sphere in (1, 0)), 160 ticks;
   `debug_teleports == 1`, `debug_state < 2` (walking again) and
   `debug_fade_level == 0`
 - F leds: Select at tick 0, 10 ticks; `debug_leds == 1` (the flag
   flipped) and `debug_led_max == 0` (the strip stays dark). With
   `--neopixels`, for a wasm built with `-Dneopixels=true`, it expects
   `0 < debug_led_max <= 10` instead (see below)
-- G takeover: Up held for ticks 0..44; `debug_state == 8` (MANUAL) and
-  the camera moved to cell (1, 0)
-- H idle return: Right at tick 0, 400 ticks; back in WALK or TURN
+- G takeover: Up held for ticks 60..104 (the stick is ignored during
+  GROW); `debug_state == 8` (MANUAL) and the camera moved to cell (1, 0)
+- H idle return: Right at tick 60, 460 ticks; back in WALK or TURN
   (`debug_manual_idle` counts the idle ticks)
 - I carving: A at tick 0, 200 ticks (OVERHEAD tick 19); `debug_state == 4`
   and `debug_carve_shown < debug_carve_count`
+- J, K coin flip: A at tick 0, 233 and 241 ticks (OVERHEAD ticks 52 and
+  60); `debug_iris_width` is 3 (edge-on) and then 24 again (back face)
+- L, M intro: no input, 31 and 61 ticks; `debug_state == 9` (GROW, the
+  maze rising) and then `debug_state == 0` (walking)
 
 It prints PASS/FAIL per run with the final state, cycle count, cell and
 heading (plus the run's own exports), and preview's error lines on a
