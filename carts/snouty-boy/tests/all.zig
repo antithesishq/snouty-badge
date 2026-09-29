@@ -9,5 +9,6 @@ test {
     _ = @import("ppu_unit.zig");
     _ = @import("apu_unit.zig");
     _ = @import("ring_unit.zig");
+    _ = @import("rom_unit.zig");
     _ = @import("determinism.zig");
 }

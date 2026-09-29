@@ -1,5 +1,5 @@
 //! SPEC.md 10.2: the scrubber's promise. Run the shipped ROM (roms/2048.gb,
-//! read at run time; skipped if absent) for 600 frames with a scripted pad
+//! read at run time from the cart or the repository root; skipped if absent) for 600 frames with a scripted pad
 //! stream, keyframe every 30 frames, then restore each keyframe k into a
 //! fresh console, replay the 30 logged pads and require keyframe k + 1
 //! exactly. Keyframes are compared field by field (`std.meta.eql`): the
@@ -9,7 +9,9 @@ const core = @import("core");
 const Gb = core.Gb;
 const Pad = core.Pad;
 
-const rom_path = "roms/2048.gb";
+/// `zig build test` runs the binary from the repository root; a test binary
+/// started by hand from the cart directory finds the ROM too.
+const rom_paths = [_][]const u8{ "carts/snouty-boy/roms/2048.gb", "roms/2048.gb" };
 const interval = 30;
 const keyframes = 20;
 const frames = interval * keyframes;
@@ -42,10 +44,13 @@ fn script(pads: []u8) void {
 }
 
 fn load_rom(gpa: std.mem.Allocator) ![]u8 {
-    return std.Io.Dir.cwd().readFileAlloc(std.testing.io, rom_path, gpa, .limited(1 << 20)) catch |err| switch (err) {
-        error.FileNotFound => return error.SkipZigTest,
-        else => return err,
-    };
+    for (rom_paths) |p| {
+        return std.Io.Dir.cwd().readFileAlloc(std.testing.io, p, gpa, .limited(1 << 20)) catch |err| switch (err) {
+            error.FileNotFound => continue,
+            else => return err,
+        };
+    }
+    return error.SkipZigTest;
 }
 
 /// Name of the first differing field, or null if equal.
@@ -169,4 +174,106 @@ test "determinism: KeyframeWith(cart_ram_len) round trip" {
     a.snapshot(full2);
     try std.testing.expectEqual(@as(?[]const u8, null), diff(full, full2));
     try std.testing.expectEqual(@sizeOf(Gb.Keyframe) - 0x1800, @sizeOf(Small));
+}
+
+/// A keyframe pool as the frontend lays it out (cart/src/frontend/rewind.zig):
+/// slots of `Gb.Fixed` followed by the ROM's cart RAM bytes, the stride
+/// rounded up so every `Fixed` is aligned.
+const Pool = struct {
+    bytes: []align(@alignOf(Gb.Fixed)) u8,
+    stride: usize,
+    ram_len: usize,
+
+    fn init(gpa: std.mem.Allocator, slots: usize, ram_len: usize) !Pool {
+        const stride = std.mem.alignForward(usize, @sizeOf(Gb.Fixed) + ram_len, @alignOf(Gb.Fixed));
+        const bytes = try gpa.alignedAlloc(u8, .of(Gb.Fixed), slots * stride);
+        return .{ .bytes = bytes, .stride = stride, .ram_len = ram_len };
+    }
+
+    fn deinit(p: Pool, gpa: std.mem.Allocator) void {
+        gpa.free(p.bytes);
+    }
+
+    fn fixed(p: Pool, i: usize) *Gb.Fixed {
+        return @ptrCast(@alignCast(p.bytes[i * p.stride ..].ptr));
+    }
+
+    fn ram(p: Pool, i: usize) []u8 {
+        return p.bytes[i * p.stride + @sizeOf(Gb.Fixed) ..][0..p.ram_len];
+    }
+};
+
+/// 2048-gb with header byte 0x149 patched: 0 (no RAM), 1 (2 KB, the real
+/// header) or 2 (8 KB), so one playable ROM covers every pool slot size.
+fn pool_round_trip_and_replay(ram_code: u8, want_len: usize) !void {
+    const gpa = std.testing.allocator;
+    const rom = try load_rom(gpa);
+    defer gpa.free(rom);
+    rom[0x149] = ram_code;
+    const r = core.Rom.from_slice(rom);
+    const ram_len = core.mmu.cart_ram_len(&r);
+    try std.testing.expectEqual(want_len, ram_len);
+
+    const pads = try gpa.alloc(u8, frames);
+    defer gpa.free(pads);
+    script(pads);
+
+    const pool = try Pool.init(gpa, keyframes + 1, ram_len);
+    defer pool.deinit(gpa);
+    // Full keyframes of the same instants, the reference.
+    const kf = try gpa.alloc(Gb.Keyframe, keyframes + 1);
+    defer gpa.free(kf);
+
+    const gb = try gpa.create(Gb);
+    defer gpa.destroy(gb);
+    gb.* = Gb.init_rom(r);
+    // Give cart RAM a pattern the game would not write, so the pool's RAM
+    // bytes are visibly carried (with RAM enabled the game may change it).
+    for (gb.cart_ram[0..ram_len], 0..) |*b, i| b.* = @truncate(i *% 13 +% ram_code);
+    gb.snapshot_pool(pool.fixed(0), pool.ram(0));
+    gb.snapshot(&kf[0]);
+    for (pads, 1..) |p, f| {
+        gb.step_frame(p);
+        if (f % interval == 0) {
+            gb.snapshot_pool(pool.fixed(f / interval), pool.ram(f / interval));
+            gb.snapshot(&kf[f / interval]);
+        }
+    }
+    try std.testing.expect(!std.meta.eql(kf[0].wram, kf[keyframes].wram));
+
+    const re = try gpa.create(Gb);
+    defer gpa.destroy(re);
+    const got = try gpa.create(Gb.Keyframe);
+    defer gpa.destroy(got);
+    for (0..keyframes) |k| {
+        // A console with unrelated history, cart RAM included: restore_pool
+        // must overwrite everything the game can touch.
+        re.* = Gb.init_rom(r);
+        for (0..k % 7 + 3) |i| re.step_frame(@truncate(i * 37));
+        @memset(re.cart_ram[0..ram_len], 0xEE);
+        re.restore_pool(pool.fixed(k), pool.ram(k));
+        re.snapshot(got);
+        if (diff(got, &kf[k])) |field| {
+            std.debug.print("ram {d}: keyframe {d}: field '{s}' differs after restore_pool\n", .{ ram_len, k, field });
+            return error.PoolRoundTrip;
+        }
+        for (pads[k * interval ..][0..interval]) |p| re.step_frame(p);
+        re.snapshot(got);
+        if (diff(got, &kf[k + 1])) |field| {
+            std.debug.print("ram {d}: keyframe {d} -> {d}: field '{s}' differs after replay\n", .{ ram_len, k, k + 1, field });
+            return error.ReplayDiverged;
+        }
+    }
+}
+
+test "determinism: pool slots without cart RAM round-trip and replay" {
+    try pool_round_trip_and_replay(0, 0);
+}
+
+test "determinism: pool slots with 2 KB cart RAM round-trip and replay" {
+    try pool_round_trip_and_replay(1, 0x800);
+}
+
+test "determinism: pool slots with 8 KB cart RAM round-trip and replay" {
+    try pool_round_trip_and_replay(2, 0x2000);
 }
