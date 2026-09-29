@@ -6,10 +6,12 @@
 //! (frontend/romsrc.zig) at the bottom. The neopixels are never written
 //! (docs/NEOPIXELS.md at the repository root).
 //!
-//! M0 scaffold: the core is a stub whose rendered frame is a test pattern
-//! (core/md.zig `test_pattern`); no splash, menu or rewind yet (M2, M3). A
-//! Select hold is counted and does nothing. See SPEC.md (design), PLAN.md
-//! (milestone contract), CLAUDE.md (toolchain).
+//! M1: the real frame loop with the pad (frontend/input.zig: Select tap =
+//! Genesis A, Select hold = menu request) and the one tone voice
+//! (frontend/audio.zig). The menu itself is M2: a Select hold pauses the
+//! game under a "MENU (M2)" banner until badge B resumes it. No splash or
+//! rewind yet (M2, M3). See SPEC.md (design), PLAN.md (milestone
+//! contract), CLAUDE.md (toolchain).
 const cart = @import("cart-api");
 const core = @import("core");
 const video = @import("frontend/video.zig");
@@ -30,7 +32,9 @@ var md: core.Md = undefined;
 /// Genesis frames per update; only the last is rendered.
 const frames_per_update = core.tunables.render_every;
 
-pub const State = enum(u32) { running = 1 };
+/// 1 running, 2 paused under the M1 menu placeholder (the splash, 0,
+/// arrives in M2).
+pub const State = enum(u32) { running = 1, menu = 2 };
 var state: State = .running;
 var controls_state: input.State = .{};
 
@@ -54,13 +58,21 @@ pub fn update() void {
     debug.frame_tick(t0);
     switch (state) {
         .running => run_update(t0),
+        .menu => menu_update(),
     }
     if (cart.is_wasm) present_wasm();
 }
 
 fn run_update(t1: u64) void {
     const in = controls_state.game_frame();
-    if (in.open_menu) menu_requests += 1;
+    if (in.open_menu) {
+        menu_requests += 1;
+        state = .menu;
+        controls_state.suppress_held();
+        audio.silence();
+        menu_update();
+        return;
+    }
 
     var f: u8 = 1;
     while (f <= frames_per_update) : (f += 1) md.step_frame(in.pad, f == frames_per_update);
@@ -70,6 +82,22 @@ fn run_update(t1: u64) void {
     video.finish_frame();
     debug.record(@truncate(t2 -% t1));
     romsrc.draw_report();
+    debug.z80_state = debug.z80_label(&md);
+    debug.draw();
+}
+
+/// The M2 menu's placeholder: the last frame stays on screen with a banner;
+/// badge B resumes (held buttons are ignored until released, so B does not
+/// reach the game).
+fn menu_update() void {
+    if (controls_state.edge.pressed(.b)) {
+        controls_state.suppress_held();
+        state = .running;
+        return;
+    }
+    audio.silence();
+    text.draw("    MENU (M2)       ", 0, 56, .rgb(0xFFFFFF), .rgb(0x000080));
+    text.draw("    B: resume       ", 0, 64, .rgb(0xFFFFFF), .rgb(0x000080));
     debug.draw();
 }
 
@@ -118,6 +146,8 @@ comptime {
         @export(&debug_sr, .{ .name = "debug_sr" });
         @export(&debug_vdp_line, .{ .name = "debug_vdp_line" });
         @export(&debug_z80_pc, .{ .name = "debug_z80_pc" });
+        @export(&debug_tone_hz, .{ .name = "debug_tone_hz" });
+        @export(&debug_z80_state, .{ .name = "debug_z80_state" });
     }
 }
 
@@ -133,7 +163,7 @@ fn debug_step_us() callconv(.c) u32 {
 fn debug_lines() callconv(.c) u32 {
     return video.last_frame_lines;
 }
-/// Frontend state: 1 running (splash 0 and menu 2 arrive in M2).
+/// Frontend state: 1 running, 2 menu placeholder (the splash, 0, is M2).
 fn debug_state() callconv(.c) u32 {
     return @backingInt(state);
 }
@@ -161,7 +191,7 @@ fn debug_cram_rebuilds() callconv(.c) u32 {
 fn debug_menu_requests() callconv(.c) u32 {
     return menu_requests;
 }
-/// `tone2` calls since boot (0 in M0: `Md.tone()` is a stub).
+/// `tone2` calls since boot.
 fn debug_tone_calls() callconv(.c) u32 {
     return audio.tone_calls;
 }
@@ -184,4 +214,17 @@ fn debug_vdp_line() callconv(.c) u32 {
 /// Z80 program counter.
 fn debug_z80_pc() callconv(.c) u32 {
     return md.z80.pc;
+}
+/// Frequency the buzzer plays (0 when silent).
+fn debug_tone_hz() callconv(.c) u32 {
+    return audio.playing_hz();
+}
+/// Z80 arbiter: bit 0 BUSREQ held by the 68000, bit 1 Z80 in reset, bit 2
+/// Z80 switched off (`tunables.z80_enabled` false).
+fn debug_z80_state() callconv(.c) u32 {
+    var v: u32 = 0;
+    if (md.arbiter.busreq) v |= 1;
+    if (md.arbiter.z80_reset) v |= 2;
+    if (!core.tunables.z80_enabled) v |= 4;
+    return v;
 }

@@ -3,8 +3,8 @@
 //! is keyed on. f32 is fine here (frontend, not core). M1 Track C owns
 //! this file; M2 adds the menu's sound toggle through `enabled`.
 //!
-//! M0: `Md.tone()` is a stub that always returns null, so this never
-//! issues a tone.
+//! Volume: `Tone.level` 0..15 maps linearly onto tone2 volume 0.2..1.0
+//! (level 0 is still audible: silence is `tone()` returning null).
 const cart = @import("cart-api");
 const core = @import("core");
 
@@ -25,6 +25,16 @@ fn stop() void {
     cart.tone2(cart.Tone2Options.stop);
     tone_calls +%= 1;
     playing = null;
+}
+
+/// Stop the buzzer (the game is paused).
+pub fn silence() void {
+    stop();
+}
+
+/// The frequency now sounding, 0 when silent (a `debug_*` export).
+pub fn playing_hz() u32 {
+    return if (playing) |p| p.hz else 0;
 }
 
 /// Once per update, after the frames ran.
