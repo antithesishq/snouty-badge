@@ -23,9 +23,16 @@ __pycache__/
 # Genesis / Mega Drive ROMs (carts/snouty-genesis/SPEC.md section 11):
 # commercial ones stay outside the repo. `*.md` cannot be a global pattern
 # (it would ignore Markdown), so .bin and .md ROMs are ignored by path; the
-# shipped ROM's exception lines belong to M0 Track R.
+# shipped ROMs' exception lines follow.
 *.gen
 *.smd
 carts/snouty-genesis/roms/*.bin
 carts/snouty-genesis/roms/*.md
 carts/snouty-genesis/tests/roms/
+
+# Snouty Genesis shipped ROMs (roms/LICENSE-*). These exceptions must stay
+# BELOW the Genesis ROM ignore patterns (*.gen, *.smd and the roms/*.bin,
+# roms/*.md, tests/roms/ path rules of SPEC.md section 11), since the last
+# matching line wins.
+!carts/snouty-genesis/roms/snouty-test.bin
+!carts/snouty-genesis/roms/miniplanets.bin
