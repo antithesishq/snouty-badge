@@ -31,6 +31,7 @@ var last_level: u8 = 0;
 var last_hp: i16 = 0;
 var last_keys: u8 = 0;
 var last_spray: bool = false;
+var last_debugger: bool = false;
 
 var ouch: u16 = 0;
 var grin: u16 = 0;
@@ -67,7 +68,8 @@ pub fn tick(s: *const state.GameState) void {
     } else if (!rewinding) {
         if (p.hp < last_hp) ouch = ouch_ticks;
         const new_keys = p.keys & ~last_keys;
-        if (new_keys != 0 or (p.has_spray and !last_spray)) grin = grin_ticks;
+        const new_weapon = (p.has_spray and !last_spray) or (p.has_debugger and !last_debugger);
+        if (new_keys != 0 or new_weapon) grin = grin_ticks;
     }
     primed = true;
     last_tick = s.tick;
@@ -75,6 +77,7 @@ pub fn tick(s: *const state.GameState) void {
     last_hp = p.hp;
     last_keys = p.keys;
     last_spray = p.has_spray;
+    last_debugger = p.has_debugger;
 
     if (glance > 0) {
         glance -= 1;

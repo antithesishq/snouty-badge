@@ -418,6 +418,7 @@ fn debug_ammo() callconv(.c) u32 {
         .swatter => 0,
         .zapper => game.player.ammo_zapper,
         .spray => game.player.ammo_spray,
+        .debugger => game.player.ammo_debugger,
     };
 }
 fn debug_level() callconv(.c) u32 {

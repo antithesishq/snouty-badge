@@ -8,7 +8,7 @@ pub const seed: u32 = 0x5EED0001;
 pub const total_ticks: u32 = 4108;
 /// sim.hash_gameplay of the state after the last tick as recorded in the
 /// simulator; 0 = not recorded yet (tools/record_demo.sh).
-pub const final_hash: u32 = 0x10A0860C;
+pub const final_hash: u32 = 0x636B911C;
 
 pub const runs = [_]Run{
     .{ .buttons = 0x0000, .ticks = 30 },

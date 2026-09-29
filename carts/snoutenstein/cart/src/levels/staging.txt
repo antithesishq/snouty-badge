@@ -6,13 +6,15 @@
 # pipe corridor under both, and the monitor gallery (6) under an Iris mural
 # (5) leading west to the exit strip (8). The other battery is in the
 # closet off the first corridor.
+# The Debugger cartridge (&) waits in a nook behind a secret door (X) in the
+# south wall of the first pipe corridor.
 # Legend: SPEC.md section 6. Lines starting with # are comments.
 11111117777777722222222222222222
 1.....1777777772%..............2
 1.....17777s7772......w........2
 1..S>.D........D...............2
-1.....177D777772...........w...2
-1.....177.777772...............2
+1.....177D77X772...........w...2
+1.....177.77&772...............2
 111111177*777772...w...........2
 1111111777777772.............$.2
 1111111777777772...............2

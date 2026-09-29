@@ -92,10 +92,10 @@ MANIFEST: dict[str, Sheet] = {
               edge_cols=(SPIDER_THREAD_X, SPIDER_THREAD_X)),
         Sheet("bug_boss.png", 32, 32, 8, True),
         Sheet("pickups.png", 16, 16, 8, True),
-        Sheet("projectiles.png", 8, 8, 4, True),
-        Sheet("weapons.png", 48, 32, 9, True, edge_ok="b"),
+        Sheet("projectiles.png", 8, 8, 6, True),
+        Sheet("weapons.png", 48, 32, 12, True, edge_ok="b"),
         Sheet("face.png", 24, 24, 9, True),
-        Sheet("hud.png", 8, 8, 8, True),
+        Sheet("hud.png", 8, 8, 9, True),
         Sheet("title.png", 128, 40, 1, True),
     ]
 }
@@ -113,13 +113,13 @@ FRAME_NAMES = {
     "bug_spider.png": BUG_FRAMES,
     "bug_boss.png": BUG_FRAMES + ["flicker"],
     "pickups.png": ["Coral key", "Iris key", "Gold key", "hotfix", "zapper charge",
-                    "spray can", "rewind battery", "spare (mug)"],
-    "projectiles.png": ["spit 0", "spit 1", "web 0", "web 1"],
+                    "spray can", "rewind battery", "Debugger cartridge"],
+    "projectiles.png": ["spit 0", "spit 1", "web 0", "web 1", "debug bolt", "debug burst"],
     "weapons.png": ["swatter idle", "swing 0", "swing 1", "zapper idle", "fire 0", "fire 1",
-                    "spray idle", "fire 0", "fire 1"],
+                    "spray idle", "fire 0", "fire 1", "debugger idle", "fire 0", "fire 1"],
     "face.png": ["healthy", "hurt", "critical", "ouch", "grin", "glance L", "glance R",
                  "rewind", "dead"],
-    "hud.png": ["Coral key", "Iris key", "Gold key", "charge", "spray", "clock", "<<", "heart"],
+    "hud.png": ["Coral key", "Iris key", "Gold key", "charge", "spray", "clock", "<<", "heart", "debugger"],
     "title.png": ["logo"],
 }
 
@@ -1148,7 +1148,7 @@ def draw_bug(name: str) -> np.ndarray:
 # --------------------------------------------------------------------------
 # pickups.png: 8 cells 16x16, standing on the floor (bottom-centre anchor:
 # drawings rest on row 14). Keys, hotfix medkit, zapper charge cell, bug
-# spray can, rewind battery, spare (a build-farm coffee mug).
+# spray can, rewind battery, Debugger cartridge (red breakpoint dot).
 # --------------------------------------------------------------------------
 KEY_COLORS = {"coral": ("c", "C", "R"), "iris": ("4", "3", "1"), "gold": ("c", "y", "B")}
 
@@ -1248,37 +1248,49 @@ def pickup_battery() -> np.ndarray:
     return c
 
 
-def pickup_mug() -> np.ndarray:
+def pickup_debugger() -> np.ndarray:
+    """The Debugger cartridge: a grey cartridge with grip ridges, a cream
+    label and the red breakpoint dot on it."""
     c = canvas(16, 16)
-    mug = np.zeros((16, 16), bool)
-    mug[7:15, 3:11] = True
-    handle = ellipse(16, 16, 11.5, 10.5, 2.3, 2.4) & ~ellipse(16, 16, 11.5, 10.5, 1.0, 1.1) & (coords(16, 16)[0] > 10)
-    fill = np.full((16, 16), "c", "<U1")
-    fill[:, 9:11] = "g"
-    fill[7, 3:11] = "B"  # coffee
-    layer(c, mug | handle, np.where(handle, "g", fill))
-    c[10:12, 5:7] = "C"  # Iris dot
-    plot(c, [(5, 5), (6, 4), (6, 3), (8, 5), (9, 4), (9, 3), (8, 2)], "g")  # steam
+    body = np.zeros((16, 16), bool)
+    body[3:15, 3:13] = True
+    body[3, 11:13] = False  # chamfered top-right corner
+    body[4, 12] = False
+    fill = np.full((16, 16), "g", "<U1")
+    fill[:, 3] = "c"
+    fill[:, 12] = "m"
+    fill[14, :] = "m"
+    layer(c, body, fill)
+    for y in (4, 6):  # grip ridges
+        c[y, 5:10] = "m"
+    rect(c, 4, 8, 11, 13, "c")  # label
+    dot = ellipse(16, 16, 7.5, 10.5, 2.6, 2.6)
+    layer(c, dot, shade(dot, "C", "r", "R", 7.5, 10.5, 2.6, 2.6))
+    c[9, 6] = "c"  # specular
     return c
 
 
 def draw_pickups() -> np.ndarray:
     cells = [pickup_key("coral"), pickup_key("iris"), pickup_key("gold"), pickup_hotfix(),
-             pickup_charge(), pickup_spray(), pickup_battery(), pickup_mug()]
+             pickup_charge(), pickup_spray(), pickup_battery(), pickup_debugger()]
     for c in cells:
         clear_border(c)
     return strip([to_rgb(c, True) for c in cells])
 
 
 # --------------------------------------------------------------------------
-# projectiles.png: 4 cells 8x8, centre anchor: spit x2 (green glob,
-# pulsing), web x2 (cream strands, rotated 45 degrees between frames).
+# projectiles.png: 6 cells 8x8, centre anchor: spit x2 (green glob,
+# pulsing), web x2 (cream strands, rotated 45 degrees between frames), the
+# Debugger bolt (red breakpoint dot, cream core, drawn at 0.25 cells) and
+# its burst (red and cream ring with rays, drawn at 1.0 cell).
 # --------------------------------------------------------------------------
 PROJECTILES = [
     ["........", "..ooo...", ".olclo..", ".ollllo.", ".olllGo.", "..oGGo..", "...oo...", "........"],
     ["........", "........", "..ooo...", ".olclo..", ".ollGo..", "..oGo...", "...o....", "........"],
     ["........", "...c....", ".g.c.g..", "..ggg...", "ccgcgcc.", "..ggg...", ".g.c.g..", "...c...."],
     ["........", ".c...c..", "..cgc...", ".gg.gg..", "..cgc...", ".c...c..", "........", "........"],
+    ["........", "..oooo..", ".orCCro.", ".oCccro.", ".orccRo.", ".orrRRo.", "..oooo..", "........"],
+    ["........", ".r.cc.r.", "..rCCr..", ".cC..Cc.", ".cC..Cc.", "..rCCr..", ".r.cc.r.", "........"],
 ]
 
 
@@ -1293,10 +1305,11 @@ def draw_projectiles() -> np.ndarray:
 
 
 # --------------------------------------------------------------------------
-# weapons.png: 9 cells 48x32, first person, seen from behind and below,
+# weapons.png: 12 cells 48x32, first person, seen from behind and below,
 # drawn at the bottom centre of the view. Snouty's purple paw and forearm
 # come in from the bottom edge (the only edge a weapon cell may touch).
-# 0-2 swatter idle/swing/swing, 3-5 zapper idle/fire/fire, 6-8 spray.
+# 0-2 swatter idle/swing/swing, 3-5 zapper idle/fire/fire, 6-8 spray,
+# 9-11 Debugger idle/fire/fire (breakpoint gun).
 # --------------------------------------------------------------------------
 WW, WH = 48, 32
 
@@ -1420,9 +1433,51 @@ def weapon_spray(pose: int) -> np.ndarray:
     return c
 
 
+def weapon_debugger(pose: int) -> np.ndarray:
+    """The breakpoint gun: a boxy steel body with the big red breakpoint
+    dot on its back face, a short wide muzzle slab on top (pointing into
+    the screen). Fire 0 sends a red bolt out of the muzzle, fire 1 is the
+    recoil (body kicked down, sparks)."""
+    c = canvas(WW, WH)
+    dy = 1 if pose == 1 else (2 if pose == 2 else 0)
+    muzzle = np.zeros((WH, WW), bool)
+    muzzle[5 + dy : 10 + dy, 16:32] = True
+    mf = np.full((WH, WW), "m", "<U1")
+    mf[5 + dy, :] = "g"
+    mf[:, 16] = "g"
+    layer(c, muzzle, mf)
+    c[ellipse(WW, WH, 23.5, 7.5 + dy, 5.2, 1.2) & muzzle] = "o"  # wide bore
+    body = np.zeros((WH, WW), bool)
+    body[10 + dy : 26 + dy, 14:34] = True
+    bf = np.full((WH, WW), "s", "<U1")
+    bf[10 + dy : 12 + dy, :] = "g"  # top face
+    bf[:, 14:16] = "g"
+    bf[:, 14] = "c"
+    bf[:, 31:34] = "m"
+    layer(c, body, bf)
+    for y in (22 + dy, 24 + dy):  # grip ribs
+        c[y, 17:31] = "m"
+    dot = ellipse(WW, WH, 23.5, 16.5 + dy, 4.3, 3.9)
+    layer(c, dot, shade(dot, "C", "r", "R", 23.5, 16.5 + dy, 4.3, 3.9))
+    plot(c, [(21, 14 + dy), (22, 14 + dy)], "c")  # specular
+    if pose == 1:  # bolt leaving the muzzle in a flash
+        flash = ellipse(WW, WH, 23.5, 4.0, 11.0, 3.2) & (c == ".")
+        c[flash] = "C"
+        c[ellipse(WW, WH, 23.5, 4.0, 7.5, 2.2) & flash] = "c"
+        bolt = ellipse(WW, WH, 23.5, 3.5, 3.2, 2.3)
+        layer(c, bolt, shade(bolt, "C", "r", "R", 23.5, 3.5, 3.2, 2.3))
+        c[3, 22] = "c"
+        plot(c, [(10, 3), (11, 2), (37, 3), (36, 2), (9, 5), (38, 5)], "C")
+    elif pose == 2:  # recoil: body kicked down, sparks at the muzzle corners
+        plot(c, [(14, 4), (13, 3), (33, 4), (34, 3), (23, 3), (24, 2)], "c")
+        plot(c, [(15, 3), (32, 3)], "C")
+    paw(c, 24, 27 + dy // 2, 3)
+    return c
+
+
 def draw_weapons() -> np.ndarray:
     cells = [weapon_swatter(i) for i in range(3)] + [weapon_zapper(i) for i in range(3)] + \
-            [weapon_spray(i) for i in range(3)]
+            [weapon_spray(i) for i in range(3)] + [weapon_debugger(i) for i in range(3)]
     for c in cells:
         clear_border(c, keep_bottom=True)
     return strip([to_rgb(c, True) for c in cells])
@@ -1537,8 +1592,9 @@ def draw_face() -> np.ndarray:
 
 
 # --------------------------------------------------------------------------
-# hud.png: 8 cells 8x8 with a 1 px empty border: three keys (lit; the code
-# dims them), zapper charge, spray can, clock, "<<", heart.
+# hud.png: 9 cells 8x8 with a 1 px empty border: three keys (lit; the code
+# dims them), zapper charge, spray can, clock, "<<", heart, Debugger ammo
+# (the red breakpoint dot in a small grey box).
 # --------------------------------------------------------------------------
 HUD_KEY = ["........", "........", ".HHH....", ".H.HHHH.", ".LLL.LL.", "......L.", "........", "........"]
 HUD_ICONS = [
@@ -1547,6 +1603,7 @@ HUD_ICONS = [
     ["........", "..4444..", ".4cc3c4.", ".4cc3c4.", ".4c33c4.", ".4cccc4.", "..4444..", "........"],
     ["........", "...4..4.", "..44.44.", ".444444.", "..33.33.", "...3..3.", "........", "........"],
     ["........", "........", ".rr..rr.", ".rCrrrr.", ".rrrrrr.", "..rrrR..", "...rR...", "........"],
+    ["........", ".gggggg.", ".g.rr.g.", ".grCrrg.", ".grrrRg.", ".g.RR.g.", ".gggggg.", "........"],
 ]
 
 
