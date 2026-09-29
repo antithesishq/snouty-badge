@@ -321,6 +321,80 @@ Open: XIP flash-fetch stalls are not modelled (`--flash-cycles 0`), so the
 Rebound XIP numbers are the most optimistic; hardware overlay numbers
 decide.
 
+## M8 Integration: Color on the drive loader (2026-09-29)
+
+Main now holds M5 (`snouty-boy/m5`: ROMs read in place from the badge
+drive through `core.Rom` bank pointers, a picker, the keyframe pool in the
+RAM above `.bss`) merged with Snouty Gear's real `lib/romfs.zig`. This
+milestone lands M6/M7 on top of it so one `snouty-boy.uf2` plays `.gb` and
+`.gbc` files from the drive, and tags `snouty-boy/m6`.
+
+Mechanics: `git merge main` into `snouty-boy-color` (one conflict pass over
+the 15 files both branches touched, instead of replaying 27 commits), then
+fast-forward main. Adrian's decision (M6/M7 status above): keep M5's ROM
+table, replace M5's keyframe pool with the page store.
+
+### Design of the merged cart
+
+1. ROM: `core.Rom` (64 x 16 KB bank pointers, per-sector slow path for
+   fragmented drive files) is the only ROM representation. `Gb.init` takes
+   `(rom: Rom, model: Model, cart_ram: []u8)`; a slice convenience
+   (`Rom.from_slice`) keeps the host tests short. `default_model` and
+   `mmu.cart_ram_len` read the header through the table. The CGB MMU keeps
+   M5's cached bank pointers (`Gb.rom0/romn`, `mmu.remap_rom`) with MBC5's
+   9-bit bank number and the inline `fetch8` fast path.
+2. Keyframes: the page store (`core.kstore`, 512 B pages shared between
+   keyframes) is the keyframe form; `Gb.Fixed` pool slots go. The store's
+   page pool and keyframe tables live in M5's run-time arena (the RAM
+   between `__bss_end__` and `__stack_limit__`, 1 KB stack guard), laid out
+   in `begin()` once the ROM and its cart RAM size are known, together with
+   the live console's cart RAM (up to 32 KB). Comptime keeps only the maxima
+   (`max_pages` for Small + 16 KB VRAM + 32 KB WRAM + 32 KB cart RAM, a
+   keyframe cap in `tuning.zig`); the page count is a run-time number, so
+   `tuning.code_estimate`, the comptime budget arithmetic and
+   `cart_options.xip` in `rewind.zig` disappear. The arena shrinks by itself
+   when a ROM is embedded (it sits in `.rodata`) and is the whole RAM window
+   for an XIP build. Fewer than two keyframes' worth of arena -> the M5
+   `halted` state. In wasm the arena stays a static array.
+3. Sources: `-Drom-source=drive` (default): the picker lists `.gb` and
+   `.gbc` files, one file starts at once, none falls back to the embedded
+   ROM. `-Drom-source=embed`: the embedded ROM only, and `-Dcart-mode=xip`
+   for ROMs that do not fit RAM beside the code (Rebound, 128 KB). All three
+   must build: default, `embed` + `roms/rex-runner.gb`, `embed` +
+   `roms/rebound.gbc` + `xip`.
+4. Overlay and menu: Color's own glyph blitter stays; the third overlay line
+   shows the keyframe count and M5's `D`/`E` source letter; the About screen
+   shows the model next to the source and CRC.
+5. Everything else is additive: DMG path byte-exact (dmg-acid2, Blargg),
+   cgb-acid2, both determinism forms (page store, and M5's fragmented-file
+   replay through the store), `rom_unit`, `kstore_unit`, `ring_unit`.
+
+### Steps
+
+1. Merge, resolve, `zig fmt`, `zig build test` green (expected about 115
+   tests: the 101 Color ones plus M5's `rom_unit`, ring and drive
+   determinism cases).
+2. The three builds above link; sizes recorded (`.text`, `.bss`, arena
+   left for the store with 2048-gb, Rex Runner and Rebound from the drive).
+3. badge-bench, calibrated `busy ms`, with a drive image from
+   `tools/make_romfs.py` holding `rebound.gbc`, `rex-runner.gb` and
+   `2048.gb`: Rebound and Rex with the M7 press scripts through the picker,
+   2048 with `carts/snouty-boy.toml`. `snouty-boy-color.toml` switches to
+   the RAM ELF plus `romfs`. Numbers next to the M7 table.
+4. Docs: README (how ROMs get onto the badge, the embedded alternative),
+   `docs/RUNNING.md` sections 4, 8, 9, SPEC 11.1 and 19.4, CLAUDE.md, the
+   root README row, the M5 and M6/M7 status blocks, this section's status.
+5. Tag `snouty-boy/m6`, fast-forward main, push.
+
+### Hardware checklist after M8 (Adrian)
+
+- Copy `snouty-boy.uf2` and the three ROM files onto the badge drive, eject,
+  start the cart: picker lists three files; each starts; About says Source
+  drive and the right model.
+- Overlay ms/FPS for Rebound (double speed) and Rex Runner; colours (LCD vs
+  Raw); scrub depth in seconds from the overlay's keyframe count.
+- 2048-gb: the M1 gate numbers.
+
 ## Hardware checklist (Adrian)
 
 - M1 gate: overlay avg/max microseconds and FPS with 2048-gb.
