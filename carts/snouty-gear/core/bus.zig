@@ -88,6 +88,13 @@ pub const Bus = struct {
     pub inline fn read(self: *Bus, addr: u16) u8 {
         const gg = self.gg;
         if (addr >= 0xC000) return gg.ram[addr & 0x1FFF];
+        if (gg.read_map[addr >> 10]) |p| return p[addr & 0x3FF];
+        return read_slow(gg, addr);
+    }
+
+    /// 0000-BFFF where `read_map` has no pointer: cart RAM, or a ROM bank
+    /// without a direct pointer.
+    noinline fn read_slow(gg: *const Gg, addr: u16) u8 {
         if (addr < 0x0400) return rom_byte(gg, 0, addr);
         const s = addr >> 14;
         if (s == 2 and gg.mapper.control & 0x08 != 0) return gg.cart_ram[addr & (gg_mod.cart_ram_size - 1)];
@@ -108,11 +115,13 @@ pub const Bus = struct {
     fn mapper_write(gg: *Gg, addr: u16, v: u8) void {
         if (addr == 0xFFFC) {
             gg.mapper.control = v;
+            gg.sync_slot(2);
             return;
         }
         const i = addr - 0xFFFD;
         gg.mapper.slot[i] = v;
         gg.mapper.bank[i] = gg.rom.wrap_bank(v);
+        gg.sync_slot(@intCast(i));
     }
 
     /// Port read (Game Gear decoding, see the file comment).
