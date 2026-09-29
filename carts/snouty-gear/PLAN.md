@@ -237,3 +237,5 @@ report and is stubbed locally.
     `.bss` (the uf2 carries `.bss` zeros) if the uf2 gets too big for the drive.
   Next: M1 (three tracks per the contract above); gate on Adrian's hardware
   run of this M0 uf2 with a `.gg` file on the drive.
+- 2026-09-29: M1 started on branch `gear/m1` (prep commit drops the M0
+  stub-shape test; tracks A/B/C in worktrees `-z80`, `-vdp`, `-machine`).

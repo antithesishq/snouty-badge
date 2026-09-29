@@ -6,5 +6,4 @@ test {
     _ = core;
     _ = @import("pattern.zig");
     _ = @import("rom_unit.zig");
-    _ = @import("stubs.zig");
 }
