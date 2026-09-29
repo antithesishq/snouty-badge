@@ -4,10 +4,10 @@ Build the cart, run the host tests, preview it headless or in the web
 simulator, put a ROM on the badge drive and flash the cart. Commands run
 from the repository root unless noted; outputs land in the root `zig-out/`.
 
-Status: M0. The core draws a test pattern (colour bars from the 32 CRAM
-entries, white diagonal stripes, a 16x16 box moved by the d-pad; button 1
-inverts the palette, button 2 rotates it, Start speeds up the scroll). The
-Game Gear itself is emulated from M1.
+Status: M1. The core emulates the Game Gear: Z80, VDP (mode 4, scanline
+renderer, interrupts), Sega mapper with cart RAM, Game Gear port decode and
+the PSG register model. There is no splash, menu, sound or rewind yet (M2,
+M3); a Select hold is counted and does nothing.
 
 ## 1. Prerequisites
 
@@ -52,25 +52,58 @@ for embedding.
 
 ```sh
 carts/snouty-gear/tools/fetch_test_roms.sh     # ZEXDOC/ZEXALL into tests/roms/ (M1 uses them)
-carts/snouty-gear/tools/fetch_test_roms.sh --single-step   # plus SingleStepTests Z80, ~1.2 GB
+carts/snouty-gear/tools/fetch_test_roms.sh --single-step       # plus a 36-file SingleStepTests Z80 subset (~30 MB)
+carts/snouty-gear/tools/fetch_test_roms.sh --single-step-all   # streams the whole 1.2 GB suite in batches, logs tests/roms/z80/results.txt
 zig build test                                 # every cart's host tests
-zig build test -Dtest-filter=pattern           # only names containing "pattern"
+zig build test -Dtest-filter=bus               # only names containing "bus"
 ```
 
-M0 tests: the pattern reaches the line sink (144 lines per frame, in order,
-hash changing every frame and with the pad, snapshot/restore replays the
-same frame), the ROM bank table (`from_slice` on 64 KB gives 4 banks at the
-right offsets, 48 KB gives 3, partial banks and the fallback reader), and
-the subsystem stubs' public shapes.
+Test names carry a prefix per area, so `-Dtest-filter=` picks one:
+
+- `rom:` the ROM bank table (`from_slice` on 64 KB gives 4 banks at the
+  right offsets, 48 KB gives 3, partial banks and the fallback reader).
+- `bus:` the memory map and ports: fixed first 1 KB, slot switching with
+  bank wrap on 64 KB (mask) and 48 KB (modulo) ROMs, cart RAM enable and
+  its 8 KB mirror, the E000 RAM mirror, mapper registers readable as RAM,
+  every pad bit on port DC and Start on port 00, link/stereo/control ports,
+  routing to the PSG and VDP, the SDSC console capture (port FD), unlisted
+  ports reading FF.
+- `psg:` latch and data bytes per channel, 10-bit period assembly,
+  attenuation, noise bits, `Psg.voice()` (loudest tone, ties to the lowest
+  channel, silent/tiny-period/noise channels skipped).
+- `smoke:` a hand-assembled ROM sets the mapper, RAM, a VDP register, CRAM,
+  VRAM and the PSG through `step_frame`; frames are deterministic across
+  snapshot/restore.
+- `golden:` `roms/waternet.gg` for 600 frames under
+  `tools/scripts/m1_play.json`, frame hashes (144 lines plus CRAM) pinned
+  at frames 120 (main menu), 180 (mode select), 360 and 570 (the pipe
+  grid). Any core change that alters a pixel fails here; if the change is
+  intended, empty `expected` in `tests/golden.zig`, run the test to print
+  the new hashes, review the preview frames by eye and paste them back.
+- `keyframe` (in `core/gg.zig`): snapshot/restore round trip.
+- `z80:` SingleStepTests on whatever `tests/roms/z80/v1/*.json` holds (the
+  36-file subset from `--single-step`; skips with a note when absent),
+  ZEXDOC always and ZEXALL unless the test binary is a Debug build
+  (`GEAR_ZEXALL=1` forces it, `GEAR_ZEX=0` skips both), and unit tests for
+  interrupts, HALT and the EI delay. `-Dtest-optimize` defaults to `safe`,
+  where both ZEX ROMs take about 18 s together.
+- `vdp:` control-port latch and codes, read-ahead buffer, CRAM pairs,
+  status side effects, frame and line interrupts, counters, scroll and
+  both locks, flips, priority, sprite limit/overflow/collision, 8x16,
+  zoom, shift-left, backdrop, and 144 lines per frame in order.
 
 ## 4. Headless preview
 
 ```sh
-node tools/preview.mjs zig-out/bin/snouty-gear.wasm --frames 120 --every 10 \
-  --script carts/snouty-gear/tools/scripts/m0_pattern.json --out carts/snouty-gear/out/ \
-  --dump-exports debug_frame_count,debug_lines,debug_rom_source,debug_rom_size,debug_rom_banks \
+node tools/preview.mjs zig-out/bin/snouty-gear.wasm --frames 600 --every 30 \
+  --script carts/snouty-gear/tools/scripts/m1_play.json --out carts/snouty-gear/out/ \
+  --dump-exports debug_frame_count,debug_lines,debug_pc,debug_iff1,debug_mapper,debug_vdp_regs01,debug_irq_frame \
   --expect "debug_lines == 144"
 ```
+
+`tools/scripts/m1_play.json` plays Waternet: Start through the title and
+menu, then cursor moves on the d-pad and button 1 (badge B) to turn tiles.
+The same sequence is the `press` list in `badge-bench/carts/snouty-gear.toml`.
 
 `out/frame_XXXX.png` are 160x128 frames. The top-left overlay shows the
 `step_frame` time and FPS (always 1000 us / 500 fps in wasm, where the
@@ -80,6 +113,18 @@ clock is a stub); the bottom line is the ROM report. Exports:
 button 1 16, button 2 32, Start 64), `debug_rom_source` (0 embedded,
 1 drive), `debug_rom_size`, `debug_rom_banks`, `debug_rom_crc` (drive only),
 `debug_cram_rebuilds`, `debug_menu_requests` (Select holds; the menu is M2).
+
+Boot diagnostics, for a game that shows nothing: `debug_pc`, `debug_sp`,
+`debug_iff1` (1 = interrupts enabled), `debug_halted`, `debug_mapper`
+(slot 0 | slot 1 << 8 | slot 2 << 16 | FFFC << 24, as written),
+`debug_vdp_regs01` (register 0 | register 1 << 8; register 1 bit 6 is
+display on, bit 5 frame IRQ enable), `debug_vdp_status` (flags without the
+read side effect), `debug_vdp_line`, `debug_irq_frame` / `debug_irq_line`
+(interrupts the CPU accepted since reset, by source), `debug_frame_t`
+(T-states the last frame ran, about 59,736) and `debug_psg_voice` (what M2's
+buzzer would play: Hz | attenuation << 24 | channel << 28, 0 silent). A game
+stuck with `debug_iff1` 0 and no IRQs usually waits on something the VDP or
+a port does not deliver; a PC in RAM (`C000`+) with a wild SP is a crash.
 
 ## 5. Web simulator
 

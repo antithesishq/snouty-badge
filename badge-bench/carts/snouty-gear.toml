@@ -1,12 +1,16 @@
-# snouty-gear: Game Gear emulator, 60 fps. M0: the core draws a test pattern
-# (no emulation yet), with the embedded Waternet ROM.
+# snouty-gear: Game Gear emulator, 60 fps. M1: the emulated console playing
+# Waternet, from the drive image below (the embedded copy is the fallback).
 budget_ms = 16.7
 frames = 600
-# Pattern inputs: move the box, button 1 (B) inverts the palette, button 2
-# (A) rotates it, Start speeds up the scroll, a Select hold (menu in M2).
-press = ["RIGHT:30-60", "DOWN:70-100", "B:120-140", "A:160-200",
-         "START:220-240", "LEFT:260-300", "UP:320-340", "SELECT:360-400",
-         "RIGHT:420-460", "A:480-520", "B:540-560"]
+# Same sequence as carts/snouty-gear/tools/scripts/m1_play.json: Start
+# through the title and menu, then d-pad cursor moves and button 1 (badge B)
+# to turn tiles, one button 2 (badge A) press.
+press = ["START:90-95", "START:150-155", "B:210-215", "RIGHT:240-247",
+         "B:260-263", "DOWN:280-287", "B:300-303", "LEFT:320-327",
+         "B:340-343", "B:360-363", "UP:380-387", "B:400-403",
+         "RIGHT:420-427", "RIGHT:440-447", "B:460-463", "DOWN:480-487",
+         "A:500-503", "B:520-523", "LEFT:540-547", "B:560-563",
+         "UP:580-587"]
 # badge-bench maps this image at 0x10080000 (docs/ROM_DRIVE.md); build it with
 #   python3 tools/make_romfs.py carts/snouty-gear/out/romfs.img carts/snouty-gear/roms/waternet.gg
 romfs = "carts/snouty-gear/out/romfs.img"

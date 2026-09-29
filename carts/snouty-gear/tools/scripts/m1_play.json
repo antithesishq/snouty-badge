@@ -1,0 +1,23 @@
+[
+  { "from": 90, "to": 95, "hold": ["START"] },
+  { "from": 150, "to": 155, "hold": ["START"] },
+  { "from": 210, "to": 215, "hold": ["B"] },
+  { "from": 240, "to": 247, "hold": ["RIGHT"] },
+  { "from": 260, "to": 263, "hold": ["B"] },
+  { "from": 280, "to": 287, "hold": ["DOWN"] },
+  { "from": 300, "to": 303, "hold": ["B"] },
+  { "from": 320, "to": 327, "hold": ["LEFT"] },
+  { "from": 340, "to": 343, "hold": ["B"] },
+  { "from": 360, "to": 363, "hold": ["B"] },
+  { "from": 380, "to": 387, "hold": ["UP"] },
+  { "from": 400, "to": 403, "hold": ["B"] },
+  { "from": 420, "to": 427, "hold": ["RIGHT"] },
+  { "from": 440, "to": 447, "hold": ["RIGHT"] },
+  { "from": 460, "to": 463, "hold": ["B"] },
+  { "from": 480, "to": 487, "hold": ["DOWN"] },
+  { "from": 500, "to": 503, "hold": ["A"] },
+  { "from": 520, "to": 523, "hold": ["B"] },
+  { "from": 540, "to": 547, "hold": ["LEFT"] },
+  { "from": 560, "to": 563, "hold": ["B"] },
+  { "from": 580, "to": 587, "hold": ["UP"] }
+]

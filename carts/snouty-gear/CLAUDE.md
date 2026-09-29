@@ -27,8 +27,11 @@ longer explanations, this one summarises.
 - `roms/` — the shipped ROM `waternet.gg` and its license. `*.gg`/`*.sms`
   are gitignored at the root (commercial ROMs never enter the repo; Sonic
   lives at `~/sonic.gg` on the VM, read-only).
-- `tools/` — `fetch_test_roms.sh` (ZEXDOC/ZEXALL; `--single-step` adds the
-  1.2 GB SingleStepTests Z80 clone), `romcheck.py` (header, mapper, port
+- `tools/` — `fetch_test_roms.sh` (ZEXDOC/ZEXALL; `--single-step` adds a
+  36-file SingleStepTests Z80 subset, `--single-step-all` streams the whole
+  1.2 GB suite in batches and logs per-file results), `gen_tables.py` and
+  `gen_vdp_tables.py` (Z80 flag and VDP bit-spread tables -> `core/*_tables.zig`,
+  committed), `romcheck.py` (header, mapper, port
   heuristics, SPEC.md section 11 verdict), `scripts/*.json` (preview and
   badge-bench input scripts). Shared tools (`preview.mjs`, `serve-cart.mjs`,
   `make_gif.py`, `make_romfs.py`) are in `../../tools/`.
@@ -62,10 +65,10 @@ only (it calls this cart's `build.zig` `pub fn add`).
   `-Dcart-optimize=fast|small|safe|debug`.
 - The generated `rom` module has `data` (the embedded ROM), `name` (its
   file name) and `source` (`.drive` or `.embed`).
-- `zig build test` → every cart's host tests; `-Dtest-filter=pattern`,
+- `zig build test` → every cart's host tests; `-Dtest-filter=bus` (test names carry an area prefix: `bus:`, `psg:`, `z80:`...),
   `-Dtest-optimize=`.
 - `size -A zig-out/firmware/snouty-gear.elf` against SPEC.md section 13.
-- Headless: `node tools/preview.mjs zig-out/bin/snouty-gear.wasm --frames 120 --every 10 --script carts/snouty-gear/tools/scripts/m0_pattern.json --out carts/snouty-gear/out/`
+- Headless: `node tools/preview.mjs zig-out/bin/snouty-gear.wasm --frames 600 --every 30 --script carts/snouty-gear/tools/scripts/m1_play.json --out carts/snouty-gear/out/`
   (from the root), then look at the PNGs.
 - `zig fmt carts/snouty-gear` before committing.
 

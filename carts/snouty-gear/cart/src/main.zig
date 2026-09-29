@@ -3,9 +3,9 @@
 //! overlay (frontend/debug.zig) on top and the ROM report line
 //! (frontend/romsrc.zig) at the bottom.
 //!
-//! M0: the core draws a test pattern instead of emulating; there is no
-//! splash, menu, audio or rewind yet (M2). A Select hold is detected but
-//! does nothing. See SPEC.md (design), PLAN.md (milestone contract),
+//! M1: the core emulates the Game Gear (Z80, VDP, mapper, PSG registers);
+//! there is no splash, menu, audio or rewind yet (M2). A Select hold is
+//! detected but does nothing. See SPEC.md (design), PLAN.md (milestone contract),
 //! CLAUDE.md (toolchain).
 const cart = @import("cart-api");
 const core = @import("core");
@@ -13,6 +13,7 @@ const video = @import("frontend/video.zig");
 const input = @import("frontend/input.zig");
 const debug = @import("frontend/debug.zig");
 const romsrc = @import("frontend/romsrc.zig");
+const text = @import("frontend/text.zig");
 
 comptime {
     cart.export_start_code();
@@ -32,6 +33,7 @@ var menu_requests: u32 = 0;
 pub fn start() void {
     cart.set_vsync_enabled(1000.0 / 60.0);
     cart.set_double_buffer_mode(.no_copy_full_frame);
+    text.init();
     video.init();
     gg.init_in_place(romsrc.select());
     gg.line_sink = video.sink();
@@ -100,6 +102,18 @@ comptime {
         @export(&debug_rom_crc, .{ .name = "debug_rom_crc" });
         @export(&debug_cram_rebuilds, .{ .name = "debug_cram_rebuilds" });
         @export(&debug_menu_requests, .{ .name = "debug_menu_requests" });
+        @export(&debug_pc, .{ .name = "debug_pc" });
+        @export(&debug_sp, .{ .name = "debug_sp" });
+        @export(&debug_iff1, .{ .name = "debug_iff1" });
+        @export(&debug_halted, .{ .name = "debug_halted" });
+        @export(&debug_mapper, .{ .name = "debug_mapper" });
+        @export(&debug_vdp_regs01, .{ .name = "debug_vdp_regs01" });
+        @export(&debug_vdp_status, .{ .name = "debug_vdp_status" });
+        @export(&debug_vdp_line, .{ .name = "debug_vdp_line" });
+        @export(&debug_irq_frame, .{ .name = "debug_irq_frame" });
+        @export(&debug_irq_line, .{ .name = "debug_irq_line" });
+        @export(&debug_frame_t, .{ .name = "debug_frame_t" });
+        @export(&debug_psg_voice, .{ .name = "debug_psg_voice" });
     }
 }
 
@@ -146,4 +160,60 @@ fn debug_cram_rebuilds() callconv(.c) u32 {
 /// Select holds that would have opened the menu.
 fn debug_menu_requests() callconv(.c) u32 {
     return menu_requests;
+}
+
+// ---- Boot diagnostics: what a game that does not start is doing ----
+
+/// Z80 program counter after the last frame.
+fn debug_pc() callconv(.c) u32 {
+    return gg.cpu.pc;
+}
+/// Z80 stack pointer.
+fn debug_sp() callconv(.c) u32 {
+    return gg.cpu.sp;
+}
+/// 1 when interrupts are enabled (IFF1).
+fn debug_iff1() callconv(.c) u32 {
+    return @intFromBool(gg.cpu.iff1);
+}
+/// 1 when the CPU sits in HALT.
+fn debug_halted() callconv(.c) u32 {
+    return @intFromBool(gg.cpu.halted);
+}
+/// Mapper as written: slot 0 | slot 1 << 8 | slot 2 << 16 | FFFC << 24.
+fn debug_mapper() callconv(.c) u32 {
+    const m = gg.mapper;
+    return @as(u32, m.slot[0]) | @as(u32, m.slot[1]) << 8 | @as(u32, m.slot[2]) << 16 | @as(u32, m.control) << 24;
+}
+/// VDP register 0 | register 1 << 8 (register 1 bit 6 display on, bit 5
+/// frame IRQ enable; register 0 bit 4 line IRQ enable).
+fn debug_vdp_regs01() callconv(.c) u32 {
+    return @as(u32, gg.vdp.regs[0]) | @as(u32, gg.vdp.regs[1]) << 8;
+}
+/// VDP status flags (bit 7 frame IRQ, 6 overflow, 5 collision) as they
+/// stand, without the read side effects.
+fn debug_vdp_status() callconv(.c) u32 {
+    return gg.vdp.status;
+}
+/// VDP line (0..261) the frame ended on.
+fn debug_vdp_line() callconv(.c) u32 {
+    return gg.vdp.line;
+}
+/// Frame interrupts the CPU accepted since reset.
+fn debug_irq_frame() callconv(.c) u32 {
+    return gg.irq_frame_count;
+}
+/// Line interrupts the CPU accepted since reset.
+fn debug_irq_line() callconv(.c) u32 {
+    return gg.irq_line_count;
+}
+/// T-states the last frame ran (about 59,736).
+fn debug_frame_t() callconv(.c) u32 {
+    return gg.frame_t;
+}
+/// The PSG voice M2's audio would play: hz | atten << 24 | channel << 28,
+/// 0 when silent.
+fn debug_psg_voice() callconv(.c) u32 {
+    const v = gg.psg.voice() orelse return 0;
+    return (v.hz & 0xFFFFFF) | @as(u32, v.atten) << 24 | @as(u32, v.channel) << 28;
 }

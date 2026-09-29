@@ -237,3 +237,74 @@ report and is stubbed locally.
     `.bss` (the uf2 carries `.bss` zeros) if the uf2 gets too big for the drive.
   Next: M1 (three tracks per the contract above); gate on Adrian's hardware
   run of this M0 uf2 with a `.gg` file on the drive.
+- 2026-09-29: M1 started on branch `gear/m1` (prep commit drops the M0
+  stub-shape test; tracks A/B/C in worktrees `-z80`, `-vdp`, `-machine`).
+- 2026-09-29: M1 core done on `gear/m1`. Tracks A (`566e510`.. Z80),
+  B (`41fa714` VDP) and C (`fd9c1f1` machine, frontend, tests) merged with
+  a one-line integration fix (`@setEvalBranchQuota` in the Z80 switch: the
+  real inline bus pushed analysis past Zig's default quota).
+  - Z80: SingleStepTests 1604/1604 files, 1,604,000 cases, 0 failures
+    (streamed by `fetch_test_roms.sh --single-step-all`, 4 min 41 s wall);
+    ZEXDOC and ZEXALL 79/79 OK each (8.3 s and 9.5 s under `safe`); 11
+    interrupt/HALT/EI unit tests. `zig build test` keeps a 36-file subset
+    (0.5 s) and both ZEX ROMs (ZEXALL skipped in Debug builds).
+  - VDP: 25 unit tests through the ports (latch, buffer, CRAM pairs,
+    status, frame and line IRQ timing, counters, scroll and locks, flips,
+    priority, sprite limit/overflow/collision, 8x16, zoom, shift-left).
+  - Machine: 14 bus, 6 PSG, 2 smoke, 1 golden test; golden pins Waternet
+    frames 120/180/360/570 from the reviewed run (`docs/m1_waternet.gif`).
+  - `zig build test`: 9/9 steps, 67/67 tests, 40 s wall (safe).
+  - Waternet plays start to finish in the simulator (title, menus, grid,
+    quit prompt). Sonic the Hedgehog GG (256 KB, local) runs through the
+    SEGA logo, title, map and Green Hill Zone (`docs/m1_sonic_ghz.png`);
+    its line-IRQ counter stays 0 in the frame-IRQ heuristic, unverified.
+  - Sizes, RAM cart, drive source, incl. the 64 KB embedded ROM: fast
+    `.text` 172,388 / `.data` 220 / `.bss` 39,608 (uf2 427,008 B);
+    small `.text` 130,532 (uf2 342,528 B). Code alone ~108 KB fast /
+    ~66 KB small against SPEC.md 13's ~95 KB; the 256-way Z80 switch with
+    the inline bus is the growth. RAM in use fast: 212 KB + 32 KB stack
+    of 307 KB, leaving ~63 KB for the M3 keyframe ring: watch it.
+  - badge-bench (calibrated, RAM ELF, ROM from a romfs image), before the
+    perf pass:
+
+    | Run | frames | mean busy | p95 | worst | over 16.7 |
+    |---|---|---|---|---|---|
+    | Waternet, `m1_play` | 600 | 9.57 ms | 11.52 | 12.09 (frame 92) | 0 |
+    | Sonic GG from the drive | 1200 | 9.87 ms | 12.54 | 12.55 (frame 237) | 0 |
+
+    Start-up 2.68 ms (Waternet) / 10.15 ms (Sonic: CRC of 256 KB). Hot:
+    `_start` (inlined step_frame/tick/bus) 63%, `api.text` 12.8% (1.2 ms:
+    overlay + report line), `video.on_line` 7.3%, Z80 decoders ~12%.
+    Against the M1 targets (mean < 8, worst < 12) both runs are just over;
+    a perf pass follows on `gear/m1-perf` (numbers appended below).
+  - Perf pass (`gear/m1-perf`, 12 commits, merged `32209fd`; frames
+    byte-identical, golden and every suite green). Waternet mean 9.57 ->
+    3.67 ms, worst 12.09 -> 6.86 ms (frame 522); Sonic mean 9.87 -> 5.72,
+    worst 12.55 -> 7.40 (frame 237); 0 frames over budget, worst frame 41%
+    / 44% of 16.7 ms. What paid: HALT fast-forward to the next line (a
+    halted Waternet ran 9,650 single NOP steps per frame), the OS font
+    captured once at start-up and drawn with word stores
+    (`frontend/text.zig`, 184K -> 9.6K cycles per frame; start-up +1.9 ms,
+    hidden by the M2 splash), a 1 KB ROM page table (`Gg.read_map`, derived
+    state, rebuilt on mapper writes/reset/restore, not in keyframes), the
+    Z80 decode inlined into the frame loop with the DD/FD fallback
+    re-dispatching via `continue :sw`, sprite table scanned a word at a
+    time, VDP field order, byte-wise sink pixels, and the squeeze's 16
+    skipped lines not rendered (`LineSink.skip` from the video line map;
+    sprites still evaluated for the flags). Rejected for size: a second
+    out-of-line copy of the opcode switch (0.15 ms better, +37 KB).
+    Sizes after: fast `.text` 154,236 / `.data` 364 / `.bss` 40,568,
+    uf2 392,192 B (RAM in use 195 KB + 32 KB stack; ~80 KB left for M3).
+    Hot after: `step_frame` 39%, `cross_lines` 28%, `video.on_line` 14%,
+    `find_sprites` 13% (0.47 ms: a per-line candidate mask is the M4 win),
+    text 1.7%. Hardware check for Adrian: the font capture reads glyphs
+    back from the framebuffer after `cart.text` at boot; if the overlay
+    or report line looks wrong on the badge, that is the suspect.
+  Next: hardware gate (this uf2 with `waternet.gg` and `sonic.gg` on the
+  drive, overlay numbers), then M2 frontend (splash, menu, tone2 audio
+  from `Psg.voice`, A/B swap, scale modes).
+  - Deviations accepted: `render_line(line, x0, out)` takes the VDP line
+    and first column; `Mapper.bank` caches wrapped slots; IRQ counters
+    live in `Gg` (IFF1 edge + PC 0038 heuristic); `frame_t` is the last
+    frame's T-states, diagnostic only; port C0-FF fully decoded (only
+    C0/DC pad, C1/DD FF); golden reads the ROM and script at run time.
