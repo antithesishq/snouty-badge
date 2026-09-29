@@ -16,8 +16,12 @@ land, and the game starts at 1.2 s (72 frames). Any button skips it.
 Sound: the buzzer plays one voice, the loudest Game Gear tone channel as a
 square wave (noise and inaudible periods dropped), louder or softer with the
 channel's attenuation. It holds while the menu is open; Sound: Off in the
-menu stops it. The simulator plays it through the browser, the badge
-through its speaker.
+menu stops it. The badge plays it through its speaker; the simulator
+through the browser (click the page once so the browser lets audio start).
+In the simulator the cart drives the audio worklet directly: upstream's
+wasm shim turns an infinite `tone2` into a 4 s fade-in that music never
+gets past (frontend/audio.zig explains). `audio.max_volume` caps every
+tone the cart plays.
 
 ## 1. Prerequisites
 
@@ -128,8 +132,11 @@ debug overlay is on). Exports:
 button 1 16, button 2 32, Start 64), `debug_rom_source` (0 embedded,
 1 drive), `debug_rom_size`, `debug_rom_banks`, `debug_rom_crc` (drive only),
 `debug_cram_rebuilds`, `debug_menu_opens`, `debug_tone_hz` (what the buzzer
-was last told to play, 0 when stopped) and `debug_settings` (bit 0 sound on,
-1 crop, 2 A/B swapped, 3 overlay on).
+was last told to play, 0 when stopped), `debug_settings` (bit 0 sound on,
+1 crop, 2 A/B swapped, 3 overlay on), `debug_psg_atten` (attenuations
+ch0 | ch1 << 4 | ch2 << 8 | noise << 12, 15 = silent, noise control << 16,
+latch << 20) and `debug_psg_tones` (10-bit periods ch0 | ch1 << 10 |
+ch2 << 20), for checking what a game asks the PSG for.
 
 Boot diagnostics, for a game that shows nothing: `debug_pc`, `debug_sp`,
 `debug_iff1` (1 = interrupts enabled), `debug_halted`, `debug_mapper`

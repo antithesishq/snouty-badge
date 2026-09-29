@@ -168,6 +168,8 @@ comptime {
         @export(&debug_irq_line, .{ .name = "debug_irq_line" });
         @export(&debug_frame_t, .{ .name = "debug_frame_t" });
         @export(&debug_psg_voice, .{ .name = "debug_psg_voice" });
+        @export(&debug_psg_atten, .{ .name = "debug_psg_atten" });
+        @export(&debug_psg_tones, .{ .name = "debug_psg_tones" });
     }
 }
 
@@ -284,4 +286,15 @@ fn debug_frame_t() callconv(.c) u32 {
 fn debug_psg_voice() callconv(.c) u32 {
     const v = gg.psg.voice() orelse return 0;
     return (v.hz & 0xFFFFFF) | @as(u32, v.atten) << 24 | @as(u32, v.channel) << 28;
+}
+/// PSG attenuations as written: ch0 | ch1 << 4 | ch2 << 8 | noise << 12
+/// (15 = silent), then the noise control << 16 and the latch << 20.
+fn debug_psg_atten() callconv(.c) u32 {
+    const p = gg.psg;
+    return @as(u32, p.atten[0]) | @as(u32, p.atten[1]) << 4 | @as(u32, p.atten[2]) << 8 | @as(u32, p.atten[3]) << 12 | @as(u32, p.noise) << 16 | @as(u32, p.latch) << 20;
+}
+/// PSG 10-bit tone periods: ch0 | ch1 << 10 | ch2 << 20.
+fn debug_psg_tones() callconv(.c) u32 {
+    const p = gg.psg;
+    return @as(u32, p.tone[0]) | @as(u32, p.tone[1]) << 10 | @as(u32, p.tone[2]) << 20;
 }
