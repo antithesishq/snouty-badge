@@ -215,9 +215,22 @@ The same model as Snouty Boy section 10.
 - `tests/determinism.zig`: 600 scripted frames of the shipped ROM, then
   restore each keyframe, replay 30 logged inputs, require byte equality
   with the next keyframe.
-- Depth: section 13. In RAM mode the ring is small, so XOR-against-previous
-  plus zero-run RLE (Snouty Boy section 10.4, not needed there) is likely
-  needed here: VRAM tile data barely changes in half a second.
+- Depth: section 13.
+- Keyframes are stored as deltas in every build (Adrian, 2026-09-29),
+  because a 256 KB ROM (section 13.1) leaves 16 to 32 KB for the ring and
+  one full 24 KB keyframe would not fit. Only the live console is kept
+  whole. Design: RAM and VRAM are split into 64-byte blocks (384 blocks,
+  a 48-byte dirty bitmap). The first write to a block after a keyframe
+  copies its old contents into an undo record; the bus write path pays
+  one bit test. Taking a keyframe closes the record (dirty blocks' old
+  bytes, zero-run RLE, plus the small registers whole) and clears the
+  bitmap. Restoring keyframe k undoes the open record, then applies
+  closed records newest to oldest down to k. Nothing is compressed on the
+  badge in the hot path and no full keyframe copy exists.
+- Record size per half second is not known yet (Sonic streams tiles into
+  VRAM while scrolling); M3 measures it. Target: at least 3 s of history
+  for small ROMs, at least 1 s for Sonic. The oldest record is dropped when
+  the ring is full.
 
 ## 11. The ROM
 
@@ -227,8 +240,21 @@ is Adrian's business, as with Super Mario Land on Snouty Boy).
 
 - Requirements, checked by `tools/romcheck.py`: Game Gear ROM (or an SMS
   ROM that runs in Game Gear mode, which few do), at most 128 KB (ideally
-  64 KB, section 13), Sega mapper or none, cart RAM at most 8 KB unless
-  the XIP build is chosen, no FM sound, no mid-line raster effects.
+  64 KB, section 13) stored as is, or up to 256 KB through the bank packer
+  in an XIP build (section 13.1), Sega mapper or none, cart RAM at most
+  8 KB unless the XIP build is chosen, no FM sound, no mid-line raster
+  effects.
+- Local stress target (never shipped): **Sonic the Hedgehog, Game Gear**
+  (Sega/Ancient 1991, 256 KB, Sega mapper, no cart RAM; header region code
+  0x6 at `7FFF`, md5 `8a95b36139206a5ba13a38bb626aee25`). It is the 8-bit
+  Sonic, a different game from the Genesis one. It is the reason for the
+  bank packer: it fills the whole cart flash window unless compressed.
+  Adrian's copy is at `~/sonic.gg` on the VM (the file named `~/sonic.sms`
+  there is the same Game Gear image). Commercial ROMs stay outside the
+  repository and are passed with `-Dgg-rom=~/sonic.gg`; the root
+  `.gitignore` ignores `*.gg` and `*.sms` so a copy in `roms/` cannot be
+  committed by accident (the shipped ROM is added with an explicit
+  exception).
 - Candidates (research 2026-09-29: release zips downloaded, LICENSE files
   read, ROM bytes scanned for mapper and port use):
   1. **Waternet** (Willems Davy, github.com/joyrider3774/waternet), MIT,
@@ -292,6 +318,51 @@ XIP cart (flash holds code, ROM and tables). Two conclusions:
    on hardware (menu acceptance, erase time per launch, flash cache hit
    rate for an interpreter loop). Section 18 item 3.
 
+### 13.1 ROMs over 128 KB: the bank packer
+
+A 256 KB ROM stored as is fills the 256 KB XIP flash window with no room
+for code, and it cannot all be unpacked into RAM either (256 KB of banks
+plus about 28 KB of live console and frontend state is more than the
+268 KiB of RAM left after the stack). So, in XIP builds only:
+
+- `tools/pack_rom.py` (a host step, not comptime, for Adrian's Mac) splits
+  the ROM into its 16 KB banks and compresses each one alone. It keeps the
+  `R` banks that compress worst uncompressed in flash and stores the rest
+  compressed. It writes `rom_packed.bin` plus a small index (per bank: raw
+  or packed, offset, length) that `core/rom.zig` embeds.
+- At `start()` the packed banks are inflated into one `.bss` array. The
+  mapper already maps slots through a 16-entry table of bank pointers, so
+  after boot a raw bank points into flash and a packed bank into RAM, at no
+  cost per access.
+- `R` is chosen by the tool from two inputs: the RAM to keep free for the
+  keyframe ring (default 32 KB) and the flash size of the code, read from
+  the linked ELF. If both cannot be met it fails with the numbers, rather
+  than building a cart that overflows.
+- Codec: deflate (Zig `std.compress.flate`) unless the M4 size check shows
+  the zstd decoder is small enough for its 3 to 5 KB smaller output. The
+  compressor may use any setting; only the decoder is on the badge.
+- Boot inflates up to 224 KB once. Its time is measured in M4 (unknown;
+  expected well under a second) and covered by the splash.
+
+Measured on Sonic GG (2026-09-29, per-bank deflate -9 via Python `zlib`;
+zstd -19 for comparison). The banks compress to 6.1 to 13.1 KB each and
+none is padding. Raw banks are picked worst-first (9, 13, 12, 14):
+
+| Raw banks | ROM in flash | Flash left for code, tables, decoder | RAM left for the ring |
+|----------:|-------------:|-------------------------------------:|----------------------:|
+| 1         | 156.6 KiB    | 99.4 KiB                             | 0.2 KiB               |
+| 2         | 160.4 KiB    | 95.6 KiB                             | 16.2 KiB              |
+| 3         | 164.6 KiB    | 91.4 KiB                             | 32.2 KiB              |
+| 4         | 168.9 KiB    | 87.1 KiB                             | 48.2 KiB              |
+
+(zstd gives 3.5 to 4.3 KiB more flash for code in each row.) This is
+tighter than section 13's code estimate: ~95 KB of ReleaseFast code plus
+~6 KB of tables plus the decoder does not fit next to 3 raw banks.
+Therefore the Sonic build is ReleaseSmall, or ReleaseSmall for the
+frontend with the Z80 and VDP modules in ReleaseFast. The M1 `size -A`
+numbers settle which. Code copied to a RAM-text section (XIP open item 4)
+takes RAM as well as flash, so it comes out of the ring budget.
+
 ## 14. Instrumentation
 
 Snouty Boy's overlay (average and worst `step_frame` microseconds, FPS),
@@ -308,7 +379,7 @@ carts/snouty-gear/
   cart/src/    main.zig frontend/{video,input,menu,rewind,splash,debug,audio}.zig
   tests/       all.zig z80_zex.zig z80_single_step.zig vdp_unit.zig
                psg_unit.zig determinism.zig roms/ (gitignored)
-  tools/       fetch_test_roms.sh romcheck.py gen_tables.py
+  tools/       fetch_test_roms.sh romcheck.py gen_tables.py pack_rom.py
                scripts/*.json (badge-bench and preview input scripts)
   roms/        the shipped ROM and its LICENSE
   docs/        RUNNING.md, preview GIFs
@@ -356,30 +427,37 @@ disjoint files, as for Snouty Boy.
   Gate: Adrian flashes it and reports the overlay numbers.
 - **M2 Frontend**: menu, splash, PSG to one tone2 voice, A/B swap, scale
   modes, all adapted from Snouty Boy.
-- **M3 Scrub**: keyframe ring, input log, scrubbing, neopixel meter,
-  determinism test, keyframe compression if the depth is under 3 s.
-- **M4 Hardware polish**: tune from Adrian's numbers; if XIP works on the
-  badge, decide the default mode (section 18 item 3).
+- **M3 Scrub**: delta keyframe ring (section 10), input log, scrubbing,
+  neopixel meter, determinism test (it must also pass with the undo
+  records, restoring every keyframe in the ring), record sizes measured.
+- **M4 Hardware polish and big ROMs**: tune from Adrian's numbers; if XIP
+  works on the badge, decide the default mode (section 18 item 3). Bank
+  packer (section 13.1) with a host test that the unpacked bank table is
+  byte-identical to the ROM; Sonic GG built locally with `-Dgg-rom`,
+  badge-bench and hardware numbers, history depth and boot time recorded.
 - **M5 Stretch** (pick with Adrian): shared emulator frontend module used
   by both emulator carts; Master System mode (256 -> 160 by following the
   horizontal scroll or a 1.6:1 column map); an original Snouty ROM built
   with devkitSMS; move `z80.zig` to a shared `lib/` for the next Z80
   machine.
 
-## 18. Decisions (open, 2026-09-29)
+## 18. Decisions
 
-1. Name: "Snouty Gear" as the working title and directory name?
-2. ROM: Waternet (MIT, small, single-voice music; recommended), Sushi
-   Nights, or one Adrian supplies (section 11).
-3. Mode: develop and bench both from M1; ship the RAM cart (small ROM,
-   compressed keyframes) until XIP is proven on the badge, then decide.
-   Recommended, because XIP has never run on hardware.
-4. Menu key: keep Select held 500 ms (same as Snouty Boy; recommended), or
-   open on a Select tap since the Game Gear has no Select button.
-5. Frontend sharing: copy from Snouty Boy now and extract a shared module
-   in M5 (recommended: Snouty Boy is still waiting for its hardware gate,
-   so it should not change underneath Adrian), or extract first in M0.
+Decided 2026-09-29: Adrian accepted every recommendation.
+
+1. Name: "Snouty Gear" is the working title and directory name.
+2. ROM: Waternet (MIT, section 11).
+3. Mode: develop and bench RAM and XIP from M1; ship the RAM cart (small
+   ROM, compressed keyframes) until XIP is proven on the badge, then decide
+   in M4.
+4. Menu key: Select held 500 ms, the same as Snouty Boy.
+5. Frontend sharing: copy from Snouty Boy now; extract a shared module in
+   M5 with Snouty Boy's frames byte-identical under badge-bench.
 
 ## Status
 
-- 2026-09-29: spec drafted; decisions in section 18 open. Nothing built.
+- 2026-09-29: spec drafted; section 18 decided (recommendations accepted).
+  Next: M0 scaffold.
+- 2026-09-29: Adrian chose delta keyframes (section 10). Added the bank
+  packer for 256 KB ROMs (section 13.1) with Sonic GG as the local stress
+  target (section 11); measurements in 13.1.

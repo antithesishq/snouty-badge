@@ -2,7 +2,7 @@
 
 SPEC.md is the design. This file is the working contract for the current
 milestone: who owns which files, the frozen interfaces, what "done" means.
-Nothing below is started until Adrian has answered SPEC.md section 18.
+SPEC.md section 18 was decided 2026-09-29; the ROM is Waternet.
 
 ## M0 Scaffold (one agent, then me)
 
@@ -97,4 +97,4 @@ report and is stubbed locally.
 
 ## Status
 
-- 2026-09-29: SPEC.md and this plan drafted; waiting on section 18.
+- 2026-09-29: SPEC.md and this plan drafted; section 18 decided. Next: M0.
