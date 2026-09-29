@@ -1,0 +1,27 @@
+# snouty-boy Color mode with Rebound (CGB, double speed + HDMA) read from the
+# badge drive by the default build (RAM cart, -Drom-source=drive), PLAN.md
+# M8. Not picked by ELF name (the ELF is snouty-boy.elf); from the
+# repository root:
+#   python3 tools/make_romfs.py out/boy-m8.img \
+#       carts/snouty-boy/roms/rebound.gbc=rebound.gbc \
+#       carts/snouty-boy/roms/rex-runner.gb=rex-runner.gb \
+#       carts/snouty-boy/roms/2048.gb=2048.gb
+#   badge-bench/bench.sh zig-out/firmware/snouty-boy.elf \
+#       --config badge-bench/carts/snouty-boy-color.toml --symbols
+# A drive build must run with the image: without it the bench faults reading
+# the boot sector (a bench artefact; on the badge the flash is always there).
+budget_ms = 16.7
+frames = 1800
+# Relative to the repository root (the directory above the ELF's zig-out/).
+romfs = "out/boy-m8.img"
+# The splash ends by itself at update 72 and the picker follows (three
+# files); A at 72 takes the first, rebound.gbc, so the game starts at the
+# same update as the embedded M7 run. Then START on the DevEd license
+# screen, START on the title starts the level; run right and jump. More
+# START presses would pause the game.
+# Rex Runner instead: --press DOWN:66-67 before A (the DOWN also ends the
+# splash), then START:200-202 and A every 50 updates from 400 to 700
+# (--frames 900, PLAN.md M8 status).
+press = ["A:72-73", "START:200-203", "START:350-353", "START:900-903",
+         "RIGHT:1100-1300", "A:1400-1405"]
+note = "Rebound (CGB) from the drive image; default build (zig build -Dcart=snouty-boy)"

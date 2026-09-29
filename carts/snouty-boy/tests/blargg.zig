@@ -1,16 +1,20 @@
 //! Blargg CPU tests: run until the serial output says Passed or Failed.
-//! Owner in M1: track A. ROMs come from tools/fetch_test_roms.sh.
+//! Owner in M1 and M6: track A. ROMs come from tools/fetch_test_roms.sh.
+//! Each ROM runs as a DMG and as a CGB (at normal speed, SPEC.md 19.6).
 const std = @import("std");
 const core = @import("core");
 
+/// Cart RAM for the consoles below (the MBC tests declare RAM in the header).
+var test_ram: [core.Gb.max_cart_ram]u8 = undefined;
+
 const frame_budget = 4000;
 
-fn run_blargg(comptime name: []const u8) !void {
+fn run_blargg(comptime name: []const u8, model: core.Model) !void {
     const rom = @embedFile("roms/" ++ name ++ ".gb");
     // Gb is ~33 KB; keep it off the test thread's stack.
     const gb = try std.testing.allocator.create(core.Gb);
     defer std.testing.allocator.destroy(gb);
-    gb.* = core.Gb.init(rom);
+    gb.* = core.Gb.init_slice(rom, model, &test_ram);
     var frame: u32 = 0;
     while (frame < frame_budget) : (frame += 1) {
         gb.step_frame(0);
@@ -20,52 +24,91 @@ fn run_blargg(comptime name: []const u8) !void {
             // Let the ROM finish printing the failure details.
             var extra: u32 = 0;
             while (extra < 120) : (extra += 1) gb.step_frame(0);
-            std.debug.print("\n{s}: FAILED after {d} frames, serial:\n{s}\n", .{ name, frame, gb.serial.text() });
+            std.debug.print("\n{s} ({t}): FAILED after {d} frames, serial:\n{s}\n", .{ name, model, frame, gb.serial.text() });
             return error.BlarggFailed;
         }
     }
-    std.debug.print("\n{s}: no verdict in {d} frames (PC={X:0>4}), serial:\n{s}\n", .{ name, frame_budget, gb.cpu.pc, gb.serial.text() });
+    std.debug.print("\n{s} ({t}): no verdict in {d} frames (PC={X:0>4}), serial:\n{s}\n", .{ name, model, frame_budget, gb.cpu.pc, gb.serial.text() });
     return error.BlarggTimeout;
 }
 
 test "blargg cpu_instrs 01 special" {
-    try run_blargg("cpu_instrs_01");
+    try run_blargg("cpu_instrs_01", .dmg);
+}
+test "blargg cpu_instrs 01 special (cgb)" {
+    try run_blargg("cpu_instrs_01", .cgb);
 }
 test "blargg cpu_instrs 02 interrupts" {
-    try run_blargg("cpu_instrs_02");
+    try run_blargg("cpu_instrs_02", .dmg);
+}
+test "blargg cpu_instrs 02 interrupts (cgb)" {
+    try run_blargg("cpu_instrs_02", .cgb);
 }
 test "blargg cpu_instrs 03 op sp,hl" {
-    try run_blargg("cpu_instrs_03");
+    try run_blargg("cpu_instrs_03", .dmg);
+}
+test "blargg cpu_instrs 03 op sp,hl (cgb)" {
+    try run_blargg("cpu_instrs_03", .cgb);
 }
 test "blargg cpu_instrs 04 op r,imm" {
-    try run_blargg("cpu_instrs_04");
+    try run_blargg("cpu_instrs_04", .dmg);
+}
+test "blargg cpu_instrs 04 op r,imm (cgb)" {
+    try run_blargg("cpu_instrs_04", .cgb);
 }
 test "blargg cpu_instrs 05 op rp" {
-    try run_blargg("cpu_instrs_05");
+    try run_blargg("cpu_instrs_05", .dmg);
+}
+test "blargg cpu_instrs 05 op rp (cgb)" {
+    try run_blargg("cpu_instrs_05", .cgb);
 }
 test "blargg cpu_instrs 06 ld r,r" {
-    try run_blargg("cpu_instrs_06");
+    try run_blargg("cpu_instrs_06", .dmg);
+}
+test "blargg cpu_instrs 06 ld r,r (cgb)" {
+    try run_blargg("cpu_instrs_06", .cgb);
 }
 test "blargg cpu_instrs 07 jr,jp,call,ret,rst" {
-    try run_blargg("cpu_instrs_07");
+    try run_blargg("cpu_instrs_07", .dmg);
+}
+test "blargg cpu_instrs 07 jr,jp,call,ret,rst (cgb)" {
+    try run_blargg("cpu_instrs_07", .cgb);
 }
 test "blargg cpu_instrs 08 misc instrs" {
-    try run_blargg("cpu_instrs_08");
+    try run_blargg("cpu_instrs_08", .dmg);
+}
+test "blargg cpu_instrs 08 misc instrs (cgb)" {
+    try run_blargg("cpu_instrs_08", .cgb);
 }
 test "blargg cpu_instrs 09 op r,r" {
-    try run_blargg("cpu_instrs_09");
+    try run_blargg("cpu_instrs_09", .dmg);
+}
+test "blargg cpu_instrs 09 op r,r (cgb)" {
+    try run_blargg("cpu_instrs_09", .cgb);
 }
 test "blargg cpu_instrs 10 bit ops" {
-    try run_blargg("cpu_instrs_10");
+    try run_blargg("cpu_instrs_10", .dmg);
+}
+test "blargg cpu_instrs 10 bit ops (cgb)" {
+    try run_blargg("cpu_instrs_10", .cgb);
 }
 test "blargg cpu_instrs 11 op a,(hl)" {
-    try run_blargg("cpu_instrs_11");
+    try run_blargg("cpu_instrs_11", .dmg);
+}
+test "blargg cpu_instrs 11 op a,(hl) (cgb)" {
+    try run_blargg("cpu_instrs_11", .cgb);
 }
 test "blargg cpu_instrs combined (MBC1)" {
-    try run_blargg("cpu_instrs");
+    try run_blargg("cpu_instrs", .dmg);
+}
+test "blargg cpu_instrs combined (MBC1) (cgb)" {
+    try run_blargg("cpu_instrs", .cgb);
 }
 test "blargg instr_timing" {
-    try run_blargg("instr_timing");
+    try run_blargg("instr_timing", .dmg);
+}
+test "blargg instr_timing (cgb)" {
+    try run_blargg("instr_timing", .cgb);
 }
 
 test "post-boot state matches DMG values" {
@@ -73,7 +116,7 @@ test "post-boot state matches DMG values" {
     rom[0x147] = 0x01; // MBC1
     const gb = try std.testing.allocator.create(core.Gb);
     defer std.testing.allocator.destroy(gb);
-    gb.* = core.Gb.init(&rom);
+    gb.* = core.Gb.init_slice(&rom, .dmg, &test_ram);
     const c = gb.cpu;
     try std.testing.expectEqual(@as(u8, 0x01), c.a);
     try std.testing.expectEqual(@as(u8, 0xB0), c.f);
@@ -125,7 +168,7 @@ test "mbc1 bank switching and 0x20 quirk" {
     rom[0x149] = 0x02;
     const gb = try std.testing.allocator.create(core.Gb);
     defer std.testing.allocator.destroy(gb);
-    gb.* = core.Gb.init(rom);
+    gb.* = core.Gb.init_slice(rom, .dmg, &test_ram);
     try std.testing.expectEqual(@as(u8, 1), gb.read8(0x4000));
     gb.write8(0x2000, 0x05);
     try std.testing.expectEqual(@as(u8, 5), gb.read8(0x4000));
@@ -147,7 +190,7 @@ test "timer: TIMA at 262144 Hz and overflow irq" {
     var rom: [0x8000]u8 = @splat(0);
     const gb = try std.testing.allocator.create(core.Gb);
     defer std.testing.allocator.destroy(gb);
-    gb.* = core.Gb.init(&rom);
+    gb.* = core.Gb.init_slice(&rom, .dmg, &test_ram);
     gb.write8(0xFF04, 0); // reset DIV
     gb.write8(0xFF06, 0xFE); // TMA
     gb.write8(0xFF05, 0xFE); // TIMA

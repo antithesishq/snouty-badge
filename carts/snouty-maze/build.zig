@@ -16,6 +16,14 @@ pub fn add(b: *Build, sycl_badge_dep: *Build.Dependency, opts: common.Options) v
     // the option is declared by the root build.zig).
     const options = b.addOptions();
     options.addOption(bool, "debug_overlay", opts.debug_overlay);
+    // -Dneopixels=true re-enables the dormant LED effects in leds.zig (default off:
+    // the badge LEDs are unusably bright; docs/NEOPIXELS.md).
+    options.addOption(bool, "neopixels", opts.neopixels);
+    // -Dmaze_size=N: the maze's side in cells at start (default 12, clamped to
+    // 4..16 = maze.max_size). badge-bench's `--poke maze_size=N` and the wasm
+    // `debug_set_size` still change it at run time.
+    const maze_size = b.option(u8, "maze_size", "snouty-maze: maze side in cells, 4..16 (default 12)") orelse 12;
+    options.addOption(u8, "maze_size", std.math.clamp(maze_size, 4, 16));
     build_options = options;
 
     os_cart.add(b, sycl_badge_dep, .{

@@ -2,6 +2,7 @@
 const std = @import("std");
 const cart = @import("cart-api");
 const camera = @import("../camera.zig");
+const textures = @import("textures.zig");
 
 var buf: [32]u8 = undefined;
 
@@ -20,16 +21,51 @@ pub fn draw_debug(render_us: u32, fps_x10: u32) void {
     cart.text(.{ .str = line2, .x = 1, .y = 10, .text_color = .rgb(0xffffff) });
 }
 
-/// Bottom strip for the overhead phase: two centred lines in the built-in
-/// 8x8 font, white over a 1 px black drop shadow, no box. The overhead pose
-/// keeps the maze in y = 4..100, so y = 106 and 116 sit on the background.
+/// Bottom strip for the overhead phase: the Iris mark (24x24) left of two
+/// lines in the built-in 8x8 font, white over a 1 px black drop shadow, no
+/// box; the icon and text group is centred and each line is centred in the
+/// text block. The overhead pose keeps the maze in y = 4..100, so the strip
+/// (y = 104..127) sits on the background.
+const name_line1 = "ADRIAN HATCH";
+const name_line2 = "ANTITHESIS";
+const icon_size = 24;
+const icon_gap = 4;
+const text_w: usize = 8 * @as(usize, @max(name_line1.len, name_line2.len));
+const group_x: usize = (cart.screen_width - (icon_size + icon_gap + text_w)) / 2;
+const icon_y = 104;
+
 pub fn draw_name_strip() void {
-    shadow_text_centred("ADRIAN HATCH", 106);
-    shadow_text_centred("ANTITHESIS", 116);
+    draw_iris(group_x, icon_y);
+    const tx = group_x + icon_size + icon_gap;
+    shadow_text_centred(name_line1, tx, 106);
+    shadow_text_centred(name_line2, tx, 116);
 }
 
-fn shadow_text_centred(comptime str: []const u8, y: i32) void {
-    const x: i32 = (@as(i32, cart.screen_width) - 8 * @as(i32, str.len)) >> 1;
+/// Nearest-neighbour 32 -> 24 blit of textures.iris with the same 1 px
+/// black drop shadow as the text; palette index 0 is transparent. 2D only,
+/// no z test.
+fn draw_iris(x0: usize, y0: usize) void {
+    const t = &textures.iris;
+    const black: cart.Pixel = .{ .bits = 0 };
+    inline for (.{ 1, 0 }) |off| {
+        for (0..icon_size) |i| {
+            const x = x0 + i + off;
+            if (x >= cart.screen_width) continue;
+            const col = &cart.framebuffer[x];
+            const u = (i * 4 + 1) / 3;
+            for (0..icon_size) |j| {
+                const y = y0 + j + off;
+                if (y >= cart.screen_height) continue;
+                const idx = t.texels[(u << 5) | ((j * 4 + 1) / 3)];
+                if (idx == 0) continue;
+                col[y] = if (off == 1) black else t.palette[idx];
+            }
+        }
+    }
+}
+
+fn shadow_text_centred(comptime str: []const u8, x_left: i32, y: i32) void {
+    const x: i32 = x_left + ((@as(i32, text_w) - 8 * @as(i32, str.len)) >> 1);
     cart.text(.{ .str = str, .x = x + 1, .y = y + 1, .text_color = .rgb(0x000000) });
     cart.text(.{ .str = str, .x = x, .y = y, .text_color = .rgb(0xffffff) });
 }

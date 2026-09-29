@@ -9,3 +9,13 @@ __pycache__/
 *.elf
 *.wasm
 .DS_Store
+# Scratch output at the root: drive images and bench runs (docs/RUNNING.md
+# of snouty-boy, section 9.1).
+/out/
+
+# Game Gear / Master System ROMs: commercial ones stay outside the repo
+*.gg
+*.sms
+
+# The shipped Snouty Gear ROM (MIT, roms/LICENSE-waternet) is the one exception.
+!carts/snouty-gear/roms/waternet.gg

@@ -37,7 +37,8 @@ pitch, so the badge can say so on the title screen.
   120 KB, measured with `size -A` every milestone. Section 13 has the table.
 - Inputs: joystick 4-way, A, B, Start, Select. Start+Select (250 ms) and
   joystick click are OS-owned; never bound.
-- Audio: `tone2`, one voice. Neopixels: 5, keep every channel at or below 10/255.
+- Audio: `tone2`, one voice. Neopixels: 5, off: the cart never writes a
+  non-zero value; the LED effects are compiled out unless built with `-Dneopixels=true` (section 12).
 - Rendering: `.no_copy_full_frame`, full redraw every frame, as in both
   existing carts. Upstream `blit` is not used at all; every pixel comes
   from our own loops.
@@ -50,7 +51,7 @@ pitch, so the badge can say so on the title screen.
 | Left / Right   | (nothing)            | Turn                                        | (nothing)                 |
 | A              | Start game           | Fire / swat                                 | (nothing)                 |
 | B              | Start game           | Hold: rewind time                           | Hold: rewind (mandatory)  |
-| Select         | Toggle sound + LEDs  | Next weapon (skips empty ones)              | (nothing)                 |
+| Select         | Toggle sound         | Next weapon (skips empty ones)              | (nothing)                 |
 | Start          | Start game           | Pause / unpause                             | (nothing)                 |
 
 Tank controls, no strafe (open question, section 17). Turn 2.5 degrees per
@@ -215,11 +216,11 @@ enemy always faces the camera. HP, speeds in cells per tick.
 
 | Name (flavor)          | HP | Speed | Behaviour                                                                                          | Attack                                            |
 |------------------------|----|-------|----------------------------------------------------------------------------------------------------|---------------------------------------------------|
-| Off-by-one (gnat)      | 3  | 0.05  | Wakes on sight or gunfire within 8 cells; zig-zags toward the player                               | Melee bite 5, every 30 t within 0.8 cells         |
+| Off-by-one (gnat)      | 3  | 0.04  | Wakes on sight or gunfire within 8 cells; zig-zags toward the player                               | Melee bite 2, every 60 t within 0.8 cells (tuned M5) |
 | Race Condition (wasp)  | 6  | 0.07  | Waits; when it sees you it charges in a straight line, overshoots, turns, charges again            | Melee 10 on contact during a charge               |
 | Memory Leak (beetle)   | 20 | 0.02  | Slow, walks straight at you, soaks damage                                                          | Spits a 0.08 cells/t projectile, 8 damage, every 90 t |
 | Deadlock (spider)      | 8  | 0     | Stationary turret on the ceiling; only visible from within 6 cells                                 | Web projectile 0.06 cells/t: 4 damage and freezes your movement for 45 t (turning still works). Rewind is the counter. |
-| Heisenbug (boss)       | 80 | 0.04  | If you look at it for 90 ticks straight it flickers and teleports to a spawn point behind you      | Spit x3 fan, 10 damage; melee 15                  |
+| Heisenbug (boss)       | 80 | 0.04  | If you look at it for 90 ticks straight it flickers and teleports to a spawn point behind you; never flinches (no pain state) | Spit x3 fan, 8 damage each, only beyond 2.5 cells; melee 10, every 60 t (tuned M5) |
 
 AI is Wolf3D-simple and deterministic: a state machine (idle, alert,
 chase, attack, pain, dead) with line of sight by grid ray, movement toward
@@ -247,7 +248,10 @@ ticks (palette set swap, free) and sets the portrait's "ouch" frame for
   is topped up to at least 3 s (an emergency reserve, granted once per
   death). While frozen only B works. Releasing B at a moment where HP > 0
   resumes play. If the meter empties while still dead, the level restarts
-  (the only "game over" in the game). No lives.
+  (the only "game over" in the game). No lives. (M4 note: with the
+  reserve, one tick back always reaches HP > 0, so the restart only
+  triggers when there is no history at all; it is kept as a safety net,
+  holding B for one second while dead with nothing to rewind into.)
 - Tension: rewinding to dodge a hit also un-does the kills you made since,
   so the meter is a resource, not a free undo. Combined with the spider's
   freeze web and the wasp's charge, that is the game.
@@ -293,7 +297,8 @@ projectiles, 64 doors, 256-bit pickup mask, PRNG, tick, stats).
   darkened (scanlines), a `<<` glyph at the top left, the status bar clock
   counting down. Enemies, doors and projectiles simply play backwards.
 - Audio: a descending square sweep retriggered every 10 ticks. Neopixels:
-  all five pulse purple at 8/255.
+  off (section 12); the dormant effect behind `-Dneopixels` pulses all
+  five purple.
 
 ## 10. HUD portrait and feedback
 
@@ -317,9 +322,17 @@ PLAYING -> Start -> PAUSED -> Start -> PLAYING
 ```
 
 Takeover keeps the world as is and hands the controls over on the next
-tick, with the meter refilled, as in `snouty-bugs`. The demo log is
-recorded in the simulator with `preview.mjs --record` (already planned as
-the fallback in the bugs cart) and committed as `demos/build_farm.bin`.
+tick, with the meter refilled (recorded as a rewind patch so the keyframe
+self-check keeps agreeing). Select does not take over. The demo is a
+fixed seed plus a run-length input log: authored as a `preview.mjs`
+script (`tools/scripts/demo_build_farm.json`), baked into `.text` by
+`tools/gen_demo.py` as `cart/src/demos/build_farm.zig` together with the
+`sim.hash_gameplay` the simulator recorded after the last tick
+(`tools/record_demo.sh`). When the log runs out the cart compares its own
+hash with the recorded one and the title shows "DEMO OK" or "DEMO
+DESYNC": the attract mode doubles as the hardware determinism test of
+section 9.3. The demo also ends on a 3 min cap, after 2 s dead without a
+rewind in the log, or once the level ends (no result in those cases).
 
 ## 12. Audio and neopixels
 
@@ -340,10 +353,24 @@ player hurt > pickup > enemy death > door > weapon.
 | Rewind (loop)  | square   | 800 -> 200 Hz | 0.17 s, retriggered |
 | Death freeze   | minor    | 55 Hz         | 0.80 s   |
 
-Neopixels show HP as a green-to-red bar (five LEDs, 10/255 max), purple
-pulse during rewind, a white flash on key pickup. Sound and LEDs default
-off, toggled with Select on the title screen only (Select is the weapon
-key in game).
+Sound defaults off, toggled with Select on the title screen only (Select
+is the weapon key in game).
+
+Neopixels are off (docs/NEOPIXELS.md at the repository root): the cart
+never writes a non-zero value. A coworker's badge shows the LEDs are
+unusably bright even at 1% (2026-09-29). The effects below are compiled
+out; `zig build -Dcart=snoutenstein -Dneopixels=true` re-enables them for
+development. `audio.write_pixels` is the only writer of `cart.neopixels`.
+
+### Dormant neopixel effects (behind -Dneopixels)
+
+All gated by `audio.enabled` too (Select on the title), capped at 10/255
+per channel:
+- HP as a green-to-red bar over the five LEDs (one per started 20 HP;
+  green from 60, amber from 25, red below); dead: LED 0 dim red.
+- Key pickup: all five white for 6 ticks.
+- Rewind: all five Iris purple, pulsing 3/255 to 8/255 on blue over a
+  30-tick triangle.
 
 ## 13. Memory budget
 
@@ -438,8 +465,9 @@ M1's timing check is one photo of the badge).
   --expect "debug_desync == 0"` for walk-through, door/key, combat,
   rewind-past-death and takeover scripts. Every milestone ships a GIF.
 - `check_determinism.mjs`: runs a script twice with a rewind inserted in
-  the second run and asserts equal `debug_state_hash` at the end, and
-  replays `demos/build_farm.bin` asserting the recorded final hash.
+  the second run and asserts equal `debug_state_hash` at the end;
+  `check.sh` replays the embedded demo (`--call debug_start_demo`) and
+  asserts `debug_demo_result == 1` (the recorded final hash matched).
 - Hardware, M1 gate: FPS overlay reads 60 and `debug_render_us` stays under
   8,000 while facing the longest corridor in the test level with 6 sprites
   in view. Anything worse triggers the section 5 fallbacks before M2.
@@ -481,7 +509,8 @@ Decided by Adrian on 2026-09-26:
 2. Controls: tank controls only, no strafe.
 3. Rewind: fully consistent; rewinding past a kill un-does it.
 4. No lives. Death freezes time and the only way out is B.
-5. Sound and LEDs toggle with Select on the title screen only.
+5. Sound toggles with Select on the title screen only (neopixels are off,
+   section 12).
 6. Boss design (Heisenbug again or new) is deferred to M3/M5.
 8. Title tag line "powered by deterministic replay": yes.
 7. Wall textures 32x32. Independent of map import: Wolf3D maps carry wall
@@ -513,3 +542,14 @@ Level grid 64x64 with Wolf3D import (section 6.1): yes.
   `docs/preview_m3.gif`. Levels are generated on the host now (the comptime
   parser broke the macOS compiler). Hardware gate still pending; the
   emulated benchmark shows 23% of the frame budget used at worst.
+- 2026-09-29: M4 (hold-B rewind through the whole GameState, death rule
+  with the 3 s reserve, Iris tint with scanlines and the `<<` marker,
+  rewind sweep and purple neopixels, keyframe self-check on wasm/Debug
+  builds, `check_determinism.mjs --rewind-at`) tagged `snoutenstein/m4`,
+  `docs/preview_m4.gif`. Section 9.1's restart-on-empty-meter is a
+  fallback only (note there). Hardware gate still pending.
+- 2026-09-29: M5 (attract demo of Build Farm with takeover, DEMO OK /
+  DESYNC hash readout on the title, gnat and Heisenbug tuning, enemy
+  separation, neopixels off) tagged `snoutenstein/m5`, `docs/preview_m5.gif`.
+  Hardware gate still pending; the demo readout is the first hardware
+  determinism test once flashed.

@@ -1,0 +1,12 @@
+# snouty-gear: Game Gear emulator, 60 fps. M0: the core draws a test pattern
+# (no emulation yet), with the embedded Waternet ROM.
+budget_ms = 16.7
+frames = 600
+# Pattern inputs: move the box, button 1 (B) inverts the palette, button 2
+# (A) rotates it, Start speeds up the scroll, a Select hold (menu in M2).
+press = ["RIGHT:30-60", "DOWN:70-100", "B:120-140", "A:160-200",
+         "START:220-240", "LEFT:260-300", "UP:320-340", "SELECT:360-400",
+         "RIGHT:420-460", "A:480-520", "B:540-560"]
+# badge-bench maps this image at 0x10080000 (docs/ROM_DRIVE.md); build it with
+#   python3 tools/make_romfs.py carts/snouty-gear/out/romfs.img carts/snouty-gear/roms/waternet.gg
+romfs = "carts/snouty-gear/out/romfs.img"

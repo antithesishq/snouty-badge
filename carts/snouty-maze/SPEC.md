@@ -45,8 +45,8 @@ used: the geometry is well known and the textures are ours.
   100 KB, measured with `size -A` every milestone (section 13).
 - Inputs: joystick 4-way, A, B, Start, Select. Start+Select (250 ms) and
   joystick click (FPS overlay) are OS-owned; never bound.
-- Audio: none (Adrian, 2026-09-27: "it'll be annoying"). Neopixels: 5,
-  every channel at or below 10/255.
+- Audio: none (Adrian, 2026-09-27: "it'll be annoying"). Neopixels: off;
+  the cart never writes non-zero values (section 9).
 - Rendering: `.no_copy_full_frame`, full redraw every frame,
   `set_vsync_enabled(1000.0 / 60.0)`.
 
@@ -61,13 +61,14 @@ the M1 debug camera and, from M4, for taking the camera over.
 | Left / Right | (starts takeover)                | Pivot 90 degrees                        | Turn                                |
 | A            | Skip to the finish sequence      | Skip to the finish sequence             | Hold + Up/Down: pitch               |
 | B            | (nothing)                        | (nothing)                               | Hold + Up/Down: rise / sink         |
-| Select       | Toggle LEDs                      | Toggle LEDs                             | Toggle render-microseconds overlay  |
+| Select       | No-op (flips the dormant LED flag) | No-op (flips the dormant LED flag)    | Toggle render-microseconds overlay  |
 | Start        | Toggle name strip                | Toggle name strip                       | Reset camera to the start cell      |
 
 Takeover: any stick input hands the camera to the viewer; movement is
 grid-locked like the original (cell to cell, 90 degree pivots). After 5 s
 without input the autopilot resumes from wherever the camera is. Takeover
-is M4 and is an open question (section 18).
+landed in M4 (decision 10); a tap during a move is queued for the next
+cell centre, and B+Select fly exists only in `-Ddebug_overlay=true` builds.
 
 ## 4. Screen layout
 
@@ -290,15 +291,27 @@ any WALK/TURN, teleport trigger -> TELEPORT (12 ticks) -> WALK
 - A in any walking state jumps to PAUSE (a demo shortcut, also handy for
   M1 timing).
 
-## 9. Neopixels (no audio)
+## 9. Neopixels (off; no audio)
 
 The original is silent and so is this cart: Adrian dropped audio on
 2026-09-27 ("we don't need audio support for this, it'll be annoying").
-LEDs default off, Select toggles them.
 
-- Neopixels: dim brick colour while walking, a purple pulse on smiley
-  (Iris purple, the badge's brand colour), white flash on teleport, slow
-  breathing during OVERHEAD. All channels at or below 10/255.
+Neopixels are off: the cart never writes non-zero values. A coworker's
+badge showed the LEDs are unusably bright even at 1% (2026-09-29;
+`docs/NEOPIXELS.md` in the repository root). The LED effects in
+`leds.zig` are compiled out; `zig build -Dcart=snouty-maze
+-Dneopixels=true` re-enables them for development. Select in the
+screensaver states is a no-op for the player: it still flips the
+internal `leds.enabled` flag (so `debug_leds` reads 1 after one press),
+but the strip stays dark (`debug_led_max` stays 0).
+
+### Dormant neopixel effects (behind -Dneopixels)
+
+Only in a `-Dneopixels=true` build, where Select toggles them (default
+off): dim brick colour while walking, amber in MANUAL, a purple pulse on
+smiley (Iris purple, the badge's brand colour), white flash on teleport,
+slow breathing during OVERHEAD. Every channel capped at
+`leds.max_level` (10/255).
 
 ## 10. Assets
 
@@ -354,7 +367,7 @@ cart/src/
     sprite.zig      billboards with z test, floor-aligned top sprite
     textures.zig    unpack sheets at start(), palette variants (lit/dark/floor/ceiling)
     overlay.zig     name strip, Bayer fade, debug readouts
-  leds.zig          neopixels
+  leds.zig          neopixels (dormant unless -Dneopixels=true)
   input.zig         edge detection, takeover and idle timer
   packed_int_array.zig  (upstream copy)
 tools/              prepare_assets.py (--placeholders), check_golden.mjs
@@ -497,7 +510,9 @@ added to 9):
 7. Logo: the Zig mark spins in the OpenGL word's place (Adrian,
    2026-09-27); the Iris mark is its own sheet `iris.png` for the Start
    button and the overhead strip.
-8. No audio. LEDs default off, Select toggles them.
+8. No audio. LEDs default off, Select toggles them. Superseded
+   2026-09-29: neopixels off, effects behind `-Dneopixels=true`
+   (section 9).
 9. Smiley flip persists until the finish, capped at 20 s: if no finish
    comes within 20 s the view unrolls on its own.
 10. Joystick takeover is in scope, as the last item of M4.
@@ -525,3 +540,8 @@ added to 9):
   Select toggle, `check_cycle` runs D..F, `docs/preview_m3.gif`. Hardware
   gate still pending Adrian's flash. Next: M4 polish (takeover, animated
   carving, tuning).
+- 2026-09-29: M4 tagged `m4`: renderer perf pass (per-column occlusion,
+  batched segments, colour grids; worst modelled frame 13.6 -> 11.4 ms at
+  12x12, goldens identical), `-Dmaze_size` (default 12; 16x16 worst 14.6),
+  joystick takeover (MANUAL, 5 s idle return), animated carving in
+  OVERHEAD, Iris mark in the name strip, `docs/preview_m4.gif`.

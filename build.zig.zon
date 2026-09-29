@@ -8,6 +8,7 @@
         "build.zig.zon",
         "build",
         "carts",
+        "lib",
         "src",
     },
     .dependencies = .{

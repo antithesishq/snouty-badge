@@ -35,7 +35,7 @@ exception: PC, address and nearest symbol are printed); 5 a frame ran past
 --max-frame-ms without presenting (hang).
 
 per-cart defaults: carts/<elf basename>.toml (budget_ms, frames, script,
-pokes, press, note); command-line flags win. --no-config ignores it.
+pokes, press, note, romfs); command-line flags win. --no-config ignores it.
 """
 
 
@@ -76,6 +76,12 @@ def build_parser():
     ap.add_argument('--flash-cycles', type=int, default=0, metavar='N',
                     help='XIP carts: add N cycles per instruction fetched from the cart flash window '
                          '(default 0, no penalty; calibrate against the OS overlay\'s XIP hit rate)')
+    ap.add_argument('--romfs', metavar='IMAGE',
+                    help='map this FAT12 image of the badge drive (tools/make_romfs.py, up to 1280 KB) '
+                         'read-only at 0x10080000, where carts find ROM files (default: the cart '
+                         'toml\'s romfs key)')
+    ap.add_argument('--flash-read-cycles', type=int, default=0, metavar='N',
+                    help='add N cycles per data load from the romfs image (default 0, no penalty)')
     ap.add_argument('--calibrate', metavar='FILE.toml',
                     help='use the fitted class costs of this calibrate/fit.py calibration file and '
                          'report idle-bus and DMA-busy ms per frame (default: '
@@ -108,6 +114,10 @@ def _main(a):
     script = a.script if a.script is not None else cfg.get('script')
     press = a.press if a.press is not None else list(cfg.get('press', []))
     pokes_s = a.poke if a.poke is not None else list(cfg.get('pokes', []))
+    romfs = a.romfs if a.romfs is not None else cfg.get('romfs')
+    if a.flash_read_cycles < 0:
+        raise BenchError("--flash-read-cycles must not be negative")
+    romfs_img = RUN.load_romfs(romfs) if romfs else None
     if frames < 1:
         raise BenchError("--frames must be at least 1")
     if a.every < 1:
@@ -124,7 +134,9 @@ def _main(a):
     meta = dict(tool=f'badge-bench {__version__}', elf=a.elf, sha256=hashlib.sha256(elf.raw).hexdigest(),
                 frames=frames, script=script, press=press, pokes=pokes_s, seed=a.seed,
                 budget_ms=budget, config=cfg_path, note=cfg.get('note'),
-                clock_mhz=M.CLOCK_HZ / 1e6, xip=elf.is_xip(), flash_cycles=a.flash_cycles)
+                clock_mhz=M.CLOCK_HZ / 1e6, xip=elf.is_xip(), flash_cycles=a.flash_cycles,
+                romfs=romfs, romfs_bytes=len(romfs_img) if romfs_img else 0,
+                flash_read_cycles=a.flash_read_cycles)
 
     cal = None
     if a.calibrate and a.no_calibrate:
@@ -152,7 +164,8 @@ def _main(a):
 
     res = RUN.run(elf, frames, controls, pokes, seed=a.seed, png_every=png_every,
                   max_frame_ms=a.max_frame_ms, on_trace=on_trace,
-                  log=progress if a.progress else None, flash_cycles=a.flash_cycles)
+                  log=progress if a.progress else None, flash_cycles=a.flash_cycles,
+                  romfs=romfs_img, flash_read_cycles=a.flash_read_cycles)
     if cal:
         add_busy(res.frames, cal)
         st = R.stats(res.frames, budget, key='busy_ms')

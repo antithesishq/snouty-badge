@@ -57,6 +57,7 @@ badge-bench <cart.elf> [--script FILE.json] [--press BTN:T1-T2 ...] [--frames N]
             [--symbols] [--top N] [--poke SYM=VALUE ...] [--json] [--seed N]
             [--max-frame-ms 1000] [--traces N] [--config FILE | --no-config]
             [--progress] [--calibrate FILE.toml] [--flash-cycles N]
+            [--romfs IMAGE] [--flash-read-cycles N]
 ```
 
 Put the ELF first (`--png` takes an optional number and would otherwise
@@ -74,13 +75,15 @@ try to read the ELF path as one).
 | `--listing` | Write `DIR/listing.lst`: capstone disassembly of the 5 hottest functions, each instruction annotated with executions and modelled cycles per frame. |
 | `--symbols` | Print the hot-function table (top 20, `--top N`). |
 | `--poke SYM=VALUE` | Write VALUE into global SYM (its ELF symbol size if 1, 2 or 4 bytes, else a u32) after loading and before `_start`, like the reflections runner did for `dither.mode`. Repeatable. `start()` runs after the poke and may overwrite it. |
-| `--json` | Write `DIR/bench.json`: every frame (insns, cycles, ms, taken branches, memory-class cycles `mem_cyc`, presents, framebuffer index, controls, neopixels, user LED, tone count; `busy_ms` when calibrated), the summary, the top 50 functions (each with `taken`, `mnemonics` = {base mnemonic: executions over the run} and `class_cyc` = {model class: cycles over the run}), traces, tones, warnings, crash/hang; `meta.calibration` when calibrated. |
+| `--json` | Write `DIR/bench.json`: every frame (insns, cycles, ms, taken branches, memory-class cycles `mem_cyc`, presents, framebuffer index, controls, neopixels (five `[r, g, b]`; any non-zero byte also adds the `neopixels written` warning), user LED, tone count; `busy_ms` when calibrated), the summary, the top 50 functions (each with `taken`, `mnemonics` = {base mnemonic: executions over the run} and `class_cyc` = {model class: cycles over the run}), traces, tones, warnings, crash/hang; `meta.calibration` when calibrated. |
 | `--seed N` | Seed of the PRNG behind `cart.rand()` (default 1). |
 | `--max-frame-ms MS` | A frame that runs longer than this (modelled) without reaching the next loop iteration is a hang (default 1000). |
 | `--traces N` | Print at most N `cart.trace()` strings live (default 20; all of them go to the JSON). |
 | `--config FILE`, `--no-config` | Use another per-cart defaults file, or none. |
 | `--progress` | One stderr line per finished frame. |
 | `--flash-cycles N` | XIP carts only: add N cycles per instruction fetched from the cart flash window. Default 0, so the output of an XIP ELF matches its RAM twin; set it once the OS overlay's XIP hit and stall rates give a real number. |
+| `--romfs IMAGE` | Map a badge drive image (FAT12, as `tools/make_romfs.py` builds it) read-only at `0x10080000`, where the OS keeps the drive. Default: the `romfs` key of `carts/<cart>.toml`, if any. See ROMs from the badge drive. |
+| `--flash-read-cycles N` | Add N cycles per data load from the `--romfs` image. Default 0 (zero-wait, like SRAM). |
 | `--calibrate FILE.toml` | Price the model classes with the fitted `[costs]` of a `calibrate/fit.py` calibration file (rounded to 0.25 cycle) and report two numbers per frame: `idle ms` (the calibrated count) and `busy ms` = idle + memory-class cycles x (factor - 1) x min(1, dma_ms / idle ms), the DMA contention of `[contention]`. Verdict and over-budget count use busy ms. Default: `calibrate/calibration.toml` when it exists (the header says so). See Calibration. |
 | `--no-calibrate` | The raw model (default costs, no stall, no contention): one `ms` column, the historical floor. `tests/test_reflections.sh` uses it. |
 
@@ -111,6 +114,25 @@ name has the `-xip` suffix). Flash is modelled as zero-wait like SRAM unless
 `--flash-cycles` says otherwise; the real part runs through a 16 KB XIP cache
 shared with Core 0, which the OS fps overlay measures (hit and stall rates).
 
+## ROMs from the badge drive
+
+Emulator carts can read a ROM file from the badge's USB drive in place
+(`lib/romfs.zig`, design in `docs/ROM_DRIVE.md`). The OS keeps that drive in
+the `romfs` region of internal flash, `0x10080000`, 1280 KB. `--romfs IMAGE`
+maps a drive image there (padded to 4 KB, at most 1280 KB), so the cart finds
+the file where it would on a badge. Build an image with
+`tools/make_romfs.py OUT.img ROM.gg` (`--list OUT.img` shows the layout), or
+set `romfs = "path/to/drive.img"` in `carts/<cart>.toml`, relative to the
+repository root; the command line wins. The header shows a `romfs:` line and
+out-of-range faults near the region are named "romfs (badge drive image)".
+
+Loads from the image cost zero wait cycles unless `--flash-read-cycles N`
+says otherwise. The real reads go through the same 16 KB XIP cache as XIP
+code, which is not modelled, so treat the numbers as a floor until the
+hardware checks in `docs/ROM_DRIVE.md` section 6 give a figure. The penalty
+hook is only installed when N > 0; without it a run with `--romfs` counts
+exactly the same cycles as one without (checked on snouty-boy, 60 frames).
+
 ## What the fake OS does
 
 From `sycl-badge/src/os/cart/platform_cart_ram.zig` (cart side of the
@@ -130,7 +152,10 @@ ids). All in `badge_bench/os_fake.py`.
 
 Controls are written into `ipc_data.controls` before each `update()`;
 neopixels and the user LED are read after it, and tones are counted per
-frame. Nothing else is mapped: any other access stops the run as a crash
+frame. Carts keep the neopixels dark (`docs/NEOPIXELS.md`): if any frame
+leaves a non-zero neopixel byte, the run gets one warning, `neopixels
+written: frame F, max channel V`, naming the first such frame and the
+brightest channel over the run (report text and `bench.json` `warnings`). Nothing else is mapped: any other access stops the run as a crash
 with the PC, the faulting address and the nearest symbols (exit 4). Reads
 of unmodelled registers inside the faked pages return 0 and are listed as
 warnings.
@@ -464,7 +489,10 @@ Notes and oddities:
 - None of the carts wrote neopixels or the user LED in these runs, sent a
   trace, or touched a peripheral the fake OS lacks. The fake OS needed
   nothing beyond what snouty-reflections uses except `cart.rand()` (ROSC,
-  used by snouty-maze's seed) and the SRAM8/9 mapping above.
+  used by snouty-maze's seed) and the SRAM8/9 mapping above. Since
+  2026-09-29 every cart must keep the neopixels dark (`docs/NEOPIXELS.md`)
+  and a run that writes a non-zero neopixel byte prints a `neopixels
+  written: frame F, max channel V` warning.
 
 Reproduce (from this directory, after `zig build` at the repository root;
 `tests/test_reflections.sh` expects the reflections ELF built at tag
@@ -491,6 +519,7 @@ carts/<name>.toml   per-cart defaults (not the repository's carts/ sources)
 calibrate/          badge-calibrate cart, fit.py, the badge capture and calibration.toml
                     (applied by default)
 tests/              test_reflections.sh (validation 1, --calibrate FILE for calibrated ms),
-                    test_calibrate_selftest.sh + make_calibrate_fixture.py (fit.py gate)
+                    test_calibrate_selftest.sh + make_calibrate_fixture.py (fit.py gate),
+                    test_neopixel_warning.py (neopixel guard on synthetic frames)
 out/                default output directory (gitignored)
 ```

@@ -1,6 +1,13 @@
-//! Line sink: Game Boy scanlines (shades 0..3) into the column-major RGB565
-//! framebuffer, with the squeeze/crop line map and the current palette.
-//! Owner in M1: track C. SPEC.md section 6.
+//! Line sink: Game Boy scanlines into the column-major RGB565 framebuffer,
+//! with the squeeze/crop line map and a 256-entry colour LUT indexed by the
+//! line byte. Owner: track C. SPEC.md sections 6 and 19.2.
+//!
+//! DMG mode: the byte is a shade 0..3 and the LUT is one of `palettes`.
+//! CGB mode: the byte is a colour index (BG 0..31, OBJ 32..63) and
+//! `lut[0..64]` is rebuilt from the console's palette RAM whenever
+//! `gb.pal_dirty` is set, checked once per line (so HBlank palette tricks
+//! show), by one of two builders: raw RGB555 or a GBC LCD colour
+//! correction (`ColorMode`).
 //!
 //! The hot path is `on_line`, called by the PPU once per visible line (144
 //! per frame). The framebuffer is `[160][128]Pixel`, i.e. column-major: one
@@ -75,6 +82,22 @@ const line_maps = blk: {
 
 var line_map: *const LineMap = &line_maps[@backingInt(Scale.squeeze)];
 
+/// `Gb.lines_wanted` for each scale: the PPU skips the pixel work of lines
+/// the map drops (16 per frame in squeeze, 16 in crop).
+const wanted_masks = blk: {
+    var t: [line_maps.len][5]u32 = undefined;
+    for (&t, line_maps) |*m, map| {
+        m.* = @splat(0);
+        for (map, 0..) |row, ly| {
+            if (row != skip) m[ly >> 5] |= 1 << (ly & 31);
+        }
+    }
+    break :blk t;
+};
+
+/// The console whose `lines_wanted` follows the scale (set by `sink`).
+var console: ?*core.Gb = null;
+
 // ---- Palettes (SPEC.md section 6), lightest shade first ----
 
 pub const Palette = struct {
@@ -105,6 +128,9 @@ const pixel_tables = blk: {
 };
 
 pub var palette_index: usize = 0;
+/// The console runs in CGB mode (set by `init`): colour indices, palette
+/// RAM, white blank screen, the "Light" palette for menu and splash.
+pub var cgb: bool = false;
 var shades: *const [4]cart.Pixel = &pixel_tables[0];
 /// The current palette indexed by the raw shade byte: entry i is
 /// `shades[i & 3]`. 512 bytes of RAM buy one instruction per pixel (the
@@ -114,10 +140,12 @@ var lut: [256]cart.Pixel = @splat(.{ .bits = 0 });
 
 /// Lines the core emitted since the last `finish_frame` (drawn or skipped).
 var lines_this_frame: u32 = 0;
-/// Lines emitted during the last completed frame (144 with the LCD on).
+/// Lines emitted during the last completed frame (the 128 the line map
+/// draws with the LCD on; the PPU skips the others, `Gb.lines_wanted`).
 pub var last_frame_lines: u32 = 0;
 
-pub fn init() void {
+pub fn init(model: core.Model) void {
+    cgb = model == .cgb;
     set_palette_index(palette_index);
     set_scale(scale);
 }
@@ -127,6 +155,7 @@ pub fn init() void {
 pub fn set_palette_index(i: usize) void {
     palette_index = i % palettes.len;
     shades = &pixel_tables[palette_index];
+    if (cgb) return; // the LUT follows palette RAM (`rebuild_cgb`)
     for (&lut, 0..) |*px, b| px.* = shades[b & 3];
 }
 
@@ -138,13 +167,110 @@ pub fn palette_name() []const u8 {
     return palettes[palette_index].name;
 }
 
+// ---- CGB colour (SPEC.md 19.2) ----
+
+/// How RGB555 palette RAM becomes badge colours.
+pub const ColorMode = enum {
+    /// A GBC LCD approximation: channels mixed and compressed like the real
+    /// screen, which is paler and less saturated than raw RGB.
+    lcd,
+    /// Exact RGB555 to RGB565 (green widened to 6 bits).
+    raw,
+};
+
+pub var color_mode: ColorMode = .lcd;
+/// Force a full LUT rebuild on the next line (colour mode changed).
+var cgb_stale: bool = true;
+/// Palette RAM as the LUT was last built from (BG then OBJ, 64 u16), so a
+/// rebuild converts only entries that changed.
+var cgb_src: [64]u16 = @splat(0);
+
+pub fn color_mode_name() []const u8 {
+    return switch (color_mode) {
+        .lcd => "LCD",
+        .raw => "Raw",
+    };
+}
+
+pub fn next_color_mode() void {
+    color_mode = if (color_mode == .lcd) .raw else .lcd;
+    cgb_stale = true;
+}
+
+/// Raw: r5 g5 b5 -> RGB565 exactly, g6 = g5 << 1 | g5 >> 4.
+fn raw_color(c: u16) cart.DisplayColor {
+    const r: u5 = @truncate(c);
+    const g: u5 = @truncate(c >> 5);
+    const b: u5 = @truncate(c >> 10);
+    return .{ .r = r, .g = @as(u6, g) << 1 | g >> 4, .b = b };
+}
+
+/// GBC LCD colour correction, integer only: the widely used channel mix
+/// from higan (byuu/Near): R = 26r + 4g + 2b, G = 24g + 8b,
+/// B = 6r + 4g + 22b, clamped to 960 and shifted to 0..240 in 8 bits, then
+/// cut to 5/6 bits. 13 multiply-adds per entry,
+/// only for entries that changed.
+fn lcd_color(c: u16) cart.DisplayColor {
+    const r: u32 = c & 0x1F;
+    const g: u32 = (c >> 5) & 0x1F;
+    const b: u32 = (c >> 10) & 0x1F;
+    const r8 = @min(r * 26 + g * 4 + b * 2, 960) >> 2;
+    const g8 = @min(g * 24 + b * 8, 960) >> 2;
+    const b8 = @min(r * 6 + g * 4 + b * 22, 960) >> 2;
+    return .{ .r = @intCast(r8 >> 3), .g = @intCast(g8 >> 2), .b = @intCast(b8 >> 3) };
+}
+
+pub fn cgb_pixel(c: u16) cart.Pixel {
+    return .from_color(switch (color_mode) {
+        .lcd => lcd_color(c),
+        .raw => raw_color(c),
+    });
+}
+
+/// `lut[0..64]` from palette RAM (little-endian RGB555: BG entry i at
+/// `bg_pal[2i]`, OBJ at `obj_pal[2i]`), converting changed entries only.
+fn rebuild_cgb(gb: *const core.Gb) void {
+    const all = cgb_stale;
+    cgb_stale = false;
+    inline for (.{ &gb.ppu.bg_pal, &gb.ppu.obj_pal }, 0..) |pal, half| {
+        for (0..32) |i| {
+            const c = (@as(u16, pal[2 * i + 1]) << 8 | pal[2 * i]) & 0x7FFF;
+            const k = half * 32 + i;
+            if (all or c != cgb_src[k]) {
+                cgb_src[k] = c;
+                lut[k] = cgb_pixel(c);
+            }
+        }
+    }
+}
+
+comptime {
+    // Raw is exact at the ends and widens green; LCD white is 240/255 grey.
+    const w = raw_color(0x7FFF);
+    if (w.r != 31 or w.g != 63 or w.b != 31) @compileError("raw white");
+    const k = raw_color(0);
+    if (k.r != 0 or k.g != 0 or k.b != 0) @compileError("raw black");
+    const g = raw_color(0x10 << 5);
+    if (g.g != 0x21) @compileError("raw green widening");
+    const lw = lcd_color(0x7FFF);
+    if (lw.r != 30 or lw.g != 60 or lw.b != 30) @compileError("lcd white");
+}
+
 pub fn set_scale(s: Scale) void {
     scale = s;
     line_map = &line_maps[@backingInt(s)];
+    if (console) |gb| gb.set_lines_wanted(wanted_masks[@backingInt(s)]);
 }
 
-pub fn sink() core.LineSink {
-    return .{ .ctx = @ptrFromInt(@alignOf(usize)), .func = &on_line };
+/// The line sink for `gb` (call after `init`): in CGB mode the context is
+/// the console, whose `pal_dirty` flag is checked once per line.
+pub fn sink(gb: *core.Gb) core.LineSink {
+    console = gb;
+    set_scale(scale);
+    return if (cgb)
+        .{ .ctx = gb, .func = &on_line_cgb }
+    else
+        .{ .ctx = gb, .func = &on_line };
 }
 
 fn on_line(_: *anyopaque, ly: u8, line: *const [gb_w]u8) void {
@@ -153,6 +279,15 @@ fn on_line(_: *anyopaque, ly: u8, line: *const [gb_w]u8) void {
     const row = line_map[ly];
     if (row == skip) return;
     store_line(row, line);
+}
+
+fn on_line_cgb(ctx: *anyopaque, ly: u8, line: *const [gb_w]u8) void {
+    const gb: *core.Gb = @ptrCast(@alignCast(ctx));
+    if (gb.pal_dirty or cgb_stale) {
+        gb.pal_dirty = false;
+        rebuild_cgb(gb);
+    }
+    on_line(ctx, ly, line);
 }
 
 /// One Game Boy line to framebuffer row `row`: 160 halfword stores with a
@@ -170,26 +305,35 @@ inline fn store_line(row: u8, line: *const [gb_w]u8) void {
     }
 }
 
-/// Fill the whole screen with one shade of the current palette.
+/// Fill the whole screen with one shade of the current palette (CGB mode:
+/// of the "Light" palette, so shade 0 is the white of a blank GBC screen).
 pub fn blank(shade: u2) void {
-    const px: u16 = shades[shade].bits;
+    const px: u16 = if (cgb) pixel_tables[light_index][shade].bits else shades[shade].bits;
     const fb: *[fb_w * fb_h / 2]u32 = @ptrCast(cart.framebuffer);
     @memset(fb, @as(u32, px) << 16 | px);
 }
 
 /// Called once per badge frame after `step_frame`. With the LCD off the core
 /// emits no lines, and the (not copied forward) back buffer still holds an
-/// old frame, so blank it to shade 0 as a real DMG shows a blank screen.
+/// old frame, so blank it to shade 0 as a real DMG shows a blank screen
+/// (white on a CGB).
 pub fn finish_frame() void {
     if (lines_this_frame == 0) blank(0);
     last_frame_lines = lines_this_frame;
     lines_this_frame = 0;
 }
 
+/// `palettes` entry used for the menu and splash in CGB mode.
+const light_index = 2;
+comptime {
+    if (!@import("std").mem.eql(u8, palettes[light_index].name, "Light")) @compileError("light_index");
+}
+
 /// Shade `s` of the current palette as a `DisplayColor`, for overlays drawn
-/// with the cart API (menu, splash) so they follow the palette.
+/// with the cart API (menu, splash) so they follow the palette. CGB mode:
+/// black on white.
 pub fn shade_color(s: u2) cart.DisplayColor {
-    return .rgb(palettes[palette_index].rgb[s]);
+    return .rgb(palettes[if (cgb) light_index else palette_index].rgb[s]);
 }
 
 /// Recolor a frozen frame in place: every pixel equal to shade k of palette

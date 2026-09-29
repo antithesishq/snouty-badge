@@ -9,12 +9,22 @@
 //! noise and no sweep: "noise" rows play as low sawtooth; the two sweeps
 //! (door, rewind) retrigger the tone every `sweep_step` ticks at the
 //! interpolated frequency from `tick`. The wasm simulator ignores the shape.
+//!
+//! Neopixels are off (docs/NEOPIXELS.md at the repository root, approved
+//! 2026-09-29: carts never write a non-zero neopixel value; a coworker's
+//! badge shows the LEDs are unusably bright even at 1%). The HP bar, key
+//! flash and rewind pulse below are kept but compiled out unless the cart
+//! is built with `-Dneopixels=true`: `write_pixels` is the only writer of
+//! `cart.neopixels` and returns at once otherwise. The OS zeroes the strip
+//! at cart start.
 const cart = @import("cart-api");
 const state = @import("state.zig");
 const levels = @import("levels.zig");
 const sim = @import("sim.zig");
+const build_options = @import("build_options");
 
-/// Sound and LEDs, off by default; Select on the title toggles it.
+/// Sound (and the dormant LED effects), off by default; Select on the
+/// title toggles it.
 pub var enabled: bool = false;
 
 pub const Event = enum { swatter, zapper, spray, enemy_hit, enemy_death, player_hurt, door, locked_door, pickup, rewind, death_freeze };
@@ -47,7 +57,7 @@ const sounds = [_]Sound{
 
 const volume: f32 = 0.6;
 const sweep_step: u8 = 3;
-const led_max: u8 = 10; // CLAUDE.md: neopixels at or below 10/255
+const led_max: u8 = 10; // cap for the dormant effects; compiled out unless -Dneopixels=true
 const key_flash_ticks: u8 = 6;
 
 // Playing sound.
@@ -69,6 +79,13 @@ var last_doors_closed: u64 = 0; // bit i: door i phase == closed
 var last_flash2: u64 = 0; // bit i: enemy i flash == flash_ticks
 
 var key_flash: u8 = 0;
+
+// Rewind: ticks since this rewind began (sound retrigger and LED pulse).
+var rewind_n: u32 = 0;
+const rewind_retrigger: u32 = 10;
+const rewind_pulse: u32 = 30; // LED triangle period, ticks
+const rewind_led_lo: u32 = 3;
+const rewind_led_hi: u32 = 8;
 
 fn start_tone(freq: u16, ticks: u8, shape: Shape) void {
     cart.tone2(.{
@@ -156,13 +173,17 @@ fn baseline(s: *const state.GameState, level: *const levels.Level) void {
 pub fn reset(s: *const state.GameState) void {
     primed = false;
     key_flash = 0;
+    rewind_n = 0;
     silence();
     write_leds(s.player.hp);
 }
 
 /// Once per displayed tick while playing.
+/// After a rewind the next call sees `s.tick < last_tick` and takes a
+/// fresh baseline without playing anything (the `jumped` branch).
 pub fn tick(s: *const state.GameState, level: *const levels.Level) void {
     if (!enabled) silence() else advance();
+    rewind_n = 0; // the next rewind starts its sweep and pulse afresh
 
     const jumped = !primed or s.tick < last_tick or s.level != last_level;
     if (jumped) {
@@ -215,9 +236,43 @@ pub fn tick(s: *const state.GameState, level: *const levels.Level) void {
     write_leds(s.player.hp);
 }
 
+/// Once per displayed tick while rewinding, instead of `tick`: no event
+/// detection; the descending rewind sweep retriggers every 10 ticks (it
+/// cuts whatever is playing, including the death freeze) and all five
+/// neopixels would pulse Iris purple, 3/255 to 8/255 on the blue channel
+/// over a 30-tick triangle (compiled out unless -Dneopixels=true). Silent when
+/// disabled. `s` is the shown
+/// state; unused for now (the display is state-independent).
+pub fn rewind_tick(s: *const state.GameState) void {
+    _ = s;
+    var c: [5]cart.NeopixelColor = @splat(.{ .g = 0, .r = 0, .b = 0 });
+    if (!enabled) {
+        silence();
+    } else {
+        advance();
+        if (rewind_n % rewind_retrigger == 0) {
+            left = 0;
+            play(.rewind);
+        }
+        // Triangle 0..15..0 over 30 ticks -> level 3..8.
+        const ph = rewind_n % rewind_pulse;
+        const tri = if (ph < rewind_pulse / 2) ph else rewind_pulse - ph;
+        const lvl: u32 = rewind_led_lo + tri * (rewind_led_hi - rewind_led_lo) / (rewind_pulse / 2);
+        // Iris 0x8E42DE scaled so blue = lvl (r = 0.64 lvl, g = 0.30 lvl).
+        const on: cart.NeopixelColor = .{
+            .g = @intCast(@min(lvl * 0x42 / 0xDE, led_max)),
+            .r = @intCast(@min(lvl * 0x8E / 0xDE, led_max)),
+            .b = @intCast(@min(lvl, led_max)),
+        };
+        c = @splat(on);
+    }
+    rewind_n +%= 1;
+    write_pixels(c);
+}
+
 /// HP bar: one LED per started 20 HP; green from 60, amber from 25, red
 /// below. Dead: LED 0 dim red. Key pickup: all white for 6 ticks. Off
-/// when disabled.
+/// when disabled. Compiled out unless -Dneopixels=true.
 fn write_leds(hp: i16) void {
     const off: cart.NeopixelColor = .{ .g = 0, .r = 0, .b = 0 };
     var c: [5]cart.NeopixelColor = @splat(off);
@@ -237,5 +292,11 @@ fn write_leds(hp: i16) void {
             for (c[0..n]) |*l| l.* = on;
         }
     }
-    for (c, 0..) |l, i| cart.neopixels[i] = l;
+    write_pixels(c);
+}
+
+/// The only place in the cart that writes cart.neopixels (docs/NEOPIXELS.md).
+fn write_pixels(c: [5]cart.NeopixelColor) void {
+    if (!build_options.neopixels) return; // the OS zeroes the strip at cart start
+    for (c, 0..) |p, i| cart.neopixels[i] = p;
 }

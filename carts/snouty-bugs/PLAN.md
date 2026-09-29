@@ -12,7 +12,7 @@ bolt-vs-gnat and gnat-vs-hitbox collisions, score. Boots to the M0 title
 card; A, B or Start begins a game. A minimal lives counter is included so a
 play session ends (lives 0 returns to the title) instead of running forever.
 Everything else from SPEC.md sections 5 to 11 (other enemies, enemy bullets,
-bombs, graze, explosions on the player, audio, neopixels) is M2 or later.
+bombs, graze, explosions on the player, audio) is M2 or later.
 
 ### Tracks (run in parallel, disjoint files)
 
@@ -201,8 +201,8 @@ empty, and a looping spawner that exercises every kind.
 - Kept outside `World` (in `main.zig`): `state`, `tick_total`, `rewinds`,
   `bombs`, best score, sound toggle. These are meta-state a rewind must not
   touch.
-- `simulate()` gains a `Mode` parameter, `.live` or `.silent`; audio and
-  neopixel calls check it. M2 has no audio yet, so this is one enum and a
+- `simulate()` gains a `Mode` parameter, `.live` or `.silent`; audio
+  calls check it. M2 has no audio yet, so this is one enum and a
   guard in the one place effects will be emitted.
 - Behaviour is unchanged: the M1 scripts must produce identical
   `frames.json` export values and the `m1_play.json` GIF must be pixel

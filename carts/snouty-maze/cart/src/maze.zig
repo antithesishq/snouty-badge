@@ -65,6 +65,10 @@ pub const Axis = enum(u8) { x, z };
 /// cells along `axis`. The renderer turns it into a box 0.1 thick.
 pub const Run = struct { x: u8, z: u8, len: u8, axis: Axis };
 
+/// One generator step: the wall on side `dir` of cell (x, z) was removed
+/// (and the matching wall of the neighbour). A full maze has w*h - 1.
+pub const Carve = packed struct(u16) { x: u4, z: u4, dir: Dir, _pad: u6 = 0 };
+
 pub const Maze = struct {
     w: u8 = 12,
     h: u8 = 12,
@@ -73,6 +77,11 @@ pub const Maze = struct {
     finish: [2]u8 = .{ 11, 11 },
     runs: [max_runs]Run = undefined,
     run_count: u16 = 0,
+    /// Carve order recorded by `generate`, `carve_count` = w*h - 1 entries.
+    carve_log: [max_cells - 1]Carve = undefined,
+    carve_count: u16 = 0,
+    /// Carves `runs` currently shows (`reveal`); carve_count after generate.
+    revealed: u16 = 0,
 
     pub fn cell(m: *const Maze, x: u8, z: u8) Cell {
         return m.cells[@as(usize, z) * max_size + x];
@@ -96,11 +105,41 @@ pub const Maze = struct {
         m.start = .{ 0, 0 };
         carve(m, r);
         m.finish = farthest_from(m, m.start);
-        build_runs(m);
+        build_runs(m, &m.cells);
+        m.revealed = m.carve_count;
+    }
+
+    /// Rebuilds `runs` as if only the first k carves had happened (all
+    /// walls up, then k removed); k is clamped to carve_count. `cells`,
+    /// `start` and `finish` keep the final maze, so the follower and the
+    /// actors never see a partial one. reveal(carve_count) gives the runs
+    /// `generate` built. About 2 * 17 * 16 segment tests plus the k wall
+    /// removals: cheap enough for every OVERHEAD tick.
+    pub fn reveal(m: *Maze, k: u16) void {
+        const n = @min(k, m.carve_count);
+        reveal_cells = @splat(.{});
+        for (m.carve_log[0..n]) |c| {
+            const x: u8 = c.x;
+            const z: u8 = c.z;
+            clear_wall(&reveal_cells, x, z, c.dir);
+            const nb = m.neighbour(x, z, c.dir).?;
+            clear_wall(&reveal_cells, nb[0], nb[1], c.dir.opposite());
+        }
+        build_runs(m, &reveal_cells);
+        m.revealed = n;
+    }
+
+    /// The cell the most recent revealed carve opened into (the carve
+    /// head), or null before the first carve and once carving is done.
+    pub fn carve_head(m: *const Maze) ?[2]u8 {
+        if (m.revealed == 0 or m.revealed >= m.carve_count) return null;
+        const c = m.carve_log[m.revealed - 1];
+        return m.neighbour(c.x, c.z, c.dir);
     }
 
     /// Iterative recursive backtracker from the start cell.
     fn carve(m: *Maze, r: *rng.Xorshift) void {
+        m.carve_count = 0;
         var sp: usize = 0;
         stack[sp] = .{ m.start[0], m.start[1] };
         sp += 1;
@@ -124,6 +163,8 @@ pub const Maze = struct {
             }
             const d = options[r.below(n)];
             const nb = m.neighbour(x, z, d).?;
+            m.carve_log[m.carve_count] = .{ .x = @intCast(x), .z = @intCast(z), .dir = d };
+            m.carve_count += 1;
             m.set_wall(x, z, d, false);
             m.set_wall(nb[0], nb[1], d.opposite(), false);
             m.cells[idx(nb[0], nb[1])].visited = true;
@@ -148,6 +189,16 @@ pub const Maze = struct {
             .e => c.e = present,
             .s => c.s = present,
             .w => c.w = present,
+        }
+    }
+
+    fn clear_wall(cells: *[max_cells]Cell, x: u8, z: u8, d: Dir) void {
+        const c = &cells[idx(x, z)];
+        switch (d) {
+            .n => c.n = false,
+            .e => c.e = false,
+            .s => c.s = false,
+            .w => c.w = false,
         }
     }
 
@@ -193,19 +244,28 @@ pub const Maze = struct {
         return if (x < m.w) m.has_wall(x, z, .w) else m.has_wall(m.w - 1, z, .e);
     }
 
-    /// Merge consecutive wall segments on every grid line into runs.
-    fn build_runs(m: *Maze) void {
+    /// Segment tests like x_segment / z_segment, on any cell grid.
+    fn x_seg(m: *const Maze, cells: *const [max_cells]Cell, x: u8, z: u8) bool {
+        return if (z < m.h) cells[idx(x, z)].n else cells[idx(x, m.h - 1)].s;
+    }
+    fn z_seg(m: *const Maze, cells: *const [max_cells]Cell, x: u8, z: u8) bool {
+        return if (x < m.w) cells[idx(x, z)].w else cells[idx(m.w - 1, z)].e;
+    }
+
+    /// Merge consecutive wall segments of `cells` on every grid line into
+    /// runs (m.cells for the final maze, reveal_cells while carving).
+    fn build_runs(m: *Maze, cells: *const [max_cells]Cell) void {
         var count: u16 = 0;
         var z: u8 = 0;
         while (z <= m.h) : (z += 1) {
             var x: u8 = 0;
             while (x < m.w) {
-                if (!m.x_segment(x, z)) {
+                if (!m.x_seg(cells, x, z)) {
                     x += 1;
                     continue;
                 }
                 const x0 = x;
-                while (x < m.w and m.x_segment(x, z)) x += 1;
+                while (x < m.w and m.x_seg(cells, x, z)) x += 1;
                 m.runs[count] = .{ .x = x0, .z = z, .len = x - x0, .axis = .x };
                 count += 1;
             }
@@ -214,12 +274,12 @@ pub const Maze = struct {
         while (x <= m.w) : (x += 1) {
             var zz: u8 = 0;
             while (zz < m.h) {
-                if (!m.z_segment(x, zz)) {
+                if (!m.z_seg(cells, x, zz)) {
                     zz += 1;
                     continue;
                 }
                 const z0 = zz;
-                while (zz < m.h and m.z_segment(x, zz)) zz += 1;
+                while (zz < m.h and m.z_seg(cells, x, zz)) zz += 1;
                 m.runs[count] = .{ .x = x, .z = z0, .len = zz - z0, .axis = .z };
                 count += 1;
             }
@@ -263,6 +323,8 @@ pub const Maze = struct {
 var stack: [max_cells][2]u8 = undefined;
 var queue: [max_cells][2]u8 = undefined;
 var dist: [max_cells]u16 = undefined;
+/// Wall grid `reveal` rebuilds the partial maze in.
+var reveal_cells: [max_cells]Cell = undefined;
 
 /// Set true to print a 12x12 maze during `zig build test`.
 const print_ascii = false;
@@ -378,4 +440,60 @@ test "ascii dump" {
     const s = m.dump(&buf);
     try std.testing.expect(s.len > 0);
     if (print_ascii) std.debug.print("\nseed 1, 12x12, {d} runs\n{s}", .{ m.run_count, s });
+}
+
+fn runs_equal(a: []const Run, b: []const Run) bool {
+    if (a.len != b.len) return false;
+    for (a, b) |x, y| {
+        if (x.x != y.x or x.z != y.z or x.len != y.len or x.axis != y.axis) return false;
+    }
+    return true;
+}
+
+test "carve log and reveal: full, empty and every k" {
+    var m: Maze = .{};
+    var full: [max_runs]Run = undefined;
+    for ([_][2]u8{ .{ 12, 12 }, .{ 16, 16 }, .{ 5, 9 } }) |size| {
+        for (0..100) |seed| {
+            var r = rng.Xorshift.init(@intCast(seed));
+            m.generate(size[0], size[1], &r);
+            const w = size[0];
+            const h = size[1];
+            try std.testing.expectEqual(@as(u16, w) * h - 1, m.carve_count);
+            try std.testing.expectEqual(m.carve_count, m.revealed);
+            const n = m.run_count;
+            @memcpy(full[0..n], m.runs[0..n]);
+            const cells = m.cells;
+            const finish = m.finish;
+
+            // reveal(0): every grid line is one whole run.
+            m.reveal(0);
+            try std.testing.expectEqual(@as(u16, 0), m.revealed);
+            try std.testing.expectEqual(@as(u16, w + 1) + (h + 1), m.run_count);
+            for (m.runs[0..m.run_count]) |run| {
+                try std.testing.expectEqual(if (run.axis == .x) w else h, run.len);
+            }
+            try std.testing.expect(m.carve_head() == null);
+
+            var k: u16 = 1;
+            while (k < m.carve_count) : (k += 1) {
+                m.reveal(k);
+                try std.testing.expect(m.run_count <= max_runs);
+                // The head is the cell the last carve opened into.
+                try std.testing.expect(m.carve_head() != null);
+            }
+
+            m.reveal(m.carve_count);
+            try std.testing.expect(runs_equal(full[0..n], m.runs[0..m.run_count]));
+            try std.testing.expect(m.carve_head() == null);
+            // Past the end clamps.
+            m.reveal(1000);
+            try std.testing.expectEqual(m.carve_count, m.revealed);
+            try std.testing.expect(runs_equal(full[0..n], m.runs[0..m.run_count]));
+            // The final maze never changes while revealing.
+            try std.testing.expectEqualSlices(u8, std.mem.asBytes(&cells), std.mem.asBytes(&m.cells));
+            try std.testing.expectEqual(finish, m.finish);
+            try check_maze(&m);
+        }
+    }
 }

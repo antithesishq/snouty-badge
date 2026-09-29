@@ -15,6 +15,11 @@ pub const Options = struct {
     cart_mode: CartMode,
     /// -Ddebug_overlay: on-screen render timing (snouty-reflections, snouty-maze).
     debug_overlay: bool,
+    /// -Dneopixels: let a cart light the neopixels. Default false: the badge
+    /// LEDs are painfully bright even at 1%, so every cart leaves them dark
+    /// and the LED code in snoutenstein, snouty-maze and snouty-boy is
+    /// compiled out (docs/NEOPIXELS.md).
+    neopixels: bool,
     /// -Drom: Game Boy ROM to embed (snouty-boy).
     rom: ?[]const u8,
     /// -Dcart-optimize: optimize mode for snouty-boy's cart.
@@ -22,10 +27,22 @@ pub const Options = struct {
     /// -Dtest-optimize / -Dtest-filter: host test options (snouty-boy).
     test_optimize: std.builtin.OptimizeMode,
     test_filter: ?[]const u8,
+    /// -Drom-source: where the snouty-boy badge build gets its ROM
+    /// (carts/snouty-boy/SPEC.md section 11, docs/ROM_DRIVE.md).
+    rom_source: RomSource,
+    /// -Dgg-rom: Game Gear ROM to embed (snouty-gear); -Dgg-rom-source: where
+    /// the badge build gets its ROM (carts/snouty-gear/SPEC.md section 7).
+    gg_rom: ?[]const u8,
+    gg_rom_source: RomSource,
     /// `zig build test`: every cart with host tests depends on this step.
     test_step: *Build.Step,
     /// `zig build check-float`: every cart with a float check depends on this step.
     check_float_step: *Build.Step,
 };
+
+/// -Dgg-rom-source (snouty-gear, docs/ROM_DRIVE.md): `drive` reads a ROM file
+/// from the badge's USB drive with the embedded ROM as fallback; `embed` uses
+/// only the embedded ROM; `pack` is the XIP bank-packer fallback (not built yet).
+pub const RomSource = enum { drive, embed, pack };
 
 pub const AddFn = *const fn (b: *Build, sycl_badge_dep: *Build.Dependency, opts: Options) void;

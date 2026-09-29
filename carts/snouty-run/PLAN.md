@@ -57,7 +57,7 @@ a hand-redrawn 48x48 sprite, not a resample.
 - Snouty x goes from -96 to 160 in 6 px steps, then waits `pause_ticks` off
   screen (start at 60) and restarts. Camera is fixed, ground does not scroll.
 - Frame index = (frame counter) mod 16 so the loop is seamless.
-- Neopixels stay off in v1 (bright and battery hungry).
+- Neopixels stay off (never written; see the root `docs/NEOPIXELS.md`).
 
 ## Rendering approach
 
@@ -284,4 +284,3 @@ Preview: `docs/preview_v5.gif` (includes a jump at update 60). Firmware about
 ## Deferred (v6+)
 
 - Parallax clouds and background hills in the sky.
-- Coral neopixel pulse on foot contact frames (0 and 8), dimmed hard.
