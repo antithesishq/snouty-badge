@@ -126,8 +126,6 @@ pub fn line_for_row(mode: LineMode, row: u8) u16 {
 }
 
 pub const Vdp = struct {
-    /// 64 KB video RAM, bytes at their VDP addresses (big-endian words).
-    vram: [0x10000]u8 = @splat(0),
     /// 64 colors, 9 bits each (----BBB-GGG-RRR-).
     cram: [64]u16 = @splat(0),
     /// 40 vertical scroll entries, 10 bits each (20 columns x planes A, B:
@@ -179,6 +177,12 @@ pub const Vdp = struct {
 
     // ---- Presentation (a menu setting, not VDP state) ----
     line_mode: LineMode = .squeeze,
+
+    /// 64 KB video RAM, bytes at their VDP addresses (big-endian words).
+    /// Declared last: Zig keeps declaration order among same-aligned
+    /// fields, so the registers and flags above stay near the struct's
+    /// start (short offsets on the badge).
+    vram: [0x10000]u8 = @splat(0),
 
     /// Power-on state. The arrays are cleared with `@memset` and the rest
     /// assigned field by field: `v.* = .{}` would put a 64 KB default

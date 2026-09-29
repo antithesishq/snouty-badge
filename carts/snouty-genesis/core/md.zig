@@ -73,17 +73,13 @@ pub const Io = struct {
 
 pub const Md = struct {
     // ---- 68000 side ----
+    // Field order and the `align(4)`s are for the badge: Zig lays fields
+    // out by alignment, and in declaration order within one alignment, so
+    // the small hot fields come first and sit within 4 KB of the struct's
+    // start, where a Thumb load reaches them with an immediate offset (the
+    // 64 KB arrays after them would push them past it: two extra
+    // instructions per access). `hot_fields_near` checks it.
     cpu: Cpu = .{},
-    /// FF0000-FFFFFF, mirrored from E00000.
-    work_ram: [0x10000]u8 = @splat(0),
-    vdp: vdp.Vdp = .{},
-    io: Io = .{},
-    /// Current pad (`Pad` bits), set by `step_frame`.
-    pad: u16 = 0,
-    /// Cartridge SRAM (SPEC.md section 11, up to 16 KB, in RAM, not saved):
-    /// byte `addr - sram_map.lo` of the header-declared range. Console
-    /// state (in keyframes). Unused when the header declares none.
-    sram: [rom.sram_max]u8 = @splat(0),
     /// The SRAM range the bus decodes now: the declared one while visible,
     /// else empty. A ROM that ends at or below the SRAM's start sees it
     /// from reset; a larger one only after A130F1 bit 0 is set (the SRAM
@@ -92,19 +88,20 @@ pub const Md = struct {
     /// 68000 cycles owed to DMA (the VDP's charge, SPEC.md section 4),
     /// taken out of the 68000's budget by the frame loop.
     dma_stall: u32 = 0,
+    io: Io align(4) = .{},
+    /// Current pad (`Pad` bits), set by `step_frame`.
+    pad: u16 align(4) = 0,
 
     // ---- Z80 side ----
-    z80: Z80 = .{},
-    /// A00000-A01FFF / Z80 0000-1FFF.
-    z80_ram: [0x2000]u8 = @splat(0),
+    z80: Z80 align(4) = .{},
     /// 6000: the bank register, 9 bits shifted in one per write (address
     /// bits 15-23 of the 32 KB window at Z80 8000-FFFF).
-    z80_bank: u16 = 0,
-    arbiter: Arbiter = .{},
+    z80_bank: u16 align(4) = 0,
+    arbiter: Arbiter align(4) = .{},
     /// Z80 INT, asserted for one line from V-int.
-    z80_int: bool = false,
+    z80_int: bool align(4) = false,
+    psg: psg.Psg align(4) = .{},
     ym: ym2612.Ym2612 = .{},
-    psg: psg.Psg = .{},
 
     // ---- Frame bookkeeping ----
     /// Frames stepped since reset (wraps).
@@ -123,7 +120,18 @@ pub const Md = struct {
     sram_map: rom.SramMap = .{},
     /// `tone()`'s answer, recomputed at the end of every frame and on
     /// `reset`/`restore` (derived from `ym` and `psg`).
-    tone_cache: ?Tone = null,
+    tone_cache: ?Tone align(4) = null,
+
+    // ---- The big arrays, last ----
+    vdp: vdp.Vdp = .{},
+    /// FF0000-FFFFFF, mirrored from E00000.
+    work_ram: [0x10000]u8 = @splat(0),
+    /// Cartridge SRAM (SPEC.md section 11, up to 16 KB, in RAM, not saved):
+    /// byte `addr - sram_map.lo` of the header-declared range. Console
+    /// state (in keyframes). Unused when the header declares none.
+    sram: [rom.sram_max]u8 = @splat(0),
+    /// A00000-A01FFF / Z80 0000-1FFF.
+    z80_ram: [0x2000]u8 = @splat(0),
 
     /// Build the console around `src` in place, reset to power-on. The
     /// console is ~153 KB: always a static, never a stack temporary (32 KB
@@ -325,3 +333,19 @@ pub const Md = struct {
         md.tone_cache = md.pick_tone();
     }
 };
+
+/// The fields the hot loops touch sit within reach of an immediate offset
+/// (see the note at the top of `Md`'s fields).
+const hot_fields_near = blk: {
+    const near = 4096;
+    for ([_]u32{
+        @offsetOf(Md, "z80"),                              @offsetOf(Md, "z80_int"),                                  @offsetOf(Md, "arbiter"),
+        @offsetOf(Md, "z80_bank"),                         @offsetOf(Md, "dma_stall"),                                @offsetOf(Md, "sram_active"),
+        @offsetOf(Md, "rom"),                              @offsetOf(Md, "m68k_carry"),                               @offsetOf(Md, "z80_carry"),
+        @offsetOf(Md, "vdp") + @offsetOf(vdp.Vdp, "regs"), @offsetOf(Md, "vdp") + @offsetOf(vdp.Vdp, "hint_pending"),
+    }) |o| if (o >= near) @compileError("Md: a hot field lies past 4 KB; see the note on Md's fields");
+    break :blk true;
+};
+comptime {
+    _ = hot_fields_near;
+}
