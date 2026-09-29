@@ -9,6 +9,7 @@
 //! lines), line counter, frame interrupt flag (line 193). An interrupt
 //! raised at the start of line N lets its handler change registers before
 //! line N + 1 is rendered.
+const std = @import("std");
 const tables = @import("vdp_tables.zig");
 
 /// Visible Game Gear screen: VDP columns 48..207, lines 24..167.
@@ -32,6 +33,10 @@ pub const frame_irq_line = 193;
 pub const LineSink = struct {
     ctx: *anyopaque,
     func: *const fn (ctx: *anyopaque, y: u8, pixels: *const [screen_w]u5, cram: *const [32]u16) void,
+    /// Lines the frontend does not show (the squeeze drops every ninth):
+    /// `skip[y]` set = line y is not rendered or emitted, only its sprites
+    /// are evaluated for the overflow and collision flags. Null: emit all.
+    skip: ?*const [screen_h]bool = null,
 
     pub fn emit(self: LineSink, y: u8, pixels: *const [screen_w]u5, cram: *const [32]u16) void {
         self.func(self.ctx, y, pixels, cram);
@@ -58,7 +63,10 @@ const LineSprites = struct {
 };
 
 pub const Vdp = struct {
-    vram: [0x4000]u8 = @splat(0),
+    // Small fields first: Zig keeps declaration order among fields of the
+    // same alignment, and the hot ones (status, registers, line counters)
+    // then sit within a load's 4 KB immediate offset of the console.
+
     /// 32 colors, 12 bits each: ----BBBBGGGGRRRR.
     cram: [32]u16 = @splat(0),
     /// Registers 0..10 (writes to 11..15 are ignored).
@@ -90,6 +98,8 @@ pub const Vdp = struct {
     /// Register 9 latched at the start of the frame.
     vscroll: u8 = 0,
 
+    vram: [0x4000]u8 = @splat(0),
+
     pub fn reset(v: *Vdp) void {
         v.* = .{};
     }
@@ -110,7 +120,7 @@ pub const Vdp = struct {
         return v.cross_lines(lt, sink);
     }
 
-    fn cross_lines(v: *Vdp, t_in_line: u32, sink: ?LineSink) bool {
+    noinline fn cross_lines(v: *Vdp, t_in_line: u32, sink: ?LineSink) bool {
         var lt = t_in_line;
         var done = false;
         while (lt >= tstates_per_line) {
@@ -134,10 +144,14 @@ pub const Vdp = struct {
         if (line < active_lines) {
             const l: u8 = @intCast(line);
             if (line >= window_y0 and line < window_y0 + screen_h) {
+                const y: u8 = @intCast(line - window_y0);
                 if (sink) |s| {
-                    var out: [screen_w]u5 = undefined;
-                    v.render_line(l, window_x0, &out);
-                    s.emit(@intCast(line - window_y0), &out, &v.cram);
+                    if (s.skip != null and s.skip.?[y]) {
+                        v.sprite_flags(l);
+                    } else {
+                        var buf: LineBuf align(4) = undefined;
+                        s.emit(y, v.render_buf(l, window_x0, &buf), &v.cram);
+                    }
                 } else v.sprite_flags(l);
             } else v.sprite_flags(l);
         }
@@ -252,12 +266,18 @@ pub const Vdp = struct {
     /// Evaluates the line's sprites, so the overflow and collision flags
     /// update as a side effect. Uses the latched vertical scroll.
     pub fn render_line(v: *Vdp, line: u8, x0: u8, out: *[screen_w]u5) void {
+        var buf: LineBuf align(4) = undefined;
+        out.* = v.render_buf(line, x0, &buf).*;
+    }
+
+    /// `render_line` without the copy: renders into the scratch `buf` and
+    /// returns the line's 160 pixels inside it.
+    fn render_buf(v: *Vdp, line: u8, x0: u8, buf: *align(4) LineBuf) *const [screen_w]u5 {
         const bd = v.backdrop();
         if (!v.display_on()) {
-            @memset(out, bd);
-            return;
+            @memset(buf[0..screen_w], bd);
+            return @ptrCast(buf[0..screen_w]);
         }
-        var buf: LineBuf align(4) = undefined;
         // Per column counter: opaque pixels of priority tiles (bit 7 = left).
         var prio: [32]u8 = @splat(0);
 
@@ -278,27 +298,28 @@ pub const Vdp = struct {
         // Column counters 24..31 ignore the vertical scroll with the lock.
         const lock: u8 = if (r0 & 0x80 != 0) 24 else 32;
         const split = @min(@max(lock, n_lo), n_end);
-        bg_tiles(v, &buf, &prio, n_lo, split, nt + (ys >> 3) * 64, ys & 7, coarse);
-        bg_tiles(v, &buf, &prio, split, n_end, nt + @as(u16, line >> 3) * 64, line & 7, coarse);
+        bg_tiles(v, buf, &prio, n_lo, split, nt + (ys >> 3) * 64, ys & 7, coarse);
+        bg_tiles(v, buf, &prio, split, n_end, nt + @as(u16, line >> 3) * 64, line & 7, coarse);
 
-        var list: LineSprites = .{};
+        var list: LineSprites = undefined;
+        list.n = 0;
         v.find_sprites(line, &list);
-        if (list.n != 0) v.sprites(&list, &buf, &prio, fine, x0, true);
+        if (list.n != 0) v.sprites(&list, buf, &prio, fine, x0, true);
 
         // Left-column blank: VDP columns 0..7, sprites included.
         if (r0 & 0x20 != 0 and x0 < 8) {
             for (x0..8) |c| buf[c + 8 - fine] = bd;
         }
         // Every byte written above is 0..31, so it reads back as a valid u5.
-        const dst: *[screen_w]u8 = @ptrCast(out);
-        @memcpy(dst, buf[@as(u16, x0) + 8 - fine ..][0..screen_w]);
+        return @ptrCast(buf[@as(u16, x0) + 8 - fine ..][0..screen_w]);
     }
 
     /// Sprite evaluation for an active line that is not rendered: sets the
     /// overflow and collision flags only.
     pub fn sprite_flags(v: *Vdp, line: u8) void {
         if (!v.display_on()) return;
-        var list: LineSprites = .{};
+        var list: LineSprites = undefined;
+        list.n = 0;
         v.find_sprites(line, &list);
         if (list.n >= 2 and v.status & status_collision == 0) {
             v.sprites(&list, undefined, undefined, 0, 0, false);
@@ -316,8 +337,28 @@ pub const Vdp = struct {
         const h: u8 = @as(u8, if (tall) 16 else 8) << zoom;
         const pat_base: u16 = @as(u16, v.regs[6] & 0x04) << 11;
         const shift: i16 = if (v.regs[0] & 0x08 != 0) 8 else 0;
+        // Four Y bytes per word: skip the word when no byte is on the line
+        // (d = line - y - 1 below h, h a power of two) and none is the D0
+        // end marker, else look at its bytes one by one.
+        const ones: u32 = 0x01010101;
+        const highs: u32 = 0x80808080;
+        const lm1: u32 = @as(u32, line -% 1) * ones;
+        const far: u32 = @as(u32, ~(h - 1)) * ones;
+        const ys = v.vram[sat..][0..64];
         var i: u16 = 0;
         while (i < 64) : (i += 1) {
+            if (i & 3 == 0) {
+                while (i < 64) : (i += 4) {
+                    const w = std.mem.readInt(u32, ys[i..][0..4], .little);
+                    // Per-byte lm1 - w, no borrow across bytes.
+                    const d4 = ((lm1 | highs) - (w & ~highs)) ^ ((lm1 ^ ~w) & highs);
+                    const m = d4 & far;
+                    const e = w ^ 0xD0D0D0D0;
+                    const hit = ((m -% ones) & ~m) | ((e -% ones) & ~e);
+                    if (hit & highs != 0) break;
+                }
+                if (i == 64) break;
+            }
             const y = v.vram[sat + i];
             if (y == 0xD0) break;
             const d = line -% y -% 1;
@@ -396,28 +437,36 @@ const LineBuf = [8 + 256]u8;
 
 /// Background tiles for column counters `from .. to` on name table row
 /// base `rbase`, fine row `fy`: two word stores per tile, and the opaque
-/// pixel mask of priority tiles into `prio`.
+/// pixel mask of priority tiles into `prio`. The four plane bytes of a
+/// pattern row are one (possibly unaligned) word load.
 inline fn bg_tiles(v: *const Vdp, buf: *align(4) LineBuf, prio: *[32]u8, from: u8, to: u8, rbase: u16, fy: u16, coarse: u8) void {
-    var n = from;
-    while (n < to) : (n += 1) {
-        const ea = rbase + @as(u16, (n -% coarse) & 31) * 2;
-        const entry: u16 = @as(u16, v.vram[ea]) | (@as(u16, v.vram[ea + 1]) << 8);
-        const r: u16 = if (entry & 0x400 != 0) 7 - fy else fy;
-        const pa = (entry & 0x1FF) * 32 + r * 4;
-        const p0 = v.vram[pa];
-        const p1 = v.vram[pa + 1];
-        const p2 = v.vram[pa + 2];
-        const p3 = v.vram[pa + 3];
+    if (from >= to) return;
+    const vram: [*]const u8 = &v.vram;
+    const row = vram + rbase;
+    const r4: u16 = fy * 4;
+    const r4_flip: u16 = (7 - fy) * 4;
+    const out: [*]align(4) u32 = @ptrCast(@alignCast(buf[8 + @as(u16, from) * 8 ..]));
+    var col: u16 = (from -% coarse) & 31;
+    var n: u16 = from;
+    var k: usize = 0;
+    while (n < to) : ({
+        n += 1;
+        k += 2;
+    }) {
+        const entry: u16 = std.mem.readInt(u16, row[col * 2 ..][0..2], .little);
+        col = (col + 1) & 31;
+        const pa = (entry & 0x1FF) * 32 + (if (entry & 0x400 != 0) r4_flip else r4);
+        const w = std.mem.readInt(u32, vram[pa..][0..4], .little);
         const hflip = entry & 0x200 != 0;
-        const row = decode(p0, p1, p2, p3, hflip);
+        const t = if (hflip) &tables.spread_rev else &tables.spread;
+        const px = t[w & 0xFF] | (t[(w >> 8) & 0xFF] << 1) | (t[(w >> 16) & 0xFF] << 2) | (t[w >> 24] << 3);
         if (entry & 0x1000 != 0) {
-            const m = p0 | p1 | p2 | p3;
+            const m: u8 = @truncate(w | (w >> 8) | (w >> 16) | (w >> 24));
             prio[n] = if (hflip) @bitReverse(m) else m;
         }
-        const pal: u32 = if (entry & 0x800 != 0) 0x10101010 else 0;
-        const words: *[2]u32 = @ptrCast(@alignCast(buf[8 + @as(u16, n) * 8 ..][0..8]));
-        words[0] = (row & 0x0F0F0F0F) | pal;
-        words[1] = ((row >> 4) & 0x0F0F0F0F) | pal;
+        const pal: u32 = @as(u32, (entry >> 11) & 1) * 0x10101010;
+        out[k] = (px & 0x0F0F0F0F) | pal;
+        out[k + 1] = ((px >> 4) & 0x0F0F0F0F) | pal;
     }
 }
 

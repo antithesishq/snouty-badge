@@ -88,6 +88,13 @@ pub const Bus = struct {
     pub inline fn read(self: *Bus, addr: u16) u8 {
         const gg = self.gg;
         if (addr >= 0xC000) return gg.ram[addr & 0x1FFF];
+        if (gg.read_map[addr >> 10]) |p| return p[addr & 0x3FF];
+        return read_slow(gg, addr);
+    }
+
+    /// 0000-BFFF where `read_map` has no pointer: cart RAM, or a ROM bank
+    /// without a direct pointer.
+    noinline fn read_slow(gg: *const Gg, addr: u16) u8 {
         if (addr < 0x0400) return rom_byte(gg, 0, addr);
         const s = addr >> 14;
         if (s == 2 and gg.mapper.control & 0x08 != 0) return gg.cart_ram[addr & (gg_mod.cart_ram_size - 1)];
@@ -108,16 +115,23 @@ pub const Bus = struct {
     fn mapper_write(gg: *Gg, addr: u16, v: u8) void {
         if (addr == 0xFFFC) {
             gg.mapper.control = v;
+            gg.sync_slot(2);
             return;
         }
         const i = addr - 0xFFFD;
         gg.mapper.slot[i] = v;
         gg.mapper.bank[i] = gg.rom.wrap_bank(v);
+        gg.sync_slot(@intCast(i));
     }
 
-    /// Port read (Game Gear decoding, see the file comment).
-    pub fn in(self: *Bus, port: u8) u8 {
-        const gg = self.gg;
+    /// Port read (Game Gear decoding, see the file comment). The wrappers
+    /// are inline and the work takes `gg`, so the Z80's `*Bus` never
+    /// escapes the frame loop and the console pointer stays in a register.
+    pub inline fn in(self: *Bus, port: u8) u8 {
+        return port_in(self.gg, port);
+    }
+
+    noinline fn port_in(gg: *Gg, port: u8) u8 {
         switch (port >> 6) {
             0 => {
                 if (port == 0x00) return if (gg.pad & Pad.start != 0) port00_idle & 0x7F else port00_idle;
@@ -136,8 +150,11 @@ pub const Bus = struct {
     }
 
     /// Port write (Game Gear decoding, see the file comment).
-    pub fn out(self: *Bus, port: u8, v: u8) void {
-        const gg = self.gg;
+    pub inline fn out(self: *Bus, port: u8, v: u8) void {
+        port_out(self.gg, port, v);
+    }
+
+    noinline fn port_out(gg: *Gg, port: u8, v: u8) void {
         switch (port >> 6) {
             0 => {
                 if (port <= 0x05) return; // Start port and link port.
@@ -155,6 +172,15 @@ pub const Bus = struct {
                 if (gg.console_sink) |s| s.emit(v);
             },
         }
+    }
+
+    /// Steps a halted CPU can run before the interrupt line can change: the
+    /// 4 T-state NOPs until the next line start, where the VDP raises its
+    /// interrupts (nothing else does while the CPU is halted). Z80.step
+    /// calls it after `irq_line` said no.
+    pub inline fn halt_steps(self: *Bus) u8 {
+        const left: u32 = gg_mod.vdp.tstates_per_line - self.gg.vdp.line_tstates;
+        return @intCast((left + 3) / 4);
     }
 
     /// The VDP's interrupt output, sampled by the Z80 between instructions.

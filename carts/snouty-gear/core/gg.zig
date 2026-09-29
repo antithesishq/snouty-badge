@@ -77,6 +77,11 @@ pub const Gg = struct {
 
     /// Not console state: excluded from keyframes, kept by `reset`.
     rom: Rom,
+    /// Direct ROM pointer for each 1 KB page of 0000-BFFF as the mapper has
+    /// it now, null where the bus must take its slow path (cart RAM in slot
+    /// 2, a bank without a direct pointer). Derived from `mapper` and `rom`
+    /// by `sync_map` (reset, restore, every mapper write); not in keyframes.
+    read_map: [48]?[*]const u8 = @splat(null),
     /// Where rendered lines go; set once by the frontend.
     line_sink: ?LineSink = null,
     /// Where SDSC debug console bytes (port FD writes) go; host tests only.
@@ -109,6 +114,7 @@ pub const Gg = struct {
         @memset(&gg.cart_ram, 0);
         gg.mapper = .{};
         gg.mapper.sync(&gg.rom);
+        gg.sync_map();
         gg.mem_control = 0;
         gg.io_control = 0xFF;
         gg.vdp.reset();
@@ -126,18 +132,39 @@ pub const Gg = struct {
         gg.pad = pad;
         const sink = gg.line_sink;
         var b = gg.bus_for();
-        var ft: u32 = 0;
+        // T-states run, from the VDP position: the loop ends on the first
+        // wrap to line 0 (a step never crosses two lines), so it ran from
+        // (line0, lt0) to (262, lt1). Saves a running sum per instruction.
+        const line0: u32 = gg.vdp.line;
+        const lt0: u32 = gg.vdp.line_tstates;
         while (true) {
             const iff1 = gg.cpu.iff1;
-            const t = gg.cpu.step(&b);
-            ft += t;
+            const t = @call(.always_inline, Cpu.step, .{ &gg.cpu, &b });
             // Acceptance clears IFF1 and lands on RST 38h (IM 1). A DI at
             // 0037 would be miscounted; nothing does that.
             if (iff1 and !gg.cpu.iff1 and gg.cpu.pc == 0x0038) gg.count_irq();
             if (gg.vdp.tick(t, sink)) break;
         }
-        gg.frame_t = ft;
+        gg.frame_t = (vdp.lines_per_frame - line0) * vdp.tstates_per_line + gg.vdp.line_tstates - lt0;
         gg.frame_count +%= 1;
+    }
+
+    /// Rebuild `read_map` from `mapper` and `rom`.
+    pub fn sync_map(gg: *Gg) void {
+        for (0..3) |s| gg.sync_slot(@intCast(s));
+    }
+
+    /// Rebuild the 16 `read_map` pages of slot `s` (0..2). Page 0 is always
+    /// bank 0 (the fixed first 1 KB).
+    pub fn sync_slot(gg: *Gg, s: u2) void {
+        const pages = gg.read_map[@as(usize, s) * 16 ..][0..16];
+        const bank = gg.rom.banks[gg.mapper.bank[s]];
+        for (pages, 0..) |*page, k| {
+            page.* = if (s == 2 and gg.mapper.control & 0x08 != 0)
+                null
+            else if (bank) |p| p + k * 0x400 else null;
+        }
+        if (s == 0) gg.read_map[0] = gg.rom.banks[0];
     }
 
     fn count_irq(gg: *Gg) void {
@@ -150,8 +177,9 @@ pub const Gg = struct {
 
     // ---- Keyframes (SPEC.md section 10) ----
 
-    /// The console minus `rom` (immutable, not ours), `line_sink` and
-    /// `console_sink` (not console state) and `frame_t` (diagnostic). M2 replaces this full copy with deltas; the shape
+    /// The console minus `rom` (immutable, not ours), `read_map` (derived),
+    /// `line_sink` and `console_sink` (not console state) and `frame_t`
+    /// (diagnostic). M2 replaces this full copy with deltas; the shape
     /// (`snapshot`/`restore`) stays. Auto layout: compare field by field
     /// (`std.meta.eql`), never as raw bytes.
     pub const Keyframe = struct {
@@ -198,6 +226,7 @@ pub const Gg = struct {
         gg.irq_frame_count = k.irq_frame_count;
         gg.irq_line_count = k.irq_line_count;
         gg.frame_t = 0;
+        gg.sync_map();
     }
 };
 

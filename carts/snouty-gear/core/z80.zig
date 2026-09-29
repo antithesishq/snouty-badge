@@ -92,15 +92,30 @@ pub fn Z80(comptime BusT: type) type {
         /// T-states.
         pub fn step(self: *Self, bus: *BusT) u32 {
             if (self.iff1 and !self.ei_delay and bus.irq_line()) return self.interrupt(bus);
+            const ei_was_set = self.ei_delay;
             self.ei_delay = false;
             self.q_prev = self.q;
             self.q = 0;
             if (self.halted) {
-                // HALT executes NOPs at the same PC until an interrupt.
+                // HALT executes NOPs at the same PC until an interrupt. A
+                // bus that knows when the interrupt line can next change
+                // (`halt_steps`) gets all the NOPs until then in one call.
+                if (@hasDecl(BusT, "halt_steps") and !ei_was_set) return self.halt_nops(bus.halt_steps());
                 self.inc_r();
                 return 4;
             }
-            return self.exec(bus, self.fetch_op(bus));
+            return @call(.always_inline, exec, .{ self, bus, self.fetch_op(bus) });
+        }
+
+        /// `n` (1..255) steps of a halted CPU with no interrupt accepted,
+        /// in one go: exactly what `n` calls of `step` would do then (R
+        /// counts every NOP, Q ends clear). `step` calls it only when no
+        /// interrupt can be taken in between. Returns the T-states.
+        fn halt_nops(self: *Self, n: u8) u32 {
+            self.q_prev = if (n == 1) self.q else 0;
+            self.q = 0;
+            self.r = (self.r & 0x80) | ((self.r +% n) & 0x7F);
+            return @as(u32, n) * 4;
         }
 
         /// Non-maskable interrupt (unused on the Game Gear; untested).
@@ -119,7 +134,7 @@ pub fn Z80(comptime BusT: type) type {
         /// Maskable interrupt acceptance. IM 0 behaves as IM 1: nothing
         /// drives the data bus on this machine, so the CPU reads FF, which
         /// is RST 38h.
-        fn interrupt(self: *Self, bus: *BusT) u32 {
+        inline fn interrupt(self: *Self, bus: *BusT) u32 {
             self.halted = false;
             self.iff1 = false;
             self.iff2 = false;
@@ -460,104 +475,114 @@ pub fn Z80(comptime BusT: type) type {
 
         // ---- unprefixed ----
 
+        /// `exec_xy` result bit: the prefix does not apply, run the opcode
+        /// in the low byte unprefixed. T-state counts are all below it.
+        const fallback: u32 = 0x100;
+
+        /// One instruction from its first opcode byte. A DD/FD prefix on an
+        /// opcode that does not use HL comes back from `exec_xy` as
+        /// `fallback | op` and re-enters this switch as the plain opcode, 4
+        /// T-states dearer, so the switch exists once (it is inlined into
+        /// `step`).
         fn exec(self: *Self, bus: *BusT, op: u8) u32 {
             // The 256-way switch inlines the bus accessors into every prong;
             // with the real Game Gear bus (itself inline) semantic analysis
             // passes Zig's default 1000-branch quota. Not a comptime loop.
             @setEvalBranchQuota(20_000);
-            switch (op) {
-                0x00 => return 4,
+            var extra: u32 = 0;
+            const t: u32 = sw: switch (op) {
+                0x00 => break :sw 4,
                 inline 0x01, 0x11, 0x21, 0x31 => |o| {
                     self.set_rp(o >> 4, self.fetch16(bus));
-                    return 10;
+                    break :sw 10;
                 },
                 0x02 => {
                     const addr = self.bc();
                     bus.write(addr, self.a);
                     self.wz = (@as(u16, self.a) << 8) | ((addr +% 1) & 0xFF);
-                    return 7;
+                    break :sw 7;
                 },
                 0x12 => {
                     const addr = self.de();
                     bus.write(addr, self.a);
                     self.wz = (@as(u16, self.a) << 8) | ((addr +% 1) & 0xFF);
-                    return 7;
+                    break :sw 7;
                 },
                 0x0A => {
                     const addr = self.bc();
                     self.a = bus.read(addr);
                     self.wz = addr +% 1;
-                    return 7;
+                    break :sw 7;
                 },
                 0x1A => {
                     const addr = self.de();
                     self.a = bus.read(addr);
                     self.wz = addr +% 1;
-                    return 7;
+                    break :sw 7;
                 },
                 inline 0x03, 0x13, 0x23, 0x33 => |o| {
                     self.set_rp(o >> 4, self.get_rp(o >> 4) +% 1);
-                    return 6;
+                    break :sw 6;
                 },
                 inline 0x0B, 0x1B, 0x2B, 0x3B => |o| {
                     self.set_rp(o >> 4, self.get_rp(o >> 4) -% 1);
-                    return 6;
+                    break :sw 6;
                 },
                 inline 0x04, 0x0C, 0x14, 0x1C, 0x24, 0x2C, 0x3C => |o| {
                     const p = self.reg(o >> 3);
                     p.* = self.inc8(p.*);
-                    return 4;
+                    break :sw 4;
                 },
                 inline 0x05, 0x0D, 0x15, 0x1D, 0x25, 0x2D, 0x3D => |o| {
                     const p = self.reg(o >> 3);
                     p.* = self.dec8(p.*);
-                    return 4;
+                    break :sw 4;
                 },
                 0x34 => {
                     const addr = self.hl();
                     bus.write(addr, self.inc8(bus.read(addr)));
-                    return 11;
+                    break :sw 11;
                 },
                 0x35 => {
                     const addr = self.hl();
                     bus.write(addr, self.dec8(bus.read(addr)));
-                    return 11;
+                    break :sw 11;
                 },
                 inline 0x06, 0x0E, 0x16, 0x1E, 0x26, 0x2E, 0x3E => |o| {
                     self.reg(o >> 3).* = self.fetch8(bus);
-                    return 7;
+                    break :sw 7;
                 },
                 0x36 => {
                     const v = self.fetch8(bus);
                     bus.write(self.hl(), v);
-                    return 10;
+                    break :sw 10;
                 },
                 0x07 => {
                     const a = (self.a << 1) | (self.a >> 7);
                     self.a = a;
                     self.setf((self.f & (FS | FZ | FP)) | (a & (FXY | FC)));
-                    return 4;
+                    break :sw 4;
                 },
                 0x0F => {
                     const cy = self.a & 1;
                     const a = (self.a >> 1) | (cy << 7);
                     self.a = a;
                     self.setf((self.f & (FS | FZ | FP)) | (a & FXY) | cy);
-                    return 4;
+                    break :sw 4;
                 },
                 0x17 => {
                     const cy = self.a >> 7;
                     const a = (self.a << 1) | (self.f & FC);
                     self.a = a;
                     self.setf((self.f & (FS | FZ | FP)) | (a & FXY) | cy);
-                    return 4;
+                    break :sw 4;
                 },
                 0x1F => {
                     const cy = self.a & 1;
                     const a = (self.a >> 1) | ((self.f & FC) << 7);
                     self.a = a;
                     self.setf((self.f & (FS | FZ | FP)) | (a & FXY) | cy);
-                    return 4;
+                    break :sw 4;
                 },
                 0x08 => {
                     const a = self.a;
@@ -566,11 +591,11 @@ pub fn Z80(comptime BusT: type) type {
                     self.f = self.f_;
                     self.a_ = a;
                     self.f_ = f;
-                    return 4;
+                    break :sw 4;
                 },
                 inline 0x09, 0x19, 0x29, 0x39 => |o| {
                     self.set_hl(self.add16(self.hl(), self.get_rp(o >> 4)));
-                    return 11;
+                    break :sw 11;
                 },
                 0x10 => {
                     const target = self.fetch_disp(bus, self.pc +% 1);
@@ -578,70 +603,70 @@ pub fn Z80(comptime BusT: type) type {
                     if (self.b != 0) {
                         self.pc = target;
                         self.wz = target;
-                        return 13;
+                        break :sw 13;
                     }
-                    return 8;
+                    break :sw 8;
                 },
                 0x18 => {
                     const target = self.fetch_disp(bus, self.pc +% 1);
                     self.pc = target;
                     self.wz = target;
-                    return 12;
+                    break :sw 12;
                 },
                 inline 0x20, 0x28, 0x30, 0x38 => |o| {
                     const target = self.fetch_disp(bus, self.pc +% 1);
                     if (self.cond((o >> 3) & 3)) {
                         self.pc = target;
                         self.wz = target;
-                        return 12;
+                        break :sw 12;
                     }
-                    return 7;
+                    break :sw 7;
                 },
                 0x22 => {
                     const addr = self.fetch16(bus);
                     self.write16(bus, addr, self.hl());
                     self.wz = addr +% 1;
-                    return 16;
+                    break :sw 16;
                 },
                 0x2A => {
                     const addr = self.fetch16(bus);
                     self.set_hl(self.read16(bus, addr));
                     self.wz = addr +% 1;
-                    return 16;
+                    break :sw 16;
                 },
                 0x32 => {
                     const addr = self.fetch16(bus);
                     bus.write(addr, self.a);
                     self.wz = (@as(u16, self.a) << 8) | ((addr +% 1) & 0xFF);
-                    return 13;
+                    break :sw 13;
                 },
                 0x3A => {
                     const addr = self.fetch16(bus);
                     self.a = bus.read(addr);
                     self.wz = addr +% 1;
-                    return 13;
+                    break :sw 13;
                 },
                 0x27 => {
                     self.daa();
-                    return 4;
+                    break :sw 4;
                 },
                 0x2F => {
                     self.a = ~self.a;
                     self.setf((self.f & (FS | FZ | FP | FC)) | FH | FN | (self.a & FXY));
-                    return 4;
+                    break :sw 4;
                 },
                 0x37 => {
                     self.setf((self.f & (FS | FZ | FP)) | FC | (((self.q_prev ^ self.f) | self.a) & FXY));
-                    return 4;
+                    break :sw 4;
                 },
                 0x3F => {
                     const hc: u8 = if ((self.f & FC) != 0) FH else FC;
                     self.setf((self.f & (FS | FZ | FP)) | hc | (((self.q_prev ^ self.f) | self.a) & FXY));
-                    return 4;
+                    break :sw 4;
                 },
                 0x76 => {
                     self.halted = true;
-                    return 4;
+                    break :sw 4;
                 },
                 // LD r,r' / LD r,(HL) / LD (HL),r
                 inline 0x40...0x75, 0x77...0x7F => |o| {
@@ -649,13 +674,13 @@ pub fn Z80(comptime BusT: type) type {
                     const src: u3 = o & 7;
                     if (src == 6) {
                         self.reg(dst).* = bus.read(self.hl());
-                        return 7;
+                        break :sw 7;
                     } else if (dst == 6) {
                         bus.write(self.hl(), self.reg(src).*);
-                        return 7;
+                        break :sw 7;
                     } else {
                         self.reg(dst).* = self.reg(src).*;
-                        return 4;
+                        break :sw 4;
                     }
                 },
                 // ALU A,r / ALU A,(HL)
@@ -663,71 +688,71 @@ pub fn Z80(comptime BusT: type) type {
                     const src: u3 = o & 7;
                     if (src == 6) {
                         self.alu((o >> 3) & 7, bus.read(self.hl()));
-                        return 7;
+                        break :sw 7;
                     }
                     self.alu((o >> 3) & 7, self.reg(src).*);
-                    return 4;
+                    break :sw 4;
                 },
                 inline 0xC6, 0xCE, 0xD6, 0xDE, 0xE6, 0xEE, 0xF6, 0xFE => |o| {
                     self.alu((o >> 3) & 7, self.fetch8(bus));
-                    return 7;
+                    break :sw 7;
                 },
                 inline 0xC0, 0xC8, 0xD0, 0xD8, 0xE0, 0xE8, 0xF0, 0xF8 => |o| {
                     if (self.cond((o >> 3) & 7)) {
                         self.pc = self.pop16(bus);
                         self.wz = self.pc;
-                        return 11;
+                        break :sw 11;
                     }
-                    return 5;
+                    break :sw 5;
                 },
                 0xC9 => {
                     self.pc = self.pop16(bus);
                     self.wz = self.pc;
-                    return 10;
+                    break :sw 10;
                 },
                 0xC1 => {
                     self.set_bc(self.pop16(bus));
-                    return 10;
+                    break :sw 10;
                 },
                 0xD1 => {
                     self.set_de(self.pop16(bus));
-                    return 10;
+                    break :sw 10;
                 },
                 0xE1 => {
                     self.set_hl(self.pop16(bus));
-                    return 10;
+                    break :sw 10;
                 },
                 0xF1 => {
                     self.set_af(self.pop16(bus));
-                    return 10;
+                    break :sw 10;
                 },
                 0xC5 => {
                     self.push16(bus, self.bc());
-                    return 11;
+                    break :sw 11;
                 },
                 0xD5 => {
                     self.push16(bus, self.de());
-                    return 11;
+                    break :sw 11;
                 },
                 0xE5 => {
                     self.push16(bus, self.hl());
-                    return 11;
+                    break :sw 11;
                 },
                 0xF5 => {
                     self.push16(bus, self.af());
-                    return 11;
+                    break :sw 11;
                 },
                 inline 0xC2, 0xCA, 0xD2, 0xDA, 0xE2, 0xEA, 0xF2, 0xFA => |o| {
                     const addr = self.fetch16(bus);
                     self.wz = addr;
                     if (self.cond((o >> 3) & 7)) self.pc = addr;
-                    return 10;
+                    break :sw 10;
                 },
                 0xC3 => {
                     const addr = self.fetch16(bus);
                     self.wz = addr;
                     self.pc = addr;
-                    return 10;
+                    break :sw 10;
                 },
                 inline 0xC4, 0xCC, 0xD4, 0xDC, 0xE4, 0xEC, 0xF4, 0xFC => |o| {
                     const addr = self.fetch16(bus);
@@ -735,38 +760,43 @@ pub fn Z80(comptime BusT: type) type {
                     if (self.cond((o >> 3) & 7)) {
                         self.push16(bus, self.pc);
                         self.pc = addr;
-                        return 17;
+                        break :sw 17;
                     }
-                    return 10;
+                    break :sw 10;
                 },
                 0xCD => {
                     const addr = self.fetch16(bus);
                     self.wz = addr;
                     self.push16(bus, self.pc);
                     self.pc = addr;
-                    return 17;
+                    break :sw 17;
                 },
                 inline 0xC7, 0xCF, 0xD7, 0xDF, 0xE7, 0xEF, 0xF7, 0xFF => |o| {
                     self.push16(bus, self.pc);
                     self.pc = o & 0x38;
                     self.wz = self.pc;
-                    return 11;
+                    break :sw 11;
                 },
-                0xCB => return self.exec_cb(bus),
-                0xED => return self.exec_ed(bus),
-                0xDD => return self.exec_xy(bus, &self.ix),
-                0xFD => return self.exec_xy(bus, &self.iy),
+                0xCB => break :sw @call(.always_inline, exec_cb, .{ self, bus }),
+                0xED => break :sw @call(.always_inline, exec_ed, .{ self, bus }),
+                inline 0xDD, 0xFD => |o| {
+                    const r = @call(.always_inline, exec_xy, .{ self, bus, if (o == 0xDD) &self.ix else &self.iy });
+                    if (r < fallback) return r;
+                    self.q_prev = 0;
+                    extra = 4;
+                    continue :sw @truncate(r);
+                },
                 0xD3 => {
                     const n = self.fetch8(bus);
                     bus.out(n, self.a);
                     self.wz = (@as(u16, self.a) << 8) | ((n +% 1) & 0xFF);
-                    return 11;
+                    break :sw 11;
                 },
                 0xDB => {
                     const n = self.fetch8(bus);
                     self.wz = ((@as(u16, self.a) << 8) | n) +% 1;
                     self.a = bus.in(n);
-                    return 11;
+                    break :sw 11;
                 },
                 0xD9 => {
                     var t = self.b;
@@ -787,18 +817,18 @@ pub fn Z80(comptime BusT: type) type {
                     t = self.l;
                     self.l = self.l_;
                     self.l_ = t;
-                    return 4;
+                    break :sw 4;
                 },
                 0xE3 => {
                     const v = self.read16(bus, self.sp);
                     self.write16(bus, self.sp, self.hl());
                     self.set_hl(v);
                     self.wz = v;
-                    return 19;
+                    break :sw 19;
                 },
                 0xE9 => {
                     self.pc = self.hl();
-                    return 4;
+                    break :sw 4;
                 },
                 0xEB => {
                     var t = self.d;
@@ -807,24 +837,25 @@ pub fn Z80(comptime BusT: type) type {
                     t = self.e;
                     self.e = self.l;
                     self.l = t;
-                    return 4;
+                    break :sw 4;
                 },
                 0xF3 => {
                     self.iff1 = false;
                     self.iff2 = false;
-                    return 4;
+                    break :sw 4;
                 },
                 0xFB => {
                     self.iff1 = true;
                     self.iff2 = true;
                     self.ei_delay = true;
-                    return 4;
+                    break :sw 4;
                 },
                 0xF9 => {
                     self.sp = self.hl();
-                    return 6;
+                    break :sw 6;
                 },
-            }
+            };
+            return t + extra;
         }
 
         // ---- CB prefix ----
@@ -994,7 +1025,7 @@ pub fn Z80(comptime BusT: type) type {
                     self.alu((o >> 3) & 7, bus.read(addr));
                     return 19;
                 },
-                0xCB => return self.exec_xycb(bus, xy),
+                0xCB => return @call(.always_inline, exec_xycb, .{ self, bus, xy }),
                 0xE1 => {
                     xy.* = self.pop16(bus);
                     return 14;
@@ -1028,10 +1059,7 @@ pub fn Z80(comptime BusT: type) type {
                 // Everything else ignores the prefix, which counts as an
                 // instruction of its own that left the flags alone (Q = 0
                 // for SCF/CCF).
-                else => {
-                    self.q_prev = 0;
-                    return self.exec(bus, op) + 4;
-                },
+                else => return fallback | op,
             }
         }
 
@@ -1178,7 +1206,7 @@ pub fn Z80(comptime BusT: type) type {
             self.q = self.f;
         }
 
-        fn block_ld(self: *Self, bus: *BusT, comptime up: bool, comptime repeat: bool) u32 {
+        inline fn block_ld(self: *Self, bus: *BusT, comptime up: bool, comptime repeat: bool) u32 {
             const v = bus.read(self.hl());
             bus.write(self.de(), v);
             if (up) {
@@ -1199,7 +1227,7 @@ pub fn Z80(comptime BusT: type) type {
             return 16;
         }
 
-        fn block_cp(self: *Self, bus: *BusT, comptime up: bool, comptime repeat: bool) u32 {
+        inline fn block_cp(self: *Self, bus: *BusT, comptime up: bool, comptime repeat: bool) u32 {
             const v = bus.read(self.hl());
             const r = self.a -% v;
             if (up) {
@@ -1250,7 +1278,7 @@ pub fn Z80(comptime BusT: type) type {
             self.setf(f);
         }
 
-        fn block_in(self: *Self, bus: *BusT, comptime up: bool, comptime repeat: bool) u32 {
+        inline fn block_in(self: *Self, bus: *BusT, comptime up: bool, comptime repeat: bool) u32 {
             const port = self.bc();
             const v = bus.in(self.c);
             bus.write(self.hl(), v);
@@ -1267,7 +1295,7 @@ pub fn Z80(comptime BusT: type) type {
             return 16;
         }
 
-        fn block_out(self: *Self, bus: *BusT, comptime up: bool, comptime repeat: bool) u32 {
+        inline fn block_out(self: *Self, bus: *BusT, comptime up: bool, comptime repeat: bool) u32 {
             const v = bus.read(self.hl());
             self.b -%= 1;
             bus.out(self.c, v);

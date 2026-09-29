@@ -13,6 +13,7 @@ const video = @import("frontend/video.zig");
 const input = @import("frontend/input.zig");
 const debug = @import("frontend/debug.zig");
 const romsrc = @import("frontend/romsrc.zig");
+const text = @import("frontend/text.zig");
 
 comptime {
     cart.export_start_code();
@@ -32,6 +33,7 @@ var menu_requests: u32 = 0;
 pub fn start() void {
     cart.set_vsync_enabled(1000.0 / 60.0);
     cart.set_double_buffer_mode(.no_copy_full_frame);
+    text.init();
     video.init();
     gg.init_in_place(romsrc.select());
     gg.line_sink = video.sink();

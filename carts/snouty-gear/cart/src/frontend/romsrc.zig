@@ -13,6 +13,7 @@ const core = @import("core");
 const rom = @import("rom");
 const romfs = @import("romfs");
 const debug = @import("debug.zig");
+const text = @import("text.zig");
 
 pub const Origin = enum(u32) { embedded = 0, drive = 1 };
 
@@ -161,12 +162,6 @@ pub fn draw_report() void {
     }
     for (0..lines) |k| {
         const y: i32 = @intCast(cart.screen_height - 8 * (lines - k));
-        cart.text(.{
-            .str = s[starts[k]..ends[k]],
-            .x = 0,
-            .y = y,
-            .text_color = .rgb(0xFFFFFF),
-            .background_color = .rgb(0x000000),
-        });
+        text.draw(s[starts[k]..ends[k]], 0, y, .rgb(0xFFFFFF), .rgb(0x000000));
     }
 }
