@@ -15,7 +15,10 @@ const state = @import("state.zig");
 pub const size = 64;
 pub const door_base: u8 = 64;
 
-pub const DoorKind = enum(u8) { plain = 0, coral = 1, iris = 2, gold = 3, exit = 4 };
+/// `secret` (legend `X`): looks like the wall around it (wall texture
+/// `DoorDef.tex`), opens when the player walks into it, never closes, and
+/// enemies cannot open it (Wolf3D pushwall, bump-activated).
+pub const DoorKind = enum(u8) { plain = 0, coral = 1, iris = 2, gold = 3, exit = 4, secret = 5 };
 
 pub const DoorDef = struct {
     x: u8,
@@ -24,6 +27,8 @@ pub const DoorDef = struct {
     /// true: the door panel runs north-south (passage is east-west, walls
     /// above and below). false: panel runs east-west.
     vertical: bool,
+    /// Secret doors only: walls.png cell drawn on the panel (0..7).
+    tex: u8 = 0,
 };
 
 pub const PickupKind = enum(u8) { key_coral, key_iris, key_gold, hotfix, charge, spray_can, battery };

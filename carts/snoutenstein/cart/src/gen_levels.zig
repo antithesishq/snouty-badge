@@ -71,7 +71,7 @@ fn emit(w: *std.Io.Writer) !void {
         const p = &parsed[i];
         try w.print("\nconst {s}_doors = [_]DoorDef{{\n", .{e.name});
         for (p.doors[0..p.door_count]) |d| {
-            try w.print("    .{{ .x = {d}, .y = {d}, .kind = .{s}, .vertical = {} }},\n", .{ d.x, d.y, @tagName(d.kind), d.vertical });
+            try w.print("    .{{ .x = {d}, .y = {d}, .kind = .{s}, .vertical = {}, .tex = {d} }},\n", .{ d.x, d.y, @tagName(d.kind), d.vertical, d.tex });
         }
         try w.print("}};\n\nconst {s}_pickups = [_]PickupDef{{\n", .{e.name});
         for (p.pickups[0..p.pickup_count]) |d| {

@@ -128,6 +128,16 @@ const RUNS = [
         check: (v) => (v.debug_carve_shown === undefined || v.debug_carve_count === undefined) ? "carve exports not read"
             : !(v.debug_carve_shown < v.debug_carve_count) ? "carving already finished" : null,
     },
+    {
+        name: "J", what: "A at tick 0, Iris mark edge-on at OVERHEAD tick 52 (coin flip)", frames: 233, press: ["A:0-0"],
+        dump: ["debug_iris_width"],
+        expect: ["debug_state == 4", "debug_iris_width > 0", "debug_iris_width < 12"],
+    },
+    {
+        name: "K", what: "A at tick 0, Iris mark back face full width at OVERHEAD tick 60", frames: 241, press: ["A:0-0"],
+        dump: ["debug_iris_width"],
+        expect: ["debug_state == 4", "debug_iris_width >= 23"],
+    },
 ];
 let runs = RUNS;
 if (opts.only) {

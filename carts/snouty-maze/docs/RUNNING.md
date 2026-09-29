@@ -43,7 +43,7 @@ Then from `carts/snouty-maze/`:
 
 ```sh
 node tools/check_golden.mjs   # golden-image regression (needs zig build first)
-node tools/check_cycle.mjs    # screensaver loop, actor triggers and LEDs (runs A..I)
+node tools/check_cycle.mjs    # screensaver loop, actor triggers and LEDs (runs A..K)
 ```
 
 `zig build` writes, in the root `zig-out/`:
@@ -284,7 +284,7 @@ M3 actor and LED exports:
 ### Screensaver loop: `tools/check_cycle.mjs`
 
 ```sh
-node tools/check_cycle.mjs                # runs A..I
+node tools/check_cycle.mjs                # runs A..K
 node tools/check_cycle.mjs --only B,D     # just the overhead and flip checks
 node tools/check_cycle.mjs --frames 20000 # longer unattended run for A
 ```
@@ -363,7 +363,7 @@ python3 ../../tools/make_gif.py out/m3 docs/preview_m3.gif --scale 3 --ms 100
 ### Art
 
 ```sh
-python3 tools/prepare_assets.py --from-w95 assets/src/w95 --art ../../snouty-art/out/maze \
+python3 tools/prepare_assets.py --from-w95 assets/src/w95 --art ../../../snouty-art/out/maze \
   --contact docs/w95_assets.png                 # what assets/gen/ is built from
 python3 tools/prepare_assets.py --placeholders --contact docs/placeholders.png
 python3 tools/prepare_assets.py --check       # validate delivered art in assets/gen/

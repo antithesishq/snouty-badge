@@ -119,7 +119,7 @@ pub fn update() void {
     const dt: u32 = @truncate(cart.micros_since_boot() - t0);
     render_us = dt;
     fps_x10 = if (dt > 0) @min(999, 10_000_000 / @max(dt, 16_667)) else 0;
-    if (name_strip_on()) overlay.draw_name_strip();
+    if (name_strip_on()) overlay.draw_name_strip() else overlay.name_strip_hidden();
     if (show_debug) overlay.draw_debug(render_us, fps_x10);
     const fade = @max(fade_level, autopilot.fade_level());
     if (fade != 0) overlay.fade(fade);
@@ -161,6 +161,7 @@ comptime {
         @export(&debug_set_roll, .{ .name = "debug_set_roll" });
         @export(&debug_skip, .{ .name = "debug_skip" });
         @export(&debug_name_strip, .{ .name = "debug_name_strip" });
+        @export(&debug_iris_width, .{ .name = "debug_iris_width" });
         @export(&debug_fade, .{ .name = "debug_fade" });
         @export(&debug_snouty_x, .{ .name = "debug_snouty_x" });
         @export(&debug_snouty_z, .{ .name = "debug_snouty_z" });
@@ -261,6 +262,11 @@ fn debug_skip() callconv(.c) void {
 }
 fn debug_name_strip() callconv(.c) u32 {
     return @intFromBool(name_strip_on());
+}
+/// Width the Iris mark was last drawn at in the name strip: 24 at rest,
+/// less mid coin flip (overlay.flip_first ticks after the strip appears).
+fn debug_iris_width() callconv(.c) u32 {
+    return overlay.iris_width;
 }
 /// Applies overlay.fade(level) (0..16) to every following frame, for
 /// testing the teleport dissolve; 0 turns it off. The teleport's own fade

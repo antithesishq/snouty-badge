@@ -77,7 +77,10 @@ The whole 160x128 is the 3D view. There is no HUD.
 - Name strip: `ADRIAN HATCH` / `ANTITHESIS` in the built-in 8x8 font, two
   lines centred, drawn only during the overhead hold (section 8), where the
   view has empty margin around the maze. Start toggles it permanently on
-  (bottom-left corner, one line) or off.
+  (bottom-left corner, one line) or off. The Iris mark beside the lines
+  flips like a coin about its vertical axis (columns squeezed to
+  24 |cos| px, mirrored darker back face, one turn in 30 ticks) 45 ticks
+  after the strip appears and every 5 s after that while it stays on.
 - Debug builds: `render us` and fps in the top-left corner (Select toggles
   in M1), so the M1 timing check is one photo of the badge.
 
@@ -341,7 +344,7 @@ below procedurally at the exact size so code never waits on art, as in
 | `snouty.png`      | 32x32 | 4      | yes         | blob with an "S", left x2 / right x2, legs alternate |
 | `smiley.png`      | 32x32 | 1      | yes         | yellow disc, two eyes, a smile                    |
 | `logo.png`        | 32x32 | 1      | yes         | iris-like mark (real: Zig mark via `--art`)       |
-| `iris.png`        | 32x32 | 1      | yes         | same drawing (real: Iris mark via `--art`)        |
+| `iris.png`        | 32x32 | 1      | yes         | same drawing at 24 px, centred (real: Iris mark via `--art`); the name strip blits texels 4..27 1:1 |
 
 Textures are unpacked to `u8` 32x32 grids at `start()` (1 KB each). Wall
 tops and the sphere are flat colours in code and need no sheet.
