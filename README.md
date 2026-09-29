@@ -11,7 +11,7 @@ tools.
 | `carts/snouty-bugs/` | `snouty-bugs` | Horizontal bullet-hell shooter with rewind-on-hit and an attract mode (tags `snouty-bugs/m1`..`m5`). |
 | `carts/snoutenstein/` | `snoutenstein` | Raycaster FPS with time rewind (tags `snoutenstein/m0`..`m3`). |
 | `carts/snouty-reflections/` | `snouty-reflections` | Real-time ray tracer demo over water (tags `snouty-reflections/m0`..`m1.1`). |
-| `carts/snouty-boy/` | `snouty-boy` | Game Boy emulator with an embedded ROM and a time scrubber (tags `snouty-boy/m1`..`m4`). |
+| `carts/snouty-boy/` | `snouty-boy` | Game Boy emulator with an embedded ROM (predates the drive loader) and a time scrubber (tags `snouty-boy/m1`..`m4`). |
 | `carts/snouty-maze/` | `snouty-maze` | Windows 3D Maze screensaver clone on a small software rasterizer (tags `snouty-maze/m0`..`m3`). |
 | `carts/snouty-gear/` | `snouty-gear` | Game Gear emulator reading its ROM from the badge drive, Waternet embedded as fallback (M0 scaffold: test pattern). |
 | `tools/` | | Shared cart tools: `preview.mjs` (headless wasm runner with input scripts and checks), `serve-cart.mjs` (feeds the web simulator), `make_gif.py`, `check_float.mjs`, `uf2_info.py`. |
@@ -88,15 +88,30 @@ Each cart's `carts/<cart>/docs/RUNNING.md` lists its own controls, and
 `tools/preview.mjs` runs a cart headless in the terminal with no browser,
 writing PNG frames (`docs/RUNNING.md` section 5).
 
-## RAM carts and XIP carts
+## RAM carts, ROMs from the badge drive, and XIP carts
 
 By default a cart is a RAM cart: the OS copies the whole image into the
-307 KB cart RAM window and code, read-only data and state share it. With
-`-Dcart-mode=xip` (or `both`) the same source is also linked as an
+307 KB cart RAM window and code, read-only data and state share it. This is
+the only mode proven on hardware, and it is what the emulator carts use.
+
+The emulator carts do not embed their ROMs. The badge's USB drive is the OS's
+`romfs` region of the internal 2 MB flash, so the user copies a ROM file
+onto the drive next to the cart's UF2, and at start the cart finds it in the
+FAT12 volume and reads ROM bytes by pointer from the flash window. Nothing
+is copied or compressed, and the cart stays an ordinary RAM cart. About
+800 KB of the 1280 KB drive is left for ROMs once a cart's UF2 is on it;
+512 KB ROMs fit, 1 MB ones do not in practice. Eject the drive before
+playing, because the OS can write flash while a cart runs. The shared
+loader is `lib/romfs.zig`, built by the first cart that needs it; the
+design, the hardware checks it still needs and the fallback (packing the
+ROM into the cart image) are in `docs/ROM_DRIVE.md`.
+
+With `-Dcart-mode=xip` (or `both`) the same source is also linked as an
 execute-in-place cart: code and read-only data live in the badge's 256 KB
 cart flash window and run from there through the XIP cache, and all of cart
-RAM is left for `.data` and `.bss`. That roughly doubles what a cart can hold,
-which is what the emulator carts need. The XIP build is
+RAM is left for `.data` and `.bss`. Only a cart whose code plus state
+exceeds cart RAM needs it (Snouty Genesis; not Snouty Gear or Snouty Lynx),
+and it is untested on hardware. The XIP build is
 `zig-out/firmware/<binary>-xip.uf2`, flashed the same way. `tools/uf2_info.py`
 shows which window a UF2 targets (the loader refuses a mix). Root `PLAN.md`
 section M3 has the design and the open hardware questions.

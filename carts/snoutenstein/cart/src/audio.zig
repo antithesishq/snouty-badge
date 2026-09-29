@@ -70,6 +70,13 @@ var last_flash2: u64 = 0; // bit i: enemy i flash == flash_ticks
 
 var key_flash: u8 = 0;
 
+// Rewind: ticks since this rewind began (sound retrigger and LED pulse).
+var rewind_n: u32 = 0;
+const rewind_retrigger: u32 = 10;
+const rewind_pulse: u32 = 30; // LED triangle period, ticks
+const rewind_led_lo: u32 = 3;
+const rewind_led_hi: u32 = 8;
+
 fn start_tone(freq: u16, ticks: u8, shape: Shape) void {
     cart.tone2(.{
         .frequency = @floatFromInt(freq),
@@ -156,13 +163,17 @@ fn baseline(s: *const state.GameState, level: *const levels.Level) void {
 pub fn reset(s: *const state.GameState) void {
     primed = false;
     key_flash = 0;
+    rewind_n = 0;
     silence();
     write_leds(s.player.hp);
 }
 
 /// Once per displayed tick while playing.
+/// After a rewind the next call sees `s.tick < last_tick` and takes a
+/// fresh baseline without playing anything (the `jumped` branch).
 pub fn tick(s: *const state.GameState, level: *const levels.Level) void {
     if (!enabled) silence() else advance();
+    rewind_n = 0; // the next rewind starts its sweep and pulse afresh
 
     const jumped = !primed or s.tick < last_tick or s.level != last_level;
     if (jumped) {
@@ -213,6 +224,39 @@ pub fn tick(s: *const state.GameState, level: *const levels.Level) void {
 
     if (key_flash > 0) key_flash -= 1;
     write_leds(s.player.hp);
+}
+
+/// Once per displayed tick while rewinding, instead of `tick`: no event
+/// detection; the descending rewind sweep retriggers every 10 ticks (it
+/// cuts whatever is playing, including the death freeze) and all five
+/// neopixels pulse Iris purple, 3/255 to 8/255 on the blue channel over a
+/// 30-tick triangle. Silent with LEDs off when disabled. `s` is the shown
+/// state; unused for now (the display is state-independent).
+pub fn rewind_tick(s: *const state.GameState) void {
+    _ = s;
+    var c: [5]cart.NeopixelColor = @splat(.{ .g = 0, .r = 0, .b = 0 });
+    if (!enabled) {
+        silence();
+    } else {
+        advance();
+        if (rewind_n % rewind_retrigger == 0) {
+            left = 0;
+            play(.rewind);
+        }
+        // Triangle 0..15..0 over 30 ticks -> level 3..8.
+        const ph = rewind_n % rewind_pulse;
+        const tri = if (ph < rewind_pulse / 2) ph else rewind_pulse - ph;
+        const lvl: u32 = rewind_led_lo + tri * (rewind_led_hi - rewind_led_lo) / (rewind_pulse / 2);
+        // Iris 0x8E42DE scaled so blue = lvl (r = 0.64 lvl, g = 0.30 lvl).
+        const on: cart.NeopixelColor = .{
+            .g = @intCast(@min(lvl * 0x42 / 0xDE, led_max)),
+            .r = @intCast(@min(lvl * 0x8E / 0xDE, led_max)),
+            .b = @intCast(@min(lvl, led_max)),
+        };
+        c = @splat(on);
+    }
+    rewind_n +%= 1;
+    for (c, 0..) |l, i| cart.neopixels[i] = l;
 }
 
 /// HP bar: one LED per started 20 HP; green from 60, amber from 25, red

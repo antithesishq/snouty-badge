@@ -32,6 +32,15 @@
 //!   (head - floor(head/30)*30 + 600), always < input_len = 640.
 //!   Rewinding 600 ticks is therefore always possible once the game has
 //!   run that long; the rewind meter (max 600) is the gameplay bound.
+//! - Patches: a commit changes the live state out of band (the meter is
+//!   drained, `rewinds` is bumped), which a replay from an earlier keyframe
+//!   would not reproduce. So `commit` records the change as a patch on the
+//!   tick it committed at (`patch[t % input_len]`, valid while
+//!   `patch_tick[..] == t`), and "state at tick t" always means "with the
+//!   patch of tick t applied". Replay applies patches after each step,
+//!   keyframes are stored pre-patch (they come from `after_step`), and a
+//!   commit drops the patches of the abandoned future like it drops
+//!   keyframes.
 const std = @import("std");
 const state = @import("state.zig");
 const sim = @import("sim.zig");
@@ -54,6 +63,10 @@ var kf: [keyframe_count]GameState = undefined;
 var kf_tick: [keyframe_count]u32 = @splat(none);
 /// Input applied to state t, at inputs[t % input_len].
 var inputs: [input_len]Buttons = undefined;
+/// Out-of-band changes made at a commit, by tick (see the patch note above).
+const Patch = struct { meter: u16, count_rewind: bool };
+var patch: [input_len]Patch = undefined;
+var patch_tick: [input_len]u32 = @splat(none);
 /// Span cache: cache[i] = state at tick cache_lo + i, i < cache_n.
 var cache: [span]GameState = undefined;
 var cache_lo: u32 = 0;
@@ -74,7 +87,8 @@ pub var desyncs: u32 = 0;
 /// Bytes of the three big pools (keyframes + span cache + inputs), plus
 /// the keyframe tick table.
 pub const memory_bytes = @sizeOf(@TypeOf(kf)) + @sizeOf(@TypeOf(cache)) +
-    @sizeOf(@TypeOf(inputs)) + @sizeOf(@TypeOf(kf_tick));
+    @sizeOf(@TypeOf(inputs)) + @sizeOf(@TypeOf(kf_tick)) +
+    @sizeOf(@TypeOf(patch)) + @sizeOf(@TypeOf(patch_tick));
 
 comptime {
     if (memory_bytes > 80 * 1024) @compileError("rewind pools exceed 80 KB; GameState grew too much");
@@ -116,16 +130,26 @@ fn block_start(t: u32) ?u32 {
     return best;
 }
 
+/// Apply the patch of tick `s.tick`, if one is recorded.
+fn apply_patch(s: *GameState) void {
+    const i = s.tick % input_len;
+    if (patch_tick[i] != s.tick) return;
+    s.player.rewind_meter = patch[i].meter;
+    if (patch[i].count_rewind) s.rewinds += 1;
+}
+
 /// Fill the span cache with states [k, hi] replayed from keyframe k.
 fn fill(level: *const Level, k: u32, hi: u32) bool {
     const src = keyframe(k) orelse return false;
     if (hi < k or hi - k >= span) return false;
     cache[0] = src.*;
+    apply_patch(&cache[0]);
     var t = k;
     while (t < hi) : (t += 1) {
         const i = t - k;
         cache[i + 1] = cache[i];
         sim.step(&cache[i + 1], level, inputs[t % input_len]);
+        apply_patch(&cache[i + 1]);
     }
     cache_lo = k;
     cache_n = hi - k + 1;
@@ -137,6 +161,7 @@ fn fill(level: *const Level, k: u32, hi: u32) bool {
 /// New history: drops everything and stores `s` as the first keyframe.
 pub fn reset(s: *const GameState) void {
     kf_tick = @splat(none);
+    patch_tick = @splat(none);
     store_keyframe(s);
     head = s.tick;
     base = s.tick;
@@ -212,14 +237,23 @@ pub fn current() *const GameState {
     return &cache[cur - cache_lo];
 }
 
-/// Leave rewind: the current state becomes live (copied into `s`), and
-/// keyframes and inputs after it are dropped so forward play continues on
-/// the new timeline. Does not touch `s.rewinds`; the caller owns that.
-pub fn commit(s: *GameState) void {
+/// Leave rewind: the current state becomes live (copied into `s`) with
+/// its meter set to `meter` and `rewinds` bumped if `count_rewind`; both
+/// are recorded as the patch of this tick so replays reproduce them.
+/// Keyframes, patches and inputs after it are dropped so forward play
+/// continues on the new timeline.
+pub fn commit(s: *GameState, meter: u16, count_rewind: bool) void {
     s.* = current().*;
     for (&kf_tick) |*k| {
         if (k.* != none and k.* > cur) k.* = none;
     }
+    for (&patch_tick) |*t| {
+        if (t.* != none and t.* > cur) t.* = none;
+    }
+    const i = cur % input_len;
+    patch[i] = .{ .meter = meter, .count_rewind = count_rewind };
+    patch_tick[i] = cur;
+    apply_patch(s);
     head = cur;
     logged_hi = @min(logged_hi, cur);
     cache_n = 0;
@@ -247,6 +281,7 @@ pub fn check(s: *const GameState, level: *const Level) bool {
     if (fill(level, k, s.tick - 1)) {
         var last = cache[cache_n - 1];
         sim.step(&last, level, inputs[(s.tick - 1) % input_len]);
+        apply_patch(&last);
         if (sim.hash(&last) != h) ok = false;
     }
     cache_n = 0;
@@ -273,6 +308,11 @@ fn script(seed: u32, tick: u32) Buttons {
 }
 
 const L = &levels.all[0];
+
+/// Commit that changes nothing but the timeline (the pre-M4 behaviour).
+fn commit_plain(s: *GameState) void {
+    commit(s, current().player.rewind_meter, false);
+}
 
 fn fresh(s: *GameState) void {
     sim.init(s, L, 0, 1234);
@@ -330,7 +370,7 @@ test "rewind 100 across keyframes, commit, replay forward matches a straight run
     try testing.expectEqual(@as(u32, 200), current().tick);
     try testing.expectEqual(@as(u32, 180), cache_lo);
 
-    commit(&s);
+    commit_plain(&s);
     try testing.expect(!rewinding());
     try testing.expectEqual(@as(u32, 200), s.tick);
     try testing.expectEqual(ref[200], sim.hash(&s));
@@ -461,7 +501,7 @@ test "commit onto a new timeline, keep playing, rewind again" {
     begin(&s, L);
     var i: u32 = 0;
     while (i < 95) : (i += 1) _ = back(L).?;
-    commit(&s);
+    commit_plain(&s);
     try testing.expectEqual(@as(u32, 205), s.tick);
     try testing.expectEqual(@as(u32, 0), earliest());
 
@@ -470,7 +510,7 @@ test "commit onto a new timeline, keep playing, rewind again" {
     begin(&s, L);
     try testing.expectEqual(@as(u32, 180), cache_lo);
     try testing.expectEqual(ref[207], sim.hash(back(L).?));
-    commit(&s);
+    commit_plain(&s);
     try testing.expectEqual(@as(u32, 207), s.tick);
 
     while (s.tick < 330) {
@@ -488,4 +528,79 @@ test "commit onto a new timeline, keep playing, rewind again" {
     while (back(L)) |p| : (n += 1) try testing.expectEqual(ref[p.tick], sim.hash(p));
     try testing.expectEqual(@as(u32, 330), n);
     try testing.expectEqual(@as(u32, 0), desyncs);
+}
+
+test "a commit's meter drain and rewind count survive replay and self-check" {
+    // Reference: seed 1 to tick 300, rewind 100, resume at 200 with the
+    // meter drained to 123 and one rewind counted, seed 2 onwards.
+    var ref: [401]u32 = undefined;
+    {
+        var r: GameState = undefined;
+        fresh(&r);
+        ref[0] = sim.hash(&r);
+        var t: u32 = 0;
+        while (t < 200) : (t += 1) {
+            sim.step(&r, L, script(1, t));
+            ref[t + 1] = sim.hash(&r);
+        }
+        r.player.rewind_meter = 123;
+        r.rewinds += 1;
+        ref[200] = sim.hash(&r);
+        while (t < 400) : (t += 1) {
+            sim.step(&r, L, script(2, t));
+            ref[t + 1] = sim.hash(&r);
+        }
+    }
+    desyncs = 0;
+    var s: GameState = undefined;
+    fresh(&s);
+    reset(&s);
+    play(&s, 1, 300);
+    begin(&s, L);
+    var i: u32 = 0;
+    while (i < 100) : (i += 1) _ = back(L).?;
+    commit(&s, 123, true);
+    try testing.expectEqual(@as(u16, 123), s.player.rewind_meter);
+    try testing.expectEqual(@as(u16, 1), s.rewinds);
+    try testing.expectEqual(ref[200], sim.hash(&s));
+
+    // Forward through several keyframe checks; the first replays across
+    // the commit from keyframe 180.
+    while (s.tick < 400) {
+        const b = script(2, s.tick);
+        log_input(s.tick, b);
+        sim.step(&s, L, b);
+        after_step(&s);
+        if (s.tick % keyframe_every == 0) try testing.expect(check(&s, L));
+    }
+    try testing.expectEqual(ref[400], sim.hash(&s));
+    try testing.expectEqual(@as(u32, 0), desyncs);
+
+    // Rewinding across the commit shows the patched states, and past it
+    // the un-patched original ones.
+    begin(&s, L);
+    while (back(L)) |p| try testing.expectEqual(ref[p.tick], sim.hash(p));
+    try testing.expectEqual(@as(u32, 0), current().tick);
+    try testing.expectEqual(@as(u32, 0), desyncs);
+
+    // Committing before the old commit drops its patch: replaying through
+    // tick 200 on the new timeline no longer drains the meter.
+    commit_plain(&s);
+    try testing.expectEqual(@as(u32, 0), s.tick);
+    play(&s, 1, 260);
+    var r: GameState = undefined;
+    fresh(&r);
+    var t: u32 = 0;
+    while (t < 260) : (t += 1) sim.step(&r, L, script(1, t));
+    try testing.expectEqual(sim.hash(&r), sim.hash(&s));
+    try testing.expectEqual(@as(u32, 0), desyncs);
+    begin(&s, L);
+    i = 0;
+    while (i < 70) : (i += 1) _ = back(L).?;
+    try testing.expectEqual(@as(u32, 190), current().tick);
+    var r2: GameState = undefined;
+    fresh(&r2);
+    t = 0;
+    while (t < 190) : (t += 1) sim.step(&r2, L, script(1, t));
+    try testing.expectEqual(sim.hash(&r2), sim.hash(current()));
 }

@@ -247,7 +247,10 @@ ticks (palette set swap, free) and sets the portrait's "ouch" frame for
   is topped up to at least 3 s (an emergency reserve, granted once per
   death). While frozen only B works. Releasing B at a moment where HP > 0
   resumes play. If the meter empties while still dead, the level restarts
-  (the only "game over" in the game). No lives.
+  (the only "game over" in the game). No lives. (M4 note: with the
+  reserve, one tick back always reaches HP > 0, so the restart only
+  triggers when there is no history at all; it is kept as a safety net,
+  holding B for one second while dead with nothing to rewind into.)
 - Tension: rewinding to dodge a hit also un-does the kills you made since,
   so the meter is a resource, not a free undo. Combined with the spider's
   freeze web and the wasp's charge, that is the game.
@@ -513,3 +516,9 @@ Level grid 64x64 with Wolf3D import (section 6.1): yes.
   `docs/preview_m3.gif`. Levels are generated on the host now (the comptime
   parser broke the macOS compiler). Hardware gate still pending; the
   emulated benchmark shows 23% of the frame budget used at worst.
+- 2026-09-29: M4 (hold-B rewind through the whole GameState, death rule
+  with the 3 s reserve, Iris tint with scanlines and the `<<` marker,
+  rewind sweep and purple neopixels, keyframe self-check on wasm/Debug
+  builds, `check_determinism.mjs --rewind-at`) tagged `snoutenstein/m4`,
+  `docs/preview_m4.gif`. Section 9.1's restart-on-empty-meter is a
+  fallback only (note there). Hardware gate still pending.

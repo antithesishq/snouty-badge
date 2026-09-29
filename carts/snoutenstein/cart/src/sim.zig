@@ -514,6 +514,19 @@ pub fn hash(s: *const GameState) u32 {
     return h;
 }
 
+/// `hash` with the rewind bookkeeping zeroed (`player.rewind_meter`,
+/// `player.rewind_regen`, `rewinds`). A state committed by a rewind
+/// differs from the state that was live at that tick only in those
+/// fields (the meter was drained, the counter bumped), so this is what
+/// `check_determinism.mjs --rewind-at` compares (PLAN.md M4).
+pub fn hash_gameplay(s: *const GameState) u32 {
+    var c = s.*;
+    c.player.rewind_meter = 0;
+    c.player.rewind_regen = 0;
+    c.rewinds = 0;
+    return hash(&c);
+}
+
 // ---------------------------------------------------------------- tests
 
 const testing = std.testing;
@@ -741,6 +754,21 @@ test "pickups clear their bit and clamp" {
     run(&s, L, .{ .down = true }, 400);
     try testing.expectEqual(@as(i16, 75), s.player.hp);
     try testing.expectEqual(@as(u8, 10), s.player.ammo_spray);
+}
+
+test "hash_gameplay ignores the rewind meter and counter" {
+    var room_st: level_parse.Parsed = undefined;
+    const room = try level_parse.parse_level(&room_st, "room", room_src, 0);
+    var a: GameState = undefined;
+    init(&a, &room, 0, 7);
+    var b = a;
+    b.player.rewind_meter = 12;
+    b.player.rewind_regen = 3;
+    b.rewinds = 2;
+    try testing.expect(hash(&a) != hash(&b));
+    try testing.expectEqual(hash_gameplay(&a), hash_gameplay(&b));
+    b.player.hp -= 1;
+    try testing.expect(hash_gameplay(&a) != hash_gameplay(&b));
 }
 
 test "rewind meter regenerates 1 per 6 ticks up to 600" {
