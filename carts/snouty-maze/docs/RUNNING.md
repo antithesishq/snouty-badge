@@ -43,7 +43,7 @@ Then from `carts/snouty-maze/`:
 
 ```sh
 node tools/check_golden.mjs   # golden-image regression (needs zig build first)
-node tools/check_cycle.mjs    # screensaver loop, actor triggers and LEDs (runs A..F)
+node tools/check_cycle.mjs    # screensaver loop, actor triggers and LEDs (runs A..I)
 ```
 
 `zig build` writes, in the root `zig-out/`:
@@ -77,7 +77,7 @@ the camera over.
 | Input        | Autopilot states                                  | Takeover (MANUAL)                  | Fly (debug builds only)            |
 |--------------|---------------------------------------------------|------------------------------------|------------------------------------|
 | Stick        | While walking or turning: take the camera over    | Up / Down: one cell forward / back (held repeats); Left / Right: pivot 90 degrees; a wall blocks the move | Walk / turn (M1 controls: 2 cells/s, 90 degrees/s; B + Up/Down rises/sinks) |
-| Select       | Toggle the neopixels (default off)                | Toggle the neopixels               | Toggle the debug overlay           |
+| Select       | No-op (flips the dormant LED flag; see LEDs)      | Same                               | Toggle the debug overlay           |
 | Start        | Toggle the name strip permanently on/off          | Same                               | Reset the camera to the start cell |
 | A            | Skip to PAUSE (start the finish sequence now; ignored during TELEPORT) | Same         | + Up/Down: pitch                   |
 | B + Select   | Toggle fly mode (only with `-Ddebug_overlay=true`) | Same                              | Back to autopilot (resumes WALK from the nearest cell centre, heading = nearest quadrant) |
@@ -96,10 +96,16 @@ Select, B+Select toggles it during the screensaver.
 
 ### LEDs
 
-The five neopixels are off at start; Select (in any autopilot state)
-toggles them. They are dim on purpose: every channel stays at or below
-10/255, because the badge LEDs are painfully bright above that. All five
-show the same colour:
+The neopixels are off: the cart never writes non-zero values. A
+coworker's badge showed the LEDs are unusably bright even at 1%
+(2026-09-29, `docs/NEOPIXELS.md` in the repository root), so the LED
+effects are compiled out. Select in the autopilot states still flips
+the internal `leds.enabled` flag but does nothing visible.
+
+`zig build -Dcart=snouty-maze -Dneopixels=true` re-enables the dormant
+effects for development. In that build the LEDs are off at start,
+Select (in any autopilot state) toggles them, every channel stays at or
+below 10/255, and all five show the same colour:
 
 | When | Colour |
 |------|--------|
@@ -270,8 +276,10 @@ M3 actor and LED exports:
 - `debug_roll_deg`: camera roll, 0..359 (180 after one flip)
 - `debug_fade_level`: current dissolve level, 0..16 (the larger of
   `debug_fade` and the teleport fade)
-- `debug_leds` (1 when the LEDs are on), `debug_led_max` (largest channel
-  written this tick, never above 10)
+- `debug_leds` (1 when `leds.enabled` is set, i.e. after one Select in
+  the screensaver; the strip stays dark regardless in the default
+  build), `debug_led_max` (largest neopixel channel: always 0 in the
+  default build, at most 10 with `-Dneopixels=true`)
 
 ### Screensaver loop: `tools/check_cycle.mjs`
 
@@ -297,8 +305,10 @@ Each run is one `preview.mjs --quiet` with `--call`s, `--press`es and
 - E teleport: `--call debug_place:20100` (sphere in (1, 0)), 100 ticks;
   `debug_teleports == 1`, `debug_state < 2` (walking again) and
   `debug_fade_level == 0`
-- F leds: Select at tick 0, 10 ticks; `debug_leds == 1` and
-  `0 < debug_led_max <= 10`
+- F leds: Select at tick 0, 10 ticks; `debug_leds == 1` (the flag
+  flipped) and `debug_led_max == 0` (the strip stays dark). With
+  `--neopixels`, for a wasm built with `-Dneopixels=true`, it expects
+  `0 < debug_led_max <= 10` instead (see below)
 - G takeover: Up held for ticks 0..44; `debug_state == 8` (MANUAL) and
   the camera moved to cell (1, 0)
 - H idle return: Right at tick 0, 400 ticks; back in WALK or TURN
@@ -308,10 +318,19 @@ Each run is one `preview.mjs --quiet` with `--call`s, `--press`es and
 
 It prints PASS/FAIL per run with the final state, cycle count, cell and
 heading (plus the run's own exports), and preview's error lines on a
-FAIL. Options `--wasm FILE`, `--seed S` (default 1). Exit 0 all pass, 2
+FAIL. Options `--wasm FILE`, `--seed S` (default 1), `--neopixels`
+(F expects lit LEDs; only for a `-Dneopixels=true` wasm). Exit 0 all pass, 2
 usage error, 3 any failure. D and E place the actor in (1, 0) because that
 is the first cell the seed 1 camera walks into; with other seeds they are
 not meaningful (seed 4, for one, never enters (1, 0) in 100 ticks).
+
+To keep the dormant LED path from rotting, build it into its own prefix
+(so the default wasm in `zig-out/` stays as it is) and run F against it:
+
+```sh
+zig build -Dcart=snouty-maze -Dneopixels=true --prefix /tmp/maze-neopixels   # from the repository root
+node tools/check_cycle.mjs --wasm /tmp/maze-neopixels/bin/snouty-maze.wasm --neopixels --only F
+```
 
 Teleports restart the walk from a random cell, so the unattended finish
 time now varies more than in M2. First tick with `debug_cycles >= 1`

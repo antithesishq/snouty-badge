@@ -499,7 +499,8 @@ is downscaled to pixel art. No audio support at all ("it'll be annoying").
   on the floor-aligned quad (Adrian: "just billboard snouty").
 - Audio removed from the design: SPEC section 9 becomes neopixels only,
   `audio.zig` leaves the M3 list, decision 9 updated. Select keeps the
-  LED toggle.
+  LED toggle. (Superseded 2026-09-29: neopixels off, see the note under
+  "LEDs" below.)
 - Goldens: unchanged unless a pose shows an actor (none does yet).
 
 ## A2 result (2026-09-27, tag `a2`)
@@ -544,7 +545,7 @@ saying so in the report.
 
 | Input | Autopilot states | Fly (debug) |
 |-------|------------------|-------------|
-| Select | Toggle the neopixels (default off) | Toggle the debug overlay |
+| Select | Toggle the neopixels (default off; since 2026-09-29 a no-op unless `-Dneopixels=true`) | Toggle the debug overlay |
 | Start | Toggle name strip permanently on/off | Reset camera to start cell |
 | A | Skip to PAUSE | + Up/Down: pitch |
 | B + Select | Toggle fly mode | Back to autopilot |
@@ -682,6 +683,16 @@ gone). Keep every other export.
 - Cost report: extra polygons at the start pose and the overhead pose.
 
 ## LEDs (C3 owns `leds.zig`)
+
+Superseded 2026-09-29 (`docs/NEOPIXELS.md`): neopixels are off. A
+coworker's badge showed the LEDs are unusably bright even at 1%, so the
+cart never writes non-zero values. The effects below are compiled out:
+`update()` writes through `write_pixels`, a no-op unless built with
+`-Dneopixels=true`, which re-enables them for development. Select in the
+screensaver states still flips `enabled` but is a no-op for the player;
+check_cycle F expects `debug_leds == 1`, `debug_led_max == 0` (with
+`--neopixels` against a `-Dneopixels=true` wasm, the old
+`0 < debug_led_max <= 10`). The M3 plan as written:
 
 `pub var enabled: bool = false`; `pub fn update(state: autopilot.State,
 flips: u32, teleports: u32) void` writes all five `cart.neopixels` every

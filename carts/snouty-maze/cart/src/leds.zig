@@ -1,7 +1,12 @@
-//! Neopixels (SPEC section 9): off by default, Select toggles. Dim brick
+//! Neopixels (SPEC section 9): compiled out. The cart never writes a
+//! non-zero value unless built with -Dneopixels=true (docs/NEOPIXELS.md:
+//! the badge LEDs are unusably bright even at 1%). Select still flips
+//! `enabled`, which does nothing visible in the default build.
+//!
+//! Dormant effects (only with -Dneopixels=true, Select toggles): dim brick
 //! while walking, a purple pulse on a smiley flip, white during a
 //! teleport, slow breathing overhead, amber in MANUAL (M4 takeover).
-//! Every channel stays at or below 10.
+//! Every channel stays at or below `max_level`.
 //!
 //! PLAN.md M3 "LEDs": the base colour comes from the autopilot state, a
 //! change in `flips` adds a 90-tick fading purple pulse on top, each
@@ -9,6 +14,7 @@
 const cart = @import("cart-api");
 const math = @import("math.zig");
 const autopilot = @import("autopilot.zig");
+const build_options = @import("build_options");
 
 pub var enabled: bool = false;
 
@@ -16,7 +22,9 @@ pub fn toggle() void {
     enabled = !enabled;
 }
 
-/// Hard ceiling for every channel (the badge LEDs are blinding above it).
+/// Ceiling for every channel of the dormant effects. Irrelevant in the
+/// default build: the LEDs are compiled out unless built with
+/// -Dneopixels=true, and then this still caps them.
 pub const max_level: u8 = 10;
 pub const pulse_ticks: u32 = 90;
 pub const breath_ticks: u32 = 180;
@@ -36,7 +44,8 @@ var last_flips: u32 = 0;
 /// Ticks left in the purple pulse (0 = none).
 var pulse_left: u32 = 0;
 
-/// Writes all five neopixels for this tick. `flips` and `teleports` are
+/// Computes this tick's colour and hands it to `write_pixels` (a no-op
+/// unless built with -Dneopixels=true). `flips` and `teleports` are
 /// the actor event counters; a change in `flips` since the last call
 /// starts the purple pulse. The teleport flash follows the TELEPORT state
 /// itself, so `teleports` is not needed beyond the interface.
@@ -54,7 +63,13 @@ pub fn update(state: autopilot.State, flips: u32, teleports: u32) void {
 
     const c = if (enabled) colour(state, pulse) else Rgb{ .r = 0, .g = 0, .b = 0 };
     const px: cart.NeopixelColor = .{ .g = c.g, .r = c.r, .b = c.b };
-    for (0..cart.neopixels.len) |i| cart.neopixels[i] = px;
+    write_pixels(.{ px, px, px, px, px });
+}
+
+/// The only place in the cart that writes cart.neopixels (docs/NEOPIXELS.md).
+fn write_pixels(c: [5]cart.NeopixelColor) void {
+    if (!build_options.neopixels) return; // the OS zeroes the strip at cart start
+    for (c, 0..) |p, i| cart.neopixels[i] = p;
 }
 
 /// Base colour for the state plus the pulse (`pulse` ticks left of

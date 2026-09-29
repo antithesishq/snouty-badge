@@ -66,8 +66,9 @@ pub fn update() void {
 
     // B+Select (either order) toggles fly, compiled in only with
     // -Ddebug_overlay=true (debug_set_camera still enters fly on wasm);
-    // Select alone toggles the neopixels in the screensaver states and
-    // the debug overlay in fly.
+    // Select alone flips leds.enabled in the screensaver states (a no-op for
+    // the player: the neopixels are compiled out unless -Dneopixels=true)
+    // and toggles the debug overlay in fly.
     if (build_options.debug_overlay and ((input.pressed(.select) and input.held(.b)) or (input.pressed(.b) and input.held(.select)))) {
         autopilot.toggle_fly(&world);
     } else if (input.pressed(.select)) {
@@ -305,7 +306,8 @@ fn debug_roll_deg() callconv(.c) u32 {
     const r: u32 = camera.cam.roll;
     return ((r * 360 + 32768) >> 16) % 360;
 }
-/// 1 when the neopixels are enabled (Select in the screensaver states).
+/// 1 when leds.enabled is set (Select in the screensaver states); the strip
+/// stays dark regardless unless built with -Dneopixels=true.
 fn debug_leds() callconv(.c) u32 {
     return @intFromBool(leds.enabled);
 }
@@ -314,7 +316,8 @@ fn debug_leds() callconv(.c) u32 {
 fn debug_manual_idle() callconv(.c) u32 {
     return autopilot.manual_idle;
 }
-/// Largest channel value across the five neopixels (must stay <= 10).
+/// Largest channel value across the five neopixels (0 in the default build;
+/// <= 10 with -Dneopixels=true).
 fn debug_led_max() callconv(.c) u32 {
     var hi: u32 = 0;
     for (0..cart.neopixels.len) |i| {
