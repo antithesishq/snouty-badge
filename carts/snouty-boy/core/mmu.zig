@@ -14,16 +14,44 @@ const apu = @import("apu.zig");
 pub const MbcKind = enum(u8) { none, mbc1, mbc3, mbc5 };
 
 /// Bytes of `Gb.cart_ram` a ROM can ever touch, from header byte 0x149: 0
-/// without RAM, 2 KB for code 1 (mirrored, see `Mbc.ram_mask`), else the
-/// full 8 KB (larger RAMs are capped, SPEC.md 11). Comptime-callable, so the
-/// frontend sizes its keyframes to the embedded ROM.
+/// without RAM, 2 KB for code 1 (mirrored, see `Mbc.ram_mask`), 8 KB for
+/// code 2. Codes 3..5 (32, 128, 64 KB) are capped at 32 KB (SPEC.md 19.1;
+/// M6 track A implements the banking). Comptime-callable, so the frontend
+/// sizes its buffer and keyframes to the embedded ROM.
 pub fn cart_ram_len(rom: []const u8) usize {
     if (rom.len < 0x150) return 0;
     return switch (rom[0x149]) {
         0 => 0,
         1 => 0x800,
-        else => 0x2000,
+        2 => 0x2000,
+        else => 0x2000, // M6.0 stub: track A raises this to 0x8000 with RAM banking
     };
+}
+
+/// Cached bank offsets (SPEC.md 19.1). Owner: track A (VBK, SVBK writes).
+pub const Banks = struct {
+    /// Byte offset of the VRAM bank at 0x8000 into `Gb.vram` (0 or 0x2000).
+    vram_off: u16 = 0,
+    /// Byte offset of the WRAM bank at 0xD000 into `Gb.wram` (0x1000 * bank,
+    /// bank 1..7).
+    wram_off: u16 = 0x1000,
+};
+
+/// CGB general-purpose / HBlank DMA (HDMA1..5). Owner: track A.
+pub const Hdma = struct {
+    src: u16 = 0,
+    dst: u16 = 0,
+    /// Blocks of 16 bytes left in an HBlank transfer.
+    blocks_left: u8 = 0,
+    /// An HBlank transfer is running.
+    active: bool = false,
+};
+
+/// Called by the PPU on entering mode 0 on visible lines with the LCD on:
+/// copies one 16-byte HBlank DMA block if a transfer is active. Owner:
+/// track A (M6.0 stub does nothing).
+pub fn hdma_hblank(gb: *Gb) void {
+    _ = gb;
 }
 
 pub const Mbc = struct {
@@ -184,15 +212,16 @@ pub fn read8(gb: *Gb, addr: u16) u8 {
             const off = gb.mbc.rom_bank_offset + (addr - 0x4000);
             return if (off < gb.rom.len) gb.rom[off] else 0xFF;
         },
-        0x8, 0x9 => return gb.vram[addr - 0x8000],
+        0x8, 0x9 => return gb.vram[gb.banks.vram_off + (addr - 0x8000)],
         0xA, 0xB => {
             if (!gb.mbc.ram_active) return 0xFF;
             return gb.cart_ram[(gb.mbc.ram_bank_offset + (addr - 0xA000)) & gb.mbc.ram_mask];
         },
-        0xC, 0xD => return gb.wram[addr - 0xC000],
+        0xC => return gb.wram[addr - 0xC000],
+        0xD => return gb.wram[gb.banks.wram_off + (addr - 0xD000)],
         0xE => return gb.wram[addr - 0xE000],
         0xF => {
-            if (addr < 0xFE00) return gb.wram[addr - 0xE000];
+            if (addr < 0xFE00) return gb.wram[gb.banks.wram_off + (addr - 0xF000)];
             if (addr >= 0xFF80) {
                 if (addr == 0xFFFF) return gb.ie;
                 return gb.hram[addr - 0xFF80];
@@ -223,15 +252,16 @@ fn read_io(gb: *Gb, reg: u8) u8 {
 pub fn write8(gb: *Gb, addr: u16, v: u8) void {
     switch (@as(u4, @truncate(addr >> 12))) {
         0x0...0x7 => gb.mbc.write(addr, v),
-        0x8, 0x9 => gb.vram[addr - 0x8000] = v,
+        0x8, 0x9 => gb.vram[gb.banks.vram_off + (addr - 0x8000)] = v,
         0xA, 0xB => {
             if (gb.mbc.ram_active) gb.cart_ram[(gb.mbc.ram_bank_offset + (addr - 0xA000)) & gb.mbc.ram_mask] = v;
         },
-        0xC, 0xD => gb.wram[addr - 0xC000] = v,
+        0xC => gb.wram[addr - 0xC000] = v,
+        0xD => gb.wram[gb.banks.wram_off + (addr - 0xD000)] = v,
         0xE => gb.wram[addr - 0xE000] = v,
         0xF => {
             if (addr < 0xFE00) {
-                gb.wram[addr - 0xE000] = v;
+                gb.wram[gb.banks.wram_off + (addr - 0xF000)] = v;
             } else if (addr >= 0xFF80) {
                 if (addr == 0xFFFF) gb.ie = v else gb.hram[addr - 0xFF80] = v;
             } else if (addr < 0xFEA0) {

@@ -31,8 +31,13 @@ pub const Ppu = struct {
     wy_hit: bool = false,
     /// Previous STAT interrupt line, for rising-edge detection.
     stat_line: bool = false,
-    /// Scratch for the line being rendered (final shades 0..3).
+    /// Scratch for the line being rendered (final shades 0..3, or CGB
+    /// colour indices, see `gb_mod.LineSink`).
     line: [gb_mod.screen_w]u8 = @splat(0),
+    /// CGB palette RAM, 8 palettes x 4 colours x RGB555 little endian
+    /// (BCPD / OCPD). Owner: track B.
+    bg_pal: [64]u8 = @splat(0xFF),
+    obj_pal: [64]u8 = @splat(0xFF),
 };
 
 // ---- STAT register bits ----
@@ -58,11 +63,11 @@ pub inline fn lcd_on(gb: *const Gb) bool {
     return (gb.io[Reg.lcdc] & 0x80) != 0;
 }
 
-/// Advance `m` M-cycles (4 T each).
-pub fn tick(gb: *Gb, m: u8) void {
+/// Advance `dots` dots (4 per M-cycle at normal speed, 2 in double speed).
+pub fn tick(gb: *Gb, dots: u16) void {
     if (!lcd_on(gb)) return;
     const p = &gb.ppu;
-    p.line_t += @as(u16, m) * 4;
+    p.line_t += dots;
     while (p.line_t >= p.next_t) {
         switch (p.mode) {
             .oam_scan => {

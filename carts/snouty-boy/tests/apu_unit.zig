@@ -10,7 +10,7 @@ const expectEqual = std.testing.expectEqual;
 const zero_rom: [0x8000]u8 = @splat(0);
 
 fn fresh() Gb {
-    var gb = Gb.init(&zero_rom);
+    var gb = Gb.init(&zero_rom, .dmg, &.{});
     gb.write8(0xFF26, 0x00); // power cycle: clean registers, sequencer at 0
     gb.write8(0xFF26, 0x80);
     return gb;
@@ -25,12 +25,12 @@ fn steps(gb: *Gb, n: u32) void {
     var i: u32 = 0;
     while (i < n) : (i += 1) {
         var m: u32 = 0;
-        while (m < apu.seq_period) : (m += 4) apu.tick(gb, 4);
+        while (m < apu.seq_period) : (m += 4) apu.tick(gb, 16);
     }
 }
 
 test "apu post-boot NR52 reads 0xF1" {
-    var gb = Gb.init(&zero_rom);
+    var gb = Gb.init(&zero_rom, .dmg, &.{});
     try expectEqual(@as(u8, 0xF1), nr52(&gb));
     try expectEqual(@as(u8, 0), apu.pick_voice(&gb).channel);
 }
@@ -295,7 +295,7 @@ test "apu state survives a keyframe round trip" {
     steps(&gb, 3);
     var k: Gb.Keyframe = undefined;
     gb.snapshot(&k);
-    var gb2 = Gb.init(&zero_rom);
+    var gb2 = Gb.init(&zero_rom, .dmg, &.{});
     gb2.restore(&k);
     try std.testing.expectEqualDeep(apu.pick_voice(&gb), apu.pick_voice(&gb2));
     try expectEqual(gb.apu.seq, gb2.apu.seq);
@@ -323,7 +323,8 @@ test "apu 2048.gb 600 idle frames keep the model consistent" {
     const rom = load_2048() orelse return error.SkipZigTest;
     const gb = try std.testing.allocator.create(Gb);
     defer std.testing.allocator.destroy(gb);
-    gb.* = Gb.init(rom);
+    var ram: [0x800]u8 = undefined;
+    gb.* = Gb.init(rom, .dmg, &ram);
     var f: u32 = 0;
     while (f < 600) : (f += 1) {
         gb.step_frame(0);

@@ -9,4 +9,7 @@ test {
     _ = @import("apu_unit.zig");
     _ = @import("ring_unit.zig");
     _ = @import("determinism.zig");
+    _ = @import("cgb_unit.zig");
+    _ = @import("cgb_acid2.zig");
+    _ = @import("kstore_unit.zig");
 }

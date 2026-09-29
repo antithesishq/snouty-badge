@@ -48,13 +48,21 @@ fn load_rom(gpa: std.mem.Allocator) ![]u8 {
     };
 }
 
-/// Name of the first differing field, or null if equal.
+/// Name of the first differing field (`Small` fields by their own name),
+/// or null if equal.
 fn diff(a: *const Gb.Keyframe, b: *const Gb.Keyframe) ?[]const u8 {
-    inline for (@typeInfo(Gb.Keyframe).@"struct".field_names) |name| {
+    inline for (@typeInfo(Gb.Small).@"struct".field_names) |name| {
+        if (!std.meta.eql(@field(a.small, name), @field(b.small, name))) return name;
+    }
+    inline for (.{ "vram", "wram", "cart_ram" }) |name| {
         if (!std.meta.eql(@field(a, name), @field(b, name))) return name;
     }
     return null;
 }
+
+/// Cart RAM buffers for the two consoles a test runs (2048-gb has 2 KB).
+var ram_a: [Gb.max_cart_ram]u8 = undefined;
+var ram_b: [Gb.max_cart_ram]u8 = undefined;
 
 test "determinism: replaying logged input from each keyframe reproduces the next" {
     const gpa = std.testing.allocator;
@@ -71,7 +79,7 @@ test "determinism: replaying logged input from each keyframe reproduces the next
     // The live run.
     const gb = try gpa.create(Gb);
     defer gpa.destroy(gb);
-    gb.* = Gb.init(rom);
+    gb.* = Gb.init(rom, .dmg, &ram_a);
     gb.snapshot(&kf[0]);
     for (pads, 1..) |p, f| {
         gb.step_frame(p);
@@ -86,7 +94,7 @@ test "determinism: replaying logged input from each keyframe reproduces the next
     const got = try gpa.create(Gb.Keyframe);
     defer gpa.destroy(got);
     for (0..keyframes) |k| {
-        re.* = Gb.init(rom);
+        re.* = Gb.init(rom, .dmg, &ram_b);
         re.restore(&kf[k]);
         for (pads[k * interval ..][0..interval]) |p| re.step_frame(p);
         re.snapshot(got);
@@ -118,11 +126,11 @@ test "determinism: restore then step equals the live run frame by frame" {
     const kb = try gpa.create(Gb.Keyframe);
     defer gpa.destroy(kb);
 
-    a.* = Gb.init(rom);
+    a.* = Gb.init(rom, .dmg, &ram_a);
     for (pads[0..30]) |p| a.step_frame(p);
     a.snapshot(k0);
 
-    b.* = Gb.init(rom);
+    b.* = Gb.init(rom, .dmg, &ram_b);
     for (0..77) |i| b.step_frame(@truncate(i * 37)); // unrelated history
     b.restore(k0);
 
@@ -154,7 +162,7 @@ test "determinism: KeyframeWith(cart_ram_len) round trip" {
     const full2 = try gpa.create(Gb.Keyframe);
     defer gpa.destroy(full2);
 
-    a.* = Gb.init(rom);
+    a.* = Gb.init(rom, .dmg, &ram_a);
     for (0..45) |i| a.step_frame(if (i % 9 < 3) Pad.left else 0);
     // The 2 KB RAM mirrors: 0xA800 is 0xA000.
     a.write8(0x0000, 0x0A);
@@ -168,5 +176,5 @@ test "determinism: KeyframeWith(cart_ram_len) round trip" {
     a.restore(k);
     a.snapshot(full2);
     try std.testing.expectEqual(@as(?[]const u8, null), diff(full, full2));
-    try std.testing.expectEqual(@sizeOf(Gb.Keyframe) - 0x1800, @sizeOf(Small));
+    try std.testing.expectEqual(@sizeOf(Gb.Keyframe) - (Gb.max_cart_ram - 0x800), @sizeOf(Small));
 }

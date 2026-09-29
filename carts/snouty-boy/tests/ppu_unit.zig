@@ -30,7 +30,7 @@ const Capture = struct {
 
 /// LCD on, BG on, 0x8000 tile data, 0x9800 BG map, identity palettes.
 fn setup(gb: *Gb, cap: *Capture) void {
-    gb.* = Gb.init(&zero_rom);
+    gb.* = Gb.init(&zero_rom, .dmg, &.{});
     gb.line_sink = cap.sink();
     ppu.write_reg(gb, Reg.lcdc, 0x91);
     gb.io[Reg.bgp] = 0xE4;
@@ -71,7 +71,7 @@ fn run_to_line(gb: *Gb, cap: *Capture, ly: u8) !void {
     var guard: u32 = 0;
     while (cap.last_ly != ly) : (guard += 1) {
         if (guard > core.frame_m_cycles * 2) return error.LineNeverRendered;
-        ppu.tick(gb, 1);
+        ppu.tick(gb, 4);
     }
 }
 
@@ -341,7 +341,7 @@ test "ppu mode timing, LY and vblank interrupt" {
             return error.TestExpectedEqual;
         }
         try expectEqual(@as(u8, 0), gb.io[Reg.ly]);
-        ppu.tick(&gb, 1);
+        ppu.tick(&gb, 4);
     }
     try expectEqual(@as(u8, 1), ppu.read_reg(&gb, Reg.ly));
     try expectEqual(@as(u8, 2), stat_mode(&gb));
@@ -352,13 +352,13 @@ test "ppu mode timing, LY and vblank interrupt" {
     while (t < 143 * 456) {
         const m: u8 = @intCast(1 + sizes % 6);
         sizes += 1;
-        ppu.tick(&gb, m);
+        ppu.tick(&gb, @as(u16, m) * 4);
         t += @as(u32, m) * 4;
         try expectEqual(@as(u8, @intCast(t / 456)), gb.io[Reg.ly]);
     }
     try expect(!gb.vblank_hit);
     try expectEqual(@as(u8, 0), gb.io[Reg.if_] & Irq.vblank);
-    while (t < 144 * 456) : (t += 4) ppu.tick(&gb, 1);
+    while (t < 144 * 456) : (t += 4) ppu.tick(&gb, 4);
     try expectEqual(@as(u8, 144), gb.io[Reg.ly]);
     try expect(gb.vblank_hit);
     try expectEqual(Irq.vblank, gb.io[Reg.if_] & Irq.vblank);
@@ -366,11 +366,11 @@ test "ppu mode timing, LY and vblank interrupt" {
     try expectEqual(@as(u32, 144), cap.count);
     // Stays in mode 1 through line 153, then wraps to line 0 mode 2.
     while (t < 154 * 456 - 4) : (t += 4) {
-        ppu.tick(&gb, 1);
+        ppu.tick(&gb, 4);
         try expectEqual(@as(u8, 1), stat_mode(&gb));
     }
     try expectEqual(@as(u8, 153), gb.io[Reg.ly]);
-    ppu.tick(&gb, 1);
+    ppu.tick(&gb, 4);
     try expectEqual(@as(u8, 0), gb.io[Reg.ly]);
     try expectEqual(@as(u8, 2), stat_mode(&gb));
     try expectEqual(@as(u32, 144), cap.count);
@@ -383,13 +383,13 @@ const expect = std.testing.expect;
 fn count_stat_irqs_until(gb: *Gb, ly: u8, extra_t: u32) u32 {
     var n: u32 = 0;
     while (gb.io[Reg.ly] != ly) {
-        ppu.tick(gb, 1);
+        ppu.tick(gb, 4);
         if (gb.io[Reg.if_] & Irq.stat != 0) n += 1;
         gb.io[Reg.if_] = 0;
     }
     var t: u32 = 0;
     while (t < extra_t) : (t += 4) {
-        ppu.tick(gb, 1);
+        ppu.tick(gb, 4);
         if (gb.io[Reg.if_] & Irq.stat != 0) n += 1;
         gb.io[Reg.if_] = 0;
     }
@@ -453,7 +453,7 @@ test "ppu LCD off and on" {
     try expectEqual(@as(u8, 0), ppu.read_reg(&gb, Reg.ly));
     try expectEqual(@as(u8, 0), stat_mode(&gb));
     const seen = cap.count;
-    for (0..core.frame_m_cycles) |_| ppu.tick(&gb, 1);
+    for (0..core.frame_m_cycles) |_| ppu.tick(&gb, 4);
     try expectEqual(seen, cap.count);
     try expectEqual(@as(u8, 0), ppu.read_reg(&gb, Reg.ly));
     try expect(!gb.vblank_hit);

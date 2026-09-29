@@ -3,6 +3,9 @@
 const std = @import("std");
 const core = @import("core");
 
+/// Cart RAM for the consoles below (the MBC tests declare RAM in the header).
+var test_ram: [core.Gb.max_cart_ram]u8 = undefined;
+
 const frame_budget = 4000;
 
 fn run_blargg(comptime name: []const u8) !void {
@@ -10,7 +13,7 @@ fn run_blargg(comptime name: []const u8) !void {
     // Gb is ~33 KB; keep it off the test thread's stack.
     const gb = try std.testing.allocator.create(core.Gb);
     defer std.testing.allocator.destroy(gb);
-    gb.* = core.Gb.init(rom);
+    gb.* = core.Gb.init(rom, .dmg, &test_ram);
     var frame: u32 = 0;
     while (frame < frame_budget) : (frame += 1) {
         gb.step_frame(0);
@@ -73,7 +76,7 @@ test "post-boot state matches DMG values" {
     rom[0x147] = 0x01; // MBC1
     const gb = try std.testing.allocator.create(core.Gb);
     defer std.testing.allocator.destroy(gb);
-    gb.* = core.Gb.init(&rom);
+    gb.* = core.Gb.init(&rom, .dmg, &test_ram);
     const c = gb.cpu;
     try std.testing.expectEqual(@as(u8, 0x01), c.a);
     try std.testing.expectEqual(@as(u8, 0xB0), c.f);
@@ -125,7 +128,7 @@ test "mbc1 bank switching and 0x20 quirk" {
     rom[0x149] = 0x02;
     const gb = try std.testing.allocator.create(core.Gb);
     defer std.testing.allocator.destroy(gb);
-    gb.* = core.Gb.init(rom);
+    gb.* = core.Gb.init(rom, .dmg, &test_ram);
     try std.testing.expectEqual(@as(u8, 1), gb.read8(0x4000));
     gb.write8(0x2000, 0x05);
     try std.testing.expectEqual(@as(u8, 5), gb.read8(0x4000));
@@ -147,7 +150,7 @@ test "timer: TIMA at 262144 Hz and overflow irq" {
     var rom: [0x8000]u8 = @splat(0);
     const gb = try std.testing.allocator.create(core.Gb);
     defer std.testing.allocator.destroy(gb);
-    gb.* = core.Gb.init(&rom);
+    gb.* = core.Gb.init(&rom, .dmg, &test_ram);
     gb.write8(0xFF04, 0); // reset DIV
     gb.write8(0xFF06, 0xFE); // TMA
     gb.write8(0xFF05, 0xFE); // TIMA

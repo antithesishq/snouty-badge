@@ -22,6 +22,8 @@ comptime {
 }
 
 var gb: core.Gb = undefined;
+/// Cart RAM, sized from the embedded ROM's header.
+var cart_ram: [core.mmu.cart_ram_len(rom.data)]u8 = undefined;
 
 pub const State = enum(u32) { splash = 0, running = 1, menu = 2 };
 var state: State = .splash;
@@ -31,7 +33,7 @@ pub fn start() void {
     cart.set_vsync_enabled(1000.0 / 60.0);
     cart.set_double_buffer_mode(.no_copy_full_frame);
     video.init();
-    gb = core.Gb.init(rom.data);
+    gb = core.Gb.init(rom.data, core.default_model(rom.data), &cart_ram);
     gb.line_sink = video.sink();
     rewind.reset(&gb);
 }

@@ -55,7 +55,7 @@ Checked in `../../sycl-badge` (`src/os/cart/api.zig`, `src/cart/cart_ram.ld`,
 
 ## 3. The machine being emulated
 
-DMG (original Game Boy), no Game Boy Color in scope (section 18, item 8).
+DMG (original Game Boy); Game Boy Color added in section 19 (M6, M7).
 
 - CPU: Sharp SM83, 4.194304 MHz, 1 M-cycle = 4 T-cycles. One frame is
   70,224 T-cycles (17,556 M-cycles) at 59.73 Hz. The emulator runs exactly
@@ -409,8 +409,118 @@ except the ROM, which he will provide.
    under 3 s.
 6. Sound approximation on by default, toggle in the menu.
 7. Keyframes every 30 frames (0.5 s steps).
-8. Game Boy Color out of scope; M5 stretch at most.
+8. Game Boy Color out of scope; M5 stretch at most. Reopened 2026-09-29:
+   Adrian asked for the Color upgrade, designed in section 19.
 9. Tag line "verified by deterministic replay" on the menu title: yes.
+
+## 19. Game Boy Color (M6, M7; added 2026-09-29)
+
+Adrian asked on 2026-09-29 for Snouty Boy to emulate the Game Boy Color.
+It is an upgrade of this cart, not a new one: one core with a model
+switch, the DMG path unchanged (Blargg, dmg-acid2 and determinism stay
+green and byte exact), and CGB-flagged ROMs (header 0x143 bit 7) booting
+in CGB mode.
+
+### 19.1 What CGB adds, and how the core models it
+
+| Feature | Hardware | Core |
+|---|---|---|
+| Model | CGB boot ROM leaves A = 0x11 (how games detect it) | `Model` enum, argument of `Gb.init`; `default_model(rom)` from 0x143. Tests force either model (Blargg ROMs are flagged 0x80). DMG games run as a DMG, no CGB compatibility palettes. |
+| VRAM | 2 x 8 KB, VBK 0xFF4F | `vram: [0x4000]u8`, cached `banks.vram_off` |
+| WRAM | 8 x 4 KB, SVBK 0xFF70 (0 means 1) | `wram: [0x8000]u8`, cached `banks.wram_off` for D000; C000 is always bank 0. DMG mode keeps the offset at 0x1000 so the fast path has no model branch. |
+| Palettes | 8 BG + 8 OBJ palettes x 4 colours RGB555, BCPS/BCPD/OCPS/OCPD 0xFF68..6B, auto-increment | 64 + 64 bytes in `Ppu`; any write sets `Gb.pal_dirty` (outside the keyframe state) |
+| BG attributes | VRAM bank 1 map byte: palette, tile bank, X/Y flip, BG priority | PPU line renderer |
+| OBJ | attribute bits 0..2 palette, bit 3 tile bank; priority by OAM order (OPRI 0xFF6C) | PPU |
+| LCDC.0 | BG/window master priority instead of BG enable | PPU, CGB mode only |
+| Double speed | KEY1 0xFF4D + STOP; CPU, timer, DIV, serial twice as fast; PPU, APU, HDMA not | `Gb.dot_shift` (2 normal, 1 double): `tick(m)` gives the PPU and APU `m << dot_shift` dots; the frame loop counts dots |
+| GDMA / HDMA | 0xFF51..55: general DMA stalls the CPU, HBlank DMA copies 16 bytes per HBlank | `mmu.Hdma` state; stalls add to `Gb.stall_m`, which the frame loop ticks away after the instruction; the PPU calls `mmu.hdma_hblank` on entering mode 0 of lines 0..143 |
+| Cart RAM | CGB games often 32 KB (MBC5, 4 banks) | `cart_ram: []u8`, a buffer the owner sizes from the header (`mmu.cart_ram_len`, now up to 32 KB); banked through `ram_bank_offset` |
+| Misc | FF72..75 plain registers, FF76/77 PCM read 0, RP 0xFF56 reads 0xFF | stored, no effect |
+
+Not in scope: DMG-on-CGB compatibility palettes, the CGB boot ROM, IR,
+MBC3 RTC, accurate STOP/speed-switch timing beyond the documented 2050
+M-cycle pause, pixel-FIFO timing (still scanline accuracy, section 4).
+
+### 19.2 Line format
+
+`LineSink` keeps its signature. In DMG mode a pixel byte is a shade 0..3 as
+before. In CGB mode it is a colour index: `pal * 4 + colour` for BG
+(0..31) and `32 + pal * 4 + colour` for OBJ (32..63). The frontend's
+256-entry `lut` is already indexed by that byte, so the store loop does not
+change: in CGB mode `lut[0..64]` is rebuilt from palette RAM (RGB555 to the
+badge's RGB565) whenever `gb.pal_dirty` is set, checked once per line, so
+games that rewrite palettes in HBlank still show every colour. A menu item
+chooses raw colours or a GBC-LCD colour correction; both are just LUT
+builders.
+
+### 19.3 Keyframes: page store
+
+A CGB console is about 57 KB of state (VRAM 16 KB, WRAM 32 KB, cart RAM up
+to 32 KB, the rest under 1.5 KB), three times a DMG one, so the fixed ring
+of whole keyframes (section 10) holds one or two slots. M7 replaces the
+slots with a page store (`core/kstore.zig`, host tested):
+
+- The state is a list of byte regions: VRAM, WRAM, cart RAM and `Small`
+  (every other snapshotted field, packed into a zero-initialised struct so
+  padding is deterministic). Each region is cut into pages of
+  `page_size` bytes (default 512).
+- A keyframe is a table of page references. On snapshot each page is
+  compared with the same page of the previous keyframe: equal means share
+  it (reference count + 1), all-zero means the shared zero page, anything
+  else takes a page from the pool and copies it.
+- When the pool is exhausted the oldest keyframe is dropped until the new
+  one fits; the ring (`core/ring.zig`) gains that eviction and a runtime
+  count, so depth adapts to how much the game changes.
+- Restore copies every page back (about 57 KB of `memcpy`, well under a
+  millisecond). Snapshot compares about 57 KB against the previous
+  keyframe. Both costs are flat, so no worst-case spike.
+- DMG mode gets the same store: banks the game never touches are zero
+  pages and cost only their table entries, so 2048-gb's history gets longer.
+
+Section 10.4 (XOR + RLE) is superseded: a page store has no chain to walk
+on restore and needs no decompression buffer.
+
+### 19.4 Memory budget (RAM cart, 268 KB usable)
+
+| Item | CGB, 64 KB ROM | CGB, XIP cart |
+|---|---:|---:|
+| Code + constants | ~65 KB | flash |
+| ROM | 64 KB | flash |
+| Live console (VRAM, WRAM, rest) | ~50 KB | ~50 KB |
+| Cart RAM (per header) | 0..32 KB | 0..32 KB |
+| Frontend statics, input log | ~5 KB | ~5 KB |
+| Page pool + tables | remainder, ~80 KB | ~210 KB |
+
+The first keyframe pays for every non-zero page (typically 15 to 30 KB);
+later ones pay only for pages that changed in 0.5 s (typically 2 to 8 KB).
+An 80 KB pool is therefore about 8 to 20 keyframes, 4 to 10 s. ROMs above
+64 KB need the XIP cart (`-Dcart-mode=xip`: 256 KB of flash for code and
+ROM, see the root PLAN.md M3; XIP is still unproven on hardware), so the shipped
+Color ROM should be at most 64 KB for the RAM cart.
+
+### 19.5 Performance
+
+Double speed doubles CPU work per frame; the PPU work is the same plus
+attribute fetches. Anchor (badge-bench, calibrated, 2048-gb DMG):
+5.04 ms mean / 11.41 ms worst of 16.7 ms. Target for the shipped Color ROM
+under the calibrated model: mean <= 10 ms, worst <= 13.4 ms (80% of the
+frame, headroom per Adrian's tuning policy). Knobs, in one place in the
+frontend: auto frame skip (render lines only every other frame when the
+previous frame ran over a threshold; the core still runs every frame, so
+determinism is untouched), `page_size`, pool size, keyframe interval.
+
+### 19.6 Tests
+
+- cgb-acid2 byte exact against a committed reference made by a host tool
+  (no comptime image decoding, see CLAUDE.md), compared as RGB555.
+- Blargg cpu_instrs and instr_timing in both models (instr_timing at
+  normal speed).
+- Mooneye CGB-relevant tests where they are small and headless.
+- Unit tests: VRAM/WRAM banking, palette auto-increment, GDMA length and
+  stall, HBlank DMA 16 bytes per line, speed switch halves the PPU dots per
+  CPU M-cycle, OPRI/OAM-order priority, BG attribute flips and priority.
+- Determinism (section 10.2) on the Color ROM through the page store, and
+  page store unit tests (sharing, zero page, eviction, restore exact).
 
 ## Status
 

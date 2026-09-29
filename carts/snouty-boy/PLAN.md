@@ -118,6 +118,140 @@ with a bottom-bar view, neopixel history meter, `tests/determinism.zig`.
 Frozen frame on scrub: restore k, step one frame through the sink, restore k
 again (documented in `cart/src/frontend/rewind.zig`).
 
+## M6 Color core and M7 Color cart: contract (started 2026-09-29)
+
+Design: SPEC.md section 19. Work happens on branch `snouty-boy-color`
+(worktree `/home/exedev/snouty-badge-color`, off main a4341e9, so other
+sessions' uncommitted work in the main checkout is untouched). Track
+worktrees branch off `snouty-boy-color`; each symlinks `sycl-badge` to
+`/home/exedev/snouty-badge/sycl-badge` and copies `tests/roms/` (never
+commit the symlink's typechange). Merged by hand, as M1.
+
+### M6.0 Interface (Claude, before the tracks): `core/gb.zig`, frozen for M6
+
+- `Model = enum { dmg, cgb }`; `default_model(rom)` is `.cgb` when header
+  0x143 has bit 7. `Gb.init(rom, model, cart_ram)`: `cart_ram` is a buffer
+  the owner provides, at least `mmu.cart_ram_len(rom)` bytes (tests use
+  `&.{}` or a local array). `reset()` keeps `rom`, `model`, `cart_ram` (zeroed)
+  and `line_sink`.
+- New state: `vram: [0x4000]u8`, `wram: [0x8000]u8`, `banks: mmu.Banks`
+  (cached `vram_off`, `wram_off`), `hdma: mmu.Hdma`, `dot_shift: u2`
+  (2 normal, 1 double speed), `stall_m: u16` (CPU M-cycles the CPU is
+  stalled by GDMA/HDMA, ticked away by the frame loop), `ppu.bg_pal`/
+  `ppu.obj_pal` (64 bytes each), and outside the state `pal_dirty: bool`.
+- Units: `gb.tick(m)` takes CPU M-cycles. `timer.tick`, `serial.tick`,
+  `mmu.tick_dma` take CPU M-cycles; `ppu.tick(gb, dots)` and
+  `apu.tick(gb, dots)` take dots (`m << dot_shift`; 4 per M-cycle at normal
+  speed). The frame loop counts `frame_dots` (70,224 per frame).
+- Keyframes: `Gb.Small` holds every snapshotted field except VRAM, WRAM and
+  cart RAM; `save_small`/`load_small`; `state_regions(small)` returns the
+  byte regions `[small, vram, wram, cart_ram]` for the page store.
+  `KeyframeWith(n)` stays (tests, self check) as `{ small, vram, wram,
+  cart_ram[n] }`; `cart_ram_len` goes up to 32 KB.
+- DMG mode must be observably unchanged: every M1..M4 test stays green
+  with `.dmg` passed explicitly.
+
+### Track A: CPU, memory map, DMA (files: `core/cpu.zig`, `core/mmu.zig`, `core/timer.zig`, `core/serial.zig`, `core/joypad.zig`, `tests/blargg.zig`, new `tests/cgb_unit.zig`, `tools/fetch_test_roms.sh`, `tools/romcheck.py`)
+
+- CGB post-boot CPU registers (A = 0x11, F = 0x80, B = 0, C = 0, D = 0xFF,
+  E = 0x56, H = 0, L = 0x0D) and CGB I/O reset values.
+- VBK (0xFF4F, reads 0xFE | bank), SVBK (0xFF70, 0 -> 1, reads 0xF8 |
+  bank), both CGB only (DMG: 0xFF, offsets fixed). Update `banks`.
+- KEY1 (0xFF4D, reads 0x7E | speed << 7 | armed) and STOP: armed ->
+  toggle `dot_shift`, clear armed, pause 2050 M-cycles (via `stall_m`), no
+  halt. Unarmed STOP stays HALT-like.
+- HDMA1..5 (0xFF51..55): GDMA (bit 7 = 0) copies at once and adds
+  `stall_m` (8 M-cycles per 16 bytes at normal speed, 16 at double);
+  HBlank DMA (bit 7 = 1) copies 16 bytes per `mmu.hdma_hblank(gb)` call
+  (the PPU calls it on entering mode 0 on lines 0..143 with the LCD on;
+  if the LCD is off when started, copy one block immediately as hardware
+  does), writing bit 7 = 0 to HDMA5 while active cancels; HDMA5 reads
+  remaining length - 1 with bit 7 set when inactive. Source masks: 0xFFF0,
+  not from VRAM; destination 0x8000 | (x & 0x1FF0) in the current VRAM bank.
+- MBC5 RAM banking (4 x 8 KB), MBC1/3 RAM banks where the header asks;
+  `cart_ram_len` 0/2/8/32 KB (header 3 = 32 KB, 4/5 capped to 32 KB with
+  a romcheck warning). `romcheck.py` accepts CGB ROMs and prints model,
+  double-speed hint (writes to 0xFF4D in the code) and HDMA use.
+- 0xFF6C OPRI, 0xFF72..75, 0xFF76/77 (read 0), RP 0xFF56: stored per
+  SPEC 19.1. BCPS..OCPD 0xFF68..6B and OPRI delegate to `ppu.write_reg` /
+  `ppu.read_reg` (B implements; stub stores to `io`).
+- `fetch_test_roms.sh`: cgb-acid2 (+ reference PNG), chosen Mooneye CGB
+  tests. Tests: Blargg cpu_instrs and instr_timing in both models (CGB at
+  normal speed); `tests/cgb_unit.zig` for banking, KEY1/STOP, GDMA/HDMA,
+  cart RAM banks; Mooneye CGB tests that pass headless (Mooneye signals
+  pass with the Fibonacci registers B=3 C=5 D=8 E=13 H=21 L=34 at `LD B,B`).
+
+### Track B: PPU (files: `core/ppu.zig`, `tests/ppu_unit.zig`, `tests/acid2.zig`, new `tests/cgb_acid2.zig`, new `tools/make_cgb_ref.py`, new `tests/cgb_acid2_reference.bin`)
+
+- `tick(gb, dots)`; CGB renderer per SPEC 19.1/19.2: BG/window attributes
+  from VRAM bank 1, tile bank, flips, BG priority bit, LCDC.0 master
+  priority, OBJ palette + bank bits, OAM-order priority when OPRI bit 0 is
+  0 (CGB default), 10-per-line limit as DMG. Output byte = colour index
+  (BG 0..31, OBJ 32..63). DMG path byte-identical.
+- BCPS/BCPD/OCPS/OCPD with auto-increment (reads of BCPS/OCPS 0x40 | v),
+  set `gb.pal_dirty` on data writes. Palette RAM reset: CGB boot leaves BG
+  palettes white (0x7FFF); OBJ palettes are undefined, use white too.
+- Call `mmu.hdma_hblank(gb)` when entering mode 0 on visible lines.
+- `tools/make_cgb_ref.py` converts cgb-acid2's reference PNG to 160x144
+  RGB555 little-endian u16 (the PNG uses c << 3 | c >> 2 per channel, so
+  divide exactly); `tests/cgb_acid2.zig` runs cgb-acid2 in CGB mode,
+  converts each index through palette RAM at emit time, compares exactly.
+- Unit tests for each CGB feature; DMG acid2 unchanged.
+
+### Track C: page store and frontend (files: new `core/kstore.zig`, `core/ring.zig`, new `tests/kstore_unit.zig`, `tests/ring_unit.zig`, `tests/determinism.zig`, `cart/src/**`, `tests/all.zig`, `docs/RUNNING.md`, `README.md`)
+
+- `core/kstore.zig`: `Store(page_size, pool_pages, max_keyframes)` per SPEC
+  19.3 over `state_regions`; refcounted pool, shared zero page, compare
+  against the previous keyframe's page, evict oldest until it fits;
+  `put`, `get(k, regions)`, `drop_oldest`, stats (pages used, bytes per
+  keyframe). Host tests: sharing, zero page, eviction order, exact restore.
+- `core/ring.zig`: runtime count with eviction from the old end (the store
+  decides when); keep the truncation semantics.
+- Frontend: `main.zig` inits with `default_model(rom)` and a cart RAM
+  buffer sized `mmu.cart_ram_len(rom)`; `rewind.zig` on the page store,
+  pool sized from the budget (RAM vs XIP: find how `os_cart` builds XIP and
+  pass the mode in); `video.zig` rebuilds `lut[0..64]` from palette RAM when
+  `pal_dirty` (raw and GBC-LCD colour correction; menu item "Color" in CGB
+  mode replaces "Palette"); frozen-frame remap only in DMG mode; splash and
+  menu say "COLOR" in CGB mode; debug overlay adds pool use.
+- Determinism test on 2048-gb and (if present) the Color ROM, through the
+  page store (restore from store == keyframe field by field).
+- Needs A and B only for the Color ROM to do anything; build and test on
+  2048-gb until merge.
+
+### M6 integration
+
+1. `zig build test` green: all DMG tests, cgb-acid2 exact, Blargg in both
+   models, unit tests. 2. Build the cart with cgb-acid2 and the Color ROM;
+   preview frames. 3. Sizes for fast/small, RAM and XIP. Tag
+   `snouty-boy/m6`.
+
+### M7 Color cart
+
+Ship ROM chosen (license checked, section 11 rules extended to CGB),
+committed with its LICENSE like 2048-gb and made the default `-Drom`;
+`badge-bench/carts/snouty-boy-color.toml` press script; bench before and
+after tuning, knobs per SPEC 19.5, numbers recorded here; GIF in `docs/`;
+tag `snouty-boy/m7`. Hardware gate (Adrian): overlay ms and FPS, colours
+look right, scrub depth.
+
+ROM research (2026-09-29, licenses read from the repos; open decision for
+Adrian, M6 does not depend on it):
+
+| ROM | License | Size | MBC / RAM | CGB | Sound | Double speed / HDMA |
+|---|---|---|---|---|---|---|
+| Rebound (DevEd, art Twoflower) | MIT, whole repo incl. DevSound music | 128 KB | MBC5 / 0 | C0 | music + SFX | yes / yes |
+| Rex Runner (The Void) | MIT, whole repo | 32 KB | MBC5 / 8 KB | 80 | SFX | likely / no |
+| Libbet (Damian Yerrick) | zlib | 32 KB | none / 0 | 80 | SFX | no / no |
+| CrossConnect | MIT (font licence unchecked) | 32 KB | MBC5 / 8 KB | 80 | SFX | no / no |
+
+Recommendation: Rebound, because it is the only one with music and the
+only one exercising double speed and HDMA, but 128 KB leaves the RAM cart
+about 20 KB of page pool, so it wants the XIP cart. Rex Runner is the RAM
+cart fallback. Build and bench both in M7; Adrian picks the default.
+Rejected: Tobu Tobu Girl DX (256 KB), uCity/Geometrix (GPL-3), Shock Lobster
+(DMG only), Petris (NC), Tuff (assets reserved).
+
 ## Hardware checklist (Adrian)
 
 - M1 gate: overlay avg/max microseconds and FPS with 2048-gb.
