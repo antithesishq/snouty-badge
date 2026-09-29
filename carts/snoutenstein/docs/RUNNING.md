@@ -218,6 +218,69 @@ node tools/check_determinism.mjs ../../zig-out/bin/snoutenstein.wasm \
 # check_determinism: PASS m1_walk.json x600 rewind@200+90: rewound from tick 189 to tick 99, 90 ticks; debug_gameplay_hash=... debug_rewinds=1 debug_desync=0|0
 ```
 
+### Attract mode and the recorded demo
+
+Left alone on the title for 10 s (600 ticks), the cart plays a recorded
+demo of Build Farm: `sim.init` of level 0 with a fixed seed, driven by an
+input log baked into the cart (`cart/src/demos/build_farm.zig`) instead of
+the pad. A blinking "DEMO" sits at the top of the view while it runs. Any
+edge on A, B, Start or the joystick (up, down, left, right) takes over on
+the spot: the demo stops without stepping that tick, the rewind meter is
+refilled, and the controls are live from the next tick. Select is ignored
+during the demo. The demo returns to the title when the log runs out, after
+3 minutes, after 2 s dead, or once an intermission or victory card has
+shown.
+
+When the log runs to the end, the cart compares `sim.hash_gameplay` of the
+final state with the hash recorded in the simulator and shows the result
+at the top left of the title: "DEMO OK" (grey) means the badge replayed the
+log bit-identically to the simulator, "DEMO DESYNC" (Coral) means it did
+not (a determinism bug; SPEC.md 9.3). Nothing is shown before a demo has
+finished, or when the data file has no recorded hash (`final_hash` 0).
+
+Exports: `debug_demo` (1 while the demo drives), `debug_demo_result` (0
+none, 1 ok, 2 desync), `debug_title_ticks` (ticks idled on the title). Two
+setup calls for `preview.mjs --call`: `--call debug_start_demo` starts the
+demo at update 0 (scripts and the bench), `--call debug_new_game_seeded`
+starts Build Farm with the demo seed in normal play, tick 0 = update 0
+(authoring the log).
+
+```sh
+# replay the embedded demo headless; T = total_ticks in cart/src/demos/build_farm.zig
+T=$(sed -n 's/.*total_ticks: u32 = \([0-9]*\);.*/\1/p' cart/src/demos/build_farm.zig)
+node ../../tools/preview.mjs ../../zig-out/bin/snoutenstein.wasm --call debug_start_demo \
+  --frames $((T + 5)) --every 60 --out out/ --expect "debug_demo_result == 1"
+```
+
+Recording a demo: the playthrough is authored as a normal input script,
+`tools/scripts/demo_build_farm.json` (`{from, to, hold}` entries, tick 0 is
+the first `sim.step` of the level; the demo ends after `max(to)`, or after
+`"tail": K` idle ticks when the file is `{"tail": K, "runs": [...]}`).
+Iterate on it with `preview.mjs --call debug_new_game_seeded --script
+tools/scripts/demo_build_farm.json`, no rebuild needed. Then:
+
+```sh
+tools/record_demo.sh     # plays the script on the built wasm, reads debug_gameplay_hash, regenerates the data file with --hash
+cd ../.. && zig build -Dcart=snoutenstein && cd carts/snoutenstein
+tools/check.sh           # proves the embedded demo reproduces the hash in demo mode
+```
+
+`tools/record_demo.sh` builds nothing: it runs `preview.mjs` on the
+existing wasm and calls the generator, which can also be run by hand:
+`python3 tools/gen_demo.py IN.json --out cart/src/demos/build_farm.zig
+[--hash 0x...]`. It encodes the script with the same button bits as
+`preview.mjs`, merges identical ticks into `Run { buttons, ticks }` and
+writes plain literal data (`level_index`, `seed`, `total_ticks`,
+`final_hash`, `runs`); without `--hash` the hash is 0 (unrecorded). Commit
+the JSON and the regenerated `.zig` together.
+
+Demo content: (track A fills in)
+
+Neopixels are off in every build (docs/NEOPIXELS.md at the repository
+root): the cart never writes an LED byte; the old HP bar, key flash and
+rewind pulse stay dormant in `cart/src/audio.zig` behind
+`neopixels_allowed`.
+
 ## 6. Flash the badge
 
 1. Connect the badge over USB-C. It shows up as a USB mass-storage drive.
