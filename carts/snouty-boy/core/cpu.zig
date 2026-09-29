@@ -8,6 +8,7 @@
 const gb_mod = @import("gb.zig");
 const Gb = gb_mod.Gb;
 const Reg = gb_mod.Reg;
+const timer = @import("timer.zig");
 
 const FZ: u8 = 0x80;
 const FN: u8 = 0x40;
@@ -253,6 +254,16 @@ inline fn sp_plus_e8(c: *Cpu, e: u8) u16 {
     return sp +% sext(e);
 }
 
+/// CGB speed switch: STOP with KEY1 bit 0 armed toggles double speed. The
+/// CPU does not halt; it pauses for 2050 M-cycles (Pan Docs), ticked away by
+/// the frame loop at the new speed. STOP also resets DIV.
+fn speed_switch(gb: *Gb) void {
+    gb.dot_shift = if (gb.dot_shift == 2) 1 else 2;
+    gb.io[Reg.key1] = if (gb.dot_shift == 1) 0x80 else 0x00;
+    timer.write_div(gb);
+    gb.stall_m += 2050;
+}
+
 // ---- decode ----
 
 fn execute(gb: *Gb, op: u8) u8 {
@@ -372,9 +383,13 @@ fn execute(gb: *Gb, op: u8) u8 {
             set_hl(c, @truncate(sum));
             return 2;
         },
-        0x10 => { // STOP, treated as HALT (skips its padding byte)
+        0x10 => { // STOP (skips its padding byte)
             c.pc +%= 1;
-            c.halted = true;
+            if (gb.is_cgb() and (gb.io[Reg.key1] & 1) != 0) {
+                speed_switch(gb);
+            } else {
+                c.halted = true; // treated as HALT
+            }
             return 1;
         },
         0x18 => { // JR e8

@@ -1,4 +1,7 @@
-//! Memory map and memory bank controllers. Owner in M1: track A.
+//! Memory map and memory bank controllers. Owner in M1 and M6: track A.
+//! CGB (SPEC.md 19.1): VBK/SVBK banks, KEY1 storage (the switch is STOP in
+//! cpu.zig), HDMA1..5 general and HBlank DMA, 32 KB cart RAM banking. In
+//! DMG mode every CGB register reads 0xFF and ignores writes.
 //! PPU registers 0xFF40..0xFF4B are delegated to core/ppu.zig
 //! (`ppu.write_reg` / `ppu.read_reg`) so their side effects live with the PPU.
 //! APU registers and wave RAM 0xFF10..0xFF3F likewise go to core/apu.zig.
@@ -15,16 +18,17 @@ pub const MbcKind = enum(u8) { none, mbc1, mbc3, mbc5 };
 
 /// Bytes of `Gb.cart_ram` a ROM can ever touch, from header byte 0x149: 0
 /// without RAM, 2 KB for code 1 (mirrored, see `Mbc.ram_mask`), 8 KB for
-/// code 2. Codes 3..5 (32, 128, 64 KB) are capped at 32 KB (SPEC.md 19.1;
-/// M6 track A implements the banking). Comptime-callable, so the frontend
-/// sizes its buffer and keyframes to the embedded ROM.
+/// code 2, 32 KB (4 banks) for code 3. Codes 4 and 5 (128, 64 KB) are capped
+/// at 32 KB: bank numbers wrap modulo 4 (SPEC.md 19.1, romcheck.py warns).
+/// Comptime-callable, so the frontend sizes its buffer and keyframes to the
+/// embedded ROM.
 pub fn cart_ram_len(rom: []const u8) usize {
     if (rom.len < 0x150) return 0;
     return switch (rom[0x149]) {
         0 => 0,
         1 => 0x800,
         2 => 0x2000,
-        else => 0x2000, // M6.0 stub: track A raises this to 0x8000 with RAM banking
+        else => 0x8000,
     };
 }
 
@@ -39,19 +43,70 @@ pub const Banks = struct {
 
 /// CGB general-purpose / HBlank DMA (HDMA1..5). Owner: track A.
 pub const Hdma = struct {
+    /// Next source address (HDMA1/2, low 4 bits clear).
     src: u16 = 0,
+    /// Next destination offset into the VRAM bank (HDMA3/4, masked 0x1FF0).
     dst: u16 = 0,
-    /// Blocks of 16 bytes left in an HBlank transfer.
+    /// Blocks of 16 bytes left in an HBlank transfer (after a cancel: the
+    /// blocks it did not copy; 0 when done).
     blocks_left: u8 = 0,
     /// An HBlank transfer is running.
     active: bool = false,
 };
 
 /// Called by the PPU on entering mode 0 on visible lines with the LCD on:
-/// copies one 16-byte HBlank DMA block if a transfer is active. Owner:
-/// track A (M6.0 stub does nothing).
+/// copies one 16-byte HBlank DMA block if a transfer is active.
 pub fn hdma_hblank(gb: *Gb) void {
-    _ = gb;
+    if (!gb.hdma.active) return;
+    hdma_block(gb);
+}
+
+/// Copy one 16-byte block, advance the addresses, stall the CPU for it:
+/// 8 M-cycles at normal speed, 16 in double speed (the same 32 dots).
+fn hdma_block(gb: *Gb) void {
+    const h = &gb.hdma;
+    const vram = gb.vram[gb.banks.vram_off..][0..0x2000];
+    const src = h.src;
+    const dst = h.dst;
+    for (0..16) |i| {
+        const s = src +% @as(u16, @intCast(i));
+        // A source in VRAM is not a valid transfer; it reads open bus.
+        vram[(dst + i) & 0x1FFF] = if (s >> 13 == 4) 0xFF else read8(gb, s);
+    }
+    h.src = src +% 16;
+    h.dst = (dst + 16) & 0x1FF0;
+    h.blocks_left -= 1;
+    if (h.blocks_left == 0) h.active = false;
+    gb.stall_m += @as(u16, 8) << (2 - gb.dot_shift);
+}
+
+/// HDMA5 write (SPEC.md 19.1). Bit 7 clear starts a general DMA, which
+/// copies everything now and stalls the CPU; bit 7 set starts an HBlank DMA
+/// (16 bytes per `hdma_hblank`). Bit 7 clear while an HBlank DMA runs
+/// cancels it instead.
+fn write_hdma5(gb: *Gb, v: u8) void {
+    const h = &gb.hdma;
+    if (h.active and v & 0x80 == 0) {
+        h.active = false;
+        return;
+    }
+    h.blocks_left = (v & 0x7F) + 1;
+    if (v & 0x80 == 0) {
+        while (h.blocks_left != 0) hdma_block(gb);
+        return;
+    }
+    h.active = true;
+    // With the LCD off there are no HBlanks: hardware copies one block now.
+    if (!ppu.lcd_on(gb)) hdma_block(gb);
+}
+
+/// HDMA5 read: while an HBlank DMA runs, the blocks left minus one with
+/// bit 7 clear; otherwise bit 7 set (0xFF once a transfer has finished,
+/// 0x80 | left - 1 after a cancel).
+fn read_hdma5(gb: *const Gb) u8 {
+    const h = &gb.hdma;
+    const left = (h.blocks_left -% 1) & 0x7F;
+    return if (h.active) left else 0x80 | left;
 }
 
 pub const Mbc = struct {
@@ -64,9 +119,10 @@ pub const Mbc = struct {
     ram_enabled: bool = false,
     /// Header declares cart RAM (0x149 != 0).
     has_ram: bool = false,
-    /// Cart RAM address mask: a 2 KB RAM (header 0x149 == 1) mirrors every
-    /// 2 KB as on hardware, so only `cart_ram[0..0x800]` is ever touched and
-    /// the scrubber's keyframes need store no more (`cart_ram_len`).
+    /// Cart RAM address mask applied to `ram_bank_offset + offset`, so the
+    /// RAM mirrors as on hardware: a 2 KB RAM (header 0x149 == 1) every 2 KB,
+    /// 8 KB ignores the bank number, 32 KB wraps banks modulo 4. Only
+    /// `cart_ram[0..cart_ram_len]` is ever touched.
     ram_mask: u16 = 0x1FFF,
     /// MBC1 banking mode bit.
     mode: u8 = 0,
@@ -76,8 +132,8 @@ pub const Mbc = struct {
     rom0_offset: u32 = 0,
     /// Cached byte offset of the switchable ROM bank into `Gb.rom`.
     rom_bank_offset: u32 = 0x4000,
-    /// Cached byte offset of the active RAM bank into `Gb.cart_ram`. With
-    /// cart RAM capped at 8 KB it is always 0, kept for when that changes.
+    /// Cached byte offset of the active RAM bank into `Gb.cart_ram`
+    /// (bank * 0x2000; `ram_mask` wraps banks past the RAM size).
     ram_bank_offset: u32 = 0,
     /// Cart RAM reads/writes go through (enabled, present, not an MBC3 RTC
     /// register).
@@ -136,7 +192,7 @@ pub const Mbc = struct {
         bank0 &= m.rom_bank_mask;
         m.rom_bank_offset = bank * 0x4000;
         m.rom0_offset = bank0 * 0x4000;
-        m.ram_bank_offset = (ram * 0x2000) & (0x2000 - 1);
+        m.ram_bank_offset = ram * 0x2000;
         const rtc = m.kind == .mbc3 and m.ram_bank >= 0x08;
         m.ram_active = m.ram_enabled and m.has_ram and !rtc;
     }
@@ -200,7 +256,26 @@ pub fn reset_io(gb: *Gb) void {
     io[Reg.wy] = 0;
     io[Reg.wx] = 0;
     gb.ie = 0;
+    if (gb.is_cgb()) reset_io_cgb(gb);
 }
+
+/// Post-boot CGB I/O values that differ from the DMG ones (Pan Docs, "Power
+/// Up Sequence"). The CGB-only registers keep their writable bits in `io`,
+/// all 0 after boot (normal speed, VRAM bank 0, WRAM bank 1, no HDMA);
+/// `read_cgb` adds the fixed bits (KEY1 0x7E, VBK 0xFE, SVBK 0xF8, RP 0x3E,
+/// FF75 0x8F). `Gb.reset` has already zeroed `io`, `banks` and `hdma`.
+fn reset_io_cgb(gb: *Gb) void {
+    gb.io[Reg.sc] = 0x7F;
+    gb.io[Reg.dma] = 0x00;
+}
+
+// CGB undocumented registers: plain storage (FF75 only bits 4..6).
+const reg_ff72: u8 = 0x72;
+const reg_ff73: u8 = 0x73;
+const reg_ff74: u8 = 0x74;
+const reg_ff75: u8 = 0x75;
+const reg_pcm12: u8 = 0x76;
+const reg_pcm34: u8 = 0x77;
 
 pub fn read8(gb: *Gb, addr: u16) u8 {
     if (addr < 0x4000) {
@@ -238,16 +313,32 @@ fn read_io(gb: *Gb, reg: u8) u8 {
     return switch (reg) {
         Reg.p1 => gb.io[Reg.p1] | 0xC0,
         Reg.sb => gb.io[Reg.sb],
-        Reg.sc => gb.io[Reg.sc] | 0x7E,
+        Reg.sc => gb.io[Reg.sc] | 0x7C,
         Reg.div, Reg.tima, Reg.tma => gb.io[reg],
         Reg.tac => gb.io[Reg.tac] | 0xF8,
         Reg.if_ => gb.io[Reg.if_] | 0xE0,
         0x10...0x3F => apu.read_reg(gb, reg),
         Reg.dma => gb.io[Reg.dma],
         0x40...0x45, 0x47...0x4B => ppu.read_reg(gb, reg),
-        Reg.vbk => if (gb.is_cgb()) 0xFE | gb.io[Reg.vbk] else 0xFF,
-        Reg.svbk => if (gb.is_cgb()) 0xF8 | gb.io[Reg.svbk] else 0xFF,
-        Reg.bcps...Reg.opri => if (gb.is_cgb()) ppu.read_reg(gb, reg) else 0xFF,
+        // CGB-only registers read 0xFF on a DMG.
+        Reg.key1, Reg.vbk, Reg.hdma5, Reg.rp, Reg.bcps...Reg.opri, Reg.svbk, reg_ff72...reg_pcm34 => if (gb.is_cgb()) read_cgb(gb, reg) else 0xFF,
+        else => 0xFF,
+    };
+}
+
+fn read_cgb(gb: *Gb, reg: u8) u8 {
+    return switch (reg) {
+        // Bit 7 current speed (mirrors `dot_shift`), bit 0 switch armed.
+        Reg.key1 => 0x7E | gb.io[Reg.key1],
+        Reg.vbk => 0xFE | gb.io[Reg.vbk],
+        Reg.hdma5 => read_hdma5(gb),
+        // Bit 1 reads 1: no infrared light received.
+        Reg.rp => gb.io[Reg.rp] | 0x3E,
+        Reg.bcps...Reg.opri => ppu.read_reg(gb, reg),
+        Reg.svbk => 0xF8 | gb.io[Reg.svbk],
+        reg_ff72, reg_ff73, reg_ff74 => gb.io[reg],
+        reg_ff75 => gb.io[reg] | 0x8F,
+        reg_pcm12, reg_pcm34 => 0x00,
         else => 0xFF,
     };
 }
@@ -284,7 +375,8 @@ fn write_io(gb: *Gb, reg: u8, v: u8) void {
         },
         Reg.sb => gb.io[Reg.sb] = v,
         Reg.sc => {
-            gb.io[Reg.sc] = v | 0x7E;
+            // CGB: bit 1 selects the fast clock and is writable.
+            gb.io[Reg.sc] = v | @as(u8, if (gb.is_cgb()) 0x7C else 0x7E);
             if ((v & 0x80) != 0) serial.start_transfer(gb);
         },
         Reg.div => timer.write_div(gb),
@@ -297,15 +389,34 @@ fn write_io(gb: *Gb, reg: u8, v: u8) void {
             ppu.write_reg(gb, reg, v);
         },
         0x40...0x45, 0x47...0x4B => ppu.write_reg(gb, reg, v),
-        Reg.vbk => if (gb.is_cgb()) {
+        // CGB-only registers ignore writes on a DMG.
+        Reg.key1, Reg.vbk, Reg.hdma1...Reg.hdma5, Reg.rp, Reg.bcps...Reg.opri, Reg.svbk, reg_ff72...reg_ff75 => if (gb.is_cgb()) write_cgb(gb, reg, v),
+        else => {},
+    }
+}
+
+fn write_cgb(gb: *Gb, reg: u8, v: u8) void {
+    const h = &gb.hdma;
+    switch (reg) {
+        // Only the arm bit is writable; STOP performs the switch (cpu.zig).
+        Reg.key1 => gb.io[Reg.key1] = (gb.io[Reg.key1] & 0x80) | (v & 1),
+        Reg.vbk => {
             gb.io[Reg.vbk] = v & 1;
             gb.banks.vram_off = @as(u16, v & 1) * 0x2000;
         },
-        Reg.svbk => if (gb.is_cgb()) {
+        Reg.hdma1 => h.src = (h.src & 0x00F0) | (@as(u16, v) << 8),
+        Reg.hdma2 => h.src = (h.src & 0xFF00) | (v & 0xF0),
+        Reg.hdma3 => h.dst = (h.dst & 0x00F0) | (@as(u16, v & 0x1F) << 8),
+        Reg.hdma4 => h.dst = (h.dst & 0x1F00) | (v & 0xF0),
+        Reg.hdma5 => write_hdma5(gb, v),
+        Reg.rp => gb.io[Reg.rp] = v & 0xC1,
+        Reg.bcps...Reg.opri => ppu.write_reg(gb, reg, v),
+        Reg.svbk => {
             gb.io[Reg.svbk] = v & 7;
             gb.banks.wram_off = @as(u16, @max(v & 7, 1)) * 0x1000;
         },
-        Reg.bcps...Reg.opri => if (gb.is_cgb()) ppu.write_reg(gb, reg, v),
+        reg_ff72, reg_ff73, reg_ff74 => gb.io[reg] = v,
+        reg_ff75 => gb.io[reg] = v & 0x70,
         else => {},
     }
 }
