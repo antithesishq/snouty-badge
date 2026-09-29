@@ -87,7 +87,7 @@ fn exists(b: *Build, rel: []const u8) bool {
     return true;
 }
 
-/// Adds the `core`, `romfs`, `rom` and `build_options` modules to the cart. `rom.data` is the
+/// Adds the `core`, `romfs`, `iris`, `rom` and `build_options` modules to the cart. `rom.data` is the
 /// embedded ROM (the file is copied next to a generated rom.zig so @embedFile
 /// can see it), `rom.name` its file name for the About screen, `rom.source`
 /// the `-Drom-source` choice. The same module serves the badge and the wasm
@@ -99,6 +99,8 @@ fn build_cart_modules(b: *Build, cart: *Build.Module, cart_api: *Build.Module, s
     cart.addImport("core", core_mod);
     // The FAT12 reader shared with Snouty Gear (docs/ROM_DRIVE.md section 4).
     cart.addImport("romfs", b.createModule(.{ .root_source_file = b.path("lib/romfs.zig") }));
+    // The Iris mark the splash draws (SPEC.md section 12), shared with Snouty Gear.
+    cart.addImport("iris", b.createModule(.{ .root_source_file = b.path("lib/iris_mark.zig") }));
 
     const wf = b.addWriteFiles();
     _ = wf.addCopyFile(b.path(rom_path), "rom.gb");

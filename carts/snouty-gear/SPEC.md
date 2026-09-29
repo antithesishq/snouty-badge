@@ -307,7 +307,8 @@ is Adrian's business, as with Super Mario Land on Snouty Boy).
 
 ## 12. Boot splash and presentation
 
-Snouty Boy's splash, recolored: the Snouty mark slides in, then a two-note
+Snouty Boy's splash, recolored: the Antithesis Iris mark (the shared 1-bit
+24x24 bitmap in `lib/iris_mark.zig`, at 2x) slides in, then a two-note
 chime, then the game. The menu title reads "SNOUTY GEAR", the ROM name, and
 "verified by deterministic replay". The
 neopixels are off: the cart never writes non-zero values (root

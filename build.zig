@@ -48,7 +48,7 @@ pub fn build(b: *Build) void {
         c.add(b, sycl_badge_dep, opts);
     }
 
-    // Shared library host tests (lib/): the romfs reader and whatever follows.
+    // Shared library host tests (lib/): the romfs reader, the Iris mark and whatever follows.
     const lib_tests = b.addTest(.{
         .filters = if (opts.test_filter) |f| &.{f} else &.{},
         .root_module = b.createModule(.{

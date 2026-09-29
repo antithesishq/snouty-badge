@@ -340,7 +340,9 @@ pointer for contiguous ROMs, or a cluster table (section 1 of
 
 ## 12. Boot splash and presentation
 
-The Snouty splash from the other emulators, recolored. The menu title
+The splash from the other emulators, recolored: the Antithesis Iris mark
+(the shared 1-bit 24x24 bitmap in `lib/iris_mark.zig`, at 2x) slides in,
+then the two-note chime. The menu title
 reads "SNOUTY GENESIS", the ROM's domestic name from its header, and
 "verified by deterministic replay". The
 neopixels are off: the cart never writes non-zero values (root
