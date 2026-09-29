@@ -7,9 +7,10 @@ simulator's ROM. The 160x144 screen is squeezed onto the badge's 160x128 by
 dropping every ninth line. Planned: an emulator menu behind a Select hold,
 one-voice sound and time scrubbing by deterministic replay, as Snouty Boy.
 
-Status: M0 scaffold. The core has its full shape but draws a moving test
-pattern instead of emulating; the screen's bottom line says which ROM was
-chosen (`ROM: embedded waternet.gg 64 KB`, or the drive file with its CRC).
+Status: M1 core. The console is emulated (Z80, VDP, Sega mapper, ports,
+PSG registers) with no sound, menu or rewind yet; the screen's bottom line
+says which ROM was chosen (`ROM: embedded waternet.gg 64 KB`, or the drive
+file with its CRC).
 
 ```sh
 (cd ../.. && zig build -Dcart=snouty-gear)   # ../../zig-out/firmware/snouty-gear.uf2, ../../zig-out/bin/snouty-gear.wasm

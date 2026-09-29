@@ -62,6 +62,17 @@ pub const Rom = struct {
         return 0xFF;
     }
 
+    /// A mapper bank number wrapped to the ROM's bank count, as the
+    /// mirrored ROM chip decodes it: a mask for power-of-two counts, a
+    /// modulo otherwise (48 KB, odd dumps). Always below `max_banks`; 0 for
+    /// an empty ROM. Called on mapper writes, never per memory access.
+    pub fn wrap_bank(r: *const Rom, bank: u8) u8 {
+        const n: u8 = r.bank_count;
+        if (n == 0) return 0;
+        if (n & (n - 1) == 0) return bank & (n - 1);
+        return bank % n;
+    }
+
     /// True when every bank has a direct pointer (no per-byte fallback).
     pub fn all_direct(r: *const Rom) bool {
         for (r.banks[0..r.bank_count]) |b| if (b == null) return false;

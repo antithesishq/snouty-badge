@@ -1,7 +1,0 @@
-[
-  { "from": 20, "to": 39, "hold": ["RIGHT", "DOWN"] },
-  { "from": 50, "to": 59, "hold": ["B"] },
-  { "from": 70, "to": 89, "hold": ["A"] },
-  { "from": 95, "to": 104, "hold": ["START"] },
-  { "from": 105, "to": 119, "hold": ["LEFT", "UP"] }
-]

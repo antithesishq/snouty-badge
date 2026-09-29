@@ -62,10 +62,10 @@ only (it calls this cart's `build.zig` `pub fn add`).
   `-Dcart-optimize=fast|small|safe|debug`.
 - The generated `rom` module has `data` (the embedded ROM), `name` (its
   file name) and `source` (`.drive` or `.embed`).
-- `zig build test` → every cart's host tests; `-Dtest-filter=pattern`,
+- `zig build test` → every cart's host tests; `-Dtest-filter=bus` (test names carry an area prefix: `bus:`, `psg:`, `z80:`...),
   `-Dtest-optimize=`.
 - `size -A zig-out/firmware/snouty-gear.elf` against SPEC.md section 13.
-- Headless: `node tools/preview.mjs zig-out/bin/snouty-gear.wasm --frames 120 --every 10 --script carts/snouty-gear/tools/scripts/m0_pattern.json --out carts/snouty-gear/out/`
+- Headless: `node tools/preview.mjs zig-out/bin/snouty-gear.wasm --frames 600 --every 30 --script carts/snouty-gear/tools/scripts/m1_play.json --out carts/snouty-gear/out/`
   (from the root), then look at the PNGs.
 - `zig fmt carts/snouty-gear` before committing.
 
