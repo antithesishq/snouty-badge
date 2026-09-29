@@ -1,6 +1,7 @@
 //! Perf variants (PLAN.md "M2.1 Perf variants"): the one place that maps
 //! `-Dreflections_variant` to frame rate, render scale and scene knobs. The
-//! picture logic is shared; a variant only sets these constants.
+//! picture logic is shared; a variant only sets these constants. cut20 is
+//! the default build (Adrian, 2026-09-29); the others stay buildable.
 //!
 //! | name     | res      | fps | scene                                         |
 //! |----------|----------|-----|-----------------------------------------------|

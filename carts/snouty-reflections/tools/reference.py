@@ -463,6 +463,16 @@ def write_png(path, rgb):
         f.write(b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", ihdr) + chunk(b"IDAT", zlib.compress(raw, 9)) + chunk(b"IEND", b""))
 
 
+# PLAN.md "M2.1 Perf variants": the flag defaults each variant sets, mirroring
+# cart/src/variant.zig. check_render.mjs and tools/emu pass --variant.
+VARIANTS = {
+    "full20": {},
+    "cut20": {"no_glass": True, "water_shadows": "off"},
+    "full15": {"fps": 15, "glass_primary": "env"},
+    "half30": {"fps": 30, "scale": 2},
+}
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--frame", type=int, action="append", required=True, help="frame index (repeatable)")
@@ -486,6 +496,11 @@ def main():
     ap.add_argument("--texels", default=None, help="shore texels (default cart/src/shore_texels.bin)")
     ap.add_argument("--palette", default=None, help="shore palette JSON (default tools/shore_palette.json)")
     ap.add_argument("--dump-npy", action="store_true", help="also save the float image as ref_FFFF.npy")
+    ap.add_argument("--variant", choices=sorted(VARIANTS),
+                    help="preset the flags of an M2.1 variant (cart/src/variant.zig); explicit flags still win")
+    pre, _ = ap.parse_known_args()
+    if pre.variant:
+        ap.set_defaults(**VARIANTS[pre.variant])
     args = ap.parse_args()
     if args.fps <= 0:
         ap.error("--fps must be > 0")

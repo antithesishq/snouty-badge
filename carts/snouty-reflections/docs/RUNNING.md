@@ -301,7 +301,7 @@ deciding.
 
 ## 9. Perf variants (M2.1)
 
-`-Dreflections_variant=full20|cut20|full15|half30` (default `full20`) picks the
+`-Dreflections_variant=full20|cut20|full15|half30` (default `cut20`, the shipped one) picks the
 resolution, frame rate and scene cuts; `docs/variants.md` has the table and
 numbers. The scene animates in seconds (one orbit is 30 s at every fps), so
 every variant shows the same scene at the same moment on hardware.

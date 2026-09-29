@@ -180,13 +180,9 @@ function load(file) {
 }
 
 // ---------------------------------------------------------------- variants
-// PLAN.md "M2.1 Perf variants": reference.py flags and frame rate per variant.
-const VARIANTS = {
-    full20: { fps: 20, ref: [] },
-    cut20: { fps: 20, ref: ["--no-glass", "--water-shadows", "off"] },
-    full15: { fps: 15, ref: ["--fps", "15", "--glass-primary", "env"] },
-    half30: { fps: 30, ref: ["--fps", "30", "--scale", "2"] },
-};
+// PLAN.md "M2.1 Perf variants": frame rate per variant (the orbit is 30 s).
+// The reference flags live in reference.py's VARIANTS, selected with --variant.
+const VARIANTS = { full20: { fps: 20 }, cut20: { fps: 20 }, full15: { fps: 15 }, half30: { fps: 30 } };
 const CART_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
 function run(cmd, argv) {
@@ -226,7 +222,7 @@ function checkVariant(name, wasm, extraFrames, only, outDir) {
         "--script", path.join(CART_DIR, "tools", "scripts", "m1_nodither.json"),
         "--dump-exports", "debug_dither_mode", "--expect", "debug_dither_mode == 1", "--out", outDir]);
     run("python3", [path.join(CART_DIR, "tools", "reference.py"), ...frames.flatMap((f) => ["--frame", String(f)]),
-        ...v.ref, "--out", outDir]);
+        "--variant", name, "--out", outDir]);
 
     const results = [];
     for (const f of frames) {

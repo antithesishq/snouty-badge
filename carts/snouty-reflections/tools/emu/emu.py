@@ -35,15 +35,19 @@ REPO = os.path.dirname(os.path.dirname(HERE))  # this cart, carts/snouty-reflect
 MONO = os.path.dirname(os.path.dirname(REPO))  # repository root, where zig build writes zig-out/
 BENCH_ELF = os.path.join(HERE, 'build', 'bench.elf')
 REAL_ELF = os.path.join(MONO, 'zig-out', 'firmware', 'snouty-reflections.elf')
-CHECK_FRAMES = [0, 300]
-SWEEP_FRAMES = list(range(0, 600, 25))
+# M2.1 variant the bench ELF is built as (build.sh reads the same variable) and
+# its orbit length: one orbit is 30 s at every frame rate.
+VARIANT = os.environ.get('EMU_VARIANT', 'cut20')
+ORBIT = 30 * {'full20': 20, 'cut20': 20, 'full15': 15, 'half30': 30}[VARIANT]
+CHECK_FRAMES = [0, ORBIT // 2]
+SWEEP_FRAMES = list(range(0, ORBIT, ORBIT // 24))
 
 
 def reference(frames, out):
     cmd = [sys.executable, os.path.join(REPO, 'tools', 'reference.py')]
     for f in frames:
         cmd += ['--frame', str(f)]
-    p = subprocess.run(cmd + ['--out', out], capture_output=True, text=True)
+    p = subprocess.run(cmd + ['--variant', VARIANT, '--out', out], capture_output=True, text=True)
     if p.returncode != 0:
         raise SystemExit(f"emu: tools/reference.py failed:\n{p.stdout}{p.stderr}")
 

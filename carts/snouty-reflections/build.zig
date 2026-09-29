@@ -17,7 +17,7 @@ pub fn add(b: *Build, sycl_badge_dep: *Build.Dependency, opts: common.Options) v
     options.addOption(bool, "debug_overlay", opts.debug_overlay);
     // -Dreflections_variant picks frame rate, render scale and scene knobs; cart/src/variant.zig
     // maps it to constants (PLAN.md "M2.1 Perf variants").
-    const variant = b.option(Variant, "reflections_variant", "snouty-reflections: full20 (default), cut20, full15 or half30") orelse .full20;
+    const variant = b.option(Variant, "reflections_variant", "snouty-reflections: cut20 (default, shipped), full20, full15 or half30") orelse .cut20;
     options.addOption(Variant, "reflections_variant", variant);
 
     // Set before add_os_cart: the custom builder runs inside that call.

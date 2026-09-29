@@ -1,5 +1,8 @@
 # M2.1 perf variants
 
+**Shipped: `cut20`** (Adrian, 2026-09-29) is the default build; pass
+`-Dreflections_variant=<name>` for the others.
+
 The full M2 scene (glass, shore, water shadows) is 74.85 ms at worst, and the
 20 fps budget is 47 ms. These are three ways to fit it, built from one tree
 for side-by-side comparison, plus the over-budget baseline. PLAN.md "M2.1 Perf
@@ -20,6 +23,14 @@ orbit and on its worst frame.
 `cut20` first kept depth-0 shadows as planned (47.97 ms, 0.97 over), so its
 shadows were turned off entirely. `half30` has 10 ms of spare time; locking it
 to 20 fps instead would leave 26 ms for more features.
+
+What `cut20` loses besides the glass: the spheres' shadows on the water.
+They are clearest while the camera faces the sun, as a darker wedge on the
+water beyond the sphere (also visible in its reflection) with less glitter;
+with the sun behind the camera they are mostly hidden behind the sphere. Reference frame 525,
+shadows on (left) and off (right):
+
+![water shadows on and off](water_shadows_on_off.png)
 
 The same moment (25.2 s into the orbit) in each, left to right: full20, cut20,
 full15, half30.

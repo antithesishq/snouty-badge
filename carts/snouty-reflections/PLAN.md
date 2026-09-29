@@ -559,3 +559,14 @@ table and a GIF per variant, and tags `snouty-reflections/m2.1-variants`.
   worst frame; negative controls (one variant's wasm checked as another) fail.
   Table, montage and GIFs in docs/variants.md; RUNNING.md section 9. Tagged
   `snouty-reflections/m2.1-variants`. Waiting on Adrian's pick.
+- 2026-09-29: Adrian picked `cut20` for main ("can't really see the
+  difference without water shadows"), keeping the variants buildable. The
+  default `-Dreflections_variant` is now cut20. Water shadows are strongest
+  when the camera faces the sun (~3,400 pixels changed at frames 525 and 0,
+  up to 41/255 per channel) and nearly gone with the sun behind it (~300 at
+  frames 225 to 300): a darker wedge on the water beyond the sphere, also in
+  its reflection, with less glitter (`docs/water_shadows_on_off.png`,
+  reference frame 525). tools/emu was broken since M2 (it did not copy
+  shore_texels.bin) and M2.1 (no build_options): fixed, it now builds a
+  variant (EMU_VARIANT, default cut20) and passes reference.py --variant.
+  `docs/preview_m2.gif` is cut20. Tagged `snouty-reflections/m2`.

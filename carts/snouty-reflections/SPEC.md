@@ -401,3 +401,9 @@ ships the text changes).
   lock 20 at full resolution. Adrian's answers: question 2 full res at
   20 fps; question 5 let the benchmark decide, one switch. M2 planned in
   PLAN.md with a 47 ms worst-frame budget.
+- 2026-09-29: M2 built with glass, shore and water shadows, but the full
+  scene's worst frame is 74.85 ms calibrated. M2.1 built three perf variants
+  (`-Dreflections_variant`, `docs/variants.md`). Adrian picked `cut20`: full
+  res at 20 fps, no glass sphere, no water shadows, 45.37 ms worst. It is the
+  default build on main; the other variants stay buildable. Question 5 is
+  moot while the glass is out.
