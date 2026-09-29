@@ -95,6 +95,18 @@ pub const Vdp = struct {
             (v.line_irq_pending and v.regs[0] & 0x10 != 0);
     }
 
+    /// Port 7E read (V counter). M0 stub: the line number, low byte; M1
+    /// (Track B) applies the 192-line NTSC jump (00-DA, D5-FF).
+    pub fn v_counter(v: *const Vdp) u8 {
+        return @truncate(v.line);
+    }
+
+    /// Port 7F read (H counter). M0 stub: T-state position scaled to a
+    /// byte; M1 (Track B) applies the documented 00-93, E9-FF sequence.
+    pub fn h_counter(v: *const Vdp) u8 {
+        return @truncate(v.line_tstates);
+    }
+
     /// Port BE read. M0 stub: the read-ahead buffer.
     pub fn read_data(v: *Vdp) u8 {
         v.latch_pending = false;
