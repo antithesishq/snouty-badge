@@ -8,7 +8,7 @@
 //! span as the others at size 1.0, but it stays anchored to the ceiling if
 //! its size ever changes); boss 1.5 bottom-anchored (the top clips above
 //! the ceiling line); pickups 0.5 bottom-anchored; projectiles 0.25
-//! centred on the horizon. Screen height and width are both 104 * size / z,
+//! centred on the horizon (the Debugger burst 0.6 -> 1.0, also centred). Screen height and width are both 104 * size / z,
 //! so the art keeps its square texels.
 const std = @import("std");
 const cart = @import("cart-api");
@@ -58,6 +58,13 @@ inline fn nibble(bytes: []const u8, i: usize) u4 {
     return @truncate(bytes[i >> 1] >> @intCast((i & 1) << 2));
 }
 
+/// Screen size of a Debugger burst (`ttl` counts 6 -> 1): 0.6 at 6,
+/// 0.73 at 5, 0.87 at 4, 1.0 from 3 down.
+fn burst_size(ttl: u8) f32 {
+    const grow: f32 = @floatFromInt(@min(@max(ttl, 3), 6) - 3); // 3..0
+    return 1.0 - grow * (0.4 / 3.0);
+}
+
 /// Spiders (ceiling turrets) are drawn only within this perpendicular distance.
 pub const spider_range: f32 = 6.0;
 
@@ -91,12 +98,20 @@ pub fn draw(s: *const state.GameState, level: *const levels.Level, px: f32, py: 
 
     const alt: u8 = @intCast((s.tick >> 2) & 1);
     for (s.projectiles) |p| {
+        var size: f32 = 0.25;
         const cell: u8 = switch (p.kind) {
             1 => alt,
             2 => 2 + alt,
+            3 => 4, // Debugger bolt
+            4 => blk: {
+                // Debugger burst: grows 0.6 -> 1.0 over its first three
+                // ticks (ttl 6, 5, 4), then holds 1.0 until it expires.
+                size = burst_size(p.ttl);
+                break :blk 5;
+            },
             else => continue,
         };
-        cam.add(fixed.to_f32(p.x), fixed.to_f32(p.y), 0.25, .projectiles, cell, .centre, false);
+        cam.add(fixed.to_f32(p.x), fixed.to_f32(p.y), size, .projectiles, cell, .centre, false);
     }
 
     // Back to front: insertion sort by z, farthest first.

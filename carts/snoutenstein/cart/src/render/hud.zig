@@ -31,6 +31,7 @@ const icon_zapper = 3;
 const icon_spray = 4;
 const icon_clock = 5;
 const icon_rewind = 6;
+const icon_debugger = 8; // cell 7 is the heart
 
 // Status bar geometry (x ranges from SPEC.md 4).
 const row1_y: i32 = bar_y + 4; // 108: text row
@@ -74,12 +75,10 @@ pub fn draw_bar(s: *const state.GameState) void {
     switch (p.weapon) {
         .swatter => text_in("-", ammo_x, 32, mid_y, grey),
         .zapper, .spray, .debugger => {
-            // M6 track C: the Debugger gets its own hud.png icon cell.
-            const icon: u32 = if (p.weapon == .zapper) icon_zapper else icon_spray;
-            const n: u8 = switch (p.weapon) {
-                .zapper => p.ammo_zapper,
-                .spray => p.ammo_spray,
-                else => p.ammo_debugger,
+            const icon: u32, const n: u8 = switch (p.weapon) {
+                .zapper => .{ icon_zapper, p.ammo_zapper },
+                .spray => .{ icon_spray, p.ammo_spray },
+                else => .{ icon_debugger, p.ammo_debugger },
             };
             blit.cell(gfx.hud, 8, 8, icon, ammo_x + 3, mid_y, .{});
             var abuf: [4]u8 = undefined;
