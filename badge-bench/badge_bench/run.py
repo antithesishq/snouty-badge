@@ -394,7 +394,27 @@ def run(elf, frames, controls, pokes=(), seed=1, png_every=0, max_frame_ms=1000.
     for (p, off, rw), n in sorted(fake.unknown.items()):
         res.warnings.append(f"unmodelled {p} register {'read' if rw == 'r' else 'write'} at "
                             f"offset {off:#05x} ({n} times); returned 0 / ignored")
+    w = neopixel_warning(res.frames)
+    if w:
+        res.warnings.append(w)
     return res
+
+
+def neopixel_warning(frames):
+    """One warning for the run if any measured frame left a non-zero neopixel
+    byte: the first offending frame and the brightest channel over the run.
+    Carts keep the strip dark (docs/NEOPIXELS.md); None when they did."""
+    first, peak = None, 0
+    for f in frames:
+        m = max((c for px in f['neopixels'] for c in px), default=0)
+        if m:
+            if first is None:
+                first = f['frame']
+            peak = max(peak, m)
+    if first is None:
+        return None
+    return (f"neopixels written: frame {first}, max channel {peak} "
+            "(carts must leave the LEDs dark, docs/NEOPIXELS.md)")
 
 
 def describe_addr(elf, a):

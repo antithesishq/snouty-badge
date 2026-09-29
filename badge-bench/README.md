@@ -75,7 +75,7 @@ try to read the ELF path as one).
 | `--listing` | Write `DIR/listing.lst`: capstone disassembly of the 5 hottest functions, each instruction annotated with executions and modelled cycles per frame. |
 | `--symbols` | Print the hot-function table (top 20, `--top N`). |
 | `--poke SYM=VALUE` | Write VALUE into global SYM (its ELF symbol size if 1, 2 or 4 bytes, else a u32) after loading and before `_start`, like the reflections runner did for `dither.mode`. Repeatable. `start()` runs after the poke and may overwrite it. |
-| `--json` | Write `DIR/bench.json`: every frame (insns, cycles, ms, taken branches, memory-class cycles `mem_cyc`, presents, framebuffer index, controls, neopixels, user LED, tone count; `busy_ms` when calibrated), the summary, the top 50 functions (each with `taken`, `mnemonics` = {base mnemonic: executions over the run} and `class_cyc` = {model class: cycles over the run}), traces, tones, warnings, crash/hang; `meta.calibration` when calibrated. |
+| `--json` | Write `DIR/bench.json`: every frame (insns, cycles, ms, taken branches, memory-class cycles `mem_cyc`, presents, framebuffer index, controls, neopixels (five `[r, g, b]`; any non-zero byte also adds the `neopixels written` warning), user LED, tone count; `busy_ms` when calibrated), the summary, the top 50 functions (each with `taken`, `mnemonics` = {base mnemonic: executions over the run} and `class_cyc` = {model class: cycles over the run}), traces, tones, warnings, crash/hang; `meta.calibration` when calibrated. |
 | `--seed N` | Seed of the PRNG behind `cart.rand()` (default 1). |
 | `--max-frame-ms MS` | A frame that runs longer than this (modelled) without reaching the next loop iteration is a hang (default 1000). |
 | `--traces N` | Print at most N `cart.trace()` strings live (default 20; all of them go to the JSON). |
@@ -152,7 +152,10 @@ ids). All in `badge_bench/os_fake.py`.
 
 Controls are written into `ipc_data.controls` before each `update()`;
 neopixels and the user LED are read after it, and tones are counted per
-frame. Nothing else is mapped: any other access stops the run as a crash
+frame. Carts keep the neopixels dark (`docs/NEOPIXELS.md`): if any frame
+leaves a non-zero neopixel byte, the run gets one warning, `neopixels
+written: frame F, max channel V`, naming the first such frame and the
+brightest channel over the run (report text and `bench.json` `warnings`). Nothing else is mapped: any other access stops the run as a crash
 with the PC, the faulting address and the nearest symbols (exit 4). Reads
 of unmodelled registers inside the faked pages return 0 and are listed as
 warnings.
@@ -486,7 +489,10 @@ Notes and oddities:
 - None of the carts wrote neopixels or the user LED in these runs, sent a
   trace, or touched a peripheral the fake OS lacks. The fake OS needed
   nothing beyond what snouty-reflections uses except `cart.rand()` (ROSC,
-  used by snouty-maze's seed) and the SRAM8/9 mapping above.
+  used by snouty-maze's seed) and the SRAM8/9 mapping above. Since
+  2026-09-29 every cart must keep the neopixels dark (`docs/NEOPIXELS.md`)
+  and a run that writes a non-zero neopixel byte prints a `neopixels
+  written: frame F, max channel V` warning.
 
 Reproduce (from this directory, after `zig build` at the repository root;
 `tests/test_reflections.sh` expects the reflections ELF built at tag
@@ -513,6 +519,7 @@ carts/<name>.toml   per-cart defaults (not the repository's carts/ sources)
 calibrate/          badge-calibrate cart, fit.py, the badge capture and calibration.toml
                     (applied by default)
 tests/              test_reflections.sh (validation 1, --calibrate FILE for calibrated ms),
-                    test_calibrate_selftest.sh + make_calibrate_fixture.py (fit.py gate)
+                    test_calibrate_selftest.sh + make_calibrate_fixture.py (fit.py gate),
+                    test_neopixel_warning.py (neopixel guard on synthetic frames)
 out/                default output directory (gitignored)
 ```
