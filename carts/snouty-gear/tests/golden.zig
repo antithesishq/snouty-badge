@@ -17,9 +17,12 @@ const Gg = core.Gg;
 const Pad = core.Pad;
 
 const frames = 600;
-const checkpoints = [_]u32{ 60, 120, 300, 600 };
-/// Hashes at `checkpoints`, filled in at integration. Empty: print only.
-const expected = [_]u64{};
+/// Frames with content on screen in the m1_play run (reviewed 2026-09-29):
+/// 120 main menu, 180 mode select, 360 the pipe grid, 570 the grid again
+/// after the quit prompt was declined.
+const checkpoints = [_]u32{ 120, 180, 360, 570 };
+/// Hashes at `checkpoints` from the reviewed M1 run (empty: print only).
+const expected = [_]u64{ 0x111996CE647897B6, 0x8DF535FC3DFF2F30, 0x32C976B8D958EF08, 0xB5B09532EB293AE2 };
 
 const Hasher = struct {
     lines: u32 = 0,

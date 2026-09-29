@@ -2,10 +2,6 @@
 //! RAM, a VDP register, CRAM, a VRAM byte and the PSG through the ports,
 //! then spins; `step_frame` runs it and the bytes must have landed.
 //!
-//! The M0 Z80 stub executes nothing (every opcode is a 4 T-state NOP), so
-//! the code-dependent asserts are gated on the CPU having reached the final
-//! `jr $` loop (`ran_program`); on the stub only the frame loop is checked.
-//! Integration: remove the gate once the real Z80 and VDP are merged.
 const std = @import("std");
 const core = @import("core");
 const Gg = core.Gg;
@@ -68,13 +64,7 @@ test "smoke: a tiny ROM drives mapper, RAM, VDP and PSG through step_frame" {
     // A frame is 262 x 228 T-states, give or take one instruction.
     try std.testing.expect(gg.frame_t >= core.frame_tstates - 23 and gg.frame_t <= core.frame_tstates + 23);
 
-    const ran_program = gg.cpu.pc == loop_pc;
-    if (!ran_program) {
-        // Z80 stub: it fetched through the bus and did nothing else.
-        try std.testing.expect(gg.cpu.pc != 0);
-        try expectEqual(@as(u8, 0), gg.ram[0x100]);
-        return;
-    }
+    try expectEqual(@as(u16, loop_pc), gg.cpu.pc);
     var b = gg.bus_for();
     try expectEqual(@as(u8, 3), gg.mapper.slot[2]);
     try expectEqual(@as(u8, 0xB3), b.read(0x8000));
