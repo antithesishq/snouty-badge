@@ -8,4 +8,5 @@ test {
     _ = core;
     _ = core.rom;
     _ = @import("smoke.zig");
+    _ = @import("m68k_single_step.zig");
 }
