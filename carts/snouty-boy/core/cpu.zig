@@ -34,8 +34,13 @@ pub const Cpu = struct {
     halt_bug: bool = false,
 };
 
-/// Post-boot DMG register values (SPEC.md section 3).
+/// Post-boot register values (SPEC.md sections 3 and 19.1): A = 0x11 is how
+/// games detect a Game Boy Color.
 pub fn reset(gb: *Gb) void {
+    if (gb.is_cgb()) {
+        gb.cpu = .{ .a = 0x11, .f = 0x80, .b = 0x00, .c = 0x00, .d = 0xFF, .e = 0x56, .h = 0x00, .l = 0x0D, .sp = 0xFFFE, .pc = 0x0100 };
+        return;
+    }
     gb.cpu = .{
         .a = 0x01,
         .f = 0xB0,

@@ -245,6 +245,9 @@ fn read_io(gb: *Gb, reg: u8) u8 {
         0x10...0x3F => apu.read_reg(gb, reg),
         Reg.dma => gb.io[Reg.dma],
         0x40...0x45, 0x47...0x4B => ppu.read_reg(gb, reg),
+        Reg.vbk => if (gb.is_cgb()) 0xFE | gb.io[Reg.vbk] else 0xFF,
+        Reg.svbk => if (gb.is_cgb()) 0xF8 | gb.io[Reg.svbk] else 0xFF,
+        Reg.bcps...Reg.opri => if (gb.is_cgb()) ppu.read_reg(gb, reg) else 0xFF,
         else => 0xFF,
     };
 }
@@ -294,6 +297,15 @@ fn write_io(gb: *Gb, reg: u8, v: u8) void {
             ppu.write_reg(gb, reg, v);
         },
         0x40...0x45, 0x47...0x4B => ppu.write_reg(gb, reg, v),
+        Reg.vbk => if (gb.is_cgb()) {
+            gb.io[Reg.vbk] = v & 1;
+            gb.banks.vram_off = @as(u16, v & 1) * 0x2000;
+        },
+        Reg.svbk => if (gb.is_cgb()) {
+            gb.io[Reg.svbk] = v & 7;
+            gb.banks.wram_off = @as(u16, @max(v & 7, 1)) * 0x1000;
+        },
+        Reg.bcps...Reg.opri => if (gb.is_cgb()) ppu.write_reg(gb, reg, v),
         else => {},
     }
 }
