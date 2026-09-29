@@ -390,3 +390,52 @@ test "rom: cart_ram_len and the header read through a fragmented image" {
         try std.testing.expectEqual(c.code != 0, m.has_ram);
     }
 }
+
+// Moved from core/rom.zig: tests in the core module do not run under
+// tests/all.zig (only the root module's tests do).
+
+test "rom: from_slice: full banks direct, partial tail through read" {
+    var img: [0x4000 + 0x150]u8 = undefined;
+    for (&img, 0..) |*b, i| b.* = @truncate(i * 7);
+    const r = Rom.from_slice(&img);
+    try std.testing.expectEqual(@as(u32, img.len), r.len);
+    try std.testing.expect(r.banks[0] != null);
+    try std.testing.expect(r.banks[1] == null);
+    try std.testing.expectEqual(img[0x3FFF], r.read(0x3FFF));
+    try std.testing.expectEqual(img[0x4000], r.read(0x4000));
+    try std.testing.expectEqual(img[0x414F], r.read(0x414F));
+    try std.testing.expectEqual(@as(u8, 0xFF), r.read(0x4150));
+    try std.testing.expectEqual(@as(u8, 0xFF), r.read(0x7FFF));
+    try std.testing.expectEqual(@as(u8, 0xFF), r.read(rom_mod.max_bytes));
+    try std.testing.expectEqual(@as(u32, 0), r.fragmented_banks());
+    try std.testing.expectEqual(std.hash.Crc32.hash(&img), r.crc32());
+}
+
+test "rom: from_sectors: contiguous banks direct, shuffled ones through the table" {
+    // A 32 KB image whose second bank is stored with two sectors swapped.
+    var img: [0x8000]u8 = undefined;
+    for (&img, 0..) |*b, i| b.* = @truncate(i ^ (i >> 8));
+    var storage: [0x8000]u8 = img;
+    std.mem.swap([512]u8, storage[0x4000..][0..512], storage[0x4200..][0..512]);
+    var sectors: [64][*]const u8 = undefined;
+    for (&sectors, 0..) |*s, i| s.* = storage[i * 512 ..].ptr;
+    std.mem.swap([*]const u8, &sectors[32], &sectors[33]);
+    const r = Rom.from_sectors(img.len, &sectors);
+    try std.testing.expect(r.banks[0] != null);
+    try std.testing.expect(r.banks[1] == null);
+    try std.testing.expectEqual(@as(u32, 1), r.fragmented_banks());
+    for (img, 0..) |want, i| try std.testing.expectEqual(want, r.read(@intCast(i)));
+    try std.testing.expectEqual(std.hash.Crc32.hash(&img), r.crc32());
+}
+
+test "rom: from_sectors: a table shorter than len caps the image" {
+    var img: [0x4000]u8 = undefined;
+    for (&img, 0..) |*b, i| b.* = @truncate(i);
+    var sectors: [4][*]const u8 = undefined;
+    for (&sectors, 0..) |*s, i| s.* = img[i * 512 ..].ptr;
+    const r = Rom.from_sectors(img.len, &sectors);
+    try std.testing.expectEqual(@as(u32, 4 * 512), r.len);
+    try std.testing.expectEqual(img[4 * 512 - 1], r.read(4 * 512 - 1));
+    try std.testing.expectEqual(@as(u8, 0xFF), r.read(4 * 512));
+    try std.testing.expectEqual(std.hash.Crc32.hash(img[0 .. 4 * 512]), r.crc32());
+}

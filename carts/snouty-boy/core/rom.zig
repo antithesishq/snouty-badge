@@ -45,9 +45,11 @@ pub const Rom = struct {
     /// An image of `len` bytes made of 512-byte sectors that may lie anywhere
     /// (a file on the badge drive). Banks whose 32 sectors are consecutive in
     /// memory get a direct pointer; the rest read through the table. The
-    /// slice must outlive the Rom.
+    /// slice must outlive the Rom. `len` is cut to what the table covers, so
+    /// a short table reads 0xFF past its end instead of out of bounds.
     pub fn from_sectors(len: u32, sectors: []const [*]const u8) Rom {
-        var r: Rom = .{ .len = @min(len, max_bytes), .sectors = sectors };
+        const covered: u32 = @intCast(@min(sectors.len, max_sectors) * sector_bytes);
+        var r: Rom = .{ .len = @min(len, max_bytes, covered), .sectors = sectors };
         const per_bank = bank_bytes / sector_bytes;
         var bank: usize = 0;
         while ((bank + 1) * bank_bytes <= r.len) : (bank += 1) {
@@ -102,48 +104,18 @@ pub const Rom = struct {
                 const n = @min(bank_bytes, r.len - off);
                 h.update(p[0..n]);
                 off += n;
-            } else {
-                var buf: [sector_bytes]u8 = undefined;
+            } else if (r.sectors.len != 0) {
+                // `off` is sector-aligned here: banks are whole sectors.
                 const n = @min(sector_bytes, r.len - off);
-                for (buf[0..n], 0..) |*b, i| b.* = r.read(off + @as(u32, @intCast(i)));
-                h.update(buf[0..n]);
+                h.update(r.sectors[off / sector_bytes][0..n]);
                 off += n;
+            } else {
+                // The partial last bank of a contiguous image.
+                const t = r.tail orelse break;
+                h.update(t[0 .. r.len - off]);
+                off = r.len;
             }
         }
         return h.final();
     }
 };
-
-test "from_slice: full banks direct, partial tail through read" {
-    var img: [0x4000 + 0x150]u8 = undefined;
-    for (&img, 0..) |*b, i| b.* = @truncate(i * 7);
-    const r = Rom.from_slice(&img);
-    try std.testing.expectEqual(@as(u32, img.len), r.len);
-    try std.testing.expect(r.banks[0] != null);
-    try std.testing.expect(r.banks[1] == null);
-    try std.testing.expectEqual(img[0x3FFF], r.read(0x3FFF));
-    try std.testing.expectEqual(img[0x4000], r.read(0x4000));
-    try std.testing.expectEqual(img[0x414F], r.read(0x414F));
-    try std.testing.expectEqual(@as(u8, 0xFF), r.read(0x4150));
-    try std.testing.expectEqual(@as(u8, 0xFF), r.read(0x7FFF));
-    try std.testing.expectEqual(@as(u8, 0xFF), r.read(max_bytes));
-    try std.testing.expectEqual(@as(u32, 0), r.fragmented_banks());
-    try std.testing.expectEqual(std.hash.Crc32.hash(&img), r.crc32());
-}
-
-test "from_sectors: contiguous banks direct, shuffled ones through the table" {
-    // A 32 KB image whose second bank is stored with two sectors swapped.
-    var img: [0x8000]u8 = undefined;
-    for (&img, 0..) |*b, i| b.* = @truncate(i ^ (i >> 8));
-    var storage: [0x8000]u8 = img;
-    std.mem.swap([512]u8, storage[0x4000..][0..512], storage[0x4200..][0..512]);
-    var sectors: [64][*]const u8 = undefined;
-    for (&sectors, 0..) |*s, i| s.* = storage[i * 512 ..].ptr;
-    std.mem.swap([*]const u8, &sectors[32], &sectors[33]);
-    const r = Rom.from_sectors(img.len, &sectors);
-    try std.testing.expect(r.banks[0] != null);
-    try std.testing.expect(r.banks[1] == null);
-    try std.testing.expectEqual(@as(u32, 1), r.fragmented_banks());
-    for (img, 0..) |want, i| try std.testing.expectEqual(want, r.read(@intCast(i)));
-    try std.testing.expectEqual(std.hash.Crc32.hash(&img), r.crc32());
-}

@@ -277,3 +277,15 @@ test "determinism: pool slots with 2 KB cart RAM round-trip and replay" {
 test "determinism: pool slots with 8 KB cart RAM round-trip and replay" {
     try pool_round_trip_and_replay(2, 0x2000);
 }
+
+// Moved from core/gb.zig, where it never ran (see tests/all.zig).
+test "determinism: keyframe round trip is exact" {
+    const rom: [0x8000]u8 = @splat(0);
+    var gb = Gb.init(&rom);
+    var k: Gb.Keyframe = undefined;
+    gb.snapshot(&k);
+    var gb2 = Gb.init(&rom);
+    gb2.wram[5] = 0xAA;
+    gb2.restore(&k);
+    try std.testing.expectEqual(@as(u8, 0), gb2.wram[5]);
+}
