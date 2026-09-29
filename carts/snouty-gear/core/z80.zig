@@ -461,6 +461,10 @@ pub fn Z80(comptime BusT: type) type {
         // ---- unprefixed ----
 
         fn exec(self: *Self, bus: *BusT, op: u8) u32 {
+            // The 256-way switch inlines the bus accessors into every prong;
+            // with the real Game Gear bus (itself inline) semantic analysis
+            // passes Zig's default 1000-branch quota. Not a comptime loop.
+            @setEvalBranchQuota(20_000);
             switch (op) {
                 0x00 => return 4,
                 inline 0x01, 0x11, 0x21, 0x31 => |o| {
