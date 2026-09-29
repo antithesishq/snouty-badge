@@ -1,8 +1,8 @@
 # Snouty Boy
 
 Fifth badge cart for the Software You Can Love (SYCL) conference, built for
-Antithesis: a Game Boy (DMG) emulator in Zig with one embedded ROM and a
-time scrubber. `SPEC.md` is the design; `PLAN.md` is the current
+Antithesis: a Game Boy (DMG) and Game Boy Color (CGB, SPEC.md 19) emulator
+in Zig with one embedded ROM and a time scrubber. `SPEC.md` is the design; `PLAN.md` is the current
 milestone's file ownership and interface contract. Sibling carts
 `../snouty-bugs` and `../snouty-run` hold the toolchain history; their
 CLAUDE.md files have the long explanations, this one summarises.
@@ -12,9 +12,14 @@ CLAUDE.md files have the long explanations, this one summarises.
 - `core/` — the emulator, badge-agnostic. `gb.zig` is the shared state and
   frame loop; one file per subsystem. No `cart-api` import, no floats, no
   allocator, no clock, no randomness (SPEC.md 10.3). Host-testable.
+- `core/kstore.zig` — the keyframe page store (SPEC.md 19.3): state regions
+  (`Gb.state_regions`) cut into pages, shared with the previous keyframe
+  when equal, a shared zero page, refcounted pool, oldest-first eviction.
+  `core/ring.zig` is the scrubber's frame/age bookkeeping on top of it.
 - `cart/src/` — the badge frontend. `main.zig` exports `start()`/`update()`
-  and holds the wasm simulator shims; `frontend/` maps video, input, debug
-  overlay, later menu/audio/rewind.
+  and holds the wasm simulator shims; `frontend/` has video (DMG shade LUT,
+  CGB palette-RAM LUT rebuilt on `gb.pal_dirty`), input, debug overlay,
+  menu, splash, audio and rewind (page store sized from the memory budget).
 - `tests/` — host tests (`zig build test`). `tests/roms/` is gitignored;
   run `tools/fetch_test_roms.sh` first. `tests/acid2_reference.bin` is the
   dmg-acid2 reference as 160x144 shade bytes.
@@ -30,7 +35,9 @@ CLAUDE.md files have the long explanations, this one summarises.
 ## Target hardware (SYCL Badge V2)
 
 - RP2354B Cortex-M33 at 150 MHz, Core 1 runs the cart from RAM. Cart RAM
-  307 KB total incl. 32 KB stack; code + ROM + state all live there.
+  window 0x4AF00 bytes (300 KiB) incl. a 32 KB stack; in the RAM cart code +
+  ROM + state all live there, in the XIP cart (`-Dcart-mode=xip`) code and
+  ROM run from the 256 KB flash window and all of it is state.
 - Screen 160x128 RGB565, framebuffer column-major `cart.framebuffer[x][y]`,
   `Pixel.from_color(DisplayColor.rgb(0xRRGGBB))`.
 - Inputs `cart.controls.*`: start, select, a, b, click, up, down, left,
@@ -58,9 +65,19 @@ root (`../..`), whose `build.zig` calls this cart's `build.zig` module
   embeds `roms/2048.gb`.
 - `zig build test` (root) → every cart's host tests, this cart's native core
   tests among them (about 15 s of it). `-Dtest-filter=acid`.
-- `size ../../zig-out/firmware/snouty-boy.elf` for the memory budget (SPEC.md 13).
+- `size ../../zig-out/firmware/snouty-boy.elf` for the memory budget (SPEC.md 13,
+  19.4). `-Dcart-mode=xip|both` adds `snouty-boy-xip.elf`/`.uf2`. The
+  cart's `build.zig` passes the mode to the cart as `cart_options.xip`
+  (it tells the two firmware builds apart by os_cart's step name
+  "<name>-xip assets"); `frontend/rewind.zig` turns it into the page-store
+  size and refuses RAM builds that leave less than one full keyframe
+  (e.g. rebound.gbc, 128 KB: use XIP). Sizes with the store (fast):
+  2048-gb RAM text 92.5 KB / bss 171 KB, XIP bss 270 KB.
 - Headless: `node ../../tools/preview.mjs ../../zig-out/bin/snouty-boy.wasm --frames 60 --every 10 --out out/`
   then look at `out/frame_XXXX.png`. Buttons via `--press A:30-40`.
+- Keyframe sizes per ROM: `tests/determinism.zig` prints a `kstore ...`
+  line per ROM; `zig build test` hides it, so run the newest
+  `../../.zig-cache/o/*/test` binary from this directory.
 - `zig fmt core cart tests build.zig` before committing.
 
 ## Simulator quirks (upstream `main`)

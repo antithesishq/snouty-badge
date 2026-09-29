@@ -1,6 +1,8 @@
 //! Boot splash (SPEC.md section 12): for `frames` frames (1.2 s) the Snouty
 //! mark and "SNOUTY BOY" scroll down from above the screen to the centre,
-//! like the DMG boot logo, on shade 0 of the current palette. Any button
+//! like the DMG boot logo, on shade 0 of the current palette. In CGB mode
+//! (SPEC.md 19) the title is "SNOUTY BOY COLOR" on white, "COLOR" in five
+//! colours like the GBC boot logo. Any button
 //! press skips it. The two-note chime belongs to frontend/audio.zig: this
 //! module only raises `request_chime` once, the frame the logo lands.
 const cart = @import("cart-api");
@@ -38,6 +40,9 @@ const mark = [16]u16{
 const mark_scale = 3;
 const mark_px: i32 = 16 * mark_scale;
 const title = "SNOUTY BOY";
+const title_cgb = "SNOUTY BOY COLOR";
+/// One colour per letter of "COLOR".
+const color_letters = [5]u32{ 0xE02020, 0xF08000, 0x20A020, 0x2060E0, 0xA020C0 };
 const title_scale = 1;
 const gap = 6;
 const block_h: i32 = mark_px + gap + 8 * title_scale;
@@ -86,12 +91,21 @@ fn draw(y: i32) void {
             });
         }
     }
-    const tw: i32 = title.len * 8 * title_scale;
-    cart.text(.{
-        .str = title,
-        .x = @divTrunc(@as(i32, cart.screen_width) - tw, 2),
-        .y = y + mark_px + gap,
-        .scale = title_scale,
-        .text_color = ink,
-    });
+    const str = if (video.cgb) title_cgb else title;
+    const tw: i32 = @intCast(str.len * 8 * title_scale);
+    const tx = @divTrunc(@as(i32, cart.screen_width) - tw, 2);
+    const ty = y + mark_px + gap;
+    cart.text(.{ .str = title, .x = tx, .y = ty, .scale = title_scale, .text_color = ink });
+    if (video.cgb) {
+        for (color_letters, 0..) |rgb, i| {
+            const at = title.len + 1 + i;
+            cart.text(.{
+                .str = title_cgb[at..][0..1],
+                .x = tx + @as(i32, @intCast(at * 8 * title_scale)),
+                .y = ty,
+                .scale = title_scale,
+                .text_color = .rgb(rgb),
+            });
+        }
+    }
 }

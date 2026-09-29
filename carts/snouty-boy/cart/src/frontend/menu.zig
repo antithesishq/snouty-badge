@@ -17,6 +17,12 @@
 //! (`video.remap_palette`), so the preview matches what resuming will show.
 //! A scale change takes effect on the first frame after resuming.
 //!
+//! Game Boy Color (SPEC.md 19.2): in CGB mode the Palette row is
+//! "Color: LCD/Raw" (the colour-correction builder, `video.ColorMode`); the
+//! frozen frame keeps its colours until the next rendered frame (a scrub
+//! step or resuming), since a CGB frame has 64 colours and no shade to remap.
+//! The title band reads "SNOUTY BOY COLOR" and the menu is black on white.
+//!
 //! Time scrubber (SPEC.md 5 and 10, frontend/rewind.zig). Left/Right on a
 //! setting row (Palette, Scale, Sound, Debug overlay) cycle that setting as
 //! before; on every other row (Resume, where the menu opens, Reset, About)
@@ -36,7 +42,7 @@ const debug = @import("debug.zig");
 const input = @import("input.zig");
 const rewind = @import("rewind.zig");
 
-pub const version = "0.4.0-m4";
+pub const version = "0.6.0-m6";
 
 /// Sound approximation on/off (SPEC.md 18 item 6). Read by frontend/audio.zig
 /// through the integrator; keep the name.
@@ -186,7 +192,7 @@ fn move(d: i2) void {
 /// Left/Right scrub, see `left_right`).
 fn adjust(d: i2) void {
     switch (cursor) {
-        .palette => {
+        .palette => if (video.cgb) video.next_color_mode() else {
             const old = video.palette_index;
             const new = if (d < 0) old + video.palettes.len - 1 else old + 1;
             video.set_palette_index(new);
@@ -242,7 +248,7 @@ fn draw(gb: *const core.Gb) void {
 
     // Title band: SPEC.md 12 and 18 item 9.
     cart.rect(.{ .x = 0, .y = 0, .width = cart.screen_width, .height = band_h, .fill_color = fg });
-    centered("SNOUTY BOY", 1, bg);
+    centered(if (video.cgb) "SNOUTY BOY COLOR" else "SNOUTY BOY", 1, bg);
     centered(rom_title(gb.rom), 10, video.shade_color(1));
     centered("verified by", 19, bg);
     centered("deterministic replay", 27, bg);
@@ -250,11 +256,12 @@ fn draw(gb: *const core.Gb) void {
     cart.rect(.{ .x = panel_x, .y = panel_y, .width = panel_w, .height = panel_h, .fill_color = bg, .stroke_color = fg });
 
     if (showing_about) {
+        var buf2: [24]u8 = undefined;
         const lines = [_][]const u8{
             cat(&buf, "Version ", version),
             "ROM:",
             rom_title(gb.rom),
-            mbc_name(gb.mbc.kind),
+            if (gb.is_cgb()) cat(buf2[0..], mbc_name(gb.mbc.kind), " CGB") else mbc_name(gb.mbc.kind),
             "Built for",
             "Antithesis",
         };
@@ -272,7 +279,10 @@ fn draw(gb: *const core.Gb) void {
         const y: i32 = first_row_y + @as(i32, @intCast(i)) * row_h;
         const label: []const u8 = switch (item) {
             .resume_game => "Resume",
-            .palette => cat(&buf, "Palette: ", video.palette_name()),
+            .palette => if (video.cgb)
+                cat(&buf, "Color: ", video.color_mode_name())
+            else
+                cat(&buf, "Palette: ", video.palette_name()),
             .scale => if (video.scale == .squeeze) "Scale: Squeeze" else "Scale: Crop",
             .sound => if (sound_enabled) "Sound: On" else "Sound: Off",
             .debug => if (debug.enabled) "Debug overlay: On" else "Debug overlay: Off",

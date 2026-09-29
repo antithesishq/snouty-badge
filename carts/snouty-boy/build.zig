@@ -63,12 +63,21 @@ fn exists(b: *Build, rel: []const u8) bool {
     return true;
 }
 
-/// Adds the `core` and `rom` modules to the cart. `rom.data` is the embedded
-/// ROM; the file is copied next to a generated rom.zig so @embedFile can see it.
+/// Adds the `core`, `rom` and `cart_options` modules to the cart. `rom.data`
+/// is the embedded ROM; the file is copied next to a generated rom.zig so
+/// @embedFile can see it. `cart_options.xip` tells the rewind budget whether
+/// code and ROM live in flash (frontend/rewind.zig). `build/os_cart.zig`
+/// calls this once per firmware (twice for -Dcart-mode=both) and names the
+/// XIP one's asset step "<name>-xip assets"; that name is the only thing the
+/// builder signature lets us tell the two apart by.
 fn build_cart_modules(b: *Build, cart: *Build.Module, cart_api: *Build.Module, step: *Build.Step) void {
     _ = cart_api;
     const core_mod = b.createModule(.{ .root_source_file = b.path(dir ++ "core/gb.zig") });
     cart.addImport("core", core_mod);
+
+    const options = b.addOptions();
+    options.addOption(bool, "xip", std.mem.endsWith(u8, step.name, "-xip assets"));
+    cart.addImport("cart_options", options.createModule());
 
     const wf = b.addWriteFiles();
     _ = wf.addCopyFile(b.path(rom_path), "rom.gb");
