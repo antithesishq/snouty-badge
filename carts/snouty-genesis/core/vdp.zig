@@ -145,6 +145,9 @@ pub const Vdp = struct {
     code: u8 = 0,
     /// Access address (16 bits; A14-A15 from the second command word).
     addr: u16 = 0,
+    /// A14-A15 as the last second word set them: a first word keeps these,
+    /// not the auto-incremented address's.
+    addr_hi: u16 = 0,
     /// A VRAM fill DMA is armed and waits for its data port write.
     fill_pending: bool = false,
 
@@ -189,6 +192,7 @@ pub const Vdp = struct {
         v.pending = false;
         v.code = 0;
         v.addr = 0;
+        v.addr_hi = 0;
         v.fill_pending = false;
         v.status = 0;
         v.line = 0;
@@ -258,7 +262,7 @@ pub const Vdp = struct {
     /// stalls the 68000 for (0 for everything but 68000-memory DMA).
     pub fn write_control(v: *Vdp, w: u16, bus: anytype) u32 {
         if (!v.pending) {
-            v.addr = (v.addr & 0xC000) | (w & 0x3FFF);
+            v.addr = v.addr_hi | (w & 0x3FFF);
             v.code = (v.code & 0x3C) | @as(u8, @intCast(w >> 14));
             if (w & 0xC000 == 0x8000) {
                 v.write_reg(@intCast((w >> 8) & 0x1F), @truncate(w));
@@ -268,7 +272,8 @@ pub const Vdp = struct {
             return 0;
         }
         v.pending = false;
-        v.addr = (v.addr & 0x3FFF) | ((w & 3) << 14);
+        v.addr_hi = (w & 3) << 14;
+        v.addr = (v.addr & 0x3FFF) | v.addr_hi;
         v.code = (v.code & 0x03) | @as(u8, @intCast((w >> 2) & 0x3C));
         if (v.code & 0x20 == 0 or v.regs[1] & 0x10 == 0) return 0;
         switch (v.regs[23] >> 6) {
@@ -288,11 +293,14 @@ pub const Vdp = struct {
     }
 
     /// Status read (C00004/C00006): clears the command latch and the
-    /// sprite overflow and collision bits.
+    /// sprite overflow and collision bits. DMA busy reads 0 except while a
+    /// fill waits for its data word (DMA is instant otherwise).
     pub fn read_status(v: *Vdp) u16 {
         v.pending = false;
         var s: u16 = st_fixed | st_fifo_empty | v.status;
         if (v.vint_pending) s |= st_vint;
+        // A fill is busy from its command until its data write.
+        if (v.fill_pending) s |= st_dma;
         if ((v.line >= vint_line and v.line < lines_per_frame - 1) or !v.display_on()) s |= st_vblank;
         const c = v.line_cycles;
         if (if (v.h40()) (c >= 33 and c < 125) else (c >= 40 and c < 123)) s |= st_hblank;

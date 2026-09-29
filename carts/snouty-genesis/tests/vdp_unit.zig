@@ -229,6 +229,29 @@ test "vdp: the first word of a register write also sets the address low bits" {
     try expectEqual(@as(u8, 0x02), v.code & 3);
 }
 
+test "vdp: a first word keeps A14-A15 from the last second word" {
+    const v = try make();
+    defer free(v);
+    reg(v, 15, 2);
+    cmd(v, code_vram_w, 0x7FFE);
+    v.write_data(0x1111); // addr 8000 now
+    ctl(v, 0x4010); // first word alone: A13-0 = 0010, A15-14 still 01
+    try expectEqual(@as(u16, 0x4010), v.addr);
+}
+
+test "vdp: status DMA busy while a fill waits for its data word" {
+    const v = try make();
+    defer free(v);
+    reg(v, 1, 0x14);
+    reg(v, 15, 1);
+    reg(v, 19, 2);
+    reg(v, 23, 0x80);
+    cmd(v, code_vram_w | 0x20, 0x1000);
+    try expect(v.read_status() & vdp.st_dma != 0);
+    v.write_data(0);
+    try expectEqual(@as(u16, 0), v.read_status() & vdp.st_dma);
+}
+
 // ---- Data port ----
 
 test "vdp: VRAM word writes, big-endian, auto-increment and read-back" {
