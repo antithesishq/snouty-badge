@@ -1,10 +1,10 @@
 #!/usr/bin/env node
-// Screensaver-loop check (M2, extended in M3): runs the cart headless through
+// Screensaver-loop check (M2, extended in M3 and M4): runs the cart headless through
 // the shared ../../tools/preview.mjs and asserts on the debug exports after
 // the last update.
 //
-//   node tools/check_cycle.mjs [--wasm ../../zig-out/bin/snouty-maze.wasm] [--only A,B,C,D,E,F]
-//                              [--frames N] [--seed S]
+//   node tools/check_cycle.mjs [--wasm ../../zig-out/bin/snouty-maze.wasm] [--only A,B,C,D,E,F,G,H,I]
+//                              [--frames N] [--seed S] [--neopixels]
 //
 // Runs (each one `node ../../tools/preview.mjs <wasm> --quiet --seed S --frames F
 // [--call ...] [--press ...] --dump-exports ... --expect ...`):
@@ -27,8 +27,21 @@
 //   E  teleport: --call debug_place:20100 puts the sphere in (1, 0); 100
 //      updates; expects debug_teleports == 1, debug_state < 2 (WALK or TURN
 //      again) and debug_fade_level == 0 (the dissolve is over).
-//   F  leds: Select at tick 0 (autopilot state, so it toggles the LEDs); 10
-//      updates; expects debug_leds == 1, 0 < debug_led_max <= 10.
+//   F  leds: Select at tick 0 (autopilot state, so it flips leds.enabled); 10
+//      updates; expects debug_leds == 1 and debug_led_max == 0: the neopixels
+//      are compiled out by default (docs/NEOPIXELS.md), so the strip stays
+//      dark. With --neopixels (for a wasm built with -Dneopixels=true, which
+//      re-enables the dormant effects) it expects 0 < debug_led_max <= 10.
+//   G  takeover (M4): Up held for ticks 0..44 (45 updates); expects
+//      debug_state == 8 (MANUAL) and (checked here) the camera cell is no
+//      longer the seed 1 start (0, 0).
+//   H  idle return (M4): Right at tick 0 only, 400 updates; the stick has
+//      been idle for 399 ticks (> 300), so expects debug_state < 2 (WALK or
+//      TURN again) and debug_manual_idle >= 300.
+//   I  carving (M4): A at tick 0, 200 updates, so the last one is OVERHEAD
+//      state tick 19 of the 90 carve ticks; expects debug_state == 4 and
+//      debug_carve_shown < debug_carve_count (the new maze is still being
+//      carved; run B, at OVERHEAD tick 60, only checks the state).
 // // debug_state, debug_state_tick, debug_cycles, debug_cell_x/z and
 // debug_heading are dumped in every run and printed with the result.
 //
@@ -44,16 +57,16 @@ import { fileURLToPath } from "node:url";
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), ".."); // this cart
 const REPO = path.resolve(ROOT, "../.."); // repository root, where zig build writes zig-out/
 const PREVIEW = path.join(REPO, "tools", "preview.mjs");
-const STATE_NAMES = ["WALK", "TURN", "PAUSE", "RISE", "OVERHEAD", "DESCEND", "TELEPORT", "FLY"];
+const STATE_NAMES = ["WALK", "TURN", "PAUSE", "RISE", "OVERHEAD", "DESCEND", "TELEPORT", "FLY", "MANUAL"];
 const DUMP = ["debug_state", "debug_state_tick", "debug_cycles", "debug_cell_x", "debug_cell_z", "debug_heading"];
 
 function usage(msg) {
     if (msg) console.error(`check_cycle: ${msg}`);
-    console.error("usage: node tools/check_cycle.mjs [--wasm FILE] [--only A,B,C,D,E,F] [--frames N] [--seed S]");
+    console.error("usage: node tools/check_cycle.mjs [--wasm FILE] [--only A,B,C,D,E,F,G,H,I] [--frames N] [--seed S] [--neopixels]");
     process.exit(2);
 }
 
-const opts = { wasm: path.join(REPO, "zig-out", "bin", "snouty-maze.wasm"), only: null, frames: 9000, seed: 1 };
+const opts = { wasm: path.join(REPO, "zig-out", "bin", "snouty-maze.wasm"), only: null, frames: 9000, seed: 1, neopixels: false };
 const argv = process.argv.slice(2);
 for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
@@ -64,6 +77,7 @@ for (let i = 0; i < argv.length; i++) {
         case "--only": (opts.only ??= []).push(...val().split(",").map((s) => s.trim().toUpperCase()).filter(Boolean)); break;
         case "--frames": opts.frames = int(val(), 1); break;
         case "--seed": opts.seed = int(val(), 0); break;
+        case "--neopixels": opts.neopixels = true; break;
         case "-h": case "--help": usage();
         default: usage(`unexpected argument '${a}'`);
     }
@@ -89,9 +103,30 @@ const RUNS = [
         expect: ["debug_teleports == 1", "debug_state < 2", "debug_fade_level == 0"],
     },
     {
-        name: "F", what: "Select turns the LEDs on, all channels <= 10", frames: 10, press: ["SELECT:0-0"],
+        name: "F", what: opts.neopixels ? "Select turns the LEDs on, all channels <= 10 (-Dneopixels=true)"
+            : "Select flips the flag, the strip stays dark", frames: 10, press: ["SELECT:0-0"],
         dump: ["debug_leds", "debug_led_max"],
-        expect: ["debug_leds == 1", "debug_led_max <= 10", "debug_led_max > 0"],
+        expect: opts.neopixels ? ["debug_leds == 1", "debug_led_max <= 10", "debug_led_max > 0"]
+            : ["debug_leds == 1", "debug_led_max == 0"],
+    },
+    {
+        name: "G", what: "Up held 45 ticks takes over and walks", frames: 45, press: ["UP:0-44"],
+        dump: ["debug_manual_idle"],
+        expect: ["debug_state == 8"],
+        check: (v) => (v.debug_cell_x === undefined || v.debug_cell_z === undefined) ? "camera cell not read"
+            : (v.debug_cell_x === 0 && v.debug_cell_z === 0) ? "camera still in the start cell (0, 0)" : null,
+    },
+    {
+        name: "H", what: "Right at tick 0, idle return by tick 400", frames: 400, press: ["RIGHT:0-0"],
+        dump: ["debug_manual_idle"],
+        expect: ["debug_state < 2", "debug_manual_idle >= 300"],
+    },
+    {
+        name: "I", what: "A at tick 0, maze still carving at OVERHEAD tick 19", frames: 200, press: ["A:0-0"],
+        dump: ["debug_carve_shown", "debug_carve_count"],
+        expect: ["debug_state == 4"],
+        check: (v) => (v.debug_carve_shown === undefined || v.debug_carve_count === undefined) ? "carve exports not read"
+            : !(v.debug_carve_shown < v.debug_carve_count) ? "carving already finished" : null,
     },
 ];
 let runs = RUNS;

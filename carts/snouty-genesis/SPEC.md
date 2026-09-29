@@ -280,8 +280,10 @@ pointer for contiguous ROMs, or a cluster table (section 1 of
 
 The Snouty splash from the other emulators, recolored. The menu title
 reads "SNOUTY GENESIS", the ROM's domestic name from its header, and
-"verified by deterministic replay". Neopixels show ring depth in the menu
-only, at most 10/255 per channel. If no ROM is found on the drive, a help
+"verified by deterministic replay". The
+neopixels are off: the cart never writes non-zero values (root
+`docs/NEOPIXELS.md`; a coworker's badge shows the LEDs are unusably bright
+even at 1%, 2026-09-29). If no ROM is found on the drive, a help
 screen says to copy a `.gen` file to the badge's USB drive.
 
 ## 13. Memory budget
@@ -385,7 +387,7 @@ disjoint files.
   no-ROM help screen; menu, splash, remap, scale and crop modes. Gate:
   Adrian copies Sonic 1 to the drive and reports update ms and XIP hit and
   stall rates, contiguous and fragmented.
-- **M3 Scrub**: delta keyframes, input log, scrubbing, neopixel meter,
+- **M3 Scrub**: delta keyframes, input log, scrubbing,
   determinism test, record sizes measured with DMA-heavy scenes.
 - **M4 Hardware polish**: tune from Adrian's numbers: RAM-text placement,
   a RAM cache for hot ROM ranges if the XIP stall rate calls for it,

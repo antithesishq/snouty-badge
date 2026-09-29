@@ -17,6 +17,12 @@
 //! (`video.remap_palette`), so the preview matches what resuming will show.
 //! A scale change takes effect on the first frame after resuming.
 //!
+//! Game Boy Color (SPEC.md 19.2): in CGB mode the Palette row is
+//! "Color: LCD/Raw" (the colour-correction builder, `video.ColorMode`); the
+//! frozen frame keeps its colours until the next rendered frame (a scrub
+//! step or resuming), since a CGB frame has 64 colours and no shade to remap.
+//! The title band reads "SNOUTY BOY COLOR" and the menu is black on white.
+//!
 //! Time scrubber (SPEC.md 5 and 10, frontend/rewind.zig). Left/Right on a
 //! setting row (Palette, Scale, Sound, Debug overlay) cycle that setting as
 //! before; on every other row (Resume, where the menu opens, Reset, About)
@@ -26,17 +32,19 @@
 //! position plays on from there and drops the future. After a scrub step the
 //! menu collapses to that line in a bar at the bottom so the restored frame
 //! is visible; Left/Right keep scrubbing, B or a Select tap resume, and
-//! Up/Down/A bring the full menu back. While the menu is
-//! open the five neopixels show how full the history is, one LED per fifth.
+//! Up/Down/A bring the full menu back. A neopixel history meter (one LED per
+//! fifth) is dormant behind -Dneopixels=true (docs/NEOPIXELS.md).
 const std = @import("std");
 const cart = @import("cart-api");
 const core = @import("core");
+const build_options = @import("build_options");
 const video = @import("video.zig");
 const debug = @import("debug.zig");
 const input = @import("input.zig");
 const rewind = @import("rewind.zig");
+const romsrc = @import("romsrc.zig");
 
-pub const version = "0.4.0-m4";
+pub const version = "0.6.0-m6";
 
 /// Sound approximation on/off (SPEC.md 18 item 6). Read by frontend/audio.zig
 /// through the integrator; keep the name.
@@ -98,8 +106,10 @@ fn on_scrub(gb: *core.Gb, dir: i2) void {
     if (rewind.step(gb, dir)) scrub_view = true;
 }
 
-/// Light the first `lit` of the five neopixels.
+/// Light the first `lit` of the five neopixels. Compiled out unless built
+/// with -Dneopixels=true (docs/NEOPIXELS.md): the badge LEDs are painfully bright.
 fn set_leds(lit: u8) void {
+    if (!build_options.neopixels) return; // the OS zeroes the strip at cart start
     for (0..cart.neopixels.len) |i| cart.neopixels[i] = if (i < lit) led_on else led_off;
 }
 
@@ -186,7 +196,7 @@ fn move(d: i2) void {
 /// Left/Right scrub, see `left_right`).
 fn adjust(d: i2) void {
     switch (cursor) {
-        .palette => {
+        .palette => if (video.cgb) video.next_color_mode() else {
             const old = video.palette_index;
             const new = if (d < 0) old + video.palettes.len - 1 else old + 1;
             video.set_palette_index(new);
@@ -221,6 +231,14 @@ pub fn rom_title(rom: []const u8) []const u8 {
     return if (n == 0) "?" else raw[0..n];
 }
 
+/// The header bytes of the running ROM (`core.Rom` reads by byte), for
+/// `rom_title`. One static buffer; the menu draws one title at a time.
+var header_buf: [0x144]u8 = @splat(0);
+fn header(rom: *const core.Rom) []const u8 {
+    for (header_buf[0x134..0x144], 0x134..) |*b, off| b.* = rom.read(@intCast(off));
+    return &header_buf;
+}
+
 fn centered(s: []const u8, y: i32, color: cart.DisplayColor) void {
     const w: i32 = @intCast(@as(usize, @min(s.len, 20)) * 8); // @min(usize, 20) is a u5
     cart.text(.{ .str = s, .x = @divTrunc(@as(i32, cart.screen_width) - w, 2), .y = y, .text_color = color });
@@ -242,28 +260,15 @@ fn draw(gb: *const core.Gb) void {
 
     // Title band: SPEC.md 12 and 18 item 9.
     cart.rect(.{ .x = 0, .y = 0, .width = cart.screen_width, .height = band_h, .fill_color = fg });
-    centered("SNOUTY BOY", 1, bg);
-    centered(rom_title(gb.rom), 10, video.shade_color(1));
+    centered(if (video.cgb) "SNOUTY BOY COLOR" else "SNOUTY BOY", 1, bg);
+    centered(rom_title(header(&gb.rom)), 10, video.shade_color(1));
     centered("verified by", 19, bg);
     centered("deterministic replay", 27, bg);
 
     cart.rect(.{ .x = panel_x, .y = panel_y, .width = panel_w, .height = panel_h, .fill_color = bg, .stroke_color = fg });
 
     if (showing_about) {
-        const lines = [_][]const u8{
-            cat(&buf, "Version ", version),
-            "ROM:",
-            rom_title(gb.rom),
-            mbc_name(gb.mbc.kind),
-            "Built for",
-            "Antithesis",
-        };
-        var y: i32 = first_row_y;
-        for (lines, 0..) |l, i| {
-            cart.text(.{ .str = l, .x = if (i == 2) text_x + 16 else text_x, .y = y, .text_color = fg });
-            y += row_h;
-        }
-        cart.text(.{ .str = "B: back", .x = text_x, .y = first_row_y + 7 * row_h, .text_color = dim });
+        draw_about(gb, fg, dim);
         return;
     }
 
@@ -272,7 +277,10 @@ fn draw(gb: *const core.Gb) void {
         const y: i32 = first_row_y + @as(i32, @intCast(i)) * row_h;
         const label: []const u8 = switch (item) {
             .resume_game => "Resume",
-            .palette => cat(&buf, "Palette: ", video.palette_name()),
+            .palette => if (video.cgb)
+                cat(&buf, "Color: ", video.color_mode_name())
+            else
+                cat(&buf, "Palette: ", video.palette_name()),
             .scale => if (video.scale == .squeeze) "Scale: Squeeze" else "Scale: Crop",
             .sound => if (sound_enabled) "Sound: On" else "Sound: Off",
             .debug => if (debug.enabled) "Debug overlay: On" else "Debug overlay: Off",
@@ -289,6 +297,109 @@ fn draw(gb: *const core.Gb) void {
     const history = rewind.history_frames();
     cart.text(.{ .str = scrub_label(&buf, rewind.depth_frames(), history), .x = text_x, .y = first_row_y + item_count * row_h, .text_color = if (history == 0) dim else fg });
 }
+
+/// Characters that fit inside the panel at the About text indent.
+const about_cols = (panel_w - (text_x - panel_x) - 2) / 8;
+
+/// About (SPEC.md 5, PLAN.md M5): version, header title, mapper and size,
+/// where the ROM came from and its file name, CRC32 and the model the
+/// console runs as (DMG or CGB, SPEC.md 19), and either the
+/// fragmented-bank count (drive) or why the drive lost (embedded).
+fn draw_about(gb: *const core.Gb, fg: cart.DisplayColor, dim: cart.DisplayColor) void {
+    const info = &romsrc.info;
+    var b0: [24]u8 = undefined;
+    var b1: [24]u8 = undefined;
+    var b2: [24]u8 = undefined;
+    var b3: [24]u8 = undefined;
+    var b4: [24]u8 = undefined;
+
+    var w: Line = .{ .buf = &b1 };
+    w.put(mbc_name(gb.mbc.kind));
+    w.put(", ");
+    w.num((info.size + 1023) / 1024);
+    w.put(" KB");
+    const mbc_size = w.done();
+
+    w = .{ .buf = &b2 };
+    w.put("CRC ");
+    w.hex32(info.crc);
+    w.put(if (gb.is_cgb()) " CGB" else " DMG");
+    const crc = w.done();
+
+    w = .{ .buf = &b3 };
+    if (info.source == .drive) {
+        if (info.fragmented != 0) {
+            w.put("fragmented: ");
+            w.num(info.fragmented);
+            w.put(if (info.fragmented == 1) " bank" else " banks");
+        }
+    } else if (info.fallback) |why| {
+        w.put("drive: ");
+        w.put(why);
+    }
+    const last = w.done();
+
+    const lines = [_][]const u8{
+        cat(&b0, "Version ", version),
+        rom_title(header(&gb.rom)),
+        mbc_size,
+        if (info.source == .drive) "Source: drive" else "Source: embedded",
+        fit(&b4, info.name()),
+        crc,
+        last,
+    };
+    var y: i32 = first_row_y;
+    for (lines) |l| {
+        cart.text(.{ .str = l, .x = text_x, .y = y, .text_color = fg });
+        y += row_h;
+    }
+    cart.text(.{ .str = "B: back", .x = text_x, .y = first_row_y + 7 * row_h, .text_color = dim });
+}
+
+/// `s` cut to `about_cols` characters, the last one replaced by '~' when
+/// something was cut (drive names can be 64 bytes long).
+fn fit(buf: *[24]u8, s: []const u8) []const u8 {
+    if (s.len <= about_cols) return s;
+    @memcpy(buf[0 .. about_cols - 1], s[0 .. about_cols - 1]);
+    buf[about_cols - 1] = '~';
+    return buf[0..about_cols];
+}
+
+/// Fixed-buffer line builder; output past `about_cols` is dropped.
+const Line = struct {
+    buf: *[24]u8,
+    n: usize = 0,
+
+    fn put(w: *Line, s: []const u8) void {
+        const k = @min(s.len, about_cols - @min(w.n, about_cols));
+        @memcpy(w.buf[w.n..][0..k], s[0..k]);
+        w.n += k;
+    }
+
+    fn num(w: *Line, v: u32) void {
+        var tmp: [10]u8 = undefined;
+        var n: usize = 0;
+        var x = v;
+        while (true) {
+            tmp[9 - n] = '0' + @as(u8, @intCast(x % 10));
+            n += 1;
+            x /= 10;
+            if (x == 0) break;
+        }
+        w.put(tmp[10 - n ..]);
+    }
+
+    fn hex32(w: *Line, v: u32) void {
+        const digits = "0123456789ABCDEF";
+        var tmp: [8]u8 = undefined;
+        for (&tmp, 0..) |*c, i| c.* = digits[@as(u4, @truncate(v >> @intCast(28 - 4 * i)))];
+        w.put(&tmp);
+    }
+
+    fn done(w: *const Line) []const u8 {
+        return w.buf[0..w.n];
+    }
+};
 
 /// "Scrub: live / 3.5s" or "Scrub: -1.5 / 3.5s": 18 characters at most for
 /// up to 9.9 s, which fits the panel (18 x 8 px).

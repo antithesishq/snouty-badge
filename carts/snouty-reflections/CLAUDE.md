@@ -30,8 +30,9 @@ simulator quirks.
 - Inputs `cart.controls.*`: start, select, a, b, click, up, down, left, right.
   The OS owns Start+Select (exit to menu) and joystick click (FPS overlay);
   never bind click.
-- Audio `cart.tone2`, one voice. 5 neopixels (`cart.neopixels`, GRB), every
-  channel at or below 10/255.
+- Audio `cart.tone2`, one voice. 5 neopixels (`cart.neopixels`): off; this
+  cart never writes non-zero values (root `docs/NEOPIXELS.md`; a coworker's
+  badge shows the LEDs are unusably bright even at 1%, 2026-09-29).
 - Budget: ELF `.text`+`.data` at most 120 KB, `.bss` at most 120 KB.
 
 ## Building

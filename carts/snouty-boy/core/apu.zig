@@ -25,6 +25,8 @@ const c3 = 2;
 
 /// M-cycles per frame sequencer step (8192 T-cycles).
 pub const seq_period: u16 = 2048;
+/// `seq_period` in dots (`seq_t` counts dots).
+pub const seq_period_dots: u16 = seq_period * 4;
 
 pub const Chan = extern struct {
     /// 1 when the channel is on (mirrors its NR52 status bit).
@@ -80,7 +82,7 @@ pub fn reset(gb: *Gb) void {
     sync_nr52(gb);
 }
 
-fn powered(gb: *const Gb) bool {
+inline fn powered(gb: *const Gb) bool {
     return (gb.io[nr52] & 0x80) != 0;
 }
 
@@ -239,13 +241,17 @@ fn sweep_calc(gb: *Gb) u16 {
     return new;
 }
 
-pub fn tick(gb: *Gb, m: u8) void {
+/// Advance `dots` dots (4 per normal-speed M-cycle): the frame sequencer
+/// runs at 512 Hz at either CPU speed (SPEC.md 19.1).
+/// Inlined into the per-instruction tick; a sequencer step calls out.
+pub inline fn tick(gb: *Gb, dots: u16) void {
     if (!powered(gb)) return;
     const a = &gb.apu;
-    a.seq_t += m;
-    if (a.seq_t < seq_period) return;
-    a.seq_t -= seq_period;
-    step_sequencer(gb);
+    a.seq_t += dots;
+    while (a.seq_t >= seq_period_dots) {
+        a.seq_t -= seq_period_dots;
+        step_sequencer(gb);
+    }
 }
 
 /// One 512 Hz frame sequencer step. Public for tests.

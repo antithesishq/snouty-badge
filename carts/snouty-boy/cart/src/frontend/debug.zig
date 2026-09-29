@@ -1,18 +1,28 @@
 //! FPS and step_frame microseconds overlay (SPEC.md section 14). Owner: track C.
 //! Allocation-free and std.fmt-free. Line 1: average and maximum
 //! `step_frame` time over the last 60 frames; line 2: frames per second from
-//! `micros_since_boot` deltas between `update()` calls, over 60 frames.
+//! `micros_since_boot` deltas between `update()` calls, over 60 frames,
+//! then the scrubber's page-store use in KB; line 3: the keyframes held and
+//! where the ROM came from (E embedded, D drive, frontend/romsrc.zig).
 //! In wasm builds `micros_since_boot` is an upstream stub that adds 1000 per
 //! call (so the overlay shows 1000us and 500 fps in the simulator and in
 //! preview.mjs); only hardware numbers mean anything.
 const cart = @import("cart-api");
 
-pub var enabled: bool = true;
+pub var enabled: bool = @import("tuning.zig").debug_overlay;
 
 /// Set by the rewind self-check (frontend/rewind.zig, `self_check`) when a
 /// replayed keyframe differs from the recorded one. The overlay is then
 /// drawn on red, even when disabled in the menu.
 pub var alarm: bool = false;
+
+/// Page-store pool use and keyframe count, kept current by
+/// frontend/rewind.zig after every keyframe.
+pub var pool_kb: u32 = 0;
+pub var keyframes: u32 = 0;
+/// ROM source letter: 'E' embedded, 'D' drive (frontend/romsrc.zig), set
+/// by main.zig.
+pub var source_letter: u8 = 'E';
 
 const window = 60;
 
@@ -72,7 +82,7 @@ pub fn draw() void {
     // "avg NNNN max NNNNus": the font is 8 px wide, so 20 characters fill
     // the 160 px screen; the unit is written once to keep 4-digit values
     // on screen.
-    var buf: [40]u8 = undefined;
+    var buf: [64]u8 = undefined;
     var i: usize = 0;
     i += put(buf[i..], "avg ");
     i += put_num(buf[i..], avg);
@@ -80,7 +90,51 @@ pub fn draw() void {
     i += put_num(buf[i..], max);
     i += put(buf[i..], "us\nfps ");
     i += put_num(buf[i..], fps());
-    cart.text(.{ .str = buf[0..i], .x = 0, .y = 0, .text_color = .rgb(0xFFFFFF), .background_color = .rgb(if (alarm) 0xFF0000 else 0x000000) });
+    i += put(buf[i..], " pool ");
+    i += put_num(buf[i..], pool_kb);
+    i += put(buf[i..], "K\nkf ");
+    i += put_num(buf[i..], keyframes);
+    buf[i] = ' ';
+    buf[i + 1] = source_letter;
+    i += 2;
+    draw_text(buf[0..i], white, if (alarm) red else black);
+}
+
+const white: cart.Pixel = .from_color(.rgb(0xFFFFFF));
+const black: cart.Pixel = .from_color(.rgb(0x000000));
+const red: cart.Pixel = .from_color(.rgb(0xFF0000));
+/// The OS 8x8 font (`sycl-badge/src/font.zig`): `[char - ' '][row]`, bit
+/// 7 - column, 0 = foreground. The same glyphs `cart.text` draws.
+/// Byte-identical to the table `cart.text` uses, so the linker keeps one copy.
+const font = @import("font").font;
+
+/// `cart.text` at (0, 0), scale 1, opaque background, without its generic
+/// per-pixel clipping and scaling: the overlay is drawn every frame, and
+/// `cart.text` cost about 0.65 ms of it (badge-bench). The framebuffer is
+/// column-major, so each glyph column is 8 consecutive halfword stores.
+fn draw_text(str: []const u8, fg: cart.Pixel, bg: cart.Pixel) void {
+    var cx: usize = 0;
+    var cy: usize = 0;
+    for (str) |ch| {
+        if (ch == '\n') {
+            cx = 0;
+            cy += 8;
+            continue;
+        }
+        if (cx + 8 > cart.screen_width or cy + 8 > cart.screen_height) {
+            cx += 8;
+            continue;
+        }
+        const glyph = &font[if (ch >= ' ') ch - ' ' else 0];
+        for (0..8) |col| {
+            const column = cart.framebuffer[cx + col][cy..][0..8];
+            const bit: u3 = @intCast(7 - col);
+            for (column, glyph) |*px, bits| {
+                px.* = if ((bits >> bit) & 1 == 0) fg else bg;
+            }
+        }
+        cx += 8;
+    }
 }
 
 fn put(dst: []u8, s: []const u8) usize {

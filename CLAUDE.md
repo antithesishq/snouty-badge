@@ -51,8 +51,13 @@ its design and milestone status.
 - Inputs: `cart.controls.*` (start, select, a, b, click, up, down, left, right).
   The OS owns Start+Select (exit to menu) and joystick click (FPS overlay);
   never bind click.
-- 5 neopixels (`cart.neopixels`, GRB, very bright; keep channels at or below
-  10/255), one user LED, light sensor, battery level, speaker (`tone2`, one
+- 5 neopixels (`cart.neopixels`, GRB): off for every cart. No cart writes a
+  non-zero value to `cart.neopixels` (a coworker's badge shows the LEDs are
+  unusably bright even at 1%, 2026-09-29; `docs/NEOPIXELS.md`), and
+  badge-bench warns (`neopixels written: ...`) if a run does.
+  `-Dneopixels=true` exists only for the dormant LED code in snoutenstein,
+  snouty-maze and snouty-boy; other carts have no LED code and do not take it.
+  Also one user LED, light sensor, battery level, speaker (`tone2`, one
   voice, each call cancels the previous).
 - Flash: 8000 pages of 256 bytes available via the cart API (`Zone`).
 - Cart RAM window 307 KB (`0x20035100..0x20080000`, 32 KB of it stack). A RAM

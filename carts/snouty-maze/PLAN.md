@@ -499,7 +499,8 @@ is downscaled to pixel art. No audio support at all ("it'll be annoying").
   on the floor-aligned quad (Adrian: "just billboard snouty").
 - Audio removed from the design: SPEC section 9 becomes neopixels only,
   `audio.zig` leaves the M3 list, decision 9 updated. Select keeps the
-  LED toggle.
+  LED toggle. (Superseded 2026-09-29: neopixels off, see the note under
+  "LEDs" below.)
 - Goldens: unchanged unless a pose shows an actor (none does yet).
 
 ## A2 result (2026-09-27, tag `a2`)
@@ -544,7 +545,7 @@ saying so in the report.
 
 | Input | Autopilot states | Fly (debug) |
 |-------|------------------|-------------|
-| Select | Toggle the neopixels (default off) | Toggle the debug overlay |
+| Select | Toggle the neopixels (default off; since 2026-09-29 a no-op unless `-Dneopixels=true`) | Toggle the debug overlay |
 | Start | Toggle name strip permanently on/off | Reset camera to start cell |
 | A | Skip to PAUSE | + Up/Down: pitch |
 | B + Select | Toggle fly mode | Back to autopilot |
@@ -682,6 +683,16 @@ gone). Keep every other export.
 - Cost report: extra polygons at the start pose and the overhead pose.
 
 ## LEDs (C3 owns `leds.zig`)
+
+Superseded 2026-09-29 (`docs/NEOPIXELS.md`): neopixels are off. A
+coworker's badge showed the LEDs are unusably bright even at 1%, so the
+cart never writes non-zero values. The effects below are compiled out:
+`update()` writes through `write_pixels`, a no-op unless built with
+`-Dneopixels=true`, which re-enables them for development. Select in the
+screensaver states still flips `enabled` but is a no-op for the player;
+check_cycle F expects `debug_leds == 1`, `debug_led_max == 0` (with
+`--neopixels` against a `-Dneopixels=true` wasm, the old
+`0 < debug_led_max <= 10`). The M3 plan as written:
 
 `pub var enabled: bool = false`; `pub fn update(state: autopilot.State,
 flips: u32, teleports: u32) void` writes all five `cart.neopixels` every
@@ -905,3 +916,221 @@ decides the default, the code must not.
 - `.text` + `.data` <= 120 KB, `.bss` <= 100 KB.
 - `docs/preview_m4.gif` (carving overhead, takeover walk, Iris strip),
   `docs/RUNNING.md` controls, SPEC status, tag `snouty-maze/m4`.
+
+### B4 result
+
+Behaviour (all in `autopilot.zig`, no cart API; main feeds the stick
+through `autopilot.stick(m, held, pressed)` before `step`):
+
+- `State.manual = 8` appended. MANUAL has three phases (rest, walk,
+  turn) and reuses WALK's `cell` / `walk_tick` / `dir` (facing) plus a
+  `move_dir` (motion; the opposite of `dir` when Down walks back).
+- Entry on a stick press (rising edge) in WALK or TURN only. From TURN
+  the pivot finishes, then the press runs. From WALK mid-cell the camera
+  continues to the next centre (an Up press needs nothing more; Left /
+  Right wait for the centre), Down reverses it back to the cell it left,
+  facing forward. At a centre the press runs at once.
+- At rest: Up / Down walk one cell (30 ticks, same code as WALK), Left /
+  Right pivot 90 degrees (`turn90_ticks`, smoothstep). A move that starts
+  at rest takes its first step on the same tick, and arrival / pivot end
+  picks the next move on the arrival tick, so held buttons repeat with no
+  stall (60 ticks of Up = exactly two cells). A wall in the way: no move.
+  In MANUAL mid-walk the opposite of the motion reverses it (Down while
+  going forward, Up while backing up); any other press is queued (one
+  slot) for the next rest, so taps are not lost.
+- Idle return: `manual_idle` counts ticks with no direction held (every
+  state, saturating); at rest with `manual_idle >= manual_idle_ticks`
+  (300) -> WALK via `decide` from the current cell and heading.
+- Arriving on the finish (walk or teleport) in MANUAL -> PAUSE and the
+  normal sequence. `skip()` (A), `flip()` and `begin_teleport()` accept
+  MANUAL (`autopilot.walking()` = WALK/TURN/MANUAL, also used by main
+  for the actor `triggers`). A teleport started in MANUAL ends in MANUAL
+  at rest with `manual_idle = 0`. `roll_cap` runs in MANUAL.
+- Select (LEDs) and Start (name strip) unchanged in MANUAL. LEDs: amber
+  `{6, 4, 0}` in MANUAL (brick is `{6, 2, 1}`), so the badge shows who
+  drives.
+- B+Select fly chord is behind `build_options.debug_overlay` (checked:
+  with it the chord enters FLY, without it B+Select just toggles the LEDs).
+  `debug_set_camera` still enters FLY on every wasm build.
+- Export `debug_manual_idle` (wasm).
+
+Deviations / notes:
+
+- The queued-press slot and the same-tick first step are my additions
+  (the plan says nothing about taps during a move); they make the stick
+  feel responsive and keep held repeat at exactly WALK speed.
+- `tools/scripts/m1_fly.json` holds Up from tick 0, so on an M4 build it
+  now takes over (MANUAL) instead of watching the autopilot; m2_cycle and
+  m3_tour only press A and are unaffected.
+- `tools/scripts/m4_takeover.json` (seed 1): Up 0..89 (one cell, then a
+  wall), Right tap, Up, Left tap, Up (two cells), Left tap, Down 273..302
+  (blocked), Right held 40 ticks (two pivots), Up 343..402 (two cells),
+  then idle: back to the follower at tick 703. Bench with `--frames 900`.
+
+Tests added (autopilot.zig): takeover from WALK mid-cell continues to
+the next centre (and a queued Left pivots there); takeover during TURN
+finishes the turn first; Down reversal back to the cell left, facing
+forward; a wall blocks Up and held Up repeats through open cells; idle
+return after exactly 300 ticks (held direction keeps it in MANUAL);
+walking into the finish from MANUAL -> PAUSE, A skips from MANUAL;
+teleport from MANUAL returns to MANUAL with the idle timer restarted.
+`check_cycle.mjs` runs G (Up 0..44: state 8, cell left (0, 0)) and H
+(Right at tick 0, 400 updates: WALK/TURN, idle >= 300); A..I pass.
+`zig build test`, `check-float`, `check_golden` 9/9 green.
+
+### C4 result
+
+- `maze.zig`: `Carve` (packed u16: x, z, dir) and `carve_log` recorded by
+  the backtracker (`carve_count` = w*h - 1), `revealed`, `reveal(k)` (all
+  walls in a `.bss` scratch grid, remove the first k carves, rebuild runs;
+  k clamped to carve_count) and `carve_head()` (cell the last shown carve
+  opened into, null at 0 and when done). `build_runs` now takes the cell
+  grid (m.cells from `generate`, the scratch grid from `reveal`); `cells`,
+  `start`, `finish` never change while revealing.
+- `autopilot.zig`: `carve_ticks = 90`, `m.reveal(0)` after `generate` in
+  `enter_overhead`, per-tick `reveal(carve_count * state_tick /
+  carve_ticks)` in `.overhead` (full at tick 90, so DESCEND starts from the
+  finished runs).
+- `scene.zig` (one hunk + the `draw_actors` call): while carving no finish
+  tile and no actors; the carve head is a flat Iris-pink tile
+  (`textures.carve_head_color`, one extra quad).
+- `overlay.zig`: Iris mark blitted 32 -> 24 nearest-neighbour at y =
+  104..127 with the text's 1 px black drop shadow (clipped at the screen
+  edge), then the two lines, each centred in a 96 px text block; icon (24)
+  + gap (4) + text (96) centred, x = 18. Checked on OVERHEAD frames and on
+  walking frames with Start forcing the strip: the shadow keeps it
+  readable over walls and floor.
+- `main.zig`: `debug_carve_shown`, `debug_carve_count` (wasm). Also fixed a
+  pre-existing export bug from 1910d2f: the `} else {` for `maze_size` had
+  landed above `debug_led_max`, `debug_place`, `debug_fade_level`, so the
+  wasm build lacked them and check_cycle D/E/F and two check_golden
+  poses (`debug_place`) failed; the three lines moved back into
+  the wasm branch.
+- `check_cycle.mjs` run I (A at 0, 200 updates = OVERHEAD state tick 19:
+  state 4, carve_shown 30 < carve_count 143). Header and `--only` list
+  updated; B unchanged.
+- Tests (maze.zig): seeds 0..99 at 12x12, 16x16 and 5x9: carve_count =
+  w*h - 1, reveal(0) = (w+1)+(h+1) whole-line runs, every k <= max_runs
+  with a carve head, reveal(carve_count) and reveal(1000) equal the
+  generated runs, cells/finish unchanged, check_maze still passes.
+- Cost (calibrated badge-bench, m2_cycle.json, 600 frames, `--symbols`):
+  reveal + build_runs about 8.6k cycles (0.06 ms) per call at 12x12 and
+  14.8k (0.10 ms) at 16x16. OVERHEAD frames while carving are 7.1..7.5 ms
+  (12x12) and 8.4..9.0 ms (16x16), the same as the finished-maze OVERHEAD
+  frames; the walking worst frame is unaffected.
+- Gates: `zig build test`, `check-float`, `check_golden` 9/9 (fly poses,
+  0 px), `check_cycle` A..F, I pass (G, H are B4's).
+
+### A4 result
+
+Profile (calibrated badge-bench, seed 1, 12x12, before): of 1.27 M
+cycles/frame, textured span code inlined into `draw_polygon` was 830 k:
+per visible 8-pixel segment ~70 cycles of setup around the perspective
+divide (15 of them the `vdiv`) plus ~35 cycles of `inner_tex8` call
+overhead; per segment (hidden ones too) ~45 cycles of z setup and
+`any_visible`; per column ~90 cycles (two `to_index`, span setup); per
+polygon ~250. `inner_tex8` itself ran at ~15 cycles/pixel. Every worst
+frame was a wall close in front: all 160 columns of floor, ceiling and the
+walls behind still went through edge walking, column setup and the z test
+for nothing (seed 1 frame 108: 2.04 M cycles for one visible wall).
+
+What changed (`render/raster.zig`, two call sites in `render/scene.zig`):
+
+- Per-column occlusion records (`raster.Occ`): wall faces and tops go in
+  through the new `raster.draw_occluder`; each span they draw leaves
+  "rows [top, bot) hold z >= q" for its column (q is a proven lower bound
+  of what the span wrote or found). A later polygon is dropped before edge
+  walking when every column of its range is covered with q >= a bound on
+  its largest z value (plane maximum over the pixel-centre rectangle plus
+  rounding slack); a later column span is skipped likewise; a segment inside
+  a record skips `any_visible`'s z reads. All three are exact: they only
+  skip work whose z tests would all fail. Tunables at the top of the file
+  (`seg`, `use_occlusion`, `occ_slack`).
+- Pixel loops once per column: the segment loop only stores each visible
+  segment's q/dq/uv/duv (`segs`, a bit mask); one `draw_segs` call then runs
+  the unrolled 8-pixel code for all of them. The z start value and packed
+  start uv are carried from one segment to the next instead of recomputed.
+- Opaque textures read a texel-to-colour grid (`colors`, 8 slots of
+  1024 Pixel, built on first use of a texture/palette pair): one load per
+  pixel instead of two, and no spills in the unrolled code (~9 cycles per
+  visible pixel). Sprites keep index + palette (index 0 transparent).
+- Tried and dropped: caching the divide for equal 1/z (walls in walking
+  views never give exactly zy = 0, the compare cost more than it saved).
+- `-Dmaze_size=N` (default 12, clamped 4..16) in `build.zig` ->
+  `build_options.maze_size`, the initializer of `main.maze_size` (checked:
+  16 -> 16, 99 -> 16 in the ELF). `--poke maze_size=16` still works.
+
+Exactness: `check_golden` 9/9 at 0 px. Stronger check on thumb: the
+before ELF (HEAD raster.zig, same tree otherwise) and the after ELF wrote
+every frame as PNG under badge-bench and all are byte-identical: m2_cycle
+seed 3 (900 frames), m3_tour (1000), m2_cycle seed 10 at 16x16 (900).
+`zig build test` and `check-float` green.
+
+Numbers (calibrated busy ms; m2_cycle.json 900 frames per seed, m3_tour
+1000 frames seed 1; before = same tree with HEAD raster.zig/scene calls):
+
+| 12x12 | before mean | p95 | worst | after mean | p95 | worst |
+|---|---|---|---|---|---|---|
+| seed 1 | 8.46 | 11.84 | 13.61 | 7.71 | 9.38 | 10.75 |
+| seed 2 | 8.59 | 11.18 | 12.98 | 7.38 | 9.33 | 9.82 |
+| seed 3 | 8.92 | 11.72 | 14.20 | 7.79 | 10.68 | 11.24 |
+| seed 4 | 9.53 | 12.68 | 13.55 | 7.91 | 10.85 | 11.30 |
+| seed 5 | 8.36 | 11.59 | 14.06 | 7.32 | 9.05 | 10.17 |
+| seed 6 | 8.64 | 11.13 | 13.02 | 7.61 | 10.82 | 11.20 |
+| seed 7 | 8.98 | 11.72 | 13.23 | 7.48 | 9.91 | 10.55 |
+| seed 8 | 8.41 | 12.31 | 13.34 | 7.06 | 8.80 | 9.65 |
+| seed 9 | 8.54 | 11.87 | 12.77 | 7.39 | 9.35 | 11.36 |
+| seed 10 | 8.68 | 11.85 | 13.16 | 7.60 | 9.52 | 10.84 |
+| m3_tour | 9.05 | 12.57 | 14.10 | 7.11 | 8.79 | 9.93 |
+| all | 8.75 | 11.88 | **14.20** | 7.48 | 9.65 | **11.36** |
+
+| 16x16 | before mean | p95 | worst | after mean | p95 | worst |
+|---|---|---|---|---|---|---|
+| seed 1 | 10.06 | 13.17 | 14.21 | 8.98 | 12.78 | 13.33 |
+| seed 2 | 9.95 | 13.48 | 15.10 | 8.52 | 11.54 | 12.60 |
+| seed 3 | 10.18 | 12.75 | 14.70 | 8.72 | 11.63 | 12.31 |
+| seed 4 | 10.68 | 13.88 | 15.66 | 9.00 | 11.55 | 12.50 |
+| seed 5 | 9.77 | 12.04 | 15.80 | 9.01 | 12.90 | 13.94 |
+| seed 6 | 10.56 | 13.17 | 15.03 | 9.09 | 13.55 | 14.32 |
+| seed 7 | 9.89 | 12.34 | 14.44 | 8.64 | 12.48 | 12.89 |
+| seed 8 | 9.12 | 13.42 | 14.82 | 7.69 | 11.00 | 12.12 |
+| seed 9 | 9.89 | 12.62 | 14.88 | 8.71 | 11.92 | 13.33 |
+| seed 10 | 10.95 | 14.00 | 15.90 | 9.40 | 13.07 | 14.60 |
+| m3_tour | 10.41 | 13.69 | 15.99 | 8.12 | 11.06 | 12.08 |
+| all | 10.14 | 13.42 | **15.99** | 8.71 | 12.07 | **14.60** |
+
+12x12 meets the goal: worst 11.36 ms (68% of 16.7). 16x16 does not
+(worst 14.60 ms, 87%). Its worst frames are the RISE/DESCEND views above
+the walls (seed 10 frame 286: 403 polygons, 7,352 segments, 1.72 M of
+2.19 M cycles in polygon/column/segment setup, only 0.21 M in pixel loops):
+seen from above, each column holds many stacked faces and one record per
+column hides little. A multi-interval record or a coarser front-to-back
+cull for those states would be the next step if 16x16 is wanted.
+
+Sizes (after): `.text` 66,148 + `.data` 3,248 = 69,396 B (limit 120 KB);
+`.bss` 77,984 B (was 60,624; +16 KB colour grids, +1 KB records/segments;
+limit 100 KB).
+
+## M4 result (2026-09-29, tag `snouty-maze/m4`)
+
+Done criteria met on the integrated tree: `zig build`, `zig build test`,
+`check-float` PASS, `check_golden` 9/9 at 0 px, `check_cycle` 9/9 (A..I),
+`docs/preview_m4.gif` (finish sequence with the carving and the Iris
+strip, then `m4_takeover.json`). `.text` 66,620 + `.data` 3,248 B,
+`.bss` 77,984 B (+16 KB colour grids).
+
+Calibrated badge-bench on the integrated build (busy ms, 12x12 unless
+noted):
+
+| Run | mean | p95 | worst |
+|---|---|---|---|
+| m2_cycle seeds 1..10 (900 frames each) | 7.06..7.91 | 8.80..10.85 | **11.36** (seed 9) |
+| m3_tour (1000) | 7.11 | 8.79 | 9.93 |
+| m4_takeover (900) | 6.24 | 8.96 | 9.93 |
+| m4_takeover 16x16 (900) | 6.73 | 9.25 | 9.87 |
+
+16x16 over m2_cycle stays at 14.60 worst (A4 result): the rise/descend
+views from above are the limit, so the default stays 12x12 and
+`-Dmaze_size=16` is the switch. Fix folded in: `1910d2f` had put three
+wasm debug exports (`debug_led_max`, `debug_place`, `debug_fade_level`)
+in the badge branch; C4 moved them back.

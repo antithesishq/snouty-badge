@@ -218,7 +218,7 @@ pub fn simulate(mode: world.Mode) void {
     // the hit meets (before this tick's refill).
     const rewinding = hit.by != .none and mode == .live and !god and can_auto_rewind();
     if (hit.by != .none and !rewinding) collide.remove_offender(hit);
-    // audio/neopixel effects check `mode` here (M6)
+    // audio effects check `mode` here (M6)
     fx.update();
     draw.tick_bg();
     world.w.game_tick +%= 1;

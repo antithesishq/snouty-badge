@@ -21,9 +21,10 @@ pub fn reset(gb: *Gb) void {
     gb.io[Reg.div] = 0xAB;
 }
 
-pub fn tick(gb: *Gb, m: u8) void {
+/// Advance `m` CPU M-cycles (batched by `Gb.flush`; exact for any `m`).
+pub inline fn tick(gb: *Gb, m: u32) void {
     const old = gb.timer.div;
-    const new = old +% @as(u16, m) * 4;
+    const new = old +% @as(u16, @truncate(m *% 4));
     gb.timer.div = new;
     gb.io[Reg.div] = @truncate(new >> 8);
     const tac = gb.io[Reg.tac];
@@ -32,7 +33,11 @@ pub fn tick(gb: *Gb, m: u8) void {
     // crossed. Done in u32 so the u16 wrap needs no special case.
     const s: u5 = @as(u5, tac_shift[tac & 3]) + 1;
     const o32: u32 = old;
-    const edges = ((o32 + @as(u32, m) * 4) >> s) - (o32 >> s);
+    const edges = ((o32 + m * 4) >> s) - (o32 >> s);
+    if (edges != 0) inc_tima_n(gb, edges);
+}
+
+fn inc_tima_n(gb: *Gb, edges: u32) void {
     var n = edges;
     while (n != 0) : (n -= 1) inc_tima(gb);
 }
@@ -45,6 +50,17 @@ inline fn inc_tima(gb: *Gb) void {
     } else {
         gb.io[Reg.tima] = t + 1;
     }
+}
+
+/// M-cycles until TIMA next overflows (the timer interrupt), rounded up,
+/// with TAC enabled: the (0x100 - TIMA)-th falling edge from now. Used by
+/// `Gb.halt_m`.
+pub fn m_to_overflow(gb: *const Gb) u32 {
+    const tac = gb.io[Reg.tac];
+    const s: u5 = @as(u5, tac_shift[tac & 3]) + 1;
+    const div: u32 = gb.timer.div;
+    const target = ((div >> s) + (0x100 - @as(u32, gb.io[Reg.tima]))) << s;
+    return (target - div + 3) >> 2;
 }
 
 inline fn selected_bit_high(gb: *const Gb) bool {

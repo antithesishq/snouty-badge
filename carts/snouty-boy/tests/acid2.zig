@@ -50,7 +50,7 @@ fn dump(title: []const u8, f: *const Frame) void {
 }
 
 test "acid2 matches reference frame" {
-    var gb = core.Gb.init(rom);
+    var gb = core.Gb.init_slice(rom, .dmg, &.{});
     var cap: Capture = .{};
     gb.line_sink = .{ .ctx = &cap, .func = Capture.emit };
 

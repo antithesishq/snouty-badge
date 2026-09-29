@@ -1,26 +1,52 @@
-//! Time scrubber storage (SPEC.md section 10): a static ring of keyframes
-//! taken every 30 game frames plus a one-byte-per-frame input log covering
-//! the same span. The index bookkeeping (which slot, which log byte,
-//! truncation) is `core.ring.Ring`, host-tested in `tests/ring_unit.zig`;
-//! this file owns the bytes and talks to the console and the screen.
+//! Time scrubber storage (SPEC.md sections 10 and 19.3): a page store of
+//! keyframes (`core.kstore`) taken every 30 game frames plus a
+//! one-byte-per-frame input log covering the same span. The index
+//! bookkeeping (which keyframe age, which log byte, truncation) is
+//! `core.ring.Ring`, host-tested in `tests/ring_unit.zig`; the store is
+//! host-tested in `tests/kstore_unit.zig` and `tests/determinism.zig`. This
+//! file owns the bytes and talks to the console and the screen.
 //!
-//! Keyframe size. Slots are `Gb.KeyframeWith(mmu.cart_ram_len(rom))`: the
-//! ROM is embedded, so the cart RAM the game can touch is known at compile
-//! time (0, 2 KB or 8 KB) and the slot carries only that much. With
-//! 2048-gb (2 KB RAM) a slot is about 18.9 KB instead of 24.9 KB.
+//! Page store. A keyframe is the console's four state regions (packed
+//! `Small`, VRAM, WRAM, cart RAM; `Gb.state_regions`) cut into 512-byte
+//! pages; pages equal to the previous keyframe's are shared, all-zero pages
+//! cost nothing, only changed pages are copied. When the pool is full the
+//! oldest keyframes are evicted, so the depth adapts to how much the game
+//! changes: 2048-gb copies about 8 pages (4 KB) per keyframe.
+//!
+//! Arena (PLAN.md M5 and M8). The ROM, and with it the cart RAM the console
+//! and every keyframe carry (0 to 32 KB, `mmu.cart_ram_len`), is only known
+//! at `start()` once the drive has been looked at, so `layout` places the
+//! live console (50 KB, mostly VRAM and WRAM), its cart RAM and the whole
+//! page store (pool, keyframe tables, free list, reference counts) at run
+//! time in one arena: on the badge the
+//! RAM the linker leaves between the end of `.bss` and the stack
+//! (`__bss_end__`, `__stack_limit__` from the SDK's cart_ram.ld /
+//! cart_xip.ld), minus 1 KB of guard below the stack limit. It is not
+//! `.bss`, so it is not shipped as zeros in the UF2 (docs/ROM_DRIVE.md
+//! section 3) and the OS does not clear it; `Gb.init` sets every console
+//! field, `Gb.reset` zeroes the cart RAM and the store writes every page
+//! before it reads it. The arena shrinks by
+//! itself when the build embeds a big ROM in RAM (it sits in `.rodata`
+//! below `.bss`) and is the whole RAM window of an XIP build. The keyframe
+//! count is split from it as the M7 comptime budget did (`tuning.zig`):
+//! each keyframe's table plus its typical copied pages, capped at
+//! `tuning.max_keyframes`. When the arena cannot hold two keyframe tables
+//! and a pool of half a keyframe with every page non-zero, `layout` fails
+//! and the cart shows the `halted` screen (main.zig). A keyframe that does
+//! not fit even alone empties the history until the next one that does. In wasm, which has no such linker symbols,
+//! the arena is a static array.
 //!
 //! Frozen frame after a scrub step. The console is restored to the keyframe
 //! exactly and stays there; to put a picture on screen the keyframe is
 //! stepped one frame with the logged pad for that frame (the PPU draws
 //! through the normal line sink into the back buffer) and then restored
-//! again from the same slot. So the state is exactly the keyframe's, and
-//! the picture is the frame the game showed 1/60 s later. This costs one
-//! `step_frame` per scrub step and no RAM, where storing a 2-bit 160x144
-//! image per keyframe would cost 5,760 bytes each (N 7 -> 5 at the same
-//! budget). Determinism accounting is untouched: resuming steps the game
-//! from the keyframe itself. If the pad for that frame is not logged yet
-//! (the newest keyframe, taken on the very last frame played), the
-//! keyframe's own pad is used for the preview only.
+//! again from the store. So the state is exactly the keyframe's, and the
+//! picture is the frame the game showed 1/60 s later. This costs one
+//! `step_frame` and two restores per scrub step and no RAM. Determinism
+//! accounting is untouched: resuming steps the game from the keyframe
+//! itself. If the pad for that frame is not logged yet (the newest keyframe,
+//! taken on the very last frame played), the keyframe's own pad is used for
+//! the preview only.
 //!
 //! Right from the newest keyframe returns to the live position by
 //! replaying the logged frames since it (at most 29 `step_frame`s, drawing
@@ -33,82 +59,160 @@
 const std = @import("std");
 const cart = @import("cart-api");
 const core = @import("core");
-const rom = @import("rom");
 const video = @import("video.zig");
 const debug = @import("debug.zig");
+const tuning = @import("tuning.zig");
 const Gb = core.Gb;
+const kstore = core.kstore;
 
-/// SPEC.md 18 item 7: one keyframe every 0.5 s.
-pub const frames_per_keyframe = 30;
+/// SPEC.md 18 item 7: one keyframe every 0.5 s (knob in tuning.zig).
+pub const frames_per_keyframe = tuning.frames_per_keyframe;
 
 /// When true, every new keyframe is checked by replaying the previous one
 /// into a spare console (SPEC.md 10.2, last sentence); a mismatch paints the
-/// debug overlay red (`debug.alarm`). Costs a second `Gb` plus one slot of
-/// RAM and doubles the CPU per frame, so it is off for the badge.
+/// debug overlay red (`debug.alarm`). Costs a second `Gb` of RAM and doubles
+/// the CPU per keyframe interval, so it is off for the badge.
 const self_check = false;
 
-pub const Slot = Gb.KeyframeWith(core.mmu.cart_ram_len(rom.data));
+// ---- Knobs (SPEC.md 19.5, tuning.zig) ----
 
-// ---- Memory budget (SPEC.md 13) ----
+/// Bytes per store page.
+pub const page_size = tuning.page_size;
 
-/// Cart RAM for .text + .data + .bss: 307 KB minus the 32 KB stack.
-const usable_ram = 268 * 1024;
-/// Bytes the ring aims for: keyframes plus input log.
-const ring_budget_target = 150 * 1024;
-/// Code, constants and .data, not counting the ROM (M4 fast build: about
-/// 50 KB), with headroom.
-const code_estimate = 56 * 1024;
-/// Other .bss: the live console plus frontend statics (palette LUT, line
-/// buffers, menu, debug windows), with headroom.
-const other_bss_estimate = @sizeOf(Gb) + 4 * 1024;
-const self_check_bytes = if (self_check) @sizeOf(Gb) + @sizeOf(Slot) else 0;
-const fixed_bytes = code_estimate + rom.data.len + other_bss_estimate + self_check_bytes;
-const ring_budget = if (fixed_bytes >= usable_ram) 0 else @min(ring_budget_target, usable_ram - fixed_bytes);
-const slot_cost = @sizeOf(Slot) + frames_per_keyframe; // keyframe + its log bytes
+const Store = kstore.Store(page_size);
+const R = core.ring.Ring(tuning.max_keyframes, frames_per_keyframe);
 
-/// Keyframes in the ring, derived from the budget. 7 with 2048-gb:
-/// 3.0 to 3.5 s of history.
-pub const slots = ring_budget / slot_cost;
-
-comptime {
-    if (slots < 2) @compileError(std.fmt.comptimePrint(
-        "rewind: the ROM ({d} bytes) leaves room for fewer than 2 keyframes of {d} bytes; " ++
-            "a smaller ROM or SPEC.md 10.4 compression is needed",
-        .{ rom.data.len, @sizeOf(Slot) },
-    ));
-    const total = fixed_bytes + slots * slot_cost;
-    if (total > usable_ram) @compileError(std.fmt.comptimePrint(
-        "rewind: estimated cart RAM {d} bytes exceeds the {d} usable (SPEC.md 13)",
-        .{ total, usable_ram },
-    ));
-}
-
-const R = core.ring.Ring(slots, frames_per_keyframe);
+/// Page references per keyframe at most (32 KB of cart RAM), for the report.
+pub const max_pages = kstore.pages_for(page_size, .{ @sizeOf(Gb.Small), 0x4000, 0x8000, Gb.max_cart_ram });
 
 var ring: R = .{};
-var keyframes: [slots]Slot = undefined;
+var store: Store = .{};
+/// In .bss (zeroed by the OS), unlike the arena. `R.log_len` bytes.
 var log: [R.log_len]u8 = @splat(0);
+/// Packed small state, the first store region (`Gb.state_regions`).
+var small: Gb.Small = undefined;
 
-/// Forget all history and take the reset console as keyframe 0. Call after
-/// `Gb.init` and after every `gb.reset()`.
-pub fn reset(gb: *const Gb) void {
-    gb.snapshot(&keyframes[ring.reset()]);
-    debug.alarm = false;
+// ---- Arena ----
+
+/// Bytes kept free between the arena and the stack limit.
+const stack_guard = 1024;
+/// The wasm arena; the badge build never references it.
+var wasm_arena: [256 * 1024]u8 align(8) = undefined;
+
+const linker = struct {
+    extern var __bss_end__: u8;
+    extern var __stack_limit__: u8;
+};
+
+/// The whole arena (0 bytes before `layout`).
+var arena: []align(4) u8 = &.{};
+
+fn find_arena() []align(4) u8 {
+    if (cart.is_wasm) return &wasm_arena;
+    const lo = std.mem.alignForward(usize, @intFromPtr(&linker.__bss_end__), 4);
+    const hi = @intFromPtr(&linker.__stack_limit__) -| stack_guard;
+    const len = if (hi > lo) hi - lo else 0;
+    return @as([*]align(4) u8, @ptrFromInt(lo))[0..len];
 }
 
+/// Where `layout` put the console and its cart RAM.
+pub const Layout = struct {
+    /// Room for the console, not initialised: the caller `Gb.init`s it.
+    gb: *Gb,
+    /// The console's cart RAM, `mmu.cart_ram_len` bytes, word aligned (the
+    /// store compares and copies words).
+    cart_ram: []u8,
+};
+
+/// Lay out the arena for `rom`: the live console, its cart RAM, then the
+/// page store. Returns null when fewer than two keyframes fit (the cart then
+/// refuses to start; see main.zig). Call once, before `Gb.init` and `reset`.
+pub fn layout(rom: *const core.Rom) ?Layout {
+    arena = find_arena();
+    const base = std.mem.alignForward(usize, @intFromPtr(arena.ptr), @alignOf(Gb));
+    const gb_end = base - @intFromPtr(arena.ptr) + std.mem.alignForward(usize, @sizeOf(Gb), 4);
+    const ram_len = core.mmu.cart_ram_len(rom);
+    const ram_end = gb_end + std.mem.alignForward(usize, ram_len, 4);
+    if (arena.len < ram_end) return null;
+    const rest: []align(4) u8 = @alignCast(arena[ram_end..]);
+    const pages = kstore.pages_for(page_size, .{ @sizeOf(Gb.Small), 0x4000, 0x8000, ram_len });
+    // The M7 split: per keyframe its table plus the pages it typically
+    // copies; the pool gets whatever the tables leave.
+    const per_keyframe = pages * 2 + tuning.typical_pages_per_keyframe * (page_size + 3);
+    const keyframes = @min(rest.len / per_keyframe, tuning.max_keyframes);
+    if (keyframes < 2) return null;
+    const pool = kstore.pages_fitting(page_size, rest.len, keyframes, pages);
+    // A keyframe is its non-zero pages: at most `pages`, in practice far
+    // fewer (tests/determinism.zig prints them; 2048-gb's largest is 24 of
+    // 102). Half of `pages` still holds any real keyframe seen so far; one
+    // that does not fit even alone only costs the history until the next
+    // keyframe that does (`record_frame`), never the game.
+    if (pool < pages / 2) return null;
+    store = Store.init(rest, pool, keyframes, pages);
+    ring = R.init(keyframes);
+    return .{ .gb = @ptrFromInt(base), .cart_ram = arena[gb_end..][0..ram_len] };
+}
+
+/// Arena bytes (0 before `layout`).
+pub fn arena_bytes() usize {
+    return arena.len;
+}
+
+/// Keyframes the store can hold at most (0 before `layout`).
+pub fn keyframe_capacity() usize {
+    return store.max_keyframes;
+}
+
+/// Pool bytes (0 before `layout`).
+pub fn pool_capacity_bytes() usize {
+    return store.capacity_pages() * page_size;
+}
+
+/// Forget all history and take the current console as keyframe 0. Call
+/// after `Gb.init` and after every `gb.reset()`.
+pub fn reset(gb: *Gb) void {
+    ring.reset();
+    store.reset();
+    gb.save_small(&small);
+    // Fits unless the arena is tiny: VRAM, WRAM and cart RAM are zero.
+    store.put(gb.state_regions(&small)) catch ring.lose_history();
+    update_stats();
+    debug.alarm = false;
+}
 /// Call after every stepped game frame with the pad it was stepped with.
 /// Truncates the future if the game was resumed from a scrubbed position.
-pub fn record_frame(gb: *const Gb, pad: u8) void {
+pub fn record_frame(gb: *Gb, pad: u8) void {
     const rec = ring.record();
+    if (rec.drop_newest != 0) store.drop_newest(rec.drop_newest);
     log[rec.log_index] = pad;
-    if (rec.snapshot_slot) |s| {
-        gb.snapshot(&keyframes[s]);
-        if (self_check) check_newest(gb.rom);
+    if (!rec.snapshot) return;
+    gb.save_small(&small);
+    const regions = gb.state_regions(&small);
+    if (store.put(regions)) |_| {
+        ring.set_count(store.count);
+    } else |_| {
+        // Not even the previous keyframe and this one fit: start the
+        // history again from here.
+        store.reset();
+        if (store.put(regions)) |_| ring.restart_at_live() else |_| ring.lose_history();
     }
+    update_stats();
+    if (self_check) check_newest(gb);
+}
+
+fn update_stats() void {
+    debug.pool_kb = @intCast(store.bytes_in_use() / 1024);
+    debug.keyframes = @intCast(store.count);
 }
 
 pub fn can_step(dir: i2) bool {
     return ring.can_step(dir);
+}
+
+/// Keyframe `age` into the console (sets `gb.pal_dirty` via `load_small`).
+fn restore(gb: *Gb, age: usize) void {
+    store.get(age, gb.state_regions(&small));
+    gb.load_small(&small);
 }
 
 /// Move one keyframe back (dir < 0) or forward (dir > 0), restore it into
@@ -117,13 +221,13 @@ pub fn can_step(dir: i2) bool {
 pub fn step(gb: *Gb, dir: i2) bool {
     const s = ring.step(dir) orelse return false;
     switch (s) {
-        .restore => |slot| show_keyframe(gb, slot),
+        .restore => |age| show_keyframe(gb, age),
         .replay => |r| {
             if (r.from == r.to) {
                 // Live was the newest keyframe itself.
-                show_keyframe(gb, r.slot);
+                show_keyframe(gb, 0);
             } else {
-                gb.restore(&keyframes[r.slot]);
+                restore(gb, 0);
                 const sink = gb.line_sink;
                 gb.line_sink = null;
                 var f = r.from;
@@ -139,15 +243,14 @@ pub fn step(gb: *Gb, dir: i2) bool {
     return true;
 }
 
-/// Restore `slot`, render one frame from it, restore it again.
-fn show_keyframe(gb: *Gb, slot: usize) void {
-    const k = &keyframes[slot];
-    gb.restore(k);
+/// Restore keyframe `age`, render one frame from it, restore it again.
+fn show_keyframe(gb: *Gb, age: usize) void {
+    restore(gb, age);
     const f = ring.position();
     const pad = if (ring.has_pad(f)) log[R.log_index(f)] else gb.pad;
     gb.step_frame(pad);
     video.finish_frame();
-    gb.restore(k);
+    restore(gb, age);
 }
 
 /// How far behind the live position the game is parked, in frames (0 live).
@@ -160,42 +263,47 @@ pub fn history_frames() u32 {
     return ring.history_frames();
 }
 
-/// History as fifths of the full ring, 0..5 (one neopixel per fifth).
+/// How full the history is, 0..5 (one neopixel per fifth): the larger of
+/// the ring's span and the pool's use, since either one running out means
+/// old keyframes are being dropped.
 pub fn history_fraction() u8 {
-    return ring.history_fraction();
+    const used = store.pages_in_use();
+    const cap = store.capacity_pages();
+    const pool: u8 = @intCast((used * 5 + cap - 1) / cap);
+    return @max(ring.history_fraction(), @min(pool, 5));
 }
 
-/// Valid keyframes in the ring.
+/// Valid keyframes in the store.
 pub fn keyframe_count() usize {
     return ring.count;
+}
+
+/// Pool bytes holding keyframe pages.
+pub fn pool_bytes() usize {
+    return store.bytes_in_use();
 }
 
 // ---- Self-check (SPEC.md 10.2 in the cart; compiled only if enabled) ----
 
 var spare: Gb = undefined;
-var check_slot: Slot = undefined;
+var spare_small: Gb.Small = undefined;
+var spare_ram: [if (self_check) Gb.max_cart_ram else 0]u8 align(4) = undefined;
 
 /// Replay the previous keyframe with the logged pads into `spare` and
 /// compare with the keyframe just taken.
-fn check_newest(game_rom: []const u8) void {
+fn check_newest(gb: *const Gb) void {
     if (ring.count < 2) return;
     // No struct literals or by-value arrays here: the wasm stack is 14.7 KB
-    // and a `Gb` temporary alone is 25 KB. `restore` sets every field but
-    // these two.
-    spare.rom = game_rom;
+    // and a `Gb` temporary alone is 50 KB. The restore sets every field but
+    // these.
+    spare.rom = gb.rom;
+    spare.model = gb.model;
+    spare.cart_ram = spare_ram[0..gb.cart_ram.len];
     spare.line_sink = null;
-    spare.restore(&keyframes[ring.slot_of_age(1)]);
+    store.get(1, spare.state_regions(&spare_small));
+    spare.load_small(&spare_small);
     var f = ring.frame_of_age(1);
     while (f < ring.frame_of_age(0)) : (f += 1) spare.step_frame(log[R.log_index(f)]);
-    spare.snapshot(&check_slot);
-    const newest = &keyframes[ring.slot_of_age(0)];
-    inline for (@typeInfo(Slot).@"struct".field_names) |name| {
-        const x = &@field(check_slot, name);
-        const y = &@field(newest, name);
-        const same = switch (@typeInfo(@TypeOf(x.*))) {
-            .array => std.mem.eql(u8, x, y),
-            else => std.meta.eql(x.*, y.*),
-        };
-        if (!same) debug.alarm = true;
-    }
+    spare.save_small(&spare_small);
+    if (!store.matches(0, spare.state_regions(&spare_small))) debug.alarm = true;
 }

@@ -256,8 +256,10 @@ only the cart port's block number and counter.
 
 Snouty splash and chime, then the game. Menu title "SNOUTY LYNX", ROM name,
 "verified by deterministic replay". The status strip under the picture
-shows the ROM title; neopixels show ring depth in the menu only, at most
-10/255 per channel.
+shows the ROM title. The
+neopixels are off: the cart never writes non-zero values (root
+`docs/NEOPIXELS.md`; a coworker's badge shows the LEDs are unusably bright
+even at 1%, 2026-09-29).
 
 ## 13. Memory budget
 

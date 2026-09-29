@@ -39,8 +39,11 @@ their CLAUDE.md files have the long explanations of the simulator quirks.
 - Inputs `cart.controls.*`: start, select, a, b, click, up, down, left, right.
   The OS owns Start+Select (exit to menu) and joystick click (FPS overlay);
   never bind click.
-- Audio `cart.tone2`, one voice. 5 neopixels (`cart.neopixels`, GRB), every
-  channel at or below 10/255.
+- Audio `cart.tone2`, one voice (this cart uses none). 5 neopixels
+  (`cart.neopixels`, GRB): off. The cart never writes non-zero values; the
+  LED effects in `leds.zig` are compiled out and `-Dneopixels=true`
+  re-enables them for development (`docs/NEOPIXELS.md`: unusably bright
+  even at 1%). Select in the screensaver states is a no-op for the player.
 - Budget: ELF `.text`+`.data` at most 120 KB, `.bss` at most 100 KB.
 
 ## Building

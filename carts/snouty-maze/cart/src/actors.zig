@@ -214,8 +214,8 @@ pub fn reset(m: *const maze.Maze, r: *rng.Xorshift, avoid: [2]u8) void {
 }
 
 /// One tick. `cam_cell` is the camera's cell; `triggers` is true only in
-/// WALK and TURN (the smiley and sphere fire when the camera enters their
-/// cell).
+/// WALK, TURN and MANUAL (`autopilot.walking()`; the smiley and sphere
+/// fire when the camera enters their cell).
 pub fn step(m: *const maze.Maze, r: *rng.Xorshift, cam_cell: [2]u8, triggers: bool) void {
     smiley.angle +%= smiley_spin;
     logo.angle +%= logo_spin;

@@ -309,8 +309,10 @@ is Adrian's business, as with Super Mario Land on Snouty Boy).
 
 Snouty Boy's splash, recolored: the Snouty mark slides in, then a two-note
 chime, then the game. The menu title reads "SNOUTY GEAR", the ROM name, and
-"verified by deterministic replay". Neopixels show ring depth in the menu
-only, at most 10/255 per channel.
+"verified by deterministic replay". The
+neopixels are off: the cart never writes non-zero values (root
+`docs/NEOPIXELS.md`; a coworker's badge shows the LEDs are unusably bright
+even at 1%, 2026-09-29).
 
 ## 13. Memory budget
 
@@ -455,7 +457,7 @@ disjoint files, as for Snouty Boy.
 - **M2 Frontend**: menu, splash, PSG to one tone2 voice, A/B swap, scale
   modes, all adapted from Snouty Boy.
 - **M3 Scrub**: delta keyframe ring (section 10), input log, scrubbing,
-  neopixel meter, determinism test (it must also pass with the undo
+  determinism test (it must also pass with the undo
   records, restoring every keyframe in the ring), record sizes measured.
 - **M4 Hardware polish and big ROMs**: tune from Adrian's numbers. Bank
   packer (section 13.1) with a host test that the unpacked bank table is

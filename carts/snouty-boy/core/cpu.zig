@@ -8,6 +8,8 @@
 const gb_mod = @import("gb.zig");
 const Gb = gb_mod.Gb;
 const Reg = gb_mod.Reg;
+const timer = @import("timer.zig");
+const mmu = @import("mmu.zig");
 
 const FZ: u8 = 0x80;
 const FN: u8 = 0x40;
@@ -34,8 +36,13 @@ pub const Cpu = struct {
     halt_bug: bool = false,
 };
 
-/// Post-boot DMG register values (SPEC.md section 3).
+/// Post-boot register values (SPEC.md sections 3 and 19.1): A = 0x11 is how
+/// games detect a Game Boy Color.
 pub fn reset(gb: *Gb) void {
+    if (gb.is_cgb()) {
+        gb.cpu = .{ .a = 0x11, .f = 0x80, .b = 0x00, .c = 0x00, .d = 0xFF, .e = 0x56, .h = 0x00, .l = 0x0D, .sp = 0xFFFE, .pc = 0x0100 };
+        return;
+    }
     gb.cpu = .{
         .a = 0x01,
         .f = 0xB0,
@@ -55,9 +62,13 @@ pub fn step(gb: *Gb) u8 {
     const c = &gb.cpu;
     if (c.halted) {
         // Nothing can change until a subsystem raises an interrupt, so skip
-        // ahead 4 M-cycles per step. Timer and PPU handle batched ticks
-        // exactly; interrupt latency out of HALT grows by at most 3 M-cycles.
-        if ((gb.ie & gb.io[Reg.if_] & 0x1F) == 0) return 4;
+        // ahead in 4 M-cycle chunks (`Gb.halt_m`: as many as cannot contain
+        // an interrupt source). Timer and PPU handle batched ticks exactly;
+        // interrupt latency out of HALT grows by at most 3 M-cycles.
+        if ((gb.ie & gb.io[Reg.if_] & 0x1F) == 0) {
+            gb.sync();
+            return gb.halt_m();
+        }
         c.halted = false;
     }
     if (c.ime) {
@@ -69,6 +80,7 @@ pub fn step(gb: *Gb) u8 {
             c.ime = false;
             push16(gb, c.pc);
             c.pc = 0x40 + @as(u16, n) * 8;
+            gb.op_pc = c.pc;
             return 5;
         }
     }
@@ -76,20 +88,25 @@ pub fn step(gb: *Gb) u8 {
         c.ei_pending = false;
         c.ime = true;
     }
-    const op = gb.read8(c.pc);
+    gb.op_pc = c.pc;
+    const op = mmu.fetch8(gb, c.pc);
     if (c.halt_bug) {
         c.halt_bug = false;
     } else {
         c.pc +%= 1;
     }
-    return execute(gb, op);
+    const m = @call(.always_inline, execute, .{ gb, op });
+    // Reads after the instruction (frontend, tests) see PC == op_pc and so
+    // never tick from `Gb.sync_for_read`.
+    gb.op_pc = c.pc;
+    return m;
 }
 
 // ---- helpers ----
 
 inline fn fetch8(gb: *Gb) u8 {
     const c = &gb.cpu;
-    const v = gb.read8(c.pc);
+    const v = mmu.fetch8(gb, c.pc);
     c.pc +%= 1;
     return v;
 }
@@ -248,6 +265,19 @@ inline fn sp_plus_e8(c: *Cpu, e: u8) u16 {
     return sp +% sext(e);
 }
 
+/// CGB speed switch: STOP with KEY1 bit 0 armed toggles double speed. The
+/// CPU does not halt; it pauses for 2050 M-cycles (Pan Docs), ticked away by
+/// the frame loop at the new speed. STOP also resets DIV.
+fn speed_switch(gb: *Gb) void {
+    // Cycles so far were at the old speed.
+    gb.sync();
+    gb.dot_shift = if (gb.dot_shift == 2) 1 else 2;
+    gb.io[Reg.key1] = if (gb.dot_shift == 1) 0x80 else 0x00;
+    timer.write_div(gb);
+    gb.reschedule();
+    gb.stall_m += 2050;
+}
+
 // ---- decode ----
 
 fn execute(gb: *Gb, op: u8) u8 {
@@ -367,9 +397,13 @@ fn execute(gb: *Gb, op: u8) u8 {
             set_hl(c, @truncate(sum));
             return 2;
         },
-        0x10 => { // STOP, treated as HALT (skips its padding byte)
+        0x10 => { // STOP (skips its padding byte)
             c.pc +%= 1;
-            c.halted = true;
+            if (gb.is_cgb() and (gb.io[Reg.key1] & 1) != 0) {
+                speed_switch(gb);
+            } else {
+                c.halted = true; // treated as HALT
+            }
             return 1;
         },
         0x18 => { // JR e8

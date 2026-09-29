@@ -30,7 +30,7 @@ const Capture = struct {
 
 /// LCD on, BG on, 0x8000 tile data, 0x9800 BG map, identity palettes.
 fn setup(gb: *Gb, cap: *Capture) void {
-    gb.* = Gb.init(&zero_rom);
+    gb.* = Gb.init_slice(&zero_rom, .dmg, &.{});
     gb.line_sink = cap.sink();
     ppu.write_reg(gb, Reg.lcdc, 0x91);
     gb.io[Reg.bgp] = 0xE4;
@@ -71,7 +71,7 @@ fn run_to_line(gb: *Gb, cap: *Capture, ly: u8) !void {
     var guard: u32 = 0;
     while (cap.last_ly != ly) : (guard += 1) {
         if (guard > core.frame_m_cycles * 2) return error.LineNeverRendered;
-        ppu.tick(gb, 1);
+        ppu.tick(gb, 4);
     }
 }
 
@@ -341,7 +341,7 @@ test "ppu mode timing, LY and vblank interrupt" {
             return error.TestExpectedEqual;
         }
         try expectEqual(@as(u8, 0), gb.io[Reg.ly]);
-        ppu.tick(&gb, 1);
+        ppu.tick(&gb, 4);
     }
     try expectEqual(@as(u8, 1), ppu.read_reg(&gb, Reg.ly));
     try expectEqual(@as(u8, 2), stat_mode(&gb));
@@ -352,13 +352,13 @@ test "ppu mode timing, LY and vblank interrupt" {
     while (t < 143 * 456) {
         const m: u8 = @intCast(1 + sizes % 6);
         sizes += 1;
-        ppu.tick(&gb, m);
+        ppu.tick(&gb, @as(u16, m) * 4);
         t += @as(u32, m) * 4;
         try expectEqual(@as(u8, @intCast(t / 456)), gb.io[Reg.ly]);
     }
     try expect(!gb.vblank_hit);
     try expectEqual(@as(u8, 0), gb.io[Reg.if_] & Irq.vblank);
-    while (t < 144 * 456) : (t += 4) ppu.tick(&gb, 1);
+    while (t < 144 * 456) : (t += 4) ppu.tick(&gb, 4);
     try expectEqual(@as(u8, 144), gb.io[Reg.ly]);
     try expect(gb.vblank_hit);
     try expectEqual(Irq.vblank, gb.io[Reg.if_] & Irq.vblank);
@@ -366,11 +366,11 @@ test "ppu mode timing, LY and vblank interrupt" {
     try expectEqual(@as(u32, 144), cap.count);
     // Stays in mode 1 through line 153, then wraps to line 0 mode 2.
     while (t < 154 * 456 - 4) : (t += 4) {
-        ppu.tick(&gb, 1);
+        ppu.tick(&gb, 4);
         try expectEqual(@as(u8, 1), stat_mode(&gb));
     }
     try expectEqual(@as(u8, 153), gb.io[Reg.ly]);
-    ppu.tick(&gb, 1);
+    ppu.tick(&gb, 4);
     try expectEqual(@as(u8, 0), gb.io[Reg.ly]);
     try expectEqual(@as(u8, 2), stat_mode(&gb));
     try expectEqual(@as(u32, 144), cap.count);
@@ -383,13 +383,13 @@ const expect = std.testing.expect;
 fn count_stat_irqs_until(gb: *Gb, ly: u8, extra_t: u32) u32 {
     var n: u32 = 0;
     while (gb.io[Reg.ly] != ly) {
-        ppu.tick(gb, 1);
+        ppu.tick(gb, 4);
         if (gb.io[Reg.if_] & Irq.stat != 0) n += 1;
         gb.io[Reg.if_] = 0;
     }
     var t: u32 = 0;
     while (t < extra_t) : (t += 4) {
-        ppu.tick(gb, 1);
+        ppu.tick(gb, 4);
         if (gb.io[Reg.if_] & Irq.stat != 0) n += 1;
         gb.io[Reg.if_] = 0;
     }
@@ -453,7 +453,7 @@ test "ppu LCD off and on" {
     try expectEqual(@as(u8, 0), ppu.read_reg(&gb, Reg.ly));
     try expectEqual(@as(u8, 0), stat_mode(&gb));
     const seen = cap.count;
-    for (0..core.frame_m_cycles) |_| ppu.tick(&gb, 1);
+    for (0..core.frame_m_cycles) |_| ppu.tick(&gb, 4);
     try expectEqual(seen, cap.count);
     try expectEqual(@as(u8, 0), ppu.read_reg(&gb, Reg.ly));
     try expect(!gb.vblank_hit);
@@ -464,4 +464,217 @@ test "ppu LCD off and on" {
     try expectEqual(@as(u8, 0), ppu.read_reg(&gb, Reg.ly));
     try run_frame(&gb, &cap);
     try expectEqual(seen + 144, cap.count);
+}
+
+// ---- CGB mode (SPEC.md 19.1, 19.2): lines are colour indices ----
+
+/// CGB model, LCD on, BG on, 0x8000 tile data, 0x9800 BG map.
+fn setup_cgb(gb: *Gb, cap: *Capture) void {
+    gb.* = Gb.init_slice(&zero_rom, .cgb, &.{});
+    gb.line_sink = cap.sink();
+    ppu.write_reg(gb, Reg.lcdc, 0x91);
+    gb.io[Reg.if_] = 0;
+}
+
+/// Tile `i` of VRAM bank `bank` filled with color index `c`.
+fn solid_bank(gb: *Gb, bank: usize, i: usize, c: u2) void {
+    const base = bank * 0x2000 + i * 16;
+    for (0..8) |r| {
+        gb.vram[base + r * 2] = if (c & 1 != 0) 0xFF else 0;
+        gb.vram[base + r * 2 + 1] = if (c & 2 != 0) 0xFF else 0;
+    }
+}
+
+test "cgb palette registers: auto-increment, read-back, pal_dirty" {
+    var gb = Gb.init_slice(&zero_rom, .cgb, &.{});
+    // Boot state: every colour white (0x7FFF little endian).
+    for (0..32) |i| {
+        try expectEqual(@as(u8, 0xFF), gb.ppu.bg_pal[i * 2]);
+        try expectEqual(@as(u8, 0x7F), gb.ppu.bg_pal[i * 2 + 1]);
+        try expectEqual(@as(u8, 0xFF), gb.ppu.obj_pal[i * 2]);
+        try expectEqual(@as(u8, 0x7F), gb.ppu.obj_pal[i * 2 + 1]);
+    }
+
+    // Auto-increment wraps from 63 to 0 and keeps bit 7.
+    gb.write8(0xFF68, 0x80 | 62);
+    gb.pal_dirty = false;
+    gb.write8(0xFF69, 0x11);
+    try expect(gb.pal_dirty);
+    gb.write8(0xFF69, 0x22);
+    gb.write8(0xFF69, 0x33);
+    try expectEqual(@as(u8, 0x11), gb.ppu.bg_pal[62]);
+    try expectEqual(@as(u8, 0x22), gb.ppu.bg_pal[63]);
+    try expectEqual(@as(u8, 0x33), gb.ppu.bg_pal[0]);
+    try expectEqual(@as(u8, 0xC1), gb.read8(0xFF68)); // bit 6 reads 1
+    // BCPD reads the byte at the index and does not advance it.
+    try expectEqual(@as(u8, 0x7F), gb.read8(0xFF69));
+    try expectEqual(@as(u8, 0x7F), gb.read8(0xFF69));
+    try expectEqual(@as(u8, 0xC1), gb.read8(0xFF68));
+
+    // Without bit 7 the index stays put; bit 6 is not stored.
+    gb.write8(0xFF68, 0x40 | 5);
+    try expectEqual(@as(u8, 0x45), gb.read8(0xFF68));
+    gb.write8(0xFF69, 0xAA);
+    gb.write8(0xFF69, 0xBB);
+    try expectEqual(@as(u8, 0xBB), gb.ppu.bg_pal[5]);
+    try expectEqual(@as(u8, 0xFF), gb.ppu.bg_pal[6]);
+    try expectEqual(@as(u8, 0xBB), gb.read8(0xFF69));
+
+    // OBJ palettes, independent index.
+    gb.write8(0xFF6A, 0x80 | 8);
+    gb.pal_dirty = false;
+    gb.write8(0xFF6B, 0x12);
+    gb.write8(0xFF6B, 0x34);
+    try expect(gb.pal_dirty);
+    try expectEqual(@as(u8, 0x12), gb.ppu.obj_pal[8]);
+    try expectEqual(@as(u8, 0x34), gb.ppu.obj_pal[9]);
+    try expectEqual(@as(u8, 0xCA), gb.read8(0xFF6A));
+    gb.write8(0xFF6A, 8);
+    try expectEqual(@as(u8, 0x12), gb.read8(0xFF6B));
+    try expectEqual(@as(u8, 0x45), gb.read8(0xFF68));
+
+    // OPRI: bit 0 stored, the rest read 1. CGB boot leaves 0 (OAM order).
+    try expectEqual(@as(u8, 0xFE), gb.read8(0xFF6C));
+    gb.write8(0xFF6C, 0xFF);
+    try expectEqual(@as(u8, 0xFF), gb.read8(0xFF6C));
+
+    // DMG mode: the registers do not exist.
+    var dmg = Gb.init_slice(&zero_rom, .dmg, &.{});
+    dmg.pal_dirty = false;
+    dmg.write8(0xFF68, 0x80);
+    dmg.write8(0xFF69, 0x00);
+    try expectEqual(@as(u8, 0xFF), dmg.read8(0xFF68));
+    try expectEqual(@as(u8, 0xFF), dmg.read8(0xFF69));
+    try expectEqual(@as(u8, 0xFF), dmg.ppu.bg_pal[0]);
+    try expect(!dmg.pal_dirty);
+}
+
+test "cgb bg attributes: palette, tile bank, x and y flip" {
+    var gb: Gb = undefined;
+    var cap: Capture = .{};
+    setup_cgb(&gb, &cap);
+    // Tile 2, bank 0: only pixel (0,0) set, colour 1. Bank 1: solid 3.
+    gb.vram[2 * 16] = 0x80;
+    solid_bank(&gb, 1, 2, 3);
+    const attr = 0x3800;
+    gb.vram[0x1800 + 0] = 2;
+    gb.vram[0x1800 + 1] = 2;
+    gb.vram[attr + 1] = 0x20 | 3; // X flip, palette 3
+    gb.vram[0x1800 + 2] = 2;
+    gb.vram[attr + 2] = 0x40 | 5; // Y flip, palette 5
+    gb.vram[0x1800 + 3] = 2;
+    gb.vram[attr + 3] = 0x08 | 7; // bank 1, palette 7
+    try run_frame(&gb, &cap);
+    const l0 = &cap.frame[0];
+    const l7 = &cap.frame[7];
+    try expectEqual(@as(u8, 1), l0[0]);
+    try expect_span(l0, 1, 8, 0);
+    try expect_span(l0, 8, 15, 12);
+    try expectEqual(@as(u8, 13), l0[15]);
+    try expect_span(l0, 16, 24, 20);
+    try expectEqual(@as(u8, 21), l7[16]);
+    try expect_span(l7, 17, 24, 20);
+    try expect_span(l7, 0, 8, 0);
+    try expect_span(l7, 8, 15, 12);
+    try expect_span(l0, 24, 32, 31);
+    try expect_span(l7, 24, 32, 31);
+    try expect_span(l0, 32, 160, 0);
+}
+
+test "cgb bg priority bit, obj priority bit and LCDC.0 master priority" {
+    var gb: Gb = undefined;
+    var cap: Capture = .{};
+    setup_cgb(&gb, &cap);
+    gb.vram[16..32].* = @splat(0);
+    for (0..8) |r| gb.vram[16 + r * 2] = 0x0F; // tile 1: pixels 4..7 colour 1
+    solid_bank(&gb, 0, 2, 3);
+    fill_map(&gb, 0x1800, 1);
+    gb.vram[0x3800 + 2] = 0x80; // map column 2 (x 16..23): BG priority
+    ppu.write_reg(&gb, Reg.lcdc, 0x93);
+    sprite(&gb, 0, 16, 8 + 16, 2, 0x02); // palette 2 -> 32 + 8 + 3
+    sprite(&gb, 1, 16, 8 + 40, 2, 0x02);
+    sprite(&gb, 2, 16, 8 + 64, 2, 0x82); // OBJ-behind-BG
+    try run_frame(&gb, &cap);
+    const l = &cap.frame[0];
+    try expect_span(l, 16, 20, 43); // BG colour 0 always loses
+    try expect_span(l, 20, 24, 1); // BG attribute priority wins
+    try expect_span(l, 40, 48, 43);
+    try expect_span(l, 64, 68, 43);
+    try expect_span(l, 68, 72, 1); // OAM priority bit
+    try expect_span(l, 0, 4, 0);
+    try expect_span(l, 4, 8, 1);
+
+    // LCDC.0 = 0: sprites always on top, BG still drawn.
+    ppu.write_reg(&gb, Reg.lcdc, 0x92);
+    try run_frame(&gb, &cap);
+    try expect_span(l, 16, 24, 43);
+    try expect_span(l, 64, 72, 43);
+    try expect_span(l, 0, 4, 0);
+    try expect_span(l, 4, 8, 1);
+    try expect_span(l, 28, 32, 1);
+}
+
+test "cgb window ignores LCDC.0 and uses bank 1 attributes" {
+    var gb: Gb = undefined;
+    var cap: Capture = .{};
+    setup_cgb(&gb, &cap);
+    solid_bank(&gb, 0, 3, 2);
+    fill_map(&gb, 0x1C00, 3);
+    @memset(gb.vram[0x3C00..0x4000], 4); // window map attributes: palette 4
+    ppu.write_reg(&gb, Reg.lcdc, 0xF0); // window on, map 9C00, BG bit clear
+    gb.io[Reg.wy] = 0;
+    gb.io[Reg.wx] = 7 + 80;
+    try run_frame(&gb, &cap);
+    try expect_span(&cap.frame[0], 0, 80, 0);
+    try expect_span(&cap.frame[0], 80, 160, 18);
+}
+
+test "cgb sprite priority by OAM order unless OPRI is set" {
+    var gb: Gb = undefined;
+    var cap: Capture = .{};
+    setup_cgb(&gb, &cap);
+    solid_bank(&gb, 0, 2, 3);
+    ppu.write_reg(&gb, Reg.lcdc, 0x93);
+    sprite(&gb, 0, 16, 8 + 20, 2, 0x01); // 32 + 4 + 3 = 39, x 20..27
+    sprite(&gb, 1, 16, 8 + 16, 2, 0x02); // 43, x 16..23
+    try run_frame(&gb, &cap);
+    try expect_span(&cap.frame[0], 16, 20, 43);
+    try expect_span(&cap.frame[0], 20, 28, 39); // OAM 0 wins the overlap
+
+    ppu.write_reg(&gb, Reg.opri, 1); // DMG coordinate priority
+    try run_frame(&gb, &cap);
+    try expect_span(&cap.frame[0], 16, 24, 43); // lower X wins
+    try expect_span(&cap.frame[0], 24, 28, 39);
+
+    // Still 10 sprites per line, chosen in OAM order.
+    ppu.write_reg(&gb, Reg.opri, 0);
+    @memset(&gb.oam, 0);
+    for (0..12) |i| sprite(&gb, i, 16, @intCast(8 + 10 * (11 - i)), 2, 0);
+    try run_frame(&gb, &cap);
+    try expect_span(&cap.frame[0], 0, 20, 0);
+    try expect_span(&cap.frame[0], 20, 28, 35);
+    try expect_span(&cap.frame[0], 110, 118, 35);
+}
+
+test "cgb obj tile bank and palette bits, DMG palette bit ignored" {
+    var gb: Gb = undefined;
+    var cap: Capture = .{};
+    setup_cgb(&gb, &cap);
+    solid_bank(&gb, 0, 4, 1);
+    solid_bank(&gb, 1, 4, 2);
+    solid_bank(&gb, 1, 5, 3);
+    ppu.write_reg(&gb, Reg.lcdc, 0x93);
+    sprite(&gb, 0, 16, 8 + 10, 4, 0x10); // bank 0, palette 0: 33
+    sprite(&gb, 1, 16, 8 + 30, 4, 0x08 | 6); // bank 1, palette 6: 32 + 24 + 2
+    try run_frame(&gb, &cap);
+    try expect_span(&cap.frame[0], 10, 18, 33);
+    try expect_span(&cap.frame[0], 30, 38, 58);
+    try expect_span(&cap.frame[0], 18, 30, 0);
+
+    // 8x16 from bank 1 with Y flip: the halves swap within the bank.
+    ppu.write_reg(&gb, Reg.lcdc, 0x97);
+    sprite(&gb, 1, 16 + 40, 8 + 30, 5, 0x48 | 1);
+    try run_frame(&gb, &cap);
+    try expect_span(&cap.frame[40], 30, 38, 32 + 4 + 3);
+    try expect_span(&cap.frame[48], 30, 38, 32 + 4 + 2);
 }

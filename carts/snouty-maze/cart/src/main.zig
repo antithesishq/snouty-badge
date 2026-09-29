@@ -22,7 +22,7 @@ comptime {
 }
 
 /// walk = 0, turn = 1, pause = 2, rise = 3, overhead = 4, descend = 5,
-/// teleport = 6, fly = 7 (stable: debug_state returns these). The state
+/// teleport = 6, fly = 7, manual = 8 (stable: debug_state returns these). The state
 /// itself lives in autopilot.zig.
 pub const State = autopilot.State;
 
@@ -33,8 +33,8 @@ var show_debug: bool = build_options.debug_overlay;
 var random: rng.Xorshift = undefined;
 var world: maze.Maze = .{};
 /// Exported on the badge build too, so badge-bench can `--poke maze_size=16`
-/// before start() (unexported, the compiler folds it to 12).
-var maze_size: u8 = 12;
+/// before start() (unexported, the compiler folds it to the build option).
+var maze_size: u8 = build_options.maze_size;
 /// Seed of the current rng stream, so debug_set_size and debug_set_seed
 /// give the same maze whichever order the harness calls them in.
 var seed: u32 = 0;
@@ -64,9 +64,12 @@ fn new_maze() void {
 pub fn update() void {
     input.update(read_controls());
 
-    // B+Select (either order) toggles fly; Select alone toggles the
-    // neopixels in the screensaver states and the debug overlay in fly.
-    if ((input.pressed(.select) and input.held(.b)) or (input.pressed(.b) and input.held(.select))) {
+    // B+Select (either order) toggles fly, compiled in only with
+    // -Ddebug_overlay=true (debug_set_camera still enters fly on wasm);
+    // Select alone flips leds.enabled in the screensaver states (a no-op for
+    // the player: the neopixels are compiled out unless -Dneopixels=true)
+    // and toggles the debug overlay in fly.
+    if (build_options.debug_overlay and ((input.pressed(.select) and input.held(.b)) or (input.pressed(.b) and input.held(.select)))) {
         autopilot.toggle_fly(&world);
     } else if (input.pressed(.select)) {
         if (autopilot.state == .fly) show_debug = !show_debug else leds.toggle();
@@ -86,6 +89,18 @@ pub fn update() void {
         });
     } else {
         if (input.pressed(.start)) autopilot.name_strip_forced = !autopilot.name_strip_forced;
+        // The stick takes the camera over in WALK/TURN and drives MANUAL.
+        autopilot.stick(&world, .{
+            .up = input.held(.up),
+            .down = input.held(.down),
+            .left = input.held(.left),
+            .right = input.held(.right),
+        }, .{
+            .up = input.pressed(.up),
+            .down = input.pressed(.down),
+            .left = input.pressed(.left),
+            .right = input.pressed(.right),
+        });
         if (input.pressed(.a)) {
             autopilot.skip();
         } else {
@@ -93,8 +108,8 @@ pub fn update() void {
         }
     }
     // Actors tick in every state; the smiley and sphere fire only while
-    // walking (WALK/TURN).
-    const triggers = autopilot.state == .walk or autopilot.state == .turn;
+    // walking (WALK/TURN/MANUAL).
+    const triggers = autopilot.walking();
     actors.step(&world, &random, actors.cell_of(camera.cam.pos), triggers);
 
     const t0 = cart.micros_since_boot();
@@ -159,11 +174,14 @@ comptime {
         @export(&debug_teleports, .{ .name = "debug_teleports" });
         @export(&debug_roll_deg, .{ .name = "debug_roll_deg" });
         @export(&debug_leds, .{ .name = "debug_leds" });
-    } else {
-        @export(&maze_size, .{ .name = "maze_size" });
+        @export(&debug_manual_idle, .{ .name = "debug_manual_idle" });
+        @export(&debug_carve_shown, .{ .name = "debug_carve_shown" });
+        @export(&debug_carve_count, .{ .name = "debug_carve_count" });
         @export(&debug_led_max, .{ .name = "debug_led_max" });
         @export(&debug_place, .{ .name = "debug_place" });
         @export(&debug_fade_level, .{ .name = "debug_fade_level" });
+    } else {
+        @export(&maze_size, .{ .name = "maze_size" });
     }
 }
 
@@ -237,7 +255,7 @@ fn debug_heading() callconv(.c) u32 {
 fn debug_set_roll(roll_deg: f32) callconv(.c) void {
     autopilot.set_roll(deg_to_angle(roll_deg));
 }
-/// Same as pressing A: WALK/TURN jump to PAUSE.
+/// Same as pressing A: WALK/TURN/MANUAL jump to PAUSE.
 fn debug_skip() callconv(.c) void {
     autopilot.skip();
 }
@@ -288,11 +306,18 @@ fn debug_roll_deg() callconv(.c) u32 {
     const r: u32 = camera.cam.roll;
     return ((r * 360 + 32768) >> 16) % 360;
 }
-/// 1 when the neopixels are enabled (Select in the screensaver states).
+/// 1 when leds.enabled is set (Select in the screensaver states); the strip
+/// stays dark regardless unless built with -Dneopixels=true.
 fn debug_leds() callconv(.c) u32 {
     return @intFromBool(leds.enabled);
 }
-/// Largest channel value across the five neopixels (must stay <= 10).
+/// Ticks since a stick direction was last held (MANUAL returns to WALK
+/// at autopilot.manual_idle_ticks).
+fn debug_manual_idle() callconv(.c) u32 {
+    return autopilot.manual_idle;
+}
+/// Largest channel value across the five neopixels (0 in the default build;
+/// <= 10 with -Dneopixels=true).
 fn debug_led_max() callconv(.c) u32 {
     var hi: u32 = 0;
     for (0..cart.neopixels.len) |i| {
@@ -310,6 +335,14 @@ fn debug_place(code: u32) callconv(.c) void {
     const x: u8 = @intCast((code / 100) % 100);
     const z: u8 = @intCast(code % 100);
     actors.place(&world, @fromBackingInt(@intCast(kind)), x, z);
+}
+/// Carves the maze's runs show (C4: < debug_carve_count while OVERHEAD
+/// carves) and the carve total, w*h - 1.
+fn debug_carve_shown() callconv(.c) u32 {
+    return world.revealed;
+}
+fn debug_carve_count() callconv(.c) u32 {
+    return world.carve_count;
 }
 /// The fade level applied to the last frame (0..16).
 fn debug_fade_level() callconv(.c) u32 {

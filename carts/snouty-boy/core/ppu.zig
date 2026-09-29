@@ -10,6 +10,8 @@ const gb_mod = @import("gb.zig");
 const Gb = gb_mod.Gb;
 const Reg = gb_mod.Reg;
 const Irq = gb_mod.Irq;
+const mmu = @import("mmu.zig");
+const std = @import("std");
 
 pub const Mode = enum(u2) { hblank = 0, vblank = 1, oam_scan = 2, drawing = 3 };
 
@@ -31,8 +33,22 @@ pub const Ppu = struct {
     wy_hit: bool = false,
     /// Previous STAT interrupt line, for rising-edge detection.
     stat_line: bool = false,
-    /// Scratch for the line being rendered (final shades 0..3).
-    line: [gb_mod.screen_w]u8 = @splat(0),
+    /// CGB palette RAM, 8 palettes x 4 colours x RGB555 little endian
+    /// (BCPD / OCPD), indexed by BCPS / OCPS bits 0..5. The CGB boot ROM
+    /// leaves every BG colour white (0x7FFF); OBJ palette RAM is undefined
+    /// after boot, white here too.
+    bg_pal: [64]u8 = white_pal,
+    obj_pal: [64]u8 = white_pal,
+};
+
+/// 32 colours of 0x7FFF, little endian.
+const white_pal: [64]u8 = blk: {
+    var t: [64]u8 = undefined;
+    for (0..32) |i| {
+        t[i * 2] = 0xFF;
+        t[i * 2 + 1] = 0x7F;
+    }
+    break :blk t;
 };
 
 // ---- STAT register bits ----
@@ -58,18 +74,29 @@ pub inline fn lcd_on(gb: *const Gb) bool {
     return (gb.io[Reg.lcdc] & 0x80) != 0;
 }
 
-/// Advance `m` M-cycles (4 T each).
-pub fn tick(gb: *Gb, m: u8) void {
+/// Advance `dots` dots (4 per M-cycle at normal speed, 2 in double speed).
+/// Inlined into the per-instruction tick: only a mode change calls out.
+pub inline fn tick(gb: *Gb, dots: u16) void {
     if (!lcd_on(gb)) return;
     const p = &gb.ppu;
-    p.line_t += @as(u16, m) * 4;
+    p.line_t += dots;
+    if (p.line_t >= p.next_t) advance(gb);
+}
+
+/// The mode changes `tick` has passed (at least one).
+fn advance(gb: *Gb) void {
+    const p = &gb.ppu;
     while (p.line_t >= p.next_t) {
         switch (p.mode) {
             .oam_scan => {
                 set_mode(gb, .drawing, t_hblank);
-                render_line(gb, gb.io[Reg.ly]);
+                if (gb.is_cgb()) render_line_cgb(gb, gb.io[Reg.ly]) else render_line(gb, gb.io[Reg.ly]);
             },
-            .drawing => set_mode(gb, .hblank, t_line),
+            .drawing => {
+                // Mode 3 only happens on visible lines 0..143.
+                set_mode(gb, .hblank, t_line);
+                if (gb.is_cgb()) mmu.hdma_hblank(gb);
+            },
             .hblank, .vblank => next_line(gb),
         }
     }
@@ -174,13 +201,36 @@ pub fn write_reg(gb: *Gb, reg: u8, v: u8) void {
             compose_stat(gb);
             if (lcd_on(gb)) update_stat_irq(gb);
         },
+        // CGB palette registers (the MMU only dispatches these in CGB
+        // mode). Real hardware ignores BCPD/OCPD access during mode 3; the
+        // core does not model that lock (the scanline renderer has already
+        // drawn the line by then).
+        Reg.bcps, Reg.ocps => gb.io[reg] = v & 0xBF,
+        Reg.bcpd => pal_write(gb, Reg.bcps, &gb.ppu.bg_pal, v),
+        Reg.ocpd => pal_write(gb, Reg.ocps, &gb.ppu.obj_pal, v),
+        Reg.opri => gb.io[Reg.opri] = v & 1,
         else => gb.io[reg] = v,
     }
 }
 
 pub fn read_reg(gb: *Gb, reg: u8) u8 {
-    if (reg == Reg.stat) return gb.io[Reg.stat] | 0x80;
-    return gb.io[reg];
+    return switch (reg) {
+        Reg.stat => gb.io[Reg.stat] | 0x80,
+        Reg.bcps, Reg.ocps => gb.io[reg] | 0x40,
+        Reg.bcpd => gb.ppu.bg_pal[gb.io[Reg.bcps] & 0x3F],
+        Reg.ocpd => gb.ppu.obj_pal[gb.io[Reg.ocps] & 0x3F],
+        Reg.opri => gb.io[Reg.opri] | 0xFE,
+        else => gb.io[reg],
+    };
+}
+
+/// BCPD/OCPD write: store at the index in the spec register, then advance
+/// the index (bits 0..5, wrapping) if its auto-increment bit 7 is set.
+fn pal_write(gb: *Gb, spec_reg: u8, pal: *[64]u8, v: u8) void {
+    const s = gb.io[spec_reg];
+    pal[s & 0x3F] = v;
+    if (s & 0x80 != 0) gb.io[spec_reg] = 0x80 | ((s + 1) & 0x3F);
+    gb.pal_dirty = true;
 }
 
 // ---- Renderer ----
@@ -227,6 +277,12 @@ fn render_line(gb: *Gb, ly: u8) void {
     const io = &gb.io;
     const lcdc = io[Reg.lcdc];
     if (ly == io[Reg.wy]) p.wy_hit = true;
+    const wx = io[Reg.wx];
+    const window = lcdc & 0x01 != 0 and lcdc & 0x20 != 0 and p.wy_hit and wx <= 166;
+    const wl = p.window_line;
+    if (window) p.window_line = wl + 1;
+    // Lines the frontend drops: the bookkeeping above is all that counts.
+    if (!gb.line_wanted(ly)) return;
 
     // Background and window color indices.
     var ci: [buf_len]u8 = undefined;
@@ -242,9 +298,7 @@ fn render_line(gb: *Gb, ly: u8) void {
             put8(&ci, start + t * 8, row_word(gb, bg_tile_addr(idx, lcdc) + fine_y));
         }
 
-        const wx = io[Reg.wx];
-        if (lcdc & 0x20 != 0 and p.wy_hit and wx <= 166) {
-            const wl = p.window_line;
+        if (window) {
             const wmap: usize = (if (lcdc & 0x40 != 0) @as(usize, 0x1C00) else 0x1800) + @as(usize, wl >> 3) * 32;
             const wfine: usize = @as(usize, wl & 7) * 2;
             // Screen x = wx - 7, buffer index = x + 8.
@@ -257,7 +311,6 @@ fn render_line(gb: *Gb, ly: u8) void {
                 const idx = gb.vram[wmap + t];
                 put8(&ci, pos, row_word(gb, bg_tile_addr(idx, lcdc) + wfine));
             }
-            p.window_line = wl + 1;
         }
     } else {
         @memset(&ci, 0);
@@ -266,18 +319,19 @@ fn render_line(gb: *Gb, ly: u8) void {
     const bgp = io[Reg.bgp];
     const bg_pal = [4]u8{ bgp & 3, (bgp >> 2) & 3, (bgp >> 4) & 3, bgp >> 6 };
 
+    var line: [gb_mod.screen_w]u8 = undefined;
     if (lcdc & 0x02 == 0) {
-        for (&p.line, ci[buf_off..][0..gb_mod.screen_w]) |*px, c| px.* = bg_pal[c];
+        for (&line, ci[buf_off..][0..gb_mod.screen_w]) |*px, c| px.* = bg_pal[c];
     } else {
         var obj: [buf_len]u8 = @splat(0);
         draw_sprites(gb, ly, lcdc, &obj);
         // obj byte: 0 = none, else 4 | (8 if BG-over-OBJ) | shade.
-        for (&p.line, ci[buf_off..][0..gb_mod.screen_w], obj[buf_off..][0..gb_mod.screen_w]) |*px, c, o| {
+        for (&line, ci[buf_off..][0..gb_mod.screen_w], obj[buf_off..][0..gb_mod.screen_w]) |*px, c, o| {
             px.* = if (o != 0 and (o & 8 == 0 or c == 0)) o & 3 else bg_pal[c];
         }
     }
 
-    if (gb.line_sink) |sink| sink.emit(ly, &p.line);
+    if (gb.line_sink) |sink| sink.emit(ly, &line);
 }
 
 fn draw_sprites(gb: *const Gb, ly: u8, lcdc: u8, obj: *[buf_len]u8) void {
@@ -332,4 +386,185 @@ fn draw_sprites(gb: *const Gb, ly: u8, lcdc: u8, obj: *[buf_len]u8) void {
             if (c != 0 and dst[k] == 0) dst[k] = flags | ((pal >> @intCast(c * 2)) & 3);
         }
     }
+}
+
+// ---- CGB renderer (SPEC.md 19.1, 19.2) ----
+//
+// BG/window buffer byte: bit 7 = BG-to-OAM priority (map attribute bit 7),
+// bits 4..2 = palette, bits 1..0 = colour, so `b & 0x1F` is the output
+// index. OBJ buffer byte: 0 = none, else bit 7 = OBJ-behind-BG (OAM
+// attribute bit 7) and bits 5..0 = 32 + palette * 4 + colour (never 0).
+//
+// Cost (SPEC.md 8 budgets 15 host cycles per pixel): a tile row is decoded
+// four pixels at a time through `nib` into little-endian words (byte k =
+// pixel k), the BG-to-line pass masks four pixels per word, and sprites
+// are composited only over the 8-pixel spans they cover.
+
+/// `nib[n]` spreads a nibble into a word, one bit per byte: byte k (pixel
+/// k, leftmost first) is bit 3 - k of n.
+const nib: [16]u32 = blk: {
+    var t: [16]u32 = undefined;
+    for (0..16) |n| {
+        var v: u32 = 0;
+        for (0..4) |k| v |= ((n >> (3 - k)) & 1) << (8 * k);
+        t[n] = v;
+    }
+    break :blk t;
+};
+
+inline fn store32(buf: []u8, pos: usize, v: u32) void {
+    std.mem.writeInt(u32, buf[pos..][0..4], v, .little);
+}
+
+/// One BG/window tile row into `buf[pos..pos + 8]`: `map_off` is the map
+/// entry's offset in bank 0; its attributes sit at the same offset in bank
+/// 1 (+0x2000). Bytes are `(attr & 0x80) | pal << 2 | colour`.
+inline fn cgb_tile8(gb: *const Gb, buf: *[buf_len]u8, pos: usize, map_off: usize, lcdc: u8, fine_y: u8) void {
+    const idx = gb.vram[map_off];
+    const attr = gb.vram[map_off + 0x2000];
+    const row: usize = if (attr & 0x40 != 0) 7 - fine_y else fine_y;
+    const bank: usize = @as(usize, attr & 0x08) << 10; // bit 3 -> 0x2000
+    const addr = bank + bg_tile_addr(idx, lcdc) + row * 2;
+    var lo = gb.vram[addr];
+    var hi = gb.vram[addr + 1];
+    if (attr & 0x20 != 0) {
+        lo = @bitReverse(lo);
+        hi = @bitReverse(hi);
+    }
+    const base: u32 = @as(u32, (attr & 0x80) | ((attr & 7) << 2)) * 0x01010101;
+    store32(buf, pos, nib[lo >> 4] | (nib[hi >> 4] << 1) | base);
+    store32(buf, pos + 4, nib[lo & 15] | (nib[hi & 15] << 1) | base);
+}
+
+fn render_line_cgb(gb: *Gb, ly: u8) void {
+    if (ly >= gb_mod.screen_h) return;
+    const p = &gb.ppu;
+    const io = &gb.io;
+    const lcdc = io[Reg.lcdc];
+    if (ly == io[Reg.wy]) p.wy_hit = true;
+    // Window: LCDC.5 alone enables it in CGB mode.
+    const wx = io[Reg.wx];
+    const window = lcdc & 0x20 != 0 and p.wy_hit and wx <= 166;
+    const wl = p.window_line;
+    if (window) p.window_line = wl + 1;
+    // Lines the frontend drops: the bookkeeping above is all that counts.
+    if (!gb.line_wanted(ly)) return;
+
+    // Background: always drawn in CGB mode (LCDC.0 is master priority).
+    var ci: [buf_len]u8 align(4) = undefined;
+    {
+        const scx = io[Reg.scx];
+        const y = ly +% io[Reg.scy];
+        const map: usize = (if (lcdc & 0x08 != 0) @as(usize, 0x1C00) else 0x1800) + @as(usize, y >> 3) * 32;
+        const col0: usize = scx >> 3;
+        const start: usize = buf_off - @as(usize, scx & 7);
+        for (0..21) |t| cgb_tile8(gb, &ci, start + t * 8, map + ((col0 + t) & 31), lcdc, y & 7);
+    }
+    if (window) {
+        const wmap: usize = (if (lcdc & 0x40 != 0) @as(usize, 0x1C00) else 0x1800) + @as(usize, wl >> 3) * 32;
+        var pos: usize = @as(usize, wx) + 1;
+        var t: usize = 0;
+        while (pos < buf_off + gb_mod.screen_w) : ({
+            pos += 8;
+            t += 1;
+        }) cgb_tile8(gb, &ci, pos, wmap + t, lcdc, wl & 7);
+    }
+
+    // BG colour indices, four pixels per word.
+    var line: [gb_mod.screen_w]u8 align(4) = undefined;
+    {
+        const src: *const [gb_mod.screen_w / 4]u32 = @ptrCast(ci[buf_off..][0..gb_mod.screen_w]);
+        const dst: *[gb_mod.screen_w / 4]u32 = @ptrCast(&line);
+        for (dst, src) |*d, s| d.* = s & 0x1F1F1F1F;
+    }
+
+    if (lcdc & 0x02 != 0) {
+        var obj: [buf_len]u8 = undefined;
+        var sel: [10]u8 = undefined;
+        const n = draw_sprites_cgb(gb, ly, lcdc, &obj, &sel);
+        // LCDC.0 = 0: sprites always win. Otherwise BG colour 0 loses to
+        // any sprite, BG colours 1..3 win if either priority bit is set.
+        // Only the spans sprites cover can change; overlapping spans are
+        // simply composited twice.
+        const pm: u8 = if (lcdc & 0x01 != 0) 0x80 else 0;
+        for (sel[0..n]) |s| {
+            const sx: usize = gb.oam[@as(usize, s) * 4 + 1];
+            if (sx == 0 or sx >= 168) continue;
+            // Buffer index sx is screen x sx - 8.
+            const lo_x: usize = @max(sx, buf_off);
+            const hi_x: usize = @min(sx + 8, buf_off + gb_mod.screen_w);
+            for (lo_x..hi_x) |i| {
+                const c = ci[i];
+                const o = obj[i];
+                if (o != 0 and (c & 3 == 0 or (c | o) & pm == 0)) line[i - buf_off] = o & 0x3F;
+            }
+        }
+    }
+
+    if (gb.line_sink) |sink| sink.emit(ly, &line);
+}
+
+/// OAM scan and sprite pixels into `obj`; returns the sprites selected
+/// (into `sel`, OAM order). Only `obj` bytes under a selected sprite with
+/// 0 < X < 168 are written (cleared first), which is all the compositor
+/// reads.
+fn draw_sprites_cgb(gb: *const Gb, ly: u8, lcdc: u8, obj: *[buf_len]u8, sel: *[10]u8) usize {
+    const h: u8 = if (lcdc & 0x04 != 0) 16 else 8;
+
+    // OAM scan: first 10 sprites covering this line, in OAM order.
+    var n: usize = 0;
+    for (0..40) |i| {
+        const row = ly +% 16 -% gb.oam[i * 4];
+        if (row < h) {
+            sel[n] = @intCast(i);
+            n += 1;
+            if (n == 10) break;
+        }
+    }
+    if (n == 0) return 0;
+    for (sel[0..n]) |s| {
+        const sx = gb.oam[@as(usize, s) * 4 + 1];
+        if (sx != 0 and sx < 168) @memset(obj[sx..][0..8], 0);
+    }
+    // OPRI bit 0 = 0 (CGB default): OAM order is the priority, as selected.
+    // OPRI bit 0 = 1: DMG coordinate priority, stable sort by X.
+    var order = sel.*;
+    if (gb.io[Reg.opri] & 1 != 0) {
+        var i: usize = 1;
+        while (i < n) : (i += 1) {
+            const s = order[i];
+            const sx = gb.oam[@as(usize, s) * 4 + 1];
+            var j = i;
+            while (j > 0 and gb.oam[@as(usize, order[j - 1]) * 4 + 1] > sx) : (j -= 1) order[j] = order[j - 1];
+            order[j] = s;
+        }
+    }
+
+    for (order[0..n]) |s| {
+        const o = @as(usize, s) * 4;
+        const sx = gb.oam[o + 1];
+        if (sx == 0 or sx >= 168) continue;
+        const attr = gb.oam[o + 3];
+        var row = ly +% 16 -% gb.oam[o];
+        if (attr & 0x40 != 0) row = h - 1 - row;
+        var tile = gb.oam[o + 2];
+        if (h == 16) tile &= 0xFE;
+        const bank: usize = @as(usize, attr & 0x08) << 10;
+        const addr = bank + @as(usize, tile) * 16 + @as(usize, row) * 2;
+        var lo = gb.vram[addr];
+        var hi = gb.vram[addr + 1];
+        if (attr & 0x20 != 0) {
+            lo = @bitReverse(lo);
+            hi = @bitReverse(hi);
+        }
+        const w = spread[lo] | (spread[hi] << 1);
+        if (w == 0) continue;
+        const base: u8 = (attr & 0x80) | 32 | ((attr & 7) << 2);
+        const dst = obj[sx..][0..8];
+        inline for (0..8) |k| {
+            const c: u8 = @truncate((w >> (14 - 2 * k)) & 3);
+            if (c != 0 and dst[k] == 0) dst[k] = base | c;
+        }
+    }
+    return n;
 }

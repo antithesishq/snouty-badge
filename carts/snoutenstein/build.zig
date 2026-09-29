@@ -11,6 +11,12 @@ const common = @import("../../build/common.zig");
 const dir = "carts/snoutenstein/";
 
 pub fn add(b: *Build, sycl_badge_dep: *Build.Dependency, opts: common.Options) void {
+    // -Dneopixels=true (declared by the root build.zig) re-enables the dormant
+    // LED effects in cart/src/audio.zig; off by default (docs/NEOPIXELS.md).
+    const options = b.addOptions();
+    options.addOption(bool, "neopixels", opts.neopixels);
+    build_options = options;
+
     os_cart.add(b, sycl_badge_dep, .{
         .mode = opts.cart_mode,
         .name = "snoutenstein",
@@ -19,6 +25,8 @@ pub fn add(b: *Build, sycl_badge_dep: *Build.Dependency, opts: common.Options) v
         .custom_builder = &build_cart_assets,
     });
 }
+
+var build_options: ?*Build.Step.Options = null;
 
 /// One entry per PNG in assets/gen/. `bits` is palette bits per pixel (4 =
 /// up to 15 colors + transparent). `transparent` reserves palette index 0 for
@@ -43,8 +51,10 @@ const images = [_]Image{
 };
 
 /// Converts the PNGs in assets/gen/ into a `gfx` module at build time,
-/// mirroring sycl-badge/showcase/carts/dvd/build.zig.
+/// mirroring sycl-badge/showcase/carts/dvd/build.zig, and wires the build
+/// options module.
 fn build_cart_assets(b: *Build, cart: *Build.Module, cart_api: *Build.Module, step: *Build.Step) void {
+    if (build_options) |o| cart.addImport("build_options", o.createModule());
     const convert = b.addExecutable(.{
         .name = "convert_gfx",
         .root_module = b.createModule(.{
