@@ -516,3 +516,9 @@ Level grid 64x64 with Wolf3D import (section 6.1): yes.
   `docs/preview_m3.gif`. Levels are generated on the host now (the comptime
   parser broke the macOS compiler). Hardware gate still pending; the
   emulated benchmark shows 23% of the frame budget used at worst.
+- 2026-09-29: M4 (hold-B rewind through the whole GameState, death rule
+  with the 3 s reserve, Iris tint with scanlines and the `<<` marker,
+  rewind sweep and purple neopixels, keyframe self-check on wasm/Debug
+  builds, `check_determinism.mjs --rewind-at`) tagged `snoutenstein/m4`,
+  `docs/preview_m4.gif`. Section 9.1's restart-on-empty-meter is a
+  fallback only (note there). Hardware gate still pending.
