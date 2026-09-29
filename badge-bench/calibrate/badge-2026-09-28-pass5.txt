@@ -1,0 +1,21 @@
+[CART] CAL k=0 n=131072 ops=2097152 idle_min=394515 idle_med=394516 busy_min=394033 busy_med=395074 sink=00000000
+[CART] CAL k=1 n=20480 ops=327680 idle_min=391473 idle_med=391566 busy_min=390600 busy_med=393452 sink=40b5e000
+[CART] CAL k=2 n=20480 ops=327680 idle_min=676028 idle_med=676030 busy_min=676296 busy_med=676392 sink=3fca0000
+[CART] CAL k=3 n=20480 ops=327680 idle_min=391443 idle_med=391478 busy_min=393196 busy_med=393347 sink=467efcc4
+[CART] CAL k=4 n=1664 ops=26624 idle_min=399386 idle_med=399386 busy_min=399386 busy_med=399386 sink=3fbf9800
+[CART] CAL k=5 n=1536 ops=24576 idle_min=417827 idle_med=417828 busy_min=417830 busy_med=417831 sink=40278dde
+[CART] CAL k=6 n=1664 ops=26624 idle_min=372771 idle_med=372771 busy_min=372771 busy_med=372771 sink=40b3e2c0
+[CART] CAL k=7 n=10240 ops=163840 idle_min=225657 idle_med=225661 busy_min=225632 busy_med=225636 sink=deadbeef
+[CART] CAL k=8 n=10240 ops=163840 idle_min=226039 idle_med=226106 busy_min=227241 busy_med=227289 sink=00000000
+[CART] CAL k=9 n=10240 ops=163840 idle_min=215675 idle_med=215805 busy_min=215739 busy_med=215766 sink=deadbeef
+[CART] CAL k=10 n=10240 ops=163840 idle_min=237052 idle_med=237214 busy_min=238148 busy_med=238199 sink=40a00000
+[CART] CAL k=11 n=10240 ops=163840 idle_min=288300 idle_med=288928 busy_min=289586 busy_med=289677 sink=00001000
+[CART] CAL k=12 n=98304 ops=98304 idle_min=394765 idle_med=394863 busy_min=394872 busy_med=394889 sink=00018000
+[CART] CAL k=13 n=8192 ops=131072 idle_min=421593 idle_med=421785 busy_min=421919 busy_med=422043 sink=aaaaaaaa
+[CART] CAL k=14 n=3584 ops=57344 idle_min=691780 idle_med=691793 busy_min=691771 busy_med=691771 sink=deadbeef
+[CART] CAL k=15 n=20480 ops=327680 idle_min=206209 idle_med=206444 busy_min=207233 busy_med=207397 sink=00000000
+[CART] CAL k=16 n=20480 ops=327680 idle_min=392274 idle_med=392277 busy_min=394132 busy_med=394164 sink=00000000
+[CART] CAL k=17 n=5120 ops=81920 idle_min=435294 idle_med=435295 busy_min=435350 busy_med=435353 sink=00013d6e
+[CART] CAL k=18 n=1792 ops=28672 idle_min=439812 idle_med=439816 busy_min=440344 busy_med=440391 sink=3d1d8911
+[CART] CAL k=19 n=4096 ops=245760 idle_min=463334 idle_med=463341 busy_min=463624 busy_med=463646 sink=468ba42f
+[CART] CAL done pass=5 sum=c8c7be32

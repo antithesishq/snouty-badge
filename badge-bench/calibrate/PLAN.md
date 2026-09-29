@@ -218,3 +218,77 @@ repository ignores `*.uf2`), memory of the status.
   console (or photographs the pages), `fit.py` writes `calibration.toml`,
   and `tests/test_reflections.sh --calibrate` is compared with the timing
   build's on-screen number.
+
+## C3: apply the badge fit, model FP result latency
+
+Started 2026-09-29, from the first badge capture (2026-09-28, a coworker's
+SYCL Badge V2, `badge-2026-09-28-pass5.txt` in this directory; the run
+needed the kernel's `DEMCR.TRCENA` fix on core 1, see the sycl-badge
+branch `fix/core1-dwt-trcena`). `fit.py` on that capture: residual 0.350
+cycles/op, udiv 11.9 (default 6), ldr/str 1.1 (default 2), taken 1.6,
+vcmp 1.8, vstr clamped to 0. Applying it moves the carts' worst-frame
+budget use by -17% (maze) to +41% (snouty-boy), so the defaults are no
+longer a useful floor: the calibration goes on by default (item 5).
+
+What the residual is. The kernels say the FPU stalls one cycle when an
+instruction consumes the result of the FP instruction *immediately before
+it*, and not otherwise:
+
+| pair | measured cycles/op | reading |
+|---|---|---|
+| K1 vmul x4 chains 1.19 vs K2 one chain 2.06 | +0.87 | back-to-back dependent VMUL stalls ~1 |
+| K3 two chains interleaved 1.20 | +0.01 over K1 | a dependency two instructions back is free |
+| K6 vdiv x4 chains 14.00 vs K4 one chain 15.00 | +1.00 | same stall after VDIV |
+| K5 `a = sqrt(a) + 1` 17.00 | 14 + 1 + 2 | VSQRT->VADD and VADD->VSQRT, one stall each |
+
+A per-class cost cannot express this (K1 and K2 have the same mix), so the
+fit smeared it over `vmul`, `vsqrt`, `vcmp` and `vldr` (K18/K19 have many
+such pairs, which is also why `vstr` went negative: `vldr` absorbed
+K18/K19's stalls and `vstr` had to compensate in K10).
+
+1. **New model class `fp_dep`** (`classes.py`, `model.py`): counted, like
+   `taken`, per instruction rather than per mnemonic: 1 when the
+   instruction reads a register that the *immediately preceding*
+   instruction of the same block wrote, and that instruction is FP data
+   processing (classes `vmul`, `vaddsub`, `vcmp`, `vdiv`, `vsqrt`, `vfma`;
+   registers s0-s31, d0-d15 and the FPSCR flags, so VCMP->VMRS counts).
+   Detected statically per block with capstone's `regs_access()` in
+   `decode_block`; a pair split across a block boundary is not counted
+   (a taken branch sits between them). Default cost **0**, so every
+   uncalibrated number and `tests/test_reflections.sh` stay bit-identical;
+   the fit prices it. Which producers and consumers count is decided by
+   the capture: variants (producer = FP data processing, consumer = any;
+   producer also VLDR; consumer only FP data processing) are each fitted
+   and the one with the lowest residual is kept, the others recorded here.
+2. **Plumbing.** `decode_block` returns the block's stall count; `blocks`
+   rows gain it; `hot[]` entries gain `fp_dep` (stalls over the run, like
+   `taken`) and `class_cyc.fp_dep`; the listing marks stalled instructions;
+   `fit.py` builds the `fp_dep` column from `hot[].fp_dep / entries` and
+   writes it to `[costs]`; the fixture generator emits `fp_dep = 0`
+   (unidentifiable there, kept at the default, selftest unchanged);
+   `config.load_calibration` accepts the new key.
+3. **VLDR/VSTR.** After 1, if `vstr` still fits negative, tie `vldr = vstr`
+   in `fit.py` (one unknown; they are only separable through K19's mix).
+4. **Refit** on the capture -> `calibration.toml` (committed) and rerun
+   the six carts; record before/after per cart in the badge-bench README.
+5. **Calibration on by default.** `badge-bench` loads
+   `calibrate/calibration.toml` when it exists; `--no-calibrate` gives the
+   raw model; `--calibrate FILE` names another file. Reports keep saying
+   which. `tests/test_reflections.sh` and the model half of
+   `tests/test_calibrate_selftest.sh` pass `--no-calibrate` (they check
+   the raw model's exactness). `carts/*.toml` budgets are judged on the
+   calibrated busy ms as before.
+6. **Docs.** badge-bench README (model table gains `fp_dep`; the FP stall
+   blind spot becomes a measured term; "no badge has been measured yet"
+   goes; the calibrated per-cart table), `calibrate/README.md` status,
+   `SPEC.md` status, `dist/README.md` (the kernel needs the TRCENA fix or
+   the cart hangs before its first line).
+
+Not in C3, needs another badge run (**C4**): kernels for `ldrd/strd`
+(6-7% of snouty-bugs' and snouty's cycles, unmeasured, default 3), `vfma`
+(under 1% everywhere) and a load-use pair (VLDR feeding the next FP op);
+flash the fixed kernel first.
+
+Gates: `tests/test_calibrate_selftest.sh` PASS; `tests/test_reflections.sh`
+exact with `--no-calibrate`; the refit residual well under 0.350 cycles/op
+with `vstr` positive; the six carts rerun.
