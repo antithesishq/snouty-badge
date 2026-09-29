@@ -25,3 +25,4 @@ __pycache__/
 # roms/*.md, tests/roms/ path rules of SPEC.md section 11), since the last
 # matching line wins.
 !carts/snouty-genesis/roms/snouty-test.bin
+!carts/snouty-genesis/roms/miniplanets.bin
