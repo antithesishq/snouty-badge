@@ -150,7 +150,7 @@ pub const Md = struct {
         md.sram_map = if (md.rom.size >= rom.header_end) rom.sram_map(&h) else .{};
         md.sram_active = if (md.sram_map.present() and md.rom.size <= md.sram_map.lo) md.sram_map else .{};
         md.dma_stall = 0;
-        md.z80.reset();
+        z80bus.reset_genesis(&md.z80);
         @memset(&md.z80_ram, 0);
         md.z80_bank = 0;
         md.arbiter = .{};
@@ -185,10 +185,8 @@ pub const Md = struct {
             md.run_m68k(&b, line_share(line, scaled_frame));
             md.run_z80(&zb);
             md.z80_int = false;
-            // SHIM (Track D): the YM2612 timers advance in real 68000
-            // cycles per line; the call is compiled in once ym2612.zig has
-            // `advance(m68k_cycles: u32)`.
-            if (@hasDecl(ym2612.Ym2612, "advance")) md.ym.advance(line_share(line, vdp.m68k_cycles_per_frame));
+            // The YM2612 timers count real 68000 cycles (its clock), unscaled.
+            md.ym.tick(line_share(line, vdp.m68k_cycles_per_frame));
             md.vdp.end_line();
         }
         md.frame_count +%= 1;
@@ -232,7 +230,12 @@ pub const Md = struct {
         if (!tunables.z80_enabled or md.arbiter.busreq or md.arbiter.z80_reset) return;
         const share: u32 = vdp.z80_cycles_per_line * tunables.z80_scale;
         var used: u32 = md.z80_carry;
-        while (used < share) used += @call(.always_inline, Z80.step, .{ &md.z80, zb }) * tunables.scale_one;
+        while (used < share) {
+            // Cycles left in this slice, so a halted Z80 sleeps to its end.
+            zb.left = (share - used + tunables.scale_one - 1) / tunables.scale_one;
+            used += @call(.always_inline, Z80.step, .{ &md.z80, zb }) * tunables.scale_one;
+        }
+        zb.left = 0;
         md.z80_carry = used - share;
     }
 
@@ -253,15 +256,9 @@ pub const Md = struct {
     }
 
     /// SPEC.md section 9: the FM pick against the PSG pick, the louder
-    /// wins, FM on a tie.
+    /// wins, FM on a tie (`ym2612.pick_tone`).
     fn pick_tone(md: *const Md) ?Tone {
-        const fm = md.ym.pick();
-        const sq = md.psg.pick();
-        if (fm) |f| {
-            if (sq) |p| if (p.level > f.level) return p;
-            return f;
-        }
-        return sq;
+        return ym2612.pick_tone(&md.ym, &md.psg);
     }
 
     pub fn bus_for(md: *Md) bus.Bus {

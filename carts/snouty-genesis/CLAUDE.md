@@ -20,8 +20,8 @@ ownership and interface contract.
   `RomSource`, `tunables.zig` the performance knobs). No `cart-api` import,
   no floats, no allocator, no clock, no randomness, no romfs: the core sees
   the ROM only as `rom.RomSource`, a base pointer or a cluster table.
-  Host-testable. M0: every subsystem is a compiling stub with the PLAN.md
-  M1 signatures; `step_frame` draws a test pattern.
+  Host-testable. `step_frame` runs the 262-line frame loop of PLAN.md's
+  M1 contract (68000 share, Z80 slice, YM timers, `end_line`).
 - The Z80 is Snouty Gear's `carts/snouty-gear/core/z80.zig`, imported as
   the module **`z80`** (`@import("z80")` in `core/z80bus.zig`), rooted at
   that file by this cart's `build.zig` for both the cart and the host

@@ -34,6 +34,7 @@
 const md_mod = @import("md.zig");
 const rom = @import("rom.zig");
 const tunables = @import("tunables.zig");
+const z80bus = @import("z80bus.zig");
 const Md = md_mod.Md;
 const Pad = md_mod.Pad;
 
@@ -210,8 +211,7 @@ fn set_busreq(md: *Md, on: bool) void {
 /// 1 releases it (the Z80 starts at 0000 from its reset state).
 fn set_z80_reset(md: *Md, assert: bool) void {
     if (assert) {
-        md.z80.reset();
-        md.ym.reset();
+        z80bus.reset_line(md);
         md.z80_carry = 0;
     }
     md.arbiter.z80_reset = assert;

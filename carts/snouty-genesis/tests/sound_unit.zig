@@ -510,9 +510,9 @@ test "sound: pick_tone weighs FM against PSG, FM wins ties" {
 // ---- End to end: the test ROM's Z80 driver ----
 
 /// First bytes of tools/testrom/z80.s: di; im 1; ld sp,2000h; jp 0044h.
-const driver_sig = [_]u8{ 0xF3, 0xED, 0x56, 0x31, 0x00, 0x20, 0xC3, 0x44, 0x00 };
+const driver_sig = [_]u8{ 0xF3, 0xED, 0x56, 0x31, 0x00, 0x20, 0xC3, 0x43, 0x00 };
 /// tools/testrom/README.md: "copy the 264 driver bytes to A00000".
-const driver_len = 264;
+const driver_len = 267;
 
 /// Run the shipped driver for `frames` frames of 262 lines x 228 cycles,
 /// INT raised for line 224. `pulse`: INT drops as soon as the Z80 accepts
@@ -584,13 +584,11 @@ test "sound: the test ROM's Z80 driver, INT as a pulse: A4, E5 every 30 frames" 
     try expectEqual(@as(u32, 200), try run_driver(200, true));
 }
 
-test "sound: the test ROM's Z80 driver, INT held for the line: re-entered each frame" {
-    // The driver's handler ends `ei; reti` about 70 cycles in, so a line
-    // long INT is taken again: three acceptances per frame, the note
-    // toggles every 10 frames. Real hardware (and SPEC.md section 9's
-    // model) does this too: the driver, not the bus, needs the fix (Track
-    // D report).
-    const n = try run_driver(200, false);
-    std.debug.print("snouty-genesis: test ROM driver, line-long INT: {d} acceptances in 200 frames\n", .{n});
-    try expectEqual(@as(u32, 3 * 200), n);
+test "sound: the test ROM's Z80 driver, INT held for the line: still one acceptance per frame" {
+    // The M0 driver's handler ended `ei; reti` about 70 cycles in, so a
+    // line-long INT was taken three times per frame (Track D found it);
+    // the fixed driver returns with interrupts disabled and waits out the
+    // line before EI; HALT, so the frame loop's line-long INT (SPEC.md
+    // section 9) is accepted exactly once.
+    try expectEqual(@as(u32, 200), try run_driver(200, false));
 }
