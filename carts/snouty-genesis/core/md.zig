@@ -229,7 +229,7 @@ pub const Md = struct {
         while (used < share) {
             // Cycles left in this slice, so a halted Z80 sleeps to its end.
             zb.left = (share - used + tunables.scale_one - 1) / tunables.scale_one;
-            used += @call(.always_inline, Z80.step, .{ &md.z80, zb }) * tunables.scale_one;
+            used += md.z80.step(zb) * tunables.scale_one;
         }
         zb.left = 0;
         md.z80_carry = used - share;
