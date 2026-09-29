@@ -13,11 +13,15 @@ section 6).
   (r * 7 / 4, or 48 + r); `row_squeeze[l]` / `row_crop[l]`: the inverse
   over lines 0..223, 0xFF for a line that is not shown.
 
+- `spread[b]` / `spread_rev[b]`: a tile row byte (two 4bpp pixels, the
+  left one in the high nibble) as two pixel bytes, left pixel in the low
+  byte (`spread`) or, for a horizontal flip, in the high byte. H32 draws
+  planes at full width with them (four lookups per 8-pixel tile row), then
+  samples the badge columns.
+
 Literal data because heavy comptime table building runs Adrian's Mac Zig
-out of memory (CLAUDE.md). Genesis tiles are packed 4bpp (two pixels per
-byte, left pixel in the high nibble), so unlike Snouty Gear's planar mode 4
-no bit-spread table is needed: the renderer shifts nibbles out of one
-big-endian 32-bit row word.
+out of memory (CLAUDE.md). H40 needs no table: each tile holds exactly
+four badge columns, shifted out of the row word four at a time.
 """
 import os
 import shutil
@@ -77,6 +81,12 @@ def main():
         fmt("row_squeeze", "Squeeze: the badge row showing line l, 0xFF when none.", "u8", inverse(squeeze)),
         "",
         fmt("row_crop", "Crop: the badge row showing line l, 0xFF when none.", "u8", inverse(crop)),
+        "",
+        fmt("spread", "Row byte b -> pixel bytes: left pixel (b >> 4) low, right (b & 15) high.", "u16",
+            [(b >> 4) | (b & 15) << 8 for b in range(256)]),
+        "",
+        fmt("spread_rev", "Row byte b -> pixel bytes, flipped: right pixel (b & 15) low, left high.", "u16",
+            [(b & 15) | (b >> 4) << 8 for b in range(256)]),
         "",
     ]
     with open(OUT, "w") as f:
