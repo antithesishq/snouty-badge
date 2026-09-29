@@ -583,6 +583,170 @@ unreachable secrets: print, do not fail, for `wolf_*`).
   mean/worst in the status line. GIF, tag `m3`, pull-and-run note.
 
 
+## M4 Rewind (started 2026-09-29)
+
+Goal: the headline mechanic. Hold B and time runs backwards through the
+whole `GameState` (SPEC.md 9); the death freeze becomes the real rewind;
+Iris tint, scanlines, `<<` marker, descending sweep and purple neopixels
+while rewinding; the determinism self-check runs at every keyframe on the
+wasm and Debug builds and `check_determinism.mjs --rewind-at/--rewind-for`
+proves a rewound state is bit-identical to the state that was live back
+then. The rewind core (`rewind.zig`, 7 host tests, m2) is used as is.
+
+Work happens in the worktree `/home/exedev/snouty-badge-snoutenstein`
+(branch `snoutenstein-m4`) because other carts are mid-edit in the main
+working tree; the branch merges into `main` at the tag.
+
+### Tracks (parallel, disjoint files; agents do not commit)
+
+| Track | Owner | Files |
+|-------|-------|-------|
+| A presentation | Opus agent | `cart/src/render/hud.zig`, `cart/src/render/view.zig` (scanline pass only), `cart/src/audio.zig` |
+| B harness | Opus agent | `tools/check_determinism.mjs`, `docs/RUNNING.md` ("Determinism check" section) |
+| lead | this session | `cart/src/main.zig`, `cart/src/sim.zig` (`hash_gameplay` only), `tools/scripts/*.json`, `tools/check.sh`, `PLAN.md`, `SPEC.md` status, GIF, bench, commits, tag |
+
+### Rewind semantics (lead, `main.zig`)
+
+Tick conventions are `rewind.zig`'s: `log_input(game.tick, b)` before
+each forward `sim.step`, `after_step(&game)` after it, `reset(&game)` in
+`new_game` after `sim.init`. Pausing steps nothing and logs nothing.
+
+- New mode `.rewinding = 6`. Entered from `.playing` or `.dead` on a B
+  press (`pressed`, not held: a B still held after a forced commit must
+  not re-enter). `budget` = the live meter, or `max(meter, 180)` when
+  entering from `.dead` (the once-per-death reserve, SPEC.md 9.1). The
+  reserve is *not* written into `GameState` (that would make the live
+  state disagree with its replay); `commit` writes the result. `drained`
+  starts at 0. `rewind.begin(&game, level)`, `hud.set_rewinding(true)`.
+- Each tick while B is held and `drained < budget`: `rewind.back(level)`;
+  on success `drained += 1`. `back` returning null means the history is
+  exhausted (level start): hold there.
+- Release, or `drained == budget` (meter empty): if the shown state has
+  `hp > 0`, `rewind.commit(&game)`, then `game.player.rewind_meter =
+  budget - drained`, `game.rewinds += 1` if `drained > 0`, mode
+  `.playing`. The release tick does not step; forward play resumes the
+  next tick. If the shown state still has `hp <= 0` (B tapped at the
+  death tick without stepping back) the mode returns to `.dead`.
+- Safety net for SPEC.md 9.1's "meter empties while still dead": with the
+  reserve, one tick back always reaches `hp > 0`, so the restart can only
+  happen when there is no history at all (death at tick 0, impossible in
+  practice). Kept as: in `.dead`, holding B for 60 ticks while `back`
+  fails restarts the level. Noted as a deviation.
+- Display while rewinding: `view.shade_override = 4` (Iris set), the
+  shown state is `rewind.current()`, `hud.meter_override = budget -
+  drained` so the clock counts down, `view.scanlines()` after
+  `view.draw`, `hud.draw_rewind_marker()`, `audio.rewind_tick(shown)`
+  instead of `audio.tick` (the next `audio.tick` re-baselines on the tick
+  jump; `portrait.rewinding` already suppresses face events).
+- Self-check (SPEC.md 9.3): `const self_check = cart.is_wasm or
+  builtin.mode == .Debug`; when set and `game.tick % rewind.keyframe_every
+  == 0` after `after_step`, call `rewind.check(&game, level)`. Export
+  `debug_desync = rewind.desyncs`. Hardware ReleaseSmall skips it (30
+  `step`s in one frame every half second is not free).
+- `sim.hash_gameplay(s)`: FNV over a copy with `player.rewind_meter`,
+  `player.rewind_regen` and `rewinds` zeroed. A committed state differs
+  from the state that was live at that tick only in those fields, so this
+  is what the harness compares. Exported as `debug_gameplay_hash`.
+- New exports: `debug_rewinds`, `debug_meter` (the displayed meter,
+  override included), `debug_desync`, `debug_gameplay_hash`.
+
+### Contract: presentation (track A)
+
+`hud.zig`:
+- `pub var meter_override: ?u16 = null`; when set, `draw_bar` draws the
+  clock and meter from it instead of `s.player.rewind_meter`.
+- `pub fn draw_rewind_marker() void`: a `<<` at the top left of the view
+  (x 0, y 0) in Iris on anti-black, as `draw_render_us` draws its text.
+- `draw_render_us` moves to the top right (right-aligned at x 159) so the
+  marker and the readout never overlap.
+- `draw_dead()` loses the hold bar: "HOLD B TO REWIND" plus a second line
+  with the seconds available (`meter_override` if set, else the meter,
+  floored to the 3 s reserve, i.e. `max(m, 180)`), e.g. "3s OF REWIND".
+  Signature `draw_dead(meter_ticks: u16)`; the lead passes the budget.
+
+`view.zig`:
+- `pub fn scanlines() void`: darkens rows `y % 4 == 3` for `y < view_h`
+  in `cart.framebuffer` (column-major, `[x][y]`): halve r, g, b via
+  `to_color` / `from_color`, or a precomputed 16-bit trick; whichever is
+  cheaper, note the choice. 160 x 26 pixels, budget well under 0.2 ms on
+  the M33 (count the instructions in the inner loop and say so).
+
+`audio.zig`:
+- `pub fn rewind_tick(s: *const state.GameState) void`: advances the
+  voice, retriggers `.rewind` every 10 ticks (the table entry exists),
+  and writes all five neopixels Iris purple pulsing between 3/255 and
+  8/255 over a 30-tick triangle (CLAUDE.md: never above 10/255). No
+  event detection. Own counter, reset by `reset`. When `!enabled`,
+  silence and LEDs off as `tick` does.
+- Confirm `tick` re-baselines when it next runs after a rewind
+  (`s.tick < last_tick`) so no hurt/pickup sounds fire from the tick
+  jump; add a host test if audio.zig can be tested without cart-api,
+  otherwise say it cannot.
+
+Verify with `zig build -Dcart=snoutenstein` at the repository root
+(`../..`) and `zig build test`-free checks: hud/view/audio import
+cart-api so there are no host tests; make sure the wasm and firmware
+both build.
+
+### Contract: harness (track B)
+
+`tools/check_determinism.mjs --rewind-at T --rewind-for N` (T, N in
+update indices, 0-based, like preview's `--at`/`--call-at`):
+
+- Run 1: the script unchanged, `--frames F`, plus `--call-at f debug_tick`
+  and `--call-at f debug_gameplay_hash` for every f in `[max(0, T-1-N),
+  T-1]` (read from frames.json `calls`).
+- Run 2: the script with `{"from": T, "to": T+N-1, "hold": ["B"]}`
+  appended to a temp copy (fail with exit 2 if the script already holds B
+  in that range), same `F`, plus `--call-at T+N debug_tick`,
+  `debug_gameplay_hash`, `debug_mode`, `debug_rewinds`, `debug_desync`
+  (the release frame commits; nothing steps that frame). Requires
+  `T + N < F`.
+- Assert: run 2 at `T+N` has `debug_mode == 1` (playing) and
+  `debug_rewinds >= 1`; its `debug_tick` equals some run-1 sample's tick
+  in the window; the two `debug_gameplay_hash` values agree; `debug_desync
+  == 0` at the end of both runs (always add it to the compared exports
+  when the cart exports it). Report the ticks (`rewound from tick X to
+  tick Y, N' ticks`) on the PASS line; a tick not found in the window is
+  a FAIL explaining that the rewind was shorter than asked (meter or
+  history bound) and how far it got.
+- Without `--rewind-*` the tool behaves exactly as today (and still
+  compares `debug_desync` when exported).
+- Exit codes unchanged: 0 pass, 2 usage, 3 mismatch or failed run.
+- `docs/RUNNING.md` "Determinism check": replace the "reserved for M4"
+  sentence with the real usage and one example line.
+
+The exports `debug_gameplay_hash`, `debug_rewinds`, `debug_desync`,
+`debug_meter` and mode 6 are the lead's and land in `main.zig` early in
+the milestone; until they build, develop against the option parsing and
+script rewriting, then run the real thing.
+
+### Lead work
+
+- `main.zig` as above; `sim.hash_gameplay`; `rewind.reset` in `new_game`.
+- Scripts: `m4_rewind.json` (test level, walk 150 ticks, hold B 60,
+  expect playing, `debug_rewinds == 1`, `debug_px` back near the tick-90
+  position), `m4_death.json` (from `m3_death.json`: die, hold B a while,
+  release alive, expect playing and `debug_hp > 0` with `debug_tick` below
+  the death tick), `m4_empty.json` (walk the corridor back and forth for
+  700 ticks, hold B 700: the meter runs dry at 600 ticks back, forced
+  commit, `debug_meter == 0`, still playing). `m3_death.json`'s
+  expectations updated for the new death rule. `check.sh` adds the M4
+  runs, `check_determinism.mjs --rewind-at 200 --rewind-for 90` on the
+  walk script and `--expect "debug_desync == 0"` on every run.
+- Bench the rewind-entry burst (`rewind.begin` replays up to 29 steps in
+  one frame) on badge-bench with the rewind script; record mean/worst.
+- SPEC.md 9.1 note (restart is a fallback), status lines, GIF
+  `docs/preview_m4.gif` from the rewind script, tag `m4`, merge to main,
+  pull-and-run note.
+
+### Verification for M4
+
+`tools/check.sh` green including the new runs; `zig test rewind.zig` and
+`sim.zig` unchanged; `debug_desync == 0` on every scripted run; the
+rewind determinism check passes on the walk script; GIF shows the Iris
+tint, scanlines and the clock counting down.
+
 ## Status
 
 - 2026-09-26: M0 scaffold committed. M1 plan written; four tracks launched.
