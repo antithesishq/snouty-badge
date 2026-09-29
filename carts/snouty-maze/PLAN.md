@@ -890,7 +890,7 @@ decides the default, the code must not.
   rasterizer (no z test).
 - Exports: `debug_carve_shown` (k), `debug_carve_count`.
 - Host tests: `reveal(count)` == generated runs for seeds 0..99; `reveal(0)`
-  is the full grid (2*(w+h)... one run per grid line: w+1 + h+1 runs);
+  is the full grid (one run per grid line: (w + 1) + (h + 1) runs);
   run counts stay <= max_runs for every k.
 - `check_cycle.mjs` run I: A at tick 0, 200 updates (OVERHEAD tick 20):
   debug_carve_shown < debug_carve_count; run B unchanged.
