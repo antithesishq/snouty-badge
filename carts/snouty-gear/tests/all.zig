@@ -5,6 +5,9 @@ const core = @import("core");
 test {
     _ = core;
     _ = @import("rom_unit.zig");
+    _ = @import("z80_unit.zig");
+    _ = @import("z80_single_step.zig");
+    _ = @import("z80_zex.zig");
     _ = @import("vdp_unit.zig");
     _ = @import("bus_unit.zig");
     _ = @import("psg_unit.zig");
