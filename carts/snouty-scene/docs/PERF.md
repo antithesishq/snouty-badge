@@ -43,3 +43,12 @@ and index field 5 KB, copper strip 6 KB, palettes 1.5 KB).
 
 Plenty of headroom: the M1 parts can spend up to about 9 ms each before a
 fade pushes them to the limit.
+
+## M1
+
+Calibrated badge-bench, `carts/snouty-scene/tools/bench_parts.sh <index>`
+(part frames + 60), `.bss` delta against the M0 build's 28,472 bytes.
+
+| # | Part | mean busy ms | part worst busy ms (frame) | run worst | .bss delta | what dominates |
+|---|---|---|---|---|---|---|
+|  6 | Metaballs | 2.53 | 3.48 (t 585) | 3.48 | +14,336 (8 KB 1/r^2 LUT, 5 KB index field, two palettes) | `metaballs.render` field sum, 81% (5-6 balls x 5,120 half-res pixels, one LUT load + MAC each); `upscale2x` column copies 13%; worst frame is the fade-out with the sixth ball in |

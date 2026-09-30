@@ -42,7 +42,7 @@ pub const entries = [_]Entry{
     .{ .part = .of(placeholder.Placeholder(3, "Rotozoomer")), .bars = 5 },
     .{ .part = .of(placeholder.Placeholder(4, "Tunnel")), .bars = 5 },
     .{ .part = .of(placeholder.Placeholder(5, "Twister")), .bars = 4 },
-    .{ .part = .of(placeholder.Placeholder(6, "Metaballs")), .bars = 5 },
+    .{ .part = .of(@import("parts/metaballs.zig")), .bars = 5 },
     .{ .part = .of(placeholder.Placeholder(7, "Voxel")), .bars = 7 },
     .{ .part = .of(placeholder.Placeholder(8, "Snouty head")), .bars = 6 },
     .{ .part = .of(placeholder.Placeholder(9, "Fire")), .bars = 4 },
