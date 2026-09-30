@@ -12,6 +12,12 @@
 //!
 //! M2.2: full20, cut20 and full15 show the Iris logo to primary rays only,
 //! with 3 samples (knobs 5-7, iris_cut); half30 shows it everywhere.
+//!
+//! M3: cut20 turns the rings, noon's water shadows and noon's small sphere
+//! off (the M3 knobs, scene.zig; m3_cut) and renders presets without a
+//! second sphere with their own instance (class_split); full20 and full15
+//! follow m3_cut, half30 keeps noon's shadows and small sphere; the three
+//! keep one render instance.
 const build_options = @import("build_options");
 const scene = @import("scene.zig");
 
@@ -50,11 +56,16 @@ const Config = struct {
 /// unless their budget allows more: half30 keeps everything.
 const iris_cut: Config = .{ .fps = 0, .iris_in_chrome = false, .iris_in_water = false, .iris_samples = 3 };
 
+/// The M3 knobs cut20 needs (PLAN.md M3 "Knobs": rings, then noon's
+/// shadows and small sphere), followed by full20 and full15; half30's
+/// budget allows noon's but not the rings (33.1 ms in sunset with them).
+const m3_cut: Config = .{ .fps = 0, .rings = false, .noon_shadows = false, .noon_third_sphere = false };
+
 const config: Config = switch (variant) {
-    .full20 => .{ .fps = 20, .iris_in_chrome = iris_cut.iris_in_chrome, .iris_in_water = iris_cut.iris_in_water, .iris_samples = iris_cut.iris_samples },
-    .cut20 => .{ .fps = 20, .glass_enabled = false, .water_shadows = .off, .iris_in_chrome = iris_cut.iris_in_chrome, .iris_in_water = iris_cut.iris_in_water, .iris_samples = iris_cut.iris_samples, .rings = false, .noon_shadows = false, .noon_third_sphere = false, .class_split = true },
-    .full15 => .{ .fps = 15, .glass_primary = .env, .iris_in_chrome = iris_cut.iris_in_chrome, .iris_in_water = iris_cut.iris_in_water, .iris_samples = iris_cut.iris_samples },
-    .half30 => .{ .fps = 30, .render_scale = 2 },
+    .full20 => .{ .fps = 20, .iris_in_chrome = iris_cut.iris_in_chrome, .iris_in_water = iris_cut.iris_in_water, .iris_samples = iris_cut.iris_samples, .rings = m3_cut.rings, .noon_shadows = m3_cut.noon_shadows, .noon_third_sphere = m3_cut.noon_third_sphere },
+    .cut20 => .{ .fps = 20, .glass_enabled = false, .water_shadows = .off, .iris_in_chrome = iris_cut.iris_in_chrome, .iris_in_water = iris_cut.iris_in_water, .iris_samples = iris_cut.iris_samples, .rings = m3_cut.rings, .noon_shadows = m3_cut.noon_shadows, .noon_third_sphere = m3_cut.noon_third_sphere, .class_split = true },
+    .full15 => .{ .fps = 15, .glass_primary = .env, .iris_in_chrome = iris_cut.iris_in_chrome, .iris_in_water = iris_cut.iris_in_water, .iris_samples = iris_cut.iris_samples, .rings = m3_cut.rings, .noon_shadows = m3_cut.noon_shadows, .noon_third_sphere = m3_cut.noon_third_sphere },
+    .half30 => .{ .fps = 30, .render_scale = 2, .rings = m3_cut.rings },
 };
 
 pub const fps: u32 = config.fps;

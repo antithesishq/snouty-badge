@@ -370,7 +370,11 @@ comptime {
 // M3 knobs (PLAN.md M3 "Knobs"), in cut order: if a cut20 bench row is over
 // 47.0 ms, rings (per preset), then stripes, noon_shadows,
 // noon_third_sphere, sun_drift. Never cut the free camera, presets or bob
-// without asking Adrian. Costs: see PLAN.md "M3 status".
+// without asking Adrian. Calibrated busy ms, cut20 (PLAN.md "M3 status"):
+// rings 12.5 in sunset (8.9 when active, 3.6 for the code's presence even
+// with no ring: cut20 compiles them out); stripes 1.1 in sunset, nothing
+// measurable in midnight or noon (kept); noon_shadows 6.9 and
+// noon_third_sphere 6.6 in noon (both off in cut20); sun_drift 0 (kept).
 
 /// Master switch for bob, sun drift, rings and stripes. false renders the
 /// M2.2 scene bit for bit (sunset, default height, fade 1): the legacy
@@ -393,9 +397,10 @@ pub const any_stripes = motion and blk: {
     for (stripes) |x| any = any or x;
     break :blk any;
 };
-/// Noon's exact water shadows on primary water hits.
+/// Noon's exact water shadows on primary water hits (variant.zig: off in
+/// cut20).
 pub const noon_shadows: bool = variant.noon_shadows;
-/// Noon's small chrome sphere.
+/// Noon's small chrome sphere (variant.zig: off in cut20).
 pub const noon_third_sphere: bool = variant.noon_third_sphere;
 /// The sun's slow swing about +y.
 pub const sun_drift: bool = true;
