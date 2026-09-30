@@ -6,7 +6,8 @@ Status: plan, 2026-09-29, revised 2026-09-30 with Adrian's answers
 `setup.sh`, `sync.sh`, 48 unit tests and `tests/e2e_loop.sh`. The real
 block-device mount/eject path and `setup.sh` have not run anywhere yet
 (this VM's kernel has no vfat); first run is on a Pi with a FAT12 stick
-(section 3). M1 next. Idea from Adrian's coworker:
+(section 3). M1 designed 2026-09-30 (section 8), building. Idea from
+Adrian's coworker:
 "plug in badge, ask Claude to write you a game or whatever, have the thing
 show up; also have a collection of carts ready to go". Adrian's priorities:
 (1) deploy the existing carts with as little effort as possible, driven
@@ -142,6 +143,7 @@ watch the menu re-scan, run a cart, come back, deploy the Sonic set.
 - **M1 library**: manifest, sets, fit check with root-entry accounting,
   `sync.sh` from the VM, ROM upload from the phone, per-cart RAM/XIP
   toggle, "what is on the badge now" view (read the root directory).
+  Much of this landed with M0; what M1 adds is in section 8.
 - **M2 build on the fly**: section 6, remote path first (works on every
   Pi), local path second.
 - **M3 table polish**: badge LED/menu hints in the UI text, one-tap
@@ -211,12 +213,115 @@ Answered by Adrian 2026-09-30:
    ssh. (Section 2 interfaces; the `badge` CLI is first-class, not a
    debug aid.)
 
+Answered by Adrian 2026-09-30 (second round):
+5. ROM upload: no passphrase. Anyone on the station's network can upload.
+6. Adrian's phone is iOS, and the station must work from Android too; the
+   phone OS is not allowed to be a limitation. Consequences in section 8.
+
 Still open:
-4. Which sets for show day? First guess: Demo reel (snouty, bugs,
-   snoutenstein, maze = 1135 KB), Game Gear (gear + SONIC.GG + bugs),
-   Game Boy (boy + two .gb), Genesis XIP (genesis-xip + a .md). Can be
-   settled in M1 by editing `manifest.toml`.
-5. ROM upload from any phone on the network, or only after a passphrase?
-   Plan assumes no auth on the private network until told otherwise.
-6. Which phone OS is Adrian's? Decides whether `snouty.local` works
-   directly or the fixed address / captive pop-up path is the usual one.
+4. Which sets for show day? Section 8 ships a first guess as the default
+   manifest (Demo reel, Game Gear, Game Boy, Genesis XIP); the phone page
+   can now save new sets, so this no longer needs a decision up front.
+
+## 8. M1: what the phone can do with the library
+
+Design 2026-09-30, on top of M0. Everything below is stdlib Python plus
+the one HTML page; the `badge` CLI gains the same verbs.
+
+### 8.1 Cart variants and the RAM/XIP toggle
+
+`zig-out/firmware` holds every cart twice: `snouty.uf2` (RAM) and
+`snouty-xip.uf2` (XIP). `sync.sh` copies both. M0 listed them as two
+carts; M1 folds them into one cart *family* keyed by the stem without
+`-xip`, with up to two variants:
+
+- `carts/<key>.uf2` is the `ram` variant, `carts/<key>-xip.uf2` the `xip`
+  variant. A manifest entry may name them explicitly (`file`, `xip_file`).
+  `snouty-genesis-xip.uf2` alone gives family `snouty-genesis` with only an
+  XIP variant.
+- `[carts.<key>] use = "ram" | "xip"` picks the variant that sets deploy
+  (default `ram`, or the only variant that exists). The page shows a
+  RAM/XIP toggle on every cart with two variants; the CLI has `badge mode
+  <cart> ram|xip` and `badge mode --all ram|xip`. The choice is per cart
+  and persists in the manifest; fit numbers for every set follow it.
+- The drive name is the variant's file name (`snouty-xip.uf2`), because
+  that is what the badge menu shows; the fit check accounts for it.
+
+### 8.2 Sets: patterns, ad-hoc selections, saving from the phone
+
+- A set's `roms` list may hold glob patterns (`"*.gg"`, `"Sonic*"`)
+  matched case-insensitively against ROM file names in the library, so
+  "Game Gear = gear cart + every .gg ROM" stays true as ROMs are uploaded.
+- The Library section of the page gets a checkbox per cart and per ROM,
+  a live fit line (`3 carts, 1 ROM: 812 KB of 1,260 KB, 9 of 31 entries`,
+  computed by `POST /api/fit`), a **Deploy selection** button and a
+  **Save as set** button (asks for a title; key = slug of the title).
+  `POST /api/sets` creates or replaces a set, `DELETE /api/sets/<key>`
+  removes one, and `POST /api/deploy` accepts `{"carts": [...], "roms":
+  [...]}` as well as `{"set": key}`. CLI: `badge deploy --carts a,b --roms
+  x`, `badge set save KEY --title T --carts ... --roms ...`, `badge set
+  rm KEY`.
+- Each set row on the page can be expanded to list the drive names it
+  would write and the reasons it does not fit.
+- `badge-manager/sets.default.toml` holds the first-guess show-day sets
+  and titles for the known carts. `setup.sh` installs it as the manifest
+  when none exists; `badge init-sets` adds any default set or cart title
+  that is missing from an existing manifest, never overwriting.
+
+### 8.3 What is on the badge
+
+`badge.files` entries gain `title` and `kind` (`cart`, `rom`, `other`) by
+matching drive names against the library, and `badge.set` names the set
+whose plan equals the files on the drive (case-insensitive), else null.
+The page says "On it: Demo reel" when it can, and lists titles instead of
+bare file names. The CLI's `badge status` does the same.
+
+### 8.4 Nightly sync
+
+`systemd/badge-sync.timer` runs `badge sync` at 03:00 local (persistent,
+with a randomised 10 min delay) so the library follows main without
+anyone touching the Pi. It needs internet and the ssh key from the README;
+a failed sync is one log line and nothing else changes. `setup.sh`
+installs and enables the timer.
+
+### 8.5 iOS and Android
+
+Both phone OSes are first-class. What changes:
+
+- **Reaching the page.** iOS Safari resolves `snouty.local`; Android does
+  natively from Android 12 on, older Android does not. The fixed address
+  `http://10.42.0.1/` and the captive pop-up on the station's own network
+  work on both (the server already answers Apple's and Android's
+  connectivity probes with a redirect). On a phone hotspot the Pi's
+  address is only discoverable from the hotspot's client list, so the
+  page carries a **Share** section with two QR codes: one for the page's
+  URL and one Wi-Fi QR (`WIFI:T:WPA;S:snouty-badge;P:...;;`) for the
+  station's own network, shown only in access point mode. Both camera
+  apps read both. A second phone joins by scanning the first one's
+  screen; `badge qr` prints the same codes in the terminal for a sticker.
+  QR codes come from the `qrencode` package (apt), served as SVG by
+  `GET /qr/page.svg` and `GET /qr/wifi.svg`; without `qrencode` the Share
+  section is hidden and nothing else changes.
+- **Uploading a ROM.** Android's file picker filters by MIME type and
+  hides files whose extensions it does not know (`.gg`, `.gbc`, `.md`),
+  so the `accept` attribute is dropped; the server keeps validating the
+  extension and the page keeps the 4 MB check.
+- Touch targets stay 44 px, the page uses no hover-only affordances,
+  and the long-poll keeps working when Android Chrome throttles a
+  background tab (it re-syncs on the next poll).
+
+### 8.6 Status contract additions
+
+See `badge_manager/__init__.py`: `badge.files[].title/kind`, `badge.set`,
+`library.carts[].use/variants`, `sets[].files`, and `share`.
+
+### 8.7 Tracks
+
+- Track A (library, station, CLI, default manifest, unit tests):
+  `library.py`, `station.py`, `cli.py`, `sets.default.toml`,
+  `tests/test_library.py`, `tests/test_station.py`, `tests/test_cli.py`.
+- Track B (server, page, QR, systemd, setup, README, server tests):
+  `server.py`, `www/index.html`, `systemd/badge-sync.*`, `setup.sh`,
+  `README.md`, `tests/test_server.py`.
+- Then integration: full test run, `--fake-badge` directory walk-through
+  of every new page action, tag `badge-manager/m1`.
