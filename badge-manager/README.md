@@ -98,6 +98,16 @@ iPhone and Android are both first-class; nothing needs an app.
   Android hides extensions it does not know when a page filters them.
   **There is no passphrase, by decision (PLAN 7, answer 5): anyone on the
   station's network can upload a ROM.**
+- **Build a cart**: type what the cart should do ("a Snouty cart where
+  ...") and tap **Build on the VM** (or **Build on the station** on a Pi
+  that builds locally); when builds are not ready the button is greyed out
+  with the reason. While the job runs the card shows its state, the elapsed
+  time and the live log (the agent's lines in blue), with **Cancel** (tap
+  twice). When it is done it shows the preview GIF, the title, the bench
+  time against the 16.7 ms frame budget and the size, and the new cart is
+  already ticked in the library, so **Deploy selection** puts it on the
+  badge. A failed job shows the error and the last log lines. The last ten
+  builds are listed under the card; tap one for its full log.
 
 ## ssh
 
@@ -240,7 +250,10 @@ The demo badge plugs in after 3 s, has three sets (one too big) and a
 library with RAM/XIP carts, deploys in about 2 s and then asks to be
 unplugged, and re-plugs itself 10 s later. Every page control works against
 it: the RAM/XIP toggle, selections, Save as set, Remove set, upload, and
-the Share QR codes (it pretends to be on its own network).
+the Share QR codes (it pretends to be on its own network). The demo also
+fakes a build: a scripted 20-second job with step and agent lines that ends
+with a new cart and its GIF in the library (a prompt containing "fail"
+fails instead).
 `BADGE_STATION_DEMO=1` does the same. The server also falls back to the
 demo when the real station cannot start.
 
