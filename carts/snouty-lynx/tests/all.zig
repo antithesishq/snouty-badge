@@ -5,4 +5,5 @@
 test {
     _ = @import("boot_unit.zig");
     _ = @import("boot_local.zig");
+    _ = @import("boot_crosscheck.zig");
 }
