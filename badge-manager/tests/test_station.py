@@ -185,8 +185,8 @@ class StationTest(unittest.TestCase):
         self.st.poll()
         s = self.st.status()
         self.assertEqual(set(s) - {"log_seq"},
-                         {"badge", "busy", "action", "network", "share", "build", "sets",
-                          "library", "log"})
+                         {"badge", "busy", "action", "network", "share", "build", "job",
+                          "builds", "sets", "library", "log"})
         self.assertEqual(set(s["badge"]) - {"ejected"},
                          {"present", "device", "mounted", "files", "set", "free_bytes",
                           "free_entries", "note"})
@@ -202,7 +202,8 @@ class StationTest(unittest.TestCase):
             for v in c["variants"].values():
                 self.assertEqual(set(v), {"file", "size", "ok", "error"})
         self.assertEqual(set(s["network"]), {"mode", "ssid", "address", "internet"})
-        self.assertEqual(set(s["build"]), {"local", "remote"})
+        self.assertEqual(set(s["build"]), {"local", "remote", "ready", "why", "where"})
+        self.assertEqual((s["job"], s["builds"]), (None, []))
         for x in s["sets"]:
             self.assertLessEqual({"name", "title", "bytes", "entries", "fits", "why",
                                   "entries_capacity"}, set(x))
