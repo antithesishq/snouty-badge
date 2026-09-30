@@ -362,8 +362,9 @@ player hurt > pickup > enemy death > door > weapon.
 | Rewind (loop)  | square   | 800 -> 200 Hz | 0.17 s, retriggered |
 | Death freeze   | minor    | 55 Hz         | 0.80 s   |
 
-Sound defaults off, toggled with Select on the title screen only (Select
-is the weapon key in game).
+Sound defaults off (`build_options.sound`, `-Dsound=true` for a sound-on
+build: root docs/SOUND.md), toggled with Select on the title screen only
+(Select is the weapon key in game).
 
 Neopixels are off (docs/NEOPIXELS.md at the repository root): the cart
 never writes a non-zero value. A coworker's badge shows the LEDs are

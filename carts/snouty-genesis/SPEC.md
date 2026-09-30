@@ -269,6 +269,10 @@ and the badge's one `tone2` voice plays one note chosen from them.
   ties. The frontend issues `tone2` on change and stops it when nothing
   is keyed on. Noise, DAC samples, envelopes and vibrato are lost by
   design.
+- **Sound toggle**: `frontend/audio.zig` `enabled` starts as
+  `build_options.sound` says (`-Dsound`, off by default: root
+  docs/SOUND.md). Badge A in the M1 menu placeholder toggles it; the M2
+  menu's Sound row takes that over.
 - **Z80 off** (tunable and menu item, fallback 4 of section 8): the
   arbiter stub. BUSREQ reports granted at once, RESET is recorded, Z80 RAM
   is plain memory, the YM2612 status reads "not busy" and the tone comes

@@ -237,7 +237,8 @@ traced colour toward black before dithering).
 
 - Buzzer: a slow, sparse chiptune arpeggio (single voice, `tone2`), 8-bar
   loop, tempo synced to the camera orbit so one loop is one revolution.
-  Off by default? No: on, because the badge is a demo. Select toggles.
+  Off by default (Adrian, 2026-09-30, every cart: root docs/SOUND.md);
+  `-Dsound=true` builds it on. Select toggles.
 
 ## 9. Architecture
 
