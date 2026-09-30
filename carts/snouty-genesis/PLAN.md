@@ -534,6 +534,7 @@ pub fn record_frame(md: *Md) void;           // after every stepped frame; trunc
 pub fn can_step(dir: i2) bool;
 pub fn step(md: *Md, dir: i2) bool;          // swap one record (see above); false at the ends
 pub fn parked() bool;                        // cursor != 0
+pub fn resume_here(md: *Md) void;            // frontend, before the first step_frame after a scrub: drops the future, opens a record here
 pub fn depth_frames() u32;                   // frames behind live (0 live)
 pub fn history_frames() u32;                 // frames reachable back from live
 pub fn record_count() usize;                 // closed records held
