@@ -42,8 +42,11 @@ badge-bench run and the badge show the same frames, and the picker is free.
   thumb); `f32` is fine for per-frame and per-row set-up.
 - Cart RAM is 307 KB for code, data, bss and stack together
   (`cart_ram.ld`); the two framebuffers are the OS's. Budget for this
-  cart: `.text` + `.rodata` under 110 KB, `.bss` under 150 KB. RAM cart,
-  no XIP.
+  cart: `.text` + `.rodata` under 110 KB, `.bss` under 190 KB (raised from
+  150 KB at M1: the tunnel's 200x168 sway window costs 67 KB and the
+  measured total, 78 KB text + 169 KB bss, leaves 60 KB for the stack;
+  the fallback if RAM gets tight is fixed-centre 160x128 tunnel LUTs,
+  27 KB less). RAM cart, no XIP.
 - 2.5 M cycles per frame at 60 Hz. The perf rule is the monorepo's:
   **every part's worst frame under 12 ms in calibrated badge-bench** (72%
   of budget), so a demo never drops a frame. Half-resolution render

@@ -142,7 +142,20 @@ fast axis in memory: inner loops go down a column.
   12 ms busy; numbers recorded in `docs/PERF.md`.
 - ELF `.text` under 60 KB at M0 (there is room for the seven M1 parts).
 
-## M1 the effects (next)
+## M1 the effects — DONE, tag `snouty-scene/m1`
+
+Status 2026-09-30: seven parts, one Opus agent each in worktrees
+`snouty-badge-scene-<part>` (branches `scene/m1-<part>`), merged into
+`scene/m0`. Every part under 6 ms worst (table in `docs/PERF.md`); voxel
+runs full resolution (160 columns, 150 steps) at 5.59 ms, tunnel sways
+its window over 200x168 LUTs (67 KB). Sizes: `.text` 77,624, `.bss`
+169,016 (SPEC budget raised to 190 KB). Full loop verified headless:
+6900 frames, `debug_part` back to 0 at frame 6870. Weak spots for M3
+are listed per part in each agent's GIF review notes (PERF.md rows) and
+summarised in the M2 hand-off. Merge note: `host_tests.zig` imports,
+`timeline.zig` entries and `PERF.md` rows conflict on every merge; they
+resolve mechanically (keep both / non-placeholder line / append rows).
+
 
 Seven parts, each one module and one agent, in worktrees
 `/home/exedev/snouty-badge-scene-<part>` on branches `scene/m1-<part>`

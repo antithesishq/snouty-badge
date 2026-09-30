@@ -58,3 +58,26 @@ per part (part frames + 60), `.bss` delta against M0's 28,472.
 |  6 | Metaballs | 2.53 | 3.48 (t 585) | 3.48 | +14,336 (8 KB 1/r^2 LUT, 5 KB index field, two palettes) | `metaballs.render` field sum, 81% (5-6 balls x 5,120 half-res pixels, one LUT load + MAC each); `upscale2x` column copies 13%; worst frame is the fade-out with the sixth ball in |
 |  7 | Voxel | 4.76 | 5.59 (t 825) | 5.59 | +35,528 (64,000) | `parts.voxel.render` 96%: the column march, 160 full-res rays x 150 steps (one map load, two 32x32->64 multiplies, one projection multiply each); the 128x128 u16 map is 32 KB of the delta. Worst frame is a fade-out frame. ELF `86e58d02764c`. |
 |  8 | Snouty head |  1.01 |  1.88 (t 716) |  1.88 | +3,256 | background column copies (memcpy, ~0.3 ms), `render` (transform, cull, sort, column fill, ~0.4 ms), i64 edge divides (~0.27 ms); worst frame is the fade-out |
+
+### M1 merged build (2026-09-30)
+
+`tools/bench_parts.sh` over every part on the merged `scene/m0` (all seven
+M1 parts plus the placeholder Ending), calibrated busy ms:
+
+| # | Part | mean | part worst (frame) | run worst | verdict |
+|---|---|---|---|---|---|
+|  0 | Intro       |  1.18 |  2.45 (t 350) |  2.45 | ok |
+|  1 | Plasma      |  0.81 |  1.59 (t 1) |  1.59 | ok |
+|  2 | Copper      |  0.51 |  1.30 (t 715) |  2.13 | ok |
+|  3 | Rotozoomer  |  1.34 |  2.13 (t 1) |  2.38 | ok |
+|  4 | Tunnel      |  1.59 |  2.38 (t 1) |  2.38 | ok |
+|  5 | Twister     |  0.75 |  1.53 (t 1) |  3.14 | ok |
+|  6 | Metaballs   |  2.53 |  3.48 (t 585) |  5.56 | ok |
+|  7 | Voxel       |  4.76 |  5.59 (t 825) |  5.59 | ok |
+|  8 | Snouty head |  1.01 |  1.88 (t 716) |  2.71 | ok |
+|  9 | Fire        |  1.93 |  2.71 (t 469) |  2.71 | ok |
+| 10 | Ending (placeholder) |  0.94 |  1.73 (t 1) |  1.73 | ok |
+
+Sizes (`size -A`): `.text` 77,624, `.data` 20, `.bss` 169,016 (tunnel
+LUTs 67 KB, voxel map 32 KB, metaballs 14 KB, fire 10 KB, plasma 16 KB,
+the rest small). Worst part is 33% of the frame budget.
