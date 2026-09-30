@@ -38,3 +38,10 @@ carts/snouty-genesis/tests/roms/
 # matching line wins.
 !carts/snouty-genesis/roms/snouty-test.bin
 !carts/snouty-genesis/roms/miniplanets.bin
+
+# Atari Lynx ROMs (carts/snouty-lynx/SPEC.md section 11): commercial ones stay
+# outside the repo. Exceptions for shipped ROMs go BELOW these lines (the last
+# matching line wins).
+*.lnx
+*.lyx
+!carts/snouty-lynx/roms/placeholder.lnx
