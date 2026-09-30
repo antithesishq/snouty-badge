@@ -12,9 +12,20 @@ pub const Serial = struct {
     }
 };
 
-/// Called by the MMU on a write to SC (0xFF02) with bit 7 set. The transfer
-/// completes instantly and no peer answers (received byte 0xFF, SPEC.md 10.3).
+/// Called by the MMU on a write to SC (0xFF02) with bit 7 set.
+///
+/// Internal clock (bit 0 set): the transfer completes instantly and no peer
+/// answers (received byte 0xFF, SPEC.md 10.3), so SC bit 7 clears and the
+/// serial interrupt fires.
+///
+/// External clock (bit 0 clear): the Game Boy waits for the other side to
+/// drive the clock, and with no cable that never happens. SC bit 7 stays
+/// set and no interrupt fires. Tetris and Tetris DX probe for a link cable
+/// this way on the title screen every frame; completing the transfer (or
+/// raising the interrupt) makes them think a second Game Boy answered and
+/// they stop reading the joypad.
 pub fn start_transfer(gb: *Gb) void {
+    if ((gb.io[gb_mod.Reg.sc] & 0x01) == 0) return;
     const s = &gb.serial;
     if (s.len == s.out.len) {
         // Full: drop the oldest half so the tail (e.g. "Passed") stays visible.

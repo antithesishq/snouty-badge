@@ -1,0 +1,90 @@
+# Snouty Flyover (Memory Lane)
+
+Tenth badge cart for the Software You Can Love (SYCL) conference, built for
+Antithesis: a Comanche-style voxel heightfield flyover through a landscape
+of data structures, generated on the badge as the camera flies. `SPEC.md`
+is the design and milestone list, `PLAN.md` the current milestone's
+contract between parallel tracks (fixed interfaces, constants, status
+lines). The repository-wide notes (hardware, cart API, build wiring) are in
+`../../CLAUDE.md`.
+
+## Layout
+
+- `cart/src/` — the Zig cart, one module per concern (SPEC.md section 9):
+  - `main.zig`: `start()`/`update()`, vsync lock, input, debug overlay and
+    debug exports, the wasm shims (`present_wasm`, `read_controls`)
+  - `camera.zig`: flight model (SPEC 5.5), constants in one block at the top;
+    autopilot track from M1
+  - `render.zig`: column march, sky, sun, fog dither, water (5.1-5.3, 5.6);
+    `z_far` and `lod_mul` knobs
+  - `palette.zig`: the 256-entry palette (5.3), pulse cycling, fog and water tables
+  - `world.zig`: map ring (`height`/`colour`, DEPTH x 256), `advance_to`,
+    `gen_row`; the segment sequencer and district tick dispatch from M1
+  - `districts/`: `bus`, `heap`, `sort`, `tree`, `hash`, `stack`,
+    `pipeline`. Each exports the `world.District` fields (`title`, `gloss`,
+    `caption`, `alt`, `verb_at`, `alt_at`, `row`, `enter`, `tick`, `verb`);
+    `row(seed, ly)` must be a pure function, dynamic edits go through
+    `world.rows(y)` and skip rows the ring no longer holds; water cells are
+    exactly `h == world.water` with colour `palette.water_idx`
+  - `text.zig`, `sprite.zig`: title card and caption (shadowed OS font),
+    the flying anteater (`show_avatar` removes it; frames from
+    `tools/anteater.py`)
+  - `fixed.zig`: Q16 helpers, value noise, xorshift rng
+  - `input.zig`: per-tick button snapshot with edges
+- `tools/` — `concept.py` (numpy look prototype, float, not a bit reference),
+  `scripts/` (preview and bench input scripts). The shared tools
+  (`preview.mjs`, `serve-cart.mjs`, `make_gif.py`, `check_float.mjs`) are in
+  `../../tools/`.
+- `docs/` — `RUNNING.md`, `concept/`, milestone GIFs.
+
+## Rules
+
+- All integer: Q16.16 fixed point for world coordinates (`fixed.Q`,
+  `fixed.mul`), no `f32`/`f64` anywhere in the cart, so wasm, badge-bench
+  and the badge produce identical frames; `zig build check-float` must pass.
+- No allocation; the map ring is `.bss`, generated at run time (no map data
+  in the binary). Nothing heavy at comptime (the Mac comptime OOM rule in
+  `../../CLAUDE.md`): tables are literals or built in `start()`.
+- Ring addressing is `height[y & (DEPTH-1)][x & (W-1)]`; `advance_to` keeps
+  `[cam_row - keep_behind, cam_row + gen_ahead)` valid and the renderer must
+  not march past `world.gen_ahead` rows.
+- Axes: yaw 0 flies along +y, positive yaw turns toward +x (screen right);
+  banking right is negative `roll` (the right side of the horizon rises).
+- No audio, neopixels never written.
+
+## Budget (SPEC sections 10 and 11)
+
+- Locked 30 fps (decided at M2: the reflection pass doubles the march on
+  lake frames); calibrated badge-bench worst frame at most 22 ms (busy ms).
+- Memory: map ring 128 KB at depth 256 (64 KB at 128), fog table 4 KB,
+  code 30-75 KB; M3 gate `.text + .data` under 75 KB, `.bss` under 165 KB
+  (M4: 70.3 KB / 159.4 KB); the RAM window is 275 KB.
+- Knob cut order if over budget: `z_far`, `lod_mul`, reflections,
+  `-Dflyover_depth=128`, cliff shading, fog levels.
+
+## Commands
+
+From the repository root (`export PATH="$HOME/.local/bin:$PATH"`):
+
+```sh
+zig build -Dcart=snouty-flyover [-Dflyover_fps=30|60] [-Dflyover_depth=256|128] [-Ddebug_overlay=true]
+zig build check-float -Dcart=snouty-flyover
+badge-bench/bench.sh zig-out/firmware/snouty-flyover.elf --script carts/snouty-flyover/tools/scripts/attract.json --frames 2400 --every 100 --symbols
+```
+
+From this directory:
+
+```sh
+node ../../tools/preview.mjs ../../zig-out/bin/snouty-flyover.wasm --frames 2400 --every 3 \
+    --script tools/scripts/attract.json --out out/ --dump-exports debug_cam_y,debug_segment_kind,debug_world_check
+python3 ../../tools/make_gif.py out/ preview.gif --scale 3 --ms 33
+tools/check_render.sh             # twelve frame checksums against tools/render_hashes.txt (--update regenerates)
+node ../../tools/serve-cart.mjs   # simulator on :2468, see docs/RUNNING.md
+```
+
+## Conventions
+
+- Zig style follows upstream: snake_case functions, 4-space indent, `zig fmt`.
+- Commit messages: short imperative subject, body explains why.
+- Milestone hand-off: tag `snouty-flyover/<m>`, preview GIF in `docs/`, the
+  bench number in PLAN.md's status, and a "pull and run this" section.

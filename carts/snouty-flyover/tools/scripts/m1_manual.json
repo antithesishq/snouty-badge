@@ -1,0 +1,7 @@
+[
+  { "from": 60, "to": 120, "hold": ["RIGHT"] },
+  { "from": 200, "to": 200, "hold": ["B"] },
+  { "from": 400, "to": 460, "hold": ["LEFT"] },
+  { "from": 600, "to": 600, "hold": ["B"] },
+  { "from": 900, "to": 900, "hold": ["START"] }
+]
