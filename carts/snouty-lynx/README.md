@@ -12,8 +12,10 @@ Status: M0 scaffold. The Iris-mark splash, then a placeholder screen: the
 core's test pattern in the picture area (the first four rows show the
 ROM's first bytes as pixels) and the strip with "SNOUTY LYNX", where the
 ROM came from and its name and size. No CPU, no sound yet; the neopixels
-stay off. The embedded ROM is `roms/placeholder.lnx`, a 576-byte stand-in
-(not a Lynx program) until M0 picks the shipped homebrew.
+stay off. The embedded fallback ROM is `roms/raycast.lnx`, 42Bastian's
+textured raycaster (Apache-2.0, `roms/LICENSE-raycast.txt`); the boot path
+that decrypts a cart's loader without the Lynx boot ROM is `core/boot.zig`
+(`docs/BOOT.md`).
 
 ```sh
 (cd ../.. && zig build -Dcart=snouty-lynx)   # ../../zig-out/firmware/snouty-lynx.uf2, ../../zig-out/bin/snouty-lynx.wasm

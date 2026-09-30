@@ -41,7 +41,7 @@ pub fn build(b: *Build) void {
         .gg_rom_source = b.option(common.RomSource, "gg-rom-source", "snouty-gear: drive (default; ROM file on the badge drive, embedded ROM as fallback), embed, pack") orelse .drive,
         .md_rom = b.option([]const u8, "md-rom", "snouty-genesis: Genesis ROM to embed (default carts/snouty-genesis/roms/snouty-test.bin, a generated placeholder while that is absent)"),
         .md_rom_source = b.option(common.MdRomSource, "md-rom-source", "snouty-genesis: drive (default; a .gen/.md/.bin file on the badge drive, the embedded ROM as fallback) or embed") orelse .drive,
-        .lynx_rom = b.option([]const u8, "lynx-rom", "snouty-lynx: Lynx ROM to embed, .lnx (headered) or headerless (default carts/snouty-lynx/roms/placeholder.lnx)"),
+        .lynx_rom = b.option([]const u8, "lynx-rom", "snouty-lynx: Lynx ROM to embed, .lnx (headered) or headerless (default carts/snouty-lynx/roms/raycast.lnx)"),
         .lynx_rom_source = b.option(common.RomSource, "lynx-rom-source", "snouty-lynx: drive (default; a .lnx/.lyx file on the badge drive, the embedded ROM as fallback), embed, pack (not built yet)") orelse .drive,
         .only = only,
         .test_step = b.step("test", "Run every cart's host tests"),

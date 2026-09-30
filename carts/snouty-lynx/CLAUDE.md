@@ -37,8 +37,14 @@ CLAUDE.md and docs have the longer explanations.
   `drive_unit.zig` (against `tests/fixtures/*.img`, written by
   `tests/fixtures/make_fixtures.py` from the placeholder and synthetic
   data), the `lynx:` test in core/lynx.zig. `tests/roms/` is gitignored.
-- `roms/` — `placeholder.lnx` (576 B, `tools/make_placeholder_rom.py`, not
-  a Lynx program) until the shipped ROM lands with its LICENSE.
+- `roms/` — `raycast.lnx` (shipped, Apache-2.0, `LICENSE-raycast.txt`,
+  `docs/ROM_CANDIDATES.md`) and `placeholder.lnx` (576 B,
+  `tools/make_placeholder_rom.py`, not a Lynx program, only for the drive
+  fixtures). `*.lnx`/`*.lyx` are gitignored at the root; commercial dumps
+  live in `~/roms/lynx/` on the VM.
+- `core/boot.zig` — the post-boot state (loader decryption from the public
+  write-ups, `docs/BOOT.md`); tests in `tests/boot_*.zig`, cross-check tool
+  `tools/bootrom_crosscheck.py` (needs Adrian's local boot ROM, never in the repo).
 - `tools/` — `make_placeholder_rom.py`, `scripts/*.json` (preview and
   badge-bench input). Shared tools (`preview.mjs`, `serve-cart.mjs`,
   `make_gif.py`, `make_romfs.py`) are in `../../tools/`.

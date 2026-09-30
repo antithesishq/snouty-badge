@@ -40,8 +40,11 @@ carts/snouty-genesis/tests/roms/
 !carts/snouty-genesis/roms/miniplanets.bin
 
 # Atari Lynx ROMs (carts/snouty-lynx/SPEC.md section 11): commercial ones stay
-# outside the repo. Exceptions for shipped ROMs go BELOW these lines (the last
-# matching line wins).
+# outside the repo.
 *.lnx
 *.lyx
+
+# The shipped Snouty Lynx ROM (Apache-2.0, roms/LICENSE-raycast.txt). Keep
+# this exception BELOW the *.lnx pattern: the last matching line wins.
+!carts/snouty-lynx/roms/raycast.lnx
 !carts/snouty-lynx/roms/placeholder.lnx

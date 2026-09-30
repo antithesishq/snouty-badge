@@ -10,10 +10,11 @@ const common = @import("../../build/common.zig");
 /// This cart's directory, relative to the repository root that build.zig runs from.
 const dir = "carts/snouty-lynx/";
 
-/// The embedded ROM unless `-Dlynx-rom` names another: the M0 placeholder
-/// (tools/make_placeholder_rom.py, 576 bytes, not a Lynx program). M0
-/// Track A replaces it with the shipped homebrew ROM.
-const default_rom = dir ++ "roms/placeholder.lnx";
+/// The embedded ROM unless `-Dlynx-rom` names another: 42Bastian's textured
+/// raycaster (Apache-2.0, roms/LICENSE-raycast.txt, docs/ROM_CANDIDATES.md).
+/// tools/make_placeholder_rom.py still builds roms/placeholder.lnx for the
+/// drive fixtures.
+const default_rom = dir ++ "roms/raycast.lnx";
 
 /// ROM to embed and where the badge build looks for its ROM. Module-level
 /// because `build_cart_modules` has no user context parameter.
@@ -57,6 +58,13 @@ pub fn add(b: *Build, sycl_badge_dep: *Build.Dependency, opts: common.Options) v
         .target = b.graph.host,
         .optimize = test_optimize,
     });
+    // core/boot.zig as its own module for the boot tests (M1 may re-export it
+    // from core/lynx.zig, docs/BOOT.md).
+    const boot_host = b.createModule(.{
+        .root_source_file = b.path(dir ++ "core/boot.zig"),
+        .target = b.graph.host,
+        .optimize = test_optimize,
+    });
     const drive_host = b.createModule(.{
         .root_source_file = b.path(dir ++ "cart/src/frontend/drive.zig"),
         .target = b.graph.host,
@@ -77,6 +85,7 @@ pub fn add(b: *Build, sycl_badge_dep: *Build.Dependency, opts: common.Options) v
                 .{ .name = "core", .module = core_host },
                 .{ .name = "romfs", .module = romfs_host },
                 .{ .name = "drive", .module = drive_host },
+                .{ .name = "boot", .module = boot_host },
             },
         }),
     });
