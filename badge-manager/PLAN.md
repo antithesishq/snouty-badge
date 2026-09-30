@@ -462,6 +462,22 @@ progress:
 Exit codes: 0 done, 2 bad arguments/name, 3 the cart does not build, 4
 the agent failed or hit its limits, 124 wall clock, 130 cancelled.
 
+As built (Track B): step lines are `step: <name>` then `step: <name> ok
+(<s> s)`; the template and the skill come from the repo the script runs
+in (so a branch can test them before main has them); Zig's cache is
+shared with `ZIG_LOCAL_CACHE_DIR` (the agent's own builds inherit it) plus
+`zig-pkg` and badge-bench venv symlinks; `claude` also gets
+`--permission-prompts none` (a denied call is logged, never a hang),
+`--tools Read,Edit,Write,Glob,Grep,Bash`, `--strict-mcp-config`,
+`--no-session-persistence` and `Bash(ls *)`; preview and bench also press
+LEFT 130-165 and RIGHT 175-225 so a game's movement is on the GIF and in
+the bench; `out/` also gets `preview.png` (the last frame) and
+`agent.jsonl.gz` (the raw agent stream), `summary.json` also `controls`;
+`where` is `remote` when the script runs under ssh; a job that fails or
+is cancelled after the template step still commits what it has to
+`build/ID`; `build-jobs/ID` is removed at the end unless `--out` is inside
+it (the remote path copies and removes it).
+
 ### 9.4 The template cart and the skill
 
 `badge-manager/template-cart/` is a minimal cart with no asset pipeline:
@@ -570,11 +586,41 @@ dedicated one (`/home/badge/.ssh/id_ed25519`, `setup.sh` generates it).
   prompt, GIF looked at, bench line read, the cart deployed to the loop
   image with `--fake-badge`. Timings and the verdict go here:
 
+Track B timings (2026-09-30, the VM with 2 vCPUs, other sessions keeping
+the load average between 10 and 18, so read them as upper bounds):
+
 | Step | Seconds |
 |---|---|
-| worktree + submodule | (9.9, to fill) |
-| template build, cold cache | |
-| template build, warm cache | |
-| preview + GIF | |
-| bench, 300 frames | |
-| agent, real prompt | |
+| worktree + submodule (`--reference`) | 3-6 (1 on an idle VM) |
+| template build, cold cache (a worktree with its own empty `.zig-cache`) | 108 on an idle VM; ~840 under load 18 (it rebuilds microzig's regz and the SDK) |
+| template build, shared warm cache (`ZIG_LOCAL_CACHE_DIR=<repo>/.zig-cache`, new cart name) | 2-11 |
+| rebuild after the agent (nothing changed since its last build) | 0 |
+| preview (240 updates) + GIF | 1-2 |
+| bench, 300 frames | 37-61 |
+| agent, real prompt (20-21 turns) | 178-181 |
+| whole job, `--no-agent` | 50-77 |
+| whole job with the agent | 237-250 |
+
+Caches: sharing `<repo>/.zig-cache` through `ZIG_LOCAL_CACHE_DIR` (which the
+agent's own `zig build` calls inherit, unlike a `--cache-dir` flag) plus a
+`zig-pkg` symlink turns the first build from minutes into seconds. Zig's
+cache takes file locks and is content-addressed, so concurrent use by a job
+and a build in `<repo>` is safe; two jobs in different worktrees with the
+same cart name reused the cached configure graph and still installed into
+their own `zig-out/`. The badge-bench venv is shared by a symlink too, so a
+job never pip-installs.
+
+What the agent run produced ("a Snouty cart where a square dodges falling
+blocks, d-pad to move, score at the top", `--max-turns 25 --max-usd 3`,
+twice): both runs finished with `success` and a building cart on the first
+try of the job. Run 1: "Snouty Dodges" (`snouty-square-dodges`), a score
+and best-score band at the top, a coral square with eyes at the bottom,
+coloured blocks falling faster as the score rises, a GAME OVER box and A
+to restart; 20 turns, $1.20, 1.49 ms worst busy, 14336-byte UF2 (RAM cart,
+27 KB in the window). Its only trouble was two denied Bash calls (an
+`export PATH=... &&` prefix and one preview command), which the skill now
+forbids explicitly. Run 2 with that fix: "Snouty Dodge", score plus three
+lives, no denials, 21 turns, $1.15, 1.40 ms, 13312 bytes; it had committed
+a second preview directory, so the template's `.gitignore` now ignores
+every PNG, GIF and frames.json in the cart. The GIF frames show exactly
+what the summaries describe.
