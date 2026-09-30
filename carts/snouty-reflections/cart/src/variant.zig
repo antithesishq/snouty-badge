@@ -35,8 +35,11 @@ const Config = struct {
     iris_in_chrome: bool = true,
     iris_in_water: bool = true,
     iris_samples: u32 = 4,
-    /// M3 knob rings (scene.zig), for every preset.
+    /// M3 knobs (scene.zig): rings for every preset, noon's exact water
+    /// shadows and its small chrome sphere.
     rings: bool = true,
+    noon_shadows: bool = true,
+    noon_third_sphere: bool = true,
     /// M3: a second render instance for the presets without a second sphere
     /// (trace.Class); +17 KB, -1.4 ms in sunset.
     class_split: bool = false,
@@ -49,7 +52,7 @@ const iris_cut: Config = .{ .fps = 0, .iris_in_chrome = false, .iris_in_water = 
 
 const config: Config = switch (variant) {
     .full20 => .{ .fps = 20, .iris_in_chrome = iris_cut.iris_in_chrome, .iris_in_water = iris_cut.iris_in_water, .iris_samples = iris_cut.iris_samples },
-    .cut20 => .{ .fps = 20, .glass_enabled = false, .water_shadows = .off, .iris_in_chrome = iris_cut.iris_in_chrome, .iris_in_water = iris_cut.iris_in_water, .iris_samples = iris_cut.iris_samples, .rings = false, .class_split = true },
+    .cut20 => .{ .fps = 20, .glass_enabled = false, .water_shadows = .off, .iris_in_chrome = iris_cut.iris_in_chrome, .iris_in_water = iris_cut.iris_in_water, .iris_samples = iris_cut.iris_samples, .rings = false, .noon_shadows = false, .noon_third_sphere = false, .class_split = true },
     .full15 => .{ .fps = 15, .glass_primary = .env, .iris_in_chrome = iris_cut.iris_in_chrome, .iris_in_water = iris_cut.iris_in_water, .iris_samples = iris_cut.iris_samples },
     .half30 => .{ .fps = 30, .render_scale = 2 },
 };
@@ -63,6 +66,8 @@ pub const iris_in_chrome: bool = config.iris_in_chrome;
 pub const iris_in_water: bool = config.iris_in_water;
 pub const iris_samples: u32 = config.iris_samples;
 pub const rings: bool = config.rings;
+pub const noon_shadows: bool = config.noon_shadows;
+pub const noon_third_sphere: bool = config.noon_third_sphere;
 pub const class_split: bool = config.class_split;
 
 comptime {

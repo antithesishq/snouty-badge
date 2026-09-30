@@ -292,9 +292,14 @@ inline fn hit_slot2(o: Vec3, d: Vec3, comptime mode: SphereTest, fs: anytype) f3
     return hit_sphere(scene.slot2, &fs.sc.slot2, o, d, mode);
 }
 
+/// The preset has the small chrome sphere (never without the knob).
+inline fn has_third(sc: *const scene.Frame) bool {
+    return scene.noon_third_sphere and sc.third;
+}
+
 /// The small chrome sphere, no_hit unless the preset has it.
 inline fn hit_small(o: Vec3, d: Vec3, comptime mode: SphereTest, fs: anytype) f32 {
-    if (!fs.sc.third) return no_hit;
+    if (!has_third(&fs.sc)) return no_hit;
     return hit_sphere(scene.small, &fs.sc.small, o, d, mode);
 }
 
@@ -553,7 +558,7 @@ inline fn shade_water(
     if (debug_span and depth == 0 and x_rows and !chrome_only(fs) and !tests_extras(fs, child)) {
         const rn = math.normalize(r);
         if ((fs.sc.slot2_kind != .none and hit_sphere(scene.slot2, &fs.sc.slot2, p, rn, .on_water) != no_hit) or
-            (fs.sc.third and hit_sphere(scene.small, &fs.sc.small, p, rn, .on_water) != no_hit) or
+            (has_third(&fs.sc) and hit_sphere(scene.small, &fs.sc.small, p, rn, .on_water) != no_hit) or
             (fs.shadow_primary and water_shadow_live(p, fs) < 1.0))
             debug_x_miss = true;
     }
@@ -735,8 +740,8 @@ fn trace(
             };
             const small_ok = switch (from) {
                 .small => false,
-                .eye => pw.small,
-                else => fs.sc.third,
+                .eye => scene.noon_third_sphere and pw.small,
+                else => has_third(&fs.sc),
             };
             // Optional results: the usual miss skips the compare with tn.
             if (slot2_ok) {
@@ -1344,7 +1349,7 @@ fn x_spans_at(cam: *const camera.Camera, fs: anytype) XSpans {
         rs[xs.n_spheres] = scene.slot2.r;
         xs.n_spheres += 1;
     }
-    if (sc.third) {
+    if (has_third(sc)) {
         cms[xs.n_spheres] = math.vec3(scene.small.x, -sc.small.y, scene.small.z);
         rs[xs.n_spheres] = scene.small.r;
         xs.n_spheres += 1;
@@ -1353,7 +1358,7 @@ fn x_spans_at(cam: *const camera.Camera, fs: anytype) XSpans {
         xs.mirror[i] = mirror_at(cam.*, cms[i], rs[i]);
         xs.near[i] = span_ahead(cam, cms[i], rs[i] * inv_cos);
     }
-    if (fs.shadow_primary and !fs.shadow_map) {
+    if ((scene.water_shadows != .off or scene.noon_shadows) and fs.shadow_primary and !fs.shadow_map) {
         for (fs.casters[0..fs.n_casters]) |*cs| {
             const hx = 0.5 * (cs.x1 - cs.x0);
             const hz = 0.5 * (cs.z1 - cs.z0);
@@ -1400,7 +1405,7 @@ noinline fn plan_columns(cam: *const camera.Camera, fs: anytype) void {
     const sp_chrome = sphere_span_at(cam.*, math.vec3(scene.chrome.x, fs.sc.chrome.y, scene.chrome.z), scene.chrome.r);
     const slot2_on = !chrome_only(fs) and fs.sc.slot2_kind != .none;
     const sp_slot2 = sphere_span_at(cam.*, math.vec3(scene.slot2.x, fs.sc.slot2.y, scene.slot2.z), scene.slot2.r);
-    const small_on = !chrome_only(fs) and fs.sc.third;
+    const small_on = !chrome_only(fs) and has_third(&fs.sc);
     const sp_small = sphere_span_at(cam.*, math.vec3(scene.small.x, fs.sc.small.y, scene.small.z), scene.small.r);
     const sp_logo = sphere_span_at(cam.*, iris.centre, iris.radius);
     // sphere_rows takes whole lines, so a bounding sphere behind the eye
@@ -1503,7 +1508,7 @@ fn set_shadows(fs: anytype, mode: scene.PresetShadows) void {
         fs.casters[n] = scene.caster(math.vec3(scene.slot2.x, sc.slot2.y, scene.slot2.z), scene.slot2.r, op, l);
         n += 1;
     }
-    if (sc.third) {
+    if (has_third(sc)) {
         fs.casters[n] = scene.caster(math.vec3(scene.small.x, sc.small.y, scene.small.z), scene.small.r, 1.0, l);
         n += 1;
     }
@@ -1574,7 +1579,7 @@ noinline fn render(comptime cl: Class, view: View, cam_in: *const camera.Camera,
     if (scene.motion and scene.rings[pi]) {
         water.add_ring(&fs.wf, scene.chrome.x, scene.chrome.z);
         if (sc.slot2_kind != .none) water.add_ring(&fs.wf, scene.slot2.x, scene.slot2.z);
-        if (sc.third) water.add_ring(&fs.wf, scene.small.x, scene.small.z);
+        if (has_third(sc)) water.add_ring(&fs.wf, scene.small.x, scene.small.z);
     }
     if (scene.motion and scene.stripes[pi]) {
         fs.stripe_factor = .{ 1.0 - scene.stripe_depth, 1.0 };

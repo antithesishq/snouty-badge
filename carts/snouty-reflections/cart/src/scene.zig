@@ -394,9 +394,9 @@ pub const any_stripes = motion and blk: {
     break :blk any;
 };
 /// Noon's exact water shadows on primary water hits.
-pub const noon_shadows: bool = true;
+pub const noon_shadows: bool = variant.noon_shadows;
 /// Noon's small chrome sphere.
-pub const noon_third_sphere: bool = true;
+pub const noon_third_sphere: bool = variant.noon_third_sphere;
 /// The sun's slow swing about +y.
 pub const sun_drift: bool = true;
 
