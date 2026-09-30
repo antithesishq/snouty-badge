@@ -198,7 +198,7 @@ class StationTest(unittest.TestCase):
                                       "entries_capacity", "fits", "why", "carts", "roms", "files"})
         for c in s["library"]["carts"]:
             self.assertEqual(set(c), {"key", "title", "use", "mode", "file", "size", "variants",
-                                      "roms", "ok", "error", "auto"})
+                                      "roms", "ok", "error", "auto", "build", "preview"})
             for v in c["variants"].values():
                 self.assertEqual(set(v), {"file", "size", "ok", "error"})
         self.assertEqual(set(s["network"]), {"mode", "ssid", "address", "internet"})

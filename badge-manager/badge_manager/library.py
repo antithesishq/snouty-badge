@@ -6,6 +6,7 @@ manifest.toml:
   use = "xip"               # the variant sets deploy (default "ram", or the only one there is)
   file = "carts/x.uf2"      # optional: the RAM variant; xip_file likewise for XIP
   roms = []                 # extensions this cart reads from the drive, e.g. [".gg", ".sms"]
+  build = "20260930-141500-rain"   # optional: the build job that made it (builds/<id>/)
   # mode = "ram"|"xip" (M0): checked against the blocks; "xip" makes `file` the XIP variant
 
   [roms.sonic]
@@ -42,6 +43,7 @@ UF2_FLASH = (0x101C0000, 0x10200000)
 UF2_RAM = (0x20020000, 0x20080000)
 VARIANTS = ("ram", "xip")
 CUSTOM = "custom"            # key of an ad-hoc selection (Library.selection)
+BUILD_ID = re.compile(r"[0-9]{8}-[0-9]{6}-[a-z0-9][a-z0-9-]*")   # build.py job ids
 
 
 class LibraryError(Exception):
@@ -72,6 +74,7 @@ class Cart:
     auto: bool = False       # found in carts/, not named in the manifest
     use: str = "ram"
     variants: dict[str, Variant] = field(default_factory=dict)
+    build: str | None = None  # id of the build job that made it (builds/<id>/)
 
 
 @dataclass
@@ -259,7 +262,8 @@ class Library:
             use = "ram" if "ram" in variants else next(iter(variants))
         v = variants.get(use)
         c = Cart(key, str(t.get("title", key)), (v or next(iter(variants.values()))).file,
-                 use, list(t.get("roms", [])), auto=auto, use=use, variants=variants)
+                 use, list(t.get("roms", [])), auto=auto, use=use, variants=variants,
+                 build=str(t["build"]) if t.get("build") else None)
         if v is None:
             c.error = (f"{c.title} has no {use.upper()} variant in the library" if use in VARIANTS
                        else f"{key}: use = {use!r}, expected \"ram\" or \"xip\"")
@@ -468,11 +472,13 @@ class Library:
         return self.roms[key]
 
     def import_uf2(self, path: Path, key: str, title: str | None = None,
-                   mode: str | None = None) -> Cart:
+                   mode: str | None = None, build: str | None = None) -> Cart:
         """Validate PATH, copy it to carts/<key>.uf2 and name it in the manifest.
 
         An XIP UF2 keyed <family>-xip for a cart family that exists becomes that
-        family's XIP variant (carts/<family>-xip.uf2) instead of a second cart."""
+        family's XIP variant (carts/<family>-xip.uf2) instead of a second cart.
+        BUILD records the build job that made it (`build = "<id>"`); a UF2 imported
+        without one drops any old `build` of that cart."""
         path = Path(path)
         kind = validate_uf2(path)
         if mode and mode != kind:
@@ -498,8 +504,23 @@ class Library:
         t["title"] = title or t.get("title") or key
         t["mode"] = kind
         t.setdefault("roms", [])
+        t.pop("build", None)
+        if build:
+            t["build"] = build
         self._set_table("carts", key, t)
         return self.carts[key]
+
+    def add_uf2(self, path: Path, key: str, title: str | None = None,
+                mode: str | None = None, build: str | None = None) -> Cart:
+        """import_uf2 under the name PLAN.md 9.2 uses."""
+        return self.import_uf2(path, key, title, mode, build)
+
+    def preview_url(self, build: str | None) -> str | None:
+        """/builds/<id>/preview.gif when that build left a GIF, else None."""
+        if build and BUILD_ID.fullmatch(build) and (
+                self.root / "builds" / build / "out" / "preview.gif").is_file():
+            return f"/builds/{build}/preview.gif"
+        return None
 
     def set_cart_mode(self, key: str, mode: str) -> Cart:
         """Make sets deploy KEY's MODE ("ram" | "xip") variant; persists as `use`."""
@@ -616,7 +637,8 @@ class Library:
                   "mode": c.mode, "size": c.size,
                   "variants": {m: {"file": v.file.name, "size": v.size, "ok": not v.error,
                                    "error": v.error} for m, v in c.variants.items()},
-                  "roms": c.roms, "ok": not c.error, "error": c.error, "auto": c.auto}
+                  "roms": c.roms, "ok": not c.error, "error": c.error, "auto": c.auto,
+                  "build": c.build, "preview": self.preview_url(c.build)}
                  for c in self.carts.values()]
         roms = [{"key": r.key, "title": r.title, "file": r.file.name,
                  "short": self.drive_name(r), "size": r.size,
