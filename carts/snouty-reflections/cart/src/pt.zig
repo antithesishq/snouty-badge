@@ -210,16 +210,27 @@ fn seed() void {
         const col = arena.words[x * height ..][0..height];
         for (col, 0..) |*w, y| {
             const c = fb[x][y].to_color();
-            const r: u32 = c.r;
-            const g: u32 = c.g;
-            const b: u32 = c.b;
-            const qr = (r * 512 + 30) / 31;
-            const qg = (g * 512 + 62) / 63;
-            const qb = (b * 256 + 30) / 31;
-            w.* = qr | (qg << 11) | (qb << 22);
+            w.* = seed_r[c.r] | seed_g[c.g] | seed_b[c.b];
         }
     }
 }
+
+/// The seed's per-channel words: ceil(c * scale / max) in its bit field.
+const seed_r: [32]u32 = blk: {
+    var t: [32]u32 = undefined;
+    for (&t, 0..) |*q, c| q.* = (c * 512 + 30) / 31;
+    break :blk t;
+};
+const seed_g: [64]u32 = blk: {
+    var t: [64]u32 = undefined;
+    for (&t, 0..) |*q, c| q.* = ((c * 512 + 62) / 63) << 11;
+    break :blk t;
+};
+const seed_b: [32]u32 = blk: {
+    var t: [32]u32 = undefined;
+    for (&t, 0..) |*q, c| q.* = ((c * 256 + 30) / 31) << 22;
+    break :blk t;
+};
 
 // ---------------------------------------------------------------- random numbers
 
