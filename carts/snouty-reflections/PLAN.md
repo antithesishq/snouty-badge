@@ -752,8 +752,8 @@ close-up of the logo, updates SPEC status and RUNNING.md, and tags
 
 SPEC.md sections 3, 6 and 7 as revised 2026-09-30: four presets on
 Select, attract cycling with a fade, a free camera on the stick, spheres
-that bob with rings on the water, a drifting sun, stripes on the chrome,
-dither modes 2 to 4. A freezes time (the real-time tracer keeps drawing
+that bob with rings on the water, a drifting sun, stripes on the chrome
+(dropped in M3.1, 2026-09-30, below), dither modes 2 to 4. A freezes time (the real-time tracer keeps drawing
 the frozen scene; M4 swaps the path tracer in behind the same button).
 No audio (SPEC.md section 8).
 
@@ -854,7 +854,11 @@ Presets are selected at runtime; all four exist in every variant.
   Rays test the ring only inside the sphere's `2 R_r` square.
 - Stripes (knob `stripes`): chrome colour times
   `1 - 0.12 * [fract(3 * (n.x cos a + n.z sin a)) < 0.5]`,
-  `a = s / 20` turns, `n` the unit normal at the hit.
+  `a = s / 20` turns, `n` the unit normal at the hit. **Dropped
+  2026-09-30 (M3.1) at Adrian's request**: on the simulator the hard
+  bands "don't look like chrome, they look like artifacting". The knob
+  and its code are gone from the cart; `reference.py --stripes` defaults
+  to 0 and keeps the formula only for comparison.
 
 **Presets** (sky gradient as the M1 formula with these colours; "sun"
 is the light and the disc, moon included):

@@ -368,15 +368,16 @@ comptime {
 }
 
 // M3 knobs (PLAN.md M3 "Knobs"), in cut order: if a cut20 bench row is over
-// 47.0 ms, rings (per preset), then stripes, noon_shadows,
-// noon_third_sphere, sun_drift. Never cut the free camera, presets or bob
+// 47.0 ms, rings (per preset), then noon_shadows, noon_third_sphere,
+// sun_drift. Never cut the free camera, presets or bob
 // without asking Adrian. Calibrated busy ms, cut20 (PLAN.md "M3 status"):
 // rings 12.5 in sunset (8.9 when active, 3.6 for the code's presence even
-// with no ring: cut20 compiles them out); stripes 1.1 in sunset, nothing
-// measurable in midnight or noon (kept); noon_shadows 6.9 and
+// with no ring: cut20 compiles them out); noon_shadows 6.9 and
 // noon_third_sphere 6.6 in noon (both off in cut20); sun_drift 0 (kept).
+// M3's chrome stripes (1.1 ms in sunset) were removed in M3.1, 2026-09-30:
+// Adrian saw them as artifacting, not chrome (PLAN.md M3.1).
 
-/// Master switch for bob, sun drift, rings and stripes. false renders the
+/// Master switch for bob, sun drift and rings. false renders the
 /// M2.2 scene bit for bit (sunset, default height, fade 1): the legacy
 /// identity check. Off in the -Dreflections_bench=motion_off build.
 pub const motion: bool = build_options.reflections_bench != .motion_off;
@@ -388,13 +389,6 @@ pub const rings: [preset_count]bool = @splat(variant.rings);
 pub const any_rings = motion and blk: {
     var any = false;
     for (rings) |r| any = any or r;
-    break :blk any;
-};
-/// Faint rotating stripes on the chrome sphere, per preset.
-pub const stripes: [preset_count]bool = .{ true, true, true, true };
-pub const any_stripes = motion and blk: {
-    var any = false;
-    for (stripes) |x| any = any or x;
     break :blk any;
 };
 /// Noon's exact water shadows on primary water hits (variant.zig: off in
@@ -412,11 +406,6 @@ pub const bob_period: f32 = 10.0;
 /// Sun drift: L rotated about +y by drift_deg * sin_turns(s / drift_period).
 pub const drift_deg: f32 = 8.0;
 pub const drift_period: f32 = 60.0;
-/// Stripes: chrome colour times 1 - stripe_depth where fract(3 (n.x cos a +
-/// n.z sin a)) < 0.5, a = s / stripe_period turns.
-pub const stripe_depth: f32 = 0.12;
-pub const stripe_freq: f32 = 3.0;
-pub const stripe_period: f32 = 20.0;
 
 /// A sphere's shadow on the water: the sun-side cylinder of radius
 /// sqrt(1.21) * rs around the sphere, cut by y = 0, is an ellipse; x0..z1 is
