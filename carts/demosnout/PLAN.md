@@ -1,11 +1,11 @@
-# Snouty Scene: plan
+# Demosnout: plan
 
 `SPEC.md` is the design; this file is the contract for the milestone in
 progress. Worktree `/home/exedev/snouty-badge-scene`, branch `scene/m0`
 (M1 parts get `scene/m1-<part>` branches from the m0 tag and are merged
-back). Every milestone ends with: `zig build -Dcart=snouty-scene`, `zig
+back). Every milestone ends with: `zig build -Dcart=demosnout`, `zig
 build test`, `zig build check-float`, badge-bench numbers, a preview GIF
-in `docs/`, an annotated tag `snouty-scene/mN`, and a "pull and run this"
+in `docs/`, an annotated tag `demosnout/mN`, and a "pull and run this"
 section in the hand-off message.
 
 ## M0 scaffold (2026-09-30) — DONE, tag `snouty-scene/m0`
@@ -24,11 +24,11 @@ preview GIF shows all three parts.
 
 **Track A, scaffold and first parts** (one agent). Owns:
 
-- `carts/snouty-scene/build.zig` (module `pub fn add`, modelled on
+- `carts/demosnout/build.zig` (module `pub fn add`, modelled on
   `carts/snouty-maze/build.zig` without the asset converter: no build-time
   generation, the `gen/` files are committed), the root `build.zig`
-  `carts` table entry `.{ .dir = "snouty-scene", .binary = "snouty-scene", ... }`,
-  the root `README.md` table row, `badge-bench/carts/snouty-scene.toml`
+  `carts` table entry `.{ .dir = "demosnout", .binary = "demosnout", ... }`,
+  the root `README.md` table row, `badge-bench/carts/demosnout.toml`
   (`budget_ms = 16.7`, `frames = 900`).
 - `cart/src/main.zig`: `start()` (vsync 60, `no_copy_full_frame`, every
   part's `init()`, `timeline.start(scene_part)`), `update()` (input,
@@ -81,7 +81,7 @@ preview GIF shows all three parts.
   drawn per row) and the sine scroller: a greetings string moving right
   to left at 2 px per frame, each glyph column drawn at
   `y = 56 + 24 * sin(...)` with a 3-px black drop shadow, 16 rows tall,
-  colour cycling along the string. Text: "SNOUTY SCENE  *  ANTITHESIS
+  colour cycling along the string. Text: "DEMOSNOUT  *  ANTITHESIS
   PRESENTS A SYCL BADGE PRODUCTION  *  GREETINGS TO THE SYCL CREW, THE
   ZIG COMMUNITY AND EVERYONE AT THE BOOTH  *  " (looping). Follows the
   part interface of SPEC section 4 exactly; imports only `cart-api`,
@@ -129,15 +129,15 @@ fast axis in memory: inner loops go down a column.
 
 ### Definition of done (M0)
 
-- `zig build -Dcart=snouty-scene` from the root writes the uf2, elf and
+- `zig build -Dcart=demosnout` from the root writes the uf2, elf and
   wasm; `zig build test` and `zig build check-float` pass.
-- `node tools/preview.mjs zig-out/bin/snouty-scene.wasm --frames 1800
-  --every 6 --out carts/snouty-scene/out/m0` runs without a trap;
+- `node tools/preview.mjs zig-out/bin/demosnout.wasm --frames 1800
+  --every 6 --out carts/demosnout/out/m0` runs without a trap;
   `docs/preview_m0.gif` made from it shows Intro, Plasma and Copper with
   fades, then the placeholder digits.
 - `preview.mjs --press A:100-101 --at "150 debug_part == 1"` and
   `--call debug_goto:2 --at "0 debug_part == 2"` pass.
-- `badge-bench/bench.sh zig-out/firmware/snouty-scene.elf --frames 900
+- `badge-bench/bench.sh zig-out/firmware/demosnout.elf --frames 900
   --every 60 --symbols`: worst frame of Intro, Plasma and Copper under
   12 ms busy; numbers recorded in `docs/PERF.md`.
 - ELF `.text` under 60 KB at M0 (there is room for the seven M1 parts).
@@ -167,7 +167,7 @@ reports RAM (`.bss` delta) and the numbers. Merge order: cheapest first.
 Contract details are in SPEC.md sections 3 to 5; the agent brief adds
 per-part parameters.
 
-## M2 the show — DONE, tag `snouty-scene/m2` (2026-09-30); M3 waits for Adrian's GIF review
+## M2 the show — DONE, tag `snouty-scene/m2` (2026-09-30)
 
 Status: Ending written (4.68 ms worst, .bss +5.5 KB), pacing pass below,
 picker polish, `tools/check_timeline.mjs` + `tests/golden.json`, full
@@ -205,3 +205,40 @@ GIF. Single agent plus review.
   frame 0 itself and neither side is veiled, so the loop is the smoothest
   cut in the show (pixel-identical frames). The Intro's title still lands
   at frame 180 and holds.
+
+## M3 Adrian's review — DONE, tag `demosnout/m3` (2026-09-30)
+
+Adrian ran M2 on the badge ("generally I love it") and asked for four
+things, all in this milestone:
+
+- Renamed to **Demosnout**: directory `carts/demosnout/`, binary
+  `demosnout` (the badge menu shows it), bench toml, the Intro title (one
+  line at 2x, gold), the scroller, the picker title and the first credit
+  card. Older tags keep their `snouty-scene/` names.
+- Copper 6 to 7 bars: the scroller (1463 px at 2 px per frame, plus the
+  160 px entry) needs 812 frames to cross once; at 720 the dissolve cut
+  the greetings off. At 840 the last glyph leaves the screen as the
+  dissolve starts.
+- Credits: "CODE + ART / CLAUDE", "PROMPTING + / HUMANING / ADRIAN" (the
+  label over two lines; a 20-character line is the full screen width) and
+  a new "SPECIAL THANKS / THE DEMOSCENE" card before the closing one.
+  Seven cards at 96 frames need the Ending at 8 bars (cards end at 768,
+  the mark holds alone until the cross-fade at 864). Loop is 57 bars =
+  114 s.
+- B outside debug builds toggles a **hold** (`timeline.hold`): the
+  auto-advance stops. Every part but the Ending is `.endless`: its `t`
+  keeps counting past the part length and the out-veil is suppressed (they
+  are periodic or settle; the Intro clamps its warp speed at its last
+  frame so `t * t` cannot overflow). The Ending is `.loop`: it fades out
+  (its seamless cut is replaced by a fade) and restarts at frame 0.
+  Releasing the hold on a part that ran past its length cuts to the next
+  part, exactly like A/Start. A toast "HOLD ON" / "HOLD OFF" shows
+  bottom-right for 75 frames. `debug_hold` export; host test in
+  `timeline.zig`; `check_timeline.mjs` goldens regenerated.
+
+Verified: `zig build -Dcart=demosnout`, `zig build test`, `zig build
+check-float`, `check_timeline.mjs` PASS (loop 6840 frames), headless
+presses (B holds the Intro past frame 900, B again moves on, the held
+Ending restarts, A still skips), review GIF `docs/preview_m3.gif` (every
+10th frame of the loop), bench spot checks of parts 0, 2 and 10 in the
+commit message.

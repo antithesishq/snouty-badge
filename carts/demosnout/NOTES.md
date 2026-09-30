@@ -1,4 +1,4 @@
-# Snouty Scene: demoscene cart notes
+# Demosnout: demoscene cart notes
 
 Status: notes only (2026-09-30). Not a spec, not scheduled. "Snouty
 Scene" is a working title. From the reflection on what is left: a classic

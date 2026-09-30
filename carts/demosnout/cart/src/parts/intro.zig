@@ -2,9 +2,10 @@
 //! viewer, the speed ramping up quadratically, and each is drawn as a
 //! streak from where it is to where it was a few frames ago, so points turn
 //! into long warp lines by the end. "ANTITHESIS PRESENTS" fades in at
-//! 1.5 s (frame 90); SNOUTY / SCENE slams in at 3 s (frame 180), shrinking
-//! from 6x to 2x over 10 frames, then lands with a background flash and a
-//! short shake and stays until the fade-out.
+//! 1.5 s (frame 90); DEMOSNOUT slams in at 3 s (frame 180), shrinking from
+//! 6x to 2x over 10 frames, then lands with a background flash and a short
+//! shake and stays until the fade-out. Held past its length (the timeline's
+//! hold), the warp stays at the speed of its last frame and the title stays.
 //!
 //! All star maths is fixed point (i32), the stars are seeded from rng.zig
 //! with a constant in enter(), and the state advances once per render(), so
@@ -63,14 +64,20 @@ fn respawn(s: *Star, z: i32) void {
     s.z = z;
 }
 
-/// World units per frame the stars travel at frame t: 10, rising to ~118.
+/// Last frame of the part (3 bars); speed and trail stop growing there so
+/// a held Intro warps on at full speed (t * t would overflow otherwise).
+const last_frame = 3 * 120 - 1;
+
+/// World units per frame the stars travel at frame t: 10, rising to ~117.
 fn speed(t: u32) i32 {
-    return @intCast(10 + (t * t) / 1200);
+    const tc: u32 = @min(t, last_frame);
+    return @intCast(10 + (tc * tc) / 1200);
 }
 
-/// How many frames back the tail reaches: 1 at the start, 7 at the end.
+/// How many frames back the tail reaches: 1 at the start, 6 at the end.
 fn trail(t: u32) i32 {
-    return @intCast(1 + t / 60);
+    const tc: u32 = @min(t, last_frame);
+    return @intCast(1 + tc / 60);
 }
 
 pub fn render(t: u32, fb: cart.FramebufferPtr) void {
@@ -171,8 +178,7 @@ fn blend(under: cart.Pixel, over: cart.Pixel, alpha: u32) cart.Pixel {
     });
 }
 
-/// SNOUTY over SCENE at 2x (a 12-character line would not fit 160 px at
-/// 2x), slamming in from 6x.
+/// DEMOSNOUT on one line at 2x (9 characters, 144 px), slamming in from 6x.
 fn title(t: u32) void {
     const k = t - title_at;
     const scale: u32 = if (k < slam_frames) 2 + (4 * (slam_frames - k)) / slam_frames else 2;
@@ -183,11 +189,9 @@ fn title(t: u32) void {
         shake = if (t % 2 == 0) a else -a;
     }
     const s: i32 = @intCast(scale);
-    const line1 = "SNOUTY";
-    const line2 = "SCENE";
+    const line = "DEMOSNOUT";
     const white: u32 = 0xffffff;
-    // White while slamming, settling into gold and pink after landing.
+    // White while slamming, settling into gold after landing.
     const settle: u32 = if (t < land_at) 0 else @min((t - land_at) * 16, 256);
-    text.shadowed(line1, text.centre_x(line1, scale), 64 - 4 * s - 10 + shake, .rgb(palette.mix_rgb(white, 0xffd850, settle)), scale);
-    text.shadowed(line2, text.centre_x(line2, scale), 64 - 4 * s + 10 + shake, .rgb(palette.mix_rgb(white, 0xff5ab0, settle)), scale);
+    text.shadowed(line, text.centre_x(line, scale), 64 - 4 * s + shake, .rgb(palette.mix_rgb(white, 0xffd850, settle)), scale);
 }

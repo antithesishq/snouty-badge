@@ -1,14 +1,21 @@
-# Snouty Scene: performance
+# Demosnout: performance
 
 The rule (SPEC.md section 2): every part's worst frame under **12 ms**
 calibrated busy time in badge-bench (72% of the 16.7 ms frame), so the demo
 never drops a frame. Budgets: `.text` + `.rodata` under 110 KB, `.bss`
 under 190 KB (raised from 150 KB at M1).
 
+## M3 (2026-09-30), Adrian's review
+
+Copper is 7 bars and the Ending 8 (one more credit card); the parts' per
+frame work is unchanged, the Intro title is one line instead of two and
+the hold toast is two `cart.text` calls, so the M2 table below still
+stands (re-benched spot checks in the M3 commit message).
+
 ## M2 (2026-09-30), the finished show
 
 Calibrated badge-bench (`calibrate/calibration.toml`, fitted 2026-09-29),
-ELF sha256 `940b386313ab`. `carts/snouty-scene/tools/bench_parts.sh` over
+ELF sha256 `940b386313ab`. `carts/demosnout/tools/bench_parts.sh` over
 all eleven parts, each run from the part's frame 0 for its length plus 60
 frames (so "run worst" includes the next part's enter() and fade-in):
 
@@ -34,7 +41,7 @@ clear). The Ending's worst is its closing cross-fade into the Intro
 the spread RGB565 value); its steady frames are 3 to 3.5 ms (halo box,
 the 47-row reflection, one multiply per water pixel, credits text).
 
-Full loop, `badge-bench/bench.sh zig-out/firmware/snouty-scene.elf --frames
+Full loop, `badge-bench/bench.sh zig-out/firmware/demosnout.elf --frames
 6660 --every 600 --symbols` (one loop, 6600 frames, plus 60 of the second
 pass through the seamless cut):
 
@@ -64,7 +71,7 @@ below are kept for the record (M0 order and 15-frame fades).
 
 Calibrated badge-bench (`calibrate/calibration.toml`, fitted 2026-09-29),
 ELF sha256 `49024cc29202` (the M0 build).
-`carts/snouty-scene/tools/bench_parts.sh 0 1 2 3 10`, each run from the
+`carts/demosnout/tools/bench_parts.sh 0 1 2 3 10`, each run from the
 part's frame 0 for its length plus 60 frames:
 
 | # | Part | mean busy ms | part worst busy ms (frame) | run worst | verdict |
@@ -80,7 +87,7 @@ all 20,480 pixels, about 1 ms, on top of the part. The placeholders cost
 more than the plasma because `cart.text` at 6x scale writes pixel by pixel
 with bounds checks.
 
-Full loop, `badge-bench/bench.sh zig-out/firmware/snouty-scene.elf --frames
+Full loop, `badge-bench/bench.sh zig-out/firmware/demosnout.elf --frames
 900 --every 60 --symbols` (Intro, then 540 frames of Plasma):
 
 - start-up (every part's `init()`: tables, palettes, the scroller strip):

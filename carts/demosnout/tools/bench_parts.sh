@@ -1,15 +1,15 @@
 #!/usr/bin/env bash
-# One badge-bench run per part of the Snouty Scene timeline, then a table of
+# One badge-bench run per part of the Demosnout timeline, then a table of
 # worst frames (calibrated busy ms, the perf rule of SPEC.md section 2:
 # every part's worst frame under 12 ms).
 #
-#   carts/snouty-scene/tools/bench_parts.sh          # every part, 0..10
-#   carts/snouty-scene/tools/bench_parts.sh 0 1 2    # just these
+#   carts/demosnout/tools/bench_parts.sh          # every part, 0..10
+#   carts/demosnout/tools/bench_parts.sh 0 1 2    # just these
 #
-# Run from anywhere after `zig build -Dcart=snouty-scene`. Each part N runs
-# `badge-bench/bench.sh zig-out/firmware/snouty-scene.elf --poke scene_part=N
+# Run from anywhere after `zig build -Dcart=demosnout`. Each part N runs
+# `badge-bench/bench.sh zig-out/firmware/demosnout.elf --poke scene_part=N
 # --frames <part frames + 60> --every 1000 --json --out
-# carts/snouty-scene/out/bench/N` from the repository root, so the run covers
+# carts/demosnout/out/bench/N` from the repository root, so the run covers
 # the whole part (fades included) and the first second of the next one.
 # "part worst" is the worst frame over the part's own frames (read from
 # bench.json), "run worst" over the whole run (it includes the next part's
@@ -19,12 +19,12 @@ set -u
 cd "$(dirname "$0")/../../.."
 
 # Keep in step with cart/src/timeline.zig (`bars`, `entries`).
-bars=(3 5 6 5 4 4 5 7 5 4 7)
+bars=(3 5 7 5 4 4 5 7 5 4 8)
 names=("Intro" "Plasma" "Copper" "Rotozoomer" "Twister" "Tunnel" "Metaballs" "Voxel" "Snouty head" "Fire" "Ending")
 limit=12
 
-elf=zig-out/firmware/snouty-scene.elf
-[ -f "$elf" ] || { echo "bench_parts: $elf missing; run zig build -Dcart=snouty-scene" >&2; exit 1; }
+elf=zig-out/firmware/demosnout.elf
+[ -f "$elf" ] || { echo "bench_parts: $elf missing; run zig build -Dcart=demosnout" >&2; exit 1; }
 
 if [ $# -gt 0 ]; then parts=("$@"); else parts=(0 1 2 3 4 5 6 7 8 9 10); fi
 
@@ -35,7 +35,7 @@ for n in "${parts[@]}"; do
         echo "bench_parts: no part $n (0..$((${#bars[@]} - 1)))" >&2; exit 2
     fi
     len=$(( ${bars[$n]} * 120 ))
-    out=carts/snouty-scene/out/bench/$n
+    out=carts/demosnout/out/bench/$n
     echo "bench_parts: part $n (${names[$n]}), $len frames + 60" >&2
     mkdir -p "$out"
     badge-bench/bench.sh "$elf" --poke scene_part="$n" --frames $((len + 60)) --every 1000 --json --out "$out" > "$out/stdout.txt" 2>&1

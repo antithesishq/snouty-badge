@@ -1,4 +1,4 @@
-//! Part 10, Ending (7 bars, 14 s): the Iris mark rises over a night sea
+//! Part 10, Ending (8 bars, 16 s): the Iris mark rises over a night sea
 //! and is reflected in rippling water while the credits fade in and out
 //! one card at a time; then it holds alone and the whole picture
 //! cross-fades into the Intro's first frame, so the loop closes without a
@@ -25,7 +25,7 @@
 //! banded shimmer so the swell reads. Columns are the framebuffer's fast
 //! axis, so each water column reads from its (shifted) sky column.
 //!
-//! Credits are six cards in the 8x8 font above the mark, each about 96
+//! Credits are seven cards in the 8x8 font above the mark, each about 96
 //! frames with a 15-frame fade done by mixing the text colour into the sky
 //! (not fx.fade, which would dim everything). The last `crossfade` frames
 //! mix every pixel towards the Intro's background gradient and blend the
@@ -46,8 +46,8 @@ const intro = @import("intro.zig");
 
 pub const name: []const u8 = "Ending";
 
-/// Part length in frames (7 bars); must match the timeline entry.
-pub const length = 7 * 120;
+/// Part length in frames (8 bars); must match the timeline entry.
+pub const length = 8 * 120;
 
 /// First water row: the sky is rows 0..horizon-1, the sea the other 47.
 pub const horizon = 81;
@@ -109,13 +109,15 @@ const crossfade = 96;
 
 // --- credits ----------------------------------------------------------------
 
-const Card = struct { lines: []const []const u8 };
+/// A card's lines; the first `label_lines` are drawn in the label colour.
+const Card = struct { lines: []const []const u8, label_lines: u8 = 1 };
 const cards = [_]Card{
-    .{ .lines = &.{"SNOUTY SCENE"} },
-    .{ .lines = &.{ "CODE", "CLAUDE + ADRIAN" } },
-    .{ .lines = &.{ "ART", "SNOUTY-ART PIPELINE" } },
+    .{ .lines = &.{"DEMOSNOUT"} },
+    .{ .lines = &.{ "CODE + ART", "CLAUDE" } },
+    .{ .lines = &.{ "PROMPTING +", "HUMANING", "ADRIAN" }, .label_lines = 2 },
     .{ .lines = &.{ "MUSIC", "SILENT", "(THE BADGE SPEAKER)" } },
     .{ .lines = &.{ "GREETINGS", "SYCL  ZIG", "ANTITHESIS" } },
+    .{ .lines = &.{ "SPECIAL THANKS", "THE DEMOSCENE" } },
     .{ .lines = &.{ "2026", "SOFTWARE YOU", "CAN LOVE" } },
 };
 const card_start = 96;
@@ -417,7 +419,7 @@ fn draw_credits(t: u32) void {
     for (card.lines, 0..) |line, i| {
         const y = y0 + @as(i32, @intCast(i)) * line_pitch;
         const bg = sky_rgb[@intCast(@min(y + 4, horizon - 1))];
-        const fg: u32 = if (i == 0) label_rgb else value_rgb;
+        const fg: u32 = if (i < card.label_lines) label_rgb else value_rgb;
         const x = text.centre_x(line, 1);
         cart.text(.{ .str = line, .x = x + 1, .y = y + 1, .text_color = .rgb(palette.mix_rgb(bg, 0x000000, c.alpha)) });
         cart.text(.{ .str = line, .x = x, .y = y, .text_color = .rgb(palette.mix_rgb(bg, fg, c.alpha)) });
@@ -469,7 +471,7 @@ test "ending: credit cards fade in, hold and out, and fit the screen" {
     try std.testing.expect(card_start + cards.len * card_len + 60 <= length - crossfade);
     for (cards) |c| {
         try std.testing.expect(c.lines.len >= 1 and c.lines.len <= 3);
-        for (c.lines) |l| try std.testing.expect(l.len * 8 <= 160);
+        for (c.lines) |l| try std.testing.expect(l.len * 8 + 2 <= 160); // a margin for the shadow
     }
     // The last line's glyphs and shadow end above the mark's outer ring.
     try std.testing.expect(text_top + 2 * line_pitch + 9 <= mark_rest_y - border);

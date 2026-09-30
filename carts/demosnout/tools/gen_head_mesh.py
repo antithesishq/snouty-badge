@@ -6,7 +6,7 @@ of head.zig (vertices as [3]f32, faces as { a, b, c, material }, wound
 counter-clockwise seen from outside). Rerun and commit when the shape
 changes:
 
-    python3 carts/snouty-scene/tools/gen_head_mesh.py [--sheet out.png]
+    python3 carts/demosnout/tools/gen_head_mesh.py [--sheet out.png]
 
 --sheet also writes a contact sheet of 12 poses rendered the way the cart
 does (painter's algorithm, flat shading), for judging the shape quickly.
