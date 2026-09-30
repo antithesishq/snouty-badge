@@ -21,6 +21,7 @@ test {
     _ = @import("parts/fire.zig");
     _ = @import("parts/metaballs.zig");
     _ = @import("parts/voxel.zig");
+    _ = @import("parts/head.zig");
 }
 
 test "scroller font: every glyph is non-empty and fits 16 rows" {
