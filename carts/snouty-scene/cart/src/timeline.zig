@@ -45,7 +45,7 @@ pub const entries = [_]Entry{
     .{ .part = .of(placeholder.Placeholder(6, "Metaballs")), .bars = 5 },
     .{ .part = .of(placeholder.Placeholder(7, "Voxel")), .bars = 7 },
     .{ .part = .of(placeholder.Placeholder(8, "Snouty head")), .bars = 6 },
-    .{ .part = .of(placeholder.Placeholder(9, "Fire")), .bars = 4 },
+    .{ .part = .of(@import("parts/fire.zig")), .bars = 4 },
     .{ .part = .of(placeholder.Placeholder(10, "Ending")), .bars = 7 },
 };
 
