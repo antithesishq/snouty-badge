@@ -1,6 +1,7 @@
 # badge-manager: a headless badge station for the expo table
 
-Status: plan, 2026-09-29. Nothing built yet. Idea from Adrian's coworker:
+Status: plan, 2026-09-29, revised 2026-09-30 with Adrian's answers
+(section 7). Nothing built yet. Idea from Adrian's coworker:
 "plug in badge, ask Claude to write you a game or whatever, have the thing
 show up; also have a collection of carts ready to go". Adrian's priorities:
 (1) deploy the existing carts with as little effort as possible, driven
@@ -35,8 +36,10 @@ from a phone; (2) build a cart on the fly with a CLI agent.
 
 ## 2. Shape
 
-One Raspberry Pi (4 or 5; 8 GB if it is to run Zig itself, section 6) on
-the table, USB-C cable dangling, no screen or keyboard. Adrian's phone
+Any 64-bit Raspberry Pi (Zero 2 W, 3, 4, 5) running Raspberry Pi OS
+Lite 64-bit, on the table with a USB-C cable dangling, no screen or
+keyboard. The station itself needs nothing beyond Python 3; only building
+carts locally needs a big Pi (section 6). Adrian's phone
 opens `http://snouty.local` and sees:
 
 ```
@@ -77,10 +80,33 @@ Pieces:
   badge menu shows them.
 - Deploy = wipe (delete every file), copy UF2s then ROMs, `sync`,
   unmount, eject. Deterministic drive state, contiguous files, ~2 s.
-- Network: the Pi joins Adrian's phone hotspot (SSID in a config file),
-  advertises `snouty.local` via avahi, and falls back to running its own
-  access point `snouty-badge` if the hotspot is absent. Hotspot first
-  because that is what gives the CLI agent internet (section 6).
+- Interfaces, no phone app ever: a browser page and an ssh command line,
+  both driving the same Python module.
+  - Browser: `http://snouty.local` (mDNS via avahi; iOS Safari resolves
+    it, Android Chrome often does not). Every mode therefore also has a
+    fixed address, `http://10.42.0.1`, which is what the Pi's own access
+    point hands out, and a QR sticker on the Pi points at it. In access
+    point mode the Pi's dnsmasq answers every name with itself, so a phone
+    joining the network gets the "sign in to network" pop-up and the page
+    opens without typing anything. On a phone hotspot the Pi's address
+    shows in the hotspot's client list; the page also prints it so it can
+    be bookmarked once.
+  - ssh: `ssh badge@snouty.local` and the `badge` command (`status`,
+    `sets`, `deploy <set>`, `wipe`, `sync`, `build "<prompt>"`, `log`).
+    Same functions the page calls, so anything works from a laptop or a
+    phone ssh client with no page at all. Also the debug path.
+- Network: NetworkManager (stock on Raspberry Pi OS) with two profiles.
+  A client profile for Adrian's phone hotspot (SSID/password in
+  `station.toml`, several allowed) at high autoconnect priority, and an
+  access point profile `snouty-badge` (WPA2, shared IPv4, `10.42.0.1`).
+  A small watchdog brings the access point up when no hotspot has
+  connected 45 s after boot, and retries the hotspot every five minutes
+  while nobody is attached to the access point. Pi Zero 2 W / 3 / 4 / 5
+  each have one radio, so it is one or the other, never both; ethernet,
+  if plugged in, is used for internet in either mode. Hotspot mode is
+  what gives the build agent (section 6) internet; in access point mode
+  without ethernet the page says builds are offline and everything else
+  still works.
 
 ## 3. Testing without a badge
 
@@ -101,14 +127,18 @@ watch the menu re-scan, run a cart, come back, deploy the Sonic set.
 
 ## 4. Milestones
 
-- **M0 station**: `station.py` with detection, mount, wipe/deploy/eject,
-  JSON API, phone page, systemd unit, `setup.sh` for a fresh Raspberry
-  Pi OS Lite (packages, avahi, hotspot config, service). Fake-badge test
-  on the VM. Deliverable: deploy a set to a FAT12 USB stick from a phone.
+- **M0 station**: the `badge_manager` Python package: detection, mount,
+  wipe/deploy/eject, the `badge` CLI, JSON API and phone page, systemd
+  unit, `setup.sh` for a fresh Raspberry Pi OS Lite 64-bit (packages,
+  avahi, the two NetworkManager profiles and the watchdog, the `badge`
+  user for ssh, service). Fake-badge test on the VM. Deliverable: deploy
+  a set to a FAT12 USB stick from a phone browser and from ssh, on a Pi
+  that found the hotspot and on one that had to make its own network.
 - **M1 library**: manifest, sets, fit check with root-entry accounting,
   `sync.sh` from the VM, ROM upload from the phone, per-cart RAM/XIP
   toggle, "what is on the badge now" view (read the root directory).
-- **M2 build on the fly**: section 6.
+- **M2 build on the fly**: section 6, remote path first (works on every
+  Pi), local path second.
 - **M3 table polish**: badge LED/menu hints in the UI text, one-tap
   "same set again", deploy history, optional read-only kiosk page on a
   spare tablet. Only if there is time.
@@ -123,6 +153,11 @@ watch the menu re-scan, run a cart, come back, deploy the Sonic set.
 - Library lives on the Pi, not fetched at the show: expo internet is not
   a dependency for feature 1. `sync.sh` runs the night before.
 - No badge-side changes. Everything here works with the stock OS.
+- Any Pi is supported (Adrian, 2026-09-30): the station does no work a
+  Pi Zero 2 W cannot do; builds probe the machine and fall back to a
+  cloud VM. Networking is hotspot first, own access point otherwise.
+  Interfaces are a browser page and ssh, never an app (Adrian,
+  2026-09-30).
 
 ## 6. M2: build a cart on the fly
 
@@ -135,28 +170,48 @@ the library with a manifest entry. Job output streams to the phone (the
 page tails the log); when it ends there is a "Deploy" button next to the
 new cart. Expect 3-10 minutes per job.
 
-Where the build runs:
-- On the Pi: needs the pinned Zig nightly for aarch64 Linux (exists), Node
-  20, Python venv for badge-bench, `claude` CLI logged in. A Pi 5 8 GB
-  compiles a small cart in a couple of minutes; the comptime-heavy carts
-  may OOM the way Adrian's Mac does ([[mac-zig-comptime-oom]]), so the
-  template cart must stay light.
-- Remote fallback: `BUILD_HOST=exedev@animated-badge.exe.xyz` makes the
-  job run over ssh on the VM and scp the UF2 back. Needs internet either
-  way (the agent does), which is why the Pi joins the phone hotspot.
+Where the build runs, decided by a probe at job start, shown on the page:
+- Local, when the Pi has >= 6 GB RAM (`MemTotal`), the pinned Zig nightly
+  for aarch64 Linux at `~/.local/zig`, Node 20 and a badge-bench venv
+  (`setup.sh --build-tools` installs them on a Pi 5 8 GB; a Pi 4 8 GB
+  qualifies too, slower). A small template cart compiles in a couple of
+  minutes there; the comptime-heavy carts may OOM the way Adrian's Mac
+  does ([[mac-zig-comptime-oom]]), so the template stays light.
+- Cloud VM otherwise, or whenever the local probe fails or the local
+  build errors with OutOfMemory: the job runs the same script over ssh on
+  `build_host` from `station.toml` (default the exe.dev VM,
+  `exedev@animated-badge.exe.xyz`, repo at `/home/exedev/snouty-badge`),
+  streams its log back, and scps the UF2, GIF and bench line into the
+  library. The ssh key lives on the Pi; `badge build --remote` forces it.
+  Both paths run the same `badge-manager/build-job.sh`, so the Pi is only
+  ever a thin client for anything Zig-sized.
+- `claude` itself runs wherever the build runs (it needs the checkout),
+  logged in ahead of time on each; the job carries the prompt over ssh.
+Internet is needed for either path (the agent talks to the API), hence
+hotspot first in section 2.
 
 Guardrails: one job at a time, a wall-clock limit, jobs run under a
 separate user with the library as the only writable path, and the phone
 page shows the diff summary and the preview GIF before anything is
 deployed.
 
-## 7. Open questions for Adrian
+## 7. Questions and answers
 
-1. Which Pi and how much RAM? Decides whether M2 builds locally.
-2. Hotspot from the phone (agent gets internet) or the Pi as its own AP
-   (works with no phone data)? Plan assumes hotspot first, AP fallback.
-3. Which sets for show day? A first guess: Demo reel (snouty, bugs,
+Answered by Adrian 2026-09-30:
+1. Which Pi? Any we reasonably can; fall back to a cloud VM when the Pi
+   lacks the resources for Zig. (Section 6 probe + `build_host`.)
+2. Hotspot or access point? Phone hotspot when available, broadcast our
+   own network otherwise. (Section 2.)
+3. Phone side: no special app, must work from a normal browser window or
+   ssh. (Section 2 interfaces; the `badge` CLI is first-class, not a
+   debug aid.)
+
+Still open:
+4. Which sets for show day? First guess: Demo reel (snouty, bugs,
    snoutenstein, maze = 1135 KB), Game Gear (gear + SONIC.GG + bugs),
-   Game Boy (boy + two .gb), Genesis XIP (genesis-xip + a .md).
-4. Should ROM uploads from strangers' phones be allowed, or only from a
-   logged-in page? Plan assumes the page has no auth on a private hotspot.
+   Game Boy (boy + two .gb), Genesis XIP (genesis-xip + a .md). Can be
+   settled in M1 by editing `manifest.toml`.
+5. ROM upload from any phone on the network, or only after a passphrase?
+   Plan assumes no auth on the private network until told otherwise.
+6. Which phone OS is Adrian's? Decides whether `snouty.local` works
+   directly or the fixed address / captive pop-up path is the usual one.
