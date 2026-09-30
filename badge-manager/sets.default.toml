@@ -32,6 +32,9 @@ title = "Snouty Genesis"
 use = "xip"                 # no RAM build exists; keeps XIP if one appears
 roms = [".md", ".bin"]
 
+[carts.snouty-flyover]
+title = "Memory Lane"
+
 [carts.badge-calibrate]
 title = "Badge calibrate"
 
