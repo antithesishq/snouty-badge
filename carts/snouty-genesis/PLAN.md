@@ -574,3 +574,46 @@ arms coded as stubs to the Track A interface above; keep the diff small),
   logging shows 0xFFFFFFFF durations before and sustain 6 / attack 0 after.
 - 2026-09-30 (M2 started): branch `genesis/m2` from main `f53d696`; tracks
   A (menu, splash, remap, scale) and B (drive scan, picker, help) as above.
+- 2026-09-30 (M2 DONE): tag `snouty-genesis/m2`. Track A (5 commits:
+  input layouts and edges, scale + `video.apply`, romsrc names, splash,
+  menu + state machine) and Track B (3 commits: `drive.zig` module +
+  tests + fixtures, romsrc rework + picker + help + main wiring, screen
+  captures) merged; main.zig, romsrc.zig and build.zig resolved by hand
+  (integration commit a8e3409), the menu's Pick ROM row switched on.
+  - Host tests 143/143 (136 of M1 unchanged, 7 `drive:`); golden hashes
+    unchanged (the core is untouched). Every cart builds (`zig build`).
+  - Sizes: `.text` 220,600 B (+16.0 KB over M1; 41.5 KB of the 256 KB
+    window left), `.data` 156, `.bss` 165,412 B (+560; the picker's
+    scan table). Embed build `.text` 196,620 B (no drive code).
+  - badge-bench (calibrated, `busy ms`, game updates only, i.e. after the
+    36 splash updates at 0.37 ms each): test ROM from the drive
+    (`romfs_test.img`, `m2_play.json`, 156 updates) 8.75 mean / 24.21
+    worst (M1 embedded 8.77 / 24.21); Miniplanets from the drive
+    (`romfs_mini.img`, `m2_mini300.json`, 336 updates) 19.47 / 28.11 (M1
+    19.47 / 28.11): the frontend costs nothing in play. Menu updates
+    0.90 ms, picker 0.30 ms, help 0.33 ms. Choosing a 512 KB ROM in the
+    picker costs one 43.6 ms update (the CRC32 over the file): a single
+    slipped present at load, noted below.
+  - Screens: `docs/m2_splash_menu.gif` (preview, `m2_menu.json`: splash,
+    game, menu rows cycling, About, crop, second open), `docs/m2_picker.png`
+    and `docs/m2_help.png` (badge-bench over drive images). The picker ->
+    Miniplanets -> menu -> Pick ROM -> picker -> Miniplanets again path verified in
+    badge-bench (`out/pickflow2/`).
+  - Deviations from the contract: FRAG.MD in the fixture is fragmented by
+    a post-processing step in `make_fixtures.py` (`--fragment` deals
+    clusters round-robin, so two equal files never differ); `Candidate`
+    gained `map_err` and `note()`; `live_edge()` masks buttons held over
+    from the previous state so the press that skips the splash cannot pick
+    a row; the report's `(i of N)` counts listed files, as the picker does.
+  - Open after M2: the CRC32 at selection (drop it or spread it over the
+    splash) and the fragmented path's cost (test ROM 35.0 ms early updates
+    through the cluster table vs 24.2 embedded in Track B's run: measure
+    properly in M4, a RAM cache for hot ranges is the M4 answer); H40
+    column-pair averaging (SPEC 6) not offered; M3's `Keyframe` restore
+    must call `video.apply` (the `Vdp` carries `line_mode`); `romsrc`
+    `title_name` inlines `parse_header` (about 1 KB); the debug overlay is
+    on by default until the hardware numbers are in; the two track
+    worktrees' `sycl-badge` submodules were empty (`git submodule
+    update --init --reference` from the main checkout's module store fixed
+    them). Hardware check (open, not a gate): XIP launch, drive streaming
+    stall rates contiguous and fragmented, the picker on a real drive.
