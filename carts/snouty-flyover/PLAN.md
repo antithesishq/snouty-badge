@@ -917,10 +917,54 @@ the skip (`debug_cam_y` jumps to the next pair start) and for the packet
   - Integration: `world.caption()` returns the Bus's own verb now that the
     card's third line names the district ahead.
 
-## M4 Polish (outline)
+## M4 Polish
 
-Palette and fog pass from the GIF review, easter eggs (the Stack unwind
-after the overflow, the free list spelling something), the Tree rotation,
-dam hold/pass of packets, `api.text` cost (8% of the frame: a cheaper
-shadowed text), the lake frame headroom (`refl_z_far`), dist artifacts.
-Contract to be written at M4 start.
+Self-review of the M3 attract GIF (Adrian defers reviews): no rendering
+artefacts, every card and caption reads, the anteater reads. Kept as is:
+the palette and fog (the concept's, no change), the Iris sun size, the
+temporal dither, rubble brightness, the 8% `api.text` cost (0.6 ms is
+affordable at 65% of budget), `refl_z_far` 200. Not done, recorded:
+the Tree rotation (needs a different tree representation), dam hold/pass
+of packets (the cycling reads as flow already), the free list spelling
+a word (invisible from the Heap altitude). Dist artifacts: uf2/elf/wasm
+are build outputs (gitignored, `zig build -Dcart=snouty-flyover`); the
+cart is registered in the root README, `badge-manager/sets.default.toml`
+("Memory Lane") and has a README.
+
+Goal: three visible finishes, no interface changes, bench unchanged.
+
+### Tracks (two Opus agents, no shared files)
+
+- **Track A: Stack unwind** (`districts/stack.zig`): after the overflow
+  pit opens, the canyon unwinds: 30 frames after the pit, the pushes pop
+  one every 8 frames (the newest push's rows rise one band per pop, the
+  pit floor closes to the full-depth floor first), the sky flashes 2
+  frames on each pop (`render.sky_flash = 2`), until the live push list
+  is empty; the depth-10 base canyon stays. A new push during the unwind
+  cancels it. Autopilot behaviour unchanged (it never overflows). Check in
+  `m2_verbs.json` (four pushes, the fourth overflows at frame 1600): pit at
+  1600, first pop by about 1640, canyon back to base depth by about 1680,
+  `debug_stack_depth` back to 0 when the unwind ends. Worst per-frame
+  writes bounded like the push wave (report it).
+- **Track B: Sort and Heap feedback** (`districts/sort.zig`,
+  `districts/heap.zig`): when a Sort band finishes sorting, its 64 bar tops
+  flash `palette.white` for 6 frames and return to their hues (the pivot
+  colour is already white, so use it; rows rewritten twice, 2 x 7 x 256
+  cells); the Heap autopilot altitude `alt` 40 -> 52 so the mesas do not
+  fill the view (the clearance spring still wins), and the GC wall's
+  collapse leaves the rubble one shade brighter than now (`rubble + 1 +
+  (x % 2)`, indices 21..22) so the footprints read against the floor.
+
+### Done criteria for M4
+
+- Build, check-float; sizes within the M3 gates (75 KB / 165 KB).
+- Attract 2400: bench worst within 1 ms of 14.26; `debug_world_check ==
+  0`; `check_render.sh` regenerated and passing.
+- `m2_verbs` GIF shows the unwind; `m3_verbs` shows a band flash.
+- PLAN status, RUNNING.md note, tag `snouty-flyover/m4`; the branch merged
+  to main.
+
+### M4 status
+
+- 2026-09-30: started after the origin/main merge (e097073, both new carts
+  in the root build).
