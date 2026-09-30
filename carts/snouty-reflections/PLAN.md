@@ -1071,3 +1071,289 @@ status; tag `snouty-reflections/m3`.
   new heights. Preview GIFs `docs/preview_m3_presets.gif` (4 orbits of
   attract) and `docs/preview_m3_free_camera.gif`. Tagged
   `snouty-reflections/m3`.
+
+## M4 Freeze frame (2026-09-30)
+
+SPEC.md section 5b: A freezes time and a progressive path tracer, `pt.zig`,
+replaces the real-time tracer until A again. Adrian's answers
+(2026-09-30): section 17 question 8, a converged frozen image resumes
+attract by itself after 60 s without input; question 9, depth of field on
+by default, subtle, focused on the chrome sphere.
+
+The real-time tracer and its per-variant specialisations are not changed
+beyond the memory sharing below. Its check_render (24/24) and M3 bench
+rows 1 and 2 must stay within 0.1 ms of the M3 numbers.
+
+### Memory
+
+The accumulator is 160 x 128 `u32` = 80 KB. The real-time tracer's
+`water.primary_fade_rt` (`[80][128]f32`, 40 KB) is only needed while the
+real-time tracer runs, so both live in one 80 KB arena:
+
+```zig
+// arena.zig (Track A)
+pub var words: [camera.width * camera.height]u32 align(8) = undefined;
+pub const Owner = enum { realtime, pt };
+pub var owner: Owner = .realtime;
+```
+
+`water.primary_fade_rt` becomes a comptime-known pointer into
+`arena.words` (same code in the hot path: a constant address). Handing
+the arena to `pt` sets `owner = .pt`; handing it back calls
+`water.invalidate_tables()` (sets `tables_height` to NaN), so the next
+real-time frame rebuilds the tables (about 1.6 ms, once). The motion_off
+bench build keeps its comptime table and does not use the arena for it.
+
+Limits for every shipped variant: `.text + .data` at most 136 KB, `.bss`
+at most 136 KB, and their sum at most 250 KB (the RAM window is 307,456 B
+with a 32 KB stack). Expected cut20: `.bss` 67 + 40 = 107 KB.
+
+### Fixed interfaces
+
+```zig
+// pt.zig (Track A)
+pub const max_passes: u32 = 256;          // knob
+pub const slice_us: u32 = 36_000;         // knob: tracing time per update
+pub const wasm_columns_per_update: u32 = 40; // knob: wasm has no clock; the integrator sets it from the bench rate
+/// Seed the accumulator from the framebuffer the real-time tracer has just
+/// drawn for `view` (decode RGB565 to linear, n = 0 in every column), take
+/// the arena, and set up the frozen scene. Call after trace.render_frame
+/// in the same update.
+pub fn begin(view: trace.View) void;
+/// Trace whole columns (one sample per pixel each) until
+/// micros_since_boot() >= deadline_us, at least one column; on wasm,
+/// exactly wasm_columns_per_update columns. Nothing once done().
+pub fn step(deadline_us: u64) void;
+/// Dither the accumulator mean to the framebuffer (dither.quantise in the
+/// current mode, then the caller's dither.end_frame()).
+pub fn display() void;
+/// Give the arena back to the real-time tracer (no-op when not active).
+pub fn release() void;
+pub fn active() bool;
+/// Completed passes (the minimum over columns).
+pub fn passes() u32;
+pub fn done() bool;                       // passes() == max_passes
+```
+
+Debug exports added (wasm, Track B in `main.zig`): `debug_set_pt(on)`
+(0 keeps the M3 behaviour: a frozen view shows the real-time frame; 1,
+the default, runs the path tracer), `debug_pt_run(n)` (runs n whole passes
+synchronously, wasm only), `debug_pt_passes()`, `debug_pt_accum()` (byte
+address of `arena.words` in wasm memory, for the harness to read the
+means), `debug_pt_restart()`. `check_render.mjs` calls `debug_set_pt(0)`
+first.
+
+### App (Track B, `app.zig`, `main.zig`, `overlay.zig`)
+
+- A (unfrozen): this update renders the real-time frame as today, with
+  time stopped; then `pt.begin(view)`. Later frozen updates:
+  `pt.step(t0 + slice_us)` (`t0` is `micros_since_boot()` at the start of
+  update), `pt.display()`, `dither.end_frame()`.
+- Stick held while frozen: `pt.release()` and the real-time tracer draws
+  the moving view (so the camera stays responsive); on the first update
+  with no stick held, the real-time frame for the new view and then
+  `pt.begin` (a restart). Select while frozen: next preset, the same
+  restart. B while frozen: next dither mode, accumulation kept.
+- A (frozen): `pt.release()`, time resumes. Start: `pt.release()`,
+  unfreeze, attract.
+- Auto-resume (question 8, knob `frozen_resume_s = 60`): once `pt.done()`,
+  `frozen_resume_s * fps` updates without input act as Start.
+- `debug_set_view` keeps its M3 meaning and, with `debug_set_pt(1)`, the
+  next update starts accumulation.
+- `-Ddebug_overlay=true`: while frozen, also show `passes()`.
+
+### The M4 estimator, exactly
+
+Both `pt.zig` and `tools/reference.py --pt` implement this. f32 in the
+cart (no f64), f64 in the reference except for the integer RNG, which
+must match bit for bit.
+
+**Scene.** The frozen `View`'s scene, as the real-time M3 scene defines
+it at that `t` (bob heights, drifted sun `L`, logo spin, wave phases,
+per-preset sky, sun colour, shore tint, ripple scale), with every preset's
+full content regardless of variant: sunset chrome + glass, midnight
+chrome + matte, noon chrome + matte + small chrome, storm chrome; rings
+on in every preset; stripes as M3; the logo everywhere. `fade = 1`.
+
+**Random numbers.** Pixel `(x, y)`, pass `n` (0-based, per column),
+dimension `d`:
+
+```
+lowbias32(v): v ^= v >> 16; v *= 0x7feb352d; v ^= v >> 15; v *= 0x846ca68b; v ^= v >> 16   (u32 wrapping)
+key = (n * 64 + d) * 20480 + y * 160 + x                                (u32 wrapping)
+hash(x, y, n, d) = lowbias32(key)
+to_unit(h) = (h >> 8) * 2^-24                                           (exact in f32)
+bn(x, y) = bluenoise64.bin[(y & 63) * 64 + (x & 63)]                    (the dither's file, u8)
+```
+
+Dimensions 0 to 3 are a blue-noise-rotated R2 sequence, the rest hashed:
+
+```
+A0 = 3242174889 (0xc13fa9a9), A1 = 2447445414 (0x91e10da6)      # 2^32 / g, 2^32 / g^2, g the plastic number
+d = 0, 1 (pixel jitter): u = to_unit((bn(x,      y     ) << 24) + n * A_d)
+d = 2, 3 (lens):         u = to_unit((bn(x + 32, y + 32) << 24) + n * A_(d-2))
+d >= 4:                  u = to_unit(hash(x, y, n, d))
+```
+
+Vertex `b` (0 = the primary hit) uses dimensions `4 + 4b` and `5 + 4b`
+for the sun direction and `6 + 4b`, `7 + 4b` for its surface sample.
+Dimension 63 is the accumulator's stochastic rounding.
+
+**Camera ray.** `px = x + u0`, `py = y + u1`, then the M1 screen-to-ray
+formulas with `px, py` in place of `x + 0.5, y + 0.5`, the camera basis
+of the view's orbit and height. Depth of field (knob `dof`, default on):
+
+```
+f  = dot(chrome_centre - eye, fwd)                 # chrome centre at t
+P  = eye + dir * (f / dot(dir, fwd))
+rl = lens_radius * sqrt(u2);  a = 2 pi u3           # lens_radius = 0.05 (knob)
+o  = eye + right * (rl cos a) + up * (rl sin a);  dir = normalize(P - o)
+```
+
+**Sun sample** at vertex `b`: `Ls = normalize(L + tan(sun_radius) *
+sqrt(ua) * (cos(2 pi ub) e1 + sin(2 pi ub) e2))`, `sun_radius = 1.5 deg`
+(knob), `(e1, e2) = onb(L)`, with
+
+```
+onb(n): s = n.z >= 0 ? 1 : -1;  a = -1 / (s + n.z);  b = n.x n.y a
+        e1 = (1 + s n.x^2 a, s b, -s n.x);  e2 = (b, s + n.y^2 a, -n.y)
+```
+
+**Visibility** `vis(p, Ls)`: a shadow ray from `p` along `Ls` (t > 1e-3):
+0 if it meets the chrome, matte or small sphere or the logo; 0.45 if it
+meets only the glass (M2 opacity 0.55); 1 otherwise (the shore does not
+cast).
+
+**Path.** `Lsum = 0`, `thr = (1,1,1)`, `diffuse = false`, then for vertex
+`b = 0 .. max_bounces` (`max_bounces = 4`, knob; `b == max_bounces` is the
+terminal vertex): find the nearest hit of spheres, logo (M2.2 slab test,
+K = 4), opaque shore texel and water plane (`d.y < 0`), as in the
+real-time scene, and shade:
+
+- **Sky** (miss): `Lsum += thr * sky(d)`; after a diffuse bounce use
+  `sky` without the disc term (`grad + sun_col * 0.4 * glow`: the disc is
+  the light the direct term already counts). Stop.
+- **Shore**: `Lsum += thr * palette[i]` (preset tint). Stop.
+- **Logo**: `Lsum += thr * logo_colour` (M2.2 face/side shading with `L`).
+  Stop.
+- **Chrome** (and the small chrome): `n` the unit normal. Terminal:
+  `Lsum += thr * tint * stripe * sun_col * (0.25 + 0.75 max(0, n.L))`,
+  stop. Else `thr *= tint * stripe`, `d = reflect(d, n)`.
+- **Glass**: `n` outward. Entering when `dot(d, n) < 0`: `c = -dot(d, n)`,
+  `eta = 1/1.5`, normal `n`; else `c = dot(d, n)`, `eta = 1.5`, normal
+  `-n`. `k = 1 - eta^2 (1 - c^2)`; `F = 1` if `k < 0`, else
+  `schlick(entering ? c : sqrt(k), 0.04)`. Terminal: `Lsum += thr *
+  glass_far`, stop. Else with `u = u(6 + 4b)`: `u < F` reflects, otherwise
+  refracts (`refract` as M2 with that normal), and `thr *= glass_tint` on
+  entering refraction only. The next hit of a ray inside the glass is its
+  far side.
+- **Water** at `p`: ripple normal as M3 (three waves times the preset
+  scale, plus rings, `fade` from `dist = |p - o|`, `o` this ray's origin),
+  then gloss (knob `water_roughness = 0.08`):
+
+  ```
+  rr = water_roughness * sqrt(u(6+4b));  a = 2 pi u(7+4b)
+  n' = normalize(n + (rr cos a, 0, rr sin a))
+  r  = reflect(d, n');  if r.y < 0.02: r.y = 0.02, r = normalize(r)
+  F  = schlick(max(0, -dot(d, n')), 0.02)
+  v  = vis(p, Ls)
+  base = water_deep + water_scatter * v
+  spec = (preset has water specular) ? max(0, dot(r, Ls))^64 * v : 0
+  Lsum += thr * ((1 - F) * base + sun_col * 0.5 * spec)
+  ```
+
+  Terminal: `Lsum += thr * F * env(r)` (shore, else `sky(r)`), stop. Else
+  `thr *= F`, `d = r`.
+- **Matte**: `n`, `Lsum += thr * albedo * sun_col * max(0, dot(n, Ls)) *
+  vis(p, Ls)` when `dot(n, Ls) > 0`. Terminal: stop. Else a
+  cosine-weighted bounce, `ra = sqrt(u(6+4b))`, `a = 2 pi u(7+4b)`,
+  `d = e1 ra cos a + n sqrt(1 - ra^2) + e2 ra sin a` with `(e1, e2) =
+  onb(n)`, `thr *= albedo * sky_fill` (`sky_fill = 0.3`, knob: the
+  real-time look had a 0.15 ambient; the full dome without it washes the
+  matte out), `diffuse = true`.
+
+After a bounce the new origin is `p` (hits need `t > 1e-3`). The path
+stops early when `max(thr) < 1/1024` (the reference does the same). The
+sample is `min(Lsum, 4.0)` per channel (knob `sample_clamp`).
+
+**Accumulator.** Per pixel one `u32`, r bits 0-10, g 11-21, b 22-31,
+fixed point over `[0, 4)`: `r = q_r / 512`, `g = q_g / 512`,
+`b = q_b / 256`. Per column `n_col[x]`, the samples each of its pixels
+holds. Adding sample `s` to a pixel: `m = decode + (s - decode) /
+(n_col + 1)`, then per channel `q = min(max_q, floor(m * scale + u_c))`,
+`u_c` from `hash(x, y, n, 63)`: r `(h >> 21) / 2048`, g `((h >> 10) &
+2047) / 2048`, b `(h & 1023) / 1024`. After the column, `n_col += 1`.
+`begin` stores the decoded real-time frame (`r5 / 31` etc.) with every
+`n_col = 0`, so a column's first sample replaces it: until the front
+reaches a column it shows the real-time frame.
+
+**Order.** Each pass traces columns 0 to 159 left to right, rows 0 to 127,
+so the pass front sweeps across the image. `display()` saturates each mean
+to `[0, 1]` and runs `dither.quantise`.
+
+### Reference and check (Track C)
+
+- `tools/reference.py --pt --passes N [--from M]` computes the estimator
+  above for passes `M .. N-1` (same RNG, so the same samples), vectorised
+  over pixels, and saves the float mean (`.npy`) plus a PNG. Cache
+  converged images under `out/pt_ref/`.
+- `tools/check_pt.mjs`: sets a view (`debug_set_view`, `debug_set_pt(1)`),
+  runs `debug_pt_run`, reads the means from `debug_pt_accum()` and
+  compares, in 8-bit units of `[0, 1]` (means saturated to `[0, 1]`):
+  1. Same samples: cart after 16 passes against the reference's first 16
+     passes: at least 98% of channel values within 3 units, mean absolute
+     difference at most 0.5 (float differences flip a few Fresnel and
+     gloss choices, nothing else).
+  2. Convergence: against the reference with 1024 passes, RMSE at 16, 64
+     and 256 passes decreases, `RMSE(64) / RMSE(256) >= 1.6`, and
+     `RMSE(256) <= 4.0` units.
+  3. Seed: after `pt.begin` and before any column, `display()` with dither
+     `none` reproduces the real-time frame exactly.
+  Check set: each preset at `t = 0`, `orbit = 0`; sunset at `t = 300`;
+  noon at height 1.0.
+- `tools/bench_variants.sh --m4`: cut20, badge-bench,
+  row 5 sunset, midnight, noon: preset by Select, A at update 100, 1,200
+  updates frozen. Gate: every frozen update's calibrated busy time at most
+  47.0 ms. Report: passes after 1,200 updates, the update at which
+  `done()` (time to 256 passes in seconds at 20 fps), ms per pass.
+  Row 6: stick held while frozen (the real-time preview with a table
+  rebuild): reported, not gated. Plus M3 rows 1 and 2 again (within
+  0.1 ms of M3).
+
+### Tracks
+
+Worktrees off this plan commit, one branch each; each track commits,
+the integrator merges. A change needed in another track's file goes in
+the final report.
+
+- **A (path tracer)**: new `cart/src/pt.zig`, new `cart/src/arena.zig`,
+  `water.zig` (the arena pointer and `invalidate_tables` only). May read
+  but not change `scene.zig`, `iris.zig`, `camera.zig`, `math.zig`,
+  `shore_data.zig`; small `pub` additions there are allowed if the
+  real-time code does not change. Until B lands, a stand-in in its
+  branch's `main.zig` is allowed.
+- **B (app)**: `cart/src/app.zig`, `main.zig`, `overlay.zig`,
+  `tools/scripts/` (m4 scripts). Builds against a stub `pt.zig` in its
+  branch until A lands.
+- **C (reference, harness)**: `tools/reference.py`, new
+  `tools/check_pt.mjs`, `tools/check_render.mjs` (`debug_set_pt(0)`),
+  `tools/bench_variants.sh`, `docs/RUNNING.md`.
+
+Integration (me): merge A, B, C; set `wasm_columns_per_update` and
+`slice_us` from the bench; check_pt, check_render, check-float, sizes,
+bench rows; a freeze GIF and before/after stills in `docs/`; SPEC.md
+status; tag `snouty-reflections/m4`; merge to main.
+
+### Done criteria for M4
+
+- A freezes and the image converges on the simulator in every preset;
+  stick, Select, B, A, Start behave as above; auto-resume after 60 s.
+- check_pt passes on the check set; check_render 24/24 still passes for
+  cut20 and half30; `zig build check-float` for every variant.
+- Row 5 frozen updates at most 47.0 ms in every preset; rows 1 and 2
+  within 0.1 ms of M3; sizes within the limits.
+
+### M4 status
+
+- 2026-09-30: plan written. Question 8: 60 s auto-resume; question 9: DOF
+  on, `lens_radius` 0.05.
