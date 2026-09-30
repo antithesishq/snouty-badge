@@ -35,6 +35,8 @@ const Config = struct {
     iris_in_chrome: bool = true,
     iris_in_water: bool = true,
     iris_samples: u32 = 4,
+    /// M3 knob rings (scene.zig), for every preset.
+    rings: bool = true,
 };
 
 /// The logo knobs cut20 needs (PLAN.md M2.2 "Budget and order of work":
@@ -44,7 +46,7 @@ const iris_cut: Config = .{ .fps = 0, .iris_in_chrome = false, .iris_in_water = 
 
 const config: Config = switch (variant) {
     .full20 => .{ .fps = 20, .iris_in_chrome = iris_cut.iris_in_chrome, .iris_in_water = iris_cut.iris_in_water, .iris_samples = iris_cut.iris_samples },
-    .cut20 => .{ .fps = 20, .glass_enabled = false, .water_shadows = .off, .iris_in_chrome = iris_cut.iris_in_chrome, .iris_in_water = iris_cut.iris_in_water, .iris_samples = iris_cut.iris_samples },
+    .cut20 => .{ .fps = 20, .glass_enabled = false, .water_shadows = .off, .iris_in_chrome = iris_cut.iris_in_chrome, .iris_in_water = iris_cut.iris_in_water, .iris_samples = iris_cut.iris_samples, .rings = false },
     .full15 => .{ .fps = 15, .glass_primary = .env, .iris_in_chrome = iris_cut.iris_in_chrome, .iris_in_water = iris_cut.iris_in_water, .iris_samples = iris_cut.iris_samples },
     .half30 => .{ .fps = 30, .render_scale = 2 },
 };
@@ -57,6 +59,7 @@ pub const glass_primary: scene.GlassPrimary = config.glass_primary;
 pub const iris_in_chrome: bool = config.iris_in_chrome;
 pub const iris_in_water: bool = config.iris_in_water;
 pub const iris_samples: u32 = config.iris_samples;
+pub const rings: bool = config.rings;
 
 comptime {
     if (render_scale != 1 and render_scale != 2) @compileError("render_scale must be 1 or 2");

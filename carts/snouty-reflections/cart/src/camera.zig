@@ -52,9 +52,9 @@ pub const v_table: [height]f32 = blk: {
 /// correctly rounded). u(159 - x) = -u(x) and v(127 - y) = -v(y) exactly
 /// (both tables are symmetric in f32), so the image only stores the top-left
 /// quarter (80 x 64 f32 = 20 KB of .text; M2.2 mirrored it in y for the
-/// logo's code size) and init() unfolds it in y into inv_len_table in .bss,
-/// indexed with `half_column(x)`: the same values, no per-ray index fold.
-const inv_len_quarter: [width / 2][height / 2]f32 = blk: {
+/// logo's code size), indexed with `half_column(x)` and y or 127 - y (the
+/// tracer walks the lower half with a negative stride, M3).
+pub const inv_len_quarter: [width / 2][height / 2]f32 = blk: {
     @setEvalBranchQuota(200000);
     var t: [width / 2][height / 2]f32 = undefined;
     for (0..width / 2) |x| {
@@ -67,16 +67,9 @@ const inv_len_quarter: [width / 2][height / 2]f32 = blk: {
     break :blk t;
 };
 
-/// 80 x 128 f32 (40 KB of .bss), filled by init().
-pub var inv_len_table: [width / 2][height]f32 = undefined;
-
-pub fn init() void {
-    for (&inv_len_table, &inv_len_quarter) |*col, *q| {
-        for (q, 0..) |v, y| {
-            col[y] = v;
-            col[height - 1 - y] = v;
-        }
-    }
+/// inv_len_quarter at (half column hc, row y).
+pub inline fn inv_len(hc: usize, y: usize) f32 {
+    return inv_len_quarter[hc][if (y < height / 2) y else height - 1 - y];
 }
 
 comptime {

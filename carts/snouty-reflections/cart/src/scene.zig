@@ -5,6 +5,7 @@ const std = @import("std");
 const math = @import("math.zig");
 const shore_data = @import("shore_data.zig");
 const variant = @import("variant.zig");
+const build_options = @import("build_options");
 const Vec3 = math.Vec3;
 const vec3 = math.vec3;
 const splat = math.splat;
@@ -126,7 +127,8 @@ pub const glass_far = vec3(0.45, 0.33, 0.35);
 pub const matte_albedo = vec3(0.60, 0.55, 0.50);
 
 pub const water_deep = vec3(0.02, 0.08, 0.14);
-/// Sunlight scattered in the water, scaled by the shadow: 0.08 * sun_col.
+/// Sunlight scattered in the water, scaled by the shadow: 0.08 * the M2
+/// sun_col, the same in every preset.
 pub const water_scatter = sun_col * splat(0.08);
 pub const water_f0: f32 = 0.02;
 
@@ -147,6 +149,7 @@ const Consts = struct {
     /// dot(d, L) at or below which the sky has neither disc nor glow: 0.90,
     /// or 2 (never exceeded) for a preset without them.
     sky_cut: f32,
+    /// The M2 constant in every preset.
     water_scatter: Vec3,
     /// Specular highlight colour on the water: 0.5 * sun_col (zero without).
     water_spec_col: Vec3,
@@ -181,9 +184,9 @@ fn consts(comptime def: PresetDef) Consts {
         .sun_disc_col = if (def.disc) def.sun_col else splat(0.0),
         .sun_glow_col = if (def.disc) def.sun_col * splat(0.4) else splat(0.0),
         .sky_cut = if (def.disc) 0.90 else 2.0,
-        .water_scatter = def.sun_col * splat(0.08),
+        .water_scatter = water_scatter,
         .water_spec_col = if (def.water_spec) def.sun_col * splat(0.5) else splat(0.0),
-        .water_base = water_deep + def.sun_col * splat(0.08),
+        .water_base = water_deep + water_scatter,
         .sphere_lit_col = sphere_tint * def.sun_col,
         .matte_amb = matte_albedo * (def.mid * splat(0.15)),
         .matte_sun = matte_albedo * def.sun_col,
@@ -199,6 +202,23 @@ pub const preset_consts: [preset_count]Consts = blk: {
     for (preset_defs, 0..) |def, i| t[i] = consts(def);
     break :blk t;
 };
+const consts_sunset = preset_consts[0];
+const consts_midnight = preset_consts[1];
+const consts_noon = preset_consts[2];
+const consts_storm = preset_consts[3];
+
+/// A preset's values at runtime. A switch over four separate constants, not
+/// preset_consts[i]: the thumb build indexed that array of vector structs
+/// with a stride that did not match its layout (presets 1 to 3 read the
+/// wrong bytes on the badge build only; the wasm was right).
+pub fn consts_of(preset: Preset) *const Consts {
+    return switch (preset) {
+        .sunset => &consts_sunset,
+        .midnight => &consts_midnight,
+        .noon => &consts_noon,
+        .storm => &consts_storm,
+    };
+}
 
 /// Ripple amplitude scale per preset (water.zig folds it into the waves).
 pub const ripple_scale: [preset_count]f32 = blk: {
@@ -254,7 +274,7 @@ pub const Ball = struct {
 /// The frame's scene values. `sun` is the (drifted) direction to the sun,
 /// `ys` the sphere centre heights.
 pub fn frame_at(preset: Preset, fade: f32, sun: Vec3, ys: [3]f32) Frame {
-    const c = &preset_consts[@backingInt(preset)];
+    const c = consts_of(preset);
     const f = splat(fade);
     var fr: Frame = .{
         .sun_dir = sun,
@@ -354,13 +374,25 @@ comptime {
 
 /// Master switch for bob, sun drift, rings and stripes. false renders the
 /// M2.2 scene bit for bit (sunset, default height, fade 1): the legacy
-/// identity check.
-pub const motion: bool = false;
+/// identity check. Off in the -Dreflections_bench=motion_off build.
+pub const motion: bool = build_options.reflections_bench != .motion_off;
 /// Circular ripples around each sphere, per preset (sunset, midnight, noon,
-/// storm).
-pub const rings: [preset_count]bool = .{ true, true, true, true };
-/// Faint rotating stripes on the chrome sphere.
-pub const stripes: bool = true;
+/// storm); variant.zig turns them off where the budget does not allow them.
+pub const rings: [preset_count]bool = @splat(variant.rings);
+/// Whether any preset has rings: without, the ring code is not compiled at
+/// all (its mere presence in the water normal costs ~3.5 ms in cut20).
+pub const any_rings = motion and blk: {
+    var any = false;
+    for (rings) |r| any = any or r;
+    break :blk any;
+};
+/// Faint rotating stripes on the chrome sphere, per preset.
+pub const stripes: [preset_count]bool = .{ true, true, true, true };
+pub const any_stripes = motion and blk: {
+    var any = false;
+    for (stripes) |x| any = any or x;
+    break :blk any;
+};
 /// Noon's exact water shadows on primary water hits.
 pub const noon_shadows: bool = true;
 /// Noon's small chrome sphere.
@@ -390,6 +422,8 @@ pub const Caster = struct {
     /// smoothstep edges 0.72 rs^2 and 1.21 rs^2 on q2.
     q2_lo: f32,
     q2_hi: f32,
+    /// 1 / (q2_hi - q2_lo).
+    q2_inv: f32,
     opacity: f32,
     x0: f32,
     x1: f32,
@@ -415,6 +449,7 @@ pub fn caster(c: Vec3, rs: f32, opacity: f32, l: Vec3) Caster {
         .c = c,
         .q2_lo = 0.72 * rs * rs,
         .q2_hi = 1.21 * rs * rs,
+        .q2_inv = 1.0 / (1.21 * rs * rs - 0.72 * rs * rs),
         .opacity = opacity,
         .x0 = ax - hx,
         .x1 = ax + hx,

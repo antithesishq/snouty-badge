@@ -8,12 +8,34 @@ const dither = @import("dither.zig");
 const overlay = @import("overlay.zig");
 const trace = @import("trace.zig");
 const camera = @import("camera.zig");
+const scene = @import("scene.zig");
 const variant = @import("variant.zig");
 const build_options = @import("build_options");
 
 comptime {
     cart.export_start_code();
 }
+
+/// Preset of the stand-in view (Track A's branch only): badge-bench sets it
+/// with --poke reflections_bench_preset=N, the wasm with debug_set_preset.
+export var reflections_bench_preset: u32 = 0;
+/// Offset added to the frame counter for the stand-in view (badge-bench
+/// --poke reflections_bench_frame0=N starts the orbit at frame N).
+export var reflections_bench_frame0: u32 = 0;
+/// Fixed eye height in mm for badge-bench (--poke reflections_bench_height_mm=3000); 0: default.
+export var reflections_bench_height_mm: u32 = 0;
+
+/// -Dreflections_bench=height: the eye height sweeps min to max and back
+/// once per orbit, so every frame rebuilds the primary water tables.
+fn bench_height(f: u32) f32 {
+    const half = camera.orbit_frames / 2;
+    const i = f % camera.orbit_frames;
+    const k: f32 = @floatFromInt(if (i < half) i else camera.orbit_frames - i);
+    return camera.min_height + (camera.max_height - camera.min_height) * k / @as(f32, half);
+}
+
+/// A view fixed by debug_set_view (wasm harness), drawn every frame.
+var debug_view: ?trace.View = null;
 
 /// Frames since start().
 var frame: u32 = 0;
@@ -34,11 +56,17 @@ pub fn update() void {
     const t0 = cart.micros_since_boot();
     dither.begin_frame(frame);
     // Track B's app.zig replaces this with the attract / free camera state.
-    trace.render_frame(.{
-        .preset = .sunset,
-        .t = frame,
-        .orbit = frame % camera.orbit_frames,
-        .height = camera.default_height,
+    const f = frame +% reflections_bench_frame0;
+    trace.render_frame(debug_view orelse .{
+        .preset = @fromBackingInt(@intCast(reflections_bench_preset % scene.preset_count)),
+        .t = f,
+        .orbit = f % camera.orbit_frames,
+        .height = if (build_options.reflections_bench == .height)
+            bench_height(f)
+        else if (reflections_bench_height_mm != 0)
+            @as(f32, @floatFromInt(reflections_bench_height_mm)) / 1000.0
+        else
+            camera.default_height,
         .fade = 1.0,
     });
     render_us = @truncate(cart.micros_since_boot() - t0);
@@ -55,6 +83,10 @@ comptime {
         @export(&debug_render_us, .{ .name = "debug_render_us" });
         @export(&debug_pixel_checksum, .{ .name = "debug_pixel_checksum" });
         @export(&debug_dither_mode, .{ .name = "debug_dither_mode" });
+        @export(&debug_set_preset, .{ .name = "debug_set_preset" });
+        @export(&debug_set_view, .{ .name = "debug_set_view" });
+        @export(&debug_set_dither_mode, .{ .name = "debug_set_dither_mode" });
+        @export(&debug_preset, .{ .name = "debug_preset" });
     }
 }
 
@@ -63,6 +95,24 @@ fn debug_frame() callconv(.c) u32 {
 }
 fn debug_render_us() callconv(.c) u32 {
     return render_us;
+}
+fn debug_set_preset(p: u32) callconv(.c) void {
+    reflections_bench_preset = p;
+}
+fn debug_set_view(preset: u32, t: u32, orbit: u32, height_mm: u32) callconv(.c) void {
+    debug_view = .{
+        .preset = @fromBackingInt(@intCast(preset % scene.preset_count)),
+        .t = t,
+        .orbit = orbit % camera.orbit_frames,
+        .height = @as(f32, @floatFromInt(height_mm)) / 1000.0,
+        .fade = 1.0,
+    };
+}
+fn debug_set_dither_mode(m: u32) callconv(.c) void {
+    dither.mode = @fromBackingInt(@intCast(m & 1));
+}
+fn debug_preset() callconv(.c) u32 {
+    return if (debug_view) |v| @backingInt(v.preset) else reflections_bench_preset % scene.preset_count;
 }
 fn debug_dither_mode() callconv(.c) u32 {
     return @backingInt(dither.mode);
