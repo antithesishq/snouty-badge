@@ -13,4 +13,8 @@ test {
     _ = @import("psg_unit.zig");
     _ = @import("smoke.zig");
     _ = @import("golden.zig");
+    _ = @import("ring_unit.zig");
+    _ = @import("kstore_unit.zig");
+    _ = @import("determinism.zig");
+    _ = @import("scrub_sizing.zig");
 }
