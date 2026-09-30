@@ -149,7 +149,8 @@ watch the menu re-scan, run a cart, come back, deploy the Sonic set.
   toggle, "what is on the badge now" view (read the root directory).
   Much of this landed with M0; what M1 adds is in section 8.
 - **M2 build on the fly**: section 6, remote path first (works on every
-  Pi), local path second.
+  Pi), local path second. Built 2026-09-30 to the section 9 contract
+  (tag `badge-manager/m2`); the ssh path still waits for a Pi.
 - **M3 table polish**: badge LED/menu hints in the UI text, one-tap
   "same set again", deploy history, optional read-only kiosk page on a
   spare tablet. Only if there is time.
@@ -624,3 +625,26 @@ lives, no denials, 21 turns, $1.15, 1.40 ms, 13312 bytes; it had committed
 a second preview directory, so the template's `.gitignore` now ignores
 every PNG, GIF and frames.json in the cart. The GIF frames show exactly
 what the summaries describe.
+
+Final check (2026-09-30, the merged branch, everything through the
+Python side): `python3 -m badge_manager --config <tmp>/station.toml build
+"a Snouty cart where you catch falling acorns in a basket, d-pad moves
+the basket, score at the top, three misses and it is game over" --local`
+with `build_repo` pointing at this checkout. Job
+`20260930-221533-catch-falling`: agent 26 turns, $1.50, 249 s; whole
+job 309 s; "Acorn Catch" (`snouty-catch-falling`), 16384-byte RAM UF2,
+worst busy 2.17 ms of the 16.7 budget. The GIF frames show a SCORE band,
+three acorn lives at the top right, a tree canopy dropping acorns, the
+basket sliding left and right under the d-pad script and a miss marker
+on the ground. Afterwards `badge builds`, `badge build --status` and
+`badge library` all showed the job and the cart with its build id, the
+real server served `/builds/<id>/preview.gif` (30268 bytes, 200) and
+answered 404 to a `..` path, `/api/status` carried `build`, `job`,
+`builds` and the cart's `preview`, and `badge --fake-badge badge.img
+deploy --carts snouty-catch-falling --yes` put the UF2 on the loop image
+as one contiguous file behind the label. 137 unit tests, `e2e_loop.sh`
+and `e2e_build.sh` pass. The generated cart is on the local branch
+`build/20260930-221533-catch-falling` of this repository.
+
+Not run anywhere yet: the remote ssh path against the real VM from a Pi
+(exercised only with a fake `ssh` on PATH), `setup.sh`, and any badge.
