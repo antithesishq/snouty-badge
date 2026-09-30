@@ -19,11 +19,26 @@
 //!
 //! Keys: Up/Down move (wrapping), A chooses, B or a Select tap (a press that
 //! began inside the menu) resumes. Left/Right or A cycle a setting row
-//! (Buttons, Scale, Sound, Debug overlay); on Resume, Reset, Pick ROM and
-//! About Left/Right do nothing in M2 (M3 makes them scrub time, SPEC.md 10,
-//! and draws "Scrub: ..." on the panel's bottom line, kept free here). A
-//! scale change takes effect on the first frame after resuming (main.zig
-//! calls `video.apply` whenever the menu closes).
+//! (Buttons, Scale, Sound, Debug overlay). A scale change takes effect on
+//! the first frame after resuming (main.zig calls `video.apply` whenever the
+//! menu closes) or on the next scrub step, which redraws the whole screen.
+//!
+//! Time scrubber (SPEC.md 5 and 10, frontend/rewind.zig), Gear's UI. On
+//! every row that is not a setting (Resume, where the menu opens, Reset,
+//! Pick ROM, About) Left/Right step time back/forward one record (0.5 s),
+//! repeating 4 times a second while held; a Left/Right held over from the
+//! game does nothing (main.zig suppresses held buttons on open, and the
+//! repeat only starts from a press). The panel's bottom line
+//! (`scrub_line_y`) reads "Scrub: live / 3.5s" or "Scrub: -1.5 / 3.5s"
+//! (position behind live / history held), dim while there is no history,
+//! "Scrub: no memory" when the arena had no room. Resuming from a scrubbed
+//! position plays on from there and drops the future. After a scrub step
+//! the panel gives way to that line in a bar at the bottom (`scrub_view`)
+//! so the restored frame, drawn by `rewind.step`, is visible; Left/Right
+//! keep scrubbing, B or a Select tap resume, and Up/Down/A bring the full
+//! menu back. The bar lies inside the panel's rectangle, so the panel
+//! covers it completely when it comes back. Reset and Pick ROM forget the
+//! history (`rewind.reset` here, and in main.zig's `begin`).
 //!
 //! Colours: Gear's fixed scheme, a navy title band with white and yellow
 //! text, a black panel with a blue frame, white rows and a yellow cursor
@@ -37,8 +52,9 @@ const input = @import("input.zig");
 const audio = @import("audio.zig");
 const romsrc = @import("romsrc.zig");
 const text = @import("text.zig");
+const rewind = @import("rewind.zig");
 
-pub const version = "0.2.0-m2";
+pub const version = "0.3.0-m3";
 
 /// What main.zig does after a menu update.
 pub const Result = enum {
@@ -64,16 +80,28 @@ fn visible(item: Item) bool {
 
 var cursor: Item = .resume_game;
 var showing_about: bool = false;
+/// After a scrub step the panel would hide the restored frame, so only the
+/// scrub bar is drawn until Up/Down/A.
+var scrub_view: bool = false;
 /// A Select press began inside the menu; its release resumes. The release
 /// of the hold that opened the menu does not count.
 var select_armed: bool = false;
+
+/// Scrub auto-repeat (SPEC.md 5: 4 steps per second while held; one update
+/// is 1/30 s here, Gear's 15 frames are 1/60 s each).
+const repeat_updates = 8;
+/// Direction of the held scrub key, 0 when none.
+var repeat_dir: i2 = 0;
+var repeat_left: u8 = 0;
 
 /// Enter the menu. Called in the update the Select hold threshold is
 /// reached, before anything is drawn; the caller then calls `update` once
 /// in the same update.
 pub fn open() void {
     showing_about = false;
+    scrub_view = false;
     select_armed = false;
+    repeat_dir = 0;
     cursor = .resume_game;
     if (!cart.is_wasm) {
         const n = cart.screen_width * cart.screen_height / 2;
@@ -98,19 +126,29 @@ pub fn update(md: *core.Md, e: input.Edge) Result {
 
     if (showing_about) {
         if (e.pressed(.a) or e.pressed(.b) or select_tap) showing_about = false;
+    } else if (scrub_view) {
+        if (e.pressed(.b) or select_tap) return .resume_game;
+        // Up/Down/A bring the full menu back without acting.
+        if (e.pressed(.up) or e.pressed(.down) or e.pressed(.a)) {
+            scrub_view = false;
+            repeat_dir = 0;
+        } else left_right(md, e);
     } else {
         if (e.pressed(.b) or select_tap) return .resume_game;
         if (e.pressed(.up)) move(-1);
         if (e.pressed(.down)) move(1);
-        if (e.pressed(.left)) adjust(-1);
-        if (e.pressed(.right)) adjust(1);
+        left_right(md, e);
         if (e.pressed(.a)) {
             switch (cursor) {
                 .resume_game => return .resume_game,
                 .reset => {
-                    // main.zig re-applies the scale on resume (Vdp.reset
-                    // puts line_mode back to squeeze).
+                    // `Md.reset` writes the memories directly, past the
+                    // undo hooks: forget the history. main.zig re-applies
+                    // the scale on resume too (Vdp.reset puts line_mode
+                    // back to squeeze).
                     md.reset();
+                    rewind.reset(md);
+                    video.apply(md);
                     return .resume_game;
                 },
                 .pick_rom => return .pick_rom,
@@ -134,8 +172,49 @@ fn move(d: i2) void {
     cursor = @fromBackingInt(@intCast(i));
 }
 
-/// Left/Right (or A, forwards) on a setting row cycles it. Other rows:
-/// nothing in M2 (M3 scrubs there).
+fn is_setting(item: Item) bool {
+    return switch (item) {
+        .buttons, .scale, .sound, .debug => true,
+        .resume_game, .reset, .pick_rom, .about => false,
+    };
+}
+
+/// Time scrubber step (SPEC.md section 10): Left = back 0.5 s, Right =
+/// forward. Swaps the record into `md` and redraws the frozen frame.
+fn on_scrub(md: *core.Md, dir: i2) void {
+    if (rewind.step(md, dir)) scrub_view = true;
+}
+
+/// Left/Right: cycle a setting on a setting row, else scrub with
+/// auto-repeat. The repeat starts only from a press in the menu.
+fn left_right(md: *core.Md, e: input.Edge) void {
+    const d: i2 = if (e.pressed(.left)) -1 else if (e.pressed(.right)) 1 else 0;
+    if (d != 0) {
+        repeat_dir = 0;
+        if (is_setting(cursor)) {
+            adjust(d);
+        } else {
+            on_scrub(md, d);
+            repeat_dir = d;
+            repeat_left = repeat_updates;
+        }
+        return;
+    }
+    if (repeat_dir == 0) return;
+    const still = if (repeat_dir < 0) e.held(.left) else e.held(.right);
+    if (!still or is_setting(cursor)) {
+        repeat_dir = 0;
+        return;
+    }
+    repeat_left -= 1;
+    if (repeat_left == 0) {
+        on_scrub(md, repeat_dir);
+        repeat_left = repeat_updates;
+    }
+}
+
+/// Left/Right (or A, forwards) on a setting row cycles it. Other rows
+/// scrub (`left_right`).
 fn adjust(d: i2) void {
     switch (cursor) {
         .buttons => input.layout = input.layout.step(d),
@@ -161,6 +240,10 @@ const first_row_y = panel_y + 3;
 /// in M2, "Scrub: ..." in M3. Fixed below the eighth row even when Pick
 /// ROM is hidden.
 pub const scrub_line_y = first_row_y + item_count * row_h;
+/// The scrub bar shown after a step (`scrub_view`): the panel's bottom
+/// strip, so the panel hides it entirely when it comes back.
+const bar_h = 10;
+const bar_y = panel_y + panel_h - bar_h;
 
 /// Characters of the 8 px font across the screen (title band).
 const screen_cols = cart.screen_width / 8;
@@ -207,6 +290,14 @@ fn centered(s: []const u8, y: i32, color: cart.DisplayColor) void {
 fn draw(md: *const core.Md) void {
     var buf: [24]u8 = undefined;
 
+    if (scrub_view) {
+        // Only the bar: the rest is the restored frame, redrawn in full by
+        // every scrub step (frontend/rewind.zig).
+        cart.rect(.{ .x = panel_x, .y = bar_y, .width = panel_w, .height = bar_h, .fill_color = band_color, .stroke_color = frame_color });
+        centered(scrub_text(&buf), bar_y + 1, title_color);
+        return;
+    }
+
     // Title band: SPEC.md 12.
     cart.rect(.{ .x = 0, .y = 0, .width = cart.screen_width, .height = band_h, .fill_color = band_color });
     centered(title, 1, title_color);
@@ -233,7 +324,56 @@ fn draw(md: *const core.Md) void {
         }
         y += row_h;
     }
-    // The bottom line (`scrub_line_y`) stays empty until M3's scrubber.
+    const live = rewind.capacity_slots() != 0 and rewind.history_frames() != 0;
+    text.draw(scrub_text(&buf), text_x, scrub_line_y, if (live) row_color else dim_color, panel_color);
+}
+
+/// The scrub line for the current position, or "Scrub: no memory" when
+/// the scrubber found no room (frontend/rewind.zig `init`).
+fn scrub_text(buf: *[24]u8) []const u8 {
+    if (rewind.capacity_slots() == 0) return no_memory;
+    return scrub_label(buf, rewind.depth_frames(), rewind.history_frames());
+}
+
+const no_memory = "Scrub: no memory";
+
+/// "Scrub: live / 3.5s" or "Scrub: -1.5 / 3.5s"; from 10 s on whole
+/// seconds ("Scrub: -12 / 32s"), so it stays within 18 characters (the
+/// panel's width) for any history. Gear's.
+pub fn scrub_label(buf: *[24]u8, depth: u32, history: u32) []const u8 {
+    var i: usize = 0;
+    i += put(buf[i..], "Scrub: ");
+    if (depth == 0) {
+        i += put(buf[i..], "live");
+    } else {
+        i += put(buf[i..], "-");
+        i += put_secs(buf[i..], depth);
+    }
+    i += put(buf[i..], " / ");
+    i += put_secs(buf[i..], history);
+    i += put(buf[i..], "s");
+    return buf[0..i];
+}
+
+fn put(dst: []u8, s: []const u8) usize {
+    @memcpy(dst[0..s.len], s);
+    return s.len;
+}
+
+/// Frames at 60 Hz as seconds: "3.5" (rounded to tenths) below 10 s, else
+/// whole seconds "32" (capped at 99).
+fn put_secs(dst: []u8, frames: u32) usize {
+    const tenths = (frames + 3) / 6;
+    if (tenths < 100) {
+        dst[0] = '0' + @as(u8, @intCast(tenths / 10));
+        dst[1] = '.';
+        dst[2] = '0' + @as(u8, @intCast(tenths % 10));
+        return 3;
+    }
+    const secs = @min(tenths / 10, 99);
+    dst[0] = '0' + @as(u8, @intCast(secs / 10));
+    dst[1] = '0' + @as(u8, @intCast(secs % 10));
+    return 2;
 }
 
 /// About (PLAN.md M2 Track A): version, file name, header name, size,
@@ -370,10 +510,20 @@ comptime {
     check_width("CRC 00000000", panel_cols);
     check_width("4096 KB", panel_cols);
     check_width(back_hint, panel_cols);
+    check_width(no_memory, panel_cols);
+    check_width("Scrub: -9.9 / 9.9s", panel_cols);
+    check_width("Scrub: live / 9.9s", panel_cols);
+    check_width("Scrub: -99 / 99s", panel_cols);
+    if (bar_y < scrub_line_y) @compileError("scrub bar overlaps the rows");
+    if (bar_y + bar_h > panel_y + panel_h) @compileError("scrub bar outside the panel");
 }
 
 comptime {
     var buf: [24]u8 = undefined;
     if (!std.mem.eql(u8, fit(&buf, "snouty-test.bin", 18), "snouty-test.bin")) @compileError("fit short");
     if (!std.mem.eql(u8, fit(&buf, "Sonic the Hedgehog (World).md", 18), "Sonic the Hedgeho~")) @compileError("fit long");
+    if (!std.mem.eql(u8, scrub_label(&buf, 0, 210), "Scrub: live / 3.5s")) @compileError("scrub_label live");
+    if (!std.mem.eql(u8, scrub_label(&buf, 90, 239), "Scrub: -1.5 / 4.0s")) @compileError("scrub_label depth");
+    if (!std.mem.eql(u8, scrub_label(&buf, 600, 1890), "Scrub: -10 / 31s")) @compileError("scrub_label long");
+    if (scrub_label(&buf, 594, 594).len > panel_cols) @compileError("scrub_label too wide");
 }
