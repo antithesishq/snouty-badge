@@ -1,8 +1,8 @@
 #!/usr/bin/env node
-// Timeline regression for Snouty Scene: one full loop, headless.
+// Timeline regression for Demosnout: one full loop, headless.
 //
-//   node carts/snouty-scene/tools/check_timeline.mjs [--update] [--stride N]
-//                                                   [--wasm zig-out/bin/snouty-scene.wasm]
+//   node carts/demosnout/tools/check_timeline.mjs [--update] [--stride N]
+//                                                   [--wasm zig-out/bin/demosnout.wasm]
 //
 // Reads the part lengths from cart/src/timeline.zig (`pub const bars`), then
 // runs the cart once through the whole loop plus 60 frames with
@@ -39,11 +39,11 @@ const GOLDEN_FRAME = 30;
 
 function usage(msg) {
     if (msg) console.error(`check_timeline: ${msg}`);
-    console.error("usage: node carts/snouty-scene/tools/check_timeline.mjs [--update] [--stride N] [--wasm FILE]");
+    console.error("usage: node carts/demosnout/tools/check_timeline.mjs [--update] [--stride N] [--wasm FILE]");
     process.exit(2);
 }
 
-const opts = { update: false, stride: 30, wasm: path.join(REPO, "zig-out", "bin", "snouty-scene.wasm") };
+const opts = { update: false, stride: 30, wasm: path.join(REPO, "zig-out", "bin", "demosnout.wasm") };
 const argv = process.argv.slice(2);
 for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
@@ -56,7 +56,7 @@ for (let i = 0; i < argv.length; i++) {
         default: usage(`unexpected argument '${a}'`);
     }
 }
-if (!fs.existsSync(opts.wasm)) usage(`${path.relative(process.cwd(), opts.wasm)} not found (run zig build -Dcart=snouty-scene)`);
+if (!fs.existsSync(opts.wasm)) usage(`${path.relative(process.cwd(), opts.wasm)} not found (run zig build -Dcart=demosnout)`);
 
 // ---------------------------------------------------------------- the plan
 const src = fs.readFileSync(TIMELINE, "utf8");

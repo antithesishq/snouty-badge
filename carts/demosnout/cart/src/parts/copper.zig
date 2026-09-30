@@ -20,7 +20,7 @@ const font = @import("../gen/scroller_font.zig");
 
 pub const name: []const u8 = "Copper";
 
-pub const text = "SNOUTY SCENE  *  ANTITHESIS PRESENTS A SYCL BADGE PRODUCTION  *  " ++
+pub const text = "DEMOSNOUT  *  ANTITHESIS PRESENTS A SYCL BADGE PRODUCTION  *  " ++
     "GREETINGS TO THE SYCL CREW, THE ZIG COMMUNITY AND EVERYONE AT THE BOOTH  *  ";
 
 const width = 160;

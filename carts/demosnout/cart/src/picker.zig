@@ -17,7 +17,7 @@ const text = @import("text.zig");
 pub var open: bool = false;
 var cursor: u8 = 0;
 
-const title = "SNOUTY SCENE  -  PARTS";
+const title = "DEMOSNOUT  -  PARTS";
 const hint = "A JUMP  B/SELECT CLOSE";
 
 const row_h: i32 = 9;

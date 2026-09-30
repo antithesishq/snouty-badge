@@ -180,7 +180,7 @@ def proof(path):
     body = re.search(r"const columns_data: \[\d+\]u16 = \.\{(.*?)\};", src, re.S).group(1)
     data = [int(v, 16) for v in re.findall(r"0x([0-9a-f]{4})", body)]
     rows = ["".join(chr(c) for c in range(32, 64)), "".join(chr(c) for c in range(64, 96)),
-            "SNOUTY SCENE  *  GREETINGS TO THE ZIG COMMUNITY!"]
+            "DEMOSNOUT  *  GREETINGS TO THE ZIG COMMUNITY!"]
     W = max(sum(widths[ord(ch) - 32] for ch in r) for r in rows) + 4
     im = Image.new("RGB", (W, len(rows) * 20 + 4), (16, 16, 48))
     px = im.load()

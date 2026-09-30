@@ -1,13 +1,14 @@
-//! Snouty Scene: a demoscene production for the SYCL Badge V2. Classic
+//! Demosnout: a demoscene production for the SYCL Badge V2. Classic
 //! real-time effects on a 120 BPM frame clock, looping, with a part picker.
 //! See SPEC.md for the design, PLAN.md for the current milestone and
 //! CLAUDE.md for the toolchain.
 //!
-//! update(): input (A/Start skip, Select opens the picker, B toggles the
-//! timing overlay in -Ddebug_overlay=true builds; nothing while Start and
-//! Select are held together, the OS's exit chord), then the timeline
-//! renders the current part and its veil, the picker and the overlay draw
-//! on top, and the clock advances one frame.
+//! update(): input (A/Start skip, Select opens the picker, B holds the
+//! current part (auto-advance off; in -Ddebug_overlay=true builds B toggles
+//! the timing overlay instead); nothing while Start and Select are held
+//! together, the OS's exit chord), then the timeline renders the current
+//! part and its veil, the picker, the hold toast and the overlay draw on
+//! top, and the clock advances one frame.
 const cart = @import("cart-api");
 const build_options = @import("build_options");
 const input = @import("input.zig");
@@ -15,6 +16,7 @@ const math = @import("math.zig");
 const timeline = @import("timeline.zig");
 const picker = @import("picker.zig");
 const overlay = @import("overlay.zig");
+const text = @import("text.zig");
 
 comptime {
     cart.export_start_code();
@@ -27,6 +29,9 @@ var scene_part: u8 = 0;
 
 var render_us: u32 = 0;
 var show_overlay: bool = build_options.debug_overlay;
+/// Frames left of the "HOLD ON" / "HOLD OFF" toast after B.
+var hold_toast: u32 = 0;
+const toast_frames = 75;
 
 pub fn start() void {
     cart.set_vsync_enabled(1000.0 / 60.0);
@@ -46,19 +51,36 @@ pub fn update() void {
         picker.show();
     } else if (input.pressed(.a) or input.pressed(.start)) {
         timeline.skip();
-    } else if (build_options.debug_overlay and input.pressed(.b)) {
-        show_overlay = !show_overlay;
+    } else if (input.pressed(.b)) {
+        if (build_options.debug_overlay) {
+            show_overlay = !show_overlay;
+        } else {
+            timeline.set_hold(!timeline.hold);
+            hold_toast = toast_frames;
+        }
     }
 
     const fb = cart.framebuffer;
     const t0 = cart.micros_since_boot();
     timeline.render(fb);
     if (picker.open) picker.draw();
+    if (hold_toast > 0) {
+        hold_toast -= 1;
+        draw_hold_toast();
+    }
     render_us = @truncate(cart.micros_since_boot() - t0);
     if (show_overlay) overlay.draw(render_us, timeline.current(), timeline.part_frame());
     timeline.step();
 
     if (cart.is_wasm) present_wasm();
+}
+
+/// "HOLD ON" / "HOLD OFF" in the bottom-right corner for toast_frames after
+/// B, so the state change is visible without a permanent mark on the show.
+fn draw_hold_toast() void {
+    const str: []const u8 = if (timeline.hold) "HOLD ON" else "HOLD OFF";
+    const x: i32 = 160 - 4 - @as(i32, @intCast(str.len)) * text.glyph;
+    text.shadowed(str, x, 128 - 4 - text.glyph, .rgb(0xffd850), 1);
 }
 
 // Debug exports for the headless harness (wasm), scene_part for badge-bench.
@@ -71,6 +93,7 @@ comptime {
         @export(&debug_render_us, .{ .name = "debug_render_us" });
         @export(&debug_goto, .{ .name = "debug_goto" });
         @export(&debug_picker, .{ .name = "debug_picker" });
+        @export(&debug_hold, .{ .name = "debug_hold" });
     } else {
         @export(&scene_part, .{ .name = "scene_part" });
     }
@@ -106,6 +129,10 @@ fn debug_goto(part: u32) callconv(.c) void {
 /// 1 while the picker is open.
 fn debug_picker() callconv(.c) u32 {
     return @intFromBool(picker.open);
+}
+/// 1 while the hold (B) is on.
+fn debug_hold() callconv(.c) u32 {
+    return @intFromBool(timeline.hold);
 }
 
 /// Button state. Upstream's platform_wasm.zig exposes `controls` but never

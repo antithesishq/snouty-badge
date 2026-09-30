@@ -617,3 +617,12 @@ arms coded as stubs to the Track A interface above; keep the diff small),
     update --init --reference` from the main checkout's module store fixed
     them). Hardware check (open, not a gate): XIP launch, drive streaming
     stall rates contiguous and fragmented, the picker on a real drive.
+- 2026-09-30 (M3 feasibility, no code): record sizes for the delta
+  keyframes measured with temporary write probes (SPEC 10.1): 8-10 KB
+  per 30-frame record in Miniplanets play, 89 KB at a level load, about
+  110 KB of RAM for the ring, so about 6 s of history in play. Found
+  that the third Start in the Miniplanets scripts pauses the game: the
+  M1/M2 Miniplanets perf numbers are for a paused game; M3's first step
+  is to fix `golden_mini.pad_at`, `m1_mini300.json`, `m2_mini300.json`,
+  re-record `golden-mini` and re-bench. Adrian: M3 starts after Snouty
+  Gear M3 (same design, prior art).

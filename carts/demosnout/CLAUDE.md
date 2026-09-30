@@ -1,4 +1,4 @@
-# Snouty Scene
+# Demosnout
 
 Demoscene cart for the SYCL Badge V2, built for Antithesis: ten classic
 real-time effects on a 120 BPM frame clock, looping, with a part picker.
@@ -35,8 +35,8 @@ owns Start+Select and the stick click. No audio, no neopixels.
 
 Zig `0.17.0-dev.1936+5a625d5f3` at `~/.local/bin/zig`
 (`export PATH="$HOME/.local/bin:$PATH"`). From the repository root:
-`zig build -Dcart=snouty-scene` (outputs `zig-out/firmware/snouty-scene.{uf2,elf}`,
-`zig-out/bin/snouty-scene.wasm`), `zig build test`, `zig build check-float`.
+`zig build -Dcart=demosnout` (outputs `zig-out/firmware/demosnout.{uf2,elf}`,
+`zig-out/bin/demosnout.wasm`), `zig build test`, `zig build check-float`.
 `-Ddebug_overlay=true` compiles in the B-toggled timing overlay. Never
 branch `build.zig` on file existence or environment (this Zig caches the
 configure graph).
@@ -44,11 +44,11 @@ configure graph).
 Headless, from the root:
 
 ```
-node tools/preview.mjs zig-out/bin/snouty-scene.wasm --frames 1800 --every 6 --raw-colors --out carts/snouty-scene/out/loop
-python3 tools/make_gif.py carts/snouty-scene/out/loop carts/snouty-scene/docs/preview.gif --scale 3 --ms 100
-node tools/preview.mjs zig-out/bin/snouty-scene.wasm --frames 300 --call debug_goto:4 --every 5 --raw-colors --out carts/snouty-scene/out/tunnel
-badge-bench/bench.sh zig-out/firmware/snouty-scene.elf --frames 900 --every 60 --symbols
-carts/snouty-scene/tools/bench_parts.sh          # one badge-bench run per part, worst-frame table
+node tools/preview.mjs zig-out/bin/demosnout.wasm --frames 1800 --every 6 --raw-colors --out carts/demosnout/out/loop
+python3 tools/make_gif.py carts/demosnout/out/loop carts/demosnout/docs/preview.gif --scale 3 --ms 100
+node tools/preview.mjs zig-out/bin/demosnout.wasm --frames 300 --call debug_goto:4 --every 5 --raw-colors --out carts/demosnout/out/tunnel
+badge-bench/bench.sh zig-out/firmware/demosnout.elf --frames 900 --every 60 --symbols
+carts/demosnout/tools/bench_parts.sh          # one badge-bench run per part, worst-frame table
 ```
 
 ## Conventions
