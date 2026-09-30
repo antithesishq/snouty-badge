@@ -293,7 +293,7 @@ class CommandTest(Env):
         d = self.jobs.dir(job.id)
         run, fetch, clean = self.jobs.commands(job)
         work = f"/home/exedev/repo/build-jobs/{job.id}"
-        ssh = "ssh -o BatchMode=yes -o ConnectTimeout=15 exedev@vm.example"
+        ssh = "ssh -o BatchMode=yes -o ConnectTimeout=15 -o StrictHostKeyChecking=accept-new exedev@vm.example"
         self.assertEqual(run, f"{ssh} 'bash /home/exedev/repo/badge-manager/build-job.sh "
                               f"--id {job.id} --out {work}/out --prompt-file - "
                               "--name snouty-rain --max-turns 40 --max-usd 5 --minutes 19' "
@@ -311,7 +311,7 @@ class CommandTest(Env):
         job = self.jobs.create("rain", "remote")
         with mock.patch.object(build_mod, "SSH_KEY", key):
             clean = self.jobs.commands(job)[2]
-        self.assertTrue(clean.startswith(f"ssh -o BatchMode=yes -o ConnectTimeout=15 -i {key} "
+        self.assertTrue(clean.startswith(f"ssh -o BatchMode=yes -o ConnectTimeout=15 -o StrictHostKeyChecking=accept-new -i {key} "
                                          "exedev@vm.example "), clean)
 
     def test_remote_quoting(self):
@@ -320,10 +320,10 @@ class CommandTest(Env):
         run = self.jobs.commands(job)[0]
         # the remote command is one argument, quoted again inside for the remote shell
         argv = shlex.split(run.split(" < ")[0])
-        self.assertEqual(argv[:6], ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=15",
-                                    "exedev@vm.example"])
-        self.assertEqual(len(argv), 7)
-        self.assertEqual(shlex.split(argv[6])[:2],
+        self.assertEqual(argv[:8], ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=15",
+                                    "-o", "StrictHostKeyChecking=accept-new", "exedev@vm.example"])
+        self.assertEqual(len(argv), 9)
+        self.assertEqual(shlex.split(argv[8])[:2],
                          ["bash", "/home/x/my repo/badge-manager/build-job.sh"])
 
     def test_template(self):

@@ -43,7 +43,7 @@ MAX_PROMPT = 2000
 LOG_LINE_MAX = 300
 KILL_GRACE_S = 3.0            # SIGTERM, then SIGKILL this much later
 SSH_STEP_S = 120              # timeout for the fetch, cleanup and cancel ssh calls
-SSH_OPTS = ["-o", "BatchMode=yes", "-o", "ConnectTimeout=15"]
+SSH_OPTS = ["-o", "BatchMode=yes", "-o", "ConnectTimeout=15", "-o", "StrictHostKeyChecking=accept-new"]
 SSH_KEY = Path("/home/badge/.ssh/id_ed25519")   # PLAN 9.8: the station's own key, used when
                                                 # present (the station runs as root)
 PACKAGE_ROOT = Path(__file__).resolve().parents[1]           # badge-manager/

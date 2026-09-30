@@ -36,6 +36,9 @@ if [ -z "$HOST" ]; then
     exit 2
 fi
 mkdir -p "$LIBRARY/carts"
+# The station's own key (setup.sh generates it), the same one `badge build` uses.
+SSH_ID=""
+[ -f /home/badge/.ssh/id_ed25519 ] && SSH_ID="-i /home/badge/.ssh/id_ed25519"
 
 if [ "$HOST" = local ]; then
     shopt -s nullglob
@@ -47,7 +50,7 @@ if [ "$HOST" = local ]; then
 else
     echo "sync: $HOST:$REPO/zig-out/firmware/*.uf2 -> $LIBRARY/carts/"
     changes=$(rsync -rt --itemize-changes --out-format='%i %n' \
-        -e "ssh -o BatchMode=yes -o ConnectTimeout=10" \
+        -e "ssh $SSH_ID -o BatchMode=yes -o ConnectTimeout=10 -o StrictHostKeyChecking=accept-new" \
         "$HOST:$REPO/zig-out/firmware/*.uf2" "$LIBRARY/carts/")
 fi
 changed=$(printf '%s\n' "$changes" | awk '$1 ~ /^>f/ { print $2 }')
