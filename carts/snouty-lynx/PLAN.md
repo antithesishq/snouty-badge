@@ -55,6 +55,20 @@ charge).
 ## Status
 
 - 2026-09-29: SPEC.md and this plan drafted; waiting on section 18.
+- 2026-09-30: M0 DONE. Tracks A and B merged on `lynx/m0` (b950ebe), tag
+  `snouty-lynx/m0`. Merged tree: root `zig build` builds every cart; the 22
+  other uf2/wasm files are byte-identical to origin/main 2680e2a (compared
+  from the same directory: the wasm files embed the build path, so hashes
+  from different worktrees differ); `zig build test` 461/462, the one
+  failure is demosnout's pre-existing `timeline` test (fails at 2680e2a
+  too, not ours); Lynx 22/22 with the local test data (both boot ROM
+  cross-checks match, 240,000 SingleStepTests cases parse). Sizes with
+  raycast.lnx embedded: .text 57,124 B (27,765 of it the ROM), .bss 73,920,
+  uf2 264,192, wasm 258,974. badge-bench fixture run: busy mean 0.70 ms,
+  worst 0.76, 0 over, LEDs off. Open for M1: `core/boot.zig` and
+  `core/cart.zig` each parse the header (unify in M1; boot's `Cart` is the
+  test-side one), M1 must trap $FE00/$FE4A (docs/BOOT.md), badge-manager
+  station set registration, hardware never seen (show-day gate).
 - 2026-09-30: M0 Track A (boot) done on `lynx/m0-boot`; report below.
   ROM sizes and compression (tools/romcheck.py, sizes only): Hard Drivin'
   131,072 B headerless, 256 x 512 B, 3-block loader, zlib -9 57.8% (per
