@@ -13,4 +13,4 @@ pub const stack_guard = 1024;
 /// 0x4AF00 minus the 32 KB stack, `.data`, `.bss` and `stack_guard`, from
 /// `size -A` of the XIP ELF) so the simulator and the headless preview show
 /// badge-like depth; integration sets the final figure. 100 KB until then.
-pub const wasm_arena_bytes = 100 * 1024;
+pub const wasm_arena_bytes = 101 * 1024;

@@ -319,6 +319,14 @@ there), because a full Genesis keyframe does not fit twice in RAM.
   evicted when the ring is full; a record that fills the ring alone loses
   the history until the next boundary. The picture while parked is drawn
   from the parked state without stepping it (`Md.render_still`).
+- Shipped (M3 tag, 2026-09-30): 68-byte slots, `Md.Small` 1664 B (26
+  slots per record), records capped at 64, a badge arena of about
+  103.9 KB (1528 slots; the wasm preview uses 101 KB). Miniplanets play
+  records are 123-142 slots (8.6 KB), so about 5.5 s of history in play,
+  9.5 s on menus, 0.5-1 s right after boot or a level load (a level load
+  record is 1362 slots, 92.6 KB). Tracking costs +0.12 ms per update on
+  the unpaused play script (the byte test on the 68000, Z80 and VDP write
+  paths); a scrub step costs 4.9 ms (the swap plus `render_still`).
 
 ### 10.1 Record sizes measured (2026-09-30, before M3)
 

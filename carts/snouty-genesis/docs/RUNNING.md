@@ -206,8 +206,8 @@ node tools/preview.mjs zig-out/bin/snouty-genesis.wasm --frames 540 --every 2 --
   --call-at "404 debug_frame_count" --call-at "470 debug_scrub_depth"
 ```
 
-Expected (the undo boundaries every 30 frames from the reset in `begin`,
-`frame_count` 0): the menu opens at `debug_frame_count` 556, so the first
+Verified at the M3 integration (the undo boundaries every 30 frames from
+the reset in `begin`, `frame_count` 0): the menu opens at `debug_frame_count` 556, so the first
 Left parks on the boundary at frame 540 (depth 16; from live a step goes
 back to the start of the open record, a full 30 only when live sits on a
 boundary), then 510, 480, 450 (depth 46, 76, 106), Right x2 back to 480
@@ -221,6 +221,7 @@ after it park 22 and 52 frames back (frames 600 and 570), and B resumes
 from 570. `debug_state` is 2 from 314 to 402 and 458 to 500, 1 otherwise.
 PNGs: the scrub bar over the restored picture after each step
 (`frame_0340.png` ...), the full panel again at 384.
+`docs/m3_scrub.gif` is updates 290-512 of this run, every third one.
 
 ## 5. Controls and the menu
 

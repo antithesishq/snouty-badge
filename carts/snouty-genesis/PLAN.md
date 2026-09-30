@@ -881,3 +881,57 @@ writes the memories directly, past the hooks). Exports `debug_scrub_depth`,
   play updates about 21.2 ms (paused they were 19.5); game updates
   about 20.0 mean. Hot: `step_frame` 41.6 %, `run_z80` 28.8 %, plane
   render 9.6 %, `write16` 1.7 % (1734 calls per update).
+- 2026-09-30 (M3 DONE): tag `snouty-genesis/m3`. Track A (3 commits:
+  `core/undo.zig`, `Md.Small`/`render_still`, hooks; `undo_unit`;
+  `determinism` + `scrub_sizing`) merged, Track B's five frontend commits
+  cherry-picked over its stub commit (rewind/tuning, menu scrub UI,
+  main.zig wiring + exports, `m3_scrub.json`, RUNNING.md). Integration:
+  `tuning.wasm_arena_bytes` 101 KB (the badge arena: 307,968 - 32 KB
+  stack - 168 `.data` - 170,068 `.bss` - 1 KB guard = 103,940 B, 1528
+  slots), `docs/m3_scrub.gif`, RUNNING.md's sequence marked verified.
+  - Host tests 157/157 (143 + 11 `undo_unit`, 2 `determinism` (test ROM
+    and Miniplanets: every Left matches its full keyframe, Right returns
+    to live, tracked == untracked, resume chains), 1 `scrub_sizing`);
+    `golden-mini:` lines unchanged from the baseline; `golden` unchanged.
+  - Preview (Miniplanets wasm, `m3_scrub.json`, 540 updates): menu at
+    frame 556; Lefts park at depth 16 / 46 / 76 / 106, Rights 76 / 46,
+    B resumes from 510 (records 8 -> 7, `frame_count` 516 at update 404),
+    second visit depth 22 / 52, live again at the end with 11 records,
+    350 frames of history, 1517 of 1520 slots (pool-limited).
+  - badge-bench (calibrated, `busy ms`, scrubber on from `start`):
+    Miniplanets unpaused `m2_mini300` 336 updates 17.99 mean / 28.84 worst
+    (baseline 17.87 / 28.10; +0.12 ms mean is the write-path byte test,
+    `write16` 46.1K -> 55.0K cycles per update, plus one-off block copies;
+    the worst is the boot update 47 copying the Z80 upload), game updates
+    20.10 mean, play 21.3; scrub script 540 updates 14.34 / 28.84, 0 over,
+    a scrub step update 4.9 ms (`render_still` 128 rows + the swap), menu
+    0.9 ms; test ROM `m2_play` 156 updates 6.90 / 25.82 (Track A's baseline on the same
+    path 6.82 / 24.21; the worst is update 36, the first game update,
+    copying the boot writes). Sizes: `.text` 231,952 B
+    (+11.4 KB over M2; 30.2 KB of the flash window left), `.data` 168,
+    `.bss` 170,068 (+4.7 KB: 2432 need bytes, `Md.Small` staging 1664 B,
+    record table).
+  - Sizing (`scrub_sizing`, Miniplanets, slots per 30-frame record, 26 of
+    them the 1664 B small state): boot 506-527, title 74-131, menu load
+    677, menu 74, level load 1362 (92.6 KB: RAM 411 / VRAM 906 / Z80 19
+    blocks), play 123-142 (8.6 KB). A 1528-slot ring holds about 11 play
+    records: 5.5 s of history in play (plus up to 0.5 s in the open
+    record), 9.5 s on menus, 0.5-1 s right after boot or a level load.
+  - Deviations from the contract (defaulted, Adrian may overrule): the
+    frontend calls `undo.resume_here` before the first frame after a
+    scrub (the truncation cannot live in `record_frame`, which runs after
+    the frame); the dirty byte is a "need" byte (nonzero = not yet saved,
+    so all-zero `.bss` means tracking off and no `.data` image); the Z80
+    bank window's work RAM writes are hooked too (the contract's list
+    missed them); `render_still` also restores the sprite cache fields;
+    the first Left from live goes to the start of the open record (depth
+    = frames since the last boundary, not a fixed 60); auto-repeat is one
+    step per 8 updates (3.75/s); the menu suppresses buttons held over
+    from the game on open; `m3_scrub.json` is 540 updates; the Reset row
+    forgets the history.
+  - Open after M3: `not_wait_loop` is a hint outside `Small` (harmless,
+    determinism test agrees); the hooks cannot tell two consoles apart
+    (only the determinism test steps two); a level load leaves under 1 s
+    of history until it rebuilds; H40 column averaging and the CRC32 at
+    selection still open (M4 perf). Hardware check (open, not a gate):
+    the scrub step's 4.9 ms and the arena size on a real badge.
