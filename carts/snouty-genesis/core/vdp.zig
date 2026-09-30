@@ -160,6 +160,11 @@ pub const Vdp = struct {
     /// Pending interrupts not yet taken by the 68000.
     vint_pending: bool = false,
     hint_pending: bool = false,
+    /// `irq_level()` as of the last change of the pending flags or of
+    /// registers 0 and 1 (`sync_irq`): what the 68000 samples before every
+    /// instruction, one load instead of four. Code that pokes the flags or
+    /// registers directly (tests) calls `sync_irq`.
+    irq: u3 = 0,
     /// 68000 cycles into the current line, for the interpolated HV counter
     /// and the H-blank bit. The frame loop keeps it current.
     line_cycles: u16 = 0,
@@ -203,6 +208,7 @@ pub const Vdp = struct {
         v.hint_counter = 0;
         v.vint_pending = false;
         v.hint_pending = false;
+        v.irq = 0;
         v.line_cycles = 0;
         v.hv_latch = 0;
         v.line_mode = .squeeze;
@@ -294,6 +300,7 @@ pub const Vdp = struct {
         if (r == 0 and val & 0x02 != 0 and v.regs[0] & 0x02 == 0) v.hv_latch = v.hv_now();
         if (r == 5 or r == 12) v.spr_dirty = true;
         v.regs[r] = val;
+        if (r <= 1) v.sync_irq();
     }
 
     /// Status read (C00004/C00006): clears the command latch and the
@@ -466,6 +473,7 @@ pub const Vdp = struct {
         v.line = if (v.line + 1 >= lines_per_frame) 0 else v.line + 1;
         v.line_cycles = 0;
         if (v.line == vint_line) v.vint_pending = true;
+        v.sync_irq();
     }
 
     /// The interrupt level the VDP presents to the 68000 (6 V-int, 4 H-int,
@@ -484,6 +492,12 @@ pub const Vdp = struct {
             4 => v.hint_pending = false,
             else => {},
         }
+        v.sync_irq();
+    }
+
+    /// Recompute `irq` from the pending flags and registers 0 and 1.
+    pub fn sync_irq(v: *Vdp) void {
+        v.irq = v.irq_level();
     }
 
     /// The badge row that shows `line` under `line_mode`, or null when the

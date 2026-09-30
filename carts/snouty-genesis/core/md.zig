@@ -217,7 +217,7 @@ pub const Md = struct {
                 md.dma_stall = 0;
                 continue;
             }
-            if (md.cpu.stopped and md.vdp.irq_level() <= md.cpu.mask()) {
+            if (md.cpu.stopped and md.vdp.irq <= md.cpu.mask()) {
                 used = share;
                 break;
             }

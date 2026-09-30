@@ -31,6 +31,7 @@
 //! read of the Z80 area or the I/O ports returns the byte in both halves; a
 //! word write stores the high byte (Z80 area) or the low byte (I/O, PSG).
 //! A byte write to a VDP port writes the byte to both halves of the word.
+const std = @import("std");
 const md_mod = @import("md.zig");
 const rom = @import("rom.zig");
 const m68k = @import("m68k.zig");
@@ -108,6 +109,15 @@ pub const Bus = struct {
     /// on the Genesis raises one the games use).
     pub inline fn irq_level(self: *Bus) u3 {
         return self.md.vdp.irq_level();
+    }
+
+    /// The same, as the VDP cached it at its last change (`Vdp.irq`): what
+    /// `M68k.step` samples when the bus has it. Checked against
+    /// `irq_level` in safe builds (the host tests).
+    pub inline fn irq_sample(self: *Bus) u3 {
+        const v = &self.md.vdp;
+        if (std.debug.runtime_safety) std.debug.assert(v.irq == v.irq_level());
+        return v.irq;
     }
 
     pub inline fn ack_irq(self: *Bus, level: u3) void {

@@ -6,7 +6,9 @@
 //! `*BusT`: `read8(addr: u24) u8`, `read16(addr: u24) u16`,
 //! `write8(addr: u24, v: u8)`, `write16(addr: u24, v: u16)`,
 //! `irq_level() u3` (sampled before every instruction) and
-//! `ack_irq(level: u3)` (the CPU took an interrupt at that level). Longs
+//! `ack_irq(level: u3)` (the CPU took an interrupt at that level); a bus
+//! may also offer `irq_sample() u3`, the same value kept current by the
+//! bus (cheaper), which `step` then samples instead. Longs
 //! are two word accesses, high word first. Odd word addresses go to the bus
 //! as they are (no address error, SPEC.md section 4).
 //!
@@ -229,6 +231,8 @@ pub fn M68k(comptime BusT: type) type {
         const has_window = @hasDecl(BusT, "code_window") and
             @typeInfo(@TypeOf(BusT.code_window)) == .@"fn";
         const no_window = [2]u8{ 0, 0 };
+        const has_irq_sample = @hasDecl(BusT, "irq_sample") and
+            @typeInfo(@TypeOf(BusT.irq_sample)) == .@"fn";
 
         /// Power-on/RESET: supervisor, interrupts masked, SSP and PC from
         /// the vectors at 000000 and 000004 (40 cycles on the real chip,
@@ -242,7 +246,7 @@ pub fn M68k(comptime BusT: type) type {
         /// Run one instruction (or take an interrupt, or idle 4 cycles in
         /// STOP) and return its 68000 cycles.
         pub fn step(self: *Self, bus: *BusT) u32 {
-            const lvl = bus.irq_level();
+            const lvl = if (has_irq_sample) bus.irq_sample() else bus.irq_level();
             if (lvl > self.mask()) return self.interrupt(bus, lvl);
             if (self.stopped) return 4;
             self.cyc = 4;
