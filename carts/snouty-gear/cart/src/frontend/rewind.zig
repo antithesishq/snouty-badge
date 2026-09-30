@@ -23,7 +23,7 @@
 //! is not `.bss`, so it is not shipped as zeros in the UF2
 //! (docs/ROM_DRIVE.md section 3) and the OS does not clear it; the store
 //! writes every page before it reads it. In wasm, which has no such linker
-//! symbols, the arena is a 72 KB static array, about the badge's, so the
+//! symbols, the arena is a 54 KB static array, the badge's size, so the
 //! preview shows badge-like depth. The keyframe count is split from the
 //! arena as Snouty Boy does: each keyframe's table plus its typical copied
 //! pages, capped at `tuning.max_keyframes`. When fewer than two keyframes
@@ -86,7 +86,7 @@ var ready: bool = false;
 // ---- Arena ----
 
 /// The wasm arena; the badge build never references it.
-var wasm_arena: [72 * 1024]u8 align(8) = undefined;
+var wasm_arena: [54 * 1024]u8 align(8) = undefined;
 
 const linker = struct {
     extern var __bss_end__: u8;

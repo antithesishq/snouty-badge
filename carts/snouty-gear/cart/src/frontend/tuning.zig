@@ -17,13 +17,16 @@ pub const frames_per_keyframe = 30;
 /// after Track A's sizing numbers (tests/scrub_sizing.zig).
 pub const page_size = 128;
 /// Expected pages copied per keyframe, for splitting the arena between pool
-/// pages and keyframe tables (frontend/rewind.zig `init`): about 5 KB per
-/// keyframe, the SPEC.md 10 measurement on Waternet.
-pub const typical_pages_per_keyframe = 40;
-/// Keyframes at most, whatever the arena: 64 are 32 s of history at 30
-/// frames each. The cap also sizes the input log (`64 x 30` bytes in
+/// pages and keyframe tables (frontend/rewind.zig `init`). Measured through
+/// the store (tests/scrub_sizing.zig, 2026-09-30): Waternet copies 13 pages
+/// per keyframe on average, Sonic 29. 24 splits the badge's 54 KB arena
+/// into 15 keyframe tables and a 46 KB pool: Waternet keeps all 15 (7 s),
+/// Sonic fills the pool at about 12 (5.5 s) and evicts from there.
+pub const typical_pages_per_keyframe = 24;
+/// Keyframes at most, whatever the arena: 32 are 16 s of history at 30
+/// frames each. The cap also sizes the input log (`32 x 30` bytes in
 /// `.bss`). At most 255 (the store's reference count is a u8). The RAM
-/// cart's arena (about 69 KB) holds far fewer at the typical rate.
-pub const max_keyframes = 64;
+/// cart's arena (54 KB) holds about 15 at the typical rate.
+pub const max_keyframes = 32;
 /// Bytes kept free between the arena and the stack limit on the badge.
 pub const stack_guard = 1024;

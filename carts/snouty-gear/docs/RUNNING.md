@@ -130,13 +130,13 @@ node tools/preview.mjs zig-out/bin/snouty-gear.wasm --frames 1000 --every 1 --st
   --script carts/snouty-gear/tools/scripts/m3_scrub.json --out carts/snouty-gear/out/ \
   --dump-exports debug_state,debug_scrub_depth,debug_history,debug_keyframes,debug_frame_count \
   --at "734 debug_scrub_depth == 90" --at "745 debug_scrub_depth == 60" \
-  --at "757 debug_frame_count == 571" --at "757 debug_keyframes == 10"
+  --at "757 debug_frame_count == 571" --at "757 debug_keyframes == 13"
 ```
 
 Left x3 (updates 712, 723, 734: `debug_scrub_depth` 30, 60, 90,
 `debug_frame_count` 600, 570, 540), Right (745: 60), Up brings the panel
 back (751), B resumes (757: depth 0, frame 571, the two keyframes ahead
-dropped, 10 left, history 271 frames), 102 game frames (history grows one
+dropped, 13 left, history 361 frames), 102 game frames (history grows one
 frame per frame, a keyframe every 30), Select held again (menu at 861,
 frame 672), Left (876: depth 12, frame 660), B (890: frame 661). The same
 sequence is the `press` list of `badge-bench/carts/snouty-gear.toml`.
@@ -163,8 +163,8 @@ from live), `debug_keyframes` (keyframes in the page store),
 `debug_keyframe_cap` (the most it holds; 0 means no room, the scrubber is
 off and the menu says "Scrub: no memory"), `debug_pool_bytes` (pool bytes
 in use) and `debug_arena_bytes` (the arena the store was laid out in:
-a 72 KB static in wasm, 12 keyframes; on the badge the RAM between
-`__bss_end__` and `__stack_limit__` minus 1 KB).
+a 54 KB static in wasm, the badge's size, 15 keyframes; on the badge the
+RAM between `__bss_end__` and `__stack_limit__` minus 1 KB, 56,204 B).
 
 Boot diagnostics, for a game that shows nothing: `debug_pc`, `debug_sp`,
 `debug_iff1` (1 = interrupts enabled), `debug_halted`, `debug_mapper`

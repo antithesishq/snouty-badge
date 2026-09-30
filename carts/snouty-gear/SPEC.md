@@ -252,7 +252,9 @@ The same model as Snouty Boy section 10.
   half-second record is about 1.5 KB for Waternet (10 RAM + 14 VRAM
   blocks) and about 4.1 KB for Sonic scrolling Green Hill Zone (21 RAM +
   38 VRAM blocks), with a 12.8 KB spike at the level load. The ~69 KB of
-  RAM left after M2 gives roughly 14 s of Waternet and 6 s of Sonic.
+  RAM left after M2 would give roughly 14 s of Waternet and 6 s of Sonic;
+  the arena the badge really has after M3's own code, `.bss` and the 1 KB
+  stack guard is 54 KB (`__stack_limit__ - __bss_end__`, 55,244 B).
   Target: at least 3 s of history for any ROM from the drive, at least
   1 s for Sonic in the packing fallback. The oldest keyframe is dropped
   when the pool is full.
@@ -264,6 +266,12 @@ The same model as Snouty Boy section 10.
   5.0 s of Sonic (4.5 s at the worst point). 64 B pages: same depth
   (5.0 s, 11 keyframes), the 1030 B tables leave no room for 64
   keyframes at all. 256 B pages: 4.9 KB per Sonic keyframe, 4.0 s.
+- Shipped (M3 tag): 128 B pages, `typical_pages_per_keyframe` 24,
+  `max_keyframes` 32 (960 B input log). The badge arena is 56,204 B
+  (`__stack_limit__ - __bss_end__` minus the 1 KB guard), split into 15
+  keyframe tables (7.7 KB) and a 46 KB pool: Waternet holds all 15
+  (7 s of history, pool 29 KB in the preview), Sonic fills the pool at
+  about 12 (5.5 s, estimated from the sizing test's 4.2 KB per keyframe).
 
 ## 11. The ROM
 
@@ -352,7 +360,7 @@ cart RAM at all. The embedded fallback ROM does (it is in the RAM image).
 | Drive file map (fragmented case)  | <= 4 KB               |
 | Live console + cart RAM 8 KB      | ~33 KB                |
 | Frontend state, input log         | ~3 KB                 |
-| Keyframe ring (page store, sec. 10)| ~69 KB (run-time arena, 12 keyframes, 5-5.5 s) |
+| Keyframe ring (page store, sec. 10)| 54 KB run-time arena: 15 keyframes, 7 s Waternet, ~5.5 s Sonic |
 | Total of ~268 KiB                 | fits                  |
 
 The fallback ROM competes with the ring, so it stays small (Waternet's

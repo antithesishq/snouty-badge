@@ -662,3 +662,53 @@ SPEC 10/13 numbers; tag `snouty-gear/m3`; merge to main and push
   sound has the same defect (same shim), unfixed. `audio.max_volume`
   added as the cap for the badge speaker (coworkers find the badge's
   sound effects loud); default 1.0 pending Adrian's call.
+- 2026-09-30 (M3 DONE): tag `snouty-gear/m3`. Prep `b11944e` (page store
+  and ring copied from Snouty Boy, `Gg.Small`/`state_regions`,
+  `vdp.State`), Track A `gear/m3-a` (ring/kstore/determinism/sizing
+  tests, 28 new, suite 95/95 in 2m39s), Track B `gear/m3-b`
+  (`frontend/rewind.zig`, `tuning.zig`, menu scrubbing, six exports,
+  `m3_scrub.json`, bench sequence, RUNNING.md), integration tuning.
+  - Design as defaulted in the contract: page store, 128 B pages
+    (Track A: 64 B doubles the table cost for the same Sonic depth, 256 B
+    copies 16% more per Sonic keyframe and loses 1 s). The keyframe count
+    comes from the layout, never a fixed 64: at 64 B pages the 64 tables
+    alone fill the arena, at 128 B they cut Sonic to 1.5 s.
+  - The badge arena is 56,204 B, not the ~69 KB the contract assumed
+    (M3's own code, `.bss` and the 1 KB guard): `__stack_limit__`
+    0x20078000 minus `__bss_end__` 0x2006a074 minus 1024. Integration set
+    `typical_pages_per_keyframe` 40 -> 24 and `max_keyframes` 64 -> 32
+    (input log 960 B), which splits it into 15 keyframe tables and a
+    46 KB pool; the wasm arena is 54 KB to match. Preview: cap 15, Waternet
+    holds all 15 (history 420 frames = 7 s when the menu opens, pool
+    29 KB); Sonic is pool-limited at about 12 keyframes (5.5 s, from the
+    sizing test's 4.2 KB per keyframe, not run on the cart).
+  - `m3_scrub.json` (1000 updates): 3/3 documented `--at` checks pass
+    (depth 90 after three Lefts at 734, 60 after Right at 745, frame 571
+    after B at 757); keyframes 15 -> 13 after resuming (two dropped),
+    history 361, second menu at 861 holds 15 again. `docs/m3_scrub.gif`
+    (every 3rd update from 700, 100 frames). The M2 `m2_menu.json`
+    exports are identical to the M2 build (Track B, 224 updates).
+  - badge-bench (calibrated, Waternet from the romfs image, 1000 frames,
+    `--symbols`): mean 3.00 ms, p95 6.52, worst 6.89 (frame 341, a
+    snapshot frame, 41% of budget), 0 over; game frames as M1/M2 (worst
+    6.86 -> 6.89), snapshot frames +0.37 ms on average (Track B: 0.09 to
+    1.21), scrub steps 3.39-3.59 ms, resume 2.69, idle menu ~2.2-2.5.
+    Neopixels never written. Hot list unchanged (`step_frame` 32%,
+    `cross_lines` 29%, `video.on_line` 15%, `find_sprites` 14.5%).
+  - Sizes (fast, drive source, incl. the 64 KB embedded ROM): `.text`
+    174,052 (+9,064 over M2: `rewind.restore` 2.5 KB, `kstore.put`
+    2.7 KB, menu 1.2 KB), `.data` 468, `.bss` 41,828 (+1,144: the 960 B
+    log); uf2 435,200 B; RAM in use 209 KB + 32 KB stack, arena 55 KB.
+  - Accepted deviations: scrub label shows whole seconds from 10 s on
+    ("Scrub: -12 / 16s", 18 columns); the scrub bar is the panel's bottom
+    strip, not full width; `m3_scrub.json` starts its Select hold at 673
+    so the menu opens on a keyframe; the sizing test replays captured
+    states into each store layout instead of re-running the emulator.
+  - Deferred to Adrian (defaults taken): page store instead of undo
+    records (SPEC 10 keeps the alternative); Boy's scrub UI verbatim;
+    `typical_pages_per_keyframe` 24 trades ~0.5 s of Sonic for +2 s of
+    Waternet against Track A's 32.
+  Next: hardware gate for M0-M3 in one flash from main (drive ROM, font
+  capture, splash, menu, scrub); M4 perf ideas (sprite candidate mask,
+  decoded tile cache) or M5 shared emulator frontend with Snouty Boy;
+  Snouty Genesis M3 can now copy this scrubber.
