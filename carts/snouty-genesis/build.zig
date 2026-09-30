@@ -155,7 +155,7 @@ fn rom_module(b: *Build) Build.LazyPath {
 }
 
 /// Adds `build_options`, `core` (with `z80`), `romfs` (lib/romfs.zig, the
-/// drive reader) and the generated `rom` to the cart.
+/// drive reader), `iris` (lib/iris_mark.zig) and the generated `rom` to the cart.
 fn build_cart_modules(b: *Build, cart: *Build.Module, cart_api: *Build.Module, step: *Build.Step) void {
     _ = cart_api;
     cart.addImport("build_options", build_options.?.createModule());
@@ -165,6 +165,7 @@ fn build_cart_modules(b: *Build, cart: *Build.Module, cart_api: *Build.Module, s
         .imports = &.{.{ .name = "z80", .module = z80 }},
     }));
     cart.addImport("romfs", b.createModule(.{ .root_source_file = b.path("lib/romfs.zig") }));
+    cart.addImport("iris", b.createModule(.{ .root_source_file = b.path("lib/iris_mark.zig") }));
     cart.addImport("rom", b.createModule(.{ .root_source_file = rom_module(b) }));
     step.dependOn(rom_step);
 }
