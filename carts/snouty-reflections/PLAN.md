@@ -1,4 +1,4 @@
-# Plan: M0 scaffold, M1 "Tracer on hardware", M2 "Materials and shore", M2.2 "Names, skyline and Iris", M3 "Presets and motion"
+# Plan: M0 scaffold, M1 "Tracer on hardware", M2 "Materials and shore", M2.2 "Names, skyline and Iris", M3 "Presets and motion", M3.1 "No stripes, logo clear of the skyline"
 
 Companion to `SPEC.md`. This file is the contract between the parallel
 tracks; when it and the spec disagree, this file wins for the current
@@ -1075,3 +1075,54 @@ status; tag `snouty-reflections/m3`.
   new heights. Preview GIFs `docs/preview_m3_presets.gif` (4 orbits of
   attract) and `docs/preview_m3_free_camera.gif`. Tagged
   `snouty-reflections/m3`.
+
+## M3.1 No stripes, logo clear of the skyline (2026-09-30)
+
+Two changes Adrian asked for after running main on the simulator. No new
+content; the M3 scene holds except as noted.
+
+1. **Chrome stripes dropped**, every preset and variant: "they don't look
+   like chrome to me, they look like artifacting". The `stripes` knob,
+   its constants, the per-frame setup and the colour factor are removed
+   from the tracer (not left behind a false flag); `reference.py
+   --stripes` defaults to 0 and keeps the M3 formula only for
+   comparison.
+2. **Iris logo moved right**: centre `(-15.5, 1.8, 12.0)` (was `x =
+   -13.5`). At -13.5 the mark overlapped Harbour Centre, the last tower
+   (texels u <= 233, x >= -13.25), in 36 of the 86 attract frames where
+   both are on screen. At -15.5 it stands over Canada Place's sails and
+   past the shore's end, at least 9.5 px (median 13.7) right of the towers
+   in every orbit frame, far from the title. Frames of the 600-frame orbit
+   with 10+ logo pixels visible (not behind the chrome): 94 (was 95); 50+
+   pixels: 77 (was 80). Every bound (bounding sphere, chrome cone,
+   water-logo spans, screen spans) derives from `iris.centre`; nothing
+   else moved. Candidates -14.5 to -16.5 were measured the same way; -15
+   leaves 7.5 px, -16 and beyond lose more frames for no visible gain.
+
+### M3.1 status
+
+- 2026-09-30 (branch reflections/m3.1). Calibrated busy ms, cut20,
+  `bench_variants.sh --m3` rows 1 and 2, worst (mean), rebaselined on this
+  machine from origin/main:
+
+  | row | M3 (main) | no stripes | + logo at -15.5 |
+  |---|---|---|---|
+  | 1 step1 (motion off) | 45.49 (43.11) | 45.67 (43.34) | 45.58 (43.18) |
+  | 2 sunset | 46.45 (43.90) | 45.67 (43.34) | 45.67 (43.32) |
+  | 2 midnight | 50.29 (46.26) | 49.42 (45.21) | 49.36 (45.20) |
+  | 2 noon | 50.60 (45.68) | 49.70 (44.63) | 49.73 (44.62) |
+  | 2 storm | 45.54 (42.62) | 45.26 (42.10) | 45.15 (42.09) |
+
+  Stripes saved 0.78 ms in sunset, ~0.9 in midnight and noon, 0.28 in
+  storm. Row 1 has no stripes in either build (motion off); its +0.18 comes
+  from code generation (that build's `.text` shrank by 48 bytes), not
+  from any rendering change. The logo move is within
+  0.1 ms in every row (noon +0.03, the rest equal or faster).
+  Midnight and noon remain over 47.0 (accepted in M3). Sizes `.text +
+  .data` / `.bss`: cut20 108896 / 67096, full20 95712 / 66984, full15
+  93408 / 66984, half30 122224 / 67096. All four variants build;
+  check-float passes; check_render PASS cut20 28/28 and half30 28/28 (M3
+  check set plus logo frames 175, 182, 245, 269 / 263, 273, 368, 404;
+  reference knob flags `--rings 0`, plus `--noon-shadows 0
+  --noon-third-sphere 0` for cut20). `docs/iris_closeup.png` re-shot,
+  `docs/preview_m3.1.gif` is one orbit of attract (sunset), scale 3.

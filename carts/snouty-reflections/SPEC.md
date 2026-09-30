@@ -539,3 +539,7 @@ Question 4 (music) is answered by section 8: no audio.
   dither modes. cut20 worst frames: sunset 46.36, storm 45.45 ms; midnight
   50.30 and noon 50.62 (accepted). Rings, noon's shadows and third sphere
   are off in the real-time view and return in M4's freeze frame. Next: M4.
+- 2026-09-30: M3.1 (branch `reflections/m3.1`): chrome stripes dropped at
+  Adrian's request (they read as artifacting; section 7), and the Iris
+  logo moved to `x = -15.5`, clear of Harbour Centre. cut20 worst frames:
+  sunset 45.67, storm 45.15, midnight 49.36, noon 49.73 ms (PLAN.md M3.1).
