@@ -236,7 +236,7 @@ The same model as Snouty Boy section 10.
   page store Snouty Boy already ships (`core/kstore.zig` and
   `core/ring.zig`, copied per section 7). The console is four byte
   regions (`Gg.state_regions`: the packed `Small` of CPU, mapper, VDP
-  registers and latches, PSG and counters, about 120 B; RAM 8 KB; VRAM
+  registers and latches, PSG and counters, 164 B; RAM 8 KB; VRAM
   16 KB; cart RAM 8 KB), cut into pages of `tuning.page_size` bytes. A
   keyframe is a table of page references: a page equal to the newest
   keyframe's is shared, an all-zero page is the shared zero page, anything
@@ -256,6 +256,14 @@ The same model as Snouty Boy section 10.
   Target: at least 3 s of history for any ROM from the drive, at least
   1 s for Sonic in the packing fallback. The oldest keyframe is dropped
   when the pool is full.
+- Measured 2026-09-30 through the page store (`tests/scrub_sizing.zig`,
+  69 KB arena, keyframe count split as the frontend does, mean pages
+  copied per keyframe plus its table): at 128 B pages (258 pages, 516 B
+  table) Waternet copies 12.8 pages (2.2 KB per keyframe) and Sonic 29.0
+  (4.2 KB, 123 at the level load); 12 keyframes, 5.5 s of Waternet and
+  5.0 s of Sonic (4.5 s at the worst point). 64 B pages: same depth
+  (5.0 s, 11 keyframes), the 1030 B tables leave no room for 64
+  keyframes at all. 256 B pages: 4.9 KB per Sonic keyframe, 4.0 s.
 
 ## 11. The ROM
 
@@ -344,7 +352,7 @@ cart RAM at all. The embedded fallback ROM does (it is in the RAM image).
 | Drive file map (fragmented case)  | <= 4 KB               |
 | Live console + cart RAM 8 KB      | ~33 KB                |
 | Frontend state, input log         | ~3 KB                 |
-| Keyframe ring (page store, sec. 10)| ~69 KB (run-time arena) |
+| Keyframe ring (page store, sec. 10)| ~69 KB (run-time arena, 12 keyframes, 5-5.5 s) |
 | Total of ~268 KiB                 | fits                  |
 
 The fallback ROM competes with the ring, so it stays small (Waternet's
