@@ -67,7 +67,9 @@ before audio was dropped (section 8).
 | Start          | (nothing)                         | Return to attract orbit              | Unfreeze and return to attract orbit         |
 
 Free camera returns to attract by itself after 20 s without input; frozen
-mode does not time out (section 17 question 8). The camera can never go
+mode returns to attract 60 s after its image has converged with no input
+(section 17 question 8). Holding the stick while frozen shows the
+real-time tracer's moving view; accumulation restarts on release. The camera can never go
 below the water plane or inside a sphere; the orbit radius is fixed so the
 composition always holds.
 
@@ -484,8 +486,10 @@ ships the text changes).
 8. Frozen mode (section 5b) never times out, so a badge left frozen at a
    booth stays on its converged image. Resume attract by itself some time
    after the image converges with no input? Recommendation: yes, 60 s.
+   **Answered 2026-09-30: yes, 60 s after convergence (PLAN.md M4).**
 9. Depth of field in frozen mode: on by default (subtle, focused on the
    chrome sphere), off, or a toggle? Recommendation: on, subtle.
+   **Answered 2026-09-30: on, subtle (`lens_radius` 0.05, a knob).**
 
 Question 4 (music) is answered by section 8: no audio.
 
