@@ -1,0 +1,3 @@
+# Preview frames and badge-bench runs (docs/RUNNING.md).
+out/
+__pycache__/
