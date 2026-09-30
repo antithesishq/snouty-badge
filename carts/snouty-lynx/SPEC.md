@@ -388,23 +388,35 @@ track in worktrees with disjoint files.
   with cc65; move `cpu65.zig` to a shared `lib/` for a NES cart; Lynx II
   stereo ignored cleanly; EEPROM saves to badge flash.
 
-## 18. Decisions (open, 2026-09-29)
+## 18. Decisions (closed 2026-09-30, Adrian)
 
-1. Order: build after Snouty Gear reaches M3 (reuses its delta ring, bank
-   packing experience and possibly the shared frontend; recommended), or
-   in parallel now.
-2. Boot path: the host packer performs the loader decryption itself from
-   the public write-ups (recommended; nothing copyrighted on the badge or
-   in the repo, constants to be checked for provenance in M0), or the
-   packer reads Adrian's own `lynxboot.img` locally and never commits it.
-3. Shipped ROM: decided in M0 from what is licensed; if nothing suitable
-   exists, ship a cc65-built Snouty demo and keep commercial titles local.
-4. Controls: Select tap = Option 1 and Option 2 in the menu (recommended),
-   or Start+A chords for the options.
-5. Screen: picture at the top with a 26-row strip below (recommended), or
-   centred with 13-row bars.
+1. Order: build now. Snouty Gear M3 (the page-store scrub ring, tag
+   `snouty-gear/m3`) landed on 2026-09-30, so the ring is available for
+   reuse from the start.
+2. Boot path: the cart performs the loader decryption itself from the
+   public write-ups (the annotated boot ROM disassembly and the community
+   encryption documents); no boot ROM on the badge or in the repo. Adrian's
+   own `lynxboot.img` (512 B, md5 fcd403db69f54290b51035d82f835e7b) is at
+   `~/roms/lynx/lynxboot.img` on the VM, outside the repo, and serves two
+   purposes only: a host-test cross-check that the public constants
+   reproduce what the real ROM does, and a fallback if the public route
+   turns out incomplete. It is never committed and never shipped.
+3. Shipped ROM: our choice (Adrian, 2026-09-30): pick the best licensed
+   homebrew in M0; if nothing suitable exists, ship a cc65-built Snouty
+   demo. Parked stretch idea: port the Snouty Flyover voxel flyer
+   (`carts/snouty-flyover`) to the Lynx as our own 3D showcase ROM; not on
+   any plan yet. Commercial titles stay local:
+   `~/roms/lynx/hard_drivin.lnx` and `~/roms/lynx/blue_lightning.lnx`
+   (both 131,072 B, **headerless** dumps despite the `.lnx` name, so the
+   loader and `romcheck.py` must accept a headerless file and infer the
+   block size from the file size: 128 KB = 256 blocks of 512 B, 256 KB =
+   1 KB blocks, 512 KB = 2 KB blocks; header present = trust the header).
+4. Controls: as the other emulator carts. D-pad, A, B, Start = Pause,
+   Select tap = Option 1, Select hold = menu, Option 2 lives in the menu;
+   the menu has the A/B swap row that Snouty Boy and Snouty Gear have.
+5. Screen: picture at the top with the 26-row strip below (rows 102..127).
 6. Several `.lnx` files on the drive: list them in the menu and restart
-   into the chosen one (recommended), or require exactly one.
+   into the chosen one.
 
 ## 19. Facts to check in M0
 
@@ -424,3 +436,8 @@ copy).
   (Adrian; `docs/ROM_DRIVE.md`); the compressed flash cache is now the
   13.1 fallback, and boot decryption moved from a host tool into
   `core/boot.zig`.
+- 2026-09-30: section 18 closed by Adrian (build now, public-write-up
+  decryption with his boot ROM as a local cross-check only, controls as the
+  other emulators, strip below, drive list). Hard Drivin' and Blue
+  Lightning dumps received: headerless 128 KB files. M0 started on branch
+  `lynx/m0`.
