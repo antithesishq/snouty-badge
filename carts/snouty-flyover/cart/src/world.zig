@@ -67,6 +67,10 @@ pub const Segment = struct {
 
 pub const Rows = struct { h: *[W]u8, c: *[W]u8 };
 
+/// Who pressed B this frame: the autopilot's schedule goes to the live
+/// district, the player's press to the Bus under the camera when on one.
+pub const Verb = enum(u8) { none, player, pilot };
+
 /// A district module as a table entry (districts/<name>.zig exports these pub decls).
 pub const District = struct {
     title: []const u8,
@@ -270,7 +274,7 @@ pub fn live() Segment {
 
 /// Call after advance_to each frame: tracks the segment under the camera,
 /// enters and ticks the live district, runs its verb when `verb` is set.
-pub fn tick(frame: u32, cam_row: i32, verb: bool) void {
+pub fn tick(frame: u32, cam_row: i32, verb: Verb) void {
     const under = segment_at(cam_row);
     if (under.index != under_index) {
         // The segment the camera starts in is not "entered": the boot card
@@ -297,7 +301,44 @@ pub fn tick(frame: u32, cam_row: i32, verb: bool) void {
     if (!generated_row(live_seg.y0 + live_seg.len - 1)) return;
     const d = info(live_seg.kind);
     d.tick(frame, cam_row);
-    if (verb) d.verb();
+    // The Bus under the camera ticks too (packets); the player's B goes to it.
+    // TODO(Track B): bus.enter on entering a Bus.
+    if (under.kind == .bus) info(.bus).tick(frame, cam_row);
+    switch (verb) {
+        .none => {},
+        .pilot => d.verb(),
+        .player => if (under.kind == .bus) info(.bus).verb() else d.verb(),
+    }
+}
+
+/// First row of the next Bus after cam_row (the next 256-row pair).
+pub fn next_bus_row(cam_row: i32) i32 {
+    return ((cam_row >> 8) + 1) * pair_len;
+}
+
+/// Generate at most max_rows toward cam_row + gen_ahead (a skip spreads the
+/// ring refill over a few frames); true once the window is complete.
+pub fn advance_partial(cam_row: i32, max_rows: u32) bool {
+    const target = cam_row + gen_ahead;
+    if (target - generated > DEPTH) generated = target - DEPTH;
+    var n: u32 = 0;
+    while (generated < target and n < max_rows) : ({
+        generated += 1;
+        n += 1;
+    }) {
+        const i: usize = @intCast(generated & (DEPTH - 1));
+        gen_row(generated, &height[i], &colour[i]);
+    }
+    return generated >= target;
+}
+
+/// After a camera jump: forget the segment under the camera and the live
+/// district so the next tick enters the new ones without restoring the old
+/// district's rows (they are being regenerated anyway).
+pub fn skip_reset(cam_row: i32) void {
+    _ = cam_row;
+    under_index = no_segment;
+    live_seg.index = no_segment;
 }
 
 /// The segment the camera crossed into this frame, reported once.

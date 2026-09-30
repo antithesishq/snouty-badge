@@ -729,10 +729,130 @@ walls.
     should it be lower; is the lake frame's 12.8 ms worth trading for
     `refl_z_far` 128; Stack pit at height 9 (works) or 0.
 
-## M3 Hands on (outline)
+## M3 Hands on
 
-All B verbs (Bus packet, Tree rotation on every third insert), boost fog
-pull-in and horizon drop, Select skip to the next Bus, manual flight
-clamping review, autopilot timeout tuning, heap/sort onto the world.zig
-row helpers. Gate: every verb visible within 2 s of the press; bench
-unchanged. Contract to be written at M3 start.
+Goal (SPEC 13): everything an attendee can do works and shows within 2 s
+of the press: every B verb from inside its district (the Bus packet, the
+Tree insert seen from inside, the Pipeline flood ahead of the camera),
+boost with the fog pull-in and horizon drop, Select skipping to the next
+Bus with a short transition, manual flight that does not slam into walls
+at boost speed. Gate: `m3_verbs.json` shows each verb within 60 frames of
+its press in the GIF; bench worst frame unchanged within 1 ms
+(12.77 ms); `debug_world_check == 0`; check-float; hashes regenerated.
+
+Deferred to M4: the Tree rotation (a ridge swinging 90 degrees needs a
+different tree representation; M3 keeps the insert), the Stack unwind
+after the overflow, dam hold/pass of packets, the heap/sort refactor onto
+`world.span`/`leg_row`.
+
+### Tracks
+
+- **Track A: flight feel** (`camera.zig`, `render.zig`): boost fog
+  pull-in and horizon drop, speed-scaled terrain look-ahead and a faster
+  spring on large gaps, the skip transition frames (a black frame with
+  the card is drawn by main; render exposes nothing new beyond `fog_pull`).
+- **Track B: Bus packet and Tree insert** (`world.zig`, `districts/bus.zig`,
+  `districts/tree.zig`): the Bus gets a tick and the packet verb, the
+  player's B goes to the Bus under the camera; the Tree insert becomes
+  visible from inside the district.
+- **Track C: skip, wiring, scripts** (`main.zig`, `districts/pipeline.zig`,
+  `tools/scripts/m3_verbs.json`, `tools/render_hashes.txt`,
+  `docs/RUNNING.md`): Select skip with the 3-frame transition, the Bus
+  card's "next" line, the Pipeline flood ahead of the camera, the verbs
+  script and docs.
+
+### Fixed interfaces (M3 additions, in the scaffold)
+
+```zig
+// world.zig
+pub const Verb = enum(u8) { none, player, pilot };
+pub fn tick(frame: u32, cam_row: i32, verb: Verb) void;
+//   pilot -> live district verb (the autopilot schedule); player -> the Bus
+//   under the camera when on a Bus, else the live district. The Bus under
+//   the camera is entered and ticked like a district (bus.enter/tick run
+//   while the camera is on it).
+pub fn next_bus_row(cam_row: i32) i32;      // first row of the next Bus (next pair start)
+pub fn advance_partial(cam_row: i32, max_rows: u32) bool; // generate at most max_rows toward cam_row + gen_ahead; true when caught up
+pub fn skip_reset(cam_row: i32) void;       // after a jump: forget entered/live state so the new segment is entered and the old district's edits are not restored
+
+// camera.zig
+pub const Stick = struct { steer, pitch: i32, boost: bool, verb: world.Verb = .none };
+pub fn jump_to(row: i32) void;              // Select: place the camera at row (x kept, alt kept, yaw 0), for main
+
+// render.zig
+pub var fog_pull: u8 = 0;                    // 0..32 steps the fog table is shifted nearer (boost); main/camera set it
+
+// main.zig skip: on Select (edge) when not already skipping: target = world.next_bus_row(cam_row);
+//   camera.jump_to(target); world.skip_reset(target); skipping = 3. While skipping > 0: call
+//   world.advance_partial(cam_row, 96), draw a black frame with the next segment's card via text,
+//   skip camera.update and world.tick; when advance_partial returns true and skipping reaches 0, resume.
+```
+
+### Constants and behaviour
+
+Boost (Track A): speed 1.875 (2.5x cruise). While boosting, `render.fog_pull`
+eases toward 24 (steps; the fog level table index becomes `i + fog_pull`,
+clamped) at 2 per frame and back at 1 per frame; the horizon target drops
+8 rows (the same ease as pitch). Manual clamping: `ahead_rows` scales
+with speed (`24 + 16 * speed / cruise`, so 64 at boost); the spring takes
+1/4 of the gap per frame when the gap is over 16 cells, 1/16 otherwise;
+the hard floor stays. Check with `m0_fly.json` (boost 450-540) and
+`m2_verbs.json` (the Stack entrance, clearance was 4): clearance at least
+8 in both.
+
+Bus packet (Track B): `bus.enter(seg)` clears the packet list;
+`bus.tick` advances up to 4 packets: a packet is a 3-cell-wide block on
+lane k (the player's lane is the one nearest the camera x, else lane 1)
+at height deck + 6, colour `palette.white`, moving +6 rows per frame from
+`cam_row + 6` to the Bus end, restoring the deck cells it leaves with the
+static lane colour (`bus.row` for those cells; a per-packet 3x3 patch is
+enough since the packet is 3 rows long). Caption on the Bus becomes
+`B: send a packet`; the card's third line carries `next: HEAP` (main).
+Autopilot: `bus.verb_at` = 24 (it sends one packet per Bus).
+
+Tree insert from inside (Track B): the deferred question is whether to
+flip the tree (root near the camera, leaves far) so the insert's leaf is
+ahead of the camera and the search descends along the flight; from
+altitude 205 the tree reads top-down either way, so flip it, keep the
+interior-only trail rule, and set `verb_at` back to a positive row (60)
+with the insert mound growing at the lit leaf, which is now ahead. If the
+flipped tree reads worse in the preview, keep the layout and make the
+insert grow the mound at the deepest lit node ahead of `cam_row + 20`
+instead; say which in the status.
+
+Skip (Track C): Select edge, manual or autopilot (the skip does not
+change the autopilot flag); target `world.next_bus_row(cam_row)`; the
+transition draws three black frames with the target segment's card
+(title, gloss, `next: <district>`) while `advance_partial` generates 96
+rows per frame (a Bus + district pair is 256 rows; the ring window is 248
+rows, so three frames cover it); the camera keeps x and altitude, yaw
+and roll reset; `debug_skips` counts skips. The bench must show no frame
+over 22 ms during a skip (a generated row is about 10 k cycles; 96 rows
+is 1 M cycles, under 7 ms, and no march runs on those frames).
+
+Pipeline flood ahead (Track C): the burst floods the stream cells within
+12 of the centre between `max(cam_row + 10, dam_ly + 6)` local and
+`spring_ly - 2`, so a press anywhere in the channels shows the flood
+ahead; over the lake (local row under 110) the flood covers the dam-to-
+merge sections as in M2. `verb_at` stays 70.
+
+Scripts (Track C): `m3_verbs.json`: manual takeover at 60; B pressed 30
+rows after each district card would have ended (local row ~70 of each
+district: frames from the row table at cruise, verify with
+`debug_segment_kind`), B on the second Bus (packet), Select at the start
+of the third Heap (skips to the Bus before the Sort), A held 200 frames
+somewhere flat (Sort), Start at the end; 2600 frames. `--at` checks for
+the skip (`debug_cam_y` jumps to the next pair start) and for the packet
+(`debug_bus_packets > 0`). Regenerate `render_hashes.txt` last.
+
+### Done criteria for M3
+
+- Build, check-float; `.text + .data` under 75 KB, `.bss` under 165 KB.
+- Attract 2400 frames: worst under 22 ms and within 1 ms of 12.77;
+  `debug_world_check == 0`; `check_render.sh` passes on the tagged build.
+- `m3_verbs.json` GIF shows every verb within 60 frames of its press.
+- RUNNING.md, PLAN status, tag `snouty-flyover/m3`.
+
+### M3 status
+
+- 2026-09-30: started; scaffold commit follows.

@@ -46,7 +46,7 @@ pub fn update() void {
         text.show_card(d.title, d.gloss);
     }
     text.set_caption(world.caption());
-    if (stick.verb) text.flash_caption();
+    if (stick.verb != .none) text.flash_caption();
     palette.begin_frame(frame);
     render.draw(frame);
     sprite.draw(camera.cam.roll);

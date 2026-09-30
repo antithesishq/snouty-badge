@@ -70,7 +70,7 @@ pub var cam: Cam = .{};
 
 /// What the flight model flies with, from the player or the autopilot:
 /// steer and pitch in Q16 (-1..1), boost = A held, verb = B pressed (edge).
-pub const Stick = struct { steer: i32 = 0, pitch: i32 = 0, boost: bool = false, verb: bool = false };
+pub const Stick = struct { steer: i32 = 0, pitch: i32 = 0, boost: bool = false, verb: world.Verb = .none };
 
 /// Autopilot on (the default at boot); Start toggles, stick/A/B input takes over.
 pub var autopilot: bool = true;
@@ -135,7 +135,7 @@ pub fn pilot(frame: u32) Stick {
         .steer = (@as(i32, @intFromBool(input.held(.right))) - @intFromBool(input.held(.left))) * fixed.one,
         .pitch = (@as(i32, @intFromBool(input.held(.down))) - @intFromBool(input.held(.up))) * fixed.one,
         .boost = input.held(.a),
-        .verb = input.pressed(.b),
+        .verb = if (input.pressed(.b)) world.Verb.player else .none,
     };
     const any = manual.steer != 0 or manual.pitch != 0 or manual.boost or input.held(.b);
     if (any) {
@@ -166,11 +166,11 @@ fn auto_stick(frame: u32, row: i32) Stick {
 
     const live = world.live();
     const at = world.info(live.kind).verb_at;
-    var verb = false;
+    var verb: world.Verb = .none;
     if (at != no_verb and live.index != verb_index) {
         const trigger = live.y0 + at;
         if (prev_row < trigger and row >= trigger) {
-            verb = true;
+            verb = .pilot;
             verb_index = live.index;
         }
     }
