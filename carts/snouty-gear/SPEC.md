@@ -230,20 +230,32 @@ The same model as Snouty Boy section 10.
 - Keyframes are stored as deltas in every build (Adrian, 2026-09-29),
   because the packing fallback for a 256 KB ROM (section 13.1) leaves 16
   to 32 KB for the ring, where one full 24 KB keyframe would not fit;
-  with the ROM on the drive (the default) they simply give more depth. Only the live console is kept
-  whole. Design: RAM and VRAM are split into 64-byte blocks (384 blocks,
-  a 48-byte dirty bitmap). The first write to a block after a keyframe
-  copies its old contents into an undo record; the bus write path pays
-  one bit test. Taking a keyframe closes the record (dirty blocks' old
-  bytes, zero-run RLE, plus the small registers whole) and clears the
-  bitmap. Restoring keyframe k undoes the open record, then applies
-  closed records newest to oldest down to k. Nothing is compressed on the
-  badge in the hot path and no full keyframe copy exists.
-- Record size per half second is not known yet (Sonic streams tiles into
-  VRAM while scrolling); M3 measures it. Target: at least 3 s of history
-  for any ROM from the drive, at least 1 s for Sonic in the packing
-  fallback. The oldest record is dropped when
-  the ring is full.
+  with the ROM on the drive (the default) they simply give more depth.
+  Only the live console is kept whole.
+- Mechanism (M3, 2026-09-30, defaulted; see PLAN.md "M3 Scrub"): the
+  page store Snouty Boy already ships (`core/kstore.zig` and
+  `core/ring.zig`, copied per section 7). The console is four byte
+  regions (`Gg.state_regions`: the packed `Small` of CPU, mapper, VDP
+  registers and latches, PSG and counters, about 120 B; RAM 8 KB; VRAM
+  16 KB; cart RAM 8 KB), cut into pages of `tuning.page_size` bytes. A
+  keyframe is a table of page references: a page equal to the newest
+  keyframe's is shared, an all-zero page is the shared zero page, anything
+  else is copied into a pool page. Restoring keyframe k copies its pages
+  back, no chain walk. The bus and VDP write paths stay untouched (no
+  dirty bit per write, the 30-frame compare of 32 KB costs about 0.1 ms
+  once per half second). The store lives in a run-time arena between
+  `__bss_end__` and the stack limit, so the uf2 does not carry it, and the
+  keyframe count is chosen at start from what fits. The undo-record
+  design first written here (copy-on-first-write 64-byte blocks) is the
+  alternative if the page tables turn out too costly; M3 measures both.
+- Measured 2026-09-30 (first-write dirty 64 B blocks, host run): a
+  half-second record is about 1.5 KB for Waternet (10 RAM + 14 VRAM
+  blocks) and about 4.1 KB for Sonic scrolling Green Hill Zone (21 RAM +
+  38 VRAM blocks), with a 12.8 KB spike at the level load. The ~69 KB of
+  RAM left after M2 gives roughly 14 s of Waternet and 6 s of Sonic.
+  Target: at least 3 s of history for any ROM from the drive, at least
+  1 s for Sonic in the packing fallback. The oldest keyframe is dropped
+  when the pool is full.
 
 ## 11. The ROM
 
@@ -332,7 +344,7 @@ cart RAM at all. The embedded fallback ROM does (it is in the RAM image).
 | Drive file map (fragmented case)  | <= 4 KB               |
 | Live console + cart RAM 8 KB      | ~33 KB                |
 | Frontend state, input log         | ~3 KB                 |
-| Keyframe ring (deltas, section 10)| ~60-100 KB            |
+| Keyframe ring (page store, sec. 10)| ~69 KB (run-time arena) |
 | Total of ~268 KiB                 | fits                  |
 
 The fallback ROM competes with the ring, so it stays small (Waternet's
