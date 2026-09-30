@@ -224,7 +224,7 @@ debug overlay is on; About shows the same information.
 ```zig
 // frontend/menu.zig (Track A)
 pub const version = "0.2.0-m2";
-pub var sound_enabled: bool = true;           // main.zig copies it into audio.enabled each frame
+pub var sound_enabled: bool = build_options.sound; // -Dsound, default false (docs/SOUND.md); main.zig copies it into audio.enabled each frame
 pub const Result = enum { stay, resume_game };
 pub fn open() void;                           // frozen-frame copy + .copy_forward, cursor to Resume
 pub fn close() void;                          // back to .no_copy_full_frame
@@ -270,7 +270,7 @@ splash, 1 running, 2 menu.
 - Rows: `Resume`, `Buttons: B=1 A=2` / `Buttons: A=1 B=2` (toggles
   `input.swap_ab`), `Scale: Squeeze` / `Scale: Crop` (`video.set_scale`;
   takes effect on the first frame after resuming, which redraws in full),
-  `Sound: On/Off` (`sound_enabled`), `Debug overlay: On/Off`
+  `Sound: On/Off` (`sound_enabled`, off at boot unless `-Dsound=true`), `Debug overlay: On/Off`
   (`debug.enabled`), `Reset` (`gg.reset()`, resume), `About`.
 - Title band (SPEC.md 12): "SNOUTY GEAR", the ROM name (the file name:
   the drive entry or the embedded `rom.name`; a Game Gear header has no

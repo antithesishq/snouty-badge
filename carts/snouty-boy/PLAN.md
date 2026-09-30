@@ -631,6 +631,22 @@ M5 only, nothing under `carts/snouty-boy`, `lib`, `build` or
   Raw); scrub depth in seconds from the overlay's keyframe count.
 - 2048-gb: the M1 gate numbers.
 
+## Simulator sound fix (2026-09-30)
+
+Snouty Gear found (2026-09-29, Sonic inaudible) that upstream's wasm
+`tone2` shim sends `duration = -1` as `0xFFFFFFFF`, which the simulator's
+WASM-4 style worklet reads as a 255-frame attack/decay/sustain/release:
+every note restarts a 4 s fade-in and music stays under 2% volume. This
+cart had the same defect. Fix as in Gear, `frontend/audio.zig`: the wasm
+build calls the simulator's `tone` import itself (no attack, 6-frame
+sustain re-issued every frame, pulse at 50% duty for the square voice, the
+worklet's triangle channel for the wave channel, the old channel silenced
+on a shape change); the badge keeps the infinite `tone2`, which the OS
+driver supports. Thumb `.text` byte-identical to before. New export
+`debug_tone_hz`. Headless check: `tools/preview.mjs` with its `tone` stub
+logging shows the chime as sustain 4 / attack 0 and Rex Runner's jump
+tone re-issued per frame with attack 0.
+
 ## Hardware checklist (Adrian)
 
 - M1 gate: overlay avg/max microseconds and FPS with 2048-gb.

@@ -20,7 +20,7 @@ its design and milestone status.
   `snouty-bugs`, `snoutenstein`, `snouty-reflections`, `snouty-boy`,
   `snouty-maze`.
 - `build.zig`, `build.zig.zon`, `build/common.zig` — the one Zig package.
-  Shared options (`-Dcart`, `-Dcart-mode`, `-Ddebug_overlay`, `-Drom`, ...)
+  Shared options (`-Dcart`, `-Dcart-mode`, `-Ddebug_overlay`, `-Dsound`, `-Drom`, ...)
   and the shared `test` and `check-float` steps are declared here and passed
   to each cart. `build/os_cart.zig` builds a cart in RAM mode (upstream's
   `add_os_cart`) or XIP mode (`build/xip/entry.zig` as root, `cart_xip.ld`,
@@ -59,6 +59,11 @@ its design and milestone status.
   snouty-maze and snouty-boy; other carts have no LED code and do not take it.
   Also one user LED, light sensor, battery level, speaker (`tone2`, one
   voice, each call cancels the previous).
+- Speaker: every cart boots silent and has a runtime sound toggle (a menu
+  row or a button). A cart's sound flag is initialised from
+  `build_options.sound` (`-Dsound=true` builds a sound-on set) and only
+  that toggle changes it; the OS keeps no volume setting across cart
+  starts (`docs/SOUND.md`).
 - Flash: 8000 pages of 256 bytes available via the cart API (`Zone`).
 - Cart RAM window 307 KB (`0x20035100..0x20080000`, 32 KB of it stack). A RAM
   cart holds code, read-only data and state there; keep `size -A` of `.text`

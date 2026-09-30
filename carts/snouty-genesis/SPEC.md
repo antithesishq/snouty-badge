@@ -269,6 +269,10 @@ and the badge's one `tone2` voice plays one note chosen from them.
   ties. The frontend issues `tone2` on change and stops it when nothing
   is keyed on. Noise, DAC samples, envelopes and vibrato are lost by
   design.
+- **Sound toggle**: `frontend/audio.zig` `enabled` starts as
+  `build_options.sound` says (`-Dsound`, off by default: root
+  docs/SOUND.md). Badge A in the M1 menu placeholder toggles it; the M2
+  menu's Sound row takes that over.
 - **Z80 off** (tunable and menu item, fallback 4 of section 8): the
   arbiter stub. BUSREQ reports granted at once, RESET is recorded, Z80 RAM
   is plain memory, the YM2612 status reads "not busy" and the tone comes
@@ -341,8 +345,9 @@ pointer for contiguous ROMs, or a cluster table (section 1 of
 ## 12. Boot splash and presentation
 
 The splash from the other emulators, recolored: the Antithesis Iris mark
-(the shared 1-bit 24x24 bitmap in `lib/iris_mark.zig`, at 2x) slides in,
-then the two-note chime. The menu title
+(the shared 1-bit 24x24 bitmap in `lib/iris_mark.zig`, at 2x) slides in.
+No chime: every cart boots silent (root docs/SOUND.md) and the speaker
+earns no further audio work (M2 decision, 2026-09-30). The menu title
 reads "SNOUTY GENESIS", the ROM's domestic name from its header, and
 "verified by deterministic replay". The
 neopixels are off: the cart never writes non-zero values (root
@@ -491,3 +496,6 @@ disjoint files.
   M1 (Z80 + register models + one voice), stock firmware. Sections 1, 2,
   7, 8, 9, 10, 11, 13 and 17 updated to match; M0 started on branch
   `genesis/m0`.
+- 2026-09-30: M0 and M1 done (PLAN.md Status). M2 started on `genesis/m2`:
+  section 12's chime dropped; section 6's H40 column-pair averaging option
+  deferred to M4 (render cost); the rest of M2 as section 17.

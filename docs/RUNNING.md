@@ -41,6 +41,7 @@ All from the repository root:
 zig build                          # every cart, a few minutes clean
 zig build -Dcart=snouty-maze       # one cart; comma-separate for several
 zig build --help                   # the per-cart options (-Ddebug_overlay, -Drom, ...)
+zig build -Dsound=true             # carts boot with sound on (default off; a menu row or button toggles it, docs/SOUND.md)
 ```
 
 Outputs, one set per cart:

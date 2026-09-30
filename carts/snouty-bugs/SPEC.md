@@ -374,7 +374,9 @@ plays on every third bolt so it does not drown everything.
 | Extra life    | major    | 660 Hz                             | 0.30 s   |
 | Boss enters   | minor    | 82 Hz                              | 0.80 s   |
 
-Select toggles sound. The neopixels stay dark (section 2).
+Select toggles sound. Sound starts off unless the cart is built with
+`-Dsound=true` (`build_options.sound`, the repository rule in
+docs/SOUND.md). The neopixels stay dark (section 2).
 
 ## 12. Asset manifest
 
@@ -545,7 +547,8 @@ brief so the real sheets drop in without code changes.
 
 - Repo name and GitHub remote: scaffolded locally as `snouty-bugs`; rename
   before pushing if you want something else.
-- Sound default off, on-badge toggle on Select: agree?
+- Sound default off, on-badge toggle on Select: agreed 2026-09-30 for every
+  cart (root docs/SOUND.md; the default comes from `-Dsound`).
 - Boss flavor name "Heisenbug" and the software-bug enemy names: keep, or go
   with plain insect names on screen?
 - Graze scoring: kept (2026-09-27); a graze also refills fuel (5.2).

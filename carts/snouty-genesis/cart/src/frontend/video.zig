@@ -122,3 +122,19 @@ pub fn finish_frame() void {
     last_frame_lines = rows_this_frame;
     rows_this_frame = 0;
 }
+
+// ---- Scale (the menu's Scale row, SPEC.md section 6) ----
+
+/// Which of the 224 Genesis lines reach the 128 badge rows: `.squeeze`
+/// shows every line through the line table, `.crop` a 1:1 middle band.
+/// The VDP holds the mode (`Vdp.line_mode`); this is the setting, applied
+/// by `apply`.
+pub var scale: core.vdp.LineMode = .squeeze;
+
+/// Put `scale` into the console. main.zig calls it after `init_in_place`,
+/// after a Reset (`Vdp.reset` puts the mode back to squeeze) and when the
+/// menu closes. (M3: a `Keyframe` restore brings back the recorded `Vdp`,
+/// so it must re-apply too.)
+pub fn apply(md: *core.Md) void {
+    md.vdp.line_mode = scale;
+}
