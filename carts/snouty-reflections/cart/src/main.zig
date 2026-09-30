@@ -7,6 +7,7 @@ const math = @import("math.zig");
 const dither = @import("dither.zig");
 const overlay = @import("overlay.zig");
 const trace = @import("trace.zig");
+const camera = @import("camera.zig");
 const variant = @import("variant.zig");
 const build_options = @import("build_options");
 
@@ -32,7 +33,14 @@ pub fn update() void {
 
     const t0 = cart.micros_since_boot();
     dither.begin_frame(frame);
-    trace.render_frame(frame);
+    // Track B's app.zig replaces this with the attract / free camera state.
+    trace.render_frame(.{
+        .preset = .sunset,
+        .t = frame,
+        .orbit = frame % camera.orbit_frames,
+        .height = camera.default_height,
+        .fade = 1.0,
+    });
     render_us = @truncate(cart.micros_since_boot() - t0);
     if (build_options.debug_overlay) overlay.draw(render_us, frame);
 

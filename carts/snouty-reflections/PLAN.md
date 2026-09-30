@@ -972,3 +972,15 @@ status; tag `snouty-reflections/m3`.
 ### M3 status
 
 - 2026-09-30: plan written.
+- 2026-09-30 (Track A step 1): runtime scene, motion off, sunset only.
+  `trace.View` / `render_frame(view)`; preset values (sun, sky, colours,
+  shore palette, wave gains) are comptime per preset and copied into a
+  per-frame `scene.Frame` with the fade folded into every emitted colour
+  (no per-pixel cost); sphere heights and `k = y^2 - r^2` per frame; the
+  primary water tables are runtime copies (`water.build_tables`) of the
+  comptime ones at default height. Legacy identity: checksums of frames
+  0..600 step 50 equal the m2.2 baseline for cut20 and half30, both dither
+  modes. cut20 45.48 / 43.09 ms (worst / mean; baseline 45.94 / 43.61):
+  -0.46 ms. `.text + .data` cut20 94800, full20 106152, full15 104376,
+  half30 123368 (under 140 KB); `.bss` cut20 86632, full20/full15 120488,
+  half30 120592 (the 40 KB primary_fade_rt).
