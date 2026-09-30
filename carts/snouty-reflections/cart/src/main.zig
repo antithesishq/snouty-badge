@@ -9,10 +9,7 @@ const app = @import("app.zig");
 const variant = @import("variant.zig");
 const build_options = @import("build_options");
 
-// TEMPORARY m3_shim import: at integration replace with
-//   const trace = @import("trace.zig");
-// and delete m3_shim.zig (see app.zig).
-const trace = @import("m3_shim.zig").trace;
+const trace = @import("trace.zig");
 
 comptime {
     cart.export_start_code();

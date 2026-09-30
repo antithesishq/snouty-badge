@@ -27,15 +27,9 @@ const dither = @import("dither.zig");
 const variant = @import("variant.zig");
 const build_options = @import("build_options");
 
-// TEMPORARY m3_shim import block: at integration replace with
-//   const scene = @import("scene.zig");
-//   const camera = @import("camera.zig");
-//   const trace = @import("trace.zig");
-// and delete m3_shim.zig.
-const m3_shim = @import("m3_shim.zig");
-const scene = m3_shim.scene;
-const camera = m3_shim.camera;
-const trace = m3_shim.trace;
+const scene = @import("scene.zig");
+const camera = @import("camera.zig");
+const trace = @import("trace.zig");
 
 pub const State = enum(u32) { attract = 0, free = 1 };
 

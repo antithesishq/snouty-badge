@@ -972,3 +972,75 @@ status; tag `snouty-reflections/m3`.
 ### M3 status
 
 - 2026-09-30: plan written.
+- 2026-09-30 (Track A step 1): runtime scene, motion off, sunset only.
+  `trace.View` / `render_frame(view)`; preset values (sun, sky, colours,
+  shore palette, wave gains) are comptime per preset and copied into a
+  per-frame `scene.Frame` with the fade folded into every emitted colour
+  (no per-pixel cost); sphere heights and `k = y^2 - r^2` per frame; the
+  primary water tables are runtime copies (`water.build_tables`) of the
+  comptime ones at default height. Legacy identity: checksums of frames
+  0..600 step 50 equal the m2.2 baseline for cut20 and half30, both dither
+  modes. cut20 45.48 / 43.09 ms (worst / mean; baseline 45.94 / 43.61):
+  -0.46 ms. `.text + .data` cut20 94800, full20 106152, full15 104376,
+  half30 123368 (under 140 KB); `.bss` cut20 86632, full20/full15 120488,
+  half30 120592 (the 40 KB primary_fade_rt).
+- 2026-09-30 (Track A steps 2-4, presets, motion, height). Calibrated busy
+  ms, worst / mean over one orbit, cut20 unless noted.
+  - Presets and matte/small spheres, motion off (`-Dreflections_bench=
+    motion_off`): row 1, sunset 45.49 / 43.11 (baseline 45.94 / 43.61);
+    legacy identity holds (checksums 0..600 step 50, cut20 and half30,
+    dither none; bayer differs on odd frames only because the stand-in
+    main's dither parity follows its own frame counter, not the view).
+  - A first general form (runtime flags for the other spheres in every
+    ray) cost 1.4 ms in sunset and put midnight at 55.1, noon at 66.8.
+    Now: the render is instantiated twice in cut20 (`trace.Class`:
+    chrome-only for sunset and storm, the M2.2 code; general for presets
+    with a second sphere), and in the general one the water rows whose
+    reflection may meet another sphere or whose hit may lie in a noon
+    shadow (`x` rows, per column: the M2.2 water-logo bands, a small span
+    round the mirror image for t >= tau, a span round each shadow box)
+    run x kinds; the rest run the chrome-only kinds. debug_span paints a
+    plain row that needed an x kind: zero over 200 frames each of
+    midnight and noon; a negative control paints 359.
+  - Knobs in cut order, measured at each preset's worst frame: rings 12.5
+    ms in sunset (8.9 active, 3.6 for the ring code's mere presence in
+    the water normal) - off in cut20, full20, full15, half30 (half30 33.1
+    with rings, budget 31.3); stripes 1.1 in sunset, ~0 in midnight and
+    noon - kept; noon_shadows 6.9 and noon_third_sphere 6.6 in noon - off
+    in cut20, full20, full15 (kept in half30); sun_drift 0 - kept.
+  - Row 2 per preset, motion on, knobs as above: sunset 46.62 / 44.08,
+    midnight 49.81 / 46.01 (OVER), noon 50.24 / 45.34 (OVER), storm
+    45.78 / 42.81. Midnight and noon are over after every knob: of their
+    ~3.5 ms over sunset, the matte seen in the water costs 1.4-1.8
+    (without it 48.41 / 48.45), the rest is the general render (1.3) and
+    the x-row planning (0.5). Not cut further: needs Adrian (options:
+    no matte in water reflections, a matte-only render instance for +17
+    KB, or a lower bar for those two presets).
+  - Row 3, height sweep (`-Dreflections_bench=height`: 1.0 -> 3.0 -> 1.0
+    over each orbit, a table rebuild every frame): sunset 51.40 / 47.17,
+    midnight 54.89 / 48.98, noon 55.32 / 48.32, storm 51.53 / 45.99, all
+    OVER. Worst per height band (sunset): 1.0-1.8 at or under 46.5, 2.0
+    48.2, 2.4 50.6, 2.6-3.0 51.4: above ~1.8 m more rows see water (every
+    row at 3.0), and water pixels cost ~270 cycles against ~60 for sky.
+    The rebuild is 0.8 ms at 1.0 m, ~2 ms at 3.0 m (a divide per entry).
+    Needs Adrian: e.g. max_height 1.8, or a cheaper water shade above it.
+  - Other variants (not gated): half30 sunset 27.11 / 21.21, noon 20.45
+    / 18.07 (budget 31.3); full15 sunset 64.83 / 60.63 (budget 62.7);
+    full20 sunset 90.48 / 68.47 (baseline). full20 and full15 got
+    heavier than M2.2 because moving spheres make the static shadow map
+    invalid: their water shadows are exact per hit at every depth.
+  - check_render (Track C's reference, the variant's knob flags): 24/24
+    PASS for cut20, half30, full20, full15 (worst: storm t=300, 75 pixels
+    > 1 unit, 21 > 6: the one-step normal renormalisation at 2.5x
+    amplitude). check-float passes for every variant and the height and
+    motion_off builds.
+  - Sizes, `.text + .data` / `.bss`: cut20 98684 / 47080, full20 84028 /
+    46968, full15 82636 / 46968, half30 111916 / 47080. The inverse ray
+    length is read from the 20 KB quarter table with a mirrored stride
+    (no 40 KB unfolded copy); the shipped build computes the primary
+    water fade at runtime (40 KB `.bss`, every height) and leaves out the
+    27.5 KB comptime table, which the motion_off build keeps.
+  - Toolchain bug found: indexing a comptime array of structs holding
+    vectors (`[4]Consts`) at runtime read wrong bytes for presets 1-3 in
+    the thumb build only (wasm right); `scene.consts_of` switches over
+    four separate constants instead.
