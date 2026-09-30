@@ -380,4 +380,3 @@ pub fn caption() []const u8 {
     if (under_index == no_segment) return "";
     return info(under_seg.kind).caption;
 }
-

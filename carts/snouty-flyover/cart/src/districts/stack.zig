@@ -15,6 +15,15 @@
 //! every full-depth row it reaches falls into a black pit, and the sky
 //! flashes (render.sky_flash). Pushes reset when the district is left.
 //!
+//! Unwind (PLAN.md M4 Track A): `unwind_delay` frames after an overflow's
+//! wave has opened the pit, the pushes pop, newest first, one every
+//! `pop_interval` frames: a popped push's rows rise one band as a wave from
+//! its first row to the district end over `pop_frames` frames (the pit
+//! closes to the full-depth floor with the overflowing push, the first pop),
+//! the sky flashes `pop_flash` frames on each pop, until no push is left;
+//! the static canyon stays. A push during the unwind cancels it (a pop wave
+//! already running finishes alongside the new push's wave).
+//!
 //! row() is a pure function of ly (the seed is unused: every Stack is the
 //! same canyon); the pushes live in the live state and are applied through
 //! world.rows() only.
@@ -63,6 +72,19 @@ const max_pushes = 32;
 const pit_h: u8 = world.water + 1;
 /// Sky flash frames on an overflow.
 const overflow_flash: u8 = 6;
+/// Frames from the overflow's wave reaching the district end (the pit fully
+/// open) to the first pop.
+const unwind_delay: i32 = 30;
+/// Frames from one pop to the next.
+const pop_interval: i32 = 8;
+/// Frames a pop's wave takes to run from its first row to the district end
+/// (at most pop_interval, so pop waves never overlap).
+const pop_frames: i32 = 8;
+/// Sky flash frames on each pop.
+const pop_flash: u8 = 2;
+comptime {
+    if (pop_frames > pop_interval) @compileError("pop waves must not overlap");
+}
 
 // --- Rows -------------------------------------------------------------------
 
@@ -131,6 +153,15 @@ var pushes: u32 = 0;
 /// or done when it has reached the district end.
 var front: i32 = 0;
 var pushing = false;
+/// The unwind: running (waiting for or making pops), frames to the next
+/// pop, and the pop wave in progress: the popped push (no longer counted in
+/// `pushes`) still stands on rows from pop_front to the district end.
+var unwinding = false;
+var unwind_wait: i32 = 0;
+var popping = false;
+var pop_from: i32 = 0;
+var pop_ovf = false;
+var pop_front: i32 = 0;
 /// The camera row as of the last tick (verb() runs right after tick()).
 var last_cam_row: i32 = 0;
 
@@ -139,7 +170,9 @@ var last_cam_row: i32 = 0;
 var frame_cells: u32 = 0;
 pub var max_frame_cells: u32 = 0;
 
-/// Pushes made in the live Stack this visit (0 before the first).
+/// Pushes standing in the live Stack this visit (0 before the first push
+/// and again once the unwind has popped them all; a pop counts from the
+/// frame its wave starts).
 pub fn push_count() u32 {
     return pushes;
 }
@@ -158,6 +191,10 @@ fn state_at(y: i32) RowState {
         if (pushing and k == pushes - 1 and y >= front) break;
         extra += 1;
         ovf = ovf or push_ovf[k];
+    }
+    if (popping and y >= pop_front and y >= pop_from) {
+        extra += 1;
+        ovf = ovf or pop_ovf;
     }
     const d = @min(max_depth, base_depth(ly) + extra);
     return .{ .d = d, .pit = ovf and d == max_depth };
@@ -182,24 +219,63 @@ pub fn enter(seg: world.Segment) void {
     pushes = 0;
     pushing = false;
     front = 0;
+    unwinding = false;
+    popping = false;
 }
 
-/// Per-frame: advance the push wave (rows_per_frame rows).
+/// Per-frame: advance the push wave and the unwind (each wave rewrites at
+/// most ceil(rows / its frames) rows a frame).
 pub fn tick(frame: u32, cam_row: i32) void {
     _ = frame;
     last_cam_row = cam_row;
     frame_cells = 0;
     defer max_frame_cells = @max(max_frame_cells, frame_cells);
-    if (!pushing) return;
     const end = live_y0 + world.district_len;
-    const from = push_from[pushes - 1];
-    const step = @divFloor(end - from + push_frames - 1, push_frames);
-    const stop = @min(end, front + @max(step, 1));
-    while (front < stop) {
-        front += 1; // row front - 1 now counts the push (state_at)
-        repaint(front - 1);
+    if (pushing) {
+        const from = push_from[pushes - 1];
+        const step = @divFloor(end - from + push_frames - 1, push_frames);
+        const stop = @min(end, front + @max(step, 1));
+        while (front < stop) {
+            front += 1; // row front - 1 now counts the push (state_at)
+            repaint(front - 1);
+        }
+        if (front >= end) {
+            pushing = false;
+            // The overflow's pit is open: the unwind starts its countdown.
+            if (push_ovf[pushes - 1]) {
+                unwinding = true;
+                unwind_wait = unwind_delay;
+            }
+        }
     }
-    if (front >= end) pushing = false;
+    if (unwinding and !pushing) {
+        if (unwind_wait > 0) unwind_wait -= 1;
+        if (unwind_wait == 0 and !popping) {
+            if (pushes == 0) {
+                unwinding = false;
+            } else {
+                pushes -= 1;
+                pop_from = push_from[pushes];
+                pop_ovf = push_ovf[pushes];
+                pop_front = pop_from;
+                popping = true;
+                unwind_wait = pop_interval;
+                render.sky_flash = @max(render.sky_flash, pop_flash);
+            }
+        }
+    }
+    if (popping) {
+        const step = @divFloor(end - pop_from + pop_frames - 1, pop_frames);
+        const stop = @min(end, pop_front + @max(step, 1));
+        while (pop_front < stop) {
+            pop_front += 1; // row pop_front - 1 no longer counts the pop
+            repaint(pop_front - 1);
+        }
+        if (pop_front >= end) {
+            popping = false;
+            if (unwinding and pushes == 0) unwinding = false;
+        }
+    }
 }
 
 /// B: push a frame from cam_row + push_lead to the district end (ignored
@@ -215,5 +291,6 @@ pub fn verb() void {
     pushes += 1;
     front = from;
     pushing = true;
+    unwinding = false; // a push cancels the unwind
     if (ovf) render.sky_flash = overflow_flash;
 }
