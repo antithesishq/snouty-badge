@@ -1,0 +1,7 @@
+# Preview frames, GIFs and scratch output. The cart draws everything in
+# code (no asset pipeline), so no image in this directory is a build input
+# and none is committed to the job's build/ID branch.
+*.png
+*.gif
+frames.json
+/out/
