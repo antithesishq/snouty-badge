@@ -1,0 +1,14 @@
+# /etc/badge-station/station.toml
+library = "/var/lib/badge-station/library"
+http_port = 80
+# fake_badge = "/var/lib/badge-station/fake.img"   # loop image or directory instead of USB
+
+[[hotspots]]
+ssid = "Adrian's iPhone"
+password = "change-me"
+
+ap_ssid = "snouty-badge"
+ap_password = "snoutysnouty"
+
+build_host = "exedev@animated-badge.exe.xyz"
+build_repo = "/home/exedev/snouty-badge"
