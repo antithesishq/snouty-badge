@@ -48,7 +48,9 @@ CLAUDE.md files have the long explanations, this one summarises.
   `Pixel.from_color(DisplayColor.rgb(0xRRGGBB))`.
 - Inputs `cart.controls.*`: start, select, a, b, click, up, down, left,
   right. The OS owns Start+Select (exit) and click; never bind click.
-- Audio `cart.tone2(...)`, one voice, each call cancels the previous.
+- Audio `cart.tone2(...)`, one voice, each call cancels the previous. The
+  wasm build calls the simulator's `tone` import itself instead (upstream's
+  shim breaks infinite tones; `frontend/audio.zig` explains).
 - `read_flash`/`write_flash_page` are stubs on hardware, so the ROM is read
   by pointer: `cart/src/frontend/romsrc.zig` finds `.gb`/`.gbc` files on the
   badge drive (the OS `romfs` FAT12 region at 0x10080000) through the shared

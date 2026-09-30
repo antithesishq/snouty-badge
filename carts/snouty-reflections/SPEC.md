@@ -44,7 +44,7 @@ pixel per frame; this cart is the same idea at 20 frames per second.
   120 KB (section 13).
 - Inputs: joystick 4-way, A, B, Start, Select. Start+Select (250 ms) and
   joystick click are OS-owned; never bound.
-- Audio: `tone2`, one buzzer voice. Neopixels: off; the cart never writes
+- Audio: `tone2`, one buzzer voice, unused (section 8). Neopixels: off; the cart never writes
   non-zero values (root `docs/NEOPIXELS.md`; a coworker's badge shows the
   LEDs are unusably bright even at 1%, 2026-09-29).
 - Rendering mode `.no_copy_full_frame`, full redraw every frame, vsync via
@@ -53,18 +53,23 @@ pixel per frame; this cart is the same idea at 20 frames per second.
 
 ## 3. Controls
 
-| Input          | Attract (default)                 | Free camera                            |
-|----------------|-----------------------------------|----------------------------------------|
-| Left / Right   | Enter free camera; orbit          | Orbit around the spheres               |
-| Up / Down      | Enter free camera; raise / lower  | Camera height (clamped above water)    |
-| A              | Next scene preset (section 6)     | Next scene preset                      |
-| B              | Cycle dither mode (section 5.5)   | Cycle dither mode                      |
-| Select         | Toggle sound                      | Toggle sound                           |
-| Start          | (nothing)                         | Return to attract orbit                |
+Revised 2026-09-30: A freezes the scene for progressive path tracing
+(section 5b); presets moved from A to Select, which was the sound toggle
+before audio was dropped (section 8).
 
-Free camera returns to attract by itself after 20 s without input. The
-camera can never go below the water plane or inside a sphere; the orbit
-radius is fixed so the composition always holds.
+| Input          | Attract (default)                 | Free camera                          | Frozen (section 5b)                          |
+|----------------|-----------------------------------|--------------------------------------|----------------------------------------------|
+| Left / Right   | Enter free camera; orbit          | Orbit around the spheres             | Orbit the frozen view; restarts accumulation |
+| Up / Down      | Enter free camera; raise / lower  | Camera height (clamped above water)  | Height; restarts accumulation                |
+| A              | Freeze                            | Freeze                               | Unfreeze: time resumes where it stopped      |
+| B              | Cycle dither mode (section 5.5)   | Cycle dither mode                    | Cycle dither mode (accumulation kept)        |
+| Select         | Next scene preset (section 6)     | Next scene preset                    | Next preset; restarts accumulation           |
+| Start          | (nothing)                         | Return to attract orbit              | Unfreeze and return to attract orbit         |
+
+Free camera returns to attract by itself after 20 s without input; frozen
+mode does not time out (section 17 question 8). The camera can never go
+below the water plane or inside a sphere; the orbit radius is fixed so the
+composition always holds.
 
 ## 4. Screen layout
 
@@ -204,10 +209,79 @@ reflection, test it; a hit costs one plane pair and a handful of 2D shape
 tests, no secondary rays. The estimate is 1 to 2 ms of the 20 fps frame,
 against 1.6 ms of headroom in `cut20`, so PLAN.md M2.2 gives it knobs.
 
+## 5b. Freeze frame: progressive path tracing (M4)
+
+Pressing A stops time (camera, water, logo spin, sphere bob, sun drift all
+hold at the frame A was pressed) and the cart switches from the real-time
+tracer to a Monte Carlo one that adds one sample per pixel per pass into
+an accumulation buffer. The picture starts as the ordinary real-time frame,
+turns briefly noisy, and then converges over seconds to what the real-time
+path cannot afford: the whole scene, glass sphere included, with soft
+light and glossy reflections. Pressing A again resumes time exactly where
+it stopped. The claim of section 16 gets stronger, not weaker: every pixel
+is still traced, now hundreds of times.
+
+**What the frozen tracer adds over cut20** (all of it paid for by time,
+not by the 50 ms frame):
+
+- Anti-aliasing: each sample jitters its ray inside the pixel (box
+  filter), so edges of the spheres, logo and skyline come out smooth.
+- Soft shadows: the sun is a disc (angular radius a knob, about 1.5 deg)
+  and each shadow ray aims at a random point on it. Spheres and the Iris
+  logo shadow the water with real penumbras (cut20 has no water shadows at
+  all; M2 had analytic ones for spheres only).
+- The glass sphere is back, with real refraction. At each glass hit the
+  path reflects with probability equal to the Fresnel term and refracts
+  otherwise: one ray per hit, so cheaper per sample than the real-time
+  glass that traced both.
+- Glossy water: the ripple normal is perturbed by a sampled microfacet
+  (roughness a knob), so the sun's glitter path and the reflections blur
+  the way real water does instead of breaking into single-pixel sparkle.
+- The logo in every reflection (water and chrome), and specular chains up
+  to 4 bounces (chrome to glass to water and back).
+- Diffuse surfaces get true path tracing: a cosine-weighted bounce plus a
+  shadow ray to the sun, lit by the sky dome, with colour bleeding from the
+  lake and the other spheres. The default sunset scene is nearly all
+  mirrors; the matte spheres of the M3 presets (section 6) are where this
+  shows.
+- Depth of field (knob, section 17 question 9): a thin lens focused on the
+  chrome sphere, so the skyline and the shore melt into bokeh.
+
+**Sampling.** Pixel jitter, lens and sun-disc samples come from a
+low-discrepancy sequence per pass, offset per pixel by a blue-noise tile,
+so the noise is fine-grained and converges faster than white noise. The
+random numbers are an integer hash of (pixel, pass, dimension), so a
+frozen image is deterministic and `tools/reference.py` can compute the
+same estimator. Each sample is clamped (knob, default 4.0 in linear units)
+before accumulating so the sun's reflection does not leave fireflies.
+
+**Accumulation.** One `u32` per pixel holding the running mean as RGB
+11:11:10 fixed point over [0, 2), updated `mean += (x - mean) / n` with
+stochastic rounding from the pixel hash so the mean stays unbiased: 80 KB
+of `.bss`. All pixels share the pass count `n`. The display pass runs the
+mean through the same dither stage as the real-time frame.
+
+**Scheduling.** A pass costs more than a frame (estimate 80 to 150 ms; M4
+measures it), so it is sliced by columns: each `update()` traces columns
+until about 40 ms have gone by (`micros_since_boot`), then dithers the
+whole accumulator to the screen. The display keeps refreshing at 20 fps,
+input stays live, and a pass front sweeps across the image. Tracing stops
+at `max_passes` (knob, default 256, about 30 s); the image stays up until
+A. Until the first pass completes, the columns not yet traced show the
+real-time frame that was on screen when A was pressed.
+
+**Structure.** A separate module `pt.zig` with runtime scene parameters
+(no comptime specialisation: speed matters less here than breadth). The
+real-time tracer and its per-variant specialisations are untouched; its
+check_render and badge-bench numbers must not move.
+
 ## 6. Scene presets
 
 Cycled with A, each a small struct (camera orbit parameters, sun
 direction, sky gradient index, sphere list, ripple parameters):
+
+Cycled with Select since 2026-09-30 (section 3). In frozen mode (section
+5b) every preset gets its full content, glass and shadows included.
 
 1. **Sunset lake** (default): chrome + glass sphere, low orange sun,
    strong glitter.
@@ -220,7 +294,8 @@ direction, sky gradient index, sphere list, ripple parameters):
    reflection tears apart.
 
 Attract mode advances presets every 30 s with a 1 s fade (scale the
-traced colour toward black before dithering).
+traced colour toward black before dithering); the cycle pauses while
+frozen.
 
 ## 7. Animation
 
@@ -235,10 +310,12 @@ traced colour toward black before dithering).
 
 ## 8. Audio
 
-- Buzzer: a slow, sparse chiptune arpeggio (single voice, `tone2`), 8-bar
-  loop, tempo synced to the camera orbit so one loop is one revolution.
-  Off by default (Adrian, 2026-09-30, every cart: root docs/SOUND.md);
-  `-Dsound=true` builds it on. Select toggles.
+None. Adrian, 2026-09-30: feedback from the badge is that its speaker
+sounds bad, so audio is not worth development time. The cart never calls
+`tone`/`tone2`, has no sound toggle and no music; Select cycles presets
+instead (section 3). This supersedes the chiptune plan and the
+`-Dsound` default-off note (branch `sound-off`, root `docs/SOUND.md`):
+whichever merges second keeps this text.
 
 ## 9. Architecture
 
@@ -253,7 +330,7 @@ cart/src/
   dither.zig      Bayer/blue-noise/palette tables (comptime), quantise,
                   upscale
   math.zig        Vec3 (@Vector(3, f32)), sin table, fast inverse sqrt
-  music.zig       tone2 sequencer
+  pt.zig          frozen-mode progressive path tracer (section 5b)
 tools/
   gen_shore.py    shore texture from assets/ (Snouty + text + trees)
   gen_bluenoise.py void-and-cluster table -> Zig source
@@ -299,13 +376,18 @@ framebuffer, for regression tests).
 | Sky gradients 4 x 64 x 3 f32                  | .text | 3 KB    |
 | Sin table 1,024 f32, Bayer, blue noise 64x64  | .text | 9 KB    |
 | Palette cube 16^3 u8 (mode 3)                 | .text | 4 KB    |
-| Music                                         | .text | 1 KB    |
+| Frozen-mode tracer `pt.zig` (est.)            | .text | ~15 KB  |
 | Per-column / per-row direction tables         | .bss  | 2 KB    |
 | Half-res colour buffer (scale 2 path only)    | .bss  | 60 KB   |
-| Scene + camera state, accumulators            | .bss  | 1 KB    |
+| Scene + camera state                          | .bss  | 1 KB    |
+| Frozen-mode accumulation, 160x128 `u32`       | .bss  | 80 KB   |
 | Total                                         |       | ~123 KB |
 
 The framebuffers belong to the OS and are not counted. Well inside 307 KB.
+Measured M2.2 (cut20): `.text` + `.data` 90 KB, `.bss` 45 KB (40 KB of it
+the 1/|ray| table). The M4 accumulator takes `.bss` to about 125 KB, over
+the 120 KB this cart has kept to, so M4 raises the `.bss` limit to 136 KB:
+90 + 125 + 32 KB stack = 247 KB of the 307 KB window.
 
 ## 12. Asset manifest
 
@@ -336,23 +418,24 @@ tracks go to Opus subagents with disjoint files, as before.
   section 10 table picks the resolution path.
 - **M2 Materials and shore**: glass sphere with refraction, shadow rays,
   shore texture with Snouty and text, reflection palette, Fresnel tuning.
-- **M3 Presets and motion**: the four presets, attract cycling with fade,
-  free camera, sphere bobbing and radiating ripples, dither modes 2 to 4.
-- **M4 Polish**: chiptune, debug overlay option,
-  hardware tuning pass, final GIFs, README.
+- **M3 Presets and motion**: the four presets on Select, attract cycling
+  with fade, free camera, sphere bobbing and radiating ripples, sun drift,
+  chrome stripes, dither modes 2 to 4, all at 20 fps in cut20. A is
+  reserved for M4. No audio (section 8).
+- **M4 Freeze frame**: A freezes time and runs the progressive path
+  tracer (section 5b) until A again; reference estimator and a
+  convergence check in `tools/`, per-pass cost from badge-bench.
+- **M5 Polish**: debug overlay option, hardware tuning pass, final GIFs,
+  README.
 
 ## 14. Future options (not in this cart's scope)
 
 Kept here so they are not lost. Either could become a second "scene" in
 this cart behind the A button if the budget allows, or a fifth cart.
 
-- **Voxel heightfield flyover** (Comanche-style). Cast one ray per column
-  through a 256x256 `u8` heightmap with a colour map, drawing vertical
-  runs from the bottom up with an occlusion height per column. Cheaper
-  per pixel than ray tracing; 30 fps full res is realistic. Lakes in the
-  heightmap can reuse this cart's water shader (reflect the ray, march
-  again) and distance fog reuses the dither stage. Needs ~128 KB of map
-  data, which fits.
+- **Voxel heightfield flyover** (Comanche-style): moved to its own idea
+  note, `carts/snouty-flyover/SPEC.md` (2026-09-30), as a possible
+  separate cart.
 - **Bump-mapped rotozoom tunnel**. Per-pixel `(angle, depth)` lookup into
   a comptime 160x128 table, textured with a tiled 64x64 pattern, with a
   cheap bump term from a second offset lookup to fake a moving light.
@@ -396,7 +479,15 @@ ships the text changes).
 6. Iris emblem etched into the chrome sphere: worth the art time?
 7. Should the flyover (section 14) be planned as a preset in this cart
    from the start, sharing the water and dither code, or kept as a
-   separate future cart?
+   separate future cart? **Answered 2026-09-30: separate cart idea,
+   `carts/snouty-flyover/`.**
+8. Frozen mode (section 5b) never times out, so a badge left frozen at a
+   booth stays on its converged image. Resume attract by itself some time
+   after the image converges with no input? Recommendation: yes, 60 s.
+9. Depth of field in frozen mode: on by default (subtle, focused on the
+   chrome sphere), off, or a toggle? Recommendation: on, subtle.
+
+Question 4 (music) is answered by section 8: no audio.
 
 ## Status
 
@@ -434,3 +525,8 @@ ships the text changes).
   worst); the logo also reflects in water and chrome in half30. Whether
   cut20 gets the reflections waits on a per-frame hardware capture (branch
   `reflections/hw-trace`).
+- 2026-09-30: logo moved right of the skyline (`x = -13.5`, in front of
+  Canada Place), on main. Adrian: no audio (section 8, the badge speaker
+  sounds bad); A becomes freeze-frame progressive path tracing (section
+  5b, M4), presets move to Select; M3 next, then M4, then M5 polish. The
+  voxel flyover became its own idea note, `carts/snouty-flyover/SPEC.md`.

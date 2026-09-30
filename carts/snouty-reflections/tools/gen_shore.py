@@ -19,13 +19,14 @@ Content, left to right as seen from the lake (M2.2):
   u  52..80   Stanley Park treeline at the waterline
   u  60..76   the Lions' twin peaks, top of the hazy North Shore band that
               runs behind everything
-  u  78..107  West End towers; u 80..104, v 22..47 is where the 3D Iris
-              logo stands in front, so nothing but plain building mass there
+  u  78..107  West End towers, plain building mass (the 3D Iris logo stood
+              in front of u 80..104 until it moved right of the skyline)
   u 108..113  the Living Shangri-La, the tallest and slimmest tower
   u 114..223  the downtown glass towers catching the sun, "ADRIAN HATCH"
               over "ANTITHESIS" in front of their shaded lower floors
   u 224..237  Harbour Centre: saucer and mast
-  u 238..255  Canada Place's white sails at the waterline
+  u 238..255  Canada Place's white sails at the waterline, the 3D Iris logo
+              standing in front of them (x = -13.5)
 
 Design notes: the texture is point-sampled at about one texel per pixel at
 best and mostly seen upside down in rippling water, so everything is at
