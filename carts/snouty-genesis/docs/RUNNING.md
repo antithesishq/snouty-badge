@@ -4,12 +4,13 @@ Build the cart, run the host tests, preview it headless or in the web
 simulator, benchmark it, put a ROM on the badge drive and flash the cart.
 Commands run from the repository root; outputs land in the root `zig-out/`.
 
-Status: M2. Boot: a 1.2 s splash (the Iris mark and "SNOUTY GENESIS";
+Status: M3. Boot: a 1.2 s splash (the Iris mark and "SNOUTY GENESIS";
 any button skips it), then the game, or on the badge the ROM picker when
 the drive holds several Genesis ROMs and a help screen when it holds none.
 Holding Select for 500 ms opens the emulator menu (section 5). Sound is off
 at boot unless built with `-Dsound=true` (root docs/SOUND.md); the menu's
-Sound row turns it on. No time scrubbing yet (M3).
+Sound row turns it on. In the menu Left/Right scrub time back and forward
+in half-second steps (section 5).
 
 ## 1. Prerequisites
 
@@ -157,7 +158,13 @@ the button layout index, bit 5 overlay on), `debug_tone_calls`,
 `debug_tone_hz` (0 silent), `debug_sound_on`, `debug_pc`, `debug_sp`,
 `debug_sr` (68000), `debug_vdp_line`, `debug_z80_pc`, `debug_z80_state`
 (bit 0 BUSREQ, bit 1 reset, bit 2 off). Exports that read the console
-return 0 until a ROM is loaded (the picker or help screen is up).
+return 0 until a ROM is loaded (the picker or help screen is up). The
+scrubber's: `debug_scrub_depth` (Genesis frames parked behind live, 0
+live), `debug_scrub_history` (frames reachable back from live),
+`debug_scrub_records` (closed undo records held), `debug_scrub_slots`
+(68-byte ring slots in use), `debug_scrub_capacity` (slots the arena
+holds; 0 = no memory, scrubber off), `debug_scrub_arena` (arena bytes;
+in wasm `tuning.wasm_arena_bytes`).
 
 Miniplanets (Sik's homebrew, 512 KB, zlib licence, `roms/miniplanets.bin`)
 in the simulator or preview: build with it embedded. It is too big for
@@ -177,6 +184,44 @@ window) and `zig build` exits non-zero, but the wasm is still installed to
 need (check the About screen or `debug_rom_size` = 524288). Rebuild without
 `-Dmd-rom` to go back to the test ROM.
 
+The scrubber on Miniplanets (with that wasm), `tools/scripts/m3_scrub.json`
+(540 updates): `m2_mini300.json`'s presses into level 1 up to update 296,
+then a Select hold 300-334 (the menu opens at 314), Left x4 (338, 346,
+354, 362), Right x2 (370, 378), Down (382: the panel comes back), Down
+(386: cursor on Btns), Right and Left (390, 394: the layout cycles and
+back, no scrub), Up (398), B (402: resume, 40 updates of play), a Select
+hold 444-478 with Left held 450-462 across the opening (458: must not
+scrub), Left x2 (484, 492), B (500), play to 539. `--call-at` reads the
+exports after given updates (preview.mjs `--dump-exports` only reads them
+at the end):
+
+```sh
+node tools/preview.mjs zig-out/bin/snouty-genesis.wasm --frames 540 --every 2 --start-skip 296 \
+  --out carts/snouty-genesis/out/m3_scrub/ \
+  --script carts/snouty-genesis/tools/scripts/m3_scrub.json \
+  --dump-exports debug_state,debug_scrub_depth,debug_scrub_history,debug_scrub_records,debug_scrub_capacity \
+  --call-at "340 debug_scrub_depth" --call-at "340 debug_frame_count" \
+  --call-at "364 debug_scrub_depth" --call-at "380 debug_scrub_depth" \
+  --call-at "400 debug_scrub_records" --call-at "404 debug_scrub_records" \
+  --call-at "404 debug_frame_count" --call-at "470 debug_scrub_depth"
+```
+
+Expected (the undo boundaries every 30 frames from the reset in `begin`,
+`frame_count` 0): the menu opens at `debug_frame_count` 556, so the first
+Left parks on the boundary at frame 540 (depth 16; from live a step goes
+back to the start of the open record, a full 30 only when live sits on a
+boundary), then 510, 480, 450 (depth 46, 76, 106), Right x2 back to 480
+and 510 (76, 46). `debug_frame_count` follows the parked frame (it is
+console state). The Btns row cycles `debug_settings` bits 2-4 and back
+without moving the depth. B resumes from frame 510: the record 510-540 is
+dropped (`debug_scrub_records` one lower at 404 than at 400) and play
+continues from 510 (`debug_frame_count` 516 at update 404). The held Left
+at the second opening leaves the depth at 0 (update 470); the two Lefts
+after it park 22 and 52 frames back (frames 600 and 570), and B resumes
+from 570. `debug_state` is 2 from 314 to 402 and 458 to 500, 1 otherwise.
+PNGs: the scrub bar over the restored picture after each step
+(`frame_0340.png` ...), the full panel again at 384.
+
 ## 5. Controls and the menu
 
 D-pad, badge B = Genesis B, badge A = Genesis C, Start = Start; a Select
@@ -185,7 +230,8 @@ tap (under 500 ms) = Genesis A, sent for 4 Genesis frames from the release
 menu:
 
 - Up/Down move, A chooses, B or a Select tap resumes; Left/Right (or A)
-  cycle a setting row.
+  cycle a setting row. On the other rows (Resume, where the menu opens,
+  Reset, Pick ROM, About) Left/Right scrub time, below.
 - `Resume`.
 - `Btns B=B A=C S=A`: which Genesis button badge B, badge A and the Select
   tap (S) send; six layouts, this one first.
@@ -203,6 +249,24 @@ menu:
 
 The title band shows the ROM's name from its header (Miniplanets says
 "MINIPLANETS", the test ROM "SNOUTY TEST").
+
+Time scrubber (SPEC.md section 10). The cart keeps an undo record every 30
+Genesis frames (0.5 s) in the RAM left free after the console. In the menu,
+on a row that is not a setting, Left steps 0.5 s back and Right 0.5 s
+forward (holding one repeats about 4 times a second); a Left or Right
+still held from the game does nothing until pressed again. The panel's
+bottom line reads `Scrub: live / 3.5s` (at the live position, 3.5 s of
+history) or `Scrub: -1.5 / 3.5s` (parked 1.5 s back), dim while there is
+no history yet, and `Scrub: no memory` if the cart found no RAM for it.
+After a step the panel gives way to that line in a bar at the bottom so
+the picture of that moment shows; Left/Right keep scrubbing, Up/Down/A
+bring the menu back, B or a Select tap resume. Resuming from a scrubbed
+position plays on from there and drops everything after it. Stepping is
+exact (the records are swapped with the console's memory, nothing is
+replayed). Reset and Pick ROM forget the history. How far back it goes
+depends on how much the game writes: about 5 s in play, more on title
+screens and menus, under 1 s right after a level load (one load fills most
+of the ring; the history then rebuilds at a second per second).
 
 ## 6. Web simulator
 
@@ -245,7 +309,11 @@ shows the help screen instead of the game; `--press A:38-39` leaves it for
 the embedded ROM. Miniplanets from the drive:
 `python3 tools/make_romfs.py carts/snouty-genesis/out/romfs_mini.img carts/snouty-genesis/roms/miniplanets.bin=MINI.GEN`
 with `--romfs carts/snouty-genesis/out/romfs_mini.img --script
-carts/snouty-genesis/tools/scripts/m2_mini300.json --frames 336`. Two
+carts/snouty-genesis/tools/scripts/m2_mini300.json --frames 336`. The
+scrubber's menu updates (`render_still` per step) on Miniplanets:
+`--script carts/snouty-genesis/tools/scripts/m3_scrub.json --frames 540`
+with the same `--romfs` (the drive image's splash has the same 36 updates
+as the wasm's, so the ticks line up). Two
 files with `--fragment 4` give a fragmented one. The picker and help
 screens can be captured the same way (`--png 10`, `--press DOWN:40-41`,
 `--out DIR`; there is no wasm path to them). The Z80's share: rebuild with
