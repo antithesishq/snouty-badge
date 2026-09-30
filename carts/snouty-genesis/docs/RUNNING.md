@@ -134,7 +134,8 @@ placeholder), `debug_pad` (`core.Pad` bits: up 1, down 2, left 4, right
 8, A 16, B 32, C 64, Start 128), `debug_rom_source` (0 none, 1 embedded,
 2 drive contiguous, 3 drive fragmented), `debug_rom_size`,
 `debug_rom_crc` (drive only), `debug_cram_rebuilds`,
-`debug_menu_requests`, `debug_tone_calls`, `debug_tone_hz` (0 silent),
+`debug_menu_requests`, `debug_tone_calls` (voice changes, what `tone2`
+sees on the badge), `debug_tone_hz` (0 silent),
 `debug_pc`, `debug_sp`, `debug_sr` (68000), `debug_vdp_line`,
 `debug_z80_pc`, `debug_z80_state` (bit 0 BUSREQ, bit 1 reset, bit 2 off).
 
@@ -164,6 +165,13 @@ terminal, `npm run dev` in `sycl-badge/simulator` in another, then
 <http://localhost:1234>. Keys: arrows/WASD d-pad, X or J = badge B =
 Genesis B, Z or K = badge A = Genesis C, Enter = Start, Backspace = Select
 (tap: Genesis A).
+
+Sound: one voice (`Md.tone()`), a square tone at the level's volume. The
+badge plays it through its speaker; the simulator through the browser
+(click the page once so the browser lets audio start). In the simulator
+the cart drives the audio worklet directly: upstream's wasm shim turns an
+infinite `tone2` into a 4 s fade-in that music never gets past
+(`cart/src/frontend/audio.zig` explains).
 
 ## 6. Benchmark
 

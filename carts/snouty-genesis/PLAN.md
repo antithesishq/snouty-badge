@@ -336,3 +336,14 @@ report and is stubbed locally.
   for ROMs on an otherwise empty drive). Next: M2 streaming picker,
   menu, splash, remap, scale/crop. Hardware check (open): XIP launch,
   drive streaming stall rates.
+- 2026-09-30 (simulator sound): as found in Snouty Gear 2026-09-29,
+  upstream's wasm `tone2` shim sends `duration = -1` as `0xFFFFFFFF`,
+  which the simulator's WASM-4 style worklet reads as a 255-frame
+  attack/decay/sustain/release, so every note restarts a 4 s fade-in and
+  music stays under 2% volume. `frontend/audio.zig` now calls the
+  simulator's `tone` import itself in the wasm build (no attack, 6-frame
+  sustain re-issued every update, 50% duty); the badge keeps the infinite
+  `tone2`. Thumb `.text` byte-identical. `debug_tone_calls` counts voice
+  changes on both targets (11 in the M1 play script), not the per-update
+  re-issues. Headless check: `tools/preview.mjs` with its `tone` stub
+  logging shows 0xFFFFFFFF durations before and sustain 6 / attack 0 after.
