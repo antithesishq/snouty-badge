@@ -44,6 +44,10 @@ pub const Options = struct {
     /// section 11).
     md_rom: ?[]const u8,
     md_rom_source: MdRomSource,
+    /// -Dlynx-rom: Lynx ROM to embed (snouty-lynx); -Dlynx-rom-source: where
+    /// its badge build gets the ROM (carts/snouty-lynx/SPEC.md section 7).
+    lynx_rom: ?[]const u8,
+    lynx_rom_source: RomSource,
     /// -Dcart as given (null: every cart is built). snouty-genesis builds
     /// only as an XIP cart: named here without -Dcart-mode=xip it stops the
     /// build, in an all-carts build it builds XIP regardless.
