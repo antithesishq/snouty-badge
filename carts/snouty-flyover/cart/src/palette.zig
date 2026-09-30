@@ -3,20 +3,21 @@
 //!
 //! Every u16 here uses the cart API's `DisplayColor` bit layout (r in bits
 //! 0-4, g in 5-10, b in 11-15), so `@bitCast(rgb565[i])` is a DisplayColor.
-//! `fog` is different: its entries are ready-to-store `Pixel` bits (already
-//! byte-swapped on wasm), so the renderer writes them without conversion.
+//! `fog` and `fog_w` are different: their entries are ready-to-store `Pixel`
+//! bits (already byte-swapped on wasm), so the renderer writes them without
+//! conversion.
 //!
 //! The two literal tables were generated once from `tools/concept.py`
 //! (`Palette` plus the district `pair()` calls in the order `World` makes
 //! them), rounded to 5/6/5 bits; each line's comment gives the 0xRRGGBB
-//! source values. No comptime work: `fog` is built by runtime loops.
+//! source values. No comptime work: `fog` and `fog_w` are built by runtime loops.
 //!
 //! Layout:
 //!   0-15    noise floor, 0x141833 -> 0x1E2450
 //!   16-19   grid lines, 0x283060 -> 0x34407A
 //!   20-23   GC rubble
 //!   24-27   water (24 is the one written to the map)
-//!   28-30   spare, 31 white (GC wall)
+//!   28      Stack overflow pit (black), 29-30 spare, 31 white (GC wall)
 //!   32-47   pulse A comet (cyan, head at 32), 48-63 pulse A dash
 //!   64-79   pulse B comet (amber, head at 64), 80-95 pulse B dash
 //!   96-255  district (top, side) pairs, top at the even index:
@@ -40,7 +41,7 @@ pub const rgb565 = [256]u16{
     0x30C2, 0x30C3, 0x38C3, 0x38E3, 0x38E3, 0x38E3, 0x40E3, 0x40E3, //   0: 141833 151935 151A37 161A39 171B3B 171C3D 181D3F 191E41
     0x4103, 0x4103, 0x4903, 0x4903, 0x4903, 0x4903, 0x4924, 0x5124, //   8: 191E42 1A1F44 1B2046 1B2148 1C224A 1D224C 1D234E 1E2450
     0x6185, 0x69A5, 0x71C6, 0x7A06, 0x3925, 0x3946, 0x4187, 0x49A8, //  16: 283060 2C3569 303B71 34407A 2A2436 312A3D 393043 40364A
-    0x9A82, 0x9222, 0x81C1, 0x7181, 0x834C, 0x834C, 0x834C, 0xFFBD, //  24: 1050A0 0E4590 0C3B80 0A3070 606880 606880 606880 F0F8FF
+    0x9A82, 0x9222, 0x81C1, 0x7181, 0x0000, 0x834C, 0x834C, 0xFFBD, //  24: 1050A0 0E4590 0C3B80 0A3070 000000 606880 606880 F0F8FF
     0xFFFC, 0x3921, 0x3921, 0x3921, 0x3921, 0x3921, 0x3921, 0x3921, //  32: E8FFFF 0A2436 0A2436 0A2436 0A2436 0A2436 0A2436 0A2436
     0x3921, 0x49A2, 0x6283, 0x8BA4, 0xB4C5, 0xE627, 0xFF2B, 0xFF93, //  40: 0A2436 0F3548 175166 21738B 2C9BB5 39C6E3 5DE5FF A0F2FF
     0xFFFC, 0x3921, 0x3921, 0x3921, 0x3921, 0x3921, 0x3921, 0x3921, //  48: E8FFFF 0A2436 0A2436 0A2436 0A2436 0A2436 0A2436 0A2436
@@ -74,6 +75,10 @@ pub const rgb565 = [256]u16{
 /// Fog-blended palette for this frame, `fog[level][index]`, as Pixel bits.
 pub var fog: [fog_levels][256]u16 = undefined;
 
+/// Fog-blended `water` table for this frame (the lake reflection, SPEC 5.6),
+/// `fog_w[level][index]`, as Pixel bits; same fog colour and weights as `fog`.
+pub var fog_w: [fog_levels][256]u16 = undefined;
+
 /// This frame's palette: rgb565 with the pulse ranges rotated (SPEC 5.3),
 /// DisplayColor bits. Rebuilt by begin_frame; the fog table is built from it.
 pub var cur: [256]u16 = undefined;
@@ -105,13 +110,13 @@ pub const stack_lip = 194;
 pub const pipe_dam = 204;
 pub const pipe_spring = 206;
 
-/// Darker blue-tinted version of each entry for the lake reflection (M2);
-/// present but unused in M0. Concept: lerp(0.85 * c, 0x0C2C66, 0.55) * 0.92.
+/// Darker blue-tinted version of each entry for the lake reflection (M2),
+/// the source of `fog_w`. Concept: lerp(0.85 * c, 0x0C2C66, 0.55) * 0.92.
 pub const water = [256]u16{
     0x4102, 0x4902, 0x4902, 0x4902, 0x4902, 0x4902, 0x4902, 0x4902, //   0: 0D1F46 0D1F46 0E1F47 0E2048 0E2048 0E2049 0F204A 0F214A
     0x4902, 0x4902, 0x4902, 0x4902, 0x4902, 0x5102, 0x5122, 0x5122, //   8: 0F214B 0F214C 0F224C 10224D 10224E 10224E 10234F 112350
     0x5142, 0x5943, 0x5963, 0x5963, 0x4923, 0x4923, 0x4943, 0x4943, //  16: 142755 162958 172B5B 182D5F 152347 172549 1A274B 1D294E
-    0x6981, 0x6181, 0x6161, 0x5941, 0x61E5, 0x61E5, 0x61E5, 0x8B6B, //  24: 0C326C 0B2F66 0A2B61 0A275B 283B61 283B61 283B61 5B6E8D
+    0x6981, 0x6181, 0x6161, 0x5941, 0x0000, 0x61E5, 0x61E5, 0x8B6B, //  24: 0C326C 0B2F66 0A2B61 0A275B 000000 283B61 283B61 5B6E8D
     0x8B8B, 0x4921, 0x4921, 0x4921, 0x4921, 0x4921, 0x4921, 0x4921, //  32: 58708D 0A2347 0A2347 0A2347 0A2347 0A2347 0A2347 0A2347
     0x4921, 0x4941, 0x59A2, 0x6202, 0x7263, 0x82E3, 0x8B25, 0x8B68, //  40: 0A2347 0B294D 0E3358 123F64 164D73 1A5C84 27678D 3F6B8D
     0x8B8B, 0x4921, 0x4921, 0x4921, 0x4921, 0x4921, 0x4921, 0x4921, //  48: 58708D 0A2347 0A2347 0A2347 0A2347 0A2347 0A2347 0A2347
@@ -151,23 +156,31 @@ const pulse_lo = [4]u8{ pulse_a, pulse_a_dash, pulse_b, pulse_b_dash };
 const pulse_speed = [4]u32{ 1, 2, 0xFFFF_FFFF, 0xFFFF_FFFE }; // +1, +2, -1, -2 (mod 2^32)
 
 /// fog_pulse[level][k]: the fog blend of rgb565[pulse_a + k] (k 0..63, the
-/// four pulse ranges), kept by init(). Only the pulse ranges change per
-/// frame and a rotation commutes with the per-entry blend, so begin_frame
-/// rotates these into `fog` instead of blending all 2048 entries (same
-/// result, ~0.5 k stores).
+/// four pulse ranges), kept by init(); fog_w_pulse the same for `water`.
+/// Only the pulse ranges change per frame and a rotation commutes with the
+/// per-entry blend, so begin_frame rotates these into `fog` and `fog_w`
+/// instead of blending all 4096 entries (same result, ~1 k stores).
 var fog_pulse: [fog_levels][64]u16 = undefined;
+var fog_w_pulse: [fog_levels][64]u16 = undefined;
 
-/// Build `fog` from rgb565 (every entry, once), keep the pulse entries in
-/// fog_pulse, and set `cur`. render.init calls this before the first
-/// begin_frame.
+/// Build `fog` from rgb565 and `fog_w` from `water` (every entry, once),
+/// keep the pulse entries in fog_pulse / fog_w_pulse, and set `cur`.
+/// render.init calls this before the first begin_frame.
 pub fn init() void {
+    build_fog(&fog, &fog_pulse, &rgb565);
+    build_fog(&fog_w, &fog_w_pulse, &water);
+    cur = rgb565;
+    begin_frame(0);
+}
+
+fn build_fog(table: *[fog_levels][256]u16, pulse: *[fog_levels][64]u16, src: *const [256]u16) void {
     const fr: i32 = @intCast(((fog_rgb >> 16) * 31 + 127) / 255);
     const fg: i32 = @intCast((((fog_rgb >> 8) & 0xFF) * 63 + 127) / 255);
     const fb: i32 = @intCast(((fog_rgb & 0xFF) * 31 + 127) / 255);
-    for (&fog, &fog_pulse, 0..) |*level_table, *pulse_table, level| {
+    for (table, pulse, 0..) |*level_table, *pulse_table, level| {
         for (level_table, 0..) |*out, i| {
             const w = if (i >= emissive_lo and i < emissive_hi) fog_weight[level >> 1] else fog_weight[level];
-            const c: i32 = rgb565[i];
+            const c: i32 = src[i];
             const r = blend(c & 31, fr, w);
             const g = blend((c >> 5) & 63, fg, w);
             const b = blend(c >> 11, fb, w);
@@ -176,13 +189,11 @@ pub fn init() void {
         }
         @memcpy(pulse_table, level_table[pulse_a..][0..64]);
     }
-    cur = rgb565;
-    begin_frame(0);
 }
 
-/// Rotate the four pulse ranges into `cur` and `fog` for this frame
-/// (A forwards by 1 and 2 per frame, B backwards by 1 and 2); every other
-/// entry keeps the value init() gave it.
+/// Rotate the four pulse ranges into `cur`, `fog` and `fog_w` for this
+/// frame (A forwards by 1 and 2 per frame, B backwards by 1 and 2); every
+/// other entry keeps the value init() gave it.
 pub fn begin_frame(frame: u32) void {
     for (pulse_lo, pulse_speed) |lo, speed| {
         const shift = speed *% frame;
@@ -190,6 +201,7 @@ pub fn begin_frame(frame: u32) void {
             const src = lo + ((@as(u32, @intCast(j)) -% shift) & 15);
             cur[lo + j] = rgb565[src];
             for (&fog, &fog_pulse) |*level_table, *pulse_table| level_table[lo + j] = pulse_table[src - pulse_a];
+            for (&fog_w, &fog_w_pulse) |*level_table, *pulse_table| level_table[lo + j] = pulse_table[src - pulse_a];
         }
     }
 }

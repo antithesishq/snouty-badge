@@ -5,13 +5,15 @@
 //! beside the deck. Static only: the lanes move through palette cycling, and
 //! the packet verb is M3.
 const world = @import("../world.zig");
+const camera = @import("../camera.zig");
 const palette = @import("../palette.zig");
 
 pub const title: []const u8 = "BUS";
 pub const gloss: []const u8 = "the address bus";
 pub const caption: []const u8 = "B: send a packet";
 pub const alt: i32 = 40;
-pub const verb_at: i32 = -1;
+/// No verb until M3 (the packet); camera.no_verb means never.
+pub const verb_at: i32 = camera.no_verb;
 
 /// Autopilot altitude track: no track, the constant `alt`.
 pub fn alt_at(ly: i32) i32 {

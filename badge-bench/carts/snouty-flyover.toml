@@ -1,5 +1,5 @@
 # snouty-flyover: voxel heightfield flyover (Memory Lane), locked to 30 fps by its own vsync.
 budget_ms = 22.0
-frames = 1800
+frames = 2400
 script = "carts/snouty-flyover/tools/scripts/attract.json"
-note = "M1 attract: no input, the autopilot flies Bus-Heap-Bus-Sort-Bus-Heap-Bus-Sort (rows 0..1322) and presses B at Heap local row 30 and Sort local row 60; budget is the 30 fps frame with headroom (SPEC 10)"
+note = "M2 attract: no input, the autopilot flies one whole cycle Bus-Heap-Bus-Sort-Bus-Tree-Bus-Hash-Bus-Stack-Bus-Pipeline plus the next Bus and Heap (rows 0..1767), dives the Stack canyon, skims the Pipeline lake (reflection pass) and presses B once per district; budget is the 30 fps frame with headroom (SPEC 10)"

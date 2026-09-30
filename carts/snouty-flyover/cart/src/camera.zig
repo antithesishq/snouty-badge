@@ -29,9 +29,10 @@ const ahead_width = 32;
 const spring_shift = 4;
 /// Hard floor above the terrain directly under the camera, cells.
 const min_above = 4;
-/// Pilot altitude limits (pitch moves the cruise altitude between them), cells.
+/// Pilot altitude limits (pitch moves the cruise altitude between them),
+/// absolute cells; alt_high clears the Tree's floor + 185 = 205.
 const alt_low = 12;
-const alt_high = 160;
+const alt_high = 208;
 /// Cruise altitude change per frame at full pitch (24 rows), Q16 cells.
 const climb_max: i32 = fixed.one / 2;
 /// Largest roll, 20 rows of shear across the screen.
@@ -91,8 +92,17 @@ const ap_gain_cells: i32 = 12;
 const ap_lead: i32 = 40;
 /// Stick clamp, Q16 (1/3: roll at most 1/3 of roll_max, about 6 rows).
 const ap_steer_max: i32 = fixed.one / 3;
-/// Cruise altitude slew toward floor + district alt, Q16 cells per frame (1).
+/// Cruise altitude slew toward floor + the live district's alt_at, Q16
+/// cells per frame (1; the Stack dive needs about 0.5).
 const ap_climb: i32 = fixed.one;
+/// Districts flown on an altitude track (the Stack dive, SPEC 5.5): the
+/// autopilot flies the centre line there (no serpentine) and its clearance
+/// scan narrows to ap_track_width cells around the flight line, so the
+/// canyon walls beside the camera do not hold it up over the floor.
+const ap_track_width = 8;
+fn on_track(kind: world.Kind) bool {
+    return kind == .stack;
+}
 
 /// Look-down in the districts read from altitude (alt >= ap_look_alt): the
 /// stick pitch the autopilot holds there, Q16 (-1/2: horizon row 52, as in
@@ -100,6 +110,13 @@ const ap_climb: i32 = fixed.one;
 /// cruise_alt itself.
 const ap_look_alt: i32 = 80;
 const ap_look_pitch: i32 = -fixed.one / 2;
+
+/// A district's `verb_at` meaning "the autopilot never presses B". Any other
+/// value, negative included, is the local row whose crossing presses B; a
+/// negative row lies on the Bus before the district (the live district
+/// there), so the verb can start before the camera arrives. The Bus's own
+/// -1 is harmless: a Bus is never the live district.
+pub const no_verb: i32 = -32768;
 
 /// Index of the last segment the autopilot pressed B in, and the camera row
 /// seen by the previous pilot() call (for the verb_at crossing).
@@ -137,8 +154,9 @@ pub fn pilot(frame: u32) Stick {
 /// The autopilot's stick: serpentine steering and the once-per-segment B.
 fn auto_stick(frame: u32, row: i32) Stick {
     const under = world.segment_at(row);
+    const swing = under.kind != .bus and !on_track(under.kind);
     const target = ap_centre * fixed.one +
-        if (under.kind == .bus) 0 else ap_swing * sin(@as(i32, @intCast(frame & 1023)) * ap_turn_rate);
+        if (swing) ap_swing * sin(@as(i32, @intCast(frame & 1023)) * ap_turn_rate) else 0;
     // Error across the wrapping strip, in (-W/2, W/2] cells.
     const span = world.W * fixed.one;
     const err = @mod(target - cam.x + span / 2, span) - span / 2;
@@ -149,7 +167,7 @@ fn auto_stick(frame: u32, row: i32) Stick {
     const live = world.live();
     const at = world.info(live.kind).verb_at;
     var verb = false;
-    if (at >= 0 and live.index != verb_index) {
+    if (at != no_verb and live.index != verb_index) {
         const trigger = live.y0 + at;
         if (prev_row < trigger and row >= trigger) {
             verb = true;
@@ -232,7 +250,8 @@ pub fn update(stick: Stick, frame: u32) void {
     cruise_alt = @max(alt_low * fixed.one, @min(alt_high * fixed.one, cruise_alt));
 
     // Altitude spring toward max(cruise, terrain ahead + clearance), then the hard floor.
-    const target = @max(cruise_alt, (@as(i32, ahead_max()) + clear_above) * fixed.one);
+    const width: i32 = if (autopilot and on_track(world.live().kind)) ap_track_width else ahead_width;
+    const target = @max(cruise_alt, (@as(i32, ahead_max(width)) + clear_above) * fixed.one);
     cam.alt += (target - cam.alt) >> spring_shift;
     const floor = (@as(i32, ground(cam.x, cam.y)) + min_above) * fixed.one;
     cam.alt = @max(cam.alt, floor);
@@ -246,10 +265,10 @@ fn ground(x: i32, y: i32) u8 {
     return world.height[@intCast(row & (world.DEPTH - 1))][col];
 }
 
-/// Highest cell in the ahead_rows rows from the camera row, across ahead_width
+/// Highest cell in the ahead_rows rows from the camera row, across `width`
 /// cells centred on the flight line (which leans with the yaw). Only rows in
 /// the ring are read; after start() that is every one of them.
-fn ahead_max() u8 {
+fn ahead_max(width: i32) u8 {
     const row0 = cam.y >> fixed.Q;
     const lean = sin(cam.yaw); // Q16 x cells per row
     var best: u8 = 0;
@@ -259,8 +278,8 @@ fn ahead_max() u8 {
         if (!world.generated_row(row)) break;
         const line = &world.height[@intCast(row & (world.DEPTH - 1))];
         const centre = (cam.x + lean * i) >> fixed.Q;
-        var c = centre - ahead_width / 2;
-        while (c < centre + ahead_width / 2) : (c += 1) {
+        var c = centre - @divTrunc(width, 2);
+        while (c < centre + @divTrunc(width, 2)) : (c += 1) {
             best = @max(best, line[@intCast(c & (world.W - 1))]);
         }
     }

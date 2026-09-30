@@ -189,13 +189,77 @@ pub fn gen_row(y: i32, out_h: *[W]u8, out_c: *[W]u8) void {
 /// Noise floor (SPEC 5.4): floor + 0..7, colour 0..14 by height, grid lines
 /// every 64 cells in x and y in 16..19.
 pub fn floor_row(y: i32, out_h: *[W]u8, out_c: *[W]u8) void {
-    const grid_row = y & 63 == 0;
     for (out_h, out_c, 0..) |*h, *c, xu| {
-        const x: i32 = @intCast(xu);
-        const n: u8 = fixed.noise2(x, y, floor_seed) >> 5; // 0..7
-        h.* = floor + n;
-        c.* = if (grid_row or x & 63 == 0) 16 + (n >> 1) else 2 * n;
+        const f = floor_cell(@intCast(xu), y);
+        h.* = f.h;
+        c.* = f.c;
     }
+}
+
+pub const Cell = struct { h: u8, c: u8 };
+
+/// One cell of the noise floor (what floor_row writes at (x, y)); x wraps.
+/// For districts that put the floor back under a cell they raised.
+pub inline fn floor_cell(x: i32, y: i32) Cell {
+    const xw = x & (W - 1);
+    const n: u8 = fixed.noise2(xw, y, floor_seed) >> 5; // 0..7
+    const grid_line = y & 63 == 0 or xw & 63 == 0;
+    return .{ .h = floor + n, .c = if (grid_line) 16 + (n >> 1) else 2 * n };
+}
+
+// --- Row painting helpers for the districts ---------------------------------
+
+/// Paint cells [x0, x0 + w) of a row (x wraps) with height `hv` and colour
+/// `cv`: one row of an axis-aligned box.
+pub noinline fn span(h: *[W]u8, c: *[W]u8, x0: i32, w: i32, hv: u8, cv: u8) void {
+    var k: i32 = 0;
+    while (k < w) : (k += 1) {
+        const i: usize = @intCast((x0 + k) & (W - 1));
+        h[i] = hv;
+        c[i] = cv;
+    }
+}
+
+/// Wrapped distance in cells from x to the span [x0, x0 + w) (0 inside).
+pub fn x_dist(x: i32, x0: i32, w: i32) i32 {
+    if (((x - x0) & (W - 1)) < w) return 0;
+    return @min((x0 - x) & (W - 1), (x - (x0 + w - 1)) & (W - 1));
+}
+
+/// The cells of one leg of a palette-cycled path that fall on row `ly`.
+/// The leg runs from (xa, ya) to (xb, yb), axis-aligned or at 45 degrees,
+/// in n = max(|xb - xa|, |yb - ya|) steps (the end point excluded, as in the
+/// prototype's World.path); step k is centred on (xa + sx k, ya + sy k) and
+/// covers the width x width cells from (centre - width / 2). Calls
+/// `ctx.cell(x, p)` for every covered cell on row ly with p = p0 + k, in
+/// increasing k, so a caller that writes each call leaves the later step on
+/// top. x is not wrapped. Returns p0 + n, the distance at the leg's end.
+pub noinline fn leg_row(ly: i32, xa: i32, ya: i32, xb: i32, yb: i32, width: i32, p0: i32, ctx: anytype) i32 {
+    const dx = xb - xa;
+    const dy = yb - ya;
+    const n: i32 = @intCast(@max(@abs(dx), @abs(dy)));
+    const sx: i32 = if (dx > 0) 1 else if (dx < 0) -1 else 0;
+    const sy: i32 = if (dy > 0) 1 else if (dy < 0) -1 else 0;
+    const lo = width >> 1;
+    // Rows covered by step k: [ya + sy k - lo, ya + sy k - lo + width).
+    var k0: i32 = 0;
+    var k1: i32 = n; // exclusive
+    if (sy == 0) {
+        if (ly < ya - lo or ly >= ya - lo + width) return p0 + n;
+    } else {
+        // ya + sy k in [ly + lo - width + 1, ly + lo].
+        const a = (ly + lo - width + 1 - ya) * sy;
+        const b = (ly + lo - ya) * sy;
+        k0 = @max(k0, @min(a, b));
+        k1 = @min(k1, @max(a, b) + 1);
+    }
+    var k = k0;
+    while (k < k1) : (k += 1) {
+        const x = xa + sx * k - lo;
+        var j: i32 = 0;
+        while (j < width) : (j += 1) ctx.cell(x + j, p0 + k);
+    }
+    return p0 + n;
 }
 
 /// The district being ticked: the one under the camera, or the next one when

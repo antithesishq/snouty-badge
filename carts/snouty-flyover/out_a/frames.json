@@ -3,7 +3,7 @@
   "width": 160,
   "height": 128,
   "format": "rgb565 column-major, wasm byte-swapped",
-  "updates": 1800,
+  "updates": 2400,
   "every": 3,
   "startSkip": 0,
   "seed": 1,
@@ -44,47 +44,87 @@
     "debug_cam_ground",
     "debug_cam_clear",
     "debug_sort_max_bars",
-    "debug_sort_state"
+    "debug_sort_state",
+    "debug_water_cols",
+    "debug_stack_depth",
+    "debug_pipe_state",
+    "debug_verb_max_cells",
+    "debug_sky_flash"
   ],
   "exports": {
-    "debug_frame": 1800,
-    "debug_cam_x": 130,
-    "debug_cam_y": 1322,
-    "debug_cam_alt": 103,
-    "debug_cam_clear": 75,
-    "debug_segment_kind": 0,
-    "debug_live_kind": 2,
+    "debug_frame": 2400,
+    "debug_cam_y": 1767,
+    "debug_cam_alt": 75,
+    "debug_cam_clear": 52,
+    "debug_segment_kind": 1,
+    "debug_live_kind": 1,
     "debug_autopilot": 1,
-    "debug_sort_state": 256,
+    "debug_water_cols": 0,
     "debug_world_check": 0
   },
   "expect": [],
   "at": [
     {
-      "tick": 900,
-      "expr": "debug_cam_clear > 4",
-      "name": "debug_cam_clear",
-      "op": ">",
-      "value": 4,
-      "actual": 54,
-      "pass": true
-    },
-    {
-      "tick": 1799,
-      "expr": "debug_world_check == 0",
-      "name": "debug_world_check",
+      "tick": 1500,
+      "expr": "debug_segment_kind == 5",
+      "name": "debug_segment_kind",
       "op": "==",
-      "value": 0,
-      "actual": 0,
+      "value": 5,
+      "actual": 5,
       "pass": true
     },
     {
-      "tick": 1799,
+      "tick": 1680,
+      "expr": "debug_cam_alt < 50",
+      "name": "debug_cam_alt",
+      "op": "<",
+      "value": 50,
+      "actual": 44,
+      "pass": true
+    },
+    {
+      "tick": 1900,
+      "expr": "debug_water_cols > 0",
+      "name": "debug_water_cols",
+      "op": ">",
+      "value": 0,
+      "actual": 160,
+      "pass": true
+    },
+    {
+      "tick": 2399,
       "expr": "debug_autopilot == 1",
       "name": "debug_autopilot",
       "op": "==",
       "value": 1,
       "actual": 1,
+      "pass": true
+    },
+    {
+      "tick": 2399,
+      "expr": "debug_cam_clear > 0",
+      "name": "debug_cam_clear",
+      "op": ">",
+      "value": 0,
+      "actual": 52,
+      "pass": true
+    },
+    {
+      "tick": 2399,
+      "expr": "debug_cam_y == 1767",
+      "name": "debug_cam_y",
+      "op": "==",
+      "value": 1767,
+      "actual": 1767,
+      "pass": true
+    },
+    {
+      "tick": 2399,
+      "expr": "debug_world_check == 0",
+      "name": "debug_world_check",
+      "op": "==",
+      "value": 0,
+      "actual": 0,
       "pass": true
     }
   ],
@@ -98,15 +138,15 @@
   "dataSegments": [
     {
       "off": "0xa020",
-      "size": 3356
+      "size": 6248
     },
     {
-      "off": "0xad3c",
-      "size": 120
+      "off": "0xb888",
+      "size": 172
     },
     {
       "off": "0xc000",
-      "size": 235740
+      "size": 242212
     }
   ],
   "warnings": [],
@@ -3109,6 +3149,1006 @@
     {
       "file": "frame_1797.png",
       "update": 1797,
+      "buffer": 0
+    },
+    {
+      "file": "frame_1800.png",
+      "update": 1800,
+      "buffer": 0
+    },
+    {
+      "file": "frame_1803.png",
+      "update": 1803,
+      "buffer": 0
+    },
+    {
+      "file": "frame_1806.png",
+      "update": 1806,
+      "buffer": 0
+    },
+    {
+      "file": "frame_1809.png",
+      "update": 1809,
+      "buffer": 0
+    },
+    {
+      "file": "frame_1812.png",
+      "update": 1812,
+      "buffer": 0
+    },
+    {
+      "file": "frame_1815.png",
+      "update": 1815,
+      "buffer": 0
+    },
+    {
+      "file": "frame_1818.png",
+      "update": 1818,
+      "buffer": 0
+    },
+    {
+      "file": "frame_1821.png",
+      "update": 1821,
+      "buffer": 0
+    },
+    {
+      "file": "frame_1824.png",
+      "update": 1824,
+      "buffer": 0
+    },
+    {
+      "file": "frame_1827.png",
+      "update": 1827,
+      "buffer": 0
+    },
+    {
+      "file": "frame_1830.png",
+      "update": 1830,
+      "buffer": 0
+    },
+    {
+      "file": "frame_1833.png",
+      "update": 1833,
+      "buffer": 0
+    },
+    {
+      "file": "frame_1836.png",
+      "update": 1836,
+      "buffer": 0
+    },
+    {
+      "file": "frame_1839.png",
+      "update": 1839,
+      "buffer": 0
+    },
+    {
+      "file": "frame_1842.png",
+      "update": 1842,
+      "buffer": 0
+    },
+    {
+      "file": "frame_1845.png",
+      "update": 1845,
+      "buffer": 0
+    },
+    {
+      "file": "frame_1848.png",
+      "update": 1848,
+      "buffer": 0
+    },
+    {
+      "file": "frame_1851.png",
+      "update": 1851,
+      "buffer": 0
+    },
+    {
+      "file": "frame_1854.png",
+      "update": 1854,
+      "buffer": 0
+    },
+    {
+      "file": "frame_1857.png",
+      "update": 1857,
+      "buffer": 0
+    },
+    {
+      "file": "frame_1860.png",
+      "update": 1860,
+      "buffer": 0
+    },
+    {
+      "file": "frame_1863.png",
+      "update": 1863,
+      "buffer": 0
+    },
+    {
+      "file": "frame_1866.png",
+      "update": 1866,
+      "buffer": 0
+    },
+    {
+      "file": "frame_1869.png",
+      "update": 1869,
+      "buffer": 0
+    },
+    {
+      "file": "frame_1872.png",
+      "update": 1872,
+      "buffer": 0
+    },
+    {
+      "file": "frame_1875.png",
+      "update": 1875,
+      "buffer": 0
+    },
+    {
+      "file": "frame_1878.png",
+      "update": 1878,
+      "buffer": 0
+    },
+    {
+      "file": "frame_1881.png",
+      "update": 1881,
+      "buffer": 0
+    },
+    {
+      "file": "frame_1884.png",
+      "update": 1884,
+      "buffer": 0
+    },
+    {
+      "file": "frame_1887.png",
+      "update": 1887,
+      "buffer": 0
+    },
+    {
+      "file": "frame_1890.png",
+      "update": 1890,
+      "buffer": 0
+    },
+    {
+      "file": "frame_1893.png",
+      "update": 1893,
+      "buffer": 0
+    },
+    {
+      "file": "frame_1896.png",
+      "update": 1896,
+      "buffer": 0
+    },
+    {
+      "file": "frame_1899.png",
+      "update": 1899,
+      "buffer": 0
+    },
+    {
+      "file": "frame_1902.png",
+      "update": 1902,
+      "buffer": 0
+    },
+    {
+      "file": "frame_1905.png",
+      "update": 1905,
+      "buffer": 0
+    },
+    {
+      "file": "frame_1908.png",
+      "update": 1908,
+      "buffer": 0
+    },
+    {
+      "file": "frame_1911.png",
+      "update": 1911,
+      "buffer": 0
+    },
+    {
+      "file": "frame_1914.png",
+      "update": 1914,
+      "buffer": 0
+    },
+    {
+      "file": "frame_1917.png",
+      "update": 1917,
+      "buffer": 0
+    },
+    {
+      "file": "frame_1920.png",
+      "update": 1920,
+      "buffer": 0
+    },
+    {
+      "file": "frame_1923.png",
+      "update": 1923,
+      "buffer": 0
+    },
+    {
+      "file": "frame_1926.png",
+      "update": 1926,
+      "buffer": 0
+    },
+    {
+      "file": "frame_1929.png",
+      "update": 1929,
+      "buffer": 0
+    },
+    {
+      "file": "frame_1932.png",
+      "update": 1932,
+      "buffer": 0
+    },
+    {
+      "file": "frame_1935.png",
+      "update": 1935,
+      "buffer": 0
+    },
+    {
+      "file": "frame_1938.png",
+      "update": 1938,
+      "buffer": 0
+    },
+    {
+      "file": "frame_1941.png",
+      "update": 1941,
+      "buffer": 0
+    },
+    {
+      "file": "frame_1944.png",
+      "update": 1944,
+      "buffer": 0
+    },
+    {
+      "file": "frame_1947.png",
+      "update": 1947,
+      "buffer": 0
+    },
+    {
+      "file": "frame_1950.png",
+      "update": 1950,
+      "buffer": 0
+    },
+    {
+      "file": "frame_1953.png",
+      "update": 1953,
+      "buffer": 0
+    },
+    {
+      "file": "frame_1956.png",
+      "update": 1956,
+      "buffer": 0
+    },
+    {
+      "file": "frame_1959.png",
+      "update": 1959,
+      "buffer": 0
+    },
+    {
+      "file": "frame_1962.png",
+      "update": 1962,
+      "buffer": 0
+    },
+    {
+      "file": "frame_1965.png",
+      "update": 1965,
+      "buffer": 0
+    },
+    {
+      "file": "frame_1968.png",
+      "update": 1968,
+      "buffer": 0
+    },
+    {
+      "file": "frame_1971.png",
+      "update": 1971,
+      "buffer": 0
+    },
+    {
+      "file": "frame_1974.png",
+      "update": 1974,
+      "buffer": 0
+    },
+    {
+      "file": "frame_1977.png",
+      "update": 1977,
+      "buffer": 0
+    },
+    {
+      "file": "frame_1980.png",
+      "update": 1980,
+      "buffer": 0
+    },
+    {
+      "file": "frame_1983.png",
+      "update": 1983,
+      "buffer": 0
+    },
+    {
+      "file": "frame_1986.png",
+      "update": 1986,
+      "buffer": 0
+    },
+    {
+      "file": "frame_1989.png",
+      "update": 1989,
+      "buffer": 0
+    },
+    {
+      "file": "frame_1992.png",
+      "update": 1992,
+      "buffer": 0
+    },
+    {
+      "file": "frame_1995.png",
+      "update": 1995,
+      "buffer": 0
+    },
+    {
+      "file": "frame_1998.png",
+      "update": 1998,
+      "buffer": 0
+    },
+    {
+      "file": "frame_2001.png",
+      "update": 2001,
+      "buffer": 0
+    },
+    {
+      "file": "frame_2004.png",
+      "update": 2004,
+      "buffer": 0
+    },
+    {
+      "file": "frame_2007.png",
+      "update": 2007,
+      "buffer": 0
+    },
+    {
+      "file": "frame_2010.png",
+      "update": 2010,
+      "buffer": 0
+    },
+    {
+      "file": "frame_2013.png",
+      "update": 2013,
+      "buffer": 0
+    },
+    {
+      "file": "frame_2016.png",
+      "update": 2016,
+      "buffer": 0
+    },
+    {
+      "file": "frame_2019.png",
+      "update": 2019,
+      "buffer": 0
+    },
+    {
+      "file": "frame_2022.png",
+      "update": 2022,
+      "buffer": 0
+    },
+    {
+      "file": "frame_2025.png",
+      "update": 2025,
+      "buffer": 0
+    },
+    {
+      "file": "frame_2028.png",
+      "update": 2028,
+      "buffer": 0
+    },
+    {
+      "file": "frame_2031.png",
+      "update": 2031,
+      "buffer": 0
+    },
+    {
+      "file": "frame_2034.png",
+      "update": 2034,
+      "buffer": 0
+    },
+    {
+      "file": "frame_2037.png",
+      "update": 2037,
+      "buffer": 0
+    },
+    {
+      "file": "frame_2040.png",
+      "update": 2040,
+      "buffer": 0
+    },
+    {
+      "file": "frame_2043.png",
+      "update": 2043,
+      "buffer": 0
+    },
+    {
+      "file": "frame_2046.png",
+      "update": 2046,
+      "buffer": 0
+    },
+    {
+      "file": "frame_2049.png",
+      "update": 2049,
+      "buffer": 0
+    },
+    {
+      "file": "frame_2052.png",
+      "update": 2052,
+      "buffer": 0
+    },
+    {
+      "file": "frame_2055.png",
+      "update": 2055,
+      "buffer": 0
+    },
+    {
+      "file": "frame_2058.png",
+      "update": 2058,
+      "buffer": 0
+    },
+    {
+      "file": "frame_2061.png",
+      "update": 2061,
+      "buffer": 0
+    },
+    {
+      "file": "frame_2064.png",
+      "update": 2064,
+      "buffer": 0
+    },
+    {
+      "file": "frame_2067.png",
+      "update": 2067,
+      "buffer": 0
+    },
+    {
+      "file": "frame_2070.png",
+      "update": 2070,
+      "buffer": 0
+    },
+    {
+      "file": "frame_2073.png",
+      "update": 2073,
+      "buffer": 0
+    },
+    {
+      "file": "frame_2076.png",
+      "update": 2076,
+      "buffer": 0
+    },
+    {
+      "file": "frame_2079.png",
+      "update": 2079,
+      "buffer": 0
+    },
+    {
+      "file": "frame_2082.png",
+      "update": 2082,
+      "buffer": 0
+    },
+    {
+      "file": "frame_2085.png",
+      "update": 2085,
+      "buffer": 0
+    },
+    {
+      "file": "frame_2088.png",
+      "update": 2088,
+      "buffer": 0
+    },
+    {
+      "file": "frame_2091.png",
+      "update": 2091,
+      "buffer": 0
+    },
+    {
+      "file": "frame_2094.png",
+      "update": 2094,
+      "buffer": 0
+    },
+    {
+      "file": "frame_2097.png",
+      "update": 2097,
+      "buffer": 0
+    },
+    {
+      "file": "frame_2100.png",
+      "update": 2100,
+      "buffer": 0
+    },
+    {
+      "file": "frame_2103.png",
+      "update": 2103,
+      "buffer": 0
+    },
+    {
+      "file": "frame_2106.png",
+      "update": 2106,
+      "buffer": 0
+    },
+    {
+      "file": "frame_2109.png",
+      "update": 2109,
+      "buffer": 0
+    },
+    {
+      "file": "frame_2112.png",
+      "update": 2112,
+      "buffer": 0
+    },
+    {
+      "file": "frame_2115.png",
+      "update": 2115,
+      "buffer": 0
+    },
+    {
+      "file": "frame_2118.png",
+      "update": 2118,
+      "buffer": 0
+    },
+    {
+      "file": "frame_2121.png",
+      "update": 2121,
+      "buffer": 0
+    },
+    {
+      "file": "frame_2124.png",
+      "update": 2124,
+      "buffer": 0
+    },
+    {
+      "file": "frame_2127.png",
+      "update": 2127,
+      "buffer": 0
+    },
+    {
+      "file": "frame_2130.png",
+      "update": 2130,
+      "buffer": 0
+    },
+    {
+      "file": "frame_2133.png",
+      "update": 2133,
+      "buffer": 0
+    },
+    {
+      "file": "frame_2136.png",
+      "update": 2136,
+      "buffer": 0
+    },
+    {
+      "file": "frame_2139.png",
+      "update": 2139,
+      "buffer": 0
+    },
+    {
+      "file": "frame_2142.png",
+      "update": 2142,
+      "buffer": 0
+    },
+    {
+      "file": "frame_2145.png",
+      "update": 2145,
+      "buffer": 0
+    },
+    {
+      "file": "frame_2148.png",
+      "update": 2148,
+      "buffer": 0
+    },
+    {
+      "file": "frame_2151.png",
+      "update": 2151,
+      "buffer": 0
+    },
+    {
+      "file": "frame_2154.png",
+      "update": 2154,
+      "buffer": 0
+    },
+    {
+      "file": "frame_2157.png",
+      "update": 2157,
+      "buffer": 0
+    },
+    {
+      "file": "frame_2160.png",
+      "update": 2160,
+      "buffer": 0
+    },
+    {
+      "file": "frame_2163.png",
+      "update": 2163,
+      "buffer": 0
+    },
+    {
+      "file": "frame_2166.png",
+      "update": 2166,
+      "buffer": 0
+    },
+    {
+      "file": "frame_2169.png",
+      "update": 2169,
+      "buffer": 0
+    },
+    {
+      "file": "frame_2172.png",
+      "update": 2172,
+      "buffer": 0
+    },
+    {
+      "file": "frame_2175.png",
+      "update": 2175,
+      "buffer": 0
+    },
+    {
+      "file": "frame_2178.png",
+      "update": 2178,
+      "buffer": 0
+    },
+    {
+      "file": "frame_2181.png",
+      "update": 2181,
+      "buffer": 0
+    },
+    {
+      "file": "frame_2184.png",
+      "update": 2184,
+      "buffer": 0
+    },
+    {
+      "file": "frame_2187.png",
+      "update": 2187,
+      "buffer": 0
+    },
+    {
+      "file": "frame_2190.png",
+      "update": 2190,
+      "buffer": 0
+    },
+    {
+      "file": "frame_2193.png",
+      "update": 2193,
+      "buffer": 0
+    },
+    {
+      "file": "frame_2196.png",
+      "update": 2196,
+      "buffer": 0
+    },
+    {
+      "file": "frame_2199.png",
+      "update": 2199,
+      "buffer": 0
+    },
+    {
+      "file": "frame_2202.png",
+      "update": 2202,
+      "buffer": 0
+    },
+    {
+      "file": "frame_2205.png",
+      "update": 2205,
+      "buffer": 0
+    },
+    {
+      "file": "frame_2208.png",
+      "update": 2208,
+      "buffer": 0
+    },
+    {
+      "file": "frame_2211.png",
+      "update": 2211,
+      "buffer": 0
+    },
+    {
+      "file": "frame_2214.png",
+      "update": 2214,
+      "buffer": 0
+    },
+    {
+      "file": "frame_2217.png",
+      "update": 2217,
+      "buffer": 0
+    },
+    {
+      "file": "frame_2220.png",
+      "update": 2220,
+      "buffer": 0
+    },
+    {
+      "file": "frame_2223.png",
+      "update": 2223,
+      "buffer": 0
+    },
+    {
+      "file": "frame_2226.png",
+      "update": 2226,
+      "buffer": 0
+    },
+    {
+      "file": "frame_2229.png",
+      "update": 2229,
+      "buffer": 0
+    },
+    {
+      "file": "frame_2232.png",
+      "update": 2232,
+      "buffer": 0
+    },
+    {
+      "file": "frame_2235.png",
+      "update": 2235,
+      "buffer": 0
+    },
+    {
+      "file": "frame_2238.png",
+      "update": 2238,
+      "buffer": 0
+    },
+    {
+      "file": "frame_2241.png",
+      "update": 2241,
+      "buffer": 0
+    },
+    {
+      "file": "frame_2244.png",
+      "update": 2244,
+      "buffer": 0
+    },
+    {
+      "file": "frame_2247.png",
+      "update": 2247,
+      "buffer": 0
+    },
+    {
+      "file": "frame_2250.png",
+      "update": 2250,
+      "buffer": 0
+    },
+    {
+      "file": "frame_2253.png",
+      "update": 2253,
+      "buffer": 0
+    },
+    {
+      "file": "frame_2256.png",
+      "update": 2256,
+      "buffer": 0
+    },
+    {
+      "file": "frame_2259.png",
+      "update": 2259,
+      "buffer": 0
+    },
+    {
+      "file": "frame_2262.png",
+      "update": 2262,
+      "buffer": 0
+    },
+    {
+      "file": "frame_2265.png",
+      "update": 2265,
+      "buffer": 0
+    },
+    {
+      "file": "frame_2268.png",
+      "update": 2268,
+      "buffer": 0
+    },
+    {
+      "file": "frame_2271.png",
+      "update": 2271,
+      "buffer": 0
+    },
+    {
+      "file": "frame_2274.png",
+      "update": 2274,
+      "buffer": 0
+    },
+    {
+      "file": "frame_2277.png",
+      "update": 2277,
+      "buffer": 0
+    },
+    {
+      "file": "frame_2280.png",
+      "update": 2280,
+      "buffer": 0
+    },
+    {
+      "file": "frame_2283.png",
+      "update": 2283,
+      "buffer": 0
+    },
+    {
+      "file": "frame_2286.png",
+      "update": 2286,
+      "buffer": 0
+    },
+    {
+      "file": "frame_2289.png",
+      "update": 2289,
+      "buffer": 0
+    },
+    {
+      "file": "frame_2292.png",
+      "update": 2292,
+      "buffer": 0
+    },
+    {
+      "file": "frame_2295.png",
+      "update": 2295,
+      "buffer": 0
+    },
+    {
+      "file": "frame_2298.png",
+      "update": 2298,
+      "buffer": 0
+    },
+    {
+      "file": "frame_2301.png",
+      "update": 2301,
+      "buffer": 0
+    },
+    {
+      "file": "frame_2304.png",
+      "update": 2304,
+      "buffer": 0
+    },
+    {
+      "file": "frame_2307.png",
+      "update": 2307,
+      "buffer": 0
+    },
+    {
+      "file": "frame_2310.png",
+      "update": 2310,
+      "buffer": 0
+    },
+    {
+      "file": "frame_2313.png",
+      "update": 2313,
+      "buffer": 0
+    },
+    {
+      "file": "frame_2316.png",
+      "update": 2316,
+      "buffer": 0
+    },
+    {
+      "file": "frame_2319.png",
+      "update": 2319,
+      "buffer": 0
+    },
+    {
+      "file": "frame_2322.png",
+      "update": 2322,
+      "buffer": 0
+    },
+    {
+      "file": "frame_2325.png",
+      "update": 2325,
+      "buffer": 0
+    },
+    {
+      "file": "frame_2328.png",
+      "update": 2328,
+      "buffer": 0
+    },
+    {
+      "file": "frame_2331.png",
+      "update": 2331,
+      "buffer": 0
+    },
+    {
+      "file": "frame_2334.png",
+      "update": 2334,
+      "buffer": 0
+    },
+    {
+      "file": "frame_2337.png",
+      "update": 2337,
+      "buffer": 0
+    },
+    {
+      "file": "frame_2340.png",
+      "update": 2340,
+      "buffer": 0
+    },
+    {
+      "file": "frame_2343.png",
+      "update": 2343,
+      "buffer": 0
+    },
+    {
+      "file": "frame_2346.png",
+      "update": 2346,
+      "buffer": 0
+    },
+    {
+      "file": "frame_2349.png",
+      "update": 2349,
+      "buffer": 0
+    },
+    {
+      "file": "frame_2352.png",
+      "update": 2352,
+      "buffer": 0
+    },
+    {
+      "file": "frame_2355.png",
+      "update": 2355,
+      "buffer": 0
+    },
+    {
+      "file": "frame_2358.png",
+      "update": 2358,
+      "buffer": 0
+    },
+    {
+      "file": "frame_2361.png",
+      "update": 2361,
+      "buffer": 0
+    },
+    {
+      "file": "frame_2364.png",
+      "update": 2364,
+      "buffer": 0
+    },
+    {
+      "file": "frame_2367.png",
+      "update": 2367,
+      "buffer": 0
+    },
+    {
+      "file": "frame_2370.png",
+      "update": 2370,
+      "buffer": 0
+    },
+    {
+      "file": "frame_2373.png",
+      "update": 2373,
+      "buffer": 0
+    },
+    {
+      "file": "frame_2376.png",
+      "update": 2376,
+      "buffer": 0
+    },
+    {
+      "file": "frame_2379.png",
+      "update": 2379,
+      "buffer": 0
+    },
+    {
+      "file": "frame_2382.png",
+      "update": 2382,
+      "buffer": 0
+    },
+    {
+      "file": "frame_2385.png",
+      "update": 2385,
+      "buffer": 0
+    },
+    {
+      "file": "frame_2388.png",
+      "update": 2388,
+      "buffer": 0
+    },
+    {
+      "file": "frame_2391.png",
+      "update": 2391,
+      "buffer": 0
+    },
+    {
+      "file": "frame_2394.png",
+      "update": 2394,
+      "buffer": 0
+    },
+    {
+      "file": "frame_2397.png",
+      "update": 2397,
       "buffer": 0
     }
   ]

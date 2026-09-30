@@ -8,36 +8,57 @@ so one `update()` is one frame and everything moves by frame count, not
 wall time.
 
 M1 is the world engine: the strip is a sequence of 64-row Bus segments and
-192-row districts (Bus 0..63, HEAP 64..255, Bus 256..319, SORT 320..511,
-then HEAP again at 576, SORT at 832, and so on), generated on the badge as
-the camera flies. The HEAP mallocs and frees blocks as you pass and its B
-verb sweeps a white GC wall down the district; the SORT runs a live
-quicksort on the band ahead of the camera (white pivot, two swaps per
-frame) and B shuffles that band and re-sorts it at eight swaps per frame.
-Palette pulses run along the Bus lanes and the free list, a title card
-names each segment as you enter it and the caption at the bottom names
-the B verb (on a Bus: the district ahead). The autopilot flies by default
-(a slow serpentine, a district's own cruise altitude, B pressed once per
-district); any stick, A or B input takes over and 15 s without input hands
-back. Tree, Hash, Stack, Pipeline and water come in M2.
+192-row districts, generated on the badge as the camera flies; each
+district has its own dataflow (a tick that edits cells every frame) and a
+B verb. Palette pulses run along the Bus lanes and the district paths, a
+title card names each segment as you enter it and the caption at the
+bottom names the B verb (on a Bus: the district ahead). The autopilot
+flies by default (a slow serpentine, a district's own altitude track, B
+pressed once per district); any stick, A or B input takes over and 15 s
+without input hands back.
 
-Controls (SPEC.md section 3; the last column is what M1 does):
+M2 completes the district cycle: Bus 0..63, HEAP 64..255, Bus, SORT
+320..511, Bus, TREE 576..767, Bus, HASH 832..1023, Bus, STACK 1088..1279,
+Bus, PIPELINE 1344..1535, then HEAP again at 1600 (one cycle is 1536
+rows, 2048 frames at cruise). The STACK is a terraced red canyon on the
+centre line whose floor steps down one frame (8 cells) every 13 rows to
+10 frames deep and back up at the far end; the autopilot dives with the
+floor (14 cells over it) along the call/return signal. B pushes a frame:
+the canyon from 8 rows ahead to the district end gets one frame deeper
+(a wave over 10 frames); pushing where the canyon is already 10 deep
+overflows the stack: the floor falls into a black pit and the sky
+flashes white. The PIPELINE starts with a mirror lake (the renderer's
+reflection pass: mirrored skyline, sky and Iris sun), then three streams
+with filter dams, braiding up to six springs at the far end; packets are
+dashes flowing along the channels toward the camera. B bursts the pipe:
+the stream sections between the dams and the merge point flood (sink to
+the water line over 20 frames), hold 40 frames and drain back row by row.
+The frame rate stays locked at 30 fps (SPEC 10, decided in M2).
 
-| Input        | Design                                                   | M1                                   |
+Controls (SPEC.md section 3; the last column is what M2 does):
+
+| Input        | Design                                                   | M2                                   |
 |--------------|----------------------------------------------------------|--------------------------------------|
 | Left / Right | Bank and steer across the strip (roll shears the horizon) | roll, bank-to-turn, x wraps; takes manual control |
 | Up / Down    | Pitch: dive / climb (altitude clamped above the terrain)  | horizon 40..88 and cruise altitude; takes manual control |
 | A            | Boost while held                                          | 0.75 -> 1.9 cells per frame; takes manual control |
-| B            | The district verb                                         | HEAP: collect garbage, SORT: shuffle the band; nothing on a Bus yet (M3); takes manual control |
+| B            | The district verb                                         | HEAP: collect garbage, SORT: shuffle the band, TREE: insert a key, HASH: rehash the table, STACK: push a frame (again as soon as the previous push has run, 10 frames), PIPELINE: burst the pipe (one burst at a time); nothing on a Bus yet (M3); takes manual control |
 | Select       | Skip to the next district                                 | nothing yet (M3)                     |
 | Start        | Toggle autopilot / manual flight                          | toggles (on the press); 450 frames (15 s) without input also returns to autopilot |
 
 The autopilot (on at boot) steers toward x = 128 on a Bus and
-128 + 16 sin(frame / 512 turn) in a district, with the stick clamped to
-1/3 so the roll stays within about 6 rows; it holds `floor` + the live
-district's altitude (HEAP 40, SORT 110), looks down a little in the SORT
-(horizon row 52), and presses B when the camera crosses the district's
-`verb_at` row (HEAP local row 30, SORT 60).
+128 + 16 sin(frame / 512 turn) in a district (straight down the centre
+line in the STACK), with the stick clamped to 1/3 so the roll stays
+within about 6 rows. It holds `floor` + the live district's altitude
+track `alt_at(row)`: a constant for most districts (HEAP 40, SORT 110,
+TREE 185, HASH 120), the canyon floor + 14 in the STACK (the dive, with
+the terrain clearance scan narrowed to 8 cells around the flight line so
+the canyon walls do not hold it up), and 10 over the water across the
+PIPELINE lake (18 over the floor after it; the clearance spring lifts it
+over dams and springs). It looks down a little in the districts read from
+altitude (`alt` 80 or more: SORT, TREE, HASH; horizon row 52) and
+presses B when the camera crosses the district's `verb_at` row (HEAP 30,
+SORT 60, TREE 50, HASH 40, STACK 20, PIPELINE 30).
 
 Start+Select returns to the badge menu and the joystick click toggles the
 OS FPS overlay; both belong to the OS. The cart has no sound and never
@@ -156,12 +177,21 @@ is one 30 fps frame, so `--every 1 --ms 33` is real speed.
 Input scripts live in `tools/scripts/`:
 
 - `attract.json`: `[]`, no input; the autopilot flies. Used with
-  `--frames 1800` (rows 0..1322: Bus, HEAP, Bus, SORT, Bus, HEAP, Bus,
-  SORT, Bus) and by badge-bench.
-- `m1_manual.json` (1200 frames): stick right 60-120 (takes manual
-  control), B at 200 (HEAP garbage collection), stick left 400-460, B at
-  600 (SORT shuffle; the camera is at row ~439, inside the SORT), Start at
-  900 (autopilot back on).
+  `--frames 2400` (rows 0..1767: one whole cycle Bus, HEAP, Bus, SORT,
+  Bus, TREE, Bus, HASH, Bus, STACK, Bus, PIPELINE, then Bus and HEAP), by
+  badge-bench and by `tools/check_render.sh`. The STACK is reached about
+  frame 1450, the PIPELINE lake about frame 1790.
+- `m2_verbs.json` (2200 frames): stick right 60-100 (takes manual
+  control), then B once in each district: 150 (HEAP, row ~109), 500
+  (SORT, ~371), 820 (TREE, ~611), 1160 (HASH, ~866), 1480, 1520 and 1560
+  (three STACK pushes, rows ~1106..1166), 1600 (a fourth push, where the
+  canyon ahead is already 10 frames deep: the overflow pit and the sky
+  flash), 1830 (PIPELINE burst, row ~1369), Start at 2150 (autopilot back
+  on). The B presses keep the idle counter from handing back to the
+  autopilot in between.
+- `m1_manual.json` (1200 frames, kept from M1): stick right 60-120, B at
+  200 (HEAP garbage collection), stick left 400-460, B at 600 (SORT
+  shuffle; the camera is at row ~439), Start at 900.
 - `m0_fly.json` (600 frames, kept from M0): stick right 120-200, left
   300-380, A held 450-540. The autopilot flies frames 0-119, then the
   stick takes over; frame 599 still reads `debug_cam_y` 540.
@@ -181,30 +211,59 @@ Debug exports (zero-argument wasm functions unless noted, usable with
 | `debug_horizon`        | horizon screen row, 64 level                                     |
 | `debug_world_check`    | regenerates every row the ring should hold outside the live district (whose cells the tick edits) and counts mismatching cells; 0 is correct |
 | `debug_map_height(x, y)`, `debug_map_colour(x, y)` | one ring cell (two arguments, so not for `--dump-exports`); 0xFFFF if row y is not in the ring |
-| `debug_segment_kind`, `debug_segment_index` | segment under the camera: kind 0 Bus, 1 HEAP, 2 SORT; index = 2 * pair (+1 for the district) |
+| `debug_segment_kind`, `debug_segment_index` | segment under the camera: kind 0 Bus, 1 HEAP, 2 SORT, 3 TREE, 4 HASH, 5 STACK, 6 PIPELINE; index = 2 * pair (+1 for the district) |
 | `debug_live_kind`      | kind of the live (ticked) district: the one under the camera, or the next one on a Bus |
 | `debug_autopilot`      | 1 while the autopilot flies, 0 in manual flight                  |
 | `debug_cam_ground`     | terrain height of the cell under the camera                      |
 | `debug_cam_clear`      | `debug_cam_alt` - `debug_cam_ground`; above 0 means the camera is above the terrain |
 | `debug_sort_state`     | live SORT: running band (255 none) + 256 * sorted bands + 65536 while it re-sorts after B |
 | `debug_sort_max_bars`  | most SORT bars (7 rows x 4 cells each) rewritten in one frame since boot: tick alone in the low 16 bits, a frame with a shuffle in the high 16 |
+| `debug_water_cols`     | screen columns that ran the reflection pass (render.zig pass 2) last frame; 0 away from water |
+| `debug_stack_depth`    | frames pushed in the live STACK this visit (B presses that started a push), 0 when the live district is not the STACK |
+| `debug_pipe_state`     | live PIPELINE burst: phase (0 idle, 1 sink, 2 hold, 3 restore) + 256 * frames into the phase; 0 when the live district is not the PIPELINE |
+| `debug_verb_max_cells` | most cells (height + colour) one frame of a verb wrote since boot: STACK push waves in the low 16 bits, PIPELINE bursts in the high 16 |
+| `debug_sky_flash`      | frames of white sky left (a STACK overflow sets 6)               |
 
-Checks that hold at M1:
+Checks that hold at M2:
 
 ```sh
-node ../../tools/preview.mjs ../../zig-out/bin/snouty-flyover.wasm --frames 1800 --quiet \
-    --script tools/scripts/attract.json --out out/ --at "1799 debug_world_check == 0" \
-    --at "1799 debug_autopilot == 1" --at "1799 debug_cam_clear > 0"
-node ../../tools/preview.mjs ../../zig-out/bin/snouty-flyover.wasm --frames 1200 --quiet \
-    --script tools/scripts/m1_manual.json --out out/ \
+node ../../tools/preview.mjs ../../zig-out/bin/snouty-flyover.wasm --frames 2400 --quiet \
+    --script tools/scripts/attract.json --out out/ --at "2399 debug_world_check == 0" \
+    --at "2399 debug_autopilot == 1" --at "2399 debug_cam_clear > 0" \
+    --at "1500 debug_segment_kind == 5" --at "1520 debug_stack_depth == 2" \
+    --at "1680 debug_cam_alt < 50" --at "1900 debug_segment_kind == 6" \
+    --at "1900 debug_water_cols > 0" --at "2399 debug_cam_y == 1767"
+node ../../tools/preview.mjs ../../zig-out/bin/snouty-flyover.wasm --frames 2200 --quiet \
+    --script tools/scripts/m2_verbs.json --out out/ \
     --at "59 debug_autopilot == 1" --at "61 debug_autopilot == 0" \
-    --at "600 debug_segment_kind == 2" --at "899 debug_autopilot == 0" \
-    --at "900 debug_autopilot == 1" --at "700 debug_cam_clear > 0" \
-    --at "1199 debug_world_check == 0"
+    --at "1480 debug_segment_kind == 5" --at "1561 debug_stack_depth == 3" \
+    --at "1600 debug_stack_depth == 4" --at "1600 debug_sky_flash == 5" \
+    --at "1830 debug_segment_kind == 6" --at "1831 debug_pipe_state == 257" \
+    --at "2150 debug_autopilot == 1" --at "2199 debug_world_check == 0"
 ```
 
-In the attract run the camera ends at row 1322 (`debug_cam_y`), x stays in
-112..144 and the roll within +-6 rows.
+In the attract run the camera ends at row 1767 (`debug_cam_y`) and
+`debug_cam_clear` is above 0 at every frame (lowest 11 cells, frame 1727,
+at the STACK exit). The dive (`debug_cam_alt` through the STACK): 116 on
+the Bus before it (the plateau is at 110), 109 at local row 29 as the
+floor starts stepping down, 65 at row 89, 44 at the 10-frame floor (rows
+~140..160, floor at 30), then 50 climbing out at row 194 (the Bus after).
+Across the PIPELINE lake it holds 20 (12 over the water) and lifts to
+about 45 over the dams and springs.
+
+### Render regression check
+
+`tools/check_render.sh` runs the attract script for 2400 frames and
+compares `debug_pixel_checksum` after frames 0, 200, ..., 2200 with the
+twelve "T V" lines in `tools/render_hashes.txt` (SPEC 10; the frames are
+bit-exact, so any change to the picture shows):
+
+```sh
+zig build -Dcart=snouty-flyover            # from the repository root
+tools/check_render.sh                      # PASS (12 frames match ...), exit 0; exit 3 on a mismatch
+tools/check_render.sh --update             # after an intended change: rewrite render_hashes.txt
+tools/check_render.sh path/to/other.wasm   # check a different build
+```
 
 ## 6. Flashing
 
@@ -221,12 +280,12 @@ joystick for the OS FPS overlay.
 badge-bench (`../../badge-bench/README.md`) runs the ELF on an emulated
 Cortex-M33 with the badge-calibrated cycle model; read the `busy ms`
 column. `../../badge-bench/carts/snouty-flyover.toml` sets the defaults
-(budget 22 ms, 1800 frames, `attract.json`). From the repository root:
+(budget 22 ms, 2400 frames, `attract.json`). From the repository root:
 
 ```sh
-badge-bench/bench.sh zig-out/firmware/snouty-flyover.elf --script carts/snouty-flyover/tools/scripts/attract.json --frames 1800 --every 60 --symbols
+badge-bench/bench.sh zig-out/firmware/snouty-flyover.elf --script carts/snouty-flyover/tools/scripts/attract.json --frames 2400 --every 60 --symbols
 ```
 
 The first run creates `badge-bench/.venv` (needs network, under a minute);
-an 1800-frame run takes about two minutes at M1 (worst 11.03 ms, mean 6.66). The milestone numbers are in
+an 1800-frame run took about two minutes at M1 (worst 11.03 ms, mean 6.66; the 2400-frame M2 run takes about a third longer). The milestone numbers are in
 `PLAN.md` under each milestone's status.

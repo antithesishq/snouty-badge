@@ -20,13 +20,15 @@ lines). The repository-wide notes (hardware, cart API, build wiring) are in
   - `palette.zig`: the 256-entry palette (5.3), pulse cycling, fog and water tables
   - `world.zig`: map ring (`height`/`colour`, DEPTH x 256), `advance_to`,
     `gen_row`; the segment sequencer and district tick dispatch from M1
-  - `districts/`: `bus.zig`, `heap.zig`, `sort.zig` (M1); tree, hash, stack,
-    pipeline (M2). Each exports the `world.District` fields (`title`,
-    `gloss`, `caption`, `alt`, `verb_at`, `row`, `enter`, `tick`, `verb`);
+  - `districts/`: `bus`, `heap`, `sort`, `tree`, `hash`, `stack`,
+    `pipeline`. Each exports the `world.District` fields (`title`, `gloss`,
+    `caption`, `alt`, `verb_at`, `alt_at`, `row`, `enter`, `tick`, `verb`);
     `row(seed, ly)` must be a pure function, dynamic edits go through
-    `world.rows(y)` and skip rows the ring no longer holds
+    `world.rows(y)` and skip rows the ring no longer holds; water cells are
+    exactly `h == world.water` with colour `palette.water_idx`
   - `text.zig`, `sprite.zig`: title card and caption (shadowed OS font),
-    placeholder Snouty (`show_avatar` removes it)
+    the flying anteater (`show_avatar` removes it; frames from
+    `tools/anteater.py`)
   - `fixed.zig`: Q16 helpers, value noise, xorshift rng
   - `input.zig`: per-tick button snapshot with edges
 - `tools/` — `concept.py` (numpy look prototype, float, not a bit reference),
@@ -52,11 +54,11 @@ lines). The repository-wide notes (hardware, cart API, build wiring) are in
 
 ## Budget (SPEC sections 10 and 11)
 
-- Locked 30 fps; calibrated badge-bench worst frame at most 22 ms (busy ms).
-  If M1 is under 11 ms worst, the lock may go to 60 fps (`-Dflyover_fps`).
+- Locked 30 fps (decided at M2: the reflection pass doubles the march on
+  lake frames); calibrated badge-bench worst frame at most 22 ms (busy ms).
 - Memory: map ring 128 KB at depth 256 (64 KB at 128), fog table 4 KB,
-  code 30-50 KB; M1 gate `.text + .data` under 60 KB, `.bss` under 160 KB
-  (M1: 37.5 KB / 151.7 KB); the RAM window is 275 KB.
+  code 30-70 KB; M2 gate `.text + .data` under 70 KB, `.bss` under 165 KB
+  (M2: 66.7 KB / 158.7 KB); the RAM window is 275 KB.
 - Knob cut order if over budget: `z_far`, `lod_mul`, reflections,
   `-Dflyover_depth=128`, cliff shading, fog levels.
 
@@ -67,15 +69,16 @@ From the repository root (`export PATH="$HOME/.local/bin:$PATH"`):
 ```sh
 zig build -Dcart=snouty-flyover [-Dflyover_fps=30|60] [-Dflyover_depth=256|128] [-Ddebug_overlay=true]
 zig build check-float -Dcart=snouty-flyover
-badge-bench/bench.sh zig-out/firmware/snouty-flyover.elf --script carts/snouty-flyover/tools/scripts/attract.json --frames 1800 --every 60 --symbols
+badge-bench/bench.sh zig-out/firmware/snouty-flyover.elf --script carts/snouty-flyover/tools/scripts/attract.json --frames 2400 --every 100 --symbols
 ```
 
 From this directory:
 
 ```sh
-node ../../tools/preview.mjs ../../zig-out/bin/snouty-flyover.wasm --frames 1800 --every 3 \
+node ../../tools/preview.mjs ../../zig-out/bin/snouty-flyover.wasm --frames 2400 --every 3 \
     --script tools/scripts/attract.json --out out/ --dump-exports debug_cam_y,debug_segment_kind,debug_world_check
 python3 ../../tools/make_gif.py out/ preview.gif --scale 3 --ms 33
+tools/check_render.sh             # twelve frame checksums against tools/render_hashes.txt (--update regenerates)
 node ../../tools/serve-cart.mjs   # simulator on :2468, see docs/RUNNING.md
 ```
 

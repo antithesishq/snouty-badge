@@ -11,6 +11,8 @@ const render = @import("render.zig");
 const text = @import("text.zig");
 const sprite = @import("sprite.zig");
 const sort = @import("districts/sort.zig");
+const stack = @import("districts/stack.zig");
+const pipeline = @import("districts/pipeline.zig");
 
 comptime {
     cart.export_start_code();
@@ -107,6 +109,11 @@ comptime {
         @export(&debug_cam_clear, .{ .name = "debug_cam_clear" });
         @export(&debug_sort_max_bars, .{ .name = "debug_sort_max_bars" });
         @export(&debug_sort_state, .{ .name = "debug_sort_state" });
+        @export(&debug_water_cols, .{ .name = "debug_water_cols" });
+        @export(&debug_stack_depth, .{ .name = "debug_stack_depth" });
+        @export(&debug_pipe_state, .{ .name = "debug_pipe_state" });
+        @export(&debug_verb_max_cells, .{ .name = "debug_verb_max_cells" });
+        @export(&debug_sky_flash, .{ .name = "debug_sky_flash" });
     }
 }
 
@@ -139,6 +146,30 @@ fn debug_sort_state() callconv(.c) u32 {
 /// the tick alone in the low 16 bits, with a shuffle (B) in the high 16.
 fn debug_sort_max_bars() callconv(.c) u32 {
     return sort.max_tick_bars | sort.max_frame_bars << 16;
+}
+
+/// Columns that ran the reflection pass (render.zig pass 2) last frame.
+fn debug_water_cols() callconv(.c) u32 {
+    return render.water_cols;
+}
+/// Pushes made in the live STACK this visit (the frames pushed on top of
+/// the static canyon), 0 when the live district is not the Stack.
+fn debug_stack_depth() callconv(.c) u32 {
+    return if (world.live().kind == .stack) stack.push_count() else 0;
+}
+/// Live PIPELINE burst: phase (0 idle, 1 sink, 2 hold, 3 restore) + 256 *
+/// frames into the phase; 0 when the live district is not the Pipeline.
+fn debug_pipe_state() callconv(.c) u32 {
+    return if (world.live().kind == .pipeline) pipeline.debug_state() else 0;
+}
+/// Most cells (height + colour pairs) one frame of a verb wrote since boot:
+/// STACK push waves in the low 16 bits, PIPELINE bursts in the high 16.
+fn debug_verb_max_cells() callconv(.c) u32 {
+    return @min(stack.max_frame_cells, 0xFFFF) | @as(u32, @min(pipeline.max_frame_cells, 0xFFFF)) << 16;
+}
+/// Frames of white sky left (render.sky_flash, set by a STACK overflow).
+fn debug_sky_flash() callconv(.c) u32 {
+    return render.sky_flash;
 }
 
 fn debug_frame() callconv(.c) u32 {
