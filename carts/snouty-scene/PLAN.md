@@ -172,3 +172,31 @@ per-part parameters.
 Ending part, credits, pacing and palette pass, picker polish,
 `tools/check_timeline.mjs` with goldens, `docs/PERF.md` table, full-loop
 GIF. Single agent plus review.
+
+### Pacing decisions (2026-09-30, from the full-loop contact sheet)
+
+- Order is now Intro, Plasma, Copper, Rotozoomer, Twister, Tunnel,
+  Metaballs, Voxel, Head, Fire, Ending: it alternates warm/cool and
+  bright/dark at every boundary and splits the two purple full-screen
+  textures (Rotozoomer, Tunnel) with the warm Twister.
+- Metaballs now cross-fades warm to cool (was cool to warm): it follows
+  the violet Tunnel in orange and hands its blue to the Voxel sky, so the
+  dark-to-daylight jump into Voxel continues a hue instead of breaking one.
+- Voxel stays just after Metaballs as the climax (the one daylight part);
+  the Head after it is dark and slow, Fire is the last burst, and Fire to
+  Ending is a match cut on the Iris mark (centre screen in both).
+- Tunnel 5 to 4 bars: its look is set in the first seconds and it is the
+  fastest motion in the show; 8 s keeps it a rush.
+- Snouty head 6 to 5 bars: a single tumbling object, 10 s is enough.
+  Loop is 55 bars = 110 s (was 57).
+- Fades 15 to 20 frames with a 5-frame black gap on each side (10 black
+  frames at a boundary): a gentler ramp on the LCD and a short breath
+  between high-contrast palettes; still under a beat and a half.
+- Copper to Rotozoomer and Voxel to Head use `fx.dissolve` (4x4 blocks in
+  8x8 Bayer order) for variety: the blocks rhyme with the Rotozoomer's
+  tiles, and the dissolve keeps the Voxel daylight crisp instead of
+  passing through a muddy dim fade.
+- Ending to Intro is `.seamless`: the Ending cross-fades into the Intro's
+  frame 0 itself and neither side is veiled, so the loop is the smoothest
+  cut in the show (pixel-identical frames). The Intro's title still lands
+  at frame 180 and holds.

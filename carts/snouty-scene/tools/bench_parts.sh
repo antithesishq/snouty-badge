@@ -19,8 +19,8 @@ set -u
 cd "$(dirname "$0")/../../.."
 
 # Keep in step with cart/src/timeline.zig (`bars`, `entries`).
-bars=(3 5 6 5 5 4 5 7 6 4 7)
-names=("Intro" "Plasma" "Copper" "Rotozoomer" "Tunnel" "Twister" "Metaballs" "Voxel" "Snouty head" "Fire" "Ending")
+bars=(3 5 6 5 4 4 5 7 5 4 7)
+names=("Intro" "Plasma" "Copper" "Rotozoomer" "Twister" "Tunnel" "Metaballs" "Voxel" "Snouty head" "Fire" "Ending")
 limit=12
 
 elf=zig-out/firmware/snouty-scene.elf

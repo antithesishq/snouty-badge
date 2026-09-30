@@ -1,4 +1,4 @@
-//! Part 4, Tunnel (5 bars, 10 s): flying down a tunnel lined with Iris
+//! Part 5, Tunnel (4 bars, 8 s): flying down a tunnel lined with Iris
 //! marks, the classic lookup-table tunnel.
 //!
 //! init() fills two byte tables over a 200x168 field, larger than the

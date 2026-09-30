@@ -1,4 +1,4 @@
-//! Part 8, Snouty head (6 bars, 12 s): a flat-shaded low-poly Snouty head
+//! Part 8, Snouty head (5 bars, 10 s): a flat-shaded low-poly Snouty head
 //! tumbling in space over a dark dithered gradient and a slow starfield.
 //! The mesh is a const table (74 vertices, 93 triangles, written by
 //! tools/gen_head_mesh.py between the mesh markers below): a 6-segment

@@ -10,8 +10,8 @@
 //! dy*dy per ball, so the inner loop is an add, a shift, a clamp, a table
 //! load and a multiply-accumulate. The palette puts the iso contour at
 //! index 64 behind a hard bright rim over a smooth dark halo, so the blobs
-//! read as solid shiny objects. It cross-fades once from a cool palette to
-//! a warm one; on every beat the radii swell 10% and settle over 4 frames.
+//! read as solid shiny objects. It cross-fades once from a warm palette to
+//! a cool one; on every beat the radii swell 10% and settle over 4 frames.
 const std = @import("std");
 const cart = @import("cart-api");
 const math = @import("../math.zig");
@@ -166,14 +166,16 @@ pub fn render(t: u32, fb: cart.FramebufferPtr) void {
         for (col, acc) |*v, a| v.* = field_index(a);
     }
 
+    // Warm first, then cool (M2 pacing: the part follows the violet Tunnel
+    // and hands its blue over to the Voxel sky).
     if (t < blend_from) {
-        fx.upscale2x(&field, &cool, fb);
-    } else if (t >= blend_from + blend_len) {
         fx.upscale2x(&field, &warm, fb);
+    } else if (t >= blend_from + blend_len) {
+        fx.upscale2x(&field, &cool, fb);
     } else {
         const f: f32 = @as(f32, @floatFromInt(t - blend_from)) / blend_len;
         const k: u8 = @intFromFloat(math.smoothstep(0.0, 1.0, f) * 255.0);
-        const pal = palette.lerp(&cool, &warm, k);
+        const pal = palette.lerp(&warm, &cool, k);
         fx.upscale2x(&field, &pal, fb);
     }
 }

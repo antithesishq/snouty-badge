@@ -22,9 +22,9 @@ const ending = @import("parts/ending.zig");
 pub const frames_per_beat = 30;
 pub const frames_per_bar = 4 * frames_per_beat;
 /// Frames of each fade or dissolve ramp, out of one part and into the next.
-pub const fade_frames = 15;
+pub const fade_frames = 20;
 /// Frames of full black at each side of a `.fade` or `.dissolve` boundary.
-pub const gap_frames = 0;
+pub const gap_frames = 5;
 
 /// How a part hands over to the next one (see the file comment).
 pub const Cut = enum { fade, dissolve, seamless };
@@ -48,22 +48,22 @@ pub const Entry = struct { part: Part, bars: u8, cut: Cut = .fade };
 pub const entries = [_]Entry{
     .{ .part = .of(@import("parts/intro.zig")), .bars = 3 },
     .{ .part = .of(@import("parts/plasma.zig")), .bars = 5 },
-    .{ .part = .of(@import("parts/copper.zig")), .bars = 6 },
+    .{ .part = .of(@import("parts/copper.zig")), .bars = 6, .cut = .dissolve },
     .{ .part = .of(@import("parts/rotozoomer.zig")), .bars = 5 },
-    .{ .part = .of(@import("parts/tunnel.zig")), .bars = 5 },
     .{ .part = .of(@import("parts/twister.zig")), .bars = 4 },
+    .{ .part = .of(@import("parts/tunnel.zig")), .bars = 4 },
     .{ .part = .of(@import("parts/metaballs.zig")), .bars = 5 },
-    .{ .part = .of(@import("parts/voxel.zig")), .bars = 7 },
-    .{ .part = .of(@import("parts/head.zig")), .bars = 6 },
+    .{ .part = .of(@import("parts/voxel.zig")), .bars = 7, .cut = .dissolve },
+    .{ .part = .of(@import("parts/head.zig")), .bars = 5 },
     .{ .part = .of(@import("parts/fire.zig")), .bars = 4 },
     .{ .part = .of(ending), .bars = 7, .cut = .seamless },
 };
 
 /// Part lengths in bars, the same as `entries` (checked at comptime in init_all), kept
 /// apart so the host tests can use them without the cart API.
-pub const bars = [_]u8{ 3, 5, 6, 5, 5, 4, 5, 7, 6, 4, 7 };
+pub const bars = [_]u8{ 3, 5, 6, 5, 4, 4, 5, 7, 5, 4, 7 };
 /// Each entry's cut, the same as `entries` (checked with `bars`).
-pub const cuts = [_]Cut{ .fade, .fade, .fade, .fade, .fade, .fade, .fade, .fade, .fade, .fade, .seamless };
+pub const cuts = [_]Cut{ .fade, .fade, .dissolve, .fade, .fade, .fade, .fade, .dissolve, .fade, .fade, .seamless };
 pub const count = bars.len;
 
 /// Length of part `i` in frames.
@@ -80,10 +80,11 @@ pub fn loop_frames() u32 {
 
 /// Visibility (0 black .. 256 untouched) `n` frames from a veiled edge of
 /// a part (n = 0 is its first or last frame): `gap_frames` of black, then a
-/// linear ramp over `fade_frames`.
+/// linear ramp from 16 (the first fade level that is not black) to 256
+/// over `fade_frames`.
 pub fn ramp(n: u32) u16 {
     if (n < gap_frames) return 0;
-    return @intCast(@min(256, ((n - gap_frames) * 256) / fade_frames));
+    return @intCast(@min(256, 16 + ((n - gap_frames) * 240) / fade_frames));
 }
 
 /// The veil over one frame: which transition draws it and how visible the
@@ -210,23 +211,27 @@ test "bars to frames and the loop" {
     try std.testing.expectEqual(@as(u32, 600), frames_of(1));
     var total_bars: u32 = 0;
     for (bars) |b| total_bars += b;
-    try std.testing.expectEqual(@as(u32, 57), total_bars);
-    try std.testing.expectEqual(@as(u32, 57 * 120), loop_frames());
-    // 114 s at 60 fps.
-    try std.testing.expectEqual(@as(u32, 114 * 60), loop_frames());
+    try std.testing.expectEqual(@as(u32, 55), total_bars);
+    try std.testing.expectEqual(@as(u32, 55 * 120), loop_frames());
+    // 110 s at 60 fps.
+    try std.testing.expectEqual(@as(u32, 110 * 60), loop_frames());
 }
 
 test "fade levels" {
     const len = frames_of(0);
+    const edge = gap_frames + fade_frames; // first fully visible frame
     try std.testing.expectEqual(@as(u8, 0), fade_level(0, len));
-    try std.testing.expectEqual(@as(u8, 16), fade_level(15, len));
+    for (0..gap_frames) |t| try std.testing.expectEqual(@as(u8, 0), fade_level(@intCast(t), len));
+    try std.testing.expectEqual(@as(u8, 1), fade_level(gap_frames, len));
+    try std.testing.expectEqual(@as(u8, 16), fade_level(edge, len));
     try std.testing.expectEqual(@as(u8, 16), fade_level(len / 2, len));
-    try std.testing.expectEqual(@as(u8, 16), fade_level(len - 16, len));
+    try std.testing.expectEqual(@as(u8, 16), fade_level(len - 1 - edge, len));
+    try std.testing.expect(fade_level(len - edge, len) < 16);
     try std.testing.expectEqual(@as(u8, 0), fade_level(len - 1, len));
-    try std.testing.expect(fade_level(len - 8, len) < 16);
+    try std.testing.expectEqual(@as(u8, 0), fade_level(len - gap_frames, len));
     // Monotonic in and out.
-    for (1..fade_frames + 1) |t| try std.testing.expect(fade_level(@intCast(t), len) >= fade_level(@intCast(t - 1), len));
-    for (len - fade_frames..len) |t| try std.testing.expect(fade_level(@intCast(t), len) <= fade_level(@intCast(t - 1), len));
+    for (1..edge + 1) |t| try std.testing.expect(fade_level(@intCast(t), len) >= fade_level(@intCast(t - 1), len));
+    for (len - edge..len) |t| try std.testing.expect(fade_level(@intCast(t), len) <= fade_level(@intCast(t - 1), len));
 }
 
 test "clock advances through every part and loops" {

@@ -1,4 +1,4 @@
-//! Part 5, Twister (4 bars, 8 s): a square column with four faces (amber,
+//! Part 4, Twister (4 bars, 8 s): a square column with four faces (amber,
 //! orange, red, plum) twisting about its vertical axis over a slowly
 //! drifting dark gradient, standing on a dim reflecting floor.
 //!

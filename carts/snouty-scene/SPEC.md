@@ -56,26 +56,32 @@ badge-bench run and the badge show the same frames, and the picker is free.
 ## 3. The parts and the timeline
 
 The frame clock is 120 BPM: 30 frames per beat, 120 frames per 2-second
-bar. Part lengths are whole bars. Between parts a 15-frame fade to black
-ends one part and a 15-frame fade from black starts the next
-(`fx.fade`), applied by the timeline, not by the parts.
+bar. Part lengths are whole bars. Each entry has a `cut`, its hand-over to
+the next part, applied by the timeline, not by the parts: `.fade` (5
+frames of black, then a 20-frame fade, on each side of the bar line;
+`fx.fade`), `.dissolve` (the same timing with 4x4-pixel blocks dropping
+out in 8x8 Bayer order; `fx.dissolve`) or `.seamless` (no veil either
+side: the Ending's last frame is the Intro's first). Skipping or the
+picker cuts to a part's frame 0, which then fades in.
 
-| # | Part | Bars | Seconds | What it shows | Method |
-|---|---|---|---|---|---|
-| 0 | Intro | 3 | 6 | Starfield warp, "Antithesis presents", **SNOUTY SCENE** slams in | 3D star points, 8x8 text at 2x |
-| 1 | Plasma | 5 | 10 | Sum-of-sines plasma cycling through three palettes | 8-bit index field at half res, 2x upscale, palette rotates |
-| 2 | Copper + scroller | 6 | 12 | Copper bars behind a 16-row sine scroller of greetings | per-row colour bars, per-column glyph blit with sine y offset |
-| 3 | Rotozoomer | 5 | 10 | The Snouty sprite tiled to infinity, rotating and zooming | fixed-point affine step per pixel, 32x32 texture, `& 31` wrap |
-| 4 | Tunnel | 5 | 10 | Flying down a tunnel textured with Iris marks | angle/depth LUTs at init (u8 each, 40 KB), texture scroll per frame |
-| 5 | Twister | 4 | 8 | A twisted four-faced column, shaded, over a moving gradient | per-row: 4 edge positions from sin, fill spans |
-| 6 | Metaballs | 5 | 10 | Five blobs merging and splitting | half-res field sum with a 1/r^2 LUT, threshold + palette, 2x |
-| 7 | Voxel landscape | 7 | 14 | Comanche-style fly-over of a Green Hill Zone island | 128x128 height + colour maps (procedural at init), column ray-march at half horizontal res |
-| 8 | Snouty head | 6 | 12 | A flat-shaded low-poly Snouty head (or dodecahedron fallback) tumbling, lit | scanline triangle fill with a z-sorted (painter's) face list, no z buffer |
-| 9 | Fire | 4 | 8 | The classic cooling-map fire with the Iris mark floating in it | 80x64 heat buffer, spread + cool + rise, palette, 2x |
-| 10 | Ending | 7 | 14 | The Iris mark on a night sky, reflected in rippling water, credits | 2D reflection with per-row sine displacement (not the ray tracer), text |
+| # | Part | Bars | Seconds | Cut out | What it shows | Method |
+|---|---|---|---|---|---|---|
+| 0 | Intro | 3 | 6 | fade | Starfield warp, "Antithesis presents", **SNOUTY SCENE** slams in | 3D star points, 8x8 text at 2x |
+| 1 | Plasma | 5 | 10 | fade | Sum-of-sines plasma cycling through three palettes | 8-bit index field at half res, 2x upscale, palette rotates |
+| 2 | Copper + scroller | 6 | 12 | dissolve | Copper bars behind a 16-row sine scroller of greetings | per-row colour bars, per-column glyph blit with sine y offset |
+| 3 | Rotozoomer | 5 | 10 | fade | The Snouty sprite tiled to infinity, rotating and zooming | fixed-point affine step per pixel, 32x32 texture, `& 31` wrap |
+| 4 | Twister | 4 | 8 | fade | A twisted four-faced column, shaded, over a moving gradient | per-row: 4 edge positions from sin, fill spans |
+| 5 | Tunnel | 4 | 8 | fade | Flying down a tunnel textured with Iris marks | angle/depth LUTs at init (u8 each), texture scroll per frame |
+| 6 | Metaballs | 5 | 10 | fade | Five blobs merging and splitting, warm then cool | half-res field sum with a 1/r^2 LUT, threshold + palette, 2x |
+| 7 | Voxel landscape | 7 | 14 | dissolve | Comanche-style fly-over of a Green Hill Zone island | 128x128 height + colour maps (procedural at init), column ray-march |
+| 8 | Snouty head | 5 | 10 | fade | A flat-shaded low-poly Snouty head tumbling, lit | scanline triangle fill with a z-sorted (painter's) face list, no z buffer |
+| 9 | Fire | 4 | 8 | fade | The classic cooling-map fire with the Iris mark floating in it | 80x64 heat buffer, spread + cool + rise, palette, 2x |
+| 10 | Ending | 7 | 14 | seamless | The Iris mark rising over a night sea, reflected in rippling water, credits | 2D reflection with per-row sine displacement (not the ray tracer), text |
 
-Total 57 bars = 114 s, then loop to part 0. The Intro is also where the
-loop closes, so the title comes back every two minutes.
+Total 55 bars = 110 s, then loop to part 0 (M2 pacing pass: order and
+lengths changed from the M1 table, reasons in PLAN.md's M2 section). The
+Intro is also where the loop closes, so the title comes back every two
+minutes.
 
 Design intent per part is in the module's doc comment; the palette and
 pacing decisions are reviewed on the M2 GIF (section 9 risk 1).
@@ -209,7 +215,7 @@ the reference until then).
 
 ## 10. Decisions taken on NOTES.md section 8 (2026-09-30)
 
-1. Length: about two minutes, looping (114 s + fades). Short enough for
+1. Length: about two minutes, looping (110 s since the M2 pacing pass). Short enough for
    a booth, long enough for ten parts.
 2. Parts: the ten above (the NOTES pick plus twister, metaballs, fire
    and copper bars, which are cheap and classic).
