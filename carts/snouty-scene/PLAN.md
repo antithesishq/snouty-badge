@@ -167,7 +167,7 @@ reports RAM (`.bss` delta) and the numbers. Merge order: cheapest first.
 Contract details are in SPEC.md sections 3 to 5; the agent brief adds
 per-part parameters.
 
-## M2 the show — built 2026-09-30, awaiting Adrian's GIF review (no tag yet)
+## M2 the show — DONE, tag `snouty-scene/m2` (2026-09-30); M3 waits for Adrian's GIF review
 
 Status: Ending written (4.68 ms worst, .bss +5.5 KB), pacing pass below,
 picker polish, `tools/check_timeline.mjs` + `tests/golden.json`, full
