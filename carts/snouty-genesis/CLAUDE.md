@@ -32,7 +32,8 @@ ownership and interface contract.
   (60/30: `tunables.render_every` frames per update, the last rendered)
   and holds the wasm simulator shims; `frontend/` has video (tagged index
   -> `Pixel` cache with shadow/highlight), input (pad word, Select tap = A,
-  Select hold = menu), audio (`Md.tone()` -> `tone2` on change), debug
+  Select hold = menu), audio (`Md.tone()` -> `tone2` on change; the wasm
+  build drives the simulator's `tone` import itself, see the file), debug
   (overlay), text (fast font), romsrc (drive or embedded ROM, the report
   line).
 - `tests/` — host tests, entry `tests/all.zig`. `tests/roms/` is

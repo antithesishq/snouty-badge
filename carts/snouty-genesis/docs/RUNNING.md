@@ -4,15 +4,12 @@ Build the cart, run the host tests, preview it headless or in the web
 simulator, benchmark it, put a ROM on the badge drive and flash the cart.
 Commands run from the repository root; outputs land in the root `zig-out/`.
 
-Status: M1 in progress (tracks merging). The frame loop of PLAN.md runs:
-262 lines per frame, the 68000 per line, the Z80 slice when released,
-V-int and H-int from the VDP, the pad with its TH protocol, the one tone
-voice (`Md.tone()` -> `tone2`). Until the 68000 (Track A) and VDP (Track
-B) land, the picture is the backdrop colour only; once merged, the test
-ROM shows its grid, stripes, colour ramp, frame counter and a sprite the
-d-pad moves (`tools/testrom/README.md`). A Select hold pauses under a
-"MENU (M2)" banner; badge B resumes. No splash, real menu or rewind (M2,
-M3).
+Status: M2. Boot: a 1.2 s splash (the Iris mark and "SNOUTY GENESIS";
+any button skips it), then the game, or on the badge the ROM picker when
+the drive holds several Genesis ROMs and a help screen when it holds none.
+Holding Select for 500 ms opens the emulator menu (section 5). Sound is off
+at boot unless built with `-Dsound=true` (root docs/SOUND.md); the menu's
+Sound row turns it on. No time scrubbing yet (M3).
 
 ## 1. Prerequisites
 
@@ -83,6 +80,13 @@ passing test's stderr with its command line; that is not a failure).
   `dma_read16`.
 - `golden:` the scripted run of `roms/snouty-test.bin` (below),
   two runs from reset compared (determinism), snapshot/restore mid-run.
+- `drive:` the drive scan (`cart/src/frontend/drive.zig`, a module with no
+  cart-api import) over `tests/fixtures/m2_drive.img`: four `.gen/.md/.bin`
+  files listed in order with verdicts ok / ok / no header / SMD, the test
+  ROM's header name, a contiguous and a fragmented copy both reading back
+  byte-identical to `roms/snouty-test.bin` (CRC `E5D1C6BF`), an image with
+  no ROM, a broken boot sector. `tests/fixtures/make_fixtures.py`
+  regenerates the images (README.md there).
 
 ### Golden hashes
 
@@ -109,36 +113,51 @@ test; re-record only after re-checking by eye and ear.
 ## 4. Headless preview
 
 ```sh
-node tools/preview.mjs zig-out/bin/snouty-genesis.wasm --frames 150 --every 10 \
-  --out carts/snouty-genesis/out/m1/ \
-  --script carts/snouty-genesis/tools/scripts/m1_play.json \
-  --dump-exports debug_frame_count,debug_lines,debug_pc,debug_z80_state,debug_tone_hz \
-  --expect "debug_lines == 128"
+node tools/preview.mjs zig-out/bin/snouty-genesis.wasm --frames 186 --every 10 \
+  --out carts/snouty-genesis/out/m2/ \
+  --script carts/snouty-genesis/tools/scripts/m2_play.json \
+  --dump-exports debug_frame_count,debug_lines,debug_state,debug_settings \
+  --expect "debug_state == 1"
 ```
 
-`out/m1/frame_XXXX.png` are 160x128 frames, one per 10 updates (20 Genesis
-frames). The script (`tools/scripts/m1_play.json`, ticks = updates): idle
-to 29 (boot), Right 30-59, Down+B 60-74, Start 80-81 (sprite back to the
-centre), badge A = Genesis C 90-94, a Select tap 100-101 (Genesis A for 4
-frames: the PSG tone mutes), Up+Left 105-119.
+`out/m2/frame_XXXX.png` are 160x128 frames, one per 10 updates (20 Genesis
+frames). Updates 0-35 are the splash; the game starts at update 36.
+`tools/scripts/m2_play.json` is M1's script (ticks = updates) shifted by
+those 36: idle to 65 (boot), Right 66-95, Down+B 96-110, Start 116-117
+(sprite back to the centre), badge A = Genesis C 126-130, a Select tap
+136-137 (Genesis A for 4 frames: the PSG tone mutes), Up+Left 141-155.
+`m2_menu.json` (220 updates) opens the menu twice and walks every row
+(`docs/m2_splash_menu.gif` is that run, every second update):
 
-The top-left overlay: line 1 update time (both Genesis frames), line 2
+```sh
+node tools/preview.mjs zig-out/bin/snouty-genesis.wasm --frames 220 --every 4 \
+  --out carts/snouty-genesis/out/m2menu/ \
+  --script carts/snouty-genesis/tools/scripts/m2_menu.json \
+  --dump-exports debug_state,debug_menu_opens,debug_settings
+```
+
+It ends with `debug_state=1 debug_menu_opens=2 debug_settings=11` (sound
+on, crop, layout 2, overlay off).
+
+The top-left overlay (menu row "Debug overlay", on by default until the
+hardware numbers are in): line 1 update time (both Genesis frames), line 2
 presents per second and emulated frames per second (always 1000 us / 500
 / 1000 in wasm, where the clock is a stub), line 3 `z80:on r2 z100 c100`:
 the Z80 (`on`, `req` held by BUSREQ, `rst` in reset, `off` switched off)
 and the tunables (`render_every`, `z80_scale` and `cpu_scale` in percent).
-The bottom lines are the ROM report. Exports: `debug_frame_count`
-(Genesis frames, two per update), `debug_step_us`, `debug_lines` (rows
-rendered last frame, 128), `debug_state` (1 running, 2 menu
-placeholder), `debug_pad` (`core.Pad` bits: up 1, down 2, left 4, right
-8, A 16, B 32, C 64, Start 128), `debug_rom_source` (0 none, 1 embedded,
-2 drive contiguous, 3 drive fragmented), `debug_rom_size`,
-`debug_rom_crc` (drive only), `debug_cram_rebuilds`,
-`debug_menu_requests`, `debug_tone_calls`, `debug_tone_hz` (0 silent),
-`debug_sound_on` (1 when sound is on: 0 at boot unless built with
-`-Dsound=true`, badge A in the menu toggles it; root docs/SOUND.md),
-`debug_pc`, `debug_sp`, `debug_sr` (68000), `debug_vdp_line`,
-`debug_z80_pc`, `debug_z80_state` (bit 0 BUSREQ, bit 1 reset, bit 2 off).
+The bottom lines are the ROM report, shown only with the overlay. Exports:
+`debug_frame_count` (Genesis frames, two per update), `debug_step_us`,
+`debug_lines` (rows rendered last frame, 128), `debug_state` (0 splash, 1
+running, 2 menu, 3 picker, 4 help), `debug_pad` (`core.Pad` bits: up 1,
+down 2, left 4, right 8, A 16, B 32, C 64, Start 128), `debug_rom_source`
+(0 none, 1 embedded, 2 drive contiguous, 3 drive fragmented),
+`debug_rom_size`, `debug_rom_crc` (drive only), `debug_cram_rebuilds`,
+`debug_menu_opens`, `debug_settings` (bit 0 sound on, bit 1 crop, bits 2-4
+the button layout index, bit 5 overlay on), `debug_tone_calls`,
+`debug_tone_hz` (0 silent), `debug_sound_on`, `debug_pc`, `debug_sp`,
+`debug_sr` (68000), `debug_vdp_line`, `debug_z80_pc`, `debug_z80_state`
+(bit 0 BUSREQ, bit 1 reset, bit 2 off). Exports that read the console
+return 0 until a ROM is loaded (the picker or help screen is up).
 
 Miniplanets (Sik's homebrew, 512 KB, zlib licence, `roms/miniplanets.bin`)
 in the simulator or preview: build with it embedded. It is too big for
@@ -147,18 +166,45 @@ badge reads it from the drive, section 7):
 
 ```sh
 zig build -Dcart=snouty-genesis -Dcart-mode=xip -Dmd-rom=carts/snouty-genesis/roms/miniplanets.bin
-node tools/preview.mjs zig-out/bin/snouty-genesis.wasm --frames 600 --every 60 \
-  --out carts/snouty-genesis/out/miniplanets/ --press START:200-203
+node tools/preview.mjs zig-out/bin/snouty-genesis.wasm --frames 640 --every 60 \
+  --out carts/snouty-genesis/out/miniplanets/ --press START:236-239
 ```
 
 The firmware link of that build fails (`section '.text' will not fit in
 region 'FLASH'`: the 512 KB ROM cannot be embedded in the 256 KB XIP
 window) and `zig build` exits non-zero, but the wasm is still installed to
 `zig-out/bin/snouty-genesis.wasm`, which is all the simulator and preview
-need (check the report line or `debug_rom_size` = 524288). Rebuild without
+need (check the About screen or `debug_rom_size` = 524288). Rebuild without
 `-Dmd-rom` to go back to the test ROM.
 
-## 5. Web simulator
+## 5. Controls and the menu
+
+D-pad, badge B = Genesis B, badge A = Genesis C, Start = Start; a Select
+tap (under 500 ms) = Genesis A, sent for 4 Genesis frames from the release
+(SPEC.md section 5). Holding Select for 500 ms pauses the game under the
+menu:
+
+- Up/Down move, A chooses, B or a Select tap resumes; Left/Right (or A)
+  cycle a setting row.
+- `Resume`.
+- `Btns B=B A=C S=A`: which Genesis button badge B, badge A and the Select
+  tap (S) send; six layouts, this one first.
+- `Scale: Squeeze` (badge row r shows Genesis line r*7/4, all 224 lines
+  squeezed into 128) or `Scale: Crop` (lines 48..175 at full height, for
+  games whose action sits in the middle band). Takes effect on resume.
+- `Sound: Off/On` (the one tone voice; off at boot, root docs/SOUND.md).
+- `Debug overlay: On/Off` (also hides the ROM report line).
+- `Reset`: the console from its reset vector, settings kept.
+- `Pick ROM` (only on the badge with ROM files on the drive): back to the
+  picker.
+- `About`: version, file name, header name, size, source, region and
+  SRAM, CRC and "fragmented" for a drive ROM, or why the drive was not
+  used. B back.
+
+The title band shows the ROM's name from its header (Miniplanets says
+"MINIPLANETS", the test ROM "SNOUTY TEST").
+
+## 6. Web simulator
 
 As Snouty Gear (`carts/snouty-gear/docs/RUNNING.md` section 5):
 `node tools/serve-cart.mjs zig-out/bin/snouty-genesis.wasm` in one
@@ -167,30 +213,45 @@ terminal, `npm run dev` in `sycl-badge/simulator` in another, then
 Genesis B, Z or K = badge A = Genesis C, Enter = Start, Backspace = Select
 (tap: Genesis A).
 
-## 6. Benchmark
+Sound: one voice (`Md.tone()`), a square tone at the level's volume, off
+at boot unless built with `-Dsound=true` (badge A in the menu toggles it;
+root docs/SOUND.md). The badge plays it through its speaker; the simulator through the browser
+(click the page once so the browser lets audio start). In the simulator
+the cart drives the audio worklet directly: upstream's wasm shim turns an
+infinite `tone2` into a 4 s fade-in that music never gets past
+(`cart/src/frontend/audio.zig` explains).
+
+## 7. Benchmark
 
 ```sh
 zig build -Dcart=snouty-genesis -Dcart-mode=xip
-python3 tools/make_romfs.py carts/snouty-genesis/out/romfs.img
+python3 tools/make_romfs.py carts/snouty-genesis/out/romfs_test.img \
+  carts/snouty-genesis/roms/snouty-test.bin=TEST.GEN
 badge-bench/bench.sh zig-out/firmware/snouty-genesis-xip.elf \
   --config badge-bench/carts/snouty-genesis.toml --symbols
 ```
 
 The toml is not picked up by name (the ELF's basename has `-xip`), hence
-`--config`. It runs 120 updates (240 Genesis frames) of the embedded test
-ROM under `tools/scripts/m1_play.json` against the 33.3 ms budget; M1's
-target is a mean under 31 ms and a worst update under 33 ms (calibrated,
-the `busy ms` column). The romfs image is required: the default build
-reads the drive, and without an image the run faults reading the boot
-sector (a bench artefact); the image above is an empty volume, so the cart
-falls back to the embedded ROM. To bench the drive path, put a ROM on the
-image, e.g.
-`python3 tools/make_romfs.py carts/snouty-genesis/out/romfs.img carts/snouty-genesis/roms/snouty-test.bin=TEST.GEN`
-(add `--fragment 4` with two files to get a fragmented one), or pass
-`--romfs IMAGE`. The Z80's share: rebuild with `tunables.z80_scale = 0`
-(or `z80_enabled = false`) and compare.
+`--config`. It runs 156 updates under `tools/scripts/m2_play.json`: the
+36-update splash, then the M1 sequence on the test ROM read from the drive
+image (one ROM file: no picker), against the 33.3 ms budget; the M1
+targets are a mean under 31 ms and a worst update under 33 ms (calibrated,
+the `busy ms` column; the splash updates pull the mean down, so compare
+the M1 numbers with the per-update output from update 36 on). The romfs
+image is required: the default build reads the drive, and without an
+image the run faults reading the boot sector (a bench artefact). An empty
+image (`python3 tools/make_romfs.py carts/snouty-genesis/out/romfs.img`)
+shows the help screen instead of the game; `--press A:38-39` leaves it for
+the embedded ROM. Miniplanets from the drive:
+`python3 tools/make_romfs.py carts/snouty-genesis/out/romfs_mini.img carts/snouty-genesis/roms/miniplanets.bin=MINI.GEN`
+with `--romfs carts/snouty-genesis/out/romfs_mini.img --script
+carts/snouty-genesis/tools/scripts/m2_mini300.json --frames 336`. Two
+files with `--fragment 4` give a fragmented one. The picker and help
+screens can be captured the same way (`--png 10`, `--press DOWN:40-41`,
+`--out DIR`; there is no wasm path to them). The Z80's share: rebuild with
+`tunables.z80_scale = 0` (or `z80_enabled = false`) and compare.
 
-## 7. A ROM on the badge drive
+## 8. A ROM on the badge drive
 
 The badge's USB drive (`SYCLBADGE`, the OS romfs region) holds carts and
 any other file. With the default `drive` build:
@@ -201,18 +262,21 @@ any other file. With the default `drive` build:
    contiguous; a fragmented one runs through the cluster table and the
    report says so.
 3. **Eject the drive before playing** (docs/ROM_DRIVE.md section 2).
-4. Start Snouty Genesis. The bottom lines read
+4. Start Snouty Genesis. After the splash the game runs (one ROM file), or
+   the picker lists the drive's `.gen`/`.md`/`.bin` files (several): file
+   name and size per row, the selected file's header name under the list,
+   files that cannot run dimmed with the reason (`no SEGA header`, `SMD
+   interleaved: convert to .bin`, `mapper or over 4 MB: unsupported`, `SVP
+   chip: unsupported`); Up/Down, A plays, B runs the embedded test ROM
+   (`docs/m2_picker.png`). With a drive but no Genesis file a help screen
+   says to copy one and lists the skipped files; A runs the test ROM
+   (`docs/m2_help.png`). The menu's `Pick ROM` row returns to the picker.
+   With the overlay on, the bottom lines read
    `ROM: drive contiguous NAME 512 KB crc 1A2B3C4D` (or `fragmented`; plus
-   `(1 of N)` when several Genesis files are on the drive: the first in the
-   directory wins until M2's picker). Files whose word at 0x100 is not
-   "SEGA" are skipped; SMD-interleaved files, SSF2-mapper or over-4 MB
-   ROMs and SVP (Virtua Racing) are refused and the report names the
-   reason (e.g. `drive: SMD interleaved: convert to .bin`). With no volume
-   or no ROM file it reads
-   `ROM: embedded snouty-test.bin 16 KB, drive: no .gen/.md/.bin file` (or
-   the romfs error name).
+   `(i of N)` with several files); with no volume they read
+   `ROM: embedded snouty-test.bin 16 KB, drive: NoVolume`.
 
-## 8. Flash the badge
+## 9. Flash the badge
 
 Copy `zig-out/firmware/snouty-genesis-xip.uf2` onto the badge drive. XIP
 carts are not yet confirmed on hardware (an open item, not a gate: no

@@ -30,7 +30,7 @@ simulator quirks.
 - Inputs `cart.controls.*`: start, select, a, b, click, up, down, left, right.
   The OS owns Start+Select (exit to menu) and joystick click (FPS overlay);
   never bind click.
-- Audio `cart.tone2`, one voice. 5 neopixels (`cart.neopixels`): off; this
+- Audio `cart.tone2`, one voice: unused, no audio in this cart (SPEC.md section 8). 5 neopixels (`cart.neopixels`): off; this
   cart never writes non-zero values (root `docs/NEOPIXELS.md`; a coworker's
   badge shows the LEDs are unusably bright even at 1%, 2026-09-29).
 - Budget: ELF `.text`+`.data` at most 120 KB, `.bss` at most 120 KB.
@@ -63,8 +63,13 @@ python3 ../../tools/make_gif.py out/ preview.gif --scale 3 --ms 50
 ```
 
 Debug exports (wasm): `debug_frame`, `debug_render_us`,
-`debug_pixel_checksum`, `debug_dither_mode`. `--press B:0-0` switches to
-the no-dither mode for reference comparisons.
+`debug_pixel_checksum`, `debug_dither_mode`, and since M3
+`debug_set_view(preset, t, orbit, height_mm)` (freezes on that view),
+`debug_set_dither_mode(mode)` (1 = none, for reference comparisons),
+`debug_preset`, `debug_state`, `debug_t`, `debug_orbit`,
+`debug_height_mm`. B cycles bayer -> blue noise -> palette16 -> none, so
+input scripts need three B presses to reach none
+(`tools/scripts/m3_nodither.json`). App state is `cart/src/app.zig`.
 
 ## Conventions
 

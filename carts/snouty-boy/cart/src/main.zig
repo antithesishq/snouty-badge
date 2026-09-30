@@ -225,6 +225,7 @@ comptime {
         @export(&debug_rom_crc, .{ .name = "debug_rom_crc" });
         @export(&debug_slots, .{ .name = "debug_slots" });
         @export(&debug_arena_bytes, .{ .name = "debug_arena_bytes" });
+        @export(&debug_tone_hz, .{ .name = "debug_tone_hz" });
     }
 }
 
@@ -313,4 +314,8 @@ fn debug_slots() callconv(.c) u32 {
 /// Bytes of the arena holding cart RAM and the keyframe store.
 fn debug_arena_bytes() callconv(.c) u32 {
     return @intCast(rewind.arena_bytes());
+}
+/// What the buzzer was last told to play, in Hz; 0 when stopped.
+fn debug_tone_hz() callconv(.c) u32 {
+    return if (audio.playing) audio.last_hz else 0;
 }
