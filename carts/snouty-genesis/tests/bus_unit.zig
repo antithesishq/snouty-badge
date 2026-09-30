@@ -476,3 +476,61 @@ test "md: DMA stall cycles come out of the 68000's budget" {
     try expectEqual(@as(u32, 0), a.dma_stall);
     try expect(a.m68k_carry < 200);
 }
+
+/// The bus without `dma_source`: the VDP's word-by-word DMA path.
+const PlainBus = struct {
+    b: core.bus.Bus,
+    pub fn read16(self: *PlainBus, addr: u24) u16 {
+        return self.b.read16(addr);
+    }
+};
+
+/// A 68000-to-VRAM DMA of `words` words from `src` to VRAM `dst`, through
+/// `bus`; returns the stall.
+fn run_dma(md: *Md, bus: anytype, src: u32, words: u16, dst: u16) u32 {
+    const v = &md.vdp;
+    v.write_reg(1, 0x54); // display, DMA enabled
+    v.write_reg(5, 0x7E); // sprite table at FC00
+    v.write_reg(15, 2);
+    v.write_reg(19, @truncate(words));
+    v.write_reg(20, @truncate(words >> 8));
+    v.write_reg(21, @truncate(src >> 1));
+    v.write_reg(22, @truncate(src >> 9));
+    v.write_reg(23, @truncate((src >> 17) & 0x7F));
+    v.spr_dirty = false; // set by the register 5 write
+    _ = v.write_control(0x4000 | (dst & 0x3FFF), bus);
+    return v.write_control(0x0080 | (dst >> 14), bus);
+}
+
+test "bus: VDP DMA through dma_source matches the word-by-word path" {
+    var big: [0x800]u8 = undefined;
+    make_rom(&big);
+    for (big[0x400..], 0..) |*x, i| x.* = @truncate(i * 7 + 3);
+    const a = try new_md(&big);
+    defer std.testing.allocator.destroy(a);
+    const r = try new_md(&big);
+    defer std.testing.allocator.destroy(r);
+    for (&a.work_ram, &r.work_ram, 0..) |*x, *y, i| {
+        x.* = @truncate(i * 13 + 1);
+        y.* = x.*;
+    }
+    // ROM running past its end (open bus after), work RAM across its 64 KB
+    // mirror and the 128 KB window wrap, VRAM wrapping over the sprite table.
+    const cases = [_]struct { src: u32, words: u16, dst: u16 }{
+        .{ .src = 0x0700, .words = 0x100, .dst = 0x1000 },
+        .{ .src = 0xFFFF00, .words = 0x100, .dst = 0xFF00 },
+        .{ .src = 0xFF0010, .words = 0x40, .dst = 0x2002 },
+        .{ .src = 0x0400, .words = 0, .dst = 0x8000 },
+    };
+    for (cases) |c| {
+        var ab = a.bus_for();
+        var rb: PlainBus = .{ .b = r.bus_for() };
+        const sa = run_dma(a, &ab, c.src, c.words, c.dst);
+        const sr = run_dma(r, &rb, c.src, c.words, c.dst);
+        try expectEqual(sr, sa);
+        try std.testing.expect(std.meta.eql(a.vdp, r.vdp));
+        // Only the transfers over FC00-FFFF touch the sprite table (length
+        // 0 is 64 K words: all of VRAM).
+        try expectEqual(c.dst == 0xFF00 or c.words == 0, a.vdp.spr_dirty);
+    }
+}

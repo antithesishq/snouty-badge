@@ -105,6 +105,27 @@ pub const Bus = struct {
         write16_io(md, addr, v);
     }
 
+    /// A run of 68000 memory a VDP DMA may copy straight from: `words`
+    /// big-endian words at `ptr`, the same bytes `read16` would give.
+    pub const DmaSpan = struct { ptr: [*]const u8, words: u32 };
+
+    /// Up to `want` words from the even address `addr` as one run, if they
+    /// are plain memory: ROM below the SRAM and the ROM's end (contiguous
+    /// source only), or work RAM up to its 64 KB mirror boundary. Null
+    /// otherwise; the VDP then reads word by word.
+    pub fn dma_source(self: *Bus, addr: u24, want: u32) ?DmaSpan {
+        const md = self.md;
+        if (addr >= 0xE00000) {
+            const i: u32 = addr & 0xFFFF;
+            return .{ .ptr = @as([*]const u8, &md.work_ram) + i, .words = @min(want, (0x10000 - i) / 2) };
+        }
+        if (addr >= 0x400000) return null;
+        const p = md.rom.base orelse return null;
+        const end = @min(md.rom.size, md.sram_active.lo);
+        if (addr + 2 > end) return null;
+        return .{ .ptr = p + addr, .words = @min(want, (end - addr) / 2) };
+    }
+
     /// `M68k`'s wait loop hook: `Md.skip_wait_loop`.
     pub fn wait_loop(self: *Bus, cpu: *md_mod.Cpu) void {
         self.md.skip_wait_loop(cpu);

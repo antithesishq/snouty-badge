@@ -389,11 +389,39 @@ pub const Vdp = struct {
     /// 68000 memory to VRAM/CRAM/VSRAM: source word address in registers
     /// 21-23 (bits 1-23 of the byte address); the low 17 bits wrap, so a
     /// transfer never leaves its 128 KB window.
+    ///
+    /// Fast path: a VRAM write at an even address with auto-increment 2
+    /// from memory the bus can hand out as bytes (`bus.dma_source`, when it
+    /// has one: ROM and work RAM) copies straight across, run by run; the
+    /// result is the word-by-word loop's (tests/bus_unit.zig compares).
     fn dma_68k(v: *Vdp, bus: anytype) u32 {
         const n = v.dma_length();
         const hi: u32 = @as(u32, v.regs[23] & 0x7F) << 17;
         var src: u16 = @as(u16, v.regs[22]) << 8 | v.regs[21];
         var k: u32 = 0;
+        if (comptime @hasDecl(@typeInfo(@TypeOf(bus)).pointer.child, "dma_source")) {
+            if (v.code & 0x0F == 0x01 and v.regs[15] == 2 and v.addr & 1 == 0) {
+                const sat: u16 = @as(u16, v.regs[5] & 0x7E) << 9;
+                var a = v.addr;
+                var sat_hit = false;
+                while (k < n) {
+                    // A run ends where the 128 KB source window wraps.
+                    const want = @min(n - k, 0x10000 - @as(u32, src));
+                    const span = bus.dma_source(@intCast(hi | @as(u32, src) << 1), want) orelse break;
+                    var j: u32 = 0;
+                    while (j < span.words) : (j += 1) {
+                        v.vram[a] = span.ptr[2 * j];
+                        v.vram[a + 1] = span.ptr[2 * j + 1];
+                        if (a -% sat < 0x400) sat_hit = true;
+                        a +%= 2;
+                    }
+                    k += span.words;
+                    src +%= @truncate(span.words);
+                }
+                v.addr = a;
+                if (sat_hit) v.spr_dirty = true;
+            }
+        }
         while (k < n) : (k += 1) {
             const w = bus.read16(@intCast(hi | @as(u32, src) << 1));
             src +%= 1;
