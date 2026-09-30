@@ -1,15 +1,18 @@
 //! `Md.tone()` -> the badge's one `tone2` voice (SPEC.md section 9). Calls
 //! `tone2` only when the note changes, and stops the buzzer when nothing
 //! is keyed on. f32 is fine here (frontend, not core). M1 Track C owns
-//! this file; M2 adds the menu's sound toggle through `enabled`.
+//! this file; main.zig toggles `enabled` (A in the M1 menu placeholder, the
+//! menu's Sound row from M2).
 //!
 //! Volume: `Tone.level` 0..15 maps linearly onto tone2 volume 0.2..1.0
 //! (level 0 is still audible: silence is `tone()` returning null).
 const cart = @import("cart-api");
 const core = @import("core");
+const build_options = @import("build_options");
 
-/// Sound on/off (menu toggle from M2, default on).
-pub var enabled: bool = true;
+/// Sound on/off. Starts as `-Dsound` says (off by default, docs/SOUND.md);
+/// the menu toggles it.
+pub var enabled: bool = build_options.sound;
 
 /// Frequencies outside this range are treated as silence.
 const min_hz: u16 = 20;

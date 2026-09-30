@@ -15,6 +15,9 @@ pub fn add(b: *Build, sycl_badge_dep: *Build.Dependency, opts: common.Options) v
     // LED effects in cart/src/audio.zig; off by default (docs/NEOPIXELS.md).
     const options = b.addOptions();
     options.addOption(bool, "neopixels", opts.neopixels);
+    // -Dsound=true starts with sound on; off by default, Select on the title
+    // toggles it (docs/SOUND.md).
+    options.addOption(bool, "sound", opts.sound);
     build_options = options;
 
     os_cart.add(b, sycl_badge_dep, .{

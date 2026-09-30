@@ -23,6 +23,9 @@ var rom_source: Source = .drive;
 /// What the cart sees as `rom.source` (`pack` is not built yet and builds as `drive`).
 const Source = enum { drive, embed };
 
+/// The `build_options` module (`sound`), set by `add` for `build_cart_modules`.
+var build_options: ?*Build.Step.Options = null;
+
 pub fn add(b: *Build, sycl_badge_dep: *Build.Dependency, opts: common.Options) void {
     const path = resolve_rom(b, opts.gg_rom orelse default_rom);
     rom_path = path.lazy;
@@ -35,6 +38,12 @@ pub fn add(b: *Build, sycl_badge_dep: *Build.Dependency, opts: common.Options) v
             break :blk .drive;
         },
     };
+
+    // -Dsound=true starts with sound on; off by default, the menu's Sound row
+    // toggles it (docs/SOUND.md).
+    const options = b.addOptions();
+    options.addOption(bool, "sound", opts.sound);
+    build_options = options;
 
     os_cart.add(b, sycl_badge_dep, .{
         .mode = opts.cart_mode,
@@ -85,12 +94,13 @@ fn exists(b: *Build, rel: []const u8) bool {
     return true;
 }
 
-/// Adds `core`, `romfs` (lib/romfs.zig, the drive reader), `iris` (lib/iris_mark.zig) and `rom` to the
+/// Adds `build_options`, `core`, `romfs` (lib/romfs.zig, the drive reader), `iris` (lib/iris_mark.zig) and `rom` to the
 /// cart. `rom` is generated: the embedded ROM (`data`, copied next to the
 /// generated rom.zig so @embedFile can see it), its file name (`name`) and
 /// where the badge build gets its ROM (`source`, `.drive` or `.embed`).
 fn build_cart_modules(b: *Build, cart: *Build.Module, cart_api: *Build.Module, step: *Build.Step) void {
     _ = cart_api;
+    cart.addImport("build_options", build_options.?.createModule());
     cart.addImport("core", b.createModule(.{ .root_source_file = b.path(dir ++ "core/gg.zig") }));
     cart.addImport("romfs", b.createModule(.{ .root_source_file = b.path("lib/romfs.zig") }));
     // The Iris mark the splash draws (SPEC.md section 12), shared with Snouty Boy.

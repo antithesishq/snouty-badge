@@ -135,6 +135,8 @@ placeholder), `debug_pad` (`core.Pad` bits: up 1, down 2, left 4, right
 2 drive contiguous, 3 drive fragmented), `debug_rom_size`,
 `debug_rom_crc` (drive only), `debug_cram_rebuilds`,
 `debug_menu_requests`, `debug_tone_calls`, `debug_tone_hz` (0 silent),
+`debug_sound_on` (1 when sound is on: 0 at boot unless built with
+`-Dsound=true`, badge A in the menu toggles it; root docs/SOUND.md),
 `debug_pc`, `debug_sp`, `debug_sr` (68000), `debug_vdp_line`,
 `debug_z80_pc`, `debug_z80_state` (bit 0 BUSREQ, bit 1 reset, bit 2 off).
 
