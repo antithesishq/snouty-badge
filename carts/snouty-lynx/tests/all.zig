@@ -6,4 +6,5 @@ test {
     _ = @import("boot_unit.zig");
     _ = @import("boot_local.zig");
     _ = @import("boot_crosscheck.zig");
+    _ = @import("cpu65_single_step.zig");
 }
