@@ -64,6 +64,32 @@ Primary rays test it, water reflections at every depth if --iris-in-water 1
 --no-iris removes it; with --no-iris and the M2 texel file the output is
 byte-identical to the M2.1 reference.
 
+M4 (--pt): the freeze-frame path tracer's estimator, PLAN.md M4 "The M4
+estimator, exactly", for pt.zig and tools/check_pt.mjs:
+
+    python3 tools/reference.py --pt --passes 1024 --preset noon --t 0 --orbit 0     # one view
+    python3 tools/reference.py --pt --passes 16,1024 --check-set                    # check_pt's references
+    python3 tools/reference.py --pt --passes 64 --from 16 --view sunset:300         # passes 16 .. 63 only
+    python3 tools/reference.py --rng-selftest                                       # RNG values for pt.zig
+
+It writes the float mean of passes M .. N-1 (128 x 160 x 3 float64, not
+saturated) as pt_<view>_nMMMM-NNNN[_knobs]_<scene>.npy plus a PNG (dither
+none) to --out (default out/pt_ref/, the cache: an existing .npy is reused
+unless --force). <scene> is pt_scene_hash(): 8 hex digits over every
+upper-case scene constant (IRIS_C included), the pt_config() flags, the
+knobs, fps, the shore and blue-noise files and PT_ESTIMATOR, so a scene edit
+never reuses a stale reference. The scene is every preset's full content
+regardless of variant (pt_config: glass in sunset, matte, small chrome,
+rings, sun drift, the logo in every reflection, K = 4; stripes per
+PT_STRIPES, off since M3.1). f64 throughout except the RNG (lowbias32, key,
+R2 with the blue-noise rotation, to_unit), which is bit exact. Rays of
+--batch passes are traced together as one masked wavefront and the passes
+are split over --jobs processes. --accum simulates the cart's u32
+accumulator (stochastic rounding) instead of the float mean. The knob flags
+(--dof, --lens-radius, --sun-radius, --max-bounces, --water-roughness,
+--sky-fill, --sample-clamp) default to pt.zig's values; a non-default one
+is part of the file name.
+
 Compare against the cart with tools/check_render.mjs (see docs/RUNNING.md).
 The code is vectorised: every function takes arrays of N rays (N x 3) and the
 bounded recursion (depth 0..2) is done by calling trace() on the masked subset
@@ -839,6 +865,609 @@ def quantise_none(img):
     return np.rint(q * 255.0 / maxv).astype(np.uint8)
 
 
+# ---------------------------------------------------------------- M4 path tracer (--pt)
+# PLAN.md M4 "The M4 estimator, exactly". f64 everywhere except the integer
+# RNG (lowbias32, the key layout, R2 with the blue-noise rotation, to_unit),
+# which is bit exact with the plan and so with pt.zig. The frame is a
+# wavefront: every ray of a batch of passes (pass-major, then pixel y * 160
+# + x) goes through vertex b = 0 .. max_bounces together, with masks.
+PT_W_H = W * H                                 # 20480: the key's pixel stride
+PT_A = (np.uint32(0xC13FA9A9), np.uint32(0x91E10DA6))   # 2^32 / g, 2^32 / g^2 (plastic number)
+PT_THR_MIN = 1.0 / 1024.0
+PT_GLASS_VIS = 1.0 - GLASS_OPACITY             # 0.45: a shadow ray that meets only the glass
+PT_CACHE = os.path.join(CART, "out", "pt_ref")
+
+
+class PtKnobs:
+    """The M4 knobs (PLAN.md M4 estimator; pt.zig has the same names)."""
+
+    def __init__(self, dof=True, lens_radius=0.05, sun_radius_deg=1.5, max_bounces=4, water_roughness=0.08,
+                 sky_fill=0.3, sample_clamp=4.0):
+        self.dof = dof
+        self.lens_radius = lens_radius
+        self.sun_radius_deg = sun_radius_deg
+        self.max_bounces = max_bounces
+        self.water_roughness = water_roughness
+        self.sky_fill = sky_fill
+        self.sample_clamp = sample_clamp
+        assert 4 + 4 * max_bounces + 3 < 63, "vertex dimensions would reach dimension 63 (the rounding)"
+
+    DEFAULTS = dict(dof=True, lens_radius=0.05, sun_radius_deg=1.5, max_bounces=4, water_roughness=0.08,
+                    sky_fill=0.3, sample_clamp=4.0)
+
+    def tag(self):
+        """'' at the defaults, else a short suffix for cache names."""
+        diff = [f"{k}{getattr(self, k):g}" if not isinstance(v, bool) else f"{k}{int(getattr(self, k))}"
+                for k, v in self.DEFAULTS.items() if getattr(self, k) != v]
+        return ("_" + "_".join(diff)) if diff else ""
+
+
+PT_STRIPES = False                             # M3.1: Adrian dropped the chrome stripes (all presets)
+PT_ESTIMATOR = "m4-1"                          # bump when the estimator's code changes (cache key)
+PT_CHECK_SET = [("sunset", 0, 0, DEFAULT_HEIGHT), ("midnight", 0, 0, DEFAULT_HEIGHT), ("noon", 0, 0, DEFAULT_HEIGHT),
+                ("storm", 0, 0, DEFAULT_HEIGHT), ("sunset", 300, 300, DEFAULT_HEIGHT), ("noon", 0, 0, 1.0)]
+
+
+def pt_config(fps=20):
+    """The M4 scene: every preset's full content regardless of variant (glass
+    in sunset, matte in midnight and noon, the small chrome in noon, rings,
+    sun drift, the logo (IRIS_C) in every reflection with K = 4); stripes
+    per PT_STRIPES."""
+    return Config(glass="real", water_shadows="all", glass_secondary="full", fps=fps, glass_enabled=True,
+                  glass_primary="full", scale=1, iris=True, iris_in_chrome=True, iris_in_water=True,
+                  iris_samples=4, motion=True, rings=True, stripes=PT_STRIPES, sun_drift=True, noon_shadows=True,
+                  noon_third_sphere=True)
+
+
+def pt_scene_hash(knobs, fps):
+    """8 hex digits over everything the estimator reads: every upper-case
+    module constant (IRIS_C, the presets, sphere and water constants, ...),
+    the pt_config() flags, the knobs, fps, the shore texels and palette, the
+    blue-noise tile and PT_ESTIMATOR. Part of every cache name, so a scene
+    change (M3.1) or a knob change never reuses a stale reference."""
+    import hashlib
+
+    def canon(v):
+        if isinstance(v, np.ndarray):
+            return canon(v.tolist())
+        if isinstance(v, dict):
+            return "{" + ",".join(f"{k!r}:{canon(v[k])}" for k in sorted(v)) + "}"
+        if isinstance(v, (list, tuple)):
+            return "[" + ",".join(canon(x) for x in v) + "]"
+        if isinstance(v, float):
+            return repr(float(v))
+        if callable(v):
+            return getattr(v, "__name__", "callable")         # SHADERS: never an address
+        return repr(v)
+
+    skip = {"HERE", "CART", "PT_CACHE", "VARIANTS", "IRIS_CUT", "PT_CHECK_SET"}
+    consts = {k: v for k, v in globals().items()
+              if k.isupper() and k not in skip and isinstance(v, (int, float, str, np.ndarray, list, tuple, dict))}
+    cfg = pt_config(fps)
+    flags = {k: v for k, v in vars(cfg).items() if isinstance(v, (bool, int, float, str))}
+    h = hashlib.sha256()
+    h.update(canon(consts).encode())
+    h.update(canon(flags).encode())
+    h.update(canon({k: getattr(knobs, k) for k in PtKnobs.DEFAULTS}).encode())
+    h.update(cfg.texels.tobytes())
+    h.update(canon(cfg.base_palette).encode())
+    h.update(pt_bluenoise().tobytes())
+    return h.hexdigest()[:8]
+
+
+# ---- the RNG (bit exact)
+def pt_lowbias32(v):
+    v = np.asarray(v, dtype=np.uint32)
+    with np.errstate(over="ignore"):
+        v = v ^ (v >> np.uint32(16))
+        v = v * np.uint32(0x7FEB352D)
+        v = v ^ (v >> np.uint32(15))
+        v = v * np.uint32(0x846CA68B)
+        v = v ^ (v >> np.uint32(16))
+    return v
+
+
+def pt_key(x, y, n, d):
+    """(n * 64 + d) * 20480 + y * 160 + x, u32 wrapping."""
+    x, y, n = (np.asarray(a, dtype=np.uint32) for a in (x, y, n))
+    with np.errstate(over="ignore"):
+        return (n * np.uint32(64) + np.uint32(d)) * np.uint32(PT_W_H) + y * np.uint32(W) + x
+
+
+def pt_hash(x, y, n, d):
+    return pt_lowbias32(pt_key(x, y, n, d))
+
+
+def pt_to_unit(h):
+    """(h >> 8) * 2^-24: exact in f32 and f64."""
+    return (np.asarray(h, dtype=np.uint32) >> np.uint32(8)).astype(np.float64) * (2.0 ** -24)
+
+
+_BLUENOISE = None
+
+
+def pt_bluenoise():
+    global _BLUENOISE
+    if _BLUENOISE is None:
+        path = os.path.join(CART, "cart", "src", "bluenoise64.bin")
+        b = np.frombuffer(open(path, "rb").read(), dtype=np.uint8)
+        if b.size != 64 * 64:
+            raise SystemExit(f"reference: {path}: {b.size} bytes, want 4096")
+        _BLUENOISE = b.astype(np.uint32)
+    return _BLUENOISE
+
+
+def pt_bn(x, y):
+    """bluenoise64.bin[(y & 63) * 64 + (x & 63)] (the dither's tile)."""
+    x = np.asarray(x, dtype=np.uint32)
+    y = np.asarray(y, dtype=np.uint32)
+    return pt_bluenoise()[((y & np.uint32(63)) << np.uint32(6)) | (x & np.uint32(63))]
+
+
+def pt_r2_bits(x, y, n, d):
+    """The u32 before to_unit for dimensions 0..3: (bn << 24) + n * A_(d mod 2),
+    bn at (x, y) for d = 0, 1 and at (x + 32, y + 32) for d = 2, 3."""
+    assert 0 <= d <= 3
+    x = np.asarray(x, dtype=np.uint32)
+    y = np.asarray(y, dtype=np.uint32)
+    off = np.uint32(32 if d >= 2 else 0)
+    with np.errstate(over="ignore"):
+        return (pt_bn(x + off, y + off) << np.uint32(24)) + np.asarray(n, dtype=np.uint32) * PT_A[d & 1]
+
+
+def pt_u(x, y, n, d):
+    """The sample in [0, 1) of dimension d."""
+    if d < 4:
+        return pt_to_unit(pt_r2_bits(x, y, n, d))
+    return pt_to_unit(pt_hash(x, y, n, d))
+
+
+def pt_rng_selftest():
+    """A few values for pt.zig's test to compare against (printed by --rng-selftest)."""
+    lines = []
+    for v in (0, 1, 0x12345678, 0xFFFFFFFF):
+        lines.append(f"lowbias32(0x{v:08x}) = 0x{int(pt_lowbias32(v)):08x}")
+    for (x, y, n, d) in ((0, 0, 0, 4), (1, 0, 0, 4), (159, 127, 0, 5), (17, 42, 3, 6), (80, 64, 255, 23),
+                         (5, 7, 1023, 63), (159, 127, 4095, 63)):
+        k = int(pt_key(x, y, n, d))
+        h = int(pt_hash(x, y, n, d))
+        lines.append(f"hash(x={x}, y={y}, n={n}, d={d}): key = 0x{k:08x}, h = 0x{h:08x}, "
+                     f"to_unit = {float(pt_to_unit(h)):.9f} ({h >> 8} / 2^24)")
+    for (x, y) in ((0, 0), (1, 0), (63, 63), (100, 70)):
+        lines.append(f"bn({x}, {y}) = {int(pt_bn(x, y))}, bn({x + 32}, {y + 32}) = {int(pt_bn(x + 32, y + 32))}")
+    for (x, y, n) in ((0, 0, 0), (0, 0, 1), (17, 42, 3), (100, 70, 255)):
+        vals = []
+        for d in range(4):
+            b = int(pt_r2_bits(x, y, n, d))
+            vals.append(f"d{d} 0x{b:08x} -> {float(pt_to_unit(b)):.9f}")
+        lines.append(f"R2(x={x}, y={y}, n={n}): " + ", ".join(vals))
+    # The accumulator's rounding offsets for one pixel.
+    h = int(pt_hash(17, 42, 3, 63))
+    lines.append(f"rounding hash(17, 42, 3, 63) = 0x{h:08x}: u_r = {(h >> 21) / 2048:.9f}, "
+                 f"u_g = {((h >> 10) & 2047) / 2048:.9f}, u_b = {(h & 1023) / 1024:.9f}")
+    return lines
+
+
+# ---- geometry helpers
+def pt_onb(n):
+    """PLAN.md M4 onb(n): (e1, e2), each (N, 3)."""
+    s = np.where(n[:, 2] >= 0.0, 1.0, -1.0)
+    a = -1.0 / (s + n[:, 2])
+    b = n[:, 0] * n[:, 1] * a
+    e1 = np.stack([1.0 + s * n[:, 0] * n[:, 0] * a, s * b, -s * n[:, 0]], axis=-1)
+    e2 = np.stack([b, s + n[:, 1] * n[:, 1] * a, -n[:, 1]], axis=-1)
+    return e1, e2
+
+
+def pt_sky(d, cfg, diffuse):
+    """sky(d); rays after a diffuse bounce drop the disc term (grad + sun_col
+    * 0.4 * glow): the direct sun term already counts the disc."""
+    col = sky(d, cfg)
+    if cfg.disc and diffuse.any():
+        dd = d[diffuse]
+        h = clamp01(dd[:, 1])
+        grad = np.where((h < 0.3)[:, None], lerp(cfg.horizon, cfg.mid, h / 0.3),
+                        lerp(cfg.mid, cfg.zenith, (h - 0.3) / 0.7))
+        glow = smoothstep(0.90, 1.00, dot(dd, cfg.L))
+        col[diffuse] = grad + cfg.sun_col * (0.4 * glow * glow)[:, None]
+    return col
+
+
+def pt_vis(p, ls, cfg):
+    """Shadow ray from p along ls (t > 1e-3): 0 if it meets the chrome, matte
+    or small sphere or the logo, 0.45 if it meets only the glass, else 1 (the
+    shore does not cast)."""
+    n = len(p)
+    opaque = np.zeros(n, dtype=bool)
+    glass = np.zeros(n, dtype=bool)
+    for sp in cfg.spheres:
+        hit = np.isfinite(hit_sphere(p, ls, sp.c, sp.r))
+        if sp.kind == "glass":
+            glass |= hit
+        else:
+            opaque |= hit
+    rest = ~opaque
+    if rest.any():
+        ti, _ = hit_iris(p[rest], ls[rest], np.full(int(rest.sum()), np.inf), cfg)
+        opaque[np.flatnonzero(rest)[np.isfinite(ti)]] = True
+    return np.where(opaque, 0.0, np.where(glass, PT_GLASS_VIS, 1.0))
+
+
+def pt_sun_dir(u_a, u_b, cfg, knobs):
+    """Ls = normalize(L + tan(sun_radius) sqrt(ua) (cos(2 pi ub) e1 + sin(2 pi ub) e2))."""
+    L = np.broadcast_to(cfg.L, (len(u_a), 3))
+    e1, e2 = pt_onb(np.ascontiguousarray(L))
+    r = np.tan(np.radians(knobs.sun_radius_deg)) * np.sqrt(u_a)
+    a = 2.0 * np.pi * u_b
+    return normalize(L + (r * np.cos(a))[:, None] * e1 + (r * np.sin(a))[:, None] * e2)
+
+
+def pt_camera_rays(cfg, knobs, x, y, n):
+    """Origins and directions of the camera rays for pixels (x, y), pass n."""
+    eye, fwd, right, up = cfg.cam
+    px = x + pt_u(x, y, n, 0)
+    py = y + pt_u(x, y, n, 1)
+    u = (px - 80.0) / 80.0 * TAN_H
+    v = -(py - 64.0) / 80.0 * TAN_H
+    d = normalize(fwd + right * u[:, None] + up * v[:, None])
+    o = np.broadcast_to(eye, d.shape).copy()
+    if knobs.dof:
+        f = float(np.dot(cfg.spheres[0].c - eye, fwd))           # chrome centre at t
+        P = eye + d * (f / dot(d, fwd))[:, None]
+        rl = knobs.lens_radius * np.sqrt(pt_u(x, y, n, 2))
+        a = 2.0 * np.pi * pt_u(x, y, n, 3)
+        o = eye + right * (rl * np.cos(a))[:, None] + up * (rl * np.sin(a))[:, None]
+        d = normalize(P - o)
+    return o, d
+
+
+def pt_samples(cfg, knobs, x, y, n):
+    """One sample per ray (min(Lsum, clamp) per channel) for pixel arrays x, y
+    (uint32) at passes n (uint32): the path of PLAN.md M4 "Path"."""
+    m = len(x)
+    o, d = pt_camera_rays(cfg, knobs, x, y, n)
+    lsum = np.zeros((m, 3))
+    thr = np.ones((m, 3))
+    diffuse = np.zeros(m, dtype=bool)
+    inside = np.zeros(m, dtype=bool)
+    alive = np.ones(m, dtype=bool)
+    spheres = cfg.spheres
+    ns = len(spheres)
+    glass_k = next((k for k, sp in enumerate(spheres) if sp.kind == "glass"), None)
+    for b in range(knobs.max_bounces + 1):
+        terminal = b == knobs.max_bounces
+        ids = np.flatnonzero(alive)
+        if len(ids) == 0:
+            break
+        xo, yo, no = x[ids], y[ids], n[ids]
+        oo, dd = o[ids], d[ids]
+        k = len(ids)
+        ins = inside[ids]
+        # Nearest hit. Outside the glass: spheres (view order), shore, water,
+        # then the logo, whose chord is clipped to the nearer sphere hit.
+        # Inside: only the glass (its far side).
+        t_cols = []
+        for sp in spheres:
+            t_cols.append(hit_sphere(oo, dd, sp.c, sp.r))
+        if glass_k is not None and ins.any():
+            for j in range(ns):
+                if j != glass_k:
+                    t_cols[j] = np.where(ins, np.inf, t_cols[j])
+        t_sph = np.min(np.stack(t_cols, axis=-1), axis=-1)
+        t_shore, shore_idx = hit_shore(oo, dd, cfg)
+        t_water = hit_water(oo, dd)
+        t_water = np.where(t_water > T_MIN, t_water, np.inf)
+        t_shore = np.where(ins, np.inf, t_shore)
+        t_water = np.where(ins, np.inf, t_water)
+        t_all = np.stack(t_cols + [t_shore, t_water], axis=-1)
+        which = np.argmin(t_all, axis=-1)
+        tmin = t_all[np.arange(k), which]
+        miss, logo = ns + 2, ns + 3
+        which = np.where(np.isfinite(tmin), which, miss)
+        out = ~ins
+        iface = np.zeros(k, dtype=bool)
+        if out.any():
+            oi = np.flatnonzero(out)
+            ti, fc = hit_iris(oo[oi], dd[oi], t_sph[oi], cfg)
+            mi = np.isfinite(ti)
+            which[oi[mi]] = logo
+            iface[oi[mi]] = fc[mi]
+        p = oo + dd * np.where(np.isfinite(tmin), tmin, 0.0)[:, None]
+        th = thr[ids]
+        add = np.zeros((k, 3))
+        stop = np.zeros(k, dtype=bool)
+        new_d = dd.copy()
+        new_inside = ins.copy()
+        new_diff = diffuse[ids].copy()
+        # Sun sample of this vertex (used by water and matte).
+        need_sun = (which == ns + 1) | np.isin(which, [j for j, sp in enumerate(spheres) if sp.kind == "matte"])
+        ls = np.zeros((k, 3))
+        if need_sun.any():
+            si = np.flatnonzero(need_sun)
+            ls[si] = pt_sun_dir(pt_u(xo[si], yo[si], no[si], 4 + 4 * b), pt_u(xo[si], yo[si], no[si], 5 + 4 * b),
+                                cfg, knobs)
+        # Sky.
+        mm = which == miss
+        if mm.any():
+            add[mm] = th[mm] * pt_sky(dd[mm], cfg, new_diff[mm])
+            stop[mm] = True
+        # Shore.
+        mm = which == ns
+        if mm.any():
+            add[mm] = th[mm] * cfg.palette[shore_idx[mm]]
+            stop[mm] = True
+        # Logo.
+        mm = which == logo
+        if mm.any():
+            add[mm] = th[mm] * shade_iris(dd[mm], iface[mm], cfg)
+            stop[mm] = True
+        for j, sp in enumerate(spheres):
+            mm = which == j
+            if not mm.any():
+                continue
+            nrm = (p[mm] - sp.c) / sp.r
+            if sp.kind in ("chrome", "small"):
+                f = np.broadcast_to(SPHERE_TINT, nrm.shape).copy()
+                if sp.kind == "chrome" and cfg.stripe_a is not None:
+                    f = f * stripe_factor(nrm, cfg)[:, None]
+                if terminal:
+                    lam = 0.25 + 0.75 * np.maximum(0.0, dot(nrm, cfg.L))
+                    add[mm] = th[mm] * f * cfg.sun_col * lam[:, None]
+                    stop[mm] = True
+                else:
+                    th[mm] = th[mm] * f
+                    new_d[mm] = reflect(dd[mm], nrm)
+            elif sp.kind == "glass":
+                if terminal:
+                    add[mm] = th[mm] * GLASS_FAR
+                    stop[mm] = True
+                    continue
+                di = dd[mm]
+                dn = dot(di, nrm)
+                entering = dn < 0.0
+                c = np.where(entering, -dn, dn)
+                eta = np.where(entering, 1.0 / GLASS_IOR, GLASS_IOR)
+                nn = np.where(entering[:, None], nrm, -nrm)
+                kk = 1.0 - eta * eta * (1.0 - c * c)
+                tir = kk < 0.0
+                sk = np.sqrt(np.maximum(kk, 0.0))
+                F = np.where(tir, 1.0, schlick(np.where(entering, c, sk), GLASS_F0))
+                mi = np.flatnonzero(mm)
+                u = pt_u(xo[mi], yo[mi], no[mi], 6 + 4 * b)
+                refl = u < F
+                rd = reflect(di, nrm)
+                td = normalize(eta[:, None] * di + (eta * c - sk)[:, None] * nn)
+                new_d[mm] = np.where(refl[:, None], rd, td)
+                tint = entering & ~refl
+                tt = th[mm]
+                tt[tint] = tt[tint] * GLASS_TINT
+                th[mm] = tt
+                new_inside[mm] = entering ^ refl
+            else:  # matte
+                mi = np.flatnonzero(mm)
+                l_s = ls[mi]
+                nl = dot(nrm, l_s)
+                lit = nl > 0.0
+                if lit.any():
+                    v = pt_vis(p[mi[lit]], l_s[lit], cfg)
+                    add[mi[lit]] = th[mi[lit]] * MATTE_ALBEDO * cfg.sun_col * (nl[lit] * v)[:, None]
+                if terminal:
+                    stop[mi] = True
+                    continue
+                e1, e2 = pt_onb(nrm)
+                ra = np.sqrt(pt_u(xo[mi], yo[mi], no[mi], 6 + 4 * b))
+                a = 2.0 * np.pi * pt_u(xo[mi], yo[mi], no[mi], 7 + 4 * b)
+                new_d[mi] = (e1 * (ra * np.cos(a))[:, None] + nrm * np.sqrt(1.0 - ra * ra)[:, None]
+                             + e2 * (ra * np.sin(a))[:, None])
+                th[mi] = th[mi] * MATTE_ALBEDO * knobs.sky_fill
+                new_diff[mi] = True
+        # Water.
+        mm = which == ns + 1
+        if mm.any():
+            mi = np.flatnonzero(mm)
+            pw, dw = p[mi], dd[mi]
+            dist = np.linalg.norm(pw - oo[mi], axis=-1)
+            nrm = ripple_normal(pw, dist, cfg.t, cfg.fade_k, cfg.ripples, cfg.ring_centres)
+            rr = knobs.water_roughness * np.sqrt(pt_u(xo[mi], yo[mi], no[mi], 6 + 4 * b))
+            a = 2.0 * np.pi * pt_u(xo[mi], yo[mi], no[mi], 7 + 4 * b)
+            n2 = normalize(nrm + np.stack([rr * np.cos(a), np.zeros(len(mi)), rr * np.sin(a)], axis=-1))
+            r = reflect(dw, n2)
+            low = r[:, 1] < 0.02
+            if low.any():
+                r[low, 1] = 0.02
+                r[low] = normalize(r[low])
+            F = schlick(np.maximum(0.0, -dot(dw, n2)), WATER_F0)
+            l_s = ls[mi]
+            v = pt_vis(pw, l_s, cfg)
+            base = DEEP + WATER_SCATTER * v[:, None]
+            col = (1.0 - F)[:, None] * base
+            if cfg.water_spec:
+                spec = spec_pow(np.maximum(0.0, dot(r, l_s)), 6) * v     # ^64
+                col = col + cfg.sun_col * (0.5 * spec)[:, None]
+            tw = th[mi]
+            acc = tw * col
+            if terminal:
+                ts_, idx_ = hit_shore(pw, r, cfg)
+                env_c = pt_sky(r, cfg, new_diff[mi])
+                hs = np.isfinite(ts_)
+                env_c[hs] = cfg.palette[idx_[hs]]
+                acc = acc + tw * F[:, None] * env_c
+                stop[mi] = True
+            else:
+                th[mi] = tw * F[:, None]
+                new_d[mi] = r
+            add[mi] = acc
+        lsum[ids] += add
+        thr[ids] = th
+        o[ids] = p
+        d[ids] = new_d
+        inside[ids] = new_inside
+        diffuse[ids] = new_diff
+        still = ~stop & (np.max(th, axis=-1) >= PT_THR_MIN)
+        alive[ids] = still
+    return np.minimum(lsum, knobs.sample_clamp)
+
+
+def pt_sum_passes(view, n0, n1, knobs, fps=20, batch=4):
+    """Sum of the samples of passes n0 .. n1-1, (H, W, 3) float64."""
+    preset, t, orbit, height = view
+    cfg = pt_config(fps)
+    cfg.set_view(preset, t, orbit, height)
+    yy, xx = np.mgrid[0:H, 0:W]
+    px = xx.reshape(-1).astype(np.uint32)
+    py = yy.reshape(-1).astype(np.uint32)
+    acc = np.zeros((H * W, 3))
+    for a in range(n0, n1, batch):
+        b = min(n1, a + batch)
+        P = b - a
+        n = np.repeat(np.arange(a, b, dtype=np.uint32), H * W)
+        s = pt_samples(cfg, knobs, np.tile(px, P), np.tile(py, P), n)
+        acc += s.reshape(P, H * W, 3).sum(axis=0)
+    return acc.reshape(H, W, 3)
+
+
+def _pt_worker(job):
+    view, n0, n1, kw, fps, batch = job
+    return n0, n1, pt_sum_passes(view, n0, n1, PtKnobs(**kw), fps, batch)
+
+
+def pt_render(view, n0, n1, knobs, fps=20, jobs=1, batch=4, log=None):
+    """Mean of passes n0 .. n1-1 (H, W, 3, float64, not saturated), split over
+    `jobs` processes in chunks of passes."""
+    import time
+    total = n1 - n0
+    kw = {k: getattr(knobs, k) for k in PtKnobs.DEFAULTS}
+    chunk = max(batch, min(64, -(-total // max(1, jobs * 4))))
+    work = [(view, a, min(n1, a + chunk), kw, fps, batch) for a in range(n0, n1, chunk)]
+    acc = np.zeros((H, W, 3))
+    t0 = time.time()
+    done = 0
+    if jobs <= 1 or len(work) == 1:
+        results = map(_pt_worker, work)
+        pool = None
+    else:
+        import multiprocessing as mp
+        pool = mp.get_context("fork").Pool(jobs)
+        results = pool.imap_unordered(_pt_worker, work)
+    try:
+        for a, b, s in results:
+            acc += s
+            done += b - a
+            if log:
+                el = time.time() - t0
+                log(f"reference: pt {view_name(*view)}: {done}/{total} passes, {el:.1f} s "
+                    f"({1000.0 * el / done:.0f} ms per pass wall)")
+    finally:
+        if pool is not None:
+            pool.close()
+            pool.join()
+    return acc / total
+
+
+def pt_accumulate(view, n1, knobs, seed_rgb=None, fps=20, batch=4):
+    """The cart's u32 accumulator after passes 0 .. n1-1 (PLAN.md M4
+    "Accumulator": 11:11:10 over [0, 4), m = decode + (s - decode) / (n + 1),
+    stochastic rounding from hash(x, y, n, 63)), decoded to (H, W, 3). f64
+    arithmetic, so a few values may differ by one step from the cart's f32.
+    seed_rgb: the decoded real-time frame (only shows when n1 == 0)."""
+    preset, t, orbit, height = view
+    cfg = pt_config(fps)
+    cfg.set_view(preset, t, orbit, height)
+    yy, xx = np.mgrid[0:H, 0:W]
+    px = xx.reshape(-1).astype(np.uint32)
+    py = yy.reshape(-1).astype(np.uint32)
+    scale = np.array([512.0, 512.0, 256.0])
+    maxq = np.array([2047.0, 2047.0, 1023.0])
+    q = np.zeros((H * W, 3)) if seed_rgb is None else np.minimum(maxq, np.floor(seed_rgb.reshape(-1, 3) * scale))
+    for a in range(0, n1, batch):
+        b = min(n1, a + batch)
+        P = b - a
+        n = np.repeat(np.arange(a, b, dtype=np.uint32), H * W)
+        s = pt_samples(cfg, knobs, np.tile(px, P), np.tile(py, P), n).reshape(P, H * W, 3)
+        for i in range(P):
+            nn = a + i
+            h = pt_hash(px, py, np.full(H * W, nn, dtype=np.uint32), 63)
+            uc = np.stack([(h >> np.uint32(21)) / 2048.0, ((h >> np.uint32(10)) & np.uint32(2047)) / 2048.0,
+                           (h & np.uint32(1023)) / 1024.0], axis=-1)
+            dec = q / scale
+            m_ = dec + (s[i] - dec) / (nn + 1)
+            q = np.minimum(maxq, np.floor(m_ * scale + uc))
+    return (q / scale).reshape(H, W, 3)
+
+
+def pt_to8(img):
+    """Means saturated to [0, 1] in 8-bit units (the check's unit), float."""
+    return clamp01(img) * 255.0
+
+
+def pt_main(args, ap):
+    """reference.py --pt: see the module docstring."""
+    import time
+    if args.rng_selftest:
+        for line in pt_rng_selftest():
+            print(line)
+        return 0
+    try:
+        passes_list = [int(v) for v in (args.passes or "").split(",") if v.strip()]
+    except ValueError:
+        ap.error("--passes takes N or a comma list N1,N2,...")
+    if not passes_list or min(passes_list) < 1:
+        ap.error("--pt needs --passes N (N >= 1, or a comma list)")
+    n0 = args.from_pass
+    if n0 and len(passes_list) > 1:
+        ap.error("--from needs a single --passes N")
+    if not 0 <= n0 < min(passes_list):
+        ap.error("--from must be in [0, passes)")
+    knobs = PtKnobs(dof=bool(args.dof), lens_radius=args.lens_radius, sun_radius_deg=args.sun_radius,
+                    max_bounces=args.max_bounces, water_roughness=args.water_roughness, sky_fill=args.sky_fill,
+                    sample_clamp=args.sample_clamp)
+    views = list(PT_CHECK_SET) if args.check_set else []
+    if args.t is not None or not (args.view or args.check_set):
+        t = args.t or 0
+        orbit = args.orbit if args.orbit is not None else t
+        views.append((args.preset, t, orbit % (30 * args.fps), args.height))
+    for v in args.view:
+        parts = v.split(":")
+        if not 2 <= len(parts) <= 4:
+            ap.error(f"--view {v}: want PRESET:T[:ORBIT[:HEIGHT]]")
+        t = int(parts[1])
+        orbit = int(parts[2]) if len(parts) > 2 and parts[2] != "" else t
+        views.append((parse_preset(parts[0]), t, orbit % (30 * args.fps),
+                      parse_height(parts[3]) if len(parts) > 3 else DEFAULT_HEIGHT))
+    out = args.out or PT_CACHE
+    os.makedirs(out, exist_ok=True)
+    fps_tag = "" if args.fps == 20 else f"_fps{args.fps}"
+    scene = pt_scene_hash(knobs, args.fps)
+    print(f"reference: pt scene hash {scene} (stripes {int(PT_STRIPES)}, IRIS_C {IRIS_C.tolist()}), "
+          f"{len(views)} views x passes {','.join(map(str, passes_list))}", file=sys.stderr)
+    t_all = time.time()
+    for view, npass in [(v, n) for v in views for n in passes_list]:
+        tag = (f"{'accum' if args.accum else 'pt'}_{view_name(*view)}_n{n0:04d}-{npass:04d}{knobs.tag()}{fps_tag}"
+               f"_{scene}")
+        base = os.path.join(out, tag)
+        if os.path.exists(base + ".npy") and not args.force:
+            print(f"reference: cached {base}.npy", file=sys.stderr)
+            img = np.load(base + ".npy")
+        else:
+            t0 = time.time()
+            if args.accum:
+                if n0 != 0:
+                    ap.error("--accum needs --from 0")
+                img = pt_accumulate(view, npass, knobs, fps=args.fps, batch=args.batch)
+            else:
+                img = pt_render(view, n0, npass, knobs, fps=args.fps, jobs=args.jobs, batch=args.batch,
+                                log=(lambda s: print(s, file=sys.stderr)) if args.verbose else None)
+            el = time.time() - t0
+            np.save(base + ".npy", img)
+            print(f"reference: {tag}: {npass - n0} passes in {el:.1f} s "
+                  f"({1000.0 * el / (npass - n0):.0f} ms per pass, {args.jobs} jobs)", file=sys.stderr)
+            write_png(base + ".png", quantise_none(img))
+        print(f"reference: wrote {base}.npy and {base}.png", file=sys.stderr)
+        print(base + ".npy")
+    print(f"reference: pt total {time.time() - t_all:.1f} s", file=sys.stderr)
+    return 0
+
+
 # ---------------------------------------------------------------- PNG
 def write_png(path, rgb):
     h, w, _ = rgb.shape
@@ -896,7 +1525,7 @@ def main():
     ap.add_argument("--view", action="append", default=[],
                     help="M3 view PRESET:T[:ORBIT[:HEIGHT]] (repeatable); ORBIT defaults to T mod orbit_frames")
     ap.add_argument("--name", default=None, help="output basename (without ref_ and .png) for a single --t view")
-    ap.add_argument("--out", required=True, help="output directory")
+    ap.add_argument("--out", default=None, help="output directory (required, except with --pt: default out/pt_ref)")
     ap.add_argument("--motion", type=int, choices=[0, 1], default=1,
                     help="M3 motion master switch: bob, sun drift, rings, stripes (default 1; 0 = M2.2 identity)")
     ap.add_argument("--rings", type=int, choices=[0, 1], default=1, help="M3 knob: rings on the water under each sphere")
@@ -934,12 +1563,41 @@ def main():
     ap.add_argument("--dump-npy", action="store_true", help="also save the float image as ref_*.npy")
     ap.add_argument("--variant", choices=sorted(VARIANTS),
                     help="preset the flags of an M2.1 variant (cart/src/variant.zig); explicit flags still win")
+    pt = ap.add_argument_group("M4 path tracer (--pt, PLAN.md M4 \"The M4 estimator, exactly\")")
+    pt.add_argument("--pt", action="store_true",
+                    help="render the M4 path-traced mean of passes --from .. --passes-1 for the view (--preset/--t/"
+                         "--orbit/--height or --view); writes pt_<view>_nMMMM-NNNN.npy/.png, cached")
+    pt.add_argument("--passes", default=None,
+                    help="N: passes 0 .. N-1 (or --from .. N-1); a comma list N1,N2 renders each")
+    pt.add_argument("--check-set", action="store_true",
+                    help="the check_pt.mjs check set (PT_CHECK_SET: each preset at t 0 orbit 0, sunset t 300, "
+                         "noon at height 1.0) in addition to any --view")
+    pt.add_argument("--verbose", action="store_true", help="progress lines while rendering")
+    pt.add_argument("--from", dest="from_pass", type=int, default=0, help="first pass M (default 0)")
+    pt.add_argument("--jobs", type=int, default=os.cpu_count() or 1, help="worker processes (default: all cores)")
+    pt.add_argument("--batch", type=int, default=4, help="passes traced together in one vectorised wavefront (4)")
+    pt.add_argument("--force", action="store_true", help="ignore the cache and render again")
+    pt.add_argument("--accum", action="store_true",
+                    help="simulate the cart's u32 11:11:10 accumulator (stochastic rounding) instead of the float "
+                         "mean; one process, needs --from 0")
+    pt.add_argument("--rng-selftest", action="store_true", help="print lowbias32/hash/R2/to_unit values and exit")
+    pt.add_argument("--dof", type=int, choices=[0, 1], default=1, help="knob dof (default 1)")
+    pt.add_argument("--lens-radius", type=float, default=0.05, help="knob lens_radius (default 0.05)")
+    pt.add_argument("--sun-radius", type=float, default=1.5, help="knob sun_radius in degrees (default 1.5)")
+    pt.add_argument("--max-bounces", type=int, default=4, help="knob max_bounces (default 4)")
+    pt.add_argument("--water-roughness", type=float, default=0.08, help="knob water_roughness (default 0.08)")
+    pt.add_argument("--sky-fill", type=float, default=0.3, help="knob sky_fill (default 0.3)")
+    pt.add_argument("--sample-clamp", type=float, default=4.0, help="knob sample_clamp (default 4.0)")
     pre, _ = ap.parse_known_args()
     if pre.variant:
         ap.set_defaults(**VARIANTS[pre.variant])
     args = ap.parse_args()
     if args.fps <= 0:
         ap.error("--fps must be > 0")
+    if args.pt or args.rng_selftest:
+        return pt_main(args, ap)
+    if args.out is None:
+        ap.error("--out is required")
     if args.iris_samples < 2:
         ap.error("--iris-samples must be >= 2")
     cfg = Config(args.glass, args.water_shadows, args.glass_secondary, args.fade_k, args.texels, args.palette,

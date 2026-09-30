@@ -44,7 +44,9 @@
 //   every --frame F / --t T (orbit = --orbit O, else T) for each --preset
 //   (default sunset) and each --height (default 1.6). --only drops the check
 //   set. Files: cart_<name>.png, ref_<name>.png, diff_<name>.png with
-//   name = <preset>_t<TTTT>_o<OOOO>_h<mm>.
+//   name = <preset>_t<TTTT>_o<OOOO>_h<mm>. An M4 cart (it exports
+//   debug_set_pt) gets debug_set_pt(0) right after start(), so a frozen view
+//   is the real-time frame; the path tracer has its own check_pt.mjs.
 // * Legacy (today's wasm, no debug_set_view): ../../tools/preview.mjs steps
 //   the frames with B pressed on tick 0 (tools/scripts/m1_nodither.json,
 //   dither `none`), reference.py renders them with --motion 0 (the M2.2
@@ -284,6 +286,9 @@ class Cart {
         for (const init of ["_start", "_initialize"]) if (typeof this.ex[init] === "function") this.call(init);
         this.setControls(0);
         this.call("start");
+        // M4: a frozen view shows the real-time frame, not the path tracer
+        // (PLAN.md M4 "Fixed interfaces"), so these checks keep M3 behaviour.
+        if (this.has("debug_set_pt")) this.call("debug_set_pt", 0);
     }
     has(name) { return typeof this.ex[name] === "function"; }
     call(name, ...args) {
