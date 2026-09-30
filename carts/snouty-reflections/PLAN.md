@@ -597,7 +597,7 @@ literal.
 
 | Item | Value |
 |------|-------|
-| Centre | `C = (4.5, 1.8, 12.0)` |
+| Centre | `C = (-13.5, 1.8, 12.0)` (was `x = 4.5`; moved right of the skyline, the counterpart of Snouty on the left, clear of the title) |
 | Half-size | `S = 1.5` (the mark's unit square spans `U, V` in `[-1, 1]`) |
 | Half-thickness | `h = 0.12` (world units) |
 | Bounding sphere | centre `C`, radius `1.57` (mark radius `1.042 S`, plus `h`) |
@@ -741,3 +741,9 @@ close-up of the logo, updates SPEC status and RUNNING.md, and tags
   commits; main added lib/iris_mark.zig, not used here yet), re-verified:
   cut20 46.33 / 43.69 ms, check_render PASS, all carts build. Tagged
   `snouty-reflections/m2.2` and pushed to main.
+- 2026-09-30: Adrian asked for the logo to the right of the skyline, the
+  counterpart of Snouty on the left. Centre moved from `x = 4.5` to
+  `x = -13.5` (in front of Canada Place; the exact mirror of Snouty,
+  `x = -11.75`, crowded the end of "HATCH"). Shore texture unchanged.
+  cut20 45.94 / 43.61 ms, half30 22.47 / 18.91; check_render PASS (cut20
+  frames 190, 250, 270; half30 285, 375, 405).

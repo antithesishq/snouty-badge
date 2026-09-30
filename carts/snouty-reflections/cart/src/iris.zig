@@ -11,7 +11,7 @@ const Vec3 = math.Vec3;
 const vec3 = math.vec3;
 const splat = math.splat;
 
-pub const centre = vec3(4.5, 1.8, 12.0);
+pub const centre = vec3(-13.5, 1.8, 12.0);
 /// Half-size S: the mark's unit square spans U, V in [-1, 1].
 pub const half_size: f32 = 1.5;
 /// Half-thickness h of the slab, world units.
