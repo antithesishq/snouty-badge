@@ -5,7 +5,8 @@
 //! nearest unsorted band ahead of the camera, 2 swaps per frame, and repaints
 //! the two bars after every swap; the pivot bar is white while its partition
 //! runs. B shuffles that band in one frame and re-sorts it at 8 swaps per
-//! frame. A finished band is a rainbow ramp.
+//! frame. A finished band is a rainbow ramp; the moment a live sort finishes
+//! it, the band's bar tops flash white for flash_frames.
 //!
 //! row() is a pure function of (seed, ly): the layout of the segment being
 //! generated lives in the `gen` slot (rebuilt when the seed changes), the one
@@ -64,6 +65,11 @@ const work_lead: i32 = 40;
 /// the concept's staircase (sort.png: coarse near, finished rainbow ramps
 /// far). false: every band starts as a plain permutation.
 const presort = true;
+/// Frames a band's bar tops stay white (palette.sort_pivot) after its live
+/// sort finishes. One band flashes at a time; a band finishing during
+/// another's flash waits (flash_pending, one slot: a later finisher takes
+/// it over) and flashes the frame after that one ends. 0 turns it off.
+const flash_frames: u8 = 6;
 
 comptime {
     if (bars * bar_w != world.W) @compileError("sort bars must cover the strip");
@@ -249,9 +255,11 @@ fn paint_bar(h: *[world.W]u8, c: *[world.W]u8, k: usize, v: u8, pivot: bool) voi
     @memset(c[k * bar_w ..][0..bar_w], cv);
 }
 
-fn paint_band(l: *const Layout, r: usize, h: *[world.W]u8, c: *[world.W]u8) void {
+/// Paint band r's 64 bars; `white` paints every bar top in the pivot colour
+/// (the finish flash), heights unchanged.
+fn paint_band(l: *const Layout, r: usize, h: *[world.W]u8, c: *[world.W]u8, white: bool) void {
     const s = &l.sorters[r];
-    for (l.vals[r], 0..) |v, k| paint_bar(h, c, k, v, s.is_pivot(k));
+    for (l.vals[r], 0..) |v, k| paint_bar(h, c, k, v, white or s.is_pivot(k));
 }
 
 var gen: Layout = .{};
@@ -260,7 +268,7 @@ var gen: Layout = .{};
 pub fn row(seed: u32, ly: i32, h: *[world.W]u8, c: *[world.W]u8) void {
     const r = band_of(ly) orelse return;
     if (gen.seed != seed) build(&gen, seed);
-    paint_band(&gen, r, h, c);
+    paint_band(&gen, r, h, c, false);
 }
 
 // --- Live state -------------------------------------------------------------
@@ -275,6 +283,13 @@ var fast = false;
 var shuffle_rng: fixed.Rng = .{ .s = 1 };
 /// The camera row as of the last tick (verb() runs right after tick()).
 var last_cam_row: i32 = 0;
+/// Finish flash: the band flashing (null none), frames left, and the band
+/// that finished during that flash and flashes next (null none).
+var flash_band: ?usize = null;
+var flash_left: u8 = 0;
+var flash_pending: ?usize = null;
+/// A band was rewritten for the flash this frame (a finishing band waits).
+var flash_painted = false;
 
 /// Bars rewritten this frame and the most in any frame since boot (a bar is
 /// band_depth rows x bar_w cells of height and colour).
@@ -309,12 +324,62 @@ const Painter = struct {
     }
 };
 
-fn repaint_band(r: usize) void {
+/// Rewrites all of live band r through world.rows: the bars cover every
+/// cell of a row, so one row is painted and copied to the band's rows.
+fn repaint_band(r: usize, white: bool) void {
     frame_bars += bars;
+    var h: [world.W]u8 = undefined;
+    var c: [world.W]u8 = undefined;
+    paint_band(&live, r, &h, &c, white);
     var y = band_y0(r);
     while (y < band_y0(r) + band_depth) : (y += 1) {
-        if (world.rows(y)) |rw| paint_band(&live, r, rw.h, rw.c);
+        if (world.rows(y)) |rw| {
+            rw.h.* = h;
+            rw.c.* = c;
+        }
     }
+}
+
+/// Band r's live sort just finished: flash it now, or queue it (replacing
+/// a band already waiting) when a flash runs or a band was already
+/// rewritten for the flash this frame (at most 64 flash bars per frame).
+fn finished(r: usize) void {
+    if (flash_frames == 0 or flash_band == r) return;
+    if (flash_band == null and !flash_painted) {
+        start_flash(r);
+    } else {
+        flash_pending = r;
+    }
+}
+
+fn start_flash(r: usize) void {
+    flash_band = r;
+    flash_left = flash_frames;
+    flash_painted = true;
+    repaint_band(r, true);
+}
+
+/// One frame of the finish flash, before the sort runs: the last frame
+/// repaints the band in its hues; with no flash running, the waiting band
+/// starts its flash.
+fn step_flash() void {
+    flash_painted = false;
+    if (flash_band) |r| {
+        flash_left -= 1;
+        if (flash_left != 0) return;
+        flash_band = null;
+        flash_painted = true;
+        repaint_band(r, false);
+    } else if (flash_pending) |p| {
+        flash_pending = null;
+        start_flash(p);
+    }
+}
+
+/// Band r is reshuffled: drop its flash or its turn (the caller repaints it).
+fn cancel_flash(r: usize) void {
+    if (flash_pending == r) flash_pending = null;
+    if (flash_band == r) flash_band = null;
 }
 
 /// The segment becomes live: rebuild the layout from its seed, reset dynamics.
@@ -323,6 +388,8 @@ pub fn enter(seg: world.Segment) void {
     live_y0 = seg.y0;
     running = null;
     fast = false;
+    flash_band = null;
+    flash_pending = null;
     shuffle_rng = .{ .s = seg.seed ^ 0x5A0F_F1E5 };
     if (shuffle_rng.s == 0) shuffle_rng.s = 1;
 }
@@ -347,6 +414,7 @@ pub fn tick(frame: u32, cam_row: i32) void {
         max_frame_bars = @max(max_frame_bars, frame_bars);
         max_tick_bars = @max(max_tick_bars, frame_bars);
     }
+    step_flash();
     // A fast (shuffled) band keeps sorting while any of its rows is in the
     // ring; a slow one hands over once the work line passes it.
     if (running) |r| {
@@ -365,6 +433,7 @@ pub fn tick(frame: u32, cam_row: i32) void {
     if (s.done) {
         running = null;
         fast = false;
+        finished(r);
     }
 }
 
@@ -375,7 +444,8 @@ pub fn verb() void {
     const r = running orelse (next_band(cam_row, false) orelse (next_band(cam_row, true) orelse return));
     shuffle(&live.vals[r], &shuffle_rng);
     live.sorters[r].start();
-    repaint_band(r);
+    cancel_flash(r);
+    repaint_band(r, false);
     running = r;
     fast = true;
     max_frame_bars = @max(max_frame_bars, frame_bars);
