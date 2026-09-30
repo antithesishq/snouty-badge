@@ -967,4 +967,37 @@ Goal: three visible finishes, no interface changes, bench unchanged.
 ### M4 status
 
 - 2026-09-30: started after the origin/main merge (e097073, both new carts
-  in the root build).
+  in the root build; main fast-forwarded to the branch at 2680e2a).
+- 2026-09-30: done, tag `snouty-flyover/m4` (code cfefd20). Calibrated
+  badge-bench over the 2400-frame attract run: worst 14.26 ms (frame 1823,
+  unchanged from M3), mean 7.65, p95 11.84; 65% of the 22 ms budget.
+  Sizes: `.text` 70,064 B, `.data` 192 B, `.bss` 159,408 B (gates 75 KB /
+  165 KB). check-float passes; `debug_world_check` is 0 at the end of the
+  attract, `m2_verbs` and `m3_verbs` runs; `check_render.sh` passes against
+  the regenerated hashes. GIFs `docs/preview_m4_attract.gif` and
+  `docs/preview_m4_verbs.gif` (the `m2_verbs` script: four Stack pushes,
+  the pit at frame 1600 and the unwind); the M3 GIFs are removed as
+  superseded.
+  - Track A (Stack unwind): 30 frames after the overflow wave has opened
+    the pit, the pushes pop newest first every 8 frames; each pop is an
+    8-frame wave raising the push's rows one band and sets `sky_flash = 2`;
+    the pit closes with the first pop; the static depth-10 canyon stays; a
+    push during the unwind cancels it (a running pop wave finishes).
+    `debug_stack_depth` counts down to 0. `m2_verbs`: pit 1600, pops
+    1639/1647/1655/1663, canyon restored 1670. Worst verb writes 5,376 cells
+    a frame measured (bound 6,144 for a pop, 11,264 if a push cancels
+    mid-pop). `.text` +72 B.
+  - Track B (Sort and Heap feedback): a band whose live quicksort finishes
+    flashes its bar tops white (`sort_pivot`) for 6 frames, one band at a
+    time with a one-slot queue; a reshuffle cancels it; the presorted far
+    band never flashes. In attract the shuffled band and two nearly
+    presorted ones flash in turn at frames 570-587. Heap `alt` 40 -> 52
+    (the clearance spring still sets the height over the mesas, so the
+    view changes only after about frame 210); rubble is `rubble + 1 +
+    x % 2`. Worst Sort writes 82 bars a frame (bound), 73 seen. `.text`
+    +964 B, `.bss` +24 B.
+  - The SPEC 13 milestone list is complete. Open beyond M4: the hardware
+    check on show day ([[hardware-gate-deferred]] in the repo notes: the
+    calibrated bench is the reference), Adrian's review of the M4 GIFs, and
+    the recorded not-done items (Tree rotation, dam hold/pass, the free
+    list word).

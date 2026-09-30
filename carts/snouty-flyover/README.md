@@ -20,10 +20,10 @@ rehash, push a frame, burst the pipe), Select skips to the next district,
 Start toggles the autopilot, which flies and presses B by itself at boot
 and 15 s after the last input.
 
-Status: M3 (tag `snouty-flyover/m3`). Calibrated badge-bench worst frame
-14.26 ms of the 22 ms budget over the 2400-frame attract run. M4 polish is
-next (`PLAN.md`). GIFs: `docs/preview_m3_attract.gif`,
-`docs/preview_m3_verbs.gif`.
+Status: M4, the last planned milestone (tag `snouty-flyover/m4`).
+Calibrated badge-bench worst frame 14.26 ms of the 22 ms budget over the
+2400-frame attract run; not yet run on a badge. GIFs:
+`docs/preview_m4_attract.gif`, `docs/preview_m4_verbs.gif`.
 
 ```sh
 (cd ../.. && zig build -Dcart=snouty-flyover)   # ../../zig-out/firmware/snouty-flyover.uf2, ../../zig-out/bin/snouty-flyover.wasm
