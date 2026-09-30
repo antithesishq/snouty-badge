@@ -63,6 +63,36 @@ pub fn fade(fb: cart.FramebufferPtr, level: u8) void {
     }
 }
 
+/// 8x8 Bayer order, 0..63: the order in which 4x4-pixel blocks of an 8x8
+/// block tile go black in `dissolve`.
+const bayer8 = [8][8]u8{
+    .{ 0, 32, 8, 40, 2, 34, 10, 42 },
+    .{ 48, 16, 56, 24, 50, 18, 58, 26 },
+    .{ 12, 44, 4, 36, 14, 46, 6, 38 },
+    .{ 60, 28, 52, 20, 62, 30, 54, 22 },
+    .{ 3, 35, 11, 43, 1, 33, 9, 41 },
+    .{ 51, 19, 59, 27, 49, 17, 57, 25 },
+    .{ 15, 47, 7, 39, 13, 45, 5, 37 },
+    .{ 63, 31, 55, 23, 61, 29, 53, 21 },
+};
+
+/// Block dissolve to black: the frame is cut into 4x4-pixel blocks and a
+/// block stays visible only while its 8x8 Bayer rank is below `level`
+/// (64 leaves the frame alone, 0 makes it black), so blocks drop out in an
+/// even ordered-dither pattern. Cheaper than `fade`: black blocks are
+/// plain stores, visible ones untouched.
+pub fn dissolve(fb: cart.FramebufferPtr, level: u8) void {
+    if (level >= 64) return;
+    const black: cart.Pixel = .from_color(.{ .r = 0, .g = 0, .b = 0 });
+    for (fb, 0..) |*col, x| {
+        const row = &bayer8[(x >> 2) & 7];
+        var by: usize = 0;
+        while (by < height / 4) : (by += 1) {
+            if (row[by & 7] >= level) @memset(col[by * 4 ..][0..4], black);
+        }
+    }
+}
+
 /// Fills the whole frame with one pixel.
 pub fn clear(fb: cart.FramebufferPtr, px: cart.Pixel) void {
     for (fb) |*col| @memset(col, px);
@@ -112,6 +142,29 @@ test "fade at 16, 8 and 0" {
     try std.testing.expectEqual(cart.DisplayColor{ .r = 10, .g = 20, .b = 5 }, fb[3][5].to_color());
     fade(&fb, 0);
     for (fb) |col| for (col) |px| try std.testing.expectEqual(cart.DisplayColor{ .r = 0, .g = 0, .b = 0 }, px.to_color());
+}
+
+test "dissolve at 64, 32 and 0" {
+    var fb: cart.Framebuffer align(cart.framebuffer_alignment) = undefined;
+    const white: cart.Pixel = .from_color(.{ .r = 31, .g = 63, .b = 31 });
+    const black: cart.Pixel = .from_color(.{ .r = 0, .g = 0, .b = 0 });
+    clear(&fb, white);
+    dissolve(&fb, 64);
+    for (fb) |col| for (col) |px| try std.testing.expectEqual(white, px);
+    dissolve(&fb, 32);
+    var lit: u32 = 0;
+    for (fb) |col| for (col) |px| {
+        if (px == white) lit += 1;
+    };
+    try std.testing.expectEqual(@as(u32, width * height / 2), lit);
+    dissolve(&fb, 0);
+    for (fb) |col| for (col) |px| try std.testing.expectEqual(black, px);
+    // Every rank appears once in the order.
+    var seen: [64]bool = @splat(false);
+    for (bayer8) |r| for (r) |v| {
+        seen[v] = true;
+    };
+    for (seen) |s| try std.testing.expect(s);
 }
 
 test "upscale2x doubles every index" {

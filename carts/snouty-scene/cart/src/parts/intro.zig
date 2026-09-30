@@ -33,6 +33,11 @@ const title_at = 180;
 const slam_frames = 10;
 const land_at = title_at + slam_frames;
 
+/// The night gradient behind the stars (top and bottom rows), public so the
+/// Ending can cross-fade into exactly this frame 0 (the seamless loop cut).
+pub const bg_top: u32 = 0x010208;
+pub const bg_bottom: u32 = 0x0c0620;
+
 const Star = struct { x: i32, y: i32, z: i32 };
 
 var stars: [star_count]Star = undefined;
@@ -70,8 +75,8 @@ fn trail(t: u32) i32 {
 
 pub fn render(t: u32, fb: cart.FramebufferPtr) void {
     // Background: deep night gradient, flashing on the title's landing.
-    var top: u32 = 0x010208;
-    var bottom: u32 = 0x0c0620;
+    var top: u32 = bg_top;
+    var bottom: u32 = bg_bottom;
     if (t >= land_at and t < land_at + 12) {
         const f: u32 = (land_at + 12 - t) * 16; // 192 .. 16
         top = palette.mix_rgb(top, 0x6040a0, f);
@@ -79,6 +84,20 @@ pub fn render(t: u32, fb: cart.FramebufferPtr) void {
     }
     fx.vgradient(fb, top, bottom);
 
+    draw_stars(fb, t, 256);
+
+    if (t >= presents_at) {
+        const f: u32 = @min((t - presents_at) * 12, 256);
+        const str = "ANTITHESIS PRESENTS";
+        text.shadowed(str, text.centre_x(str, 1), 28, .rgb(palette.mix_rgb(0x000000, 0xb8c4e8, f)), 1);
+    }
+    if (t >= title_at) title(t);
+}
+
+/// Advances every star one frame at the speed of frame t and draws its
+/// streak; `bright` (0..256) is the streaks' opacity over the frame, 256 as
+/// in render().
+fn draw_stars(fb: cart.FramebufferPtr, t: u32, bright: u32) void {
     const v = speed(t);
     const len = v * trail(t);
     for (&stars) |*s| {
@@ -91,15 +110,18 @@ pub fn render(t: u32, fb: cart.FramebufferPtr) void {
             continue;
         }
         const tz = @min(s.z + len, far);
-        streak(fb, hx, hy, project(s.x, tz, cx), project(s.y, tz, cy), s.z);
+        streak(fb, hx, hy, project(s.x, tz, cx), project(s.y, tz, cy), s.z, bright);
     }
+}
 
-    if (t >= presents_at) {
-        const f: u32 = @min((t - presents_at) * 12, 256);
-        const str = "ANTITHESIS PRESENTS";
-        text.shadowed(str, text.centre_x(str, 1), 28, .rgb(palette.mix_rgb(0x000000, 0xb8c4e8, f)), 1);
-    }
-    if (t >= title_at) title(t);
+/// The stars of frame 0 exactly as render(0) draws them (enter() first),
+/// blended over the frame with opacity `bright` (0..256), for the Ending's last
+/// frames: at 256, over `fx.vgradient(fb, bg_top, bg_bottom)`, this is the
+/// Intro's frame 0 pixel for pixel, so the loop closes without a cut.
+/// The timeline calls enter() again when the Intro starts.
+pub fn first_frame_stars(fb: cart.FramebufferPtr, bright: u32) void {
+    enter();
+    draw_stars(fb, 0, bright);
 }
 
 inline fn project(w: i32, z: i32, c: i32) i32 {
@@ -109,13 +131,13 @@ inline fn project(w: i32, z: i32, c: i32) i32 {
 /// A line from the head (hx, hy) to the tail, bright at the head and
 /// dimming along the tail; brightness also falls with depth. Clipped per
 /// pixel; at most 160 steps.
-fn streak(fb: cart.FramebufferPtr, hx: i32, hy: i32, tx: i32, ty: i32, z: i32) void {
+fn streak(fb: cart.FramebufferPtr, hx: i32, hy: i32, tx: i32, ty: i32, z: i32, bright: u32) void {
     const depth: i32 = @max(0, 31 - @divTrunc(z * 22, far)); // 9 far .. 31 near
     const dx = tx - hx;
     const dy = ty - hy;
     const n: i32 = @min(160, @max(@as(i32, @intCast(@abs(dx))), @as(i32, @intCast(@abs(dy)))));
     if (n == 0) {
-        plot(fb, hx, hy, shades[@intCast(depth)]);
+        plot(fb, hx, hy, shades[@intCast(depth)], bright);
         return;
     }
     // 16.16 stepping from head to tail.
@@ -126,15 +148,27 @@ fn streak(fb: cart.FramebufferPtr, hx: i32, hy: i32, tx: i32, ty: i32, z: i32) v
     var i: i32 = 0;
     while (i <= n) : (i += 1) {
         const b = depth - @divTrunc(depth * i, n + 1);
-        plot(fb, x >> 16, y >> 16, shades[@intCast(b)]);
+        plot(fb, x >> 16, y >> 16, shades[@intCast(b)], bright);
         x += sx;
         y += sy;
     }
 }
 
-inline fn plot(fb: cart.FramebufferPtr, x: i32, y: i32, px: cart.Pixel) void {
+/// Stores `px`, or with `alpha` < 256 blends it over what is there.
+inline fn plot(fb: cart.FramebufferPtr, x: i32, y: i32, px: cart.Pixel, alpha: u32) void {
     if (x < 0 or x >= fx.width or y < 0 or y >= fx.height) return;
-    fb[@intCast(x)][@intCast(y)] = px;
+    const dst = &fb[@intCast(x)][@intCast(y)];
+    dst.* = if (alpha >= 256) px else blend(dst.*, px, alpha);
+}
+
+fn blend(under: cart.Pixel, over: cart.Pixel, alpha: u32) cart.Pixel {
+    const a = under.to_color();
+    const b = over.to_color();
+    return .from_color(.{
+        .r = @intCast((@as(u32, a.r) * (256 - alpha) + @as(u32, b.r) * alpha) >> 8),
+        .g = @intCast((@as(u32, a.g) * (256 - alpha) + @as(u32, b.g) * alpha) >> 8),
+        .b = @intCast((@as(u32, a.b) * (256 - alpha) + @as(u32, b.b) * alpha) >> 8),
+    });
 }
 
 /// SNOUTY over SCENE at 2x (a 12-character line would not fit 160 px at

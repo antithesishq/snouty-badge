@@ -2,22 +2,32 @@
 //!
 //! The frame clock is 120 BPM: 30 frames per beat, 120 per bar; a part lasts
 //! a whole number of bars. The timeline renders the current part at its own
-//! frame number `t` (frames since enter()), then fades the frame: black to
-//! full over the first 15 frames, full to black over the last 15. After the
-//! last part it loops to the first. `skip()` (A/Start) and `goto()` (the
-//! picker, debug_goto) cut straight to a part's frame 0, so only its
-//! fade-in shows. Every entry into a part calls its `enter()`.
+//! frame number `t` (frames since enter()), then veils the frame according
+//! to each entry's `cut`, the hand-over to the next part: `.fade` goes to
+//! black over the last `fade_frames` (plus `gap_frames` of black) and the
+//! next part comes up the same way; `.dissolve` does the same with 4x4
+//! blocks in Bayer order (fx.dissolve); `.seamless` has no veil on either
+//! side, for a part that ends on the next part's first frame (the Ending
+//! into the Intro). After the last part it loops to the first. `skip()`
+//! (A/Start) and `goto()` (the picker, debug_goto) cut straight to a part's
+//! frame 0, which then fades in. Every entry into a part calls its `enter()`.
 //!
 //! `bars` and the `Clock` arithmetic are plain data and host-tested;
 //! `parts` holds the function pointers (and so pulls in the cart API).
 const std = @import("std");
 const cart = @import("cart-api");
 const fx = @import("fx.zig");
-const placeholder = @import("parts/placeholder.zig");
+const ending = @import("parts/ending.zig");
 
 pub const frames_per_beat = 30;
 pub const frames_per_bar = 4 * frames_per_beat;
+/// Frames of each fade or dissolve ramp, out of one part and into the next.
 pub const fade_frames = 15;
+/// Frames of full black at each side of a `.fade` or `.dissolve` boundary.
+pub const gap_frames = 0;
+
+/// How a part hands over to the next one (see the file comment).
+pub const Cut = enum { fade, dissolve, seamless };
 
 /// A part: its picker label and the three entry points of SPEC.md section 4.
 pub const Part = struct {
@@ -31,7 +41,7 @@ pub const Part = struct {
     }
 };
 
-pub const Entry = struct { part: Part, bars: u8 };
+pub const Entry = struct { part: Part, bars: u8, cut: Cut = .fade };
 
 /// The show, in order (SPEC.md section 3). Order and lengths are one-line
 /// changes here; `bars` below must list the same lengths.
@@ -46,12 +56,14 @@ pub const entries = [_]Entry{
     .{ .part = .of(@import("parts/voxel.zig")), .bars = 7 },
     .{ .part = .of(@import("parts/head.zig")), .bars = 6 },
     .{ .part = .of(@import("parts/fire.zig")), .bars = 4 },
-    .{ .part = .of(placeholder.Placeholder(10, "Ending")), .bars = 7 },
+    .{ .part = .of(ending), .bars = 7, .cut = .seamless },
 };
 
 /// Part lengths in bars, the same as `entries` (checked at comptime in init_all), kept
 /// apart so the host tests can use them without the cart API.
 pub const bars = [_]u8{ 3, 5, 6, 5, 5, 4, 5, 7, 6, 4, 7 };
+/// Each entry's cut, the same as `entries` (checked with `bars`).
+pub const cuts = [_]Cut{ .fade, .fade, .fade, .fade, .fade, .fade, .fade, .fade, .fade, .fade, .seamless };
 pub const count = bars.len;
 
 /// Length of part `i` in frames.
@@ -66,24 +78,47 @@ pub fn loop_frames() u32 {
     return n;
 }
 
-/// Fade level (0 black .. 16 unchanged) of frame `t` of a part `len` frames
-/// long: rises over the first `fade_frames`, falls over the last.
-pub fn fade_level(t: u32, len: u32) u8 {
-    const in: u32 = if (t < fade_frames) (t * 16) / fade_frames else 16;
+/// Visibility (0 black .. 256 untouched) `n` frames from a veiled edge of
+/// a part (n = 0 is its first or last frame): `gap_frames` of black, then a
+/// linear ramp over `fade_frames`.
+pub fn ramp(n: u32) u16 {
+    if (n < gap_frames) return 0;
+    return @intCast(@min(256, ((n - gap_frames) * 256) / fade_frames));
+}
+
+/// The veil over one frame: which transition draws it and how visible the
+/// part is (0 black .. 256 untouched).
+pub const Veil = struct { cut: Cut, vis: u16 };
+
+/// Veil of frame `t` of a part `len` frames long that was entered through
+/// cut `in` (the previous entry's, or `.fade` after a jump) and leaves
+/// through its own cut `out`.
+pub fn veil(t: u32, len: u32, in: Cut, out: Cut) Veil {
     const left = len - 1 - @min(t, len - 1); // frames after this one
-    const out: u32 = if (left < fade_frames) (left * 16) / fade_frames else 16;
-    return @intCast(@min(in, out));
+    const vin: u16 = if (in == .seamless) 256 else ramp(t);
+    const vout: u16 = if (out == .seamless) 256 else ramp(left);
+    return if (vin <= vout) .{ .cut = in, .vis = vin } else .{ .cut = out, .vis = vout };
+}
+
+/// fx.fade level (0 black .. 16 unchanged) of frame `t` of a plain faded
+/// part `len` frames long.
+pub fn fade_level(t: u32, len: u32) u8 {
+    return @intCast(veil(t, len, .fade, .fade).vis >> 4);
 }
 
 /// Where the show is: part index and frame within that part.
 pub const Clock = struct {
     index: u8 = 0,
     frame: u32 = 0,
+    /// The cut this part was entered through: the previous entry's when the
+    /// show ran into it, `.fade` after a jump.
+    entered_by: Cut = .fade,
 
     /// Next frame; true when that crossed into a new part (then frame 0).
     pub fn advance(c: *Clock) bool {
         c.frame += 1;
         if (c.frame < frames_of(c.index)) return false;
+        c.entered_by = cuts[c.index];
         c.index = next_index(c.index);
         c.frame = 0;
         return true;
@@ -93,10 +128,11 @@ pub const Clock = struct {
     pub fn jump(c: *Clock, i: usize) void {
         c.index = @intCast(@min(i, count - 1));
         c.frame = 0;
+        c.entered_by = .fade;
     }
 
-    pub fn level(c: Clock) u8 {
-        return fade_level(c.frame, frames_of(c.index));
+    pub fn veil_now(c: Clock) Veil {
+        return veil(c.frame, frames_of(c.index), c.entered_by, cuts[c.index]);
     }
 };
 
@@ -116,8 +152,9 @@ pub fn init_all() void {
     // Checked here rather than in a file-level comptime block, which would
     // make the host tests (they import this file) analyse every part.
     comptime {
-        if (entries.len != bars.len) @compileError("timeline: entries and bars differ in length");
-        for (entries, bars) |e, b| if (e.bars != b) @compileError("timeline: entries and bars disagree");
+        if (entries.len != bars.len or cuts.len != bars.len) @compileError("timeline: entries, bars and cuts differ in length");
+        for (entries, bars, cuts) |e, b, k| if (e.bars != b or e.cut != k) @compileError("timeline: entries disagree with bars or cuts");
+        if (ending.length != frames_of(count - 1)) @compileError("timeline: ending.length is not the Ending's entry length");
     }
     inline for (entries) |e| e.part.init();
 }
@@ -128,10 +165,14 @@ pub fn start(first: u8) void {
     goto(first);
 }
 
-/// Draws the current frame: the part, then the timeline fade.
+/// Draws the current frame: the part, then the timeline's veil.
 pub fn render(fb: cart.FramebufferPtr) void {
     entries[clock.index].part.render(clock.frame, fb);
-    fx.fade(fb, clock.level());
+    const v = clock.veil_now();
+    switch (v.cut) {
+        .fade, .seamless => fx.fade(fb, @intCast(v.vis >> 4)),
+        .dissolve => fx.dissolve(fb, @intCast(v.vis >> 2)),
+    }
 }
 
 /// Advances one frame, entering the next part when the current one ends.
@@ -208,8 +249,30 @@ test "jump and skip" {
     c.jump(next_index(c.index));
     try std.testing.expectEqual(@as(u8, 1), c.index);
     try std.testing.expectEqual(@as(u32, 0), c.frame);
-    try std.testing.expectEqual(@as(u8, 0), c.level());
+    try std.testing.expectEqual(@as(u16, 0), c.veil_now().vis);
     c.jump(200);
     try std.testing.expectEqual(@as(u8, count - 1), c.index);
     try std.testing.expectEqual(@as(u8, 0), next_index(c.index));
+}
+
+test "veils: seamless cuts skip the fade on both sides, jumps fade in" {
+    const len = frames_of(1);
+    // A plain part fades both ways.
+    try std.testing.expectEqual(@as(u16, 0), veil(0, len, .fade, .fade).vis);
+    try std.testing.expectEqual(@as(u16, 256), veil(len / 2, len, .fade, .fade).vis);
+    try std.testing.expectEqual(@as(u16, 0), veil(len - 1, len, .fade, .fade).vis);
+    // Leaving through a seamless cut: no fade-out; entering through one: no fade-in.
+    try std.testing.expectEqual(@as(u16, 256), veil(len - 1, len, .fade, .seamless).vis);
+    try std.testing.expectEqual(@as(u16, 256), veil(0, len, .seamless, .fade).vis);
+    // The side that is darker picks the transition.
+    try std.testing.expectEqual(Cut.dissolve, veil(len - 2, len, .fade, .dissolve).cut);
+    try std.testing.expectEqual(Cut.dissolve, veil(1, len, .dissolve, .fade).cut);
+    // The live clock: the loop enters part 0 through the last entry's cut.
+    var c: Clock = .{};
+    for (0..loop_frames()) |_| _ = c.advance();
+    try std.testing.expectEqual(@as(u8, 0), c.index);
+    try std.testing.expectEqual(cuts[count - 1], c.entered_by);
+    c.jump(0);
+    try std.testing.expectEqual(Cut.fade, c.entered_by);
+    try std.testing.expectEqual(@as(u16, 0), c.veil_now().vis);
 }
