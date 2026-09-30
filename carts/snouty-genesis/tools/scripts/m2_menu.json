@@ -1,0 +1,19 @@
+[
+  { "from": 45, "to": 62, "hold": ["SELECT"] },
+  { "from": 70, "to": 70, "hold": ["DOWN"] },
+  { "from": 74, "to": 74, "hold": ["RIGHT"] },
+  { "from": 78, "to": 78, "hold": ["RIGHT"] },
+  { "from": 82, "to": 82, "hold": ["DOWN"] },
+  { "from": 86, "to": 86, "hold": ["A"] },
+  { "from": 90, "to": 90, "hold": ["DOWN"] },
+  { "from": 94, "to": 94, "hold": ["A"] },
+  { "from": 98, "to": 98, "hold": ["DOWN"] },
+  { "from": 102, "to": 102, "hold": ["A"] },
+  { "from": 106, "to": 106, "hold": ["DOWN"] },
+  { "from": 110, "to": 110, "hold": ["DOWN"] },
+  { "from": 114, "to": 114, "hold": ["A"] },
+  { "from": 130, "to": 130, "hold": ["B"] },
+  { "from": 140, "to": 140, "hold": ["B"] },
+  { "from": 170, "to": 187, "hold": ["SELECT"] },
+  { "from": 196, "to": 196, "hold": ["SELECT"] }
+]
