@@ -25,11 +25,20 @@ Routes:
   POST /api/cart-mode {"cart": key, "mode": "ram"|"xip"}
                     -> {"ok": true, "cart": <status cart JSON>}           edit
   GET  /qr/page.svg, /qr/wifi.svg          QR codes from qrencode (404 without it)
+  POST /api/build   {"prompt", "where"?: "auto"|"local"|"remote", "name"?, "no_agent"?}
+                    -> {"ok": true, "id"}; 400 bad prompt/name, 409 a build runs,
+                       503 builds not ready (status build.why)
+  GET  /api/build                          {"job": the running or last job, full log | null}
+  GET  /api/build/<id>                     {"job": that job, full log}; 404 unknown
+  POST /api/build/cancel                   {"ok": true}; 404 when no build runs
+  GET  /builds/<id>/<file>                 preview.gif, preview.png, bench.txt, summary.json
   captive-portal probes and foreign Host headers redirect to the page.
 
 Actions return {"ok": true} at once and run in a worker thread. Actions and
 edits answer 409 while another action runs (a deploy must never race a
-manifest rewrite), 400 with {"ok": false, "error"} on bad input.
+manifest rewrite), 400 with {"ok": false, "error"} on bad input. Builds run
+in the station's own thread under their own lock, never the action lock, so
+a deploy can run while a cart builds.
 """
 from __future__ import annotations
 
@@ -60,11 +69,16 @@ ROM_EXTENSIONS = {".gg", ".sms", ".gb", ".gbc", ".md", ".bin"}
 MAX_UPLOAD = 4 * 1024 * 1024
 MAX_JSON = 64 * 1024
 MAX_WAIT = 30.0
+MAX_PROMPT = 2000
+BUILD_WHERE = ("auto", "local", "remote")
+BUILD_FILE_TYPES = {".gif": "image/gif", ".png": "image/png",
+                    ".txt": "text/plain; charset=utf-8", ".json": "application/json"}
 CAPTIVE_PATHS = {
     "/generate_204", "/gen_204", "/hotspot-detect.html", "/connecttest.txt",
     "/ncsi.txt", "/success.txt", "/library/test/success.html",
     "/canonical.html",
 }
+BUILD_ID = re.compile(r"^[0-9]{8}-[0-9]{6}-[a-z0-9][a-z0-9-]{0,30}$")
 STATIC_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 LOCAL_HOSTS = re.compile(r"^(localhost|snouty(\.local)?|[0-9.]+|\[[0-9a-fA-F:.]+\])$")
 
@@ -715,10 +729,16 @@ class Handler(BaseHTTPRequestHandler):
     def _route_name(path: str) -> str | None:
         if path.startswith("/api/sets/") and len(path) > len("/api/sets/"):
             return "set_item"
+        if path == "/api/build/cancel":
+            return "build_cancel"
+        if path.startswith("/api/build/") and len(path) > len("/api/build/"):
+            return "build_item"
+        if path.startswith("/builds/"):
+            return "build_file"
         return {"/": "index", "/index.html": "index", "/api/status": "status",
                 "/api/log": "log", "/api/deploy": "deploy", "/api/wipe": "wipe",
                 "/api/sync": "sync", "/api/upload": "upload", "/api/fit": "fit",
-                "/api/sets": "sets", "/api/cart-mode": "cart_mode",
+                "/api/sets": "sets", "/api/cart-mode": "cart_mode", "/api/build": "build",
                 "/qr/page.svg": "qr_page", "/qr/wifi.svg": "qr_wifi"}.get(path)
 
     def _foreign_host(self) -> bool:
@@ -846,7 +866,68 @@ class Handler(BaseHTTPRequestHandler):
             raise ApiError(404, "qrencode failed")
         self._send(200, svg, "image/svg+xml")
 
+    def _build_method(self, name: str):
+        fn = getattr(self.app.station, name, None)
+        if not callable(fn):
+            raise ApiError(503, "builds are not available on this station")
+        return fn
+
+    def _get_build(self, query):
+        self._json(200, {"job": self._build_method("build_job")()})
+
+    def _get_build_item(self, query):
+        job_id = unquote(urlsplit(self.path).path[len("/api/build/"):])
+        job = self._build_method("build_job")(job_id) if BUILD_ID.match(job_id) else None
+        if job is None:
+            raise ApiError(404, "no such build")
+        self._json(200, {"job": job})
+
+    def _get_build_file(self, query):
+        parts = unquote(urlsplit(self.path).path[len("/builds/"):]).split("/")
+        if len(parts) != 2 or not BUILD_ID.match(parts[0]):
+            raise ApiError(404, "not found")
+        path = self._build_method("build_file")(parts[0], parts[1])
+        if path is None:
+            raise ApiError(404, "not found")
+        path = Path(path)
+        self._send(200, path.read_bytes(),
+                   BUILD_FILE_TYPES.get(path.suffix, "application/octet-stream"))
+
     # -------------------------------------------------------- POST routes
+
+    def _post_build(self, query):
+        body = self._read_json()
+        prompt, where = body.get("prompt"), body.get("where", "auto")
+        name, no_agent = body.get("name"), body.get("no_agent", False)
+        if not isinstance(prompt, str) or not prompt.strip():
+            raise ApiError(400, "say what the cart should be")
+        if len(prompt.strip()) > MAX_PROMPT:
+            raise ApiError(400, f"the prompt is too long (at most {MAX_PROMPT} characters)")
+        if where not in BUILD_WHERE:
+            raise ApiError(400, "where must be auto, local or remote")
+        if name is not None and (not isinstance(name, str) or not name.strip()):
+            raise ApiError(400, "name must be a cart name")
+        if not isinstance(no_agent, bool):
+            raise ApiError(400, "no_agent must be true or false")
+        start = self._build_method("start_build")
+        try:
+            job_id = start(prompt.strip(), where=where, name=name or None, no_agent=no_agent)
+        except self.app.busy_types as e:
+            raise ApiError(409, _message(e))
+        except Exception as e:
+            if type(e).__name__ == "BuildNotReady":
+                raise ApiError(503, _message(e))
+            if isinstance(e, self.app.edit_errors):
+                raise ApiError(400, _message(e))
+            raise
+        self._json(200, {"ok": True, "id": job_id})
+
+    def _post_build_cancel(self, query):
+        self._read_json()
+        if not self._build_method("cancel_build")():
+            raise ApiError(404, "no build is running")
+        self._json(200, {"ok": True})
+
 
     def _post_deploy(self, query):
         body = self._read_json()
