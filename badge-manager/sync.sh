@@ -92,12 +92,14 @@ added=0
 shopt -s nullglob
 for f in "$LIBRARY"/carts/*.uf2; do
     stem=$(basename "$f" .uf2)
-    if printf '%s\n' "$known" | grep -qxF -- "$stem"; then
+    family=${stem%-xip}          # snouty-xip.uf2 is the XIP variant of snouty
+    if printf '%s\n' "$known" | grep -qxF -e "$stem" -e "$family"; then
         continue
     fi
     if [ $cli_ok -eq 1 ]; then
         if (cd "$here" && python3 -m badge_manager add-uf2 "$f" --key "$stem"); then
-            echo "sync: added $stem to the manifest"
+            echo "sync: added $family to the manifest"
+            known=$(printf '%s\n%s' "$known" "$family")
             added=$((added + 1))
         else
             echo "sync: could not add $stem" >&2

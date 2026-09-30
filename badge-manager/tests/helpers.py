@@ -75,6 +75,11 @@ title = "Game Gear Sonic"
 carts = ["snouty-gear"]
 roms = ["sonic", "sonic2"]
 
+[sets.gg]
+title = "All Game Gear"
+carts = ["snouty-gear"]
+roms = ["*.gg"]
+
 [sets.broken]
 title = "Broken"
 carts = ["snouty", "missing-cart", "genesis-xip"]
@@ -83,9 +88,11 @@ roms = ["nope"]
 
 
 def make_library(root: Path) -> Path:
-    """carts: snouty, snouty-bugs, snouty-gear (RAM), genesis-xip (XIP);
-    roms: two Sonic files; sets demo, gear, broken (unknown cart and ROM)."""
+    """carts: snouty (RAM in use + snouty-xip.uf2 XIP variant), snouty-bugs, snouty-gear
+    (RAM), genesis-xip (XIP); roms: two Sonic files; sets demo, gear, gg (pattern *.gg),
+    broken (unknown cart and ROM)."""
     make_uf2(root / "carts" / "snouty.uf2", "ram", 6)
+    make_uf2(root / "carts" / "snouty-xip.uf2", "xip", 4)
     make_uf2(root / "carts" / "snouty-bugs.uf2", "ram", 3)
     make_uf2(root / "carts" / "snouty-gear.uf2", "ram", 5)
     make_uf2(root / "carts" / "genesis-xip.uf2", "xip", 2)

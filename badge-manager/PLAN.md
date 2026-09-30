@@ -6,8 +6,12 @@ Status: plan, 2026-09-29, revised 2026-09-30 with Adrian's answers
 `setup.sh`, `sync.sh`, 48 unit tests and `tests/e2e_loop.sh`. The real
 block-device mount/eject path and `setup.sh` have not run anywhere yet
 (this VM's kernel has no vfat); first run is on a Pi with a FAT12 stick
-(section 3). M1 designed 2026-09-30 (section 8), building. Idea from
-Adrian's coworker:
+(section 3). M1 built 2026-09-30 (tag `badge-manager/m1`, section 8):
+cart variants with a RAM/XIP toggle, ad-hoc selections and sets saved
+from the phone, ROM globs in sets, default show-day sets, the badge
+contents identified by set, nightly sync timer, QR share codes, iOS and
+Android both supported; 89 unit tests. M2 (build on the fly) next. Idea
+from Adrian's coworker:
 "plug in badge, ask Claude to write you a game or whatever, have the thing
 show up; also have a collection of carts ready to go". Adrian's priorities:
 (1) deploy the existing carts with as little effort as possible, driven

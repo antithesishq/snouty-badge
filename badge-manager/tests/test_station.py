@@ -8,6 +8,7 @@ from pathlib import Path
 from tests.helpers import make_config, make_uf2, write_config
 from badge_manager import config as config_mod
 from badge_manager import station as station_mod
+from badge_manager.library import LibraryError
 from badge_manager.station import DoesNotFit, NoBadge, Station, StationBusy
 
 
@@ -146,8 +147,10 @@ class StationTest(unittest.TestCase):
         t0 = time.monotonic()
         self.assertEqual(self.st.wait_for_change(n, 0.2), n)
         self.assertGreaterEqual(time.monotonic() - t0, 0.15)
-        threading.Timer(0.05, self.st.log, args=("hello",)).start()
+        timer = threading.Timer(0.05, self.st.log, args=("hello",))
+        timer.start()
         self.assertGreater(self.st.wait_for_change(n, 5), n)
+        timer.join(5)                  # its log-file write must finish before tearDown
 
     def test_sync_streams_and_reloads(self):
         self.cfg.sync_command = "echo fetched one; echo second line; exit 3"
@@ -182,10 +185,22 @@ class StationTest(unittest.TestCase):
         self.st.poll()
         s = self.st.status()
         self.assertEqual(set(s) - {"log_seq"},
-                         {"badge", "busy", "action", "network", "build", "sets", "library", "log"})
+                         {"badge", "busy", "action", "network", "share", "build", "sets",
+                          "library", "log"})
         self.assertEqual(set(s["badge"]) - {"ejected"},
-                         {"present", "device", "mounted", "files", "free_bytes",
+                         {"present", "device", "mounted", "files", "set", "free_bytes",
                           "free_entries", "note"})
+        self.assertEqual(set(s["share"]), {"url", "ssid", "password"})
+        for f in s["badge"]["files"]:
+            self.assertEqual(set(f), {"name", "size", "title", "kind"})
+        for x in s["sets"]:
+            self.assertEqual(set(x), {"name", "title", "bytes", "entries", "bytes_capacity",
+                                      "entries_capacity", "fits", "why", "carts", "roms", "files"})
+        for c in s["library"]["carts"]:
+            self.assertEqual(set(c), {"key", "title", "use", "mode", "file", "size", "variants",
+                                      "roms", "ok", "error", "auto"})
+            for v in c["variants"].values():
+                self.assertEqual(set(v), {"file", "size", "ok", "error"})
         self.assertEqual(set(s["network"]), {"mode", "ssid", "address", "internet"})
         self.assertEqual(set(s["build"]), {"local", "remote"})
         for x in s["sets"]:
@@ -193,6 +208,70 @@ class StationTest(unittest.TestCase):
                                   "entries_capacity"}, set(x))
             self.assertEqual(x["entries_capacity"], 31)
         self.assertEqual(set(s["log"][0]), {"t", "msg"})
+
+    # -- M1 -------------------------------------------------------------------
+
+    def test_badge_set_and_titles(self):
+        self.assertEqual(self.st.status()["badge"]["set"], None)      # no badge yet
+        self.st.poll()
+        b = self.st.status()["badge"]
+        self.assertIsNone(b["set"])
+        self.assertEqual({f["name"]: f["kind"] for f in b["files"]},
+                         {"old.uf2": "other", ".fseventsd": "other"})
+        self.st.deploy("demo")
+        b = self.st.status()["badge"]                 # ejected: files still shown, set known
+        self.assertEqual(b["set"], "demo")
+        self.assertEqual(sorted((f["title"], f["kind"]) for f in b["files"]),
+                         [("Snouty Bughunt", "cart"), ("Snouty Run", "cart")])
+        dev, t = self.st._ejected
+        self.st._ejected = (dev, t - station_mod.FAKE_REPLUG_S - 1)
+        (self.badge / ".Trashes").mkdir()
+        self.st.poll()
+        b = self.st.status()["badge"]
+        self.assertTrue(b["present"])
+        self.assertEqual(b["set"], "demo")            # hidden junk is ignored
+
+    def test_deploy_selection(self):
+        self.st.poll()
+        self.st.deploy(self.st.library.selection(["snouty-bugs"], [".gg"]))
+        self.assertEqual(sorted(p.name for p in self.badge.iterdir()),
+                         ["SONIC.GG", "SONIC2.GG", "snouty-bugs.uf2"])
+        self.assertTrue(any(m.startswith("deploying Selection: 3 files") for m in self.msgs()))
+        self.assertIsNone(self.st.status()["badge"]["set"])
+
+    def test_library_edits(self):
+        seq = self.st.status()["log_seq"]
+        c = self.st.set_cart_mode("snouty", "xip")
+        self.assertEqual(c.use, "xip")
+        self.assertEqual(self.msgs()[-1], "snouty now deploys as XIP")
+        sets = {x["name"]: x for x in self.st.status()["sets"]}
+        self.assertEqual(sets["demo"]["files"], ["snouty-xip.uf2", "snouty-bugs.uf2"])
+        s = self.st.save_set("Game Gear", ["snouty-gear", "snouty-bugs"], ["*.gg"], key="gear")
+        self.assertEqual(s.key, "gear")
+        self.assertEqual(self.msgs()[-1], "saved set Game Gear (gear): 2 carts, *.gg")
+        self.st.delete_set("gear")
+        self.assertEqual(self.msgs()[-1], "removed set gear")
+        self.assertNotIn("gear", {x["name"] for x in self.st.status()["sets"]})
+        self.assertGreater(self.st.status()["log_seq"], seq + 3)
+        with self.assertRaises(LibraryError):
+            self.st.delete_set("gear")
+        with self.assertRaises(LibraryError):
+            self.st.set_cart_mode("snouty-bugs", "xip")
+
+    def test_share(self):
+        st = self.st
+        net = {"mode": "none", "ssid": None, "address": None, "internet": False}
+        self.assertEqual(st.share(net), {"url": None, "ssid": None, "password": None})
+        self.assertEqual(st.share(dict(net, mode="hotspot", ssid="phone", address="172.20.10.3")),
+                         {"url": "http://172.20.10.3/", "ssid": None, "password": None})
+        self.assertEqual(st.share(dict(net, mode="ap", ssid="snouty-badge")),
+                         {"url": "http://10.42.0.1/", "ssid": self.cfg.ap_ssid,
+                          "password": self.cfg.ap_password})
+        self.assertEqual(st.share(dict(net, mode="ap", address="10.42.0.7"))["url"],
+                         "http://10.42.0.7/")
+        self.assertEqual(st.status()["share"]["url"], None)
+        self.cfg.http_port = 8080          # not port 80: the URL and QR must say so
+        self.assertEqual(st.share(dict(net, mode="ap"))["url"], "http://10.42.0.1:8080/")
 
     def test_nmcli_parsing(self):
         st = self.st

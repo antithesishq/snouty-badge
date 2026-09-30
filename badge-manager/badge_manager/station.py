@@ -2,11 +2,12 @@
 
 - poll(): called ~1/s by a background thread (server) or once (CLI);
   detects plug/unplug, mounts on plug, reads contents, updates status.
-- deploy(set_key): fit check -> wipe -> copy UF2s then ROMs -> sync ->
-  eject. Serialized by a lock; raises StationBusy if another action runs.
+- deploy(target): a set key or an ad-hoc CartSet; fit check -> wipe ->
+  copy UF2s then ROMs -> sync -> eject. Serialized by a lock; raises StationBusy if another action runs.
 - wipe(), sync() likewise. Every step appends to the log ring (200 lines);
   subscribers (the server's long-poll) are notified via a Condition.
-- status(): the dict in badge_manager/__init__.py.
+- set_cart_mode(), save_set(), delete_set(): manifest edits, one log line each.
+- status(): the dict in badge_manager/__init__.py; share() is its "share" part.
 - network(): mode/ssid/address/internet from `nmcli -t` when available.
 
 Actions are serialized in-process by a Lock and across processes (server
@@ -33,7 +34,7 @@ from typing import Callable, Iterator
 from . import fat12
 from .config import Config
 from .device import Badge, DeviceError, find_badge
-from .library import Library, LibraryError
+from .library import CUSTOM, CartSet, Library, LibraryError
 
 LOG_LINES = 200
 FAKE_REPLUG_S = 3.0          # a fake badge "comes back" this long after an eject
@@ -146,7 +147,7 @@ class Station:
 
     @staticmethod
     def _no_badge_info(note: str = "no badge plugged in") -> dict:
-        return {"present": False, "device": None, "mounted": False, "files": [],
+        return {"present": False, "device": None, "mounted": False, "files": [], "set": None,
                 "free_bytes": None, "free_entries": None, "note": note, "ejected": False}
 
     def poll(self) -> None:
@@ -217,9 +218,9 @@ class Station:
         b = self._badge
         if b is None:
             return
-        files = [{"name": e.name, "size": e.size} for e in b.listdir()]
+        files, on = self.library.identify([{"name": e.name, "size": e.size} for e in b.listdir()])
         self._info = {"present": True, "device": b.device, "mounted": True, "files": files,
-                      "free_bytes": b.free_bytes(), "free_entries": b.free_entries(),
+                      "set": on, "free_bytes": b.free_bytes(), "free_entries": b.free_entries(),
                       "note": "ready", "ejected": False}
         self._changed()
 
@@ -234,8 +235,9 @@ class Station:
         with self._state:
             self._badge = None
             self._ejected = (b.device, time.monotonic())
+            files, on = self.library.identify(files)
             self._info = {"present": False, "device": b.device, "mounted": False,
-                          "files": files, "free_bytes": None, "free_entries": None,
+                          "files": files, "set": on, "free_bytes": None, "free_entries": None,
                           "note": "ejected, unplug the badge", "ejected": True}
             self._changed()
 
@@ -292,16 +294,18 @@ class Station:
                 os.close(fd)
             self._action.release()
 
-    def deploy(self, set_key: str) -> None:
-        """Wipe the badge, copy SET_KEY's UF2s then ROMs, sync, eject."""
-        with self._busy(f"deploy {set_key}"):
+    def deploy(self, target: str | CartSet) -> None:
+        """Wipe the badge, copy TARGET's (set key or ad-hoc CartSet) UF2s then ROMs, sync, eject."""
+        adhoc = isinstance(target, CartSet)
+        label = ("selection" if target.key == CUSTOM else target.key) if adhoc else target
+        with self._busy(f"deploy {label}"):
             t0 = time.monotonic()
-            s = self.library.sets.get(set_key)
+            s = target if adhoc else self.library.sets.get(target)
             if s is None:
-                raise StationError(f"no set called {set_key!r}")
+                raise StationError(f"no set called {target!r}")
             b = self._require_badge()
             try:
-                items = self.library.plan(set_key)
+                items = self.library.plan(s)
             except LibraryError as e:
                 self.log(f"cannot deploy {s.title}: {e}")
                 raise DoesNotFit(str(e)) from e
@@ -419,6 +423,33 @@ class Station:
         with self._state:
             self.library.reload()
 
+    # -- library edits (manifest only, the drive is not touched) ----------------
+
+    def set_cart_mode(self, key: str, mode: str):
+        """Make sets deploy cart KEY as MODE ("ram" | "xip"); returns the Cart."""
+        with self._state:
+            c = self.library.set_cart_mode(key, mode)
+            self._changed()
+        self.log(f"{key} now deploys as {mode.upper()}")
+        return c
+
+    def save_set(self, title: str, carts: list[str], roms: list[str],
+                 key: str | None = None) -> CartSet:
+        """Create or replace a set in the manifest; returns it."""
+        with self._state:
+            s = self.library.save_set(title, carts, roms, key)
+            self._changed()
+        n = len(s.carts)
+        self.log(f"saved set {s.title} ({s.key}): {n} cart{'s' if n != 1 else ''}"
+                 + "".join(f", {r}" for r in s.roms))
+        return s
+
+    def delete_set(self, key: str) -> None:
+        with self._state:
+            self.library.delete_set(key)
+            self._changed()
+        self.log(f"removed set {key}")
+
     # -- network and build probes ---------------------------------------------
 
     def network(self) -> dict:
@@ -513,6 +544,19 @@ class Station:
         zig = (home / "zig" / "zig").exists() or (home / "bin" / "zig").exists()
         return kb_total >= 6 * 1024 * 1024 * 0.95 and zig
 
+    def share(self, net: dict | None = None) -> dict:
+        """{"url", "ssid", "password"}: how a second phone reaches the page."""
+        net = net or self.network()
+        if net["mode"] == "ap":
+            return {"url": self._url(net.get("address") or "10.42.0.1"),
+                    "ssid": self.config.ap_ssid, "password": self.config.ap_password}
+        addr = net.get("address")
+        return {"url": self._url(addr) if addr else None, "ssid": None, "password": None}
+
+    def _url(self, addr: str) -> str:
+        port = getattr(self.config, "http_port", 80)
+        return f"http://{addr}/" if port == 80 else f"http://{addr}:{port}/"
+
     # -- status ---------------------------------------------------------------
 
     def status(self) -> dict:
@@ -524,6 +568,7 @@ class Station:
                     geom = self._badge.geometry()
             lib = self.library.to_json(geom)
             return {"badge": dict(self._info), "busy": self._busy_action is not None,
-                    "action": self._busy_action, "network": net, "build": build,
+                    "action": self._busy_action, "network": net,
+                    "share": self.share(net), "build": build,
                     "sets": lib["sets"], "library": lib["library"],
                     "log": list(self._log), "log_seq": self._seq}

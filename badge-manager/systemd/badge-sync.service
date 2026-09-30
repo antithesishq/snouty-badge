@@ -1,0 +1,11 @@
+[Unit]
+Description=Snouty badge station nightly library sync (badge sync)
+Documentation=file:///opt/badge-station/badge-manager/README.md
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+Environment=BADGE_STATION_CONFIG=/etc/badge-station/station.toml
+ExecStart=/usr/local/bin/badge sync
+TimeoutStartSec=15min

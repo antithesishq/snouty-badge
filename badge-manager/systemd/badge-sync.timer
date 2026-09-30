@@ -1,0 +1,10 @@
+[Unit]
+Description=Sync the badge station library from the build host every night at 03:00
+
+[Timer]
+OnCalendar=*-*-* 03:00:00
+Persistent=true
+RandomizedDelaySec=10min
+
+[Install]
+WantedBy=timers.target

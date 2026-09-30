@@ -61,6 +61,27 @@ progress { width: 100%; height: 10px; margin-top: 8px; }
 }
 footer { color: var(--muted); font-size: 0.85rem; text-align: center; margin-top: 16px; }
 .hidden { display: none; }
+.tap { background: none; border: 0; padding: 0; margin: 0; min-height: 44px; min-width: 0; width: 100%;
+  text-align: left; color: inherit; font: inherit; font-weight: normal; cursor: pointer; display: block; }
+.tap .name::after { content: " \25B8"; color: var(--muted); }
+.tap.open .name::after { content: " \25BE"; }
+.detail { margin-top: 6px; padding: 8px 10px; border-radius: 8px; background: var(--bg); font-size: 0.9rem; }
+.detail ul li { padding: 2px 0; overflow-wrap: anywhere; }
+.detail .actions { margin-top: 8px; }
+.check { display: inline-flex; align-items: center; justify-content: center; min-width: 44px; min-height: 44px; margin: -6px 0 -6px -8px; cursor: pointer; }
+.check input { width: 22px; height: 22px; margin: 0; accent-color: var(--accent); }
+.seg { display: inline-flex; border: 1px solid var(--accent); border-radius: 10px; overflow: hidden; flex: none; }
+.seg button { min-width: 52px; padding: 8px 10px; border: 0; border-radius: 0; background: transparent; color: var(--accent); }
+.seg button + button { border-left: 1px solid var(--accent); }
+.seg button.on { background: var(--accent); color: var(--accent-fg); }
+.selbar { padding: 8px 10px; border-radius: 8px; background: var(--bg); margin-bottom: 8px; }
+.selbar .actions { margin-top: 8px; }
+button.armed { background: var(--danger); border-color: var(--danger); color: var(--card); }
+.fitline.warn { color: var(--warn); }
+.qr { display: block; width: 180px; max-width: 70%; height: auto; margin: 8px auto; background: #fff; padding: 6px; border-radius: 8px; }
+.share-block + .share-block { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--line); }
+.center { text-align: center; }
+.mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; overflow-wrap: anywhere; }
 .err { color: var(--danger); font-size: 0.9rem; margin-top: 6px; }
 </style>
 </head>
@@ -92,12 +113,35 @@ footer { color: var(--muted); font-size: 0.85rem; text-align: center; margin-top
 
 <section>
   <h2>Library</h2>
+  <div class="selbar">
+    <div id="fitline" class="fitline meta">Nothing selected. Tick carts and ROMs to build a set.</div>
+    <div class="actions">
+      <button id="deploy-sel" type="button" disabled>Deploy selection</button>
+      <button id="save-sel" class="secondary" type="button" disabled>Save as set</button>
+    </div>
+    <div id="sel-msg" class="meta hidden"></div>
+  </div>
   <ul id="library"><li class="meta">Nothing in the library yet.</li></ul>
   <div class="actions">
-    <label class="filebtn">Upload a ROM<input id="upload" type="file" accept=".gg,.sms,.gb,.gbc,.md,.bin"></label>
+    <label class="filebtn">Upload a ROM<input id="upload" type="file"></label>
   </div>
   <progress id="upload-progress" class="hidden" max="100" value="0"></progress>
   <div id="upload-msg" class="meta"></div>
+</section>
+
+<section id="share" class="hidden">
+  <h2>Share</h2>
+  <div class="share-block center">
+    <div class="meta">Open this page on another phone:</div>
+    <div id="share-url" class="mono"></div>
+    <img id="qr-page" class="qr" alt="QR code for the page address" width="180" height="180">
+  </div>
+  <div id="share-wifi" class="share-block center hidden">
+    <div class="meta">Join the station's network:</div>
+    <div>Network <b id="share-ssid" class="mono"></b>, password <b id="share-pass" class="mono"></b></div>
+    <img id="qr-wifi" class="qr" alt="Wi-Fi QR code for the station's network" width="180" height="180">
+    <div class="meta">Scan with the camera to join.</div>
+  </div>
 </section>
 
 <section>
@@ -115,22 +159,49 @@ footer { color: var(--muted); font-size: 0.85rem; text-align: center; margin-top
   var state = null;
   var seq = null;
   var wipeArmed = null;
+  var expanded = {};                   // set name -> true while its row is open
+  var removeArmed = null;              // {name, timer} while "Tap again to remove" shows
+  var deployArmed = null;              // timer while "Tap again to deploy" shows
+  var selected = { carts: {}, roms: {} };
+  var fit = null;                      // last /api/fit answer for the selection
+  var fitKey = "";                     // selection + library signature fit belongs to
+  var fitTimer = null;
+  var fitPending = null;               // selection key of the /api/fit in flight
+  var shareKey = null;
+  var modePending = {};                // cart key -> true while its toggle posts
 
   function kb(n) {
     if (n === null || n === undefined) return "?";
     return n >= 1024 * 1024 ? (n / 1048576).toFixed(2) + " MB" : Math.round(n / 1024) + " KB";
   }
+  function kbPlain(n) { return Math.ceil((n || 0) / 1024).toLocaleString() + " KB"; }
+  function plural(n, one, many) { return n + " " + (n === 1 ? one : many); }
   function el(tag, cls, text) {
     var e = document.createElement(tag);
     if (cls) e.className = cls;
     if (text !== undefined) e.textContent = text;
     return e;
   }
+  function button(text, cls, onclick) {
+    var b = el("button", cls || "", text);
+    b.type = "button";
+    b.addEventListener("click", onclick);
+    return b;
+  }
   function clear(node) { while (node.firstChild) node.removeChild(node.firstChild); }
   function showError(msg) {
     var e = $("action-err");
     e.textContent = msg || "";
     e.classList.toggle("hidden", !msg);
+  }
+  function selMsg(msg, warn) {
+    var e = $("sel-msg");
+    e.textContent = msg || "";
+    e.className = (warn ? "why" : "meta") + (msg ? "" : " hidden");
+  }
+  function failText(code, data) {
+    if (code === 409) return "The station is busy. Wait for the current action to finish.";
+    return (data && data.error) || ("Request failed (" + (code || "no connection") + ").");
   }
 
   function renderNet(s) {
@@ -148,6 +219,11 @@ footer { color: var(--muted); font-size: 0.85rem; text-align: center; margin-top
     $("build").textContent = build;
   }
 
+  function setTitle(s, name) {
+    var found = (s.sets || []).filter(function (x) { return x.name === name; })[0];
+    return found ? (found.title || found.name) : name;
+  }
+
   function renderBadge(s) {
     var b = s.badge || {};
     var st = $("badge-state"), extra = $("badge-extra"), files = $("badge-files");
@@ -158,12 +234,13 @@ footer { color: var(--muted); font-size: 0.85rem; text-align: center; margin-top
     if (ejected) {
       st.textContent = "Unplug the badge.";
       st.classList.add("ok");
-      extra.textContent = "It is ejected and safe to unplug. Its menu shows the new carts.";
+      extra.textContent = "It is ejected and safe to unplug. Its menu shows the new carts." +
+        (b.set ? " On it: " + setTitle(s, b.set) + "." : "");
     } else if (!b.present) {
       st.textContent = "Plug the badge in while it is on its menu.";
       extra.textContent = b.note && !/plug the badge in|no badge/i.test(b.note) ? b.note : "";
     } else {
-      st.textContent = "Badge connected.";
+      st.textContent = b.set ? "On it: " + setTitle(s, b.set) : "Badge connected.";
       st.classList.add("ok");
       var bits = [kb(b.free_bytes) + " free"];
       if (b.free_entries !== null && b.free_entries !== undefined) bits.push(b.free_entries + " free entries");
@@ -174,7 +251,11 @@ footer { color: var(--muted); font-size: 0.85rem; text-align: center; margin-top
       if (!list.length) files.appendChild(el("li", "row meta", "The drive is empty."));
       list.forEach(function (f) {
         var li = el("li", "row");
-        li.appendChild(el("span", "grow name", f.name));
+        var left = el("div", "grow");
+        left.appendChild(el("div", "name", f.title || f.name));
+        var kind = f.kind && f.kind !== "other" ? f.kind + ", " : "";
+        left.appendChild(el("div", "meta", kind + f.name));
+        li.appendChild(left);
         li.appendChild(el("span", "meta", kb(f.size)));
         files.appendChild(li);
       });
@@ -184,57 +265,242 @@ footer { color: var(--muted); font-size: 0.85rem; text-align: center; margin-top
     a.classList.toggle("hidden", !s.busy);
   }
 
+  function disarmRemove() {
+    if (removeArmed) clearTimeout(removeArmed.timer);
+    removeArmed = null;
+  }
+
   function renderSets(s) {
     var ul = $("sets");
     clear(ul);
     var sets = s.sets || [];
-    if (!sets.length) ul.appendChild(el("li", "meta", "No sets yet. Add some to manifest.toml."));
+    if (!sets.length) ul.appendChild(el("li", "meta", "No sets yet. Tick carts in the library and save them as a set."));
     var present = s.badge && s.badge.present;
+    var names = {};
     sets.forEach(function (set) {
+      names[set.name] = true;
       var li = el("li", "row");
       var left = el("div", "grow");
-      left.appendChild(el("div", "name", set.title || set.name));
-      left.appendChild(el("div", "meta", kb(set.bytes) + ", " + set.entries + " of " + (set.entries_capacity || 31) + " entries"));
-      (set.fits ? [] : set.why || []).forEach(function (w) { left.appendChild(el("div", "why", w)); });
+      var open = !!expanded[set.name];
+      var tap = button("", "tap" + (open ? " open" : ""), function () {
+        expanded[set.name] = !expanded[set.name];
+        if (!expanded[set.name] && removeArmed && removeArmed.name === set.name) disarmRemove();
+        renderSets(state);
+      });
+      tap.setAttribute("aria-expanded", open ? "true" : "false");
+      tap.appendChild(el("div", "name", set.title || set.name));
+      tap.appendChild(el("div", "meta", kb(set.bytes) + ", " + set.entries + " of " + (set.entries_capacity || 31) + " entries"));
+      (set.fits ? [] : set.why || []).slice(0, open ? 0 : 1).forEach(function (w) { tap.appendChild(el("div", "why", w)); });
+      left.appendChild(tap);
+      if (open) {
+        var d = el("div", "detail");
+        var files = set.files || [];
+        d.appendChild(el("div", "meta", files.length ? "Writes " + plural(files.length, "file", "files") + ":" : "Writes nothing."));
+        var fl = el("ul");
+        files.forEach(function (f) { fl.appendChild(el("li", "", f)); });
+        d.appendChild(fl);
+        if (!set.fits) (set.why || []).forEach(function (w) { d.appendChild(el("div", "why", w)); });
+        var armed = removeArmed && removeArmed.name === set.name;
+        var acts = el("div", "actions");
+        var rm = button(armed ? "Tap again to remove" : "Remove set", "danger" + (armed ? " armed" : ""), function () {
+          if (!(removeArmed && removeArmed.name === set.name)) {
+            disarmRemove();
+            removeArmed = { name: set.name, timer: setTimeout(function () { disarmRemove(); renderSets(state); }, 4000) };
+            renderSets(state);
+            return;
+          }
+          disarmRemove();
+          showError("");
+          request("DELETE", "/api/sets/" + encodeURIComponent(set.name), null, function (code, data) {
+            if (code === 200 && data && data.ok) { delete expanded[set.name]; return; }
+            showError(failText(code, data));
+            renderSets(state);
+          });
+        });
+        rm.disabled = s.busy;
+        acts.appendChild(rm);
+        d.appendChild(acts);
+        left.appendChild(d);
+      }
       li.appendChild(left);
       if (set.fits) {
-        var btn = el("button", "", "Deploy");
-        btn.type = "button";
+        var btn = button("Deploy", "", function () { act("/api/deploy", { set: set.name }); });
         btn.disabled = s.busy || !present;
         btn.title = present ? "" : "Plug the badge in first";
-        btn.addEventListener("click", function () { act("/api/deploy", { set: set.name }); });
         li.appendChild(btn);
       }
       ul.appendChild(li);
     });
+    Object.keys(expanded).forEach(function (k) { if (!names[k]) delete expanded[k]; });
     $("wipe").disabled = s.busy || !present;
     $("sync").disabled = s.busy;
+  }
+
+  function selectedList(kind) { return Object.keys(selected[kind]).sort(); }
+
+  function checkbox(kind, key, label) {
+    var lab = el("label", "check");
+    var box = el("input");
+    box.type = "checkbox";
+    box.checked = !!selected[kind][key];
+    box.setAttribute("aria-label", "Select " + label);
+    box.addEventListener("change", function () {
+      if (box.checked) selected[kind][key] = true; else delete selected[kind][key];
+      selMsg("");
+      disarmDeploy();
+      scheduleFit();
+    });
+    lab.appendChild(box);
+    return lab;
+  }
+
+  function modeToggle(c, busy) {
+    var seg = el("div", "seg");
+    seg.setAttribute("role", "group");
+    seg.setAttribute("aria-label", "Variant for " + (c.title || c.key));
+    ["ram", "xip"].forEach(function (m) {
+      var b = button(m.toUpperCase(), c.use === m ? "on" : "", function () {
+        if (c.use === m) return;
+        modePending[c.key] = true;
+        renderLibrary(state);
+        showError("");
+        request("POST", "/api/cart-mode", { cart: c.key, mode: m }, function (code, data) {
+          delete modePending[c.key];
+          if (!(code === 200 && data && data.ok)) showError(failText(code, data));
+          if (state) renderLibrary(state);
+        });
+      });
+      b.setAttribute("aria-pressed", c.use === m ? "true" : "false");
+      b.disabled = busy || !!modePending[c.key];
+      seg.appendChild(b);
+    });
+    return seg;
   }
 
   function renderLibrary(s) {
     var ul = $("library");
     clear(ul);
     var lib = s.library || {};
-    var items = [];
-    (lib.carts || []).forEach(function (c) {
-      items.push([c.title || c.key || c.name, "cart" + (c.mode ? ", " + c.mode : ""), c.size]);
-    });
-    (lib.roms || []).forEach(function (r) {
-      items.push([r.title || r.key || r.name, "rom" + (r.short ? ", " + r.short : ""), r.size]);
-    });
-    if (!items.length) ul.appendChild(el("li", "meta", "Nothing in the library yet."));
-    items.forEach(function (it) {
+    var carts = lib.carts || [], roms = lib.roms || [];
+    var keep = { carts: {}, roms: {} };
+    carts.forEach(function (c) { if (selected.carts[c.key]) keep.carts[c.key] = true; });
+    roms.forEach(function (r) { if (selected.roms[r.key]) keep.roms[r.key] = true; });
+    selected = keep;
+    if (lib.error) ul.appendChild(el("li", "row why", lib.error));
+    if (!carts.length && !roms.length) ul.appendChild(el("li", "meta", "Nothing in the library yet."));
+    carts.forEach(function (c) {
       var li = el("li", "row");
+      var title = c.title || c.key;
+      li.appendChild(checkbox("carts", c.key, title));
       var left = el("div", "grow");
-      left.appendChild(el("div", "name", it[0]));
-      left.appendChild(el("div", "meta", it[1]));
+      left.appendChild(el("div", "name", title));
+      left.appendChild(el("div", "meta", "cart, " + (c.file || c.key) + ", " + kb(c.size)));
+      if (c.error) left.appendChild(el("div", "why", c.error));
       li.appendChild(left);
-      li.appendChild(el("span", "meta", kb(it[2])));
+      var v = c.variants || {};
+      if (v.ram && v.xip) li.appendChild(modeToggle(c, s.busy));
+      else li.appendChild(el("span", "meta", (c.use || c.mode || "").toUpperCase()));
       ul.appendChild(li);
+    });
+    roms.forEach(function (r) {
+      var li = el("li", "row");
+      var title = r.title || r.key;
+      li.appendChild(checkbox("roms", r.key, title));
+      var left = el("div", "grow");
+      left.appendChild(el("div", "name", title));
+      left.appendChild(el("div", "meta", "ROM" + (r.short ? ", " + r.short : "") + ", " + kb(r.size)));
+      if (r.error) left.appendChild(el("div", "why", r.error));
+      li.appendChild(left);
+      ul.appendChild(li);
+    });
+    renderSelection(s);
+  }
+
+  // A selection's fit depends on the chosen keys and on the library (sizes, RAM/XIP).
+  function selectionKey(s) {
+    var lib = (s && s.library) || {};
+    var sig = (lib.carts || []).map(function (c) { return c.key + ":" + c.use + ":" + c.size; }).join(",") + "|" +
+      (lib.roms || []).map(function (r) { return r.key + ":" + r.size + ":" + r.short; }).join(",");
+    var cap = s && s.badge ? (s.badge.present ? "p" : "n") : "";
+    return selectedList("carts").join(",") + "|" + selectedList("roms").join(",") + "|" + sig + "|" + cap;
+  }
+
+  function scheduleFit() {
+    if (fitTimer) clearTimeout(fitTimer);
+    fitTimer = setTimeout(runFit, 250);
+    renderSelection(state);
+  }
+
+  function runFit() {
+    fitTimer = null;
+    var carts = selectedList("carts"), roms = selectedList("roms");
+    var key = selectionKey(state);
+    if (!carts.length && !roms.length) { fit = null; fitKey = key; renderSelection(state); return; }
+    fitPending = key;
+    request("POST", "/api/fit", { carts: carts, roms: roms }, function (code, data) {
+      if (fitPending === key) fitPending = null;
+      if (selectionKey(state) !== key) { renderSelection(state); return; }   // moved on: fit again
+      fitKey = key;
+      fit = code === 200 && data ? data : { error: failText(code, data) };
+      renderSelection(state);
     });
   }
 
-  function renderLog(s) {
+  function renderSelection(s) {
+    if (!s) return;
+    var carts = selectedList("carts"), roms = selectedList("roms");
+    var line = $("fitline");
+    var none = !carts.length && !roms.length;
+    var fresh = fitKey === selectionKey(s);
+    if (!none && !fresh && !fitTimer && fitPending !== selectionKey(s)) scheduleFit();
+    line.className = "fitline";
+    if (none) {
+      line.textContent = "Nothing selected. Tick carts and ROMs to build a set.";
+      line.classList.add("meta");
+    } else if (!fit || !fresh) {
+      line.textContent = plural(carts.length, "cart", "carts") + ", " + plural(roms.length, "ROM", "ROMs") + ": checking the fit...";
+      line.classList.add("meta");
+    } else if (fit.error) {
+      line.textContent = fit.error;
+      line.classList.add("warn");
+    } else {
+      var txt = plural(carts.length, "cart", "carts") + ", " + plural(roms.length, "ROM", "ROMs") + ": " +
+        kbPlain(fit.bytes) + " of " + kbPlain(fit.bytes_capacity) + ", " +
+        fit.entries + " of " + fit.entries_capacity + " entries";
+      if (!fit.fits) txt += ". Does not fit: " + (fit.why || []).join("; ");
+      line.textContent = txt;
+      if (!fit.fits) line.classList.add("warn");
+    }
+    var ok = !none && fresh && fit && !fit.error && fit.fits;
+    var present = s.badge && s.badge.present;
+    var dep = $("deploy-sel");
+    dep.disabled = !ok || !present || s.busy;
+    dep.title = present ? "" : "Plug the badge in first";
+    if (dep.disabled) disarmDeploy();
+    $("save-sel").disabled = none || s.busy;
+  }
+
+  function renderShare(s) {
+    var sh = s.share || {};
+    var on = !!(s.qr && sh.url);
+    $("share").classList.toggle("hidden", !on);
+    if (!on) { shareKey = null; return; }
+    var key = sh.url + "|" + (sh.ssid || "") + "|" + (sh.password || "");
+    if (key === shareKey) return;
+    shareKey = key;
+    var bust = "?v=" + Date.now();
+    $("share-url").textContent = sh.url;
+    $("qr-page").src = "/qr/page.svg" + bust;
+    var wifi = !!sh.ssid;
+    $("share-wifi").classList.toggle("hidden", !wifi);
+    if (wifi) {
+      $("share-ssid").textContent = sh.ssid;
+      $("share-pass").textContent = sh.password || "(none)";
+      $("qr-wifi").src = "/qr/wifi.svg" + bust;
+    }
+  }
+
+  function renderLog(s, first) {
     var pre = $("log");
     var atBottom = pre.scrollHeight - pre.scrollTop - pre.clientHeight < 24;
     var lines = (s.log || []).slice(-30).map(function (l) {
@@ -245,18 +511,20 @@ footer { color: var(--muted); font-size: 0.85rem; text-align: center; margin-top
     var text = lines.join("\n");
     if (pre.textContent !== text) {
       pre.textContent = text;
-      if (atBottom || !state) pre.scrollTop = pre.scrollHeight;
+      if (atBottom || first) pre.scrollTop = pre.scrollHeight;
     }
   }
 
   function render(s) {
+    var first = !state;
+    state = s;
     renderNet(s);
     renderBadge(s);
     renderSets(s);
     renderLibrary(s);
-    renderLog(s);
-    state = s;
-    if (s.busy) disarmWipe();
+    renderShare(s);
+    renderLog(s, first);
+    if (s.busy) { disarmWipe(); disarmDeploy(); }
   }
 
   function request(method, url, body, cb) {
@@ -288,12 +556,11 @@ footer { color: var(--muted); font-size: 0.85rem; text-align: center; margin-top
     });
   }
 
-  function act(url, body) {
+  function act(url, body, onok) {
     showError("");
     request("POST", url, body || {}, function (code, data) {
-      if (code === 200 && data && data.ok) return;
-      if (code === 409) showError("The station is busy. Wait for the current action to finish.");
-      else showError((data && data.error) || ("Request failed (" + (code || "no connection") + ")."));
+      if (code === 200 && data && data.ok) { if (onok) onok(data); return; }
+      showError(failText(code, data));
     });
   }
 
@@ -317,6 +584,46 @@ footer { color: var(--muted); font-size: 0.85rem; text-align: center; margin-top
   });
   $("sync").addEventListener("click", function () { act("/api/sync"); });
 
+  function disarmDeploy() {
+    if (deployArmed) clearTimeout(deployArmed);
+    deployArmed = null;
+    var b = $("deploy-sel");
+    b.classList.remove("armed");
+    b.textContent = "Deploy selection";
+  }
+  $("deploy-sel").addEventListener("click", function () {
+    var b = $("deploy-sel");
+    if (!deployArmed) {
+      b.classList.add("armed");
+      b.textContent = "Tap again: wipe and deploy";
+      deployArmed = setTimeout(disarmDeploy, 4000);
+      return;
+    }
+    disarmDeploy();
+    selMsg("");
+    act("/api/deploy", { carts: selectedList("carts"), roms: selectedList("roms") });
+  });
+
+  $("save-sel").addEventListener("click", function () {
+    var carts = selectedList("carts"), roms = selectedList("roms");
+    if (!carts.length && !roms.length) return;
+    var title = window.prompt("Name for the new set:", "");
+    if (title === null) return;
+    title = title.trim();
+    if (!title) { selMsg("A set needs a name.", true); return; }
+    selMsg("Saving " + title + "...");
+    request("POST", "/api/sets", { title: title, carts: carts, roms: roms }, function (code, data) {
+      if (code === 200 && data && data.ok) {
+        selected = { carts: {}, roms: {} };
+        fit = null;
+        selMsg("Saved “" + title + "”. It is in Sets now.");
+        if (state) renderLibrary(state);
+      } else {
+        selMsg("Could not save: " + failText(code, data), true);
+      }
+    });
+  });
+
   $("upload").addEventListener("change", function () {
     var input = this, file = input.files && input.files[0];
     if (!file) return;
@@ -338,7 +645,7 @@ footer { color: var(--muted); font-size: 0.85rem; text-align: center; margin-top
       var data = null;
       try { data = JSON.parse(x.responseText); } catch (e) { data = null; }
       msg.textContent = x.status === 200 ? "Added " + file.name + " to the library." :
-        "Upload failed: " + ((data && data.error) || x.status);
+        "Upload failed: " + (x.status === 409 ? "the station is busy, try again in a moment." : ((data && data.error) || x.status));
       done();
     };
     x.onerror = function () { msg.textContent = "Upload failed: no connection."; done(); };

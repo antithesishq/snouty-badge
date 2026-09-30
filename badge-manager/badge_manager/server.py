@@ -1,4 +1,4 @@
-"""JSON API and the phone page for the badge station (PLAN.md section 2).
+"""JSON API and the phone page for the badge station (PLAN.md sections 2 and 8).
 
     python3 -m badge_manager.server [--config PATH] [--port N]
                                     [--fake-badge PATH] [--demo]
@@ -8,15 +8,39 @@ station.poll() once a second, one worker thread per action so a request
 returns at once. --demo (or BADGE_STATION_DEMO=1) serves DemoStation, a fake
 that honours the status contract in badge_manager/__init__.py; it is also
 the fallback when the real Station cannot be imported or constructed.
+
+Routes:
+  GET  /, /index.html, /static/<name>      the page (www/)
+  GET  /api/status[?since=N&wait=S]        Station.status() + "seq" + "qr" (bool)
+  GET  /api/log?n=N                        {"log": [...]}
+  POST /api/deploy  {"set": key} | {"carts": [...], "roms": [...]}   action
+  POST /api/wipe, /api/sync                action
+  POST /api/upload  multipart, or the raw file with X-Filename       edit
+  POST /api/fit     {"carts": [...], "roms": [...]}
+                    -> {bytes, entries, bytes_capacity, entries_capacity,
+                        fits, why, files}
+  POST /api/sets    {"key"?, "title", "carts", "roms"}
+                    -> {"ok": true, "key": key, "set": <status set JSON>}  edit
+  DELETE /api/sets/<key>                   -> {"ok": true}                  edit
+  POST /api/cart-mode {"cart": key, "mode": "ram"|"xip"}
+                    -> {"ok": true, "cart": <status cart JSON>}           edit
+  GET  /qr/page.svg, /qr/wifi.svg          QR codes from qrencode (404 without it)
+  captive-portal probes and foreign Host headers redirect to the page.
+
+Actions return {"ok": true} at once and run in a worker thread. Actions and
+edits answer 409 while another action runs (a deploy must never race a
+manifest rewrite), 400 with {"ok": false, "error"} on bad input.
 """
 from __future__ import annotations
 
 import argparse
+import fnmatch
 import json
 import logging
 import os
 import re
 import shutil
+import subprocess
 import sys
 import tempfile
 import threading
@@ -58,53 +82,211 @@ class DemoBusy(Exception):
     pass
 
 
+class _DemoSet:
+    """Stands in for library.CartSet: key, title, carts, roms."""
+
+    def __init__(self, key: str, title: str, carts: list[str], roms: list[str]):
+        self.key, self.title, self.carts, self.roms = key, title, list(carts), list(roms)
+
+
+def _demo_entries(name: str) -> int:
+    up = name.upper() == name and re.fullmatch(r"[A-Z0-9_-]{1,8}(\.[A-Z0-9]{1,3})?", name)
+    return 1 if up else 1 + -(-len(name) // 13)
+
+
+def _demo_short(name: str, taken: set[str]) -> str:
+    stem, ext = os.path.splitext(name)
+    base = re.sub(r"[^A-Z0-9]", "", stem.upper())[:8] or "ROM"
+    ext = re.sub(r"[^A-Z0-9]", "", ext.upper())[:3]
+    short, n = base + ("." + ext if ext else ""), 1
+    while short in taken:
+        tail = f"~{n}"
+        short = base[:8 - len(tail)] + tail + ("." + ext if ext else "")
+        n += 1
+    return short
+
+
 class _DemoLibrary:
-    """Just enough of Library for the page: to_json() and add_rom()."""
+    """Enough of Library for the page: to_json(), selection(), fit_json(), add_rom(),
+    save_set(), delete_set(), set_cart_mode(), with the M1 cart variants and ROM globs."""
+
+    VOLUME = 1280 * 1024 - 8 * 512
+    ENTRIES = 31
 
     def __init__(self, root: Path):
         self.root = root
-        self.carts = [
-            {"key": "snouty", "title": "Snouty Run", "size": 315392, "mode": "ram"},
-            {"key": "snouty-bugs", "title": "Snouty Bughunt", "size": 154624, "mode": "ram"},
-            {"key": "snoutenstein", "title": "Snoutenstein 3D", "size": 385024, "mode": "ram"},
-            {"key": "snouty-gear", "title": "Snouty Gear", "size": 357376, "mode": "ram"},
-        ]
-        self.roms = [
-            {"key": "sonic", "title": "Sonic GG", "size": 262144, "short": "SONIC.GG"},
-        ]
+        self.lock = threading.RLock()
+
+        def v(file, size):
+            return {"file": file, "size": size, "ok": True, "error": ""}
+        self.carts = {
+            "snouty": {"title": "Snouty Run", "use": "ram", "roms": [],
+                       "variants": {"ram": v("snouty.uf2", 315392),
+                                    "xip": v("snouty-xip.uf2", 331776)}},
+            "snouty-bugs": {"title": "Snouty Bughunt", "use": "ram", "roms": [],
+                            "variants": {"ram": v("snouty-bugs.uf2", 154624)}},
+            "snoutenstein": {"title": "Snoutenstein 3D", "use": "ram", "roms": [],
+                             "variants": {"ram": v("snoutenstein.uf2", 385024)}},
+            "snouty-gear": {"title": "Snouty Gear", "use": "ram", "roms": [".gg", ".sms"],
+                            "variants": {"ram": v("snouty-gear.uf2", 357376),
+                                         "xip": v("snouty-gear-xip.uf2", 372736)}},
+            "snouty-genesis": {"title": "Snouty Genesis", "use": "xip", "roms": [".md", ".bin"],
+                               "variants": {"xip": v("snouty-genesis-xip.uf2", 290816)}},
+        }
+        self.roms = {
+            "sonic": {"title": "Sonic GG", "file": "Sonic The Hedgehog (World).gg",
+                      "size": 262144, "short": "SONIC.GG"},
+        }
+        self.sets = {
+            "demo": {"title": "Demo reel", "carts": ["snouty", "snouty-bugs", "snoutenstein"],
+                     "roms": []},
+            "gear": {"title": "Game Gear", "carts": ["snouty-gear", "snouty-bugs", "snouty",
+                                                     "snoutenstein"], "roms": ["*.gg"]},
+            "genesis": {"title": "Genesis (XIP)", "carts": ["snouty-genesis", "snouty-bugs"],
+                        "roms": ["*.md"]},
+        }
+
+    # -- lookups
+
+    def _cart_json(self, key: str) -> dict:
+        c = self.carts[key]
+        var = c["variants"][c["use"]]
+        return {"key": key, "title": c["title"], "use": c["use"], "mode": c["use"],
+                "file": var["file"], "size": var["size"],
+                "variants": {k: dict(x) for k, x in c["variants"].items()},
+                "roms": list(c["roms"]), "ok": True, "error": "", "auto": False}
+
+    def _rom_keys(self, pattern: str) -> list[str]:
+        if pattern in self.roms:
+            return [pattern]
+        pat = pattern.lower()
+        return [k for k, r in self.roms.items()
+                if fnmatch.fnmatchcase(r["file"].lower(), pat) or fnmatch.fnmatchcase(k, pat)]
+
+    def selection(self, carts: list[str], roms: list[str]) -> _DemoSet:
+        bad = [k for k in carts if k not in self.carts]
+        bad += [k for k in roms if not self._rom_keys(k) and not any(ch in k for ch in "*?[")]
+        if bad:
+            raise ValueError("not in the library: " + ", ".join(bad))
+        return _DemoSet("selection", "Selection", carts, roms)
+
+    def _target(self, target) -> _DemoSet:
+        if isinstance(target, str):
+            if target not in self.sets:
+                raise KeyError(f"no set called {target!r}")
+            s = self.sets[target]
+            return _DemoSet(target, s["title"], s["carts"], s["roms"])
+        return target
+
+    def plan(self, target) -> list[tuple[str, int]]:
+        s = self._target(target)
+        items = []
+        for k in s.carts:
+            c = self.carts.get(k)
+            if c:
+                var = c["variants"][c["use"]]
+                items.append((var["file"], var["size"]))
+        seen: set[str] = set()
+        for pat in s.roms:
+            for k in self._rom_keys(pat):
+                if k not in seen:
+                    seen.add(k)
+                    items.append((self.roms[k]["short"], self.roms[k]["size"]))
+        return items
+
+    def fit_json(self, target, geom=None) -> dict:
+        s = self._target(target)
+        items = self.plan(s)
+        nbytes = sum(-(-size // 512) * 512 for _, size in items)
+        entries = sum(_demo_entries(n) for n, _ in items)
+        why = [f"cart {k!r} is not in the library" for k in s.carts if k not in self.carts]
+        if nbytes > self.VOLUME:
+            why.append(f"{nbytes // 1024} KB is more than the {self.VOLUME // 1024} KB "
+                       "the drive holds")
+        if entries > self.ENTRIES:
+            why.append(f"{entries} root entries, the drive has {self.ENTRIES}")
+        return {"bytes": nbytes, "entries": entries, "bytes_capacity": self.VOLUME,
+                "entries_capacity": self.ENTRIES, "fits": not why, "why": why,
+                "files": [n for n, _ in items]}
+
+    def fit(self, target, geom=None) -> dict:
+        return self.fit_json(target, geom)
+
+    # -- edits
 
     def add_rom(self, path: Path, title: str | None = None) -> str:
         (self.root / "roms").mkdir(parents=True, exist_ok=True)
         dest = self.root / "roms" / path.name
         shutil.copyfile(path, dest)
         key = re.sub(r"[^a-z0-9]+", "-", path.stem.lower()).strip("-") or "rom"
-        self.roms = [r for r in self.roms if r["key"] != key]
-        self.roms.append({"key": key, "title": title or path.stem,
-                          "size": dest.stat().st_size, "short": ""})
+        with self.lock:
+            self.roms.pop(key, None)
+            taken = {r["short"] for r in self.roms.values()}
+            self.roms[key] = {"title": title or path.stem, "file": path.name,
+                              "size": dest.stat().st_size, "short": _demo_short(path.name, taken)}
         return key
 
+    def save_set(self, title: str, carts: list[str], roms: list[str],
+                 key: str | None = None) -> _DemoSet:
+        title = (title or "").strip()
+        if not title:
+            raise ValueError("a set needs a title")
+        if not carts and not roms:
+            raise ValueError("a set needs at least one cart or ROM")
+        self.selection(carts, roms)          # validates the keys
+        key = key or re.sub(r"[^a-z0-9]+", "-", title.lower()).strip("-") or "set"
+        with self.lock:
+            self.sets[key] = {"title": title, "carts": list(carts), "roms": list(roms)}
+        return _DemoSet(key, title, carts, roms)
+
+    def delete_set(self, key: str) -> None:
+        with self.lock:
+            if key not in self.sets:
+                raise KeyError(f"no set called {key!r}")
+            del self.sets[key]
+
+    def set_cart_mode(self, key: str, mode: str) -> dict:
+        c = self.carts.get(key)
+        if c is None:
+            raise KeyError(f"no cart called {key!r}")
+        if mode not in c["variants"]:
+            raise ValueError(f"{c['title']} has no {mode.upper()} variant")
+        c["use"] = mode
+        return self._cart_json(key)
+
+    # -- JSON
+
+    def sets_json(self) -> list[dict]:
+        out = []
+        for k, s in list(self.sets.items()):
+            f = self.fit_json(k)
+            out.append({"name": k, "title": s["title"], "bytes": f["bytes"],
+                        "entries": f["entries"], "bytes_capacity": f["bytes_capacity"],
+                        "entries_capacity": f["entries_capacity"], "fits": f["fits"],
+                        "why": f["why"], "carts": list(s["carts"]), "roms": list(s["roms"]),
+                        "files": f["files"]})
+        return out
+
     def to_json(self) -> dict:
-        return {"carts": list(self.carts), "roms": list(self.roms)}
+        carts = [self._cart_json(k) for k in self.carts]
+        roms = [{"key": k, "title": r["title"], "file": r["file"], "short": r["short"],
+                 "size": r["size"], "ok": True, "error": "", "auto": False}
+                for k, r in self.roms.items()]
+        return {"carts": carts, "roms": roms, "error": ""}
 
 
 class DemoStation:
-    """Fakes the Station contract: the badge plugs in 3 s after start, two
-    sets (one does not fit), deploy takes 2 s and ends ejected; unplugging
+    """Fakes the Station contract: the badge plugs in 3 s after start, three
+    sets (one does not fit), deploy takes about 2 s and ends ejected; unplugging
     is simulated 6 s after the eject and a re-plug 4 s after that."""
 
-    SETS = {
-        "demo": ("Demo reel", ["snouty.uf2", "snouty-bugs.uf2", "snoutenstein.uf2"]),
-        "gear": ("Game Gear Sonic", ["snouty-gear.uf2", "snouty-bugs.uf2", "snouty.uf2",
-                                     "snoutenstein.uf2", "SONIC.GG"]),
-    }
-    VOLUME = 1280 * 1024 - 8 * 512
-
-    def __init__(self, library_root: Path | None = None):
+    def __init__(self, library_root: Path | None = None, step: float = 0.4):
         self._cond = threading.Condition()
         self._lock = threading.Lock()
         self._seq = 0
         self._log: list[dict] = []
         self._start = time.monotonic()
+        self._step = step
         self._present = False
         self._ejected_at: float | None = None
         self._unplugged_at: float | None = None
@@ -113,11 +295,6 @@ class DemoStation:
         root = library_root or Path(tempfile.mkdtemp(prefix="badge-demo-lib-"))
         self.library = _DemoLibrary(root)
         self.log("Demo station started. The badge plugs itself in after 3 s.")
-
-    def _sizes(self) -> dict[str, int]:
-        sizes = {c["key"] + ".uf2": c["size"] for c in self.library.carts}
-        sizes.update({r["short"]: r["size"] for r in self.library.roms if r["short"]})
-        return sizes
 
     def _bump(self) -> None:
         with self._cond:
@@ -150,25 +327,23 @@ class DemoStation:
             self._files = [{"name": "snouty.uf2", "size": 315392}]
         self.log("Badge found on /dev/sda, mounted.")
 
-    def _entries(self, name: str) -> int:
-        up = name.upper() == name and re.fullmatch(r"[A-Z0-9_-]{1,8}(\.[A-Z0-9]{1,3})?", name)
-        return 1 if up else 1 + -(-len(name) // 13)
+    def _file_json(self, f: dict) -> dict:
+        lib = self.library
+        name = f["name"].lower()
+        for k, c in lib.carts.items():
+            if any(v["file"].lower() == name for v in c["variants"].values()):
+                return {**f, "title": c["title"], "kind": "cart"}
+        for r in lib.roms.values():
+            if r["short"].lower() == name or r["file"].lower() == name:
+                return {**f, "title": r["title"], "kind": "rom"}
+        return {**f, "title": f["name"], "kind": "other"}
 
-    def _set_json(self, key: str) -> dict:
-        title, names = self.SETS[key]
-        sizes = self._sizes()
-        nbytes = sum(-(-sizes.get(n, 0) // 512) * 512 for n in names)
-        entries = sum(self._entries(n) for n in names)
-        why = []
-        if nbytes > self.VOLUME:
-            why.append(f"{nbytes // 1024} KB is more than the {self.VOLUME // 1024} KB the drive holds")
-        if entries > 31:
-            why.append(f"{entries} root entries, the drive has 31")
-        return {"name": key, "title": title, "bytes": nbytes, "entries": entries,
-                "fits": not why, "why": why}
+    def share(self) -> dict:
+        return {"url": "http://10.42.0.1/", "ssid": "snouty-badge", "password": "snoutysnouty"}
 
     def status(self) -> dict:
         present = self._present
+        on_drive = self._files if present or self._ejected_at is not None else []
         used = sum(-(-f["size"] // 512) * 512 for f in self._files)
         note = ""
         if self._ejected_at is not None:
@@ -178,16 +353,24 @@ class DemoStation:
         with self._cond:
             logs = list(self._log)
             seq = self._seq
+        with self.library.lock:
+            sets = self.library.sets_json()
+            library = self.library.to_json()
+        names = sorted(f["name"].lower() for f in on_drive)
+        badge_set = next((s["name"] for s in sets
+                          if names and sorted(n.lower() for n in s["files"]) == names), None)
         return {
             "seq": seq,
+            "log_seq": seq,
             "badge": {
                 "present": present,
                 "device": "/dev/sda" if present else None,
                 "mounted": present,
                 "ejected": self._ejected_at is not None,
-                "files": list(self._files) if present else [],
-                "free_bytes": self.VOLUME - used if present else None,
-                "free_entries": 31 - sum(self._entries(f["name"]) for f in self._files)
+                "files": [self._file_json(f) for f in on_drive],
+                "set": badge_set,
+                "free_bytes": _DemoLibrary.VOLUME - used if present else None,
+                "free_entries": 31 - sum(_demo_entries(f["name"]) for f in self._files)
                 if present else None,
                 "note": note,
             },
@@ -195,9 +378,10 @@ class DemoStation:
             "action": self.action,
             "network": {"mode": "ap", "ssid": "snouty-badge", "address": "10.42.0.1",
                         "internet": False},
+            "share": self.share(),
             "build": {"local": False, "remote": "exedev@animated-badge.exe.xyz"},
-            "sets": [self._set_json(k) for k in self.SETS],
-            "library": self.library.to_json(),
+            "sets": sets,
+            "library": library,
             "log": logs,
         }
 
@@ -213,38 +397,50 @@ class DemoStation:
             self._lock.release()
             self._bump()
 
-    def deploy(self, set_key: str) -> None:
-        if set_key not in self.SETS:
-            raise KeyError(set_key)
+    def _edit(self, fn, *args):
+        if not self._lock.acquire(blocking=False):
+            raise DemoBusy(self.action or "busy")
+        try:
+            out = fn(*args)
+        finally:
+            self._lock.release()
+        self._bump()
+        return out
+
+    def deploy(self, target) -> None:
+        lib = self.library
+        if isinstance(target, dict):
+            target = lib.selection(target.get("carts", []), target.get("roms", []))
+        cs = lib._target(target)
+        label = cs.key if isinstance(target, str) else "selection"
 
         def go():
             if not self._present:
                 self.log("No badge plugged in.")
                 return
-            s = self._set_json(set_key)
-            if not s["fits"]:
-                self.log(f"Set {set_key} does not fit: " + "; ".join(s["why"]))
+            f = lib.fit_json(cs)
+            if not f["fits"]:
+                self.log(f"{cs.title} does not fit: " + "; ".join(f["why"]))
                 return
-            sizes = self._sizes()
-            self.log(f"Deploy {s['title']}: wiping the drive.")
+            self.log(f"Deploy {cs.title}: wiping the drive.")
             self._files = []
-            time.sleep(0.4)
-            for name in self.SETS[set_key][1]:
-                time.sleep(0.4)
-                self._files.append({"name": name, "size": sizes.get(name, 0)})
+            time.sleep(self._step)
+            for name, size in lib.plan(cs):
+                time.sleep(self._step)
+                self._files.append({"name": name, "size": size})
                 self.log(f"Copied {name}.")
-            time.sleep(0.2)
+            time.sleep(self._step / 2)
             self.log("Synced, unmounted, ejected. Unplug the badge.")
             self._present = False
             self._ejected_at = time.monotonic()
-        self._run(f"deploy {set_key}", go)
+        self._run(f"deploy {label}", go)
 
     def wipe(self) -> None:
         def go():
             if not self._present:
                 self.log("No badge plugged in.")
                 return
-            time.sleep(0.5)
+            time.sleep(self._step)
             self._files = []
             self.log("Wiped the drive.")
         self._run("wipe", go)
@@ -252,9 +448,23 @@ class DemoStation:
     def sync(self) -> None:
         def go():
             self.log("Sync: rsync from exedev@animated-badge.exe.xyz (demo, nothing copied).")
-            time.sleep(1.0)
+            time.sleep(self._step * 2)
             self.log("Sync done, 0 files changed.")
         self._run("sync", go)
+
+    def save_set(self, title: str, carts: list[str], roms: list[str], key: str | None = None):
+        cs = self._edit(self.library.save_set, title, carts, roms, key)
+        self.log(f"Saved set {cs.title} ({cs.key}).")
+        return cs
+
+    def delete_set(self, key: str) -> None:
+        self._edit(self.library.delete_set, key)
+        self.log(f"Removed set {key}.")
+
+    def set_cart_mode(self, key: str, mode: str) -> dict:
+        cart = self._edit(self.library.set_cart_mode, key, mode)
+        self.log(f"{cart['title']} deploys its {mode.upper()} variant now.")
+        return cart
 
     def wait_for_change(self, since: int, timeout: float) -> int:
         with self._cond:
@@ -298,6 +508,54 @@ def current_seq(station) -> int:
     return station.wait_for_change(-1, 0)
 
 
+def _edit_errors() -> tuple[type, ...]:
+    """Bad input to an edit (unknown key, empty title): a 400."""
+    types: list[type] = [ValueError, KeyError]
+    for mod, name in ((".library", "LibraryError"), (".station", "StationError")):
+        try:
+            types.append(getattr(__import__(f"badge_manager{mod}", fromlist=[name]), name))
+        except Exception:
+            pass
+    return tuple(types)
+
+
+def _message(e: Exception) -> str:
+    if isinstance(e, KeyError) and e.args:
+        return str(e.args[0])
+    return str(e) or type(e).__name__
+
+
+def badge_geometry(station):
+    """The plugged badge's geometry, else None (the library then uses the badge default)."""
+    badge = getattr(station, "_badge", None)
+    if badge is None:
+        return None
+    try:
+        return badge.geometry()
+    except Exception:
+        return None
+
+
+def wifi_qr_text(ssid: str, password: str) -> str:
+    """The Wi-Fi QR payload both camera apps read (WPA, special characters escaped)."""
+    def esc(v: str) -> str:
+        return re.sub(r'([\\;,:"])', r"\\\1", v)
+    return f"WIFI:T:WPA;S:{esc(ssid)};P:{esc(password)};;"
+
+
+def qr_svg(text: str) -> bytes | None:
+    """TEXT as an SVG QR code from qrencode, None when qrencode is missing or fails."""
+    exe = shutil.which("qrencode")
+    if not exe:
+        return None
+    try:
+        r = subprocess.run([exe, "-t", "SVG", "-o", "-", "-m", "1", text],
+                           capture_output=True, timeout=5)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return r.stdout if r.returncode == 0 and r.stdout else None
+
+
 class App:
     """Everything the handler needs, shared across request threads."""
 
@@ -306,8 +564,57 @@ class App:
         self.www = www
         self.busy_types = _busy_types(station)
         self.expected_errors = _expected_errors()
+        self.edit_errors = _edit_errors()
+        self.qr = shutil.which("qrencode") is not None
         self._action_lock = threading.Lock()
         self._stop = threading.Event()
+
+    def edit(self, fn, *args):
+        """Run a manifest edit in the request thread, never while an action runs."""
+        if self.station.status().get("busy") or not self._action_lock.acquire(blocking=False):
+            raise ApiError(409, "busy")
+        try:
+            return fn(*args)
+        except self.busy_types:
+            raise ApiError(409, "busy")
+        except self.edit_errors as e:
+            raise ApiError(400, _message(e))
+        finally:
+            self._action_lock.release()
+
+    def share(self) -> dict:
+        fn = getattr(self.station, "share", None)
+        if callable(fn):
+            return fn() or {}
+        return self.station.status().get("share") or {}
+
+    @property
+    def library(self):
+        lib = getattr(self.station, "library", None)
+        if lib is None:
+            raise ApiError(503, "the library is not available")
+        return lib
+
+    def selection(self, body: dict):
+        """{"carts", "roms"} -> a CartSet from library.selection(); 400 on bad keys."""
+        carts, roms = body.get("carts", []), body.get("roms", [])
+        for name, v in (("carts", carts), ("roms", roms)):
+            if not isinstance(v, list) or not all(isinstance(x, str) and x for x in v):
+                raise ApiError(400, f"{name} must be a list of keys")
+        lib = self.status_library()
+        known_carts = {c.get("key") for c in lib.get("carts", [])}
+        known_roms = {r.get("key") for r in lib.get("roms", [])}
+        bad = [k for k in carts if k not in known_carts]
+        bad += [k for k in roms if k not in known_roms and not any(ch in k for ch in "*?[")]
+        if bad:
+            raise ApiError(400, "not in the library: " + ", ".join(bad))
+        try:
+            return self.library.selection(carts, roms)
+        except self.edit_errors as e:
+            raise ApiError(400, _message(e))
+
+    def status_library(self) -> dict:
+        return self.station.status().get("library") or {}
 
     # Actions: validated in the request thread, run in a worker thread.
     def start(self, name: str, fn, *args) -> None:
@@ -406,9 +713,13 @@ class Handler(BaseHTTPRequestHandler):
 
     @staticmethod
     def _route_name(path: str) -> str | None:
+        if path.startswith("/api/sets/") and len(path) > len("/api/sets/"):
+            return "set_item"
         return {"/": "index", "/index.html": "index", "/api/status": "status",
                 "/api/log": "log", "/api/deploy": "deploy", "/api/wipe": "wipe",
-                "/api/sync": "sync", "/api/upload": "upload"}.get(path)
+                "/api/sync": "sync", "/api/upload": "upload", "/api/fit": "fit",
+                "/api/sets": "sets", "/api/cart-mode": "cart_mode",
+                "/qr/page.svg": "qr_page", "/qr/wifi.svg": "qr_wifi"}.get(path)
 
     def _foreign_host(self) -> bool:
         host = (self.headers.get("Host") or "").strip().lower()
@@ -507,6 +818,7 @@ class Handler(BaseHTTPRequestHandler):
             seq = current_seq(station)
         st = station.status()
         st["seq"] = st.get("log_seq", seq)
+        st["qr"] = self.app.qr
         self._json(200, st)
 
     def _get_log(self, query):
@@ -516,18 +828,90 @@ class Handler(BaseHTTPRequestHandler):
             raise ApiError(400, "n must be a number")
         self._json(200, {"log": self.app.station.status().get("log", [])[-n:]})
 
+    def _get_qr_page(self, query):
+        self._qr(self.app.share().get("url"))
+
+    def _get_qr_wifi(self, query):
+        share = self.app.share()
+        ssid, password = share.get("ssid"), share.get("password")
+        self._qr(wifi_qr_text(ssid, password or "") if ssid else None)
+
+    def _qr(self, text: str | None):
+        if not self.app.qr:
+            raise ApiError(404, "qrencode is not installed")
+        if not text:
+            raise ApiError(404, "nothing to share")
+        svg = qr_svg(text)
+        if svg is None:
+            raise ApiError(404, "qrencode failed")
+        self._send(200, svg, "image/svg+xml")
+
     # -------------------------------------------------------- POST routes
 
     def _post_deploy(self, query):
         body = self._read_json()
-        key = body.get("set")
-        if not isinstance(key, str) or not key:
-            raise ApiError(400, "missing set")
-        names = {s.get("name") for s in self.app.station.status().get("sets", [])}
-        if key not in names:
-            raise ApiError(400, f"unknown set {key}")
-        self.app.start(f"deploy {key}", self.app.station.deploy, key)
+        if "set" in body:
+            key = body.get("set")
+            if not isinstance(key, str) or not key:
+                raise ApiError(400, "set must be a set key")
+            names = {s.get("name") for s in self.app.station.status().get("sets", [])}
+            if key not in names:
+                raise ApiError(400, f"unknown set {key}")
+            self.app.start(f"deploy {key}", self.app.station.deploy, key)
+        elif "carts" in body or "roms" in body:
+            cart_set = self.app.selection(body)
+            if not cart_set.carts and not cart_set.roms:
+                raise ApiError(400, "nothing selected")
+            self.app.start("deploy selection", self.app.station.deploy, cart_set)
+        else:
+            raise ApiError(400, "missing set (or carts and roms)")
         self._json(200, {"ok": True})
+
+    def _post_fit(self, query):
+        body = self._read_json()
+        cart_set = self.app.selection(body)
+        try:
+            rep = self.app.library.fit_json(cart_set, badge_geometry(self.app.station))
+        except self.app.edit_errors as e:
+            raise ApiError(400, _message(e))
+        self._json(200, rep)
+
+    def _post_sets(self, query):
+        body = self._read_json()
+        title, key = body.get("title"), body.get("key")
+        carts, roms = body.get("carts", []), body.get("roms", [])
+        if not isinstance(title, str) or not title.strip():
+            raise ApiError(400, "a set needs a title")
+        if key is not None and (not isinstance(key, str) or not key):
+            raise ApiError(400, "key must be a string")
+        for name, v in (("carts", carts), ("roms", roms)):
+            if not isinstance(v, list) or not all(isinstance(x, str) and x for x in v):
+                raise ApiError(400, f"{name} must be a list of keys")
+        cs = self.app.edit(self.app.station.save_set, title.strip(), carts, roms, key)
+        key = getattr(cs, "key", None) or key
+        sets = self.app.station.status().get("sets", [])
+        self._json(200, {"ok": True, "key": key,
+                         "set": next((s for s in sets if s.get("name") == key), None)})
+
+    def _delete_set_item(self, query):
+        self._drain()
+        key = unquote(urlsplit(self.path).path[len("/api/sets/"):])
+        if not key or "/" in key:
+            raise ApiError(400, "bad set key")
+        self.app.edit(self.app.station.delete_set, key)
+        self._json(200, {"ok": True})
+
+    def _post_cart_mode(self, query):
+        body = self._read_json()
+        cart, mode = body.get("cart"), body.get("mode")
+        if not isinstance(cart, str) or not cart:
+            raise ApiError(400, "missing cart")
+        if mode not in ("ram", "xip"):
+            raise ApiError(400, "mode must be ram or xip")
+        self.app.edit(self.app.station.set_cart_mode, cart, mode)
+        carts = self.app.status_library().get("carts", [])
+        self._json(200, {"ok": True,
+                         "cart": next((c for c in carts if c.get("key") == cart), None)})
 
     def _post_wipe(self, query):
         self._read_json()
@@ -540,6 +924,8 @@ class Handler(BaseHTTPRequestHandler):
         self._json(200, {"ok": True})
 
     def _post_upload(self, query):
+        if self.app.station.status().get("busy") or self.app._action_lock.locked():
+            raise ApiError(409, "busy")
         ctype = self.headers.get("Content-Type", "")
         n = self._length(MAX_UPLOAD + 64 * 1024)
         if ctype.startswith("multipart/form-data"):
@@ -574,7 +960,7 @@ class Handler(BaseHTTPRequestHandler):
             path = Path(tmp) / name
             path.write_bytes(data)
             try:
-                rom = library.add_rom(path)
+                rom = self.app.edit(library.add_rom, path)
             except (ValueError, OSError, _library_error()) as e:
                 raise ApiError(400, str(e))
         key = rom if isinstance(rom, str) else getattr(rom, "key", None)
