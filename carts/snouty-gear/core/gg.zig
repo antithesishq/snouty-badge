@@ -15,6 +15,8 @@ pub const bus = @import("bus.zig");
 pub const vdp = @import("vdp.zig");
 pub const psg = @import("psg.zig");
 pub const rom = @import("rom.zig");
+pub const ring = @import("ring.zig");
+pub const kstore = @import("kstore.zig");
 
 pub const Rom = rom.Rom;
 pub const LineSink = vdp.LineSink;
@@ -177,6 +179,50 @@ pub const Gg = struct {
 
     // ---- Keyframes (SPEC.md section 10) ----
 
+    /// The console state that is neither RAM, VRAM nor cart RAM, packed for
+    /// the page store (`kstore`): CPU, mapper, memory/IO control, the VDP
+    /// minus VRAM, PSG, pad and the frame counters. Padding is zeroed by
+    /// `save_small` so equal states compare equal byte for byte (the store
+    /// relies on that for page sharing, not for correctness). Compare two
+    /// `Small`s field by field in tests (`std.meta.eql`), never as bytes.
+    pub const Small = struct {
+        cpu: Cpu,
+        mapper: bus.Mapper,
+        mem_control: u8,
+        io_control: u8,
+        vdp: vdp.Vdp.State,
+        psg: psg.Psg,
+        pad: u8,
+        frame_count: u32,
+        irq_frame_count: u32,
+        irq_line_count: u32,
+    };
+
+    pub fn save_small(gg: *const Gg, out: *Small) void {
+        @memset(std.mem.asBytes(out), 0);
+        inline for (@typeInfo(Small).@"struct".field_names) |name| {
+            if (comptime std.mem.eql(u8, name, "vdp")) gg.vdp.save_state(&out.vdp) else @field(out, name) = @field(gg, name);
+        }
+    }
+
+    /// Apply a `Small`; the caller has already written RAM, VRAM and cart
+    /// RAM (`state_regions`). Rebuilds `read_map`, like `restore`.
+    pub fn load_small(gg: *Gg, k: *const Small) void {
+        inline for (@typeInfo(Small).@"struct".field_names) |name| {
+            if (comptime std.mem.eql(u8, name, "vdp")) gg.vdp.load_state(&k.vdp) else @field(gg, name) = @field(k, name);
+        }
+        gg.frame_t = 0;
+        gg.sync_map();
+    }
+
+    /// The console state as byte regions for the page store, in a fixed
+    /// order: the packed `small` (caller-owned, filled by `save_small`
+    /// before a snapshot and applied with `load_small` after a restore),
+    /// RAM, VRAM, cart RAM. `kstore.region_count` regions.
+    pub fn state_regions(gg: *Gg, small: *Small) [kstore.region_count][]u8 {
+        return .{ std.mem.asBytes(small), &gg.ram, &gg.vdp.vram, &gg.cart_ram };
+    }
+
     /// The console minus `rom` (immutable, not ours), `read_map` (derived),
     /// `line_sink` and `console_sink` (not console state) and `frame_t`
     /// (diagnostic). M2 replaces this full copy with deltas; the shape
@@ -229,6 +275,30 @@ pub const Gg = struct {
         gg.sync_map();
     }
 };
+
+test "small state round trip through state_regions" {
+    const data: [0x8000]u8 = @splat(0);
+    var gg = Gg.init(Rom.from_slice(&data));
+    gg.step_frame(Pad.right);
+    gg.vdp.vram[0x123] = 0x45;
+    var small: Gg.Small = undefined;
+    gg.save_small(&small);
+    var full: Gg.Keyframe = undefined;
+    gg.snapshot(&full);
+    const src = gg.state_regions(&small);
+
+    var gg2 = Gg.init(Rom.from_slice(&data));
+    var small2: Gg.Small = undefined;
+    const dst = gg2.state_regions(&small2);
+    for (src, dst) |a, b| @memcpy(b, a);
+    gg2.load_small(&small2);
+    var full2: Gg.Keyframe = undefined;
+    gg2.snapshot(&full2);
+    inline for (@typeInfo(Gg.Keyframe).@"struct".field_names) |name| {
+        try std.testing.expect(std.meta.eql(@field(full, name), @field(full2, name)));
+    }
+    try std.testing.expectEqual(@as(u8, 0x45), gg2.vdp.vram[0x123]);
+}
 
 test "keyframe round trip" {
     const data: [0x8000]u8 = @splat(0);

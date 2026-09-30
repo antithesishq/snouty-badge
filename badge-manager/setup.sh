@@ -39,7 +39,8 @@ fi
 step "Packages"
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -q
-apt-get install -y -q python3 avahi-daemon udisks2 rsync network-manager iw git dosfstools curl xz-utils
+apt-get install -y -q python3 avahi-daemon udisks2 rsync network-manager iw git dosfstools curl xz-utils \
+    qrencode
 python3 -c 'import sys, tomllib; sys.exit(sys.version_info < (3, 11))' ||
     { echo "setup.sh: python3 3.11 or newer is required" >&2; exit 1; }
 
@@ -80,8 +81,13 @@ else
     echo "kept $ETC/station.toml"
 fi
 if [ ! -f "$LIB/manifest.toml" ]; then
-    printf '# Carts, ROMs and sets; see badge_manager/library.py.\n' > "$LIB/manifest.toml"
-    echo "created $LIB/manifest.toml"
+    if [ -f "$PREFIX/badge-manager/sets.default.toml" ]; then
+        install -m 644 "$PREFIX/badge-manager/sets.default.toml" "$LIB/manifest.toml"
+        echo "created $LIB/manifest.toml from sets.default.toml"
+    else
+        printf '# Carts, ROMs and sets; see badge_manager/library.py.\n' > "$LIB/manifest.toml"
+        echo "created an empty $LIB/manifest.toml"
+    fi
 fi
 
 step "Hostname snouty"
@@ -110,6 +116,17 @@ if [ -n "$invoker" ] && [ "$invoker" != root ] && [ -f "/home/$invoker/.ssh/auth
     chmod 600 /home/badge/.ssh/authorized_keys
     echo "copied $invoker's ssh keys to badge"
 fi
+# The station's own key for the build host (badge build over ssh, PLAN 9.8).
+# The exe.dev VM authenticates account keys, so the public key must be
+# registered once: `ssh exe.dev ssh-key add '<pubkey>'` from any logged-in shell.
+install -d -m 700 -o badge -g badge /home/badge/.ssh
+if [ ! -f /home/badge/.ssh/id_ed25519 ]; then
+    ssh-keygen -q -t ed25519 -N "" -C "badge-station@$(hostname)" -f /home/badge/.ssh/id_ed25519
+    chown badge:badge /home/badge/.ssh/id_ed25519 /home/badge/.ssh/id_ed25519.pub
+    echo "generated the station's ssh key /home/badge/.ssh/id_ed25519"
+fi
+echo "build host key to register (ssh exe.dev ssh-key add '...'):"
+echo "  $(cat /home/badge/.ssh/id_ed25519.pub)"
 cat > /usr/local/bin/badge <<EOF
 #!/bin/sh
 # The badge station command line (badge-manager/badge_manager/cli.py).
@@ -151,10 +168,15 @@ step "Services"
 install -m 644 "$PREFIX/badge-manager/systemd/badge-station.service" /etc/systemd/system/
 install -m 644 "$PREFIX/badge-manager/systemd/badge-net-watchdog.service" /etc/systemd/system/
 install -m 644 "$PREFIX/badge-manager/systemd/badge-net-watchdog.timer" /etc/systemd/system/
+install -m 644 "$PREFIX/badge-manager/systemd/badge-sync.service" /etc/systemd/system/
+install -m 644 "$PREFIX/badge-manager/systemd/badge-sync.timer" /etc/systemd/system/
 systemctl daemon-reload
-systemctl enable badge-station.service badge-net-watchdog.timer
+systemctl enable badge-station.service badge-net-watchdog.timer badge-sync.timer
+# Merge any default set or cart title missing from the manifest (never overwrites),
+# before the restart so the server starts with them.
+/usr/local/bin/badge init-sets || echo "setup.sh: badge init-sets failed, default sets not merged" >&2
 systemctl restart badge-station.service
-systemctl start badge-net-watchdog.timer
+systemctl start badge-net-watchdog.timer badge-sync.timer
 
 if [ $BUILD_TOOLS -eq 1 ]; then
     step "Build tools"
@@ -216,4 +238,6 @@ for a in $addrs; do
 done
 echo "Access point:  wifi snouty-badge, then http://10.42.0.1/"
 echo "ssh:           ssh badge@snouty.local badge status"
+echo "QR codes:      badge qr   (the page and Wi-Fi codes in the terminal, for a sticker)"
+echo "Nightly sync:  badge-sync.timer at 03:00 (systemctl list-timers badge-sync.timer)"
 echo "Config:        $ETC/station.toml (re-run net/nm-profiles.sh after editing hotspots)"

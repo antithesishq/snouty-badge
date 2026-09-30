@@ -175,11 +175,6 @@ fn FrameOf(comptime cl: Class) type {
         /// The eye is at default_height: primary water fades from the comptime
         /// table (M2.2's values), else from water.primary_fade_rt.
         fade_default: bool,
-        /// Stripes on the chrome: 2 * 3 cos a and 2 * 3 sin a, and the colour
-        /// factor by the parity of floor(2 v) (1, 1 in a preset without them).
-        stripe_c: f32 = 0.0,
-        stripe_s: f32 = 0.0,
-        stripe_factor: [2]f32 = .{ 1.0, 1.0 },
     };
 }
 
@@ -608,17 +603,10 @@ fn gate_true(comptime from: From) Extra(water_child(from)) {
     return true;
 }
 
-/// Colour of a ray `d` hitting the chrome sphere at `p`, with the stripes.
+/// Colour of a ray `d` hitting the chrome sphere at `p`.
 inline fn shade_chrome(p: Vec3, d: Vec3, comptime depth: u32, fs: anytype) Vec3 {
     const n = p - math.vec3(scene.chrome.x, fs.sc.chrome.y, scene.chrome.z); // radius 1
-    const c = shade_chrome_plain(p, d, n, depth, fs);
-    if (!scene.any_stripes) return c;
-    // 1 - 0.12 where fract(v) < 0.5, v = 3 (n.x cos a + n.z sin a): that is
-    // where floor(2 v) is even (2 v is exact), an integer test and a
-    // two-entry table instead of a float compare.
-    const v2 = n[0] * fs.stripe_c + n[2] * fs.stripe_s;
-    const k: i32 = @intFromFloat(@floor(v2));
-    return c * splat(fs.stripe_factor[@as(u32, @bitCast(k)) & 1]);
+    return shade_chrome_plain(p, d, n, depth, fs);
 }
 
 inline fn shade_chrome_plain(p: Vec3, d: Vec3, n: Vec3, comptime depth: u32, fs: anytype) Vec3 {
@@ -1438,7 +1426,7 @@ noinline fn plan_columns(cam: *const camera.Camera, fs: anytype) void {
 pub const View = struct {
     preset: scene.Preset,
     /// Scene time in frames at variant.fps: water, logo spin, bobbing, sun
-    /// drift, stripes. Stops while frozen.
+    /// drift. Stops while frozen.
     t: u32,
     /// Camera angle as an index into camera.orbit_sincos, [0, orbit_frames).
     orbit: u32,
@@ -1580,13 +1568,6 @@ noinline fn render(comptime cl: Class, view: View, cam_in: *const camera.Camera,
         water.add_ring(&fs.wf, scene.chrome.x, scene.chrome.z);
         if (sc.slot2_kind != .none) water.add_ring(&fs.wf, scene.slot2.x, scene.slot2.z);
         if (has_third(sc)) water.add_ring(&fs.wf, scene.small.x, scene.small.z);
-    }
-    if (scene.motion and scene.stripes[pi]) {
-        fs.stripe_factor = .{ 1.0 - scene.stripe_depth, 1.0 };
-        const a = seconds(view.t) * (1.0 / scene.stripe_period);
-        // Doubled for the parity test in shade_chrome.
-        fs.stripe_c = 2.0 * scene.stripe_freq * math.sin_turns(a + 0.25);
-        fs.stripe_s = 2.0 * scene.stripe_freq * math.sin_turns(a);
     }
     plan_columns(&cam, &fs);
     const fb = cart.framebuffer;

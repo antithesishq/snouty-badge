@@ -1,0 +1,56 @@
+# First-guess show-day sets and titles for the known carts (PLAN.md 8.2).
+# setup.sh installs this as library/manifest.toml when there is none;
+# `badge init-sets` adds any cart or set below that an existing manifest
+# lacks and never changes one it has. Cart files and RAM/XIP variants are
+# discovered in carts/ (<key>.uf2, <key>-xip.uf2), so nothing here pins them.
+
+[carts.snouty]
+title = "Snouty Run"
+
+[carts.snouty-bugs]
+title = "Snouty Bughunt"
+
+[carts.snoutenstein]
+title = "Snoutenstein 3D"
+
+[carts.snouty-maze]
+title = "Snouty Maze"
+
+[carts.snouty-reflections]
+title = "Snouty Reflections"
+
+[carts.snouty-boy]
+title = "Snouty Boy"
+roms = [".gb", ".gbc"]
+
+[carts.snouty-gear]
+title = "Snouty Gear"
+roms = [".gg", ".sms"]
+
+[carts.snouty-genesis]
+title = "Snouty Genesis"
+use = "xip"                 # no RAM build exists; keeps XIP if one appears
+roms = [".md", ".bin"]
+
+[carts.badge-calibrate]
+title = "Badge calibrate"
+
+[sets.demo]
+title = "Demo reel"
+carts = ["snouty", "snouty-bugs", "snoutenstein", "snouty-maze"]
+roms = []
+
+[sets.gear]
+title = "Game Gear"
+carts = ["snouty-gear", "snouty-bugs"]
+roms = ["*.gg"]
+
+[sets.boy]
+title = "Game Boy"
+carts = ["snouty-boy", "snouty-bugs"]
+roms = ["*.gb", "*.gbc"]
+
+[sets.genesis]
+title = "Genesis (XIP)"
+carts = ["snouty-genesis"]
+roms = ["*.md", "*.bin"]

@@ -1,0 +1,4 @@
+# demosnout (was snouty-scene): demoscene production, no input, 60 fps. 900 frames = Intro
+# (360), Plasma (600, of which 540 here); per-part runs: carts/demosnout/tools/bench_parts.sh.
+budget_ms = 16.7
+frames = 900

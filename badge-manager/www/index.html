@@ -9,7 +9,7 @@
 :root {
   --bg: #f6f5f2; --card: #ffffff; --fg: #1d1d1f; --muted: #6b6b70; --line: #deddd8;
   --accent: #1f6feb; --accent-fg: #ffffff; --danger: #c62828; --ok: #2e7d32; --warn: #a15c00;
-  --log-bg: #1d1d1f; --log-fg: #e8e8e8;
+  --log-bg: #1d1d1f; --log-fg: #e8e8e8; --log-agent: #8cc4ff; --log-err: #ff8a80;
 }
 @media (prefers-color-scheme: dark) {
   :root {
@@ -54,14 +54,54 @@ button:disabled { opacity: 0.4; cursor: default; }
 .filebtn { display: inline-flex; align-items: center; justify-content: center; }
 .filebtn input { position: absolute; width: 1px; height: 1px; opacity: 0; }
 progress { width: 100%; height: 10px; margin-top: 8px; }
-#log {
+#log, .joblog {
   background: var(--log-bg); color: var(--log-fg); border-radius: 8px; padding: 8px 10px;
   font: 12px/1.45 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   max-height: 280px; overflow-y: auto; white-space: pre-wrap; overflow-wrap: anywhere; margin: 0;
 }
 footer { color: var(--muted); font-size: 0.85rem; text-align: center; margin-top: 16px; }
 .hidden { display: none; }
+.tap { background: none; border: 0; padding: 0; margin: 0; min-height: 44px; min-width: 0; width: 100%;
+  text-align: left; color: inherit; font: inherit; font-weight: normal; cursor: pointer; display: block; }
+.tap .name::after { content: " \25B8"; color: var(--muted); }
+.tap.open .name::after { content: " \25BE"; }
+.detail { margin-top: 6px; padding: 8px 10px; border-radius: 8px; background: var(--bg); font-size: 0.9rem; }
+.detail ul li { padding: 2px 0; overflow-wrap: anywhere; }
+.detail .actions { margin-top: 8px; }
+.check { display: inline-flex; align-items: center; justify-content: center; min-width: 44px; min-height: 44px; margin: -6px 0 -6px -8px; cursor: pointer; }
+.check input { width: 22px; height: 22px; margin: 0; accent-color: var(--accent); }
+.seg { display: inline-flex; border: 1px solid var(--accent); border-radius: 10px; overflow: hidden; flex: none; }
+.seg button { min-width: 52px; padding: 8px 10px; border: 0; border-radius: 0; background: transparent; color: var(--accent); }
+.seg button + button { border-left: 1px solid var(--accent); }
+.seg button.on { background: var(--accent); color: var(--accent-fg); }
+.selbar { padding: 8px 10px; border-radius: 8px; background: var(--bg); margin-bottom: 8px; }
+.selbar .actions { margin-top: 8px; }
+button.armed { background: var(--danger); border-color: var(--danger); color: var(--card); }
+.fitline.warn { color: var(--warn); }
+.qr { display: block; width: 180px; max-width: 70%; height: auto; margin: 8px auto; background: #fff; padding: 6px; border-radius: 8px; }
+.share-block + .share-block { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--line); }
+.center { text-align: center; }
+.mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; overflow-wrap: anywhere; }
 .err { color: var(--danger); font-size: 0.9rem; margin-top: 6px; }
+textarea {
+  display: block; width: 100%; min-height: 88px; margin: 0; padding: 10px 12px; resize: vertical;
+  font-family: inherit; font-size: 16px; line-height: 1.4; color: var(--fg); background: var(--bg);
+  border: 1px solid var(--line); border-radius: 10px; -webkit-appearance: none; appearance: none;
+}
+textarea:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+.job { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--line); }
+.jobhead { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+.joblog { margin-top: 8px; max-height: 220px; }
+.joblog .agent { color: var(--log-agent); }
+.joblog .bad { color: var(--log-err); }
+.result { display: flex; gap: 12px; align-items: center; margin-top: 8px; }
+.result img { width: 128px; height: 128px; flex: none; border-radius: 8px; background: var(--log-bg); image-rendering: pixelated; }
+.good { color: var(--ok); font-weight: 600; }
+.over { color: var(--danger); font-weight: 600; }
+.thumb { width: 40px; height: 40px; flex: none; border-radius: 6px; background: var(--bg); image-rendering: pixelated; object-fit: cover; }
+#build-host { min-width: 0; overflow-wrap: anywhere; text-align: right; }
+#builds { margin-top: 8px; }
+#builds .tap { display: flex; align-items: center; gap: 10px; }
 </style>
 </head>
 <body>
@@ -92,12 +132,64 @@ footer { color: var(--muted); font-size: 0.85rem; text-align: center; margin-top
 
 <section>
   <h2>Library</h2>
+  <div class="selbar">
+    <div id="fitline" class="fitline meta">Nothing selected. Tick carts and ROMs to build a set.</div>
+    <div class="actions">
+      <button id="deploy-sel" type="button" disabled>Deploy selection</button>
+      <button id="save-sel" class="secondary" type="button" disabled>Save as set</button>
+    </div>
+    <div id="sel-msg" class="meta hidden"></div>
+  </div>
   <ul id="library"><li class="meta">Nothing in the library yet.</li></ul>
   <div class="actions">
-    <label class="filebtn">Upload a ROM<input id="upload" type="file" accept=".gg,.sms,.gb,.gbc,.md,.bin"></label>
+    <label class="filebtn">Upload a ROM<input id="upload" type="file"></label>
   </div>
   <progress id="upload-progress" class="hidden" max="100" value="0"></progress>
   <div id="upload-msg" class="meta"></div>
+</section>
+
+<section id="build-card">
+  <h2>Build a cart <small id="build-host"></small></h2>
+  <textarea id="build-prompt" rows="3" maxlength="2000" placeholder="a Snouty cart where ..." aria-label="What the cart should do"></textarea>
+  <div class="actions">
+    <button id="build-go" type="button" disabled>Build</button>
+  </div>
+  <div id="build-why" class="why hidden"></div>
+  <div id="build-err" class="err hidden"></div>
+  <div id="job" class="job hidden">
+    <div class="jobhead"><span id="job-state" class="state"></span><span id="job-elapsed" class="meta"></span></div>
+    <div id="job-prompt" class="meta"></div>
+    <div id="job-result" class="result hidden">
+      <img id="job-gif" alt="Preview of the new cart" width="128" height="128">
+      <div class="grow">
+        <div id="job-title" class="name"></div>
+        <div id="job-bench" class="meta"></div>
+        <div id="job-size" class="meta"></div>
+        <div id="job-ticked" class="meta"></div>
+      </div>
+    </div>
+    <div id="job-error" class="err hidden"></div>
+    <pre id="job-log" class="joblog hidden"></pre>
+    <div id="job-acts" class="actions hidden">
+      <button id="job-cancel" class="danger" type="button">Cancel</button>
+    </div>
+  </div>
+  <ul id="builds"></ul>
+</section>
+
+<section id="share" class="hidden">
+  <h2>Share</h2>
+  <div class="share-block center">
+    <div class="meta">Open this page on another phone:</div>
+    <div id="share-url" class="mono"></div>
+    <img id="qr-page" class="qr" alt="QR code for the page address" width="180" height="180">
+  </div>
+  <div id="share-wifi" class="share-block center hidden">
+    <div class="meta">Join the station's network:</div>
+    <div>Network <b id="share-ssid" class="mono"></b>, password <b id="share-pass" class="mono"></b></div>
+    <img id="qr-wifi" class="qr" alt="Wi-Fi QR code for the station's network" width="180" height="180">
+    <div class="meta">Scan with the camera to join.</div>
+  </div>
 </section>
 
 <section>
@@ -115,22 +207,68 @@ footer { color: var(--muted); font-size: 0.85rem; text-align: center; margin-top
   var state = null;
   var seq = null;
   var wipeArmed = null;
+  var expanded = {};                   // set name -> true while its row is open
+  var removeArmed = null;              // {name, timer} while "Tap again to remove" shows
+  var deployArmed = null;              // timer while "Tap again to deploy" shows
+  var selected = { carts: {}, roms: {} };
+  var fit = null;                      // last /api/fit answer for the selection
+  var fitKey = "";                     // selection + library signature fit belongs to
+  var fitTimer = null;
+  var fitPending = null;               // selection key of the /api/fit in flight
+  var shareKey = null;
+  var modePending = {};                // cart key -> true while its toggle posts
+  var skew = 0;                        // station clock minus this phone's, ms (Date header)
+  var cancelArmed = null;              // timer while "Tap again to cancel" shows
+  var buildPosting = false;            // POST /api/build in flight
+  var jobWatch = null;                 // id of a job this page saw queued/running
+  var pendingTick = null;              // cart key to tick once it is in the library
+  var jobLogText = null;               // what #job-log shows, to skip needless rebuilds
+  var openBuild = null;                // {id, state, job, error} for the full-log row
+  var thumbs = {};                     // "place|src" -> <img>, reused so re-renders do not refetch
 
   function kb(n) {
     if (n === null || n === undefined) return "?";
     return n >= 1024 * 1024 ? (n / 1048576).toFixed(2) + " MB" : Math.round(n / 1024) + " KB";
   }
+  function kbPlain(n) { return Math.ceil((n || 0) / 1024).toLocaleString() + " KB"; }
+  function plural(n, one, many) { return n + " " + (n === 1 ? one : many); }
   function el(tag, cls, text) {
     var e = document.createElement(tag);
     if (cls) e.className = cls;
     if (text !== undefined) e.textContent = text;
     return e;
   }
+  function button(text, cls, onclick) {
+    var b = el("button", cls || "", text);
+    b.type = "button";
+    b.addEventListener("click", onclick);
+    return b;
+  }
+  function thumb(place, src) {
+    var key = place + "|" + (src || "");
+    if (!thumbs[key]) {
+      var t = el("img", "thumb");
+      t.alt = "";
+      t.width = t.height = 40;
+      if (src) t.src = src;
+      thumbs[key] = t;
+    }
+    return thumbs[key];
+  }
   function clear(node) { while (node.firstChild) node.removeChild(node.firstChild); }
   function showError(msg) {
     var e = $("action-err");
     e.textContent = msg || "";
     e.classList.toggle("hidden", !msg);
+  }
+  function selMsg(msg, warn) {
+    var e = $("sel-msg");
+    e.textContent = msg || "";
+    e.className = (warn ? "why" : "meta") + (msg ? "" : " hidden");
+  }
+  function failText(code, data) {
+    if (code === 409) return "The station is busy. Wait for the current action to finish.";
+    return (data && data.error) || ("Request failed (" + (code || "no connection") + ").");
   }
 
   function renderNet(s) {
@@ -142,10 +280,18 @@ footer { color: var(--muted); font-size: 0.85rem; text-align: center; margin-top
     parts.push(n.internet ? "internet yes" : "internet no");
     $("net").textContent = parts.join(", ");
     var b = s.build || {};
-    var build = b.local ? "Builds run on this Pi." :
+    var build;
+    if (b.ready === false) build = "Builds: " + (b.why || "not set up") + ".";
+    else if (b.ready === true) build = b.where === "local" ? "Builds run on this Pi." : "Builds run on " + b.remote + ".";
+    else build = b.local ? "Builds run on this Pi." :
       b.remote ? (n.internet ? "Builds run on " + b.remote + "." : "Builds are offline (no internet).") :
       "Builds are not set up.";
     $("build").textContent = build;
+  }
+
+  function setTitle(s, name) {
+    var found = (s.sets || []).filter(function (x) { return x.name === name; })[0];
+    return found ? (found.title || found.name) : name;
   }
 
   function renderBadge(s) {
@@ -158,12 +304,13 @@ footer { color: var(--muted); font-size: 0.85rem; text-align: center; margin-top
     if (ejected) {
       st.textContent = "Unplug the badge.";
       st.classList.add("ok");
-      extra.textContent = "It is ejected and safe to unplug. Its menu shows the new carts.";
+      extra.textContent = "It is ejected and safe to unplug. Its menu shows the new carts." +
+        (b.set ? " On it: " + setTitle(s, b.set) + "." : "");
     } else if (!b.present) {
       st.textContent = "Plug the badge in while it is on its menu.";
       extra.textContent = b.note && !/plug the badge in|no badge/i.test(b.note) ? b.note : "";
     } else {
-      st.textContent = "Badge connected.";
+      st.textContent = b.set ? "On it: " + setTitle(s, b.set) : "Badge connected.";
       st.classList.add("ok");
       var bits = [kb(b.free_bytes) + " free"];
       if (b.free_entries !== null && b.free_entries !== undefined) bits.push(b.free_entries + " free entries");
@@ -174,7 +321,11 @@ footer { color: var(--muted); font-size: 0.85rem; text-align: center; margin-top
       if (!list.length) files.appendChild(el("li", "row meta", "The drive is empty."));
       list.forEach(function (f) {
         var li = el("li", "row");
-        li.appendChild(el("span", "grow name", f.name));
+        var left = el("div", "grow");
+        left.appendChild(el("div", "name", f.title || f.name));
+        var kind = f.kind && f.kind !== "other" ? f.kind + ", " : "";
+        left.appendChild(el("div", "meta", kind + f.name));
+        li.appendChild(left);
         li.appendChild(el("span", "meta", kb(f.size)));
         files.appendChild(li);
       });
@@ -184,57 +335,246 @@ footer { color: var(--muted); font-size: 0.85rem; text-align: center; margin-top
     a.classList.toggle("hidden", !s.busy);
   }
 
+  function disarmRemove() {
+    if (removeArmed) clearTimeout(removeArmed.timer);
+    removeArmed = null;
+  }
+
   function renderSets(s) {
     var ul = $("sets");
     clear(ul);
     var sets = s.sets || [];
-    if (!sets.length) ul.appendChild(el("li", "meta", "No sets yet. Add some to manifest.toml."));
+    if (!sets.length) ul.appendChild(el("li", "meta", "No sets yet. Tick carts in the library and save them as a set."));
     var present = s.badge && s.badge.present;
+    var names = {};
     sets.forEach(function (set) {
+      names[set.name] = true;
       var li = el("li", "row");
       var left = el("div", "grow");
-      left.appendChild(el("div", "name", set.title || set.name));
-      left.appendChild(el("div", "meta", kb(set.bytes) + ", " + set.entries + " of " + (set.entries_capacity || 31) + " entries"));
-      (set.fits ? [] : set.why || []).forEach(function (w) { left.appendChild(el("div", "why", w)); });
+      var open = !!expanded[set.name];
+      var tap = button("", "tap" + (open ? " open" : ""), function () {
+        expanded[set.name] = !expanded[set.name];
+        if (!expanded[set.name] && removeArmed && removeArmed.name === set.name) disarmRemove();
+        renderSets(state);
+      });
+      tap.setAttribute("aria-expanded", open ? "true" : "false");
+      tap.appendChild(el("div", "name", set.title || set.name));
+      tap.appendChild(el("div", "meta", kb(set.bytes) + ", " + set.entries + " of " + (set.entries_capacity || 31) + " entries"));
+      (set.fits ? [] : set.why || []).slice(0, open ? 0 : 1).forEach(function (w) { tap.appendChild(el("div", "why", w)); });
+      left.appendChild(tap);
+      if (open) {
+        var d = el("div", "detail");
+        var files = set.files || [];
+        d.appendChild(el("div", "meta", files.length ? "Writes " + plural(files.length, "file", "files") + ":" : "Writes nothing."));
+        var fl = el("ul");
+        files.forEach(function (f) { fl.appendChild(el("li", "", f)); });
+        d.appendChild(fl);
+        if (!set.fits) (set.why || []).forEach(function (w) { d.appendChild(el("div", "why", w)); });
+        var armed = removeArmed && removeArmed.name === set.name;
+        var acts = el("div", "actions");
+        var rm = button(armed ? "Tap again to remove" : "Remove set", "danger" + (armed ? " armed" : ""), function () {
+          if (!(removeArmed && removeArmed.name === set.name)) {
+            disarmRemove();
+            removeArmed = { name: set.name, timer: setTimeout(function () { disarmRemove(); renderSets(state); }, 4000) };
+            renderSets(state);
+            return;
+          }
+          disarmRemove();
+          showError("");
+          request("DELETE", "/api/sets/" + encodeURIComponent(set.name), null, function (code, data) {
+            if (code === 200 && data && data.ok) { delete expanded[set.name]; return; }
+            showError(failText(code, data));
+            renderSets(state);
+          });
+        });
+        rm.disabled = s.busy;
+        acts.appendChild(rm);
+        d.appendChild(acts);
+        left.appendChild(d);
+      }
       li.appendChild(left);
       if (set.fits) {
-        var btn = el("button", "", "Deploy");
-        btn.type = "button";
+        var btn = button("Deploy", "", function () { act("/api/deploy", { set: set.name }); });
         btn.disabled = s.busy || !present;
         btn.title = present ? "" : "Plug the badge in first";
-        btn.addEventListener("click", function () { act("/api/deploy", { set: set.name }); });
         li.appendChild(btn);
       }
       ul.appendChild(li);
     });
+    Object.keys(expanded).forEach(function (k) { if (!names[k]) delete expanded[k]; });
     $("wipe").disabled = s.busy || !present;
     $("sync").disabled = s.busy;
+  }
+
+  function selectedList(kind) { return Object.keys(selected[kind]).sort(); }
+
+  function checkbox(kind, key, label) {
+    var lab = el("label", "check");
+    var box = el("input");
+    box.type = "checkbox";
+    box.checked = !!selected[kind][key];
+    box.setAttribute("aria-label", "Select " + label);
+    box.addEventListener("change", function () {
+      if (box.checked) selected[kind][key] = true; else delete selected[kind][key];
+      selMsg("");
+      disarmDeploy();
+      scheduleFit();
+    });
+    lab.appendChild(box);
+    return lab;
+  }
+
+  function modeToggle(c, busy) {
+    var seg = el("div", "seg");
+    seg.setAttribute("role", "group");
+    seg.setAttribute("aria-label", "Variant for " + (c.title || c.key));
+    ["ram", "xip"].forEach(function (m) {
+      var b = button(m.toUpperCase(), c.use === m ? "on" : "", function () {
+        if (c.use === m) return;
+        modePending[c.key] = true;
+        renderLibrary(state);
+        showError("");
+        request("POST", "/api/cart-mode", { cart: c.key, mode: m }, function (code, data) {
+          delete modePending[c.key];
+          if (!(code === 200 && data && data.ok)) showError(failText(code, data));
+          if (state) renderLibrary(state);
+        });
+      });
+      b.setAttribute("aria-pressed", c.use === m ? "true" : "false");
+      b.disabled = busy || !!modePending[c.key];
+      seg.appendChild(b);
+    });
+    return seg;
   }
 
   function renderLibrary(s) {
     var ul = $("library");
     clear(ul);
     var lib = s.library || {};
-    var items = [];
-    (lib.carts || []).forEach(function (c) {
-      items.push([c.title || c.key || c.name, "cart" + (c.mode ? ", " + c.mode : ""), c.size]);
+    var carts = lib.carts || [], roms = lib.roms || [];
+    var keep = { carts: {}, roms: {} };
+    carts.forEach(function (c) {
+      if (pendingTick === c.key) { selected.carts[c.key] = true; pendingTick = null; }
+      if (selected.carts[c.key]) keep.carts[c.key] = true;
     });
-    (lib.roms || []).forEach(function (r) {
-      items.push([r.title || r.key || r.name, "rom" + (r.short ? ", " + r.short : ""), r.size]);
-    });
-    if (!items.length) ul.appendChild(el("li", "meta", "Nothing in the library yet."));
-    items.forEach(function (it) {
+    roms.forEach(function (r) { if (selected.roms[r.key]) keep.roms[r.key] = true; });
+    selected = keep;
+    if (lib.error) ul.appendChild(el("li", "row why", lib.error));
+    if (!carts.length && !roms.length) ul.appendChild(el("li", "meta", "Nothing in the library yet."));
+    carts.forEach(function (c) {
       var li = el("li", "row");
+      var title = c.title || c.key;
+      li.appendChild(checkbox("carts", c.key, title));
+      if (c.preview) li.appendChild(thumb("lib", c.preview));
       var left = el("div", "grow");
-      left.appendChild(el("div", "name", it[0]));
-      left.appendChild(el("div", "meta", it[1]));
+      left.appendChild(el("div", "name", title));
+      left.appendChild(el("div", "meta", "cart, " + (c.file || c.key) + ", " + kb(c.size)));
+      if (c.error) left.appendChild(el("div", "why", c.error));
       li.appendChild(left);
-      li.appendChild(el("span", "meta", kb(it[2])));
+      var v = c.variants || {};
+      if (v.ram && v.xip) li.appendChild(modeToggle(c, s.busy));
+      else li.appendChild(el("span", "meta", (c.use || c.mode || "").toUpperCase()));
       ul.appendChild(li);
+    });
+    roms.forEach(function (r) {
+      var li = el("li", "row");
+      var title = r.title || r.key;
+      li.appendChild(checkbox("roms", r.key, title));
+      var left = el("div", "grow");
+      left.appendChild(el("div", "name", title));
+      left.appendChild(el("div", "meta", "ROM" + (r.short ? ", " + r.short : "") + ", " + kb(r.size)));
+      if (r.error) left.appendChild(el("div", "why", r.error));
+      li.appendChild(left);
+      ul.appendChild(li);
+    });
+    renderSelection(s);
+  }
+
+  // A selection's fit depends on the chosen keys and on the library (sizes, RAM/XIP).
+  function selectionKey(s) {
+    var lib = (s && s.library) || {};
+    var sig = (lib.carts || []).map(function (c) { return c.key + ":" + c.use + ":" + c.size; }).join(",") + "|" +
+      (lib.roms || []).map(function (r) { return r.key + ":" + r.size + ":" + r.short; }).join(",");
+    var cap = s && s.badge ? (s.badge.present ? "p" : "n") : "";
+    return selectedList("carts").join(",") + "|" + selectedList("roms").join(",") + "|" + sig + "|" + cap;
+  }
+
+  function scheduleFit() {
+    if (fitTimer) clearTimeout(fitTimer);
+    fitTimer = setTimeout(runFit, 250);
+    renderSelection(state);
+  }
+
+  function runFit() {
+    fitTimer = null;
+    var carts = selectedList("carts"), roms = selectedList("roms");
+    var key = selectionKey(state);
+    if (!carts.length && !roms.length) { fit = null; fitKey = key; renderSelection(state); return; }
+    fitPending = key;
+    request("POST", "/api/fit", { carts: carts, roms: roms }, function (code, data) {
+      if (fitPending === key) fitPending = null;
+      if (selectionKey(state) !== key) { renderSelection(state); return; }   // moved on: fit again
+      fitKey = key;
+      fit = code === 200 && data ? data : { error: failText(code, data) };
+      renderSelection(state);
     });
   }
 
-  function renderLog(s) {
+  function renderSelection(s) {
+    if (!s) return;
+    var carts = selectedList("carts"), roms = selectedList("roms");
+    var line = $("fitline");
+    var none = !carts.length && !roms.length;
+    var fresh = fitKey === selectionKey(s);
+    if (!none && !fresh && !fitTimer && fitPending !== selectionKey(s)) scheduleFit();
+    line.className = "fitline";
+    if (none) {
+      line.textContent = "Nothing selected. Tick carts and ROMs to build a set.";
+      line.classList.add("meta");
+    } else if (!fit || !fresh) {
+      line.textContent = plural(carts.length, "cart", "carts") + ", " + plural(roms.length, "ROM", "ROMs") + ": checking the fit...";
+      line.classList.add("meta");
+    } else if (fit.error) {
+      line.textContent = fit.error;
+      line.classList.add("warn");
+    } else {
+      var txt = plural(carts.length, "cart", "carts") + ", " + plural(roms.length, "ROM", "ROMs") + ": " +
+        kbPlain(fit.bytes) + " of " + kbPlain(fit.bytes_capacity) + ", " +
+        fit.entries + " of " + fit.entries_capacity + " entries";
+      if (!fit.fits) txt += ". Does not fit: " + (fit.why || []).join("; ");
+      line.textContent = txt;
+      if (!fit.fits) line.classList.add("warn");
+    }
+    var ok = !none && fresh && fit && !fit.error && fit.fits;
+    var present = s.badge && s.badge.present;
+    var dep = $("deploy-sel");
+    dep.disabled = !ok || !present || s.busy;
+    dep.title = present ? "" : "Plug the badge in first";
+    if (dep.disabled) disarmDeploy();
+    $("save-sel").disabled = none || s.busy;
+  }
+
+  function renderShare(s) {
+    var sh = s.share || {};
+    var on = !!(s.qr && sh.url);
+    $("share").classList.toggle("hidden", !on);
+    if (!on) { shareKey = null; return; }
+    var key = sh.url + "|" + (sh.ssid || "") + "|" + (sh.password || "");
+    if (key === shareKey) return;
+    shareKey = key;
+    var bust = "?v=" + Date.now();
+    $("share-url").textContent = sh.url;
+    $("qr-page").src = "/qr/page.svg" + bust;
+    var wifi = !!sh.ssid;
+    $("share-wifi").classList.toggle("hidden", !wifi);
+    if (wifi) {
+      $("share-ssid").textContent = sh.ssid;
+      $("share-pass").textContent = sh.password || "(none)";
+      $("qr-wifi").src = "/qr/wifi.svg" + bust;
+    }
+  }
+
+  function renderLog(s, first) {
     var pre = $("log");
     var atBottom = pre.scrollHeight - pre.scrollTop - pre.clientHeight < 24;
     var lines = (s.log || []).slice(-30).map(function (l) {
@@ -245,18 +585,246 @@ footer { color: var(--muted); font-size: 0.85rem; text-align: center; margin-top
     var text = lines.join("\n");
     if (pre.textContent !== text) {
       pre.textContent = text;
-      if (atBottom || !state) pre.scrollTop = pre.scrollHeight;
+      if (atBottom || first) pre.scrollTop = pre.scrollHeight;
     }
   }
 
+  // ---------------------------------------------------------------- Build a cart (PLAN 9.6)
+
+  var JOB_STATES = { queued: "Queued", running: "Building...", done: "Done", failed: "Failed", cancelled: "Cancelled" };
+  var BUDGET_MS = 16.7;
+
+  function jobRunning(j) { return !!j && (j.state === "queued" || j.state === "running"); }
+  function clock(sec) {
+    sec = Math.max(0, Math.floor(sec || 0));
+    var m = Math.floor(sec / 60), r = sec % 60;
+    return m + ":" + (r < 10 ? "0" : "") + r;
+  }
+  function jobElapsed(j) {
+    if (jobRunning(j) && typeof j.started === "number") return (Date.now() + skew) / 1000 - j.started;
+    return j.seconds || 0;
+  }
+  function buildErr(msg) {
+    var e = $("build-err");
+    e.textContent = msg || "";
+    e.classList.toggle("hidden", !msg);
+  }
+  function benchNode(ms) {
+    var span = el("span");
+    if (typeof ms !== "number") { span.textContent = "no bench"; return span; }
+    span.appendChild(el("span", ms <= BUDGET_MS ? "good" : "over", ms.toFixed(1) + " ms"));
+    span.appendChild(document.createTextNode(" of the " + BUDGET_MS + " ms frame budget"));
+    return span;
+  }
+  function logClass(line) {
+    if (/^agent:/.test(line)) return "agent";
+    if (/error|FAIL|failed/.test(line)) return "bad";
+    return "";
+  }
+  function fillLog(pre, lines) {
+    var text = lines.join("\n");
+    if (pre.getAttribute("data-text") === text) return false;
+    pre.setAttribute("data-text", text);
+    clear(pre);
+    lines.forEach(function (line, i) {
+      pre.appendChild(el("span", logClass(line), line + (i < lines.length - 1 ? "\n" : "")));
+    });
+    return true;
+  }
+
+  function disarmCancel() {
+    if (cancelArmed) clearTimeout(cancelArmed);
+    cancelArmed = null;
+    var b = $("job-cancel");
+    b.classList.remove("armed");
+    b.textContent = "Cancel";
+  }
+
+  function renderBuild(s) {
+    var b = s.build || {};
+    var j = s.job || null;
+    var running = jobRunning(j);
+    var go = $("build-go");
+    go.textContent = b.where === "local" ? "Build on the station" : b.where === "remote" ? "Build on the VM" : "Build";
+    $("build-host").textContent = b.ready ? (b.where === "local" ? "on this Pi" : (b.remote || "")) : "";
+    var why = $("build-why");
+    var whyText = b.ready ? (running ? "A build is running. One at a time." : "") : (b.why || "Builds are not set up on this station.");
+    why.textContent = whyText;
+    why.classList.toggle("hidden", !whyText);
+    go.disabled = !b.ready || running || buildPosting || !$("build-prompt").value.trim();
+    if (running && j) jobWatch = j.id;
+    renderJob(j);
+    renderBuilds(s.builds || []);
+  }
+
+  function renderJob(j) {
+    var box = $("job");
+    box.classList.toggle("hidden", !j);
+    if (!j) { disarmCancel(); return; }
+    var running = jobRunning(j);
+    var st = $("job-state");
+    st.textContent = (JOB_STATES[j.state] || j.state) + (j.title ? " " + j.title : "");
+    st.className = "state" + (j.state === "done" ? " ok" : j.state === "failed" ? " warn" : "");
+    $("job-elapsed").textContent = clock(jobElapsed(j));
+    $("job-prompt").textContent = j.prompt ? "“" + j.prompt + "”" : "";
+
+    var res = j.state === "done" ? j.result : null;
+    $("job-result").classList.toggle("hidden", !res);
+    if (res) {
+      var gif = $("job-gif");
+      if (res.preview && gif.getAttribute("src") !== res.preview) gif.src = res.preview;
+      gif.classList.toggle("hidden", !res.preview);
+      $("job-title").textContent = j.title || res.cart;
+      var bench = $("job-bench");
+      clear(bench);
+      bench.appendChild(benchNode(res.bench_ms));
+      $("job-size").textContent = kb(res.size) + ", " + res.cart;
+      if (jobWatch === j.id) {                        // this page saw it run: tick the new cart once
+        jobWatch = null;
+        pendingTick = res.cart;
+        $("job-ticked").textContent = "Ticked in the library: Deploy selection puts it on the badge.";
+      }
+    } else {
+      $("job-ticked").textContent = "";
+    }
+
+    var err = $("job-error");
+    var errText = j.state === "failed" ? "The build failed: " + (j.error || "exit " + j.exit) + "." :
+      j.state === "cancelled" ? "Cancelled." : "";
+    err.textContent = errText;
+    err.classList.toggle("hidden", !errText);
+    if (j.state !== "done" && jobWatch === j.id && !running) jobWatch = null;
+
+    var pre = $("job-log");
+    var lines = running ? (j.log || []) : j.state === "failed" ? (j.log || []).slice(-12) : [];
+    pre.classList.toggle("hidden", !lines.length);
+    var atBottom = pre.scrollHeight - pre.scrollTop - pre.clientHeight < 24;
+    var wasHidden = jobLogText === null;
+    if (fillLog(pre, lines) && (atBottom || wasHidden)) pre.scrollTop = pre.scrollHeight;
+    jobLogText = lines.length ? "shown" : null;
+
+    $("job-acts").classList.toggle("hidden", !running);
+    if (!running) disarmCancel();
+  }
+
+  function renderBuilds(rows) {
+    var ul = $("builds");
+    clear(ul);
+    var ids = {};
+    rows.forEach(function (r) {
+      ids[r.id] = true;
+      var li = el("li", "row");
+      var left = el("div", "grow");
+      var open = !!openBuild && openBuild.id === r.id;
+      var tap = button("", "tap" + (open ? " open" : ""), function () {
+        if (openBuild && openBuild.id === r.id) { openBuild = null; renderBuilds(state.builds || []); return; }
+        openBuild = { id: r.id, state: r.state, job: null, error: "" };
+        fetchBuild(r.id);
+        renderBuilds(state.builds || []);
+      });
+      tap.setAttribute("aria-expanded", open ? "true" : "false");
+      tap.appendChild(r.preview ? thumb("build", r.preview) : el("span", "thumb"));
+      var txt = el("div", "grow");
+      txt.appendChild(el("div", "name", r.title || r.name || r.id));
+      var meta = el("div", "meta");
+      meta.appendChild(document.createTextNode((JOB_STATES[r.state] || r.state) + ", " + clock(r.seconds)));
+      if (typeof r.bench_ms === "number") {
+        meta.appendChild(document.createTextNode(", "));
+        meta.appendChild(el("span", r.bench_ms <= BUDGET_MS ? "good" : "over", r.bench_ms.toFixed(1) + " ms"));
+      }
+      txt.appendChild(meta);
+      if (r.state === "failed" && r.error) txt.appendChild(el("div", "why", r.error));
+      tap.appendChild(txt);
+      left.appendChild(tap);
+      if (open) {
+        if (openBuild.state !== r.state && openBuild.job) {   // it moved on: fetch the log again
+          openBuild.state = r.state;
+          fetchBuild(r.id);
+        }
+        var d = el("div", "detail");
+        if (openBuild.error) d.appendChild(el("div", "err", openBuild.error));
+        else if (!openBuild.job) d.appendChild(el("div", "meta", "Loading the log..."));
+        else {
+          var jb = openBuild.job;
+          if (jb.prompt) d.appendChild(el("div", "meta", "“" + jb.prompt + "”"));
+          var pre = el("pre", "joblog");
+          fillLog(pre, (jb.log || []).length ? jb.log : ["(no log)"]);
+          d.appendChild(pre);
+        }
+        left.appendChild(d);
+      }
+      li.appendChild(left);
+      ul.appendChild(li);
+    });
+    if (openBuild && !ids[openBuild.id]) openBuild = null;
+  }
+
+  function fetchBuild(id) {
+    request("GET", "/api/build/" + encodeURIComponent(id), null, function (code, data) {
+      if (!openBuild || openBuild.id !== id) return;
+      if (code === 200 && data && data.job) { openBuild.job = data.job; openBuild.error = ""; openBuild.state = data.job.state; }
+      else openBuild.error = "Could not load the log: " + failText(code, data);
+      if (state) renderBuilds(state.builds || []);
+    });
+  }
+
+  $("build-prompt").addEventListener("input", function () {
+    buildErr("");
+    if (state) renderBuild(state);
+  });
+  $("build-go").addEventListener("click", function () {
+    var box = $("build-prompt");
+    var prompt = box.value.trim();
+    if (!prompt) return;
+    buildErr("");
+    buildPosting = true;
+    if (state) renderBuild(state);
+    request("POST", "/api/build", { prompt: prompt }, function (code, data) {
+      buildPosting = false;
+      if (code === 200 && data && data.ok) {
+        jobWatch = data.id || null;
+        box.value = "";
+        box.blur();
+      } else if (code === 409) {
+        buildErr("A build is already running. Wait for it or cancel it.");
+      } else if (code === 503) {
+        buildErr((data && data.error) || "Builds are not available right now.");
+      } else {
+        buildErr(failText(code, data));
+      }
+      if (state) renderBuild(state);
+    });
+  });
+  $("job-cancel").addEventListener("click", function () {
+    var b = $("job-cancel");
+    if (!cancelArmed) {
+      b.classList.add("armed");
+      b.textContent = "Tap again to cancel";
+      cancelArmed = setTimeout(disarmCancel, 4000);
+      return;
+    }
+    disarmCancel();
+    buildErr("");
+    request("POST", "/api/build/cancel", {}, function (code, data) {
+      if (code === 200 && data && data.ok) return;
+      buildErr(code === 404 ? "Nothing to cancel: the build already ended." : failText(code, data));
+    });
+  });
+  setInterval(function () {
+    if (state && jobRunning(state.job)) $("job-elapsed").textContent = clock(jobElapsed(state.job));
+  }, 1000);
+
   function render(s) {
+    var first = !state;
+    state = s;
     renderNet(s);
     renderBadge(s);
     renderSets(s);
+    renderBuild(s);                    // before the library: a finished build ticks its cart
     renderLibrary(s);
-    renderLog(s);
-    state = s;
-    if (s.busy) disarmWipe();
+    renderShare(s);
+    renderLog(s, first);
+    if (s.busy) { disarmWipe(); disarmDeploy(); }
   }
 
   function request(method, url, body, cb) {
@@ -267,7 +835,7 @@ footer { color: var(--muted); font-size: 0.85rem; text-align: center; margin-top
     x.onload = function () {
       var data = null;
       try { data = JSON.parse(x.responseText); } catch (e) { data = null; }
-      cb(x.status, data);
+      cb(x.status, data, x);
     };
     x.onerror = x.ontimeout = function () { cb(0, null); };
     x.send(body === null || body === undefined ? null : JSON.stringify(body));
@@ -275,8 +843,10 @@ footer { color: var(--muted); font-size: 0.85rem; text-align: center; margin-top
 
   function poll() {
     var url = seq === null ? "/api/status" : "/api/status?since=" + seq + "&wait=25";
-    request("GET", url, null, function (code, data) {
+    request("GET", url, null, function (code, data, x) {
       if (code === 200 && data) {
+        var served = Date.parse(x.getResponseHeader("Date") || "");
+        if (!isNaN(served)) skew = served - Date.now();
         if (typeof data.seq === "number") seq = data.seq;
         render(data);
         setTimeout(poll, typeof data.seq === "number" ? 0 : 1000);
@@ -288,12 +858,11 @@ footer { color: var(--muted); font-size: 0.85rem; text-align: center; margin-top
     });
   }
 
-  function act(url, body) {
+  function act(url, body, onok) {
     showError("");
     request("POST", url, body || {}, function (code, data) {
-      if (code === 200 && data && data.ok) return;
-      if (code === 409) showError("The station is busy. Wait for the current action to finish.");
-      else showError((data && data.error) || ("Request failed (" + (code || "no connection") + ")."));
+      if (code === 200 && data && data.ok) { if (onok) onok(data); return; }
+      showError(failText(code, data));
     });
   }
 
@@ -317,6 +886,46 @@ footer { color: var(--muted); font-size: 0.85rem; text-align: center; margin-top
   });
   $("sync").addEventListener("click", function () { act("/api/sync"); });
 
+  function disarmDeploy() {
+    if (deployArmed) clearTimeout(deployArmed);
+    deployArmed = null;
+    var b = $("deploy-sel");
+    b.classList.remove("armed");
+    b.textContent = "Deploy selection";
+  }
+  $("deploy-sel").addEventListener("click", function () {
+    var b = $("deploy-sel");
+    if (!deployArmed) {
+      b.classList.add("armed");
+      b.textContent = "Tap again: wipe and deploy";
+      deployArmed = setTimeout(disarmDeploy, 4000);
+      return;
+    }
+    disarmDeploy();
+    selMsg("");
+    act("/api/deploy", { carts: selectedList("carts"), roms: selectedList("roms") });
+  });
+
+  $("save-sel").addEventListener("click", function () {
+    var carts = selectedList("carts"), roms = selectedList("roms");
+    if (!carts.length && !roms.length) return;
+    var title = window.prompt("Name for the new set:", "");
+    if (title === null) return;
+    title = title.trim();
+    if (!title) { selMsg("A set needs a name.", true); return; }
+    selMsg("Saving " + title + "...");
+    request("POST", "/api/sets", { title: title, carts: carts, roms: roms }, function (code, data) {
+      if (code === 200 && data && data.ok) {
+        selected = { carts: {}, roms: {} };
+        fit = null;
+        selMsg("Saved “" + title + "”. It is in Sets now.");
+        if (state) renderLibrary(state);
+      } else {
+        selMsg("Could not save: " + failText(code, data), true);
+      }
+    });
+  });
+
   $("upload").addEventListener("change", function () {
     var input = this, file = input.files && input.files[0];
     if (!file) return;
@@ -338,7 +947,7 @@ footer { color: var(--muted); font-size: 0.85rem; text-align: center; margin-top
       var data = null;
       try { data = JSON.parse(x.responseText); } catch (e) { data = null; }
       msg.textContent = x.status === 200 ? "Added " + file.name + " to the library." :
-        "Upload failed: " + ((data && data.error) || x.status);
+        "Upload failed: " + (x.status === 409 ? "the station is busy, try again in a moment." : ((data && data.error) || x.status));
       done();
     };
     x.onerror = function () { msg.textContent = "Upload failed: no connection."; done(); };

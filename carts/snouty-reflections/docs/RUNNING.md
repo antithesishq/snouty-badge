@@ -5,7 +5,7 @@ real-time ray tracer demo. Chrome spheres float on a rippling lake while the
 camera orbits them (one revolution every 30 s); every pixel is a traced ray,
 quantised to RGB565 through a dither. Four scene presets (sunset, midnight,
 noon, storm) cycle in attract mode with a fade; the spheres bob and ring the
-water, the sun drifts, the chrome carries faint turning stripes (M3). The
+water and the sun drifts (M3). The
 cart is locked to its variant's frame rate (20 fps for the shipped `cut20`,
 `cart.set_vsync_enabled(1000.0 / 20.0)`), so one `update()` is one frame
 and the scene animates by frame count, not wall time. There is no audio
@@ -235,7 +235,7 @@ regenerating the art (`tools/gen_shore.py`) needs no change to the
 reference.
 
 **Views.** A view is what the cart's `trace.View` holds: the preset, the
-scene time `t` in frames (water, logo spin, bob, sun drift, stripes), the
+scene time `t` in frames (water, logo spin, bob, sun drift), the
 camera's orbit index and the eye height. The reference renders views three
 ways:
 
@@ -252,8 +252,9 @@ with `<name>` = `<preset>_t<TTTT>_o<OOOO>_h<mm>`, for example
 computed in f32, as the cart does at run time; everything else is f64.
 
 **Motion.** `--motion 1` (the default) is the M3 cart: spheres bob, the sun
-drifts, rings spread on the water under each sphere and stripes turn on the
-chrome. `--motion 0` turns all four off; with `--motion 0`, `--preset
+drifts and rings spread on the water under each sphere (`--stripes 1`
+still draws M3's chrome stripes, which the cart dropped on 2026-09-30).
+`--motion 0` turns all of it off; with `--motion 0`, `--preset
 sunset` and the default height the output is byte-identical to the M2.2
 reference, frame for frame (the legacy identity). The M3 knobs:
 
@@ -261,7 +262,7 @@ reference, frame for frame (the legacy identity). The M3 knobs:
 |------|------------------------|---------|
 | `--motion` | `1`, `0` | master switch for bob, drift, rings, stripes |
 | `--rings` | `1`, `0` | rings on the water (with `--motion 1`) |
-| `--stripes` | `1`, `0` | stripes on the chrome sphere (with `--motion 1`) |
+| `--stripes` | `0`, `1` | M3's stripes on the chrome sphere (with `--motion 1`); dropped from the cart 2026-09-30, so off by default |
 | `--sun-drift` | `1`, `0` | the sun rotates about +y by 8 deg * sin(s / 60 turns) (with `--motion 1`) |
 | `--noon-shadows` | `1`, `0` | noon shadows the primary water hits |
 | `--noon-third-sphere` | `1`, `0` | noon has the small chrome sphere |

@@ -10,8 +10,8 @@ scene, exactly", executable.
     python3 tools/reference.py --frame 0 --out out/ --fps 30 --scale 2                   # M2.1 variant half30
 
 A view is what the cart's trace.View holds (PLAN.md M3 "Fixed interfaces"):
-the preset, the scene time t in frames (water, logo spin, bob, sun drift,
-stripes; s = t / fps seconds), the camera angle as an orbit index (theta =
+the preset, the scene time t in frames (water, logo spin, bob, sun drift;
+s = t / fps seconds), the camera angle as an orbit index (theta =
 orbit / orbit_frames turns) and the eye height in metres. --frame F is the
 view (preset, t = F, orbit = F mod orbit_frames, height) and writes
 DIR/ref_FFFF.png (FFFF = zero-padded F, matching preview.mjs's
@@ -33,8 +33,11 @@ rest stays f64. At the default height the M2.2 f64 camera is used unchanged.
 with --motion 0, --preset sunset and the default height the output is
 byte-identical to the M2.2 reference (the legacy identity). --motion 1 is
 the default (the M3 cart). The motion knobs --rings, --stripes, --sun-drift
-(0/1) only act with --motion 1; --noon-shadows and --noon-third-sphere
-(0/1) are preset content and act either way. Presets (--preset
+(0/1) only act with --motion 1; --stripes defaults to 0 since the cart
+dropped the chrome stripes (2026-09-30, Adrian: they read as artifacting,
+not chrome; PLAN.md M3.1) and the flag only keeps the old formula for
+comparison. --noon-shadows and --noon-third-sphere (0/1) are preset
+content and act either way. Presets (--preset
 sunset|midnight|noon|storm or 0..3) set the sun direction and colour, the
 sky gradient, disc and water specular on or off, the ripple amplitude
 scale, the shore palette tint, the spheres (glass in sunset where the
@@ -57,7 +60,7 @@ from cart/src/shore_texels.bin and tools/shore_palette.json (override with
 rows, y in [0, 6) for M2.2; the M2 file's 32 rows still give y in [0, 4)).
 
 M2.2 adds the spinning Iris logo (PLAN.md M2.2 "Iris logo": slab-extruded
-mark at (-13.5, 1.8, 12), six turns per orbit, K samples along the slab chord).
+mark at (-15.5, 1.8, 12) since M3.1, six turns per orbit, K samples along the slab chord).
 Primary rays test it, water reflections at every depth if --iris-in-water 1
 (knob 6), chrome reflections (both chrome spheres) if --iris-in-chrome 1
 (knob 5), rays leaving the glass never. --iris-samples K is knob 7,
@@ -158,7 +161,7 @@ SHORE_TPU = 8.0                               # texels per world unit
 TEX_W = 256
 
 # Iris logo (PLAN.md M2.2 "Iris logo"): a slab-extruded mark standing on the water.
-IRIS_C = np.array([-13.5, 1.8, 12.0])
+IRIS_C = np.array([-15.5, 1.8, 12.0])
 IRIS_S = 1.5                                  # half-size: the mark's U, V in [-1, 1]
 IRIS_HT = 0.12                                # half-thickness (world units)
 IRIS_R = 1.57                                 # bounding sphere radius
@@ -251,7 +254,7 @@ class Config:
     def __init__(self, glass="real", water_shadows="all", glass_secondary="full", fade_k=FADE_K,
                  texels_path=None, palette_path=None, fps=20, glass_enabled=True, glass_primary="full",
                  scale=1, iris=True, iris_in_chrome=True, iris_in_water=True, iris_samples=4,
-                 motion=True, rings=True, stripes=True, sun_drift=True, noon_shadows=True,
+                 motion=True, rings=True, stripes=False, sun_drift=True, noon_shadows=True,
                  noon_third_sphere=True):
         assert glass in ("real", "fake")
         assert water_shadows in ("all", "primary_only", "off")
@@ -1529,7 +1532,8 @@ def main():
     ap.add_argument("--motion", type=int, choices=[0, 1], default=1,
                     help="M3 motion master switch: bob, sun drift, rings, stripes (default 1; 0 = M2.2 identity)")
     ap.add_argument("--rings", type=int, choices=[0, 1], default=1, help="M3 knob: rings on the water under each sphere")
-    ap.add_argument("--stripes", type=int, choices=[0, 1], default=1, help="M3 knob: stripes on the chrome sphere")
+    ap.add_argument("--stripes", type=int, choices=[0, 1], default=0,
+                    help="M3 knob: stripes on the chrome sphere (default 0: dropped from the cart 2026-09-30)")
     ap.add_argument("--sun-drift", type=int, choices=[0, 1], default=1, help="M3 knob: the sun drifts about +y")
     ap.add_argument("--noon-shadows", type=int, choices=[0, 1], default=1,
                     help="M3 knob: noon shadows primary water hits (default 1)")
