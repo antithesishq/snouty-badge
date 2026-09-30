@@ -6,6 +6,9 @@
 #                                     10,000 cases, ~85 MB) into tests/roms/65c02/,
 #                                     which `zig build test` parses (M0) and runs
 #                                     on core/cpu65.zig (M1)
+#                                     plus drhelius's lynx-tests 1.4.9 (MIT, 19 small
+#                                     .lnx hardware tests: cpu, page-mode, math, timers,
+#                                     sprites1-5, ...) into tests/roms/lynx-tests/
 #   tools/fetch_test_roms.sh --all    the WHOLE variant (256 files, ~0.9 GB): streams
 #                                     batches of $BATCH (default 32) files into
 #                                     tests/roms/65c02/batch/, checks each batch
@@ -24,12 +27,23 @@ all=0
 for a in "$@"; do
   case "$a" in
     --all) all=1 ;;
-    -h|--help) sed -n '2,22p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,25p' "$0"; exit 0 ;;
     *) echo "unknown option: $a" >&2; exit 2 ;;
   esac
 done
 
 cart=$(cd "$(dirname "$0")/.." && pwd)
+
+# drhelius/lynx-tests (MIT): hardware test carts for M1 (SPEC.md section 16).
+mkdir -p "$cart/tests/roms/lynx-tests"
+if [ ! -f "$cart/tests/roms/lynx-tests/cpu.lnx" ]; then
+  echo "fetch lynx-tests-1.4.9.zip"
+  tmp=$(mktemp -d)
+  curl -fsSL -o "$tmp/t.zip" https://github.com/drhelius/lynx-tests/releases/download/1.4.9/lynx-tests-1.4.9.zip
+  unzip -o -q -j "$tmp/t.zip" '*.lnx' -d "$cart/tests/roms/lynx-tests"
+  curl -fsSL -o "$cart/tests/roms/lynx-tests/LICENSE" https://raw.githubusercontent.com/drhelius/lynx-tests/main/LICENSE || true
+  rm -rf "$tmp"
+fi
 raw=https://raw.githubusercontent.com/SingleStepTests/65x02/main/rockwell65c02/v1
 mkdir -p "$cart/tests/roms/65c02"
 cd "$cart/tests/roms/65c02"
