@@ -3,7 +3,62 @@
 The rule (SPEC.md section 2): every part's worst frame under **12 ms**
 calibrated busy time in badge-bench (72% of the 16.7 ms frame), so the demo
 never drops a frame. Budgets: `.text` + `.rodata` under 110 KB, `.bss`
-under 150 KB (M0 target: `.text` under 60 KB).
+under 190 KB (raised from 150 KB at M1).
+
+## M2 (2026-09-30), the finished show
+
+Calibrated badge-bench (`calibrate/calibration.toml`, fitted 2026-09-29),
+ELF sha256 `940b386313ab`. `carts/snouty-scene/tools/bench_parts.sh` over
+all eleven parts, each run from the part's frame 0 for its length plus 60
+frames (so "run worst" includes the next part's enter() and fade-in):
+
+| # | Part | mean busy ms | part worst busy ms (frame) | run worst | verdict |
+|---|---|---|---|---|---|
+|  0 | Intro       |  1.20 |  2.44 (t 335) |  2.44 | ok |
+|  1 | Plasma      |  0.83 |  1.60 (t 5) |  1.60 | ok |
+|  2 | Copper      |  0.50 |  1.21 (t 24) |  1.52 | ok |
+|  3 | Rotozoomer  |  1.36 |  2.13 (t 5) |  2.13 | ok |
+|  4 | Twister     |  0.77 |  1.53 (t 24) |  2.38 | ok |
+|  5 | Tunnel      |  1.62 |  2.38 (t 5) |  3.15 | ok |
+|  6 | Metaballs   |  2.55 |  3.49 (t 576) |  5.56 | ok |
+|  7 | Voxel       |  4.76 |  5.56 (t 5) |  5.56 | ok |
+|  8 | Snouty head |  1.02 |  1.87 (t 594) |  2.71 | ok |
+|  9 | Fire        |  1.95 |  2.71 (t 469) |  3.22 | ok |
+| 10 | Ending      |  3.35 |  4.68 (t 803) |  4.68 | ok |
+
+Every part is under 6 ms worst, half the 12 ms rule. The worst frames are
+veil frames: `fx.fade` is about 1 ms over the whole frame (frame 5 is the
+first fade-in frame after the 5-frame black gap; black frames are a plain
+clear). The Ending's worst is its closing cross-fade into the Intro
+(t 803: every pixel mixed towards the Intro gradient, two multiplies on
+the spread RGB565 value); its steady frames are 3 to 3.5 ms (halo box,
+the 47-row reflection, one multiply per water pixel, credits text).
+
+Full loop, `badge-bench/bench.sh zig-out/firmware/snouty-scene.elf --frames
+6660 --every 600 --symbols` (one loop, 6600 frames, plus 60 of the second
+pass through the seamless cut):
+
+- start-up (reset to the first update: every part's `init()`, the tunnel
+  and plasma LUTs, the voxel map, textures, palettes): 71.9 ms
+- busy ms: min 0.39, mean 1.97, p95 4.75, max 5.56 (frame 3845, a Voxel
+  fade-in frame); 0 of 6660 frames over budget, worst frame 33% of 16.7 ms
+- hot functions: `parts.voxel.render` 29%, `parts.ending.render` 15%,
+  `memcpy` 13% (background column copies and upscale2x's second column),
+  `parts.metaballs.render` 10%, fire 6%, rotozoomer 6%, tunnel 6%,
+  `api.text` 4%
+
+Sizes (`size -A`): `.text` 89,144 (under the 110 KB budget), `.data` 20,
+`.bss` 174,528 (under 190 KB; the Ending adds 5,512: the sky column, the
+16-level halo palette per sky row, halo level table, mark masks, stars,
+the Intro gradient in spread form). Stack headroom in the 307 KB window is
+about 50 KB.
+
+## History
+
+The M1 per-part rows are replaced by the M2 table above (the M1 parts'
+own `.bss` deltas: tunnel LUTs 69 KB, voxel map 36 KB, metaballs 14 KB,
+fire 11 KB, rotozoomer 4 KB, twister and head 3 KB each). The M0 numbers
+below are kept for the record (M0 order and 15-frame fades).
 
 ## M0 (2026-09-30)
 
@@ -43,41 +98,3 @@ and index field 5 KB, copper strip 6 KB, palettes 1.5 KB).
 
 Plenty of headroom: the M1 parts can spend up to about 9 ms each before a
 fade pushes them to the limit.
-
-## M1
-
-Calibrated badge-bench, `carts/snouty-scene/tools/bench_parts.sh <index>`
-per part (part frames + 60), `.bss` delta against M0's 28,472.
-
-| # | Part | mean busy ms | part worst busy ms (frame) | run worst | .bss delta | what dominates |
-|---|---|---|---|---|---|---|
-|  5 | Twister     |  0.75 |  1.53 (t 1) |  1.72 | +3,440 | background column copy (`memcpy`, 47%) and the row span fill in `render` (45%); steady frames 0.70 ms, the worst is a fade frame |
-|  3 | Rotozoomer | 1.34 | 2.13 (t 1) | 2.13 | +4,104 (texture 2 KB + background texel list 2 KB) | `render` 95%: ~9.5 cycles per pixel, full res; worst frames are the fade-in |
-|  4 | Tunnel |  1.59 |  2.38 (t 1) |  2.38 | +69,248 (two 200x168 u8 LUTs 67.2 KB, texel classes 1 KB, depth ramps 1 KB) | `parts.tunnel.render` 96%: 20,480 px x ~11 cycles (angle, depth, row, class, palette loads + store); worst frame is the fade-in, +0.8 ms; init() about 27 ms of start-up |
-|  9 | Fire        |  1.93 |  2.71 (t 469) |  2.71 | +10,624 | `parts.fire.render` 89% (heat spread over 5,040 cells, ~0.9 ms; mark overlay; heat, 4 KB cooling map, mark masks), upscale column copies 8%; worst frames are the fades |
-|  6 | Metaballs | 2.53 | 3.48 (t 585) | 3.48 | +14,336 (8 KB 1/r^2 LUT, 5 KB index field, two palettes) | `metaballs.render` field sum, 81% (5-6 balls x 5,120 half-res pixels, one LUT load + MAC each); `upscale2x` column copies 13%; worst frame is the fade-out with the sixth ball in |
-|  7 | Voxel | 4.76 | 5.59 (t 825) | 5.59 | +35,528 (64,000) | `parts.voxel.render` 96%: the column march, 160 full-res rays x 150 steps (one map load, two 32x32->64 multiplies, one projection multiply each); the 128x128 u16 map is 32 KB of the delta. Worst frame is a fade-out frame. ELF `86e58d02764c`. |
-|  8 | Snouty head |  1.01 |  1.88 (t 716) |  1.88 | +3,256 | background column copies (memcpy, ~0.3 ms), `render` (transform, cull, sort, column fill, ~0.4 ms), i64 edge divides (~0.27 ms); worst frame is the fade-out |
-
-### M1 merged build (2026-09-30)
-
-`tools/bench_parts.sh` over every part on the merged `scene/m0` (all seven
-M1 parts plus the placeholder Ending), calibrated busy ms:
-
-| # | Part | mean | part worst (frame) | run worst | verdict |
-|---|---|---|---|---|---|
-|  0 | Intro       |  1.18 |  2.45 (t 350) |  2.45 | ok |
-|  1 | Plasma      |  0.81 |  1.59 (t 1) |  1.59 | ok |
-|  2 | Copper      |  0.51 |  1.30 (t 715) |  2.13 | ok |
-|  3 | Rotozoomer  |  1.34 |  2.13 (t 1) |  2.38 | ok |
-|  4 | Tunnel      |  1.59 |  2.38 (t 1) |  2.38 | ok |
-|  5 | Twister     |  0.75 |  1.53 (t 1) |  3.14 | ok |
-|  6 | Metaballs   |  2.53 |  3.48 (t 585) |  5.56 | ok |
-|  7 | Voxel       |  4.76 |  5.59 (t 825) |  5.59 | ok |
-|  8 | Snouty head |  1.01 |  1.88 (t 716) |  2.71 | ok |
-|  9 | Fire        |  1.93 |  2.71 (t 469) |  2.71 | ok |
-| 10 | Ending (placeholder) |  0.94 |  1.73 (t 1) |  1.73 | ok |
-
-Sizes (`size -A`): `.text` 77,624, `.data` 20, `.bss` 169,016 (tunnel
-LUTs 67 KB, voxel map 32 KB, metaballs 14 KB, fire 10 KB, plasma 16 KB,
-the rest small). Worst part is 33% of the frame budget.

@@ -167,7 +167,12 @@ reports RAM (`.bss` delta) and the numbers. Merge order: cheapest first.
 Contract details are in SPEC.md sections 3 to 5; the agent brief adds
 per-part parameters.
 
-## M2 the show
+## M2 the show — built 2026-09-30, awaiting Adrian's GIF review (no tag yet)
+
+Status: Ending written (4.68 ms worst, .bss +5.5 KB), pacing pass below,
+picker polish, `tools/check_timeline.mjs` + `tests/golden.json`, full
+M2 bench table in `docs/PERF.md` (every part under 6 ms, full loop 5.56 ms
+worst), review GIF `docs/preview_m2.gif` (every 10th frame of the loop).
 
 Ending part, credits, pacing and palette pass, picker polish,
 `tools/check_timeline.mjs` with goldens, `docs/PERF.md` table, full-loop
