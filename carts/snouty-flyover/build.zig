@@ -46,8 +46,9 @@ pub fn add(b: *Build, sycl_badge_dep: *Build.Dependency, opts: common.Options) v
 var build_options: ?*Build.Step.Options = null;
 
 fn add_options(b: *Build, cart: *Build.Module, cart_api: *Build.Module, step: *Build.Step) void {
-    _ = b;
     _ = cart_api;
     _ = step;
     if (build_options) |o| cart.addImport("build_options", o.createModule());
+    // The shared Antithesis Iris mark (lib/iris_mark.zig): the sun in render.zig.
+    cart.addImport("iris", b.createModule(.{ .root_source_file = b.path("lib/iris_mark.zig") }));
 }

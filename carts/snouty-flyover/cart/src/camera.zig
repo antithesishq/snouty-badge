@@ -1,14 +1,63 @@
-//! Flight model (SPEC.md 5.5): stick steering with roll shear, pitch, the
-//! altitude spring, boost. Stub: Track B implements update().
+//! Flight model (SPEC.md 5.5, PLAN.md "Camera constants"): stick steering
+//! with roll shear, bank-to-turn yaw, pitch, the altitude spring, boost.
+//! All Q16 integer.
+//!
+//! Conventions shared with render.zig: yaw 0 flies along +y, positive yaw
+//! turns toward +x (screen right), so the forward vector is
+//! (sin yaw, cos yaw). Banking right lifts the right side of the horizon,
+//! which is a negative `roll`.
 const cart = @import("cart-api");
 const fixed = @import("fixed.zig");
+const world = @import("world.zig");
+
+// --- Flight constants -------------------------------------------------------
+
+/// Cruise speed, 0.75 cells per frame.
+const cruise: i32 = 3 * fixed.one / 4;
+/// Speed while A is held, 1.9 cells per frame.
+const boost: i32 = 124518;
+/// Speed eases toward its target by 1/2^speed_ease_shift of the gap per frame.
+const speed_ease_shift = 3;
+/// Start altitude above the terrain under the camera, cells.
+const start_above = 48;
+/// Clearance kept above the highest terrain ahead, cells.
+const clear_above = 12;
+/// Rows ahead of the camera and cells across the flight line scanned for it.
+const ahead_rows = 24;
+const ahead_width = 32;
+/// Altitude spring: moves 1/2^spring_shift of the gap per frame (1/16).
+const spring_shift = 4;
+/// Hard floor above the terrain directly under the camera, cells.
+const min_above = 4;
+/// Pilot altitude limits (pitch moves the cruise altitude between them), cells.
+const alt_low = 12;
+const alt_high = 160;
+/// Cruise altitude change per frame at full pitch (24 rows), Q16 cells.
+const climb_max: i32 = fixed.one / 2;
+/// Largest roll, 20 rows of shear across the screen.
+const roll_max: i32 = 20 * fixed.one;
+/// Roll eases toward the stick over about this many frames (1/12 of the gap per frame).
+const roll_ease = 12;
+/// Yaw gained per frame per row of roll: 1 unit per 4 rows (Q16 units of 1/1024 turn).
+const yaw_per_roll_div = 4;
+/// Yaw cap either side of straight ahead, 1/16 turn.
+const yaw_cap: i32 = 64;
+/// With the stick centred the heading drifts back to straight ahead at this rate (units per frame).
+const yaw_return: i32 = 1;
+/// Level horizon row and the pitch range either side of it (rows).
+const horizon_level = 64;
+const pitch_range = 24;
+/// Horizon eases toward the pitch target by 1/2^pitch_ease_shift of the gap per frame.
+const pitch_ease_shift = 3;
+
+// --- State ------------------------------------------------------------------
 
 pub const Cam = struct {
-    /// Position in Q16 cells; y only increases.
+    /// Position in Q16 cells; y only increases, x wraps at world.W.
     x: i32 = 128 * fixed.one,
     y: i32 = 0,
     alt: i32 = 56 * fixed.one,
-    /// 1/1024 turn, 0 = +y.
+    /// 1/1024 turn, 0 = +y, positive toward +x.
     yaw: i32 = 0,
     /// Screen row of the horizon; 64 is level.
     horizon: i32 = 64,
@@ -18,8 +67,115 @@ pub const Cam = struct {
 
 pub var cam: Cam = .{};
 
+/// Q16 accumulators behind the integer fields of `cam`.
+var yaw_q: i32 = 0;
+var horizon_q: i32 = horizon_level * fixed.one;
+var speed: i32 = cruise;
+/// Altitude the pilot asks for (pitch moves it); the spring target is the
+/// higher of this and the terrain clearance.
+var cruise_alt: i32 = 0;
+
+/// Place the camera at the start altitude; call after world.advance_to at start().
+pub fn init() void {
+    cam = .{};
+    yaw_q = 0;
+    horizon_q = horizon_level * fixed.one;
+    speed = cruise;
+    cam.alt = (@as(i32, ground(cam.x, cam.y)) + start_above) * fixed.one;
+    cruise_alt = cam.alt;
+}
+
 pub fn update(controls: cart.Controls, frame: u32) void {
-    _ = controls;
     _ = frame;
-    cam.y += 3 * fixed.one / 4;
+    const steer: i32 = @as(i32, @intFromBool(controls.right)) - @intFromBool(controls.left);
+    const pitch: i32 = @as(i32, @intFromBool(controls.down)) - @intFromBool(controls.up);
+
+    // Speed: boost while A is held.
+    const want_speed = if (controls.a) boost else cruise;
+    speed += (want_speed - speed) >> speed_ease_shift;
+    if (@abs(want_speed - speed) < 64) speed = want_speed;
+
+    // Roll eases toward the stick; banking right lifts the right side (negative roll).
+    const want_roll = -steer * roll_max;
+    const droll = @divTrunc(want_roll - cam.roll, roll_ease);
+    cam.roll = if (droll == 0) want_roll else cam.roll + droll;
+
+    // Bank to turn, capped; heading recentres when the stick is released.
+    yaw_q -= @divTrunc(cam.roll, yaw_per_roll_div);
+    if (steer == 0) {
+        const r = yaw_return * fixed.one;
+        if (yaw_q > r) yaw_q -= r else if (yaw_q < -r) yaw_q += r else yaw_q = 0;
+    }
+    yaw_q = @max(-yaw_cap * fixed.one, @min(yaw_cap * fixed.one, yaw_q));
+    cam.yaw = yaw_q >> fixed.Q;
+
+    // Move: forward is (sin yaw, cos yaw); x wraps across the strip.
+    cam.x = (cam.x + fixed.mul(speed, sin(cam.yaw))) & (world.W * fixed.one - 1);
+    cam.y += fixed.mul(speed, cos(cam.yaw));
+
+    // Pitch: up dives (horizon rises), down climbs (horizon falls).
+    const want_h = (horizon_level + pitch * pitch_range) * fixed.one;
+    horizon_q += (want_h - horizon_q) >> pitch_ease_shift;
+    if (@abs(want_h - horizon_q) < 256) horizon_q = want_h;
+    cam.horizon = (horizon_q + fixed.one / 2) >> fixed.Q;
+    const tilt = horizon_q - horizon_level * fixed.one; // Q16 rows, +-24
+    cruise_alt += @divTrunc(fixed.mul(tilt, climb_max), pitch_range);
+    cruise_alt = @max(alt_low * fixed.one, @min(alt_high * fixed.one, cruise_alt));
+
+    // Altitude spring toward max(cruise, terrain ahead + clearance), then the hard floor.
+    const target = @max(cruise_alt, (@as(i32, ahead_max()) + clear_above) * fixed.one);
+    cam.alt += (target - cam.alt) >> spring_shift;
+    const floor = (@as(i32, ground(cam.x, cam.y)) + min_above) * fixed.one;
+    cam.alt = @max(cam.alt, floor);
+}
+
+/// Terrain height under a Q16 position (0 if the row is not in the ring).
+fn ground(x: i32, y: i32) u8 {
+    const row = y >> fixed.Q;
+    if (!world.generated_row(row)) return 0;
+    const col: usize = @intCast((x >> fixed.Q) & (world.W - 1));
+    return world.height[@intCast(row & (world.DEPTH - 1))][col];
+}
+
+/// Highest cell in the ahead_rows rows from the camera row, across ahead_width
+/// cells centred on the flight line (which leans with the yaw). Only rows in
+/// the ring are read; after start() that is every one of them.
+fn ahead_max() u8 {
+    const row0 = cam.y >> fixed.Q;
+    const lean = sin(cam.yaw); // Q16 x cells per row
+    var best: u8 = 0;
+    var i: i32 = 0;
+    while (i < ahead_rows) : (i += 1) {
+        const row = row0 + i;
+        if (!world.generated_row(row)) break;
+        const line = &world.height[@intCast(row & (world.DEPTH - 1))];
+        const centre = (cam.x + lean * i) >> fixed.Q;
+        var c = centre - ahead_width / 2;
+        while (c < centre + ahead_width / 2) : (c += 1) {
+            best = @max(best, line[@intCast(c & (world.W - 1))]);
+        }
+    }
+    return best;
+}
+
+// --- Sine -------------------------------------------------------------------
+
+/// sin over a quarter turn in 16 steps, Q16 (round(65536 * sin(i * pi / 32))).
+const quarter = [17]i32{ 0, 6424, 12785, 19024, 25080, 30893, 36410, 41576, 46341, 50660, 54491, 57798, 60547, 62714, 64277, 65220, 65536 };
+
+/// Q16 sine of an angle in 1/1024 turns, linear between 16-unit table steps
+/// (error under 0.2%). Private to the flight model; render.zig keeps its own table.
+pub fn sin(a: i32) i32 {
+    const t = a & 1023;
+    const q = t & 255; // position inside the quadrant
+    const p = if (t & 256 != 0) 256 - q else q; // mirror the 2nd and 4th quadrants
+    const i: usize = @intCast(p >> 4);
+    const f = p & 15;
+    const v = if (i == 16) quarter[16] else quarter[i] + (((quarter[i + 1] - quarter[i]) * f) >> 4);
+    return if (t & 512 != 0) -v else v;
+}
+
+/// Q16 cosine of an angle in 1/1024 turns.
+pub fn cos(a: i32) i32 {
+    return sin(a + 256);
 }

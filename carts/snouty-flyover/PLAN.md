@@ -91,8 +91,11 @@ pub fn draw(frame: u32) void;           // whole frame into cart.framebuffer
 ```
 
 Map addressing: `height[y & (DEPTH-1)][x & (W-1)]`. The camera's `y`
-increases forever; `advance_to` keeps `[cam_row - 8, cam_row + z_far]`
-generated and remembers the highest generated row.
+increases forever; `advance_to` keeps `[cam_row - 8, cam_row + gen_ahead)`
+generated, with `gen_ahead = DEPTH - 8`, and remembers the highest
+generated row. (Amended during M0: the ring cannot hold `z_far + 8` rows,
+so the march's far limit is `min(256, gen_ahead)` cells: 248 at depth 256,
+120 at depth 128.)
 
 M0 noise floor (Track B): `h = 8 + noise2(x, y, seed) / 32` (amplitude
 8), colour index `0..7` by `h`, index `8` on grid lines (`x % 64 == 0 or
@@ -145,6 +148,23 @@ badge-bench/bench.sh zig-out/firmware/snouty-flyover.elf --script carts/snouty-f
 - 2026-09-30: started. Scaffold commit 14c9145 (root build entry, knobs,
   main.zig, stub modules with the fixed interfaces; builds, check-float
   passes). Tracks A and B running as Opus agents in this worktree.
+- 2026-09-30: done, tag `snouty-flyover/m0`. Calibrated badge-bench over
+  the 600-frame `m0_fly.json` run: worst 7.01 ms (frame 454, boosting),
+  mean 6.35, p95 6.83; 32% of the 22 ms budget, so the 60 fps lock stays
+  possible (decide in M2 with districts and the fog dither in, SPEC 10).
+  Hot: the inlined march 91%, fog rebuild 4%, sky memcpy 3%, world 2%.
+  Sizes: `.text` 14,492 B, `.data` 44 B, `.bss` 141,672 B (map 128 KB, fog
+  4 KB, renderer tables; little `.bss` headroom left under the 140 KB gate,
+  `-Dflyover_depth=128` halves the map if M1 needs room). check-float
+  passes; `debug_world_check` is 0 across the run. Deviations from this
+  plan, both kept: the ring window is `[cam_row - 8, cam_row + DEPTH - 8)`
+  and the march far limit is `min(256, gen_ahead)` = 248 cells; the fog
+  level per step follows the concept's curve (level 0 to 60 cells, then
+  f^1.4 to level 7 at z_far) instead of `step / 32`, which topped out at
+  level 4. Camera additions: pitch sets a cruise altitude that the terrain
+  clearance only raises, and the heading returns to straight ahead when
+  the stick is centred. GIF: `docs/preview_m0.gif`. The M0 test blocks use
+  bus/sort palette indices; M1 removes them.
 
 ## M1 World engine (outline, planned after M0's bench number)
 

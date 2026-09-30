@@ -23,6 +23,7 @@ pub fn start() void {
     cart.set_double_buffer_mode(.no_copy_full_frame);
     render.init();
     world.advance_to(camera.cam.y >> fixed.Q);
+    camera.init();
 }
 
 pub fn update() void {
@@ -77,6 +78,12 @@ comptime {
         @export(&debug_cam_y, .{ .name = "debug_cam_y" });
         @export(&debug_cam_x, .{ .name = "debug_cam_x" });
         @export(&debug_cam_alt, .{ .name = "debug_cam_alt" });
+        @export(&debug_cam_yaw, .{ .name = "debug_cam_yaw" });
+        @export(&debug_cam_roll, .{ .name = "debug_cam_roll" });
+        @export(&debug_horizon, .{ .name = "debug_horizon" });
+        @export(&debug_world_check, .{ .name = "debug_world_check" });
+        @export(&debug_map_height, .{ .name = "debug_map_height" });
+        @export(&debug_map_colour, .{ .name = "debug_map_colour" });
     }
 }
 
@@ -94,6 +101,44 @@ fn debug_cam_x() callconv(.c) u32 {
 }
 fn debug_cam_alt() callconv(.c) u32 {
     return @bitCast(camera.cam.alt >> fixed.Q);
+}
+fn debug_cam_yaw() callconv(.c) u32 {
+    return @bitCast(camera.cam.yaw);
+}
+/// Roll in rows of shear (rounded toward zero); negative = banked right.
+fn debug_cam_roll() callconv(.c) u32 {
+    return @bitCast(@divTrunc(camera.cam.roll, fixed.one));
+}
+fn debug_horizon() callconv(.c) u32 {
+    return @bitCast(camera.cam.horizon);
+}
+/// Regenerates every row the ring should hold around the camera and counts the
+/// cells that differ from the ring (0 = ring consistent), plus 1000000 per row
+/// in the window that generated_row() does not report as present.
+fn debug_world_check() callconv(.c) u32 {
+    var h: [world.W]u8 = undefined;
+    var c: [world.W]u8 = undefined;
+    var bad: u32 = 0;
+    const row0 = camera.cam.y >> fixed.Q;
+    var y = row0 - world.keep_behind;
+    while (y < row0 + world.gen_ahead) : (y += 1) {
+        if (!world.generated_row(y)) bad += 1_000_000;
+        world.gen_row(y, &h, &c);
+        const i: usize = @intCast(y & (world.DEPTH - 1));
+        for (h, c, world.height[i], world.colour[i]) |eh, ec, rh, rc| {
+            bad += @intFromBool(eh != rh) + @intFromBool(ec != rc);
+        }
+    }
+    return bad;
+}
+/// Ring cell at world (x, y), or 0xFFFF if row y is not in the ring.
+fn debug_map_height(x: i32, y: i32) callconv(.c) u32 {
+    if (!world.generated_row(y)) return 0xFFFF;
+    return world.height[@intCast(y & (world.DEPTH - 1))][@intCast(x & (world.W - 1))];
+}
+fn debug_map_colour(x: i32, y: i32) callconv(.c) u32 {
+    if (!world.generated_row(y)) return 0xFFFF;
+    return world.colour[@intCast(y & (world.DEPTH - 1))][@intCast(x & (world.W - 1))];
 }
 /// Sum of all framebuffer words, for render regression tests.
 fn debug_pixel_checksum() callconv(.c) u32 {

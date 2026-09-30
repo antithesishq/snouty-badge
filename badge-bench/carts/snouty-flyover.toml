@@ -1,0 +1,5 @@
+# snouty-flyover: voxel heightfield flyover (Memory Lane), locked to 30 fps by its own vsync.
+budget_ms = 22.0
+frames = 600
+script = "carts/snouty-flyover/tools/scripts/m0_fly.json"
+note = "M0: bank right 120-200, left 300-380, boost 450-540; budget is the 30 fps frame with headroom (SPEC 10)"
