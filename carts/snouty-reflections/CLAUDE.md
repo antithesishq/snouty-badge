@@ -63,8 +63,13 @@ python3 ../../tools/make_gif.py out/ preview.gif --scale 3 --ms 50
 ```
 
 Debug exports (wasm): `debug_frame`, `debug_render_us`,
-`debug_pixel_checksum`, `debug_dither_mode`. `--press B:0-0` switches to
-the no-dither mode for reference comparisons.
+`debug_pixel_checksum`, `debug_dither_mode`, and since M3
+`debug_set_view(preset, t, orbit, height_mm)` (freezes on that view),
+`debug_set_dither_mode(mode)` (1 = none, for reference comparisons),
+`debug_preset`, `debug_state`, `debug_t`, `debug_orbit`,
+`debug_height_mm`. B cycles bayer -> blue noise -> palette16 -> none, so
+input scripts need three B presses to reach none
+(`tools/scripts/m3_nodither.json`). App state is `cart/src/app.zig`.
 
 ## Conventions
 

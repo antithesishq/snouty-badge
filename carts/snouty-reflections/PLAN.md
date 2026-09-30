@@ -1,4 +1,4 @@
-# Plan: M0 scaffold, M1 "Tracer on hardware", M2 "Materials and shore", M2.2 "Names, skyline and Iris", M3 "Presets and motion"
+# Plan: M0 scaffold, M1 "Tracer on hardware", M2 "Materials and shore", M2.2 "Names, skyline and Iris", M3 "Presets and motion", M3.1 "No stripes, logo clear of the skyline"
 
 Companion to `SPEC.md`. This file is the contract between the parallel
 tracks; when it and the spec disagree, this file wins for the current
@@ -597,7 +597,7 @@ literal.
 
 | Item | Value |
 |------|-------|
-| Centre | `C = (-13.5, 1.8, 12.0)` (was `x = 4.5`; moved right of the skyline, the counterpart of Snouty on the left, clear of the title) |
+| Centre | `C = (-15.5, 1.8, 12.0)` (M3.1; was `x = 4.5`, then `-13.5`: moved right of the skyline, the counterpart of Snouty on the left, clear of the title, and in M3.1 clear of Harbour Centre) |
 | Half-size | `S = 1.5` (the mark's unit square spans `U, V` in `[-1, 1]`) |
 | Half-thickness | `h = 0.12` (world units) |
 | Bounding sphere | centre `C`, radius `1.57` (mark radius `1.042 S`, plus `h`) |
@@ -752,8 +752,8 @@ close-up of the logo, updates SPEC status and RUNNING.md, and tags
 
 SPEC.md sections 3, 6 and 7 as revised 2026-09-30: four presets on
 Select, attract cycling with a fade, a free camera on the stick, spheres
-that bob with rings on the water, a drifting sun, stripes on the chrome,
-dither modes 2 to 4. A freezes time (the real-time tracer keeps drawing
+that bob with rings on the water, a drifting sun, stripes on the chrome
+(dropped in M3.1, 2026-09-30, below), dither modes 2 to 4. A freezes time (the real-time tracer keeps drawing
 the frozen scene; M4 swaps the path tracer in behind the same button).
 No audio (SPEC.md section 8).
 
@@ -777,7 +777,7 @@ pub const Preset = enum(u32) { sunset = 0, midnight = 1, noon = 2, storm = 3 };
 // camera.zig (Track A)
 pub const default_height: f32 = 1.6;
 pub const min_height: f32 = 1.0;
-pub const max_height: f32 = 3.0;
+pub const max_height: f32 = 1.8; // Adrian 2026-09-30: was 3.0, over budget above 1.8
 
 // trace.zig (Track A)
 pub const View = struct {
@@ -854,7 +854,11 @@ Presets are selected at runtime; all four exist in every variant.
   Rays test the ring only inside the sphere's `2 R_r` square.
 - Stripes (knob `stripes`): chrome colour times
   `1 - 0.12 * [fract(3 * (n.x cos a + n.z sin a)) < 0.5]`,
-  `a = s / 20` turns, `n` the unit normal at the hit.
+  `a = s / 20` turns, `n` the unit normal at the hit. **Dropped
+  2026-09-30 (M3.1) at Adrian's request**: on the simulator the hard
+  bands "don't look like chrome, they look like artifacting". The knob
+  and its code are gone from the cart; `reference.py --stripes` defaults
+  to 0 and keeps the formula only for comparison.
 
 **Presets** (sky gradient as the M1 formula with these colours; "sun"
 is the light and the disc, moon included):
@@ -972,3 +976,153 @@ status; tag `snouty-reflections/m3`.
 ### M3 status
 
 - 2026-09-30: plan written.
+- 2026-09-30 (Track A step 1): runtime scene, motion off, sunset only.
+  `trace.View` / `render_frame(view)`; preset values (sun, sky, colours,
+  shore palette, wave gains) are comptime per preset and copied into a
+  per-frame `scene.Frame` with the fade folded into every emitted colour
+  (no per-pixel cost); sphere heights and `k = y^2 - r^2` per frame; the
+  primary water tables are runtime copies (`water.build_tables`) of the
+  comptime ones at default height. Legacy identity: checksums of frames
+  0..600 step 50 equal the m2.2 baseline for cut20 and half30, both dither
+  modes. cut20 45.48 / 43.09 ms (worst / mean; baseline 45.94 / 43.61):
+  -0.46 ms. `.text + .data` cut20 94800, full20 106152, full15 104376,
+  half30 123368 (under 140 KB); `.bss` cut20 86632, full20/full15 120488,
+  half30 120592 (the 40 KB primary_fade_rt).
+- 2026-09-30 (Track A steps 2-4, presets, motion, height). Calibrated busy
+  ms, worst / mean over one orbit, cut20 unless noted.
+  - Presets and matte/small spheres, motion off (`-Dreflections_bench=
+    motion_off`): row 1, sunset 45.49 / 43.11 (baseline 45.94 / 43.61);
+    legacy identity holds (checksums 0..600 step 50, cut20 and half30,
+    dither none; bayer differs on odd frames only because the stand-in
+    main's dither parity follows its own frame counter, not the view).
+  - A first general form (runtime flags for the other spheres in every
+    ray) cost 1.4 ms in sunset and put midnight at 55.1, noon at 66.8.
+    Now: the render is instantiated twice in cut20 (`trace.Class`:
+    chrome-only for sunset and storm, the M2.2 code; general for presets
+    with a second sphere), and in the general one the water rows whose
+    reflection may meet another sphere or whose hit may lie in a noon
+    shadow (`x` rows, per column: the M2.2 water-logo bands, a small span
+    round the mirror image for t >= tau, a span round each shadow box)
+    run x kinds; the rest run the chrome-only kinds. debug_span paints a
+    plain row that needed an x kind: zero over 200 frames each of
+    midnight and noon; a negative control paints 359.
+  - Knobs in cut order, measured at each preset's worst frame: rings 12.5
+    ms in sunset (8.9 active, 3.6 for the ring code's mere presence in
+    the water normal) - off in cut20, full20, full15, half30 (half30 33.1
+    with rings, budget 31.3); stripes 1.1 in sunset, ~0 in midnight and
+    noon - kept; noon_shadows 6.9 and noon_third_sphere 6.6 in noon - off
+    in cut20, full20, full15 (kept in half30); sun_drift 0 - kept.
+  - Row 2 per preset, motion on, knobs as above: sunset 46.62 / 44.08,
+    midnight 49.81 / 46.01 (OVER), noon 50.24 / 45.34 (OVER), storm
+    45.78 / 42.81. Midnight and noon are over after every knob: of their
+    ~3.5 ms over sunset, the matte seen in the water costs 1.4-1.8
+    (without it 48.41 / 48.45), the rest is the general render (1.3) and
+    the x-row planning (0.5). Not cut further: needs Adrian (options:
+    no matte in water reflections, a matte-only render instance for +17
+    KB, or a lower bar for those two presets).
+  - Row 3, height sweep (`-Dreflections_bench=height`: 1.0 -> 3.0 -> 1.0
+    over each orbit, a table rebuild every frame): sunset 51.40 / 47.17,
+    midnight 54.89 / 48.98, noon 55.32 / 48.32, storm 51.53 / 45.99, all
+    OVER. Worst per height band (sunset): 1.0-1.8 at or under 46.5, 2.0
+    48.2, 2.4 50.6, 2.6-3.0 51.4: above ~1.8 m more rows see water (every
+    row at 3.0), and water pixels cost ~270 cycles against ~60 for sky.
+    The rebuild is 0.8 ms at 1.0 m, ~2 ms at 3.0 m (a divide per entry).
+    Needs Adrian: e.g. max_height 1.8, or a cheaper water shade above it.
+  - Other variants (not gated): half30 sunset 27.11 / 21.21, noon 20.45
+    / 18.07 (budget 31.3); full15 sunset 64.83 / 60.63 (budget 62.7);
+    full20 sunset 90.48 / 68.47 (baseline). full20 and full15 got
+    heavier than M2.2 because moving spheres make the static shadow map
+    invalid: their water shadows are exact per hit at every depth.
+  - check_render (Track C's reference, the variant's knob flags): 24/24
+    PASS for cut20, half30, full20, full15 (worst: storm t=300, 75 pixels
+    > 1 unit, 21 > 6: the one-step normal renormalisation at 2.5x
+    amplitude). check-float passes for every variant and the height and
+    motion_off builds.
+  - Sizes, `.text + .data` / `.bss`: cut20 98684 / 47080, full20 84028 /
+    46968, full15 82636 / 46968, half30 111916 / 47080. The inverse ray
+    length is read from the 20 KB quarter table with a mirrored stride
+    (no 40 KB unfolded copy); the shipped build computes the primary
+    water fade at runtime (40 KB `.bss`, every height) and leaves out the
+    27.5 KB comptime table, which the motion_off build keeps.
+  - Toolchain bug found: indexing a comptime array of structs holding
+    vectors (`[4]Consts`) at runtime read wrong bytes for presets 1-3 in
+    the thumb build only (wasm right); `scene.consts_of` switches over
+    four separate constants instead.
+- 2026-09-30 (integration, branch reflections/m3-int): A, B, C merged,
+  m3_shim removed. Legacy identity (motion_off vs the pre-M3 main build)
+  13/13 frames identical for cut20 and half30, dither none and bayer;
+  check_render 24/24 PASS for all four variants with their knob flags.
+  Sizes `.text + .data` / `.bss`: cut20 109936 / 67096, full20 95456 /
+  66984, full15 93936 / 66984, half30 123344 / 67096 (under 140 KB). The
+  blue-noise table is f32 (16 KB `.bss`); M4's 80 KB accumulator still
+  fits the 307 KB window (110 + 147 + 32) but a u8 table would give 12 KB
+  back. Bench (`bench_variants.sh --m3`, cut20): row 1 45.49 / 43.11
+  PASS; row 2 attract 4 orbits: sunset 46.36, midnight 50.30 (OVER),
+  noon 50.62 (OVER), storm 45.45; row 3 height sweep with Track B's app
+  (1.0 to 3.0 m at 50 mm per frame, a rebuild every frame): 54.2 to 58.9,
+  all OVER; row 4 palette16 47.24 / 44.69 (report). Waiting on Adrian for
+  midnight/noon, max height, and the knobs turned off (rings, noon
+  shadows, noon third sphere).
+- 2026-09-30: Adrian's answers: midnight and noon ship as they are
+  (occasional stutter accepted on their heaviest frames); free camera
+  capped at 1.8 m (`camera.max_height`, reference, check_render, docs);
+  rings, noon shadows and noon's third sphere stay off in the real-time
+  view (M4's frozen tracer brings them back). Row 3 again with the cap:
+  sunset 48.01 / 44.17, midnight 52.36, noon 52.72, storm 47.76 / 42.82.
+  Sunset and storm are over 47.0 only while the height is moving (the
+  table rebuild, ~1.6 ms, runs on every frame of a height change), still
+  inside the 50 ms frame. check_render 24/24 PASS cut20 and half30 at the
+  new heights. Preview GIFs `docs/preview_m3_presets.gif` (4 orbits of
+  attract) and `docs/preview_m3_free_camera.gif`. Tagged
+  `snouty-reflections/m3`.
+
+## M3.1 No stripes, logo clear of the skyline (2026-09-30)
+
+Two changes Adrian asked for after running main on the simulator. No new
+content; the M3 scene holds except as noted.
+
+1. **Chrome stripes dropped**, every preset and variant: "they don't look
+   like chrome to me, they look like artifacting". The `stripes` knob,
+   its constants, the per-frame setup and the colour factor are removed
+   from the tracer (not left behind a false flag); `reference.py
+   --stripes` defaults to 0 and keeps the M3 formula only for
+   comparison.
+2. **Iris logo moved right**: centre `(-15.5, 1.8, 12.0)` (was `x =
+   -13.5`). At -13.5 the mark overlapped Harbour Centre, the last tower
+   (texels u <= 233, x >= -13.25), in 36 of the 86 attract frames where
+   both are on screen. At -15.5 it stands over Canada Place's sails and
+   past the shore's end, at least 9.5 px (median 13.7) right of the towers
+   in every orbit frame, far from the title. Frames of the 600-frame orbit
+   with 10+ logo pixels visible (not behind the chrome): 94 (was 95); 50+
+   pixels: 77 (was 80). Every bound (bounding sphere, chrome cone,
+   water-logo spans, screen spans) derives from `iris.centre`; nothing
+   else moved. Candidates -14.5 to -16.5 were measured the same way; -15
+   leaves 7.5 px, -16 and beyond lose more frames for no visible gain.
+
+### M3.1 status
+
+- 2026-09-30 (branch reflections/m3.1). Calibrated busy ms, cut20,
+  `bench_variants.sh --m3` rows 1 and 2, worst (mean), rebaselined on this
+  machine from origin/main:
+
+  | row | M3 (main) | no stripes | + logo at -15.5 |
+  |---|---|---|---|
+  | 1 step1 (motion off) | 45.49 (43.11) | 45.67 (43.34) | 45.58 (43.18) |
+  | 2 sunset | 46.45 (43.90) | 45.67 (43.34) | 45.67 (43.32) |
+  | 2 midnight | 50.29 (46.26) | 49.42 (45.21) | 49.36 (45.20) |
+  | 2 noon | 50.60 (45.68) | 49.70 (44.63) | 49.73 (44.62) |
+  | 2 storm | 45.54 (42.62) | 45.26 (42.10) | 45.15 (42.09) |
+
+  Stripes saved 0.78 ms in sunset, ~0.9 in midnight and noon, 0.28 in
+  storm. Row 1 has no stripes in either build (motion off); its +0.18 comes
+  from code generation (that build's `.text` shrank by 48 bytes), not
+  from any rendering change. The logo move is within
+  0.1 ms in every row (noon +0.03, the rest equal or faster).
+  Midnight and noon remain over 47.0 (accepted in M3). Sizes `.text +
+  .data` / `.bss`: cut20 108896 / 67096, full20 95712 / 66984, full15
+  93408 / 66984, half30 122224 / 67096. All four variants build;
+  check-float passes; check_render PASS cut20 28/28 and half30 28/28 (M3
+  check set plus logo frames 175, 182, 245, 269 / 263, 273, 368, 404;
+  reference knob flags `--rings 0`, plus `--noon-shadows 0
+  --noon-third-sphere 0` for cut20). `docs/iris_closeup.png` re-shot,
+  `docs/preview_m3.1.gif` is one orbit of attract (sunset), scale 3.

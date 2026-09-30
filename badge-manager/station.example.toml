@@ -1,0 +1,26 @@
+# /etc/badge-station/station.toml
+# Top-level keys first: in TOML every key after a [[hotspots]] header
+# belongs to that hotspot, so the hotspot list stays at the end.
+library = "/var/lib/badge-station/library"
+http_port = 80
+# fake_badge = "/var/lib/badge-station/fake.img"   # loop image or directory instead of USB
+
+ap_ssid = "snouty-badge"
+ap_password = "snoutysnouty"                       # WPA2, 8 characters or more
+
+build_host = "exedev@animated-badge.exe.xyz"
+build_repo = "/home/exedev/snouty-badge"
+
+# Building a cart from a prompt (PLAN section 9). The station builds on
+# itself when it can (6 GB RAM, Zig, build_repo present), else on build_host.
+build_max_minutes = 20                             # wall clock, then the job is killed
+build_max_usd = 5.0                                # agent spend limit per job
+build_max_turns = 40                               # agent turn limit per job
+# build_command = "bash /path/to/build-job.sh --id {id} --out {out} --prompt-file {prompt_file} {flags}"
+#                                                  # replaces build-job.sh (tests, custom setups)
+
+# Phone hotspots to join, tried before the station makes its own network.
+# Repeat the block for each phone.
+[[hotspots]]
+ssid = "Adrian's iPhone"
+password = "change-me"

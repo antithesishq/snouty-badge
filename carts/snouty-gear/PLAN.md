@@ -346,6 +346,159 @@ splash, 1 running, 2 menu.
    hardware run (M0/M1 drive checks still pending) now also confirms the
    buzzer and the splash.
 
+## M3 Scrub: contract
+
+The time scrubber (SPEC.md section 10): a keyframe every 30 frames into a
+page store, the pad byte per frame into an input log, Left/Right in the
+menu step half a second back and forward, resuming from a parked keyframe
+plays on from there and drops the future. Two Opus tracks in worktrees
+against the prep commit on `gear/m3`, then integration.
+
+### Decisions defaulted here (Adrian may overrule; nothing else is blocked)
+
+- Mechanism: Snouty Boy's page store, copied (SPEC.md 7: copy now, share
+  in M5), instead of the copy-on-first-write undo records SPEC.md 10 first
+  described. Same outcome (deltas, not full snapshots), zero cost on the
+  bus/VDP write paths, O(1) restore, 22 unit tests and a determinism test
+  to port rather than write. The undo-record design stays in SPEC.md as
+  the alternative; Track A's sizing test says whether the page tables cost
+  too much (they scale with page count x keyframes: at 128 B pages a
+  keyframe table is 257 refs = 514 B).
+- Page size 128 B by default; Track A measures 64/128/256 on Waternet and
+  Sonic and the integration picks the size with the most depth.
+- Scrub UI as in Snouty Boy: Left/Right on a non-setting row scrub; after
+  a step the panel gives way to a one-line bar at the bottom of the screen
+  ("Scrub: -1.5 / 3.5s") so the restored frame is visible; Up/Down/A bring
+  the panel back; B or a Select tap resume from the parked position.
+  Auto-repeat 4 steps per second while held. No neopixels (they stay off
+  on every cart).
+- The console `gg` stays a static in `.bss` (33 KB); only the store lives
+  in the run-time arena `__bss_end__`..`__stack_limit__ - 1 KB`
+  (cart_ram.ld exports both). The wasm build uses a 72 KB static arena so
+  the preview shows badge-like depth.
+
+### Frozen in the prep commit (core, already compiles and passes `zig build test`)
+
+```zig
+// core/gg.zig
+pub const ring = @import("ring.zig");     // Ring(max_n, interval): count, live, cursor, record/step/... (Boy's, verbatim)
+pub const kstore = @import("kstore.zig"); // Store(page_size): init/reset/put/get/matches/drop_*/pages_in_use/... (Boy's, verbatim)
+pub const Gg = struct {
+    pub const Small = struct { cpu, mapper, mem_control, io_control, vdp: vdp.Vdp.State, psg, pad, frame_count, irq_frame_count, irq_line_count };
+    pub fn save_small(gg: *const Gg, out: *Small) void;   // zeroes padding first
+    pub fn load_small(gg: *Gg, k: *const Small) void;     // then sync_map, frame_t = 0
+    pub fn state_regions(gg: *Gg, small: *Small) [4][]u8; // { small bytes, ram 8 KB, vram 16 KB, cart_ram 8 KB }
+    // Keyframe / snapshot / restore (full copies) stay for tests.
+};
+// core/vdp.zig
+pub const Vdp.State = struct { every Vdp field but vram };  // comptime-checked complete
+pub fn save_state / load_state
+```
+
+Frozen for the frontend (Track B writes them; the integration's scripts
+and bench checks use these names):
+
+```zig
+// cart/src/frontend/tuning.zig
+pub const frames_per_keyframe = 30;
+pub const page_size = 128;               // integration may change it after Track A's numbers
+pub const typical_pages_per_keyframe = 40; // layout estimate: ~5 KB per keyframe (SPEC 10 measurement)
+pub const max_keyframes = 64;
+pub const stack_guard = 1024;
+
+// cart/src/frontend/rewind.zig (Boy's, adapted: static gg, fixed 8 KB cart RAM region)
+pub fn init() bool;                       // finds the arena, lays out the store; false = no room for 2 keyframes
+pub fn reset(gg: *core.Gg) void;          // forget history, snapshot now (called from start and the Reset row)
+pub fn record_frame(gg: *core.Gg, pad: u8) void; // after every game step_frame
+pub fn can_step(dir: i2) bool;
+pub fn step(gg: *core.Gg, dir: i2) bool;  // restore + draw the parked frame, or replay to live
+pub fn depth_frames() u32;  pub fn history_frames() u32;  pub fn history_fraction() u8;
+pub fn keyframe_count() usize; pub fn keyframe_capacity() usize; pub fn pool_bytes() usize;
+pub fn pool_capacity_bytes() usize; pub fn arena_bytes() usize;
+
+// main.zig wasm exports (added)
+debug_scrub_depth   = rewind.depth_frames()      // frames behind live, 0 at live
+debug_history       = rewind.history_frames()
+debug_keyframes     = keyframe_count()
+debug_keyframe_cap  = keyframe_capacity()
+debug_pool_bytes    = pool_bytes()
+debug_arena_bytes   = arena_bytes()
+```
+
+### Track A: core tests, sizing, docs (files `tests/ring_unit.zig`, `tests/kstore_unit.zig`, `tests/determinism.zig`, `tests/scrub_sizing.zig`, `tests/all.zig`, `SPEC.md` section 10/13 numbers, `README.md` test list)
+
+- Port Boy's `tests/ring_unit.zig` (12 tests) and `tests/kstore_unit.zig`
+  (10 tests) to the Gear core: same behaviour, region lengths of the Gear
+  console (`@sizeOf(Gg.Small)`, 0x2000, 0x4000, 0x2000).
+- `tests/determinism.zig` per SPEC.md 10: Waternet (`roms/waternet.gg`,
+  path resolution as `tests/golden.zig`), 600 frames of a pseudo-random
+  pad script (LCG; Start presses so the game gets going), a full
+  `Gg.Keyframe` every 30 frames; then for each k restore keyframe k,
+  replay the 30 logged pads, compare with keyframe k+1 field by field
+  (`Small` fields + the three regions; report the first differing field
+  name). A second test puts the same run through `kstore.Store(128)` with
+  a large pool and checks `get(age)` reproduces every full keyframe and
+  that `matches` agrees. Skip (not fail) when the ROM is missing.
+- `tests/scrub_sizing.zig`: Waternet 1800 frames (the m1 script then the
+  poke loop from the measurement) through `Store(64)`, `Store(128)` and
+  `Store(256)` with a pool sized to 69 KB minus tables for 64 keyframes;
+  assert every size holds at least 3 s of history at the end (SPEC 10
+  target) and record `pages_in_use` per keyframe (copied/shared/zero
+  counters are in the store) in the test's failure message and in the
+  PLAN status via your report. If `~/sonic.gg` exists (HOME), run the
+  same with the Sonic script (Start 200/320/440, then Right held, jump
+  every 45 frames) and assert >= 3 s at 2400 frames; skip otherwise.
+- Wire the four files into `tests/all.zig`. `zig build test -Dcart=snouty-gear`
+  green (Debug-skipped ZEXALL as before), `zig fmt`.
+- Report: the measured pages per keyframe at 64/128/256 for both ROMs and
+  the depth each gives in 69 KB, plus the table cost; recommend a page size.
+
+### Track B: frontend (files `cart/src/frontend/rewind.zig`, `cart/src/frontend/tuning.zig`, `cart/src/frontend/menu.zig`, `cart/src/frontend/debug.zig`, `cart/src/main.zig`, `tools/scripts/m3_scrub.json`, `badge-bench/carts/snouty-gear.toml`, `docs/RUNNING.md`)
+
+- `rewind.zig`: port Boy's (`carts/snouty-boy/cart/src/frontend/rewind.zig`)
+  with the frozen shape above. Arena from `__bss_end__`/`__stack_limit__`
+  on the badge, 72 KB static on wasm; `gg` is not in the arena. `init`
+  returns false when fewer than two keyframes fit: the cart still runs,
+  the scrub line reads "Scrub: no memory" and `debug_keyframe_cap` is 0.
+  `record_frame` after every `gg.step_frame` in `run_frame`; `reset` from
+  `start` (after `init`) and from the menu's Reset row. Keep Boy's
+  `self_check` hook (off) and `debug.alarm`.
+- `menu.zig`: Left/Right on `resume_game`/`reset`/`about` rows scrub
+  (setting rows keep flipping); auto-repeat 4/s; `scrub_view` bar at the
+  bottom of the screen after a step (panel hidden, "Scrub: -1.5 / 3.5s"
+  centred, 18 chars max: `check_width`); Up/Down/A return to the panel;
+  the panel's bottom line (`scrub_line_y`) reads "Scrub: live / 3.5s" or
+  "Scrub: -1.5 / 3.5s", dim when history is 0. B or Select tap resume
+  from the parked position (main.zig keeps its `suppress_held`). Reset
+  row: `gg.reset()` then `rewind.reset(gg)`.
+- `debug.zig`: overlay gets a keyframes/pool KB line when the overlay is
+  on (Boy's `pool_kb`, `keyframes`).
+- `main.zig`: the exports above; `start` calls `rewind.init()` then
+  `rewind.reset(&gg)` after `init_in_place`.
+- `tools/scripts/m3_scrub.json`: m2_play's sequence, then in the menu
+  cursor on Resume, Left x3 (tap, release, 10 frames apart), Right x1,
+  B to resume, 60 more game frames, Select-hold again, Left x1, B; total
+  about 1000 frames. Checks with `--dump-exports
+  debug_state,debug_scrub_depth,debug_history,debug_keyframes,debug_frame_count`:
+  depth 90 after three Lefts, 60 after the Right, 0 after resuming,
+  `debug_frame_count` goes back accordingly (the ring truncates), history
+  grows by 30 per half second of play.
+- `badge-bench/carts/snouty-gear.toml`: the same sequence (`press` list,
+  `frames` ~1000). Run badge-bench; the scrub steps (a 32 KB compare/copy)
+  and the snapshot frames must stay well under budget; report mean/worst
+  and the snapshot-frame cost (every 30th game frame).
+- `docs/RUNNING.md`: menu paragraph gains the scrubber; section 4/5 list
+  the new exports and script.
+- `zig fmt`; `zig build -Dcart=snouty-gear` (badge) and the wasm preview
+  both build; no comptime loops; `check-float` clean.
+
+### Integration (me, after the two merge)
+
+Pick the page size from Track A's numbers; preview `m3_scrub.json` and a
+GIF `docs/m3_scrub.gif`; `zig build test`; badge-bench numbers; sizes;
+SPEC 10/13 numbers; tag `snouty-gear/m3`; merge to main and push
+(Adrian tests from main); pull-and-run notes.
+
 ## Status
 
 - 2026-09-29: SPEC.md and this plan drafted; section 18 decided. Next: M0.
@@ -509,3 +662,53 @@ splash, 1 running, 2 menu.
   sound has the same defect (same shim), unfixed. `audio.max_volume`
   added as the cap for the badge speaker (coworkers find the badge's
   sound effects loud); default 1.0 pending Adrian's call.
+- 2026-09-30 (M3 DONE): tag `snouty-gear/m3`. Prep `b11944e` (page store
+  and ring copied from Snouty Boy, `Gg.Small`/`state_regions`,
+  `vdp.State`), Track A `gear/m3-a` (ring/kstore/determinism/sizing
+  tests, 28 new, suite 95/95 in 2m39s), Track B `gear/m3-b`
+  (`frontend/rewind.zig`, `tuning.zig`, menu scrubbing, six exports,
+  `m3_scrub.json`, bench sequence, RUNNING.md), integration tuning.
+  - Design as defaulted in the contract: page store, 128 B pages
+    (Track A: 64 B doubles the table cost for the same Sonic depth, 256 B
+    copies 16% more per Sonic keyframe and loses 1 s). The keyframe count
+    comes from the layout, never a fixed 64: at 64 B pages the 64 tables
+    alone fill the arena, at 128 B they cut Sonic to 1.5 s.
+  - The badge arena is 56,204 B, not the ~69 KB the contract assumed
+    (M3's own code, `.bss` and the 1 KB guard): `__stack_limit__`
+    0x20078000 minus `__bss_end__` 0x2006a074 minus 1024. Integration set
+    `typical_pages_per_keyframe` 40 -> 24 and `max_keyframes` 64 -> 32
+    (input log 960 B), which splits it into 15 keyframe tables and a
+    46 KB pool; the wasm arena is 54 KB to match. Preview: cap 15, Waternet
+    holds all 15 (history 420 frames = 7 s when the menu opens, pool
+    29 KB); Sonic is pool-limited at about 12 keyframes (5.5 s, from the
+    sizing test's 4.2 KB per keyframe, not run on the cart).
+  - `m3_scrub.json` (1000 updates): 3/3 documented `--at` checks pass
+    (depth 90 after three Lefts at 734, 60 after Right at 745, frame 571
+    after B at 757); keyframes 15 -> 13 after resuming (two dropped),
+    history 361, second menu at 861 holds 15 again. `docs/m3_scrub.gif`
+    (every 3rd update from 700, 100 frames). The M2 `m2_menu.json`
+    exports are identical to the M2 build (Track B, 224 updates).
+  - badge-bench (calibrated, Waternet from the romfs image, 1000 frames,
+    `--symbols`): mean 3.00 ms, p95 6.52, worst 6.89 (frame 341, a
+    snapshot frame, 41% of budget), 0 over; game frames as M1/M2 (worst
+    6.86 -> 6.89), snapshot frames +0.37 ms on average (Track B: 0.09 to
+    1.21), scrub steps 3.39-3.59 ms, resume 2.69, idle menu ~2.2-2.5.
+    Neopixels never written. Hot list unchanged (`step_frame` 32%,
+    `cross_lines` 29%, `video.on_line` 15%, `find_sprites` 14.5%).
+  - Sizes (fast, drive source, incl. the 64 KB embedded ROM): `.text`
+    174,052 (+9,064 over M2: `rewind.restore` 2.5 KB, `kstore.put`
+    2.7 KB, menu 1.2 KB), `.data` 468, `.bss` 41,828 (+1,144: the 960 B
+    log); uf2 435,200 B; RAM in use 209 KB + 32 KB stack, arena 55 KB.
+  - Accepted deviations: scrub label shows whole seconds from 10 s on
+    ("Scrub: -12 / 16s", 18 columns); the scrub bar is the panel's bottom
+    strip, not full width; `m3_scrub.json` starts its Select hold at 673
+    so the menu opens on a keyframe; the sizing test replays captured
+    states into each store layout instead of re-running the emulator.
+  - Deferred to Adrian (defaults taken): page store instead of undo
+    records (SPEC 10 keeps the alternative); Boy's scrub UI verbatim;
+    `typical_pages_per_keyframe` 24 trades ~0.5 s of Sonic for +2 s of
+    Waternet against Track A's 32.
+  Next: hardware gate for M0-M3 in one flash from main (drive ROM, font
+  capture, splash, menu, scrub); M4 perf ideas (sprite candidate mask,
+  decoded tile cache) or M5 shared emulator frontend with Snouty Boy;
+  Snouty Genesis M3 can now copy this scrubber.

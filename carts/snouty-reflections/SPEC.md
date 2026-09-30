@@ -60,7 +60,7 @@ before audio was dropped (section 8).
 | Input          | Attract (default)                 | Free camera                          | Frozen (section 5b)                          |
 |----------------|-----------------------------------|--------------------------------------|----------------------------------------------|
 | Left / Right   | Enter free camera; orbit          | Orbit around the spheres             | Orbit the frozen view; restarts accumulation |
-| Up / Down      | Enter free camera; raise / lower  | Camera height (clamped above water)  | Height; restarts accumulation                |
+| Up / Down      | Enter free camera; raise / lower  | Camera height 1.0 to 1.8 m           | Height; restarts accumulation                |
 | A              | Freeze                            | Freeze                               | Unfreeze: time resumes where it stopped      |
 | B              | Cycle dither mode (section 5.5)   | Cycle dither mode                    | Cycle dither mode (accumulation kept)        |
 | Select         | Next scene preset (section 6)     | Next scene preset                    | Next preset; restarts accumulation           |
@@ -301,9 +301,11 @@ frozen.
 
 - Camera orbits at 12 degrees per second, height bobbing gently.
 - Sun drifts slowly along the horizon so the glitter path moves.
-- Spheres bob in anti-phase (`sin` table) by about half a radius; the
-  chrome sphere slowly spins a faint procedural stripe pattern so its
-  reflection has visible motion even when the camera pauses.
+- Spheres bob in anti-phase (`sin` table) by about half a radius. (M3
+  also spun a faint procedural stripe pattern on the chrome sphere; it
+  was dropped on 2026-09-30 at Adrian's request: on the badge the hard
+  0.12-deep bands read as rendering artifacts, not as chrome, and they
+  cost ~1.1 ms in sunset.)
 - Ripples move with time; a low-amplitude circular ripple radiates from
   under each sphere as it bobs (one extra sine term keyed to distance
   from the sphere's shadow point on the water).
@@ -420,7 +422,8 @@ tracks go to Opus subagents with disjoint files, as before.
   shore texture with Snouty and text, reflection palette, Fresnel tuning.
 - **M3 Presets and motion**: the four presets on Select, attract cycling
   with fade, free camera, sphere bobbing and radiating ripples, sun drift,
-  chrome stripes, dither modes 2 to 4, all at 20 fps in cut20. A is
+  chrome stripes (dropped in M3.1, 2026-09-30: they looked like
+  artifacting), dither modes 2 to 4, all at 20 fps in cut20. A is
   reserved for M4. No audio (section 8).
 - **M4 Freeze frame**: A freezes time and runs the progressive path
   tracer (section 5b) until A again; reference estimator and a
@@ -530,3 +533,13 @@ Question 4 (music) is answered by section 8: no audio.
   sounds bad); A becomes freeze-frame progressive path tracing (section
   5b, M4), presets move to Select; M3 next, then M4, then M5 polish. The
   voxel flyover became its own idea note, `carts/snouty-flyover/SPEC.md`.
+- 2026-09-30: M3 on main (tag `snouty-reflections/m3`): four presets on
+  Select with attract cycling and fades, free camera (orbit, height 1.0 to
+  1.8 m), A freezes time, bobbing spheres, sun drift, chrome stripes, four
+  dither modes. cut20 worst frames: sunset 46.36, storm 45.45 ms; midnight
+  50.30 and noon 50.62 (accepted). Rings, noon's shadows and third sphere
+  are off in the real-time view and return in M4's freeze frame. Next: M4.
+- 2026-09-30: M3.1 (branch `reflections/m3.1`): chrome stripes dropped at
+  Adrian's request (they read as artifacting; section 7), and the Iris
+  logo moved to `x = -15.5`, clear of Harbour Centre. cut20 worst frames:
+  sunset 45.67, storm 45.15, midnight 49.36, noon 49.73 ms (PLAN.md M3.1).

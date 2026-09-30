@@ -1,15 +1,37 @@
 # Running the Snouty on the Water cart
 
 Snouty on the Water (`snouty-reflections`) is a SYCL Badge V2 cart: a
-real-time ray tracer demo. A chrome sphere sits on a rippling lake at sunset
-while the camera orbits it (one revolution every 30 s); every pixel is a
-traced ray, quantised to RGB565 through a temporal Bayer dither. The cart is
-locked to 20 fps (`cart.set_vsync_enabled(1000.0 / 20.0)`), so one `update()`
-is one frame and the scene animates by frame count, not wall time.
+real-time ray tracer demo. Chrome spheres float on a rippling lake while the
+camera orbits them (one revolution every 30 s); every pixel is a traced ray,
+quantised to RGB565 through a dither. Four scene presets (sunset, midnight,
+noon, storm) cycle in attract mode with a fade; the spheres bob and ring the
+water and the sun drifts (M3). The
+cart is locked to its variant's frame rate (20 fps for the shipped `cut20`,
+`cart.set_vsync_enabled(1000.0 / 20.0)`), so one `update()` is one frame
+and the scene animates by frame count, not wall time. There is no audio
+(SPEC.md section 8): the cart never calls `tone`.
 
-Controls (M1): B cycles the dither mode (`bayer_temporal`, `none`). Start+Select
-returns to the badge menu and the joystick click toggles the OS FPS overlay;
-both belong to the OS.
+Controls (SPEC.md section 3, M3):
+
+| Input          | Attract (default)                 | Free camera                          | Frozen                                       |
+|----------------|-----------------------------------|--------------------------------------|----------------------------------------------|
+| Left / Right   | Enter free camera; orbit          | Orbit around the spheres             | Orbit the frozen view                        |
+| Up / Down      | Enter free camera; raise / lower  | Camera height 1.0 to 1.8 m           | Height                                       |
+| A              | Freeze                            | Freeze                               | Unfreeze: time resumes where it stopped      |
+| B              | Cycle dither mode                 | Cycle dither mode                    | Cycle dither mode                            |
+| Select         | Next scene preset                 | Next scene preset                    | Next preset                                  |
+| Start          | (nothing)                         | Return to attract orbit              | Unfreeze and return to attract orbit         |
+
+Free camera orbits at 36 deg/s (3 orbit steps per frame at 20 fps) and
+moves the height by 0.05 m per frame; it returns to attract by itself after
+20 s without input, keeping the angle, and the height eases back to 1.6 m.
+Frozen mode does not time out; in M3 the real-time tracer keeps drawing the
+frozen scene (M4 puts the path tracer behind the same button). Attract
+switches to the next preset every orbit (30 s) with a 0.5 s fade out and in;
+the cycle pauses while frozen or in free camera. Dither modes, in B order:
+`bayer_temporal` (default), `blue_noise`, `palette16` (16 colours, the Amiga
+look), `none`. Start+Select returns to the badge menu and the joystick click
+toggles the OS FPS overlay; both belong to the OS.
 
 The cart lives in `carts/snouty-reflections/` of the snouty-badge repository.
 Commands below run from that directory unless noted; only `zig build` runs
@@ -158,10 +180,37 @@ and `--expect`):
 | `debug_frame`          | frame counter (number of `update()` calls so far)                |
 | `debug_render_us`      | render time of the last frame in microseconds; always 0 in wasm (no timer), real on the badge |
 | `debug_pixel_checksum` | sum of all framebuffer words, for render regression tests        |
-| `debug_dither_mode`    | 0 `bayer_temporal` (default), 1 `none`                           |
+| `debug_dither_mode`    | 0 `bayer_temporal` (default), 1 `none`, 2 `blue_noise`, 3 `palette16` (M3) |
+| `debug_preset`         | M3: 0 sunset, 1 midnight, 2 noon, 3 storm                        |
+| `debug_state`          | M3: 0 attract, 1 free camera, 2 frozen                           |
 
-Input scripts live in `tools/scripts/`: `m1_nodither.json` presses B on tick 0,
-so every frame renders in dither mode `none` (used by the reference check).
+Two M3 exports take arguments, so `preview.mjs` cannot call them (its
+`--call` passes at most one integer); `tools/check_render.mjs` loads the
+cart itself to use them:
+
+| Export                                         | Meaning |
+|------------------------------------------------|---------|
+| `debug_set_view(preset, t, orbit, height_mm)`  | freeze and set the view: preset 0..3, scene time `t` in frames, orbit index `[0, orbit_frames)`, eye height in mm (1000..1800; 1600 is the default) |
+| `debug_set_dither_mode(mode)`                  | set the dither mode directly (numbers as `debug_dither_mode`) |
+
+Input scripts live in `tools/scripts/` (`--script`):
+
+| Script              | What it does |
+|---------------------|--------------|
+| `m1_nodither.json`  | B on tick 0: dither `none` on the pre-M3 cart (two modes). On an M3 cart one B press gives `blue_noise` |
+| `m3_nodither.json`  | B on ticks 0, 2, 4: dither `none` on an M3 cart (bayer -> blue_noise -> palette16 -> none) |
+| `blue_noise.json`   | B on tick 0: `blue_noise` on an M3 cart |
+| `palette16.json`    | B on ticks 0 and 2: `palette16` on an M3 cart |
+| `presets.json`      | Select on ticks 150, 300, 450: all four presets in one orbit (the scene time keeps running) |
+| `free_camera.json`  | Right for 200 ticks, Up 40, Left 200, Down 40 (free camera, height 1.6 -> 3.0 -> 1.0), A at 500 and 560 (freeze, unfreeze), Start at 600 (back to attract) |
+
+For example, a free-camera GIF:
+
+```sh
+node ../../tools/preview.mjs ../../zig-out/bin/snouty-reflections.wasm --frames 660 --every 3 \
+    --script tools/scripts/free_camera.json --out out/free/
+python3 ../../tools/make_gif.py out/free/ free.gif --scale 3 --ms 150
+```
 
 An unknown or non-zero-argument export name is an error that lists the
 exports the cart has. Exit codes: 1 the cart cannot be loaded or does not
@@ -175,23 +224,89 @@ value of the cart's frame counter while that frame was rendered.
 ## 6. Reference check
 
 `tools/reference.py` renders the scene defined in `PLAN.md` ("The M1 scene,
-exactly" plus "The M2 scene, exactly": chrome and glass spheres, the
-textured shore at z = 14, water with sphere shadows and scatter) with numpy
-in float64 and quantises it like dither mode `none`; `tools/check_render.mjs`
-compares a cart frame against it in RGB565 units. Frame F of the reference
-is the same camera angle and water time as `frame_F.png` from `preview.mjs`.
-The shore texture and palette are read at run time from
-`cart/src/shore_texels.bin` and `tools/shore_palette.json`, so regenerating
-the art (`tools/gen_shore.py`) needs no change to the reference.
+exactly", "The M2 scene, exactly", M2.2 "The scene changes, exactly" and M3
+"The M3 scene, exactly": chrome, glass, matte and small chrome spheres, the
+textured shore at z = 14, the Iris logo, water with ripples, rings, sphere
+shadows and scatter, four presets) with numpy in float64 and quantises it
+like dither mode `none`; `tools/check_render.mjs` compares a cart frame
+against it in RGB565 units. The shore texture and palette are read at run
+time from `cart/src/shore_texels.bin` and `tools/shore_palette.json`, so
+regenerating the art (`tools/gen_shore.py`) needs no change to the
+reference.
 
-The M2 check frames are 0, 150, 300 and 450, plus the badge-bench worst
-frame, all in dither mode `none`:
+**Views.** A view is what the cart's `trace.View` holds: the preset, the
+scene time `t` in frames (water, logo spin, bob, sun drift), the
+camera's orbit index and the eye height. The reference renders views three
+ways:
+
+| Flag | Output | View |
+|------|--------|------|
+| `--frame F` (repeatable) | `ref_FFFF.png` | `--preset`, `t = F`, `orbit = F mod orbit_frames`, `--height` |
+| `--t T [--orbit O] [--name N]` | `ref_<name>.png` | `--preset`, `t = T`, `orbit = O` (default `T`), `--height` |
+| `--view P:T[:O[:H]]` (repeatable) | `ref_<name>.png` | preset `P`, `t = T`, `orbit = O` (default `T`), height `H` m (default 1.6) |
+
+with `<name>` = `<preset>_t<TTTT>_o<OOOO>_h<mm>`, for example
+`ref_storm_t0300_o0300_h1800.png`. `--preset` is `sunset` (default),
+`midnight`, `noon`, `storm` or 0..3; `--height` is 1.0 to 1.8 m (default
+1.6). A height other than 1.6 is rounded to f32 and the camera basis is
+computed in f32, as the cart does at run time; everything else is f64.
+
+**Motion.** `--motion 1` (the default) is the M3 cart: spheres bob, the sun
+drifts and rings spread on the water under each sphere (`--stripes 1`
+still draws M3's chrome stripes, which the cart dropped on 2026-09-30).
+`--motion 0` turns all of it off; with `--motion 0`, `--preset
+sunset` and the default height the output is byte-identical to the M2.2
+reference, frame for frame (the legacy identity). The M3 knobs:
+
+| Flag | Values (default first) | Meaning |
+|------|------------------------|---------|
+| `--motion` | `1`, `0` | master switch for bob, drift, rings, stripes |
+| `--rings` | `1`, `0` | rings on the water (with `--motion 1`) |
+| `--stripes` | `0`, `1` | M3's stripes on the chrome sphere (with `--motion 1`); dropped from the cart 2026-09-30, so off by default |
+| `--sun-drift` | `1`, `0` | the sun rotates about +y by 8 deg * sin(s / 60 turns) (with `--motion 1`) |
+| `--noon-shadows` | `1`, `0` | noon shadows the primary water hits |
+| `--noon-third-sphere` | `1`, `0` | noon has the small chrome sphere |
+
+```sh
+python3 tools/reference.py --variant cut20 --preset noon --t 150 --out out/            # out/ref_noon_t0150_o0150_h1600.png
+python3 tools/reference.py --variant cut20 --view storm:300:300:3.0 --view sunset:0 --out out/
+python3 tools/reference.py --variant cut20 --frame 300 --motion 0 --out out/           # M2.2 frame 300
+```
+
+**The check, M3 cart.** When the wasm exports `debug_set_view` and
+`debug_set_dither_mode`, `check_render.mjs --variant` loads the cart
+in-process: per view it sets dither `none` and the view, runs two updates
+(the frames must be identical: the view is frozen), checks `debug_preset`
+and `debug_state == 2`, and compares the frame against `reference.py
+--view`. With no other flags it runs the M3 check set: each preset at `t` =
+0, 150, 300, 450 (orbit = t) and sunset and storm at heights 1.0 and 3.0 at
+`t` = 0 and 300, 24 views:
+
+```sh
+node tools/check_render.mjs --variant cut20                         # the M3 check set, dist/variants/cut20.wasm
+node tools/check_render.mjs --variant half30 --wasm ../../zig-out/bin/snouty-reflections.wasm
+node tools/check_render.mjs --variant cut20 --only --frame 393 --preset noon --preset storm --height 2.2
+node tools/check_render.mjs --variant cut20 --only --t 100 --orbit 450 --view midnight:37:12:1.35
+```
+
+`--frame F` and `--t T [--orbit O]` add a view per `--preset` (default
+sunset) and per `--height` (default 1.6); `--view` adds one view; `--only`
+drops the check set. Files land in `--out` (default `out/check_<variant>`):
+`cart_<name>.png`, `ref_<name>.png` and `diff_<name>.png`. `--motion 0`
+checks a motion-off build (it is passed to the reference), and `--ref-arg
+ARG` passes any other reference flag, for a cart built with a knob turned.
+
+**The check, pre-M3 cart.** A wasm without those exports (the m2.2 builds)
+takes the legacy path: `preview.mjs` steps frames 0, 1/4, 1/2 and 3/4 of the
+orbit plus every `--frame` with B on tick 0 (`m1_nodither.json`) and the
+reference renders them with `--motion 0`. `--preset`, `--height`,
+`--orbit` and `--view` are refused there. By hand, the same comparison is:
 
 ```sh
 node ../../tools/preview.mjs ../../zig-out/bin/snouty-reflections.wasm --frames 451 --every 150 \
     --script tools/scripts/m1_nodither.json \
     --dump-exports debug_dither_mode --expect "debug_dither_mode == 1" --out out/
-python3 tools/reference.py --frame 0 --frame 150 --frame 300 --frame 450 --out out/
+python3 tools/reference.py --frame 0 --frame 150 --frame 300 --frame 450 --motion 0 --out out/
 for f in 0000 0150 0300 0450; do
     node tools/check_render.mjs out/frame_$f.png out/ref_$f.png --diff out/diff_$f.png
 done
@@ -200,9 +315,24 @@ done
 For the bench's worst frame W, render just that frame with
 `--frames W+1 --every W` (for example `--frames 558 --every 557` writes
 `frame_0000.png` and `frame_0557.png`) and `reference.py --frame W`.
-`tools/scripts/m1_nodither.json` presses B on tick 0, so every frame after
-it renders in mode `none`; the `--expect` confirms the press landed (the
-tolerance alone would not show it).
+
+**Legacy identity** (PLAN.md M3 "Fixed interfaces"). A build with the
+motion knob off must render the sunset view of frame F bit for bit as the
+m2.2 cart renders frame F. `--identity` compares `debug_pixel_checksum`
+(and the frame) of the two wasms at frames 0 to 600 step 50, dither `none`:
+
+```sh
+node tools/check_render.mjs --identity --variant cut20 --wasm motion_off.wasm --baseline m2.2/cut20.wasm
+node tools/check_render.mjs --identity --variant half30 --wasm motion_off.wasm --baseline m2.2/half30.wasm \
+    --from 0 --to 900 --step 25
+```
+
+The baseline is stepped update by update (B on tick 0). The new wasm gets
+`debug_set_view(0, F, F mod orbit_frames, 1600)` per frame when it has the
+export, otherwise it is stepped the same way. `--dither bayer` leaves both
+in the default dither instead (that also needs the new cart to feed the
+dither the same frame parity). A mismatch writes `identity_new_FFFF.png`
+and `identity_base_FFFF.png` to `--out` (default `out/identity`) and exits 3.
 
 **Knobs.** The reference takes the cart's `// M2 knobs` (in
 `cart/src/scene.zig`) as flags; run it with the settings the cart ships, or
@@ -213,12 +343,22 @@ the check compares different scenes:
 | `--glass` | `real`, `fake` | knob 1: exit-point refraction, or one refraction traced from the entry point |
 | `--water-shadows` | `all`, `primary_only`, `off` | knob 2: which water hits get sphere shadows |
 | `--glass-secondary` | `full`, `env` | knob 3: glass at depth 1 traces its two rays, or looks them up in `env()` (shore or sky) |
+| `--glass-primary` | `full`, `env` | knob 4: glass seen by primary rays looks its rays up in `env_flat` |
+| `--iris-in-chrome` | `1`, `0` | knob 5: chrome reflections (both chrome spheres) show the Iris logo |
+| `--iris-in-water` | `1`, `0` | knob 6: water reflections show the logo |
+| `--iris-samples` | `4` | knob 7: mask samples along the slab chord (minimum 2) |
+| `--no-iris` | | no logo |
 | `--fade-k` | `0.05` | ripple fade, `g = 1 / (1 + fade_k * dist)`, `fade = g * g` |
+
+`--variant full20|cut20|full15|half30` sets the variant's flags (M2.1:
+`--fps`, `--scale`, `--no-glass` and the knobs above; section 9); explicit
+flags still win. `--water-shadows` is the sunset preset's setting (the other
+presets fix their own: noon primary rays, midnight and storm none).
 
 For example `python3 tools/reference.py --frame 300 --out out/ --glass fake
 --water-shadows primary_only`. `--texels FILE` and `--palette FILE` override
 the shore data; `--dump-npy` also saves the float image before quantisation
-(`out/ref_FFFF.npy`, 128x160x3) for debugging. One 160x128 frame takes
+(`out/ref_*.npy`, 128x160x3) for debugging. One 160x128 frame takes
 under a second.
 
 **The rule.** A pixel's difference is its largest per-channel difference in
@@ -309,8 +449,8 @@ every variant shows the same scene at the same moment on hardware.
 ```sh
 tools/build_variants.sh            # all four -> dist/variants/<name>.{uf2,elf,wasm}, sizes, check-float
 tools/build_variants.sh half30     # just one
-tools/check_render.mjs --variant cut20 [--frame F]...   # reference check (dist/variants/<name>.wasm)
-tools/bench_variants.sh [name...]  # badge-bench one orbit each; ~4 min per variant
+tools/check_render.mjs --variant cut20 [--frame F]...   # reference check (dist/variants/<name>.wasm; section 6)
+tools/bench_variants.sh [name...]  # badge-bench one orbit each; ~4 min per variant (--m3: section 10)
 ```
 
 To compare in the web simulator, serve one file and copy variants over it;
@@ -327,3 +467,29 @@ second whatever the cart's vsync says, so it plays full20 and cut20 3x fast,
 full15 4x and half30 2x. Judge the picture there, not the motion or frame
 rate; the timing is in `docs/variants.md` (or on the badge with
 `-Ddebug_overlay=true`).
+
+## 10. M3 bench rows
+
+`tools/bench_variants.sh --m3 [row...]` runs the M3 badge-bench rows
+(PLAN.md M3 "Budget and bench") for cut20 (`M3_VARIANT=half30` etc. for
+another variant), calibrated busy ms, worst frame at most 47.0 ms:
+
+| Row | Build | Run | Gate |
+|-----|-------|-----|------|
+| 1 `step1` | `-Dreflections_bench=motion_off` (motion knob off) | 600 frames: sunset, one orbit | 47.0, and at most 1.0 ms over the M2.2 worst (45.94, or `BASELINE_ELF=path/to/m2.2/cut20.elf` benched the same way) |
+| 2 `attract` | default | 2,400 frames: four orbits of attract, every preset, motion, fades | 47.0; worst and mean per preset (600-frame block) |
+| 3 `height` | `-Dreflections_bench=height` (attract sweeps the height 1.0 to 1.8 and back) | 2,400 frames, one orbit per preset | 47.0; per preset |
+| 4 `palette16` | default | 600 frames, `--poke dither.mode=3` (palette16 from frame 0) | reported only |
+
+The ELFs are `dist/bench/<variant>-{default,motion_off,height}.elf`; a
+missing one is built at the repository root and copied there (the root
+`zig-out/` then holds that build), and the default one may also come from
+`dist/variants/<variant>.elf` (`tools/build_variants.sh`). `REBUILD=1`
+rebuilds all three. Reports land in `out/bench_m3_<row>/`. Rows 2 and 3 take
+about 5 minutes each; `BENCH_FRAMES=N` cuts every run short for a smoke test.
+
+```sh
+tools/bench_variants.sh --m3                   # rows 1-4
+tools/bench_variants.sh --m3 2 4               # attract and palette16 only
+BASELINE_ELF=/path/to/m2.2/cut20.elf tools/bench_variants.sh --m3 1
+```

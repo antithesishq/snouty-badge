@@ -1,24 +1,27 @@
 # snouty-genesis: Genesis emulator, XIP cart only (SPEC.md section 13), two
 # Genesis frames per update presented at 30 Hz (60/30, SPEC.md section 8):
-# budget 33.3 ms per update. M1: the real frame loop (68000 per line, Z80
-# slice, VDP) on the embedded test ROM, driven by the M1 input script.
+# budget 33.3 ms per update. M2: the boot splash (36 updates), then the
+# real frame loop on the test ROM read from the drive image, driven by the
+# M2 input script (M1's shifted past the splash).
 #
 # Not picked by ELF name (the XIP ELF is snouty-genesis-xip.elf, whose
 # basename has the -xip suffix); from the repository root:
 #   zig build -Dcart=snouty-genesis -Dcart-mode=xip
-#   python3 tools/make_romfs.py carts/snouty-genesis/out/romfs.img
+#   python3 tools/make_romfs.py carts/snouty-genesis/out/romfs_test.img \
+#       carts/snouty-genesis/roms/snouty-test.bin=TEST.GEN
 #   badge-bench/bench.sh zig-out/firmware/snouty-genesis-xip.elf \
 #       --config badge-bench/carts/snouty-genesis.toml --symbols
 # The romfs image is required: the default build reads the badge drive and
 # without an image the run faults reading the boot sector (a bench
-# artefact). The image above is an empty volume (no ROM file), so the cart
-# falls back to its embedded ROM, which is what this benchmark measures. To
-# bench a ROM from the drive instead, add it to the image
-# (`ROM.bin=NAME.GEN`) or pass --romfs.
+# artefact). With one ROM file the game starts straight after the splash;
+# an empty image shows the no-ROM help screen instead (--press A:38-39
+# leaves it for the embedded ROM), several files show the picker. To bench
+# Miniplanets from the drive, pass --romfs carts/snouty-genesis/out/romfs_mini.img
+# --script carts/snouty-genesis/tools/scripts/m2_mini300.json --frames 336.
 budget_ms = 33.3
-# 120 updates = 240 Genesis frames: boot (display on about frame 12), Right
-# held, Down+B, Start, badge A (Genesis C), a Select tap (Genesis A mutes
-# the PSG), Up+Left (the script runs to update 119).
-frames = 120
-script = "carts/snouty-genesis/tools/scripts/m1_play.json"
-romfs = "carts/snouty-genesis/out/romfs.img"
+# 156 updates: 36 splash, then the 120 of M1 (boot with display on about
+# update 48, Right held, Down+B, Start, badge A (Genesis C), a Select tap
+# (Genesis A mutes the PSG), Up+Left to update 155).
+frames = 156
+script = "carts/snouty-genesis/tools/scripts/m2_play.json"
+romfs = "carts/snouty-genesis/out/romfs_test.img"

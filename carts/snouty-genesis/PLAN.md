@@ -218,6 +218,231 @@ report and is stubbed locally.
    not a gate): Adrian flashes and reports the overlay numbers when a
    badge is available.
 
+## M2 Streaming and frontend: contract
+
+Branch `genesis/m2` (from main `f53d696`, worktree
+`/home/exedev/snouty-badge-genesis`). Two Opus tracks in worktrees with
+disjoint files, then integration. What M2 delivers (SPEC.md sections 5,
+6, 11, 12, 17): the boot splash, the emulator menu (buttons, scale,
+sound, overlay, reset, pick ROM, about), the button remap, the crop
+scale mode, the drive picker for several ROMs, the no-ROM help screen,
+and a host-tested drive scan against a FAT12 fixture image. Not in M2:
+the H40 column-pair averaging option of SPEC.md section 6 (1.5x render
+time; revisit with the M4 numbers), the two-note splash chime (dropped:
+every cart boots silent, root docs/SOUND.md, and audio gets no further
+investment), any scrub (M3).
+
+### Frontend states (main.zig, both tracks touch it; integration merges)
+
+`State = enum(u32) { splash = 0, running = 1, menu = 2, pick = 3, help = 4 }`,
+one update = two Genesis frames = 1/30 s, as M1.
+
+- `start()`: `text.init`, `video.init`, `romsrc.scan()`. Then the ROM
+  decision:
+  - not a drive build (`!romsrc.use_drive`: wasm, `-Dmd-rom-source=embed`),
+    or the volume failed to open: `begin(romsrc.embedded(why))`, run after
+    the splash;
+  - exactly one playable candidate: `begin(romsrc.select(i))`, run after
+    the splash;
+  - two or more: `pick` after the splash;
+  - a volume but no playable candidate: `help` after the splash.
+- `begin(src)`: `md.init_in_place(src)`, `md.line_sink = video.sink()`,
+  apply the scale setting (below), `have_md = true`. Never touch `md`
+  before `have_md` (the wasm exports return 0 until then).
+- `splash`: `splash.update(any_pressed)` returns true when done or
+  skipped; then `suppress_held` and enter `running` (calling
+  `run_update` in the same update), `pick` or `help`.
+- `pick` (drive builds only, guarded by `if (romsrc.use_drive)` so none
+  of it compiles into wasm): `picker.update(edge)` returns `??usize`:
+  outer null stay; inner null the embedded ROM (`romsrc.embedded("skipped")`),
+  else `romsrc.select(i)`. Then `begin`, `suppress_held`, `running`.
+- `help` (drive builds only): `help.update(edge)` returns true on A (or
+  B): `begin(romsrc.embedded("no ROM on the drive"))`, `running`.
+- `running`: as M1's `run_update`; `in.open_menu` enters `menu`
+  (`menu.open()`, then `menu.update` once in the same update).
+- `menu`: `audio.silence()`; `menu.update(&md, edge)` returns `.stay`,
+  `.resume_game` (close, `suppress_held`, apply scale, `running`,
+  `run_update` in the same update) or `.pick_rom` (close, `suppress_held`,
+  `picker.reset()`, `pick`; drive builds with candidates only).
+- `romsrc.draw_report()` only while `debug.enabled` (as Gear); the About
+  screen and the title band carry the ROM facts otherwise.
+
+### Track A: menu, splash, remap, scale (branch `genesis/m2-menu`, worktree `/home/exedev/snouty-badge-genesis-menu`)
+
+Files: `cart/src/frontend/menu.zig` (new), `cart/src/frontend/splash.zig`
+(new), `cart/src/frontend/input.zig`, `cart/src/frontend/video.zig`,
+`cart/src/main.zig` (splash and menu wiring only, the `pick`/`help` arms
+left as `if (romsrc.use_drive) {}` stubs coded to the Track B interface
+below; keep the diff small), `build.zig` (the `iris` import only:
+`cart.addImport("iris", b.createModule(.{ .root_source_file = b.path("lib/iris_mark.zig") }))`).
+
+- Splash: Snouty Gear's `splash.zig` at 30 Hz: `frames = 36`,
+  `land_frame = 24`, title "SNOUTY GENESIS" with "GENESIS" in the
+  accent colour, the Iris mark (`lib/iris_mark.zig`, 24x24 at 2x) sliding
+  down onto a dark navy background (`video.blank` takes a 9-bit CRAM word
+  here, not Gear's 12-bit one). No chime, no `request_chime`. Any button
+  skips.
+- Menu: Gear's `menu.zig` adapted. Opened by the 500 ms Select hold
+  (`input.zig` already raises `open_menu`), frozen frame through the
+  `copy_forward` trick (Gear's comment explains it; the cart runs
+  `.no_copy_full_frame` too). Keys as Gear: Up/Down move (wrap), A
+  choose, B or a Select tap that began inside the menu resumes,
+  Left/Right cycle a setting row; Left/Right on Resume/Reset/About do
+  nothing (M3 scrubs there and draws "Scrub: ..." on the panel's bottom
+  line, keep it free). Rows in order: `Resume`, `Buttons`, `Scale`,
+  `Sound`, `Debug overlay`, `Reset`, `Pick ROM`, `About`. `Pick ROM`
+  exists only when `romsrc.use_drive and romsrc.candidate_count > 0`
+  (comptime-false in wasm: the row is skipped, not greyed); A on it
+  returns `.pick_rom`. Eight rows do not fit Gear's layout (7 rows, 10 px,
+  86 px panel): use 9 px rows, or a 28 px title band; keep the bottom
+  line free. `pub const version = "0.2.0-m2"`.
+  - Title band: "SNOUTY GENESIS", then the ROM's name
+    (`romsrc.title_name()`: the header's domestic name trimmed, else the
+    overseas name, else the file name; cut to 20 columns with `~`), then
+    "verified by" / "deterministic replay".
+  - `Sound: On/Off` flips `audio.enabled` directly (it is seeded from
+    `build_options.sound`; the M1 placeholder's A toggle goes away).
+    `Debug overlay: On/Off` flips `debug.enabled`.
+  - `Reset`: `md.reset()`, then the scale is re-applied by main (Vdp.reset
+    puts `line_mode` back to squeeze), and `.resume_game`.
+  - About: version; file name (`romsrc.file_name()`), header name, size
+    in KB, `Source: embedded|drive`, region letters and "SRAM" when
+    declared (`core.rom.parse_header`), then `CRC xxxxxxxx` and
+    "fragmented" for a drive ROM, or "Drive not used:" + `romsrc.fallback`
+    for an embedded one. "B: back" on the bottom line.
+  - Colours: Gear's fixed scheme (navy band, white/yellow text, black
+    panel with a blue frame, yellow cursor bar).
+- Remap (SPEC.md sections 5 and 18 item 5): `input.zig` gains
+  `pub const Layout = enum(u8)` of the six assignments of Genesis A, B, C
+  to badge B, badge A and the Select tap, `pub var layout: Layout`
+  defaulting to the M1 mapping (badge B = B, badge A = C, tap = A), the
+  next ones `B=C A=B S=A`, `B=B A=A S=C`, `B=A A=B S=C`, `B=A A=C S=B`,
+  `B=C A=A S=B`. `pad_from_controls` and the tap use it; the tap's pad
+  bit is the layout's third button. Menu label `Btns B=B A=C S=A`
+  (16 columns). Cycled by Left/Right/A. `Edge` gains `released` and
+  `any_pressed` (Gear has them).
+- Scale (SPEC.md section 6): `video.zig` gains
+  `pub var scale: core.vdp.LineMode = .squeeze` and
+  `pub fn apply(md: *core.Md) void` (`md.vdp.line_mode = scale`); main
+  calls `apply` in `begin`, after `Reset` and when the menu closes. The
+  menu row reads `Scale: Squeeze` / `Scale: Crop`. (M3 note: `Keyframe`
+  carries the whole `Vdp`, so `restore` must re-apply too.)
+- Wasm exports: `debug_state` documents 0..4; `debug_menu_opens`
+  (rename of `debug_menu_requests`), `debug_settings` (bit 0 sound, bit
+  1 crop, bits 2-4 layout index, bit 5 overlay), `debug_sound_on` kept.
+- Verify: `zig build -Dcart=snouty-genesis -Dcart-mode=xip` from the
+  worktree root; `node tools/preview.mjs zig-out/bin/snouty-genesis.wasm
+  --frames 220 --every 4 --script tools/scripts/m2_menu.json` (write that
+  script: nothing to 40 so the splash plays, then Select held 45-62,
+  Down/Right/A taps through the rows, B) and look at the PNGs; the host
+  tests stay green (`zig build test-genesis ...`; `tests/roms` is a
+  symlink into the genesis worktree). Sizes: `.text` must stay under
+  the 256 KB window with room for Track B (about 8 KB); report `.text`
+  and `.bss` before and after. `zig fmt`. Commits `snouty-genesis: `
+  prefixed; do not merge, do not touch main.
+
+### Track B: drive scan, picker, help (branch `genesis/m2-drive`, worktree `/home/exedev/snouty-badge-genesis-drive`)
+
+Files: `cart/src/frontend/drive.zig` (new module, no `cart-api`
+import), `cart/src/frontend/romsrc.zig` (rework), `cart/src/frontend/picker.zig`
+(new), `cart/src/frontend/help.zig` (new), `tests/drive_unit.zig` (new),
+`tests/fixtures/` (new: the image, its sources and a README with the
+exact `make_romfs.py` command), `tests/all.zig` (one line), `build.zig`
+(the `drive` module for the cart and the tests, and `romfs` for the
+tests), `main.zig` (the `pick`/`help` arms and `begin`; the splash/menu
+arms coded as stubs to the Track A interface above; keep the diff small),
+`tools/` only if a tiny helper is needed to interleave an SMD fixture.
+
+- `drive.zig`: everything that decides what is on the drive, host
+  testable. Imports `core`, `rom` (the generated module) and `romfs` only.
+  `pub const max_candidates = 8`; `pub const Candidate = struct { entry:
+  romfs.Entry, verdict: core.rom.Refusal, name: [48]u8 + len (the header's
+  domestic name trimmed, else overseas; empty when refused), size: u32 }`
+  with `playable()`; `pub const Scan = struct { candidates, count,
+  playable_count, err: ?romfs.Error }`; `pub fn scan(base: [*]const u8,
+  clusters: []u16) Scan` (the volume's `.gen`/`.md`/`.bin` root files,
+  each mapped once through `clusters`, `core.rom.check` on a `RomSource`
+  built as M1's `source_of`; files with no header at all are listed with
+  `.no_header` so the picker can show them dimmed, not skipped); `pub fn
+  open(base, cand, clusters) !romfs.Mapped` and `pub fn source_of(m:
+  *const romfs.Mapped) core.RomSource`. `Volume` may be kept in a module
+  static after `scan` so `open` needs no re-open.
+- `romsrc.zig`: `pub const use_drive = !cart.is_wasm and rom.source ==
+  .drive`; `pub var scan_result: drive.Scan`; `pub fn scan() void` (drive
+  builds; a no-op otherwise); `pub var candidate_count`, `playable_count`;
+  `pub fn select(i: usize) core.RomSource` (map the candidate again,
+  CRC32, `origin`, the report line as M1); `pub fn embedded(why:
+  ?[]const u8) core.RomSource` (M1's, now `pub`); `pub var fallback:
+  ?[]const u8` (why the drive was not used); `pub fn file_name()`
+  and `pub fn title_name()` ([]const u8, see Track A); `origin`, `crc`,
+  `report()`, `draw_report()` as M1. The `clusters` table (5 KB) and
+  `mapped` stay statics owned here.
+- `picker.zig`: Snouty Boy's picker at 30 Hz with the menu's colours
+  (navy title band "Pick a ROM", white rows, yellow cursor bar, dimmed
+  unplayable rows). One row per candidate: file name (14 columns) and
+  size (`512K`). Under the list the selected file's header name, or its
+  refusal text (`Refusal.text()`) when unplayable; then `A: play` and
+  `B: test ROM`. `pub fn update(e: input.Edge) ??usize`, `pub fn reset()`
+  (cursor to the first playable; called before re-entering from the
+  menu). Full redraw every update.
+- `help.zig`: the SPEC.md section 12 screen for a drive with no Genesis
+  ROM: "No Genesis ROM found", "Copy a .gen, .md or .bin file to the
+  SYCLBADGE drive, eject, restart." (word-wrapped to 20 columns), then up
+  to four skipped files as `NAME: reason` (dimmed), then `A: run test ROM`.
+  `pub fn update(e: input.Edge) bool`. The embedded ROM is always the
+  shipped test ROM in a badge build, so the wording can say so.
+- Fixture (`tests/fixtures/m2_drive.img`, `--truncate`): from
+  `roms/snouty-test.bin`: `TEST.GEN` contiguous, `FRAG.MD` fragmented
+  (`--fragment`), `NOHDR.BIN` (16 KB of a byte pattern with no header),
+  `BAD.BIN` an SMD-interleaved copy of the test ROM (build it with a few
+  lines of Python noted in the README: 512-byte copier header with bytes
+  8-9 AA BB, then 16 KB blocks odd bytes first), `README.TXT` (ignored
+  by extension), a deleted `.gen` entry (`--delete`), a `.fseventsd`
+  directory. Keep the image small (the test ROM is 16 KB).
+- `tests/drive_unit.zig` (`drive:` prefix): `scan` finds the four
+  `.gen/.md/.bin` files with verdicts ok/ok/no_header/smd_interleaved,
+  `playable_count == 2`, names `SNOUTY TEST`-style from the header (read
+  the actual header text of the test ROM and assert it), sizes; `open`
+  of `TEST.GEN` is contiguous and of `FRAG.MD` is not, both read back
+  byte-identical to `roms/snouty-test.bin` through `source_of` +
+  `core.rom.read8/read16`, CRC32 equal; a scan of an image with no ROM
+  gives `playable_count == 0` and no error; a bad boot sector gives
+  `err = NoVolume`. The tests' `drive` module is rooted at
+  `cart/src/frontend/drive.zig` with imports `core`, `rom`, `romfs`
+  (`lib/romfs.zig`); the fixture is `@embedFile`d from `tests/fixtures/`.
+- Screens: no wasm path reaches them, so capture with badge-bench:
+  `python3 tools/make_romfs.py carts/snouty-genesis/out/pick.img
+  carts/snouty-genesis/roms/snouty-test.bin=TEST.GEN
+  carts/snouty-genesis/roms/miniplanets.bin=MINI.GEN` then
+  `badge-bench/bench.sh zig-out/firmware/snouty-genesis-xip.elf --config
+  badge-bench/carts/snouty-genesis.toml --romfs carts/snouty-genesis/out/pick.img
+  --frames 60 --png 10 --press B:1-2 --press DOWN:44-45 --out
+  carts/snouty-genesis/out/pick/` (B skips the splash stub) and an empty
+  image for the help screen; put one PNG of each in `docs/` as
+  `m2_picker.png`, `m2_help.png`.
+- Verify: build, `zig build test-genesis ...` green with the new tests,
+  every M1 test unchanged, badge-bench with the M1 toml (empty image)
+  still runs the embedded ROM; report `.text`/`.bss`. `zig fmt`. Commits
+  `snouty-genesis: ` prefixed; do not merge, do not touch main.
+
+### Integration (me, after the two merge)
+
+1. Merge A then B into `genesis/m2`; resolve `main.zig` and `build.zig`.
+2. `zig fmt`, build, all host tests, golden hashes unchanged (the core
+   is untouched).
+3. Scripts: `tools/scripts/m2_play.json` = `m1_play.json` shifted by the
+   36 splash updates (or a B tap at update 1 to skip it: pick the shift so
+   the bench measures the game); `m2_menu.json` from Track A. Toml:
+   `frames` and `script` updated; bench numbers for the game (mean/worst)
+   and for a menu-open run.
+4. Sizes against SPEC.md section 13; preview GIF `docs/m2_splash_menu.gif`
+   (splash, game, menu, About), the picker and help PNGs from Track B.
+5. `docs/RUNNING.md` (states, keys, menu rows, picker, help, exports,
+   bench), `SPEC.md` section 12 status (chime dropped) and Status,
+   `README.md`, this file's Status; tag `snouty-genesis/m2`; ff-merge
+   main; push. Hardware check (open, not a gate): XIP launch, drive
+   streaming stall rates contiguous and fragmented (Adrian, show day).
+
 ## Status
 
 - 2026-09-29: SPEC.md, this plan and `docs/ROM_STREAMING.md` drafted;
@@ -347,3 +572,57 @@ report and is stubbed locally.
   changes on both targets (11 in the M1 play script), not the per-update
   re-issues. Headless check: `tools/preview.mjs` with its `tone` stub
   logging shows 0xFFFFFFFF durations before and sustain 6 / attack 0 after.
+- 2026-09-30 (M2 started): branch `genesis/m2` from main `f53d696`; tracks
+  A (menu, splash, remap, scale) and B (drive scan, picker, help) as above.
+- 2026-09-30 (M2 DONE): tag `snouty-genesis/m2`. Track A (5 commits:
+  input layouts and edges, scale + `video.apply`, romsrc names, splash,
+  menu + state machine) and Track B (3 commits: `drive.zig` module +
+  tests + fixtures, romsrc rework + picker + help + main wiring, screen
+  captures) merged; main.zig, romsrc.zig and build.zig resolved by hand
+  (integration commit a8e3409), the menu's Pick ROM row switched on.
+  - Host tests 143/143 (136 of M1 unchanged, 7 `drive:`); golden hashes
+    unchanged (the core is untouched). Every cart builds (`zig build`).
+  - Sizes: `.text` 220,600 B (+16.0 KB over M1; 41.5 KB of the 256 KB
+    window left), `.data` 156, `.bss` 165,412 B (+560; the picker's
+    scan table). Embed build `.text` 196,620 B (no drive code).
+  - badge-bench (calibrated, `busy ms`, game updates only, i.e. after the
+    36 splash updates at 0.37 ms each): test ROM from the drive
+    (`romfs_test.img`, `m2_play.json`, 156 updates) 8.75 mean / 24.21
+    worst (M1 embedded 8.77 / 24.21); Miniplanets from the drive
+    (`romfs_mini.img`, `m2_mini300.json`, 336 updates) 19.47 / 28.11 (M1
+    19.47 / 28.11): the frontend costs nothing in play. Menu updates
+    0.90 ms, picker 0.30 ms, help 0.33 ms. Choosing a 512 KB ROM in the
+    picker costs one 43.6 ms update (the CRC32 over the file): a single
+    slipped present at load, noted below.
+  - Screens: `docs/m2_splash_menu.gif` (preview, `m2_menu.json`: splash,
+    game, menu rows cycling, About, crop, second open), `docs/m2_picker.png`
+    and `docs/m2_help.png` (badge-bench over drive images). The picker ->
+    Miniplanets -> menu -> Pick ROM -> picker -> Miniplanets again path verified in
+    badge-bench (`out/pickflow2/`).
+  - Deviations from the contract: FRAG.MD in the fixture is fragmented by
+    a post-processing step in `make_fixtures.py` (`--fragment` deals
+    clusters round-robin, so two equal files never differ); `Candidate`
+    gained `map_err` and `note()`; `live_edge()` masks buttons held over
+    from the previous state so the press that skips the splash cannot pick
+    a row; the report's `(i of N)` counts listed files, as the picker does.
+  - Open after M2: the CRC32 at selection (drop it or spread it over the
+    splash) and the fragmented path's cost (test ROM 35.0 ms early updates
+    through the cluster table vs 24.2 embedded in Track B's run: measure
+    properly in M4, a RAM cache for hot ranges is the M4 answer); H40
+    column-pair averaging (SPEC 6) not offered; M3's `Keyframe` restore
+    must call `video.apply` (the `Vdp` carries `line_mode`); `romsrc`
+    `title_name` inlines `parse_header` (about 1 KB); the debug overlay is
+    on by default until the hardware numbers are in; the two track
+    worktrees' `sycl-badge` submodules were empty (`git submodule
+    update --init --reference` from the main checkout's module store fixed
+    them). Hardware check (open, not a gate): XIP launch, drive streaming
+    stall rates contiguous and fragmented, the picker on a real drive.
+- 2026-09-30 (M3 feasibility, no code): record sizes for the delta
+  keyframes measured with temporary write probes (SPEC 10.1): 8-10 KB
+  per 30-frame record in Miniplanets play, 89 KB at a level load, about
+  110 KB of RAM for the ring, so about 6 s of history in play. Found
+  that the third Start in the Miniplanets scripts pauses the game: the
+  M1/M2 Miniplanets perf numbers are for a paused game; M3's first step
+  is to fix `golden_mini.pad_at`, `m1_mini300.json`, `m2_mini300.json`,
+  re-record `golden-mini` and re-bench. Adrian: M3 starts after Snouty
+  Gear M3 (same design, prior art).

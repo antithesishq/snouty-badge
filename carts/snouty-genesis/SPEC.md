@@ -302,6 +302,47 @@ there), because a full Genesis keyframe does not fit twice in RAM.
   not fit, the menu says "rewind unavailable" rather than shipping a
   scrubber that cannot go back.
 
+### 10.1 Record sizes measured (2026-09-30, before M3)
+
+Temporary probes on every work RAM, VRAM and Z80 RAM write in the core,
+Miniplanets through the 600-frame golden script (with the pause fixed,
+see below), 64-byte blocks, one record per 30 frames. "Written" is what
+the undo record actually copies (a block rewritten with the same bytes
+still counts); a frame-to-frame byte diff undercounts it by 10-30%.
+
+| Scene                             | Blocks written (RAM / VRAM / Z80) | Record  |
+|-----------------------------------|-----------------------------------|---------|
+| Level 1 play (planet rotating)    | 30 / 48 / 20-40                   | 8-10 KB |
+| Title screen, menus               | 12 / 21 / 16                      | 5-6 KB  |
+| Boot (Z80 driver upload)          | 86 / 287 / 128                    | 35 KB   |
+| Level load                        | 411 / 906 / 19                    | 89 KB   |
+
+Fixed state per record: `Cpu` 112 B, `Vdp` minus VRAM 912 B, `Ym2612`
+552 B, `Z80` 36 B, `Psg` 12 B, `Io` 6 B (about 1.7 KB; cartridge SRAM,
+when present, is block-tracked like work RAM). RAM: `.bss` 165,412 B of
+the 307 KB window after M2, so about 110 KB for the ring: about 12 play
+records, i.e. about 6 s of history in play, about 9 s on menus, under 1 s
+right after a level load (one 89 KB record flushes most of the ring, and
+history rebuilds at one second per second). Verdict: the scrubber is
+worth building; the 1 s target holds except across big loads, where the
+menu shows how far back it can go. Copying is negligible (about 100
+blocks per record); the perf risk is the dirty-bit test on the hot
+68000 write path, to be measured in M3.
+
+Found while measuring: the third Start press in `golden_mini.pad_at`,
+`tools/scripts/m1_mini300.json` and `m2_mini300.json` (updates 160-162,
+196-198 with the splash) PAUSES Miniplanets, so the "gameplay" tail of
+those runs is a frozen scene with only the sound driver running, and the
+M1/M2 Miniplanets numbers (19.47 ms mean / 28.11 worst) are for a paused
+game. Unpaused play redraws the planet by DMA every frame and is
+unmeasured. M3 starts by fixing the scripts (drop the third Start or add
+an unpause press), re-recording the `golden-mini` hashes and re-benching
+against the section 8 budget.
+
+Sequencing (Adrian, 2026-09-30): M3 waits until Snouty Gear's scrubber
+(Gear M3, the same delta-keyframe design) is done, and reuses it as
+prior art.
+
 ## 11. The ROM
 
 Two sources behind one interface, `RomSource` in `core/rom.zig`: a base
@@ -345,8 +386,9 @@ pointer for contiguous ROMs, or a cluster table (section 1 of
 ## 12. Boot splash and presentation
 
 The splash from the other emulators, recolored: the Antithesis Iris mark
-(the shared 1-bit 24x24 bitmap in `lib/iris_mark.zig`, at 2x) slides in,
-then the two-note chime. The menu title
+(the shared 1-bit 24x24 bitmap in `lib/iris_mark.zig`, at 2x) slides in.
+No chime: every cart boots silent (root docs/SOUND.md) and the speaker
+earns no further audio work (M2 decision, 2026-09-30). The menu title
 reads "SNOUTY GENESIS", the ROM's domestic name from its header, and
 "verified by deterministic replay". The
 neopixels are off: the cart never writes non-zero values (root
@@ -460,7 +502,9 @@ disjoint files.
   Adrian copies Sonic 1 to the drive and reports update ms and XIP hit and
   stall rates, contiguous and fragmented.
 - **M3 Scrub**: delta keyframes, input log, scrubbing,
-  determinism test, record sizes measured with DMA-heavy scenes.
+  determinism test, record sizes measured with DMA-heavy scenes (first
+  numbers in section 10.1). Starts after Snouty Gear M3 (prior art); its
+  first step is the paused-script fix and re-bench of section 10.1.
 - **M4 Hardware polish**: tune from Adrian's numbers: RAM-text placement,
   a RAM cache for hot ROM ranges if the XIP stall rate calls for it,
   `render_every` and `cpu_scale` defaults, decode-table choice revisited
@@ -495,3 +539,6 @@ disjoint files.
   M1 (Z80 + register models + one voice), stock firmware. Sections 1, 2,
   7, 8, 9, 10, 11, 13 and 17 updated to match; M0 started on branch
   `genesis/m0`.
+- 2026-09-30: M0 and M1 done (PLAN.md Status). M2 started on `genesis/m2`:
+  section 12's chime dropped; section 6's H40 column-pair averaging option
+  deferred to M4 (render cost); the rest of M2 as section 17.

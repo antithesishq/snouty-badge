@@ -6,7 +6,9 @@
 //! States: splash (frontend/splash.zig) -> running -> menu
 //! (frontend/menu.zig, opened by a 500 ms Select hold, frontend/input.zig)
 //! -> running. The core is stepped only while running. Sound is one tone2
-//! voice from the PSG (frontend/audio.zig). The time scrubber is M3.
+//! voice from the PSG (frontend/audio.zig). The time scrubber
+//! (frontend/rewind.zig, SPEC.md 10) records a keyframe every 30 game frames
+//! and the pad of every frame; the menu's Left/Right scrub through them.
 //! See SPEC.md (design), PLAN.md (milestone contract), CLAUDE.md (toolchain).
 const cart = @import("cart-api");
 const core = @import("core");
@@ -18,6 +20,7 @@ const text = @import("frontend/text.zig");
 const menu = @import("frontend/menu.zig");
 const splash = @import("frontend/splash.zig");
 const audio = @import("frontend/audio.zig");
+const rewind = @import("frontend/rewind.zig");
 
 comptime {
     cart.export_start_code();
@@ -45,6 +48,10 @@ pub fn start() void {
     video.init();
     gg.init_in_place(romsrc.select());
     gg.line_sink = video.sink();
+    // False when the arena has no room for two keyframes: the scrubber
+    // stays off ("Scrub: no memory"), the game runs as before.
+    _ = rewind.init();
+    rewind.reset(&gg);
 }
 
 pub fn update() void {
@@ -104,6 +111,7 @@ fn run_frame(t1: u64) void {
     }
 
     gg.step_frame(in.pad);
+    rewind.record_frame(&gg, in.pad);
     const t2 = cart.micros_since_boot();
 
     audio.update(&gg);
@@ -170,6 +178,12 @@ comptime {
         @export(&debug_psg_voice, .{ .name = "debug_psg_voice" });
         @export(&debug_psg_atten, .{ .name = "debug_psg_atten" });
         @export(&debug_psg_tones, .{ .name = "debug_psg_tones" });
+        @export(&debug_scrub_depth, .{ .name = "debug_scrub_depth" });
+        @export(&debug_history, .{ .name = "debug_history" });
+        @export(&debug_keyframes, .{ .name = "debug_keyframes" });
+        @export(&debug_keyframe_cap, .{ .name = "debug_keyframe_cap" });
+        @export(&debug_pool_bytes, .{ .name = "debug_pool_bytes" });
+        @export(&debug_arena_bytes, .{ .name = "debug_arena_bytes" });
     }
 }
 
@@ -297,4 +311,31 @@ fn debug_psg_atten() callconv(.c) u32 {
 fn debug_psg_tones() callconv(.c) u32 {
     const p = gg.psg;
     return @as(u32, p.tone[0]) | @as(u32, p.tone[1]) << 10 | @as(u32, p.tone[2]) << 20;
+}
+
+// ---- Time scrubber (frontend/rewind.zig) ----
+
+/// Frames the game is parked behind live, 0 at live.
+fn debug_scrub_depth() callconv(.c) u32 {
+    return rewind.depth_frames();
+}
+/// Frames of history reachable from live.
+fn debug_history() callconv(.c) u32 {
+    return rewind.history_frames();
+}
+/// Keyframes held in the page store.
+fn debug_keyframes() callconv(.c) u32 {
+    return @intCast(rewind.keyframe_count());
+}
+/// Keyframes the store can hold at most (0: no room, scrubber off).
+fn debug_keyframe_cap() callconv(.c) u32 {
+    return @intCast(rewind.keyframe_capacity());
+}
+/// Pool bytes holding keyframe pages.
+fn debug_pool_bytes() callconv(.c) u32 {
+    return @intCast(rewind.pool_bytes());
+}
+/// Arena bytes the store was laid out in (72 KB static in wasm).
+fn debug_arena_bytes() callconv(.c) u32 {
+    return @intCast(rewind.arena_bytes());
 }
