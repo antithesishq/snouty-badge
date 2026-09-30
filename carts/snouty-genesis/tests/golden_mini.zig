@@ -16,7 +16,7 @@ const per_update = 2;
 
 /// Input per update: Start through the title and the menus, then a walk
 /// (`tools/scripts/m1_mini300.json` presses the same for badge-bench).
-fn pad_at(u: u32) u16 {
+pub fn pad_at(u: u32) u16 {
     var p: u16 = 0;
     if ((u >= 100 and u <= 102) or (u >= 130 and u <= 132) or (u >= 160 and u <= 162)) p |= Pad.start;
     if (u >= 180 and u <= 220) p |= Pad.right;

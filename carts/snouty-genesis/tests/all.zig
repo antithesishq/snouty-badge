@@ -12,6 +12,7 @@ test {
     _ = @import("bus_unit.zig");
     _ = @import("golden.zig");
     _ = @import("golden_mini.zig");
+    _ = @import("md_wait_loop.zig");
     _ = @import("vdp_unit.zig");
     _ = @import("m68k_single_step.zig");
 }

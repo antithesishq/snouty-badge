@@ -105,6 +105,11 @@ pub const Bus = struct {
         write16_io(md, addr, v);
     }
 
+    /// `M68k`'s wait loop hook: `Md.skip_wait_loop`.
+    pub fn wait_loop(self: *Bus, cpu: *md_mod.Cpu) void {
+        self.md.skip_wait_loop(cpu);
+    }
+
     /// The interrupt level presented to the 68000 (the VDP's; nothing else
     /// on the Genesis raises one the games use).
     pub inline fn irq_level(self: *Bus) u3 {

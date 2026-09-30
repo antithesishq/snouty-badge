@@ -30,6 +30,11 @@
 //! Fetch: if the bus has `code_window` (see `CodeWindow`), opcodes and
 //! extension words are read straight from ROM/RAM without a bus call.
 //!
+//! Wait loops: if the bus has `wait_loop(cpu: *Self)`, a taken short
+//! branch back to what may be a wait loop's head calls it (`note_loop`);
+//! the bus may skip whole iterations of the loop by adding their cycles to
+//! `cyc`, leaving every register as stepping them would.
+//!
 //! The dummy reads the 68000 does before CLR, Scc and MOVE from SR to
 //! memory, and MOVEM's extra word read, are charged but not performed (no
 //! read side effects on I/O). TAS writes back (the Genesis bus drops the
@@ -230,9 +235,11 @@ pub fn M68k(comptime BusT: type) type {
 
         const has_window = @hasDecl(BusT, "code_window") and
             @typeInfo(@TypeOf(BusT.code_window)) == .@"fn";
-        const no_window = [2]u8{ 0, 0 };
         const has_irq_sample = @hasDecl(BusT, "irq_sample") and
             @typeInfo(@TypeOf(BusT.irq_sample)) == .@"fn";
+        const has_wait_hook = @hasDecl(BusT, "wait_loop") and
+            @typeInfo(@TypeOf(BusT.wait_loop)) == .@"fn";
+        const no_window = [2]u8{ 0, 0 };
 
         /// Power-on/RESET: supervisor, interrupts masked, SSP and PC from
         /// the vectors at 000000 and 000004 (40 cycles on the real chip,
@@ -1412,9 +1419,29 @@ pub fn M68k(comptime BusT: type) type {
             return base +% sext16(self.ext16(bus));
         }
 
-        fn op_bra(self: *Self, bus: *BusT, op: u16) void {
+        inline fn op_bra(self: *Self, bus: *BusT, op: u16) void {
             self.pc = self.branch_target(bus, op);
             self.cyc += if (op & 0xFF != 0) 6 else 2;
+            if (has_wait_hook and op & 0xFF >= 0xF6) self.note_loop(bus, op & 0xFF);
+        }
+
+        /// A short branch back by `0x100 - d8` bytes was just taken. If the
+        /// PC is now at what may be the head of a wait loop, one of the
+        /// shapes the bus's `wait_loop` hook recognises (a branch to
+        /// itself, or with -10, -8, -6: one TST, BTST #n or MOVE to Dn with
+        /// an absolute source, then this branch), hand it the CPU: it may
+        /// skip whole iterations by adding their cycles to `cyc`. Only the
+        /// opcode is looked at here, through the fetch window; the hook
+        /// checks everything else.
+        inline fn note_loop(self: *Self, bus: *BusT, d8: u16) void {
+            if (d8 != 0xFE) {
+                if (d8 & 1 != 0 or d8 == 0xFC or !has_window) return;
+                const off = (self.pc & 0xFF_FFFF) -% self.win_base;
+                if (off >= self.win_len) return;
+                const w = @as(u16, self.win_ptr[off]) << 8 | self.win_ptr[off + 1];
+                if (w & 0xFF3E != 0x4A38 and w & 0xC1FE != 0x0038 and w & 0xFFFE != 0x0838) return;
+            }
+            bus.wait_loop(self);
         }
 
         fn op_bsr(self: *Self, bus: *BusT, op: u16) void {

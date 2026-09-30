@@ -116,6 +116,14 @@ pub const Md = struct {
     rom: RomSource = .{},
     /// Where rendered rows go; set once by the frontend.
     line_sink: ?LineSink = null,
+    /// The 68000 share of the line being run (`run_m68k`), 0 outside it,
+    /// and whether a DMA stall was charged in it: what `skip_wait_loop`
+    /// needs besides `vdp.line_cycles` (not console state).
+    m68k_share: u32 align(4) = 0,
+    m68k_stalled: bool align(4) = false,
+    /// An address `skip_wait_loop` found is not a wait loop head (not
+    /// console state: it only saves looking again).
+    not_wait_loop: u32 align(4) = 0xFFFF_FFFF,
     /// The SRAM range the header declares (derived from `rom` by `reset`).
     sram_map: rom.SramMap = .{},
     /// `tone()`'s answer, recomputed at the end of every frame and on
@@ -158,6 +166,9 @@ pub const Md = struct {
         md.sram_map = if (md.rom.size >= rom.header_end) rom.sram_map(&h) else .{};
         md.sram_active = if (md.sram_map.present() and md.rom.size <= md.sram_map.lo) md.sram_map else .{};
         md.dma_stall = 0;
+        md.not_wait_loop = 0xFFFF_FFFF;
+        md.m68k_share = 0;
+        md.m68k_stalled = false;
         z80bus.reset_genesis(&md.z80);
         @memset(&md.z80_ram, 0);
         md.z80_bank = 0;
@@ -211,10 +222,14 @@ pub const Md = struct {
     /// the HV counter.
     fn run_m68k(md: *Md, b: *bus.Bus, share: u32) void {
         var used: u32 = md.m68k_carry;
+        md.m68k_share = share;
+        md.m68k_stalled = false;
+        defer md.m68k_share = 0;
         while (used < share) {
             if (md.dma_stall != 0) {
                 used += md.dma_stall;
                 md.dma_stall = 0;
+                md.m68k_stalled = true;
                 continue;
             }
             if (md.cpu.stopped and md.vdp.irq <= md.cpu.mask()) {
@@ -225,6 +240,126 @@ pub const Md = struct {
             md.vdp.line_cycles = @truncate(@min(used, 0xFFFF));
         }
         md.m68k_carry = used - share;
+    }
+
+    /// The bus's `wait_loop` hook (`M68k.note_loop`): the 68000 just took
+    /// a short branch back to `cpu.pc`, which may be the head of a wait
+    /// loop. A game waiting for V-int spins on a work RAM flag the
+    /// interrupt handler sets (`tst.b flag; beq.s *-6`: 55% of
+    /// Miniplanets' instructions in play, 97% of the test ROM's) or on
+    /// `bra.s *`. Nothing can change the flag or raise an interrupt before
+    /// the line ends (the Z80 runs after the 68000's share, interrupts
+    /// change at `end_line`), so whole iterations are skipped by adding
+    /// their cycles to this branch's: every register, flag and cycle count
+    /// ends exactly as stepping them would leave it. It stops at least one
+    /// iteration short of the share, so the instruction that crosses into
+    /// the next line is a real one. Recognised, with the PC at the head:
+    /// TST.b/w/l or BTST #n on an abs.w or abs.l work RAM address, or
+    /// MOVE.b/w/l from one to Dn, followed by BEQ.s/BNE.s to the head;
+    /// BRA.s or Bcc.s to itself (its flags cannot change).
+    /// tests/md_wait_loop.zig checks each form against plain stepping.
+    ///
+    /// The position in the line is `vdp.line_cycles` (the cycles before
+    /// this instruction) plus `cpu.cyc`; not known exactly before the
+    /// line's first step or after a DMA stall, so those do not skip.
+    pub noinline fn skip_wait_loop(md: *Md, cpu: *Cpu) void {
+        const pc: u24 = @truncate(cpu.pc);
+        if (pc == md.not_wait_loop) return;
+        const line_pos: u32 = md.vdp.line_cycles;
+        if (md.m68k_stalled or line_pos == 0 or line_pos == 0xFFFF) return;
+        const used = line_pos + cpu.cyc;
+        const share = md.m68k_share;
+        if (md.dma_stall != 0 or md.vdp.irq > cpu.mask()) return;
+        // Code in ROM or work RAM only (no read side effects).
+        if (pc >= 0x400000 and pc < 0xE00000) return;
+        var b = md.bus_for();
+        const op = b.read16(pc);
+        // The taken Bcc.s / BRA.s, then the head's cycles below.
+        var iter: u32 = 10;
+        var len: u32 = 0;
+        var addr: u32 = 0;
+        // 0: TST, 1: BTST #n, 2: MOVE to Dn, 3: a branch to itself.
+        var kind: u2 = 0;
+        var sz: u2 = 0;
+        var bit: u3 = 0;
+        if (op & 0xF000 == 0x6000 and op & 0xFF == 0xFE and op & 0x0F00 != 0x0100) {
+            kind = 3;
+        } else if (op & 0xFF3E == 0x4A38 and op & 0xC0 != 0xC0) {
+            // TST.<sz> abs.w / abs.l
+            sz = @truncate(op >> 6);
+            len = if (op & 1 != 0) 6 else 4;
+            addr = abs_operand(&b, pc +% 2, op & 1 != 0);
+            // Its words at 4 cycles each, the operand read (8 for a long).
+            iter += len / 2 * 4 + 4 + (if (sz == 2) @as(u32, 4) else 0);
+        } else if (op & 0xC1FE == 0x0038 and op & 0x3000 != 0) {
+            // MOVE.<sz> abs.w / abs.l, Dn (sets Dn and the flags as TST).
+            kind = 2;
+            sz = switch (op >> 12) {
+                1 => 0,
+                3 => 1,
+                else => 2,
+            };
+            len = if (op & 1 != 0) 6 else 4;
+            addr = abs_operand(&b, pc +% 2, op & 1 != 0);
+            iter += len / 2 * 4 + 4 + (if (sz == 2) @as(u32, 4) else 0);
+        } else if (op & 0xFFFE == 0x0838) {
+            // BTST #n, abs.w / abs.l (a byte in memory: bit n mod 8)
+            kind = 1;
+            bit = @truncate(b.read16(pc +% 2));
+            len = if (op & 1 != 0) 8 else 6;
+            addr = abs_operand(&b, pc +% 4, op & 1 != 0);
+            iter += len / 2 * 4 + 4;
+        } else return md.no_wait_loop(pc);
+
+        if (kind != 3) {
+            // Followed by BEQ.s / BNE.s back to the head.
+            const br = b.read16(@truncate(pc +% len));
+            const cc = br >> 8;
+            if (cc != 0x67 and cc != 0x66) return md.no_wait_loop(pc);
+            if (br & 0xFF != (0x100 - (len + 2)) & 0xFF) return md.no_wait_loop(pc);
+            const a: u24 = @truncate(addr);
+            if (a < 0xE00000) return md.no_wait_loop(pc);
+            // As the bus reads it (a word at `addr & ~1`).
+            var v: u32 = undefined;
+            if (kind == 1 or sz == 0) {
+                v = md.work_ram[@as(u16, @truncate(a))];
+            } else {
+                const i: u16 = @truncate(a & 0xFFFE);
+                v = @as(u32, md.work_ram[i]) << 8 | md.work_ram[i + 1];
+                if (sz == 2) v = v << 16 | @as(u32, md.work_ram[i +% 2]) << 8 | md.work_ram[i +% 3];
+            }
+            const zero = if (kind == 1) v >> bit & 1 == 0 else v == 0;
+            // The branch must be taken again (else the loop is exiting).
+            if (zero != (cc == 0x67)) return;
+            if (used + iter >= share) return;
+            // The flags and register the loop's head leaves (the same
+            // every iteration).
+            if (kind == 1) {
+                cpu.f_z = @intFromBool(!zero);
+            } else {
+                const sh: u5 = switch (sz) {
+                    0 => 24,
+                    1 => 16,
+                    else => 0,
+                };
+                cpu.f_n = v << sh;
+                cpu.f_z = v << sh;
+                cpu.f_v = 0;
+                cpu.f_c = false;
+                if (kind == 2) {
+                    const m: u32 = @as(u32, 0xFFFF_FFFF) >> sh;
+                    const r: u3 = @truncate(op >> 9);
+                    cpu.d[r] = (cpu.d[r] & ~m) | v;
+                }
+            }
+        } else if (used + iter >= share) return;
+        cpu.cyc += (share - 1 - used) / iter * iter;
+    }
+
+    /// `pc` is not a wait loop head: remember it. (Code in RAM may change
+    /// into one; it is then only not skipped, which is always exact.)
+    fn no_wait_loop(md: *Md, pc: u24) void {
+        md.not_wait_loop = pc;
     }
 
     /// The Z80's slice of this line, in `scale_one` units so a scaled
@@ -336,6 +471,16 @@ pub const Md = struct {
         md.tone_cache = md.pick_tone();
     }
 };
+
+inline fn sext16(v: u16) u32 {
+    return @bitCast(@as(i32, @as(i16, @bitCast(v))));
+}
+
+/// The address word(s) at `at`: abs.l, or abs.w sign-extended.
+inline fn abs_operand(b: *bus.Bus, at: u24, long: bool) u32 {
+    if (long) return @as(u32, b.read16(at)) << 16 | b.read16(at +% 2);
+    return sext16(b.read16(at));
+}
 
 /// The fields the hot loops touch sit within reach of an immediate offset
 /// (see the note at the top of `Md`'s fields).
