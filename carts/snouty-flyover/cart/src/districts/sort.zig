@@ -22,6 +22,12 @@ pub const caption: []const u8 = "B: shuffle the band";
 pub const alt: i32 = 110;
 pub const verb_at: i32 = 60;
 
+/// Autopilot altitude track: no track, the constant `alt`.
+pub fn alt_at(ly: i32) i32 {
+    _ = ly;
+    return alt;
+}
+
 // --- Sort knobs -------------------------------------------------------------
 
 /// Bars across the strip and their width in cells (bars * bar_w = world.W).

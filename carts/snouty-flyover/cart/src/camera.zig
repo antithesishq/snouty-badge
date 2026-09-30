@@ -223,7 +223,8 @@ pub fn update(stick: Stick, frame: u32) void {
     const tilt = horizon_q - horizon_level * fixed.one; // Q16 rows, +-24
     if (autopilot) {
         // Hold floor + the live district's cruise altitude.
-        const want_alt = (@as(i32, world.floor) + world.info(world.live().kind).alt) * fixed.one;
+        const live_seg = world.live();
+        const want_alt = (@as(i32, world.floor) + world.info(live_seg.kind).alt_at((cam.y >> fixed.Q) - live_seg.y0)) * fixed.one;
         cruise_alt += @max(-ap_climb, @min(ap_climb, want_alt - cruise_alt));
     } else {
         cruise_alt += @divTrunc(fixed.mul(tilt, climb_max), pitch_range);

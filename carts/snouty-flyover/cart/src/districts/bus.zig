@@ -13,6 +13,12 @@ pub const caption: []const u8 = "B: send a packet";
 pub const alt: i32 = 40;
 pub const verb_at: i32 = -1;
 
+/// Autopilot altitude track: no track, the constant `alt`.
+pub fn alt_at(ly: i32) i32 {
+    _ = ly;
+    return alt;
+}
+
 // --- Bus knobs --------------------------------------------------------------
 
 /// Deck span [deck_x0, deck_x1) and its height above world.floor.

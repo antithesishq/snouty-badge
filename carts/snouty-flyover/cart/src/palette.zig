@@ -92,6 +92,18 @@ pub const sort_hue0 = 100;
 pub const sort_pivot = 148;
 pub const heap_alloc = [3]u8{ 196, 198, 200 };
 pub const heap_free = 202;
+pub const water_idx = 24;
+pub const pit = 28;
+pub const tree_level = [6]u8{ 150, 152, 154, 156, 158, 160 };
+pub const hash_bucket = 162;
+pub const hash_chain = [3]u8{ 164, 166, 168 };
+pub const hash_small = 170;
+pub const stack_top = 172;
+/// Stack band j (0..9) is stack_band0 + 2 j.
+pub const stack_band0 = 174;
+pub const stack_lip = 194;
+pub const pipe_dam = 204;
+pub const pipe_spring = 206;
 
 /// Darker blue-tinted version of each entry for the lake reflection (M2);
 /// present but unused in M0. Concept: lerp(0.85 * c, 0x0C2C66, 0.55) * 0.92.

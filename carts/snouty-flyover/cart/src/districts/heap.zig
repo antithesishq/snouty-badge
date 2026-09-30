@@ -21,6 +21,12 @@ pub const caption: []const u8 = "B: collect garbage";
 pub const alt: i32 = 40;
 pub const verb_at: i32 = 30;
 
+/// Autopilot altitude track: no track, the constant `alt`.
+pub fn alt_at(ly: i32) i32 {
+    _ = ly;
+    return alt;
+}
+
 const W = world.W;
 const F: i32 = world.floor;
 

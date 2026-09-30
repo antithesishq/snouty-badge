@@ -10,6 +10,10 @@ const fixed = @import("fixed.zig");
 const bus = @import("districts/bus.zig");
 const heap = @import("districts/heap.zig");
 const sort = @import("districts/sort.zig");
+const tree = @import("districts/tree.zig");
+const hash = @import("districts/hash.zig");
+const stack = @import("districts/stack.zig");
+const pipeline = @import("districts/pipeline.zig");
 
 /// Strip width in cells; x wraps.
 pub const W = 256;
@@ -31,6 +35,9 @@ pub const keep_behind = 8;
 pub const gen_ahead = DEPTH - keep_behind;
 /// Noise floor base height; every structure builds on floor + n.
 pub const floor: u8 = 20;
+/// Water level: a cell with h <= water is water (colour palette.water_idx);
+/// the renderer draws it as a mirror (SPEC 5.6).
+pub const water: u8 = floor - 12;
 /// Seed of the noise floor.
 const floor_seed: u32 = 0x5EED_F1A1;
 /// Segment lengths in rows; a Bus and a district make one 256-row pair.
@@ -43,9 +50,9 @@ comptime {
 
 // --- Segments ---------------------------------------------------------------
 
-pub const Kind = enum(u8) { bus, heap, sort };
+pub const Kind = enum(u8) { bus, heap, sort, tree, hash, stack, pipeline };
 /// District cycle: pair p holds order[p % order.len] after its Bus.
-pub const order = [_]Kind{ .heap, .sort };
+pub const order = [_]Kind{ .heap, .sort, .tree, .hash, .stack, .pipeline };
 
 pub const Segment = struct {
     kind: Kind,
@@ -69,6 +76,9 @@ pub const District = struct {
     alt: i32,
     /// Local row where the autopilot presses B, -1 never.
     verb_at: i32,
+    /// Autopilot altitude above `floor` at local row ly (negative on the Bus
+    /// before the district); districts without a track return `alt`.
+    alt_at: *const fn (ly: i32) i32,
     row: *const fn (seed: u32, ly: i32, h: *[W]u8, c: *[W]u8) void,
     enter: *const fn (seg: Segment) void,
     tick: *const fn (frame: u32, cam_row: i32) void,
@@ -82,6 +92,7 @@ fn entry(comptime M: type) District {
         .caption = M.caption,
         .alt = M.alt,
         .verb_at = M.verb_at,
+        .alt_at = &M.alt_at,
         .row = &M.row,
         .enter = &M.enter,
         .tick = &M.tick,
@@ -89,7 +100,7 @@ fn entry(comptime M: type) District {
     };
 }
 
-const table = [_]District{ entry(bus), entry(heap), entry(sort) };
+const table = [_]District{ entry(bus), entry(heap), entry(sort), entry(tree), entry(hash), entry(stack), entry(pipeline) };
 
 pub fn info(kind: Kind) *const District {
     return &table[@backingInt(kind)];

@@ -458,9 +458,211 @@ toggles (edge). Manual `Stick` is `+-1` per button.
     (indices 20..22) is dark and reads as footprints, brighten or not; the
     temporal fog dither on the LCD.
 
-## M2 The other districts (outline)
+## M2 The other districts
 
-Tree, Hash, Stack (scripted dive), Pipeline with the reflection lake and
-mirrored sun; the 30/60 fps decision from the bench with every district
-in; `tools/check_render.mjs` frame hashes. Contract written after the M1
-GIF review.
+Adrian (2026-09-30): "keep building and defer/default any decisions", so
+the M1 review questions take their defaults (Heap altitude 40, Sort near
+field as is, rubble dark, temporal dither kept) and M2 starts at once.
+
+Goal: the full district cycle Bus, Heap, Sort, Tree, Hash, Stack, Pipeline
+with each district's tick dataflow and its B verb where it is cheap, the
+water reflection with the mirrored sky and Iris sun, the Stack's scripted
+dive through the autopilot altitude track, frame hashes for regression,
+and the frame-rate decision. Gate: the full attract run (2400 frames, one
+whole cycle and a Bus) under 22 ms worst on the calibrated bench,
+`debug_world_check == 0`, check-float clean, GIFs.
+
+Frame rate: decided now. M1's worst frame is 11.03 ms and the reflection
+adds a second march on lake columns, so the lock stays at 30 fps for good
+(`-Dflyover_fps=60` remains a build knob, unsupported). The 22 ms budget
+stands.
+
+Deferred to M3/M4: the Tree rotation on every third insert, the Stack
+overflow "canyon unwinds" animation (M2 does the pit and the sky flash),
+dam hold/pass of packets (M2 packets are the palette cycling), Select
+skip, Bus packet verb, Snouty sheet.
+
+### Tracks
+
+- **Track A: water** (`render.zig`, `palette.zig`): the reflection pass,
+  mirrored sky and sun, ripple, the water fog table, `sky_flash`.
+- **Track B: Tree and Hash** (`world.zig`, `districts/tree.zig`,
+  `districts/hash.zig`).
+- **Track C: Stack, Pipeline, tooling** (`districts/stack.zig`,
+  `districts/pipeline.zig`, `camera.zig`, `main.zig`, `tools/scripts/`,
+  `tools/check_render.sh` + `tools/render_hashes.txt`, `docs/RUNNING.md`,
+  bench toml).
+
+### Fixed interfaces (M2 additions)
+
+```zig
+// world.zig
+pub const Kind = enum(u8) { bus, heap, sort, tree, hash, stack, pipeline };
+pub const order = [_]Kind{ .heap, .sort, .tree, .hash, .stack, .pipeline };
+pub const water: u8 = floor - 12;         // = 8: a cell with h <= water is water (colour palette.water_idx)
+pub const District = struct { ...as M1..., alt_at: *const fn (ly: i32) i32 }; // autopilot altitude above floor at local row ly (ly may be negative on the Bus before; clamp); districts without a track return alt
+// districts export alt_at as well (pub fn alt_at(ly: i32) i32).
+
+// palette.zig
+pub const water_idx = 24;                 // the map index of water cells
+pub var fog_w: [fog_levels][256]u16;      // water-tinted fog table (from `water`), pulses rotated like `fog`
+pub const tree_level = [6]u8{ 150, 152, 154, 156, 158, 160 };
+pub const hash_bucket = 162; pub const hash_chain = [3]u8{ 164, 166, 168 }; pub const hash_small = 170;
+pub const stack_top = 172; pub const stack_band0 = 174 /* + 2j, j 0..9 */; pub const stack_lip = 194;
+pub const pipe_dam = 204; pub const pipe_spring = 206;
+pub const pit = 28;                        // stack overflow pit (black; Track A darkens 28 to 0x000000)
+
+// render.zig
+pub const reflections = true;             // knob: false = flat water colour
+pub var sky_flash: u8 = 0;                // frames of white sky left (stack overflow); draw() decrements
+```
+
+### Reflection algorithm (Track A)
+
+Per column, pass 1 is the M1 march with one change: a sample with
+`h <= world.water` is water and is drawn as an opaque surface at height
+`water` with `fog[level][water_idx]`; the rows it fills are recorded in a
+128-bit per-column mask `wmask` (4 u32) and `w_first_step` remembers the
+first water step. If the column had no water rows the column is done.
+
+Pass 2 (when `reflections`): march again from `w_first_step` to the end
+with `occ2` starting at the lowest water row + 1. A land sample (`h >
+water`) projects at `row_m = hor + mul(alt - ((2 water - h) << 16),
+inv_z[i]) >> 16` plus `ripple[(i + frame) & 15]` (a 16-entry table of
+-1, 0, 1); if `row_m < occ2`, fill rows `[max(row_m, 0), occ2)` whose
+`wmask` bit is set with `fog_w[level][c]` and set `occ2 = row_m`. A water
+sample fills nothing (it is a hole to the mirrored sky). After the march,
+every still-water row `r` in `[0, occ2)` (mask set, not yet written; keep a
+second mask `wdone` or clear bits as they are written) gets the mirrored
+sky: `sky_water_rel[(2 hor - r) - hor + 128]` (the sky table tinted toward
+the water colour at init), or the tinted sun (`sun_core_w`/`sun_rim_w`)
+where the column is under the sun and the mirrored row is inside the
+sun mask. The mirror line is the horizon row of the column (`hor`).
+Known approximation, accepted: a far reflection that should show below a
+nearer one (a tall skyline behind a low dam) is clipped by `occ2`.
+
+Cost: pass 2 runs only over lake columns and only from the first water
+step; a frame over the lake roughly doubles the march. `reflections =
+false` skips pass 2 and leaves the water surface colour.
+
+`sky_flash`: while nonzero, the sky copy uses `sky_flash_rel` (the sky
+gradient lerped 70% toward white) and decrements once per frame.
+
+### Constants (from `tools/concept.py` and `docs/concept/README.md`)
+
+Tree (Track B): the fixed shape from `gen_tree` stored flipped so the
+leaves are near the camera and the root far: levels 0..5 with heights
+`floor + {30, 24, 19, 15, 12, 10}`, ridge widths `{12, 9, 7, 6, 5, 4}`,
+straight runs `{24, 14, 10, 6, 4, 0}`, fork half-span `dx = 64 >> lvl`
+(diagonal branches one row per cell), a fork cap `wid + 4` wide and 6
+higher at each fork, leaf mounds 6x6. Root at x 128, local row 40 from
+the far end (so the far end of the district holds the root spine).
+Colours `palette.tree_level[lvl]`. Search: pulse B comet path 3 wide
+along the root-to-leaf trail of the current key, painted interior only
+(a cell whose 4 neighbours are all within 2 of its height), so the ridge
+faces do not light. Tick: a new key every 120 frames picks a random
+leaf (5 bits from the rng); the old trail is repainted with the ridge
+colour and the new one lit, spread over 12 frames per level from the
+root (the "descent"). Verb (`B: insert a key`, `verb_at` 50): a new leaf
+mound 6x6 rises over 10 frames at the end of the lit trail, offset 8
+cells outward. Title `TREE`, gloss `binary search`, alt 185 (the
+autopilot looks down there).
+
+Hash (Track B): buckets 10x10 at `x = 11 + 32 i` (8 per row), rows every
+36 local rows from 10 to 128 (4 rows), height `floor + 40`,
+`palette.hash_bucket`; each bucket has a chain of 0..3 terraces (rng
+choice from {0,1,1,2,3,3}) behind it: terrace k at rows `y + 11 + 7k`,
+width `8 - 2k`, 6 deep, height `floor + 30 - 8k`, colour
+`hash_chain[k]`; insert lane per row after the first: pulse A comet 2
+wide from the strip edge (alternating sides) along `y - 3` to a target
+bucket from {1, 2, 5, 6} then to the bucket, raised to `floor + 2`; the
+rehash seam: pulse B dash 3 wide across the strip at local row 150,
+raised to `floor + 4`; after it (rows 158 to 182, every 18) 16 small
+buckets 6x6 at `x = 5 + 16 i`, height `floor + 20`, `hash_small`. Tick:
+every 90 frames a bucket at least 16 cells from the camera x with fewer
+than 3 terraces grows one over 8 frames. Verb (`B: rehash the table`,
+`verb_at` 40): over 30 frames the terraces of every bucket ahead of the
+camera drain to the floor and 8 small buckets per big row rise between
+the big ones (`x = 27 + 32 i`, 6x6, to `floor + 20`), one sweep at a
+time, restored per row through `regen_row` when animations end is not
+needed (the changes are the new state until the ring wraps). Title
+`HASH`, gloss `open hashing`, alt 120.
+
+Stack (Track C): from `gen_stack` with `plateau` 90, `band` 8, `F` 10,
+`S` 5: depth `d(r)` = `1 + r / 13` for local rows under 130, 10 for 130
+to 159, then `10 - (r - 160) / 12`, clamped to 1..10; for a cell at
+distance `dx = |x - 128|` (use `|2x - 255| / 2`) the terrace index
+`kk = clamp(ceil((dx - F + 1) / S), 0, d)`, height `plateau - band (d -
+kk)` above the floor, colour `stack_top` where `kk >= d`, else
+`stack_band0 + 2 (j - 1)` with `j = (plateau - h) / band`, and
+`stack_lip` on the lip cells `|dx - (F - 1 + (kk - 1) S)| < 1` for `0 <
+kk < d`; the call/return signal: pulse B dash 2 wide down x 127..128
+along the whole district. `alt_at(ly)` = floor height at that row + 14
+(`plateau - band d(ly) + 14`; for negative ly use ly = 0), so the
+autopilot dives with the floor and climbs out. Tick: nothing beyond the
+cycling in M2 (band-edge pulses on push are part of the verb). Verb
+(`B: push a frame`, `verb_at` 20): the canyon ahead of the camera (rows
+from `cam_row + 8` to the district end) deepens one band over 10 frames
+(`d += 1` for those rows, re-derived by the row function with a
+`push_extra` count in the live state); at `d > 10` the floor cells (`kk
+== 0`) drop to height 0 with colour `palette.pit` (the overflow pit) and
+`render.sky_flash = 6`; the push count resets when the district is left.
+Title `STACK`, gloss `call frames`, alt 24 (the track overrides it).
+
+Pipeline (Track C): from `gen_pipeline`. Flow is toward the camera. Local
+rows 0..109 are the lake: height `water`, colour `water_idx`, floor
+noise removed. Six springs at `x = {28, 70, 108, 148, 186, 228}` on the
+far end (rows 170..177: 8x8 towers `floor + 26` `pipe_spring` with a 4x4
+`pulse_a` cap at `floor + 28`); channels: from the springs (row 170) the
+pairs braid toward three merge points `{49, 128, 207}` at row 150 with
+the concept's smoothstep and cosine offsets (integer: smoothstep
+`t t (3 - 2 t)` in Q16, `camera.sin` for the cosine), then three
+channels 7..13 wide meander (`6 sin`) from row 150 down to the lake at
+row 108; channel cells are water (`water`, `water_idx`); packets: pulse
+A dash 1 wide along each channel centre raised to `water + 1` (a lit
+thread just above the surface); three dams 18 wide, 6 deep at row 116
+(`floor + 16`, `pipe_dam`) with a 2-wide notch at `water + 1` carrying
+the dash. Tick: nothing beyond the cycling in M2. Verb (`B: burst the
+pipe`, `verb_at` 30): the three channel sections between the dams and
+the merge point flood: their non-water cells within 12 of the centre
+sink to `water` over 20 frames, hold 40, then `regen_row` restores them
+over the next 20 frames (one row per frame from the far end). Title
+`PIPELINE`, gloss `packets to the lake`, alt 18 (10 over the water; the
+spring lifts over the dams).
+
+Autopilot (Track C): `cruise_alt` follows `floor + info(live).alt_at(cam_row
+- live.y0)` instead of `.alt`; the look-down rule keeps using `.alt`.
+Stack: `alt_at` makes the dive; the clearance spring still wins over
+walls.
+
+### Scripts, hashes, bench
+
+- `tools/scripts/attract.json` stays `[]`; the attract run becomes 2400
+  frames (`--frames 2400`: a whole cycle of 7 segments is 1536 rows =
+  2048 frames at cruise, plus the next Bus and Heap). The bench toml
+  moves to 2400 frames.
+- `tools/scripts/m2_verbs.json`: manual takeover at 60 (right 60-100),
+  then B inside each district once (frames chosen from the row table:
+  Tree at rows 576..767, Hash 832..1023, Stack 1088..1279, Pipeline
+  1344..1535; at cruise row = 0.75 frame), Start at the end; 2200 frames.
+- `tools/check_render.sh`: runs preview over `attract.json` with `--at "T
+  debug_pixel_checksum == V"` for the twelve (T, V) pairs in
+  `tools/render_hashes.txt` (frames 0, 200, ..., 2200), regenerated by
+  `tools/check_render.sh --update`. It is the SPEC 10 regression check.
+- Debug exports: `debug_water_cols` (columns that ran pass 2 last frame)
+  and `debug_stack_depth`.
+
+### Done criteria for M2
+
+- Build, check-float; `.text + .data` under 70 KB, `.bss` under 165 KB.
+- Attract 2400 frames: calibrated bench worst under 22 ms;
+  `debug_world_check == 0` at the end; `debug_cam_clear > 0` at every
+  60th frame; `check_render.sh` passes on the tagged build.
+- GIFs `docs/preview_m2_attract.gif` and `docs/preview_m2_verbs.gif`,
+  with the lake reflection of the sun visible.
+- RUNNING.md, PLAN status, SPEC status (frame rate decided), tag
+  `snouty-flyover/m2`.
+
+### M2 status
+
+- 2026-09-30: started; scaffold commit follows.

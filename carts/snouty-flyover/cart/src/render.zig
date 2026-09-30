@@ -14,6 +14,10 @@ const camera = @import("camera.zig");
 /// Far end of the march in Q16 cells (knob, SPEC.md 10): 256 cells, capped
 /// at the rows the map ring keeps generated ahead of the camera.
 pub const z_far: i32 = @as(i32, @min(256, world.gen_ahead)) << fixed.Q;
+/// Water reflection (SPEC 5.6, PLAN M2): false leaves the flat water surface. Scaffold: TODO(Track A).
+pub const reflections = true;
+/// Frames of white sky left (the Stack overflow flash); draw() decrements it. Scaffold: TODO(Track A).
+pub var sky_flash: u8 = 0;
 /// Step growth per march step, 1.0075 in Q16 (knob); ~143 steps to z_far.
 pub const lod_mul: i32 = 0x1_01EC;
 /// First sample distance and first step, Q16 cells.
