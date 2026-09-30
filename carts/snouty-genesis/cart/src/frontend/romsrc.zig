@@ -53,8 +53,8 @@ var entries: [8]romfs.Entry = undefined;
 
 /// Choose the ROM. Call once from `start()`.
 pub fn select() core.RomSource {
-    if (cart.is_wasm or rom.source == .embed) return embedded(null);
-    return from_drive();
+    current = if (cart.is_wasm or rom.source == .embed) embedded(null) else from_drive();
+    return current;
 }
 
 fn from_drive() core.RomSource {
@@ -88,6 +88,7 @@ fn from_drive() core.RomSource {
     // Map the pick again: the loop reused `clusters` for later files.
     mapped = vol.map(e, &clusters) catch |err| return embedded(@errorName(err));
     crc = mapped.crc32();
+    drive_name = entries[i].slice();
     const src = source_of(&mapped);
     origin = if (src.base != null) .drive_contiguous else .drive_fragmented;
 
@@ -123,6 +124,7 @@ fn embedded(why: ?[]const u8) core.RomSource {
     const verdict = core.rom.check(&src);
     const ok = verdict == .ok;
     origin = if (ok) .embedded else .none;
+    fallback = why;
     var w: Writer = .{};
     if (ok) {
         w.put("ROM: embedded ");
@@ -199,4 +201,43 @@ pub fn draw_report() void {
         const y: i32 = @intCast(cart.screen_height - 8 * (lines - k));
         text.draw(s[starts[k]..ends[k]], 0, y, .rgb(0xFFFFFF), .rgb(0x000000));
     }
+}
+
+// ---- Names for the menu's title band and About (M2 Track A; Track B's
+// rework keeps these three names) ----
+
+/// Why the drive was not used (null: it was, or it was not asked for).
+pub var fallback: ?[]const u8 = null;
+/// The source `select` returned, for `title_name`.
+var current: core.RomSource = .{};
+/// The drive file's name (points into `entries`), null for the embedded ROM.
+var drive_name: ?[]const u8 = null;
+var title_buf: [48]u8 = undefined;
+
+/// The ROM's file name: the drive entry's, else the embedded ROM's.
+pub fn file_name() []const u8 {
+    return drive_name orelse rom.name;
+}
+
+/// The header's domestic name, else the overseas name, trimmed with runs of
+/// spaces folded to one (headers pad words apart), else `file_name()`.
+pub fn title_name() []const u8 {
+    const h = core.rom.parse_header(&current);
+    const d = fold(core.rom.trim(&h.domestic));
+    if (d.len > 0) return d;
+    const o = fold(core.rom.trim(&h.overseas));
+    if (o.len > 0) return o;
+    return file_name();
+}
+
+/// `s` into `title_buf` without leading spaces, runs of spaces folded and
+/// non-ASCII bytes as '?'.
+fn fold(s: []const u8) []const u8 {
+    var n: usize = 0;
+    for (s) |c| {
+        if (c == ' ' and (n == 0 or title_buf[n - 1] == ' ')) continue;
+        title_buf[n] = if (c >= 32 and c < 127) c else '?';
+        n += 1;
+    }
+    return title_buf[0..n];
 }

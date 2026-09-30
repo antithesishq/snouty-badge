@@ -6,13 +6,14 @@
 //! (frontend/romsrc.zig) at the bottom. The neopixels are never written
 //! (docs/NEOPIXELS.md at the repository root).
 //!
-//! M1: the real frame loop with the pad (frontend/input.zig: Select tap =
-//! Genesis A, Select hold = menu request) and the one tone voice
-//! (frontend/audio.zig). The menu itself is M2: a Select hold pauses the
-//! game under a "MENU (M2)" banner until badge B resumes it; A there
-//! toggles sound (off at boot unless built with -Dsound=true, docs/SOUND.md).
-//! No splash or rewind yet (M2, M3). See SPEC.md (design), PLAN.md (milestone
-//! contract), CLAUDE.md (toolchain).
+//! States (PLAN.md M2 "Frontend states"): splash (frontend/splash.zig) ->
+//! running -> menu (frontend/menu.zig, opened by a 500 ms Select hold,
+//! frontend/input.zig) -> running; a drive build with several ROMs goes to
+//! the picker (pick) after the splash, one with none to the help screen
+//! (help). The core is stepped only while running. Sound is the one tone
+//! voice (frontend/audio.zig), off at boot unless built with -Dsound=true
+//! (docs/SOUND.md); the menu's Sound row flips it. No rewind yet (M3). See
+//! SPEC.md (design), PLAN.md (milestone contract), CLAUDE.md (toolchain).
 const cart = @import("cart-api");
 const core = @import("core");
 const video = @import("frontend/video.zig");
@@ -21,6 +22,8 @@ const audio = @import("frontend/audio.zig");
 const debug = @import("frontend/debug.zig");
 const romsrc = @import("frontend/romsrc.zig");
 const text = @import("frontend/text.zig");
+const menu = @import("frontend/menu.zig");
+const splash = @import("frontend/splash.zig");
 
 comptime {
     cart.export_start_code();
@@ -33,14 +36,18 @@ var md: core.Md = undefined;
 /// Genesis frames per update; only the last is rendered.
 const frames_per_update = core.tunables.render_every;
 
-/// 1 running, 2 paused under the M1 menu placeholder (the splash, 0,
-/// arrives in M2).
-pub const State = enum(u32) { running = 1, menu = 2 };
-var state: State = .running;
+/// `debug_state` reports these numbers.
+pub const State = enum(u32) { splash = 0, running = 1, menu = 2, pick = 3, help = 4 };
+var state: State = .splash;
 var controls_state: input.State = .{};
+/// `md` holds a ROM (`begin` ran). Nothing touches `md` before; the wasm
+/// exports return 0 until then.
+var have_md = false;
+/// Where the splash leads: running, or (drive builds, Track B) pick / help.
+var after_splash: State = .running;
 
-/// Select holds seen (the M2 menu will open there).
-var menu_requests: u32 = 0;
+/// Menu opens since boot.
+var menu_opens: u32 = 0;
 
 pub fn start() void {
     // Presents at 60 / render_every Hz (30 by default).
@@ -49,8 +56,18 @@ pub fn start() void {
     text.init();
     video.init();
     debug.frames_per_update = frames_per_update;
-    md.init_in_place(romsrc.select());
+    // Track B: `romsrc.scan()` and the ROM decision of PLAN.md "Frontend
+    // states" replace this line (embedded / one candidate: begin(...) and
+    // after_splash = .running; several: after_splash = .pick; none: .help).
+    begin(romsrc.select());
+}
+
+/// Load a ROM into the console and apply the menu settings to it.
+fn begin(src: core.RomSource) void {
+    md.init_in_place(src);
     md.line_sink = video.sink();
+    video.apply(&md);
+    have_md = true;
 }
 
 pub fn update() void {
@@ -58,8 +75,14 @@ pub fn update() void {
     const t0 = cart.micros_since_boot();
     debug.frame_tick(t0);
     switch (state) {
+        .splash => if (splash.update(controls_state.edge.any_pressed())) {
+            controls_state.suppress_held();
+            state = after_splash;
+            if (state == .running) run_update(t0);
+        },
         .running => run_update(t0),
         .menu => menu_update(),
+        .pick, .help => unreachable, // Track B: the picker and help arms.
     }
     if (cart.is_wasm) present_wasm();
 }
@@ -67,11 +90,11 @@ pub fn update() void {
 fn run_update(t1: u64) void {
     const in = controls_state.game_frame();
     if (in.open_menu) {
-        menu_requests += 1;
+        menu_opens += 1;
         state = .menu;
-        controls_state.suppress_held();
         audio.silence();
-        menu_update();
+        menu.open();
+        _ = menu.update(&md, controls_state.edge);
         return;
     }
 
@@ -82,27 +105,27 @@ fn run_update(t1: u64) void {
     audio.update(&md);
     video.finish_frame();
     debug.record(@truncate(t2 -% t1));
-    romsrc.draw_report();
+    if (debug.enabled) romsrc.draw_report();
     debug.z80_state = debug.z80_label(&md);
     debug.draw();
 }
 
-/// The M2 menu's placeholder: the last frame stays on screen with a banner;
-/// badge B resumes (held buttons are ignored until released, so B does not
-/// reach the game); badge A toggles sound (the M2 menu's Sound row takes
-/// this over).
+/// One menu update over the frozen frame; the core is not stepped.
 fn menu_update() void {
-    if (controls_state.edge.pressed(.b)) {
-        controls_state.suppress_held();
-        state = .running;
-        return;
-    }
-    if (controls_state.edge.pressed(.a)) audio.enabled = !audio.enabled;
     audio.silence();
-    text.draw("    MENU (M2)       ", 0, 56, .rgb(0xFFFFFF), .rgb(0x000080));
-    text.draw("    B: resume       ", 0, 64, .rgb(0xFFFFFF), .rgb(0x000080));
-    text.draw(if (audio.enabled) "    A: sound on     " else "    A: sound off    ", 0, 72, .rgb(0xFFFFFF), .rgb(0x000080));
-    debug.draw();
+    switch (menu.update(&md, controls_state.edge)) {
+        .stay => {},
+        .resume_game => {
+            menu.close();
+            controls_state.suppress_held();
+            video.apply(&md); // a Scale change, or Reset's squeeze
+            state = .running;
+            run_update(cart.micros_since_boot());
+        },
+        // Track B: menu.close(); controls_state.suppress_held();
+        // picker.reset(); state = .pick; (the row is hidden until then).
+        .pick_rom => unreachable,
+    }
 }
 
 pub fn read_controls() cart.Controls {
@@ -143,7 +166,8 @@ comptime {
         @export(&debug_rom_size, .{ .name = "debug_rom_size" });
         @export(&debug_rom_crc, .{ .name = "debug_rom_crc" });
         @export(&debug_cram_rebuilds, .{ .name = "debug_cram_rebuilds" });
-        @export(&debug_menu_requests, .{ .name = "debug_menu_requests" });
+        @export(&debug_menu_opens, .{ .name = "debug_menu_opens" });
+        @export(&debug_settings, .{ .name = "debug_settings" });
         @export(&debug_tone_calls, .{ .name = "debug_tone_calls" });
         @export(&debug_sound_on, .{ .name = "debug_sound_on" });
         @export(&debug_pc, .{ .name = "debug_pc" });
@@ -158,6 +182,7 @@ comptime {
 
 /// Genesis frames stepped since reset (`md.frame_count`; two per update).
 fn debug_frame_count() callconv(.c) u32 {
+    if (!have_md) return 0;
     return md.frame_count;
 }
 /// Microseconds the last update's frames took.
@@ -168,12 +193,13 @@ fn debug_step_us() callconv(.c) u32 {
 fn debug_lines() callconv(.c) u32 {
     return video.last_frame_lines;
 }
-/// Frontend state: 1 running, 2 menu placeholder (the splash, 0, is M2).
+/// Frontend state: 0 splash, 1 running, 2 menu, 3 picker, 4 no-ROM help.
 fn debug_state() callconv(.c) u32 {
     return @backingInt(state);
 }
 /// Pad word the core was last stepped with (`core.Pad` bits).
 fn debug_pad() callconv(.c) u32 {
+    if (!have_md) return 0;
     return md.pad;
 }
 /// 0 none, 1 embedded, 2 drive contiguous, 3 drive fragmented.
@@ -182,6 +208,7 @@ fn debug_rom_source() callconv(.c) u32 {
 }
 /// ROM size in bytes.
 fn debug_rom_size() callconv(.c) u32 {
+    if (!have_md) return 0;
     return md.rom.size;
 }
 /// CRC32 of the drive ROM (0 for the embedded one).
@@ -192,36 +219,51 @@ fn debug_rom_crc() callconv(.c) u32 {
 fn debug_cram_rebuilds() callconv(.c) u32 {
     return video.cram_rebuilds;
 }
-/// Select holds that would have opened the menu.
-fn debug_menu_requests() callconv(.c) u32 {
-    return menu_requests;
+/// Times the menu opened since boot.
+fn debug_menu_opens() callconv(.c) u32 {
+    return menu_opens;
+}
+/// Menu settings: bit 0 sound on, bit 1 crop scale, bits 2-4 the button
+/// layout (`input.Layout`, 0 = B=B A=C S=A), bit 5 debug overlay on.
+fn debug_settings() callconv(.c) u32 {
+    var v: u32 = 0;
+    if (audio.enabled) v |= 1;
+    if (video.scale == .crop) v |= 2;
+    v |= @as(u32, @intCast(input.layout.index())) << 2;
+    if (debug.enabled) v |= 32;
+    return v;
 }
 /// `tone2` calls since boot.
 fn debug_tone_calls() callconv(.c) u32 {
     return audio.tone_calls;
 }
-/// 1 when sound is on (`-Dsound` at boot, A in the menu toggles it).
+/// 1 when sound is on (`-Dsound` at boot, the menu's Sound row flips it).
 fn debug_sound_on() callconv(.c) u32 {
     return @intFromBool(audio.enabled);
 }
 /// 68000 program counter after the last frame.
 fn debug_pc() callconv(.c) u32 {
+    if (!have_md) return 0;
     return md.cpu.pc;
 }
 /// 68000 active stack pointer (A7).
 fn debug_sp() callconv(.c) u32 {
+    if (!have_md) return 0;
     return md.cpu.a[7];
 }
 /// 68000 status register.
 fn debug_sr() callconv(.c) u32 {
+    if (!have_md) return 0;
     return md.cpu.get_sr();
 }
 /// VDP line (0..261) the frame ended on.
 fn debug_vdp_line() callconv(.c) u32 {
+    if (!have_md) return 0;
     return md.vdp.line;
 }
 /// Z80 program counter.
 fn debug_z80_pc() callconv(.c) u32 {
+    if (!have_md) return 0;
     return md.z80.pc;
 }
 /// Frequency the buzzer plays (0 when silent).
@@ -231,6 +273,7 @@ fn debug_tone_hz() callconv(.c) u32 {
 /// Z80 arbiter: bit 0 BUSREQ held by the 68000, bit 1 Z80 in reset, bit 2
 /// Z80 switched off (`tunables.z80_enabled` false).
 fn debug_z80_state() callconv(.c) u32 {
+    if (!have_md) return 0;
     var v: u32 = 0;
     if (md.arbiter.busreq) v |= 1;
     if (md.arbiter.z80_reset) v |= 2;
