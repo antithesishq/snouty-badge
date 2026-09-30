@@ -11,7 +11,9 @@ const Vec3 = math.Vec3;
 const vec3 = math.vec3;
 const splat = math.splat;
 
-pub const centre = vec3(-13.5, 1.8, 12.0);
+/// M3.1: x = -15.5 (was -13.5), right of Harbour Centre as seen from the
+/// lake, so the mark stands clear of the towers instead of in front of them.
+pub const centre = vec3(-15.5, 1.8, 12.0);
 /// Half-size S: the mark's unit square spans U, V in [-1, 1].
 pub const half_size: f32 = 1.5;
 /// Half-thickness h of the slab, world units.

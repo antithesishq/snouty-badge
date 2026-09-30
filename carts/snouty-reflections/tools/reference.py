@@ -60,7 +60,7 @@ from cart/src/shore_texels.bin and tools/shore_palette.json (override with
 rows, y in [0, 6) for M2.2; the M2 file's 32 rows still give y in [0, 4)).
 
 M2.2 adds the spinning Iris logo (PLAN.md M2.2 "Iris logo": slab-extruded
-mark at (-13.5, 1.8, 12), six turns per orbit, K samples along the slab chord).
+mark at (-15.5, 1.8, 12) since M3.1, six turns per orbit, K samples along the slab chord).
 Primary rays test it, water reflections at every depth if --iris-in-water 1
 (knob 6), chrome reflections (both chrome spheres) if --iris-in-chrome 1
 (knob 5), rays leaving the glass never. --iris-samples K is knob 7,
@@ -135,7 +135,7 @@ SHORE_TPU = 8.0                               # texels per world unit
 TEX_W = 256
 
 # Iris logo (PLAN.md M2.2 "Iris logo"): a slab-extruded mark standing on the water.
-IRIS_C = np.array([-13.5, 1.8, 12.0])
+IRIS_C = np.array([-15.5, 1.8, 12.0])
 IRIS_S = 1.5                                  # half-size: the mark's U, V in [-1, 1]
 IRIS_HT = 0.12                                # half-thickness (world units)
 IRIS_R = 1.57                                 # bounding sphere radius

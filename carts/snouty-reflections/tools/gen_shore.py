@@ -25,8 +25,9 @@ Content, left to right as seen from the lake (M2.2):
   u 114..223  the downtown glass towers catching the sun, "ADRIAN HATCH"
               over "ANTITHESIS" in front of their shaded lower floors
   u 224..237  Harbour Centre: saucer and mast
-  u 238..255  Canada Place's white sails at the waterline, the 3D Iris logo
-              standing in front of them (x = -13.5)
+  u 238..255  Canada Place's white sails at the waterline; the 3D Iris logo
+              stands in front of their right half and past the shore's end
+              (x = -15.5 since M3.1, clear of Harbour Centre; it was -13.5)
 
 Design notes: the texture is point-sampled at about one texel per pixel at
 best and mostly seen upside down in rippling water, so everything is at

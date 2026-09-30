@@ -597,7 +597,7 @@ literal.
 
 | Item | Value |
 |------|-------|
-| Centre | `C = (-13.5, 1.8, 12.0)` (was `x = 4.5`; moved right of the skyline, the counterpart of Snouty on the left, clear of the title) |
+| Centre | `C = (-15.5, 1.8, 12.0)` (M3.1; was `x = 4.5`, then `-13.5`: moved right of the skyline, the counterpart of Snouty on the left, clear of the title, and in M3.1 clear of Harbour Centre) |
 | Half-size | `S = 1.5` (the mark's unit square spans `U, V` in `[-1, 1]`) |
 | Half-thickness | `h = 0.12` (world units) |
 | Bounding sphere | centre `C`, radius `1.57` (mark radius `1.042 S`, plus `h`) |
