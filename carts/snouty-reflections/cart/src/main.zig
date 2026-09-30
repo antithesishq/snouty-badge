@@ -3,18 +3,22 @@
 //! toolchain.
 const cart = @import("cart-api");
 const input = @import("input.zig");
-const math = @import("math.zig");
 const dither = @import("dither.zig");
 const overlay = @import("overlay.zig");
-const trace = @import("trace.zig");
+const app = @import("app.zig");
 const variant = @import("variant.zig");
 const build_options = @import("build_options");
+
+// TEMPORARY m3_shim import: at integration replace with
+//   const trace = @import("trace.zig");
+// and delete m3_shim.zig (see app.zig).
+const trace = @import("m3_shim.zig").trace;
 
 comptime {
     cart.export_start_code();
 }
 
-/// Frames since start().
+/// Updates since start().
 var frame: u32 = 0;
 /// Microseconds spent in the last render (hardware timer; 0 on wasm).
 var render_us: u32 = 0;
@@ -22,20 +26,26 @@ var render_us: u32 = 0;
 pub fn start() void {
     cart.set_vsync_enabled(1000.0 / @as(comptime_float, variant.fps));
     cart.set_double_buffer_mode(.no_copy_full_frame);
+    dither.init();
     trace.init();
 }
 
 pub fn update() void {
     input.update(read_controls());
+    app.handle_input();
 
-    if (input.pressed(.b)) dither.next_mode();
-
+    const view = app.view();
     const t0 = cart.micros_since_boot();
-    dither.begin_frame(frame);
-    trace.render_frame(frame);
+    // Bayer parity from scene time, not the update count: a frame is a pure
+    // function of (view, dither mode), so frozen and debug_set_view frames
+    // repeat exactly and view t = f matches M2.2's frame f.
+    dither.begin_frame(view.t);
+    trace.render_frame(view);
+    dither.end_frame();
     render_us = @truncate(cart.micros_since_boot() - t0);
-    if (build_options.debug_overlay) overlay.draw(render_us, frame);
+    if (build_options.debug_overlay) overlay.draw(render_us);
 
+    app.advance();
     frame +%= 1;
     if (cart.is_wasm) present_wasm();
 }
@@ -47,6 +57,13 @@ comptime {
         @export(&debug_render_us, .{ .name = "debug_render_us" });
         @export(&debug_pixel_checksum, .{ .name = "debug_pixel_checksum" });
         @export(&debug_dither_mode, .{ .name = "debug_dither_mode" });
+        @export(&debug_set_dither_mode, .{ .name = "debug_set_dither_mode" });
+        @export(&debug_set_view, .{ .name = "debug_set_view" });
+        @export(&debug_preset, .{ .name = "debug_preset" });
+        @export(&debug_state, .{ .name = "debug_state" });
+        @export(&debug_t, .{ .name = "debug_t" });
+        @export(&debug_orbit, .{ .name = "debug_orbit" });
+        @export(&debug_height_mm, .{ .name = "debug_height_mm" });
     }
 }
 
@@ -58,6 +75,32 @@ fn debug_render_us() callconv(.c) u32 {
 }
 fn debug_dither_mode() callconv(.c) u32 {
     return @backingInt(dither.mode);
+}
+/// Set the dither mode (dither.Mode values; out of range is ignored).
+fn debug_set_dither_mode(mode: u32) callconv(.c) void {
+    if (mode < @typeInfo(dither.Mode).@"enum".field_names.len) dither.set_mode(@fromBackingInt(@intCast(mode)));
+}
+/// Freeze and set the view: preset index, scene time in frames, orbit index,
+/// eye height in mm (PLAN.md M3; for check_render). Takes effect on the next
+/// update().
+fn debug_set_view(preset: u32, t: u32, orbit: u32, height_mm: i32) callconv(.c) void {
+    app.set_view(preset, t, orbit, height_mm);
+}
+fn debug_preset() callconv(.c) u32 {
+    return @backingInt(app.preset);
+}
+/// 0 attract, 1 free camera, 2 frozen.
+fn debug_state() callconv(.c) u32 {
+    return app.state_code();
+}
+fn debug_t() callconv(.c) u32 {
+    return app.t;
+}
+fn debug_orbit() callconv(.c) u32 {
+    return app.orbit;
+}
+fn debug_height_mm() callconv(.c) i32 {
+    return app.height_mm;
 }
 /// Sum of all framebuffer words, for render regression tests.
 fn debug_pixel_checksum() callconv(.c) u32 {
