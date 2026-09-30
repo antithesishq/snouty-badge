@@ -1,0 +1,16 @@
+# snouty-lynx: Atari Lynx emulator, 60 fps. M0 scaffold: the Iris-mark boot
+# splash (skipped by A on update 40), then the placeholder screen (the
+# core's test pattern at rows 0..101 and the status strip), which is what
+# every frame after the splash draws until M1 runs a real core.
+budget_ms = 16.7
+frames = 300
+# carts/snouty-lynx/tools/scripts/m0_boot.json: A skips the splash at 40,
+# Start (Pause) 100-109, Up+B 130-139, a Select tap 160-162 (Option 1).
+script = "carts/snouty-lynx/tools/scripts/m0_boot.json"
+# The committed drive fixture (no commercial ROMs; regenerate with
+# carts/snouty-lynx/tests/fixtures/make_fixtures.py): ROT.LNX (refused),
+# GAME.LNX (the placeholder, runs), RAW.LYX, FRAG.LNX. For a local run with a
+# real dump (never committed):
+#   python3 tools/make_romfs.py out/lynx-romfs.img ~/roms/lynx/hard_drivin.lnx
+#   badge-bench/bench.sh zig-out/firmware/snouty-lynx.elf --romfs out/lynx-romfs.img
+romfs = "carts/snouty-lynx/tests/fixtures/m0_drive.img"
