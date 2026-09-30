@@ -299,12 +299,14 @@ function checkView(cart, v, checks, jobs, outDir) {
     if (checks.has(1) || checks.has(2)) {
         cart.call("debug_pt_restart");
         const rmse = [];
+        let lastMean = null;
         const ref1024 = checks.has(2) ? reference(v, REF_PASSES, jobs) : null;
         for (const n of PASSES) {
             if (n > 16 && !checks.has(2)) break;
             const got = runTo(cart, n);
             if (got !== n) { lines.push(`  debug_pt_passes() = ${got} after running to ${n}  FAIL`); pass = false; break; }
             const mean = decodeAccum(cart.accumWords());
+            lastMean = mean;
             fs.writeFileSync(path.join(outDir, `cart_${name}_n${pad4(n)}.png`), encodePNG(to8(quantiseNone(mean)), WIDTH, HEIGHT));
             if (n === 16 && checks.has(1)) {
                 const ref16 = reference(v, 16, jobs);
@@ -338,7 +340,23 @@ function checkView(cart, v, checks, jobs, outDir) {
                     `(its rounding alone: ${compareMeans(acc, reference(v, 256, jobs)).rmse.toFixed(3)} vs the float mean)`);
             }
         }
-        if (checks.has(2) && rmse.length === PASSES.length) pass = convergence(rmse, lines) && pass;
+        if (checks.has(2) && rmse.length === PASSES.length) {
+            // The cart's own RMSE is floored by the accumulator's re-rounding
+            // (about 1 unit of 255 at 256 passes, an eighth of a 5-bit display
+            // step), so the 1/sqrt(n) ratio is gated on the estimator's float
+            // means (same samples), and the cart must track the simulated
+            // accumulator and stay under RMSE_256_MAX.
+            const floatRmse = PASSES.map((n) => [n, compareMeans(reference(v, n, jobs), ref1024).rmse]);
+            const fr = Object.fromEntries(floatRmse), r = Object.fromEntries(rmse);
+            const fratio = fr[64] / fr[256];
+            const acc = reference(v, 256, null, true);
+            const sa = compareMeans(lastMean, acc);
+            const ok = r[16] > r[64] && r[256] <= RMSE_256_MAX && fratio >= RATIO_64_256 && sa.within >= SAME_FRACTION;
+            lines.push(`  2 convergence vs ${REF_PASSES} passes: cart RMSE ${rmse.map(([n, e]) => `${n}: ${e.toFixed(3)}`).join(", ")} ` +
+                `(want 16 > 64, 256 <= ${RMSE_256_MAX}); estimator 64/256 ratio ${fratio.toFixed(2)} (want >= ${RATIO_64_256}); ` +
+                `cart vs simulated accumulator at 256: ${(100 * sa.within).toFixed(2)}% within ${SAME_UNITS} (want >= ${100 * SAME_FRACTION}%)  ${ok ? "ok" : "FAIL"}`);
+            pass = ok && pass;
+        }
     }
     return { name, pass, lines };
 }

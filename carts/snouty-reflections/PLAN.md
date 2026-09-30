@@ -1262,7 +1262,8 @@ real-time scene, and shade:
   Lsum += thr * ((1 - F) * base + sun_col * 0.5 * spec)
   ```
 
-  Terminal: `Lsum += thr * F * env(r)` (shore, else `sky(r)`), stop. Else
+  Terminal: `Lsum += thr * F * env(r)` (shore, else `sky(r)`, without
+  the disc after a diffuse bounce, as a sky miss), stop. Else
   `thr *= F`, `d = r`.
 - **Matte**: `n`, `Lsum += thr * albedo * sun_col * max(0, dot(n, Ls)) *
   vis(p, Ls)` when `dot(n, Ls) > 0`. Terminal: stop. Else a
@@ -1304,9 +1305,13 @@ to `[0, 1]` and runs `dither.quantise`.
      passes: at least 98% of channel values within 3 units, mean absolute
      difference at most 0.5 (float differences flip a few Fresnel and
      gloss choices, nothing else).
-  2. Convergence: against the reference with 1024 passes, RMSE at 16, 64
-     and 256 passes decreases, `RMSE(64) / RMSE(256) >= 1.6`, and
-     `RMSE(256) <= 4.0` units.
+  2. Convergence: against the reference with 1024 passes, the cart's
+     RMSE falls from 16 to 64 passes and `RMSE(256) <= 4.0` units; the
+     estimator's float means give `RMSE(64) / RMSE(256) >= 1.6`; the cart
+     at 256 passes matches the simulated accumulator (`--accum`) like
+     check 1. (Changed at integration: the 11:11:10 running mean is
+     re-rounded every pass, a random walk of about 1 unit at 256 passes,
+     an eighth of a 5-bit display step, which floors the cart's RMSE.)
   3. Seed: after `pt.begin` and before any column, `display()` with dither
      `none` reproduces the real-time frame exactly.
   Check set: each preset at `t = 0`, `orbit = 0`; sunset at `t = 300`;

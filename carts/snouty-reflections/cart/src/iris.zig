@@ -182,7 +182,7 @@ const grid: [grid_n][grid_n]Cell = blk: {
 };
 
 /// mask(u, v), from the grid where the cell decides it.
-inline fn mask_fast(u: f32, v: f32) bool {
+pub inline fn mask_fast(u: f32, v: f32) bool {
     const iu: u32 = @bitCast(@as(i32, @intFromFloat(@floor(u * grid_scale + grid_offset))));
     const iv: u32 = @bitCast(@as(i32, @intFromFloat(@floor(v * grid_scale + grid_offset))));
     if (iu >= grid_n or iv >= grid_n) return false;

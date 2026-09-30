@@ -160,7 +160,7 @@ var bayer8_table: [8 * 64]f32 = undefined;
 var blue_table: [64 * 64]f32 = undefined;
 const none_table: [64]f32 = @splat(1e-4);
 
-const bluenoise_bytes: *const [4096]u8 = @embedFile("bluenoise64.bin");
+pub const bluenoise_bytes: *const [4096]u8 = @embedFile("bluenoise64.bin");
 const palette_bytes: *const [32]u8 = @embedFile("palette16.bin");
 const palette_cube: *const [4096]u8 = @embedFile("palette16_cube.bin");
 var palette_pixels: [16]cart.Pixel = undefined;
