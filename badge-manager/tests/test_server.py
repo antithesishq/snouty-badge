@@ -414,14 +414,14 @@ class BuildServerTest(ServerCase):
         finally:
             conn.close()
 
-    def test_demo_without_builds_is_503(self):
-        demo = DemoStation(library_root=self.tmp / "demo", step=0.01)
-        if callable(getattr(demo, "start_build", None)):
-            self.skipTest("DemoStation builds (Track C)")
-        self.httpd.app.station = demo
+    def test_station_without_builds_is_503(self):
+        class NoBuilds:
+            """A station from before M2: none of the build methods."""
+            def status(self):
+                return {"busy": False, "log_seq": 0, "sets": [], "library": {"carts": [], "roms": []}}
+        self.httpd.app.station = NoBuilds()
         self.assertEqual(self.call("POST", "/api/build", {"prompt": "rain"})[0], 503)
         self.assertEqual(self.call("GET", "/api/build")[0], 503)
-
 
 if __name__ == "__main__":
     unittest.main()

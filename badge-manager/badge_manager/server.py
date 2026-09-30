@@ -656,7 +656,7 @@ class DemoStation:
                              "with a letter")
         with self._build_lock:
             if self._job_thread is not None:
-                raise DemoBusy("build")
+                raise DemoBusy("a build is already running")
             taken = set(self.library.carts) | {j["name"] for j in self._jobs}
             if name is not None and name in taken:
                 raise ValueError(f"there is already a cart called {name}")
