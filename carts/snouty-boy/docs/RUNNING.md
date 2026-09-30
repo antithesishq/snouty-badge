@@ -200,6 +200,14 @@ Then open <http://localhost:1234>. The hosted simulator at
 <https://badgesim.microzig.tech/> also fetches from `localhost:2468` and should
 work with the same watcher in Chrome; if it does not load, use the local UI.
 
+Sound: the buzzer plays one voice, the channel `core.apu.pick_voice` picks,
+as a square (or, for the wave channel, triangle) tone at the envelope's
+volume; Sound: Off in the menu stops it. The badge plays it through its
+speaker; the simulator through the browser (click the page once so the
+browser lets audio start). In the simulator the cart drives the audio
+worklet directly: upstream's wasm shim turns an infinite `tone2` into a
+4 s fade-in that music never gets past (`frontend/audio.zig` explains).
+
 Keys (from `sycl-badge/simulator/README.md`) and what they do here:
 
 | Keyboard           | Badge          | Game Boy / emulator                         |
@@ -328,6 +336,7 @@ Useful options (the header of the shared `../../tools/preview.mjs` has the full 
     both must be 0 in the default build (with `-Dneopixels=true` the menu
     lights up to 5, channel at most 10)
   - `debug_alarm`: 1 if the rewind self-check found a mismatch
+  - `debug_tone_hz`: what the buzzer was last told to play, 0 when stopped
   - `debug_slots`: keyframes the store can hold at most for this ROM
     (wasm: a static 256 KB arena)
   - `debug_arena_bytes`: bytes of that arena
