@@ -16,7 +16,7 @@ Controls (SPEC.md section 3, M3):
 | Input          | Attract (default)                 | Free camera                          | Frozen                                       |
 |----------------|-----------------------------------|--------------------------------------|----------------------------------------------|
 | Left / Right   | Enter free camera; orbit          | Orbit around the spheres             | Orbit the frozen view                        |
-| Up / Down      | Enter free camera; raise / lower  | Camera height 1.0 to 3.0 m           | Height                                       |
+| Up / Down      | Enter free camera; raise / lower  | Camera height 1.0 to 1.8 m           | Height                                       |
 | A              | Freeze                            | Freeze                               | Unfreeze: time resumes where it stopped      |
 | B              | Cycle dither mode                 | Cycle dither mode                    | Cycle dither mode                            |
 | Select         | Next scene preset                 | Next scene preset                    | Next preset                                  |
@@ -190,7 +190,7 @@ cart itself to use them:
 
 | Export                                         | Meaning |
 |------------------------------------------------|---------|
-| `debug_set_view(preset, t, orbit, height_mm)`  | freeze and set the view: preset 0..3, scene time `t` in frames, orbit index `[0, orbit_frames)`, eye height in mm (1000..3000; 1600 is the default) |
+| `debug_set_view(preset, t, orbit, height_mm)`  | freeze and set the view: preset 0..3, scene time `t` in frames, orbit index `[0, orbit_frames)`, eye height in mm (1000..1800; 1600 is the default) |
 | `debug_set_dither_mode(mode)`                  | set the dither mode directly (numbers as `debug_dither_mode`) |
 
 Input scripts live in `tools/scripts/` (`--script`):
@@ -246,8 +246,8 @@ ways:
 | `--view P:T[:O[:H]]` (repeatable) | `ref_<name>.png` | preset `P`, `t = T`, `orbit = O` (default `T`), height `H` m (default 1.6) |
 
 with `<name>` = `<preset>_t<TTTT>_o<OOOO>_h<mm>`, for example
-`ref_storm_t0300_o0300_h3000.png`. `--preset` is `sunset` (default),
-`midnight`, `noon`, `storm` or 0..3; `--height` is 1.0 to 3.0 m (default
+`ref_storm_t0300_o0300_h1800.png`. `--preset` is `sunset` (default),
+`midnight`, `noon`, `storm` or 0..3; `--height` is 1.0 to 1.8 m (default
 1.6). A height other than 1.6 is rounded to f32 and the camera basis is
 computed in f32, as the cart does at run time; everything else is f64.
 
@@ -477,7 +477,7 @@ another variant), calibrated busy ms, worst frame at most 47.0 ms:
 |-----|-------|-----|------|
 | 1 `step1` | `-Dreflections_bench=motion_off` (motion knob off) | 600 frames: sunset, one orbit | 47.0, and at most 1.0 ms over the M2.2 worst (45.94, or `BASELINE_ELF=path/to/m2.2/cut20.elf` benched the same way) |
 | 2 `attract` | default | 2,400 frames: four orbits of attract, every preset, motion, fades | 47.0; worst and mean per preset (600-frame block) |
-| 3 `height` | `-Dreflections_bench=height` (attract sweeps the height 1.0 to 3.0 and back) | 2,400 frames, one orbit per preset | 47.0; per preset |
+| 3 `height` | `-Dreflections_bench=height` (attract sweeps the height 1.0 to 1.8 and back) | 2,400 frames, one orbit per preset | 47.0; per preset |
 | 4 `palette16` | default | 600 frames, `--poke dither.mode=3` (palette16 from frame 0) | reported only |
 
 The ELFs are `dist/bench/<variant>-{default,motion_off,height}.elf`; a

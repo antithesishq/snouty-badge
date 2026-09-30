@@ -5,7 +5,7 @@ scene, exactly", executable.
 
     python3 tools/reference.py --frame 0 --frame 150 --frame 300 --frame 450 --out out/
     python3 tools/reference.py --variant cut20 --preset noon --t 150 --out out/          # one M3 view
-    python3 tools/reference.py --variant cut20 --view storm:300:300:3.0 --out out/       # preset:t:orbit:height
+    python3 tools/reference.py --variant cut20 --view storm:300:300:1.8 --out out/       # preset:t:orbit:height
     python3 tools/reference.py --variant cut20 --frame 300 --motion 0 --out out/         # M2.2 frame 300
     python3 tools/reference.py --frame 0 --out out/ --fps 30 --scale 2                   # M2.1 variant half30
 
@@ -96,7 +96,7 @@ ZENITH = np.array([0.15, 0.20, 0.45])
 ORBIT_R = 4.5
 DEFAULT_HEIGHT = 1.6
 MIN_HEIGHT = 1.0
-MAX_HEIGHT = 3.0
+MAX_HEIGHT = 1.8
 TARGET = np.array([0.0, 0.9, 0.0])
 
 # Chrome sphere

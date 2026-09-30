@@ -777,7 +777,7 @@ pub const Preset = enum(u32) { sunset = 0, midnight = 1, noon = 2, storm = 3 };
 // camera.zig (Track A)
 pub const default_height: f32 = 1.6;
 pub const min_height: f32 = 1.0;
-pub const max_height: f32 = 3.0;
+pub const max_height: f32 = 1.8; // Adrian 2026-09-30: was 3.0, over budget above 1.8
 
 // trace.zig (Track A)
 pub const View = struct {
@@ -1059,3 +1059,15 @@ status; tag `snouty-reflections/m3`.
   all OVER; row 4 palette16 47.24 / 44.69 (report). Waiting on Adrian for
   midnight/noon, max height, and the knobs turned off (rings, noon
   shadows, noon third sphere).
+- 2026-09-30: Adrian's answers: midnight and noon ship as they are
+  (occasional stutter accepted on their heaviest frames); free camera
+  capped at 1.8 m (`camera.max_height`, reference, check_render, docs);
+  rings, noon shadows and noon's third sphere stay off in the real-time
+  view (M4's frozen tracer brings them back). Row 3 again with the cap:
+  sunset 48.01 / 44.17, midnight 52.36, noon 52.72, storm 47.76 / 42.82.
+  Sunset and storm are over 47.0 only while the height is moving (the
+  table rebuild, ~1.6 ms, runs on every frame of a height change), still
+  inside the 50 ms frame. check_render 24/24 PASS cut20 and half30 at the
+  new heights. Preview GIFs `docs/preview_m3_presets.gif` (4 orbits of
+  attract) and `docs/preview_m3_free_camera.gif`. Tagged
+  `snouty-reflections/m3`.

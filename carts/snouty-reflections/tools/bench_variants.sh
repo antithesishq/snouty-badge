@@ -21,7 +21,7 @@
 #               preset with motion and fades. Worst and mean per preset
 #               (600-frame block) too.
 #   3 height    -Dreflections_bench=height build (attract sweeps the height
-#               1.0 to 3.0 and back, a table rebuild every frame), 4 orbits,
+#               1.0 to 1.8 and back, a table rebuild every frame), 4 orbits,
 #               1 per preset, broken down per preset.
 #   4 palette16 default build, dither palette16 from frame 0 (--poke
 #               dither.mode=3), sunset, 1 orbit. Reported, not gated.

@@ -19,7 +19,7 @@ pub const orbit_radius: f32 = 4.5;
 /// camera's range.
 pub const default_height: f32 = 1.6;
 pub const min_height: f32 = 1.0;
-pub const max_height: f32 = 3.0;
+pub const max_height: f32 = 1.8;
 pub const orbit_height: f32 = default_height;
 /// Seconds per revolution, at every frame rate (PLAN.md M2.1).
 pub const orbit_seconds = 30;

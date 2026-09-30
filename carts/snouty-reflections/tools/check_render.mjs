@@ -40,7 +40,7 @@
 //   frozen, when exported) agree, and compares the second frame with
 //   reference.py --view P:T:O:H (motion on unless --motion 0). Views: the
 //   M3 check set, each preset at t = 0, 150, 300, 450 (orbit = t), and sunset
-//   and storm at heights 1.0 and 3.0 at t = 0 and 300; plus every --view; plus
+//   and storm at heights 1.0 and 1.8 at t = 0 and 300; plus every --view; plus
 //   every --frame F / --t T (orbit = --orbit O, else T) for each --preset
 //   (default sunset) and each --height (default 1.6). --only drops the check
 //   set. Files: cart_<name>.png, ref_<name>.png, diff_<name>.png with
@@ -220,7 +220,7 @@ function load(file) {
 const VARIANTS = { full20: { fps: 20 }, cut20: { fps: 20 }, full15: { fps: 15 }, half30: { fps: 30 } };
 // scene.Preset order (PLAN.md M3 "Fixed interfaces").
 const PRESETS = ["sunset", "midnight", "noon", "storm"];
-const DEFAULT_HEIGHT_MM = 1600, MIN_HEIGHT_MM = 1000, MAX_HEIGHT_MM = 3000;
+const DEFAULT_HEIGHT_MM = 1600, MIN_HEIGHT_MM = 1000, MAX_HEIGHT_MM = 1800;
 const CART_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const REFERENCE = path.join(CART_DIR, "tools", "reference.py");
 
@@ -234,7 +234,7 @@ function parsePreset(s) {
 function parseHeightMm(s) {
     const h = Number(s);
     const mm = Math.round(h * 1000);
-    if (!Number.isFinite(h) || mm < MIN_HEIGHT_MM || mm > MAX_HEIGHT_MM) usage(`height '${s}' must be in [1.0, 3.0] metres`);
+    if (!Number.isFinite(h) || mm < MIN_HEIGHT_MM || mm > MAX_HEIGHT_MM) usage(`height '${s}' must be in [1.0, 1.8] metres`);
     return mm;
 }
 const pad4 = (n) => String(n).padStart(4, "0");
@@ -342,7 +342,7 @@ function checkLegacy(name, wasm, extraFrames, only, outDir, refArgs) {
 function m3CheckSet() {
     const views = [];
     for (let p = 0; p < PRESETS.length; p++) for (const t of [0, 150, 300, 450]) views.push({ preset: p, t, orbit: t, mm: DEFAULT_HEIGHT_MM });
-    for (const p of [0, 3]) for (const mm of [1000, 3000]) for (const t of [0, 300]) views.push({ preset: p, t, orbit: t, mm });
+    for (const p of [0, 3]) for (const mm of [1000, 1800]) for (const t of [0, 300]) views.push({ preset: p, t, orbit: t, mm });
     return views;
 }
 
