@@ -324,3 +324,15 @@ report and is stubbed locally.
   in `run_m68k` (+4-5 cycles per 68000 instruction from spills). Z80
   share in play: `run_z80` 30% (5.8 ms per update; its core is Gear's,
   its main loop polls the YM2612 timer flag all frame).
+- 2026-09-30 (M1 DONE): tag `snouty-genesis/m1`. Perf branch merged;
+  on the merged tree: 136/136 host tests (SingleStepTests subset 0
+  failures), golden hashes unchanged, every other cart's uf2
+  byte-identical. badge-bench calibrated: test ROM 8.77 ms mean / 24.21
+  worst; Miniplanets from the drive 18.61 / 28.11 (120 updates) and
+  19.47 / 28.11 (300-update gameplay script): under the 31 / 33 targets
+  at full speed, no fallback set. Sizes: `.text` 204,572 B (256 KB
+  window), `.bss` 164,852 B (`Md` ~157 KB; ~110 KB of the RAM window
+  left for the M3 ring), uf2 411,648 B (so about 830 KB of `romfs` remain
+  for ROMs on an otherwise empty drive). Next: M2 streaming picker,
+  menu, splash, remap, scale/crop. Hardware check (open): XIP launch,
+  drive streaming stall rates.
