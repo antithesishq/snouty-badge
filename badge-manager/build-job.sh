@@ -420,6 +420,8 @@ else
         exit "${PIPESTATUS[0]}"
     ) &
     wait $! || agent_rc=$?
+    # The raw stream, for a post-mortem from the station (small, gzipped).
+    [ -s "$job/agent.stream" ] && gzip -c "$job/agent.stream" > "$out/agent.jsonl.gz"
     if [ -s "$job/agent.stderr" ]; then
         sed 's/^/agent: stderr: /' "$job/agent.stderr" | tail -5 | cut -c1-220
     fi

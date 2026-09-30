@@ -40,7 +40,11 @@ simpler reading of the request and ship it.
   small sprite tables as `[_]u16`/`[_]u8` literals in a `.zig` file).
 - Your only shell commands are `zig build ...`, `node tools/preview.mjs
   ...`, `python3 tools/make_gif.py ...` and `ls ...`, run from the
-  worktree root. Other commands are denied; do not try git, rm or scripts.
+  worktree root (the current directory). Zig, Node and Python are already
+  on `PATH`: write each command bare, exactly as in "The loop" below, with
+  no `export`, `cd`, `env` or `&&`/`;` prefix. Anything else is denied
+  automatically (nobody can approve it): no git, rm, sed, scripts or
+  heredocs. Piping into `tail`, `head` or `grep` is fine.
 
 ## Cart API cheat sheet
 
@@ -103,6 +107,8 @@ pub fn update() void { ... }                     // 60 times a second
    carts/__NAME__/preview`, then **Read one or two of the PNGs**
    (`carts/__NAME__/preview/frame_0150.png`) and check that the screen shows
    what you meant. `--press BTN:T1-T2` holds a button for those ticks.
+   Write previews only to `carts/__NAME__/preview` (reuse the directory; a
+   longer run for a game-over screen can use `--frames 1500 --every 100`).
    Exit code 3 means the cart trapped (out-of-bounds index, overflow): fix it.
 4. At most **about five build and preview rounds**. Stop early with a simple
    cart that works rather than an ambitious one that does not build. A
