@@ -37,6 +37,7 @@ const rom = @import("rom.zig");
 const m68k = @import("m68k.zig");
 const tunables = @import("tunables.zig");
 const z80bus = @import("z80bus.zig");
+const undo = @import("undo.zig");
 const Md = md_mod.Md;
 const Pad = md_mod.Pad;
 
@@ -88,6 +89,7 @@ pub const Bus = struct {
     pub fn write8(self: *Bus, addr: u24, v: u8) void {
         const md = self.md;
         if (addr >= 0xE00000) {
+            undo.touch_wr(@truncate(addr));
             md.work_ram[addr & 0xFFFF] = v;
             return;
         }
@@ -98,6 +100,7 @@ pub const Bus = struct {
         const md = self.md;
         if (addr >= 0xE00000) {
             const i: u16 = @truncate(addr & 0xFFFE);
+            undo.touch_wr(i);
             md.work_ram[i] = @truncate(v >> 8);
             md.work_ram[i + 1] = @truncate(v);
             return;
@@ -197,7 +200,10 @@ fn read16_io(md: *Md, addr: u24) u16 {
 
 fn write8_io(md: *Md, addr: u24, v: u8) void {
     if (addr < 0x400000) {
-        if (addr >= md.sram_active.lo and addr <= md.sram_active.hi) md.sram[addr - md.sram_active.lo] = v;
+        if (addr >= md.sram_active.lo and addr <= md.sram_active.hi) {
+            undo.touch_sr(@intCast(addr - md.sram_active.lo));
+            md.sram[addr - md.sram_active.lo] = v;
+        }
         return;
     }
     if (addr >= 0xC00000) {

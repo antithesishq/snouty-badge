@@ -12,9 +12,13 @@
 //! the picker (pick) after the splash, one with none to the help screen
 //! (help). The core is stepped only while running. Sound is the one tone
 //! voice (frontend/audio.zig), off at boot unless built with -Dsound=true
-//! (docs/SOUND.md); the menu's Sound row flips it. No rewind yet (M3). See
-//! SPEC.md (design), PLAN.md (milestone contract), CLAUDE.md (toolchain).
-//! The console is created by `begin` once the ROM is known (`have_md`).
+//! (docs/SOUND.md); the menu's Sound row flips it. The time scrubber
+//! (frontend/rewind.zig over core/undo.zig, SPEC.md 10) keeps an undo record
+//! per 30 Genesis frames in the RAM the linker leaves free; the menu's
+//! Left/Right swap through them, and playing on from a scrubbed position
+//! drops the future. See SPEC.md (design), PLAN.md (milestone contract),
+//! CLAUDE.md (toolchain). The console is created by `begin` once the ROM is
+//! known (`have_md`).
 const cart = @import("cart-api");
 const core = @import("core");
 const video = @import("frontend/video.zig");
@@ -27,6 +31,7 @@ const menu = @import("frontend/menu.zig");
 const splash = @import("frontend/splash.zig");
 const picker = @import("frontend/picker.zig");
 const help = @import("frontend/help.zig");
+const rewind = @import("frontend/rewind.zig");
 
 comptime {
     cart.export_start_code();
@@ -60,6 +65,9 @@ pub fn start() void {
     text.init();
     video.init();
     debug.frames_per_update = frames_per_update;
+    // False when the arena has no room: the game runs untracked and the
+    // menu reads "Scrub: no memory".
+    _ = rewind.init();
     romsrc.scan();
     choose_rom();
 }
@@ -87,6 +95,7 @@ fn begin(src: core.RomSource) void {
     md.line_sink = video.sink();
     video.apply(&md);
     have_md = true;
+    rewind.reset(&md);
 }
 
 pub fn update() void {
@@ -158,13 +167,21 @@ fn run_update(t1: u64) void {
         menu_opens += 1;
         state = .menu;
         audio.silence();
+        // A Left/Right held over from the game must not scrub.
+        controls_state.suppress_held();
         menu.open();
-        _ = menu.update(&md, controls_state.edge);
+        _ = menu.update(&md, live_edge());
         return;
     }
 
+    // After a scrub the console is parked on a record boundary: playing on
+    // drops the records ahead.
+    rewind.resume_if_parked(&md);
     var f: u8 = 1;
-    while (f <= frames_per_update) : (f += 1) md.step_frame(in.pad, f == frames_per_update);
+    while (f <= frames_per_update) : (f += 1) {
+        md.step_frame(in.pad, f == frames_per_update);
+        rewind.record_frame(&md);
+    }
     const t2 = cart.micros_since_boot();
 
     audio.update(&md);
@@ -178,12 +195,12 @@ fn run_update(t1: u64) void {
 /// One menu update over the frozen frame; the core is not stepped.
 fn menu_update() void {
     audio.silence();
-    switch (menu.update(&md, controls_state.edge)) {
+    switch (menu.update(&md, live_edge())) {
         .stay => {},
         .resume_game => {
             menu.close();
             controls_state.suppress_held();
-            video.apply(&md); // a Scale change, or Reset's squeeze
+            video.apply(&md); // a Scale change, Reset's squeeze, a scrub
             state = .running;
             run_update(cart.micros_since_boot());
         },
@@ -247,6 +264,12 @@ comptime {
         @export(&debug_z80_pc, .{ .name = "debug_z80_pc" });
         @export(&debug_tone_hz, .{ .name = "debug_tone_hz" });
         @export(&debug_z80_state, .{ .name = "debug_z80_state" });
+        @export(&debug_scrub_depth, .{ .name = "debug_scrub_depth" });
+        @export(&debug_scrub_history, .{ .name = "debug_scrub_history" });
+        @export(&debug_scrub_records, .{ .name = "debug_scrub_records" });
+        @export(&debug_scrub_slots, .{ .name = "debug_scrub_slots" });
+        @export(&debug_scrub_capacity, .{ .name = "debug_scrub_capacity" });
+        @export(&debug_scrub_arena, .{ .name = "debug_scrub_arena" });
     }
 }
 
@@ -349,4 +372,31 @@ fn debug_z80_state() callconv(.c) u32 {
     if (md.arbiter.z80_reset) v |= 2;
     if (!core.tunables.z80_enabled) v |= 4;
     return v;
+}
+
+// ---- Time scrubber (frontend/rewind.zig) ----
+
+/// Frames the console is parked behind live (0 live; 30 per scrub step).
+fn debug_scrub_depth() callconv(.c) u32 {
+    return rewind.depth_frames();
+}
+/// Frames of history reachable back from live.
+fn debug_scrub_history() callconv(.c) u32 {
+    return rewind.history_frames();
+}
+/// Closed undo records held.
+fn debug_scrub_records() callconv(.c) u32 {
+    return @intCast(rewind.record_count());
+}
+/// Ring slots (68 B each) in use, closed records and the open one.
+fn debug_scrub_slots() callconv(.c) u32 {
+    return @intCast(rewind.slots_in_use());
+}
+/// Ring slots the arena holds (0: no room, scrubber off).
+fn debug_scrub_capacity() callconv(.c) u32 {
+    return @intCast(rewind.capacity_slots());
+}
+/// Arena bytes found (`tuning.wasm_arena_bytes` in wasm).
+fn debug_scrub_arena() callconv(.c) u32 {
+    return @intCast(rewind.arena_bytes());
 }

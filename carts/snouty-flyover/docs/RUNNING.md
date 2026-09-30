@@ -337,5 +337,5 @@ badge-bench/bench.sh zig-out/firmware/snouty-flyover.elf --script carts/snouty-f
 ```
 
 The first run creates `badge-bench/.venv` (needs network, under a minute);
-the 2400-frame attract run takes about three minutes (M3: worst 14.26 ms on a lake frame, mean 7.65). The milestone numbers are in
+the 2400-frame attract run takes about three minutes (M4: worst 14.26 ms on a lake frame, mean 7.65). The milestone numbers are in
 `PLAN.md` under each milestone's status.

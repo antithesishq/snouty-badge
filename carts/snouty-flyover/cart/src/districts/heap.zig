@@ -18,7 +18,9 @@ const camera = @import("../camera.zig");
 pub const title: []const u8 = "HEAP";
 pub const gloss: []const u8 = "malloc / free / gc";
 pub const caption: []const u8 = "B: collect garbage";
-pub const alt: i32 = 40;
+/// Autopilot altitude: 52 (was 40, where the mesas filled the view); the
+/// camera's clearance spring still lifts it over the tallest blocks.
+pub const alt: i32 = 52;
 pub const verb_at: i32 = 30;
 
 /// Autopilot altitude track: no track, the constant `alt`.
@@ -93,6 +95,9 @@ const gc_speed = 4;
 const gc_h = 24;
 const collapse_frames = 10;
 const rubble_h = 2;
+/// Rubble colour: palette.rubble + rubble_shade + (x % 2), indices 21..22,
+/// one shade above the darkest so the footprints read against the floor.
+const rubble_shade = 1;
 
 comptime {
     if (gc_speed < gc_rows) @compileError("the wall must leave its old rows every frame");
@@ -289,7 +294,7 @@ fn apply_row(i: usize, r: world.Rows) void {
     const d = dyn[i];
     @memset(r.h[b.x..][0..b.w], d.h);
     if (d.flags & d_rubble != 0) {
-        for (r.c[b.x..][0..b.w], b.x..) |*cc, x| cc.* = @intCast(palette.rubble + x % 3);
+        for (r.c[b.x..][0..b.w], b.x..) |*cc, x| cc.* = @intCast(palette.rubble + rubble_shade + x % 2);
     } else {
         @memset(r.c[b.x..][0..b.w], d.c);
     }

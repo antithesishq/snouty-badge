@@ -441,3 +441,10 @@ M0 runs on the defaults given after each question.
   Section 17's defaults stand (title Memory Lane, all six districts, the
   placeholder sprite, verbs only, the Iris sun). Adrian: "keep building and
   defer/default any decisions", so M2 started without the M1 GIF review.
+- 2026-09-30: M2, M3 and M4 done the same day on Adrian's "keep building"
+  (tags `snouty-flyover/m2`..`m4`); the branch is merged to main. The
+  flyer is a flapping anteater (Adrian: the placeholder blob was not
+  recognisable). Every district, verb, the skip, boost and the autopilot
+  are in; calibrated bench worst 14.26 ms of 22. Not built: the Tree
+  rotation, dam hold/pass, the free-list word (PLAN.md M4). Hardware check
+  waits for show day.

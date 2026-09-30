@@ -5,6 +5,7 @@ const math = @import("math.zig");
 const camera = @import("camera.zig");
 const variant = @import("variant.zig");
 const scene = @import("scene.zig");
+const arena = @import("arena.zig");
 const Vec3 = math.Vec3;
 
 const Wave = struct { a: f32, kx: f32, kz: f32, w: f32 };
@@ -115,10 +116,17 @@ pub const primary_fade: [camera.width / 2][camera.water_rows]f32 = blk: {
 /// itself (rows above first_water_row unused): build_tables() copies
 /// primary_t at default_height (the tracer reads the comptime primary_fade
 /// there, bit for bit M2.2) and recomputes both in f32 at any other height,
-/// only when the height changes. 128 f32 + 80 x 128 f32 (40.5 KB of .bss;
-/// at max_height every row goes down).
+/// only when the height changes. 128 f32 of .bss, and 80 x 128 f32 (40 KB;
+/// at max_height every row goes down) in the first half of arena.words,
+/// which the freeze-frame path tracer borrows (PLAN.md M4 "Memory"): a
+/// comptime-known address, so the hot path is the same constant address as
+/// a plain global.
 pub var primary_t_rt: [camera.height]f32 = undefined;
-pub var primary_fade_rt: [camera.width / 2][camera.height]f32 = undefined;
+pub const primary_fade_rt: *[camera.width / 2][camera.height]f32 = @ptrCast(&arena.words);
+
+comptime {
+    if (@sizeOf([camera.width / 2][camera.height]f32) > @sizeOf(@TypeOf(arena.words))) @compileError("primary_fade_rt does not fit the arena");
+}
 /// The comptime primary_fade at default_height only with motion off (the
 /// M2.2 identity); the shipped build computes every height at runtime and
 /// leaves the 27.5 KB table out.
@@ -127,6 +135,12 @@ pub const fade_comptime = !scene.motion;
 /// Height the tables hold; NaN until the first build.
 var tables_height: f32 = std.math.nan(f32);
 
+/// Makes the next build_tables() rebuild (pt.release: the path tracer has
+/// overwritten primary_fade_rt in the arena).
+pub fn invalidate_tables() void {
+    tables_height = std.math.nan(f32);
+}
+
 /// Hit distances beyond this are clamped (the fade there is ~1e-6 and the
 /// ripple phases must stay inside sin_turns' range).
 const max_primary_t: f32 = 2e4;
@@ -134,6 +148,13 @@ const max_primary_t: f32 = 2e4;
 /// Makes primary_t_rt and primary_fade_rt hold basis `b`'s tables. Returns
 /// true if it rebuilt them.
 pub fn build_tables(b: *const camera.Basis) bool {
+    // The path tracer holds the arena only between pt.begin and pt.release;
+    // a real-time frame drawn in between takes it back (pt.active() is then
+    // false) and rebuilds.
+    if (arena.owner != .realtime) {
+        arena.owner = .realtime;
+        tables_height = std.math.nan(f32);
+    }
     if (b.height == tables_height) return false;
     tables_height = b.height;
     const fwr = b.first_water_row;
@@ -148,7 +169,7 @@ pub fn build_tables(b: *const camera.Basis) bool {
     // t = -height / w.y for the unnormalised ray w, w.y = basis_y + basis_h v;
     // dist = t |w| = t / inv_len; g = 1 / (1 + fade_k dist) = inv_len /
     // (inv_len + fade_k t): one divide per entry.
-    for (&primary_fade_rt, 0..) |*col, hc| {
+    for (primary_fade_rt, 0..) |*col, hc| {
         for (fwr..camera.height) |y| {
             const il = camera.inv_len(hc, y);
             const g = il / (il + fade_k * primary_t_rt[y]);

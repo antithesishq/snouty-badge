@@ -58,7 +58,7 @@ lines). The repository-wide notes (hardware, cart API, build wiring) are in
   lake frames); calibrated badge-bench worst frame at most 22 ms (busy ms).
 - Memory: map ring 128 KB at depth 256 (64 KB at 128), fog table 4 KB,
   code 30-75 KB; M3 gate `.text + .data` under 75 KB, `.bss` under 165 KB
-  (M3: 69.4 KB / 159.4 KB); the RAM window is 275 KB.
+  (M4: 70.3 KB / 159.4 KB); the RAM window is 275 KB.
 - Knob cut order if over budget: `z_far`, `lod_mul`, reflections,
   `-Dflyover_depth=128`, cliff shading, fog levels.
 

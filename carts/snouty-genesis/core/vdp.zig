@@ -47,6 +47,17 @@
 
 const std = @import("std");
 const tables = @import("vdp_tables.zig");
+const undo = @import("undo.zig");
+
+/// The scrubber's hook for a fill or copy of `n` bytes at `addr ^ 1`
+/// stepping by `inc`: with an increment of 1 or 2 the bytes lie in one
+/// run from `addr & ~1` (at most `n * inc + 1` long), marked at once;
+/// false = the caller marks byte by byte.
+fn touch_run(addr: u16, n: u32, inc: u8) bool {
+    if (inc != 1 and inc != 2) return true;
+    undo.touch_vr_range(addr & 0xFFFE, n * inc + 2);
+    return false;
+}
 
 /// Badge row width: the renderer emits 160 pixels (every second H40
 /// column, or the H32 column table).
@@ -218,6 +229,41 @@ pub const Vdp = struct {
         v.spr_dirty = true;
     }
 
+    /// Everything but `vram` and `line_mode` (a menu setting): the VDP's
+    /// part of `Md.Small`, the scrubber's per-record state. The sprite
+    /// cache fields come along: they are consistent with the VRAM of the
+    /// same instant. Compare field by field, never as bytes.
+    pub const Small = struct {
+        cram: [64]u16,
+        vsram: [40]u16,
+        regs: [24]u8,
+        pending: bool,
+        code: u8,
+        addr: u16,
+        addr_hi: u16,
+        fill_pending: bool,
+        status: u16,
+        line: u16,
+        hint_counter: u8,
+        vint_pending: bool,
+        hint_pending: bool,
+        irq: u3,
+        line_cycles: u16,
+        hv_latch: u16,
+        spr_cache: [80]u32,
+        spr_count: u8,
+        spr_band: [28][3]u32,
+        spr_dirty: bool,
+    };
+
+    pub fn save_small(v: *const Vdp, out: *Small) void {
+        inline for (@typeInfo(Small).@"struct".field_names) |name| @field(out, name) = @field(v, name);
+    }
+
+    pub fn load_small(v: *Vdp, k: *const Small) void {
+        inline for (@typeInfo(Small).@"struct".field_names) |name| @field(v, name) = @field(k, name);
+    }
+
     inline fn h40(v: *const Vdp) bool {
         return v.regs[12] & 0x01 != 0;
     }
@@ -357,6 +403,7 @@ pub const Vdp = struct {
             0x01 => {
                 const d = if (a & 1 != 0) @byteSwap(w) else w;
                 const i = a & 0xFFFE;
+                undo.touch_vr(i);
                 v.vram[i] = @truncate(d >> 8);
                 v.vram[i + 1] = @truncate(d);
                 // Within 1 KB of the table base covers H40 and H32.
@@ -408,6 +455,7 @@ pub const Vdp = struct {
                     // A run ends where the 128 KB source window wraps.
                     const want = @min(n - k, 0x10000 - @as(u32, src));
                     const span = bus.dma_source(@intCast(hi | @as(u32, src) << 1), want) orelse break;
+                    undo.touch_vr_range(a, span.words * 2);
                     var j: u32 = 0;
                     while (j < span.words) : (j += 1) {
                         v.vram[a] = span.ptr[2 * j];
@@ -456,7 +504,9 @@ pub const Vdp = struct {
         switch (v.code & 0x0F) {
             0x01 => {
                 const b: u8 = @truncate(w >> 8);
+                const per_byte = touch_run(v.addr, n, v.regs[15]);
                 while (k < n) : (k += 1) {
+                    if (per_byte) undo.touch_vr(v.addr ^ 1);
                     v.vram[v.addr ^ 1] = b;
                     v.addr +%= v.regs[15];
                 }
@@ -477,7 +527,9 @@ pub const Vdp = struct {
         v.spr_dirty = true;
         var src: u16 = @as(u16, v.regs[22]) << 8 | v.regs[21];
         var k: u32 = 0;
+        const per_byte = touch_run(v.addr, n, v.regs[15]);
         while (k < n) : (k += 1) {
+            if (per_byte) undo.touch_vr(v.addr ^ 1);
             v.vram[v.addr ^ 1] = v.vram[src ^ 1];
             src +%= 1;
             v.addr +%= v.regs[15];

@@ -56,13 +56,19 @@
   "exports": {
     "debug_frame": 2400,
     "debug_cam_y": 1767,
-    "debug_cam_clear": 52,
-    "debug_autopilot": 1,
-    "debug_bus_packets": 7,
     "debug_world_check": 0
   },
   "expect": [],
   "at": [
+    {
+      "tick": 1680,
+      "expr": "debug_cam_alt < 50",
+      "name": "debug_cam_alt",
+      "op": "<",
+      "value": 50,
+      "actual": 46,
+      "pass": true
+    },
     {
       "tick": 2399,
       "expr": "debug_world_check == 0",
@@ -87,7 +93,7 @@
       "name": "debug_cam_clear",
       "op": ">",
       "value": 0,
-      "actual": 52,
+      "actual": 60,
       "pass": true
     }
   ],
