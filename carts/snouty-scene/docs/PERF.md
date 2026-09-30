@@ -43,3 +43,12 @@ and index field 5 KB, copper strip 6 KB, palettes 1.5 KB).
 
 Plenty of headroom: the M1 parts can spend up to about 9 ms each before a
 fade pushes them to the limit.
+
+## M1
+
+Same calibrated badge-bench, `carts/snouty-scene/tools/bench_parts.sh N`
+per part (its length plus 60 frames), `.bss` delta against M0's 28,472.
+
+| # | Part | mean busy ms | part worst busy ms (frame) | run worst | .bss delta | what dominates |
+|---|---|---|---|---|---|---|
+|  9 | Fire        |  1.93 |  2.71 (t 469) |  2.71 | +10,624 | `parts.fire.render` 89% (heat spread over 5,040 cells, ~0.9 ms; mark overlay; heat, 4 KB cooling map, mark masks), upscale column copies 8%; worst frames are the fades |

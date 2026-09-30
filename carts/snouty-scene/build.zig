@@ -44,7 +44,10 @@ pub fn add(b: *Build, sycl_badge_dep: *Build.Dependency, opts: common.Options) v
         .root_source_file = b.path(dir ++ "cart/src/host_tests.zig"),
         .target = b.graph.host,
         .optimize = .Debug,
-        .imports = &.{.{ .name = "cart-api", .module = cart_api }},
+        .imports = &.{
+            .{ .name = "cart-api", .module = cart_api },
+            .{ .name = "iris_mark", .module = b.createModule(.{ .root_source_file = b.path("lib/iris_mark.zig") }) },
+        },
     }) });
     opts.test_step.dependOn(&b.addRunArtifact(tests).step);
 }
@@ -52,8 +55,9 @@ pub fn add(b: *Build, sycl_badge_dep: *Build.Dependency, opts: common.Options) v
 var build_options: ?*Build.Step.Options = null;
 
 fn add_options(b: *Build, cart: *Build.Module, cart_api: *Build.Module, step: *Build.Step) void {
-    _ = b;
     _ = cart_api;
     _ = step;
     if (build_options) |o| cart.addImport("build_options", o.createModule());
+    // The shared 24x24 Iris mark (lib/iris_mark.zig), for Fire.
+    cart.addImport("iris_mark", b.createModule(.{ .root_source_file = b.path("lib/iris_mark.zig") }));
 }

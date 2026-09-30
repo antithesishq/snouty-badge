@@ -15,6 +15,7 @@ test {
     _ = @import("timeline.zig");
     _ = @import("gen/scroller_font.zig");
     _ = @import("parts/copper.zig");
+    _ = @import("parts/fire.zig");
 }
 
 test "scroller font: every glyph is non-empty and fits 16 rows" {
