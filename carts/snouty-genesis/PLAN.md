@@ -874,3 +874,9 @@ writes the memories directly, past the hooks). Exports `debug_scrub_depth`,
   00061E sr 2004, z80 pc 0D45`. Tracks A (core, `genesis/m3-core`,
   worktree `/home/exedev/snouty-badge-genesis-core`) and B (frontend,
   `genesis/m3-front`, `/home/exedev/snouty-badge-genesis-front`).
+  Unpaused badge-bench baseline (calibrated, `busy ms`, Miniplanets from
+  `out/romfs_mini.img`, `m2_mini300.json`, 336 updates incl. 36 splash):
+  17.87 mean / 28.10 worst (update 48, boot), 0 over budget; level-1
+  play updates about 21.2 ms (paused they were 19.5); game updates
+  about 20.0 mean. Hot: `step_frame` 41.6 %, `run_z80` 28.8 %, plane
+  render 9.6 %, `write16` 1.7 % (1734 calls per update).
