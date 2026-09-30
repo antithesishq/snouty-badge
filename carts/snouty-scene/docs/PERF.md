@@ -52,3 +52,4 @@ per part (part frames + 60), `.bss` delta against M0's 28,472.
 | # | Part | mean busy ms | part worst busy ms (frame) | run worst | .bss delta | what dominates |
 |---|---|---|---|---|---|---|
 |  5 | Twister     |  0.75 |  1.53 (t 1) |  1.72 | +3,440 | background column copy (`memcpy`, 47%) and the row span fill in `render` (45%); steady frames 0.70 ms, the worst is a fade frame |
+|  3 | Rotozoomer | 1.34 | 2.13 (t 1) | 2.13 | +4,104 (texture 2 KB + background texel list 2 KB) | `render` 95%: ~9.5 cycles per pixel, full res; worst frames are the fade-in |

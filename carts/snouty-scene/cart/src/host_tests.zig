@@ -16,6 +16,7 @@ test {
     _ = @import("gen/scroller_font.zig");
     _ = @import("parts/copper.zig");
     _ = @import("parts/twister.zig");
+    _ = @import("parts/rotozoomer.zig");
 }
 
 test "scroller font: every glyph is non-empty and fits 16 rows" {
