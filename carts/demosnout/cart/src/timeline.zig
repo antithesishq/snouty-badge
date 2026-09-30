@@ -11,6 +11,11 @@
 //! into the Intro). After the last part it loops to the first. `skip()`
 //! (A/Start) and `goto()` (the picker, debug_goto) cut straight to a part's
 //! frame 0, which then fades in. Every entry into a part calls its `enter()`.
+//! `hold` (B outside debug builds) switches the auto-advance off: an
+//! `.endless` part just keeps rendering at ever higher `t` with no
+//! fade-out (every part but the Ending is periodic or settles), a `.loop`
+//! part restarts at its frame 0 through its fades; releasing the hold cuts
+//! to the next part as a skip does.
 //!
 //! `bars` and the `Clock` arithmetic are plain data and host-tested;
 //! `parts` holds the function pointers (and so pulls in the cart API).
@@ -41,14 +46,17 @@ pub const Part = struct {
     }
 };
 
-pub const Entry = struct { part: Part, bars: u8, cut: Cut = .fade };
+/// What a hold does at the end of a part (see the file comment).
+pub const Hold = enum { endless, loop };
+
+pub const Entry = struct { part: Part, bars: u8, cut: Cut = .fade, hold: Hold = .endless };
 
 /// The show, in order (SPEC.md section 3). Order and lengths are one-line
 /// changes here; `bars` below must list the same lengths.
 pub const entries = [_]Entry{
     .{ .part = .of(@import("parts/intro.zig")), .bars = 3 },
     .{ .part = .of(@import("parts/plasma.zig")), .bars = 5 },
-    .{ .part = .of(@import("parts/copper.zig")), .bars = 6, .cut = .dissolve },
+    .{ .part = .of(@import("parts/copper.zig")), .bars = 7, .cut = .dissolve },
     .{ .part = .of(@import("parts/rotozoomer.zig")), .bars = 5 },
     .{ .part = .of(@import("parts/twister.zig")), .bars = 4 },
     .{ .part = .of(@import("parts/tunnel.zig")), .bars = 4 },
@@ -56,14 +64,16 @@ pub const entries = [_]Entry{
     .{ .part = .of(@import("parts/voxel.zig")), .bars = 7, .cut = .dissolve },
     .{ .part = .of(@import("parts/head.zig")), .bars = 5 },
     .{ .part = .of(@import("parts/fire.zig")), .bars = 4 },
-    .{ .part = .of(ending), .bars = 7, .cut = .seamless },
+    .{ .part = .of(ending), .bars = 8, .cut = .seamless, .hold = .loop },
 };
 
 /// Part lengths in bars, the same as `entries` (checked at comptime in init_all), kept
 /// apart so the host tests can use them without the cart API.
-pub const bars = [_]u8{ 3, 5, 6, 5, 4, 4, 5, 7, 5, 4, 7 };
+pub const bars = [_]u8{ 3, 5, 7, 5, 4, 4, 5, 7, 5, 4, 8 };
 /// Each entry's cut, the same as `entries` (checked with `bars`).
 pub const cuts = [_]Cut{ .fade, .fade, .dissolve, .fade, .fade, .fade, .fade, .dissolve, .fade, .fade, .seamless };
+/// Each entry's hold behaviour, the same as `entries` (checked with `bars`).
+pub const holds = [_]Hold{ .endless, .endless, .endless, .endless, .endless, .endless, .endless, .endless, .endless, .endless, .loop };
 pub const count = bars.len;
 
 /// Length of part `i` in frames.
@@ -115,10 +125,18 @@ pub const Clock = struct {
     /// show ran into it, `.fade` after a jump.
     entered_by: Cut = .fade,
 
-    /// Next frame; true when that crossed into a new part (then frame 0).
-    pub fn advance(c: *Clock) bool {
+    /// Next frame; true when that (re-)entered a part (then frame 0). While
+    /// `held` an `.endless` part runs on past its length and a `.loop` part
+    /// restarts, fading in.
+    pub fn advance(c: *Clock, held: bool) bool {
         c.frame += 1;
         if (c.frame < frames_of(c.index)) return false;
+        if (held) {
+            if (holds[c.index] == .endless) return false;
+            c.frame = 0;
+            c.entered_by = .fade;
+            return true;
+        }
         c.entered_by = cuts[c.index];
         c.index = next_index(c.index);
         c.frame = 0;
@@ -132,8 +150,15 @@ pub const Clock = struct {
         c.entered_by = .fade;
     }
 
-    pub fn veil_now(c: Clock) Veil {
-        return veil(c.frame, frames_of(c.index), c.entered_by, cuts[c.index]);
+    /// While `held` an `.endless` part never fades out and a `.loop` part
+    /// fades (never cuts seamlessly) into its own restart.
+    pub fn veil_now(c: Clock, held: bool) Veil {
+        var out = cuts[c.index];
+        if (held) out = switch (holds[c.index]) {
+            .endless => .seamless,
+            .loop => if (out == .seamless) .fade else out,
+        };
+        return veil(c.frame, frames_of(c.index), c.entered_by, out);
     }
 };
 
@@ -147,14 +172,16 @@ pub fn next_index(i: u8) u8 {
 var clock: Clock = .{};
 /// Frames since start(), across parts and loops.
 pub var global_frame: u32 = 0;
+/// Auto-advance off (B outside debug builds): see the file comment.
+pub var hold: bool = false;
 
 /// Every part's init(), once, from main.start() (after math.init_tables()).
 pub fn init_all() void {
     // Checked here rather than in a file-level comptime block, which would
     // make the host tests (they import this file) analyse every part.
     comptime {
-        if (entries.len != bars.len or cuts.len != bars.len) @compileError("timeline: entries, bars and cuts differ in length");
-        for (entries, bars, cuts) |e, b, k| if (e.bars != b or e.cut != k) @compileError("timeline: entries disagree with bars or cuts");
+        if (entries.len != bars.len or cuts.len != bars.len or holds.len != bars.len) @compileError("timeline: entries, bars, cuts and holds differ in length");
+        for (entries, bars, cuts, holds) |e, b, k, h| if (e.bars != b or e.cut != k or e.hold != h) @compileError("timeline: entries disagree with bars, cuts or holds");
         if (ending.length != frames_of(count - 1)) @compileError("timeline: ending.length is not the Ending's entry length");
     }
     inline for (entries) |e| e.part.init();
@@ -169,7 +196,7 @@ pub fn start(first: u8) void {
 /// Draws the current frame: the part, then the timeline's veil.
 pub fn render(fb: cart.FramebufferPtr) void {
     entries[clock.index].part.render(clock.frame, fb);
-    const v = clock.veil_now();
+    const v = clock.veil_now(hold);
     switch (v.cut) {
         .fade, .seamless => fx.fade(fb, @intCast(v.vis >> 4)),
         .dissolve => fx.dissolve(fb, @intCast(v.vis >> 2)),
@@ -179,7 +206,13 @@ pub fn render(fb: cart.FramebufferPtr) void {
 /// Advances one frame, entering the next part when the current one ends.
 pub fn step() void {
     global_frame +%= 1;
-    if (clock.advance()) entries[clock.index].part.enter();
+    if (clock.advance(hold)) entries[clock.index].part.enter();
+}
+
+/// B outside debug builds: toggles the hold. Releasing it on a part that
+/// has run past its length moves on at the next step, as a skip does.
+pub fn set_hold(on: bool) void {
+    hold = on;
 }
 
 /// A/Start: cut to the next part's frame 0 (no fade-out, fade-in kept).
@@ -211,10 +244,10 @@ test "bars to frames and the loop" {
     try std.testing.expectEqual(@as(u32, 600), frames_of(1));
     var total_bars: u32 = 0;
     for (bars) |b| total_bars += b;
-    try std.testing.expectEqual(@as(u32, 55), total_bars);
-    try std.testing.expectEqual(@as(u32, 55 * 120), loop_frames());
-    // 110 s at 60 fps.
-    try std.testing.expectEqual(@as(u32, 110 * 60), loop_frames());
+    try std.testing.expectEqual(@as(u32, 57), total_bars);
+    try std.testing.expectEqual(@as(u32, 57 * 120), loop_frames());
+    // 114 s at 60 fps.
+    try std.testing.expectEqual(@as(u32, 114 * 60), loop_frames());
 }
 
 test "fade levels" {
@@ -240,7 +273,7 @@ test "clock advances through every part and loops" {
     var entered: u32 = 0;
     for (0..loop_frames()) |_| {
         seen[c.index] += 1;
-        if (c.advance()) entered += 1;
+        if (c.advance(false)) entered += 1;
     }
     for (0..count) |i| try std.testing.expectEqual(frames_of(i), seen[i]);
     try std.testing.expectEqual(@as(u32, count), entered);
@@ -250,11 +283,11 @@ test "clock advances through every part and loops" {
 
 test "jump and skip" {
     var c: Clock = .{};
-    for (0..100) |_| _ = c.advance();
+    for (0..100) |_| _ = c.advance(false);
     c.jump(next_index(c.index));
     try std.testing.expectEqual(@as(u8, 1), c.index);
     try std.testing.expectEqual(@as(u32, 0), c.frame);
-    try std.testing.expectEqual(@as(u16, 0), c.veil_now().vis);
+    try std.testing.expectEqual(@as(u16, 0), c.veil_now(false).vis);
     c.jump(200);
     try std.testing.expectEqual(@as(u8, count - 1), c.index);
     try std.testing.expectEqual(@as(u8, 0), next_index(c.index));
@@ -274,10 +307,41 @@ test "veils: seamless cuts skip the fade on both sides, jumps fade in" {
     try std.testing.expectEqual(Cut.dissolve, veil(1, len, .dissolve, .fade).cut);
     // The live clock: the loop enters part 0 through the last entry's cut.
     var c: Clock = .{};
-    for (0..loop_frames()) |_| _ = c.advance();
+    for (0..loop_frames()) |_| _ = c.advance(false);
     try std.testing.expectEqual(@as(u8, 0), c.index);
     try std.testing.expectEqual(cuts[count - 1], c.entered_by);
     c.jump(0);
     try std.testing.expectEqual(Cut.fade, c.entered_by);
-    try std.testing.expectEqual(@as(u16, 0), c.veil_now().vis);
+    try std.testing.expectEqual(@as(u16, 0), c.veil_now(false).vis);
+}
+
+test "hold: endless parts run on, loop parts restart, release moves on" {
+    // Plasma is endless: past its length the frame keeps counting, no
+    // fade-out, no enter().
+    var c: Clock = .{};
+    c.jump(1);
+    const len = frames_of(1);
+    for (0..len + 200) |_| try std.testing.expect(!c.advance(true));
+    try std.testing.expectEqual(@as(u8, 1), c.index);
+    try std.testing.expectEqual(len + 200, c.frame);
+    try std.testing.expectEqual(@as(u16, 256), c.veil_now(true).vis);
+    try std.testing.expectEqual(Cut.seamless, c.veil_now(true).cut);
+    // Released: the next step moves on, entered through the part's own cut.
+    try std.testing.expect(c.advance(false));
+    try std.testing.expectEqual(@as(u8, 2), c.index);
+    try std.testing.expectEqual(@as(u32, 0), c.frame);
+    try std.testing.expectEqual(cuts[1], c.entered_by);
+    // The Ending loops: it fades out (not the seamless cut) and restarts on
+    // frame 0, fading in.
+    c.jump(count - 1);
+    const end_len = frames_of(count - 1);
+    for (0..end_len - 1) |_| try std.testing.expect(!c.advance(true));
+    try std.testing.expectEqual(end_len - 1, c.frame);
+    try std.testing.expectEqual(@as(u16, 0), c.veil_now(true).vis);
+    try std.testing.expectEqual(Cut.fade, c.veil_now(true).cut);
+    try std.testing.expectEqual(@as(u16, 256), c.veil_now(false).vis);
+    try std.testing.expect(c.advance(true));
+    try std.testing.expectEqual(@as(u8, count - 1), c.index);
+    try std.testing.expectEqual(@as(u32, 0), c.frame);
+    try std.testing.expectEqual(Cut.fade, c.entered_by);
 }

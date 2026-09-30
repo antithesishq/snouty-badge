@@ -1,8 +1,8 @@
-# Snouty Scene: a demoscene production for the SYCL Badge V2
+# Demosnout: a demoscene production for the SYCL Badge V2
 
 Status: spec, 2026-09-30. Supersedes `NOTES.md` (kept for the history of
-the idea). Working title "Snouty Scene"; the on-screen title is
-**SNOUTY SCENE** with "Antithesis presents" above it.
+the idea). Titled **DEMOSNOUT** (renamed from "Snouty Scene" after
+Adrian's M2 review, 2026-09-30) with "Antithesis presents" above it.
 
 ## 1. What it is
 
@@ -66,9 +66,9 @@ picker cuts to a part's frame 0, which then fades in.
 
 | # | Part | Bars | Seconds | Cut out | What it shows | Method |
 |---|---|---|---|---|---|---|
-| 0 | Intro | 3 | 6 | fade | Starfield warp, "Antithesis presents", **SNOUTY SCENE** slams in | 3D star points, 8x8 text at 2x |
+| 0 | Intro | 3 | 6 | fade | Starfield warp, "Antithesis presents", **DEMOSNOUT** slams in | 3D star points, 8x8 text at 2x |
 | 1 | Plasma | 5 | 10 | fade | Sum-of-sines plasma cycling through three palettes | 8-bit index field at half res, 2x upscale, palette rotates |
-| 2 | Copper + scroller | 6 | 12 | dissolve | Copper bars behind a 16-row sine scroller of greetings | per-row colour bars, per-column glyph blit with sine y offset |
+| 2 | Copper + scroller | 7 | 14 | dissolve | Copper bars behind a 16-row sine scroller of greetings | per-row colour bars, per-column glyph blit with sine y offset |
 | 3 | Rotozoomer | 5 | 10 | fade | The Snouty sprite tiled to infinity, rotating and zooming | fixed-point affine step per pixel, 32x32 texture, `& 31` wrap |
 | 4 | Twister | 4 | 8 | fade | A twisted four-faced column, shaded, over a moving gradient | per-row: 4 edge positions from sin, fill spans |
 | 5 | Tunnel | 4 | 8 | fade | Flying down a tunnel textured with Iris marks | angle/depth LUTs at init (u8 each), texture scroll per frame |
@@ -76,10 +76,12 @@ picker cuts to a part's frame 0, which then fades in.
 | 7 | Voxel landscape | 7 | 14 | dissolve | Comanche-style fly-over of a Green Hill Zone island | 128x128 height + colour maps (procedural at init), column ray-march |
 | 8 | Snouty head | 5 | 10 | fade | A flat-shaded low-poly Snouty head tumbling, lit | scanline triangle fill with a z-sorted (painter's) face list, no z buffer |
 | 9 | Fire | 4 | 8 | fade | The classic cooling-map fire with the Iris mark floating in it | 80x64 heat buffer, spread + cool + rise, palette, 2x |
-| 10 | Ending | 7 | 14 | seamless | The Iris mark rising over a night sea, reflected in rippling water, credits | 2D reflection with per-row sine displacement (not the ray tracer), text |
+| 10 | Ending | 8 | 16 | seamless | The Iris mark rising over a night sea, reflected in rippling water, credits | 2D reflection with per-row sine displacement (not the ray tracer), text |
 
-Total 55 bars = 110 s, then loop to part 0 (M2 pacing pass: order and
-lengths changed from the M1 table, reasons in PLAN.md's M2 section). The
+Total 57 bars = 114 s, then loop to part 0 (M2 pacing pass: order and
+lengths changed from the M1 table, reasons in PLAN.md's M2 section; M3:
+Copper 6 to 7 bars so the scroller crosses once in full, Ending 7 to 8 for
+a seventh credit card). The
 Intro is also where the loop closes, so the title comes back every two
 minutes.
 
@@ -152,7 +154,8 @@ struct of function pointers plus the name, built with `Part.of(module)`.
 running --A/Start--> next part (immediate cut, no fade-out; fade-in kept)
 running --Select--> picker (demo keeps running underneath an opaque panel)
 picker  --Up/Down--> move; --A--> jump to part, close; --Select/B--> close
-running --B (debug_overlay build only)--> toggle overlay
+running --B--> hold on/off (auto-advance off: the part runs on, or the Ending restarts)
+running --B (debug_overlay build only)--> toggle overlay instead
 ```
 
 Inputs are edge-triggered through `input.zig` (copied from snouty-maze).
@@ -170,7 +173,7 @@ ignores every button; the stick click is never read.
 - `tools/bench_parts.sh`: runs badge-bench once per part (`--poke
   scene_part=N --frames <part length + 60>`) and prints a table of
   worst frames; the table is copied into `docs/PERF.md` at each
-  milestone. `badge-bench/carts/snouty-scene.toml`: the plain loop,
+  milestone. `badge-bench/carts/demosnout.toml`: the plain loop,
   `frames = 900`.
 - Host tests (`cart/src/host_tests.zig`): timeline arithmetic (bars to
   frames, loop, goto), palette builders, `fx.fade` at 0 and 16, the
@@ -195,7 +198,7 @@ ignores every button; the stick click is never read.
   the whole timeline, picker polish, `check_timeline.mjs` goldens,
   `docs/PERF.md`, full-loop review GIF. Tag `snouty-scene/m2`.
 - **M3 polish**: whatever Adrian's GIF review asks for (palettes, order,
-  lengths). Tag `snouty-scene/m3`.
+  lengths). Tag `demosnout/m3`.
 
 Hardware gate: show day, as for every cart (calibrated badge-bench is
 the reference until then).
@@ -222,7 +225,7 @@ the reference until then).
 2. Parts: the ten above (the NOTES pick plus twister, metaballs, fire
    and copper bars, which are cheap and classic).
 3. Music: none (badge speaker decision). Beat is a frame clock.
-4. Ships as its own cart, `snouty-scene`, binary `snouty-scene`.
+4. Ships as its own cart, `demosnout`, binary `demosnout`.
 
 Adrian can overturn any of these at the M0 or M2 review; the timeline
 table makes order and length one-line changes.

@@ -4,11 +4,11 @@ const Build = std.Build;
 const os_cart = @import("../../build/os_cart.zig");
 // A module of the root build.zig, not a package root. If Zig says "import of
 // file outside module path" here, `zig build` was run in this directory: run
-// `zig build -Dcart=snouty-scene` from the repository root instead.
+// `zig build -Dcart=demosnout` from the repository root instead.
 const common = @import("../../build/common.zig");
 
 /// This cart's directory, relative to the repository root that build.zig runs from.
-const dir = "carts/snouty-scene/";
+const dir = "carts/demosnout/";
 
 /// No build-time generation: the generated tables in cart/src/gen/ are
 /// committed (tools/gen_font.py, tools/gen_textures.py).
@@ -21,7 +21,7 @@ pub fn add(b: *Build, sycl_badge_dep: *Build.Dependency, opts: common.Options) v
 
     os_cart.add(b, sycl_badge_dep, .{
         .mode = opts.cart_mode,
-        .name = "snouty-scene",
+        .name = "demosnout",
         .optimize = .ReleaseFast,
         .root_source_file = b.path(dir ++ "cart/src/main.zig"),
         .custom_builder = &add_options,
@@ -30,7 +30,7 @@ pub fn add(b: *Build, sycl_badge_dep: *Build.Dependency, opts: common.Options) v
     // `zig build check-float` (shared step): fail if the cart ELF links soft-float or libm routines.
     const check_float = b.addSystemCommand(&.{"node"});
     check_float.addFileArg(b.path("tools/check_float.mjs"));
-    check_float.addFileArg(b.graph.path(.install_prefix, "firmware/snouty-scene.elf"));
+    check_float.addFileArg(b.graph.path(.install_prefix, "firmware/demosnout.elf"));
     check_float.step.dependOn(b.getInstallStep());
     check_float.has_side_effects = true;
     opts.check_float_step.dependOn(&check_float.step);

@@ -104,6 +104,43 @@ pub const Vdp = struct {
         v.* = .{};
     }
 
+    // ---- Keyframes (SPEC.md section 10) ----
+
+    /// Every field of the VDP except `vram`, which is a keyframe region of
+    /// its own (`Gg.state_regions`). Field names match `Vdp`'s.
+    pub const State = struct {
+        cram: [32]u16,
+        regs: [11]u8,
+        latch_pending: bool,
+        latch_low: u8,
+        addr: u16,
+        code: u2,
+        read_buffer: u8,
+        cram_latch: u8,
+        status: u8,
+        line_irq_pending: bool,
+        line: u16,
+        line_tstates: u16,
+        line_counter: u8,
+        vscroll: u8,
+    };
+
+    comptime {
+        // Every Vdp field is either `vram` or in `State`: adding a field
+        // without deciding fails here.
+        const vf = @typeInfo(Vdp).@"struct".field_names.len;
+        const sf = @typeInfo(State).@"struct".field_names.len;
+        if (vf != sf + 1) @compileError("vdp.State must list every Vdp field but vram");
+    }
+
+    pub fn save_state(v: *const Vdp, out: *State) void {
+        inline for (@typeInfo(State).@"struct".field_names) |name| @field(out, name) = @field(v, name);
+    }
+
+    pub fn load_state(v: *Vdp, k: *const State) void {
+        inline for (@typeInfo(State).@"struct".field_names) |name| @field(v, name) = @field(k, name);
+    }
+
     // ---- Timing ----
 
     /// Advance by `t` T-states. Each line start crossed runs that line's
