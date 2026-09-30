@@ -1044,3 +1044,18 @@ status; tag `snouty-reflections/m3`.
     vectors (`[4]Consts`) at runtime read wrong bytes for presets 1-3 in
     the thumb build only (wasm right); `scene.consts_of` switches over
     four separate constants instead.
+- 2026-09-30 (integration, branch reflections/m3-int): A, B, C merged,
+  m3_shim removed. Legacy identity (motion_off vs the pre-M3 main build)
+  13/13 frames identical for cut20 and half30, dither none and bayer;
+  check_render 24/24 PASS for all four variants with their knob flags.
+  Sizes `.text + .data` / `.bss`: cut20 109936 / 67096, full20 95456 /
+  66984, full15 93936 / 66984, half30 123344 / 67096 (under 140 KB). The
+  blue-noise table is f32 (16 KB `.bss`); M4's 80 KB accumulator still
+  fits the 307 KB window (110 + 147 + 32) but a u8 table would give 12 KB
+  back. Bench (`bench_variants.sh --m3`, cut20): row 1 45.49 / 43.11
+  PASS; row 2 attract 4 orbits: sunset 46.36, midnight 50.30 (OVER),
+  noon 50.62 (OVER), storm 45.45; row 3 height sweep with Track B's app
+  (1.0 to 3.0 m at 50 mm per frame, a rebuild every frame): 54.2 to 58.9,
+  all OVER; row 4 palette16 47.24 / 44.69 (report). Waiting on Adrian for
+  midnight/noon, max height, and the knobs turned off (rings, noon
+  shadows, noon third sphere).
