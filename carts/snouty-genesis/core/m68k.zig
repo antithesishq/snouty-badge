@@ -528,7 +528,14 @@ pub fn M68k(comptime BusT: type) type {
         /// step by the size (A7 by 2 for bytes). `read` charges -(An)'s 2
         /// internal cycles (source and read-modify-write operands; MOVE's
         /// destination and MOVEM do not pay them).
-        noinline fn ea_addr(self: *Self, bus: *BusT, comptime sz: Sz, mode: u3, reg: u3, comptime read: bool) u32 {
+        inline fn ea_addr(self: *Self, bus: *BusT, comptime sz: Sz, mode: u3, reg: u3, comptime read: bool) u32 {
+            // (An) and (An)+ inline (most destinations), the rest out of
+            // line: a call per operand cost ~20 cycles of push and pop.
+            if (mode == 2 or mode == 3) return self.ea_addr_inl(bus, sz, mode, reg, read);
+            return self.ea_addr_far(bus, sz, mode, reg, read);
+        }
+
+        noinline fn ea_addr_far(self: *Self, bus: *BusT, comptime sz: Sz, mode: u3, reg: u3, comptime read: bool) u32 {
             return self.ea_addr_inl(bus, sz, mode, reg, read);
         }
 
@@ -589,11 +596,14 @@ pub fn M68k(comptime BusT: type) type {
             };
         }
 
-        /// Source operand of any mode, low `sz` bits. Registers inline (the
-        /// common case pays no call), memory and immediates out of line.
+        /// Source operand of any mode, low `sz` bits. Registers, (An) and
+        /// (An)+ inline (the common cases pay no call; d16(An) inline too
+        /// costs 22 KB of flash and was slower), the other memory modes and
+        /// immediates out of line.
         inline fn read_ea(self: *Self, bus: *BusT, comptime sz: Sz, mode: u3, reg: u3) u32 {
             if (mode == 0) return self.d[reg] & mask_of(sz);
             if (mode == 1) return self.a[reg] & mask_of(sz);
+            if (mode == 2 or mode == 3) return self.rd(bus, sz, self.ea_addr_inl(bus, sz, mode, reg, true));
             return self.read_ea_mem(bus, sz, mode, reg);
         }
 
