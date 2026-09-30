@@ -41,6 +41,7 @@ pub const hurt_ticks: u8 = 4;
 pub const gunfire_radius: Fixed = fixed.from_int(8);
 pub const max_zapper = 99;
 pub const max_spray = 30;
+pub const max_debugger = 9;
 pub const max_rewind = 600;
 pub const rewind_regen_ticks = 6;
 
@@ -93,6 +94,7 @@ pub fn fire_rate(w: state.Weapon) u8 {
         .swatter => 24,
         .zapper => 12,
         .spray => 36,
+        .debugger => 48,
     };
 }
 
@@ -159,7 +161,7 @@ pub fn is_solid(s: *const GameState, level: *const Level, cx: i32, cy: i32) bool
 }
 
 /// Who is moving: the player opens any door it has the key for and flags
-/// locked ones; enemies open plain doors only.
+/// locked ones; enemies open plain doors only, never secret ones.
 pub const Mover = enum { player, enemy };
 
 /// Move the circle at (x, y) of half-size `r` by (dx, dy) with sliding:
@@ -222,7 +224,7 @@ fn bump(s: *GameState, level: *const Level, cx: i32, cy: i32, who: Mover) void {
         .coral => 1,
         .iris => 2,
         .gold => 4,
-        .plain, .exit => 0,
+        .plain, .exit, .secret => 0,
     };
     if (s.player.keys & need != need) {
         s.last_locked = @backingInt(kind);
@@ -259,6 +261,8 @@ fn update_doors(s: *GameState, level: *const Level) void {
                 }
             },
             door_open => {
+                // Secret doors stay open for good once found.
+                if (def.kind == .secret) continue;
                 if (d.timer > 0) d.timer -= 1;
                 if (d.timer == 0 and !door_occupied(s, def.x, def.y)) d.phase = door_closing;
             },
@@ -299,6 +303,13 @@ fn enter_cell(s: *GameState, level: *const Level) void {
                 }
             },
             .battery => p.rewind_meter = @min(max_rewind, p.rewind_meter + 180),
+            .debugger => {
+                p.ammo_debugger = @min(max_debugger, @as(u16, p.ammo_debugger) + 3);
+                if (!p.has_debugger) {
+                    p.has_debugger = true;
+                    p.weapon = .debugger;
+                }
+            },
         }
         state.take_pickup(s, i);
     }
@@ -379,17 +390,20 @@ fn has_ammo(p: *const state.Player, w: state.Weapon) bool {
         .swatter => true,
         .zapper => p.ammo_zapper > 0,
         .spray => p.has_spray and p.ammo_spray > 0,
+        .debugger => p.has_debugger and p.ammo_debugger > 0,
     };
 }
 
-/// Select cycles swatter -> zapper -> spray -> swatter, skipping empty ones.
+/// Select cycles swatter -> zapper -> spray -> debugger -> swatter,
+/// skipping empty ones.
 fn next_weapon(p: *const state.Player) state.Weapon {
     var w = p.weapon;
-    for (0..3) |_| {
+    for (0..4) |_| {
         w = switch (w) {
             .swatter => .zapper,
             .zapper => .spray,
-            .spray => .swatter,
+            .spray => .debugger,
+            .debugger => .swatter,
         };
         if (has_ammo(p, w)) return w;
     }
@@ -420,6 +434,13 @@ fn update_weapon(s: *GameState, level: *const Level, b: state.Buttons) void {
                 const a: fixed.Angle = p.angle +% @as(u16, @bitCast(@as(i16, @intCast(j))));
                 if (cast(s, level, a, spray_reach)) |i| damage_enemy(s, i, spray_damage);
             }
+        },
+        .debugger => {
+            // A full pool still costs the charge, like a missed shot.
+            if (p.ammo_debugger == 0) return;
+            p.ammo_debugger -= 1;
+            s.last_shot = s.tick;
+            _ = projectiles.spawn(s, p.x, p.y, p.angle, projectiles.kind_debug);
         },
     }
     p.fire_cooldown = fire_rate(p.weapon);
@@ -714,10 +735,49 @@ test "the exit door opens and finishes the level when entered" {
     try testing.expectEqual(@as(i32, 4), fixed.to_int(s.player.x));
 }
 
+const secret_level_src =
+    \\1111111111
+    \\1....5...1
+    \\1S>..X$..1
+    \\1....5...1
+    \\1........1
+    \\1.a......1
+    \\1111111111
+;
+
+test "a secret door opens for the player, never closes, and enemies cannot open it" {
+    var st: level_parse.Parsed = undefined;
+    const L = try level_parse.parse_level(&st, "secret", secret_level_src, 0);
+    try testing.expectEqual(levels.DoorKind.secret, L.doors[0].kind);
+    try testing.expectEqual(@as(u8, 4), L.doors[0].tex);
+    try testing.expect(L.doors[0].vertical); // walls above and below: the panel runs north-south
+    var s: GameState = undefined;
+    init(&s, &L, 0, 1);
+    // An enemy walking into it does nothing.
+    bump(&s, &L, 5, 2, .enemy);
+    try testing.expectEqual(@as(u8, door_closed), s.doors[0].phase);
+    // The player walks east into the panel: it opens.
+    var n: usize = 0;
+    while (s.doors[0].phase == door_closed and n < 200) : (n += 1) step(&s, &L, .{ .up = true });
+    try testing.expectEqual(@as(u8, door_opening), s.doors[0].phase);
+    while (s.doors[0].phase == door_opening) step(&s, &L, .{});
+    try testing.expectEqual(@as(u8, door_open), s.doors[0].phase);
+    // Long after the plain-door hold time, still open, nobody inside it.
+    for (0..3 * @as(usize, door_hold)) |_| step(&s, &L, .{ .down = true });
+    try testing.expectEqual(@as(u8, door_open), s.doors[0].phase);
+    try testing.expectEqual(@as(u8, 255), s.doors[0].open);
+}
+
 const pickup_level_src =
     \\111111111111
     \\1S>cig+%$*$1
     \\111111111111
+;
+
+const debugger_level_src =
+    \\111111111
+    \\1S>&&&&.1
+    \\111111111
 ;
 
 test "pickups clear their bit and clamp" {
@@ -758,6 +818,31 @@ test "pickups clear their bit and clamp" {
     run(&s, L, .{ .down = true }, 400);
     try testing.expectEqual(@as(i16, 75), s.player.hp);
     try testing.expectEqual(@as(u8, 10), s.player.ammo_spray);
+
+    // Debugger: the first `&` gives the gun, 3 charges and selects it;
+    // four pickups give 3 + 3 + 3 + 3 capped at 9.
+    var dbg_st: level_parse.Parsed = undefined;
+    const dbg = try level_parse.parse_level(&dbg_st, "debugger", debugger_level_src, 0);
+    try testing.expectEqual(@as(usize, 4), dbg.pickups.len);
+    init(&s, &dbg, 0, 1);
+    try testing.expect(!s.player.has_debugger);
+    try testing.expectEqual(@as(u8, 0), s.player.ammo_debugger);
+    s.player.weapon = .swatter;
+    var got_first = false;
+    for (0..400) |_| {
+        step(&s, &dbg, .{ .up = true });
+        if (!got_first and s.player.has_debugger) {
+            got_first = true;
+            try testing.expectEqual(@as(u8, 3), s.player.ammo_debugger);
+            try testing.expectEqual(state.Weapon.debugger, s.player.weapon);
+            // Later pickups must not reselect it.
+            s.player.weapon = .zapper;
+        }
+    }
+    try testing.expect(got_first);
+    for (0..dbg.pickups.len) |i| try testing.expect(!state.pickup_present(&s, i));
+    try testing.expectEqual(@as(u8, max_debugger), s.player.ammo_debugger);
+    try testing.expectEqual(state.Weapon.zapper, s.player.weapon);
 }
 
 test "hash_gameplay ignores the rewind meter and counter" {
@@ -1062,6 +1147,87 @@ test "Select cycles weapons and skips empty ones" {
     step(&s, &arena, .{});
     step(&s, &arena, sel);
     try testing.expectEqual(state.Weapon.swatter, s.player.weapon);
+    // Four weapons: swatter -> zapper -> spray -> debugger -> swatter.
+    s.player.ammo_zapper = 5;
+    s.player.ammo_spray = 5;
+    s.player.has_debugger = true;
+    s.player.ammo_debugger = 3;
+    const order = [_]state.Weapon{ .zapper, .spray, .debugger, .swatter, .zapper };
+    for (order) |w| {
+        step(&s, &arena, .{});
+        step(&s, &arena, sel);
+        try testing.expectEqual(w, s.player.weapon);
+    }
+    // Debugger held but out of charges: spray -> swatter.
+    s.player.ammo_debugger = 0;
+    step(&s, &arena, .{});
+    step(&s, &arena, sel);
+    try testing.expectEqual(state.Weapon.spray, s.player.weapon);
+    step(&s, &arena, .{});
+    step(&s, &arena, sel);
+    try testing.expectEqual(state.Weapon.swatter, s.player.weapon);
+    // Charges without the gun (cannot happen in play) are skipped too.
+    s.player.has_debugger = false;
+    s.player.ammo_debugger = 3;
+    s.player.weapon = .spray;
+    step(&s, &arena, .{});
+    step(&s, &arena, sel);
+    try testing.expectEqual(state.Weapon.swatter, s.player.weapon);
+}
+
+test "Debugger fires one bolt per 48 ticks, spends a charge, empty does nothing" {
+    var arena_st: level_parse.Parsed = undefined;
+    const arena = try level_parse.parse_level(&arena_st, "arena", arena_src, 0);
+    var s: GameState = undefined;
+    // Gnat parked far off the firing line (row 4, x = 10.5).
+    arena_with(&s, &arena, .gnat, fixed.from_int(10) + fixed.half, fixed.from_int(4) + fixed.half);
+    s.player.has_debugger = true;
+    s.player.ammo_debugger = 3;
+    s.player.weapon = .debugger;
+    const fire: state.Buttons = .{ .a = true };
+    step(&s, &arena, fire);
+    try testing.expectEqual(@as(u8, 2), s.player.ammo_debugger);
+    try testing.expectEqual(@as(u32, 0), s.last_shot);
+    try testing.expectEqual(projectiles.kind_debug, s.projectiles[0].kind);
+    try testing.expectEqual(px0 + projectiles.spawn_offset, s.projectiles[0].x);
+    try testing.expectEqual(@as(u8, 48), s.player.fire_cooldown);
+    // Held A: the next shot comes 48 ticks later.
+    run(&s, &arena, fire, 47);
+    try testing.expectEqual(@as(u8, 2), s.player.ammo_debugger);
+    step(&s, &arena, fire);
+    try testing.expectEqual(@as(u8, 1), s.player.ammo_debugger);
+    try testing.expectEqual(@as(u32, 48), s.last_shot);
+    // Both bolts in flight (the east wall is 9 cells out, 90 ticks away).
+    try testing.expectEqual(@as(usize, 2), projectiles.live_count(&s));
+    try testing.expectEqual(projectiles.kind_debug, s.projectiles[1].kind);
+    step(&s, &arena, .{});
+    run(&s, &arena, fire, 49);
+    try testing.expectEqual(@as(u8, 0), s.player.ammo_debugger);
+    // Empty: no charge to spend, no bolt, no shot.
+    const before = s.last_shot;
+    for (&s.projectiles) |*pr| pr.* = .{};
+    s.player.fire_cooldown = 0;
+    run(&s, &arena, fire, 60);
+    try testing.expectEqual(before, s.last_shot);
+    try testing.expectEqual(@as(usize, 0), projectiles.live_count(&s));
+    try testing.expectEqual(@as(i16, 100), s.player.hp);
+}
+
+test "a Debugger bolt fired down the arena kills a gnat" {
+    var arena_st: level_parse.Parsed = undefined;
+    const arena = try level_parse.parse_level(&arena_st, "arena", arena_src, 0);
+    var s: GameState = undefined;
+    arena_with(&s, &arena, .gnat, fixed.from_int(5) + fixed.half, px0);
+    s.player.has_debugger = true;
+    s.player.ammo_debugger = 1;
+    s.player.weapon = .debugger;
+    step(&s, &arena, .{ .a = true });
+    var ticks: usize = 0;
+    while (s.kills == 0) : (ticks += 1) {
+        try testing.expect(ticks < 60);
+        step(&s, &arena, .{});
+    }
+    try testing.expectEqual(state.EnemyState.dying, s.enemies[0].state);
 }
 
 test "spray spends one can and hits a beetle at 3 cells" {

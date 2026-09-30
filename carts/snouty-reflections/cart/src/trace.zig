@@ -1,19 +1,23 @@
-//! Real-time ray tracer for the M2 scene (PLAN.md "The M1 scene, exactly"
-//! and "The M2 scene, exactly"). Column-major: the ray basis fwd + right*u
-//! is built once per column, up*v comes from a comptime row table and the
-//! primary ray's 1/length from a comptime per-pixel table. Recursion is
-//! resolved at comptime: `trace` is instantiated per (depth, came-from)
-//! pair, so there is no runtime recursion and the depth bound (0..2) is
-//! structural. The hot instantiations (primary rays and their chrome and
-//! water bounces) are inlined; the rest are shared calls.
+//! Real-time ray tracer for the M2.2 scene (PLAN.md "The M1 scene, exactly",
+//! "The M2 scene, exactly" and M2.2 "The scene changes, exactly").
+//! Column-major: the ray basis fwd + right*u is built once per column, up*v
+//! comes from a comptime row table and the primary ray's 1/length from a
+//! per-pixel table. Recursion is resolved at comptime: `trace` is
+//! instantiated per (depth, came-from) pair, so there is no runtime recursion
+//! and the depth bound (0..2) is structural. The hot instantiations (primary
+//! rays and their chrome and water bounces) are inlined; the rest are shared
+//! calls.
 //!
-//! Each column is split into row runs by what a primary ray can hit: the
-//! chrome and glass spheres' per-frame screen spans (full test), and outside
-//! them sky rows above the shore band (sky only), sky rows in it (shore or
-//! sky), water rows that may still reach the shore (shore test first) and
-//! the other water rows (hit point and fade from comptime tables, no
-//! divide). The split is exact or conservative, see sphere_rows,
-//! shore_first_row, shore_water_end and camera.first_water_row.
+//! Each column is split into row runs by what a primary ray can hit
+//! (plan_columns, before the render loop): the chrome sphere's, the glass
+//! sphere's and the Iris logo's per-frame screen spans (.eye segments, each
+//! testing only the objects whose span covers it), and outside them sky rows
+//! above the shore band (sky only), sky rows in it (shore or sky), water rows
+//! that may still reach the shore (shore test first) and the other water rows
+//! (hit point and fade from comptime tables, no divide); the water rows whose
+//! reflection may meet the logo run a form that tests it. The split is exact
+//! or conservative, see sphere_rows, shore_first_row, shore_water_end,
+//! water_logo_rows and camera.first_water_row.
 const std = @import("std");
 const cart = @import("cart-api");
 const math = @import("math.zig");
@@ -22,6 +26,7 @@ const camera = @import("camera.zig");
 const scene = @import("scene.zig");
 const water = @import("water.zig");
 const variant = @import("variant.zig");
+const iris = @import("iris.zig");
 const Vec3 = math.Vec3;
 const splat = math.splat;
 
@@ -36,7 +41,8 @@ const split_call: std.builtin.CallModifier = if (bench_split) .never_inline else
 
 /// Where a ray was spawned; lets the tracer skip tests that cannot succeed.
 const From = enum {
-    /// Primary ray from the eye inside a sphere's screen span: everything.
+    /// Primary ray from the eye inside a span (chrome, glass or logo):
+    /// everything, each object only in the rows of its span (EyeFlags).
     eye,
     /// Primary ray outside the spans going up, above the shore band: sky.
     eye_sky,
@@ -49,19 +55,82 @@ const From = enum {
     /// Primary ray outside the spans going down: water, hit from the
     /// comptime tables (PrimaryWater).
     eye_water,
+    /// eye_water_shore and eye_water in the rows whose reflection may meet
+    /// the logo (water_logo_rows): they spawn water_logo rays.
+    eye_water_shore_logo,
+    eye_water_logo,
     /// Reflection off the convex chrome sphere: cannot hit it again.
     sphere,
     /// Reflected off or transmitted through the convex glass sphere: cannot
     /// hit it again.
     glass,
-    /// Reflection off the water: r.y >= 0.02, cannot hit the water.
+    /// Reflection off the water: r.y >= 0.02, cannot hit the water. A
+    /// per-frame bound rules out the logo.
     water,
+    /// Reflection off the water that may meet the logo (knob 6).
+    water_logo,
 };
+
+inline fn off_water(from: From) bool {
+    return from == .water or from == .water_logo;
+}
+
+/// The primary water kinds: hit from the comptime tables.
+inline fn eye_water_kind(from: From) bool {
+    return switch (from) {
+        .eye_water, .eye_water_shore, .eye_water_logo, .eye_water_shore_logo => true,
+        else => false,
+    };
+}
+
+/// The kind of the water reflection a primary water ray spawns.
+fn water_child(comptime from: From) From {
+    return switch (from) {
+        .eye_water, .eye_water_shore => .water,
+        else => if (scene.iris_in_water) .water_logo else .water,
+    };
+}
+
+/// The same row kind with the logo in its water reflections.
+fn with_water_logo(comptime from: From) From {
+    return switch (from) {
+        .eye_water => .eye_water_logo,
+        .eye_water_shore => .eye_water_shore_logo,
+        else => unreachable,
+    };
+}
 
 /// Per-frame state shared by every ray.
 const Frame = struct {
     ph: water.Phases,
+    iris: iris.Frame,
 };
+
+/// Tests of the primary rays of an .eye run (a segment of the column inside
+/// some span): which objects' spans hold the run, and whether its water
+/// reflections may reach the logo (water_logo_rows). Constant per run.
+const EyeFlags = packed struct(u8) {
+    chrome: bool = false,
+    glass: bool = false,
+    logo: bool = false,
+    water_logo: bool = false,
+    _: u4 = 0,
+};
+
+/// Water hit of a primary water ray, from water.primary_t/_fade.
+const PrimaryWater = struct { p: Vec3, fade: f32 };
+
+/// trace's per-ray extra argument: the flags of an .eye ray, the water hit of
+/// a primary water ray, and for a .water_logo ray whether it may reach the
+/// logo (false for .eye rays outside water_logo_rows).
+fn Extra(comptime from: From) type {
+    if (eye_water_kind(from)) return PrimaryWater;
+    return switch (from) {
+        .eye => EyeFlags,
+        .water_logo => bool,
+        else => void,
+    };
+}
 
 /// How hit_sphere forms the discriminant.
 const SphereTest = enum {
@@ -134,7 +203,7 @@ fn shore(o: Vec3, d: Vec3, comptime on_water: bool) ?Vec3 {
     // The clamps catch the band edges, where the divide-free test and the
     // divided coordinates can round to different sides.
     const u = @min(@max((scene.shore_half_width - xs) * scene.shore_texels_per_unit, 0.0), 255.0);
-    const v = @min(@max((scene.shore_height - ys) * scene.shore_texels_per_unit, 0.0), 31.0);
+    const v = @min(@max((scene.shore_height - ys) * scene.shore_texels_per_unit, 0.0), @as(f32, @floatFromInt(scene.shore_rows - 1)));
     return scene.shore_texel(@intFromFloat(u), @intFromFloat(v));
 }
 
@@ -201,8 +270,13 @@ fn casters_bound(comptime field: []const u8, comptime max: bool) f32 {
     return v;
 }
 
-/// Fills shadow_map; call once before the first render_frame.
+var ready = false;
+
+/// Fills shadow_map and camera.inv_len_table; main.start() calls it, and
+/// render_frame calls it if nobody has (the emulator bench).
 pub fn init() void {
+    ready = true;
+    camera.init();
     for (&shadow_map, 0..) |*row, j| {
         const pz = shadow_z0 + (@as(f32, @floatFromInt(j)) + 0.5) * shadow_step;
         for (row, 0..) |*m, i| {
@@ -222,21 +296,109 @@ fn water_shadow(p: Vec3) f32 {
     return @as(f32, @floatFromInt(shadow_map[j][i])) * (1.0 / 255.0);
 }
 
+/// Direction from the chrome sphere's centre to the logo's, and the cosine
+/// of the cone around it that holds every chrome reflection able to meet the
+/// logo's bounding sphere: from a point p on the unit sphere the bounding
+/// sphere subtends at most asin(R / (|C - Sc| - 1)), and C - p is within
+/// asin(1 / |C - Sc|) of C - Sc; plus 0.01 rad of margin. Comptime, so a
+/// chrome reflection pays a dot product and a compare.
+const chrome_logo = blk: {
+    const dx: f64 = iris.centre[0] - scene.sphere_centre[0];
+    const dy: f64 = iris.centre[1] - scene.sphere_centre[1];
+    const dz: f64 = iris.centre[2] - scene.sphere_centre[2];
+    const dist = @sqrt(dx * dx + dy * dy + dz * dz);
+    const ang = std.math.asin(@as(f64, iris.radius) / (dist - 1.0)) + std.math.asin(1.0 / dist) + 0.01;
+    break :blk .{
+        .dir = math.vec3(@floatCast(dx / dist), @floatCast(dy / dist), @floatCast(dz / dist)),
+        .cos = @as(f32, @floatCast(@cos(ang))),
+    };
+};
+
+/// |r|^2 of a water reflection is at least this: water.normal's one Newton
+/// step leaves |n|^2 in [0.996, 1] for gradients up to max_slope, and
+/// reflect() about such an n gives |r|^2 = 1 - 4 dot(d, n)^2 (1 - |n|^2).
+const water_refl_len2_min: f32 = 0.984;
+
+/// The logo along (o, d), or null. Chrome reflections first pass the
+/// comptime cone, water reflections (o.y = 0, unnormalised) the bounding
+/// sphere with the length bound: a hit needs b = dot(o - C, d) < 0 (the
+/// water is outside the sphere, c > 0) and b^2 >= |d|^2 c. The rest is a
+/// call, so the hot loops that inline this keep their registers.
+inline fn logo(o: Vec3, d: Vec3, t_near: f32, comptime from: From, fs: *const Frame) ?Vec3 {
+    if (from == .sphere and math.dot(d, chrome_logo.dir) < chrome_logo.cos) {
+        if (debug_span and debug_hits_logo_sphere(o, d)) debug_logo_miss = true;
+        return null;
+    }
+    if (off_water(from)) {
+        const cen = iris.centre;
+        const ox = o[0] - cen[0];
+        const oz = o[2] - cen[2];
+        const b = ox * d[0] + oz * d[2] - cen[1] * d[1];
+        if (!(b < 0.0)) return null;
+        const c = ox * ox + oz * oz + comptime (cen[1] * cen[1] - iris.radius * iris.radius);
+        if (!(b * b >= water_refl_len2_min * c)) return null;
+    }
+    return @call(logo_call(from), logo_chord, .{ o, d, t_near, from, fs });
+}
+
+/// Primary rays inline the whole logo test (-0.5 ms modelled at the worst
+/// frame, +2.5 KB); the secondary rays call it, which keeps the variants
+/// under the size budget.
+fn logo_call(comptime from: From) std.builtin.CallModifier {
+    return if (from == .eye) .always_inline else .never_inline;
+}
+
+/// The bounding-sphere chord, clipped to t > 1e-3 and to t_near (the nearer
+/// sphere hit: a ray from the water beyond the logo can meet the chrome
+/// sphere after it), then iris.hit. Water reflections (o.y = 0) arrive
+/// unnormalised; they are rejected with the length bound first and
+/// renormalised only if they may hit, so the chord is exact.
+fn logo_chord(o: Vec3, d_in: Vec3, t_near: f32, comptime from: From, fs: *const Frame) ?Vec3 {
+    const cen = iris.centre;
+    const oc = if (off_water(from)) math.vec3(o[0] - cen[0], -cen[1], o[2] - cen[2]) else o - cen;
+    const c = math.dot(oc, oc) - iris.radius * iris.radius;
+    var d = d_in;
+    var b = math.dot(oc, d);
+    if (off_water(from)) {
+        // logo() has done the reject on the unnormalised d.
+        d = math.renormalize(d);
+        b = math.dot(oc, d);
+    }
+    const disc = b * b - c;
+    if (!(disc >= 0.0)) return null;
+    const sq = @sqrt(disc);
+    const t_min = @max(-b - sq, 1e-3);
+    const t_max = @min(-b + sq, t_near);
+    if (!(t_min < t_max)) return null;
+    return @call(logo_call(from), iris.hit, .{ oc, d, t_min, t_max, &fs.iris });
+}
+
 /// Colour of a ray `d` hitting the water at `p` (y = 0) with ripple fade
-/// `fade`.
-inline fn shade_water(p: Vec3, d: Vec3, fade: f32, comptime depth: u32, fs: *const Frame) Vec3 {
+/// `fade`. At depth 0 the reflection is traced as `child` (.water when a
+/// per-frame bound rules out the logo) with `gate` its runtime extra.
+inline fn shade_water(
+    p: Vec3,
+    d: Vec3,
+    fade: f32,
+    comptime depth: u32,
+    fs: *const Frame,
+    comptime child: From,
+    gate: Extra(child),
+) Vec3 {
     const n = water.normal(p, fade, fs.ph);
     var r = math.reflect(d, n);
     if (r[1] < scene.min_reflect_y) {
         r[1] = scene.min_reflect_y;
         r = math.normalize(r);
     }
+    if (debug_span and depth == 0 and (child == .water or !gate) and debug_hits_logo_sphere(p, math.normalize(r)))
+        debug_logo_miss = true;
     const refl = if (depth == 0)
-        @call(.always_inline, trace, .{ p, r, depth + 1, .water, fs, {} })
+        @call(.always_inline, trace, .{ p, r, depth + 1, child, fs, gate })
     else if (depth < 2)
-        trace(p, r, depth + 1, .water, fs, {})
+        (if (scene.iris_in_water) trace(p, r, depth + 1, .water_logo, fs, true) else trace(p, r, depth + 1, .water, fs, {}))
     else
-        env(p, r, true, false);
+        water_env(p, r, fs);
     const f = math.schlick(@max(0.0, -math.dot(d, n)), scene.water_f0);
     var spec = @max(0.0, math.dot(r, scene.sun_dir));
     inline for (0..6) |_| spec *= spec; // ^64
@@ -252,6 +414,20 @@ inline fn shade_water(p: Vec3, d: Vec3, fade: f32, comptime depth: u32, fs: *con
     }
     const base = comptime scene.water_deep + scene.water_scatter;
     return math.lerp(base, refl, f) + scene.water_spec_col * splat(spec);
+}
+
+/// A depth-2 water reflection: env(), with the logo in front (knob 6).
+inline fn water_env(p: Vec3, r: Vec3, fs: *const Frame) Vec3 {
+    if (scene.iris_in_water) {
+        if (logo(p, r, no_hit, .water_logo, fs)) |c| return c;
+    }
+    return env(p, r, true, false);
+}
+
+/// The runtime extra of a water_child that is always allowed to test.
+fn gate_true(comptime from: From) Extra(water_child(from)) {
+    if (comptime water_child(from) == .water) return {};
+    return true;
 }
 
 /// Colour of a ray `d` hitting the chrome sphere at `p`.
@@ -309,24 +485,21 @@ fn shade_glass(p: Vec3, d: Vec3, comptime depth: u32, fs: *const Frame) Vec3 {
     return refl * splat(f) + scene.glass_tint * trans * splat(1.0 - f);
 }
 
-/// Water hit of an .eye_water primary ray, from water.primary_t/_fade.
-const PrimaryWater = struct { p: Vec3, fade: f32 };
-
 fn trace(
     o: Vec3,
     d: Vec3,
     comptime depth: u32,
     comptime from: From,
     fs: *const Frame,
-    pw: if (from == .eye_water or from == .eye_water_shore) PrimaryWater else void,
+    pw: Extra(from),
 ) Vec3 {
     switch (from) {
         .eye_sky => return scene.sky(d),
         .eye_env => return env(o, d, false, false),
-        .eye_water => return shade_water(pw.p, d, pw.fade, depth, fs),
-        .eye_water_shore => {
+        .eye_water, .eye_water_logo => return shade_water(pw.p, d, pw.fade, depth, fs, water_child(from), gate_true(from)),
+        .eye_water_shore, .eye_water_shore_logo => {
             if (@call(split_call, shore, .{ o, d, false })) |c| return c;
-            return shade_water(pw.p, d, pw.fade, depth, fs);
+            return shade_water(pw.p, d, pw.fade, depth, fs, water_child(from), gate_true(from));
         },
         else => {},
     }
@@ -335,20 +508,44 @@ fn trace(
     // shore along every ray (PLAN.md "The M2 scene, exactly").
     const mode: SphereTest = switch (from) {
         .eye => .stable,
-        .water => .on_water,
+        .water, .water_logo => .on_water,
         else => .standard,
     };
-    const tc = if (from != .sphere) hit_chrome(o, d, mode) else no_hit;
-    const tg = if (from != .glass) hit_glass(o, d, mode) else no_hit;
+    // .eye rows test only the objects whose span holds the row.
+    const chrome_ok = switch (from) {
+        .sphere => false,
+        .eye => pw.chrome,
+        else => true,
+    };
+    const glass_ok = switch (from) {
+        .glass => false,
+        .eye => pw.glass,
+        else => true,
+    };
+    const tc = if (chrome_ok) hit_chrome(o, d, mode) else no_hit;
+    const tg = if (glass_ok) hit_glass(o, d, mode) else no_hit;
+
+    // The logo lies above the water and in front of the shore, so only a
+    // sphere can be nearer; its chord ends at the nearer sphere hit.
+    const logo_ok = switch (from) {
+        .eye => pw.logo,
+        .sphere => scene.iris_in_chrome,
+        .water_logo => pw,
+        else => false,
+    };
+    if (logo_ok) {
+        if (logo(o, d, @min(tc, tg), from, fs)) |c| return c;
+    }
+
     if (tc < tg) return shade_chrome(o + d * splat(tc), d, depth, fs);
     if (tg != no_hit) {
         if (depth == 2) return scene.glass_far;
         return @call(split_call, shade_glass, .{ o + d * splat(tg), d, depth, fs });
     }
 
-    if (@call(split_call, shore, .{ o, d, from == .water })) |c| return c;
+    if (@call(split_call, shore, .{ o, d, off_water(from) })) |c| return c;
 
-    if (from != .water and d[1] < 0.0) {
+    if (!off_water(from) and d[1] < 0.0) {
         // tw = -o.y / d.y and g = 1 / (1 + fade_k * tw) = d.y / k with
         // k = d.y - fade_k * o.y, both from one reciprocal of d.y * k.
         // |d| = 1, so tw is the distance from the ray origin. o.y >= 0 and
@@ -362,7 +559,9 @@ fn trace(
         // tests of the reflected ray.
         const p = math.vec3(o[0] + d[0] * tw, 0.0, o[2] + d[2] * tw);
         const g = d[1] * d[1] * inv;
-        return shade_water(p, d, g * g, depth, fs);
+        const child = comptime water_child(from);
+        const gate: Extra(child) = if (comptime child == .water) {} else if (from == .eye) pw.water_logo else true;
+        return shade_water(p, d, g * g, depth, fs, child, gate);
     }
 
     return scene.sky(d);
@@ -385,13 +584,15 @@ const SphereSpan = struct {
     cz: f32,
     k: f32,
     a: f32,
+    /// 1 / a, per frame.
+    inv_a: f32,
 };
 
 const span_r2: f32 = 1.05;
 /// Rows per unit of v: y = 63.5 - v * rows_per_v (camera.v_table inverted).
 const rows_per_v: f32 = 80.0 / camera.tan_h;
 
-fn sphere_span_at(cam: camera.Camera, comptime centre: Vec3, comptime r: f32) SphereSpan {
+fn sphere_span_at(cam: camera.Camera, centre: Vec3, r: f32) SphereSpan {
     const e2c = centre - cam.eye;
     const cy = math.dot(e2c, cam.up);
     const k = math.dot(e2c, e2c) - span_r2 * r * r;
@@ -401,6 +602,7 @@ fn sphere_span_at(cam: camera.Camera, comptime centre: Vec3, comptime r: f32) Sp
         .cz = math.dot(e2c, cam.fwd),
         .k = k,
         .a = cy * cy - k,
+        .inv_a = 1.0 / (cy * cy - k),
     };
 }
 
@@ -417,7 +619,7 @@ inline fn sphere_rows(sp: SphereSpan, u: f32) Rows {
     const disc = b * b - sp.a * q;
     if (!(disc >= 0.0)) return .{ .lo = 0, .hi = 0 };
     const sq = @sqrt(disc);
-    const inv_a = 1.0 / sp.a;
+    const inv_a = sp.inv_a;
     // a < 0: (-b + sq) / a is the smaller root, (-b - sq) / a the larger.
     const v_min = (-b + sq) * inv_a;
     const v_max = (-b - sq) * inv_a;
@@ -429,23 +631,131 @@ inline fn sphere_rows(sp: SphereSpan, u: f32) Rows {
     return .{ .lo = lo, .hi = @max(lo, hi) };
 }
 
-/// Up to two disjoint, sorted row runs: the union of the two sphere spans.
-const Spans = struct { r: [2]Rows, n: usize };
+/// Primary water rows whose reflection may meet the logo, per column. A
+/// primary ray E + t d hits the water at p; the ripple normal there is
+/// tilted by at most theta = atan(fade * max_slope), so the reflected ray r
+/// is within 2 theta of the flat mirror direction r0 (reflection about n is
+/// 2-Lipschitz in n), plus 0.02 rad where the r.y >= 0.02 clamp lifts a
+/// near-horizon ray and 0.008 for the unnormalised n: alpha. If r meets the
+/// bounding sphere (C, R), then r0 is within asin(R / L) + alpha of C - p,
+/// L = |C - p|, and mirroring in y = 0 (r0 -> d, C -> C' = (Cx, -Cy, Cz)),
+/// d is within that angle of C' - p. Then:
+///  - p lies before the point of the line nearest C' (t < tau): otherwise
+///    the angle is >= 90 degrees, which needs asin(R / L) + alpha >= 90
+///    degrees, and no water point qualifies (it would lie within 0.44 of
+///    below C, over 7.9 from every eye position, where alpha < 0.32);
+///  - the line's distance delta to C' is at most L sin(asin(R / L) +
+///    alpha) <= R + s L, s = sin(2 theta) + slack >= sin(alpha) (sin(a + b)
+///    <= sin a + sin b), and L^2 = delta^2 + (tau - t)^2 with 0 < tau - t <=
+///    D' - t (D' = |C' - E| >= tau), so delta <= R + s sqrt(delta^2 +
+///    (D' - t)^2), which solves to delta <= rho = (R + s sqrt(R^2 + (1 -
+///    s^2) A^2)) / (1 - s^2), A = D' - t.
+/// The line bound is a projected sphere around C' (sphere_span_at). Its
+/// radius shrinks with t, so the water rows are cut into bands by the
+/// comptime distance primary_t (at most the true distance t, so fade(t) and
+/// D' - t at the band's nearest row bound the band); a band whose nearest
+/// distance is at least D' is empty (t < tau <= D'). The column's range is
+/// the hull of the bands' spans, each clipped to its band.
+const WaterLogoBand = struct { lo: usize, hi: usize, t: f32, s: f32, inv_1ms2: f32 };
 
-inline fn span_union(a: Rows, b: Rows) Spans {
-    if (a.lo == a.hi) return .{ .r = .{ b, b }, .n = @intFromBool(b.lo != b.hi) };
-    if (b.lo == b.hi) return .{ .r = .{ a, a }, .n = 1 };
-    const first = if (a.lo <= b.lo) a else b;
-    const second = if (a.lo <= b.lo) b else a;
-    if (second.lo <= first.hi) {
-        const m = Rows{ .lo = first.lo, .hi = @max(first.hi, second.hi) };
-        return .{ .r = .{ m, m }, .n = 1 };
+/// Band edges in primary_t, far to near.
+const water_logo_band_t = [_]f32{ 16.0, 11.0, 7.5, 5.0 };
+const water_logo_slack: f32 = 0.035;
+const water_logo_nb = water_logo_band_t.len + 1;
+
+/// Bands nearest first (largest radius first): rows, the distance of the
+/// band's nearest row, s there and 1 / (1 - s^2).
+const water_logo_bands: [water_logo_nb]WaterLogoBand = blk: {
+    var bands: [water_logo_nb]WaterLogoBand = undefined;
+    const fwr = camera.first_water_row;
+    var hi: usize = camera.height;
+    for (0..water_logo_nb) |b| {
+        // Rows [lo, hi) with primary_t below the next edge (nearer rows
+        // are lower on screen, so primary_t falls as y grows).
+        var lo = hi;
+        if (b + 1 < water_logo_nb) {
+            const edge = water_logo_band_t[water_logo_nb - 2 - b];
+            while (lo > fwr and water.primary_t[lo - 1 - fwr] < edge) lo -= 1;
+        } else lo = fwr;
+        const t = water.primary_t[hi - 1 - fwr];
+        const g = 1.0 / (1.0 + water.fade_k * t);
+        // sin(2 atan x) = 2 x / (1 + x^2), x = max_slope fade.
+        const x = water.max_slope * g * g;
+        const s = 2.0 * x / (1.0 + x * x) + water_logo_slack;
+        bands[b] = .{ .lo = lo, .hi = hi, .t = t, .s = s, .inv_1ms2 = 1.0 / (1.0 - s * s) };
+        hi = lo;
     }
-    return .{ .r = .{ first, second }, .n = 2 };
+    break :blk bands;
+};
+
+const C_mirror = math.vec3(iris.centre[0], -iris.centre[1], iris.centre[2]);
+
+/// Per-frame spans of the active bands (a prefix: nearer bands first).
+const WaterLogo = struct { sp: [water_logo_nb]SphereSpan, n: usize };
+
+fn water_logo_at(cam: camera.Camera) WaterLogo {
+    var wl: WaterLogo = .{ .sp = undefined, .n = 0 };
+    if (!scene.iris_in_water) return wl;
+    const e2c = C_mirror - cam.eye;
+    const dd = @sqrt(math.dot(e2c, e2c));
+    const r = iris.radius;
+    inline for (water_logo_bands) |band| {
+        const a = dd - band.t;
+        if (!(a > 0.0)) return wl;
+        // 1% on the radius covers the rounding of the bound itself.
+        const s = band.s;
+        const rho = 1.01 * (r + s * @sqrt(r * r + (1.0 - s * s) * a * a)) * band.inv_1ms2;
+        const sp = sphere_span_at(cam, C_mirror, rho);
+        // Wholly behind the eye's plane: no ray passes within rho ahead of
+        // the eye (tau > 0), nor within the smaller radii of the next bands.
+        if (sp.cz < -span_r2 * rho) return wl;
+        wl.sp[wl.n] = sp;
+        wl.n += 1;
+    }
+    return wl;
+}
+
+/// Hull of the active bands' rows in column u. The spans are nested (the
+/// radius shrinks band by band), so an empty first span ends the column.
+inline fn water_logo_rows(wl: *const WaterLogo, u: f32) Rows {
+    if (wl.n == 0) return .{ .lo = 0, .hi = 0 };
+    // Only rays with t < tau, so tau = dot(C' - E, d) > 0: rows with
+    // m + v cy > 0 (sphere_rows' terms), one side of a row threshold,
+    // padded by a row.
+    const sp = &wl.sp[0];
+    const m = u * sp.cx + sp.cz;
+    var lo: usize = camera.height;
+    var hi: usize = 0;
+    var f_lo: usize = 0;
+    var f_hi: usize = camera.height;
+    if (sp.cy == 0.0) {
+        if (!(m > 0.0)) return .{ .lo = 0, .hi = 0 };
+    } else {
+        const y = 63.5 + m / sp.cy * rows_per_v;
+        if (sp.cy > 0.0) {
+            f_hi = @intFromFloat(@min(@max(@ceil(y) + 1.0, 0.0), camera.height));
+        } else {
+            f_lo = @intFromFloat(@min(@max(@floor(y) - 1.0, 0.0), camera.height));
+        }
+    }
+    for (0..wl.n) |b| {
+        const r = sphere_rows(wl.sp[b], u);
+        if (r.lo == r.hi) break;
+        const band = water_logo_bands[b];
+        const c = clip(band.lo, band.hi, r.lo, r.hi);
+        if (c.lo != c.hi) {
+            lo = @min(lo, c.lo);
+            hi = @max(hi, c.hi);
+        }
+    }
+    lo = @max(lo, f_lo);
+    hi = @min(hi, f_hi);
+    if (lo >= hi) return .{ .lo = 0, .hi = 0 };
+    return .{ .lo = lo, .hi = hi };
 }
 
 /// Per-frame line of the shore's top edge. A primary ray w = base + up*v
-/// with w.z > 0 meets z = 14 below y = 4 iff f(v) = (4 - eye.y) w.z -
+/// with w.z > 0 meets z = 14 below y = H (scene.shore_height) iff f(v) = (H - eye.y) w.z -
 /// (14 - eye.z) w.y > 0, linear in v: f = f0(column) + f1 v with f1 < 0 on
 /// the whole orbit (up is nearly +y), so the shore rows of a column are the
 /// rows below one threshold.
@@ -504,17 +814,105 @@ inline fn shore_first_row(se: ShoreEdge, base: Vec3) usize {
     return lo;
 }
 
-/// Verification switch: paint magenta every primary ray outside the spans
-/// that would have hit a sphere, and cyan every eye_sky or eye_water ray
-/// that would have hit the shore. With it on, all 600 orbit frames rendered with zero
-/// magenta and cyan pixels (tools/preview.mjs --frames 600 --every 1).
+/// Verification switch: paint magenta every primary ray that would have hit
+/// a sphere or the logo's bounding sphere without testing it (outside the
+/// spans, or in the .eye rows outside that object's span), cyan every eye_sky
+/// or eye_water ray that would have hit the shore, and yellow every primary
+/// water ray outside water_logo_rows whose reflection meets the logo's
+/// bounding sphere, and every pixel with a chrome reflection that the cone
+/// rejected but that meets it. With it on, a whole orbit rendered with zero
+/// magenta, cyan and yellow pixels in cut20, full20 and half30 (M2.2,
+/// tools/preview.mjs --every 1; a halved water-logo radius stays clean, a
+/// fifth of it paints the reflection yellow).
 const debug_span = false;
+/// Set by shade_water and logo() under debug_span (single-threaded).
+var debug_logo_miss = false;
+
+/// The logo's bounding sphere along (o, d), unit d, t > 1e-3 (debug only).
+fn debug_hits_logo_sphere(o: Vec3, d: Vec3) bool {
+    const oc = o - iris.centre;
+    const b = math.dot(oc, d);
+    const disc = b * b - (math.dot(oc, oc) - iris.radius * iris.radius);
+    return disc >= 0.0 and -b + @sqrt(disc) > 1e-3;
+}
 
 /// Pixels per ray along each axis (variant.zig): 1, or 2 for a ray per even
 /// (x, y) written to its 2x2 block.
 const scale = variant.render_scale;
 /// The `scale` framebuffer columns a column of rays writes.
 const Columns = *[scale][camera.height]cart.Pixel;
+
+/// A row run stored in a byte pair.
+const Run8 = struct {
+    lo: u8,
+    hi: u8,
+
+    inline fn of(r: Rows) Run8 {
+        return .{ .lo = @intCast(r.lo), .hi = @intCast(r.hi) };
+    }
+};
+
+/// A run of .eye rows with its tests.
+const EyeSeg = struct { lo: u8, hi: u8, flags: EyeFlags };
+/// The chrome, glass and logo spans and the water-logo rows have at most 8
+/// ends between them, so at most 7 segments.
+const max_eye_segs = 7;
+
+/// Every bound of a column, computed for all columns before the render loop
+/// (plan_columns) so the loop keeps none of the per-frame span parameters in
+/// registers: the union of the spans cut into .eye segments with constant
+/// tests, the water rows whose reflection may meet the logo, and the shore
+/// rows.
+const ColumnRows = struct {
+    segs: [max_eye_segs]EyeSeg,
+    n_segs: u8,
+    water_logo: Run8,
+    shore_lo: u8,
+    shore_hi: u8,
+};
+var column_rows: [camera.width]ColumnRows = undefined;
+
+inline fn in_rows(r: Rows, y: usize) bool {
+    return y >= r.lo and y < r.hi;
+}
+
+/// The .eye segments of a column: the union of the object spans, cut at every
+/// span end and at the water-logo rows' ends, each segment with the tests
+/// whose spans (or rows) cover it. Adjacent segments with equal tests merge.
+fn eye_segments(cr: *ColumnRows, chrome: Rows, glass: Rows, logo_r: Rows, water_logo: Rows) void {
+    var ends: [8]usize = undefined;
+    var n: usize = 0;
+    for ([4]Rows{ chrome, glass, logo_r, water_logo }) |r| {
+        if (r.lo == r.hi) continue;
+        for ([2]usize{ r.lo, r.hi }) |e| {
+            var i = n;
+            while (i > 0 and ends[i - 1] > e) : (i -= 1) ends[i] = ends[i - 1];
+            ends[i] = e;
+            n += 1;
+        }
+    }
+    var ns: usize = 0;
+    var i: usize = 0;
+    while (i + 1 < n) : (i += 1) {
+        const a = ends[i];
+        const b = ends[i + 1];
+        if (a == b) continue;
+        const flags = EyeFlags{
+            .chrome = in_rows(chrome, a),
+            .glass = in_rows(glass, a),
+            .logo = in_rows(logo_r, a),
+            .water_logo = in_rows(water_logo, a),
+        };
+        if (!(flags.chrome or flags.glass or flags.logo)) continue;
+        if (ns > 0 and cr.segs[ns - 1].hi == a and cr.segs[ns - 1].flags == flags) {
+            cr.segs[ns - 1].hi = @intCast(b);
+        } else {
+            cr.segs[ns] = .{ .lo = @intCast(a), .hi = @intCast(b), .flags = flags };
+            ns += 1;
+        }
+    }
+    cr.n_segs = @intCast(ns);
+}
 
 /// Primary rays of rows [y0, y1) of column x (with scale 2: the even rows,
 /// so a block takes the row kind of its even row; runs partition the column,
@@ -529,20 +927,22 @@ inline fn render_rows(
     y0: usize,
     y1: usize,
     comptime from: From,
+    flags: EyeFlags,
 ) void {
     const fade_col = &water.primary_fade[camera.half_column(x)];
     var y = if (scale == 1) y0 else (y0 + 1) & ~@as(usize, 1);
     while (y < y1) : (y += scale) {
         const w = base + cam.up * splat(camera.v_table[y]);
         const d = w * splat(inv_len[y]);
-        const pw = if (from == .eye_water or from == .eye_water_shore) blk: {
+        const pw: Extra(from) = if (comptime eye_water_kind(from)) blk: {
             const i = y - camera.first_water_row;
             const t = water.primary_t[i];
-            break :blk PrimaryWater{
+            break :blk .{
                 .p = math.vec3(cam.eye[0] + w[0] * t, 0.0, cam.eye[2] + w[2] * t),
                 .fade = fade_col[i],
             };
-        } else {};
+        } else if (from == .eye) flags else {};
+        if (debug_span) debug_logo_miss = false;
         const c = @call(.always_inline, trace, .{ cam.eye, d, 0, from, fs, pw });
         // Every shaded colour is a non-negative combination of non-negative
         // constants, so saturate reduces to the upper clamp.
@@ -554,11 +954,19 @@ inline fn render_rows(
                 columns[i][y + j] = dither.quantise(@intCast(x + i), @intCast(y + j), cs);
             }
         }
-        if (debug_span and from != .eye and
-            (hit_chrome(cam.eye, d, .stable) != no_hit or hit_glass(cam.eye, d, .stable) != no_hit))
-            columns[0][y] = cart.Pixel.from_color(.{ .r = 31, .g = 0, .b = 31 });
-        if (debug_span and (from == .eye_sky or from == .eye_water) and shore(cam.eye, d, false) != null)
-            columns[0][y] = cart.Pixel.from_color(.{ .r = 0, .g = 63, .b = 31 });
+        if (debug_span) {
+            const no_chrome = if (from == .eye) !pw.chrome else true;
+            const no_glass = if (from == .eye) !pw.glass else true;
+            const no_logo = if (from == .eye) !pw.logo else true;
+            if ((no_chrome and hit_chrome(cam.eye, d, .stable) != no_hit) or
+                (no_glass and hit_glass(cam.eye, d, .stable) != no_hit) or
+                (no_logo and debug_hits_logo_sphere(cam.eye, d)))
+                columns[0][y] = cart.Pixel.from_color(.{ .r = 31, .g = 0, .b = 31 });
+            if ((from == .eye_sky or from == .eye_water or from == .eye_water_logo) and shore(cam.eye, d, false) != null)
+                columns[0][y] = cart.Pixel.from_color(.{ .r = 0, .g = 63, .b = 31 });
+            if (debug_logo_miss)
+                columns[0][y] = cart.Pixel.from_color(.{ .r = 31, .g = 63, .b = 0 });
+        }
     }
 }
 
@@ -568,8 +976,30 @@ inline fn clip(y0: usize, y1: usize, lo: usize, hi: usize) Rows {
     return .{ .lo = a, .hi = @max(a, @min(hi, y1)) };
 }
 
-/// Rows [y0, y1) outside the sphere spans: sky above shore_lo, shore or sky
-/// down to first_water_row, shore or water down to shore_hi, water below.
+/// Water rows [y0, y1) of one kind, split at cr.water_logo: the rows inside
+/// run the kind's logo form, the (up to two) runs outside the plain one; one
+/// call site each keeps a single inlined copy of both.
+inline fn render_water_rows(
+    columns: Columns,
+    x: usize,
+    base: Vec3,
+    inv_len: *const [camera.height]f32,
+    cam: *const camera.Camera,
+    fs: *const Frame,
+    cr: *const ColumnRows,
+    y0: usize,
+    y1: usize,
+    comptime from: From,
+) void {
+    if (!scene.iris_in_water) return render_rows(columns, x, base, inv_len, cam, fs, y0, y1, from, .{});
+    const in = clip(y0, y1, cr.water_logo.lo, cr.water_logo.hi);
+    const outside = [2]Rows{ .{ .lo = y0, .hi = in.lo }, .{ .lo = in.hi, .hi = y1 } };
+    for (outside) |r| render_rows(columns, x, base, inv_len, cam, fs, r.lo, r.hi, from, .{});
+    render_rows(columns, x, base, inv_len, cam, fs, in.lo, in.hi, with_water_logo(from), .{});
+}
+
+/// Rows [y0, y1) outside the spans: sky above shore_lo, shore or sky down to
+/// first_water_row, shore or water down to shore_hi, water below.
 inline fn render_clear_rows(
     columns: Columns,
     x: usize,
@@ -577,6 +1007,7 @@ inline fn render_clear_rows(
     inv_len: *const [camera.height]f32,
     cam: *const camera.Camera,
     fs: *const Frame,
+    cr: *const ColumnRows,
     y0: usize,
     y1: usize,
     shore_lo: usize,
@@ -587,43 +1018,67 @@ inline fn render_clear_rows(
     const e = clip(y0, y1, shore_lo, fwr);
     const ws = clip(y0, y1, fwr, shore_hi);
     const wr = clip(y0, y1, shore_hi, camera.height);
-    render_rows(columns, x, base, inv_len, cam, fs, s.lo, s.hi, .eye_sky);
-    render_rows(columns, x, base, inv_len, cam, fs, e.lo, e.hi, .eye_env);
-    render_rows(columns, x, base, inv_len, cam, fs, ws.lo, ws.hi, .eye_water_shore);
-    render_rows(columns, x, base, inv_len, cam, fs, wr.lo, wr.hi, .eye_water);
+    render_rows(columns, x, base, inv_len, cam, fs, s.lo, s.hi, .eye_sky, .{});
+    render_rows(columns, x, base, inv_len, cam, fs, e.lo, e.hi, .eye_env, .{});
+    render_water_rows(columns, x, base, inv_len, cam, fs, cr, ws.lo, ws.hi, .eye_water_shore);
+    render_water_rows(columns, x, base, inv_len, cam, fs, cr, wr.lo, wr.hi, .eye_water);
+}
+
+/// Fills column_rows for the frame. Not inlined: its registers stay out of
+/// the render loop.
+noinline fn plan_columns(cam: *const camera.Camera) void {
+    const sp_chrome = sphere_span_at(cam.*, scene.sphere_centre, 1.0);
+    const sp_glass = if (scene.glass_enabled) sphere_span_at(cam.*, scene.glass_centre, scene.glass_radius) else {};
+    const sp_logo = sphere_span_at(cam.*, iris.centre, iris.radius);
+    // sphere_rows takes whole lines, so a bounding sphere behind the eye
+    // would show on the opposite side of the screen: skip it when it lies
+    // wholly behind the eye's plane (every primary ray has w.fwd = 1 > 0).
+    const logo_ahead = sp_logo.cz > -span_r2 * iris.radius;
+    const wl = water_logo_at(cam.*);
+    const se = shore_edge_at(cam.*);
+    const none = Rows{ .lo = 0, .hi = 0 };
+    var x: usize = 0;
+    while (x < camera.width) : (x += scale) {
+        const u = camera.u_table[x];
+        const base = cam.fwd + cam.right * splat(u);
+        const chrome = sphere_rows(sp_chrome, u);
+        const glass = if (scene.glass_enabled) sphere_rows(sp_glass, u) else none;
+        const logo_r = if (logo_ahead) sphere_rows(sp_logo, u) else none;
+        const water_logo = water_logo_rows(&wl, u);
+        const cr = &column_rows[x];
+        cr.water_logo = .of(water_logo);
+        cr.shore_lo = @intCast(shore_first_row(se, base));
+        cr.shore_hi = @intCast(shore_water_end(se, base));
+        eye_segments(cr, chrome, glass, logo_r, water_logo);
+    }
 }
 
 /// Not inlined into update(): keeps the caller's register state out of the
 /// hot loop's allocation.
 pub noinline fn render_frame(frame: u32) void {
+    if (!ready) init();
     const cam = camera.at_frame(frame);
-    const fs = Frame{ .ph = water.phases_at_frame(frame) };
-    const sp_chrome = sphere_span_at(cam, scene.sphere_centre, 1.0);
-    const sp_glass = if (scene.glass_enabled) sphere_span_at(cam, scene.glass_centre, scene.glass_radius) else {};
-    const se = shore_edge_at(cam);
+    const fs = Frame{ .ph = water.phases_at_frame(frame), .iris = iris.at_frame(frame) };
+    plan_columns(&cam);
     const fb = cart.framebuffer;
     var x: usize = 0;
     while (x < camera.width) : (x += scale) {
         const columns: Columns = fb[x..][0..scale];
-        const u = camera.u_table[x];
-        const base = cam.fwd + cam.right * splat(u);
+        const base = cam.fwd + cam.right * splat(camera.u_table[x]);
         const inv_len = &camera.inv_len_table[camera.half_column(x)];
-        const shore_lo = shore_first_row(se, base);
-        const shore_hi = shore_water_end(se, base);
-        const rows_chrome = sphere_rows(sp_chrome, u);
-        const spans = if (scene.glass_enabled)
-            span_union(rows_chrome, sphere_rows(sp_glass, u))
-        else
-            Spans{ .r = .{ rows_chrome, rows_chrome }, .n = @intFromBool(rows_chrome.lo != rows_chrome.hi) };
-        // Clear rows before each span, the span, and the clear rest; one
-        // call site each keeps a single inlined copy of every row kind.
+        const cr = &column_rows[x];
+        // Clear rows before each .eye segment, the segment, and the clear
+        // rest; one call site each keeps a single inlined copy of every row
+        // kind.
         var y: usize = 0;
-        for (0..spans.n + 1) |i| {
-            const end = if (i < spans.n) spans.r[i].lo else camera.height;
-            render_clear_rows(columns, x, base, inv_len, &cam, &fs, y, end, shore_lo, shore_hi);
-            if (i == spans.n) break;
-            render_rows(columns, x, base, inv_len, &cam, &fs, spans.r[i].lo, spans.r[i].hi, .eye);
-            y = spans.r[i].hi;
+        const n: usize = cr.n_segs;
+        for (0..n + 1) |i| {
+            const end: usize = if (i < n) cr.segs[i].lo else camera.height;
+            render_clear_rows(columns, x, base, inv_len, &cam, &fs, cr, y, end, cr.shore_lo, cr.shore_hi);
+            if (i == n) break;
+            const seg = cr.segs[i];
+            render_rows(columns, x, base, inv_len, &cam, &fs, seg.lo, seg.hi, .eye, seg.flags);
+            y = seg.hi;
         }
     }
 }

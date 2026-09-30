@@ -68,7 +68,7 @@ coworker's badge shows the LEDs unusably bright even at 1%).
   suspect too). Anything data-like goes through a host-side generator
   (`convert_gfx`, `gen_levels`) or a runtime check, never a big comptime
   loop. Adrian builds on a Mac, so this is a hard rule.
-- Levels: `#`/`1`-`8` walls, `.` floor, `D C I G E` doors, `S>` start with
+- Levels: `#`/`1`-`8` walls, `.` floor, `D C I G E` doors, `X` secret door, `S>` start with
   facing, `c i g + % $ *` pickups, `a w b s H` enemies (a = gnat).
 
 ## Building and previewing

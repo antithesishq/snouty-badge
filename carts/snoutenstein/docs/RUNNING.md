@@ -221,7 +221,7 @@ node tools/check_determinism.mjs ../../zig-out/bin/snoutenstein.wasm \
 ### Attract mode and the recorded demo
 
 Left alone on the title for 10 s (600 ticks), the cart plays a recorded
-demo of Build Farm: `sim.init` of level 0 with a fixed seed, driven by an
+demo of Production: `sim.init` of level 2 with a fixed seed, driven by an
 input log baked into the cart (`cart/src/demos/build_farm.zig`) instead of
 the pad. A blinking "DEMO" sits at the top of the view while it runs. Any
 edge on A, B, Start or the joystick (up, down, left, right) takes over on
@@ -242,7 +242,7 @@ Exports: `debug_demo` (1 while the demo drives), `debug_demo_result` (0
 none, 1 ok, 2 desync), `debug_title_ticks` (ticks idled on the title). Two
 setup calls for `preview.mjs --call`: `--call debug_start_demo` starts the
 demo at update 0 (scripts and the bench), `--call debug_new_game_seeded`
-starts Build Farm with the demo seed in normal play, tick 0 = update 0
+starts the demo level (Production) with the demo seed in normal play, tick 0 = update 0
 (authoring the log).
 
 ```sh
@@ -274,30 +274,31 @@ writes plain literal data (`level_index`, `seed`, `total_ticks`,
 `final_hash`, `runs`); without `--hash` the hash is 0 (unrecorded). Commit
 the JSON and the regenerated `.zig` together.
 
-Demo content: 3,627 ticks (60.5 s), Build Farm with the zapper (tuned
-for the post-M5 balance: gnats bite 4 HP every 40 ticks). Snouty walks
-the rack corridor east, opens the plain door at (11,3) and zaps the three
-cable-tray gnats from the doorway (one bite taken), walks past the zapper
-charge at (16,4), clears the two hub gnats from the door at (17,7),
-crosses the hub, opens the vent closet door at (7,10), grabs the Coral
-key at (3,9) (the portrait grins), zaps the closet gnat after two bites,
-takes the hotfix at (2,11) back to 100 HP, then walks back across the hub
-(Select to the swatter and back on the way) and through the Coral door at
-(15,13) into the pipe hall. There it stands in the open while the three
-pipe-hall gnats bite it down to 32 HP, holds B for updates 1961-2200 (240
-ticks, 4 s of Iris rewind; game tick 1961 back to 1721, HP 92), backs
-into the Coral doorway and zaps two gnats as they line up, steps out and
-turns east to zap the third, then tours the hall (west end, a look at the
-Iris mural on the south wall) and ends standing at (19.0,16.5) facing the
-exit strip, alive, 88 HP, 9 kills, never touching the exit. Recorded hash
-`0x093CA09A` (final game tick 3146). After any change that moves the
-simulation (balance, AI, map, rewind), the gnats wake and move
-differently and the log goes stale: edit `tools/scripts/demo_build_farm.json`
-(author with `--call debug_new_game_seeded` and `--call-at T debug_px`
-etc. as above, check HP, kills and position at the milestones), run
-`tools/record_demo.sh`, rebuild, then `tools/check.sh` (the attract,
-demo and takeover runs must pass). Changing an early segment reshuffles
-every fight after it, so re-check the whole run, not just the edit.
+Demo content: 4,108 ticks (68.5 s) of Production (level index 2), ending
+alive. Snouty walks the pipe corridor east through the plain doors at
+(7,3) and (12,3), zaps the three cable-tray gnats from the doorway, grabs
+the zapper charge at (13,1) and zaps the beetle at (21,8) (one of its
+spits lands), then pushes through the door at (23,5) and walks straight
+into the vent hall: the spider webs it (freeze), both wasps charge into
+it and it drops to 34 HP. It holds B for updates 1221-1430 (210 ticks,
+3.5 s of Iris rewind; HP back to 90 just inside the door) and on the
+second try zaps both wasps, the spider and the gnat from the doorway.
+It picks up the Coral key at (37,8) (grin) and the hotfix at (25,9),
+goes back across the cable trays and through the Coral door at (14,10)
+into the brick room, grabs the charge at (12,12), zaps a gnat and the
+beetle, switches to the swatter when the charges run out, swats the last
+gnat, takes the Iris key at (2,12), is webbed twice walking up to the
+spider at (8,18), swats it and ends facing the Iris door at (15,16)
+without opening it: 74 HP, 12 kills, mode playing. The boss arena needs
+all three keys and is out of reach. Recorded hash `0x10A0860C` (final
+game tick 3687). After any change that moves the simulation (balance,
+AI, map, rewind), the enemies move differently and the log goes stale:
+edit `tools/scripts/demo_build_farm.json` (author with `--call
+debug_new_game_seeded` and `--call-at T debug_px` etc. as above, check
+HP, kills and position at the milestones), run `tools/record_demo.sh`,
+rebuild, then `tools/check.sh` (the attract, demo and takeover runs must
+pass). Changing an early segment reshuffles every fight after it, so
+re-check the whole run, not just the edit.
 
 Neopixels are off in every build (docs/NEOPIXELS.md at the repository
 root): the cart never writes a non-zero LED byte; the HP bar, key flash

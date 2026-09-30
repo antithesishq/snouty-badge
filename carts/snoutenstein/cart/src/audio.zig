@@ -7,7 +7,7 @@
 //!
 //! Tone2 has square, triangle, sawtooth, sine, major and minor shapes, no
 //! noise and no sweep: "noise" rows play as low sawtooth; the two sweeps
-//! (door, rewind) retrigger the tone every `sweep_step` ticks at the
+//! (door, rewind, Debugger burst) retrigger the tone every `sweep_step` ticks at the
 //! interpolated frequency from `tick`. The wasm simulator ignores the shape.
 //!
 //! Neopixels are off (docs/NEOPIXELS.md at the repository root, approved
@@ -21,13 +21,14 @@ const cart = @import("cart-api");
 const state = @import("state.zig");
 const levels = @import("levels.zig");
 const sim = @import("sim.zig");
+const projectiles = @import("projectiles.zig");
 const build_options = @import("build_options");
 
 /// Sound (and the dormant LED effects), off by default; Select on the
 /// title toggles it.
 pub var enabled: bool = false;
 
-pub const Event = enum { swatter, zapper, spray, enemy_hit, enemy_death, player_hurt, door, locked_door, pickup, rewind, death_freeze };
+pub const Event = enum { swatter, zapper, spray, enemy_hit, enemy_death, player_hurt, door, locked_door, pickup, rewind, death_freeze, debugger, burst };
 
 const Shape = cart.Tone2Options.Shape;
 
@@ -40,7 +41,8 @@ const Sound = struct {
 };
 
 /// Indexed by `@intFromEnum(Event)`. Priority: death > rewind > player
-/// hurt > pickup > enemy death > door > enemy hit > locked door > weapon.
+/// hurt > pickup > enemy death = Debugger burst > door > enemy hit >
+/// locked door > weapon (the Debugger shot included).
 const sounds = [_]Sound{
     .{ .shape = .sawtooth, .from = 200, .to = 200, .ticks = 3, .prio = 1 }, // swatter (noise)
     .{ .shape = .square, .from = 1200, .to = 1200, .ticks = 3, .prio = 1 }, // zapper
@@ -53,7 +55,13 @@ const sounds = [_]Sound{
     .{ .shape = .major, .from = 660, .to = 660, .ticks = 12, .prio = 6 }, // pickup
     .{ .shape = .square, .from = 800, .to = 200, .ticks = 10, .prio = 8 }, // rewind
     .{ .shape = .minor, .from = 55, .to = 55, .ticks = 48, .prio = 9 }, // death freeze
+    .{ .shape = .square, .from = 90, .to = 90, .ticks = 2, .prio = 1 }, // debugger shot (click)
+    .{ .shape = .square, .from = 70, .to = 50, .ticks = 8, .prio = 5 }, // debugger burst (thump)
 };
+
+comptime {
+    if (sounds.len != @as(usize, @backingInt(Event.burst)) + 1) @compileError("one sounds row per Event (burst is the last)");
+}
 
 const volume: f32 = 0.6;
 const sweep_step: u8 = 3;
@@ -74,6 +82,7 @@ var last_kills: u16 = 0;
 var last_keys: u8 = 0;
 var last_ammo_zapper: u8 = 0;
 var last_ammo_spray: u8 = 0;
+var last_ammo_debugger: u8 = 0;
 var last_cooldown: u8 = 0;
 var last_doors_closed: u64 = 0; // bit i: door i phase == closed
 var last_flash2: u64 = 0; // bit i: enemy i flash == flash_ticks
@@ -153,6 +162,18 @@ fn flash2(s: *const state.GameState, level: *const levels.Level) u64 {
     return m;
 }
 
+/// A Debugger burst appeared this tick: `projectiles.update` turns the bolt
+/// into a `kind_burst` with ttl `burst_ticks` and does not count it down
+/// that tick, so a fresh burst is the only one showing the full ttl. The
+/// caller also requires the tick to have advanced (a paused frame shows
+/// the same state again).
+fn new_burst(s: *const state.GameState) bool {
+    for (s.projectiles) |pr| {
+        if (pr.kind == projectiles.kind_burst and pr.ttl == projectiles.burst_ticks) return true;
+    }
+    return false;
+}
+
 fn baseline(s: *const state.GameState, level: *const levels.Level) void {
     const p = &s.player;
     primed = true;
@@ -163,6 +184,7 @@ fn baseline(s: *const state.GameState, level: *const levels.Level) void {
     last_keys = p.keys;
     last_ammo_zapper = p.ammo_zapper;
     last_ammo_spray = p.ammo_spray;
+    last_ammo_debugger = p.ammo_debugger;
     last_cooldown = p.fire_cooldown;
     last_doors_closed = doors_closed(s, level);
     last_flash2 = flash2(s, level);
@@ -210,10 +232,13 @@ pub fn tick(s: *const state.GameState, level: *const levels.Level) void {
         const ev: ?Event = if (p.hp < last_hp)
             .player_hurt
         else if (new_keys != 0 or p.ammo_zapper > last_ammo_zapper or
-            p.ammo_spray > last_ammo_spray or p.hp > last_hp)
+            p.ammo_spray > last_ammo_spray or p.ammo_debugger > last_ammo_debugger or
+            p.hp > last_hp)
             .pickup
         else if (s.kills > last_kills)
             .enemy_death
+        else if (s.tick != last_tick and new_burst(s))
+            .burst
         else if (opened != 0)
             .door
         else if (f2 & ~last_flash2 != 0)
@@ -224,6 +249,7 @@ pub fn tick(s: *const state.GameState, level: *const levels.Level) void {
             .swatter => .swatter,
             .zapper => .zapper,
             .spray => .spray,
+            .debugger => .debugger,
         } else null;
         if (ev) |e| play(e);
 

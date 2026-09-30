@@ -83,13 +83,14 @@ pub fn parse(out: *Parsed, src: []const u8, default_wall: u8) Error!void {
                 '.' => {},
                 '#' => out.cells[y][x] = default_wall + 1,
                 '1'...'8' => out.cells[y][x] = ch - '0',
-                'D', 'C', 'I', 'G', 'E' => {
+                'D', 'C', 'I', 'G', 'E', 'X' => {
                     if (out.door_count >= state.max_doors) return error.TooManyDoors;
                     const kind: DoorKind = switch (ch) {
                         'D' => .plain,
                         'C' => .coral,
                         'I' => .iris,
                         'G' => .gold,
+                        'X' => .secret,
                         else => .exit,
                     };
                     // Walls to the left and right: the passage runs
@@ -97,8 +98,15 @@ pub fn parse(out: *Parsed, src: []const u8, default_wall: u8) Error!void {
                     const left = if (x == 0) '#' else raw[y][x - 1];
                     const right = if (x + 1 >= width) '#' else raw[y][x + 1];
                     const vertical = !(is_wall_char(left) and is_wall_char(right));
+                    // A secret door wears the texture of the wall beside it
+                    // (above it when the panel runs north-south).
+                    const beside = if (vertical) (if (y == 0) '#' else raw[y - 1][x]) else left;
+                    const tex: u8 = if (kind != .secret) 0 else switch (beside) {
+                        '1'...'8' => beside - '1',
+                        else => default_wall,
+                    };
                     out.cells[y][x] = levels.door_base + out.door_count;
-                    out.doors[out.door_count] = .{ .x = xb, .y = yb, .kind = kind, .vertical = vertical };
+                    out.doors[out.door_count] = .{ .x = xb, .y = yb, .kind = kind, .vertical = vertical, .tex = tex };
                     out.door_count += 1;
                 },
                 'S' => {
@@ -115,7 +123,7 @@ pub fn parse(out: *Parsed, src: []const u8, default_wall: u8) Error!void {
                     };
                     if (x + 1 < width) x += 1; // the arrow cell is floor
                 },
-                'c', 'i', 'g', '+', '%', '$', '*' => {
+                'c', 'i', 'g', '+', '%', '$', '*', '&' => {
                     if (out.pickup_count >= state.max_pickups) return error.TooManyPickups;
                     const kind: PickupKind = switch (ch) {
                         'c' => .key_coral,
@@ -124,7 +132,8 @@ pub fn parse(out: *Parsed, src: []const u8, default_wall: u8) Error!void {
                         '+' => .hotfix,
                         '%' => .charge,
                         '$' => .spray_can,
-                        else => .battery,
+                        '*' => .battery,
+                        else => .debugger,
                     };
                     out.pickups[out.pickup_count] = .{ .x = xb, .y = yb, .kind = kind };
                     out.pickup_count += 1;
@@ -192,7 +201,7 @@ test "test level parses at run time" {
     try testing.expectEqual(@as(u8, 24), l.height);
     try testing.expectEqual(@as(u8, 3), l.start_x);
     try testing.expectEqual(@as(u8, 3), l.start_y);
-    try testing.expectEqual(@as(usize, 8), l.doors.len);
+    try testing.expectEqual(@as(usize, 9), l.doors.len); // five kinds plus three plain plus the M5.2 secret door
     try testing.expect(Level.is_door(l.cell(7, 4)));
     try testing.expect(l.doors[Level.door_index(l.cell(7, 4))].vertical);
     try testing.expect(Level.is_wall(l.cell(0, 0)));

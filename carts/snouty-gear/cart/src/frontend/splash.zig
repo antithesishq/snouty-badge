@@ -1,5 +1,5 @@
 //! Boot splash (SPEC.md section 12), Snouty Boy's recolored: for `frames`
-//! frames (1.2 s) the Snouty mark and "SNOUTY GEAR" scroll down from above
+//! frames (1.2 s) the Iris mark and "SNOUTY GEAR" scroll down from above
 //! the screen to the centre, on a dark blue background with a light mark,
 //! "GEAR" in an orange accent and a thin accent bar under the title. Any
 //! button press skips it. The two-note chime belongs to frontend/audio.zig
@@ -8,6 +8,7 @@
 //! here.
 const cart = @import("cart-api");
 const video = @import("video.zig");
+const iris = @import("iris");
 
 /// Splash length in frames (1.2 s at 60 Hz).
 pub const frames = 72;
@@ -25,28 +26,9 @@ const ink: cart.DisplayColor = .rgb(0xF0F0E8);
 /// "GEAR" and the bar under the title.
 const accent: cart.DisplayColor = .rgb(0xFF9020);
 
-/// 16x16 Snouty mark (copied from Snouty Boy), one u16 per row, MSB =
-/// leftmost pixel: a pig face with ears, eyes and a big two-nostril snout.
-const mark = [16]u16{
-    0b0000000000000000,
-    0b0011000000001100,
-    0b0100100000010010,
-    0b0100011111100010,
-    0b0010000000000100,
-    0b0100000000000010,
-    0b1000110000110001,
-    0b1000110000110001,
-    0b1000000000000001,
-    0b1000111111110001,
-    0b1001000000001001,
-    0b1001011001101001,
-    0b1001000000001001,
-    0b0100111111110010,
-    0b0010000000000100,
-    0b0001111111111000,
-};
-const mark_scale = 3;
-const mark_px: i32 = 16 * mark_scale;
+/// The Antithesis Iris mark (lib/iris_mark.zig, 24x24) at 2x: 48 px.
+const mark_scale = 2;
+const mark_px: i32 = iris.size * mark_scale;
 const title = "SNOUTY GEAR";
 /// "GEAR" starts at this character of `title`.
 const accent_at = 7;
@@ -84,25 +66,7 @@ fn logo_y(f: u32) i32 {
 fn draw(y: i32) void {
     video.blank(bg_cram);
     const x0: i32 = @divTrunc(@as(i32, cart.screen_width) - mark_px, 2);
-    for (mark, 0..) |row, r| {
-        // Merge runs of set pixels into one rect each.
-        var c: u5 = 0;
-        while (c < 16) {
-            if (row & (@as(u16, 0x8000) >> @intCast(c)) == 0) {
-                c += 1;
-                continue;
-            }
-            const run_start = c;
-            while (c < 16 and row & (@as(u16, 0x8000) >> @intCast(c)) != 0) c += 1;
-            cart.rect(.{
-                .x = x0 + @as(i32, run_start) * mark_scale,
-                .y = y + @as(i32, @intCast(r)) * mark_scale,
-                .width = @as(u32, c - run_start) * mark_scale,
-                .height = mark_scale,
-                .fill_color = ink,
-            });
-        }
-    }
+    iris.draw(cart, x0, y, mark_scale, ink);
     const tw: i32 = title.len * 8;
     const tx = @divTrunc(@as(i32, cart.screen_width) - tw, 2);
     const ty = y + mark_px + gap;

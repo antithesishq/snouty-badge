@@ -57,12 +57,15 @@ var iris_texels: [size * size]u8 = undefined;
 var wall_pic_pal: [16]cart.Pixel = undefined;
 var start_pal: [16]cart.Pixel = undefined;
 var iris_pal: [16]cart.Pixel = undefined;
+var iris_back_pal: [16]cart.Pixel = undefined;
 
 /// The picture hung on about one wall segment in eight (opaque).
 pub var wall_pic: Texture = .{ .texels = &wall_pic_texels, .palette = &wall_pic_pal };
 /// Start button and Iris mark (index 0 transparent).
 pub var start: Texture = .{ .texels = &start_texels, .palette = &start_pal };
 pub var iris: Texture = .{ .texels = &iris_texels, .palette = &iris_pal };
+/// The Iris mark's back face (name strip coin flip), 70% brightness.
+pub var iris_back: Texture = .{ .texels = &iris_texels, .palette = &iris_back_pal };
 
 /// Flat colour for wall tops.
 pub var top_color: cart.Pixel = undefined;
@@ -95,6 +98,7 @@ pub fn init() void {
     palette(gfx.wall_pic, &wall_pic_pal, 10);
     palette(gfx.start, &start_pal, 10);
     palette(gfx.iris, &iris_pal, 10);
+    palette(gfx.iris, &iris_back_pal, 7);
 }
 
 /// Copies an n x n block starting at sheet column x0 into the top-left of a

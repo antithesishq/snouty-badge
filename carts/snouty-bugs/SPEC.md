@@ -336,8 +336,9 @@ table, or if `y == random` from the PRNG within [16, 104].
 - HUD (y 0..7): score as 6 digits in the built-in 8x8 font at x=0; a
   status slot at x 48..63 (`<<` blinking during any rewind playback); the
   fuel bar at x 68..99 (1 px Anti-White frame, y 1..6; Coral fill 30x4
-  inside, red below the hardcore floor); rewinds as Snouty-head icons 8x8
-  right-aligned (up to 5 shown), or `HARD` in Coral in hardcore.
+  inside, red below the hardcore floor); rewinds as Snouty-head icons 12x8
+  right-aligned at x 100..159 (up to 5 shown), or `HARD` in Coral in
+  hardcore.
   Background Anti-Black. In DEMO, "DEMO" is drawn over the fuel bar every
   other half second; in the first 60 ticks after a takeover or an auto
   rewind, "GO!" on the message line.
@@ -345,8 +346,10 @@ table, or if `y == random` from the PRNG within [16, 104].
   bug message centered in Coral at y=56; frame dimmed every other scanline
   during playback. Game over after a hit with no rewinds shows the same bug
   message above "GAME OVER".
-- Title: title logo image 128x40 at (16, 20) over a slowly scrolling
-  background; "A PLAY" (y 92) and "B HARDCORE" (y 104, Coral) blinking; small "Antithesis" in
+- Title: "SNOUTY" (y 40) / "BUGHUNT" (y 52, Coral) in the 8x8 font over a
+  slowly scrolling background (the `title.png` logo, 128x40 at (16, 20), is
+  built but not drawn yet); the ship's level cell with its thruster loop
+  bobbing 1 px at (64, 62); "A PLAY" (y 92) and "B HARDCORE" (y 104, Coral) blinking; small "Antithesis" in
   Coral at y=116 with Iris marks (reuse `iris_16.png` from snouty-badge).
 - Game over: the fatal bug message, "GAME OVER" 8x8 font, score, best score
   this boot, then title.
@@ -389,7 +392,7 @@ is what the code expects. Sizes in bytes are the packed 4-bit index arrays.
 | `boss.png`            | 48x48  | 5      | 240x48    | 5,760  | 4 idle wing frames + 1 flicker/teleport frame    |
 | `fx_small.png`        | 16x16  | 8      | 128x16    | 1,024  | explosion x5, spark x3                           |
 | `fx_big.png`          | 32x32  | 6      | 192x32    | 3,072  | big explosion                                    |
-| `hud.png`             | 8x8    | 4      | 32x8      | 128    | Snouty head (life), spare, spare (were bomb icons), heart |
+| `hud.png`             | 12x8   | 4      | 48x8      | 192    | Snouty head (rewind stock), spare, spare (were bomb icons), heart |
 | `title.png`           | 128x40 | 1      | 128x40    | 2,560  | logo lettering                                   |
 | `bg_far.png`          | 256x120| 1      | 256x120   | 15,360 | tileable horizontally; opaque, 8-bit allowed (30,720 B) |
 | `bg_near.png`         | 256x24 | 1      | 256x24    | 3,072  | tileable horizontally; transparent over far layer |
@@ -582,4 +585,11 @@ brief so the real sheets drop in without code changes.
 - 2026-09-27: M5 built and tagged `m5`: the bomb is gone, hold-B rewind on
   the fuel bar (5.2), hardcore mode (5.3), fuel HUD, A/B title
   (`docs/preview_m5.gif`). See PLAN.md.
+- 2026-09-29: Adrian: the 8x8 Snouty head icon (rewind stock, title card)
+  looked like a rat. `hud.png` cells are 12x8 now (10x6 visible head with
+  a round ear, a 2x2 eye and a blunt snout tube). A 48x48 bust portrait
+  was tried for the title card and dropped the same day: the title card
+  draws the game's ship sprite instead. The game's title is "Snouty
+  Bughunt" (was "Snouty vs. the Bugs"; repo, cart and doc names unchanged).
+  Review image `docs/snouty_icons_2026-09-29.png`.
 

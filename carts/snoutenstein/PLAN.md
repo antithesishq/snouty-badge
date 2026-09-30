@@ -977,9 +977,104 @@ Host measurements: standing among the three cable-tray gnats for 7 s
 leaves 4 HP (was 68), zapping without turning 60 HP (was 88); the
 stand-and-shoot Heisenbug duel ends at 15 HP (was 52). The test bands in
 `ai.zig` encode these. Death scripts die at tick 1034 (was 3028). The
-demo was re-recorded because gnat timing changed: 3,627 ticks, hash
-0x093CA09A, bitten to 32 HP before a 240-tick rewind (game tick 1961
-back to 1721, 92 HP after), ends at 88 HP with all nine gnats.
+demo was re-recorded because gnat timing changed (3,627 ticks on Build
+Farm, hash 0x093CA09A), then again on Production at Adrian's request
+("the most interesting level", dying in the demo is fine, it loops back
+to the title): 4,108 ticks (68.5 s), hash 0x10A0860C: plain doors, the
+cable-tray gnats, the beetle (a spit lands), the vent hall (webbed,
+charged by wasps, down to 34 HP), a 210-tick rewind (tick 1221 back to
+1011, 90 HP), the vent hall cleared, Coral key, hotfix, the brick room, out
+of charges so the swatter, the Iris key, ends alive at 74 HP with 12 kills
+in front of the Iris door. The Heisenbug is behind all three keys and out
+of a 90 s demo's reach. `record_demo.sh` keeps the level
+from the data file and accepts a log that ends dead; `main.zig` compares
+the hash when the log ends alive or dead. The file names still say
+`build_farm` (the data file is per cart, not per level).
+
+### M5.2 Secret doors (2026-09-29)
+
+Adrian: "put a single can in the first level, hidden behind a secret
+door." New door kind `secret` (legend `X`), a bump-activated Wolf3D
+pushwall: `DoorDef.tex` carries the neighbouring wall's texture (parser:
+the cell above for a north-south panel, the cell to the left otherwise);
+the raycaster draws a fully closed secret door as a flush wall with that
+texture (`secret_shut`) and as a sliding wall chunk once it moves;
+`sim.bump` opens it for the player only (enemies never), `update_doors`
+skips the hold/close phases for it; `check_level.py` treats `X` as an
+unlocked door. Build Farm grew two rows: a one-cell nook under the Iris
+mural at (11,20) with the level's one spray can behind `X` at (11,19).
+Production is untouched, so the attract demo's hash is unaffected. Tests:
+parse (`tex`, orientation), sim (opens for the player, stays open 3x the
+hold time, an enemy bump does nothing).
+
+## M6 The Debugger (planned 2026-09-29, done 2026-09-29)
+
+Adrian: "plan to implement the debugger weapon and put it behind a
+secret door in levels 2 and 3." SPEC.md 7 calls it a slow splash
+projectile. Confirmed 2026-09-29 ("Let's build the debugger gun");
+the proposal below stands with these contract corrections found at
+pre-work time:
+
+- `Player` grows by 4 bytes, not 2: `ammo_debugger: u8`,
+  `has_debugger: bool` and an explicit `_pad: [2]u8` (24 + 2 bytes would
+  leave compiler padding, which `assert_no_padding` rejects). GameState
+  is 1,372 bytes; the attract demo is re-recorded at the end.
+- `projectiles.png` cells are 8x8 (not 16x16): cell 4 the bolt, cell 5 the
+  burst, six cells. The burst is a display-only projectile
+  `kind_burst = 4` (no movement, no damage, ttl 6) that sprites.zig draws
+  as cell 5 at 1.0 cell, centre anchored; the bolt `kind_debug = 3` is
+  cell 4 at 0.25 like the enemy shots. The 12 damage is dealt once, in
+  the tick the bolt bursts.
+- `pickups.png` cell 7 (the spare mug) becomes the Debugger cartridge, so
+  `PickupKind.debugger = 7` needs no new pickup cell. `hud.png` gains
+  cell 8 (the heart is cell 7). `weapons.png` gains cells 9, 10, 11.
+- Legend `&` is parsed (level_parse, check_level.py) and the test level
+  gets one `&` at (5, 5), off the m1/m2/m5 script paths, for the
+  `m6_debugger.json` script.
+- Pre-work (lead, committed before the tracks): the enum members, the
+  `Player` fields, the `&` legend and compile stubs (`fire_rate` 48,
+  `has_ammo`, four-way `next_weapon`, ammo spend without a shot, the
+  pickup, `debug_ammo`, hud/audio switch arms). Tracks replace the stubs.
+
+- **Weapon 4, the Debugger.** `Weapon.debugger = 3`. Fires a player
+  projectile (`projectiles.kind_debug = 3`, owner = player: it hurts
+  enemies, never the player) at 0.10 cells/tick, ttl 120 (12 cells). On
+  hitting a solid cell or coming within 0.4 cells of a living enemy it
+  bursts: 12 damage to every living enemy within 1.5 cells of the burst
+  (no line-of-sight test; the burst is the point), plus a 6-tick white
+  flash on each. Cooldown 48 ticks. Ammo `ammo_debugger` u8, start 0, max
+  9; pickup `debugger` (legend `&`, `PickupKind.debugger`) gives 3 charges
+  and, on the first pickup, `has_debugger` and selects the weapon (grin).
+  Select cycles swatter, zapper, spray, debugger, skipping empties.
+  Against the Heisenbug (80 HP) that is 7 bursts; the boss's 2.5-cell spit
+  minimum means a player at 3 to 6 cells trades bursts for spit.
+- **State.** `Player` gains `ammo_debugger: u8` and `has_debugger: bool`
+  (append, defaults, keep `assert_no_padding` green: 2 bytes, check the
+  struct still has no compiler padding). `GameState` grows by 2 bytes, so
+  `sim.hash` changes and the attract demo must be re-recorded
+  (`tools/record_demo.sh`); rewind pools grow by 2 x 52 bytes.
+- **Art (placeholders, `tools/prepare_assets.py`).** `weapons.png` gains
+  three 48x32 cells (idle, fire x2: a chunky breakpoint gun);
+  `projectiles.png` gains two 16x16 cells (the bolt, the burst);
+  `hud.png` gains an ammo icon cell 7. `ASSETS.md` rows for each.
+- **Levels.** Staging: a secret door off the pipe supply wing with one
+  `&`; Production: a secret door in the monitor hall with one `&` and a
+  hotfix, so the Debugger arrives before the Gold door. Both nooks are
+  one or two cells; `check_level.py` must still report every pickup
+  reachable. No other balance change.
+- **Audio.** A low square thump for the burst (priority with enemy
+  death), a short click for the shot.
+- **Verification.** Host tests: a burst 3 cells away kills two adjacent
+  gnats and leaves a third at 2 cells untouched; the projectile stops at
+  a wall and bursts there; Select cycles through four weapons and skips
+  the empty Debugger; the 600-tick hash test still passes twice.
+  Scripts: `m6_debugger.json` on the test level (pick up `&` placed
+  there, fire at the beetle). Re-record the demo, GIF, tag `m6`.
+- **Tracks.** A weapon (sim/projectiles/state, tests), B art + levels
+  (prepare_assets, ASSETS.md, staging.txt, production.txt, gen.zig), C
+  render/HUD/audio (weapon.zig, sprites.zig cells, hud.zig icon,
+  audio.zig rows); lead main.zig (nothing much: Select handling is in
+  sim), scripts, demo re-record, status.
 
 ## Status
 
@@ -1089,3 +1184,44 @@ back to 1721, 92 HP after), ends at 88 HP with all nine gnats.
 - 2026-09-29: M5.1 balance follow-up tagged `snoutenstein/m5.1` (table
   above): enemies hurt again at Adrian's request, demo re-recorded, bench
   unchanged (the sim is not where the frame time goes).
+- 2026-09-29: M5.2 (`snoutenstein/m5.2`): attract demo moved to
+  Production, secret doors with Build Farm's hidden spray can, M6 Debugger
+  planned above. Test level gained a secret door too (`m5_secret.json`
+render check). check.sh now reads the demo level from the data file.
+- 2026-09-29: M6 plan confirmed by Adrian ("Let's build the debugger gun");
+  pre-work committed, three tracks launched (A sim, B art + levels, C
+  render/HUD/audio) in worktree branch `snoutenstein-m6`.
+- 2026-09-29: M6 done and tagged `snoutenstein/m6`. All three tracks landed
+  as contracted (corrections listed under M6 above). ELF text 96.0 KB
+  (+3.3 KB: three weapon cells, the bolt/burst code, two audio rows), bss
+  91.0 KB (GameState 1,372 bytes, +4 x 52 keyframes). Host tests: sim 57,
+  projectiles 57, ai 57, rewind 65 in the aggregate runs (9 new: bolt
+  spawn, wall burst in the last floor cell, 3-cell burst kills two gnats
+  and spares one 2.04 cells out, exact 12 on a beetle with a 6-tick flash,
+  player untouched at 0.5 cells and by a bolt flying through, ttl expiry
+  without a burst, four-way Select, `&` pickup 3/3/3/3 capped at 9 with no
+  reselect, 48-tick cadence). Script `m6_debugger.json` on the test level:
+  the `&` at (5, 5) is taken at tick 97 (weapon 3, 3 charges), the first
+  bolt bursts on the adjacent gnat at tick 202 (one kill, burst visible 6
+  ticks), the second flies 5 cells to the west wall; `check_determinism`
+  passes on it. Demo re-recorded on Production: 4,108 ticks, final tick
+  3,687 (its rewind), ends alive at 74 HP, hash 0x636B911C (DEMO OK in
+  check.sh). Bench (calibrated): `m6_debugger.json` mean 2.91 ms, worst
+  5.72 ms (34%) at frame 206, the point-blank burst sprite filling the
+  view; Build Farm opening unchanged (worst 3.50 ms, 21%). Art adds no
+  colour to any sheet (weapons and pickups stay 15/15). Level nooks:
+  Staging `X` (12, 4) south off the first pipe corridor, `&` (12, 5);
+  Production `X` (35, 21) in the monitor hall's south wall (texture 8, the
+  6 walls are one cell thick everywhere), `&` (35, 22) and `+` (36, 22),
+  before the Gold door. Deviations: the burst is a display-only
+  projectile kind (`kind_burst`) so the sprite pass and audio detect it
+  by diffing GameState; a burst that kills plays the death sound, not the
+  thump (equal priority); a bolt fired while standing closer than 0.4
+  cells to a facing wall spawns inside it and bursts there (the damage is
+  unaffected, the burst sprite is hidden in the wall; enemy shots have
+  always done this); pickup and door indices after the new cells shifted
+  in Staging, Production and the test level (no script used them).
+  Deferred to hardware as before: weapon feel, boss balance with the
+  Debugger (7 bursts kill the Heisenbug; the player at 3 to 6 cells trades
+  bursts for spit). Next: Adrian's review of M1-M6 in the simulator; no
+  cart milestone is planned beyond M6.

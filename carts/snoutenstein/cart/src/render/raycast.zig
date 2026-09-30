@@ -64,11 +64,20 @@ pub fn cast(s: *const state.GameState, level: *const Level, px: f32, py: f32, rd
         if (t > range) return fog_hit;
         const c = level.cell(mx, my);
         if (c == 0) continue;
+        var id: u8 = undefined;
         if (Level.is_door(c)) {
-            if (door_hit(s, level, c, mx, my, px, py, rdx, rdy)) |h| return h;
-            continue;
+            // A closed secret door is a wall in disguise: flush faces with
+            // the neighbouring wall's texture, no recess to give it away.
+            if (secret_shut(s, level, c)) |tex| {
+                id = tex;
+            } else {
+                if (door_hit(s, level, c, mx, my, px, py, rdx, rdy)) |h| return h;
+                continue;
+            }
+        } else {
+            // Wall (1..63), or a reserved value treated as wall.
+            id = if (c >= 1 and c <= textures.wall_count) c - 1 else (c -% 1) % textures.wall_count;
         }
-        // Wall (1..63), or a reserved value treated as wall.
         var u: f32 = undefined;
         if (side == 0) {
             const hy = py + t * rdy;
@@ -79,9 +88,18 @@ pub fn cast(s: *const state.GameState, level: *const Level, px: f32, py: f32, rd
             u = hx - @floor(hx);
             if (rdy > 0) u = 1.0 - u;
         }
-        const id: u8 = if (c >= 1 and c <= textures.wall_count) c - 1 else (c -% 1) % textures.wall_count;
         return .{ .dist = t, .tex = id, .tx = tex_col(u), .side = side, .fog = false };
     }
+}
+
+/// The wall texture a fully closed secret door shows, or null when the
+/// cell is an ordinary door or a secret door that has started to open.
+fn secret_shut(s: *const state.GameState, level: *const Level, c: u8) ?u8 {
+    const i = Level.door_index(c);
+    if (i >= level.doors.len) return null;
+    const def = level.doors[i];
+    if (def.kind != .secret or s.doors[i].open != 0) return null;
+    return def.tex;
 }
 
 /// Tests the door panel of cell (mx, my). The panel lies on the cell's
@@ -110,7 +128,7 @@ fn door_hit(s: *const state.GameState, level: *const Level, c: u8, mx: i32, my: 
     if (t > range) return fog_hit;
     return .{
         .dist = t,
-        .tex = textures.door_tex_base + @backingInt(def.kind),
+        .tex = if (def.kind == .secret) def.tex else textures.door_tex_base + @backingInt(def.kind),
         .tx = tex_col(f - open),
         .side = if (def.vertical) 0 else 1,
         .fog = false,

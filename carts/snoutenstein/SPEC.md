@@ -145,6 +145,7 @@ detail settings), then drop the distance shading, then render at 30 fps.
 .  floor                                       S    player start, facing the arrow after it (^v<>)
 D  door                                        C I G   door locked with Coral / Iris / Gold key
 E  exit door (walk in to finish the level)     c i g   key pickups
+X  secret door (looks like the wall beside it; walk into it; stays open)
 a  gnat   w wasp   b beetle   s spider   H Heisenbug (boss)
 +  hotfix (health +25)   %  ammo for the zapper   $ ammo for the spray   *  rewind battery (+3 s)
 ```
@@ -162,6 +163,12 @@ a  gnat   w wasp   b beetle   s spider   H Heisenbug (boss)
   close unless something stands in them. Locked doors need the matching
   key; bumping one without it flashes the key slot in the HUD and plays a
   buzz.
+- Secret doors (`X`, Adrian 2026-09-29) are Wolf3D pushwalls: closed, the
+  cell renders as a flush wall with the texture of the wall beside it (no
+  recess, no seam); walking into it slides it open like a door, it never
+  closes again, and enemies cannot open it. Build Farm hides its single
+  spray can behind one (under the Iris mural); Staging and Production get
+  one each for the Debugger (section 7, M6).
 
 ### 6.1 Wolfenstein 3D map import
 
@@ -206,8 +213,8 @@ files are never committed; converted levels are (section 18, item 9).
 
 Select cycles 1 -> 2 -> 3 -> 1, skipping weapons with no ammo. Picking up
 the spray in Staging switches to it and triggers the portrait's grin. A
-fourth weapon (a slow splash projectile, "the Debugger") is listed in
-section 17 as optional for M5 if art and RAM allow.
+fourth weapon, "the Debugger", is planned for M6 (PLAN.md): a slow splash
+projectile found behind the secret doors of Staging and Production.
 
 ## 8. Enemies (the bugs)
 
@@ -312,7 +319,8 @@ beating grin.
 
 ```
 boot -> TITLE (logo, "PRESS A", "powered by deterministic replay" tag line, 10 s)
-     -> DEMO: replay a recorded input log on Build Farm; "DEMO" blinks in the HUD
+     -> DEMO: replay a recorded input log on Production; "DEMO" blinks in the HUD
+         (Adrian, 2026-09-29: the most interesting level; dying in the demo is fine)
          -> any A/B/Start/joystick input -> PLAYING from that exact state (takeover)
          -> log ends or 3 min -> TITLE
 TITLE -> A/B/Start -> PLAYING, level 1, fresh state
@@ -332,7 +340,8 @@ script (`tools/scripts/demo_build_farm.json`), baked into `.text` by
 hash with the recorded one and the title shows "DEMO OK" or "DEMO
 DESYNC": the attract mode doubles as the hardware determinism test of
 section 9.3. The demo also ends on a 3 min cap, after 2 s dead without a
-rewind in the log, or once the level ends (no result in those cases).
+rewind in the log, or once the level ends (no result in those cases; a
+log that ends with the player dead still gets its hash compared).
 
 ## 12. Audio and neopixels
 

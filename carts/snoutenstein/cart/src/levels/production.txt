@@ -6,6 +6,8 @@
 # spray, a hotfix and a battery, the Iris door into the monitor hall (6)
 # with the Gold key in its far corner, then the Gold door into the Iris
 # mural arena (5) where the Heisenbug waits alone, and the exit room (8).
+# The Debugger (&) and a hotfix hide behind a secret door (X) in the monitor
+# hall's south wall, left of the Gold key corner.
 # Legend: SPEC.md section 6. Lines starting with # are comments.
 1111111177772222222222244444444444444444
 1......177772%.........4...............4
@@ -28,8 +30,8 @@
 3.......s......6.................w.....6
 3..a.........$.6...a.................*.6
 3..............6......................g6
-77777.7777755555555555G55555555588888888
-77777D777775....................88888888
+77777.7777755555555555G555555555888X8888
+77777D777775....................888&+888
 7..........5....................88888888
 7..........5....................8......8
 7.s........5....................8...s..8

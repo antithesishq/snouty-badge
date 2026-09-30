@@ -311,8 +311,9 @@ for a single-game cart: `-Drom-source=embed -Drom=...`, with
 
 ## 12. Boot splash and presentation
 
-- On `start()`: 1.2 s splash where the Snouty mark scrolls down from the
-  top like the DMG logo, then the two-note DMG-style chime through `tone2`
+- On `start()`: 1.2 s splash where the Antithesis Iris mark (the shared
+  1-bit 24x24 bitmap in `lib/iris_mark.zig`, drawn at 2x in the palette's
+  darkest shade) scrolls down from the top like the DMG logo, then the two-note DMG-style chime through `tone2`
   (1 kHz then 2 kHz, 60 ms each), then the game. Select-hold skips.
 - Title bar in the menu: "SNOUTY BOY" in the badge font, the ROM's header
   title, and the tag line "verified by deterministic replay".

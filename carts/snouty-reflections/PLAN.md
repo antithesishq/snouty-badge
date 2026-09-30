@@ -1,4 +1,4 @@
-# Plan: M0 scaffold, M1 "Tracer on hardware", M2 "Materials and shore"
+# Plan: M0 scaffold, M1 "Tracer on hardware", M2 "Materials and shore", M2.2 "Names, skyline and Iris"
 
 Companion to `SPEC.md`. This file is the contract between the parallel
 tracks; when it and the spec disagree, this file wins for the current
@@ -570,3 +570,174 @@ table and a GIF per variant, and tags `snouty-reflections/m2.1-variants`.
   shore_texels.bin) and M2.1 (no build_options): fixed, it now builds a
   variant (EMU_VARIANT, default cut20) and passes reference.py --variant.
   `docs/preview_m2.gif` is cut20. Tagged `snouty-reflections/m2`.
+
+## M2.2 Names, skyline and Iris (2026-09-29)
+
+Adrian added three things to scope (SPEC section 5a, 12): "ADRIAN HATCH"
+beside "ANTITHESIS", a Vancouver skyline instead of the treeline, and a
+spinning 3D Iris logo near the names so it reflects. The shipped variant
+is `cut20`; all four variants must keep building and are benched.
+
+### The scene changes, exactly
+
+Everything in the M2 scene holds unless changed here.
+
+**Shore.** Plane `z = 14` facing `-z`, `x` in `(-16, 16]`, `y` in `[0, 6)`
+(was `[0, 4)`), 256 x 48 texels (was 32 rows), still 8 texels per unit:
+
+```
+u = min(255, floor((16 - xs) * 8));   v = min(47, floor((6 - ys) * 8))
+```
+
+`shore_texels.bin` grows to 6144 bytes, same packing. Code takes the height
+from `shore_data.height` (Zig) and the texel file size (Python), not a
+literal.
+
+**Iris logo.** A slab-extruded Iris mark standing on the water.
+
+| Item | Value |
+|------|-------|
+| Centre | `C = (4.5, 1.8, 12.0)` |
+| Half-size | `S = 1.5` (the mark's unit square spans `U, V` in `[-1, 1]`) |
+| Half-thickness | `h = 0.12` (world units) |
+| Bounding sphere | centre `C`, radius `1.57` (mark radius `1.042 S`, plus `h`) |
+| Spin | `phi = 2 pi * ((6 * frame) mod orbit_frames) / orbit_frames`: six turns per 30 s orbit, 5 s per turn, the same at every fps; reuse the orbit sin/cos table at index `(6 * frame) mod orbit_frames` |
+| Axes | `n = (-sin phi, 0, -cos phi)` (faces the lake at `phi = 0`), `e_u = (-cos phi, 0, sin phi)` (reads left to right from the lake), `e_v = (0, 1, 0)` |
+| Local coords | `q = p - C`: `U = dot(q, e_u) / S`, `V = q.y / S`, `W = dot(q, n)` |
+
+It spans `y` in `[0.3, 3.3]` and `z` in `[10.43, 13.57]`: above the water
+and in front of the shore, so along any ray the order is sphere, logo,
+shore, water, sky, except that a sphere and the logo compare `t` (a ray
+from the water beyond the logo can meet both).
+
+**Mask** `M(U, V)` (measured from `snouty-art/ref/iris_mark.png`, 288 px,
+centre 144, unit 140 px; the small inner fillets are dropped, they are
+under a pixel at this size):
+
+```
+diamond(U, V) = |U| + |V| <= 0.414
+TL(U, V)      = U <= 0.293 and V >= -0.293 and U >= -1 and V <= 1
+                and not (U > -0.65 and V < 0.65)
+                and (U >= 0 or V <= 0 or U*U + V*V <= 1)
+BR(U, V)      = TL(-U, -V)
+M(U, V)       = diamond or TL or BR
+```
+
+**Hit.** For a ray `o + t d` with `t` in `(t_min, t_max)` (the bounding
+sphere chord, clipped to `t > 1e-3` and to `t` less than any nearer hit):
+
+```
+Wo = dot(o - C, n);  Wd = dot(d, n)
+if |Wd| > 1e-6:  ta, tb = sorted((-h - Wo) / Wd, (h - Wo) / Wd)   # slab entry, exit
+else:            if |Wo| > h: miss;  ta, tb = -inf, +inf
+t0 = max(ta, t_min);  t1 = min(tb, t_max);  if t0 >= t1: miss
+for i in 0 .. K-1:        # K = iris_samples, default 4
+    t = t0 + (t1 - t0) * i / (K - 1)
+    if M(U(o + t d), V(o + t d)): hit at t; face = (i == 0 and t0 == ta); stop
+```
+
+`face` hits are on a front or back face; any other sample hit is the side.
+
+**Shading** (no secondary rays, no shadow received or cast):
+
+```
+iris = (1.0, 0.3467, 0.2831)                  # linear of sRGB (255, 159, 145)
+face: N = n if dot(n, d) < 0 else -n
+      col = iris * (0.30 + 0.70 * max(0, dot(N, L)))
+            + sun_col * 0.6 * max(0, dot(reflect(d, N), L))^32
+side: col = iris * 0.18
+```
+
+**Which rays test it.** Primary rays; rays reflected off the water at any
+depth (knob 6); rays reflected off the chrome sphere (knob 5). Rays
+leaving the glass sphere (full20, full15) do not. A per-frame conservative
+bound decides which rays actually run the test (for example the
+projected bounding sphere for primary rays, the mirrored one widened for
+the ripple slope for water rays, a bounding-sphere reject for chrome
+rays); a bound may never change the picture.
+
+### Knobs (added to the M2 block in scene.zig)
+
+5. `iris_in_chrome: bool` (default true): chrome reflections show the logo.
+6. `iris_in_water: bool` (default true): water reflections show it.
+7. `iris_samples: u32` (default 4, minimum 2): K above.
+
+Reference flags: `--iris-in-chrome`, `--iris-in-water` (0/1),
+`--iris-samples K`, `--no-iris`. Variant presets set them if a variant
+changes them.
+
+### Budget and order of work
+
+Budgets are unchanged: cut20 47.0, full20 (baseline) 47.0, full15 62.7,
+half30 31.3 ms, calibrated busy, one orbit, bayer dither. cut20 starts at
+45.37. Measure after each step: taller shore with the new art, then the
+logo primary only, then in water, then in chrome. If cut20 is over, turn
+knob 7 to 3, then knob 5 off, then knob 6 off, and stop and report if still
+over. The other variants' knobs follow cut20's unless their own budget
+allows more. `.text + .data` < 120 KB for every variant; if one goes over,
+mirror the `inv_len` table in y (M1.1 notes, ~20 KB).
+
+### Shore art (Track B)
+
+`tools/gen_shore.py` redraws the 256 x 48 texture; same rules as M2 (code
+drawn, no downloads, point-sampled at about a texel per pixel, mostly
+seen upside down in rippling water, everything two texels thick, 15
+colours plus transparent; trees may go to free palette slots).
+
+- Top: a Vancouver skyline as seen from the water at sunset, sky gaps
+  index 0. Recognisable at this size: Harbour Centre's saucer and mast,
+  the tall slim Living Shangri-La, a cluster of glass towers catching the
+  sun, Canada Place's white sails at the waterline, and the North Shore
+  mountains (the Lions' twin peaks) as a faint hazy band behind.
+- "ADRIAN HATCH" over "ANTITHESIS" in the 8x12 font, cream outlined in
+  ink, in `u` 108 to 236.
+- Snouty on the jetty, as M2, in `u` 12 to 76.
+- `u` 80 to 104, `v` 22 to 47 is where the logo stands in front: keep it
+  plain (skyline and shoreline only), no text.
+- The bottom rows meet the water as before.
+
+### Check frames
+
+check_render per variant on the four orbit quarters, the bench worst, and
+three logo frames the integrator picks from the bench data: logo largest on
+screen, logo edge-on, logo in the chrome sphere. The M2 pass rule holds.
+
+### Tracks
+
+- **A (tracer)**: taller shore, logo, bounds, knobs, variants, size, the
+  per-step numbers. Owns `cart/`.
+- **B (art)**: `tools/gen_shore.py` and what it writes
+  (`cart/src/shore_texels.bin`, `shore_data.zig`, `tools/shore_palette.json`,
+  `docs/shore_texture.png`). Writes a first 256 x 48 version early (the M2
+  art moved down 16 rows is fine) so A and C can test against the new size.
+- **C (reference)**: `tools/reference.py` (shore size, logo, flags),
+  `tools/check_render.mjs` if needed.
+
+The integrator benches, checks, writes `docs/preview_m2.2.gif` and a
+close-up of the logo, updates SPEC status and RUNNING.md, and tags
+`snouty-reflections/m2.2`.
+
+### M2.2 status
+
+- 2026-09-29: plan written; tracks A, B, C started.
+- 2026-09-29: tracks A, B, C merged (untagged, pending Adrian). Art: Vancouver
+  skyline, "ADRIAN HATCH" over "ANTITHESIS", palette reshuffled (B's report in
+  gen_shore.py). Tracer: iris.zig, per-column pre-planned spans (lossless,
+  paid for the logo's overhead), inv_len mirrored in y (comptime 80x64,
+  unfolded into .bss at init). Per step, cut20 calibrated worst / mean:
+  taller shore 46.65 / 43.37; + logo primary K=4 46.46 / 43.70; + water
+  reflections 52.95 / 46.80; + chrome 54.01 / 47.90; K=3 53.77; chrome off
+  52.84; water off 46.33 / 43.69 (shipped). Final: full20 73.88 (over,
+  baseline), cut20 46.33, full15 58.05 (67.30 with the logo everywhere),
+  half30 22.57 with the logo everywhere. full20/cut20/full15 ship iris_cut
+  (no logo in water or chrome, K=3); half30 all on. `.text + .data`: 101608 /
+  89976 / 99672 / 119576; check-float passes; check_render PASS on all
+  variants incl. logo frames 279 (edge-on), 393 (largest), 597 (chrome).
+  Open for Adrian: the logo only reflects in half30; a badge capture
+  (branch reflections/hw-trace) will say whether cut20 can afford the water
+  reflection.
+- 2026-09-29: Adrian approved shipping as is (logo seen directly in cut20,
+  reflections decided after the hardware capture). Merged with main (41
+  commits; main added lib/iris_mark.zig, not used here yet), re-verified:
+  cut20 46.33 / 43.69 ms, check_render PASS, all carts build. Tagged
+  `snouty-reflections/m2.2` and pushed to main.

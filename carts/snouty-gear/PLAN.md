@@ -494,3 +494,18 @@ splash, 1 running, 2 menu.
   numbers, font capture, splash, buzzer), then M3 scrub (delta keyframe
   ring per SPEC.md 10, input log, Left/Right scrubbing on the free menu
   line, determinism test).
+- 2026-09-29 (after the M2 tag): Adrian ran Sonic and heard nothing. The
+  core was fine (`debug_psg_atten`/`debug_psg_tones`, new exports, show
+  Sonic's title music starting at frame 520 with attenuation envelopes,
+  and `debug_tone_hz` follows it); the simulator was the culprit:
+  upstream's wasm `tone2` shim sends `duration = -1` as `0xFFFFFFFF`,
+  which the WASM-4 style worklet reads as a 255-frame attack/decay/
+  sustain/release, so every note restarts a 4 s fade-in and music stays
+  under 2% volume (worklet math replayed in node: upstream 0.002-0.018 of
+  full, fix 1.000). Fix in `frontend/audio.zig`: the wasm build calls the
+  simulator's `tone` import itself (no attack, 6-frame sustain re-issued
+  every frame, 50% duty); the badge keeps the infinite `tone2`, which the
+  OS driver supports. Thumb `.text` unchanged. Snouty Boy's simulator
+  sound has the same defect (same shim), unfixed. `audio.max_volume`
+  added as the cap for the badge speaker (coworkers find the badge's
+  sound effects loud); default 1.0 pending Adrian's call.

@@ -121,16 +121,17 @@ for circuit traces.
 | 6 | `boss.png`      | 48x48  | 5      | 6           | The Heisenbug: a big beetle/roach hybrid with a question-mark motif on its shell, facing left. 0-3 idle wing loop, 4 teleport silhouette (see 6). Visible ~44x40. |
 | 7 | `fx_small.png`  | 16x16  | 8      | 3           | 0-4 small explosion, 5-7 hit spark (8x8 visible centered, white/yellow).                           |
 | 8 | `fx_big.png`    | 32x32  | 6      | 4           | Big explosion for boss and player, orange/yellow/white, last frame dark debris.                    |
-| 9 | `hud.png`       | 8x8    | 4      | n/a         | 0 Snouty head icon (life), 1 and 2 spare (were bomb icons; the fuel bar is drawn in code), 3 heart. 1 px transparent border. |
-|10 | `title.png`     | 128x40 | 1      | n/a         | Lettering "SNOUTY vs THE BUGS" in two lines, chunky 16-bit game logo style, Snouty purples with cream highlights and a Coral "vs". Transparent background. |
+| 9 | `hud.png`       | 12x8   | 4      | n/a         | 0 Snouty head icon (rewind stock; 10x6 visible, see the 2026-09-29 notes), 1 and 2 spare (were bomb icons; the fuel bar is drawn in code), 3 heart. 1 px transparent border. |
+|10 | `title.png`     | 128x40 | 1      | n/a         | Lettering "SNOUTY BUGHUNT" in two lines ("SNOUTY" / "BUGHUNT"; the game was called "Snouty vs. the Bugs" until 2026-09-29), chunky 16-bit game logo style, Snouty purples with cream highlights and "BUGHUNT" in Coral. Transparent background. |
 |11 | `bg_far.png`    | 256x120| 1      | n/a         | Opaque, tiles seamlessly left-right. Deep space with a faint nebula and a distant "motherboard planet" horizon along the bottom third. Low contrast: everything here sits behind bullets. Up to 15 colors preferred. |
 |12 | `bg_near.png`   | 256x24 | 1      | n/a         | Transparent above, tiles seamlessly left-right. Circuit-board terrain: traces, pads, a chip or two, in teal and dark blue. Slightly higher contrast than far, still darker than any bullet. |
+
 
 Optional, only after 1 to 12 are approved:
 
 | # | File              | Cell   | Frames | Notes                                                              |
 |---|-------------------|--------|--------|--------------------------------------------------------------------|
-|13 | `snouty_portrait.png` | 48x48 | 1  | Title-screen Snouty waving from the cockpit, for the title card.   |
+|13 | `snouty_portrait.png` | 48x48 | 1  | Title-screen Snouty waving from the cockpit, for the title card. Not currently wanted: a bust-only placeholder was tried 2026-09-29 and dropped; the title card draws the ship sprite. |
 |14 | `bestiary.png`    | 16x16  | 5      | Clean single frames of each bug for the title bestiary.            |
 
 ## 8. Delivery format (per study, mirrors Run Study 05)
@@ -225,6 +226,21 @@ Notes from the M2 placeholder pass (`bugs.png`, `fx_big.png`):
   uses grey and mid-dark smoke (frame 4 a broken ring, frame 5 a small puff
   with two orange embers) because outline-dark pixels vanish on navy.
 
+Notes from the Snouty icon revision (2026-09-29, `hud.png`, title card):
+
+- Adrian: the 8x8 head icon read as a rat (a snout tapering to a point and
+  a 1 px ear). The HUD cell is 12x8 now, so the head has 10x6 visible
+  pixels: a round 2 px ear on the back of the dome, a 2x2 cream eye with
+  the pupil forward, and a blunt snout tube 2 to 3 px thick that droops at
+  the tip. Keep those four features in any real version; they are what
+  separates Snouty from a rodent at this size. The code draws the icons at
+  x 160 - 12 * (i + 1), so five fill x 100..159 right of the fuel bar.
+- The title card no longer reuses the HUD icon: it draws the ship's level
+  cell with the thruster loop at (64, 62), bobbing 1 px, under the two
+  title lines ("SNOUTY" / "BUGHUNT" in the 8x8 font at y 40 and 52). A
+  48x48 bust portrait was tried and dropped the same day; Adrian prefers
+  the in-game ship.
+
 Notes from the M3 placeholder pass (`boss.png`, `title.png`):
 
 - Boss layout in its 48x48 cell (placeholder, side view facing left): the
@@ -249,8 +265,8 @@ Notes from the M3 placeholder pass (`boss.png`, `title.png`):
   grey wing; nothing is cream or white, so round bullets and needles stay
   the brightest thing when they cross it. Keep it that way.
 - Title: hand-placed 5x7 block glyphs scaled 3x ("SNOUTY") and 2x
-  ("vs THE BUGS") with 45-degree chamfers on every diagonal step, banded
-  purple 4/3/2 fill, cream top edge, purple 1 bottom edge, 1 px outline;
-  "vs" is lowercase Coral with red/dark-red shading. The two lines share
+  ("BUGHUNT", since 2026-09-29) with 45-degree chamfers on every diagonal
+  step, banded purple 4/3/2 fill, cream top edge, purple 1 bottom edge,
+  1 px outline; the second line is Coral with red/dark-red shading. The two lines share
   one outline row (y 23) to fit 40 px. 9 colours. Never render the logo
   with a font rasteriser: its anti-aliasing blows the 15-colour budget.

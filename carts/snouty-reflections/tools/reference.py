@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-"""Reference renderer for the M2 scene: PLAN.md "The M1 scene, exactly" plus
-"The M2 scene, exactly", executable.
+"""Reference renderer for the M2.2 scene: PLAN.md "The M1 scene, exactly",
+"The M2 scene, exactly" and M2.2 "The scene changes, exactly", executable.
 
     python3 tools/reference.py --frame 0 --frame 150 --frame 300 --frame 450 --out out/
     python3 tools/reference.py --frame 0 --out out/ --glass fake --water-shadows primary_only
@@ -26,7 +26,15 @@ water time is F / N s), --no-glass (the glass sphere and its shadow removed),
 --glass-primary env (knob 4, trace.zig's env_flat) and --scale 2 (rays only at
 the even pixels of the full-resolution camera, each copied to its 2x2 block). The shore texture and palette are read at run time
 from cart/src/shore_texels.bin and tools/shore_palette.json (override with
---texels / --palette).
+--texels / --palette); the shore's height is the file's row count / 8 (48
+rows, y in [0, 6) for M2.2; the M2 file's 32 rows still give y in [0, 4)).
+
+M2.2 adds the spinning Iris logo (PLAN.md M2.2 "Iris logo": slab-extruded
+mark at (4.5, 1.8, 12), six turns per orbit, K samples along the slab chord).
+Primary rays test it, water reflections at every depth if --iris-in-water 1
+(knob 6), chrome reflections if --iris-in-chrome 1 (knob 5), rays leaving the
+glass never. --iris-samples K is knob 7, --no-iris removes it; with --no-iris
+and the M2 texel file the output is byte-identical to the M2.1 reference.
 
 Compare against the cart with tools/check_render.mjs (see docs/RUNNING.md).
 The code is vectorised: every function takes arrays of N rays (N x 3) and the
@@ -71,12 +79,21 @@ GLASS_F0 = 0.04
 GLASS_OPACITY = 0.55
 GLASS_FAR = np.array([0.45, 0.33, 0.35])      # glass reached at depth 2
 
-# Shore: plane z = 14 facing -z, x in (-16, 16], y in [0, 4), 256 x 32 texels
+# Shore: plane z = 14 facing -z, x in (-16, 16], y in [0, rows / 8), 256 x rows
+# texels (M2.2: 48 rows, y in [0, 6); M2: 32 rows, y in [0, 4)). The row count
+# comes from the texel file's size (Config.tex_h, Config.shore_h).
 SHORE_Z = 14.0
 SHORE_X = 16.0
-SHORE_H = 4.0
 SHORE_TPU = 8.0                               # texels per world unit
-TEX_W, TEX_H = 256, 32
+TEX_W = 256
+
+# Iris logo (PLAN.md M2.2 "Iris logo"): a slab-extruded mark standing on the water.
+IRIS_C = np.array([4.5, 1.8, 12.0])
+IRIS_S = 1.5                                  # half-size: the mark's U, V in [-1, 1]
+IRIS_HT = 0.12                                # half-thickness (world units)
+IRIS_R = 1.57                                 # bounding sphere radius
+IRIS_COL = np.array([1.0, 0.3467, 0.2831])    # linear of sRGB (255, 159, 145)
+IRIS_SPIN = 6                                 # turns per orbit
 
 # Water
 DEEP = np.array([0.02, 0.08, 0.14])
@@ -107,12 +124,13 @@ class Config:
 
     def __init__(self, glass="real", water_shadows="all", glass_secondary="full", fade_k=FADE_K,
                  texels_path=None, palette_path=None, fps=20, glass_enabled=True, glass_primary="full",
-                 scale=1):
+                 scale=1, iris=True, iris_in_chrome=True, iris_in_water=True, iris_samples=4):
         assert glass in ("real", "fake")
         assert water_shadows in ("all", "primary_only", "off")
         assert glass_secondary in ("full", "env")
         assert glass_primary in ("full", "env")
         assert fps > 0 and scale in (1, 2)
+        assert iris_samples >= 2
         self.glass = glass
         self.water_shadows = water_shadows
         self.glass_secondary = glass_secondary
@@ -125,16 +143,33 @@ class Config:
         # Shadow casters: the glass casts only while it exists.
         self.shadow_spheres = SHADOW_SPHERES if glass_enabled else SHADOW_SPHERES[:1]
         self.texels = load_texels(texels_path or os.path.join(CART, "cart", "src", "shore_texels.bin"))
+        self.tex_h = self.texels.shape[0]
+        self.shore_h = self.tex_h / SHORE_TPU
         self.palette = load_palette(palette_path or os.path.join(HERE, "shore_palette.json"))
+        # M2.2 knobs 5-7 and --no-iris. The per-frame spin is set by set_frame().
+        self.iris = iris
+        self.iris_in_chrome = iris and iris_in_chrome
+        self.iris_in_water = iris and iris_in_water
+        self.iris_samples = iris_samples
+        self.set_frame(0)
+
+    def set_frame(self, frame):
+        """The logo's axes for frame F: phi = 2 pi ((6 F) mod orbit_frames) / orbit_frames."""
+        phi = 2.0 * np.pi * ((IRIS_SPIN * frame) % self.orbit_frames) / self.orbit_frames
+        s, c = np.sin(phi), np.cos(phi)
+        self.iris_n = np.array([-s, 0.0, -c])     # faces the lake at phi = 0
+        self.iris_eu = np.array([-c, 0.0, s])     # reads left to right from the lake
 
 
 def load_texels(path):
-    """4-bit indices as a (32, 256) array [v, u]: byte v*128 + u/2, low nibble for even u."""
+    """4-bit indices as a (rows, 256) array [v, u]: byte v*128 + u/2, low nibble for even u.
+    rows = file size / 128 (48 for M2.2, 32 for the M2 file)."""
     data = np.frombuffer(open(path, "rb").read(), dtype=np.uint8)
-    if data.size != TEX_W * TEX_H // 2:
-        raise SystemExit(f"reference: {path}: expected {TEX_W * TEX_H // 2} bytes, got {data.size}")
-    rows = data.reshape(TEX_H, TEX_W // 2)
-    tex = np.empty((TEX_H, TEX_W), dtype=np.uint8)
+    if data.size == 0 or data.size % (TEX_W // 2):
+        raise SystemExit(f"reference: {path}: size {data.size} is not a whole number of {TEX_W // 2}-byte rows")
+    tex_h = data.size // (TEX_W // 2)
+    rows = data.reshape(tex_h, TEX_W // 2)
+    tex = np.empty((tex_h, TEX_W), dtype=np.uint8)
     tex[:, 0::2] = rows & 0x0F
     tex[:, 1::2] = rows >> 4
     return tex
@@ -262,11 +297,11 @@ def hit_shore(o, d, cfg):
     ts = (SHORE_Z - o[:, 2]) / safe_dz
     xs = o[:, 0] + d[:, 0] * ts
     ys = o[:, 1] + d[:, 1] * ts
-    inside = fwd & (ts > T_MIN) & (ys >= 0.0) & (ys < SHORE_H) & (xs > -SHORE_X) & (xs <= SHORE_X)
+    inside = fwd & (ts > T_MIN) & (ys >= 0.0) & (ys < cfg.shore_h) & (xs > -SHORE_X) & (xs <= SHORE_X)
     idx = np.zeros(n, dtype=np.intp)
     if inside.any():
         u = np.minimum(TEX_W - 1, np.floor((SHORE_X - xs[inside]) * SHORE_TPU)).astype(np.intp)
-        v = np.minimum(TEX_H - 1, np.floor((SHORE_H - ys[inside]) * SHORE_TPU)).astype(np.intp)
+        v = np.minimum(cfg.tex_h - 1, np.floor((cfg.shore_h - ys[inside]) * SHORE_TPU)).astype(np.intp)
         idx[inside] = cfg.texels[v, u]
     hit = inside & (idx != 0)
     return np.where(hit, ts, np.inf), idx
@@ -307,6 +342,92 @@ def water_shadow(p, spheres=SHADOW_SPHERES):
     return sh
 
 
+def iris_tl(u, v):
+    """The mark's top-left bracket (PLAN.md M2.2 "Mask")."""
+    return ((u <= 0.293) & (v >= -0.293) & (u >= -1.0) & (v <= 1.0)
+            & ~((u > -0.65) & (v < 0.65))
+            & ((u >= 0.0) | (v <= 0.0) | (u * u + v * v <= 1.0)))
+
+
+def iris_mask(u, v):
+    """M(U, V) = diamond or TL or BR, BR(U, V) = TL(-U, -V)."""
+    return (np.abs(u) + np.abs(v) <= 0.414) | iris_tl(u, v) | iris_tl(-u, -v)
+
+
+def hit_iris(o, d, t_near, cfg):
+    """(t, face) of the rays against the logo; t = np.inf on a miss. t_near is
+    the nearest other hit that can be in front of the logo (the spheres), which
+    clips the bounding-sphere chord. Follows PLAN.md M2.2 "Hit" literally: the
+    chord (t_min, t_max), the slab entry and exit, K samples from t0 to t1, and
+    face = the first sample hit and t0 is the slab entry."""
+    n_rays = len(d)
+    t_hit = np.full(n_rays, np.inf)
+    face = np.zeros(n_rays, dtype=bool)
+    # Bounding sphere chord, clipped to t > T_MIN and to t < t_near.
+    oc = o - IRIS_C
+    b = dot(oc, d)
+    disc = b * b - (dot(oc, oc) - IRIS_R * IRIS_R)
+    ok = disc >= 0.0
+    sq = np.sqrt(np.where(ok, disc, 0.0))
+    t_min = np.maximum(-b - sq, T_MIN)
+    t_max = np.minimum(-b + sq, t_near)
+    # Slab |W| <= h along n.
+    n = cfg.iris_n
+    wo = dot(oc, n)
+    wd = dot(d, n)
+    par = np.abs(wd) <= 1e-6
+    safe = np.where(par, 1.0, wd)
+    ta_ = (-IRIS_HT - wo) / safe
+    tb_ = (IRIS_HT - wo) / safe
+    ta = np.where(par, -np.inf, np.minimum(ta_, tb_))
+    tb = np.where(par, np.inf, np.maximum(ta_, tb_))
+    ok &= ~(par & (np.abs(wo) > IRIS_HT))
+    t0 = np.maximum(ta, t_min)
+    t1 = np.minimum(tb, t_max)
+    ok &= t0 < t1
+    live = ok.copy()
+    k = cfg.iris_samples
+    for i in range(k):
+        if not live.any():
+            break
+        t = t0 + (t1 - t0) * (i / (k - 1))
+        p = o + d * np.where(live, t, 0.0)[:, None]
+        q = p - IRIS_C
+        m = live & iris_mask(dot(q, cfg.iris_eu) / IRIS_S, q[:, 1] / IRIS_S)
+        t_hit[m] = t[m]
+        if i == 0:
+            face[m] = t0[m] == ta[m]
+        live &= ~m
+    return t_hit, face
+
+
+def shade_iris(d, face, cfg):
+    """Face: lambert plus a ^32 highlight off the facing normal; side: flat 0.18."""
+    col = np.broadcast_to(IRIS_COL * 0.18, d.shape).copy()
+    if face.any():
+        df = d[face]
+        n = cfg.iris_n
+        s = np.where(dot(df, n) < 0.0, 1.0, -1.0)[:, None]
+        nf = n * s
+        lam = 0.30 + 0.70 * np.maximum(0.0, dot(nf, SUN_L))
+        spec = np.maximum(0.0, dot(reflect(df, nf), SUN_L))
+        for _ in range(5):                      # ^32
+            spec = spec * spec
+        col[face] = IRIS_COL * lam[:, None] + SUN_COL * (0.6 * spec)[:, None]
+    return col
+
+
+def env_iris(o, d, cfg):
+    """env() with the logo in front: the depth-2 water reflection (knob 6)."""
+    col = env(o, d, cfg)
+    if cfg.iris_in_water and len(d):
+        ti, face = hit_iris(o, d, np.full(len(d), np.inf), cfg)
+        m = np.isfinite(ti)
+        if m.any():
+            col[m] = shade_iris(d[m], face[m], cfg)
+    return col
+
+
 # ---------------------------------------------------------------- shading
 def shade_glass(o, d, ts, depth, t, cfg):
     """Glass sphere hit from outside at o + d ts (PLAN "Glass shading")."""
@@ -335,8 +456,8 @@ def shade_glass(o, d, ts, depth, t, cfg):
         refl = env_flat(p, r, cfg)
         trans = env_flat(o2, d2, cfg)
     else:
-        refl = trace(p, r, depth + 1, t, cfg, skip_glass=True)
-        trans = trace(o2, d2, depth + 1, t, cfg, skip_glass=True)
+        refl = trace(p, r, depth + 1, t, cfg, skip_glass=True, iris=False)     # rays leaving the glass
+        trans = trace(o2, d2, depth + 1, t, cfg, skip_glass=True, iris=False)  # never see the logo
     return f * refl + (1.0 - f) * GLASS_TINT * trans
 
 
@@ -344,7 +465,7 @@ def shade_chrome(o, d, ts, depth, t, cfg):
     p = o + d * ts[:, None]
     n = (p - SPHERE_C) / SPHERE_R
     if depth < MAX_DEPTH:
-        return SPHERE_TINT * trace(p, reflect(d, n), depth + 1, t, cfg)
+        return SPHERE_TINT * trace(p, reflect(d, n), depth + 1, t, cfg, iris=cfg.iris_in_chrome)
     lam = 0.25 + 0.75 * np.maximum(0.0, dot(n, SUN_L))
     return SPHERE_TINT * SUN_COL * lam[:, None]
 
@@ -356,7 +477,10 @@ def shade_water(o, d, tw, depth, t, cfg):
     r = reflect(d, n)
     r[:, 1] = np.maximum(r[:, 1], 0.02)         # if r.y < 0.02: r.y = 0.02
     r = normalize(r)
-    refl = trace(p, r, depth + 1, t, cfg) if depth < MAX_DEPTH else env(p, r, cfg)
+    if depth < MAX_DEPTH:
+        refl = trace(p, r, depth + 1, t, cfg, iris=cfg.iris_in_water)
+    else:
+        refl = env_iris(p, r, cfg)              # knob 6 covers water reflections at every depth
     f = schlick(np.maximum(0.0, dot(-d, n)), WATER_F0)
     if cfg.water_shadows == "all" or (cfg.water_shadows == "primary_only" and depth == 0):
         sh = water_shadow(p, cfg.shadow_spheres)
@@ -370,11 +494,14 @@ def shade_water(o, d, tw, depth, t, cfg):
     return lerp(base, refl, f) + SUN_COL * (0.5 * spec)[:, None]
 
 
-def trace(o, d, depth, t, cfg, skip_glass=False):
+def trace(o, d, depth, t, cfg, skip_glass=False, iris=False):
     """Linear RGB for N rays (o, d: N x 3, d unit). depth 0..2, t = frame / fps.
     skip_glass: the rays start on the glass sphere (reflection, exit or fake
     refraction), which they cannot hit again, so it is not tested; also set
-    for every ray when the glass is disabled (--no-glass)."""
+    for every ray when the glass is disabled (--no-glass).
+    iris: the rays test the logo (primary rays, and water / chrome reflections
+    per knobs 6 / 5; never rays leaving the glass). The caller has already
+    folded --no-iris and the knobs into it; cfg.set_frame() set the spin."""
     skip_glass = skip_glass or not cfg.glass_enabled
     n_rays = len(d)
     col = np.zeros((n_rays, 3))
@@ -392,6 +519,15 @@ def trace(o, d, depth, t, cfg, skip_glass=False):
     which = np.argmin(t_all, axis=-1)
     tmin = t_all[np.arange(n_rays), which]
     which = np.where(np.isfinite(tmin), which, 4)          # 4 = miss
+
+    # The logo: in front of the shore and above the water, so only a sphere
+    # can be nearer; its chord is clipped to t below the nearer sphere hit.
+    if iris:
+        ti, iface = hit_iris(o, d, np.minimum(t_all[:, 0], t_all[:, 1]), cfg)
+        mi = np.isfinite(ti)
+        which = np.where(mi, 5, which)                     # 5 = logo
+        if mi.any():
+            col[mi] = shade_iris(d[mi], iface[mi], cfg)
 
     shaders = [shade_chrome, shade_glass, None, shade_water]
     for k, fn in enumerate(shaders):
@@ -426,6 +562,7 @@ def render(frame, cfg=None):
     only the even (x, y) pixels are traced, with exactly the full-resolution
     pixel's ray, and each is copied to its 2x2 block."""
     cfg = cfg or Config()
+    cfg.set_frame(frame)
     t = frame / cfg.fps
     eye, fwd, right, up = camera(frame, cfg.orbit_frames)
     s = cfg.scale
@@ -436,7 +573,7 @@ def render(frame, cfg=None):
     dirs = fwd + right * u[None, :, None] + up * v[:, None, None]   # (H, W, 3)
     d = normalize(dirs.reshape(-1, 3))
     o = np.broadcast_to(eye, d.shape).copy()
-    img = trace(o, d, 0, t, cfg).reshape(len(y), len(x), 3)
+    img = trace(o, d, 0, t, cfg, iris=cfg.iris).reshape(len(y), len(x), 3)
     if s > 1:
         img = np.repeat(np.repeat(img, s, axis=0), s, axis=1)
     return img
@@ -465,10 +602,11 @@ def write_png(path, rgb):
 
 # PLAN.md "M2.1 Perf variants": the flag defaults each variant sets, mirroring
 # cart/src/variant.zig. check_render.mjs and tools/emu pass --variant.
+IRIS_CUT = {"iris_in_chrome": 0, "iris_in_water": 0, "iris_samples": 3}  # variant.zig iris_cut
 VARIANTS = {
-    "full20": {},
-    "cut20": {"no_glass": True, "water_shadows": "off"},
-    "full15": {"fps": 15, "glass_primary": "env"},
+    "full20": {**IRIS_CUT},
+    "cut20": {"no_glass": True, "water_shadows": "off", **IRIS_CUT},
+    "full15": {"fps": 15, "glass_primary": "env", **IRIS_CUT},
     "half30": {"fps": 30, "scale": 2},
 }
 
@@ -492,6 +630,13 @@ def main():
                     help="frame rate: orbit_frames = 30 * fps, water t = frame / fps (default 20)")
     ap.add_argument("--scale", type=int, choices=[1, 2], default=1,
                     help="render scale: 2 traces the even pixels and fills 2x2 blocks (default 1)")
+    ap.add_argument("--no-iris", action="store_true", help="remove the Iris logo (M2.2) everywhere")
+    ap.add_argument("--iris-in-chrome", type=int, choices=[0, 1], default=1,
+                    help="knob 5: chrome reflections show the logo (default 1)")
+    ap.add_argument("--iris-in-water", type=int, choices=[0, 1], default=1,
+                    help="knob 6: water reflections, at every depth, show the logo (default 1)")
+    ap.add_argument("--iris-samples", type=int, default=4,
+                    help="knob 7: K, samples along the slab chord (default 4, minimum 2)")
     ap.add_argument("--fade-k", type=float, default=FADE_K, help=f"ripple fade constant (default {FADE_K})")
     ap.add_argument("--texels", default=None, help="shore texels (default cart/src/shore_texels.bin)")
     ap.add_argument("--palette", default=None, help="shore palette JSON (default tools/shore_palette.json)")
@@ -504,13 +649,18 @@ def main():
     args = ap.parse_args()
     if args.fps <= 0:
         ap.error("--fps must be > 0")
+    if args.iris_samples < 2:
+        ap.error("--iris-samples must be >= 2")
     cfg = Config(args.glass, args.water_shadows, args.glass_secondary, args.fade_k, args.texels, args.palette,
                  fps=args.fps, glass_enabled=not args.no_glass, glass_primary=args.glass_primary,
-                 scale=args.scale)
+                 scale=args.scale, iris=not args.no_iris, iris_in_chrome=bool(args.iris_in_chrome),
+                 iris_in_water=bool(args.iris_in_water), iris_samples=args.iris_samples)
     os.makedirs(args.out, exist_ok=True)
     print(f"reference: glass={'off' if args.no_glass else cfg.glass} water_shadows={cfg.water_shadows} "
           f"glass_secondary={cfg.glass_secondary} glass_primary={cfg.glass_primary} fade_k={cfg.fade_k:g} "
-          f"fps={cfg.fps} (orbit {cfg.orbit_frames} frames) scale={cfg.scale}", file=sys.stderr)
+          f"fps={cfg.fps} (orbit {cfg.orbit_frames} frames) scale={cfg.scale} shore_rows={cfg.tex_h} "
+          f"iris={'off' if not cfg.iris else f'chrome={int(cfg.iris_in_chrome)} water={int(cfg.iris_in_water)} K={cfg.iris_samples}'}",
+          file=sys.stderr)
     for frame in args.frame:
         if frame < 0:
             ap.error("--frame must be >= 0")

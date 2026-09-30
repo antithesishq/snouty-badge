@@ -4,7 +4,7 @@
 //
 //   node tools/check_render.mjs <preview.png> <ref.png> [--diff out.png] [--amp out.png]
 //   node tools/check_render.mjs --variant full20|cut20|full15|half30 [--wasm cart.wasm]
-//                               [--frame F]... [--only] [--out DIR]
+//                               [--frame F]... [--only] [--out DIR] [--ref-arg ARG]...
 //
 // Both PNGs must be the same size, 8-bit RGB or RGBA, non-interlaced. Each
 // channel is recovered to 5/6/5 units: round(v8 * 31 / 255) for red and blue,
@@ -31,12 +31,19 @@
 //   half30  --fps 30 --scale 2                           orbit 900
 //
 // Frames: 0, 1/4, 1/2 and 3/4 of the orbit (rounded down), plus every --frame
-// F (for example the bench's worst frame); with --only just the --frame ones.
+// F (for example the bench's worst frame, and M2.2's logo frames: at 20 fps
+// 393 logo largest, 383 edge-on, 598 in the chrome sphere); with --only just
+// the --frame ones. The reference renders the M2.2 logo with its knob
+// defaults (reference.py VARIANTS sets no iris flags yet).
 // The wasm defaults to dist/variants/<variant>.wasm (tools/build_variants.sh)
 // when it exists, else ../../zig-out/bin/snouty-reflections.wasm (a warning
 // says so: that build is whatever variant was last built). Frames, references
 // and diff_FFFF.png go to --out (default out/check_<variant>). For half30 every
 // pixel of the 2x2-upscaled frame is compared.
+//
+// --ref-arg ARG (repeatable) appends ARG to the reference.py command line, for
+// a cart built with non-default knobs, e.g. --ref-arg --iris-samples --ref-arg 3
+// or --ref-arg --no-iris.
 //
 // Exit codes: 0 PASS (every frame), 3 FAIL, 2 usage or unreadable PNG, 1 a
 // preview.mjs or reference.py run failed.
@@ -55,7 +62,7 @@ const OUTLIER_UNITS = 6;
 function usage(msg) {
     if (msg) console.error(`check_render: ${msg}`);
     console.error("usage: node tools/check_render.mjs <preview.png> <ref.png> [--diff out.png] [--amp out.png]\n" +
-        "       node tools/check_render.mjs --variant full20|cut20|full15|half30 [--wasm cart.wasm] [--frame F]... [--only] [--out DIR]");
+        "       node tools/check_render.mjs --variant full20|cut20|full15|half30 [--wasm cart.wasm] [--frame F]... [--only] [--out DIR] [--ref-arg ARG]...");
     process.exit(2);
 }
 
@@ -192,7 +199,7 @@ function run(cmd, argv) {
     if (r.status !== 0) { console.error(`check_render: ${cmd} exited with ${r.status}`); process.exit(1); }
 }
 
-function checkVariant(name, wasm, extraFrames, only, outDir) {
+function checkVariant(name, wasm, extraFrames, only, outDir, refArgs) {
     const v = VARIANTS[name];
     if (!v) usage(`unknown variant ${name} (want ${Object.keys(VARIANTS).join(", ")})`);
     const orbit = 30 * v.fps;
@@ -222,7 +229,7 @@ function checkVariant(name, wasm, extraFrames, only, outDir) {
         "--script", path.join(CART_DIR, "tools", "scripts", "m1_nodither.json"),
         "--dump-exports", "debug_dither_mode", "--expect", "debug_dither_mode == 1", "--out", outDir]);
     run("python3", [path.join(CART_DIR, "tools", "reference.py"), ...frames.flatMap((f) => ["--frame", String(f)]),
-        "--variant", name, "--out", outDir]);
+        "--variant", name, ...refArgs, "--out", outDir]);
 
     const results = [];
     for (const f of frames) {
@@ -240,7 +247,7 @@ function checkVariant(name, wasm, extraFrames, only, outDir) {
 
 // ---------------------------------------------------------------- main
 const args = process.argv.slice(2);
-const files = [], extraFrames = [];
+const files = [], extraFrames = [], refArgs = [];
 let diffOut = null, ampOut = null, variant = null, wasm = null, outDir = null, only = false;
 for (let i = 0; i < args.length; i++) {
     if (args[i] === "--diff") { diffOut = args[++i]; if (!diffOut) usage("--diff needs a file name"); }
@@ -254,6 +261,7 @@ for (let i = 0; i < args.length; i++) {
         extraFrames.push(f);
     }
     else if (args[i] === "--only") only = true;
+    else if (args[i] === "--ref-arg") { const r = args[++i]; if (r === undefined) usage("--ref-arg needs an argument"); refArgs.push(r); }
     else if (args[i] === "-h" || args[i] === "--help") usage();
     else if (args[i].startsWith("--")) usage(`unknown option ${args[i]}`);
     else files.push(args[i]);
@@ -261,9 +269,9 @@ for (let i = 0; i < args.length; i++) {
 
 if (variant) {
     if (files.length || diffOut || ampOut) usage("--variant takes no PNG files, --diff or --amp");
-    process.exit(checkVariant(variant, wasm, extraFrames, only, outDir) ? 0 : 3);
+    process.exit(checkVariant(variant, wasm, extraFrames, only, outDir, refArgs) ? 0 : 3);
 }
-if (wasm || outDir || extraFrames.length || only) usage("--wasm, --out, --frame and --only need --variant");
+if (wasm || outDir || extraFrames.length || only || refArgs.length) usage("--wasm, --out, --frame, --only and --ref-arg need --variant");
 if (files.length !== 2) usage();
 
 const a = load(files[0]), b = load(files[1]);
