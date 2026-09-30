@@ -43,3 +43,12 @@ and index field 5 KB, copper strip 6 KB, palettes 1.5 KB).
 
 Plenty of headroom: the M1 parts can spend up to about 9 ms each before a
 fade pushes them to the limit.
+
+## M1
+
+Calibrated badge-bench, `carts/snouty-scene/tools/bench_parts.sh <index>`
+per part (part frames + 60), `.bss` delta against M0's 28,472.
+
+| # | Part | mean busy ms | part worst busy ms (frame) | run worst | .bss delta | what dominates |
+|---|---|---|---|---|---|---|
+|  5 | Twister     |  0.75 |  1.53 (t 1) |  1.72 | +3,440 | background column copy (`memcpy`, 47%) and the row span fill in `render` (45%); steady frames 0.70 ms, the worst is a fade frame |
