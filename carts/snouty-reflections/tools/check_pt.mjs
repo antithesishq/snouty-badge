@@ -3,7 +3,7 @@
 // (PLAN.md M4 "Reference and check (Track C)").
 //
 //   node tools/check_pt.mjs [--wasm cart.wasm] [--variant cut20] [--view P:T[:O[:H]]]... [--only]
-//                           [--checks 1,2,3] [--jobs N] [--out DIR] [--ref-only]
+//                           [--checks 1,2,3] [--jobs N] [--out DIR] [--ref-only] [--no-accum-info]
 //
 // Per view the cart is loaded in-process (as check_render.mjs does) and
 // driven through its debug exports: debug_set_dither_mode(1) (none),
@@ -27,7 +27,10 @@
 //   2. Convergence. Continuing to 64 and 256 passes (debug_pt_run(48),
 //      debug_pt_run(192)): RMSE against the 1024-pass reference at 16, 64 and
 //      256 passes decreases, RMSE(64) / RMSE(256) >= 1.6 and RMSE(256) <= 4.0
-//      units.
+//      units. An extra line (not gated; --no-accum-info skips it and its
+//      256-pass accumulator simulation) shows the floor the accumulator
+//      format itself sets at 256 passes: reference.py --accum against the
+//      1024-pass reference and against the float 256-pass mean.
 //
 // debug_pt_passes() must read 16, 64 and 256 after the runs. Check set
 // (default; --only drops it and keeps the --view list): each preset at
@@ -70,7 +73,7 @@ const NEED = ["start", "update", "debug_set_view", "debug_set_dither_mode", "deb
 function usage(msg) {
     if (msg) console.error(`check_pt: ${msg}`);
     console.error("usage: node tools/check_pt.mjs [--wasm cart.wasm] [--variant cut20] [--view P:T[:O[:H]]]... [--only]\n" +
-        "              [--checks 1,2,3] [--jobs N] [--out DIR] [--ref-only]");
+        "              [--checks 1,2,3] [--jobs N] [--out DIR] [--ref-only] [--no-accum-info]");
     process.exit(2);
 }
 
@@ -323,6 +326,17 @@ function checkView(cart, v, checks, jobs, outDir) {
                     `mean |d| ${sa.meanAbs.toFixed(4)}, max ${sa.maxAbs.toFixed(1)} at (${sa.maxAt.x}, ${sa.maxAt.y}) ${sa.maxAt.ch}`);
             }
             if (ref1024) rmse.push([n, compareMeans(mean, ref1024).rmse]);
+            if (n === 256 && ref1024 && accumInfo) {
+                // Not gated: the floor the accumulator format sets. The running
+                // mean is re-rounded every pass, so its rounding error is a
+                // random walk that grows with n instead of averaging out.
+                const acc = reference(v, 256, null, true);
+                let same = 0;
+                for (let i = 0; i < mean.length; i++) if (mean[i] === acc[i]) same++;
+                lines.push(`    (info) 256 passes: cart vs the simulated accumulator ${(100 * same / mean.length).toFixed(2)}% identical; ` +
+                    `simulated accumulator vs ${REF_PASSES}: RMSE ${compareMeans(acc, ref1024).rmse.toFixed(3)} ` +
+                    `(its rounding alone: ${compareMeans(acc, reference(v, 256, jobs)).rmse.toFixed(3)} vs the float mean)`);
+            }
         }
         if (checks.has(2) && rmse.length === PASSES.length) pass = convergence(rmse, lines) && pass;
     }
@@ -348,7 +362,7 @@ function refOnly(v, jobs) {
 
 // ---------------------------------------------------------------- main
 const args = process.argv.slice(2);
-let wasm = null, variant = "cut20", only = false, outDir = null, jobs = null, refOnlyMode = false;
+let wasm = null, variant = "cut20", only = false, outDir = null, jobs = null, refOnlyMode = false, accumInfo = true;
 let checks = new Set([1, 2, 3]);
 const views = [];
 for (let i = 0; i < args.length; i++) {
@@ -361,6 +375,7 @@ for (let i = 0; i < args.length; i++) {
     else if (a === "--jobs") jobs = int(val());
     else if (a === "--only") only = true;
     else if (a === "--ref-only") refOnlyMode = true;
+    else if (a === "--no-accum-info") accumInfo = false;
     else if (a === "--checks") {
         checks = new Set(val().split(",").map((s) => Number(s.trim())));
         if ([...checks].some((c) => ![1, 2, 3].includes(c))) usage("--checks takes a list of 1, 2, 3");
