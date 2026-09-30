@@ -10,6 +10,9 @@ const variant = @import("variant.zig");
 const build_options = @import("build_options");
 
 const trace = @import("trace.zig");
+// M4 Track A stand-in (until Track B's main.zig lands): pt runs while frozen.
+const pt = @import("pt.zig");
+const arena = @import("arena.zig");
 
 comptime {
     cart.export_start_code();
@@ -37,7 +40,22 @@ pub fn update() void {
     // function of (view, dither mode), so frozen and debug_set_view frames
     // repeat exactly and view t = f matches M2.2's frame f.
     dither.begin_frame(view.t);
-    trace.render_frame(view);
+    if (app.frozen and pt_on) {
+        // Track A stand-in: a new frozen view renders the real-time frame and
+        // seeds the path tracer; later frozen updates trace and display.
+        if (!pt.active() or pt_restart or !same_view(view, pt_view)) {
+            trace.render_frame(view);
+            pt.begin(view);
+            pt_view = view;
+            pt_restart = false;
+        } else {
+            if (pt_bench_pass) pt.step_columns(160) else pt.step(t0 + pt.slice_us);
+            pt.display();
+        }
+    } else {
+        pt.release();
+        trace.render_frame(view);
+    }
     dither.end_frame();
     render_us = @truncate(cart.micros_since_boot() - t0);
     if (build_options.debug_overlay) overlay.draw(render_us);
@@ -47,9 +65,51 @@ pub fn update() void {
     if (cart.is_wasm) present_wasm();
 }
 
+/// Track A measurement switch: one whole pass per frozen update (badge-bench
+/// per-pass cost). Ship false.
+const pt_bench_pass = false;
+
+/// Track A stand-in state.
+var pt_on: bool = true;
+var pt_restart: bool = false;
+var pt_view: trace.View = undefined;
+
+fn same_view(a: trace.View, b: trace.View) bool {
+    return a.preset == b.preset and a.t == b.t and a.orbit == b.orbit and a.height == b.height;
+}
+
+fn debug_set_pt(on: u32) callconv(.c) void {
+    pt_on = on != 0;
+}
+/// Runs n whole passes synchronously (from a pass boundary).
+fn debug_pt_run(n: u32) callconv(.c) void {
+    pt.run_passes(n);
+}
+fn debug_pt_passes() callconv(.c) u32 {
+    return pt.passes();
+}
+fn debug_pt_accum() callconv(.c) u32 {
+    return @intCast(@intFromPtr(&arena.words));
+}
+fn debug_pt_restart() callconv(.c) void {
+    pt_restart = true;
+}
+/// Stand-in only: display the accumulator now (no step) and present.
+fn debug_pt_display() callconv(.c) void {
+    pt.display();
+    dither.end_frame();
+    present_wasm();
+}
+
 // Debug exports for the headless harness (wasm only).
 comptime {
     if (cart.is_wasm) {
+        @export(&debug_set_pt, .{ .name = "debug_set_pt" });
+        @export(&debug_pt_run, .{ .name = "debug_pt_run" });
+        @export(&debug_pt_passes, .{ .name = "debug_pt_passes" });
+        @export(&debug_pt_accum, .{ .name = "debug_pt_accum" });
+        @export(&debug_pt_restart, .{ .name = "debug_pt_restart" });
+        @export(&debug_pt_display, .{ .name = "debug_pt_display" });
         @export(&debug_frame, .{ .name = "debug_frame" });
         @export(&debug_render_us, .{ .name = "debug_render_us" });
         @export(&debug_pixel_checksum, .{ .name = "debug_pixel_checksum" });
