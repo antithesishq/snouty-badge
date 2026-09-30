@@ -52,3 +52,19 @@ test "boot: Hard Drivin' loader (local dump)" {
 test "boot: Blue Lightning loader (local dump)" {
     try check("roms/lynx/blue_lightning.lnx", 5, boot.entry_decrypt_frame);
 }
+
+test "boot: shipped roms/raycast.lnx (headered, 1 KB blocks)" {
+    const file = files.read_cart_file("roms/raycast.lnx", &file_buf) orelse return error.SkipZigTest;
+    const cart = try boot.Cart.from_file(file);
+    const h = cart.header.?;
+    try std.testing.expectEqualStrings("RAYCAST", h.name_slice());
+    try std.testing.expectEqual(@as(u32, 1024), cart.block_size);
+    try std.testing.expectEqual(boot.Rotation.none, h.rotation);
+    try std.testing.expectEqual(@as(u8, 0), h.eeprom);
+    try std.testing.expectEqual(@as(u16, 0), h.bank1_page);
+    const st = try boot.post_boot(&cart, &ram);
+    // A one-block size-coded loader (cc65-style micro loader).
+    try std.testing.expectEqual(@as(u8, 1), st.frame.blocks);
+    try std.testing.expectEqual(@as(u32, 52), st.cart_counter);
+    try std.testing.expect(files.op_len(ram[0x200]) != null);
+}
