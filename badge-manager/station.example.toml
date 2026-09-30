@@ -1,14 +1,18 @@
 # /etc/badge-station/station.toml
+# Top-level keys first: in TOML every key after a [[hotspots]] header
+# belongs to that hotspot, so the hotspot list stays at the end.
 library = "/var/lib/badge-station/library"
 http_port = 80
 # fake_badge = "/var/lib/badge-station/fake.img"   # loop image or directory instead of USB
 
-[[hotspots]]
-ssid = "Adrian's iPhone"
-password = "change-me"
-
 ap_ssid = "snouty-badge"
-ap_password = "snoutysnouty"
+ap_password = "snoutysnouty"                       # WPA2, 8 characters or more
 
 build_host = "exedev@animated-badge.exe.xyz"
 build_repo = "/home/exedev/snouty-badge"
+
+# Phone hotspots to join, tried before the station makes its own network.
+# Repeat the block for each phone.
+[[hotspots]]
+ssid = "Adrian's iPhone"
+password = "change-me"

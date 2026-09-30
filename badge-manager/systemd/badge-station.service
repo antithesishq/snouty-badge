@@ -1,0 +1,19 @@
+[Unit]
+Description=Snouty badge station (web page and JSON API)
+Documentation=file:///opt/badge-station/badge-manager/README.md
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/badge-station/badge-manager
+Environment=PYTHONPATH=/opt/badge-station/badge-manager
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/usr/bin/python3 -m badge_manager.server --config /etc/badge-station/station.toml
+Restart=always
+RestartSec=2
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+
+[Install]
+WantedBy=multi-user.target

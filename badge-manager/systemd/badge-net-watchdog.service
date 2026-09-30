@@ -1,0 +1,10 @@
+[Unit]
+Description=Snouty badge station network watchdog (phone hotspot or own access point)
+After=NetworkManager.service
+Wants=NetworkManager.service
+
+[Service]
+Type=oneshot
+Environment=BADGE_STATION_CONFIG=/etc/badge-station/station.toml
+ExecStart=/bin/bash /opt/badge-station/badge-manager/net/net-watchdog.sh
+TimeoutStartSec=120

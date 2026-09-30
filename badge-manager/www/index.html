@@ -1,0 +1,354 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>Snouty badge station</title>
+<style>
+:root {
+  --bg: #f6f5f2; --card: #ffffff; --fg: #1d1d1f; --muted: #6b6b70; --line: #deddd8;
+  --accent: #1f6feb; --accent-fg: #ffffff; --danger: #c62828; --ok: #2e7d32; --warn: #a15c00;
+  --log-bg: #1d1d1f; --log-fg: #e8e8e8;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #121214; --card: #1c1c1f; --fg: #ececee; --muted: #9a9aa2; --line: #2e2e33;
+    --accent: #4c8dff; --accent-fg: #0b0b0c; --danger: #ff6b6b; --ok: #6fcf75; --warn: #f0a94a;
+    --log-bg: #0b0b0c; --log-fg: #d6d6d6;
+  }
+}
+* { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+body {
+  margin: 0; background: var(--bg); color: var(--fg);
+  font: 16px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+}
+main { max-width: 640px; margin: 0 auto; padding: 12px 12px 32px; }
+header h1 { font-size: 1.35rem; margin: 4px 0 2px; }
+.sub { color: var(--muted); font-size: 0.9rem; }
+section { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 12px; margin-top: 12px; }
+h2 { font-size: 1.05rem; margin: 0 0 8px; display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+h2 small { font-weight: normal; color: var(--muted); font-size: 0.85rem; }
+ul { list-style: none; margin: 0; padding: 0; }
+li.row { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 10px 0; border-top: 1px solid var(--line); }
+li.row:first-child { border-top: 0; }
+.grow { flex: 1; min-width: 0; }
+.name { overflow-wrap: anywhere; }
+.meta { color: var(--muted); font-size: 0.85rem; }
+.why { color: var(--warn); font-size: 0.85rem; }
+button, .filebtn {
+  font: inherit; font-weight: 600; min-height: 44px; min-width: 88px; padding: 8px 16px;
+  border-radius: 10px; border: 1px solid var(--accent); background: var(--accent); color: var(--accent-fg);
+  cursor: pointer; -webkit-tap-highlight-color: transparent; touch-action: manipulation;
+}
+button.secondary, .filebtn { background: transparent; color: var(--accent); }
+button.danger { border-color: var(--danger); background: transparent; color: var(--danger); }
+button.danger.armed { background: var(--danger); color: var(--card); }
+button:disabled { opacity: 0.4; cursor: default; }
+.state { font-size: 1.05rem; font-weight: 600; }
+.state.ok { color: var(--ok); }
+.state.warn { color: var(--warn); }
+.action { margin-top: 8px; padding: 8px 10px; border-radius: 8px; background: var(--bg); font-weight: 600; }
+.actions { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 10px; }
+.filebtn { display: inline-flex; align-items: center; justify-content: center; }
+.filebtn input { position: absolute; width: 1px; height: 1px; opacity: 0; }
+progress { width: 100%; height: 10px; margin-top: 8px; }
+#log {
+  background: var(--log-bg); color: var(--log-fg); border-radius: 8px; padding: 8px 10px;
+  font: 12px/1.45 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  max-height: 280px; overflow-y: auto; white-space: pre-wrap; overflow-wrap: anywhere; margin: 0;
+}
+footer { color: var(--muted); font-size: 0.85rem; text-align: center; margin-top: 16px; }
+.hidden { display: none; }
+.err { color: var(--danger); font-size: 0.9rem; margin-top: 6px; }
+</style>
+</head>
+<body>
+<main>
+<header>
+  <h1>Snouty badge station</h1>
+  <div class="sub" id="net">Connecting to the station...</div>
+  <div class="sub" id="build"></div>
+</header>
+
+<section id="badge-card">
+  <h2>Badge <small id="badge-dev"></small></h2>
+  <div id="badge-state" class="state">Waiting for the station.</div>
+  <div id="badge-extra" class="meta"></div>
+  <ul id="badge-files"></ul>
+  <div id="action" class="action hidden"></div>
+</section>
+
+<section>
+  <h2>Sets</h2>
+  <ul id="sets"><li class="meta">No sets yet.</li></ul>
+  <div class="actions">
+    <button id="wipe" class="danger" type="button">Wipe</button>
+    <button id="sync" class="secondary" type="button">Sync library</button>
+  </div>
+  <div id="action-err" class="err hidden"></div>
+</section>
+
+<section>
+  <h2>Library</h2>
+  <ul id="library"><li class="meta">Nothing in the library yet.</li></ul>
+  <div class="actions">
+    <label class="filebtn">Upload a ROM<input id="upload" type="file" accept=".gg,.sms,.gb,.gbc,.md,.bin"></label>
+  </div>
+  <progress id="upload-progress" class="hidden" max="100" value="0"></progress>
+  <div id="upload-msg" class="meta"></div>
+</section>
+
+<section>
+  <h2>Log</h2>
+  <pre id="log"></pre>
+</section>
+
+<footer>This page: <span id="here"></span></footer>
+</main>
+
+<script>
+"use strict";
+(function () {
+  var $ = function (id) { return document.getElementById(id); };
+  var state = null;
+  var seq = null;
+  var wipeArmed = null;
+
+  function kb(n) {
+    if (n === null || n === undefined) return "?";
+    return n >= 1024 * 1024 ? (n / 1048576).toFixed(2) + " MB" : Math.round(n / 1024) + " KB";
+  }
+  function el(tag, cls, text) {
+    var e = document.createElement(tag);
+    if (cls) e.className = cls;
+    if (text !== undefined) e.textContent = text;
+    return e;
+  }
+  function clear(node) { while (node.firstChild) node.removeChild(node.firstChild); }
+  function showError(msg) {
+    var e = $("action-err");
+    e.textContent = msg || "";
+    e.classList.toggle("hidden", !msg);
+  }
+
+  function renderNet(s) {
+    var n = s.network || {};
+    var mode = { hotspot: "Phone hotspot", ap: "Own access point", wired: "Wired", none: "No network" }[n.mode] || "Network unknown";
+    var parts = [mode];
+    if (n.ssid) parts.push(n.ssid);
+    if (n.address) parts.push(n.address);
+    parts.push(n.internet ? "internet yes" : "internet no");
+    $("net").textContent = parts.join(", ");
+    var b = s.build || {};
+    var build = b.local ? "Builds run on this Pi." :
+      b.remote ? (n.internet ? "Builds run on " + b.remote + "." : "Builds are offline (no internet).") :
+      "Builds are not set up.";
+    $("build").textContent = build;
+  }
+
+  function renderBadge(s) {
+    var b = s.badge || {};
+    var st = $("badge-state"), extra = $("badge-extra"), files = $("badge-files");
+    clear(files);
+    $("badge-dev").textContent = b.present && b.device ? b.device : "";
+    var ejected = b.ejected === true || (!b.present && /eject/i.test(b.note || ""));
+    st.className = "state";
+    if (ejected) {
+      st.textContent = "Unplug the badge.";
+      st.classList.add("ok");
+      extra.textContent = "It is ejected and safe to unplug. Its menu shows the new carts.";
+    } else if (!b.present) {
+      st.textContent = "Plug the badge in while it is on its menu.";
+      extra.textContent = b.note && !/plug the badge in|no badge/i.test(b.note) ? b.note : "";
+    } else {
+      st.textContent = "Badge connected.";
+      st.classList.add("ok");
+      var bits = [kb(b.free_bytes) + " free"];
+      if (b.free_entries !== null && b.free_entries !== undefined) bits.push(b.free_entries + " free entries");
+      if (!b.mounted) bits.push("not mounted");
+      if (b.note && b.note !== "ready") bits.push(b.note);
+      extra.textContent = bits.join(", ");
+      var list = b.files || [];
+      if (!list.length) files.appendChild(el("li", "row meta", "The drive is empty."));
+      list.forEach(function (f) {
+        var li = el("li", "row");
+        li.appendChild(el("span", "grow name", f.name));
+        li.appendChild(el("span", "meta", kb(f.size)));
+        files.appendChild(li);
+      });
+    }
+    var a = $("action");
+    a.textContent = s.busy ? "Working: " + (s.action || "busy") + "..." : "";
+    a.classList.toggle("hidden", !s.busy);
+  }
+
+  function renderSets(s) {
+    var ul = $("sets");
+    clear(ul);
+    var sets = s.sets || [];
+    if (!sets.length) ul.appendChild(el("li", "meta", "No sets yet. Add some to manifest.toml."));
+    var present = s.badge && s.badge.present;
+    sets.forEach(function (set) {
+      var li = el("li", "row");
+      var left = el("div", "grow");
+      left.appendChild(el("div", "name", set.title || set.name));
+      left.appendChild(el("div", "meta", kb(set.bytes) + ", " + set.entries + " of " + (set.entries_capacity || 31) + " entries"));
+      (set.fits ? [] : set.why || []).forEach(function (w) { left.appendChild(el("div", "why", w)); });
+      li.appendChild(left);
+      if (set.fits) {
+        var btn = el("button", "", "Deploy");
+        btn.type = "button";
+        btn.disabled = s.busy || !present;
+        btn.title = present ? "" : "Plug the badge in first";
+        btn.addEventListener("click", function () { act("/api/deploy", { set: set.name }); });
+        li.appendChild(btn);
+      }
+      ul.appendChild(li);
+    });
+    $("wipe").disabled = s.busy || !present;
+    $("sync").disabled = s.busy;
+  }
+
+  function renderLibrary(s) {
+    var ul = $("library");
+    clear(ul);
+    var lib = s.library || {};
+    var items = [];
+    (lib.carts || []).forEach(function (c) {
+      items.push([c.title || c.key || c.name, "cart" + (c.mode ? ", " + c.mode : ""), c.size]);
+    });
+    (lib.roms || []).forEach(function (r) {
+      items.push([r.title || r.key || r.name, "rom" + (r.short ? ", " + r.short : ""), r.size]);
+    });
+    if (!items.length) ul.appendChild(el("li", "meta", "Nothing in the library yet."));
+    items.forEach(function (it) {
+      var li = el("li", "row");
+      var left = el("div", "grow");
+      left.appendChild(el("div", "name", it[0]));
+      left.appendChild(el("div", "meta", it[1]));
+      li.appendChild(left);
+      li.appendChild(el("span", "meta", kb(it[2])));
+      ul.appendChild(li);
+    });
+  }
+
+  function renderLog(s) {
+    var pre = $("log");
+    var atBottom = pre.scrollHeight - pre.scrollTop - pre.clientHeight < 24;
+    var lines = (s.log || []).slice(-30).map(function (l) {
+      var d = new Date((l.t || 0) * 1000);
+      var hh = ("0" + d.getHours()).slice(-2), mm = ("0" + d.getMinutes()).slice(-2), ss = ("0" + d.getSeconds()).slice(-2);
+      return hh + ":" + mm + ":" + ss + "  " + l.msg;
+    });
+    var text = lines.join("\n");
+    if (pre.textContent !== text) {
+      pre.textContent = text;
+      if (atBottom || !state) pre.scrollTop = pre.scrollHeight;
+    }
+  }
+
+  function render(s) {
+    renderNet(s);
+    renderBadge(s);
+    renderSets(s);
+    renderLibrary(s);
+    renderLog(s);
+    state = s;
+    if (s.busy) disarmWipe();
+  }
+
+  function request(method, url, body, cb) {
+    var x = new XMLHttpRequest();
+    x.open(method, url);
+    x.timeout = 40000;
+    if (body !== null && body !== undefined) x.setRequestHeader("Content-Type", "application/json");
+    x.onload = function () {
+      var data = null;
+      try { data = JSON.parse(x.responseText); } catch (e) { data = null; }
+      cb(x.status, data);
+    };
+    x.onerror = x.ontimeout = function () { cb(0, null); };
+    x.send(body === null || body === undefined ? null : JSON.stringify(body));
+  }
+
+  function poll() {
+    var url = seq === null ? "/api/status" : "/api/status?since=" + seq + "&wait=25";
+    request("GET", url, null, function (code, data) {
+      if (code === 200 && data) {
+        if (typeof data.seq === "number") seq = data.seq;
+        render(data);
+        setTimeout(poll, typeof data.seq === "number" ? 0 : 1000);
+      } else {
+        $("net").textContent = "Lost the station. Retrying...";
+        seq = null;
+        setTimeout(poll, 2000);
+      }
+    });
+  }
+
+  function act(url, body) {
+    showError("");
+    request("POST", url, body || {}, function (code, data) {
+      if (code === 200 && data && data.ok) return;
+      if (code === 409) showError("The station is busy. Wait for the current action to finish.");
+      else showError((data && data.error) || ("Request failed (" + (code || "no connection") + ")."));
+    });
+  }
+
+  function disarmWipe() {
+    if (wipeArmed) clearTimeout(wipeArmed);
+    wipeArmed = null;
+    var b = $("wipe");
+    b.classList.remove("armed");
+    b.textContent = "Wipe";
+  }
+  $("wipe").addEventListener("click", function () {
+    var b = $("wipe");
+    if (!wipeArmed) {
+      b.classList.add("armed");
+      b.textContent = "Tap again to wipe";
+      wipeArmed = setTimeout(disarmWipe, 4000);
+      return;
+    }
+    disarmWipe();
+    act("/api/wipe");
+  });
+  $("sync").addEventListener("click", function () { act("/api/sync"); });
+
+  $("upload").addEventListener("change", function () {
+    var input = this, file = input.files && input.files[0];
+    if (!file) return;
+    var bar = $("upload-progress"), msg = $("upload-msg");
+    if (file.size > 4 * 1024 * 1024) {
+      msg.textContent = file.name + " is larger than the 4 MB limit.";
+      input.value = "";
+      return;
+    }
+    bar.value = 0;
+    bar.classList.remove("hidden");
+    msg.textContent = "Uploading " + file.name + "...";
+    var x = new XMLHttpRequest();
+    x.open("POST", "/api/upload");
+    x.setRequestHeader("X-Filename", encodeURIComponent(file.name));
+    x.setRequestHeader("Content-Type", "application/octet-stream");
+    x.upload.onprogress = function (e) { if (e.lengthComputable) bar.value = 100 * e.loaded / e.total; };
+    x.onload = function () {
+      var data = null;
+      try { data = JSON.parse(x.responseText); } catch (e) { data = null; }
+      msg.textContent = x.status === 200 ? "Added " + file.name + " to the library." :
+        "Upload failed: " + ((data && data.error) || x.status);
+      done();
+    };
+    x.onerror = function () { msg.textContent = "Upload failed: no connection."; done(); };
+    function done() { bar.classList.add("hidden"); input.value = ""; }
+    x.send(file);
+  });
+
+  $("here").textContent = location.protocol + "//" + location.host + "/";
+  poll();
+})();
+</script>
+</body>
+</html>

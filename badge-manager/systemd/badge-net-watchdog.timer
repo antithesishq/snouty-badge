@@ -1,0 +1,10 @@
+[Unit]
+Description=Run the badge station network watchdog 45 s after boot and every 5 minutes
+
+[Timer]
+OnBootSec=45s
+OnUnitActiveSec=5min
+AccuracySec=5s
+
+[Install]
+WantedBy=timers.target

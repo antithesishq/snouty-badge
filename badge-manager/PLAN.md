@@ -1,7 +1,12 @@
 # badge-manager: a headless badge station for the expo table
 
 Status: plan, 2026-09-29, revised 2026-09-30 with Adrian's answers
-(section 7). Nothing built yet. Idea from Adrian's coworker:
+(section 7). M0 built 2026-09-30 (tag `badge-manager/m0`): the package,
+`badge` CLI, server and phone page, systemd units, network scripts,
+`setup.sh`, `sync.sh`, 48 unit tests and `tests/e2e_loop.sh`. The real
+block-device mount/eject path and `setup.sh` have not run anywhere yet
+(this VM's kernel has no vfat); first run is on a Pi with a FAT12 stick
+(section 3). M1 next. Idea from Adrian's coworker:
 "plug in badge, ask Claude to write you a game or whatever, have the thing
 show up; also have a collection of carts ready to go". Adrian's priorities:
 (1) deploy the existing carts with as little effort as possible, driven
