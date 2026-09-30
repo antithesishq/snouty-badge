@@ -6,7 +6,9 @@
 //! `*BusT`: `read8(addr: u24) u8`, `read16(addr: u24) u16`,
 //! `write8(addr: u24, v: u8)`, `write16(addr: u24, v: u16)`,
 //! `irq_level() u3` (sampled before every instruction) and
-//! `ack_irq(level: u3)` (the CPU took an interrupt at that level). Longs
+//! `ack_irq(level: u3)` (the CPU took an interrupt at that level); a bus
+//! may also offer `irq_sample() u3`, the same value kept current by the
+//! bus (cheaper), which `step` then samples instead. Longs
 //! are two word accesses, high word first. Odd word addresses go to the bus
 //! as they are (no address error, SPEC.md section 4).
 //!
@@ -27,6 +29,11 @@
 //!
 //! Fetch: if the bus has `code_window` (see `CodeWindow`), opcodes and
 //! extension words are read straight from ROM/RAM without a bus call.
+//!
+//! Wait loops: if the bus has `wait_loop(cpu: *Self)`, a taken short
+//! branch back to what may be a wait loop's head calls it (`note_loop`);
+//! the bus may skip whole iterations of the loop by adding their cycles to
+//! `cyc`, leaving every register as stepping them would.
 //!
 //! The dummy reads the 68000 does before CLR, Scc and MOVE from SR to
 //! memory, and MOVEM's extra word read, are charged but not performed (no
@@ -228,6 +235,10 @@ pub fn M68k(comptime BusT: type) type {
 
         const has_window = @hasDecl(BusT, "code_window") and
             @typeInfo(@TypeOf(BusT.code_window)) == .@"fn";
+        const has_irq_sample = @hasDecl(BusT, "irq_sample") and
+            @typeInfo(@TypeOf(BusT.irq_sample)) == .@"fn";
+        const has_wait_hook = @hasDecl(BusT, "wait_loop") and
+            @typeInfo(@TypeOf(BusT.wait_loop)) == .@"fn";
         const no_window = [2]u8{ 0, 0 };
 
         /// Power-on/RESET: supervisor, interrupts masked, SSP and PC from
@@ -242,7 +253,7 @@ pub fn M68k(comptime BusT: type) type {
         /// Run one instruction (or take an interrupt, or idle 4 cycles in
         /// STOP) and return its 68000 cycles.
         pub fn step(self: *Self, bus: *BusT) u32 {
-            const lvl = bus.irq_level();
+            const lvl = if (has_irq_sample) bus.irq_sample() else bus.irq_level();
             if (lvl > self.mask()) return self.interrupt(bus, lvl);
             if (self.stopped) return 4;
             self.cyc = 4;
@@ -517,7 +528,14 @@ pub fn M68k(comptime BusT: type) type {
         /// step by the size (A7 by 2 for bytes). `read` charges -(An)'s 2
         /// internal cycles (source and read-modify-write operands; MOVE's
         /// destination and MOVEM do not pay them).
-        noinline fn ea_addr(self: *Self, bus: *BusT, comptime sz: Sz, mode: u3, reg: u3, comptime read: bool) u32 {
+        inline fn ea_addr(self: *Self, bus: *BusT, comptime sz: Sz, mode: u3, reg: u3, comptime read: bool) u32 {
+            // (An) and (An)+ inline (most destinations), the rest out of
+            // line: a call per operand cost ~20 cycles of push and pop.
+            if (mode == 2 or mode == 3) return self.ea_addr_inl(bus, sz, mode, reg, read);
+            return self.ea_addr_far(bus, sz, mode, reg, read);
+        }
+
+        noinline fn ea_addr_far(self: *Self, bus: *BusT, comptime sz: Sz, mode: u3, reg: u3, comptime read: bool) u32 {
             return self.ea_addr_inl(bus, sz, mode, reg, read);
         }
 
@@ -578,11 +596,14 @@ pub fn M68k(comptime BusT: type) type {
             };
         }
 
-        /// Source operand of any mode, low `sz` bits. Registers inline (the
-        /// common case pays no call), memory and immediates out of line.
+        /// Source operand of any mode, low `sz` bits. Registers, (An) and
+        /// (An)+ inline (the common cases pay no call; d16(An) inline too
+        /// costs 22 KB of flash and was slower), the other memory modes and
+        /// immediates out of line.
         inline fn read_ea(self: *Self, bus: *BusT, comptime sz: Sz, mode: u3, reg: u3) u32 {
             if (mode == 0) return self.d[reg] & mask_of(sz);
             if (mode == 1) return self.a[reg] & mask_of(sz);
+            if (mode == 2 or mode == 3) return self.rd(bus, sz, self.ea_addr_inl(bus, sz, mode, reg, true));
             return self.read_ea_mem(bus, sz, mode, reg);
         }
 
@@ -1408,9 +1429,29 @@ pub fn M68k(comptime BusT: type) type {
             return base +% sext16(self.ext16(bus));
         }
 
-        fn op_bra(self: *Self, bus: *BusT, op: u16) void {
+        inline fn op_bra(self: *Self, bus: *BusT, op: u16) void {
             self.pc = self.branch_target(bus, op);
             self.cyc += if (op & 0xFF != 0) 6 else 2;
+            if (has_wait_hook and op & 0xFF >= 0xF6) self.note_loop(bus, op & 0xFF);
+        }
+
+        /// A short branch back by `0x100 - d8` bytes was just taken. If the
+        /// PC is now at what may be the head of a wait loop, one of the
+        /// shapes the bus's `wait_loop` hook recognises (a branch to
+        /// itself, or with -10, -8, -6: one TST, BTST #n or MOVE to Dn with
+        /// an absolute source, then this branch), hand it the CPU: it may
+        /// skip whole iterations by adding their cycles to `cyc`. Only the
+        /// opcode is looked at here, through the fetch window; the hook
+        /// checks everything else.
+        inline fn note_loop(self: *Self, bus: *BusT, d8: u16) void {
+            if (d8 != 0xFE) {
+                if (d8 & 1 != 0 or d8 == 0xFC or !has_window) return;
+                const off = (self.pc & 0xFF_FFFF) -% self.win_base;
+                if (off >= self.win_len) return;
+                const w = @as(u16, self.win_ptr[off]) << 8 | self.win_ptr[off + 1];
+                if (w & 0xFF3E != 0x4A38 and w & 0xC1FE != 0x0038 and w & 0xFFFE != 0x0838) return;
+            }
+            bus.wait_loop(self);
         }
 
         fn op_bsr(self: *Self, bus: *BusT, op: u16) void {

@@ -87,6 +87,9 @@ pub fn add(b: *Build, sycl_badge_dep: *Build.Dependency, opts: common.Options) v
         }),
     });
     const run = b.addRunArtifact(tests);
+    // The tests read ROMs and scripts at run time (not build inputs) and
+    // print the golden hashes: run them every time, never from the cache.
+    run.has_side_effects = true;
     opts.test_step.dependOn(&run.step);
     // This cart's tests alone (the shared `test` step runs every cart's).
     b.step("test-genesis", "Run snouty-genesis host tests").dependOn(&run.step);

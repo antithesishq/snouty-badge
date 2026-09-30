@@ -126,8 +126,6 @@ pub fn line_for_row(mode: LineMode, row: u8) u16 {
 }
 
 pub const Vdp = struct {
-    /// 64 KB video RAM, bytes at their VDP addresses (big-endian words).
-    vram: [0x10000]u8 = @splat(0),
     /// 64 colors, 9 bits each (----BBB-GGG-RRR-).
     cram: [64]u16 = @splat(0),
     /// 40 vertical scroll entries, 10 bits each (20 columns x planes A, B:
@@ -162,6 +160,11 @@ pub const Vdp = struct {
     /// Pending interrupts not yet taken by the 68000.
     vint_pending: bool = false,
     hint_pending: bool = false,
+    /// `irq_level()` as of the last change of the pending flags or of
+    /// registers 0 and 1 (`sync_irq`): what the 68000 samples before every
+    /// instruction, one load instead of four. Code that pokes the flags or
+    /// registers directly (tests) calls `sync_irq`.
+    irq: u3 = 0,
     /// 68000 cycles into the current line, for the interpolated HV counter
     /// and the H-blank bit. The frame loop keeps it current.
     line_cycles: u16 = 0,
@@ -179,6 +182,12 @@ pub const Vdp = struct {
 
     // ---- Presentation (a menu setting, not VDP state) ----
     line_mode: LineMode = .squeeze,
+
+    /// 64 KB video RAM, bytes at their VDP addresses (big-endian words).
+    /// Declared last: Zig keeps declaration order among same-aligned
+    /// fields, so the registers and flags above stay near the struct's
+    /// start (short offsets on the badge).
+    vram: [0x10000]u8 = @splat(0),
 
     /// Power-on state. The arrays are cleared with `@memset` and the rest
     /// assigned field by field: `v.* = .{}` would put a 64 KB default
@@ -199,6 +208,7 @@ pub const Vdp = struct {
         v.hint_counter = 0;
         v.vint_pending = false;
         v.hint_pending = false;
+        v.irq = 0;
         v.line_cycles = 0;
         v.hv_latch = 0;
         v.line_mode = .squeeze;
@@ -290,6 +300,7 @@ pub const Vdp = struct {
         if (r == 0 and val & 0x02 != 0 and v.regs[0] & 0x02 == 0) v.hv_latch = v.hv_now();
         if (r == 5 or r == 12) v.spr_dirty = true;
         v.regs[r] = val;
+        if (r <= 1) v.sync_irq();
     }
 
     /// Status read (C00004/C00006): clears the command latch and the
@@ -378,11 +389,39 @@ pub const Vdp = struct {
     /// 68000 memory to VRAM/CRAM/VSRAM: source word address in registers
     /// 21-23 (bits 1-23 of the byte address); the low 17 bits wrap, so a
     /// transfer never leaves its 128 KB window.
+    ///
+    /// Fast path: a VRAM write at an even address with auto-increment 2
+    /// from memory the bus can hand out as bytes (`bus.dma_source`, when it
+    /// has one: ROM and work RAM) copies straight across, run by run; the
+    /// result is the word-by-word loop's (tests/bus_unit.zig compares).
     fn dma_68k(v: *Vdp, bus: anytype) u32 {
         const n = v.dma_length();
         const hi: u32 = @as(u32, v.regs[23] & 0x7F) << 17;
         var src: u16 = @as(u16, v.regs[22]) << 8 | v.regs[21];
         var k: u32 = 0;
+        if (comptime @hasDecl(@typeInfo(@TypeOf(bus)).pointer.child, "dma_source")) {
+            if (v.code & 0x0F == 0x01 and v.regs[15] == 2 and v.addr & 1 == 0) {
+                const sat: u16 = @as(u16, v.regs[5] & 0x7E) << 9;
+                var a = v.addr;
+                var sat_hit = false;
+                while (k < n) {
+                    // A run ends where the 128 KB source window wraps.
+                    const want = @min(n - k, 0x10000 - @as(u32, src));
+                    const span = bus.dma_source(@intCast(hi | @as(u32, src) << 1), want) orelse break;
+                    var j: u32 = 0;
+                    while (j < span.words) : (j += 1) {
+                        v.vram[a] = span.ptr[2 * j];
+                        v.vram[a + 1] = span.ptr[2 * j + 1];
+                        if (a -% sat < 0x400) sat_hit = true;
+                        a +%= 2;
+                    }
+                    k += span.words;
+                    src +%= @truncate(span.words);
+                }
+                v.addr = a;
+                if (sat_hit) v.spr_dirty = true;
+            }
+        }
         while (k < n) : (k += 1) {
             const w = bus.read16(@intCast(hi | @as(u32, src) << 1));
             src +%= 1;
@@ -462,6 +501,7 @@ pub const Vdp = struct {
         v.line = if (v.line + 1 >= lines_per_frame) 0 else v.line + 1;
         v.line_cycles = 0;
         if (v.line == vint_line) v.vint_pending = true;
+        v.sync_irq();
     }
 
     /// The interrupt level the VDP presents to the 68000 (6 V-int, 4 H-int,
@@ -480,6 +520,12 @@ pub const Vdp = struct {
             4 => v.hint_pending = false,
             else => {},
         }
+        v.sync_irq();
+    }
+
+    /// Recompute `irq` from the pending flags and registers 0 and 1.
+    pub fn sync_irq(v: *Vdp) void {
+        v.irq = v.irq_level();
     }
 
     /// The badge row that shows `line` under `line_mode`, or null when the

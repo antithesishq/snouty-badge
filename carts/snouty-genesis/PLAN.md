@@ -289,10 +289,38 @@ report and is stubbed locally.
     worst; Miniplanets from the drive image 34.65 / 37.67, OVER the 31/33
     targets (Z80 23.5%, 68000 handlers 47%, EA reads 13.6%, bus accessors
     5.4%, VDP 5%). Perf pass on `genesis/m1-perf` (Opus) with those
-    targets; Z80 module at ReleaseSmall saves 21 KB flash (perf on the
-    Sona driver to be measured there).
+    targets (result below).
   - Open after M1: H32/shadow-highlight render cost; hot loops not yet in
     RAM-text (XIP cache); Z80 writes to the VDP through 7F00 dropped;
     menu is a placeholder (M2); a `-Dmd-rom` larger than the flash window
     fails the firmware link although the wasm builds (wasm-only step
     wanted); no root LICENSE (test ROM is MIT under Adrian's name).
+- 2026-09-30 (M1 perf pass, branch `genesis/m1-perf` from `9b933d7`,
+  worktree `/home/exedev/snouty-badge-genesis-perf`). Integration step 4:
+  targets met with the defaults (full speed, no fallback). Behaviour
+  bit-identical throughout: the test ROM's golden lines and the new
+  `golden-mini` run (Miniplanets, 600 frames into level 1, frame + tone +
+  state hashes) unchanged after every commit. badge-bench calibrated, ms
+  per update (mean / worst), Miniplanets from `out/romfs_mini.img` with the
+  toml's 120-update script and with `tools/scripts/m1_mini300.json` (300
+  updates, Start at 100/130/160, level 1 from ~170):
+
+  | Change | Mini 120 | Mini 300 | Test ROM | `.text` |
+  |---|---|---|---|---|
+  | integration `9b933d7` | 34.65 / 37.67 | 35.33 / 39.29 | 22.75 / 26.30 | 200,732 |
+  | hot `Md` fields within 4 KB | 32.04 / 34.93 | | 21.49 / 25.54 | 185,100 |
+  | Z80 step inlined | 29.45 / 32.08 | 29.96 / 32.87 | 21.17 / 25.07 | 196,252 |
+  | IRQ level cached in the VDP | 28.03 / 30.57 | 28.61 / 31.13 | 20.64 / 23.60 | 197,452 |
+  | wait loops skipped exactly | 19.68 / 30.74 | 20.69 / 31.63 | 8.80 / 24.04 | 198,236 |
+  | DMA copied from ROM/RAM | 19.52 / 30.74 | 20.29 / 30.74 | 8.80 / 24.04 | 199,500 |
+  | (An), (An)+ operands inline | 18.61 / 28.11 | 19.47 / 28.11 | 8.77 / 24.21 | 204,572 |
+
+  Worst updates are Miniplanets' boot (update 12, Z80 driver upload and
+  tile loads) and its level load (update 143, ~26.7 ms now); they do not
+  wait for V-int, so the wait-loop skip does nothing for them. Measured
+  and rejected: the `z80` module at ReleaseSmall (-21 KB flash, +3.5 ms
+  on Miniplanets); inline bus accessor fast paths (+19 KB, no gain);
+  d16(An) inline too (+22 KB, slower); a per-instruction wait-loop check
+  in `run_m68k` (+4-5 cycles per 68000 instruction from spills). Z80
+  share in play: `run_z80` 30% (5.8 ms per update; its core is Gear's,
+  its main loop polls the YM2612 timer flag all frame).

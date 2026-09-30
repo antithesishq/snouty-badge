@@ -31,6 +31,7 @@
 //! read of the Z80 area or the I/O ports returns the byte in both halves; a
 //! word write stores the high byte (Z80 area) or the low byte (I/O, PSG).
 //! A byte write to a VDP port writes the byte to both halves of the word.
+const std = @import("std");
 const md_mod = @import("md.zig");
 const rom = @import("rom.zig");
 const m68k = @import("m68k.zig");
@@ -104,10 +105,45 @@ pub const Bus = struct {
         write16_io(md, addr, v);
     }
 
+    /// A run of 68000 memory a VDP DMA may copy straight from: `words`
+    /// big-endian words at `ptr`, the same bytes `read16` would give.
+    pub const DmaSpan = struct { ptr: [*]const u8, words: u32 };
+
+    /// Up to `want` words from the even address `addr` as one run, if they
+    /// are plain memory: ROM below the SRAM and the ROM's end (contiguous
+    /// source only), or work RAM up to its 64 KB mirror boundary. Null
+    /// otherwise; the VDP then reads word by word.
+    pub fn dma_source(self: *Bus, addr: u24, want: u32) ?DmaSpan {
+        const md = self.md;
+        if (addr >= 0xE00000) {
+            const i: u32 = addr & 0xFFFF;
+            return .{ .ptr = @as([*]const u8, &md.work_ram) + i, .words = @min(want, (0x10000 - i) / 2) };
+        }
+        if (addr >= 0x400000) return null;
+        const p = md.rom.base orelse return null;
+        const end = @min(md.rom.size, md.sram_active.lo);
+        if (addr + 2 > end) return null;
+        return .{ .ptr = p + addr, .words = @min(want, (end - addr) / 2) };
+    }
+
+    /// `M68k`'s wait loop hook: `Md.skip_wait_loop`.
+    pub fn wait_loop(self: *Bus, cpu: *md_mod.Cpu) void {
+        self.md.skip_wait_loop(cpu);
+    }
+
     /// The interrupt level presented to the 68000 (the VDP's; nothing else
     /// on the Genesis raises one the games use).
     pub inline fn irq_level(self: *Bus) u3 {
         return self.md.vdp.irq_level();
+    }
+
+    /// The same, as the VDP cached it at its last change (`Vdp.irq`): what
+    /// `M68k.step` samples when the bus has it. Checked against
+    /// `irq_level` in safe builds (the host tests).
+    pub inline fn irq_sample(self: *Bus) u3 {
+        const v = &self.md.vdp;
+        if (std.debug.runtime_safety) std.debug.assert(v.irq == v.irq_level());
+        return v.irq;
     }
 
     pub inline fn ack_irq(self: *Bus, level: u3) void {
