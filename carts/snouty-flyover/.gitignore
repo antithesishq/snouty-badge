@@ -1,0 +1,13 @@
+.zig-cache/
+zig-out/
+node_modules/
+*.uf2
+*.elf
+*.wasm
+.DS_Store
+zig-pkg/
+__pycache__/
+tools/emu/build/
+tools/emu/out/
+tools/emu/.venv/
+out/
