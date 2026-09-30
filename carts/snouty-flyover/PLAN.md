@@ -665,4 +665,74 @@ walls.
 
 ### M2 status
 
-- 2026-09-30: started; scaffold commit follows.
+- 2026-09-30: started; scaffold 95677c8 (seven-kind cycle, `alt_at`,
+  `world.water`, stubs). Tracks A, B, C as Opus agents.
+- 2026-09-30: done, tag `snouty-flyover/m2` (code 91b3863, the anteater
+  ebc41b4). Calibrated badge-bench over the 2400-frame `attract.json` run:
+  worst 12.77 ms (frame 1909, over the lake with pass 2 on all 160
+  columns), mean 7.53, p95 12.09; 58% of the 22 ms budget, 0 frames over.
+  Hot: the inlined march 89%, `api.text` 7.3%, memcpy 2.5%; every district
+  tick is under 0.2%. Sizes: `.text` 66,496 B, `.data` 180 B, `.bss`
+  158,728 B (gates 70 KB / 165 KB). check-float passes; `debug_world_check`
+  is 0 at the end of the attract and `m2_verbs` runs; every `--at` check
+  in RUNNING.md passes (one expectation corrected: the Stack depth is 2
+  right after the second push frame); `tools/check_render.sh` passes
+  against the regenerated `render_hashes.txt`. Lowest camera clearance 11
+  cells (attract, Stack exit), 4 in `m2_verbs` (manual flight into the
+  Stack entrance wall, the hard floor lifts it). GIFs
+  `docs/preview_m2_attract.gif` (2400 frames, every 3rd) and
+  `docs/preview_m2_verbs.gif`; the M1 GIFs are removed as superseded.
+  - The flyer: Adrian could not recognise the placeholder blob and asked
+    for "a flying anteater ... flapping his lil arms". `sprite.zig` is now
+    a 44x28 side-profile anteater (long drooping snout, humped back, dark
+    shoulder band, bushy tail, one arm flapping through three phases,
+    sheared with the horizon when banking); frames come from
+    `tools/anteater.py` as string rows, no comptime.
+  - Track A (water): `palette.fog_w` from `water` with rotated pulses; index
+    28 (pit) black. Two-pass reflection: pass 1 records `h == water` rows in
+    a 128-bit column mask; pass 2 marches mirrored heights from the first
+    water step to `refl_z_far` 200 cells with a 16-entry ripple and fills
+    each free water row whose mirrored ray lies inside a mirrored column
+    (per-row free mask, as the concept did) instead of the planned
+    bottom-up `occ2`, which let the far shore cover the whole lake; the
+    rest gets the water-tinted mirrored sky and the rippled Iris sun.
+    `sky_flash` via `sky_flash_rel`. Worst lake frame runs pass 2 for 18.9k
+    steps against pass 1's 22.6k. Water test is `h == water` exactly.
+  - Track B (Tree, Hash): the fixed 63-node Tree with its root on local row
+    191 (the shape spans 186 rows, so "40 from the far end" did not fit),
+    trail painted interior only by the exact neighbour rule, a new key
+    every 120 frames descending 12 frames per level, B searches from the
+    root and raises a mound 6 rows past the leaf. Hash per the constants;
+    a terrace grows every 90 frames; rehash drains the terraces ahead over
+    30 frames while 8 small buckets per row rise, then restores the floor
+    one row per frame. world.zig gained `floor_cell`, `span`, `x_dist`,
+    `leg_row` for M3 to move heap/sort onto. About 13.9 KB `.text`.
+  - Track C (Stack, Pipeline, tooling): Stack canyon per `gen_stack` with
+    the lip on each tread's inner edge (the concept's lip test never
+    matches an integer cell); the autopilot dives 116 -> 44 along floor +
+    14 on the centre line with an 8-cell clearance scan; B pushes as a
+    10-frame wave of whole-row rewrites from `cam_row + 8`; depth saturates
+    at 10 and a push at full depth is the overflow (pit at `water + 1` in
+    `palette.pit`, `sky_flash` 6). Pipeline per `gen_pipeline` with integer
+    smoothstep and sine; `alt_at` is 10 over the water across the lake, 18
+    after; B floods the stream sections over 20 frames, holds 40, restores
+    a row per frame (28). `alt_high` 208 (the Tree at 205), `camera.no_verb`
+    sentinel, negative `verb_at` allowed. Worst writes: push 4.4K cells,
+    burst 1.4K. New exports `debug_water_cols`, `debug_stack_depth`,
+    `debug_pipe_state`, `debug_verb_max_cells`, `debug_sky_flash`;
+    `m2_verbs.json`; `check_render.sh`; bench at 2400 frames.
+  - Integration defaults: Tree `verb_at` -40 (insert fires on the Bus
+    approach, where the leaves are still in view), Bus `verb_at` =
+    `camera.no_verb`, Pipeline `verb_at` 70 (the flood at 30 was 90 rows
+    out of view).
+  - Review questions, all defaulted: is the Tree readable from 205 or
+    should it be lower; is the lake frame's 12.8 ms worth trading for
+    `refl_z_far` 128; Stack pit at height 9 (works) or 0.
+
+## M3 Hands on (outline)
+
+All B verbs (Bus packet, Tree rotation on every third insert), boost fog
+pull-in and horizon drop, Select skip to the next Bus, manual flight
+clamping review, autopilot timeout tuning, heap/sort onto the world.zig
+row helpers. Gate: every verb visible within 2 s of the press; bench
+unchanged. Contract to be written at M3 start.
