@@ -166,9 +166,236 @@ badge-bench/bench.sh zig-out/firmware/snouty-flyover.elf --script carts/snouty-f
   the stick is centred. GIF: `docs/preview_m0.gif`. The M0 test blocks use
   bus/sort palette indices; M1 removes them.
 
-## M1 World engine (outline, planned after M0's bench number)
+## M1 World engine
 
-Tracks: A palette cycling + temporal fog dither + text; B segment
-sequencer + Bus + Heap (with the GC sweep); C Sort district + autopilot
-track + placeholder Snouty. Attract script `tools/scripts/attract.json`.
-Gate: Bus-Heap-Bus-Sort loop under 22 ms worst, GIF review.
+Goal: the strip becomes a sequence of segments (Bus, Heap, Bus, Sort, ...)
+generated on the badge, with the dataflow engine running (palette cycling,
+per-frame cell edits), the fog dither, title cards and the caption, the
+autopilot flying by default, and the placeholder Snouty. Gate: the 1800
+frame attract run (Bus-Heap-Bus-Sort and on) under 22 ms worst on the
+calibrated bench, check-float clean, GIF for Adrian's review.
+
+Scope kept for later: Tree, Hash, Stack, Pipeline and water (M2); Select
+skip, the Bus packet verb, the 15 s autopilot timeout tuning and the real
+Snouty sheet (M3). B works in M1 for the two districts that have a verb
+(Heap: collect garbage, Sort: shuffle).
+
+### Tracks
+
+Three Opus agents in this worktree, separate `--prefix` builds, no track
+edits another track's files. I write the scaffold first (every interface
+below as a compiling stub, `main.zig` wired to all of them), then the
+tracks fill in.
+
+- **Track A: light and text** (`palette.zig`, `render.zig`, `text.zig`,
+  `sprite.zig`): pulse-range cycling (5.3), the 4x4 Bayer fog dither, cliff
+  shading retune for the new structures, the title card and caption, the
+  placeholder Snouty.
+- **Track B: world and the first districts** (`world.zig`,
+  `districts/bus.zig`, `districts/heap.zig`): the segment sequencer, the
+  floor with the real palette indices, the live-district tick dispatch, the
+  Bus, the Heap with malloc/free and the GC sweep verb.
+- **Track C: Sort, autopilot, wiring** (`districts/sort.zig`, `camera.zig`,
+  `main.zig`, `input.zig`, `tools/scripts/`, `../../badge-bench/carts/snouty-flyover.toml`,
+  `docs/RUNNING.md`): the Sort district with the live quicksort and the
+  shuffle verb, the autopilot and manual takeover, Start toggle, B to the
+  live verb, debug exports, the attract and manual scripts, docs.
+
+### Fixed interfaces (M1 additions; M0 interfaces stay)
+
+```zig
+// world.zig
+pub const floor: u8 = 20;                 // noise floor base height; everything builds on floor + n
+pub const bus_len = 64;                   // rows
+pub const district_len = 192;             // rows; bus + district = 256 = one "pair"
+pub const Kind = enum(u8) { bus, heap, sort };  // M2 appends tree, hash, stack, pipeline
+pub const order = [_]Kind{ .heap, .sort };      // district cycle; pair p holds order[p % order.len]
+pub const Segment = struct { kind: Kind, y0: i32, len: i32, seed: u32, index: u32 };
+pub fn segment_at(y: i32) Segment;        // pair = floor(y / 256); bus if y mod 256 < 64
+pub fn live() Segment;                    // the district being ticked: the one under the camera, or the next one when the camera is on a bus
+pub const Rows = struct { h: *[W]u8, c: *[W]u8 };
+pub fn rows(y: i32) ?Rows;                // ring row y, null if not in the ring; districts edit through this
+pub fn regen_row(y: i32) void;            // rewrite row y's static content (floor + segment row()) if in the ring
+pub fn floor_row(y: i32, h: *[W]u8, c: *[W]u8) void;  // noise floor + grid lines (called by gen_row before the segment's row())
+pub fn tick(frame: u32, cam_row: i32, verb: bool) void; // after advance_to: enter() the live district when it changes, tick it, run its verb when `verb`
+pub fn entered_segment() ?Segment;        // the segment the camera crossed into this frame (once), for the title card
+pub const District = struct {
+    title: []const u8,                    // caps, at most 8 chars
+    gloss: []const u8,                    // one line, at most 19 chars
+    caption: []const u8,                  // "B: ...", at most 19 chars
+    alt: i32,                             // autopilot cruise altitude above `floor`, cells
+    verb_at: i32,                         // local row where the autopilot presses B, -1 never
+    row: *const fn (seed: u32, ly: i32, h: *[W]u8, c: *[W]u8) void,
+    enter: *const fn (seg: Segment) void,
+    tick: *const fn (frame: u32, cam_row: i32) void,
+    verb: *const fn () void,
+};
+pub fn info(kind: Kind) *const District;  // the table entry (bus included: no verb, caption "NEXT: <name>" is built by caption())
+pub fn caption() []const u8;              // caption for the segment under the camera
+
+// districts/<name>.zig: exports exactly the District fields as pub decls
+// (title, gloss, caption, alt, verb_at, row, enter, tick, verb); world.zig
+// builds the table from them.
+
+// palette.zig
+pub var cur: [256]u16;                    // this frame's palette (pulse ranges rotated), DisplayColor bits
+pub fn begin_frame(frame: u32) void;      // rotate into cur, rebuild fog from cur
+pub const pulse_a = 32; pub const pulse_a_dash = 48; pub const pulse_b = 64; pub const pulse_b_dash = 80;
+pub const white = 31; pub const rubble = 20; pub const grid = 16;
+pub const bus_road = 96; pub const bus_rim = 98; pub const sort_hue0 = 100; pub const sort_pivot = 148;
+pub const heap_alloc = [3]u8{ 196, 198, 200 }; pub const heap_free = 202;
+
+// render.zig: unchanged API; draw(frame) now dithers fog on (x, frame) and
+// leaves rows 100..127 untouched for the sprite and caption? No: the
+// terrain is drawn full screen; sprite and text draw over it afterwards.
+
+// text.zig
+pub fn show_card(title: []const u8, gloss: []const u8) void;  // 90 frames, top-left; replaces the current card
+pub fn set_caption(s: []const u8) void;   // persistent, bottom-left, row 119
+pub fn flash_caption() void;              // 20 frames bright
+pub fn draw(frame: u32) void;             // after render.draw and sprite.draw
+
+// sprite.zig
+pub const show_avatar = true;             // the one constant that removes Snouty
+pub fn draw(roll: i32) void;              // 24x16 at x 68..91, rows 100..115; frame by roll sign past 6 rows
+
+// camera.zig
+pub const Stick = struct { steer: i32 = 0, pitch: i32 = 0, boost: bool = false, verb: bool = false }; // steer/pitch Q16 in -1..1
+pub var autopilot: bool = true;
+pub fn pilot(frame: u32) Stick;           // reads input.zig; Start edge toggles; any stick/A/B input takes manual control; idle_frames without input returns to autopilot
+pub fn update(stick: Stick, frame: u32) void;
+pub const idle_frames = 450;              // 15 s
+
+// main.zig update() order
+//   input.update(read_controls()); const stick = camera.pilot(frame); camera.update(stick, frame);
+//   world.advance_to(cam_row); world.tick(frame, cam_row, stick.verb);
+//   if (world.entered_segment()) |seg| text.show_card(info(seg.kind).title, info(seg.kind).gloss);
+//   text.set_caption(world.caption()); if (stick.verb) text.flash_caption();
+//   palette.begin_frame(frame); render.draw(frame); sprite.draw(cam.roll); text.draw(frame);
+```
+
+Ring rule for ticks: the ring holds `[cam_row - 8, cam_row + 248)`, so a
+live district's rows behind the camera are gone; every dynamic edit goes
+through `world.rows(y)` and skips null. `world.tick` only calls a
+district's `tick` once its last row is generated, which is true from 56
+rows before the end of the preceding bus. A district's `row()` must be a
+pure function of `(seed, ly)` (layouts are recomputed from the seed, in a
+`gen` slot for the segment being generated and a `live` slot for the
+segment being ticked; the two are never the same segment because the ring
+is shorter than one bus + district cycle).
+
+### Constants (from `docs/concept/README.md` and `tools/concept.py`)
+
+Floor (Track B): `h = floor + noise2 >> 5` (0..7 over `floor` = 20),
+colour `2 * n` (indices 0..14), grid lines every 64 cells in x and y as
+`grid + (n >> 1)` (16..19). The M0 test blocks are gone.
+
+Bus (Track B): deck x 110..145 at `floor + 8`, colour `bus_road`; rims
+x 110..111 and 144..145 `bus_rim`; four 2-cell lanes at x 116, 124, 131,
+139 (cells x+0, x+1) painted `pulse_a_dash + (ly + 5k) % 16` for lanes
+0 and 2 and `pulse_b_dash + (ly + 5k) % 16` for lanes 1 and 3 (the B range
+rotates the other way, so the lanes alternate direction); pylons 4x4 at
+x 104 and 148 every 16 rows from ly 8, `floor + 14`, `bus_rim`. Title
+`BUS`, gloss `the address bus`, autopilot alt 40, no verb (M3).
+
+Heap (Track B): rows of blocks from ly 6 to ly 180; a row has depth
+10..27 and blocks of width from {8,10,12,14,16,20,24,30} with gaps 3..7
+starting at x 0..5; block depth = row depth - 0..4; a block overlapping
+x 122..133 (the corridor) or a 22% roll is freed: height `floor + 6..15`,
+colour `heap_free`; otherwise allocated: `floor + 20..85`, one of
+`heap_alloc`; 40% of allocated blocks are unreferenced (GC victims). Free
+list: polyline through freed-block centres in (y, x) order, vertical then
+horizontal legs, 2 cells wide, colour `pulse_a + dist % 16` where dist
+counts cells along the polyline, raising cells to `floor + 3`, only on
+cells at or below `floor + 20`. Tick: every 40 frames pick a block at
+least 16 cells from the camera's x: an allocated one frees (sinks to
+`floor + 8` over 8 frames, turns `heap_free`) or a freed one mallocs
+(rises to `floor + 40` over 8 frames, turns `heap_alloc[0]`). Verb
+(`B: collect garbage`, autopilot at local row 30): a 2-row white
+(`white`, height `floor + 24`) wall starts 12 rows ahead of the camera and
+moves away at 4 rows per frame to the end of the district; every
+unreferenced block whose near edge the wall has passed collapses over 10
+frames to `floor + 2` and turns `rubble + (x % 3)`; the rows the wall
+leaves are restored with `regen_row` then the collapse state re-applied.
+Only one sweep at a time. Title `HEAP`, gloss `malloc / free / gc`, alt 40.
+
+Sort (Track C): 64 bars of 4 cells across x; 17 bands, band r at rows
+`14 + 10r .. 14 + 10r + 6` (7 deep, 3 gap); band values are a seeded
+permutation of 0..63; bar height `floor + 6 + v * 74 / 64`, colour
+`sort_hue0 + 2 * (v * 24 / 64)`; pivot bars `sort_pivot`. Tick: the
+nearest band at or ahead of `cam_row - 8` that is not sorted runs
+quicksort (Lomuto, explicit range stack, last element pivot) at 2 swaps
+per frame, rewriting the two bars' cells after each swap and painting the
+current pivot `sort_pivot` until its partition ends; a finished band is a
+rainbow ramp. Verb (`B: shuffle the band`, autopilot at local row 60): the
+running band (or the next unsorted one) is Fisher-Yates shuffled in one
+frame, its rows rewritten, and it sorts at 8 swaps per frame until done.
+Title `SORT`, gloss `quicksort, live`, alt 90.
+
+Palette (Track A): `cur[32 + j] = rgb565[32 + ((j - frame) & 15)]`,
+`cur[48 + j] = rgb565[48 + ((j - 2 frame) & 15)]`, `cur[64 + j] =
+rgb565[64 + ((j + frame) & 15)]`, `cur[80 + j] = rgb565[80 + ((j + 2
+frame) & 15)]`; everything else copied. Fog is rebuilt from `cur`.
+
+Fog dither (Track A): `fog_q[step]` is the level in Q4 (0..112) on the M0
+curve; sixteen `[max_steps]u8` tables `fog_level_t[t][step] = (fog_q +
+t) >> 4` (t 0..15), the column picks `t = bayer4[x & 3][frame & 3]`
+(SPEC 5.3). If the GIF shows the 4-frame flicker as crawl, switch to
+`bayer4[x & 3][(x >> 2) & 3]` (spatial only) and say so in the status.
+Cliff shading: `cliff_dh` 12 -> 4 so bus rims, sort bars and heap block
+faces shade; the 3-high free-list ridge must not.
+
+Text (Track A): OS 8x8 font via `cart.text`, no background; each glyph
+drawn twice, black one pixel down-right first. Card: title at (4, 4) in
+`0xFFB040`, gloss at (4, 14) in `0xC8D0E8`, 90 frames, the last 20 fading
+by drawing in the dim colour only. Caption at (4, 119) in `0x8090B0`,
+flashed `0xE8FFFF` for 20 frames. Boot card: `MEMORY LANE` /
+`generated on badge` with a third line `at 30 fps` (from
+`build_options.flyover_fps`), shown by main at frame 0; a district card
+replaces it.
+
+Sprite (Track A): 24x16, three frames (level, bank left, bank right) as
+`[16]u24` literals, two colours (`0xE8D8C0` body, `0x402830` outline), at
+x 68..91, rows 100..115, transparent zero bits; frame by `roll` sign when
+`|roll| > 6 rows`. `show_avatar = false` compiles it out.
+
+Autopilot (Track C): default on. Target x = 128 in a bus; in a district
+`128 + 16 sin(frame / 512 turn)`; steer is a P controller on `(target -
+x)` with a lead of 40 frames of the current yaw drift, output clamped to
+`+-1/3` (Q16 in `Stick.steer`), so the roll stays gentle; pitch holds
+`cruise_alt` at `floor + info(live).alt` (the camera already lifts for
+terrain); presses B once per segment when `cam_row` crosses `y0 +
+verb_at`. Manual: any stick/A/B input switches to manual and resets the
+idle counter; `idle_frames` without input returns to autopilot; Start
+toggles (edge). Manual `Stick` is `+-1` per button.
+
+### Scripts and bench
+
+- `tools/scripts/attract.json`: `[]` (no input; the autopilot flies),
+  used with `--frames 1800`. The bench toml switches to it (1800 frames,
+  `budget_ms = 22.0`).
+- `tools/scripts/m1_manual.json`: stick right 60-120 (takes control),
+  B at 200 (heap GC), left 400-460, B at 700 (sort shuffle), Start at 900
+  (autopilot back on), 1200 frames.
+- Debug exports added (Track C): `debug_segment_kind`, `debug_segment_index`,
+  `debug_autopilot`, `debug_live_kind`; `debug_world_check` compares only
+  rows outside the live district (dynamic edits are legitimate there).
+
+### Done criteria for M1
+
+- `zig build -Dcart=snouty-flyover`, `zig build check-float` pass; `.text
+  + .data` under 60 KB, `.bss` under 160 KB (M0 was 141.7 KB; the RAM
+  window is 275 KB, `-Dflyover_depth=128` stays the escape).
+- Attract run 1800 frames: calibrated bench worst frame under 22 ms;
+  `debug_world_check == 0` at frame 1799; the camera never sinks below
+  the terrain (`debug_cam_alt` above `debug_map_height` under it, checked
+  by the manual script's `--at` lines).
+- Preview GIFs in `docs/`: `preview_m1_attract.gif` (1800 frames, every
+  3rd) and `preview_m1_manual.gif`; the Heap GC wall and the Sort
+  swaps visible in them.
+- `docs/RUNNING.md` updated (controls table, scripts, exports), PLAN
+  status line with the bench numbers, tag `snouty-flyover/m1`.
+
+### M1 status
+
+- 2026-09-30: started. Contract above; scaffold commit follows.
