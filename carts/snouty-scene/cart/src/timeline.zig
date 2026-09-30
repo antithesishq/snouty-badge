@@ -39,7 +39,7 @@ pub const entries = [_]Entry{
     .{ .part = .of(@import("parts/intro.zig")), .bars = 3 },
     .{ .part = .of(@import("parts/plasma.zig")), .bars = 5 },
     .{ .part = .of(@import("parts/copper.zig")), .bars = 6 },
-    .{ .part = .of(placeholder.Placeholder(3, "Rotozoomer")), .bars = 5 },
+    .{ .part = .of(@import("parts/rotozoomer.zig")), .bars = 5 },
     .{ .part = .of(placeholder.Placeholder(4, "Tunnel")), .bars = 5 },
     .{ .part = .of(placeholder.Placeholder(5, "Twister")), .bars = 4 },
     .{ .part = .of(placeholder.Placeholder(6, "Metaballs")), .bars = 5 },

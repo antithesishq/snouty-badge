@@ -43,3 +43,12 @@ and index field 5 KB, copper strip 6 KB, palettes 1.5 KB).
 
 Plenty of headroom: the M1 parts can spend up to about 9 ms each before a
 fade pushes them to the limit.
+
+## M1
+
+Calibrated badge-bench as M0, `tools/bench_parts.sh N` per part (part's
+length plus 60 frames of the next part).
+
+| # | Part | mean busy ms | part worst busy ms (frame) | run worst | .bss delta | what dominates |
+|---|---|---|---|---|---|---|
+|  3 | Rotozoomer | 1.34 | 2.13 (t 1) | 2.13 | +4,104 (texture 2 KB + background texel list 2 KB) | `render` 95%: ~9.5 cycles per pixel, full res; worst frames are the fade-in |
