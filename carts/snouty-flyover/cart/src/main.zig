@@ -8,6 +8,8 @@ const world = @import("world.zig");
 const palette = @import("palette.zig");
 const camera = @import("camera.zig");
 const render = @import("render.zig");
+const text = @import("text.zig");
+const sprite = @import("sprite.zig");
 
 comptime {
     cart.export_start_code();
@@ -24,16 +26,28 @@ pub fn start() void {
     render.init();
     world.advance_to(camera.cam.y >> fixed.Q);
     camera.init();
+    text.show_card("MEMORY LANE", "generated on badge");
 }
 
 pub fn update() void {
     input.update(read_controls());
-    camera.update(read_controls(), frame);
+    const stick = camera.pilot(frame);
+    camera.update(stick, frame);
 
     const t0 = cart.micros_since_boot();
-    world.advance_to(camera.cam.y >> fixed.Q);
+    const cam_row = camera.cam.y >> fixed.Q;
+    world.advance_to(cam_row);
+    world.tick(frame, cam_row, stick.verb);
+    if (world.entered_segment()) |seg| {
+        const d = world.info(seg.kind);
+        text.show_card(d.title, d.gloss);
+    }
+    text.set_caption(world.caption());
+    if (stick.verb) text.flash_caption();
     palette.begin_frame(frame);
     render.draw(frame);
+    sprite.draw(camera.cam.roll);
+    text.draw(frame);
     render_us = @truncate(cart.micros_since_boot() - t0);
     if (build_options.debug_overlay) draw_overlay();
 
@@ -84,7 +98,25 @@ comptime {
         @export(&debug_world_check, .{ .name = "debug_world_check" });
         @export(&debug_map_height, .{ .name = "debug_map_height" });
         @export(&debug_map_colour, .{ .name = "debug_map_colour" });
+        @export(&debug_segment_kind, .{ .name = "debug_segment_kind" });
+        @export(&debug_segment_index, .{ .name = "debug_segment_index" });
+        @export(&debug_live_kind, .{ .name = "debug_live_kind" });
+        @export(&debug_autopilot, .{ .name = "debug_autopilot" });
     }
+}
+
+/// Segment under the camera: kind (0 bus, 1 heap, 2 sort, ...) and index.
+fn debug_segment_kind() callconv(.c) u32 {
+    return @backingInt(world.segment_at(camera.cam.y >> fixed.Q).kind);
+}
+fn debug_segment_index() callconv(.c) u32 {
+    return world.segment_at(camera.cam.y >> fixed.Q).index;
+}
+fn debug_live_kind() callconv(.c) u32 {
+    return @backingInt(world.live().kind);
+}
+fn debug_autopilot() callconv(.c) u32 {
+    return @intFromBool(camera.autopilot);
 }
 
 fn debug_frame() callconv(.c) u32 {
@@ -112,17 +144,20 @@ fn debug_cam_roll() callconv(.c) u32 {
 fn debug_horizon() callconv(.c) u32 {
     return @bitCast(camera.cam.horizon);
 }
-/// Regenerates every row the ring should hold around the camera and counts the
-/// cells that differ from the ring (0 = ring consistent), plus 1000000 per row
-/// in the window that generated_row() does not report as present.
+/// Regenerates every row the ring should hold around the camera, outside the
+/// live district (whose tick edits cells), and counts the cells that differ
+/// from the ring (0 = ring consistent), plus 1000000 per row in the window
+/// that generated_row() does not report as present.
 fn debug_world_check() callconv(.c) u32 {
     var h: [world.W]u8 = undefined;
     var c: [world.W]u8 = undefined;
     var bad: u32 = 0;
     const row0 = camera.cam.y >> fixed.Q;
+    const live = world.live();
     var y = row0 - world.keep_behind;
     while (y < row0 + world.gen_ahead) : (y += 1) {
         if (!world.generated_row(y)) bad += 1_000_000;
+        if (y >= live.y0 and y < live.y0 + live.len) continue;
         world.gen_row(y, &h, &c);
         const i: usize = @intCast(y & (world.DEPTH - 1));
         for (h, c, world.height[i], world.colour[i]) |eh, ec, rh, rc| {

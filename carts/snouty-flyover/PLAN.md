@@ -245,8 +245,7 @@ pub const white = 31; pub const rubble = 20; pub const grid = 16;
 pub const bus_road = 96; pub const bus_rim = 98; pub const sort_hue0 = 100; pub const sort_pivot = 148;
 pub const heap_alloc = [3]u8{ 196, 198, 200 }; pub const heap_free = 202;
 
-// render.zig: unchanged API; draw(frame) now dithers fog on (x, frame) and
-// leaves rows 100..127 untouched for the sprite and caption? No: the
+// render.zig: unchanged API; draw(frame) dithers fog on (x, frame). The
 // terrain is drawn full screen; sprite and text draw over it afterwards.
 
 // text.zig

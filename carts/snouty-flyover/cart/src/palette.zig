@@ -74,11 +74,24 @@ pub const rgb565 = [256]u16{
 /// Fog-blended palette for this frame, `fog[level][index]`, as Pixel bits.
 pub var fog: [fog_levels][256]u16 = undefined;
 
-/// Pulse-range rotation (M1). TODO(M1): begin_frame advances `cycle`, rotates
-/// 32-47 and 64-79 by one (A forwards, B backwards) and 48-63 / 80-95 by two
-/// into a working copy of rgb565 before the fog rebuild (SPEC 5.3). M0 leaves
-/// it at 0 and fogs the literal table.
-pub var cycle: u32 = 0;
+/// This frame's palette: rgb565 with the pulse ranges rotated (SPEC 5.3),
+/// DisplayColor bits. Rebuilt by begin_frame; the fog table is built from it.
+pub var cur: [256]u16 = undefined;
+
+// Index names the generators use (layout above).
+pub const grid = 16;
+pub const rubble = 20;
+pub const white = 31;
+pub const pulse_a = 32;
+pub const pulse_a_dash = 48;
+pub const pulse_b = 64;
+pub const pulse_b_dash = 80;
+pub const bus_road = 96;
+pub const bus_rim = 98;
+pub const sort_hue0 = 100;
+pub const sort_pivot = 148;
+pub const heap_alloc = [3]u8{ 196, 198, 200 };
+pub const heap_free = 202;
 
 /// Darker blue-tinted version of each entry for the lake reflection (M2);
 /// present but unused in M0. Concept: lerp(0.85 * c, 0x0C2C66, 0.55) * 0.92.
@@ -120,16 +133,19 @@ pub const water = [256]u16{
 /// Blend weight of each fog level in 1/256: round(level * 256 / 7).
 const fog_weight = [fog_levels]i32{ 0, 37, 73, 110, 146, 183, 219, 256 };
 
-/// Cycle the pulse ranges (M1) and rebuild `fog` for this frame.
+/// Rotate the pulse ranges into `cur` and rebuild `fog` for this frame.
+/// Scaffold: TODO(Track A) rotate 32-47 by frame (A forwards), 48-63 by
+/// 2 frame, 64-79 by -frame (B backwards), 80-95 by -2 frame.
 pub fn begin_frame(frame: u32) void {
     _ = frame;
+    cur = rgb565;
     const fr: i32 = @intCast(((fog_rgb >> 16) * 31 + 127) / 255);
     const fg: i32 = @intCast((((fog_rgb >> 8) & 0xFF) * 63 + 127) / 255);
     const fb: i32 = @intCast(((fog_rgb & 0xFF) * 31 + 127) / 255);
     for (&fog, 0..) |*level_table, level| {
         for (level_table, 0..) |*out, i| {
             const w = if (i >= emissive_lo and i < emissive_hi) fog_weight[level >> 1] else fog_weight[level];
-            const c: i32 = rgb565[i];
+            const c: i32 = cur[i];
             const r = blend(c & 31, fr, w);
             const g = blend((c >> 5) & 63, fg, w);
             const b = blend(c >> 11, fb, w);

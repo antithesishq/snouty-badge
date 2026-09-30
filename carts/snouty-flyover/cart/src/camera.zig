@@ -6,9 +6,9 @@
 //! turns toward +x (screen right), so the forward vector is
 //! (sin yaw, cos yaw). Banking right lifts the right side of the horizon,
 //! which is a negative `roll`.
-const cart = @import("cart-api");
 const fixed = @import("fixed.zig");
 const world = @import("world.zig");
+const input = @import("input.zig");
 
 // --- Flight constants -------------------------------------------------------
 
@@ -67,6 +67,40 @@ pub const Cam = struct {
 
 pub var cam: Cam = .{};
 
+/// What the flight model flies with, from the player or the autopilot:
+/// steer and pitch in Q16 (-1..1), boost = A held, verb = B pressed (edge).
+pub const Stick = struct { steer: i32 = 0, pitch: i32 = 0, boost: bool = false, verb: bool = false };
+
+/// Autopilot on (the default at boot); Start toggles, stick/A/B input takes over.
+pub var autopilot: bool = true;
+/// Frames without input before the autopilot resumes (15 s).
+pub const idle_frames = 450;
+var idle: u32 = 0;
+
+/// Merge the player's buttons (input.zig, already updated this frame) with the
+/// autopilot. Scaffold: TODO(Track C) the serpentine, altitude and B schedule
+/// of PLAN.md M1; for now the autopilot flies straight.
+pub fn pilot(frame: u32) Stick {
+    _ = frame;
+    if (input.pressed(.start)) autopilot = !autopilot;
+    const manual: Stick = .{
+        .steer = (@as(i32, @intFromBool(input.held(.right))) - @intFromBool(input.held(.left))) * fixed.one,
+        .pitch = (@as(i32, @intFromBool(input.held(.down))) - @intFromBool(input.held(.up))) * fixed.one,
+        .boost = input.held(.a),
+        .verb = input.pressed(.b),
+    };
+    const any = manual.steer != 0 or manual.pitch != 0 or manual.boost or input.held(.b);
+    if (any) {
+        autopilot = false;
+        idle = 0;
+    } else if (!autopilot) {
+        idle += 1;
+        if (idle >= idle_frames) autopilot = true;
+    }
+    if (!autopilot) return manual;
+    return .{};
+}
+
 /// Q16 accumulators behind the integer fields of `cam`.
 var yaw_q: i32 = 0;
 var horizon_q: i32 = horizon_level * fixed.one;
@@ -85,18 +119,18 @@ pub fn init() void {
     cruise_alt = cam.alt;
 }
 
-pub fn update(controls: cart.Controls, frame: u32) void {
+pub fn update(stick: Stick, frame: u32) void {
     _ = frame;
-    const steer: i32 = @as(i32, @intFromBool(controls.right)) - @intFromBool(controls.left);
-    const pitch: i32 = @as(i32, @intFromBool(controls.down)) - @intFromBool(controls.up);
+    const steer = stick.steer; // Q16, -1..1
+    const pitch = stick.pitch;
 
     // Speed: boost while A is held.
-    const want_speed = if (controls.a) boost else cruise;
+    const want_speed = if (stick.boost) boost else cruise;
     speed += (want_speed - speed) >> speed_ease_shift;
     if (@abs(want_speed - speed) < 64) speed = want_speed;
 
     // Roll eases toward the stick; banking right lifts the right side (negative roll).
-    const want_roll = -steer * roll_max;
+    const want_roll = -fixed.mul(steer, roll_max);
     const droll = @divTrunc(want_roll - cam.roll, roll_ease);
     cam.roll = if (droll == 0) want_roll else cam.roll + droll;
 
@@ -114,7 +148,7 @@ pub fn update(controls: cart.Controls, frame: u32) void {
     cam.y += fixed.mul(speed, cos(cam.yaw));
 
     // Pitch: up dives (horizon rises), down climbs (horizon falls).
-    const want_h = (horizon_level + pitch * pitch_range) * fixed.one;
+    const want_h = horizon_level * fixed.one + pitch * pitch_range;
     horizon_q += (want_h - horizon_q) >> pitch_ease_shift;
     if (@abs(want_h - horizon_q) < 256) horizon_q = want_h;
     cam.horizon = (horizon_q + fixed.one / 2) >> fixed.Q;
