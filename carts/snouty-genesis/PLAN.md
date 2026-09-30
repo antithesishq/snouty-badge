@@ -443,6 +443,246 @@ arms coded as stubs to the Track A interface above; keep the diff small),
    main; push. Hardware check (open, not a gate): XIP launch, drive
    streaming stall rates contiguous and fragmented (Adrian, show day).
 
+## M3 Scrub: contract
+
+The time scrubber (SPEC.md section 10): an undo record per 30 Genesis
+frames, Left/Right in the menu step half a second back and forward through
+them, resuming from a parked position plays on from there and drops the
+future. Two Opus tracks in worktrees against the prep commit on
+`genesis/m3`, then integration. Snouty Gear's M3 (`gear/m3`, worktree
+`/home/exedev/snouty-badge-gear`) is the prior art for the frontend
+(`frontend/rewind.zig`, the menu's scrub line and scrub view, the debug
+exports, `m3_scrub.json`) and for the shape of the tests; its page store
+is not.
+
+### Step 0 (done in the prep commit)
+
+The third Start of the Miniplanets scripts paused the game (SPEC 10.1).
+`tests/golden_mini.zig` `pad_at`, `tools/scripts/m1_mini300.json` and
+`m2_mini300.json` lost it; the `golden-mini:` lines and the unpaused
+badge-bench numbers are in the Status entry for 2026-09-30 (M3 started)
+and are the M3 baseline: every track compares against them.
+
+### Decisions defaulted here (Adrian may overrule; nothing is blocked)
+
+- Mechanism: the copy-on-first-write undo records SPEC.md 10 describes,
+  not Gear's page store. The page store keeps every non-zero page of the
+  newest keyframe in its pool: for a Genesis with its 64 KB VRAM in use
+  that is about 136 KB, more than the ~105 KB the RAM window has left. An
+  undo record only holds what changed, and the live console is the newest
+  keyframe.
+- A record is applied by swapping: each 64-byte block in the record is
+  exchanged with the console's block, and the record then holds the
+  newer contents. Applying it again goes forward. So Left and Right are
+  the same operation, bit-exact, with no input log and no replay
+  (deviation from SPEC.md 10 as first written: the per-frame pad log is
+  dropped; Gear needed it to replay back to live).
+- Storage: one uniform ring of 68-byte slots (`u16` id, `u16` pad, 64
+  bytes) in a run-time arena, the RAM the linker leaves between
+  `__bss_end__` and `__stack_limit__` minus a 1 KB guard, as Gear does.
+  A record is a run of slots: first the console's small state (every
+  console field outside the four byte regions, packed as `Md.Small`,
+  about 1.7 KB, ids `0xF000 + chunk`), then one slot per block first
+  written in the interval (id = region << 12 | block). Regions: work RAM
+  (1024 blocks), VRAM (1024), Z80 RAM (128), cartridge SRAM (256 at most,
+  only the declared range is ever written). The dirty state is one byte
+  per block (2432 bytes in `.bss`), read on the write paths and cleared
+  when a record closes. When the ring is full the oldest closed record is
+  evicted; when the open record alone fills it, history is lost until the
+  next boundary (the dirty bytes are set to 1 so the write paths stop
+  copying) and rebuilds from there.
+- Interval 30 frames (0.5 s, the scrub step), records capped at 64
+  (32 s). Block size 64 B (SPEC 10.1 measured 16 B as not worth it for
+  Gear; the same holds here).
+- The picture while parked: the console is restored exactly to the
+  keyframe and stays there; `Md.render_still` draws all 128 rows from
+  that state through the line sink without stepping (sprite table cache
+  rebuilt, the sticky status bits saved around it), so the parked state
+  is never disturbed. It shows the frame the game was about to draw,
+  which is what a player expects from "0.5 s ago".
+- The menu UI is Gear's: "Scrub: live / 3.5s" or "Scrub: -1.5 / 3.5s" on
+  the panel's bottom line (`menu.scrub_line_y`, already reserved),
+  Left/Right on a non-setting row scrub with 4 steps per second on hold,
+  after a step the panel gives way to a bottom bar over the restored
+  picture, B or a Select tap resume, Up/Down/A bring the panel back.
+  "Scrub: no memory" when the arena holds fewer than two records' worth
+  of slots. Reset and Pick ROM forget the history.
+- Performance gate: the write-path check costs one byte load and a
+  branch per 68000/Z80/VDP write. Track A measures with badge-bench
+  before and after; the budget is +1.0 ms mean on the unpaused Miniplanets
+  script and the section 8 totals (31 mean / 33 worst) still hold. If the
+  check costs more, the fallback is a per-frame block compare against a
+  shadow copy of work RAM only (VRAM keeps the DMA-run marks), decided at
+  integration, not by the track.
+
+### Frozen for M3
+
+```zig
+// core/undo.zig (Track A). One tracker for one console (file-level state:
+// the dirty bytes must be reachable from the write paths without an Md
+// offset). No cart-api, no allocator; the arena comes from the frontend.
+pub const block_size = 64;
+pub const Slot = extern struct { id: u16, pad: u16 = 0, data: [block_size]u8 };  // 68 B
+pub const frames_per_record = 30;
+pub const max_records = 64;
+pub const Region = enum(u4) { work_ram = 0, vram = 1, z80_ram = 2, sram = 3, small = 15 };
+pub fn init(arena: []align(4) u8) void;      // slots = arena.len / 68; tracking off
+pub fn capacity_slots() usize;               // 0 before init
+pub fn reset(md: *Md) void;                  // forget history, open record 0 from md; tracking on
+pub fn disable() void;                       // tracking off (dirty all 1), the console runs untracked
+pub fn record_frame(md: *Md) void;           // after every stepped frame; truncates if parked; boundary close/open
+pub fn can_step(dir: i2) bool;
+pub fn step(md: *Md, dir: i2) bool;          // swap one record (see above); false at the ends
+pub fn parked() bool;                        // cursor != 0
+pub fn depth_frames() u32;                   // frames behind live (0 live)
+pub fn history_frames() u32;                 // frames reachable back from live
+pub fn record_count() usize;                 // closed records held
+pub fn slots_in_use() usize;
+// Hot hooks, inline, called BEFORE the write with the region address:
+pub inline fn touch_wr(addr: u16) void;      // work RAM byte address (a word never straddles a block)
+pub inline fn touch_vr(addr: u16) void;      // VRAM
+pub fn touch_vr_range(addr: u16, bytes: u32) void;  // DMA runs, wraps at 64 KB
+pub inline fn touch_zr(addr: u13) void;      // Z80 RAM
+pub inline fn touch_sr(addr: u14) void;      // cartridge SRAM (index into md.sram)
+
+// core/md.zig (Track A)
+pub const Small = struct { ... };            // cpu, vdp: vdp.Vdp.Small (all but vram and line_mode), io, pad,
+                                             // sram_active, dma_stall, z80, z80_bank, arbiter, z80_int, ym, psg,
+                                             // frame_count, m68k_carry, z80_carry
+pub fn save_small(md: *const Md, out: *Small) void;
+pub fn load_small(md: *Md, k: *const Small) void;  // recomputes tone_cache; keeps rom, line_sink, line_mode, not_wait_loop
+pub fn render_still(md: *Md) void;           // 128 rows through line_sink from the current state, state unchanged
+// Keyframe / snapshot / restore stay (tests).
+
+// cart/src/frontend/rewind.zig (Track B), over core.undo
+pub fn init() bool;                          // arena from the linker (wasm: static), undo.init; false = no memory
+pub fn reset(md: *core.Md) void;             // after begin() and the menu's Reset
+pub fn record_frame(md: *core.Md) void;
+pub fn step(md: *core.Md, dir: i2) bool;     // undo.step then show()
+pub fn show(md: *core.Md) void;              // render_still + video.finish_frame
+pub fn depth_frames() u32; history_frames() u32; record_count() usize; capacity_slots() usize; slots_in_use() usize; arena_bytes() usize;
+// cart/src/frontend/tuning.zig (Track B): stack_guard = 1024, wasm_arena_bytes (badge-like, set at integration)
+```
+
+`main.zig` (Track B): `rewind.init()` in `start` (before the console
+exists; the arena does not depend on the ROM), `rewind.reset(&md)` at the
+end of `begin`, `rewind.record_frame(&md)` after every `md.step_frame` in
+`run_update`, `rewind.reset` after the menu's Reset row (`md.reset()`
+writes the memories directly, past the hooks). Exports `debug_scrub_depth`,
+`debug_scrub_history`, `debug_scrub_records`, `debug_scrub_slots`,
+`debug_scrub_capacity`, `debug_scrub_arena` for `--dump-exports`.
+
+### Track A: core (files `core/undo.zig`, `core/md.zig` (Small, render_still, hooks), `core/bus.zig`, `core/vdp.zig`, `core/z80bus.zig` (hooks only), `tests/undo_unit.zig`, `tests/determinism.zig`, `tests/scrub_sizing.zig`, `tests/all.zig`)
+
+- `core/undo.zig` as frozen above. Ring bookkeeping: records as
+  (start slot, length) in a `[max_records]` table plus the open record;
+  append at the head, evict at the tail, modular slot indices; `cursor`
+  = records applied (0 live). Left from live with an empty open record
+  (live on the boundary) goes straight to the newest closed record, as
+  Gear's ring does. Resuming while parked drops the applied records
+  (they hold the future) and opens a fresh record from the parked state.
+  `reset` and the boundary close/open: `save_small` into the record's
+  small slots, dirty bytes cleared. The hot hooks test one dirty byte and
+  call a non-inline `save(region, block)` on the first write.
+- Hooks: `bus.zig` `write8`/`write16` work RAM path (`touch_wr` before
+  the store), `write8_io` SRAM store (`touch_sr`); `vdp.zig` `bus_write`
+  VRAM case (`touch_vr`), `dma_68k` fast path (`touch_vr_range` per run),
+  `dma_fill` and `dma_copy` VRAM stores (`touch_vr` per byte, or a range
+  when register 15 is 1 or 2); `z80bus.zig` `write` Z80 RAM store
+  (`touch_zr`); the 68000's A00000 writes reach the same function. CRAM
+  and VSRAM are in `Small`. Nothing else in the core writes the regions
+  except `reset` (`@memset`), which the frontend follows with
+  `rewind.reset`.
+- `Md.Small`/`save_small`/`load_small` copy field by field with an
+  `inline for` over the field names (Gear `gg.zig` `save_small`);
+  `vdp.Vdp.Small`/`save_small`/`load_small` the same, skipping `vram`
+  and `line_mode`; `spr_cache`, `spr_band`, `spr_count`, `spr_dirty` are
+  copied (they are consistent with the VRAM of the same instant).
+  `load_small` ends with `tone_cache = pick_tone()`.
+- `Md.render_still`: for every line with a row (`vdp.row_for_line`),
+  `vdp.render_line(row, sink)` through `md.line_sink`; save and restore
+  `vdp.status` and `vdp.line` around it; `vdp.line` is walked 0..261 for
+  `row_for_line`. Confirm with a test that a `Keyframe` before equals the
+  one after (`std.meta.eql` field by field, as `tests/determinism.zig` in
+  Gear does).
+- Tests (all host, `tests/all.zig` updated):
+  - `undo_unit.zig`: a small arena (say 400 slots) over a console running
+    the test ROM: record/step/step symmetry (Left then Right restores the
+    exact `Keyframe`), depth/history arithmetic, truncation on resume,
+    eviction order, lose-history and rebuild, the empty-open-record
+    boundary case, `disable`.
+  - `determinism.zig`: the test ROM (always present) and Miniplanets (skip
+    if absent) for 600 frames with a scripted pad stream, a full
+    `Keyframe` every 30 frames alongside a tracked run in a large arena;
+    then walk Left through every record comparing each parked state with
+    the keyframe of that frame, walk Right back to live and compare with
+    the live keyframe; also a tracked console and an untracked one stepped
+    identically end equal (tracking changes no behaviour). Then resume
+    from a parked position and check the next boundary's record chains
+    correctly (step back twice, forward twice).
+  - `scrub_sizing.zig` (print only, like `golden-mini`): Miniplanets
+    through `golden_mini.pad_at`, slots per record and a per-scene
+    summary (boot, title, level load, play), the SPEC 10.1 table redone
+    through the real store.
+- badge-bench before (prep commit) and after (tracking on from `start`;
+  Track A wires a minimal `undo.init`/`undo.reset`/`record_frame` into
+  `main.zig` behind nothing else so the numbers are of the shipped path;
+  Track B's `rewind.zig` replaces it at integration): unpaused
+  `m2_mini300.json` from `out/romfs_mini.img`, 336 updates, `busy ms`
+  mean / worst, and the test ROM script. Report the delta.
+- `zig fmt`, `zig build test-genesis` green, `golden`/`golden-mini` lines
+  unchanged from the Status baseline, both targets build, `.text` and
+  `.bss` reported (`size -A`).
+
+### Track B: frontend (files `cart/src/frontend/rewind.zig`, `cart/src/frontend/tuning.zig`, `cart/src/frontend/menu.zig`, `cart/src/main.zig`, `tools/scripts/m3_scrub.json`, `badge-bench/carts/snouty-genesis.toml`, `docs/RUNNING.md`)
+
+- Until Track A lands, build against a stub `core/undo.zig` with the
+  frozen signatures (no-ops returning "no memory"), kept out of the
+  track's commits or replaced at merge; `Md.render_still` may be stubbed
+  as one `step_frame` for the preview run. Do not touch other core files.
+- `rewind.zig` as frozen: the arena from `__bss_end__`/`__stack_limit__`
+  minus `tuning.stack_guard` on the badge (Gear's `find_arena`), a
+  `tuning.wasm_arena_bytes` static in wasm (start at 100 KB; integration
+  sets it to the badge's `size -A` figure); `init` returns false when
+  fewer than `2 * small_slots + 64` slots fit; stats for the menu and the
+  exports.
+- `menu.zig`: Gear's scrub line, `scrub_view` bar, auto-repeat (4 steps
+  per second while Left/Right held), `scrub_label` with its comptime
+  checks, dim line while there is no history, "Scrub: no memory"; the
+  Genesis row set stays (Resume, Btns, Scale, Sound, Debug overlay, Reset,
+  Pick ROM, About). Reset and Pick ROM call `rewind.reset` after the
+  console is (re)made (`begin` does it for Pick ROM). After a scrub step
+  `video.apply(&md)` is harmless and kept for the M2 note.
+- `main.zig` wiring and exports as above; `debug_state` unchanged.
+- `tools/scripts/m3_scrub.json`: Miniplanets from the splash into play
+  (M2's `m2_mini300.json` presses), then a 35-update Select hold to open
+  the menu, Left x4 with releases (each step 0.5 s back), Right x2, B to
+  resume, 40 updates of play, the menu again, Left x2, B; about 420
+  updates. Verify in the headless preview with
+  `--dump-exports debug_state,debug_scrub_depth,debug_scrub_history,debug_scrub_records`
+  that the depth reads 60/120/180/240 then 120/60 frames, that resuming
+  truncates (records drop) and that play continues; PNGs of the scrub
+  bar. The toml gets a comment with the Miniplanets scrub command
+  (`--script ... m3_scrub.json --frames 420`); the default run stays the
+  test ROM.
+- `docs/RUNNING.md`: the scrubber's controls and limits (about 5 s in
+  play, more on menus, under 1 s right after a level load).
+- No host tests (cart-api); `zig fmt`, both targets build, no comptime
+  loops.
+
+### Integration (me, after the two merge)
+
+1. Merge both tracks into `genesis/m3`; `zig build test-genesis` green
+   (determinism included), golden lines unchanged, every cart builds.
+2. `wasm_arena_bytes` from `size -A` of the merged XIP ELF (RAM window
+   0x4AF00 minus the 32 KB stack, `.data` + `.bss`, the guard); preview
+   run of `m3_scrub.json`; GIF `docs/m3_scrub.gif`; RUNNING.md folded.
+3. badge-bench: unpaused Miniplanets and the test ROM with the scrubber
+   on, against the Step 0 baseline; the scrub script's menu updates
+   (`render_still` cost). Sizes.
+4. SPEC 10 status paragraph, tag `snouty-genesis/m3`, merge to main and
+   push (Adrian tests from main), pull-and-run notes.
+
 ## Status
 
 - 2026-09-29: SPEC.md, this plan and `docs/ROM_STREAMING.md` drafted;
@@ -626,3 +866,11 @@ arms coded as stubs to the Track A interface above; keep the diff small),
   is to fix `golden_mini.pad_at`, `m1_mini300.json`, `m2_mini300.json`,
   re-record `golden-mini` and re-bench. Adrian: M3 starts after Snouty
   Gear M3 (same design, prior art).
+- 2026-09-30 (M3 started, after Snouty Gear M3): branch `genesis/m3` from
+  origin/main `2680e2a`; contract above. Step 0: the pausing third Start
+  dropped from `golden_mini.pad_at`, `m1_mini300.json`, `m2_mini300.json`.
+  Unpaused baseline, `golden-mini:` lines: `frames 0x246F566FF41A43A4, 62
+  tone changes 0xE68656F23938261E, state 0x3B9FFCB07C1C9047`; `68000 pc
+  00061E sr 2004, z80 pc 0D45`. Tracks A (core, `genesis/m3-core`,
+  worktree `/home/exedev/snouty-badge-genesis-core`) and B (frontend,
+  `genesis/m3-front`, `/home/exedev/snouty-badge-genesis-front`).

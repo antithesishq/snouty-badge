@@ -301,6 +301,24 @@ there), because a full Genesis keyframe does not fit twice in RAM.
 - Target: at least 1 s of history. M3 measures record sizes; if 1 s does
   not fit, the menu says "rewind unavailable" rather than shipping a
   scrubber that cannot go back.
+- Mechanism (M3, 2026-09-30, defaulted; PLAN.md "M3 Scrub: contract"):
+  the undo records above, in one ring of 68-byte slots (`core/undo.zig`)
+  living in the run-time arena between `__bss_end__` and the stack limit,
+  as Snouty Gear's store does. Gear's page store was not taken: it keeps
+  every non-zero page of the newest keyframe in its pool, about 136 KB
+  for a Genesis with its VRAM in use, more than the RAM window has left;
+  an undo record holds only what changed and the live console is the
+  newest keyframe. A record is applied by swapping its blocks with the
+  console's, after which it holds the newer contents, so Left and Right
+  are one operation and bit-exact: there is no input log and no replay
+  (the pad log above is dropped). A record starts with the packed small
+  state (`Md.Small`: everything outside work RAM, VRAM, Z80 RAM and
+  cartridge SRAM, about 1.7 KB) and adds one slot per block first written
+  in its 30 frames; one dirty byte per block (2432 bytes) is tested on the
+  68000, Z80 and VDP write paths, DMA marks runs. The oldest record is
+  evicted when the ring is full; a record that fills the ring alone loses
+  the history until the next boundary. The picture while parked is drawn
+  from the parked state without stepping it (`Md.render_still`).
 
 ### 10.1 Record sizes measured (2026-09-30, before M3)
 
