@@ -55,7 +55,7 @@ const item_count = @typeInfo(Item).@"enum".field_names.len;
 /// The Pick ROM row exists only for a drive build that found candidates;
 /// otherwise it is skipped (not greyed) by `move` and `draw`.
 fn pick_available() bool {
-    return false; // Track B: romsrc.use_drive and romsrc.candidate_count > 0
+    return romsrc.use_drive and romsrc.candidate_count > 0;
 }
 
 fn visible(item: Item) bool {

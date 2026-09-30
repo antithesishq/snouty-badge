@@ -81,6 +81,23 @@ pub fn add(b: *Build, sycl_badge_dep: *Build.Dependency, opts: common.Options) v
         .target = b.graph.host,
         .optimize = test_optimize,
     });
+    // The drive scan (cart/src/frontend/drive.zig) is a module of its own so
+    // the tests can run it against FAT12 fixture images (tests/fixtures/).
+    const romfs_host = b.createModule(.{
+        .root_source_file = b.path("lib/romfs.zig"),
+        .target = b.graph.host,
+        .optimize = test_optimize,
+    });
+    const drive_host = b.createModule(.{
+        .root_source_file = b.path(dir ++ "cart/src/frontend/drive.zig"),
+        .target = b.graph.host,
+        .optimize = test_optimize,
+        .imports = &.{
+            .{ .name = "core", .module = core_host },
+            .{ .name = "rom", .module = rom_host },
+            .{ .name = "romfs", .module = romfs_host },
+        },
+    });
     const tests = b.addTest(.{
         .name = "snouty-genesis-tests",
         .filters = if (opts.test_filter) |f| &.{f} else &.{},
@@ -91,6 +108,8 @@ pub fn add(b: *Build, sycl_badge_dep: *Build.Dependency, opts: common.Options) v
             .imports = &.{
                 .{ .name = "core", .module = core_host },
                 .{ .name = "rom", .module = rom_host },
+                .{ .name = "romfs", .module = romfs_host },
+                .{ .name = "drive", .module = drive_host },
             },
         }),
     });
@@ -155,17 +174,30 @@ fn rom_module(b: *Build) Build.LazyPath {
 }
 
 /// Adds `build_options`, `core` (with `z80`), `romfs` (lib/romfs.zig, the
-/// drive reader), `iris` (lib/iris_mark.zig) and the generated `rom` to the cart.
+/// drive reader), `iris` (lib/iris_mark.zig), the generated `rom` and `drive` (the drive scan,
+/// cart/src/frontend/drive.zig, a module so the host tests share it) to the
+/// cart.
 fn build_cart_modules(b: *Build, cart: *Build.Module, cart_api: *Build.Module, step: *Build.Step) void {
     _ = cart_api;
     cart.addImport("build_options", build_options.?.createModule());
     const z80 = b.createModule(.{ .root_source_file = b.path(gear_core ++ "z80.zig") });
-    cart.addImport("core", b.createModule(.{
+    const core = b.createModule(.{
         .root_source_file = b.path(dir ++ "core/md.zig"),
         .imports = &.{.{ .name = "z80", .module = z80 }},
-    }));
-    cart.addImport("romfs", b.createModule(.{ .root_source_file = b.path("lib/romfs.zig") }));
+    });
+    const romfs = b.createModule(.{ .root_source_file = b.path("lib/romfs.zig") });
+    const rom = b.createModule(.{ .root_source_file = rom_module(b) });
+    cart.addImport("core", core);
+    cart.addImport("romfs", romfs);
+    cart.addImport("rom", rom);
     cart.addImport("iris", b.createModule(.{ .root_source_file = b.path("lib/iris_mark.zig") }));
-    cart.addImport("rom", b.createModule(.{ .root_source_file = rom_module(b) }));
+    cart.addImport("drive", b.createModule(.{
+        .root_source_file = b.path(dir ++ "cart/src/frontend/drive.zig"),
+        .imports = &.{
+            .{ .name = "core", .module = core },
+            .{ .name = "rom", .module = rom },
+            .{ .name = "romfs", .module = romfs },
+        },
+    }));
     step.dependOn(rom_step);
 }

@@ -14,6 +14,7 @@
 //! voice (frontend/audio.zig), off at boot unless built with -Dsound=true
 //! (docs/SOUND.md); the menu's Sound row flips it. No rewind yet (M3). See
 //! SPEC.md (design), PLAN.md (milestone contract), CLAUDE.md (toolchain).
+//! The console is created by `begin` once the ROM is known (`have_md`).
 const cart = @import("cart-api");
 const core = @import("core");
 const video = @import("frontend/video.zig");
@@ -24,6 +25,8 @@ const romsrc = @import("frontend/romsrc.zig");
 const text = @import("frontend/text.zig");
 const menu = @import("frontend/menu.zig");
 const splash = @import("frontend/splash.zig");
+const picker = @import("frontend/picker.zig");
+const help = @import("frontend/help.zig");
 
 comptime {
     cart.export_start_code();
@@ -36,15 +39,16 @@ var md: core.Md = undefined;
 /// Genesis frames per update; only the last is rendered.
 const frames_per_update = core.tunables.render_every;
 
-/// `debug_state` reports these numbers.
+/// 0 splash, 1 running, 2 menu, 3 pick (drive picker), 4 help (no ROM on
+/// the drive). `pick` and `help` only happen in drive builds.
 pub const State = enum(u32) { splash = 0, running = 1, menu = 2, pick = 3, help = 4 };
 var state: State = .splash;
-var controls_state: input.State = .{};
-/// `md` holds a ROM (`begin` ran). Nothing touches `md` before; the wasm
-/// exports return 0 until then.
-var have_md = false;
-/// Where the splash leads: running, or (drive builds, Track B) pick / help.
+/// Where the splash leads: `running` (the ROM was chosen in `start`),
+/// `pick` or `help`.
 var after_splash: State = .running;
+/// `md` has been initialised by `begin`; nothing reads it before.
+var have_md = false;
+var controls_state: input.State = .{};
 
 /// Menu opens since boot.
 var menu_opens: u32 = 0;
@@ -56,13 +60,28 @@ pub fn start() void {
     text.init();
     video.init();
     debug.frames_per_update = frames_per_update;
-    // Track B: `romsrc.scan()` and the ROM decision of PLAN.md "Frontend
-    // states" replace this line (embedded / one candidate: begin(...) and
-    // after_splash = .running; several: after_splash = .pick; none: .help).
-    begin(romsrc.select());
+    romsrc.scan();
+    choose_rom();
 }
 
-/// Load a ROM into the console and apply the menu settings to it.
+/// The ROM decision of PLAN.md "Frontend states": the embedded ROM when the
+/// drive is not used or has no volume, the one playable drive file, the
+/// picker for several, the help screen for none.
+fn choose_rom() void {
+    if (!romsrc.use_drive) return begin(romsrc.embedded(null));
+    const s = &romsrc.scan_result;
+    if (s.err) |e| return begin(romsrc.embedded(@errorName(e)));
+    if (s.playable_count == 1) return begin(romsrc.select(s.first_playable().?));
+    if (s.playable_count > 1) {
+        picker.reset();
+        after_splash = .pick;
+    } else {
+        after_splash = .help;
+    }
+}
+
+/// Create the console for `src`. Called once the ROM is known: in `start`,
+/// or when the picker or the help screen is left.
 fn begin(src: core.RomSource) void {
     md.init_in_place(src);
     md.line_sink = video.sink();
@@ -75,16 +94,62 @@ pub fn update() void {
     const t0 = cart.micros_since_boot();
     debug.frame_tick(t0);
     switch (state) {
-        .splash => if (splash.update(controls_state.edge.any_pressed())) {
-            controls_state.suppress_held();
-            state = after_splash;
-            if (state == .running) run_update(t0);
-        },
+        .splash => splash_update(t0),
         .running => run_update(t0),
         .menu => menu_update(),
-        .pick, .help => unreachable, // Track B: the picker and help arms.
+        // Only a drive build gets here; the check keeps the picker and the
+        // help screen out of the wasm and embed builds.
+        .pick => if (romsrc.use_drive) pick_update(t0),
+        .help => if (romsrc.use_drive) help_update(t0),
     }
     if (cart.is_wasm) present_wasm();
+}
+
+/// One splash update (frontend/splash.zig); any button skips it. When it
+/// ends, `after_splash` starts in the same update.
+fn splash_update(t0: u64) void {
+    if (splash.update(controls_state.edge.any_pressed())) leave_splash(t0);
+}
+
+/// Enter `after_splash` and run its first update now, with the buttons that
+/// skipped the splash ignored until released.
+fn leave_splash(t0: u64) void {
+    controls_state.suppress_held();
+    state = after_splash;
+    switch (state) {
+        .running => run_update(t0),
+        .pick => if (romsrc.use_drive) pick_update(t0),
+        .help => if (romsrc.use_drive) help_update(t0),
+        else => {},
+    }
+}
+
+/// The edge with suppressed (held-over) buttons masked out, so a button
+/// that left the previous state does not act in the next.
+fn live_edge() input.Edge {
+    const e = controls_state.edge;
+    return .{ .prev = e.prev, .cur = e.cur & ~controls_state.suppress };
+}
+
+/// One picker update (drive builds). On a choice start that ROM (or the
+/// embedded one for B) and run its first frames in the same update.
+fn pick_update(t0: u64) void {
+    const choice = picker.update(live_edge()) orelse return;
+    begin(if (choice) |i| romsrc.select(i) else romsrc.embedded("skipped"));
+    start_running(t0);
+}
+
+/// One help-screen update (drive builds); A or B runs the embedded ROM.
+fn help_update(t0: u64) void {
+    if (!help.update(live_edge())) return;
+    begin(romsrc.embedded("no ROM on the drive"));
+    start_running(t0);
+}
+
+fn start_running(t0: u64) void {
+    controls_state.suppress_held();
+    state = .running;
+    run_update(t0);
 }
 
 fn run_update(t1: u64) void {
@@ -122,9 +187,13 @@ fn menu_update() void {
             state = .running;
             run_update(cart.micros_since_boot());
         },
-        // Track B: menu.close(); controls_state.suppress_held();
-        // picker.reset(); state = .pick; (the row is hidden until then).
-        .pick_rom => unreachable,
+        .pick_rom => {
+            menu.close();
+            controls_state.suppress_held();
+            audio.silence();
+            picker.reset();
+            state = .pick;
+        },
     }
 }
 
@@ -155,6 +224,7 @@ fn present_wasm() void {
 
 // Zero-argument exports for `tools/preview.mjs --dump-exports` (wasm only).
 // In wasm micros_since_boot adds 1000 per call, so debug_step_us means nothing.
+// Those that read `md` return 0 until `begin` has created it (`have_md`).
 comptime {
     if (cart.is_wasm) {
         @export(&debug_frame_count, .{ .name = "debug_frame_count" });
