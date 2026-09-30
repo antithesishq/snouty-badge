@@ -202,7 +202,8 @@ work with the same watcher in Chrome; if it does not load, use the local UI.
 
 Sound: the buzzer plays one voice, the channel `core.apu.pick_voice` picks,
 as a square (or, for the wave channel, triangle) tone at the envelope's
-volume; Sound: Off in the menu stops it. The badge plays it through its
+volume. Sound is off at boot unless built with `-Dsound=true`; the menu's
+Sound row toggles it (root docs/SOUND.md). The badge plays it through its
 speaker; the simulator through the browser (click the page once so the
 browser lets audio start). In the simulator the cart drives the audio
 worklet directly: upstream's wasm shim turns an infinite `tone2` into a

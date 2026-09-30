@@ -24,9 +24,9 @@ const sim = @import("sim.zig");
 const projectiles = @import("projectiles.zig");
 const build_options = @import("build_options");
 
-/// Sound (and the dormant LED effects), off by default; Select on the
-/// title toggles it.
-pub var enabled: bool = false;
+/// Sound (and the dormant LED effects). Starts as `-Dsound` says (off by
+/// default, docs/SOUND.md); Select on the title toggles it.
+pub var enabled: bool = build_options.sound;
 
 pub const Event = enum { swatter, zapper, spray, enemy_hit, enemy_death, player_hurt, door, locked_door, pickup, rewind, death_freeze, debugger, burst };
 

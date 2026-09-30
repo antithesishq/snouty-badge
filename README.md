@@ -11,9 +11,9 @@ tools.
 | `carts/snouty-bugs/` | `snouty-bugs` | Horizontal bullet-hell shooter with rewind-on-hit and an attract mode (tags `snouty-bugs/m1`..`m5`). |
 | `carts/snoutenstein/` | `snoutenstein` | Raycaster FPS with time rewind (tags `snoutenstein/m0`..`m3`). |
 | `carts/snouty-reflections/` | `snouty-reflections` | Real-time ray tracer demo over water (tags `snouty-reflections/m0`..`m1.1`). |
-| `carts/snouty-boy/` | `snouty-boy` | Game Boy and Game Boy Color emulator that runs `.gb`/`.gbc` files from the badge drive (a picker for several, the embedded ROM as fallback) with a time scrubber (tags `snouty-boy/m1`..`m5`; Color M6-M8 built). |
+| `carts/snouty-boy/` | `snouty-boy` | Game Boy and Game Boy Color emulator that runs `.gb`/`.gbc` files from the badge drive (a picker for several, the embedded ROM as fallback) with a time scrubber (tags `snouty-boy/m1`..`m5`; Color M6-M8 built). Sound off until the menu's Sound row turns it on (`-Dsound=true` flips the default). |
 | `carts/snouty-maze/` | `snouty-maze` | Windows 3D Maze screensaver clone on a small software rasterizer (tags `snouty-maze/m0`..`m3`). |
-| `carts/snouty-gear/` | `snouty-gear` | Game Gear emulator reading its ROM from the badge drive, Waternet embedded as fallback (M2: plays Waternet and Sonic GG, boot splash, one-voice PSG sound, menu with button swap / scale / About; time scrubbing is M3). |
+| `carts/snouty-gear/` | `snouty-gear` | Game Gear emulator reading its ROM from the badge drive, Waternet embedded as fallback (M2: plays Waternet and Sonic GG, boot splash, one-voice PSG sound (off until the menu's Sound row turns it on, `-Dsound=true` flips the default), menu with button swap / scale / About; time scrubbing is M3). |
 | `carts/snouty-genesis/` | `snouty-genesis` | Sega Genesis emulator, XIP cart only (`snouty-genesis-xip.uf2`), streaming its ROM from the badge drive (M0 scaffold: console state and stubs, test pattern; `-Dcart-mode=xip`). |
 | `tools/` | | Shared cart tools: `preview.mjs` (headless wasm runner with input scripts and checks), `serve-cart.mjs` (feeds the web simulator), `make_gif.py`, `check_float.mjs`, `uf2_info.py`. |
 | `badge-bench/` | | Emulated Cortex-M33 cycle benchmark for any cart ELF, with per-cart defaults and hot-function lists. |

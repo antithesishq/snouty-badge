@@ -25,7 +25,8 @@ const cart = @import("cart-api");
 const core = @import("core");
 const apu = core.apu;
 
-/// Sound approximation on/off (menu toggle, default on; SPEC.md 18.6).
+/// Sound approximation on/off (the menu's Sound row; off at boot unless
+/// built with `-Dsound=true`; SPEC.md 18.6).
 pub var enabled: bool = true;
 
 /// Frequencies outside this range are treated as silence (games park a

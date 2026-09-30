@@ -43,6 +43,9 @@ pub fn add(b: *Build, sycl_badge_dep: *Build.Dependency, opts: common.Options) v
     // compiled out by default (docs/NEOPIXELS.md).
     const options = b.addOptions();
     options.addOption(bool, "neopixels", opts.neopixels);
+    // -Dsound=true starts with sound on; off by default, the menu's Sound row
+    // toggles it (docs/SOUND.md).
+    options.addOption(bool, "sound", opts.sound);
     build_options = options;
     font_path = sycl_badge_dep.path("src/font.zig");
 

@@ -30,6 +30,7 @@
 const std = @import("std");
 const cart = @import("cart-api");
 const core = @import("core");
+const build_options = @import("build_options");
 const video = @import("video.zig");
 const debug = @import("debug.zig");
 const input = @import("input.zig");
@@ -38,8 +39,9 @@ const romsrc = @import("romsrc.zig");
 pub const version = "0.2.0-m2";
 
 /// Sound approximation on/off (SPEC.md section 9): main.zig copies it into
-/// `audio.enabled` every frame. Keep the name.
-pub var sound_enabled: bool = true;
+/// `audio.enabled` every frame. Keep the name. Starts as `-Dsound` says
+/// (off by default, docs/SOUND.md).
+pub var sound_enabled: bool = build_options.sound;
 
 pub const Result = enum { stay, resume_game };
 

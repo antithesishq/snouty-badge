@@ -9,8 +9,9 @@
 //! M1: the real frame loop with the pad (frontend/input.zig: Select tap =
 //! Genesis A, Select hold = menu request) and the one tone voice
 //! (frontend/audio.zig). The menu itself is M2: a Select hold pauses the
-//! game under a "MENU (M2)" banner until badge B resumes it. No splash or
-//! rewind yet (M2, M3). See SPEC.md (design), PLAN.md (milestone
+//! game under a "MENU (M2)" banner until badge B resumes it; A there
+//! toggles sound (off at boot unless built with -Dsound=true, docs/SOUND.md).
+//! No splash or rewind yet (M2, M3). See SPEC.md (design), PLAN.md (milestone
 //! contract), CLAUDE.md (toolchain).
 const cart = @import("cart-api");
 const core = @import("core");
@@ -88,16 +89,19 @@ fn run_update(t1: u64) void {
 
 /// The M2 menu's placeholder: the last frame stays on screen with a banner;
 /// badge B resumes (held buttons are ignored until released, so B does not
-/// reach the game).
+/// reach the game); badge A toggles sound (the M2 menu's Sound row takes
+/// this over).
 fn menu_update() void {
     if (controls_state.edge.pressed(.b)) {
         controls_state.suppress_held();
         state = .running;
         return;
     }
+    if (controls_state.edge.pressed(.a)) audio.enabled = !audio.enabled;
     audio.silence();
     text.draw("    MENU (M2)       ", 0, 56, .rgb(0xFFFFFF), .rgb(0x000080));
     text.draw("    B: resume       ", 0, 64, .rgb(0xFFFFFF), .rgb(0x000080));
+    text.draw(if (audio.enabled) "    A: sound on     " else "    A: sound off    ", 0, 72, .rgb(0xFFFFFF), .rgb(0x000080));
     debug.draw();
 }
 
@@ -141,6 +145,7 @@ comptime {
         @export(&debug_cram_rebuilds, .{ .name = "debug_cram_rebuilds" });
         @export(&debug_menu_requests, .{ .name = "debug_menu_requests" });
         @export(&debug_tone_calls, .{ .name = "debug_tone_calls" });
+        @export(&debug_sound_on, .{ .name = "debug_sound_on" });
         @export(&debug_pc, .{ .name = "debug_pc" });
         @export(&debug_sp, .{ .name = "debug_sp" });
         @export(&debug_sr, .{ .name = "debug_sr" });
@@ -194,6 +199,10 @@ fn debug_menu_requests() callconv(.c) u32 {
 /// `tone2` calls since boot.
 fn debug_tone_calls() callconv(.c) u32 {
     return audio.tone_calls;
+}
+/// 1 when sound is on (`-Dsound` at boot, A in the menu toggles it).
+fn debug_sound_on() callconv(.c) u32 {
+    return @intFromBool(audio.enabled);
 }
 /// 68000 program counter after the last frame.
 fn debug_pc() callconv(.c) u32 {

@@ -451,7 +451,8 @@ except the ROM, which he will provide.
 5. Scrub depth: build the keyframe ring uncompressed in M4, measure the
    depth with the real ROM, add section 10.4 compression only if it is
    under 3 s.
-6. Sound approximation on by default, toggle in the menu.
+6. Sound approximation toggled in the menu; the default comes from
+   `-Dsound` (off since 2026-09-30, root docs/SOUND.md; it was on).
 7. Keyframes every 30 frames (0.5 s steps).
 8. Game Boy Color out of scope; M5 stretch at most. Reopened 2026-09-29:
    Adrian asked for the Color upgrade, designed in section 19.

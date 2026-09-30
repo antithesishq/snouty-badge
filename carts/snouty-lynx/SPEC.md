@@ -203,7 +203,8 @@ Four LFSR channels reduced to one `tone2` voice. A channel whose feedback
 taps and shift pattern give a square wave (the common music setting) has a
 pitch of timer rate / period; pick the loudest such channel (absolute
 volume), ties by channel number; drop noise-like tap settings. Update
-`tone2` only on change, once per frame. Menu toggle, default on. Sampled
+`tone2` only on change, once per frame. Menu toggle; the default comes from
+`-Dsound` (off, root docs/SOUND.md). Sampled
 audio (DAC writes through volume) is ignored.
 
 ## 10. Time scrubbing

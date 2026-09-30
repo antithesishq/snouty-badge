@@ -132,7 +132,8 @@ debug overlay is on). Exports:
 button 1 16, button 2 32, Start 64), `debug_rom_source` (0 embedded,
 1 drive), `debug_rom_size`, `debug_rom_banks`, `debug_rom_crc` (drive only),
 `debug_cram_rebuilds`, `debug_menu_opens`, `debug_tone_hz` (what the buzzer
-was last told to play, 0 when stopped), `debug_settings` (bit 0 sound on,
+was last told to play, 0 when stopped), `debug_settings` (bit 0 sound on:
+clear at boot unless built with `-Dsound=true`, root docs/SOUND.md;
 1 crop, 2 A/B swapped, 3 overlay on), `debug_psg_atten` (attenuations
 ch0 | ch1 << 4 | ch2 << 8 | noise << 12, 15 = silent, noise control << 16,
 latch << 20) and `debug_psg_tones` (10-bit periods ch0 | ch1 << 10 |

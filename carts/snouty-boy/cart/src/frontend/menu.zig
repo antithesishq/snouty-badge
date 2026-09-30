@@ -47,8 +47,9 @@ const romsrc = @import("romsrc.zig");
 pub const version = "0.6.0-m6";
 
 /// Sound approximation on/off (SPEC.md 18 item 6). Read by frontend/audio.zig
-/// through the integrator; keep the name.
-pub var sound_enabled: bool = true;
+/// through the integrator; keep the name. Starts as `-Dsound` says (off by
+/// default, docs/SOUND.md).
+pub var sound_enabled: bool = build_options.sound;
 
 pub const Result = enum { stay, resume_game };
 
