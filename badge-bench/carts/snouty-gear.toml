@@ -1,21 +1,25 @@
-# snouty-gear: Game Gear emulator, 60 fps. M2: the boot splash (72 frames,
+# snouty-gear: Game Gear emulator, 60 fps. M3: the boot splash (72 frames,
 # what the badge shows first), then the emulated console playing Waternet
-# from the drive image below (the embedded copy is the fallback), then one
-# pass through the emulator menu.
+# from the drive image below (the embedded copy is the fallback) while the
+# time scrubber records (a keyframe every 30 game frames), then two menu
+# passes that scrub.
 budget_ms = 16.7
-frames = 760
-# Same sequence as carts/snouty-gear/tools/scripts/m2_play.json: M1's
-# m1_play.json shifted by the 72 splash frames (Start through the title and
-# menu, d-pad cursor moves and button 1 (badge B) to turn tiles, one button 2
-# (badge A) press), then Select held 35 frames to open the emulator menu,
-# Down twice and B to resume.
+frames = 1000
+# Same sequence as carts/snouty-gear/tools/scripts/m3_scrub.json: M2's
+# m2_play game sequence (Start through the title and menu, d-pad cursor
+# moves and button 1 (badge B) to turn tiles, one button 2 (badge A) press),
+# then Select held from 673 so the menu opens on game frame 630 (a keyframe),
+# Left x3 (back 1.5 s), Right, Up (panel back), B to resume from -1.0 s
+# (drops the future), 102 game frames (the second Select hold included),
+# the menu again on frame 672, Left (back to 660), B.
 press = ["START:162-167", "START:222-227", "B:282-287", "RIGHT:312-319",
          "B:332-335", "DOWN:352-359", "B:372-375", "LEFT:392-399",
          "B:412-415", "B:432-435", "UP:452-459", "B:472-475",
          "RIGHT:492-499", "RIGHT:512-519", "B:532-535", "DOWN:552-559",
-         "A:572-575", "B:592-595", "LEFT:612-619", "B:632-635",
-         "UP:652-659", "SELECT:680-715", "DOWN:722-725", "DOWN:732-735",
-         "B:745-748"]
+         "A:572-575", "B:592-595", "LEFT:612-619", "B:632-635", "UP:652-659",
+         "SELECT:673-708", "LEFT:712-713", "LEFT:723-724", "LEFT:734-735",
+         "RIGHT:745-746", "UP:751-752", "B:757-758", "SELECT:830-865",
+         "LEFT:876-877", "B:890-891"]
 # badge-bench maps this image at 0x10080000 (docs/ROM_DRIVE.md); build it with
 #   python3 tools/make_romfs.py carts/snouty-gear/out/romfs.img carts/snouty-gear/roms/waternet.gg
 romfs = "carts/snouty-gear/out/romfs.img"

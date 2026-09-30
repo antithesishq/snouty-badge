@@ -9,6 +9,9 @@
 - set_cart_mode(), save_set(), delete_set(): manifest edits, one log line each.
 - status(): the dict in badge_manager/__init__.py; share() is its "share" part.
 - network(): mode/ssid/address/internet from `nmcli -t` when available.
+- start_build(), build_job(), cancel_build(), build_file(): cart builds (build.py, PLAN
+  9.2). A build holds its own lock (builds/.lock), not the action lock, so a deploy can
+  run while it builds; only registering the finished cart takes the state lock.
 
 Actions are serialized in-process by a Lock and across processes (server
 and an ssh `badge` command) by flock on <mount_root>/station.lock. The log
@@ -32,6 +35,7 @@ from pathlib import Path
 from typing import Callable, Iterator
 
 from . import fat12
+from .build import MAX_PROMPT, BuildBusy, BuildError, Job, Jobs
 from .config import Config
 from .device import Badge, DeviceError, find_badge
 from .library import CUSTOM, CartSet, Library, LibraryError
@@ -58,6 +62,10 @@ class NoBadge(StationError):
 
 class DoesNotFit(StationError):
     pass
+
+
+class BuildNotReady(StationError):
+    """No way to build right now (build.why says why): a 503 on the page."""
 
 
 def kb(n: int) -> str:
@@ -88,7 +96,11 @@ class Station:
         self._mount_error: tuple[str, str] | None = None
         self._net: tuple[float, dict] | None = None
         self._inet: tuple[float, bool] | None = None
-        self._build: dict | None = None
+        self._build_local: bool | None = None
+        self.jobs = Jobs(config.library, config, on_change=self._changed,
+                         register=self._register_build)
+        self._build_done: threading.Event | None = None    # set when our build thread ends
+        self._builds_seen: tuple | None = ()          # () = not polled yet
         self._log_file = config.resolved_log_file()
         self._load_log_tail()
 
@@ -151,7 +163,9 @@ class Station:
                 "free_bytes": None, "free_entries": None, "note": note, "ejected": False}
 
     def poll(self) -> None:
-        """Detect plug/unplug; mount and read a newly plugged badge. Skipped while an action runs."""
+        """Detect plug/unplug; mount and read a newly plugged badge. Skipped while an action runs.
+        Also wakes the long poll when a build another process runs has moved on."""
+        self._poll_builds()
         if self._action.locked():
             return
         self._poll()
@@ -527,14 +541,24 @@ class Station:
         self._inet = (now, ok)
         return ok
 
-    def build_info(self) -> dict:
-        if self._build is None:
-            self._build = {"local": self._local_build_ok(), "remote": self.config.build_host}
-        return dict(self._build)
+    def build_info(self, net: dict | None = None) -> dict:
+        """{"local", "remote", "ready", "why", "where"}: where="auto" would build, and whether
+        it can now. build_command (tests, custom setups) skips the probes and the network."""
+        if self._build_local is None:
+            self._build_local = self._local_build_ok()
+        local, remote = self._build_local, self.config.build_host or None
+        where = "local" if local else "remote" if remote else None
+        why = ""
+        if self.config.build_command:
+            where = where or "local"
+        elif where is None:
+            why = "no build VM is set and this station cannot build carts itself"
+        elif not (net or self.network())["internet"]:
+            why = "no internet: builds need the network"
+        return {"local": local, "remote": remote, "ready": not why, "why": why, "where": where}
 
-    @staticmethod
-    def _local_build_ok() -> bool:
-        """>= 6 GB RAM and a Zig under ~/.local (section 6 of PLAN.md)."""
+    def _local_build_ok(self) -> bool:
+        """>= 6 GB RAM, a Zig under ~/.local and build_repo on this machine (PLAN 6, 9.2)."""
         try:
             mem = Path("/proc/meminfo").read_text()
             kb_total = int(re.search(r"MemTotal:\s+(\d+)", mem).group(1))
@@ -542,7 +566,8 @@ class Station:
             return False
         home = Path.home() / ".local"
         zig = (home / "zig" / "zig").exists() or (home / "bin" / "zig").exists()
-        return kb_total >= 6 * 1024 * 1024 * 0.95 and zig
+        repo = Path(self.config.build_repo).is_dir()
+        return kb_total >= 6 * 1024 * 1024 * 0.95 and zig and repo
 
     def share(self, net: dict | None = None) -> dict:
         """{"url", "ssid", "password"}: how a second phone reaches the page."""
@@ -557,10 +582,140 @@ class Station:
         port = getattr(self.config, "http_port", 80)
         return f"http://{addr}/" if port == 80 else f"http://{addr}:{port}/"
 
+    # -- builds ---------------------------------------------------------------
+
+    def _build_where(self, where: str) -> str:
+        """"local" | "remote" for WHERE ("auto" | "local" | "remote"); BuildNotReady if not."""
+        if where not in ("auto", "local", "remote"):
+            raise StationError(f"where must be auto, local or remote, not {where!r}")
+        info = self.build_info()
+        if self.config.build_command:
+            return info["where"] if where == "auto" else where
+        if where == "local" and not info["local"]:
+            raise BuildNotReady("this station cannot build carts itself (it needs 6 GB of RAM, "
+                                "Zig and the repository)")
+        if where == "remote" and not info["remote"]:
+            raise BuildNotReady("no build VM is set (build_host in station.toml)")
+        if not info["ready"]:
+            raise BuildNotReady(info["why"])
+        return info["where"] if where == "auto" else where
+
+    def _taken_names(self) -> set[str]:
+        """Cart names a build named after its prompt must not reuse."""
+        with self._state:
+            return set(self.library.carts)
+
+    def start_build(self, prompt: str, where: str = "auto", name: str | None = None,
+                    no_agent: bool = False,
+                    on_line: Callable[[str], None] | None = None) -> str:
+        """Start a build job in a thread; returns its id. Raises StationBusy while one runs,
+        BuildNotReady when it cannot run here, StationError on a bad prompt or name."""
+        prompt = (prompt or "").strip()
+        if not prompt:
+            raise StationError("the prompt is empty")
+        if len(prompt) > MAX_PROMPT:
+            raise StationError(f"the prompt is too long ({len(prompt)} of {MAX_PROMPT} "
+                               "characters)")
+        w = self._build_where(where)
+        try:
+            job = self.jobs.create(prompt, w, name, no_agent, taken=self._taken_names())
+        except BuildBusy as e:
+            raise StationBusy(str(e)) from e
+        except (BuildError, OSError) as e:
+            raise StationError(str(e)) from e
+        self.log(f"build {job.name} started "
+                 + ("on the build VM" if w == "remote" else "on the station"))
+        done = self._build_done = threading.Event()
+        threading.Thread(target=self._run_build, args=(job, on_line, done),
+                         name=f"build-{job.id}", daemon=True).start()
+        return job.id
+
+    def _run_build(self, job: Job, on_line: Callable[[str], None] | None,
+                   done: threading.Event) -> None:
+        try:
+            job = self.jobs.run(job, on_line)
+            if job.state == "done":
+                self.log(f"build {job.name} done: {job.title} is in the library")
+            else:
+                self.log(f"build {job.name} {job.state}: {job.error}")
+        finally:
+            done.set()
+
+    def wait_build(self, timeout: float | None = None) -> bool:
+        """Wait for the build this Station started; True once it has ended. (An Event, not
+        Thread.join: a Ctrl-C inside join can leave is_alive() wrong.)"""
+        done = self._build_done
+        return done is None or done.wait(timeout)
+
+    def _register_build(self, uf2: Path, name: str, title: str, job_id: str) -> None:
+        with self._state:
+            self.library.add_uf2(uf2, key=name, title=title, build=job_id)
+            self._changed()
+
+    def build_job(self, job_id: str | None = None) -> dict | None:
+        """Job JOB_ID (default the running one, else the last) with its whole log."""
+        job = self.jobs.get(job_id) if job_id else (self.jobs.current() or self.jobs.latest())
+        if job is None:
+            return None
+        return {**self._job_json(job), "log": self.jobs.log(job.id)}
+
+    def cancel_build(self) -> bool:
+        """Stop the running build (started here or elsewhere); False when none runs."""
+        ok = self.jobs.cancel()
+        if ok:
+            self.log("build cancelled")
+        return ok
+
+    def build_file(self, job_id: str, name: str) -> Path | None:
+        """out/NAME of build JOB_ID for NAME in preview.gif, preview.png, bench.txt,
+        summary.json; None for anything else or a missing file."""
+        return self.jobs.file(job_id, name)
+
+    @staticmethod
+    def _job_json(job: Job) -> dict:
+        r = job.result
+        return {"id": job.id, "prompt": job.prompt, "name": job.name, "title": job.title,
+                "where": job.where, "state": job.state, "started": job.started,
+                "seconds": round(job.elapsed(), 1), "exit": job.exit, "error": job.error,
+                "result": {k: r.get(k) for k in ("cart", "preview", "bench_ms", "size")}
+                if r else None}
+
+    @staticmethod
+    def _build_row(j: Job) -> dict:
+        return {"id": j.id, "name": j.name, "title": j.title, "state": j.state,
+                "started": j.started, "seconds": round(j.elapsed(), 1),
+                "preview": (j.result or {}).get("preview"),
+                "bench_ms": (j.result or {}).get("bench_ms"), "error": j.error}
+
+    def builds(self, n: int = 10) -> list[dict]:
+        """status()["builds"] rows for the last N builds, newest first."""
+        return [self._build_row(j) for j in self.jobs.list(n)]
+
+    def _builds_json(self) -> tuple[dict | None, list[dict]]:
+        """status()["job"] (the running job, else the last, log tail) and ["builds"]."""
+        jobs = self.jobs.list(10)
+        rows = [self._build_row(j) for j in jobs]
+        if not jobs:
+            return None, rows
+        return {**self._job_json(jobs[0]), "log": self.jobs.tail(jobs[0].id, 40)}, rows
+
+    def _poll_builds(self) -> None:
+        """Bump the change counter when the newest job's files changed (another process)."""
+        ids = self.jobs.ids()
+        seen = None
+        if ids:
+            d = self.jobs.dir(ids[0])
+            seen = (ids[0],) + tuple(_mtime(d / f) for f in ("job.json", "job.log"))
+        if self._builds_seen != () and seen != self._builds_seen:
+            self._changed()
+        self._builds_seen = seen
+
     # -- status ---------------------------------------------------------------
 
     def status(self) -> dict:
-        net, build = self.network(), self.build_info()
+        net = self.network()
+        build = self.build_info(net)
+        job, builds = self._builds_json()
         with self._state:
             geom = None
             if self._badge is not None:
@@ -569,6 +724,13 @@ class Station:
             lib = self.library.to_json(geom)
             return {"badge": dict(self._info), "busy": self._busy_action is not None,
                     "action": self._busy_action, "network": net,
-                    "share": self.share(net), "build": build,
+                    "share": self.share(net), "build": build, "job": job, "builds": builds,
                     "sets": lib["sets"], "library": lib["library"],
                     "log": list(self._log), "log_seq": self._seq}
+
+
+def _mtime(p: Path) -> int | None:
+    try:
+        return p.stat().st_mtime_ns
+    except OSError:
+        return None

@@ -23,6 +23,11 @@ class Config:
     build_host: str | None = "exedev@animated-badge.exe.xyz"
     build_repo: str = "/home/exedev/snouty-badge"
     sync_command: str | None = None          # default derived from build_host/build_repo
+    build_command: str | None = None         # overrides build-job.sh; {id} {out} {prompt_file}
+                                             # {name} {flags} are filled in shell-quoted
+    build_max_minutes: float = 20            # wall clock per build job, then it is killed
+    build_max_usd: float = 5.0               # passed to the agent (build-job.sh --max-usd)
+    build_max_turns: int = 40                # passed to the agent (build-job.sh --max-turns)
     log_file: Path | None = None             # default: <library>/../station.log; "" = no file
     source: Path | None = None               # the file this was loaded from, if any
 

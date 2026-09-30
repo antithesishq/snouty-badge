@@ -25,11 +25,20 @@ Routes:
   POST /api/cart-mode {"cart": key, "mode": "ram"|"xip"}
                     -> {"ok": true, "cart": <status cart JSON>}           edit
   GET  /qr/page.svg, /qr/wifi.svg          QR codes from qrencode (404 without it)
+  POST /api/build   {"prompt", "where"?: "auto"|"local"|"remote", "name"?, "no_agent"?}
+                    -> {"ok": true, "id"}; 400 bad prompt/name, 409 a build runs,
+                       503 builds not ready (status build.why)
+  GET  /api/build                          {"job": the running or last job, full log | null}
+  GET  /api/build/<id>                     {"job": that job, full log}; 404 unknown
+  POST /api/build/cancel                   {"ok": true}; 404 when no build runs
+  GET  /builds/<id>/<file>                 preview.gif, preview.png, bench.txt, summary.json
   captive-portal probes and foreign Host headers redirect to the page.
 
 Actions return {"ok": true} at once and run in a worker thread. Actions and
 edits answer 409 while another action runs (a deploy must never race a
-manifest rewrite), 400 with {"ok": false, "error"} on bad input.
+manifest rewrite), 400 with {"ok": false, "error"} on bad input. Builds run
+in the station's own thread under their own lock, never the action lock, so
+a deploy can run while a cart builds.
 """
 from __future__ import annotations
 
@@ -60,11 +69,16 @@ ROM_EXTENSIONS = {".gg", ".sms", ".gb", ".gbc", ".md", ".bin"}
 MAX_UPLOAD = 4 * 1024 * 1024
 MAX_JSON = 64 * 1024
 MAX_WAIT = 30.0
+MAX_PROMPT = 2000
+BUILD_WHERE = ("auto", "local", "remote")
+BUILD_FILE_TYPES = {".gif": "image/gif", ".png": "image/png",
+                    ".txt": "text/plain; charset=utf-8", ".json": "application/json"}
 CAPTIVE_PATHS = {
     "/generate_204", "/gen_204", "/hotspot-detect.html", "/connecttest.txt",
     "/ncsi.txt", "/success.txt", "/library/test/success.html",
     "/canonical.html",
 }
+BUILD_ID = re.compile(r"^[0-9]{8}-[0-9]{6}-[a-z0-9][a-z0-9-]{0,30}$")
 STATIC_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 LOCAL_HOSTS = re.compile(r"^(localhost|snouty(\.local)?|[0-9.]+|\[[0-9a-fA-F:.]+\])$")
 
@@ -154,7 +168,8 @@ class _DemoLibrary:
         return {"key": key, "title": c["title"], "use": c["use"], "mode": c["use"],
                 "file": var["file"], "size": var["size"],
                 "variants": {k: dict(x) for k, x in c["variants"].items()},
-                "roms": list(c["roms"]), "ok": True, "error": "", "auto": False}
+                "roms": list(c["roms"]), "ok": True, "error": "", "auto": False,
+                "build": c.get("build"), "preview": c.get("preview")}
 
     def _rom_keys(self, pattern: str) -> list[str]:
         if pattern in self.roms:
@@ -275,13 +290,159 @@ class _DemoLibrary:
         return {"carts": carts, "roms": roms, "error": ""}
 
 
+# The demo's build job: a scripted fake of build.py's Jobs (PLAN 9.2, 9.5).
+
+BUILD_FILES = ("preview.gif", "preview.png", "bench.txt", "summary.json")
+BUILD_ID = re.compile(r"^[0-9]{8}-[0-9]{6}-[a-z0-9-]{1,40}$")
+CART_NAME = re.compile(r"^[a-z][a-z0-9-]{2,23}$")
+MAX_PROMPT = 2000
+_BUILD_STOP = {"a", "an", "the", "snouty", "cart", "game", "where", "with", "and", "of",
+               "that", "in", "on", "to", "for", "is", "it", "you", "your"}
+
+
+def _prompt_words(prompt: str) -> list[str]:
+    words = re.findall(r"[a-z0-9]+", prompt.lower())
+    return [w for w in words if w not in _BUILD_STOP] or ["cart"]
+
+
+def _demo_cart_name(prompt: str, taken) -> str:
+    """snouty- + a slug from the prompt's first words, unique among `taken`."""
+    slug = ""
+    for w in _prompt_words(prompt)[:3]:
+        if len("snouty-" + slug + w) > 21:
+            slug = slug or w[:14]
+            break
+        slug = f"{slug}-{w}" if slug else w
+    base = "snouty-" + (slug or "cart")[:14]
+    name, n = base, 2
+    while name in taken:
+        name, n = f"{base[:21]}-{n}", n + 1
+    return name
+
+
+def _demo_title(prompt: str) -> str:
+    title = ""
+    for w in _prompt_words(prompt)[:3]:
+        if len(title) + len(w) + 1 > 20:
+            title = title or w.capitalize()[:20]
+            break
+        title = f"{title} {w.capitalize()}".strip()
+    return title or "New Cart"
+
+
+def _gif_lzw(pixels: bytes, min_size: int) -> bytes:
+    """GIF's variable-width LZW. Frames here are small, so the table never fills."""
+    clear, eoi = 1 << min_size, (1 << min_size) + 1
+    table = {bytes([i]): i for i in range(clear)}
+    size, nxt = min_size + 1, eoi + 1
+    out, acc, bits = bytearray(), 0, 0
+
+    def emit(code):
+        nonlocal acc, bits, size
+        acc |= code << bits
+        bits += size
+        while bits >= 8:
+            out.append(acc & 0xFF)
+            acc >>= 8
+            bits -= 8
+        if nxt > (1 << size) - 1 and size < 12:
+            size += 1
+
+    emit(clear)
+    w = pixels[:1]
+    for p in pixels[1:]:
+        wc = w + bytes([p])
+        if wc in table:
+            w = wc
+            continue
+        emit(table[w])
+        table[wc] = nxt
+        nxt += 1
+        w = bytes([p])
+    emit(table[w])
+    emit(eoi)
+    if bits:
+        out.append(acc & 0xFF)
+    blocks = bytearray()
+    for i in range(0, len(out), 255):
+        chunk = out[i:i + 255]
+        blocks += bytes([len(chunk)]) + chunk
+    return bytes(blocks) + b"\x00"
+
+
+def _demo_frames(seed: int, n: int = 2, side: int = 32) -> list[bytes]:
+    """Palette-index frames: a square hopping across a two-tone floor."""
+    frames = []
+    for f in range(n):
+        px = bytearray(side * side)
+        for y in range(side):
+            for x in range(side):
+                px[y * side + x] = 1 if y >= side * 3 // 4 else 0
+        x0 = 4 + f * (side - 16) // max(1, n - 1)
+        y0 = side * 3 // 4 - 10 - (4 if f % 2 else 0)
+        for y in range(y0, y0 + 10):
+            for x in range(x0, x0 + 8):
+                px[y * side + x] = 2
+        px[(y0 + 3) * side + x0 + 5] = 3                  # an eye
+        frames.append(bytes(px))
+    return frames
+
+
+def _demo_palette(seed: int) -> list[tuple[int, int, int]]:
+    hue = [(236, 112, 160), (90, 170, 240), (120, 210, 120), (240, 180, 60)][seed % 4]
+    return [(24, 24, 32), (70, 60, 90), hue, (255, 255, 255)]
+
+
+def demo_gif(seed: int = 0, side: int = 32) -> bytes:
+    """A real, tiny, looping 2-frame GIF89a (4 colours)."""
+    pal = _demo_palette(seed)
+    out = bytearray(b"GIF89a")
+    out += side.to_bytes(2, "little") * 2 + bytes([0xF1, 0, 0])        # 4-entry global table
+    out += b"".join(bytes(c) for c in pal)
+    out += b"\x21\xFF\x0BNETSCAPE2.0\x03\x01\x00\x00\x00"                  # loop forever
+    for px in _demo_frames(seed, 2, side):
+        out += b"\x21\xF9\x04\x04" + (40).to_bytes(2, "little") + b"\x00\x00"   # 0.4 s
+        out += b"\x2C" + b"\x00\x00\x00\x00" + side.to_bytes(2, "little") * 2 + b"\x00"
+        out += b"\x02" + _gif_lzw(px, 2)
+    out += b"\x3B"
+    return bytes(out)
+
+
+def demo_png(seed: int = 0, side: int = 32) -> bytes:
+    """The GIF's first frame as an RGB PNG."""
+    import struct
+    import zlib
+    pal = _demo_palette(seed)
+    px = _demo_frames(seed, 2, side)[0]
+    raw = b"".join(b"\x00" + b"".join(bytes(pal[i]) for i in px[y * side:(y + 1) * side])
+                   for y in range(side))
+
+    def chunk(kind: bytes, data: bytes) -> bytes:
+        return (struct.pack(">I", len(data)) + kind + data
+                + struct.pack(">I", zlib.crc32(kind + data) & 0xFFFFFFFF))
+    return (b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", side, side, 8, 2, 0, 0, 0))
+            + chunk(b"IDAT", zlib.compress(raw)) + chunk(b"IEND", b""))
+
+
+class _DemoCancelled(Exception):
+    pass
+
+
 class DemoStation:
     """Fakes the Station contract: the badge plugs in 3 s after start, three
     sets (one does not fit), deploy takes about 2 s and ends ejected; unplugging
-    is simulated 6 s after the eject and a re-plug 4 s after that."""
+    is simulated 6 s after the eject and a re-plug 4 s after that. start_build()
+    runs a scripted job of `build_seconds` (step and agent lines, a generated
+    GIF) that ends with a new cart in the library."""
 
-    def __init__(self, library_root: Path | None = None, step: float = 0.4):
+    def __init__(self, library_root: Path | None = None, step: float = 0.4,
+                 build_seconds: float = 20.0):
         self._cond = threading.Condition()
+        self._build_lock = threading.RLock()
+        self._build_seconds = build_seconds
+        self._jobs: list[dict] = []              # oldest first
+        self._job_thread: threading.Thread | None = None
+        self._build_cancel = threading.Event()
         self._lock = threading.Lock()
         self._seq = 0
         self._log: list[dict] = []
@@ -356,6 +517,7 @@ class DemoStation:
         with self.library.lock:
             sets = self.library.sets_json()
             library = self.library.to_json()
+        job, builds = self._builds_json()
         names = sorted(f["name"].lower() for f in on_drive)
         badge_set = next((s["name"] for s in sets
                           if names and sorted(n.lower() for n in s["files"]) == names), None)
@@ -379,7 +541,9 @@ class DemoStation:
             "network": {"mode": "ap", "ssid": "snouty-badge", "address": "10.42.0.1",
                         "internet": False},
             "share": self.share(),
-            "build": {"local": False, "remote": "exedev@animated-badge.exe.xyz"},
+            "build": self.build_status(),
+            "job": job,
+            "builds": builds,
             "sets": sets,
             "library": library,
             "log": logs,
@@ -465,6 +629,228 @@ class DemoStation:
         cart = self._edit(self.library.set_cart_mode, key, mode)
         self.log(f"{cart['title']} deploys its {mode.upper()} variant now.")
         return cart
+
+    # -- the fake build job (PLAN 9.5): same methods Track A's Station exposes
+
+    BUILD_HOST = "exedev@animated-badge.exe.xyz"
+
+    def build_status(self) -> dict:
+        return {"local": False, "remote": self.BUILD_HOST, "ready": True, "why": "",
+                "where": "remote"}
+
+    def start_build(self, prompt: str, where: str = "auto", name: str | None = None,
+                    no_agent: bool = False) -> str:
+        """Start the scripted ~20 s job in a thread; returns its id. Prompts that
+        contain the word "fail" fail at the second build, like a broken agent edit."""
+        prompt = (prompt or "").strip()
+        if not prompt:
+            raise ValueError("the prompt is empty")
+        if len(prompt) > MAX_PROMPT:
+            raise ValueError(f"the prompt is longer than {MAX_PROMPT} characters")
+        if where not in ("auto", "remote", "local"):
+            raise ValueError("where must be auto, local or remote")
+        if where == "local":
+            raise ValueError("this station cannot build locally")
+        if name is not None and not CART_NAME.match(name):
+            raise ValueError("a cart name is 3-24 characters: a-z, 0-9 and -, starting "
+                             "with a letter")
+        with self._build_lock:
+            if self._job_thread is not None:
+                raise DemoBusy("a build is already running")
+            taken = set(self.library.carts) | {j["name"] for j in self._jobs}
+            if name is not None and name in taken:
+                raise ValueError(f"there is already a cart called {name}")
+            name = name or _demo_cart_name(prompt, taken)
+            now = time.time()
+            base = time.strftime("%Y%m%d-%H%M%S", time.localtime(now)) + "-" + \
+                name.removeprefix("snouty-")
+            jid, n = base, 2
+            while any(j["id"] == jid for j in self._jobs):
+                jid, n = f"{base}-{n}", n + 1
+            job = {"id": jid, "prompt": prompt, "name": name, "title": _demo_title(prompt),
+                   "where": "remote", "host": self.BUILD_HOST, "state": "queued",
+                   "started": now, "finished": None, "seconds": 0.0, "exit": None,
+                   "error": "", "result": None, "no_agent": bool(no_agent), "log": []}
+            self._jobs.append(job)
+            self._build_cancel = threading.Event()
+            self._job_thread = threading.Thread(target=self._build_run, args=(job,),
+                                                name=f"demo-build-{jid}", daemon=True)
+            self._job_thread.start()
+        self.log(f"Build {jid} queued: {prompt[:60]}")
+        return jid
+
+    def _build_line(self, job: dict, line: str) -> None:
+        with self._build_lock:
+            job["log"].append(line)
+        self._bump()
+
+    def _build_script(self, job: dict) -> list[tuple[float, str]]:
+        """(seconds before the line, line) summing to about 20 s at build_seconds=20."""
+        n, jid = job["name"], job["id"]
+        src = f"carts/{n}/cart/src/main.zig"
+        words = " ".join(_prompt_words(job["prompt"])[:6])
+        lines = [
+            (0.6, f"step: git fetch origin main (0.6 s)"),
+            (1.0, f"step: worktree build-jobs/{jid}/src at origin/main (1.0 s)"),
+            (1.2, "step: submodule sycl-badge with --reference (1.2 s)"),
+            (0.4, f"step: name {n}"),
+            (0.6, f"step: template copied to carts/{n}, registered in build.zig"),
+            (2.4, f"step: template builds (2.4 s)"),
+        ]
+        if not job["no_agent"]:
+            lines += [
+                (1.0, f"agent: Read carts/{n}/CLAUDE.md"),
+                (0.8, f"agent: Read {src}"),
+                (1.4, f"agent: I'll keep the template's loop and add {words}."),
+                (1.6, f"agent: Edit {src}"),
+                (1.8, f"agent: Bash zig build -Dcart={n}"),
+                (1.2, f"agent: Bash node tools/preview.mjs zig-out/bin/{n}.wasm --frames 90 "
+                      "--every 30"),
+                (0.8, f"agent: Write carts/{n}/summary.json"),
+                (0.4, "step: agent done (7 turns, $0.41, 9.0 s)"),
+            ]
+        lines += [(1.4, f"step: {n} builds (1.4 s)")]
+        if re.search(r"\bfail", job["prompt"], re.I):
+            return lines + [
+                (0.2, f"{src}:88:17: error: use of undeclared identifier 'snout_x'"),
+                (0.1, "        w4.rect(snout_x, 40, 8, 8);"),
+                (0.1, "                ^~~~~~~"),
+                (0.0, "FAIL 3 the cart does not build"),
+            ]
+        return lines + [
+            (1.2, "step: preview.gif, 60 frames (1.2 s)"),
+            (1.3, "step: bench 300 frames: worst 9.8 ms busy of 16.7 (1.3 s)"),
+            (0.4, f"step: uf2 gate ok, {n}.uf2 ({self._build_size(job) // 1024} KB)"),
+            (0.3, f"step: committed to build/{jid}, worktree removed"),
+        ]
+
+    @staticmethod
+    def _build_size(job: dict) -> int:
+        return (96 * 1024 + 37 * len(job["prompt"])) // 512 * 512
+
+    def _build_run(self, job: dict) -> None:
+        scale = self._build_seconds / 20.0
+        cancel = self._build_cancel
+        out = self.library.root / "builds" / job["id"] / "out"
+        exit_code, error = 0, ""
+        try:
+            if cancel.wait(0.5 * scale):
+                raise _DemoCancelled()
+            with self._build_lock:
+                job["state"] = "running"
+            self._build_line(job, f"step: job {job['id']} on {self.BUILD_HOST}")
+            for delay, line in self._build_script(job):
+                if cancel.wait(delay * scale):
+                    raise _DemoCancelled()
+                if line.startswith("FAIL "):
+                    exit_code, error = int(line.split()[1]), line.split(" ", 2)[2]
+                    break
+                self._build_line(job, line)
+            if not exit_code:
+                self._build_finish(job, out)
+        except _DemoCancelled:
+            exit_code, error = 130, "cancelled"
+            self._build_line(job, "step: cancelled, worktree removed")
+        except Exception as e:                  # a bug in the demo: show it like a failure
+            log.error("demo build failed:\n%s", traceback.format_exc())
+            exit_code, error = 1, f"{type(e).__name__}: {e}"
+        with self._build_lock:
+            job["finished"] = time.time()
+            job["seconds"] = round(job["finished"] - job["started"], 1)
+            job["exit"] = exit_code
+            job["error"] = error
+            job["state"] = ("done" if exit_code == 0 else
+                            "cancelled" if exit_code == 130 else "failed")
+            self._job_thread = None
+        tail = {"done": f"done, {job['title']} is in the library",
+                "cancelled": "cancelled", "failed": f"failed: {error}"}[job["state"]]
+        self.log(f"Build {job['id']} {tail}.")
+
+    def _build_finish(self, job: dict, out: Path) -> None:
+        """Write out/ like build-job.sh and register the cart like build.py."""
+        seed = sum(job["prompt"].encode()) % 4
+        size = self._build_size(job)
+        out.mkdir(parents=True, exist_ok=True)
+        (out / "preview.gif").write_bytes(demo_gif(seed))
+        (out / "preview.png").write_bytes(demo_png(seed))
+        (out / "bench.txt").write_text(
+            f"{job['name']}: 300 frames, busy mean 7.4 ms, worst 9.8 ms of 16.7 ms\n"
+            "fits the 60 fps budget with 41% headroom (demo numbers)\n")
+        seconds = round(time.time() - job["started"], 1)
+        summary = {"name": job["name"], "title": job["title"],
+                   "description": job["prompt"][:200], "prompt": job["prompt"],
+                   "where": "remote", "seconds": seconds, "agent_turns": 7,
+                   "agent_usd": 0.41, "bench_ms": 9.8, "size": size,
+                   "files": [f"carts/{job['name']}/cart/src/main.zig",
+                             f"carts/{job['name']}/summary.json"],
+                   "branch": f"build/{job['id']}"}
+        (out / "summary.json").write_text(json.dumps(summary, indent=2) + "\n")
+        preview = f"/builds/{job['id']}/preview.gif"
+        with self.library.lock, self._build_lock:
+            self.library.carts[job["name"]] = {
+                "title": job["title"], "use": "ram", "roms": [],
+                "variants": {"ram": {"file": job["name"] + ".uf2", "size": size,
+                                     "ok": True, "error": ""}},
+                "build": job["id"], "preview": preview}
+            job["result"] = {"cart": job["name"], "uf2": job["name"] + ".uf2", "size": size,
+                             "preview": preview, "bench_ms": 9.8,
+                             "branch": f"build/{job['id']}"}
+        self._build_line(job, f"step: {job['name']}.uf2 added to the library")
+
+    def cancel_build(self) -> bool:
+        with self._build_lock:
+            if self._job_thread is None:
+                return False
+            self._build_cancel.set()
+        return True
+
+    @staticmethod
+    def _job_seconds(job: dict) -> float:
+        if job["finished"] is None:
+            return round(time.time() - job["started"], 1)
+        return job["seconds"]
+
+    def _job_json(self, job: dict, lines: int | None) -> dict:
+        seconds = self._job_seconds(job)
+        res = job["result"]
+        return {"id": job["id"], "prompt": job["prompt"], "name": job["name"],
+                "title": job["title"], "where": job["where"], "state": job["state"],
+                "started": job["started"], "seconds": seconds, "exit": job["exit"],
+                "error": job["error"],
+                "log": list(job["log"] if lines is None else job["log"][-lines:]),
+                "result": None if res is None else
+                {"cart": res["cart"], "preview": res["preview"],
+                 "bench_ms": res["bench_ms"], "size": res["size"]}}
+
+    def build_job(self, id: str | None = None) -> dict | None:
+        """The current or last job (or job `id`) with its whole log."""
+        with self._build_lock:
+            if id is None:
+                job = self._jobs[-1] if self._jobs else None
+            else:
+                job = next((j for j in self._jobs if j["id"] == id), None)
+            return None if job is None else self._job_json(job, None)
+
+    def build_file(self, id: str, name: str) -> Path | None:
+        if name not in BUILD_FILES or not BUILD_ID.match(id or ""):
+            return None
+        with self._build_lock:
+            if not any(j["id"] == id for j in self._jobs):
+                return None
+        path = self.library.root / "builds" / id / "out" / name
+        return path if path.is_file() else None
+
+    def _builds_json(self) -> tuple[dict | None, list[dict]]:
+        with self._build_lock:
+            job = self._job_json(self._jobs[-1], 40) if self._jobs else None
+            rows = [{"id": j["id"], "name": j["name"], "title": j["title"],
+                     "state": j["state"], "started": j["started"],
+                     "seconds": self._job_seconds(j),
+                     "preview": j["result"]["preview"] if j["result"] else None,
+                     "bench_ms": j["result"]["bench_ms"] if j["result"] else None,
+                     "error": j["error"]}
+                    for j in reversed(self._jobs[-10:])]
+        return job, rows
 
     def wait_for_change(self, since: int, timeout: float) -> int:
         with self._cond:
@@ -715,10 +1101,16 @@ class Handler(BaseHTTPRequestHandler):
     def _route_name(path: str) -> str | None:
         if path.startswith("/api/sets/") and len(path) > len("/api/sets/"):
             return "set_item"
+        if path == "/api/build/cancel":
+            return "build_cancel"
+        if path.startswith("/api/build/") and len(path) > len("/api/build/"):
+            return "build_item"
+        if path.startswith("/builds/"):
+            return "build_file"
         return {"/": "index", "/index.html": "index", "/api/status": "status",
                 "/api/log": "log", "/api/deploy": "deploy", "/api/wipe": "wipe",
                 "/api/sync": "sync", "/api/upload": "upload", "/api/fit": "fit",
-                "/api/sets": "sets", "/api/cart-mode": "cart_mode",
+                "/api/sets": "sets", "/api/cart-mode": "cart_mode", "/api/build": "build",
                 "/qr/page.svg": "qr_page", "/qr/wifi.svg": "qr_wifi"}.get(path)
 
     def _foreign_host(self) -> bool:
@@ -846,7 +1238,68 @@ class Handler(BaseHTTPRequestHandler):
             raise ApiError(404, "qrencode failed")
         self._send(200, svg, "image/svg+xml")
 
+    def _build_method(self, name: str):
+        fn = getattr(self.app.station, name, None)
+        if not callable(fn):
+            raise ApiError(503, "builds are not available on this station")
+        return fn
+
+    def _get_build(self, query):
+        self._json(200, {"job": self._build_method("build_job")()})
+
+    def _get_build_item(self, query):
+        job_id = unquote(urlsplit(self.path).path[len("/api/build/"):])
+        job = self._build_method("build_job")(job_id) if BUILD_ID.match(job_id) else None
+        if job is None:
+            raise ApiError(404, "no such build")
+        self._json(200, {"job": job})
+
+    def _get_build_file(self, query):
+        parts = unquote(urlsplit(self.path).path[len("/builds/"):]).split("/")
+        if len(parts) != 2 or not BUILD_ID.match(parts[0]):
+            raise ApiError(404, "not found")
+        path = self._build_method("build_file")(parts[0], parts[1])
+        if path is None:
+            raise ApiError(404, "not found")
+        path = Path(path)
+        self._send(200, path.read_bytes(),
+                   BUILD_FILE_TYPES.get(path.suffix, "application/octet-stream"))
+
     # -------------------------------------------------------- POST routes
+
+    def _post_build(self, query):
+        body = self._read_json()
+        prompt, where = body.get("prompt"), body.get("where", "auto")
+        name, no_agent = body.get("name"), body.get("no_agent", False)
+        if not isinstance(prompt, str) or not prompt.strip():
+            raise ApiError(400, "say what the cart should be")
+        if len(prompt.strip()) > MAX_PROMPT:
+            raise ApiError(400, f"the prompt is too long (at most {MAX_PROMPT} characters)")
+        if where not in BUILD_WHERE:
+            raise ApiError(400, "where must be auto, local or remote")
+        if name is not None and (not isinstance(name, str) or not name.strip()):
+            raise ApiError(400, "name must be a cart name")
+        if not isinstance(no_agent, bool):
+            raise ApiError(400, "no_agent must be true or false")
+        start = self._build_method("start_build")
+        try:
+            job_id = start(prompt.strip(), where=where, name=name or None, no_agent=no_agent)
+        except self.app.busy_types as e:
+            raise ApiError(409, _message(e))
+        except Exception as e:
+            if type(e).__name__ == "BuildNotReady":
+                raise ApiError(503, _message(e))
+            if isinstance(e, self.app.edit_errors):
+                raise ApiError(400, _message(e))
+            raise
+        self._json(200, {"ok": True, "id": job_id})
+
+    def _post_build_cancel(self, query):
+        self._read_json()
+        if not self._build_method("cancel_build")():
+            raise ApiError(404, "no build is running")
+        self._json(200, {"ok": True})
+
 
     def _post_deploy(self, query):
         body = self._read_json()

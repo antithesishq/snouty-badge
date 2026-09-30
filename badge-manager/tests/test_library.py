@@ -115,6 +115,26 @@ class LibraryTest(unittest.TestCase):
             self.lib.import_uf2(make_uf2(self.tmp / "r.uf2", "ram"), "r", mode="xip")
         self.assertNotIn("bad", self.lib.carts)
 
+    def test_add_uf2_with_build(self):
+        bid = "20260930-141500-rain"
+        c = self.lib.add_uf2(make_uf2(self.tmp / "r.uf2", "ram", 2), "snouty-rain", "Rain",
+                             build=bid)
+        self.assertEqual((c.key, c.title, c.build), ("snouty-rain", "Rain", bid))
+        data = tomllib.loads((self.root / "manifest.toml").read_text())
+        self.assertEqual(data["carts"]["snouty-rain"]["build"], bid)
+        cart = next(x for x in self.lib.to_json()["library"]["carts"] if x["key"] == "snouty-rain")
+        self.assertEqual((cart["build"], cart["preview"]), (bid, None))
+        gif = self.root / "builds" / bid / "out" / "preview.gif"
+        gif.parent.mkdir(parents=True)
+        gif.write_bytes(b"GIF89a")
+        cart = next(x for x in self.lib.to_json()["library"]["carts"] if x["key"] == "snouty-rain")
+        self.assertEqual(cart["preview"], f"/builds/{bid}/preview.gif")
+        self.assertIsNone(self.lib.preview_url("../../etc"))
+        # a UF2 from elsewhere (sync, add-uf2) replaces the cart and forgets the build
+        c = self.lib.import_uf2(make_uf2(self.tmp / "r2.uf2", "ram", 3), "snouty-rain")
+        self.assertIsNone(c.build)
+        self.assertIsNone(self.lib.carts["snouty"].build)
+
     def test_to_json_shape(self):
         j = self.lib.to_json()
         s = j["sets"][0]

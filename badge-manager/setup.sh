@@ -116,6 +116,17 @@ if [ -n "$invoker" ] && [ "$invoker" != root ] && [ -f "/home/$invoker/.ssh/auth
     chmod 600 /home/badge/.ssh/authorized_keys
     echo "copied $invoker's ssh keys to badge"
 fi
+# The station's own key for the build host (badge build over ssh, PLAN 9.8).
+# The exe.dev VM authenticates account keys, so the public key must be
+# registered once: `ssh exe.dev ssh-key add '<pubkey>'` from any logged-in shell.
+install -d -m 700 -o badge -g badge /home/badge/.ssh
+if [ ! -f /home/badge/.ssh/id_ed25519 ]; then
+    ssh-keygen -q -t ed25519 -N "" -C "badge-station@$(hostname)" -f /home/badge/.ssh/id_ed25519
+    chown badge:badge /home/badge/.ssh/id_ed25519 /home/badge/.ssh/id_ed25519.pub
+    echo "generated the station's ssh key /home/badge/.ssh/id_ed25519"
+fi
+echo "build host key to register (ssh exe.dev ssh-key add '...'):"
+echo "  $(cat /home/badge/.ssh/id_ed25519.pub)"
 cat > /usr/local/bin/badge <<EOF
 #!/bin/sh
 # The badge station command line (badge-manager/badge_manager/cli.py).

@@ -9,7 +9,7 @@
 :root {
   --bg: #f6f5f2; --card: #ffffff; --fg: #1d1d1f; --muted: #6b6b70; --line: #deddd8;
   --accent: #1f6feb; --accent-fg: #ffffff; --danger: #c62828; --ok: #2e7d32; --warn: #a15c00;
-  --log-bg: #1d1d1f; --log-fg: #e8e8e8;
+  --log-bg: #1d1d1f; --log-fg: #e8e8e8; --log-agent: #8cc4ff; --log-err: #ff8a80;
 }
 @media (prefers-color-scheme: dark) {
   :root {
@@ -54,7 +54,7 @@ button:disabled { opacity: 0.4; cursor: default; }
 .filebtn { display: inline-flex; align-items: center; justify-content: center; }
 .filebtn input { position: absolute; width: 1px; height: 1px; opacity: 0; }
 progress { width: 100%; height: 10px; margin-top: 8px; }
-#log {
+#log, .joblog {
   background: var(--log-bg); color: var(--log-fg); border-radius: 8px; padding: 8px 10px;
   font: 12px/1.45 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   max-height: 280px; overflow-y: auto; white-space: pre-wrap; overflow-wrap: anywhere; margin: 0;
@@ -83,6 +83,25 @@ button.armed { background: var(--danger); border-color: var(--danger); color: va
 .center { text-align: center; }
 .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; overflow-wrap: anywhere; }
 .err { color: var(--danger); font-size: 0.9rem; margin-top: 6px; }
+textarea {
+  display: block; width: 100%; min-height: 88px; margin: 0; padding: 10px 12px; resize: vertical;
+  font-family: inherit; font-size: 16px; line-height: 1.4; color: var(--fg); background: var(--bg);
+  border: 1px solid var(--line); border-radius: 10px; -webkit-appearance: none; appearance: none;
+}
+textarea:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+.job { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--line); }
+.jobhead { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+.joblog { margin-top: 8px; max-height: 220px; }
+.joblog .agent { color: var(--log-agent); }
+.joblog .bad { color: var(--log-err); }
+.result { display: flex; gap: 12px; align-items: center; margin-top: 8px; }
+.result img { width: 128px; height: 128px; flex: none; border-radius: 8px; background: var(--log-bg); image-rendering: pixelated; }
+.good { color: var(--ok); font-weight: 600; }
+.over { color: var(--danger); font-weight: 600; }
+.thumb { width: 40px; height: 40px; flex: none; border-radius: 6px; background: var(--bg); image-rendering: pixelated; object-fit: cover; }
+#build-host { min-width: 0; overflow-wrap: anywhere; text-align: right; }
+#builds { margin-top: 8px; }
+#builds .tap { display: flex; align-items: center; gap: 10px; }
 </style>
 </head>
 <body>
@@ -129,6 +148,35 @@ button.armed { background: var(--danger); border-color: var(--danger); color: va
   <div id="upload-msg" class="meta"></div>
 </section>
 
+<section id="build-card">
+  <h2>Build a cart <small id="build-host"></small></h2>
+  <textarea id="build-prompt" rows="3" maxlength="2000" placeholder="a Snouty cart where ..." aria-label="What the cart should do"></textarea>
+  <div class="actions">
+    <button id="build-go" type="button" disabled>Build</button>
+  </div>
+  <div id="build-why" class="why hidden"></div>
+  <div id="build-err" class="err hidden"></div>
+  <div id="job" class="job hidden">
+    <div class="jobhead"><span id="job-state" class="state"></span><span id="job-elapsed" class="meta"></span></div>
+    <div id="job-prompt" class="meta"></div>
+    <div id="job-result" class="result hidden">
+      <img id="job-gif" alt="Preview of the new cart" width="128" height="128">
+      <div class="grow">
+        <div id="job-title" class="name"></div>
+        <div id="job-bench" class="meta"></div>
+        <div id="job-size" class="meta"></div>
+        <div id="job-ticked" class="meta"></div>
+      </div>
+    </div>
+    <div id="job-error" class="err hidden"></div>
+    <pre id="job-log" class="joblog hidden"></pre>
+    <div id="job-acts" class="actions hidden">
+      <button id="job-cancel" class="danger" type="button">Cancel</button>
+    </div>
+  </div>
+  <ul id="builds"></ul>
+</section>
+
 <section id="share" class="hidden">
   <h2>Share</h2>
   <div class="share-block center">
@@ -169,6 +217,14 @@ button.armed { background: var(--danger); border-color: var(--danger); color: va
   var fitPending = null;               // selection key of the /api/fit in flight
   var shareKey = null;
   var modePending = {};                // cart key -> true while its toggle posts
+  var skew = 0;                        // station clock minus this phone's, ms (Date header)
+  var cancelArmed = null;              // timer while "Tap again to cancel" shows
+  var buildPosting = false;            // POST /api/build in flight
+  var jobWatch = null;                 // id of a job this page saw queued/running
+  var pendingTick = null;              // cart key to tick once it is in the library
+  var jobLogText = null;               // what #job-log shows, to skip needless rebuilds
+  var openBuild = null;                // {id, state, job, error} for the full-log row
+  var thumbs = {};                     // "place|src" -> <img>, reused so re-renders do not refetch
 
   function kb(n) {
     if (n === null || n === undefined) return "?";
@@ -187,6 +243,17 @@ button.armed { background: var(--danger); border-color: var(--danger); color: va
     b.type = "button";
     b.addEventListener("click", onclick);
     return b;
+  }
+  function thumb(place, src) {
+    var key = place + "|" + (src || "");
+    if (!thumbs[key]) {
+      var t = el("img", "thumb");
+      t.alt = "";
+      t.width = t.height = 40;
+      if (src) t.src = src;
+      thumbs[key] = t;
+    }
+    return thumbs[key];
   }
   function clear(node) { while (node.firstChild) node.removeChild(node.firstChild); }
   function showError(msg) {
@@ -213,7 +280,10 @@ button.armed { background: var(--danger); border-color: var(--danger); color: va
     parts.push(n.internet ? "internet yes" : "internet no");
     $("net").textContent = parts.join(", ");
     var b = s.build || {};
-    var build = b.local ? "Builds run on this Pi." :
+    var build;
+    if (b.ready === false) build = "Builds: " + (b.why || "not set up") + ".";
+    else if (b.ready === true) build = b.where === "local" ? "Builds run on this Pi." : "Builds run on " + b.remote + ".";
+    else build = b.local ? "Builds run on this Pi." :
       b.remote ? (n.internet ? "Builds run on " + b.remote + "." : "Builds are offline (no internet).") :
       "Builds are not set up.";
     $("build").textContent = build;
@@ -383,7 +453,10 @@ button.armed { background: var(--danger); border-color: var(--danger); color: va
     var lib = s.library || {};
     var carts = lib.carts || [], roms = lib.roms || [];
     var keep = { carts: {}, roms: {} };
-    carts.forEach(function (c) { if (selected.carts[c.key]) keep.carts[c.key] = true; });
+    carts.forEach(function (c) {
+      if (pendingTick === c.key) { selected.carts[c.key] = true; pendingTick = null; }
+      if (selected.carts[c.key]) keep.carts[c.key] = true;
+    });
     roms.forEach(function (r) { if (selected.roms[r.key]) keep.roms[r.key] = true; });
     selected = keep;
     if (lib.error) ul.appendChild(el("li", "row why", lib.error));
@@ -392,6 +465,7 @@ button.armed { background: var(--danger); border-color: var(--danger); color: va
       var li = el("li", "row");
       var title = c.title || c.key;
       li.appendChild(checkbox("carts", c.key, title));
+      if (c.preview) li.appendChild(thumb("lib", c.preview));
       var left = el("div", "grow");
       left.appendChild(el("div", "name", title));
       left.appendChild(el("div", "meta", "cart, " + (c.file || c.key) + ", " + kb(c.size)));
@@ -515,12 +589,238 @@ button.armed { background: var(--danger); border-color: var(--danger); color: va
     }
   }
 
+  // ---------------------------------------------------------------- Build a cart (PLAN 9.6)
+
+  var JOB_STATES = { queued: "Queued", running: "Building...", done: "Done", failed: "Failed", cancelled: "Cancelled" };
+  var BUDGET_MS = 16.7;
+
+  function jobRunning(j) { return !!j && (j.state === "queued" || j.state === "running"); }
+  function clock(sec) {
+    sec = Math.max(0, Math.floor(sec || 0));
+    var m = Math.floor(sec / 60), r = sec % 60;
+    return m + ":" + (r < 10 ? "0" : "") + r;
+  }
+  function jobElapsed(j) {
+    if (jobRunning(j) && typeof j.started === "number") return (Date.now() + skew) / 1000 - j.started;
+    return j.seconds || 0;
+  }
+  function buildErr(msg) {
+    var e = $("build-err");
+    e.textContent = msg || "";
+    e.classList.toggle("hidden", !msg);
+  }
+  function benchNode(ms) {
+    var span = el("span");
+    if (typeof ms !== "number") { span.textContent = "no bench"; return span; }
+    span.appendChild(el("span", ms <= BUDGET_MS ? "good" : "over", ms.toFixed(1) + " ms"));
+    span.appendChild(document.createTextNode(" of the " + BUDGET_MS + " ms frame budget"));
+    return span;
+  }
+  function logClass(line) {
+    if (/^agent:/.test(line)) return "agent";
+    if (/error|FAIL|failed/.test(line)) return "bad";
+    return "";
+  }
+  function fillLog(pre, lines) {
+    var text = lines.join("\n");
+    if (pre.getAttribute("data-text") === text) return false;
+    pre.setAttribute("data-text", text);
+    clear(pre);
+    lines.forEach(function (line, i) {
+      pre.appendChild(el("span", logClass(line), line + (i < lines.length - 1 ? "\n" : "")));
+    });
+    return true;
+  }
+
+  function disarmCancel() {
+    if (cancelArmed) clearTimeout(cancelArmed);
+    cancelArmed = null;
+    var b = $("job-cancel");
+    b.classList.remove("armed");
+    b.textContent = "Cancel";
+  }
+
+  function renderBuild(s) {
+    var b = s.build || {};
+    var j = s.job || null;
+    var running = jobRunning(j);
+    var go = $("build-go");
+    go.textContent = b.where === "local" ? "Build on the station" : b.where === "remote" ? "Build on the VM" : "Build";
+    $("build-host").textContent = b.ready ? (b.where === "local" ? "on this Pi" : (b.remote || "")) : "";
+    var why = $("build-why");
+    var whyText = b.ready ? (running ? "A build is running. One at a time." : "") : (b.why || "Builds are not set up on this station.");
+    why.textContent = whyText;
+    why.classList.toggle("hidden", !whyText);
+    go.disabled = !b.ready || running || buildPosting || !$("build-prompt").value.trim();
+    if (running && j) jobWatch = j.id;
+    renderJob(j);
+    renderBuilds(s.builds || []);
+  }
+
+  function renderJob(j) {
+    var box = $("job");
+    box.classList.toggle("hidden", !j);
+    if (!j) { disarmCancel(); return; }
+    var running = jobRunning(j);
+    var st = $("job-state");
+    st.textContent = (JOB_STATES[j.state] || j.state) + (j.title ? " " + j.title : "");
+    st.className = "state" + (j.state === "done" ? " ok" : j.state === "failed" ? " warn" : "");
+    $("job-elapsed").textContent = clock(jobElapsed(j));
+    $("job-prompt").textContent = j.prompt ? "“" + j.prompt + "”" : "";
+
+    var res = j.state === "done" ? j.result : null;
+    $("job-result").classList.toggle("hidden", !res);
+    if (res) {
+      var gif = $("job-gif");
+      if (res.preview && gif.getAttribute("src") !== res.preview) gif.src = res.preview;
+      gif.classList.toggle("hidden", !res.preview);
+      $("job-title").textContent = j.title || res.cart;
+      var bench = $("job-bench");
+      clear(bench);
+      bench.appendChild(benchNode(res.bench_ms));
+      $("job-size").textContent = kb(res.size) + ", " + res.cart;
+      if (jobWatch === j.id) {                        // this page saw it run: tick the new cart once
+        jobWatch = null;
+        pendingTick = res.cart;
+        $("job-ticked").textContent = "Ticked in the library: Deploy selection puts it on the badge.";
+      }
+    } else {
+      $("job-ticked").textContent = "";
+    }
+
+    var err = $("job-error");
+    var errText = j.state === "failed" ? "The build failed: " + (j.error || "exit " + j.exit) + "." :
+      j.state === "cancelled" ? "Cancelled." : "";
+    err.textContent = errText;
+    err.classList.toggle("hidden", !errText);
+    if (j.state !== "done" && jobWatch === j.id && !running) jobWatch = null;
+
+    var pre = $("job-log");
+    var lines = running ? (j.log || []) : j.state === "failed" ? (j.log || []).slice(-12) : [];
+    pre.classList.toggle("hidden", !lines.length);
+    var atBottom = pre.scrollHeight - pre.scrollTop - pre.clientHeight < 24;
+    var wasHidden = jobLogText === null;
+    if (fillLog(pre, lines) && (atBottom || wasHidden)) pre.scrollTop = pre.scrollHeight;
+    jobLogText = lines.length ? "shown" : null;
+
+    $("job-acts").classList.toggle("hidden", !running);
+    if (!running) disarmCancel();
+  }
+
+  function renderBuilds(rows) {
+    var ul = $("builds");
+    clear(ul);
+    var ids = {};
+    rows.forEach(function (r) {
+      ids[r.id] = true;
+      var li = el("li", "row");
+      var left = el("div", "grow");
+      var open = !!openBuild && openBuild.id === r.id;
+      var tap = button("", "tap" + (open ? " open" : ""), function () {
+        if (openBuild && openBuild.id === r.id) { openBuild = null; renderBuilds(state.builds || []); return; }
+        openBuild = { id: r.id, state: r.state, job: null, error: "" };
+        fetchBuild(r.id);
+        renderBuilds(state.builds || []);
+      });
+      tap.setAttribute("aria-expanded", open ? "true" : "false");
+      tap.appendChild(r.preview ? thumb("build", r.preview) : el("span", "thumb"));
+      var txt = el("div", "grow");
+      txt.appendChild(el("div", "name", r.title || r.name || r.id));
+      var meta = el("div", "meta");
+      meta.appendChild(document.createTextNode((JOB_STATES[r.state] || r.state) + ", " + clock(r.seconds)));
+      if (typeof r.bench_ms === "number") {
+        meta.appendChild(document.createTextNode(", "));
+        meta.appendChild(el("span", r.bench_ms <= BUDGET_MS ? "good" : "over", r.bench_ms.toFixed(1) + " ms"));
+      }
+      txt.appendChild(meta);
+      if (r.state === "failed" && r.error) txt.appendChild(el("div", "why", r.error));
+      tap.appendChild(txt);
+      left.appendChild(tap);
+      if (open) {
+        if (openBuild.state !== r.state && openBuild.job) {   // it moved on: fetch the log again
+          openBuild.state = r.state;
+          fetchBuild(r.id);
+        }
+        var d = el("div", "detail");
+        if (openBuild.error) d.appendChild(el("div", "err", openBuild.error));
+        else if (!openBuild.job) d.appendChild(el("div", "meta", "Loading the log..."));
+        else {
+          var jb = openBuild.job;
+          if (jb.prompt) d.appendChild(el("div", "meta", "“" + jb.prompt + "”"));
+          var pre = el("pre", "joblog");
+          fillLog(pre, (jb.log || []).length ? jb.log : ["(no log)"]);
+          d.appendChild(pre);
+        }
+        left.appendChild(d);
+      }
+      li.appendChild(left);
+      ul.appendChild(li);
+    });
+    if (openBuild && !ids[openBuild.id]) openBuild = null;
+  }
+
+  function fetchBuild(id) {
+    request("GET", "/api/build/" + encodeURIComponent(id), null, function (code, data) {
+      if (!openBuild || openBuild.id !== id) return;
+      if (code === 200 && data && data.job) { openBuild.job = data.job; openBuild.error = ""; openBuild.state = data.job.state; }
+      else openBuild.error = "Could not load the log: " + failText(code, data);
+      if (state) renderBuilds(state.builds || []);
+    });
+  }
+
+  $("build-prompt").addEventListener("input", function () {
+    buildErr("");
+    if (state) renderBuild(state);
+  });
+  $("build-go").addEventListener("click", function () {
+    var box = $("build-prompt");
+    var prompt = box.value.trim();
+    if (!prompt) return;
+    buildErr("");
+    buildPosting = true;
+    if (state) renderBuild(state);
+    request("POST", "/api/build", { prompt: prompt }, function (code, data) {
+      buildPosting = false;
+      if (code === 200 && data && data.ok) {
+        jobWatch = data.id || null;
+        box.value = "";
+        box.blur();
+      } else if (code === 409) {
+        buildErr("A build is already running. Wait for it or cancel it.");
+      } else if (code === 503) {
+        buildErr((data && data.error) || "Builds are not available right now.");
+      } else {
+        buildErr(failText(code, data));
+      }
+      if (state) renderBuild(state);
+    });
+  });
+  $("job-cancel").addEventListener("click", function () {
+    var b = $("job-cancel");
+    if (!cancelArmed) {
+      b.classList.add("armed");
+      b.textContent = "Tap again to cancel";
+      cancelArmed = setTimeout(disarmCancel, 4000);
+      return;
+    }
+    disarmCancel();
+    buildErr("");
+    request("POST", "/api/build/cancel", {}, function (code, data) {
+      if (code === 200 && data && data.ok) return;
+      buildErr(code === 404 ? "Nothing to cancel: the build already ended." : failText(code, data));
+    });
+  });
+  setInterval(function () {
+    if (state && jobRunning(state.job)) $("job-elapsed").textContent = clock(jobElapsed(state.job));
+  }, 1000);
+
   function render(s) {
     var first = !state;
     state = s;
     renderNet(s);
     renderBadge(s);
     renderSets(s);
+    renderBuild(s);                    // before the library: a finished build ticks its cart
     renderLibrary(s);
     renderShare(s);
     renderLog(s, first);
@@ -535,7 +835,7 @@ button.armed { background: var(--danger); border-color: var(--danger); color: va
     x.onload = function () {
       var data = null;
       try { data = JSON.parse(x.responseText); } catch (e) { data = null; }
-      cb(x.status, data);
+      cb(x.status, data, x);
     };
     x.onerror = x.ontimeout = function () { cb(0, null); };
     x.send(body === null || body === undefined ? null : JSON.stringify(body));
@@ -543,8 +843,10 @@ button.armed { background: var(--danger); border-color: var(--danger); color: va
 
   function poll() {
     var url = seq === null ? "/api/status" : "/api/status?since=" + seq + "&wait=25";
-    request("GET", url, null, function (code, data) {
+    request("GET", url, null, function (code, data, x) {
       if (code === 200 && data) {
+        var served = Date.parse(x.getResponseHeader("Date") || "");
+        if (!isNaN(served)) skew = served - Date.now();
         if (typeof data.seq === "number") seq = data.seq;
         render(data);
         setTimeout(poll, typeof data.seq === "number" ? 0 : 1000);

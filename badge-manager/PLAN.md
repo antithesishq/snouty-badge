@@ -149,7 +149,8 @@ watch the menu re-scan, run a cart, come back, deploy the Sonic set.
   toggle, "what is on the badge now" view (read the root directory).
   Much of this landed with M0; what M1 adds is in section 8.
 - **M2 build on the fly**: section 6, remote path first (works on every
-  Pi), local path second.
+  Pi), local path second. Built 2026-09-30 to the section 9 contract
+  (tag `badge-manager/m2`); the ssh path still waits for a Pi.
 - **M3 table polish**: badge LED/menu hints in the UI text, one-tap
   "same set again", deploy history, optional read-only kiosk page on a
   spare tablet. Only if there is time.
@@ -329,3 +330,321 @@ See `badge_manager/__init__.py`: `badge.files[].title/kind`, `badge.set`,
   `README.md`, `tests/test_server.py`.
 - Then integration: full test run, `--fake-badge` directory walk-through
   of every new page action, tag `badge-manager/m1`.
+
+## 9. M2: build a cart on the fly (design, 2026-09-30)
+
+Section 6 is the sketch; this is the contract the M2 tracks build to.
+Remote path first: a Pi Zero 2 W drives a build on the exe.dev VM over
+ssh. The local path (a Pi 5 with `setup.sh --build-tools`) runs the very
+same script on the Pi itself. Nothing in the badge OS changes.
+
+### 9.1 Facts checked on the VM
+
+- `claude` 2.1.x is installed and logged in on the VM (`claude -p`
+  answers); `--print` mode takes `--allowedTools`, `--permission-mode`,
+  `--max-turns`, `--max-budget-usd`, `--output-format stream-json`
+  `--verbose`, `--append-system-prompt-file`.
+- The VM's sshd is exe.dev's: keys are registered on the *account*
+  (`ssh exe.dev ssh-key add '<pubkey>'`), there is no `authorized_keys`.
+  The Pi's `badge` user therefore needs its key registered once by Adrian
+  (`setup.sh` prints the public key and the command). VMs cannot reach
+  each other; a Pi on a phone hotspot can reach `animated-badge.exe.xyz`.
+- A `git worktree add` of the repo does not populate the `sycl-badge`
+  submodule; the job must `git submodule update --init --reference
+  <repo>/.git/modules/sycl-badge`. Zig caches: `.zig-cache/` and
+  `zig-pkg/` are per checkout (1.5 GB and 534 MB in the main checkout);
+  the job passes `--cache-dir <repo>/.zig-cache` so a fresh worktree does
+  not rebuild the SDK. Timings measured in 9.9.
+- The VM has 2 vCPUs and 7 GB RAM; a small cart builds in seconds once
+  the cache is warm. Expect the agent, not Zig, to dominate a job.
+
+### 9.2 Job model (on disk, shared by server and CLI)
+
+A job lives in `<library>/builds/<id>/` with `id = YYYYMMDD-HHMMSS-<slug>`
+(`slug` = the cart name without its `snouty-` prefix):
+
+```
+builds/<id>/job.json     {id, prompt, name, title, where: "local"|"remote", host,
+                          state: "queued"|"running"|"done"|"failed"|"cancelled",
+                          started, finished, seconds, exit, error,
+                          result: {cart, uf2, size, preview, bench_ms, branch} | null}
+builds/<id>/job.log      one line per event, appended while the job runs
+builds/<id>/out/         what build-job.sh produced: <name>.uf2, preview.gif,
+                         bench.txt, summary.json, cart.tar.gz
+builds/.lock             flock: one job at a time, whoever runs it
+```
+
+`badge_manager/build.py` owns this: `Jobs(root)` with `start(prompt,
+where, name=None) -> Job` (runs the command in the calling thread; the
+server wraps it in a thread, the CLI runs it in the foreground and prints
+the log), `current()`, `get(id)`, `list(n)`, `cancel()`, `tail(id, n)`.
+The runner streams the command's stdout into `job.log` line by line
+(each line also bumps the station's change counter so the page's long
+poll wakes), enforces `build_max_minutes` (default 20) by killing the
+process group, and on exit 0 reads `out/summary.json`, checks the UF2
+with `tools/uf2_info.py`, copies it into `<library>/carts/<name>.uf2` and
+registers it (`Library.add_uf2(key=name, title=summary.title,
+build=id)`), so the new cart appears in the library with its GIF.
+Manifest cart entries gain an optional `build = "<id>"`; the cart JSON
+gains `"preview": "/builds/<id>/preview.gif" | null` and `"build": id |
+null`.
+
+The build lock is separate from the deploy lock: a deploy or wipe can run
+while a build is in flight; only the final registration takes the
+station's state lock for a moment. `busy`/`action` keep their meaning.
+
+The command the runner starts, in order of precedence:
+
+1. `build_command` from `station.toml` (tests point it at
+   `tests/fake_build_job.sh`), a template with `{id}`, `{out}`,
+   `{prompt_file}`, `{name}`, `{flags}`.
+2. `where == "local"`: `bash <build_repo>/badge-manager/build-job.sh --id
+   ID --out <library>/builds/ID/out --prompt-file <library>/builds/ID/prompt.txt
+   [--name NAME] [--no-agent]`.
+3. `where == "remote"`: `ssh -o BatchMode=yes -o ConnectTimeout=15 HOST
+   bash <build_repo>/badge-manager/build-job.sh --id ID --out
+   <build_repo>/build-jobs/ID/out --prompt-file - ... < prompt.txt`, then
+   `ssh HOST tar -C <build_repo>/build-jobs/ID -cf - out | tar -x -C
+   <library>/builds/ID`, then `ssh HOST rm -rf <build_repo>/build-jobs/ID`.
+   Cancel runs `ssh HOST bash .../build-job.sh --cancel ID` and kills the
+   local ssh.
+
+`where == "auto"` picks local when the local probe passes (section 6:
+RAM, Zig, and now also `build_repo` present on this machine), else remote
+when `build_host` is set. `build.ready` in the status is false, with a
+`why`, when neither applies or `network.internet` is false.
+
+### 9.3 build-job.sh (runs at the repo, on whichever host builds)
+
+```
+build-job.sh --id ID --out DIR --prompt-file FILE|- [--name snouty-x]
+             [--no-agent] [--max-turns 40] [--max-usd 5] [--minutes 15]
+build-job.sh --cancel ID
+build-job.sh --self-test          # template only, into a temp dir
+```
+
+Steps, each logged as `step: ...` with its seconds, so the phone sees
+progress:
+
+1. `git fetch origin main` (offline: fall back to local `main`), `git
+   worktree add --detach build-jobs/ID/src origin/main`, submodule init
+   with `--reference`, the cache-dir flag exported through `ZIG_FLAGS`.
+2. Name: `--name`, else `snouty-` + a slug from the prompt's first words;
+   must match `[a-z][a-z0-9-]{2,23}`, not exist under `carts/` or in
+   the root `build.zig`. Binary name = directory name.
+3. Copy `badge-manager/template-cart/` to `carts/NAME/`, replace
+   `__NAME__`, insert the registry line before `badge-calibrate` in the
+   root `build.zig`. `zig build -Dcart=NAME` once: proves the toolchain
+   and warms the cache before the agent starts (`step: template builds`).
+4. Agent (skipped with `--no-agent`): `claude -p` in the worktree with the
+   prompt = `.claude/skills/new-cart/SKILL.md` + the request,
+   `--allowedTools` for Read/Edit/Write/Glob/Grep plus `Bash(zig build
+   *)`, `Bash(node tools/preview.mjs *)`, `Bash(python3 tools/make_gif.py *)`,
+   `--permission-mode acceptEdits`, `--max-turns`, `--max-budget-usd`,
+   `--output-format stream-json --verbose` piped through a small Python
+   filter that prints `agent: <text>` and `agent: <tool> <target>` lines.
+   Afterwards `git status --porcelain`: every change outside `carts/NAME/`
+   and the one `build.zig` line is reverted and logged.
+5. `zig build -Dcart=NAME` again (the job fails here if the agent left
+   the cart broken; the Zig error is the last thing in the log).
+6. `node tools/preview.mjs zig-out/bin/NAME.wasm --frames 240 --every 4
+   --press A:60-120 --out build-jobs/ID/preview` + `tools/make_gif.py
+   --scale 2 --ms 66` -> `out/preview.gif`.
+7. `badge-bench/bench.sh zig-out/firmware/NAME.elf --frames 300 --json`
+   -> `out/bench.txt` (the summary lines) and `bench_ms` = worst busy ms.
+8. `tools/uf2_info.py` gate; copy `out/NAME.uf2`; `tar` the cart source
+   into `out/cart.tar.gz`; commit the worktree to a local branch
+   `build/ID` (never pushed) and remove the worktree.
+9. `out/summary.json`: `{name, title, description, prompt, where, seconds,
+   agent_turns, agent_usd, bench_ms, size, files: [...], branch}`. Title
+   and description come from `carts/NAME/summary.json`, which the agent
+   writes (falling back to the name and the prompt).
+
+Exit codes: 0 done, 2 bad arguments/name, 3 the cart does not build, 4
+the agent failed or hit its limits, 124 wall clock, 130 cancelled.
+
+As built (Track B): step lines are `step: <name>` then `step: <name> ok
+(<s> s)`; the template and the skill come from the repo the script runs
+in (so a branch can test them before main has them); Zig's cache is
+shared with `ZIG_LOCAL_CACHE_DIR` (the agent's own builds inherit it) plus
+`zig-pkg` and badge-bench venv symlinks; `claude` also gets
+`--permission-prompts none` (a denied call is logged, never a hang),
+`--tools Read,Edit,Write,Glob,Grep,Bash`, `--strict-mcp-config`,
+`--no-session-persistence` and `Bash(ls *)`; preview and bench also press
+LEFT 130-165 and RIGHT 175-225 so a game's movement is on the GIF and in
+the bench; `out/` also gets `preview.png` (the last frame) and
+`agent.jsonl.gz` (the raw agent stream), `summary.json` also `controls`;
+`where` is `remote` when the script runs under ssh; a job that fails or
+is cancelled after the template step still commits what it has to
+`build/ID`; `build-jobs/ID` is removed at the end unless `--out` is inside
+it (the remote path copies and removes it).
+
+### 9.4 The template cart and the skill
+
+`badge-manager/template-cart/` is a minimal cart with no asset pipeline:
+`build.zig` (`os_cart.add`, `ReleaseSmall`, no `custom_builder`),
+`cart/src/main.zig` (~150 lines: `export_start_code`, the wasm
+`present_wasm`/`read_controls` shims copied from snouty-run, `start()`
+with vsync 60 fps and `.no_copy_full_frame`, an `update()` that draws a
+"SNOUTY" title, a d-pad-moved square and an A-button colour change),
+`CLAUDE.md` for the agent (what to edit, what not to touch), `.gitignore`.
+No sound, no neopixels, no click binding, per the repository policies.
+`build-job.sh --self-test` copies and builds it so the template is
+checked by `tests/e2e_build.sh` and stays buildable.
+
+`.claude/skills/new-cart/SKILL.md` at the repository root is the agent's
+brief: where it is (a worktree, the cart already registered and
+building), the edit scope (`carts/NAME/` only), the API cheat sheet from
+the root `CLAUDE.md`, the budgets (16.7 ms per update, 307 KB RAM, light
+comptime, the Mac OOM note), the loop (edit, `zig build -Dcart=NAME`,
+`node tools/preview.mjs ... --frames 90 --every 30` and look at a PNG,
+at most a handful of rounds), and the finish (`carts/NAME/summary.json`
+with `title` (<= 20 characters, shown in the badge menu and on the page),
+`description`, `controls`). It tells the agent to stop early with a
+working cart rather than a broken ambitious one.
+
+### 9.5 Status contract and routes
+
+Additions to `Station.status()`:
+
+```
+"build": {"local": bool, "remote": str|None, "ready": bool, "why": str,
+          "where": "local"|"remote"|None},           # what "auto" would pick
+"job": None | {"id", "prompt", "name", "title", "where", "state",
+               "started", "seconds", "exit", "error",
+               "log": [str],                          # last 40 lines
+               "result": {"cart", "preview", "bench_ms", "size"} | None},
+"builds": [{"id", "name", "title", "state", "started", "seconds",
+            "preview", "bench_ms", "error"}]          # newest first, last 10
+```
+
+Routes:
+
+| Route | Body | Answer |
+|---|---|---|
+| `POST /api/build` | `{"prompt": str, "where"?: "auto"|"local"|"remote", "name"?: str}` | `{"ok": true, "id"}`; 400 empty/too long prompt (2000 chars), 409 a job is running, 503 `build.ready` false |
+| `GET /api/build` | | the current or last job with its full log (`{"job": ...}`) |
+| `GET /api/build/<id>` | | that job, full log |
+| `POST /api/build/cancel` | | `{"ok": true}`; 404 when nothing runs |
+| `GET /builds/<id>/preview.gif` | | the GIF (also `.png`, `bench.txt`, `summary.json` from `out/`) |
+
+`DemoStation` fakes a job too: `POST /api/build` on the demo runs a
+scripted 20-second job (step lines, a few `agent:` lines, a generated GIF)
+that ends with a new cart in the demo library, so the page can be
+developed without the VM.
+
+### 9.6 The page
+
+A "Build a cart" card between the library and Share: a textarea with a
+placeholder ("a Snouty cart where ..."), a "Build" button showing where
+it will run ("on the station" / "on the build VM"), disabled with the
+`why` when not ready. While a job runs: state, elapsed, the log tail
+(auto-scrolling, monospace, `agent:` lines highlighted), a Cancel button.
+When it ends: the GIF, the title, the bench ms against the 16.7 budget,
+the size, and the cart appears in the library with its checkbox ticked
+so "Deploy selection" is one tap. Below, the last builds as small rows
+with thumbnails. Everything works with the long poll that already
+exists; `GET /api/build` is used only when the tail is not enough.
+
+### 9.7 CLI
+
+```
+badge build "a Snouty cart where ..." [--remote|--local] [--name snouty-x] [--no-agent]
+badge build --status            # the current or last job
+badge build --cancel
+badge build --log [ID]          # the whole job log
+badge builds                    # the last builds
+```
+
+`badge build PROMPT` runs the job in the foreground, streaming the log,
+and exits 0/1/2 like the other commands. Since state is on disk, the page
+shows a CLI-started job and `badge build --status` shows a page-started
+one.
+
+### 9.8 Guardrails
+
+One job at a time (the flock), a wall clock (`build_max_minutes`, 20),
+`build_max_usd` (5) and `build_max_turns` (40) passed to the agent, the
+agent confined to its cart directory (tools allow-list + the post-run
+revert), prompt length <= 2000, generated code kept on a local branch and
+never pushed, output written only under `build-jobs/ID` on the build
+host and `builds/ID` in the library, and the new cart goes through the
+normal fit check before it can be deployed. The ssh key on the Pi is a
+dedicated one (`/home/badge/.ssh/id_ed25519`, `setup.sh` generates it).
+
+### 9.9 Tracks and verification
+
+- Track A (Python): `build.py`, `config.py` keys (`build_command`,
+  `build_max_minutes`, `build_max_usd`, `build_max_turns`), `Station`
+  glue, `server.py` routes, `cli.py`, `library.py` `build` field and
+  `preview` URL, `tests/test_build.py` against `tests/fake_build_job.sh`,
+  server and CLI tests, README + `__init__.py` contract.
+- Track B (shell + Zig): `template-cart/`, `build-job.sh`,
+  `.claude/skills/new-cart/SKILL.md`, `tests/e2e_build.sh` (self-test
+  plus a `--no-agent` job through the CLI on the VM), timings.
+- Track C (page): `www/index.html` build card, `DemoStation` job.
+- Final check on the VM: one real `badge build --local` with a real
+  prompt, GIF looked at, bench line read, the cart deployed to the loop
+  image with `--fake-badge`. Timings and the verdict go here:
+
+Track B timings (2026-09-30, the VM with 2 vCPUs, other sessions keeping
+the load average between 10 and 18, so read them as upper bounds):
+
+| Step | Seconds |
+|---|---|
+| worktree + submodule (`--reference`) | 3-6 (1 on an idle VM) |
+| template build, cold cache (a worktree with its own empty `.zig-cache`) | 108 on an idle VM; ~840 under load 18 (it rebuilds microzig's regz and the SDK) |
+| template build, shared warm cache (`ZIG_LOCAL_CACHE_DIR=<repo>/.zig-cache`, new cart name) | 2-11 |
+| rebuild after the agent (nothing changed since its last build) | 0 |
+| preview (240 updates) + GIF | 1-2 |
+| bench, 300 frames | 37-61 |
+| agent, real prompt (20-21 turns) | 178-181 |
+| whole job, `--no-agent` | 50-77 |
+| whole job with the agent | 237-250 |
+
+Caches: sharing `<repo>/.zig-cache` through `ZIG_LOCAL_CACHE_DIR` (which the
+agent's own `zig build` calls inherit, unlike a `--cache-dir` flag) plus a
+`zig-pkg` symlink turns the first build from minutes into seconds. Zig's
+cache takes file locks and is content-addressed, so concurrent use by a job
+and a build in `<repo>` is safe; two jobs in different worktrees with the
+same cart name reused the cached configure graph and still installed into
+their own `zig-out/`. The badge-bench venv is shared by a symlink too, so a
+job never pip-installs.
+
+What the agent run produced ("a Snouty cart where a square dodges falling
+blocks, d-pad to move, score at the top", `--max-turns 25 --max-usd 3`,
+twice): both runs finished with `success` and a building cart on the first
+try of the job. Run 1: "Snouty Dodges" (`snouty-square-dodges`), a score
+and best-score band at the top, a coral square with eyes at the bottom,
+coloured blocks falling faster as the score rises, a GAME OVER box and A
+to restart; 20 turns, $1.20, 1.49 ms worst busy, 14336-byte UF2 (RAM cart,
+27 KB in the window). Its only trouble was two denied Bash calls (an
+`export PATH=... &&` prefix and one preview command), which the skill now
+forbids explicitly. Run 2 with that fix: "Snouty Dodge", score plus three
+lives, no denials, 21 turns, $1.15, 1.40 ms, 13312 bytes; it had committed
+a second preview directory, so the template's `.gitignore` now ignores
+every PNG, GIF and frames.json in the cart. The GIF frames show exactly
+what the summaries describe.
+
+Final check (2026-09-30, the merged branch, everything through the
+Python side): `python3 -m badge_manager --config <tmp>/station.toml build
+"a Snouty cart where you catch falling acorns in a basket, d-pad moves
+the basket, score at the top, three misses and it is game over" --local`
+with `build_repo` pointing at this checkout. Job
+`20260930-221533-catch-falling`: agent 26 turns, $1.50, 249 s; whole
+job 309 s; "Acorn Catch" (`snouty-catch-falling`), 16384-byte RAM UF2,
+worst busy 2.17 ms of the 16.7 budget. The GIF frames show a SCORE band,
+three acorn lives at the top right, a tree canopy dropping acorns, the
+basket sliding left and right under the d-pad script and a miss marker
+on the ground. Afterwards `badge builds`, `badge build --status` and
+`badge library` all showed the job and the cart with its build id, the
+real server served `/builds/<id>/preview.gif` (30268 bytes, 200) and
+answered 404 to a `..` path, `/api/status` carried `build`, `job`,
+`builds` and the cart's `preview`, and `badge --fake-badge badge.img
+deploy --carts snouty-catch-falling --yes` put the UF2 on the loop image
+as one contiguous file behind the label. 137 unit tests, `e2e_loop.sh`
+and `e2e_build.sh` pass. The generated cart is on the local branch
+`build/20260930-221533-catch-falling` of this repository.
+
+Not run anywhere yet: the remote ssh path against the real VM from a Pi
+(exercised only with a fake `ssh` on PATH), `setup.sh`, and any badge.

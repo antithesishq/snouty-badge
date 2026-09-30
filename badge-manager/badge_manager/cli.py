@@ -9,6 +9,7 @@ from __future__ import annotations
 import argparse
 import json
 import shutil
+import signal
 import subprocess
 import sys
 import time
@@ -18,7 +19,8 @@ from . import config as config_mod
 from . import fat12
 from .device import DeviceError
 from .library import CartSet, LibraryError
-from .station import DoesNotFit, NoBadge, Station, StationBusy, StationError, kb
+from .station import (BuildNotReady, DoesNotFit, NoBadge, Station, StationBusy, StationError,
+                      kb)
 
 EXIT_OK, EXIT_ERROR, EXIT_PRECONDITION = 0, 1, 2
 DEFAULT_SETS = Path(__file__).resolve().parents[1] / "sets.default.toml"
@@ -91,8 +93,25 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--key", required=True, help="library key; the drive name is KEY.uf2")
     p.add_argument("--title")
     p.add_argument("--mode", choices=["ram", "xip"], help="expected mode (checked)")
-    p = cmd("build", "build a cart from a prompt (M2)")
-    p.add_argument("prompt")
+    p.add_argument("--build", metavar="ID", help="the build job that made it")
+    p = cmd("build", 'build a cart from a prompt: build "a Snouty cart where ..."; '
+                     "build --status | --cancel | --log [ID]")
+    p.add_argument("prompt", nargs="?", help="what the cart should be (at most 2000 characters)")
+    where = p.add_mutually_exclusive_group()
+    where.add_argument("--remote", dest="where", action="store_const", const="remote",
+                       default="auto", help="build on the build VM (build_host)")
+    where.add_argument("--local", dest="where", action="store_const", const="local",
+                       help="build on this station")
+    p.add_argument("--name", help="cart name (snouty- is added when missing); default from "
+                                  "the prompt")
+    p.add_argument("--no-agent", action="store_true", help="build the template cart only")
+    what = p.add_mutually_exclusive_group()
+    what.add_argument("--status", action="store_true", help="the running or last build")
+    what.add_argument("--cancel", action="store_true", help="stop the running build")
+    what.add_argument("--log", nargs="?", const="", metavar="ID",
+                      help="the whole log of build ID (default the running or last one)")
+    p = cmd("builds", "the last builds")
+    p.add_argument("-n", type=int, default=10, help="how many (default 10)")
     return ap
 
 
@@ -100,13 +119,15 @@ def _csv(text: str) -> list[str]:
     return [x.strip() for x in text.split(",") if x.strip()]
 
 
-def _station(a: argparse.Namespace, stream: bool = False, poll: bool = True) -> Station:
+def _station(a: argparse.Namespace, stream: bool = False, poll: bool = True,
+             keep_log: bool = False) -> Station:
+    """STREAM prints and keeps the station log lines; KEEP_LOG only keeps them."""
     cfg = config_mod.load(getattr(a, "config", None))
     fake = getattr(a, "fake_badge", None)
     if fake:
         cfg.fake_badge = str(Path(fake).resolve())
     st = Station(cfg, on_log=(lambda m: print(m, flush=True)) if stream else None,
-                 persist_log=stream)
+                 persist_log=stream or keep_log)
     if poll:
         st.poll()
     return st
@@ -164,8 +185,12 @@ def cmd_status(st: Station, a) -> int:
     lines.append(f"Network: {n['mode']}" + (f" '{n['ssid']}'" if n["ssid"] else "")
                  + (f", {n['address']}" if n["address"] else "")
                  + f", internet {'yes' if n['internet'] else 'no'}")
-    lines.append(f"Build:   local {'yes' if s['build']['local'] else 'no'}, "
-                 f"remote {s['build']['remote'] or 'none'}")
+    b = s["build"]
+    lines.append(f"Build:   local {'yes' if b['local'] else 'no'}, "
+                 f"remote {b['remote'] or 'none'}, "
+                 + (f"ready ({b['where']})" if b["ready"] else f"not ready: {b['why']}"))
+    if s["job"] and s["job"]["state"] in ("queued", "running"):
+        lines.append(f"         building {s['job']['name']}, {s['job']['seconds']:.0f} s")
     if s["share"]["url"]:
         lines.append(f"Share:   {s['share']['url']}" + (
             f", Wi-Fi '{s['share']['ssid']}'" if s["share"]["ssid"] else ""))
@@ -291,7 +316,7 @@ def cmd_add_rom(st: Station, a) -> int:
 
 
 def cmd_add_uf2(st: Station, a) -> int:
-    c = st.library.import_uf2(a.path, a.key, a.title, a.mode)
+    c = st.library.import_uf2(a.path, a.key, a.title, a.mode, a.build)
     print(f"added cart {c.key}: {c.file.name}, {c.mode.upper()}, {kb(c.size)}")
     return EXIT_OK
 
@@ -350,27 +375,120 @@ def _wifi_escape(text: str) -> str:
 
 
 def cmd_build(st: Station, a) -> int:
-    print("badge build is not yet available in M0", file=sys.stderr)
-    return EXIT_PRECONDITION
+    if a.status:
+        return _build_status(st, a)
+    if a.cancel:
+        if not st.cancel_build():
+            print("no build is running", file=sys.stderr)
+            return EXIT_PRECONDITION
+        print("cancelled")
+        return EXIT_OK
+    if a.log is not None:
+        return _build_log(st, a.log or None)
+    if not a.prompt:
+        print('usage: badge build "PROMPT" [--remote|--local] [--name NAME] [--no-agent]',
+              file=sys.stderr)
+        return EXIT_ERROR
+    return _build_run(st, a)
+
+
+def _build_run(st: Station, a) -> int:
+    """Start a build and stream its log; Ctrl-C (or a dropped ssh) cancels it."""
+    job_id = st.start_build(a.prompt, a.where, a.name, a.no_agent,
+                            on_line=lambda line: print(line, flush=True))
+    old = {s: signal.signal(s, _interrupt) for s in (signal.SIGTERM, signal.SIGHUP)}
+    try:
+        while not st.wait_build(0.2):
+            pass
+    except KeyboardInterrupt:
+        print("cancelling the build", file=sys.stderr, flush=True)
+        st.cancel_build()
+        st.wait_build(30)
+    finally:
+        for s, h in old.items():
+            signal.signal(s, h)
+    job = st.build_job(job_id) or {}
+    if job.get("state") != "done":
+        return EXIT_ERROR
+    r = job["result"]
+    print(f"{job['title']} is in the library as {r['cart']} (build {job_id})")
+    return EXIT_OK
+
+
+def _interrupt(signum, frame):
+    raise KeyboardInterrupt
+
+
+def _build_lines(job: dict) -> list[str]:
+    lines = [f"Build:   {job['id']} ({job['state']}, {job['seconds']:.0f} s, "
+             f"{'on the build VM' if job['where'] == 'remote' else 'on the station'})",
+             f"Prompt:  {job['prompt']}"]
+    r = job.get("result")
+    if r:
+        ms = f", {r['bench_ms']:g} ms" if r.get("bench_ms") is not None else ""
+        lines.append(f"Cart:    {r['cart']}, {job['title']}, {kb(r['size'])}{ms}")
+    if job.get("error"):
+        lines.append(f"Error:   {job['error']}")
+    return lines
+
+
+def _build_status(st: Station, a) -> int:
+    job = st.build_job()
+    if getattr(a, "json", False):
+        _json({"build": st.build_info(), "job": job})
+        return EXIT_OK
+    info = st.build_info()
+    print(f"Builds:  {'ready, ' + info['where'] if info['ready'] else 'not ready: ' + info['why']}")
+    if job is None:
+        print("no builds yet")
+        return EXIT_OK
+    print("\n".join(_build_lines(job)))
+    print("\n".join("  " + line for line in job["log"][-10:]))
+    return EXIT_OK
+
+
+def _build_log(st: Station, job_id: str | None) -> int:
+    job = st.build_job(job_id)
+    if job is None:
+        print(f"no build {job_id}" if job_id else "no builds yet", file=sys.stderr)
+        return EXIT_ERROR
+    print("\n".join(job["log"]))
+    return EXIT_OK
+
+
+def cmd_builds(st: Station, a) -> int:
+    rows = st.builds(max(1, a.n))
+    if getattr(a, "json", False):
+        _json(rows)
+        return EXIT_OK
+    if not rows:
+        print("no builds yet")
+    for r in rows:
+        what = r.get("title") or r.get("name") or ""
+        if r.get("error"):
+            what += f"  ! {r['error']}"
+        print(f"  {r['id']:<34} {r['state']:<9} {r['seconds']:>5.0f} s  {what}")
+    return EXIT_OK
 
 
 COMMANDS = {"status": cmd_status, "sets": cmd_sets, "deploy": cmd_deploy, "wipe": cmd_wipe,
             "sync": cmd_sync, "log": cmd_log, "fit": cmd_fit, "library": cmd_library,
             "add-rom": cmd_add_rom, "add-uf2": cmd_add_uf2, "mode": cmd_mode, "set": cmd_set,
-            "init-sets": cmd_init_sets, "qr": cmd_qr, "build": cmd_build}
+            "init-sets": cmd_init_sets, "qr": cmd_qr, "build": cmd_build,
+            "builds": cmd_builds}
 STREAMING = {"deploy", "wipe", "sync", "mode", "set"}    # log lines printed and kept
 NO_BADGE = {"library", "log", "add-rom", "add-uf2", "mode", "set", "init-sets",
-            "qr"}                                        # never touch the drive
+            "qr", "build", "builds"}                     # never touch the drive
+KEEP_LOG = {"build"}                                     # log lines kept, not printed
 
 
 def main(argv: list[str] | None = None) -> int:
     a = build_parser().parse_args(argv)
     try:
-        if a.cmd == "build":
-            return cmd_build(None, a)
-        st = _station(a, stream=a.cmd in STREAMING, poll=a.cmd not in NO_BADGE)
+        st = _station(a, stream=a.cmd in STREAMING, poll=a.cmd not in NO_BADGE,
+                      keep_log=a.cmd in KEEP_LOG)
         return COMMANDS[a.cmd](st, a)
-    except (NoBadge, DoesNotFit, StationBusy) as e:
+    except (NoBadge, DoesNotFit, StationBusy, BuildNotReady) as e:
         print(f"badge: {e}", file=sys.stderr)
         return EXIT_PRECONDITION
     except (StationError, LibraryError, DeviceError, OSError) as e:

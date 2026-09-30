@@ -1,6 +1,7 @@
 """The HTTP API (server.py) against DemoStation, plus one class against the real Station."""
 import http.client
 import json
+import os
 import shutil
 import tempfile
 import threading
@@ -9,11 +10,13 @@ import unittest
 import urllib.error
 import urllib.request
 from pathlib import Path
+from unittest import mock
 
 from tests.helpers import make_config
 from badge_manager import server
 from badge_manager.library import Library
 from badge_manager.server import DemoStation, make_server, wifi_qr_text
+from badge_manager.station import Station
 
 HAVE_QRENCODE = shutil.which("qrencode") is not None
 
@@ -309,6 +312,116 @@ class RealStationServerTest(ServerCase):
         code, _, _ = self.call("GET", "/qr/page.svg")
         self.assertEqual(code, 404)          # network "none": nothing to share
 
+
+class BuildServerTest(ServerCase):
+    """The build routes against the real Station, builds run by tests/fake_build_job.sh."""
+
+    def make_station(self):
+        from tests.test_build import FAKE_COMMAND
+        env = {k: v for k, v in os.environ.items() if not k.startswith("FAKE_BUILD")}
+        patcher = mock.patch.dict(os.environ, env, clear=True)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        self.badge = self.tmp / "badge"
+        self.badge.mkdir()
+        cfg = make_config(self.tmp, self.badge)
+        cfg.build_command = FAKE_COMMAND
+        st = Station(cfg)
+        st._net = (time.monotonic() + 1e9, {"mode": "none", "ssid": None, "address": None,
+                                            "internet": False})
+        st.poll()
+        return st
+
+    def wait_build(self) -> dict:
+        self.assertTrue(self.station.wait_build(20))
+        return self.status()
+
+    def test_build_and_files(self):
+        self.assertEqual(self.call("GET", "/api/build")[:2], (200, {"job": None}))
+        code, data, _ = self.call("POST", "/api/build", {"prompt": "a cart where it rains"})
+        self.assertEqual(code, 200, data)
+        job_id = data["id"]
+        st = self.wait_build()
+        self.assertEqual((st["job"]["id"], st["job"]["state"]), (job_id, "done"))
+        self.assertEqual(st["builds"][0]["id"], job_id)
+        self.assertEqual(st["build"]["ready"], True)
+        code, data, _ = self.call("GET", "/api/build")
+        self.assertEqual((code, data["job"]["id"]), (200, job_id))
+        self.assertIn("step: template builds (0 s)", data["job"]["log"])
+        code, data, _ = self.call("GET", f"/api/build/{job_id}")
+        self.assertEqual((code, data["job"]["state"]), (200, "done"))
+        self.assertEqual(self.call("GET", "/api/build/20990101-000000-nope")[0], 404)
+        self.assertEqual(self.call("GET", "/api/build/..%2F..%2Fetc")[0], 404)
+        code, gif, hdrs = self.call("GET", f"/builds/{job_id}/preview.gif")
+        self.assertEqual((code, gif[:6], hdrs["Content-Type"]), (200, b"GIF89a", "image/gif"))
+        code, summary, _ = self.call("GET", f"/builds/{job_id}/summary.json")
+        self.assertEqual((code, summary["name"]), (200, "snouty-rains"))
+        self.assertEqual(self.call("GET", f"/builds/{job_id}/bench.txt")[0], 200)
+        for bad in (f"/builds/{job_id}/job.json", f"/builds/{job_id}/prompt.txt",
+                    f"/builds/{job_id}/snouty-rains.uf2", f"/builds/{job_id}/../job.json",
+                    f"/builds/{job_id}/%2e%2e%2fjob.json", "/builds/../manifest.toml",
+                    f"/builds/{job_id}", "/builds/"):
+            self.assertEqual(self.call("GET", bad)[0], 404, bad)
+        cart = next(c for c in st["library"]["carts"] if c["key"] == "snouty-rains")
+        self.assertEqual(cart["preview"], f"/builds/{job_id}/preview.gif")
+
+    def test_bad_requests(self):
+        for body in ({}, {"prompt": "  "}, {"prompt": 3}, {"prompt": "x" * 2001},
+                     {"prompt": "rain", "where": "moon"}, {"prompt": "rain", "name": "a b"},
+                     {"prompt": "rain", "name": ""}, {"prompt": "rain", "no_agent": "yes"}):
+            code, data, _ = self.call("POST", "/api/build", body)
+            self.assertEqual(code, 400, (body, data))
+            self.assertFalse(data["ok"])
+        self.assertEqual(self.station.jobs.ids(), [])
+
+    def test_not_ready_is_503(self):
+        self.station.config.build_command = None
+        code, data, _ = self.call("POST", "/api/build", {"prompt": "rain"})
+        self.assertEqual(code, 503, data)
+        self.assertEqual(data["error"], self.status()["build"]["why"])
+
+    def test_busy_cancel_and_deploy_during_a_build(self):
+        self.assertEqual(self.call("POST", "/api/build/cancel")[0], 404)
+        with mock.patch.dict(os.environ, {"FAKE_BUILD_SLOW": "30"}):
+            code, data, _ = self.call("POST", "/api/build", {"prompt": "rain", "where": "local",
+                                                             "name": "drops"})
+            self.assertEqual(code, 200, data)
+            self.assertTrue(data["id"].endswith("-drops"))
+            code, data, _ = self.call("POST", "/api/build", {"prompt": "snow"})
+            self.assertEqual(code, 409, data)
+            code, data, _ = self.call("POST", "/api/deploy", {"set": "demo"})
+            self.assertEqual((code, data), (200, {"ok": True}))       # not blocked by the build
+            self.wait_idle()
+            self.assertEqual(sorted(p.name for p in self.badge.iterdir()),
+                             ["snouty-bugs.uf2", "snouty.uf2"])
+            self.assertEqual(self.status()["job"]["state"], "running")
+            self.assertEqual(self.call("POST", "/api/build/cancel")[:2], (200, {"ok": True}))
+            st = self.wait_build()
+        self.assertEqual(st["job"]["state"], "cancelled")
+        self.assertEqual(self.call("POST", "/api/build/cancel")[0], 404)
+
+    def test_cancel_body_keeps_the_connection(self):
+        conn = http.client.HTTPConnection("127.0.0.1", self.port, timeout=10)
+        try:
+            conn.request("POST", "/api/build/cancel", body=b"{}",
+                         headers={"Content-Type": "application/json"})
+            r = conn.getresponse()
+            r.read()
+            self.assertEqual(r.status, 404)
+            conn.request("GET", "/api/build")
+            r = conn.getresponse()
+            self.assertEqual((r.status, json.loads(r.read())), (200, {"job": None}))
+        finally:
+            conn.close()
+
+    def test_station_without_builds_is_503(self):
+        class NoBuilds:
+            """A station from before M2: none of the build methods."""
+            def status(self):
+                return {"busy": False, "log_seq": 0, "sets": [], "library": {"carts": [], "roms": []}}
+        self.httpd.app.station = NoBuilds()
+        self.assertEqual(self.call("POST", "/api/build", {"prompt": "rain"})[0], 503)
+        self.assertEqual(self.call("GET", "/api/build")[0], 503)
 
 if __name__ == "__main__":
     unittest.main()

@@ -4,10 +4,10 @@ Build the cart, run the host tests, preview it headless or in the web
 simulator, put a ROM on the badge drive and flash the cart. Commands run
 from the repository root unless noted; outputs land in the root `zig-out/`.
 
-Status: M2. The core emulates the Game Gear: Z80, VDP (mode 4, scanline
+Status: M3. The core emulates the Game Gear: Z80, VDP (mode 4, scanline
 renderer, interrupts), Sega mapper with cart RAM, Game Gear port decode and
 the PSG register model. The frontend has the boot splash, one-voice sound
-and the emulator menu (section 5). Time scrubbing is M3.
+the emulator menu and the time scrubber (section 5).
 
 Boot splash: the Snouty mark and "SNOUTY GEAR" slide down onto a dark blue
 screen for 0.8 s, a two-note chime (1046 Hz, then 2093 Hz) plays as they
@@ -121,7 +121,25 @@ to turn tiles, then a Select hold opens the emulator menu, two Down presses
 and B resume (760 frames). The same sequence is the `press` list in
 `badge-bench/carts/snouty-gear.toml`. `m1_play.json` is the same game
 sequence without the splash (the golden test uses it on the core);
-`m2_menu.json` walks every menu row (section 5).
+`m2_menu.json` walks every menu row (section 5). `m3_scrub.json` is
+m2_play's game sequence with the Select hold moved to update 673 (so the
+menu opens on game frame 630, a keyframe), then scrubs (1000 updates):
+
+```sh
+node tools/preview.mjs zig-out/bin/snouty-gear.wasm --frames 1000 --every 1 --start-skip 700 \
+  --script carts/snouty-gear/tools/scripts/m3_scrub.json --out carts/snouty-gear/out/ \
+  --dump-exports debug_state,debug_scrub_depth,debug_history,debug_keyframes,debug_frame_count \
+  --at "734 debug_scrub_depth == 90" --at "745 debug_scrub_depth == 60" \
+  --at "757 debug_frame_count == 571" --at "757 debug_keyframes == 13"
+```
+
+Left x3 (updates 712, 723, 734: `debug_scrub_depth` 30, 60, 90,
+`debug_frame_count` 600, 570, 540), Right (745: 60), Up brings the panel
+back (751), B resumes (757: depth 0, frame 571, the two keyframes ahead
+dropped, 13 left, history 361 frames), 102 game frames (history grows one
+frame per frame, a keyframe every 30), Select held again (menu at 861,
+frame 672), Left (876: depth 12, frame 660), B (890: frame 661). The same
+sequence is the `press` list of `badge-bench/carts/snouty-gear.toml`.
 
 `out/frame_XXXX.png` are 160x128 frames. The top-left overlay shows the
 `step_frame` time and FPS (always 1000 us / 500 fps in wasm, where the
@@ -138,6 +156,15 @@ clear at boot unless built with `-Dsound=true`, root docs/SOUND.md;
 ch0 | ch1 << 4 | ch2 << 8 | noise << 12, 15 = silent, noise control << 16,
 latch << 20) and `debug_psg_tones` (10-bit periods ch0 | ch1 << 10 |
 ch2 << 20), for checking what a game asks the PSG for.
+
+Time scrubber (frontend/rewind.zig): `debug_scrub_depth` (frames the game
+is parked behind live, 0 at live), `debug_history` (frames reachable back
+from live), `debug_keyframes` (keyframes in the page store),
+`debug_keyframe_cap` (the most it holds; 0 means no room, the scrubber is
+off and the menu says "Scrub: no memory"), `debug_pool_bytes` (pool bytes
+in use) and `debug_arena_bytes` (the arena the store was laid out in:
+a 54 KB static in wasm, the badge's size, 15 keyframes; on the badge the
+RAM between `__bss_end__` and `__stack_limit__` minus 1 KB, 56,204 B).
 
 Boot diagnostics, for a game that shows nothing: `debug_pc`, `debug_sp`,
 `debug_iff1` (1 = interrupts enabled), `debug_halted`, `debug_mapper`
@@ -163,7 +190,7 @@ Controls (badge / simulator key):
 
 | Badge        | In the game                  | In the menu                      |
 |--------------|------------------------------|----------------------------------|
-| D-pad        | D-pad                        | Up/Down move, Left/Right flip a setting |
+| D-pad        | D-pad                        | Up/Down move, Left/Right flip a setting or scrub time |
 | B (X, J)     | Button 1 (2 when swapped)    | Resume, or back from About       |
 | A (Z, K)     | Button 2 (1 when swapped)    | Choose / flip a setting          |
 | Start        | Start                        | nothing                          |
@@ -187,6 +214,22 @@ drive CRC32 plus `fragmented`, or for an embedded ROM on the badge why the
 drive was not used. B or a Select tap resumes; held buttons reach the game
 only after they are released. `tools/scripts/m2_menu.json` walks it in the
 headless preview (`--dump-exports debug_state,debug_settings,debug_menu_opens`).
+
+Time scrubber (SPEC.md 10): while the game runs the cart keeps a keyframe
+every half second and the pad of every frame. On Resume, Reset or About
+(not on a setting row) Left steps back half a second and Right forward,
+four steps a second while held. The panel's bottom line reads
+`Scrub: live / 5.5s` (at the live position / history held) or
+`Scrub: -1.5 / 5.5s` (parked 1.5 s back), dim while there is no history;
+from 10 s on it shows whole seconds. After a step the panel gives way to
+that line in a bar at the bottom, so the restored frame is visible;
+Left/Right keep scrubbing, Up/Down/A bring the panel back, B or a Select
+tap resume from the parked position. Resuming from the past plays on from
+there and drops the future (no branches). Reset also clears the history.
+How deep it goes depends on how much the game changes per half second: the
+store keeps only the changed 128-byte pages, and evicts the oldest
+keyframes when the pool is full. `tools/scripts/m3_scrub.json` walks it
+(section 4).
 
 ## 6. A ROM on the badge drive
 
