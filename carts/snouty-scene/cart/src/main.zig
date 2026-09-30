@@ -4,9 +4,10 @@
 //! CLAUDE.md for the toolchain.
 //!
 //! update(): input (A/Start skip, Select opens the picker, B toggles the
-//! timing overlay in -Ddebug_overlay=true builds), then the timeline renders
-//! the current part and its fade, the picker and the overlay draw on top,
-//! and the clock advances one frame.
+//! timing overlay in -Ddebug_overlay=true builds; nothing while Start and
+//! Select are held together, the OS's exit chord), then the timeline
+//! renders the current part and its veil, the picker and the overlay draw
+//! on top, and the clock advances one frame.
 const cart = @import("cart-api");
 const build_options = @import("build_options");
 const input = @import("input.zig");
@@ -14,7 +15,6 @@ const math = @import("math.zig");
 const timeline = @import("timeline.zig");
 const picker = @import("picker.zig");
 const overlay = @import("overlay.zig");
-const fx = @import("fx.zig");
 
 comptime {
     cart.export_start_code();
@@ -38,7 +38,9 @@ pub fn start() void {
 
 pub fn update() void {
     input.update(read_controls());
-    if (picker.open) {
+    if (input.held(.start) and input.held(.select)) {
+        // Start+Select is the OS's exit chord: react to neither button.
+    } else if (picker.open) {
         picker.handle();
     } else if (input.pressed(.select)) {
         picker.show();
@@ -51,10 +53,7 @@ pub fn update() void {
     const fb = cart.framebuffer;
     const t0 = cart.micros_since_boot();
     timeline.render(fb);
-    if (picker.open) {
-        fx.fade(fb, 8);
-        picker.draw();
-    }
+    if (picker.open) picker.draw();
     render_us = @truncate(cart.micros_since_boot() - t0);
     if (show_overlay) overlay.draw(render_us, timeline.current(), timeline.part_frame());
     timeline.step();

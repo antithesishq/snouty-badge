@@ -18,6 +18,16 @@ pub fn shadowed(str: []const u8, x: i32, y: i32, fg: cart.DisplayColor, scale: u
     cart.text(.{ .str = str, .x = x, .y = y, .scale = scale, .text_color = fg });
 }
 
+/// `str` at a 7 px character pitch instead of 8 (the font's glyphs leave
+/// their eighth column blank, so most letters still do not touch): 22
+/// characters fit the 160 px screen. One `cart.text` call per character.
+pub fn condensed(str: []const u8, x: i32, y: i32, fg: cart.DisplayColor) void {
+    for (str, 0..) |c, i| {
+        if (c == ' ') continue;
+        cart.text(.{ .str = &.{c}, .x = x + @as(i32, @intCast(i)) * 7, .y = y, .text_color = fg });
+    }
+}
+
 /// x that centres `str` (one line, 8x8 font at `scale`) on the 160 px screen.
 pub fn centre_x(str: []const u8, scale: u32) i32 {
     return @divTrunc(160 - @as(i32, @intCast(str.len * 8 * scale)), 2);

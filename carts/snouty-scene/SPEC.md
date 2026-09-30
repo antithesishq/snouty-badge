@@ -150,12 +150,14 @@ struct of function pointers plus the name, built with `Part.of(module)`.
 
 ```
 running --A/Start--> next part (immediate cut, no fade-out; fade-in kept)
-running --Select--> picker (demo keeps rendering underneath, dimmed by fade(8))
+running --Select--> picker (demo keeps running underneath an opaque panel)
 picker  --Up/Down--> move; --A--> jump to part, close; --Select/B--> close
 running --B (debug_overlay build only)--> toggle overlay
 ```
 
 Inputs are edge-triggered through `input.zig` (copied from snouty-maze).
+While Start and Select are both held (the OS's exit chord) the cart
+ignores every button; the stick click is never read.
 
 ## 7. Determinism, tests and tooling
 
