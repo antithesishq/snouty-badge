@@ -43,3 +43,12 @@ and index field 5 KB, copper strip 6 KB, palettes 1.5 KB).
 
 Plenty of headroom: the M1 parts can spend up to about 9 ms each before a
 fade pushes them to the limit.
+
+## M1
+
+Calibrated badge-bench, `carts/snouty-scene/tools/bench_parts.sh <index>`
+per part on its own branch (`.bss` delta against M0's 28,472).
+
+| # | Part | mean busy ms | part worst busy ms (frame) | run worst | .bss delta | what dominates |
+|---|---|---|---|---|---|---|
+|  4 | Tunnel |  1.59 |  2.38 (t 1) |  2.38 | +69,248 (two 200x168 u8 LUTs 67.2 KB, texel classes 1 KB, depth ramps 1 KB) | `parts.tunnel.render` 96%: 20,480 px x ~11 cycles (angle, depth, row, class, palette loads + store); worst frame is the fade-in, +0.8 ms; init() about 27 ms of start-up |
