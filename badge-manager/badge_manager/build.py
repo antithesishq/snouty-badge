@@ -44,6 +44,8 @@ LOG_LINE_MAX = 300
 KILL_GRACE_S = 3.0            # SIGTERM, then SIGKILL this much later
 SSH_STEP_S = 120              # timeout for the fetch, cleanup and cancel ssh calls
 SSH_OPTS = ["-o", "BatchMode=yes", "-o", "ConnectTimeout=15"]
+SSH_KEY = Path("/home/badge/.ssh/id_ed25519")   # PLAN 9.8: the station's own key, used when
+                                                # present (the station runs as root)
 PACKAGE_ROOT = Path(__file__).resolve().parents[1]           # badge-manager/
 UF2_INFO = PACKAGE_ROOT.parent / "tools" / "uf2_info.py"     # skipped when missing
 REPO_CARTS = PACKAGE_ROOT.parent / "carts"                   # names a new cart must avoid
@@ -510,7 +512,8 @@ class Jobs:
         """ssh HOST REMOTE, REMOTE quoted once more for the remote shell."""
         if not host:
             raise BuildError("no build_host in station.toml")
-        return _join(["ssh", *SSH_OPTS, host, remote])
+        key = ["-i", str(SSH_KEY)] if SSH_KEY.is_file() else []
+        return _join(["ssh", *SSH_OPTS, *key, host, remote])
 
     # -- cancel ---------------------------------------------------------------
 

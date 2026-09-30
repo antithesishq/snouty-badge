@@ -111,11 +111,60 @@ ssh badge@snouty.local badge set rm gg
 ssh badge@snouty.local badge init-sets              # merge missing default sets
 ssh badge@snouty.local badge qr
 ssh badge@snouty.local badge log
+ssh -t badge@snouty.local badge build "a Snouty cart where it rains frogs"
+ssh -t badge@snouty.local badge build "a maze" --remote --name maze2 --no-agent
+ssh badge@snouty.local badge build --status         # the running or last build
+ssh badge@snouty.local badge build --log            # its whole log (or --log ID)
+ssh badge@snouty.local badge build --cancel
+ssh badge@snouty.local badge builds                 # the last builds
 ```
+
+`badge build` streams the job's log and exits 0 when the cart is in the
+library, 1 when the build failed or was cancelled, 2 when another build is
+running or builds are not possible right now. Ctrl-C (or a dropped ssh
+session) cancels the build. It does not need the badge plugged in.
 
 The `badge` command runs `python3 -m badge_manager` as root through a
 sudoers rule that allows only that command. `badge --help` lists the rest
 (`fit`, `library`, `wipe`, `sync`, `add-rom`, `add-uf2`).
+
+## Building a cart from the phone
+
+The page's "Build a cart" box (or `badge build` over ssh) takes a prompt
+like "a Snouty cart where it rains frogs" and makes a new cart from it
+(PLAN section 9):
+
+1. The station starts a job in `library/builds/<id>/` and picks where it
+   runs. It builds on the Pi itself when the Pi has 6 GB of RAM or more,
+   the Zig toolchain (`setup.sh --build-tools`) and a checkout at
+   `build_repo`; otherwise on the build VM `build_host` over ssh. The page
+   shows which one ("on the station" / "on the build VM") and why a build
+   is not possible (no build VM set, no internet).
+2. `badge-manager/build-job.sh` runs there: a fresh worktree, a template
+   cart, `claude -p` editing it to the prompt (limited to
+   `build_max_turns` turns and `build_max_usd` dollars), a Zig build, a
+   preview GIF and a badge-bench figure. Every step streams to the page.
+   The job is killed after `build_max_minutes` (20). Expect 3 to 10 minutes.
+3. On success the UF2 is checked with `tools/uf2_info.py`, copied to
+   `library/carts/<name>.uf2` and added to the manifest with
+   `build = "<id>"`. The cart shows up in the library with its GIF, ready
+   to tick and deploy. The generated source stays on a local `build/<id>`
+   branch on the build host; nothing is pushed.
+
+One build runs at a time. A deploy can still run while a cart builds.
+
+**The build VM needs the Pi's ssh key.** The station runs as root and uses
+`/home/badge/.ssh/id_ed25519` when it exists (else root's own key). The
+exe.dev VM has no `authorized_keys`: keys are registered on the exe.dev
+account (PLAN 9.1). Register the Pi's public key once, from a machine
+that is logged in to exe.dev:
+
+```
+ssh exe.dev ssh-key add '<contents of /home/badge/.ssh/id_ed25519.pub>'
+```
+
+Then `ssh badge@snouty.local badge build "..." --remote --no-agent`
+checks the whole path without spending anything on the agent.
 
 ## Filling the library
 
@@ -212,10 +261,16 @@ The page uses nothing else, so a laptop can script the station with curl.
 | `POST /api/cart-mode` | `{"cart": "snouty", "mode": "xip"}` | `{"ok": true, "cart": {...}}` |
 | `POST /api/upload` | multipart, or the raw file with an `X-Filename` header | `{"ok": true, "key", "name", "size"}` |
 | `GET /qr/page.svg`, `GET /qr/wifi.svg` | | SVG QR codes; 404 without `qrencode` or off the Pi's own network (Wi-Fi) |
+| `POST /api/build` | `{"prompt": "...", "where"?: "auto"\|"local"\|"remote", "name"?: "snouty-x"}` | `{"ok": true, "id"}` at once; 400 empty or too long prompt (2000 characters) or bad name, 409 a build is running, 503 builds not possible (`build.why` in the status) |
+| `GET /api/build` | | `{"job": ...}`: the running or last build with its whole log, or `null` |
+| `GET /api/build/<id>` | | `{"job": ...}` for that build; 404 unknown |
+| `POST /api/build/cancel` | | `{"ok": true}`; 404 when no build runs |
+| `GET /builds/<id>/preview.gif` | | the build's GIF; also `preview.png`, `bench.txt`, `summary.json`; 404 for anything else |
 
 Bad input is a 400 with `{"ok": false, "error": "..."}`. Everything that
 acts or edits answers 409 while a deploy, wipe or sync runs, so a deploy
-never races a manifest rewrite.
+never races a manifest rewrite. Builds are separate: they answer 409 only
+while another build runs, and a deploy can run during a build.
 
 ## Where things live on the Pi
 
@@ -224,6 +279,8 @@ never races a manifest rewrite.
 | `/opt/badge-station/badge-manager`, `/opt/badge-station/tools` | the code (`setup.sh` rsyncs it) |
 | `/etc/badge-station/station.toml` | configuration |
 | `/var/lib/badge-station/library/` | `manifest.toml`, `carts/*.uf2`, `roms/` |
+| `/var/lib/badge-station/library/builds/<id>/` | one cart build: `job.json`, `job.log`, `prompt.txt`, `out/` (UF2, `preview.gif`, `bench.txt`, `summary.json`); `builds/.lock` while one runs |
+| `/home/badge/.ssh/id_ed25519` | the station's ssh key for the build VM |
 | `/run/badge-station/` | the badge mount point |
 | `/usr/local/bin/badge`, `/etc/sudoers.d/badge-station` | the ssh command |
 | `/etc/systemd/system/badge-station.service` | the web server (`journalctl -u badge-station`) |

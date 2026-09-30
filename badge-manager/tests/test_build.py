@@ -262,6 +262,9 @@ class CommandTest(Env):
         self.cfg = make_config(self.tmp, None)
         self.cfg.build_host, self.cfg.build_repo = "exedev@vm.example", "/home/exedev/repo"
         self.jobs = Jobs(self.cfg.library, self.cfg)
+        p = mock.patch.object(build_mod, "SSH_KEY", self.tmp / "no-key")
+        p.start()
+        self.addCleanup(p.stop)
 
     def tearDown(self):
         for i in self.jobs.ids():
@@ -301,6 +304,15 @@ class CommandTest(Env):
         self.assertEqual(self.jobs.cancel_command(job),
                          f"{ssh} 'bash /home/exedev/repo/badge-manager/build-job.sh "
                          f"--cancel {job.id}'")
+
+    def test_remote_uses_the_station_key(self):
+        key = self.tmp / "id_ed25519"
+        key.write_text("key")
+        job = self.jobs.create("rain", "remote")
+        with mock.patch.object(build_mod, "SSH_KEY", key):
+            clean = self.jobs.commands(job)[2]
+        self.assertTrue(clean.startswith(f"ssh -o BatchMode=yes -o ConnectTimeout=15 -i {key} "
+                                         "exedev@vm.example "), clean)
 
     def test_remote_quoting(self):
         self.cfg.build_repo = "/home/x/my repo"
