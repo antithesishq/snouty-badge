@@ -129,10 +129,12 @@ pub var colour: [DEPTH][W]u8 = undefined;
 /// just behind the start position.
 var generated: i32 = -keep_behind;
 
-/// The district being ticked (index 0xFFFF_FFFF before the first tick).
-var live_seg: Segment = .{ .kind = .bus, .y0 = 0, .len = 0, .seed = 1, .index = 0xFFFF_FFFF };
+/// Index meaning "no segment yet".
+const no_segment: u32 = 0xFFFF_FFFF;
+/// The district being ticked (index no_segment before the first tick).
+var live_seg: Segment = .{ .kind = .bus, .y0 = 0, .len = 0, .seed = 1, .index = no_segment };
 /// Segment under the camera last frame, for entered_segment().
-var under_index: u32 = 0xFFFF_FFFF;
+var under_index: u32 = no_segment;
 var under_seg: Segment = undefined;
 var entered: ?Segment = null;
 
@@ -196,17 +198,27 @@ pub fn live() Segment {
 pub fn tick(frame: u32, cam_row: i32, verb: bool) void {
     const under = segment_at(cam_row);
     if (under.index != under_index) {
+        // The segment the camera starts in is not "entered": the boot card
+        // (main.zig start()) keeps the screen for its 90 frames.
+        if (under_index != no_segment) entered = under;
         under_index = under.index;
         under_seg = under;
-        entered = under;
     }
     const want = if (under.kind == .bus) segment_at(under.y0 + bus_len) else under;
     if (want.index != live_seg.index) {
+        // The old district's rows still in the ring (the keep_behind rows
+        // behind the camera) carry its dynamic edits; restore them, so every
+        // row outside the live district is gen_row's (debug_world_check).
+        if (live_seg.index != no_segment) {
+            var y = @max(live_seg.y0, generated - DEPTH);
+            while (y < live_seg.y0 + live_seg.len) : (y += 1) regen_row(y);
+        }
         live_seg = want;
         info(want.kind).enter(want);
     }
     // Every row of the live district is in the ring from 56 rows before its
-    // Bus ends; ticks wait for that.
+    // Bus ends (at depth 256); ticks wait for that, so a tick never finds its
+    // rows ungenerated ahead of the camera.
     if (!generated_row(live_seg.y0 + live_seg.len - 1)) return;
     const d = info(live_seg.kind);
     d.tick(frame, cam_row);
@@ -222,7 +234,7 @@ pub fn entered_segment() ?Segment {
 /// Caption for the segment under the camera: the district's B verb, or on a
 /// Bus the name of the district ahead.
 pub fn caption() []const u8 {
-    if (under_index == 0xFFFF_FFFF) return "";
+    if (under_index == no_segment) return "";
     if (under_seg.kind != .bus) return info(under_seg.kind).caption;
     return next_caption[@backingInt(segment_at(under_seg.y0 + bus_len).kind)];
 }

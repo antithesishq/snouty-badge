@@ -1,7 +1,8 @@
 //! The column march, sky and sun, cliff shading (SPEC.md 5.1-5.3). All
 //! integer: Q16.16 world coordinates, precomputed step, reciprocal, fog-level,
 //! sin and direction tables, so wasm, badge-bench and the badge draw the same
-//! frame. The fog dither of SPEC 5.3 is M1.
+//! frame. Fog is dithered between its eight levels with a 4x4 Bayer
+//! threshold per column (SPEC 5.3, PLAN.md M1 "Fog dither").
 const cart = @import("cart-api");
 const fixed = @import("fixed.zig");
 const world = @import("world.zig");
@@ -28,8 +29,14 @@ const fov_tan: i32 = 52429;
 const px_per_tan: i32 = 100;
 /// A span taller than this many rows whose height jump is above cliff_dh
 /// cells draws the colour's side entry (c | 1) for district indices.
+/// cliff_dh 4 shades bus rims (+8), sort bars and heap faces (+6 and up)
+/// but not the free-list ridge (+3).
 const cliff_min: i32 = 6;
-const cliff_dh: i32 = 12;
+const cliff_dh: i32 = 4;
+/// Fog dither mode (knob): true picks a column's threshold by
+/// bayer4[x & 3][frame & 3] (temporal, SPEC 5.3), false by
+/// bayer4[x & 3][(x >> 2) & 3] (spatial only, no flicker).
+const fog_temporal = true;
 /// Fog starts at this distance (cells) and reaches the fog colour at z_far.
 const fog_near: i32 = 60;
 /// Iris sun: mark scale (24 px -> 72 px), centre rows above the horizon.
@@ -67,11 +74,20 @@ const iris_rows = @import("iris").rows;
 
 // --- Tables built by init() -------------------------------------------------
 
-/// Sample distance per step (Q16 cells), its scaled reciprocal
-/// (view_scale * 2^32 / z, so mul(dh, inv_z) >> 16 is rows) and fog level.
+/// Sample distance per step (Q16 cells) and its scaled reciprocal
+/// (view_scale * 2^32 / z, so mul(dh, inv_z) >> 16 is rows).
 var z_tab: [max_steps]i32 = undefined;
 var inv_z: [max_steps]i32 = undefined;
-var fog_level: [max_steps]u8 = undefined;
+/// Fog level per step for each dither threshold t in 0..15:
+/// fog_level_t[t][i] = (fog_q[i] + t) >> 4, fog_q the level in Q4 (0..112).
+var fog_level_t: [16][max_steps]u8 = undefined;
+/// 4x4 ordered-dither thresholds 0..15.
+const bayer4 = [4][4]u8{
+    .{ 0, 8, 2, 10 },
+    .{ 12, 4, 14, 6 },
+    .{ 3, 11, 1, 9 },
+    .{ 15, 7, 13, 5 },
+};
 var n_steps: usize = 0;
 /// sin of i/1024 turn for i in 0..256 (a quarter wave), Q16.
 var sin_q: [257]i32 = undefined;
@@ -99,7 +115,7 @@ pub fn init() void {
     init_sky();
     init_sun();
     init_stars();
-    palette.begin_frame(0);
+    palette.init();
 }
 
 fn init_steps() void {
@@ -110,24 +126,26 @@ fn init_steps() void {
         z_tab[i] = z;
         // view_scale * 2^32 / z, as (view_scale << 24) / (z >> 8).
         inv_z[i] = @divTrunc(view_scale << 24, z >> 8);
-        fog_level[i] = level_for(z);
+        const q = level_for(z);
+        for (&fog_level_t, 0..) |*tab, t| tab[i] = @intCast((q + @as(u32, @intCast(t))) >> 4);
         z += dz;
         dz = fixed.mul(dz, lod_mul);
     }
     n_steps = i;
 }
 
-/// Fog level of a sample at distance z (Q16 cells): 0 before fog_near, then
-/// f = (z - near) / (far - near) on the concept's f^1.4 curve (approximated
-/// as 0.6 f + 0.4 f^2), rounded to 0..7. M1 retunes here.
-fn level_for(z: i32) u8 {
+/// Fog level of a sample at distance z (Q16 cells) in Q4 (0..112): 0 before
+/// fog_near, then f = (z - near) / (far - near) on the concept's f^1.4 curve
+/// (approximated as 0.6 f + 0.4 f^2) times 7 levels; the dither rounds it.
+fn level_for(z: i32) u32 {
     const zc8 = z >> 8; // Q8 cells
     const near8 = fog_near << 8;
     if (zc8 <= near8) return 0;
     const span8 = (z_far >> 8) - near8;
     const f = @min(@divTrunc((zc8 - near8) * 256, span8), 256); // Q8
     const g = (154 * f + @divTrunc(102 * f * f, 256)) >> 8; // Q8
-    return @intCast(@min((g * (palette.fog_levels - 1) + 128) >> 8, palette.fog_levels - 1));
+    const top = (palette.fog_levels - 1) * 16;
+    return @intCast(@min((g * top) >> 8, top));
 }
 
 /// Quarter-wave Taylor series to x^9 in Q16 (error about 1 LSB).
@@ -236,7 +254,7 @@ fn init_stars() void {
 }
 
 pub fn draw(frame: u32) void {
-    _ = frame;
+    const ft: usize = frame & 3;
     const cam = camera.cam;
     if (cam.yaw != dir_yaw) build_dirs(cam.yaw);
 
@@ -251,6 +269,8 @@ pub fn draw(frame: u32) void {
         const hor = cam.horizon + ((roll80 * (@as(i32, @intCast(x)) - sw / 2)) >> fixed.Q);
         const dx = dir_x[x];
         const dy = dir_y[x];
+        const t = if (fog_temporal) bayer4[x & 3][ft] else bayer4[x & 3][(x >> 2) & 3];
+        const fog_level = &fog_level_t[t];
         var occ: i32 = sh;
         var prev_h = h_cam;
         var i: usize = 0;
@@ -315,8 +335,6 @@ pub fn draw(frame: u32) void {
             }
         }
     }
-    // TODO(M1): 4x4 Bayer fog dither on (x, frame) choosing the upper or lower
-    // fog level per column and step (SPEC 5.3).
 }
 
 // --- Colour helpers (init only) ---------------------------------------------

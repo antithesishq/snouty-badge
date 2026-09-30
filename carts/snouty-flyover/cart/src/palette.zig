@@ -133,24 +133,51 @@ pub const water = [256]u16{
 /// Blend weight of each fog level in 1/256: round(level * 256 / 7).
 const fog_weight = [fog_levels]i32{ 0, 37, 73, 110, 146, 183, 219, 256 };
 
-/// Rotate the pulse ranges into `cur` and rebuild `fog` for this frame.
-/// Scaffold: TODO(Track A) rotate 32-47 by frame (A forwards), 48-63 by
-/// 2 frame, 64-79 by -frame (B backwards), 80-95 by -2 frame.
-pub fn begin_frame(frame: u32) void {
-    _ = frame;
-    cur = rgb565;
+/// The pulse ranges: first index and rotation per frame (SPEC 5.3, PLAN M1).
+/// `cur[lo + j] = rgb565[lo + ((j - speed * frame) & 15)]`.
+const pulse_lo = [4]u8{ pulse_a, pulse_a_dash, pulse_b, pulse_b_dash };
+const pulse_speed = [4]u32{ 1, 2, 0xFFFF_FFFF, 0xFFFF_FFFE }; // +1, +2, -1, -2 (mod 2^32)
+
+/// fog_pulse[level][k]: the fog blend of rgb565[pulse_a + k] (k 0..63, the
+/// four pulse ranges), kept by init(). Only the pulse ranges change per
+/// frame and a rotation commutes with the per-entry blend, so begin_frame
+/// rotates these into `fog` instead of blending all 2048 entries (same
+/// result, ~0.5 k stores).
+var fog_pulse: [fog_levels][64]u16 = undefined;
+
+/// Build `fog` from rgb565 (every entry, once), keep the pulse entries in
+/// fog_pulse, and set `cur`. render.init calls this before the first
+/// begin_frame.
+pub fn init() void {
     const fr: i32 = @intCast(((fog_rgb >> 16) * 31 + 127) / 255);
     const fg: i32 = @intCast((((fog_rgb >> 8) & 0xFF) * 63 + 127) / 255);
     const fb: i32 = @intCast(((fog_rgb & 0xFF) * 31 + 127) / 255);
-    for (&fog, 0..) |*level_table, level| {
+    for (&fog, &fog_pulse, 0..) |*level_table, *pulse_table, level| {
         for (level_table, 0..) |*out, i| {
             const w = if (i >= emissive_lo and i < emissive_hi) fog_weight[level >> 1] else fog_weight[level];
-            const c: i32 = cur[i];
+            const c: i32 = rgb565[i];
             const r = blend(c & 31, fr, w);
             const g = blend((c >> 5) & 63, fg, w);
             const b = blend(c >> 11, fb, w);
             const bits: u16 = @intCast(r | (g << 5) | (b << 11));
             out.* = if (cart.is_wasm) @byteSwap(bits) else bits;
+        }
+        @memcpy(pulse_table, level_table[pulse_a..][0..64]);
+    }
+    cur = rgb565;
+    begin_frame(0);
+}
+
+/// Rotate the four pulse ranges into `cur` and `fog` for this frame
+/// (A forwards by 1 and 2 per frame, B backwards by 1 and 2); every other
+/// entry keeps the value init() gave it.
+pub fn begin_frame(frame: u32) void {
+    for (pulse_lo, pulse_speed) |lo, speed| {
+        const shift = speed *% frame;
+        for (0..16) |j| {
+            const src = lo + ((@as(u32, @intCast(j)) -% shift) & 15);
+            cur[lo + j] = rgb565[src];
+            for (&fog, &fog_pulse) |*level_table, *pulse_table| level_table[lo + j] = pulse_table[src - pulse_a];
         }
     }
 }

@@ -77,12 +77,43 @@ pub var autopilot: bool = true;
 pub const idle_frames = 450;
 var idle: u32 = 0;
 
-/// Merge the player's buttons (input.zig, already updated this frame) with the
-/// autopilot. Scaffold: TODO(Track C) the serpentine, altitude and B schedule
-/// of PLAN.md M1; for now the autopilot flies straight.
+// --- Autopilot knobs (PLAN.md M1 "Autopilot") -------------------------------
+
+/// Flight line on a Bus, cells (the deck centre).
+const ap_centre: i32 = 128;
+/// Serpentine in a district: centre + ap_swing * sin(frame * ap_turn_rate),
+/// sin in 1/1024 turns; rate 2 = one full turn per 512 frames.
+const ap_swing: i32 = 16;
+const ap_turn_rate: i32 = 2;
+/// P controller: full stick at ap_gain_cells of predicted error, where the
+/// prediction adds ap_lead frames of the current x drift (speed * sin yaw).
+const ap_gain_cells: i32 = 12;
+const ap_lead: i32 = 40;
+/// Stick clamp, Q16 (1/3: roll at most 1/3 of roll_max, about 6 rows).
+const ap_steer_max: i32 = fixed.one / 3;
+/// Cruise altitude slew toward floor + district alt, Q16 cells per frame (1).
+const ap_climb: i32 = fixed.one;
+
+/// Look-down in the districts read from altitude (alt >= ap_look_alt): the
+/// stick pitch the autopilot holds there, Q16 (-1/2: horizon row 52, as in
+/// docs/concept/sort.png). Autopilot pitch only tilts the view; it drives
+/// cruise_alt itself.
+const ap_look_alt: i32 = 80;
+const ap_look_pitch: i32 = -fixed.one / 2;
+
+/// Index of the last segment the autopilot pressed B in, and the camera row
+/// seen by the previous pilot() call (for the verb_at crossing).
+var verb_index: u32 = 0xFFFF_FFFF;
+var prev_row: i32 = 0;
+
+/// Merge the player's buttons (input.zig, already updated this frame) with
+/// the autopilot: Start (edge) toggles, any stick/A/B input switches to manual
+/// and resets the idle counter, idle_frames without input returns to autopilot.
 pub fn pilot(frame: u32) Stick {
-    _ = frame;
-    if (input.pressed(.start)) autopilot = !autopilot;
+    if (input.pressed(.start)) {
+        autopilot = !autopilot;
+        idle = 0;
+    }
     const manual: Stick = .{
         .steer = (@as(i32, @intFromBool(input.held(.right))) - @intFromBool(input.held(.left))) * fixed.one,
         .pitch = (@as(i32, @intFromBool(input.held(.down))) - @intFromBool(input.held(.up))) * fixed.one,
@@ -97,8 +128,36 @@ pub fn pilot(frame: u32) Stick {
         idle += 1;
         if (idle >= idle_frames) autopilot = true;
     }
+    const row = cam.y >> fixed.Q;
+    defer prev_row = row;
     if (!autopilot) return manual;
-    return .{};
+    return auto_stick(frame, row);
+}
+
+/// The autopilot's stick: serpentine steering and the once-per-segment B.
+fn auto_stick(frame: u32, row: i32) Stick {
+    const under = world.segment_at(row);
+    const target = ap_centre * fixed.one +
+        if (under.kind == .bus) 0 else ap_swing * sin(@as(i32, @intCast(frame & 1023)) * ap_turn_rate);
+    // Error across the wrapping strip, in (-W/2, W/2] cells.
+    const span = world.W * fixed.one;
+    const err = @mod(target - cam.x + span / 2, span) - span / 2;
+    const drift = fixed.mul(speed, sin(cam.yaw)); // Q16 cells per frame
+    const want = @divTrunc(err - ap_lead * drift, ap_gain_cells);
+    const steer = @max(-ap_steer_max, @min(ap_steer_max, want));
+
+    const live = world.live();
+    const at = world.info(live.kind).verb_at;
+    var verb = false;
+    if (at >= 0 and live.index != verb_index) {
+        const trigger = live.y0 + at;
+        if (prev_row < trigger and row >= trigger) {
+            verb = true;
+            verb_index = live.index;
+        }
+    }
+    const pitch = if (world.info(under.kind).alt >= ap_look_alt) ap_look_pitch else 0;
+    return .{ .steer = steer, .pitch = pitch, .verb = verb };
 }
 
 /// Q16 accumulators behind the integer fields of `cam`.
@@ -117,6 +176,15 @@ pub fn init() void {
     speed = cruise;
     cam.alt = (@as(i32, ground(cam.x, cam.y)) + start_above) * fixed.one;
     cruise_alt = cam.alt;
+    autopilot = true;
+    idle = 0;
+    verb_index = 0xFFFF_FFFF;
+    prev_row = 0;
+}
+
+/// Terrain height of the cell under the camera (for the debug exports).
+pub fn ground_under() u8 {
+    return ground(cam.x, cam.y);
 }
 
 pub fn update(stick: Stick, frame: u32) void {
@@ -153,7 +221,13 @@ pub fn update(stick: Stick, frame: u32) void {
     if (@abs(want_h - horizon_q) < 256) horizon_q = want_h;
     cam.horizon = (horizon_q + fixed.one / 2) >> fixed.Q;
     const tilt = horizon_q - horizon_level * fixed.one; // Q16 rows, +-24
-    cruise_alt += @divTrunc(fixed.mul(tilt, climb_max), pitch_range);
+    if (autopilot) {
+        // Hold floor + the live district's cruise altitude.
+        const want_alt = (@as(i32, world.floor) + world.info(world.live().kind).alt) * fixed.one;
+        cruise_alt += @max(-ap_climb, @min(ap_climb, want_alt - cruise_alt));
+    } else {
+        cruise_alt += @divTrunc(fixed.mul(tilt, climb_max), pitch_range);
+    }
     cruise_alt = @max(alt_low * fixed.one, @min(alt_high * fixed.one, cruise_alt));
 
     // Altitude spring toward max(cruise, terrain ahead + clearance), then the hard floor.

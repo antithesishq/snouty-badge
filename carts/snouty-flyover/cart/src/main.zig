@@ -10,6 +10,7 @@ const camera = @import("camera.zig");
 const render = @import("render.zig");
 const text = @import("text.zig");
 const sprite = @import("sprite.zig");
+const sort = @import("districts/sort.zig");
 
 comptime {
     cart.export_start_code();
@@ -26,7 +27,7 @@ pub fn start() void {
     render.init();
     world.advance_to(camera.cam.y >> fixed.Q);
     camera.init();
-    text.show_card("MEMORY LANE", "generated on badge");
+    text.show_card3("MEMORY LANE", "generated on badge", text.fps_line);
 }
 
 pub fn update() void {
@@ -102,6 +103,10 @@ comptime {
         @export(&debug_segment_index, .{ .name = "debug_segment_index" });
         @export(&debug_live_kind, .{ .name = "debug_live_kind" });
         @export(&debug_autopilot, .{ .name = "debug_autopilot" });
+        @export(&debug_cam_ground, .{ .name = "debug_cam_ground" });
+        @export(&debug_cam_clear, .{ .name = "debug_cam_clear" });
+        @export(&debug_sort_max_bars, .{ .name = "debug_sort_max_bars" });
+        @export(&debug_sort_state, .{ .name = "debug_sort_state" });
     }
 }
 
@@ -117,6 +122,23 @@ fn debug_live_kind() callconv(.c) u32 {
 }
 fn debug_autopilot() callconv(.c) u32 {
     return @intFromBool(camera.autopilot);
+}
+/// Terrain height under the camera; a script asserts debug_cam_alt > this.
+fn debug_cam_ground() callconv(.c) u32 {
+    return camera.ground_under();
+}
+/// Camera altitude minus the terrain under it, cells (negative = inside it).
+fn debug_cam_clear() callconv(.c) u32 {
+    return @bitCast((camera.cam.alt >> fixed.Q) - @as(i32, camera.ground_under()));
+}
+/// Live Sort: running band (255 none) + 256 * sorted bands + 65536 if fast (after B).
+fn debug_sort_state() callconv(.c) u32 {
+    return sort.debug_state();
+}
+/// Most Sort bars (7 rows x 4 cells each) rewritten in one frame since boot:
+/// the tick alone in the low 16 bits, with a shuffle (B) in the high 16.
+fn debug_sort_max_bars() callconv(.c) u32 {
+    return sort.max_tick_bars | sort.max_frame_bars << 16;
 }
 
 fn debug_frame() callconv(.c) u32 {

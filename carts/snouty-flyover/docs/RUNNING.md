@@ -7,20 +7,37 @@ terrain generated on the badge as the camera flies. The cart is locked to
 so one `update()` is one frame and everything moves by frame count, not
 wall time.
 
-M0 is the scaffold: a noise floor with a grid every 64 cells and a row of
-eight test blocks (heights 16 to 128) every 128 rows, the sky and the Iris
-sun, and manual flight. Districts, text and the autopilot come in M1.
+M1 is the world engine: the strip is a sequence of 64-row Bus segments and
+192-row districts (Bus 0..63, HEAP 64..255, Bus 256..319, SORT 320..511,
+then HEAP again at 576, SORT at 832, and so on), generated on the badge as
+the camera flies. The HEAP mallocs and frees blocks as you pass and its B
+verb sweeps a white GC wall down the district; the SORT runs a live
+quicksort on the band ahead of the camera (white pivot, two swaps per
+frame) and B shuffles that band and re-sorts it at eight swaps per frame.
+Palette pulses run along the Bus lanes and the free list, a title card
+names each segment as you enter it and the caption at the bottom names
+the B verb (on a Bus: the district ahead). The autopilot flies by default
+(a slow serpentine, a district's own cruise altitude, B pressed once per
+district); any stick, A or B input takes over and 15 s without input hands
+back. Tree, Hash, Stack, Pipeline and water come in M2.
 
-Controls (SPEC.md section 3; the last column is what M0 does):
+Controls (SPEC.md section 3; the last column is what M1 does):
 
-| Input        | Design                                                   | M0                                   |
+| Input        | Design                                                   | M1                                   |
 |--------------|----------------------------------------------------------|--------------------------------------|
-| Left / Right | Bank and steer across the strip (roll shears the horizon) | yes: roll, bank-to-turn, x wraps     |
-| Up / Down    | Pitch: dive / climb (altitude clamped above the terrain)  | yes: horizon 40..88, cruise altitude |
-| A            | Boost while held                                          | yes: 0.75 -> 1.9 cells per frame     |
-| B            | The district verb                                         | nothing yet                          |
-| Select       | Skip to the next district                                 | nothing yet                          |
-| Start        | Toggle autopilot / manual flight                          | nothing yet                          |
+| Left / Right | Bank and steer across the strip (roll shears the horizon) | roll, bank-to-turn, x wraps; takes manual control |
+| Up / Down    | Pitch: dive / climb (altitude clamped above the terrain)  | horizon 40..88 and cruise altitude; takes manual control |
+| A            | Boost while held                                          | 0.75 -> 1.9 cells per frame; takes manual control |
+| B            | The district verb                                         | HEAP: collect garbage, SORT: shuffle the band; nothing on a Bus yet (M3); takes manual control |
+| Select       | Skip to the next district                                 | nothing yet (M3)                     |
+| Start        | Toggle autopilot / manual flight                          | toggles (on the press); 450 frames (15 s) without input also returns to autopilot |
+
+The autopilot (on at boot) steers toward x = 128 on a Bus and
+128 + 16 sin(frame / 512 turn) in a district, with the stick clamped to
+1/3 so the roll stays within about 6 rows; it holds `floor` + the live
+district's altitude (HEAP 40, SORT 110), looks down a little in the SORT
+(horizon row 52), and presses B when the camera crosses the district's
+`verb_at` row (HEAP local row 30, SORT 60).
 
 Start+Select returns to the badge menu and the joystick click toggles the
 OS FPS overlay; both belong to the OS. The cart has no sound and never
@@ -136,9 +153,18 @@ option list (`--press`, `--expect`, `--at`, `--quiet`, ...) is in its header
 comment and in `../snouty-reflections/docs/RUNNING.md` section 5. One update
 is one 30 fps frame, so `--every 1 --ms 33` is real speed.
 
-Input scripts live in `tools/scripts/`: `m0_fly.json` is 600 frames of
-cruise with the stick right for frames 120-200, left 300-380 and A held
-450-540 (the bench script too).
+Input scripts live in `tools/scripts/`:
+
+- `attract.json`: `[]`, no input; the autopilot flies. Used with
+  `--frames 1800` (rows 0..1322: Bus, HEAP, Bus, SORT, Bus, HEAP, Bus,
+  SORT, Bus) and by badge-bench.
+- `m1_manual.json` (1200 frames): stick right 60-120 (takes manual
+  control), B at 200 (HEAP garbage collection), stick left 400-460, B at
+  600 (SORT shuffle; the camera is at row ~439, inside the SORT), Start at
+  900 (autopilot back on).
+- `m0_fly.json` (600 frames, kept from M0): stick right 120-200, left
+  300-380, A held 450-540. The autopilot flies frames 0-119, then the
+  stick takes over; frame 599 still reads `debug_cam_y` 540.
 
 Debug exports (zero-argument wasm functions unless noted, usable with
 `--dump-exports`, `--expect` and `--at`):
@@ -153,11 +179,32 @@ Debug exports (zero-argument wasm functions unless noted, usable with
 | `debug_cam_yaw`        | heading in 1/1024 turn, positive toward +x, capped at +-64       |
 | `debug_cam_roll`       | horizon shear in rows, negative when banked right                |
 | `debug_horizon`        | horizon screen row, 64 level                                     |
-| `debug_world_check`    | regenerates every row the ring should hold and counts mismatching cells; 0 is correct |
+| `debug_world_check`    | regenerates every row the ring should hold outside the live district (whose cells the tick edits) and counts mismatching cells; 0 is correct |
 | `debug_map_height(x, y)`, `debug_map_colour(x, y)` | one ring cell (two arguments, so not for `--dump-exports`); 0xFFFF if row y is not in the ring |
+| `debug_segment_kind`, `debug_segment_index` | segment under the camera: kind 0 Bus, 1 HEAP, 2 SORT; index = 2 * pair (+1 for the district) |
+| `debug_live_kind`      | kind of the live (ticked) district: the one under the camera, or the next one on a Bus |
+| `debug_autopilot`      | 1 while the autopilot flies, 0 in manual flight                  |
+| `debug_cam_ground`     | terrain height of the cell under the camera                      |
+| `debug_cam_clear`      | `debug_cam_alt` - `debug_cam_ground`; above 0 means the camera is above the terrain |
+| `debug_sort_state`     | live SORT: running band (255 none) + 256 * sorted bands + 65536 while it re-sorts after B |
+| `debug_sort_max_bars`  | most SORT bars (7 rows x 4 cells each) rewritten in one frame since boot: tick alone in the low 16 bits, a frame with a shuffle in the high 16 |
 
-With the script above, frame 599 reads `debug_cam_y` 541 and
-`debug_world_check` 0; `--at "599 debug_world_check == 0"` makes that a check.
+Checks that hold at M1:
+
+```sh
+node ../../tools/preview.mjs ../../zig-out/bin/snouty-flyover.wasm --frames 1800 --quiet \
+    --script tools/scripts/attract.json --out out/ --at "1799 debug_world_check == 0" \
+    --at "1799 debug_autopilot == 1" --at "1799 debug_cam_clear > 0"
+node ../../tools/preview.mjs ../../zig-out/bin/snouty-flyover.wasm --frames 1200 --quiet \
+    --script tools/scripts/m1_manual.json --out out/ \
+    --at "59 debug_autopilot == 1" --at "61 debug_autopilot == 0" \
+    --at "600 debug_segment_kind == 2" --at "899 debug_autopilot == 0" \
+    --at "900 debug_autopilot == 1" --at "700 debug_cam_clear > 0" \
+    --at "1199 debug_world_check == 0"
+```
+
+In the attract run the camera ends at row 1322 (`debug_cam_y`), x stays in
+112..144 and the roll within +-6 rows.
 
 ## 6. Flashing
 
@@ -174,10 +221,10 @@ joystick for the OS FPS overlay.
 badge-bench (`../../badge-bench/README.md`) runs the ELF on an emulated
 Cortex-M33 with the badge-calibrated cycle model; read the `busy ms`
 column. `../../badge-bench/carts/snouty-flyover.toml` sets the defaults
-(budget 22 ms, 600 frames, `m0_fly.json`). From the repository root:
+(budget 22 ms, 1800 frames, `attract.json`). From the repository root:
 
 ```sh
-badge-bench/bench.sh zig-out/firmware/snouty-flyover.elf --script carts/snouty-flyover/tools/scripts/m0_fly.json --frames 600 --every 60 --symbols
+badge-bench/bench.sh zig-out/firmware/snouty-flyover.elf --script carts/snouty-flyover/tools/scripts/attract.json --frames 1800 --every 60 --symbols
 ```
 
 The first run creates `badge-bench/.venv` (needs network, under a minute);
