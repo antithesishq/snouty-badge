@@ -40,6 +40,7 @@ const z80 = @import("z80");
 const md_mod = @import("md.zig");
 const Md = md_mod.Md;
 const rom = @import("rom.zig");
+const undo = @import("undo.zig");
 
 /// 68000 address of the first work RAM byte reachable through the window
 /// (work RAM is mirrored across E00000-FFFFFF).
@@ -73,6 +74,7 @@ pub const Z80Bus = struct {
 
     pub inline fn write(self: *Z80Bus, addr: u16, v: u8) void {
         if (addr < 0x4000) {
+            undo.touch_zr(@truncate(addr));
             self.md.z80_ram[addr & 0x1FFF] = v;
         } else if (addr >= 0x8000) {
             self.write_window(addr, v);
@@ -137,7 +139,10 @@ pub const Z80Bus = struct {
 
     inline fn write_window(self: *Z80Bus, addr: u16, v: u8) void {
         const a = window_base(self.md) | (addr & 0x7FFF);
-        if (a >= work_ram_from) self.md.work_ram[a & 0xFFFF] = v;
+        if (a >= work_ram_from) {
+            undo.touch_wr(@truncate(a));
+            self.md.work_ram[a & 0xFFFF] = v;
+        }
     }
 };
 
