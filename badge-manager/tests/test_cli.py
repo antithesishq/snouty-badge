@@ -1,6 +1,7 @@
 import json
 import os
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -10,7 +11,7 @@ from pathlib import Path
 from tests.helpers import ROOT, make_uf2, write_config
 
 
-class CliTest(unittest.TestCase):
+class CliCase(unittest.TestCase):
     def setUp(self):
         self.tmp = Path(tempfile.mkdtemp())
         self.cfg = write_config(self.tmp)
@@ -20,16 +21,26 @@ class CliTest(unittest.TestCase):
     def tearDown(self):
         shutil.rmtree(self.tmp)
 
-    def run_cli(self, *args: str, fake: bool = True, path: str | None = None) -> subprocess.CompletedProcess:
+    def cli_env(self, path: str | None = None, extra: dict | None = None) -> dict:
+        env = {k: v for k, v in os.environ.items()
+               if not k.startswith(("BADGE_STATION", "FAKE_BUILD"))}
+        if path is not None:
+            env["PATH"] = path
+        return {**env, **(extra or {})}
+
+    def cli_cmd(self, *args: str, fake: bool = True) -> list[str]:
         cmd = [sys.executable, "-m", "badge_manager", "--config", str(self.cfg)]
         if fake:
             cmd += ["--fake-badge", str(self.badge)]
-        env = {k: v for k, v in os.environ.items() if not k.startswith("BADGE_STATION")}
-        if path is not None:
-            env["PATH"] = path
-        return subprocess.run(cmd + list(args), cwd=ROOT, capture_output=True, text=True,
-                              env=env, timeout=60)
+        return cmd + list(args)
 
+    def run_cli(self, *args: str, fake: bool = True, path: str | None = None,
+                env: dict | None = None) -> subprocess.CompletedProcess:
+        return subprocess.run(self.cli_cmd(*args, fake=fake), cwd=ROOT, capture_output=True,
+                              text=True, env=self.cli_env(path, env), timeout=60)
+
+
+class CliTest(CliCase):
     def test_status_json(self):
         r = self.run_cli("status", "--json")
         self.assertEqual(r.returncode, 0, r.stderr)
@@ -70,9 +81,9 @@ class CliTest(unittest.TestCase):
         self.assertIn("no badge", r.stderr)
         self.assertEqual(self.run_cli("fit", "broken").returncode, 2)
         self.assertEqual(self.run_cli("fit", "demo").returncode, 0)
-        r = self.run_cli("build", "a snouty cart where it rains")
-        self.assertEqual(r.returncode, 2)
-        self.assertIn("not yet available in M0", r.stderr)
+        r = self.run_cli("build")
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("usage: badge build", r.stderr)
         self.assertEqual(self.run_cli("deploy", "nope", "--yes").returncode, 1)
 
     def test_status_on_it(self):
@@ -158,6 +169,98 @@ class CliTest(unittest.TestCase):
         r = self.run_cli("add-uf2", str(make_uf2(self.tmp / "m.uf2", "mixed")), "--key", "bad")
         self.assertEqual(r.returncode, 1)
         self.assertIn("mixed", r.stderr)
+        r = self.run_cli("add-uf2", str(make_uf2(self.tmp / "b.uf2")), "--key", "built",
+                         "--build", "20260930-120000-built")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        cart = next(c for c in json.loads(self.run_cli("library", "--json").stdout)["carts"]
+                    if c["key"] == "built")
+        self.assertEqual(cart["build"], "20260930-120000-built")
+
+
+class CliBuildTest(CliCase):
+    """badge build / builds against tests/fake_build_job.sh (build_command)."""
+
+    def setUp(self):
+        super().setUp()
+        from tests.test_build import FAKE_COMMAND
+        with open(self.cfg, "a") as fh:
+            fh.write(f"build_command = {json.dumps(FAKE_COMMAND)}\n")
+
+    def test_build_builds_status_log(self):
+        self.assertIn("no builds yet", self.run_cli("builds").stdout)
+        self.assertIn("no builds yet", self.run_cli("build", "--status").stdout)
+        shutil.rmtree(self.badge)                       # build never needs the badge
+        r = self.run_cli("build", "a cart where it rains", "--no-agent")
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertIn("step: template builds (0 s)", r.stdout)
+        self.assertNotIn("agent:", r.stdout)
+        self.assertRegex(r.stdout, r"done: Fake Rains, 4 KB, 4\.2 ms")
+        self.assertRegex(r.stdout, r"Fake Rains is in the library as snouty-rains "
+                                   r"\(build \d{8}-\d{6}-rains\)")
+        job_id = r.stdout.strip().rsplit("(build ", 1)[1].rstrip(")")
+        cart = next(c for c in json.loads(self.run_cli("library", "--json").stdout)["carts"]
+                    if c["key"] == "snouty-rains")
+        self.assertEqual((cart["build"], cart["title"]), (job_id, "Fake Rains"))
+        r = self.run_cli("builds")
+        self.assertRegex(r.stdout, rf"{job_id}\s+done\s+\d+ s  Fake Rains")
+        rows = json.loads(self.run_cli("builds", "--json").stdout)
+        self.assertEqual([x["id"] for x in rows], [job_id])
+        r = self.run_cli("build", "--status")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn(f"Build:   {job_id} (done", r.stdout)
+        self.assertIn("Cart:    snouty-rains, Fake Rains", r.stdout)
+        st = json.loads(self.run_cli("build", "--status", "--json").stdout)
+        self.assertEqual((st["job"]["id"], st["build"]["ready"]), (job_id, True))
+        r = self.run_cli("build", "--log")
+        self.assertEqual(r.stdout.splitlines()[0], "build snouty-rains on the station")
+        self.assertEqual(self.run_cli("build", "--log", job_id).stdout, r.stdout)
+        r = self.run_cli("build", "--log", "20990101-000000-nope")
+        self.assertEqual(r.returncode, 1)
+        r = self.run_cli("build", "--cancel")
+        self.assertEqual(r.returncode, 2)
+        self.assertIn("no build is running", r.stderr)
+        self.assertIn(f"build snouty-rains done", self.run_cli("log").stdout)
+
+    def test_build_failure_and_bad_name(self):
+        r = self.run_cli("build", "rain", env={"FAKE_BUILD_FAIL": "3"})
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("failed: the cart does not build", r.stdout)
+        r = self.run_cli("build", "rain", "--name", "a b")
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("bad cart name", r.stderr)
+
+    def test_busy_and_cancel_a_queued_job(self):
+        from badge_manager import config as config_mod
+        from badge_manager.build import Jobs
+        cfg = config_mod.load(self.cfg)
+        jobs = Jobs(cfg.library, cfg)
+        job = jobs.create("rain", "local")              # holds the build lock
+        try:
+            r = self.run_cli("build", "snow")
+            self.assertEqual(r.returncode, 2)
+            self.assertIn("a build is running", r.stderr)
+            r = self.run_cli("build", "--cancel")
+            self.assertEqual(r.returncode, 0, r.stderr)
+            self.assertTrue((jobs.dir(job.id) / "cancel").exists())
+        finally:
+            jobs.run(job)
+        self.assertEqual(jobs.get(job.id).state, "cancelled")
+
+    def test_ctrl_c_cancels(self):
+        p = subprocess.Popen(self.cli_cmd("build", "rain"), cwd=ROOT, text=True,
+                             stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                             env=self.cli_env(extra={"FAKE_BUILD_SLOW": "30"}))
+        try:
+            for line in p.stdout:
+                if "thinking" in line:
+                    break
+            p.send_signal(signal.SIGINT)
+            out, err = p.communicate(timeout=20)
+        finally:
+            p.kill()
+        self.assertEqual(p.returncode, 1, err)
+        self.assertIn("cancelling the build", err)
+        self.assertRegex(out, r"cancelled after \d+ s")
 
 
 if __name__ == "__main__":

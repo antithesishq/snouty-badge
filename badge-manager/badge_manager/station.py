@@ -99,7 +99,7 @@ class Station:
         self._build_local: bool | None = None
         self.jobs = Jobs(config.library, config, on_change=self._changed,
                          register=self._register_build)
-        self._build_thread: threading.Thread | None = None
+        self._build_done: threading.Event | None = None    # set when our build thread ends
         self._builds_seen: tuple | None = ()          # () = not polled yet
         self._log_file = config.resolved_log_file()
         self._load_log_tail()
@@ -625,26 +625,27 @@ class Station:
             raise StationError(str(e)) from e
         self.log(f"build {job.name} started "
                  + ("on the build VM" if w == "remote" else "on the station"))
-        t = threading.Thread(target=self._run_build, args=(job, on_line),
-                             name=f"build-{job.id}", daemon=True)
-        self._build_thread = t
-        t.start()
+        done = self._build_done = threading.Event()
+        threading.Thread(target=self._run_build, args=(job, on_line, done),
+                         name=f"build-{job.id}", daemon=True).start()
         return job.id
 
-    def _run_build(self, job: Job, on_line: Callable[[str], None] | None) -> None:
-        job = self.jobs.run(job, on_line)
-        if job.state == "done":
-            self.log(f"build {job.name} done: {job.title} is in the library")
-        else:
-            self.log(f"build {job.name} {job.state}: {job.error}")
+    def _run_build(self, job: Job, on_line: Callable[[str], None] | None,
+                   done: threading.Event) -> None:
+        try:
+            job = self.jobs.run(job, on_line)
+            if job.state == "done":
+                self.log(f"build {job.name} done: {job.title} is in the library")
+            else:
+                self.log(f"build {job.name} {job.state}: {job.error}")
+        finally:
+            done.set()
 
     def wait_build(self, timeout: float | None = None) -> bool:
-        """Join the build this Station started; True once it has ended."""
-        t = self._build_thread
-        if t is None:
-            return True
-        t.join(timeout)
-        return not t.is_alive()
+        """Wait for the build this Station started; True once it has ended. (An Event, not
+        Thread.join: a Ctrl-C inside join can leave is_alive() wrong.)"""
+        done = self._build_done
+        return done is None or done.wait(timeout)
 
     def _register_build(self, uf2: Path, name: str, title: str, job_id: str) -> None:
         with self._state:
@@ -679,14 +680,21 @@ class Station:
                 "result": {k: r.get(k) for k in ("cart", "preview", "bench_ms", "size")}
                 if r else None}
 
+    @staticmethod
+    def _build_row(j: Job) -> dict:
+        return {"id": j.id, "name": j.name, "title": j.title, "state": j.state,
+                "started": j.started, "seconds": round(j.elapsed(), 1),
+                "preview": (j.result or {}).get("preview"),
+                "bench_ms": (j.result or {}).get("bench_ms"), "error": j.error}
+
+    def builds(self, n: int = 10) -> list[dict]:
+        """status()["builds"] rows for the last N builds, newest first."""
+        return [self._build_row(j) for j in self.jobs.list(n)]
+
     def _builds_json(self) -> tuple[dict | None, list[dict]]:
         """status()["job"] (the running job, else the last, log tail) and ["builds"]."""
         jobs = self.jobs.list(10)
-        rows = [{"id": j.id, "name": j.name, "title": j.title, "state": j.state,
-                 "started": j.started, "seconds": round(j.elapsed(), 1),
-                 "preview": (j.result or {}).get("preview"),
-                 "bench_ms": (j.result or {}).get("bench_ms"), "error": j.error}
-                for j in jobs]
+        rows = [self._build_row(j) for j in jobs]
         if not jobs:
             return None, rows
         return {**self._job_json(jobs[0]), "log": self.jobs.tail(jobs[0].id, 40)}, rows
