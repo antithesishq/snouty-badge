@@ -11,11 +11,15 @@
 //! channel centres are recomputed per row (a few dozen sines), so the
 //! district has no layout cache.
 //!
-//! Verb (B: burst the pipe): the three stream sections between the dams and
-//! the merge point flood: every non-water cell within `flood_half` of a
-//! stream centre sinks one cell per frame to the water line (at most 19
-//! frames from the floor's top), holds `hold_frames`, then the rows are
-//! restored one per frame from the far end through world.regen_row.
+//! Verb (B: burst the pipe, PLAN.md M3 "Pipeline flood ahead"): the channels
+//! ahead of the camera flood: every non-water cell within `flood_half` of a
+//! stream or spring channel centre, from 10 rows ahead of the camera (never
+//! before the dams) to two rows short of the springs, sinks one cell per
+//! frame to the water line, white while it sinks (at most 19 frames from
+//! the floor's top), holds `hold_frames`, then the rows are restored one per frame from the far end
+//! through world.regen_row. From over the lake (and the Bus before it) the
+//! flood covers the stream sections between the dams and the merge point,
+//! as in M2.
 const world = @import("../world.zig");
 const palette = @import("../palette.zig");
 const fixed = @import("../fixed.zig");
@@ -26,7 +30,8 @@ pub const gloss: []const u8 = "packets to the lake";
 pub const caption: []const u8 = "B: burst the pipe";
 pub const alt: i32 = 18;
 /// Late enough that the flooded stream sections (local rows 122..149) are in
-/// view from over the lake when the burst runs (30 put them 90 rows out).
+/// view from over the lake when the autopilot's burst runs (30 put them 90
+/// rows out).
 pub const verb_at: i32 = 70;
 
 const W = world.W;
@@ -75,13 +80,20 @@ const cap_h: i32 = 28;
 /// Autopilot altitude over the lake, relative to world.floor: 10 cells over
 /// the water (the concept's skim). After the lake the district's `alt`.
 const lake_alt: i32 = @as(i32, water) + 10 - F;
-/// Burst: rows flood_ly0..flood_ly1-1 (between the dams and the merge
-/// point), cells within flood_half of a stream centre, sink one cell per
-/// frame for sink_frames, hold hold_frames, then restore one row per frame.
+/// Burst: from over the lake rows flood_ly0..merge_ly-1 (between the dams
+/// and the merge point); from the channels max(cam + flood_ahead, flood_ly0)
+/// ..flood_ly1-1. Cells within flood_half of a stream (or, from merge_ly,
+/// spring channel) centre sink one cell per frame for sink_frames, hold
+/// hold_frames, then the rows restore one per frame.
 const flood_ly0: i32 = dam_ly + dam_rows;
-const flood_ly1: i32 = merge_ly;
+const flood_ly1: i32 = spring_ly - 2;
+const flood_ahead: i32 = 10;
 const flood_half: i32 = 12;
 const sink_frames: u32 = 20;
+/// Colour of a flooding cell until it reaches the water line: the night
+/// floor and the water are both dark blue, so the sinking channels show as
+/// white water (the flood ahead reads from altitude).
+const foam: u8 = palette.white;
 const hold_frames: u32 = 40;
 
 // --- Geometry ---------------------------------------------------------------
@@ -238,6 +250,11 @@ var phase: Phase = .idle;
 /// Frames into the sink or hold phase; the next row to restore.
 var phase_t: u32 = 0;
 var restore_ly: i32 = 0;
+/// The running burst's local rows [burst_ly0, burst_ly1).
+var burst_ly0: i32 = flood_ly0;
+var burst_ly1: i32 = merge_ly;
+/// Camera row at the last tick (the verb runs after the tick, same frame).
+var tick_row: i32 = 0;
 
 /// Cells written this frame (height + colour pairs) and the most since boot.
 var frame_cells: u32 = 0;
@@ -256,32 +273,55 @@ pub fn enter(seg: world.Segment) void {
 }
 
 /// One sink step over the flood area: every non-water cell within
-/// flood_half of a stream centre (the dash thread excepted) drops a cell;
-/// cells reaching the water line turn water.
+/// flood_half of a stream centre (below merge_ly) or a spring channel centre
+/// (from merge_ly; the two channels of a pair as one span where they
+/// overlap), the dash thread excepted, drops a cell; cells reaching the
+/// water line turn water.
 fn sink_step() void {
-    var ly = flood_ly0;
-    while (ly < flood_ly1) : (ly += 1) {
+    var ly = burst_ly0;
+    while (ly < burst_ly1) : (ly += 1) {
         const rw = world.rows(live_y0 + ly) orelse continue;
-        for (0..merged.len) |mi| {
-            const cx = stream_x(mi, ly) >> fixed.Q;
-            var x = cx - flood_half;
-            while (x <= cx + flood_half) : (x += 1) {
-                const k: usize = @intCast(x & (W - 1));
-                const cc = rw.c[k];
-                if (rw.h[k] <= water) continue;
-                if (cc >= palette.pulse_a_dash and cc < palette.pulse_a_dash + 16) continue;
-                rw.h[k] -= 1;
-                if (rw.h[k] == water) rw.c[k] = palette.water_idx;
-                frame_cells += 1;
+        if (ly < merge_ly) {
+            for (0..merged.len) |mi| {
+                const cx = stream_x(mi, ly) >> fixed.Q;
+                sink_span(rw, cx - flood_half, cx + flood_half);
+            }
+        } else {
+            for (0..merged.len) |pi| {
+                const a = spring_x(2 * pi, ly) >> fixed.Q;
+                const b = spring_x(2 * pi + 1, ly) >> fixed.Q;
+                const lo = @min(a, b);
+                const hi = @max(a, b);
+                if (hi - lo <= 2 * flood_half) {
+                    sink_span(rw, lo - flood_half, hi + flood_half);
+                } else {
+                    sink_span(rw, lo - flood_half, lo + flood_half);
+                    sink_span(rw, hi - flood_half, hi + flood_half);
+                }
             }
         }
+    }
+}
+
+/// Sink cells x0..x1 (inclusive, x wraps) of one row by a cell (noinline:
+/// four inlined copies cost about 0.9 KB of .text).
+noinline fn sink_span(rw: world.Rows, x0: i32, x1: i32) void {
+    var x = x0;
+    while (x <= x1) : (x += 1) {
+        const k: usize = @intCast(x & (W - 1));
+        const cc = rw.c[k];
+        if (rw.h[k] <= water) continue;
+        if (cc >= palette.pulse_a_dash and cc < palette.pulse_a_dash + 16) continue;
+        rw.h[k] -= 1;
+        rw.c[k] = if (rw.h[k] == water) palette.water_idx else foam;
+        frame_cells += 1;
     }
 }
 
 /// Per-frame: run the burst (sink, hold, restore).
 pub fn tick(frame: u32, cam_row: i32) void {
     _ = frame;
-    _ = cam_row;
+    tick_row = cam_row;
     frame_cells = 0;
     defer max_frame_cells = @max(max_frame_cells, frame_cells);
     switch (phase) {
@@ -298,21 +338,29 @@ pub fn tick(frame: u32, cam_row: i32) void {
             phase_t += 1;
             if (phase_t >= hold_frames) {
                 phase = .restore;
-                restore_ly = flood_ly1 - 1;
+                restore_ly = burst_ly1 - 1;
             }
         },
         .restore => {
             world.regen_row(live_y0 + restore_ly);
             frame_cells += W;
             restore_ly -= 1;
-            if (restore_ly < flood_ly0) phase = .idle;
+            if (restore_ly < burst_ly0) phase = .idle;
         },
     }
 }
 
-/// B: burst the pipe (ignored while a burst is running).
+/// B: burst the pipe ahead of the camera (ignored while a burst is running,
+/// and within flood_ahead rows of the flood's far end, where nothing is left
+/// ahead to flood).
 pub fn verb() void {
     if (phase != .idle) return;
+    const cam_ly = tick_row - live_y0;
+    const ly0 = if (cam_ly < lake_rows) flood_ly0 else @max(cam_ly + flood_ahead, flood_ly0);
+    const ly1 = if (cam_ly < lake_rows) merge_ly else flood_ly1;
+    if (ly0 >= ly1) return;
+    burst_ly0 = ly0;
+    burst_ly1 = ly1;
     phase = .sink;
     phase_t = 0;
 }

@@ -13,6 +13,7 @@ const sprite = @import("sprite.zig");
 const sort = @import("districts/sort.zig");
 const stack = @import("districts/stack.zig");
 const pipeline = @import("districts/pipeline.zig");
+const bus = @import("districts/bus.zig");
 
 comptime {
     cart.export_start_code();
@@ -34,6 +35,20 @@ pub fn start() void {
 
 pub fn update() void {
     input.update(read_controls());
+    if (skipping == 0 and input.pressed(.select)) start_skip();
+    if (skipping > 0) {
+        skip_frame();
+    } else {
+        fly();
+    }
+    if (build_options.debug_overlay) draw_overlay();
+
+    frame +%= 1;
+    if (cart.is_wasm) present_wasm();
+}
+
+/// One normal frame: pilot, flight, world, render, sprite, text.
+fn fly() void {
     const stick = camera.pilot(frame);
     camera.update(stick, frame);
 
@@ -41,10 +56,7 @@ pub fn update() void {
     const cam_row = camera.cam.y >> fixed.Q;
     world.advance_to(cam_row);
     world.tick(frame, cam_row, stick.verb);
-    if (world.entered_segment()) |seg| {
-        const d = world.info(seg.kind);
-        text.show_card(d.title, d.gloss);
-    }
+    if (world.entered_segment()) |seg| show_segment_card(seg);
     text.set_caption(world.caption());
     if (stick.verb != .none) text.flash_caption();
     palette.begin_frame(frame);
@@ -52,11 +64,65 @@ pub fn update() void {
     sprite.draw(camera.cam.roll);
     text.draw(frame);
     render_us = @truncate(cart.micros_since_boot() - t0);
-    if (build_options.debug_overlay) draw_overlay();
-
-    frame +%= 1;
-    if (cart.is_wasm) present_wasm();
 }
+
+// --- Select skip (PLAN.md M3 "Skip") -----------------------------------------
+
+/// Transition frames (black with the card) and the ring rows generated per
+/// frame: a pair is 256 rows and the window 256, so three frames refill it.
+const skip_frames: u8 = 3;
+const skip_rows: u32 = 96;
+
+/// Skip frames left; the last one repeats until the ring is complete.
+var skipping: u8 = 0;
+/// Skips since start() (debug_skips).
+var skips: u32 = 0;
+
+/// Select (edge): jump to the next Bus, keeping x and altitude (and the
+/// autopilot flag), show its card, and spread the ring refill over the
+/// transition frames. noinline (with skip_frame): inlined into update() the
+/// two ring-generation paths grew the cart's _start by about 11 KB of .text.
+noinline fn start_skip() void {
+    const target = world.next_bus_row(camera.cam.y >> fixed.Q);
+    camera.jump_to(target);
+    world.skip_reset(target);
+    // A short jump keeps the old district's last rows (target - keep_behind
+    // .. target) in the ring, with its dynamic edits: put them back.
+    var y = target - world.keep_behind;
+    while (y < target) : (y += 1) world.regen_row(y);
+    skipping = skip_frames;
+    skips += 1;
+    show_segment_card(world.segment_at(target));
+    text.set_caption("");
+}
+
+/// A transition frame: generate up to skip_rows rows toward the new window
+/// and draw black with the card; no flight, no district tick, no march.
+noinline fn skip_frame() void {
+    const t0 = cart.micros_since_boot();
+    const done = world.advance_partial(camera.cam.y >> fixed.Q, skip_rows);
+    if (skipping > 1 or done) skipping -= 1;
+    const black: cart.Pixel = .from_color(.{ .r = 0, .g = 0, .b = 0 });
+    for (cart.framebuffer) |*column| @memset(column, black);
+    text.draw(frame);
+    render_us = @truncate(cart.micros_since_boot() - t0);
+}
+
+/// Title card for a segment the camera enters (or skips to); a Bus card's
+/// third line names the district after it.
+fn show_segment_card(seg: world.Segment) void {
+    const d = world.info(seg.kind);
+    if (seg.kind != .bus) return text.show_card(d.title, d.gloss);
+    const next = world.info(world.segment_at(seg.y0 + world.bus_len).kind).title;
+    const n = @min(next.len, next_buf.len - next_prefix.len);
+    @memcpy(next_buf[0..next_prefix.len], next_prefix);
+    @memcpy(next_buf[next_prefix.len..][0..n], next[0..n]);
+    text.show_card3(d.title, d.gloss, next_buf[0 .. next_prefix.len + n]);
+}
+
+/// The Bus card's third line; the card keeps a slice of it until the next card.
+const next_prefix = "next: ";
+var next_buf: [next_prefix.len + 16]u8 = undefined;
 
 /// -Ddebug_overlay=true: "uuuuuus fffps" top-right, plus the camera cell row.
 fn draw_overlay() void {
@@ -114,6 +180,8 @@ comptime {
         @export(&debug_pipe_state, .{ .name = "debug_pipe_state" });
         @export(&debug_verb_max_cells, .{ .name = "debug_verb_max_cells" });
         @export(&debug_sky_flash, .{ .name = "debug_sky_flash" });
+        @export(&debug_skips, .{ .name = "debug_skips" });
+        @export(&debug_bus_packets, .{ .name = "debug_bus_packets" });
     }
 }
 
@@ -172,6 +240,16 @@ fn debug_sky_flash() callconv(.c) u32 {
     return render.sky_flash;
 }
 
+/// Select skips since start().
+fn debug_skips() callconv(.c) u32 {
+    return skips;
+}
+
+/// Bus packets launched since start() (B on a Bus, or the autopilot's).
+fn debug_bus_packets() callconv(.c) u32 {
+    return bus.sent();
+}
+
 fn debug_frame() callconv(.c) u32 {
     return frame;
 }
@@ -198,7 +276,8 @@ fn debug_horizon() callconv(.c) u32 {
     return @bitCast(camera.cam.horizon);
 }
 /// Regenerates every row the ring should hold around the camera, outside the
-/// live district (whose tick edits cells), and counts the cells that differ
+/// live district and the Bus under the camera (whose ticks edit cells: the
+/// district's dataflow, the Bus packets), and counts the cells that differ
 /// from the ring (0 = ring consistent), plus 1000000 per row in the window
 /// that generated_row() does not report as present.
 fn debug_world_check() callconv(.c) u32 {
@@ -207,10 +286,12 @@ fn debug_world_check() callconv(.c) u32 {
     var bad: u32 = 0;
     const row0 = camera.cam.y >> fixed.Q;
     const live = world.live();
+    const under = world.segment_at(row0);
     var y = row0 - world.keep_behind;
     while (y < row0 + world.gen_ahead) : (y += 1) {
         if (!world.generated_row(y)) bad += 1_000_000;
         if (y >= live.y0 and y < live.y0 + live.len) continue;
+        if (under.kind == .bus and y >= under.y0 and y < under.y0 + under.len) continue;
         world.gen_row(y, &h, &c);
         const i: usize = @intCast(y & (world.DEPTH - 1));
         for (h, c, world.height[i], world.colour[i]) |eh, ec, rh, rc| {

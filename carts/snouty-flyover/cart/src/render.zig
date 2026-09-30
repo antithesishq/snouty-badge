@@ -43,6 +43,12 @@ const flash_pct: i32 = 70;
 /// (my & 255) >= 40 as water at height world.water, a fake canal to see
 /// reflections in districts without water.
 const debug_fake_water = false;
+/// Boost fog pull-in (PLAN.md M3): a column's fog levels are read this
+/// many steps further out, so the fog closes in; camera.zig eases it
+/// (0..fog_pull_max).
+pub var fog_pull: u8 = 0;
+/// Largest fog_pull: fog_level_t rows carry this many padding entries.
+pub const fog_pull_max = 32;
 /// Frames of white sky left (the Stack overflow flash); draw() decrements it.
 pub var sky_flash: u8 = 0;
 /// Last frame: columns that ran pass 2 and the pass-2 steps they took
@@ -114,8 +120,10 @@ const iris_rows = @import("iris").rows;
 var z_tab: [max_steps]i32 = undefined;
 var inv_z: [max_steps]i32 = undefined;
 /// Fog level per step for each dither threshold t in 0..15:
-/// fog_level_t[t][i] = (fog_q[i] + t) >> 4, fog_q the level in Q4 (0..112).
-var fog_level_t: [16][max_steps]u8 = undefined;
+/// fog_level_t[t][i] = (fog_q[i] + t) >> 4, fog_q the level in Q4 (0..112);
+/// entries from n_steps on repeat the last step's level, so a column can
+/// read from fog_pull steps in without a clamp in the march.
+var fog_level_t: [16][max_steps + fog_pull_max]u8 = undefined;
 /// 4x4 ordered-dither thresholds 0..15.
 const bayer4 = [4][4]u8{
     .{ 0, 8, 2, 10 },
@@ -181,6 +189,7 @@ fn init_steps() void {
         dz = fixed.mul(dz, lod_mul);
     }
     n_steps = i;
+    for (&fog_level_t) |*tab| @memset(tab[n_steps..], tab[n_steps - 1]);
 }
 
 /// Fog level of a sample at distance z (Q16 cells) in Q4 (0..112): 0 before
@@ -327,6 +336,7 @@ pub fn draw(frame: u32) void {
     const alt = cam.alt;
     const h_cam: i32 = world.height[@intCast((cy >> fixed.Q) & (world.DEPTH - 1))][@intCast((cx >> fixed.Q) & (world.W - 1))];
     const sky = if (sky_flash != 0) &sky_flash_rel else &sky_rel;
+    const pull: usize = @min(fog_pull, fog_pull_max);
     // Mirrored land height offset: a land sample at h projects as 2 water - h.
     const alt_m = alt - ((2 * @as(i32, world.water)) << fixed.Q);
     const alt_w = alt - (@as(i32, world.water) << fixed.Q);
@@ -347,7 +357,7 @@ pub fn draw(frame: u32) void {
         const dx = dir_x[x];
         const dy = dir_y[x];
         const t = if (fog_temporal) bayer4[x & 3][ft] else bayer4[x & 3][(x >> 2) & 3];
-        const fog_level = &fog_level_t[t];
+        const fog_level: [*]const u8 = fog_level_t[t][pull..].ptr;
         var occ: i32 = sh;
         var prev_h = h_cam;
         // Water rows of this column (bit r of wmask[r >> 5]) and the first

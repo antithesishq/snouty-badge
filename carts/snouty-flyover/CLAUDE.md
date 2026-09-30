@@ -57,8 +57,8 @@ lines). The repository-wide notes (hardware, cart API, build wiring) are in
 - Locked 30 fps (decided at M2: the reflection pass doubles the march on
   lake frames); calibrated badge-bench worst frame at most 22 ms (busy ms).
 - Memory: map ring 128 KB at depth 256 (64 KB at 128), fog table 4 KB,
-  code 30-70 KB; M2 gate `.text + .data` under 70 KB, `.bss` under 165 KB
-  (M2: 66.7 KB / 158.7 KB); the RAM window is 275 KB.
+  code 30-75 KB; M3 gate `.text + .data` under 75 KB, `.bss` under 165 KB
+  (M3: 69.4 KB / 159.4 KB); the RAM window is 275 KB.
 - Knob cut order if over budget: `z_far`, `lod_mul`, reflections,
   `-Dflyover_depth=128`, cliff shading, fog levels.
 

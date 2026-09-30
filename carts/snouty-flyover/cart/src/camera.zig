@@ -9,24 +9,33 @@
 const fixed = @import("fixed.zig");
 const world = @import("world.zig");
 const input = @import("input.zig");
+const render = @import("render.zig");
 
 // --- Flight constants -------------------------------------------------------
 
 /// Cruise speed, 0.75 cells per frame.
 const cruise: i32 = 3 * fixed.one / 4;
-/// Speed while A is held, 1.9 cells per frame.
-const boost: i32 = 124518;
+/// Speed while A is held, 1.875 cells per frame (2.5x cruise, PLAN.md M3 "Boost").
+const boost: i32 = 15 * fixed.one / 8;
 /// Speed eases toward its target by 1/2^speed_ease_shift of the gap per frame.
 const speed_ease_shift = 3;
 /// Start altitude above the terrain under the camera, cells.
 const start_above = 48;
 /// Clearance kept above the highest terrain ahead, cells.
 const clear_above = 12;
-/// Rows ahead of the camera and cells across the flight line scanned for it.
-const ahead_rows = 24;
+/// Rows ahead of the camera scanned for it: ahead_base + ahead_per_speed *
+/// speed / cruise (40 at cruise, 64 at boost: about 53 and 34 frames of
+/// warning). Bounded by the rows the ring holds.
+const ahead_base = 24;
+const ahead_per_speed = 16;
+/// Cells across the flight line scanned for it.
 const ahead_width = 32;
-/// Altitude spring: moves 1/2^spring_shift of the gap per frame (1/16).
+/// Altitude spring: moves 1/2^spring_shift of the gap per frame (1/16), or
+/// 1/2^spring_fast_shift (1/4) while the target is more than spring_fast_gap
+/// cells above the camera (a wall ahead; descents keep the gentle rate).
 const spring_shift = 4;
+const spring_fast_shift = 2;
+const spring_fast_gap = 16;
 /// Hard floor above the terrain directly under the camera, cells.
 const min_above = 4;
 /// Pilot altitude limits (pitch moves the cruise altitude between them),
@@ -50,6 +59,14 @@ const horizon_level = 64;
 const pitch_range = 24;
 /// Horizon eases toward the pitch target by 1/2^pitch_ease_shift of the gap per frame.
 const pitch_ease_shift = 3;
+/// Boost look (PLAN.md M3): the horizon drops this many rows while A is
+/// held (eased like pitch, not counted as climb), and render.fog_pull
+/// eases toward boost_fog_pull steps at boost_fog_in per frame and back
+/// to 0 at boost_fog_out per frame (at most 32, render's table padding).
+const boost_drop = 8;
+const boost_fog_pull: u8 = 24;
+const boost_fog_in: u8 = 2;
+const boost_fog_out: u8 = 1;
 
 // --- State ------------------------------------------------------------------
 
@@ -181,6 +198,8 @@ fn auto_stick(frame: u32, row: i32) Stick {
 /// Q16 accumulators behind the integer fields of `cam`.
 var yaw_q: i32 = 0;
 var horizon_q: i32 = horizon_level * fixed.one;
+/// The boost part of horizon_q, Q16 rows (0..boost_drop).
+var drop_q: i32 = 0;
 var speed: i32 = cruise;
 /// Altitude the pilot asks for (pitch moves it); the spring target is the
 /// higher of this and the terrain clearance.
@@ -191,6 +210,8 @@ pub fn init() void {
     cam = .{};
     yaw_q = 0;
     horizon_q = horizon_level * fixed.one;
+    drop_q = 0;
+    render.fog_pull = 0;
     speed = cruise;
     cam.alt = (@as(i32, ground(cam.x, cam.y)) + start_above) * fixed.one;
     cruise_alt = cam.alt;
@@ -198,6 +219,19 @@ pub fn init() void {
     idle = 0;
     verb_index = 0xFFFF_FFFF;
     prev_row = 0;
+}
+
+/// Select skip (PLAN.md M3): put the camera on `row` (x and altitude kept),
+/// heading straight ahead with the wings level, and rearm the autopilot's
+/// once-per-segment B so the next district's verb still fires. The
+/// autopilot flag is left as it is.
+pub fn jump_to(row: i32) void {
+    cam.y = row << fixed.Q;
+    cam.yaw = 0;
+    cam.roll = 0;
+    yaw_q = 0;
+    verb_index = 0xFFFF_FFFF;
+    prev_row = row;
 }
 
 /// Terrain height of the cell under the camera (for the debug exports).
@@ -233,12 +267,19 @@ pub fn update(stick: Stick, frame: u32) void {
     cam.x = (cam.x + fixed.mul(speed, sin(cam.yaw))) & (world.W * fixed.one - 1);
     cam.y += fixed.mul(speed, cos(cam.yaw));
 
+    // Boost look: the fog pulls in and the horizon drops while A is held.
+    const pull = render.fog_pull;
+    render.fog_pull = if (stick.boost) @min(boost_fog_pull, pull + boost_fog_in) else pull -| boost_fog_out;
+    const want_drop: i32 = if (stick.boost) boost_drop * fixed.one else 0;
+    drop_q += (want_drop - drop_q) >> pitch_ease_shift;
+    if (@abs(want_drop - drop_q) < 256) drop_q = want_drop;
+
     // Pitch: up dives (horizon rises), down climbs (horizon falls).
-    const want_h = horizon_level * fixed.one + pitch * pitch_range;
+    const want_h = horizon_level * fixed.one + pitch * pitch_range + want_drop;
     horizon_q += (want_h - horizon_q) >> pitch_ease_shift;
     if (@abs(want_h - horizon_q) < 256) horizon_q = want_h;
     cam.horizon = (horizon_q + fixed.one / 2) >> fixed.Q;
-    const tilt = horizon_q - horizon_level * fixed.one; // Q16 rows, +-24
+    const tilt = horizon_q - drop_q - horizon_level * fixed.one; // Q16 rows, +-24
     if (autopilot) {
         // Hold floor + the live district's cruise altitude.
         const live_seg = world.live();
@@ -251,8 +292,10 @@ pub fn update(stick: Stick, frame: u32) void {
 
     // Altitude spring toward max(cruise, terrain ahead + clearance), then the hard floor.
     const width: i32 = if (autopilot and on_track(world.live().kind)) ap_track_width else ahead_width;
-    const target = @max(cruise_alt, (@as(i32, ahead_max(width)) + clear_above) * fixed.one);
-    cam.alt += (target - cam.alt) >> spring_shift;
+    const rows = ahead_base + @divTrunc(ahead_per_speed * speed, cruise);
+    const target = @max(cruise_alt, (@as(i32, ahead_max(rows, width)) + clear_above) * fixed.one);
+    const gap = target - cam.alt;
+    cam.alt += gap >> if (gap > spring_fast_gap * fixed.one) spring_fast_shift else spring_shift;
     const floor = (@as(i32, ground(cam.x, cam.y)) + min_above) * fixed.one;
     cam.alt = @max(cam.alt, floor);
 }
@@ -265,15 +308,15 @@ fn ground(x: i32, y: i32) u8 {
     return world.height[@intCast(row & (world.DEPTH - 1))][col];
 }
 
-/// Highest cell in the ahead_rows rows from the camera row, across `width`
+/// Highest cell in the `rows` rows from the camera row, across `width`
 /// cells centred on the flight line (which leans with the yaw). Only rows in
-/// the ring are read; after start() that is every one of them.
-fn ahead_max(width: i32) u8 {
+/// the ring are read (the scan stops at the first one it does not hold).
+fn ahead_max(rows: i32, width: i32) u8 {
     const row0 = cam.y >> fixed.Q;
     const lean = sin(cam.yaw); // Q16 x cells per row
     var best: u8 = 0;
     var i: i32 = 0;
-    while (i < ahead_rows) : (i += 1) {
+    while (i < rows) : (i += 1) {
         const row = row0 + i;
         if (!world.generated_row(row)) break;
         const line = &world.height[@intCast(row & (world.DEPTH - 1))];

@@ -35,15 +35,30 @@ the stream sections between the dams and the merge point flood (sink to
 the water line over 20 frames), hold 40 frames and drain back row by row.
 The frame rate stays locked at 30 fps (SPEC 10, decided in M2).
 
-Controls (SPEC.md section 3; the last column is what M2 does):
+M3 puts every verb in the attendee's hands (SPEC 13). B on a Bus sends a
+packet (a white block racing down the lane nearest the camera to the Bus
+end; the autopilot sends one per Bus), and the Bus card's third line
+names the district after it (`next: SORT`). Select skips to the next
+Bus (the start of the next Bus + district pair, 256 rows): three black
+frames with that Bus's card while the ring refills 96 rows per frame,
+then flight resumes with the card still up, x and altitude kept, heading
+and bank level, autopilot or manual as before (Select does not take
+manual control). The PIPELINE burst floods ahead of the camera: pressed
+over the channels, the stream and spring channels from 10 rows ahead to
+the springs sink to the water line (white water while they sink); pressed
+over the lake or on the Bus before it, the stream sections between the
+dams and the merge point flood as in M2. A boosts (fog pulls in, the
+horizon drops; camera.zig).
 
-| Input        | Design                                                   | M2                                   |
+Controls (SPEC.md section 3; the last column is what M3 does):
+
+| Input        | Design                                                   | M3                                   |
 |--------------|----------------------------------------------------------|--------------------------------------|
 | Left / Right | Bank and steer across the strip (roll shears the horizon) | roll, bank-to-turn, x wraps; takes manual control |
 | Up / Down    | Pitch: dive / climb (altitude clamped above the terrain)  | horizon 40..88 and cruise altitude; takes manual control |
-| A            | Boost while held                                          | 0.75 -> 1.9 cells per frame; takes manual control |
-| B            | The district verb                                         | HEAP: collect garbage, SORT: shuffle the band, TREE: insert a key, HASH: rehash the table, STACK: push a frame (again as soon as the previous push has run, 10 frames), PIPELINE: burst the pipe (one burst at a time); nothing on a Bus yet (M3); takes manual control |
-| Select       | Skip to the next district                                 | nothing yet (M3)                     |
+| A            | Boost while held                                          | 0.75 -> 1.875 cells per frame (2.5x), fog pulls in, horizon drops 8 rows; takes manual control |
+| B            | The district verb                                         | HEAP: collect garbage, SORT: shuffle the band, TREE: insert a key, HASH: rehash the table, STACK: push a frame (again as soon as the previous push has run, 10 frames), PIPELINE: burst the pipe ahead of the camera (one burst at a time; nothing within 10 rows of the springs); on a Bus: send a packet (up to 4 in flight); takes manual control |
+| Select       | Skip to the next district                                 | on the press: jump to the next Bus (next pair start) with a 3-frame black transition and its card; keeps the autopilot flag |
 | Start        | Toggle autopilot / manual flight                          | toggles (on the press); 450 frames (15 s) without input also returns to autopilot |
 
 The autopilot (on at boot) steers toward x = 128 on a Bus and
@@ -58,7 +73,8 @@ PIPELINE lake (18 over the floor after it; the clearance spring lifts it
 over dams and springs). It looks down a little in the districts read from
 altitude (`alt` 80 or more: SORT, TREE, HASH; horizon row 52) and
 presses B when the camera crosses the district's `verb_at` row (HEAP 30,
-SORT 60, TREE 50, HASH 40, STACK 20, PIPELINE 30).
+SORT 60, TREE 60, HASH 40, STACK 20, PIPELINE 70; on each Bus it sends
+one packet at local row 24).
 
 Start+Select returns to the badge menu and the joystick click toggles the
 OS FPS overlay; both belong to the OS. The cart has no sound and never
@@ -181,6 +197,18 @@ Input scripts live in `tools/scripts/`:
   Bus, TREE, Bus, HASH, Bus, STACK, Bus, PIPELINE, then Bus and HEAP), by
   badge-bench and by `tools/check_render.sh`. The STACK is reached about
   frame 1450, the PIPELINE lake about frame 1790.
+- `m3_verbs.json` (2600 frames, M3): stick right 60-100 (takes manual
+  control), then B at local row ~70 of each district (frames from row =
+  0.74 x frame at cruise, checked with `debug_segment_kind`): 184 (HEAP,
+  row 134), 367 (the second Bus, row 271: a packet; `debug_bus_packets`
+  goes 1 -> 2, the autopilot sent the first on the first Bus), 529 (SORT,
+  393), 875 (TREE, 652), 1220 (HASH, 911), 1566 (STACK, 1171), 1912
+  (PIPELINE, 1430, over the lake: the M2 flood range, white water from
+  about frame 1915); Select at 2141 (the second HEAP, row 1601, local 1:
+  jumps to 1792, the Bus before the SORT; black frames 2141-2143, flight
+  from 2144); A held 2260-2459 (boost over the SORT and on into the next
+  Bus and TREE); Start at 2560 (autopilot back on). The heap reached at
+  2141 is the cycle's second: the third (row 3136) is past 2600 frames.
 - `m2_verbs.json` (2200 frames): stick right 60-100 (takes manual
   control), then B once in each district: 150 (HEAP, row ~109), 500
   (SORT, ~371), 820 (TREE, ~611), 1160 (HASH, ~866), 1480, 1520 and 1560
@@ -209,7 +237,7 @@ Debug exports (zero-argument wasm functions unless noted, usable with
 | `debug_cam_yaw`        | heading in 1/1024 turn, positive toward +x, capped at +-64       |
 | `debug_cam_roll`       | horizon shear in rows, negative when banked right                |
 | `debug_horizon`        | horizon screen row, 64 level                                     |
-| `debug_world_check`    | regenerates every row the ring should hold outside the live district (whose cells the tick edits) and counts mismatching cells; 0 is correct |
+| `debug_world_check`    | regenerates every row the ring should hold outside the live district and the Bus under the camera (whose ticks edit cells: dataflow, packets) and counts mismatching cells, plus 1000000 per missing row; 0 is correct (mid-skip it counts the rows still to generate) |
 | `debug_map_height(x, y)`, `debug_map_colour(x, y)` | one ring cell (two arguments, so not for `--dump-exports`); 0xFFFF if row y is not in the ring |
 | `debug_segment_kind`, `debug_segment_index` | segment under the camera: kind 0 Bus, 1 HEAP, 2 SORT, 3 TREE, 4 HASH, 5 STACK, 6 PIPELINE; index = 2 * pair (+1 for the district) |
 | `debug_live_kind`      | kind of the live (ticked) district: the one under the camera, or the next one on a Bus |
@@ -223,8 +251,30 @@ Debug exports (zero-argument wasm functions unless noted, usable with
 | `debug_pipe_state`     | live PIPELINE burst: phase (0 idle, 1 sink, 2 hold, 3 restore) + 256 * frames into the phase; 0 when the live district is not the PIPELINE |
 | `debug_verb_max_cells` | most cells (height + colour) one frame of a verb wrote since boot: STACK push waves in the low 16 bits, PIPELINE bursts in the high 16 |
 | `debug_sky_flash`      | frames of white sky left (a STACK overflow sets 6)               |
+| `debug_skips`          | Select skips since boot                                          |
+| `debug_bus_packets`    | Bus packets launched since boot (B on a Bus and the autopilot's one per Bus) |
 
-Checks that hold at M2:
+Checks that hold at M3 (the Select skip, the packet, the burst and the
+ring after the skip):
+
+```sh
+node ../../tools/preview.mjs ../../zig-out/bin/snouty-flyover.wasm --frames 2600 --quiet \
+    --script tools/scripts/m3_verbs.json --out out/ \
+    --at "59 debug_autopilot == 1" --at "61 debug_autopilot == 0" \
+    --at "366 debug_bus_packets == 1" --at "367 debug_segment_kind == 0" \
+    --at "367 debug_bus_packets == 2" --at "1912 debug_segment_kind == 6" \
+    --at "1913 debug_pipe_state == 257" --at "2140 debug_segment_kind == 1" \
+    --at "2140 debug_skips == 0" --at "2141 debug_cam_y == 1792" \
+    --at "2141 debug_skips == 1" --at "2143 debug_cam_y == 1792" \
+    --at "2144 debug_world_check == 0" --at "2144 debug_segment_kind == 0" \
+    --at "2144 debug_autopilot == 0" --at "2260 debug_segment_kind == 2" \
+    --at "2560 debug_autopilot == 1" --at "2599 debug_world_check == 0" \
+    --at "2599 debug_cam_clear > 0"
+```
+
+Frame 2141 is the press and the first black frame (`debug_cam_y` jumps
+from 1601 to 1792, the next pair start); 2144 is the first flown frame
+and finds the ring complete. Checks that hold at M2:
 
 ```sh
 node ../../tools/preview.mjs ../../zig-out/bin/snouty-flyover.wasm --frames 2400 --quiet \
