@@ -1,11 +1,12 @@
-//! App state (PLAN.md M3 "App state", SPEC.md section 3): attract orbit or
-//! free camera, a frozen flag on top of either, the preset cycle with its
-//! fade, and the View handed to the tracer each frame.
+//! App state (PLAN.md M3 "App state", M4 "App", SPEC.md section 3): attract
+//! orbit or free camera, a frozen flag on top of either, the preset cycle
+//! with its fade, and the View handed to the tracer each frame.
 //!
-//! Per update, main.zig calls `handle_input()` (after input.update), renders
-//! `view()`, then calls `advance()`. So update #f of an untouched run
-//! renders t = f, orbit = f % orbit_frames, sunset, default height, fade 1
-//! until the first fade-out: M2.2's frame f (the legacy identity).
+//! Per update, main.zig calls `handle_input()` (after input.update), asks
+//! `frame_kind()` what to draw, draws `view()`, then calls `advance()`. So
+//! update #f of an untouched run renders t = f, orbit = f % orbit_frames,
+//! sunset, default height, fade 1 until the first fade-out: M2.2's frame f
+//! (the legacy identity).
 //!
 //! Controls (never the joystick click; Start+Select is the OS's):
 //!   stick     attract: enter free camera. free (frozen or not): Left/Right
@@ -17,6 +18,19 @@
 //! Free camera returns to attract after `free_timeout_frames` updates with
 //! no input, but not while frozen. In attract (unfrozen) the height eases
 //! back to the default by 0.05 per frame.
+//!
+//! Frozen (M4, SPEC.md section 5b): the update that freezes draws the
+//! real-time frame and then starts the path tracer on it (`pt.begin`);
+//! later frozen updates step and display the path tracer. While the stick
+//! is held the path tracer is released and the real-time tracer draws the
+//! moving (time-stopped) view; the first update without the stick restarts
+//! accumulation there. Select while frozen restarts it on the next preset;
+//! B keeps it. A unfreezes and Start unfreezes into attract, both releasing
+//! the path tracer. Once the image has converged (`pt.done()`),
+//! `frozen_resume_s` seconds without input act as Start.
+//!
+//! "Restart" is always `pt.release()`: a frozen update without the stick
+//! whose path tracer is not active begins a new accumulation.
 //!
 //! Heights are kept in integer millimetres so the 0.05 steps never drift:
 //! 1600 mm converts to exactly `camera.default_height` (1.6 as f32), which
@@ -30,6 +44,7 @@ const build_options = @import("build_options");
 const scene = @import("scene.zig");
 const camera = @import("camera.zig");
 const trace = @import("trace.zig");
+const pt = @import("pt.zig");
 
 pub const State = enum(u32) { attract = 0, free = 1 };
 
@@ -45,6 +60,10 @@ pub const fade_frames: u32 = fps / 2;
 /// Free-camera orbit speed: 3 orbit frames per update (36 deg/s at 20 fps).
 pub const orbit_step: u32 = 3;
 pub const height_step_mm: i32 = 50;
+/// M4 auto-resume (SPEC.md section 17 question 8): a converged frozen image
+/// returns to attract after this long without input.
+pub const frozen_resume_s: u32 = 60;
+pub const frozen_resume_frames: u32 = frozen_resume_s * fps;
 
 fn to_mm(comptime h: f32) i32 {
     return @intFromFloat(@round(h * 1000.0));
@@ -97,6 +116,23 @@ var fading_in: bool = false;
 var idle: u32 = 0;
 /// Height sweep direction for bench_height.
 var bench_dir: i32 = 1;
+/// Updates without input since the frozen image converged (auto-resume).
+var frozen_idle: u32 = 0;
+/// The stick was held this update (a frozen view then draws in real time).
+var stick_held: bool = false;
+/// debug_set_pt: false keeps the M3 behaviour (a frozen view shows the
+/// real-time frame and the path tracer never begins).
+pub var pt_enabled: bool = true;
+
+/// What main.zig draws this update.
+pub const FrameKind = enum(u32) {
+    /// The real-time tracer (the path tracer released first).
+    realtime = 0,
+    /// The real-time frame, then pt.begin on it: a new accumulation.
+    pt_begin = 1,
+    /// pt.step, pt.display.
+    pt_step = 2,
+};
 
 /// 0 attract, 1 free, 2 frozen (either), as debug_state reports it.
 pub fn state_code() u32 {
@@ -134,6 +170,19 @@ fn pause_cycle() void {
     if (cycle + fade_frames >= orbit_frames) cycle = orbit_frames - fade_frames;
 }
 
+/// After handle_input(): what to draw for view().
+pub fn frame_kind() FrameKind {
+    if (!frozen or !pt_enabled or stick_held) return .realtime;
+    return if (pt.active()) .pt_step else .pt_begin;
+}
+
+/// Start: back to attract, unfrozen.
+fn go_attract() void {
+    pt.release();
+    state = .attract;
+    frozen = false;
+}
+
 fn next_preset() void {
     preset = @fromBackingInt(@intCast((@backingInt(preset) + 1) % preset_count));
 }
@@ -144,16 +193,19 @@ pub fn handle_input() void {
 
     if (input.pressed(.start)) {
         any = true;
-        state = .attract;
-        frozen = false;
+        go_attract();
     }
     if (input.pressed(.a)) {
         any = true;
         if (!frozen) pause_cycle();
+        // Freezing: pt is not active, so this update begins. Unfreezing:
+        // time resumes where it stopped.
+        pt.release();
         frozen = !frozen;
     }
     if (input.pressed(.b)) {
         any = true;
+        // Accumulation kept: display() quantises in the new mode.
         dither.next_mode();
     }
     if (input.pressed(.select)) {
@@ -161,13 +213,16 @@ pub fn handle_input() void {
         next_preset();
         cycle = 0;
         fading_in = false;
+        // Frozen: restart accumulation on the new preset.
+        pt.release();
     }
 
     const left = input.held(.left);
     const right = input.held(.right);
     const up = input.held(.up);
     const down = input.held(.down);
-    if (left or right or up or down) {
+    stick_held = left or right or up or down;
+    if (stick_held) {
         any = true;
         if (state == .attract) {
             pause_cycle();
@@ -181,13 +236,31 @@ pub fn handle_input() void {
 
     if (any) {
         idle = 0;
+        frozen_idle = 0;
     } else if (state == .free and !frozen) {
         idle += 1;
         if (idle >= free_timeout_frames) {
             state = .attract;
             idle = 0;
         }
+    } else if (frozen and pt_enabled and pt.active() and pt.done()) {
+        frozen_idle += 1;
+        if (frozen_idle >= frozen_resume_frames) {
+            frozen_idle = 0;
+            go_attract();
+        }
     }
+}
+
+/// debug_pt_restart: the next frozen update begins a new accumulation.
+pub fn restart_pt() void {
+    pt.release();
+}
+
+/// debug_set_pt.
+pub fn set_pt(on: bool) void {
+    pt_enabled = on;
+    if (!on) pt.release();
 }
 
 /// End of the update: move time on.
@@ -221,6 +294,9 @@ pub fn advance() void {
 pub fn set_view(preset_index: u32, t_frames: u32, orbit_index: u32, h_mm: i32) void {
     pause_cycle();
     frozen = true;
+    // With the path tracer on, the next update starts accumulating here.
+    pt.release();
+    frozen_idle = 0;
     preset = @fromBackingInt(@intCast(preset_index % preset_count));
     t = t_frames;
     orbit = orbit_index % orbit_frames;
