@@ -855,4 +855,72 @@ the skip (`debug_cam_y` jumps to the next pair start) and for the packet
 
 ### M3 status
 
-- 2026-09-30: started; scaffold commit follows.
+- 2026-09-30: started; scaffold b026873 (`world.Verb`, `next_bus_row`,
+  `advance_partial`, `skip_reset`, `Stick.verb` as a source).
+- 2026-09-30: done, tag `snouty-flyover/m3` (code 7029d14). Calibrated
+  badge-bench over the 2400-frame attract run: worst 14.26 ms (frame 1823,
+  entering the lake at altitude 38 with pass 2 on all 160 columns; M2's
+  worst lake frame had the camera at 20), mean 7.65, p95 11.84; 65% of the
+  22 ms budget, 0 frames over. That is 1.5 ms over the "within 1 ms of
+  12.77" gate: the longer look-ahead and faster climb spring keep the
+  camera higher over the first lake rows, so more mirrored rows are
+  filled. Kept; `refl_z_far` 200 -> 128 is the cut if M4 needs the
+  headroom. Hot: the march 88%, `api.text` 8.1%, memcpy 2.5%. Sizes:
+  `.text` 69,228 B, `.data` 192 B, `.bss` 159,368 B (gates 75 KB / 165 KB).
+  check-float passes; all 19 `--at` checks of `m3_verbs.json` and the
+  attract and `m2_verbs` checks in RUNNING.md pass; `check_render.sh`
+  passes against the regenerated hashes; lowest manual clearance 11 cells
+  (was 4). GIFs `docs/preview_m3_attract.gif` (2400 frames, every 3rd) and
+  `docs/preview_m3_verbs.gif` (2600 frames: every verb from inside its
+  district, a packet on the second Bus, a Select skip at the second Heap,
+  200 frames of boost over the Sort); the M2 GIFs are removed as
+  superseded.
+  - Track A (flight feel): boost 1.875 cells/frame; `render.fog_pull`
+    eases to 24 at +2/frame while A is held and back at -1/frame, applied
+    as a per-column fog table pointer offset over a 32-entry padded table
+    (the march loop is unchanged; pass 2 uses the same pointer); the
+    horizon drops 8 rows while boosting, kept out of the climb tilt so a
+    manual boost does not read as a climb. Look-ahead `24 + 16 speed /
+    cruise` rows (40 cruise, 64 boost); the spring takes 1/4 of the gap
+    when the target is over 16 cells above (climbs only). `camera.jump_to`
+    keeps x and altitude, zeroes yaw/roll, rearms the autopilot verb.
+    Lowest clearance: `m0_fly` 11 (boost 13), `m2_verbs` 11 (M2: 4 at the
+    Stack entrance), attract 11. The Stack dive still reaches 44 and climbs
+    out about 16 frames earlier.
+  - Track B (Bus packet, Tree insert): the Bus under the camera is entered,
+    ticked and restored on leaving by `world.tick`; the player's B on a Bus
+    goes to it, the autopilot's to the live district. A packet is a white
+    3x3 block, deck + 6, 3 rows per frame from `cam_row + 12` to the Bus
+    end, at most 4 in flight, cells restored from the static deck rule; it
+    runs on the nearest lane at least 8 cells beside the camera because the
+    anteater hides the camera's own lane (PLAN had 6 rows/frame from +6:
+    off screen at the Bus altitude). The autopilot sends one at Bus row 24
+    from `bus.tick`. The Tree is flipped (root at local row 0, leaves at
+    180..185, insert mounds 186..191) and reads top-down from the approach;
+    an insert cancels the running search, descends 4 frames per level on
+    the leaf 32 cells beside the camera (alternating sides), and raises a
+    white 24-high mound 32 frames after the press; `verb_at` 40 because
+    from 205 the view starts 75 rows ahead and the mound leaves view past
+    local row 110. `skip_reset` restores the live district's last 8 rows.
+  - Track C (skip, wiring, scripts): Select jumps to `next_bus_row`,
+    draws three black frames with the target Bus card while
+    `advance_partial` refills 96 rows a frame, resumes with the card up and
+    the autopilot flag untouched (`start_skip` also regenerates the old
+    district's last 8 rows). Every Bus card's third line is `next:
+    <TITLE>`. The Pipeline burst floods ahead of the camera (over the
+    channels `max(cam + 10, 122)` to 168, over the lake the M2 rows
+    122..149); sinking cells are white until they reach the water line
+    because the flood was invisible against the dark floor. `debug_world_check`
+    excludes the Bus under the camera. Exports `debug_skips`,
+    `debug_bus_packets`. `m3_verbs.json` presses Select at the second Heap
+    (the third is past frame 2600).
+  - Integration: `world.caption()` returns the Bus's own verb now that the
+    card's third line names the district ahead.
+
+## M4 Polish (outline)
+
+Palette and fog pass from the GIF review, easter eggs (the Stack unwind
+after the overflow, the free list spelling something), the Tree rotation,
+dam hold/pass of packets, `api.text` cost (8% of the frame: a cheaper
+shadowed text), the lake frame headroom (`refl_z_far`), dist artifacts.
+Contract to be written at M4 start.
