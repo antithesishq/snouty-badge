@@ -433,3 +433,11 @@ M0 runs on the defaults given after each question.
   goes grey under fog and needs the emissive half-fog treatment.
 - 2026-09-30: Adrian deferred all section 17 questions; M0 started
   (scaffold 14c9145, tracks A and B running).
+- 2026-09-30: M0 (tag `snouty-flyover/m0`) and M1 (`snouty-flyover/m1`)
+  done on branch `flyover/m0-plan`; PLAN.md has the numbers. Section 10's
+  frame-rate question is closed: M1's worst frame is 11.03 ms and the M2
+  reflection adds a second march on lake columns, so the lock is 30 fps for
+  good with the 22 ms budget; `-Dflyover_fps=60` stays a build knob only.
+  Section 17's defaults stand (title Memory Lane, all six districts, the
+  placeholder sprite, verbs only, the Iris sun). Adrian: "keep building and
+  defer/default any decisions", so M2 started without the M1 GIF review.
