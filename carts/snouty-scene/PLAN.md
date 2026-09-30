@@ -8,7 +8,13 @@ build test`, `zig build check-float`, badge-bench numbers, a preview GIF
 in `docs/`, an annotated tag `snouty-scene/mN`, and a "pull and run this"
 section in the hand-off message.
 
-## M0 scaffold (2026-09-30)
+## M0 scaffold (2026-09-30) — DONE, tag `snouty-scene/m0`
+
+Status: built and benched 2026-09-30 (six commits). Eleven timeline
+entries (0 Intro .. 10 Ending, as SPEC section 3), placeholders for parts
+3 to 10. Worst frame 2.45 ms (Intro fade-out), `.text` 39.7 KB, `.bss`
+28.5 KB, 22 host tests. Numbers in `docs/PERF.md`, GIF `docs/preview_m0.gif`.
+`preview.mjs` needs `--raw-colors` to show badge colours.
 
 Goal: the cart exists, loops through Intro, Plasma and Copper + scroller
 with fades, A skips, Select opens a picker, badge-bench runs it, and the

@@ -44,9 +44,9 @@ configure graph).
 Headless, from the root:
 
 ```
-node tools/preview.mjs zig-out/bin/snouty-scene.wasm --frames 1800 --every 6 --out carts/snouty-scene/out/loop
+node tools/preview.mjs zig-out/bin/snouty-scene.wasm --frames 1800 --every 6 --raw-colors --out carts/snouty-scene/out/loop
 python3 tools/make_gif.py carts/snouty-scene/out/loop carts/snouty-scene/docs/preview.gif --scale 3 --ms 100
-node tools/preview.mjs zig-out/bin/snouty-scene.wasm --frames 300 --call debug_goto:4 --every 5 --out carts/snouty-scene/out/tunnel
+node tools/preview.mjs zig-out/bin/snouty-scene.wasm --frames 300 --call debug_goto:4 --every 5 --raw-colors --out carts/snouty-scene/out/tunnel
 badge-bench/bench.sh zig-out/firmware/snouty-scene.elf --frames 900 --every 60 --symbols
 carts/snouty-scene/tools/bench_parts.sh          # one badge-bench run per part, worst-frame table
 ```
