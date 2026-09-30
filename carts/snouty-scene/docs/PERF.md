@@ -43,3 +43,13 @@ and index field 5 KB, copper strip 6 KB, palettes 1.5 KB).
 
 Plenty of headroom: the M1 parts can spend up to about 9 ms each before a
 fade pushes them to the limit.
+
+## M1
+
+Calibrated badge-bench, `carts/snouty-scene/tools/bench_parts.sh N` per
+part (part's length plus 60 frames from its frame 0). `.bss` delta is
+against M0's 28,472.
+
+| # | Part | mean busy ms | part worst busy ms (frame) | run worst | .bss delta | what dominates |
+|---|---|---|---|---|---|---|
+|  7 | Voxel | 4.76 | 5.59 (t 825) | 5.59 | +35,528 (64,000) | `parts.voxel.render` 96%: the column march, 160 full-res rays x 150 steps (one map load, two 32x32->64 multiplies, one projection multiply each); the 128x128 u16 map is 32 KB of the delta. Worst frame is a fade-out frame. ELF `86e58d02764c`. |
