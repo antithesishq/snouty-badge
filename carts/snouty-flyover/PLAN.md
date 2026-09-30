@@ -397,4 +397,70 @@ toggles (edge). Manual `Stick` is `+-1` per button.
 
 ### M1 status
 
-- 2026-09-30: started. Contract above; scaffold commit follows.
+- 2026-09-30: started. Contract above; scaffold 225d7cf (sequencer, district
+  table, `Stick`, text/sprite stubs); tracks A, B, C as Opus agents.
+- 2026-09-30: done, tag `snouty-flyover/m1` (code 00868e0). Calibrated
+  badge-bench over the 1800-frame `attract.json` run: worst 11.03 ms
+  (frame 1044), mean 6.66, p95 7.21; 50% of the 22 ms budget, 0 frames
+  over. Hot: the inlined march 86%, `api.text` 8.6% (the shadowed card and
+  caption, about 0.6 ms), memcpy 2.5%, `gen_row` 2.2%; the district ticks
+  are under 0.3% together. The worst frame is a hair over the 11 ms line
+  of SPEC 10, so 60 fps is not free; M2 decides with the other districts
+  in. Sizes: `.text` 37,408 B, `.data` 128 B, `.bss` 151,700 B (Heap
+  3.0 KB, Sort 3.0 KB, fog threshold tables 3 KB, fog pulse cache 1 KB).
+  check-float passes; `debug_world_check` is 0 at frame 1799 of the
+  attract run and at 1199 of `m1_manual.json`; every `--at` check in
+  RUNNING.md passes; lowest camera clearance 26 cells (attract) and 7
+  (manual, over the Heap). GIFs: `docs/preview_m1_attract.gif` (1800
+  frames, every 3rd) and `docs/preview_m1_manual.gif`.
+  - Track A (light and text): `palette.init()` builds `fog` once and
+    keeps the pulse entries; `begin_frame` rotates the four pulse ranges
+    into `cur` and `fog` (about 576 stores a frame instead of the 2048-blend
+    rebuild). Fog dither: 16 Q4 threshold tables `fog_level_t`, the column's
+    table chosen by `bayer4[x & 3][frame & 3]`; the temporal variant is
+    kept (`fog_temporal` knob; the spatial one looked the same, no visible
+    crawl). Cliff shading `cliff_dh` 12 -> 4. Shadowed 8x8 text, card 90
+    frames with a 20-frame dim tail, caption with a 20-frame flash,
+    `show_card3` + `text.fps_line` for the boot card. Placeholder Snouty,
+    24x16, three frames as two-layer u24 literals, banks past |roll| > 6.
+  - Track B (world, Bus, Heap): the floor uses the real palette (0..14
+    shades, one-cell grid in 16..19). `world.tick` restores the old
+    district's rows still in the ring when the live district changes, so
+    `debug_world_check` stays 0 across switches. Bus per the constants. Heap:
+    seeded block layout (at most 144 blocks; 126 seen over 20000 seeds),
+    free-list polyline as a pure function of (seed, ly), malloc/free every
+    40 frames at least 16 cells off the camera x, GC wall at 4 rows per
+    frame turning unreferenced blocks into rubble over 10 frames, re-applying
+    dynamic state to the rows it leaves; worst measured tick 4.6K cell
+    writes in a frame. Deviations kept: a victim must also reach past the
+    wall's start row; the wall cuts through tall blocks like the prototype.
+  - Track C (Sort, autopilot, wiring): Sort with a resumable per-band
+    quicksort (Lomuto, 2 swaps per frame on the nearest unsorted band past
+    `cam_row + 40`, white pivot), B shuffles a band and re-sorts at 8 swaps
+    per frame; per-frame writes capped at 2 x swaps + 2 bars (a bar is 28
+    cells), 64 + 6 bars on a shuffle frame. Deviations kept: the work line
+    is `cam_row + 40` (the band under the camera is off screen from the
+    Sort altitude); bands start presorted by r/16 of their partitions
+    (`presort` knob) for the concept's staircase; Sort `alt` 110 (90 put
+    the camera 11 cells over the tallest bars) and the autopilot looks
+    down (horizon row 52) in districts with `alt >= 80`. Autopilot: P
+    controller with 40 frames of lead, clamp 1/3; over the attract run x
+    stays in 112..144, roll within +-6 rows, 16 roll flips at least 50
+    frames apart, Sort altitude 124..129, B once per district at
+    `verb_at`; any input takes manual, 450 idle frames or Start return to
+    autopilot. New exports `debug_cam_ground`, `debug_cam_clear`,
+    `debug_sort_state`, `debug_sort_max_bars`. `m1_manual.json` presses the
+    Sort B at frame 600 (at 700 the camera is on the Bus).
+  - Integration: the segment the camera starts in is not reported by
+    `entered_segment`, so the boot card keeps its 90 frames.
+  - For the GIF review: does the Heap read at altitude 40 or should the
+    autopilot fly higher; is the Sort's near field too busy; rubble
+    (indices 20..22) is dark and reads as footprints, brighten or not; the
+    temporal fog dither on the LCD.
+
+## M2 The other districts (outline)
+
+Tree, Hash, Stack (scripted dive), Pipeline with the reflection lake and
+mirrored sun; the 30/60 fps decision from the bench with every district
+in; `tools/check_render.mjs` frame hashes. Contract written after the M1
+GIF review.
