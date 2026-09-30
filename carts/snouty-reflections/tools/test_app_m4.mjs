@@ -25,10 +25,13 @@ const args = process.argv.slice(2);
 const opt = (name, def) => { const i = args.indexOf(name); return i >= 0 ? args[i + 1] : def; };
 const wasmFile = opt("--wasm", path.resolve(CART_DIR, "../../zig-out/bin/snouty-reflections.wasm"));
 const baseFile = opt("--baseline");
-const COLS = Number(opt("--cols", 40));
+const COLS = Number(opt("--cols", 36));
 const MAX_PASSES = Number(opt("--max-passes", 256));
 const RESUME = Number(opt("--resume", 1200));
-const UPDATES_PER_PASS = Math.ceil(160 / COLS);
+// Columns carry over from one pass to the next, so k stepping updates hold
+// floor(k * COLS / 160) passes (COLS need not divide 160).
+const passesAfter = (k) => Math.floor(k * COLS / 160);
+const updatesFor = (p) => Math.ceil(p * 160 / COLS);
 if (!baseFile) { console.error("usage: test_app_m4.mjs [--wasm new.wasm] --baseline m3.wasm"); process.exit(2); }
 
 const BTN = { START: 1 << 0, SELECT: 1 << 1, A: 1 << 2, B: 1 << 3, UP: 1 << 5, DOWN: 1 << 6, LEFT: 1 << 7, RIGHT: 1 << 8 };
@@ -110,7 +113,7 @@ for (const name of ["m4_freeze_sunset.json", "m4_frozen_stick.json", "m4_control
 }
 
 // ---- 3. Freeze in each preset, accumulation, convergence and auto-resume.
-const doneAt = 100 + MAX_PASSES * UPDATES_PER_PASS; // last stepping update is doneAt
+const doneAt = 100 + updatesFor(MAX_PASSES); // last stepping update is doneAt
 for (const [name, preset] of [["m4_freeze_sunset.json", 0], ["m4_freeze_midnight.json", 1], ["m4_freeze_noon.json", 2]]) {
     const s = loadScript(name);
     const n = doneAt + RESUME + 20;
@@ -118,7 +121,7 @@ for (const [name, preset] of [["m4_freeze_sunset.json", 0], ["m4_freeze_midnight
     check(a[99].state === 0 && a[100].state === 2 && a[100].preset === preset && a[100].t === 100,
         `${name}: frozen at update 100 in preset ${preset}, t = 100 (state ${a[100].state}, preset ${a[100].preset}, t ${a[100].t})`);
     check(a[100].sum === b[100].sum && a[100].passes === 0, `${name}: update 100 shows the real-time frame (pt begun, 0 passes)`);
-    check(a[100 + UPDATES_PER_PASS].passes === 1 && a[100 + 10 * UPDATES_PER_PASS].passes === 10, `${name}: ${UPDATES_PER_PASS} updates per pass`);
+    check(a[100 + updatesFor(1)].passes === 1 && a[100 + updatesFor(10)].passes === 10, `${name}: ${COLS} columns per update`);
     const d = firstIndex(a, (r) => r.passes === MAX_PASSES);
     check(d === doneAt, `${name}: ${MAX_PASSES} passes (done) at update ${d} (expected ${doneAt})`);
     const frozenT = a.slice(100, doneAt + RESUME).every((r) => r.state === 2 && r.t === 100 && r.preset === preset);
@@ -145,11 +148,11 @@ for (const [name, preset] of [["m4_freeze_sunset.json", 0], ["m4_freeze_midnight
     const a = run(wasmFile, s, 600).frames, b = run(baseFile, s, 600).frames;
     realtimeMatches(a, b, 0, 599, "m4_frozen_stick");
     const pre = a[299].passes;
-    check(pre === Math.floor(199 / UPDATES_PER_PASS), `stick: ${pre} passes before the stick`);
+    check(pre === passesAfter(199), `stick: ${pre} passes before the stick`);
     check(a.slice(300, 340).every((r) => r.passes === 0 && r.state === 2 && r.t === 100), "stick: updates 300..339 real-time (pt released), still frozen at t = 100");
     check(a[300].orbit !== a[299].orbit && a[339].orbit !== a[300].orbit, `stick: the orbit moves (${a[299].orbit} -> ${a[300].orbit} -> ${a[339].orbit})`);
     check(a[340].passes === 0 && a[340].sum === b[340].sum && a[340].orbit === a[339].orbit, "stick: update 340 (released) draws the real-time frame and begins");
-    check(a[340 + UPDATES_PER_PASS].passes === 1 && a[341].sum !== b[341].sum, "stick: accumulation restarted from 0 after the release");
+    check(a[340 + updatesFor(1)].passes === 1 && a[341].sum !== b[341].sum, "stick: accumulation restarted from 0 after the release");
     check(a[599].state === 2, "stick: no free-camera timeout while frozen");
     check(a[100].kind === 1 && a[101].kind === 2 && a.slice(300, 340).every((r) => r.kind === 0) && a[340].kind === 1 && a[341].kind === 2,
         "stick: debug_frame_kind begin at 100, step, real-time 300..339, begin at 340, step");
@@ -162,10 +165,10 @@ for (const [name, preset] of [["m4_freeze_sunset.json", 0], ["m4_freeze_midnight
     realtimeMatches(a, b, 0, 699, "m4_controls");
     check(a[200].dither !== a[199].dither && a[200].passes >= a[199].passes && a[200].passes > 0 && a[200].state === 2,
         `B: dither ${a[199].dither} -> ${a[200].dither}, accumulation kept (${a[199].passes} -> ${a[200].passes} passes)`);
-    check(a[300].preset === (a[299].preset + 1) % 4 && a[300].passes === 0 && a[300].sum === b[300].sum && a[304].passes === 1,
+    check(a[300].preset === (a[299].preset + 1) % 4 && a[300].passes === 0 && a[300].sum === b[300].sum && a[300 + updatesFor(1)].passes === 1,
         `Select: preset ${a[299].preset} -> ${a[300].preset}, accumulation restarted`);
     check(a[400].state !== 2 && a[400].passes === 0 && a[400].t === 101 && a[449].t === 150, `A frozen: unfrozen, time resumes (t ${a[400].t} .. ${a[449].t})`);
-    check(a[450].state === 2 && a[450].passes === 0 && a[454].passes === 1, "A again: frozen, new accumulation");
+    check(a[450].state === 2 && a[450].passes === 0 && a[450 + updatesFor(1)].passes === 1, "A again: frozen, new accumulation");
     check(a[550].state === 0 && a[550].passes === 0 && a[551].t === a[550].t + 1, "Start frozen: attract, pt released, time runs");
 }
 

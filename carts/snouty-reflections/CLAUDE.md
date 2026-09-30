@@ -33,7 +33,9 @@ simulator quirks.
 - Audio `cart.tone2`, one voice: unused, no audio in this cart (SPEC.md section 8). 5 neopixels (`cart.neopixels`): off; this
   cart never writes non-zero values (root `docs/NEOPIXELS.md`; a coworker's
   badge shows the LEDs are unusably bright even at 1%, 2026-09-29).
-- Budget: ELF `.text`+`.data` at most 120 KB, `.bss` at most 120 KB.
+- Budget (since M4): ELF `.text`+`.data` at most 136 KB, `.bss` at most
+  136 KB, their sum at most 250 KB. The 80 KB path-tracer accumulator shares
+  `arena.zig` with the real-time tracer's 40 KB fade table.
 
 ## Building
 
@@ -70,6 +72,11 @@ Debug exports (wasm): `debug_frame`, `debug_render_us`,
 `debug_height_mm`. B cycles bayer -> blue noise -> palette16 -> none, so
 input scripts need three B presses to reach none
 (`tools/scripts/m3_nodither.json`). App state is `cart/src/app.zig`.
+Since M4 (`pt.zig`, the frozen-mode path tracer): `debug_set_pt(on)`
+(0 = the M3 frozen real-time frame, for check_render), `debug_pt_run(n)`,
+`debug_pt_passes`, `debug_pt_accum` (accumulator address, index x*128+y),
+`debug_pt_restart`, `debug_frame_kind`. `tools/check_pt.mjs` checks the
+path tracer against `reference.py --pt`; `tools/test_app_m4.mjs` the app.
 
 ## Conventions
 

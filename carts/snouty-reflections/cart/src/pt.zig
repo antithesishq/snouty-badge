@@ -43,7 +43,7 @@ pub const max_passes: u32 = 256;
 pub const slice_us: u32 = 36_000;
 /// wasm has no clock: step() traces exactly this many columns per update
 /// there. The integrator sets it from the bench rate.
-pub const wasm_columns_per_update: u32 = 40;
+pub const wasm_columns_per_update: u32 = 36; // badge-bench cut20: 256 passes in ~1150 updates (4.5 per pass)
 
 // Estimator knobs (PLAN.md M4 "The M4 estimator, exactly"). tools/reference.py
 // --pt takes the same values; change both together.

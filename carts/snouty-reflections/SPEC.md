@@ -547,3 +547,12 @@ Question 4 (music) is answered by section 8: no audio.
   Adrian's request (they read as artifacting; section 7), and the Iris
   logo moved to `x = -15.5`, clear of Harbour Centre. cut20 worst frames:
   sunset 45.67, storm 45.15, midnight 49.36, noon 49.73 ms (PLAN.md M3.1).
+- 2026-09-30: M3.1 on main (tag `snouty-reflections/m3.1`): chrome
+  stripes dropped (Adrian: they read as artifacting), Iris logo moved to
+  `x = -15.5`, clear of the skyline.
+- 2026-09-30: M4 on main (tag `snouty-reflections/m4`): A freezes and the
+  progressive path tracer converges over about 60 s (256 passes, ~190 ms
+  each on the calibrated bench) with the glass sphere, soft shadows,
+  glossy water, depth of field and every preset's full content, while the
+  display stays at 20 fps (frozen updates at most 42.9 ms). Auto-resume
+  60 s after convergence. Next: M5 polish.

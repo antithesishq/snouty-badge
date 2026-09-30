@@ -1417,3 +1417,31 @@ status; tag `snouty-reflections/m4`; merge to main.
 
 - 2026-09-30: plan written. Question 8: 60 s auto-resume; question 9: DOF
   on, `lens_radius` 0.05.
+- 2026-09-30 (integration, branch reflections/m4): A, B, C merged with
+  M3.1 (no stripes, logo at x = -15.5). B's main.zig, A's pt.zig and
+  arena.zig; the terminal water env drops the sun disc after a diffuse
+  bounce (the reference's reading of the plan). check_pt's convergence
+  gate changed (see check 2 above): the 11:11:10 running mean is
+  re-rounded every pass, which floors the cart's RMSE at about 1 unit.
+  - check_pt 6/6 PASS cut20 (checks 1-3; cart RMSE at 256 passes 1.0 to
+    1.6 units, estimator 64/256 ratio 2.26 to 2.42) and 6/6 half30
+    (checks 1, 3; the harness now passes the variant's fps to the
+    reference). check_render 24/24 cut20 and half30 (their knob flags).
+    test_app_m4 all PASS (unfrozen frames identical to the M3.1 build).
+    check-float passes for every variant.
+  - Sizes `.text + .data` / `.bss`: cut20 123984 / 109672, full20 110800
+    / 109552, full15 108496 / 109552, half30 137280 / 109672 (sum 246952,
+    under 250 KB).
+  - Bench (cut20, calibrated busy ms), row 5 worst frozen update / mean /
+    A update: sunset 42.89 / 40.50 / 41.75, midnight 42.87 / 42.02 /
+    48.56, noon 42.86 / 40.62 / 45.36, all PASS. ms per pass: sunset
+    188.7, midnight 199.9, noon 189.2; 256 passes in 57.5 s (sunset),
+    57.6 s (noon), just over 60 s (midnight). Row 6 (stick while frozen)
+    worst 46.49. Rows 1 and 2 against M3.1: step1 45.63 (+0.05), attract
+    sunset 45.60, midnight 49.29, noon 49.68, storm 45.11 (all -0.04 to
+    -0.07).
+  - `wasm_columns_per_update` 36 (the bench's ~4.5 updates per pass);
+    `slice_us` stays 36000 (4 ms under the gate).
+  - `docs/preview_m4_freeze.gif` (5 s attract, freeze, first passes, then
+    a time lapse to 256 passes), `docs/m4_freeze_strip.png`. Tagged
+    `snouty-reflections/m4`.
