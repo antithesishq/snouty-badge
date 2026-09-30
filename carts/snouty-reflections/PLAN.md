@@ -1228,7 +1228,7 @@ it at that `t` (bob heights, drifted sun `L`, logo spin, wave phases,
 per-preset sky, sun colour, shore tint, ripple scale), with every preset's
 full content regardless of variant: sunset chrome + glass, midnight
 chrome + matte, noon chrome + matte + small chrome, storm chrome; rings
-on in every preset; stripes as M3; the logo everywhere. `fade = 1`.
+on in every preset; no stripes (dropped in M3.1); the logo everywhere. `fade = 1`.
 
 **Random numbers.** Pixel `(x, y)`, pass `n` (0-based, per column),
 dimension `d`:

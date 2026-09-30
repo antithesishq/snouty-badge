@@ -183,6 +183,9 @@ function checkSet() {
 function reference(v, n, jobs, accum = false) {
     const argv = [REFERENCE, "--pt", "--passes", String(n), "--view", viewArg(v)];
     if (accum) argv.push("--accum");
+    // Scene time is t / fps: the variant's rate must reach the reference.
+    const fps = { full15: 15, half30: 30 }[variant];
+    if (fps) argv.push("--fps", String(fps));
     if (jobs) argv.push("--jobs", String(jobs));
     const r = spawnSync("python3", argv, { stdio: ["ignore", "pipe", "inherit"], encoding: "utf8" });
     if (r.error || r.status !== 0) { console.error(`check_pt: python3 ${argv.join(" ")} failed${r.error ? `: ${r.error.message}` : ` (exit ${r.status})`}`); process.exit(1); }
