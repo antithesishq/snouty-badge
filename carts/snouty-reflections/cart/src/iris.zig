@@ -39,23 +39,28 @@ pub const Frame = struct {
     /// 2 dot(n, L): dot(reflect(d, N), L) = dot(d, L) - dot(d, n) * nl2 for
     /// either sign of N.
     nl2: f32,
+    /// The side colour, faded.
+    side_col: Vec3,
 };
 
-/// phi = (6 frame mod orbit_frames) / orbit_frames turns, from the camera's
-/// orbit sin/cos table (the same angles, rounded once from f64).
-pub fn at_frame(frame: u32) Frame {
+/// phi = (6 t mod orbit_frames) / orbit_frames turns (t the scene time in
+/// frames), from the camera's orbit sin/cos table (the same angles, rounded
+/// once from f64). `sf` gives the sun and the fade.
+pub fn at_frame(t: u32, sf: *const scene.Frame, fade: f32) Frame {
     const nf = camera.orbit_frames;
-    const sc = camera.orbit_sincos[(spin_turns * (frame % nf)) % nf];
+    const sc = camera.orbit_sincos[(spin_turns * (t % nf)) % nf];
     const s = sc[0];
     const c = sc[1];
     const n = vec3(-s, 0.0, -c);
-    const nl = math.dot(n, scene.sun_dir);
+    const nl = math.dot(n, sf.sun_dir);
+    const f = splat(fade);
     return .{
         .n = n,
         .eu = vec3(-c, 0.0, s) * splat(inv_s),
-        .front_col = col * splat(0.30 + 0.70 * @max(0.0, nl)),
-        .back_col = col * splat(0.30 + 0.70 * @max(0.0, -nl)),
+        .front_col = col * splat(0.30 + 0.70 * @max(0.0, nl)) * f,
+        .back_col = col * splat(0.30 + 0.70 * @max(0.0, -nl)) * f,
         .nl2 = 2.0 * nl,
+        .side_col = side_col * f,
     };
 }
 
@@ -196,7 +201,7 @@ inline fn mask_fast(u: f32, v: f32) bool {
 /// sample where t0 is the slab entry is on a face (lambert and highlight),
 /// any other on the side (flat). Not inlined: only rays whose chord is not
 /// empty get here.
-pub fn hit(oc: Vec3, d: Vec3, t_min: f32, t_max: f32, fr: *const Frame) ?Vec3 {
+pub fn hit(oc: Vec3, d: Vec3, t_min: f32, t_max: f32, fr: *const Frame, sf: *const scene.Frame) ?Vec3 {
     const h = half_thickness;
     const wo = math.dot(oc, fr.n);
     const wd = math.dot(d, fr.n);
@@ -223,12 +228,12 @@ pub fn hit(oc: Vec3, d: Vec3, t_min: f32, t_max: f32, fr: *const Frame) ?Vec3 {
         const t = t0 + dt * frac;
         if (mask_fast(uo + ud * t, vo + vd * t)) {
             if (i == 0 and ta >= t_min) {
-                var spec = @max(0.0, math.dot(d, scene.sun_dir) - wd * fr.nl2);
+                var spec = @max(0.0, math.dot(d, sf.sun_dir) - wd * fr.nl2);
                 inline for (0..5) |_| spec *= spec; // ^32
                 const lit = if (wd < 0.0) fr.front_col else fr.back_col;
-                return lit + scene.sun_col * splat(0.6 * spec);
+                return lit + sf.sun_col * splat(0.6 * spec);
             }
-            return side_col;
+            return fr.side_col;
         }
     }
     return null;

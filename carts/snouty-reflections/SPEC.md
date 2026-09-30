@@ -60,7 +60,7 @@ before audio was dropped (section 8).
 | Input          | Attract (default)                 | Free camera                          | Frozen (section 5b)                          |
 |----------------|-----------------------------------|--------------------------------------|----------------------------------------------|
 | Left / Right   | Enter free camera; orbit          | Orbit around the spheres             | Orbit the frozen view; restarts accumulation |
-| Up / Down      | Enter free camera; raise / lower  | Camera height (clamped above water)  | Height; restarts accumulation                |
+| Up / Down      | Enter free camera; raise / lower  | Camera height 1.0 to 1.8 m           | Height; restarts accumulation                |
 | A              | Freeze                            | Freeze                               | Unfreeze: time resumes where it stopped      |
 | B              | Cycle dither mode (section 5.5)   | Cycle dither mode                    | Cycle dither mode (accumulation kept)        |
 | Select         | Next scene preset (section 6)     | Next scene preset                    | Next preset; restarts accumulation           |
@@ -530,3 +530,9 @@ Question 4 (music) is answered by section 8: no audio.
   sounds bad); A becomes freeze-frame progressive path tracing (section
   5b, M4), presets move to Select; M3 next, then M4, then M5 polish. The
   voxel flyover became its own idea note, `carts/snouty-flyover/SPEC.md`.
+- 2026-09-30: M3 on main (tag `snouty-reflections/m3`): four presets on
+  Select with attract cycling and fades, free camera (orbit, height 1.0 to
+  1.8 m), A freezes time, bobbing spheres, sun drift, chrome stripes, four
+  dither modes. cut20 worst frames: sunset 46.36, storm 45.45 ms; midnight
+  50.30 and noon 50.62 (accepted). Rings, noon's shadows and third sphere
+  are off in the real-time view and return in M4's freeze frame. Next: M4.
