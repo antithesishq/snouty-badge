@@ -390,18 +390,26 @@ stay true: no map data in the binary (the `.rodata` check in
 
 ## 17. Open questions for Adrian
 
+Adrian, 2026-09-30: none of these block M0, so all six are deferred and
+M0 runs on the defaults given after each question.
+
 1. Title: "Memory Lane" (flying down memory lane), "Core Dump",
    "Dataflight", or something else? The directory stays `snouty-flyover`.
+   Default: "Memory Lane", one string on the M1 title card.
 2. District order and count for v1: the six above plus the Bus, or cut
-   to four for M1+M2 and add later?
+   to four for M1+M2 and add later? Default: all six; M1 builds Bus,
+   Heap and Sort either way.
 3. Snouty as a banking sprite at the bottom (Comanche cockpit style), or
-   no avatar at all and a pure first-person flight?
+   no avatar at all and a pure first-person flight? Default: placeholder
+   sprite in M1, one constant removes it.
 4. B verbs as the only interaction, or add a light goal (fly through
-   the free list's rings, catch packets) later?
+   the free list's rings, catch packets) later? Default: verbs only;
+   revisit at M3.
 5. Iris as the sun: yes, or keep the Iris only in the lake as a
-   reflected mark?
+   reflected mark? Default: sun, built in M0 as one knob.
 6. 30 fps locked with 5x headroom, or spend the headroom on 60 fps
-   first and cut view distance to fit?
+   first and cut view distance to fit? Default: the M0 bench decides
+   (section 10).
 
 ## Status
 
@@ -423,3 +431,5 @@ stay true: no map data in the binary (the `.rodata` check in
   (rule for the generators, section 5.3); the Hash district is too dense
   up close and needs a wider grid or a taller camera; the white GC wall
   goes grey under fog and needs the emissive half-fog treatment.
+- 2026-09-30: Adrian deferred all section 17 questions; M0 started
+  (scaffold 14c9145, tracks A and B running).

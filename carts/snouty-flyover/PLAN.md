@@ -142,7 +142,9 @@ badge-bench/bench.sh zig-out/firmware/snouty-flyover.elf --script carts/snouty-f
 
 ### M0 status
 
-- (not started)
+- 2026-09-30: started. Scaffold commit 14c9145 (root build entry, knobs,
+  main.zig, stub modules with the fixed interfaces; builds, check-float
+  passes). Tracks A and B running as Opus agents in this worktree.
 
 ## M1 World engine (outline, planned after M0's bench number)
 
