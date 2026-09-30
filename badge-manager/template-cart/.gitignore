@@ -1,0 +1,5 @@
+# Preview frames and scratch output from tools/preview.mjs and make_gif.py.
+/preview/
+/out/
+*.gif
+!docs/*.gif
