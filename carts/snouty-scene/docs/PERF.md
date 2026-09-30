@@ -53,3 +53,4 @@ per part (part frames + 60), `.bss` delta against M0's 28,472.
 |---|---|---|---|---|---|---|
 |  5 | Twister     |  0.75 |  1.53 (t 1) |  1.72 | +3,440 | background column copy (`memcpy`, 47%) and the row span fill in `render` (45%); steady frames 0.70 ms, the worst is a fade frame |
 |  3 | Rotozoomer | 1.34 | 2.13 (t 1) | 2.13 | +4,104 (texture 2 KB + background texel list 2 KB) | `render` 95%: ~9.5 cycles per pixel, full res; worst frames are the fade-in |
+|  4 | Tunnel |  1.59 |  2.38 (t 1) |  2.38 | +69,248 (two 200x168 u8 LUTs 67.2 KB, texel classes 1 KB, depth ramps 1 KB) | `parts.tunnel.render` 96%: 20,480 px x ~11 cycles (angle, depth, row, class, palette loads + store); worst frame is the fade-in, +0.8 ms; init() about 27 ms of start-up |
