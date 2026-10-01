@@ -186,8 +186,7 @@ fn high_read(l: *Lynx, addr: u16, charge: bool) u8 {
         },
         0xFD => if (m & Mapctl.mikey_off == 0) {
             if (charge) l.ticks += mikey_ticks(l.ticks, lo);
-            sync_mikey(l);
-            return l.mikey.read(lo);
+            return mikey_read(l, lo);
         },
         else => {
             if (charge) l.ticks += Ticks.ram;
@@ -313,7 +312,16 @@ pub fn joystick_byte(pad: u16, lefthand: bool) u8 {
     return out;
 }
 
-fn mikey_write(l: *Lynx, lo: u8, v: u8) void {
+/// Out of line (as `mikey_write`): the Mikey catch-up and timer code
+/// would make every Suzy register access in `high_read` and `high_write`
+/// pay their register saves (Hard Drivin' polls SPRSYS and reads the math
+/// unit about 1,500 times a frame).
+noinline fn mikey_read(l: *Lynx, lo: u8) u8 {
+    sync_mikey(l);
+    return l.mikey.read(lo);
+}
+
+noinline fn mikey_write(l: *Lynx, lo: u8, v: u8) void {
     sync_mikey(l);
     l.mikey.write(lo, v);
     switch (lo) {

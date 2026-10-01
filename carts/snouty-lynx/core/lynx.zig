@@ -479,7 +479,9 @@ pub const Lynx = struct {
     }
 
     /// CPUSLEEP written (core/bus.zig): see the file comment.
-    pub fn cpu_sleep(l: *Lynx) void {
+    /// Out of line: Suzy's register writes share `bus.high_write` with
+    /// this rare path, and should not pay its register saves.
+    pub noinline fn cpu_sleep(l: *Lynx) void {
         if (l.mikey.pending() != 0 or l.mikey.suzy_done) return;
         if (l.sprite_left == 0) {
             if (!l.suzy.sprites_pending()) {
@@ -505,6 +507,9 @@ pub const Lynx = struct {
                 l.mikey.suzy_done = true;
                 return;
             }
+            // (The catch-up on entry may already have raised an
+            // interrupt: then the step below and its test come first.)
+            if (l.mikey.steal == 0 and l.mikey.pending() == 0 and l.sleep_through_dma()) return;
             const step = @min(l.sprite_left, l.mikey.next_event -| l.ticks);
             l.ticks += step;
             l.sleep_ticks += step;
@@ -520,6 +525,51 @@ pub const Lynx = struct {
             l.mikey.steal_burst = false;
             if (l.sprite_left != 0 and l.mikey.pending() != 0) return;
         }
+    }
+
+    /// `sprite_sleep`'s steps while the next event is a display burst or
+    /// refresh due before the run ends and before any timer event (most
+    /// of a run: one every 192 or 256 ticks), with the clock and counters
+    /// in locals: sleep to the event, run it, add its steal, catch up to
+    /// the new time. Mikey is caught up, nothing is stolen and no
+    /// interrupt is pending on entry;
+    /// on return the same holds unless the last catch-up left steal for
+    /// `sprite_sleep`'s next step. True when that catch-up ran a timer
+    /// event that woke the CPU (the run is not over: `sprite_sleep`
+    /// returns).
+    inline fn sleep_through_dma(l: *Lynx) bool {
+        const m = &l.mikey;
+        var t = l.ticks;
+        var left = l.sprite_left;
+        var sleep: u32 = 0;
+        var dma: u32 = 0;
+        var woke = false;
+        while (m.steal == 0 and m.dma_next < m.timer_event and m.dma_next - t < left) {
+            const e = m.dma_next;
+            left -= e - t;
+            sleep += e - t;
+            m.now = e;
+            m.dma_event(e);
+            m.next_event = @min(m.timer_event, m.dma_next);
+            const st = m.steal;
+            m.steal = 0;
+            t = e + st;
+            sleep += st;
+            dma += st;
+            m.now = t;
+            if (t >= m.next_event) {
+                const timers = m.timer_event <= t;
+                m.advance_to(t);
+                if (timers and m.pending() != 0) woke = true;
+            }
+            m.steal_burst = false;
+            if (woke) break;
+        }
+        l.ticks = t;
+        l.sprite_left = left;
+        l.sleep_ticks += sleep;
+        l.dma_ticks += dma;
+        return woke;
     }
 
     /// The sprite engine is mid-run (SPRSYS bit 0 reads set).
