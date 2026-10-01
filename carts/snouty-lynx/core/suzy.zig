@@ -857,7 +857,11 @@ const Draw = struct {
         if (replay_rows and d.cache_ok and !hits_source and data == d.c_data and nbytes == d.c_nbytes and
             x_start == d.c_x and dx == d.c_dx and acc0 == d.c_acc and hsiz == d.c_hsiz)
         {
-            for (d.spans[0..d.n_spans]) |sp| _ = d.fill_pixels(vline, cline, sp.a, sp.b, sp.pen_index);
+            if (d.simple) {
+                for (d.spans[0..d.n_spans]) |sp| d.fill_video(vline, sp.a, sp.b, sp.pen_index);
+            } else {
+                for (d.spans[0..d.n_spans]) |sp| _ = d.fill_pixels(vline, cline, sp.a, sp.b, sp.pen_index);
+            }
             return d.c_cost;
         }
         // A copy of the decoder for sprites that write video only (no XOR,
@@ -1005,17 +1009,7 @@ const Draw = struct {
     inline fn fill(d: *Draw, comptime simple: bool, vline: u16, cline: u16, a: u16, b: u16, pen_index: u8, right: bool) void {
         d.spans[d.n_spans] = .{ .a = @intCast(a), .b = @intCast(b), .pen_index = pen_index };
         d.n_spans += 1;
-        if (simple) {
-            // No pen collides, XORs or is tracked (`simple`).
-            const f = d.pen_flags[pen_index];
-            if (f & flag_opaque != 0) {
-                const first = a >> 1;
-                undo.touch_short(vline +% first, ((b - 1) >> 1) - first + 1);
-                set_nibbles(d.ram, vline, a, b, f >> 4);
-                d.pixels += b - a;
-            }
-            return;
-        }
+        if (simple) return d.fill_video(vline, a, b, pen_index);
         const f = d.fill_pixels(vline, cline, a, b, pen_index);
         if (d.track_vid) d.vid.add(a, b, if (f & flag_opaque == 0) vid_read else if (d.xor) vid_xor else vid_write, right);
         if (f & flag_collide != 0) {
@@ -1023,6 +1017,16 @@ const Draw = struct {
         } else if (f & flag_preserve != 0) {
             d.col.add(a, b, col_preserve, right);
         }
+    }
+
+    /// `fill_pixels` for a `simple` sprite (no pen collides or XORs).
+    inline fn fill_video(d: *Draw, vline: u16, a: u16, b: u16, pen_index: u8) void {
+        const f = d.pen_flags[pen_index];
+        if (f & flag_opaque == 0) return;
+        const first = a >> 1;
+        undo.touch_short(vline +% first, ((b - 1) >> 1) - first + 1);
+        set_nibbles(d.ram, vline, a, b, f >> 4);
+        d.pixels += b - a;
     }
 
     /// The RAM side of `fill`; returns the pen's flags.
