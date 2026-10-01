@@ -25,7 +25,7 @@ fn mini_pad(frame: u32) u16 {
 
 const Counter = struct {
     rows: u32 = 0,
-    fn on_line(ctx: *anyopaque, _: u8, _: *const [core.out_w]u8, _: *const [64]u16) void {
+    fn on_line(ctx: *anyopaque, _: u8, _: [*]const u8, _: u16, _: *const [64]u16) void {
         const h: *Counter = @ptrCast(@alignCast(ctx));
         h.rows += 1;
     }
