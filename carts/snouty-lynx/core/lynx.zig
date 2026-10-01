@@ -132,6 +132,9 @@ pub const Lynx = struct {
     /// fraction of a tick (in 1/60).
     frame_end: u64,
     frame_frac: u32,
+    /// `run_cpu`'s bound: below it an instruction needs no Mikey catch-up.
+    /// Any Mikey access zeroes it (bus.sync_mikey).
+    fast_end: u64,
     /// The pad word of the last `step_frame`.
     pad: u16,
     /// Frames stepped since reset.
@@ -181,6 +184,7 @@ pub const Lynx = struct {
         l.ticks = 0;
         l.frame_end = 0;
         l.frame_frac = 0;
+        l.fast_end = 0;
         l.pad = 0;
         l.frame_count = 0;
         l.sleep_ticks = 0;
@@ -239,8 +243,38 @@ pub const Lynx = struct {
             n += 1;
         }
         l.frame_end += n;
-        while (l.ticks < l.frame_end) l.step_one();
+        while (l.ticks < l.frame_end) {
+            if (l.halted or l.sleeping) l.step_one() else l.run_cpu();
+        }
         l.frame_count +%= 1;
+    }
+
+    /// Instructions back to back while nothing but the CPU can happen: the
+    /// same as `step_one` per instruction, with the Mikey catch-up after
+    /// an instruction skipped while it would do nothing. That is while the
+    /// clock stays below `fast_end` (Mikey's next event, or the frame
+    /// end): Mikey's state (interrupts, `steal`, `vblank_count`,
+    /// `next_event`) only changes at its events or through a register
+    /// access, and every access zeroes `fast_end` (bus.sync_mikey), as do
+    /// the ROM traps, so the full catch-up runs after that instruction.
+    /// Mikey's `now` lags the bus clock in between; nothing reads it before
+    /// the next sync.
+    fn run_cpu(l: *Lynx) void {
+        // DMA that fell in the last catch-up's own steal is charged after
+        // the next instruction (`after_step`), as `step_one` does.
+        l.fast_end = if (l.mikey.steal != 0) 0 else @min(l.frame_end, l.mikey.next_event);
+        while (true) {
+            const pc = l.cpu.regs.pc;
+            const irq = l.cpu.takes_irq(l.mikey.irq_line());
+            if (!irq and pc >= bus.rom_base and pc < 0xFFF8 and l.mapctl & bus.Mapctl.rom_off == 0) {
+                l.rom_entry(pc);
+            } else {
+                if (irq) l.irq_count +%= 1;
+                l.cpu.step(l);
+            }
+            if (l.ticks >= l.fast_end) break;
+        }
+        l.after_step();
     }
 
     /// One instruction, interrupt sequence, trap, or stretch of sleep.
@@ -266,13 +300,18 @@ pub const Lynx = struct {
                 l.rom_entry(pc);
             } else {
                 if (irq) l.irq_count +%= 1;
-                const before = l.ticks;
+                // A step always charges bus cycles (at least the opcode
+                // fetch, or the interrupt sequence's cycles).
                 l.cpu.step(l);
-                // A step always charges bus cycles; this keeps a CPU that
-                // charged none (the M1 stub) from hanging the frame loop.
-                if (l.ticks == before) l.ticks += bus.Ticks.fetch;
             }
         }
+        l.after_step();
+    }
+
+    /// After an instruction: Mikey caught up (its events up to now), the
+    /// video DMA and refresh it took charged, the display copied at
+    /// vertical blank.
+    fn after_step(l: *Lynx) void {
         bus.sync_mikey(l);
         if (l.mikey.steal != 0) {
             // Video DMA and refresh held the bus (core/mikey.zig).
@@ -293,6 +332,9 @@ pub const Lynx = struct {
 
     /// PC reached ROM space with the ROM mapped.
     fn rom_entry(l: *Lynx, pc: u16) void {
+        // The traps write Mikey's registers directly: bring its clock up
+        // first (`run_cpu` lets it lag).
+        bus.sync_mikey(l);
         switch (pc) {
             boot.entry_set_cart_block => l.trap_set_cart_block(),
             boot.entry_decrypt_frame => l.trap_decrypt_frame(),

@@ -255,7 +255,10 @@ pub fn vector_byte(addr: u16) u8 {
 }
 
 /// Bring Mikey's clock up to the bus's (timer reads see the exact count).
+/// Also ends `Lynx.run_cpu`'s fast run after the current instruction (the
+/// access may change Mikey's events, interrupts or DMA steal).
 pub inline fn sync_mikey(l: *Lynx) void {
+    l.fast_end = 0;
     l.mikey.advance(l.ticks - l.mikey.now);
 }
 
