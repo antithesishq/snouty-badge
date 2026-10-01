@@ -314,8 +314,32 @@ carts/snouty-genesis/tools/scripts/m2_mini300.json --frames 336`. The
 scrubber's menu updates (`render_still` per step) on Miniplanets:
 `--script carts/snouty-genesis/tools/scripts/m3_scrub.json --frames 540`
 with the same `--romfs` (the drive image's splash has the same 36 updates
-as the wasm's, so the ticks line up). Two
-files with `--fragment 4` give a fragmented one. The picker and help
+as the wasm's, so the ticks line up).
+
+A fragmented drive file (the attendee case: a ROM copied onto a drive
+that already holds other files) is made with a second, non-ROM pad file
+and `--fragment N`, which hands out clusters N at a time round-robin over
+the files. The pad's extension is not scanned (`.DAT`), so the ROM still
+starts without the picker:
+
+```sh
+head -c 524288 /dev/zero > carts/snouty-genesis/out/pad512.dat
+python3 tools/make_romfs.py carts/snouty-genesis/out/romfs_test_frag4.img \
+  carts/snouty-genesis/roms/snouty-test.bin=TEST.GEN \
+  carts/snouty-genesis/out/pad512.dat=PAD.DAT --fragment 4
+python3 tools/make_romfs.py carts/snouty-genesis/out/romfs_mini_frag4.img \
+  carts/snouty-genesis/roms/miniplanets.bin=MINI.GEN \
+  carts/snouty-genesis/out/pad512.dat=PAD.DAT --fragment 4
+```
+
+then the runs above with `--romfs` pointing at the image. `--fragment 4`
+gives 2 KB runs, `--fragment 1` single 512-byte clusters (the worst case).
+The pad must be at least as large as the ROM for the whole file to be
+fragmented: a smaller pad (e.g. 16 KB) fragments only the ROM's first
+2 x pad bytes and the rest is one run. The report line says
+`drive fragmented` (overlay on). Since M4 the 68000 fetches and the VDP
+DMAs straight from each cluster run (`rom.run_at`), so a fragmented file
+should bench within about 1 ms of the contiguous one. The picker and help
 screens can be captured the same way (`--png 10`, `--press DOWN:40-41`,
 `--out DIR`; there is no wasm path to them). The Z80's share: rebuild with
 `tunables.z80_scale = 0` (or `z80_enabled = false`) and compare.
