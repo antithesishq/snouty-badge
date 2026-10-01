@@ -100,7 +100,8 @@ pub fn Cpu(comptime Bus: type) type {
         }
 
         /// One instruction, or the interrupt sequence when `bus.irq_line()`
-        /// and I is clear.
+        /// and I is clear. A copy of the whole switch: a bus with its own
+        /// run loop (`step_inline`) should not also call this.
         pub fn step(self: *Self, bus: *Bus) void {
             self.step_inline(bus);
         }
@@ -514,11 +515,14 @@ pub fn Cpu(comptime Bus: type) type {
 
         /// One instruction after its opcode fetch, then its interrupt poll.
         /// Each opcode is its own case with the operation and addressing
-        /// mode known at compile time (no decoding at run time). Not
-        /// inlined into the run loop: inlining bought ~0.7 ms a frame for
-        /// ~35 KB of .text, and the M3 scrub ring needs that RAM
-        /// (docs/SCRUB.md; the M3 integration measured both).
-        fn exec(self: *Self, bus: *Bus, op: u8) void {
+        /// mode known at compile time (no decoding at run time). Inline:
+        /// the ~30 KB switch must exist once in the program, so a bus
+        /// keeps exactly one caller of `step_inline` (the Lynx: its
+        /// `run_cpu`, out of line, holds the whole run loop with the
+        /// switch in it; `step` is for the host tests). M3 had `exec`
+        /// out of line, a call and a nine-register save per instruction
+        /// (M4 perf pass, PLAN.md).
+        inline fn exec(self: *Self, bus: *Bus, op: u8) void {
             @setEvalBranchQuota(4000);
             switch (op) {
                 inline else => |o| {

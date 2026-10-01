@@ -253,7 +253,7 @@ pub const Lynx = struct {
         if (l.ticks >= rebase_at) l.rebase();
         l.frame_end += n;
         while (l.ticks < l.frame_end) {
-            if (l.halted or l.sleeping) l.step_one() else l.run_cpu();
+            if (l.halted or l.sleeping) l.step_one() else l.run_cpu(false);
         }
         l.frame_count +%= 1;
     }
@@ -289,11 +289,24 @@ pub const Lynx = struct {
     /// access, and every access zeroes `fast_end` (bus.sync_mikey), as do
     /// the ROM traps, so the full catch-up runs after that instruction.
     /// Mikey's `now` lags the bus clock in between; nothing reads it before
-    /// the next sync.
-    fn run_cpu(l: *Lynx) void {
+    /// the next sync. `single`: one instruction (or interrupt sequence or
+    /// trap) and its `after_step`, which is `step_one` awake.
+    ///
+    /// Out of line on purpose, with the CPU's whole opcode switch inlined
+    /// into its loop (`step_inline`): the only copy of the switch in the
+    /// program (~30 KB), and no call or register save per instruction.
+    /// For a build with room to spare (XIP), `noinline` -> `inline` here
+    /// puts the loop into `step_frame` and `step_one` (two copies; the
+    /// call it saves is once per Mikey event, not per instruction).
+    noinline fn run_cpu(l_static: *Lynx, single: bool) void {
+        // The console is a static: hide its address from the optimizer so
+        // the loop keeps one base register instead of rematerialising the
+        // constant after every bus call (~5 KB of .text).
+        var hidden = l_static;
+        const l: *Lynx = @as(*volatile *Lynx, &hidden).*;
         // DMA that fell in the last catch-up's own steal is charged after
         // the next instruction (`after_step`), as `step_one` does.
-        l.fast_end = if (l.mikey.steal != 0) 0 else @min(l.frame_end, l.mikey.next_event);
+        l.fast_end = if (single or l.mikey.steal != 0) 0 else @min(l.frame_end, l.mikey.next_event);
         while (true) {
             const pc = l.cpu.regs.pc;
             const irq = l.cpu.takes_irq(l.mikey.irq_line());
@@ -355,16 +368,10 @@ pub const Lynx = struct {
             l.mikey.steal = 0;
             l.mikey.steal_burst = false;
         } else {
-            const pc = l.cpu.regs.pc;
-            const irq = l.cpu.takes_irq(l.mikey.irq_line());
-            if (!irq and pc >= bus.rom_base and pc < 0xFFF8 and l.mapctl & bus.Mapctl.rom_off == 0) {
-                l.rom_entry(pc);
-            } else {
-                if (irq) l.irq_count +%= 1;
-                // A step always charges bus cycles (at least the opcode
-                // fetch, or the interrupt sequence's cycles).
-                l.cpu.step(l);
-            }
+            // One instruction, interrupt sequence or trap, then
+            // `after_step` (a step always charges bus cycles: at least the
+            // opcode fetch, or the interrupt sequence's).
+            return l.run_cpu(true);
         }
         l.after_step();
     }
