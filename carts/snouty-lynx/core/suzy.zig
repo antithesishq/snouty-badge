@@ -494,7 +494,7 @@ pub const Suzy = struct {
             .xor = kind == 6,
             .deposit = !no_collide and deposit_types & (@as(u8, 1) << kind) != 0,
             .coll_num = s.sprcoll & 0x0F,
-            .track_vid = kind == 6 or s.sprctl0 >> 6 == 0,
+            .track_vid = kind == 6,
         };
         var any: u8 = 0;
         for (0..16) |k| {
@@ -506,6 +506,7 @@ pub const Suzy = struct {
         d.writes_vid = any & flag_opaque != 0;
         d.writes_col = any & flag_collide != 0;
         d.track_col = any & (flag_collide | flag_preserve) != 0;
+        d.simple = !d.xor and !d.track_vid and !d.track_col;
 
         const hflip = s.sprctl0 & 0x20 != 0;
         const vflip = s.sprctl0 & 0x10 != 0;
@@ -626,7 +627,7 @@ inline fn row_ticks(d: *const Draw, rs: RowStats) u32 {
     var t: u32 = c.row_base + c.per_output * @max(rs.pens, rs.outs);
     if (!rs.edge_stop) {
         t += if (bpp == 1) c.row_tail_1bpp else c.row_tail;
-        if (bpp == 1 and d.vid.last_part) t += c.row_tail_partial_1bpp;
+        if (bpp == 1 and rs.last_part) t += c.row_tail_partial_1bpp;
     }
     if (d.literal) {
         if (rs.outs > 0) {
@@ -762,6 +763,9 @@ const RowStats = struct {
     lit_pens: u32 = 0,
     /// The row stopped at the screen edge (else it ran out of data).
     edge_stop: bool = false,
+    /// The last video byte the row reached is only partly covered (the
+    /// 1 bpp row tail).
+    last_part: bool = false,
 };
 
 const vid_write: u8 = 1;
@@ -781,12 +785,16 @@ const Draw = struct {
     xor: bool,
     deposit: bool,
     coll_num: u8,
-    /// The tick model reads the row's video bytes (XOR sprites, and the
-    /// 1 bpp partial-byte tail): track them per span.
+    /// The tick model counts the row's XORed video bytes (XOR sprites):
+    /// track video bytes per span. (The 1 bpp partial-byte tail only
+    /// needs the row's covered extent, `draw_row`.)
     track_vid: bool,
     /// Some pen index writes or reads the collision buffer (collide or
     /// preserve): the tick model counts collision groups per span.
     track_col: bool = false,
+    /// Neither XOR nor `track_vid` nor `track_col`: spans only write
+    /// video (`draw_row`'s simple copy).
+    simple: bool = false,
     /// Some pen index writes the video buffer / the collision buffer: a
     /// row whose line of that buffer holds the source bytes is decoded,
     /// not replayed (`row`).
@@ -852,7 +860,12 @@ const Draw = struct {
             for (d.spans[0..d.n_spans]) |sp| _ = d.fill_pixels(vline, cline, sp.a, sp.b, sp.pen_index);
             return d.c_cost;
         }
-        const cost = d.draw_row(data, nbytes, vline, cline, x_start, dx, acc0, hsiz);
+        // A copy of the decoder for sprites that write video only (no XOR,
+        // nothing for the unit counters): raycast's and Hard Drivin's.
+        const cost = if (d.simple)
+            d.draw_row(true, data, nbytes, vline, cline, x_start, dx, acc0, hsiz)
+        else
+            d.draw_row(false, data, nbytes, vline, cline, x_start, dx, acc0, hsiz);
         d.c_data = data;
         d.c_nbytes = nbytes;
         d.c_x = x_start;
@@ -869,7 +882,7 @@ const Draw = struct {
     /// screen column `x_start` and stepping `dx`; the spans go to `spans`
     /// and the cost (`row_ticks`) is returned. Out of line: the sprite
     /// loop stays small and this keeps its state in registers.
-    inline fn draw_row(d: *Draw, data: u16, nbytes: u8, vline: u16, cline: u16, x_start: i32, dx: i32, acc0: u32, hsiz: u16) u32 {
+    inline fn draw_row(d: *Draw, comptime simple: bool, data: u16, nbytes: u8, vline: u16, cline: u16, x_start: i32, dx: i32, acc0: u32, hsiz: u16) u32 {
         d.n_spans = 0;
         const right = dx > 0;
         // Super clipping: a row starting off screen and drawing away from
@@ -896,6 +909,11 @@ const Draw = struct {
         var acc = acc0;
         const h: u32 = hsiz;
 
+        // The row's covered pixels are contiguous: from the first span's
+        // start edge to the last span's far edge (`first`, `last`: a for
+        // rightward rows, b for leftward ones the other way round).
+        var first: i32 = -1;
+        var last: i32 = -1;
         var lit_left: u32 = 0; // pens still to read in a literal packet
         decode: while (true) {
             var n: u32 = 1;
@@ -953,7 +971,9 @@ const Draw = struct {
             if (b > screen_width) b = screen_width;
             if (a < b) {
                 d.on_screen = true;
-                d.fill(vline, cline, @intCast(a), @intCast(b), @intCast(pen_index), right);
+                d.fill(simple, vline, cline, @intCast(a), @intCast(b), @intCast(pen_index), right);
+                if (first < 0) first = if (right) a else b;
+                last = if (right) b else a;
             }
             if (if (right) x >= screen_width else x < 0) {
                 // Generation stops at the first output past the edge.
@@ -966,14 +986,36 @@ const Draw = struct {
         rs.bits = total - left;
         if (d.track_vid) d.vid.flush();
         if (d.track_col) d.col.flush();
+        if (bpp == 1 and !rs.edge_stop and last >= 0) {
+            if (d.track_vid) {
+                rs.last_part = d.vid.last_part;
+            } else if (right) {
+                // The byte of pixel last - 1, covered from first at most.
+                rs.last_part = last - @max(first, (last - 1) & ~@as(i32, 1)) < 2;
+            } else {
+                // The byte of pixel last, covered up to first at most.
+                rs.last_part = @min(first, (last & ~@as(i32, 1)) + 2) - last < 2;
+            }
+        }
         return row_ticks(d, rs);
     }
 
     /// Pixels a..b-1 of the row with one pen index: video then collision,
     /// recorded for `row`'s replay, and counted for the tick model.
-    inline fn fill(d: *Draw, vline: u16, cline: u16, a: u16, b: u16, pen_index: u8, right: bool) void {
+    inline fn fill(d: *Draw, comptime simple: bool, vline: u16, cline: u16, a: u16, b: u16, pen_index: u8, right: bool) void {
         d.spans[d.n_spans] = .{ .a = @intCast(a), .b = @intCast(b), .pen_index = pen_index };
         d.n_spans += 1;
+        if (simple) {
+            // No pen collides, XORs or is tracked (`simple`).
+            const f = d.pen_flags[pen_index];
+            if (f & flag_opaque != 0) {
+                const first = a >> 1;
+                undo.touch_short(vline +% first, ((b - 1) >> 1) - first + 1);
+                set_nibbles(d.ram, vline, a, b, f >> 4);
+                d.pixels += b - a;
+            }
+            return;
+        }
         const f = d.fill_pixels(vline, cline, a, b, pen_index);
         if (d.track_vid) d.vid.add(a, b, if (f & flag_opaque == 0) vid_read else if (d.xor) vid_xor else vid_write, right);
         if (f & flag_collide != 0) {
@@ -1012,7 +1054,7 @@ fn overlaps(a: u16, la: u16, b: u16, lb: u16) bool {
 }
 
 /// Pixels a..b-1 (a < b) of the line at `base` set to `v` (0..15).
-fn set_nibbles(ram: *[0x10000]u8, base: u16, a: u16, b: u16, v: u8) void {
+inline fn set_nibbles(ram: *[0x10000]u8, base: u16, a: u16, b: u16, v: u8) void {
     var x = a;
     if (x & 1 != 0) {
         const p = base +% (x >> 1);
