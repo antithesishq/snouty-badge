@@ -5,10 +5,10 @@
 //! `Pixel` cache of the 12-bit palette (GREEN, BLUERED), rebuilt when the
 //! palette registers change.
 //!
-//! SPEC.md 6 plans a 256-entry byte -> index pair table; M0 splits the byte
-//! with a shift and a mask instead (same result, no table), and M4 measures
-//! whether the table is worth its 512 bytes. The framebuffer is column-major
-//! (`[160][128]Pixel`): one Lynx row is 160 halfword stores 256 bytes apart.
+//! A 256-entry byte -> pixel pair table (SPEC.md 6; 1 KB) gives both pixels
+//! of a byte in one load. The framebuffer is column-major
+//! (`[160][128]Pixel`): two Lynx rows at a time make each column's pair of
+//! pixels one word store.
 const cart = @import("cart-api");
 const core = @import("core");
 
@@ -48,23 +48,36 @@ fn palette_changed(f: core.Frame) bool {
     return diff != 0;
 }
 
-/// Draw one Lynx frame into rows `top`..`top + 101`.
+/// Lynx byte -> its two pixels (left in the low half), rebuilt with the
+/// palette cache (SPEC.md 6's byte -> pixel pair table).
+var pairs: [256]u32 = @splat(0);
+
+/// Draw one Lynx frame into rows `top`..`top + 101`. The framebuffer is
+/// column-major, so two Lynx rows are converted together: the pixels of
+/// rows y and y + 1 in one column are adjacent, one 32-bit store.
 pub fn show(f: core.Frame) void {
     if (palette_changed(f)) {
         for (&pixels, f.green, f.bluered) |*px, g, br| px.* = .from_color(lynx_color(g, br));
+        for (&pairs, 0..) |*p, b| p.* = @as(u32, pixels[b >> 4].bits) | @as(u32, pixels[b & 0xF].bits) << 16;
         green_seen = f.green.*;
         bluered_seen = f.bluered.*;
         palette_rebuilds +%= 1;
     }
-    const fb: [*]cart.Pixel = @ptrCast(cart.framebuffer);
+    comptime {
+        if (top % 2 != 0 or lynx_h % 2 != 0 or fb_h % 2 != 0) @compileError("row pairs");
+    }
+    const fb: [*]u32 = @ptrCast(@alignCast(cart.framebuffer));
     var y: usize = 0;
-    while (y < lynx_h) : (y += 1) {
-        const src = f.pixels[y * (lynx_w / 2) ..][0 .. lynx_w / 2];
-        var dst = fb + top + y;
-        for (src) |b| {
-            dst[0] = pixels[b >> 4];
-            dst[fb_h] = pixels[b & 0xF];
-            dst += 2 * fb_h;
+    while (y < lynx_h) : (y += 2) {
+        const src0 = f.pixels[y * (lynx_w / 2) ..][0 .. lynx_w / 2];
+        const src1 = f.pixels[(y + 1) * (lynx_w / 2) ..][0 .. lynx_w / 2];
+        var dst = fb + (top + y) / 2;
+        for (src0, src1) |b0, b1| {
+            const p0 = pairs[b0];
+            const p1 = pairs[b1];
+            dst[0] = (p0 & 0xFFFF) | (p1 << 16);
+            dst[fb_h / 2] = (p0 >> 16) | (p1 & 0xFFFF_0000);
+            dst += fb_h;
         }
     }
 }
