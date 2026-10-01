@@ -103,9 +103,11 @@ pub const Display = struct {
 };
 
 pub const Lynx = struct {
-    pub const Cpu = cpu65.Cpu(Lynx);
+    /// The CPU runs on a `bus.Port` (run_cpu's local view of the console).
+    pub const Cpu = cpu65.Cpu(bus.Port);
 
-    // The CPU's bus (core/bus.zig).
+    // The bus accesses on the console itself (core/bus.zig; the tests'
+    // way in, the CPU's is `bus.Port`).
     pub const fetch = bus.fetch;
     pub const read = bus.read;
     pub const dummy = bus.dummy;
@@ -321,6 +323,9 @@ pub const Lynx = struct {
         // (nothing reads the count during a run; a reboot keeps it).
         var count: u32 = 0;
         defer l.cpu.instr_count +%= count;
+        // The clock and the page-mode state in registers for the run
+        // (bus.Port); back in `l` before anything here reads them.
+        var port = bus.Port.of(l);
         while (true) {
             step: {
                 const pc = l.cpu.regs.pc;
@@ -328,20 +333,24 @@ pub const Lynx = struct {
                 if (pc >= rom_lo or @intFromBool(l.cpu.irq_ok) & line_bit != 0) {
                     irq = l.cpu.takes_irq(line);
                     if (!irq and pc >= bus.rom_base and pc < 0xFFF8 and l.mapctl & bus.Mapctl.rom_off == 0) {
+                        port.put();
                         l.rom_entry(pc);
+                        port.get();
                         break :step;
                     }
                     if (irq) l.irq_count +%= 1;
                 }
                 count +%= @intFromBool(!irq);
-                l.cpu.step_decided(l, irq);
+                l.cpu.step_decided(&port, irq);
             }
-            if (l.ticks < l.fast_end) continue;
+            if (port.t < l.fast_end) continue;
+            port.put();
             // Only a display burst or refresh due (no register access in
             // the instruction, no timer event, the frame goes on): its
             // catch-up in line.
             if (l.fast_end == 0 or l.ticks >= l.frame_end or l.mikey.timer_event <= l.ticks) break;
             if (!l.dma_catch_up()) return;
+            port.get();
             l.fast_end = @min(l.frame_end, l.mikey.next_event);
         }
         l.after_step();

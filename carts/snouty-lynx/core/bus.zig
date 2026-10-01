@@ -175,6 +175,84 @@ pub inline fn irq_line(l: *Lynx) bool {
     return l.mikey.irq_line();
 }
 
+/// The CPU's bus inside `Lynx.run_cpu` (`Lynx.Cpu` is `cpu65.Cpu(Port)`):
+/// the same accesses as `fetch`/`read`/`dummy`/`write` above, with the
+/// console's `ticks`, `fetch_cost` and `fetch_ticks` held in the port, a
+/// local of the run loop (registers, not memory), and written back to
+/// the console around every call that may read or change them (the
+/// high-page accesses; `undo.touch`'s `save` touches none of them). The
+/// run loop `put`s them back before anything else of its own reads them.
+pub const Port = struct {
+    l: *Lynx,
+    t: u32,
+    fc: u32,
+    ft: u32,
+
+    /// $CB/$DB are 1-cycle NOPs on the Lynx (core/cpu65.zig).
+    pub const cpu_lynx_nops = true;
+
+    pub inline fn of(l: *Lynx) Port {
+        return .{ .l = l, .t = l.ticks, .fc = l.fetch_cost, .ft = l.fetch_ticks };
+    }
+
+    /// The held values back into the console.
+    pub inline fn put(p: *const Port) void {
+        p.l.ticks = p.t;
+        p.l.fetch_cost = p.fc;
+    }
+
+    /// The console's values again (after a call that may change them).
+    pub inline fn get(p: *Port) void {
+        p.t = p.l.ticks;
+        p.fc = p.l.fetch_cost;
+        p.ft = p.l.fetch_ticks;
+    }
+
+    pub inline fn fetch(p: *Port, addr: u16) u8 {
+        p.t += if (addr & 0xF != 0) p.fc else Ticks.fetch_full;
+        p.fc = p.ft; // the stream is open
+        if (addr < suzy_base) return p.l.ram[addr];
+        p.put();
+        const v = high_read(p.l, addr, false);
+        p.get();
+        return v;
+    }
+
+    pub inline fn read(p: *Port, addr: u16) u8 {
+        p.fc = Ticks.fetch_full; // closes the stream
+        if (addr < suzy_base) {
+            p.t += Ticks.ram;
+            return p.l.ram[addr];
+        }
+        p.put();
+        const v = high_read(p.l, addr, true);
+        p.get();
+        return v;
+    }
+
+    pub inline fn dummy(p: *Port, addr: u16) void {
+        _ = addr;
+        p.t += Ticks.ram;
+    }
+
+    pub inline fn write(p: *Port, addr: u16, v: u8) void {
+        p.fc = Ticks.fetch_full; // closes the stream
+        if (addr < suzy_base) {
+            p.t += Ticks.ram;
+            undo.touch(addr);
+            p.l.ram[addr] = v;
+            return;
+        }
+        p.put();
+        high_write(p.l, addr, v);
+        p.get();
+    }
+
+    pub inline fn irq_line(p: *Port) bool {
+        return p.l.mikey.irq_line();
+    }
+};
+
 /// A read at $FC00-$FFFF. `charge`: false for a fetch (already charged).
 fn high_read(l: *Lynx, addr: u16, charge: bool) u8 {
     const m = l.mapctl;
