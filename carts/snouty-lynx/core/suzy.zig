@@ -26,6 +26,9 @@
 //!   the 64 KB `ram`; it never sees the overlays.
 //! - `pixels_drawn` counts pixels written since reset (the overlay's
 //!   "Suzy pixels per frame"; the frontend differences it).
+//! - `run_sprites` writes RAM directly: before each video span, each
+//!   collision span and the depository byte it tells the scrubber
+//!   (`undo.touch_short` / `undo.touch`, core/undo.zig), never per pixel.
 //!
 //! Register map ($FC00 + addr; Epyx hardware appendix, SPEC.md section 20):
 //! $00-$2F the sprite engine's 16-bit registers, even address = low byte,
@@ -40,6 +43,7 @@
 //! (ignored).
 
 const std = @import("std");
+const undo = @import("undo.zig");
 
 pub const screen_width: i32 = 160;
 pub const screen_height: i32 = 102;
@@ -597,7 +601,9 @@ pub const Suzy = struct {
         if (d.deposit or everon) {
             var v: u8 = if (d.deposit) d.fred else 0;
             if (everon and !d.on_screen) v |= 0x80;
-            ram[s.regs[reg.scbadr] +% s.regs[reg.colloff]] = v;
+            const dep = s.regs[reg.scbadr] +% s.regs[reg.colloff];
+            undo.touch(dep);
+            ram[dep] = v;
         }
         s.pixels_drawn +%= d.pixels;
         return (d.ticks + tick_cost.unit / 2) / tick_cost.unit;
@@ -1002,12 +1008,18 @@ const Draw = struct {
     /// The RAM side of `fill`; returns the pen's flags.
     inline fn fill_pixels(d: *Draw, vline: u16, cline: u16, a: u16, b: u16, pen_index: u8) u8 {
         const f = d.pen_flags[pen_index];
+        // The bytes of pixels a..b-1 (two per byte): one scrubber touch per
+        // span and buffer (core/undo.zig), never per pixel.
+        const first = a >> 1;
+        const n = ((b - 1) >> 1) - first + 1;
         if (f & flag_opaque != 0) {
+            undo.touch_short(vline +% first, n);
             const pen = f >> 4;
             if (d.xor) xor_nibbles(d.ram, vline, a, b, pen) else set_nibbles(d.ram, vline, a, b, pen);
             d.pixels += b - a;
         }
         if (f & flag_collide != 0) {
+            undo.touch_short(cline +% first, n);
             const old = max_set_nibbles(d.ram, cline, a, b, d.coll_num);
             if (d.deposit and old > d.fred) d.fred = old;
         }

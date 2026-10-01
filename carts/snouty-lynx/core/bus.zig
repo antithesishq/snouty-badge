@@ -14,6 +14,8 @@
 //! - `$FFFA-$FFFF` vectors unless MAPCTL bit 3: `boot.vector_*`.
 //! - Writes to ROM and vector space go to the RAM underneath (the boot
 //!   ROM's own clear loop relies on it).
+//! - Every RAM write calls `undo.touch` first (the scrubber's dirty byte,
+//!   core/undo.zig): `write`'s fast path and `high_write`'s RAM tail.
 //!
 //! Ticks (16 MHz, SPEC.md 3 and 20): an opcode or operand fetch takes 4
 //! ticks in page mode, 5 otherwise; any other RAM/ROM/vector or MAPCTL
@@ -54,6 +56,7 @@ const Lynx = lynx_mod.Lynx;
 const cart_mod = @import("cart.zig");
 const boot = @import("boot.zig");
 const mikey_mod = @import("mikey.zig");
+const undo = @import("undo.zig");
 
 pub const suzy_base: u16 = 0xFC00;
 pub const mikey_base: u16 = 0xFD00;
@@ -161,6 +164,7 @@ pub inline fn write(l: *Lynx, addr: u16, v: u8) void {
     l.stream_open = false;
     if (addr < suzy_base) {
         l.ticks += Ticks.ram;
+        undo.touch(addr);
         l.ram[addr] = v;
         return;
     }
@@ -220,7 +224,10 @@ fn high_write(l: *Lynx, addr: u16, v: u8) void {
             return;
         },
     }
+    // RAM: $FFF8, ROM and vector space (the RAM underneath), or an
+    // overlay switched off.
     l.ticks += Ticks.ram;
+    undo.touch(addr);
     l.ram[addr] = v;
 }
 
