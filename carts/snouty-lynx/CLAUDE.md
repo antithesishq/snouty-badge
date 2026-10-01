@@ -31,14 +31,18 @@ CLAUDE.md and docs have the longer explanations.
   the public write-ups (docs/BOOT.md). PLAN.md "Frozen for M1" is the
   interface contract between these files.
 - `cart/src/` — the badge frontend. `main.zig` exports `start()`/`update()`,
-  the wasm shims and exports, the splash -> running state machine, the
-  status strip and the no-ROM help. `frontend/`: `video` (Lynx frame ->
+  the wasm shims and exports, the state machine (splash -> running | pick | help, running <-> menu,
+  menu -> pick -> running), the status strip and the no-ROM help. `frontend/`: `video` (Lynx frame ->
   rows 0..101, 16-entry palette cache), `input` (pad word, Select tap =
   Option 1, Select hold = menu), `drive` (drive scan and Cart from a drive
   file; a module of its own, host-tested), `romsrc` (drive or embedded
   ROM, the report line), `splash` (Iris mark, `lib/iris_mark.zig`),
   `debug` (step timing, FPS), `text` (Snouty Gear's fast font, verbatim),
-  `menu` (M2 stub). `debug.enabled` is on in M1 (no menu row yet).
+  `menu` (the
+  frozen-frame menu: Resume, Buttons swap, Press Option 2, Restart
+  Pause+Opt1, Debug overlay, Reset, Pick ROM, About; PLAN.md M2), `picker`
+  (the drive file list, restarts into the chosen file). `debug.enabled`
+  is off at boot and a menu row. No sound anywhere.
 - `tests/` — host tests, entry `tests/all.zig` (one `_ = @import` line per
   file): `cpu65_single_step.zig` (SingleStepTests rockwell65c02, data from
   `tools/fetch_test_roms.sh`), `suzy_unit.zig`, `math_unit.zig`,
