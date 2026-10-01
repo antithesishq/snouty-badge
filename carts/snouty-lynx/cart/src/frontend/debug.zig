@@ -28,6 +28,13 @@ pub fn record_core(instr: u32, pixels: u32) void {
     have_core = true;
 }
 
+/// The core's counters jumped (a scrub step swapped an older or newer
+/// state in, or the core rebooted): the next `record_core` only takes the
+/// new base, so the overlay never shows a wrapped difference.
+pub fn core_moved() void {
+    have_core = false;
+}
+
 const window = 60;
 
 var step_samples: [window]u32 = @splat(0);

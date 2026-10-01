@@ -21,9 +21,25 @@
 //!
 //! Keys: Up/Down move (wrapping), A chooses, B or a Select tap (a press that
 //! began inside the menu) resumes. Left/Right or A cycle a setting row
-//! (Buttons, Debug overlay); on the other rows Left/Right do nothing in M2
-//! (M3's time scrubber takes them, and the panel's bottom line,
-//! `scrub_line_y`, is left free for its "Scrub: ..." text).
+//! (Buttons, Debug overlay).
+//!
+//! Time scrubber (SPEC.md 5 and 10, frontend/rewind.zig), Genesis's UI. On
+//! every row that is not a setting (Resume, where the menu opens, Press
+//! Option 2, Restart, Reset, Pick ROM, About) Left/Right step time
+//! back/forward one record (30 frames, 0.5 s), repeating 4 times a second
+//! while held; a Left/Right held over from the game does nothing (main.zig
+//! suppresses held buttons on open, and the repeat only starts from a
+//! press). The panel's bottom line (`scrub_line_y`) reads "Scrub: live /
+//! 3.5s" or "Scrub: -1.5 / 3.5s" (position behind live / history held),
+//! dim while there is no history, "Scrub: no memory" when the arena had no
+//! room. Resuming from a scrubbed position plays on from there and drops
+//! the future (main.zig, `rewind.resume_if_parked`). After a scrub step the
+//! panel gives way to that line in a bar at the bottom (`scrub_view`) so
+//! the restored frame, drawn by `rewind.step`, is visible; Left/Right keep
+//! scrubbing, B or a Select tap resume, and Up/Down/A bring the full menu
+//! back. The bar lies inside the panel's rectangle, so the panel covers it
+//! completely when it comes back. Reset and Pick ROM forget the history
+//! (`rewind.reset` after the boot, here and in main.zig's `boot`).
 //!
 //! The Lynx's Option 2 and its restart chord have no badge button (SPEC.md
 //! 5, 18.4): their rows resume the game with `hold_pad` held for
@@ -39,8 +55,9 @@ const debug = @import("debug.zig");
 const input = @import("input.zig");
 const romsrc = @import("romsrc.zig");
 const text = @import("text.zig");
+const rewind = @import("rewind.zig");
 
-pub const version = "0.2.0-m2";
+pub const version = "0.3.0-m3";
 
 /// The title the menu band and the status strip show.
 pub const title = "SNOUTY LYNX";
@@ -80,13 +97,25 @@ var showing_about: bool = false;
 /// A Select press began inside the menu; its release resumes. The release
 /// of the hold that opened the menu does not count.
 var select_armed: bool = false;
+/// After a scrub step the panel would hide the restored frame, so only the
+/// scrub bar is drawn until Up/Down/A.
+var scrub_view: bool = false;
+
+/// Scrub auto-repeat (SPEC.md 5: 4 steps per second while held; one update
+/// is 1/60 s here).
+const repeat_updates = 15;
+/// Direction of the held scrub key, 0 when none.
+var repeat_dir: i2 = 0;
+var repeat_left: u8 = 0;
 
 /// Enter the menu. Called in the update the Select hold threshold is
 /// reached, before anything is drawn; the caller then calls `update` once
 /// in the same update.
 pub fn open() void {
     showing_about = false;
+    scrub_view = false;
     select_armed = false;
+    repeat_dir = 0;
     cursor = .resume_game;
     if (!cart.is_wasm) {
         const n = cart.screen_width * cart.screen_height / 2;
@@ -111,14 +140,18 @@ pub fn update(l: *core.Lynx, e: input.Edge) Result {
 
     if (showing_about) {
         if (e.pressed(.a) or e.pressed(.b) or select_tap) showing_about = false;
+    } else if (scrub_view) {
+        if (e.pressed(.b) or select_tap) return .resume_game;
+        // Up/Down/A bring the full menu back without acting.
+        if (e.pressed(.up) or e.pressed(.down) or e.pressed(.a)) {
+            scrub_view = false;
+            repeat_dir = 0;
+        } else left_right(l, e);
     } else {
         if (e.pressed(.b) or select_tap) return .resume_game;
         if (e.pressed(.up)) move(-1);
         if (e.pressed(.down)) move(1);
-        if (is_setting(cursor)) {
-            if (e.pressed(.left)) adjust();
-            if (e.pressed(.right)) adjust();
-        }
+        left_right(l, e);
         if (e.pressed(.a)) {
             switch (cursor) {
                 .resume_game => return .resume_game,
@@ -128,7 +161,10 @@ pub fn update(l: *core.Lynx, e: input.Edge) Result {
                     // Power on again: the boot (core/boot.zig) reruns.
                     // `init_in_place` with the same cart is `reset`, and
                     // the out-of-line call shares main.zig's copy.
+                    // The boot writes RAM past the undo hooks: forget the
+                    // history.
                     @call(.never_inline, core.Lynx.init_in_place, .{ l, l.cart });
+                    rewind.reset(l);
                     return .resume_game;
                 },
                 .pick_rom => return .pick_rom,
@@ -162,6 +198,41 @@ fn is_setting(item: Item) bool {
     return item == .buttons or item == .debug;
 }
 
+/// Time scrubber step (SPEC.md section 10): Left = back 0.5 s, Right =
+/// forward. Swaps the record into `l` and redraws the frozen frame.
+fn on_scrub(l: *core.Lynx, dir: i2) void {
+    if (rewind.step(l, dir)) scrub_view = true;
+}
+
+/// Left/Right: flip a setting on a setting row, else scrub with
+/// auto-repeat. The repeat starts only from a press in the menu. Out of
+/// line: called from both the panel and the scrub view.
+noinline fn left_right(l: *core.Lynx, e: input.Edge) void {
+    const d: i2 = if (e.pressed(.left)) -1 else if (e.pressed(.right)) 1 else 0;
+    if (d != 0) {
+        repeat_dir = 0;
+        if (is_setting(cursor)) {
+            adjust();
+        } else {
+            on_scrub(l, d);
+            repeat_dir = d;
+            repeat_left = repeat_updates;
+        }
+        return;
+    }
+    if (repeat_dir == 0) return;
+    const still = if (repeat_dir < 0) e.held(.left) else e.held(.right);
+    if (!still or is_setting(cursor)) {
+        repeat_dir = 0;
+        return;
+    }
+    repeat_left -= 1;
+    if (repeat_left == 0) {
+        on_scrub(l, repeat_dir);
+        repeat_left = repeat_updates;
+    }
+}
+
 /// Both settings have two values, so Left, Right and A all flip them.
 fn adjust() void {
     switch (cursor) {
@@ -182,9 +253,14 @@ const panel_h = cart.screen_height - panel_y;
 const row_h = 9;
 const text_x = panel_x + 4;
 const first_row_y = panel_y + 2;
-/// The panel's bottom line (y 110): "B: back" on About; M3's scrub line on
+/// The panel's bottom line (y 110): "B: back" on About, "Scrub: ..." on
 /// the rows. Fixed below the last row even when Pick ROM is hidden.
 pub const scrub_line_y = first_row_y + item_count * row_h;
+/// The scrub bar shown after a step (`scrub_view`): the panel's bottom
+/// strip (y 118..127, over the status strip's last line), so the panel
+/// hides it entirely when it comes back.
+const bar_h = 10;
+const bar_y = panel_y + panel_h - bar_h;
 /// About lines above the bottom line.
 const about_lines = item_count;
 
@@ -233,6 +309,14 @@ fn centered(s: []const u8, y: i32, color: cart.DisplayColor) void {
 fn draw(l: *const core.Lynx) void {
     var buf: [24]u8 = undefined;
 
+    if (scrub_view) {
+        // Only the bar: the rest is the restored frame and strip, redrawn
+        // in full by every scrub step (frontend/rewind.zig `show`).
+        cart.rect(.{ .x = panel_x, .y = bar_y, .width = panel_w, .height = bar_h, .fill_color = band_color, .stroke_color = frame_color });
+        centered(scrub_text(&buf), bar_y + 1, title_color);
+        return;
+    }
+
     // Title band: SPEC.md 12.
     cart.rect(.{ .x = 0, .y = 0, .width = cart.screen_width, .height = band_h, .fill_color = band_color });
     centered(title, 1, title_color);
@@ -259,6 +343,56 @@ fn draw(l: *const core.Lynx) void {
         }
         y += row_h;
     }
+    const live = rewind.capacity_slots() != 0 and rewind.history_frames() != 0;
+    text.draw(scrub_text(&buf), text_x, scrub_line_y, if (live) row_color else dim_color, panel_color);
+}
+
+/// The scrub line for the current position, or "Scrub: no memory" when
+/// the scrubber found no room (frontend/rewind.zig `init`).
+fn scrub_text(buf: *[24]u8) []const u8 {
+    if (rewind.capacity_slots() == 0) return no_memory;
+    return scrub_label(buf, rewind.depth_frames(), rewind.history_frames());
+}
+
+const no_memory = "Scrub: no memory";
+
+/// "Scrub: live / 3.5s" or "Scrub: -1.5 / 3.5s"; from 10 s on whole
+/// seconds ("Scrub: -12 / 32s"), so it stays within 18 characters (the
+/// panel's width) for any history. Genesis's (Gear's).
+pub noinline fn scrub_label(buf: *[24]u8, depth: u32, history: u32) []const u8 {
+    var i: usize = 0;
+    i += put(buf[i..], "Scrub: ");
+    if (depth == 0) {
+        i += put(buf[i..], "live");
+    } else {
+        i += put(buf[i..], "-");
+        i += put_secs(buf[i..], depth);
+    }
+    i += put(buf[i..], " / ");
+    i += put_secs(buf[i..], history);
+    i += put(buf[i..], "s");
+    return buf[0..i];
+}
+
+fn put(dst: []u8, s: []const u8) usize {
+    @memcpy(dst[0..s.len], s);
+    return s.len;
+}
+
+/// Lynx frames (60 Hz) as seconds: "3.5" (rounded to tenths) below 10 s,
+/// else whole seconds "32" (capped at 99).
+fn put_secs(dst: []u8, frames: u32) usize {
+    const tenths = (frames + 3) / 6;
+    if (tenths < 100) {
+        dst[0] = '0' + @as(u8, @intCast(tenths / 10));
+        dst[1] = '.';
+        dst[2] = '0' + @as(u8, @intCast(tenths % 10));
+        return 3;
+    }
+    const secs = @min(tenths / 10, 99);
+    dst[0] = '0' + @as(u8, @intCast(secs / 10));
+    dst[1] = '0' + @as(u8, @intCast(secs % 10));
+    return 2;
 }
 
 /// The core's boot error as text, null when it booted.
@@ -406,10 +540,21 @@ comptime {
     check_width("Boot: BadCheckByte", panel_cols);
     check_width("EEPROM: not saved", panel_cols);
     check_width(back_hint, panel_cols);
+    check_width(no_memory, panel_cols);
+    check_width("Scrub: -9.9 / 9.9s", panel_cols);
+    check_width("Scrub: live / 9.9s", panel_cols);
+    check_width("Scrub: -99 / 99s", panel_cols);
+    // The last row's cursor bar ends at scrub_line_y - 2.
+    if (bar_y + 1 < scrub_line_y) @compileError("scrub bar overlaps the rows");
+    if (bar_y + bar_h > panel_y + panel_h) @compileError("scrub bar outside the panel");
 }
 
 comptime {
     var buf: [24]u8 = undefined;
     if (!std.mem.eql(u8, fit(&buf, "RAYCAST.LNX", 18), "RAYCAST.LNX")) @compileError("fit short");
     if (!std.mem.eql(u8, fit(&buf, "Hard Drivin' (USA, Europe).lnx", 18), "Hard Drivin' (USA~")) @compileError("fit long");
+    if (!std.mem.eql(u8, scrub_label(&buf, 0, 210), "Scrub: live / 3.5s")) @compileError("scrub_label live");
+    if (!std.mem.eql(u8, scrub_label(&buf, 90, 239), "Scrub: -1.5 / 4.0s")) @compileError("scrub_label depth");
+    if (!std.mem.eql(u8, scrub_label(&buf, 600, 1890), "Scrub: -10 / 31s")) @compileError("scrub_label long");
+    if (scrub_label(&buf, 594, 594).len > panel_cols) @compileError("scrub_label too wide");
 }

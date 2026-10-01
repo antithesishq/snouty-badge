@@ -1,4 +1,4 @@
-//! Snouty Lynx: Atari Lynx emulator cart (M2: the frontend). The Iris-mark
+//! Snouty Lynx: Atari Lynx emulator cart (M3: the scrubber). The Iris-mark
 //! splash (frontend/splash.zig), then the game: the core steps 1/60 s of
 //! Lynx time per update and its last completed frame goes to rows 0..101,
 //! the 26-row status strip below it (SPEC.md section 6) has the title and
@@ -17,6 +17,13 @@
 //! picker is up. Choosing a file in the picker restarts the core on it
 //! (`romsrc.open`, `Lynx.init_in_place`).
 //!
+//! Time scrubber (M3, SPEC.md section 10, PLAN.md "M3 Scrub"):
+//! frontend/rewind.zig over core/undo.zig keeps an undo record every 30
+//! frames in the RAM the linker leaves free; in the menu Left/Right swap
+//! through them, and playing on from a scrubbed position drops the future.
+//! Every boot (start, a picker choice, the menu's Reset) forgets the
+//! history.
+//!
 //! No sound (the badge speaker is unused in this project) and the
 //! neopixels are never written (docs/NEOPIXELS.md). SPEC.md is the design,
 //! PLAN.md the milestone contract, CLAUDE.md the conventions.
@@ -30,6 +37,8 @@ const text = @import("frontend/text.zig");
 const menu = @import("frontend/menu.zig");
 const splash = @import("frontend/splash.zig");
 const picker = @import("frontend/picker.zig");
+const strip = @import("frontend/strip.zig");
+const rewind = @import("frontend/rewind.zig");
 
 comptime {
     cart.export_start_code();
@@ -55,6 +64,8 @@ pub fn start() void {
     cart.set_vsync_enabled(1000.0 / 60.0);
     cart.set_double_buffer_mode(.no_copy_full_frame);
     text.init();
+    // The arena does not depend on the ROM; false = "Scrub: no memory".
+    _ = rewind.init();
     // The boot (core/boot.zig, no boot ROM) runs inside `init_in_place`:
     // the ROM is only known here, after the drive scan. With several drive
     // files the first playable one boots now and the picker may replace it.
@@ -117,11 +128,13 @@ fn help_frame(t0: u64) void {
     run_frame(t0);
 }
 
-/// (Re)start the core on `c`. One out-of-line call for every site (start,
-/// the picker, the menu's Reset) so the boot code (core/boot.zig, ~2 KB
-/// once inlined) is not copied into each.
+/// (Re)start the core on `c` (start and the picker; the menu's Reset makes
+/// the same call) and forget the scrub history: the boot writes RAM past
+/// the undo hooks. The boot is one out-of-line call for every site so the
+/// boot code (core/boot.zig, ~2 KB once inlined) is not copied into each.
 pub fn boot(c: core.Cart) void {
     @call(.never_inline, core.Lynx.init_in_place, .{ &lynx, c });
+    rewind.reset(&lynx);
 }
 
 /// One picker update (drive builds). A choice restarts the core on that
@@ -165,80 +178,18 @@ fn run_frame(t1: u64) void {
         menu.hold_frames_left -= 1;
         pad |= menu.hold_pad;
     }
+    // After a scrub the console is parked on a record boundary: playing on
+    // from there drops the future.
+    rewind.resume_if_parked(&lynx);
     lynx.step_frame(pad);
+    rewind.record_frame(&lynx);
     const t2 = cart.micros_since_boot();
     debug.record(@truncate(t2 -% t1));
     debug.record_core(lynx.instr_count(), lynx.pixels_drawn());
 
     video.show(lynx.frame());
     if (state == .help) draw_help();
-    draw_strip();
-}
-
-const strip_bg: cart.DisplayColor = .rgb(0x101828);
-const strip_ink: cart.DisplayColor = .rgb(0xF0F0E8);
-const strip_accent: cart.DisplayColor = .rgb(0xFFC020);
-const strip_dim: cart.DisplayColor = .rgb(0x98A8C8);
-const strip_warn: cart.DisplayColor = .rgb(0xFF6040);
-const cols = cart.screen_width / 8;
-
-/// Rows 102..127, three 8 px lines: "SNOUTY LYNX" and the ROM name (header
-/// title, else file name); the origin ("drive 128 KB", "embedded 27 KB")
-/// or with the overlay on the step times; then the core's boot error if
-/// any, else with the overlay on instructions and Suzy pixels, else the
-/// detail (the drive CRC and flags, or why the drive was not used).
-fn draw_strip() void {
-    video.fill_rows(video.strip_y, video.strip_h, strip_bg);
-    const y0: i32 = video.strip_y + 1;
-    var buf: [32]u8 = undefined;
-
-    text.draw(menu.title, 0, y0, strip_accent, strip_bg);
-    const name_x = menu.title.len + 1;
-    text.draw(fit(&buf, romsrc.title_name(), cols - name_x), name_x * 8, y0, strip_ink, strip_bg);
-
-    var b2: [32]u8 = undefined;
-    if (debug.enabled) {
-        text.draw(debug.line(&b2), 0, y0 + 8, strip_ink, strip_bg);
-    } else {
-        text.draw(romsrc.origin_line(b2[0..24]), 0, y0 + 8, strip_dim, strip_bg);
-    }
-
-    if (menu.boot_error_text(&lynx)) |s| {
-        var n = debug.put(&buf, "boot error: ");
-        n += debug.put(buf[n..cols], s);
-        text.draw(buf[0..n], 0, y0 + 16, strip_warn, strip_bg);
-    } else if (debug.enabled) {
-        text.draw(debug.line2(&buf), 0, y0 + 16, strip_accent, strip_bg);
-    } else {
-        text.draw(detail_line(&buf), 0, y0 + 16, strip_dim, strip_bg);
-    }
-}
-
-/// "crc 1A2B3C4D frag raw" (drive) or "drive: NoVolume" (embedded with a
-/// reason), cut to the strip's width; empty otherwise.
-fn detail_line(buf: *[32]u8) []const u8 {
-    var n: usize = 0;
-    if (romsrc.origin == .drive) {
-        n += debug.put(buf[n..], "crc ");
-        var hex: [8]u8 = undefined;
-        n += debug.put(buf[n..], romsrc.hex8(&hex, romsrc.crc));
-        if (romsrc.fragmented) n += debug.put(buf[n..], " frag");
-        if (!romsrc.layout.headered) n += debug.put(buf[n..], " raw");
-        if (romsrc.layout.warn_eeprom()) n += debug.put(buf[n..], " no-EEP");
-    } else if (romsrc.fallback) |why| {
-        n += debug.put(buf[n..], "drive: ");
-        n += debug.put(buf[n..], why);
-    }
-    return fit(buf[0..cols], buf[0..@min(n, buf.len)], cols);
-}
-
-/// `s` cut to `n` characters, the last one '~' when cut (`buf` may hold
-/// `s` itself).
-fn fit(buf: []u8, s: []const u8, n: usize) []const u8 {
-    if (s.len <= n) return s;
-    if (buf.ptr != s.ptr) @memcpy(buf[0 .. n - 1], s[0 .. n - 1]);
-    buf[n - 1] = '~';
-    return buf[0..n];
+    strip.draw(&lynx);
 }
 
 /// The drive has a volume but no playable Lynx ROM (Snouty Genesis's M2
@@ -249,15 +200,15 @@ fn draw_help() void {
     const black: cart.DisplayColor = .rgb(0x000000);
     const y0 = 24;
     video.fill_rows(y0 - 3, lines.len * 10 + 16, black);
-    for (lines, 0..) |l, k| text.draw(l, 0, y0 + @as(i32, @intCast(k)) * 10, if (k == 0) strip_accent else strip_ink, black);
+    for (lines, 0..) |l, k| text.draw(l, 0, y0 + @as(i32, @intCast(k)) * 10, if (k == 0) strip.accent else strip.ink, black);
     const found = romsrc.candidates();
     if (found.len == 0) return;
-    var buf: [cols]u8 = undefined;
+    var buf: [strip.cols]u8 = undefined;
     var n: usize = 0;
     n += debug.put(buf[n..], found[0].file_name());
     n += debug.put(buf[n..], ": ");
     n += debug.put(buf[n..], found[0].note());
-    text.draw(buf[0..n], 0, y0 + lines.len * 10 + 2, strip_dim, black);
+    text.draw(buf[0..n], 0, y0 + lines.len * 10 + 2, strip.dim, black);
 }
 
 pub fn read_controls() cart.Controls {
@@ -306,6 +257,12 @@ comptime {
         @export(&debug_menu_opens, .{ .name = "debug_menu_opens" });
         @export(&debug_settings, .{ .name = "debug_settings" });
         @export(&debug_hold_pad, .{ .name = "debug_hold_pad" });
+        @export(&debug_scrub_depth, .{ .name = "debug_scrub_depth" });
+        @export(&debug_scrub_history, .{ .name = "debug_scrub_history" });
+        @export(&debug_scrub_records, .{ .name = "debug_scrub_records" });
+        @export(&debug_scrub_slots, .{ .name = "debug_scrub_slots" });
+        @export(&debug_scrub_capacity, .{ .name = "debug_scrub_capacity" });
+        @export(&debug_scrub_arena, .{ .name = "debug_scrub_arena" });
     }
 }
 
@@ -420,4 +377,31 @@ fn debug_settings() callconv(.c) u32 {
 /// the core for `menu.hold_frames_left` frames.
 fn debug_hold_pad() callconv(.c) u32 {
     return menu.hold_pad;
+}
+
+// ---- Time scrubber (frontend/rewind.zig) ----
+
+/// Frames the console is parked behind live (0 live; 30 per scrub step).
+fn debug_scrub_depth() callconv(.c) u32 {
+    return rewind.depth_frames();
+}
+/// Frames reachable back from live.
+fn debug_scrub_history() callconv(.c) u32 {
+    return rewind.history_frames();
+}
+/// Closed undo records held.
+fn debug_scrub_records() callconv(.c) u32 {
+    return @intCast(rewind.record_count());
+}
+/// 68-byte ring slots in use (closed records and the open one).
+fn debug_scrub_slots() callconv(.c) u32 {
+    return @intCast(rewind.slots_in_use());
+}
+/// Ring slots the arena holds (0: no room, scrubber off).
+fn debug_scrub_capacity() callconv(.c) u32 {
+    return @intCast(rewind.capacity_slots());
+}
+/// Arena bytes found (in wasm `tuning.wasm_arena_bytes`).
+fn debug_scrub_arena() callconv(.c) u32 {
+    return @intCast(rewind.arena_bytes());
 }
