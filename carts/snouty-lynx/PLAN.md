@@ -276,6 +276,39 @@ file comment for the register map. Everything Suzy touches is in `ram`.
 
 ## Status
 
+- 2026-10-01: M1 INTEGRATED. Tracks A (CPU), B (Suzy), C (machine) merged on
+  `lynx/m1`, then two fixers (Suzy vs the lynx-tests carts: math flags and
+  busy timing, register mirrors, flip offsets, a hardware-fitted tick
+  model; machine: page-mode stream rules, DMA/refresh as timed events,
+  one-instruction-late CLI/SEI/PLP, Mikey timer slot timing, interrupted
+  sprite runs) and the perf pass below. Results: SingleStepTests 256/256
+  files (2,560,000 cases); drhelius lynx-tests (MIT) every row PASS on
+  cpu (8), memio (3), page-mode (6), math (8), timers (7), timers2 (10),
+  sdoneack (9), sprites1 (8), sprites2 (8), sprites3 (8), sprites5 (8),
+  sprites4 7 of 8 (DMA EXP W24 code 3: we charge the full video-DMA steal
+  inside a sprite run, hardware hides ~60% of it; M4); refresh-rate shows
+  158/041/104. Golden hashes pinned in tests/golden.zig (raycast at 6
+  checkpoints, each test cart's result screen). `zig build test-lynx`
+  90/90. Local only (never committed): Hard Drivin' boots through its
+  two-trap loader, title, track map, high scores, transmission menu and a
+  drive with the polygon road, cars and dashboard (`out/hd_drive.json`:
+  A at 600 and 800, Up from 900); Blue Lightning boots to its logo,
+  attract (scaled explosion, jets) and the mission-code screen, which
+  reads the d-pad. badge-bench (calibrated, raycast from the fixture
+  drive image, m1_play.json): busy mean 8.44 ms, p95 11.53, worst 12.96,
+  0 of 300 over; Hard Drivin' drive script mean 11.6, p95 14.6, worst
+  20.1 (one spike), 2 of 1300 over (SPEC 8: mean <= 12, worst < 14; the
+  spike is M4's). Sizes (ReleaseFast, drive source, raycast embedded):
+  .text 145,328 B (97 KB before the perf inlining), .data 112, .bss
+  84,168; free arena `__bss_end__` 0x2006d458 .. 0x20078000 = 43,944 B.
+  OPEN for M3: the scrub ring wanted >= 64 KB; levers are ReleaseSmall
+  for the frontend, un-inlining `exec` (~1 ms for ~48 KB), or the XIP
+  cart mode (256 KB flash for code, untested on hardware). Also open:
+  `debug.enabled` is on until M2's menu row; SP before reset; $5C on
+  hardware. Deferred decisions taken by default: Suzy draws on CPUSLEEP
+  (hardware model), the display is copied at vblank, no sound (project
+  decision), Option 2 only in the M2 menu. Docs: docs/CPU.md, docs/SUZY.md,
+  docs/RUNNING.md (run-lynx), docs/m1_raycast.gif. Tag `snouty-lynx/m1`.
 - 2026-10-01: M1 perf pass on `lynx/m1-perf` (host-side speed only: same
   hashes, tick counts, IRQs, pixels and sleep ticks at every 25th update
   of every lynx-tests cart, raycast every 10th, Hard Drivin' every 50th

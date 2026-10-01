@@ -44,26 +44,32 @@ const raycast_checkpoints = [_]u32{ 40, 60, 100, 160, 220, 299 };
 const short_checkpoints = [_]u32{299};
 const long_checkpoints = [_]u32{449};
 
+/// Reviewed 2026-10-01 (M1 integration): the splash skipped at 40, textured
+/// walls at 60/100, the cyan face sprite at 160, turned at 220 and 299.
+const raycast_hashes = [_]u64{ 0xD93F4954963F0B8E, 0xB6906AFCC0ED0BB2, 0xB6906AFCC0ED0BB2, 0x0C3234C137852C37, 0x29AD2D8A1D68CA31, 0xDA90F351DAF97040 };
+
 const cases = [_]Case{
-    .{ .name = "raycast", .rom = "roms/raycast.lnx", .script = "tools/scripts/m1_play.json", .updates = 300, .checkpoints = &raycast_checkpoints, .hashes = &.{} },
-    lynx_test("cpu", false),
-    lynx_test("memio", false),
-    lynx_test("page-mode", false),
-    lynx_test("math", false),
-    lynx_test("timers", false),
-    lynx_test("timers2", false),
-    lynx_test("sprites1", true),
-    lynx_test("sprites2", true),
-    lynx_test("sprites3", true),
-    lynx_test("sprites4", true),
-    lynx_test("sprites5", true),
-    lynx_test("sdoneack", false),
-    lynx_test("refresh-rate", false),
+    .{ .name = "raycast", .rom = "roms/raycast.lnx", .script = "tools/scripts/m1_play.json", .updates = 300, .checkpoints = &raycast_checkpoints, .hashes = &raycast_hashes },
+    lynx_test("cpu", false, 0xDC1EBB73A036794B),
+    lynx_test("memio", false, 0x30B48D4732846926),
+    lynx_test("page-mode", false, 0x24C85B7AB030EE00),
+    lynx_test("math", false, 0xE82C94EAFE5F4C4B),
+    lynx_test("timers", false, 0x192ADDEB04EA9C99),
+    lynx_test("timers2", false, 0x52146A8577186BC8),
+    lynx_test("sprites1", true, 0x07C1F6B3882205D7),
+    lynx_test("sprites2", true, 0xEF1A2DB317A8AFE6),
+    lynx_test("sprites3", true, 0x8C8B982E26744612),
+    lynx_test("sprites4", true, 0x80A5C72314739C23),
+    lynx_test("sprites5", true, 0x5CA6BFDBB9972A6B),
+    lynx_test("sdoneack", false, 0xA2822F2D55562AB1),
+    lynx_test("refresh-rate", false, 0xCC8D35132DF73857),
 };
 
-fn lynx_test(comptime name: []const u8, long: bool) Case {
+/// `hash`: the result screen reviewed 2026-10-01 (every row PASS except
+/// sprites4 DMA EXP W24, code 3: PLAN.md M1 integration).
+fn lynx_test(comptime name: []const u8, long: bool, comptime hash: u64) Case {
     const cp: []const u32 = if (long) &long_checkpoints else &short_checkpoints;
-    return .{ .name = name, .rom = "tests/roms/lynx-tests/" ++ name ++ ".lnx", .script = null, .updates = cp[cp.len - 1] + 1, .checkpoints = cp, .hashes = &.{} };
+    return .{ .name = name, .rom = "tests/roms/lynx-tests/" ++ name ++ ".lnx", .script = null, .updates = cp[cp.len - 1] + 1, .checkpoints = cp, .hashes = &.{hash} };
 }
 
 var lynx: core.Lynx = undefined;
