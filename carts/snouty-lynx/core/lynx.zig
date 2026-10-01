@@ -313,11 +313,14 @@ pub const Lynx = struct {
         // that instruction (`sync_mikey`); the DMA catch-up below changes
         // no interrupt bit.
         const line = l.mikey.irq_line();
-        const line_bit: u8 = @intFromBool(line);
-        // PCs from here on may be in the mapped boot ROM (a MAPCTL write
-        // ends the run: `bus.set_mapctl`); $FFFF only takes the precise
-        // test below.
-        const rom_lo: u16 = if (l.mapctl & bus.Mapctl.rom_off == 0) bus.rom_base else 0xFFFF;
+        // PCs from here on take the precise test below: those that may be
+        // in the mapped boot ROM (a MAPCTL write ends the run:
+        // `bus.set_mapctl`; $FFFF only takes the test), or every PC while
+        // the line is high (an interrupt is due whenever I is clear).
+        var slow_pc_v: u16 = if (line) 0 else if (l.mapctl & bus.Mapctl.rom_off == 0) bus.rom_base else 0xFFFF;
+        // (Opaque to the optimizer, which would otherwise split the one
+        // compare per instruction back into two tests.)
+        const slow_pc = @as(*volatile u16, &slow_pc_v).*;
         l.cpu.normalize_p();
         // Instructions of this run, added to `cpu.instr_count` at its end
         // (nothing reads the count during a run; a reboot keeps it).
@@ -330,7 +333,7 @@ pub const Lynx = struct {
             step: {
                 const pc = l.cpu.regs.pc;
                 var irq = false;
-                if (pc >= rom_lo or @intFromBool(l.cpu.irq_ok) & line_bit != 0) {
+                if (pc >= slow_pc) {
                     irq = l.cpu.takes_irq(line);
                     if (!irq and pc >= bus.rom_base and pc < 0xFFF8 and l.mapctl & bus.Mapctl.rom_off == 0) {
                         port.put();
