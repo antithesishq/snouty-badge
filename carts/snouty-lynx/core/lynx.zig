@@ -184,7 +184,9 @@ pub const Lynx = struct {
         l.reset();
     }
 
-    /// Power on: clocks and diagnostics to zero, then the boot.
+    /// Power on: clocks and diagnostics to zero, then the boot. RAM is
+    /// rewritten past the scrubber's hooks: the frontend calls
+    /// `undo.reset` after this (and after `init_in_place`).
     pub fn reset(l: *Lynx) void {
         l.ticks = 0;
         l.tick_base = 0;
@@ -399,6 +401,8 @@ pub const Lynx = struct {
             boot.entry_decrypt_frame => l.trap_decrypt_frame(),
             else => {
                 l.rom_resets +%= 1;
+                // The boot clears and rewrites all of RAM past the bus.
+                undo.touch_range(0, 0x10000);
                 l.reboot();
             },
         }
@@ -430,6 +434,10 @@ pub const Lynx = struct {
     /// continue at $0200.
     fn trap_decrypt_frame(l: *Lynx) void {
         var rd: bus.PortReader = .{ .port = &l.port, .cart = &l.cart };
+        // decrypt_frame writes RAM past the bus: its zero-page bytes ($02,
+        // $05, $07) and up to 250 bytes wrapping within the page at $06.
+        undo.touch(boot.zp_count);
+        undo.touch_range(@as(u16, l.ram[boot.zp_dest_hi]) << 8, 0x100);
         const res = boot.decrypt_frame(&rd, &l.ram) catch |e| return l.fail(e);
         for (boot.frame_mikey_writes) |w| l.mikey.write(@truncate(w.addr), w.value);
         const r = &l.cpu.regs;
@@ -507,7 +515,12 @@ pub const Lynx = struct {
 
     /// Copy the frame at the latched DISPADR and the palette into `display`
     /// without stepping (what `on_vblank` does): the picture of a restored
-    /// state while the scrubber is parked (M3). Counts as a display frame.
+    /// state while the scrubber is parked (M3). Changes nothing but
+    /// `display` (not even `display_frames`: a parked state must stay
+    /// equal to the one recorded), so it may be called any number of
+    /// times. A game that draws into the shown buffer after vertical blank
+    /// may differ from what was shown at that moment; the next live
+    /// vertical blank replaces it.
     pub fn refresh_display(l: *Lynx) void {
         const a: u16 = l.mikey.dispadr_latched & 0xFFFC;
         const first = @min(frame_bytes, 0x10000 - @as(usize, a));
@@ -515,7 +528,60 @@ pub const Lynx = struct {
         if (first < frame_bytes) @memcpy(l.display.pixels[first..], l.ram[0 .. frame_bytes - first]);
         l.display.green = l.mikey.green;
         l.display.bluered = l.mikey.bluered;
-        l.display_frames +%= 1;
+    }
+
+    // ---- The scrubber's small state (M3, core/undo.zig) ----
+
+    /// Every console field outside `ram` that is console state: the head
+    /// of every undo record. Excluded (`small_excluded`): `ram` (the
+    /// record's blocks), `cart` (the ROM, read-only: only the port's block
+    /// and counter are state, in `port`), `display` (an output copy the
+    /// game never reads; `refresh_display` rebuilds it) and `idle_sleep`
+    /// (a frontend setting). The diagnostics are in, so a restored state
+    /// equals the saved one field for field. Compare field by field, never
+    /// as bytes (padding is zeroed by `save_small` only so equal states
+    /// give equal record bytes). Nothing in it holds a pointer
+    /// (comptime-checked below), so a record is position-independent.
+    pub const Small = struct {
+        cpu: Cpu,
+        mikey: mikey.Mikey,
+        suzy: suzy.Suzy,
+        port: bus.CartPort,
+        mapctl: u8,
+        fetch_ticks: u8,
+        stream_open: bool,
+        ticks: u32,
+        tick_base: u64,
+        frame_end: u32,
+        frame_frac: u32,
+        fast_end: u32,
+        pad: u16,
+        frame_count: u32,
+        sleeping: bool,
+        sprite_left: u32,
+        halted: bool,
+        boot_error: ?boot.BootError,
+        vblank_seen: u32,
+        sleep_ticks: u64,
+        irq_count: u32,
+        dma_ticks: u64,
+        display_frames: u32,
+        sprite_runs: u32,
+        rom_resets: u32,
+    };
+
+    /// The `Lynx` fields `Small` leaves out on purpose (see `Small`).
+    pub const small_excluded = [_][]const u8{ "ram", "cart", "display", "idle_sleep" };
+
+    pub fn save_small(l: *const Lynx, out: *Small) void {
+        @memset(std.mem.asBytes(out), 0);
+        inline for (@typeInfo(Small).@"struct".field_names) |name| @field(out, name) = @field(l, name);
+    }
+
+    /// Apply a `Small`; `ram` is the caller's. Keeps `cart`, `display` and
+    /// `idle_sleep`.
+    pub fn load_small(l: *Lynx, k: *const Small) void {
+        inline for (@typeInfo(Small).@"struct".field_names) |name| @field(l, name) = @field(k, name);
     }
 
     /// The frame to show (the copy made at the last vertical blank).
@@ -537,6 +603,48 @@ pub const Lynx = struct {
         return l.suzy.pixels_drawn;
     }
 };
+
+// `Lynx.Small` is every `Lynx` field but `Lynx.small_excluded`, with the
+// same types, and holds no pointer: a field added to the console must be
+// classified here (put in `Small`, or excluded on purpose), or this fails.
+comptime {
+    const lf = @typeInfo(Lynx).@"struct".field_names;
+    const sf = @typeInfo(Lynx.Small).@"struct".field_names;
+    for (lf) |name| {
+        var excluded = false;
+        for (Lynx.small_excluded) |x| {
+            if (std.mem.eql(u8, x, name)) excluded = true;
+        }
+        if (excluded) {
+            if (@hasField(Lynx.Small, name)) @compileError("Lynx.Small holds an excluded field: " ++ name);
+        } else if (!@hasField(Lynx.Small, name)) {
+            @compileError("Lynx field not classified for the scrubber (Lynx.Small or small_excluded): " ++ name);
+        }
+    }
+    if (lf.len != sf.len + Lynx.small_excluded.len) @compileError("Lynx.small_excluded names a field Lynx lacks");
+    for (sf) |name| {
+        if (!@hasField(Lynx, name)) @compileError("Lynx.Small field not in Lynx: " ++ name);
+        if (@FieldType(Lynx.Small, name) != @FieldType(Lynx, name)) @compileError("Lynx.Small field type differs: " ++ name);
+    }
+    if (has_pointer(Lynx.Small)) @compileError("Lynx.Small must hold no pointer (records are swapped as bytes)");
+}
+
+/// Does `T` contain a pointer anywhere (struct fields, arrays, optionals)?
+fn has_pointer(comptime T: type) bool {
+    return switch (@typeInfo(T)) {
+        .pointer => true,
+        .@"struct" => blk: {
+            for (@typeInfo(T).@"struct".field_names) |name| {
+                if (has_pointer(@FieldType(T, name))) break :blk true;
+            }
+            break :blk false;
+        },
+        .array => |a| has_pointer(a.child),
+        .optional => |o| has_pointer(o.child),
+        .@"union", .@"opaque", .@"fn" => true,
+        else => false,
+    };
+}
 
 test "lynx: a cart that does not boot halts with a black frame" {
     const S = struct {

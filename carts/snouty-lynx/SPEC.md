@@ -252,20 +252,41 @@ audio (DAC writes through volume) is ignored.
 
 ## 10. Time scrubbing
 
-Snouty Gear section 10's design unchanged: live console whole, keyframes
-every 30 badge frames as undo records (first write to a 64-byte block
-after a keyframe saves its old bytes; 1,024 blocks over 64 KB RAM, a
-128-byte dirty bitmap), plus the chip registers whole per keyframe.
-Suzy's writes go through the same block tracking.
+Snouty Genesis M3's design (docs/SCRUB.md has it as built): the live
+console is the newest keyframe; every 30 badge frames an undo record
+closes. A record is the console's small state (`Lynx.Small`, 584 B = 10
+slots: CPU, Mikey, Suzy, cart port, clocks, diagnostics; not the ROM,
+`display` or `idle_sleep`) plus the old contents of every 64-byte RAM block
+first written in its interval (1,024 blocks over 64 KB, one dirty byte per
+block in `.bss`), in a ring of 68-byte slots in the run-time arena. A step
+swaps one record with the console (Left and Right are the same operation,
+bit-exact, no input log, no replay). Suzy's span writes, the `$FE4A`
+decrypt trap and a boot re-run through ROM space go through the same
+block tracking; the frontend forgets the history at reset.
 
-Double-buffered games rewrite two 8 KB framebuffers every frame, so each
-record carries up to ~16 KB of framebuffer blocks. Two mitigations,
-measured in M3: framebuffer blocks may be excluded from the record and
-re-rendered on restore by replaying from the keyframe (the replay already
-runs for the determinism test), and records are zero-run RLE coded.
-Target: at least 2 s of history with a 256 KB cart.
+Measured in M3 (tests/scrub_sizing.zig): the records are mostly
+framebuffers, because games redraw every buffer every frame. raycast
+triple-buffers (24 KB at $9F00-$FEFF): 405 slots = 27.5 KB per record.
+Hard Drivin' and Blue Lightning double-buffer at $C000-$FFFF: 233-371
+slots per record in play (16-25 KB). History held (closed records beside a
+full open one, the second half of the run):
 
-The ROM is read-only and not part of the console state; keyframes hold
+| Arena (free RAM - 1 KB guard)           | raycast | Hard Drivin' | Blue Lightning |
+|-----------------------------------------|---------|--------------|----------------|
+| ReleaseFast as built, 40,632 B          | 0 s     | 0 s          | 0 s            |
+| ReleaseFast, exec un-inlined, ~88 KB    | 1.0 s   | 1.0 s        | 1.5 s          |
+| ReleaseSmall, 120,296 B                 | 1.5 s   | 2.0 s        | 2.0 s          |
+| XIP, 190,000 B                          | 2.5 s   | 3.5 s        | 4.0 s          |
+| same, 60-frame records: un-inlined      | 2.0 s   | 2.0 s        | 3.0 s          |
+| same, 60-frame records: ReleaseSmall    | 3.0 s   | 3.0 s        | 4.0 s          |
+
+A 60-frame record holds the same buffer blocks as a 30-frame one, so it
+doubles the history per byte at the price of 1 s steps. The 2 s target
+(with the 256 KB cart) is met on raycast only by XIP or by 60-frame
+records; the levers not built are zero-run coding of the slots and
+leaving out the buffers not shown (docs/SCRUB.md).
+
+The ROM is read-only and not part of the console state; records hold
 only the cart port's block number and counter.
 
 ## 11. Boot and ROMs
@@ -318,13 +339,15 @@ RAM after the stack.
 | Embedded fallback ROM (small homebrew) | ~16-32 KB      |
 | Drive file map (fragmented case)       | <= 4 KB        |
 | Console: 64 KB RAM + chip registers    | ~66 KB         |
-| Keyframe ring                          | ~70-90 KB      |
+| Undo ring (M3: 27.5 KB per 0.5 s on raycast) | what is left (40 KB as built) |
 | Frontend state, input log              | ~4 KB          |
 | **Total**                              | **~250-296 KB** |
 
 The top of the range does not fit, so the ring takes what is left after
 the code is measured in M1 (target at least 64 KB), and the fallback ROM
-stays small. ReleaseSmall for the frontend is the first lever if code
+stays small. Measured (M2/M3): ReleaseFast leaves 40,632 B, ReleaseSmall
+120,296 B; a record costs 27.5 KB on raycast and 16-25 KB on the
+double-buffered commercial games (section 10 table). ReleaseSmall for the frontend is the first lever if code
 comes in high.
 
 ### 13.1 Fallback: ROM packed into the cart
