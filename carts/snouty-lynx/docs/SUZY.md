@@ -290,20 +290,40 @@ its tick to `read_at`/`write_at`:
 
 `draw_row` decodes one source line into runs of (pen index, count) and
 turns each into one clipped span; the span writers (`set_nibbles`,
-`xor_nibbles`, `max_set_nibbles`) do two pixels per byte with no per-pixel
-branches. The tick model's counts are per span too (`Units` classifies
-the video bytes and collision groups a span touches in O(1)), and
-`row_ticks` runs once per drawn row; `Units` keeps only the two counts
-the model reads (XORed bytes; light and detecting collision groups), and
-video bytes are only tracked for XOR and 1 bpp sprites. The per-sprite
-pen table folds the palette and the type's opaque/collide rules into one
-byte per pen index. `Draw.row` replays the previous row's spans and cost
-when a source line is drawn taller than one row with unchanged inputs
-(no stretch or tilt step), unless the row's video or collision line holds
-the line's source bytes; the cache is dropped after a row that wrote over
-them (M1 perf pass; the result is a fresh decode's, `suzy_unit` checks a
-sprite drawn over its own data). Hooks for M4: an unscaled-literal fast
-path and per-type specialised row functions.
+`xor_nibbles`, `max_set_nibbles`) do two pixels per byte with no
+per-pixel branches, and the whole bytes of a span 8 bytes or longer go
+out as aligned word stores (`fill_bytes`: Hard Drivin's sky, ground and
+polygon rows are up to 80 bytes). The tick model's counts are per span
+too and kept in `draw_row`'s locals (`RowStats`); `row_ticks` runs once
+per drawn row. `Units` (the video bytes and collision groups a span
+touches, classified in O(1)) is only fed when the cost reads it: video
+bytes for XOR sprites (their XORed bytes), collision groups for sprites
+with a pen that writes or reads collision. The 1 bpp partial-byte row
+tail needs no counter: a row's spans are contiguous, so the last byte's
+coverage follows from the first and last span edges. Sprites with
+neither XOR nor collision (`Draw.simple`: raycast's walls, Hard Drivin's
+dashboard, sky and polygons) take a compile-time copy of the decoder
+whose span fill is only the scrubber touch, the nibble writes and the
+pixel count. The per-sprite pen table folds the palette and the type's
+opaque/collide rules into one byte per pen index. `Draw.row` replays the
+previous row's spans and cost when a source line is drawn taller than
+one row with unchanged inputs (no stretch or tilt step), unless a line of
+a buffer the sprite writes (video or collision) holds the line's source
+bytes; the cache is dropped after a row that wrote over them (M1 perf
+pass; the result is a fresh decode's, `suzy_unit` checks a sprite drawn
+over its own data). `draw_sprite` is out of line (M4: its own register
+allocation instead of inside `bus.high_write`'s CPUSLEEP path).
+
+Measured (M4, calibrated badge-bench): raycast (m2_play, ~640 decoded
+and ~850 replayed rows, ~1,500 spans, ~6,100 pixels a frame) ~400k
+cycles a frame in `draw_sprite`, about 270 cycles a drawn row; Hard
+Drivin's heaviest frame (update 1088: 178 sprites, 41k pixels, ~550
+decoded rows of ~7 spans) ~0.95M. Both are bound by the per-row setup in
+`draw_sprite`'s loop and the per-span decode and clip, which run spilled
+(the loop holds more state than the registers). Tried and slower: a
+two-pass row (decode the spans, then write them, the replay code for
+both), `draw_row` out of line, one decoder copy per drawing direction,
+not recording rows of stretched sprites.
 
 ## Open questions (hardware behaviour not settled by the documents)
 

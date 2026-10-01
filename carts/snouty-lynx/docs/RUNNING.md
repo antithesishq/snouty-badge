@@ -198,7 +198,7 @@ The scrubber (M3), `tools/scripts/m3_scrub.json`, 480 updates: A at 40,
 menu opens at 314), Left held 330-375 (steps back at 330, 345, 360, 375:
 the press and three repeats at 4/s), Right at 390 and 400 (forward
 twice), B at 415 (play on from the parked position), then Up 420-450,
-Right 451-479. With the badge-sized arena (63,568 B) raycast holds one
+Right 451-479. With the badge-sized arena (64,232 B since M4; 63,568 at M3) raycast holds one
 closed 60-frame record plus the open one, so the history is about 1.6 s:
 Left reaches the oldest record on the second step and the later presses
 do nothing, and two Rights are back at live.
@@ -249,7 +249,11 @@ badge. M3 (ReleaseFast with the CPU dispatcher not inlined, the undo
 hooks on): all 480 frames busy mean 9.00 ms, p95 14.57, worst 16.81 (the
 second frame after resuming, the one frame over the 16.7 ms budget);
 game frames 41-284 mean 12.04, worst 16.13; menu frames 0.93; a scrub step
-1.61; the resume frame 16.47. M2 for comparison (exec inlined, no hooks):
+1.61; the resume frame 16.47. M4 (PLAN.md "M4 perf pass", same build
+settings): mean 6.13, p95 9.47, worst 10.73 (frame 418), 0 over; game
+frames 41-284 mean 8.27; the resume frame 10.50 (the game's heavy phase
+of its three-frame cycle, as 418: resuming itself costs next to
+nothing). M2 for comparison (exec inlined, no hooks):
 game frames 0-299 mean 8.42, p95 11.50, worst 12.94 (M1 8.44 / 11.53 /
 12.96); menu frames 334-364 mean 0.92, worst 1.17 (the frozen-frame copy).
 The default build also writes `snouty-lynx-xip.uf2` (docs/SCRUB.md: the

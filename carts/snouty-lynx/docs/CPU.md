@@ -40,9 +40,31 @@ Bus calls per instruction (the tick-model sanity check), averaged over the
 cases: the 24-file subset 2.20 fetch, 1.95 read, 0.50 write; all 256
 opcodes (uniform mix, not a game's) 2.03 fetch, 1.50 read, 0.27 write.
 
+## Speed (M4)
+
+`exec` (the opcode switch, ~30 KB of Thumb) is `inline` and exists once:
+the console's `run_cpu` (core/lynx.zig, out of line) holds the run loop
+with the switch in it, and `step_one` goes through it too, so no call or
+register save is paid per instruction. The CPU's bus there is a
+`bus.Port`, a local of the loop holding the console pointer and copies
+of the clock, the page-mode fetch cost, `fetch_ticks` and the run's end
+bound, written back around every high-page access (the only calls that
+read or change them); the console's own `fetch`/`read`/`write` remain
+for the tests. Per instruction the loop does one compare against a
+per-run PC bound (0 while the IRQ line is high, else the mapped ROM's
+$FE00 or $FFFF), counts the instruction in a register (added to
+`instr_count` at the end of the run) and sets P's bits 4-5 once per run
+(`normalize_p`: no instruction clears them). `step` and `step_inline`
+(the SingleStepTests path) keep the per-instruction forms. Calibrated
+badge-bench, raycast m2_play: ~64 cycles of `run_cpu` per Lynx
+instruction (M3: ~123 with `exec` out of line). For a build with room
+to spare (XIP), `noinline` -> `inline` on `run_cpu` is the one-keyword
+switch, but it would only save the call per Mikey event.
+
 ## P
 
-`Regs.p` always holds bits 4 and 5 set (`step` forces them). The suite
+`Regs.p` always holds bits 4 and 5 set (`step` forces them; the Lynx's
+run loop sets them once per run). The suite
 stores bit 5 set and bit 4 as its generator left it: clear in most files,
 set throughout `0f`, `f1`, `ff`; PLP and RTI results have it clear. The test
 compares `p | 0x30` on both sides. Pushes: PHP and BRK push P | $30, the IRQ

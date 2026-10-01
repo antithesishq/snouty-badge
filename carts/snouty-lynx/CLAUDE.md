@@ -14,9 +14,11 @@ CLAUDE.md and docs have the longer explanations.
 
 - `core/` — the emulator, badge-agnostic: no `cart-api`, no floats, no
   allocator, no clock, no randomness, no romfs. `lynx.zig` is the whole
-  console (`Lynx`: 64 KB RAM, CPU, Mikey, Suzy, the cart port) and also
-  the CPU's bus (`fetch`/`read`/`write`/`dummy`/`irq_line`, bodies in
-  `bus.zig`): `init_in_place`, `reset` (runs `boot.post_boot`),
+  console (`Lynx`: 64 KB RAM, CPU, Mikey, Suzy, the cart port) with its
+  bus accesses (`fetch`/`read`/`write`/`dummy`/`irq_line`, bodies in
+  `bus.zig`; the CPU itself runs on `bus.Port`, `run_cpu`'s local view
+  with the clock in registers, docs/CPU.md "Speed"): `init_in_place`,
+  `reset` (runs `boot.post_boot`),
   `step_frame(pad)` (1/60 s of Lynx time, one instruction at a time, the
   $FE00/$FE4A boot-ROM traps, Suzy drawing on CPUSLEEP, the display copied
   into `display` at vertical blank), `frame()` (that copy plus the palette),

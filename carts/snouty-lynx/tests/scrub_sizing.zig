@@ -35,6 +35,7 @@ const Arena = struct { name: []const u8, bytes: u32 };
 const arenas = [_]Arena{
     .{ .name = "ReleaseFast as built (M2)", .bytes = 40_632 },
     .{ .name = "ReleaseFast, exec un-inlined (M3 as built)", .bytes = 64_592 },
+    .{ .name = "ReleaseFast, switch in the run loop (M4 as built)", .bytes = 65_256 },
     .{ .name = "ReleaseSmall", .bytes = 120_296 },
     .{ .name = "XIP", .bytes = 190_000 },
 };

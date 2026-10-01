@@ -554,6 +554,87 @@ modes build, preview of m3_scrub.json still passes its checks.
 
 ## Status
 
+- 2026-10-01: M4 perf pass on `lynx/m4` (host side; every target met).
+  Emulated behaviour unchanged: the same frame hash, ticks, instructions,
+  IRQs, pixels, sleep ticks and display frames at every update of
+  raycast (m1_play, 600), Hard Drivin' (hd_drive, 1,800), Blue Lightning
+  (900) and all 19 lynx-tests carts (300, sprites1-5 450), compared after
+  every change; `test-lynx` 108/108 (golden hashes, SingleStepTests,
+  determinism untouched); m3_scrub preview passes its four checks and
+  LEDs 0; both cart modes build. Calibrated badge-bench, RAM cart,
+  ReleaseFast, undo hooks on, busy ms:
+
+  | run                         | mean  | p95   | worst          | over |
+  |-----------------------------|-------|-------|----------------|------|
+  | m2_play 400, M3 (2c70bec)   | 9.58  | 14.27 | 16.13 (226)    | 0    |
+  | m2_play 400, M4             | 6.70  | 8.98  | 10.23 (226)    | 0    |
+  | m3_scrub 480, M3            | 9.00  | 14.57 | 16.81 (418)    | 1    |
+  | m3_scrub 480, M4            | 6.13  | 9.45  | 10.73 (418)    | 0    |
+  | Hard Drivin' 1,800, M3      | 14.66 | 16.77 | 24.13 (1088)   | 101  |
+  | Hard Drivin' 1,800, M4      | 8.45  | 10.92 | 15.33 (1088)   | 0    |
+
+  raycast game frames 41-299 mean 11.64 -> 8.10 (target 11), worst
+  16.13 -> 10.23 (target 14); m3_scrub game frames 41-284 12.04 -> 8.27,
+  the resume frame 16.47 -> 10.50, scrub step 1.61, menu 0.93 (both
+  unchanged). The "resume spike" was the game's heavy frame of its
+  three-frame cycle (415 and 418 cost the same before and after):
+  `resume_here` and the first frame's block saves cost next to nothing,
+  so nothing was spread. Hard Drivin' driving 900-1800 mean 15.32 ->
+  8.60; its worst frames are 1088 and 1784 (a 41k-pixel dashboard and
+  sky redraw on top of a full CPU frame) and a ~14.5 ms redraw every ~94
+  frames. Per unit: CPU `run_cpu` cycles per Lynx instruction 123 -> 64
+  (raycast) and 140 -> 71 (Hard Drivin', exec + run loop before);
+  Suzy (all of high_write before; draw_sprite + cpu_sleep + high_write
+  after) 85 -> 74 cycles per pixel on raycast's 2-pixel rows (~270 per
+  drawn row), Hard Drivin's update 1088 1.39M -> ~0.95M. Steps
+  (m2_play's first 200 frames: mean, CPU, Suzy cycles a frame; HD 1088):
+
+  | step (commit)                                        | mean | CPU  | Suzy | HD 1088 |
+  |------------------------------------------------------|------|------|------|---------|
+  | M3 (2c70bec)                                         | 9.30 | 752k | 514k | 24.13   |
+  | switch inside run_cpu, one copy (494526c)            | 8.34 | 610k | 508k |         |
+  | fetch_cost byte, IRQ line + P once per run; Suzy row stats in locals (f6d90be, 5dc496a) | 7.63 | 509k | 502k | |
+  | one compare for ROM/IRQ, u32 fetch fields (99a5aed)  | 7.49 | 479k | 510k |         |
+  | instruction count in a register; word span stores, draw_sprite out of line (835adb4, 6b2db23) | 7.42 | 472k | 506k | 18.20 |
+  | sleep loop, Mikey paths out of line (984537a)        | 7.24 | 472k | 480k | 17.77   |
+  | clock in registers: bus.Port (76c4693)               | 7.07 | 438k | 485k | 17.34   |
+  | video-only decoder copy (2adbd5c)                    | 6.91 | 438k | 462k | 16.44   |
+  | one slow-path compare per instruction (c1228c8)      | 6.78 | 418k | 462k | 15.94   |
+  | run's end bound in a register (9d35776)              | 6.60 | 391k | 462k |         |
+  | short fill for replayed rows (5494fe4)               | 6.54 | 391k | 453k | 15.33*  |
+
+  (* the full 1,800-frame run; the Suzy column moves ~2% with code
+  layout alone.) Hot functions after, m2_play 400
+  (cycles a frame): run_cpu 406k (the CPU loop with the whole opcode
+  switch), draw_sprite 400k, cpu_sleep 34k, video.show 28k, high_write
+  22k, high_read 15k, text.draw 13k, after_step 13k, memcpy 10k (the
+  vblank copy), Mikey run_events 10k + underflow 9k + mikey_write 9k +
+  write 8k + reschedule 6k; Hard Drivin' 1,800: run_cpu 878k,
+  draw_sprite 203k, high_read 49k (SPRSYS polls and math reads, ~1,000
+  a frame), video.show 32k, high_write 29k. Sizes (RAM ELF): .text
+  122,136 -> 121,408 B, .bss 86,328 -> 86,344 (fetch_cost/fetch_ticks
+  are u32 now), `__bss_end__` 0x200683b0 -> 0x20068118: arena 64,592 ->
+  65,256 B (934 -> 944 slots after the guard; `tuning.wasm_arena_bytes`
+  64,232); XIP .text 122,452 -> 121,724, `__bss_end__` 0x2004a2c0 ->
+  0x2004a2d0. `exec` is now `inline` and exists once, inside
+  `Lynx.run_cpu` (out of line, the whole run loop; `step_one` goes
+  through it): the "inlined for XIP" knob is `noinline` -> `inline` on
+  `run_cpu`, which would only save its call per Mikey event (docs/CPU.md
+  "Speed"). Tried and dropped (measured slower or not paying): the
+  console address hidden from the optimizer (601k vs 533k CPU), a local
+  copy of the CPU registers in the loop (+18k), `ram` aligned or moved
+  (field offsets out of immediate range, +13 KB), a two-pass Suzy row,
+  `draw_row` out of line, one decoder per direction, not recording
+  stretched rows, the sleep loop with locals only (the tight DMA-only
+  loop is what paid). ReleaseSmall now leaves 105,528 B of arena but is
+  still over budget (m2_play first 200 frames mean 8.09; Hard Drivin'
+  1088 19.86 ms). Not done: sprites4 DMA EXP W24 (charging part of the
+  video-DMA steal inside sprite runs shifts every sprite run's time the
+  tick model was fitted with, so the other sprite rows would need a
+  refit: not cheap). Left: Suzy's per-row setup and per-span decode
+  still run spilled (~270 cycles a drawn row); the CPU's flags are
+  computed eagerly (lazy N/Z would be the next large CPU step, a cpu65
+  change); hardware numbers are show day's.
 - 2026-10-01: M4 contract written on `lynx/m4`; one Opus agent started.
 - 2026-10-01: M3 INTEGRATED. Tracks A (undo core) and B (scrub frontend)
   merged on `lynx/m3`; 108/108 host tests (13 undo, 2 determinism: raycast

@@ -111,6 +111,10 @@ frames as in 30, so the history per byte doubles; steps become 1 s):
 | ReleaseSmall | 3.0 s | 3.0 s | 4.0 s | 6.0 s | 6.0 s |
 | XIP | 5.0 s | 6.0 s | 7.0 s | 10.0 s | 10.0 s |
 
+M4 (PLAN.md "M4 perf pass"): the opcode switch moved into the run loop
+(`Lynx.run_cpu`; no separate `exec`), .text 728 B smaller: 65,256 B free
+(`__bss_end__` 0x20068118), 944 slots after the guard (M3: 934).
+
 ## Cost on the hot path (badge-bench)
 
 `m2_play.json`, calibrated, game frames 0-299 (busy ms):
