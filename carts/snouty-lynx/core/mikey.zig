@@ -125,15 +125,32 @@ pub const last_visible_line: u8 = 101;
 
 /// Bus time the CPU loses to video DMA and DRAM refresh (lynx-tests
 /// lynx-video-timing.md and lynx-sprite-performance.md, from hardware
-/// captures): ten 8-byte display bursts per visible line of about 28 ticks
-/// of RAM ownership each, plus one prefetch burst at the top line; off the
-/// visible lines (or with video DMA off) a 4-tick refresh every 256 ticks.
-/// Charged in one piece at each line start (Lynx `steal`): the CPU runs
-/// about 11% fewer cycles per frame, as on hardware; the timers are not
-/// affected.
+/// captures), each charged when it happens (an event, like the timers'):
+///
+/// - On a visible line with DISPCTL bit 0, ten 8-byte display bursts of
+///   about 28 ticks of RAM ownership, 192 ticks apart, the first
+///   `dma_first_burst` ticks into the line's 1,920-tick active transfer
+///   (which ends the line); the top line also has a prefetch burst at its
+///   start (the timer 0 borrow). The bursts cover refresh.
+/// - Everywhere else (blank lines, video DMA off, timer 0 stopped), a
+///   4-tick refresh every 256 ticks, on the grid `refresh_phase` mod 256.
+///
+/// Lynx `steal` collects them; core/lynx.zig adds them to the clock after
+/// the instruction during which they fell (the CPU runs about 11% fewer
+/// cycles per visible frame, as on hardware); the timers are not affected.
+/// Sprite runs see them the same way (a sprite run's bus time is extended
+/// by the DMA that falls inside it).
 pub const dma_ticks_per_burst: u32 = 28;
-pub const dma_ticks_per_line: u32 = 10 * dma_ticks_per_burst;
-pub const refresh_divisor: u64 = 64;
+pub const dma_bursts_per_line: u8 = 10;
+pub const dma_ticks_per_line: u32 = dma_bursts_per_line * dma_ticks_per_burst;
+pub const dma_burst_spacing: u64 = 192;
+pub const dma_active_ticks: u64 = 1920;
+/// Ticks from the start of a group's LCD transfer to its DMA burst (8-12
+/// in the captures).
+pub const dma_first_burst: u64 = 10;
+pub const refresh_ticks: u32 = 4;
+pub const refresh_period: u64 = 256;
+pub const refresh_phase: u64 = 0;
 
 /// Count of timer 2 at which DISPADR is latched for the next frame: the
 /// start of the third vertical blank line (timer 2 reloads to 104 at the
@@ -166,14 +183,29 @@ pub const Timer = struct {
     }
 };
 
+/// The first refresh grid point at or after tick `t`.
+fn refresh_at_or_after(t: u64) u64 {
+    const base = (t -| refresh_phase + refresh_period - 1) / refresh_period * refresh_period;
+    return base + refresh_phase;
+}
+
 pub const Mikey = struct {
     timers: [8]Timer = @splat(.{}),
     /// Pending interrupt bits (INTSET/INTRST read), without the UART level.
     intset: u8 = 0,
     /// Mikey's clock (= Lynx.ticks after every sync).
     now: u64 = 0,
+    /// Earliest of `timer_event` and `dma_next`.
+    next_event: u64 = 0,
     /// Earliest `expire` of the timers that are events.
-    next_event: u64 = ticks_never,
+    timer_event: u64 = ticks_never,
+    /// Tick of the next display burst or refresh (see `dma_ticks_per_burst`).
+    dma_next: u64 = 0,
+    /// Display bursts left on the current visible line (0: refresh).
+    dma_bursts_left: u8 = 0,
+    /// Tick at which the current line ends (timer 0's period from its
+    /// start), for the refresh after the last burst.
+    dma_line_end: u64 = 0,
     /// Bit i set: timer i is an event (see the file comment).
     event_mask: u8 = 0,
 
@@ -201,12 +233,16 @@ pub const Mikey = struct {
     /// Bus ticks taken from the CPU by video DMA and refresh, not yet
     /// charged (core/lynx.zig adds them to the clock).
     steal: u32 = 0,
+    /// A display burst fell in `steal`: the CPU's DRAM page is lost.
+    steal_burst: bool = false,
     /// Every other register as last written (audio, stereo, attenuation,
     /// MTEST): read back as stored.
     regs: [256]u8 = @splat(0),
 
     pub fn reset(m: *Mikey, now: u64) void {
         m.* = .{ .now = now };
+        m.dma_next = refresh_at_or_after(now);
+        m.next_event = m.dma_next;
     }
 
     /// Interrupt bits as INTSET reads them (the UART's level included).
@@ -228,6 +264,11 @@ pub const Mikey = struct {
     fn run_events(m: *Mikey) void {
         while (m.next_event <= m.now) {
             const t_ev = m.next_event;
+            if (m.dma_next == t_ev) {
+                m.dma_event(t_ev);
+                m.next_event = @min(m.timer_event, m.dma_next);
+                continue;
+            }
             var i: u3 = 0;
             while (true) : (i += 1) {
                 if (m.event_mask & (@as(u8, 1) << i) != 0 and m.timers[i].expire == t_ev) break;
@@ -243,45 +284,69 @@ pub const Mikey = struct {
         const t = &m.timers[i];
         t.value = 0;
         t.expire = ticks_never;
-        m.underflow(i);
+        m.underflow(i, at);
         if (t.free_running()) t.expire = at + ((@as(u64, t.value) + 1) << t.shift());
     }
 
     /// Borrow out of timer i: done, interrupt, reload, clock the next one.
-    fn underflow(m: *Mikey, i: u3) void {
+    fn underflow(m: *Mikey, i: u3, at: u64) void {
         const t = &m.timers[i];
         t.done = t.ctla & Ctla.reset_done == 0;
         if (t.ctla & Ctla.irq_enable != 0 and i != 4) m.intset |= @as(u8, 1) << i;
         if (t.ctla & Ctla.reload != 0) t.value = t.backup;
         if (i == 2) m.vblank_count +%= 1;
         const n = link_next[i];
-        if (n != 0xFF) m.borrow_in(@intCast(n));
-        if (i == 0) m.line_start();
+        if (n != 0xFF) m.borrow_in(@intCast(n), at);
+        if (i == 0) m.line_start(at);
     }
 
     /// Timer 0 borrowed: a display line starts (timer 2 has just counted).
     /// Latch DISPADR on the third vertical blank line, and charge the bus
     /// time video DMA (visible lines with DISPCTL bit 0) or DRAM refresh
     /// (otherwise) takes from the CPU over this line (`steal`).
-    fn line_start(m: *Mikey) void {
+    fn line_start(m: *Mikey, at: u64) void {
         const line = m.timers[2].value;
         if (line == dispadr_latch_line) m.dispadr_latched = m.dispadr;
+        const t0 = &m.timers[0];
+        const len = (@as(u64, t0.backup) + 1) << t0.shift();
+        m.dma_line_end = at + len;
         if (m.dispctl & 1 != 0 and line <= last_visible_line) {
-            m.steal += dma_ticks_per_line + if (line == last_visible_line) dma_ticks_per_burst else 0;
+            if (line == last_visible_line) {
+                m.steal += dma_ticks_per_burst;
+                m.steal_burst = true;
+            }
+            m.dma_bursts_left = dma_bursts_per_line;
+            m.dma_next = at + (len -| dma_active_ticks) + dma_first_burst;
+        } else if (m.dma_bursts_left != 0) {
+            m.dma_bursts_left = 0;
+            m.dma_next = refresh_at_or_after(at);
+        }
+    }
+
+    /// A display burst or a refresh is due at `at`.
+    fn dma_event(m: *Mikey, at: u64) void {
+        if (m.dma_bursts_left != 0 and m.dispctl & 1 != 0) {
+            m.steal += dma_ticks_per_burst;
+            m.steal_burst = true;
+            m.dma_bursts_left -= 1;
+            // After the last burst, refresh resumes past the line's end
+            // (the next line's start reschedules first).
+            m.dma_next = if (m.dma_bursts_left != 0) at + dma_burst_spacing else refresh_at_or_after(m.dma_line_end + 1);
         } else {
-            const t0 = &m.timers[0];
-            m.steal += @intCast(((@as(u64, t0.backup) + 1) << t0.shift()) / refresh_divisor);
+            m.dma_bursts_left = 0;
+            m.steal += refresh_ticks;
+            m.dma_next = refresh_at_or_after(at + 1);
         }
     }
 
     /// A clock from the previous timer of the chain.
-    fn borrow_in(m: *Mikey, i: u3) void {
+    fn borrow_in(m: *Mikey, i: u3, at: u64) void {
         const t = &m.timers[i];
         if (!t.linked() or !t.running()) return;
         if (t.value > 0) {
             t.value -= 1;
         } else {
-            m.underflow(i);
+            m.underflow(i, at);
         }
     }
 
@@ -307,7 +372,8 @@ pub const Mikey = struct {
             next = @min(next, t.expire);
         }
         m.event_mask = mask;
-        m.next_event = next;
+        m.timer_event = next;
+        m.next_event = @min(next, m.dma_next);
     }
 
     /// Catch a quiet timer up to `now` in closed form.
@@ -379,7 +445,7 @@ pub const Mikey = struct {
                 t.done = v & Ctlb.done != 0 and t.ctla & Ctla.reset_done == 0;
                 // Software borrow in: one clock now.
                 if (v & Ctlb.borrow_in != 0) {
-                    if (t.value > 0) t.value -= 1 else m.underflow(i);
+                    if (t.value > 0) t.value -= 1 else m.underflow(i, m.now);
                 }
             },
         }
@@ -460,8 +526,8 @@ pub const Mikey = struct {
 
     /// Ticks from now to the next timer event (ticks_never if none).
     pub fn ticks_to_event(m: *const Mikey) u64 {
-        if (m.next_event == ticks_never) return ticks_never;
-        return m.next_event - m.now;
+        if (m.timer_event == ticks_never) return ticks_never;
+        return m.timer_event - m.now;
     }
 
     /// Timer i's count without side effects on the catch-up state, for

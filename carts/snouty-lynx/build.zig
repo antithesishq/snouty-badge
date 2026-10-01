@@ -58,13 +58,6 @@ pub fn add(b: *Build, sycl_badge_dep: *Build.Dependency, opts: common.Options) v
         .target = b.graph.host,
         .optimize = test_optimize,
     });
-    // core/boot.zig as its own module for the boot tests (M1 may re-export it
-    // from core/lynx.zig, docs/BOOT.md).
-    const boot_host = b.createModule(.{
-        .root_source_file = b.path(dir ++ "core/boot.zig"),
-        .target = b.graph.host,
-        .optimize = test_optimize,
-    });
     const drive_host = b.createModule(.{
         .root_source_file = b.path(dir ++ "cart/src/frontend/drive.zig"),
         .target = b.graph.host,
@@ -85,7 +78,6 @@ pub fn add(b: *Build, sycl_badge_dep: *Build.Dependency, opts: common.Options) v
                 .{ .name = "core", .module = core_host },
                 .{ .name = "romfs", .module = romfs_host },
                 .{ .name = "drive", .module = drive_host },
-                .{ .name = "boot", .module = boot_host },
             },
         }),
     });

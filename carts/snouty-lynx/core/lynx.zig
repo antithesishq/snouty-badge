@@ -21,9 +21,13 @@
 //! CPUSLEEP ($FD91 write), Epyx CPU chapter and Felix: a pending interrupt
 //! (masked or not) or an unacknowledged Suzy-done (SDONEACK) keeps the CPU
 //! awake. Otherwise, with a sprite list pending (`suzy.sprites_pending()`)
-//! the whole list is drawn at once and its bus time charged
-//! (`suzy.run_sprites`); the CPU continues when Suzy is done (those ticks
-//! count as `sleep_ticks`). With nothing pending the CPU does not sleep:
+//! the whole list is drawn at once and its bus time (`suzy.run_sprites`)
+//! is slept through; the CPU continues when Suzy is done (those ticks count
+//! as `sleep_ticks`) or, earlier, when a Mikey interrupt becomes pending:
+//! then Suzy is paused with the rest of the time in `sprite_left`, SPRSYS
+//! still reads "working", and the next CPUSLEEP resumes it without an
+//! SDONEACK (lynx-tests sdoneack IRQ RESLEEP). The pixels are already in
+//! RAM at the start of the run; only time and the wake-up are split. With nothing pending the CPU does not sleep:
 //! "Sleep is broken in Mikey. The CPU will NOT remain asleep unless Suzy is
 //! using the bus" (Epyx lynx4.html), and Felix agrees. `idle_sleep = true`
 //! switches to the M1 contract's model instead: sleep until Mikey's next
@@ -103,8 +107,11 @@ pub const Lynx = struct {
     // The CPU's bus (core/bus.zig).
     pub const fetch = bus.fetch;
     pub const read = bus.read;
+    pub const dummy = bus.dummy;
     pub const write = bus.write;
     pub const irq_line = bus.irq_line;
+    /// $CB/$DB are 1-cycle NOPs on the Lynx (core/cpu65.zig).
+    pub const cpu_lynx_nops = true;
 
     /// The 64 KB of RAM (display and collision buffers live in it).
     ram: [0x10000]u8,
@@ -132,6 +139,10 @@ pub const Lynx = struct {
 
     /// Asleep until an interrupt (only with `idle_sleep`).
     sleeping: bool,
+    /// Bus ticks of the current sprite run not yet spent: an interrupt
+    /// woke the CPU mid-run (Suzy paused, SPRSYS reads it working); the
+    /// next CPUSLEEP resumes it without SDONEACK.
+    sprite_left: u64,
     /// The contract's sleep model for CPUSLEEP with no sprites (see the
     /// file comment). Default false: the documented hardware.
     idle_sleep: bool,
@@ -194,6 +205,7 @@ pub const Lynx = struct {
         l.stream_open = false;
         bus.set_mapctl(l, 0);
         l.sleeping = false;
+        l.sprite_left = 0;
         l.halted = false;
         l.boot_error = null;
         l.vblank_seen = 0;
@@ -240,12 +252,16 @@ pub const Lynx = struct {
                 l.sleeping = false;
                 return;
             }
-            const target = @max(l.ticks, @min(l.mikey.next_event, l.frame_end));
+            const target = @max(l.ticks, @min(l.mikey.timer_event, l.frame_end));
             l.sleep_ticks += target - l.ticks;
             l.ticks = target;
+            // Video DMA and refresh delay nothing while the CPU sleeps.
+            bus.sync_mikey(l);
+            l.mikey.steal = 0;
+            l.mikey.steal_burst = false;
         } else {
             const pc = l.cpu.regs.pc;
-            const irq = l.mikey.irq_line() and l.cpu.regs.p & cpu65.Flag.i == 0;
+            const irq = l.cpu.takes_irq(l.mikey.irq_line());
             if (!irq and pc >= bus.rom_base and pc < 0xFFF8 and l.mapctl & bus.Mapctl.rom_off == 0) {
                 l.rom_entry(pc);
             } else {
@@ -263,7 +279,13 @@ pub const Lynx = struct {
             l.ticks += l.mikey.steal;
             l.dma_ticks += l.mikey.steal;
             l.mikey.steal = 0;
-            l.stream_open = false;
+            // A display burst takes the DRAM page: the next fetch is a full
+            // cycle (lynx-page-mode.md). A refresh does not break the
+            // stream: lynx-tests page-mode NOP PM ON measures $35 only
+            // without that (fitted; the timers ONESHOT+LINK loop, in
+            // visible lines, needs the burst break to reach 13 IRQs).
+            if (l.mikey.steal_burst) l.stream_open = false;
+            l.mikey.steal_burst = false;
             bus.sync_mikey(l);
         }
         if (l.mikey.vblank_count != l.vblank_seen) l.on_vblank();
@@ -323,15 +345,50 @@ pub const Lynx = struct {
     /// CPUSLEEP written (core/bus.zig): see the file comment.
     pub fn cpu_sleep(l: *Lynx) void {
         if (l.mikey.pending() != 0 or l.mikey.suzy_done) return;
-        if (l.suzy.sprites_pending()) {
-            const t = l.suzy.run_sprites(&l.ram);
-            l.ticks += t;
-            l.sleep_ticks += t;
+        if (l.sprite_left == 0) {
+            if (!l.suzy.sprites_pending()) {
+                if (l.idle_sleep) l.sleeping = true;
+                return;
+            }
+            l.sprite_left = l.suzy.run_sprites(&l.ram);
             l.sprite_runs +%= 1;
-            l.mikey.suzy_done = true;
-            return;
         }
-        if (l.idle_sleep) l.sleeping = true;
+        l.sprite_sleep();
+    }
+
+    /// Asleep while Suzy spends `sprite_left` bus ticks, until she is done
+    /// (SDONEACK needed before the next sleep) or a Mikey interrupt is
+    /// pending (masked or not: the CPU wakes, Suzy pauses with the rest
+    /// still to do). The list was already drawn into RAM by `run_sprites`;
+    /// only the time and the wake-up are split. Video DMA in the run
+    /// extends it (Suzy waits for the bus too).
+    fn sprite_sleep(l: *Lynx) void {
+        bus.sync_mikey(l);
+        while (true) {
+            if (l.sprite_left == 0) {
+                l.mikey.suzy_done = true;
+                return;
+            }
+            const step = @min(l.sprite_left, l.mikey.next_event -| l.ticks);
+            l.ticks += step;
+            l.sleep_ticks += step;
+            l.sprite_left -= step;
+            bus.sync_mikey(l);
+            if (l.mikey.steal != 0) {
+                l.ticks += l.mikey.steal;
+                l.sleep_ticks += l.mikey.steal;
+                l.dma_ticks += l.mikey.steal;
+                l.mikey.steal = 0;
+                bus.sync_mikey(l);
+            }
+            l.mikey.steal_burst = false;
+            if (l.sprite_left != 0 and l.mikey.pending() != 0) return;
+        }
+    }
+
+    /// The sprite engine is mid-run (SPRSYS bit 0 reads set).
+    pub fn sprite_paused(l: *const Lynx) bool {
+        return l.sprite_left != 0;
     }
 
     /// Vertical blank: copy the displayed frame and the palette.
