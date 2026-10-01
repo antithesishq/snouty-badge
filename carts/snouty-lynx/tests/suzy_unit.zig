@@ -842,9 +842,12 @@ test "suzy: tick estimate and pixel counter" {
     (Scb{ .sprctl0 = ctl0(4, 4), .sprctl1 = 0x10 | literal, .sprcoll = 1 }).put(r.ram, scb0);
     const before = r.s.pixels_drawn;
     const t = r.go(scb0, 1);
-    // Header 50; bytes: 2 offset bytes + 3 data bytes = 5 x 5; 4 pixels
-    // x 5; 4 collision pixels x 5.
-    try std.testing.expectEqual(@as(u32, 50 + 25 + 20 + 20), t);
+    // core/suzy.zig tick_cost: the SCB 64 + sizes 8 + palette 8 + cold
+    // start 27. One row of 5 pens (1, 2, 3, 4 and the pad's 0) at 4 bpp,
+    // run out of data: base 65.6 + 5 x 1.953 + tail 6.9 (the literal bus
+    // path, 5 x 2.94, is shorter); collision on: 19.5 + one detect group
+    // 10. 7153 / 64 rounds to 112 ticks.
+    try std.testing.expectEqual(@as(u32, 64 + 8 + 8 + 27 + 112), t);
     try std.testing.expectEqual(@as(u32, 4), r.s.pixels_drawn - before);
 }
 
@@ -906,4 +909,65 @@ test "suzy: H flip keeps the quadrant's HSIZOFF (Alpine Games check)" {
     _ = r.go(scb0, 1);
     try std.testing.expectEqual([4]u8{ 0, 0, 0, 5 }, r.row(156, 0, 4));
     try std.testing.expectEqual(@as(u32, 1), r.count_pixels());
+}
+
+/// One lynx-tests sprite-suite case: its Suzy time on a Lynx I, from the
+/// suite's hardware centre (us) less the runner's own time (about 260
+/// ticks in this emulator) and DRAM refresh (1/65), within the suite's
+/// 16 us window (about 250 ticks).
+fn expect_hw_ticks(t: u32, hw_us: u32) !void {
+    const target: i64 = @divTrunc((@as(i64, hw_us) * 16 - 260) * 64, 65);
+    if (@abs(@as(i64, t) - target) > 240) {
+        std.debug.print("ticks {d}, hardware {d} us = {d} ticks\n", .{ t, hw_us, target });
+        return error.TestUnexpectedResult;
+    }
+}
+
+test "suzy: tick model against the lynx-tests hardware timings" {
+    var r = try Rig.init();
+    defer r.deinit();
+    r.w16(0x28, 0); // the suites run with HSIZOFF = VSIZOFF = 0
+    r.w16(0x2A, 0);
+    r.s.write(0x92, 0x20); // NO_COLLIDE
+    var l: Lines = .{ .ram = r.ram };
+    // sprites1 LIT 4B FULL: 161 literal 4 bpp pens, 160 x 102, BACKNONCOLL.
+    var full: [81]u8 = @splat(0x11);
+    full[80] = 0;
+    l.line(&full);
+    l.end();
+    const pal: [8]u8 = .{ 0x01, 0x23, 0x45, 0x67, 0x89, 0xAB, 0xCD, 0xEF };
+    (Scb{ .sprctl0 = ctl0(4, 1), .sprctl1 = 0x10 | literal, .hpos = 0, .vpos = 0, .hsiz = 0x0100, .vsiz = 0x6600, .palette = pal }).put(r.ram, scb0);
+    try expect_hw_ticks(r.go(scb0, 1), 3081);
+    // sprites1 EXPAND W64: one pen 64 wide.
+    l = .{ .ram = r.ram, .p = data0 + 0x100 };
+    l.line(&.{0x22});
+    l.end();
+    (Scb{ .sprctl0 = ctl0(4, 1), .sprctl1 = 0x10 | literal, .data = data0 + 0x100, .hpos = 0, .vpos = 0, .hsiz = 0x4000, .vsiz = 0x6600, .palette = pal }).put(r.ram, scb0);
+    try expect_hw_ticks(r.go(scb0, 1), 1300);
+    // sprites2 SUPER CLIP: 167 pens from x 160, every row rejected.
+    l = .{ .ram = r.ram, .p = data0 + 0x200 };
+    var long: [21]u8 = @splat(0xFF);
+    long[20] = 0;
+    l.line(&long);
+    l.end();
+    (Scb{ .sprctl0 = ctl0(1, 1), .sprctl1 = 0x10 | literal, .data = data0 + 0x200, .hpos = 160, .vpos = 0, .hsiz = 0x0100, .vsiz = 0x6600, .palette = pal }).put(r.ram, scb0);
+    try expect_hw_ticks(r.go(scb0, 1), 319);
+    // sprites3 TYPE NORM: packed RLE 16 x pens 0, E, F, 1, collision on.
+    r.s.write(0x92, 0);
+    l = .{ .ram = r.ram, .p = data0 + 0x300 };
+    l.line(&.{ 0x78, 0x3F, 0x9F, 0xEF, 0x10, 0 });
+    l.end();
+    (Scb{ .sprctl0 = ctl0(4, 4), .sprcoll = 5, .data = data0 + 0x300, .hpos = 0, .vpos = 0, .hsiz = 0x0100, .vsiz = 0x6600, .palette = pal }).put(r.ram, scb0);
+    try expect_hw_ticks(r.go(scb0, 1), 1906);
+    // sprites4 LINK 4 SCB: four linked one-row RLE W64 sprites.
+    r.s.write(0x92, 0x20);
+    l = .{ .ram = r.ram, .p = data0 + 0x400 };
+    l.line(&.{ 0x78, 0xBC, 0x5E, 0x2F, 0x10, 0 });
+    l.end();
+    for (0..4) |k| {
+        const at: u16 = scb0 + @as(u16, @intCast(k)) * 0x20;
+        const next: u16 = if (k == 3) 0 else at + 0x20;
+        (Scb{ .sprctl0 = ctl0(4, 1), .sprcoll = 5, .next = next, .data = data0 + 0x400, .hpos = 0, .vpos = @intCast(k), .hsiz = 0x0100, .vsiz = 0x0100, .palette = pal }).put(r.ram, at);
+    }
+    try expect_hw_ticks(r.go(scb0, 1), 92);
 }
