@@ -38,8 +38,17 @@ pub const Origin = enum(u32) {
 };
 
 pub var origin: Origin = .none;
-/// CRC32 of the drive file (0 for the embedded ROM).
+/// CRC32 of the drive file (0 for the embedded ROM, and 0 until
+/// `crc_known`: `crc_tick` hashes the file a slice per update so starting a
+/// ROM never stalls a frame).
 pub var crc: u32 = 0;
+/// True once `crc` holds the running ROM's CRC32 (always for the embedded
+/// ROM, whose `crc` is 0).
+pub var crc_known: bool = true;
+/// File bytes `crc_tick` hashes per call (about 0.7 ms on the badge).
+pub const crc_chunk: u32 = 8 * 1024;
+/// The CRC in progress for the drive file `select` started.
+var crc_state: romfs.Mapped.Crc = undefined;
 /// Why the drive was not used when the embedded ROM runs ("NoVolume",
 /// "skipped", "no ROM on the drive"...); null for a drive ROM or when the
 /// drive was never asked (wasm, embed builds).
@@ -90,27 +99,53 @@ pub fn candidates() []const drive.Candidate {
     return scan_result.candidates[0..candidate_count];
 }
 
-/// Start drive candidate `i`: map it, CRC32 it, set `origin` and the report
-/// line. Falls back to the embedded ROM (with the reason) when `i` is not a
-/// playable candidate or its chain no longer maps.
+/// Start drive candidate `i`: map it, set `origin` and the report line,
+/// and start the CRC32 that `crc_tick` finishes (the report reads
+/// "crc ...." until then). Falls back to the embedded ROM (with the
+/// reason) when `i` is not a playable candidate or its chain no longer
+/// maps.
 pub fn select(i: usize) core.RomSource {
     if (!use_drive) return embedded(null);
     if (i >= candidate_count or !scan_result.candidates[i].playable()) return embedded("not playable");
     const c = &scan_result.candidates[i];
     mapped = drive.open(drive_base(), c, &clusters) catch |err| return embedded(@errorName(err));
-    crc = mapped.crc32();
+    crc_state = romfs.Mapped.Crc.init();
+    crc = 0;
+    crc_known = false;
     const src = drive.source_of(&mapped);
     origin = if (src.base != null) .drive_contiguous else .drive_fragmented;
     chosen = i;
     fallback = null;
+    drive_report();
+    return src;
+}
 
+/// Hash the next `crc_chunk` bytes of the running drive file; on the last
+/// slice set `crc`, `crc_known` and the report line. Call once per running
+/// update; a no-op once the CRC is known, for the embedded ROM and in
+/// builds without the drive.
+pub fn crc_tick() void {
+    if (!use_drive) return;
+    if (crc_known) return;
+    if (!crc_state.step(&mapped, crc_chunk)) return;
+    crc = crc_state.final();
+    crc_known = true;
+    drive_report();
+}
+
+/// The report line for the drive file `chosen`, e.g. "ROM: drive
+/// contiguous SONIC.GEN 512 KB crc 1A2B3C4D (1 of 2)"; "crc ...." while
+/// the CRC is pending.
+fn drive_report() void {
+    const i = chosen orelse return;
+    const c = &scan_result.candidates[i];
     var w: Writer = .{};
     w.put(if (origin == .drive_contiguous) "ROM: drive contiguous " else "ROM: drive fragmented ");
     w.put(c.file_name());
     w.put(" ");
     w.num((mapped.size + 1023) / 1024);
     w.put(" KB crc ");
-    w.hex32(crc);
+    if (crc_known) w.hex32(crc) else w.put("....");
     if (playable_count > 1) {
         w.put(" (");
         w.num(@intCast(i + 1));
@@ -119,7 +154,6 @@ pub fn select(i: usize) core.RomSource {
         w.put(")");
     }
     w.done();
-    return src;
 }
 
 /// The embedded ROM; `why` says why the drive was not used (null: it was
@@ -132,6 +166,7 @@ pub fn embedded(why: ?[]const u8) core.RomSource {
     const ok = verdict == .ok;
     origin = if (ok) .embedded else .none;
     crc = 0;
+    crc_known = true;
     chosen = null;
     fallback = why;
     var w: Writer = .{};

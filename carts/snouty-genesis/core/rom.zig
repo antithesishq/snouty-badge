@@ -74,6 +74,39 @@ pub inline fn read16(src: *const RomSource, addr: u32) u16 {
     return @as(u16, q[0]) << 8 | q[1];
 }
 
+/// A stretch of the ROM held in one piece of memory: bytes
+/// `base .. base + len` of the ROM are `ptr[0 .. len]`.
+pub const Run = struct { ptr: [*]const u8, base: u32, len: u32 };
+
+/// Clusters `run_at` scans in each direction from the cluster of `addr`
+/// (so a fetch-window or DMA miss on a fragmented ROM costs a bounded
+/// loop; a 64-cluster cap is 32 KB either side).
+pub const run_cap: u32 = 64;
+
+/// The run of the ROM that holds `addr`, null at or past `size`. A `base`
+/// source is one run (the whole ROM). A clustered source gives the maximal
+/// stretch of consecutive volume clusters around the cluster of `addr`
+/// (at most `run_cap` clusters back and `run_cap` forward), clipped to
+/// `size`. The 68000's fetch window and the VDP's DMA spans come from here
+/// (core/bus.zig), so a fragmented drive file is read by pointer inside
+/// each run and the bus asks again only at a run boundary.
+pub fn run_at(src: *const RomSource, addr: u32) ?Run {
+    if (addr >= src.size) return null;
+    if (src.base) |p| return .{ .ptr = p, .base = 0, .len = src.size };
+    const cl = src.clusters;
+    const i: u32 = addr >> cluster_shift;
+    const last_index: u32 = (src.size - 1) >> cluster_shift;
+    var first = i;
+    const lo = i -| run_cap;
+    while (first > lo and cl[first - 1] +% 1 == cl[first]) first -= 1;
+    var last = i;
+    const hi = @min(last_index, i + run_cap);
+    while (last < hi and cl[last + 1] == cl[last] +% 1) last += 1;
+    const base = first << cluster_shift;
+    const len = @min((last - first + 1) << cluster_shift, src.size - base);
+    return .{ .ptr = src.data_base + (@as(u32, cl[first]) - 2) * cluster_size, .base = base, .len = len };
+}
+
 /// Two words, big-endian (vectors, header fields).
 pub fn read32(src: *const RomSource, addr: u32) u32 {
     return @as(u32, read16(src, addr)) << 16 | read16(src, addr +% 2);

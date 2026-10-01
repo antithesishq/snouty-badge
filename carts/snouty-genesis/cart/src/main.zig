@@ -182,6 +182,8 @@ fn run_update(t1: u64) void {
         md.step_frame(in.pad, f == frames_per_update);
         rewind.record_frame(&md);
     }
+    // The drive ROM's CRC32, 8 KB per update (a no-op once known).
+    romsrc.crc_tick();
     const t2 = cart.micros_since_boot();
 
     audio.update(&md);
@@ -317,13 +319,15 @@ fn debug_menu_opens() callconv(.c) u32 {
     return menu_opens;
 }
 /// Menu settings: bit 0 sound on, bit 1 crop scale, bits 2-4 the button
-/// layout (`input.Layout`, 0 = B=B A=C S=A), bit 5 debug overlay on.
+/// layout (`input.Layout`, 0 = B=B A=C S=A), bit 5 debug overlay on,
+/// bit 6 Smooth H40 on.
 fn debug_settings() callconv(.c) u32 {
     var v: u32 = 0;
     if (audio.enabled) v |= 1;
     if (video.scale == .crop) v |= 2;
     v |= @as(u32, @intCast(input.layout.index())) << 2;
     if (debug.enabled) v |= 32;
+    if (video.smooth) v |= 64;
     return v;
 }
 /// `tone2` calls since boot.

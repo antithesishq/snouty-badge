@@ -58,14 +58,14 @@ const Hasher = struct {
     in_order: bool = true,
     hash: u64 = 0,
 
-    fn on_line(ctx: *anyopaque, row: u8, line: *const [core.out_w]u8, cram: *const [64]u16) void {
+    fn on_line(ctx: *anyopaque, row: u8, line: [*]const u8, width: u16, cram: *const [64]u16) void {
         const h: *Hasher = @ptrCast(@alignCast(ctx));
         if (row != h.next_row) h.in_order = false;
         h.next_row = @as(u32, row) + 1;
         h.rows += 1;
         var w = std.hash.Wyhash.init(h.hash);
         w.update(&.{row});
-        w.update(line);
+        w.update(line[0..width]);
         w.update(std.mem.sliceAsBytes(cram));
         h.hash = w.final();
     }

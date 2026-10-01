@@ -340,21 +340,48 @@ pub const Mapped = struct {
     }
 
     /// CRC-32 (IEEE 802.3, the same as Python's zlib.crc32) of the whole
-    /// file, taken run by run over the mapped sectors.
+    /// file, taken run by run over the mapped sectors (`Crc` in one go).
     pub fn crc32(self: *const Mapped) u32 {
-        var h = std.hash.Crc32.init();
-        var i: usize = 0;
-        var left: u32 = self.size;
-        while (left > 0) {
-            // Extend a run of consecutive clusters, then hash it in one go.
-            var j = i + 1;
-            while (j < self.clusters.len and self.clusters[j] == self.clusters[j - 1] + 1) j += 1;
-            const run: u32 = @intCast((j - i) * ss);
-            const take = @min(run, left);
-            h.update(self.cluster_ptr(i)[0..take]);
-            left -= take;
-            i = j;
-        }
-        return h.final();
+        var c = Crc.init();
+        while (!c.step(self, std.math.maxInt(u32))) {}
+        return c.final();
     }
+
+    /// `crc32` spread over several calls, so a cart can hash a large file a
+    /// slice per frame: `init`, then `step(m, bytes)` until it returns true,
+    /// then `final`. Each step hashes the next `bytes` of the file (fewer at
+    /// the end), run by run over consecutive clusters.
+    pub const Crc = struct {
+        h: std.hash.Crc32,
+        /// File bytes hashed so far.
+        at: u32,
+
+        pub fn init() Crc {
+            return .{ .h = std.hash.Crc32.init(), .at = 0 };
+        }
+
+        /// Hash up to `bytes` more of `m`; true when the whole file is in.
+        pub fn step(c: *Crc, m: *const Mapped, bytes: u32) bool {
+            var budget: u32 = bytes;
+            while (c.at < m.size and budget > 0) {
+                const i: usize = c.at / ss;
+                const off: u32 = c.at % ss;
+                const want: u32 = @min(budget, m.size - c.at);
+                // Extend a run of consecutive clusters while it is short of
+                // `want`, then hash it in one go.
+                var j = i + 1;
+                var run: u32 = ss - off;
+                while (run < want and j < m.clusters.len and m.clusters[j] == m.clusters[j - 1] + 1) : (j += 1) run += ss;
+                const take = @min(run, want);
+                c.h.update(m.cluster_ptr(i)[off..][0..take]);
+                c.at += take;
+                budget -= take;
+            }
+            return c.at >= m.size;
+        }
+
+        pub fn final(c: *const Crc) u32 {
+            return c.h.final();
+        }
+    };
 };

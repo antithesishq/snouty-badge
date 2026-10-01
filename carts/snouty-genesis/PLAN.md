@@ -684,6 +684,170 @@ writes the memories directly, past the hooks). Exports `debug_scrub_depth`,
 4. SPEC 10 status paragraph, tag `snouty-genesis/m3`, merge to main and
    push (Adrian tests from main), pull-and-run notes.
 
+## M4 Perf: contract
+
+SPEC.md section 17's M4 ("hardware polish") as far as the calibrated
+badge-bench reaches (no badge until the
+show). Two Opus tracks in worktrees against the prep commit on
+`genesis/m4`, then integration. The RAM-text placement, the XIP hot-range
+cache and the `render_every` / `cpu_scale` defaults stay open for the
+hardware numbers: the bench models flash as zero-wait memory (its
+`--flash-cycles` / `--flash-read-cycles` knobs are a flat penalty, not a
+cache), so none of them can be tuned here. What can:
+
+### Baseline (2026-10-01, M3 tree a64eb13, calibrated `busy ms`)
+
+| Run (badge-bench, 156 / 336 updates)                 | mean  | worst | over |
+|------------------------------------------------------|------:|------:|-----:|
+| test ROM, drive contiguous (`m2_play`)               |  6.90 | 25.82 |    0 |
+| test ROM, drive fragmented (`--fragment 4`)          | 25.53 | 37.01 |  yes |
+| Miniplanets, drive contiguous (`m2_mini300`, 336)    | 17.99 | 28.84 |    0 |
+| Miniplanets, drive fragmented (`--fragment 4`)       | 34.81 | 40.00 |  yes |
+
+A fragmented file costs 2-3.7x (fragmented Miniplanets is over budget on
+every game update: unplayable): `Bus.code_window` returns null for it, so
+every opcode and extension word goes `fetch_slow` -> `code_window` ->
+`read16` -> cluster lookup, and `dma_source` returns null, so every DMA
+word goes through `read16` too. Any file copied onto a drive that already
+holds other files (the cart UF2s themselves) can be fragmented, so this is
+the attendee path. Also: `romsrc.select` runs `Mapped.crc32` over the whole
+file before the first frame (43.6 ms for 512 KB, one over-budget update
+when the picker starts a ROM); and SPEC.md section 6's H40 column-pair
+averaging (every second Genesis column is dropped today, which makes H40
+text hard to read) is still not offered.
+
+### Track A: ROM path (branch `genesis/m4-rom`, worktree `/home/exedev/snouty-badge-genesis-rom`)
+
+Files: `core/rom.zig`, `core/bus.zig`, `cart/src/frontend/romsrc.zig`,
+`lib/romfs.zig` (additions only), `tests/bus_unit.zig`,
+`tests/drive_unit.zig`, `tests/fixtures/*` if a new fixture is needed,
+`tests/all.zig` (new test file hookup), `docs/RUNNING.md` section 7
+(the fragmented bench recipe). Not `cart/src/main.zig`, `menu.zig`,
+`core/vdp.zig`, `core/md.zig`.
+
+1. Runs in the cluster table. `core/rom.zig` gains
+   `pub const Run = struct { ptr: [*]const u8, base: u32, len: u32 }` and
+   `pub fn run_at(src: *const RomSource, addr: u32) ?Run`: for a `base`
+   source the whole ROM; for a clustered source the maximal run of
+   consecutive clusters that holds `addr` (scan back and forward from the
+   cluster of `addr` while `clusters[i+1] == clusters[i] + 1`, each
+   direction capped at 64 clusters so a window miss costs a bounded loop),
+   clipped to `size`; null at or past `size`. `Bus.code_window` returns
+   the run as the fetch window for any ROM (so a fragmented ROM fetches
+   directly inside each run and asks again only at a run boundary);
+   `Bus.dma_source` hands out a span up to the end of the run (the VDP's
+   loop already asks again for the rest). Everything else (`read8`,
+   `read16`, the Z80 bank window, SRAM) is unchanged. Target: the
+   fragmented test ROM within 1 ms mean of contiguous (`--fragment 4` is
+   2 KB runs; `--fragment 1` is the worst case: measure both and record).
+2. CRC32 off the critical path. `lib/romfs.zig` `Mapped` gains an
+   incremental form (`pub const Crc = struct { h: std.hash.Crc32, at: u32 }`
+   with `init`, `step(m, bytes) bool` hashing the next `bytes` of the file
+   run by run and returning true when done, `final`); `crc32()` stays and
+   is expressed through it. `romsrc.select` no longer hashes: it starts a
+   `Crc`, sets `crc = 0`, `crc_known = false`; a new
+   `pub fn crc_tick() void` hashes `crc_chunk = 8 * 1024` bytes per call
+   (about 0.7 ms) and on completion sets `crc`, `crc_known` and rewrites
+   the report line. The report reads `crc ....` until then. main.zig's
+   `run_update` will call `romsrc.crc_tick()` once per running update
+   (integration adds that one line and the About screen's `crc ....`;
+   Track A documents both in its hand-off). `debug_rom_crc` stays 0 until
+   known. `embedded` sets `crc_known = true`, `crc = 0`.
+3. Tests. `rom:` `run_at` on a synthetic clustered source (runs of 1, 3
+   and 64+ clusters, the caps, the last partial cluster, past the end);
+   `bus:` a fragmented synthetic ROM fetches and DMAs byte-identically to
+   the same bytes contiguous (the existing `rom:` "contiguous and
+   clustered read identically" test extended to the code window and
+   `dma_source`); `drive:` the fragmented fixture's CRC via `Crc.step` in
+   chunks equals `crc32()` and the known `E5D1C6BF`. `golden` and
+   `golden-mini` unchanged (embedded source: no new code on their path).
+4. Bench: `docs/RUNNING.md` section 7 gets the fragmented recipe
+   (`make_romfs.py OUT ROM=NAME.GEN PAD=PAD.DAT --fragment 4`, with a
+   non-ROM pad file so the picker does not appear; `PAD.DAT` is not
+   scanned). Record contiguous vs fragmented (4 and 1) for the test ROM
+   and Miniplanets in the hand-off, plus `.text` / `.bss` deltas.
+
+### Track B: H40 column averaging (branch `genesis/m4-smooth`, worktree `/home/exedev/snouty-badge-genesis-smooth`)
+
+Files: `core/vdp.zig`, `core/vdp_tables.zig` + `tools/gen_vdp_tables.py`
+(if a table is needed), `core/md.zig` (only the `Vdp.Small` field-count
+check and `render_still` if the sink signature changes), `tests/vdp_unit.zig`,
+`cart/src/frontend/video.zig`, `cart/src/frontend/menu.zig`,
+`cart/src/main.zig` (`video.apply` already called everywhere needed;
+`debug_settings` bit 6), `tools/scripts/m4_smooth.json`, `docs/RUNNING.md`
+sections 4-5. Not `core/rom.zig`, `core/bus.zig`, `romsrc.zig`, `drive.zig`.
+
+1. Setting. `Vdp` gains `h_mode: HMode = .sharp` (`pub const HMode =
+   enum(u8) { sharp, smooth }`) next to `line_mode`: a menu setting, not
+   console state, so outside `Vdp.Small` (md.zig's comptime check becomes
+   `vs.len + 3`) and re-applied by `video.apply` (which sets both).
+   `smooth` only changes H40 lines; H32 lines are untouched (SPEC.md 6:
+   the 8/5 column table stays).
+2. Renderer. In `smooth` an H40 line is composed at full 320-pixel width
+   (a third comptime mode of `compose`: the H32 machinery, `row8` into a
+   `FullBuf` of 8 + 320 + 8, `plane32`-style tile loop with 40/41 tiles,
+   the window and sprites at full width, `final_pass` / `final_sh` over
+   320 pixels; no `gather`). The sink receives the 320 tagged pixels:
+   `LineSink.func` takes `line: [*]const u8, width: u16` (160 or 320),
+   `emit` forwards; `Vdp.render_line`, `Md.render_still` and the golden
+   hashers pass the width (`golden` hashes 160-wide lines exactly as
+   before; `smooth` is never on in the tests' golden runs, so the
+   recorded hashes stay). SPEC.md 6 estimates 1.5x render time for this.
+3. Frontend. `video.zig` `on_line` with width 320 stores
+   `avg(pixels[src[2x]], pixels[src[2x+1]])` per badge column: the RGB565
+   average through the carry-free trick `(a & b) + (((a ^ b) & mask) >> 1)`
+   with `mask` clearing each field's low bit **in the framebuffer's byte
+   order** (check `cart.Pixel` in sycl-badge's cart API: the halfword may
+   be byte-swapped for the LCD; derive `mask` from `Pixel.from_color` of
+   known colors in a comptime check). A unit-style comptime or host check
+   in video.zig that `avg(red, blue)` is the purple `from_color` gives.
+4. Menu. A `Smooth H40: Off/On` setting row (label 15 cols of
+   `panel_cols` 18; Left/Right/A cycle, takes effect on resume like
+   Scale). Nine rows at `row_h` 9: move the panel geometry and the
+   comptime layout checks (scrub line, bar) accordingly; if nine rows do
+   not fit the 128 px with the title band and the scrub line, fall back to
+   a four-way Scale row (`Scale: Squeeze`, `Scale: Crop`,
+   `Scale: Sqz+Smooth`, `Scale: Crop+Smooth`, all within 18) and say so.
+   `debug_settings` bit 6 = smooth on. Default **off** (integration may
+   turn it on from the bench numbers: see Integration 3).
+5. Tests. `vdp:` the 320-wide line against the existing reference
+   renderer (`ref_line`'s 320-pixel intermediates: every column, not the
+   even ones) for the same random states the 160-wide tests use, H40 with
+   and without shadow/highlight, window, per-column scroll, sprite
+   limits; H32 in `smooth` identical to `sharp`; `h_mode` survives
+   `Keyframe` restore + `video.apply` the way `line_mode` does. The
+   `golden` and `golden-mini` hashes unchanged.
+6. Preview. `tools/scripts/m4_smooth.json`: Miniplanets into level 1
+   (as `m2_mini300`), menu, Down to the Smooth row, Right, resume, play
+   on; `--call-at` reads `debug_settings`. Side-by-side PNGs of the same
+   frame sharp and smooth into `out/m4_smooth/` for the hand-off
+   (integration picks `docs/m4_smooth.png`). Bench the Miniplanets
+   script with smooth on and off (`--romfs out/romfs_mini.img`, 336
+   updates) and record mean / worst / render share.
+
+### Integration (me, after the two merge)
+
+1. Merge A then B on `genesis/m4`; add `romsrc.crc_tick()` to
+   `run_update` and the About screen's `crc ....`; all carts build,
+   `zig build test`, `check-float`, `golden` / `golden-mini` unchanged.
+2. Bench matrix (calibrated, `busy ms`): test ROM and Miniplanets,
+   contiguous and fragmented 4 / 1, smooth off and on; the scrub script.
+   Flash sensitivity for show day: Miniplanets contiguous with
+   `--flash-cycles 1, 2, 4` and `--flash-read-cycles 1, 2, 4` (a table
+   "if the OS overlay's stall rate reads X, expect Y ms" in RUNNING.md
+   section 7, and which fallback of SPEC.md 8 to flip first).
+3. Default for `Smooth H40`: on if Miniplanets smooth stays under 31 ms
+   mean / 33 worst with 1 ms to spare and the PNGs read better; else off
+   with the menu row. Record the decision in SPEC.md 6 and the Status.
+4. Sizes (`.text` must stay under the 256 KB window; note the headroom),
+   `docs/m4_smooth.png`, RUNNING.md status line "M4", PLAN Status entry,
+   SPEC.md Status entry, tag `snouty-genesis/m4`, merge to main and push
+   (Adrian tests on a real badge from main). Hardware check (open, not a
+   gate): XIP launch, drive streaming stall rates (contiguous and
+   fragmented), the scrub step, RAM-text decision from the overlay's XIP
+   hit rate.
+
+
 ## Status
 
 - 2026-09-29: SPEC.md, this plan and `docs/ROM_STREAMING.md` drafted;
@@ -935,3 +1099,58 @@ writes the memories directly, past the hooks). Exports `debug_scrub_depth`,
     of history until it rebuilds; H40 column averaging and the CRC32 at
     selection still open (M4 perf). Hardware check (open, not a gate):
     the scrub step's 4.9 ms and the arena size on a real badge.
+- 2026-10-01 (M4 DONE): tag `snouty-genesis/m4` on `genesis/m4`, merged
+  to main and pushed. Tracks A (`genesis/m4-rom`: `rom.run_at`, run
+  windows and DMA spans, `romfs.Mapped.Crc`, `romsrc.crc_tick`) and B
+  (`genesis/m4-smooth`: `Vdp.h_mode`, 320-wide `compose` for H40, the
+  width-carrying `LineSink`, `video.avg`, the `Smooth H40` menu row as a
+  ninth row with the panel moved up to y 36, `debug_settings` bit 6)
+  merged; integration added the `crc_tick` call, the About screen's
+  `crc ....`, Smooth H40 **on by default** (Integration 3's rule held:
+  +2.6 ms mean, worst unchanged, and H40 text was unreadable; docs/m4_smooth.png),
+  version 0.4.0-m4.
+  - Verified on the merged tree: all carts build, check-float PASS, 168/168
+    genesis host tests (157 + 5 Track A: `run_at`, fragmented fetch and
+    DMA identity, incremental CRC, `frag_mini` 600 frames of Miniplanets
+    from runs of 1 and 4 vs embedded; + 6 Track B `vdp:` 320-wide line vs
+    the reference, forced features, odd columns, sink width, `h_mode`
+    through `Small` and `Keyframe`); `golden` and `golden-mini` unchanged;
+    all-carts `zig build test` 507/511 with the one failure demosnout's
+    `timeline: hold` test, which fails on the base commit too. Preview:
+    `m2_menu.json` ends `debug_settings=75`, `m4_smooth.json` reads 96 at
+    340 and 32 at 358 (the Right turns smooth off now).
+  - badge-bench (calibrated `busy ms`, mean / worst, 0 over budget in
+    every game run; Smooth H40 on): test ROM contiguous 9.16 / 26.41
+    (M3 6.90 / 25.82: +2.2 ms is the smooth render of an H40 ROM, +0.5
+    the CRC ticks in updates 36-37), fragmented-4 9.32 / 26.41 (M3 25.53
+    / 37.01); Miniplanets contiguous 20.74 / 29.07 (M3 17.99 / 28.84;
+    Track B sharp 18.03 / 28.89, Track A alone 18.09 / 29.02),
+    fragmented-4 21.16 / 29.43 (M3 34.81 / 40.00, 288 of 336 over), scrub
+    script 16.57 / 29.07; Track A's picker start 13.26 / 29.03 (M3 43.82
+    worst: the CRC stall). What fragmentation still costs (~0.4 ms): the
+    fetch window refilled at run boundaries (~213 per update) and the Z80
+    bank window on the slow path. Flash sensitivity table in RUNNING.md
+    section 7: `--flash-cycles 1` alone gives 41.25 / 55.39.
+  - Sizes: `.text` 231,712 B (M3 231,952; Track A -4.0 KB, Track B +3.7 KB;
+    30.5 KB of the flash window left), `.data` 168, `.bss` 170,076 (+8).
+    Hot code (for the RAM-text decision): `run_z80` 76 KB, `step_frame`
+    37 KB, renderer 20 KB.
+  - Deviations: Track A's identity tests are new tests in `bus_unit.zig`
+    (the existing one lives in `smoke.zig`, outside its list) and
+    `frag_mini.zig` is extra; a 16 KB pad only fragments a ROM's first
+    32 KB (RUNNING.md says to pad with a file at least as big). Track B
+    touched `m2_menu.json` (one Down over the new row) and the sink's
+    callers in five test files; in smooth, sprite collision is detected
+    at all 320 columns (closer to hardware; the status bit can differ
+    between the modes). `M68k.flush_code_window` is never called:
+    `Md.restore` copies the keyframe's window with the CPU, fine while a
+    keyframe is only restored into the console it came from.
+  - Open after M4 (hardware): XIP launch, the OS overlay's XIP hit and
+    stall rates with Miniplanets running (the budget is gone at an
+    average stall of 0.15 cycles per instruction), RAM-text for the
+    renderer or the 68000 if they say so (a `cart_xip.ld` section plus a
+    copy in `build/xip/entry.zig`; the SDK submodule is read-only, so a
+    repo-side linker script), `render_every` / `cpu_scale` defaults, the
+    scrub step cost. Bench-side: the Z80 bank window could use `run_at`;
+    `run_z80` at 76 KB is the inlining of Gear's core and the first
+    candidate if flash gets tight.
