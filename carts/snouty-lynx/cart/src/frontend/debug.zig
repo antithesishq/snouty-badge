@@ -72,10 +72,12 @@ pub fn record(step_us: u32) void {
 pub fn fps() u32 {
     const n = @min(frame_count, window);
     if (n == 0) return 0;
-    var sum: u64 = 0;
-    for (frame_deltas[0..n]) |d| sum += d;
+    // 32-bit sums, saturating (a window over 71 minutes): no 64-bit
+    // division in the cart (compiler_rt's is 1.4 KB of .text).
+    var sum: u32 = 0;
+    for (frame_deltas[0..n]) |d| sum +|= d;
     if (sum == 0) return 0;
-    return @intCast((@as(u64, n) * 1_000_000 + sum / 2) / sum);
+    return (@as(u32, n) * 1_000_000 +| sum / 2) / sum;
 }
 
 /// Mean and worst `step_frame` microseconds over the window.
@@ -83,12 +85,12 @@ pub fn step_stats() struct { mean: u32, worst: u32 } {
     const n = @min(step_count, window);
     if (n == 0) return .{ .mean = 0, .worst = 0 };
     var max: u32 = 0;
-    var sum: u64 = 0;
+    var sum: u32 = 0;
     for (step_samples[0..n]) |s| {
         max = @max(max, s);
-        sum += s;
+        sum +|= s;
     }
-    return .{ .mean = @intCast(sum / n), .worst = max };
+    return .{ .mean = sum / n, .worst = max };
 }
 
 /// "NNfps uNNNNN wNNNNN" (fps, mean and worst step us; 20 columns at most).

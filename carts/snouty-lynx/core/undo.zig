@@ -341,7 +341,7 @@ fn open_record(l: *Lynx) void {
 /// The next slot of the open record, evicting the oldest closed record
 /// when the ring is full; null when the open record alone fills it (the
 /// history is lost until the next boundary).
-fn alloc_slot() ?*Slot {
+noinline fn alloc_slot() ?*Slot {
     const n: u32 = @intCast(slots.len);
     if (used == n) {
         if (closed == 0) {
