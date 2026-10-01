@@ -274,8 +274,109 @@ file comment for the register map. Everything Suzy touches is in `ram`.
 5. Simulator GIF of raycast; `docs/RUNNING.md`; tag `snouty-lynx/m1`;
    merge to main and push (badge gate deferred to show day).
 
+## M2 Frontend: contract
+
+Written 2026-10-01 after M1. One Opus agent on branch `lynx/m2` (worktree
+`/home/exedev/snouty-badge-lynx-m2`), adapting `../snouty-genesis/cart/src/
+frontend/` (menu, picker, help) and `../snouty-gear` where Genesis differs;
+Snouty Gear's M5 shared frontend has not landed, so copy and note it for
+extraction. No sound anywhere (project decision: the badge speaker is
+unused; SPEC.md 9 is void, no `audio.zig`, no `-Dsound`). Decisions taken
+by default (Adrian may change them later): Option 2 and the Lynx restart
+chord are menu rows that hold the buttons for the game; the Iris-mark
+splash from M0 stays as it is (no chime); the debug overlay is off at
+boot and a menu row; the strip shows the title and the ROM name.
+
+### Frozen for M2
+
+```zig
+// frontend/menu.zig
+pub const version = "0.2.0-m2";
+pub const title = "SNOUTY LYNX";                // unchanged
+pub const Result = enum { stay, resume_game, pick_rom };
+pub fn open() void;                             // frozen-frame copy + .copy_forward, cursor on Resume
+pub fn close() void;                            // back to .no_copy_full_frame
+pub fn update(l: *core.Lynx, e: input.Edge) Result;
+pub var hold_pad: u16;                          // Pad bits main.zig ORs into the game pad for `hold_frames_left` frames after resuming
+pub var hold_frames_left: u8;                   // set by the "Press Option 2" (Pad.opt2, 4 frames) and "Restart: Pause+Opt 1" (Pad.pause | Pad.opt1, 4 frames) rows
+
+// frontend/input.zig (exists)
+pub var swap_ab: bool;                          // the Buttons row toggles it
+
+// frontend/picker.zig (new, Genesis's adapted)
+pub fn reset() void;
+pub fn update(e: input.Edge) ??usize;           // null: stay; some(null): leave without a choice (B); some(i): candidates()[i] chosen
+
+// frontend/debug.zig (exists)
+pub var enabled: bool = false;                  // off at boot (was true in M1); the Debug overlay row toggles it
+```
+
+`main.zig` states: `splash -> running | pick | help`, `running <-> menu`,
+`menu -> pick -> running`. After the splash: the embedded ROM (wasm or
+`-Dlynx-rom-source=embed`) or exactly one playable drive file starts at
+once; several playable files open the picker (SPEC.md 18.6: the list,
+A chooses, restart into that file through `romsrc`/`drive.open`, the core
+re-`init_in_place`d; B picks the first); none shows the help over the
+embedded ROM as M0 did. `debug_state`: 0 splash, 1 running, 2 menu, 3
+pick, 4 help. Exports added: `debug_menu_opens`, `debug_settings` (bit 0
+unused/sound-less, bit 2 A/B swapped, bit 3 overlay), `debug_hold_pad`.
+The strip (rows 102..127) shows: line 1 "SNOUTY LYNX" + the ROM name
+(header title when present, else the file name), line 2 the debug line
+only when the overlay is on, else the ROM origin ("drive 128 KB" /
+"embedded 27 KB"); the no-ROM help band stays as it is.
+
+### Work (files `cart/src/frontend/{menu,picker,input,debug,romsrc}.zig`, `cart/src/main.zig`, `tools/scripts/m2_menu.json`, `tools/scripts/m2_play.json`, `badge-bench/carts/snouty-lynx.toml`, `docs/RUNNING.md`, `README.md`, this file's status)
+
+- Menu rows (9 px rows as Genesis): `Resume`, `Buttons: A=A B=B` /
+  `Buttons: A=B B=A` (`input.swap_ab`), `Press Option 2`, `Restart:
+  Pause+Opt1` (both set `hold_pad`/`hold_frames_left` and resume), `Debug
+  overlay: On/Off`, `Reset` (`lynx.reset()` = the boot again, resume),
+  `Pick ROM` (only when the drive has more than one playable file; returns
+  `.pick_rom`), `About`. Left/Right or A cycle a setting row; on other
+  rows they do nothing in M2 (M3 gives them the scrubber: leave the panel's
+  bottom line free, `scrub_line_y` as Genesis). Title band: "SNOUTY LYNX",
+  the ROM name, "verified by" / "deterministic replay". Colours: Genesis's
+  fixed scheme.
+- About: version, ROM name, header title/manufacturer when headered, size
+  in KB and block size, source (drive/embedded), CRC32 (drive), "fragmented"
+  when not all blocks are direct, EEPROM warning, the drive fallback reason
+  for an embedded ROM, and the core's boot error if any. `romsrc.zig`
+  grows the accessors it lacks.
+- Picker: Genesis's `picker.zig` over `romsrc.candidates()` (`drive.Candidate`:
+  file name, note, playable), refused files listed dim with their reason.
+  Choosing restarts: `romsrc` opens that candidate (`drive.open` into the
+  shared `Source`/cluster table; the CRC recomputed; `origin`, `size`,
+  `layout`, `crc`, `name()` updated), `lynx.init_in_place(cart)`. A boot
+  error (`lynx.boot_error`) is shown in the strip and About, the picture
+  stays black, the menu still opens.
+- `input.zig`: `swap_ab` wired (already there), the hold state machine
+  unchanged; main.zig ORs `menu.hold_pad` into the pad while
+  `hold_frames_left > 0`.
+- `debug.zig`: `enabled = false` by default; the overlay line as in M1.
+- `main.zig`: the state machine above, `suppress_held` on every state
+  change, `menu.open` on `open_menu`, exports.
+- Scripts: `tools/scripts/m2_menu.json` (preview: skip the splash, play
+  30 updates, hold Select 35 updates, walk every row, toggle Buttons and
+  the overlay once and back, Press Option 2, About, resume; check
+  `debug_state`, `debug_settings`, `debug_menu_opens`, `debug_hold_pad`);
+  `tools/scripts/m2_play.json` = `m1_play.json` plus a menu pass (Select
+  held, two Downs, B) after update 300 (frames = 400) for the bench toml.
+- Checks: both targets build, `zig build test-lynx` unchanged (90/90, the
+  golden hashes are core-level), `zig fmt`, preview PNGs of the menu,
+  About and the picker (a drive image with two ROMs: raycast twice under
+  different names is fine for the picker fixture, built with
+  tools/make_romfs.py into `out/`, not committed; the committed fixture
+  `tests/fixtures/m1_drive.img` has one), badge-bench with `m2_play.json`
+  (menu frames far under budget, game frames as M1 within noise), `.text`
+  growth noted (the arena is 43,944 B before M2; the frontend may not grow
+  it by more than ~6 KB; use ReleaseSmall-friendly code: no comptime loops,
+  no big tables).
+- Done when: the above, `docs/m2_menu.gif`, pull-and-run notes in
+  docs/RUNNING.md, status here, tag `snouty-lynx/m2`, merge to main.
+
 ## Status
 
+- 2026-10-01: M2 contract written on `lynx/m2`; one Opus agent started.
 - 2026-10-01: M1 INTEGRATED. Tracks A (CPU), B (Suzy), C (machine) merged on
   `lynx/m1`, then two fixers (Suzy vs the lynx-tests carts: math flags and
   busy timing, register mirrors, flip offsets, a hardware-fitted tick
