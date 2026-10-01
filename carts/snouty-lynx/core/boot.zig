@@ -25,103 +25,25 @@
 const std = @import("std");
 
 // ---------------------------------------------------------------------------
-// The cart image
+// The cart
 
-/// `.lnx` header size. [H] sizes.h and the cc65 `lynx` target's
-/// libsrc/lynx/exehdr.s ("LYNX", bank sizes, version, name, maker, rotation).
-pub const header_len = 64;
+/// The cart as the core sees it (block pointers, the `.lnx` header parser):
+/// core/cart.zig. The boot code only reads it sequentially.
+pub const cart = @import("cart.zig");
 
-pub const Rotation = enum(u8) { none = 0, left = 1, right = 2, _ };
-
-pub const Header = struct {
-    /// Bank 0 page (block) size in bytes, from header bytes 4-5.
-    bank0_page: u16,
-    /// Bank 1 page size, bytes 6-7 (0 = no bank 1).
-    bank1_page: u16,
-    version: u16,
-    /// NUL-padded, header bytes 10..41.
-    name: [32]u8,
-    /// NUL-padded, header bytes 42..57.
-    manufacturer: [16]u8,
-    /// Byte 58.
-    rotation: Rotation,
-    /// Byte 59 (version 1 headers from newer tools: AUDIN used as a bank
-    /// switch bit), 0 when unused.
-    audin: u8,
-    /// Byte 60 (EEPROM type and flags), 0 when there is none.
-    eeprom: u8,
-
-    pub fn name_slice(h: *const Header) []const u8 {
-        return std.mem.sliceTo(&h.name, 0);
-    }
-};
-
-pub const CartError = error{
-    /// Headerless file whose size is not 128, 256 or 512 KB.
-    UnknownSize,
-    /// "LYNX" header with a bank 0 page size that is not 256..2048 and a
-    /// power of two.
-    BadHeader,
-};
-
-/// The cart as the boot code sees it: the payload (header stripped) and its
-/// block size. The cart port's full model lives in core/cart.zig (M1); this
-/// is only what the boot path needs.
-pub const Cart = struct {
-    data: []const u8,
-    block_size: u32,
-    header: ?Header,
-
-    /// Accepts a headered `.lnx` (trust the header) or a headerless dump
-    /// (SPEC 18.3: 128 KB = 256 blocks of 512 B, 256 KB = 1 KB blocks,
-    /// 512 KB = 2 KB blocks).
-    pub fn from_file(file: []const u8) CartError!Cart {
-        if (file.len >= header_len and std.mem.eql(u8, file[0..4], "LYNX")) {
-            const page = std.mem.readInt(u16, file[4..6], .little);
-            if (page < 256 or page > 2048 or !std.math.isPowerOfTwo(page)) return error.BadHeader;
-            var h: Header = .{
-                .bank0_page = page,
-                .bank1_page = std.mem.readInt(u16, file[6..8], .little),
-                .version = std.mem.readInt(u16, file[8..10], .little),
-                .name = undefined,
-                .manufacturer = undefined,
-                .rotation = @fromBackingInt(@intCast(file[58])),
-                .audin = file[59],
-                .eeprom = file[60],
-            };
-            @memcpy(&h.name, file[10..42]);
-            @memcpy(&h.manufacturer, file[42..58]);
-            return .{ .data = file[header_len..], .block_size = page, .header = h };
-        }
-        const bs: u32 = switch (file.len) {
-            128 * 1024 => 512,
-            256 * 1024 => 1024,
-            512 * 1024 => 2048,
-            else => return error.UnknownSize,
-        };
-        return .{ .data = file, .block_size = bs, .header = null };
-    }
-
-    /// Byte `counter` of block `block`. Past the end of a short image (a
-    /// homebrew file smaller than its header's bank) reads 0xFF.
-    pub fn byte_at(c: *const Cart, block: u8, counter: u32) u8 {
-        const off = @as(usize, block) * c.block_size + (counter % c.block_size);
-        return if (off < c.data.len) c.data[off] else 0xFF;
-    }
-};
-
-/// Sequential reader over RCART0: the block selected by $FE00 and a counter
-/// that advances on every read (the cart's ripple counter). `decrypt_frame`
-/// takes any value with this shape (`read_byte`), so M1's cart port can be
-/// passed directly.
+/// Sequential reader over RCART0 for tests and tools: block `block`, a
+/// counter that advances on every read and wraps within the block (the
+/// cart's ripple counter). `post_boot` and `decrypt_frame` take any value
+/// with this shape (`read_byte`); the emulator passes its cart port
+/// (core/bus.zig `PortReader`).
 pub const CartReader = struct {
-    cart: *const Cart,
+    cart: *const cart.Cart,
     block: u8 = 0,
     counter: u32 = 0,
 
     pub fn read_byte(r: *CartReader) u8 {
-        const b = r.cart.byte_at(r.block, r.counter);
-        r.counter += 1;
+        const b = r.cart.read(r.block, r.counter);
+        r.counter = (r.counter + 1) & (r.cart.block_size - 1);
         return b;
     }
 };
@@ -426,7 +348,7 @@ pub const vector_irq: u16 = 0xFF80;
 /// the block number is shifted out MSB first with a sentinel carry, so the
 /// routine leaves A = 0, X = 2, C = 1 (the sentinel), Z = 1, N = 0, and
 /// SYSCTL1 = 2 (strobe low, power on), IODAT = 0. [A] FE00-FE18. The block
-/// register and the counter reset are the cart port's (core/cart.zig).
+/// register and the counter reset are the cart port's (core/bus.zig).
 pub const SetCartBlockExit = struct {
     pub const a: u8 = 0;
     pub const x: u8 = 2;
@@ -469,17 +391,18 @@ pub const sp_at_entry: u8 = 0x01;
 
 /// The first boot pass: RAM cleared, Mikey programmed, block 0 selected,
 /// the first frame decrypted to $0200 ([A] FF80-FE9A). `ram` is fully
-/// overwritten. The returned reader position (`cart_block`,
-/// `cart_counter`) is where the loader's own RCART0 reads continue.
-pub fn post_boot(cart: *const Cart, ram: *[65536]u8) BootError!BootState {
+/// overwritten. `reader` (a `read_byte` value, see `CartReader`) must sit
+/// at block 0, counter 0, as the ROM's $FE00 call with A = 0 leaves the
+/// cart; it ends where the loader's own RCART0 reads continue, which the
+/// result records as `cart_block` and `cart_counter`.
+pub fn post_boot(reader: anytype, ram: *[65536]u8) BootError!BootState {
     // [A] FF95 STZ $00, FE19-FE24 clears $0003-$FFFF (RAM under every
     // overlay), FE43 STZ $02; $01 wraps to 0. All RAM is zero.
     @memset(ram, 0);
     // [A] FE3D-FE41: destination $0200.
     ram[zp_dest_lo] = 0x00;
     ram[zp_dest_hi] = 0x02;
-    var reader: CartReader = .{ .cart = cart, .block = 0, .counter = 0 };
-    const f = try decrypt_frame(&reader, ram);
+    const f = try decrypt_frame(reader, ram);
     var writes: [boot_mikey_writes.len + frame_mikey_writes.len]RegWrite = undefined;
     @memcpy(writes[0..boot_mikey_writes.len], &boot_mikey_writes);
     @memcpy(writes[boot_mikey_writes.len..], &frame_mikey_writes);
@@ -496,8 +419,8 @@ pub fn post_boot(cart: *const Cart, ram: *[65536]u8) BootError!BootState {
         .iodir = 0x03,
         .iodat = 0x02,
         .sysctl1 = 0x02,
-        .cart_block = reader.block,
-        .cart_counter = reader.counter,
+        .cart_block = 0,
+        .cart_counter = 1 + @as(u32, f.blocks) * block_len,
         .frame = f,
         .mikey_writes = writes,
     };

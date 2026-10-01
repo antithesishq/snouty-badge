@@ -4,6 +4,16 @@ Status 2026-09-30 (M0 Track A): `core/boot.zig` built and host-tested; the
 cross-check against the real boot ROM passes for Hard Drivin' and Blue
 Lightning. SPEC.md sections 11 and 18.2 are the decisions this implements.
 
+Status 2026-10-01 (M1 Track C): the emulator uses it. `core/boot.zig` no
+longer parses the header (its `Cart` is gone; `core/cart.zig` is the one
+parser) and `post_boot` takes a `read_byte` reader: the emulator passes its
+cart port (`core/bus.zig` `PortReader`), the tests `boot.CartReader` over a
+`core.cart.Cart`. `core/lynx.zig` traps $FE00 and $FE4A as described
+below and re-runs the boot for any other PC in ROM space. With the M1 CPU
+and Suzy merged in a scratch build, Hard Drivin' and Blue Lightning run
+from their loaders into attract mode (Hard Drivin' into a drive), so the
+two traps are all the loaders need.
+
 ## What the boot ROM does
 
 From Alexander Thissen's annotated disassembly ([A], AtariAge "Annotated
@@ -43,9 +53,10 @@ exactly $FE00 and $FE4A.
 
 ## The public route (`core/boot.zig`)
 
-- `Cart.from_file`: a headered `.lnx` (trust bank 0's page size) or a
-  headerless dump (SPEC 18.3: 128/256/512 KB = 512 B/1 KB/2 KB blocks).
-- `post_boot(cart, ram)`: steps 1-4 above. RAM is zeroed, the loader lands
+- The cart: `core/cart.zig` (`parse`, `Cart.from_slice`; a headered `.lnx`
+  trusts bank 0's page size, a headerless dump gets its block size from
+  the file size, SPEC 18.3). `CartReader` reads it sequentially.
+- `post_boot(reader, ram)`: steps 1-4 above. RAM is zeroed, the loader lands
   at $0200, zero page $00-$07 is as the ROM leaves it ($05/$06 = end of
   the loader, $07 = 0), and the returned `BootState` has the CPU registers,
   MAPCTL, IODIR/IODAT/SYSCTL1, every Mikey write in order, the cart block
