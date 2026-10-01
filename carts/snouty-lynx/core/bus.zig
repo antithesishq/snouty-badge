@@ -17,22 +17,31 @@
 //!
 //! Ticks (16 MHz, SPEC.md 3 and 20): an opcode or operand fetch takes 4
 //! ticks in page mode, 5 otherwise; any other RAM/ROM/vector or MAPCTL
-//! access 5, Mikey reads and writes 5, Suzy writes 5, Suzy reads 9 (the
-//! 9-15 range of the CPU chapter: one value), RCART reads 15.
+//! access 5, an internal CPU cycle (`dummy`) 5, Mikey reads and writes 5
+//! (timer and audio registers plus their wait, below), Suzy writes 5, Suzy
+//! reads 9 (the 9-15 range of the CPU chapter: one value), RCART reads 15.
 //!
 //! Page mode, as measured by drhelius's lynx-tests (MIT; lynx-page-mode.md,
 //! the page-mode cart): a fetch is a 4-tick page-mode cycle when MAPCTL bit
 //! 7 is clear, the instruction stream is open and the address is not at a
 //! 16-byte boundary ($xxx0). Any data read or write closes the stream (the
 //! next fetch is a normal 5-tick cycle that reopens it); a fetch at $xxx0
-//! is normal but keeps it open. Dummy reads come through `read` too, so
-//! they close the stream as well (the tests' guide treats internal cycles
-//! as not closing it: implied instructions cost one tick more here).
+//! is normal but keeps it open. Internal cycles (`dummy`: implied
+//! instructions' second cycle, indexing, RMW re-reads, stack dummies) leave
+//! it open, as does a taken branch with displacement 0 (cpu65.zig issues a
+//! `read` for a taken branch to another address, which closes it). A video
+//! DMA burst closes it, a refresh does not (core/lynx.zig).
 //!
-//! Mikey's timer and audio registers ($FD00-$FD3F) take 18 ticks per
-//! access: the timer logic is shared round robin (lynx-tests timers2:
-//! 64 `LDA TIMnBKUP` take $83 us against $4F for RAM or other Mikey
-//! registers, 31 ticks each instead of 18).
+//! Mikey's timer and audio registers ($FD00-$FD3F) are served round robin:
+//! the 16 units (timers 0-7, audio 0-3 at slots 8-11) each own one tick of
+//! a 16-tick cycle, and an access waits for its unit's turn: it completes
+//! at a tick t with (t - slot) mod 16 == `timer_slot_phase` (at least 5
+//! ticks). lynx-tests timers2 measures it: 64 `LDA TIMnBKUP` take $83/$84
+//! us (32 ticks per LDA abs: 18 plus the wait), writes $83/$84 for timers
+//! 0-1 and $84 for 2-7, against $4F/$50 for RAM, INTSET/INTRST and SERCTL
+//! (18 ticks plus refresh). Gearlynx (GPL, read for behaviour only, nothing
+//! copied) models the same wait. Internal cycles at those addresses do not
+//! wait.
 //!
 //! Cart port (Epyx cart chapter, SPEC.md 3): the block number is an 8-bit
 //! shift register clocked on each 0 -> 1 edge of SYSCTL1 bit 0 with IODAT
@@ -66,7 +75,6 @@ pub const Ticks = struct {
     pub const fetch_full: u8 = 5;
     pub const ram: u64 = 5;
     pub const mikey: u64 = 5;
-    pub const mikey_timer: u64 = 18;
     pub const suzy_write: u64 = 5;
     pub const suzy_read: u64 = 9;
     pub const rcart: u64 = 15;
@@ -139,6 +147,13 @@ pub inline fn read(l: *Lynx, addr: u16) u8 {
     return high_read(l, addr, true);
 }
 
+/// An internal CPU cycle (cpu65.zig `dummy`): a full 5-tick cycle that no
+/// device sees and that leaves the page-mode stream as it is.
+pub inline fn dummy(l: *Lynx, addr: u16) void {
+    _ = addr;
+    l.ticks += Ticks.ram;
+}
+
 pub inline fn write(l: *Lynx, addr: u16, v: u8) void {
     l.stream_open = false;
     if (addr < suzy_base) {
@@ -163,7 +178,7 @@ fn high_read(l: *Lynx, addr: u16, charge: bool) u8 {
             return suzy_read(l, lo);
         },
         0xFD => if (m & Mapctl.mikey_off == 0) {
-            if (charge) l.ticks += mikey_ticks(lo);
+            if (charge) l.ticks += mikey_ticks(l.ticks, lo);
             sync_mikey(l);
             return l.mikey.read(lo);
         },
@@ -192,7 +207,7 @@ fn high_write(l: *Lynx, addr: u16, v: u8) void {
             return;
         },
         0xFD => if (m & Mapctl.mikey_off == 0) {
-            l.ticks += mikey_ticks(lo);
+            l.ticks += mikey_ticks(l.ticks, lo);
             mikey_write(l, lo, v);
             return;
         },
@@ -206,9 +221,20 @@ fn high_write(l: *Lynx, addr: u16, v: u8) void {
     l.ram[addr] = v;
 }
 
-inline fn mikey_ticks(lo: u8) u64 {
-    return if (lo < 0x40) Ticks.mikey_timer else Ticks.mikey;
+/// A Mikey register access starting at tick `t`: 5 ticks, after waiting
+/// for the unit's turn when it is a timer or audio register (see the file
+/// comment).
+pub inline fn mikey_ticks(t: u64, lo: u8) u64 {
+    if (lo >= 0x40) return Ticks.mikey;
+    const slot: u64 = if (lo < 0x20) lo >> 2 else 8 + ((lo - 0x20) >> 3);
+    return ((slot +% timer_slot_phase -% t -% Ticks.mikey) & 15) + Ticks.mikey;
 }
+
+/// The phase of the timer round robin against the bus clock: an access to
+/// unit n completes at a tick t with (t - n) mod 16 == `timer_slot_phase`.
+/// Fitted to lynx-tests timers2 (reads and writes of each timer, the
+/// phase rows) with the 1 us clock edges at multiples of 16 ticks.
+pub const timer_slot_phase: u64 = 0;
 
 pub fn set_mapctl(l: *Lynx, v: u8) void {
     l.mapctl = v;

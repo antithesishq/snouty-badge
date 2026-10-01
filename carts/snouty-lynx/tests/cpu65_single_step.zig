@@ -2,7 +2,7 @@
 //! core/cpu65.zig, plus the IRQ sequence (the suite has no interrupts).
 //!
 //! Every case runs on a flat 64 KB `TestBus` that logs each bus call
-//! (`fetch` and `read` both log "read", as the suite does) and is compared
+//! (`fetch`, `read` and `dummy` all log "read", as the suite does) and is compared
 //! on the final registers, every `final.ram` entry, the cycle count and
 //! each cycle's address, value and kind. P is compared with bits 4 and 5
 //! forced set on both sides: the suite stores bit 5 set and bit 4 as the
@@ -71,6 +71,12 @@ pub const TestBus = struct {
         b.reads += 1;
         b.rec(addr, b.ram[addr], false);
         return b.ram[addr];
+    }
+
+    /// An internal cycle: the suite lists it as a read of `addr`.
+    pub fn dummy(b: *TestBus, addr: u16) void {
+        b.reads += 1;
+        b.rec(addr, b.ram[addr], false);
     }
 
     pub fn write(b: *TestBus, addr: u16, v: u8) void {
@@ -204,7 +210,7 @@ test "cpu65: IRQ sequence (7 cycles, B clear, I set, D clear, vector $FFFE)" {
     bus.ram[0xFFFE] = 0x34;
     bus.ram[0xFFFF] = 0x12;
     bus.ram[0x0400] = 0xEA;
-    var cpu: Cpu = .{ .regs = .{ .pc = 0x0400, .s = 0xF0, .p = 0x20 | cpu65.Flag.d | cpu65.Flag.c } };
+    var cpu: Cpu = .{ .regs = .{ .pc = 0x0400, .s = 0xF0, .p = 0x20 | cpu65.Flag.d | cpu65.Flag.c }, .irq_ok = true };
     bus.irq = true;
     cpu.step(bus);
     try std.testing.expectEqual(@as(usize, 7), bus.n);
@@ -231,4 +237,96 @@ test "cpu65: IRQ sequence (7 cycles, B clear, I set, D clear, vector $FFFE)" {
     try std.testing.expectEqual(@as(u16, 0x0400), cpu.regs.pc);
     try std.testing.expect(cpu.regs.p & cpu65.Flag.i == 0);
     try std.testing.expectEqual(@as(u8, 0x30 | cpu65.Flag.d | cpu65.Flag.c), cpu.regs.p);
+}
+
+test "cpu65: interrupt poll (CLI/SEI/PLP one instruction late, RTI at once, 1-cycle NOPs never)" {
+    const gpa = std.testing.allocator;
+    const bus = try gpa.create(TestBus);
+    defer gpa.destroy(bus);
+    bus.* = .{};
+    bus.ram[0xFFFE] = 0x00;
+    bus.ram[0xFFFF] = 0x30;
+    const I = cpu65.Flag.i;
+    // CLI; INX with the line high: INX runs, then the IRQ.
+    @memcpy(bus.ram[0x0400..][0..2], &[_]u8{ 0x58, 0xE8 });
+    var cpu: Cpu = .{ .regs = .{ .pc = 0x0400, .p = 0x30 | I } };
+    bus.irq = true;
+    cpu.step(bus);
+    try std.testing.expectEqual(@as(u16, 0x0401), cpu.regs.pc);
+    cpu.step(bus);
+    try std.testing.expectEqual(@as(u16, 0x0402), cpu.regs.pc);
+    try std.testing.expectEqual(@as(u8, 1), cpu.regs.x);
+    cpu.step(bus);
+    try std.testing.expectEqual(@as(u16, 0x3000), cpu.regs.pc);
+    // CLI; $03 $0B $F3 $FB; INX: the 1-cycle NOPs do not poll, INX does.
+    @memcpy(bus.ram[0x0500..][0..6], &[_]u8{ 0x58, 0x03, 0x0B, 0xF3, 0xFB, 0xE8 });
+    cpu = .{ .regs = .{ .pc = 0x0500, .p = 0x30 | I } };
+    for (0..5) |_| {
+        cpu.step(bus);
+        try std.testing.expect(!cpu.takes_irq(true));
+    }
+    try std.testing.expectEqual(@as(u16, 0x0505), cpu.regs.pc);
+    cpu.step(bus);
+    try std.testing.expectEqual(@as(u16, 0x0506), cpu.regs.pc);
+    cpu.step(bus);
+    try std.testing.expectEqual(@as(u16, 0x3000), cpu.regs.pc);
+    // SEI with the line high and I clear: the IRQ comes right after SEI,
+    // with I set in the pushed P.
+    bus.ram[0x0600] = 0x78;
+    cpu = .{ .regs = .{ .pc = 0x0600, .s = 0xFF, .p = 0x30 }, .irq_ok = false };
+    cpu.step(bus);
+    try std.testing.expect(cpu.takes_irq(true));
+    cpu.step(bus);
+    try std.testing.expectEqual(@as(u16, 0x3000), cpu.regs.pc);
+    try std.testing.expect(bus.ram[0x01FD] & I != 0);
+    // RTI restoring I clear: polled at once.
+    @memcpy(bus.ram[0x01FD..][0..3], &[_]u8{ 0x20, 0x00, 0x07 });
+    bus.ram[0x3000] = 0x40;
+    cpu = .{ .regs = .{ .pc = 0x3000, .s = 0xFC, .p = 0x30 | I } };
+    cpu.step(bus);
+    try std.testing.expectEqual(@as(u16, 0x0700), cpu.regs.pc);
+    try std.testing.expect(cpu.takes_irq(true));
+}
+
+/// TestBus with the Lynx's $CB/$DB (`cpu_lynx_nops`).
+const LynxNopBus = struct {
+    pub const cpu_lynx_nops = true;
+    t: TestBus = .{},
+    pub fn fetch(b: *LynxNopBus, addr: u16) u8 {
+        return b.t.fetch(addr);
+    }
+    pub fn read(b: *LynxNopBus, addr: u16) u8 {
+        return b.t.read(addr);
+    }
+    pub fn dummy(b: *LynxNopBus, addr: u16) void {
+        b.t.dummy(addr);
+    }
+    pub fn write(b: *LynxNopBus, addr: u16, v: u8) void {
+        b.t.write(addr, v);
+    }
+    pub fn irq_line(b: *LynxNopBus) bool {
+        return b.t.irq;
+    }
+};
+
+test "cpu65: Lynx $CB/$DB are 1-byte 1-cycle NOPs that do not poll" {
+    const gpa = std.testing.allocator;
+    const bus = try gpa.create(LynxNopBus);
+    defer gpa.destroy(bus);
+    bus.* = .{};
+    @memcpy(bus.t.ram[0x0400..][0..4], &[_]u8{ 0x58, 0xCB, 0xDB, 0xE8 });
+    var cpu: cpu65.Cpu(LynxNopBus) = .{ .regs = .{ .pc = 0x0400, .p = 0x30 | cpu65.Flag.i } };
+    bus.t.irq = true;
+    cpu.step(bus);
+    bus.t.n = 0;
+    cpu.step(bus);
+    try std.testing.expectEqual(@as(usize, 1), bus.t.n);
+    try std.testing.expect(!cpu.takes_irq(true));
+    cpu.step(bus);
+    try std.testing.expectEqual(@as(usize, 2), bus.t.n);
+    try std.testing.expectEqual(@as(u16, 0x0403), cpu.regs.pc);
+    try std.testing.expect(!cpu.takes_irq(true));
+    cpu.step(bus);
+    try std.testing.expectEqual(@as(u8, 1), cpu.regs.x);
+    try std.testing.expect(cpu.takes_irq(true));
 }

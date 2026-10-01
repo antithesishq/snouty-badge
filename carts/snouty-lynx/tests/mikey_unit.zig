@@ -258,13 +258,16 @@ test "mikey: DISPADR latch on the third blank line, DMA and refresh steal per fr
     }
     try expectEqual(@as(u16, 0x8000), m.dispadr_latched);
     // A whole frame of steal: 102 visible lines of 10 bursts plus the top
-    // line's prefetch, 3 blank lines of refresh (2544 / 64 ticks).
+    // line's prefetch, and a 4-tick refresh every 256 ticks over the 3
+    // blank lines (2544 x 3 / 256: 29 or 30 grid points, plus the one
+    // after the last line's final burst at most).
     const v1 = m.vblank_count;
     while (m.vblank_count == v1) m.advance(m.next_event - m.now);
     m.steal = 0;
     const v2 = m.vblank_count;
     while (m.vblank_count == v2) m.advance(m.next_event - m.now);
-    try expectEqual(@as(u32, 102 * mikey.dma_ticks_per_line + mikey.dma_ticks_per_burst + 3 * (2544 / 64)), m.steal);
+    const bursts: u32 = 102 * mikey.dma_ticks_per_line + mikey.dma_ticks_per_burst;
+    try expect(m.steal >= bursts + 29 * mikey.refresh_ticks and m.steal <= bursts + 31 * mikey.refresh_ticks);
 }
 
 test "mikey: a quiet fast timer (UART baud) costs no events and reads right" {
@@ -272,7 +275,7 @@ test "mikey: a quiet fast timer (UART baud) costs no events and reads right" {
     m.write(bkup(4), 1);
     m.write(cnt(4), 1);
     m.write(ctla(4), C.reload | C.count); // every 32 ticks
-    try expectEqual(mikey.ticks_never, m.next_event);
+    try expectEqual(mikey.ticks_never, m.timer_event);
     m.advance(10_000);
     try expectEqual(mikey.Ctlb.done, m.read(ctlb(4)));
     // 10,000 = 312 x 32 + 16: the count is 1 - (16 >> 4) % 2 ... read it.
@@ -336,11 +339,22 @@ test "bus: tick costs (page mode stream, data cycles, Mikey timers, Suzy, RCART)
     _ = l.fetch(0x0212); // 5
     try expectEqual(@as(u64, 28), l.ticks - t0);
     _ = l.read(0xFD80); // Mikey 5
-    _ = l.read(0xFD02); // Mikey timer 18
+    // Timer 0: 5 ticks after waiting for its slot (the access ends at a
+    // tick = 0 mod 16 for timer 0, = 3 for timer 3, = 9 for audio 1).
+    _ = l.read(0xFD02);
+    try expectEqual(bus.timer_slot_phase, l.ticks % 16);
+    const tw = l.ticks;
+    _ = l.read(0xFD0C);
+    try expectEqual(@as(u64, 16 + 3), l.ticks - tw); // at least 5: one turn later
+    l.write(0xFD28, 0);
+    try expectEqual(@as(u64, 16 + 3 + 6), l.ticks - tw);
+    try expectEqual(@as(u64, 16), bus.mikey_ticks(0, 0x00)); // 11 + 5: ends at 16
+    const t2 = l.ticks;
     _ = l.read(0xFC92); // Suzy 9
     _ = l.read(0xFCB2); // RCART 15
     l.write(0xFC92, 0); // Suzy write 5
-    try expectEqual(@as(u64, 28 + 5 + 18 + 9 + 15 + 5), l.ticks - t0);
+    l.dummy(0xFD02); // internal cycle: 5, the stream stays as it was
+    try expectEqual(@as(u64, 9 + 15 + 5 + 5), l.ticks - t2);
     // MAPCTL bit 7: no page-mode fetch.
     l.write(0xFFF9, 0x80);
     const t1 = l.ticks;

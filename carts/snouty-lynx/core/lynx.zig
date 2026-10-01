@@ -103,8 +103,11 @@ pub const Lynx = struct {
     // The CPU's bus (core/bus.zig).
     pub const fetch = bus.fetch;
     pub const read = bus.read;
+    pub const dummy = bus.dummy;
     pub const write = bus.write;
     pub const irq_line = bus.irq_line;
+    /// $CB/$DB are 1-cycle NOPs on the Lynx (core/cpu65.zig).
+    pub const cpu_lynx_nops = true;
 
     /// The 64 KB of RAM (display and collision buffers live in it).
     ram: [0x10000]u8,
@@ -240,12 +243,16 @@ pub const Lynx = struct {
                 l.sleeping = false;
                 return;
             }
-            const target = @max(l.ticks, @min(l.mikey.next_event, l.frame_end));
+            const target = @max(l.ticks, @min(l.mikey.timer_event, l.frame_end));
             l.sleep_ticks += target - l.ticks;
             l.ticks = target;
+            // Video DMA and refresh delay nothing while the CPU sleeps.
+            bus.sync_mikey(l);
+            l.mikey.steal = 0;
+            l.mikey.steal_burst = false;
         } else {
             const pc = l.cpu.regs.pc;
-            const irq = l.mikey.irq_line() and l.cpu.regs.p & cpu65.Flag.i == 0;
+            const irq = l.cpu.takes_irq(l.mikey.irq_line());
             if (!irq and pc >= bus.rom_base and pc < 0xFFF8 and l.mapctl & bus.Mapctl.rom_off == 0) {
                 l.rom_entry(pc);
             } else {
@@ -263,7 +270,13 @@ pub const Lynx = struct {
             l.ticks += l.mikey.steal;
             l.dma_ticks += l.mikey.steal;
             l.mikey.steal = 0;
-            l.stream_open = false;
+            // A display burst takes the DRAM page: the next fetch is a full
+            // cycle (lynx-page-mode.md). A refresh does not break the
+            // stream: lynx-tests page-mode NOP PM ON measures $35 only
+            // without that (fitted; the timers ONESHOT+LINK loop, in
+            // visible lines, needs the burst break to reach 13 IRQs).
+            if (l.mikey.steal_burst) l.stream_open = false;
+            l.mikey.steal_burst = false;
             bus.sync_mikey(l);
         }
         if (l.mikey.vblank_count != l.vblank_seen) l.on_vblank();

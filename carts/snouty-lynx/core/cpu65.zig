@@ -6,14 +6,34 @@
 //!
 //! - `bus.fetch(addr: u16) u8`: an opcode or operand byte read at PC (the
 //!   Lynx charges these 4 ticks in page mode).
-//! - `bus.read(addr: u16) u8`: every other read, dummy reads included (the
-//!   65C02 performs them on the real bus too, and a dummy read of RCART0
-//!   advances the cart counter, so they are never skipped).
+//! - `bus.read(addr: u16) u8`: a data read (operands' memory, pointers,
+//!   the stack, vectors).
+//! - `bus.dummy(addr: u16) void`: an internal cycle: the dummy reads the
+//!   65C02 makes while it computes (implied instructions' second cycle,
+//!   indexing, the RMW re-read, the decimal extra cycle, JSR/RTS/RTI/pull
+//!   stack and PC dummies, the IRQ sequence's two opcode cycles). The
+//!   SingleStepTests list them as reads of `addr`; the Lynx charges a full
+//!   cycle but no device sees it and the page-mode instruction stream
+//!   stays open (lynx-tests lynx-page-mode.md: internal cycles do not
+//!   contribute to, nor break, the sequential fetch stream). A taken
+//!   branch's extra cycle is a `read` when the target differs from PC (it
+//!   ends the stream) and a `dummy` for a zero displacement.
 //! - `bus.write(addr: u16, v: u8) void`.
-//! - `bus.irq_line() bool`: sampled once per `step`, before the opcode
-//!   fetch; when set and I is clear the step is the 7-cycle interrupt
-//!   sequence instead of an instruction (pushes PCH, PCL, P with B clear,
-//!   sets I, PC from `read($FFFE/$FFFF)`).
+//! - `bus.irq_line() bool`: sampled at the start of `step`; when set and
+//!   the previous instruction's interrupt poll allowed it (`irq_ok`), the
+//!   step is the 7-cycle interrupt sequence instead of an instruction
+//!   (pushes PCH, PCL, P with B clear, sets I, PC from `read($FFFE/$FFFF)`).
+//!   The poll is the 6502's: an instruction polls in its last cycle with
+//!   the I flag it has then, so CLI, SEI and PLP act one instruction late
+//!   (CLI; INC: the INC runs before the IRQ), RTI at once, and the Lynx's
+//!   1-cycle NOPs ($x3, $xB) do not poll at all: an IRQ cannot be taken
+//!   right after one (lynx-tests cpu "UNDC NOP IRQ", measured on hardware).
+//! - Optional `Bus.cpu_lynx_nops: bool` (a decl): when true, $CB and $DB
+//!   are 1-byte 1-cycle NOPs like the rest of the $xB column, as the Lynx
+//!   runs them (lynx-tests cpu Test 8 executes five of each between CLI and
+//!   the sentinel and the IRQ still comes after the sentinel; Felix and
+//!   Gearlynx agree). Absent or false: the suite's $CB (1 byte, 2 cycles)
+//!   and $DB (2 bytes, 4 cycles, zp,X).
 //!
 //! Timing: the CPU does exactly the bus cycles the hardware does (the
 //! SingleStepTests `cycles` lists are the reference), one `fetch`/`read`/
@@ -22,7 +42,8 @@
 //!
 //! Cycle patterns are the suite's (docs/CPU.md lists the quirks: the
 //! decimal-mode extra cycle of ADC #/SBC # reads $0059/$0000, $CB is a
-//! 1-byte 2-cycle NOP, $DB a 2-byte zp,X NOP, $5C/$DC/$FC 3-byte 4-cycle).
+//! 1-byte 2-cycle NOP, $DB a 2-byte zp,X NOP unless `cpu_lynx_nops`,
+//! $5C/$DC/$FC 3-byte 4-cycle).
 //!
 //! Variant switch for later consoles (NES, 2600, C64 would want an NMOS
 //! 6502 with its illegal opcodes): `Variant` is the hook; only `.lynx` is
@@ -59,6 +80,9 @@ pub fn Cpu(comptime Bus: type) type {
         pub const variant: Variant = .lynx;
 
         regs: Regs = .{},
+        /// The last instruction's interrupt poll: an IRQ may be taken
+        /// before the next one (see the file comment).
+        irq_ok: bool = false,
         /// Instructions executed (interrupt sequences not counted); wraps.
         /// Diagnostic for the frontend overlay (SPEC.md section 14).
         instr_count: u32 = 0,
@@ -78,23 +102,42 @@ pub fn Cpu(comptime Bus: type) type {
         /// One instruction, or the interrupt sequence when `bus.irq_line()`
         /// and I is clear.
         pub fn step(self: *Self, bus: *Bus) void {
-            if (bus.irq_line() and self.regs.p & Flag.i == 0) {
+            if (self.irq_ok and bus.irq_line()) {
                 self.interrupt(bus);
+                self.irq_ok = false;
                 return;
             }
             self.regs.p |= Flag.u | Flag.b;
             self.instr_count +%= 1;
+            const p_before = self.regs.p;
             const op = self.fetch8(bus);
             self.exec(bus, op);
+            self.irq_ok = poll(op, p_before, self.regs.p);
         }
 
+        /// Will the next `step` take the interrupt when the line is `line`?
+        pub inline fn takes_irq(self: *const Self, line: bool) bool {
+            return self.irq_ok and line;
+        }
+
+        /// The interrupt poll of instruction `op`: I as the instruction's
+        /// last cycle sees it (before CLI/SEI/PLP change it), and never
+        /// after a 1-cycle NOP (every $x3/$xB opcode has low bits 011).
+        inline fn poll(op: u8, p_before: u8, p_after: u8) bool {
+            if (op & 0x07 == 0x03 and (lynx_nops or (op != 0xCB and op != 0xDB))) return false;
+            const p = if (op == 0x58 or op == 0x78 or op == 0x28) p_before else p_after;
+            return p & Flag.i == 0;
+        }
+
+        const lynx_nops = @hasDecl(Bus, "cpu_lynx_nops") and Bus.cpu_lynx_nops;
+
         /// The 7-cycle IRQ sequence: the discarded opcode fetch and its
-        /// repeat (as BRK's first two cycles, without advancing PC), PCH,
-        /// PCL, P with B clear, then the vector.
+        /// repeat (as BRK's first two cycles, without advancing PC; internal
+        /// cycles, `dummy`), PCH, PCL, P with B clear, then the vector.
         fn interrupt(self: *Self, bus: *Bus) void {
             const r = &self.regs;
-            _ = bus.fetch(r.pc);
-            _ = bus.fetch(r.pc);
+            bus.dummy(r.pc);
+            bus.dummy(r.pc);
             self.push(bus, @truncate(r.pc >> 8));
             self.push(bus, @truncate(r.pc));
             self.push(bus, (r.p | Flag.u) & ~Flag.b);
@@ -131,7 +174,7 @@ pub fn Cpu(comptime Bus: type) type {
         /// The dummy read of the byte after the opcode (implied and
         /// accumulator instructions, pushes and pulls).
         inline fn dummy_pc(self: *Self, bus: *Bus) void {
-            _ = bus.read(self.regs.pc);
+            bus.dummy(self.regs.pc);
         }
 
         // ---- addressing modes (each issues its own dummy cycles) ----
@@ -143,7 +186,7 @@ pub fn Cpu(comptime Bus: type) type {
         /// zp,X / zp,Y: a dummy read of the unindexed zero-page address.
         inline fn ea_zp_idx(self: *Self, bus: *Bus, idx: u8) u16 {
             const z = self.fetch8(bus);
-            _ = bus.read(z);
+            bus.dummy(z);
             return z +% idx;
         }
 
@@ -156,7 +199,7 @@ pub fn Cpu(comptime Bus: type) type {
         inline fn ea_abs_idx(self: *Self, bus: *Bus, idx: u8, always: bool) u16 {
             const base = self.fetch16(bus);
             const ea = base +% idx;
-            if (always or (base ^ ea) & 0xFF00 != 0) _ = bus.read(self.regs.pc -% 1);
+            if (always or (base ^ ea) & 0xFF00 != 0) bus.dummy(self.regs.pc -% 1);
             return ea;
         }
 
@@ -169,7 +212,7 @@ pub fn Cpu(comptime Bus: type) type {
         /// (zp,X): dummy read of zp, then the pointer at zp + X.
         inline fn ea_izx(self: *Self, bus: *Bus) u16 {
             const z = self.fetch8(bus);
-            _ = bus.read(z);
+            bus.dummy(z);
             return zp_ptr(bus, z +% self.regs.x);
         }
 
@@ -179,7 +222,7 @@ pub fn Cpu(comptime Bus: type) type {
             const z = self.fetch8(bus);
             const base = zp_ptr(bus, z);
             const ea = base +% self.regs.y;
-            if (always or (base ^ ea) & 0xFF00 != 0) _ = bus.read(self.regs.pc -% 1);
+            if (always or (base ^ ea) & 0xFF00 != 0) bus.dummy(self.regs.pc -% 1);
             return ea;
         }
 
@@ -216,7 +259,7 @@ pub fn Cpu(comptime Bus: type) type {
                 self.nz(res);
                 return;
             }
-            _ = bus.read(ea);
+            bus.dummy(ea);
             // 65C02 decimal add (Bruce Clark, "Decimal Mode", appendix A).
             var lo: u16 = @as(u16, a & 0x0F) + (m & 0x0F) + c;
             if (lo >= 0x0A) lo = ((lo + 0x06) & 0x0F) + 0x10;
@@ -243,7 +286,7 @@ pub fn Cpu(comptime Bus: type) type {
                 self.nz(bin);
                 return;
             }
-            _ = bus.read(ea);
+            bus.dummy(ea);
             // 65C02 decimal subtract (Bruce Clark, sequence 4).
             const lo: i16 = @as(i16, a & 0x0F) - @as(i16, m & 0x0F) - @as(i16, @intCast(borrow));
             var res: i16 = @as(i16, a) - @as(i16, m) - @as(i16, @intCast(borrow));
@@ -347,7 +390,7 @@ pub fn Cpu(comptime Bus: type) type {
         /// wrote twice), write.
         fn rmw(self: *Self, bus: *Bus, f: Rmw, ea: u16) void {
             const v = bus.read(ea);
-            _ = bus.read(ea);
+            bus.dummy(ea);
             bus.write(ea, self.rmw_op(f, v));
         }
 
@@ -362,10 +405,19 @@ pub fn Cpu(comptime Bus: type) type {
             const off: u8 = self.fetch8(bus);
             if (!taken) return;
             const r = &self.regs;
-            _ = bus.read(r.pc);
             const target = r.pc +% @as(u16, @bitCast(@as(i16, @as(i8, @bitCast(off)))));
-            if ((target ^ r.pc) & 0xFF00 != 0) _ = bus.read((r.pc & 0xFF00) | (target & 0x00FF));
+            taken_cycle(bus, r.pc, target);
+            if ((target ^ r.pc) & 0xFF00 != 0) bus.dummy((r.pc & 0xFF00) | (target & 0x00FF));
             r.pc = target;
+        }
+
+        /// The extra cycle of a taken branch (a read of PC). To another
+        /// address it is a `read`, which ends the sequential fetch stream
+        /// (the Lynx's page mode: the target's fetch is a full cycle); with
+        /// a zero displacement the stream goes on, so it is a `dummy`
+        /// (lynx-tests lynx-page-mode.md, measured on hardware).
+        inline fn taken_cycle(bus: *Bus, pc: u16, target: u16) void {
+            if (target != pc) _ = bus.read(pc) else bus.dummy(pc);
         }
 
         /// BBRn/BBSn zp,rel (5 cycles; taken +1, page crossing +1, both
@@ -373,13 +425,13 @@ pub fn Cpu(comptime Bus: type) type {
         fn bbx(self: *Self, bus: *Bus, mask: u8, set: bool) void {
             const z = self.fetch8(bus);
             const v = bus.read(z);
-            _ = bus.read(z);
+            bus.dummy(z);
             const off: u8 = self.fetch8(bus);
             if ((v & mask != 0) != set) return;
             const r = &self.regs;
-            _ = bus.read(r.pc);
             const target = r.pc +% @as(u16, @bitCast(@as(i16, @as(i8, @bitCast(off)))));
-            if ((target ^ r.pc) & 0xFF00 != 0) _ = bus.read(r.pc);
+            taken_cycle(bus, r.pc, target);
+            if ((target ^ r.pc) & 0xFF00 != 0) bus.dummy(r.pc);
             r.pc = target;
         }
 
@@ -387,7 +439,7 @@ pub fn Cpu(comptime Bus: type) type {
         fn xmb(self: *Self, bus: *Bus, mask: u8, set: bool) void {
             const z = self.fetch8(bus);
             const v = bus.read(z);
-            _ = bus.read(z);
+            bus.dummy(z);
             bus.write(z, if (set) v | mask else v & ~mask);
         }
 
@@ -606,7 +658,7 @@ pub fn Cpu(comptime Bus: type) type {
                     // the NMOS (wrapped) high-byte read, before the real one.
                     const ptr = self.fetch16(bus);
                     const lo: u16 = bus.read(ptr);
-                    _ = bus.read((ptr & 0xFF00) | ((ptr +% 1) & 0x00FF));
+                    bus.dummy((ptr & 0xFF00) | ((ptr +% 1) & 0x00FF));
                     const hi: u16 = bus.read(ptr +% 1);
                     r.pc = hi << 8 | lo;
                 },
@@ -614,7 +666,7 @@ pub fn Cpu(comptime Bus: type) type {
                     // JMP (abs,X): dummy read of the operand's low byte
                     // address (the suite's).
                     const base = self.fetch16(bus);
-                    _ = bus.read(r.pc -% 2);
+                    bus.dummy(r.pc -% 2);
                     const ptr = base +% r.x;
                     const lo: u16 = bus.read(ptr);
                     const hi: u16 = bus.read(ptr +% 1);
@@ -622,7 +674,7 @@ pub fn Cpu(comptime Bus: type) type {
                 },
                 0x20 => {
                     const lo: u16 = self.fetch8(bus);
-                    _ = bus.read(0x100 | @as(u16, r.s));
+                    bus.dummy(0x100 | @as(u16, r.s));
                     self.push(bus, @truncate(r.pc >> 8));
                     self.push(bus, @truncate(r.pc));
                     const hi: u16 = bus.fetch(r.pc);
@@ -630,16 +682,16 @@ pub fn Cpu(comptime Bus: type) type {
                 },
                 0x60 => {
                     self.dummy_pc(bus);
-                    _ = bus.read(0x100 | @as(u16, r.s));
+                    bus.dummy(0x100 | @as(u16, r.s));
                     const lo: u16 = self.pull(bus);
                     const hi: u16 = self.pull(bus);
                     const ret = hi << 8 | lo;
-                    _ = bus.read(ret);
+                    bus.dummy(ret);
                     r.pc = ret +% 1;
                 },
                 0x40 => {
                     self.dummy_pc(bus);
-                    _ = bus.read(0x100 | @as(u16, r.s));
+                    bus.dummy(0x100 | @as(u16, r.s));
                     r.p = self.pull(bus) | Flag.u | Flag.b;
                     const lo: u16 = self.pull(bus);
                     const hi: u16 = self.pull(bus);
@@ -675,7 +727,7 @@ pub fn Cpu(comptime Bus: type) type {
                 },
                 0x68, 0xFA, 0x7A, 0x28 => {
                     self.dummy_pc(bus);
-                    _ = bus.read(0x100 | @as(u16, r.s));
+                    bus.dummy(0x100 | @as(u16, r.s));
                     const v = self.pull(bus);
                     switch (op) {
                         0x68 => {
@@ -731,15 +783,19 @@ pub fn Cpu(comptime Bus: type) type {
                 // $44: zp, 3 cycles.
                 0x44 => _ = bus.read(self.ea_zp(bus)),
                 // $54/$D4/$F4 and (suite) $DB: zp,X, 4 cycles.
-                0x54, 0xD4, 0xF4, 0xDB => _ = bus.read(self.ea_zp_idx(bus, r.x)),
+                0x54, 0xD4, 0xF4 => _ = bus.read(self.ea_zp_idx(bus, r.x)),
+                0xDB => if (!lynx_nops) {
+                    _ = bus.read(self.ea_zp_idx(bus, r.x));
+                },
                 // $5C/$DC/$FC: 3 bytes, 4 cycles (the last re-reads the
                 // operand's high byte address; Felix has $5C at 8).
                 0x5C, 0xDC, 0xFC => {
                     _ = self.fetch16(bus);
-                    _ = bus.read(r.pc -% 1);
+                    bus.dummy(r.pc -% 1);
                 },
-                // $CB (WAI on WDC parts): 1 byte, 2 cycles in the suite.
-                0xCB => self.dummy_pc(bus),
+                // $CB (WAI on WDC parts): 1 byte, 2 cycles in the suite; 1
+                // cycle on the Lynx (`lynx_nops`).
+                0xCB => if (!lynx_nops) self.dummy_pc(bus),
                 // $x3/$xB: 1 byte, 1 cycle.
                 0x03,
                 0x13,
