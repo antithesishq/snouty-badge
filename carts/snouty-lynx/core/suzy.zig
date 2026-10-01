@@ -209,7 +209,7 @@ pub const Suzy = struct {
     /// Bus tick at which the running math operation completes (SPRSYS bit
     /// 7 reads 1 before it). Only `write_at`/`read_at` see time; plain
     /// `write`/`read` behave as if the math were instant.
-    math_done: u64 = 0,
+    math_done: u32 = 0,
     sprctl0: u8 = 0,
     sprctl1: u8 = 0,
     sprcoll: u8 = 0,
@@ -224,12 +224,12 @@ pub const Suzy = struct {
 
     /// A register read at $FC00 + addr (never $B0-$B3), math instant.
     pub fn read(s: *const Suzy, a: u8) u8 {
-        return s.read_at(a, std.math.maxInt(u64));
+        return s.read_at(a, std.math.maxInt(u32));
     }
 
     /// A register read at bus tick `now` (SPRSYS bit 7 shows a math
     /// operation still running).
-    pub fn read_at(s: *const Suzy, a: u8, now: u64) u8 {
+    pub fn read_at(s: *const Suzy, a: u8, now: u32) u8 {
         if (a < 0x30 or (a >= 0x40 and a < 0x70)) {
             const w = s.regs[(a & 0x3F) >> 1];
             return if (a & 1 == 0) @truncate(w) else @truncate(w >> 8);
@@ -243,7 +243,7 @@ pub const Suzy = struct {
         };
     }
 
-    fn sprsys_read(s: *const Suzy, now: u64) u8 {
+    fn sprsys_read(s: *const Suzy, now: u32) u8 {
         var v: u8 = s.sprsys & 0x1A; // vstretch, lefthand, stop request
         if (now < s.math_done) v |= 0x80;
         if (s.math_warning) v |= 0x40;
@@ -261,7 +261,7 @@ pub const Suzy = struct {
     /// A register write at bus tick `now`: a math operation started here
     /// reads as running in SPRSYS bit 7 until its documented duration has
     /// passed (its results are visible at once).
-    pub fn write_at(s: *Suzy, a: u8, v: u8, now: u64) void {
+    pub fn write_at(s: *Suzy, a: u8, v: u8, now: u32) void {
         if (a < 0x30 or (a >= 0x40 and a < 0x70)) {
             if (now < s.math_done) s.unsafe_access = true;
             const i = (a & 0x3F) >> 1;
@@ -289,6 +289,11 @@ pub const Suzy = struct {
             },
             else => {},
         }
+    }
+
+    /// The bus clock moved back by `d` (core/lynx.zig `rebase`).
+    pub fn rebase(s: *Suzy, d: u32) void {
+        s.math_done -|= d;
     }
 
     /// A sprite list is waiting for the bus (SPRGO bit 0 and SUZYBUSEN).
@@ -323,7 +328,7 @@ pub const Suzy = struct {
     }
 
     /// What a write to math address `a` ($40-$6F, already stored) starts.
-    fn math_command(s: *Suzy, a: u8, now: u64) void {
+    fn math_command(s: *Suzy, a: u8, now: u32) void {
         switch (a) {
             addr.mathc => if (s.sprsys & 0x80 != 0) {
                 s.sign_cd_neg = s.sign_convert(addr.mathd);
@@ -345,7 +350,7 @@ pub const Suzy = struct {
         }
     }
 
-    fn math_started(s: *Suzy, now: u64, ticks: u32) void {
+    fn math_started(s: *Suzy, now: u32, ticks: u32) void {
         s.unsafe_access = true; // lynx-tests math: set after every operation
         s.math_done = now +| ticks;
     }

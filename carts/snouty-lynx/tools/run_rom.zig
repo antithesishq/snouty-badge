@@ -99,7 +99,7 @@ pub fn main(init: std.process.Init.Minimal) !void {
         for (at.items) |u| want = want or u == st.update;
         if (!quiet or want) {
             try w.print("update {d} frame {d} hash {X:0>16} pad {X:0>3} ticks {d} instr {d} irqs {d} px {d} sleep {d} dframes {d} pc {X:0>4}{s}\n", .{
-                st.update,      lynx.frame_count,    st.hash,          st.pad,              lynx.ticks,       lynx.instr_count(),
+                st.update,      lynx.frame_count,    st.hash,          st.pad,              lynx.time(),      lynx.instr_count(),
                 lynx.irq_count, lynx.pixels_drawn(), lynx.sleep_ticks, lynx.display_frames, lynx.cpu.regs.pc, if (st.stepped) "" else " (splash)",
             });
         }

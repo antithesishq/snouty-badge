@@ -60,15 +60,15 @@ pub const screen_h = 102;
 pub const frame_bytes = screen_w * screen_h / 2;
 
 /// 16 MHz ticks per badge frame: 16,000,000 / 60 = 266,666 + 40/60.
-pub const ticks_per_frame: u64 = 266_666;
+pub const ticks_per_frame: u32 = 266_666;
 pub const frame_frac_num: u32 = 40;
 pub const frame_frac_den: u32 = 60;
 
 /// Ticks charged for the $FE00 trap (the ROM shifts eight bits out) and,
 /// per 51-byte block, for the $FE4A trap (two 408-bit modular multiplies in
 /// 6502 code: an estimate, nothing depends on it).
-pub const set_block_ticks: u64 = 300;
-pub const decrypt_block_ticks: u64 = 100_000;
+pub const set_block_ticks: u32 = 300;
+pub const decrypt_block_ticks: u32 = 100_000;
 
 /// The pad word `step_frame` takes. The low byte is the JOYSTICK register
 /// ($FCB0) layout as a game reads it with SPRSYS LEFTHAND clear (cc65
@@ -126,15 +126,19 @@ pub const Lynx = struct {
     fetch_ticks: u8,
     /// The CPU's sequential instruction stream is open (core/bus.zig).
     stream_open: bool,
-    /// 16 MHz ticks since reset (the bus adds to it).
-    ticks: u64,
+    /// 16 MHz ticks since `tick_base` (the bus adds to it; `time()` is
+    /// the clock since reset). 32-bit for the badge's core: `step_frame`
+    /// rebases before it nears 2^31 (`rebase`).
+    ticks: u32,
+    /// Ticks since reset at `ticks` = 0 (a multiple of 2^20).
+    tick_base: u64,
     /// `ticks` at which the current `step_frame` ends, and the carried
     /// fraction of a tick (in 1/60).
-    frame_end: u64,
+    frame_end: u32,
     frame_frac: u32,
     /// `run_cpu`'s bound: below it an instruction needs no Mikey catch-up.
     /// Any Mikey access zeroes it (bus.sync_mikey).
-    fast_end: u64,
+    fast_end: u32,
     /// The pad word of the last `step_frame`.
     pad: u16,
     /// Frames stepped since reset.
@@ -145,7 +149,7 @@ pub const Lynx = struct {
     /// Bus ticks of the current sprite run not yet spent: an interrupt
     /// woke the CPU mid-run (Suzy paused, SPRSYS reads it working); the
     /// next CPUSLEEP resumes it without SDONEACK.
-    sprite_left: u64,
+    sprite_left: u32,
     /// The contract's sleep model for CPUSLEEP with no sprites (see the
     /// file comment). Default false: the documented hardware.
     idle_sleep: bool,
@@ -182,6 +186,7 @@ pub const Lynx = struct {
     /// Power on: clocks and diagnostics to zero, then the boot.
     pub fn reset(l: *Lynx) void {
         l.ticks = 0;
+        l.tick_base = 0;
         l.frame_end = 0;
         l.frame_frac = 0;
         l.fast_end = 0;
@@ -242,11 +247,34 @@ pub const Lynx = struct {
             l.frame_frac -= frame_frac_den;
             n += 1;
         }
+        if (l.ticks >= rebase_at) l.rebase();
         l.frame_end += n;
         while (l.ticks < l.frame_end) {
             if (l.halted or l.sleeping) l.step_one() else l.run_cpu();
         }
         l.frame_count +%= 1;
+    }
+
+    /// `ticks` past this at a frame start: `rebase`.
+    const rebase_at: u32 = 1 << 30;
+
+    /// Move the clock origin forward by a multiple of 2^20 ticks (every
+    /// timer period, the refresh grid and the 16-tick round robin divide
+    /// it, so no phase changes): `ticks`, `frame_end` and every clock value
+    /// in Mikey and Suzy drop by the same amount, `tick_base` grows by it.
+    fn rebase(l: *Lynx) void {
+        bus.sync_mikey(l);
+        const d = @min(l.ticks, l.frame_end) & ~@as(u32, (1 << 20) - 1);
+        l.tick_base += d;
+        l.ticks -= d;
+        l.frame_end -= d;
+        l.mikey.rebase(d);
+        l.suzy.rebase(d);
+    }
+
+    /// 16 MHz ticks since reset.
+    pub fn time(l: *const Lynx) u64 {
+        return l.tick_base + l.ticks;
     }
 
     /// Instructions back to back while nothing but the CPU can happen: the
