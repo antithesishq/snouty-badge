@@ -181,6 +181,10 @@ const flag_collide: u8 = 2;
 /// Pen E of the shadow types: collision read but kept (timing only).
 const flag_preserve: u8 = 4;
 
+/// Test knob: false decodes every row (no replay of the previous row's
+/// spans, `Draw.row`); the result must be the same either way.
+pub var replay_rows: bool = true;
+
 pub const Suzy = struct {
     /// SPRSYS ($FC92) as last written (bit 7 signed math, 6 accumulate, 5
     /// no collide, 4 vstretch, 3 lefthand, 2 clear unsafe, 1 sprite to stop).
@@ -562,8 +566,7 @@ pub const Suzy = struct {
                     if (y >= 0 and y < screen_height) {
                         const yo: u16 = @intCast(y);
                         const x: i32 = @as(i32, @as(i16, @bitCast(hposstrt -% hoff))) + hadj;
-                        d.draw_row(sprdline, off - 1, yo, x, dx, acc0, hsiz);
-                        d.ticks += row_ticks(&d.rs, d.bpp, d.literal) + transform;
+                        d.ticks += d.row(sprdline, off - 1, yo, x, dx, acc0, hsiz) + transform;
                     } else {
                         // A row before the screen, moving towards it.
                         d.ticks += tick_cost.row_clipped;
@@ -802,6 +805,62 @@ const Draw = struct {
     ticks: u32 = 0,
     rs: RowStats = .{},
 
+    /// The last decoded row, for the next row of the same source line
+    /// (`row`): its inputs, its spans and its cost. `cache_ok` is cleared
+    /// when a row's writes may have changed the source bytes.
+    cache_ok: bool = false,
+    c_data: u16 = 0,
+    c_nbytes: u8 = 0,
+    c_hsiz: u16 = 0,
+    c_x: i32 = 0,
+    c_dx: i32 = 0,
+    c_acc: u32 = 0,
+    c_cost: u32 = 0,
+    n_spans: u32 = 0,
+    spans: [screen_width]Span = undefined,
+
+    const Span = struct { a: u8, b: u8, pen_index: u8 };
+
+    /// One destination row from a source line (`draw_row`), returning its
+    /// cost in `tick_cost.unit`s. A row with the same inputs as the last
+    /// decoded one (the next row of a source line drawn taller than one
+    /// row, unless stretch or tilt change it) decodes to the same spans
+    /// and the same statistics, so those are replayed onto the new line
+    /// instead: the result in RAM and the ticks are the same as decoding
+    /// it again, as long as the source bytes are unchanged. A row is not
+    /// replayed when its own line (video or collision) holds source bytes
+    /// (the decode would read what it has just written), and the cache is
+    /// dropped after a row that wrote over them.
+    fn row(d: *Draw, data: u16, nbytes: u8, y: u16, x_start: i32, dx: i32, acc0: u32, hsiz: u16) u32 {
+        var cost: u32 = undefined;
+        const vline = d.vidbas +% y *% line_bytes;
+        const cline = d.collbas +% y *% line_bytes;
+        if (replay_rows and d.cache_ok and data == d.c_data and nbytes == d.c_nbytes and x_start == d.c_x and
+            dx == d.c_dx and acc0 == d.c_acc and hsiz == d.c_hsiz and
+            !overlaps(data, nbytes, vline, line_bytes) and !overlaps(data, nbytes, cline, line_bytes))
+        {
+            d.last_vline = vline;
+            d.last_cline = cline;
+            for (d.spans[0..d.n_spans]) |sp| _ = d.fill_pixels(vline, cline, sp.a, sp.b, sp.pen_index);
+            cost = d.c_cost;
+        } else {
+            d.n_spans = 0;
+            d.draw_row(data, nbytes, y, x_start, dx, acc0, hsiz);
+            cost = row_ticks(&d.rs, d.bpp, d.literal);
+            d.c_data = data;
+            d.c_nbytes = nbytes;
+            d.c_x = x_start;
+            d.c_dx = dx;
+            d.c_acc = acc0;
+            d.c_hsiz = hsiz;
+            d.c_cost = cost;
+            d.cache_ok = true;
+        }
+        if (d.n_spans != 0 and (overlaps(data, nbytes, vline, line_bytes) or
+            overlaps(data, nbytes, cline, line_bytes))) d.cache_ok = false;
+        return cost;
+    }
+
     /// Decode one source line (`nbytes` data bytes at `data`) into one
     /// destination row `y`, starting at screen column `x` and stepping `dx`.
     fn draw_row(d: *Draw, data: u16, nbytes: u8, y: u16, x_start: i32, dx: i32, acc0: u32, hsiz: u16) void {
@@ -922,27 +981,45 @@ const Draw = struct {
         }
     }
 
-    /// Pixels a..b-1 of the row with one pen index: video then collision.
+    /// Pixels a..b-1 of the row with one pen index: video then collision,
+    /// recorded for `row`'s replay, and counted for the tick model.
     fn fill(d: *Draw, vline: u16, cline: u16, a: u16, b: u16, pen_index: u8, right: bool) void {
-        const f = d.pen_flags[pen_index];
-        const n: u32 = b - a;
+        d.spans[d.n_spans] = .{ .a = @intCast(a), .b = @intCast(b), .pen_index = pen_index };
+        d.n_spans += 1;
+        const f = d.fill_pixels(vline, cline, a, b, pen_index);
         if (f & flag_opaque != 0) {
-            const pen = f >> 4;
-            if (d.xor) xor_nibbles(d.ram, vline, a, b, pen) else set_nibbles(d.ram, vline, a, b, pen);
-            d.pixels += n;
             if (d.track_vid) d.rs.vid.add(a, b, if (d.xor) vid_xor else vid_write, right);
         } else if (d.track_vid) {
             d.rs.vid.add(a, b, vid_read, right);
         }
         if (f & flag_collide != 0) {
-            const old = max_set_nibbles(d.ram, cline, a, b, d.coll_num);
-            if (d.deposit and old > d.fred) d.fred = old;
             d.rs.col.add(a, b, if (d.deposit) col_detect else col_write, right);
         } else if (f & flag_preserve != 0) {
             d.rs.col.add(a, b, col_preserve, right);
         }
     }
+
+    /// The RAM side of `fill`; returns the pen's flags.
+    inline fn fill_pixels(d: *Draw, vline: u16, cline: u16, a: u16, b: u16, pen_index: u8) u8 {
+        const f = d.pen_flags[pen_index];
+        if (f & flag_opaque != 0) {
+            const pen = f >> 4;
+            if (d.xor) xor_nibbles(d.ram, vline, a, b, pen) else set_nibbles(d.ram, vline, a, b, pen);
+            d.pixels += b - a;
+        }
+        if (f & flag_collide != 0) {
+            const old = max_set_nibbles(d.ram, cline, a, b, d.coll_num);
+            if (d.deposit and old > d.fred) d.fred = old;
+        }
+        return f;
+    }
 };
+
+/// Do the circular (mod 64 KB) byte ranges [a, a + la) and [b, b + lb)
+/// share a byte? (la, lb >= 1.)
+fn overlaps(a: u16, la: u16, b: u16, lb: u16) bool {
+    return a -% b < lb or b -% a < la;
+}
 
 /// Pixels a..b-1 (a < b) of the line at `base` set to `v` (0..15).
 fn set_nibbles(ram: *[0x10000]u8, base: u16, a: u16, b: u16, v: u8) void {

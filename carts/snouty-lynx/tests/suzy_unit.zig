@@ -971,3 +971,44 @@ test "suzy: tick model against the lynx-tests hardware timings" {
     }
     try expect_hw_ticks(r.go(scb0, 1), 92);
 }
+
+/// One run of a sprite whose line data sits in the video buffer it draws
+/// over, each line three rows tall: the row drawn over the data changes
+/// what the next row of the line decodes.
+fn run_self_overwrite(replay: bool, out: *Ram) !u32 {
+    var r = try Rig.init();
+    defer r.deinit();
+    core.suzy.replay_rows = replay;
+    defer core.suzy.replay_rows = true;
+    // Row 6 of the screen, bytes 4..7 (pixels 8..15): the line data.
+    const data: u16 = vidbas + 6 * 80 + 4;
+    r.ram[data - 1] = 5; // offset: four data bytes
+    r.ram[data] = 0x12;
+    r.ram[data + 1] = 0x34;
+    r.ram[data + 2] = 0x56;
+    r.ram[data + 3] = 0x78;
+    r.ram[data + 4] = 5;
+    r.ram[data + 5] = 0x9A;
+    r.ram[data + 6] = 0xBC;
+    r.ram[data + 7] = 0xDE;
+    r.ram[data + 8] = 0xF1;
+    r.ram[data + 9] = 0;
+    // Literal 4 bpp, normal type, three rows per line, from (9, 4).
+    (Scb{ .sprctl0 = ctl0(4, 4), .sprctl1 = 0x90, .data = data - 1, .hpos = 9, .vpos = 4, .vsiz = 0x300 }).put(r.ram, scb0);
+    const t = r.go(scb0, 1);
+    out.* = r.ram.*;
+    return t;
+}
+
+test "suzy: replaying a row equals decoding it, also when it overwrote its data" {
+    const a = try std.testing.allocator.create(Ram);
+    defer std.testing.allocator.destroy(a);
+    const b = try std.testing.allocator.create(Ram);
+    defer std.testing.allocator.destroy(b);
+    const ta = try run_self_overwrite(true, a);
+    const tb = try run_self_overwrite(false, b);
+    try std.testing.expectEqual(tb, ta);
+    try std.testing.expectEqualSlices(u8, b, a);
+    // The data was overwritten mid-line (the test exercises the guard).
+    try std.testing.expect(b[vidbas + 6 * 80 + 4] != 0x12);
+}
