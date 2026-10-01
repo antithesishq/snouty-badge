@@ -376,6 +376,53 @@ only when the overlay is on, else the ROM origin ("drive 128 KB" /
 
 ## Status
 
+- 2026-10-01: M2 DONE on `lynx/m2` (frontend agent; not tagged or merged:
+  the integrator tags `snouty-lynx/m2` and merges). Menu (frontend/menu.zig,
+  Genesis's adapted, a copy until Gear's M5 shared frontend): Resume,
+  `Buttons: A=A B=B`/`A=B B=A`, Press Option 2, `Restart Pause+Opt1` (the
+  contract's "Restart: Pause+Opt1" is 19 columns, one more than the panel;
+  both hold rows set `hold_pad`/`hold_frames_left` = 4 and resume), Debug
+  overlay (off at boot), Reset (`init_in_place` on the same cart = the boot
+  again), Pick ROM (only with more than one playable drive file), About
+  (version, file, header title + maker, size + block size, source, then
+  boot error, drive-not-used reason, CRC, fragmented, EEPROM while lines
+  remain). Frozen frame as Genesis; Left/Right only flip the two settings;
+  the panel's bottom line (`scrub_line_y` = 110) is left for M3. States
+  splash -> running | pick | help, running <-> menu, menu -> pick -> running
+  (`debug_state` 0..4); help = the embedded ROM under the M0 band, A or B
+  hides it. Picker (frontend/picker.zig): from the splash B keeps the first
+  playable file (booted in `start`), from the menu B goes back; the cursor
+  starts on the running file. Strip: "SNOUTY LYNX" + the ROM name (header
+  title, else file name); origin + size, or the debug line; then the boot
+  error, or the debug line 2, or the CRC/flags / drive fallback reason.
+  romsrc: `select` returns the cart and the next state, `open(i)` for the
+  picker (drive.open into the shared Source/cluster table, CRC again),
+  `title_name`, `fallback`, `fragmented`; the report string is gone.
+  Exports `debug_menu_opens`, `debug_settings` (bit 2 swap, bit 3 overlay),
+  `debug_hold_pad`. No sound, neopixels never written (`debug_led_max` 0).
+  Checks: both targets build; `zig build test-lynx` 90/90; preview
+  `m2_menu.json` (360 updates) passes 11 checks (menu at 104, settings 4 /
+  0 / 8 / 0, `debug_pad` 4 on updates 230-233 and 0 at 234, Select-tap
+  resume at 312, opens 2, hold pad 4, LEDs 0), `docs/m2_menu.gif` (134 KB).
+  Picker verified in badge-bench on `out/lynx-two.img` (raycast as
+  RAYCAST.LNX and AGAIN.LNX, tools/make_romfs.py, not committed): the list
+  after the splash, Down + A plays AGAIN.LNX (About names it, the strip
+  reads "drive 27 KB"), the menu shows Pick ROM and reopens the list with
+  "B: back", B resumes; the choosing frame is 13.30 ms (boot + CRC). Help
+  checked on `tests/fixtures/m0_none.img`. badge-bench (calibrated,
+  `m2_play.json`, 400 frames, fixture drive): game frames 0-299 busy mean
+  8.42 ms, p95 11.50, worst 12.94 (M1 8.44 / 11.53 / 12.96); menu frames
+  334-364 mean 0.92, worst 1.17 (the frozen-frame copy); after resuming
+  mean 9.26, worst 12.32; 0 of 400 over. Sizes (ReleaseFast, drive source,
+  raycast embedded): .text 148,472 B (cf132ba built in the same tree:
+  145,560), .data 120, .bss 84,160; free arena `__bss_end__` 0x2006e148 ..
+  0x20078000 = 40,632 B (cf132ba: 43,712), so the frontend took 3,080 B.
+  The first cut took 8.7 KB: ReleaseFast inlined the romsrc/debug number
+  and size helpers at every call site, now `noinline`; the boot is one
+  out-of-line `init_in_place` for start, the picker and Reset. Deferred:
+  the scrubber (M3, Left/Right and the bottom line), no hint on the help
+  band that A/B hides it, the strip cannot tell two files with the same
+  header title apart (About can), the Gear/Genesis/Lynx menu extraction.
 - 2026-10-01: M2 contract written on `lynx/m2`; one Opus agent started.
 - 2026-10-01: M1 INTEGRATED. Tracks A (CPU), B (Suzy), C (machine) merged on
   `lynx/m1`, then two fixers (Suzy vs the lynx-tests carts: math flags and
