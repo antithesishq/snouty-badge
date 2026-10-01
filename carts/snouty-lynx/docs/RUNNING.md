@@ -5,13 +5,17 @@ simulator, bench it, put a ROM on the badge drive and flash the cart.
 Commands run from the repository root unless noted; outputs land in the
 root `zig-out/`.
 
-Status: M0 scaffold. Boot splash (the Iris mark and "SNOUTY LYNX" slide
-down onto a dark screen, 1.2 s, any button skips; no chime, the cart is
-silent), then the placeholder screen: the core's test pattern at rows
-0..101 (16 colour bars, a band walking down a line a frame, the ROM's
-first 320 bytes as pixels in rows 0..3) and the status strip at rows
-102..127 (`SNOUTY LYNX drive|embedded`, then the ROM name, size, CRC and
-flags). No emulation yet.
+Status: M1 Track C (machine) on `lynx/m1-machine`, before integration.
+Boot splash (the Iris mark and "SNOUTY LYNX" slide down onto a dark
+screen, 1.2 s, any button skips; the cart is silent), then the real core:
+the boot without the boot ROM (`core/boot.zig`), the bus, Mikey's timers,
+interrupts and display copy, the cart port and the $FE00/$FE4A traps
+(`core/bus.zig`, `core/mikey.zig`, `core/lynx.zig`), with the CPU and
+Suzy from Tracks A and B once merged (on this branch alone they are the
+frozen stubs and the picture stays black). Rows 102..127 are the status
+strip: with the debug overlay on (M1 default) fps, mean (`u`) and worst
+(`w`) step microseconds, then instructions (`i`) and Suzy pixels (`px`) of
+the last frame, then the ROM report.
 
 ## 1. Build
 
@@ -62,28 +66,76 @@ zig build test-lynx -Dtest-filter=drive  # only names containing "drive"
   byte read back through pointers and the cluster table) and
   `m0_none.img` (nothing playable), plus a blank image (NoVolume).
   Regenerate the images with `python3 carts/snouty-lynx/tests/fixtures/make_fixtures.py`.
-- `lynx:` the M0 test pattern.
+- `boot:` the loader decryption (cc65 and Wookie loaders, rejected
+  frames), the boot reader over `core/cart.zig`, the local dumps and the
+  cross-check against the real boot ROM (skipped without `~/roms/lynx/`
+  and `tests/roms/boot/*.boot.json`, docs/BOOT.md).
+- `mikey:` timer periods at every clock select, global clock edges,
+  linking 0 -> 2 -> 4 and 1 -> 3 -> 5 -> 7, one-shot DONE and RESET_DONE,
+  the CTLB software clock, INTSET/INTRST and the UART level, palette and
+  IODAT, the vertical blank cadence from the boot values (105 x 159 us),
+  the DISPADR latch and the DMA/refresh steal, quiet fast timers.
+- `bus:` MAPCTL overlays, tick costs (page-mode stream, Mikey timers,
+  Suzy, RCART), JOYSTICK/SWITCHES/LEFTHAND, the cart port protocol.
+- `lynx:` the post-boot state on raycast, the $FE00 and $FE4A traps, the
+  ROM-space reboot, CPUSLEEP (sprites, SDONEACK, pending IRQs, the
+  optional idle sleep), the frame clock and the display copy, a cart that
+  does not boot.
+- `golden:` the runner's input model and script parser; raycast under
+  `tools/scripts/m1_play.json` and the drhelius lynx-tests carts
+  (`tests/roms/lynx-tests/`, `tools/fetch_test_roms.sh`; skipped when
+  absent). The hash tables are empty until integration: the test prints
+  them.
+
+## 2a. Run a ROM headless (`run-lynx`)
+
+```sh
+zig build run-lynx -- carts/snouty-lynx/roms/raycast.lnx \
+  carts/snouty-lynx/tools/scripts/m1_play.json 300 out/run-raycast
+zig build run-lynx -- carts/snouty-lynx/tests/roms/lynx-tests/timers.lnx - 300 out/run-timers --quiet --every 0
+zig build run-lynx -- ~/roms/lynx/hard_drivin.lnx - 1500 out/run-hd --every 150   # local dump, never committed
+```
+
+Arguments: the ROM (headered `.lnx` or a headerless dump), the input
+script (`-` for none: the splash then ends by itself at update 72),
+the number of badge updates, the output directory. It runs the cart's
+input model (`tests/runner.zig`: the splash, the held-button suppression,
+a Select tap = Option 1) and prints one line per update: the frame hash
+(the same hash `tests/golden.zig` pins), the pad word and the
+diagnostics (ticks, instructions, IRQs taken, Suzy pixels, sleep ticks,
+display frames, PC). `frame_UUUU.ppm` (160x102, the 12-bit palette
+widened) is written every `--every N` updates (default 30), at each
+`--at U,U,...` and at the last update. `--quiet` prints only those
+updates and the summary; `--idle-sleep` switches CPUSLEEP to the
+sleep-until-interrupt model (`core/lynx.zig`). Paths are relative to the
+repository root. Convert with any image tool (`python3 -c "from PIL import
+Image; Image.open('f.ppm').save('f.png')"`).
 
 ## 3. Headless preview
 
 ```sh
-node tools/preview.mjs zig-out/bin/snouty-lynx.wasm --frames 200 --every 20 \
-  --script carts/snouty-lynx/tools/scripts/m0_boot.json --out carts/snouty-lynx/out/ \
-  --dump-exports debug_state,debug_rom_source,debug_rom_size,debug_rom_block_size,debug_led_max \
-  --expect "debug_state == 1" --expect "debug_led_max == 0"
+node tools/preview.mjs zig-out/bin/snouty-lynx.wasm --frames 300 --every 30 \
+  --script carts/snouty-lynx/tools/scripts/m1_play.json --out carts/snouty-lynx/out/ \
+  --dump-exports debug_state,debug_boot_error,debug_instr_count,debug_display_frames,debug_led_max \
+  --expect "debug_state == 1" --expect "debug_boot_error == 0" --expect "debug_led_max == 0"
 ```
 
-`tools/scripts/m0_boot.json`: A skips the splash at update 40, Start
-(Pause) 100-109, Up+B 130-139, a Select tap 160-162 (Option 1 for three
-frames). Exports: `debug_frame_count`, `debug_state` (0 splash, 1 running),
-`debug_pad` (`core.Pad` bits: A 1, B 2, Option 2 4, Option 1 8, right 16,
-left 32, down 64, up 128, Pause 256), `debug_rom_source` (0 embedded,
-1 drive), `debug_rom_size` (file bytes), `debug_rom_block_size`,
-`debug_rom_direct_blocks`, `debug_rom_headered`, `debug_rom_crc` (drive
-only), `debug_palette_rebuilds`, `debug_led_max` (largest neopixel channel;
-must be 0). `docs/m0_screen.png` is frame 100 of this run;
-`docs/m0_splash.png` is frame 60 of a run without the script (the landed
-splash).
+`tools/scripts/m1_play.json`: A skips the splash at update 40, then Up
+70-130, Left 131-160, Up+Right 161-210, Down 211-240, Right 241-270, Up+B
+271-299 (raycast moves and turns). `tools/scripts/m0_boot.json` (Start,
+Up+B, a Select tap) still works. Exports: `debug_frame_count`,
+`debug_state` (0 splash, 1 running), `debug_pad` (`core.Pad` bits: A 1, B
+2, Option 2 4, Option 1 8, right 16, left 32, down 64, up 128, Pause 256),
+`debug_rom_source` (0 embedded, 1 drive), `debug_rom_size` (file bytes),
+`debug_rom_block_size`, `debug_rom_direct_blocks`, `debug_rom_headered`,
+`debug_rom_crc` (drive only), `debug_palette_rebuilds`, `debug_led_max`
+(largest neopixel channel; must be 0); from M1 the core's diagnostics:
+`debug_ticks_lo`/`debug_ticks_hi` (16 MHz ticks), `debug_instr_count`,
+`debug_instr_per_frame`, `debug_pixels_drawn` (Suzy), `debug_irq_count`,
+`debug_sleep_ticks` (CPU asleep while Suzy draws), `debug_display_frames`
+(vertical blanks copied), `debug_boot_error` (0 booted, 1-4 the
+`core.boot.BootError`), `debug_pc`. In wasm `micros_since_boot` adds 1000
+per call, so the strip's step times mean nothing there.
 
 ## 4. Web simulator
 
@@ -105,9 +157,10 @@ A, X or J = badge B = Lynx B, Enter = Start = Pause, Backspace = Select
 badge-bench/bench.sh zig-out/firmware/snouty-lynx.elf --symbols
 ```
 
-`badge-bench/carts/snouty-lynx.toml` runs `m0_boot.json` for 300 frames
-with `tests/fixtures/m0_drive.img` as the drive (committed, no commercial
-ROMs: the cart runs GAME.LNX, "2 of 4"). With a local dump:
+`badge-bench/carts/snouty-lynx.toml` runs `m1_play.json` for 300 frames
+with no drive image, so the cart runs the embedded raycast.lnx (the M0
+drive fixture's GAME.LNX is the placeholder, which does not boot). With a
+local dump:
 
 ```sh
 python3 tools/make_romfs.py out/lynx-romfs.img ~/roms/lynx/hard_drivin.lnx

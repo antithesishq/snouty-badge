@@ -1,16 +1,19 @@
-# snouty-lynx: Atari Lynx emulator, 60 fps. M0 scaffold: the Iris-mark boot
-# splash (skipped by A on update 40), then the placeholder screen (the
-# core's test pattern at rows 0..101 and the status strip), which is what
-# every frame after the splash draws until M1 runs a real core.
+# snouty-lynx: Atari Lynx emulator, 60 fps. M1: the real core (65C02, Mikey
+# timers and interrupts, Suzy sprites and math, the boot without the boot
+# ROM) running the embedded roms/raycast.lnx (42Bastian's textured
+# raycaster, Apache-2.0): the Iris-mark splash (skipped by A on update 40),
+# then raycast's walls and HUD with the status strip (debug numbers on in
+# M1: fps, mean/worst step us, instructions and Suzy pixels per frame).
 budget_ms = 16.7
 frames = 300
-# carts/snouty-lynx/tools/scripts/m0_boot.json: A skips the splash at 40,
-# Start (Pause) 100-109, Up+B 130-139, a Select tap 160-162 (Option 1).
-script = "carts/snouty-lynx/tools/scripts/m0_boot.json"
-# The committed drive fixture (no commercial ROMs; regenerate with
-# carts/snouty-lynx/tests/fixtures/make_fixtures.py): ROT.LNX (refused),
-# GAME.LNX (the placeholder, runs), RAW.LYX, FRAG.LNX. For a local run with a
-# real dump (never committed):
+# carts/snouty-lynx/tools/scripts/m1_play.json: A skips the splash at 40,
+# Up 70-130, Left 131-160, Up+Right 161-210, Down 211-240, Right 241-270,
+# Up+B 271-299 (moves and turns through the maze).
+script = "carts/snouty-lynx/tools/scripts/m1_play.json"
+# No romfs: with no drive volume the cart runs the embedded raycast.lnx.
+# (The M0 drive fixture, carts/snouty-lynx/tests/fixtures/m0_drive.img,
+# would pick GAME.LNX, the placeholder, which is not a Lynx program: it
+# fails the boot and the picture stays black.) For a local run with a real
+# dump (never committed):
 #   python3 tools/make_romfs.py out/lynx-romfs.img ~/roms/lynx/hard_drivin.lnx
 #   badge-bench/bench.sh zig-out/firmware/snouty-lynx.elf --romfs out/lynx-romfs.img
-romfs = "carts/snouty-lynx/tests/fixtures/m0_drive.img"
