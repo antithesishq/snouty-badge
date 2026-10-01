@@ -346,15 +346,15 @@ pub const Lynx = struct {
                 count +%= @intFromBool(!irq);
                 l.cpu.step_decided(&port, irq);
             }
-            if (port.t < l.fast_end) continue;
+            if (port.t < port.end) continue;
             port.put();
             // Only a display burst or refresh due (no register access in
             // the instruction, no timer event, the frame goes on): its
             // catch-up in line.
             if (l.fast_end == 0 or l.ticks >= l.frame_end or l.mikey.timer_event <= l.ticks) break;
             if (!l.dma_catch_up()) return;
-            port.get();
             l.fast_end = @min(l.frame_end, l.mikey.next_event);
+            port.get();
         }
         l.after_step();
     }

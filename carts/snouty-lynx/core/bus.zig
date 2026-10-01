@@ -187,12 +187,14 @@ pub const Port = struct {
     t: u32,
     fc: u32,
     ft: u32,
+    /// `l.fast_end` (only the slow paths change it: read again by `get`).
+    end: u32,
 
     /// $CB/$DB are 1-cycle NOPs on the Lynx (core/cpu65.zig).
     pub const cpu_lynx_nops = true;
 
     pub inline fn of(l: *Lynx) Port {
-        return .{ .l = l, .t = l.ticks, .fc = l.fetch_cost, .ft = l.fetch_ticks };
+        return .{ .l = l, .t = l.ticks, .fc = l.fetch_cost, .ft = l.fetch_ticks, .end = l.fast_end };
     }
 
     /// The held values back into the console.
@@ -206,6 +208,7 @@ pub const Port = struct {
         p.t = p.l.ticks;
         p.fc = p.l.fetch_cost;
         p.ft = p.l.fetch_ticks;
+        p.end = p.l.fast_end;
     }
 
     pub inline fn fetch(p: *Port, addr: u16) u8 {
