@@ -300,9 +300,39 @@ pub const Lynx = struct {
                 if (irq) l.irq_count +%= 1;
                 l.cpu.step_inline(l);
             }
-            if (l.ticks >= l.fast_end) break;
+            if (l.ticks < l.fast_end) continue;
+            // Only a display burst or refresh due (no register access in
+            // the instruction, no timer event, the frame goes on): its
+            // catch-up in line.
+            if (l.fast_end == 0 or l.ticks >= l.frame_end or l.mikey.timer_event <= l.ticks) break;
+            if (!l.dma_catch_up()) return;
+            l.fast_end = @min(l.frame_end, l.mikey.next_event);
         }
         l.after_step();
+    }
+
+    /// `after_step` when only video DMA or refresh events are due (no timer
+    /// event, so no interrupt or vertical blank can come from them): the
+    /// same steps, without the general event loop. False when the charged
+    /// steal reaches another event or the frame end: then the rest of
+    /// `after_step` has been done and `run_cpu` returns.
+    inline fn dma_catch_up(l: *Lynx) bool {
+        const m = &l.mikey;
+        m.now = l.ticks;
+        while (m.dma_next <= m.now) m.dma_event(m.dma_next);
+        m.next_event = @min(m.timer_event, m.dma_next);
+        l.ticks += m.steal;
+        l.dma_ticks += m.steal;
+        m.steal = 0;
+        if (m.steal_burst) l.stream_open = false;
+        m.steal_burst = false;
+        if (l.ticks >= m.next_event or l.ticks >= l.frame_end) {
+            bus.sync_mikey(l);
+            if (m.vblank_count != l.vblank_seen) l.on_vblank();
+            return false;
+        }
+        m.now = l.ticks;
+        return true;
     }
 
     /// One instruction, interrupt sequence, trap, or stretch of sleep.

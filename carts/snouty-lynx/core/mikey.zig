@@ -329,7 +329,7 @@ pub const Mikey = struct {
     }
 
     /// A display burst or a refresh is due at `at`.
-    fn dma_event(m: *Mikey, at: Tick) void {
+    pub fn dma_event(m: *Mikey, at: Tick) void {
         if (m.dma_bursts_left != 0 and m.dispctl & 1 != 0) {
             m.steal += dma_ticks_per_burst;
             m.steal_burst = true;
