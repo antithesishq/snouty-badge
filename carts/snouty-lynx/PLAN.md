@@ -509,8 +509,52 @@ Merge, `zig build test` green, pick the build per the sizing table,
 preview GIF `docs/m3_scrub.gif`, badge-bench on m3_scrub, sizes, status,
 tag `snouty-lynx/m3`, merge to main.
 
+## M4 Perf: contract
+
+Written 2026-10-01 after M3. One Opus agent on `lynx/m4` (worktree
+`/home/exedev/snouty-badge-lynx-m4`). The hardware half of SPEC.md 17's
+M4 (every stress target measured on a badge) is show day's; this is the
+host-side half against the calibrated badge-bench. The 13.1 packed
+fallback is not needed (the drive path works in the bench; hardware
+pending).
+
+Baseline (M3, RAM cart, ReleaseFast with `cpu65.exec` not inlined, undo
+hooks on; m2_play.json 400 frames): all frames mean 9.58 ms, worst 16.13;
+game frames 41-299 mean 11.64; m3_scrub.json: worst 16.81 at the second
+frame after resume (1 of 480 over). Per unit: CPU ~100 host cycles per
+instruction (target 60), Suzy ~74 per pixel written on raycast's 5-pixel
+rows (target 20), display 0.25 ms. Hard Drivin' drive (local script):
+mean 11.6, worst 20.1 (one spike).
+
+Targets: raycast game frames worst under 14 ms and mean under 11 in the
+RAM build; the resume spike gone (no frame over budget in m3_scrub); Hard
+Drivin' worst under 16.7. Emulated behaviour unchanged: the golden hashes
+and every lynx-tests row stay as they are (a deliberate timing fix, e.g.
+sprites4 DMA EXP W24, is allowed only as a separate commit that re-pins
+the hashes it changes and keeps every other row).
+
+Work, in order of expected payoff:
+1. Suzy per-row cost (docs/SUZY.md "Performance shape"): the decoded-row
+   path (~235 cycles per row), the per-span accounting of the tick model
+   (keep the result bit-identical), sprite-type-specialised span writers,
+   the collision-span `touch_range` (one call per span is the rule; batch
+   per row where the spans are contiguous).
+2. CPU dispatcher without inlining it into the run loop: the `exec` call
+   overhead (register saves), keeping `regs` in locals across an
+   instruction, the fetch/read/write fast paths (`undo.touch` is one byte
+   load and a branch), `after_step`. The inlined variant stays one
+   keyword away for the XIP build (note how to switch it).
+3. The resume spike: `resume_here` + the first `step_frame` +
+   `record_frame` land in one frame; spread or cheapen (e.g. truncate
+   records lazily, open the record without copying).
+4. Mikey events, `video.show`, the strip (small).
+Each change measured; keep what pays; the before/after table in the
+Status. `zig build test-lynx` 108/108 unchanged, `zig fmt`, both cart
+modes build, preview of m3_scrub.json still passes its checks.
+
 ## Status
 
+- 2026-10-01: M4 contract written on `lynx/m4`; one Opus agent started.
 - 2026-10-01: M3 INTEGRATED. Tracks A (undo core) and B (scrub frontend)
   merged on `lynx/m3`; 108/108 host tests (13 undo, 2 determinism: raycast
   600 frames restore-and-step equals the next copy, every record back and
