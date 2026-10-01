@@ -22,7 +22,8 @@ const expect = std.testing.expect;
 const expectEqual = std.testing.expectEqual;
 
 const frames = 600;
-const per = undo.frames_per_record;
+/// 30-frame records as SPEC 10 wrote them (the cart uses 60; set below).
+const per = 30;
 const kfs = frames / per + 1;
 
 fn same_consoles(what: []const u8, a: *const Lynx, b: *const Lynx, sa: *uu.State, sb: *uu.State) !void {
@@ -32,6 +33,7 @@ fn same_consoles(what: []const u8, a: *const Lynx, b: *const Lynx, sa: *uu.State
 }
 
 test "determinism: raycast, a restored copy steps to the next copy (600 frames)" {
+    undo.frames_per_record = per;
     const a = std.testing.allocator;
     const pads = try uu.PlayPads.init();
     const copies = try a.alloc(Lynx, kfs);
@@ -61,6 +63,7 @@ test "determinism: raycast, a restored copy steps to the next copy (600 frames)"
 }
 
 test "determinism: raycast, every record back and forth, resume (600 frames)" {
+    undo.frames_per_record = per;
     const a = std.testing.allocator;
     const pads = try uu.PlayPads.init();
     const l = try a.create(Lynx);
@@ -121,10 +124,10 @@ test "determinism: raycast, every record back and forth, resume (600 frames)" {
     // state, the history whole again, and the new records chain.
     try expect(undo.step(l, -1));
     try expect(undo.step(l, -1));
-    try expectEqual(@as(u32, 60), undo.depth_frames());
+    try expectEqual(@as(u32, 2 * per), undo.depth_frames());
     undo.resume_here(l);
     try expectEqual(@as(usize, kfs - 3), undo.record_count());
-    f = frames - 60;
+    f = frames - 2 * per;
     while (f < frames) : (f += 1) {
         l.step_frame(pads.at(f));
         undo.record_frame(l);

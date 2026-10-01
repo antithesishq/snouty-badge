@@ -38,7 +38,12 @@ pub fn add(b: *Build, sycl_badge_dep: *Build.Dependency, opts: common.Options) v
     };
 
     os_cart.add(b, sycl_badge_dep, .{
-        .mode = opts.cart_mode,
+        // Both artifacts from the default build: the RAM cart (the default on
+        // the badge) and `snouty-lynx-xip.uf2`, the XIP cart whose 190 KB of
+        // free RAM is what the M3 scrubber wants (docs/SCRUB.md); XIP is
+        // untested on hardware, so the RAM cart stays the default until
+        // Adrian's badge run says otherwise. -Dcart-mode=xip|both as usual.
+        .mode = if (opts.cart_mode == .ram) .both else opts.cart_mode,
         .name = "snouty-lynx",
         .optimize = opts.cart_optimize,
         .root_source_file = b.path(dir ++ "cart/src/main.zig"),

@@ -27,7 +27,8 @@ CLAUDE.md and docs have the longer explanations.
   stored only. `suzy.zig`: sprite engine, collision, math unit
   (docs/SUZY.md). `bus.zig`: memory map, MAPCTL overlays, tick costs,
   page-mode stream, `CartPort`. `cart.zig`: the cart as 256 block pointers
-  and the `.lnx`/headerless parser. `boot.zig`: the post-boot state from
+  and the `.lnx`/headerless parser. `undo.zig`: the scrubber's undo-record
+  ring (copy-on-first-write 64 B blocks, swapped to step; docs/SCRUB.md). `boot.zig`: the post-boot state from
   the public write-ups (docs/BOOT.md). PLAN.md "Frozen for M1" is the
   interface contract between these files.
 - `cart/src/` — the badge frontend. `main.zig` exports `start()`/`update()`,
@@ -41,7 +42,9 @@ CLAUDE.md and docs have the longer explanations.
   `menu` (the
   frozen-frame menu: Resume, Buttons swap, Press Option 2, Restart
   Pause+Opt1, Debug overlay, Reset, Pick ROM, About; PLAN.md M2), `picker`
-  (the drive file list, restarts into the chosen file). `debug.enabled`
+  (the drive file list, restarts into the chosen file), `rewind` (the time
+  scrubber over `core.undo`: arena from the linker symbols, M3), `tuning`
+  (stack guard, wasm arena), `strip` (the status strip). `debug.enabled`
   is off at boot and a menu row. No sound anywhere.
 - `tests/` — host tests, entry `tests/all.zig` (one `_ = @import` line per
   file): `cpu65_single_step.zig` (SingleStepTests rockwell65c02, data from
@@ -70,7 +73,8 @@ Zig `0.17.0-dev.1936+5a625d5f3` at `~/.local/bin/zig`; `zig build` runs
 from the repository root only.
 
 - `zig build -Dcart=snouty-lynx` -> `zig-out/firmware/snouty-lynx.uf2`,
-  `.elf`, `zig-out/bin/snouty-lynx.wasm`. `-Dlynx-rom=PATH` (repo-relative,
+  `.elf`, `snouty-lynx-xip.uf2`/`.elf` (both cart modes by default; the
+  XIP one is the scrubber's hope, docs/SCRUB.md) and `zig-out/bin/snouty-lynx.wasm`. `-Dlynx-rom=PATH` (repo-relative,
   absolute or `~/x.lnx`; no cart-relative form, the build never probes the
   filesystem), `-Dlynx-rom-source=drive|embed|pack` (`pack`, SPEC.md 13.1,
   is not built: it prints a note and builds `drive`), `-Dcart-optimize=`.

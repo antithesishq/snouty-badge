@@ -23,7 +23,8 @@ const files = @import("testfiles.zig");
 const uu = @import("undo_unit.zig");
 const expect = std.testing.expect;
 
-const per = undo.frames_per_record;
+/// The cart's record length (60 frames at M3 integration).
+const per = undo.default_frames_per_record;
 /// Kept below the frontend's guard (PLAN.md: 1 KB between the arena and
 /// the stack limit).
 const stack_guard = 1024;
@@ -33,7 +34,7 @@ const Arena = struct { name: []const u8, bytes: u32 };
 /// "M3 Scrub: contract", Memory): the arena is that minus the guard.
 const arenas = [_]Arena{
     .{ .name = "ReleaseFast as built (M2)", .bytes = 40_632 },
-    .{ .name = "ReleaseFast, exec un-inlined (est.)", .bytes = 88_000 },
+    .{ .name = "ReleaseFast, exec un-inlined (M3 as built)", .bytes = 64_592 },
     .{ .name = "ReleaseSmall", .bytes = 120_296 },
     .{ .name = "XIP", .bytes = 190_000 },
 };
@@ -41,7 +42,7 @@ const arenas = [_]Arena{
 const max_recs = 128;
 
 const Sizes = struct {
-    /// Slots of each 30-frame record, and its RAM blocks as a bit set.
+    /// Slots of each record, and its RAM blocks as a bit set.
     slots: [max_recs]u32 = undefined,
     sets: [max_recs][undo.ram_blocks / 64]u64 = undefined,
     n: usize = 0,
@@ -59,6 +60,7 @@ var ids: [undo.ram_blocks]u16 = undefined;
 fn measure(l: *Lynx, pads: []const ?u16) *const Sizes {
     const s = &sizes;
     s.* = .{};
+    undo.frames_per_record = per;
     undo.init(&arena_buf);
     defer undo.disable();
     undo.reset(l);
@@ -166,8 +168,8 @@ fn report(name: []const u8, s: *const Sizes) void {
 }
 
 /// History over the second half of the run (steady play): the least and
-/// the mean a ring holds, in seconds (each closed record is `k` * 0.5 s;
-/// the open record adds up to that much more).
+/// the mean a ring holds, in seconds (each closed record is `k` * `per`
+/// frames at 60 Hz; the open record adds up to that much more).
 fn history(name: []const u8, slots: []const u32, k: u32) void {
     const r0 = slots.len / 2;
     if (r0 == 0) return;
@@ -184,8 +186,8 @@ fn history(name: []const u8, slots: []const u32, k: u32) void {
             sum_h += h;
         }
         const cnt: u32 = @intCast(slots.len - r0);
-        const min10 = min_h * k * 5; // tenths of a second
-        const mean10 = sum_h * k * 5 / cnt;
+        const min10 = min_h * k * per / 6; // tenths of a second (per frames at 60 Hz)
+        const mean10 = sum_h * k * per / 6 / cnt;
         std.debug.print("sizing: {s}: {d:>3}-frame records: {s:<36} {d:>7} B -> {d:>5} slots: min {d:>2} records = {d}.{d} s, mean {d}.{d} s{s}\n", .{ name, k * per, a.name, a.bytes, cap, min_h, min10 / 10, min10 % 10, mean10 / 10, mean10 % 10, if (capped) " (capped by the run or max_records)" else "" });
     }
 }
@@ -206,7 +208,7 @@ test "sizing: raycast, 1800 frames under the m1 script looped" {
     lynx.init_in_place(try uu.raycast());
     const s = measure(&lynx, pads_buf[0..1800]);
     report("raycast", s);
-    try expect(s.n == 60);
+    try expect(s.n == 1800 / per);
     try expect(s.lost == 0);
 }
 

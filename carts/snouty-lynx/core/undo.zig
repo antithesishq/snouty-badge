@@ -55,7 +55,14 @@ const Lynx = lynx_mod.Lynx;
 
 pub const block_size = 64;
 pub const Slot = extern struct { id: u16, pad: u16 = 0, data: [block_size]u8 };
-pub const frames_per_record = 30;
+/// 60 badge frames (1 s) per record, not SPEC.md 10's 30: the Lynx games
+/// redraw their 8 KB screen buffers every frame, so a record holds the same
+/// blocks whatever its length, and 60 doubles the history per byte
+/// (docs/SCRUB.md sizing; M3 integration decision, Adrian may change it).
+pub const default_frames_per_record = 60;
+/// A variable (read once per frame) so the unit tests can keep SPEC 10's
+/// 30-frame arithmetic; the cart never changes it.
+pub var frames_per_record: u32 = default_frames_per_record;
 pub const max_records = 64;
 pub const Region = enum(u4) { ram = 0, small = 15 };
 

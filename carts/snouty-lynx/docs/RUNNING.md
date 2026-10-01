@@ -197,14 +197,18 @@ The scrubber (M3), `tools/scripts/m3_scrub.json`, 480 updates: A at 40,
 `m1_play.json`'s moves up to 280 (Up+B 241-280), Select held 285-320 (the
 menu opens at 314), Left held 330-375 (steps back at 330, 345, 360, 375:
 the press and three repeats at 4/s), Right at 390 and 400 (forward
-twice), B at 415 (play on from 2 records back), then Up 420-450, Right
-451-479:
+twice), B at 415 (play on from the parked position), then Up 420-450,
+Right 451-479. With the badge-sized arena (63,568 B) raycast holds one
+closed 60-frame record plus the open one, so the history is about 1.6 s:
+Left reaches the oldest record on the second step and the later presses
+do nothing, and two Rights are back at live.
 
 ```sh
 node tools/preview.mjs zig-out/bin/snouty-lynx.wasm --frames 480 --every 5 \
   --script carts/snouty-lynx/tools/scripts/m3_scrub.json --out carts/snouty-lynx/out/ \
   --dump-exports debug_state,debug_scrub_depth,debug_scrub_history,debug_scrub_capacity,debug_scrub_arena,debug_led_max \
   --at "320 debug_state == 2" --at "414 debug_state == 2" --at "415 debug_state == 1" \
+  --at "329 debug_scrub_history > 0" --at "376 debug_scrub_depth > 0" \
   --at "479 debug_scrub_depth == 0" --expect "debug_menu_opens == 1" --expect "debug_led_max == 0"
 ```
 
@@ -241,9 +245,16 @@ badge-bench/bench.sh zig-out/firmware/snouty-lynx.elf --symbols
 (section 3: play to 280, the menu from update 314, four scrubs back, two
 forward, B at 415, play to 479) over the committed drive fixture `tests/fixtures/m1_drive.img`
 (RAYCAST.LNX = roms/raycast.lnx), so the cart reads the drive as on the
-badge. M2: game frames 0-299 busy mean 8.42 ms, p95 11.50, worst 12.94
-(M1 8.44 / 11.53 / 12.96); menu frames 334-364 mean 0.92, worst 1.17 (the
-frozen-frame copy). `m2_play.json` still runs with `--script
+badge. M3 (ReleaseFast with the CPU dispatcher not inlined, the undo
+hooks on): all 480 frames busy mean 9.00 ms, p95 14.57, worst 16.81 (the
+second frame after resuming, the one frame over the 16.7 ms budget);
+game frames 41-284 mean 12.04, worst 16.13; menu frames 0.93; a scrub step
+1.61; the resume frame 16.47. M2 for comparison (exec inlined, no hooks):
+game frames 0-299 mean 8.42, p95 11.50, worst 12.94 (M1 8.44 / 11.53 /
+12.96); menu frames 334-364 mean 0.92, worst 1.17 (the frozen-frame copy).
+The default build also writes `snouty-lynx-xip.uf2` (docs/SCRUB.md: the
+XIP cart has 187,712 B of arena, about 3-6 s of history; untested on
+hardware). `m2_play.json` still runs with `--script
 carts/snouty-lynx/tools/scripts/m2_play.json --frames 400`.
 
 The picker (drive builds only, never in wasm): a drive with two playable

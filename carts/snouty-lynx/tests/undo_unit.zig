@@ -108,6 +108,7 @@ pub const Fixture = struct {
     /// raycast booted, an arena of `slots` slots, `states` state buffers;
     /// tracking on from reset.
     pub fn init(slots: usize, states: usize) !Fixture {
+        undo.frames_per_record = 30; // the tests below count in SPEC 10's 30-frame records
         const a = std.testing.allocator;
         const l = try a.create(Lynx);
         errdefer a.destroy(l);
@@ -215,23 +216,24 @@ test "undo: Left then Right restores exact states, depth and history" {
 test "undo: Left from live on a boundary skips the empty open record" {
     var f = try Fixture.init(big, 3);
     defer f.deinit();
-    while (f.frame < 90) {
-        if (f.frame == 30) f.snap(0);
-        if (f.frame == 60) f.snap(1);
+    const per = undo.frames_per_record;
+    while (f.frame < 3 * per) {
+        if (f.frame == per) f.snap(0);
+        if (f.frame == 2 * per) f.snap(1);
         f.step();
     }
     f.snap(2);
-    try expectEqual(@as(u32, 90), undo.history_frames());
+    try expectEqual(@as(u32, 3 * per), undo.history_frames());
     try expect(undo.step(f.l, -1));
-    try expectEqual(@as(u32, 30), undo.depth_frames());
+    try expectEqual(@as(u32, per), undo.depth_frames());
     try f.same("one back", 1);
     try expect(undo.step(f.l, -1));
-    try expectEqual(@as(u32, 60), undo.depth_frames());
+    try expectEqual(@as(u32, 2 * per), undo.depth_frames());
     try f.same("two back", 0);
     // Right twice lands on live (the empty record is re-applied in the
     // same step).
     try expect(undo.step(f.l, 1));
-    try expectEqual(@as(u32, 30), undo.depth_frames());
+    try expectEqual(@as(u32, per), undo.depth_frames());
     try expect(undo.step(f.l, 1));
     try expect(!undo.parked());
     try f.same("live", 2);
@@ -316,7 +318,7 @@ test "undo: eviction drops the oldest records first" {
     // The fifth close opened a sixth record whose small slots evicted the
     // oldest.
     try expectEqual(@as(usize, 4), undo.record_count());
-    try expectEqual(@as(u32, 4 * 30), undo.history_frames());
+    try expectEqual(@as(u32, 4 * undo.frames_per_record), undo.history_frames());
     try expectEqual(4 * (s + 10) + s, undo.slots_in_use());
     // Every held record goes back to its state; the oldest is st[1].
     var k: usize = 5;
@@ -339,7 +341,7 @@ test "undo: max_records caps the ring" {
         boundary(f.l);
     }
     try expectEqual(@as(usize, undo.max_records), undo.record_count());
-    try expectEqual(@as(u32, undo.max_records * 30), undo.history_frames());
+    try expectEqual(@as(u32, undo.max_records * undo.frames_per_record), undo.history_frames());
     var n: u32 = 0;
     while (undo.step(f.l, -1)) n += 1;
     try expectEqual(@as(u32, undo.max_records), n);

@@ -514,8 +514,11 @@ pub fn Cpu(comptime Bus: type) type {
 
         /// One instruction after its opcode fetch, then its interrupt poll.
         /// Each opcode is its own case with the operation and addressing
-        /// mode known at compile time (no decoding at run time).
-        inline fn exec(self: *Self, bus: *Bus, op: u8) void {
+        /// mode known at compile time (no decoding at run time). Not
+        /// inlined into the run loop: inlining bought ~0.7 ms a frame for
+        /// ~35 KB of .text, and the M3 scrub ring needs that RAM
+        /// (docs/SCRUB.md; the M3 integration measured both).
+        fn exec(self: *Self, bus: *Bus, op: u8) void {
             @setEvalBranchQuota(4000);
             switch (op) {
                 inline else => |o| {

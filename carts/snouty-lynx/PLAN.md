@@ -511,6 +511,43 @@ tag `snouty-lynx/m3`, merge to main.
 
 ## Status
 
+- 2026-10-01: M3 INTEGRATED. Tracks A (undo core) and B (scrub frontend)
+  merged on `lynx/m3`; 108/108 host tests (13 undo, 2 determinism: raycast
+  600 frames restore-and-step equals the next copy, every record back and
+  forth bit-exact, resume + replay equals live; 3 sizing, print only); the
+  golden hashes unchanged. Preview of `m3_scrub.json`: the menu opens at
+  314 with "Scrub: live / 1.6s", Left parks at -0.6 s then -1.6 s (the
+  oldest record) with the restored picture under the bar, two Rights are
+  live, B resumes and the history regrows (99 frames at 479); GIF
+  `docs/m3_scrub.gif`. DECISIONS (defaults, Adrian may change them):
+  (1) `undo.frames_per_record` = 60 (1 s steps) instead of SPEC 10's 30:
+  the games redraw their 8 KB screen buffers every frame (raycast three
+  buffers, 405 slots = 27.5 KB per record whatever its length; Hard
+  Drivin' two, 230-400 slots; Blue Lightning ~290), so a longer record
+  doubles the history per byte; the unit tests keep 30-frame arithmetic
+  by setting the variable. (2) Build: ReleaseFast with `cpu65.exec` not
+  inlined (cpu65.zig), which gives 64,592 B of arena (63,568 B = 934
+  slots after the guard) for ~0.7 ms a frame: history raycast ~1.0-1.6 s,
+  Hard Drivin' ~1-2 s, Blue Lightning ~2 s, all SHORT of SPEC 10's 2 s.
+  Measured alternatives: exec inlined 40,632 B = 0 records (scrubber says
+  "no memory" on every title); ReleaseSmall 120,296 B = raycast 1.5 s /
+  HD 1.5 s / BL 2 s at 60-frame records (11.28 ms mean, worst 17.0, over
+  budget); `frames_per_record` = 120: raycast 2 s / HD 2 s / BL 4 s at 2 s
+  steps; XIP (`snouty-lynx-xip.uf2`, now built by default beside the RAM
+  cart) 187,712 B = raycast 2.5 s / HD 3 s / BL 3.5 s with the fast CPU,
+  but XIP is untested on hardware. RECOMMENDATION for Adrian's badge run:
+  flash `snouty-lynx-xip.uf2` once; if it runs, XIP becomes the Lynx
+  default (and exec can be inlined again). badge-bench (calibrated,
+  m3_scrub.json, drive fixture): all frames mean 9.00 / p95 14.57 / worst
+  16.81 ms (frame 418, the second after resume: 1 of 480 over budget);
+  game frames 41-284 mean 12.04, worst 16.13; menu 0.93; scrub step 1.61;
+  resume frame 16.47. On m2_play: mean 9.58, worst 16.13, 0 over (M2 was
+  8.42 game-frame mean). Hook cost +0.45 ms mean (Track A), un-inlining
+  +0.7. Sizes: RAM .text 122,136 B, .bss 86,328, `__bss_end__`
+  0x200683b0; XIP .text 122,452 (flash), `__bss_end__` 0x2004a2c0.
+  `tuning.wasm_arena_bytes` = 63,568. Open: the resume-frame spike (M4:
+  spread resume_here + the first step), sprites4 DMA EXP W24, `exec`
+  inlining as a per-mode knob. Tag `snouty-lynx/m3`.
 - 2026-10-01: M3 Track B (frontend) done on `lynx/m3-frontend`, against
   the undo stub. `frontend/rewind.zig` (Genesis's: arena from
   `__bss_end__`/`__stack_limit__` minus `tuning.stack_guard`, wasm static

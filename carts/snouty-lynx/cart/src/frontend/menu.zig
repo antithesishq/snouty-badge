@@ -26,7 +26,7 @@
 //! Time scrubber (SPEC.md 5 and 10, frontend/rewind.zig), Genesis's UI. On
 //! every row that is not a setting (Resume, where the menu opens, Press
 //! Option 2, Restart, Reset, Pick ROM, About) Left/Right step time
-//! back/forward one record (30 frames, 0.5 s), repeating 4 times a second
+//! back/forward one record (`undo.frames_per_record` frames: 60, 1 s), repeating 4 times a second
 //! while held; a Left/Right held over from the game does nothing (main.zig
 //! suppresses held buttons on open, and the repeat only starts from a
 //! press). The panel's bottom line (`scrub_line_y`) reads "Scrub: live /

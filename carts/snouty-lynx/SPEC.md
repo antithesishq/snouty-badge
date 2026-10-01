@@ -596,3 +596,8 @@ real hardware; SP before reset.
   Hard Drivin' and Blue Lightning (local) run. Section 3/4 updated with
   the hardware findings (CPUSLEEP, display latch, DMA steal, undefined
   opcode timings); SP before reset and $5C on hardware still open.
+- 2026-10-01: M2 (menu, picker) and M3 (scrubber) built. M3 integration:
+  60-frame undo records and the un-inlined CPU dispatcher give 1-2 s of
+  history in the RAM cart, short of section 10's 2 s; the XIP cart
+  (built beside it, untested on hardware) would give 2.5-3.5 s. PLAN.md
+  M3 status has the decision table for Adrian.

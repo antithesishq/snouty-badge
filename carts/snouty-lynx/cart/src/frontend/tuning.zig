@@ -14,4 +14,7 @@ pub const stack_guard = 1024;
 /// integration picks) so the simulator and the headless preview show
 /// badge-like depth; integration sets the final figure. The ReleaseFast
 /// RAM build of the M3 prep commit leaves 40,632 B, so 40 KB until then.
-pub const wasm_arena_bytes = 40 * 1024;
+/// The badge's figure at M3 integration: `__stack_limit__` 0x20078000 -
+/// `__bss_end__` 0x200683b0 - `stack_guard` = 63,568 B (ReleaseFast, exec
+/// not inlined; docs/SCRUB.md). Re-measure when the cart grows.
+pub const wasm_arena_bytes = 63_568;
