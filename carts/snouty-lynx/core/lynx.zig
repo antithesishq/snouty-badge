@@ -317,6 +317,10 @@ pub const Lynx = struct {
         // test below.
         const rom_lo: u16 = if (l.mapctl & bus.Mapctl.rom_off == 0) bus.rom_base else 0xFFFF;
         l.cpu.normalize_p();
+        // Instructions of this run, added to `cpu.instr_count` at its end
+        // (nothing reads the count during a run; a reboot keeps it).
+        var count: u32 = 0;
+        defer l.cpu.instr_count +%= count;
         while (true) {
             step: {
                 const pc = l.cpu.regs.pc;
@@ -329,6 +333,7 @@ pub const Lynx = struct {
                     }
                     if (irq) l.irq_count +%= 1;
                 }
+                count +%= @intFromBool(!irq);
                 l.cpu.step_decided(l, irq);
             }
             if (l.ticks < l.fast_end) continue;
