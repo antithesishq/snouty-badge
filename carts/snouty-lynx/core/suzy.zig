@@ -482,7 +482,7 @@ pub const Suzy = struct {
     }
 
     /// Paint the sprite whose SCB is loaded; returns its data/pixel ticks.
-    fn draw_sprite(s: *Suzy, ram: *[0x10000]u8, budget: u32) u32 {
+    noinline fn draw_sprite(s: *Suzy, ram: *[0x10000]u8, budget: u32) u32 {
         const kind: u3 = @truncate(s.sprctl0);
         const no_collide = s.sprsys & 0x20 != 0 or s.sprcoll & 0x20 != 0;
         var d: Draw = .{
@@ -1019,8 +1019,11 @@ fn set_nibbles(ram: *[0x10000]u8, base: u16, a: u16, b: u16, v: u8) void {
         ram[p] = (ram[p] & 0xF0) | v;
         x += 1;
     }
-    const both = v * 0x11;
-    while (x + 1 < b) : (x += 2) ram[base +% (x >> 1)] = both;
+    const full = (b - x) >> 1;
+    if (full != 0) {
+        fill_bytes(ram, base +% (x >> 1), full, v * 0x11, false);
+        x += 2 * full;
+    }
     if (x < b) {
         const p = base +% (x >> 1);
         ram[p] = (ram[p] & 0x0F) | (v << 4);
@@ -1033,9 +1036,35 @@ fn xor_nibbles(ram: *[0x10000]u8, base: u16, a: u16, b: u16, v: u8) void {
         ram[base +% (x >> 1)] ^= v;
         x += 1;
     }
-    const both = v * 0x11;
-    while (x + 1 < b) : (x += 2) ram[base +% (x >> 1)] ^= both;
+    const full = (b - x) >> 1;
+    if (full != 0) {
+        fill_bytes(ram, base +% (x >> 1), full, v * 0x11, true);
+        x += 2 * full;
+    }
     if (x < b) ram[base +% (x >> 1)] ^= v << 4;
+}
+
+/// `n` (1..80) RAM bytes from `p` (wrapping at 64 KB) set to `v`, or
+/// XORed with it: word stores where the run is long enough (a background
+/// or polygon row is up to 80 bytes; raycast's are one or two).
+inline fn fill_bytes(ram: *[0x10000]u8, p: u16, n: u16, v: u8, comptime xor: bool) void {
+    var i: usize = p;
+    const end = i + n;
+    if (n >= 8 and end <= 0x10000) {
+        const addr0 = @intFromPtr(ram);
+        while ((addr0 + i) & 3 != 0) : (i += 1) {
+            if (xor) ram[i] ^= v else ram[i] = v;
+        }
+        const w = @as(u32, v) * 0x0101_0101;
+        while (i + 4 <= end) : (i += 4) {
+            const q: *u32 = @ptrCast(@alignCast(&ram[i]));
+            if (xor) q.* ^= w else q.* = w;
+        }
+    }
+    while (i < end) : (i += 1) {
+        const k: u16 = @truncate(i);
+        if (xor) ram[k] ^= v else ram[k] = v;
+    }
 }
 
 /// Like `set_nibbles`, returning the largest nibble it overwrote.
