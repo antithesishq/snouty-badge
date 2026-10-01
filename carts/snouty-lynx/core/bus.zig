@@ -85,6 +85,9 @@ pub const joystick: u8 = 0xB0;
 pub const switches: u8 = 0xB1;
 pub const rcart0: u8 = 0xB2;
 pub const rcart1: u8 = 0xB3;
+/// SPRSYS: bit 0 (sprite working) also covers a run paused by an
+/// interrupt (core/lynx.zig `sprite_left`).
+pub const sprsys: u8 = 0x92;
 
 /// SWITCHES bits 1 and 2 (cart 0/1 I/O inactive): read set, as Felix
 /// reads them on a normal cart.
@@ -265,6 +268,8 @@ fn suzy_read(l: *Lynx, lo: u8) u8 {
             l.port.step(&l.cart);
             break :blk 0xFF;
         },
+        // A run paused by an interrupt still reads "sprite working".
+        sprsys => l.suzy.read(lo) | @intFromBool(l.sprite_left != 0),
         else => l.suzy.read(lo),
     };
 }

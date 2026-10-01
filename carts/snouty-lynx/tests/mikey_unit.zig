@@ -532,6 +532,34 @@ test "lynx: CPUSLEEP with and without pending sprites, SDONEACK, pending IRQs" {
     l.idle_sleep = false;
 }
 
+test "lynx: an interrupt wakes the CPU mid sprite run; CPUSLEEP resumes it without SDONEACK" {
+    try boot_raycast();
+    l.write(0xFD90, 0); // SDONEACK
+    l.write(0xFD80, 0xFF);
+    // A run in progress (as `run_sprites` would leave it) and timer 6 set
+    // to interrupt within 2 us.
+    l.sprite_left = 50_000;
+    l.write(0xFD18, 1); // TIM6BKUP
+    l.write(0xFD1A, 1); // TIM6CNT
+    l.write(0xFD19, C.irq_enable | C.count); // 1 us, one shot
+    const t = l.ticks;
+    l.write(0xFD91, 0); // CPUSLEEP
+    try expect(l.mikey.pending() & 0x40 != 0);
+    try expect(l.sprite_left > 0 and l.sprite_left < 50_000);
+    try expect(l.ticks - t < 50_000);
+    try expect(!l.mikey.suzy_done);
+    try expectEqual(@as(u8, 1), l.read(0xFC92) & 1); // SPRSYS: working
+    // Acknowledge the timer; sleeping again finishes the run.
+    l.write(0xFD19, 0);
+    l.write(0xFD80, 0x40);
+    l.write(0xFD91, 0);
+    try expectEqual(@as(u64, 0), l.sprite_left);
+    try expect(l.mikey.suzy_done);
+    try expect(l.ticks - t >= 50_000);
+    try expectEqual(@as(u8, 0), l.read(0xFC92) & 1);
+    l.write(0xFD90, 0);
+}
+
 test "lynx: frames advance 266,667 ticks (fraction carried) and copy the display at vertical blank" {
     try boot_raycast();
     // A recognisable byte in the boot display buffer ($2000).
