@@ -890,3 +890,20 @@ test "suzy: a list that never ends is capped" {
     try std.testing.expect(t >= core.suzy.tick_cost.run_cap);
     try std.testing.expect(t < core.suzy.tick_cost.run_cap + 1_000_000);
 }
+
+test "suzy: H flip keeps the quadrant's HSIZOFF (Alpine Games check)" {
+    // lynx-tests sprites2 ALPINE FLIP: 1 bpp literal $A8 (pens 1010100,
+    // the last bit unused), H flip from x 163, HSIZ $00FF, HSIZOFF $7F.
+    // The SE quadrant starts its accumulator at HSIZOFF even though the
+    // flip draws it leftwards: every pen is one pixel wide from x 163
+    // down, so index 1 (pen 5) of the fifth pen lands on x 159.
+    var r = try Rig.init();
+    defer r.deinit();
+    var l: Lines = .{ .ram = r.ram };
+    l.line(&.{0xA8});
+    l.end();
+    (Scb{ .sprctl0 = ctl0(1, 5) | 0x20, .sprctl1 = 0x10 | literal, .hpos = 163, .vpos = 0, .hsiz = 0x00FF, .vsiz = 0x0100, .palette = .{ 0x05, 0x23, 0x45, 0x67, 0x89, 0xAB, 0xCD, 0xEF } }).put(r.ram, scb0);
+    _ = r.go(scb0, 1);
+    try std.testing.expectEqual([4]u8{ 0, 0, 0, 5 }, r.row(156, 0, 4));
+    try std.testing.expectEqual(@as(u32, 1), r.count_pixels());
+}

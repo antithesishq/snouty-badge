@@ -462,13 +462,16 @@ pub const Suzy = struct {
             const dx: i32 = if (left) -1 else 1;
             const dy: u16 = if (up) 0xFFFF else 1;
             tiltacum = 0;
-            vsizacum = if (up) 0 else vsizoff;
+            // The size offsets follow the quadrant, not the flips: an
+            // H-flipped SE sprite still starts at HSIZOFF (lynx-tests
+            // sprites2 ALPINE FLIP, Alpine Games' protection check).
+            vsizacum = if (q & 2 != 0) 0 else vsizoff;
             vpos = s.regs[reg.vposstrt] -% voff;
             // Quadrants drawing the other way from the first start one
             // pixel further out, so the halves do not overlap.
             if ((q ^ q_start) & 2 != 0) vpos +%= dy;
             const hadj: i32 = if ((q ^ q_start) & 1 != 0) dx else 0;
-            const acc0: u32 = if (left) 0 else hsizoff;
+            const acc0: u32 = if (q & 1 != 0) 0 else hsizoff;
 
             while (true) {
                 if (d.ticks() >= budget) {
