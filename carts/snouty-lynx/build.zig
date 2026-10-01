@@ -96,6 +96,37 @@ pub fn add(b: *Build, sycl_badge_dep: *Build.Dependency, opts: common.Options) v
     opts.test_step.dependOn(&run.step);
     // This cart's tests alone (the shared `test` step runs every cart's).
     b.step("test-lynx", "Run snouty-lynx host tests").dependOn(&run.step);
+
+    // `zig build run-lynx -- <rom> <script.json|-> <updates> <outdir> [...]`:
+    // a ROM headless (tools/run_rom.zig over tests/runner.zig, the golden
+    // test's runner), PPM frames and per-update hashes. Release build: the
+    // core is slow in Debug.
+    const core_fast = b.createModule(.{
+        .root_source_file = b.path(dir ++ "core/lynx.zig"),
+        .target = b.graph.host,
+        .optimize = .ReleaseFast,
+    });
+    const run_rom = b.addExecutable(.{
+        .name = "run-lynx",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path(dir ++ "tools/run_rom.zig"),
+            .target = b.graph.host,
+            .optimize = .ReleaseFast,
+            .imports = &.{
+                .{ .name = "core", .module = core_fast },
+                .{ .name = "runner", .module = b.createModule(.{
+                    .root_source_file = b.path(dir ++ "tests/runner.zig"),
+                    .target = b.graph.host,
+                    .optimize = .ReleaseFast,
+                    .imports = &.{.{ .name = "core", .module = core_fast }},
+                }) },
+            },
+        }),
+    });
+    const run_rom_run = b.addRunArtifact(run_rom);
+    run_rom_run.addPassthruArgs();
+    run_rom_run.has_side_effects = true;
+    b.step("run-lynx", "Run a Lynx ROM headless (snouty-lynx tools/run_rom.zig)").dependOn(&run_rom_run.step);
 }
 
 /// `-Dlynx-rom` as given: `~/x.lnx` (expanded here, the shell leaves `=~`
