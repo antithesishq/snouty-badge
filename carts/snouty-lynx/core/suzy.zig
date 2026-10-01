@@ -37,6 +37,8 @@
 //! JOYSTICK, $B1 SWITCHES, $B2 RCART0, $B3 RCART1, $C0-$C3 LEDs/parallel
 //! (ignored).
 
+const std = @import("std");
+
 pub const screen_width: i32 = 160;
 pub const screen_height: i32 = 102;
 pub const line_bytes: u16 = 80;
@@ -115,6 +117,15 @@ pub const tick_cost = struct {
     pub const run_cap: u32 = 4_000_000;
 };
 
+/// Math unit durations in 16 MHz ticks (Epyx "Math": 44 ticks, 54 with
+/// sign or accumulate; divide 176 + 14 per leading zero bit of NP).
+pub const math_ticks = struct {
+    pub const multiply: u32 = 44;
+    pub const multiply_signed_or_acc: u32 = 54;
+    pub const divide: u32 = 176;
+    pub const divide_per_zero: u32 = 14;
+};
+
 /// Draw order of the quadrants: SE, NE, NW, SW, starting from SPRCTL1
 /// bits 0-1 (bit 0 left, bit 1 up: SE 0, SW 1, NE 2, NW 3).
 const quad_cycle = [4]u2{ 0, 2, 3, 1 };
@@ -133,10 +144,10 @@ pub const Suzy = struct {
     /// Pixels written by the sprite engine since reset (wraps).
     pixels_drawn: u32 = 0,
 
-    /// The engine's 16-bit registers $00-$2F (`reg`).
+    /// The 48 physical registers $00-$2F (`reg`), also seen at $40-$6F:
+    /// the math unit's ABCD, NP, EFGH and JKLM are SPRDLINE..VPOSSTRT,
+    /// SPRDOFF/SPRVPOS and SCBADR/PROCADR (lynx-tests memio "SUZY MIRRORS").
     regs: [reg.count]u16 = @splat(0),
-    /// Math registers $50-$6F as bytes (index = addr - $50).
-    math: [0x20]u8 = @splat(0),
     /// Signs saved by the signed-multiply conversion (on MATHA/MATHC writes).
     sign_ab_neg: bool = false,
     sign_cd_neg: bool = false,
@@ -144,8 +155,14 @@ pub const Suzy = struct {
     math_warning: bool = false,
     /// SPRSYS read bit 5: last carry.
     math_carry: bool = false,
-    /// SPRSYS read bit 2. Never set in this model (docs/SUZY.md).
+    /// SPRSYS read bit 2: set when a math operation starts (and on any
+    /// engine register write while one runs), cleared by writing SPRSYS
+    /// with bit 2 set.
     unsafe_access: bool = false,
+    /// Bus tick at which the running math operation completes (SPRSYS bit
+    /// 7 reads 1 before it). Only `write_at`/`read_at` see time; plain
+    /// `write`/`read` behave as if the math were instant.
+    math_done: u64 = 0,
     sprctl0: u8 = 0,
     sprctl1: u8 = 0,
     sprcoll: u8 = 0,
@@ -158,24 +175,30 @@ pub const Suzy = struct {
         s.* = .{};
     }
 
-    /// A register read at $FC00 + addr (never $B0-$B3).
+    /// A register read at $FC00 + addr (never $B0-$B3), math instant.
     pub fn read(s: *const Suzy, a: u8) u8 {
-        if (a < 0x30) {
-            const w = s.regs[a >> 1];
+        return s.read_at(a, std.math.maxInt(u64));
+    }
+
+    /// A register read at bus tick `now` (SPRSYS bit 7 shows a math
+    /// operation still running).
+    pub fn read_at(s: *const Suzy, a: u8, now: u64) u8 {
+        if (a < 0x30 or (a >= 0x40 and a < 0x70)) {
+            const w = s.regs[(a & 0x3F) >> 1];
             return if (a & 1 == 0) @truncate(w) else @truncate(w >> 8);
         }
-        if (a >= 0x50 and a < 0x70) return s.math[a - 0x50];
         return switch (a) {
             addr.suzyhrev => 0x01,
-            addr.sprsys => s.sprsys_read(),
+            addr.sprsys => s.sprsys_read(now),
             // Write-only and unallocated addresses: Felix measured mostly
             // %11111100 here; any constant will do for games.
             else => if (a < 0x80) 0x00 else 0xFC,
         };
     }
 
-    fn sprsys_read(s: *const Suzy) u8 {
+    fn sprsys_read(s: *const Suzy, now: u64) u8 {
         var v: u8 = s.sprsys & 0x1A; // vstretch, lefthand, stop request
+        if (now < s.math_done) v |= 0x80;
         if (s.math_warning) v |= 0x40;
         if (s.math_carry) v |= 0x20;
         if (s.unsafe_access) v |= 0x04;
@@ -183,19 +206,24 @@ pub const Suzy = struct {
         return v;
     }
 
-    /// A register write at $FC00 + addr (never $B0-$B3).
+    /// A register write at $FC00 + addr (never $B0-$B3), math instant.
     pub fn write(s: *Suzy, a: u8, v: u8) void {
-        if (a < 0x30) {
-            const i = a >> 1;
+        s.write_at(a, v, 0);
+    }
+
+    /// A register write at bus tick `now`: a math operation started here
+    /// reads as running in SPRSYS bit 7 until its documented duration has
+    /// passed (its results are visible at once).
+    pub fn write_at(s: *Suzy, a: u8, v: u8, now: u64) void {
+        if (a < 0x30 or (a >= 0x40 and a < 0x70)) {
+            if (now < s.math_done) s.unsafe_access = true;
+            const i = (a & 0x3F) >> 1;
             if (a & 1 == 0) {
                 s.regs[i] = v; // a low-byte write zeroes the high byte
             } else {
                 s.regs[i] = (s.regs[i] & 0x00FF) | (@as(u16, v) << 8);
             }
-            return;
-        }
-        if (a >= 0x50 and a < 0x70) {
-            s.math_write(a, v);
+            if (a >= 0x40) s.math_command(a, now);
             return;
         }
         switch (a) {
@@ -229,15 +257,13 @@ pub const Suzy = struct {
     // ---------------------------------------------------------------
     // Math unit
 
+    /// The 16-bit value whose low byte is at math address `a` ($40-$6F).
     fn m16(s: *const Suzy, a: u8) u16 {
-        const i = a - 0x50;
-        return @as(u16, s.math[i]) | (@as(u16, s.math[i + 1]) << 8);
+        return s.regs[(a & 0x3F) >> 1];
     }
 
     fn set_m16(s: *Suzy, a: u8, v: u16) void {
-        const i = a - 0x50;
-        s.math[i] = @truncate(v);
-        s.math[i + 1] = @truncate(v >> 8);
+        s.regs[(a & 0x3F) >> 1] = v;
     }
 
     fn m32(s: *const Suzy, a: u8) u32 {
@@ -249,10 +275,8 @@ pub const Suzy = struct {
         s.set_m16(a + 2, @truncate(v >> 16));
     }
 
-    fn math_write(s: *Suzy, a: u8, v: u8) void {
-        const i = a - 0x50;
-        s.math[i] = v;
-        if (a & 1 == 0) s.math[i + 1] = 0; // B,D,F,H,K,M,P zero A,C,E,G,J,L,N
+    /// What a write to math address `a` ($40-$6F, already stored) starts.
+    fn math_command(s: *Suzy, a: u8, now: u64) void {
         switch (a) {
             addr.mathc => if (s.sprsys & 0x80 != 0) {
                 s.sign_cd_neg = s.sign_convert(addr.mathd);
@@ -260,14 +284,23 @@ pub const Suzy = struct {
             addr.matha => {
                 if (s.sprsys & 0x80 != 0) s.sign_ab_neg = s.sign_convert(addr.mathb);
                 s.multiply();
+                s.math_started(now, if (s.sprsys & 0xC0 != 0) math_ticks.multiply_signed_or_acc else math_ticks.multiply);
             },
-            addr.mathe => s.divide(),
-            addr.mathm => {
-                s.math_warning = false;
-                s.math_carry = false;
+            addr.mathe => {
+                const np = s.m16(addr.mathp);
+                s.divide();
+                s.math_started(now, math_ticks.divide + math_ticks.divide_per_zero * @as(u32, @clz(np)));
             },
+            // "The write to 'M' will clear the accumulator overflow bit";
+            // the last carry stays (lynx-tests math ACCUM MUL).
+            addr.mathm => s.math_warning = false,
             else => {},
         }
+    }
+
+    fn math_started(s: *Suzy, now: u64, ticks: u32) void {
+        s.unsafe_access = true; // lynx-tests math: set after every operation
+        s.math_done = now +| ticks;
     }
 
     /// The signed-multiply input conversion, done when the high byte is
@@ -283,24 +316,31 @@ pub const Suzy = struct {
         return false;
     }
 
-    /// AB x CD -> EFGH, optionally accumulated into JKLM.
+    /// AB x CD -> EFGH, optionally accumulated into JKLM. Last carry: set
+    /// when a signed product was negated (and is non-zero), or by the
+    /// accumulator's carry out of bit 31, which is also the warning
+    /// (lynx-tests math SIGNED MUL, ACCUM MUL).
     fn multiply(s: *Suzy) void {
         var prod: u32 = @as(u32, s.m16(addr.mathb)) * @as(u32, s.m16(addr.mathd));
-        if (s.sprsys & 0x80 != 0 and s.sign_ab_neg != s.sign_cd_neg) prod = ~prod +% 1;
+        s.math_carry = false;
+        if (s.sprsys & 0x80 != 0 and s.sign_ab_neg != s.sign_cd_neg) {
+            s.math_carry = prod != 0;
+            prod = ~prod +% 1;
+        }
         s.set_m32(addr.mathh, prod);
         s.math_warning = false;
         if (s.sprsys & 0x40 != 0) {
-            const old = s.m32(addr.mathm);
-            const acc = old +% prod;
-            // Overflow = bit 31 changed (Felix's reading; docs/SUZY.md).
-            const ovf = (acc ^ old) & 0x8000_0000 != 0;
-            s.math_warning = ovf;
-            s.math_carry = ovf;
-            s.set_m32(addr.mathm, acc);
+            const sum = @addWithOverflow(s.m32(addr.mathm), prod);
+            const carry = sum[1] != 0;
+            s.math_warning = carry;
+            s.math_carry = carry;
+            s.set_m32(addr.mathm, sum[0]);
         }
     }
 
-    /// EFGH / NP -> ABCD, remainder in JKLM (JK = 0). Unsigned only.
+    /// EFGH / NP -> ABCD, remainder in JKLM (JK = 0). Unsigned only. Last
+    /// carry: the remainder is non-zero (lynx-tests math SIMPLE DIV, NO
+    /// REM DIV).
     fn divide(s: *Suzy) void {
         const np: u32 = s.m16(addr.mathp);
         const efgh = s.m32(addr.mathh);
@@ -311,9 +351,11 @@ pub const Suzy = struct {
             s.math_carry = true;
             return;
         }
+        const rem = efgh % np;
         s.set_m32(addr.mathd, efgh / np);
-        s.set_m32(addr.mathm, efgh % np);
+        s.set_m32(addr.mathm, rem);
         s.math_warning = false;
+        s.math_carry = rem != 0;
     }
 
     // ---------------------------------------------------------------

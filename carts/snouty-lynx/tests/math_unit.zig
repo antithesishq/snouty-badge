@@ -161,17 +161,18 @@ test "math: accumulate into JKLM with the overflow warning" {
             else
                 @as(u32, a) * @as(u32, c);
             try std.testing.expectEqual(prod, efgh(&s));
-            const old = acc;
-            acc +%= prod;
+            const sum = @addWithOverflow(acc, prod);
+            acc = sum[0];
             try std.testing.expectEqual(acc, jklm(&s));
-            const ovf = (old ^ acc) & 0x8000_0000 != 0;
+            // The warning is the unsigned carry out of bit 31.
+            const ovf = sum[1] != 0;
             try std.testing.expectEqual(ovf, warning(&s));
             try std.testing.expectEqual(ovf, s.read(sprsys) & 0x20 != 0);
             saw_warning = saw_warning or ovf;
         }
         try std.testing.expect(saw_warning);
-        // The accumulator can be preset through all four bytes; writing M
-        // clears the warning.
+        // The accumulator can be preset through all four bytes; a bit-31
+        // sign change alone is no overflow.
         s.write(M, 0xFF);
         s.write(L, 0xFF);
         s.write(K, 0xFF);
@@ -179,9 +180,20 @@ test "math: accumulate into JKLM with the overflow warning" {
         try std.testing.expect(!warning(&s));
         mul(&s, 1, 1);
         try std.testing.expectEqual(@as(u32, 0x8000_0000), jklm(&s));
+        try std.testing.expect(!warning(&s));
+        // $FFFFFFFF + 1 carries out; writing M clears the warning but not
+        // the last carry (lynx-tests math ACCUM MUL).
+        s.write(K, 0xFF);
+        s.write(J, 0xFF);
+        s.write(M, 0xFF);
+        s.write(L, 0xFF);
+        mul(&s, 1, 1);
+        try std.testing.expectEqual(@as(u32, 0), jklm(&s));
         try std.testing.expect(warning(&s));
+        try std.testing.expect(s.read(sprsys) & 0x20 != 0);
         s.write(M, 0);
         try std.testing.expect(!warning(&s));
+        try std.testing.expect(s.read(sprsys) & 0x20 != 0);
     }
 }
 
@@ -249,4 +261,80 @@ test "math: low-byte writes zero the partner high byte; only A and E start" {
     s.write(B, 10);
     s.write(A, 0);
     try std.testing.expectEqual(@as(u32, 20), efgh(&s));
+}
+
+test "math: SPRSYS flags as lynx-tests math expects" {
+    var s: Suzy = .{};
+    // Unsigned multiply: no carry, no warning; unsafe set by the operation.
+    s.write(sprsys, 0x04);
+    mul(&s, 2, 0xFF);
+    try std.testing.expectEqual(@as(u8, 0x04), s.read(sprsys) & 0x64);
+    // Writing SPRSYS with bit 2 clears unsafe.
+    s.write(sprsys, 0x04);
+    try std.testing.expectEqual(@as(u8, 0), s.read(sprsys) & 0x04);
+    // Signed multiply with a negative product: last carry.
+    s.write(sprsys, 0x80);
+    mul(&s, 5, 0xFFFD);
+    try std.testing.expectEqual(@as(u32, 0xFFFF_FFF1), efgh(&s));
+    try std.testing.expectEqual(@as(u8, 0x24), s.read(sprsys) & 0x64);
+    // $8000 x 2 signed: $8000 counts positive, no carry.
+    s.write(sprsys, 0x84);
+    mul(&s, 2, 0x8000);
+    try std.testing.expectEqual(@as(u32, 0x1_0000), efgh(&s));
+    try std.testing.expectEqual(@as(u8, 0x04), s.read(sprsys) & 0x64);
+    // Divide: carry = remainder non-zero.
+    s.write(sprsys, 0x04);
+    div(&s, 0x1_0000, 10);
+    try std.testing.expectEqual(@as(u32, 0x1999), abcd(&s));
+    try std.testing.expectEqual(@as(u8, 0x24), s.read(sprsys) & 0x64);
+    div(&s, 0xFFFF, 0xFF);
+    try std.testing.expectEqual(@as(u8, 0x04), s.read(sprsys) & 0x64);
+    div(&s, 0x1234, 0);
+    try std.testing.expectEqual(@as(u8, 0x64), s.read(sprsys) & 0x64);
+}
+
+test "math: SPRSYS bit 7 while an operation runs (timed access)" {
+    var s: Suzy = .{};
+    s.write_at(D, 0xFF, 1000);
+    s.write_at(C, 0xFF, 1005);
+    s.write_at(B, 2, 1010);
+    s.write_at(A, 0, 1015); // unsigned: 44 ticks
+    try std.testing.expectEqual(@as(u8, 0x80), s.read_at(sprsys, 1015 + 43) & 0x80);
+    try std.testing.expectEqual(@as(u8, 0), s.read_at(sprsys, 1015 + 44) & 0x80);
+    // Results are readable at once; the untimed read never shows busy.
+    try std.testing.expectEqual(@as(u32, 0x1FFFE), efgh(&s));
+    // Divide by $1234 (3 leading zeros): 176 + 3 x 14 ticks.
+    s.write_at(P, 0x34, 2000);
+    s.write_at(N, 0x12, 2005);
+    s.write_at(E, 0x12, 2010);
+    try std.testing.expectEqual(@as(u8, 0x80), s.read_at(sprsys, 2010 + 217) & 0x80);
+    try std.testing.expectEqual(@as(u8, 0), s.read_at(sprsys, 2010 + 218) & 0x80);
+    // Signed or accumulating multiplies take 54.
+    s.write_at(sprsys, 0x80, 3000);
+    s.write_at(A, 0, 3005);
+    try std.testing.expectEqual(@as(u8, 0x80), s.read_at(sprsys, 3005 + 53) & 0x80);
+    try std.testing.expectEqual(@as(u8, 0), s.read_at(sprsys, 3005 + 54) & 0x80);
+}
+
+test "math: the math registers are the sprite registers at $40-$6F" {
+    var s: Suzy = .{};
+    // SPRDLINE ($12) is CD, HPOSSTRT ($14) AB, VPOSSTRT ($16) NP.
+    s.write(0x12, 0x34);
+    s.write(0x13, 0x12);
+    try std.testing.expectEqual(@as(u8, 0x34), s.read(D));
+    try std.testing.expectEqual(@as(u8, 0x12), s.read(C));
+    // A plain mirror byte reads back through the sprite register.
+    s.write(0x40, 0xA5);
+    try std.testing.expectEqual(@as(u8, 0xA5), s.read(0x00));
+    // The product lands in SPRDOFF/SPRVPOS ($20-$23), the accumulator in
+    // SCBADR/PROCADR ($2C-$2F).
+    s.write(sprsys, 0x40);
+    s.write(M, 0);
+    s.write(K, 0);
+    mul(&s, 3, 7);
+    try std.testing.expectEqual(@as(u8, 21), s.read(0x20));
+    try std.testing.expectEqual(@as(u8, 21), s.read(0x2C));
+    // Writing the sprite-register addresses does not start anything.
+    s.write(0x15, 1);
+    try std.testing.expectEqual(@as(u8, 21), s.read(0x20));
 }
