@@ -247,8 +247,10 @@ pub inline fn mikey_ticks(t: u32, lo: u8) u32 {
 pub const timer_slot_phase: u32 = 0;
 
 /// Always reached with the stream closed (a write, or the boot), so
-/// `fetch_cost` needs no update.
+/// `fetch_cost` needs no update. Ends `Lynx.run_cpu`'s run after this
+/// instruction (it tests ROM space against the MAPCTL of the run's start).
 pub fn set_mapctl(l: *Lynx, v: u8) void {
+    l.fast_end = 0;
     l.mapctl = v;
     l.fetch_ticks = if (v & Mapctl.sequential_off != 0) Ticks.fetch_full else Ticks.fetch;
 }

@@ -124,13 +124,13 @@ pub const Lynx = struct {
     /// MAPCTL ($FFF9).
     mapctl: u8,
     /// Ticks of a page-mode fetch (4, or 5 with MAPCTL bit 7).
-    fetch_ticks: u8,
+    fetch_ticks: u32,
     /// Ticks of the next opcode or operand fetch at an address not on a
     /// 16-byte boundary (core/bus.zig): `fetch_ticks` while the CPU's
     /// sequential instruction stream is open, `bus.Ticks.fetch_full` while
     /// it is closed (one byte to test per fetch instead of a flag and
     /// `fetch_ticks`; with MAPCTL bit 7 both are a full cycle anyway).
-    fetch_cost: u8,
+    fetch_cost: u32,
     /// 16 MHz ticks since `tick_base` (the bus adds to it; `time()` is
     /// the clock since reset). 32-bit for the badge's core: `step_frame`
     /// rebases before it nears 2^31 (`rebase`).
@@ -311,14 +311,24 @@ pub const Lynx = struct {
         // that instruction (`sync_mikey`); the DMA catch-up below changes
         // no interrupt bit.
         const line = l.mikey.irq_line();
+        const line_bit: u8 = @intFromBool(line);
+        // PCs from here on may be in the mapped boot ROM (a MAPCTL write
+        // ends the run: `bus.set_mapctl`); $FFFF only takes the precise
+        // test below.
+        const rom_lo: u16 = if (l.mapctl & bus.Mapctl.rom_off == 0) bus.rom_base else 0xFFFF;
         l.cpu.normalize_p();
         while (true) {
-            const pc = l.cpu.regs.pc;
-            const irq = l.cpu.takes_irq(line);
-            if (!irq and pc >= bus.rom_base and pc < 0xFFF8 and l.mapctl & bus.Mapctl.rom_off == 0) {
-                l.rom_entry(pc);
-            } else {
-                if (irq) l.irq_count +%= 1;
+            step: {
+                const pc = l.cpu.regs.pc;
+                var irq = false;
+                if (pc >= rom_lo or @intFromBool(l.cpu.irq_ok) & line_bit != 0) {
+                    irq = l.cpu.takes_irq(line);
+                    if (!irq and pc >= bus.rom_base and pc < 0xFFF8 and l.mapctl & bus.Mapctl.rom_off == 0) {
+                        l.rom_entry(pc);
+                        break :step;
+                    }
+                    if (irq) l.irq_count +%= 1;
+                }
                 l.cpu.step_decided(l, irq);
             }
             if (l.ticks < l.fast_end) continue;
@@ -560,8 +570,8 @@ pub const Lynx = struct {
         suzy: suzy.Suzy,
         port: bus.CartPort,
         mapctl: u8,
-        fetch_ticks: u8,
-        fetch_cost: u8,
+        fetch_ticks: u32,
+        fetch_cost: u32,
         ticks: u32,
         tick_base: u64,
         frame_end: u32,
