@@ -102,6 +102,12 @@ pub fn Cpu(comptime Bus: type) type {
         /// One instruction, or the interrupt sequence when `bus.irq_line()`
         /// and I is clear.
         pub fn step(self: *Self, bus: *Bus) void {
+            self.step_inline(bus);
+        }
+
+        /// `step` inlined into the caller's loop (the console's run loop:
+        /// no call, no register save and restore per instruction).
+        pub inline fn step_inline(self: *Self, bus: *Bus) void {
             if (self.irq_ok and bus.irq_line()) {
                 self.interrupt(bus);
                 self.irq_ok = false;
@@ -509,7 +515,7 @@ pub fn Cpu(comptime Bus: type) type {
         /// One instruction after its opcode fetch, then its interrupt poll.
         /// Each opcode is its own case with the operation and addressing
         /// mode known at compile time (no decoding at run time).
-        fn exec(self: *Self, bus: *Bus, op: u8) void {
+        inline fn exec(self: *Self, bus: *Bus, op: u8) void {
             @setEvalBranchQuota(4000);
             switch (op) {
                 inline else => |o| {

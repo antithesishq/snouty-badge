@@ -270,7 +270,7 @@ pub const Lynx = struct {
                 l.rom_entry(pc);
             } else {
                 if (irq) l.irq_count +%= 1;
-                l.cpu.step(l);
+                l.cpu.step_inline(l);
             }
             if (l.ticks >= l.fast_end) break;
         }
