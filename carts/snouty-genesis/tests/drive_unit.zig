@@ -151,3 +151,35 @@ test "drive: header_name collapses padding and falls back to the overseas name" 
     const k = drive.header_name(&src, &out);
     try testing.expectEqualStrings("ABC?", out[0..k]);
 }
+
+/// `Mapped.Crc` over `m` in steps of `chunk` bytes; the step count.
+fn crc_in_steps(m: *const romfs.Mapped, chunk: u32, steps: *u32) u32 {
+    var c = romfs.Mapped.Crc.init();
+    steps.* = 0;
+    while (true) {
+        steps.* += 1;
+        if (c.step(m, chunk)) break;
+    }
+    // Further steps change nothing.
+    std.debug.assert(c.step(m, chunk));
+    return c.final();
+}
+
+test "drive: the incremental CRC of the fragmented and contiguous files matches crc32" {
+    const s = drive.scan(drive_img, &clusters);
+    for ([_][]const u8{ "FRAG.MD", "TEST.GEN" }) |name| {
+        const m = try drive.open(drive_img, try find(&s, name), &clusters);
+        try testing.expectEqual(test_rom_crc, m.crc32());
+        // 8 KB (the cart's chunk), odd sizes that cut clusters, one byte.
+        for ([_]u32{ 8 * 1024, 1000, 512, 3, 1, 1 << 20 }) |chunk| {
+            var steps: u32 = 0;
+            try testing.expectEqual(test_rom_crc, crc_in_steps(&m, chunk, &steps));
+            try testing.expectEqual((test_rom_size + chunk - 1) / chunk, steps);
+        }
+    }
+    // An empty file is done at once (CRC of nothing is 0).
+    const empty: romfs.Mapped = .{ .size = 0, .clusters = &.{}, .data_base = drive_img };
+    var steps: u32 = 0;
+    try testing.expectEqual(@as(u32, 0), crc_in_steps(&empty, 8192, &steps));
+    try testing.expectEqual(@as(u32, 1), steps);
+}
