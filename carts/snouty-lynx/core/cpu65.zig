@@ -109,10 +109,8 @@ pub fn Cpu(comptime Bus: type) type {
             }
             self.regs.p |= Flag.u | Flag.b;
             self.instr_count +%= 1;
-            const p_before = self.regs.p;
             const op = self.fetch8(bus);
             self.exec(bus, op);
-            self.irq_ok = poll(op, p_before, self.regs.p);
         }
 
         /// Will the next `step` take the interrupt when the line is `line`?
@@ -246,7 +244,7 @@ pub fn Cpu(comptime Bus: type) type {
 
         /// ADC/SBC: `ea` is the decimal-mode extra cycle's read address
         /// (the operand's own address; the suite's $0059/$0000 for #).
-        fn adc(self: *Self, bus: *Bus, m: u8, ea: u16) void {
+        inline fn adc(self: *Self, bus: *Bus, m: u8, ea: u16) void {
             const r = &self.regs;
             const a = r.a;
             const c: u16 = self.carry();
@@ -260,7 +258,14 @@ pub fn Cpu(comptime Bus: type) type {
                 return;
             }
             bus.dummy(ea);
-            // 65C02 decimal add (Bruce Clark, "Decimal Mode", appendix A).
+            self.adc_decimal(m);
+        }
+
+        /// 65C02 decimal add (Bruce Clark, "Decimal Mode", appendix A).
+        fn adc_decimal(self: *Self, m: u8) void {
+            const r = &self.regs;
+            const a = r.a;
+            const c: u16 = self.carry();
             var lo: u16 = @as(u16, a & 0x0F) + (m & 0x0F) + c;
             if (lo >= 0x0A) lo = ((lo + 0x06) & 0x0F) + 0x10;
             var sum: u16 = @as(u16, a & 0xF0) + (m & 0xF0) + lo;
@@ -273,7 +278,7 @@ pub fn Cpu(comptime Bus: type) type {
             self.nz(r.a);
         }
 
-        fn sbc(self: *Self, bus: *Bus, m: u8, ea: u16) void {
+        inline fn sbc(self: *Self, bus: *Bus, m: u8, ea: u16) void {
             const r = &self.regs;
             const a = r.a;
             const borrow: u16 = 1 - @as(u16, self.carry());
@@ -287,7 +292,14 @@ pub fn Cpu(comptime Bus: type) type {
                 return;
             }
             bus.dummy(ea);
-            // 65C02 decimal subtract (Bruce Clark, sequence 4).
+            self.sbc_decimal(m, borrow);
+        }
+
+        /// 65C02 decimal subtract (Bruce Clark, sequence 4); C and V are
+        /// already the binary ones.
+        fn sbc_decimal(self: *Self, m: u8, borrow: u16) void {
+            const r = &self.regs;
+            const a = r.a;
             const lo: i16 = @as(i16, a & 0x0F) - @as(i16, m & 0x0F) - @as(i16, @intCast(borrow));
             var res: i16 = @as(i16, a) - @as(i16, m) - @as(i16, @intCast(borrow));
             if (res < 0) res -= 0x60;
@@ -310,7 +322,7 @@ pub fn Cpu(comptime Bus: type) type {
         /// The read-group operations in the cc=01 column order.
         const Alu = enum(u3) { ora, @"and", eor, adc, sta, lda, cmp, sbc };
 
-        fn alu(self: *Self, bus: *Bus, op: Alu, m: u8, ea: u16) void {
+        inline fn alu(self: *Self, bus: *Bus, comptime op: Alu, m: u8, ea: u16) void {
             const r = &self.regs;
             switch (op) {
                 .ora => {
@@ -338,7 +350,7 @@ pub fn Cpu(comptime Bus: type) type {
 
         const Rmw = enum { asl, lsr, rol, ror, inc, dec, tsb, trb };
 
-        fn rmw_op(self: *Self, f: Rmw, v: u8) u8 {
+        inline fn rmw_op(self: *Self, comptime f: Rmw, v: u8) u8 {
             const r = &self.regs;
             switch (f) {
                 .asl => {
@@ -388,20 +400,20 @@ pub fn Cpu(comptime Bus: type) type {
 
         /// Read, dummy re-read (the 65C02 reads twice where the NMOS part
         /// wrote twice), write.
-        fn rmw(self: *Self, bus: *Bus, f: Rmw, ea: u16) void {
+        inline fn rmw(self: *Self, bus: *Bus, comptime f: Rmw, ea: u16) void {
             const v = bus.read(ea);
             bus.dummy(ea);
             bus.write(ea, self.rmw_op(f, v));
         }
 
-        fn rmw_a(self: *Self, bus: *Bus, f: Rmw) void {
+        inline fn rmw_a(self: *Self, bus: *Bus, comptime f: Rmw) void {
             self.dummy_pc(bus);
             self.regs.a = self.rmw_op(f, self.regs.a);
         }
 
         /// Relative branch: taken costs a dummy read of PC, a page
         /// crossing another of the target's low byte in the old page.
-        fn branch(self: *Self, bus: *Bus, taken: bool) void {
+        inline fn branch(self: *Self, bus: *Bus, taken: bool) void {
             const off: u8 = self.fetch8(bus);
             if (!taken) return;
             const r = &self.regs;
@@ -422,7 +434,7 @@ pub fn Cpu(comptime Bus: type) type {
 
         /// BBRn/BBSn zp,rel (5 cycles; taken +1, page crossing +1, both
         /// dummy reads of PC after the offset).
-        fn bbx(self: *Self, bus: *Bus, mask: u8, set: bool) void {
+        inline fn bbx(self: *Self, bus: *Bus, comptime mask: u8, comptime set: bool) void {
             const z = self.fetch8(bus);
             const v = bus.read(z);
             bus.dummy(z);
@@ -436,7 +448,7 @@ pub fn Cpu(comptime Bus: type) type {
         }
 
         /// RMBn/SMBn zp (5 cycles: read, dummy re-read, write).
-        fn xmb(self: *Self, bus: *Bus, mask: u8, set: bool) void {
+        inline fn xmb(self: *Self, bus: *Bus, comptime mask: u8, comptime set: bool) void {
             const z = self.fetch8(bus);
             const v = bus.read(z);
             bus.dummy(z);
@@ -445,7 +457,7 @@ pub fn Cpu(comptime Bus: type) type {
 
         /// The cc=01 column (ORA AND EOR ADC STA LDA CMP SBC) plus (zp)
         /// in column $x2, decoded from the opcode's low five bits.
-        fn group1(self: *Self, bus: *Bus, op: u8) void {
+        inline fn group1(self: *Self, bus: *Bus, comptime op: u8) void {
             const r = &self.regs;
             const f: Alu = @fromBackingInt(@intCast(op >> 5));
             if (f == .sta) {
@@ -484,17 +496,31 @@ pub fn Cpu(comptime Bus: type) type {
             self.alu(bus, f, bus.read(ea), ea);
         }
 
-        fn load_x(self: *Self, v: u8) void {
+        inline fn load_x(self: *Self, v: u8) void {
             self.regs.x = v;
             self.nz(v);
         }
 
-        fn load_y(self: *Self, v: u8) void {
+        inline fn load_y(self: *Self, v: u8) void {
             self.regs.y = v;
             self.nz(v);
         }
 
+        /// One instruction after its opcode fetch, then its interrupt poll.
+        /// Each opcode is its own case with the operation and addressing
+        /// mode known at compile time (no decoding at run time).
         fn exec(self: *Self, bus: *Bus, op: u8) void {
+            @setEvalBranchQuota(4000);
+            switch (op) {
+                inline else => |o| {
+                    const p_before = self.regs.p;
+                    self.exec_op(bus, o);
+                    self.irq_ok = poll(o, p_before, self.regs.p);
+                },
+            }
+        }
+
+        inline fn exec_op(self: *Self, bus: *Bus, comptime op: u8) void {
             const r = &self.regs;
             switch (op) {
                 // ---- cc=01 column and (zp) ----
