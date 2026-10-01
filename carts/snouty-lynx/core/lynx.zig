@@ -125,8 +125,12 @@ pub const Lynx = struct {
     mapctl: u8,
     /// Ticks of a page-mode fetch (4, or 5 with MAPCTL bit 7).
     fetch_ticks: u8,
-    /// The CPU's sequential instruction stream is open (core/bus.zig).
-    stream_open: bool,
+    /// Ticks of the next opcode or operand fetch at an address not on a
+    /// 16-byte boundary (core/bus.zig): `fetch_ticks` while the CPU's
+    /// sequential instruction stream is open, `bus.Ticks.fetch_full` while
+    /// it is closed (one byte to test per fetch instead of a flag and
+    /// `fetch_ticks`; with MAPCTL bit 7 both are a full cycle anyway).
+    fetch_cost: u8,
     /// 16 MHz ticks since `tick_base` (the bus adds to it; `time()` is
     /// the clock since reset). 32-bit for the badge's core: `step_frame`
     /// rebases before it nears 2^31 (`rebase`).
@@ -214,7 +218,7 @@ pub const Lynx = struct {
         l.mikey.reset(l.ticks);
         l.suzy.reset();
         l.port = .{};
-        l.stream_open = false;
+        l.fetch_cost = bus.Ticks.fetch_full;
         bus.set_mapctl(l, 0);
         l.sleeping = false;
         l.sprite_left = 0;
@@ -298,23 +302,24 @@ pub const Lynx = struct {
     /// For a build with room to spare (XIP), `noinline` -> `inline` here
     /// puts the loop into `step_frame` and `step_one` (two copies; the
     /// call it saves is once per Mikey event, not per instruction).
-    noinline fn run_cpu(l_static: *Lynx, single: bool) void {
-        // The console is a static: hide its address from the optimizer so
-        // the loop keeps one base register instead of rematerialising the
-        // constant after every bus call (~5 KB of .text).
-        var hidden = l_static;
-        const l: *Lynx = @as(*volatile *Lynx, &hidden).*;
+    noinline fn run_cpu(l: *Lynx, single: bool) void {
         // DMA that fell in the last catch-up's own steal is charged after
         // the next instruction (`after_step`), as `step_one` does.
         l.fast_end = if (single or l.mikey.steal != 0) 0 else @min(l.frame_end, l.mikey.next_event);
+        // The IRQ line is constant for the whole run: only Mikey changes
+        // it (its events and register writes), and both end the run after
+        // that instruction (`sync_mikey`); the DMA catch-up below changes
+        // no interrupt bit.
+        const line = l.mikey.irq_line();
+        l.cpu.normalize_p();
         while (true) {
             const pc = l.cpu.regs.pc;
-            const irq = l.cpu.takes_irq(l.mikey.irq_line());
+            const irq = l.cpu.takes_irq(line);
             if (!irq and pc >= bus.rom_base and pc < 0xFFF8 and l.mapctl & bus.Mapctl.rom_off == 0) {
                 l.rom_entry(pc);
             } else {
                 if (irq) l.irq_count +%= 1;
-                l.cpu.step_inline(l);
+                l.cpu.step_decided(l, irq);
             }
             if (l.ticks < l.fast_end) continue;
             // Only a display burst or refresh due (no register access in
@@ -340,7 +345,7 @@ pub const Lynx = struct {
         l.ticks += m.steal;
         l.dma_ticks += m.steal;
         m.steal = 0;
-        if (m.steal_burst) l.stream_open = false;
+        if (m.steal_burst) l.fetch_cost = bus.Ticks.fetch_full;
         m.steal_burst = false;
         if (l.ticks >= m.next_event or l.ticks >= l.frame_end) {
             bus.sync_mikey(l);
@@ -391,7 +396,7 @@ pub const Lynx = struct {
             // stream: lynx-tests page-mode NOP PM ON measures $35 only
             // without that (fitted; the timers ONESHOT+LINK loop, in
             // visible lines, needs the burst break to reach 13 IRQs).
-            if (l.mikey.steal_burst) l.stream_open = false;
+            if (l.mikey.steal_burst) l.fetch_cost = bus.Ticks.fetch_full;
             l.mikey.steal_burst = false;
             bus.sync_mikey(l);
         }
@@ -434,7 +439,7 @@ pub const Lynx = struct {
         const hi: u16 = l.ram[0x100 | @as(u16, r.s)];
         r.pc = (hi << 8 | lo) +% 1;
         l.ticks += set_block_ticks;
-        l.stream_open = false;
+        l.fetch_cost = bus.Ticks.fetch_full;
     }
 
     /// $FE4A: decrypt the next frame from the cart port to ($05/$06), then
@@ -455,7 +460,7 @@ pub const Lynx = struct {
         r.p = (r.p & ~(F.n | F.v | F.z | F.c)) | res.nvzc;
         r.pc = boot.loader_entry;
         l.ticks += set_block_ticks + decrypt_block_ticks * res.blocks;
-        l.stream_open = false;
+        l.fetch_cost = bus.Ticks.fetch_full;
     }
 
     /// CPUSLEEP written (core/bus.zig): see the file comment.
@@ -556,7 +561,7 @@ pub const Lynx = struct {
         port: bus.CartPort,
         mapctl: u8,
         fetch_ticks: u8,
-        stream_open: bool,
+        fetch_cost: u8,
         ticks: u32,
         tick_base: u64,
         frame_end: u32,

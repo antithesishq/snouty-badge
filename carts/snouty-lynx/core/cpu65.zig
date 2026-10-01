@@ -109,15 +109,30 @@ pub fn Cpu(comptime Bus: type) type {
         /// `step` inlined into the caller's loop (the console's run loop:
         /// no call, no register save and restore per instruction).
         pub inline fn step_inline(self: *Self, bus: *Bus) void {
-            if (self.irq_ok and bus.irq_line()) {
+            const irq = self.irq_ok and bus.irq_line();
+            if (!irq) self.normalize_p();
+            self.step_decided(bus, irq);
+        }
+
+        /// `step_inline` for a run loop that samples the line itself
+        /// (`irq` = `takes_irq(line)`) and keeps P's bits 4 and 5 set
+        /// (`normalize_p` once before the loop: no instruction clears
+        /// them, PLP, RTI and the interrupt set them, and nothing ever
+        /// reads them, since every push forces them).
+        pub inline fn step_decided(self: *Self, bus: *Bus, irq: bool) void {
+            if (irq) {
                 self.interrupt(bus);
                 self.irq_ok = false;
                 return;
             }
-            self.regs.p |= Flag.u | Flag.b;
             self.instr_count +%= 1;
             const op = self.fetch8(bus);
             self.exec(bus, op);
+        }
+
+        /// P's bits 4 and 5 read set (as PHP pushes them).
+        pub inline fn normalize_p(self: *Self) void {
+            self.regs.p |= Flag.u | Flag.b;
         }
 
         /// Will the next `step` take the interrupt when the line is `line`?

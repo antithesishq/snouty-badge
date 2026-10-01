@@ -138,14 +138,14 @@ pub const PortReader = struct {
 // The CPU's bus
 
 pub inline fn fetch(l: *Lynx, addr: u16) u8 {
-    l.ticks += if (l.stream_open and addr & 0xF != 0) l.fetch_ticks else Ticks.fetch_full;
-    l.stream_open = true;
+    l.ticks += if (addr & 0xF != 0) l.fetch_cost else Ticks.fetch_full;
+    l.fetch_cost = l.fetch_ticks; // the stream is open
     if (addr < suzy_base) return l.ram[addr];
     return high_read(l, addr, false);
 }
 
 pub inline fn read(l: *Lynx, addr: u16) u8 {
-    l.stream_open = false;
+    l.fetch_cost = Ticks.fetch_full; // closes the stream
     if (addr < suzy_base) {
         l.ticks += Ticks.ram;
         return l.ram[addr];
@@ -161,7 +161,7 @@ pub inline fn dummy(l: *Lynx, addr: u16) void {
 }
 
 pub inline fn write(l: *Lynx, addr: u16, v: u8) void {
-    l.stream_open = false;
+    l.fetch_cost = Ticks.fetch_full; // closes the stream
     if (addr < suzy_base) {
         l.ticks += Ticks.ram;
         undo.touch(addr);
@@ -246,6 +246,8 @@ pub inline fn mikey_ticks(t: u32, lo: u8) u32 {
 /// phase rows) with the 1 us clock edges at multiples of 16 ticks.
 pub const timer_slot_phase: u32 = 0;
 
+/// Always reached with the stream closed (a write, or the boot), so
+/// `fetch_cost` needs no update.
 pub fn set_mapctl(l: *Lynx, v: u8) void {
     l.mapctl = v;
     l.fetch_ticks = if (v & Mapctl.sequential_off != 0) Ticks.fetch_full else Ticks.fetch;
