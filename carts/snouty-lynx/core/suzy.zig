@@ -496,10 +496,16 @@ pub const Suzy = struct {
             .coll_num = s.sprcoll & 0x0F,
             .track_vid = kind == 6 or s.sprctl0 >> 6 == 0,
         };
+        var any: u8 = 0;
         for (0..16) |k| {
             const pen = s.pen_map[k];
-            d.pen_flags[k] = pen_flags(kind, pen, no_collide) | (pen << 4);
+            const f = pen_flags(kind, pen, no_collide);
+            d.pen_flags[k] = f | (pen << 4);
+            any |= f;
         }
+        d.writes_vid = any & flag_opaque != 0;
+        d.writes_col = any & flag_collide != 0;
+        d.track_col = any & (flag_collide | flag_preserve) != 0;
 
         const hflip = s.sprctl0 & 0x20 != 0;
         const vflip = s.sprctl0 & 0x10 != 0;
@@ -612,18 +618,17 @@ pub const Suzy = struct {
 
 /// The cost of one drawn destination row in `tick_cost.unit`s: the
 /// slowest of the output pipeline and (totally literal rows) the bus,
-/// then collision, XOR and the row tail on top.
-fn row_ticks(rs: *RowStats, bpp: u5, literal: bool) u32 {
+/// then collision, XOR and the row tail on top. `d`'s unit counts must be
+/// flushed.
+inline fn row_ticks(d: *const Draw, rs: RowStats) u32 {
     const c = tick_cost;
-    if (rs.superclip) return c.row_clipped;
-    rs.vid.flush();
-    rs.col.flush();
+    const bpp = d.bpp;
     var t: u32 = c.row_base + c.per_output * @max(rs.pens, rs.outs);
     if (!rs.edge_stop) {
         t += if (bpp == 1) c.row_tail_1bpp else c.row_tail;
-        if (bpp == 1 and rs.vid.last_part) t += c.row_tail_partial_1bpp;
+        if (bpp == 1 and d.vid.last_part) t += c.row_tail_partial_1bpp;
     }
-    if (literal) {
+    if (d.literal) {
         if (rs.outs > 0) {
             // Source bits per output in 1/64: the bus cost per output.
             const bpo = @min((rs.bits * 64) / rs.outs, 4 * 64);
@@ -635,10 +640,10 @@ fn row_ticks(rs: *RowStats, bpp: u5, literal: bool) u32 {
     } else {
         t = (t + c.packet * rs.packets + c.packed_literal_pen * rs.lit_pens) -| c.packed_row_credit;
     }
-    const light: u32 = rs.col.other;
-    const detect: u32 = rs.col.hit;
+    const light: u32 = d.col.other;
+    const detect: u32 = d.col.hit;
     if (light + detect != 0) t += c.coll_row + c.coll_group_light * light + c.coll_group_detect * detect;
-    const xor: u32 = rs.vid.hit;
+    const xor: u32 = d.vid.hit;
     return t + c.xor_byte * xor;
 }
 
@@ -742,7 +747,9 @@ fn Units(comptime shift: u5, comptime key: u8) type {
     };
 }
 
-/// What one destination row asked of the engine (the tick model's input).
+/// What one destination row asked of the engine (the tick model's input):
+/// `draw_row`'s locals. The video and collision unit counts are `Draw`'s
+/// (`vid`, `col`), tracked only for sprites whose cost reads them.
 const RowStats = struct {
     /// Source pens decoded, output positions generated (including the one
     /// past the screen edge that stops the row) and packet headers read.
@@ -755,29 +762,6 @@ const RowStats = struct {
     lit_pens: u32 = 0,
     /// The row stopped at the screen edge (else it ran out of data).
     edge_stop: bool = false,
-    /// The row could not reach the screen and was not decoded.
-    superclip: bool = false,
-    /// Video bytes: bit 0 written, bit 1 read (transparent), bit 2 XOR;
-    /// `hit` counts the XORed ones. Only tracked when the tick model needs
-    /// it (`Draw.track_vid`).
-    vid: Units(1, vid_xor) = .{},
-    /// Collision groups: bit 0 written, bit 1 read and written (the
-    /// depository types), bit 2 read only (pen E of the shadow types);
-    /// `hit` counts the detecting ones, `other` the light ones.
-    col: Units(3, col_detect) = .{},
-
-    /// Ready for the next row (field by field: a struct copy here was a
-    /// memcpy per row on the badge).
-    inline fn clear(rs: *RowStats) void {
-        rs.pens = 0;
-        rs.outs = 0;
-        rs.packets = 0;
-        rs.lit_pens = 0;
-        rs.edge_stop = false;
-        rs.superclip = false;
-        rs.vid.clear();
-        rs.col.clear();
-    }
 };
 
 const vid_write: u8 = 1;
@@ -800,6 +784,14 @@ const Draw = struct {
     /// The tick model reads the row's video bytes (XOR sprites, and the
     /// 1 bpp partial-byte tail): track them per span.
     track_vid: bool,
+    /// Some pen index writes or reads the collision buffer (collide or
+    /// preserve): the tick model counts collision groups per span.
+    track_col: bool = false,
+    /// Some pen index writes the video buffer / the collision buffer: a
+    /// row whose line of that buffer holds the source bytes is decoded,
+    /// not replayed (`row`).
+    writes_vid: bool = false,
+    writes_col: bool = false,
     /// Pen index -> pen number << 4 | flags (the palette folded in).
     pen_flags: [16]u8 = @splat(0),
     fred: u8 = 0,
@@ -809,7 +801,15 @@ const Draw = struct {
     pixels: u32 = 0,
     /// Ticks charged so far for this sprite.
     ticks: u32 = 0,
-    rs: RowStats = .{},
+    /// Video bytes: bit 0 written, bit 1 read (transparent), bit 2 XOR;
+    /// `hit` counts the XORed ones. Only tracked when the tick model needs
+    /// it (`track_vid`).
+    vid: Units(1, vid_xor) = .{},
+    /// Collision groups: bit 0 written, bit 1 read and written (the
+    /// depository types), bit 2 read only (pen E of the shadow types);
+    /// `hit` counts the detecting ones, `other` the light ones (only with
+    /// `track_col`; otherwise both stay 0, as nothing would be counted).
+    col: Units(3, col_detect) = .{},
 
     /// The last decoded row, for the next row of the same source line
     /// (`row`): its inputs, its spans and its cost. `cache_ok` is cleared
@@ -834,51 +834,54 @@ const Draw = struct {
     /// and the same statistics, so those are replayed onto the new line
     /// instead: the result in RAM and the ticks are the same as decoding
     /// it again, as long as the source bytes are unchanged. A row is not
-    /// replayed when its own line (video or collision) holds source bytes
-    /// (the decode would read what it has just written), and the cache is
-    /// dropped after a row that wrote over them.
-    fn row(d: *Draw, data: u16, nbytes: u8, y: u16, x_start: i32, dx: i32, acc0: u32, hsiz: u16) u32 {
-        var cost: u32 = undefined;
-        const vline = d.vidbas +% y *% line_bytes;
-        const cline = d.collbas +% y *% line_bytes;
-        if (replay_rows and d.cache_ok and data == d.c_data and nbytes == d.c_nbytes and x_start == d.c_x and
-            dx == d.c_dx and acc0 == d.c_acc and hsiz == d.c_hsiz and
-            !overlaps(data, nbytes, vline, line_bytes) and !overlaps(data, nbytes, cline, line_bytes))
-        {
-            d.last_vline = vline;
-            d.last_cline = cline;
-            for (d.spans[0..d.n_spans]) |sp| _ = d.fill_pixels(vline, cline, sp.a, sp.b, sp.pen_index);
-            cost = d.c_cost;
-        } else {
-            d.n_spans = 0;
-            d.draw_row(data, nbytes, y, x_start, dx, acc0, hsiz);
-            cost = row_ticks(&d.rs, d.bpp, d.literal);
-            d.c_data = data;
-            d.c_nbytes = nbytes;
-            d.c_x = x_start;
-            d.c_dx = dx;
-            d.c_acc = acc0;
-            d.c_hsiz = hsiz;
-            d.c_cost = cost;
-            d.cache_ok = true;
-        }
-        if (d.n_spans != 0 and (overlaps(data, nbytes, vline, line_bytes) or
-            overlaps(data, nbytes, cline, line_bytes))) d.cache_ok = false;
-        return cost;
-    }
-
-    /// Decode one source line (`nbytes` data bytes at `data`) into one
-    /// destination row `y`, starting at screen column `x` and stepping `dx`.
-    fn draw_row(d: *Draw, data: u16, nbytes: u8, y: u16, x_start: i32, dx: i32, acc0: u32, hsiz: u16) void {
+    /// replayed when a line it writes (video or collision) holds source
+    /// bytes (the decode would read what it has just written), and the
+    /// cache is dropped after a row that wrote over them. (A sprite that
+    /// never writes a buffer cannot change the source through it, so only
+    /// the buffers it writes are tested.)
+    inline fn row(d: *Draw, data: u16, nbytes: u8, y: u16, x_start: i32, dx: i32, acc0: u32, hsiz: u16) u32 {
         const vline = d.vidbas +% y *% line_bytes;
         const cline = d.collbas +% y *% line_bytes;
         d.last_vline = vline;
         d.last_cline = cline;
-        const rs = &d.rs;
-        rs.clear();
+        const hits_source = (d.writes_vid and overlaps(data, nbytes, vline, line_bytes)) or
+            (d.writes_col and overlaps(data, nbytes, cline, line_bytes));
+        if (replay_rows and d.cache_ok and !hits_source and data == d.c_data and nbytes == d.c_nbytes and
+            x_start == d.c_x and dx == d.c_dx and acc0 == d.c_acc and hsiz == d.c_hsiz)
+        {
+            for (d.spans[0..d.n_spans]) |sp| _ = d.fill_pixels(vline, cline, sp.a, sp.b, sp.pen_index);
+            return d.c_cost;
+        }
+        const cost = d.draw_row(data, nbytes, vline, cline, x_start, dx, acc0, hsiz);
+        d.c_data = data;
+        d.c_nbytes = nbytes;
+        d.c_x = x_start;
+        d.c_dx = dx;
+        d.c_acc = acc0;
+        d.c_hsiz = hsiz;
+        d.c_cost = cost;
+        d.cache_ok = !(hits_source and d.n_spans != 0);
+        return cost;
+    }
 
+    /// Decode one source line (`nbytes` data bytes at `data`) into the
+    /// destination row whose lines start at `vline`/`cline`, starting at
+    /// screen column `x_start` and stepping `dx`; the spans go to `spans`
+    /// and the cost (`row_ticks`) is returned. Out of line: the sprite
+    /// loop stays small and this keeps its state in registers.
+    inline fn draw_row(d: *Draw, data: u16, nbytes: u8, vline: u16, cline: u16, x_start: i32, dx: i32, acc0: u32, hsiz: u16) u32 {
+        d.n_spans = 0;
+        const right = dx > 0;
+        // Super clipping: a row starting off screen and drawing away from
+        // it is rejected without decoding.
+        if (if (right) x_start >= screen_width else x_start < 0) return tick_cost.row_clipped;
+        if (d.track_vid) d.vid.clear();
+        if (d.track_col) d.col.clear();
+
+        var rs: RowStats = .{};
         const ram = d.ram;
         const bpp = d.bpp;
+        const literal = d.literal;
         const pen_mask: u32 = (@as(u32, 1) << bpp) - 1;
         // Bit reader, MSB first. `left` is the bits still in the line; a
         // field is only taken while strictly more bits than its width
@@ -886,47 +889,18 @@ const Draw = struct {
         // the Epyx pad-byte bug, as Felix models it).
         const total: u32 = @as(u32, nbytes) * 8;
         var left: u32 = total;
-        defer rs.bits = total - left;
         var src: u16 = data;
         var buf: u32 = 0;
         var have: u5 = 0;
         var x = x_start;
         var acc = acc0;
         const h: u32 = hsiz;
-        const right = dx > 0;
-        // Super clipping: a row starting off screen and drawing away from
-        // it is rejected without decoding.
-        if (if (right) x_start >= screen_width else x_start < 0) {
-            rs.superclip = true;
-            return;
-        }
 
         var lit_left: u32 = 0; // pens still to read in a literal packet
-        while (true) {
+        decode: while (true) {
             var n: u32 = 1;
-            var pen_index: u32 = undefined;
-            if (d.literal) {
-                if (left <= bpp) return;
-                while (have < bpp) : (have += 8) {
-                    buf = (buf << 8) | ram[src];
-                    src +%= 1;
-                }
-                have -= bpp;
-                left -= bpp;
-                pen_index = (buf >> have) & pen_mask;
-            } else if (lit_left > 0) {
-                if (left <= bpp) return;
-                while (have < bpp) : (have += 8) {
-                    buf = (buf << 8) | ram[src];
-                    src +%= 1;
-                }
-                have -= bpp;
-                left -= bpp;
-                pen_index = (buf >> have) & pen_mask;
-                lit_left -= 1;
-                rs.lit_pens += 1;
-            } else {
-                if (left <= 5) return;
+            if (!literal and lit_left == 0) {
+                if (left <= 5) break :decode;
                 while (have < 5) : (have += 8) {
                     buf = (buf << 8) | ram[src];
                     src +%= 1;
@@ -940,16 +914,20 @@ const Draw = struct {
                     lit_left = count + 1;
                     continue;
                 }
-                if (count == 0) return; // header 00000: end of line
-                if (left <= bpp) return;
-                while (have < bpp) : (have += 8) {
-                    buf = (buf << 8) | ram[src];
-                    src +%= 1;
-                }
-                have -= bpp;
-                left -= bpp;
-                pen_index = (buf >> have) & pen_mask;
+                if (count == 0) break :decode; // header 00000: end of line
                 n = count + 1;
+            }
+            if (left <= bpp) break :decode;
+            while (have < bpp) : (have += 8) {
+                buf = (buf << 8) | ram[src];
+                src +%= 1;
+            }
+            have -= bpp;
+            left -= bpp;
+            const pen_index = (buf >> have) & pen_mask;
+            if (!literal and n == 1) {
+                lit_left -= 1;
+                rs.lit_pens += 1;
             }
             rs.pens += n;
 
@@ -981,27 +959,27 @@ const Draw = struct {
                 // Generation stops at the first output past the edge.
                 rs.outs += @intCast(@max(1, if (right) screen_width + 1 - @max(out_a, 0) else @min(out_b, screen_width) + 1));
                 rs.edge_stop = true;
-                return;
+                break :decode;
             }
             rs.outs += @intCast(w);
         }
+        rs.bits = total - left;
+        if (d.track_vid) d.vid.flush();
+        if (d.track_col) d.col.flush();
+        return row_ticks(d, rs);
     }
 
     /// Pixels a..b-1 of the row with one pen index: video then collision,
     /// recorded for `row`'s replay, and counted for the tick model.
-    fn fill(d: *Draw, vline: u16, cline: u16, a: u16, b: u16, pen_index: u8, right: bool) void {
+    inline fn fill(d: *Draw, vline: u16, cline: u16, a: u16, b: u16, pen_index: u8, right: bool) void {
         d.spans[d.n_spans] = .{ .a = @intCast(a), .b = @intCast(b), .pen_index = pen_index };
         d.n_spans += 1;
         const f = d.fill_pixels(vline, cline, a, b, pen_index);
-        if (f & flag_opaque != 0) {
-            if (d.track_vid) d.rs.vid.add(a, b, if (d.xor) vid_xor else vid_write, right);
-        } else if (d.track_vid) {
-            d.rs.vid.add(a, b, vid_read, right);
-        }
+        if (d.track_vid) d.vid.add(a, b, if (f & flag_opaque == 0) vid_read else if (d.xor) vid_xor else vid_write, right);
         if (f & flag_collide != 0) {
-            d.rs.col.add(a, b, if (d.deposit) col_detect else col_write, right);
+            d.col.add(a, b, if (d.deposit) col_detect else col_write, right);
         } else if (f & flag_preserve != 0) {
-            d.rs.col.add(a, b, col_preserve, right);
+            d.col.add(a, b, col_preserve, right);
         }
     }
 
