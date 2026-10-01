@@ -11,27 +11,40 @@ appendix `hardware.html`, [SPR] `lynx6.html`, [MATH] `lynx9.html`, [BUGS]
 `lynx10.html`), cc65's `include/_suzy.h`, and the Felix emulator
 (github.com/laoo/Felix, MIT), read for behaviour the documents leave
 open. Felix's choices are marked [FELIX] below. Handy (GPL) was not read.
+The drhelius lynx-tests hardware test carts (github.com/drhelius/lynx-tests,
+MIT: `math`, `memio`, `sprites1`-`sprites5` and the author's
+`lynx-sprite-performance.md`) decide where the documents are unclear and
+calibrate the tick model; the test wins over a reading of the documents
+(it passes on a real Lynx). drhelius's Gearlynx (GPL-3) was read only to
+interpret what those tests check (the math flags, the size offsets of a
+flipped quadrant); no code was taken from it.
 
 ## Shape (the M1 contract)
 
 - `write(addr, v)`: `$00-$2F` are 24 16-bit registers, even address = low
   byte; a write to a low byte zeroes the high byte ([HW] "Any CPU write
-  to an LSB will set the MSB to 0"). `$30-$4F` are ignored. `$50-$6F`
-  are the math bytes, where the same low-byte rule applies. `$80`
-  SPRCTL0, `$81` SPRCTL1, `$82` SPRCOLL, `$83` SPRINIT, `$90` SUZYBUSEN
-  are stored; `$91` SPRGO and `$92` SPRSYS are stored raw in
-  `sprgo`/`sprsys`. Anything else is ignored.
-- `read(addr)`: `$00-$2F` return the engine's current values (after a
-  run they hold the last sprite's working state: SCBADR, SPRDLINE,
-  HPOSSTRT after tilt, SPRHSIZ after stretch, and so on). `$50-$6F` the
-  math bytes. `$88` SUZYHREV = `$01`. `$92` SPRSYS as below. Other
-  addresses below `$80` read 0; above, `$FC` (Felix's measurement of the
-  open bus noise, mostly `%11111100`).
-- SPRSYS read: bit 7 math in process (always 0: math completes inside
-  `write`), bit 6 math warning, bit 5 last carry, bit 4 vstretch and bit
-  3 lefthand as written, bit 2 unsafe access (never set, see below), bit
-  1 stop request (as written; SPRGO writes clear it), bit 0 sprite
-  process running (= SPRGO bit 0 still pending; 0 after `run_sprites`).
+  to an LSB will set the MSB to 0"). `$40-$6F` are the same 48 bytes
+  (lynx-tests memio "SUZY MIRRORS": Suzy has 48 physical registers and
+  the math unit's are the sprite engine's, see "Math unit"); a write
+  there also runs the math command of that address. `$30-$3F` and
+  `$70-$7F` are ignored. `$80` SPRCTL0, `$81` SPRCTL1, `$82` SPRCOLL,
+  `$83` SPRINIT, `$90` SUZYBUSEN are stored; `$91` SPRGO and `$92` SPRSYS
+  are stored raw in `sprgo`/`sprsys`. Anything else is ignored.
+- `read(addr)`: `$00-$2F` (and `$40-$6F`) return the engine's current
+  values (after a run they hold the last sprite's working state: SCBADR,
+  SPRDLINE, HPOSSTRT after tilt, SPRHSIZ after stretch, and so on).
+  `$88` SUZYHREV = `$01`. `$92` SPRSYS as below. Other addresses below
+  `$80` read 0; above, `$FC` (Felix's measurement of the open bus noise,
+  mostly `%11111100`).
+- `write_at(addr, v, now)` / `read_at(addr, now)` are the same with the
+  bus tick: a math operation started at `now` reads as running (SPRSYS
+  bit 7) for its documented duration. `write`/`read` are `now` = 0 /
+  never-busy, so a bus that does not pass the clock sees instant math.
+- SPRSYS read: bit 7 math in process (timed accesses only), bit 6 math
+  warning, bit 5 last carry, bit 4 vstretch and bit 3 lefthand as
+  written, bit 2 unsafe access, bit 1 stop request (as written; SPRGO
+  writes clear it), bit 0 sprite process running (= SPRGO bit 0 still
+  pending; 0 after `run_sprites`).
 - `sprites_pending()`: SPRGO bit 0 and SUZYBUSEN bit 0.
 - `run_sprites(ram)`: walks and draws the whole list, clears SPRGO bit 0,
   returns the tick estimate.
@@ -79,9 +92,13 @@ SPRCTL1 bits 1-0 (bit 1 up, bit 0 left). In each, the drawing direction
 is the quadrant's direction XOR the flips (SPRCTL0 bit 5 H, bit 4 V).
 Per quadrant [FELIX]:
 
-- VSIZACUM starts at VSIZOFF when drawing down and at 0 when drawing up;
-  the horizontal accumulator starts at HSIZOFF when drawing right and 0
-  when drawing left ([SPR] "Horizontal and Vertical Size Offset").
+- VSIZACUM starts at VSIZOFF in the down quadrants (SE, SW) and at 0 in
+  the up ones; the horizontal accumulator starts at HSIZOFF in the right
+  quadrants (SE, NE) and at 0 in the left ones ([SPR] "Horizontal and
+  Vertical Size Offset"). The quadrant decides, not the drawing direction
+  after the flips: an H-flipped SE quadrant draws left but starts at
+  HSIZOFF (lynx-tests sprites2 ALPINE FLIP, the check Alpine Games' copy
+  protection makes on pixel 159; [SPR] reads as if the direction decided).
 - The start row is VPOSSTRT - VOFF; a quadrant whose vertical direction
   differs from the start quadrant's starts one row further in its own
   direction, and likewise one column for the horizontal direction (so the
@@ -150,7 +167,12 @@ and is not modelled.
 Registers (each group little-endian in the address space): AB = `$54`
 (B, low) / `$55` (A, high), CD = `$52` (D) / `$53` (C), NP = `$56` (P) /
 `$57` (N), EFGH = `$60` H .. `$63` E, JKLM = `$6C` M .. `$6F` J, ABCD (the
-quotient) = `$52` D .. `$55` A.
+quotient) = `$52` D .. `$55` A. They are the sprite registers seen at
+`$40-$6F`: ABCD is SPRDLINE/HPOSSTRT (`$12-$15`), NP VPOSSTRT (`$16`),
+EFGH SPRDOFF/SPRVPOS (`$20-$23`), JKLM SCBADR/PROCADR (`$2C-$2F`), so a
+sprite run overwrites them and math clobbers those engine registers
+(memio "SUZY MIRRORS"). Writing the sprite-register addresses
+themselves (`$12-$17`, `$20-$23`, `$2C-$2F`) starts nothing.
 
 - Writing A starts AB x CD -> EFGH. Writing E starts EFGH / NP -> ABCD
   with the remainder in JKLM (JK = 0). Nothing else starts anything.
@@ -160,59 +182,118 @@ quotient) = `$52` D .. `$55` A.
   operand is replaced by its magnitude and its sign saved; the product is
   negated if the saved signs differ. The hardware tests bit 15 of
   `value - 1`, so `$8000` is positive (+32768) and 0 is negative (with no
-  effect on the product) ([MATH] "Bugs in MathLand"). The saved sign is
-  only re-evaluated on a high-byte write, so writing only D or B keeps
-  the old sign ([BUGS]: the upper-byte auto clear does not clear the sign
-  flag). Both are tested.
-- Accumulate (SPRSYS bit 6): JKLM += EFGH. The warning bit (SPRSYS bit 6)
-  and the carry bit (bit 5) are set when the add changes bit 31 of JKLM
-  [FELIX] (open question 3). A multiply clears the warning first; writing
-  M clears warning and carry ([MATH]: "The write to 'M' will clear the
+  effect on the product) ([MATH] "Bugs in MathLand"; math MUL $8000 BUG).
+  The saved sign is only re-evaluated on a high-byte write, so writing
+  only D or B keeps the old sign ([BUGS]; math SIGNED MUL part 2).
+- Flags, as lynx-tests math checks them on a Lynx I: every operation
+  sets SPRSYS bit 2 (unsafe access; writing SPRSYS with bit 2 set clears
+  it, as does nothing else). Last carry (bit 5): a multiply sets it when
+  it negated a non-zero signed product; an accumulating multiply sets it
+  and the warning (bit 6) from the carry out of bit 31 of JKLM + EFGH
+  (an unsigned carry, not a sign change: open question 3 settled by math
+  ACCUM MUL, `$FFFFFFF0 + $100`); a divide sets the carry when the
+  remainder is not zero and clears the warning. Writing M clears the
+  warning but not the carry ([MATH]: "The write to 'M' will clear the
   accumulator overflow bit").
 - Divide is unsigned in every mode. Divide by zero: ABCD = `$FFFFFFFF`,
-  JKLM = 0 [FELIX], warning and carry set. The remainder bugs ([MATH]:
-  "the remainder will have 2 possible errors") are not modelled: the
-  remainder is exact.
-- Timing: the result is ready when `write` returns; SPRSYS bit 7 never
-  reads 1. Games that poll it or wait the documented 44/54 ticks (multiply)
-  or 176 + 14 N ticks (divide) both work. Writing E right after A
+  JKLM = 0 [FELIX], warning and carry set (math DIV BY ZERO). The
+  remainder bugs ([MATH]: "the remainder will have 2 possible errors")
+  are not modelled: the remainder is exact (math SIMPLE DIV does not
+  check M).
+- Timing: results are visible as soon as the write returns, but with
+  `write_at`/`read_at` SPRSYS bit 7 reads 1 for 44 ticks (multiply), 54
+  (signed or accumulating) or 176 + 14 N (divide, N = leading zero bits
+  of NP) from the starting write ([MATH]). A write to a register below
+  `$70` while it runs sets the unsafe bit. Writing E right after A
   ("QbertRoot") divides whatever EFGH then holds.
-- Unsafe access (SPRSYS bit 2) is never set: the CPU cannot touch Suzy
-  while it draws in this model, and the math completes instantly. SPRSYS
-  bit 2 written as 1 clears it.
 
 ## Tick model
 
-`run_sprites` returns an estimate in 16 MHz ticks (SPEC.md section 4:
-pixel output exact, drawing time approximate). The constants are in
-`tick_cost` in `core/suzy.zig`, to be tuned in M4 against a measured title:
+`run_sprites` returns the engine's time in 16 MHz ticks. The model is
+fitted to the drhelius lynx-tests sprite suites (sprites1-5, MIT): each
+case's Lynx I time (the suites' expected windows are hardware centre
++-16 us, minimum of three runs, display DMA off except one) less the
+runner's own CPU time in this emulator (~260 ticks) and DRAM refresh,
+and to the slopes in the suite author's `lynx-sprite-performance.md`
+(MIT). It is not a cycle model of the silicon (the guide is explicit
+that Suzy's pipeline is not documented at that level); it is a per-row
+formula from counts the decoder makes anyway. Constants: `tick_cost` in
+`core/suzy.zig` (per-sprite ones in ticks, per-row ones in 1/64 tick).
 
-| Item | Ticks |
-|---|---|
-| Each drawn sprite (SCB fetch and setup) | 50 |
-| Each skipped sprite | 25 |
-| Each offset byte (once per source line) | 5 |
-| Each data byte of a line, per destination row drawn | 5 |
-| Each pixel written to video | 5 |
-| Each collision buffer pixel accessed | 5 |
+Per sprite: 64 for the SCB, + 8 for the size reload block, + 8 for the
+palette, + 27 for the first sprite of a run or after a skipped SCB (the
+cold pipeline). Linked sprites measured ~80 more than another row
+(sprites4 LINK 2/4). A skipped sprite: 25.
 
-The pixel and collision costs are per pixel, as PLAN.md asked; the
-hardware writes two pixels per byte through an 8-word FIFO, so this
-probably overestimates large solid sprites by up to 2x (a full-screen
-background clear charges 81,600 ticks, about 30% of a frame). Rows skipped
-off the top or bottom and pixels clipped at the sides cost nothing beyond
-their source bytes.
+Per drawn row, from what the row asked of the engine:
+
+- Output pipeline: 65.6 + 1.953 x max(pens decoded, outputs generated),
+  counting the one output past the screen edge that stops a row; a row
+  that instead ran out of source data pays its tail, 3.7 at 1 bpp and
+  6.9 at 2-4 bpp, and a 1 bpp row ending in a half-written byte 6 more
+  (sprites2 ALIGN 1B X0 vs X1).
+- Totally literal rows are also bus bound: outputs x 2.40, 2.40, 2.46,
+  2.63, 2.94 ticks at 0..4 source bits per output (interpolated); the row
+  takes the slower of the two (sprites1 LIT 1B-4B FULL: 2529, 2586, 2760,
+  3081 us, while the W20 downscales of the same sources stay at ~390
+  ticks a row: the guide's source-bound frontier).
+- Packed rows: + 4.3 per packet header (the end-of-line header too) and
+  0.25 per pen of a literal packet, - 7.9 (sprites4 PACK RLE W32/W64,
+  PACK LIT W64).
+- Collision, when the row touches the collision buffer at all: + 19.5,
+  + 1.65 per 8-pixel screen group only written (background) or only
+  read (pen E of the shadow types), + 10 per group read, compared and
+  written (the depository types). Fitted to sprites3 (the eight types
+  over pens 0, E, F, 1) and sprites4 PACK PEN E / XOR F.
+- XOR: + 2 per video byte XORed (the guide's downstream XOR stage).
+- Stretch (reload depth >= 2): + 8 per row; tilt (depth 3): + 18
+  (sprites5, the guide's stage costs).
+- A row that cannot reach the screen (super clipping: it starts off the
+  screen drawing away) is rejected without decoding: 45.7 (sprites2
+  SUPER CLIP; the guide's 46.5). A row before the screen moving towards
+  it costs the same (untested). The rows of a line past the screen edge
+  in the drawing direction cost 20 once; a source line downscaled to no
+  rows 20 (the guide's offset read plus reject stage; sprites2 VCLIP
+  DOWN, sprites5 ZOOM OUT).
+
+Video bytes only read (transparent pixels) cost nothing extra: NONCOLL
+with pen-0 holes measured the same as BACKNONCOLL (sprites3). Display
+DMA is the machine's business (core/lynx.zig charges its bus time to the
+CPU clock, also while Suzy draws; on hardware Suzy hides about half of
+it, see "lynx-tests results").
 
 Safety cap: a run stops once its estimate passes `tick_cost.run_cap`
 (4,000,000 ticks, 15 frames). Real hardware would hang on a list with a
 loop or on sprite data without an end; the cap keeps the badge running.
+
+## lynx-tests results
+
+With the machine as merged on `lynx/m1` (9a2766e) plus the bus passing
+its tick to `read_at`/`write_at`:
+
+- math: SIMPLE MUL, ACCUM MUL, SIGNED MUL, MUL $8000 BUG, SIMPLE DIV, NO
+  REM DIV, DIV BY ZERO pass. TIMING fails stage 1 with 17 us where the
+  hardware takes 16 (multiply stage passes): with Suzy's 218-tick divide
+  the CPU's poll loop (`lda SPRSYS / and / bne` plus the two `lda
+  TIM6CNT`) must total 256-271 ticks between the two timer reads. In
+  this emulator the result jumps from 17 straight to 13 us when the
+  divide is made 40 ticks shorter (16 shorter still gives 17), so the
+  poll loop's emulated cost decides it: a CPU/bus timing question, not
+  the divider's.
+- sprites1-5: all 40 rows pass but sprites4 DMA EXP W24 (code 3: 872 us
+  against 818-850). With display DMA on the machine adds its full
+  video-DMA steal (~11%) to the sprite run; the hardware loses ~5% on
+  that row.
+- memio: MIKEY COLORS, SUZY SPR REGS, SUZY MIRRORS pass.
 
 ## Performance shape
 
 `draw_row` decodes one source line into runs of (pen index, count) and
 turns each into one clipped span; the span writers (`set_nibbles`,
 `xor_nibbles`, `max_set_nibbles`) do two pixels per byte with no per-pixel
-branches. The per-sprite pen table folds the palette and the type's
+branches. The tick model's counts are per span too (`Units` classifies
+the video bytes and collision groups a span touches in O(1)), and
+`row_ticks` runs once per drawn row. The per-sprite pen table folds the palette and the type's
 opaque/collide rules into one byte per pen index. Hooks for M4: an
 unscaled-literal fast path, skipping the decode for repeated rows of a
 vertically scaled line, and per-type specialised row functions.
@@ -222,11 +303,13 @@ vertically scaled line, and per-type specialised row functions.
 1. Totally literal lines: does the hardware paint the leftover bits at the
    end of the last byte ([SPR]) or drop the last pen when it ends on bit 0
    (Felix, implemented)? A literal line of whole pens with a zero pad byte
-   draws the same either way (plus transparent pad pens).
+   draws the same either way (plus transparent pad pens). The lynx-tests
+   CRCs (sprites1 W20, sprites2 ALIGN, ALPINE) pass with the Felix rule.
 2. Everon polarity and which sprites it writes for (docs implemented,
-   Felix differs).
-3. The accumulator "overflow": bit-31 change (Felix, implemented) or
-   unsigned carry out of bit 31.
+   Felix differs; the drhelius guide agrees with the docs: bit 7 = 1 only
+   when never on screen).
+3. Settled: the accumulator overflow is the unsigned carry out of bit 31
+   (lynx-tests math ACCUM MUL).
 4. Multi-quadrant sprites with tilt/stretch: HPOSSTRT and SPRHSIZ carry
    over between quadrants (Felix, implemented) or restart per quadrant.
 5. The hardware's per-8-pixel collision bursts: a pixel painted twice by
@@ -236,5 +319,8 @@ vertically scaled line, and per-type specialised row functions.
    truncates each pixel's width to 8 bits; here a width is the full sum.
 7. SPRCTL1 bit 6 (sizing algorithm 3, "broke" per [HW]) is ignored.
 8. The divide remainder bugs and divide-by-zero's JKLM (0 here).
-9. The drhelius lynx-tests `sprites` and `math` carts (Track C's golden
-   runs) are the first whole-machine check of all of this.
+9. The tick model outside what the suites measured: wide collidable or
+   XOR rows, packed rows at 1-3 bpp, rows off the top moving down, mixed
+   transparent/opaque bytes (the guide says they cost more; the suites'
+   mixed rows did not show it), the palette-at-`xxFA` page bug (not
+   modelled), display DMA overlap.

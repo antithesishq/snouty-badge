@@ -8,19 +8,21 @@
 //!
 //! What the bus (core/lynx.zig, Track C) does with it:
 //!
-//! - `write(addr, v)` / `read(addr)` for every Suzy address except $B0-$B3
-//!   (JOYSTICK, SWITCHES, RCART0, RCART1), which the bus serves itself from
-//!   the pad word and the cart port; the bus calls `lefthand()` to swap the
-//!   joystick direction bits (SPRSYS bit 3). Math unit operations complete
-//!   inside `write` (MATHA starts a multiply, MATHE a divide), so a read of
-//!   SPRSYS never shows a math in progress.
+//! - `write_at(addr, v, now)` / `read_at(addr, now)` (or the untimed
+//!   `write` / `read`) for every Suzy address except $B0-$B3 (JOYSTICK,
+//!   SWITCHES, RCART0, RCART1), which the bus serves itself from the pad
+//!   word and the cart port; the bus calls `lefthand()` to swap the
+//!   joystick direction bits (SPRSYS bit 3). Math results are written
+//!   inside the write that starts them (MATHA a multiply, MATHE a divide);
+//!   with the bus tick `now`, SPRSYS bit 7 reads busy for the documented
+//!   duration, without it never.
 //! - Sprites draw when the CPU sleeps: SPRGO ($91) bit 0 only latches the
 //!   request; the bus calls `run_sprites(ram)` on the CPUSLEEP write
 //!   (Mikey $FD91) while `sprites_pending()`, which walks the whole list at
 //!   once, writes the video and collision buffers and the depository bytes
 //!   into `ram`, clears the request and returns the 16 MHz ticks the CPU is
-//!   charged (SPEC.md section 4: pixels written and bytes read, an
-//!   estimate; docs/SUZY.md "Tick model"). Everything Suzy touches is in
+//!   charged (SPEC.md section 4: a per-row model fitted to lynx-tests
+//!   hardware timings; docs/SUZY.md "Tick model"). Everything Suzy touches is in
 //!   the 64 KB `ram`; it never sees the overlays.
 //! - `pixels_drawn` counts pixels written since reset (the overlay's
 //!   "Suzy pixels per frame"; the frontend differences it).
@@ -30,9 +32,9 @@
 //! a CPU write to a low byte zeroes the high byte (TMPADR, TILTACUM, HOFF,
 //! VOFF, VIDBAS, COLLBAS, VIDADR, COLLADR, SCBNEXT $10, SPRDLINE, HPOSSTRT,
 //! VPOSSTRT, SPRHSIZ, SPRVSIZ, STRETCH, TILT, SPRDOFF, SPRVPOS, COLLOFF,
-//! VSIZACUM, HSIZOFF $28, VSIZOFF, SCBADR, PROCADR), $52-$6F math (MATHD..
-//! MATHA $52-$55, MATHP/N $56-$57, MATHH..MATHE $60-$63, MATHM..MATHJ
-//! $6C-$6F), $80 SPRCTL0, $81 SPRCTL1, $82 SPRCOLL, $83 SPRINIT, $88
+//! VSIZACUM, HSIZOFF $28, VSIZOFF, SCBADR, PROCADR), $40-$6F the same 48
+//! bytes again, where the math unit's ports are (MATHD..MATHA $52-$55,
+//! MATHP/N $56-$57, MATHH..MATHE $60-$63, MATHM..MATHJ $6C-$6F), $80 SPRCTL0, $81 SPRCTL1, $82 SPRCOLL, $83 SPRINIT, $88
 //! SUZYHREV, $89 SUZYSREV, $90 SUZYBUSEN, $91 SPRGO, $92 SPRSYS, $B0
 //! JOYSTICK, $B1 SWITCHES, $B2 RCART0, $B3 RCART1, $C0-$C3 LEDs/parallel
 //! (ignored).
