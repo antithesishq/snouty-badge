@@ -10,10 +10,12 @@ frames = 300
 # Up 70-130, Left 131-160, Up+Right 161-210, Down 211-240, Right 241-270,
 # Up+B 271-299 (moves and turns through the maze).
 script = "carts/snouty-lynx/tools/scripts/m1_play.json"
-# No romfs: with no drive volume the cart runs the embedded raycast.lnx.
-# (The M0 drive fixture, carts/snouty-lynx/tests/fixtures/m0_drive.img,
-# would pick GAME.LNX, the placeholder, which is not a Lynx program: it
-# fails the boot and the picture stays black.) For a local run with a real
-# dump (never committed):
+# The committed drive fixture carts/snouty-lynx/tests/fixtures/m1_drive.img
+# (RAYCAST.LNX = roms/raycast.lnx; regenerate with
+# carts/snouty-lynx/tests/fixtures/make_fixtures.py) so the bench runs the
+# drive path the badge uses. Without a romfs the bench maps no drive and the
+# romfs scan faults at start-up (the badge reads blank flash there instead).
+# For a local run with a real dump (never committed):
 #   python3 tools/make_romfs.py out/lynx-romfs.img ~/roms/lynx/hard_drivin.lnx
 #   badge-bench/bench.sh zig-out/firmware/snouty-lynx.elf --romfs out/lynx-romfs.img
+romfs = "carts/snouty-lynx/tests/fixtures/m1_drive.img"

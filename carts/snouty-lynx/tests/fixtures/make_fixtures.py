@@ -14,6 +14,9 @@ Writes, byte-for-byte reproducibly (make_romfs.py fixes timestamps):
   (all direct), FRAG.LNX's blocks 1 and 3 cross a run boundary (null
   pointers, read through the cluster table).
 - m0_none.img: ROT.LNX and README.TXT only (no playable ROM: the help).
+- m1_drive.img: RAYCAST.LNX (roms/raycast.lnx, the shipped ROM) and
+  README.TXT: the badge-bench default (M1), so the bench runs the drive
+  path with a ROM that boots.
 
 Python 3 standard library only.
 """
@@ -26,6 +29,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.normpath(os.path.join(HERE, '../../../..'))
 MAKE_ROMFS = os.path.join(ROOT, 'tools/make_romfs.py')
 PLACEHOLDER = os.path.join(ROOT, 'carts/snouty-lynx/roms/placeholder.lnx')
+RAYCAST = os.path.join(ROOT, 'carts/snouty-lynx/roms/raycast.lnx')
 
 
 def raw_pattern():
@@ -53,6 +57,7 @@ def main():
         run(os.path.join(HERE, 'm0_drive.img'), f'{rot}=ROT.LNX', f'{PLACEHOLDER}=GAME.LNX',
             f'{raw}=RAW.LYX', f'{frag}=FRAG.LNX', f'{readme}=README.TXT', '--fragment', '2', '--truncate')
         run(os.path.join(HERE, 'm0_none.img'), f'{rot}=ROT.LNX', f'{readme}=README.TXT', '--truncate')
+        run(os.path.join(HERE, 'm1_drive.img'), f'{RAYCAST}=RAYCAST.LNX', f'{readme}=README.TXT', '--truncate')
 
 
 if __name__ == '__main__':
