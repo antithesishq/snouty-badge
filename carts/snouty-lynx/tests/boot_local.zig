@@ -4,7 +4,7 @@
 //! straight-line walk from $0200 meets only defined opcodes and ends in a
 //! JMP to the ROM's frame decryptor or into RAM.
 const std = @import("std");
-const boot = @import("boot");
+const boot = @import("core").boot;
 const files = @import("testfiles.zig");
 
 var file_buf: [512 * 1024 + 64]u8 = undefined;
@@ -12,10 +12,14 @@ var ram: [65536]u8 = undefined;
 
 fn check(rel: []const u8, want_blocks: u8, want_jmp: u16) !void {
     const file = files.read_home_file(rel, &file_buf) orelse return error.SkipZigTest;
-    const cart = try boot.Cart.from_file(file);
-    try std.testing.expect(cart.header == null);
-    try std.testing.expectEqual(@as(u32, 512), cart.block_size);
-    const st = try boot.post_boot(&cart, &ram);
+    const lay = boot.cart.parse(file, @intCast(file.len));
+    try std.testing.expectEqual(boot.cart.Refusal.ok, lay.verdict);
+    try std.testing.expect(!lay.headered);
+    try std.testing.expectEqual(@as(u32, 512), lay.block_size);
+    const cart = boot.cart.Cart.from_slice(&lay, file);
+    var r: boot.CartReader = .{ .cart = &cart };
+    const st = try boot.post_boot(&r, &ram);
+    try std.testing.expectEqual(st.cart_counter, r.counter);
     const count = file[0];
     try std.testing.expectEqual(@as(u8, 0) -% count, st.frame.blocks);
     try std.testing.expectEqual(want_blocks, st.frame.blocks);
@@ -55,14 +59,16 @@ test "boot: Blue Lightning loader (local dump)" {
 
 test "boot: shipped roms/raycast.lnx (headered, 1 KB blocks)" {
     const file = files.read_cart_file("roms/raycast.lnx", &file_buf) orelse return error.SkipZigTest;
-    const cart = try boot.Cart.from_file(file);
-    const h = cart.header.?;
-    try std.testing.expectEqualStrings("RAYCAST", h.name_slice());
-    try std.testing.expectEqual(@as(u32, 1024), cart.block_size);
-    try std.testing.expectEqual(boot.Rotation.none, h.rotation);
-    try std.testing.expectEqual(@as(u8, 0), h.eeprom);
-    try std.testing.expectEqual(@as(u16, 0), h.bank1_page);
-    const st = try boot.post_boot(&cart, &ram);
+    const lay = boot.cart.parse(file, @intCast(file.len));
+    try std.testing.expectEqual(boot.cart.Refusal.ok, lay.verdict);
+    try std.testing.expect(lay.headered);
+    try std.testing.expectEqualStrings("RAYCAST", lay.title());
+    try std.testing.expectEqual(@as(u32, 1024), lay.block_size);
+    try std.testing.expectEqual(@as(u8, 0), lay.rotation);
+    try std.testing.expectEqual(@as(u8, 0), lay.eeprom);
+    const cart = boot.cart.Cart.from_slice(&lay, file);
+    var r: boot.CartReader = .{ .cart = &cart };
+    const st = try boot.post_boot(&r, &ram);
     // A one-block size-coded loader (cc65-style micro loader).
     try std.testing.expectEqual(@as(u8, 1), st.frame.blocks);
     try std.testing.expectEqual(@as(u32, 52), st.cart_counter);

@@ -1,6 +1,6 @@
 //! boot: known-answer tests from public sources (no ROM files needed).
 const std = @import("std");
-const boot = @import("boot");
+const boot = @import("core").boot;
 
 /// cc65 libsrc/lynx/bootldr.s (Karri Kaksonen, 2011; cc65 is zlib
 /// licensed): the one-block encrypted loader cc65's `lynx` target puts in
@@ -45,11 +45,23 @@ const wookie_plain = [_]u8{
     0x00, 0x03, 0xe8, 0xd0, 0xf7, 0x4c, 0x00, 0x03,
 } ++ @as([18]u8, @splat(0));
 
+const Cart = boot.cart.Cart;
+
 /// A 128 KB headerless cart image whose block 0 starts with `loader`.
-fn cart_with(buf: *[128 * 1024]u8, loader: []const u8) boot.Cart {
+fn cart_with(buf: *[128 * 1024]u8, loader: []const u8) Cart {
     @memset(buf, 0xFF);
     @memcpy(buf[0..loader.len], loader);
-    return boot.Cart.from_file(buf) catch unreachable;
+    const lay = boot.cart.parse(buf, buf.len);
+    std.debug.assert(lay.verdict == .ok);
+    return Cart.from_slice(&lay, buf);
+}
+
+/// post_boot over a fresh reader at block 0, counter 0.
+fn boot_cart(c: *const Cart) boot.BootError!boot.BootState {
+    var r: boot.CartReader = .{ .cart = c };
+    const st = try boot.post_boot(&r, &ram);
+    std.debug.assert(r.counter == st.cart_counter);
+    return st;
 }
 
 var cart_buf: [128 * 1024]u8 = undefined;
@@ -58,7 +70,7 @@ var ram: [65536]u8 = undefined;
 fn expect_loader(encrypted: []const u8, plain: []const u8) !void {
     const cart = cart_with(&cart_buf, encrypted);
     try std.testing.expectEqual(@as(u32, 512), cart.block_size);
-    const st = try boot.post_boot(&cart, &ram);
+    const st = try boot_cart(&cart);
     try std.testing.expectEqual(@as(u8, 1), st.frame.blocks);
     try std.testing.expectEqual(@as(u16, 50), st.frame.len);
     try std.testing.expectEqualSlices(u8, plain, ram[0x200..0x232]);
@@ -111,43 +123,48 @@ test "boot: rejected loaders" {
     var enc = cc65_encrypted;
     enc[0] = 0xFA;
     var cart = cart_with(&cart_buf, &enc);
-    try std.testing.expectError(error.BadCount, boot.post_boot(&cart, &ram));
+    try std.testing.expectError(error.BadCount, boot_cart(&cart));
     // A flipped ciphertext byte fails the $15 check (or, rarely, the range check).
     enc = cc65_encrypted;
     enc[10] ^= 0x40;
     cart = cart_with(&cart_buf, &enc);
-    if (boot.post_boot(&cart, &ram)) |_| return error.TestUnexpectedResult else |e| try std.testing.expect(e == error.BadCheckByte or e == error.BadBlock or e == error.BadLastByte);
+    if (boot_cart(&cart)) |_| return error.TestUnexpectedResult else |e| try std.testing.expect(e == error.BadCheckByte or e == error.BadBlock or e == error.BadLastByte);
     // Top three bytes zero.
     enc = cc65_encrypted;
     enc[49] = 0;
     enc[50] = 0;
     enc[51] = 0;
     cart = cart_with(&cart_buf, &enc);
-    try std.testing.expectError(error.BadBlock, boot.post_boot(&cart, &ram));
+    try std.testing.expectError(error.BadBlock, boot_cart(&cart));
     // Top three bytes equal to the modulus's: not below it.
     enc[51] = boot.modulus_be[0];
     enc[50] = boot.modulus_be[1];
     enc[49] = boot.modulus_be[2];
     cart = cart_with(&cart_buf, &enc);
-    try std.testing.expectError(error.BadBlock, boot.post_boot(&cart, &ram));
+    try std.testing.expectError(error.BadBlock, boot_cart(&cart));
 }
 
-test "boot: cart header and headerless sizes" {
+test "boot: the boot reader over core/cart.zig (header, short image, wrap)" {
     var hdr: [64 + 1024]u8 = @splat(0);
     @memcpy(hdr[0..4], "LYNX");
     hdr[4] = 0x00;
     hdr[5] = 0x04; // 1024-byte pages
     hdr[8] = 1;
     @memcpy(hdr[10..17], "RAYCAST");
-    hdr[58] = 0;
-    const c = try boot.Cart.from_file(&hdr);
-    try std.testing.expectEqual(@as(u32, 1024), c.block_size);
-    try std.testing.expectEqualStrings("RAYCAST", c.header.?.name_slice());
-    try std.testing.expectEqual(@as(usize, 1024), c.data.len);
+    for (hdr[64..], 0..) |*b, i| b.* = @truncate(i);
+    const lay = boot.cart.parse(&hdr, hdr.len);
+    try std.testing.expectEqual(boot.cart.Refusal.ok, lay.verdict);
+    try std.testing.expectEqual(@as(u32, 1024), lay.block_size);
+    try std.testing.expectEqualStrings("RAYCAST", lay.title());
+    const c = Cart.from_slice(&lay, &hdr);
     // Past the end of a short image reads 0xFF.
-    try std.testing.expectEqual(@as(u8, 0xFF), c.byte_at(3, 5));
-    hdr[5] = 0x03; // 768: not a power of two
-    try std.testing.expectError(error.BadHeader, boot.Cart.from_file(&hdr));
-    hdr[0] = 'X'; // no header: only 128/256/512 KB are known sizes
-    try std.testing.expectError(error.UnknownSize, boot.Cart.from_file(hdr[0..100]));
+    var r: boot.CartReader = .{ .cart = &c, .block = 3, .counter = 5 };
+    try std.testing.expectEqual(@as(u8, 0xFF), r.read_byte());
+    // Block 0 reads the data after the header, and the counter wraps
+    // within the block.
+    r = .{ .cart = &c, .block = 0, .counter = 1022 };
+    try std.testing.expectEqual(@as(u8, 0xFE), r.read_byte());
+    try std.testing.expectEqual(@as(u8, 0xFF), r.read_byte());
+    try std.testing.expectEqual(@as(u32, 0), r.counter);
+    try std.testing.expectEqual(@as(u8, 0x00), r.read_byte());
 }

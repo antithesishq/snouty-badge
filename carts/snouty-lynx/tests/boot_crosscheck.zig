@@ -13,7 +13,7 @@
 //! zero page ($08-$FF), the stack page, and the copy of its multiply
 //! routine at $5000-$50FF.
 const std = @import("std");
-const boot = @import("boot");
+const boot = @import("core").boot;
 const files = @import("testfiles.zig");
 
 const JRegs = struct {
@@ -82,9 +82,13 @@ fn cross_check(name: []const u8) !void {
     defer parsed.deinit();
     const j = parsed.value;
 
-    const cart = try boot.Cart.from_file(file);
-    try std.testing.expectEqual(j.block_size, cart.block_size);
-    const st = try boot.post_boot(&cart, &ram);
+    const lay = boot.cart.parse(file, @intCast(file.len));
+    try std.testing.expectEqual(boot.cart.Refusal.ok, lay.verdict);
+    try std.testing.expectEqual(j.block_size, lay.block_size);
+    const cart = boot.cart.Cart.from_slice(&lay, file);
+    var first_reader: boot.CartReader = .{ .cart = &cart };
+    const st = try boot.post_boot(&first_reader, &ram);
+    try std.testing.expectEqual(st.cart_counter, first_reader.counter);
 
     // Registers and chip state at the first JMP $0200.
     const r = j.first.regs;
@@ -147,7 +151,9 @@ fn cross_check(name: []const u8) !void {
         ram[boot.zp_dest_hi] = @truncate(f.dest >> 8);
         var reader: boot.CartReader = .{ .cart = &cart, .block = f.entry.block, .counter = f.entry.counter };
         const res = try boot.decrypt_frame(&reader, &ram);
-        try std.testing.expectEqual(f.exit.counter, reader.counter);
+        // The host tool's counter is unmasked; the cart wires only the
+        // block-size bits (Blue Lightning's second frame ends at 512 = 0).
+        try std.testing.expectEqual(f.exit.counter & (cart.block_size - 1), reader.counter);
         try std.testing.expectEqual(f.exit.a, res.a);
         try std.testing.expectEqual(f.exit.x, res.x);
         try std.testing.expectEqual(f.exit.y, res.y);
