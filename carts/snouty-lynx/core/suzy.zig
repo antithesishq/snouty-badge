@@ -481,6 +481,7 @@ pub const Suzy = struct {
             .xor = kind == 6,
             .deposit = !no_collide and deposit_types & (@as(u8, 1) << kind) != 0,
             .coll_num = s.sprcoll & 0x0F,
+            .track_vid = kind == 6 or s.sprctl0 >> 6 == 0,
         };
         for (0..16) |k| {
             const pen = s.pen_map[k];
@@ -620,14 +621,10 @@ fn row_ticks(rs: *RowStats, bpp: u5, literal: bool) u32 {
     } else {
         t = (t + c.packet * rs.packets + c.packed_literal_pen * rs.lit_pens) -| c.packed_row_credit;
     }
-    const v = &rs.vid;
-    const k = &rs.col;
-    const light: u32 = @as(u32, k.full[1]) + k.full[4] + k.full[5] + k.part[1] + k.part[4] + k.part[5];
-    const detect: u32 = @as(u32, k.full[2]) + k.full[3] + k.full[6] + k.full[7] +
-        k.part[2] + k.part[3] + k.part[6] + k.part[7];
+    const light: u32 = rs.col.other;
+    const detect: u32 = rs.col.hit;
     if (light + detect != 0) t += c.coll_row + c.coll_group_light * light + c.coll_group_detect * detect;
-    const xor: u32 = @as(u32, v.full[4]) + v.full[5] + v.full[6] + v.full[7] +
-        v.part[4] + v.part[5] + v.part[6] + v.part[7];
+    const xor: u32 = rs.vid.hit;
     return t + c.xor_byte * xor;
 }
 
@@ -665,57 +662,71 @@ fn rd16(ram: *const [0x10000]u8, a: u16) u16 {
 /// Units of the row a span touches, classified by what touched them: video
 /// bytes (two pixels) or collision groups (eight pixels, screen aligned).
 /// Spans arrive in drawing order and abut, so only the unit shared with
-/// the previous span is pending; the others are counted at once.
-const Units = struct {
-    shift: u5,
-    cur: i32 = no_unit,
-    mask: u8 = 0,
-    cov: u8 = 0,
-    /// Units by class mask: completely covered, and partly (row ends).
-    full: [8]u16 = @splat(0),
-    part: [8]u16 = @splat(0),
-    /// The last unit flushed was partly covered.
-    last_part: bool = false,
+/// the previous span is pending; the others are counted at once. The tick
+/// model only needs two counts per row: the units whose class mask has
+/// bit `key` (`hit`) and the others (`other`); and for video bytes whether
+/// the last one was partly covered.
+fn Units(comptime shift: u5, comptime key: u8) type {
+    return struct {
+        const Self = @This();
+        cur: i32 = no_unit,
+        mask: u8 = 0,
+        cov: u8 = 0,
+        hit: u16 = 0,
+        other: u16 = 0,
+        /// The last unit flushed was partly covered.
+        last_part: bool = false,
 
-    const no_unit: i32 = std.math.minInt(i32);
+        const no_unit: i32 = std.math.minInt(i32);
 
-    fn merge(u: *Units, unit: i32, m: u8, n: i32) void {
-        if (unit != u.cur) {
-            u.flush();
-            u.cur = unit;
-            u.mask = m;
-            u.cov = @intCast(n);
-        } else {
-            u.mask |= m;
-            u.cov += @intCast(n);
+        inline fn clear(u: *Self) void {
+            u.cur = no_unit;
+            u.hit = 0;
+            u.other = 0;
+            u.last_part = false;
         }
-    }
 
-    fn flush(u: *Units) void {
-        if (u.cur == no_unit) return;
-        u.last_part = u.cov < (@as(u8, 1) << @intCast(u.shift));
-        if (u.last_part) u.part[u.mask] += 1 else u.full[u.mask] += 1;
-        u.cur = no_unit;
-    }
-
-    /// Pixels a..b-1 (a < b) with class bit(s) `m`, drawn rightwards or not.
-    fn add(u: *Units, a: i32, b: i32, m: u8, right: bool) void {
-        const sh = u.shift;
-        const lo = a >> sh;
-        const hi = (b - 1) >> sh;
-        if (lo == hi) return u.merge(lo, m, b - a);
-        const n_lo = ((lo + 1) << sh) - a;
-        const n_hi = b - (hi << sh);
-        if (right) {
-            u.merge(lo, m, n_lo);
-            u.merge(hi, m, n_hi);
-        } else {
-            u.merge(hi, m, n_hi);
-            u.merge(lo, m, n_lo);
+        inline fn count(u: *Self, m: u8, n: u16) void {
+            if (m & key != 0) u.hit += n else u.other += n;
         }
-        u.full[m] += @intCast(hi - lo - 1);
-    }
-};
+
+        inline fn merge(u: *Self, unit: i32, m: u8, n: i32) void {
+            if (unit != u.cur) {
+                u.flush();
+                u.cur = unit;
+                u.mask = m;
+                u.cov = @intCast(n);
+            } else {
+                u.mask |= m;
+                u.cov += @intCast(n);
+            }
+        }
+
+        fn flush(u: *Self) void {
+            if (u.cur == no_unit) return;
+            u.last_part = u.cov < (@as(u8, 1) << shift);
+            u.count(u.mask, 1);
+            u.cur = no_unit;
+        }
+
+        /// Pixels a..b-1 (a < b) with class bit(s) `m`, drawn rightwards or not.
+        fn add(u: *Self, a: i32, b: i32, m: u8, right: bool) void {
+            const lo = a >> shift;
+            const hi = (b - 1) >> shift;
+            if (lo == hi) return u.merge(lo, m, b - a);
+            const n_lo = ((lo + 1) << shift) - a;
+            const n_hi = b - (hi << shift);
+            if (right) {
+                u.merge(lo, m, n_lo);
+                u.merge(hi, m, n_hi);
+            } else {
+                u.merge(hi, m, n_hi);
+                u.merge(lo, m, n_lo);
+            }
+            u.count(m, @intCast(hi - lo - 1));
+        }
+    };
+}
 
 /// What one destination row asked of the engine (the tick model's input).
 const RowStats = struct {
@@ -732,11 +743,27 @@ const RowStats = struct {
     edge_stop: bool = false,
     /// The row could not reach the screen and was not decoded.
     superclip: bool = false,
-    /// Video bytes: bit 0 written, bit 1 read (transparent), bit 2 XOR.
-    vid: Units = .{ .shift = 1 },
+    /// Video bytes: bit 0 written, bit 1 read (transparent), bit 2 XOR;
+    /// `hit` counts the XORed ones. Only tracked when the tick model needs
+    /// it (`Draw.track_vid`).
+    vid: Units(1, vid_xor) = .{},
     /// Collision groups: bit 0 written, bit 1 read and written (the
-    /// depository types), bit 2 read only (pen E of the shadow types).
-    col: Units = .{ .shift = 3 },
+    /// depository types), bit 2 read only (pen E of the shadow types);
+    /// `hit` counts the detecting ones, `other` the light ones.
+    col: Units(3, col_detect) = .{},
+
+    /// Ready for the next row (field by field: a struct copy here was a
+    /// memcpy per row on the badge).
+    inline fn clear(rs: *RowStats) void {
+        rs.pens = 0;
+        rs.outs = 0;
+        rs.packets = 0;
+        rs.lit_pens = 0;
+        rs.edge_stop = false;
+        rs.superclip = false;
+        rs.vid.clear();
+        rs.col.clear();
+    }
 };
 
 const vid_write: u8 = 1;
@@ -756,6 +783,9 @@ const Draw = struct {
     xor: bool,
     deposit: bool,
     coll_num: u8,
+    /// The tick model reads the row's video bytes (XOR sprites, and the
+    /// 1 bpp partial-byte tail): track them per span.
+    track_vid: bool,
     /// Pen index -> pen number << 4 | flags (the palette folded in).
     pen_flags: [16]u8 = @splat(0),
     fred: u8 = 0,
@@ -774,8 +804,8 @@ const Draw = struct {
         const cline = d.collbas +% y *% line_bytes;
         d.last_vline = vline;
         d.last_cline = cline;
-        d.rs = .{};
         const rs = &d.rs;
+        rs.clear();
 
         const ram = d.ram;
         const bpp = d.bpp;
@@ -895,8 +925,8 @@ const Draw = struct {
             const pen = f >> 4;
             if (d.xor) xor_nibbles(d.ram, vline, a, b, pen) else set_nibbles(d.ram, vline, a, b, pen);
             d.pixels += n;
-            d.rs.vid.add(a, b, if (d.xor) vid_xor else vid_write, right);
-        } else {
+            if (d.track_vid) d.rs.vid.add(a, b, if (d.xor) vid_xor else vid_write, right);
+        } else if (d.track_vid) {
             d.rs.vid.add(a, b, vid_read, right);
         }
         if (f & flag_collide != 0) {
