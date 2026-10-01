@@ -293,10 +293,17 @@ turns each into one clipped span; the span writers (`set_nibbles`,
 `xor_nibbles`, `max_set_nibbles`) do two pixels per byte with no per-pixel
 branches. The tick model's counts are per span too (`Units` classifies
 the video bytes and collision groups a span touches in O(1)), and
-`row_ticks` runs once per drawn row. The per-sprite pen table folds the palette and the type's
-opaque/collide rules into one byte per pen index. Hooks for M4: an
-unscaled-literal fast path, skipping the decode for repeated rows of a
-vertically scaled line, and per-type specialised row functions.
+`row_ticks` runs once per drawn row; `Units` keeps only the two counts
+the model reads (XORed bytes; light and detecting collision groups), and
+video bytes are only tracked for XOR and 1 bpp sprites. The per-sprite
+pen table folds the palette and the type's opaque/collide rules into one
+byte per pen index. `Draw.row` replays the previous row's spans and cost
+when a source line is drawn taller than one row with unchanged inputs
+(no stretch or tilt step), unless the row's video or collision line holds
+the line's source bytes; the cache is dropped after a row that wrote over
+them (M1 perf pass; the result is a fresh decode's, `suzy_unit` checks a
+sprite drawn over its own data). Hooks for M4: an unscaled-literal fast
+path and per-type specialised row functions.
 
 ## Open questions (hardware behaviour not settled by the documents)
 
