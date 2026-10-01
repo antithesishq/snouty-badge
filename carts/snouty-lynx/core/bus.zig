@@ -269,8 +269,8 @@ fn suzy_read(l: *Lynx, lo: u8) u8 {
             break :blk 0xFF;
         },
         // A run paused by an interrupt still reads "sprite working".
-        sprsys => l.suzy.read(lo) | @intFromBool(l.sprite_left != 0),
-        else => l.suzy.read(lo),
+        sprsys => l.suzy.read_at(lo, l.ticks) | @intFromBool(l.sprite_left != 0),
+        else => l.suzy.read_at(lo, l.ticks),
     };
 }
 
@@ -280,7 +280,7 @@ fn suzy_write(l: *Lynx, lo: u8, v: u8) void {
         // A write strobes the cart too (RAM carts, EEPROMs: not emulated);
         // the counter advances.
         rcart0, rcart1 => l.port.step(&l.cart),
-        else => l.suzy.write(lo, v),
+        else => l.suzy.write_at(lo, v, l.ticks),
     }
 }
 
