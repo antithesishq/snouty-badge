@@ -21,7 +21,15 @@ Controls: d-pad, A, B as on the Lynx; Start = Pause; Select tap = Option
 A chooses, B or a Select tap resumes): Resume, Buttons (A/B swap), Press
 Option 2, Restart Pause+Opt1 (both hold those Lynx buttons for 4 frames
 after resuming), Debug overlay, Reset (the boot again), Pick ROM (only
-with more than one playable drive file), About. Several playable files on
+with more than one playable drive file), About. M3 (time scrubber,
+`lynx/m3`): in the menu Left/Right on any row but the two settings step
+time back/forward one undo record (30 frames, 0.5 s), 4 steps a second
+while held; the panel's bottom line reads "Scrub: live / 3.5s" or "Scrub:
+-1.5 / 3.5s" (dim with no history, "Scrub: no memory" when the arena has
+no room for two records). After a step only a bar at the bottom remains
+over the restored picture; Left/Right keep scrubbing, B or a Select tap
+play on from there (the history ahead is dropped), Up/Down/A bring the
+panel back. Reset and Pick ROM forget the history. Several playable files on
 the drive open the picker after the splash (A plays, B runs the first);
 a drive with none shows the add-a-ROM help over the embedded ROM (A or B
 dismisses it).
@@ -185,6 +193,29 @@ last Press Option 2 / Restart row asked for: 4 or 264),
 `core.boot.BootError`), `debug_pc`. In wasm `micros_since_boot` adds 1000
 per call, so the strip's step times mean nothing there.
 
+The scrubber (M3), `tools/scripts/m3_scrub.json`, 480 updates: A at 40,
+`m1_play.json`'s moves up to 280 (Up+B 241-280), Select held 285-320 (the
+menu opens at 314), Left held 330-375 (steps back at 330, 345, 360, 375:
+the press and three repeats at 4/s), Right at 390 and 400 (forward
+twice), B at 415 (play on from 2 records back), then Up 420-450, Right
+451-479:
+
+```sh
+node tools/preview.mjs zig-out/bin/snouty-lynx.wasm --frames 480 --every 5 \
+  --script carts/snouty-lynx/tools/scripts/m3_scrub.json --out carts/snouty-lynx/out/ \
+  --dump-exports debug_state,debug_scrub_depth,debug_scrub_history,debug_scrub_capacity,debug_scrub_arena,debug_led_max \
+  --at "320 debug_state == 2" --at "414 debug_state == 2" --at "415 debug_state == 1" \
+  --at "479 debug_scrub_depth == 0" --expect "debug_menu_opens == 1" --expect "debug_led_max == 0"
+```
+
+The scrubber's exports: `debug_scrub_depth` (Lynx frames parked behind
+live, 0 live), `debug_scrub_history` (frames reachable back from live),
+`debug_scrub_records` (closed undo records held), `debug_scrub_slots`
+(68-byte ring slots in use), `debug_scrub_capacity` (slots the arena
+holds; 0 = no memory, scrubber off), `debug_scrub_arena` (arena bytes; in
+wasm `tuning.wasm_arena_bytes`, on the badge `__stack_limit__` -
+`__bss_end__` - 1 KB).
+
 ## 4. Web simulator
 
 As Snouty Boy (`carts/snouty-boy/docs/RUNNING.md` section 6). Terminal 1:
@@ -206,13 +237,14 @@ runs the embedded ROM, so it never shows the picker or the help.
 badge-bench/bench.sh zig-out/firmware/snouty-lynx.elf --symbols
 ```
 
-`badge-bench/carts/snouty-lynx.toml` runs `m2_play.json` for 400 frames
-(`m1_play.json`, then the menu from update 334: Select held 305-340, two
-Downs, B at 365) over the committed drive fixture `tests/fixtures/m1_drive.img`
+`badge-bench/carts/snouty-lynx.toml` runs `m3_scrub.json` for 480 frames
+(section 3: play to 280, the menu from update 314, four scrubs back, two
+forward, B at 415, play to 479) over the committed drive fixture `tests/fixtures/m1_drive.img`
 (RAYCAST.LNX = roms/raycast.lnx), so the cart reads the drive as on the
 badge. M2: game frames 0-299 busy mean 8.42 ms, p95 11.50, worst 12.94
 (M1 8.44 / 11.53 / 12.96); menu frames 334-364 mean 0.92, worst 1.17 (the
-frozen-frame copy).
+frozen-frame copy). `m2_play.json` still runs with `--script
+carts/snouty-lynx/tools/scripts/m2_play.json --frames 400`.
 
 The picker (drive builds only, never in wasm): a drive with two playable
 files, raycast under two names (not committed), and a script that skips

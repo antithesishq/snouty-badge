@@ -511,6 +511,31 @@ tag `snouty-lynx/m3`, merge to main.
 
 ## Status
 
+- 2026-10-01: M3 Track B (frontend) done on `lynx/m3-frontend`, against
+  the undo stub. `frontend/rewind.zig` (Genesis's: arena from
+  `__bss_end__`/`__stack_limit__` minus `tuning.stack_guard`, wasm static
+  `tuning.wasm_arena_bytes` = 40 KB until integration; `min_slots` = two
+  records' small state + 64, small state from `undo.small_slots` or
+  `Lynx.Small` once Track A lands, an over-estimate before; `show` =
+  `refresh_display` + `video.show` + the strip), `frontend/tuning.zig`,
+  `frontend/strip.zig` (the status strip moved out of main.zig so `show`
+  can redraw the whole parked screen). Menu: scrub line on y 110, Left/Right
+  on every non-setting row, repeat 15 updates (4/s), `scrub_view` bar
+  y 118..127, Reset calls `rewind.reset`; main.zig: `rewind.init` in start,
+  `rewind.reset` in `boot` (start, picker), `resume_if_parked` +
+  `record_frame` around `step_frame`, the six `debug_scrub_*` exports;
+  `debug.core_moved` after a step or reset so the overlay's per-frame
+  counts never show a wrapped delta. `tools/scripts/m3_scrub.json` (480
+  updates), the bench toml points at it. Checks: both targets build,
+  `test-lynx` 93/93, preview of m3_scrub passes (menu at 314..414, resume
+  at 415, depth 0, LEDs 0, wasm capacity 602 slots); with a local hack
+  forcing `step` to succeed the scrub bar and the redrawn picture + strip
+  were checked, then reverted. badge-bench m2_play (same script on the
+  prep ELF and this one): game 0-299 mean 8.43 / p95 11.52 / worst 12.94
+  (prep 8.42 / 11.52 / 12.94), menu 0.94 / 1.19 (0.92 / 1.17). Sizes
+  (ReleaseFast RAM): .text 148,844 (+372), .bss 84,168 (+8); `__bss_end__`
+  0x2006e2e8, arena 40,216 B - 1 KB guard = 39,192 B (576 slots). The
+  undo itself is still a stub: its cost lands with Track A.
 - 2026-10-01: M3 contract written on `lynx/m3` with the undo stubs; tracks A (core) and B (frontend) started.
 - 2026-10-01: M2 DONE on `lynx/m2` (frontend agent; not tagged or merged:
   the integrator tags `snouty-lynx/m2` and merges). Menu (frontend/menu.zig,

@@ -4,19 +4,20 @@
 # Apache-2.0) from the drive fixture: the Iris-mark splash (skipped by A on
 # update 40), then raycast's walls and HUD with the status strip (M2: title,
 # ROM name and origin; the debug overlay is off at boot), and from update
-# 334 the emulator menu over the frozen frame (M2).
+# 314 the emulator menu over the frozen frame with the time scrubber (M3).
 # M1 perf pass (2026-10-01): busy mean 8.44 ms, p95 11.53, worst 12.96,
 # 0 of 300 over (was 16.69 / 22.23 / 24.29, 255 over; PLAN.md Status).
 # M2 (2026-10-01, m2_play.json): game frames 0-299 busy mean 8.42, p95
 # 11.50, worst 12.94; menu frames 334-364 mean 0.92, worst 1.17; 0 of 400 over.
 budget_ms = 16.7
-frames = 400
-# carts/snouty-lynx/tools/scripts/m2_play.json: m1_play.json (A skips the
-# splash at 40, Up 70-130, Left 131-160, Up+Right 161-210, Down 211-240,
-# Right 241-270, Up+B 271-299: moves and turns through the maze), then a
-# menu pass: Select held 305-340 (the menu opens at 334), Down at 350 and
-# 355, B at 365 resumes, Up 375-399.
-script = "carts/snouty-lynx/tools/scripts/m2_play.json"
+frames = 480
+# carts/snouty-lynx/tools/scripts/m3_scrub.json: A skips the splash at 40,
+# then m1_play.json's moves through the maze (Up 70-130, Left 131-160,
+# Up+Right 161-210, Down 211-240, Up+B 241-280); Select held 285-320 (the
+# menu opens at 314); Left held 330-375 (scrub back at 330, 345, 360, 375:
+# the press and three 4/s repeats); Right at 390 and 400 (forward twice);
+# B at 415 resumes from the scrubbed position; Up 420-450, Right 451-479.
+script = "carts/snouty-lynx/tools/scripts/m3_scrub.json"
 # The committed drive fixture carts/snouty-lynx/tests/fixtures/m1_drive.img
 # (RAYCAST.LNX = roms/raycast.lnx; regenerate with
 # carts/snouty-lynx/tests/fixtures/make_fixtures.py) so the bench runs the

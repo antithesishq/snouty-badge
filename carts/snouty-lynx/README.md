@@ -27,10 +27,17 @@ the boot path that decrypts a cart's loader without the Lynx boot ROM is
 | Start                    | Pause                                                  |
 | Select, tap              | Option 1                                               |
 | Select, hold 500 ms      | Emulator menu (the game pauses under it)               |
+| Left/Right in the menu   | Time scrubber: 0.5 s back / forward (not on a setting row) |
 | Start + Select           | Back to the badge OS (the OS's chord)                  |
 
 Menu: Up/Down move, A chooses, B or a Select tap resumes; Left/Right or A
-flip a setting.
+flip a setting. On every other row Left/Right scrub time: back or forward
+half a second, 4 steps a second while held. The panel's bottom line reads
+"Scrub: live / 3.5s" or "Scrub: -1.5 / 3.5s" (position / history held).
+After a step the panel gives way to that line in a bar over the restored
+picture: Left/Right keep scrubbing, B or a Select tap play on from there
+(the later history is dropped), Up/Down/A bring the menu back. Reset and
+Pick ROM forget the history.
 
 | Row                      | Does                                                   |
 |--------------------------|--------------------------------------------------------|
