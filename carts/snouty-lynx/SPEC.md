@@ -377,8 +377,9 @@ carts/snouty-lynx/
   all 256 (`--all`; all parse). Known deviations from the Lynx: cycle
   counts are 6502 cycles, the tick cost (4/5 per section 3) is ours;
   $5C is a 3-byte NOP of 4 cycles in the suite but 8 in Felix (not
-  measured on hardware); undefined-opcode timings in general come from
-  Felix plus partial measurements. drhelius's MIT lynx-tests (cpu,
+  measured on hardware); M1 takes the suite's timings for every
+  undefined opcode (docs/CPU.md lists them and the suite's dummy-read
+  patterns). drhelius's MIT lynx-tests (cpu,
   page-mode, math, timers, sprites) are fetched too, for M1.
   Klaus Dormann's 6502/65C02 functional tests as a second opinion (GPL,
   test-only, never committed).
@@ -504,7 +505,7 @@ against the real ROM (docs/BOOT.md).
 | No RMB/SMB/BBR/BBS | **corrected**: the Lynx runs them | [FELIX], [SNAKE], [SC] |
 | No WAI/STP; $CB/$DB are 1-byte NOPs | confirmed | [FELIX] |
 | STZ, BRA, PHX/PLX/PHY/PLY, TRB/TSB, (zp), INC/DEC A, BIT #/zp,X/abs,X, JMP (abs,X) | confirmed | [FELIX] |
-| Undefined opcodes are NOPs: $x3/$xB 1 byte 1 cycle; $x2 2/2; $44 2/3; $54/$D4/$F4 2/4; $DC/$FC 3/4; $5C 3 bytes (4 cycles in SingleStepTests, 8 in Felix) | confirmed, $5C open | [FELIX], [CYC], section 16 |
+| Undefined opcodes are NOPs: $x3/$xB 1 byte 1 cycle; $x2 2/2; $44 2/3; $54/$D4/$F4 2/4; $5C/$DC/$FC 3/4; $CB 1 byte 2 cycles; $DB 2 bytes 4 cycles (zp,X pattern) | confirmed per SingleStepTests (M1: all 256 opcodes pass; $5C is 4 there, 8 in Felix; $CB/$DB corrected from "1/1") | [FELIX], [CYC], section 16, docs/CPU.md |
 | Decimal ADC/SBC take one extra cycle (65C02) | confirmed | [FELIX] |
 | Page mode: opcode/operand fetch 4 ticks, other RAM/ROM access 5 ticks; MAPCTL bit 7 forces 5 | **corrected** (5 ticks is every data access, not only page breaks) | [CPU], [HW], [FELIX] |
 | Other costs: hardware 5, palette 5, Suzy write 5, Suzy read 9-15, RCART 15 ticks | added | [CPU], [CART] |
