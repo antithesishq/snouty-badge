@@ -3,14 +3,15 @@
 //! input.zig, trimmed):
 //!
 //! - D-pad to d-pad, badge A to A (outer), badge B to B (inner), Start to
-//!   Pause. The A/B swap row of the menu arrives in M2 (`swap_ab`).
+//!   Pause. The menu's Buttons row swaps A and B (`swap_ab`).
 //! - Select tap (released before `hold_frames`): Option 1 for `tap_frames`
 //!   game frames.
-//! - Select held `hold_frames` (500 ms): `GameInput.open_menu` is set once.
-//!   M0 has no menu yet (frontend/menu.zig is a stub), so main.zig ignores it.
+//! - Select held `hold_frames` (500 ms): `GameInput.open_menu` is set once
+//!   and main.zig opens the emulator menu (frontend/menu.zig).
 //! - Start pressed while Select is held is the OS exit chord: the hold is
 //!   cancelled.
-//! - Option 2 is a menu item (M2), never a button.
+//! - Option 2 and the Pause + Option 1 restart are menu rows (main.zig ORs
+//!   `menu.hold_pad` into the pad for a few frames), never buttons.
 //!
 //! The joystick click belongs to the OS and is never bound.
 const cart = @import("cart-api");
@@ -64,6 +65,10 @@ pub const Edge = struct {
 
     pub fn pressed(e: Edge, comptime b: Button) bool {
         return (e.cur & ~e.prev & mask(b)) != 0;
+    }
+
+    pub fn released(e: Edge, comptime b: Button) bool {
+        return (~e.cur & e.prev & mask(b)) != 0;
     }
 
     pub fn held(e: Edge, comptime b: Button) bool {

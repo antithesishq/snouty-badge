@@ -5,9 +5,9 @@
 //! `enabled`. Allocation-free and std.fmt-free. In wasm `micros_since_boot`
 //! adds 1000 per call, so only hardware numbers mean anything.
 
-/// M1: on (the strip shows the numbers instead of the ROM report); the M2
-/// menu gets a row for it.
-pub var enabled: bool = true;
+/// Off at boot; the menu's "Debug overlay" row toggles it (the strip then
+/// shows the numbers instead of the ROM origin).
+pub var enabled: bool = false;
 
 /// Instructions and Suzy pixels of the last stepped frame.
 pub var instr_per_frame: u32 = 0;
@@ -112,7 +112,7 @@ pub fn put(dst: []u8, s: []const u8) usize {
     return k;
 }
 
-pub fn put_num(dst: []u8, v: u32) usize {
+pub noinline fn put_num(dst: []u8, v: u32) usize {
     var tmp: [10]u8 = undefined;
     var n: usize = 0;
     var x = v;

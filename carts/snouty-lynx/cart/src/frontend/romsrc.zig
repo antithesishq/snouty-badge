@@ -1,15 +1,15 @@
 //! Where the ROM comes from (docs/ROM_DRIVE.md sections 4 and 5, SPEC.md
-//! section 11), plus the report line the status strip shows.
+//! section 11), plus the facts the status strip and About show.
 //!
 //! Badge build with `rom.source == .drive`: scan the FAT12 volume at
 //! `romfs.base_addr` for `.lnx`/`.lyx` files (frontend/drive.zig), run the
-//! first playable one (M0; the M2 menu lists `candidates()`), CRC it and
+//! first playable one (the picker, frontend/picker.zig, offers the others
+//! when there are several and `open`s the chosen one), CRC it and
 //! build the core's block table (flash pointers for contiguous blocks, the
 //! per-cluster path for the rest). No volume, no file, or only refused
-//! files: the embedded ROM, with the reason in the report. The simulator
+//! files: the embedded ROM, with the reason in `fallback`. The simulator
 //! (wasm) and `-Dlynx-rom-source=embed` always embed. The core never sees
 //! romfs (SPEC.md section 7).
-const std = @import("std");
 const cart = @import("cart-api");
 const core = @import("core");
 const rom = @import("rom");
@@ -41,10 +41,29 @@ var scanned: drive.Scan = undefined;
 var scanned_ok = false;
 var chosen: usize = 0;
 
+/// Why the drive was not used for the embedded ROM ("NoVolume", "X.LNX:
+/// rotated", "skipped"); null for a drive ROM or when it was not asked.
+pub var fallback: ?[]const u8 = null;
+var fallback_buf: [48]u8 = undefined;
+/// The drive file runs partly through the per-cluster path.
+pub var fragmented: bool = false;
+
 /// The drive's Lynx files as scanned (empty when the drive was not read).
 pub fn candidates() []const drive.Candidate {
     if (!scanned_ok) return &.{};
     return scanned.candidates[0..scanned.count];
+}
+
+/// Index in `candidates()` of the running drive file, null for the
+/// embedded ROM.
+pub fn chosen_index() ?usize {
+    return if (origin == .drive) chosen else null;
+}
+
+/// Playable drive files (0 when the drive was not read).
+pub fn playable_count() u32 {
+    if (!scanned_ok) return 0;
+    return scanned.playable_count;
 }
 
 /// File name of the running ROM: the drive entry or the embedded ROM's.
@@ -52,22 +71,16 @@ pub fn name() []const u8 {
     return if (origin == .drive) scanned.candidates[chosen].file_name() else rom.name;
 }
 
-var report_buf: [96]u8 = undefined;
-var report_len: usize = 0;
-
-/// E.g. "drive HARD_D~1.LNX 128 KB crc 1A2B3C4D", "embedded
-/// placeholder.lnx 576 B", "embedded placeholder.lnx 576 B, drive:
-/// NoVolume" or "..., drive: X.LNX: rotated".
-pub fn report() []const u8 {
-    return report_buf[0..report_len];
+/// The ROM's display name: the header title when there is one, else the
+/// file name (the strip and the menu band). Set with `layout`.
+pub fn title_name() []const u8 {
+    return title;
 }
+var title: []const u8 = "";
 
-/// The report without its first word ("drive" / "embedded"), which the
-/// status strip shows on the title line instead.
-pub fn detail() []const u8 {
-    const r = report();
-    const sp = std.mem.indexOfScalar(u8, r, ' ') orelse return r;
-    return r[sp + 1 ..];
+fn set_title() void {
+    const t = layout.title();
+    title = if (t.len > 0) t else name();
 }
 
 /// "drive" or "embedded".
@@ -75,110 +88,97 @@ pub fn origin_word() []const u8 {
     return if (origin == .drive) "drive" else "embedded";
 }
 
-/// Choose the ROM. Call once from `start()`.
-pub fn select() core.Cart {
-    if (!use_drive) return embedded(null, null);
-    return from_drive();
+/// "drive 128 KB" or "embedded 27 KB" (the strip's second line).
+pub fn origin_line(buf: *[24]u8) []const u8 {
+    var n = debug.put(buf, origin_word());
+    n += debug.put(buf[n..], " ");
+    n += put_size(buf[n..], size);
+    return buf[0..n];
 }
 
-fn from_drive() core.Cart {
+/// What happens after the splash (main.zig's state machine).
+pub const Choice = enum {
+    /// The cart from `select` runs (embedded, or the one playable file).
+    run,
+    /// Several playable drive files: the picker (the cart from `select`
+    /// is the first of them, B keeps it).
+    pick,
+    /// A drive volume without a playable file: the help over the
+    /// embedded ROM.
+    help,
+};
+
+/// Choose the ROM. Call once from `start()`.
+pub fn select() struct { cart: core.Cart, next: Choice } {
+    if (!use_drive) return .{ .cart = embedded(null, null), .next = .run };
     const base: [*]const u8 = @ptrFromInt(romfs.base_addr);
     scanned = drive.scan(base, &clusters);
     scanned_ok = true;
-    if (scanned.err) |e| return embedded(@errorName(e), null);
+    if (scanned.err) |e| return .{ .cart = embedded(@errorName(e), null), .next = .run };
     const i = scanned.first_playable() orelse {
         no_rom_on_drive = true;
-        if (scanned.count > 0) return embedded(null, &scanned.candidates[0]);
-        return embedded("no .lnx/.lyx file", null);
+        const c = if (scanned.count > 0) embedded(null, &scanned.candidates[0]) else embedded("no .lnx/.lyx file", null);
+        return .{ .cart = c, .next = .help };
     };
+    return .{ .cart = open(i), .next = if (scanned.playable_count > 1) .pick else .run };
+}
+
+/// Open drive candidate `i` (a playable one from `candidates()`) for the
+/// picker: maps it into the shared cluster table and `Source`, recomputes
+/// the CRC and the report. The caller re-`init_in_place`s the core with
+/// the result before anything reads the old Cart again. A file that no
+/// longer maps gives the embedded ROM with the reason.
+pub noinline fn open(i: usize) core.Cart {
+    const base: [*]const u8 = @ptrFromInt(romfs.base_addr);
     const cand = &scanned.candidates[i];
     const c = drive.open(base, cand, &clusters, &source) catch |e| return embedded(@errorName(e), null);
     chosen = i;
     origin = .drive;
+    fallback = null;
     layout = cand.layout;
     size = cand.entry.size;
     crc = source.mapped.crc32();
-
-    var w: Writer = .{};
-    w.put("drive ");
-    w.put(cand.file_name());
-    w.put(" ");
-    w.size(size);
-    w.put(" crc ");
-    w.hex32(crc);
-    if (c.direct_blocks() < @min(core.cart.block_count, c.size / c.block_size)) w.put(" frag");
-    if (!layout.headered) w.put(" raw");
-    if (layout.warn_eeprom()) w.put(" no-EEPROM");
-    if (scanned.count > 1) {
-        w.put(" (");
-        w.num(@intCast(i + 1));
-        w.put(" of ");
-        w.num(scanned.count);
-        w.put(")");
-    }
-    w.done();
+    fragmented = c.direct_blocks() < @min(core.cart.block_count, c.size / c.block_size);
+    set_title();
     return c;
 }
 
 /// The embedded ROM. `why` or `refused` say why the drive was not used
 /// (both null: it was not asked).
-fn embedded(why: ?[]const u8, refused: ?*const drive.Candidate) core.Cart {
+pub noinline fn embedded(why: ?[]const u8, refused: ?*const drive.Candidate) core.Cart {
     origin = .embedded;
+    crc = 0;
+    fragmented = false;
     size = @intCast(rom.data.len);
     layout = core.cart.parse(rom.data, size);
-    var w: Writer = .{};
-    w.put("embedded ");
-    w.put(rom.name);
-    w.put(" ");
-    w.size(size);
-    if (layout.verdict != .ok) {
-        w.put(": ");
-        w.put(layout.verdict.text());
-    }
+    set_title();
+    fallback = null;
     if (why) |s| {
-        w.put(", drive: ");
-        w.put(s);
+        fallback = fallback_buf[0..debug.put(&fallback_buf, s)];
     }
     if (refused) |c| {
-        w.put(", drive: ");
-        w.put(c.file_name());
-        w.put(": ");
-        w.put(c.note());
+        var n = debug.put(&fallback_buf, c.file_name());
+        n += debug.put(fallback_buf[n..], ": ");
+        n += debug.put(fallback_buf[n..], c.note());
+        fallback = fallback_buf[0..n];
     }
-    w.done();
     if (layout.verdict != .ok) return core.Cart.empty(&layout);
     return core.Cart.from_slice(&layout, rom.data);
 }
 
-const Writer = struct {
-    n: usize = 0,
-
-    fn put(w: *Writer, s: []const u8) void {
-        w.n += debug.put(report_buf[w.n..], s);
+/// "128 KB" or "576 B".
+pub noinline fn put_size(dst: []u8, bytes: u32) usize {
+    if (bytes >= 1024) {
+        const n = debug.put_num(dst, bytes / 1024);
+        return n + debug.put(dst[n..], " KB");
     }
+    const n = debug.put_num(dst, bytes);
+    return n + debug.put(dst[n..], " B");
+}
 
-    fn num(w: *Writer, v: u32) void {
-        w.n += debug.put_num(report_buf[w.n..], v);
-    }
-
-    fn size(w: *Writer, bytes: u32) void {
-        if (bytes >= 1024) {
-            w.num(bytes / 1024);
-            w.put(" KB");
-        } else {
-            w.num(bytes);
-            w.put(" B");
-        }
-    }
-
-    fn hex32(w: *Writer, v: u32) void {
-        const digits = "0123456789ABCDEF";
-        var tmp: [8]u8 = undefined;
-        for (&tmp, 0..) |*ch, i| ch.* = digits[(v >> @intCast(28 - 4 * i)) & 0xF];
-        w.put(&tmp);
-    }
-
-    fn done(w: *Writer) void {
-        report_len = w.n;
-    }
-};
+/// `v` as eight upper-case hex digits.
+pub noinline fn hex8(buf: *[8]u8, v: u32) []const u8 {
+    const digits = "0123456789ABCDEF";
+    for (buf, 0..) |*ch, i| ch.* = digits[(v >> @intCast(28 - 4 * i)) & 0xF];
+    return buf;
+}
