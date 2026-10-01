@@ -266,6 +266,16 @@ pub const Mikey = struct {
         if (m.now >= m.next_event) m.run_events();
     }
 
+    /// `advance` to tick `t`, with the common case in line: only video
+    /// DMA or refresh events due (the same steps as `run_events` for them).
+    pub inline fn advance_to(m: *Mikey, t: Tick) void {
+        m.now = t;
+        if (t < m.next_event) return;
+        if (m.timer_event <= t) return m.run_events();
+        while (m.dma_next <= t) m.dma_event(m.dma_next);
+        m.next_event = @min(m.timer_event, m.dma_next);
+    }
+
     fn run_events(m: *Mikey) void {
         while (m.next_event <= m.now) {
             const t_ev = m.next_event;

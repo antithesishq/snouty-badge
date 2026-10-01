@@ -259,7 +259,7 @@ pub fn vector_byte(addr: u16) u8 {
 /// access may change Mikey's events, interrupts or DMA steal).
 pub inline fn sync_mikey(l: *Lynx) void {
     l.fast_end = 0;
-    l.mikey.advance(l.ticks - l.mikey.now);
+    l.mikey.advance_to(l.ticks);
 }
 
 fn suzy_read(l: *Lynx, lo: u8) u8 {
