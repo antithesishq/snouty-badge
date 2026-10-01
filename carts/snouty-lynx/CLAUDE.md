@@ -14,15 +14,22 @@ CLAUDE.md and docs have the longer explanations.
 
 - `core/` — the emulator, badge-agnostic: no `cart-api`, no floats, no
   allocator, no clock, no randomness, no romfs. `lynx.zig` is the whole
-  console (`Lynx`: 64 KB RAM, CPU registers, Mikey, Suzy, the cart),
-  `init_in_place`, `reset`, `step_frame(pad)`, `frame()` (the displayed
-  4-bit buffer at DISPADR plus the GREEN/BLUERED palette), `Pad` (low byte
-  = JOYSTICK $FCB0 layout, bit 8 = Pause). `cart.zig` is the cart as the
-  core sees it: 256 block pointers (`Cart`) and the `.lnx` header /
-  headerless parser (`parse` -> `Layout`, with `Refusal`). `cpu65.zig`,
-  `bus.zig`, `mikey.zig`, `suzy.zig` are M0 stubs with their public shape
-  (M1 fills them). `boot.zig` (post-boot state, SPEC.md 11) is M0 Track
-  A's; the TODOs in `lynx.zig` and `cart/src/main.zig` mark where it plugs in.
+  console (`Lynx`: 64 KB RAM, CPU, Mikey, Suzy, the cart port) and also
+  the CPU's bus (`fetch`/`read`/`write`/`dummy`/`irq_line`, bodies in
+  `bus.zig`): `init_in_place`, `reset` (runs `boot.post_boot`),
+  `step_frame(pad)` (1/60 s of Lynx time, one instruction at a time, the
+  $FE00/$FE4A boot-ROM traps, Suzy drawing on CPUSLEEP, the display copied
+  into `display` at vertical blank), `frame()` (that copy plus the palette),
+  `Pad` (low byte = JOYSTICK $FCB0 layout, bit 8 = Pause). `cpu65.zig`:
+  the Rockwell 65C02 over a generic Bus, cycle-exact against
+  SingleStepTests (docs/CPU.md). `mikey.zig`: timers, interrupts, display
+  registers, palette, DMA/refresh bus steal, cart strobes, audio registers
+  stored only. `suzy.zig`: sprite engine, collision, math unit
+  (docs/SUZY.md). `bus.zig`: memory map, MAPCTL overlays, tick costs,
+  page-mode stream, `CartPort`. `cart.zig`: the cart as 256 block pointers
+  and the `.lnx`/headerless parser. `boot.zig`: the post-boot state from
+  the public write-ups (docs/BOOT.md). PLAN.md "Frozen for M1" is the
+  interface contract between these files.
 - `cart/src/` — the badge frontend. `main.zig` exports `start()`/`update()`,
   the wasm shims and exports, the splash -> running state machine, the
   status strip and the no-ROM help. `frontend/`: `video` (Lynx frame ->
@@ -31,23 +38,27 @@ CLAUDE.md and docs have the longer explanations.
   file; a module of its own, host-tested), `romsrc` (drive or embedded
   ROM, the report line), `splash` (Iris mark, `lib/iris_mark.zig`),
   `debug` (step timing, FPS), `text` (Snouty Gear's fast font, verbatim),
-  `menu` (M2 stub).
+  `menu` (M2 stub). `debug.enabled` is on in M1 (no menu row yet).
 - `tests/` — host tests, entry `tests/all.zig` (one `_ = @import` line per
-  file): `cart_unit.zig` (parser and block table on synthetic data),
-  `drive_unit.zig` (against `tests/fixtures/*.img`, written by
-  `tests/fixtures/make_fixtures.py` from the placeholder and synthetic
-  data), the `lynx:` test in core/lynx.zig. `tests/roms/` is gitignored.
+  file): `cpu65_single_step.zig` (SingleStepTests rockwell65c02, data from
+  `tools/fetch_test_roms.sh`), `suzy_unit.zig`, `math_unit.zig`,
+  `mikey_unit.zig` (timers, bus, port, traps, sleep), `golden.zig` +
+  `runner.zig` (scripted runs of the shipped ROM and drhelius's lynx-tests
+  carts, frame hashes), `boot_*.zig`, `cart_unit.zig`, `drive_unit.zig`
+  (against `tests/fixtures/*.img` from `tests/fixtures/make_fixtures.py`).
+  `tests/roms/` is gitignored.
 - `roms/` — `raycast.lnx` (shipped, Apache-2.0, `LICENSE-raycast.txt`,
   `docs/ROM_CANDIDATES.md`) and `placeholder.lnx` (576 B,
   `tools/make_placeholder_rom.py`, not a Lynx program, only for the drive
   fixtures). `*.lnx`/`*.lyx` are gitignored at the root; commercial dumps
   live in `~/roms/lynx/` on the VM.
-- `core/boot.zig` — the post-boot state (loader decryption from the public
-  write-ups, `docs/BOOT.md`); tests in `tests/boot_*.zig`, cross-check tool
-  `tools/bootrom_crosscheck.py` (needs Adrian's local boot ROM, never in the repo).
-- `tools/` — `make_placeholder_rom.py`, `scripts/*.json` (preview and
-  badge-bench input). Shared tools (`preview.mjs`, `serve-cart.mjs`,
-  `make_gif.py`, `make_romfs.py`) are in `../../tools/`.
+- `tools/` — `run_rom.zig` (`zig build run-lynx -- <rom> <script|-> <updates>
+  <outdir>`: headless run, frame images and hashes, docs/RUNNING.md 2a),
+  `fetch_test_roms.sh`, `romcheck.py`, `bootrom_crosscheck.py` (needs
+  Adrian's local boot ROM, never in the repo), `make_placeholder_rom.py`,
+  `scripts/*.json` (preview and badge-bench input). Shared tools
+  (`preview.mjs`, `serve-cart.mjs`, `make_gif.py`, `make_romfs.py`) are in
+  `../../tools/`.
 
 ## Building
 
@@ -61,7 +72,8 @@ from the repository root only.
   is not built: it prints a note and builds `drive`), `-Dcart-optimize=`.
 - Generated `rom` module: `data`, `name`, `source` (`.drive`/`.embed`).
 - `zig build test-lynx` (this cart) or `zig build test` (all);
-  `-Dtest-filter=cart`, `-Dtest-optimize=`.
+  `-Dtest-filter=cart`, `-Dtest-optimize=`. `zig build run-lynx -- ...`
+  runs a ROM headless (tools/run_rom.zig).
 - `zig fmt carts/snouty-lynx` before committing.
 
 ## Rules
@@ -72,8 +84,8 @@ from the repository root only.
   host generators or runtime init.
 - The console is ~66 KB: a static, `init_in_place`, never by value.
 - Neopixels: never written (docs/NEOPIXELS.md; `debug_led_max` must read 0).
-  Sound: none in M0; when added it boots silent behind a menu toggle
-  initialised from `-Dsound` (docs/SOUND.md).
+  Sound: none (the badge speaker is unused in this project; Mikey's audio
+  registers are stored, never heard).
 - ROMs: `*.lnx`/`*.lyx` are gitignored at the root; only shipped ROMs with
   a license get an exception line. Adrian's dumps (`~/roms/lynx/`, 128 KB
   headerless) are for local `-Dlynx-rom=` builds and `out/` romfs images only.
