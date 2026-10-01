@@ -571,3 +571,15 @@ disjoint files.
 - 2026-09-30: M0 and M1 done (PLAN.md Status). M2 started on `genesis/m2`:
   section 12's chime dropped; section 6's H40 column-pair averaging option
   deferred to M4 (render cost); the rest of M2 as section 17.
+- 2026-10-01: M2, M3 and M4 done (PLAN.md Status). M4 was the part of
+  section 17's "hardware polish" the bench reaches: a fragmented drive
+  ROM now fetches and DMAs by cluster run (section 11's streaming at the
+  contiguous speed; it was 2-3.7x slower, over budget), the CRC32 runs in
+  the background, and section 6's column-pair averaging shipped as the
+  `Smooth H40` row, on by default (1.81x render time, not the 1.5x
+  estimated). Section 8's note stands: the bench cannot see XIP cache
+  misses; RUNNING.md section 7 has the flash sensitivity table (the
+  budget is gone at an average stall of 0.15 cycles per instruction).
+  Left for hardware: RAM-text (needs a linker-script section the SDK's
+  `cart_xip.ld` lacks; the hot code is bigger than the free RAM, see
+  RUNNING.md), the fallback defaults, the XIP hit rate.

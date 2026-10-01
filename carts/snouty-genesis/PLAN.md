@@ -1099,3 +1099,58 @@ sections 4-5. Not `core/rom.zig`, `core/bus.zig`, `romsrc.zig`, `drive.zig`.
     of history until it rebuilds; H40 column averaging and the CRC32 at
     selection still open (M4 perf). Hardware check (open, not a gate):
     the scrub step's 4.9 ms and the arena size on a real badge.
+- 2026-10-01 (M4 DONE): tag `snouty-genesis/m4` on `genesis/m4`, merged
+  to main and pushed. Tracks A (`genesis/m4-rom`: `rom.run_at`, run
+  windows and DMA spans, `romfs.Mapped.Crc`, `romsrc.crc_tick`) and B
+  (`genesis/m4-smooth`: `Vdp.h_mode`, 320-wide `compose` for H40, the
+  width-carrying `LineSink`, `video.avg`, the `Smooth H40` menu row as a
+  ninth row with the panel moved up to y 36, `debug_settings` bit 6)
+  merged; integration added the `crc_tick` call, the About screen's
+  `crc ....`, Smooth H40 **on by default** (Integration 3's rule held:
+  +2.6 ms mean, worst unchanged, and H40 text was unreadable; docs/m4_smooth.png),
+  version 0.4.0-m4.
+  - Verified on the merged tree: all carts build, check-float PASS, 168/168
+    genesis host tests (157 + 5 Track A: `run_at`, fragmented fetch and
+    DMA identity, incremental CRC, `frag_mini` 600 frames of Miniplanets
+    from runs of 1 and 4 vs embedded; + 6 Track B `vdp:` 320-wide line vs
+    the reference, forced features, odd columns, sink width, `h_mode`
+    through `Small` and `Keyframe`); `golden` and `golden-mini` unchanged;
+    all-carts `zig build test` 507/511 with the one failure demosnout's
+    `timeline: hold` test, which fails on the base commit too. Preview:
+    `m2_menu.json` ends `debug_settings=75`, `m4_smooth.json` reads 96 at
+    340 and 32 at 358 (the Right turns smooth off now).
+  - badge-bench (calibrated `busy ms`, mean / worst, 0 over budget in
+    every game run; Smooth H40 on): test ROM contiguous 9.16 / 26.41
+    (M3 6.90 / 25.82: +2.2 ms is the smooth render of an H40 ROM, +0.5
+    the CRC ticks in updates 36-37), fragmented-4 9.32 / 26.41 (M3 25.53
+    / 37.01); Miniplanets contiguous 20.74 / 29.07 (M3 17.99 / 28.84;
+    Track B sharp 18.03 / 28.89, Track A alone 18.09 / 29.02),
+    fragmented-4 21.16 / 29.43 (M3 34.81 / 40.00, 288 of 336 over), scrub
+    script 16.57 / 29.07; Track A's picker start 13.26 / 29.03 (M3 43.82
+    worst: the CRC stall). What fragmentation still costs (~0.4 ms): the
+    fetch window refilled at run boundaries (~213 per update) and the Z80
+    bank window on the slow path. Flash sensitivity table in RUNNING.md
+    section 7: `--flash-cycles 1` alone gives 41.25 / 55.39.
+  - Sizes: `.text` 231,712 B (M3 231,952; Track A -4.0 KB, Track B +3.7 KB;
+    30.5 KB of the flash window left), `.data` 168, `.bss` 170,076 (+8).
+    Hot code (for the RAM-text decision): `run_z80` 76 KB, `step_frame`
+    37 KB, renderer 20 KB.
+  - Deviations: Track A's identity tests are new tests in `bus_unit.zig`
+    (the existing one lives in `smoke.zig`, outside its list) and
+    `frag_mini.zig` is extra; a 16 KB pad only fragments a ROM's first
+    32 KB (RUNNING.md says to pad with a file at least as big). Track B
+    touched `m2_menu.json` (one Down over the new row) and the sink's
+    callers in five test files; in smooth, sprite collision is detected
+    at all 320 columns (closer to hardware; the status bit can differ
+    between the modes). `M68k.flush_code_window` is never called:
+    `Md.restore` copies the keyframe's window with the CPU, fine while a
+    keyframe is only restored into the console it came from.
+  - Open after M4 (hardware): XIP launch, the OS overlay's XIP hit and
+    stall rates with Miniplanets running (the budget is gone at an
+    average stall of 0.15 cycles per instruction), RAM-text for the
+    renderer or the 68000 if they say so (a `cart_xip.ld` section plus a
+    copy in `build/xip/entry.zig`; the SDK submodule is read-only, so a
+    repo-side linker script), `render_every` / `cpu_scale` defaults, the
+    scrub step cost. Bench-side: the Z80 bank window could use `run_at`;
+    `run_z80` at 76 KB is the inlining of Gear's core and the first
+    candidate if flash gets tight.

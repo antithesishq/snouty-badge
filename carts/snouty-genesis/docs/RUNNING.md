@@ -376,6 +376,41 @@ screens can be captured the same way (`--png 10`, `--press DOWN:40-41`,
 `--out DIR`; there is no wasm path to them). The Z80's share: rebuild with
 `tunables.z80_scale = 0` (or `z80_enabled = false`) and compare.
 
+### Flash sensitivity (for show day)
+
+badge-bench models flash as zero-wait memory. The XIP cache is 16 KB,
+shared with the OS and with the drive ROM's data reads, and no badge has
+run this cart yet, so the stall rate is unknown. `--flash-cycles N` adds
+a flat N cycles to every instruction fetched from the cart flash window
+and `--flash-read-cycles N` N cycles to every data load from the romfs
+image; M4 numbers (Miniplanets contiguous, `m2_mini300`, 336 updates,
+Smooth H40 on):
+
+| Penalty                      | mean ms | worst ms | over budget |
+|------------------------------|--------:|---------:|------------:|
+| none                         |   20.74 |    29.07 |           0 |
+| `--flash-cycles 1`           |   41.25 |    55.39 |         all |
+| `--flash-cycles 2`           |   61.77 |    81.96 |         all |
+| `--flash-cycles 4`           |  102.98 |   135.29 |         all |
+| `--flash-read-cycles 1`      |   20.88 |    29.39 |           0 |
+| `--flash-read-cycles 2`      |   21.03 |    29.71 |           0 |
+| `--flash-read-cycles 4`      |   21.31 |    30.35 |           0 |
+
+Reading: about 2.6 M instructions run per update, so every 0.1 cycle of
+average instruction-fetch stall costs 1.7 ms mean; the budget's 2.5 ms
+of headroom is gone at an average stall of 0.15 cycles per instruction
+(a cache miss costs tens of cycles, so the XIP hit rate must stay above
+roughly 99.5%). ROM data reads hardly matter: even 4 wait cycles on
+every load adds 0.6 ms. On the badge, read the OS overlay's XIP hit and
+stall rates (joystick click) with the game running. If the game runs
+slow: first `render_every = 3` (20 Hz presents, 50 ms budget, section
+8 of SPEC.md), then `z80_scale`, then `cpu_scale`. The lasting fix is a
+RAM-text section for the hot loops, which needs a linker-script change
+in the SDK (`cart_xip.ld` has no such section): the hot code is
+`run_z80` 76 KB, `step_frame` 37 KB (the 68000 interpreter inlined),
+`render_line` + `plane` + `on_line` 20 KB, so only the renderer or the
+68000 fits beside the 104 KB scrub arena, not all three.
+
 ## 8. A ROM on the badge drive
 
 The badge's USB drive (`SYCLBADGE`, the OS romfs region) holds carts and
