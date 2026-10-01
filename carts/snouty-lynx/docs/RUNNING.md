@@ -5,17 +5,40 @@ simulator, bench it, put a ROM on the badge drive and flash the cart.
 Commands run from the repository root unless noted; outputs land in the
 root `zig-out/`.
 
-Status: M1 Track C (machine) on `lynx/m1-machine`, before integration.
-Boot splash (the Iris mark and "SNOUTY LYNX" slide down onto a dark
-screen, 1.2 s, any button skips; the cart is silent), then the real core:
-the boot without the boot ROM (`core/boot.zig`), the bus, Mikey's timers,
-interrupts and display copy, the cart port and the $FE00/$FE4A traps
-(`core/bus.zig`, `core/mikey.zig`, `core/lynx.zig`), with the CPU and
-Suzy from Tracks A and B once merged (on this branch alone they are the
-frozen stubs and the picture stays black). Rows 102..127 are the status
-strip: with the debug overlay on (M1 default) fps, mean (`u`) and worst
-(`w`) step microseconds, then instructions (`i`) and Suzy pixels (`px`) of
-the last frame, then the ROM report.
+Status: M2 (frontend) on `lynx/m2`. Boot splash (the Iris mark and
+"SNOUTY LYNX" slide down onto a dark screen, 1.2 s, any button skips; the
+cart is silent), then the real core (`core/`: the 65C02, Mikey, Suzy, the
+boot without the boot ROM). Rows 102..127 are the status strip: "SNOUTY
+LYNX" and the ROM name (header title, else file name); then the origin
+("drive 27 KB" / "embedded 27 KB") and the detail (the drive CRC and
+`frag`/`raw`/`no-EEP`, or why the drive was not used), or with the debug
+overlay on (a menu row, off at boot) fps, mean (`u`) and worst (`w`) step
+microseconds, then instructions (`i`) and Suzy pixels (`px`) of the last
+frame. A boot error replaces the last line.
+
+Controls: d-pad, A, B as on the Lynx; Start = Pause; Select tap = Option
+1; Select held 500 ms = the emulator menu over the frozen frame (Up/Down,
+A chooses, B or a Select tap resumes): Resume, Buttons (A/B swap), Press
+Option 2, Restart Pause+Opt1 (both hold those Lynx buttons for 4 frames
+after resuming), Debug overlay, Reset (the boot again), Pick ROM (only
+with more than one playable drive file), About. Several playable files on
+the drive open the picker after the splash (A plays, B runs the first);
+a drive with none shows the add-a-ROM help over the embedded ROM (A or B
+dismisses it).
+
+## 0. Pull and run (review)
+
+```sh
+git fetch && git checkout lynx/m2        # or main once merged
+zig build -Dcart=snouty-lynx             # uf2 + wasm
+zig build test-lynx --summary all        # 90/90
+node tools/preview.mjs zig-out/bin/snouty-lynx.wasm --frames 360 --every 3 \
+  --script carts/snouty-lynx/tools/scripts/m2_menu.json --out carts/snouty-lynx/out/ \
+  --expect "debug_menu_opens == 2" --expect "debug_settings == 8" --expect "debug_led_max == 0"
+```
+
+Then the simulator (section 4: hold Backspace for half a second for the
+menu) or the badge (section 7). `docs/m2_menu.gif` is the preview above.
 
 ## 1. Build
 
@@ -123,8 +146,33 @@ node tools/preview.mjs zig-out/bin/snouty-lynx.wasm --frames 300 --every 30 \
 `tools/scripts/m1_play.json`: A skips the splash at update 40, then Up
 70-130, Left 131-160, Up+Right 161-210, Down 211-240, Right 241-270, Up+B
 271-299 (raycast moves and turns). `tools/scripts/m0_boot.json` (Start,
-Up+B, a Select tap) still works. Exports: `debug_frame_count`,
-`debug_state` (0 splash, 1 running), `debug_pad` (`core.Pad` bits: A 1, B
+Up+B, a Select tap) still works.
+
+The menu (M2), `tools/scripts/m2_menu.json`, 360 updates: A at 40, Up
+45-70, Select held 75-109 (the menu opens at 104), Down to Buttons and
+Right (A/B swapped, `debug_settings` 4) at 125, Left back at 135, down to
+Debug overlay and A (on, 8) at 155, Right (off) at 165, down to About and A
+at 180, B back at 205, up to Press Option 2 and A at 230 (resumes with
+`debug_pad` 4 for updates 230-233), Left 240-255, a second Select hold
+260-294, the overlay on at 306, a Select tap resumes at 312, Up 320-350:
+
+```sh
+node tools/preview.mjs zig-out/bin/snouty-lynx.wasm --frames 360 --every 3 \
+  --script carts/snouty-lynx/tools/scripts/m2_menu.json --out carts/snouty-lynx/out/ \
+  --dump-exports debug_state,debug_settings,debug_menu_opens,debug_hold_pad,debug_led_max \
+  --at "104 debug_state == 2" --at "126 debug_settings == 4" --at "156 debug_settings == 8" \
+  --at "230 debug_pad == 4" --at "234 debug_pad == 0" --at "312 debug_state == 1" \
+  --expect "debug_state == 1" --expect "debug_settings == 8" --expect "debug_menu_opens == 2" \
+  --expect "debug_hold_pad == 4" --expect "debug_led_max == 0"
+python3 tools/make_gif.py carts/snouty-lynx/out/ carts/snouty-lynx/docs/m2_menu.gif --scale 2 --ms 50
+```
+
+Exports: `debug_frame_count`,
+`debug_state` (0 splash, 1 running, 2 menu, 3 picker, 4 no-ROM help),
+`debug_menu_opens`, `debug_settings` (bit 0 unused: no sound; bit 2 A/B
+swapped, bit 3 debug overlay on), `debug_hold_pad` (the `core.Pad` bits the
+last Press Option 2 / Restart row asked for: 4 or 264),
+`debug_pad` (`core.Pad` bits: A 1, B
 2, Option 2 4, Option 1 8, right 16, left 32, down 64, up 128, Pause 256),
 `debug_rom_source` (0 embedded, 1 drive), `debug_rom_size` (file bytes),
 `debug_rom_block_size`, `debug_rom_direct_blocks`, `debug_rom_headered`,
@@ -149,7 +197,8 @@ node ../../tools/serve-cart.mjs      # serves ../../zig-out/bin/snouty-lynx.wasm
 Terminal 2: `cd sycl-badge/simulator && npm install && npm run dev`, then
 <http://localhost:1234>. Keys: arrows/WASD d-pad, Z or K = badge A = Lynx
 A, X or J = badge B = Lynx B, Enter = Start = Pause, Backspace = Select
-(tap = Option 1; a hold does nothing until the M2 menu).
+(tap = Option 1; held half a second = the menu). The simulator always
+runs the embedded ROM, so it never shows the picker or the help.
 
 ## 5. badge-bench
 
@@ -157,10 +206,29 @@ A, X or J = badge B = Lynx B, Enter = Start = Pause, Backspace = Select
 badge-bench/bench.sh zig-out/firmware/snouty-lynx.elf --symbols
 ```
 
-`badge-bench/carts/snouty-lynx.toml` runs `m1_play.json` for 300 frames
-with no drive image, so the cart runs the embedded raycast.lnx (the M0
-drive fixture's GAME.LNX is the placeholder, which does not boot). With a
-local dump:
+`badge-bench/carts/snouty-lynx.toml` runs `m2_play.json` for 400 frames
+(`m1_play.json`, then the menu from update 334: Select held 305-340, two
+Downs, B at 365) over the committed drive fixture `tests/fixtures/m1_drive.img`
+(RAYCAST.LNX = roms/raycast.lnx), so the cart reads the drive as on the
+badge. M2: game frames 0-299 busy mean 8.42 ms, p95 11.50, worst 12.94
+(M1 8.44 / 11.53 / 12.96); menu frames 334-364 mean 0.92, worst 1.17 (the
+frozen-frame copy).
+
+The picker (drive builds only, never in wasm): a drive with two playable
+files, raycast under two names (not committed), and a script that skips
+the splash, moves down and plays the second file, then opens it again
+from the menu:
+
+```sh
+python3 tools/make_romfs.py out/lynx-two.img carts/snouty-lynx/roms/raycast.lnx=RAYCAST.LNX \
+  carts/snouty-lynx/roms/raycast.lnx=AGAIN.LNX
+badge-bench/bench.sh zig-out/firmware/snouty-lynx.elf --romfs out/lynx-two.img \
+  --press A:40-40 --press DOWN:50-50 --press A:60-60 --frames 120 --png 5 --out out/bench-pick
+```
+
+`frame_0045.png` is the picker, `frame_0100.png` the game with `AGAIN.LNX`
+(About names the file). `tests/fixtures/m0_none.img` (only a refused
+`ROT.LNX`) shows the help band. With a local dump:
 
 ```sh
 python3 tools/make_romfs.py out/lynx-romfs.img ~/roms/lynx/hard_drivin.lnx

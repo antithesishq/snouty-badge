@@ -8,14 +8,40 @@ badge's 160x128 screen with a 26-row status strip below it. Planned: the
 65SC02, Suzy's sprite engine and math unit, Mikey's timers and palette,
 time scrubbing by deterministic replay (SPEC.md).
 
-Status: M0 scaffold. The Iris-mark splash, then a placeholder screen: the
-core's test pattern in the picture area (the first four rows show the
-ROM's first bytes as pixels) and the strip with "SNOUTY LYNX", where the
-ROM came from and its name and size. No CPU, no sound yet; the neopixels
-stay off. The embedded fallback ROM is `roms/raycast.lnx`, 42Bastian's
-textured raycaster (Apache-2.0, `roms/LICENSE-raycast.txt`); the boot path
-that decrypts a cart's loader without the Lynx boot ROM is `core/boot.zig`
-(`docs/BOOT.md`).
+Status: M2, the frontend. The Iris-mark splash, then the game (the real
+core since M1: the 65C02, Mikey, Suzy, the boot without the boot ROM),
+the strip with "SNOUTY LYNX", the ROM name and where it came from, and
+the emulator menu. No sound (the badge speaker is unused in this project);
+the neopixels stay off. The embedded fallback ROM is `roms/raycast.lnx`,
+42Bastian's textured raycaster (Apache-2.0, `roms/LICENSE-raycast.txt`);
+the boot path that decrypts a cart's loader without the Lynx boot ROM is
+`core/boot.zig` (`docs/BOOT.md`).
+
+## Controls
+
+| Badge                    | Lynx / emulator                                        |
+|--------------------------|--------------------------------------------------------|
+| D-pad                    | D-pad                                                  |
+| A                        | A (outer button); B with the menu's Buttons swap       |
+| B                        | B (inner button); A with the swap                      |
+| Start                    | Pause                                                  |
+| Select, tap              | Option 1                                               |
+| Select, hold 500 ms      | Emulator menu (the game pauses under it)               |
+| Start + Select           | Back to the badge OS (the OS's chord)                  |
+
+Menu: Up/Down move, A chooses, B or a Select tap resumes; Left/Right or A
+flip a setting.
+
+| Row                      | Does                                                   |
+|--------------------------|--------------------------------------------------------|
+| Resume                   | Back to the game                                       |
+| Buttons: A=A B=B         | Swap badge A and B                                     |
+| Press Option 2           | Resume with Option 2 held for 4 frames                 |
+| Restart Pause+Opt1       | Resume with Pause + Option 1 held for 4 frames (the Lynx restart chord) |
+| Debug overlay: Off       | The strip shows fps, step times, instructions, Suzy pixels |
+| Reset                    | Power on again (the boot reruns)                       |
+| Pick ROM                 | The drive's ROM list (only with two or more playable files) |
+| About                    | Version, file, header title and maker, size, source, CRC |
 
 ```sh
 (cd ../.. && zig build -Dcart=snouty-lynx)   # ../../zig-out/firmware/snouty-lynx.uf2, ../../zig-out/bin/snouty-lynx.wasm
@@ -35,12 +61,14 @@ default build (`-Dlynx-rom-source=drive`):
 3. **Eject the drive before playing.** The OS writes flash while a host
    writes the drive, and a cart reading it at the same time could see torn
    data (docs/ROM_DRIVE.md section 2 at the repository root).
-4. Start Snouty Lynx. The strip reads `SNOUTY LYNX drive` and
-   `hard_drivin.lnx 128 KB crc 6DF63834` (plus `raw` for a headerless file
-   and `(1 of N)` when several are on the drive: M0 runs the first playable
-   one, the M2 menu lists them). With no Lynx file on the drive a help box
-   says how to add one and the embedded ROM runs underneath; a refused file
-   (rotated screen, bank 1) is named with the reason.
+4. Start Snouty Lynx. The strip reads `SNOUTY LYNX` and the ROM's header
+   title (or file name), then `drive 128 KB` and `crc 6DF63834` (plus
+   `raw` for a headerless file, `frag` for a fragmented one). With two or
+   more playable files a list opens after the splash: Up/Down, A plays, B
+   runs the first; the menu's Pick ROM row brings it back and restarts
+   into the chosen file. With no Lynx file on the drive a help box says
+   how to add one and the embedded ROM runs underneath (A or B hides the
+   box); a refused file (rotated screen, bank 1) is named with the reason.
 
 The ROM file also shows in the OS cart menu and fails to load if picked
 there; that is cosmetic. Commercial ROMs never enter the repository
