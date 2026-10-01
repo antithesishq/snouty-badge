@@ -702,9 +702,10 @@ cache), so none of them can be tuned here. What can:
 | test ROM, drive contiguous (`m2_play`)               |  6.90 | 25.82 |    0 |
 | test ROM, drive fragmented (`--fragment 4`)          | 25.53 | 37.01 |  yes |
 | Miniplanets, drive contiguous (`m2_mini300`, 336)    | 17.99 | 28.84 |    0 |
-| Miniplanets, drive fragmented (`--fragment 4`)       | (integration fills in) | | |
+| Miniplanets, drive fragmented (`--fragment 4`)       | 34.81 | 40.00 |  yes |
 
-A fragmented file costs 3.7x: `Bus.code_window` returns null for it, so
+A fragmented file costs 2-3.7x (fragmented Miniplanets is over budget on
+every game update: unplayable): `Bus.code_window` returns null for it, so
 every opcode and extension word goes `fetch_slow` -> `code_window` ->
 `read16` -> cluster lookup, and `dma_source` returns null, so every DMA
 word goes through `read16` too. Any file copied onto a drive that already
