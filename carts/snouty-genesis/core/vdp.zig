@@ -7,7 +7,9 @@
 //! Output (PLAN.md "Frozen for M1"): each rendered badge row goes to the
 //! `LineSink` as 160 bytes, each a 6-bit CRAM index (palette << 4 | color)
 //! with the shadow/highlight tag in bits 6-7 (`tag_*`), plus the current
-//! 9-bit CRAM, so the frontend owns the color conversion.
+//! 9-bit CRAM, so the frontend owns the color conversion. Under
+//! `h_mode == .smooth` (M4) an H40 row is 320 such bytes, every Genesis
+//! column, and the frontend averages each pair.
 //!
 //! Byte order: `vram` holds the bytes at their VDP addresses (big-endian
 //! words, as the 68000 wrote them): name table entries and the sprite
@@ -33,7 +35,8 @@
 //! four even screen columns, so one tile row word becomes one four-pixel
 //! store; plane A and the window merge straight over B when they do not
 //! share the line. H32 draws the 256-pixel line through the `spread`
-//! tables and gathers the badge columns 8 in, 5 out. The sprite link list
+//! tables and gathers the badge columns 8 in, 5 out. Smooth H40 draws the
+//! 320-pixel line the H32 way (`Mode.h40_full`). The sprite link list
 //! is walked once per change of the table (`walk_sat`) into a cache plus
 //! per-8-line band masks, so a line only visits the sprites of its band.
 //! Shadow/highlight takes a per-pixel final pass. The tests check every
@@ -64,6 +67,8 @@ fn touch_run(addr: u16, n: u32, inc: u8) bool {
 pub const out_w = 160;
 /// Badge rows rendered per frame (the line table picks 128 of 224 lines).
 pub const out_h = 128;
+/// Widest line the sink can receive: a whole H40 line under `HMode.smooth`.
+pub const max_w = 320;
 
 pub const lines_per_frame: u16 = 262;
 pub const active_lines: u16 = 224;
@@ -102,6 +107,13 @@ pub const st_fixed: u16 = 0x3400;
 /// setting. Squeeze: row r shows line r * 7 / 4. Crop: lines 48..175.
 pub const LineMode = enum(u8) { squeeze, crop };
 
+/// How an H40 line reaches the 160 badge columns (SPEC.md section 6); a
+/// menu setting. Sharp: every second Genesis column (the line is composed
+/// at 160 pixels). Smooth: the line is composed at all 320 columns and the
+/// frontend averages each column pair. H32 lines are the same either way
+/// (the 8-in-5 column table).
+pub const HMode = enum(u8) { sharp, smooth };
+
 /// DMA stall model (68000 cycles charged for a 68000-to-VDP transfer):
 /// words per line from the VDP's access slots, 68000 bus DMA to VRAM
 /// taking two slots a word. Blank = V-blank or display off.
@@ -116,15 +128,16 @@ pub const dma_words_per_line = struct {
     pub const cram_blank_h32: u32 = 161;
 };
 
-/// Where rendered rows go. `row` is the badge row (0..127), `line` its 160
-/// tagged indices, `cram` the CRAM as the row was rendered (64 words,
-/// ----BBB-GGG-RRR-).
+/// Where rendered rows go. `row` is the badge row (0..127), `line` its
+/// `width` tagged indices: 160 badge columns, or 320 (every column of an
+/// H40 line under `HMode.smooth`, two per badge column); `cram` the CRAM as
+/// the row was rendered (64 words, ----BBB-GGG-RRR-).
 pub const LineSink = struct {
     ctx: *anyopaque,
-    func: *const fn (ctx: *anyopaque, row: u8, line: *const [out_w]u8, cram: *const [64]u16) void,
+    func: *const fn (ctx: *anyopaque, row: u8, line: [*]const u8, width: u16, cram: *const [64]u16) void,
 
-    pub inline fn emit(s: LineSink, row: u8, line: *const [out_w]u8, cram: *const [64]u16) void {
-        s.func(s.ctx, row, line, cram);
+    pub inline fn emit(s: LineSink, row: u8, line: [*]const u8, width: u16, cram: *const [64]u16) void {
+        s.func(s.ctx, row, line, width, cram);
     }
 };
 
@@ -193,6 +206,7 @@ pub const Vdp = struct {
 
     // ---- Presentation (a menu setting, not VDP state) ----
     line_mode: LineMode = .squeeze,
+    h_mode: HMode = .sharp,
 
     /// 64 KB video RAM, bytes at their VDP addresses (big-endian words).
     /// Declared last: Zig keeps declaration order among same-aligned
@@ -202,8 +216,9 @@ pub const Vdp = struct {
 
     /// Power-on state. The arrays are cleared with `@memset` and the rest
     /// assigned field by field: `v.* = .{}` would put a 64 KB default
-    /// image in flash and copy it. `line_mode` goes back to squeeze (the
-    /// frontend re-applies its menu setting after a reset).
+    /// image in flash and copy it. `line_mode` goes back to squeeze and
+    /// `h_mode` to sharp (the frontend re-applies its menu settings after a
+    /// reset).
     pub fn reset(v: *Vdp) void {
         @memset(&v.vram, 0);
         @memset(&v.cram, 0);
@@ -223,13 +238,14 @@ pub const Vdp = struct {
         v.line_cycles = 0;
         v.hv_latch = 0;
         v.line_mode = .squeeze;
+        v.h_mode = .sharp;
         @memset(&v.spr_cache, 0);
         v.spr_count = 0;
         @memset(&v.spr_band, @splat(0));
         v.spr_dirty = true;
     }
 
-    /// Everything but `vram` and `line_mode` (a menu setting): the VDP's
+    /// Everything but `vram`, `line_mode` and `h_mode` (menu settings): the VDP's
     /// part of `Md.Small`, the scrubber's per-record state. The sprite
     /// cache fields come along: they are consistent with the VRAM of the
     /// same instant. Compare field by field, never as bytes.
@@ -594,28 +610,57 @@ pub const Vdp = struct {
     // ---- Rendering ----
 
     /// Render the current line (`line`) as badge row `row` and hand it to
-    /// `sink` with the CRAM.
+    /// `sink` with the CRAM: 160 pixels, or 320 for an H40 line under
+    /// `h_mode == .smooth` (`compose_any`).
     pub fn render_line(v: *Vdp, row: u8, sink: LineSink) void {
-        var buf: [out_w]u8 = undefined;
-        v.compose_line(v.line, &buf);
-        sink.emit(row, &buf, &v.cram);
+        var buf: [max_w]u8 = undefined;
+        const w = v.compose_any(v.line, &buf);
+        sink.emit(row, &buf, w, &v.cram);
+    }
+
+    /// Compose Genesis line `line` as `render_line` would and return its
+    /// width: the whole 320-pixel H40 line (`compose_full`) when `h_mode`
+    /// is smooth, the line is H40 and the display is on; otherwise the 160
+    /// badge columns of `compose_line` in `out[0..160]`.
+    pub fn compose_any(v: *Vdp, line: u16, out: *[max_w]u8) u16 {
+        if (v.h_mode == .smooth and v.h40() and v.display_on()) {
+            v.compose(.h40_full, line, out);
+            return max_w;
+        }
+        v.compose_line(line, out[0..out_w]);
+        return out_w;
     }
 
     /// Compose Genesis line `line` (0..223) into 160 tagged pixels: the
     /// badge columns of `tables.col_h40` / `col_h32`, layers backdrop,
     /// B low, A (or window) low, sprites low, B high, A high, sprites high;
     /// shadow/highlight when register 12 bit 3 is set. Sets the sprite
-    /// overflow and collision status bits.
+    /// overflow and collision status bits. Ignores `h_mode`.
     pub fn compose_line(v: *Vdp, line: u16, out: *[out_w]u8) void {
         const bd: u8 = v.regs[7] & 0x3F;
         if (!v.display_on()) {
             @memset(out, bd);
             return;
         }
-        if (v.h40()) v.compose(true, line, out) else v.compose(false, line, out);
+        if (v.h40()) v.compose(.h40, line, out) else v.compose(.h32, line, out);
     }
 
-    fn compose(v: *Vdp, comptime wide: bool, line: u16, out: *[out_w]u8) void {
+    /// Compose Genesis line `line` at all 320 columns as an H40 line
+    /// (whatever register 12 says; `compose_any` checks it), as
+    /// `compose_line` otherwise. Collision is detected at every column, not
+    /// only the even ones.
+    pub fn compose_full(v: *Vdp, line: u16, out: *[max_w]u8) void {
+        if (!v.display_on()) {
+            @memset(out, v.regs[7] & 0x3F);
+            return;
+        }
+        v.compose(.h40_full, line, out);
+    }
+
+    fn compose(v: *Vdp, comptime m: Mode, line: u16, out: *[mode_w(m)]u8) void {
+        const wide = m != .h32;
+        const full = m == .h40_full;
+        const W = mode_w(m);
         const cols: *const [out_w]u16 = if (wide) &tables.col_h40 else &tables.col_h32;
         const first: []const u8 = if (wide) &tables.first_h40 else &tables.first_h32;
         const screen_w: u16 = if (wide) 320 else 256;
@@ -666,65 +711,66 @@ pub const Vdp = struct {
         pb.which = 1;
 
         // Window region (registers 17-18): whole line or a column span
-        // replacing plane A.
+        // replacing plane A (output columns; screen columns when `full`).
         const wv: u16 = @as(u16, r[18] & 0x1F) << 3;
         var w_lo: usize = 0;
-        var w_hi: usize = out_w;
+        var w_hi: usize = W;
         const a_shown = if (r[18] & 0x80 != 0) line < wv else line >= wv;
         if (a_shown) {
             const hp: u16 = @min(@as(u16, r[17] & 0x1F) << 4, screen_w);
-            const split: usize = first[hp];
+            const split: usize = if (full) hp else first[hp];
             // Width 0: plane A across the whole line either way.
             if (hp == 0) w_hi = 0 else if (r[17] & 0x80 != 0) w_lo = split else w_hi = split;
         }
 
-        // Layer buffers, badge column i at `pad + i`, word aligned so the
-        // final pass takes four pixels at a time. Pixel bytes: color index
-        // in bits 0-5 (color 0 = transparent), the tile's priority in bit 6.
-        // H40 without shadow/highlight, when plane A and the window do not
-        // share the line, merges A (or the window) over B as it is drawn
-        // (`merged`); otherwise A has its own buffer and the final pass
-        // merges.
-        var ba: LayerBuf align(4) = undefined;
-        var bb: LayerBuf align(4) = undefined;
-        const merged = wide and r[12] & 0x08 == 0 and !(a_shown and w_lo < w_hi);
+        // Layer buffers, output column i at `pad + i` (`8 + i` when `full`), word aligned
+        // so the final pass takes four pixels at a time. Pixel bytes: color
+        // index in bits 0-5 (color 0 = transparent), the tile's priority in
+        // bit 6. H40 without shadow/highlight, when plane A and the window
+        // do not share the line, merges A (or the window) over B as it is
+        // drawn (`merged`); otherwise A has its own buffer and the final
+        // pass merges.
+        var ba: ModeBuf(m) align(4) = undefined;
+        var bb: ModeBuf(m) align(4) = undefined;
+        const merged = m == .h40 and r[12] & 0x08 == 0 and !(a_shown and w_lo < w_hi);
         const la = if (merged) &bb else &ba;
-        v.plane(wide, &bb, pb, cols, false);
-        if (a_shown) v.plane(wide, la, pa, cols, merged);
+        v.plane(m, &bb, pb, cols, false);
+        if (a_shown) v.plane(m, la, pa, cols, merged);
         if (w_lo < w_hi) {
             const nt_w: u16 = if (wide) @as(u16, r[3] & 0x3C) << 10 else @as(u16, r[3] & 0x3E) << 10;
             const stride: u16 = if (wide) 128 else 64;
-            v.window(wide, la, w_lo, w_hi, cols, nt_w +% (line >> 3) * stride, (line & 7) * 4, merged);
+            v.window(m, la, w_lo, w_hi, cols, nt_w +% (line >> 3) * stride, (line & 7) * 4, merged);
         }
 
-        // Sprites, badge column i at `spr[pad + i]` (0 = none).
-        var spr: LayerBuf align(4) = undefined;
-        const any = v.sprites(wide, line, &spr, cols, first);
+        // Sprites, output column i at the same offset in `spr` (0 = none).
+        var spr: ModeBuf(m) align(4) = undefined;
+        const any = v.sprites(m, line, &spr, cols, first);
 
         const bd: u8 = r[7] & 0x3F;
         if (r[12] & 0x08 == 0) {
-            if (merged) final_pass(true, &ba, &bb, &spr, any, bd, out) else final_pass(false, &ba, &bb, &spr, any, bd, out);
+            if (m == .h40 and merged) final_pass(full, true, &ba, &bb, &spr, any, bd, out) else final_pass(full, false, &ba, &bb, &spr, any, bd, out);
         } else {
-            final_sh(&ba, &bb, &spr, any, bd, out);
+            final_sh(full, &ba, &bb, &spr, any, bd, out);
         }
 
         // Register 0 bit 5: the leftmost 8 screen columns show the backdrop.
         if (r[0] & 0x20 != 0) {
-            for (out[0..first[8]]) |*o| o.* = bd;
+            for (out[0..(if (full) 8 else first[8])]) |*o| o.* = bd;
         }
     }
 
-    /// One plane's line into `buf` (all 160 columns). H40 goes a tile at a
-    /// time: each 8-pixel tile holds exactly four badge columns (the even
+    /// One plane's line into `buf` (all output columns). H40 goes a tile at
+    /// a time: each 8-pixel tile holds exactly four badge columns (the even
     /// screen columns), at nibble positions of the scroll's parity, so a
     /// tile row word becomes one four-pixel store (merged over plane B
     /// when `merge`). H32 draws the full 256 pixels and samples the badge
-    /// columns through the column table.
-    fn plane(v: *const Vdp, comptime wide: bool, buf: *align(4) LayerBuf, pl: PlaneLine, cols: *const [out_w]u16, merge: bool) void {
+    /// columns through the column table. Full H40 draws the 320 pixels
+    /// straight into `buf` as H32 does.
+    fn plane(v: *const Vdp, comptime m: Mode, buf: *align(4) ModeBuf(m), pl: PlaneLine, cols: *const [out_w]u16, merge: bool) void {
         // The column left of the first whole 2-cell column (hscroll not a
         // multiple of 16) under per-column vertical scroll: H40 uses A's
         // and B's column 19 ANDed, H32 0.
-        const vs_part: u16 = if (wide) v.vsram[38] & v.vsram[39] else 0;
+        const vs_part: u16 = if (m != .h32) v.vsram[38] & v.vsram[39] else 0;
         var row: u16 = 0;
         var r4: u16 = 0;
         if (!pl.per_col) {
@@ -732,24 +778,27 @@ pub const Vdp = struct {
             row = pl.nt +% ((@as(u16, y >> 3) << pl.shift) & 0x1FC0);
             r4 = (y & 7) * 4;
         }
-        if (wide) {
-            switch (@as(u2, @intFromBool(pl.per_col)) << 1 | @intFromBool(merge)) {
+        switch (m) {
+            .h40 => switch (@as(u2, @intFromBool(pl.per_col)) << 1 | @intFromBool(merge)) {
                 0 => v.plane40(false, false, buf, pl, row, r4, vs_part),
                 1 => v.plane40(false, true, buf, pl, row, r4, vs_part),
                 2 => v.plane40(true, false, buf, pl, row, r4, vs_part),
                 else => v.plane40(true, true, buf, pl, row, r4, vs_part),
-            }
-        } else {
-            // H32: the plane at full width, then the badge columns sampled.
-            var full: FullBuf align(4) = undefined;
-            if (pl.per_col) v.plane32(true, &full, pl, row, r4, vs_part) else v.plane32(false, &full, pl, row, r4, vs_part);
-            gather(buf, &full, cols, 0, out_w);
+            },
+            .h32 => {
+                // H32: the plane at full width, then the badge columns sampled.
+                var full: FullBuf align(4) = undefined;
+                if (pl.per_col) v.plane_full(256, true, &full, pl, row, r4, vs_part) else v.plane_full(256, false, &full, pl, row, r4, vs_part);
+                gather(buf, &full, cols, 0, out_w);
+            },
+            .h40_full => if (pl.per_col) v.plane_full(320, true, buf, pl, row, r4, vs_part) else v.plane_full(320, false, buf, pl, row, r4, vs_part),
         }
     }
 
-    /// H32 plane line at full width into `full` (screen x at `8 + x`), a
-    /// tile row (8 pixel bytes) per step through the spread tables.
-    fn plane32(v: *const Vdp, comptime per_col: bool, full: *align(4) FullBuf, pl: PlaneLine, row_full: u16, r4_full: u16, vs_part: u16) void {
+    /// A plane line `w` pixels wide (256 H32, 320 full H40) into `full`
+    /// (screen x at `8 + x`), a tile row (8 pixel bytes) per step through
+    /// the spread tables.
+    fn plane_full(v: *const Vdp, comptime w: u16, comptime per_col: bool, full: *align(4) [8 + w + 8]u8, pl: PlaneLine, row_full: u16, r4_full: u16, vs_part: u16) void {
         const vram = &v.vram;
         const hs = pl.hs;
         const fine: u16 = hs & 15;
@@ -759,7 +808,7 @@ pub const Vdp = struct {
         const x0: i16 = if (f == 0) 0 else @as(i16, @intCast(f)) - 8;
         var at: usize = @intCast(8 + x0);
         var col: u16 = ((@as(u16, @bitCast(x0)) -% hs) & pl.wmask) >> 3;
-        const n: u16 = if (f == 0) 32 else 33;
+        const n: u16 = if (f == 0) w / 8 else w / 8 + 1;
         var xs: i16 = x0;
         var m: u16 = 0;
         while (m < n) : (m += 1) {
@@ -822,27 +871,37 @@ pub const Vdp = struct {
         }
     }
 
-    /// The window for badge columns `from .. to` into `buf`: no scroll, one
-    /// name table row at `row`, pattern row offset `r4`. In H40 `from` and
-    /// `to` are multiples of 8 (16-pixel steps), so whole tiles.
-    fn window(v: *const Vdp, comptime wide: bool, buf: *align(4) LayerBuf, from: usize, to: usize, cols: *const [out_w]u16, row: u16, r4: u16, merge: bool) void {
+    /// The window for output columns `from .. to` into `buf`: no scroll,
+    /// one name table row at `row`, pattern row offset `r4`. In H40 `from`
+    /// and `to` are multiples of 8 badge columns (16-pixel steps), so whole
+    /// tiles; in full H40 multiples of 16 screen columns.
+    fn window(v: *const Vdp, comptime m: Mode, buf: *align(4) ModeBuf(m), from: usize, to: usize, cols: *const [out_w]u16, row: u16, r4: u16, merge: bool) void {
         const vram = &v.vram;
-        if (wide) {
-            var m: usize = from >> 2;
-            while (m < to >> 2) : (m += 1) {
-                const e = be16(vram, row +% @as(u16, @intCast(m)) * 2);
-                const four = tile4(vram, e, r4, 4);
-                const q = buf[pad + m * 4 ..][0..4];
-                st32(q, if (merge) over(four, ld32(q)) else four);
-            }
-            return;
+        switch (m) {
+            .h40 => {
+                var t: usize = from >> 2;
+                while (t < to >> 2) : (t += 1) {
+                    const e = be16(vram, row +% @as(u16, @intCast(t)) * 2);
+                    const four = tile4(vram, e, r4, 4);
+                    const q = buf[pad + t * 4 ..][0..4];
+                    st32(q, if (merge) over(four, ld32(q)) else four);
+                }
+            },
+            .h40_full => {
+                var cx: usize = from >> 3;
+                while (cx < to >> 3) : (cx += 1) {
+                    row8(vram, be16(vram, row +% @as(u16, @intCast(cx)) * 2), r4, buf[8 + cx * 8 ..][0..8]);
+                }
+            },
+            .h32 => {
+                var full: FullBuf align(4) = undefined;
+                var cx: u16 = cols[from] >> 3;
+                while (cx <= cols[to - 1] >> 3) : (cx += 1) {
+                    row8(vram, be16(vram, row +% cx * 2), r4, full[8 + @as(usize, cx) * 8 ..][0..8]);
+                }
+                gather(buf, &full, cols, from, to);
+            },
         }
-        var full: FullBuf align(4) = undefined;
-        var cx: u16 = cols[from] >> 3;
-        while (cx <= cols[to - 1] >> 3) : (cx += 1) {
-            row8(vram, be16(vram, row +% cx * 2), r4, full[8 + @as(usize, cx) * 8 ..][0..8]);
-        }
-        gather(buf, &full, cols, from, to);
     }
 
     /// Walk the sprite link list from sprite 0 (stops at link 0, at a link
@@ -885,9 +944,10 @@ pub const Vdp = struct {
     /// overflow bit), 320 / 256 pixels (the sprite that crosses the limit
     /// is cut, later ones are dropped), an X = 0 sprite after one with
     /// X != 0 masks the rest of the line; an opaque pixel over an earlier
-    /// opaque one sets the collision bit (badge columns only). False when
-    /// no sprite is on the line.
-    fn sprites(v: *Vdp, comptime wide: bool, line: u16, spr: *align(4) LayerBuf, cols: *const [out_w]u16, first: []const u8) bool {
+    /// opaque one sets the collision bit (output columns only, plus the
+    /// pads under partial H40 cells). False when no sprite is on the line.
+    fn sprites(v: *Vdp, comptime m: Mode, line: u16, spr: *align(4) ModeBuf(m), cols: *const [out_w]u16, first: []const u8) bool {
+        const wide = m != .h32;
         const vram = &v.vram;
         const max_line: u16 = if (wide) 20 else 16;
         const max_px: u16 = if (wide) 320 else 256;
@@ -939,7 +999,31 @@ pub const Vdp = struct {
             if (attr & 0x1000 != 0) r = hc * 8 - 1 - r;
             const tile0 = (attr & 0x7FF) + (r >> 3);
             const r4 = (r & 7) * 4;
-            if (wide) {
+            if (m == .h40_full) {
+                // A cell at a time: its eight pixels at screen x (the pads
+                // take the partial cells at both ends), merged under the
+                // sprites already drawn four bytes per step.
+                var cx: u16 = 0;
+                while (cx < wc - cut) : (cx += 1) {
+                    const xc = sx + @as(i32, cx) * 8;
+                    if (xc + 8 <= 0 or xc >= screen_w) continue;
+                    const tcol = if (hf) wc - 1 - cx else cx;
+                    const t = (tile0 + tcol * hc) & 0x7FF;
+                    var px: [8]u8 align(4) = undefined;
+                    row8(vram, (attr & 0xE800) | t, r4, &px);
+                    const at: usize = @intCast(8 + xc);
+                    inline for (0..2) |h| {
+                        const four = ld32(px[h * 4 ..][0..4]);
+                        const q = spr[at + h * 4 ..][0..4];
+                        const cur = ld32(q);
+                        const nzn = nonzero(four);
+                        const nzc = nonzero(cur);
+                        collide |= nzn & nzc;
+                        const mk = expand(nzn & ~nzc);
+                        st32(q, (cur & ~mk) | (four & mk));
+                    }
+                }
+            } else if (wide) {
                 // A cell at a time: its even screen columns are four badge
                 // columns at nibbles of the cell's X parity, merged under
                 // the sprites already drawn (four bytes per step).
@@ -955,8 +1039,8 @@ pub const Vdp = struct {
                     const nzn = nonzero(four);
                     const nzc = nonzero(cur);
                     collide |= nzn & nzc;
-                    const m = expand(nzn & ~nzc);
-                    st32(spr[at..][0..4], (cur & ~m) | (four & m));
+                    const mk = expand(nzn & ~nzc);
+                    st32(spr[at..][0..4], (cur & ~mk) | (four & mk));
                 }
             } else {
                 const draw_w: i32 = @as(i32, wc - cut) * 8;
@@ -1020,6 +1104,28 @@ const highs: u32 = 0x80808080;
 /// A plane line at full H32 width: screen x at `8 + x`, with room for
 /// the partial tiles at both ends.
 const FullBuf = [8 + 256 + 8]u8;
+/// A layer of a full H40 line (`Mode.h40_full`), laid out as `FullBuf`.
+const WideBuf = [8 + 320 + 8]u8;
+
+/// The renderer's three line shapes: H40 at 160 badge columns (tile
+/// quads), H32 at 160 (full width, then the column table), and H40 at all
+/// 320 columns for `HMode.smooth` (the H32 strategy at 320 pixels).
+const Mode = enum { h40, h32, h40_full };
+
+fn ModeBuf(comptime m: Mode) type {
+    return if (m == .h40_full) WideBuf else LayerBuf;
+}
+
+/// Output width of a mode.
+fn mode_w(comptime m: Mode) usize {
+    return if (m == .h40_full) max_w else out_w;
+}
+
+/// Layer buffer type, column offset and output width of the final passes:
+/// `full` for `Mode.h40_full`.
+fn PassBuf(comptime full: bool) type {
+    return if (full) WideBuf else LayerBuf;
+}
 
 /// Entry `e`'s pattern row (offset `r4`, flips applied) as eight pixel
 /// bytes at `dst`.
@@ -1071,15 +1177,16 @@ inline fn over(a: u32, b: u32) u32 {
 /// over B (unless `merged` did it while drawing), then a sprite wins where
 /// it is opaque and either has priority or the plane pixel is not opaque
 /// with priority; transparent is the backdrop.
-fn final_pass(comptime merged: bool, ba: *align(4) const LayerBuf, bb: *align(4) const LayerBuf, spr: *align(4) const LayerBuf, any: bool, bd: u8, out: *[out_w]u8) void {
+fn final_pass(comptime full: bool, comptime merged: bool, ba: *align(4) const PassBuf(full), bb: *align(4) const PassBuf(full), spr: *align(4) const PassBuf(full), any: bool, bd: u8, out: *[if (full) max_w else out_w]u8) void {
+    const o: usize = if (full) 8 else pad;
     const bd4: u32 = @as(u32, bd) * ones;
     var k: usize = 0;
-    while (k < out_w) : (k += 4) {
-        const b = ld32(bb[pad + k ..][0..4]);
-        var p = if (merged) b else over(ld32(ba[pad + k ..][0..4]), b);
+    while (k < out.len) : (k += 4) {
+        const b = ld32(bb[o + k ..][0..4]);
+        var p = if (merged) b else over(ld32(ba[o + k ..][0..4]), b);
         var nzp = nonzero(p);
         if (any) {
-            const s = ld32(spr[pad + k ..][0..4]);
+            const s = ld32(spr[o + k ..][0..4]);
             if (s != 0) {
                 const wins = nonzero(s) & ((s << 1) | ~(nzp & (p << 1)));
                 const ms = expand(wins);
@@ -1098,12 +1205,13 @@ fn final_pass(comptime merged: bool, ba: *align(4) const LayerBuf, bb: *align(4)
 /// (a shadowed pixel becomes normal), color 15 shadows it; color 14 of
 /// palettes 0-2 is always normal; other sprite pixels are normal with
 /// priority, else take the plane's intensity.
-fn final_sh(ba: *align(4) const LayerBuf, bb: *align(4) const LayerBuf, spr: *align(4) const LayerBuf, any: bool, bd: u8, out: *[out_w]u8) void {
+fn final_sh(comptime full: bool, ba: *align(4) const PassBuf(full), bb: *align(4) const PassBuf(full), spr: *align(4) const PassBuf(full), any: bool, bd: u8, out: *[if (full) max_w else out_w]u8) void {
+    const o: usize = if (full) 8 else pad;
     const bd4: u32 = @as(u32, bd) * ones;
     var k: usize = 0;
-    while (k < out_w) : (k += 4) {
-        const a = ld32(ba[pad + k ..][0..4]);
-        const b = ld32(bb[pad + k ..][0..4]);
+    while (k < out.len) : (k += 4) {
+        const a = ld32(ba[o + k ..][0..4]);
+        const b = ld32(bb[o + k ..][0..4]);
         const p = over(a, b);
         const nzp = nonzero(p);
         const mt = expand(~nzp & highs);
@@ -1112,7 +1220,7 @@ fn final_sh(ba: *align(4) const LayerBuf, bb: *align(4) const LayerBuf, spr: *al
         const normal = ((a | b) << 1) & highs;
         var q = base | ((~normal & highs) >> 1);
         if (any) {
-            const s = ld32(spr[pad + k ..][0..4]);
+            const s = ld32(spr[o + k ..][0..4]);
             const wins = nonzero(s) & ((s << 1) | ~(nzp & (p << 1)));
             if (wins != 0) {
                 const sc = s & 0x3F3F3F3F;

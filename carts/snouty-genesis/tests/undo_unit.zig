@@ -432,7 +432,7 @@ test "undo: disable stops tracking and forgets" {
 const RowCheck = struct {
     rows: u32 = 0,
     in_order: bool = true,
-    fn on_line(ctx: *anyopaque, row: u8, _: *const [core.out_w]u8, _: *const [64]u16) void {
+    fn on_line(ctx: *anyopaque, row: u8, _: [*]const u8, _: u16, _: *const [64]u16) void {
         const h: *RowCheck = @ptrCast(@alignCast(ctx));
         if (row != h.rows) h.in_order = false;
         h.rows += 1;

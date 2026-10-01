@@ -138,7 +138,8 @@ node tools/preview.mjs zig-out/bin/snouty-genesis.wasm --frames 220 --every 4 \
 ```
 
 It ends with `debug_state=1 debug_menu_opens=2 debug_settings=11` (sound
-on, crop, layout 2, overlay off).
+on, crop, layout 2, overlay off; since M4 one more Down at 88 steps over
+the Smooth H40 row, which the walk leaves off).
 
 The top-left overlay (menu row "Debug overlay", on by default until the
 hardware numbers are in): line 1 update time (both Genesis frames), line 2
@@ -154,7 +155,7 @@ down 2, left 4, right 8, A 16, B 32, C 64, Start 128), `debug_rom_source`
 (0 none, 1 embedded, 2 drive contiguous, 3 drive fragmented),
 `debug_rom_size`, `debug_rom_crc` (drive only), `debug_cram_rebuilds`,
 `debug_menu_opens`, `debug_settings` (bit 0 sound on, bit 1 crop, bits 2-4
-the button layout index, bit 5 overlay on), `debug_tone_calls`,
+the button layout index, bit 5 overlay on, bit 6 Smooth H40 on), `debug_tone_calls`,
 `debug_tone_hz` (0 silent), `debug_sound_on`, `debug_pc`, `debug_sp`,
 `debug_sr` (68000), `debug_vdp_line`, `debug_z80_pc`, `debug_z80_state`
 (bit 0 BUSREQ, bit 1 reset, bit 2 off). Exports that read the console
@@ -223,6 +224,25 @@ PNGs: the scrub bar over the restored picture after each step
 (`frame_0340.png` ...), the full panel again at 384.
 `docs/m3_scrub.gif` is updates 290-512 of this run, every third one.
 
+Smooth H40 on Miniplanets (same wasm), `tools/scripts/m4_smooth.json`
+(460 updates): `m2_mini300.json`'s presses into level 1 up to update 296,
+a Select hold 300-334 (the menu opens at 314), Down x3 (338, 342, 346:
+cursor on `Smooth H40`), Right (350: on), B (354: resume), then Up
+360-395 and Right+A 400-440 in play:
+
+```sh
+node tools/preview.mjs zig-out/bin/snouty-genesis.wasm --frames 460 --every 20 \
+  --out carts/snouty-genesis/out/m4_smooth/smooth/ \
+  --script carts/snouty-genesis/tools/scripts/m4_smooth.json \
+  --dump-exports debug_settings,debug_state \
+  --call-at "340 debug_settings" --call-at "358 debug_settings"
+```
+
+`debug_settings` reads 32 at 340 (overlay on) and 96 at 358 and at the end
+(bit 6: smooth on). For a sharp twin of the same frames drop the Right at
+350 from a copy of the script: the emulation is the same, only the H40
+columns differ (every second one dropped vs each pair averaged).
+
 ## 5. Controls and the menu
 
 D-pad, badge B = Genesis B, badge A = Genesis C, Start = Start; a Select
@@ -239,6 +259,11 @@ menu:
 - `Scale: Squeeze` (badge row r shows Genesis line r*7/4, all 224 lines
   squeezed into 128) or `Scale: Crop` (lines 48..175 at full height, for
   games whose action sits in the middle band). Takes effect on resume.
+- `Smooth H40: Off/On`: how a 320-pixel (H40) line fits the 160 columns.
+  Off drops every second Genesis column (sharp, cheaper); On draws all 320
+  and shows the average of each pair, so thin H40 text and 1-pixel
+  details stay visible (SPEC.md section 6). H32 games look the same either
+  way. Takes effect on resume.
 - `Sound: Off/On` (the one tone voice; off at boot, root docs/SOUND.md).
 - `Debug overlay: On/Off` (also hides the ROM report line).
 - `Reset`: the console from its reset vector, settings kept.

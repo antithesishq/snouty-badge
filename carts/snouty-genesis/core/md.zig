@@ -437,7 +437,7 @@ pub const Md = struct {
     /// like `Keyframe` (`rom`, `line_sink`, `sram_map`, `tone_cache`), plus
     /// the per-line scratch `m68k_share`/`m68k_stalled` (zero between
     /// frames) and the `not_wait_loop` hint; inside the VDP `vram` and
-    /// `line_mode` (`vdp.Vdp.Small`). Compare field by field, never as
+    /// `line_mode` / `h_mode` (`vdp.Vdp.Small`). Compare field by field, never as
     /// bytes (padding is zeroed by `save_small` only so equal states have
     /// equal bytes).
     pub const Small = struct {
@@ -466,7 +466,7 @@ pub const Md = struct {
     }
 
     /// Apply a `Small`; the byte regions are the caller's. Keeps `rom`,
-    /// `line_sink`, `vdp.line_mode` and `not_wait_loop`; recomputes
+    /// `line_sink`, `vdp.line_mode`, `vdp.h_mode` and `not_wait_loop`; recomputes
     /// `tone_cache`.
     pub fn load_small(md: *Md, k: *const Small) void {
         inline for (@typeInfo(Small).@"struct".field_names) |name| {
@@ -576,7 +576,7 @@ comptime {
 
 // `Md.Small` is `Keyframe` minus work RAM, Z80 RAM and SRAM (VRAM is in
 // its `vdp`), and
-// `vdp.Vdp.Small` is `Vdp` minus `vram` and `line_mode`: a field added to
+// `vdp.Vdp.Small` is `Vdp` minus `vram`, `line_mode` and `h_mode`: a field added to
 // the console must be added to both (or excluded here on purpose).
 comptime {
     const kf = @typeInfo(Md.Keyframe).@"struct".field_names;
@@ -585,6 +585,6 @@ comptime {
     for (sm) |name| if (!@hasField(Md.Keyframe, name)) @compileError("Md.Small field not in Keyframe: " ++ name);
     const vf = @typeInfo(vdp.Vdp).@"struct".field_names;
     const vs = @typeInfo(vdp.Vdp.Small).@"struct".field_names;
-    if (vf.len != vs.len + 2) @compileError("Vdp.Small out of step with Vdp");
+    if (vf.len != vs.len + 3) @compileError("Vdp.Small out of step with Vdp");
     for (vs) |name| if (@FieldType(vdp.Vdp.Small, name) != @FieldType(vdp.Vdp, name)) @compileError("Vdp.Small field type differs: " ++ name);
 }

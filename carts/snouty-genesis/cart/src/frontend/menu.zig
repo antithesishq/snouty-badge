@@ -1,6 +1,6 @@
 //! Emulator menu (SPEC.md sections 5 and 12), adapted from Snouty Gear's
 //! frontend/menu.zig: the Genesis rows (Buttons is a six-way remap, Pick
-//! ROM for a drive with several files), 9 px rows so eight of them fit,
+//! ROM for a drive with several files), 9 px rows so nine of them fit,
 //! and the header facts on About. Opened by holding Select for 500 ms
 //! (frontend/input.zig), drawn over the frozen game frame. The core is not
 //! stepped while it is open. One update is 1/30 s, as everywhere in this
@@ -19,9 +19,10 @@
 //!
 //! Keys: Up/Down move (wrapping), A chooses, B or a Select tap (a press that
 //! began inside the menu) resumes. Left/Right or A cycle a setting row
-//! (Buttons, Scale, Sound, Debug overlay). A scale change takes effect on
-//! the first frame after resuming (main.zig calls `video.apply` whenever the
-//! menu closes) or on the next scrub step, which redraws the whole screen.
+//! (Buttons, Scale, Smooth H40, Sound, Debug overlay). A Scale or Smooth
+//! H40 change takes effect on the first frame after resuming (main.zig
+//! calls `video.apply` whenever the menu closes) or on the next scrub step,
+//! which redraws the whole screen.
 //!
 //! Time scrubber (SPEC.md 5 and 10, frontend/rewind.zig), Gear's UI. On
 //! every row that is not a setting (Resume, where the menu opens, Reset,
@@ -65,7 +66,7 @@ pub const Result = enum {
     pick_rom,
 };
 
-const Item = enum { resume_game, buttons, scale, sound, debug, reset, pick_rom, about };
+const Item = enum { resume_game, buttons, scale, smooth, sound, debug, reset, pick_rom, about };
 const item_count = @typeInfo(Item).@"enum".field_names.len;
 
 /// The Pick ROM row exists only for a drive build that found candidates;
@@ -174,7 +175,7 @@ fn move(d: i2) void {
 
 fn is_setting(item: Item) bool {
     return switch (item) {
-        .buttons, .scale, .sound, .debug => true,
+        .buttons, .scale, .smooth, .sound, .debug => true,
         .resume_game, .reset, .pick_rom, .about => false,
     };
 }
@@ -219,6 +220,7 @@ fn adjust(d: i2) void {
     switch (cursor) {
         .buttons => input.layout = input.layout.step(d),
         .scale => video.scale = if (video.scale == .squeeze) .crop else .squeeze,
+        .smooth => video.smooth = !video.smooth,
         .sound => audio.enabled = !audio.enabled,
         .debug => debug.enabled = !debug.enabled,
         .resume_game, .reset, .pick_rom, .about => {},
@@ -229,16 +231,18 @@ fn adjust(d: i2) void {
 
 const band_h = 36;
 const panel_x = 4;
-const panel_y = 40;
+/// M4: the panel starts right under the band and runs to the bottom edge,
+/// rows 2 px below its frame, so nine rows and the bottom line fit (M3:
+/// y 40, 86 px, rows 3 px in, eight rows).
+const panel_y = band_h;
 const panel_w = cart.screen_width - 2 * panel_x;
-const panel_h = 86;
-/// 9 px rows (Gear: 10) so eight rows and the bottom line fit the panel.
+const panel_h = cart.screen_height - panel_y;
+/// 9 px rows (Gear: 10) so nine rows and the bottom line fit the panel.
 const row_h = 9;
 const text_x = panel_x + 4;
-const first_row_y = panel_y + 3;
-/// The panel's bottom line (y 115): "B: back" on About, empty on the rows
-/// in M2, "Scrub: ..." in M3. Fixed below the eighth row even when Pick
-/// ROM is hidden.
+const first_row_y = panel_y + 2;
+/// The panel's bottom line (y 119): "B: back" on About, "Scrub: ..." on
+/// the rows. Fixed below the ninth row even when Pick ROM is hidden.
 pub const scrub_line_y = first_row_y + item_count * row_h;
 /// The scrub bar shown after a step (`scrub_view`): the panel's bottom
 /// strip, so the panel hides it entirely when it comes back.
@@ -272,6 +276,7 @@ fn label(item: Item) []const u8 {
         .resume_game => "Resume",
         .buttons => input.layout.label(),
         .scale => if (video.scale == .squeeze) "Scale: Squeeze" else "Scale: Crop",
+        .smooth => if (video.smooth) "Smooth H40: On" else "Smooth H40: Off",
         .sound => if (audio.enabled) "Sound: On" else "Sound: Off",
         .debug => if (debug.enabled) "Debug overlay: On" else "Debug overlay: Off",
         .reset => "Reset",
@@ -502,6 +507,7 @@ comptime {
     check_width(tagline_2, screen_cols);
     check_width("Btns B=B A=C S=A", panel_cols);
     check_width("Scale: Squeeze", panel_cols);
+    check_width("Smooth H40: Off", panel_cols);
     check_width("Debug overlay: Off", panel_cols);
     check_width("Version " ++ version, panel_cols);
     check_width("Source: embedded", panel_cols);
@@ -514,7 +520,9 @@ comptime {
     check_width("Scrub: -9.9 / 9.9s", panel_cols);
     check_width("Scrub: live / 9.9s", panel_cols);
     check_width("Scrub: -99 / 99s", panel_cols);
-    if (bar_y < scrub_line_y) @compileError("scrub bar overlaps the rows");
+    // The last row's cursor bar ends at scrub_line_y - 2.
+    if (bar_y + 1 < scrub_line_y) @compileError("scrub bar overlaps the rows");
+    if (first_row_y - 1 <= panel_y) @compileError("first cursor bar on the panel frame");
     if (bar_y + bar_h > panel_y + panel_h) @compileError("scrub bar outside the panel");
 }
 

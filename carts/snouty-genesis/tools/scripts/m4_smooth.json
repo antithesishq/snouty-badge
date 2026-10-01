@@ -1,0 +1,15 @@
+[
+  {"from": 136, "to": 138, "hold": ["START"]},
+  {"from": 166, "to": 168, "hold": ["START"]},
+  {"from": 216, "to": 256, "hold": ["RIGHT"]},
+  {"from": 236, "to": 241, "hold": ["B"]},
+  {"from": 261, "to": 296, "hold": ["LEFT", "A"]},
+  {"from": 300, "to": 334, "hold": ["SELECT"]},
+  {"from": 338, "to": 339, "hold": ["DOWN"]},
+  {"from": 342, "to": 343, "hold": ["DOWN"]},
+  {"from": 346, "to": 347, "hold": ["DOWN"]},
+  {"from": 350, "to": 351, "hold": ["RIGHT"]},
+  {"from": 354, "to": 355, "hold": ["B"]},
+  {"from": 360, "to": 395, "hold": ["UP"]},
+  {"from": 400, "to": 440, "hold": ["RIGHT", "A"]}
+]

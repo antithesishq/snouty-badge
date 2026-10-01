@@ -32,10 +32,11 @@ const Capture = struct {
     first: [core.out_w]u8 = undefined,
     row16: [core.out_w]u8 = undefined,
 
-    fn on_line(ctx: *anyopaque, row: u8, line: *const [core.out_w]u8, cram: *const [64]u16) void {
+    fn on_line(ctx: *anyopaque, row: u8, line: [*]const u8, width: u16, cram: *const [64]u16) void {
+        _ = width;
         const c: *Capture = @ptrCast(@alignCast(ctx));
-        if (row == 0) c.first = line.*;
-        if (row == 16) c.row16 = line.*;
+        if (row == 0) c.first = line[0..core.out_w].*;
+        if (row == 16) c.row16 = line[0..core.out_w].*;
         c.rows += 1;
         c.last_row = row;
         _ = cram;
