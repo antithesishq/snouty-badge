@@ -130,13 +130,22 @@ Game-level accuracy, verified per title, not cycle accuracy.
   SingleStepTests 65x02 variant closest to the 65SC02 (section 16).
 - Timers and interrupts: advanced per instruction by elapsed ticks, so
   line and frame interrupts land on the right instruction.
-- Suzy: when SPRGO is written the whole sprite list is drawn at once, the
-  CPU is charged an estimate of the bus time Suzy would have used (pixels
-  written, bytes read), and SPRSYS reports done. Pixel output, collision
-  buffer and depository values must be exact; drawing time is approximate.
-- Display: a frame is converted from DISPADR at the start of vertical
-  blank (games change DISPADR there to flip double buffers). Mid-frame
-  palette changes are not seen.
+- Suzy: SPRGO latches the request; the list is drawn at once when the CPU
+  sleeps (CPUSLEEP: on hardware Suzy only gets the bus while the CPU is
+  asleep, and "sleep is broken in Mikey": without Suzy on the bus the CPU
+  does not stay asleep, Epyx CPU chapter, confirmed by lynx-tests
+  sdoneack). The CPU is charged a tick model fitted to the lynx-tests
+  hardware timings (docs/SUZY.md) and an interrupt during the run wakes it
+  with the run resumed on the next CPUSLEEP. Pixel output, collision buffer
+  and depository values are exact (lynx-tests sprites1-5 pass); drawing
+  time is approximate (within the suite's +-16 us windows).
+- Display: DISPADR is latched when timer 2 reaches the third blank line;
+  at the timer 2 borrow (vertical blank) the 8,160 bytes there and the
+  palette are copied into the core's `display`, which the frontend shows
+  (the last completed Lynx frame). Mid-frame palette changes are not seen.
+  Video DMA and refresh steal bus time as timed events (ten 28-tick bursts
+  per visible line, a 4-tick refresh every 256 ticks elsewhere), which is
+  what makes the lynx-tests timers and page-mode rows pass.
 - Not attempted: exact Suzy bus timing, UART/ComLynx, Lynx II stereo,
   rotated games (they need a 102x160 screen; the header's rotation byte
   makes `romcheck.py` refuse them).
@@ -558,3 +567,9 @@ real hardware; SP before reset.
   cycles, sprite type order, boot frames), `core/boot.zig` cross-checked
   against the real boot ROM, SingleStepTests `rockwell65c02` chosen,
   `roms/raycast.lnx` (Apache-2.0) shipped.
+- 2026-10-01: M1 core built (three Opus tracks, two fixers, a perf pass;
+  PLAN.md). CPU passes all 256 SingleStepTests files; drhelius's
+  lynx-tests pass every row except sprites4 DMA EXP W24; raycast.lnx,
+  Hard Drivin' and Blue Lightning (local) run. Section 3/4 updated with
+  the hardware findings (CPUSLEEP, display latch, DMA steal, undefined
+  opcode timings); SP before reset and $5C on hardware still open.
