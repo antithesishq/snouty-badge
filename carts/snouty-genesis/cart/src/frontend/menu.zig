@@ -55,7 +55,7 @@ const romsrc = @import("romsrc.zig");
 const text = @import("text.zig");
 const rewind = @import("rewind.zig");
 
-pub const version = "0.3.0-m3";
+pub const version = "0.4.0-m4";
 
 /// What main.zig does after a menu update.
 pub const Result = enum {
@@ -419,7 +419,7 @@ fn draw_about(md: *const core.Md) void {
     if (drive) {
         w = .{ .buf = &b3 };
         w.put("CRC ");
-        w.hex32(romsrc.crc);
+        if (romsrc.crc_known) w.hex32(romsrc.crc) else w.put("....");
         line7 = w.done();
         if (romsrc.origin == .drive_fragmented) line8 = "fragmented";
     } else if (romsrc.fallback) |why| {

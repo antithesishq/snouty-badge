@@ -182,6 +182,8 @@ fn run_update(t1: u64) void {
         md.step_frame(in.pad, f == frames_per_update);
         rewind.record_frame(&md);
     }
+    // The drive ROM's CRC32, 8 KB per update (a no-op once known).
+    romsrc.crc_tick();
     const t2 = cart.micros_since_boot();
 
     audio.update(&md);

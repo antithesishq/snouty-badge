@@ -118,8 +118,11 @@ joystick click are OS-owned as always. The 6-button pad is out of scope.
 ## 6. Screen mapping
 
 - **H40 (320 wide)**: badge column `x` shows Genesis column `2x`. Only
-  those 160 columns are ever rendered, which halves pixel work. A menu
-  option averages column pairs instead (costs about 1.5x render time).
+  those 160 columns are ever rendered, which halves pixel work (`Smooth
+  H40: Off`). The menu's `Smooth H40` row averages each column pair
+  instead, composing the line at 320 pixels (M4: 1.81x render time, +2.6 ms
+  mean on Miniplanets, the worst update unchanged); **on by default** since
+  M4 because H40 text is unreadable with every second column dropped.
 - **H32 (256 wide)**: badge column `x` shows Genesis column `x * 8 / 5`
   through a 160-entry column table (same renderer, different table).
 - **Vertical, squeeze (default)**: badge row `r` shows Genesis line

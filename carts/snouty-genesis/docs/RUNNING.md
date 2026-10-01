@@ -4,13 +4,16 @@ Build the cart, run the host tests, preview it headless or in the web
 simulator, benchmark it, put a ROM on the badge drive and flash the cart.
 Commands run from the repository root; outputs land in the root `zig-out/`.
 
-Status: M3. Boot: a 1.2 s splash (the Iris mark and "SNOUTY GENESIS";
+Status: M4. Boot: a 1.2 s splash (the Iris mark and "SNOUTY GENESIS";
 any button skips it), then the game, or on the badge the ROM picker when
 the drive holds several Genesis ROMs and a help screen when it holds none.
 Holding Select for 500 ms opens the emulator menu (section 5). Sound is off
 at boot unless built with `-Dsound=true` (root docs/SOUND.md); the menu's
 Sound row turns it on. In the menu Left/Right scrub time back and forward
-in half-second steps (section 5).
+in half-second steps (section 5). H40 games show every column pair
+averaged (the menu's `Smooth H40` row, on by default); a fragmented drive
+ROM runs at the speed of a contiguous one, and its CRC32 is computed in
+the background over the first two seconds of play (section 7).
 
 ## 1. Prerequisites
 
@@ -137,9 +140,9 @@ node tools/preview.mjs zig-out/bin/snouty-genesis.wasm --frames 220 --every 4 \
   --dump-exports debug_state,debug_menu_opens,debug_settings
 ```
 
-It ends with `debug_state=1 debug_menu_opens=2 debug_settings=11` (sound
-on, crop, layout 2, overlay off; since M4 one more Down at 88 steps over
-the Smooth H40 row, which the walk leaves off).
+It ends with `debug_state=1 debug_menu_opens=2 debug_settings=75` (sound
+on, crop, layout 2, overlay off, Smooth H40 still on from its default;
+since M4 one more Down at 88 steps over the Smooth H40 row).
 
 The top-left overlay (menu row "Debug overlay", on by default until the
 hardware numbers are in): line 1 update time (both Genesis frames), line 2
@@ -227,7 +230,8 @@ PNGs: the scrub bar over the restored picture after each step
 Smooth H40 on Miniplanets (same wasm), `tools/scripts/m4_smooth.json`
 (460 updates): `m2_mini300.json`'s presses into level 1 up to update 296,
 a Select hold 300-334 (the menu opens at 314), Down x3 (338, 342, 346:
-cursor on `Smooth H40`), Right (350: on), B (354: resume), then Up
+cursor on `Smooth H40`), Right (350: off, it is on by default), B (354:
+resume), then Up
 360-395 and Right+A 400-440 in play:
 
 ```sh
@@ -238,10 +242,12 @@ node tools/preview.mjs zig-out/bin/snouty-genesis.wasm --frames 460 --every 20 \
   --call-at "340 debug_settings" --call-at "358 debug_settings"
 ```
 
-`debug_settings` reads 32 at 340 (overlay on) and 96 at 358 and at the end
-(bit 6: smooth on). For a sharp twin of the same frames drop the Right at
-350 from a copy of the script: the emulation is the same, only the H40
-columns differ (every second one dropped vs each pair averaged).
+`debug_settings` reads 96 at 340 (overlay on, smooth on) and 32 at 358 and
+at the end (bit 6 clear: sharp). For the smooth twin of the same frames
+drop the Right at 350 from a copy of the script: the emulation is the
+same, only the H40 columns differ (each pair averaged vs every second one
+dropped). `docs/m4_smooth.png` is update 420 of both, sharp left and
+smooth right.
 
 ## 5. Controls and the menu
 
@@ -259,8 +265,9 @@ menu:
 - `Scale: Squeeze` (badge row r shows Genesis line r*7/4, all 224 lines
   squeezed into 128) or `Scale: Crop` (lines 48..175 at full height, for
   games whose action sits in the middle band). Takes effect on resume.
-- `Smooth H40: Off/On`: how a 320-pixel (H40) line fits the 160 columns.
-  Off drops every second Genesis column (sharp, cheaper); On draws all 320
+- `Smooth H40: On/Off` (on by default since M4): how a 320-pixel (H40)
+  line fits the 160 columns. Off drops every second Genesis column (sharp,
+  about 2.6 ms cheaper per update); On draws all 320
   and shows the average of each pair, so thin H40 text and 1-pixel
   details stay visible (SPEC.md section 6). H32 games look the same either
   way. Takes effect on resume.
