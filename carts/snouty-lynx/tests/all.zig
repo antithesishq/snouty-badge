@@ -1,7 +1,7 @@
 //! Host test entry point: `zig build test` (every cart) or `zig build
 //! test-lynx` (this cart) from the repository root; `-Dtest-filter=cart`
 //! for a subset (test names carry an area prefix: `cart:`, `drive:`,
-//! `lynx:`, `boot:`). A new test file is one `_ = @import(...)` line here.
+//! `lynx:`, `boot:`, `cpu65:`, `suzy:`, `mikey:`, `golden:`). A new test file is one `_ = @import(...)` line here.
 const std = @import("std");
 const core = @import("core");
 
@@ -13,4 +13,8 @@ test {
     _ = @import("boot_local.zig");
     _ = @import("boot_crosscheck.zig");
     _ = @import("cpu65_single_step.zig");
+    _ = @import("suzy_unit.zig");
+    _ = @import("math_unit.zig");
+    _ = @import("mikey_unit.zig");
+    _ = @import("golden.zig");
 }

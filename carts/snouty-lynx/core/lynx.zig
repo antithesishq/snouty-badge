@@ -3,12 +3,23 @@
 //! Badge-agnostic: no cart-api, no floats, no allocator, no clock, no
 //! randomness; the pad word per frame is the only input.
 //!
-//! M0 scaffold: the subsystems (cpu65.zig, bus.zig, mikey.zig, suzy.zig)
-//! are stubs with their public shape, and `step_frame` draws a moving test
-//! pattern into RAM at the display address with a fixed 16-colour palette,
-//! so the frontend's video path (framebuffer bytes -> two palette indices ->
-//! RGB565, SPEC.md 6) is exercised end to end. M1 replaces the body of
-//! `step_frame` with 1/60 s of emulated time (266,667 ticks of 16 MHz).
+//! M1 contract (PLAN.md "Frozen for M1"): `Lynx` is also the CPU's bus
+//! (`fetch`, `read`, `write`, `irq_line`, the functions of core/bus.zig
+//! bound here), so `Cpu = cpu65.Cpu(Lynx)`. `step_frame` runs 1/60 s of
+//! Lynx time (266,667 ticks of 16 MHz, the fraction carried) one
+//! instruction at a time, advancing Mikey's timers by the ticks the bus
+//! charged, trapping the boot ROM entries $FE00/$FE4A (docs/BOOT.md),
+//! drawing Suzy's sprite list on CPUSLEEP and sleeping to the next
+//! interrupt otherwise. At the start of vertical blank the displayed
+//! frame (8,160 bytes at DISPADR) and the palette are copied into
+//! `display`, which `frame()` returns: the frontend always shows the last
+//! completed Lynx frame, whatever refresh rate the game runs.
+//!
+//! M0 scaffold state of this file: the subsystems are stubs with their
+//! frozen public shape, and `step_frame` draws a moving test pattern into
+//! RAM at the display address with a fixed 16-colour palette, so the
+//! frontend's video path (framebuffer bytes -> two palette indices ->
+//! RGB565, SPEC.md 6) is exercised end to end. M1 Track C replaces it.
 const std = @import("std");
 
 pub const cart = @import("cart.zig");

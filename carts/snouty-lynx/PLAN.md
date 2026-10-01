@@ -47,13 +47,236 @@ Integration: merge both, `zig build` + `zig build test`, sizes, tag
 
 ## M1 Core: contract
 
-Written at the end of M0, once the register facts and the boot path are
-confirmed (frozen interfaces: `Lynx.step_frame(pad)`, the Bus methods,
-the `line_sink`/frame sink, the Suzy entry point and its bus-time
-charge).
+Written 2026-10-01 after M0. Three Opus agents in their own git worktrees
+and branches off the prep commit on `lynx/m1`, disjoint files, as Snouty
+Gear's M1 did. Nobody edits another track's files; a needed change goes in
+the final report and is stubbed locally. The prep commit holds compiling
+stubs of every frozen interface below (`zig build -Dcart=snouty-lynx` and
+`zig build test-lynx` pass with them), and `tests/all.zig` already imports
+every test file a track will fill (`suzy_unit`, `math_unit`, `mikey_unit`,
+`golden`), so no track touches `tests/all.zig` or `build.zig`.
+
+Done when (SPEC.md section 17): host tests green (SingleStepTests on the
+CPU, Suzy and math unit tests, Mikey tests, drhelius lynx-tests carts), the
+shipped `roms/raycast.lnx` and Hard Drivin' (local) play in the simulator,
+badge-bench numbers recorded against SPEC.md section 8, tag
+`snouty-lynx/m1`, merged to main (the badge gate is show day).
+
+### Frozen for M1: `core/lynx.zig` is the bus
+
+- `Lynx` keeps the M0 frontend-facing shape: `init_in_place(c: Cart)`,
+  `reset()`, `step_frame(pad: u16)`, `frame() Frame`, fields `cart`, `pad`,
+  `frame_count`; `Pad` bits (JOYSTICK layout, bit 8 Pause) and `Frame`
+  (`pixels: *const [8160]u8`, `green`, `bluered`) are unchanged.
+- `Lynx` is also the CPU's bus: `pub const Cpu = cpu65.Cpu(Lynx)` and
+  `Lynx` has `fetch(addr: u16) u8`, `read(addr: u16) u8`, `write(addr: u16,
+  v: u8) void`, `irq_line() bool` (bodies in `core/bus.zig`, bound into the
+  struct with `pub const fetch = bus.fetch;` etc.). Tick accounting is the
+  bus's: `fetch` adds 4 (5 when MAPCTL bit 7 is set), RAM `read`/`write` 5,
+  Mikey/Suzy writes 5, Suzy reads 9 (SPEC.md section 3: 9-15; one value is
+  fine), RCART reads 15, all into `Lynx.ticks: u64`.
+- Memory map and MAPCTL (SPEC.md 3, 20): `$FC00-$FCFF` Suzy unless bit 0;
+  `$FD00-$FDFF` Mikey unless bit 1; `$FE00-$FFF7` ROM unless bit 2;
+  `$FFFA-$FFFF` vectors unless bit 3; `$FFF8` always RAM; `$FFF9` MAPCTL
+  always. ROM-space reads return `boot.vector_*` for the six vector bytes
+  and `0x00` elsewhere (never ROM bytes). Suzy `$B0-$B3` are the bus's:
+  JOYSTICK = pad low byte with the direction bits swapped when
+  `suzy.lefthand()`, SWITCHES = Pause (bit 0) plus cart-in bits as the
+  hardware reads them, RCART0/1 = cart port reads (counter advances).
+- Boot (docs/BOOT.md "What M1 needs"): `reset()` runs `boot.post_boot`
+  over the cart port, applies `mikey_writes` through `Mikey.write`, sets
+  MAPCTL/IODIR/IODAT/SYSCTL1, the port position and the CPU registers.
+  Before each instruction, while MAPCTL bit 2 is clear: PC == `$FE00`
+  does the block select with A, sets `SetCartBlockExit`, performs the RTS
+  (pulls the return address, PC + 1), charges ~300 ticks; PC == `$FE4A`
+  runs `boot.decrypt_frame` over the port, applies `frame_mikey_writes`,
+  sets A/X/Y, merges `nvzc` into P, PC = `$0200`; a PC anywhere else in
+  `$FE00-$FFF7` (an IRQ taken through ROM vectors, a crash) re-runs
+  `reset()`. `core/boot.zig` loses its own `Cart`: `post_boot` takes the
+  reader (`anytype` with `read_byte`), and the boot tests build the reader
+  over `core.cart.Cart` (`tests/boot_*.zig` are Track C's to adjust).
+- Frame loop: `step_frame` runs until `ticks` has advanced by 266,667
+  (16,000,000 / 60; the remainder is carried in `frame_frac`), one
+  `cpu.step(l)` at a time, then `mikey.advance(dt)` with the ticks the
+  step charged. CPUSLEEP (`$FD91` write): if `suzy.sprites_pending()`,
+  `ticks += suzy.run_sprites(&ram)` (the CPU wakes when Suzy is done; on
+  hardware Suzy only gets the bus while the CPU sleeps, so SPRGO alone
+  draws nothing); else the CPU sleeps until Mikey's next interrupt (ticks
+  jump there, capped at the frame end; the sleep persists across
+  `step_frame` calls if no interrupt comes).
+- Display: when timer 2 fires (vertical blank), the 8,160 bytes at the
+  latched DISPADR (low two bits ignored) and the palette are copied into
+  `Lynx.display` (`pixels: [8160]u8`, `green`, `bluered`); `frame()`
+  returns that. DISPCTL bit 1 (flip) ignored in M1 (noted).
+- Diagnostics (SPEC.md 14, frontend overlay): `ticks`, `cpu.instr_count`,
+  `suzy.pixels_drawn`, `sleep_ticks` (ticks spent asleep), `irq_count`.
+- Keyframes (M3) will copy `Lynx` minus `cart` and `display`.
+
+### Frozen for M1: `core/cpu65.zig` (Track A)
+
+- `Cpu(comptime Bus: type)`: `regs: Regs` (a, x, y, s, p, pc), `instr_count:
+  u32`, `reset(bus)`, `step(bus)`. `step` samples `bus.irq_line()` before
+  the opcode fetch; when set and I is clear it runs the 7-cycle IRQ
+  sequence (push PCH, PCL, P with B clear and bit 5 set; I set; D cleared
+  as the 65C02 does; PC from `read($FFFE/$FFFF)`) instead of an
+  instruction. No NMI.
+- Bus calls: `fetch` for opcode and operand bytes, `read` for every other
+  read including dummy reads, `write`. Exactly the bus cycles the hardware
+  does, in order: the SingleStepTests `cycles` lists (address, value,
+  read/write) are the reference and the test compares them cycle by cycle.
+  P reads with bits 4 and 5 set.
+- Instruction set: the full 65C02 (BRA, STZ, TRB/TSB, PHX/PHY/PLX/PLY, INC/
+  DEC A, BIT #/zp,X/abs,X, (zp), JMP (abs,X), decimal mode with the fixed
+  N/Z and the extra cycle) plus RMB0-7/SMB0-7/BBR0-7/BBS0-7; `$CB`/`$DB`
+  and every other undefined opcode are NOPs with the byte count and cycle
+  count the suite shows (SPEC.md 20: `$x3`/`$xB` 1/1, `$x2` 2/2, `$44` 2/3,
+  `$54`/`$D4`/`$F4` 2/4, `$DC`/`$FC` 3/4, `$5C` 3/8 in the suite's
+  rockwell variant: take the suite's). Page-crossing extra cycles and the
+  65C02's dummy-read addresses per the suite.
+
+### Frozen for M1: `core/suzy.zig` (Track B)
+
+`Suzy` with `reset()`, `read(addr: u8) u8`, `write(addr: u8, v: u8) void`
+(never called for `$B0-$B3`), `sprites_pending() bool`,
+`run_sprites(ram: *[0x10000]u8) u32` (ticks to charge), `lefthand() bool`,
+`pixels_drawn: u32`. Math unit operations complete inside `write`. See the
+file comment for the register map. Everything Suzy touches is in `ram`.
+
+### Track A: CPU (files `core/cpu65.zig`, `tests/cpu65_single_step.zig`, `tests/roms/65c02/*` via `tools/fetch_test_roms.sh`)
+
+- Implement `step` per the frozen contract: a 256-entry switch (no
+  comptime-generated tables bigger than a few hundred bytes: Adrian's Mac
+  runs out of memory on heavy comptime), addressing-mode helpers that
+  issue the exact dummy cycles, flags, decimal mode, interrupts.
+- `tests/cpu65_single_step.zig`: `run_case` on a flat 64 KB test bus that
+  logs every `fetch`/`read`/`write` as the suite does ("read" for both
+  fetch and read); compare final registers, every RAM entry of `final`,
+  the cycle count and the per-cycle address/value/kind. All 24 fetched
+  files (240,000 cases) must pass; then run `tools/fetch_test_roms.sh
+  --all` with `LYNX_SST_CMD` pointed at the test binary so all 256
+  opcodes pass (record the results in the report; the files are not kept).
+  A mismatch that is a documented suite quirk (none known) goes in the
+  report, never a skip.
+- Record the host run time of the suite and the instruction mix of a
+  quick count (how many `fetch`/`read`/`write` calls per instruction on
+  average) so the integrator can sanity-check the tick model.
+- Also a `tests/roms/lynx-tests/cpu.lnx` note: the cart tests need the
+  whole machine, so Track C's golden runs them; Track A does not.
+
+### Track B: Suzy (files `core/suzy.zig`, `tests/suzy_unit.zig`, `tests/math_unit.zig`, `docs/SUZY.md`)
+
+- Register file `$00-$92` as the Epyx hardware appendix defines it
+  (`SPRCTL0`/`SPRCTL1`/`SPRCOLL` are per-sprite and loaded from the SCB;
+  the CPU-written copies and the engine's working registers share the
+  addresses; reads of the 16-bit engine registers return the current
+  values).
+- Sprite engine on `run_sprites`: walk from SCBNEXT until a zero link or
+  SPRCTL1 bit 2 (skip sprite) handling; per sprite load the SCB per the
+  reload depth, the pen map unless bit 3, then draw: quadrant order from
+  the start quadrant with H/V flips, 8.8 HSIZ/VSIZ scaling accumulators
+  with HSIZOFF/VSIZOFF, STRETCH (per line) and TILT (per line), the
+  literal/packed decoders at 1-4 bpp (offset byte, packets of a literal
+  bit and a 4-bit count, header 0 ends the line, totally literal mode,
+  the pad-byte hardware quirk of SPEC.md 20), the eight sprite types'
+  pixel and collision semantics (which pens are transparent, what writes
+  to the video buffer, what writes/reads the collision buffer, the
+  depository byte at SCBADR + COLLOFF for types 2, 3, 4, 6, 7 unless
+  SPRSYS no-collide or SPRCOLL bit 5), clipping to 0..159 x 0..101 with
+  HOFF/VOFF, the video buffer at VIDBAS and the collision buffer at
+  COLLBAS (80 bytes per line, high nibble left), everon (SPRGO bit 2
+  sets SPRCOLL bit 7 in the depository when the sprite was fully off
+  screen). SPRSYS read: bit 0 sprite working (0 after the run), bit 7
+  math in progress (0), bit 6 math warning, bit 5 last carry, bit 2
+  unsafe access.
+- Bus-time estimate returned by `run_sprites`: per sprite header ~ 50
+  ticks, per source byte read 5, per pixel written 5 plus per collision
+  buffer access 5 (document the model in `docs/SUZY.md`; it is tuned in
+  M4).
+- Math unit: AB x CD -> EFGH (unsigned; signed via SPRSYS bit 7 with the
+  sign-magnitude conversion the hardware does), accumulate into JKLM
+  (SPRSYS bit 6, with the overflow -> warning bit), EFGH / NP -> ABCD
+  with remainder in JKLM (unsigned; divide by zero sets the warning and
+  gives all ones), the register byte order and which write starts what
+  (MATHA `$55` multiply, MATHE `$63` divide; writing MATHC/MATHA and
+  MATHM/MATHE also zeroes their partner high bytes as the appendix says).
+- Tests: synthetic SCBs in a 64 KB RAM: literal and packed lines at each
+  bpp, pen maps, each sprite type's pixel and collision result, the
+  depository, each quadrant and flip, HSIZ/VSIZ scaling (1x, 2x, 0.5x),
+  stretch and tilt against hand-computed spans, clipping, everon, and
+  random-operand math against Zig arithmetic (signed, accumulate,
+  divide, warning cases). `docs/SUZY.md`: what is exact, what is
+  approximate, the open questions (hardware behaviour not in the docs).
+- Facts come from the Epyx appendix (monlynx.de lynx6/lynx9) and cc65's
+  `_suzy.h`; Felix (MIT) may be read for behaviour the docs leave open,
+  Handy (GPL) not at all. Write Zig, copy nothing.
+
+### Track C: machine (files `core/lynx.zig`, `core/bus.zig`, `core/mikey.zig`, `core/boot.zig`, `tests/boot_*.zig`, `tests/mikey_unit.zig`, `tests/golden.zig`, `tests/testfiles.zig`, `tools/run_rom.zig` (+ its line in `build.zig`: the only build.zig edit, a `run-lynx` host exe step), `cart/src/**`, `tools/scripts/*.json`, `docs/RUNNING.md`, `badge-bench/carts/snouty-lynx.toml`)
+
+- `core/bus.zig`: the functions above over `*Lynx`, the cart port
+  (`CartPort`: 8-bit block shift register fed from IODAT bit 1 on SYSCTL1
+  bit 0 rising edges, strobe-high counter clear, 11-bit counter masked to
+  the block size, reads through `cart.Cart.read`), MAPCTL, the ROM-space
+  rules, Suzy `$B0-$B3`.
+- `core/mikey.zig`: 8 timers (BACKUP/CTLA/CNT/CTLB, clock select 1-64 us
+  = 16-1024 ticks, linking per the two chains, reload, count enable,
+  reset-done, timer-done and borrow-in/out bits, IRQ enable), INTSET/
+  INTRST with the IRQ line, `advance(dt)` that advances every counting
+  timer by elapsed ticks (keep a next-event tick so the common path is a
+  compare), timer 2 done = vertical blank (the display copy hook), audio
+  registers stored (no sound), palette, DISPCTL/DISPADR/PBKUP, CPUSLEEP
+  hook, IODIR/IODAT/SYSCTL1 with the port strobes, UART registers idle
+  (SERCTL reads TXRDY/TXEMPTY set), MIKEYHREV `$01`.
+- `core/lynx.zig`: the frame loop, traps, sleep, display copy, `reset`
+  with `post_boot`, as frozen. Unify the two header parsers (`boot.Cart`
+  goes, `core.cart` stays).
+- `tools/run_rom.zig` (host exe, `zig build run-lynx -- <rom> <script.json>
+  <frames> <outdir>`): runs a ROM headless with the preview/badge-bench
+  script format, writes `frame_NNNN.ppm` (or PNG via a tiny writer) at
+  requested frames and prints per-frame hashes and the diagnostics. The
+  integrator reviews those images; `tests/golden.zig` reuses the runner's
+  core (shared code in `tests/golden.zig` or a `tools/runner.zig` module
+  the exe and the test both import) to pin the hashes of `roms/raycast.lnx`
+  and the lynx-tests carts (`tests/roms/lynx-tests/*.lnx`, skipped when
+  absent: cpu, memio, page-mode, math, timers, timers2, sprites1-5,
+  sdoneack, refresh-rate), hashes empty until integration.
+- Frontend (`cart/src/`): `main.zig` steps the real core, overlay line
+  with mean/worst step us, FPS, instructions and Suzy pixels per frame
+  (`debug.zig`), `debug_*` exports for `ticks`, `instr_count`,
+  `pixels_drawn`, `irq_count`, `sleep_ticks`, `display frames`; `video.zig`
+  takes `frame()` as before. `tools/scripts/m1_play.json`: a 300-update
+  run of raycast (splash skipped at 40, then moves and turns); update the
+  bench toml to it.
+- Tests (`tests/mikey_unit.zig`): timer periods and linking (0 -> 2 -> 4,
+  1 -> 3 -> 5 -> 7), IRQ set/clear through INTRST, the vertical blank
+  cadence (timer 0 $9E/$18 and timer 2 $68/$1F give 105 lines x 159 us =
+  16.7 ms), MAPCTL overlays, the cart port protocol (select block 7 by
+  strobes, counter wrap, strobe-high clear), the $FE00 and $FE4A traps on
+  the raycast loader (boot lands at $0200, the loader's first $FE00 call
+  selects the right block), CPUSLEEP with and without pending sprites.
+  Against the stubs the golden frames are black: that is expected; the
+  integrator fills the hashes.
+
+### Integration (me, after the three merge)
+
+1. Merge A, B, C into `lynx/m1`; `zig build`, `zig build test` green
+   (demosnout's `timeline` failure is pre-existing).
+2. `zig build run-lynx` on raycast.lnx, cpu.lnx, memio, page-mode, math,
+   timers, sprites1-5: review the images, fix what is wrong (an Opus
+   integration agent if the fixes are deep), pin the golden hashes.
+3. Hard Drivin' (local, `-Dlynx-rom=~/roms/lynx/hard_drivin.lnx` and the
+   romfs image) through its loader into attract mode and a drive; Blue
+   Lightning as the sprite-scaling check. Images reviewed; never committed.
+4. badge-bench calibrated on the RAM ELF with the raycast fixture and the
+   local Hard Drivin' image: record mean, p95, worst, hot functions
+   against SPEC.md section 8; sizes (`.text`, `.bss`, free arena) against
+   section 13.
+5. Simulator GIF of raycast; `docs/RUNNING.md`; tag `snouty-lynx/m1`;
+   merge to main and push (badge gate deferred to show day).
 
 ## Status
 
+- 2026-10-01: M1 contract written, prep commit with the frozen stubs on
+  `lynx/m1`; tracks A (CPU), B (Suzy), C (machine) started.
 - 2026-09-29: SPEC.md and this plan drafted; waiting on section 18.
 - 2026-09-30: M0 DONE. Tracks A and B merged on `lynx/m0` (b950ebe), tag
   `snouty-lynx/m0`. Merged tree: root `zig build` builds every cart; the 22
