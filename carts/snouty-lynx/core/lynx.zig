@@ -48,6 +48,7 @@ pub const cpu65 = @import("cpu65.zig");
 pub const bus = @import("bus.zig");
 pub const mikey = @import("mikey.zig");
 pub const suzy = @import("suzy.zig");
+pub const undo = @import("undo.zig");
 pub const boot = @import("boot.zig");
 
 pub const Cart = cart.Cart;
@@ -495,6 +496,19 @@ pub const Lynx = struct {
     fn on_vblank(l: *Lynx) void {
         l.vblank_seen = l.mikey.vblank_count;
         if (l.mikey.dispctl & 1 == 0) return;
+        const a: u16 = l.mikey.dispadr_latched & 0xFFFC;
+        const first = @min(frame_bytes, 0x10000 - @as(usize, a));
+        @memcpy(l.display.pixels[0..first], l.ram[a..][0..first]);
+        if (first < frame_bytes) @memcpy(l.display.pixels[first..], l.ram[0 .. frame_bytes - first]);
+        l.display.green = l.mikey.green;
+        l.display.bluered = l.mikey.bluered;
+        l.display_frames +%= 1;
+    }
+
+    /// Copy the frame at the latched DISPADR and the palette into `display`
+    /// without stepping (what `on_vblank` does): the picture of a restored
+    /// state while the scrubber is parked (M3). Counts as a display frame.
+    pub fn refresh_display(l: *Lynx) void {
         const a: u16 = l.mikey.dispadr_latched & 0xFFFC;
         const first = @min(frame_bytes, 0x10000 - @as(usize, a));
         @memcpy(l.display.pixels[0..first], l.ram[a..][0..first]);

@@ -17,4 +17,7 @@ test {
     _ = @import("math_unit.zig");
     _ = @import("mikey_unit.zig");
     _ = @import("golden.zig");
+    _ = @import("undo_unit.zig");
+    _ = @import("determinism.zig");
+    _ = @import("scrub_sizing.zig");
 }

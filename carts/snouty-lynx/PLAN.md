@@ -374,8 +374,144 @@ only when the overlay is on, else the ROM origin ("drive 128 KB" /
 - Done when: the above, `docs/m2_menu.gif`, pull-and-run notes in
   docs/RUNNING.md, status here, tag `snouty-lynx/m2`, merge to main.
 
+## M3 Scrub: contract
+
+Written 2026-10-01 after M2. The time scrubber (SPEC.md section 10): an
+undo record per 30 badge frames, Left/Right in the menu step half a
+second back and forward, resuming from a parked position plays on from
+there and drops the future. Two Opus tracks in worktrees against the prep
+commit on `lynx/m3`, then integration. Prior art: Snouty Genesis M3
+(`carts/snouty-genesis/core/undo.zig`, `tests/undo_unit.zig`,
+`tests/scrub_sizing.zig`, `tests/determinism.zig`,
+`cart/src/frontend/rewind.zig`, the menu's scrub line and scrub view) is
+the design copied here; Snouty Gear's page store is not.
+
+### Decisions defaulted here (Adrian may overrule; nothing is blocked)
+
+- Mechanism: Genesis's copy-on-first-write undo records applied by
+  swapping (Left and Right are the same operation, bit-exact, no input
+  log, no replay). The live console is the newest keyframe. SPEC.md 10's
+  "exclude the framebuffer and re-render by replay" mitigation is NOT
+  built: without an input log there is no replay; instead the record
+  simply holds the framebuffer blocks the game rewrote (measured by
+  Track A: raycast redraws one 8 KB buffer per Lynx frame, Hard Drivin'
+  two).
+- Storage: a ring of 68-byte slots (`u16` id, `u16` pad, 64 B) in the
+  run-time arena between `__bss_end__` and `__stack_limit__` minus a 1 KB
+  guard. Regions: RAM (1024 blocks of 64 B over the 64 KB; the display
+  and collision buffers are ordinary RAM here) and `small` (every console
+  field outside `ram` that is console state: `cpu`, `mikey`, `suzy`,
+  `port`, `mapctl`, `fetch_ticks`, `stream_open`, `ticks`/`tick_base`,
+  `frame_end`, `frame_frac`, `fast_end`, `pad`, `frame_count`,
+  `sleeping`, `sprite_left`, `halted`, `boot_error`, `vblank_seen` and
+  the diagnostics; NOT `cart`, `display`, `idle_sleep`). Packed as
+  `Lynx.Small` with `save_small`/`load_small`, comptime-checked complete
+  against the `Lynx` field list (a new field must be classified).
+- Dirty state: one byte per RAM block (1024 B in `.bss`), read on the
+  bus write path (`bus.write`'s RAM branch and `high_write`'s `$FFF8`/RAM
+  cases) and by Suzy (`run_sprites` writes RAM directly: it calls
+  `undo.touch_range(addr, len)` once per span written, per collision
+  span and per depository byte, never per pixel), cleared when a record
+  closes. The `$FE4A` trap's `decrypt_frame` and `reboot` write RAM
+  directly too: `touch_range` over the frame destination, and `reset`
+  forgets the history (Reset row, Pick ROM, boot).
+- Interval 30 frames, records capped at 64. Block 64 B.
+- Memory: Track A's sizing test reports slots per record on raycast,
+  Hard Drivin' (local) and Blue Lightning (local) and the history each
+  arena gives: ReleaseFast as built (43,944 B free: likely 1-2 records),
+  ReleaseFast with `exec` not inlined into `run_cpu` (perf pass table:
+  ~1 ms for ~48 KB), ReleaseSmall (120,296 B free, badge-bench 11.28 ms
+  mean / 17.0 worst on raycast), XIP (190,000 B, untested on hardware,
+  not before show day). Integration picks the cheapest build that gives
+  >= 2 s on raycast and Hard Drivin' (SPEC 10 target) with worst under
+  the 16.7 ms budget: default order ReleaseFast un-inlined, then
+  ReleaseSmall. The pick is a `-Dcart-optimize` default in
+  `carts/snouty-lynx/build.zig` plus (if un-inlining) a `tunables.zig`
+  switch; recorded in the status.
+- Picture while parked: after a swap the console holds the keyframe
+  exactly; `Lynx.refresh_display()` copies the frame at the latched
+  DISPADR and the palette into `display` (what `on_vblank` does) without
+  stepping, and the frontend shows it. The strip reads "Scrub: -1.5 /
+  3.5s" as Genesis.
+- Performance gate: +0.5 ms mean on the m2_play raycast run for the
+  dirty check; section 8 totals hold.
+
+### Frozen for M3
+
+```zig
+// core/undo.zig (Track A), file-level state as Genesis's: no cart-api, no allocator.
+pub const block_size = 64;
+pub const Slot = extern struct { id: u16, pad: u16 = 0, data: [block_size]u8 };
+pub const frames_per_record = 30;
+pub const max_records = 64;
+pub const Region = enum(u4) { ram = 0, small = 15 };
+pub fn init(arena: []align(4) u8) void;
+pub fn capacity_slots() usize;
+pub fn reset(l: *Lynx) void;                 // forget history, open record 0 from l; tracking on
+pub fn disable() void;
+pub fn record_frame(l: *Lynx) void;          // after every stepped frame
+pub fn can_step(dir: i2) bool;
+pub fn step(l: *Lynx, dir: i2) bool;         // swap one record; then l.refresh_display()
+pub fn parked() bool;
+pub fn resume_here(l: *Lynx) void;
+pub fn depth_frames() u32;  pub fn history_frames() u32;  pub fn record_count() usize;
+pub fn slots_in_use() usize;  pub fn lost_history() bool;
+pub inline fn touch(addr: u16) void;         // one RAM byte, before the write
+pub fn touch_range(addr: u16, bytes: u32) void;  // Suzy spans, decrypt_frame; wraps at 64 KB
+
+// core/lynx.zig (Track A)
+pub const Small = struct { ... };            // see above; comptime-complete
+pub fn save_small(l: *const Lynx, out: *Small) void;
+pub fn load_small(l: *Lynx, k: *const Small) void;   // keeps cart, display, idle_sleep
+pub fn refresh_display(l: *Lynx) void;
+
+// cart/src/frontend/rewind.zig (Track B), over core.undo: Genesis's shape
+pub fn init() bool;  reset(l)  record_frame(l)  step(l, dir) bool  show(l)
+pub fn depth_frames() u32; history_frames() u32; record_count() usize; capacity_slots() usize; slots_in_use() usize; arena_bytes() usize;
+// cart/src/frontend/tuning.zig (Track B): stack_guard = 1024, wasm_arena_bytes
+```
+
+Exports (Track B): `debug_scrub_depth`, `debug_scrub_history`,
+`debug_scrub_records`, `debug_scrub_slots`, `debug_scrub_capacity`,
+`debug_scrub_arena`.
+
+### Track A: core (files `core/undo.zig`, `core/lynx.zig` (Small, save/load_small, refresh_display, the touch calls in reset/traps), `core/bus.zig` (write hooks), `core/suzy.zig` (touch_range per span; keep the hot path: one call per span, not per pixel), `tests/undo_unit.zig`, `tests/determinism.zig`, `tests/scrub_sizing.zig`, `tests/all.zig` (three new lines), `SPEC.md` 10/13 numbers)
+
+- `undo.zig` ported from Genesis with the two regions; unit tests ported
+  (boundary open/close, eviction, swap back and forth bit-exact, lost
+  history, resume drops the future, touch_range wrap).
+- `tests/determinism.zig`: raycast 600 frames under the m1 script, a
+  full `Lynx` copy every 30 frames; for each k restore k, step 30
+  frames, compare with k+1 (ram + Small field by field, first differing
+  field named). Then the same run through `undo`: step back to every
+  record and forward again reproduces the live state bit-exactly.
+- `tests/scrub_sizing.zig`: slots per record and the history at the
+  four arena sizes above for raycast (1800 frames, m1 script looped),
+  Hard Drivin' (`~/roms/lynx/hard_drivin.lnx`, the drive script of the
+  M1 status, skipped when absent) and Blue Lightning (attract). Report
+  the table.
+- badge-bench before/after on m2_play (the dirty check cost).
+
+### Track B: frontend (files `cart/src/frontend/rewind.zig`, `tuning.zig`, `menu.zig` (scrub line, scrub view, Left/Right, repeat), `debug.zig`, `main.zig` (init/reset/record_frame/resume_here calls, exports), `tools/scripts/m3_scrub.json`, `badge-bench/carts/snouty-lynx.toml`, `docs/RUNNING.md`)
+
+- Genesis's `rewind.zig` and menu scrub UI adapted; `resume_here` before
+  the first `step_frame` after a scrub; Reset and Pick ROM forget the
+  history; "Scrub: no memory" when fewer than two records fit.
+- `m3_scrub.json`: play 240 updates, open the menu, Left x4 with the
+  repeat, Right x2, resume, play on; exports checked in the preview
+  (`debug_scrub_depth` back to 0 after resuming, history growing).
+- wasm arena: a static of `tuning.wasm_arena_bytes` (set to the badge's
+  figure at integration).
+
+### Integration
+
+Merge, `zig build test` green, pick the build per the sizing table,
+preview GIF `docs/m3_scrub.gif`, badge-bench on m3_scrub, sizes, status,
+tag `snouty-lynx/m3`, merge to main.
+
 ## Status
 
+- 2026-10-01: M3 contract written on `lynx/m3` with the undo stubs; tracks A (core) and B (frontend) started.
 - 2026-10-01: M2 DONE on `lynx/m2` (frontend agent; not tagged or merged:
   the integrator tags `snouty-lynx/m2` and merges). Menu (frontend/menu.zig,
   Genesis's adapted, a copy until Gear's M5 shared frontend): Resume,
