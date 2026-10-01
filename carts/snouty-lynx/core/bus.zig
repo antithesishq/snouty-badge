@@ -73,11 +73,11 @@ pub const Mapctl = struct {
 pub const Ticks = struct {
     pub const fetch: u8 = 4;
     pub const fetch_full: u8 = 5;
-    pub const ram: u64 = 5;
-    pub const mikey: u64 = 5;
-    pub const suzy_write: u64 = 5;
-    pub const suzy_read: u64 = 9;
-    pub const rcart: u64 = 15;
+    pub const ram: u32 = 5;
+    pub const mikey: u32 = 5;
+    pub const suzy_write: u32 = 5;
+    pub const suzy_read: u32 = 9;
+    pub const rcart: u32 = 15;
 };
 
 /// Suzy addresses the bus serves itself.
@@ -227,9 +227,9 @@ fn high_write(l: *Lynx, addr: u16, v: u8) void {
 /// A Mikey register access starting at tick `t`: 5 ticks, after waiting
 /// for the unit's turn when it is a timer or audio register (see the file
 /// comment).
-pub inline fn mikey_ticks(t: u64, lo: u8) u64 {
+pub inline fn mikey_ticks(t: u32, lo: u8) u32 {
     if (lo >= 0x40) return Ticks.mikey;
-    const slot: u64 = if (lo < 0x20) lo >> 2 else 8 + ((lo - 0x20) >> 3);
+    const slot: u32 = if (lo < 0x20) lo >> 2 else 8 + ((lo - 0x20) >> 3);
     return ((slot +% timer_slot_phase -% t -% Ticks.mikey) & 15) + Ticks.mikey;
 }
 
@@ -237,7 +237,7 @@ pub inline fn mikey_ticks(t: u64, lo: u8) u64 {
 /// unit n completes at a tick t with (t - n) mod 16 == `timer_slot_phase`.
 /// Fitted to lynx-tests timers2 (reads and writes of each timer, the
 /// phase rows) with the 1 us clock edges at multiples of 16 ticks.
-pub const timer_slot_phase: u64 = 0;
+pub const timer_slot_phase: u32 = 0;
 
 pub fn set_mapctl(l: *Lynx, v: u8) void {
     l.mapctl = v;
@@ -255,8 +255,11 @@ pub fn vector_byte(addr: u16) u8 {
 }
 
 /// Bring Mikey's clock up to the bus's (timer reads see the exact count).
+/// Also ends `Lynx.run_cpu`'s fast run after the current instruction (the
+/// access may change Mikey's events, interrupts or DMA steal).
 pub inline fn sync_mikey(l: *Lynx) void {
-    l.mikey.advance(l.ticks - l.mikey.now);
+    l.fast_end = 0;
+    l.mikey.advance_to(l.ticks);
 }
 
 fn suzy_read(l: *Lynx, lo: u8) u8 {

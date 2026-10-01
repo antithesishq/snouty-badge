@@ -60,15 +60,15 @@ pub const screen_h = 102;
 pub const frame_bytes = screen_w * screen_h / 2;
 
 /// 16 MHz ticks per badge frame: 16,000,000 / 60 = 266,666 + 40/60.
-pub const ticks_per_frame: u64 = 266_666;
+pub const ticks_per_frame: u32 = 266_666;
 pub const frame_frac_num: u32 = 40;
 pub const frame_frac_den: u32 = 60;
 
 /// Ticks charged for the $FE00 trap (the ROM shifts eight bits out) and,
 /// per 51-byte block, for the $FE4A trap (two 408-bit modular multiplies in
 /// 6502 code: an estimate, nothing depends on it).
-pub const set_block_ticks: u64 = 300;
-pub const decrypt_block_ticks: u64 = 100_000;
+pub const set_block_ticks: u32 = 300;
+pub const decrypt_block_ticks: u32 = 100_000;
 
 /// The pad word `step_frame` takes. The low byte is the JOYSTICK register
 /// ($FCB0) layout as a game reads it with SPRSYS LEFTHAND clear (cc65
@@ -126,12 +126,19 @@ pub const Lynx = struct {
     fetch_ticks: u8,
     /// The CPU's sequential instruction stream is open (core/bus.zig).
     stream_open: bool,
-    /// 16 MHz ticks since reset (the bus adds to it).
-    ticks: u64,
+    /// 16 MHz ticks since `tick_base` (the bus adds to it; `time()` is
+    /// the clock since reset). 32-bit for the badge's core: `step_frame`
+    /// rebases before it nears 2^31 (`rebase`).
+    ticks: u32,
+    /// Ticks since reset at `ticks` = 0 (a multiple of 2^20).
+    tick_base: u64,
     /// `ticks` at which the current `step_frame` ends, and the carried
     /// fraction of a tick (in 1/60).
-    frame_end: u64,
+    frame_end: u32,
     frame_frac: u32,
+    /// `run_cpu`'s bound: below it an instruction needs no Mikey catch-up.
+    /// Any Mikey access zeroes it (bus.sync_mikey).
+    fast_end: u32,
     /// The pad word of the last `step_frame`.
     pad: u16,
     /// Frames stepped since reset.
@@ -142,7 +149,7 @@ pub const Lynx = struct {
     /// Bus ticks of the current sprite run not yet spent: an interrupt
     /// woke the CPU mid-run (Suzy paused, SPRSYS reads it working); the
     /// next CPUSLEEP resumes it without SDONEACK.
-    sprite_left: u64,
+    sprite_left: u32,
     /// The contract's sleep model for CPUSLEEP with no sprites (see the
     /// file comment). Default false: the documented hardware.
     idle_sleep: bool,
@@ -179,8 +186,10 @@ pub const Lynx = struct {
     /// Power on: clocks and diagnostics to zero, then the boot.
     pub fn reset(l: *Lynx) void {
         l.ticks = 0;
+        l.tick_base = 0;
         l.frame_end = 0;
         l.frame_frac = 0;
+        l.fast_end = 0;
         l.pad = 0;
         l.frame_count = 0;
         l.sleep_ticks = 0;
@@ -238,9 +247,92 @@ pub const Lynx = struct {
             l.frame_frac -= frame_frac_den;
             n += 1;
         }
+        if (l.ticks >= rebase_at) l.rebase();
         l.frame_end += n;
-        while (l.ticks < l.frame_end) l.step_one();
+        while (l.ticks < l.frame_end) {
+            if (l.halted or l.sleeping) l.step_one() else l.run_cpu();
+        }
         l.frame_count +%= 1;
+    }
+
+    /// `ticks` past this at a frame start: `rebase`.
+    const rebase_at: u32 = 1 << 30;
+
+    /// Move the clock origin forward by a multiple of 2^20 ticks (every
+    /// timer period, the refresh grid and the 16-tick round robin divide
+    /// it, so no phase changes): `ticks`, `frame_end` and every clock value
+    /// in Mikey and Suzy drop by the same amount, `tick_base` grows by it.
+    fn rebase(l: *Lynx) void {
+        bus.sync_mikey(l);
+        const d = @min(l.ticks, l.frame_end) & ~@as(u32, (1 << 20) - 1);
+        l.tick_base += d;
+        l.ticks -= d;
+        l.frame_end -= d;
+        l.mikey.rebase(d);
+        l.suzy.rebase(d);
+    }
+
+    /// 16 MHz ticks since reset.
+    pub fn time(l: *const Lynx) u64 {
+        return l.tick_base + l.ticks;
+    }
+
+    /// Instructions back to back while nothing but the CPU can happen: the
+    /// same as `step_one` per instruction, with the Mikey catch-up after
+    /// an instruction skipped while it would do nothing. That is while the
+    /// clock stays below `fast_end` (Mikey's next event, or the frame
+    /// end): Mikey's state (interrupts, `steal`, `vblank_count`,
+    /// `next_event`) only changes at its events or through a register
+    /// access, and every access zeroes `fast_end` (bus.sync_mikey), as do
+    /// the ROM traps, so the full catch-up runs after that instruction.
+    /// Mikey's `now` lags the bus clock in between; nothing reads it before
+    /// the next sync.
+    fn run_cpu(l: *Lynx) void {
+        // DMA that fell in the last catch-up's own steal is charged after
+        // the next instruction (`after_step`), as `step_one` does.
+        l.fast_end = if (l.mikey.steal != 0) 0 else @min(l.frame_end, l.mikey.next_event);
+        while (true) {
+            const pc = l.cpu.regs.pc;
+            const irq = l.cpu.takes_irq(l.mikey.irq_line());
+            if (!irq and pc >= bus.rom_base and pc < 0xFFF8 and l.mapctl & bus.Mapctl.rom_off == 0) {
+                l.rom_entry(pc);
+            } else {
+                if (irq) l.irq_count +%= 1;
+                l.cpu.step_inline(l);
+            }
+            if (l.ticks < l.fast_end) continue;
+            // Only a display burst or refresh due (no register access in
+            // the instruction, no timer event, the frame goes on): its
+            // catch-up in line.
+            if (l.fast_end == 0 or l.ticks >= l.frame_end or l.mikey.timer_event <= l.ticks) break;
+            if (!l.dma_catch_up()) return;
+            l.fast_end = @min(l.frame_end, l.mikey.next_event);
+        }
+        l.after_step();
+    }
+
+    /// `after_step` when only video DMA or refresh events are due (no timer
+    /// event, so no interrupt or vertical blank can come from them): the
+    /// same steps, without the general event loop. False when the charged
+    /// steal reaches another event or the frame end: then the rest of
+    /// `after_step` has been done and `run_cpu` returns.
+    inline fn dma_catch_up(l: *Lynx) bool {
+        const m = &l.mikey;
+        m.now = l.ticks;
+        while (m.dma_next <= m.now) m.dma_event(m.dma_next);
+        m.next_event = @min(m.timer_event, m.dma_next);
+        l.ticks += m.steal;
+        l.dma_ticks += m.steal;
+        m.steal = 0;
+        if (m.steal_burst) l.stream_open = false;
+        m.steal_burst = false;
+        if (l.ticks >= m.next_event or l.ticks >= l.frame_end) {
+            bus.sync_mikey(l);
+            if (m.vblank_count != l.vblank_seen) l.on_vblank();
+            return false;
+        }
+        m.now = l.ticks;
+        return true;
     }
 
     /// One instruction, interrupt sequence, trap, or stretch of sleep.
@@ -266,13 +358,18 @@ pub const Lynx = struct {
                 l.rom_entry(pc);
             } else {
                 if (irq) l.irq_count +%= 1;
-                const before = l.ticks;
+                // A step always charges bus cycles (at least the opcode
+                // fetch, or the interrupt sequence's cycles).
                 l.cpu.step(l);
-                // A step always charges bus cycles; this keeps a CPU that
-                // charged none (the M1 stub) from hanging the frame loop.
-                if (l.ticks == before) l.ticks += bus.Ticks.fetch;
             }
         }
+        l.after_step();
+    }
+
+    /// After an instruction: Mikey caught up (its events up to now), the
+    /// video DMA and refresh it took charged, the display copied at
+    /// vertical blank.
+    fn after_step(l: *Lynx) void {
         bus.sync_mikey(l);
         if (l.mikey.steal != 0) {
             // Video DMA and refresh held the bus (core/mikey.zig).
@@ -293,6 +390,9 @@ pub const Lynx = struct {
 
     /// PC reached ROM space with the ROM mapped.
     fn rom_entry(l: *Lynx, pc: u16) void {
+        // The traps write Mikey's registers directly: bring its clock up
+        // first (`run_cpu` lets it lag).
+        bus.sync_mikey(l);
         switch (pc) {
             boot.entry_set_cart_block => l.trap_set_cart_block(),
             boot.entry_decrypt_frame => l.trap_decrypt_frame(),

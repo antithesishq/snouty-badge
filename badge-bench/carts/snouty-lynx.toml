@@ -4,6 +4,8 @@
 # raycaster, Apache-2.0): the Iris-mark splash (skipped by A on update 40),
 # then raycast's walls and HUD with the status strip (debug numbers on in
 # M1: fps, mean/worst step us, instructions and Suzy pixels per frame).
+# M1 perf pass (2026-10-01): busy mean 8.44 ms, p95 11.53, worst 12.96,
+# 0 of 300 over (was 16.69 / 22.23 / 24.29, 255 over; PLAN.md Status).
 budget_ms = 16.7
 frames = 300
 # carts/snouty-lynx/tools/scripts/m1_play.json: A skips the splash at 40,

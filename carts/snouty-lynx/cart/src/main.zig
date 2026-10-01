@@ -240,10 +240,10 @@ fn debug_led_max() callconv(.c) u32 {
 }
 /// Lynx 16 MHz ticks since reset, low and high 32 bits.
 fn debug_ticks_lo() callconv(.c) u32 {
-    return @truncate(lynx.ticks);
+    return @truncate(lynx.time());
 }
 fn debug_ticks_hi() callconv(.c) u32 {
-    return @truncate(lynx.ticks >> 32);
+    return @truncate(lynx.time() >> 32);
 }
 /// CPU instructions executed since reset (wraps).
 fn debug_instr_count() callconv(.c) u32 {

@@ -64,7 +64,12 @@
 //!   on, level triggered as on hardware. Timer 4 never sets bit 4 itself.
 //! - DISPCTL flip (bit 1) is ignored (M1).
 
-pub const ticks_never: u64 = ~@as(u64, 0);
+/// Mikey's clock type: 16 MHz ticks since `Lynx.tick_base` (core/lynx.zig
+/// rebases every clock by a multiple of 2^20 before it nears 2^31, so the
+/// timer prescaler edges, the refresh grid and the bus's 16-tick round
+/// robin keep their phase; 32-bit on the badge's 32-bit core).
+pub const Tick = u32;
+pub const ticks_never: Tick = ~@as(Tick, 0);
 
 /// Register offsets ($FD00 + x).
 pub const Reg = struct {
@@ -143,14 +148,14 @@ pub const last_visible_line: u8 = 101;
 pub const dma_ticks_per_burst: u32 = 28;
 pub const dma_bursts_per_line: u8 = 10;
 pub const dma_ticks_per_line: u32 = dma_bursts_per_line * dma_ticks_per_burst;
-pub const dma_burst_spacing: u64 = 192;
-pub const dma_active_ticks: u64 = 1920;
+pub const dma_burst_spacing: Tick = 192;
+pub const dma_active_ticks: Tick = 1920;
 /// Ticks from the start of a group's LCD transfer to its DMA burst (8-12
 /// in the captures).
-pub const dma_first_burst: u64 = 10;
+pub const dma_first_burst: Tick = 10;
 pub const refresh_ticks: u32 = 4;
-pub const refresh_period: u64 = 256;
-pub const refresh_phase: u64 = 0;
+pub const refresh_period: Tick = 256;
+pub const refresh_phase: Tick = 0;
 
 /// Count of timer 2 at which DISPADR is latched for the next frame: the
 /// start of the third vertical blank line (timer 2 reloads to 104 at the
@@ -166,9 +171,9 @@ pub const Timer = struct {
     value: u8 = 0,
     done: bool = false,
     /// Tick of the next underflow of a running unlinked timer, else never.
-    expire: u64 = ticks_never,
+    expire: Tick = ticks_never,
 
-    fn shift(t: *const Timer) u6 {
+    fn shift(t: *const Timer) u5 {
         return @intCast(4 + @as(u32, t.ctla & Ctla.clock_mask));
     }
     fn linked(t: *const Timer) bool {
@@ -184,7 +189,7 @@ pub const Timer = struct {
 };
 
 /// The first refresh grid point at or after tick `t`.
-fn refresh_at_or_after(t: u64) u64 {
+fn refresh_at_or_after(t: Tick) Tick {
     const base = (t -| refresh_phase + refresh_period - 1) / refresh_period * refresh_period;
     return base + refresh_phase;
 }
@@ -194,18 +199,18 @@ pub const Mikey = struct {
     /// Pending interrupt bits (INTSET/INTRST read), without the UART level.
     intset: u8 = 0,
     /// Mikey's clock (= Lynx.ticks after every sync).
-    now: u64 = 0,
+    now: Tick = 0,
     /// Earliest of `timer_event` and `dma_next`.
-    next_event: u64 = 0,
+    next_event: Tick = 0,
     /// Earliest `expire` of the timers that are events.
-    timer_event: u64 = ticks_never,
+    timer_event: Tick = ticks_never,
     /// Tick of the next display burst or refresh (see `dma_ticks_per_burst`).
-    dma_next: u64 = 0,
+    dma_next: Tick = 0,
     /// Display bursts left on the current visible line (0: refresh).
     dma_bursts_left: u8 = 0,
     /// Tick at which the current line ends (timer 0's period from its
     /// start), for the refresh after the last burst.
-    dma_line_end: u64 = 0,
+    dma_line_end: Tick = 0,
     /// Bit i set: timer i is an event (see the file comment).
     event_mask: u8 = 0,
 
@@ -239,7 +244,7 @@ pub const Mikey = struct {
     /// MTEST): read back as stored.
     regs: [256]u8 = @splat(0),
 
-    pub fn reset(m: *Mikey, now: u64) void {
+    pub fn reset(m: *Mikey, now: Tick) void {
         m.* = .{ .now = now };
         m.dma_next = refresh_at_or_after(now);
         m.next_event = m.dma_next;
@@ -256,9 +261,19 @@ pub const Mikey = struct {
     }
 
     /// Advance the clock by `dt` ticks, running the timer events due.
-    pub inline fn advance(m: *Mikey, dt: u64) void {
+    pub inline fn advance(m: *Mikey, dt: Tick) void {
         m.now += dt;
         if (m.now >= m.next_event) m.run_events();
+    }
+
+    /// `advance` to tick `t`, with the common case in line: only video
+    /// DMA or refresh events due (the same steps as `run_events` for them).
+    pub inline fn advance_to(m: *Mikey, t: Tick) void {
+        m.now = t;
+        if (t < m.next_event) return;
+        if (m.timer_event <= t) return m.run_events();
+        while (m.dma_next <= t) m.dma_event(m.dma_next);
+        m.next_event = @min(m.timer_event, m.dma_next);
     }
 
     fn run_events(m: *Mikey) void {
@@ -280,16 +295,16 @@ pub const Mikey = struct {
     }
 
     /// Underflow of a running unlinked timer at its `expire` tick `at`.
-    fn expire_timer(m: *Mikey, i: u3, at: u64) void {
+    fn expire_timer(m: *Mikey, i: u3, at: Tick) void {
         const t = &m.timers[i];
         t.value = 0;
         t.expire = ticks_never;
         m.underflow(i, at);
-        if (t.free_running()) t.expire = at + ((@as(u64, t.value) + 1) << t.shift());
+        if (t.free_running()) t.expire = at + ((@as(Tick, t.value) + 1) << t.shift());
     }
 
     /// Borrow out of timer i: done, interrupt, reload, clock the next one.
-    fn underflow(m: *Mikey, i: u3, at: u64) void {
+    fn underflow(m: *Mikey, i: u3, at: Tick) void {
         const t = &m.timers[i];
         t.done = t.ctla & Ctla.reset_done == 0;
         if (t.ctla & Ctla.irq_enable != 0 and i != 4) m.intset |= @as(u8, 1) << i;
@@ -304,11 +319,11 @@ pub const Mikey = struct {
     /// Latch DISPADR on the third vertical blank line, and charge the bus
     /// time video DMA (visible lines with DISPCTL bit 0) or DRAM refresh
     /// (otherwise) takes from the CPU over this line (`steal`).
-    fn line_start(m: *Mikey, at: u64) void {
+    fn line_start(m: *Mikey, at: Tick) void {
         const line = m.timers[2].value;
         if (line == dispadr_latch_line) m.dispadr_latched = m.dispadr;
         const t0 = &m.timers[0];
-        const len = (@as(u64, t0.backup) + 1) << t0.shift();
+        const len = (@as(Tick, t0.backup) + 1) << t0.shift();
         m.dma_line_end = at + len;
         if (m.dispctl & 1 != 0 and line <= last_visible_line) {
             if (line == last_visible_line) {
@@ -324,7 +339,7 @@ pub const Mikey = struct {
     }
 
     /// A display burst or a refresh is due at `at`.
-    fn dma_event(m: *Mikey, at: u64) void {
+    pub fn dma_event(m: *Mikey, at: Tick) void {
         if (m.dma_bursts_left != 0 and m.dispctl & 1 != 0) {
             m.steal += dma_ticks_per_burst;
             m.steal_burst = true;
@@ -340,7 +355,7 @@ pub const Mikey = struct {
     }
 
     /// A clock from the previous timer of the chain.
-    fn borrow_in(m: *Mikey, i: u3, at: u64) void {
+    fn borrow_in(m: *Mikey, i: u3, at: Tick) void {
         const t = &m.timers[i];
         if (!t.linked() or !t.running()) return;
         if (t.value > 0) {
@@ -389,7 +404,7 @@ pub const Mikey = struct {
         } else {
             // Reloading, or a one-shot held running by RESET_DONE (its
             // period is then one source clock: it stays at 0).
-            const v: u64 = if (t.ctla & Ctla.reload != 0) t.backup else 0;
+            const v: Tick = if (t.ctla & Ctla.reload != 0) t.backup else 0;
             const p = (v + 1) << t.shift();
             const n = (m.now - t.expire) / p + 1;
             t.expire += n * p;
@@ -426,7 +441,7 @@ pub const Mikey = struct {
         if (!t.free_running()) return;
         const s = t.shift();
         const next_edge = ((m.now >> s) + 1) << s;
-        t.expire = next_edge + (@as(u64, t.value) << s);
+        t.expire = next_edge + (@as(Tick, t.value) << s);
     }
 
     fn timer_write(m: *Mikey, addr: u8, v: u8) void {
@@ -524,8 +539,25 @@ pub const Mikey = struct {
         }
     }
 
+    /// Move every clock value back by `d` (a multiple of 2^20, at most
+    /// `now`): Lynx.rebase. The quiet timers are caught up first (as any
+    /// read would), so every `expire` left is in the future; the only
+    /// value that may lie further back, `dma_line_end`, clamps at 0 and is
+    /// not read before the next line start sets it.
+    pub fn rebase(m: *Mikey, d: Tick) void {
+        m.settle_all();
+        m.now -= d;
+        m.next_event -|= d;
+        if (m.timer_event != ticks_never) m.timer_event -|= d;
+        m.dma_next -|= d;
+        m.dma_line_end -|= d;
+        for (&m.timers) |*t| {
+            if (t.expire != ticks_never) t.expire -|= d;
+        }
+    }
+
     /// Ticks from now to the next timer event (ticks_never if none).
-    pub fn ticks_to_event(m: *const Mikey) u64 {
+    pub fn ticks_to_event(m: *const Mikey) Tick {
         if (m.timer_event == ticks_never) return ticks_never;
         return m.timer_event - m.now;
     }

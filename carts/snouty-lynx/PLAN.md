@@ -74,7 +74,8 @@ badge-bench numbers recorded against SPEC.md section 8, tag
   struct with `pub const fetch = bus.fetch;` etc.). Tick accounting is the
   bus's: `fetch` adds 4 (5 when MAPCTL bit 7 is set), RAM `read`/`write` 5,
   Mikey/Suzy writes 5, Suzy reads 9 (SPEC.md section 3: 9-15; one value is
-  fine), RCART reads 15, all into `Lynx.ticks: u64`.
+  fine), RCART reads 15, all into `Lynx.ticks` (u64 at first; u32 from
+  `tick_base` since the M1 perf pass, `time()` is the 64-bit clock).
 - Memory map and MAPCTL (SPEC.md 3, 20): `$FC00-$FCFF` Suzy unless bit 0;
   `$FD00-$FDFF` Mikey unless bit 1; `$FE00-$FFF7` ROM unless bit 2;
   `$FFFA-$FFFF` vectors unless bit 3; `$FFF8` always RAM; `$FFF9` MAPCTL
@@ -275,6 +276,43 @@ file comment for the register map. Everything Suzy touches is in `ram`.
 
 ## Status
 
+- 2026-10-01: M1 perf pass on `lynx/m1-perf` (host-side speed only: same
+  hashes, tick counts, IRQs, pixels and sleep ticks at every 25th update
+  of every lynx-tests cart, raycast every 10th, Hard Drivin' every 50th
+  to update 1299; also with the clock rebase forced every 2^21 ticks;
+  SingleStepTests 240,000 pass; 90 host tests). Calibrated badge-bench,
+  RAM ELF, raycast m1_play.json, busy ms per 16.7 ms frame:
+
+  | step (commit)                                   | mean  | p95   | worst | over |
+  |-------------------------------------------------|-------|-------|-------|------|
+  | before (234f47d)                                | 16.69 | 22.23 | 24.29 | 255  |
+  | run loop skips Mikey catch-up between events    | 14.90 | 18.87 | 20.64 | 167  |
+  | Suzy row stats: two counters, no per-row memcpy | 12.77 | 18.02 | 19.36 | 36   |
+  | exec: one compile-time case per opcode          | 11.74 | 15.93 | 17.21 | 2    |
+  | step + exec inlined into the run loop           | 10.70 | 13.99 | 15.11 | 0    |
+  | bus clock and Mikey times in 32 bits            | 9.52  | 11.94 | 13.33 | 0    |
+  | Suzy replays a line's spans on its next rows    | 8.86  | 12.27 | 13.69 | 0    |
+  | display: pair table, two rows per word store    | 8.71  | 12.10 | 13.52 | 0    |
+  | DMA/refresh catch-up in the run loop            | 8.53  | 11.55 | 12.99 | 0    |
+  | Mikey advance_to (sprite-run sleep loop)        | 8.44  | 11.53 | 12.96 | 0    |
+
+  Hot functions per frame, before -> after: run_frame (CPU loop +
+  display) 808k -> run_cpu 617k + run_frame 38k (display 64k -> 42k);
+  high_write (Suzy) 744k -> 511k; exec 461k -> inlined; memcpy 192k
+  (1,278 calls) -> 7k (3.5: the vblank copy); run_events 88k -> 10k;
+  alu/branch/rmw/bbx 130k -> inlined. Per unit: CPU ~99 host cycles per
+  instruction (SPEC 8: 60), Suzy ~74 per pixel written (20: raycast's
+  rows are ~5 px wide, per-row cost dominates), display 0.25 ms. Hard
+  Drivin' (local romfs, hd_drive.json, 1,300 updates incl. menus): mean
+  22.14 -> 11.59, p95 25.79 -> 14.58, worst 35.48 -> 20.07 (frame 1088),
+  1,218 -> 2 frames over; CPU-bound (11.7k instructions a frame, run_cpu
+  1.24M cycles). Tried and dropped: sampling the IRQ line once per run
+  (fewer instructions, more cycles). Left for M4: the CPU loop (regs, PC
+  and ticks live in memory: a register-resident tick count or PC would
+  need a Bus contract change), Suzy's decoded-row cost (~235 cycles; the
+  literal-bus udiv, per-type row functions), sprites4 DMA EXP W24 (needs
+  a change to the DMA steal charged inside sprite runs: emulated timing,
+  not done here).
 - 2026-10-01: M1 contract written, prep commit with the frozen stubs on
   `lynx/m1`; tracks A (CPU), B (Suzy), C (machine) started.
 - 2026-09-29: SPEC.md and this plan drafted; waiting on section 18.

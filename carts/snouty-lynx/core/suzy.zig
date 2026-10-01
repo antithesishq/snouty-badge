@@ -181,6 +181,10 @@ const flag_collide: u8 = 2;
 /// Pen E of the shadow types: collision read but kept (timing only).
 const flag_preserve: u8 = 4;
 
+/// Test knob: false decodes every row (no replay of the previous row's
+/// spans, `Draw.row`); the result must be the same either way.
+pub var replay_rows: bool = true;
+
 pub const Suzy = struct {
     /// SPRSYS ($FC92) as last written (bit 7 signed math, 6 accumulate, 5
     /// no collide, 4 vstretch, 3 lefthand, 2 clear unsafe, 1 sprite to stop).
@@ -209,7 +213,7 @@ pub const Suzy = struct {
     /// Bus tick at which the running math operation completes (SPRSYS bit
     /// 7 reads 1 before it). Only `write_at`/`read_at` see time; plain
     /// `write`/`read` behave as if the math were instant.
-    math_done: u64 = 0,
+    math_done: u32 = 0,
     sprctl0: u8 = 0,
     sprctl1: u8 = 0,
     sprcoll: u8 = 0,
@@ -224,12 +228,12 @@ pub const Suzy = struct {
 
     /// A register read at $FC00 + addr (never $B0-$B3), math instant.
     pub fn read(s: *const Suzy, a: u8) u8 {
-        return s.read_at(a, std.math.maxInt(u64));
+        return s.read_at(a, std.math.maxInt(u32));
     }
 
     /// A register read at bus tick `now` (SPRSYS bit 7 shows a math
     /// operation still running).
-    pub fn read_at(s: *const Suzy, a: u8, now: u64) u8 {
+    pub fn read_at(s: *const Suzy, a: u8, now: u32) u8 {
         if (a < 0x30 or (a >= 0x40 and a < 0x70)) {
             const w = s.regs[(a & 0x3F) >> 1];
             return if (a & 1 == 0) @truncate(w) else @truncate(w >> 8);
@@ -243,7 +247,7 @@ pub const Suzy = struct {
         };
     }
 
-    fn sprsys_read(s: *const Suzy, now: u64) u8 {
+    fn sprsys_read(s: *const Suzy, now: u32) u8 {
         var v: u8 = s.sprsys & 0x1A; // vstretch, lefthand, stop request
         if (now < s.math_done) v |= 0x80;
         if (s.math_warning) v |= 0x40;
@@ -261,7 +265,7 @@ pub const Suzy = struct {
     /// A register write at bus tick `now`: a math operation started here
     /// reads as running in SPRSYS bit 7 until its documented duration has
     /// passed (its results are visible at once).
-    pub fn write_at(s: *Suzy, a: u8, v: u8, now: u64) void {
+    pub fn write_at(s: *Suzy, a: u8, v: u8, now: u32) void {
         if (a < 0x30 or (a >= 0x40 and a < 0x70)) {
             if (now < s.math_done) s.unsafe_access = true;
             const i = (a & 0x3F) >> 1;
@@ -289,6 +293,11 @@ pub const Suzy = struct {
             },
             else => {},
         }
+    }
+
+    /// The bus clock moved back by `d` (core/lynx.zig `rebase`).
+    pub fn rebase(s: *Suzy, d: u32) void {
+        s.math_done -|= d;
     }
 
     /// A sprite list is waiting for the bus (SPRGO bit 0 and SUZYBUSEN).
@@ -323,7 +332,7 @@ pub const Suzy = struct {
     }
 
     /// What a write to math address `a` ($40-$6F, already stored) starts.
-    fn math_command(s: *Suzy, a: u8, now: u64) void {
+    fn math_command(s: *Suzy, a: u8, now: u32) void {
         switch (a) {
             addr.mathc => if (s.sprsys & 0x80 != 0) {
                 s.sign_cd_neg = s.sign_convert(addr.mathd);
@@ -345,7 +354,7 @@ pub const Suzy = struct {
         }
     }
 
-    fn math_started(s: *Suzy, now: u64, ticks: u32) void {
+    fn math_started(s: *Suzy, now: u32, ticks: u32) void {
         s.unsafe_access = true; // lynx-tests math: set after every operation
         s.math_done = now +| ticks;
     }
@@ -481,6 +490,7 @@ pub const Suzy = struct {
             .xor = kind == 6,
             .deposit = !no_collide and deposit_types & (@as(u8, 1) << kind) != 0,
             .coll_num = s.sprcoll & 0x0F,
+            .track_vid = kind == 6 or s.sprctl0 >> 6 == 0,
         };
         for (0..16) |k| {
             const pen = s.pen_map[k];
@@ -556,8 +566,7 @@ pub const Suzy = struct {
                     if (y >= 0 and y < screen_height) {
                         const yo: u16 = @intCast(y);
                         const x: i32 = @as(i32, @as(i16, @bitCast(hposstrt -% hoff))) + hadj;
-                        d.draw_row(sprdline, off - 1, yo, x, dx, acc0, hsiz);
-                        d.ticks += row_ticks(&d.rs, d.bpp, d.literal) + transform;
+                        d.ticks += d.row(sprdline, off - 1, yo, x, dx, acc0, hsiz) + transform;
                     } else {
                         // A row before the screen, moving towards it.
                         d.ticks += tick_cost.row_clipped;
@@ -620,14 +629,10 @@ fn row_ticks(rs: *RowStats, bpp: u5, literal: bool) u32 {
     } else {
         t = (t + c.packet * rs.packets + c.packed_literal_pen * rs.lit_pens) -| c.packed_row_credit;
     }
-    const v = &rs.vid;
-    const k = &rs.col;
-    const light: u32 = @as(u32, k.full[1]) + k.full[4] + k.full[5] + k.part[1] + k.part[4] + k.part[5];
-    const detect: u32 = @as(u32, k.full[2]) + k.full[3] + k.full[6] + k.full[7] +
-        k.part[2] + k.part[3] + k.part[6] + k.part[7];
+    const light: u32 = rs.col.other;
+    const detect: u32 = rs.col.hit;
     if (light + detect != 0) t += c.coll_row + c.coll_group_light * light + c.coll_group_detect * detect;
-    const xor: u32 = @as(u32, v.full[4]) + v.full[5] + v.full[6] + v.full[7] +
-        v.part[4] + v.part[5] + v.part[6] + v.part[7];
+    const xor: u32 = rs.vid.hit;
     return t + c.xor_byte * xor;
 }
 
@@ -665,57 +670,71 @@ fn rd16(ram: *const [0x10000]u8, a: u16) u16 {
 /// Units of the row a span touches, classified by what touched them: video
 /// bytes (two pixels) or collision groups (eight pixels, screen aligned).
 /// Spans arrive in drawing order and abut, so only the unit shared with
-/// the previous span is pending; the others are counted at once.
-const Units = struct {
-    shift: u5,
-    cur: i32 = no_unit,
-    mask: u8 = 0,
-    cov: u8 = 0,
-    /// Units by class mask: completely covered, and partly (row ends).
-    full: [8]u16 = @splat(0),
-    part: [8]u16 = @splat(0),
-    /// The last unit flushed was partly covered.
-    last_part: bool = false,
+/// the previous span is pending; the others are counted at once. The tick
+/// model only needs two counts per row: the units whose class mask has
+/// bit `key` (`hit`) and the others (`other`); and for video bytes whether
+/// the last one was partly covered.
+fn Units(comptime shift: u5, comptime key: u8) type {
+    return struct {
+        const Self = @This();
+        cur: i32 = no_unit,
+        mask: u8 = 0,
+        cov: u8 = 0,
+        hit: u16 = 0,
+        other: u16 = 0,
+        /// The last unit flushed was partly covered.
+        last_part: bool = false,
 
-    const no_unit: i32 = std.math.minInt(i32);
+        const no_unit: i32 = std.math.minInt(i32);
 
-    fn merge(u: *Units, unit: i32, m: u8, n: i32) void {
-        if (unit != u.cur) {
-            u.flush();
-            u.cur = unit;
-            u.mask = m;
-            u.cov = @intCast(n);
-        } else {
-            u.mask |= m;
-            u.cov += @intCast(n);
+        inline fn clear(u: *Self) void {
+            u.cur = no_unit;
+            u.hit = 0;
+            u.other = 0;
+            u.last_part = false;
         }
-    }
 
-    fn flush(u: *Units) void {
-        if (u.cur == no_unit) return;
-        u.last_part = u.cov < (@as(u8, 1) << @intCast(u.shift));
-        if (u.last_part) u.part[u.mask] += 1 else u.full[u.mask] += 1;
-        u.cur = no_unit;
-    }
-
-    /// Pixels a..b-1 (a < b) with class bit(s) `m`, drawn rightwards or not.
-    fn add(u: *Units, a: i32, b: i32, m: u8, right: bool) void {
-        const sh = u.shift;
-        const lo = a >> sh;
-        const hi = (b - 1) >> sh;
-        if (lo == hi) return u.merge(lo, m, b - a);
-        const n_lo = ((lo + 1) << sh) - a;
-        const n_hi = b - (hi << sh);
-        if (right) {
-            u.merge(lo, m, n_lo);
-            u.merge(hi, m, n_hi);
-        } else {
-            u.merge(hi, m, n_hi);
-            u.merge(lo, m, n_lo);
+        inline fn count(u: *Self, m: u8, n: u16) void {
+            if (m & key != 0) u.hit += n else u.other += n;
         }
-        u.full[m] += @intCast(hi - lo - 1);
-    }
-};
+
+        inline fn merge(u: *Self, unit: i32, m: u8, n: i32) void {
+            if (unit != u.cur) {
+                u.flush();
+                u.cur = unit;
+                u.mask = m;
+                u.cov = @intCast(n);
+            } else {
+                u.mask |= m;
+                u.cov += @intCast(n);
+            }
+        }
+
+        fn flush(u: *Self) void {
+            if (u.cur == no_unit) return;
+            u.last_part = u.cov < (@as(u8, 1) << shift);
+            u.count(u.mask, 1);
+            u.cur = no_unit;
+        }
+
+        /// Pixels a..b-1 (a < b) with class bit(s) `m`, drawn rightwards or not.
+        fn add(u: *Self, a: i32, b: i32, m: u8, right: bool) void {
+            const lo = a >> shift;
+            const hi = (b - 1) >> shift;
+            if (lo == hi) return u.merge(lo, m, b - a);
+            const n_lo = ((lo + 1) << shift) - a;
+            const n_hi = b - (hi << shift);
+            if (right) {
+                u.merge(lo, m, n_lo);
+                u.merge(hi, m, n_hi);
+            } else {
+                u.merge(hi, m, n_hi);
+                u.merge(lo, m, n_lo);
+            }
+            u.count(m, @intCast(hi - lo - 1));
+        }
+    };
+}
 
 /// What one destination row asked of the engine (the tick model's input).
 const RowStats = struct {
@@ -732,11 +751,27 @@ const RowStats = struct {
     edge_stop: bool = false,
     /// The row could not reach the screen and was not decoded.
     superclip: bool = false,
-    /// Video bytes: bit 0 written, bit 1 read (transparent), bit 2 XOR.
-    vid: Units = .{ .shift = 1 },
+    /// Video bytes: bit 0 written, bit 1 read (transparent), bit 2 XOR;
+    /// `hit` counts the XORed ones. Only tracked when the tick model needs
+    /// it (`Draw.track_vid`).
+    vid: Units(1, vid_xor) = .{},
     /// Collision groups: bit 0 written, bit 1 read and written (the
-    /// depository types), bit 2 read only (pen E of the shadow types).
-    col: Units = .{ .shift = 3 },
+    /// depository types), bit 2 read only (pen E of the shadow types);
+    /// `hit` counts the detecting ones, `other` the light ones.
+    col: Units(3, col_detect) = .{},
+
+    /// Ready for the next row (field by field: a struct copy here was a
+    /// memcpy per row on the badge).
+    inline fn clear(rs: *RowStats) void {
+        rs.pens = 0;
+        rs.outs = 0;
+        rs.packets = 0;
+        rs.lit_pens = 0;
+        rs.edge_stop = false;
+        rs.superclip = false;
+        rs.vid.clear();
+        rs.col.clear();
+    }
 };
 
 const vid_write: u8 = 1;
@@ -756,6 +791,9 @@ const Draw = struct {
     xor: bool,
     deposit: bool,
     coll_num: u8,
+    /// The tick model reads the row's video bytes (XOR sprites, and the
+    /// 1 bpp partial-byte tail): track them per span.
+    track_vid: bool,
     /// Pen index -> pen number << 4 | flags (the palette folded in).
     pen_flags: [16]u8 = @splat(0),
     fred: u8 = 0,
@@ -767,6 +805,62 @@ const Draw = struct {
     ticks: u32 = 0,
     rs: RowStats = .{},
 
+    /// The last decoded row, for the next row of the same source line
+    /// (`row`): its inputs, its spans and its cost. `cache_ok` is cleared
+    /// when a row's writes may have changed the source bytes.
+    cache_ok: bool = false,
+    c_data: u16 = 0,
+    c_nbytes: u8 = 0,
+    c_hsiz: u16 = 0,
+    c_x: i32 = 0,
+    c_dx: i32 = 0,
+    c_acc: u32 = 0,
+    c_cost: u32 = 0,
+    n_spans: u32 = 0,
+    spans: [screen_width]Span = undefined,
+
+    const Span = struct { a: u8, b: u8, pen_index: u8 };
+
+    /// One destination row from a source line (`draw_row`), returning its
+    /// cost in `tick_cost.unit`s. A row with the same inputs as the last
+    /// decoded one (the next row of a source line drawn taller than one
+    /// row, unless stretch or tilt change it) decodes to the same spans
+    /// and the same statistics, so those are replayed onto the new line
+    /// instead: the result in RAM and the ticks are the same as decoding
+    /// it again, as long as the source bytes are unchanged. A row is not
+    /// replayed when its own line (video or collision) holds source bytes
+    /// (the decode would read what it has just written), and the cache is
+    /// dropped after a row that wrote over them.
+    fn row(d: *Draw, data: u16, nbytes: u8, y: u16, x_start: i32, dx: i32, acc0: u32, hsiz: u16) u32 {
+        var cost: u32 = undefined;
+        const vline = d.vidbas +% y *% line_bytes;
+        const cline = d.collbas +% y *% line_bytes;
+        if (replay_rows and d.cache_ok and data == d.c_data and nbytes == d.c_nbytes and x_start == d.c_x and
+            dx == d.c_dx and acc0 == d.c_acc and hsiz == d.c_hsiz and
+            !overlaps(data, nbytes, vline, line_bytes) and !overlaps(data, nbytes, cline, line_bytes))
+        {
+            d.last_vline = vline;
+            d.last_cline = cline;
+            for (d.spans[0..d.n_spans]) |sp| _ = d.fill_pixels(vline, cline, sp.a, sp.b, sp.pen_index);
+            cost = d.c_cost;
+        } else {
+            d.n_spans = 0;
+            d.draw_row(data, nbytes, y, x_start, dx, acc0, hsiz);
+            cost = row_ticks(&d.rs, d.bpp, d.literal);
+            d.c_data = data;
+            d.c_nbytes = nbytes;
+            d.c_x = x_start;
+            d.c_dx = dx;
+            d.c_acc = acc0;
+            d.c_hsiz = hsiz;
+            d.c_cost = cost;
+            d.cache_ok = true;
+        }
+        if (d.n_spans != 0 and (overlaps(data, nbytes, vline, line_bytes) or
+            overlaps(data, nbytes, cline, line_bytes))) d.cache_ok = false;
+        return cost;
+    }
+
     /// Decode one source line (`nbytes` data bytes at `data`) into one
     /// destination row `y`, starting at screen column `x` and stepping `dx`.
     fn draw_row(d: *Draw, data: u16, nbytes: u8, y: u16, x_start: i32, dx: i32, acc0: u32, hsiz: u16) void {
@@ -774,8 +868,8 @@ const Draw = struct {
         const cline = d.collbas +% y *% line_bytes;
         d.last_vline = vline;
         d.last_cline = cline;
-        d.rs = .{};
         const rs = &d.rs;
+        rs.clear();
 
         const ram = d.ram;
         const bpp = d.bpp;
@@ -887,27 +981,45 @@ const Draw = struct {
         }
     }
 
-    /// Pixels a..b-1 of the row with one pen index: video then collision.
+    /// Pixels a..b-1 of the row with one pen index: video then collision,
+    /// recorded for `row`'s replay, and counted for the tick model.
     fn fill(d: *Draw, vline: u16, cline: u16, a: u16, b: u16, pen_index: u8, right: bool) void {
-        const f = d.pen_flags[pen_index];
-        const n: u32 = b - a;
+        d.spans[d.n_spans] = .{ .a = @intCast(a), .b = @intCast(b), .pen_index = pen_index };
+        d.n_spans += 1;
+        const f = d.fill_pixels(vline, cline, a, b, pen_index);
         if (f & flag_opaque != 0) {
-            const pen = f >> 4;
-            if (d.xor) xor_nibbles(d.ram, vline, a, b, pen) else set_nibbles(d.ram, vline, a, b, pen);
-            d.pixels += n;
-            d.rs.vid.add(a, b, if (d.xor) vid_xor else vid_write, right);
-        } else {
+            if (d.track_vid) d.rs.vid.add(a, b, if (d.xor) vid_xor else vid_write, right);
+        } else if (d.track_vid) {
             d.rs.vid.add(a, b, vid_read, right);
         }
         if (f & flag_collide != 0) {
-            const old = max_set_nibbles(d.ram, cline, a, b, d.coll_num);
-            if (d.deposit and old > d.fred) d.fred = old;
             d.rs.col.add(a, b, if (d.deposit) col_detect else col_write, right);
         } else if (f & flag_preserve != 0) {
             d.rs.col.add(a, b, col_preserve, right);
         }
     }
+
+    /// The RAM side of `fill`; returns the pen's flags.
+    inline fn fill_pixels(d: *Draw, vline: u16, cline: u16, a: u16, b: u16, pen_index: u8) u8 {
+        const f = d.pen_flags[pen_index];
+        if (f & flag_opaque != 0) {
+            const pen = f >> 4;
+            if (d.xor) xor_nibbles(d.ram, vline, a, b, pen) else set_nibbles(d.ram, vline, a, b, pen);
+            d.pixels += b - a;
+        }
+        if (f & flag_collide != 0) {
+            const old = max_set_nibbles(d.ram, cline, a, b, d.coll_num);
+            if (d.deposit and old > d.fred) d.fred = old;
+        }
+        return f;
+    }
 };
+
+/// Do the circular (mod 64 KB) byte ranges [a, a + la) and [b, b + lb)
+/// share a byte? (la, lb >= 1.)
+fn overlaps(a: u16, la: u16, b: u16, lb: u16) bool {
+    return a -% b < lb or b -% a < la;
+}
 
 /// Pixels a..b-1 (a < b) of the line at `base` set to `v` (0..15).
 fn set_nibbles(ram: *[0x10000]u8, base: u16, a: u16, b: u16, v: u8) void {
