@@ -1030,6 +1030,44 @@ hitbox center is at (x + 36, y + 12)).
 - `debug_grant(n)` is NOT provided: scripts collect real crates (the
   first beetle dies at a known tick under constant fire).
 
+### Deviations (A)
+
+Track A, 2026-10-02. Choices where the contract was silent or ambiguous:
+
+- `Bolt` carries one field beyond the contract, `gain: f32`: a seeker's
+  steering gain is fixed at spawn from the level then, so a crate collected
+  while seekers are in flight does not retune them.
+- Bolt positions: (x, y) is the top-left of the 16x8 cell for zaps and
+  seekers (both spawn at (x + 28, y + 8), so their centers are the nose,
+  (x + 36, y + 12)) and of the 24x4 box for beams ((x + 24, y + 10) plus the
+  level's y offset). The drawn beam (1-3 px) is centered in the 4 px box;
+  its "coral flicker" is the tail third drawn Coral on alternate 2-tick
+  frames. `bullets.bolt_hitbox(b)` gives each kind's box (the name
+  `hitbox` is the enemy bullets').
+- BISECT initial angles "alternating +-10/256 times i" read as a symmetric
+  fan: 0, +10, -10, +20, -20 (1/256 turns) for seekers 1..5.
+- Angle 0 is exactly (speed, 0) (no table lookup), so the level-1 zap moves
+  bit-for-bit as the M5 zapper did; the L5 jitter can also land on 0.
+- `trail[t % 80].fired` means the ship triggered a volley that tick, even
+  if the full pool dropped every bolt of it. Ghost k fires only once
+  `game_tick >= 24k` (no history to replay before that) and is drawn at
+  the trail entry of the tick just simulated (`game_tick - 1 - 24k`), i.e.
+  where it last fired from, in the ship's current pose, farthest first.
+- The drop cursor and the crate count live in `world.w.drops`
+  (`pickups.Drops{ seq, count }`), the crates in `world.w.pickups`. The
+  cursor advances only when a crate actually spawns, so a drop lost to a
+  full pool skips no kind of the sequence.
+- Collection is tested inside `pickups.update` (after the crates move,
+  before `collide.run`); a crate dropped by this tick's kill first moves and
+  can first be collected on the next tick. The cell-top clamp to [16, 104]
+  also applies to the spawn position. A crate that grants nothing more
+  scores 100 + 500 = 600 (the +100 is on every collection).
+- Beam pierce is per enemy SLOT: an enemy spawned into a slot that the
+  beam already damaged is skipped by that beam too (harmless; beams live
+  at most ~23 ticks).
+- `FLAKY, RETRYING` is drawn in PLAYING only (as `GO!`), and the shield
+  icon is drawn whenever the shield is up, also while the ship blinks.
+
 ### Verification for M6
 
 - `tools/check.sh` all green; `debug_history_check == 0` on frames with
