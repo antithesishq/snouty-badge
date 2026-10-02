@@ -1,6 +1,6 @@
 //! Emulator menu (SPEC.md sections 5 and 12), adapted from Snouty Gear's
 //! frontend/menu.zig: the Genesis rows (Buttons is a six-way remap, Pick
-//! ROM for a drive with several files), 9 px rows so nine of them fit,
+//! ROM for a drive with several files), 8 px rows so nine of them and a footer fit,
 //! and the header facts on About. Opened by holding Select for 500 ms
 //! (frontend/input.zig), drawn over the frozen game frame. The core is not
 //! stepped while it is open. One update is 1/30 s, as everywhere in this
@@ -32,8 +32,10 @@
 //! repeat only starts from a press). The panel's bottom line
 //! (`scrub_line_y`) reads "Scrub: live / 3.5s" or "Scrub: -1.5 / 3.5s"
 //! (position behind live / history held), dim while there is no history,
-//! "Scrub: no memory" when the arena had no room. Resuming from a scrubbed
-//! position plays on from there and drops the future. After a scrub step
+//! "Scrub: no memory" when the arena had no room; on Resume at the live
+//! position it names the action instead, "Left/Right: rewind" or "Rewind:
+//! no history", and a footer reads "B: back to game" (lib/hint.zig,
+//! review 2026-10-01 UX-05). Resuming from a scrubbed position plays on from there and drops the future. After a scrub step
 //! the panel gives way to that line in a bar at the bottom (`scrub_view`)
 //! so the restored frame, drawn by `rewind.step`, is visible; Left/Right
 //! keep scrubbing, B or a Select tap resume, and Up/Down/A bring the full
@@ -54,6 +56,7 @@ const audio = @import("audio.zig");
 const romsrc = @import("romsrc.zig");
 const text = @import("text.zig");
 const rewind = @import("rewind.zig");
+const hint = @import("hint");
 
 pub const version = "0.4.0-m4";
 
@@ -233,17 +236,25 @@ const band_h = 36;
 const panel_x = 4;
 /// M4: the panel starts right under the band and runs to the bottom edge,
 /// rows 2 px below its frame, so nine rows and the bottom line fit (M3:
-/// y 40, 86 px, rows 3 px in, eight rows).
+/// y 40, 86 px, rows 3 px in, eight rows). Rows are 8 px apart since the
+/// footer (review 2026-10-01 UX-05) took the last 9.
 const panel_y = band_h;
 const panel_w = cart.screen_width - 2 * panel_x;
 const panel_h = cart.screen_height - panel_y;
-/// 9 px rows (Gear: 10) so nine rows and the bottom line fit the panel.
-const row_h = 9;
+/// 8 px rows, the font's own line pitch (Gear: 10, M4: 9), so nine rows,
+/// the bottom line and the footer fit the panel. The cursor bar is one
+/// pixel taller (`bar_rows`), from a pixel above the row's glyphs to its
+/// descenders.
+const row_h = 8;
+const bar_rows = row_h + 1;
 const text_x = panel_x + 4;
 const first_row_y = panel_y + 2;
-/// The panel's bottom line (y 119): "B: back" on About, "Scrub: ..." on
-/// the rows. Fixed below the ninth row even when Pick ROM is hidden.
+/// The panel's bottom line (y 110): "B: back" on About, "Scrub: ..." on
+/// the rows, or on Resume the rewind hint (`hint.resume_line`). Fixed
+/// below the ninth row even when Pick ROM is hidden.
 pub const scrub_line_y = first_row_y + item_count * row_h;
+/// The footer (y 119): how to leave the menu (`hint.back`).
+const footer_y = scrub_line_y + 9;
 /// The scrub bar shown after a step (`scrub_view`): the panel's bottom
 /// strip, so the panel hides it entirely when it comes back.
 const bar_h = 10;
@@ -254,8 +265,8 @@ const screen_cols = cart.screen_width / 8;
 /// Characters that fit inside the panel at the row text indent.
 const panel_cols = (panel_w - (text_x - panel_x) - 2) / 8;
 
-const band_color: cart.DisplayColor = .rgb(0x0A1A50);
-const title_color: cart.DisplayColor = .rgb(0xFFFFFF);
+pub const band_color: cart.DisplayColor = .rgb(0x0A1A50);
+pub const title_color: cart.DisplayColor = .rgb(0xFFFFFF);
 const name_color: cart.DisplayColor = .rgb(0xFFD040);
 const tagline_color: cart.DisplayColor = .rgb(0xB8C8F0);
 const panel_color: cart.DisplayColor = .rgb(0x000000);
@@ -322,15 +333,18 @@ fn draw(md: *const core.Md) void {
         const item: Item = @fromBackingInt(@intCast(i));
         if (!visible(item)) continue;
         if (item == cursor) {
-            cart.rect(.{ .x = panel_x + 2, .y = y - 1, .width = panel_w - 4, .height = row_h, .fill_color = cursor_color });
+            cart.rect(.{ .x = panel_x + 2, .y = y - 1, .width = panel_w - 4, .height = bar_rows, .fill_color = cursor_color });
             text.draw(label(item), text_x, y, cursor_text_color, cursor_color);
         } else {
             text.draw(label(item), text_x, y, row_color, panel_color);
         }
         y += row_h;
     }
-    const live = rewind.capacity_slots() != 0 and rewind.history_frames() != 0;
-    text.draw(scrub_text(&buf), text_x, scrub_line_y, if (live) row_color else dim_color, panel_color);
+    const has_memory = rewind.capacity_slots() != 0;
+    const live = has_memory and rewind.history_frames() != 0;
+    const bottom = hint.resume_line(cursor == .resume_game, has_memory, rewind.depth_frames(), rewind.history_frames()) orelse scrub_text(&buf);
+    text.draw(bottom, text_x, scrub_line_y, if (live) row_color else dim_color, panel_color);
+    text.draw(hint.back, text_x, footer_y, dim_color, panel_color);
 }
 
 /// The scrub line for the current position, or "Scrub: no memory" when
@@ -500,6 +514,8 @@ fn check_width(comptime s: []const u8, comptime cols: usize) void {
 comptime {
     if (panel_cols != 18) @compileError("panel_cols changed: recheck the layout");
     if (scrub_line_y + row_h > panel_y + panel_h) @compileError("scrub line outside the panel");
+    if (footer_y + 8 > panel_y + panel_h - 1) @compileError("menu footer outside the panel");
+    if (hint.panel_cols != panel_cols) @compileError("hint.panel_cols does not match this panel");
     if (panel_y + panel_h > cart.screen_height) @compileError("panel below the screen");
     if (band_h > panel_y) @compileError("band overlaps the panel");
     check_width(title, screen_cols);
@@ -520,7 +536,7 @@ comptime {
     check_width("Scrub: -9.9 / 9.9s", panel_cols);
     check_width("Scrub: live / 9.9s", panel_cols);
     check_width("Scrub: -99 / 99s", panel_cols);
-    // The last row's cursor bar ends at scrub_line_y - 2.
+    // The last row's cursor bar ends at scrub_line_y - 1.
     if (bar_y + 1 < scrub_line_y) @compileError("scrub bar overlaps the rows");
     if (first_row_y - 1 <= panel_y) @compileError("first cursor bar on the panel frame");
     if (bar_y + bar_h > panel_y + panel_h) @compileError("scrub bar outside the panel");

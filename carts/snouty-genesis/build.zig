@@ -192,7 +192,7 @@ fn rom_module(b: *Build) Build.LazyPath {
 }
 
 /// Adds `build_options`, `core` (with `z80`), `romfs` (lib/romfs.zig, the
-/// drive reader), `iris` (lib/iris_mark.zig), the generated `rom` and `drive` (the drive scan,
+/// drive reader), `iris` (lib/iris_mark.zig), `hint` (lib/hint.zig), the generated `rom` and `drive` (the drive scan,
 /// cart/src/frontend/drive.zig, a module so the host tests share it) to the
 /// cart.
 fn build_cart_modules(b: *Build, cart: *Build.Module, cart_api: *Build.Module, step: *Build.Step) void {
@@ -209,6 +209,8 @@ fn build_cart_modules(b: *Build, cart: *Build.Module, cart_api: *Build.Module, s
     cart.addImport("romfs", romfs);
     cart.addImport("rom", rom);
     cart.addImport("iris", b.createModule(.{ .root_source_file = b.path("lib/iris_mark.zig") }));
+    // The control hints (splash, first seconds of play, menu), shared with Boy, Gear, Lynx.
+    cart.addImport("hint", b.createModule(.{ .root_source_file = b.path("lib/hint.zig") }));
     cart.addImport("drive", b.createModule(.{
         .root_source_file = b.path(dir ++ "cart/src/frontend/drive.zig"),
         .imports = &.{

@@ -3,11 +3,13 @@
 //! like the DMG boot logo, on shade 0 of the current palette. In CGB mode
 //! (SPEC.md 19) the title is "SNOUTY BOY COLOR" on white, "COLOR" in five
 //! colours like the GBC boot logo. Any button
-//! press skips it. The two-note chime belongs to frontend/audio.zig: this
+//! press skips it. The bottom line says how to open the emulator menu
+//! (`hint.hold_select`, lib/hint.zig). The two-note chime belongs to frontend/audio.zig: this
 //! module only raises `request_chime` once, the frame the logo lands.
 const cart = @import("cart-api");
 const video = @import("video.zig");
 const iris = @import("iris");
+const hint = @import("hint");
 
 /// Splash length in frames (1.2 s at 60 Hz).
 pub const frames = 72;
@@ -30,6 +32,10 @@ const gap = 6;
 const block_h: i32 = mark_px + gap + 8 * title_scale;
 const rest_y: i32 = @divTrunc(@as(i32, cart.screen_height) - block_h, 2);
 const start_y: i32 = -block_h;
+
+comptime {
+    if (rest_y + block_h > hint.splash_y) @compileError("the menu hint overlaps the title");
+}
 
 var frame: u32 = 0;
 
@@ -60,6 +66,7 @@ fn draw(y: i32) void {
     const tx = @divTrunc(@as(i32, cart.screen_width) - tw, 2);
     const ty = y + mark_px + gap;
     cart.text(.{ .str = title, .x = tx, .y = ty, .scale = title_scale, .text_color = ink });
+    hint.draw_centred(cart, hint.hold_select, hint.splash_y, video.shade_color(2));
     if (video.cgb) {
         for (color_letters, 0..) |rgb, i| {
             const at = title.len + 1 + i;

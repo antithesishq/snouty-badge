@@ -18,7 +18,10 @@
 //! Left/Right swap through them, and playing on from a scrubbed position
 //! drops the future. See SPEC.md (design), PLAN.md (milestone contract),
 //! CLAUDE.md (toolchain). The console is created by `begin` once the ROM is
-//! known (`have_md`).
+//! known (`have_md`). Control hints (lib/hint.zig): "Hold Select: menu" on
+//! the splash and in a strip at the bottom for the first 3 s of play after
+//! the splash, picker or help screen (gone at the first fresh press); the
+//! menu has its own.
 const cart = @import("cart-api");
 const core = @import("core");
 const video = @import("frontend/video.zig");
@@ -32,6 +35,7 @@ const splash = @import("frontend/splash.zig");
 const picker = @import("frontend/picker.zig");
 const help = @import("frontend/help.zig");
 const rewind = @import("frontend/rewind.zig");
+const hint = @import("hint");
 
 comptime {
     cart.export_start_code();
@@ -57,6 +61,10 @@ var controls_state: input.State = .{};
 
 /// Menu opens since boot.
 var menu_opens: u32 = 0;
+/// "Hold Select: menu" over the first seconds of play (lib/hint.zig).
+var play_hint: hint.Overlay = .{};
+/// `hint.play_seconds` in updates (30 a second by default).
+const play_hint_updates = hint.play_seconds * 60 / frames_per_update;
 
 pub fn start() void {
     // Presents at 60 / render_every Hz (30 by default).
@@ -126,7 +134,10 @@ fn leave_splash(t0: u64) void {
     controls_state.suppress_held();
     state = after_splash;
     switch (state) {
-        .running => run_update(t0),
+        .running => {
+            play_hint.start(play_hint_updates);
+            run_update(t0);
+        },
         .pick => if (romsrc.use_drive) pick_update(t0),
         .help => if (romsrc.use_drive) help_update(t0),
         else => {},
@@ -158,12 +169,14 @@ fn help_update(t0: u64) void {
 fn start_running(t0: u64) void {
     controls_state.suppress_held();
     state = .running;
+    play_hint.start(play_hint_updates);
     run_update(t0);
 }
 
 fn run_update(t1: u64) void {
     const in = controls_state.game_frame();
     if (in.open_menu) {
+        play_hint.stop();
         menu_opens += 1;
         state = .menu;
         audio.silence();
@@ -192,6 +205,8 @@ fn run_update(t1: u64) void {
     if (debug.enabled) romsrc.draw_report();
     debug.z80_state = debug.z80_label(&md);
     debug.draw();
+    // A press held over from the splash, picker or help is suppressed, not fresh.
+    play_hint.update_and_draw(cart, text.draw, live_edge().any_pressed(), cart.screen_height - hint.strip_h, menu.title_color, menu.band_color);
 }
 
 /// One menu update over the frozen frame; the core is not stepped.

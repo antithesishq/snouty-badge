@@ -205,6 +205,13 @@ Controls (badge / simulator key):
 
 Start+Select (exit to the OS menu) and the joystick click belong to the OS.
 
+On-screen hints (`lib/hint.zig`, shared with Boy, Genesis and Lynx): the
+splash and the first 3 s of play show "Hold Select: menu" (a strip at the
+bottom, gone at the first button press); in the menu the bottom line on
+Resume reads "Left/Right: rewind" ("Rewind: no history" before the first
+keyframe; the `Scrub:` readout once parked or on other rows) and the
+footer reads "B: back to game".
+
 ### Menu
 
 Hold Select for half a second: the game pauses under the menu (the frame

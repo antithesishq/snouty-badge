@@ -15,6 +15,9 @@
 //! size; `rewind.layout` then places the console, that cart RAM and the
 //! keyframe store in the RAM above `.bss`. `halted` is the refusal to run when fewer than 2
 //! keyframes fit there (frontend/rewind.zig).
+//! Control hints (lib/hint.zig): "Hold Select: menu" on the splash and in
+//! a strip at the bottom for the first 3 s of play after the splash or the
+//! picker (gone at the first fresh press); the menu has its own.
 //! See SPEC.md (design), PLAN.md (milestone contract), CLAUDE.md (toolchain).
 const cart = @import("cart-api");
 const core = @import("core");
@@ -27,6 +30,7 @@ const audio = @import("frontend/audio.zig");
 const rewind = @import("frontend/rewind.zig");
 const romsrc = @import("frontend/romsrc.zig");
 const picker = @import("frontend/picker.zig");
+const hint = @import("hint");
 
 comptime {
     cart.export_start_code();
@@ -43,6 +47,8 @@ var state: State = .splash;
 var controls_state: input.State = .{};
 /// Leave the splash for the picker instead of the game.
 var pick_after_splash = false;
+/// "Hold Select: menu" over the first seconds of play (lib/hint.zig).
+var play_hint: hint.Overlay = .{};
 
 pub fn start() void {
     cart.set_vsync_enabled(1000.0 / 60.0);
@@ -104,6 +110,7 @@ pub fn update() void {
                     pick_frame();
                 } else {
                     state = .running;
+                    play_hint.start(hint.play_seconds * 60);
                     run_frame(t0);
                 }
             }
@@ -136,6 +143,7 @@ fn pick_frame() void {
     controls_state.suppress_held();
     if (state == .halted) return;
     state = .running;
+    play_hint.start(hint.play_seconds * 60);
     run_frame(cart.micros_since_boot());
 }
 
@@ -158,6 +166,7 @@ var chime_second_at: u32 = 0;
 fn run_frame(t1: u64) void {
     const in = controls_state.game_frame();
     if (in.open_menu) {
+        play_hint.stop();
         state = .menu;
         menu.open();
         _ = menu.update(gb, controls_state.edge);
@@ -173,6 +182,10 @@ fn run_frame(t1: u64) void {
     video.finish_frame();
     debug.record(@truncate(t2 -% t1));
     debug.draw();
+    // A press held over from the splash or picker is suppressed, not fresh.
+    const e = controls_state.edge;
+    const fresh = (input.Edge{ .prev = e.prev, .cur = e.cur & ~controls_state.suppress }).any_pressed();
+    play_hint.update_and_draw(cart, null, fresh, cart.screen_height - hint.strip_h, video.shade_color(0), video.shade_color(3));
 }
 
 pub fn read_controls() cart.Controls {
