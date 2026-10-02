@@ -902,6 +902,145 @@ ones); `docs/preview_m5.gif`; `@sizeOf(World)` shrinks (bomb fields gone);
 ELF text within a few KB of M4. Adrian on hardware: the hold-B feel (2
 ticks per frame), the refill rate, the hardcore floor.
 
+## M6 Powerups (started 2026-10-02)
+
+Adrian, 2026-10-02: "Snouty bugs needs fun powerups, like any great bullet
+hell shooter": Raiden-style stacking weapon crates, reskinned as testing
+tools, plus one twist only this game can do because it already records its
+own history: the FORK, a ghost ship replaying the player's own trajectory a
+second behind. Attract mode moves to M7, polish to M8. SPEC.md 5.4 has the
+design; this section is the contract the tracks build against.
+
+### Decisions fixed here
+
+- **Everything a crate grants lives in the World** (weapon kind and level,
+  forks, the retry shield, the crates themselves). A rewind therefore
+  un-collects anything grabbed in the rewound window and un-forks the
+  ghosts: Raiden's power loss, for free, from the honesty rule of 13.1.
+  No extra level drop on a hit (the rewind already charges the player).
+- **The one meta effect, CORE HOURS fuel**, is paid by `main.zig` against a
+  high-water mark on a monotonic World counter (`player.cores`), exactly
+  like graze fuel, so a crate rewound away and collected again pays once.
+- **No new rng draws until a crate is collected.** Drop timing and crate
+  kind are deterministic functions of World counters (kills, a drop
+  sequence index), never of `rng`, so every existing script's world is
+  unchanged up to the first collection. The fuzzer's level-5 jitter does
+  draw from `rng` (world-deterministic, fine).
+- **Base state = the current zapper.** Weapon kind FUZZER at level 1 fires
+  exactly today's single bolt at today's cadence, so a run that collects
+  nothing plays as M5 did.
+- **Trail ring**: the ship's position is recorded every tick into an
+  80-entry ring in the World whether or not a fork exists, so a fork has
+  history to replay the moment it is collected and the ring rewinds with
+  everything else.
+- Pickups collide with the whole ship cell (32x24), not the 6x6 hitbox:
+  collecting must feel generous.
+- Bolt pool grows 24 -> 64; `@sizeOf(World)` may grow to ~7 KB (keyframes
+  ~28 KB .bss, inside the 160 KB budget). Shots that do not fit are dropped,
+  the ship's own volley spawning before the ghosts' so it has priority.
+- Sound: no new effects (Adrian 2026-09-30: no audio development).
+
+### Numbers (SPEC.md 5.4)
+
+Weapons, all fired on A at the zapper cadence (one volley per 6 ticks),
+`level` 1..5. The ship's volley originates at the nose, (x + 28, y + 8) as
+today (bolt cell top-left for the zap; the other bolts are placed so their
+hitbox center is at (x + 36, y + 12)).
+
+| Kind   | Letter | Bolt | Speed | Damage | Volley per level 1..5 |
+|--------|--------|------|-------|--------|------------------------|
+| FUZZER | F | zap, 16x8, dies on hit | 4.0 | 1 | 1 straight; 2 straight (y -3, +3); 3-way (0, +-8/256 turn); 5-way (0, +-8, +-16); 5-way with +-4/256 random jitter per bolt (`rng`) |
+| ASSERT | A | beam, 24 px long, pierces | 6.0 | 1 (L1-2), 2 (L3-4), 3 (L5) | 1 beam; 1; 2 beams (y -4, +4); 2; 3 beams (0, -6, +6). Thickness drawn 1, 1, 2, 2, 3 px; hitbox 24x4 centered |
+| BISECT | B | seeker, 8x8 hitbox, dies on hit, homes | 3.5 | 1 | 1; 2; 3; 4; 5 seekers, initial angles alternating +-10/256 turn times i; steer gain 0.08 + 0.04 (level - 1) |
+
+- Angles in 1/256 turns, vectors from `enemies.sin_table` (no libm).
+  Screen y is down; "+-" offsets are symmetric so the sign does not matter.
+- Pierce: a beam damages each enemy slot at most once (`hit_mask: u32`
+  over the 24 enemy slots), a spark at each hit, and keeps going. Zap and
+  seeker die on the first hit.
+- Seeker steering, per tick: `t` = unit vector to the nearest live,
+  hittable enemy's center (squared distance, pool order breaks ties);
+  `v_hat = normalize(v_hat + gain * t)`, `v = v_hat * speed`. No target:
+  straight on. `@sqrt` only.
+- Bolt cull: x >= 160 or x < -24 or y < -8 or y >= 136.
+- Crate on the same weapon: level + 1 (max 5; at max +500 points
+  instead). Crate of another weapon: kind changes, level kept. Every
+  collection also scores +100.
+- FORK: `forks` 0..3; ghost k (1-based) is drawn at the trail entry of
+  `game_tick - 24k` and fires the current weapon at its own nose whenever
+  the ship fired 24k ticks ago (the trail entry's `fired` flag). Ghosts
+  have no hitbox, collect nothing, and are drawn with `skip_odd`
+  (checkerboard) without a thruster. A fourth fork crate: +500.
+- RETRY: `shield` 0..1 (a second crate: +500). A hit with the shield up
+  consumes it inside `simulate` (both modes): the offender is removed as
+  in god mode, 60 ticks of invulnerability, `retry_pop = 60` ticks of
+  `FLAKY, RETRYING` on the message line (the `GO!` row logic). No rewind
+  or fuel is spent; meta never sees the hit. A 12x8 shield icon is drawn
+  centered above the ship cell (y - 6) while the shield is up.
+- CORE HOURS: `player.cores += 1`; `main.zig` adds 60 fuel per count above
+  `cores_high_water` (capped at `fuel_max`).
+- Crates: pool of 4 (`world.w.pickups`), 16x16 cell, spawned centered on
+  the dropper's center, drifting left 0.5 px/tick with y = base_y + 6 *
+  sin(age / 90 turn) clamped to the play area [16, 104] for the cell top;
+  gone at x < -16. A drop with a full pool is lost.
+- Drops (no rng): a Memory Leak beetle killed by a bolt; every 5th gnat
+  killed by a bolt (`player.gnat_kills` counter); the boss's fire phase
+  changing (every 240 fighting ticks, `fire_tick % 240 == 0` with
+  `fire_tick > 0`); a ram kill (`remove_offender`) drops nothing. Crate
+  kind from `drop_seq` (World, wraps at 8): [W, cores, W, fork, X, retry,
+  W, fork], W = the ship's current weapon kind at drop time, X = the next
+  kind after W cyclically (F -> A -> B -> F). So stacking is the default
+  and a swap is on offer every eight crates.
+- HUD: the status slot (x 48..63) shows the weapon as letter + level
+  (`F3`) in Anti-White; `<<` still takes the slot during any rewind
+  (rewind.zig already patches it Anti-Black first). Nothing else in the
+  HUD changes.
+
+### Tracks (run in parallel, disjoint files)
+
+- **A: gameplay** (Opus). `bullets.zig` (Bolt rework, pool 64),
+  `player.zig` (weapon state, volley, trail ring, forks, shield, ghost
+  draw), `collide.zig` (pierce, damage amounts, drop hooks),
+  `pickups.zig` (new), `world.zig`, `enemies.zig` (boss phase-change
+  drop), `main.zig` (update/draw order, shield handling, cores fuel, debug
+  exports), `hud.zig` (weapon slot), `rewind.zig` (retry pop text helper if
+  needed). Builds against the placeholder `bolt.png` (2 cells) and
+  `pickups.png` from track B; until B lands, A may generate stand-in
+  sheets locally but must not commit them.
+- **B: art** (Opus). `tools/prepare_assets.py`: `bolt.png` grows to 6
+  cells 16x8 (0-1 zap as today, 2-3 beam segment, 4-5 seeker dart);
+  new `pickups.png`, 6 cells 16x16 (fuzzer F, assert A, bisect B, fork,
+  retry, core hours), crates with a 1 px border, readable at lanyard
+  scale; `hud.png` cell 1 (a spare) becomes the retry shield icon. New
+  `build.zig` image row for `pickups.png`; manifest, mockup and validator
+  updated; `assets/gen/*.png` regenerated and committed; `ASSETS.md`
+  section 7 rows.
+- **C: harness and docs** (Opus, after A and B): new scripts
+  `m6_pickup`, `m6_fork`, `m6_retry`, `m6_cores`, `m6_identity`
+  (`debug_history_check == 0` with forks and beams in flight); re-pin the
+  existing scripts where the sweep now collects crates; `docs/RUNNING.md`
+  section for the crates; `tools/check.sh` green.
+
+### Interface A exposes (for C and the HUD)
+
+- `debug_weapon() -> kind * 10 + level` (kind 0 F, 1 A, 2 B),
+  `debug_forks()`, `debug_shield()`, `debug_pickups()` (live crates),
+  `debug_cores()` (World counter), `debug_drops()` (crates spawned this
+  game, World counter), all wasm-only like the others.
+- `debug_grant(n)` is NOT provided: scripts collect real crates (the
+  first beetle dies at a known tick under constant fire).
+
+### Verification for M6
+
+- `tools/check.sh` all green; `debug_history_check == 0` on frames with
+  ghosts, beams and crates in flight, during a hold-B rewind and after.
+- A rewind that crosses a collection restores the earlier weapon level
+  (pinned in `m6_pickup`).
+- `@sizeOf(World)` reported; ELF `.text + .data` under 160 KB.
+- badge-bench on `m6_fork` (3 ghosts, fuzzer 5) and `m3_boss`: worst
+  frame under 16.7 ms with headroom.
+- `docs/preview_m6.gif`: crates collected, ghosts, a beam, a retry.
+
 ## Status
 
 - 2026-09-26: M0 scaffold committed. M1 plan written; stand-in sheets
