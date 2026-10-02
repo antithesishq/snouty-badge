@@ -112,7 +112,7 @@ Options (all from the root):
 
 | Option | Values (default first) | Meaning |
 |--------|------------------------|---------|
-| `-Dflyover_fps` | `30`, `60` | vsync lock; SPEC section 10 decides 60 from the M1/M2 bench |
+| `-Dflyover_fps` | `30`, `60` | vsync lock; the cart ships at 30 (decided at M2, SPEC section 10); 60 is for experiments only |
 | `-Dflyover_depth` | `256`, `128` | map ring depth in rows; 128 halves the map memory and the view distance (`world.gen_ahead`) |
 | `-Ddebug_overlay` | `false`, `true` | draws the frame time in microseconds, the fps it implies and the camera row, top right |
 

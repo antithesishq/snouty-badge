@@ -5,7 +5,8 @@ simulator, bench it, put a ROM on the badge drive and flash the cart.
 Commands run from the repository root unless noted; outputs land in the
 root `zig-out/`.
 
-Status: M2 (frontend) on `lynx/m2`. Boot splash (the Iris mark and
+Status: M4 (perf) done, on main; M2 is the frontend described here, M3
+the scrubber, M4 the perf pass (PLAN.md Status). Boot splash (the Iris mark and
 "SNOUTY LYNX" slide down onto a dark screen, 1.2 s, any button skips; the
 cart is silent), then the real core (`core/`: the 65C02, Mikey, Suzy, the
 boot without the boot ROM). Rows 102..127 are the status strip: "SNOUTY

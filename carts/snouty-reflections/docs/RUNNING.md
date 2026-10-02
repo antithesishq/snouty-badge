@@ -25,8 +25,12 @@ Controls (SPEC.md section 3, M3):
 Free camera orbits at 36 deg/s (3 orbit steps per frame at 20 fps) and
 moves the height by 0.05 m per frame; it returns to attract by itself after
 20 s without input, keeping the angle, and the height eases back to 1.6 m.
-Frozen mode does not time out; in M3 the real-time tracer keeps drawing the
-frozen scene (M4 puts the path tracer behind the same button). Attract
+Freezing (A) stops time and, since M4, hands the screen to a progressive
+path tracer (SPEC.md section 5b, section 11 below): the picture starts as
+the real-time frame and converges over seconds, adding anti-aliasing,
+soft shadows, the glass sphere, glossy water and depth of field; A again
+resumes time where it stopped. A converged frozen image returns to
+attract by itself after 60 s without input. Attract
 switches to the next preset every orbit (30 s) with a 0.5 s fade out and in;
 the cycle pauses while frozen or in free camera. Dither modes, in B order:
 `bayer_temporal` (default), `blue_noise`, `palette16` (16 colours, the Amiga

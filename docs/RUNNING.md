@@ -50,14 +50,19 @@ Outputs, one set per cart:
 - `zig-out/firmware/<binary>.elf` (for badge-bench and `size -A`)
 - `zig-out/bin/<binary>.wasm` (for the simulator)
 
-Binaries: `snouty`, `snouty-bugs`, `snoutenstein`, `snouty-reflections`,
-`snouty-boy`, `snouty-maze`. `zig build -Dcart-mode=xip` (or `both`) adds
-the execute-in-place variant `zig-out/firmware/<binary>-xip.uf2` and `.elf`,
-which runs code from the cart flash window and keeps all cart RAM for data;
-section 8 below. `zig build test` runs the host tests (snouty-boy
-core, snouty-maze modules); `zig build check-float` fails if a float-heavy cart
-links soft-float or libm routines. Zig fetches packages into `zig-pkg/` at the
-root (gitignored).
+Binaries (the 12 carts of the root `build.zig`, plus the calibration
+tool): `snouty` (cart `snouty-run`), `snouty-bugs`, `snoutenstein`,
+`snouty-reflections`, `snouty-boy`, `snouty-maze`, `snouty-gear`,
+`snouty-genesis` (XIP only: `snouty-genesis-xip`), `snouty-lynx` (plus
+`snouty-lynx-xip` by default), `snouty-flyover`, `demosnout`,
+`snouty-zero` (XIP only: `snouty-zero-xip`) and `badge-calibrate`.
+`zig build -Dcart-mode=xip` (or `both`) adds the execute-in-place variant
+`zig-out/firmware/<binary>-xip.uf2` and `.elf` for the other carts, which
+runs code from the cart flash window and keeps all cart RAM for data;
+section 8 below. `zig build test` runs every cart's host tests and the
+shared `lib/` tests (the gate before a merge); `zig build check-float`
+fails if a float-heavy cart links soft-float or libm routines. Zig fetches
+packages into `zig-pkg/` at the root (gitignored).
 
 If building on the Mac fails inside the compiler with `error: OutOfMemory`,
 that is a known comptime issue with this Zig; the prebuilt files can be pulled

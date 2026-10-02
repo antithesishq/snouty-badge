@@ -4,14 +4,15 @@ An Atari Lynx emulator cart for the SYCL Badge V2, written in Zig for
 Antithesis. On the badge it plays a `.lnx` (or headerless `.lyx`) ROM copied
 onto the badge's USB drive, with an embedded ROM as the fallback and as the
 simulator's ROM. The Lynx's 160x102 picture sits 1:1 at the top of the
-badge's 160x128 screen with a 26-row status strip below it. Planned: the
-65SC02, Suzy's sprite engine and math unit, Mikey's timers and palette,
-time scrubbing by deterministic replay (SPEC.md).
+badge's 160x128 screen with a 26-row status strip below it. The core
+emulates the 65C02, Suzy's sprite engine and math unit, and Mikey's
+timers and palette; the menu has a time scrubber (SPEC.md).
 
-Status: M2, the frontend. The Iris-mark splash, then the game (the real
-core since M1: the 65C02, Mikey, Suzy, the boot without the boot ROM),
-the strip with "SNOUTY LYNX", the ROM name and where it came from, and
-the emulator menu. No sound (the badge speaker is unused in this project);
+Status: M4 (perf) done; M0-M4 are on main, history in PLAN.md. The
+Iris-mark splash, then the game (the real core since M1: the 65C02, Mikey,
+Suzy, the boot without the boot ROM), the strip with "SNOUTY LYNX", the
+ROM name and where it came from, the emulator menu and picker (M2) and the
+time scrubber (M3). No sound (the badge speaker is unused in this project);
 the neopixels stay off. The embedded fallback ROM is `roms/raycast.lnx`,
 42Bastian's textured raycaster (Apache-2.0, `roms/LICENSE-raycast.txt`);
 the boot path that decrypts a cart's loader without the Lynx boot ROM is
