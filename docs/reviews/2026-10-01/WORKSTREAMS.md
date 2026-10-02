@@ -87,6 +87,12 @@ Independent of A except that you should rebase onto main after A merges so the g
 
 **Acceptance for the stream.** Root gate green, every touched cart's own check script green, `zig build` for all carts in both RAM and XIP modes, and badge-bench numbers re-recorded for Flyover (C1) and Reflections (C7). Perf budgets must not regress.
 
+**C1-C3 done 2026-10-02** (branch `cgames/m1`, unmerged):
+
+- C1: Flyover `cam.y` is i64 Q16, every row through `camera.cam_row()` (i32); render marches with the low 32 bits; the ring check moved to `world.check()`. Host test `cart/src/host_tests.zig` (autopilot across row 32768, ring window + `world.check` every frame; crashes with the old i32 y) on the root gate; new `tools/check.sh` = render golden (12/12 unchanged) + the 130-skip soak (`tools/scripts/skip_soak.json`: row 32769 at 639, `debug_world_check == 0`). Calibrated bench worst 15.08 ms (was 15.07), mean 8.35.
+- C2: Snoutenstein rewind patches store the absolute `rewinds` (idempotent); `set_meter` keeps the live count. Unit test (commit + two `set_meter` at one tick, self-checks and rewind against a reference) and the UP-at-1900 takeover preview in `tools/check.sh`; check.sh all passed.
+- C3: Bugs boss HP moved to pure `boss_hp.zig`, capped at 255 for spawn and HUD; tests for loops 0/1/9/10/20/255 registered on the root gate (Bugs' first host tests). check.sh 14/14.
+
 ## Workstream D: onboarding, docs and on-device discovery
 
 Independent of A and C in code, but **D touches each cart's `docs/RUNNING.md` and README**, and C7 also edits Reflections RUNNING. Coordinate by having D rebase on main after C merges, or by having D leave the Reflections frozen-slice paragraph to C7.
@@ -121,5 +127,5 @@ Architecture proposals 2 and 4 from the README (shared platform adapter, authori
 |---|---|---|
 | A | **done 2026-10-02** | tag `review-2026-10-01/A` |
 | B | in progress (other agent) | |
-| C | not started | |
+| C | C1-C3 done on `cgames/m1` (unmerged); C4-C8 other agent | |
 | D | not started | |
