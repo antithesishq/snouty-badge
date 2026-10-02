@@ -40,7 +40,10 @@
 //!   patch of tick t applied". Replay applies patches after each step,
 //!   keyframes are stored pre-patch (they come from `after_step`), and a
 //!   commit drops the patches of the abandoned future like it drops
-//!   keyframes.
+//!   keyframes. A patch holds absolute values (the meter and the rewind
+//!   count to set), so applying it to a state that already has it is a
+//!   no-op: a second patch at the same tick (the attract takeover's
+//!   `set_meter` right after a commit) cannot count a rewind twice.
 const std = @import("std");
 const state = @import("state.zig");
 const sim = @import("sim.zig");
@@ -63,8 +66,10 @@ var kf: [keyframe_count]GameState = undefined;
 var kf_tick: [keyframe_count]u32 = @splat(none);
 /// Input applied to state t, at inputs[t % input_len].
 var inputs: [input_len]Buttons = undefined;
-/// Out-of-band changes made at a commit, by tick (see the patch note above).
-const Patch = struct { meter: u16, count_rewind: bool };
+/// Out-of-band changes made at a commit, by tick (see the patch note above):
+/// the values `rewind_meter` and `rewinds` take at that tick. Absolute, not
+/// deltas, so applying a patch is idempotent.
+const Patch = struct { meter: u16, rewinds: u16 };
 var patch: [input_len]Patch = undefined;
 var patch_tick: [input_len]u32 = @splat(none);
 /// Span cache: cache[i] = state at tick cache_lo + i, i < cache_n.
@@ -135,7 +140,7 @@ fn apply_patch(s: *GameState) void {
     const i = s.tick % input_len;
     if (patch_tick[i] != s.tick) return;
     s.player.rewind_meter = patch[i].meter;
-    if (patch[i].count_rewind) s.rewinds += 1;
+    s.rewinds = patch[i].rewinds;
 }
 
 /// Fill the span cache with states [k, hi] replayed from keyframe k.
@@ -251,7 +256,8 @@ pub fn commit(s: *GameState, meter: u16, count_rewind: bool) void {
         if (t.* != none and t.* > cur) t.* = none;
     }
     const i = cur % input_len;
-    patch[i] = .{ .meter = meter, .count_rewind = count_rewind };
+    // current() already carries any earlier patch of this tick.
+    patch[i] = .{ .meter = meter, .rewinds = s.rewinds + @intFromBool(count_rewind) };
     patch_tick[i] = cur;
     apply_patch(s);
     head = cur;
@@ -262,14 +268,14 @@ pub fn commit(s: *GameState, meter: u16, count_rewind: bool) void {
 
 /// Out-of-band meter change while playing (the attract-mode takeover
 /// refills it, PLAN.md M5): recorded as the patch of `s.tick` so a replay
-/// reproduces it and the keyframe self-check keeps agreeing. Keeps an
-/// existing patch's `count_rewind` (a commit at this very tick). Only
-/// valid when not rewinding and `s.tick == head`.
+/// reproduces it and the keyframe self-check keeps agreeing. The rewind
+/// count is kept as `s` has it (`s` already carries the patch of a commit
+/// at this very tick, so its count is that patch's). Only valid when not
+/// rewinding and `s.tick == head`.
 pub fn set_meter(s: *GameState, meter: u16) void {
     std.debug.assert(!active and s.tick == head);
     const i = s.tick % input_len;
-    const count = patch_tick[i] == s.tick and patch[i].count_rewind;
-    patch[i] = .{ .meter = meter, .count_rewind = count };
+    patch[i] = .{ .meter = meter, .rewinds = s.rewinds };
     patch_tick[i] = s.tick;
     apply_patch(s);
 }
@@ -617,4 +623,63 @@ test "a commit's meter drain and rewind count survive replay and self-check" {
     t = 0;
     while (t < 190) : (t += 1) sim.step(&r2, L, script(1, t));
     try testing.expectEqual(sim.hash(&r2), sim.hash(current()));
+}
+
+// Review 2026-10-01 G1: the attract takeover commits a rewind and then
+// refills the meter at the same tick (main.zig take_over: end_rewind, then
+// set_meter). The live state gets both patches applied; a replay applies
+// the tick's patch once. They must agree.
+test "a commit and set_meter at the same tick: live and replay agree" {
+    // Reference: seed 1 to tick 250, the commit's count and the refill
+    // applied once at 250, seed 2 onwards.
+    var ref: [331]u32 = undefined;
+    {
+        var r: GameState = undefined;
+        fresh(&r);
+        ref[0] = sim.hash(&r);
+        var t: u32 = 0;
+        while (t < 250) : (t += 1) {
+            sim.step(&r, L, script(1, t));
+            ref[t + 1] = sim.hash(&r);
+        }
+        r.player.rewind_meter = 600;
+        r.rewinds = 1;
+        ref[250] = sim.hash(&r);
+        while (t < 330) : (t += 1) {
+            sim.step(&r, L, script(2, t));
+            ref[t + 1] = sim.hash(&r);
+        }
+    }
+    desyncs = 0;
+    var s: GameState = undefined;
+    fresh(&s);
+    reset(&s);
+    play(&s, 1, 300);
+    begin(&s, L);
+    var i: u32 = 0;
+    while (i < 50) : (i += 1) _ = back(L).?;
+    commit(&s, 550, true);
+    set_meter(&s, 600);
+    // Applying the tick's patch again (a second refill) changes nothing.
+    set_meter(&s, 600);
+    try testing.expectEqual(@as(u16, 1), s.rewinds);
+    try testing.expectEqual(@as(u16, 600), s.player.rewind_meter);
+    try testing.expectEqual(ref[250], sim.hash(&s));
+
+    // The keyframe self-checks replay across tick 250 with its patch once.
+    while (s.tick < 330) {
+        const b = script(2, s.tick);
+        log_input(s.tick, b);
+        sim.step(&s, L, b);
+        after_step(&s);
+        if (s.tick % keyframe_every == 0) try testing.expect(check(&s, L));
+    }
+    try testing.expectEqual(ref[330], sim.hash(&s));
+    try testing.expectEqual(@as(u32, 0), desyncs);
+
+    // Rewinding back over the patch tick shows the same states as live play.
+    begin(&s, L);
+    try testing.expectEqual(@as(u32, 0), desyncs);
+    while (back(L)) |p| try testing.expectEqual(ref[p.tick], sim.hash(p));
+    try testing.expectEqual(@as(u32, 0), desyncs);
 }
