@@ -54,10 +54,20 @@ Binaries: `snouty`, `snouty-bugs`, `snoutenstein`, `snouty-reflections`,
 `snouty-boy`, `snouty-maze`. `zig build -Dcart-mode=xip` (or `both`) adds
 the execute-in-place variant `zig-out/firmware/<binary>-xip.uf2` and `.elf`,
 which runs code from the cart flash window and keeps all cart RAM for data;
-section 8 below. `zig build test` runs the host tests (snouty-boy
-core, snouty-maze modules); `zig build check-float` fails if a float-heavy cart
-links soft-float or libm routines. Zig fetches packages into `zig-pkg/` at the
-root (gitignored).
+section 8 below. `zig build test` runs every cart's host tests: the shared
+`lib/` tests, the snouty-boy, snouty-gear, snouty-genesis and snouty-lynx
+cores, the snouty-maze, demosnout and snouty-zero modules, and the
+snoutenstein sim/levels/parser/rewind/demo suites. Tests that need
+downloaded fixtures (the Z80 and 68000 SingleStepTests, ZEXDOC/ZEXALL, the
+Lynx test ROMs) report as **skipped**, not passed, when the files are
+absent; the strict conformance gates
+`zig build test-z80-strict -Dcart=snouty-gear` and
+`zig build test-m68k-strict -Dcart=snouty-genesis -Dcart-mode=xip` fail
+instead and print the executed case counts (fetch the fixtures with each
+cart's `tools/fetch_test_roms.sh` first). `zig build check-float` fails if
+a float-heavy cart links soft-float or libm routines; it inspects the ELF
+of the selected `-Dcart-mode` (`<binary>.elf`, `<binary>-xip.elf`, or both).
+Zig fetches packages into `zig-pkg/` at the root (gitignored).
 
 If building on the Mac fails inside the compiler with `error: OutOfMemory`,
 that is a known comptime issue with this Zig; the prebuilt files can be pulled
