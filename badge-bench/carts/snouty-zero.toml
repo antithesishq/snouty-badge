@@ -1,0 +1,5 @@
+# snouty-zero: Mode 7 hover racer, 60 fps.
+budget_ms = 16.7
+frames = 600
+script = "carts/snouty-zero/tools/scripts/m0_fly.json"
+note = "M0 free camera over Cold Aisle: A held throughout (forward 3 px/tick), Right 100-220, Left 350-470 (PLAN.md M0)"

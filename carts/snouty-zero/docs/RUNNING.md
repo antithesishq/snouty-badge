@@ -1,0 +1,128 @@
+# Running the Snouty Zero cart
+
+Snouty Zero (`snouty-zero`) is a SYCL Badge V2 cart: an F-Zero style Mode 7
+hover racer set on a planet-sized AI datacenter. 60 fps
+(`cart.set_vsync_enabled(1000.0 / 60.0)`), one `update()` per frame.
+
+M0 is the floor renderer: the Cold Aisle map drawn as a per-row affine
+floor with four fog banks, a two-layer parallax horizon strip and a free
+camera. Controls at M0: Left/Right yaw, A forward, B back, Up/Down camera
+height (24..160 world px, default 64). The race controls of SPEC section 4
+arrive with M1.
+
+Start+Select returns to the badge menu and the joystick click toggles the
+OS FPS overlay; both belong to the OS. The cart never writes the neopixels
+and boots silent.
+
+The cart lives in `carts/snouty-zero/` of the snouty-badge repository.
+Commands below run from that directory unless noted; only `zig build` and
+`badge-bench/bench.sh` run from the repository root (`../..`), and build
+outputs are in the root `zig-out/` (`../../zig-out/...` from here).
+
+## 1. Prerequisites
+
+Zig, Node.js, Python with Pillow and numpy, git: see `../../docs/RUNNING.md`
+at the repository root. The emulated benchmark (section 7) also needs
+Python 3.9 or newer with the `venv` module.
+
+## 2. Checkout layout
+
+Cloning the repository with its `sycl-badge/` submodule is described in
+`../../docs/RUNNING.md`. Milestones are annotated tags (`git tag -n1
+'snouty-zero/*'`).
+
+## 3. Build
+
+From the repository root:
+
+```sh
+zig build -Dcart=snouty-zero   # only this cart; plain `zig build` builds every cart
+```
+
+Options (all from the root):
+
+| Option | Values (default first) | Meaning |
+|--------|------------------------|---------|
+| `-Dzero_floor` | `row`, `column` | floor inner loop (SPEC 18 measurement; `row` won in the bench, `column` kept for a hardware check) |
+| `-Ddebug_overlay` | `false`, `true` | draws the render time in microseconds and the camera height, top right |
+| `-Dsound` | `false`, `true` | initial value of the sound toggle (M3) |
+| `-Dcart-mode` | `ram`, `xip`, `both` | RAM cart (the primary) or the execute-in-place variant |
+
+This writes `zig-out/firmware/snouty-zero.uf2` (badge), `.elf` (badge-bench,
+`size -A`) and `zig-out/bin/snouty-zero.wasm` (simulator).
+`zig build check-float -Dcart=snouty-zero` must pass (integer-only cart);
+`zig build test -Dcart=snouty-zero` runs the host tests.
+
+## 4. Web simulator
+
+Terminal 1 serves the cart and live-reloads it:
+
+```sh
+cd carts/snouty-zero
+node ../../tools/serve-cart.mjs   # serves ../../zig-out/bin/snouty-zero.wasm on :2468
+```
+
+Terminal 2 runs the simulator UI:
+
+```sh
+cd ../../sycl-badge/simulator
+npm install
+npm run dev
+```
+
+Then open <http://localhost:1234>. Keys: arrows/WASD joystick, Z/K = A,
+X/J = B, Enter = Start, Backspace = Select.
+
+## 5. Headless preview (no browser)
+
+```sh
+node ../../tools/preview.mjs ../../zig-out/bin/snouty-zero.wasm --frames 600 --every 10 \
+    --script tools/scripts/m0_fly.json --out out/ \
+    --dump-exports debug_frame,debug_cam_x,debug_cam_y,debug_cam_yaw
+python3 ../../tools/make_gif.py out/ preview.gif --scale 3 --ms 170
+```
+
+Input scripts live in `tools/scripts/`:
+
+- `m0_fly.json` (600 frames): A held throughout, Right 100-220, Left
+  350-470. The badge-bench default.
+
+Debug exports (zero-argument wasm functions, usable with `--dump-exports`,
+`--expect` and `--at`):
+
+| Export | Meaning |
+|---|---|
+| `debug_frame` | frames since start |
+| `debug_render_us` | render time of the last frame in microseconds; always 0 in wasm |
+| `debug_pixel_checksum` | sum of all framebuffer words |
+| `debug_cam_x`, `debug_cam_y` | camera world position (0..1023) |
+| `debug_cam_yaw` | heading, u16 turn (0 = +x, 16384 = +y) |
+| `debug_cam_height` | camera height over the floor |
+| `debug_tile_under` | attribute of the tile under the camera (0 off, 1 surface, 2 rail, 3 pad, 4 throttled, 5 cold, 6 hot, 7 hop, 8 start, 9/10 sectors) |
+
+## 6. Flashing
+
+1. Put the badge in bootloader mode and connect it over USB-C; it shows up
+   as a USB drive.
+2. Copy `zig-out/firmware/snouty-zero.uf2` onto the drive.
+3. Pick the cart in the badge menu. Start+Select returns to the menu.
+
+## 7. Emulated cycle benchmark
+
+badge-bench (`../../badge-bench/README.md`) runs the ELF on an emulated
+Cortex-M33 with the badge-calibrated cycle model; read the `busy ms`
+column. `../../badge-bench/carts/snouty-zero.toml` sets the defaults.
+From the repository root:
+
+```sh
+badge-bench/bench.sh zig-out/firmware/snouty-zero.elf --script carts/snouty-zero/tools/scripts/m0_fly.json --frames 600 --every 60 --symbols
+```
+
+Milestone numbers are in `PLAN.md` under each milestone's status.
+
+## 8. Regenerating the data
+
+```sh
+python3 tools/build_tracks.py     # tilesets, horizon strips, every .track -> assets/gen/
+python3 tools/gen_sin.py          # cart/src/gen/sin.zig
+```

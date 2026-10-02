@@ -1,0 +1,145 @@
+const std = @import("std");
+const allocator = std.heap.c_allocator;
+const Image = @import("zigimg").Image;
+
+const ConvertFile = struct {
+    path: []const u8,
+    bits: u4,
+    transparency: bool,
+};
+
+var io_mem: std.Io.Threaded = .init_single_threaded;
+const io = io_mem.io();
+
+pub fn main(init: std.process.Init.Minimal) !void {
+    var args = try init.args.iterateAllocator(allocator);
+    defer args.deinit();
+
+    _ = args.next();
+    var in_files: std.ArrayList(ConvertFile) = .empty;
+    var out_path: []const u8 = undefined;
+    while (args.next()) |arg| {
+        if (std.mem.eql(u8, arg, "-i")) {
+            const path = args.next() orelse return error.MissingArg;
+            const bits = args.next() orelse return error.MissingArg;
+            const transparency = args.next() orelse return error.MissingArg;
+            try in_files.append(allocator, .{ .path = path, .bits = @intCast(bits[0] - '0'), .transparency = transparency[0] == 't' });
+        } else if (std.mem.eql(u8, arg, "-o")) {
+            out_path = args.next() orelse return error.MissingArg;
+        }
+    }
+
+    const out_file = try std.Io.Dir.cwd().createFile(io, out_path, .{});
+    defer out_file.close(io);
+
+    var writer_buf: [4096]u8 = undefined;
+    var out_file_writer = out_file.writer(io, &writer_buf);
+    const writer = &out_file_writer.interface;
+    try writer.writeAll("const PackedIntSlice = @import(\"packed_int_array\").PackedIntSlice;\n");
+    try writer.writeAll("const DisplayColor = @import(\"cart-api\").DisplayColor;\n\n");
+
+    for (in_files.items) |in_file| {
+        try convert(in_file, writer);
+    }
+
+    writer.flush() catch |err| {
+        std.debug.print("Error flushing output: {s}\n", .{@errorName(err)});
+        if (@errorReturnTrace()) |trace| {
+            std.debug.dumpStackTrace(trace.*);
+        }
+        return err;
+    };
+}
+
+fn convert(args: ConvertFile, writer: *std.Io.Writer) !void {
+    const N = 8 / args.bits;
+
+    const read_buffer = try allocator.alloc(u8, 4 * 1024 * 1024);
+    defer allocator.free(read_buffer);
+    var image = Image.fromFilePath(allocator, io, args.path, read_buffer) catch |err| {
+        std.debug.print("Error loading image from {s}: {s}\n", .{ args.path, @errorName(err) });
+        if (@errorReturnTrace()) |trace| {
+            std.debug.dumpStackTrace(trace.*);
+        }
+        return err;
+    };
+    defer image.deinit(allocator);
+
+    var colors: std.ArrayList(Color) = .empty;
+    defer colors.deinit(allocator);
+    if (args.transparency) try colors.append(allocator, .{ .r = 31, .g = 0, .b = 31 });
+    var indices: std.ArrayList(usize) = try .initCapacity(allocator, image.width * image.height);
+    defer indices.deinit(allocator);
+    var it = image.iterator();
+    while (it.next()) |pixel| {
+        const color = Color{
+            .r = @intFromFloat(31.0 * pixel.r),
+            .g = @intFromFloat(63.0 * pixel.g),
+            .b = @intFromFloat(31.0 * pixel.b),
+        };
+        const index = try getIndex(&colors, color);
+        indices.appendAssumeCapacity(index);
+    }
+    var packed_data = try allocator.alloc(u8, indices.items.len / N);
+    defer allocator.free(packed_data);
+    for (packed_data, 0..) |_, i| {
+        packed_data[i] = 0;
+        for (0..N) |n| {
+            const shift: u3 = @intCast(n * args.bits);
+            packed_data[i] |= @intCast(indices.items[N * i + n] << shift);
+        }
+    }
+
+    const name = std.fs.path.stem(args.path);
+    write_image_decl(writer, name, &image, colors.items, packed_data, args.bits) catch |err| {
+        std.debug.print("Error writing decl for {s}: {s}\n", .{ name, @errorName(err) });
+        if (@errorReturnTrace()) |trace| {
+            std.debug.dumpStackTrace(trace.*);
+        }
+        return err;
+    };
+}
+
+fn write_image_decl(writer: *std.Io.Writer, name: []const u8, image: *const Image, colors: []const Color, packed_data: []const u8, bits: u4) !void {
+    const N = 8 / bits;
+
+    try writer.print("pub const {s} = struct {{\n", .{name});
+
+    try writer.print("    pub const width = {};\n", .{image.width});
+    try writer.print("    pub const height = {};\n", .{image.height});
+
+    try writer.writeAll("    pub const colors = [_]DisplayColor{\n");
+    for (colors) |c| {
+        try writer.print("        .{{ .r = {}, .g = {}, .b = {} }},\n", .{ c.r, c.g, c.b });
+    }
+    try writer.writeAll("    };\n");
+
+    try writer.print("    pub const indices = PackedIntSlice(u{}).init(@constCast(data[0..]), data.len * {});\n", .{ bits, N });
+    try writer.writeAll("    const data = [_]u8{\n");
+    for (packed_data, 0..) |index, i| {
+        if (i % 32 == 0) try writer.writeAll("        ");
+        try writer.print("{}, ", .{index});
+        if ((i + 1) % 32 == 0) try writer.writeAll("\n");
+    }
+    try writer.writeAll("    };\n");
+
+    try writer.writeAll("};\n\n");
+}
+
+pub const Color = packed struct(u16) {
+    b: u5,
+    g: u6,
+    r: u5,
+
+    fn eql(self: Color, other: Color) bool {
+        return @as(u16, @bitCast(self)) == @as(u16, @bitCast(other));
+    }
+};
+
+fn getIndex(colors: *std.ArrayList(Color), color: Color) !usize {
+    for (colors.items, 0..) |c, i| {
+        if (c.eql(color)) return i;
+    }
+    try colors.append(allocator, color);
+    return colors.items.len - 1;
+}
