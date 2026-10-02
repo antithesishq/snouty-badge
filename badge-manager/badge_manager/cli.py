@@ -8,15 +8,20 @@ not available yet).
 from __future__ import annotations
 import argparse
 import json
+import os
 import shutil
 import signal
 import subprocess
 import sys
 import time
+import urllib.error
+import urllib.request
+from urllib.parse import quote
 from pathlib import Path
 
 from . import config as config_mod
 from . import fat12
+from .build import BuildError
 from .device import DeviceError
 from .library import CartSet, LibraryError
 from .station import (BuildNotReady, DoesNotFit, NoBadge, Station, StationBusy, StationError,
@@ -110,6 +115,8 @@ def build_parser() -> argparse.ArgumentParser:
     what.add_argument("--cancel", action="store_true", help="stop the running build")
     what.add_argument("--log", nargs="?", const="", metavar="ID",
                       help="the whole log of build ID (default the running or last one)")
+    what.add_argument("--retry-fetch", metavar="ID",
+                      help="recover retained output from a failed remote transfer")
     p = cmd("builds", "the last builds")
     p.add_argument("-n", type=int, default=10, help="how many (default 10)")
     return ap
@@ -138,8 +145,11 @@ def _json(obj) -> None:
 
 
 def _confirm(a: argparse.Namespace, question: str) -> bool:
-    if getattr(a, "yes", False) or not sys.stdin.isatty():
+    if getattr(a, "yes", False):
         return True
+    if not sys.stdin.isatty():
+        print("badge: noninteractive deploy/wipe requires --yes", file=sys.stderr)
+        return False
     return input(f"{question} [y/N] ").strip().lower() in ("y", "yes")
 
 
@@ -176,7 +186,10 @@ def _set_lines(sets: list[dict]) -> list[str]:
 
 
 def cmd_status(st: Station, a) -> int:
-    s = st.status()
+    return _show_status(st.status(), a)
+
+
+def _show_status(s: dict, a) -> int:
     if getattr(a, "json", False):
         _json(s)
         return EXIT_OK
@@ -289,7 +302,10 @@ def cmd_log(st: Station, a) -> int:
 
 
 def cmd_library(st: Station, a) -> int:
-    lib = st.library.to_json()["library"]
+    return _show_library(st.library.to_json()["library"], a)
+
+
+def _show_library(lib: dict, a) -> int:
     if getattr(a, "json", False):
         _json(lib)
         return EXIT_OK
@@ -375,6 +391,10 @@ def _wifi_escape(text: str) -> str:
 
 
 def cmd_build(st: Station, a) -> int:
+    if a.retry_fetch:
+        job = st.jobs.retry_fetch(a.retry_fetch)
+        print(f"recovered {job.name} from the build VM")
+        return EXIT_OK
     if a.status:
         return _build_status(st, a)
     if a.cancel:
@@ -457,7 +477,10 @@ def _build_log(st: Station, job_id: str | None) -> int:
 
 
 def cmd_builds(st: Station, a) -> int:
-    rows = st.builds(max(1, a.n))
+    return _show_builds(st.builds(max(1, a.n)), a)
+
+
+def _show_builds(rows: list[dict], a) -> int:
     if getattr(a, "json", False):
         _json(rows)
         return EXIT_OK
@@ -477,7 +500,7 @@ COMMANDS = {"status": cmd_status, "sets": cmd_sets, "deploy": cmd_deploy, "wipe"
             "init-sets": cmd_init_sets, "qr": cmd_qr, "build": cmd_build,
             "builds": cmd_builds}
 STREAMING = {"deploy", "wipe", "sync", "mode", "set"}    # log lines printed and kept
-NO_BADGE = {"library", "log", "add-rom", "add-uf2", "mode", "set", "init-sets",
+NO_BADGE = {"sets", "fit", "library", "log", "add-rom", "add-uf2", "mode", "set", "init-sets",
             "qr", "build", "builds"}                     # never touch the drive
 KEEP_LOG = {"build"}                                     # log lines kept, not printed
 
@@ -485,17 +508,246 @@ KEEP_LOG = {"build"}                                     # log lines kept, not p
 def main(argv: list[str] | None = None) -> int:
     a = build_parser().parse_args(argv)
     try:
+        if os.environ.get("BADGE_STATION_OPERATOR") == "1":
+            if hasattr(a, "config") or hasattr(a, "fake_badge"):
+                raise ValueError("installed operator commands use the station's fixed configuration")
+            if a.cmd in ("deploy", "wipe"):
+                return _operator_device_action(a)
+            if a.cmd == "status":
+                return _show_status(_operator_get("/api/status"), a)
+            if a.cmd == "sets":
+                sets = _operator_get("/api/status")["sets"]
+                _json(sets) if getattr(a, "json", False) else print("\n".join(_set_lines(sets)))
+                return EXIT_OK
+            if a.cmd == "library":
+                return _show_library(_operator_get("/api/status")["library"], a)
+            if a.cmd == "log":
+                for e in _operator_get(f"/api/log?n={max(1, min(a.n, 200))}")["log"]:
+                    print(f"{time.strftime('%H:%M:%S', time.localtime(e['t']))}  {e['msg']}")
+                return EXIT_OK
+            if a.cmd == "builds":
+                return _show_builds(_operator_get(f"/api/builds?n={max(1, min(a.n, 100))}")["builds"], a)
+            if a.cmd == "fit":
+                return _operator_fit(a)
+            if a.cmd == "qr":
+                return _operator_qr()
+            if a.cmd == "sync":
+                return _operator_action("sync", {})
+            if a.cmd == "mode":
+                return _operator_mode(a)
+            if a.cmd == "set":
+                return _operator_set(a)
+            if a.cmd == "build":
+                return _operator_build(a)
+            if a.cmd in ("add-rom", "add-uf2", "init-sets"):
+                raise ValueError(f"{a.cmd} needs a station administrator; use the page or an admin shell")
         st = _station(a, stream=a.cmd in STREAMING, poll=a.cmd not in NO_BADGE,
                       keep_log=a.cmd in KEEP_LOG)
         return COMMANDS[a.cmd](st, a)
     except (NoBadge, DoesNotFit, StationBusy, BuildNotReady) as e:
         print(f"badge: {e}", file=sys.stderr)
         return EXIT_PRECONDITION
-    except (StationError, LibraryError, DeviceError, OSError) as e:
+    except (StationError, LibraryError, DeviceError, BuildError, OSError, ValueError) as e:
         print(f"badge: {e}", file=sys.stderr)
         return EXIT_ERROR
     except KeyboardInterrupt:
         return EXIT_ERROR
+
+
+def _operator_device_action(a: argparse.Namespace) -> int:
+    """Installed SSH CLI asks the root service to touch USB, using its fixed config."""
+    if hasattr(a, "config") or hasattr(a, "fake_badge"):
+        raise ValueError("installed operator device commands use the station's fixed configuration")
+    if not _confirm(a, "Replace every file on the badge?" if a.cmd == "deploy"
+                    else "Delete every file on the badge?"):
+        return EXIT_ERROR
+    if a.cmd == "wipe":
+        body = {}
+    elif a.carts is not None:
+        if a.set:
+            raise ValueError("give a SET or --carts, not both")
+        body = {"carts": a.carts, "roms": a.roms}
+    elif a.set and not a.roms:
+        body = {"set": a.set}
+    else:
+        raise ValueError("give a SET or --carts with optional --roms")
+    # Only the installed root-owned configuration sets the listening port.
+    return _operator_action(a.cmd, body)
+
+
+def _operator_action(name: str, body: dict) -> int:
+    data = _operator_post(f"/api/{name}", body)
+    if not data.get("ok"):
+        raise StationError(f"station did not accept {name}")
+    operation = data.get("operation") or {}
+    if not operation.get("id"):
+        print(f"{name} accepted; follow progress with badge log or the station page")
+        return EXIT_OK
+    print(f"{name} started", flush=True)
+    for _ in range(720):
+        current = _operator_get("/api/status").get("operation") or {}
+        if current.get("id") != operation["id"]:
+            raise StationError(f"{name} result was replaced; check badge log")
+        if current.get("state") == "done":
+            print(f"{name} completed")
+            return EXIT_OK
+        if current.get("state") == "failed":
+            raise StationError(f"{name} failed: {current.get('error') or 'see badge log'}")
+        time.sleep(1)
+    raise StationError(f"{name} is still running; check badge log")
+
+
+def _operator_url(path: str) -> str:
+    return f"http://127.0.0.1:{config_mod.operator_port()}{path}"
+
+
+def _operator_get(path: str) -> dict:
+    try:
+        with urllib.request.urlopen(_operator_url(path), timeout=15) as response:
+            return json.load(response)
+    except urllib.error.URLError as e:
+        raise StationError(f"station unavailable: {e.reason}") from e
+
+
+def _operator_post(path: str, body: dict) -> dict:
+    req = urllib.request.Request(_operator_url(path), data=json.dumps(body).encode(),
+                                 method="POST", headers={"Content-Type": "application/json"})
+    try:
+        with urllib.request.urlopen(req, timeout=15) as response:
+            return json.load(response)
+    except urllib.error.HTTPError as e:
+        raise StationError(f"station rejected {path}: {e.read(1000).decode(errors='replace')}") from e
+    except urllib.error.URLError as e:
+        raise StationError(f"station unavailable: {e.reason}") from e
+
+
+def _operator_mode(a: argparse.Namespace) -> int:
+    args = a.args
+    if len(args) != (1 if a.all else 2) or args[-1] not in ("ram", "xip"):
+        raise ValueError("usage: badge mode CART ram|xip, or badge mode --all ram|xip")
+    mode = args[-1]
+    keys = ([c["key"] for c in _operator_get("/api/status")["library"]["carts"]
+             if mode in c.get("variants", [])] if a.all else [args[0]])
+    for key in keys:
+        _operator_post("/api/cart-mode", {"cart": key, "mode": mode})
+        print(f"{key} now deploys as {mode.upper()}")
+    return EXIT_OK
+
+
+def _operator_set(a: argparse.Namespace) -> int:
+    if a.set_cmd == "rm":
+        req = urllib.request.Request(_operator_url("/api/sets/" + quote(a.key, safe="")),
+                                     method="DELETE")
+        try:
+            urllib.request.urlopen(req, timeout=15).close()
+        except urllib.error.HTTPError as e:
+            raise StationError(f"station rejected set removal: {e.read(1000).decode(errors='replace')}") from e
+        print(f"removed set {a.key}")
+        return EXIT_OK
+    sets = _operator_get("/api/status")["sets"]
+    replace = any(s["name"] == a.key for s in sets)
+    _operator_post("/api/sets", {"key": a.key, "title": a.title or a.key,
+                                  "carts": a.carts, "roms": a.roms, "replace": replace})
+    print(f"saved set {a.title or a.key} ({a.key})")
+    return EXIT_OK
+
+
+def _operator_build(a: argparse.Namespace) -> int:
+    if a.cancel:
+        _operator_post("/api/build/cancel", {})
+        print("cancelled")
+        return EXIT_OK
+    if a.retry_fetch:
+        _operator_post("/api/build/retry-fetch", {"id": a.retry_fetch})
+        print(f"recovered build {a.retry_fetch}")
+        return EXIT_OK
+    if a.status or a.log is not None:
+        if a.log is not None:
+            path = "/api/build/" + quote(a.log, safe="") if a.log else "/api/build"
+            job = _operator_get(path).get("job")
+            if not job:
+                print("no build found", file=sys.stderr)
+                return EXIT_ERROR
+            print("\n".join(job["log"]))
+            return EXIT_OK
+        status = _operator_get("/api/status")
+        job = _operator_get("/api/build").get("job")
+        if getattr(a, "json", False):
+            _json({"build": status["build"], "job": job})
+        else:
+            info = status["build"]
+            print(f"Builds:  {'ready, ' + info['where'] if info['ready'] else 'not ready: ' + info['why']}")
+            print("\n".join(_build_lines(job)) if job else "no builds yet")
+        return EXIT_OK
+    if not a.prompt:
+        raise ValueError('usage: badge build "PROMPT" [--remote|--local] [--name NAME] [--no-agent]')
+    data = _operator_post("/api/build", {"prompt": a.prompt, "where": a.where,
+                                          "name": a.name, "no_agent": a.no_agent})
+    job_id = data["id"]
+    seen = 0
+    old = {s: signal.signal(s, _interrupt) for s in (signal.SIGTERM, signal.SIGHUP)}
+    try:
+        while True:
+            job = _operator_get("/api/build/" + quote(job_id, safe=""))["job"]
+            lines = job.get("log") or []
+            for line in lines[seen:]:
+                print(line, flush=True)
+            seen = len(lines)
+            if job["state"] not in ("queued", "running"):
+                if job["state"] == "done":
+                    print(f"{job['title']} is in the library as {job['result']['cart']} (build {job_id})")
+                    return EXIT_OK
+                return EXIT_ERROR
+            time.sleep(1)
+    except KeyboardInterrupt:
+        print("cancelling the build", file=sys.stderr)
+        _operator_post("/api/build/cancel", {})
+        return EXIT_ERROR
+    finally:
+        for s, handler in old.items():
+            signal.signal(s, handler)
+
+
+def _operator_fit(a: argparse.Namespace) -> int:
+    if a.carts is not None:
+        if a.set:
+            raise ValueError("give a SET or --carts, not both")
+        body = {"carts": a.carts, "roms": a.roms}
+        title = "Selection"
+    else:
+        if not a.set or a.roms:
+            raise ValueError("give a SET or --carts with optional --roms")
+        set_ = next((s for s in _operator_get("/api/status")["sets"] if s["name"] == a.set), None)
+        if not set_:
+            raise ValueError(f"no set called {a.set!r}")
+        body = {"carts": set_["carts"], "roms": set_["roms"]}
+        title = set_["title"]
+    rep = _operator_post("/api/fit", body)
+    verdict = "fits" if rep["fits"] else "does NOT fit"
+    print(f"{title}: {len(rep['files'])} files, {kb(rep['bytes'])} of "
+          f"{fat12.kb_down(rep['bytes_capacity'])}, {rep['entries']} of "
+          f"{rep['entries_capacity']} root entries: {verdict}")
+    for name in rep["files"]:
+        print(f"  {name}")
+    for why in rep["why"]:
+        print(f"  ! {why}")
+    return EXIT_OK if rep["fits"] else EXIT_PRECONDITION
+
+
+def _operator_qr() -> int:
+    if not shutil.which("qrencode"):
+        raise ValueError("badge qr needs qrencode")
+    share = _operator_get("/api/status")["share"]
+    if not share.get("url"):
+        raise ValueError("no address to share: the station has no network")
+    codes = [(f"The page: {share['url']}", share["url"])]
+    if share.get("ssid"):
+        codes.append((f"Wi-Fi '{share['ssid']}', password {share['password']}",
+                      f"WIFI:T:WPA;S:{_wifi_escape(share['ssid'])};P:{_wifi_escape(share['password'])};;"))
+    for label, value in codes:
+        print(label, flush=True)
+        subprocess.run(["qrencode", "-t", "UTF8", value], check=True)
+    return EXIT_OK
 
 
 if __name__ == "__main__":

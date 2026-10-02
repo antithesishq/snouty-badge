@@ -25,14 +25,24 @@ import sys, tomllib
 with open(sys.argv[1], "rb") as f:
     c = tomllib.load(f)
 hs = c.get("hotspots", [])
+if not isinstance(hs, list) or any(not isinstance(h, dict) for h in hs):
+    raise ValueError("hotspots must be an array of tables")
 last = hs[-1] if hs else {}
 # Tolerate ap_* keys written after a [[hotspots]] header (they land in that table).
 ssid = c.get("ap_ssid", last.get("ap_ssid", "snouty-badge"))
 pw = c.get("ap_password", last.get("ap_password", "snoutysnouty"))
+if not isinstance(ssid, str) or not ssid or not isinstance(pw, str) or len(pw) < 8:
+    raise ValueError("access point needs a nonempty SSID and an 8-character password")
+if "\0" in ssid or "\0" in pw:
+    raise ValueError("access point credentials cannot contain NUL")
 out = ["ap", str(ssid), str(pw)]
 for h in hs:
-    if h.get("ssid"):
-        out += ["hotspot", str(h["ssid"]), str(h.get("password", ""))]
+    name, password = h.get("ssid"), h.get("password", "")
+    if not isinstance(name, str) or not name or not isinstance(password, str):
+        raise ValueError("each hotspot needs an SSID and a string password")
+    if "\0" in name or "\0" in password:
+        raise ValueError("hotspot credentials cannot contain NUL")
+    out += ["hotspot", name, password]
 sys.stdout.write("\0".join(out) + "\0")
 PY
 }
@@ -50,8 +60,14 @@ upsert() {   # upsert NAME SETTINGS...
     fi
 }
 
+parsed=$(mktemp)
+trap 'rm -f "$parsed"' EXIT
+if ! read_config > "$parsed"; then
+    echo "nm-profiles: invalid $CONFIG; no profiles changed" >&2
+    exit 1
+fi
 records=()
-while IFS= read -r -d '' field; do records+=("$field"); done < <(read_config)
+while IFS= read -r -d '' field; do records+=("$field"); done < "$parsed"
 
 n=0
 i=0

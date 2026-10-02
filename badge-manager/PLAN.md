@@ -127,10 +127,9 @@ must be proven before then on two stand-ins:
   with the badge's geometry, loop-mounted (or written through the
   station's own FAT code in tests). Exercises wipe/copy/fit/eject logic
   and the web UI on the VM and in CI.
-- Any USB stick formatted FAT12 with label `SYCLBADGE` on the real Pi
-  (`mkfs.vfat -F 12 -n SYCLBADGE -s 1 -r 32 -S 512` on a 1280 KB
-  partition reproduces the badge's limits exactly). Detection matches on
-  label or VID:PID, so the stick takes the badge's place end to end.
+- Use `--fake-badge` with a FAT12 image or directory for Pi tests without
+  the real badge. Production detection requires the badge's USB VID:PID,
+  label, and geometry; a label-only USB stick is deliberately ignored.
 
 Show-day check: plug the real badge in on the menu, deploy the demo set,
 watch the menu re-scan, run a cart, come back, deploy the Sonic set.
@@ -142,7 +141,8 @@ watch the menu re-scan, run a cart, come back, deploy the Sonic set.
   unit, `setup.sh` for a fresh Raspberry Pi OS Lite 64-bit (packages,
   avahi, the two NetworkManager profiles and the watchdog, the `badge`
   user for ssh, service). Fake-badge test on the VM. Deliverable: deploy
-  a set to a FAT12 USB stick from a phone browser and from ssh, on a Pi
+  a set to the real badge (or an explicit fake image during development)
+  from a phone browser and from ssh, on a Pi
   that found the hotspot and on one that had to make its own network.
 - **M1 library**: manifest, sets, fit check with root-entry accounting,
   `sync.sh` from the VM, ROM upload from the phone, per-cart RAM/XIP
@@ -202,8 +202,9 @@ Where the build runs, decided by a probe at job start, shown on the page:
 Internet is needed for either path (the agent talks to the API), hence
 hotspot first in section 2.
 
-Guardrails: one job at a time, a wall-clock limit, jobs run under a
-separate user with the library as the only writable path, and the phone
+Guardrails: one job at a time, a wall-clock limit, local jobs run under the
+unprivileged `badge` account (which owns its checkout and each job's output
+directory while the service owns the library), and the phone
 page shows the diff summary and the preview GIF before anything is
 deployed.
 
@@ -398,19 +399,22 @@ The command the runner starts, in order of precedence:
 1. `build_command` from `station.toml` (tests point it at
    `tests/fake_build_job.sh`), a template with `{id}`, `{out}`,
    `{prompt_file}`, `{name}`, `{flags}`.
-2. `where == "local"`: `bash <build_repo>/badge-manager/build-job.sh --id
+2. `where == "local"`: `bash <build_local_repo>/badge-manager/build-job.sh --id
    ID --out <library>/builds/ID/out --prompt-file <library>/builds/ID/prompt.txt
    [--name NAME] [--no-agent]`.
 3. `where == "remote"`: `ssh -o BatchMode=yes -o ConnectTimeout=15 HOST
    bash <build_repo>/badge-manager/build-job.sh --id ID --out
    <build_repo>/build-jobs/ID/out --prompt-file - ... < prompt.txt`, then
    `ssh HOST tar -C <build_repo>/build-jobs/ID -cf - out | tar -x -C
-   <library>/builds/ID`, then `ssh HOST rm -rf <build_repo>/build-jobs/ID`.
+   <library>/builds/ID`. Cleanup follows a successful transfer, UF2 gate,
+   and registration. A failed fetch keeps the package for `badge build
+   --retry-fetch ID`; completed remote job directories expire after seven
+   days on the next build.
    Cancel runs `ssh HOST bash .../build-job.sh --cancel ID` and kills the
    local ssh.
 
 `where == "auto"` picks local when the local probe passes (section 6:
-RAM, Zig, and now also `build_repo` present on this machine), else remote
+RAM, Zig, and `build_local_repo` present on this machine), else remote
 when `build_host` is set. `build.ready` in the status is false, with a
 `why`, when neither applies or `network.internet` is false.
 

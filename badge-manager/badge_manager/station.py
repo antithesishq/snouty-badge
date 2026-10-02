@@ -25,6 +25,7 @@ import os
 import re
 import shlex
 import shutil
+import signal
 import socket
 import subprocess
 import tempfile
@@ -38,7 +39,7 @@ from . import fat12
 from .build import MAX_PROMPT, BuildBusy, BuildError, Job, Jobs
 from .config import Config
 from .device import Badge, DeviceError, find_badge
-from .library import CUSTOM, CartSet, Library, LibraryError
+from .library import CUSTOM, CartSet, Library, LibraryError, PlanItem, validate_uf2
 
 LOG_LINES = 200
 FAKE_REPLUG_S = 3.0          # a fake badge "comes back" this long after an eject
@@ -46,6 +47,18 @@ NET_CACHE_S = 5.0
 INTERNET_CACHE_S = 30.0
 SYNC_TIMEOUT_S = 600
 SYNC_SH = Path(__file__).resolve().parents[1] / "sync.sh"   # Track B's script
+
+
+def _group_has_live_members(pgid: int) -> bool:
+    """Linux /proc check that ignores orphaned zombies awaiting init reaping."""
+    for stat in Path("/proc").glob("[0-9]*/stat"):
+        try:
+            fields = stat.read_text().rsplit(") ", 1)[1].split()
+            if int(fields[2]) == pgid and fields[0] != "Z":
+                return True
+        except (OSError, ValueError, IndexError):
+            continue
+    return False
 
 
 class StationError(Exception):
@@ -100,6 +113,7 @@ class Station:
         self.jobs = Jobs(config.library, config, on_change=self._changed,
                          register=self._register_build)
         self._build_done: threading.Event | None = None    # set when our build thread ends
+        self._library_seen = None
         self._builds_seen: tuple | None = ()          # () = not polled yet
         self._log_file = config.resolved_log_file()
         self._load_log_tail()
@@ -166,13 +180,36 @@ class Station:
         """Detect plug/unplug; mount and read a newly plugged badge. Skipped while an action runs.
         Also wakes the long poll when a build another process runs has moved on."""
         self._poll_builds()
-        if self._action.locked():
+        with self._state:
+            paths = [self.library.manifest, *self.library.root.glob("carts/*"),
+                     *self.library.root.glob("roms/*")]
+            seen = tuple((str(p), _mtime(p)) for p in paths)
+            if seen != self._library_seen:
+                self.library.reload()
+                self._library_seen = seen
+                self._changed()
+        if not self._action.acquire(blocking=False):
             return
-        self._poll()
+        fd = None
+        try:
+            fd = self._flock()
+            self._poll()
+        except StationBusy:
+            pass
+        finally:
+            if fd is not None:
+                os.close(fd)
+            self._action.release()
 
     def _poll(self) -> None:
         try:
             b = find_badge(self.config.fake_badge, self.config.mount_root)
+        except DeviceError as e:
+            with self._state:
+                self._badge = None
+                self._info = self._no_badge_info(str(e))
+                self._changed()
+            return
         except OSError:
             b = None
         with self._state:
@@ -278,7 +315,7 @@ class Station:
             except OSError:
                 continue
         if fd is None:
-            return None
+            raise StationBusy("cannot open the station lock; check mount_root permissions")
         try:
             fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except OSError:
@@ -314,55 +351,85 @@ class Station:
         label = ("selection" if target.key == CUSTOM else target.key) if adhoc else target
         with self._busy(f"deploy {label}"):
             t0 = time.monotonic()
-            s = target if adhoc else self.library.sets.get(target)
-            if s is None:
-                raise StationError(f"no set called {target!r}")
             b = self._require_badge()
-            try:
-                items = self.library.plan(s)
-            except LibraryError as e:
-                self.log(f"cannot deploy {s.title}: {e}")
-                raise DoesNotFit(str(e)) from e
-            rep = fat12.fit([(i.name, i.size) for i in items], geom=self._geometry(b))
-            self.log(f"deploying {s.title}: {len(items)} files, {kb(rep.bytes_used)}, "
-                     f"{rep.entries_used} of {rep.entries_capacity} root entries")
-            if not rep.fits:
-                self.log(f"{s.title} does not fit: {'; '.join(rep.why)}")
-                raise DoesNotFit("; ".join(rep.why))
-            try:
-                self._wipe(b)
-                for it in items:
-                    self.log(f"copying {it.name} ({kb(it.size)})")
-                    b.copy(it.src, it.name)
-                os.sync()
-                files = self._verify(b, [i.name for i in items])
-                self.log("ejecting the badge")
-                b.eject()
-            except DeviceError as e:
-                self._fail("deploy", e)
-            self._mark_ejected(b, files)
-            self.log(f"done in {time.monotonic() - t0:.1f} s, unplug the badge")
+            with tempfile.TemporaryDirectory(prefix="badge-deploy-") as stage:
+                s = None
+                try:
+                    with self._state, self.library.locked():
+                        self.library.reload()
+                        s = target if adhoc else self.library.sets.get(target)
+                        if s is None:
+                            raise LibraryError(f"no set called {target!r}")
+                        items = self._stage(self.library.plan(s), Path(stage))
+                    rep = fat12.fit([(i.name, i.size) for i in items], geom=self._geometry(b))
+                except (LibraryError, OSError, ValueError, DeviceError) as e:
+                    self.log(f"cannot deploy {s.title if s else label}: {e}")
+                    raise DoesNotFit(str(e)) from e
+                self.log(f"deploying {s.title}: {len(items)} files, {kb(rep.bytes_used)}, "
+                         f"{rep.entries_used} of {rep.entries_capacity} root entries")
+                if not rep.fits:
+                    self.log(f"{s.title} does not fit: {'; '.join(rep.why)}")
+                    raise DoesNotFit("; ".join(rep.why))
+                try:
+                    self._wipe(b)
+                    for it in items:
+                        self.log(f"copying {it.name} ({kb(it.size)})")
+                        b.copy(it.src, it.name)
+                    os.sync()
+                    files = self._verify(b, items)
+                    self.log("ejecting the badge")
+                    b.eject()
+                except (DeviceError, OSError) as e:
+                    self._fail("deploy", e)
+                self._mark_ejected(b, files)
+                self.log(f"done in {time.monotonic() - t0:.1f} s, unplug the badge")
+
+    def _stage(self, items: list[PlanItem], directory: Path) -> list[PlanItem]:
+        """Freeze and validate every input before any destructive badge operation."""
+        staged, names = [], set()
+        for i, item in enumerate(items):
+            fat12.validate_filename(item.name)
+            if item.name.casefold() in names:
+                raise LibraryError(f"duplicate destination: {item.name}")
+            names.add(item.name.casefold())
+            dest = directory / str(i)
+            with item.src.open("rb") as src, dest.open("wb") as dst:
+                before = os.fstat(src.fileno())
+                shutil.copyfileobj(src, dst)
+                after = os.fstat(src.fileno())
+            if (before.st_size, before.st_mtime_ns, before.st_ctime_ns) != (
+                    after.st_size, after.st_mtime_ns, after.st_ctime_ns):
+                raise LibraryError(f"{item.name} changed while preparing deployment; retry")
+            size = dest.stat().st_size
+            if size != before.st_size:
+                raise LibraryError(f"incomplete deployment input: {item.name}")
+            if item.kind == "cart":
+                validate_uf2(dest)
+            staged.append(PlanItem(dest, item.name, size, item.title, item.kind))
+        return staged
 
     def _geometry(self, b: Badge) -> fat12.Geometry:
-        try:
-            return b.geometry()
-        except DeviceError:
-            return fat12.geometry()
+        return b.geometry()
 
     def _wipe(self, b: Badge) -> None:
         self.log("wiping the badge")
         n = b.wipe()
         self.log(f"wiped, {n} old file{'s' if n != 1 else ''} removed")
 
-    def _verify(self, b: Badge, names: list[str]) -> list[dict]:
+    def _verify(self, b: Badge, items: list[PlanItem]) -> list[dict]:
         files = b.listdir()
+        names = [i.name for i in items]
         have = {e.name.lower() for e in files}
         missing = [n for n in names if n.lower() not in have]
         if missing:
             raise DeviceError("missing after copy: " + ", ".join(missing))
+        sizes = {e.name.lower(): e.size for e in files}
+        for item in items:
+            if sizes[item.name.lower()] != item.size:
+                raise DeviceError(f"incorrect size after copy: {item.name}")
         frag = b.fragmented()
         if frag:
-            self.log("warning: not contiguous on the drive: " + ", ".join(frag))
+            raise DeviceError("not contiguous on the drive: " + ", ".join(frag))
         self.log(f"all {len(names)} files on the badge, {fat12.kb_down(b.free_bytes())} free, "
                  f"{b.free_entries()} root entries free")
         return [{"name": e.name, "size": e.size} for e in files]
@@ -371,7 +438,7 @@ class Station:
         self.log(f"{what} failed: {e}")
         with self._state, contextlib.suppress(DeviceError, OSError):
             self._refresh()
-        raise StationError(f"{what} failed: {e}") from e
+        raise StationError(f"{what} failed: {e}. Badge contents may be incomplete; reconnect and deploy again.") from e
 
     def wipe(self) -> None:
         """Delete every file on the badge, then eject."""
@@ -404,7 +471,7 @@ class Station:
             return rc == 0
 
     def _sync_command(self) -> tuple[str, dict]:
-        """config.sync_command, else badge-manager/sync.sh HOST REPO, else a bare rsync."""
+        """Use the configured command or the installed staged sync implementation."""
         env = dict(os.environ, BADGE_STATION_LIBRARY=str(self.config.library))
         if self.config.source:
             env["BADGE_STATION_CONFIG"] = str(self.config.source)
@@ -414,24 +481,43 @@ class Station:
             host = self.config.build_host or "local"
             return (f"bash {shlex.quote(str(SYNC_SH))} {shlex.quote(host)} "
                     f"{shlex.quote(self.config.build_repo)}"), env
-        return self.config.default_sync_command(), env
+        raise StationError("sync.sh is missing; reinstall the badge station before syncing")
 
     def _run_streamed(self, cmd: str, env: dict | None = None) -> int:
         try:
             p = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE, env=env,
-                                 stderr=subprocess.STDOUT, text=True, errors="replace")
+                                 stderr=subprocess.STDOUT, text=True, errors="replace",
+                                 start_new_session=True)
         except OSError as e:
             self.log(f"could not start: {e}")
             return 127
-        timer = threading.Timer(SYNC_TIMEOUT_S, p.kill)
+        expired = threading.Event()
+
+        def kill_group():
+            expired.set()
+            with contextlib.suppress(ProcessLookupError):
+                os.killpg(p.pid, signal.SIGKILL)
+
+        timer = threading.Timer(SYNC_TIMEOUT_S, kill_group)
         timer.start()
         try:
             for line in p.stdout:
                 if line.strip():
                     self.log(line.rstrip()[:300])
-            return p.wait()
+            rc = p.wait()
+            return 124 if expired.is_set() else rc
         finally:
             timer.cancel()
+            with contextlib.suppress(ProcessLookupError):
+                os.killpg(p.pid, signal.SIGKILL)
+            p.stdout.close()
+            p.wait()
+            if expired.is_set():
+                # SIGKILL is asynchronous; let descendants reach a terminal
+                # state before reporting timeout to the caller.
+                end = time.monotonic() + 1
+                while time.monotonic() < end and _group_has_live_members(p.pid):
+                    time.sleep(0.01)
 
     def reload_library(self) -> None:
         with self._state:
@@ -448,10 +534,10 @@ class Station:
         return c
 
     def save_set(self, title: str, carts: list[str], roms: list[str],
-                 key: str | None = None) -> CartSet:
+                 key: str | None = None, *, replace: bool = False) -> CartSet:
         """Create or replace a set in the manifest; returns it."""
         with self._state:
-            s = self.library.save_set(title, carts, roms, key)
+            s = self.library.save_set(title, carts, roms, key, replace=replace)
             self._changed()
         n = len(s.carts)
         self.log(f"saved set {s.title} ({s.key}): {n} cart{'s' if n != 1 else ''}"
@@ -552,22 +638,60 @@ class Station:
         if self.config.build_command:
             where = where or "local"
         elif where is None:
-            why = "no build VM is set and this station cannot build carts itself"
+            why = (getattr(self, "_local_build_reason", "") if self.config.build_local_repo else "") or \
+                  "no build VM is set and this station cannot build carts itself"
         elif not (net or self.network())["internet"]:
             why = "no internet: builds need the network"
         return {"local": local, "remote": remote, "ready": not why, "why": why, "where": where}
 
     def _local_build_ok(self) -> bool:
-        """>= 6 GB RAM, a Zig under ~/.local and build_repo on this machine (PLAN 6, 9.2)."""
+        """Check the installed builder's no-agent prerequisites."""
         try:
             mem = Path("/proc/meminfo").read_text()
             kb_total = int(re.search(r"MemTotal:\s+(\d+)", mem).group(1))
         except (OSError, AttributeError, ValueError):
             return False
-        home = Path.home() / ".local"
-        zig = (home / "zig" / "zig").exists() or (home / "bin" / "zig").exists()
-        repo = Path(self.config.build_repo).is_dir()
-        return kb_total >= 6 * 1024 * 1024 * 0.95 and zig and repo
+        home = Path(self.config.build_home or Path.home()) / ".local"
+        zig = home / "zig" / "zig"
+        if not zig.is_file():
+            zig = home / "bin" / "zig"
+        repo = Path(self.config.build_local_repo or self.config.build_repo)
+        if not self.config.build_local_repo:
+            return kb_total >= 6 * 1024 * 1024 * 0.95 and zig.exists() and repo.is_dir()
+        reason = ""
+        if kb_total < 6 * 1024 * 1024 * 0.95:
+            reason = "local builds need at least 6 GB RAM"
+        elif not repo.is_dir():
+            reason = f"local build checkout is missing: {repo}"
+        elif not zig.is_file():
+            reason = f"builder Zig is missing: {zig}"
+        elif self.config.build_user and os.geteuid() == 0 and not all(
+            self._builder_can(flag, path) for flag, path in (("-x", zig), ("-r", repo))
+        ):
+            reason = "builder cannot read its checkout or execute Zig"
+        elif not (Path("/opt/badge-station/badge-bench/.venv/bin/python3").is_file() or
+                  (repo / "badge-bench/.venv/bin/python3").is_file()):
+            reason = "badge-bench venv is missing (run setup.sh --build-tools)"
+        else:
+            try:
+                command = ["node", "--version"]
+                if self.config.build_user and os.geteuid() == 0:
+                    command = ["runuser", "-u", self.config.build_user, "--", *command]
+                result = subprocess.run(command, capture_output=True, text=True, timeout=5)
+                version = int(result.stdout.strip().lstrip("v").split(".")[0])
+                if result.returncode or version < 20:
+                    reason = "builder needs Node.js 20 or newer"
+            except (OSError, ValueError, IndexError, subprocess.SubprocessError):
+                reason = "builder needs Node.js 20 or newer"
+        self._local_build_reason = reason
+        return not reason
+
+    def _builder_can(self, flag: str, path: Path) -> bool:
+        try:
+            return subprocess.run(["runuser", "-u", self.config.build_user, "--", "test",
+                                   flag, str(path)], capture_output=True, timeout=5).returncode == 0
+        except (OSError, subprocess.SubprocessError):
+            return False
 
     def share(self, net: dict | None = None) -> dict:
         """{"url", "ssid", "password"}: how a second phone reaches the page."""
@@ -592,7 +716,8 @@ class Station:
         if self.config.build_command:
             return info["where"] if where == "auto" else where
         if where == "local" and not info["local"]:
-            raise BuildNotReady("this station cannot build carts itself (it needs 6 GB of RAM, "
+            raise BuildNotReady(getattr(self, "_local_build_reason", "") or
+                                "this station cannot build carts itself (it needs 6 GB of RAM, "
                                 "Zig and the repository)")
         if where == "remote" and not info["remote"]:
             raise BuildNotReady("no build VM is set (build_host in station.toml)")

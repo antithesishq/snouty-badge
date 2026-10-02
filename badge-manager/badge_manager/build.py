@@ -23,11 +23,15 @@ import contextlib
 import fcntl
 import json
 import os
+import pwd
 import re
 import shlex
+import shutil
 import signal
+import stat
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 from dataclasses import asdict, dataclass, fields
@@ -44,8 +48,7 @@ LOG_LINE_MAX = 300
 KILL_GRACE_S = 3.0            # SIGTERM, then SIGKILL this much later
 SSH_STEP_S = 120              # timeout for the fetch, cleanup and cancel ssh calls
 SSH_OPTS = ["-o", "BatchMode=yes", "-o", "ConnectTimeout=15", "-o", "StrictHostKeyChecking=accept-new"]
-SSH_KEY = Path("/home/badge/.ssh/id_ed25519")   # PLAN 9.8: the station's own key, used when
-                                                # present (the station runs as root)
+SSH_KEY = Path("/home/badge/.ssh/id_ed25519")
 PACKAGE_ROOT = Path(__file__).resolve().parents[1]           # badge-manager/
 UF2_INFO = PACKAGE_ROOT.parent / "tools" / "uf2_info.py"     # skipped when missing
 REPO_CARTS = PACKAGE_ROOT.parent / "carts"                   # names a new cart must avoid
@@ -253,7 +256,7 @@ class Jobs:
         if name not in OUT_FILES or not ID_RE.match(job_id or ""):
             return None
         p = self.dir(job_id) / "out" / name
-        return p if p.is_file() else None
+        return p if p.is_file() and not p.is_symlink() else None
 
     # -- writing ----------------------------------------------------------
 
@@ -294,6 +297,12 @@ class Jobs:
             job_id = self._new_id(name)
             d = self.dir(job_id)
             (d / "out").mkdir(parents=True)
+            if where == "local" and os.geteuid() == 0:
+                if not self.config.build_user:
+                    raise BuildError("local builds need build_user when the station runs as root")
+                account = pwd.getpwnam(self.config.build_user)
+                os.chown(d / "out", account.pw_uid, account.pw_gid)
+                (d / "out").chmod(0o700)
             (d / "prompt.txt").write_text(prompt + "\n")
             (d / "job.log").touch()
             host = self.config.build_host if where == "remote" else None
@@ -346,7 +355,7 @@ class Jobs:
 
     def _remote_after(self, job: Job, steps: list[str], rc: int, timed_out: bool,
                       on_line) -> int:
-        """Fetch out/ after a good run, stop the host side after a bad one, always clean up."""
+        """Fetch a good result; retain remote output until local validation succeeds."""
         if timed_out:
             self._quiet(self.cancel_command(job))
         elif rc == 0 and not self._cancel_asked(job):
@@ -354,46 +363,88 @@ class Jobs:
             if self._quiet(steps[1]) != 0:
                 self._line(job, "could not fetch the results from the build VM", on_line)
                 rc = 255
-        self._quiet(steps[2])
+        elif rc != 0:
+            self._quiet(self.cancel_command(job))
+        if rc != 0:
+            self._line(job, f"remote files retained; retry with badge build --retry-fetch {job.id}", on_line)
         return rc
+
+    def retry_fetch(self, job_id: str) -> Job:
+        """Recover a completed remote package retained after a transfer failure."""
+        job = self.get(job_id)
+        if not job or job.where != "remote" or job.state != "failed" or self.config.build_command:
+            raise BuildError("no failed remote build with that ID")
+        fd = self._acquire()
+        try:
+            steps = self.commands(job)
+            self._line(job, "retrying remote result transfer", None)
+            if self._quiet(steps[1]) != 0:
+                raise BuildError("remote result transfer failed; files remain on the build VM")
+            result, title = self._collect(job)
+            job.result, job.title, job.state, job.error, job.exit = result, title, "done", None, 0
+            self._quiet(steps[2])
+            self._finish(job, None)
+            return job
+        finally:
+            os.close(fd)
 
     def _stream(self, job: Job, cmd: str, deadline: float, on_line) -> tuple[int, bool]:
         """Run shell command CMD with its output in job.log; kill its group at DEADLINE."""
         try:
+            builder = self._builder_options(job)
             p = subprocess.Popen(cmd, shell=True, stdin=subprocess.DEVNULL,
                                  stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
-                                 errors="replace", start_new_session=True, cwd=self.dir(job.id))
+                                 errors="replace", start_new_session=True, cwd=self.dir(job.id),
+                                 **builder)
         except OSError as e:
             self._line(job, f"could not start the build: {e}", on_line)
             return 127, False
         self._procs[job.id] = p
         job.state, job.pid = "running", p.pid
-        self._save(job)
         timed_out = threading.Event()
 
         def expire():
             timed_out.set()
-            kill_group(p.pid, lambda: p.poll() is None)
+            kill_group(p.pid)
 
         timer = threading.Timer(max(0.0, deadline - time.monotonic()), expire)
         timer.daemon = True
-        timer.start()
+        completed = False
         try:
+            self._save(job)
+            timer.start()
             with p.stdout:
                 for line in p.stdout:
                     if line.strip():
                         self._line(job, line, on_line)
-            return p.wait(), timed_out.is_set()
+            rc = p.wait()
+            completed = True
+            return rc, timed_out.is_set()
         finally:
             timer.cancel()
+            if not completed or _group_has_live_members(p.pid):
+                kill_group(p.pid, wait=True)
+                with contextlib.suppress(subprocess.TimeoutExpired):
+                    p.wait(timeout=2)
 
     @staticmethod
     def _quiet(cmd: str | None) -> int:
         if not cmd:
             return 0
         try:
-            return subprocess.run(cmd, shell=True, stdin=subprocess.DEVNULL,
-                                  capture_output=True, timeout=SSH_STEP_S).returncode
+            p = subprocess.Popen("set -o pipefail; " + cmd, shell=True,
+                                 executable="/bin/bash", stdin=subprocess.DEVNULL,
+                                 stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                 start_new_session=True)
+            try:
+                p.communicate(timeout=SSH_STEP_S)
+            except subprocess.TimeoutExpired:
+                kill_group(p.pid, wait=True)
+                try:
+                    p.communicate(timeout=2)
+                except subprocess.TimeoutExpired:
+                    return 1
+            return p.returncode or 0
         except (OSError, subprocess.SubprocessError):
             return 1
 
@@ -411,9 +462,24 @@ class Jobs:
             try:
                 job.result, job.title = self._collect(job)
                 job.state = "done"
+                if job.where == "remote" and not self.config.build_command:
+                    self._quiet(self.commands(job)[2])
             except BuildError as e:
                 job.state, job.error = "failed", str(e)
         self._finish(job, on_line)
+
+    def _builder_options(self, job: Job) -> dict:
+        """Drop root only for local code; SSH itself uses the station account key."""
+        if job.where != "local" or os.geteuid() != 0:
+            return {}
+        if not self.config.build_user:
+            raise BuildError("local builds need build_user when the station runs as root")
+        account = pwd.getpwnam(self.config.build_user)
+        home = str(self.config.build_home or account.pw_dir)
+        env = dict(os.environ, HOME=home, USER=account.pw_name, LOGNAME=account.pw_name,
+                   PATH=f"{home}/.local/bin:{os.environ.get('PATH', '/usr/bin:/bin')}")
+        return {"user": account.pw_uid, "group": account.pw_gid,
+                "extra_groups": [], "env": env}
 
     def _finish(self, job: Job, on_line) -> None:
         job.finished = time.time()
@@ -436,24 +502,50 @@ class Jobs:
     def _collect(self, job: Job) -> tuple[dict, str]:
         """Gate and register out/<name>.uf2; returns (result, title)."""
         out = self.dir(job.id) / "out"
+        summary_file = out / "summary.json"
         try:
-            summary = json.loads((out / "summary.json").read_text())
+            fd = os.open(summary_file, os.O_RDONLY | os.O_NOFOLLOW)
+            with os.fdopen(fd, "rb") as fh:
+                info = os.fstat(fh.fileno())
+                if not stat.S_ISREG(info.st_mode) or info.st_size > 64 * 1024:
+                    raise BuildError("invalid build summary")
+                summary = json.load(fh)
             summary = summary if isinstance(summary, dict) else {}
         except (OSError, ValueError):
             summary = {}
         uf2 = out / f"{job.name}.uf2"
         if not uf2.is_file():
             raise BuildError(f"the build made no {uf2.name}")
-        uf2_gate(uf2)
-        title = str(summary.get("title") or job.name).strip()[:40] or job.name
+        # The builder owns out/. Pin the exact bytes in the root-owned job
+        # directory before validating and registering them.
+        snap_fd, snap_name = tempfile.mkstemp(prefix=".verified-", suffix=".uf2",
+                                              dir=self.dir(job.id))
+        snapshot = Path(snap_name)
         try:
-            self.register(uf2, job.name, title, job.id)
-        except Exception as e:
-            raise BuildError(f"could not add the cart to the library: {e}") from e
+            with os.fdopen(snap_fd, "wb") as dst:
+                src_fd = os.open(uf2, os.O_RDONLY | os.O_NOFOLLOW)
+                with os.fdopen(src_fd, "rb") as src:
+                    if not stat.S_ISREG(os.fstat(src.fileno()).st_mode):
+                        raise BuildError("the UF2 is not a regular file")
+                    shutil.copyfileobj(src, dst)
+                    dst.flush()
+                    os.fsync(dst.fileno())
+            try:
+                uf2_gate(snapshot)
+            except BuildError as e:
+                raise BuildError(str(e).replace(snapshot.name, uf2.name)) from e
+            title = str(summary.get("title") or job.name).strip()[:40] or job.name
+            try:
+                self.register(snapshot, job.name, title, job.id)
+            except Exception as e:
+                raise BuildError(f"could not add the cart to the library: {e}") from e
+            size = snapshot.stat().st_size
+        finally:
+            snapshot.unlink(missing_ok=True)
         preview = next((f"/builds/{job.id}/{n}" for n in ("preview.gif", "preview.png")
-                        if (out / n).is_file()), None)
+                        if (out / n).is_file() and not (out / n).is_symlink()), None)
         bench = summary.get("bench_ms")
-        result = {"cart": job.name, "uf2": f"carts/{job.name}.uf2", "size": uf2.stat().st_size,
+        result = {"cart": job.name, "uf2": f"carts/{job.name}.uf2", "size": size,
                   "preview": preview,
                   "bench_ms": bench if isinstance(bench, (int, float)) else None,
                   "branch": summary.get("branch") or None}
@@ -485,7 +577,8 @@ class Jobs:
             cmd = self.config.build_command.format(
                 **{k: shlex.quote(v) for k, v in fill.items()}, flags=_join(self.flags(job)))
             return [cmd]
-        script = f"{self.config.build_repo}/{BUILD_JOB_SH}"
+        local_repo = self.config.build_local_repo or self.config.build_repo
+        script = f"{local_repo if job.where == 'local' else self.config.build_repo}/{BUILD_JOB_SH}"
         if job.where == "local":
             return [_join(["bash", script, "--id", job.id, "--out", str(d / "out"),
                            "--prompt-file", str(prompt), *self.flags(job)])]
@@ -507,12 +600,12 @@ class Jobs:
     def _remote_dir(self, job: Job) -> str:
         return f"{self.config.build_repo}/build-jobs/{job.id}"
 
-    @staticmethod
-    def _ssh(host: str | None, remote: str) -> str:
+    def _ssh(self, host: str | None, remote: str) -> str:
         """ssh HOST REMOTE, REMOTE quoted once more for the remote shell."""
         if not host:
             raise BuildError("no build_host in station.toml")
-        key = ["-i", str(SSH_KEY)] if SSH_KEY.is_file() else []
+        ssh_key = self.config.build_home / ".ssh/id_ed25519" if self.config.build_home else SSH_KEY
+        key = ["-i", str(ssh_key)] if ssh_key.is_file() else []
         return _join(["ssh", *SSH_OPTS, *key, host, remote])
 
     # -- cancel ---------------------------------------------------------------
@@ -529,9 +622,9 @@ class Jobs:
         self._changed()
         p = self._procs.get(job.id)
         if p is not None:
-            kill_group(p.pid, lambda: p.poll() is None)
+            kill_group(p.pid)
         elif job.pid:
-            kill_group(job.pid, lambda: _alive(job.pid), wait=True)
+            kill_group(job.pid, wait=True)
         self._quiet(self.cancel_command(job))
         return True
 
@@ -548,14 +641,24 @@ def _alive(pid: int) -> bool:
         return False
 
 
-def kill_group(pgid: int, alive: Callable[[], bool], wait: bool = False) -> None:
-    """SIGTERM process group PGID, SIGKILL it KILL_GRACE_S later if ALIVE() still says so.
-    WAIT blocks for the grace period (another process's job); else a timer does it."""
+def _group_has_live_members(pgid: int) -> bool:
+    for stat in Path("/proc").glob("[0-9]*/stat"):
+        try:
+            fields = stat.read_text().rsplit(") ", 1)[1].split()
+            if int(fields[2]) == pgid and fields[0] != "Z":
+                return True
+        except (OSError, ValueError, IndexError):
+            continue
+    return False
+
+
+def kill_group(pgid: int, alive: Callable[[], bool] | None = None, wait: bool = False) -> None:
+    """Signal the whole group even when its original leader already exited."""
     with contextlib.suppress(OSError):
         os.killpg(pgid, signal.SIGTERM)
 
     def hard():
-        if alive():
+        if _group_has_live_members(pgid):
             with contextlib.suppress(OSError):
                 os.killpg(pgid, signal.SIGKILL)
 
@@ -565,9 +668,14 @@ def kill_group(pgid: int, alive: Callable[[], bool], wait: bool = False) -> None
         t.start()
         return
     end = time.monotonic() + KILL_GRACE_S
-    while time.monotonic() < end and alive():
+    while time.monotonic() < end and _group_has_live_members(pgid):
         time.sleep(0.05)
     hard()
+    # Delivery of SIGKILL is asynchronous. Do not release the job lock while
+    # runnable descendants from this group are still being torn down.
+    end = time.monotonic() + 1
+    while time.monotonic() < end and _group_has_live_members(pgid):
+        time.sleep(0.01)
 
 
 def uf2_gate(uf2: Path) -> None:

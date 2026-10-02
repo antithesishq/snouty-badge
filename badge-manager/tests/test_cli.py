@@ -74,6 +74,14 @@ class CliTest(CliCase):
         r = self.run_cli("log", "-n", "3")
         self.assertIn("unplug the badge", r.stdout)
 
+    def test_noninteractive_destructive_commands_require_yes(self):
+        (self.badge / "keep.txt").write_text("keep")
+        for args in (("deploy", "demo"), ("wipe",)):
+            r = self.run_cli(*args)
+            self.assertEqual(r.returncode, 1)
+            self.assertIn("requires --yes", r.stderr)
+            self.assertEqual((self.badge / "keep.txt").read_text(), "keep")
+
     def test_preconditions(self):
         shutil.rmtree(self.badge)
         r = self.run_cli("deploy", "demo", "--yes")

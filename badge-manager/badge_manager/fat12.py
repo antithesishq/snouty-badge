@@ -8,6 +8,7 @@ are contiguous without trusting the host's view.
 """
 from __future__ import annotations
 import math
+import io
 import os
 import re
 import struct
@@ -26,6 +27,22 @@ ROOT_SECTORS = (ROOT_ENTRIES * 32 + SECTOR - 1) // SECTOR
 
 # Characters allowed in an 8.3 name (tools/make_romfs.py SFN_OK).
 SFN_CHARS = set("ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!#$%&'()-@^_`{}~")
+
+
+def validate_filename(name: str) -> None:
+    """Require a single portable FAT filename, never a path or special entry."""
+    if (not isinstance(name, str) or not name or name in (".", "..")
+            or name[-1:] in (".", " ")
+            or any(ord(c) < 32 or ord(c) == 127 or c in '\\/:*?"<>|' for c in name)):
+        raise ValueError(f"invalid FAT filename: {name!r}")
+    try:
+        units = len(name.encode("utf-16-le")) // 2
+    except UnicodeError as e:
+        raise ValueError("invalid filename encoding") from e
+    if units > 255:
+        raise ValueError("FAT filename exceeds 255 characters")
+    if name.split(".")[0].upper() in {"CON", "PRN", "AUX", "NUL", *[f"{p}{n}" for p in ("COM", "LPT") for n in range(1, 10)]}:
+        raise ValueError(f"reserved FAT filename: {name!r}")
 
 
 def fat_sectors(total_sectors: int) -> int:
@@ -204,6 +221,8 @@ class VolumeInfo:
 
 def _fat_get(fat: bytes, cluster: int) -> int:
     off = cluster + cluster // 2
+    if cluster < 0 or off + 1 >= len(fat):
+        raise ValueError("cluster outside FAT table")
     v = fat[off] | (fat[off + 1] << 8)
     return (v >> 4) if cluster & 1 else (v & 0xFFF)
 
@@ -232,18 +251,28 @@ def read_volume(fh: BinaryIO) -> VolumeInfo:
     fs = struct.unpack_from("<H", boot, 22)[0]
     if total == 0:
         total = struct.unpack_from("<I", boot, 32)[0]
-    if not bps or not spc or not fs or not rootn:
-        raise ValueError("boot sector geometry is zero")
+    if (bps not in (512, 1024, 2048, 4096) or not spc or spc > 128
+            or spc & (spc - 1) or not fs or not rootn or not res or nf not in (1, 2)):
+        raise ValueError("invalid FAT boot sector geometry")
     root_start = res + nf * fs
     data_start = root_start + (rootn * 32 + bps - 1) // bps
     ncl = (total - data_start) // spc
-    if ncl >= 4085:
+    if not 0 < ncl < 4085:
         raise ValueError("not a FAT12 volume")
+    if (ncl + 1) + (ncl + 1) // 2 + 2 > fs * bps:
+        raise ValueError("FAT table too small for declared clusters")
+    fh.seek(total * bps - 1)
+    if len(fh.read(1)) != 1:
+        raise ValueError("truncated FAT volume")
     fh.seek(res * bps)
     fat = fh.read(fs * bps)
+    if len(fat) != fs * bps:
+        raise ValueError("truncated FAT table")
     free = sum(1 for c in range(2, ncl + 2) if _fat_get(fat, c) == 0)
     fh.seek(root_start * bps)
     root = fh.read(rootn * 32)
+    if len(root) != rootn * 32:
+        raise ValueError("truncated root directory")
     geom = Geometry(bps * spc, ncl, rootn)
     label = boot[43:54].decode("latin-1").strip()
     used, files, lfn = 0, [], []
@@ -265,9 +294,27 @@ def read_volume(fh: BinaryIO) -> VolumeInfo:
             label = e[0:11].decode("latin-1").strip() or label
             lfn = []
             continue
-        files.append(_raw_file(e, lfn, fat, ncl))
+        rf = _raw_file(e, lfn, fat, ncl)
+        chain = _chain(fat, rf.first_cluster, ncl)
+        if not rf.is_dir and len(chain) != math.ceil(rf.size / geom.cluster_bytes):
+            raise ValueError(f"invalid cluster chain length for {rf.name}")
+        files.append(rf)
         lfn = []
     return VolumeInfo(geom, label, free, used, files)
+
+
+def _chain(fat: bytes, first: int, ncl: int) -> list[int]:
+    chain, seen = [], set()
+    c = first
+    if c == 0:
+        return chain
+    while c < 0xFF8:
+        if not 2 <= c < min(ncl + 2, 0xFF0) or c in seen:
+            raise ValueError("invalid or cyclic FAT cluster chain")
+        seen.add(c)
+        chain.append(c)
+        c = _fat_get(fat, c)
+    return chain
 
 
 def _raw_file(e: bytes, lfn: list[bytes], fat: bytes, ncl: int) -> RawFile:
@@ -282,12 +329,11 @@ def _raw_file(e: bytes, lfn: list[bytes], fat: bytes, ncl: int) -> RawFile:
         name = "".join(chr(c) for c in cs)
     cl0 = struct.unpack_from("<H", e, 26)[0]
     size = struct.unpack_from("<I", e, 28)[0]
-    runs, c, prev, seen = 0, cl0, None, set()
-    while 2 <= c < ncl + 2 and c not in seen:
-        seen.add(c)
+    runs, prev = 0, None
+    for c in _chain(fat, cl0, ncl):
         if prev is None or c != prev + 1:
             runs += 1
-        prev, c = c, _fat_get(fat, c)
+        prev = c
     return RawFile(name, size, bool(e[11] & 0x10), cl0, runs)
 
 
@@ -372,11 +418,14 @@ class Fat12Image:
         with open(path, "rb") as fh:
             self.img = bytearray(fh.read())
         b = self.img
+        read_volume(io.BytesIO(b))  # the writer accepts the same bounded media as the reader
         if len(b) < SECTOR or b[510:512] != b"\x55\xAA":
             raise ValueError("no FAT boot sector")
         self.bps, self.spc = struct.unpack_from("<H", b, 11)[0], b[13]
         self.res, self.nf = struct.unpack_from("<H", b, 14)[0], b[16]
         self.rootn, total = struct.unpack_from("<HH", b, 17)
+        if total == 0:
+            total = struct.unpack_from("<I", b, 32)[0]
         self.fs = struct.unpack_from("<H", b, 22)[0]
         self.root_off = (self.res + self.nf * self.fs) * self.bps
         self.data_sector = self.res + self.nf * self.fs + (self.rootn * 32 + self.bps - 1) // self.bps
@@ -392,6 +441,17 @@ class Fat12Image:
             fh.write(self.img)
             fh.flush()
             os.fsync(fh.fileno())
+
+    def read_file(self, name: str) -> bytes:
+        volume = read_volume(io.BytesIO(self.img))
+        file = next((f for f in volume.files if f.name.casefold() == name.casefold()), None)
+        if file is None or file.is_dir:
+            raise ValueError(f"file not found: {name}")
+        chunks = []
+        for c in _chain(self.fat, file.first_cluster, self.ncl):
+            offset = (self.data_sector + (c - 2) * self.spc) * self.bps
+            chunks.append(self.img[offset:offset + self.cluster_bytes])
+        return b"".join(chunks)[:file.size]
 
     def _entry(self, i: int) -> bytearray:
         o = self.root_off + i * 32
@@ -473,6 +533,7 @@ class Fat12Image:
             start = None
 
     def add(self, name: str, data: bytes) -> None:
+        validate_filename(name)
         self.delete(name)
         taken = set()
         for i in range(self.rootn):

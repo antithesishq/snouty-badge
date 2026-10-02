@@ -179,7 +179,7 @@ class StationTest(unittest.TestCase):
         self.assertTrue(st.sync(), "\n".join(e["msg"] for e in st.log_lines()))
         c = st.library.carts["snouty-new"]
         self.assertEqual((c.mode, c.auto), ("xip", False))
-        self.assertTrue(any("added snouty-new" in e["msg"] for e in st.log_lines()))
+        self.assertTrue(any("updated snouty-new" in e["msg"] for e in st.log_lines()))
 
     def test_status_contract(self):
         self.st.poll()
@@ -247,7 +247,7 @@ class StationTest(unittest.TestCase):
         self.assertEqual(self.msgs()[-1], "snouty now deploys as XIP")
         sets = {x["name"]: x for x in self.st.status()["sets"]}
         self.assertEqual(sets["demo"]["files"], ["snouty-xip.uf2", "snouty-bugs.uf2"])
-        s = self.st.save_set("Game Gear", ["snouty-gear", "snouty-bugs"], ["*.gg"], key="gear")
+        s = self.st.save_set("Game Gear", ["snouty-gear", "snouty-bugs"], ["*.gg"], key="gear", replace=True)
         self.assertEqual(s.key, "gear")
         self.assertEqual(self.msgs()[-1], "saved set Game Gear (gear): 2 carts, *.gg")
         self.st.delete_set("gear")

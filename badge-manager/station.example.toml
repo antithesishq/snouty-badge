@@ -10,6 +10,9 @@ ap_password = "snoutysnouty"                       # WPA2, 8 characters or more
 
 build_host = "exedev@animated-badge.exe.xyz"
 build_repo = "/home/exedev/snouty-badge"
+build_local_repo = "/home/badge/snouty-badge"
+build_user = "badge"
+build_home = "/home/badge"
 
 # Building a cart from a prompt (PLAN section 9). The station builds on
 # itself when it can (6 GB RAM, Zig, build_repo present), else on build_host.

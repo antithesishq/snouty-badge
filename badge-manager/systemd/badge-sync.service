@@ -7,5 +7,6 @@ After=network-online.target
 [Service]
 Type=oneshot
 Environment=BADGE_STATION_CONFIG=/etc/badge-station/station.toml
+Environment=BADGE_STATION_OPERATOR=0
 ExecStart=/usr/local/bin/badge sync
 TimeoutStartSec=15min

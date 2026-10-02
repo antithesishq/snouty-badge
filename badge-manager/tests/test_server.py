@@ -7,6 +7,7 @@ import tempfile
 import threading
 import time
 import unittest
+from types import SimpleNamespace
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -144,7 +145,8 @@ class DemoServerTest(ServerCase):
         self.assertEqual(data["set"]["files"], ["snouty.uf2", "SONIC.GG"])
         self.assertIn("phone-pick", {s["name"] for s in self.status()["sets"]})
         code, data, _ = self.call("DELETE", "/api/sets/phone-pick")
-        self.assertEqual((code, data), (200, {"ok": True}))
+        self.assertEqual(code, 200)
+        self.assertTrue(data["ok"])
         self.assertNotIn("phone-pick", {s["name"] for s in self.status()["sets"]})
 
     def test_cart_mode(self):
@@ -155,10 +157,82 @@ class DemoServerTest(ServerCase):
         demo = next(s for s in self.status()["sets"] if s["name"] == "demo")
         self.assertIn("snouty-xip.uf2", demo["files"])
 
+    def test_mutation_origin_and_json_media_type(self):
+        before = next(c for c in self.status()["library"]["carts"] if c["key"] == "snouty")["use"]
+        target = {"cart": "snouty", "mode": "xip"}
+        foreign = {"Origin": "http://127.0.0.1:9999"}
+        self.assertEqual(self.call("POST", "/api/cart-mode", target, headers=foreign)[0], 403)
+        self.assertEqual(self.call("POST", "/api/cart-mode", raw=json.dumps(target).encode(),
+                                   headers={"Content-Type": "text/plain"})[0], 415)
+        self.assertEqual(next(c for c in self.status()["library"]["carts"]
+                              if c["key"] == "snouty")["use"], before)
+        same = {"Origin": f"http://127.0.0.1:{self.port}"}
+        self.assertEqual(self.call("POST", "/api/cart-mode", target, headers=same)[0], 200)
+        self.assertEqual(self.call("POST", "/api/cart-mode", {**target, "mode": "ram"})[0], 200)
+        self.assertEqual(self.call("POST", "/api/upload", raw=b"abc",
+                                   headers={"Origin": "http://evil.example", "X-Filename": "a.gg",
+                                            "Content-Type": "application/octet-stream"})[0], 403)
+
+    def test_set_collision_requires_explicit_replace(self):
+        original = next(x for x in self.status()["sets"] if x["name"] == "demo")
+        body = {"title": "Demo", "carts": ["snouty-bugs"], "roms": []}
+        code, rep, _ = self.call("POST", "/api/sets", body)
+        self.assertEqual(code, 409)
+        self.assertEqual(rep["existing"]["name"], "demo")
+        self.assertEqual(next(x for x in self.status()["sets"] if x["name"] == "demo")["carts"], original["carts"])
+        code, rep, _ = self.call("POST", "/api/sets", {**body, "replace": True, "key": "demo"})
+        self.assertEqual(code, 200, rep)
+        self.assertEqual(next(x for x in self.status()["sets"] if x["name"] == "demo")["carts"], ["snouty-bugs"])
+        code, rep, _ = self.call("POST", "/api/sets", {"title": "Game-Gear", "carts": ["snouty"], "roms": []})
+        self.assertEqual(code, 409)
+        self.assertEqual(rep["existing"]["name"], "gear")
+        self.assertEqual(rep["existing"]["title"], "Game Gear")
+
+    def test_false_sync_result_is_failed(self):
+        self.station.sync = lambda: False
+        code, rep, _ = self.call("POST", "/api/sync", {})
+        self.assertEqual(code, 200, rep)
+        operation = self.wait_idle()["operation"]
+        self.assertEqual(operation["state"], "failed")
+        self.assertIn("retry", operation["error"])
+
+    def test_operation_survives_app_recreation(self):
+        self.station.config = type("Config", (), {"library": self.tmp / "lib"})()
+        self.httpd.app._operation_file = self.tmp / "lib" / ".last-operation.json"
+        self.station.sync = lambda: False
+        self.assertEqual(self.call("POST", "/api/sync", {})[0], 200)
+        operation = self.wait_idle()["operation"]
+        self.assertEqual(server.App(self.station).operation_status()["id"], operation["id"])
+        self.assertEqual(server.App(self.station).operation_status()["state"], "failed")
+
+    def test_interrupted_operation_is_reconciled_on_restart(self):
+        root = self.tmp / "lib"
+        root.mkdir(exist_ok=True)
+        (root / ".last-operation.json").write_text(json.dumps({"id": "old", "name": "deploy demo",
+                                                               "state": "running", "error": None,
+                                                               "started": time.time(), "finished": None}))
+        self.station.config = type("Config", (), {"library": root})()
+        operation = server.App(self.station).operation_status()
+        self.assertEqual(operation["state"], "failed")
+        self.assertIn("restarted", operation["error"])
+
+    def test_worker_failure_is_visible_after_acceptance(self):
+        def fail():
+            raise RuntimeError("USB disconnected; reconnect the badge and retry")
+        self.station.sync = fail
+        code, rep, _ = self.call("POST", "/api/sync", {})
+        self.assertEqual(code, 200, rep)
+        id = rep["operation"]["id"]
+        operation = self.wait_idle()["operation"]
+        self.assertEqual((operation["id"], operation["state"]), (id, "failed"))
+        self.assertIn("reconnect", operation["error"])
+        self.assertIsNotNone(operation["finished"])
+
     def test_deploy_selection(self):
         code, data, _ = self.call("POST", "/api/deploy", {"carts": ["snouty-bugs"],
                                                           "roms": ["sonic"]})
-        self.assertEqual((code, data), (200, {"ok": True}))
+        self.assertEqual(code, 200)
+        self.assertEqual(data["operation"]["state"], "accepted")
         st = self.wait_idle()
         msgs = [x["msg"] for x in st["log"]]
         self.assertIn("Copied snouty-bugs.uf2.", msgs)
@@ -243,7 +317,7 @@ class DemoServerTest(ServerCase):
         code, body, hdrs = self.call("GET", "/")
         self.assertEqual(code, 200)
         self.assertIn(b"Deploy selection", body)
-        self.assertNotIn(b"accept=", body)
+        self.assertIn(b"demo-banner", body)
 
 
 @unittest.skipUnless(hasattr(Library, "save_set"), "needs the M1 Library (Track A)")
@@ -270,6 +344,15 @@ class RealStationServerTest(ServerCase):
             self.assertIn("variants", c)
             self.assertIn(c["use"], ("ram", "xip"))
 
+    def test_remote_recovery_route(self):
+        job_id = "20261001-120000-rain"
+        self.assertEqual(self.call("POST", "/api/build/retry-fetch", {"id": "../bad"})[0], 400)
+        with mock.patch.object(self.station.jobs, "retry_fetch",
+                               return_value=SimpleNamespace(id=job_id)) as retry:
+            code, data, _ = self.call("POST", "/api/build/retry-fetch", {"id": job_id})
+        self.assertEqual((code, data), (200, {"ok": True, "id": job_id}))
+        retry.assert_called_once_with(job_id)
+
     def test_fit_and_deploy_selection(self):
         code, rep, _ = self.call("POST", "/api/fit", {"carts": ["snouty-bugs"], "roms": ["sonic"]})
         self.assertEqual(code, 200, rep)
@@ -278,7 +361,8 @@ class RealStationServerTest(ServerCase):
         code, data, _ = self.call("POST", "/api/fit", {"carts": ["nope"]})
         self.assertEqual(code, 400)
         code, data, _ = self.call("POST", "/api/deploy", {"carts": ["snouty-bugs"], "roms": ["sonic"]})
-        self.assertEqual((code, data), (200, {"ok": True}))
+        self.assertEqual(code, 200)
+        self.assertTrue(data["ok"])
         self.wait_idle()
         names = sorted(p.name for p in self.badge.iterdir())
         self.assertEqual(names, sorted(rep["files"]))
@@ -291,7 +375,8 @@ class RealStationServerTest(ServerCase):
         self.assertEqual(data["set"]["roms"], ["*.gg"])
         self.assertIn("phone-pick", Library(self.station.config.library).sets)
         code, data, _ = self.call("DELETE", "/api/sets/phone-pick")
-        self.assertEqual((code, data), (200, {"ok": True}))
+        self.assertEqual(code, 200)
+        self.assertTrue(data["ok"])
         self.assertNotIn("phone-pick", Library(self.station.config.library).sets)
         code, _, _ = self.call("DELETE", "/api/sets/phone-pick")
         self.assertEqual(code, 400)
@@ -390,7 +475,8 @@ class BuildServerTest(ServerCase):
             code, data, _ = self.call("POST", "/api/build", {"prompt": "snow"})
             self.assertEqual(code, 409, data)
             code, data, _ = self.call("POST", "/api/deploy", {"set": "demo"})
-            self.assertEqual((code, data), (200, {"ok": True}))       # not blocked by the build
+            self.assertEqual(code, 200)
+            self.assertTrue(data["ok"])       # not blocked by the build
             self.wait_idle()
             self.assertEqual(sorted(p.name for p in self.badge.iterdir()),
                              ["snouty-bugs.uf2", "snouty.uf2"])
@@ -422,6 +508,23 @@ class BuildServerTest(ServerCase):
         self.httpd.app.station = NoBuilds()
         self.assertEqual(self.call("POST", "/api/build", {"prompt": "rain"})[0], 503)
         self.assertEqual(self.call("GET", "/api/build")[0], 503)
+
+class StartupTest(unittest.TestCase):
+    def test_bad_config_fails_without_demo(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            bad = Path(tmp) / "station.toml"
+            bad.write_text("[broken\n")
+            with mock.patch.object(server, "serve") as serve:
+                self.assertEqual(server.main(["--config", str(bad)]), 1)
+                serve.assert_not_called()
+
+    def test_initialization_exception_fails_without_demo(self):
+        with mock.patch.object(server, "_load_config", return_value=object()), \
+             mock.patch.object(server, "_real_station", side_effect=OSError("unreadable library")), \
+             mock.patch.object(server, "serve") as serve:
+            self.assertEqual(server.main([]), 1)
+            serve.assert_not_called()
+
 
 if __name__ == "__main__":
     unittest.main()

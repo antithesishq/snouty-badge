@@ -1,7 +1,7 @@
 """The badge drive: find it, mount it, wipe it, fill it, eject it.
 
 Real badge: USB mass storage, VID:PID 04d2:04d2, FAT12 label SYCLBADGE
-(/dev/disk/by-label/SYCLBADGE). The station runs as root and mounts with
+(with the badge's exact volume geometry). The station runs as root and mounts with
 `mount -t vfat -o sync,flush,utf8,shortname=mixed`. Eject = umount +
 `udisksctl power-off -b DEV` (fallback: echo 1 > /sys/block/X/device/delete).
 
@@ -10,6 +10,7 @@ through `sudo -n`; when neither works a DeviceError says so.
 """
 from __future__ import annotations
 import glob
+import hashlib
 import os
 import shutil
 import subprocess
@@ -56,7 +57,8 @@ def find_badge(fake: str | None = None,
                mount_root: Path = Path("/run/badge-station")) -> Badge | None:
     """FAKE = image path (LoopBadge, or ImageBadge when the kernel has no vfat;
     $BADGE_STATION_IMAGE=loop|builtin forces one) or directory (DirBadge); else
-    scan /dev/disk/by-label/SYCLBADGE and /sys/bus/usb for 04d2:04d2 -> BlockBadge.
+    scan /sys/bus/usb for exactly one 04d2:04d2 device -> BlockBadge.
+    BlockBadge checks USB identity, volume label and geometry before mounting.
     A FAKE path that does not exist counts as unplugged."""
     if fake:
         p = Path(fake)
@@ -66,7 +68,7 @@ def find_badge(fake: str | None = None,
             mode = os.environ.get("BADGE_STATION_IMAGE") or ("loop" if kernel_has_vfat() else "builtin")
             return LoopBadge(p, mount_root) if mode == "loop" else ImageBadge(p)
         return None
-    dev = _by_label() or _by_usb_id()
+    dev = _by_usb_id()
     return BlockBadge(dev, mount_root) if dev else None
 
 
@@ -86,6 +88,7 @@ def _by_label() -> str | None:
 
 def _by_usb_id(sys_usb: str = "/sys/bus/usb/devices") -> str | None:
     """Find the block device of a 04d2:04d2 USB device (whole disk or its first partition)."""
+    candidates = set()
     for d in sorted(glob.glob(os.path.join(sys_usb, "*"))):
         if (_read(os.path.join(d, "idVendor")), _read(os.path.join(d, "idProduct"))) != USB_ID:
             continue
@@ -97,8 +100,27 @@ def _by_usb_id(sys_usb: str = "/sys/bus/usb/devices") -> str | None:
                     continue      # no medium
                 parts = sorted(glob.glob(f"/sys/block/{disk}/{disk}*"))
                 name = os.path.basename(parts[0]) if parts else disk
-                return f"/dev/{name}"
-    return None
+                candidates.add(f"/dev/{name}")
+    if len(candidates) > 1:
+        raise DeviceError("multiple badges found; connect only the badge to change")
+    return next(iter(candidates), None)
+
+
+def _usb_identity(devnode: str) -> tuple[str | None, str | None]:
+    path = Path("/sys/class/block") / Path(devnode).name
+    for parent in path.resolve().parents:
+        vendor = _read(str(parent / "idVendor"))
+        if vendor is not None:
+            return vendor, _read(str(parent / "idProduct"))
+    return None, None
+
+
+def _destination(root: Path, name: str) -> Path:
+    try:
+        fat12.validate_filename(name)
+    except ValueError as e:
+        raise DeviceError(str(e)) from e
+    return root / name
 
 
 def _read(path: str) -> str | None:
@@ -177,14 +199,18 @@ def _wipe_root(root: Path) -> int:
 
 def _copy_file(src: Path, dst: Path) -> None:
     try:
-        with open(src, "rb") as fi, open(dst, "wb") as fo:
+        with open(src, "rb") as fi, os.fdopen(os.open(
+                dst, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o644), "wb") as fo:
             shutil.copyfileobj(fi, fo, 64 * 1024)
             fo.flush()
             os.fsync(fo.fileno())
+        if dst.stat().st_size != src.stat().st_size:
+            raise DeviceError(f"copy of {dst.name} is short")
+        with open(src, "rb") as fi, open(dst, "rb") as fo:
+            if hashlib.file_digest(fi, "sha256").digest() != hashlib.file_digest(fo, "sha256").digest():
+                raise DeviceError(f"copy of {dst.name} failed content verification")
     except OSError as e:
-        raise DeviceError(f"copy of {dst.name} failed: {e}") from e
-    if dst.stat().st_size != src.stat().st_size:
-        raise DeviceError(f"copy of {dst.name} is short")
+        raise DeviceError(f"verification of {dst.name} failed: {e}") from e
 
 
 class _Mounted:
@@ -269,13 +295,23 @@ class _Mounted:
         return n
 
     def copy(self, src: Path, name: str) -> None:
-        _copy_file(Path(src), self.mount() / name)
+        fat_name = _destination(self.mountpoint, name)
+        self.mount()
+        _copy_file(Path(src), fat_name)
 
 
 class BlockBadge(_Mounted):
     def __init__(self, devnode: str, mount_root: Path = Path("/run/badge-station")):
         super().__init__(mount_root)
         self.device = os.path.realpath(devnode)
+
+    def mount(self) -> Path:
+        if _usb_identity(self.device) != USB_ID:
+            raise DeviceError("device is not a SYCL badge (USB identity mismatch)")
+        volume = self._volume()
+        if volume.label != fat12.LABEL or volume.geometry != fat12.geometry():
+            raise DeviceError("badge label or geometry does not match the supported SYCL volume")
+        return super().mount()
 
     def _disk(self) -> str:
         """sdX for sdX or sdX1."""
@@ -366,7 +402,8 @@ class DirBadge:
         return _wipe_root(self.mount())
 
     def copy(self, src: Path, name: str) -> None:
-        _copy_file(Path(src), self.mount() / name)
+        dst = _destination(self.directory, name)
+        _copy_file(Path(src), dst)
 
 
 class ImageBadge:
@@ -424,12 +461,19 @@ class ImageBadge:
         return n
 
     def copy(self, src: Path, name: str) -> None:
+        _destination(self.image.parent, name)
         img = self._open()
         try:
-            img.add(name, Path(src).read_bytes())
+            data = Path(src).read_bytes()
+            img.add(name, data)
         except (OSError, ValueError) as e:
             raise DeviceError(f"copy of {name} failed: {e}") from e
         self._save(img)
+        try:
+            if self._open().read_file(name) != data:
+                raise DeviceError(f"copy of {name} failed content verification")
+        except ValueError as e:
+            raise DeviceError(f"copy of {name} failed verification: {e}") from e
 
     def _save(self, img: fat12.Fat12Image) -> None:
         try:

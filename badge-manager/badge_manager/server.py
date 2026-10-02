@@ -7,7 +7,7 @@ Standard library only: ThreadingHTTPServer, one background thread calling
 station.poll() once a second, one worker thread per action so a request
 returns at once. --demo (or BADGE_STATION_DEMO=1) serves DemoStation, a fake
 that honours the status contract in badge_manager/__init__.py; it is also
-the fallback when the real Station cannot be imported or constructed.
+selected only by explicit opt-in.
 
 Routes:
   GET  /, /index.html, /static/<name>      the page (www/)
@@ -49,12 +49,14 @@ import logging
 import os
 import re
 import shutil
+import stat
 import subprocess
 import sys
 import tempfile
 import threading
 import time
 import traceback
+import uuid
 from email.parser import BytesParser
 from email.policy import HTTP as HTTP_POLICY
 from http import HTTPStatus
@@ -242,7 +244,7 @@ class _DemoLibrary:
         return key
 
     def save_set(self, title: str, carts: list[str], roms: list[str],
-                 key: str | None = None) -> _DemoSet:
+                 key: str | None = None, *, replace: bool = False) -> _DemoSet:
         title = (title or "").strip()
         if not title:
             raise ValueError("a set needs a title")
@@ -251,6 +253,15 @@ class _DemoLibrary:
         self.selection(carts, roms)          # validates the keys
         key = key or re.sub(r"[^a-z0-9]+", "-", title.lower()).strip("-") or "set"
         with self.lock:
+            if key in self.sets and not replace:
+                raise ValueError(f"set {key!r} already exists")
+            title_slug = re.sub(r"[^a-z0-9]+", "-", title.lower()).strip("-")
+            same_title = next((k for k, value in self.sets.items()
+                               if k != key and re.sub(r"[^a-z0-9]+", "-", value["title"].lower()).strip("-") == title_slug), None)
+            if same_title is not None:
+                raise ValueError(f"set {same_title!r} already exists as {self.sets[same_title]['title']!r}")
+            if replace and key not in self.sets:
+                raise ValueError(f"set {key!r} does not exist")
             self.sets[key] = {"title": title, "carts": list(carts), "roms": list(roms)}
         return _DemoSet(key, title, carts, roms)
 
@@ -616,8 +627,9 @@ class DemoStation:
             self.log("Sync done, 0 files changed.")
         self._run("sync", go)
 
-    def save_set(self, title: str, carts: list[str], roms: list[str], key: str | None = None):
-        cs = self._edit(self.library.save_set, title, carts, roms, key)
+    def save_set(self, title: str, carts: list[str], roms: list[str], key: str | None = None,
+                 *, replace: bool = False):
+        cs = self._edit(lambda: self.library.save_set(title, carts, roms, key, replace=replace))
         self.log(f"Saved set {cs.title} ({cs.key}).")
         return cs
 
@@ -954,13 +966,46 @@ class App:
         self.qr = shutil.which("qrencode") is not None
         self._action_lock = threading.Lock()
         self._stop = threading.Event()
+        self._operation_lock = threading.Lock()
+        self.operation = None
+        library_root = getattr(getattr(station, "config", None), "library", None)
+        self._operation_file = Path(library_root) / ".last-operation.json" if library_root else None
+        if self._operation_file:
+            try:
+                saved = json.loads(self._operation_file.read_text())
+                if isinstance(saved, dict):
+                    if saved.get("state") in ("accepted", "running"):
+                        saved.update(state="failed", finished=time.time(),
+                                     error="Station restarted before this action finished. Check the badge and log before retrying.")
+                    self.operation = saved
+            except (OSError, ValueError):
+                pass
 
-    def edit(self, fn, *args):
+    def _save_operation(self):
+        if not self._operation_file:
+            return
+        try:
+            path = self._operation_file
+            path.parent.mkdir(parents=True, exist_ok=True)
+            tmp = path.with_name(path.name + "." + uuid.uuid4().hex + ".tmp")
+            try:
+                tmp.write_text(json.dumps(self.operation))
+                tmp.replace(path)
+            finally:
+                tmp.unlink(missing_ok=True)
+        except OSError:
+            log.warning("could not persist last operation", exc_info=True)
+
+    def operation_status(self):
+        with self._operation_lock:
+            return dict(self.operation) if self.operation else None
+
+    def edit(self, fn, *args, **kwargs):
         """Run a manifest edit in the request thread, never while an action runs."""
         if self.station.status().get("busy") or not self._action_lock.acquire(blocking=False):
             raise ApiError(409, "busy")
         try:
-            return fn(*args)
+            return fn(*args, **kwargs)
         except self.busy_types:
             raise ApiError(409, "busy")
         except self.edit_errors as e:
@@ -1003,26 +1048,51 @@ class App:
         return self.station.status().get("library") or {}
 
     # Actions: validated in the request thread, run in a worker thread.
-    def start(self, name: str, fn, *args) -> None:
+    def start(self, name: str, fn, *args) -> dict:
         st = self.station.status()
         if st.get("busy") or not self._action_lock.acquire(blocking=False):
             raise ApiError(409, "busy")
+        with self._operation_lock:
+            self.operation = {"id": uuid.uuid4().hex, "name": name, "state": "accepted",
+                              "error": None, "started": time.time(), "finished": None}
+            accepted = dict(self.operation)
+            self._save_operation()
 
         def work():
+            failure = None
             try:
-                fn(*args)
+                with self._operation_lock:
+                    self.operation["state"] = "running"
+                    self._save_operation()
+                result = fn(*args)
+                if name == "sync" and result is False:
+                    failure = "Sync failed. Check the station log and retry after fixing the source."
             except self.busy_types:
-                self.station.log(f"{name}: the station is busy, try again.")
+                failure = "The station is busy. Try again."
             except self.expected_errors as e:
+                failure = str(e)
                 log.warning("%s: %s", name, e)
-                self.station.log(f"{name} stopped: {e}")
             except Exception as e:
+                failure = str(e)
                 log.error("%s failed:\n%s", name, traceback.format_exc())
-                self.station.log(f"{name} failed: {e}")
             finally:
+                if failure:
+                    try:
+                        self.station.log(f"{name} failed: {failure}")
+                    except Exception:
+                        pass
+                with self._operation_lock:
+                    self.operation.update(state="failed" if failure else "done",
+                                          error=failure, finished=time.time())
+                    self._save_operation()
+                try:
+                    self.station.log(f"{name} " + ("failed." if failure else "completed."))
+                except Exception:
+                    pass
                 self._action_lock.release()
 
         threading.Thread(target=work, name=f"action-{name}", daemon=True).start()
+        return accepted
 
     def poller(self) -> None:
         failing = False
@@ -1084,6 +1154,8 @@ class Handler(BaseHTTPRequestHandler):
                 if url.path.startswith("/static/") and method == "get":
                     return self._static(url.path[len("/static/"):])
                 raise ApiError(404, "not found")
+            if method in ("post", "put", "delete"):
+                self._check_mutation_origin()
             route(query)
         except ApiError as e:
             self._drain()
@@ -1103,6 +1175,8 @@ class Handler(BaseHTTPRequestHandler):
             return "set_item"
         if path == "/api/build/cancel":
             return "build_cancel"
+        if path == "/api/build/retry-fetch":
+            return "build_retry_fetch"
         if path.startswith("/api/build/") and len(path) > len("/api/build/"):
             return "build_item"
         if path.startswith("/builds/"):
@@ -1111,6 +1185,7 @@ class Handler(BaseHTTPRequestHandler):
                 "/api/log": "log", "/api/deploy": "deploy", "/api/wipe": "wipe",
                 "/api/sync": "sync", "/api/upload": "upload", "/api/fit": "fit",
                 "/api/sets": "sets", "/api/cart-mode": "cart_mode", "/api/build": "build",
+                "/api/builds": "builds",
                 "/qr/page.svg": "qr_page", "/qr/wifi.svg": "qr_wifi"}.get(path)
 
     def _foreign_host(self) -> bool:
@@ -1120,6 +1195,16 @@ class Handler(BaseHTTPRequestHandler):
         elif "]" in host:
             host = host[:host.index("]") + 1]
         return bool(host) and not LOCAL_HOSTS.match(host)
+
+    def _check_mutation_origin(self):
+        origin = self.headers.get("Origin")
+        if origin is None:
+            return  # intentional non-browser API callers
+        parsed = urlsplit(origin)
+        host = self.headers.get("Host", "")
+        expected = f"{parsed.scheme}://{host}"
+        if self._foreign_host() or parsed.scheme not in ("http", "https") or origin != expected:
+            raise ApiError(403, "request origin does not match this station")
 
     def do_GET(self):
         self._dispatch("get")
@@ -1166,6 +1251,8 @@ class Handler(BaseHTTPRequestHandler):
         self._body_read = True
 
     def _read_json(self) -> dict:
+        if self.headers.get("Content-Type", "").split(";", 1)[0].strip().lower() != "application/json" and self.headers.get("Content-Length", "0") != "0":
+            raise ApiError(415, "send JSON with Content-Type: application/json")
         n = self._length(MAX_JSON)
         raw = self.rfile.read(n) if n else b""
         self._body_read = True
@@ -1211,6 +1298,8 @@ class Handler(BaseHTTPRequestHandler):
         st = station.status()
         st["seq"] = st.get("log_seq", seq)
         st["qr"] = self.app.qr
+        st["demo"] = isinstance(station, DemoStation)
+        st["operation"] = self.app.operation_status()
         self._json(200, st)
 
     def _get_log(self, query):
@@ -1254,6 +1343,15 @@ class Handler(BaseHTTPRequestHandler):
             raise ApiError(404, "no such build")
         self._json(200, {"job": job})
 
+    def _get_builds(self, query):
+        try:
+            n = max(1, min(100, int(query.get("n", 10))))
+        except ValueError:
+            raise ApiError(400, "n must be a number")
+        rows = (self.app.station.builds(n) if hasattr(self.app.station, "builds") else
+                self.app.station.status().get("builds", [])[:n])
+        self._json(200, {"builds": rows})
+
     def _get_build_file(self, query):
         parts = unquote(urlsplit(self.path).path[len("/builds/"):]).split("/")
         if len(parts) != 2 or not BUILD_ID.match(parts[0]):
@@ -1262,8 +1360,16 @@ class Handler(BaseHTTPRequestHandler):
         if path is None:
             raise ApiError(404, "not found")
         path = Path(path)
-        self._send(200, path.read_bytes(),
-                   BUILD_FILE_TYPES.get(path.suffix, "application/octet-stream"))
+        try:
+            fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC)
+            with os.fdopen(fd, "rb") as fh:
+                info = os.fstat(fh.fileno())
+                if not stat.S_ISREG(info.st_mode) or info.st_size > 20 * 1024 * 1024:
+                    raise ApiError(404, "not found")
+                data = fh.read()
+        except OSError as e:
+            raise ApiError(404, "not found") from e
+        self._send(200, data, BUILD_FILE_TYPES.get(path.suffix, "application/octet-stream"))
 
     # -------------------------------------------------------- POST routes
 
@@ -1300,6 +1406,23 @@ class Handler(BaseHTTPRequestHandler):
             raise ApiError(404, "no build is running")
         self._json(200, {"ok": True})
 
+    def _post_build_retry_fetch(self, query):
+        body = self._read_json()
+        job_id = body.get("id")
+        if not isinstance(job_id, str) or not BUILD_ID.fullmatch(job_id):
+            raise ApiError(400, "give a valid build ID")
+        jobs = getattr(self.app.station, "jobs", None)
+        if jobs is None:
+            raise ApiError(503, "remote build recovery is unavailable")
+        from .build import BuildBusy, BuildError
+        try:
+            job = jobs.retry_fetch(job_id)
+        except BuildBusy as e:
+            raise ApiError(409, str(e)) from e
+        except BuildError as e:
+            raise ApiError(400, str(e)) from e
+        self._json(200, {"ok": True, "id": job.id})
+
 
     def _post_deploy(self, query):
         body = self._read_json()
@@ -1310,15 +1433,15 @@ class Handler(BaseHTTPRequestHandler):
             names = {s.get("name") for s in self.app.station.status().get("sets", [])}
             if key not in names:
                 raise ApiError(400, f"unknown set {key}")
-            self.app.start(f"deploy {key}", self.app.station.deploy, key)
+            operation = self.app.start(f"deploy {key}", self.app.station.deploy, key)
         elif "carts" in body or "roms" in body:
             cart_set = self.app.selection(body)
             if not cart_set.carts and not cart_set.roms:
                 raise ApiError(400, "nothing selected")
-            self.app.start("deploy selection", self.app.station.deploy, cart_set)
+            operation = self.app.start("deploy selection", self.app.station.deploy, cart_set)
         else:
             raise ApiError(400, "missing set (or carts and roms)")
-        self._json(200, {"ok": True})
+        self._json(200, {"ok": True, "operation": operation})
 
     def _post_fit(self, query):
         body = self._read_json()
@@ -1332,6 +1455,11 @@ class Handler(BaseHTTPRequestHandler):
     def _post_sets(self, query):
         body = self._read_json()
         title, key = body.get("title"), body.get("key")
+        replace = body.get("replace", False)
+        if not isinstance(replace, bool):
+            raise ApiError(400, "replace must be true or false")
+        if replace and not key:
+            raise ApiError(400, "replace needs an existing set key")
         carts, roms = body.get("carts", []), body.get("roms", [])
         if not isinstance(title, str) or not title.strip():
             raise ApiError(400, "a set needs a title")
@@ -1340,7 +1468,19 @@ class Handler(BaseHTTPRequestHandler):
         for name, v in (("carts", carts), ("roms", roms)):
             if not isinstance(v, list) or not all(isinstance(x, str) and x for x in v):
                 raise ApiError(400, f"{name} must be a list of keys")
-        cs = self.app.edit(self.app.station.save_set, title.strip(), carts, roms, key)
+        try:
+            cs = self.app.edit(self.app.station.save_set, title.strip(), carts, roms, key,
+                               replace=replace)
+        except ApiError as e:
+            if not replace and "already exists" in e.error:
+                existing_key = key or re.sub(r"[^a-z0-9]+", "-", title.lower()).strip("-") or "set"
+                title_slug = re.sub(r"[^a-z0-9]+", "-", title.lower()).strip("-")
+                existing = next((s for s in self.app.station.status().get("sets", [])
+                                 if s.get("name") == existing_key or
+                                 re.sub(r"[^a-z0-9]+", "-", str(s.get("title", "")).lower()).strip("-") == title_slug), None)
+                self._json(409, {"ok": False, "error": e.error, "existing": existing})
+                return
+            raise
         key = getattr(cs, "key", None) or key
         sets = self.app.station.status().get("sets", [])
         self._json(200, {"ok": True, "key": key,
@@ -1368,13 +1508,13 @@ class Handler(BaseHTTPRequestHandler):
 
     def _post_wipe(self, query):
         self._read_json()
-        self.app.start("wipe", self.app.station.wipe)
-        self._json(200, {"ok": True})
+        operation = self.app.start("wipe", self.app.station.wipe)
+        self._json(200, {"ok": True, "operation": operation})
 
     def _post_sync(self, query):
         self._read_json()
-        self.app.start("sync", self.app.station.sync)
-        self._json(200, {"ok": True})
+        operation = self.app.start("sync", self.app.station.sync)
+        self._json(200, {"ok": True, "operation": operation})
 
     def _post_upload(self, query):
         if self.app.station.status().get("busy") or self.app._action_lock.locked():
@@ -1474,31 +1614,16 @@ def serve(station, config) -> None:
 # ---------------------------------------------------------------- entry
 
 def _load_config(path: str | None):
-    try:
-        from . import config as config_mod
-        return config_mod.load(Path(path) if path else None)
-    except Exception as e:
-        log.warning("config: %s: %s; using defaults", type(e).__name__, e)
-        try:
-            from .config import Config
-            return Config()
-        except Exception:
-            return argparse.Namespace(http_port=80, http_bind="0.0.0.0", fake_badge=None,
-                                      library=Path("/var/lib/badge-station/library"))
+    from . import config as config_mod
+    return config_mod.load(Path(path) if path else None)
 
 
 def _real_station(config):
-    """The real Station, or None when it is not usable yet (skeleton)."""
-    try:
-        from .station import Station
-        station = Station(config)
-        if not isinstance(station.status(), dict):
-            raise TypeError("Station.status() did not return a dict")
-        return station
-    except Exception as e:
-        log.warning("real Station unavailable (%s: %s); serving the demo station",
-                    type(e).__name__, e)
-        return None
+    from .station import Station
+    station = Station(config)
+    if not isinstance(station.status(), dict):
+        raise TypeError("Station.status() did not return a dict")
+    return station
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -1512,18 +1637,25 @@ def main(argv: list[str] | None = None) -> int:
     a = ap.parse_args(argv)
     logging.basicConfig(level=logging.INFO, stream=sys.stderr,
                         format="%(asctime)s %(levelname)s %(message)s")
-    config = _load_config(a.config)
+    try:
+        config = _load_config(a.config)
+    except Exception as e:
+        log.error("station configuration failed: %s: %s", type(e).__name__, e)
+        return 1
     if a.port is not None:
         config.http_port = a.port
     if a.bind:
         config.http_bind = a.bind
     if a.fake_badge:
         config.fake_badge = a.fake_badge
-    station = None
-    if not (a.demo or os.environ.get("BADGE_STATION_DEMO") == "1"):
-        station = _real_station(config)
-    if station is None:
+    if a.demo or os.environ.get("BADGE_STATION_DEMO") == "1":
         station = DemoStation()
+    else:
+        try:
+            station = _real_station(config)
+        except Exception as e:
+            log.error("station initialization failed: %s: %s", type(e).__name__, e)
+            return 1
     serve(station, config)
     return 0
 

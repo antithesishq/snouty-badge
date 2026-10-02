@@ -33,7 +33,7 @@ set -uo pipefail
 
 here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)   # <repo>/badge-manager
 repo=$(cd "$here/.." && pwd)
-export PATH="$HOME/.local/bin:$PATH"
+export PATH="${BUILD_TOOL_HOME:-$HOME}/.local/bin:$PATH"
 
 usage() {
     sed -n '4,8p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//' >&2
@@ -143,6 +143,15 @@ if [ -n "$name" ]; then
 fi
 
 job=$repo/build-jobs/$id
+# Results are retained for transfer recovery. Remove only completed job
+# directories older than seven days; active jobs keep their pid alive.
+mkdir -p "$repo/build-jobs"
+for old in "$repo"/build-jobs/*; do
+    [ -d "$old" ] || continue
+    [ "$old" = "$job" ] && continue
+    [ -f "$old/pid" ] && kill -0 "$(cat "$old/pid")" 2>/dev/null && continue
+    [ "$(find "$old" -maxdepth 0 -mtime +7 -print)" ] && rm -rf -- "$old"
+done
 if [ -f "$job/pid" ] && kill -0 "$(cat "$job/pid")" 2>/dev/null; then
     die 2 "job $id is already running"
 fi
@@ -275,7 +284,9 @@ fi
 export ZIG_LOCAL_CACHE_DIR=$repo/.zig-cache
 export ZIG_FLAGS="--cache-dir $ZIG_LOCAL_CACHE_DIR"
 [ -d "$repo/zig-pkg" ] && ln -s "$repo/zig-pkg" "$src/zig-pkg"
-[ -d "$repo/badge-bench/.venv" ] && ln -s "$repo/badge-bench/.venv" "$src/badge-bench/.venv"
+bench_venv=${BADGE_BENCH_VENV:-$repo/badge-bench/.venv}
+[ -d /opt/badge-station/badge-bench/.venv ] && bench_venv=/opt/badge-station/badge-bench/.venv
+[ -d "$bench_venv" ] && ln -s "$bench_venv" "$src/badge-bench/.venv"
 step_ok
 
 # --- 2. name -----------------------------------------------------------------

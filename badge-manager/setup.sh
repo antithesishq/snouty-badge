@@ -64,12 +64,22 @@ if [ -z "$SRC" ]; then
     fi
 fi
 echo "source: $SRC"
+revision=$(git -C "$SRC" rev-parse HEAD 2>/dev/null || echo unknown)
+if [ "$revision" != unknown ] && [ -n "$(git -C "$SRC" status --porcelain 2>/dev/null)" ]; then
+    revision="$revision (dirty source)"
+fi
 mkdir -p "$PREFIX"
+printf '%s\n' "$revision" > "$PREFIX/REVISION"
+echo "installed revision: $revision"
 rsync -a --delete --exclude __pycache__ --exclude '*.pyc' "$SRC/badge-manager/" "$PREFIX/badge-manager/"
 rsync -a --delete --exclude __pycache__ --exclude '*.pyc' "$SRC/tools/" "$PREFIX/tools/"
 if [ $BUILD_TOOLS -eq 1 ] && [ -d "$SRC/badge-bench" ]; then
     rsync -a --delete --exclude .venv --exclude __pycache__ "$SRC/badge-bench/" "$PREFIX/badge-bench/"
 fi
+# rsync -a preserves checkout ownership. Service code must remain trusted
+# even when an administrator installs it from the builder's checkout.
+chown -R root:root "$PREFIX/badge-manager" "$PREFIX/tools"
+chmod -R go-w "$PREFIX/badge-manager" "$PREFIX/tools"
 chmod +x "$PREFIX/badge-manager/"*.sh "$PREFIX/badge-manager/net/"*.sh
 
 step "Configuration and library"
@@ -131,24 +141,17 @@ cat > /usr/local/bin/badge <<EOF
 #!/bin/sh
 # The badge station command line (badge-manager/badge_manager/cli.py).
 cd $PREFIX/badge-manager || exit 1
-if [ "\$(id -u)" -eq 0 ]; then
-    exec /usr/bin/python3 -m badge_manager "\$@"
-fi
-exec sudo -n /usr/bin/python3 -m badge_manager "\$@"
+export BADGE_STATION_OPERATOR=\${BADGE_STATION_OPERATOR:-1}
+exec /usr/bin/python3 -m badge_manager "\$@"
 EOF
 chmod 755 /usr/local/bin/badge
-# CWD= pins the working directory, so `python3 -m` can only find the installed package.
-sudoers=$(mktemp)
-cat > "$sudoers" <<EOF
-# Installed by badge-manager/setup.sh: the badge user may run the station CLI as root.
-badge ALL=(root) CWD=$PREFIX/badge-manager NOPASSWD: /usr/bin/python3 -m badge_manager, /usr/bin/python3 -m badge_manager *
-EOF
-if visudo -cqf "$sudoers"; then
-    install -m 440 "$sudoers" /etc/sudoers.d/badge-station
-else
-    echo "setup.sh: sudoers drop-in did not validate, the badge command will need a password" >&2
-fi
-rm -f "$sudoers"
+# Remove the old broad grant when upgrading an existing station.
+rm -f /etc/sudoers.d/badge-station
+# The root service owns library state. Writable job output is granted per
+# build after the job directory is created; the SSH account cannot replace
+# service-owned state files with symlinks.
+chown -R root:root "$LIB"
+chmod -R go-w "$LIB"
 
 step "Network: NetworkManager profiles, captive DNS, mDNS"
 systemctl enable --now NetworkManager >/dev/null 2>&1 || true
@@ -174,12 +177,37 @@ systemctl daemon-reload
 systemctl enable badge-station.service badge-net-watchdog.timer badge-sync.timer
 # Merge any default set or cart title missing from the manifest (never overwrites),
 # before the restart so the server starts with them.
-/usr/local/bin/badge init-sets || echo "setup.sh: badge init-sets failed, default sets not merged" >&2
+BADGE_STATION_OPERATOR=0 /usr/local/bin/badge init-sets || echo "setup.sh: badge init-sets failed, default sets not merged" >&2
 systemctl restart badge-station.service
 systemctl start badge-net-watchdog.timer badge-sync.timer
 
 if [ $BUILD_TOOLS -eq 1 ]; then
     step "Build tools"
+    BUILD_REPO=/home/badge/snouty-badge
+    if [ ! -d "$BUILD_REPO/.git" ]; then
+        runuser -u badge -- git clone -q "$REPO_URL" "$BUILD_REPO"
+    else
+        runuser -u badge -- git -C "$BUILD_REPO" fetch -q origin "$REPO_BRANCH"
+        runuser -u badge -- git -C "$BUILD_REPO" checkout -q -B "$REPO_BRANCH" FETCH_HEAD
+    fi
+    # build_repo is the remote VM path; local builds use this checkout.
+    python3 - "$ETC/station.toml" <<'PY'
+from pathlib import Path
+import sys
+path = Path(sys.argv[1])
+text = path.read_text()
+values = {'build_local_repo': '/home/badge/snouty-badge',
+          'build_user': 'badge', 'build_home': '/home/badge'}
+missing = [f'{key} = "{value}"\n' for key, value in values.items()
+           if not any(line.strip().startswith(key + ' =') for line in text.splitlines())]
+if missing:
+    first = text.find('[[hotspots]]')
+    if first < 0:
+        text += '\n' + ''.join(missing)
+    else:
+        text = text[:first] + ''.join(missing) + '\n' + text[first:]
+    path.write_text(text)
+PY
     ZIG_HOME=/home/badge/.local/zig
     if [ -x "$ZIG_HOME/zig" ] && [ "$("$ZIG_HOME/zig" version)" = "$ZIG_VERSION" ]; then
         echo "zig $ZIG_VERSION already installed"
@@ -229,6 +257,9 @@ if [ $BUILD_TOOLS -eq 1 ]; then
         echo "builds will run on build_host from $ETC/station.toml instead."
     fi
 fi
+
+# Build tools and checkout may have been added after the first service start.
+systemctl restart badge-station.service
 
 step "Done"
 addrs=$(hostname -I 2>/dev/null || true)

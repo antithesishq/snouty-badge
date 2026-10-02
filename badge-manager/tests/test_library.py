@@ -1,8 +1,11 @@
 import shutil
+import subprocess
+import sys
 import tempfile
 import tomllib
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from tests.helpers import ROOT, make_library, make_uf2
 from badge_manager.library import CartSet, Library, LibraryError, UF2Error, validate_uf2
@@ -243,7 +246,7 @@ class LibraryTest(unittest.TestCase):
         data = tomllib.loads((self.root / "manifest.toml").read_text())
         self.assertEqual(data["carts"]["snouty"]["notes"], "kept on rewrite")
         self.assertEqual(data["sets"]["gear"]["roms"], ["sonic", "sonic2"])
-        s = self.lib.save_set("Demo two", ["snouty"], [], key="demo")    # replace
+        s = self.lib.save_set("Demo two", ["snouty"], [], key="demo", replace=True)
         self.assertEqual(self.lib.sets["demo"].title, "Demo two")
         j = {x["name"]: x for x in self.lib.to_json()["sets"]}
         self.assertEqual(j["game-gear"]["roms"], ["*.gg"])
@@ -319,6 +322,120 @@ class LibraryTest(unittest.TestCase):
         self.lib.reload()
         self.assertTrue(self.lib.error.startswith("manifest.toml"))
         self.assertEqual(self.lib.sets, {})
+
+    def test_stale_clients_merge_and_invalid_manifest_preserved(self):
+        other = Library(self.root)
+        self.lib.save_set("New Set", ["snouty"], [])
+        other.set_cart_mode("snouty", "xip")
+        fresh = Library(self.root)
+        self.assertIn("new-set", fresh.sets)
+        self.assertEqual(fresh.carts["snouty"].use, "xip")
+        manifest = self.root / "manifest.toml"
+        broken = manifest.read_bytes() + b"\n[unfinished\n"
+        manifest.write_bytes(broken)
+        for edit in (lambda: self.lib.save_set("Another", ["snouty"], []),
+                     lambda: other.set_cart_mode("snouty", "ram"),
+                     lambda: self.lib.init_defaults(ROOT / "sets.default.toml")):
+            with self.assertRaisesRegex(LibraryError, "repair"):
+                edit()
+            self.assertEqual(manifest.read_bytes(), broken)
+
+    def test_overlapping_process_writes_keep_both_sets(self):
+        code = ("import sys; from badge_manager.library import Library; "
+                "Library(sys.argv[1]).save_set(sys.argv[2], ['snouty'], [])")
+        children = [subprocess.Popen([sys.executable, '-c', code, str(self.root), title],
+                                     stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                    for title in ('First process', 'Second process')]
+        for child in children:
+            _, err = child.communicate(timeout=10)
+            self.assertEqual(child.returncode, 0, err.decode())
+        sets = Library(self.root).sets
+        self.assertIn('first-process', sets)
+        self.assertIn('second-process', sets)
+
+    def test_set_collision_and_controls_preserve_manifest(self):
+        manifest = self.root / "manifest.toml"
+        before = manifest.read_bytes()
+        for title, key in (("Demo reel", None), ("Demo Reel", "demo"),
+                           ("Another", "gear")):
+            with self.assertRaisesRegex(LibraryError, "already exists"):
+                self.lib.save_set(title, ["snouty"], [], key=key)
+            self.assertEqual(manifest.read_bytes(), before)
+        self.lib.save_set("Line\rBreak", ["snouty"], [])
+        self.assertEqual(Library(self.root).sets["line-break"].title, "Line\rBreak")
+        good = manifest.read_bytes()
+        with self.assertRaises(LibraryError):
+            self.lib.save_set("Bad\x00Title", ["snouty"], [])
+        self.assertEqual(manifest.read_bytes(), good)
+
+    def test_invalid_rom_destinations_and_collision(self):
+        manifest = self.root / "manifest.toml"
+        original = manifest.read_text()
+        for bad in ("../outside.gg", "/tmp/outside.gg", "A/B.GG", "..", "A\\B.GG"):
+            text = original.replace('title = "Sonic GG"',
+                                    f'title = "Sonic GG"\nshort = "{bad.replace(chr(92), chr(92) * 2)}"')
+            manifest.write_text(text)
+            self.lib.reload()
+            with self.assertRaisesRegex(LibraryError, "invalid ROM destination"):
+                self.lib.plan("gear")
+        text = original.replace('title = "Sonic GG"', 'title = "Sonic GG"\nshort = "SONIC.GG"')
+        text = text.replace('title = "Sonic 2"', 'title = "Sonic 2"\nshort = "sonic.gg"')
+        manifest.write_text(text)
+        self.lib.reload()
+        with self.assertRaisesRegex(LibraryError, "conflicts"):
+            self.lib.plan("gear")
+
+    def test_uf2_impossible_payload(self):
+        path = make_uf2(self.tmp / "large.uf2", "ram")
+        data = bytearray(path.read_bytes())
+        import struct
+        struct.pack_into("<I", data, 16, 9000)
+        path.write_bytes(data)
+        with self.assertRaisesRegex(UF2Error, "payload size"):
+            validate_uf2(path)
+        path = make_uf2(self.tmp / "count.uf2", "ram", 2)
+        data = bytearray(path.read_bytes())
+        struct.pack_into("<I", data, 24, 3)
+        path.write_bytes(data)
+        with self.assertRaisesRegex(UF2Error, "block count"):
+            validate_uf2(path)
+        path = make_uf2(self.tmp / "family.uf2", "ram")
+        data = bytearray(path.read_bytes())
+        struct.pack_into("<I", data, 28, 0xDEADBEEF)
+        path.write_bytes(data)
+        with self.assertRaisesRegex(UF2Error, "family"):
+            validate_uf2(path)
+
+    def test_import_validates_exact_staged_bytes(self):
+        import badge_manager.library as library_module
+        source = make_uf2(self.tmp / "race.uf2", "ram")
+        target = self.root / "carts" / "race.uf2"
+        before = (self.root / "manifest.toml").read_bytes()
+        original = library_module.validate_uf2
+        def change_after_first_check(path):
+            kind = original(path)
+            if Path(path) == source:
+                source.write_bytes(b"invalid replacement")
+            return kind
+        with mock.patch.object(library_module, "validate_uf2", side_effect=change_after_first_check):
+            with self.assertRaises(UF2Error):
+                self.lib.import_uf2(source, "race")
+        self.assertFalse(target.exists())
+        self.assertEqual((self.root / "manifest.toml").read_bytes(), before)
+        self.assertEqual(list((self.root / "carts").glob(".race.uf2.*")), [])
+
+    def test_import_rejects_symlink_source(self):
+        source = make_uf2(self.tmp / "real.uf2", "ram")
+        link = self.tmp / "link.uf2"
+        link.symlink_to(source)
+        with self.assertRaises(UF2Error):
+            self.lib.import_uf2(link, "linked")
+        self.assertFalse((self.root / "carts" / "linked.uf2").exists())
+        alias = self.tmp / "alias"
+        alias.symlink_to(source.parent, target_is_directory=True)
+        with self.assertRaises(UF2Error):
+            self.lib.import_uf2(alias / source.name, "linked")
+        self.assertFalse((self.root / "carts" / "linked.uf2").exists())
 
 
 if __name__ == "__main__":

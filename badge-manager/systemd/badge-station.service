@@ -7,9 +7,12 @@ After=network-online.target
 [Service]
 Type=simple
 User=root
+Group=badge
+UMask=0022
 WorkingDirectory=/opt/badge-station/badge-manager
 Environment=PYTHONPATH=/opt/badge-station/badge-manager
 Environment=PYTHONUNBUFFERED=1
+ExecStartPre=/usr/bin/python3 -m badge_manager.config --publish-operator-endpoint /etc/badge-station/station.toml
 ExecStart=/usr/bin/python3 -m badge_manager.server --config /etc/badge-station/station.toml
 Restart=always
 RestartSec=2

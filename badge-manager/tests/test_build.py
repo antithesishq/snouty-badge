@@ -254,6 +254,9 @@ class JobsTest(Env):
         self.assertIsNone(jobs.file("..", "preview.gif"))
         self.assertIsNone(jobs.file(f"{job.id}/../{job.id}", "preview.gif"))
         self.assertIsNone(jobs.file("../../etc", "passwd"))
+        (jobs.dir(job.id) / "out" / "preview.gif").unlink()
+        (jobs.dir(job.id) / "out" / "preview.gif").symlink_to(self.tmp / "secret")
+        self.assertIsNone(jobs.file(job.id, "preview.gif"))
 
 
 class CommandTest(Env):
@@ -366,6 +369,33 @@ class CommandTest(Env):
         self.assertTrue((self.jobs.dir(job.id) / "out" / "preview.gif").is_file())
         self.assertIn("snouty-rain", Library(self.cfg.library).carts)
 
+    def test_failed_remote_fetch_retains_and_recovers_result(self):
+        bin_ = self.tmp / "bin"
+        bin_.mkdir()
+        fail_once = self.tmp / "fail-fetch"
+        fail_once.touch()
+        (bin_ / "ssh").write_text(
+            "#!/bin/bash\n"
+            "while [ \"${1:-}\" = -o ]; do shift 2; done\n"
+            "shift\n"
+            f"if [[ \"$1\" == tar\\ * ]] && [ -f {fail_once} ]; then "
+            f"rm {fail_once}; exit 255; fi\n"
+            "exec bash -c \"$1\"\n")
+        (bin_ / "ssh").chmod(0o755)
+        repo = self.tmp / "repo"
+        (repo / "badge-manager").mkdir(parents=True)
+        shutil.copy(FAKE, repo / "badge-manager" / "build-job.sh")
+        self.cfg.build_repo = str(repo)
+        with mock.patch.dict(os.environ, {"PATH": f"{bin_}:{os.environ['PATH']}"}):
+            job = self.jobs.start("rain", "remote")
+            self.assertEqual(job.state, "failed")
+            self.assertIn("retry-fetch", "\n".join(self.jobs.log(job.id)))
+            self.assertTrue((repo / "build-jobs" / job.id / "out" / "snouty-rain.uf2").exists())
+            recovered = self.jobs.retry_fetch(job.id)
+        self.assertEqual(recovered.state, "done")
+        self.assertFalse((repo / "build-jobs" / job.id).exists())
+        self.assertIn("snouty-rain", Library(self.cfg.library).carts)
+
 
 class StationBuildTest(Env):
     def station(self, **kw) -> Station:
@@ -401,6 +431,20 @@ class StationBuildTest(Env):
             self.assertFalse(st._local_build_ok())      # build_repo is not a directory
             Path(st.config.build_repo).mkdir()
             self.assertTrue(st._local_build_ok())
+
+    def test_installed_local_probe_names_missing_prerequisite(self):
+        repo = self.tmp / "builder-repo"
+        home = self.tmp / "builder-home"
+        st = self.station(build_local_repo=str(repo), build_home=home)
+        with mock.patch("pathlib.Path.read_text", return_value="MemTotal: 8000000 kB\n"):
+            self.assertFalse(st._local_build_ok())
+            self.assertIn("checkout", st._local_build_reason)
+            repo.mkdir()
+            zig = home / ".local/zig/zig"
+            zig.parent.mkdir(parents=True)
+            zig.write_text("stub")
+            self.assertFalse(st._local_build_ok())
+            self.assertIn("venv", st._local_build_reason)
 
     def test_start_status_and_registration(self):
         st = self.station()

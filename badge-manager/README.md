@@ -16,8 +16,28 @@ git clone https://github.com/antithesishq/snouty-badge.git
 sudo snouty-badge/badge-manager/setup.sh
 ```
 
-`setup.sh` is safe to re-run (it is also how you update). It installs the
-code into `/opt/badge-station`, sets the hostname to `snouty`, creates the
+`setup.sh` is safe to re-run. To update from a local clone, select the new
+revision before reinstalling:
+
+```
+cd snouty-badge
+git fetch origin main
+git checkout main
+git pull --ff-only
+git rev-parse --short HEAD
+sudo badge-manager/setup.sh --build-tools   # omit --build-tools if you do not build locally
+```
+
+The installer prints its source path and revision and stores the revision in
+`/opt/badge-station/REVISION`. Record it before updating. To roll back,
+`git checkout <previous-commit>` in that
+clone and rerun setup. If local building is enabled, restore the builder
+checkout too with `sudo -u badge git -C /home/badge/snouty-badge checkout
+<previous-commit>`. A script installed from a URL fetches its configured
+branch itself.
+
+The installer copies code into `/opt/badge-station`, sets the hostname to
+`snouty`, creates the
 `badge` user (with your ssh keys) and the `badge` command, writes the
 NetworkManager profiles, installs `qrencode` for the Share QR codes,
 starts the library from `sets.default.toml` (or merges its missing sets
@@ -26,6 +46,16 @@ timer. Without a clone,
 `curl -fsSL <raw setup.sh url> | sudo bash` clones the repository itself.
 `--build-tools` adds the pinned Zig, Node 20 and, on a Pi with 6 GB or
 more, the badge-bench venv, for building carts on the Pi (PLAN section 6).
+It creates a separate checkout at `/home/badge/snouty-badge` and runs local
+builds as the unprivileged `badge` user. For agent builds, install and
+authenticate `claude` for that account. Check the no-agent path first with
+`ssh -t badge@snouty.local 'badge build "a test cart" --local --no-agent'`.
+
+For a first deploy, configure a reachable hotspot below, open
+`http://snouty.local/` (or join `snouty-badge` and open `http://10.42.0.1/`),
+plug the badge in at its menu, and choose the **Demo reel** set. Check its
+fit result, tap **Deploy**, confirm the replacement, and wait for the page
+to say it ejected the badge. Unplug and reconnect it to run the carts.
 
 ## Configure the hotspot
 
@@ -113,19 +143,21 @@ iPhone and Android are both first-class; nothing needs an app.
 
 ```
 ssh badge@snouty.local badge status
-ssh badge@snouty.local badge deploy demo
-ssh badge@snouty.local badge deploy --carts snouty,snouty-gear --roms 'sonic*'
+ssh -t badge@snouty.local 'badge deploy demo'
+ssh -t badge@snouty.local 'badge deploy --carts snouty,snouty-gear --roms "sonic*"'
+# Noninteractive scripts must explicitly acknowledge replacement:
+ssh badge@snouty.local 'badge deploy demo --yes'
 ssh badge@snouty.local badge mode snouty xip        # or: badge mode --all ram
-ssh badge@snouty.local badge set save gg --title "Game Gear" --carts snouty-gear --roms '*.gg'
+ssh badge@snouty.local 'badge set save gg --title "Game Gear" --carts snouty-gear --roms "*.gg"'
 ssh badge@snouty.local badge set rm gg
-ssh badge@snouty.local badge init-sets              # merge missing default sets
 ssh badge@snouty.local badge qr
 ssh badge@snouty.local badge log
-ssh -t badge@snouty.local badge build "a Snouty cart where it rains frogs"
-ssh -t badge@snouty.local badge build "a maze" --remote --name maze2 --no-agent
+ssh -t badge@snouty.local 'badge build "a Snouty cart where it rains frogs"'
+ssh -t badge@snouty.local 'badge build "a maze" --remote --name maze2 --no-agent'
 ssh badge@snouty.local badge build --status         # the running or last build
 ssh badge@snouty.local badge build --log            # its whole log (or --log ID)
 ssh badge@snouty.local badge build --cancel
+ssh badge@snouty.local 'badge build --retry-fetch JOB_ID' # failed remote result transfer
 ssh badge@snouty.local badge builds                 # the last builds
 ```
 
@@ -134,9 +166,29 @@ library, 1 when the build failed or was cancelled, 2 when another build is
 running or builds are not possible right now. Ctrl-C (or a dropped ssh
 session) cancels the build. It does not need the badge plugged in.
 
-The `badge` command runs `python3 -m badge_manager` as root through a
-sudoers rule that allows only that command. `badge --help` lists the rest
-(`fit`, `library`, `wipe`, `sync`, `add-rom`, `add-uf2`).
+The `badge` SSH command runs as the unprivileged `badge` account. Mutations
+go to the installed station service, which owns USB and library state;
+`--config` and `--fake-badge` are refused by that wrapper. The installer
+removes its former broad sudoers grant. Importing a UF2, initializing default
+sets, and importing ROMs from a local path require a station administrator;
+the phone page can upload ROMs. Administrators use `sudo` for these actions,
+for `/etc/badge-station/station.toml`, NetworkManager, and service changes.
+Run the Python module from `/opt/badge-station/badge-manager` when invoking
+an admin CLI command directly, for example:
+
+```
+cd /opt/badge-station/badge-manager
+sudo env BADGE_STATION_OPERATOR=0 /usr/bin/python3 -m badge_manager init-sets
+```
+
+A noninteractive deploy or wipe requires
+`--yes`; an interactive one asks before replacing badge contents.
+
+Failed remote result transfers keep the host's output for seven days. Retry
+with `badge build --retry-fetch JOB_ID` after connectivity returns. The cart
+enters the library only after the transferred UF2 passes validation. Remote
+files are removed after that, and old completed job directories expire on a
+later build.
 
 ## Building a cart from the phone
 
@@ -147,7 +199,7 @@ like "a Snouty cart where it rains frogs" and makes a new cart from it
 1. The station starts a job in `library/builds/<id>/` and picks where it
    runs. It builds on the Pi itself when the Pi has 6 GB of RAM or more,
    the Zig toolchain (`setup.sh --build-tools`) and a checkout at
-   `build_repo`; otherwise on the build VM `build_host` over ssh. The page
+   `build_local_repo`; otherwise on the build VM `build_host` over ssh. The page
    shows which one ("on the station" / "on the build VM") and why a build
    is not possible (no build VM set, no internet).
 2. `badge-manager/build-job.sh` runs there: a fresh worktree, a template
@@ -163,8 +215,8 @@ like "a Snouty cart where it rains frogs" and makes a new cart from it
 
 One build runs at a time. A deploy can still run while a cart builds.
 
-**The build VM needs the Pi's ssh key.** The station runs as root and uses
-`/home/badge/.ssh/id_ed25519` when it exists (else root's own key). The
+**The build VM needs the Pi's ssh key.** The station's remote runner uses
+`/home/badge/.ssh/id_ed25519` when it exists. The
 exe.dev VM has no `authorized_keys`: keys are registered on the exe.dev
 account (PLAN 9.1). Register the Pi's public key once, from a machine
 that is logged in to exe.dev:
@@ -173,14 +225,14 @@ that is logged in to exe.dev:
 ssh exe.dev ssh-key add '<contents of /home/badge/.ssh/id_ed25519.pub>'
 ```
 
-Then `ssh badge@snouty.local badge build "..." --remote --no-agent`
+Then `ssh -t badge@snouty.local 'badge build "a test cart" --remote --no-agent'`
 checks the whole path without spending anything on the agent.
 
 ## Filling the library
 
 `sync.sh` pulls `zig-out/firmware/*.uf2` from `build_host`:`build_repo`
-(station.toml) over ssh, checks each file with `tools/uf2_info.py`, and
-registers new carts with `badge add-uf2`. It uses the station's key
+(station.toml) over ssh, stages and validates the batch, then registers
+changed carts through the library transaction. It uses the station's key
 `/home/badge/.ssh/id_ed25519` (generated by `setup.sh`, registered on the
 exe.dev account as described under "Building a cart from the phone").
 
@@ -192,15 +244,16 @@ sudo /opt/badge-station/badge-manager/sync.sh local /home/badge/snouty-badge
 
 The timer `badge-sync.timer` runs `badge sync` every night at 03:00 (up
 to 10 minutes later at random, and at the next boot if the Pi was off), so
-the library follows main without anyone touching the Pi. It needs internet
-and the ssh key above; a failed sync is one log line and nothing else
-changes. `systemctl list-timers badge-sync.timer` shows the next run,
+the library receives artifacts currently present in the configured build
+directory. Sync does not fetch or build the latest main revision. It needs
+internet and the ssh key above; a failed sync preserves previously installed
+carts. `systemctl list-timers badge-sync.timer` shows the next run,
 `journalctl -u badge-sync` the last one.
 
 Sets live in `/var/lib/badge-station/library/manifest.toml` (format in
 `badge_manager/library.py`). A fresh install starts from
 `sets.default.toml` (first-guess show-day sets and titles for the known
-carts); `badge init-sets` adds any default set or cart title an existing
+carts); an administrator can run `init-sets` to add any default set or cart title an existing
 manifest lacks and never overwrites one. A set's `roms` may hold glob
 patterns matched case-insensitively against ROM file names, so a set stays
 current as ROMs are uploaded:
@@ -217,15 +270,9 @@ ROMs can also be uploaded from the page (.gg .sms .gb .gbc .md .bin, up to
 
 ## Testing without a badge
 
-A USB stick with the badge's exact limits (1280 KB FAT12, 32 root entries,
-label SYCLBADGE) takes the badge's place end to end:
-
-```
-sudo parted -s /dev/sdX mklabel msdos mkpart primary fat16 1MiB 2304KiB
-sudo mkfs.vfat -F 12 -n SYCLBADGE -s 1 -r 32 -S 512 /dev/sdX1
-```
-
-Without any hardware, point the station at an image or a directory:
+Production detection requires the real badge's USB identity, label, and
+geometry. A label-only USB stick is ignored. For development, explicitly
+point the station at an image or directory:
 
 ```
 python3 ../tools/make_romfs.py /tmp/badge.img           # empty badge image

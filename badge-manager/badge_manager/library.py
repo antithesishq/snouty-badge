@@ -26,9 +26,14 @@ family `<stem>`), so a fresh `sync` shows up without editing the manifest.
 """
 from __future__ import annotations
 import fnmatch
+import contextlib
+import fcntl
+import os
 import re
 import shutil
+import stat
 import struct
+import tempfile
 import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -41,6 +46,7 @@ from .fat12 import FitReport
 UF2_MAGIC0, UF2_MAGIC1, UF2_MAGIC_END = 0x0A324655, 0x9E5D5157, 0x0AB16F30
 UF2_FLASH = (0x101C0000, 0x10200000)
 UF2_RAM = (0x20020000, 0x20080000)
+UF2_FAMILIES = {0xE48BFF59, 0xE48BFF5A, 0xE48BFF5B}
 VARIANTS = ("ram", "xip")
 CUSTOM = "custom"            # key of an ad-hoc selection (Library.selection)
 BUILD_ID = re.compile(r"[0-9]{8}-[0-9]{6}-[a-z0-9][a-z0-9-]*")   # build.py job ids
@@ -108,7 +114,8 @@ class PlanItem:
 def validate_uf2(path: Path) -> str:
     """"ram" | "xip" from the UF2 block addresses; raises UF2Error on mixed/malformed."""
     try:
-        data = Path(path).read_bytes()
+        with os.fdopen(_open_regular_nofollow(Path(path)), "rb") as stream:
+            data = stream.read()
     except OSError as e:
         raise UF2Error(f"{Path(path).name}: {e.strerror or e}") from e
     name = Path(path).name
@@ -116,12 +123,21 @@ def validate_uf2(path: Path) -> str:
         raise UF2Error(f"{name}: size {len(data)} is not a multiple of 512")
     in_flash = in_ram = True
     any_flash = any_ram = False
+    expected = len(data) // 512
+    seen = set()
     for i in range(0, len(data), 512):
-        m0, m1, _flags, addr, size = struct.unpack_from("<5I", data, i)
+        m0, m1, flags, addr, size, number, count, family = struct.unpack_from("<8I", data, i)
         end = struct.unpack_from("<I", data, i + 508)[0]
         if (m0, m1, end) != (UF2_MAGIC0, UF2_MAGIC1, UF2_MAGIC_END):
             raise UF2Error(f"{name}: block {i // 512} has bad magic")
-        in_flash &= UF2_FLASH[0] <= addr and addr + size <= UF2_FLASH[1]
+        if not 0 < size <= 476 or addr + size > 0x100000000:
+            raise UF2Error(f"{name}: block {i // 512} has invalid payload size {size}")
+        if count != expected or number >= count or number in seen:
+            raise UF2Error(f"{name}: invalid block count or number at block {i // 512}")
+        seen.add(number)
+        if flags & 0x2000 and family not in UF2_FAMILIES:
+            raise UF2Error(f"{name}: unsupported UF2 family {family:#x}")
+        in_flash &= UF2_FLASH[0] <= addr and addr + size < UF2_FLASH[1]
         in_ram &= UF2_RAM[0] <= addr and addr + size <= UF2_RAM[1]
         any_flash |= UF2_FLASH[0] <= addr < UF2_FLASH[1]
         any_ram |= UF2_RAM[0] <= addr < UF2_RAM[1]
@@ -157,7 +173,11 @@ def _toml_value(v) -> str:
         return repr(v)
     if isinstance(v, (list, tuple)):
         return "[" + ", ".join(_toml_value(x) for x in v) + "]"
-    s = str(v).replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n")
+    s = str(v).replace("\\", "\\\\").replace('"', '\\"')
+    s = ''.join({'\b': '\\b', '\t': '\\t', '\n': '\\n', '\f': '\\f', '\r': '\\r'}.get(ch, ch)
+                for ch in s)
+    if any(ord(ch) < 32 or ord(ch) == 127 for ch in s):
+        raise LibraryError("text contains an unsupported control character")
     return f'"{s}"'
 
 
@@ -179,6 +199,25 @@ def dump_toml(data: dict, prefix: str = "") -> str:
     return out
 
 
+def _open_regular_nofollow(path: Path) -> int:
+    """Open a source without following a symlink in any path component."""
+    path = Path(os.path.abspath(path))
+    parts = path.parts[1:]
+    parent = os.open("/", os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        for part in parts[:-1]:
+            child = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=parent)
+            os.close(parent)
+            parent = child
+        fd = os.open(parts[-1], os.O_RDONLY | os.O_NOFOLLOW, dir_fd=parent)
+        if not stat.S_ISREG(os.fstat(fd).st_mode):
+            os.close(fd)
+            raise LibraryError(f"{path.name}: source is not a regular file")
+        return fd
+    finally:
+        os.close(parent)
+
+
 class Library:
     def __init__(self, root: Path):
         self.root = Path(root)
@@ -194,13 +233,81 @@ class Library:
     def manifest(self) -> Path:
         return self.root / "manifest.toml"
 
+    @contextlib.contextmanager
+    def locked(self):
+        """Process-wide library boundary; readers may hold it through staging."""
+        self.root.mkdir(parents=True, exist_ok=True)
+        with (self.root / ".manifest.lock").open("a+b") as lock:
+            os.fchmod(lock.fileno(), 0o664)
+            fcntl.flock(lock, fcntl.LOCK_EX)
+            try:
+                yield
+            finally:
+                fcntl.flock(lock, fcntl.LOCK_UN)
+
+    @staticmethod
+    def _validate_raw(raw: dict) -> None:
+        if not isinstance(raw, dict):
+            raise LibraryError("root must be a table")
+        for section in ("carts", "roms", "sets"):
+            value = raw.get(section, {})
+            if not isinstance(value, dict) or any(not isinstance(v, dict) for v in value.values()):
+                raise LibraryError(f"{section} must contain tables")
+
+    def _fresh_raw(self) -> dict:
+        try:
+            raw = tomllib.loads(self.manifest.read_text()) if self.manifest.exists() else {}
+            self._validate_raw(raw)
+            return raw
+        except (OSError, tomllib.TOMLDecodeError, LibraryError) as e:
+            raise LibraryError(f"cannot edit invalid manifest.toml; repair it first: {e}") from e
+
+    def _commit(self, raw: dict) -> None:
+        candidate = "# badge station library (rewritten by badge_manager)\n" + dump_toml(raw)
+        try:
+            parsed = tomllib.loads(candidate)
+            self._validate_raw(parsed)
+            if parsed != raw:
+                raise LibraryError("manifest did not round-trip")
+        except tomllib.TOMLDecodeError as e:
+            raise LibraryError(f"candidate manifest is invalid: {e}") from e
+        fd, name = tempfile.mkstemp(prefix=".manifest.", suffix=".tmp", dir=self.root)
+        try:
+            previous = self.manifest.stat() if self.manifest.exists() else None
+            os.fchmod(fd, stat.S_IMODE(previous.st_mode) if previous else 0o664)
+            if os.geteuid() == 0:
+                os.fchown(fd, previous.st_uid if previous else os.geteuid(),
+                           previous.st_gid if previous else self.root.stat().st_gid)
+            with os.fdopen(fd, "w") as stream:
+                stream.write(candidate)
+                stream.flush()
+                os.fsync(stream.fileno())
+            os.replace(name, self.manifest)
+        finally:
+            if os.path.exists(name):
+                os.unlink(name)
+        self.reload()
+
+    def _mutate(self, change):
+        with self.locked():
+            raw = self._fresh_raw()
+            self.reload()
+            result = change(raw)
+            self._commit(raw)
+            return result
+
     def reload(self) -> None:
         """Re-read manifest and file sizes (new dicts swapped in at the end)."""
         error = ""
         try:
             raw = tomllib.loads(self.manifest.read_text()) if self.manifest.exists() else {}
-        except (tomllib.TOMLDecodeError, OSError) as e:
+        except (tomllib.TOMLDecodeError, OSError, LibraryError) as e:
             error, raw = f"manifest.toml: {e}", {}
+        if not error:
+            try:
+                self._validate_raw(raw)
+            except LibraryError as e:
+                error, raw = f"manifest.toml: {e}", {}
         self._raw = raw
         carts = {k: self._cart(k, v) for k, v in self._tables("carts").items()}
         roms = {k: self._rom(k, v) for k, v in self._tables("roms").items()}
@@ -214,11 +321,11 @@ class Library:
     def _drive_names(self) -> dict[str, str]:
         """One drive name per ROM, library-wide (manifest order, explicit `short`s reserved),
         so a ROM has the same name in every set and on the page."""
-        taken = {r.short for r in self.roms.values() if r.short}
+        taken = {r.short.upper() for r in self.roms.values() if r.short}
         out = {}
         for k, r in self.roms.items():
             out[k] = r.short or self.short_name(r, taken)
-            taken.add(out[k])
+            taken.add(out[k].upper())
         return out
 
     def drive_name(self, rom: Rom) -> str:
@@ -253,6 +360,9 @@ class Library:
         if "ram" in variants and kinds["ram"] == "xip" and "xip" not in variants and not pinned:
             v = variants.pop("ram")                   # an XIP UF2 without the -xip name
             variants["xip"] = Variant(v.file, v.size, "xip")
+        if not auto and pinned != "xip" and not t.get("use") and "ram" not in variants:
+            f = self._path(paths["ram"][0])
+            variants["ram"] = Variant(f, 0, "ram", f"{f.name} is missing from the library")
         if not variants:
             slot = "xip" if pinned == "xip" else "ram"
             f = self._path(paths[slot][0])
@@ -297,6 +407,11 @@ class Library:
             r.size = f.stat().st_size
         except OSError:
             r.error = f"{f.name} is missing from the library"
+        if r.short:
+            try:
+                fat12.validate_filename(r.short)
+            except ValueError as e:
+                r.error = f"{key}: invalid ROM destination {r.short!r}: {e}"
         return r
 
     def _discover(self, carts: dict[str, Cart], roms: dict[str, Rom]) -> None:
@@ -359,7 +474,12 @@ class Library:
             elif c.error:
                 problems.append(c.error)
             else:
-                items.append(PlanItem(c.file, c.file.name, c.size, c.title, "cart"))
+                try:
+                    fat12.validate_filename(c.file.name)
+                except ValueError as e:
+                    problems.append(f"{c.key}: invalid cart destination: {e}")
+                else:
+                    items.append(PlanItem(c.file, c.file.name, c.size, c.title, "cart"))
         keys = self._rom_keys(s.roms)
         taken = {i.name for i in items} | {r.short for k in keys
                                            if (r := self.roms.get(k)) and r.short}
@@ -372,8 +492,16 @@ class Library:
                 problems.append(r.error)
                 continue
             name = self.drive_name(r)
-            if name in taken and name != r.short:
+            if name.upper() in {n.upper() for n in taken} and name != r.short:
                 name = self.short_name(r, taken)
+            try:
+                fat12.validate_filename(name)
+            except ValueError as e:
+                problems.append(f"{k}: invalid ROM destination: {e}")
+                continue
+            if name.upper() in {i.name.upper() for i in items}:
+                problems.append(f"{k}: destination {name!r} conflicts with another file")
+                continue
             taken.add(name)
             items.append(PlanItem(r.file, name, r.size, r.title, "rom"))
         if not items and not problems:
@@ -455,21 +583,91 @@ class Library:
                 short: str | None = None) -> Rom:
         """Copy PATH into roms/ and name it in the manifest. Returns the new Rom."""
         path = Path(path)
-        dst = self.root / "roms" / path.name
-        dst.parent.mkdir(parents=True, exist_ok=True)
-        if path.resolve() != dst.resolve():
-            shutil.copyfile(path, dst)
-        existing = [k for k, r in self.roms.items() if r.file.resolve() == dst.resolve()
-                    and not r.auto]
-        key = key or (existing[0] if existing else
-                      self._free_key(slug(title or path.stem), self._tables("roms")))
-        t = dict(self._tables("roms").get(key, {}))
-        t["file"] = f"roms/{dst.name}"
-        t["title"] = title or t.get("title") or path.stem
         if short:
-            t["short"] = short
-        self._set_table("roms", key, t)
+            try:
+                fat12.validate_filename(short)
+            except ValueError as e:
+                raise LibraryError(f"invalid ROM destination {short!r}: {e}") from e
+        dst = self.root / "roms" / path.name
+        with self.locked():
+            raw = self._fresh_raw()
+            self.reload()
+            existing = [k for k, r in self.roms.items() if r.file.resolve() == dst.resolve()
+                        and not r.auto]
+            key = key or (existing[0] if existing else
+                          self._free_key(slug(title or path.stem), raw.get("roms", {})))
+            t = dict(raw.get("roms", {}).get(key, {}))
+            t["file"] = f"roms/{dst.name}"
+            t["title"] = title or t.get("title") or path.stem
+            if short:
+                t["short"] = short
+            raw.setdefault("roms", {})[key] = t
+            self._promote({dst: path}, raw)
         return self.roms[key]
+
+    def _promote(self, files: dict[Path, Path], raw: dict,
+                 expected_kinds: dict[Path, str] | None = None) -> None:
+        """Stage artifacts, replace them, then commit metadata; restore on failure.
+
+        Caller holds locked() and has read a valid current manifest.
+        """
+        staged: dict[Path, Path] = {}
+        backups: dict[Path, Path] = {}
+        promoted: list[Path] = []
+        try:
+            for dst, src in files.items():
+                dst.parent.mkdir(parents=True, exist_ok=True)
+                fd, name = tempfile.mkstemp(prefix=f".{dst.name}.", dir=dst.parent)
+                staged[dst] = Path(name)
+                previous = dst.stat() if dst.exists() else None
+                os.fchmod(fd, stat.S_IMODE(previous.st_mode) if previous else 0o664)
+                if os.geteuid() == 0:
+                    os.fchown(fd, previous.st_uid if previous else os.geteuid(),
+                               previous.st_gid if previous else dst.parent.stat().st_gid)
+                try:
+                    source_fd = _open_regular_nofollow(src)
+                    with os.fdopen(source_fd, "rb") as inp, os.fdopen(fd, "wb") as out:
+                        before = os.fstat(inp.fileno())
+                        if not stat.S_ISREG(before.st_mode):
+                            raise LibraryError(f"{src.name}: source is not a regular file")
+                        shutil.copyfileobj(inp, out)
+                        after = os.fstat(inp.fileno())
+                        if (before.st_size, before.st_mtime_ns, before.st_ctime_ns) != (
+                                after.st_size, after.st_mtime_ns, after.st_ctime_ns):
+                            raise LibraryError(f"{src.name}: source changed while staging")
+                        out.flush()
+                        os.fsync(out.fileno())
+                except Exception:
+                    # fdopen owns fd only after both context managers have entered.
+                    try:
+                        os.close(fd)
+                    except OSError:
+                        pass
+                    raise
+                if expected_kinds and dst in expected_kinds:
+                    actual = validate_uf2(staged[dst])
+                    if actual != expected_kinds[dst]:
+                        raise UF2Error(f"{src.name}: staged cart changed from {expected_kinds[dst].upper()} to {actual.upper()}")
+            for dst, tmp in staged.items():
+                if dst.exists():
+                    fd, name = tempfile.mkstemp(prefix=f".{dst.name}.backup.", dir=dst.parent)
+                    with os.fdopen(fd, "wb") as out, dst.open("rb") as inp:
+                        shutil.copyfileobj(inp, out)
+                    backups[dst] = Path(name)
+                os.replace(tmp, dst)
+                promoted.append(dst)
+            self._commit(raw)
+        except Exception:
+            for dst in reversed(promoted):
+                if dst in backups:
+                    os.replace(backups.pop(dst), dst)
+                else:
+                    dst.unlink(missing_ok=True)
+            self.reload()
+            raise
+        finally:
+            for tmp in [*staged.values(), *backups.values()]:
+                tmp.unlink(missing_ok=True)
 
     def import_uf2(self, path: Path, key: str, title: str | None = None,
                    mode: str | None = None, build: str | None = None) -> Cart:
@@ -479,36 +677,55 @@ class Library:
         family's XIP variant (carts/<family>-xip.uf2) instead of a second cart.
         BUILD records the build job that made it (`build = "<id>"`); a UF2 imported
         without one drops any old `build` of that cart."""
-        path = Path(path)
-        kind = validate_uf2(path)
-        if mode and mode != kind:
-            raise UF2Error(f"{path.name} is a {kind.upper()} cart, not {mode.upper()}")
-        tables = self._tables("carts")
-        fam, slot = family_of(key)
-        fold = (slot == "xip" and kind == "xip" and key not in tables and fam in self.carts
-                and tables.get(fam, {}).get("mode") != "xip")
-        dst = self.root / "carts" / f"{key}.uf2"
-        dst.parent.mkdir(parents=True, exist_ok=True)
-        if path.resolve() != dst.resolve():
-            shutil.copyfile(path, dst)
-        if fold:
-            t = dict(tables.get(fam, {}))
-            t.pop("xip_file", None)
-            t["title"] = t.get("title") or title or fam
-            t.setdefault("roms", [])
-            self._set_table("carts", fam, t)
-            return self.carts[fam]
-        t = dict(tables.get(key, {}))
-        t.pop("file", None)
-        t.pop("xip_file", None)
-        t["title"] = title or t.get("title") or key
-        t["mode"] = kind
-        t.setdefault("roms", [])
-        t.pop("build", None)
-        if build:
-            t["build"] = build
-        self._set_table("carts", key, t)
-        return self.carts[key]
+        result = self.import_uf2s([(Path(path), key, title, mode, build)])
+        return result[0]
+
+    def import_uf2s(self, entries: list[tuple[Path, str, str | None, str | None, str | None]]) -> list[Cart]:
+        """Validate and register a batch of UF2s under one library transaction."""
+        with self.locked():
+            raw = self._fresh_raw()
+            self.reload()
+            files: dict[Path, Path] = {}
+            expected_kinds: dict[Path, str] = {}
+            result_keys = []
+            for path, key, title, mode, build in entries:
+                path = Path(path)
+                if not re.fullmatch(r"[A-Za-z0-9_-]+", key) or key.startswith("-"):
+                    raise LibraryError(f"invalid cart key {key!r}")
+                kind = validate_uf2(path)
+                if mode and mode != kind:
+                    raise UF2Error(f"{path.name} is a {kind.upper()} cart, not {mode.upper()}")
+                tables = raw.setdefault("carts", {})
+                fam, slot = family_of(key)
+                fold = (slot == "xip" and kind == "xip" and key not in tables and (fam in self.carts or fam in tables)
+                        and tables.get(fam, {}).get("mode") != "xip")
+                dst = self.root / "carts" / f"{key}.uf2"
+                if dst in files:
+                    raise LibraryError(f"duplicate cart destination {dst.name}")
+                files[dst] = path
+                expected_kinds[dst] = kind
+                if fold:
+                    t = dict(tables.get(fam, {}))
+                    t.pop("xip_file", None)
+                    t["title"] = t.get("title") or title or fam
+                    t.setdefault("roms", [])
+                    tables[fam] = t
+                    result_keys.append(fam)
+                else:
+                    t = dict(tables.get(key, {}))
+                    t.pop("file", None)
+                    t.pop("xip_file", None)
+                    t["title"] = title or t.get("title") or key
+                    t["mode"] = kind
+                    t.setdefault("roms", [])
+                    t.pop("build", None)
+                    if build:
+                        t["build"] = build
+                    tables[key] = t
+                    result_keys.append(key)
+            if entries:
+                self._promote(files, raw, expected_kinds)
+            return [self.carts[k] for k in result_keys]
 
     def add_uf2(self, path: Path, key: str, title: str | None = None,
                 mode: str | None = None, build: str | None = None) -> Cart:
@@ -524,46 +741,60 @@ class Library:
 
     def set_cart_mode(self, key: str, mode: str) -> Cart:
         """Make sets deploy KEY's MODE ("ram" | "xip") variant; persists as `use`."""
-        c = self.carts.get(key)
-        if c is None:
-            raise LibraryError(f"no cart called {key!r}")
-        if mode not in c.variants:
-            raise LibraryError(f"{c.title} has no {mode.upper()} variant in the library")
-        t = dict(self._tables("carts").get(key, {}))
-        if c.auto:                          # pin files the defaults would not find
-            for slot, v in c.variants.items():
-                default = self.root / "carts" / (f"{key}.uf2" if slot == "ram" else f"{key}-xip.uf2")
-                if v.file.resolve() != default.resolve():
-                    t["file" if slot == "ram" else "xip_file"] = self._rel(v.file)
-        t["use"] = mode
-        self._set_table("carts", key, t)
+        def change(raw):
+            c = self.carts.get(key)
+            if c is None:
+                raise LibraryError(f"no cart called {key!r}")
+            if mode not in c.variants:
+                raise LibraryError(f"{c.title} has no {mode.upper()} variant in the library")
+            t = dict(raw.get("carts", {}).get(key, {}))
+            if c.auto:
+                for slot, v in c.variants.items():
+                    default = self.root / "carts" / (f"{key}.uf2" if slot == "ram" else f"{key}-xip.uf2")
+                    if v.file.resolve() != default.resolve():
+                        t["file" if slot == "ram" else "xip_file"] = self._rel(v.file)
+            t["use"] = mode
+            raw.setdefault("carts", {})[key] = t
+        self._mutate(change)
         return self.carts[key]
 
     def save_set(self, title: str, carts: list[str], roms: list[str],
-                 key: str | None = None) -> CartSet:
-        """Create or replace set KEY (default slug(TITLE)); ROM patterns are kept as given."""
+                 key: str | None = None, *, replace: bool = False) -> CartSet:
+        """Create a set; replacing an existing key requires explicit replace=True."""
         title = str(title or "").strip()
         if not title:
             raise LibraryError("a set needs a title")
         sel = self.selection(carts, roms)
         if not sel.carts and not sel.roms:
             raise LibraryError("nothing selected")
-        unknown = [f"cart {k!r}" for k in sel.carts if k not in self.carts]
-        unknown += [f"ROM {k!r}" for k in sel.roms if not is_pattern(k) and k not in self.roms]
-        if unknown:
-            raise LibraryError(", ".join(unknown) + " not in the library")
         key = str(key or slug(title)).strip()
         if not key:
             raise LibraryError("a set needs a key")
-        t = dict(self._tables("sets").get(key, {}))
-        t.update(title=title, carts=sel.carts, roms=sel.roms)
-        self._set_table("sets", key, t)
+        def change(raw):
+            unknown = [f"cart {k!r}" for k in sel.carts if k not in self.carts]
+            unknown += [f"ROM {k!r}" for k in sel.roms if not is_pattern(k) and k not in self.roms]
+            if unknown:
+                raise LibraryError(", ".join(unknown) + " not in the library")
+            sec = raw.setdefault("sets", {})
+            if key in sec and not replace:
+                raise LibraryError(f"set {key!r} already exists as {str(sec[key].get('title', key))!r}; choose Replace")
+            same_title = next((k for k, v in sec.items()
+                               if k != key and slug(str(v.get("title", k))) == slug(title)), None)
+            if same_title is not None:
+                raise LibraryError(f"set {same_title!r} already exists as {str(sec[same_title].get('title', same_title))!r}; choose Replace with its key")
+            t = dict(sec.get(key, {}))
+            t.update(title=title, carts=sel.carts, roms=sel.roms)
+            sec[key] = t
+        self._mutate(change)
         return self.sets[key]
 
     def delete_set(self, key: str) -> None:
-        if key not in self._tables("sets"):
-            raise LibraryError(f"no set called {key!r}")
-        self._del_table("sets", key)
+        def change(raw):
+            sec = raw.get("sets", {})
+            if key not in sec:
+                raise LibraryError(f"no set called {key!r}")
+            del sec[key]
+        self._mutate(change)
 
     def init_defaults(self, path: Path) -> list[str]:
         """Add PATH's cart and set tables missing from the manifest; returns "carts.x"/"sets.y"."""
@@ -571,30 +802,24 @@ class Library:
             defaults = tomllib.loads(Path(path).read_text())
         except (tomllib.TOMLDecodeError, OSError) as e:
             raise LibraryError(f"{path}: {e}") from e
-        if self.error:
-            raise LibraryError(f"not merging into a broken manifest: {self.error}")
-        raw = dict(self._raw)
         added = []
-        for section in ("carts", "sets"):
-            sec = dict(raw.get(section, {}))
-            for k, v in defaults.get(section, {}).items():
-                if not isinstance(v, dict):
-                    continue
-                if k not in sec:
-                    sec[k] = v
-                    added.append(f"{section}.{k}")
-                elif section == "carts":
-                    # A cart sync auto-added has title = key and nothing else:
-                    # fill in what the defaults know, never touch a real value.
-                    t = dict(sec[k])
-                    fills = {kk: vv for kk, vv in v.items()
-                             if kk not in t or (kk == "title" and t[kk] == k)}
-                    if fills:
-                        sec[k] = {**t, **fills}
-                        added.append(f"{section}.{k}." + ".".join(fills))
-            raw[section] = sec
-        if added or not self.manifest.exists():
-            self._write(raw)
+        def change(raw):
+            for section in ("carts", "sets"):
+                sec = raw.setdefault(section, {})
+                for k, v in defaults.get(section, {}).items():
+                    if not isinstance(v, dict):
+                        continue
+                    if k not in sec:
+                        sec[k] = v
+                        added.append(f"{section}.{k}")
+                    elif section == "carts":
+                        t = dict(sec[k])
+                        fills = {kk: vv for kk, vv in v.items()
+                                 if kk not in t or (kk == "title" and t[kk] == k)}
+                        if fills:
+                            sec[k] = {**t, **fills}
+                            added.append(f"{section}.{k}." + ".".join(fills))
+        self._mutate(change)
         return added
 
     def _rel(self, p: Path) -> str:
@@ -604,26 +829,16 @@ class Library:
             return str(p)
 
     def _set_table(self, section: str, key: str, table: dict) -> None:
-        raw = dict(self._raw)
-        sec = dict(raw.get(section, {}))
-        sec[key] = table
-        raw[section] = sec
-        self._write(raw)
+        self._mutate(lambda raw: raw.setdefault(section, {}).__setitem__(key, table))
 
     def _del_table(self, section: str, key: str) -> None:
-        raw = dict(self._raw)
-        sec = dict(raw.get(section, {}))
-        sec.pop(key, None)
-        raw[section] = sec
-        self._write(raw)
+        self._mutate(lambda raw: raw.get(section, {}).pop(key, None))
 
     def _write(self, raw: dict) -> None:
-        """Rewrite manifest.toml atomically from RAW, then reload."""
-        self.root.mkdir(parents=True, exist_ok=True)
-        tmp = self.manifest.with_suffix(".toml.tmp")
-        tmp.write_text("# badge station library (rewritten by badge_manager)\n" + dump_toml(raw))
-        tmp.replace(self.manifest)
-        self.reload()
+        """Compatibility hook for callers with a complete replacement document."""
+        with self.locked():
+            self._fresh_raw()
+            self._commit(raw)
 
     # -- JSON -----------------------------------------------------------
 

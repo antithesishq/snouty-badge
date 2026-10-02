@@ -45,6 +45,8 @@ button, .filebtn {
 button.secondary, .filebtn { background: transparent; color: var(--accent); }
 button.danger { border-color: var(--danger); background: transparent; color: var(--danger); }
 button.danger.armed { background: var(--danger); color: var(--card); }
+.banner { padding: 10px 12px; border-radius: 8px; margin-top: 8px; background: var(--warn); color: var(--card); font-weight: 700; }
+.retry { min-width: 0; margin-top: 6px; }
 button:disabled { opacity: 0.4; cursor: default; }
 .state { font-size: 1.05rem; font-weight: 600; }
 .state.ok { color: var(--ok); }
@@ -108,7 +110,8 @@ textarea:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
 <main>
 <header>
   <h1>Snouty badge station</h1>
-  <div class="sub" id="net">Connecting to the station...</div>
+  <div id="demo-banner" class="banner hidden" role="status">DEMO STATION · Actions are simulated. No physical badge or library is changed.</div>
+  <div class="sub" id="net" role="status" aria-live="polite">Connecting to the station...</div>
   <div class="sub" id="build"></div>
 </header>
 
@@ -117,7 +120,8 @@ textarea:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
   <div id="badge-state" class="state">Waiting for the station.</div>
   <div id="badge-extra" class="meta"></div>
   <ul id="badge-files"></ul>
-  <div id="action" class="action hidden"></div>
+  <div id="action" class="action hidden" role="status" aria-live="polite"></div>
+  <div id="operation" class="action hidden" role="status" aria-live="polite"></div>
 </section>
 
 <section>
@@ -127,22 +131,25 @@ textarea:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
     <button id="wipe" class="danger" type="button">Wipe</button>
     <button id="sync" class="secondary" type="button">Sync library</button>
   </div>
-  <div id="action-err" class="err hidden"></div>
+  <div id="action-err" class="err hidden" role="alert"></div>
 </section>
 
 <section>
   <h2>Library</h2>
   <div class="selbar">
-    <div id="fitline" class="fitline meta">Nothing selected. Tick carts and ROMs to build a set.</div>
+    <div id="fitline" class="fitline meta" role="status" aria-live="polite">Nothing selected. Tick carts and ROMs to build a set.</div>
+    <button id="retry-fit" class="secondary retry hidden" type="button">Retry fit</button>
     <div class="actions">
       <button id="deploy-sel" type="button" disabled>Deploy selection</button>
       <button id="save-sel" class="secondary" type="button" disabled>Save as set</button>
     </div>
-    <div id="sel-msg" class="meta hidden"></div>
+    <div id="sel-msg" class="meta hidden" role="status" aria-live="polite"></div>
   </div>
+  <div class="meta">RAM carts load into memory; XIP carts run from flash. Changing a variant affects every saved set using that cart.</div>
   <ul id="library"><li class="meta">Nothing in the library yet.</li></ul>
+  <div class="meta">ROMs: .gg, .sms, .gb, .gbc, .md, or .bin; up to 4 MB. Choose a ROM its matching emulator cart can open.</div>
   <div class="actions">
-    <label class="filebtn">Upload a ROM<input id="upload" type="file"></label>
+    <label class="filebtn">Upload a ROM<input id="upload" type="file" accept=".gg,.sms,.gb,.gbc,.md,.bin"></label>
   </div>
   <progress id="upload-progress" class="hidden" max="100" value="0"></progress>
   <div id="upload-msg" class="meta"></div>
@@ -154,8 +161,9 @@ textarea:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
   <div class="actions">
     <button id="build-go" type="button" disabled>Build</button>
   </div>
+  <div class="meta">A build may take several minutes. The station checks a 16.7 ms frame budget; you can cancel while it runs.</div>
   <div id="build-why" class="why hidden"></div>
-  <div id="build-err" class="err hidden"></div>
+  <div id="build-err" class="err hidden" role="alert"></div>
   <div id="job" class="job hidden">
     <div class="jobhead"><span id="job-state" class="state"></span><span id="job-elapsed" class="meta"></span></div>
     <div id="job-prompt" class="meta"></div>
@@ -209,11 +217,14 @@ textarea:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
   var wipeArmed = null;
   var expanded = {};                   // set name -> true while its row is open
   var removeArmed = null;              // {name, timer} while "Tap again to remove" shows
-  var deployArmed = null;              // timer while "Tap again to deploy" shows
+  var deployArmed = null;
+  var setDeployArmed = null;              // timer while "Tap again to deploy" shows
   var selected = { carts: {}, roms: {} };
   var fit = null;                      // last /api/fit answer for the selection
   var fitKey = "";                     // selection + library signature fit belongs to
   var fitTimer = null;
+  var fitFailures = 0;
+  var fitRetryTimer = null;
   var fitPending = null;               // selection key of the /api/fit in flight
   var shareKey = null;
   var modePending = {};                // cart key -> true while its toggle posts
@@ -256,6 +267,28 @@ textarea:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
     return thumbs[key];
   }
   function clear(node) { while (node.firstChild) node.removeChild(node.firstChild); }
+  function replaceList(node, key, paint) {
+    if (node._renderKey === key) return;
+    var active = document.activeElement;
+    var focusKey = active && node.contains(active) ? active.getAttribute("data-focus-key") : null;
+    var scroll = {};
+    node.querySelectorAll(".joblog").forEach(function (pre) {
+      scroll[pre.getAttribute("data-log-key")] = pre.scrollTop;
+    });
+    clear(node);
+    paint();
+    node._renderKey = key;
+    node.querySelectorAll(".joblog").forEach(function (pre) {
+      var old = scroll[pre.getAttribute("data-log-key")];
+      if (old !== undefined) pre.scrollTop = old;
+    });
+    if (focusKey) {
+      var target = Array.prototype.find.call(node.querySelectorAll("[data-focus-key]"), function (n) {
+        return n.getAttribute("data-focus-key") === focusKey;
+      });
+      if (target && !target.disabled) target.focus({ preventScroll: true });
+    }
+  }
   function showError(msg) {
     var e = $("action-err");
     e.textContent = msg || "";
@@ -342,10 +375,10 @@ textarea:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
 
   function renderSets(s) {
     var ul = $("sets");
-    clear(ul);
     var sets = s.sets || [];
-    if (!sets.length) ul.appendChild(el("li", "meta", "No sets yet. Tick carts in the library and save them as a set."));
     var present = s.badge && s.badge.present;
+    replaceList(ul, JSON.stringify([sets, s.busy, s.badge && s.badge.present, expanded, removeArmed && removeArmed.name, setDeployArmed && setDeployArmed.name]), function () {
+    if (!sets.length) ul.appendChild(el("li", "meta", "No sets yet. Tick carts in the library and save them as a set."));
     var names = {};
     sets.forEach(function (set) {
       names[set.name] = true;
@@ -358,6 +391,7 @@ textarea:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
         renderSets(state);
       });
       tap.setAttribute("aria-expanded", open ? "true" : "false");
+      tap.setAttribute("data-focus-key", "set:" + set.name);
       tap.appendChild(el("div", "name", set.title || set.name));
       tap.appendChild(el("div", "meta", kb(set.bytes) + ", " + set.entries + " of " + (set.entries_capacity || 31) + " entries"));
       (set.fits ? [] : set.why || []).slice(0, open ? 0 : 1).forEach(function (w) { tap.appendChild(el("div", "why", w)); });
@@ -387,6 +421,7 @@ textarea:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
             renderSets(state);
           });
         });
+        rm.setAttribute("data-focus-key", "remove:" + set.name);
         rm.disabled = s.busy;
         acts.appendChild(rm);
         d.appendChild(acts);
@@ -394,7 +429,20 @@ textarea:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
       }
       li.appendChild(left);
       if (set.fits) {
-        var btn = button("Deploy", "", function () { act("/api/deploy", { set: set.name }); });
+        var armedDeploy = setDeployArmed && setDeployArmed.name === set.name;
+        var btn = button(armedDeploy ? "Tap again: replace everything" : "Deploy", armedDeploy ? "armed" : "", function () {
+          if (!setDeployArmed || setDeployArmed.name !== set.name) {
+            if (setDeployArmed) clearTimeout(setDeployArmed.timer);
+            setDeployArmed = { name: set.name, timer: setTimeout(function () { setDeployArmed = null; renderSets(state); }, 5000) };
+            renderSets(state);
+            return;
+          }
+          clearTimeout(setDeployArmed.timer);
+          setDeployArmed = null;
+          renderSets(state);
+          act("/api/deploy", { set: set.name });
+        });
+        btn.setAttribute("data-focus-key", "deploy:" + set.name);
         btn.disabled = s.busy || !present;
         btn.title = present ? "" : "Plug the badge in first";
         li.appendChild(btn);
@@ -402,6 +450,7 @@ textarea:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
       ul.appendChild(li);
     });
     Object.keys(expanded).forEach(function (k) { if (!names[k]) delete expanded[k]; });
+    });
     $("wipe").disabled = s.busy || !present;
     $("sync").disabled = s.busy;
   }
@@ -414,6 +463,7 @@ textarea:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
     box.type = "checkbox";
     box.checked = !!selected[kind][key];
     box.setAttribute("aria-label", "Select " + label);
+    box.setAttribute("data-focus-key", kind + ":" + key);
     box.addEventListener("change", function () {
       if (box.checked) selected[kind][key] = true; else delete selected[kind][key];
       selMsg("");
@@ -441,6 +491,7 @@ textarea:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
         });
       });
       b.setAttribute("aria-pressed", c.use === m ? "true" : "false");
+      b.setAttribute("data-focus-key", "mode:" + c.key + ":" + m);
       b.disabled = busy || !!modePending[c.key];
       seg.appendChild(b);
     });
@@ -449,7 +500,6 @@ textarea:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
 
   function renderLibrary(s) {
     var ul = $("library");
-    clear(ul);
     var lib = s.library || {};
     var carts = lib.carts || [], roms = lib.roms || [];
     var keep = { carts: {}, roms: {} };
@@ -459,6 +509,7 @@ textarea:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
     });
     roms.forEach(function (r) { if (selected.roms[r.key]) keep.roms[r.key] = true; });
     selected = keep;
+    replaceList(ul, JSON.stringify([lib, s.busy, modePending, selected]), function () {
     if (lib.error) ul.appendChild(el("li", "row why", lib.error));
     if (!carts.length && !roms.length) ul.appendChild(el("li", "meta", "Nothing in the library yet."));
     carts.forEach(function (c) {
@@ -487,6 +538,7 @@ textarea:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
       li.appendChild(left);
       ul.appendChild(li);
     });
+    });
     renderSelection(s);
   }
 
@@ -501,6 +553,8 @@ textarea:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
 
   function scheduleFit() {
     if (fitTimer) clearTimeout(fitTimer);
+    if (fitRetryTimer) clearTimeout(fitRetryTimer);
+    fitRetryTimer = null;
     fitTimer = setTimeout(runFit, 250);
     renderSelection(state);
   }
@@ -516,6 +570,14 @@ textarea:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
       if (selectionKey(state) !== key) { renderSelection(state); return; }   // moved on: fit again
       fitKey = key;
       fit = code === 200 && data ? data : { error: failText(code, data) };
+      fitFailures = fit.error ? fitFailures + 1 : 0;
+      if (fit.error && !fitRetryTimer) {
+        var delay = Math.min(15000, 1000 * Math.pow(2, Math.min(fitFailures - 1, 4)));
+        fitRetryTimer = setTimeout(function () {
+          fitRetryTimer = null;
+          if (selectionKey(state) === key) runFit();
+        }, delay);
+      }
       renderSelection(state);
     });
   }
@@ -545,6 +607,7 @@ textarea:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
       line.textContent = txt;
       if (!fit.fits) line.classList.add("warn");
     }
+    $("retry-fit").classList.toggle("hidden", !fit || !fit.error || none);
     var ok = !none && fresh && fit && !fit.error && fit.fits;
     var present = s.badge && s.badge.present;
     var dep = $("deploy-sel");
@@ -553,6 +616,12 @@ textarea:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
     if (dep.disabled) disarmDeploy();
     $("save-sel").disabled = none || s.busy;
   }
+
+  $("retry-fit").addEventListener("click", function () {
+    if (fitRetryTimer) clearTimeout(fitRetryTimer);
+    fitRetryTimer = null;
+    if (fitPending !== selectionKey(state)) runFit();
+  });
 
   function renderShare(s) {
     var sh = s.share || {};
@@ -709,7 +778,7 @@ textarea:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
 
   function renderBuilds(rows) {
     var ul = $("builds");
-    clear(ul);
+    replaceList(ul, JSON.stringify([rows, openBuild]), function () {
     var ids = {};
     rows.forEach(function (r) {
       ids[r.id] = true;
@@ -723,6 +792,7 @@ textarea:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
         renderBuilds(state.builds || []);
       });
       tap.setAttribute("aria-expanded", open ? "true" : "false");
+      tap.setAttribute("data-focus-key", "build:" + r.id);
       tap.appendChild(r.preview ? thumb("build", r.preview) : el("span", "thumb"));
       var txt = el("div", "grow");
       txt.appendChild(el("div", "name", r.title || r.name || r.id));
@@ -748,6 +818,7 @@ textarea:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
           var jb = openBuild.job;
           if (jb.prompt) d.appendChild(el("div", "meta", "“" + jb.prompt + "”"));
           var pre = el("pre", "joblog");
+          pre.setAttribute("data-log-key", r.id);
           fillLog(pre, (jb.log || []).length ? jb.log : ["(no log)"]);
           d.appendChild(pre);
         }
@@ -757,6 +828,7 @@ textarea:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
       ul.appendChild(li);
     });
     if (openBuild && !ids[openBuild.id]) openBuild = null;
+    });
   }
 
   function fetchBuild(id) {
@@ -815,10 +887,27 @@ textarea:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
   }, 1000);
 
   function render(s) {
+    document.querySelectorAll("main button, #upload").forEach(function (control) {
+      if (control.getAttribute("data-offline-disabled") === "true") {
+        control.disabled = false;
+        control.removeAttribute("data-offline-disabled");
+      }
+    });
     var first = !state;
     state = s;
+    $("demo-banner").classList.toggle("hidden", !s.demo);
     renderNet(s);
     renderBadge(s);
+    var operation = s.operation;
+    var result = $("operation");
+    if (operation) {
+      var label = operation.name || "Action";
+      result.textContent = operation.state === "done" ? label + " completed." :
+        operation.state === "failed" ? label + " failed: " + (operation.error || "See the log and retry.") :
+        label + " accepted; " + (operation.state === "running" ? "working now." : "waiting to start.");
+      result.classList.remove("hidden");
+      result.classList.toggle("err", operation.state === "failed");
+    } else result.classList.add("hidden");
     renderSets(s);
     renderBuild(s);                    // before the library: a finished build ticks its cart
     renderLibrary(s);
@@ -851,7 +940,10 @@ textarea:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
         render(data);
         setTimeout(poll, typeof data.seq === "number" ? 0 : 1000);
       } else {
-        $("net").textContent = "Lost the station. Retrying...";
+        $("net").textContent = "Lost the station. Status may be stale; retrying...";
+        document.querySelectorAll("main button, #upload").forEach(function (control) {
+          if (!control.disabled) { control.disabled = true; control.setAttribute("data-offline-disabled", "true"); }
+        });
         seq = null;
         setTimeout(poll, 2000);
       }
@@ -861,7 +953,11 @@ textarea:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
   function act(url, body, onok) {
     showError("");
     request("POST", url, body || {}, function (code, data) {
-      if (code === 200 && data && data.ok) { if (onok) onok(data); return; }
+      if (code === 200 && data && data.ok) {
+        var op = data.operation;
+        if (op) { var r = $("operation"); r.textContent = op.name + " accepted; waiting to start."; r.classList.remove("hidden"); }
+        if (onok) onok(data); return;
+      }
       showError(failText(code, data));
     });
   }
@@ -914,7 +1010,14 @@ textarea:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
     title = title.trim();
     if (!title) { selMsg("A set needs a name.", true); return; }
     selMsg("Saving " + title + "...");
-    request("POST", "/api/sets", { title: title, carts: carts, roms: roms }, function (code, data) {
+    function saved(code, data) {
+      if (code === 409 && data && data.existing) {
+        var existing = data.existing;
+        if (window.confirm("A set named “" + (existing.title || existing.name) + "” already uses this key. Replace its complete cart and ROM selection?")) {
+          request("POST", "/api/sets", { key: existing.name, replace: true, title: title, carts: carts, roms: roms }, saved);
+        } else selMsg("Set was kept. Choose another name to create a new set.", true);
+        return;
+      }
       if (code === 200 && data && data.ok) {
         selected = { carts: {}, roms: {} };
         fit = null;
@@ -923,7 +1026,8 @@ textarea:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
       } else {
         selMsg("Could not save: " + failText(code, data), true);
       }
-    });
+    }
+    request("POST", "/api/sets", { title: title, carts: carts, roms: roms }, saved);
   });
 
   $("upload").addEventListener("change", function () {
