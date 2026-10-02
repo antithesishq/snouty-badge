@@ -23,7 +23,7 @@ width 60
  620  680   52
  720  610   52                     # the U's far end
  720  510   52
- 620  440   52
+ 620  440   52     hill            # the U's way back out: a hill on the straight
  230  440   52
  140  370   56
  140  220   60

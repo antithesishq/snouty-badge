@@ -30,6 +30,10 @@ freezes the world for 20 frames with its cause, then rewinds 120 ticks
 automatically if the bar holds 90 (which it costs); with less, JOB KILLED
 ends the race with RETIRED on the results. Grand Prix: the league's three
 tracks, points 9/6/4/3/2, standings between tracks, a champion line.
+M4 adds hills (Exhaust Ridge, Fiber Backbone, Substation Sprint: the
+floor rises to a crest and falls away, visual only), the rail-hit shake,
+spark bursts and exhaust flames, the blinking horizon LEDs, an own font
+blit and a rewind that costs at most 10 replayed ticks a frame.
 
 Controls (SPEC section 4) at M2:
 
@@ -184,6 +188,7 @@ Debug exports (zero-argument wasm functions, usable with `--dump-exports`,
 | `debug_rewinding` | 0 live, 1 hold-B rewind, 2 auto-rewind playback, 3 crash hit-stop, 4 JOB KILLED |
 | `debug_active` | 1 while the player's machine is alive |
 | `debug_sound`, `debug_mode`, `debug_track`, `debug_gp_points` | sound flag; 0 quick / 1 GP / 2 attract; current track index; SNOUTY's GP points |
+| `debug_rebuilds`, `debug_replay_calls`, `debug_replay_max` | rewind cost: keyframe rebuilds this race (0 expected), simulate calls by restores and prefills in the last frame, and the most in one frame since boot |
 
 ## 6. Flashing
 
@@ -210,4 +215,6 @@ Milestone numbers are in `PLAN.md` under each milestone's status.
 ```sh
 python3 tools/build_tracks.py     # tilesets, horizon strips, every .track -> assets/gen/
 python3 tools/gen_sin.py          # cart/src/gen/sin.zig
+python3 tools/gen_font.py         # assets/gen/font.bin from the SDK font
+python3 tools/prepare_assets.py   # sprite sheets (assets/gen/*.png), ASSETS.md
 ```

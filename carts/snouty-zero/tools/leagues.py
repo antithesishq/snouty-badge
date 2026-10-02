@@ -16,7 +16,7 @@ A_OFF, A_SURF, A_RAIL, A_PAD, A_THROT, A_COLD, A_HOT, A_HOP, A_START, A_SEC1, A_
 ATTR_NAMES = ["off", "surface", "rail", "pad", "throttled", "cold", "hot", "hop", "start", "sector1", "sector2"]
 DRIVABLE = {A_SURF, A_PAD, A_THROT, A_COLD, A_HOT, A_HOP, A_START, A_SEC1, A_SEC2}
 # Centerline flag bits, also the segment feature names.
-FLAG_BITS = {"rail": 0, "open": 1, "pad": 2, "throttled": 3, "cold": 4, "hot": 5, "hop": 6}
+FLAG_BITS = {"rail": 0, "open": 1, "pad": 2, "throttled": 3, "cold": 4, "hot": 5, "hop": 6, "hill": 7}
 
 # Tile index layout shared by every league (painters fill in the looks).
 BG_PLAIN, BG_SEAM_V, BG_SEAM_H, BG_SEAM_X, BG_VENT, BG_LED = 1, 2, 3, 4, 5, 6

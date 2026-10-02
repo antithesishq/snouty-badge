@@ -3,6 +3,7 @@
 const fixed = @import("fixed.zig");
 const tuning = @import("tuning.zig");
 const input = @import("input.zig");
+const hills = @import("hills.zig");
 
 pub const Cam = struct {
     /// World position, Q16.16 (wraps at 1024).
@@ -74,7 +75,8 @@ pub fn project(wx: i32, wy: i32) ?Projected {
     const zf = (fixed.mul(dx, c) + fixed.mul(dy, s)) >> fixed.Q;
     const xl = (fixed.mul(dx, -s) + fixed.mul(dy, c)) >> fixed.Q;
     if (zf < 8) return null;
-    const sy = tuning.horizon_y + @divTrunc(cam.height * tuning.focal, zf);
+    const h = hills.height_ahead(zf, tuning.cam_behind);
+    const sy = tuning.horizon_y + @max(1, @divTrunc((cam.height - h) * tuning.focal, zf));
     const sx = 80 + @divTrunc(xl * tuning.focal, zf);
     return .{ .sx = sx, .sy = sy, .zf = zf, .scale = @intCast(@divTrunc(256 * tuning.cam_behind, zf)) };
 }

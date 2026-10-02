@@ -19,6 +19,7 @@ const results = @import("results.zig");
 const history = @import("history.zig");
 const menu = @import("menu.zig");
 const sound = @import("sound.zig");
+const hills = @import("hills.zig");
 
 comptime {
     cart.export_start_code();
@@ -84,6 +85,7 @@ pub fn start() void {
     cart.set_vsync_enabled(1000.0 / 60.0);
     cart.set_double_buffer_mode(.no_copy_full_frame);
     sprites.init();
+    sprites.reset_effects();
     render.set_track(&track.cold_aisle);
     camera.init(512 << fixed.Q, 512 << fixed.Q, 0);
     camera.cam.height = 96;
@@ -102,8 +104,11 @@ fn current_track() *const track.Track {
 fn new_race(t: *const track.Track) void {
     render.set_track(t);
     hud.init_minimap(t);
+    hills.init(t);
+    render.hills_on = true;
     sim.reset(t, race_machines);
     history.reset();
+    sprites.reset_effects();
     const p = &world.w.machines[world.player];
     camera.follow(p.x, p.y, p.heading, true);
     snapshot = tuning.snapshot_max;
@@ -121,8 +126,12 @@ fn new_race(t: *const track.Track) void {
     go(.race);
 }
 
+/// Most replay simulate calls in one frame since boot (debug_replay_max).
+var replay_max: u32 = 0;
+
 pub fn update() void {
     input.update(read_controls());
+    history.replay_calls = 0;
     const t0 = cart.micros_since_boot();
     switch (screen) {
         .splash => splash_frame(),
@@ -134,6 +143,7 @@ pub fn update() void {
         .standings => standings_frame(),
     }
     render_us = @truncate(cart.micros_since_boot() - t0);
+    replay_max = @max(replay_max, history.replay_calls);
     if (build_options.debug_overlay) draw_overlay();
     frame +%= 1;
     screen_frames +%= 1;
@@ -155,6 +165,8 @@ fn splash_frame() void {
 /// Title over a slowly turning view of Cold Aisle; 10 s idle starts the attract demo.
 fn title_frame() void {
     autopilot = false;
+    render.hills_on = false;
+    render.frame = frame;
     camera.cam.yaw +%= 24;
     render.draw();
     menu.draw_title(screen_frames);
@@ -188,6 +200,8 @@ fn menu_nav(list: *menu.List) void {
 }
 
 fn menu_frame() void {
+    render.hills_on = false;
+    render.frame = frame;
     camera.cam.yaw +%= 8;
     render.draw();
     cart.rect(.{ .x = 0, .y = 28, .width = 160, .height = 72, .fill_color = hud.anti_black });
@@ -259,6 +273,8 @@ fn menu_frame() void {
 fn draw_race() void {
     const p = &world.w.machines[world.player];
     if (free_cam) camera.free_fly() else camera.follow(p.x, p.y, p.heading, false);
+    render.shake = p.shake;
+    render.frame = frame;
     hud.snapshot_ticks = snapshot;
     hud.rewinding = rewinding or auto_left > 0;
     render.draw();
@@ -328,6 +344,7 @@ fn race_frame() void {
     if (auto_left > 0) {
         const k = @min(auto_left, tuning.auto_rewind_per_frame);
         if (!rewind_by(k)) auto_left = 0 else auto_left -= k;
+        history.prefill(tuning.prefill_per_frame);
         if (auto_left == 0) resume_live();
         draw_race();
         return;
@@ -348,6 +365,7 @@ fn race_frame() void {
             results.rewinds += 1;
         }
         if (rewind_by(tuning.rewind_per_frame)) snapshot -= tuning.rewind_per_frame;
+        history.prefill(tuning.prefill_per_frame);
         if (attract_b > 0) attract_b -= 1;
         draw_race();
         return;
@@ -365,6 +383,7 @@ fn race_frame() void {
     if (free_cam) buttons = .{};
     if (w.phase == .racing) history.record(buttons);
     sim.simulate(buttons);
+    sprites.tick_effects();
 
     // Crash start: freeze for the hit-stop (the sim's own reset path is for rivals).
     if (p.crash != .none and p.active) {
@@ -560,6 +579,9 @@ comptime {
         @export(&debug_gp_points, .{ .name = "debug_gp_points" });
         @export(&debug_start_race, .{ .name = "debug_start_race" });
         @export(&debug_force_crash, .{ .name = "debug_force_crash" });
+        @export(&debug_rebuilds, .{ .name = "debug_rebuilds" });
+        @export(&debug_replay_calls, .{ .name = "debug_replay_calls" });
+        @export(&debug_replay_max, .{ .name = "debug_replay_max" });
     }
 }
 
@@ -649,6 +671,17 @@ fn debug_force_crash() callconv(.c) u32 {
     const p = &world.w.machines[world.player];
     if (p.active and p.crash == .none and screen == .race) sim.crash(p, .fall);
     return world.w.tick;
+}
+/// Keyframe rebuilds (the slow restore path) since the race started.
+fn debug_rebuilds() callconv(.c) u32 {
+    return history.rebuilds;
+}
+/// Simulate calls made by restores and prefills in the last frame; the most since boot.
+fn debug_replay_calls() callconv(.c) u32 {
+    return history.replay_calls;
+}
+fn debug_replay_max() callconv(.c) u32 {
+    return replay_max;
 }
 /// Player rank 1..5 (0 before the first tick or when retired).
 fn debug_rank() callconv(.c) u32 {

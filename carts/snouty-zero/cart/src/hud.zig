@@ -7,6 +7,7 @@ const world = @import("world.zig");
 const sim = @import("sim.zig");
 const track = @import("track.zig");
 const sprites = @import("sprites.zig");
+const font = @import("font.zig");
 
 pub const white = cart.DisplayColor.rgb(0xFCFBF9);
 pub const coral = cart.DisplayColor.rgb(0xF18271);
@@ -19,10 +20,10 @@ pub const dim = cart.DisplayColor.rgb(0x3A3340);
 const bar_y: i32 = 56;
 const bar_h: u32 = 16;
 
-/// Text with a one-pixel Anti-Black drop shadow so it reads over the floor.
+/// Text with a one-pixel Anti-Black drop shadow so it reads over the floor
+/// (font.zig, the M4 fast path).
 pub fn text(str: []const u8, x: i32, y: i32, color: cart.DisplayColor) void {
-    cart.text(.{ .str = str, .x = x + 1, .y = y + 1, .text_color = anti_black });
-    cart.text(.{ .str = str, .x = x, .y = y, .text_color = color });
+    font.draw(str, x, y, .from_color(color), .from_color(anti_black));
 }
 
 pub fn centered(str: []const u8, y: i32, color: cart.DisplayColor) void {

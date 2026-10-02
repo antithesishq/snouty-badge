@@ -13,6 +13,8 @@ PLAN.md "Generated data formats":
   <track>_map.bin      128x128 tile indices, map[y][x]
   <track>_attr.bin     256 attributes, one per tile index
   <track>_center.bin   256 samples x (x u16, y u16, tangent u16, half u8, flags u8)
+                       flags: bit 0 rail, 1 open, 2 pad, 3 throttled, 4 cold,
+                       5 hot, 6 hop, 7 hill (of the sample's segment)
 
 plus docs/<track>_preview.png (1:1 map with the centerline), and
 docs/<league>_tiles.png / docs/<league>_tiles.txt (contact sheet, index list).
@@ -41,6 +43,11 @@ Rasterizer rules:
     the plate, (12, 44] px plus a shift of up to 8 px chosen so that no
     centerline sample is a spot where a stopped machine sits wholly in the
     gap. Hops must sit on straight runs along x or y.
+  * hill paints nothing: it only sets centerline flag bit 7 on every sample
+    of the segment (the cart bends the floor into a smooth rise and dip over
+    a run of hill samples). A run must be at least HILL_MIN samples (20..40
+    reads well) and must not touch a hop segment or come within
+    SEAM_CLEAR samples of the start line or a sector seam (0, 85, 170).
   * `open` opens both sides of a segment; `open:left` / `open:right` only the
     driver's left or right side (the other side keeps its rail).
   * Off-track tiles 4-adjacent to surface become edge pieces chosen by the
@@ -91,6 +98,10 @@ HOP_SHIFTS = (0, 8, -8, 16, -16, 24, -24)
 # none may sit between a hop plate and the end of its gap.
 TRAFFIC_SAMPLES = (40, 72, 106, 140, 186, 218)
 HALF_LEN, HALF_WID = 12, 6   # tuning.zig machine footprint
+# Hill runs (flag bit 7): at least HILL_MIN consecutive samples, clear of
+# hop segments and of the start line / sector seams by SEAM_CLEAR samples.
+HILL_MIN, SEAM_CLEAR = 12, 3
+SEAMS = (0, 85, 170)
 
 
 # ---------------------------------------------------------------- tracks
@@ -440,6 +451,40 @@ def validate(trk, tmap, ts, errs):
     return clear
 
 
+def hill_runs(trk):
+    """Circular runs of hill-flagged samples as (first, last, length)."""
+    hb = 1 << FLAG_BITS["hill"]
+    on = [bool(int(trk.dflags[j]) & hb) for j in trk.sidx]
+    if all(on):
+        return [(0, NSAMP - 1, NSAMP)]
+    runs, k0 = [], next(k for k in range(NSAMP) if not on[k])   # start just after an off sample
+    k, n = (k0 + 1) % NSAMP, 0
+    while n < NSAMP:
+        if on[k]:
+            a, ln = k, 0
+            while on[k] and n < NSAMP:
+                ln, k, n = ln + 1, (k + 1) % NSAMP, n + 1
+            runs.append((a, (a + ln - 1) % NSAMP, ln))
+        else:
+            k, n = (k + 1) % NSAMP, n + 1
+    return sorted(runs)
+
+
+def validate_hills(trk, errs):
+    pb = 1 << FLAG_BITS["hop"]
+    runs = hill_runs(trk)
+    for a, b, ln in runs:
+        ks = [(a + i) % NSAMP for i in range(ln)]
+        if ln < HILL_MIN:
+            errs.append(f"{trk.name}: hill run {a}..{b} is {ln} samples, under {HILL_MIN} (reads as a bump)")
+        if any(int(trk.dflags[trk.sidx[k]]) & pb for k in ks):
+            errs.append(f"{trk.name}: hill run {a}..{b} overlaps a hop segment")
+        for s in SEAMS:
+            if any(min((k - s) % NSAMP, (s - k) % NSAMP) <= SEAM_CLEAR for k in ks):
+                errs.append(f"{trk.name}: hill run {a}..{b} within {SEAM_CLEAR} samples of seam sample {s}")
+    return runs
+
+
 def min_radius(trk, step=12):
     """Smallest circumradius of (j - step, j, j + step) along the dense line."""
     nd = len(trk.dx)
@@ -565,11 +610,14 @@ def main():
             sizes[p] = len(d)
         write_preview(trk, tmap, ts, docs / f"{trk.name}_preview.png")
         clear = validate(trk, tmap, ts, errs)
+        hills = validate_hills(trk, errs)
         counts = np.bincount(ts.attr[tmap].ravel(), minlength=11)
         r, rx, ry, rseg = min_radius(trk)
         print(f"track {trk.name}: lap {trk.length:.0f} px, {len(trk.pts)} control points, "
               f"min clearance {clear:.0f} px, min radius {r:.0f} px at ({rx:.0f},{ry:.0f}) segment {rseg}, "
               f"{len(trk.hops)} hop gap(s)")
+        if hills:
+            print("  hill samples (flag bit 7): " + ", ".join(f"{a}..{b} ({n})" for a, b, n in hills))
         print("  segment lengths: " + " ".join(f"{b - a:.0f}" for a, b in zip(trk.seg_start, trk.seg_start[1:])))
         print("  tiles per attribute: " + ", ".join(f"{ATTR_NAMES[i]} {c}" for i, c in enumerate(counts) if c))
         print(f"  start ({trk.dx[0]:.0f},{trk.dy[0]:.0f}) heading {trk.turn[0]}; sector1 sample 85 at "

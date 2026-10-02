@@ -129,6 +129,43 @@ const hop_height: i32 = 20;
 
 const Entry = struct { index: u8, p: camera.Projected };
 
+/// Effects (SPEC 6.3): spark bursts where a machine hit a rail or another
+/// machine, exhaust flames behind boosting machines. Draw-only meta-state:
+/// sparks live in screen-independent world coordinates for 16 ticks.
+const Spark = struct { x: i32 = 0, y: i32 = 0, age: u8 = 255 };
+var sparks: [8]Spark = undefined;
+var next_spark: usize = 0;
+var prev_shake: [world.machine_count]u8 = @splat(0);
+
+/// Once per live frame: spawn sparks for machines whose shake just started.
+pub fn tick_effects() void {
+    for (world.w.machines[0..world.w.active_count], 0..) |*m, i| {
+        if (m.shake > 0 and prev_shake[i] == 0) {
+            sparks[next_spark] = .{ .x = m.x, .y = m.y, .age = 0 };
+            next_spark = (next_spark + 1) % sparks.len;
+        }
+        prev_shake[i] = m.shake;
+    }
+    for (&sparks) |*sp| {
+        if (sp.age < 16) sp.age += 1;
+    }
+}
+
+pub fn reset_effects() void {
+    sparks = @splat(.{});
+    prev_shake = @splat(0);
+}
+
+fn draw_sparks() void {
+    for (sparks) |sp| {
+        if (sp.age >= 16) continue;
+        const p = camera.project(sp.x, sp.y) orelse continue;
+        if (p.sy < tuning.horizon_y + 2) continue;
+        const lift_px: i32 = @intCast((@as(u32, 6) * p.scale) >> 8);
+        blit_scaled(gfx.fx, 16, 16, sp.age / 4, p.sx, p.sy - lift_px + 8, p.scale, &fx_pal, .{});
+    }
+}
+
 /// Every active machine, back to front. The player's lean frame follows
 /// its steering; hopping machines rise on a sine arc over their shadow.
 pub fn draw_machines() void {
@@ -150,6 +187,7 @@ pub fn draw_machines() void {
         list[j] = e;
     }
     for (list[0..n]) |e| draw_machine(&world.w.machines[e.index], e.index, e.p);
+    draw_sparks();
 }
 
 fn draw_machine(m: *const world.Machine, index: u8, p: camera.Projected) void {
@@ -163,6 +201,11 @@ fn draw_machine(m: *const world.Machine, index: u8, p: camera.Projected) void {
         lift += (fixed.sin(a) * hop_height) >> fixed.Q;
     }
     const lift_px: i32 = @intCast((@as(u32, @intCast(lift)) * p.scale) >> 8);
+    // Exhaust flame behind a boosting machine, under the body.
+    if (m.boost > 0) {
+        const fl: u32 = if ((m.boost / 3) % 2 == 0) 4 else 5;
+        blit_scaled(gfx.fx, 16, 16, fl, p.sx, p.sy - lift_px + 6, p.scale, &fx_pal, .{});
+    }
     const flash = m.immune > 0 and (m.immune / 2) % 2 == 0 and m.crash == .none;
     const opts = BlitOpts{ .flat = if (flash) @as(?cart.Pixel, .from_color(.rgb(0xFCFBF9))) else null };
     if (index == world.player) {

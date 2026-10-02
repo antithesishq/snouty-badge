@@ -374,6 +374,70 @@ pub fn earliest_tick() u32;
   8x8 font blit, keyframes every 15 ticks or an incremental replay, the
   AI's per-tick cost.
 
+## M4 Perf and polish
+
+Goal: the M3 bench profile's fast paths, the hills trick, shake, effects,
+the LED blink, the XIP build measured, tuning defaults confirmed; merged
+to main and tagged with the review GIF.
+
+### Tracks
+
+- **Track A: generator and XIP** (`tools/build_tracks.py`, `.track`
+  files, `assets/gen/*`, docs previews; a `-Dcart-mode=xip` build in a
+  separate prefix and its bench run): the `hill` segment feature sets
+  centerline flag bit 7 on the segment's samples (SPEC 15; the cart
+  turns a run of hill samples into a smooth rise and dip, so a run of 20
+  to 40 samples reads well); hills on Exhaust Ridge (the ridge), Fiber
+  Backbone (the long sweepers) and Substation Sprint (one straight);
+  the XIP ELF benched with the same script to answer SPEC 18.3 (tile
+  fetch from flash).
+- **Track B: cart** (everything in `cart/src/` and the bench toml):
+  `font.zig` (own 8x8 blit from `assets/gen/font.bin`, `tools/gen_font.py`
+  extracts the SDK font) replacing `cart.text` in the HUD and menus;
+  `history.zig` window cache (states every 2 ticks of the current
+  30-tick window, the previous window prefilled at the rewind rate, so a
+  rewind frame replays at most 4 ticks instead of 29); hills in
+  `render.zig`/`camera.zig` (a per-row z table from a forward march over
+  the height profile, sprites projected with the same profile); shake
+  (rail hits jitter the horizon row and a column offset for 4 ticks);
+  effects (spark burst on rail hits and collisions, exhaust flame while
+  boosting); the horizon LED blink (front palette entry 15 takes entry
+  14's colour every 8 ticks).
+
+### Done criteria
+
+- bench worst frame under 6 ms on `m3_bench.json` (the rewind frame) and
+  the mean under 2.5 ms; XIP numbers recorded.
+- tests still green (restore equality with the window cache; the six
+  tracks completable; hills do not change the simulation).
+- `docs/preview_m4.gif`; merged to main; tag `snouty-zero/m4`.
+
+### M4 status
+
+- 2026-10-02: DONE. Track A (Opus agent): `hill` feature (flag bit 7,
+  validation: runs >= 12 samples, clear of hops and seams) on Exhaust
+  Ridge (samples 37..67), Fiber Backbone (17..46), Substation Sprint
+  (198..223); XIP measured (SPEC 18.3): with badge-bench's XIP default
+  (`--flash-cycles 0`) the XIP ELF counts the same cycles as the RAM ELF
+  frame for frame, and the bench never charges data loads from the flash
+  window, so the tile-fetch cost is only answerable on hardware; the XIP
+  `.text` fits the 256 KB window with 37 KB spare. Track B: `font.zig`
+  (the SDK font extracted by `tools/gen_font.py`, noinline blit: inlined,
+  ReleaseFast copied the unrolled loops into every call site, +40 KB),
+  `history.zig` window cache (states every 3 ticks; three windows: the
+  live one plus two prefilled below it, 8 ticks of prefill per rewind
+  frame; 8 periodic keyframes + 4 checkpoint slots, since a checkpoint
+  in the periodic ring evicted its window's keyframe and forced a replay
+  from tick 0), hills (forward march over the height profile for the row
+  tables, same profile in the sprite projection), shake, spark bursts
+  and exhaust flames, the LED blink. Bench (`m3_bench.json`, 1700 frames,
+  two crash auto-rewinds in the run): **mean 2.03 ms, worst 4.72 ms**
+  (28%; M3 was 2.77 / 9.05). `debug_rebuilds` stays 0 and
+  `debug_replay_max` 10 over both rewind scripts. ELF `.text` 224.9 KB,
+  `.bss` 35.4 KB: 261 KB + 32 KB stack of the 307 KB window, 14 KB left;
+  the Core league (M5) goes XIP as SPEC 13 says. `docs/preview_m4.gif`
+  (Exhaust Ridge: the hill, the open ridge, the field).
+
 ## Deferred questions for Adrian
 
 1. (M0) Camera height 64 / focal 128: the near floor shows a 16 px seam
@@ -388,6 +452,10 @@ pub fn earliest_tick() u32;
    (more spline points) and the SPEC rate; a play test decides.
 4. (M1) A crash (fall, meltdown) resets to the centerline after the
    hit-stop until M3 brings the rewind.
+7. (M4) Hills are visual only (the simulation stays flat); crest height
+   26 world px; the horizon strip does not move with them. The tuning
+   pass used the defaults (no play notes yet); the autopilot's 30 s laps
+   stand.
 6. (M3) The auto rewind costs 90 ticks of the bar and goes back 120 (SPEC
    5.4's wording was ambiguous); the attract demo holds B for 20 frames
    every 9 s; the title shows Cold Aisle turning under it; the sound

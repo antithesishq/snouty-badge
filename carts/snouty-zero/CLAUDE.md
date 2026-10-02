@@ -14,7 +14,11 @@ before changing anything. The repository-wide rules are in the root
   numbers here, not in the modules.
 - `camera.zig`, `render.zig` (floor tables + inner loop, horizon strip,
   fog banks), `track.zig` (embedded league art and track data accessors).
-- M1+: `world.zig`, `sim.zig`, `history.zig`, `hud.zig`, `ai.zig`, `sprites.zig`.
+- `world.zig` (the plain World struct), `sim.zig` (one tick, no cart API),
+  `ai.zig` (characters, autopilot), `history.zig` (keyframes + window
+  cache, the rewind), `sprites.zig` (scaled blit, machines, effects),
+  `hud.zig`, `font.zig`, `menu.zig`, `results.zig`, `sound.zig`,
+  `hills.zig` (height profile from flag bit 7).
 
 ## Data
 

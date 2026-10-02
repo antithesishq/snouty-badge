@@ -132,3 +132,5 @@ pub const rewind_per_frame: u32 = 2;
 pub const auto_rewind_cost: u32 = 90;
 pub const auto_rewind_ticks: u32 = 120;
 pub const auto_rewind_per_frame: u32 = 4;
+/// Window-cache prefill: replay ticks per rewind frame (history.zig).
+pub const prefill_per_frame: u32 = 8;

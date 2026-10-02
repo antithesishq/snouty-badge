@@ -6,6 +6,7 @@ const fixed = @import("fixed.zig");
 const tuning = @import("tuning.zig");
 const track = @import("track.zig");
 const camera = @import("camera.zig");
+const hills = @import("hills.zig");
 
 pub const horizon_y: i32 = tuning.horizon_y;
 /// First floor row.
@@ -37,6 +38,17 @@ var fog_pixel: cart.Pixel = undefined;
 var league: *const track.League = &track.edge;
 var current: *const track.Track = &track.cold_aisle;
 
+/// Shake ticks left (rail hits, SPEC 6.2): the horizon row and the floor
+/// jitter by one pixel on alternate ticks. Set by main from the player's shake.
+pub var shake: u32 = 0;
+/// Frame counter for the LED blink and the shake parity (set by main).
+pub var frame: u32 = 0;
+/// Hills on: the row tables come from the forward march every frame.
+pub var hills_on: bool = false;
+/// Front palette entry 15 as drawn (`led_on`), swapped with entry 14 every 8 ticks (SPEC 6.4).
+var led_on: cart.Pixel = undefined;
+var led_off: cart.Pixel = undefined;
+
 /// Select the track (and its league art): builds the fog banks and the
 /// horizon palettes. Call at race start.
 pub fn set_track(t: *const track.Track) void {
@@ -59,7 +71,49 @@ pub fn set_track(t: *const track.Track) void {
         front_pal[i] = .from_color(@bitCast(league.horizon_front_pal(i)));
         back_pal[i] = .from_color(@bitCast(league.horizon_back_pal(i)));
     }
+    led_on = front_pal[15];
+    led_off = front_pal[14];
     rows_height = -1;
+}
+
+/// Current one-pixel jitter (0 or 1) from the shake.
+fn jitter() i32 {
+    return if (shake > 0 and (frame & 1) == 1) 1 else 0;
+}
+
+fn bank_of(zi: i32) usize {
+    return if (zi >= tuning.fog_z[2]) 3 else if (zi >= tuning.fog_z[1]) 2 else if (zi >= tuning.fog_z[0]) 1 else 0;
+}
+
+/// Hills (SPEC 15): march forward over the height profile and project each
+/// step; a screen row takes the nearest z whose projection reaches it
+/// (rows hidden behind a crest keep the crest). Rows the march never
+/// reaches (a dip ahead) get the far distance.
+fn build_rows_hills(height: i32) void {
+    rows_height = -1; // always rebuilt
+    const far: i32 = (height * tuning.focal) << fixed.Q;
+    for (floor_y0..128) |y| row_z[y] = far;
+    var z: i32 = @divTrunc(height * tuning.focal, 95); // the bottom row's flat distance
+    var y_min: i32 = 128; // lowest projected row reached so far (rows above are still open)
+    var steps: u32 = 0;
+    while (z < 8192 and steps < 240) : (steps += 1) {
+        const h = hills.height_ahead(z, tuning.cam_behind);
+        const dy = @divTrunc((height - h) * tuning.focal, z);
+        const y = horizon_y + @max(dy, 1);
+        if (y < y_min) {
+            // Fill every open row from y_min - 1 down to y with this z.
+            var r = y_min - 1;
+            while (r >= y and r >= @as(i32, @intCast(floor_y0))) : (r -= 1) row_z[@intCast(r)] = z * fixed.one;
+            y_min = y;
+            if (y_min <= @as(i32, @intCast(floor_y0))) break;
+        }
+        z += @max(1, z >> 4);
+    }
+    for (floor_y0..128) |y| {
+        const zq = row_z[y];
+        row_scale[y] = @divTrunc(zq, tuning.focal);
+        row_fog[y] = &fog[bank_of(zq >> fixed.Q)];
+    }
 }
 
 /// Row distance and scale tables for a camera height (SPEC 6.2): z(y) =
@@ -88,7 +142,8 @@ pub fn scale_of_row(y: usize) i32 {
 /// Whole frame: horizon strip, horizon row, floor.
 pub fn draw() void {
     const cam = camera.cam;
-    if (cam.height != rows_height) build_rows(cam.height);
+    if (hills_on and hills.any) build_rows_hills(cam.height) else if (cam.height != rows_height) build_rows(cam.height);
+    front_pal[15] = if ((frame / 8) % 2 == 0) led_on else led_off;
     draw_horizon(cam.yaw);
     draw_floor(cam);
 }
@@ -99,18 +154,21 @@ fn draw_horizon(yaw: fixed.Turn) void {
     const back = league.horizon_back();
     const scroll_f: u32 = @as(u32, yaw) >> 7; // 512 px per turn
     const scroll_b: u32 = @as(u32, yaw) >> 8; // 256 px per turn, half rate
+    const j: usize = @intCast(jitter());
     for (0..@intCast(screen_w)) |x| {
         const col = &cart.framebuffer[x];
         const sxf: usize = @intCast((@as(u32, @intCast(x)) + scroll_f) & 511);
         const sxb: usize = @intCast((@as(u32, @intCast(x)) + scroll_b) & 255);
         const shf: u3 = if (sxf & 1 == 1) 4 else 0;
         const shb: u3 = if (sxb & 1 == 1) 4 else 0;
+        // With the shake the strip's row y+j lands on screen row y.
         for (0..32) |y| {
-            const f: u8 = (front[y * 256 + (sxf >> 1)] >> shf) & 15;
+            const sy: usize = @min(y + j, 31);
+            const f: u8 = (front[sy * 256 + (sxf >> 1)] >> shf) & 15;
             if (f != 0) {
                 col[y] = front_pal[f];
             } else {
-                col[y] = back_pal[(back[y * 128 + (sxb >> 1)] >> shb) & 15];
+                col[y] = back_pal[(back[sy * 128 + (sxb >> 1)] >> shb) & 15];
             }
         }
         col[@intCast(horizon_y)] = fog_pixel;
@@ -122,6 +180,8 @@ fn draw_floor(cam: camera.Cam) void {
     const c = fixed.cos(cam.yaw);
     const s = fixed.sin(cam.yaw);
     const half_w: i32 = screen_w / 2;
+    // Shake: the whole floor slides one screen pixel sideways on alternate ticks.
+    const jit: i32 = jitter();
     for (floor_y0..128) |y| {
         const z = row_z[y];
         const sc = row_scale[y];
@@ -130,8 +190,8 @@ fn draw_floor(cam: camera.Cam) void {
         const fy = fixed.mul(s, z);
         const rx = fixed.mul(-s, sc);
         const ry = fixed.mul(c, sc);
-        row_x0[y] = cam.x +% fx -% rx * half_w;
-        row_y0[y] = cam.y +% fy -% ry * half_w;
+        row_x0[y] = cam.x +% fx -% rx * (half_w + jit);
+        row_y0[y] = cam.y +% fy -% ry * (half_w + jit);
         row_dx[y] = rx;
         row_dy[y] = ry;
     }

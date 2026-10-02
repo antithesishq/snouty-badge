@@ -10,8 +10,8 @@ league spine
 width 60
 # x    y    half   features
  320  120   64                     # start line
- 540  220   60                     # a long sweeper along the top
- 800  140   60
+ 540  220   60     hill            # a long sweeper along the top, over a hill
+ 800  140   60     hill
  890  280   56
  820  370   56                     # sweeper back in toward the middle
  480  380   56

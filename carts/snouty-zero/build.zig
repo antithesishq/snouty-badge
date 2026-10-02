@@ -20,6 +20,7 @@ pub const FloorLoop = enum { column, row };
 /// Generated data files embedded by the `assets` module (PLAN.md "Generated
 /// data formats"). Each becomes `assets.<name>: []const u8`.
 const data_files = [_][]const u8{
+    "font.bin",
     "edge_tiles.bin",
     "edge_pal.bin",
     "edge_horizon.bin",
