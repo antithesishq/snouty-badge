@@ -44,7 +44,7 @@ pub fn draw_title(frame: u32) void {
     hud.text(title_str, 80 - 11 * 8, 46, hud.white);
     hud.text(title_str, 80 - 11 * 8 + 1, 46, hud.white); // bold
     hud.centered(subtitle_str, 62, hud.coral);
-    if ((frame / 30) % 2 == 0) hud.centered("PRESS START", 74, hud.cyan);
+    if ((frame / 30) % 2 == 0) hud.centered(hud.press_str, 74, hud.cyan);
 }
 
 /// A titled list with the cursor row in coral and a `>` marker.
@@ -117,5 +117,5 @@ pub fn draw_standings(st: *const Standings, league: []const u8, final: bool, fra
         const champion = order[0];
         hud.centered(if (champion == 0) "SNOUTY IS CHAMPION" else "RETRAIN AND RETRY", 100, if (champion == 0) hud.cyan else hud.coral);
     }
-    if ((frame / 30) % 2 == 0) hud.centered("PRESS START", 114, hud.coral);
+    if ((frame / 30) % 2 == 0) hud.centered(hud.press_str, 114, hud.coral);
 }
