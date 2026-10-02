@@ -68,6 +68,9 @@ pub fn add(b: *Build, sycl_badge_dep: *Build.Dependency, opts: common.Options) v
     options.addOption(bool, "sound", opts.sound);
     const floor_loop = b.option(FloorLoop, "zero_floor", "snouty-zero: floor inner loop, row (default, PLAN.md M0 status) or column") orelse .row;
     options.addOption(FloorLoop, "floor_loop", floor_loop);
+    // -Dbadge=tufty (declared by the root build.zig; snouty-tufty only): the
+    // title accepts A as well as Start, and the PRESS cards name the Tufty's C.
+    common.add_badge_option(options, opts);
     build_options = options;
 
     // XIP only from M5 (SPEC 13, PLAN.md M5): nine tracks plus three leagues

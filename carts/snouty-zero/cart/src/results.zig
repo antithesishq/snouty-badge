@@ -52,5 +52,5 @@ pub fn draw(frame: u32) void {
     put_uint(pct[0..3], @intCast(@divTrunc(@as(i32, @max(0, m.thermal)) * 100, tuning.thermal_max)));
     hud.text("THERMAL", 24, 92, hud.white);
     hud.text(&pct, 88, 92, hud.orange);
-    if ((frame / 30) % 2 == 0) hud.centered("PRESS START", 112, hud.coral);
+    if ((frame / 30) % 2 == 0) hud.centered(hud.press_str, 112, hud.coral);
 }

@@ -8,6 +8,16 @@ const sim = @import("sim.zig");
 const track = @import("track.zig");
 const sprites = @import("sprites.zig");
 const font = @import("font.zig");
+const build_options = @import("build_options");
+
+/// -Dbadge=tufty: the Tufty 2350 under snouty-tufty, whose map
+/// (docs/ports/snouty-zero.md there) is C = the throttle, latched on by a
+/// press (later presses re-press A, which the menus read as confirm), A/B
+/// steer, UP Overclock, DOWN brake, A+B rewind, UP+DOWN start/pause. The
+/// title then takes A as well as Start, and the PRESS cards name C.
+pub const tufty = @hasDecl(build_options, "badge") and build_options.badge == .tufty;
+/// The blinking card on the title, results and standings screens.
+pub const press_str = if (tufty) "PRESS C" else "PRESS START";
 
 pub const white = cart.DisplayColor.rgb(0xFCFBF9);
 pub const coral = cart.DisplayColor.rgb(0xF18271);

@@ -170,7 +170,8 @@ fn title_frame() void {
     camera.cam.yaw +%= 24;
     render.draw();
     menu.draw_title(screen_frames);
-    if (input.pressed(.start)) {
+    // The Tufty build also takes A (its C) here: Start is a chord there.
+    if (input.pressed(.start) or (hud.tufty and input.pressed(.a))) {
         sound.menu_confirm();
         go(.main_menu);
     } else if (any_pressed()) {
