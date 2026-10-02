@@ -58,6 +58,14 @@ zig build check-float -Dcart=snouty-reflections -Dcart-mode=both --prefix /tmp/b
 
 Update `docs/RUNNING.md:54-60` (test command list) to name the strict Z80 gate and the Snoutenstein suites now in the root gate.
 
+**Done 2026-10-02** (branch `gate/m1`, tag `review-2026-10-01/A`), no runtime behavior changed:
+
+- A1: the Demosnout hold test asserts visibility 256 and no auto-advance while held; the tied-cut assertion is gone, `veil()` and rendering untouched. Root gate green again.
+- A2: `carts/snoutenstein/cart/src/host_tests.zig` (rewind.zig, which reaches sim, levels and level_parse, plus demo.zig) registered on the shared test step: 69 tests, the union of the five suites `tools/check.sh` runs. Freshness checks stay in check.sh.
+- A3: Gear's Z80 SingleStepTests/ZEXDOC/ZEXALL wrappers and Genesis's 68000 SingleStepTests return `error.SkipZigTest` when fixtures are absent (`zig build test` shows 3 and 2 skips). New strict steps outside `test`: `zig build test-z80-strict -Dcart=snouty-gear` and `zig build test-m68k-strict -Dcart=snouty-genesis -Dcart-mode=xip` set `SNOUTY_FIXTURES=required` on the run, fail with `FixtureMissing`, and print executed case counts. Verified failing with fixtures absent, and the Gear step passing with the 36-file subset plus both ZEX ROMs (36000 cases, 79 + 79 OK). The m68k strict step was not seen passing (no 68000 fixtures fetched). Gear's default test run is now `has_side_effects` like Genesis's.
+- A4: `common.add_float_check(b, opts, name, mode)` derives the ELF list from `os_cart.Mode.elf_suffixes()`; the five float-checked carts use it (Zero passes `.xip`). Verified from empty prefixes: XIP checks `snouty-reflections-xip.elf` only, `both` checks both ELFs, RAM checks the four other carts' ELFs.
+- Root gate after A: `zig build test --summary all` = 21/21 steps, 496/505 tests passed, 9 skipped, 0 failed (Boy's gitignored `tests/roms/` fixtures copied into the worktree; without them Boy's test binary does not compile, a pre-existing property of its `@embedFile` tests, not changed here).
+
 ## Workstream B: badge-manager station (TAKEN, another agent)
 
 INF02, INF03, INF04, UX-01, UX-02, UX-03, UX-04. Listed only so the other streams know its scope. **One overlap:** INF04 wants a shared UF2 validator used by both `badge-manager/badge_manager/library.py` and `tools/uf2_info.py`. The validator lives on the badge-manager side; other streams must not edit `tools/uf2_info.py`.
@@ -111,7 +119,7 @@ Architecture proposals 2 and 4 from the README (shared platform adapter, authori
 
 | Stream | State | Tag / commit |
 |---|---|---|
-| A | not started | |
+| A | **done 2026-10-02** | tag `review-2026-10-01/A` |
 | B | in progress (other agent) | |
 | C | not started | |
 | D | not started | |
