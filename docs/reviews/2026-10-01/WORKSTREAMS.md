@@ -87,11 +87,20 @@ Independent of A except that you should rebase onto main after A merges so the g
 
 **Acceptance for the stream.** Root gate green, every touched cart's own check script green, `zig build` for all carts in both RAM and XIP modes, and badge-bench numbers re-recorded for Flyover (C1) and Reflections (C7). Perf budgets must not regress.
 
-**C1-C3 done 2026-10-02** (branch `cgames/m1`, unmerged):
+**C1-C3 done 2026-10-02** (branch `cgames/m1`, on main at 24f5dd9):
 
 - C1: Flyover `cam.y` is i64 Q16, every row through `camera.cam_row()` (i32); render marches with the low 32 bits; the ring check moved to `world.check()`. Host test `cart/src/host_tests.zig` (autopilot across row 32768, ring window + `world.check` every frame; crashes with the old i32 y) on the root gate; new `tools/check.sh` = render golden (12/12 unchanged) + the 130-skip soak (`tools/scripts/skip_soak.json`: row 32769 at 639, `debug_world_check == 0`). Calibrated bench worst 15.08 ms (was 15.07), mean 8.35.
 - C2: Snoutenstein rewind patches store the absolute `rewinds` (idempotent); `set_meter` keeps the live count. Unit test (commit + two `set_meter` at one tick, self-checks and rewind against a reference) and the UP-at-1900 takeover preview in `tools/check.sh`; check.sh all passed.
 - C3: Bugs boss HP moved to pure `boss_hp.zig`, capped at 255 for spawn and HUD; tests for loops 0/1/9/10/20/255 registered on the root gate (Bugs' first host tests). check.sh 14/14.
+
+**C4-C8 done 2026-10-02** (branch `cemu/m1`, tag `review-2026-10-01/C`), rebased over A and D:
+
+- C4: Boy's screen flow is a pure module, `frontend/flow.zig` (`Flow(Ctx)` + `Picker`), and `input.State` gains `live_edge()` (Genesis/Lynx pattern, previous frame masked too). Every transition suppresses the held buttons and every screen but the game reads the live edge: the splash's A/B/Down no longer picks, runs the fallback or moves the cursor, and an A/B held with the Select hold no longer closes the menu it opens. Gear gets the same menu-entry fix. D's play hint rides the flow as `play_begin` and a `fresh` flag on `step`. Tests: `tests/flow_unit.zig` (two candidates; skip with A, B, Down, Select; picker stays, held button ignored, fresh press acts; 2 of 3 fail on the old flow) on the root gate; Gear `tools/check_menu_entry.sh` preview (fails with `debug_scrub_depth = 47` on the old main.zig).
+- C5: Genesis `Header.declared_size()` returns `?u64`; `check()` gives `.bad_range` for a reversed range and `.mapper` over 4 MB. `tests/rom_unit.zig`: spans 0..0, 0..FFFFFFFF, 1..FFFFFFFF, FFFFFFFF..FFFFFFFF, two reversed, 4 MiB, 4 MiB + 1, plus a drive scan with a malformed NOHDR.BIN next to a playable TEST.GEN; 7/7 in `-Dtest-optimize=safe` and `fast`, full suite 170 in both.
+- C6: `lib/romfs.Volume` holds a `romfs.Image` (bytes + length): `Image.badge()` (1280 KiB), `Image.whole()`, and the explicit `Image.truncated_test()`. Total sectors must fit the image, FATs and root must be present, the FAT must cover every cluster, else `BadGeometry` before any directory or data access; truncated fixtures refuse (`BadChain`) clusters past their bytes. Boy, Gear, Genesis, Lynx callers and `docs/ROM_DRIVE.md` updated. `lib/tests/romfs_unit.zig`: the probe geometry (reserved 3000, 2 FATs of 8, total 4000) is `BadGeometry` from a 512-byte and a drive-sized image; one sector short fails; 1-sector FAT over 2560 sectors fails; fragmented fixtures unchanged. Bench: all four drive ELFs still load from a drive image and fall back cleanly on the probe image.
+- C7: Reflections `pt` slice = frame period - `variant.pt_reserve_us` (14 ms; measured non-tracing overhead 6.9 ms per frozen update), so cut20 keeps exactly 36 ms (`.text/.data/.bss` byte-identical) and half30 traces 19,333 us at 30 fps. Calibrated frozen worst (sunset/midnight/noon): half30 26.16/26.24/26.30 ms against a 30.33 gate (was 42.8, about 23 fps); cut20 42.89/42.87/42.86 against 47.0, unchanged from M4; attract row unchanged. `tests/variant_unit.zig` (slice < period for every variant) on the root gate and via `tools/check_variants.sh`; `check_pt.mjs` 6/6 for cut20 and half30. Per-variant slices in the cart's `docs/RUNNING.md` section 12; half30 hardware pacing is a show-day check (PLAN.md M4).
+- C8: Lynx headered files over 512 KB of data (512 KB + 64) are `.too_big` like raw ones; within that, trailing data past the declared bank is still ignored and short homebrew runs. `tests/cart_unit.zig`: 600 KiB headered too big, 512 KB + 64 ok and + 65 too big for every bank size, 128 KiB + 64 ok, 3 KB homebrew ok; `tools/romcheck.py` reports the same rule.
+- Stream acceptance at the merge: `zig build test --summary all` 0 failed (481/490 in the final run, 9 fixture skips, the rest cached from earlier runs); `zig build -Dcart-mode=both` all carts (24 ELFs); `zig build check-float` pass.
 
 ## Workstream D: onboarding, docs and on-device discovery
 
@@ -136,5 +145,5 @@ Architecture proposals 2 and 4 from the README (shared platform adapter, authori
 |---|---|---|
 | A | **done 2026-10-02** | tag `review-2026-10-01/A` |
 | B | in progress (other agent) | |
-| C | C1-C3 done on `cgames/m1` (unmerged); C4-C8 other agent | |
+| C | **done 2026-10-02** | C1-C3 at 24f5dd9, tag `review-2026-10-01/C` |
 | D | **done 2026-10-02** | tag `review-2026-10-01/D` |
