@@ -17,14 +17,8 @@ repository root. This cart also needs curl (for `tools/fetch_test_roms.sh`);
 ## 2. Checkout layout
 
 Cloning the repository with its `sycl-badge/` submodule is described in
-`../../docs/RUNNING.md` at the repository root. Until the `monorepo` branch
-is on GitHub it lives on the exe.dev VM:
-
-```sh
-git clone -b monorepo exedev@animated-badge.exe.xyz:/home/exedev/snouty-badge
-cd snouty-badge && git submodule update --init
-cd carts/snouty-boy
-```
+[`docs/RUNNING.md`](../../../docs/RUNNING.md) section 2 at the
+repository root; this cart is `carts/snouty-boy/` in that checkout.
 
 Milestones are annotated tags (`git tag -n1 'snouty-boy/*'`: `snouty-boy/m1`,
 `/m3`, `/m4`); work in progress is on `m<N>-*` branches.

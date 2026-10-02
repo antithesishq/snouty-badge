@@ -13,13 +13,8 @@ Node.js, Python with Pillow for GIF previews).
 
 This cart lives in `carts/snoutenstein/` of the snouty-badge repository; the
 upstream SDK is the `sycl-badge/` submodule at the repository root. See
-`../../docs/RUNNING.md` for cloning with the submodule. To review a milestone
-from the exe.dev VM on another machine:
-
-```sh
-git clone -b monorepo exedev@animated-badge.exe.xyz:/home/exedev/snouty-badge
-cd snouty-badge && git submodule update --init
-```
+[`docs/RUNNING.md`](../../../docs/RUNNING.md) section 2 for cloning
+with the submodule.
 
 Milestones are annotated tags `snoutenstein/m0`..`snoutenstein/m3`
 (`git tag -n1 'snoutenstein/*'`; `git checkout snoutenstein/m3` builds that
@@ -45,8 +40,9 @@ Levels live in `cart/src/levels/*.txt` and are compiled into
 `cart/src/levels/gen.zig` by `tools/gen_levels.sh`, which is committed. After
 editing or importing a level, run the script and commit both files.
 
-Without a local toolchain, the VM's build artifacts can be pulled into the
-same locations and everything below works unchanged:
+**Team VM only** (needs an ssh login on the team's exe.dev VM): without a
+local toolchain, the VM's build artifacts can be pulled into the same
+locations and everything below works unchanged:
 
 ```sh
 mkdir -p ../../zig-out/firmware ../../zig-out/bin

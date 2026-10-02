@@ -5,6 +5,23 @@ badge), plus the tools used to make and measure them. One Zig build produces
 every cart; each cart has its own directory with its design, plan, assets and
 tools.
 
+## Start here
+
+1. **Play a prebuilt cart on a badge**: copy its `.uf2` onto the badge's
+   `SYCLBADGE` drive, eject, pick it in the badge menu
+   ([docs/INSTALL.md](docs/INSTALL.md)).
+2. **Try a cart in the simulator** (no badge needed): install the pinned
+   Zig and Node.js, clone, `zig build -Dcart=snouty-bugs`, serve it and
+   open the web simulator; the copy-paste path is
+   [docs/RUNNING.md](docs/RUNNING.md) sections 1 to 4.
+3. **Develop a cart**: the same setup, then the cart's own
+   `carts/<cart>/docs/RUNNING.md` (previews, scripts, gates),
+   [CLAUDE.md](CLAUDE.md) (hardware, cart API, build wiring) and
+   [badge-bench](badge-bench/README.md) to cost it before flashing.
+
+Running an expo badge station (a Raspberry Pi that deploys cart sets from
+a phone) is separate: [badge-manager/README.md](badge-manager/README.md).
+
 ## Carts: what works today
 
 Sourced by hand from the cart registration in the root `build.zig` and each
@@ -41,7 +58,7 @@ and the section linked per cart.
 
 | Cart | Embedded fallback | Build options | Drive files | Details |
 |---|---|---|---|---|
-| `snouty-boy` | `tests/roms/dmg-acid2.gb` once `tools/fetch_test_roms.sh` has run, else `roms/2048.gb` | `-Drom=PATH` (repository- or cart-relative), `-Drom-source=drive\|embed` | `.gb`, `.gbc` up to 1 MB; a picker for several | [RUNNING section 9](carts/snouty-boy/docs/RUNNING.md#9-roms-from-the-badge-drive) |
+| `snouty-boy` | `tests/roms/dmg-acid2.gb` once `tools/fetch_test_roms.sh` has run, else `roms/2048.gb` | `-Drom=PATH` (repository- or cart-relative), `-Drom-source=drive\|embed` | `.gb`, `.gbc` up to 1 MB (drive space permitting); a picker for several | [RUNNING section 9](carts/snouty-boy/docs/RUNNING.md#9-roms-from-the-badge-drive) |
 | `snouty-gear` | `roms/waternet.gg` (MIT) | `-Dgg-rom=PATH` (`~/`, absolute, repository- or cart-relative), `-Dgg-rom-source=drive\|embed` (`pack` not built yet) | `.gg`, `.sms`; the first one found plays | [RUNNING section 6](carts/snouty-gear/docs/RUNNING.md#6-a-rom-on-the-badge-drive) |
 | `snouty-genesis` | `roms/snouty-test.bin` (16 KB test ROM) | `-Dmd-rom=PATH` (`~/`, absolute, repository- or cart-relative), `-Dmd-rom-source=drive\|embed` | `.gen`, `.md`, `.bin`; a picker for several; SMD-interleaved files refused | [RUNNING section 8](carts/snouty-genesis/docs/RUNNING.md#8-a-rom-on-the-badge-drive) |
 | `snouty-lynx` | `roms/raycast.lnx` (Apache-2.0) | `-Dlynx-rom=PATH` (`~/`, absolute, repository-relative), `-Dlynx-rom-source=drive\|embed` (`pack` not built yet) | `.lnx`, headerless `.lyx`; a picker for several | [README](carts/snouty-lynx/README.md#a-rom-on-the-badge-drive) |
@@ -59,11 +76,11 @@ Other directories:
 
 ## Build
 
-Prerequisites, simulator and flashing details are in `docs/RUNNING.md`.
+All from the repository root; prerequisites, the Zig install command and
+the clone are in [docs/RUNNING.md](docs/RUNNING.md) sections 1 and 2.
+Zig `0.17.0-dev.1936+5a625d5f3` exactly, as pinned by upstream.
 
 ```sh
-git clone --recursive git@github.com:antithesishq/snouty-badge.git
-cd snouty-badge
 zig build                        # every cart
 zig build -Dcart=snouty-bugs     # one cart (any directory or binary name above)
 zig build test                   # every cart's host tests
@@ -72,58 +89,27 @@ zig build -Dcart-mode=xip        # execute-in-place carts: <binary>-xip.uf2 (see
 ```
 
 Outputs: `zig-out/firmware/<binary>.uf2` (for the badge, installed as in
-[docs/INSTALL.md](docs/INSTALL.md)), `zig-out/firmware/<binary>.elf` (for badge-bench) and
-`zig-out/bin/<binary>.wasm` (for the simulator). Zig
-`0.17.0-dev.1936+5a625d5f3` exactly, as pinned by upstream.
+[docs/INSTALL.md](docs/INSTALL.md)), `zig-out/firmware/<binary>.elf` (for
+badge-bench) and `zig-out/bin/<binary>.wasm` (for the simulator).
 
 ## Run in the simulator
 
-The upstream web simulator (`sycl-badge/simulator/`) runs any cart's wasm
-build in a browser on your own machine. It needs Node.js 20 or newer and two
-terminals, both started from the repository root.
-
-Terminal 1 builds the cart and serves it on `localhost:2468`, where the
-simulator looks for it:
+Two terminals, both in the repository root (the cart-directory form
+`cd carts/<cart> && node ../../tools/serve-cart.mjs` also works):
 
 ```sh
-zig build -Dcart=snouty-bugs
-node tools/serve-cart.mjs --cart snouty-bugs
+# terminal 1: build the cart and serve it on localhost:2468
+zig build -Dcart=snouty-bugs && node tools/serve-cart.mjs --cart snouty-bugs
+# terminal 2: the simulator UI, then open http://localhost:1234
+cd sycl-badge/simulator && npm install && npm run dev
 ```
 
-`--cart` takes a cart directory or binary name from the table above
-(`snouty-run` and `snouty` are the same cart). Run from inside
-`carts/<cart>/`, the script picks that cart without `--cart`; a wasm path
-instead of `--cart` serves any other file. The watcher reloads the page
-whenever the wasm changes, so leave it running and re-run `zig build` in
-another terminal to see a change. Keep the default port: the simulator only
-tries 2468.
-
-Terminal 2 starts the simulator UI (the first run installs its packages):
-
-```sh
-cd sycl-badge/simulator
-npm install
-npm run dev
-```
-
-Then open <http://localhost:1234>. To switch carts, stop the watcher, start
-it again with another `--cart`, and refresh the browser tab. The simulator
-does not reconnect by itself: it shows "Watcher was disconnected" until you
-refresh, or "Watcher not found" if the page opened before the watcher started.
-
-| Badge            | Keyboard           |
-|------------------|--------------------|
-| Joystick         | Arrow keys or WASD |
-| Joystick click   | Shift              |
-| A                | Z or K             |
-| B                | X or J             |
-| Start            | Enter or Y         |
-| Select           | Backspace or T     |
-| System menu      | Escape             |
-
-Each cart's `carts/<cart>/docs/RUNNING.md` lists its own controls, and
-`tools/preview.mjs` runs a cart headless in the terminal with no browser,
-writing PNG frames (`docs/RUNNING.md` section 5).
+Re-run `zig build -Dcart=...` in a third terminal and the open tab
+reloads. The keyboard map, switching carts and the fixes for "Watcher not
+found", "Watcher was disconnected" and a missing wasm are in
+[docs/RUNNING.md](docs/RUNNING.md) section 4; each cart's
+`carts/<cart>/docs/RUNNING.md` lists its controls, and
+`tools/preview.mjs` runs a cart headless with no browser (section 5).
 
 ## RAM carts, ROMs from the badge drive, and XIP carts
 
@@ -161,9 +147,16 @@ questions.
 
 ## Where to read next
 
-- `PLAN.md` at the root: the repository plan (the move to one repository).
-  Each cart's own `PLAN.md` and `SPEC.md` hold its design and milestone status.
-- `CLAUDE.md` at the root: shared hardware, cart API and build notes; each
-  cart's `CLAUDE.md` adds what is specific to it.
+- [docs/INSTALL.md](docs/INSTALL.md): putting a cart on a badge.
+- [docs/RUNNING.md](docs/RUNNING.md): setup, build, simulator, headless
+  preview, benchmark, XIP.
+- [PLAN.md](PLAN.md) at the root: the repository plan (the move to one
+  repository). Each cart's own `PLAN.md` and `SPEC.md` hold its design and
+  milestone history.
+- [CLAUDE.md](CLAUDE.md) at the root: shared hardware, cart API and build
+  notes; each cart's `CLAUDE.md` adds what is specific to it.
 - `carts/<cart>/docs/RUNNING.md`: how to preview, test and flash that cart.
-- `badge-bench/README.md`: how to cost a cart before flashing it.
+- [badge-bench/README.md](badge-bench/README.md): how to cost a cart before
+  flashing it.
+- [docs/ROM_DRIVE.md](docs/ROM_DRIVE.md), [docs/SOUND.md](docs/SOUND.md),
+  [docs/NEOPIXELS.md](docs/NEOPIXELS.md): shared design notes.

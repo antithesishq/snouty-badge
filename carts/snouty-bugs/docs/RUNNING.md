@@ -13,13 +13,8 @@ Node.js, Python with Pillow for GIF previews).
 
 This cart lives in `carts/snouty-bugs/` of the snouty-badge repository; the
 upstream SDK is the `sycl-badge/` submodule at the repository root. See
-`../../docs/RUNNING.md` for cloning with the submodule. To review a milestone
-from the exe.dev VM on another machine:
-
-```sh
-git clone -b monorepo exedev@animated-badge.exe.xyz:/home/exedev/snouty-badge
-cd snouty-badge && git submodule update --init
-```
+[`docs/RUNNING.md`](../../../docs/RUNNING.md) section 2 for cloning
+with the submodule.
 
 Milestones are annotated tags `snouty-bugs/m1`..`snouty-bugs/m5`
 (`git tag -n1 'snouty-bugs/*'`). From the exe.dev VM the GitHub remote

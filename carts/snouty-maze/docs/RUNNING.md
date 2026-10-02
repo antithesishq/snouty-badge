@@ -14,16 +14,8 @@ art in `tools/prepare_assets.py --placeholders`).
 ## 2. Getting the code
 
 Cloning the repository with its `sycl-badge/` submodule is described in
-`../../docs/RUNNING.md` at the repository root. Until the `monorepo` branch
-is on GitHub it lives on the exe.dev VM `animated-badge.exe.xyz` at
-`/home/exedev/snouty-badge`:
-
-```sh
-git clone -b monorepo exedev@animated-badge.exe.xyz:/home/exedev/snouty-badge
-cd snouty-badge && git submodule update --init
-# later, to update: git pull (or rsync -a --exclude zig-out --exclude .zig-cache --exclude zig-pkg \
-#   exedev@animated-badge.exe.xyz:/home/exedev/snouty-badge/ snouty-badge/)
-```
+[`docs/RUNNING.md`](../../../docs/RUNNING.md) section 2 at the
+repository root; update with `git pull` and `git submodule update --init`.
 
 Milestones are annotated tags (`git tag -n1 'snouty-maze/*'`:
 `snouty-maze/a1`, `/a2`, `/m0`..`/m3`); `git checkout snouty-maze/m1` gives

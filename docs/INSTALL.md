@@ -53,9 +53,10 @@ flash window, root `README.md`); it is installed exactly like a RAM cart.
 2. Copy the UF2 into the top directory of `SYCLBADGE`. Keep its name
    (`snouty-bugs.uf2`); the menu lists every file in the top directory by
    name, without `.uf2`. Several carts can sit side by side, each under
-   its own name, as long as they fit: a RAM cart's UF2 is a few hundred KB
-   (Snouty Boy's is about 480 KB), so two or three carts fill the drive.
-   Delete old ones from the drive to make room.
+   its own name, as long as they fit: the carts' UF2s are 150 to 530 KB
+   (a 2026-10-02 build: Bugs 147 KB, Demosnout 518 KB), so two to four
+   carts fill the 1280 KB drive, less with ROM files on it. Delete old
+   ones from the drive to make room.
 3. Replacing `CURRENT.UF2`, as the SDK README says ("copy a `.uf2` ...
    onto the badge drive, replacing `CURRENT.UF2`. The new program starts
    immediately"), is the other way to do it: drop your file over that
