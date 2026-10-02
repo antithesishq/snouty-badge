@@ -1,0 +1,41 @@
+# Rack Row 7: Spine league, track 2. Tight and technical: four rows of
+# racks driven as switchbacks with three hairpins, kinks in rows 1 and 3,
+# two throttled rows, rails everywhere. Driven from the top-left: east
+# along row 1, hairpin down to row 2 west, hairpin to row 3 east, hairpin
+# to row 4 west, a dip into the bottom-left pocket, then all the way back
+# up the west wall to the line. Control point 0 is the start line;
+# features on point i apply to the segment from point i to i+1.
+league spine
+width 48
+# x    y    half   features
+ 320  120   46                     # start line, row 1 east
+ 520  120   46
+ 600  150   46                     # a kink in row 1
+ 680  120   46
+ 780  120   46
+ 870  160   46                     # hairpin 1
+ 890  230   46
+ 860  300   46
+ 770  320   46     throttled       # row 2 west, throttled
+ 400  320   46
+ 310  350   46                     # hairpin 2
+ 290  420   46
+ 310  490   46
+ 400  520   46
+ 520  520   46                     # row 3 east, a kink
+ 600  550   46
+ 680  520   46
+ 780  520   46
+ 870  560   46                     # hairpin 3
+ 890  630   46
+ 860  700   46
+ 770  720   46     throttled       # row 4 west, throttled
+ 360  720   46
+ 320  740   46                     # down into the bottom pocket
+ 300  830   46
+ 230  895   46
+ 150  860   46
+ 130  760   46                     # back up the west wall
+ 140  560   46
+ 130  300   46
+ 190  150   46

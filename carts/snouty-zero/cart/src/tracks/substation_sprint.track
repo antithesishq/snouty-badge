@@ -1,0 +1,30 @@
+# Substation Sprint: Edge league, track 2. The fast one. Driven clockwise
+# on the map image: the top straight east past the substation with an
+# overclock pad, a long sweeping right-hander down the east side, the
+# bottom straight west with the second pad, then up the west side and into
+# a deep U that reaches into the middle of the map (the throttled zone on
+# its way in), back out and up to the line. Rails everywhere. Control
+# point 0 is the start line; features on point i apply to the segment from
+# point i to point i+1.
+league edge
+width 60
+# x    y    half   features
+ 300  120   64     pad             # start line; overclock pad on the top straight
+ 770  120   64
+ 870  190   60
+ 890  400   56                     # east side, one long sweep
+ 880  640   56
+ 850  840   60
+ 760  900   64     pad             # bottom straight west, second pad
+ 260  900   64
+ 150  850   60
+ 140  750   56     throttled       # into the U through the throttled zone
+ 230  680   52
+ 620  680   52
+ 720  610   52                     # the U's far end
+ 720  510   52
+ 620  440   52
+ 230  440   52
+ 140  370   56
+ 140  220   60
+ 190  130   62

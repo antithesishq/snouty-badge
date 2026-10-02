@@ -89,6 +89,6 @@ pub const World = struct {
     lap_px: u16 = 0,
 };
 
-pub const Message = enum(u8) { none, provisioning, three, two, one, deploy, final_lap, committed, fall, meltdown, collision };
+pub const Message = enum(u8) { none, provisioning, three, two, one, deploy, final_lap, committed, fall, meltdown, collision, killed };
 
 pub var w: World = .{};

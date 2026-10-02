@@ -347,6 +347,33 @@ pub fn earliest_tick() u32;
   (`debug_rewinds`, `debug_tick` going backwards); `docs/preview_m3.gif`.
 - bench: the rewind frame (2 simulate ticks + dimmed draw) recorded.
 
+### M3 status
+
+- 2026-10-02: DONE. Track A (Opus agent): Spine league (55-entry palette,
+  cabinets, fiber, light shafts), five new tracks, `open:left|right`,
+  the hop gap (32 px of void after the plate; a machine that does not hop
+  falls), generator checks for lap length 3800..5000 and corner radius
+  >= 30 px; all six tracks completable with the field of 11 (finish
+  5234..6463 ticks, 0 crashes, SNOUTY ranks 2..4). Maps stay raw (plain
+  RLE grows them; PackBits plus seam folding would save only ~35 KB net).
+  Track B: `history.zig` (16 keyframes every 30 ticks, 512-entry log;
+  the restore test checks 400+ ticks against direct states), hold-B at 2
+  ticks a frame, crash hit-stop 20 frames then a 120-tick auto rewind for
+  90 of the bar (else JOB KILLED, RETIRED on the results), splash, title
+  with the attract demo after 10 s (autopilot, a 20-frame B hold every
+  9 s), menus, pickers, pause, Grand Prix with 9/6/4/3/2 points and
+  standings, sound toggle with four tones. Preview scripts assert the
+  screen flow (`m3_menus.json`), the rewind tick for tick and the forced
+  crash's auto rewind (`m3_rewind.json`), and the attract start. ELF
+  `.text` 225.1 KB, `.bss` 20.3 KB: 246 KB + 32 KB stack of the 307 KB
+  window, so Core (M5) needs the XIP build. Bench (`m3_bench.json`, 1700
+  frames): **mean 2.77 ms, worst 9.05 ms** (54%): the worst frame is a
+  rewind frame whose restore replays up to 29 ticks of 11 machines from
+  the last keyframe (as predicted; the bugs cart has the same shape),
+  `api.text` is 36% of the mean frame. M4 fast paths, in order: an own
+  8x8 font blit, keyframes every 15 ticks or an incremental replay, the
+  AI's per-tick cost.
+
 ## Deferred questions for Adrian
 
 1. (M0) Camera height 64 / focal 128: the near floor shows a 16 px seam
@@ -361,6 +388,11 @@ pub fn earliest_tick() u32;
    (more spline points) and the SPEC rate; a play test decides.
 4. (M1) A crash (fall, meltdown) resets to the centerline after the
    hit-stop until M3 brings the rewind.
+6. (M3) The auto rewind costs 90 ticks of the bar and goes back 120 (SPEC
+   5.4's wording was ambiguous); the attract demo holds B for 20 frames
+   every 9 s; the title shows Cold Aisle turning under it; the sound
+   tones are a countdown beep, DEPLOY, a rail click and a two-note
+   finish, nothing else.
 5. (M2) The player starts 5th, alone on the back row (F-Zero style);
    rivals keep driving after they finish; Overclock leaves at least 1
    thermal rather than melting the machine on the spot; the autopilot's

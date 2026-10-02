@@ -1,0 +1,42 @@
+# Tape Vault: Spine league, track 3. Two tape vaults side by side and a
+# figure of eight that never crosses: from the line along the top of the
+# left vault the lap drops into the waist, climbs into the right vault,
+# runs down its east wall (which bows in like a reel), comes back through
+# the waist the other way and around the left vault, whose west wall bows
+# in too. The two waist hairpins nearly touch across the middle of the
+# map. Hot spots in both vaults, overclock pads on the top-left and
+# bottom-right straights. Control point 0 is the start line; features on
+# point i apply to the segment from point i to i+1.
+league spine
+width 52
+# x    y    half   features
+ 250  120   50     pad             # start line, east along the top of the left vault; pad
+ 370  130   50
+ 430  220   48
+ 440  330   48                     # down into the waist
+ 475  405   48
+ 550  405   48
+ 585  330   48                     # and up into the right vault
+ 595  220   48
+ 650  130   50
+ 790  120   50     hot:2
+ 880  230   50
+ 870  360   50
+ 740  510   50                     # the east wall bows in
+ 870  660   50
+ 880  790   50
+ 800  890   50     pad             # along the bottom of the right vault
+ 660  880   48
+ 590  790   48
+ 580  690   48                     # up into the waist
+ 545  620   48
+ 475  620   48
+ 440  690   48                     # and down into the left vault
+ 430  790   48
+ 360  890   50
+ 230  890   50     hot:2
+ 140  790   50
+ 150  660   50
+ 280  510   50                     # the west wall bows in
+ 150  360   50
+ 160  190   50

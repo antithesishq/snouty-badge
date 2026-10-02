@@ -120,3 +120,15 @@ pub const avoid_pass: i32 = 26;
 pub const avoid_margin: i32 = 16;
 pub const avoid_brake: i32 = 30;
 pub const avoid_brake_width: i32 = 14;
+
+// --- Rewind (SPEC 5.4) ---------------------------------------------------------
+
+/// Snapshot bar capacity in ticks of rewind (3 s) and its refill rate (1 per 10 ticks).
+pub const snapshot_max: u32 = 180;
+pub const snapshot_refill_every: u32 = 10;
+/// Hold-B: game ticks stepped back per frame (and bar cost per frame).
+pub const rewind_per_frame: u32 = 2;
+/// Crash: the auto rewind needs this much bar, costs it, and goes back this far at this rate.
+pub const auto_rewind_cost: u32 = 90;
+pub const auto_rewind_ticks: u32 = 120;
+pub const auto_rewind_per_frame: u32 = 4;

@@ -1,0 +1,39 @@
+# Exhaust Ridge: Edge league, track 3. Driven clockwise on the map image:
+# east along the top, then the ridge: a long run down the east side with no
+# rail on the driver's left (the drop to the map edge), past two hot spots
+# vented by the exhaust stacks; the bottom straight west has the hop over a
+# gap in the floor (no hop, no floor); then up into the exhaust rows, four
+# switchbacks through the middle of the map with one more hot spot, and
+# out to the line along the west side. Control point 0 is the start line;
+# features on point i apply to the segment from point i to i+1; open:left
+# opens only the driver's left side (the right keeps its rail).
+league edge
+width 60
+# x    y    half   features
+ 300  120   60                     # start line
+ 520  120   60
+ 760  140   60     open:left       # the ridge starts: no rail on the left
+ 860  260   56     open:left hot:2
+ 860  440   56     open:left
+ 870  620   56     open:left
+ 840  800   56
+ 720  900   60     hop             # bottom straight west: the hop gap
+ 330  900   60
+ 210  890   56
+ 150  800   52
+ 230  720   54
+ 600  720   54     hot:1           # the exhaust rows: four switchbacks
+ 680  685   54
+ 680  605   54
+ 600  570   54
+ 360  570   54
+ 280  535   54
+ 280  455   54
+ 360  420   54
+ 600  420   54
+ 680  385   54
+ 680  305   54
+ 600  270   54
+ 230  270   52
+ 150  235   56
+ 160  155   60

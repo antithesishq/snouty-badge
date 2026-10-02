@@ -127,6 +127,20 @@ fn rank_text(rank: u8) []const u8 {
     };
 }
 
+/// Snapshot bar state for the HUD (set by main.zig each frame).
+pub var snapshot_ticks: u32 = 0;
+pub var snapshot_max: u32 = 180;
+pub var rewinding: bool = false;
+
+/// Every other scanline black over the whole frame (the rewind dim).
+pub fn dim_scanlines() void {
+    const black: cart.Pixel = .from_color(.{ .r = 0, .g = 0, .b = 0 });
+    for (cart.framebuffer) |*col| {
+        var y: usize = 1;
+        while (y < 128) : (y += 2) col[y] = black;
+    }
+}
+
 pub fn draw() void {
     const w = &world.w;
     const m = &w.machines[world.player];
@@ -149,6 +163,9 @@ pub fn draw() void {
     draw_bar(2, 114, @intCast(@max(0, m.thermal)), tuning.thermal_max, if (m.boost > 0) white else orange);
     // Overclock ready mark beside the bar when the bar can pay for one.
     if (m.thermal >= tuning.thermal_overclock_min and m.boost == 0) text("OC", 44, 112, cyan);
+    // The snapshot bar (cyan) under the thermal bar; `<<` blinks while rewinding.
+    draw_bar(2, 120, @intCast(snapshot_ticks), @intCast(snapshot_max), cyan);
+    if (rewinding and (w.tick / 4) % 2 == 0) text("<<", 44, 118, cyan);
     draw_minimap();
     draw_message();
 }
@@ -173,6 +190,7 @@ fn message_text(msg: world.Message) []const u8 {
         .fall => "SEGMENT FAULT",
         .meltdown => "THERMAL SHUTDOWN",
         .collision => "COLLISION",
+        .killed => "JOB KILLED",
     };
 }
 
@@ -181,7 +199,7 @@ fn draw_message() void {
     if (w.msg == .none) return;
     const str = message_text(w.msg);
     const color = switch (w.msg) {
-        .fall, .meltdown, .collision => coral,
+        .fall, .meltdown, .collision, .killed => coral,
         .deploy, .committed => cyan,
         else => white,
     };

@@ -1,5 +1,5 @@
 # snouty-zero: Mode 7 hover racer, 60 fps.
 budget_ms = 16.7
-frames = 1500
-script = "carts/snouty-zero/tools/scripts/m2_player.json"
-note = "M2 race against 4 rivals and 6 traffic on Cold Aisle: the 200-tick countdown, Overclock at 300, A held with a few steers, Select (large minimap) at 1800 (PLAN.md M2); the grid start has every machine on screen"
+frames = 1700
+script = "carts/snouty-zero/tools/scripts/m3_bench.json"
+note = "M3: splash, title, menu (Start, Start, A, A, A: Quick Race, Edge, Cold Aisle) then the M1 drive with B held 1100-1160 (a hold-B rewind: 2 restored ticks per frame plus the dimmed draw) (PLAN.md M3)"

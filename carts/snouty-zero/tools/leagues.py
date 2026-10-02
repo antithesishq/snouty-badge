@@ -36,6 +36,7 @@ SEC1 = 77           # + axis
 SEC2 = 79           # + axis
 RAIL_DIAG = 96      # + corner where the surface is (0 NE, 1 SE, 2 SW, 3 NW)
 EDGE_DIAG = 100     # + corner, open-edge glow corner (attr 1)
+GAP = 104           # + 4-neighbour mask of drivable tiles: the hop gap (attr 0)
 N_, E_, S_, W_ = 1, 2, 4, 8
 
 
@@ -84,7 +85,7 @@ EDGE_PAL = Palette([
     # track surface
     ("floor", (38, 40, 52)), ("floor_seam", (47, 50, 64)), ("lane_dot", (150, 160, 180)),
     # rails
-    ("haz_red", (214, 38, 38)), ("haz_white", (242, 242, 242)), ("metal_hi", (204, 210, 218)),
+    ("cap_a", (214, 38, 38)), ("cap_b", (242, 242, 242)), ("metal_hi", (204, 210, 218)),
     ("metal", (146, 152, 164)), ("metal_dark", (88, 92, 104)), ("rail_base", (30, 31, 38)),
     # open edge glow
     ("glow", (136, 252, 255)), ("glow_mid", (40, 200, 232)), ("glow_dim", (24, 112, 142)),
@@ -97,6 +98,8 @@ EDGE_PAL = Palette([
     ("hop_bg", (20, 84, 74)), ("hop_arrow", (130, 255, 214)),
     ("chk_k", (18, 18, 22)),
     ("seam_lit", (70, 112, 140)), ("seam_glow", (130, 196, 230)),
+    # hop gap (M3)
+    ("void", (8, 9, 14)), ("void_mid", (20, 22, 30)),
 ])
 
 
@@ -191,6 +194,16 @@ def paint_edge_tiles(P):
     ts.put(SURF_SEAM_V, "floor seam left", A_SURF, grid(lambda x, y: fs if x == 0 else fl))
     ts.put(SURF_SEAM_H, "floor seam top", A_SURF, grid(lambda x, y: fs if y == 0 else fl))
     ts.put(SURF_SEAM_X, "floor seam corner", A_SURF, grid(lambda x, y: fs if x == 0 or y == 0 else fl))
+    paint_track_pieces(ts, P)
+    return ts
+
+
+def paint_track_pieces(ts, P):
+    """Edges, rails, corner posts, feature tiles and hop-gap tiles (32..119),
+    the same shapes in every league; the palette names are the roles (cap_a /
+    cap_b rail caps, glow*, pad_*, thr_*, cold_*, hot_*, hop_*, chk_k,
+    seam_*, void*). Fills the unused slots with tile 1."""
+    fl = P["floor"]
 
     # Edge pieces by 4-neighbour mask. Open: floor, then the glow strip.
     def open_px(d):
@@ -198,7 +211,7 @@ def paint_edge_tiles(P):
 
     def rail_px(d, x, y):
         if d <= 1:   # hazard chevrons facing the track, period 4 diagonal
-            return P["haz_red"] if ((x + y) >> 1) & 1 else P["haz_white"]
+            return P["cap_a"] if ((x + y) >> 1) & 1 else P["cap_b"]
         return [0, 0, P["metal_hi"], P["metal"], P["metal"], P["metal_dark"], P["rail_base"], P["rail_base"]][min(d, 7)]
 
     for m in range(16):
@@ -242,18 +255,28 @@ def paint_edge_tiles(P):
         return P["hop_arrow"] if head or shaft else P["hop_bg"]
     for k in range(4):
         ts.put(HOP + k, f"hop plate {'ESWN'[k]}", A_HOP, rot(grid(hop), k))
-    ts.put(START, "start line checker", A_START, grid(lambda x, y: P["haz_white"] if ((x >> 2) + (y >> 2)) & 1 else P["chk_k"]))
+    ts.put(START, "start line checker", A_START, grid(lambda x, y: P["cap_b"] if ((x >> 2) + (y >> 2)) & 1 else P["chk_k"]))
     s1 = grid(lambda x, y: P["seam_glow"] if x == 4 else (P["seam_lit"] if x == 3 else fl))
     s2 = grid(lambda x, y: P["seam_glow"] if x in (2, 5) else (P["seam_lit"] if x in (1, 6) else fl))
     ts.put(SEC1, "sector 1 seam (travel x)", A_SEC1, s1)
     ts.put(SEC1 + 1, "sector 1 seam (travel y)", A_SEC1, s1.T.copy())
     ts.put(SEC2, "sector 2 seam (travel x)", A_SEC2, s2)
     ts.put(SEC2 + 1, "sector 2 seam (travel y)", A_SEC2, s2.T.copy())
-    # Unused slots get the plain rack panel so no tile anywhere uses index 0.
+
+    # Hop gap: a void across the track just past a hop plate, with glowing
+    # lips on the sides that touch drivable floor (4-neighbour mask).
+    def gap_px(d, x, y):
+        if d == 0:
+            return P["glow"]
+        if d == 1:
+            return P["glow_dim"]
+        return P["void_mid"] if (x * 3 + y * 5) % 7 == 0 else P["void"]
+    for m in range(16):
+        ts.put(GAP + m, f"hop gap mask {m:04b}", A_OFF, grid(lambda x, y: gap_px(side_dist(m, x, y), x, y)))
+    # Unused slots get background tile 1 so no tile anywhere uses index 0.
     for i in range(256):
         if ts.names[i] is None:
             ts.tiles[i] = ts.tiles[BG_PLAIN]
-    return ts
 
 
 def paint_edge_background(tmap, free, rng):
@@ -393,6 +416,296 @@ def paint_edge_horizon(fog, rng):
     return f, b, fpal, bpal
 
 
+# ---------------------------------------------------------------- Spine league
+# Inside the city: switch cabinets with LED rows, patch panels, fiber bundles
+# in cable trays, aisle grating with light shafts from far above; the track is
+# a dark floor with lit seams. No sky: palette 0 is the blue-grey haze.
+SPINE_PAL = Palette([
+    ("fog", (38, 46, 62)),
+    # switch cabinets
+    ("cab", (36, 40, 54)), ("cab_hi", (54, 60, 78)), ("cab_seam", (78, 86, 108)),
+    ("cab_dark", (24, 27, 37)), ("vent", (12, 14, 20)),
+    ("led_on", (70, 236, 100)), ("led_off", (26, 74, 40)), ("led_amber", (246, 176, 46)),
+    ("led_blue", (84, 168, 255)),
+    # patch panels and fiber (jacket colours: yellow single-mode, aqua OM3, magenta OM4, orange OM1)
+    ("port", (8, 9, 13)), ("port_rim", (112, 120, 134)),
+    ("fib_y", (236, 206, 58)), ("fib_a", (52, 214, 214)), ("fib_m", (216, 70, 196)), ("fib_o", (248, 128, 40)),
+    # cable trays
+    ("tray", (104, 112, 130)), ("tray_dark", (60, 66, 82)),
+    # aisle grating and light shafts
+    ("grate", (22, 26, 35)), ("grate_hi", (34, 39, 52)),
+    ("shaft", (64, 82, 112)), ("shaft_hi", (98, 124, 162)), ("shaft_core", (150, 176, 210)),
+    # track surface: near-black floor, lit seams
+    ("floor", (16, 18, 28)), ("floor_seam", (28, 68, 100)), ("seam_node", (96, 206, 246)),
+    ("lane_dot", (120, 196, 255)),
+    # rails: steel with blue-white caps
+    ("cap_a", (60, 124, 255)), ("cap_b", (226, 238, 255)), ("metal_hi", (196, 206, 222)),
+    ("metal", (134, 144, 162)), ("metal_dark", (76, 82, 98)), ("rail_base", (14, 16, 24)),
+    # open edge glow (electric blue)
+    ("glow", (176, 226, 255)), ("glow_mid", (64, 150, 255)), ("glow_dim", (30, 66, 150)),
+    # features
+    ("pad_bg", (34, 26, 104)), ("pad_chev", (130, 250, 255)), ("pad_chev_lo", (56, 150, 255)),
+    ("thr_y", (238, 128, 40)), ("thr_k", (36, 26, 28)),
+    ("cold_floor", (14, 44, 70)), ("cold_stripe", (56, 198, 222)), ("cold_hi", (180, 250, 255)),
+    ("hot_core", (255, 238, 204)), ("hot_orange", (255, 118, 64)), ("hot_red", (212, 30, 92)),
+    ("hot_dark", (70, 14, 42)),
+    ("hop_bg", (52, 18, 78)), ("hop_arrow", (240, 124, 255)),
+    ("chk_k", (10, 10, 14)),
+    ("seam_lit", (36, 128, 66)), ("seam_glow", (110, 250, 150)),
+    ("void", (5, 6, 9)), ("void_mid", (16, 18, 28)),
+])
+
+# Spine background tile meanings (indices 1..15 are per league).
+SP_CAB, SP_CAB_LED, SP_CAB_LED2, SP_CAB_DOOR, SP_CAB_VENT, SP_PATCH = 1, 2, 3, 4, 5, 6
+SP_GRATE, SP_SHAFT, SP_SHAFT_CORE = 7, 8, 9
+SP_TRAY_H, SP_TRAY_V, SP_TRAY_X = 10, 11, 12
+SP_BLANK, SP_FIBER_H, SP_FIBER_V = 13, 14, 15
+
+
+def paint_spine_tiles(P):
+    ts = Tileset(P)
+    cab = P["cab"]
+
+    def cab_px(x, y):   # cabinet face: lit top lip, dark bottom shadow
+        return P["cab_hi"] if y == 0 else (P["cab_dark"] if y == 7 else cab)
+    ts.put(SP_CAB, "cabinet face", A_OFF, grid(cab_px))
+
+    def leds(colors):
+        def f(x, y):
+            if y in (3, 4) and 1 <= x <= 6:
+                if y == 3 and x % 2 == 1:
+                    return P[colors[(x // 2) % len(colors)]]
+                return P["vent"]
+            return cab_px(x, y)
+        return f
+    ts.put(SP_CAB_LED, "cabinet LED row (green)", A_OFF, grid(leds(["led_on", "led_on", "led_off"])))
+    ts.put(SP_CAB_LED2, "cabinet LED row (mixed)", A_OFF, grid(leds(["led_on", "led_amber", "led_blue"])))
+    ts.put(SP_CAB_DOOR, "cabinet door seam + handle", A_OFF, grid(
+        lambda x, y: P["cab_seam"] if x == 7 else (P["port_rim"] if x == 5 and 2 <= y <= 5 else cab_px(x, y))))
+    ts.put(SP_CAB_VENT, "cabinet vent perforation", A_OFF, grid(
+        lambda x, y: P["vent"] if 1 <= y <= 6 and (x + y) % 2 == 0 and 1 <= x <= 6 else cab_px(x, y)))
+    fib = ["fib_y", "fib_a", "fib_m", "fib_o"]
+
+    def patch(x, y):   # two rows of ports with fiber stubs dropping out
+        if y in (1, 4) and 1 <= x <= 6:
+            return P["port"] if x % 2 else P["port_rim"]
+        if y in (2, 5) and x % 2 == 1:
+            return P[fib[(x // 2 + y) % 4]]
+        return cab_px(x, y)
+    ts.put(SP_PATCH, "patch panel with fiber stubs", A_OFF, grid(patch))
+    ts.put(SP_GRATE, "aisle grating", A_OFF, grid(
+        lambda x, y: P["grate_hi"] if x % 4 == 0 or y % 4 == 0 else P["grate"]))
+
+    def shaft(lvl):     # light falling on the grating, ordered dither
+        def f(x, y):
+            g = x % 4 == 0 or y % 4 == 0
+            t = bayer4(x, y)
+            if lvl == 0:
+                return (P["shaft_hi"] if g else P["shaft"]) if t < 0.5 else (P["grate_hi"] if g else P["grate"])
+            return P["shaft_core"] if g else (P["shaft_hi"] if t < 0.75 else P["shaft"])
+        return f
+    ts.put(SP_SHAFT, "light shaft rim", A_OFF, grid(shaft(0)))
+    ts.put(SP_SHAFT_CORE, "light shaft core", A_OFF, grid(shaft(1)))
+
+    def tray(x, y):     # horizontal cable tray: side rails, rungs, two fiber runs
+        if y in (0, 7):
+            return P["tray"]
+        if y == 3:
+            return P["fib_y"]
+        if y == 4:
+            return P["fib_a"]
+        return P["tray"] if x % 4 == 3 else P["tray_dark"]
+    th = grid(tray)
+    ts.put(SP_TRAY_H, "cable tray horizontal", A_OFF, th)
+    ts.put(SP_TRAY_V, "cable tray vertical", A_OFF, th.T.copy())
+
+    def cross(x, y):
+        if y == 3 or x == 3:
+            return P["fib_y"]
+        if y == 4 or x == 4:
+            return P["fib_a"]
+        return P["tray"] if (x in (0, 7)) != (y in (0, 7)) else P["tray_dark"]
+    ts.put(SP_TRAY_X, "cable tray crossing", A_OFF, grid(cross))
+    ts.put(SP_BLANK, "cabinet blanking plate", A_OFF, grid(
+        lambda x, y: P["cab_seam"] if (x, y) in ((1, 1), (6, 1), (1, 6), (6, 6)) else P["cab_dark"]))
+
+    def loose(x, y):    # a loose fiber bundle across the grating
+        if 2 <= y <= 5:
+            return P[fib[(y - 2 + (x // 3)) % 4]] if (x + y) % 3 else P["tray_dark"]
+        return P["grate_hi"] if x % 4 == 0 or y % 4 == 0 else P["grate"]
+    lb = grid(loose)
+    ts.put(SP_FIBER_H, "fiber bundle on grating (x)", A_OFF, lb)
+    ts.put(SP_FIBER_V, "fiber bundle on grating (y)", A_OFF, lb.T.copy())
+
+    # Track surface: near-black floor, lit seams every 16 px, a node light
+    # where seams cross.
+    fl, fs = P["floor"], P["floor_seam"]
+    ts.put(SURF, "floor", A_SURF, grid(lambda x, y: fl))
+    ts.put(SURF_DOT, "floor lane dot", A_SURF, grid(lambda x, y: P["lane_dot"] if 3 <= x <= 4 and 3 <= y <= 4 else fl))
+    ts.put(SURF_SEAM_V, "floor lit seam left", A_SURF, grid(lambda x, y: fs if x == 0 else fl))
+    ts.put(SURF_SEAM_H, "floor lit seam top", A_SURF, grid(lambda x, y: fs if y == 0 else fl))
+    ts.put(SURF_SEAM_X, "floor lit seam node", A_SURF, grid(
+        lambda x, y: P["seam_node"] if x == 0 and y == 0 else (fs if x == 0 or y == 0 else fl)))
+    paint_track_pieces(ts, P)
+    return ts
+
+
+def paint_spine_background(tmap, free, rng):
+    """Fill free tiles with the city floor: cabinet rows three tiles deep
+    on a six-tile rhythm (LED row on top, patch panels and vents, door seams
+    every four tiles), aisle grating between, cross aisles every ~24 tiles,
+    cable trays with fiber along aisles, loose bundles, light shafts."""
+    period, ox = 6, rng.randrange(6)
+    cross_x = set()
+    x = rng.randrange(8, 20)
+    while x < MAPN:
+        cross_x.update((x, x + 1))
+        x += rng.randrange(18, 30)
+    for ty in range(MAPN):
+        k = (ty - ox) % period
+        for tx in range(MAPN):
+            if not free[ty, tx]:
+                continue
+            if tx in cross_x:
+                tmap[ty, tx] = SP_GRATE
+            elif k < 3:
+                if k == 0:
+                    tmap[ty, tx] = SP_CAB_LED if rng.random() < 0.75 else SP_CAB_LED2
+                elif (tx + 1) % 4 == 0:
+                    tmap[ty, tx] = SP_CAB_DOOR
+                else:
+                    r = rng.random()
+                    tmap[ty, tx] = SP_PATCH if r < 0.22 else SP_CAB_VENT if r < 0.42 else SP_BLANK if r < 0.5 else SP_CAB
+            else:
+                tmap[ty, tx] = SP_GRATE
+    # Cable trays: spans down cross aisles and along aisles (a crossing tile
+    # where they meet).
+    cols = sorted(c for c in cross_x if c - 1 not in cross_x)
+    for c in cols:
+        if rng.random() < 0.6:
+            y0 = rng.randrange(MAPN)
+            for ty in range(y0, min(MAPN, y0 + rng.randint(16, 48))):
+                if free[ty, c]:
+                    tmap[ty, c] = SP_TRAY_V
+    for r0 in range(0, MAPN, period):
+        ty = r0 + ox + 4
+        if ty < MAPN and rng.random() < 0.45:
+            x0 = rng.randrange(MAPN)
+            for tx in range(x0, min(MAPN, x0 + rng.randint(12, 40))):
+                if free[ty, tx]:
+                    tmap[ty, tx] = SP_TRAY_X if tmap[ty, tx] == SP_TRAY_V else SP_TRAY_H
+    # Loose fiber bundles strung along the aisles, short runs.
+    for _ in range(60):
+        ty, tx = rng.randrange(MAPN), rng.randrange(MAPN - 6)
+        if (ty - ox) % period == 3 and all(free[ty, tx + i] and tmap[ty, tx + i] == SP_GRATE for i in range(6)):
+            tmap[ty, tx:tx + rng.randint(3, 6)] = SP_FIBER_H
+    # Light shafts: round pools on everything (they light cabinets too).
+    for _ in range(26):
+        cy, cx, r = rng.uniform(0, MAPN), rng.uniform(0, MAPN), rng.uniform(1.6, 3.4)
+        for ty in range(int(cy - r) - 1, int(cy + r) + 2):
+            for tx in range(int(cx - r) - 1, int(cx + r) + 2):
+                if 0 <= ty < MAPN and 0 <= tx < MAPN and free[ty, tx]:
+                    d = math.hypot(tx + .5 - cx, ty + .5 - cy)
+                    if d < r * 0.55:
+                        tmap[ty, tx] = SP_SHAFT_CORE
+                    elif d < r:
+                        tmap[ty, tx] = SP_SHAFT
+
+
+def paint_spine_horizon(fog, rng):
+    """Spine horizon: front 512x32 (near cabinet silhouettes with green LED
+    dots), back 256x32 (city walls rising into darkness, light shafts)."""
+    fpal = [fog, fog, (46, 56, 76), (30, 34, 46), (22, 25, 34), (14, 16, 22), (62, 72, 94),
+            (90, 150, 230), (52, 214, 214), (246, 176, 46), (84, 92, 110), (52, 58, 72),
+            (120, 130, 150), (10, 11, 15), (26, 74, 40), (70, 236, 100)]
+    # 0 transparent, 1 fog, 2 haze, 3 far cabinet, 4 cabinet, 5 cabinet shade, 6 cabinet top lip,
+    # 7 blue rim light, 8 aqua fiber, 9 amber LED, 10..12 cable tray / pipe, 13 dark detail,
+    # 14 led_off (unused, blink), 15 led_on
+    W, H = 512, 32
+    f = np.zeros((H, W), np.uint8)
+    ground = 29
+
+    def col(x, top, c):
+        f[top:ground + 1, x % W] = c
+
+    x = 0
+    while x < W:                      # far cabinet rows, tall and flat
+        w, h = rng.randint(20, 48), rng.randint(9, 15)
+        for xx in range(x, x + w):
+            col(xx, ground - h, 3)
+        x += w + rng.randint(2, 12)
+    for k in range(9):                # structural pillars of the city, into the dark
+        cx, w = k * 57 + rng.randint(0, 30), rng.randint(5, 9)
+        for xx in range(cx, cx + w):
+            col(xx, 0, 5 if xx > cx else 6)
+        for yy in range(rng.randint(2, 6), ground - 6, rng.randint(5, 8)):   # catwalk brackets
+            for xx in range(cx - 2, cx + w + 2):
+                f[yy, xx % W] = 10
+    x = 0
+    while x < W:                      # near cabinets with LED columns and rim light
+        w, h = rng.randint(8, 22), rng.randint(7, 17)
+        top = ground - h
+        for xx in range(x, x + w):
+            col(xx, top, 4)
+            f[top, xx % W] = 6
+        f[top:ground + 1, x % W] = 7                 # rim light on the left edge
+        f[top + 1:ground + 1, (x + w - 1) % W] = 5   # shade on the right
+        for xx in range(x + 2, x + w - 2, 3):        # LED columns
+            for yy in range(top + 2, ground - 1, 2):
+                if rng.random() < 0.55:
+                    f[yy, xx % W] = 15 if rng.random() < 0.8 else (9 if rng.random() < 0.5 else 13)
+        x += w + rng.randint(0, 5)
+    for k in range(5):                # cable trays bridging between pillars, fiber hanging below
+        x0, length, y0 = rng.randrange(W), rng.randint(30, 70), rng.randint(5, 10)
+        for i in range(length):
+            xx = (x0 + i) % W
+            f[y0, xx] = 10
+            if f[y0 + 1, xx] == 0:
+                f[y0 + 1, xx] = 8 if i % 3 else 11
+    f[f > 0] = np.where(np.arange(H)[:, None].repeat(W, 1)[f > 0] >= ground - 1, 2, f[f > 0])
+    f[ground + 1:] = 1
+
+    bpal = [(4, 5, 8), (8, 10, 15), (12, 15, 22), (17, 21, 30), (23, 28, 40), (30, 36, 51),
+            (14, 16, 24), (40, 46, 62), (44, 70, 110), (60, 170, 110), (46, 60, 86), (70, 92, 128),
+            (112, 140, 182), fog, fog, fog]
+    # 0..5 darkness to haze gradient, 6 wall slab, 7 wall edge, 8 window blue, 9 window green,
+    # 10..12 light shaft dim / mid / bright, 13..15 fog
+    BW = 256
+    b = np.zeros((H, BW), np.uint8)
+    for y in range(H):
+        for x in range(BW):
+            b[y, x] = min(5, int(y / 26 * 5 + bayer4(x, y)))
+    x = 0
+    while x < BW:                     # city walls: slabs that leave the top of the strip
+        w = rng.randint(10, 30)
+        top = rng.randint(0, 10) if rng.random() < 0.6 else rng.randint(10, 18)
+        for xx in range(x, x + w):
+            for yy in range(top, ground + 1):
+                b[yy, xx % BW] = 7 if xx == x else 6
+        for yy in range(top + 2, ground - 1, 3):     # sparse windows
+            for xx in range(x + 2, x + w - 1, 3):
+                r = rng.random()
+                if r < 0.10:
+                    b[yy, xx % BW] = 9
+                elif r < 0.22:
+                    b[yy, xx % BW] = 8
+        x += w + rng.randint(1, 8)
+    for _ in range(5):                # light shafts falling from far above, slanted
+        sx, width, slope = rng.uniform(0, BW), rng.uniform(4, 9), rng.uniform(0.15, 0.35)
+        for y in range(ground + 1):
+            c = sx + slope * y
+            for xx in range(int(c - width), int(c + width) + 1):
+                d = abs(xx - c) / width
+                lvl = 1 - d
+                v = lvl * (0.5 + 0.5 * y / ground)
+                if v > 0.55:
+                    b[y, xx % BW] = 12 if v > 0.8 and bayer4(xx, y) < 0.6 else 11
+                elif v > 0.25 and bayer4(xx, y) < v * 1.6:
+                    b[y, xx % BW] = 10
+    b[ground + 1:] = 13
+    return f, b, fpal, bpal
+
+
 def pack4(img):
     """Pack 4-bit pixels two per byte, low nibble = left pixel."""
     return (img[:, 0::2] | (img[:, 1::2] << 4)).astype(np.uint8).tobytes()
@@ -401,6 +714,7 @@ def pack4(img):
 LEAGUES = {
     "edge": dict(pal=EDGE_PAL, tiles=paint_edge_tiles, background=paint_edge_background,
                  horizon=paint_edge_horizon),
-    # "spine": dict(pal=SPINE_PAL, tiles=paint_spine_tiles, ...),   M3
+    "spine": dict(pal=SPINE_PAL, tiles=paint_spine_tiles, background=paint_spine_background,
+                  horizon=paint_spine_horizon),
     # "core":  dict(pal=CORE_PAL, tiles=paint_core_tiles, ...),     M5
 }

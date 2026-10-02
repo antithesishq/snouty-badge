@@ -33,9 +33,10 @@ fn rank_word(rank: u8) []const u8 {
 pub fn draw(frame: u32) void {
     const m = &world.w.machines[world.player];
     cart.rect(.{ .x = 0, .y = 0, .width = 160, .height = 128, .fill_color = hud.anti_black });
-    hud.centered("COMMITTED", 12, hud.cyan);
+    hud.centered(if (m.active) "COMMITTED" else "JOB KILLED", 12, if (m.active) hud.cyan else hud.coral);
     hud.text("RANK", 24, 36, hud.white);
-    hud.text(rank_word(if (world.w.active_count > 1) m.rank else 1), 88, 36, if (m.rank == 1) hud.cyan else hud.white);
+    const rank: u8 = if (!m.active) 0 else if (world.w.active_count > 1) m.rank else 1;
+    hud.text(rank_word(rank), 88, 36, if (rank == 1) hud.cyan else if (rank == 0) hud.coral else hud.white);
     var clock: [7]u8 = undefined;
     hud.format_clock(&clock, m.finish_tick);
     hud.text("TIME", 24, 50, hud.white);

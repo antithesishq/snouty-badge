@@ -36,6 +36,13 @@ Rasterizer rules:
     sample 0 (2 tiles, checker). Sector 1/2: (-4, 4] at samples 85/170
     (1 tile). A cut at least 8 px wide always stops a 4-connected path;
     the validator checks that the three marks split the loop in three.
+  * hop also leaves a gap of off-track void tiles (GAP + 4-neighbour mask,
+    attribute 0) across the whole width (open-edge glow included) just past
+    the plate, (12, 44] px plus a shift of up to 8 px chosen so that no
+    centerline sample is a spot where a stopped machine sits wholly in the
+    gap. Hops must sit on straight runs along x or y.
+  * `open` opens both sides of a segment; `open:left` / `open:right` only the
+    driver's left or right side (the other side keeps its rail).
   * Off-track tiles 4-adjacent to surface become edge pieces chosen by the
     4-neighbour surface mask (N=1, E=2, S=4, W=8): open-edge glow (attr 1)
     if the nearest sample's segment is `open`, else rail (attr 2). Tiles
@@ -45,8 +52,8 @@ Rasterizer rules:
 Everything is seeded from crc32 of the track or league name, so reruns are
 byte-identical. The script validates its output and exits non-zero on any
 failure. The tile vocabulary and the league painters live in
-tools/leagues.py; only the Edge league exists so far, and a league is one
-LEAGUES entry there (palette + tile painter + background + horizon).
+tools/leagues.py (Edge and Spine so far); a league is one LEAGUES entry
+there (palette + tile painter + background + horizon).
 """
 from __future__ import annotations
 
@@ -65,13 +72,25 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from leagues import (  # noqa: E402  (tools/leagues.py: tile vocabulary + league painters)
     A_SURF, A_START, A_SEC1, A_SEC2, ATTR_NAMES, DRIVABLE, FLAG_BITS, SURF,
     SURF_DOT, SURF_SEAM_V, SURF_SEAM_H, SURF_SEAM_X, EDGE_OPEN, RAIL, PAD, THROT,
-    COLD, HOT, HOP, START, SEC1, SEC2, RAIL_DIAG, EDGE_DIAG,
+    COLD, HOT, HOP, START, SEC1, SEC2, RAIL_DIAG, EDGE_DIAG, GAP, A_OFF,
     N_, E_, S_, W_, rgb565, pack4, LEAGUES
 )
 
 CART = Path(__file__).resolve().parent.parent
 T, MAPN, WORLD, NSAMP = 8, 128, 1024, 256
 MARGIN = 100   # px between the centerline and the map's wrap edges
+# Hop gap: off-track tiles across the whole width, (GAP_LO, GAP_HI] px past
+# the middle of the hop plate band (which is (-12, 12]). 32 px > the 24 px
+# footprint, so a machine that does not hop falls; a hop (40 ticks) from the
+# plate at 1.5 px/tick already lands past the gap. Plate and gap move together
+# by whole tiles (HOP_SHIFTS px from the segment middle) until no centerline
+# sample is a spot where a stopped machine would sit wholly in the gap.
+GAP_LO, GAP_HI = 12, 44
+HOP_SHIFTS = (0, 8, -8, 16, -16, 24, -24)
+# tuning.zig traffic_samples: traffic spawns cruising (not hopping) there, so
+# none may sit between a hop plate and the end of its gap.
+TRAFFIC_SAMPLES = (40, 72, 106, 140, 186, 218)
+HALF_LEN, HALF_WID = 12, 6   # tuning.zig machine footprint
 
 
 # ---------------------------------------------------------------- tracks
@@ -88,7 +107,7 @@ def parse_track(path):
         else:
             x, y = float(line[0]), float(line[1])
             half = float(line[2]) if len(line) > 2 else float(width)
-            feats, hot = set(), 0
+            feats, hot, side = set(), 0, None
             for f in line[3:]:
                 name, _, n = f.partition(":")
                 if name not in FLAG_BITS:
@@ -96,7 +115,11 @@ def parse_track(path):
                 feats.add(name)
                 if name == "hot":
                     hot = int(n or 1)
-            pts.append((x, y, half, feats, hot))
+                if name == "open":
+                    side = n or "both"
+                    if side not in ("both", "left", "right"):
+                        raise SystemExit(f"{path}:{ln}: open takes :left or :right (driver's side), got {f!r}")
+            pts.append((x, y, half, feats, hot, side))
     if league not in LEAGUES or len(pts) < 4:
         raise SystemExit(f"{path}: needs a known league and at least 4 control points")
     return league, pts
@@ -151,7 +174,7 @@ class Track:
         self.seg_start = np.interp(np.arange(n + 1), u, cum)   # arc of each control point
         self.flags = []
         for p in self.pts:
-            f = 0 if "open" in p[3] else 1 << FLAG_BITS["rail"]
+            f = 0 if p[5] == "both" else 1 << FLAG_BITS["rail"]   # one-sided open keeps a rail
             for name in p[3]:
                 if name != "rail":
                     f |= 1 << FLAG_BITS[name]
@@ -249,6 +272,7 @@ def build_track(trk, ts, lg, rng):
         return res
     # 4. Segment features.
     bands = []   # band centre arcs, kept clear of hot spots
+    hops = []    # dense index of each hop plate's centre
     for i, p in enumerate(trk.pts):
         feats = p[3]
         a, b = trk.seg_start[i], trk.seg_start[i + 1]
@@ -261,6 +285,17 @@ def build_track(trk, ts, lg, rng):
             if name in feats:
                 bands.append(mid)
                 jm = int(round(mid / trk.ds)) % nd
+                if name == "hop":
+                    if round(turn_at(jm) / (math.pi / 4)) % 2:
+                        raise SystemExit(f"{trk.name}: hop on segment {i} must sit on a straight run along x or y")
+                    for sh in HOP_SHIFTS:
+                        j2 = (jm + int(round(sh / trk.ds))) % nd
+                        if gap_ok(trk, j2, band(j2, GAP_LO, GAP_HI, surf_list)):
+                            jm = j2
+                            break
+                    else:
+                        raise SystemExit(f"{trk.name}: no clean place for the hop gap near ({trk.dx[jm]:.0f},{trk.dy[jm]:.0f})")
+                    hops.append(jm)
                 for ty, tx in band(jm, -12, 12, surf_list):
                     tmap[ty, tx] = base + (dir4(jm) if base != THROT else 0)
         if p[4]:
@@ -284,7 +319,13 @@ def build_track(trk, ts, lg, rng):
     edge = np.zeros_like(surf)
     for ty, tx in np.argwhere(~surf & near):
         j = jmap[ty, tx]
-        is_open = trk.dflags[j] & (1 << FLAG_BITS["open"])
+        side = trk.pts[trk.seg[j]][5]
+        if side in ("left", "right"):
+            ox, oy = tx * T + 4 - trk.dx[j], ty * T + 4 - trk.dy[j]
+            tdx, tdy = trk.dx[(j + 2) % nd] - trk.dx[j - 2], trk.dy[(j + 2) % nd] - trk.dy[j - 2]
+            is_open = (tdx * oy - tdy * ox > 0) == (side == "right")   # y down: cross > 0 is the driver's right
+        else:
+            is_open = side == "both"
         if m4[ty, tx]:
             tmap[ty, tx] = (EDGE_OPEN if is_open else RAIL) + m4[ty, tx]
             edge[ty, tx] = True
@@ -301,9 +342,43 @@ def build_track(trk, ts, lg, rng):
         j = trk.sidx[k]
         for ty, tx in band(j, lo, hi, surf_list + open_edges):
             tmap[ty, tx] = base if base == START else base + axis_of(tturn(j))
-    # 7. League background on everything else.
+    # 7. Hop gaps: off-track void across the whole drivable width (open-edge
+    #    glow included) just past each hop plate.
+    for jm in hops:
+        gap = band(jm, GAP_LO, GAP_HI, surf_list + open_edges)
+        gset = set(gap)
+        for ty, tx in gap:
+            tmap[ty, tx] = GAP
+        for ty, tx in gap:
+            m = 0
+            for bit, (yy, xx) in ((N_, (ty - 1, tx)), (E_, (ty, tx + 1)), (S_, (ty + 1, tx)), (W_, (ty, tx - 1))):
+                if (yy, xx) not in gset and ts.attr[tmap[yy, xx]] in DRIVABLE:
+                    m |= bit
+            tmap[ty, tx] = GAP + m
+    trk.hops = hops
+    # 8. League background on everything else.
     lg["background"](tmap, ~surf & ~edge, rng)
     return tmap, surf
+
+
+def gap_ok(trk, jm, gap):
+    """No centerline sample is a spot where a stopped machine (24x12 on the
+    line heading) sits wholly inside the gap, and no traffic spawn sample is
+    between the hop plate and the end of the gap."""
+    gs = set(gap)
+    nd = len(trk.dx)
+    for k, j in enumerate(trk.sidx):
+        a = trk.turn[k] / 65536 * 2 * math.pi
+        hx, hy = math.cos(a), math.sin(a)
+        inside = all((int(trk.dy[j] + al * hy + ac * hx) // T, int(trk.dx[j] + al * hx - ac * hy) // T) in gs
+                     for al in (-HALF_LEN, HALF_LEN) for ac in (-HALF_WID, HALF_WID))
+        if inside:
+            return False
+        if k in TRAFFIC_SAMPLES:
+            d = ((j - jm + nd // 2) % nd - nd // 2) * trk.ds
+            if -12 - 2 * HALF_LEN < d < GAP_HI + 2 * HALF_LEN:
+                raise SystemExit(f"{trk.name}: traffic spawn sample {k} sits on the hop plate or gap; move the hop")
+    return True
 
 
 def center_bytes(trk):
@@ -318,8 +393,12 @@ def center_bytes(trk):
 def validate(trk, tmap, ts, errs):
     attr = ts.attr
     a = attr[tmap]
+    in_gap = (tmap >= GAP) & (tmap < GAP + 16)
     for j in range(len(trk.dx)):
-        v = a[int(trk.dy[j]) // T, int(trk.dx[j]) // T]
+        ty, tx = int(trk.dy[j]) // T, int(trk.dx[j]) // T
+        v = a[ty, tx]
+        if in_gap[ty, tx] and trk.dflags[j] & (1 << FLAG_BITS["hop"]):
+            continue
         if v not in DRIVABLE:
             errs.append(f"{trk.name}: centerline point {j} at ({trk.dx[j]:.0f},{trk.dy[j]:.0f}) on attribute {v}")
             break
@@ -353,7 +432,26 @@ def validate(trk, tmap, ts, errs):
     ids = [lab[int(trk.dy[j]) // T, int(trk.dx[j]) // T] for j in probes]
     if len(set(ids)) != 3 or 0 in ids:
         errs.append(f"{trk.name}: start/sector bands do not cut the track into 3 regions {ids}")
+    # Each hop gap cuts the loop once more: drivable minus the start line is
+    # one piece without hops, 1 + hops pieces with them.
+    pieces = label4(np.isin(a, list(DRIVABLE - {A_START}))).max()
+    if pieces != 1 + len(trk.hops):
+        errs.append(f"{trk.name}: drivable floor minus the start line is {pieces} pieces, expected {1 + len(trk.hops)} (hop gaps must cut the whole width)")
     return clear
+
+
+def min_radius(trk, step=12):
+    """Smallest circumradius of (j - step, j, j + step) along the dense line."""
+    nd = len(trk.dx)
+    j = np.arange(nd)
+    ax, ay = trk.dx[j - step], trk.dy[j - step]
+    bx, by = trk.dx, trk.dy
+    cx, cy = trk.dx[(j + step) % nd], trk.dy[(j + step) % nd]
+    ab, bc, ca = np.hypot(ax - bx, ay - by), np.hypot(bx - cx, by - cy), np.hypot(cx - ax, cy - ay)
+    cross = np.abs((bx - ax) * (cy - ay) - (by - ay) * (cx - ax))
+    r = np.where(cross > 1e-9, ab * bc * ca / (2 * np.maximum(cross, 1e-9)), 1e9)
+    k = int(r.argmin())
+    return r[k], trk.dx[k], trk.dy[k], int(trk.seg[k])
 
 
 def label4(m):
@@ -416,7 +514,7 @@ def write_league(name, lg, out, docs):
     Image.fromarray(sheet).save(docs / f"{name}_tiles.png")
     lines = [f"# {name} tileset: index, name, attribute (generated by tools/build_tracks.py)"]
     lines += [f"{i:3d}  {n:34s} {ts.attr[i]} {ATTR_NAMES[ts.attr[i]]}" for i, n in enumerate(ts.names) if n]
-    lines += ["# unnamed indices hold a copy of tile 1 (rack panel), attribute 0"]
+    lines += ["# unnamed indices hold a copy of tile 1, attribute 0"]
     (docs / f"{name}_tiles.txt").write_text("\n".join(lines) + "\n")
     hz = np.zeros((64, 512, 3), np.uint8)
     back = np.array(bpal, np.uint8)[np.tile(b, 2)]
@@ -468,15 +566,19 @@ def main():
         write_preview(trk, tmap, ts, docs / f"{trk.name}_preview.png")
         clear = validate(trk, tmap, ts, errs)
         counts = np.bincount(ts.attr[tmap].ravel(), minlength=11)
+        r, rx, ry, rseg = min_radius(trk)
         print(f"track {trk.name}: lap {trk.length:.0f} px, {len(trk.pts)} control points, "
-              f"min clearance {clear:.0f} px")
+              f"min clearance {clear:.0f} px, min radius {r:.0f} px at ({rx:.0f},{ry:.0f}) segment {rseg}, "
+              f"{len(trk.hops)} hop gap(s)")
         print("  segment lengths: " + " ".join(f"{b - a:.0f}" for a, b in zip(trk.seg_start, trk.seg_start[1:])))
         print("  tiles per attribute: " + ", ".join(f"{ATTR_NAMES[i]} {c}" for i, c in enumerate(counts) if c))
         print(f"  start ({trk.dx[0]:.0f},{trk.dy[0]:.0f}) heading {trk.turn[0]}; sector1 sample 85 at "
               f"({trk.dx[trk.sidx[85]]:.0f},{trk.dy[trk.sidx[85]]:.0f}); sector2 sample 170 at "
               f"({trk.dx[trk.sidx[170]]:.0f},{trk.dy[trk.sidx[170]]:.0f})")
-        if not 4000 <= trk.length <= 5000:
-            print(f"  note: lap length {trk.length:.0f} outside 4000..5000")
+        if not 3800 <= trk.length <= 5000:
+            errs.append(f"{trk.name}: lap length {trk.length:.0f} outside 3800..5000")
+        if r < 30:
+            errs.append(f"{trk.name}: corner radius {r:.0f} px at ({rx:.0f},{ry:.0f}) under 30 px (Cold Aisle drives at 31; the autopilot needs ~30)")
     expect = {"tiles": 16384, "pal": 512, "horizon": 12352, "map": 16384, "attr": 256, "center": 2048}
     for p, n in sorted(sizes.items()):
         kind = p.stem.rsplit("_", 1)[1]

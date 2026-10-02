@@ -1,0 +1,32 @@
+# Fiber Backbone: Spine league, track 1. Long flowing sweepers along the
+# main fiber run, driven clockwise on the map image: a sweeper along the
+# top, a big right-hander, then a long loop that reaches back into the
+# middle of the map and out again, down the east side, then the bottom
+# straight west where the floor is broken and there are no rails: hop the
+# gap or fall into the city. The cold aisle runs up the west side, then an
+# S to the line. Control point 0 is the start line; features on point i
+# apply to the segment from point i to i+1.
+league spine
+width 60
+# x    y    half   features
+ 320  120   64                     # start line
+ 540  220   60                     # a long sweeper along the top
+ 800  140   60
+ 890  280   56
+ 820  370   56                     # sweeper back in toward the middle
+ 480  380   56
+ 350  410   56
+ 300  500   56
+ 350  590   56
+ 480  620   56
+ 780  620   56
+ 890  730   56
+ 800  890   64     open hop        # the broken floor: hop the gap
+ 400  900   64
+ 250  880   60
+ 150  770   56     cold            # cold aisle up the west side
+ 140  560   56
+ 140  440   56
+ 205  320   56                     # an S up the west wall
+ 150  210   56
+ 210  125   60

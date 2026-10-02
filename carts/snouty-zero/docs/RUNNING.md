@@ -17,7 +17,19 @@ traffic machines, machine collisions, Overclock on Up (costs 250 of the
 1000 thermal, needs 100), overclock pads, throttled zones, hot spots,
 hops, the rank top-right, the minimap bottom-right, and a results screen
 2.5 s after the finish (rank, time, best lap, rewinds, thermal); Start
-restarts the race from there. The rewind (B) and the menus arrive with M3.
+restarts the race from there. M3 is the game around it: splash, title (10
+s idle starts the attract demo: the autopilot races and rewinds), the menu
+(Quick Race, Grand Prix, Sound), league and track pickers over six tracks
+(Edge: Cold Aisle, Substation Sprint, Exhaust Ridge; Spine: Fiber
+Backbone, Rack Row 7, Tape Vault), the pause menu, and the Antithesis
+mechanic: hold B to run the race backwards (2 ticks a frame, every other
+scanline dark, `<<` by the cyan snapshot bar) while the snapshot bar
+drains; it refills 1 tick per 10 and fills at the start line. A crash
+(SEGMENT FAULT off an open edge, THERMAL SHUTDOWN, a hard COLLISION)
+freezes the world for 20 frames with its cause, then rewinds 120 ticks
+automatically if the bar holds 90 (which it costs); with less, JOB KILLED
+ends the race with RETIRED on the results. Grand Prix: the league's three
+tracks, points 9/6/4/3/2, standings between tracks, a champion line.
 
 Controls (SPEC section 4) at M2:
 
@@ -27,9 +39,10 @@ Controls (SPEC section 4) at M2:
 | A (hold) | accelerate |
 | Down | brake; with Left/Right the tight turn (more yaw, less grip) |
 | Up | Overclock: 90 ticks of boost for 250 thermal (needs 100 left) |
-| Start | on the results screen: new race |
+| B (hold) | rewind while the snapshot bar lasts |
+| Start | pause menu (Resume, Restart, Quit, Sound); confirm in menus |
 | Select | toggle the minimap size (32 / 48 px) |
-| B | rewind arrives with M3 |
+| A | confirm in menus; B backs out |
 
 The M0 free camera is still there for debugging the floor through the
 `debug_set_freecam` export (`--call debug_set_freecam:1`: Left/Right
@@ -109,6 +122,23 @@ python3 ../../tools/make_gif.py out/ preview.gif --scale 3 --ms 170
 
 Input scripts live in `tools/scripts/`:
 
+- `m3_menus.json` (600 frames): Start at 130 (title), Down Down A (Sound
+  on) at 160-180, Up Up A (Quick Race) at 200-220, Down A (league 2,
+  Spine) at 240-250, Down A (track 2, Rack Row 7) at 270-280; Start at 400
+  (pause), Down A at 420-430 (Restart). `debug_screen` reads 5 (race)
+  from 281 and `debug_track` 4.
+- `m3_bench.json` (1700 frames): Start, Start, A, A, A through the splash,
+  title and menus into a Quick Race on Cold Aisle (race from frame 200),
+  then the M1 drive with B held 1100-1160. The badge-bench default from
+  M3 (badge-bench cannot make `--call` setup calls).
+- `m3_rewind.json` (3600 frames, with `--call debug_start_race:0 --call
+  debug_set_autopilot:1`): the autopilot drives Cold Aisle (the script's
+  steers are ignored while it drives) and B is held 900-960: a 120-tick
+  hold-B rewind (`debug_tick` goes from 700 back to 579, `debug_rewinds`
+  1); add `--call-at 1500 debug_force_crash` for a SEGMENT FAULT at tick
+  ~1180 followed by the 20-frame hit-stop and the 120-tick auto rewind
+  (`debug_rewinding` 3, then 2, then 0; `debug_rewinds` 2).
+
 - `m2_player.json` (6000 frames): A held throughout, Up (Overclock) at
   300, Right 330-400, Right+Down 520-600, Left 700-760, Select at 1800
   (large minimap). The badge-bench default from M2 (1500 frames: the
@@ -144,9 +174,16 @@ Debug exports (zero-argument wasm functions, usable with `--dump-exports`,
 | `debug_crashes` | crash hit-stops started since boot |
 | `debug_best_lap` | best lap in ticks (0 until a lap is done) |
 | `debug_rank` | player rank 1..5 |
-| `debug_screen` | 0 race, 1 results |
+| `debug_screen` | 0 splash, 1 title, 2 main menu, 3 league pick, 4 track pick, 5 race, 6 pause, 7 results, 8 standings |
 | `debug_machine_px(i)`, `debug_machine_py(i)`, `debug_machine_lap(i)` | machine i (0 player, 1..4 rivals, 5..10 traffic); one-argument exports |
 | `debug_set_autopilot(v)`, `debug_set_freecam(v)` | setup calls (`--call NAME:1`) |
+| `debug_start_race(n)` | setup call: skip the menus into a Quick Race on track n (0..5 in `track.tracks` order) |
+| `debug_force_crash` | `--call-at T debug_force_crash`: the player falls (SEGMENT FAULT) |
+| `debug_snapshot` | snapshot bar in ticks, 0..180 |
+| `debug_rewinds` | rewinds this race (hold-B holds + auto rewinds) |
+| `debug_rewinding` | 0 live, 1 hold-B rewind, 2 auto-rewind playback, 3 crash hit-stop, 4 JOB KILLED |
+| `debug_active` | 1 while the player's machine is alive |
+| `debug_sound`, `debug_mode`, `debug_track`, `debug_gp_points` | sound flag; 0 quick / 1 GP / 2 attract; current track index; SNOUTY's GP points |
 
 ## 6. Flashing
 
