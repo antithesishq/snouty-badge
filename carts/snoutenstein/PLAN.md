@@ -1225,3 +1225,19 @@ render check). check.sh now reads the demo level from the data file.
   Debugger (7 bursts kill the Heisenbug; the player at 3 to 6 cells trades
   bursts for spit). Next: Adrian's review of M1-M6 in the simulator; no
   cart milestone is planned beyond M6.
+- 2026-10-02: death-loop fix (Adrian: "once you take enough damage in a mob
+  ... you die, get prompted to rewind, briefly rewind with your available
+  budget, die again, etc."). Cause: the 3 s death reserve lands back in
+  the same mob at the HP it had then (a tap out of death: the last living
+  tick, 4 HP), so the next bite kills again. Fix: leaving a rewind out of
+  death alive revives the player, `rewind.revive`: `player.grace` = 120
+  ticks without damage or web freeze (`sim.death_grace`, one of Player's
+  two pad bytes, so GameState stays 1,372 bytes and the demo hash holds)
+  and HP topped up to `sim.death_hp_floor` = 25. Both go in the commit
+  tick's patch (Patch gained `hp` and `grace`), so replays and the
+  keyframe self-check agree. HUD: HP text and portrait frame blink Iris
+  during the grace. Tests: sim grace unit test; rewind "death revive" runs
+  the Build Farm mob (tap out of death without revive dies in < 60 ticks,
+  revived lasts >= 300 even without aiming, reserve + revive survives
+  600); m3_death asserts HP >= 25 and grace 120 after the rewind. bss
+  93.5 KB (+2.5 KB patch ring).

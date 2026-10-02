@@ -117,7 +117,7 @@ fn update_enemy_shot(s: *GameState, level: *const Level, p: *state.Projectile) b
     if (dx * dx + dy * dy < hit_radius_sq) {
         if (p.kind == kind_web) {
             sim.damage_player(s, web_damage);
-            s.player.frozen = web_freeze_ticks;
+            if (s.player.grace == 0) s.player.frozen = web_freeze_ticks;
         } else {
             sim.damage_player(s, spit_damage);
         }
