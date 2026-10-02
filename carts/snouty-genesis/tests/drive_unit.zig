@@ -45,7 +45,7 @@ fn find(s: *const drive.Scan, name: []const u8) !*const drive.Candidate {
 }
 
 test "drive: scan lists the four ROM files in directory order with their verdicts" {
-    const s = drive.scan(drive_img, &clusters);
+    const s = drive.scan(.truncated_test(drive_img), &clusters);
     try testing.expect(s.err == null);
     try testing.expectEqual(@as(u32, 4), s.count);
     try testing.expectEqual(@as(u32, 2), s.playable_count);
@@ -64,7 +64,7 @@ test "drive: scan lists the four ROM files in directory order with their verdict
 }
 
 test "drive: header names come from the header, refused files have none" {
-    const s = drive.scan(drive_img, &clusters);
+    const s = drive.scan(.truncated_test(drive_img), &clusters);
     // roms/snouty-test.bin: domestic and overseas name "SNOUTY TEST" at
     // 0x120 / 0x150, space padded.
     try testing.expectEqualStrings("SNOUTY TEST", (try find(&s, "TEST.GEN")).name());
@@ -92,8 +92,8 @@ fn check_reads(src: *const core.RomSource, want: []const u8) !void {
 
 test "drive: open maps TEST.GEN contiguous, reads back the test ROM" {
     const want = try test_rom();
-    const s = drive.scan(drive_img, &clusters);
-    const m = try drive.open(drive_img, try find(&s, "TEST.GEN"), &clusters);
+    const s = drive.scan(.truncated_test(drive_img), &clusters);
+    const m = try drive.open(.truncated_test(drive_img), try find(&s, "TEST.GEN"), &clusters);
     const p = m.contiguous() orelse return error.NotContiguous;
     const src = drive.source_of(&m);
     try testing.expectEqual(@as(?[*]const u8, p), src.base);
@@ -104,8 +104,8 @@ test "drive: open maps TEST.GEN contiguous, reads back the test ROM" {
 
 test "drive: open maps FRAG.MD through the cluster table, same bytes" {
     const want = try test_rom();
-    const s = drive.scan(drive_img, &clusters);
-    const m = try drive.open(drive_img, try find(&s, "FRAG.MD"), &clusters);
+    const s = drive.scan(.truncated_test(drive_img), &clusters);
+    const m = try drive.open(.truncated_test(drive_img), try find(&s, "FRAG.MD"), &clusters);
     try testing.expect(m.contiguous() == null);
     try testing.expectEqual(@as(usize, 32), m.clusters.len);
     // Stored back to front (tests/fixtures/make_fixtures.py).
@@ -117,7 +117,7 @@ test "drive: open maps FRAG.MD through the cluster table, same bytes" {
 }
 
 test "drive: a volume with no Genesis ROM lists the refused file, nothing playable" {
-    const s = drive.scan(none_img, &clusters);
+    const s = drive.scan(.truncated_test(none_img), &clusters);
     try testing.expect(s.err == null);
     try testing.expectEqual(@as(u32, 1), s.count);
     try testing.expectEqual(@as(u32, 0), s.playable_count);
@@ -128,14 +128,14 @@ test "drive: a volume with no Genesis ROM lists the refused file, nothing playab
 
 test "drive: a boot sector without the signature is NoVolume" {
     var img: [2048]u8 = @splat(0);
-    const s = drive.scan(&img, &clusters);
+    const s = drive.scan(.whole(&img), &clusters);
     try testing.expectEqual(@as(?romfs.Error, error.NoVolume), s.err);
     try testing.expectEqual(@as(u32, 0), s.count);
     try testing.expectEqual(@as(u32, 0), s.playable_count);
     // The real image with its signature broken.
     var broken: [drive_img.len]u8 = drive_img.*;
     broken[510] = 0;
-    try testing.expectEqual(@as(?romfs.Error, error.NoVolume), drive.scan(&broken, &clusters).err);
+    try testing.expectEqual(@as(?romfs.Error, error.NoVolume), drive.scan(.truncated_test(&broken), &clusters).err);
 }
 
 test "drive: header_name collapses padding and falls back to the overseas name" {
@@ -166,9 +166,9 @@ fn crc_in_steps(m: *const romfs.Mapped, chunk: u32, steps: *u32) u32 {
 }
 
 test "drive: the incremental CRC of the fragmented and contiguous files matches crc32" {
-    const s = drive.scan(drive_img, &clusters);
+    const s = drive.scan(.truncated_test(drive_img), &clusters);
     for ([_][]const u8{ "FRAG.MD", "TEST.GEN" }) |name| {
-        const m = try drive.open(drive_img, try find(&s, name), &clusters);
+        const m = try drive.open(.truncated_test(drive_img), try find(&s, name), &clusters);
         try testing.expectEqual(test_rom_crc, m.crc32());
         // 8 KB (the cart's chunk), odd sizes that cut clusters, one byte.
         for ([_]u32{ 8 * 1024, 1000, 512, 3, 1, 1 << 20 }) |chunk| {

@@ -44,7 +44,7 @@ fn check_bytes(m: *const romfs.Mapped, src: []const u8) !void {
 }
 
 test "romfs: waternet.gg image is one contiguous file, every 16 KB bank maps" {
-    const v = try romfs.Volume.open(waternet_img);
+    const v = try romfs.Volume.open(.truncated_test(waternet_img));
     var out: [4]romfs.Entry = undefined;
     const n = v.find(&.{ "gg", "sms" }, &out);
     try testing.expectEqual(@as(usize, 1), n);
@@ -73,7 +73,7 @@ test "romfs: waternet.gg image is one contiguous file, every 16 KB bank maps" {
 }
 
 test "romfs: long, 8.3 and case-flag names; deleted, directories, AppleDouble skipped" {
-    const v = try romfs.Volume.open(drive_img);
+    const v = try romfs.Volume.open(.truncated_test(drive_img));
     var out: [16]romfs.Entry = undefined;
     const n = v.find(&.{ "gg", "SMS" }, &out);
     const want = [_][]const u8{
@@ -115,7 +115,7 @@ test "romfs: NT case bits and an LFN group whose checksum does not match" {
     // LFN support); the reader must fall back to the 8.3 name.
     try testing.expectEqualStrings("SONICT~1GG ", img[root + 10 * 32 ..][0..11]);
     img[root + 10 * 32 + 5] = 'X';
-    const v = try romfs.Volume.open(&img);
+    const v = try romfs.Volume.open(.truncated_test(&img));
     var out: [8]romfs.Entry = undefined;
     const n = v.find(&.{"gg"}, &out);
     try testing.expect(n >= 2);
@@ -124,7 +124,7 @@ test "romfs: NT case bits and an LFN group whose checksum does not match" {
 }
 
 test "romfs: fragmented files map, chunk() only across consecutive clusters, read() exact" {
-    const v = try romfs.Volume.open(drive_img);
+    const v = try romfs.Volume.open(.truncated_test(drive_img));
     var table: [romfs.max_clusters]u16 = undefined;
     for ([_]struct { []const u8, []const u8 }{
         .{ "Sonic The Hedgehog (World).gg", src_a },
@@ -160,7 +160,7 @@ test "romfs: fragmented files map, chunk() only across consecutive clusters, rea
 }
 
 test "romfs: map errors: short table, bad chains" {
-    const v = try romfs.Volume.open(drive_img);
+    const v = try romfs.Volume.open(.truncated_test(drive_img));
     const e = try find_one(&v, "Sonic The Hedgehog (World).gg");
     var small: [2]u16 = undefined;
     try testing.expectError(error.TooManyClusters, v.map(e, &small));
@@ -181,7 +181,7 @@ test "romfs: map errors: short table, bad chains" {
     const off = 5 + 5 / 2; // odd cluster: high 12 bits of the pair
     fat[off] = (fat[off] & 0x0F) | 0x50;
     fat[off + 1] = 0x00;
-    const lv = try romfs.Volume.open(&img);
+    const lv = try romfs.Volume.open(.truncated_test(&img));
     try testing.expectError(error.BadChain, lv.map(e, &table));
 
     // An empty file maps to nothing.
@@ -197,13 +197,13 @@ test "romfs: map errors: short table, bad chains" {
 
 test "romfs: no volume and bad geometry" {
     const zeros = std.mem.zeroes([512]u8);
-    try testing.expectError(error.NoVolume, romfs.Volume.open(&zeros));
+    try testing.expectError(error.NoVolume, romfs.Volume.open(.whole(&zeros)));
     var erased: [512]u8 = undefined;
     @memset(&erased, 0xFF);
-    try testing.expectError(error.NoVolume, romfs.Volume.open(&erased));
+    try testing.expectError(error.NoVolume, romfs.Volume.open(.whole(&erased)));
 
-    const good: [512]u8 = waternet_img[0..512].*;
-    _ = try romfs.Volume.open(&good);
+    const good: [waternet_img.len]u8 = waternet_img.*;
+    _ = try romfs.Volume.open(.truncated_test(&good));
     const Patch = struct { off: usize, val: u8 };
     for ([_]Patch{
         .{ .off = 12, .val = 0x04 }, // 1024-byte sectors
@@ -214,12 +214,96 @@ test "romfs: no volume and bad geometry" {
     }) |p| {
         var bs = good;
         bs[p.off] = p.val;
-        try testing.expectError(error.BadGeometry, romfs.Volume.open(&bs));
+        try testing.expectError(error.BadGeometry, romfs.Volume.open(.truncated_test(&bs)));
     }
     // find on a non-volume finds nothing.
-    const nv = romfs.Volume{ .base = &zeros };
+    const nv = romfs.Volume{ .image = .whole(&zeros) };
     var out: [2]romfs.Entry = undefined;
     try testing.expectEqual(@as(usize, 0), nv.find(&.{"gg"}, &out));
+}
+
+/// The review's INF01 probe boot sector: a valid signature, sector size,
+/// root count and FAT marker, but 3000 reserved sectors, 2 FATs of 8 and
+/// 4000 sectors in all, so cluster 2 would map 1,545,216 bytes in, past the
+/// 1,310,720-byte drive.
+fn probe_boot() [512]u8 {
+    var boot = std.mem.zeroes([512]u8);
+    std.mem.writeInt(u16, boot[510..512], 0xaa55, .little);
+    std.mem.writeInt(u16, boot[11..13], 512, .little);
+    boot[13] = 1;
+    std.mem.writeInt(u16, boot[14..16], 3000, .little);
+    boot[16] = 2;
+    std.mem.writeInt(u16, boot[17..19], 32, .little);
+    std.mem.writeInt(u16, boot[19..21], 4000, .little);
+    std.mem.writeInt(u16, boot[22..24], 8, .little);
+    @memcpy(boot[54..62], "FAT12   ");
+    return boot;
+}
+
+/// A drive-sized image (the badge's 1280 KB region).
+var drive_sized: [romfs.size]u8 = undefined;
+
+test "romfs: geometry outside the drive is BadGeometry before any directory or data access" {
+    const boot = probe_boot();
+    try testing.expectError(error.BadGeometry, romfs.Volume.open(.truncated_test(&boot)));
+    @memset(&drive_sized, 0);
+    @memcpy(drive_sized[0..512], &boot);
+    try testing.expectError(error.BadGeometry, romfs.Volume.open(.whole(&drive_sized)));
+    // A Volume made without `open` re-checks on every call: nothing found,
+    // nothing mapped.
+    const v = romfs.Volume{ .image = .whole(&drive_sized) };
+    var out: [2]romfs.Entry = undefined;
+    try testing.expectEqual(@as(usize, 0), v.find(&.{"gg"}, &out));
+    var table: [1]u16 = undefined;
+    try testing.expectError(error.BadGeometry, v.map(.{ .size = 512, .first_cluster = 2 }, &table));
+
+    // The OS boot sector (2560 sectors, exactly the drive) opens in a
+    // drive-sized image and not in one a sector short of it.
+    @memcpy(drive_sized[0..waternet_img.len], waternet_img);
+    _ = try romfs.Volume.open(.whole(&drive_sized));
+    try testing.expectError(error.BadGeometry, romfs.Volume.open(.whole(drive_sized[0 .. romfs.size - 512])));
+    // A truncated image still may not claim more than the drive.
+    var big: [waternet_img.len]u8 = waternet_img.*;
+    std.mem.writeInt(u16, big[19..21], 2561, .little);
+    try testing.expectError(error.BadGeometry, romfs.Volume.open(.truncated_test(&big)));
+    // Nor be cut inside its FATs or root directory.
+    try testing.expectError(error.BadGeometry, romfs.Volume.open(.truncated_test(waternet_img[0..512])));
+    try testing.expectError(error.BadGeometry, romfs.Volume.open(.truncated_test(waternet_img[0 .. data_start - 1])));
+    _ = try romfs.Volume.open(.truncated_test(waternet_img[0..data_start]));
+    // An image shorter than a boot sector is no volume.
+    try testing.expectError(error.NoVolume, romfs.Volume.open(.whole(waternet_img[0..511])));
+}
+
+test "romfs: a FAT too small for the volume's clusters is BadGeometry, not capped" {
+    // 1 reserved + 2 FATs of 1 sector (341 entries) + 2 root sectors, 2560
+    // sectors: 2555 clusters the FAT cannot describe.
+    var bs: [waternet_img.len]u8 = waternet_img.*;
+    std.mem.writeInt(u16, bs[22..24], 1, .little);
+    try testing.expectError(error.BadGeometry, romfs.Volume.open(.truncated_test(&bs)));
+    // Total cut to fit the 1-sector FAT exactly (339 clusters + 2): opens.
+    std.mem.writeInt(u16, bs[19..21], 5 + 339, .little);
+    _ = try romfs.Volume.open(.truncated_test(&bs));
+    std.mem.writeInt(u16, bs[19..21], 5 + 340, .little);
+    try testing.expectError(error.BadGeometry, romfs.Volume.open(.truncated_test(&bs)));
+}
+
+test "romfs: a truncated image maps no cluster past its bytes" {
+    // drive.img cut two clusters into the data area: Sonic (3 clusters,
+    // fragmented) reaches beyond it, the 1-cluster TETRIS.GG is inside only
+    // when its cluster is.
+    const v = try romfs.Volume.open(.truncated_test(drive_img));
+    const sonic = try find_one(&v, "Sonic The Hedgehog (World).gg");
+    var table: [romfs.max_clusters]u16 = undefined;
+    const full = try v.map(sonic, &table);
+    var last: u16 = 0;
+    for (full.clusters) |c| last = @max(last, c);
+    // Cut just before the highest of Sonic's clusters.
+    const cut = drive_img[0 .. 17 * 512 + 2 * 512 + (@as(usize, last) - 2) * 512];
+    const short = try romfs.Volume.open(.truncated_test(cut));
+    try testing.expectError(error.BadChain, short.map(sonic, &table));
+    // One sector more and it maps again.
+    const cut2 = drive_img[0 .. cut.len + 512];
+    _ = try (try romfs.Volume.open(.truncated_test(cut2))).map(sonic, &table);
 }
 
 test "romfs: constants match the OS layout" {

@@ -79,9 +79,9 @@ pub fn report() []const u8 {
 var clusters: [romfs.max_clusters]u16 = undefined;
 var mapped: romfs.Mapped = undefined;
 
-/// The drive at `romfs.base_addr`.
-fn drive_base() [*]const u8 {
-    return @ptrFromInt(romfs.base_addr);
+/// The drive: `romfs.size` bytes at `romfs.base_addr`.
+fn drive_base() romfs.Image {
+    return romfs.Image.badge();
 }
 
 /// List the drive's ROM files into `scan_result`. Call once from `start()`

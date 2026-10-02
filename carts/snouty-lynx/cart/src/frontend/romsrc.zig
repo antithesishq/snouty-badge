@@ -111,7 +111,7 @@ pub const Choice = enum {
 /// Choose the ROM. Call once from `start()`.
 pub fn select() struct { cart: core.Cart, next: Choice } {
     if (!use_drive) return .{ .cart = embedded(null, null), .next = .run };
-    const base: [*]const u8 = @ptrFromInt(romfs.base_addr);
+    const base = romfs.Image.badge();
     scanned = drive.scan(base, &clusters);
     scanned_ok = true;
     if (scanned.err) |e| return .{ .cart = embedded(@errorName(e), null), .next = .run };
@@ -129,7 +129,7 @@ pub fn select() struct { cart: core.Cart, next: Choice } {
 /// the result before anything reads the old Cart again. A file that no
 /// longer maps gives the embedded ROM with the reason.
 pub noinline fn open(i: usize) core.Cart {
-    const base: [*]const u8 = @ptrFromInt(romfs.base_addr);
+    const base = romfs.Image.badge();
     const cand = &scanned.candidates[i];
     const c = drive.open(base, cand, &clusters, &source) catch |e| return embedded(@errorName(e), null);
     chosen = i;

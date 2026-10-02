@@ -97,7 +97,7 @@ pub fn scan() void {
 }
 
 fn scan_drive() void {
-    const vol = romfs.Volume.open(@ptrFromInt(romfs.base_addr)) catch |e| {
+    const vol = romfs.Volume.open_badge() catch |e| {
         scan_failure = @errorName(e);
         return;
     };
@@ -162,7 +162,7 @@ pub fn select(i: usize) core.Rom {
 fn select_drive(i: usize) core.Rom {
     if (i >= candidate_count or !candidates[i].playable) return embedded("not playable");
     const c = &candidates[i];
-    const vol = romfs.Volume.open(@ptrFromInt(romfs.base_addr)) catch |e| return embedded(@errorName(e));
+    const vol = romfs.Volume.open_badge() catch |e| return embedded(@errorName(e));
     const m = vol.map(c.entry, &clusters) catch |e| return embedded(@errorName(e));
     const size: u32 = @min(m.size, core.rom_mod.max_bytes);
     const n: usize = (size + romfs.sector_size - 1) / romfs.sector_size;

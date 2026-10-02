@@ -27,7 +27,7 @@ fn find(s: *const drive.Scan, name: []const u8) !*const drive.Candidate {
 }
 
 test "drive: scan lists every Lynx file and checks it" {
-    const s = drive.scan(drive_img.ptr, &clusters);
+    const s = drive.scan(.truncated_test(drive_img), &clusters);
     try testing.expect(s.err == null);
     try testing.expectEqual(@as(u32, 4), s.count);
     try testing.expectEqual(@as(u32, 3), s.playable_count);
@@ -44,8 +44,8 @@ test "drive: scan lists every Lynx file and checks it" {
 }
 
 test "drive: contiguous headered file maps by pointer" {
-    const s = drive.scan(drive_img.ptr, &clusters);
-    const c = try drive.open(drive_img.ptr, try find(&s, "GAME.LNX"), &clusters, &src);
+    const s = drive.scan(.truncated_test(drive_img), &clusters);
+    const c = try drive.open(.truncated_test(drive_img), try find(&s, "GAME.LNX"), &clusters, &src);
     try testing.expectEqual(@as(u32, 1), c.direct_blocks());
     // Placeholder block 0 starts with its stripe rows: 0x00 0x00 0x00 0x00 0x00 0x11.
     try testing.expectEqual(@as(u8, 0x00), c.read(0, 0));
@@ -54,14 +54,14 @@ test "drive: contiguous headered file maps by pointer" {
 }
 
 test "drive: fragmented files read the same through pointers and the cluster table" {
-    const s = drive.scan(drive_img.ptr, &clusters);
+    const s = drive.scan(.truncated_test(drive_img), &clusters);
     // RAW.LYX: runs of two clusters, blocks are whole clusters: all direct.
-    var c = try drive.open(drive_img.ptr, try find(&s, "RAW.LYX"), &clusters, &src);
+    var c = try drive.open(.truncated_test(drive_img), try find(&s, "RAW.LYX"), &clusters, &src);
     try testing.expectEqual(@as(u32, 8), c.direct_blocks());
     var i: u32 = 0;
     while (i < 4096) : (i += 1) try testing.expectEqual(pattern(i), c.read(@intCast(i / 512), i % 512));
     // FRAG.LNX: blocks 1 and 3 straddle a run boundary.
-    c = try drive.open(drive_img.ptr, try find(&s, "FRAG.LNX"), &clusters, &src);
+    c = try drive.open(.truncated_test(drive_img), try find(&s, "FRAG.LNX"), &clusters, &src);
     try testing.expectEqual(@as(u32, 2), c.direct_blocks());
     try testing.expect(c.blocks[0] != null and c.blocks[1] == null and c.blocks[2] != null and c.blocks[3] == null);
     i = 0;
@@ -70,11 +70,11 @@ test "drive: fragmented files read the same through pointers and the cluster tab
 }
 
 test "drive: no playable file, no volume" {
-    const s = drive.scan(none_img.ptr, &clusters);
+    const s = drive.scan(.truncated_test(none_img), &clusters);
     try testing.expectEqual(@as(u32, 1), s.count);
     try testing.expectEqual(@as(?usize, null), s.first_playable());
     const blank: [1024]u8 = @splat(0);
-    const n = drive.scan(&blank, &clusters);
+    const n = drive.scan(.whole(&blank), &clusters);
     try testing.expectEqual(@as(?romfs.Error, error.NoVolume), n.err);
     try testing.expectEqual(@as(u32, 0), n.count);
 }

@@ -65,15 +65,15 @@ test "rom: a drive file whose header claims 00000000-FFFFFFFF is refused beside 
     // header declaring the whole u32 space (or a reversed range).
     for ([_][2]u32{ .{ 0, 0xFFFF_FFFF }, .{ 0x200, 0x100 } }, [_]rom.Refusal{ .mapper, .bad_range }) |range, want| {
         var img: [drive_img.len]u8 = drive_img.*;
-        const s0 = drive.scan(&img, &clusters);
-        const m = try drive.open(&img, try find(&s0, "NOHDR.BIN"), &clusters);
+        const s0 = drive.scan(.truncated_test(&img), &clusters);
+        const m = try drive.open(.truncated_test(&img), try find(&s0, "NOHDR.BIN"), &clusters);
         const p = m.contiguous() orelse return error.NotContiguous;
         const at = @intFromPtr(p) - @intFromPtr(&img);
         var hdr: [0x400]u8 = undefined;
         header_rom(&hdr, range[0], range[1]);
         @memcpy(img[at..][0..0x200], hdr[0..0x200]);
 
-        const s = drive.scan(&img, &clusters);
+        const s = drive.scan(.truncated_test(&img), &clusters);
         try testing.expect(s.err == null);
         try testing.expectEqual(@as(u32, 4), s.count);
         try testing.expectEqual(@as(u32, 2), s.playable_count);

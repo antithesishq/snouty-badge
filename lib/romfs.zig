@@ -6,10 +6,15 @@
 //! The volume is the super-floppy the OS formats
 //! (sycl-badge/src/os/loader/storage.zig): boot sector at sector 0, 512-byte
 //! sectors, 1 sector per cluster, 32 root entries, "FAT12   ". The reader is
-//! read-only over a `[*]const u8` base: the badge passes `base_addr` (the XIP
-//! flash window), host tests pass an image in memory. It only touches the
-//! boot sector, the root directory, the FAT entries of the chains it walks
-//! and the data sectors it is asked for, so truncated test images work. No
+//! read-only over an `Image`: the badge passes `Image.badge()` (the
+//! `base_addr` XIP flash window, `size` bytes), host tests an image in
+//! memory. The boot sector's geometry is checked against the image's extent
+//! before any directory or data access, so a corrupt or foreign boot sector
+//! is `BadGeometry`, never a read outside the volume (review INF01). It only
+//! touches the boot sector, the root directory, the FAT entries of the
+//! chains it walks and the data sectors it is asked for, so test images
+//! truncated after the last used sector work through `Image.truncated`,
+//! which bounds every data cluster by the bytes actually present. No
 //! allocator, no floats, nothing heavy at comptime.
 const std = @import("std");
 
@@ -25,9 +30,11 @@ pub const sector_size: usize = 512;
 /// file needs ceil(file size / 512) entries (a 512 KB ROM: 1024).
 pub const max_clusters: usize = size / sector_size;
 
-/// NoVolume: no 0xAA55 boot sector signature (erased flash, zeros).
+/// NoVolume: no 0xAA55 boot sector signature (erased flash, zeros), or an
+/// image shorter than one sector.
 /// BadGeometry: a boot sector, but not the OS geometry (bytes per sector,
-/// sectors per cluster, root entries, FAT type string, sizes out of range).
+/// sectors per cluster, root entries, FAT type string, sizes out of range,
+/// a volume larger than its image, a FAT too small for the clusters).
 /// BadChain: the FAT chain is shorter than the file, loops, or names a free,
 /// reserved, bad or out-of-range cluster. TooManyClusters: the caller's
 /// cluster table is shorter than the file's cluster count.
@@ -68,6 +75,38 @@ fn rd32(p: [*]const u8, off: usize) u32 {
     return @as(u32, rd16(p, off)) | (@as(u32, rd16(p, off + 2)) << 16);
 }
 
+/// The bytes a volume is read from.
+pub const Image = struct {
+    bytes: []const u8,
+    /// A test image cut after its last used sector (`make_romfs.py
+    /// --truncate`): the volume may claim up to `size` bytes (the drive the
+    /// image stands in for), the boot sector, FATs and root directory must
+    /// be present, and `map` refuses (BadChain) any data cluster past the end
+    /// of `bytes`.
+    truncated: bool = false,
+
+    /// The badge drive: the OS romfs region, `size` bytes at `base_addr`.
+    pub fn badge() Image {
+        return whole(@as([*]const u8, @ptrFromInt(base_addr))[0..size]);
+    }
+
+    /// A whole volume in memory: the boot sector may claim at most
+    /// `bytes.len` bytes.
+    pub fn whole(bytes: []const u8) Image {
+        return .{ .bytes = bytes };
+    }
+
+    /// A truncated test image (see `truncated`).
+    pub fn truncated_test(bytes: []const u8) Image {
+        return .{ .bytes = bytes, .truncated = true };
+    }
+
+    /// Bytes the boot sector may claim for the volume.
+    fn extent(img: Image) usize {
+        return if (img.truncated) size else img.bytes.len;
+    }
+};
+
 /// Layout derived from the boot sector (sector numbers from the volume start).
 const Geometry = struct {
     fat_start: u32,
@@ -78,7 +117,9 @@ const Geometry = struct {
     clusters: u32,
 };
 
-fn geometry(base: [*]const u8) Error!Geometry {
+fn geometry(img: Image) Error!Geometry {
+    if (img.bytes.len < sector_size) return error.NoVolume;
+    const base = img.bytes.ptr;
     if (rd16(base, 510) != 0xAA55) return error.NoVolume;
     if (rd16(base, 11) != sector_size) return error.BadGeometry;
     if (base[13] != 1) return error.BadGeometry;
@@ -95,10 +136,16 @@ fn geometry(base: [*]const u8) Error!Geometry {
     const root_sectors = (root_entries * dir_entry_size + ss - 1) / ss;
     const data_start = root_start + root_sectors;
     if (total <= data_start or total > 0xFFFF) return error.BadGeometry;
-    var clusters = total - data_start;
-    // The FAT must be able to hold every cluster entry; FAT12 tops out at 4084.
+    // The whole volume lies inside the image (the 1280 KB region on the
+    // badge), and the metadata the reader walks (boot sector, FATs, root
+    // directory, all before `data_start`) is present in it.
+    if (@as(u64, total) * ss > img.extent()) return error.BadGeometry;
+    if (@as(u64, data_start) * ss > img.bytes.len) return error.BadGeometry;
+    const clusters = total - data_start;
+    // The FAT must hold an entry for every cluster plus the two reserved
+    // ones; FAT12 tops out at 4084 clusters.
     const fat_capacity = fat_sectors * ss * 2 / 3;
-    if (clusters + 2 > fat_capacity) clusters = fat_capacity - 2;
+    if (clusters + 2 > fat_capacity) return error.BadGeometry;
     if (clusters > 4084) return error.BadGeometry;
     return .{
         .fat_start = reserved,
@@ -139,19 +186,25 @@ fn ext_matches(name: []const u8, exts: []const []const u8) bool {
     return false;
 }
 
-/// An open FAT12 volume. Holds only the base pointer; the geometry is read
-/// again from the boot sector (a few loads) by each call.
+/// An open FAT12 volume. Holds only the image; the geometry is read and
+/// checked again from the boot sector (a few loads) by each call.
 pub const Volume = struct {
-    /// Start of the volume (boot sector): `base_addr` on the badge.
-    base: [*]const u8,
+    /// The volume's bytes, boot sector first: `Image.badge()` on the badge.
+    image: Image,
 
     /// Checks the boot sector: signature 0xAA55 (else NoVolume), 512-byte
-    /// sectors, 1 sector per cluster, 32 root entries, "FAT12   " and sane
-    /// sizes (else BadGeometry). FAT, root directory and data positions come
-    /// from the boot sector fields, so any FAT size the OS computes works.
-    pub fn open(base: [*]const u8) Error!Volume {
-        _ = try geometry(base);
-        return .{ .base = base };
+    /// sectors, 1 sector per cluster, 32 root entries, "FAT12   ", a FAT
+    /// large enough for the clusters and a volume that fits the image (else
+    /// BadGeometry). FAT, root directory and data positions come from the
+    /// boot sector fields, so any FAT size the OS computes works.
+    pub fn open(image: Image) Error!Volume {
+        _ = try geometry(image);
+        return .{ .image = image };
+    }
+
+    /// The badge drive (`Image.badge()`).
+    pub fn open_badge() Error!Volume {
+        return open(Image.badge());
     }
 
     /// Scans the root directory in order for files whose extension (after
@@ -165,8 +218,8 @@ pub const Volume = struct {
     /// the end-of-directory marker. Returns the number of entries written,
     /// at most `out.len` (further matches are dropped).
     pub fn find(self: *const Volume, exts: []const []const u8, out: []Entry) usize {
-        const g = geometry(self.base) catch return 0;
-        const root = self.base + g.root_start * sector_size;
+        const g = geometry(self.image) catch return 0;
+        const root = self.image.bytes.ptr + g.root_start * sector_size;
         var count: usize = 0;
         // LFN assembly: characters by position, the sequence still expected
         // next (counting down to 1) and the checksum of the group.
@@ -262,16 +315,21 @@ pub const Volume = struct {
     /// entries are needed; TooManyClusters when the slice is shorter) and
     /// returns the mapping. BadChain when the chain ends early, loops or
     /// names a cluster that is free, reserved, bad (0xFF7) or beyond the
-    /// volume. Links past the file's last cluster are not read. An empty
-    /// file maps to zero clusters.
+    /// volume (for a truncated image: beyond the bytes present). Links past
+    /// the file's last cluster are not read. An empty file maps to zero
+    /// clusters.
     pub fn map(self: *const Volume, e: Entry, clusters: []u16) Error!Mapped {
-        const g = try geometry(self.base);
+        const g = try geometry(self.image);
+        const base = self.image.bytes.ptr;
         const need: u32 = e.size / ss + @intFromBool(e.size % ss != 0);
         if (need > clusters.len) return error.TooManyClusters;
         if (need > g.clusters) return error.BadChain;
-        const fat = self.base + g.fat_start * sector_size;
+        const fat = base + g.fat_start * sector_size;
         var seen = std.mem.zeroes([max_clusters / 8 + 1]u8);
-        const last_valid: u32 = g.clusters + 1;
+        // Highest cluster number on the volume, and in the image's bytes
+        // (the same for a whole image: `geometry` checked it fits).
+        const present: u64 = self.image.bytes.len / ss;
+        const last_valid: u32 = @intCast(@min(g.clusters + 1, present -| g.data_start + 1));
         var c: u32 = e.first_cluster;
         var n: u32 = 0;
         while (n < need) : (n += 1) {
@@ -292,7 +350,7 @@ pub const Volume = struct {
         return .{
             .size = e.size,
             .clusters = clusters[0..need],
-            .data_base = self.base + g.data_start * sector_size,
+            .data_base = base + g.data_start * sector_size,
         };
     }
 };

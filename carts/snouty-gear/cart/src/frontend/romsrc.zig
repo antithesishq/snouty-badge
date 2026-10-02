@@ -62,8 +62,7 @@ pub fn select() core.Rom {
 }
 
 fn from_drive() core.Rom {
-    const base: [*]const u8 = @ptrFromInt(romfs.base_addr);
-    const vol = romfs.Volume.open(base) catch |e| return embedded(@errorName(e));
+    const vol = romfs.Volume.open_badge() catch |e| return embedded(@errorName(e));
     const n = vol.find(&.{ "gg", "sms" }, &entries);
     drive_matches = @intCast(n);
     if (n == 0) return embedded("no .gg/.sms file");

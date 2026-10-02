@@ -7,8 +7,8 @@
 //!
 //! A module root (`@import("drive")`) imported by romsrc.zig and by the
 //! host tests (tests/drive_unit.zig): it sees only `core` and `romfs`, no
-//! cart-api. The badge passes `romfs.base_addr` as `base`, the tests an
-//! image in memory.
+//! cart-api. The badge passes `romfs.Image.badge()` as `image`, the tests
+//! a fixture image in memory (`romfs.Image.truncated_test`).
 //!
 //! The caller owns the cluster table (`romfs.max_clusters` u16, 5 KB) and
 //! the `Source`: `scan` reuses the table for every file, `open` fills it
@@ -67,14 +67,14 @@ pub const Scan = struct {
 };
 
 /// List and check the root's Lynx files, in directory order.
-pub fn scan(base: [*]const u8, clusters: []u16) Scan {
+pub fn scan(image: romfs.Image, clusters: []u16) Scan {
     // Field by field: a `.{}` default would put the zeroed candidates in
     // flash and copy them.
     var s: Scan = undefined;
     s.count = 0;
     s.playable_count = 0;
     s.err = null;
-    const vol = romfs.Volume.open(base) catch |e| {
+    const vol = romfs.Volume.open(image) catch |e| {
         s.err = e;
         return s;
     };
@@ -116,8 +116,8 @@ pub const Source = struct {
 /// Map a candidate from `scan` (fills `clusters` and `src`) and build its
 /// Cart: a flash pointer for every whole block whose clusters are one run,
 /// the per-cluster path through `src` for the rest.
-pub fn open(base: [*]const u8, cand: *const Candidate, clusters: []u16, src: *Source) romfs.Error!core.Cart {
-    const vol = try romfs.Volume.open(base);
+pub fn open(image: romfs.Image, cand: *const Candidate, clusters: []u16, src: *Source) romfs.Error!core.Cart {
+    const vol = try romfs.Volume.open(image);
     src.mapped = try vol.map(cand.entry, clusters);
     const l = &cand.layout;
     src.data_offset = l.data_offset;

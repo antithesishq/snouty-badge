@@ -4,8 +4,8 @@
 //! root (`@import("drive")`), imported by the cart's romsrc.zig and by the
 //! host tests (tests/drive_unit.zig), so it sees only `core` and `romfs`
 //! (the build also offers `rom`): no cart-api, no clock, nothing badge
-//! specific. The badge passes `romfs.base_addr` as `base`, the tests an
-//! image in memory.
+//! specific. The badge passes `romfs.Image.badge()` as `image`, the tests
+//! a fixture image in memory (`romfs.Image.truncated_test`).
 //!
 //! The caller owns the cluster table (`romfs.max_clusters` u16, 5 KB):
 //! `scan` reuses it for every file, `open` fills it for the chosen one and
@@ -84,14 +84,14 @@ pub const Scan = struct {
 /// List and check the volume's root ROM files, in directory order. Each
 /// file is mapped once through `clusters` (left holding the last file's
 /// chain: `open` the chosen one again).
-pub fn scan(base: [*]const u8, clusters: []u16) Scan {
+pub fn scan(image: romfs.Image, clusters: []u16) Scan {
     // Field by field: a `.{}` default would put 1 KB of zeroed candidates
     // in flash and copy it.
     var s: Scan = undefined;
     s.count = 0;
     s.playable_count = 0;
     s.err = null;
-    const vol = romfs.Volume.open(base) catch |e| {
+    const vol = romfs.Volume.open(image) catch |e| {
         s.err = e;
         return s;
     };
@@ -114,8 +114,8 @@ pub fn scan(base: [*]const u8, clusters: []u16) Scan {
 }
 
 /// Map a candidate from `scan` for running (fills `clusters`).
-pub fn open(base: [*]const u8, cand: *const Candidate, clusters: []u16) romfs.Error!romfs.Mapped {
-    const vol = try romfs.Volume.open(base);
+pub fn open(image: romfs.Image, cand: *const Candidate, clusters: []u16) romfs.Error!romfs.Mapped {
+    const vol = try romfs.Volume.open(image);
     return vol.map(cand.entry, clusters);
 }
 

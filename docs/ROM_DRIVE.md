@@ -66,7 +66,15 @@ the first cart's M0; not needed for Sonic-sized ROMs.
   512-byte sectors, the geometry above) at the hardcoded `0x10080000`;
   on mismatch return an error the cart shows as a message. The address is
   valid for the pinned `sycl-badge` submodule only, so bumping the pin
-  means rechecking section 2.
+  means rechecking section 2. As built: `Volume.open(romfs.Image.badge())`
+  (`Volume.open_badge()`), an image of `romfs.size` (1280 KB) bytes at
+  that address. Every range the boot sector implies (total sectors, FATs,
+  root directory, data area) must lie inside the image and the FAT must
+  hold an entry for every cluster, else `BadGeometry` before any directory
+  or data read. Host tests open fixtures cut after their last used sector
+  with `Image.truncated_test(bytes)`: the volume may claim up to 1280 KB,
+  its FATs and root directory must be present, and `map` refuses
+  (`BadChain`) any cluster past the bytes given.
 - Find the file: scan the root directory (short and long names) for the
   cart's extension (`.gg`/`.sms` for Snouty Gear, `.lnx` for Snouty Lynx).
   One match: use it. Several: the cart's menu lists them (a restart picks
