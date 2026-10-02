@@ -21,6 +21,9 @@ pub fn add(b: *Build, sycl_badge_dep: *Build.Dependency, opts: common.Options) v
     const depth = b.option(u32, "flyover_depth", "snouty-flyover: map ring depth in rows, 256 (default) or 128") orelse 256;
     if (depth != 128 and depth != 256) std.debug.panic("-Dflyover_depth must be 128 or 256, got {d}", .{depth});
     options.addOption(u32, "flyover_depth", depth);
+    // -Dbadge=tufty (declared by the root build.zig; snouty-tufty only): the
+    // district captions name the Tufty's verb button, C (world.zig).
+    common.add_badge_option(options, opts);
 
     // Set before add_os_cart: the custom builder runs inside that call.
     build_options = options;

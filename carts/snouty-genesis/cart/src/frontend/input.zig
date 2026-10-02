@@ -19,7 +19,22 @@
 //! bound.
 const cart = @import("cart-api");
 const core = @import("core");
+const build_options = @import("build_options");
+const hint = @import("hint");
 const Pad = core.Pad;
+
+/// -Dbadge=tufty (snouty-tufty only): the Pimoroni Tufty 2350, whose
+/// buttons reach this cart through snouty-tufty's
+/// `controls_map.snouty_genesis`: A/B = Left/Right, C = badge A, A+B =
+/// badge B, an UP+DOWN tap = Start, UP+DOWN held 300 ms = Select held
+/// (so released before the menu opens, a Select tap). The splash, the
+/// in-play strip, the menu, the picker and the help screen name those
+/// buttons instead (`hints`, `Layout.label`, picker.zig, help.zig), and
+/// the debug overlay starts off (debug.zig). The SYCL build is unchanged.
+pub const tufty = @hasDecl(build_options, "badge") and build_options.badge == .tufty;
+
+/// The control hints this build draws (lib/hint.zig).
+pub const hints: hint.Strings = if (tufty) hint.tufty_genesis else hint.sycl;
 
 /// Select held this many updates (at 30 Hz, 500 ms) opens the menu.
 pub const hold_updates = 15;
@@ -61,12 +76,24 @@ pub const Layout = enum(u8) {
         "Btns B=C A=A S=B",
     };
 
+    /// The same on the Tufty (`tufty`): badge B is A+B ("AB"), badge A is
+    /// C, the Select tap is a short UP+DOWN hold ("UD"). 18 columns.
+    const labels_tufty = [count][]const u8{
+        "Btns AB=B C=C UD=A",
+        "Btns AB=C C=B UD=A",
+        "Btns AB=B C=A UD=C",
+        "Btns AB=A C=B UD=C",
+        "Btns AB=A C=C UD=B",
+        "Btns AB=C C=A UD=B",
+    };
+
     pub fn index(l: Layout) usize {
         return @backingInt(l);
     }
 
-    /// The menu row's label (16 columns).
+    /// The menu row's label (16 columns, 18 on the Tufty).
     pub fn label(l: Layout) []const u8 {
+        if (tufty) return labels_tufty[l.index()];
         return labels[l.index()];
     }
 

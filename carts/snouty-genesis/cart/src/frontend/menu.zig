@@ -280,7 +280,7 @@ const dim_color: cart.DisplayColor = .rgb(0x8898C0);
 const title = "SNOUTY GENESIS";
 const tagline_1 = "verified by";
 const tagline_2 = "deterministic replay";
-const back_hint = "B: back";
+const back_hint = if (input.tufty) "A+B: back" else "B: back";
 
 fn label(item: Item) []const u8 {
     return switch (item) {
@@ -342,9 +342,14 @@ fn draw(md: *const core.Md) void {
     }
     const has_memory = rewind.capacity_slots() != 0;
     const live = has_memory and rewind.history_frames() != 0;
-    const bottom = hint.resume_line(cursor == .resume_game, has_memory, rewind.depth_frames(), rewind.history_frames()) orelse scrub_text(&buf);
+    const on_resume = cursor == .resume_game;
+    const line = if (input.tufty)
+        hint.resume_line_in(input.hints, on_resume, has_memory, rewind.depth_frames(), rewind.history_frames())
+    else
+        hint.resume_line(on_resume, has_memory, rewind.depth_frames(), rewind.history_frames());
+    const bottom = line orelse scrub_text(&buf);
     text.draw(bottom, text_x, scrub_line_y, if (live) row_color else dim_color, panel_color);
-    text.draw(hint.back, text_x, footer_y, dim_color, panel_color);
+    text.draw(if (input.tufty) input.hints.back else hint.back, text_x, footer_y, dim_color, panel_color);
 }
 
 /// The scrub line for the current position, or "Scrub: no memory" when
@@ -522,6 +527,10 @@ comptime {
     check_width(tagline_1, screen_cols);
     check_width(tagline_2, screen_cols);
     check_width("Btns B=B A=C S=A", panel_cols);
+    check_width("Btns AB=B C=C UD=A", panel_cols);
+    check_width(input.hints.hold_select, panel_cols);
+    check_width(input.hints.rewind_ready, panel_cols);
+    check_width(input.hints.back, panel_cols);
     check_width("Scale: Squeeze", panel_cols);
     check_width("Smooth H40: Off", panel_cols);
     check_width("Debug overlay: Off", panel_cols);

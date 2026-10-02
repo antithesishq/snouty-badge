@@ -32,6 +32,37 @@ pub const back = "B: back to game";
 /// Every hint string, for the width test.
 pub const all = [_][]const u8{ hold_select, rewind_ready, rewind_empty, back };
 
+/// One set of the hints above, for a cart that names other buttons. The
+/// constants above are the SYCL badge's and stay what Boy, Gear and Lynx
+/// draw; a cart built for another badge picks its own set at comptime
+/// (`tufty_genesis`) and draws it through the `_in` / `_line` variants
+/// below, which take the strings as an argument.
+pub const Strings = struct {
+    hold_select: []const u8,
+    rewind_ready: []const u8,
+    rewind_empty: []const u8,
+    back: []const u8,
+};
+
+/// The SYCL badge's set (the constants above).
+pub const sycl: Strings = .{
+    .hold_select = hold_select,
+    .rewind_ready = rewind_ready,
+    .rewind_empty = rewind_empty,
+    .back = back,
+};
+
+/// snouty-genesis built with -Dbadge=tufty (snouty-tufty's
+/// `controls_map.snouty_genesis`): UP+DOWN held is Select held, so the
+/// menu opens after holding both for ~0.8 s; A and B are Left and Right;
+/// A+B is the cart's B.
+pub const tufty_genesis: Strings = .{
+    .hold_select = "Hold UP+DOWN: menu",
+    .rewind_ready = "A/B: rewind",
+    .rewind_empty = rewind_empty,
+    .back = "A+B: back to game",
+};
+
 /// Glyphs across the 160 px screen in the 8x8 OS font.
 pub const screen_cols = 20;
 /// Glyphs inside the menu panels at their row indent (Boy, Gear, Genesis
@@ -98,6 +129,21 @@ pub const Overlay = struct {
     ) void {
         if (o.tick(pressed)) draw_strip(Cart, text, hold_select, y, fg, bg);
     }
+
+    /// `update_and_draw` with the line given (`Strings.hold_select` of
+    /// the cart's set).
+    pub fn update_and_draw_line(
+        o: *Overlay,
+        comptime Cart: type,
+        comptime text: anytype,
+        line: []const u8,
+        pressed: bool,
+        y: i32,
+        fg: Cart.DisplayColor,
+        bg: Cart.DisplayColor,
+    ) void {
+        if (o.tick(pressed)) draw_strip(Cart, text, line, y, fg, bg);
+    }
 };
 
 /// x that centres `len` glyphs across `width` px (0 when wider).
@@ -140,12 +186,31 @@ pub fn resume_line(on_resume: bool, has_memory: bool, depth: u32, history: u32) 
     return if (history != 0) rewind_ready else rewind_empty;
 }
 
+/// `resume_line` with the strings of the set `s`.
+pub fn resume_line_in(s: Strings, on_resume: bool, has_memory: bool, depth: u32, history: u32) ?[]const u8 {
+    if (!on_resume or !has_memory or depth != 0) return null;
+    return if (history != 0) s.rewind_ready else s.rewind_empty;
+}
+
 const std = @import("std");
 
 test "hint: every string fits the menu panel and the screen" {
     for (all) |s| try std.testing.expect(s.len <= panel_cols and s.len <= screen_cols);
     try std.testing.expect(splash_y + 8 <= 128);
     try std.testing.expectEqual(@as(i32, 12), centre_x(hold_select.len, 160));
+}
+
+test "hint: every set fits the menu panel and the screen" {
+    for ([_]Strings{ sycl, tufty_genesis }) |set| {
+        for ([_][]const u8{ set.hold_select, set.rewind_ready, set.rewind_empty, set.back }) |s|
+            try std.testing.expect(s.len <= panel_cols and s.len <= screen_cols);
+    }
+    try std.testing.expectEqualStrings(hold_select, sycl.hold_select);
+    try std.testing.expectEqualStrings(
+        tufty_genesis.rewind_ready,
+        resume_line_in(tufty_genesis, true, true, 0, 30).?,
+    );
+    try std.testing.expect(resume_line_in(tufty_genesis, true, true, 60, 120) == null);
 }
 
 test "hint: the overlay shows for its time, then never again" {

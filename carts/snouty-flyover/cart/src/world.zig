@@ -89,11 +89,23 @@ pub const District = struct {
     verb: *const fn () void,
 };
 
+/// -Dbadge=tufty (snouty-tufty): the Tufty's verb button is C (B banks
+/// right there), so the captions read "C: ..." instead of "B: ...".
+const tufty = @hasDecl(build_options, "badge") and build_options.badge == .tufty;
+
+/// A district's caption for this badge: `M.caption` on the SYCL badge,
+/// with its leading "B:" made "C:" on the Tufty.
+fn caption_for(comptime s: []const u8) []const u8 {
+    if (!tufty) return s;
+    if (s.len < 3 or s[0] != 'B' or s[1] != ':') @compileError("a caption must start with \"B:\": " ++ s);
+    return "C" ++ s[1..];
+}
+
 fn entry(comptime M: type) District {
     return .{
         .title = M.title,
         .gloss = M.gloss,
-        .caption = M.caption,
+        .caption = caption_for(M.caption),
         .alt = M.alt,
         .verb_at = M.verb_at,
         .alt_at = &M.alt_at,

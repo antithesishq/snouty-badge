@@ -10,6 +10,7 @@ const cart = @import("cart-api");
 const video = @import("video.zig");
 const iris = @import("iris");
 const hint = @import("hint");
+const input = @import("input.zig");
 
 /// Splash length in updates (1.2 s at 30 Hz).
 pub const frames = 36;
@@ -71,5 +72,7 @@ fn draw(y: i32) void {
     cart.text(.{ .str = title[0..accent_at], .x = tx, .y = ty, .text_color = ink });
     cart.text(.{ .str = title[accent_at..], .x = tx + accent_at * 8, .y = ty, .text_color = accent });
     cart.rect(.{ .x = tx, .y = ty + 8 + bar_gap, .width = @intCast(tw), .height = bar_h, .fill_color = accent });
-    hint.draw_centred(cart, hint.hold_select, hint.splash_y, ink);
+    if (input.tufty) {
+        hint.draw_centred(cart, input.hints.hold_select, hint.splash_y, ink);
+    } else hint.draw_centred(cart, hint.hold_select, hint.splash_y, ink);
 }

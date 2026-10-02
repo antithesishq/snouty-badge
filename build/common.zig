@@ -31,8 +31,9 @@ pub fn add_badge_option(options: *Build.Step.Options, opts: Options) void {
 
 pub const Options = struct {
     cart_mode: CartMode,
-    /// -Dbadge (see `Badge`): demosnout, snoutenstein, snouty-bugs and
-    /// snouty-maze read it through their build_options.
+    /// -Dbadge (see `Badge`): demosnout, snoutenstein, snouty-bugs,
+    /// snouty-maze, snouty-flyover and snouty-genesis read it through their
+    /// build_options.
     badge: Badge,
     /// -Ddebug_overlay: on-screen render timing (snouty-reflections, snouty-maze).
     debug_overlay: bool,
