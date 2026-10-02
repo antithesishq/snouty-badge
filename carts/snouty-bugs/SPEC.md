@@ -655,3 +655,6 @@ brief so the real sheets drop in without code changes.
   stacking weapon crates as testing tools plus the FORK (ghost ships
   replaying the player's own trail), RETRY and CORE HOURS. M6 Powerups;
   attract mode becomes M7, polish M8. See PLAN.md M6.
+- 2026-10-02: M6 built and tagged `snouty-bugs/m6`: crates, the three
+  weapons, forks, retry, core hours, drops (`docs/preview_m6.gif`). See
+  PLAN.md M6 and its status entry. Next: M7 attract mode.

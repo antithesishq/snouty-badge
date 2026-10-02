@@ -1161,3 +1161,23 @@ Track A, 2026-10-02. Choices where the contract was silent or ambiguous:
   frame, the refill rate, the floor, and hardcore difficulty. Next: M6
   attract mode (autopilot drives hold-B instead of a bomb).
 
+- 2026-10-02: M6 done and tagged `snouty-bugs/m6`. Twenty scripts green
+  (`m6_pickup`, `m6_cores`, `m6_fork`, `m6_retry`, `m6_retry_hc`,
+  `m6_identity` added; `m3_loop` re-pinned, `m5_graze`'s hold moved four
+  updates earlier to keep its graze). `debug_history_check` 0 on every
+  frame of a 12,000-update god-mode sweep that reaches A5, B5, F5 with
+  the rng jitter, three forks and two stage clears, holds included.
+  `@sizeOf(World)` 6340 (was 4236); ELF text 58.9 KB + data 6.4 KB, bss
+  26.0 KB. badge-bench on the 4,800-update `m2_play` sweep (two ghosts, A4,
+  the shield pop): mean 7.35 ms, worst 12.19 ms at update 2090 (a hold-B
+  frame, 73% of budget), 0 frames over; simulation is under 1% of a frame
+  (drawing dominates), so full bolt pools cost nothing visible. Tracks: A gameplay, B art, C harness
+  (three Opus agents), deviations under "Deviations (A)". Notes for Adrian
+  (defaults taken, not blocking): a CORE HOURS crate grabbed with a full
+  bar grants nothing (fuel is meta, so the World cannot know to pay points
+  instead; +100 like any crate); the BISECT crate letter is B; with F5 or
+  B5 and three forks the 64-bolt pool is full on some frames, so ghost
+  volleys get dropped (by design, the ship fires first); m2_play's sweep
+  no longer needs its holds to survive, so the game got easier for a
+  player who collects (balance pass still pending a human). Next: M7
+  attract mode (the autopilot should collect crates and hold B).
