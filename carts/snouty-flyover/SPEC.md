@@ -448,3 +448,9 @@ M0 runs on the defaults given after each question.
   are in; calibrated bench worst 14.26 ms of 22. Not built: the Tree
   rotation, dam hold/pass, the free-list word (PLAN.md M4). Hardware check
   waits for show day.
+- 2026-10-02: the flyer is a low-poly 3D anteater mesh (`model.zig`,
+  `tools/anteater_mesh.py`) rendered in the camera's own tilted view and
+  lit, flapping its forelegs and swaying its head, banking with the roll;
+  Adrian rejected the flat side-view sprite ("represented very differently
+  graphically from the rest"). Section 4's 24x16 sprite and section 12's
+  sheet are superseded; no `snouty-art` asset is needed.

@@ -1,8 +1,9 @@
 # Snouty Flyover: Memory Lane
 
 A Comanche-style voxel heightfield flyover for the SYCL Badge V2, written
-in Zig for Antithesis, in which the terrain is the machine. A flapping
-anteater flies down an endless 256-cell strip generated on the badge as it
+in Zig for Antithesis, in which the terrain is the machine. A low-poly 3D
+anteater, flapping its forelegs and seen from the same tilted view as the
+terrain, flies down an endless 256-cell strip generated on the badge as it
 comes into view (the cart ships no map data): the Bus of pulsing lanes,
 the Heap where blocks malloc and free and a white garbage-collector wall
 sweeps the unreferenced ones to rubble, the Sort where 64-bar bands run a

@@ -9,7 +9,7 @@ const palette = @import("palette.zig");
 const camera = @import("camera.zig");
 const render = @import("render.zig");
 const text = @import("text.zig");
-const sprite = @import("sprite.zig");
+const model = @import("model.zig");
 const sort = @import("districts/sort.zig");
 const stack = @import("districts/stack.zig");
 const pipeline = @import("districts/pipeline.zig");
@@ -28,6 +28,7 @@ pub fn start() void {
     cart.set_vsync_enabled(1000.0 / @as(comptime_float, build_options.flyover_fps));
     cart.set_double_buffer_mode(.no_copy_full_frame);
     render.init();
+    model.init();
     world.advance_to(camera.cam.y >> fixed.Q);
     camera.init();
     text.show_card3("MEMORY LANE", "generated on badge", text.fps_line);
@@ -61,7 +62,7 @@ fn fly() void {
     if (stick.verb != .none) text.flash_caption();
     palette.begin_frame(frame);
     render.draw(frame);
-    sprite.draw(camera.cam.roll);
+    model.draw();
     text.draw(frame);
     render_us = @truncate(cart.micros_since_boot() - t0);
 }

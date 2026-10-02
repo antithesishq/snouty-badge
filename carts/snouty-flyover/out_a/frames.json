@@ -54,21 +54,10 @@
     "debug_bus_packets"
   ],
   "exports": {
-    "debug_frame": 2400,
-    "debug_cam_y": 1767,
     "debug_world_check": 0
   },
   "expect": [],
   "at": [
-    {
-      "tick": 1680,
-      "expr": "debug_cam_alt < 50",
-      "name": "debug_cam_alt",
-      "op": "<",
-      "value": 50,
-      "actual": 46,
-      "pass": true
-    },
     {
       "tick": 2399,
       "expr": "debug_world_check == 0",
@@ -76,24 +65,6 @@
       "op": "==",
       "value": 0,
       "actual": 0,
-      "pass": true
-    },
-    {
-      "tick": 2399,
-      "expr": "debug_autopilot == 1",
-      "name": "debug_autopilot",
-      "op": "==",
-      "value": 1,
-      "actual": 1,
-      "pass": true
-    },
-    {
-      "tick": 2399,
-      "expr": "debug_cam_clear > 0",
-      "name": "debug_cam_clear",
-      "op": ">",
-      "value": 0,
-      "actual": 60,
       "pass": true
     }
   ],
@@ -107,15 +78,15 @@
   "dataSegments": [
     {
       "off": "0xa020",
-      "size": 6164
+      "size": 5904
     },
     {
-      "off": "0xb834",
+      "off": "0xb730",
       "size": 184
     },
     {
       "off": "0xc000",
-      "size": 242812
+      "size": 245076
     }
   ],
   "warnings": [],

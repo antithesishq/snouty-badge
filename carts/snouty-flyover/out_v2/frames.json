@@ -132,38 +132,10 @@
     "debug_bus_packets"
   ],
   "exports": {
-    "debug_stack_depth": 0,
     "debug_world_check": 0
   },
   "expect": [],
   "at": [
-    {
-      "tick": 1600,
-      "expr": "debug_stack_depth == 4",
-      "name": "debug_stack_depth",
-      "op": "==",
-      "value": 4,
-      "actual": 4,
-      "pass": true
-    },
-    {
-      "tick": 1600,
-      "expr": "debug_sky_flash == 5",
-      "name": "debug_sky_flash",
-      "op": "==",
-      "value": 5,
-      "actual": 5,
-      "pass": true
-    },
-    {
-      "tick": 1670,
-      "expr": "debug_stack_depth == 0",
-      "name": "debug_stack_depth",
-      "op": "==",
-      "value": 0,
-      "actual": 0,
-      "pass": true
-    },
     {
       "tick": 2199,
       "expr": "debug_world_check == 0",
@@ -184,15 +156,15 @@
   "dataSegments": [
     {
       "off": "0xa020",
-      "size": 6164
+      "size": 5904
     },
     {
-      "off": "0xb834",
+      "off": "0xb730",
       "size": 184
     },
     {
       "off": "0xc000",
-      "size": 242812
+      "size": 245076
     }
   ],
   "warnings": [],
