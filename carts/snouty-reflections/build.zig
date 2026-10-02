@@ -38,12 +38,7 @@ pub fn add(b: *Build, sycl_badge_dep: *Build.Dependency, opts: common.Options) v
 
     // `zig build check-float` (shared step): install, then fail if the cart ELF links any
     // soft-float or libm routine (f64 math, or f32 work the M33 FPU cannot do).
-    const check_float = b.addSystemCommand(&.{"node"});
-    check_float.addFileArg(b.path("tools/check_float.mjs"));
-    check_float.addFileArg(b.graph.path(.install_prefix, "firmware/snouty-reflections.elf"));
-    check_float.step.dependOn(b.getInstallStep());
-    check_float.has_side_effects = true;
-    opts.check_float_step.dependOn(&check_float.step);
+    common.add_float_check(b, opts, "snouty-reflections", opts.cart_mode);
 }
 
 /// Perf variants; the table is in cart/src/variant.zig.

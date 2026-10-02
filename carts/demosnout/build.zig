@@ -28,12 +28,7 @@ pub fn add(b: *Build, sycl_badge_dep: *Build.Dependency, opts: common.Options) v
     });
 
     // `zig build check-float` (shared step): fail if the cart ELF links soft-float or libm routines.
-    const check_float = b.addSystemCommand(&.{"node"});
-    check_float.addFileArg(b.path("tools/check_float.mjs"));
-    check_float.addFileArg(b.graph.path(.install_prefix, "firmware/demosnout.elf"));
-    check_float.step.dependOn(b.getInstallStep());
-    check_float.has_side_effects = true;
-    opts.check_float_step.dependOn(&check_float.step);
+    common.add_float_check(b, opts, "demosnout", opts.cart_mode);
 
     // `zig build test` (shared step): host unit tests (cart/src/host_tests.zig
     // lists the modules). They get the real cart API for its types

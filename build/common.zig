@@ -68,4 +68,22 @@ pub const RomSource = enum { drive, embed, pack };
 /// `embed` uses only the embedded ROM.
 pub const MdRomSource = enum { drive, embed };
 
+/// `zig build check-float` for one cart: after install, run
+/// tools/check_float.mjs on every firmware ELF the cart's mode produces
+/// (`<name>.elf` for RAM, `<name>-xip.elf` for XIP, both for `both`), so the
+/// check always inspects the artifact that was just built and never a stale
+/// ELF of the other mode left in the output directory. `mode` is the mode
+/// the cart passed to os_cart.add (usually `opts.cart_mode`; XIP-only carts
+/// pass `.xip`).
+pub fn add_float_check(b: *Build, opts: Options, name: []const u8, mode: CartMode) void {
+    for (mode.elf_suffixes()) |suffix| {
+        const check = b.addSystemCommand(&.{"node"});
+        check.addFileArg(b.path("tools/check_float.mjs"));
+        check.addFileArg(b.graph.path(.install_prefix, b.fmt("firmware/{s}{s}.elf", .{ name, suffix })));
+        check.step.dependOn(b.getInstallStep());
+        check.has_side_effects = true;
+        opts.check_float_step.dependOn(&check.step);
+    }
+}
+
 pub const AddFn = *const fn (b: *Build, sycl_badge_dep: *Build.Dependency, opts: Options) void;

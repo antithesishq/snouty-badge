@@ -15,7 +15,21 @@ const sycl_badge = @import("sycl_badge");
 
 const MicroBuild = microzig.MicroBuild(.{ .rp2xxx = true });
 
-pub const Mode = enum { ram, xip, both };
+pub const Mode = enum {
+    ram,
+    xip,
+    both,
+
+    /// The name suffixes of the firmware ELFs this mode installs under
+    /// `<prefix>/firmware/`: `<name>.elf` for RAM, `<name>-xip.elf` for XIP.
+    pub fn elf_suffixes(mode: Mode) []const []const u8 {
+        return switch (mode) {
+            .ram => &.{""},
+            .xip => &.{"-xip"},
+            .both => &.{ "", "-xip" },
+        };
+    }
+};
 
 pub const CustomBuilder = *const fn (b: *Build, cart: *Build.Module, cart_api: *Build.Module, step: *Build.Step) void;
 
