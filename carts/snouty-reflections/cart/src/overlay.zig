@@ -4,11 +4,14 @@
 //! letter (B bayer_temporal, U blue_noise, P palette16, N none), e.g.
 //! "12345us  81fps B". Line 2: app state (ATT attract, FRE free camera,
 //! plus " Z" when frozen) and the preset name, e.g. "FRE Z noon".
+//! Line 3, while frozen with the path tracer running (M4): its completed
+//! passes out of the maximum, e.g. "pt  37/256".
 //! Text uses the OS 8x8 font with a dark background so it reads over any
 //! scene. Integers are formatted by hand to keep std.fmt out of the cart.
 const cart = @import("cart-api");
 const dither = @import("dither.zig");
 const app = @import("app.zig");
+const pt = @import("pt.zig");
 
 const fg: cart.DisplayColor = .{ .r = 31, .g = 63, .b = 31 };
 const bg: cart.DisplayColor = .{ .r = 0, .g = 0, .b = 0 };
@@ -31,6 +34,13 @@ pub fn draw(render_us: u32) void {
     const name = @tagName(app.preset);
     @memcpy(line[6..][0..name.len], name);
     text(line[0 .. 6 + name.len], 8);
+
+    if (app.frozen and pt.active()) {
+        var pl: [10]u8 = "pt    /   ".*;
+        put_uint(pl[3..6], @min(pt.passes(), 999));
+        put_uint(pl[7..10], @min(pt.max_passes, 999));
+        text(&pl, 16);
+    }
 }
 
 fn text(str: []const u8, y: i32) void {

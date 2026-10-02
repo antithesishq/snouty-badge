@@ -534,3 +534,231 @@ test "bus: VDP DMA through dma_source matches the word-by-word path" {
         try expectEqual(c.dst == 0xFF00 or c.words == 0, a.vdp.spr_dirty);
     }
 }
+
+// ---- Fragmented ROM runs (PLAN.md M4 Track A) ----
+
+/// A clustered copy of `data` over a fake volume: file cluster k lives in
+/// volume cluster `order[k]` (cluster 2 = the start of `vol`).
+const Frag = struct {
+    vol: []u8,
+    src: core.RomSource,
+
+    fn init(data: []const u8, order: []const u16) !Frag {
+        var top: usize = 0;
+        for (order) |cl| top = @max(top, cl);
+        const vol = try std.testing.allocator.alloc(u8, (top - 1) * 512);
+        @memset(vol, 0xEE);
+        for (order, 0..) |cl, k| {
+            const n = @min(512, data.len - k * 512);
+            @memcpy(vol[(@as(usize, cl) - 2) * 512 ..][0..n], data[k * 512 ..][0..n]);
+        }
+        return .{ .vol = vol, .src = .{ .size = @intCast(data.len), .clusters = order, .data_base = vol.ptr } };
+    }
+
+    fn deinit(f: *Frag) void {
+        std.testing.allocator.free(f.vol);
+    }
+};
+
+fn pattern(buf: []u8) void {
+    for (buf, 0..) |*b, i| b.* = @truncate((i *% 131) ^ (i >> 9) ^ (i >> 3));
+}
+
+/// File clusters: [10] (a run of 1), [20 21 22] (3), [100..169] (70, past
+/// the 64-cluster cap), [300] (the last, partial: 100 bytes).
+const big_order = blk: {
+    var o: [75]u16 = undefined;
+    o[0] = 10;
+    o[1] = 20;
+    o[2] = 21;
+    o[3] = 22;
+    for (4..74) |k| o[k] = 100 + (k - 4);
+    o[74] = 300;
+    break :blk o;
+};
+const big_size: u32 = 74 * 512 + 100;
+
+fn expect_run(src: *const core.RomSource, addr: u32, base: u32, len: u32) !void {
+    const r = rom.run_at(src, addr) orelse return error.NoRun;
+    try expectEqual(base, r.base);
+    try expectEqual(len, r.len);
+}
+
+test "rom: run_at finds the cluster runs, capped at 64 each way, clipped to the size" {
+    const data = try std.testing.allocator.alloc(u8, big_size);
+    defer std.testing.allocator.free(data);
+    pattern(data);
+    var f = try Frag.init(data, &big_order);
+    defer f.deinit();
+    const src = &f.src;
+    // A run of one cluster, a run of three.
+    try expect_run(src, 0, 0, 512);
+    try expect_run(src, 511, 0, 512);
+    try expect_run(src, 512, 512, 3 * 512);
+    try expect_run(src, 512 + 5, 512, 3 * 512);
+    try expect_run(src, 4 * 512 - 1, 512, 3 * 512);
+    // The 70-cluster run (file clusters 4..73): from its first cluster the
+    // forward scan stops after 64 clusters; from the middle it is whole;
+    // from its last cluster the backward scan stops after 64.
+    try expect_run(src, 4 * 512, 4 * 512, 65 * 512);
+    try expect_run(src, 40 * 512 + 2, 4 * 512, 70 * 512);
+    try expect_run(src, 73 * 512 + 6, 9 * 512, 65 * 512);
+    // The last, partial cluster; past the end.
+    try expect_run(src, 74 * 512 + 50, 74 * 512, 100);
+    try expect_run(src, big_size - 1, 74 * 512, 100);
+    try expect(rom.run_at(src, big_size) == null);
+    try expect(rom.run_at(src, big_size + 4096) == null);
+    // Every address: the run holds it and reads the file's bytes.
+    var a: u32 = 0;
+    while (a < big_size) : (a += 1) {
+        const r = rom.run_at(src, a).?;
+        try expect(r.base <= a and a < r.base + r.len);
+        try expect(r.base + r.len <= big_size);
+        try expectEqual(data[a], r.ptr[a - r.base]);
+    }
+    // A long run whose end is the partial last cluster.
+    const small = [_]u16{ 5, 6, 7 };
+    var g = try Frag.init(data[0 .. 2 * 512 + 10], &small);
+    defer g.deinit();
+    try expect_run(&g.src, 0, 0, 2 * 512 + 10);
+    try expect_run(&g.src, 2 * 512 + 9, 0, 2 * 512 + 10);
+    try expect(rom.run_at(&g.src, 2 * 512 + 10) == null);
+    // A base source is one run.
+    const flat = core.RomSource.from_slice(data);
+    try expect_run(&flat, 12345, 0, big_size);
+    try expect(rom.run_at(&flat, big_size) == null);
+}
+
+/// 16 KB: the 1 KB `make_rom` header and vectors (PC 000200), then a NOP at
+/// 0x200 and `add.w #imm,d0` (D07C imm) from 0x202, so every 512-byte
+/// boundary falls between an opcode and its immediate; at 0x3F00 a
+/// `bra.w` back to 0x200.
+fn make_add_rom(buf: []u8) void {
+    make_rom(buf[0..0x400]);
+    @memset(buf[0x400..], 0);
+    buf[0x200] = 0x4E;
+    buf[0x201] = 0x71;
+    var a: usize = 0x202;
+    var k: u16 = 1;
+    while (a + 4 <= 0x3F00) : (a += 4) {
+        std.mem.writeInt(u16, buf[a..][0..2], 0xD07C, .big);
+        std.mem.writeInt(u16, buf[a + 2 ..][0..2], k *% 0x9E37 +% 0x79B9, .big);
+        k +%= 1;
+    }
+    std.mem.writeInt(u16, buf[0x3F00..][0..2], 0x6000, .big);
+    std.mem.writeInt(u16, buf[0x3F02..][0..2], @bitCast(@as(i16, 0x200 - 0x3F02)), .big);
+}
+
+/// File cluster k of 32 in volume cluster `2 + perm(k)`: every cluster its
+/// own run except a run of four at file clusters 8..11.
+const frag_order = blk: {
+    var o: [32]u16 = undefined;
+    for (0..32) |k| o[k] = @intCast(2 + (k * 13) % 32 * 2);
+    for (8..12) |k| o[k] = @intCast(100 + k);
+    break :blk o;
+};
+
+const no_bytes = [2]u8{ 0, 0 };
+
+/// The CPU without its fetch window (which points into either source).
+fn cpu_state(md: *const Md) core.Cpu {
+    var c = md.cpu;
+    c.win_ptr = @ptrCast(&no_bytes);
+    c.win_base = 0;
+    c.win_len = 0;
+    return c;
+}
+
+test "bus: a fragmented ROM fetches through run windows like the contiguous one" {
+    var data: [0x4000]u8 = undefined;
+    make_add_rom(&data);
+    var f = try Frag.init(&data, &frag_order);
+    defer f.deinit();
+    const a = try new_md(&data);
+    defer std.testing.allocator.destroy(a);
+    const b = try std.testing.allocator.create(Md);
+    defer std.testing.allocator.destroy(b);
+    b.init_in_place(f.src);
+    // The code window around every ROM address holds it and its bytes.
+    var bb = b.bus_for();
+    var addr: u32 = 0;
+    while (addr < data.len) : (addr += 2) {
+        const w = bb.code_window(@intCast(addr)) orelse return error.NoWindow;
+        try expect(w.base <= addr and addr + 2 <= w.base + w.len);
+        try expectEqual(data[addr], w.ptr[addr - w.base]);
+        try expectEqual(data[addr + 1], w.ptr[addr + 1 - w.base]);
+    }
+    try expect(bb.code_window(@intCast(data.len)) == null);
+    // Two frames run the same instructions to the same state.
+    for (0..2) |_| {
+        a.step_frame(0, false);
+        b.step_frame(0, false);
+        try expect(std.meta.eql(cpu_state(a), cpu_state(b)));
+    }
+    try expect(a.cpu.d[0] != 0);
+    // b's window is a run of the volume, not the whole ROM.
+    try expect(b.cpu.win_len < 0x800);
+}
+
+test "bus: a fragmented ROM DMAs run by run like the contiguous one" {
+    var data: [0x4000]u8 = undefined;
+    make_rom(data[0..0x400]);
+    for (data[0x400..], 0..) |*x, i| x.* = @truncate(i * 7 + 3);
+    var f = try Frag.init(&data, &frag_order);
+    defer f.deinit();
+    const a = try new_md(&data);
+    defer std.testing.allocator.destroy(a);
+    const b = try std.testing.allocator.create(Md);
+    defer std.testing.allocator.destroy(b);
+    b.init_in_place(f.src);
+    const r = try new_md(&data);
+    defer std.testing.allocator.destroy(r);
+
+    // Spans: within one cluster, across single-cluster runs, through the
+    // run of four, from an odd word inside a cluster, past the ROM's end.
+    var bb = b.bus_for();
+    const s0 = bb.dma_source(0x0402, 0x400).?;
+    try expectEqual(@as(u32, (0x600 - 0x402) / 2), s0.words);
+    const s1 = bb.dma_source(0x1000, 0x1000).?;
+    try expectEqual(@as(u32, 4 * 512 / 2), s1.words);
+    try expect(bb.dma_source(@intCast(data.len), 4) == null);
+    const cases = [_]struct { src: u32, words: u16, dst: u16 }{
+        .{ .src = 0x0410, .words = 0x40, .dst = 0x1000 },
+        .{ .src = 0x05F0, .words = 0x300, .dst = 0x2000 },
+        .{ .src = 0x0E06, .words = 0x700, .dst = 0x4000 },
+        .{ .src = 0x3E00, .words = 0x200, .dst = 0x8000 },
+    };
+    for (cases) |c| {
+        var ab = a.bus_for();
+        var bbus = b.bus_for();
+        var rb: PlainBus = .{ .b = r.bus_for() };
+        const sa = run_dma(a, &ab, c.src, c.words, c.dst);
+        const sb = run_dma(b, &bbus, c.src, c.words, c.dst);
+        const sr = run_dma(r, &rb, c.src, c.words, c.dst);
+        try expectEqual(sr, sa);
+        try expectEqual(sr, sb);
+        try expect(std.meta.eql(r.vdp, a.vdp));
+        try expect(std.meta.eql(r.vdp, b.vdp));
+    }
+
+    // SRAM over the ROM (switched on at A130F1): spans stop below it for
+    // both sources and the rest goes word by word through the SRAM.
+    const sram: rom.SramMap = .{ .lo = 0x1100, .hi = 0x13FF };
+    for ([_]*Md{ a, b, r }) |m| {
+        m.sram_active = sram;
+        for (m.sram[0..0x300], 0..) |*x, i| x.* = @truncate(i ^ 0x5A);
+    }
+    try expectEqual(@as(u32, (0x1100 - 0x1000) / 2), bb.dma_source(0x1000, 0x1000).?.words);
+    var ab = a.bus_for();
+    try expectEqual(@as(u32, 0x80), ab.dma_source(0x1000, 0x1000).?.words);
+    try expect(bb.dma_source(0x1100, 4) == null);
+    var bbus = b.bus_for();
+    var rb: PlainBus = .{ .b = r.bus_for() };
+    const sa = run_dma(a, &ab, 0x0F00, 0x300, 0xA000);
+    const sb = run_dma(b, &bbus, 0x0F00, 0x300, 0xA000);
+    const sr = run_dma(r, &rb, 0x0F00, 0x300, 0xA000);
+    try expectEqual(sr, sa);
+    try expectEqual(sr, sb);
+    try expect(std.meta.eql(r.vdp, a.vdp));
+    try expect(std.meta.eql(r.vdp, b.vdp));
+}

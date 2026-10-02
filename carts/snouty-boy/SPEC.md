@@ -72,7 +72,11 @@ DMG (original Game Boy); Game Boy Color added in section 19 (M6, M7).
   10 per line, sprite priority and palettes BGP/OBP0/OBP1.
 - Timer: 16-bit DIV counter, TIMA/TMA/TAC with the four clock rates and the
   overflow interrupt. Serial: stub that captures bytes (test ROMs print
-  through it). Joypad register with the interrupt on press.
+  through it); an internal-clock transfer completes at once with `0xFF`
+  received, an external-clock one (SC=`0x80`) stays pending forever, as on a
+  Game Boy with no cable (Tetris and Tetris DX probe the link port this way
+  on the title screen and ignore the joypad while a peer seems to answer).
+  Joypad register with the interrupt on press.
 - Memory bank controllers: none (32 KB), MBC1, MBC3 (no RTC), MBC5,
   selected at reset from header byte `0x147`. Bank switches are rare, so a
   runtime `switch` costs nothing measurable; reads go through a cached bank
@@ -255,7 +259,7 @@ This is the sentence the title screen gets to make.
 
 The core has no `rand`, no clock, no floats, no allocator and no reads of
 badge state. The only external input is the joypad byte per frame. Serial
-input reads as `0xFF`. Uninitialized memory does not exist: VRAM, WRAM and
+input reads as `0xFF` (internal clock) or never arrives (external clock). Uninitialized memory does not exist: VRAM, WRAM and
 cart RAM are zeroed at reset (real hardware is random, homebrew does not
 rely on it).
 

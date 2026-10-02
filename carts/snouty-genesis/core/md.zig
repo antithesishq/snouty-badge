@@ -18,6 +18,7 @@
 //! bytes at their bus addresses (the 68000's big-endian word order); CRAM
 //! and VSRAM are native u16 words.
 
+const std = @import("std");
 pub const m68k = @import("m68k.zig");
 pub const bus = @import("bus.zig");
 pub const z80bus = @import("z80bus.zig");
@@ -26,6 +27,7 @@ pub const ym2612 = @import("ym2612.zig");
 pub const psg = @import("psg.zig");
 pub const rom = @import("rom.zig");
 pub const tunables = @import("tunables.zig");
+pub const undo = @import("undo.zig");
 
 pub const RomSource = rom.RomSource;
 pub const LineSink = vdp.LineSink;
@@ -428,6 +430,80 @@ pub const Md = struct {
         z80_carry: u32,
     };
 
+    // ---- The scrubber's small state (M3, core/undo.zig) ----
+
+    /// Every console field outside the four byte regions (work RAM, VRAM,
+    /// Z80 RAM, cartridge SRAM): the head of every undo record. Excluded
+    /// like `Keyframe` (`rom`, `line_sink`, `sram_map`, `tone_cache`), plus
+    /// the per-line scratch `m68k_share`/`m68k_stalled` (zero between
+    /// frames) and the `not_wait_loop` hint; inside the VDP `vram` and
+    /// `line_mode` / `h_mode` (`vdp.Vdp.Small`). Compare field by field, never as
+    /// bytes (padding is zeroed by `save_small` only so equal states have
+    /// equal bytes).
+    pub const Small = struct {
+        cpu: Cpu,
+        vdp: vdp.Vdp.Small,
+        io: Io,
+        pad: u16,
+        sram_active: rom.SramMap,
+        dma_stall: u32,
+        z80: Z80,
+        z80_bank: u16,
+        arbiter: Arbiter,
+        z80_int: bool,
+        ym: ym2612.Ym2612,
+        psg: psg.Psg,
+        frame_count: u32,
+        m68k_carry: u32,
+        z80_carry: u32,
+    };
+
+    pub fn save_small(md: *const Md, out: *Small) void {
+        @memset(std.mem.asBytes(out), 0);
+        inline for (@typeInfo(Small).@"struct".field_names) |name| {
+            if (comptime std.mem.eql(u8, name, "vdp")) md.vdp.save_small(&out.vdp) else @field(out, name) = @field(md, name);
+        }
+    }
+
+    /// Apply a `Small`; the byte regions are the caller's. Keeps `rom`,
+    /// `line_sink`, `vdp.line_mode`, `vdp.h_mode` and `not_wait_loop`; recomputes
+    /// `tone_cache`.
+    pub fn load_small(md: *Md, k: *const Small) void {
+        inline for (@typeInfo(Small).@"struct".field_names) |name| {
+            if (comptime std.mem.eql(u8, name, "vdp")) md.vdp.load_small(&k.vdp) else @field(md, name) = @field(k, name);
+        }
+        md.tone_cache = md.pick_tone();
+    }
+
+    /// Draw the 128 badge rows of the current state through `line_sink`
+    /// without stepping (the scrubber's parked picture): every line with a
+    /// row renders with the registers as they are now. The state is left
+    /// exactly as it was: `vdp.line`, the sticky status bits and the
+    /// sprite table cache (which rendering may rebuild) are restored.
+    pub fn render_still(md: *Md) void {
+        const sink = md.line_sink orelse return;
+        const v = &md.vdp;
+        const line = v.line;
+        const status = v.status;
+        const spr_cache = v.spr_cache;
+        const spr_band = v.spr_band;
+        const spr_count = v.spr_count;
+        const spr_dirty = v.spr_dirty;
+        var l: u16 = 0;
+        while (l < vdp.active_lines) : (l += 1) {
+            if (v.row_for_line(l)) |row| {
+                v.line = l;
+                v.render_line(row, sink);
+            }
+        }
+        v.line = line;
+        v.status = status;
+        v.spr_cache = spr_cache;
+        v.spr_band = spr_band;
+        v.spr_count = spr_count;
+        v.spr_dirty = spr_dirty;
+    }
+
     pub fn snapshot(md: *const Md, out: *Keyframe) void {
         out.cpu = md.cpu;
         out.work_ram = md.work_ram;
@@ -496,4 +572,19 @@ const hot_fields_near = blk: {
 };
 comptime {
     _ = hot_fields_near;
+}
+
+// `Md.Small` is `Keyframe` minus work RAM, Z80 RAM and SRAM (VRAM is in
+// its `vdp`), and
+// `vdp.Vdp.Small` is `Vdp` minus `vram`, `line_mode` and `h_mode`: a field added to
+// the console must be added to both (or excluded here on purpose).
+comptime {
+    const kf = @typeInfo(Md.Keyframe).@"struct".field_names;
+    const sm = @typeInfo(Md.Small).@"struct".field_names;
+    if (kf.len != sm.len + 3) @compileError("Md.Small out of step with Md.Keyframe");
+    for (sm) |name| if (!@hasField(Md.Keyframe, name)) @compileError("Md.Small field not in Keyframe: " ++ name);
+    const vf = @typeInfo(vdp.Vdp).@"struct".field_names;
+    const vs = @typeInfo(vdp.Vdp.Small).@"struct".field_names;
+    if (vf.len != vs.len + 3) @compileError("Vdp.Small out of step with Vdp");
+    for (vs) |name| if (@FieldType(vdp.Vdp.Small, name) != @FieldType(vdp.Vdp, name)) @compileError("Vdp.Small field type differs: " ++ name);
 }

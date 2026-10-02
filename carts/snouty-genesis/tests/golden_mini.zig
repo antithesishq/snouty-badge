@@ -18,7 +18,7 @@ const per_update = 2;
 /// (`tools/scripts/m1_mini300.json` presses the same for badge-bench).
 pub fn pad_at(u: u32) u16 {
     var p: u16 = 0;
-    if ((u >= 100 and u <= 102) or (u >= 130 and u <= 132) or (u >= 160 and u <= 162)) p |= Pad.start;
+    if ((u >= 100 and u <= 102) or (u >= 130 and u <= 132)) p |= Pad.start;
     if (u >= 180 and u <= 220) p |= Pad.right;
     if (u >= 200 and u <= 205) p |= Pad.b;
     if (u >= 225 and u <= 260) p |= Pad.left | Pad.c;
@@ -30,12 +30,12 @@ const Hasher = struct {
     hash: u64 = 0,
     rows: u32 = 0,
 
-    fn on_line(ctx: *anyopaque, row: u8, line: *const [core.out_w]u8, cram: *const [64]u16) void {
+    fn on_line(ctx: *anyopaque, row: u8, line: [*]const u8, width: u16, cram: *const [64]u16) void {
         const h: *Hasher = @ptrCast(@alignCast(ctx));
         h.rows += 1;
         var w = std.hash.Wyhash.init(h.hash);
         w.update(&.{row});
-        w.update(line);
+        w.update(line[0..width]);
         w.update(std.mem.sliceAsBytes(cram));
         h.hash = w.final();
     }

@@ -1371,13 +1371,16 @@ const Sink = struct {
     rows: u32 = 0,
     last_row: u8 = 0,
     px: [160]u8 = undefined,
+    wide: [320]u8 = undefined,
+    width: u16 = 0,
     c0: u16 = 0,
 
-    fn on_line(ctx: *anyopaque, row: u8, line: *const [160]u8, cram: *const [64]u16) void {
+    fn on_line(ctx: *anyopaque, row: u8, line: [*]const u8, width: u16, cram: *const [64]u16) void {
         const s: *Sink = @ptrCast(@alignCast(ctx));
         s.rows += 1;
         s.last_row = row;
-        s.px = line.*;
+        s.width = width;
+        if (width == 160) s.px = line[0..160].* else s.wide = line[0..320].*;
         s.c0 = cram[0];
     }
 };
@@ -1558,6 +1561,17 @@ fn ref_sprites(v: *const Vdp, line: u16, out: *[320]Px) bool {
 }
 
 fn ref_line(v: *const Vdp, line: u16, out: *[160]u8) bool {
+    return ref_cols(v, line, out, false);
+}
+
+/// `ref_line` at every column of the 320-pixel H40 line (smooth H40).
+fn ref_line_full(v: *const Vdp, line: u16, out: *[320]u8) bool {
+    return ref_cols(v, line, out, true);
+}
+
+/// The reference line into `out`: badge columns (160, through the column
+/// tables) or, with `full`, every screen column (320).
+fn ref_cols(v: *const Vdp, line: u16, out: []u8, full: bool) bool {
     const r = &v.regs;
     const bd: u8 = r[7] & 0x3F;
     if (r[1] & 0x40 == 0) {
@@ -1569,7 +1583,7 @@ fn ref_line(v: *const Vdp, line: u16, out: *[160]u8) bool {
     var sp: [320]Px = undefined;
     const overflow = ref_sprites(v, line, &sp);
     for (out, 0..) |*o, i| {
-        const x: u16 = if (wide) @intCast(2 * i) else @intCast(i * 8 / 5);
+        const x: u16 = if (full) @intCast(i) else if (wide) @intCast(2 * i) else @intCast(i * 8 / 5);
         const b = ref_plane(v, 1, x, line);
         const a = if (ref_in_window(v, x, line)) ref_window(v, x, line) else ref_plane(v, 0, x, line);
         const s = sp[x];
@@ -1597,7 +1611,7 @@ fn ref_line(v: *const Vdp, line: u16, out: *[160]u8) bool {
     }
     if (r[0] & 0x20 != 0) {
         for (out, 0..) |*o, i| {
-            const x: usize = if (wide) 2 * i else i * 8 / 5;
+            const x: usize = if (full) i else if (wide) 2 * i else i * 8 / 5;
             if (x < 8) o.* = bd;
         }
     }
@@ -1680,4 +1694,202 @@ test "vdp: random states render as the per-pixel reference" {
         }
     }
     try expectEqual(@as(u32, 0), mismatches);
+}
+
+// ---- Smooth H40 (M4 Track B): every column of an H40 line ----
+
+fn render_full(v: *Vdp, line: u16) [320]u8 {
+    var out: [320]u8 = undefined;
+    v.compose_full(line, &out);
+    return out;
+}
+
+test "vdp: smooth H40 random states render every column as the per-pixel reference" {
+    const v = try make();
+    defer free(v);
+    // The 160-wide test's seed and rounds: the same states, H40 ones
+    // composed at 320 columns, H32 ones checked unchanged by smooth.
+    var prng = std.Random.DefaultPrng.init(0x5E6A_0001);
+    const rng = prng.random();
+    var mismatches: u32 = 0;
+    var h40_lines: u32 = 0;
+    var round: u32 = 0;
+    while (round < 300) : (round += 1) {
+        random_state(v, rng);
+        var k: u32 = 0;
+        while (k < 6) : (k += 1) {
+            const line = rng.uintLessThan(u16, 224);
+            v.status = 0;
+            if (v.regs[12] & 1 == 0) {
+                // H32: smooth changes nothing (160 wide, same pixels).
+                const sharp = render(v, line);
+                v.h_mode = .smooth;
+                var buf: [vdp.max_w]u8 = undefined;
+                const w = v.compose_any(line, &buf);
+                v.h_mode = .sharp;
+                if (w != 160 or !std.mem.eql(u8, &sharp, buf[0..160])) mismatches += 1;
+                continue;
+            }
+            h40_lines += 1;
+            var want: [320]u8 = undefined;
+            const want_ovf = ref_line_full(v, line, &want);
+            const got = render_full(v, line);
+            const got_ovf = v.status & vdp.st_overflow != 0;
+            if (!std.mem.eql(u8, &want, &got) or want_ovf != got_ovf) {
+                mismatches += 1;
+                if (mismatches <= 3) {
+                    const i = std.mem.indexOfDiff(u8, &want, &got) orelse 0;
+                    std.debug.print("\nfull round {d} line {d} regs {any}: column {d} want {x} got {x}, overflow {} / {}\n", .{ round, line, v.regs, i, want[i], got[i], want_ovf, got_ovf });
+                }
+            }
+            // The even columns are the sharp line exactly.
+            v.status = 0;
+            const sharp = render(v, line);
+            for (sharp, 0..) |p, i| if (p != got[2 * i]) {
+                mismatches += 1;
+                break;
+            };
+        }
+    }
+    try expectEqual(@as(u32, 0), mismatches);
+    try expect(h40_lines > 500);
+}
+
+test "vdp: smooth H40 reference check with shadow/highlight, window, per-column scroll and full sprite lists" {
+    const v = try make();
+    defer free(v);
+    // Forced features on top of random states (the general test draws
+    // them at random): each round turns all of them on.
+    var prng = std.Random.DefaultPrng.init(0x5E6A_0004);
+    const rng = prng.random();
+    var mismatches: u32 = 0;
+    var round: u32 = 0;
+    while (round < 200) : (round += 1) {
+        random_state(v, rng);
+        v.regs[12] = if (round & 1 == 0) 0x89 else 0x81;
+        v.regs[11] |= 0x04; // per 2-cell column vertical scroll
+        v.regs[17] = @as(u8, @intCast(1 + rng.uintLessThan(u8, 19))) | (if (rng.boolean()) @as(u8, 0x80) else 0);
+        v.regs[18] = rng.int(u8) & 0x9F;
+        // A long chain of sprites on a few lines (20-per-line and
+        // 320-pixel limits).
+        const sat_base: u16 = @as(u16, v.regs[5] & 0x7E) << 9;
+        var n: u16 = 0;
+        while (n < 80) : (n += 1) {
+            const e = sat_base + n * 8;
+            poke16(v, e, 128 + 40 + rng.uintLessThan(u16, 24));
+            v.vram[e + 2] = rng.int(u8) & 0x0F;
+            v.vram[e + 3] = if (n == 79) 0 else @intCast(n + 1);
+            poke16(v, e + 4, rng.int(u16));
+            poke16(v, e + 6, 128 + rng.uintLessThan(u16, 352) -% 24);
+        }
+        v.spr_dirty = true;
+        var k: u32 = 0;
+        while (k < 4) : (k += 1) {
+            const line = if (k < 2) 40 + rng.uintLessThan(u16, 40) else rng.uintLessThan(u16, 224);
+            var want: [320]u8 = undefined;
+            v.status = 0;
+            const want_ovf = ref_line_full(v, line, &want);
+            const got = render_full(v, line);
+            const got_ovf = v.status & vdp.st_overflow != 0;
+            if (!std.mem.eql(u8, &want, &got) or want_ovf != got_ovf) {
+                mismatches += 1;
+                if (mismatches <= 3) {
+                    const i = std.mem.indexOfDiff(u8, &want, &got) orelse 0;
+                    std.debug.print("\nforced round {d} line {d} regs {any}: column {d} want {x} got {x}, overflow {} / {}\n", .{ round, line, v.regs, i, want[i], got[i], want_ovf, got_ovf });
+                }
+            }
+        }
+    }
+    try expectEqual(@as(u32, 0), mismatches);
+}
+
+test "vdp: smooth H40 shows the odd columns sharp drops" {
+    const v = try make();
+    defer free(v);
+    setup(v);
+    // 1-pixel stripes 1, 2, 1, 2 ...: sharp shows only color 1.
+    tile_rows(v, 1, 0x12121212);
+    fill_plane(v, nt_b, 32, 32, ent(false, 0, false, false, 1));
+    try expect(all(render(v, 0), 1));
+    const out = render_full(v, 0);
+    for (out, 0..) |p, x| try expectEqual(@as(u8, if (x & 1 == 0) 1 else 2), p);
+    // A sprite at an odd X lands on odd columns.
+    solid(v, 2, 7);
+    sprite(v, 0, 33, 0, 1, 1, 0, ent(true, 0, false, false, 2));
+    const s = render_full(v, 0);
+    try expectEqual(@as(u8, 1), s[32]);
+    try expectEqual(@as(u8, 7), s[33]);
+    try expectEqual(@as(u8, 7), s[40]);
+    try expectEqual(@as(u8, 2), s[41]);
+    // Register 0 bit 5 blanks the leftmost 8 columns.
+    v.regs[0] = 0x24;
+    const b = render_full(v, 0);
+    for (b[0..8]) |p| try expectEqual(@as(u8, v.regs[7] & 0x3F), p);
+    try expectEqual(@as(u8, 1), b[8]);
+}
+
+test "vdp: render_line sends 320 pixels for smooth H40, 160 otherwise" {
+    const v = try make();
+    defer free(v);
+    setup(v);
+    tile_rows(v, 1, 0x12121212);
+    fill_plane(v, nt_b, 32, 32, ent(false, 0, false, false, 1));
+    var s: Sink = .{};
+    const sink: vdp.LineSink = .{ .ctx = &s, .func = &Sink.on_line };
+    v.line = 0;
+    v.render_line(0, sink);
+    try expectEqual(@as(u16, 160), s.width);
+    v.h_mode = .smooth;
+    v.render_line(0, sink);
+    try expectEqual(@as(u16, 320), s.width);
+    try expectEqual(@as(u8, 1), s.wide[0]);
+    try expectEqual(@as(u8, 2), s.wide[1]);
+    // H32 and display off stay 160 wide.
+    h32(v);
+    v.render_line(0, sink);
+    try expectEqual(@as(u16, 160), s.width);
+    v.regs[12] |= 1;
+    v.regs[1] &= ~@as(u8, 0x40);
+    v.render_line(0, sink);
+    try expectEqual(@as(u16, 160), s.width);
+    try expect(all(s.px, v.regs[7] & 0x3F));
+}
+
+test "vdp: h_mode is a setting: reset clears it, Small leaves it alone" {
+    const v = try make();
+    defer free(v);
+    v.h_mode = .smooth;
+    var small: Vdp.Small = undefined;
+    v.save_small(&small);
+    v.h_mode = .sharp;
+    v.load_small(&small);
+    try expectEqual(vdp.HMode.sharp, v.h_mode);
+    v.h_mode = .smooth;
+    v.load_small(&small);
+    try expectEqual(vdp.HMode.smooth, v.h_mode);
+    v.reset();
+    try expectEqual(vdp.HMode.sharp, v.h_mode);
+}
+
+test "vdp: h_mode rides in a Keyframe as line_mode does (the frontend re-applies both)" {
+    const rom_data = @import("rom");
+    const a = std.testing.allocator;
+    const md = try a.create(core.Md);
+    defer a.destroy(md);
+    const kf = try a.create(core.Md.Keyframe);
+    defer a.destroy(kf);
+    md.init_in_place(core.RomSource.from_slice(rom_data.data));
+    md.vdp.h_mode = .smooth;
+    md.vdp.line_mode = .crop;
+    md.snapshot(kf);
+    md.vdp.h_mode = .sharp;
+    md.vdp.line_mode = .squeeze;
+    md.restore(kf);
+    try expectEqual(vdp.HMode.smooth, md.vdp.h_mode);
+    try expectEqual(vdp.LineMode.crop, md.vdp.line_mode);
+    // A restore brings back the recorded setting, so `video.apply` (sharp
+    // here, as the menu would hold it) must run after it, as for Scale.
+    md.vdp.h_mode = .sharp;
+    md.vdp.line_mode = .squeeze;
+    try expectEqual(vdp.HMode.sharp, md.vdp.h_mode);
 }

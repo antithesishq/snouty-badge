@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Builds every perf variant (PLAN.md "M2.1 Perf variants") and copies each to
 # dist/variants/<name>.{uf2,elf,wasm}, runs the float check per variant and
-# prints .text + .data (budget 120 KB) and .bss.
+# prints .text + .data (budget 136 KB since M4) and .bss.
 #
 #   tools/build_variants.sh [name ...]     # from carts/snouty-reflections/; default all four
 #
@@ -14,7 +14,7 @@ cart_dir=$PWD
 root=$(cd ../.. && pwd)
 zig=${ZIG:-zig}   # the zig on PATH; ZIG=/path/to/zig overrides
 out=$cart_dir/dist/variants
-limit=$((120 * 1024))
+limit=$((136 * 1024))   # M4: 136 KB (PLAN.md M4 "Memory")
 
 # .text .data .bss sizes of a 32-bit little-endian ELF (no binutils needed:
 # macOS has no GNU size).

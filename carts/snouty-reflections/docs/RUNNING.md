@@ -493,3 +493,96 @@ tools/bench_variants.sh --m3                   # rows 1-4
 tools/bench_variants.sh --m3 2 4               # attract and palette16 only
 BASELINE_ELF=/path/to/m2.2/cut20.elf tools/bench_variants.sh --m3 1
 ```
+
+## 11. M4 freeze frame: path tracer checks and bench
+
+A freezes time and the path tracer (`cart/src/pt.zig`, PLAN.md M4) takes
+over. Three tools check and measure it.
+
+**References.** `tools/reference.py --pt` computes the M4 estimator with
+the same random numbers as the cart (bit-exact integer RNG, f64 shading) and
+caches the float means in `out/pt_ref/`
+(`pt_<view>_n0000-NNNN_<scene>.npy` plus a PNG; `<scene>` is a hash of the
+scene constants, so a scene change such as M3.1's never reuses a stale
+file). check_pt renders missing references itself; to (re)generate the
+whole check set at once (after a scene change, or ahead of time):
+
+```sh
+python3 tools/reference.py --pt --check-set --passes 16,64,256,1024   # 6 views; 16/1024 for check_pt, 64/256 for --ref-only
+python3 tools/reference.py --pt --passes 1024 --preset noon --t 0      # one view (--view P:T[:O[:H]] too)
+python3 tools/reference.py --rng-selftest                              # lowbias32 / hash / R2 / to_unit values for pt.zig's test
+```
+
+Each pass is 20,480 rays, traced as one numpy wavefront per 4 passes and
+split over all cores (`--jobs`). On the two-core VM a pass costs about
+40 ms of CPU, 30 ms of wall time when idle (a 1024-pass view about 30 s,
+the `--check-set` line above about 4 minutes); with other builds running
+(load 10 to 14) the same line took 19 minutes.
+
+**Check.** `tools/check_pt.mjs` loads the wasm (default
+`dist/variants/cut20.wasm`, else the root `zig-out/bin/`), sets each view
+with `debug_set_view`, `debug_set_pt(1)`, `debug_set_dither_mode(1)` and
+reads the accumulator from `debug_pt_accum()`:
+
+| Check | What | Pass |
+|-------|------|------|
+| 3 seed | the update after `debug_set_view` draws the real-time frame and runs `pt.begin`; the decoded accumulator, quantised as `display()` does in dither none, equals that frame; after one more update every untouched column still shows it | exact |
+| 1 same samples | `debug_pt_restart`, `debug_pt_run(16)` against the reference's first 16 passes | >= 98% of channel values within 3 units, mean abs <= 0.5 (8-bit units of [0, 1], means saturated) |
+| 2 convergence | continue to 64 and 256 passes, RMSE against the 1024-pass reference | decreasing, RMSE(64) / RMSE(256) >= 1.6, RMSE(256) <= 4.0 |
+
+Check set: each preset at t = 0, orbit 0; sunset at t = 300 (orbit 300);
+noon at height 1.0.
+
+```sh
+node tools/check_pt.mjs                                    # the check set, all three checks
+node tools/check_pt.mjs --wasm ../../zig-out/bin/snouty-reflections.wasm --only --view noon:0:0:1.0 --checks 1
+node tools/check_pt.mjs --ref-only                         # check 2 on the reference itself (no cart)
+node tools/check_pt.mjs --checks 1,3 --no-accum-info       # quick: seed and same samples only
+```
+
+It prints per-check numbers per view and exits 0 (PASS), 3 (FAIL) or 2
+(missing exports). Two ungated `(info)` lines compare the cart with
+`reference.py --pt --accum`, a simulation of the u32 accumulator with its
+stochastic rounding (cached like the means): at 16 passes the share of
+identical values (99.95% on Track A's work in progress: the same samples),
+and at 256 passes the RMSE the accumulator format itself costs. The
+11:11:10 running mean is re-rounded every pass, so its rounding error is a
+random walk that grows with the pass count (about 1.3 units RMSE at 256 on
+sunset): most of check 1's mean |d| (0.43 on sunset) and the floor under
+check 2's RMSE(256) come from it, not from the tracer. On Track A's work
+in progress (2026-09-30) checks 1 and 3 pass on the whole set while check
+2 fails its ratio (0.98 to 1.40) for exactly this reason: the simulated
+accumulator scores the same RMSE as the cart. `--no-accum-info`
+skips the 256-pass simulation (about 20 s per view on an idle VM). On the
+reference alone (`--ref-only`) the ratio RMSE(64) / RMSE(256) is 2.3 to 2.4
+and RMSE(256) 0.25 to 0.86 units over the check set. Images go to `out/check_pt/`: `cart_<view>_nNNNN.png`
+(the cart's mean in dither none) and `absdiff_<view>_n0016.png` (|cart -
+reference| x 40). The accumulator is read as word `x * 128 + y`
+(column-major, `ACCUM_INDEX` at the top of the file). `check_render.mjs`
+calls `debug_set_pt(0)` when the cart has it, so its checks stay the
+real-time M3 ones.
+
+**Bench.** `tools/bench_variants.sh --m4 [row...]` (cut20, calibrated busy
+ms):
+
+| Row | Run | Gate |
+|-----|-----|------|
+| 5 `sunset`, `midnight`, `noon` | `tools/scripts/m4_freeze_<preset>.json` (Select to the preset, A at update 100), 1,300 updates | every update after the A update <= 47.0 ms; reports passes at the end, the update at which passes reach 256, seconds from A to 256 passes at 20 fps, busy ms per pass |
+| 6 `stick` | `tools/scripts/m4_frozen_stick.json` (stick held while frozen) | reported only |
+| 1, 2 | the M3 rows again | each within 0.1 ms of M3 (row 1 45.49; row 2 per preset 46.36 / 50.30 / 50.62 / 45.45) |
+
+The A update itself (the real-time frame plus `pt.begin`) is shown in its
+own column. Passes are read from the emulated RAM after each update through
+the ELF symbol `pt.n_col` (min over the 160 columns; `PT_PASSES_SYM=name`
+picks another), with badge-bench driven through its Python API; without
+the symbol the done update is guessed from the update times (marked `~`).
+The M3 baselines are the variables `M3_ROW1`, `M3_ROW2_<PRESET>` near the
+top of the M4 section (or the environment). The ELF cache is the M3 one:
+run `REBUILD=1` after changing the cart. Reports land in
+`out/bench_m4_<row>/`; `BENCH_FRAMES=N` shortens the runs.
+
+```sh
+tools/bench_variants.sh --m4              # rows 5, 6, 1, 2 (about 20 to 25 minutes on an idle VM)
+REBUILD=1 tools/bench_variants.sh --m4 5  # rebuild the ELFs first, row 5 only
+M3_ROW1=45.60 tools/bench_variants.sh --m4 1
+```

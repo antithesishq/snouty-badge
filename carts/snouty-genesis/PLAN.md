@@ -443,6 +443,411 @@ arms coded as stubs to the Track A interface above; keep the diff small),
    main; push. Hardware check (open, not a gate): XIP launch, drive
    streaming stall rates contiguous and fragmented (Adrian, show day).
 
+## M3 Scrub: contract
+
+The time scrubber (SPEC.md section 10): an undo record per 30 Genesis
+frames, Left/Right in the menu step half a second back and forward through
+them, resuming from a parked position plays on from there and drops the
+future. Two Opus tracks in worktrees against the prep commit on
+`genesis/m3`, then integration. Snouty Gear's M3 (`gear/m3`, worktree
+`/home/exedev/snouty-badge-gear`) is the prior art for the frontend
+(`frontend/rewind.zig`, the menu's scrub line and scrub view, the debug
+exports, `m3_scrub.json`) and for the shape of the tests; its page store
+is not.
+
+### Step 0 (done in the prep commit)
+
+The third Start of the Miniplanets scripts paused the game (SPEC 10.1).
+`tests/golden_mini.zig` `pad_at`, `tools/scripts/m1_mini300.json` and
+`m2_mini300.json` lost it; the `golden-mini:` lines and the unpaused
+badge-bench numbers are in the Status entry for 2026-09-30 (M3 started)
+and are the M3 baseline: every track compares against them.
+
+### Decisions defaulted here (Adrian may overrule; nothing is blocked)
+
+- Mechanism: the copy-on-first-write undo records SPEC.md 10 describes,
+  not Gear's page store. The page store keeps every non-zero page of the
+  newest keyframe in its pool: for a Genesis with its 64 KB VRAM in use
+  that is about 136 KB, more than the ~105 KB the RAM window has left. An
+  undo record only holds what changed, and the live console is the newest
+  keyframe.
+- A record is applied by swapping: each 64-byte block in the record is
+  exchanged with the console's block, and the record then holds the
+  newer contents. Applying it again goes forward. So Left and Right are
+  the same operation, bit-exact, with no input log and no replay
+  (deviation from SPEC.md 10 as first written: the per-frame pad log is
+  dropped; Gear needed it to replay back to live).
+- Storage: one uniform ring of 68-byte slots (`u16` id, `u16` pad, 64
+  bytes) in a run-time arena, the RAM the linker leaves between
+  `__bss_end__` and `__stack_limit__` minus a 1 KB guard, as Gear does.
+  A record is a run of slots: first the console's small state (every
+  console field outside the four byte regions, packed as `Md.Small`,
+  about 1.7 KB, ids `0xF000 + chunk`), then one slot per block first
+  written in the interval (id = region << 12 | block). Regions: work RAM
+  (1024 blocks), VRAM (1024), Z80 RAM (128), cartridge SRAM (256 at most,
+  only the declared range is ever written). The dirty state is one byte
+  per block (2432 bytes in `.bss`), read on the write paths and cleared
+  when a record closes. When the ring is full the oldest closed record is
+  evicted; when the open record alone fills it, history is lost until the
+  next boundary (the dirty bytes are set to 1 so the write paths stop
+  copying) and rebuilds from there.
+- Interval 30 frames (0.5 s, the scrub step), records capped at 64
+  (32 s). Block size 64 B (SPEC 10.1 measured 16 B as not worth it for
+  Gear; the same holds here).
+- The picture while parked: the console is restored exactly to the
+  keyframe and stays there; `Md.render_still` draws all 128 rows from
+  that state through the line sink without stepping (sprite table cache
+  rebuilt, the sticky status bits saved around it), so the parked state
+  is never disturbed. It shows the frame the game was about to draw,
+  which is what a player expects from "0.5 s ago".
+- The menu UI is Gear's: "Scrub: live / 3.5s" or "Scrub: -1.5 / 3.5s" on
+  the panel's bottom line (`menu.scrub_line_y`, already reserved),
+  Left/Right on a non-setting row scrub with 4 steps per second on hold,
+  after a step the panel gives way to a bottom bar over the restored
+  picture, B or a Select tap resume, Up/Down/A bring the panel back.
+  "Scrub: no memory" when the arena holds fewer than two records' worth
+  of slots. Reset and Pick ROM forget the history.
+- Performance gate: the write-path check costs one byte load and a
+  branch per 68000/Z80/VDP write. Track A measures with badge-bench
+  before and after; the budget is +1.0 ms mean on the unpaused Miniplanets
+  script and the section 8 totals (31 mean / 33 worst) still hold. If the
+  check costs more, the fallback is a per-frame block compare against a
+  shadow copy of work RAM only (VRAM keeps the DMA-run marks), decided at
+  integration, not by the track.
+
+### Frozen for M3
+
+```zig
+// core/undo.zig (Track A). One tracker for one console (file-level state:
+// the dirty bytes must be reachable from the write paths without an Md
+// offset). No cart-api, no allocator; the arena comes from the frontend.
+pub const block_size = 64;
+pub const Slot = extern struct { id: u16, pad: u16 = 0, data: [block_size]u8 };  // 68 B
+pub const frames_per_record = 30;
+pub const max_records = 64;
+pub const Region = enum(u4) { work_ram = 0, vram = 1, z80_ram = 2, sram = 3, small = 15 };
+pub fn init(arena: []align(4) u8) void;      // slots = arena.len / 68; tracking off
+pub fn capacity_slots() usize;               // 0 before init
+pub fn reset(md: *Md) void;                  // forget history, open record 0 from md; tracking on
+pub fn disable() void;                       // tracking off (dirty all 1), the console runs untracked
+pub fn record_frame(md: *Md) void;           // after every stepped frame; truncates if parked; boundary close/open
+pub fn can_step(dir: i2) bool;
+pub fn step(md: *Md, dir: i2) bool;          // swap one record (see above); false at the ends
+pub fn parked() bool;                        // cursor != 0
+pub fn resume_here(md: *Md) void;            // frontend, before the first step_frame after a scrub: drops the future, opens a record here
+pub fn depth_frames() u32;                   // frames behind live (0 live)
+pub fn history_frames() u32;                 // frames reachable back from live
+pub fn record_count() usize;                 // closed records held
+pub fn slots_in_use() usize;
+// Hot hooks, inline, called BEFORE the write with the region address:
+pub inline fn touch_wr(addr: u16) void;      // work RAM byte address (a word never straddles a block)
+pub inline fn touch_vr(addr: u16) void;      // VRAM
+pub fn touch_vr_range(addr: u16, bytes: u32) void;  // DMA runs, wraps at 64 KB
+pub inline fn touch_zr(addr: u13) void;      // Z80 RAM
+pub inline fn touch_sr(addr: u14) void;      // cartridge SRAM (index into md.sram)
+
+// core/md.zig (Track A)
+pub const Small = struct { ... };            // cpu, vdp: vdp.Vdp.Small (all but vram and line_mode), io, pad,
+                                             // sram_active, dma_stall, z80, z80_bank, arbiter, z80_int, ym, psg,
+                                             // frame_count, m68k_carry, z80_carry
+pub fn save_small(md: *const Md, out: *Small) void;
+pub fn load_small(md: *Md, k: *const Small) void;  // recomputes tone_cache; keeps rom, line_sink, line_mode, not_wait_loop
+pub fn render_still(md: *Md) void;           // 128 rows through line_sink from the current state, state unchanged
+// Keyframe / snapshot / restore stay (tests).
+
+// cart/src/frontend/rewind.zig (Track B), over core.undo
+pub fn init() bool;                          // arena from the linker (wasm: static), undo.init; false = no memory
+pub fn reset(md: *core.Md) void;             // after begin() and the menu's Reset
+pub fn record_frame(md: *core.Md) void;
+pub fn step(md: *core.Md, dir: i2) bool;     // undo.step then show()
+pub fn show(md: *core.Md) void;              // render_still + video.finish_frame
+pub fn depth_frames() u32; history_frames() u32; record_count() usize; capacity_slots() usize; slots_in_use() usize; arena_bytes() usize;
+// cart/src/frontend/tuning.zig (Track B): stack_guard = 1024, wasm_arena_bytes (badge-like, set at integration)
+```
+
+`main.zig` (Track B): `rewind.init()` in `start` (before the console
+exists; the arena does not depend on the ROM), `rewind.reset(&md)` at the
+end of `begin`, `rewind.record_frame(&md)` after every `md.step_frame` in
+`run_update`, `rewind.reset` after the menu's Reset row (`md.reset()`
+writes the memories directly, past the hooks). Exports `debug_scrub_depth`,
+`debug_scrub_history`, `debug_scrub_records`, `debug_scrub_slots`,
+`debug_scrub_capacity`, `debug_scrub_arena` for `--dump-exports`.
+
+### Track A: core (files `core/undo.zig`, `core/md.zig` (Small, render_still, hooks), `core/bus.zig`, `core/vdp.zig`, `core/z80bus.zig` (hooks only), `tests/undo_unit.zig`, `tests/determinism.zig`, `tests/scrub_sizing.zig`, `tests/all.zig`)
+
+- `core/undo.zig` as frozen above. Ring bookkeeping: records as
+  (start slot, length) in a `[max_records]` table plus the open record;
+  append at the head, evict at the tail, modular slot indices; `cursor`
+  = records applied (0 live). Left from live with an empty open record
+  (live on the boundary) goes straight to the newest closed record, as
+  Gear's ring does. Resuming while parked drops the applied records
+  (they hold the future) and opens a fresh record from the parked state.
+  `reset` and the boundary close/open: `save_small` into the record's
+  small slots, dirty bytes cleared. The hot hooks test one dirty byte and
+  call a non-inline `save(region, block)` on the first write.
+- Hooks: `bus.zig` `write8`/`write16` work RAM path (`touch_wr` before
+  the store), `write8_io` SRAM store (`touch_sr`); `vdp.zig` `bus_write`
+  VRAM case (`touch_vr`), `dma_68k` fast path (`touch_vr_range` per run),
+  `dma_fill` and `dma_copy` VRAM stores (`touch_vr` per byte, or a range
+  when register 15 is 1 or 2); `z80bus.zig` `write` Z80 RAM store
+  (`touch_zr`); the 68000's A00000 writes reach the same function. CRAM
+  and VSRAM are in `Small`. Nothing else in the core writes the regions
+  except `reset` (`@memset`), which the frontend follows with
+  `rewind.reset`.
+- `Md.Small`/`save_small`/`load_small` copy field by field with an
+  `inline for` over the field names (Gear `gg.zig` `save_small`);
+  `vdp.Vdp.Small`/`save_small`/`load_small` the same, skipping `vram`
+  and `line_mode`; `spr_cache`, `spr_band`, `spr_count`, `spr_dirty` are
+  copied (they are consistent with the VRAM of the same instant).
+  `load_small` ends with `tone_cache = pick_tone()`.
+- `Md.render_still`: for every line with a row (`vdp.row_for_line`),
+  `vdp.render_line(row, sink)` through `md.line_sink`; save and restore
+  `vdp.status` and `vdp.line` around it; `vdp.line` is walked 0..261 for
+  `row_for_line`. Confirm with a test that a `Keyframe` before equals the
+  one after (`std.meta.eql` field by field, as `tests/determinism.zig` in
+  Gear does).
+- Tests (all host, `tests/all.zig` updated):
+  - `undo_unit.zig`: a small arena (say 400 slots) over a console running
+    the test ROM: record/step/step symmetry (Left then Right restores the
+    exact `Keyframe`), depth/history arithmetic, truncation on resume,
+    eviction order, lose-history and rebuild, the empty-open-record
+    boundary case, `disable`.
+  - `determinism.zig`: the test ROM (always present) and Miniplanets (skip
+    if absent) for 600 frames with a scripted pad stream, a full
+    `Keyframe` every 30 frames alongside a tracked run in a large arena;
+    then walk Left through every record comparing each parked state with
+    the keyframe of that frame, walk Right back to live and compare with
+    the live keyframe; also a tracked console and an untracked one stepped
+    identically end equal (tracking changes no behaviour). Then resume
+    from a parked position and check the next boundary's record chains
+    correctly (step back twice, forward twice).
+  - `scrub_sizing.zig` (print only, like `golden-mini`): Miniplanets
+    through `golden_mini.pad_at`, slots per record and a per-scene
+    summary (boot, title, level load, play), the SPEC 10.1 table redone
+    through the real store.
+- badge-bench before (prep commit) and after (tracking on from `start`;
+  Track A wires a minimal `undo.init`/`undo.reset`/`record_frame` into
+  `main.zig` behind nothing else so the numbers are of the shipped path;
+  Track B's `rewind.zig` replaces it at integration): unpaused
+  `m2_mini300.json` from `out/romfs_mini.img`, 336 updates, `busy ms`
+  mean / worst, and the test ROM script. Report the delta.
+- `zig fmt`, `zig build test-genesis` green, `golden`/`golden-mini` lines
+  unchanged from the Status baseline, both targets build, `.text` and
+  `.bss` reported (`size -A`).
+
+### Track B: frontend (files `cart/src/frontend/rewind.zig`, `cart/src/frontend/tuning.zig`, `cart/src/frontend/menu.zig`, `cart/src/main.zig`, `tools/scripts/m3_scrub.json`, `badge-bench/carts/snouty-genesis.toml`, `docs/RUNNING.md`)
+
+- Until Track A lands, build against a stub `core/undo.zig` with the
+  frozen signatures (no-ops returning "no memory"), kept out of the
+  track's commits or replaced at merge; `Md.render_still` may be stubbed
+  as one `step_frame` for the preview run. Do not touch other core files.
+- `rewind.zig` as frozen: the arena from `__bss_end__`/`__stack_limit__`
+  minus `tuning.stack_guard` on the badge (Gear's `find_arena`), a
+  `tuning.wasm_arena_bytes` static in wasm (start at 100 KB; integration
+  sets it to the badge's `size -A` figure); `init` returns false when
+  fewer than `2 * small_slots + 64` slots fit; stats for the menu and the
+  exports.
+- `menu.zig`: Gear's scrub line, `scrub_view` bar, auto-repeat (4 steps
+  per second while Left/Right held), `scrub_label` with its comptime
+  checks, dim line while there is no history, "Scrub: no memory"; the
+  Genesis row set stays (Resume, Btns, Scale, Sound, Debug overlay, Reset,
+  Pick ROM, About). Reset and Pick ROM call `rewind.reset` after the
+  console is (re)made (`begin` does it for Pick ROM). After a scrub step
+  `video.apply(&md)` is harmless and kept for the M2 note.
+- `main.zig` wiring and exports as above; `debug_state` unchanged.
+- `tools/scripts/m3_scrub.json`: Miniplanets from the splash into play
+  (M2's `m2_mini300.json` presses), then a 35-update Select hold to open
+  the menu, Left x4 with releases (each step 0.5 s back), Right x2, B to
+  resume, 40 updates of play, the menu again, Left x2, B; about 420
+  updates. Verify in the headless preview with
+  `--dump-exports debug_state,debug_scrub_depth,debug_scrub_history,debug_scrub_records`
+  that the depth reads 60/120/180/240 then 120/60 frames, that resuming
+  truncates (records drop) and that play continues; PNGs of the scrub
+  bar. The toml gets a comment with the Miniplanets scrub command
+  (`--script ... m3_scrub.json --frames 420`); the default run stays the
+  test ROM.
+- `docs/RUNNING.md`: the scrubber's controls and limits (about 5 s in
+  play, more on menus, under 1 s right after a level load).
+- No host tests (cart-api); `zig fmt`, both targets build, no comptime
+  loops.
+
+### Integration (me, after the two merge)
+
+1. Merge both tracks into `genesis/m3`; `zig build test-genesis` green
+   (determinism included), golden lines unchanged, every cart builds.
+2. `wasm_arena_bytes` from `size -A` of the merged XIP ELF (RAM window
+   0x4AF00 minus the 32 KB stack, `.data` + `.bss`, the guard); preview
+   run of `m3_scrub.json`; GIF `docs/m3_scrub.gif`; RUNNING.md folded.
+3. badge-bench: unpaused Miniplanets and the test ROM with the scrubber
+   on, against the Step 0 baseline; the scrub script's menu updates
+   (`render_still` cost). Sizes.
+4. SPEC 10 status paragraph, tag `snouty-genesis/m3`, merge to main and
+   push (Adrian tests from main), pull-and-run notes.
+
+## M4 Perf: contract
+
+SPEC.md section 17's M4 ("hardware polish") as far as the calibrated
+badge-bench reaches (no badge until the
+show). Two Opus tracks in worktrees against the prep commit on
+`genesis/m4`, then integration. The RAM-text placement, the XIP hot-range
+cache and the `render_every` / `cpu_scale` defaults stay open for the
+hardware numbers: the bench models flash as zero-wait memory (its
+`--flash-cycles` / `--flash-read-cycles` knobs are a flat penalty, not a
+cache), so none of them can be tuned here. What can:
+
+### Baseline (2026-10-01, M3 tree a64eb13, calibrated `busy ms`)
+
+| Run (badge-bench, 156 / 336 updates)                 | mean  | worst | over |
+|------------------------------------------------------|------:|------:|-----:|
+| test ROM, drive contiguous (`m2_play`)               |  6.90 | 25.82 |    0 |
+| test ROM, drive fragmented (`--fragment 4`)          | 25.53 | 37.01 |  yes |
+| Miniplanets, drive contiguous (`m2_mini300`, 336)    | 17.99 | 28.84 |    0 |
+| Miniplanets, drive fragmented (`--fragment 4`)       | 34.81 | 40.00 |  yes |
+
+A fragmented file costs 2-3.7x (fragmented Miniplanets is over budget on
+every game update: unplayable): `Bus.code_window` returns null for it, so
+every opcode and extension word goes `fetch_slow` -> `code_window` ->
+`read16` -> cluster lookup, and `dma_source` returns null, so every DMA
+word goes through `read16` too. Any file copied onto a drive that already
+holds other files (the cart UF2s themselves) can be fragmented, so this is
+the attendee path. Also: `romsrc.select` runs `Mapped.crc32` over the whole
+file before the first frame (43.6 ms for 512 KB, one over-budget update
+when the picker starts a ROM); and SPEC.md section 6's H40 column-pair
+averaging (every second Genesis column is dropped today, which makes H40
+text hard to read) is still not offered.
+
+### Track A: ROM path (branch `genesis/m4-rom`, worktree `/home/exedev/snouty-badge-genesis-rom`)
+
+Files: `core/rom.zig`, `core/bus.zig`, `cart/src/frontend/romsrc.zig`,
+`lib/romfs.zig` (additions only), `tests/bus_unit.zig`,
+`tests/drive_unit.zig`, `tests/fixtures/*` if a new fixture is needed,
+`tests/all.zig` (new test file hookup), `docs/RUNNING.md` section 7
+(the fragmented bench recipe). Not `cart/src/main.zig`, `menu.zig`,
+`core/vdp.zig`, `core/md.zig`.
+
+1. Runs in the cluster table. `core/rom.zig` gains
+   `pub const Run = struct { ptr: [*]const u8, base: u32, len: u32 }` and
+   `pub fn run_at(src: *const RomSource, addr: u32) ?Run`: for a `base`
+   source the whole ROM; for a clustered source the maximal run of
+   consecutive clusters that holds `addr` (scan back and forward from the
+   cluster of `addr` while `clusters[i+1] == clusters[i] + 1`, each
+   direction capped at 64 clusters so a window miss costs a bounded loop),
+   clipped to `size`; null at or past `size`. `Bus.code_window` returns
+   the run as the fetch window for any ROM (so a fragmented ROM fetches
+   directly inside each run and asks again only at a run boundary);
+   `Bus.dma_source` hands out a span up to the end of the run (the VDP's
+   loop already asks again for the rest). Everything else (`read8`,
+   `read16`, the Z80 bank window, SRAM) is unchanged. Target: the
+   fragmented test ROM within 1 ms mean of contiguous (`--fragment 4` is
+   2 KB runs; `--fragment 1` is the worst case: measure both and record).
+2. CRC32 off the critical path. `lib/romfs.zig` `Mapped` gains an
+   incremental form (`pub const Crc = struct { h: std.hash.Crc32, at: u32 }`
+   with `init`, `step(m, bytes) bool` hashing the next `bytes` of the file
+   run by run and returning true when done, `final`); `crc32()` stays and
+   is expressed through it. `romsrc.select` no longer hashes: it starts a
+   `Crc`, sets `crc = 0`, `crc_known = false`; a new
+   `pub fn crc_tick() void` hashes `crc_chunk = 8 * 1024` bytes per call
+   (about 0.7 ms) and on completion sets `crc`, `crc_known` and rewrites
+   the report line. The report reads `crc ....` until then. main.zig's
+   `run_update` will call `romsrc.crc_tick()` once per running update
+   (integration adds that one line and the About screen's `crc ....`;
+   Track A documents both in its hand-off). `debug_rom_crc` stays 0 until
+   known. `embedded` sets `crc_known = true`, `crc = 0`.
+3. Tests. `rom:` `run_at` on a synthetic clustered source (runs of 1, 3
+   and 64+ clusters, the caps, the last partial cluster, past the end);
+   `bus:` a fragmented synthetic ROM fetches and DMAs byte-identically to
+   the same bytes contiguous (the existing `rom:` "contiguous and
+   clustered read identically" test extended to the code window and
+   `dma_source`); `drive:` the fragmented fixture's CRC via `Crc.step` in
+   chunks equals `crc32()` and the known `E5D1C6BF`. `golden` and
+   `golden-mini` unchanged (embedded source: no new code on their path).
+4. Bench: `docs/RUNNING.md` section 7 gets the fragmented recipe
+   (`make_romfs.py OUT ROM=NAME.GEN PAD=PAD.DAT --fragment 4`, with a
+   non-ROM pad file so the picker does not appear; `PAD.DAT` is not
+   scanned). Record contiguous vs fragmented (4 and 1) for the test ROM
+   and Miniplanets in the hand-off, plus `.text` / `.bss` deltas.
+
+### Track B: H40 column averaging (branch `genesis/m4-smooth`, worktree `/home/exedev/snouty-badge-genesis-smooth`)
+
+Files: `core/vdp.zig`, `core/vdp_tables.zig` + `tools/gen_vdp_tables.py`
+(if a table is needed), `core/md.zig` (only the `Vdp.Small` field-count
+check and `render_still` if the sink signature changes), `tests/vdp_unit.zig`,
+`cart/src/frontend/video.zig`, `cart/src/frontend/menu.zig`,
+`cart/src/main.zig` (`video.apply` already called everywhere needed;
+`debug_settings` bit 6), `tools/scripts/m4_smooth.json`, `docs/RUNNING.md`
+sections 4-5. Not `core/rom.zig`, `core/bus.zig`, `romsrc.zig`, `drive.zig`.
+
+1. Setting. `Vdp` gains `h_mode: HMode = .sharp` (`pub const HMode =
+   enum(u8) { sharp, smooth }`) next to `line_mode`: a menu setting, not
+   console state, so outside `Vdp.Small` (md.zig's comptime check becomes
+   `vs.len + 3`) and re-applied by `video.apply` (which sets both).
+   `smooth` only changes H40 lines; H32 lines are untouched (SPEC.md 6:
+   the 8/5 column table stays).
+2. Renderer. In `smooth` an H40 line is composed at full 320-pixel width
+   (a third comptime mode of `compose`: the H32 machinery, `row8` into a
+   `FullBuf` of 8 + 320 + 8, `plane32`-style tile loop with 40/41 tiles,
+   the window and sprites at full width, `final_pass` / `final_sh` over
+   320 pixels; no `gather`). The sink receives the 320 tagged pixels:
+   `LineSink.func` takes `line: [*]const u8, width: u16` (160 or 320),
+   `emit` forwards; `Vdp.render_line`, `Md.render_still` and the golden
+   hashers pass the width (`golden` hashes 160-wide lines exactly as
+   before; `smooth` is never on in the tests' golden runs, so the
+   recorded hashes stay). SPEC.md 6 estimates 1.5x render time for this.
+3. Frontend. `video.zig` `on_line` with width 320 stores
+   `avg(pixels[src[2x]], pixels[src[2x+1]])` per badge column: the RGB565
+   average through the carry-free trick `(a & b) + (((a ^ b) & mask) >> 1)`
+   with `mask` clearing each field's low bit **in the framebuffer's byte
+   order** (check `cart.Pixel` in sycl-badge's cart API: the halfword may
+   be byte-swapped for the LCD; derive `mask` from `Pixel.from_color` of
+   known colors in a comptime check). A unit-style comptime or host check
+   in video.zig that `avg(red, blue)` is the purple `from_color` gives.
+4. Menu. A `Smooth H40: Off/On` setting row (label 15 cols of
+   `panel_cols` 18; Left/Right/A cycle, takes effect on resume like
+   Scale). Nine rows at `row_h` 9: move the panel geometry and the
+   comptime layout checks (scrub line, bar) accordingly; if nine rows do
+   not fit the 128 px with the title band and the scrub line, fall back to
+   a four-way Scale row (`Scale: Squeeze`, `Scale: Crop`,
+   `Scale: Sqz+Smooth`, `Scale: Crop+Smooth`, all within 18) and say so.
+   `debug_settings` bit 6 = smooth on. Default **off** (integration may
+   turn it on from the bench numbers: see Integration 3).
+5. Tests. `vdp:` the 320-wide line against the existing reference
+   renderer (`ref_line`'s 320-pixel intermediates: every column, not the
+   even ones) for the same random states the 160-wide tests use, H40 with
+   and without shadow/highlight, window, per-column scroll, sprite
+   limits; H32 in `smooth` identical to `sharp`; `h_mode` survives
+   `Keyframe` restore + `video.apply` the way `line_mode` does. The
+   `golden` and `golden-mini` hashes unchanged.
+6. Preview. `tools/scripts/m4_smooth.json`: Miniplanets into level 1
+   (as `m2_mini300`), menu, Down to the Smooth row, Right, resume, play
+   on; `--call-at` reads `debug_settings`. Side-by-side PNGs of the same
+   frame sharp and smooth into `out/m4_smooth/` for the hand-off
+   (integration picks `docs/m4_smooth.png`). Bench the Miniplanets
+   script with smooth on and off (`--romfs out/romfs_mini.img`, 336
+   updates) and record mean / worst / render share.
+
+### Integration (me, after the two merge)
+
+1. Merge A then B on `genesis/m4`; add `romsrc.crc_tick()` to
+   `run_update` and the About screen's `crc ....`; all carts build,
+   `zig build test`, `check-float`, `golden` / `golden-mini` unchanged.
+2. Bench matrix (calibrated, `busy ms`): test ROM and Miniplanets,
+   contiguous and fragmented 4 / 1, smooth off and on; the scrub script.
+   Flash sensitivity for show day: Miniplanets contiguous with
+   `--flash-cycles 1, 2, 4` and `--flash-read-cycles 1, 2, 4` (a table
+   "if the OS overlay's stall rate reads X, expect Y ms" in RUNNING.md
+   section 7, and which fallback of SPEC.md 8 to flip first).
+3. Default for `Smooth H40`: on if Miniplanets smooth stays under 31 ms
+   mean / 33 worst with 1 ms to spare and the PNGs read better; else off
+   with the menu row. Record the decision in SPEC.md 6 and the Status.
+4. Sizes (`.text` must stay under the 256 KB window; note the headroom),
+   `docs/m4_smooth.png`, RUNNING.md status line "M4", PLAN Status entry,
+   SPEC.md Status entry, tag `snouty-genesis/m4`, merge to main and push
+   (Adrian tests on a real badge from main). Hardware check (open, not a
+   gate): XIP launch, drive streaming stall rates (contiguous and
+   fragmented), the scrub step, RAM-text decision from the overlay's XIP
+   hit rate.
+
+
 ## Status
 
 - 2026-09-29: SPEC.md, this plan and `docs/ROM_STREAMING.md` drafted;
@@ -626,3 +1031,126 @@ arms coded as stubs to the Track A interface above; keep the diff small),
   is to fix `golden_mini.pad_at`, `m1_mini300.json`, `m2_mini300.json`,
   re-record `golden-mini` and re-bench. Adrian: M3 starts after Snouty
   Gear M3 (same design, prior art).
+- 2026-09-30 (M3 started, after Snouty Gear M3): branch `genesis/m3` from
+  origin/main `2680e2a`; contract above. Step 0: the pausing third Start
+  dropped from `golden_mini.pad_at`, `m1_mini300.json`, `m2_mini300.json`.
+  Unpaused baseline, `golden-mini:` lines: `frames 0x246F566FF41A43A4, 62
+  tone changes 0xE68656F23938261E, state 0x3B9FFCB07C1C9047`; `68000 pc
+  00061E sr 2004, z80 pc 0D45`. Tracks A (core, `genesis/m3-core`,
+  worktree `/home/exedev/snouty-badge-genesis-core`) and B (frontend,
+  `genesis/m3-front`, `/home/exedev/snouty-badge-genesis-front`).
+  Unpaused badge-bench baseline (calibrated, `busy ms`, Miniplanets from
+  `out/romfs_mini.img`, `m2_mini300.json`, 336 updates incl. 36 splash):
+  17.87 mean / 28.10 worst (update 48, boot), 0 over budget; level-1
+  play updates about 21.2 ms (paused they were 19.5); game updates
+  about 20.0 mean. Hot: `step_frame` 41.6 %, `run_z80` 28.8 %, plane
+  render 9.6 %, `write16` 1.7 % (1734 calls per update).
+- 2026-09-30 (M3 DONE): tag `snouty-genesis/m3`. Track A (3 commits:
+  `core/undo.zig`, `Md.Small`/`render_still`, hooks; `undo_unit`;
+  `determinism` + `scrub_sizing`) merged, Track B's five frontend commits
+  cherry-picked over its stub commit (rewind/tuning, menu scrub UI,
+  main.zig wiring + exports, `m3_scrub.json`, RUNNING.md). Integration:
+  `tuning.wasm_arena_bytes` 101 KB (the badge arena: 307,968 - 32 KB
+  stack - 168 `.data` - 170,068 `.bss` - 1 KB guard = 103,940 B, 1528
+  slots), `docs/m3_scrub.gif`, RUNNING.md's sequence marked verified.
+  - Host tests 157/157 (143 + 11 `undo_unit`, 2 `determinism` (test ROM
+    and Miniplanets: every Left matches its full keyframe, Right returns
+    to live, tracked == untracked, resume chains), 1 `scrub_sizing`);
+    `golden-mini:` lines unchanged from the baseline; `golden` unchanged.
+  - Preview (Miniplanets wasm, `m3_scrub.json`, 540 updates): menu at
+    frame 556; Lefts park at depth 16 / 46 / 76 / 106, Rights 76 / 46,
+    B resumes from 510 (records 8 -> 7, `frame_count` 516 at update 404),
+    second visit depth 22 / 52, live again at the end with 11 records,
+    350 frames of history, 1517 of 1520 slots (pool-limited).
+  - badge-bench (calibrated, `busy ms`, scrubber on from `start`):
+    Miniplanets unpaused `m2_mini300` 336 updates 17.99 mean / 28.84 worst
+    (baseline 17.87 / 28.10; +0.12 ms mean is the write-path byte test,
+    `write16` 46.1K -> 55.0K cycles per update, plus one-off block copies;
+    the worst is the boot update 47 copying the Z80 upload), game updates
+    20.10 mean, play 21.3; scrub script 540 updates 14.34 / 28.84, 0 over,
+    a scrub step update 4.9 ms (`render_still` 128 rows + the swap), menu
+    0.9 ms; test ROM `m2_play` 156 updates 6.90 / 25.82 (Track A's baseline on the same
+    path 6.82 / 24.21; the worst is update 36, the first game update,
+    copying the boot writes). Sizes: `.text` 231,952 B
+    (+11.4 KB over M2; 30.2 KB of the flash window left), `.data` 168,
+    `.bss` 170,068 (+4.7 KB: 2432 need bytes, `Md.Small` staging 1664 B,
+    record table).
+  - Sizing (`scrub_sizing`, Miniplanets, slots per 30-frame record, 26 of
+    them the 1664 B small state): boot 506-527, title 74-131, menu load
+    677, menu 74, level load 1362 (92.6 KB: RAM 411 / VRAM 906 / Z80 19
+    blocks), play 123-142 (8.6 KB). A 1528-slot ring holds about 11 play
+    records: 5.5 s of history in play (plus up to 0.5 s in the open
+    record), 9.5 s on menus, 0.5-1 s right after boot or a level load.
+  - Deviations from the contract (defaulted, Adrian may overrule): the
+    frontend calls `undo.resume_here` before the first frame after a
+    scrub (the truncation cannot live in `record_frame`, which runs after
+    the frame); the dirty byte is a "need" byte (nonzero = not yet saved,
+    so all-zero `.bss` means tracking off and no `.data` image); the Z80
+    bank window's work RAM writes are hooked too (the contract's list
+    missed them); `render_still` also restores the sprite cache fields;
+    the first Left from live goes to the start of the open record (depth
+    = frames since the last boundary, not a fixed 60); auto-repeat is one
+    step per 8 updates (3.75/s); the menu suppresses buttons held over
+    from the game on open; `m3_scrub.json` is 540 updates; the Reset row
+    forgets the history.
+  - Open after M3: `not_wait_loop` is a hint outside `Small` (harmless,
+    determinism test agrees); the hooks cannot tell two consoles apart
+    (only the determinism test steps two); a level load leaves under 1 s
+    of history until it rebuilds; H40 column averaging and the CRC32 at
+    selection still open (M4 perf). Hardware check (open, not a gate):
+    the scrub step's 4.9 ms and the arena size on a real badge.
+- 2026-10-01 (M4 DONE): tag `snouty-genesis/m4` on `genesis/m4`, merged
+  to main and pushed. Tracks A (`genesis/m4-rom`: `rom.run_at`, run
+  windows and DMA spans, `romfs.Mapped.Crc`, `romsrc.crc_tick`) and B
+  (`genesis/m4-smooth`: `Vdp.h_mode`, 320-wide `compose` for H40, the
+  width-carrying `LineSink`, `video.avg`, the `Smooth H40` menu row as a
+  ninth row with the panel moved up to y 36, `debug_settings` bit 6)
+  merged; integration added the `crc_tick` call, the About screen's
+  `crc ....`, Smooth H40 **on by default** (Integration 3's rule held:
+  +2.6 ms mean, worst unchanged, and H40 text was unreadable; docs/m4_smooth.png),
+  version 0.4.0-m4.
+  - Verified on the merged tree: all carts build, check-float PASS, 168/168
+    genesis host tests (157 + 5 Track A: `run_at`, fragmented fetch and
+    DMA identity, incremental CRC, `frag_mini` 600 frames of Miniplanets
+    from runs of 1 and 4 vs embedded; + 6 Track B `vdp:` 320-wide line vs
+    the reference, forced features, odd columns, sink width, `h_mode`
+    through `Small` and `Keyframe`); `golden` and `golden-mini` unchanged;
+    all-carts `zig build test` 507/511 with the one failure demosnout's
+    `timeline: hold` test, which fails on the base commit too. Preview:
+    `m2_menu.json` ends `debug_settings=75`, `m4_smooth.json` reads 96 at
+    340 and 32 at 358 (the Right turns smooth off now).
+  - badge-bench (calibrated `busy ms`, mean / worst, 0 over budget in
+    every game run; Smooth H40 on): test ROM contiguous 9.16 / 26.41
+    (M3 6.90 / 25.82: +2.2 ms is the smooth render of an H40 ROM, +0.5
+    the CRC ticks in updates 36-37), fragmented-4 9.32 / 26.41 (M3 25.53
+    / 37.01); Miniplanets contiguous 20.74 / 29.07 (M3 17.99 / 28.84;
+    Track B sharp 18.03 / 28.89, Track A alone 18.09 / 29.02),
+    fragmented-4 21.16 / 29.43 (M3 34.81 / 40.00, 288 of 336 over), scrub
+    script 16.57 / 29.07; Track A's picker start 13.26 / 29.03 (M3 43.82
+    worst: the CRC stall). What fragmentation still costs (~0.4 ms): the
+    fetch window refilled at run boundaries (~213 per update) and the Z80
+    bank window on the slow path. Flash sensitivity table in RUNNING.md
+    section 7: `--flash-cycles 1` alone gives 41.25 / 55.39.
+  - Sizes: `.text` 231,712 B (M3 231,952; Track A -4.0 KB, Track B +3.7 KB;
+    30.5 KB of the flash window left), `.data` 168, `.bss` 170,076 (+8).
+    Hot code (for the RAM-text decision): `run_z80` 76 KB, `step_frame`
+    37 KB, renderer 20 KB.
+  - Deviations: Track A's identity tests are new tests in `bus_unit.zig`
+    (the existing one lives in `smoke.zig`, outside its list) and
+    `frag_mini.zig` is extra; a 16 KB pad only fragments a ROM's first
+    32 KB (RUNNING.md says to pad with a file at least as big). Track B
+    touched `m2_menu.json` (one Down over the new row) and the sink's
+    callers in five test files; in smooth, sprite collision is detected
+    at all 320 columns (closer to hardware; the status bit can differ
+    between the modes). `M68k.flush_code_window` is never called:
+    `Md.restore` copies the keyframe's window with the CPU, fine while a
+    keyframe is only restored into the console it came from.
+  - Open after M4 (hardware): XIP launch, the OS overlay's XIP hit and
+    stall rates with Miniplanets running (the budget is gone at an
+    average stall of 0.15 cycles per instruction), RAM-text for the
+    renderer or the 68000 if they say so (a `cart_xip.ld` section plus a
+    copy in `build/xip/entry.zig`; the SDK submodule is read-only, so a
+    repo-side linker script), `render_every` / `cpu_scale` defaults, the
+    scrub step cost. Bench-side: the Z80 bank window could use `run_at`;
+    `run_z80` at 76 KB is the inlining of Gear's core and the first
+    candidate if flash gets tight.

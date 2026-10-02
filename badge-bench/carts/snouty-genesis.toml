@@ -18,6 +18,10 @@
 # leaves it for the embedded ROM), several files show the picker. To bench
 # Miniplanets from the drive, pass --romfs carts/snouty-genesis/out/romfs_mini.img
 # --script carts/snouty-genesis/tools/scripts/m2_mini300.json --frames 336.
+# M3 time scrubber on Miniplanets (menu opens at 314, eight scrub steps,
+# two resumes; the steps' render_still cost is in the menu updates): the
+# same --romfs with --script carts/snouty-genesis/tools/scripts/m3_scrub.json
+# --frames 540. The default run below stays the test ROM.
 budget_ms = 33.3
 # 156 updates: 36 splash, then the 120 of M1 (boot with display on about
 # update 48, Right held, Down+B, Start, badge A (Genesis C), a Select tap

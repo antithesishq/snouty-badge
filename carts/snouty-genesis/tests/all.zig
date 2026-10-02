@@ -16,4 +16,8 @@ test {
     _ = @import("vdp_unit.zig");
     _ = @import("m68k_single_step.zig");
     _ = @import("drive_unit.zig");
+    _ = @import("frag_mini.zig");
+    _ = @import("undo_unit.zig");
+    _ = @import("determinism.zig");
+    _ = @import("scrub_sizing.zig");
 }

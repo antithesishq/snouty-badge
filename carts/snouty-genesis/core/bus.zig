@@ -37,6 +37,7 @@ const rom = @import("rom.zig");
 const m68k = @import("m68k.zig");
 const tunables = @import("tunables.zig");
 const z80bus = @import("z80bus.zig");
+const undo = @import("undo.zig");
 const Md = md_mod.Md;
 const Pad = md_mod.Pad;
 
@@ -48,15 +49,18 @@ pub const version: u8 = 0xA0;
 pub const Bus = struct {
     md: *Md,
 
-    /// Direct fetch window for the 68000 (`m68k.CodeWindow`): the whole
-    /// ROM when it is contiguous, or the 64 KB work RAM (kept in bus byte
-    /// order). Anything else, including a fragmented drive ROM, fetches
-    /// through `read16`. Worth about 9 host cycles per instruction.
+    /// Direct fetch window for the 68000 (`m68k.CodeWindow`): the ROM run
+    /// holding `addr` (`rom.run_at`: the whole ROM when it is contiguous,
+    /// else the stretch of consecutive drive clusters around `addr`, so a
+    /// fragmented ROM fetches by pointer and asks again at each run
+    /// boundary), or the 64 KB work RAM (kept in bus byte order). Anything
+    /// else fetches through `read16`. Worth about 9 host cycles per
+    /// instruction.
     pub fn code_window(self: *Bus, addr: u24) ?m68k.CodeWindow {
         const md = self.md;
         if (addr < 0x400000) {
-            if (md.rom.base) |p| return .{ .ptr = p, .base = 0, .len = md.rom.size };
-            return null;
+            const r = rom.run_at(&md.rom, addr) orelse return null;
+            return .{ .ptr = r.ptr, .base = r.base, .len = r.len };
         }
         if (addr >= 0xE00000) return .{ .ptr = &md.work_ram, .base = addr & 0xFF0000, .len = 0x10000 };
         return null;
@@ -88,6 +92,7 @@ pub const Bus = struct {
     pub fn write8(self: *Bus, addr: u24, v: u8) void {
         const md = self.md;
         if (addr >= 0xE00000) {
+            undo.touch_wr(@truncate(addr));
             md.work_ram[addr & 0xFFFF] = v;
             return;
         }
@@ -98,6 +103,7 @@ pub const Bus = struct {
         const md = self.md;
         if (addr >= 0xE00000) {
             const i: u16 = @truncate(addr & 0xFFFE);
+            undo.touch_wr(i);
             md.work_ram[i] = @truncate(v >> 8);
             md.work_ram[i + 1] = @truncate(v);
             return;
@@ -110,9 +116,11 @@ pub const Bus = struct {
     pub const DmaSpan = struct { ptr: [*]const u8, words: u32 };
 
     /// Up to `want` words from the even address `addr` as one run, if they
-    /// are plain memory: ROM below the SRAM and the ROM's end (contiguous
-    /// source only), or work RAM up to its 64 KB mirror boundary. Null
-    /// otherwise; the VDP then reads word by word.
+    /// are plain memory: ROM below the SRAM and the ROM's end, up to the end
+    /// of the ROM run holding `addr` (`rom.run_at`: the whole ROM when it is
+    /// contiguous; a fragmented ROM gives shorter spans and the VDP asks
+    /// again for the rest), or work RAM up to its 64 KB mirror boundary.
+    /// Never zero words. Null otherwise; the VDP then reads word by word.
     pub fn dma_source(self: *Bus, addr: u24, want: u32) ?DmaSpan {
         const md = self.md;
         if (addr >= 0xE00000) {
@@ -120,10 +128,10 @@ pub const Bus = struct {
             return .{ .ptr = @as([*]const u8, &md.work_ram) + i, .words = @min(want, (0x10000 - i) / 2) };
         }
         if (addr >= 0x400000) return null;
-        const p = md.rom.base orelse return null;
-        const end = @min(md.rom.size, md.sram_active.lo);
+        const r = rom.run_at(&md.rom, addr) orelse return null;
+        const end = @min(r.base + r.len, md.sram_active.lo);
         if (addr + 2 > end) return null;
-        return .{ .ptr = p + addr, .words = @min(want, (end - addr) / 2) };
+        return .{ .ptr = r.ptr + (addr - r.base), .words = @min(want, (end - addr) / 2) };
     }
 
     /// `M68k`'s wait loop hook: `Md.skip_wait_loop`.
@@ -197,7 +205,10 @@ fn read16_io(md: *Md, addr: u24) u16 {
 
 fn write8_io(md: *Md, addr: u24, v: u8) void {
     if (addr < 0x400000) {
-        if (addr >= md.sram_active.lo and addr <= md.sram_active.hi) md.sram[addr - md.sram_active.lo] = v;
+        if (addr >= md.sram_active.lo and addr <= md.sram_active.hi) {
+            undo.touch_sr(@intCast(addr - md.sram_active.lo));
+            md.sram[addr - md.sram_active.lo] = v;
+        }
         return;
     }
     if (addr >= 0xC00000) {

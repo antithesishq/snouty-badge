@@ -1,0 +1,102 @@
+# Snouty Lynx
+
+Badge cart for the Software You Can Love (SYCL) conference, built for
+Antithesis: an Atari Lynx emulator in Zig. The badge build reads its ROM
+from a `.lnx`/`.lyx` file on the badge's USB drive (docs/ROM_DRIVE.md at
+the repository root) and falls back to an embedded ROM; the simulator
+always embeds. `SPEC.md` is the design, `PLAN.md` the current milestone's
+contract. Snouty Lynx copies `../snouty-gear` (the template: a RAM-cart
+emulator reading the drive through `lib/romfs.zig`) and
+`../snouty-genesis` (drive scan as a module, the no-ROM help); their
+CLAUDE.md and docs have the longer explanations.
+
+## Layout
+
+- `core/` — the emulator, badge-agnostic: no `cart-api`, no floats, no
+  allocator, no clock, no randomness, no romfs. `lynx.zig` is the whole
+  console (`Lynx`: 64 KB RAM, CPU, Mikey, Suzy, the cart port) with its
+  bus accesses (`fetch`/`read`/`write`/`dummy`/`irq_line`, bodies in
+  `bus.zig`; the CPU itself runs on `bus.Port`, `run_cpu`'s local view
+  with the clock in registers, docs/CPU.md "Speed"): `init_in_place`,
+  `reset` (runs `boot.post_boot`),
+  `step_frame(pad)` (1/60 s of Lynx time, one instruction at a time, the
+  $FE00/$FE4A boot-ROM traps, Suzy drawing on CPUSLEEP, the display copied
+  into `display` at vertical blank), `frame()` (that copy plus the palette),
+  `Pad` (low byte = JOYSTICK $FCB0 layout, bit 8 = Pause). `cpu65.zig`:
+  the Rockwell 65C02 over a generic Bus, cycle-exact against
+  SingleStepTests (docs/CPU.md). `mikey.zig`: timers, interrupts, display
+  registers, palette, DMA/refresh bus steal, cart strobes, audio registers
+  stored only. `suzy.zig`: sprite engine, collision, math unit
+  (docs/SUZY.md). `bus.zig`: memory map, MAPCTL overlays, tick costs,
+  page-mode stream, `CartPort`. `cart.zig`: the cart as 256 block pointers
+  and the `.lnx`/headerless parser. `undo.zig`: the scrubber's undo-record
+  ring (copy-on-first-write 64 B blocks, swapped to step; docs/SCRUB.md). `boot.zig`: the post-boot state from
+  the public write-ups (docs/BOOT.md). PLAN.md "Frozen for M1" is the
+  interface contract between these files.
+- `cart/src/` — the badge frontend. `main.zig` exports `start()`/`update()`,
+  the wasm shims and exports, the state machine (splash -> running | pick | help, running <-> menu,
+  menu -> pick -> running), the status strip and the no-ROM help. `frontend/`: `video` (Lynx frame ->
+  rows 0..101, 16-entry palette cache), `input` (pad word, Select tap =
+  Option 1, Select hold = menu), `drive` (drive scan and Cart from a drive
+  file; a module of its own, host-tested), `romsrc` (drive or embedded
+  ROM, the report line), `splash` (Iris mark, `lib/iris_mark.zig`),
+  `debug` (step timing, FPS), `text` (Snouty Gear's fast font, verbatim),
+  `menu` (the
+  frozen-frame menu: Resume, Buttons swap, Press Option 2, Restart
+  Pause+Opt1, Debug overlay, Reset, Pick ROM, About; PLAN.md M2), `picker`
+  (the drive file list, restarts into the chosen file), `rewind` (the time
+  scrubber over `core.undo`: arena from the linker symbols, M3), `tuning`
+  (stack guard, wasm arena), `strip` (the status strip). `debug.enabled`
+  is off at boot and a menu row. No sound anywhere.
+- `tests/` — host tests, entry `tests/all.zig` (one `_ = @import` line per
+  file): `cpu65_single_step.zig` (SingleStepTests rockwell65c02, data from
+  `tools/fetch_test_roms.sh`), `suzy_unit.zig`, `math_unit.zig`,
+  `mikey_unit.zig` (timers, bus, port, traps, sleep), `golden.zig` +
+  `runner.zig` (scripted runs of the shipped ROM and drhelius's lynx-tests
+  carts, frame hashes), `boot_*.zig`, `cart_unit.zig`, `drive_unit.zig`
+  (against `tests/fixtures/*.img` from `tests/fixtures/make_fixtures.py`).
+  `tests/roms/` is gitignored.
+- `roms/` — `raycast.lnx` (shipped, Apache-2.0, `LICENSE-raycast.txt`,
+  `docs/ROM_CANDIDATES.md`) and `placeholder.lnx` (576 B,
+  `tools/make_placeholder_rom.py`, not a Lynx program, only for the drive
+  fixtures). `*.lnx`/`*.lyx` are gitignored at the root; commercial dumps
+  live in `~/roms/lynx/` on the VM.
+- `tools/` — `run_rom.zig` (`zig build run-lynx -- <rom> <script|-> <updates>
+  <outdir>`: headless run, frame images and hashes, docs/RUNNING.md 2a),
+  `fetch_test_roms.sh`, `romcheck.py`, `bootrom_crosscheck.py` (needs
+  Adrian's local boot ROM, never in the repo), `make_placeholder_rom.py`,
+  `scripts/*.json` (preview and badge-bench input). Shared tools
+  (`preview.mjs`, `serve-cart.mjs`, `make_gif.py`, `make_romfs.py`) are in
+  `../../tools/`.
+
+## Building
+
+Zig `0.17.0-dev.1936+5a625d5f3` at `~/.local/bin/zig`; `zig build` runs
+from the repository root only.
+
+- `zig build -Dcart=snouty-lynx` -> `zig-out/firmware/snouty-lynx.uf2`,
+  `.elf`, `snouty-lynx-xip.uf2`/`.elf` (both cart modes by default; the
+  XIP one is the scrubber's hope, docs/SCRUB.md) and `zig-out/bin/snouty-lynx.wasm`. `-Dlynx-rom=PATH` (repo-relative,
+  absolute or `~/x.lnx`; no cart-relative form, the build never probes the
+  filesystem), `-Dlynx-rom-source=drive|embed|pack` (`pack`, SPEC.md 13.1,
+  is not built: it prints a note and builds `drive`), `-Dcart-optimize=`.
+- Generated `rom` module: `data`, `name`, `source` (`.drive`/`.embed`).
+- `zig build test-lynx` (this cart) or `zig build test` (all);
+  `-Dtest-filter=cart`, `-Dtest-optimize=`. `zig build run-lynx -- ...`
+  runs a ROM headless (tools/run_rom.zig).
+- `zig fmt carts/snouty-lynx` before committing.
+
+## Rules
+
+- build.zig never branches on file existence or environment (this Zig
+  caches the configure graph by build files + options). Comptime stays
+  light (Adrian's Mac runs out of memory on heavy comptime): tables from
+  host generators or runtime init.
+- The console is ~66 KB: a static, `init_in_place`, never by value.
+- Neopixels: never written (docs/NEOPIXELS.md; `debug_led_max` must read 0).
+  Sound: none (the badge speaker is unused in this project; Mikey's audio
+  registers are stored, never heard).
+- ROMs: `*.lnx`/`*.lyx` are gitignored at the root; only shipped ROMs with
+  a license get an exception line. Adrian's dumps (`~/roms/lynx/`, 128 KB
+  headerless) are for local `-Dlynx-rom=` builds and `out/` romfs images only.
+- Commit messages: short imperative subject, body explains why.

@@ -67,7 +67,9 @@ before audio was dropped (section 8).
 | Start          | (nothing)                         | Return to attract orbit              | Unfreeze and return to attract orbit         |
 
 Free camera returns to attract by itself after 20 s without input; frozen
-mode does not time out (section 17 question 8). The camera can never go
+mode returns to attract 60 s after its image has converged with no input
+(section 17 question 8). Holding the stick while frozen shows the
+real-time tracer's moving view; accumulation restarts on release. The camera can never go
 below the water plane or inside a sphere; the orbit radius is fixed so the
 composition always holds.
 
@@ -487,8 +489,10 @@ ships the text changes).
 8. Frozen mode (section 5b) never times out, so a badge left frozen at a
    booth stays on its converged image. Resume attract by itself some time
    after the image converges with no input? Recommendation: yes, 60 s.
+   **Answered 2026-09-30: yes, 60 s after convergence (PLAN.md M4).**
 9. Depth of field in frozen mode: on by default (subtle, focused on the
    chrome sphere), off, or a toggle? Recommendation: on, subtle.
+   **Answered 2026-09-30: on, subtle (`lens_radius` 0.05, a knob).**
 
 Question 4 (music) is answered by section 8: no audio.
 
@@ -543,3 +547,12 @@ Question 4 (music) is answered by section 8: no audio.
   Adrian's request (they read as artifacting; section 7), and the Iris
   logo moved to `x = -15.5`, clear of Harbour Centre. cut20 worst frames:
   sunset 45.67, storm 45.15, midnight 49.36, noon 49.73 ms (PLAN.md M3.1).
+- 2026-09-30: M3.1 on main (tag `snouty-reflections/m3.1`): chrome
+  stripes dropped (Adrian: they read as artifacting), Iris logo moved to
+  `x = -15.5`, clear of the skyline.
+- 2026-09-30: M4 on main (tag `snouty-reflections/m4`): A freezes and the
+  progressive path tracer converges over about 60 s (256 passes, ~190 ms
+  each on the calibrated bench) with the glass sphere, soft shadows,
+  glossy water, depth of field and every preset's full content, while the
+  display stays at 20 fps (frozen updates at most 42.9 ms). Auto-resume
+  60 s after convergence. Next: M5 polish.

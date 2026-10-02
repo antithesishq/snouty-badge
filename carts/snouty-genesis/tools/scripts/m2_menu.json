@@ -5,6 +5,7 @@
   { "from": 78, "to": 78, "hold": ["RIGHT"] },
   { "from": 82, "to": 82, "hold": ["DOWN"] },
   { "from": 86, "to": 86, "hold": ["A"] },
+  { "from": 88, "to": 88, "hold": ["DOWN"] },
   { "from": 90, "to": 90, "hold": ["DOWN"] },
   { "from": 94, "to": 94, "hold": ["A"] },
   { "from": 98, "to": 98, "hold": ["DOWN"] },

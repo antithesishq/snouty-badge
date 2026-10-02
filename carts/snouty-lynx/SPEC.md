@@ -47,46 +47,79 @@ fits):
 ## 3. The machine being emulated
 
 Atari Lynx (original and Lynx II behave the same for games; Lynx II stereo
-is ignored). Register addresses per the Epyx "Handy" hardware spec; check
-each in M0.
+is ignored). Register addresses per the Epyx hardware documentation
+(monlynx.de mirror); every item was checked in M0, section 20 lists the
+verdicts and sources.
 
-- Clock: 16 MHz master. CPU: 65SC02 inside Mikey (a 65C02 without the
-  Rockwell bit instructions RMB/SMB/BBR/BBS), about 4 MHz; RAM cycles use
-  page mode, so effective speed is lower than 4 MHz. Timing is modelled in
-  16 MHz ticks.
+- Clock: 16 MHz master. CPU: a 65C02 cell inside Mikey, about 4 MHz peak.
+  It executes the Rockwell bit instructions RMB/SMB/BBR/BBS and has no
+  WAI/STP ($CB, $DB are 1-byte NOPs) (corrected in M0: Felix's opcode
+  table and 42Bastian's hardware-released size-coding carts use BBR/SMB;
+  section 20). Opcode and operand fetches in page mode take 4 ticks, every
+  other RAM/ROM read or write 5 ticks (corrected: Epyx CPU chapter, "a page
+  mode op-code read takes 4 ticks, a normal read or write to RAM takes 5
+  ticks"); hardware registers 5, Suzy reads 9-15, RCART reads 15. Timing
+  is modelled in 16 MHz ticks.
 - Memory: 64 KB RAM. `FC00-FCFF` Suzy, `FD00-FDFF` Mikey, `FE00-FFF7` boot
-  ROM, `FFF8` reserved, `FFF9` MAPCTL (each of the four overlays can be
-  switched off to expose RAM), `FFFA-FFFF` vectors (ROM or RAM per MAPCTL).
+  ROM, `FFF8` always RAM, `FFF9` MAPCTL, `FFFA-FFFF` vectors (ROM or RAM
+  per MAPCTL). MAPCTL: bit 0 Suzy, bit 1 Mikey, bit 2 ROM, bit 3 vectors
+  (1 = RAM there), bit 7 disables sequential (page-mode) cycles; 0 after
+  reset and at the loader's entry (Epyx hardware appendix; docs/BOOT.md).
 - Mikey:
-  - 8 timers (`FD00-FD1F`, backup/control/count/control-B each), linkable.
-    Timer 0 is the horizontal line timer, timer 2 counts lines and drives
-    vertical blank; timer 4 is the UART baud clock.
-  - 4 audio channels (`FD20-FD3F`), each a timer-clocked 12-bit LFSR with
-    a feedback tap mask and a signed 8-bit volume, optional integrate mode.
-  - Interrupts: INTRST/INTSET (`FD80/FD81`), one bit per timer.
+  - 8 timers (`FD00-FD1F`, BACKUP/CTLA/CNT/CTLB each), linkable in two
+    chains: 0 -> 2 -> 4 and 1 -> 3 -> 5 -> 7 -> audio 0 -> 1 -> 2 -> 3 -> 1
+    (Epyx timer chapter). Timer 0 is the horizontal line timer, timer 2
+    counts lines and drives vertical blank; timer 4 is the UART baud
+    clock. CTLA: bit 7 IRQ enable, 6 reset done, 4 reload, 3 count, 2-0
+    clock (1 us .. 64 us, 7 = linked); CTLB bit 3 timer done.
+  - 4 audio channels (`FD20-FD3F`, 8 registers each: VOLUME, FEEDBACK,
+    OUTPUT, SHIFT, BACKUP, CONTROL, COUNTER, OTHER), each a timer-clocked
+    12-bit LFSR with 9 selectable taps (bits 0-5, 7, 10, 11; tap 7 is
+    CONTROL bit 7) and a signed 8-bit volume, optional integrate mode
+    (CONTROL bit 5).
+  - Interrupts: INTRST/INTSET (`FD80/FD81`), one bit per timer (bit 4 is
+    the UART's, which replaces timer 4's).
   - Display: DMA from DISPADR (`FD94/FD95`), 160x102 at 4 bits per pixel
     (80 bytes per line, 8,160 bytes per frame), palette of 16 entries of
-    12 bits (GREEN `FDA0-FDAF`, BLUERED `FDB0-FDBF`), DISPCTL flip bit.
-  - Cart address: an 8-bit block number shifted in through IODAT/SYSCTL1
-    strobes; within a block, an 11-bit ripple counter advances on every
-    cart read. IODIR/IODAT (`FD8A/FD8B`) also carry the cart power/audin
-    bit. UART and ComLynx: stubbed (idle line).
+    12 bits (GREEN `FDA0-FDAF` low nibble, BLUERED `FDB0-FDBF` blue high
+    / red low), DISPCTL (`FD92`: bit 1 flip, bit 0 DMA on; $0D normal).
+    The high nibble is the left pixel.
+  - Cart address: an 8-bit block number shifted in MSB first from IODAT
+    bit 1 on each 0 -> 1 edge of SYSCTL1 (`FD87`) bit 0; the strobe held
+    high also clears the 11-bit ripple counter, which advances on every
+    RCART read. A cart wires as many counter bits as its block size needs
+    (512 B = 9, 1 KB = 10, 2 KB = 11) (confirmed; Epyx cart chapter).
+    IODAT (`FD8B`) bit 1 is also cart power (0 = on) and bit 4 AUDIN;
+    SYSCTL1 bit 1 = 0 switches the Lynx off (added in M0). UART and
+    ComLynx: stubbed (idle line).
 - Suzy:
   - Sprite engine: a linked list of sprite control blocks (SCB) from
     SCBNEXT, started by SPRGO (`FC91`). Per sprite: 1-4 bits per pixel,
     literal or run-length packed lines, a 16-entry pen map, position,
     8.8 horizontal and vertical size, stretch and tilt per line, H/V flip,
-    drawing starting in one of four quadrants, eight sprite types
-    (background, background-no-collide, boundary, boundary-shadow, normal,
-    non-collide, xor-shadow, shadow) and a collision buffer with depository.
-    The CPU is stopped while the sprite engine owns the bus.
-  - Math unit (`FC52-FC6F`): 16x16 multiply to 32 bits (signed option,
-    accumulate), 32/16 divide with remainder, started by register writes.
-  - Joystick and switches (`FCB0/FCB1`), cart reads RCART0/RCART1
-    (`FCB2/FCB3`).
-- Boot ROM: 512 bytes, copyrighted, reads and decrypts the first cart block
-  (the encrypted loader) into RAM and jumps to it. The emulator does not
-  include it (section 11).
+    drawing starting in one of four quadrants (SE, NE, NW, SW), eight sprite
+    types numbered 0 background-shadow, 1 background-no-collision, 2
+    boundary-shadow, 3 boundary, 4 normal, 5 non-collidable, 6 xor-shadow,
+    7 shadow (order corrected in M0: Epyx hardware appendix), and a
+    collision buffer with the depository byte at SCB + COLLOFF (written for
+    types 2, 3, 4, 6, 7). SCB: SPRCTL0, SPRCTL1, SPRCOLL, SCBNEXT, SPRDLINE,
+    HPOS, VPOS, then HSIZ/VSIZ/STRETCH/TILT as SPRCTL1's reload depth
+    says, then 8 palette bytes unless SPRCTL1 bit 3. Packed lines: an
+    offset byte (0 end, 1 next quadrant), then packets of 1 literal bit + 4
+    count bits (count + 1 pixels), header 0 ends the line; SPRCTL1 bit 7 is
+    totally literal (section 20). The CPU is stopped while the sprite
+    engine owns the bus.
+  - Math unit (`FC52-FC6F`): 16x16 multiply to 32 bits (AB x CD = EFGH,
+    started by writing MATHA `FC55`; SPRSYS bit 7 signed, bit 6 accumulate
+    into JKLM), 32/16 divide with remainder (EFGH / NP, started by MATHE
+    `FC63`, unsigned only).
+  - Joystick and switches (`FCB0/FCB1`): the direction bits swap with
+    SPRSYS's LEFTHAND bit (bit 3); cart reads RCART0/RCART1 (`FCB2/FCB3`).
+- Boot ROM: 512 bytes, copyrighted. It selects block 0, reads one frame of
+  1-5 RSA-encrypted 51-byte blocks (a count byte, then the blocks),
+  decrypts it to $0200 and jumps there; loaders call its $FE00 (block
+  select) and $FE4A (decrypt the next frame) routines again (corrected in
+  M0: docs/BOOT.md). The emulator does not include it (section 11).
 
 ## 4. Accuracy target
 
@@ -97,13 +130,22 @@ Game-level accuracy, verified per title, not cycle accuracy.
   SingleStepTests 65x02 variant closest to the 65SC02 (section 16).
 - Timers and interrupts: advanced per instruction by elapsed ticks, so
   line and frame interrupts land on the right instruction.
-- Suzy: when SPRGO is written the whole sprite list is drawn at once, the
-  CPU is charged an estimate of the bus time Suzy would have used (pixels
-  written, bytes read), and SPRSYS reports done. Pixel output, collision
-  buffer and depository values must be exact; drawing time is approximate.
-- Display: a frame is converted from DISPADR at the start of vertical
-  blank (games change DISPADR there to flip double buffers). Mid-frame
-  palette changes are not seen.
+- Suzy: SPRGO latches the request; the list is drawn at once when the CPU
+  sleeps (CPUSLEEP: on hardware Suzy only gets the bus while the CPU is
+  asleep, and "sleep is broken in Mikey": without Suzy on the bus the CPU
+  does not stay asleep, Epyx CPU chapter, confirmed by lynx-tests
+  sdoneack). The CPU is charged a tick model fitted to the lynx-tests
+  hardware timings (docs/SUZY.md) and an interrupt during the run wakes it
+  with the run resumed on the next CPUSLEEP. Pixel output, collision buffer
+  and depository values are exact (lynx-tests sprites1-5 pass); drawing
+  time is approximate (within the suite's +-16 us windows).
+- Display: DISPADR is latched when timer 2 reaches the third blank line;
+  at the timer 2 borrow (vertical blank) the 8,160 bytes there and the
+  palette are copied into the core's `display`, which the frontend shows
+  (the last completed Lynx frame). Mid-frame palette changes are not seen.
+  Video DMA and refresh steal bus time as timed events (ten 28-tick bursts
+  per visible line, a 4-tick refresh every 256 ticks elsewhere), which is
+  what makes the lynx-tests timers and page-mode rows pass.
 - Not attempted: exact Suzy bus timing, UART/ComLynx, Lynx II stereo,
   rotated games (they need a 102x160 screen; the header's rotation byte
   makes `romcheck.py` refuse them).
@@ -148,7 +190,8 @@ the only input.
 ```
 core/lynx.zig     Lynx struct (whole console), step_frame(pad), reset,
                   post-boot entry (section 11)
-core/cpu65.zig    65SC02 interpreter generic over a Bus type; written so a
+core/cpu65.zig    65C02 interpreter (Lynx set: bit instructions, no
+                  WAI/STP) generic over a Bus type; written so a
                   6502/65C02 variant switch lets NES, 2600 or C64 reuse it
 core/bus.zig      memory map, MAPCTL overlays, cart port and block select
 core/mikey.zig    timers, interrupts, palette, display DMA source, audio
@@ -209,20 +252,41 @@ audio (DAC writes through volume) is ignored.
 
 ## 10. Time scrubbing
 
-Snouty Gear section 10's design unchanged: live console whole, keyframes
-every 30 badge frames as undo records (first write to a 64-byte block
-after a keyframe saves its old bytes; 1,024 blocks over 64 KB RAM, a
-128-byte dirty bitmap), plus the chip registers whole per keyframe.
-Suzy's writes go through the same block tracking.
+Snouty Genesis M3's design (docs/SCRUB.md has it as built): the live
+console is the newest keyframe; every 30 badge frames an undo record
+closes. A record is the console's small state (`Lynx.Small`, 584 B = 10
+slots: CPU, Mikey, Suzy, cart port, clocks, diagnostics; not the ROM,
+`display` or `idle_sleep`) plus the old contents of every 64-byte RAM block
+first written in its interval (1,024 blocks over 64 KB, one dirty byte per
+block in `.bss`), in a ring of 68-byte slots in the run-time arena. A step
+swaps one record with the console (Left and Right are the same operation,
+bit-exact, no input log, no replay). Suzy's span writes, the `$FE4A`
+decrypt trap and a boot re-run through ROM space go through the same
+block tracking; the frontend forgets the history at reset.
 
-Double-buffered games rewrite two 8 KB framebuffers every frame, so each
-record carries up to ~16 KB of framebuffer blocks. Two mitigations,
-measured in M3: framebuffer blocks may be excluded from the record and
-re-rendered on restore by replaying from the keyframe (the replay already
-runs for the determinism test), and records are zero-run RLE coded.
-Target: at least 2 s of history with a 256 KB cart.
+Measured in M3 (tests/scrub_sizing.zig): the records are mostly
+framebuffers, because games redraw every buffer every frame. raycast
+triple-buffers (24 KB at $9F00-$FEFF): 405 slots = 27.5 KB per record.
+Hard Drivin' and Blue Lightning double-buffer at $C000-$FFFF: 233-371
+slots per record in play (16-25 KB). History held (closed records beside a
+full open one, the second half of the run):
 
-The ROM is read-only and not part of the console state; keyframes hold
+| Arena (free RAM - 1 KB guard)           | raycast | Hard Drivin' | Blue Lightning |
+|-----------------------------------------|---------|--------------|----------------|
+| ReleaseFast as built, 40,632 B          | 0 s     | 0 s          | 0 s            |
+| ReleaseFast, exec un-inlined, ~88 KB    | 1.0 s   | 1.0 s        | 1.5 s          |
+| ReleaseSmall, 120,296 B                 | 1.5 s   | 2.0 s        | 2.0 s          |
+| XIP, 190,000 B                          | 2.5 s   | 3.5 s        | 4.0 s          |
+| same, 60-frame records: un-inlined      | 2.0 s   | 2.0 s        | 3.0 s          |
+| same, 60-frame records: ReleaseSmall    | 3.0 s   | 3.0 s        | 4.0 s          |
+
+A 60-frame record holds the same buffer blocks as a 30-frame one, so it
+doubles the history per byte at the price of 1 s steps. The 2 s target
+(with the 256 KB cart) is met on raycast only by XIP or by 60-frame
+records; the levers not built are zero-run coding of the slots and
+leaving out the buffers not shown (docs/SCRUB.md).
+
+The ROM is read-only and not part of the console state; records hold
 only the cart port's block number and counter.
 
 ## 11. Boot and ROMs
@@ -239,16 +303,18 @@ only the cart port's block number and counter.
 - Requirements, checked by `tools/romcheck.py`: `.lnx` header ("LYNX"),
   bank 0 size 128, 256 or 512 KB, bank 1 empty, rotation none, no EEPROM (or
   EEPROM stubbed, logged as a warning).
-- Shipped ROM: one with a license that allows redistribution, found in M0
-  (cc65 examples, AtariAge homebrew with explicit licenses, or an original
-  Snouty 3D demo built with cc65 as a stretch). Commercial ROMs never enter
-  the repo or the cart.
+- Shipped ROM: `roms/raycast.lnx`, 42Bastian's textured raycaster
+  (Apache-2.0, `roms/LICENSE-raycast.txt`, 27 KB, headered, 1 KB pages;
+  chosen in M0, `docs/ROM_CANDIDATES.md`). An original Snouty 3D demo
+  built with cc65 stays a stretch. Commercial ROMs never enter the repo or
+  the cart.
 - Checked at runtime too: the cart applies the same checks to the drive
   file and shows the reason on screen if it refuses one.
 - Local stress targets (Adrian's copies, outside the repo; copied onto the
   badge drive, or embedded in a local simulator build with `-Dlynx-rom=`;
   the root `.gitignore` gains `*.lnx` and `*.lyx`):
-  Hard Drivin' (polygon 3D, probably 128 KB), S.T.U.N. Runner (256 KB),
+  Hard Drivin' (polygon 3D, 128 KB: confirmed from the dump, 512 B
+  blocks, 3-block loader), S.T.U.N. Runner (256 KB),
   Battlezone 2000, Checkered Flag, Blue Lightning (sprite scaling). Sizes
   confirmed from the dumps in M0. Atari's rights to the Lynx games are
   treated as commercial.
@@ -273,13 +339,15 @@ RAM after the stack.
 | Embedded fallback ROM (small homebrew) | ~16-32 KB      |
 | Drive file map (fragmented case)       | <= 4 KB        |
 | Console: 64 KB RAM + chip registers    | ~66 KB         |
-| Keyframe ring                          | ~70-90 KB      |
+| Undo ring (M3: 27.5 KB per 0.5 s on raycast) | what is left (40 KB as built) |
 | Frontend state, input log              | ~4 KB          |
 | **Total**                              | **~250-296 KB** |
 
 The top of the range does not fit, so the ring takes what is left after
 the code is measured in M1 (target at least 64 KB), and the fallback ROM
-stays small. ReleaseSmall for the frontend is the first lever if code
+stays small. Measured (M2/M3): ReleaseFast leaves 40,632 B, ReleaseSmall
+120,296 B; a record costs 27.5 KB on raycast and 16-25 KB on the
+double-buffered commercial games (section 10 table). ReleaseSmall for the frontend is the first lever if code
 comes in high.
 
 ### 13.1 Fallback: ROM packed into the cart
@@ -334,8 +402,17 @@ carts/snouty-lynx/
 ## 16. Verification
 
 - CPU: SingleStepTests 65x02 (github.com/SingleStepTests/65x02, JSON per
-  opcode) using the variant whose opcode set matches the 65SC02; which
-  one is an M0 check (the Rockwell bit instructions must be absent).
+  opcode), variant `rockwell65c02/v1` (M0): the Lynx's 65C02 has the
+  Rockwell bit instructions and no WAI/STP, which is the Rockwell set;
+  `synertek65c02` (no bit instructions) and `wdc65c02` (WAI/STP) do not
+  match. `tools/fetch_test_roms.sh` fetches 24 files (default) or streams
+  all 256 (`--all`; all parse). Known deviations from the Lynx: cycle
+  counts are 6502 cycles, the tick cost (4/5 per section 3) is ours;
+  $5C is a 3-byte NOP of 4 cycles in the suite but 8 in Felix (not
+  measured on hardware); M1 takes the suite's timings for every
+  undefined opcode (docs/CPU.md lists them and the suite's dummy-read
+  patterns). drhelius's MIT lynx-tests (cpu,
+  page-mode, math, timers, sprites) are fetched too, for M1.
   Klaus Dormann's 6502/65C02 functional tests as a second opinion (GPL,
   test-only, never committed).
 - Suzy: unit tests from synthetic SCBs: literal and packed lines at each
@@ -347,8 +424,9 @@ carts/snouty-lynx/
   sequential reads equals the file, for the drive source (a romfs image
   from `tools/make_romfs.py`, fresh and fragmented) and the embedded
   source; the packed source and cache eviction too if 13.1 is built.
-- Boot: `core/boot.zig` output for each local title equals a post-boot
-  RAM dump from a reference emulator run by hand (M0).
+- Boot: `core/boot.zig` against the real boot ROM run on a host 6502
+  (`tools/bootrom_crosscheck.py`, `tests/boot_crosscheck.zig`; M0: both
+  local titles match), plus public known-answer loaders (docs/BOOT.md).
 - Golden frames: scripted runs of the shipped ROM and, locally only, the
   stress targets; frames reviewed by eye once and pinned by hash. Local
   cross-check against a reference emulator run by hand (Handy or
@@ -388,23 +466,40 @@ track in worktrees with disjoint files.
   with cc65; move `cpu65.zig` to a shared `lib/` for a NES cart; Lynx II
   stereo ignored cleanly; EEPROM saves to badge flash.
 
-## 18. Decisions (open, 2026-09-29)
+## 18. Decisions (closed 2026-09-30, Adrian)
 
-1. Order: build after Snouty Gear reaches M3 (reuses its delta ring, bank
-   packing experience and possibly the shared frontend; recommended), or
-   in parallel now.
-2. Boot path: the host packer performs the loader decryption itself from
-   the public write-ups (recommended; nothing copyrighted on the badge or
-   in the repo, constants to be checked for provenance in M0), or the
-   packer reads Adrian's own `lynxboot.img` locally and never commits it.
-3. Shipped ROM: decided in M0 from what is licensed; if nothing suitable
-   exists, ship a cc65-built Snouty demo and keep commercial titles local.
-4. Controls: Select tap = Option 1 and Option 2 in the menu (recommended),
-   or Start+A chords for the options.
-5. Screen: picture at the top with a 26-row strip below (recommended), or
-   centred with 13-row bars.
+1. Order: build now. Snouty Gear M3 (the page-store scrub ring, tag
+   `snouty-gear/m3`) landed on 2026-09-30, so the ring is available for
+   reuse from the start.
+2. Boot path: the cart performs the loader decryption itself from the
+   public write-ups (the annotated boot ROM disassembly and the community
+   encryption documents); no boot ROM on the badge or in the repo. Adrian's
+   own `lynxboot.img` (512 B, md5 fcd403db69f54290b51035d82f835e7b) is at
+   `~/roms/lynx/lynxboot.img` on the VM, outside the repo, and serves two
+   purposes only: a host-test cross-check that the public constants
+   reproduce what the real ROM does, and a fallback if the public route
+   turns out incomplete. It is never committed and never shipped.
+   M0 result: the public route is complete (modulus from the annotated
+   disassembly and lynx-encryption-tools, which agree); the cross-check
+   matches for Hard Drivin' and Blue Lightning; the fallback was not
+   needed. Without a ROM the emulator traps $FE00 and $FE4A
+   (docs/BOOT.md).
+3. Shipped ROM: our choice (Adrian, 2026-09-30): pick the best licensed
+   homebrew in M0; if nothing suitable exists, ship a cc65-built Snouty
+   demo. Parked stretch idea: port the Snouty Flyover voxel flyer
+   (`carts/snouty-flyover`) to the Lynx as our own 3D showcase ROM; not on
+   any plan yet. Commercial titles stay local:
+   `~/roms/lynx/hard_drivin.lnx` and `~/roms/lynx/blue_lightning.lnx`
+   (both 131,072 B, **headerless** dumps despite the `.lnx` name, so the
+   loader and `romcheck.py` must accept a headerless file and infer the
+   block size from the file size: 128 KB = 256 blocks of 512 B, 256 KB =
+   1 KB blocks, 512 KB = 2 KB blocks; header present = trust the header).
+4. Controls: as the other emulator carts. D-pad, A, B, Start = Pause,
+   Select tap = Option 1, Select hold = menu, Option 2 lives in the menu;
+   the menu has the A/B swap row that Snouty Boy and Snouty Gear have.
+5. Screen: picture at the top with the 26-row strip below (rows 102..127).
 6. Several `.lnx` files on the drive: list them in the menu and restart
-   into the chosen one (recommended), or require exactly one.
+   into the chosen one.
 
 ## 19. Facts to check in M0
 
@@ -414,7 +509,68 @@ and counter width; SCB field layout and the packed-data format; the exact
 sprite-type semantics for collision; the post-boot register state. Source
 of truth: the Epyx hardware specification, cc65's `lynx.h`, and public
 emulator source used as reference only (Handy is GPL; write Zig, do not
-copy).
+copy). Done in M0: section 20.
+
+## 20. Facts checked in M0
+
+Checked 2026-09-30 against fetched sources (M0 Track A). Sources:
+[HW] Epyx hardware appendix https://www.monlynx.de/lynx/hardware.html ;
+[CPU] https://www.monlynx.de/lynx/lynx4.html ; [DISP] .../lynx5.html ;
+[SPR] .../lynx6.html ; [CART] (cart and audio) .../lynx7.html ;
+[TIM] .../lynx8.html ; [MATH] (math and I/O) .../lynx9.html ;
+[BUGS] .../lynx10.html ; [CC65] https://github.com/cc65/cc65 include/_mikey.h,
+_suzy.h, libsrc/lynx/bootldr.s, lynx-cart.s ; [FELIX] the Felix emulator,
+https://github.com/laoo/Felix libFelix/Opcodes.hpp, CPU.cpp (read for facts
+only) ; [SNAKE] 42Bastian's Snake249,
+https://codeberg.org/42Bastian/lynx_hacking/raw/branch/master/248b/snake/snake.asm ;
+[SC] http://www.sizecoding.org/wiki/Atari_Lynx ; [CYC] 42Bastian's hardware
+cycle measurements, https://github.com/42Bastian/lynx_hacking/tree/master/cycle_check ;
+[A] the annotated boot ROM,
+https://forums.atariage.com/topic/191953-annotated-lynx-boot-rom/ ;
+[H] https://github.com/dhuseby/lynx-encryption-tools ; [X] our cross-check
+against the real ROM (docs/BOOT.md).
+
+| Fact | Verdict | Source |
+|---|---|---|
+| 16 MHz master clock, timing in ticks | confirmed | [CART] |
+| CPU is a 65C02 cell in Mikey, ~4 MHz peak | confirmed (wording: "65C02 cell", not a separate 65SC02) | [CPU] |
+| No RMB/SMB/BBR/BBS | **corrected**: the Lynx runs them | [FELIX], [SNAKE], [SC] |
+| No WAI/STP; $CB/$DB are 1-byte NOPs | confirmed | [FELIX] |
+| STZ, BRA, PHX/PLX/PHY/PLY, TRB/TSB, (zp), INC/DEC A, BIT #/zp,X/abs,X, JMP (abs,X) | confirmed | [FELIX] |
+| Undefined opcodes are NOPs: $x3/$xB 1 byte 1 cycle; $x2 2/2; $44 2/3; $54/$D4/$F4 2/4; $5C/$DC/$FC 3/4; $CB 1 byte 2 cycles; $DB 2 bytes 4 cycles (zp,X pattern) | confirmed per SingleStepTests (M1: all 256 opcodes pass; $5C is 4 there, 8 in Felix; $CB/$DB corrected from "1/1") | [FELIX], [CYC], section 16, docs/CPU.md |
+| Decimal ADC/SBC take one extra cycle (65C02) | confirmed | [FELIX] |
+| Page mode: opcode/operand fetch 4 ticks, other RAM/ROM access 5 ticks; MAPCTL bit 7 forces 5 | **corrected** (5 ticks is every data access, not only page breaks) | [CPU], [HW], [FELIX] |
+| Other costs: hardware 5, palette 5, Suzy write 5, Suzy read 9-15, RCART 15 ticks | added | [CPU], [CART] |
+| Memory map FC00 Suzy, FD00 Mikey, FE00-FFF7 ROM, FFF8, FFF9 MAPCTL, FFFA-FFFF vectors | confirmed; FFF8 is always RAM | [HW] |
+| MAPCTL bits: 0 Suzy, 1 Mikey, 2 ROM, 3 vectors (1 = RAM), 7 sequential disable; 0 at reset | confirmed | [HW] |
+| MAPCTL = 0 at the jump to $0200 | confirmed (the clear loop writes $FFF9) | [A], [X] |
+| 8 timers FD00-FD1F, BACKUP/CTLA/CNT/CTLB | confirmed | [HW] |
+| Timer 0 line, timer 2 vertical, timer 4 UART baud | confirmed | [TIM] |
+| Link chains 0-2-4 and 1-3-5-7-audio0-3-1 | added | [TIM] |
+| Audio FD20-FD3F, 8 registers per channel, 12-bit LFSR, integrate | confirmed; taps 0-5, 7, 10, 11 | [HW], [CART] |
+| INTRST FD80 / INTSET FD81, one bit per timer | confirmed; bit 4 is the UART's | [HW], [TIM] |
+| DISPADR FD94/95, DISPCTL FD92, PBKUP FD93 | confirmed; DISPADR's low 2 bits ignored, latched in vertical blank | [HW], [DISP] |
+| Palette GREEN FDA0-AF, BLUERED FDB0-BF, 160x102 4 bpp, 80 B/line | confirmed; high nibble = left pixel | [HW], [DISP] |
+| IODIR FD8A, IODAT FD8B, SYSCTL1 FD87 | confirmed | [HW] |
+| Block select: 8 bits MSB first from IODAT bit 1 on SYSCTL1 bit 0 rising edges; strobe high clears the counter | confirmed | [CART], [CC65], [A], [X] |
+| Counter: 11-bit ripple counter, the cart wires 9/10/11 bits for 512 B/1 KB/2 KB blocks | confirmed | [CART] |
+| IODAT bit 1 = cart address data and cart power (0 = on), bit 4 AUDIN; SYSCTL1 bit 1 = 0 powers off | added | [HW], [MATH] |
+| RCART0 FCB2 / RCART1 FCB3 | confirmed | [HW] |
+| SCBNEXT FC10, SPRGO FC91, SPRSYS FC92, SPRCTL0/1 FC80/81, SPRCOLL FC82 | confirmed | [HW] |
+| SCB layout and SPRCTL1 reload depth, palette skip bit 3 | confirmed | [SPR], [HW] |
+| Packed data: offset byte, 1+4-bit packets (count + 1 pixels), totally literal mode | confirmed; a packet ending on bit 0 of a byte needs a pad byte (hardware bug) | [SPR], [BUGS] |
+| Quadrant order SE, NE, NW, SW; flips about the reference point | confirmed | [SPR] |
+| Sprite type numbering 0-7 | **corrected** (order: background-shadow, background-no-collision, boundary-shadow, boundary, normal, non-collidable, xor-shadow, shadow) | [HW], [SPR] |
+| Depository at SCB + COLLOFF, written for types 2, 3, 4, 6, 7 | added | [SPR], [MATH] |
+| Math unit FC52-FC6F; MATHA FC55 starts multiply, MATHE FC63 divide; SPRSYS signed/accumulate | confirmed; divide unsigned only, signed-multiply sign bugs | [MATH], [CC65] |
+| Joystick FCB0 / switches FCB1 | confirmed; directions swap with SPRSYS LEFTHAND | [HW], [CC65] |
+| Boot: one frame of 1-5 blocks (count byte $FB-$FF), 51-byte blocks, c^3 mod N, $15 check byte, running-sum obfuscation, loaded at $0200 | confirmed/**corrected** (not "the first cart block": a frame, and loaders re-enter the ROM at $FE00/$FE4A) | [A], [H], [X] |
+| Registers at the jump: A = 0, X = 0, Y = 2, I = 1, Z = 1, C/V from the last add, SP = $01 if SP was 0 before reset | confirmed (SP is an assumption) | [A], [X] |
+| Mikey after boot: TIM0 $9E/$18, TIM2 $68/$1F, PBKUP $29, DISPADR $2000, DISPCTL $0D, pens 0 and 15 black, IODIR 3, IODAT 2, SYSCTL1 2; Suzy untouched | confirmed | [A], [X] |
+| Cart position after boot: block 0, counter 1 + 51 x blocks | confirmed | [X], [CC65] |
+
+Still open: $5C's cycle count and the other undefined-opcode timings on
+real hardware; SP before reset.
 
 ## Status
 
@@ -424,3 +580,24 @@ copy).
   (Adrian; `docs/ROM_DRIVE.md`); the compressed flash cache is now the
   13.1 fallback, and boot decryption moved from a host tool into
   `core/boot.zig`.
+- 2026-09-30: section 18 closed by Adrian (build now, public-write-up
+  decryption with his boot ROM as a local cross-check only, controls as the
+  other emulators, strip below, drive list). Hard Drivin' and Blue
+  Lightning dumps received: headerless 128 KB files. M0 started on branch
+  `lynx/m0`.
+- 2026-09-30: M0 Track A (branch `lynx/m0-boot`): section 3 checked and
+  corrected (section 20: the CPU has the bit instructions, 5-tick data
+  cycles, sprite type order, boot frames), `core/boot.zig` cross-checked
+  against the real boot ROM, SingleStepTests `rockwell65c02` chosen,
+  `roms/raycast.lnx` (Apache-2.0) shipped.
+- 2026-10-01: M1 core built (three Opus tracks, two fixers, a perf pass;
+  PLAN.md). CPU passes all 256 SingleStepTests files; drhelius's
+  lynx-tests pass every row except sprites4 DMA EXP W24; raycast.lnx,
+  Hard Drivin' and Blue Lightning (local) run. Section 3/4 updated with
+  the hardware findings (CPUSLEEP, display latch, DMA steal, undefined
+  opcode timings); SP before reset and $5C on hardware still open.
+- 2026-10-01: M2 (menu, picker) and M3 (scrubber) built. M3 integration:
+  60-frame undo records and the un-inlined CPU dispatcher give 1-2 s of
+  history in the RAM cart, short of section 10's 2 s; the XIP cart
+  (built beside it, untested on hardware) would give 2.5-3.5 s. PLAN.md
+  M3 status has the decision table for Adrian.
