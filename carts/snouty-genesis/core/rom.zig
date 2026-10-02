@@ -15,7 +15,8 @@
 //! does not model it).
 //!
 //! Load-time refusals (`check`): no "SEGA" header, SMD interleave, over
-//! 4 MB or a bank-switching mapper (SSF2), the SVP chip. The frontend
+//! 4 MB (file or header range) or a bank-switching mapper (SSF2), the SVP
+//! chip, a header ROM range whose end lies before its start. The frontend
 //! prints the `Refusal`'s `text()` and falls back to the embedded ROM.
 
 const std = @import("std");
@@ -138,10 +139,12 @@ pub const Header = struct {
     /// 0x1F0: region letters (J, U, E or the newer hex digit).
     region: [3]u8,
 
-    /// Bytes the header says the ROM has (end - start + 1), 0 if nonsense.
-    pub fn declared_size(h: *const Header) u32 {
-        if (h.rom_end < h.rom_start) return 0;
-        return h.rom_end - h.rom_start + 1;
+    /// Bytes the header says the ROM has (end - start + 1, in u64 so a
+    /// header claiming 00000000-FFFFFFFF reads 4 GB rather than wrapping),
+    /// or null when the end lies before the start (review EM-03).
+    pub fn declared_size(h: *const Header) ?u64 {
+        if (h.rom_end < h.rom_start) return null;
+        return @as(u64, h.rom_end) - h.rom_start + 1;
     }
 };
 
@@ -223,6 +226,8 @@ pub const Refusal = enum(u8) {
     mapper,
     /// Virtua Racing's SVP chip.
     svp,
+    /// The header's ROM end address lies before its start.
+    bad_range,
 
     /// The line the frontend prints.
     pub fn text(r: Refusal) []const u8 {
@@ -232,6 +237,7 @@ pub const Refusal = enum(u8) {
             .smd_interleaved => "SMD interleaved: convert to .bin",
             .mapper => "mapper or over 4 MB: unsupported",
             .svp => "SVP chip: unsupported",
+            .bad_range => "bad header ROM range",
         };
     }
 };
@@ -257,7 +263,8 @@ pub fn check(src: *const RomSource) Refusal {
     if (src.size >= header_end and is_smd(src)) return .smd_interleaved;
     if (!is_genesis(src)) return .no_header;
     const h = parse_header(src);
-    if (src.size > max_size or h.declared_size() > max_size) return .mapper;
+    const declared = h.declared_size() orelse return .bad_range;
+    if (src.size > max_size or declared > max_size) return .mapper;
     if (std.mem.indexOf(u8, &h.system, "SSF") != null) return .mapper;
     if (read8(src, 0x1C8) == 'S' and read8(src, 0x1C9) == 'V') return .svp;
     var product: [14]u8 = undefined;
