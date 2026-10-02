@@ -259,6 +259,11 @@ ticks (palette set swap, free) and sets the portrait's "ouch" frame for
   reserve, one tick back always reaches HP > 0, so the restart only
   triggers when there is no history at all; it is kept as a safety net,
   holding B for one second while dead with nothing to rewind into.)
+- Revive (2026-10-02 fix): leaving a rewind out of death alive gives 2 s
+  of invulnerability (bites, spit and webs do nothing; HP text and
+  portrait frame blink Iris) and tops HP up to at least 25. Without it a
+  mob kept killing the player again right after the 3 s reserve rewind,
+  a death loop. Recorded as a rewind patch, so replays stay identical.
 - Tension: rewinding to dodge a hit also un-does the kills you made since,
   so the meter is a resource, not a free undo. Combined with the spider's
   freeze web and the wasp's charge, that is the game.

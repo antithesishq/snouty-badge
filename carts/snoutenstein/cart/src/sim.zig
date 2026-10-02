@@ -43,6 +43,13 @@ pub const max_zapper = 99;
 pub const max_spray = 30;
 pub const max_debugger = 9;
 pub const max_rewind = 600;
+/// Leaving a rewind out of death alive revives the player: 2 s of
+/// invulnerability (bites, spit and webs do nothing) and HP topped up to
+/// at least 25. Without it the 3 s death reserve lands back in the same
+/// mob at low HP and the player dies, rewinds, dies again (Adrian's
+/// report, 2026-10-02).
+pub const death_grace: u8 = 120;
+pub const death_hp_floor: i16 = 25;
 pub const rewind_regen_ticks = 6;
 
 pub const EnemyStats = struct {
@@ -127,6 +134,7 @@ pub fn step(s: *GameState, level: *const Level, b: state.Buttons) void {
     s.last_locked = 0;
     if (s.hurt > 0) s.hurt -= 1;
     const p = &s.player;
+    if (p.grace > 0) p.grace -= 1;
     if (b.left) p.angle -%= turn_speed;
     if (b.right) p.angle +%= turn_speed;
     var move: Fixed = 0;
@@ -357,9 +365,10 @@ pub fn damage_enemy(s: *GameState, i: usize, d: i16) void {
 
 /// Hurt the player: HP floors at 0 (death is the caller's business: main
 /// freezes time at hp 0) and the view flashes red for `hurt_ticks`.
+/// Nothing during the post-death grace (`death_grace`).
 pub fn damage_player(s: *GameState, amount: i16) void {
     const p = &s.player;
-    if (p.hp <= 0) return;
+    if (p.hp <= 0 or p.grace > 0) return;
     p.hp = @max(0, p.hp - amount);
     s.hurt = hurt_ticks;
 }
@@ -540,14 +549,16 @@ pub fn hash(s: *const GameState) u32 {
 }
 
 /// `hash` with the rewind bookkeeping zeroed (`player.rewind_meter`,
-/// `player.rewind_regen`, `rewinds`). A state committed by a rewind
-/// differs from the state that was live at that tick only in those
-/// fields (the meter was drained, the counter bumped), so this is what
+/// `player.rewind_regen`, `player.grace`, `rewinds`). A state committed by
+/// a rewind differs from the state that was live at that tick only in
+/// those fields (the meter was drained, the counter bumped, the death
+/// grace granted), so this is what
 /// `check_determinism.mjs --rewind-at` compares (PLAN.md M4).
 pub fn hash_gameplay(s: *const GameState) u32 {
     var c = s.*;
     c.player.rewind_meter = 0;
     c.player.rewind_regen = 0;
+    c.player.grace = 0;
     c.rewinds = 0;
     return hash(&c);
 }
@@ -1305,4 +1316,23 @@ test "a dead enemy in a doorway does not hold the door open" {
     s.enemies[0].hp = 0;
     run(&s, L, .{}, 40);
     try testing.expectEqual(@as(u8, door_closed), s.doors[0].phase);
+}
+
+test "the death grace blocks damage, then runs out" {
+    var room_st: level_parse.Parsed = undefined;
+    const room = try level_parse.parse_level(&room_st, "room", room_src, 0);
+    var s: GameState = undefined;
+    init(&s, &room, 0, 7);
+    s.player.grace = 3;
+    damage_player(&s, 10);
+    try testing.expectEqual(@as(i16, 100), s.player.hp);
+    try testing.expectEqual(@as(u8, 0), s.hurt);
+    run(&s, &room, .{}, 3);
+    try testing.expectEqual(@as(u8, 0), s.player.grace);
+    damage_player(&s, 10);
+    try testing.expectEqual(@as(i16, 90), s.player.hp);
+    // hash_gameplay treats the grace as rewind bookkeeping.
+    var g = s;
+    g.player.grace = 50;
+    try testing.expectEqual(hash_gameplay(&s), hash_gameplay(&g));
 }

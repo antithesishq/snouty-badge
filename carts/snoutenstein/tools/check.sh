@@ -41,11 +41,13 @@ node ../../tools/preview.mjs $W --frames 1400 --every 10 --out out/exit \
   --script tools/scripts/m2_exit.json \
   --dump-exports debug_mode,debug_level,debug_tick,debug_px,debug_py \
   --expect "debug_mode == 1" --expect "debug_level == 4"
-# M3: a gnat wakes and bites; death freeze, hold B, time runs back to life; Build Farm opens.
+# M3: a gnat wakes and bites; death freeze, hold B, time runs back to life
+# revived (HP >= 25, 2 s grace, the 2026-10-02 death-loop fix); Build Farm opens.
 node ../../tools/preview.mjs $W --frames 360 --quiet --out out/gnat --script tools/scripts/m3_gnat.json \
   --dump-exports debug_mode,debug_hp,debug_tick --expect "debug_mode == 1" --expect "debug_hp < 100" --expect "debug_hp > 0"
 node ../../tools/preview.mjs $W --frames 1300 --every 25 --out out/death --script tools/scripts/m3_death.json \
-  --dump-exports debug_mode,debug_hp,debug_tick,debug_rewinds,debug_desync --at "1099 debug_mode == 5" --at "1201 debug_mode == 1" --at "1201 debug_hp > 0" --at "1201 debug_tick == 933" \
+  --dump-exports debug_mode,debug_hp,debug_tick,debug_rewinds,debug_grace,debug_desync --at "1099 debug_mode == 5" --at "1201 debug_mode == 1" --at "1201 debug_hp >= 25" --at "1201 debug_tick == 933" \
+  --at "1201 debug_grace == 120" --at "1299 debug_grace == 22" \
   --expect "debug_rewinds == 1" --expect "debug_desync == 0"
 node ../../tools/preview.mjs $W --frames 420 --every 10 --out out/buildfarm --script tools/scripts/m3_buildfarm.json \
   --dump-exports debug_mode,debug_level,debug_hp,debug_px,debug_kills \

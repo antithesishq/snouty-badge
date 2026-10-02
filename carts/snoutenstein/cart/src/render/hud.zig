@@ -65,7 +65,9 @@ pub fn draw_bar(s: *const state.GameState) void {
     var buf: [8]u8 = undefined;
     const hp: i32 = @max(0, p.hp);
     const hp_str = fmt(&buf, "{d}%", .{@min(hp, 999)});
-    text_in(hp_str, 0, 32, row1_y, anti_white);
+    // Post-death grace (sim.death_grace): HP text and portrait frame blink Iris.
+    const grace_on = p.grace > 0 and (p.grace / 6) % 2 == 0;
+    text_in(hp_str, 0, 32, row1_y, if (grace_on) iris else anti_white);
     cart.rect(.{ .x = hp_bar_x, .y = row2_y, .width = hp_bar_w, .height = hp_bar_h, .fill_color = trough });
     const fill: u32 = @intCast(@divTrunc(@min(hp, 100) * @as(i32, hp_bar_w), 100));
     const hp_color = if (hp > 60) green else if (hp > 25) coral else red;
@@ -90,7 +92,7 @@ pub fn draw_bar(s: *const state.GameState) void {
     // x 64..95: portrait 24x24 in a frame. The bar is only 24 px tall, so
     // the frame is 2 px left and right; top and bottom it is the face's own
     // 1 px transparent border showing the frame colour.
-    cart.rect(.{ .x = face_x - 2, .y = bar_y, .width = 28, .height = 24, .fill_color = steel });
+    cart.rect(.{ .x = face_x - 2, .y = bar_y, .width = 28, .height = 24, .fill_color = if (grace_on) iris else steel });
     cart.rect(.{ .x = face_x, .y = bar_y + 1, .width = 24, .height = 22, .fill_color = trough });
     blit.cell(gfx.face, 24, 24, @backingInt(portrait.frame(s)), face_x, bar_y, .{});
 

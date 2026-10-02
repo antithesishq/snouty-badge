@@ -33,8 +33,8 @@
 //!   Rewinding 600 ticks is therefore always possible once the game has
 //!   run that long; the rewind meter (max 600) is the gameplay bound.
 //! - Patches: a commit changes the live state out of band (the meter is
-//!   drained, `rewinds` is bumped), which a replay from an earlier keyframe
-//!   would not reproduce. So `commit` records the change as a patch on the
+//!   drained, `rewinds` is bumped, `revive` after a rewind out of death),
+//!   which a replay from an earlier keyframe would not reproduce. So `commit` records the change as a patch on the
 //!   tick it committed at (`patch[t % input_len]`, valid while
 //!   `patch_tick[..] == t`), and "state at tick t" always means "with the
 //!   patch of tick t applied". Replay applies patches after each step,
@@ -67,9 +67,10 @@ var kf_tick: [keyframe_count]u32 = @splat(none);
 /// Input applied to state t, at inputs[t % input_len].
 var inputs: [input_len]Buttons = undefined;
 /// Out-of-band changes made at a commit, by tick (see the patch note above):
-/// the values `rewind_meter` and `rewinds` take at that tick. Absolute, not
-/// deltas, so applying a patch is idempotent.
-const Patch = struct { meter: u16, rewinds: u16 };
+/// the values `rewind_meter`, `rewinds`, `player.hp` and `player.grace`
+/// take at that tick. Absolute, not deltas, so applying a patch is
+/// idempotent.
+const Patch = struct { meter: u16, rewinds: u16, hp: i16, grace: u8 };
 var patch: [input_len]Patch = undefined;
 var patch_tick: [input_len]u32 = @splat(none);
 /// Span cache: cache[i] = state at tick cache_lo + i, i < cache_n.
@@ -141,6 +142,8 @@ fn apply_patch(s: *GameState) void {
     if (patch_tick[i] != s.tick) return;
     s.player.rewind_meter = patch[i].meter;
     s.rewinds = patch[i].rewinds;
+    s.player.hp = patch[i].hp;
+    s.player.grace = patch[i].grace;
 }
 
 /// Fill the span cache with states [k, hi] replayed from keyframe k.
@@ -257,7 +260,7 @@ pub fn commit(s: *GameState, meter: u16, count_rewind: bool) void {
     }
     const i = cur % input_len;
     // current() already carries any earlier patch of this tick.
-    patch[i] = .{ .meter = meter, .rewinds = s.rewinds + @intFromBool(count_rewind) };
+    patch[i] = .{ .meter = meter, .rewinds = s.rewinds + @intFromBool(count_rewind), .hp = s.player.hp, .grace = s.player.grace };
     patch_tick[i] = cur;
     apply_patch(s);
     head = cur;
@@ -275,7 +278,24 @@ pub fn commit(s: *GameState, meter: u16, count_rewind: bool) void {
 pub fn set_meter(s: *GameState, meter: u16) void {
     std.debug.assert(!active and s.tick == head);
     const i = s.tick % input_len;
-    patch[i] = .{ .meter = meter, .rewinds = s.rewinds };
+    patch[i] = .{ .meter = meter, .rewinds = s.rewinds, .hp = s.player.hp, .grace = s.player.grace };
+    patch_tick[i] = s.tick;
+    apply_patch(s);
+}
+
+/// The post-death revive (`sim.death_grace`, `sim.death_hp_floor`) at the
+/// live tick, called by main.zig right after the commit of a rewind out of
+/// death: recorded as the patch of `s.tick` like `set_meter`, keeping the
+/// meter and count `s` already has.
+pub fn revive(s: *GameState) void {
+    std.debug.assert(!active and s.tick == head);
+    const i = s.tick % input_len;
+    patch[i] = .{
+        .meter = s.player.rewind_meter,
+        .rewinds = s.rewinds,
+        .hp = @max(s.player.hp, sim.death_hp_floor),
+        .grace = sim.death_grace,
+    };
     patch_tick[i] = s.tick;
     apply_patch(s);
 }
@@ -682,4 +702,64 @@ test "a commit and set_meter at the same tick: live and replay agree" {
     try testing.expectEqual(@as(u32, 0), desyncs);
     while (back(L)) |p| try testing.expectEqual(ref[p.tick], sim.hash(p));
     try testing.expectEqual(@as(u32, 0), desyncs);
+}
+
+// Adrian, 2026-10-02: in a mob, death, a short rewind, death again,
+// forever. The Build Farm opening (three gnats, see ai.zig's balance
+// tests): stand still until dead, rewind `back_n` ticks out of death the
+// way main.zig does (begin, back, commit, `revive` unless `no_revive`),
+// then stand still or fight back with the zapper for up to 600 ticks.
+// Returns the ticks survived; `out_hp` the HP at the end.
+const MobRun = struct { back_n: u32, revive: bool, fire: bool };
+fn mob_after_death_rewind(r: MobRun, out_hp: *i16) !u32 {
+    const level_parse = @import("level_parse.zig");
+    const fixed = @import("fixed.zig");
+    var st: level_parse.Parsed = undefined;
+    const farm = try level_parse.parse_level(&st, "build_farm", @embedFile("levels/build_farm.txt"), 0);
+    desyncs = 0;
+    var s: GameState = undefined;
+    sim.init(&s, &farm, 0, 1);
+    s.player.x = fixed.from_int(12) + fixed.half;
+    reset(&s);
+    while (s.player.hp > 0) {
+        log_input(s.tick, .{});
+        sim.step(&s, &farm, .{});
+        after_step(&s);
+        try testing.expect(s.tick < 2000);
+    }
+    begin(&s, &farm);
+    for (0..r.back_n) |_| _ = back(&farm).?;
+    commit(&s, 0, true);
+    try testing.expect(s.player.hp > 0);
+    if (r.revive) {
+        revive(&s);
+        try testing.expect(s.player.hp >= sim.death_hp_floor);
+        try testing.expectEqual(sim.death_grace, s.player.grace);
+    }
+    const resumed = s.tick;
+    while (s.player.hp > 0 and s.tick < resumed + 600) {
+        const b: Buttons = .{ .a = r.fire };
+        log_input(s.tick, b);
+        sim.step(&s, &farm, b);
+        after_step(&s);
+        // The keyframe self-check replays across the revive patch.
+        if (s.tick % keyframe_every == 0) try testing.expect(check(&s, &farm));
+    }
+    try testing.expectEqual(@as(u32, 0), desyncs);
+    out_hp.* = s.player.hp;
+    return s.tick - resumed;
+}
+
+test "death revive: a short rewind out of death no longer lands in a mob that kills again" {
+    var hp: i16 = 0;
+    // The bug: a tap out of death resumes on the last living tick (4 HP)
+    // and the next bite kills, even fighting back.
+    try testing.expect(try mob_after_death_rewind(.{ .back_n = 1, .revive = false, .fire = true }, &hp) < 60);
+    // Revived, the same tap lasts over 5 s of fighting without even
+    // aiming (measured 382 ticks), the reserve the full 10 s.
+    try testing.expect(try mob_after_death_rewind(.{ .back_n = 1, .revive = true, .fire = true }, &hp) >= 300);
+    try testing.expectEqual(@as(u32, 600), try mob_after_death_rewind(.{ .back_n = 180, .revive = true, .fire = true }, &hp));
+    try testing.expect(hp > 0);
+    // Standing still, nothing bites for the whole grace.
+    try testing.expect(try mob_after_death_rewind(.{ .back_n = 1, .revive = true, .fire = false }, &hp) > sim.death_grace);
 }

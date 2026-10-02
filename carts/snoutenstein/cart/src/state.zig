@@ -46,8 +46,11 @@ pub const Player = struct {
     /// cartridge has been picked up (which also selects the weapon).
     ammo_debugger: u8 = 0,
     has_debugger: bool = false,
+    /// Ticks of invulnerability left after rewinding out of death
+    /// (`sim.death_grace`); set only by a rewind patch.
+    grace: u8 = 0,
     /// Explicit padding to a 4-byte multiple (assert_no_padding).
-    _pad: [2]u8 = @splat(0),
+    _pad: [1]u8 = @splat(0),
 };
 
 pub const EnemyKind = enum(u8) { gnat = 0, wasp = 1, beetle = 2, spider = 3, boss = 4 };

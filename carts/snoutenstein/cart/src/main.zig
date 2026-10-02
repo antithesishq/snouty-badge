@@ -36,7 +36,10 @@ const e1m1_index: u8 = if (@hasDecl(levels, "e1m1_index")) levels.e1m1_index els
 /// at the very first tick), holding B this long restarts the level. The
 /// real exit from death is the rewind (SPEC.md 9.1, PLAN.md M4).
 const dead_hold: u32 = 60;
-/// Emergency reserve granted when rewinding out of death: 3 s.
+/// Emergency reserve granted when rewinding out of death: 3 s. Leaving
+/// such a rewind alive also revives the player (`rewind.revive`: 2 s
+/// without damage, HP at least 25), so the reserve cannot land back in a
+/// mob that kills again at once.
 const death_reserve: u16 = 180;
 /// SPEC.md 9.3: re-simulate every keyframe span and compare, on builds
 /// where the extra 30 `sim.step`s per half second do not matter.
@@ -332,6 +335,7 @@ fn begin_rewind(ticks: u16, dead: bool) void {
 
 /// B released or budget spent. The shown state becomes live unless it is
 /// still the death tick (B tapped without stepping back): then back to dead.
+/// Out of death, the player resumes revived (`rewind.revive`).
 fn end_rewind() void {
     hud.set_rewinding(false);
     hud.meter_override = null;
@@ -341,6 +345,7 @@ fn end_rewind() void {
         held_b = 0;
         return;
     }
+    if (from_dead) rewind.revive(&game);
     mode = .playing;
 }
 
@@ -368,6 +373,7 @@ comptime {
         @export(&debug_state_hash, .{ .name = "debug_state_hash" });
         @export(&debug_nibble_ok, .{ .name = "debug_nibble_ok" });
         @export(&debug_frozen, .{ .name = "debug_frozen" });
+        @export(&debug_grace, .{ .name = "debug_grace" });
         @export(&debug_projectiles, .{ .name = "debug_projectiles" });
         @export(&debug_rewinds, .{ .name = "debug_rewinds" });
         @export(&debug_meter, .{ .name = "debug_meter" });
@@ -432,6 +438,9 @@ fn debug_state_hash() callconv(.c) u32 {
 }
 fn debug_frozen() callconv(.c) u32 {
     return game.player.frozen;
+}
+fn debug_grace() callconv(.c) u32 {
+    return game.player.grace;
 }
 /// Live projectiles.
 fn debug_projectiles() callconv(.c) u32 {
