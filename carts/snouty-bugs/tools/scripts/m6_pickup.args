@@ -1,0 +1,21 @@
+# m6_pickup: crates and their grants. m2_play's sweep (A at 30, still fire 60..239, then
+# up 40 / hold 20 / down 40 / hold 20) to 2560, plus one long hold-B at 806..885 that
+# rewinds across a collection. The drop sequence is [W, cores, W, fork, X, retry, W, fork]
+# (W = current weapon kind, X = the next one); debug_weapon = kind * 10 + level, F 0, A 1.
+# - 592 (game tick 562): the first beetle dies under the zap and drops crate 1, an F (drops
+#   0 -> 1, pickups 1); it drifts left with the bob, still in flight at 600.
+# - 803 (tick 773): the sweep runs into it: F1 -> F2 (weapon 1 -> 2), score 50 -> 150 (+100).
+# - B 806..885 (80 frames = 160 ticks, 2 fuel per frame): 806 is the first held frame and
+#   back at tick 773, still F2; 807 (tick 771) is before the grab: F1 again, score 50, the
+#   crate back on screen (pickups 1). 885: tick 615, fuel 20. 886: PLAYING, no tick.
+#   80 frames + 160 ticks = 240 updates = two periods of the sweep, so after the release the
+#   ship replays (one tick off) the same path and grabs the same crate again at 1043 (tick
+#   772): F2, score 150.
+# - 1171: crate 2, CORE HOURS. Fuel is 20 + the refill (1 per 10 live ticks) = 70 at 1382;
+#   the grab at 1383 (tick 1112) pays 60: cores 0 -> 1, fuel 70 -> 130. (In m2_play the bar
+#   is full at that grab, 1143, so the grant is lost to the 180 cap; hence the hold.)
+# - 1656: crate 3, an F again; 1868: F3 (weapon 3).
+# - 2209: crate 4, a fork; 2284: crate 5, the swap (X after F = A); 2432: fork 1; 2498:
+#   the A crate turns F3 into A3 (weapon 3 -> 13): kind changes, level kept.
+# debug_history_check is 0 with the crate in flight, during the hold and after it.
+--frames 2560 --dump-exports debug_state,debug_weapon,debug_forks,debug_cores,debug_drops,debug_score,debug_fuel --at "591 debug_drops == 0" --at "592 debug_drops == 1" --at "600 debug_pickups == 1" --at "600 debug_history_check == 0" --at "802 debug_weapon == 1" --at "803 debug_weapon == 2" --at "803 debug_pickups == 0" --at "803 debug_score == 150" --at "806 debug_state == 5" --at "806 debug_weapon == 2" --at "807 debug_weapon == 1" --at "807 debug_pickups == 1" --at "807 debug_score == 50" --at "850 debug_history_check == 0" --at "885 debug_state == 5" --at "885 debug_game_tick == 615" --at "885 debug_fuel == 20" --at "886 debug_state == 1" --at "886 debug_weapon == 1" --at "887 debug_history_check == 0" --at "1042 debug_weapon == 1" --at "1043 debug_weapon == 2" --at "1043 debug_score == 150" --at "1171 debug_drops == 2" --at "1382 debug_cores == 0" --at "1382 debug_fuel == 70" --at "1383 debug_cores == 1" --at "1383 debug_fuel == 130" --at "1656 debug_drops == 3" --at "1867 debug_weapon == 2" --at "1868 debug_weapon == 3" --at "2284 debug_drops == 5" --at "2431 debug_forks == 0" --at "2432 debug_forks == 1" --at "2497 debug_weapon == 3" --at "2498 debug_weapon == 13" --at "2559 debug_history_check == 0" --expect "debug_state == 1" --expect "debug_weapon == 13" --expect "debug_cores == 1" --expect "debug_forks == 1" --expect "debug_drops == 5"

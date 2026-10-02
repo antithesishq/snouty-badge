@@ -1,0 +1,20 @@
+# m6_identity: a long god-mode run (debug_god at 31: hits are ignored, so the run is
+# deterministic for 12000 updates) through two loops of the stage table with every weapon at
+# high level, three forks and three hold-B rewinds. Input: A at 30, still fire 60..239, then
+# m2_play's sweep (up 40 / hold 20 / down 40 / hold 20) to 12000, B held 5100..5119,
+# 7000..7019 and 10500..10529. debug_history_check (0 = the world rebuilt from keyframe +
+# input log is identical, every field) is checked with ghosts, beams, seekers and crates in
+# flight, on held frames and on the first frames after each release; it is 0 on every frame
+# from 33 on (checked once frame by frame while writing this; the pins are a sample).
+# Weapon (kind * 10 + level, F 0, A 1, B 2): F2 at 803, F3 1628, A3 2258 (swap), A4 3527,
+# A5 4891, B5 6227 (swap, level kept), F5 9976 (5-way with the rng jitter: the one weapon
+# that draws from the rng). Forks at 2191, 3549 and 5780 (3 ghosts). Stage clears at 4446
+# and 9107; the shield (3575) is never used up under god mode.
+# - 2300: A3, one ghost. 3600: A4, two ghosts. 5000: A5 (3 beams), two ghosts.
+# - Hold 1: 5100 (first held frame, game tick 5067) .. 5119 (tick 5029, fuel 140); 5120 is
+#   the release (no tick), 5121 the first live tick.
+# - 6300: B5 seekers from the ship and three ghosts (54 bolts of the pool of 64).
+# - Hold 2: 7000 (tick 6906) .. 7019 (tick 6868), release 7020, live 7021.
+# - 10000: F5 with jitter and three ghosts. Hold 3: 10500 (tick 10345) .. 10529 (tick 10287,
+#   fuel 120), release 10530, live 10531. 11999 is the last update.
+--frames 12000 --call-at "31 debug_god" --dump-exports debug_state,debug_weapon,debug_forks,debug_stage_clears,debug_world_size --at "2300 debug_forks == 1" --at "2300 debug_history_check == 0" --at "3600 debug_history_check == 0" --at "4890 debug_weapon == 14" --at "4891 debug_weapon == 15" --at "5000 debug_history_check == 0" --at "5100 debug_state == 5" --at "5100 debug_history_check == 0" --at "5110 debug_history_check == 0" --at "5119 debug_state == 5" --at "5119 debug_history_check == 0" --at "5120 debug_state == 1" --at "5120 debug_history_check == 0" --at "5121 debug_history_check == 0" --at "5779 debug_forks == 2" --at "5780 debug_forks == 3" --at "6226 debug_weapon == 15" --at "6227 debug_weapon == 25" --at "6300 debug_bolts > 40" --at "6300 debug_history_check == 0" --at "7000 debug_state == 5" --at "7010 debug_history_check == 0" --at "7019 debug_history_check == 0" --at "7020 debug_state == 1" --at "7020 debug_history_check == 0" --at "7021 debug_history_check == 0" --at "8000 debug_history_check == 0" --at "9000 debug_history_check == 0" --at "9975 debug_weapon == 25" --at "9976 debug_weapon == 5" --at "10000 debug_history_check == 0" --at "10500 debug_state == 5" --at "10515 debug_history_check == 0" --at "10529 debug_fuel == 120" --at "10529 debug_history_check == 0" --at "10530 debug_state == 1" --at "10530 debug_history_check == 0" --at "10531 debug_history_check == 0" --at "11999 debug_history_check == 0" --expect "debug_forks == 3" --expect "debug_weapon == 5" --expect "debug_stage_clears == 2" --expect "debug_state == 1"

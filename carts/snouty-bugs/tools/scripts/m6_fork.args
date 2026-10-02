@@ -1,0 +1,18 @@
+# m6_fork: m2_play's input (the sweep with its holds at 2084 and 3320) plus a third hold-B at
+# 3632..3646 that crosses a fork collection. Forks replay the ship's own trail 24 ticks per
+# ghost behind and fire the current weapon where the ship fired then; debug_history_check
+# (0 = the world rebuilt from keyframe + input log is identical) is the point of the script.
+# - 2222 (game tick 2161): fork crate grabbed, forks 0 -> 1; 2236 (tick 2175): the A crate
+#   swaps F3 for A3 (weapon 13, two 24 px beams per volley). From here a ghost and beams are
+#   in flight; 2300, 2700 and 3000 check identity with them (bolts > 0).
+# - The 3320..3334 hold (m2_play's second) runs with the ghost and the beams: 3330 is a
+#   held frame (state 5), 3335 the release (no tick), 3336 the first live tick.
+# - 3604 (tick 3497): fork 2. Same weapon A3, three sources now: 12 bolts at 3603 (ship and
+#   one ghost, 3 volleys of 2 beams each in flight), 18 at 3700 (ship and two ghosts).
+#   3625: the retry shield, 3628: A4 (weapon 14).
+# - B 3632..3646 (15 frames = 30 ticks, 3524 -> 3494): 3633 (tick 3520) undoes A4 (14 ->
+#   13), 3635 (tick 3516) the shield, and 3645 (tick 3496, one before the grab) the second
+#   fork: forks 2 -> 1. 3647 is the release (PLAYING, no tick), 3648 the first live tick.
+#   The ship re-lives the same input and re-grabs the fork at 3650 (tick 3497 again): forks 2.
+#   A4 comes back at 3749; the shield crate drifts off unclaimed.
+--frames 3800 --dump-exports debug_state,debug_weapon,debug_forks,debug_shield,debug_bolts,debug_rewinds --at "2221 debug_forks == 0" --at "2222 debug_forks == 1" --at "2236 debug_weapon == 13" --at "2300 debug_bolts > 0" --at "2300 debug_history_check == 0" --at "2700 debug_history_check == 0" --at "3000 debug_history_check == 0" --at "3330 debug_state == 5" --at "3330 debug_forks == 1" --at "3330 debug_history_check == 0" --at "3335 debug_state == 1" --at "3335 debug_history_check == 0" --at "3336 debug_history_check == 0" --at "3603 debug_forks == 1" --at "3603 debug_bolts == 12" --at "3604 debug_forks == 2" --at "3628 debug_weapon == 14" --at "3631 debug_shield == 1" --at "3632 debug_state == 5" --at "3633 debug_weapon == 13" --at "3634 debug_shield == 1" --at "3635 debug_shield == 0" --at "3644 debug_forks == 2" --at "3645 debug_forks == 1" --at "3645 debug_history_check == 0" --at "3646 debug_state == 5" --at "3646 debug_history_check == 0" --at "3647 debug_state == 1" --at "3647 debug_forks == 1" --at "3647 debug_history_check == 0" --at "3648 debug_history_check == 0" --at "3649 debug_forks == 1" --at "3650 debug_forks == 2" --at "3700 debug_bolts == 18" --at "3700 debug_history_check == 0" --at "3749 debug_weapon == 14" --at "3799 debug_history_check == 0" --expect "debug_state == 1" --expect "debug_forks == 2" --expect "debug_rewinds == 3"
