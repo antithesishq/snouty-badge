@@ -1,0 +1,5 @@
+# siwoo: name badge (demosnout's Snouty head + the chrome name), no input
+# needed, 60 fps. 1000 frames = the head's fly-in, the letters' drop, the
+# first shine (frame 136), hop (376) and the theme-changing spin wave (856).
+budget_ms = 16.7
+frames = 1000

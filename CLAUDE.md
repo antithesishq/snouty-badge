@@ -19,7 +19,8 @@ its design and milestone status.
   called by the root build.zig. Carts: `snouty-run` (binary `snouty`),
   `snouty-bugs`, `snoutenstein`, `snouty-reflections`, `snouty-boy`,
   `snouty-maze`, `snouty-gear`, `snouty-genesis`, `snouty-lynx`,
-  `snouty-flyover`, `demosnout`, `snouty-zero` (XIP only).
+  `snouty-flyover`, `demosnout`, `snouty-zero` (XIP only), `siwoo` (a name
+  badge: demosnout's head plus a chrome name).
 - `build.zig`, `build.zig.zon`, `build/common.zig` — the one Zig package.
   Shared options (`-Dcart`, `-Dcart-mode`, `-Ddebug_overlay`, `-Dsound`, `-Drom`, ...)
   and the shared `test` and `check-float` steps are declared here and passed

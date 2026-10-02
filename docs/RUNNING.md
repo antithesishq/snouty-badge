@@ -113,12 +113,12 @@ Outputs, one set per cart:
 - `zig-out/firmware/<binary>.elf` (for badge-bench and `size -A`)
 - `zig-out/bin/<binary>.wasm` (for the simulator)
 
-Binaries (the 12 carts of the root `build.zig`, plus the calibration
+Binaries (the 13 carts of the root `build.zig`, plus the calibration
 tool): `snouty` (cart `snouty-run`), `snouty-bugs`, `snoutenstein`,
 `snouty-reflections`, `snouty-boy`, `snouty-maze`, `snouty-gear`,
 `snouty-genesis` (XIP only: `snouty-genesis-xip`), `snouty-lynx` (plus
 `snouty-lynx-xip` by default), `snouty-flyover`, `demosnout`,
-`snouty-zero` (XIP only: `snouty-zero-xip`) and `badge-calibrate`.
+`snouty-zero` (XIP only: `snouty-zero-xip`), `siwoo` and `badge-calibrate`.
 `zig build -Dcart-mode=xip` (or `both`) adds the execute-in-place variant
 `zig-out/firmware/<binary>-xip.uf2` and `.elf` for the other carts, which
 runs code from the cart flash window and keeps all cart RAM for data;
