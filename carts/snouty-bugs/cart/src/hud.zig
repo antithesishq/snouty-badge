@@ -57,12 +57,13 @@ pub fn draw_hud(rewinds: u32, fuel: u32, fuel_max: u32, fatal_floor: u32, hardco
     }
 }
 
-/// `F3`, `A1`, `B5`: the weapon letter and level in the status slot.
+/// `F3`, `A1`, `B5`: the weapon letter and level in the status slot, in
+/// Coral so it reads apart from the score digits ending at x 47.
 fn draw_weapon() void {
     const p = &world.w.player;
     const letters = "FAB";
     const slot = [2]u8{ letters[@backingInt(p.weapon)], '0' + @as(u8, @min(p.level, 9)) };
-    draw.text(&slot, status_x, 0, draw.anti_white);
+    draw.text(&slot, status_x, 0, draw.coral);
 }
 
 /// The fuel bar: frame, then a fill of `fuel * 30 / fuel_max` px (rounded
