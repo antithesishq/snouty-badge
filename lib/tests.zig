@@ -2,5 +2,6 @@
 test {
     _ = @import("romfs.zig");
     _ = @import("iris_mark.zig");
+    _ = @import("hint.zig");
     _ = @import("tests/romfs_unit.zig");
 }
