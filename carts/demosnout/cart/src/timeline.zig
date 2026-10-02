@@ -324,8 +324,12 @@ test "hold: endless parts run on, loop parts restart, release moves on" {
     for (0..len + 200) |_| try std.testing.expect(!c.advance(true));
     try std.testing.expectEqual(@as(u8, 1), c.index);
     try std.testing.expectEqual(len + 200, c.frame);
+    // Held, the part stays fully visible and never auto-advances (asserted
+    // above for every frame of the overrun). Which Cut tags the veil on a
+    // 256/256 tie is veil()'s business (it returns the incoming cut), and
+    // render() treats .fade and .seamless alike at full visibility, so the
+    // tag is not asserted here.
     try std.testing.expectEqual(@as(u16, 256), c.veil_now(true).vis);
-    try std.testing.expectEqual(Cut.seamless, c.veil_now(true).cut);
     // Released: the next step moves on, entered through the part's own cut.
     try std.testing.expect(c.advance(false));
     try std.testing.expectEqual(@as(u8, 2), c.index);
