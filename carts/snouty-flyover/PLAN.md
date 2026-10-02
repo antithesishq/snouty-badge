@@ -996,6 +996,32 @@ Goal: three visible finishes, no interface changes, bench unchanged.
     view changes only after about frame 210); rubble is `rubble + 1 +
     x % 2`. Worst Sort writes 82 bars a frame (bound), 73 seen. `.text`
     +964 B, `.bss` +24 B.
+- 2026-10-02 M4.1, tag `snouty-flyover/m4.1`: the flyer is a low-poly 3D
+  anteater. Adrian: the side-view sprite was "represented very differently
+  graphically from the rest"; he wants "a low poly 3D anteater seen from
+  the same perspective, like the tilted above view as the rest of the
+  view". `tools/anteater_mesh.py` builds the mesh procedurally (lathed body
+  with the dark shoulder band, drooping snout and ears on a head bone that
+  sways, bushy flattened tail, forelegs on flap bones, tucked hind legs;
+  139 vertices, 209 triangles) and emits `anteater_mesh.zig`; it also
+  renders a preview with the same projection so the look is judged on a
+  real frame before the Zig. `model.zig` poses the mesh each frame (flap
+  32-frame cycle, head sway 128 frames, bob, roll 2 units per row of
+  horizon shear), tilts it by the camera's downward view (24 degrees at
+  the level horizon, 1 unit per row of pitch), lights it from the sun's
+  side with four shades per material (cosine thresholds compared as
+  squares, no square root), projects it 5.2 units ahead with the march's
+  horizontal scale, culls back faces by screen area, sorts the visible
+  triangles far to near and fills them with Q4 edge functions inside a
+  clip box above the caption. `sprite.zig` and the ASCII frames are gone.
+  Cost: calibrated bench worst 15.07 ms (frame 1823, +0.8 ms on M4), mean
+  8.34 (+0.7 ms); 68% of the 22 ms budget. Sizes: `.text` 71,288 B, `.bss`
+  161,664 B (the vertex and triangle scratch is 16-bit). check-float
+  passes, hashes regenerated, `debug_world_check` 0 on attract and
+  `m2_verbs`. GIFs regenerated (`docs/preview_m4_attract.gif`,
+  `docs/preview_m4_verbs.gif`). Look knobs for a next pass: `dist`,
+  `tilt_level`, `shade_mul`, the material colours and proportions in the
+  generator.
   - The SPEC 13 milestone list is complete. Open beyond M4: the hardware
     check on show day ([[hardware-gate-deferred]] in the repo notes: the
     calibrated bench is the reference), Adrian's review of the M4 GIFs, and

@@ -21,9 +21,9 @@ rehash, push a frame, burst the pipe), Select skips to the next district,
 Start toggles the autopilot, which flies and presses B by itself at boot
 and 15 s after the last input.
 
-Status: M4, the last planned milestone (tag `snouty-flyover/m4`).
-Calibrated badge-bench worst frame 14.26 ms of the 22 ms budget over the
-2400-frame attract run; not yet run on a badge. GIFs:
+Status: M4.1, the last planned milestone plus the 3D flyer (tag
+`snouty-flyover/m4.1`). Calibrated badge-bench worst frame 15.07 ms of the
+22 ms budget over the 2400-frame attract run; not yet run on a badge. GIFs:
 `docs/preview_m4_attract.gif`, `docs/preview_m4_verbs.gif`.
 
 ```sh
