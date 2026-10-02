@@ -69,6 +69,19 @@ pub fn add(b: *Build, sycl_badge_dep: *Build.Dependency, opts: common.Options) v
 
 var build_options: ?*Build.Step.Options = null;
 
+/// One entry per sprite sheet in assets/gen/ (drawn by tools/prepare_assets.py;
+/// ASSETS.md has the manifest). `bits` is palette bits per pixel (4 = up to 15
+/// colours + transparent); `transparent` reserves palette index 0 for the
+/// #FF00FF key. Each becomes `gfx.<stem>` with width, height, colors, indices.
+const Image = struct { file: []const u8, bits: u8, transparent: bool };
+const images = [_]Image{
+    .{ .file = "anteater.png", .bits = 4, .transparent = true },
+    .{ .file = "shadow.png", .bits = 4, .transparent = true },
+    .{ .file = "machine.png", .bits = 4, .transparent = true },
+    .{ .file = "fx.png", .bits = 4, .transparent = true },
+    .{ .file = "snouty_head.png", .bits = 4, .transparent = true },
+};
+
 /// The `assets` module: a generated assets.zig with one `@embedFile` per
 /// data file, the files copied next to it (an @embedFile cannot reach
 /// outside its module's directory).
@@ -86,8 +99,44 @@ fn assets_module(b: *Build) *Build.Module {
 }
 
 fn build_cart_modules(b: *Build, cart: *Build.Module, cart_api: *Build.Module, step: *Build.Step) void {
-    _ = cart_api;
-    _ = step;
     cart.addImport("build_options", build_options.?.createModule());
     cart.addImport("assets", assets_module(b));
+
+    // The `gfx` module: the PNGs in `images` through the per-cart converter
+    // (snouty-maze / snouty-bugs pattern), generated at build time.
+    const convert = b.addExecutable(.{
+        .name = "convert_gfx",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path(dir ++ "cart/build/convert_gfx.zig"),
+            .target = b.graph.host,
+            .optimize = .ReleaseSafe,
+            .link_libc = true,
+        }),
+    });
+    convert.root_module.addImport("zigimg", b.dependency("zigimg", .{}).module("zigimg"));
+
+    const gen_gfx = b.addRunArtifact(convert);
+    for (images) |img| {
+        gen_gfx.addArg("-i");
+        gen_gfx.addFileArg(b.path(b.fmt(dir ++ "assets/gen/{s}", .{img.file})));
+        gen_gfx.addArg(b.fmt("{d}", .{img.bits}));
+        gen_gfx.addArg(if (img.transparent) "true" else "false");
+    }
+    gen_gfx.addArg("-o");
+    const gfx_zig = gen_gfx.addOutputFileArg("gfx.zig");
+
+    const gfx_mod = b.createModule(.{
+        .root_source_file = gfx_zig,
+        .imports = &.{
+            .{
+                .name = "packed_int_array",
+                .module = b.createModule(.{
+                    .root_source_file = b.path(dir ++ "cart/src/packed_int_array.zig"),
+                }),
+            },
+        },
+    });
+    gfx_mod.addImport("cart-api", cart_api);
+    step.dependOn(&gen_gfx.step);
+    cart.addImport("gfx", gfx_mod);
 }

@@ -16,9 +16,9 @@ width 64
  290  510   44
  560  490   52     open            # sweeping S, no rail: leave it and fall
  850  540   52     open
- 750  690   48
- 890  800   52     hot:3           # three hot spots through the last bend
- 690  890   60                     # bottom run west, up over the kink
- 440  745   56
+ 830  690   50                     # down the right side
+ 880  840   52     hot:3           # three hot spots through the last bend
+ 690  905   60                     # bottom run west over a gentle rise
+ 420  810   56
  170  860   56     cold            # cold aisle pit strip up the west side
  180  150   60

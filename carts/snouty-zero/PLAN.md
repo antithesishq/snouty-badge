@@ -222,6 +222,64 @@ pub fn follow(m: *const world.Machine) void;    // yaw lag 1/8, behind cam_behin
   camera height in 32..96 (SPEC 18, last bullet).
 - bench worst frame recorded; `docs/preview_m1.gif`.
 
+### M1 status
+
+- 2026-10-02: DONE. Track A (Opus agent): `tools/prepare_assets.py` draws
+  the Anteater (ray-cast mini model, 4 frames), the rival machine at 5
+  yaws, shadow, fx and the Snouty head; `ASSETS.md`. Track B: `world.zig`,
+  `sim.zig` (physics, rails by tile-crossing normal, fall and meltdown
+  hit-stop with a centerline reset, laps with sectors), `ai.zig` (the
+  centerline autopilot with a curvature speed target; the rivals' base),
+  `camera.zig` follow + projection, `sprites.zig` scaled blit, `hud.zig`.
+  Host tests: determinism, terminal speed, laps need both sectors, and
+  the autopilot drives 3 laps of Cold Aisle without a crash (best lap
+  1837 ticks, 30.6 s; the AI is conservative, a player is faster).
+  Fixes on the way: `speed()` was off by 256; Cold Aisle's bottom-right
+  kinks had a 17 px radius and were softened in the `.track` file (now 33
+  px at the sharpest control points); `steer_rate` raised from 190 to
+  300 so those corners are drivable at a third of top speed. Bench
+  (`m1_drive.json`, 1200 frames): **mean 3.05 ms, worst 3.51 ms** (21%
+  of budget). ELF `.text` 81.3 KB (sprites + sim). `check-float` passes.
+  `--call debug_set_autopilot:1` lets the preview drive itself (the M2
+  attract mode uses the same path). SPEC 18 last bullet: the Anteater's
+  shadow sits on the floor row of its footprint at every camera height
+  tried (48..96), scale from the same `d(y)` table.
+
+## M2 Race
+
+Goal: a full race against the four named rivals and six traffic machines
+runs from the countdown to a results screen: characters, rubber band,
+machine collisions, thermal, Overclock (Up), pads, throttled zones, hot
+spots, hops, rank, the minimap, the results screen, the attract autopilot
+and the "every committed track is completable" test.
+
+### Tracks
+
+- **Track A: rivals and traffic** (`ai.zig` characters, `sim.zig`
+  machine-machine collisions and rank, rubber band, host tests): the
+  `Character` table of SPEC 3 (ARGMAX fast/slow turning, DROPOUT lane
+  wander, BACKPROP corners, OVERFIT exact line; batch traffic at 55% on
+  the line, two per sector), circle collisions of radius 10 with 30%
+  normal exchange and 60 thermal each, rank from `lap * 256 + progress`
+  plus the fraction to the next sample, the player's finish freezing the
+  others' order.
+- **Track B: screens** (`hud.zig` rank + minimap + Overclock bar,
+  `results.zig`, `main.zig` Overclock input and results flow, scripts,
+  bench toml, RUNNING.md): the 32x32 minimap (Select toggles 48x48) drawn
+  once per race from the centerline into a 1-bit buffer, machines as 2x2
+  dots; `3RD` top-right; the results screen (rank, time, best lap,
+  rewinds 0, thermal left, `COMMITTED`); Up = Overclock when thermal >=
+  100 (costs 250, 90 ticks of boost).
+
+### Done criteria
+
+- host tests: determinism with 11 machines; the completable test drives
+  the SNOUTY character 3 laps on every track in `track.tracks` with the
+  rivals present and no crash; rank is a permutation.
+- preview: `m2_race.json` reaches the results screen; `docs/preview_m2.gif`.
+- bench: the stress scene (four rivals and traffic on screen) worst frame
+  recorded; still under 50% of budget.
+
 ## Deferred questions for Adrian
 
 1. (M0) Camera height 64 / focal 128: the near floor shows a 16 px seam
@@ -230,3 +288,9 @@ pub fn follow(m: *const world.Machine) void;    // yaw lag 1/8, behind cam_behin
    free camera change the height live for judging it.
 2. (M0) Four fog banks band visibly on long straights; eight would cost 1
    KB of palettes and nothing per pixel.
+3. (M1) `steer_rate` 300 instead of the SPEC's 190, and Cold Aisle's
+   sharpest corners at a 33 px centerline radius (slow-down corners).
+   The alternative is a generator that rounds control-point corners
+   (more spline points) and the SPEC rate; a play test decides.
+4. (M1) A crash (fall, meltdown) resets to the centerline after the
+   hit-stop until M3 brings the rewind.

@@ -6,9 +6,23 @@ hover racer set on a planet-sized AI datacenter. 60 fps
 
 M0 is the floor renderer: the Cold Aisle map drawn as a per-row affine
 floor with four fog banks, a two-layer parallax horizon strip and a free
-camera. Controls at M0: Left/Right yaw, A forward, B back, Up/Down camera
-height (24..160 world px, default 64). The race controls of SPEC section 4
-arrive with M1.
+camera. M1 is the drive: the cart boots straight into a solo 3-lap race on
+Cold Aisle (countdown PROVISIONING, 3, 2, 1, DEPLOY), with the Anteater
+sprite, rails that bounce, a fall off an open edge or a thermal meltdown
+costing a 20-tick hit-stop and a reset to the centerline (the rewind
+replaces that in M3), lap and sector counting, and the HUD (lap, clock,
+speed, thermal bar). Start restarts the race once it is COMMITTED.
+
+Controls (SPEC section 4) at M1:
+
+| Input | Race |
+|---|---|
+| Left / Right | steer (rate falls with speed) |
+| A (hold) | accelerate |
+| Down | brake; with Left/Right the tight turn (more yaw, less grip) |
+| Start | restart after the finish |
+| Select | toggle the M0 free camera (debug: Left/Right yaw, A forward, B back, Up/Down height) |
+| Up, B | Overclock and rewind arrive with M2 and M3 |
 
 Start+Select returns to the badge menu and the joystick click toggles the
 OS FPS overlay; both belong to the OS. The cart never writes the neopixels
@@ -84,8 +98,12 @@ python3 ../../tools/make_gif.py out/ preview.gif --scale 3 --ms 170
 
 Input scripts live in `tools/scripts/`:
 
-- `m0_fly.json` (600 frames): A held throughout, Right 100-220, Left
-  350-470. The badge-bench default.
+- `m1_drive.json` (3600 frames): A held throughout, Right 330-400,
+  Right+Down 520-600, Left 700-760: the countdown (200 ticks), the top
+  straight, the first corner. The badge-bench default from M1.
+- `m0_fly.json` (600 frames, M0): A held throughout, Right 100-220, Left
+  350-470. Press Select first (`--press SELECT:0-0`) to get the free camera
+  it was written for.
 
 Debug exports (zero-argument wasm functions, usable with `--dump-exports`,
 `--expect` and `--at`):
@@ -98,7 +116,15 @@ Debug exports (zero-argument wasm functions, usable with `--dump-exports`,
 | `debug_cam_x`, `debug_cam_y` | camera world position (0..1023) |
 | `debug_cam_yaw` | heading, u16 turn (0 = +x, 16384 = +y) |
 | `debug_cam_height` | camera height over the floor |
-| `debug_tile_under` | attribute of the tile under the camera (0 off, 1 surface, 2 rail, 3 pad, 4 throttled, 5 cold, 6 hot, 7 hop, 8 start, 9/10 sectors) |
+| `debug_tile_under` | attribute of the tile under the player (0 off, 1 surface, 2 rail, 3 pad, 4 throttled, 5 cold, 6 hot, 7 hop, 8 start, 9/10 sectors) |
+| `debug_px`, `debug_py`, `debug_heading` | player world position and heading (u16 turn) |
+| `debug_speed` | player speed in 1/100 world px per tick (360 = top speed) |
+| `debug_lap`, `debug_progress` | laps completed; nearest centerline sample 0..255 |
+| `debug_phase` | 0 countdown, 1 racing, 2 finished |
+| `debug_tick` | race clock in ticks since DEPLOY |
+| `debug_thermal` | thermal bar 0..1000 |
+| `debug_crashes` | crash hit-stops started since boot |
+| `debug_best_lap` | best lap in ticks (0 until a lap is done) |
 
 ## 6. Flashing
 

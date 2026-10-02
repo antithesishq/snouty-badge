@@ -6,4 +6,6 @@ test {
     std.testing.refAllDecls(@This());
     _ = @import("fixed.zig");
     _ = @import("track.zig");
+    _ = @import("sim.zig");
+    _ = @import("ai.zig");
 }
