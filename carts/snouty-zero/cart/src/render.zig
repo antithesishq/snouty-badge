@@ -38,6 +38,11 @@ var fog_pixel: cart.Pixel = undefined;
 var league: *const track.League = &track.edge;
 var current: *const track.Track = &track.cold_aisle;
 
+/// RAM copies of the active league's art (M5, XIP cart): the floor loop and
+/// the horizon strip read these, never the flash window (SPEC 18.3).
+var tiles_ram: [track.tile_count * 64]u8 = undefined;
+var horizon_ram: [12352]u8 = undefined;
+
 /// Shake ticks left (rail hits, SPEC 6.2): the horizon row and the floor
 /// jitter by one pixel on alternate ticks. Set by main from the player's shake.
 pub var shake: u32 = 0;
@@ -51,13 +56,22 @@ var led_off: cart.Pixel = undefined;
 
 /// Select the track (and its league art): builds the fog banks and the
 /// horizon palettes. Call at race start.
+/// RGB565 as the generator writes it (r in the high bits) to DisplayColor
+/// (a packed struct whose first field, r, is the LOW bits): a plain bitcast
+/// swaps red and blue, which is what every frame up to M4 showed.
+fn color565(v: u16) cart.DisplayColor {
+    return .{ .r = @intCast((v >> 11) & 31), .g = @intCast((v >> 5) & 63), .b = @intCast(v & 31) };
+}
+
 pub fn set_track(t: *const track.Track) void {
     current = t;
     league = t.league;
-    const fog_c: cart.DisplayColor = @bitCast(league.pal_rgb565(0));
+    @memcpy(&tiles_ram, league.tiles);
+    @memcpy(&horizon_ram, league.horizon);
+    const fog_c: cart.DisplayColor = color565(league.pal_rgb565(0));
     fog_pixel = .from_color(fog_c);
     for (0..256) |i| {
-        const c: cart.DisplayColor = @bitCast(league.pal_rgb565(i));
+        const c: cart.DisplayColor = color565(league.pal_rgb565(i));
         for (0..4) |k| {
             const kk: i32 = @intCast(k);
             fog[k][i] = .from_color(.{
@@ -68,8 +82,8 @@ pub fn set_track(t: *const track.Track) void {
         }
     }
     for (0..16) |i| {
-        front_pal[i] = .from_color(@bitCast(league.horizon_front_pal(i)));
-        back_pal[i] = .from_color(@bitCast(league.horizon_back_pal(i)));
+        front_pal[i] = .from_color(color565(league.horizon_front_pal(i)));
+        back_pal[i] = .from_color(color565(league.horizon_back_pal(i)));
     }
     led_on = front_pal[15];
     led_off = front_pal[14];
@@ -150,8 +164,8 @@ pub fn draw() void {
 
 /// Two-layer parallax strip over rows 0..31, the fog colour on row 32.
 fn draw_horizon(yaw: fixed.Turn) void {
-    const front = league.horizon_front();
-    const back = league.horizon_back();
+    const front: *const [512 * 32 / 2]u8 = horizon_ram[0 .. 512 * 32 / 2];
+    const back: *const [256 * 32 / 2]u8 = horizon_ram[512 * 32 / 2 ..][0 .. 256 * 32 / 2];
     const scroll_f: u32 = @as(u32, yaw) >> 7; // 512 px per turn
     const scroll_b: u32 = @as(u32, yaw) >> 8; // 256 px per turn, half rate
     const j: usize = @intCast(jitter());
@@ -204,8 +218,8 @@ fn draw_floor(cam: camera.Cam) void {
 /// Column loop: for each screen column, walk down the floor rows writing
 /// sequential halfwords; two multiply-accumulates per pixel.
 fn floor_columns() void {
-    const map = current.map;
-    const tiles = league.tiles;
+    const map = &track.map_ram;
+    const tiles = &tiles_ram;
     var x: usize = 0;
     while (x < @as(usize, @intCast(screen_w))) : (x += 1) {
         const col = &cart.framebuffer[x];
@@ -224,8 +238,8 @@ fn floor_columns() void {
 /// Row loop: incremental adds along each screen row, writes at a 256-byte
 /// stride (SPEC 18 comparison).
 fn floor_rows() void {
-    const map = current.map;
-    const tiles = league.tiles;
+    const map = &track.map_ram;
+    const tiles = &tiles_ram;
     var y: usize = floor_y0;
     while (y < 128) : (y += 1) {
         var wx: u32 = @bitCast(row_x0[y]);

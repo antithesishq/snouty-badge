@@ -1,0 +1,47 @@
+# Weights Loop: Core league, track 3, the hardest. East along the top over
+# the first hop, down the long east side (a hill on the way), west along
+# the bottom over the second hop, then up through the switchbacks
+# stacked in the middle of the map, hot spots waiting in the hairpins and
+# the only cold aisle on the middle leg (the hairpins' rails cook the
+# thermal bar without it), and out through the open S (no rails on either
+# side) to the line. Control point 0 is the start line; features on
+# point i apply to the segment from point i to i+1. hill sets centerline
+# flag bit 7 on the segment (the cart draws a rise and dip; nothing is
+# painted).
+league core
+width 48
+# x    y    half   features
+ 270  125   50                     # start line, east along the top
+ 380  130   50     hop             # first hop
+ 700  130   50
+ 840  150   48
+ 890  260   48     hill            # the east side: a hill
+ 890  560   48     hill
+ 880  780   48
+ 820  880   50
+ 650  890   50     hop             # bottom straight west: second hop
+ 380  890   50
+ 270  870   50
+ 215  800   50     hot:1           # first hairpin, up into the switchbacks
+ 245  748   50
+ 330  735   48
+ 670  735   48
+ 735  715   52     hot:1           # second hairpin
+ 760  662   54
+ 735  610   52
+ 670  590   48     cold            # the middle leg: the only cold aisle
+ 390  590   48
+ 325  570   52     hot:1           # third hairpin
+ 300  518   54
+ 325  465   52
+ 390  445   48
+ 670  445   48
+ 735  425   52     hot:1           # fourth hairpin
+ 760  375   54
+ 735  325   52
+ 670  305   50
+ 560  265   50     open            # the open S
+ 420  310   50     open
+ 290  285   50
+ 180  240   50
+ 175  160   50

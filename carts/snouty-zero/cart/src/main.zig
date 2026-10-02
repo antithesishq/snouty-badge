@@ -44,7 +44,7 @@ pub var autopilot: bool = false;
 var free_cam: bool = false;
 
 // Menus.
-var main_list = menu.List{ .count = 3 };
+var main_list = menu.List{ .count = 4 };
 var league_list = menu.List{ .count = track.leagues.len };
 var track_list = menu.List{ .count = 3 };
 var pause_list = menu.List{ .count = 4 };
@@ -209,7 +209,13 @@ fn menu_frame() void {
         .main_menu => {
             menu_nav(&main_list);
             const sound_item: []const u8 = if (sound.enabled) "SOUND: ON" else "SOUND: OFF";
-            menu.draw_list("SNOUTY ZERO", &.{ "QUICK RACE", "GRAND PRIX", sound_item }, &main_list, 36);
+            const machine_item = menu.machine_items[sim.player_character];
+            menu.draw_list("SNOUTY ZERO", &.{ "QUICK RACE", "GRAND PRIX", machine_item, sound_item }, &main_list, 36);
+            // The machine row cycles with Left/Right too.
+            if (main_list.cursor == 2 and (input.pressed(.right) or input.pressed(.left))) {
+                sim.player_character = @intCast((sim.player_character + (if (input.pressed(.right)) @as(u8, 1) else 4)) % 5);
+                sound.menu_move();
+            }
             if (input.pressed(.a) or input.pressed(.start)) {
                 sound.menu_confirm();
                 switch (main_list.cursor) {
@@ -221,6 +227,7 @@ fn menu_frame() void {
                         mode = .gp;
                         go(.league_pick);
                     },
+                    2 => sim.player_character = (sim.player_character + 1) % 5,
                     else => {
                         sound.enabled = !sound.enabled;
                         if (!sound.enabled) sound.stop();
@@ -582,6 +589,8 @@ comptime {
         @export(&debug_rebuilds, .{ .name = "debug_rebuilds" });
         @export(&debug_replay_calls, .{ .name = "debug_replay_calls" });
         @export(&debug_replay_max, .{ .name = "debug_replay_max" });
+        @export(&debug_set_machine, .{ .name = "debug_set_machine" });
+        @export(&debug_machine, .{ .name = "debug_machine" });
     }
 }
 
@@ -671,6 +680,13 @@ fn debug_force_crash() callconv(.c) u32 {
     const p = &world.w.machines[world.player];
     if (p.active and p.crash == .none and screen == .race) sim.crash(p, .fall);
     return world.w.tick;
+}
+/// --call debug_set_machine:N picks the player's physics character (0 SNOUTY, 1..4 the rivals').
+fn debug_set_machine(n: u32) callconv(.c) void {
+    sim.player_character = @intCast(n % 5);
+}
+fn debug_machine() callconv(.c) u32 {
+    return sim.player_character;
 }
 /// Keyframe rebuilds (the slow restore path) since the race started.
 fn debug_rebuilds() callconv(.c) u32 {

@@ -44,7 +44,7 @@ Mac OOM rule). `<league>` is `edge`, `spine`, `core`; `<track>` is the
 | `<league>_tiles.bin` | 16384 | 256 tiles x 64 bytes, each tile row-major 8x8 palette indices |
 | `<league>_pal.bin` | 512 | 256 x u16 RGB565; entry 0 is the league fog/horizon colour and no tile uses index 0 |
 | `<league>_horizon.bin` | 12352 | front layer 512x32 4 bpp (8192 bytes, row-major, 2 px per byte, low nibble = left pixel, index 0 transparent); back layer 256x32 4 bpp (4096 bytes, opaque); front palette 16 x u16; back palette 16 x u16 |
-| `<track>_map.bin` | 16384 | 128x128 tile indices, `map[y][x]` (RLE comes with M3's six tracks) |
+| `<track>_map.bin` | 3.0 to 4.7 KB (M5, packed) | an LZ stream that unpacks to the 128x128 tile indices `map[y][x]`: op byte 0x00..0x7F = literal run of op+1 bytes; 0x80..0xFF = back-reference of (op&0x7F)+3 bytes at distance d+1 (one byte d < 0x80) or ((d&0x7F)<<8 | d2)+1 (two bytes), copies may overlap; `track.select` unpacks into `track.map_ram` at race start |
 | `<track>_attr.bin` | 256 | attribute per tile index, see below |
 | `<track>_center.bin` | 2048 | 256 centerline samples x 8 bytes: x u16, y u16, tangent u16 (turn), half width u8, flags u8 |
 
@@ -438,6 +438,82 @@ to main and tagged with the review GIF.
   the Core league (M5) goes XIP as SPEC 13 says. `docs/preview_m4.gif`
   (Exhaust Ridge: the hill, the open ridge, the field).
 
+## M5 Stretch: the Core league
+
+Picked by default (SPEC 16 says "pick with Adrian"; the Core league is the
+first item and completes the three-league structure; machine select comes
+with it, flash saves stay out per decision 17.6). Two structural moves
+come first because the cart is at the RAM wall (261 KB + 32 KB stack of
+307 KB) and the Core data (three maps 48 KB, tiles 16 KB, horizon 12 KB)
+would overflow the 256 KB XIP window too:
+
+1. **Compressed maps**: the generator packs every `<track>_map.bin`
+   (target under 8 KB each; the maps are 128x128 tile indices with long
+   runs and repeated rows) and `track.zig` unpacks the selected track into
+   one 16 KB RAM buffer at race start (`track.select`). Every tile lookup
+   (sim attributes, floor renderer) reads that buffer.
+2. **XIP as the only build** (SPEC 13, the Genesis pattern): code and
+   read-only data execute from the 256 KB flash window, the whole RAM
+   window is data. The active league's tileset, palette and horizon are
+   copied into RAM at race start too, so the per-pixel floor loop never
+   reads flash (the XIP cache is 16 KB and the tileset alone is 16 KB;
+   Genesis' rule: the flash hit rate must stay above 99.5%). The artifact
+   is `zig-out/firmware/snouty-zero-xip.uf2`.
+
+### Tracks
+
+- **Track A: content and compression** (`tools/leagues.py` Core painters
+  and horizon, `tools/build_tracks.py` map packer, three `.track` files:
+  Hot Aisle, Kernel Ring, Weights Loop; `assets/gen/*`, `build.zig`
+  `data_files`, `track.zig`: packed maps, `pub var map_ram`, `select(t)`,
+  the decoder and its tests, `leagues` with CORE).
+- **Track B: cart** (`build.zig` XIP-only, `render.zig` RAM copies of the
+  league art, `sim.zig` select call + machine select multipliers,
+  `menu.zig`/`main.zig` machine row, docs, bench toml for the XIP ELF).
+
+### Done criteria
+
+- all nine tracks completable (host test); decoder round-trip test.
+- XIP ELF under 256 KB `.text` with headroom; RAM figure recorded.
+- bench on the XIP ELF (same model numbers as RAM; recorded) under the
+  M4 figures plus the unpack at race start.
+- `docs/preview_m5.gif` on a Core track; merged; tag `snouty-zero/m5`.
+
+### M5 status
+
+- 2026-10-02: DONE. Track A (Opus agent): Core league (53-entry palette,
+  grating over orange glow, coolant pipes, exhaust vents, red haze with
+  reactor towers), Hot Aisle (3835 px), Kernel Ring (3838, hop, hill
+  126..158), Weights Loop (4509, two hops, hill 40..69, four hairpins);
+  the LZ map packer (greedy LZ77 with one lazy step; nine maps 32.8 KB
+  against 147 KB raw) and the 25-line decoder in `track.zig`
+  (`select`, `map_ram`, `unpack_map`, round-trip tests); all nine tracks
+  completable with the field of 11, 0 crashes (finish 5022..6626 ticks).
+  Track B: XIP-only build (Genesis pattern; `snouty-zero-xip.uf2`), the
+  active league's tiles and horizon copied to RAM at race start
+  (`render.set_track`, 28 KB), the machine select row (the player drives
+  a rival's physics multipliers; sprite stays the Anteater), docs. Found
+  on the way: every floor palette up to M4 had red and blue swapped (a
+  bitcast of the generator's RGB565 into the packed DisplayColor, whose
+  first field is the low bits); fixed in `render.color565`, so the Edge
+  sky is now pale blue-grey and the Core league orange; the M4 GIF was
+  regenerated. XIP ELF `.text` 196.5 KB of 256 KB (59 KB spare), `.bss`
+  80.6 KB of the 307 KB RAM window. Bench on the XIP ELF (`m3_bench.json`,
+  the unpack at frame 200 included): **mean 2.05 ms, worst 4.74 ms**,
+  the same as the M4 RAM build; the model never charges flash data loads
+  (the RAM copies make that moot for the per-pixel loops; code fetches
+  remain the hardware unknown, as for Genesis). `docs/preview_m5.gif`
+  (Weights Loop, the BACKPROP character).
+
+## Hand-off
+
+All five milestones are built, tested and on `origin/main` (tags
+`snouty-zero/m0` .. `m5`). What only Adrian can do: flash
+`zig-out/firmware/snouty-zero-xip.uf2` from main and play (the XIP cart's
+flash-cache behaviour and the feel of the tuning constants are the two
+things the emulated bench cannot answer); the deferred questions below
+are the decisions taken by default.
+
 ## Deferred questions for Adrian
 
 1. (M0) Camera height 64 / focal 128: the near floor shows a 16 px seam
@@ -452,6 +528,10 @@ to main and tagged with the review GIF.
    (more spline points) and the SPEC rate; a play test decides.
 4. (M1) A crash (fall, meltdown) resets to the centerline after the
    hit-stop until M3 brings the rewind.
+8. (M5) The stretch pick: the Core league plus a machine select, no flash
+   saves; the cart becomes XIP-only (flash `snouty-zero-xip.uf2`), which
+   is the one hardware-sensitive change of the whole cart (the flash
+   cache); the M4 RAM build is tagged `snouty-zero/m4` as the fallback.
 7. (M4) Hills are visual only (the simulation stays flat); crest height
    26 world px; the horizon strip does not move with them. The tuning
    pass used the defaults (no play notes yet); the autopilot's 30 s laps

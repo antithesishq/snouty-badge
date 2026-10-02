@@ -1,0 +1,33 @@
+# Hot Aisle: Core league, track 1. Fast and wide: four long passes across
+# the hot aisle joined by sweeping turns. East along the top with no rail
+# on the driver's left (the drop to the map edge) past two hot spots, round
+# the east end and back west through the middle on the cold aisle (refill
+# the thermal bar here), down and east again along the lower middle pass,
+# open on the right this time with two more hot spots, then the overclock
+# pad into the bottom straight west, open on the left, and up the long west
+# side to the line. Control point 0 is the start line; features on point
+# i apply to the segment from point i to i+1; open:left / open:right open
+# only the driver's left or right side (the other side keeps its rail).
+league core
+width 64
+# x    y    half   features
+ 280  130   66                     # start line, east along the top
+ 560  150   66     open:left hot:2 # the top straight: no rail on the left
+ 820  135   64
+ 912  235   62
+ 890  355   62
+ 760  410   62     cold            # back west through the middle: the cold aisle
+ 440  400   62
+ 318  455   60
+ 315  570   60
+ 420  625   62     open:right hot:2  # east along the lower middle, open on the right
+ 740  620   62
+ 905  705   62
+ 880  810   62
+ 780  880   64     pad             # overclock into the bottom straight
+ 520  840   66     open:left hot:2 # bottom straight west, open on the left
+ 250  890   66
+ 150  800   64
+ 150  560   64
+ 130  300   64
+ 180  170   66

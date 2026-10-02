@@ -1,4 +1,6 @@
-# snouty-zero: Mode 7 hover racer, 60 fps.
+# snouty-zero: Mode 7 hover racer, 60 fps. XIP cart only from M5: the ELF is
+# zig-out/firmware/snouty-zero-xip.elf (not picked up by name; pass this file
+# with --config badge-bench/carts/snouty-zero.toml).
 budget_ms = 16.7
 frames = 1700
 script = "carts/snouty-zero/tools/scripts/m3_bench.json"

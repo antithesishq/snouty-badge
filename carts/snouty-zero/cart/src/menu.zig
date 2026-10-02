@@ -73,6 +73,8 @@ pub const Standings = struct {
 
 pub const points_for_rank = [6]u16{ 0, 9, 6, 4, 3, 2 };
 pub const names = [5][]const u8{ "SNOUTY", "ARGMAX", "DROPOUT", "BACKPROP", "OVERFIT" };
+/// Main menu machine row (M5 machine select: the player drives that character's physics).
+pub const machine_items = [5][]const u8{ "MACHINE: ANTEATER", "MACHINE: ARGMAX", "MACHINE: DROPOUT", "MACHINE: BACKPROP", "MACHINE: OVERFIT" };
 
 fn put_uint(out: []u8, v: u32) void {
     var n = v;

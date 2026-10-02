@@ -21,8 +21,14 @@ const world_mask: i32 = (1024 << fixed.Q) - 1;
 /// rivals (1..4) on a two-column grid behind the start line, the player
 /// behind them (F-Zero style), the traffic (5..10) already cruising around
 /// the lap, two per third. Deterministic.
+/// Machine select (M5): the character whose physics the player drives
+/// (0 SNOUTY = the base tuning, 1..4 the rivals' multipliers). Meta-state
+/// set by the menu before `reset`.
+pub var player_character: u8 = 0;
+
 pub fn reset(t: *const track.Track, count: u8) void {
     current = t;
+    track.select(t);
     world.w = .{};
     world.w.active_count = count;
     world.w.countdown = 4 * tuning.countdown_step;
@@ -183,6 +189,11 @@ pub fn speed(m: *const Machine) i32 {
 }
 
 /// Physics for one machine (SPEC 5.1 steps 1..5).
+/// The player's physics character: the base unless a rival's was selected.
+fn player_char() *const ai.Character {
+    return if (player_character >= 1 and player_character <= 4) &ai.characters[player_character] else &base_character;
+}
+
 fn step_machine(m: *Machine, b: Buttons, index: usize) void {
     const up_edge = b.up and !m.up_was;
     m.up_was = b.up;
@@ -201,7 +212,7 @@ fn step_machine(m: *Machine, b: Buttons, index: usize) void {
         m.boost = tuning.overclock_ticks;
     }
     // The player keeps the base tuning; rivals and traffic use their character.
-    const c: *const ai.Character = if (index == world.player) &base_character else ai.character(index);
+    const c: *const ai.Character = if (index == world.player) player_char() else ai.character(index);
     const in_air = m.hop > 0;
     if (in_air) m.hop -= 1;
 
@@ -539,8 +550,8 @@ fn contact(a: *Machine, ia: usize, b: *Machine, ib: usize, dx8: i32, dy8: i32, d
     b.vx += fixed.mul(nx, dv);
     b.vy += fixed.mul(ny, dv);
     if (closing < tuning.collision_min_speed) return;
-    const ca: *const ai.Character = if (ia == world.player) &base_character else ai.character(ia);
-    const cb: *const ai.Character = if (ib == world.player) &base_character else ai.character(ib);
+    const ca: *const ai.Character = if (ia == world.player) player_char() else ai.character(ia);
+    const cb: *const ai.Character = if (ib == world.player) player_char() else ai.character(ib);
     hit(a, ca);
     hit(b, cb);
     if (ia == world.player and closing >= tuning.collision_crash_speed) crash(a, .collision);

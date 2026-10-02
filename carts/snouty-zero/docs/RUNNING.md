@@ -33,7 +33,14 @@ tracks, points 9/6/4/3/2, standings between tracks, a champion line.
 M4 adds hills (Exhaust Ridge, Fiber Backbone, Substation Sprint: the
 floor rises to a crest and falls away, visual only), the rail-hit shake,
 spark bursts and exhaust flames, the blinking horizon LEDs, an own font
-blit and a rewind that costs at most 10 replayed ticks a frame.
+blit and a rewind that costs at most 10 replayed ticks a frame. M5 adds
+the Core league (Hot Aisle, Kernel Ring, Weights Loop: hot-aisle grating
+over orange glow, red haze) and a MACHINE row in the main menu (drive the
+Anteater with a rival's physics: ARGMAX fast and slow-turning, DROPOUT,
+BACKPROP cornering, OVERFIT brittle; Left/Right or A cycle it). From M5
+the cart is an XIP cart: code and data execute from the cart flash
+window, maps are stored packed and the selected track is unpacked into
+RAM at race start.
 
 Controls (SPEC section 4) at M2:
 
@@ -78,8 +85,11 @@ Cloning the repository with its `sycl-badge/` submodule is described in
 From the repository root:
 
 ```sh
-zig build -Dcart=snouty-zero   # only this cart; plain `zig build` builds every cart
+zig build -Dcart=snouty-zero -Dcart-mode=xip   # only this cart; plain `zig build` builds every cart (XIP for this one)
 ```
+
+The cart builds as an XIP cart only (M5): `-Dcart=snouty-zero` without
+`-Dcart-mode=xip` stops with a message saying so.
 
 Options (all from the root):
 
@@ -88,12 +98,13 @@ Options (all from the root):
 | `-Dzero_floor` | `row`, `column` | floor inner loop (SPEC 18 measurement; `row` won in the bench, `column` kept for a hardware check) |
 | `-Ddebug_overlay` | `false`, `true` | draws the render time in microseconds and the camera height, top right |
 | `-Dsound` | `false`, `true` | initial value of the sound toggle (M3) |
-| `-Dcart-mode` | `ram`, `xip`, `both` | RAM cart (the primary) or the execute-in-place variant |
+| `-Dcart-mode` | `xip` (`both` builds the same) | the cart is XIP only; `ram` named explicitly stops the build |
 
-This writes `zig-out/firmware/snouty-zero.uf2` (badge), `.elf` (badge-bench,
-`size -A`) and `zig-out/bin/snouty-zero.wasm` (simulator).
-`zig build check-float -Dcart=snouty-zero` must pass (integer-only cart);
-`zig build test -Dcart=snouty-zero` runs the host tests.
+This writes `zig-out/firmware/snouty-zero-xip.uf2` (badge),
+`snouty-zero-xip.elf` (badge-bench, `size -A`) and
+`zig-out/bin/snouty-zero.wasm` (simulator).
+`zig build check-float -Dcart=snouty-zero -Dcart-mode=xip` must pass
+(integer-only cart); `zig build test -Dcart=snouty-zero` runs the host tests.
 
 ## 4. Web simulator
 
@@ -181,7 +192,8 @@ Debug exports (zero-argument wasm functions, usable with `--dump-exports`,
 | `debug_screen` | 0 splash, 1 title, 2 main menu, 3 league pick, 4 track pick, 5 race, 6 pause, 7 results, 8 standings |
 | `debug_machine_px(i)`, `debug_machine_py(i)`, `debug_machine_lap(i)` | machine i (0 player, 1..4 rivals, 5..10 traffic); one-argument exports |
 | `debug_set_autopilot(v)`, `debug_set_freecam(v)` | setup calls (`--call NAME:1`) |
-| `debug_start_race(n)` | setup call: skip the menus into a Quick Race on track n (0..5 in `track.tracks` order) |
+| `debug_set_machine(n)`, `debug_machine` | machine select: 0 Anteater (base physics), 1..4 the rivals' characters |
+| `debug_start_race(n)` | setup call: skip the menus into a Quick Race on track n (0..8 in `track.tracks` order: Edge 0..2, Spine 3..5, Core 6..8) |
 | `debug_force_crash` | `--call-at T debug_force_crash`: the player falls (SEGMENT FAULT) |
 | `debug_snapshot` | snapshot bar in ticks, 0..180 |
 | `debug_rewinds` | rewinds this race (hold-B holds + auto rewinds) |
@@ -194,7 +206,8 @@ Debug exports (zero-argument wasm functions, usable with `--dump-exports`,
 
 1. Put the badge in bootloader mode and connect it over USB-C; it shows up
    as a USB drive.
-2. Copy `zig-out/firmware/snouty-zero.uf2` onto the drive.
+2. Copy `zig-out/firmware/snouty-zero-xip.uf2` onto the drive (the XIP
+   cart; up to M4 the file was `snouty-zero.uf2`).
 3. Pick the cart in the badge menu. Start+Select returns to the menu.
 
 ## 7. Emulated cycle benchmark
@@ -205,8 +218,14 @@ column. `../../badge-bench/carts/snouty-zero.toml` sets the defaults.
 From the repository root:
 
 ```sh
-badge-bench/bench.sh zig-out/firmware/snouty-zero.elf --script carts/snouty-zero/tools/scripts/m0_fly.json --frames 600 --every 60 --symbols
+badge-bench/bench.sh zig-out/firmware/snouty-zero-xip.elf --config badge-bench/carts/snouty-zero.toml --script carts/snouty-zero/tools/scripts/m3_bench.json --frames 1700 --every 60 --symbols
 ```
+
+The defaults file is keyed by ELF basename, so the XIP ELF needs
+`--config`. The bench charges XIP instruction fetches at SRAM cost
+(`--flash-cycles 0`, its XIP default) and never charges data loads from
+the flash window; the cart copies the active track's art into RAM at
+race start so the per-pixel loops never read flash anyway.
 
 Milestone numbers are in `PLAN.md` under each milestone's status.
 

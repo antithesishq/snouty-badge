@@ -10,7 +10,7 @@ PLAN.md "Generated data formats":
   <league>_tiles.bin   256 tiles x 8x8 palette indices (16384 bytes)
   <league>_pal.bin     256 x u16 RGB565, entry 0 = fog/horizon colour
   <league>_horizon.bin front 512x32 4bpp, back 256x32 4bpp, 2 x 16 x u16
-  <track>_map.bin      128x128 tile indices, map[y][x]
+  <track>_map.bin      128x128 tile indices, map[y][x], packed (below)
   <track>_attr.bin     256 attributes, one per tile index
   <track>_center.bin   256 samples x (x u16, y u16, tangent u16, half u8, flags u8)
                        flags: bit 0 rail, 1 open, 2 pad, 3 throttled, 4 cold,
@@ -56,10 +56,22 @@ Rasterizer rules:
     touching surface only diagonally get a corner piece of the same kind.
   * Everything else is the league background painter (seeded per track).
 
+Packed maps (<track>_map.bin): a byte stream that unpacks to the 16384
+tile indices in order, map[y][x]. Ops, read until the 16384 bytes are out:
+  c = 0x00..0x7F   literal run: the next c + 1 bytes are copied out.
+  c = 0x80..0xFF   back-reference of (c & 0x7F) + 3 bytes (3..130), then a
+                   distance: one byte b < 0x80 is distance b + 1 (1..128,
+                   so 128 = "the row above"), or b >= 0x80 and one more byte
+                   b2 give distance ((b & 0x7F) << 8 | b2) + 1 (up to 32768).
+                   The copy runs forward byte by byte, so it may overlap
+                   what it writes (distance 1 = a run of one tile).
+The packer is a greedy LZ77 with one step of lazy matching; it verifies its
+own output with an independent decoder (unpack_map) before writing.
+
 Everything is seeded from crc32 of the track or league name, so reruns are
 byte-identical. The script validates its output and exits non-zero on any
 failure. The tile vocabulary and the league painters live in
-tools/leagues.py (Edge and Spine so far); a league is one LEAGUES entry
+tools/leagues.py (Edge, Spine, Core); a league is one LEAGUES entry
 there (palette + tile painter + background + horizon).
 """
 from __future__ import annotations
@@ -102,6 +114,87 @@ HALF_LEN, HALF_WID = 12, 6   # tuning.zig machine footprint
 # hop segments and of the start line / sector seams by SEAM_CLEAR samples.
 HILL_MIN, SEAM_CLEAR = 12, 3
 SEAMS = (0, 85, 170)
+
+
+# ---------------------------------------------------------------- map packing
+LZ_MIN, LZ_MAXLEN, LZ_MAXLIT, LZ_MAXD = 3, 130, 128, 32768
+
+
+def pack_map(src):
+    """Greedy LZ77 (format in the module docstring), one step of lazy matching."""
+    src, out, lit, chains = bytes(src), bytearray(), bytearray(), {}
+    n = len(src)
+
+    def flush():
+        while lit:
+            k = min(len(lit), LZ_MAXLIT)
+            out.append(k - 1)
+            out.extend(lit[:k])
+            del lit[:k]
+
+    def cost(d):
+        return 2 if d <= 128 else 3
+
+    def best(i):
+        bl, bd = 0, 0
+        for j in reversed(chains.get(src[i:i + 3], [])[-256:]):
+            d = i - j
+            if d > LZ_MAXD:
+                break
+            ln = 0
+            while ln < LZ_MAXLEN and i + ln < n and src[j + ln] == src[i + ln]:
+                ln += 1
+            if ln >= LZ_MIN and (bl == 0 or ln - cost(d) > bl - cost(bd)):
+                bl, bd = ln, d
+        return bl, bd
+
+    def add(i):
+        if i + 3 <= n:
+            chains.setdefault(src[i:i + 3], []).append(i)
+
+    i = 0
+    while i < n:
+        ln, d = best(i) if i + LZ_MIN <= n else (0, 0)
+        if ln and i + 1 + LZ_MIN <= n and best(i + 1)[0] > ln + 1:
+            ln = 0                        # lazy: a literal now buys a longer match next
+        if not ln:
+            lit.append(src[i])
+            add(i)
+            i += 1
+            continue
+        flush()
+        out.append(0x80 | (ln - LZ_MIN))
+        out += bytes([d - 1]) if d <= 128 else bytes([0x80 | (d - 1) >> 8, (d - 1) & 0xFF])
+        for k in range(ln):
+            add(i + k)
+        i += ln
+    flush()
+    return bytes(out)
+
+
+def unpack_map(p, size=16384):
+    """Independent decoder (the cart's track.unpack_map does the same)."""
+    o, i = bytearray(), 0
+    while len(o) < size:
+        c = p[i]
+        i += 1
+        if c < 0x80:
+            o += p[i:i + c + 1]
+            i += c + 1
+        else:
+            b = p[i]
+            i += 1
+            d = b + 1
+            if b >= 0x80:
+                d = ((b & 0x7F) << 8 | p[i]) + 1
+                i += 1
+            if d > len(o):
+                raise ValueError("back-reference before the start")
+            for _ in range((c & 0x7F) + LZ_MIN):
+                o.append(o[-d])
+    if len(o) != size or i != len(p):
+        raise ValueError(f"unpacked {len(o)} bytes from {i} of {len(p)}")
+    return bytes(o)
 
 
 # ---------------------------------------------------------------- tracks
@@ -602,7 +695,10 @@ def main():
         ts = leagues[trk.league]
         rng = random.Random(zlib.crc32(trk.name.encode()))
         tmap, surf = build_track(trk, ts, LEAGUES[trk.league], rng)
-        files = {out / f"{trk.name}_map.bin": tmap.tobytes(),
+        packed = pack_map(tmap.tobytes())
+        if unpack_map(packed) != tmap.tobytes():
+            errs.append(f"{trk.name}: packed map does not round-trip")
+        files = {out / f"{trk.name}_map.bin": packed,
                  out / f"{trk.name}_attr.bin": ts.attr.tobytes(),
                  out / f"{trk.name}_center.bin": center_bytes(trk)}
         for p, d in files.items():
@@ -627,12 +723,18 @@ def main():
             errs.append(f"{trk.name}: lap length {trk.length:.0f} outside 3800..5000")
         if r < 30:
             errs.append(f"{trk.name}: corner radius {r:.0f} px at ({rx:.0f},{ry:.0f}) under 30 px (Cold Aisle drives at 31; the autopilot needs ~30)")
-    expect = {"tiles": 16384, "pal": 512, "horizon": 12352, "map": 16384, "attr": 256, "center": 2048}
+    expect = {"tiles": 16384, "pal": 512, "horizon": 12352, "attr": 256, "center": 2048}
+    packed_total = 0
     for p, n in sorted(sizes.items()):
         kind = p.stem.rsplit("_", 1)[1]
-        if expect[kind] != n:
+        if kind == "map":
+            packed_total += n
+            if n >= 8192:
+                errs.append(f"{p.name}: packed map is {n} bytes, budget under 8192")
+        elif expect[kind] != n:
             errs.append(f"{p.name}: {n} bytes, expected {expect[kind]}")
         print(f"  {p.relative_to(CART) if p.is_relative_to(CART) else p}: {n} bytes")
+    print(f"  packed maps: {packed_total} bytes")
     for e in errs:
         print("ERROR:", e, file=sys.stderr)
     sys.exit(1 if errs else 0)

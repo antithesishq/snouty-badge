@@ -1,0 +1,39 @@
+# Kernel Ring: Core league, track 2. A railed ring round the map with the
+# kernel in its middle: east along the top over the hop, down the east
+# side through the first chicane, west along the bottom through the
+# throttled zone, then up a leg into the middle of the map and round the
+# kernel on the long bend (hills: a rise and dip all the way round), back
+# down the other leg, and home up the west side through the second
+# chicane. Rails almost everywhere. Control point 0 is the start line;
+# features on point i apply to the segment from point i to i+1. hill sets
+# centerline flag bit 7 on the segment (the cart draws a rise and dip;
+# nothing is painted).
+league core
+width 54
+# x    y    half   features
+ 300  130   54                     # start line, east along the top
+ 460  130   54     hop             # the hop over the gap
+ 760  130   54
+ 870  200   52
+ 890  300   52                     # chicane 1
+ 840  400   50
+ 890  500   52
+ 890  700   52
+ 850  850   54
+ 720  890   54     throttled       # the bottom straight is throttled
+ 620  860   52
+ 620  640   52                     # up the leg into the middle
+ 650  520   52     hill            # the long bend round the kernel
+ 600  390   52     hill
+ 500  350   52     hill
+ 400  390   52     hill
+ 370  520   52
+ 410  640   52                     # down the other leg
+ 410  860   52
+ 300  890   54
+ 180  860   54
+ 130  720   52                     # chicane 2
+ 180  600   50
+ 130  480   52
+ 130  300   54
+ 190  160   54

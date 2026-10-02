@@ -18,7 +18,8 @@ const dir = "carts/snouty-zero/";
 pub const FloorLoop = enum { column, row };
 
 /// Generated data files embedded by the `assets` module (PLAN.md "Generated
-/// data formats"). Each becomes `assets.<name>: []const u8`.
+/// data formats"). Each becomes `assets.<name>: []const u8`. The
+/// `<track>_map.bin` files are packed (`track.unpack_map`).
 const data_files = [_][]const u8{
     "font.bin",
     "edge_tiles.bin",
@@ -27,6 +28,9 @@ const data_files = [_][]const u8{
     "spine_tiles.bin",
     "spine_pal.bin",
     "spine_horizon.bin",
+    "core_tiles.bin",
+    "core_pal.bin",
+    "core_horizon.bin",
     "cold_aisle_map.bin",
     "cold_aisle_attr.bin",
     "cold_aisle_center.bin",
@@ -45,6 +49,15 @@ const data_files = [_][]const u8{
     "tape_vault_map.bin",
     "tape_vault_attr.bin",
     "tape_vault_center.bin",
+    "hot_aisle_map.bin",
+    "hot_aisle_attr.bin",
+    "hot_aisle_center.bin",
+    "kernel_ring_map.bin",
+    "kernel_ring_attr.bin",
+    "kernel_ring_center.bin",
+    "weights_loop_map.bin",
+    "weights_loop_attr.bin",
+    "weights_loop_center.bin",
 };
 
 pub fn add(b: *Build, sycl_badge_dep: *Build.Dependency, opts: common.Options) void {
@@ -57,8 +70,24 @@ pub fn add(b: *Build, sycl_badge_dep: *Build.Dependency, opts: common.Options) v
     options.addOption(FloorLoop, "floor_loop", floor_loop);
     build_options = options;
 
+    // XIP only from M5 (SPEC 13, PLAN.md M5): nine tracks plus three leagues
+    // do not fit the RAM window next to the state, so code and read-only data
+    // execute from the 256 KB cart flash window and the active track's art is
+    // copied to RAM at race start. -Dcart-mode=ram named explicitly stops the
+    // build with this message; an all-carts build builds the XIP cart regardless.
+    const explicit = if (opts.only) |list| std.mem.eql(u8, list, "snouty-zero") else false;
+    if (opts.cart_mode == .ram and explicit) {
+        std.debug.print(
+            \\snouty-zero: this cart builds as an XIP cart only (carts/snouty-zero/PLAN.md M5).
+            \\Pass -Dcart-mode=xip:
+            \\    zig build -Dcart=snouty-zero -Dcart-mode=xip
+            \\The artifact is zig-out/firmware/snouty-zero-xip.uf2 (and .elf).
+            \\
+        , .{});
+        std.process.exit(1);
+    }
     os_cart.add(b, sycl_badge_dep, .{
-        .mode = opts.cart_mode,
+        .mode = .xip,
         .name = "snouty-zero",
         .optimize = .ReleaseFast,
         .root_source_file = b.path(dir ++ "cart/src/main.zig"),
@@ -69,7 +98,7 @@ pub fn add(b: *Build, sycl_badge_dep: *Build.Dependency, opts: common.Options) v
     // links any soft-float or libm routine.
     const check_float = b.addSystemCommand(&.{"node"});
     check_float.addFileArg(b.path("tools/check_float.mjs"));
-    check_float.addFileArg(b.graph.path(.install_prefix, "firmware/snouty-zero.elf"));
+    check_float.addFileArg(b.graph.path(.install_prefix, "firmware/snouty-zero-xip.elf"));
     check_float.step.dependOn(b.getInstallStep());
     check_float.has_side_effects = true;
     opts.check_float_step.dependOn(&check_float.step);

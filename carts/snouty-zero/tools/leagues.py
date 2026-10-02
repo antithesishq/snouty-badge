@@ -706,6 +706,308 @@ def paint_spine_horizon(fog, rng):
     return f, b, fpal, bpal
 
 
+# ---------------------------------------------------------------- Core league
+# The hot core: hot-aisle grating over an orange glow, coolant pipe runs with
+# frost bands, exhaust vents shimmering with heat, warning stripes; the track
+# is a dark grating floor with faint orange seams, black steel rails with
+# orange/white hazard caps and a white-hot open edge. Palette 0 is the red
+# haze. Cold aisles stay clearly blue; hot spots stay red-white hazards.
+CORE_PAL = Palette([
+    ("fog", (96, 34, 22)),
+    # grating and plates
+    ("steel", (40, 36, 40)), ("steel_hi", (66, 60, 62)), ("steel_dark", (22, 19, 22)), ("bolt", (116, 104, 98)),
+    ("slot_deep", (112, 36, 14)), ("slot_glow", (230, 98, 24)), ("slot_hot", (255, 176, 70)),
+    # coolant pipes
+    ("pipe", (84, 100, 118)), ("pipe_hi", (146, 164, 184)), ("pipe_dark", (44, 52, 66)),
+    ("frost", (110, 214, 240)), ("frost_hi", (214, 248, 255)),
+    # exhaust vents
+    ("vent_rim", (104, 94, 90)), ("vent_dark", (14, 10, 12)), ("shimmer", (255, 214, 150)),
+    ("shimmer_lo", (196, 74, 30)),
+    # warning stripes
+    ("warn_y", (244, 152, 24)), ("warn_k", (22, 18, 20)),
+    ("led_on", (255, 140, 40)), ("led_off", (90, 40, 16)),
+    # track surface: dark grating floor, faint orange seams
+    ("floor", (30, 26, 30)), ("floor_slot", (42, 30, 30)), ("floor_seam", (88, 42, 22)),
+    ("lane_dot", (236, 150, 80)),
+    # rails: black steel, orange/white hazard caps
+    ("cap_a", (255, 112, 16)), ("cap_b", (240, 236, 228)), ("metal_hi", (100, 94, 98)),
+    ("metal", (60, 56, 62)), ("metal_dark", (36, 33, 38)), ("rail_base", (10, 9, 11)),
+    # open edge: a white-hot lip
+    ("glow", (255, 252, 236)), ("glow_mid", (255, 206, 120)), ("glow_dim", (214, 96, 32)),
+    # features
+    ("pad_bg", (62, 22, 96)), ("pad_chev", (255, 240, 120)), ("pad_chev_lo", (255, 150, 40)),
+    ("thr_y", (250, 226, 110)), ("thr_k", (44, 30, 32)),
+    ("cold_floor", (16, 44, 108)), ("cold_stripe", (64, 164, 255)), ("cold_hi", (190, 236, 255)),
+    ("hot_core", (255, 255, 224)), ("hot_orange", (255, 150, 40)), ("hot_red", (236, 28, 64)),
+    ("hot_dark", (70, 8, 24)),
+    ("hop_bg", (16, 70, 78)), ("hop_arrow", (120, 255, 226)),
+    ("chk_k", (14, 12, 14)),
+    ("seam_lit", (130, 64, 24)), ("seam_glow", (255, 176, 84)),
+    ("void", (8, 3, 3)), ("void_mid", (52, 14, 6)),
+])
+
+# Core background tile meanings (indices 1..15 are per league).
+CO_GRATE, CO_GRATE_RIM, CO_GRATE_DIM, CO_PLATE = 1, 2, 3, 4
+CO_PIPE_H, CO_PIPE_V, CO_FROST_H, CO_FROST_V, CO_PIPE_X = 5, 6, 7, 8, 9
+CO_VENT = 10        # 10..13: 2x2 exhaust vent TL, TR, BL, BR
+CO_WARN, CO_GLOW = 14, 15
+
+
+def paint_core_tiles(P):
+    ts = Tileset(P)
+
+    def grate(lvl):   # bars every 4 rows, two 6x2 slots per tile showing the glow
+        deep, lit = [(P["slot_deep"], P["slot_deep"]), (P["slot_deep"], P["slot_glow"]),
+                     (P["slot_glow"], P["slot_hot"])][lvl]
+        bar = P["slot_glow"] if lvl == 2 else P["steel_dark"]
+
+        def f(x, y):
+            if x in (0, 7):
+                return bar
+            k = y % 4
+            if k == 0:
+                return P["steel_hi"]
+            if k == 3:
+                return P["steel"]
+            return deep if k == 1 else lit
+        return f
+    g1 = grate(1)
+    ts.put(CO_GRATE, "hot-aisle grating", A_OFF, grid(g1))
+    ts.put(CO_GRATE_RIM, "grating, glow pool rim", A_OFF, grid(
+        lambda x, y: grate(2)(x, y) if bayer4(x, y) < 0.5 and y % 4 in (1, 2) else g1(x, y)))
+    ts.put(CO_GRATE_DIM, "grating, cooler", A_OFF, grid(grate(0)))
+    ts.put(CO_PLATE, "steel walkway plate", A_OFF, grid(
+        lambda x, y: P["bolt"] if (x, y) in ((1, 1), (6, 1), (1, 6), (6, 6)) else (
+            P["steel_hi"] if y == 0 else (P["steel_dark"] if y == 7 else P["steel"]))))
+
+    def pipe(frost):  # horizontal coolant pipe over the grating
+        def f(x, y):
+            if y in (0, 7):
+                return g1(x, y)
+            if frost and x in (3, 4):
+                return P["frost_hi"] if y <= 2 else P["frost"]
+            if frost and x in (2, 5):
+                return P["pipe_hi"] if y <= 3 else P["pipe_dark"]
+            return [0, P["pipe_hi"], P["pipe_hi"], P["pipe"], P["pipe"], P["pipe_dark"], P["pipe_dark"]][y]
+        return grid(f)
+    ph, pf = pipe(False), pipe(True)
+    ts.put(CO_PIPE_H, "coolant pipe (x)", A_OFF, ph)
+    ts.put(CO_PIPE_V, "coolant pipe (y)", A_OFF, ph.T.copy())
+    ts.put(CO_FROST_H, "coolant pipe frost band (x)", A_OFF, pf)
+    ts.put(CO_FROST_V, "coolant pipe frost band (y)", A_OFF, pf.T.copy())
+    px = ph.copy()
+    px[0], px[7] = ph.T[0], ph.T[7]
+    px[0, 0] = px[0, 7] = px[7, 0] = px[7, 7] = P["steel_dark"]
+    ts.put(CO_PIPE_X, "coolant pipe crossing", A_OFF, px)
+    # 16x16 exhaust vent: rim, dark throat with louvres, heat shimmer dots.
+    vent = np.zeros((16, 16), np.uint8)
+    for y in range(16):
+        for x in range(16):
+            r = math.hypot(x - 7.5, y - 7.5)
+            if r > 7.6:
+                vent[y, x] = g1(x % 8, y % 8)
+            elif r > 6.3:
+                vent[y, x] = P["vent_rim"] if (x + y) % 5 else P["steel_dark"]
+            elif (x * 7 + y * 13) % 11 == 0:
+                vent[y, x] = P["shimmer"] if r < 3.5 else P["shimmer_lo"]
+            elif y % 3 == 0:
+                vent[y, x] = P["pipe_dark"]
+            else:
+                vent[y, x] = P["vent_dark"]
+    for k, (oy, ox) in enumerate(((0, 0), (0, 8), (8, 0), (8, 8))):
+        ts.put(CO_VENT + k, f"exhaust vent {'TL TR BL BR'.split()[k]}", A_OFF, vent[oy:oy + 8, ox:ox + 8])
+    ts.put(CO_WARN, "warning stripes", A_OFF, grid(
+        lambda x, y: P["warn_y"] if ((x + y) >> 1) & 1 else P["warn_k"]))
+    ts.put(CO_GLOW, "grating, glow pool core", A_OFF, grid(grate(2)))
+
+    # Track surface: dark grating floor (faint slots), orange seams every 16 px.
+    fl, fs = P["floor"], P["floor_seam"]
+    floor = lambda x, y: P["floor_slot"] if y % 4 == 2 and 1 <= x % 4 <= 2 else fl
+    ts.put(SURF, "floor grating", A_SURF, grid(floor))
+    ts.put(SURF_DOT, "floor lane dot", A_SURF, grid(lambda x, y: P["lane_dot"] if 3 <= x <= 4 and 3 <= y <= 4 else floor(x, y)))
+    ts.put(SURF_SEAM_V, "floor glow seam left", A_SURF, grid(lambda x, y: fs if x == 0 else floor(x, y)))
+    ts.put(SURF_SEAM_H, "floor glow seam top", A_SURF, grid(lambda x, y: fs if y == 0 else floor(x, y)))
+    ts.put(SURF_SEAM_X, "floor glow seam corner", A_SURF, grid(lambda x, y: fs if x == 0 or y == 0 else floor(x, y)))
+    paint_track_pieces(ts, P)
+    return ts
+
+
+def paint_core_background(tmap, free, rng):
+    """Fill free tiles: grating everywhere (cooler and hotter patches from a
+    smooth field), walkway plate strips on a ten-tile rhythm with warning
+    stripes, long coolant pipe runs with frost bands every six tiles,
+    exhaust vents, glow pools."""
+    ph = [rng.uniform(0, 2 * math.pi) for _ in range(4)]
+    oy = rng.randrange(10)
+    plate_x = set()
+    x = rng.randrange(6, 16)
+    while x < MAPN:
+        plate_x.add(x)
+        x += rng.randrange(14, 24)
+    for ty in range(MAPN):
+        for tx in range(MAPN):
+            if not free[ty, tx]:
+                continue
+            if (ty - oy) % 10 == 0 or tx in plate_x:
+                tmap[ty, tx] = CO_PLATE
+                continue
+            v = math.sin(tx * 0.11 + ph[0]) + math.sin(ty * 0.09 + ph[1]) + 0.6 * math.sin((tx + ty) * 0.07 + ph[2])
+            tmap[ty, tx] = CO_GRATE_DIM if v < -0.5 else CO_GRATE
+    # Warning stripes: short stretches of the plate strips.
+    for _ in range(30):
+        ty = (rng.randrange(MAPN // 10) * 10 + oy) % MAPN
+        tx0 = rng.randrange(MAPN - 6)
+        for tx in range(tx0, tx0 + rng.randint(3, 6)):
+            if free[ty, tx]:
+                tmap[ty, tx] = CO_WARN
+    avail = free & np.isin(tmap, (CO_GRATE, CO_GRATE_DIM))
+    # Coolant pipe runs (on grating rows / columns, crossing where they meet).
+    for horiz in (True, False):
+        for _ in range(9 if horiz else 7):
+            for _try in range(50):
+                k = rng.randrange(MAPN)
+                if horiz and (k - oy) % 10 in (0, 9, 1):
+                    continue
+                if not horiz and (k in plate_x or k - 1 in plate_x or k + 1 in plate_x):
+                    continue
+                break
+            a = rng.randrange(MAPN)
+            n = rng.randint(40, 128)
+            for i, s in enumerate(range(a, min(MAPN, a + n))):
+                ty, tx = (k, s) if horiz else (s, k)
+                cur = tmap[ty, tx]
+                if not free[ty, tx]:
+                    continue
+                if cur in (CO_PIPE_H, CO_PIPE_V, CO_FROST_H, CO_FROST_V):
+                    tmap[ty, tx] = CO_PIPE_X
+                elif cur in (CO_GRATE, CO_GRATE_DIM, CO_PLATE, CO_WARN):
+                    frost = (s % 6) == 3
+                    tmap[ty, tx] = (CO_FROST_H if frost else CO_PIPE_H) if horiz else (CO_FROST_V if frost else CO_PIPE_V)
+                avail[ty, tx] = False
+    # Exhaust vents in the grating.
+    for _ in range(34):
+        for _try in range(200):
+            x, y = rng.randrange(MAPN - 2), rng.randrange(MAPN - 2)
+            if avail[max(0, y - 1):y + 3, max(0, x - 1):x + 3].all():
+                tmap[y:y + 2, x:x + 2] = np.array([[CO_VENT, CO_VENT + 1], [CO_VENT + 2, CO_VENT + 3]])
+                avail[max(0, y - 1):y + 3, max(0, x - 1):x + 3] = False
+                break
+    # Glow pools: the core showing through the grating.
+    for _ in range(22):
+        cy, cx, r = rng.uniform(0, MAPN), rng.uniform(0, MAPN), rng.uniform(1.6, 3.6)
+        for ty in range(int(cy - r) - 1, int(cy + r) + 2):
+            for tx in range(int(cx - r) - 1, int(cx + r) + 2):
+                if 0 <= ty < MAPN and 0 <= tx < MAPN and avail[ty, tx]:
+                    d = math.hypot(tx + .5 - cx, ty + .5 - cy)
+                    if d < r * 0.55:
+                        tmap[ty, tx] = CO_GLOW
+                    elif d < r:
+                        tmap[ty, tx] = CO_GRATE_RIM
+
+
+def paint_core_horizon(fog, rng):
+    """Core horizon: front 512x32 (near pipework on supports, chimneys with
+    a glowing rim, orange LED dots), back 256x32 (red haze gradient, slow
+    glow bands, far reactor towers and exhaust stacks)."""
+    fpal = [fog, fog, (110, 42, 26), (58, 22, 18), (36, 16, 16), (22, 10, 12), (196, 82, 34),
+            (70, 64, 70), (126, 120, 128), (110, 214, 240), (44, 22, 22), (255, 150, 60),
+            (120, 60, 46), (12, 6, 8), (90, 40, 16), (255, 140, 40)]
+    # 0 transparent, 1 fog, 2 haze, 3 far plant, 4 structure, 5 structure shade, 6 glow-lit rim,
+    # 7 pipe, 8 pipe highlight, 9 frost band, 10 chimney, 11 chimney lip glow, 12 exhaust smoke,
+    # 13 dark detail, 14 led_off (unused, blink), 15 led_on
+    W, H = 512, 32
+    f = np.zeros((H, W), np.uint8)
+    ground = 29
+
+    def col(x, top, c):
+        f[top:ground + 1, x % W] = c
+
+    x = 0
+    while x < W:                      # far plant blocks
+        w, h = rng.randint(16, 40), rng.randint(6, 11)
+        for xx in range(x, x + w):
+            col(xx, ground - h, 3)
+        x += w + rng.randint(4, 20)
+    for k in range(8):                # chimneys: tapered, glowing lip, smoke drifting left
+        cx, h = k * 64 + rng.randint(0, 40), rng.randint(16, 24)
+        top = ground - h
+        for y in range(top, ground + 1):
+            hw = 2.0 + 2.5 * (y - top) / h
+            for xx in range(int(cx - hw), int(cx + hw) + 1):
+                f[y, xx % W] = 11 if y == top else (5 if xx > cx + hw * 0.4 else 10)
+        for yy in range(top + 4, ground - 2, 5):          # LED ring on the stack
+            f[yy, int(cx) % W] = 15
+        for j in range(5):
+            px, py, r = cx - 2 - j * 4.0, top - 2 - j * 1.6, 1.8 + j * 0.8
+            for y in range(max(0, int(py - r)), min(ground, int(py + r) + 1)):
+                for xx in range(int(px - r), int(px + r) + 1):
+                    if math.hypot(xx - px, y - py) <= r and f[y, xx % W] == 0 and bayer4(xx, y) < 0.8 - j * 0.12:
+                        f[y, xx % W] = 12
+    x = 0
+    while x < W:                      # near plant: boxes with a glow-lit top rim and LED dots
+        w, h = rng.randint(8, 26), rng.randint(4, 10)
+        top = ground - h
+        for xx in range(x, x + w):
+            col(xx, top, 4)
+            f[top, xx % W] = 6
+        f[top + 1:ground + 1, (x + w - 1) % W] = 5
+        for xx in range(x + 2, x + w - 2, 4):
+            if h >= 5 and rng.random() < 0.6:
+                f[top + 2, xx % W] = 15 if rng.random() < 0.7 else 13
+        x += w + rng.randint(2, 14)
+    for k in range(6):                # pipe runs on supports, frost bands
+        x0, length, y0 = rng.randrange(W), rng.randint(50, 110), rng.randint(14, 22)
+        for i in range(length):
+            xx = (x0 + i) % W
+            f[y0, xx] = 9 if i % 23 in (11, 12) else 8
+            f[y0 + 1, xx] = 9 if i % 23 in (11, 12) else 7
+            if i % 18 == 4:           # support legs down to the plant
+                for yy in range(y0 + 2, ground + 1):
+                    if f[yy, xx] in (0, 3, 12):
+                        f[yy, xx] = 13
+    f[f > 0] = np.where(np.arange(H)[:, None].repeat(W, 1)[f > 0] >= ground - 1, 2, f[f > 0])
+    f[ground + 1:] = 1
+
+    bpal = [(26, 8, 10), (40, 12, 12), (56, 16, 14), (72, 22, 16), (86, 28, 18), (100, 34, 20),
+            (116, 42, 22), (150, 60, 28), (30, 10, 12), (92, 32, 22), (255, 110, 40), (196, 70, 30),
+            (66, 22, 18), (170, 56, 26), fog, fog]
+    # 0..6 dark to red haze gradient, 7 glow band, 8/9 far silhouette / lit edge,
+    # 10 stack beacon, 11 tower glow, 12 smoke, 13 glow band dim, 14..15 fog
+    BW = 256
+    b = np.zeros((H, BW), np.uint8)
+    for y in range(H):
+        for x in range(BW):
+            b[y, x] = min(6, int(y / 27 * 6 + bayer4(x, y)))
+    for yb, lvl in ((9, 13), (15, 7), (21, 7), (24, 13)):   # slow glow bands
+        for x in range(BW):
+            w = 1.2 + 0.9 * math.sin(x * 2 * math.pi / BW * 2 + yb)
+            for y in range(int(yb - w), int(yb + w) + 1):
+                if 0 <= y < H and bayer4(x, y) < 0.55 - abs(y - yb) / (w + 1) * 0.4:
+                    b[y, x] = lvl
+    for k in range(5):                # reactor towers: wide hyperbolic shells, glowing tops
+        cx, h = k * 51 + rng.randint(0, 24), rng.randint(12, 17)
+        top = ground - h
+        for y in range(top, ground + 1):
+            t = (y - top) / h
+            hw = 5.0 + 3.5 * (t - 0.4) ** 2 / 0.36 if t > 0.4 else 5.0 + 1.2 * (0.4 - t) / 0.4
+            for xx in range(int(cx - hw), int(cx + hw) + 1):
+                b[y, xx % BW] = 11 if y == top else (9 if xx < cx - hw + 1.5 else 8)
+    for k in range(9):                # exhaust stacks: thin, tall, a beacon on top, smoke
+        cx, h = rng.randrange(BW), rng.randint(14, 24)
+        top = ground - h
+        for y in range(top, ground + 1):
+            for xx in (cx, cx + 1):
+                b[y, xx % BW] = 8
+        b[top - 1, cx % BW] = 10
+        for j in range(6):
+            sy = top - 3 - j * 2
+            for xx in range(cx - j * 2, cx - j * 2 + 3):
+                if 0 <= sy < H and bayer4(xx, sy) < 0.6:
+                    b[sy, xx % BW] = 12
+    b[ground + 1:] = 14
+    return f, b, fpal, bpal
+
+
 def pack4(img):
     """Pack 4-bit pixels two per byte, low nibble = left pixel."""
     return (img[:, 0::2] | (img[:, 1::2] << 4)).astype(np.uint8).tobytes()
@@ -716,5 +1018,6 @@ LEAGUES = {
                  horizon=paint_edge_horizon),
     "spine": dict(pal=SPINE_PAL, tiles=paint_spine_tiles, background=paint_spine_background,
                   horizon=paint_spine_horizon),
-    # "core":  dict(pal=CORE_PAL, tiles=paint_core_tiles, ...),     M5
+    "core": dict(pal=CORE_PAL, tiles=paint_core_tiles, background=paint_core_background,
+                 horizon=paint_core_horizon),
 }

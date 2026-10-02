@@ -18,7 +18,8 @@ its design and milestone status.
   `SPEC.md`, `ASSETS.md`. `build.zig` is a module with `pub fn add(...)`
   called by the root build.zig. Carts: `snouty-run` (binary `snouty`),
   `snouty-bugs`, `snoutenstein`, `snouty-reflections`, `snouty-boy`,
-  `snouty-maze`.
+  `snouty-maze`, `snouty-gear`, `snouty-genesis`, `snouty-lynx`,
+  `snouty-flyover`, `demosnout`, `snouty-zero` (XIP only).
 - `build.zig`, `build.zig.zon`, `build/common.zig` — the one Zig package.
   Shared options (`-Dcart`, `-Dcart-mode`, `-Ddebug_overlay`, `-Dsound`, `-Drom`, ...)
   and the shared `test` and `check-float` steps are declared here and passed
