@@ -27,6 +27,16 @@ pub fn add(b: *Build, sycl_badge_dep: *Build.Dependency, opts: common.Options) v
         .root_source_file = b.path(dir ++ "cart/src/main.zig"),
         .custom_builder = &build_cart_assets,
     });
+
+    // `zig build test` (shared step): the pure sim/levels/parser/rewind/demo
+    // suites (cart/src/host_tests.zig), the same ones tools/check.sh runs.
+    // The generated-source freshness checks stay in check.sh (read-only, git).
+    const tests = b.addTest(.{ .root_module = b.createModule(.{
+        .root_source_file = b.path(dir ++ "cart/src/host_tests.zig"),
+        .target = b.graph.host,
+        .optimize = .Debug,
+    }) });
+    opts.test_step.dependOn(&b.addRunArtifact(tests).step);
 }
 
 var build_options: ?*Build.Step.Options = null;
