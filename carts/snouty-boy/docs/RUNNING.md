@@ -238,6 +238,13 @@ In the menu (drawn over the frozen game frame):
 | Left / Right   | on Palette / Color / Scale / Sound / Debug overlay: cycle it. On Resume, Reset, About: time scrubber, back / forward 0.5 s (repeats 4 times a second while held) |
 | B, Select tap  | resume (B also leaves About)                               |
 
+On-screen hints (`lib/hint.zig`, shared with Gear, Genesis and Lynx): the
+splash and the first 3 s of play after the splash or the picker show "Hold
+Select: menu" (a strip at the bottom, gone at the first button press); in
+the menu, the bottom line on Resume reads "Left/Right: rewind" ("Rewind: no
+history" before the first keyframe; the `Scrub:` readout once parked or on
+other rows) and the footer reads "B: back to game".
+
 Game Boy Color mode. The title band and splash read "SNOUTY BOY COLOR"
 and the menu is black on white. The Palette row becomes `Color: LCD` /
 `Color: Raw`: LCD (default) is a GBC screen approximation (colours mixed

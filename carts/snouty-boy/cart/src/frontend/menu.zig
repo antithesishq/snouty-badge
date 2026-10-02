@@ -28,7 +28,10 @@
 //! before; on every other row (Resume, where the menu opens, Reset, About)
 //! they step time back/forward 0.5 s, repeating 4 times a second while held.
 //! The bottom line reads "Scrub: live / 3.5s" or "Scrub: -1.5 / 3.5s"
-//! (position behind live / history in the ring). Resuming from a scrubbed
+//! (position behind live / history in the ring); on Resume at the live
+//! position it names the action instead, "Left/Right: rewind" or
+//! "Rewind: no history", and a footer under it reads "B: back to game"
+//! (lib/hint.zig, review 2026-10-01 UX-05). Resuming from a scrubbed
 //! position plays on from there and drops the future. After a scrub step the
 //! menu collapses to that line in a bar at the bottom so the restored frame
 //! is visible; Left/Right keep scrubbing, B or a Select tap resume, and
@@ -43,6 +46,7 @@ const debug = @import("debug.zig");
 const input = @import("input.zig");
 const rewind = @import("rewind.zig");
 const romsrc = @import("romsrc.zig");
+const hint = @import("hint");
 
 pub const version = "0.6.0-m6";
 
@@ -214,12 +218,25 @@ fn adjust(d: i2) void {
 
 const band_h = 36;
 const panel_x = 4;
-const panel_y = 40;
+/// The panel starts right under the band and runs to the bottom edge (it
+/// was y 40, 86 px, until the footer needed the 4 px: review 2026-10-01
+/// UX-05), rows 10 px as before.
+const panel_y = band_h;
 const panel_w = cart.screen_width - 2 * panel_x;
-const panel_h = 86;
+const panel_h = cart.screen_height - panel_y;
 const row_h = 10;
 const text_x = panel_x + 4;
 const first_row_y = panel_y + 3;
+/// The panel's bottom line (y 109): the scrub readout, or on Resume the
+/// rewind hint (`hint.resume_line`); "B: back" on About.
+const scrub_line_y = first_row_y + item_count * row_h;
+/// The footer under it (y 119): how to leave the menu (`hint.back`).
+const footer_y = scrub_line_y + row_h;
+
+comptime {
+    if (footer_y + 8 > panel_y + panel_h - 1) @compileError("menu footer outside the panel");
+    if (hint.panel_cols != (panel_w - (text_x - panel_x) - 2) / 8) @compileError("hint.panel_cols does not match this panel");
+}
 
 /// ROM title from the cartridge header (0x134..0x143): up to the first
 /// non-printable byte, trailing spaces trimmed.
@@ -296,7 +313,13 @@ fn draw(gb: *const core.Gb) void {
         cart.text(.{ .str = label, .x = text_x, .y = y, .text_color = color });
     }
     const history = rewind.history_frames();
-    cart.text(.{ .str = scrub_label(&buf, rewind.depth_frames(), history), .x = text_x, .y = first_row_y + item_count * row_h, .text_color = if (history == 0) dim else fg });
+    const depth = rewind.depth_frames();
+    if (hint.resume_line(cursor == .resume_game, true, depth, history)) |s| {
+        cart.text(.{ .str = s, .x = text_x, .y = scrub_line_y, .text_color = if (history == 0) dim else fg });
+    } else {
+        cart.text(.{ .str = scrub_label(&buf, depth, history), .x = text_x, .y = scrub_line_y, .text_color = if (history == 0) dim else fg });
+    }
+    cart.text(.{ .str = hint.back, .x = text_x, .y = footer_y, .text_color = dim });
 }
 
 /// Characters that fit inside the panel at the About text indent.
@@ -354,7 +377,7 @@ fn draw_about(gb: *const core.Gb, fg: cart.DisplayColor, dim: cart.DisplayColor)
         cart.text(.{ .str = l, .x = text_x, .y = y, .text_color = fg });
         y += row_h;
     }
-    cart.text(.{ .str = "B: back", .x = text_x, .y = first_row_y + 7 * row_h, .text_color = dim });
+    cart.text(.{ .str = "B: back", .x = text_x, .y = scrub_line_y, .text_color = dim });
 }
 
 /// `s` cut to `about_cols` characters, the last one replaced by '~' when
