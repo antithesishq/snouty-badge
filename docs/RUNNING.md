@@ -127,8 +127,11 @@ leave headroom. `badge-bench/README.md` has the details.
 
 ## 7. Flash the badge
 
-1. Connect the badge over USB-C. It shows up as a USB mass-storage drive.
-2. Copy `zig-out/firmware/<binary>.uf2` onto the drive, replacing `CURRENT.UF2`.
+[INSTALL.md](INSTALL.md) is the one recipe: copy
+`zig-out/firmware/<binary>.uf2` (or `<binary>-xip.uf2` for the XIP-only
+carts) onto the badge's `SYCLBADGE` drive, eject, start the cart from the
+OS menu, Start+Select back. It also covers ROM files for the emulator
+carts and the RP2350 bootloader drive that is easy to mistake for it.
 
 ## 8. XIP carts
 

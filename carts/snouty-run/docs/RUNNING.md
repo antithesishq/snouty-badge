@@ -128,5 +128,7 @@ update is one 60 Hz tick, so `--every 4 --ms 66` plays at about real speed.
 
 ## 6. Flash the badge
 
-1. Connect the badge over USB-C. It shows up as a USB mass-storage drive.
-2. Copy `zig-out/firmware/snouty.uf2` (at the repository root) onto the drive, replacing `CURRENT.UF2`.
+Install it as in [docs/INSTALL.md](../../../docs/INSTALL.md): copy
+`zig-out/firmware/snouty.uf2` (at the repository root) onto the badge's
+`SYCLBADGE` drive, eject, and pick it in the badge menu. Start+Select
+returns to the menu.

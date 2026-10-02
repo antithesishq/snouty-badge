@@ -204,11 +204,12 @@ Debug exports (zero-argument wasm functions, usable with `--dump-exports`,
 
 ## 6. Flashing
 
-1. Put the badge in bootloader mode and connect it over USB-C; it shows up
-   as a USB drive.
-2. Copy `zig-out/firmware/snouty-zero-xip.uf2` onto the drive (the XIP
-   cart; up to M4 the file was `snouty-zero.uf2`).
-3. Pick the cart in the badge menu. Start+Select returns to the menu.
+Install it as in [docs/INSTALL.md](../../../docs/INSTALL.md): copy
+`zig-out/firmware/snouty-zero-xip.uf2` (repository root) onto the badge's
+`SYCLBADGE` drive (not the RP2350 bootloader drive), eject, and pick the
+cart in the badge menu. Start+Select returns to the menu. Since M5 this is
+an XIP-only cart (up to M4 the file was `snouty-zero.uf2`); XIP carts have
+not yet been confirmed on a badge.
 
 ## 7. Emulated cycle benchmark
 

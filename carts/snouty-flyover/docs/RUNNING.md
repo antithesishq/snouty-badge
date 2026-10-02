@@ -317,10 +317,10 @@ tools/check_render.sh path/to/other.wasm   # check a different build
 
 ## 6. Flashing
 
-1. Put the badge in bootloader mode and connect it over USB-C. It shows up
-   as a USB mass-storage drive.
-2. Copy `zig-out/firmware/snouty-flyover.uf2` (repository root) onto the drive.
-3. Pick the cart in the badge menu. Start+Select returns to the menu.
+Install it as in [docs/INSTALL.md](../../../docs/INSTALL.md): copy
+`zig-out/firmware/snouty-flyover.uf2` (repository root) onto the badge's
+`SYCLBADGE` drive (not the RP2350 bootloader drive), eject, and pick the
+cart in the badge menu. Start+Select returns to the menu.
 
 For on-badge timing flash a `-Ddebug_overlay=true` build, or press the
 joystick for the OS FPS overlay.

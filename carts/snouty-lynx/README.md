@@ -61,8 +61,9 @@ The badge's USB drive (`SYCLBADGE`) holds carts and any other file. With the
 default build (`-Dlynx-rom-source=drive`):
 
 1. Plug in the badge, switch it on; the drive mounts.
-2. Copy `snouty-lynx.uf2` onto it (replacing `CURRENT.UF2` as for any
-   cart), and copy one `.lnx` file (or a headerless `.lyx` dump) next to it.
+2. Copy `snouty-lynx.uf2` onto it (as for any cart,
+   [docs/INSTALL.md](../../docs/INSTALL.md) at the repository root), and
+   copy one `.lnx` file (or a headerless `.lyx` dump) next to it.
    Best on a freshly wiped drive, so the file is contiguous; a fragmented
    file still works through the per-cluster path and the strip says `frag`.
 3. **Eject the drive before playing.** The OS writes flash while a host

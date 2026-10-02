@@ -38,8 +38,8 @@ zig build check-float            # no soft-float in the FPU carts' ELFs
 zig build -Dcart-mode=xip        # execute-in-place carts: <binary>-xip.uf2 (see below)
 ```
 
-Outputs: `zig-out/firmware/<binary>.uf2` (copy onto the badge over
-`CURRENT.UF2`), `zig-out/firmware/<binary>.elf` (for badge-bench) and
+Outputs: `zig-out/firmware/<binary>.uf2` (for the badge, installed as in
+[docs/INSTALL.md](docs/INSTALL.md)), `zig-out/firmware/<binary>.elf` (for badge-bench) and
 `zig-out/bin/<binary>.wasm` (for the simulator). Zig
 `0.17.0-dev.1936+5a625d5f3` exactly, as pinned by upstream.
 

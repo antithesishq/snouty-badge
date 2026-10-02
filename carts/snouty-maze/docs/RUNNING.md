@@ -387,9 +387,10 @@ the `gfx` module. Goldens in `tests/golden/` are baselined on the w95 art.
 
 ## 7. Flash the badge
 
-1. Connect the badge over USB-C. It shows up as a USB mass-storage drive.
-2. Copy `zig-out/firmware/snouty-maze.uf2` (repository root) onto the drive (replacing
-   `CURRENT.UF2`). The badge reboots into the cart.
+Install it as in [docs/INSTALL.md](../../../docs/INSTALL.md): copy
+`zig-out/firmware/snouty-maze.uf2` (repository root) onto the badge's
+`SYCLBADGE` drive, eject, and pick it in the badge menu. Start+Select
+returns to the menu.
 
 ## 8. Reading performance on the badge
 

@@ -380,13 +380,12 @@ the older amplified difference image (40 levels per unit per channel).
 
 ## 7. Flashing
 
-1. Put the badge in bootloader mode and connect it over USB-C. It shows up
-   as a USB mass-storage drive.
-2. Copy `zig-out/firmware/snouty-reflections.uf2` (repository root) onto the drive.
-3. The cart lives alongside the other carts in the badge menu; pick it
-   there. Start+Select returns to the menu.
+Install it as in [docs/INSTALL.md](../../../docs/INSTALL.md): copy
+`zig-out/firmware/snouty-reflections.uf2` (repository root) onto the
+badge's `SYCLBADGE` drive (not the RP2350 bootloader drive), eject, and
+pick it in the badge menu. Start+Select returns to the menu.
 
-To read the M1 timing, flash a `zig build -Dcart=snouty-reflections -Ddebug_overlay=true` build (render
+To read the timing on the badge, flash a `zig build -Dcart=snouty-reflections -Ddebug_overlay=true` build (render
 time drawn on screen) or press the joystick to show the OS FPS overlay.
 
 ## 8. Emulated cycle benchmark

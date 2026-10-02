@@ -438,7 +438,10 @@ any other file. With the default `drive` build:
 
 ## 9. Flash the badge
 
-Copy `zig-out/firmware/snouty-genesis-xip.uf2` onto the badge drive. XIP
+Install it as in [docs/INSTALL.md](../../../docs/INSTALL.md): copy
+`zig-out/firmware/snouty-genesis-xip.uf2` (repository root; there is no
+RAM build) onto the badge's `SYCLBADGE` drive with the ROM files (section
+8), eject, and start Snouty Genesis from the OS menu. XIP
 carts are not yet confirmed on hardware (an open item, not a gate: no
 badge until the show). On the badge the overlay's `avg`/`max`
 are real update microseconds.
