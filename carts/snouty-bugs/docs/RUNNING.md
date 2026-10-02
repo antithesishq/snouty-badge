@@ -4,6 +4,29 @@ Commands below run from this cart's directory (`carts/snouty-bugs/`) unless
 noted; `zig build` runs from the repository root, two levels up, and writes its
 outputs to `../../zig-out/`.
 
+## Controls
+
+Play first, tooling after. Badge buttons, then the simulator keys
+(section 4 has the full key table; the joystick is the arrow keys or
+WASD, so the `A` key is joystick left, not the A button).
+
+| Where | Badge | Simulator | Does |
+|---|---|---|---|
+| Title | A or Start | Z or K / Enter or Y | Normal game: a hit rewinds automatically while rewind heads last (HUD, right: 3 to start, more from 10,000 points, at most 5); with none left a hit ends the game |
+| Title | B | X or J | Hardcore game: no heads, a hit is paid from the fuel bar, a hit below 45 fuel ends the game |
+| Playing | Joystick | Arrows or WASD | Fly |
+| Playing | Hold A | Hold Z or K | Fire |
+| Playing | Hold B | Hold X or J | Rewind the world 2 ticks per frame, paid from the fuel bar (refills slowly, and per graze); release to play on |
+| Playing | Start | Enter or Y | Pause; the pause screen lists these controls; Start again resumes |
+| Anywhere | Hold Start + Select 0.5 s | (none) | Badge OS stops the cart and returns to its cart list |
+| Anywhere | Joystick click | Shift | Badge OS FPS overlay; the cart ignores it |
+| Simulator only | | Escape | Simulator menu (Continue, Save/Load state, Reset cart, ...); it freezes the cart and is not the badge OS |
+
+No sound toggle: the cart makes no sound yet, so Select does nothing (it
+will toggle sound once audio lands; [docs/SOUND.md](../../../docs/SOUND.md)).
+There is no bomb and, as yet, no attract mode: the title waits for a press.
+After a game ends the cart returns to the title.
+
 ## 1. Prerequisites
 
 See `../../docs/RUNNING.md` at the repository root (Zig version and download,

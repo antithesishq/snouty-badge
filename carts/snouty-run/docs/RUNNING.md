@@ -4,6 +4,22 @@ Commands below run from this cart's directory (`carts/snouty-run/`) unless
 noted; `zig build` runs from the repository root, two levels up, and writes its
 outputs to `../../zig-out/`.
 
+## Controls
+
+The cart plays itself: Snouty runs forever over a scrolling background
+with a name panel. Badge buttons, then the simulator keys (section 4 has
+the full key table).
+
+| Badge | Simulator | Does |
+|---|---|---|
+| A | Z or K | Jump (one press, one jump; ignored while airborne) |
+| Hold Start + Select 0.5 s | (none) | Badge OS stops the cart and returns to its cart list |
+| Joystick click | Shift | Badge OS FPS overlay; the cart ignores it |
+| | Escape | Simulator menu (Continue, Save/Load state, Reset cart, ...); it freezes the cart and is not the badge OS |
+
+No other button does anything: there is no pause and no sound (the cart
+has no audio code, so it needs no toggle; [docs/SOUND.md](../../../docs/SOUND.md)).
+
 ## 1. Prerequisites
 
 See `../../docs/RUNNING.md` at the repository root (Zig version and download,

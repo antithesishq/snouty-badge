@@ -149,7 +149,25 @@ pub fn draw_title(tick: u32) void {
     draw.draw_sprite(gfx.iris_16, 16, 16, 0, 124, 112, .{});
 }
 
+/// Pause overlay: the frozen scene dimmed, then "PAUSED" and the in-game
+/// controls on a dark panel (x 12..147, y 34..107). Keys in Coral at
+/// x 20, actions at x 92 (at most 6 characters).
 pub fn draw_pause() void {
     draw.darken_checker();
-    draw.centered_text("PAUSED", 60, draw.anti_white);
+    cart.rect(.{ .x = 12, .y = 34, .width = 136, .height = 74, .fill_color = draw.anti_black, .stroke_color = draw.star_dim });
+    draw.centered_text("PAUSED", 40, draw.anti_white);
+    for (pause_help, 0..) |row, i| {
+        const y: i32 = 54 + 10 * @as(i32, @intCast(i));
+        draw.text(row[0], 20, y, draw.coral);
+        draw.text(row[1], 92, y, draw.anti_white);
+    }
+    draw.centered_text("REWIND USES FUEL", 96, draw.star_dim);
 }
+
+/// Key, action (main.zig's playing state and player.zig).
+const pause_help = [_][2][]const u8{
+    .{ "JOYSTICK", "FLY" },
+    .{ "HOLD A", "FIRE" },
+    .{ "HOLD B", "REWIND" },
+    .{ "START", "RESUME" },
+};

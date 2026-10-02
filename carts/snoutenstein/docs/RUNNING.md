@@ -4,6 +4,32 @@ Commands below run from this cart's directory (`carts/snoutenstein/`) unless
 noted; `zig build` runs from the repository root, two levels up, and writes its
 outputs to `../../zig-out/`.
 
+## Controls
+
+Play first, tooling after. Badge buttons, then the simulator keys
+(section 4 has the full key table; the joystick is the arrow keys or
+WASD, so the `A` key is joystick left, not the A button). The
+authoritative table is `SPEC.md` section 3.
+
+| Where | Badge | Simulator | Does |
+|---|---|---|---|
+| Title | A | Z or K | Start the campaign |
+| Title | B / Start | X or J / Enter or Y | Start the imported E1M1 / the test level |
+| Title | Select | Backspace or T | Sound on/off; the cart boots silent ([docs/SOUND.md](../../../docs/SOUND.md)) |
+| Title | (leave it 10 s) | | Attract demo; A, B, Start or the joystick takes over |
+| Playing | Joystick up / down | Up / Down or W / S | Walk forward / back |
+| Playing | Joystick left / right | Left / Right or A / D | Turn (no strafe) |
+| Playing | A | Z or K | Fire / swat |
+| Playing | Select | Backspace or T | Next weapon (skips empty ones) |
+| Playing | (walk into it) | | Opens a door; there is no use button |
+| Playing | Hold B | Hold X or J | Rewind time, paid from the clock meter in the HUD |
+| Playing | Start | Enter or Y | Pause; the pause screen lists these controls; Start again resumes |
+| Dead (red, frozen) | Hold B | Hold X or J | Rewind, the only way on (always at least 3 s) |
+| Level clear / victory | A or Start | Z or K / Enter or Y | Next card |
+| Anywhere | Hold Start + Select 0.5 s | (none) | Badge OS stops the cart and returns to its cart list |
+| Anywhere | Joystick click | Shift | Badge OS FPS overlay; the cart ignores it |
+| Simulator only | | Escape | Simulator menu (Continue, Save/Load state, Reset cart, ...); it freezes the cart and is not the badge OS |
+
 ## 1. Prerequisites
 
 See `../../docs/RUNNING.md` at the repository root (Zig version and download,

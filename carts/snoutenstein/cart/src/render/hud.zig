@@ -181,9 +181,29 @@ pub fn draw_victory(s: *const state.GameState, ticks: u32) void {
     press_a(ticks);
 }
 
+/// Pause screen: "PAUSED" and the in-game controls (SPEC.md 3) on a dark
+/// panel over the frozen view (x 4..155, y 8..95, clear of the HUD bar).
+/// Keys in Coral at x 12, actions at x 100 (at most 6 characters).
 pub fn draw_pause() void {
-    cart.text(.{ .str = "PAUSED", .x = 56, .y = 48, .text_color = anti_white, .background_color = anti_black });
+    cart.rect(.{ .x = 4, .y = 8, .width = 152, .height = 88, .fill_color = anti_black, .stroke_color = grey });
+    centered("PAUSED", 13, anti_white);
+    for (pause_help, 0..) |row, i| {
+        const y: i32 = 27 + 10 * @as(i32, @intCast(i));
+        cart.text(.{ .str = row[0], .x = 12, .y = y, .text_color = coral });
+        cart.text(.{ .str = row[1], .x = 100, .y = y, .text_color = anti_white });
+    }
 }
+
+/// Key, action. Doors have no button: walking into one opens it.
+const pause_help = [_][2][]const u8{
+    .{ "UP/DOWN", "WALK" },
+    .{ "LEFT/RIGHT", "TURN" },
+    .{ "A", "FIRE" },
+    .{ "SELECT", "WEAPON" },
+    .{ "HOLD B", "REWIND" },
+    .{ "BUMP DOOR", "OPENS" },
+    .{ "START", "RESUME" },
+};
 
 /// M1 gate readout: render microseconds, top right of the view
 /// (right-aligned, last column x 159) so it never covers the rewind marker.
