@@ -1,0 +1,62 @@
+[
+  {
+    "path": "/home/exedev/snouty-badge",
+    "head": "79b7e896140c646c3c162103a4e9c723a629a3c1",
+    "status": " M README.md\n M badge-bench/calibrate/README.md\n M carts/snouty-boy/CLAUDE.md\n M carts/snouty-boy/build.zig\n M carts/snouty-boy/docs/RUNNING.md\n M sycl-badge\n"
+  },
+  {
+    "path": "/home/exedev/snouty-badge-flyover",
+    "head": "496aba0dd1b2ac70afbdd182004814ee74f11a54",
+    "status": ""
+  },
+  {
+    "path": "/home/exedev/snouty-badge-gear",
+    "head": "ae16621029d2fe00d06f54e0d8e7487426cb545d",
+    "status": "?? badge-bench/.venv\n?? carts/snouty-boy/tests/roms\n"
+  },
+  {
+    "path": "/home/exedev/snouty-badge-genesis",
+    "head": "53e1369a31ad637ce4f6f10a72ea72321c65c80f",
+    "status": "?? badge-bench/.venv\n?? carts/snouty-boy/tests/roms\n?? carts/snouty-gear/tests/roms\n"
+  },
+  {
+    "path": "/home/exedev/snouty-badge-hwtrace",
+    "head": "b6895e51807610d9341aeb46c1bc78021c7e0cda",
+    "status": ""
+  },
+  {
+    "path": "/home/exedev/snouty-badge-lynx",
+    "head": "54f2cf1a6074a516dcbd79f1373dc3e265b88751",
+    "status": "?? badge-bench/.venv\n?? carts/snouty-boy/tests/roms\n"
+  },
+  {
+    "path": "/home/exedev/snouty-badge-manager",
+    "head": "79b7e896140c646c3c162103a4e9c723a629a3c1",
+    "status": ""
+  },
+  {
+    "path": "/home/exedev/snouty-badge-reflections",
+    "head": "0d8d70db6404e8be8a83902a4f8ca8ac265f715a",
+    "status": ""
+  },
+  {
+    "path": "/home/exedev/snouty-badge-scene",
+    "head": "9a4b58182095ff208c9fb1e7b1aef81055fa60a7",
+    "status": ""
+  },
+  {
+    "path": "/home/exedev/snouty-badge-simtone",
+    "head": "f53d696b553e8d8c86a811f0bfca376e64099a37",
+    "status": ""
+  },
+  {
+    "path": "/home/exedev/snouty-badge-snoutenstein",
+    "head": "292911baa7cd57042ce328d3d7691a64967f7fd0",
+    "status": ""
+  },
+  {
+    "path": "/home/exedev/snouty-badge-zero",
+    "head": "54f2cf1a6074a516dcbd79f1373dc3e265b88751",
+    "status": "?? carts/snouty-zero/\n"
+  }
+]

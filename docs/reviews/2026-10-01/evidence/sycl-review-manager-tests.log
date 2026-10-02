@@ -1,0 +1,19 @@
+........................................................./home/exedev/snouty-badge/tools/make_romfs.py:233: ResourceWarning: unclosed file <_io.BufferedReader name='/tmp/tmpyryjgd0t/junk'>
+  items.append(dict(name=name, data=open(path, 'rb').read(), attr=0x20, deleted=False))
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+./home/exedev/snouty-badge/tools/make_romfs.py:233: ResourceWarning: unclosed file <_io.BufferedReader name='/tmp/tmpu9kif8tq/junk'>
+  items.append(dict(name=name, data=open(path, 'rb').read(), attr=0x20, deleted=False))
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+./home/exedev/snouty-badge/tools/make_romfs.py:233: ResourceWarning: unclosed file <_io.BufferedReader name='/tmp/tmp01mtjro2/junk'>
+  items.append(dict(name=name, data=open(path, 'rb').read(), attr=0x20, deleted=False))
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+/home/exedev/snouty-badge/tools/make_romfs.py:329: ResourceWarning: unclosed file <_io.BufferedReader name='/tmp/tmp01mtjro2/badge.img'>
+  img = open(path, 'rb').read()
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+..........................................................................sys:1: ResourceWarning: unclosed file <_io.TextIOWrapper name=4 encoding='UTF-8'>
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+....
+----------------------------------------------------------------------
+Ran 137 tests in 15.238s
+
+OK

@@ -1,0 +1,7 @@
+preview: cart copies its frame to the simulator region at 0x20; showing that (use --fb-addr dwarf for dwarf @ 0x32000)
+preview: PASS after update #1899: debug_mode == 6 (debug_mode = 6)
+preview: FAIL after update #1900: debug_rewinds == 1 (debug_rewinds = 2)
+preview: exports after update #1959: debug_desync=1
+preview: FAIL debug_desync == 0 (debug_desync = 1)
+preview: 0 frame(s) from 1960 update(s) -> /tmp/sycl-review-snoutenstein-takeover/ (framebuffer sim-shim @ 0x20, 287 ms)
+preview: 2 of 3 expectation(s) failed: debug_rewinds == 1 after update #1900 (got 2); debug_desync == 0 at the end (got 1)

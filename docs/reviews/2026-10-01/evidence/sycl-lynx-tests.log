@@ -1,0 +1,90 @@
+test-lynx
++- run test snouty-lynx-tests w
+boot: hard_drivin: matches the boot ROM (first frame 3 blocks, 1 later frame(s); 454 ROM work bytes in $08-$1FF/$5000 not compared; handover to 3a51)
+boot: blue_lightning: matches the boot ROM (first frame 5 blocks, 1 later frame(s); 456 ROM work bytes in $08-$1FF/$5000 not compared; handover to 137b)
+cpu65: running SingleStepTests
+PASS 6c.json 10000
+PASS 00.json 10000
+PASS 40.json 10000
+PASS 89.json 10000
+PASS 0c.json 10000
+PASS 69.json 10000
+PASS 7e.json 10000
+PASS 20.json 10000
+PASS 97.json 10000
+PASS da.json 10000
+PASS 07.json 10000
+PASS 5c.json 10000
+PASS 7a.json 10000
+PASS 1a.json 10000
+PASS cb.json 10000
+PASS 80.json 10000
+PASS ff.json 10000
+PASS 7c.json 10000
+PASS 14.json 10000
+PASS b2.json 10000
+PASS 3c.json 10000
+PASS 9c.json 10000
+PASS f1.json 10000
+PASS 0f.json 10000
+cpu65: 24 files, 240000 cases, 0 failed; per instruction x100: fetch 220, read 195, write 50
+
+undo: @sizeOf(Lynx.Small) = 592 B, 10 slots per record head
+sizing: raycast: 1800 frames, 30 records, 0 lost boundaries; record 0 849 slots; records 1..: min 403 mean 404 max 405 slots (mean 27472 B, 394 RAM blocks)
+sizing: raycast: slots per record: 849 405 405 405 403 405 405 405 405 405 405 405 405 405 405 405 405 405 405 405 405 405 405 405 405 405 403 403 405 405
+sizing: raycast:  60-frame records: ReleaseFast as built (M2)              40632 B ->   582 slots: min  0 records = 0.0 s, mean 0.0 s
+sizing: raycast:  60-frame records: ReleaseFast, exec un-inlined (M3 as built)   64592 B ->   934 slots: min  1 records = 1.0 s, mean 1.0 s
+sizing: raycast:  60-frame records: ReleaseFast, switch in the run loop (M4 as built)   65256 B ->   944 slots: min  1 records = 1.0 s, mean 1.0 s
+sizing: raycast:  60-frame records: ReleaseSmall                          120296 B ->  1754 slots: min  3 records = 3.0 s, mean 3.0 s
+sizing: raycast:  60-frame records: XIP                                   190000 B ->  2779 slots: min  5 records = 5.0 s, mean 5.0 s
+sizing: raycast: 120-frame records: ReleaseFast as built (M2)              40632 B ->   582 slots: min  0 records = 0.0 s, mean 0.0 s
+sizing: raycast: 120-frame records: ReleaseFast, exec un-inlined (M3 as built)   64592 B ->   934 slots: min  1 records = 2.0 s, mean 2.0 s
+sizing: raycast: 120-frame records: ReleaseFast, switch in the run loop (M4 as built)   65256 B ->   944 slots: min  1 records = 2.0 s, mean 2.0 s
+sizing: raycast: 120-frame records: ReleaseSmall                          120296 B ->  1754 slots: min  3 records = 6.0 s, mean 6.0 s
+sizing: raycast: 120-frame records: XIP                                   190000 B ->  2779 slots: min  5 records = 10.0 s, mean 10.0 s
+sizing: raycast: 240-frame records: ReleaseFast as built (M2)              40632 B ->   582 slots: min  0 records = 0.0 s, mean 0.0 s
+sizing: raycast: 240-frame records: ReleaseFast, exec un-inlined (M3 as built)   64592 B ->   934 slots: min  1 records = 4.0 s, mean 4.0 s
+sizing: raycast: 240-frame records: ReleaseFast, switch in the run loop (M4 as built)   65256 B ->   944 slots: min  1 records = 4.0 s, mean 4.0 s
+sizing: raycast: 240-frame records: ReleaseSmall                          120296 B ->  1754 slots: min  2 records = 8.0 s, mean 11.0 s
+sizing: raycast: 240-frame records: XIP                                   190000 B ->  2779 slots: min  3 records = 12.0 s, mean 16.0 s (capped by the run or max_records)
+sizing: Hard Drivin': 1728 frames, 28 records, 0 lost boundaries; record 0 206 slots; records 1..: min 13 mean 340 max 870 slots (mean 23120 B, 330 RAM blocks)
+sizing: Hard Drivin': slots per record: 206 13 13 870 360 283 283 283 287 340 272 272 390 398 372 371 371 370 361 367 364 365 365 365 364 364 365 365
+sizing: Hard Drivin':  60-frame records: ReleaseFast as built (M2)              40632 B ->   582 slots: min  0 records = 0.0 s, mean 0.0 s
+sizing: Hard Drivin':  60-frame records: ReleaseFast, exec un-inlined (M3 as built)   64592 B ->   934 slots: min  1 records = 1.0 s, mean 1.0 s
+sizing: Hard Drivin':  60-frame records: ReleaseFast, switch in the run loop (M4 as built)   65256 B ->   944 slots: min  1 records = 1.0 s, mean 1.0 s
+sizing: Hard Drivin':  60-frame records: ReleaseSmall                          120296 B ->  1754 slots: min  3 records = 3.0 s, mean 3.0 s
+sizing: Hard Drivin':  60-frame records: XIP                                   190000 B ->  2779 slots: min  6 records = 6.0 s, mean 6.1 s
+sizing: Hard Drivin': 120-frame records: ReleaseFast as built (M2)              40632 B ->   582 slots: min  0 records = 0.0 s, mean 0.0 s
+sizing: Hard Drivin': 120-frame records: ReleaseFast, exec un-inlined (M3 as built)   64592 B ->   934 slots: min  1 records = 2.0 s, mean 2.0 s
+sizing: Hard Drivin': 120-frame records: ReleaseFast, switch in the run loop (M4 as built)   65256 B ->   944 slots: min  1 records = 2.0 s, mean 2.0 s
+sizing: Hard Drivin': 120-frame records: ReleaseSmall                          120296 B ->  1754 slots: min  3 records = 6.0 s, mean 6.0 s
+sizing: Hard Drivin': 120-frame records: XIP                                   190000 B ->  2779 slots: min  5 records = 10.0 s, mean 11.7 s
+sizing: Hard Drivin': 240-frame records: ReleaseFast as built (M2)              40632 B ->   582 slots: min  0 records = 0.0 s, mean 0.0 s
+sizing: Hard Drivin': 240-frame records: ReleaseFast, exec un-inlined (M3 as built)   64592 B ->   934 slots: min  1 records = 4.0 s, mean 4.0 s
+sizing: Hard Drivin': 240-frame records: ReleaseFast, switch in the run loop (M4 as built)   65256 B ->   944 slots: min  1 records = 4.0 s, mean 4.0 s
+sizing: Hard Drivin': 240-frame records: ReleaseSmall                          120296 B ->  1754 slots: min  2 records = 8.0 s, mean 11.0 s
+sizing: Hard Drivin': 240-frame records: XIP                                   190000 B ->  2779 slots: min  3 records = 12.0 s, mean 16.0 s (capped by the run or max_records)
+sizing: Blue Lightning: 1500 frames, 25 records, 0 lost boundaries; record 0 665 slots; records 1..: min 12 mean 265 max 547 slots (mean 18020 B, 255 RAM blocks)
+sizing: Blue Lightning: slots per record: 665 12 12 237 301 12 547 285 285 286 291 289 291 287 288 289 288 289 287 305 302 302 302 305 286
+sizing: Blue Lightning:  60-frame records: ReleaseFast as built (M2)              40632 B ->   582 slots: min  0 records = 0.0 s, mean 0.5 s
+sizing: Blue Lightning:  60-frame records: ReleaseFast, exec un-inlined (M3 as built)   64592 B ->   934 slots: min  2 records = 2.0 s, mean 2.0 s
+sizing: Blue Lightning:  60-frame records: ReleaseFast, switch in the run loop (M4 as built)   65256 B ->   944 slots: min  2 records = 2.0 s, mean 2.0 s
+sizing: Blue Lightning:  60-frame records: ReleaseSmall                          120296 B ->  1754 slots: min  4 records = 4.0 s, mean 4.6 s
+sizing: Blue Lightning:  60-frame records: XIP                                   190000 B ->  2779 slots: min  7 records = 7.0 s, mean 7.9 s
+sizing: Blue Lightning: 120-frame records: ReleaseFast as built (M2)              40632 B ->   582 slots: min  0 records = 0.0 s, mean 0.3 s
+sizing: Blue Lightning: 120-frame records: ReleaseFast, exec un-inlined (M3 as built)   64592 B ->   934 slots: min  2 records = 4.0 s, mean 4.0 s
+sizing: Blue Lightning: 120-frame records: ReleaseFast, switch in the run loop (M4 as built)   65256 B ->   944 slots: min  2 records = 4.0 s, mean 4.0 s
+sizing: Blue Lightning: 120-frame records: ReleaseSmall                          120296 B ->  1754 slots: min  4 records = 8.0 s, mean 8.0 s
+sizing: Blue Lightning: 120-frame records: XIP                                   190000 B ->  2779 slots: min  6 records = 12.0 s, mean 13.3 s (capped by the run or max_records)
+sizing: Blue Lightning: 240-frame records: ReleaseFast as built (M2)              40632 B ->   582 slots: min  0 records = 0.0 s, mean 0.0 s
+sizing: Blue Lightning: 240-frame records: ReleaseFast, exec un-inlined (M3 as built)   64592 B ->   934 slots: min  1 records = 4.0 s, mean 6.6 s
+sizing: Blue Lightning: 240-frame records: ReleaseFast, switch in the run loop (M4 as built)   65256 B ->   944 slots: min  1 records = 4.0 s, mean 6.6 s
+sizing: Blue Lightning: 240-frame records: ReleaseSmall                          120296 B ->  1754 slots: min  2 records = 8.0 s, mean 10.6 s
+sizing: Blue Lightning: 240-frame records: XIP                                   190000 B ->  2779 slots: min  3 records = 12.0 s, mean 16.0 s (capped by the run or max_records)
+failed command: ./.zig-cache/o/82ed9a1f3ea460c7435bec8283371ff6/snouty-lynx-tests --cache-dir=./.zig-cache --seed=0xd405f8fd --listen=-
+
+Build Summary: 3/3 steps succeeded; 108/108 tests passed
+test-lynx success
++- run test snouty-lynx-tests 108 pass (108 total) 2s MaxRSS:43M
+   +- compile test snouty-lynx-tests safe native cached 2ms MaxRSS:41M
+

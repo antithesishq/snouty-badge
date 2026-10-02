@@ -1,0 +1,317 @@
+check_float: /tmp/sycl-review-build/firmware/snouty-reflections.elf
+  symbols: 265 (20 functions) in .symtab
+  .ARM.attributes: 21 file-scope tags, 8 VFP-related:
+    Tag_FP_arch = 8 (FPv5/FP-D16 for ARMv8)
+    Tag_ABI_FP_denormal = 1
+    Tag_ABI_FP_exceptions = 0
+    Tag_ABI_FP_number_model = 3
+    Tag_ABI_HardFP_use = 1 (SP only)
+    Tag_ABI_VFP_args = 1 (VFP registers (hard-float ABI))
+    Tag_FP_HP_extension = 1
+    Tag_ABI_FP_16bit_format = 1
+  VFP instructions in executable sections (heuristic): 9719
+check_float: PASS: no soft-float or libm routines among 265 symbols
+check_float: /tmp/sycl-review-build/firmware/demosnout.elf
+  symbols: 316 (51 functions) in .symtab
+  .ARM.attributes: 21 file-scope tags, 8 VFP-related:
+    Tag_FP_arch = 8 (FPv5/FP-D16 for ARMv8)
+    Tag_ABI_FP_denormal = 1
+    Tag_ABI_FP_exceptions = 0
+    Tag_ABI_FP_number_model = 3
+    Tag_ABI_HardFP_use = 1 (SP only)
+    Tag_ABI_VFP_args = 1 (VFP registers (hard-float ABI))
+    Tag_FP_HP_extension = 1
+    Tag_ABI_FP_16bit_format = 1
+  VFP instructions in executable sections (heuristic): 2612
+check_float: PASS: no soft-float or libm routines among 316 symbols
+check_float: /tmp/sycl-review-build/firmware/snouty-maze.elf
+  symbols: 333 (39 functions) in .symtab
+  .ARM.attributes: 21 file-scope tags, 8 VFP-related:
+    Tag_FP_arch = 8 (FPv5/FP-D16 for ARMv8)
+    Tag_ABI_FP_denormal = 1
+    Tag_ABI_FP_exceptions = 0
+    Tag_ABI_FP_number_model = 3
+    Tag_ABI_HardFP_use = 1 (SP only)
+    Tag_ABI_VFP_args = 1 (VFP registers (hard-float ABI))
+    Tag_FP_HP_extension = 1
+    Tag_ABI_FP_16bit_format = 1
+  VFP instructions in executable sections (heuristic): 3366
+check_float: PASS: no soft-float or libm routines among 333 symbols
+Build Summary: 156/156 steps succeeded
+check-float success
++- run node success 62ms
+|  +- install success
+|     +- install generated to snouty.elf cached
+|     |  +- compile exe snouty small thumb-freestanding-eabihf cached 5ms MaxRSS:41M
+|     |     +- run exe generate_linker_script (linker.ld) cached
+|     |     |  +- compile exe generate_linker_script debug native cached 5ms MaxRSS:41M
+|     |     +- snouty assets success
+|     |     |  +- run exe convert_gfx (gfx.zig) cached
+|     |     |     +- compile exe convert_gfx safe native cached 13ms MaxRSS:41M
+|     |     +- run exe convert_gfx (gfx.zig) (+1 more reused dependencies)
+|     |     +- options cached
+|     |     +- run exe regz (chips) cached
+|     |        +- compile exe regz safe native cached 31ms MaxRSS:42M
+|     |           +- WriteFile libxml/xmlversion.h cached
+|     |           |  +- configure cmake header dependency to libxml/xmlversion.h cached
+|     |           +- compile lib xml safe native cached 14ms MaxRSS:40M
+|     |           |  +- configure cmake header dependency to libxml/xmlversion.h (reused)
+|     |           |  +- configure cmake header dependency to config.h cached
+|     |           |  +- configure cmake header dependency to libxml/xmlversion.h (reused)
+|     |           +- compile lib xml safe native (+3 more reused dependencies)
+|     |           +- WriteFile  cached
+|     |           +- compile lib sqlite safe native cached 15ms MaxRSS:40M
+|     |           +- compile lib sqlite safe native (reused)
+|     |           +- WriteFile libxml/xmlversion.h (+1 more reused dependencies)
+|     |           +- compile lib xml safe native (+3 more reused dependencies)
+|     |           +- compile lib xml safe native (+3 more reused dependencies)
+|     |           +- translate-c sqlite3 cached
+|     |           |  +- compile exe translate-c debug native cached 13ms MaxRSS:41M
+|     |           |     +- options cached
+|     |           |     +- options cached
+|     |           |     +- options cached
+|     |           |     +- run exe generate-def (aarch64.zig) cached
+|     |           |     |  +- compile exe generate-def debug native cached 15ms MaxRSS:41M
+|     |           |     +- run exe generate-def (amdgcn.zig) cached
+|     |           |     |  +- compile exe generate-def debug native (reused)
+|     |           |     +- run exe generate-def (arm.zig) cached
+|     |           |     |  +- compile exe generate-def debug native (reused)
+|     |           |     +- run exe generate-def (bpf.zig) cached
+|     |           |     |  +- compile exe generate-def debug native (reused)
+|     |           |     +- run exe generate-def (common.zig) cached
+|     |           |     |  +- compile exe generate-def debug native (reused)
+|     |           |     +- run exe generate-def (hexagon.zig) cached
+|     |           |     |  +- compile exe generate-def debug native (reused)
+|     |           |     +- run exe generate-def (loongarch.zig) cached
+|     |           |     |  +- compile exe generate-def debug native (reused)
+|     |           |     +- run exe generate-def (mips.zig) cached
+|     |           |     |  +- compile exe generate-def debug native (reused)
+|     |           |     +- run exe generate-def (neon.zig) cached
+|     |           |     |  +- compile exe generate-def debug native (reused)
+|     |           |     +- run exe generate-def (nvptx.zig) cached
+|     |           |     |  +- compile exe generate-def debug native (reused)
+|     |           |     +- run exe generate-def (powerpc.zig) cached
+|     |           |     |  +- compile exe generate-def debug native (reused)
+|     |           |     +- run exe generate-def (riscv.zig) cached
+|     |           |     |  +- compile exe generate-def debug native (reused)
+|     |           |     +- run exe generate-def (s390x.zig) cached
+|     |           |     |  +- compile exe generate-def debug native (reused)
+|     |           |     +- run exe generate-def (ve.zig) cached
+|     |           |     |  +- compile exe generate-def debug native (reused)
+|     |           |     +- run exe generate-def (wasm.zig) cached
+|     |           |     |  +- compile exe generate-def debug native (reused)
+|     |           |     +- run exe generate-def (x86_64.zig) cached
+|     |           |     |  +- compile exe generate-def debug native (reused)
+|     |           |     +- run exe generate-def (x86.zig) cached
+|     |           |     |  +- compile exe generate-def debug native (reused)
+|     |           |     +- run exe generate-def (xcore.zig) cached
+|     |           |        +- compile exe generate-def debug native (reused)
+|     |           +- translate-c libxml2 cached
+|     |           |  +- compile exe translate-c debug native (+21 more reused dependencies)
+|     |           |  +- configure cmake header dependency to libxml/xmlversion.h (reused)
+|     |           |  +- configure cmake header dependency to config.h (reused)
+|     |           +- configure cmake header dependency to libxml/xmlversion.h (reused)
+|     |           +- configure cmake header dependency to config.h (reused)
+|     +- install generated to snouty.uf2 cached
+|     |  +- run exe elf2uf2 (output.uf2) cached
+|     |     +- compile exe elf2uf2 safe native cached 3ms MaxRSS:41M
+|     |     +- compile exe snouty small thumb-freestanding-eabihf (+5 more reused dependencies)
+|     +- install snouty cached
+|     |  +- compile exe snouty small wasm32-freestanding cached 5ms MaxRSS:41M
+|     |     +- snouty assets (+1 more reused dependencies)
+|     |     +- run exe convert_gfx (gfx.zig) (+1 more reused dependencies)
+|     |     +- options (reused)
+|     |     +- run exe regz (chips) (+1 more reused dependencies)
+|     +- install generated to snouty-bugs.elf cached
+|     |  +- compile exe snouty-bugs small thumb-freestanding-eabihf cached 4ms MaxRSS:41M
+|     |     +- run exe generate_linker_script (linker.ld) cached
+|     |     |  +- compile exe generate_linker_script debug native (reused)
+|     |     +- snouty-bugs assets success
+|     |     |  +- run exe convert_gfx (gfx.zig) cached
+|     |     |     +- compile exe convert_gfx safe native cached 12ms MaxRSS:41M
+|     |     +- run exe convert_gfx (gfx.zig) (+1 more reused dependencies)
+|     |     +- options cached
+|     |     +- run exe regz (chips) cached
+|     |        +- compile exe regz safe native (+13 more reused dependencies)
+|     +- install generated to snouty-bugs.uf2 cached
+|     |  +- run exe elf2uf2 (output.uf2) cached
+|     |     +- compile exe elf2uf2 safe native (reused)
+|     |     +- compile exe snouty-bugs small thumb-freestanding-eabihf (+5 more reused dependencies)
+|     +- install snouty-bugs cached
+|     |  +- compile exe snouty-bugs small wasm32-freestanding cached 1ms MaxRSS:41M
+|     |     +- snouty-bugs assets (+1 more reused dependencies)
+|     |     +- run exe convert_gfx (gfx.zig) (+1 more reused dependencies)
+|     |     +- options (reused)
+|     |     +- run exe regz (chips) (+1 more reused dependencies)
+|     +- install generated to snoutenstein.elf cached
+|     |  +- compile exe snoutenstein small thumb-freestanding-eabihf cached 7ms MaxRSS:41M
+|     |     +- run exe generate_linker_script (linker.ld) cached
+|     |     |  +- compile exe generate_linker_script debug native (reused)
+|     |     +- snoutenstein assets success
+|     |     |  +- run exe convert_gfx (gfx.zig) cached
+|     |     |     +- compile exe convert_gfx safe native cached 10ms MaxRSS:41M
+|     |     +- options cached
+|     |     +- run exe convert_gfx (gfx.zig) (+1 more reused dependencies)
+|     |     +- options cached
+|     |     +- run exe regz (chips) cached
+|     |        +- compile exe regz safe native (+13 more reused dependencies)
+|     +- install generated to snoutenstein.uf2 cached
+|     |  +- run exe elf2uf2 (output.uf2) cached
+|     |     +- compile exe elf2uf2 safe native (reused)
+|     |     +- compile exe snoutenstein small thumb-freestanding-eabihf (+6 more reused dependencies)
+|     +- install snoutenstein cached
+|     |  +- compile exe snoutenstein small wasm32-freestanding cached 4ms MaxRSS:41M
+|     |     +- snoutenstein assets (+1 more reused dependencies)
+|     |     +- options (reused)
+|     |     +- run exe convert_gfx (gfx.zig) (+1 more reused dependencies)
+|     |     +- options (reused)
+|     |     +- run exe regz (chips) (+1 more reused dependencies)
+|     +- install generated to snouty-reflections.elf cached
+|     |  +- compile exe snouty-reflections fast thumb-freestanding-eabihf cached 5ms MaxRSS:41M
+|     |     +- run exe generate_linker_script (linker.ld) cached
+|     |     |  +- compile exe generate_linker_script debug native (reused)
+|     |     +- snouty-reflections assets success
+|     |     +- options cached
+|     |     +- options cached
+|     |     +- run exe regz (chips) cached
+|     |        +- compile exe regz safe native (+13 more reused dependencies)
+|     +- install generated to snouty-reflections.uf2 cached
+|     |  +- run exe elf2uf2 (output.uf2) cached
+|     |     +- compile exe elf2uf2 safe native (reused)
+|     |     +- compile exe snouty-reflections fast thumb-freestanding-eabihf (+5 more reused dependencies)
+|     +- install snouty-reflections cached
+|     |  +- compile exe snouty-reflections fast wasm32-freestanding cached 3ms MaxRSS:41M
+|     |     +- snouty-reflections assets (reused)
+|     |     +- options (reused)
+|     |     +- options (reused)
+|     |     +- run exe regz (chips) (+1 more reused dependencies)
+|     +- install generated to snouty-boy.elf cached
+|     |  +- compile exe snouty-boy fast thumb-freestanding-eabihf cached 4ms MaxRSS:41M
+|     |     +- run exe generate_linker_script (linker.ld) cached
+|     |     |  +- compile exe generate_linker_script debug native (reused)
+|     |     +- snouty-boy assets success
+|     |     |  +- WriteFile rom.gb cached
+|     |     +- options cached
+|     |     +- WriteFile rom.gb (reused)
+|     |     +- WriteFile rom.gb (reused)
+|     |     +- options cached
+|     |     +- run exe regz (chips) cached
+|     |        +- compile exe regz safe native (+13 more reused dependencies)
+|     +- install generated to snouty-boy.uf2 cached
+|     |  +- run exe elf2uf2 (output.uf2) cached
+|     |     +- compile exe elf2uf2 safe native (reused)
+|     |     +- compile exe snouty-boy fast thumb-freestanding-eabihf (+7 more reused dependencies)
+|     +- install snouty-boy cached
+|     |  +- compile exe snouty-boy fast wasm32-freestanding cached 2ms MaxRSS:41M
+|     |     +- snouty-boy assets (+1 more reused dependencies)
+|     |     +- options (reused)
+|     |     +- WriteFile rom.gb (reused)
+|     |     +- WriteFile rom.gb (reused)
+|     |     +- options (reused)
+|     |     +- run exe regz (chips) (+1 more reused dependencies)
+|     +- install generated to snouty-maze.elf cached
+|     |  +- compile exe snouty-maze fast thumb-freestanding-eabihf cached 11ms MaxRSS:41M
+|     |     +- run exe generate_linker_script (linker.ld) cached
+|     |     |  +- compile exe generate_linker_script debug native (reused)
+|     |     +- snouty-maze assets success
+|     |     |  +- run exe convert_gfx (gfx.zig) cached
+|     |     |     +- compile exe convert_gfx safe native cached 31ms MaxRSS:41M
+|     |     +- options cached
+|     |     +- run exe convert_gfx (gfx.zig) (+1 more reused dependencies)
+|     |     +- options cached
+|     |     +- run exe regz (chips) cached
+|     |        +- compile exe regz safe native (+13 more reused dependencies)
+|     +- install generated to snouty-maze.uf2 cached
+|     |  +- run exe elf2uf2 (output.uf2) cached
+|     |     +- compile exe elf2uf2 safe native (reused)
+|     |     +- compile exe snouty-maze fast thumb-freestanding-eabihf (+6 more reused dependencies)
+|     +- install snouty-maze cached
+|     |  +- compile exe snouty-maze fast wasm32-freestanding cached 3ms MaxRSS:41M
+|     |     +- snouty-maze assets (+1 more reused dependencies)
+|     |     +- options (reused)
+|     |     +- run exe convert_gfx (gfx.zig) (+1 more reused dependencies)
+|     |     +- options (reused)
+|     |     +- run exe regz (chips) (+1 more reused dependencies)
+|     +- install generated to snouty-gear.elf cached
+|     |  +- compile exe snouty-gear fast thumb-freestanding-eabihf cached 3ms MaxRSS:41M
+|     |     +- run exe generate_linker_script (linker.ld) cached
+|     |     |  +- compile exe generate_linker_script debug native (reused)
+|     |     +- snouty-gear assets success
+|     |     |  +- WriteFile rom.bin cached
+|     |     +- options cached
+|     |     +- WriteFile rom.bin (reused)
+|     |     +- options cached
+|     |     +- run exe regz (chips) cached
+|     |        +- compile exe regz safe native (+13 more reused dependencies)
+|     +- install generated to snouty-gear.uf2 cached
+|     |  +- run exe elf2uf2 (output.uf2) cached
+|     |     +- compile exe elf2uf2 safe native (reused)
+|     |     +- compile exe snouty-gear fast thumb-freestanding-eabihf (+6 more reused dependencies)
+|     +- install snouty-gear cached
+|     |  +- compile exe snouty-gear fast wasm32-freestanding cached 1ms MaxRSS:41M
+|     |     +- snouty-gear assets (+1 more reused dependencies)
+|     |     +- options (reused)
+|     |     +- WriteFile rom.bin (reused)
+|     |     +- options (reused)
+|     |     +- run exe regz (chips) (+1 more reused dependencies)
+|     +- install generated to snouty-genesis-xip.elf cached
+|     |  +- compile exe snouty-genesis-xip fast thumb-freestanding-eabihf cached 6ms MaxRSS:41M
+|     |     +- run exe generate_linker_script (linker.ld) cached
+|     |     |  +- compile exe generate_linker_script debug native (reused)
+|     |     +- snouty-genesis-xip assets success
+|     |     |  +- WriteFile rom.bin cached
+|     |     +- options cached
+|     |     +- run exe regz (chips) cached
+|     |     |  +- compile exe regz safe native (+13 more reused dependencies)
+|     |     +- options cached
+|     |     +- WriteFile rom.bin (reused)
+|     +- install generated to snouty-genesis-xip.uf2 cached
+|     |  +- run exe elf2uf2 (output.uf2) cached
+|     |     +- compile exe elf2uf2 safe native (reused)
+|     |     +- compile exe snouty-genesis-xip fast thumb-freestanding-eabihf (+6 more reused dependencies)
+|     +- install snouty-genesis cached
+|     |  +- compile exe snouty-genesis fast wasm32-freestanding cached 6ms MaxRSS:41M
+|     |     +- snouty-genesis-xip assets (+1 more reused dependencies)
+|     |     +- options (reused)
+|     |     +- WriteFile rom.bin (reused)
+|     |     +- options (reused)
+|     |     +- run exe regz (chips) (+1 more reused dependencies)
+|     +- install generated to demosnout.elf cached
+|     |  +- compile exe demosnout fast thumb-freestanding-eabihf cached 2ms MaxRSS:41M
+|     |     +- run exe generate_linker_script (linker.ld) cached
+|     |     |  +- compile exe generate_linker_script debug native (reused)
+|     |     +- demosnout assets success
+|     |     +- options cached
+|     |     +- options cached
+|     |     +- run exe regz (chips) cached
+|     |        +- compile exe regz safe native (+13 more reused dependencies)
+|     +- install generated to demosnout.uf2 cached
+|     |  +- run exe elf2uf2 (output.uf2) cached
+|     |     +- compile exe elf2uf2 safe native (reused)
+|     |     +- compile exe demosnout fast thumb-freestanding-eabihf (+5 more reused dependencies)
+|     +- install demosnout cached
+|     |  +- compile exe demosnout fast wasm32-freestanding cached 4ms MaxRSS:41M
+|     |     +- demosnout assets (reused)
+|     |     +- options (reused)
+|     |     +- options (reused)
+|     |     +- run exe regz (chips) (+1 more reused dependencies)
+|     +- install generated to badge-calibrate.elf cached
+|     |  +- compile exe badge-calibrate fast thumb-freestanding-eabihf cached 5ms MaxRSS:41M
+|     |     +- run exe generate_linker_script (linker.ld) cached
+|     |     |  +- compile exe generate_linker_script debug native (reused)
+|     |     +- options cached
+|     |     +- run exe regz (chips) cached
+|     |        +- compile exe regz safe native (+13 more reused dependencies)
+|     +- install generated to badge-calibrate.uf2 cached
+|     |  +- run exe elf2uf2 (output.uf2) cached
+|     |     +- compile exe elf2uf2 safe native (reused)
+|     |     +- compile exe badge-calibrate fast thumb-freestanding-eabihf (+3 more reused dependencies)
+|     +- install badge-calibrate cached
+|        +- compile exe badge-calibrate fast wasm32-freestanding cached 6ms MaxRSS:41M
+|           +- options (reused)
+|           +- run exe regz (chips) (+1 more reused dependencies)
++- run node success 43ms
+|  +- install (+30 more reused dependencies)
++- run node success 37ms
+   +- install (+30 more reused dependencies)
+

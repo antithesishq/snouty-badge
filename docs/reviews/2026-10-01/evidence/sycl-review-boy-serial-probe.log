@@ -1,0 +1,6 @@
+1/2 serial_unit.test.serial: internal clock completes at once with 0xFF and an interrupt...OK
+2/2 serial_unit.test.serial: external clock never completes and raises no interrupt...expected 85, found 255
+FAIL (TestExpectedEqual)
+1 passed; 0 skipped; 1 failed.
+error: the following test command failed with exit code 1:
+.cache/zig/o/337e4f5dd700376315231e4d2c9ed316/root --seed=0x6a2289d5

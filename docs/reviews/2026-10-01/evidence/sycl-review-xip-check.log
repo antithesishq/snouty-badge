@@ -1,0 +1,10 @@
+check_float: cannot read /tmp/sycl-review-xip-check/firmware/snouty-reflections.elf: ENOENT: no such file or directory, open '/tmp/sycl-review-xip-check/firmware/snouty-reflections.elf'
+check-float
++- run node failure
+error: process exited with code 1
+failed command: node ./tools/check_float.mjs /tmp/sycl-review-xip-check/firmware/snouty-reflections.elf
+
+Build Summary: 46/48 steps succeeded (1 failed)
+check-float transitive failure
++- run node failure
+

@@ -1,0 +1,127 @@
+{
+  "cart": "/tmp/sycl-review-build/bin/snoutenstein.wasm",
+  "width": 160,
+  "height": 128,
+  "format": "rgb565 column-major, wasm byte-swapped",
+  "updates": 1960,
+  "every": 1,
+  "startSkip": 0,
+  "seed": 1,
+  "controls": 0,
+  "press": "UP:1900-1900",
+  "pressItems": [
+    {
+      "button": "UP",
+      "from": 1900,
+      "to": 1900
+    }
+  ],
+  "script": null,
+  "quiet": true,
+  "rawColors": false,
+  "setupCalls": [],
+  "pose": null,
+  "imports": [
+    "env.memory",
+    "env.tone"
+  ],
+  "moduleExports": [
+    "__stack_pointer",
+    "update",
+    "start",
+    "debug_mode",
+    "debug_tick",
+    "debug_px",
+    "debug_py",
+    "debug_angle",
+    "debug_render_us",
+    "debug_state_size",
+    "debug_hp",
+    "debug_kills",
+    "debug_weapon",
+    "debug_ammo",
+    "debug_level",
+    "debug_sprites",
+    "debug_state_hash",
+    "debug_nibble_ok",
+    "debug_frozen",
+    "debug_projectiles",
+    "debug_rewinds",
+    "debug_meter",
+    "debug_desync",
+    "debug_gameplay_hash",
+    "debug_demo",
+    "debug_demo_result",
+    "debug_title_ticks",
+    "debug_start_demo",
+    "debug_new_game_seeded"
+  ],
+  "exports": {
+    "debug_mode": 1,
+    "debug_rewinds": 2,
+    "debug_desync": 1,
+    "debug_demo": 0
+  },
+  "expect": [
+    {
+      "expr": "debug_desync == 0",
+      "name": "debug_desync",
+      "op": "==",
+      "value": 0,
+      "actual": 1,
+      "pass": false
+    }
+  ],
+  "at": [
+    {
+      "tick": 1899,
+      "expr": "debug_mode == 6",
+      "name": "debug_mode",
+      "op": "==",
+      "value": 6,
+      "actual": 6,
+      "pass": true
+    },
+    {
+      "tick": 1899,
+      "expr": "debug_rewinds == 0",
+      "name": "debug_rewinds",
+      "op": "==",
+      "value": 0,
+      "actual": 0,
+      "pass": true
+    },
+    {
+      "tick": 1900,
+      "expr": "debug_rewinds == 1",
+      "name": "debug_rewinds",
+      "op": "==",
+      "value": 1,
+      "actual": 2,
+      "pass": false
+    }
+  ],
+  "calls": [],
+  "framebuffer": {
+    "source": "sim-shim",
+    "base": "0x20",
+    "buffer1": null,
+    "drawPointer": null
+  },
+  "dataSegments": [
+    {
+      "off": "0xa020",
+      "size": 72380
+    },
+    {
+      "off": "0x1badc",
+      "size": 3300
+    },
+    {
+      "off": "0x1e000",
+      "size": 177824
+    }
+  ],
+  "warnings": [],
+  "frames": []
+}

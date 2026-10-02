@@ -1,0 +1,3 @@
+foreign-origin text/plain wipe: 200 b'{"ok": true}' action invoked: True
+invalid 477-byte UF2 payload accepted as: ram
+label-only discovery selects: /dev/not-a-badge

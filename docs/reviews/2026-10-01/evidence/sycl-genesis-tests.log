@@ -1,0 +1,138 @@
+test-genesis
++- run test snouty-genesis-tests w
+
+snouty-genesis: @sizeOf(Md) = 157416 B (153 KB), @sizeOf(Keyframe) = 157312 B (153 KB)
+snouty-genesis: embedded snouty-test.bin: "SNOUTY TEST", 16384 bytes, header says 16384
+
+golden-mini: frames 0x246F566FF41A43A4, 62 tone changes 0xE68656F23938261E, state 0x3B9FFCB07C1C9047
+golden-mini: 68000 pc 00061E sr 2004, z80 pc 0D45
+m68k: file                 cases   pass  addr-err  state  cycles disputed
+m68k: ABCD                   8065   8065         0      0       0        0
+m68k: ADD.b                  8065   8065         0      0       0        0
+m68k: ADD.l                  8065   5143      2922      0       0        0
+m68k: ADDA.w                 8065   5431      2634      0       0        0
+m68k: ADDX.l                 8065   5472      2593      0       0        0
+m68k: AND.w                  8065   4668      3397      0       0        0
+m68k: ANDItoSR               8065   8065         0      0       0        0
+m68k: ASL.l                  8065   8065         0      0       0        0
+m68k: ASR.w                  8065   7142       923      0       0        0
+m68k: BCHG                   8065   8065         0      0       0        0
+m68k: BSR                    8065   4085      3980      0       0        0
+m68k: BTST                   8065   8065         0      0       0        0
+m68k: Bcc                    8065   5865      2200      0       0        0
+m68k: CHK                    8065   4948      3117      0       0        0
+m68k: CLR.b                  8065   8065         0      0       0        0
+m68k: CMP.w                  8065   5024      3041      0       0        0
+m68k: DBcc                   8065   6101      1964      0       0        0
+m68k: DIVS                   8065   4992      3073      0       0        0
+m68k: DIVU                   8065   4963      3101      0       0        1
+m68k: EORItoCCR              8065   8065         0      0       0        0
+m68k: EXG                    8065   8065         0      0       0        0
+m68k: EXT.l                  8065   8065         0      0       0        0
+m68k: JSR                    8065   4183      3882      0       0        0
+m68k: LEA                    8065   8065         0      0       0        0
+m68k: LINK                   8065   8065         0      0       0        0
+m68k: LSR.b                  8065   8065         0      0       0        0
+m68k: MOVE.b                 8065   8065         0      0       0        0
+m68k: MOVE.l                 8065   3270      4795      0       0        0
+m68k: MOVE.q                 8065   8065         0      0       0        0
+m68k: MOVE.w                 8065   3368      4697      0       0        0
+m68k: MOVEA.l                8065   5379      2686      0       0        0
+m68k: MOVEM.l                8065   4223      3842      0       0        0
+m68k: MOVEP.w                8065   8065         0      0       0        0
+m68k: MOVEtoSR               8065   4938      3127      0       0        0
+m68k: MULS                   8065   4943      3122      0       0        0
+m68k: ROXL.w                 8065   7128       937      0       0        0
+m68k: family               cases   pass  addr-err  state  cycles disputed
+m68k: ABCD                   8065   8065         0      0       0        0
+m68k: ADD                   16130  13208      2922      0       0        0
+m68k: ADDA                   8065   5431      2634      0       0        0
+m68k: ADDX                   8065   5472      2593      0       0        0
+m68k: AND                    8065   4668      3397      0       0        0
+m68k: ANDItoSR               8065   8065         0      0       0        0
+m68k: ASL                    8065   8065         0      0       0        0
+m68k: ASR                    8065   7142       923      0       0        0
+m68k: BCHG                   8065   8065         0      0       0        0
+m68k: BSR                    8065   4085      3980      0       0        0
+m68k: BTST                   8065   8065         0      0       0        0
+m68k: Bcc                    8065   5865      2200      0       0        0
+m68k: CHK                    8065   4948      3117      0       0        0
+m68k: CLR                    8065   8065         0      0       0        0
+m68k: CMP                    8065   5024      3041      0       0        0
+m68k: DBcc                   8065   6101      1964      0       0        0
+m68k: DIVS                   8065   4992      3073      0       0        0
+m68k: DIVU                   8065   4963      3101      0       0        1
+m68k: EORItoCCR              8065   8065         0      0       0        0
+m68k: EXG                    8065   8065         0      0       0        0
+m68k: EXT                    8065   8065         0      0       0        0
+m68k: JSR                    8065   4183      3882      0       0        0
+m68k: LEA                    8065   8065         0      0       0        0
+m68k: LINK                   8065   8065         0      0       0        0
+m68k: LSR                    8065   8065         0      0       0        0
+m68k: MOVE                  32260  22768      9492      0       0        0
+m68k: MOVEA                  8065   5379      2686      0       0        0
+m68k: MOVEM                  8065   4223      3842      0       0        0
+m68k: MOVEP                  8065   8065         0      0       0        0
+m68k: MOVEtoSR               8065   4938      3127      0       0        0
+m68k: MULS                   8065   4943      3122      0       0        0
+m68k: ROXL                   8065   7128       937      0       0        0
+m68k: SingleStepTests (fetch window) 36 files, 290340 cases: 230306 pass, 60033 address-error (skipped), 1 disputed, 0 state fail, 0 cycle-only fail; 3082 ms
+m68k: SingleStepTests (bus fetch) 9 files, 72585 cases: 46623 pass, 25961 address-error (skipped), 1 disputed, 0 state fail, 0 cycle-only fail; 779 ms
+
+undo: @sizeOf(Md.Small) = 1664 B, 26 slots per record head
+
+scrub-sizing: Miniplanets, 1200 frames, 26-slot head (Md.Small 1664 B), records of 30 frames
+scrub-sizing: record  0 frames    0-  29:  527 slots (35836 B), RAM  86 VRAM  287 Z80 128 SRAM 0
+scrub-sizing: record  1 frames   30-  59:  506 slots (34408 B), RAM  97 VRAM  349 Z80  34 SRAM 0
+scrub-sizing: record  2 frames   60-  89:   74 slots ( 5032 B), RAM  11 VRAM   21 Z80  16 SRAM 0
+scrub-sizing: record  3 frames   90- 119:   75 slots ( 5100 B), RAM  12 VRAM   21 Z80  16 SRAM 0
+scrub-sizing: record  4 frames  120- 149:  131 slots ( 8908 B), RAM  14 VRAM   75 Z80  16 SRAM 0
+scrub-sizing: record  5 frames  150- 179:   83 slots ( 5644 B), RAM  14 VRAM   24 Z80  19 SRAM 0
+scrub-sizing: record  6 frames  180- 209:   87 slots ( 5916 B), RAM  18 VRAM   24 Z80  19 SRAM 0
+scrub-sizing: record  7 frames  210- 239:  677 slots (46036 B), RAM 142 VRAM  472 Z80  37 SRAM 0
+scrub-sizing: record  8 frames  240- 269:   74 slots ( 5032 B), RAM  18 VRAM   11 Z80  19 SRAM 0
+scrub-sizing: record  9 frames  270- 299: 1362 slots (92616 B), RAM 411 VRAM  906 Z80  19 SRAM 0
+scrub-sizing: record 10 frames  300- 329:  125 slots ( 8500 B), RAM  32 VRAM   48 Z80  19 SRAM 0
+scrub-sizing: record 11 frames  330- 359:  124 slots ( 8432 B), RAM  30 VRAM   48 Z80  20 SRAM 0
+scrub-sizing: record 12 frames  360- 389:  123 slots ( 8364 B), RAM  30 VRAM   48 Z80  19 SRAM 0
+scrub-sizing: record 13 frames  390- 419:  141 slots ( 9588 B), RAM  31 VRAM   48 Z80  36 SRAM 0
+scrub-sizing: record 14 frames  420- 449:  123 slots ( 8364 B), RAM  30 VRAM   48 Z80  19 SRAM 0
+scrub-sizing: record 15 frames  450- 479:  142 slots ( 9656 B), RAM  31 VRAM   48 Z80  37 SRAM 0
+scrub-sizing: record 16 frames  480- 509:  123 slots ( 8364 B), RAM  30 VRAM   48 Z80  19 SRAM 0
+scrub-sizing: record 17 frames  510- 539:  123 slots ( 8364 B), RAM  30 VRAM   48 Z80  19 SRAM 0
+scrub-sizing: record 18 frames  540- 569:  123 slots ( 8364 B), RAM  30 VRAM   48 Z80  19 SRAM 0
+scrub-sizing: record 19 frames  570- 599:  124 slots ( 8432 B), RAM  30 VRAM   48 Z80  20 SRAM 0
+scrub-sizing: record 20 frames  600- 629:  123 slots ( 8364 B), RAM  30 VRAM   48 Z80  19 SRAM 0
+scrub-sizing: record 21 frames  630- 659:  123 slots ( 8364 B), RAM  30 VRAM   48 Z80  19 SRAM 0
+scrub-sizing: record 22 frames  660- 689:  124 slots ( 8432 B), RAM  30 VRAM   48 Z80  20 SRAM 0
+scrub-sizing: record 23 frames  690- 719:  136 slots ( 9248 B), RAM  30 VRAM   48 Z80  32 SRAM 0
+scrub-sizing: record 24 frames  720- 749:  127 slots ( 8636 B), RAM  30 VRAM   48 Z80  23 SRAM 0
+scrub-sizing: record 25 frames  750- 779:  127 slots ( 8636 B), RAM  30 VRAM   48 Z80  23 SRAM 0
+scrub-sizing: record 26 frames  780- 809:  127 slots ( 8636 B), RAM  30 VRAM   48 Z80  23 SRAM 0
+scrub-sizing: record 27 frames  810- 839:  127 slots ( 8636 B), RAM  30 VRAM   48 Z80  23 SRAM 0
+scrub-sizing: record 28 frames  840- 869:  127 slots ( 8636 B), RAM  30 VRAM   48 Z80  23 SRAM 0
+scrub-sizing: record 29 frames  870- 899:  127 slots ( 8636 B), RAM  30 VRAM   48 Z80  23 SRAM 0
+scrub-sizing: record 30 frames  900- 929:  127 slots ( 8636 B), RAM  30 VRAM   48 Z80  23 SRAM 0
+scrub-sizing: record 31 frames  930- 959:  127 slots ( 8636 B), RAM  30 VRAM   48 Z80  23 SRAM 0
+scrub-sizing: record 32 frames  960- 989:  127 slots ( 8636 B), RAM  30 VRAM   48 Z80  23 SRAM 0
+scrub-sizing: record 33 frames  990-1019:  127 slots ( 8636 B), RAM  30 VRAM   48 Z80  23 SRAM 0
+scrub-sizing: record 34 frames 1020-1049:  127 slots ( 8636 B), RAM  30 VRAM   48 Z80  23 SRAM 0
+scrub-sizing: record 35 frames 1050-1079:  127 slots ( 8636 B), RAM  30 VRAM   48 Z80  23 SRAM 0
+scrub-sizing: record 36 frames 1080-1109:  127 slots ( 8636 B), RAM  30 VRAM   48 Z80  23 SRAM 0
+scrub-sizing: record 37 frames 1110-1139:  127 slots ( 8636 B), RAM  30 VRAM   48 Z80  23 SRAM 0
+scrub-sizing: record 38 frames 1140-1169:  127 slots ( 8636 B), RAM  30 VRAM   48 Z80  23 SRAM 0
+scrub-sizing: record 39 frames 1170-1199:  127 slots ( 8636 B), RAM  30 VRAM   48 Z80  23 SRAM 0
+scrub-sizing: boot       records  0- 1: 506-527 slots, mean 516 (35088 B); a 1560-slot ring holds 2 = 1.0 s back
+scrub-sizing: title      records  2- 6: 74-131 slots, mean 90 (6120 B); a 1560-slot ring holds 15 = 7.5 s back
+scrub-sizing: menu load  records  7- 7: 677-677 slots, mean 677 (46036 B); a 1560-slot ring holds 2 = 1.0 s back
+scrub-sizing: menu       records  8- 8: 74-74 slots, mean 74 (5032 B); a 1560-slot ring holds 19 = 9.5 s back
+scrub-sizing: level load records  9- 9: 1362-1362 slots, mean 1362 (92616 B); a 1560-slot ring holds 1 = 0.5 s back
+scrub-sizing: play       records 10-39: 123-142 slots, mean 126 (8568 B); a 1560-slot ring holds 11 = 5.5 s back
+failed command: ./.zig-cache/o/e0743c97a1c57ff3fa9bf9e7cec6b546/snouty-genesis-tests --cache-dir=./.zig-cache --seed=0xfb95077d --listen=-
+
+Build Summary: 4/4 steps succeeded; 168/168 tests passed
+test-genesis success
++- run test snouty-genesis-tests 168 pass (168 total) 5s MaxRSS:39M
+   +- compile test snouty-genesis-tests safe native cached 7ms MaxRSS:41M
+      +- WriteFile rom.bin cached
+

@@ -1,0 +1,113 @@
+test
++- run test 42 pass, 1 fail (43 total)
+tual);
+    ^
+/home/exedev/snouty-badge/carts/demosnout/cart/src/timeline.zig:328:5: 0x1279032 in test.hold: endless parts run on, loop parts restart, release moves on (host_tests.zig)
+    try std.testing.expectEqual(Cut.seamless, c.veil_now(true).cut);
+    ^
+error: 'timeline.test.hold: endless parts run on, loop parts restart, release moves on' failed:
+       expected .seamless, found .fade
+       /home/exedev/.local/zig/lib/std/testing.zig:93:17: 0x1278b44 in expectEqualInner__anon_52689 (std.zig)
+                       return error.TestExpectedEqual;
+                       ^
+       /home/exedev/.local/zig/lib/std/testing.zig:57:5: 0x1278fd9 in expectEqual (host_tests.zig)
+           return expectEqualInner(T, expected, ac
+failed command: /tmp/sycl-review-tests-cache/o/39be53acf59ddfbd32c84e7235151e81/test --cache-dir=/tmp/sycl-review-tests-cache --seed=0x633672eb --listen=-
+
+test
++- run test w
+kstore roms/2048.gb (dmg, cart RAM 2048 B, 102 pages of 512 B per keyframe): first keyframe 6 pages (3 KB), later min/avg/max 2/7/13 pages, largest non-zero keyframe 24 pages (12 KB), pool 160 pages (80 KB) for 21 keyframes
+kstore roms/rex-runner.gb (cgb, cart RAM 8192 B, 114 pages of 512 B per keyframe): first keyframe 18 pages (9 KB), later min/avg/max 2/3/20 pages, largest non-zero keyframe 20 pages (10 KB), pool 95 pages (47 KB) for 21 keyframes
+kstore roms/rebound.gbc (cgb, cart RAM 0 B, 98 pages of 512 B per keyframe): first keyframe 2 pages (1 KB), later min/avg/max 5/6/16 pages, largest non-zero keyframe 18 pages (9 KB), pool 133 pages (66 KB) for 21 keyframes
+kstore 2048-gb fragmented (dmg, cart RAM 0 B, 98 pages of 512 B per keyframe): first keyframe 2 pages (1 KB), later min/avg/max 2/7/20 pages, largest non-zero keyframe 20 pages (10 KB), pool 145 pages (72 KB) for 21 keyframes
+kstore 2048-gb fragmented (dmg, cart RAM 2048 B, 102 pages of 512 B per keyframe): first keyframe 6 pages (3 KB), later min/avg/max 2/7/20 pages, largest non-zero keyframe 24 pages (12 KB), pool 159 pages (79 KB) for 21 keyframes
+kstore 2048-gb fragmented (dmg, cart RAM 8192 B, 114 pages of 512 B per keyframe): first keyframe 18 pages (9 KB), later min/avg/max 2/7/20 pages, largest non-zero keyframe 36 pages (18 KB), pool 171 pages (85 KB) for 21 keyframes
+kstore 2048-gb fragmented (dmg, cart RAM 32768 B, 162 pages of 512 B per keyframe): first keyframe 66 pages (33 KB), later min/avg/max 2/7/20 pages, largest non-zero keyframe 84 pages (42 KB), pool 219 pages (109 KB) for 21 keyframes
+failed command: /tmp/sycl-review-tests-cache/o/dffd2034354c399199e4d0e6818a316b/test --cache-dir=/tmp/sycl-review-tests-cache --seed=0x633672eb --listen=-
+
+test
++- run test w
+z80: SingleStepTests skipped: tests/roms/z80/v1 absent (tools/fetch_test_roms.sh --single-step)
+z80: zexdoc.sms skipped: tests/roms/zexdoc.sms absent (tools/fetch_test_roms.sh)
+z80: zexall.sms skipped: tests/roms/zexall.sms absent (tools/fetch_test_roms.sh)
+determinism: kstore waternet (258 pages of 128 B per keyframe): first 66 pages, later min/avg/max 5/10/44 copied, pool 269 pages (33 KB) for 21 keyframes
+scrub_sizing: waternet: 61 keyframes captured, Small 164 B, arena 70656 B
+scrub_sizing: [frontend split] scrub_sizing: waternet page 64 B, max 11 keyframes: 515 pages/keyframe (table 1030 B), pool 885 pages; copied mean 17.4 max 81, shared mean 129, zero mean 367; 2145 B/keyframe incl. table; pages_in_use end 295 max 409; keyframes end 11 (late min 11) = 5.0 s (late min 5.0 s); pool resets 0
+scrub_sizing: [64 tables] scrub_sizing: waternet page 64 B, max 64 keyframes: 515 pages/keyframe (table 1030 B), pool 70 pages: no room for one keyframe
+scrub_sizing: waternet page 64 B, max 8 keyframes: 515 pages/keyframe (table 1030 B), pool 931 pages; copied mean 17.4 max 81, shared mean 129, zero mean 367; 2145 B/keyframe incl. table; pages_in_use end 253 max 367; keyframes end 8 (late min 8) = 3.5 s (late min 3.5 s); pool resets 0
+scrub_sizing: waternet page 64 B, max 12 keyframes: 515 pages/keyframe (table 1030 B), pool 870 pages; copied mean 17.4 max 81, shared mean 129, zero mean 367; 2145 B/keyframe incl. table; pages_in_use end 307 max 421; keyframes end 12 (late min 12) = 5.5 s (late min 5.5 s); pool resets 0
+scrub_sizing: waternet page 64 B, max 16 keyframes: 515 pages/keyframe (table 1030 B), pool 808 pages; copied mean 17.4 max 81, shared mean 129, zero mean 367; 2145 B/keyframe incl. table; pages_in_use end 359 max 473; keyframes end 16 (late min 16) = 7.5 s (late min 7.5 s); pool resets 0
+scrub_sizing: waternet page 64 B, max 24 keyframes: 515 pages/keyframe (table 1030 B), pool 685 pages; copied mean 17.4 max 81, shared mean 129, zero mean 367; 2145 B/keyframe incl. table; pages_in_use end 479 max 588; keyframes end 24 (late min 24) = 11.5 s (late min 11.5 s); pool resets 0
+scrub_sizing: waternet page 64 B, max 32 keyframes: 515 pages/keyframe (table 1030 B), pool 562 pages; copied mean 17.4 max 81, shared mean 129, zero mean 367; 2145 B/keyframe incl. table; pages_in_use end 558 max 562; keyframes end 30 (late min 22) = 14.5 s (late min 10.5 s); pool resets 0
+scrub_sizing: waternet page 64 B, max 48 keyframes: 515 pages/keyframe (table 1030 B), pool 316 pages; copied mean 17.4 max 81, shared mean 129, zero mean 367; 2145 B/keyframe incl. table; pages_in_use end 307 max 316; keyframes end 12 (late min 12) = 5.5 s (late min 5.5 s); pool resets 0
+scrub_sizing: [frontend split] scrub_sizing: waternet page 128 B, max 12 keyframes: 258 pages/keyframe (table 516 B), pool 492 pages; copied mean 12.8 max 44, shared mean 67, zero mean 177; 2165 B/keyframe incl. table; pages_in_use end 212 max 255; keyframes end 12 (late min 12) = 5.5 s (late min 5.5 s); pool resets 0
+scrub_sizing: [64 tables] scrub_sizing: waternet page 128 B, max 64 keyframes: 258 pages/keyframe (table 516 B), pool 287 pages; copied mean 12.8 max 44, shared mean 67, zero mean 177; 2165 B/keyframe incl. table; pages_in_use end 280 max 287; keyframes end 18 (late min 17) = 8.5 s (late min 8.0 s); pool resets 0
+scrub_sizing: waternet page 128 B, max 8 keyframes: 258 pages/keyframe (table 516 B), pool 507 pages; copied mean 12.8 max 44, shared mean 67, zero mean 177; 2165 B/keyframe incl. table; pages_in_use end 164 max 211; keyframes end 8 (late min 8) = 3.5 s (late min 3.5 s); pool resets 0
+scrub_sizing: waternet page 128 B, max 12 keyframes: 258 pages/keyframe (table 516 B), pool 492 pages; copied mean 12.8 max 44, shared mean 67, zero mean 177; 2165 B/keyframe incl. table; pages_in_use end 212 max 255; keyframes end 12 (late min 12) = 5.5 s (late min 5.5 s); pool resets 0
+scrub_sizing: waternet page 128 B, max 16 keyframes: 258 pages/keyframe (table 516 B), pool 476 pages; copied mean 12.8 max 44, shared mean 67, zero mean 177; 2165 B/keyframe incl. table; pages_in_use end 256 max 299; keyframes end 16 (late min 16) = 7.5 s (late min 7.5 s); pool resets 0
+scrub_sizing: waternet page 128 B, max 24 keyframes: 258 pages/keyframe (table 516 B), pool 444 pages; copied mean 12.8 max 44, shared mean 67, zero mean 177; 2165 B/keyframe incl. table; pages_in_use end 351 max 394; keyframes end 24 (late min 24) = 11.5 s (late min 11.5 s); pool resets 0
+scrub_sizing: waternet page 128 B, max 32 keyframes: 258 pages/keyframe (table 516 B), pool 413 pages; copied mean 12.8 max 44, shared mean 67, zero mean 177; 2165 B/keyframe incl. table; pages_in_use end 407 max 413; keyframes end 29 (late min 25) = 14.0 s (late min 12.0 s); pool resets 0
+scrub_sizing: waternet page 128 B, max 48 keyframes: 258 pages/keyframe (table 516 B), pool 350 pages; copied mean 12.8 max 44, shared mean 67, zero mean 177; 2165 B/keyframe incl. table; pages_in_use end 339 max 350; keyframes end 23 (late min 22) = 11.0 s (late min 10.5 s); pool resets 0
+scrub_sizing: [frontend split] scrub_sizing: waternet page 256 B, max 12 keyframes: 129 pages/keyframe (table 258 B), pool 260 pages; copied mean 9.5 max 24, shared mean 34, zero mean 85; 2690 B/keyframe incl. table; pages_in_use end 147 max 160; keyframes end 12 (late min 12) = 5.5 s (late min 5.5 s); pool resets 0
+scrub_sizing: [64 tables] scrub_sizing: waternet page 256 B, max 64 keyframes: 129 pages/keyframe (table 258 B), pool 209 pages; copied mean 9.5 max 24, shared mean 34, zero mean 85; 2690 B/keyframe incl. table; pages_in_use end 208 max 209; keyframes end 19 (late min 18) = 9.0 s (late min 8.5 s); pool resets 0
+scrub_sizing: waternet page 256 B, max 8 keyframes: 129 pages/keyframe (table 258 B), pool 264 pages; copied mean 9.5 max 24, shared mean 34, zero mean 85; 2690 B/keyframe incl. table; pages_in_use end 107 max 127; keyframes end 8 (late min 8) = 3.5 s (late min 3.5 s); pool resets 0
+scrub_sizing: waternet page 256 B, max 12 keyframes: 129 pages/keyframe (table 258 B), pool 260 pages; copied mean 9.5 max 24, shared mean 34, zero mean 85; 2690 B/keyframe incl. table; pages_in_use end 147 max 160; keyframes end 12 (late min 12) = 5.5 s (late min 5.5 s); pool resets 0
+scrub_sizing: waternet page 256 B, max 16 keyframes: 129 pages/keyframe (table 258 B), pool 256 pages; copied mean 9.5 max 24, shared mean 34, zero mean 85; 2690 B/keyframe incl. table; pages_in_use end 181 max 194; keyframes end 16 (late min 16) = 7.5 s (late min 7.5 s); pool resets 0
+scrub_sizing: waternet page 256 B, max 24 keyframes: 129 pages/keyframe (table 258 B), pool 248 pages; copied mean 9.5 max 24, shared mean 34, zero mean 85; 2690 B/keyframe incl. table; pages_in_use end 246 max 248; keyframes end 23 (late min 22) = 11.0 s (late min 10.5 s); pool resets 0
+scrub_sizing: waternet page 256 B, max 32 keyframes: 129 pages/keyframe (table 258 B), pool 240 pages; copied mean 9.5 max 24, shared mean 34, zero mean 85; 2690 B/keyframe incl. table; pages_in_use end 236 max 240; keyframes end 22 (late min 22) = 10.5 s (late min 10.5 s); pool resets 0
+scrub_sizing: waternet page 256 B, max 48 keyframes: 129 pages/keyframe (table 258 B), pool 224 pages; copied mean 9.5 max 24, shared mean 34, zero mean 85; 2690 B/keyframe incl. table; pages_in_use end 218 max 224; keyframes end 20 (late min 20) = 9.5 s (late min 9.5 s); pool resets 0
+scrub_sizing: sonic: 81 keyframes captured, Small 164 B, arena 70656 B
+scrub_sizing: [frontend split] scrub_sizing: sonic page 64 B, max 11 keyframes: 515 pages/keyframe (table 1030 B), pool 885 pages; copied mean 49.4 max 235, shared mean 242, zero mean 222; 4194 B/keyframe incl. table; pages_in_use end 853 max 882; keyframes end 11 (late min 10) = 5.0 s (late min 4.5 s); pool resets 0
+scrub_sizing: [64 tables] scrub_sizing: sonic page 64 B, max 64 keyframes: 515 pages/keyframe (table 1030 B), pool 70 pages: no room for one keyframe
+scrub_sizing: sonic page 64 B, max 8 keyframes: 515 pages/keyframe (table 1030 B), pool 931 pages; copied mean 49.4 max 235, shared mean 242, zero mean 222; 4194 B/keyframe incl. table; pages_in_use end 689 max 828; keyframes end 8 (late min 8) = 3.5 s (late min 3.5 s); pool resets 0
+scrub_sizing: sonic page 64 B, max 12 keyframes: 515 pages/keyframe (table 1030 B), pool 870 pages; copied mean 49.4 max 235, shared mean 242, zero mean 222; 4194 B/keyframe incl. table; pages_in_use end 853 max 868; keyframes end 11 (late min 10) = 5.0 s (late min 4.5 s); pool resets 0
+scrub_sizing: sonic page 64 B, max 16 keyframes: 515 pages/keyframe (table 1030 B), pool 808 pages; copied mean 49.4 max 235, shared mean 242, zero mean 222; 4194 B/keyframe incl. table; pages_in_use end 803 max 808; keyframes end 10 (late min 9) = 4.5 s (late min 4.0 s); pool resets 0
+scrub_sizing: sonic page 64 B, max 24 keyframes: 515 pages/keyframe (table 1030 B), pool 685 pages; copied mean 49.4 max 235, shared mean 242, zero mean 222; 4194 B/keyframe incl. table; pages_in_use end 643 max 684; keyframes end 7 (late min 7) = 3.0 s (late min 3.0 s); pool resets 0
+scrub_sizing: sonic page 64 B, max 32 keyframes: 515 pages/keyframe (table 1030 B), pool 562 pages; copied mean 49.4 max 235, shared mean 242, zero mean 222; 4194 B/keyframe incl. table; pages_in_use end 542 max 562; keyframes end 5 (late min 4) = 2.0 s (late min 1.5 s); pool resets 0
+scrub_sizing: sonic page 64 B, max 48 keyframes: 515 pages/keyframe (table 1030 B), pool 316 pages: no room for one keyframe
+scrub_sizing: [frontend split] scrub_sizing: sonic page 128 B, max 12 keyframes: 258 pages/keyframe (table 516 B), pool 492 pages; copied mean 29.0 max 123, shared mean 124, zero mean 104; 4236 B/keyframe incl. table; pages_in_use end 482 max 491; keyframes end 11 (late min 10) = 5.0 s (late min 4.5 s); pool resets 0
+scrub_sizing: [64 tables] scrub_sizing: sonic page 128 B, max 64 keyframes: 258 pages/keyframe (table 516 B), pool 287 pages; copied mean 29.0 max 123, shared mean 124, zero mean 104; 4236 B/keyframe incl. table; pages_in_use end 265 max 286; keyframes end 4 (late min 4) = 1.5 s (late min 1.5 s); pool resets 0
+scrub_sizing: sonic page 128 B, max 8 keyframes: 258 pages/keyframe (table 516 B), pool 507 pages; copied mean 29.0 max 123, shared mean 124, zero mean 104; 4236 B/keyframe incl. table; pages_in_use end 386 max 462; keyframes end 8 (late min 8) = 3.5 s (late min 3.5 s); pool resets 0
+scrub_sizing: sonic page 128 B, max 12 keyframes: 258 pages/keyframe (table 516 B), pool 492 pages; copied mean 29.0 max 123, shared mean 124, zero mean 104; 4236 B/keyframe incl. table; pages_in_use end 482 max 491; keyframes end 11 (late min 10) = 5.0 s (late min 4.5 s); pool resets 0
+scrub_sizing: sonic page 128 B, max 16 keyframes: 258 pages/keyframe (table 516 B), pool 476 pages; copied mean 29.0 max 123, shared mean 124, zero mean 104; 4236 B/keyframe incl. table; pages_in_use end 452 max 476; keyframes end 10 (late min 10) = 4.5 s (late min 4.5 s); pool resets 0
+scrub_sizing: sonic page 128 B, max 24 keyframes: 258 pages/keyframe (table 516 B), pool 444 pages; copied mean 29.0 max 123, shared mean 124, zero mean 104; 4236 B/keyframe incl. table; pages_in_use end 419 max 444; keyframes end 9 (late min 9) = 4.0 s (late min 4.0 s); pool resets 0
+scrub_sizing: sonic page 128 B, max 32 keyframes: 258 pages/keyframe (table 516 B), pool 413 pages; copied mean 29.0 max 123, shared mean 124, zero mean 104; 4236 B/keyframe incl. table; pages_in_use end 386 max 412; keyframes end 8 (late min 8) = 3.5 s (late min 3.5 s); pool resets 0
+scrub_sizing: sonic page 128 B, max 48 keyframes: 258 pages/keyframe (table 516 B), pool 350 pages; copied mean 29.0 max 123, shared mean 124, zero mean 104; 4236 B/keyframe incl. table; pages_in_use end 331 max 350; keyframes end 6 (late min 6) = 2.5 s (late min 2.5 s); pool resets 0
+scrub_sizing: [frontend split] scrub_sizing: sonic page 256 B, max 12 keyframes: 129 pages/keyframe (table 258 B), pool 260 pages; copied mean 18.2 max 66, shared mean 61, zero mean 49; 4920 B/keyframe incl. table; pages_in_use end 247 max 260; keyframes end 9 (late min 9) = 4.0 s (late min 4.0 s); pool resets 0
+scrub_sizing: [64 tables] scrub_sizing: sonic page 256 B, max 64 keyframes: 129 pages/keyframe (table 258 B), pool 209 pages; copied mean 18.2 max 66, shared mean 61, zero mean 49; 4920 B/keyframe incl. table; pages_in_use end 209 max 209; keyframes end 7 (late min 6) = 3.0 s (late min 2.5 s); pool resets 0
+scrub_sizing: sonic page 256 B, max 8 keyframes: 129 pages/keyframe (table 258 B), pool 264 pages; copied mean 18.2 max 66, shared mean 61, zero mean 49; 4920 B/keyframe incl. table; pages_in_use end 227 max 256; keyframes end 8 (late min 8) = 3.5 s (late min 3.5 s); pool resets 0
+scrub_sizing: sonic page 256 B, max 12 keyframes: 129 pages/keyframe (table 258 B), pool 260 pages; copied mean 18.2 max 66, shared mean 61, zero mean 49; 4920 B/keyframe incl. table; pages_in_use end 247 max 260; keyframes end 9 (late min 9) = 4.0 s (late min 4.0 s); pool resets 0
+scrub_sizing: sonic page 256 B, max 16 keyframes: 129 pages/keyframe (table 258 B), pool 256 pages; copied mean 18.2 max 66, shared mean 61, zero mean 49; 4920 B/keyframe incl. table; pages_in_use end 247 max 256; keyframes end 9 (late min 8) = 4.0 s (late min 3.5 s); pool resets 0
+scrub_sizing: sonic page 256 B, max 24 keyframes: 129 pages/keyframe (table 258 B), pool 248 pages; copied mean 18.2 max 66, shared mean 61, zero mean 49; 4920 B/keyframe incl. table; pages_in_use end 247 max 248; keyframes end 9 (late min 8) = 4.0 s (late min 3.5 s); pool resets 0
+scrub_sizing: sonic page 256 B, max 32 keyframes: 129 pages/keyframe (table 258 B), pool 240 pages; copied mean 18.2 max 66, shared mean 61, zero mean 49; 4920 B/keyframe incl. table; pages_in_use end 227 max 240; keyframes end 8 (late min 8) = 3.5 s (late min 3.5 s); pool resets 0
+scrub_sizing: sonic page 256 B, max 48 keyframes: 129 pages/keyframe (table 258 B), pool 224 pages; copied mean 18.2 max 66, shared mean 61, zero mean 49; 4920 B/keyframe incl. table; pages_in_use end 209 max 222; keyframes end 7 (late min 7) = 3.0 s (late min 3.0 s); pool resets 0
+failed command: /tmp/sycl-review-tests-cache/o/0bbb5bc4c5906927a09436b5718582f0/test --cache-dir=/tmp/sycl-review-tests-cache --seed=0x633672eb --listen=-
+
+test
++- run test snouty-genesis-tests w
+
+snouty-genesis: @sizeOf(Md) = 157416 B (153 KB), @sizeOf(Keyframe) = 157312 B (153 KB)
+snouty-genesis: embedded snouty-test.bin: "SNOUTY TEST", 16384 bytes, header says 16384
+
+golden-mini: frames 0xB91D17A8DCBB89BF, 57 tone changes 0x3B14FFCAD460A444, state 0x3DA39611A6784EFD
+golden-mini: 68000 pc 004B72 sr 2000, z80 pc 0D52
+m68k: SingleStepTests skipped: no test files (tools/fetch_test_roms.sh)
+m68k: SingleStepTests skipped: no test files (tools/fetch_test_roms.sh)
+failed command: /tmp/sycl-review-tests-cache/o/a984f9963f43295dc625eba141ce0106/snouty-genesis-tests --cache-dir=/tmp/sycl-review-tests-cache --seed=0x633672eb --listen=-
+
+Build Summary: 12/14 steps succeeded (1 failed); 461/462 tests passed (1 failed)
+test transitive failure
++- run test 132 pass (132 total) 5s MaxRSS:5M
+|  +- compile test safe native success 37s MaxRSS:525M
++- run test 39 pass (39 total) 835ms MaxRSS:4M
+|  +- compile test debug native success 1s MaxRSS:140M
++- run test 95 pass (95 total) 621ms MaxRSS:4M
+|  +- compile test safe native success 35s MaxRSS:603M
++- run test snouty-genesis-tests 143 pass (143 total) 397ms MaxRSS:4M
+|  +- compile test snouty-genesis-tests safe native success 38s MaxRSS:900M
+|     +- WriteFile rom.bin success
++- run test 42 pass, 1 fail (43 total)
+|  +- compile test debug native success 1s MaxRSS:144M
++- run test 10 pass (10 total) 10ms MaxRSS:2M
+   +- compile test safe native success 22s MaxRSS:386M
+

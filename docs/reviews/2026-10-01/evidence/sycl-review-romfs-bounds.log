@@ -1,0 +1,11 @@
+1/1 sycl-review-romfs-bounds.test.review probe geometry must not map outside the badge volume...mapped offset=1545216, physical volume=1310720
+FAIL (TestUnexpectedResult)
+/home/exedev/.local/zig/lib/std/testing.zig:584:14: 0x124bed9 in expect (std.zig)
+    if (!ok) return error.TestUnexpectedResult;
+             ^
+/tmp/sycl-review-romfs-bounds.zig:20:5: 0x124c375 in test.review probe geometry must not map outside the badge volume (sycl-review-romfs-bounds.zig)
+    try std.testing.expect(offset < romfs.size);
+    ^
+0 passed; 0 skipped; 1 failed.
+error: the following test command failed with exit code 1:
+.cache/zig/o/d31fba897559e16a4d82cb04ce20c461/root --seed=0xbc2e1664

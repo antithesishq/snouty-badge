@@ -1,0 +1,15 @@
+1/1 sycl-review-rom-probe.test.review: malformed Genesis length must be rejected...thread 250503 panic: integer overflow
+/home/exedev/../../tmp/sycl-review-rom-probe.zig:9: 0x10280ca in test.review: malformed Genesis length must be rejected (root)
+    try std.testing.expectEqual(mdrom.Refusal.mapper, mdrom.check(&src));
+
+.local/zig/lib/compiler/test_runner.zig:295:25: 0x107dd69 in mainTerminal (root)
+        if (test_fn.func()) |_| {
+                        ^
+.local/zig/lib/std/start.zig:789:88: 0x107c117 in callMain (root)
+    if (fn_info.param_types[0].? == std.process.Init.Minimal) return wrapMain(root.main(.{
+                                                                                       ^
+.local/zig/lib/std/start.zig:248:5: 0x107bbcd in _start (root)
+    asm volatile (switch (native_arch) {
+    ^
+error: the following test command terminated with signal ABRT:
+.cache/zig/o/6ab33e02eacc29b6553c2bf6fbe7b1f6/root --seed=0xc9aa2806
