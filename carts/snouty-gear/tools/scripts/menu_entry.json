@@ -1,0 +1,5 @@
+[
+  { "from": 120, "to": 160, "hold": ["SELECT"] },
+  { "from": 149, "to": 165, "hold": ["LEFT", "A"] },
+  { "from": 175, "to": 176, "hold": ["LEFT"] }
+]

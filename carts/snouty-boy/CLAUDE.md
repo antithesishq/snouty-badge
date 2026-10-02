@@ -22,6 +22,10 @@ CLAUDE.md files have the long explanations, this one summarises.
   CGB palette-RAM LUT rebuilt on `gb.pal_dirty`), input, debug overlay,
   menu, splash, audio, rewind (the run-time arena: console, cart RAM, page
   store), the ROM source (`romsrc.zig`) and the ROM picker (`picker.zig`).
+  `flow.zig` (screen flow: splash, pick, running, menu, halted) and
+  `input.zig` have no cart-api import and run in the host tests
+  (`tests/flow_unit.zig`): every transition suppresses held buttons and
+  every screen but the game reads `input.State.live_edge()`.
 - `tests/` — host tests (`zig build test`). `tests/roms/` is gitignored;
   run `tools/fetch_test_roms.sh` first. Only `tests/*.zig` run: a `test`
   block inside `core/*.zig` is never built (the test root is `tests/all.zig`

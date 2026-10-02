@@ -227,6 +227,10 @@ drive CRC32 plus `fragmented`, or for an embedded ROM on the badge why the
 drive was not used. B or a Select tap resumes; held buttons reach the game
 only after they are released. `tools/scripts/m2_menu.json` walks it in the
 headless preview (`--dump-exports debug_state,debug_settings,debug_menu_opens`).
+A button pressed on the very update the hold opens the menu waits for its
+release too (an A does not act on Resume, a Left does not scrub):
+`sh carts/snouty-gear/tools/check_menu_entry.sh` checks it headlessly
+(`tools/scripts/menu_entry.json`, exit 0 when it holds).
 
 Time scrubber (SPEC.md 10): while the game runs the cart keeps a keyframe
 every half second and the pad of every frame. On Resume, Reset or About

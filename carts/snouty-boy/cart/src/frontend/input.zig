@@ -12,20 +12,40 @@
 //!   hold is cancelled, so neither a tap nor the menu follows. Start itself
 //!   still goes to the game as usual.
 //!
-//! Buttons held across a state change (splash skipped, menu closed) are
-//! suppressed until released (`suppress_held`), so the B that closed the menu
-//! does not also reach the game. The joystick click belongs to the OS and is
-//! never bound.
-const cart = @import("cart-api");
+//! Buttons held across a state change (splash skipped, picker left, menu
+//! opened or closed) are suppressed until released (`suppress_held`), so the
+//! B that closed the menu does not also reach the game. Every screen other
+//! than the game reads `State.live_edge()`, the edge with those buttons
+//! masked out (frontend/flow.zig). The joystick click belongs to the OS and
+//! is never bound.
+//!
+//! No cart-api import: `Controls` mirrors `Controls` bit for bit
+//! (main.zig checks the layout at compile time), so frontend/flow.zig and
+//! this file run in the host tests (tests/flow_unit.zig).
 const core = @import("core");
 const Pad = core.Pad;
+
+/// `cart.Controls` (sycl-badge/src/os/cart/api.zig), same bit layout; main.zig
+/// bit-casts the badge's controls into it.
+pub const Controls = packed struct(u16) {
+    start: bool = false,
+    select: bool = false,
+    a: bool = false,
+    b: bool = false,
+    click: bool = false,
+    up: bool = false,
+    down: bool = false,
+    left: bool = false,
+    right: bool = false,
+    _pad: u7 = 0,
+};
 
 /// Select held this long (frames at 60 Hz) opens the emulator menu.
 pub const hold_frames = 30;
 /// Frames a Select tap is delivered to the game for.
 pub const tap_frames = 3;
 
-pub fn pad_from_controls(c: cart.Controls) u8 {
+pub fn pad_from_controls(c: Controls) u8 {
     var pad: u8 = 0;
     if (c.right) pad |= Pad.right;
     if (c.left) pad |= Pad.left;
@@ -42,7 +62,7 @@ pub fn pad_from_controls(c: cart.Controls) u8 {
 pub const Button = enum { start, select, a, b, up, down, left, right };
 
 fn mask(comptime b: Button) u16 {
-    var c: cart.Controls = @bitCast(@as(u16, 0));
+    var c: Controls = @bitCast(@as(u16, 0));
     @field(c, @tagName(b)) = true;
     return @bitCast(c);
 }
@@ -60,7 +80,7 @@ pub const Edge = struct {
     prev: u16 = 0,
     cur: u16 = 0,
 
-    pub fn update(e: *Edge, c: cart.Controls) void {
+    pub fn update(e: *Edge, c: Controls) void {
         e.prev = e.cur;
         e.cur = @bitCast(c);
     }
@@ -105,11 +125,22 @@ pub const State = struct {
     tap_left: u8 = 0,
     /// Buttons ignored until released (Controls bits).
     suppress: u16 = 0,
+    /// Last frame's `live_edge().cur`, so a suppressed button reads neither
+    /// pressed nor released on the live edge until it is pressed afresh.
+    live_prev: u16 = 0,
 
     /// Once per badge frame, in every state, before anything else.
-    pub fn poll(s: *State, c: cart.Controls) void {
+    pub fn poll(s: *State, c: Controls) void {
+        s.live_prev = s.edge.cur & ~s.suppress;
         s.edge.update(c);
         s.suppress &= s.edge.cur;
+    }
+
+    /// This frame's edge with the suppressed (held-over) buttons masked out
+    /// of both frames: what the splash, picker and menu read, so the button
+    /// that left one screen does not act on the next.
+    pub fn live_edge(s: *const State) Edge {
+        return .{ .prev = s.live_prev, .cur = s.edge.cur & ~s.suppress };
     }
 
     /// Ignore every currently held button until it is released, and forget
@@ -124,7 +155,7 @@ pub const State = struct {
     /// Input for a frame in which the game runs.
     pub fn game_frame(s: *State) GameInput {
         const e = s.edge;
-        const live: cart.Controls = @bitCast(e.cur & ~s.suppress);
+        const live: Controls = @bitCast(e.cur & ~s.suppress);
         var pad = pad_from_controls(live) & ~Pad.select;
         var open_menu = false;
 
@@ -156,15 +187,15 @@ pub const State = struct {
     }
 };
 
-fn ctl(comptime names: []const Button) cart.Controls {
-    var c: cart.Controls = @bitCast(@as(u16, 0));
+fn ctl(comptime names: []const Button) Controls {
+    var c: Controls = @bitCast(@as(u16, 0));
     inline for (names) |n| @field(c, @tagName(n)) = true;
     return c;
 }
 
 comptime {
-    // Pad bits and the Edge masks agree with cart.Controls' layout.
-    var c: cart.Controls = @bitCast(@as(u16, 0));
+    // Pad bits and the Edge masks agree with Controls' layout.
+    var c: Controls = @bitCast(@as(u16, 0));
     c.a = true;
     c.left = true;
     if (pad_from_controls(c) != Pad.a | Pad.left) @compileError("pad mapping");

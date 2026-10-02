@@ -15,6 +15,7 @@
 //! size; `rewind.layout` then places the console, that cart RAM and the
 //! keyframe store in the RAM above `.bss`. `halted` is the refusal to run when fewer than 2
 //! keyframes fit there (frontend/rewind.zig).
+//!
 //! Control hints (lib/hint.zig): "Hold Select: menu" on the splash and in
 //! a strip at the bottom for the first 3 s of play after the splash or the
 //! picker (gone at the first fresh press); the menu has its own.
@@ -30,6 +31,7 @@ const audio = @import("frontend/audio.zig");
 const rewind = @import("frontend/rewind.zig");
 const romsrc = @import("frontend/romsrc.zig");
 const picker = @import("frontend/picker.zig");
+const flow = @import("frontend/flow.zig");
 const hint = @import("hint");
 
 comptime {
@@ -42,11 +44,10 @@ var gb: *core.Gb = undefined;
 /// `gb` has been created (false while the picker is up).
 var have_gb = false;
 
-pub const State = enum(u32) { splash = 0, running = 1, menu = 2, pick = 3, halted = 4 };
-var state: State = .splash;
-var controls_state: input.State = .{};
-/// Leave the splash for the picker instead of the game.
-var pick_after_splash = false;
+pub const State = flow.State;
+/// Which screen is up and what it may see (frontend/flow.zig).
+var fl: flow.Flow(Ctx) = .{};
+var ctx: Ctx = .{};
 /// "Hold Select: menu" over the first seconds of play (lib/hint.zig).
 var play_hint: hint.Overlay = .{};
 
@@ -58,94 +59,111 @@ pub fn start() void {
     video.init(.dmg);
     romsrc.scan();
     if (romsrc.use_drive and romsrc.playable_count > 1) {
-        pick_after_splash = true;
-    } else {
-        begin(romsrc.choose_default());
+        fl.pick_after_splash = true;
+    } else if (!begin(romsrc.choose_default())) {
+        fl.state = .halted;
     }
 }
 
 /// Lay out cart RAM and the keyframe store for `r`, then create the
-/// console in the model its header asks for.
-fn begin(r: core.Rom) void {
+/// console in the model its header asks for. False when fewer than 2
+/// keyframes fit (the halted screen follows).
+fn begin(r: core.Rom) bool {
     debug.source_letter = if (romsrc.info.source == .drive) 'D' else 'E';
     const model = core.default_model(&r);
     video.init(model);
-    const l = rewind.layout(&r) orelse {
-        state = .halted;
-        return;
-    };
+    const l = rewind.layout(&r) orelse return false;
     gb = l.gb;
     gb.* = core.Gb.init(r, model, l.cart_ram);
     gb.line_sink = video.sink(gb);
     have_gb = true;
     rewind.reset(gb);
+    return true;
 }
 
 pub fn update() void {
-    controls_state.poll(read_controls());
     // Timestamp every badge frame (paused or not) so the FPS counter sees
-    // real frame intervals; `debug.record` below only measures step_frame.
-    const t0 = cart.micros_since_boot();
-    debug.frame_tick(t0);
+    // real frame intervals; `debug.record` measures only step_frame.
+    debug.frame_tick(cart.micros_since_boot());
 
     // Sound follows the menu toggle; the tone holds while the core is paused
     // and stops at once when sound is switched off (audio.update handles it).
     audio.enabled = menu.sound_enabled;
 
-    switch (state) {
-        .splash => {
-            if (splash.request_chime) {
-                splash.request_chime = false;
-                audio.chime(0);
-                chime_second_at = frames_seen + 4;
-            }
-            if (chime_second_at != 0 and frames_seen == chime_second_at) {
-                chime_second_at = 0;
-                audio.chime(1);
-            }
-            if (splash.update(controls_state.edge.any_pressed())) {
-                controls_state.suppress_held();
-                if (romsrc.use_drive and pick_after_splash) {
-                    state = .pick;
-                    pick_frame();
-                } else {
-                    state = .running;
-                    play_hint.start(hint.play_seconds * 60);
-                    run_frame(t0);
-                }
-            }
-        },
-        // Only a drive build can get here; the check keeps the picker and
-        // the drive code out of the wasm build.
-        .pick => if (romsrc.use_drive) pick_frame(),
-        .halted => draw_halted(),
-        .running => run_frame(t0),
-        .menu => {
-            audio.update(gb);
-            if (menu.update(gb, controls_state.edge) == .resume_game) {
-                menu.close();
-                controls_state.suppress_held();
-                state = .running;
-                run_frame(cart.micros_since_boot());
-            }
-        },
-    }
+    fl.update(&ctx, @bitCast(read_controls()));
 
     frames_seen +%= 1;
     if (cart.is_wasm) present_wasm();
 }
 
-/// One picker frame; on a choice, create the console and start the game in
-/// the same frame.
-fn pick_frame() void {
-    const choice = picker.update(controls_state.edge) orelse return;
-    begin(if (choice) |i| romsrc.select(i) else romsrc.embedded("skipped"));
-    controls_state.suppress_held();
-    if (state == .halted) return;
-    state = .running;
-    play_hint.start(hint.play_seconds * 60);
-    run_frame(cart.micros_since_boot());
-}
+/// The badge side of frontend/flow.zig: the splash, picker, console, menu
+/// and halted screen it switches between.
+const Ctx = struct {
+    pub fn splash_frame(_: *Ctx, skip: bool) bool {
+        if (splash.request_chime) {
+            splash.request_chime = false;
+            audio.chime(0);
+            chime_second_at = frames_seen + 4;
+        }
+        if (chime_second_at != 0 and frames_seen == chime_second_at) {
+            chime_second_at = 0;
+            audio.chime(1);
+        }
+        return splash.update(skip);
+    }
+
+    /// Only a drive build gets a choice; the check keeps the picker and the
+    /// drive code out of the wasm build.
+    pub fn pick_frame(_: *Ctx, e: input.Edge) ??usize {
+        return if (romsrc.use_drive) picker.update(e) else null;
+    }
+
+    pub fn begin_choice(_: *Ctx, choice: ?usize) bool {
+        return if (romsrc.use_drive) begin(if (choice) |i| romsrc.select(i) else romsrc.embedded("skipped")) else false;
+    }
+
+    /// The game starts after the splash or the picker (not after the menu).
+    pub fn play_begin(_: *Ctx) void {
+        play_hint.start(hint.play_seconds * 60);
+    }
+
+    /// One game frame; `fresh` is a press not held over from the last
+    /// screen, which dismisses the play hint.
+    pub fn step(_: *Ctx, pad: u8, fresh: bool) void {
+        const t1 = cart.micros_since_boot();
+        gb.step_frame(pad);
+        const t2 = cart.micros_since_boot();
+        rewind.record_frame(gb, pad);
+
+        audio.update(gb);
+
+        video.finish_frame();
+        debug.record(@truncate(t2 -% t1));
+        debug.draw();
+        play_hint.update_and_draw(cart, null, fresh, cart.screen_height - hint.strip_h, video.shade_color(0), video.shade_color(3));
+    }
+
+    pub fn menu_open(_: *Ctx) void {
+        play_hint.stop();
+        menu.open();
+    }
+
+    pub fn menu_frame(_: *Ctx, e: input.Edge) flow.MenuResult {
+        audio.update(gb);
+        return switch (menu.update(gb, e)) {
+            .stay => .stay,
+            .resume_game => .resume_game,
+        };
+    }
+
+    pub fn menu_close(_: *Ctx) void {
+        menu.close();
+    }
+
+    pub fn halted_frame(_: *Ctx) void {
+        draw_halted();
+    }
+};
 
 /// Fewer than 2 keyframes fit next to this ROM: say so instead of running a
 /// game the scrubber cannot rewind (PLAN.md M5, M8). Only a ROM embedded
@@ -161,31 +179,12 @@ fn draw_halted() void {
 var frames_seen: u32 = 0;
 var chime_second_at: u32 = 0;
 
-/// One game frame, or opening the menu instead of stepping. `t1` is a fresh
-/// `micros_since_boot` reading taken just before.
-fn run_frame(t1: u64) void {
-    const in = controls_state.game_frame();
-    if (in.open_menu) {
-        play_hint.stop();
-        state = .menu;
-        menu.open();
-        _ = menu.update(gb, controls_state.edge);
-        return;
+comptime {
+    // input.Controls mirrors cart.Controls bit for bit.
+    if (@bitSizeOf(input.Controls) != @bitSizeOf(cart.Controls)) @compileError("Controls size");
+    for (@typeInfo(cart.Controls).@"struct".field_names) |name| {
+        if (@bitOffsetOf(input.Controls, name) != @bitOffsetOf(cart.Controls, name)) @compileError("Controls layout: " ++ name);
     }
-
-    gb.step_frame(in.pad);
-    const t2 = cart.micros_since_boot();
-    rewind.record_frame(gb, in.pad);
-
-    audio.update(gb);
-
-    video.finish_frame();
-    debug.record(@truncate(t2 -% t1));
-    debug.draw();
-    // A press held over from the splash or picker is suppressed, not fresh.
-    const e = controls_state.edge;
-    const fresh = (input.Edge{ .prev = e.prev, .cur = e.cur & ~controls_state.suppress }).any_pressed();
-    play_hint.update_and_draw(cart, null, fresh, cart.screen_height - hint.strip_h, video.shade_color(0), video.shade_color(3));
 }
 
 pub fn read_controls() cart.Controls {
@@ -260,7 +259,7 @@ fn debug_palette() callconv(.c) u32 {
 }
 /// Frontend state: 0 splash, 1 running, 2 menu, 3 pick, 4 halted.
 fn debug_state() callconv(.c) u32 {
-    return @backingInt(state);
+    return @backingInt(fl.state);
 }
 /// Pad byte the game was last stepped with (`core.Pad` bits; Select = 64).
 fn debug_pad() callconv(.c) u32 {

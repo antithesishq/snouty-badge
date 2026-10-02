@@ -65,6 +65,13 @@ pub fn add(b: *Build, sycl_badge_dep: *Build.Dependency, opts: common.Options) v
         .target = b.graph.host,
         .optimize = test_optimize,
     });
+    // The frontend's screen flow and input (no cart-api), for tests/flow_unit.zig.
+    const flow_host = b.createModule(.{
+        .root_source_file = b.path(dir ++ "cart/src/frontend/flow.zig"),
+        .target = b.graph.host,
+        .optimize = test_optimize,
+        .imports = &.{.{ .name = "core", .module = core_host }},
+    });
     const test_filter = opts.test_filter;
     const tests = b.addTest(.{
         .filters = if (test_filter) |f| &.{f} else &.{},
@@ -72,7 +79,10 @@ pub fn add(b: *Build, sycl_badge_dep: *Build.Dependency, opts: common.Options) v
             .root_source_file = b.path(dir ++ "tests/all.zig"),
             .target = b.graph.host,
             .optimize = test_optimize,
-            .imports = &.{.{ .name = "core", .module = core_host }},
+            .imports = &.{
+                .{ .name = "core", .module = core_host },
+                .{ .name = "flow", .module = flow_host },
+            },
         }),
     });
     const run_tests = b.addRunArtifact(tests);

@@ -10,7 +10,10 @@
 //!   cancelled. Start itself still goes to the game.
 //!
 //! Buttons held across a state change are suppressed until released
-//! (`suppress_held`). The joystick click belongs to the OS and is never bound.
+//! (`suppress_held`); the menu reads `State.live_edge()`, the edge with them
+//! masked out, so an A or B pressed with the Select hold that opens the menu
+//! does not act on it (review EM-01, the same rule as Snouty Boy's
+//! frontend/flow.zig). The joystick click belongs to the OS and is never bound.
 const cart = @import("cart-api");
 const core = @import("core");
 const Pad = core.Pad;
@@ -95,11 +98,21 @@ pub const State = struct {
     held_frames: u16 = 0,
     /// Buttons ignored until released (Controls bits).
     suppress: u16 = 0,
+    /// Last frame's `live_edge().cur`, so a suppressed button reads neither
+    /// pressed nor released on the live edge until it is pressed afresh.
+    live_prev: u16 = 0,
 
     /// Once per badge frame, in every state, before anything else.
     pub fn poll(s: *State, c: cart.Controls) void {
+        s.live_prev = s.edge.cur & ~s.suppress;
         s.edge.update(c);
         s.suppress &= s.edge.cur;
+    }
+
+    /// This frame's edge with the suppressed (held-over) buttons masked out
+    /// of both frames: what the menu reads.
+    pub fn live_edge(s: *const State) Edge {
+        return .{ .prev = s.live_prev, .cur = s.edge.cur & ~s.suppress };
     }
 
     /// Ignore every held button until released and forget a Select hold.

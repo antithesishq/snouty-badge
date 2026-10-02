@@ -92,7 +92,7 @@ pub fn update() void {
         .running => run_frame(t0),
         .menu => {
             audio.update(&gg);
-            if (menu.update(&gg, controls_state.edge) == .resume_game) {
+            if (menu.update(&gg, controls_state.live_edge()) == .resume_game) {
                 menu.close();
                 controls_state.suppress_held();
                 state = .running;
@@ -113,8 +113,10 @@ fn run_frame(t1: u64) void {
         play_hint.stop();
         menu_opens += 1;
         state = .menu;
+        // The held Select, and an A/B pressed with it, wait for a release.
+        controls_state.suppress_held();
         menu.open();
-        _ = menu.update(&gg, controls_state.edge);
+        _ = menu.update(&gg, controls_state.live_edge());
         return;
     }
 
