@@ -89,7 +89,11 @@ node tools/check_golden.mjs            # golden-image regression
   wasm build agrees with itself, so the simulator hides it. Use `[3]f32`
   fields and convert at the use site (`render/mesh.zig`).
 - Randomness only through `rng.zig`, seeded once from `cart.rand()` in
-  `start()`, so `preview.mjs --seed` reproduces runs exactly.
+  `start()`, so `preview.mjs --seed` reproduces runs exactly. Exception:
+  the `-Dbadge=tufty` badge build (snouty-tufty only) mixes the
+  microsecond clock into that seed and stirs it once at the first button
+  press, because `cart.rand()` reads 0 on the RP2350 (`main.zig`
+  `clock_seeded`).
 - Never commit the generated `gfx.zig`; do commit `assets/gen/*.png`.
 - Commit messages: short imperative subject, body explains why.
 - Milestone hand-off: tag, preview GIF in `docs/`, and a "pull and run this"

@@ -7,6 +7,13 @@ const gfx = @import("gfx");
 const state = @import("../state.zig");
 const blit = @import("blit.zig");
 const portrait = @import("portrait.zig");
+const build_options = @import("build_options");
+
+/// -Dbadge=tufty: the Tufty 2350 under snouty-tufty, whose map
+/// (docs/ports/snoutenstein.md there) is A/B turn, C fire, UP/DOWN walk,
+/// UP double tap autowalk, A+B rewind, UP+DOWN tap weapon, UP+DOWN hold
+/// pause. Every control name on screen follows it in that build.
+const tufty = @hasDecl(build_options, "badge") and build_options.badge == .tufty;
 
 pub const bar_y: i32 = 104;
 pub const bar_h: u32 = 24;
@@ -129,9 +136,16 @@ pub fn draw_title(tick_n: u32, sound_on: bool, demo_result: DemoResult) void {
     blit.cell(gfx.title, 128, 40, 0, 16, 16, .{});
     centered("powered by", 62, iris);
     centered("deterministic replay", 72, iris);
-    if ((tick_n / 30) % 2 == 0) centered("PRESS A", 90, anti_white);
-    centered(if (sound_on) "SELECT: SOUND ON" else "SELECT: SOUND OFF", 106, grey);
-    centered("B: E1M1  START: TEST", 118, grey);
+    if ((tick_n / 30) % 2 == 0) centered(if (tufty) "PRESS C" else "PRESS A", 90, anti_white);
+    if (tufty) {
+        // Three rows where the SYCL card has two: the chords are longer.
+        centered(if (sound_on) "UP+DN: SOUND ON" else "UP+DN: SOUND OFF", 100, grey);
+        centered("A+B: E1M1", 109, grey);
+        centered("HOLD UP+DN: TEST", 118, grey);
+    } else {
+        centered(if (sound_on) "SELECT: SOUND ON" else "SELECT: SOUND OFF", 106, grey);
+        centered("B: E1M1  START: TEST", 118, grey);
+    }
 }
 
 /// Death freeze (SPEC.md 9.1): the view is drawn red underneath; this is
@@ -139,7 +153,7 @@ pub fn draw_title(tick_n: u32, sound_on: bool, demo_result: DemoResult) void {
 /// lead passes; it is floored to the 3 s once-per-death reserve here too.
 pub fn draw_dead(meter_ticks: u16) void {
     cart.rect(.{ .x = 20, .y = 40, .width = 120, .height = 28, .fill_color = anti_black });
-    centered("HOLD B TO REWIND", 46, coral);
+    centered(if (tufty) "HOLD A+B: REWIND" else "HOLD B TO REWIND", 46, coral);
     const m: u32 = @max(meter_ticks, reserve_ticks);
     var buf: [16]u8 = undefined;
     centered(fmt(&buf, "{d}s OF REWIND", .{(m + 59) / 60}), 57, iris);
@@ -183,19 +197,22 @@ pub fn draw_victory(s: *const state.GameState, ticks: u32) void {
 
 /// Pause screen: "PAUSED" and the in-game controls (SPEC.md 3) on a dark
 /// panel over the frozen view (x 4..155, y 8..95, clear of the HUD bar).
-/// Keys in Coral at x 12, actions at x 100 (at most 6 characters).
+/// Keys in Coral at x 12, actions at x 100 (at most 6 characters). The
+/// Tufty build has one row more (autowalk), so its panel reaches y 103,
+/// still clear of the bar at 104, and its rows start 3 px higher.
 pub fn draw_pause() void {
-    cart.rect(.{ .x = 4, .y = 8, .width = 152, .height = 88, .fill_color = anti_black, .stroke_color = grey });
+    cart.rect(.{ .x = 4, .y = 8, .width = 152, .height = if (tufty) 96 else 88, .fill_color = anti_black, .stroke_color = grey });
     centered("PAUSED", 13, anti_white);
     for (pause_help, 0..) |row, i| {
-        const y: i32 = 27 + 10 * @as(i32, @intCast(i));
+        const y: i32 = (if (tufty) 24 else 27) + 10 * @as(i32, @intCast(i));
         cart.text(.{ .str = row[0], .x = 12, .y = y, .text_color = coral });
         cart.text(.{ .str = row[1], .x = 100, .y = y, .text_color = anti_white });
     }
 }
 
 /// Key, action. Doors have no button: walking into one opens it.
-const pause_help = [_][2][]const u8{
+const pause_help = if (tufty) tufty_pause_help else sycl_pause_help;
+const sycl_pause_help = [_][2][]const u8{
     .{ "UP/DOWN", "WALK" },
     .{ "LEFT/RIGHT", "TURN" },
     .{ "A", "FIRE" },
@@ -203,6 +220,17 @@ const pause_help = [_][2][]const u8{
     .{ "HOLD B", "REWIND" },
     .{ "BUMP DOOR", "OPENS" },
     .{ "START", "RESUME" },
+};
+/// Keys at most 11 characters (x 12..99).
+const tufty_pause_help = [_][2][]const u8{
+    .{ "UP/DOWN", "WALK" },
+    .{ "DOUBLE UP", "AUTO" },
+    .{ "A/B", "TURN" },
+    .{ "C", "FIRE" },
+    .{ "TAP UP+DN", "WEAPON" },
+    .{ "HOLD A+B", "REWIND" },
+    .{ "BUMP DOOR", "OPENS" },
+    .{ "HOLD UP+DN", "RESUME" },
 };
 
 /// M1 gate readout: render microseconds, top right of the view
@@ -221,7 +249,7 @@ fn stats_time(s: *const state.GameState, y: i32) void {
 }
 
 fn press_a(ticks: u32) void {
-    if (ticks >= 60 and (ticks / 30) % 2 == 0) centered("PRESS A", 100, anti_white);
+    if (ticks >= 60 and (ticks / 30) % 2 == 0) centered(if (tufty) "PRESS C" else "PRESS A", 100, anti_white);
 }
 
 fn centered(str: []const u8, y: i32, color: cart.DisplayColor) void {

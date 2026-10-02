@@ -24,6 +24,9 @@ pub fn add(b: *Build, sycl_badge_dep: *Build.Dependency, opts: common.Options) v
     // `debug_set_size` still change it at run time.
     const maze_size = b.option(u8, "maze_size", "snouty-maze: maze side in cells, 4..16 (default 12)") orelse 12;
     options.addOption(u8, "maze_size", std.math.clamp(maze_size, 4, 16));
+    // -Dbadge=tufty (declared by the root build.zig; snouty-tufty only): the
+    // maze seed comes from the microsecond clock (cart.rand() is always 0 there).
+    common.add_badge_option(options, opts);
     build_options = options;
 
     os_cart.add(b, sycl_badge_dep, .{

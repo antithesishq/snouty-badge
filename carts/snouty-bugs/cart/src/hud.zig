@@ -5,6 +5,13 @@ const gfx = @import("gfx");
 const draw = @import("draw.zig");
 const enemies = @import("enemies.zig");
 const world = @import("world.zig");
+const build_options = @import("build_options");
+
+/// -Dbadge=tufty: the Tufty 2350 under snouty-tufty, whose map
+/// (docs/ports/snouty-bugs.md there) is C tap autofire (latched; later taps
+/// re-trigger), A/B left/right, UP/DOWN, A+B held rewind (Hardcore on the
+/// title), UP+DOWN start/pause. The title and pause help follow it.
+const tufty = @hasDecl(build_options, "badge") and build_options.badge == .tufty;
 
 const max_rewind_icons = 5;
 /// `hud.png` cell: 12x8 since 2026-09-29 (the 8x8 head read as a rat).
@@ -141,8 +148,8 @@ pub fn draw_title(tick: u32) void {
     draw.draw_sprite(gfx.thruster, 8, 8, (tick / 3) % 4, title_ship_x - 6, ship_y + 8, .{});
     draw.draw_sprite(gfx.ship, 32, 24, 0, title_ship_x, ship_y, .{});
     if ((tick / 30) % 2 == 0) {
-        draw.centered_text("A PLAY", 92, draw.anti_white);
-        draw.centered_text("B HARDCORE", 104, draw.coral);
+        draw.centered_text(if (tufty) "C PLAY" else "A PLAY", 92, draw.anti_white);
+        draw.centered_text(if (tufty) "A+B HARDCORE" else "B HARDCORE", 104, draw.coral);
     }
     draw.centered_text("Antithesis", 116, draw.coral);
     draw.draw_sprite(gfx.iris_16, 16, 16, 0, 20, 112, .{});
@@ -151,23 +158,31 @@ pub fn draw_title(tick: u32) void {
 
 /// Pause overlay: the frozen scene dimmed, then "PAUSED" and the in-game
 /// controls on a dark panel (x 12..147, y 34..107). Keys in Coral at
-/// x 20, actions at x 92 (at most 6 characters).
+/// x 20, actions at x 92 (at most 6 characters). The Tufty build's keys
+/// are up to 9 characters, so its columns are x 16 and 96.
 pub fn draw_pause() void {
     draw.darken_checker();
     cart.rect(.{ .x = 12, .y = 34, .width = 136, .height = 74, .fill_color = draw.anti_black, .stroke_color = draw.star_dim });
     draw.centered_text("PAUSED", 40, draw.anti_white);
     for (pause_help, 0..) |row, i| {
         const y: i32 = 54 + 10 * @as(i32, @intCast(i));
-        draw.text(row[0], 20, y, draw.coral);
-        draw.text(row[1], 92, y, draw.anti_white);
+        draw.text(row[0], if (tufty) 16 else 20, y, draw.coral);
+        draw.text(row[1], if (tufty) 96 else 92, y, draw.anti_white);
     }
     draw.centered_text("REWIND USES FUEL", 96, draw.star_dim);
 }
 
 /// Key, action (main.zig's playing state and player.zig).
-const pause_help = [_][2][]const u8{
+const pause_help = if (tufty) tufty_pause_help else sycl_pause_help;
+const sycl_pause_help = [_][2][]const u8{
     .{ "JOYSTICK", "FLY" },
     .{ "HOLD A", "FIRE" },
     .{ "HOLD B", "REWIND" },
     .{ "START", "RESUME" },
+};
+const tufty_pause_help = [_][2][]const u8{
+    .{ "A/B UP/DN", "FLY" },
+    .{ "TAP C", "FIRE" },
+    .{ "HOLD A+B", "REWIND" },
+    .{ "UP+DOWN", "RESUME" },
 };

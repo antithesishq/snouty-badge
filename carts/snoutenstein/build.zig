@@ -18,6 +18,9 @@ pub fn add(b: *Build, sycl_badge_dep: *Build.Dependency, opts: common.Options) v
     // -Dsound=true starts with sound on; off by default, Select on the title
     // toggles it (docs/SOUND.md).
     options.addOption(bool, "sound", opts.sound);
+    // -Dbadge=tufty (declared by the root build.zig; snouty-tufty only): the
+    // title, death prompt, cards and pause help name the Tufty buttons.
+    common.add_badge_option(options, opts);
     build_options = options;
 
     os_cart.add(b, sycl_badge_dep, .{

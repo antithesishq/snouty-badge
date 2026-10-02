@@ -30,6 +30,7 @@ pub fn build(b: *Build) void {
 
     const opts = common.Options{
         .cart_mode = b.option(common.CartMode, "cart-mode", "ram (default): the usual RAM cart; xip: execute in place from the 256 KB cart flash window (<binary>-xip.uf2); both") orelse .ram,
+        .badge = b.option(common.Badge, "badge", "sycl (default): the SYCL Badge V2; tufty: the Tufty 2350 under snouty-tufty (Tufty button names on screen in demosnout, snoutenstein, snouty-bugs; snouty-maze seeds from the clock)") orelse .sycl,
         .debug_overlay = b.option(bool, "debug_overlay", "Draw render timing on screen (snouty-reflections, snouty-maze, demosnout, snouty-zero)") orelse false,
         .neopixels = b.option(bool, "neopixels", "Let carts light the neopixels (snoutenstein, snouty-maze, snouty-boy). Default off: the LEDs are painfully bright on hardware, see docs/NEOPIXELS.md") orelse false,
         .sound = b.option(bool, "sound", "Start every cart with sound on (snoutenstein, snouty-boy, snouty-gear, snouty-genesis, snouty-zero). Default off: carts boot silent and their menu item or button turns sound on, see docs/SOUND.md") orelse false,

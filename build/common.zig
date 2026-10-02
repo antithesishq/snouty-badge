@@ -11,8 +11,29 @@ const Build = std.Build;
 /// -Dcart-mode: RAM cart (the default), execute-in-place cart, or both.
 pub const CartMode = @import("os_cart.zig").Mode;
 
+/// -Dbadge: which badge the cart is built for. `sycl` (the default) is the
+/// SYCL Badge V2 and changes nothing. `tufty` is the Pimoroni Tufty 2350
+/// running the snouty-tufty OS, which maps its buttons (A, B, C, UP, DOWN)
+/// onto the SYCL controls per cart: carts that print control names print
+/// the Tufty's instead, and snouty-maze seeds its maze from the clock.
+/// Only the snouty-tufty build passes it (on the snouty-badge `tufty`
+/// branch, never main).
+pub const Badge = enum { sycl, tufty };
+
+/// Adds `badge` to a cart's build_options, except for the default `sycl`:
+/// then the options module is the one a build without the option makes,
+/// and the default build's code and data stay byte-identical (only debug
+/// info follows the source lines). A cart reads it as
+/// `const tufty = @hasDecl(build_options, "badge") and build_options.badge == .tufty;`.
+pub fn add_badge_option(options: *Build.Step.Options, opts: Options) void {
+    if (opts.badge != .sycl) options.addOption(Badge, "badge", opts.badge);
+}
+
 pub const Options = struct {
     cart_mode: CartMode,
+    /// -Dbadge (see `Badge`): demosnout, snoutenstein, snouty-bugs and
+    /// snouty-maze read it through their build_options.
+    badge: Badge,
     /// -Ddebug_overlay: on-screen render timing (snouty-reflections, snouty-maze).
     debug_overlay: bool,
     /// -Dneopixels: let a cart light the neopixels. Default false: the badge

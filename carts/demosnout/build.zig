@@ -17,6 +17,9 @@ pub fn add(b: *Build, sycl_badge_dep: *Build.Dependency, opts: common.Options) v
     // toggles it; the option is declared by the root build.zig).
     const options = b.addOptions();
     options.addOption(bool, "debug_overlay", opts.debug_overlay);
+    // -Dbadge=tufty (declared by the root build.zig; snouty-tufty only): the
+    // picker hint names the Tufty buttons (docs/CARTS.md in snouty-tufty).
+    common.add_badge_option(options, opts);
     build_options = options;
 
     os_cart.add(b, sycl_badge_dep, .{

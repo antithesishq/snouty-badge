@@ -13,12 +13,14 @@ const cart = @import("cart-api");
 const input = @import("input.zig");
 const timeline = @import("timeline.zig");
 const text = @import("text.zig");
+const build_options = @import("build_options");
 
 pub var open: bool = false;
 var cursor: u8 = 0;
 
 const title = "DEMOSNOUT  -  PARTS";
-const hint = "A JUMP  B/SELECT CLOSE";
+/// The Tufty build (-Dbadge=tufty) names its buttons: C sends Select there.
+const hint = if (@hasDecl(build_options, "badge") and build_options.badge == .tufty) "A JUMP  B/C CLOSE" else "A JUMP  B/SELECT CLOSE";
 
 const row_h: i32 = 9;
 const panel_x: i32 = 0;

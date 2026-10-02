@@ -11,6 +11,13 @@ const common = @import("../../build/common.zig");
 const dir = "carts/snouty-bugs/";
 
 pub fn add(b: *Build, sycl_badge_dep: *Build.Dependency, opts: common.Options) void {
+    // -Dbadge=tufty (declared by the root build.zig; snouty-tufty only): the
+    // title and pause help name the Tufty buttons.
+    const options = b.addOptions();
+    common.add_badge_option(options, opts);
+    // Set before add_os_cart: the custom builder runs inside that call.
+    build_options = options;
+
     os_cart.add(b, sycl_badge_dep, .{
         .mode = opts.cart_mode,
         .name = "snouty-bugs",
@@ -28,6 +35,8 @@ pub fn add(b: *Build, sycl_badge_dep: *Build.Dependency, opts: common.Options) v
     }) });
     opts.test_step.dependOn(&b.addRunArtifact(tests).step);
 }
+
+var build_options: ?*Build.Step.Options = null;
 
 /// One entry per PNG in assets/gen/. `bits` is palette bits per pixel (4 =
 /// up to 15 colors + transparent). `transparent` reserves palette index 0 for
@@ -51,8 +60,10 @@ const images = [_]Image{
 };
 
 /// Converts the PNGs in assets/gen/ into a `gfx` module at build time,
-/// mirroring sycl-badge/showcase/carts/dvd/build.zig.
+/// mirroring sycl-badge/showcase/carts/dvd/build.zig, and wires the build
+/// options module.
 fn build_cart_assets(b: *Build, cart: *Build.Module, cart_api: *Build.Module, step: *Build.Step) void {
+    if (build_options) |o| cart.addImport("build_options", o.createModule());
     const convert = b.addExecutable(.{
         .name = "convert_gfx",
         .root_module = b.createModule(.{
