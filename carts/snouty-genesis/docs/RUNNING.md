@@ -283,6 +283,14 @@ menu:
 The title band shows the ROM's name from its header (Miniplanets says
 "MINIPLANETS", the test ROM "SNOUTY TEST").
 
+On-screen hints (`lib/hint.zig`, shared with Boy, Gear and Lynx): the
+splash and the first 3 s of play after the splash, picker or help screen
+show "Hold Select: menu" (a strip at the bottom, gone at the first button
+press); in the menu the bottom line on Resume reads "Left/Right: rewind"
+("Rewind: no history" before the first record; the `Scrub:` readout once
+parked or on other rows) and the footer reads "B: back to game". The menu
+rows are 8 px apart since the footer was added (9 px in M4).
+
 Time scrubber (SPEC.md section 10). The cart keeps an undo record every 30
 Genesis frames (0.5 s) in the RAM left free after the console. In the menu,
 on a row that is not a setting, Left steps 0.5 s back and Right 0.5 s

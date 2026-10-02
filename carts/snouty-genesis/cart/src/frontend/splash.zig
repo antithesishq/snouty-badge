@@ -4,10 +4,12 @@
 //! background with a light mark, "GENESIS" in a red accent and a thin
 //! accent bar under the title. Any button press skips it. No chime: every
 //! cart boots silent (docs/SOUND.md at the repository root) and audio gets
-//! no further work. The cart has no palette, so the colours are fixed here.
+//! no further work. The bottom line says how to open the emulator menu
+//! (`hint.hold_select`, lib/hint.zig). The cart has no palette, so the colours are fixed here.
 const cart = @import("cart-api");
 const video = @import("video.zig");
 const iris = @import("iris");
+const hint = @import("hint");
 
 /// Splash length in updates (1.2 s at 30 Hz).
 pub const frames = 36;
@@ -38,6 +40,7 @@ const start_y: i32 = -block_h;
 comptime {
     if (title.len * 8 > cart.screen_width) @compileError("splash title wider than the screen");
     if (title[accent_at] != 'G') @compileError("accent_at must point at GENESIS");
+    if (rest_y + block_h > hint.splash_y) @compileError("the menu hint overlaps the title");
 }
 
 var frame: u32 = 0;
@@ -68,4 +71,5 @@ fn draw(y: i32) void {
     cart.text(.{ .str = title[0..accent_at], .x = tx, .y = ty, .text_color = ink });
     cart.text(.{ .str = title[accent_at..], .x = tx + accent_at * 8, .y = ty, .text_color = accent });
     cart.rect(.{ .x = tx, .y = ty + 8 + bar_gap, .width = @intCast(tw), .height = bar_h, .fill_color = accent });
+    hint.draw_centred(cart, hint.hold_select, hint.splash_y, ink);
 }
