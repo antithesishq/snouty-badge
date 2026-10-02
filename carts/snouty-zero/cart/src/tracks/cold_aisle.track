@@ -1,0 +1,24 @@
+# Cold Aisle: Edge league, track 1. Driven clockwise on the map image:
+# the long top straight east, back west through the upper esses, a
+# hairpin, east through the open sweeping S (no rails), down the hot
+# chicane, the bottom run west, then the cold-aisle pit strip north up the
+# west side to the line. Control point 0 is the start line. Features on
+# point i apply to the segment from point i to point i+1; a segment
+# without `open` has rails.
+league edge
+width 64
+# x    y    half   features
+ 480  150   64     pad             # start line; overclock pad mid-straight
+ 850  150   60                     # long right-hander
+ 880  310   52
+ 600  300   48                     # upper esses, heading west
+ 290  350   48                     # into the hairpin
+ 290  510   44
+ 560  490   52     open            # sweeping S, no rail: leave it and fall
+ 850  540   52     open
+ 830  690   50                     # down the right side
+ 880  840   52     hot:3           # three hot spots through the last bend
+ 690  905   60                     # bottom run west over a gentle rise
+ 420  810   56
+ 170  860   56     cold            # cold aisle pit strip up the west side
+ 180  150   60

@@ -1,0 +1,5 @@
+# snouty-zero: Mode 7 hover racer, 60 fps.
+budget_ms = 16.7
+frames = 1200
+script = "carts/snouty-zero/tools/scripts/m1_drive.json"
+note = "M1 solo race on Cold Aisle: the 200-tick countdown, then A held with a few steers (PLAN.md M1); rails and a reset or two are part of the run"
