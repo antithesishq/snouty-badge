@@ -9,6 +9,7 @@
 //! | `cut20`  | 160x128  | 20  | no glass sphere; water_shadows = off          |
 //! | `full15` | 160x128  | 15  | everything; glass_primary = env (knob 4)      |
 //! | `half30` | 80x64 x2 | 30  | everything, knobs at defaults                 |
+//! | `tufty20`| 160x128  | 20  | full15's scene at 20 fps (Tufty 2350, 250 MHz)|
 //!
 //! M2.2: full20, cut20 and full15 show the Iris logo to primary rays only,
 //! with 3 samples (knobs 5-7, iris_cut); half30 shows it everywhere.
@@ -68,6 +69,14 @@ pub fn config_of(v: Variant) Config {
         .cut20 => .{ .fps = 20, .glass_enabled = false, .water_shadows = .off, .iris_in_chrome = iris_cut.iris_in_chrome, .iris_in_water = iris_cut.iris_in_water, .iris_samples = iris_cut.iris_samples, .rings = m3_cut.rings, .noon_shadows = m3_cut.noon_shadows, .noon_third_sphere = m3_cut.noon_third_sphere, .class_split = true },
         .full15 => .{ .fps = 15, .glass_primary = .env, .iris_in_chrome = iris_cut.iris_in_chrome, .iris_in_water = iris_cut.iris_in_water, .iris_samples = iris_cut.iris_samples, .rings = m3_cut.rings, .noon_shadows = m3_cut.noon_shadows, .noon_third_sphere = m3_cut.noon_third_sphere },
         .half30 => .{ .fps = 30, .render_scale = 2, .rings = m3_cut.rings },
+        // The Tufty 2350 port (snouty-tufty): the same core at 250 MHz, so
+        // full15's scene fits 20 fps there (docs/variants.md "tufty20").
+        // Over budget on the SYCL badge at 150 MHz.
+        .tufty20 => blk: {
+            var c = config_of(.full15);
+            c.fps = 20;
+            break :blk c;
+        },
     };
 }
 

@@ -17,7 +17,7 @@ pub fn add(b: *Build, sycl_badge_dep: *Build.Dependency, opts: common.Options) v
     options.addOption(bool, "debug_overlay", opts.debug_overlay);
     // -Dreflections_variant picks frame rate, render scale and scene knobs; cart/src/variant.zig
     // maps it to constants (PLAN.md "M2.1 Perf variants").
-    const variant = b.option(Variant, "reflections_variant", "snouty-reflections: cut20 (default, shipped), full20, full15 or half30") orelse .cut20;
+    const variant = b.option(Variant, "reflections_variant", "snouty-reflections: cut20 (default, shipped), full20, full15, half30 or tufty20 (Tufty 2350 at 250 MHz)") orelse .cut20;
     options.addOption(Variant, "reflections_variant", variant);
     // -Dreflections_bench=height: attract sweeps the eye height min to max and back
     // continuously (a primary-table rebuild every frame), for the M3 bench row.
@@ -60,7 +60,7 @@ pub fn add(b: *Build, sycl_badge_dep: *Build.Dependency, opts: common.Options) v
 }
 
 /// Perf variants; the table is in cart/src/variant.zig.
-const Variant = enum { full20, cut20, full15, half30 };
+const Variant = enum { full20, cut20, full15, half30, tufty20 };
 /// Bench-only behaviours (PLAN.md M3 "Budget and bench").
 const Bench = enum { none, height, motion_off };
 

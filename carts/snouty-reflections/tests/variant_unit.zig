@@ -25,3 +25,12 @@ test "variant: frozen path tracer slice < frame period for every variant" {
     try testing.expectEqual(@as(u32, 33_333), variant.frame_period_us(variant.config_of(.half30).fps));
     try testing.expect(variant.pt_slice_for(variant.config_of(.half30).fps) < 33_333 - 3_000);
 }
+
+test "variant: tufty20 is full15's scene at 20 fps" {
+    // The Tufty 2350 port (docs/variants.md "tufty20"): every knob but the
+    // frame rate comes from full15.
+    var want = variant.config_of(.full15);
+    want.fps = 20;
+    try testing.expectEqualDeep(want, variant.config_of(.tufty20));
+    try testing.expectEqual(@as(u32, 36_000), variant.pt_slice_for(variant.config_of(.tufty20).fps));
+}

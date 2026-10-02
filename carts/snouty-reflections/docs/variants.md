@@ -43,3 +43,51 @@ full15, half30.
 One-orbit GIFs, sampled every 0.6 s of scene time (so they play 6x fast and
 show equal scene time): `variant_full20.gif`, `variant_cut20.gif`,
 `variant_full15.gif`, `variant_half30.gif`.
+
+## `tufty20` (Tufty 2350 port, 2026-10-02)
+
+The Pimoroni Tufty 2350 runs the same RP2350 Cortex-M33 core at 250 MHz
+instead of the SYCL badge's 150 MHz. The snouty-tufty repository builds this
+cart with `-Dreflections_variant=tufty20`: **full15's scene (glass sphere,
+water shadows, glass seen directly through `env`, the M2.2 logo cuts and the
+M3 cuts) at 20 fps**. Only the frame rate differs from full15
+(`tests/variant_unit.zig` checks that). The frozen path tracer slice is
+36 ms, as in cut20. The variant is not meant for the SYCL badge, where it
+drops to about 15 fps on heavy frames. The picture is full15's, so
+`variant_full15.gif` shows it (played at 20 fps instead of 15).
+
+**The gate, converted.** badge-bench models a 150 MHz core. The Tufty's
+20 fps budget is 47.0 ms (94% of 50 ms) at 250 MHz, which is
+47.0 x 250 / 150 = **78.3 ms modelled at 150 MHz**. Cycle counts carry over
+1:1 to the higher clock because this is a RAM cart: code and data are in
+SRAM, which runs at the system clock, so the XIP flash stalls of an XIP
+cart do not apply. The `fp_dep` stalls are cycles too. Not modelled: SRAM
+bank contention with the Tufty OS's scaler on core 0, so keep about 10%
+spare.
+
+Calibrated busy ms at 150 MHz on all four presets, and the estimate at
+250 MHz (x 0.6). Command: `M3_VARIANT=tufty20 M3_BUDGET=78.3
+tools/bench_variants.sh --m3 2 3`.
+
+| Row | Preset | Worst (frame) | Mean | Worst @ 250 MHz | Verdict vs 78.3 |
+|---|---|---|---|---|---|
+| 2 attract (4 orbits, motion, fades) | sunset | **63.44** (324) | 59.17 | 38.1 | PASS |
+| | midnight | 51.95 (847) | 47.52 | 31.2 | PASS |
+| | noon | 52.02 (1447) | 46.72 | 31.2 | PASS |
+| | storm | 48.30 (2058) | 45.07 | 29.0 | PASS |
+| | all | 63.44 | 49.62 | 38.1 | PASS, 19% spare |
+| 3 height (a table rebuild every frame) | sunset | **65.72** (356) | 59.54 | 39.4 | PASS |
+| | midnight | 54.25 (836) | 48.08 | 32.6 | PASS |
+| | noon | 54.58 (1444) | 47.23 | 32.7 | PASS |
+| | storm | 50.51 (2052) | 45.09 | 30.3 | PASS |
+| | all | 65.72 | 49.98 | 39.4 | PASS, 16% spare |
+
+Sunset is the heaviest preset because it is the only one with the glass
+sphere. The worst frame, 65.72 ms, leaves 12.6 ms of the 78.3 ms gate. That
+covers the 10% contention reserve, so no knob was cut. A controls run (orbit
+and height, preset, dither, freeze and unfreeze, 600 updates) peaks at
+62.72 ms. Frozen updates take about 42 ms. The 36 ms slice is wall-clock, so
+on the Tufty the tracer gets 1.67x more work done per update. It should
+reach 256 passes in about 35 s instead of 58 s.
+
+Build sizes (`size -A`): `.text` 109,616, `.data` 64, `.bss` 109,552.

@@ -354,7 +354,7 @@ the check compares different scenes:
 | `--no-iris` | | no logo |
 | `--fade-k` | `0.05` | ripple fade, `g = 1 / (1 + fade_k * dist)`, `fade = g * g` |
 
-`--variant full20|cut20|full15|half30` sets the variant's flags (M2.1:
+`--variant full20|cut20|full15|half30|tufty20` sets the variant's flags (M2.1:
 `--fps`, `--scale`, `--no-glass` and the knobs above; section 9); explicit
 flags still win. `--water-shadows` is the sunset preset's setting (the other
 presets fix their own: noon primary rays, midnight and storm none).
@@ -444,13 +444,13 @@ deciding.
 
 ## 9. Perf variants (M2.1)
 
-`-Dreflections_variant=full20|cut20|full15|half30` (default `cut20`, the shipped one) picks the
+`-Dreflections_variant=full20|cut20|full15|half30|tufty20` (default `cut20`, the shipped one; `tufty20` is the Tufty 2350 port's) picks the
 resolution, frame rate and scene cuts; `docs/variants.md` has the table and
 numbers. The scene animates in seconds (one orbit is 30 s at every fps), so
 every variant shows the same scene at the same moment on hardware.
 
 ```sh
-tools/build_variants.sh            # all four -> dist/variants/<name>.{uf2,elf,wasm}, sizes, check-float
+tools/build_variants.sh            # all five -> dist/variants/<name>.{uf2,elf,wasm}, sizes, check-float
 tools/build_variants.sh half30     # just one
 tools/check_render.mjs --variant cut20 [--frame F]...   # reference check (dist/variants/<name>.wasm; section 6)
 tools/bench_variants.sh [name...]  # badge-bench one orbit each; ~4 min per variant (--m3: section 10)
@@ -608,6 +608,7 @@ slice overran half30's 33.3 ms period on every converging update):
 | `cut20` (shipped) | 20 | 50,000 | 36,000 (unchanged from M4; the ELF's code is identical) |
 | `full15` | 15 | 66,666 | 52,666 |
 | `half30` | 30 | 33,333 | 19,333 |
+| `tufty20` | 20 | 50,000 | 36,000 |
 
 The reserve is the measured time a frozen update spends outside the
 deadline loop (input, `display()`, `dither.end_frame`, the overshoot of the

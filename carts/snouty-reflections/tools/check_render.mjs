@@ -3,7 +3,7 @@
 // units (PLAN.md M2 "Check frames", M3 "Reference and check").
 //
 //   node tools/check_render.mjs <preview.png> <ref.png> [--diff out.png] [--amp out.png]
-//   node tools/check_render.mjs --variant full20|cut20|full15|half30 [--wasm cart.wasm] [--out DIR]
+//   node tools/check_render.mjs --variant full20|cut20|full15|half30|tufty20 [--wasm cart.wasm] [--out DIR]
 //                               [--frame F]... [--t T [--orbit O]]... [--view P:T[:O[:H]]]...
 //                               [--preset P]... [--height H]... [--only] [--motion 0|1] [--ref-arg ARG]...
 //   node tools/check_render.mjs --identity --wasm new.wasm --baseline m2.2.wasm [--variant V]
@@ -87,7 +87,7 @@ const OUTLIER_UNITS = 6;
 function usage(msg) {
     if (msg) console.error(`check_render: ${msg}`);
     console.error("usage: node tools/check_render.mjs <preview.png> <ref.png> [--diff out.png] [--amp out.png]\n" +
-        "       node tools/check_render.mjs --variant full20|cut20|full15|half30 [--wasm cart.wasm] [--out DIR]\n" +
+        "       node tools/check_render.mjs --variant full20|cut20|full15|half30|tufty20 [--wasm cart.wasm] [--out DIR]\n" +
         "              [--frame F]... [--t T [--orbit O]]... [--view P:T[:O[:H]]]... [--preset P]... [--height H]...\n" +
         "              [--only] [--motion 0|1] [--ref-arg ARG]...\n" +
         "       node tools/check_render.mjs --identity --wasm new.wasm --baseline m2.2.wasm [--variant V]\n" +
@@ -219,7 +219,7 @@ function load(file) {
 // ---------------------------------------------------------------- variants and presets
 // PLAN.md "M2.1 Perf variants": frame rate per variant (the orbit is 30 s).
 // The reference flags live in reference.py's VARIANTS, selected with --variant.
-const VARIANTS = { full20: { fps: 20 }, cut20: { fps: 20 }, full15: { fps: 15 }, half30: { fps: 30 } };
+const VARIANTS = { full20: { fps: 20 }, cut20: { fps: 20 }, full15: { fps: 15 }, half30: { fps: 30 }, tufty20: { fps: 20 } };
 // scene.Preset order (PLAN.md M3 "Fixed interfaces").
 const PRESETS = ["sunset", "midnight", "noon", "storm"];
 const DEFAULT_HEIGHT_MM = 1600, MIN_HEIGHT_MM = 1000, MAX_HEIGHT_MM = 1800;

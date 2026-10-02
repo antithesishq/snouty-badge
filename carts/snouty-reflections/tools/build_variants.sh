@@ -3,7 +3,7 @@
 # dist/variants/<name>.{uf2,elf,wasm}, runs the float check per variant and
 # prints .text + .data (budget 136 KB since M4) and .bss.
 #
-#   tools/build_variants.sh [name ...]     # from carts/snouty-reflections/; default all four
+#   tools/build_variants.sh [name ...]     # from carts/snouty-reflections/; default all five
 #
 # Each variant is a separate build at the repository root, so the root
 # zig-out/ is left holding the last one built. Takes a few minutes.
@@ -37,7 +37,7 @@ PY
 }
 
 variants=("$@")
-[ ${#variants[@]} -eq 0 ] && variants=(full20 cut20 full15 half30)
+[ ${#variants[@]} -eq 0 ] && variants=(full20 cut20 full15 half30 tufty20)
 
 mkdir -p "$out"
 summary=()

@@ -46,7 +46,7 @@ echo "emu: copied from $CART_SRC:$copied"
 # takes the enum type from the value, so the tag names are all that must match).
 cat > "$BUILD/build_options.zig" <<EOF
 pub const debug_overlay: bool = false;
-pub const reflections_variant: enum { full20, cut20, full15, half30 } = .$VARIANT;
+pub const reflections_variant: enum { full20, cut20, full15, half30, tufty20 } = .$VARIANT;
 EOF
 
 echo "emu: zig $(zig version): building build/bench.elf (variant $VARIANT)"

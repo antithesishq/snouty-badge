@@ -38,7 +38,7 @@ REAL_ELF = os.path.join(MONO, 'zig-out', 'firmware', 'snouty-reflections.elf')
 # M2.1 variant the bench ELF is built as (build.sh reads the same variable) and
 # its orbit length: one orbit is 30 s at every frame rate.
 VARIANT = os.environ.get('EMU_VARIANT', 'cut20')
-ORBIT = 30 * {'full20': 20, 'cut20': 20, 'full15': 15, 'half30': 30}[VARIANT]
+ORBIT = 30 * {'full20': 20, 'cut20': 20, 'full15': 15, 'half30': 30, 'tufty20': 20}[VARIANT]
 CHECK_FRAMES = [0, ORBIT // 2]
 SWEEP_FRAMES = list(range(0, ORBIT, ORBIT // 24))
 

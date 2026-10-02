@@ -109,7 +109,8 @@ bench_m21() {
     local VARIANTS="full20 600 47.0
 cut20 600 47.0
 full15 450 62.7
-half30 900 31.3"
+half30 900 31.3
+tufty20 600 ${TUFTY20_BUDGET:-78.3}"
     local want=("$@") rows=() status=0 name frames budget elf out row
     while read -r name frames budget; do
         if [ ${#want[@]} -gt 0 ] && [[ ! " ${want[*]} " =~ " $name " ]]; then continue; fi
@@ -139,7 +140,7 @@ half30 900 31.3"
 
 # ---------------------------------------------------------------- M3 mode
 M3_VARIANT="${M3_VARIANT:-cut20}"
-M3_BUDGET=47.0
+M3_BUDGET="${M3_BUDGET:-47.0}"   # tufty20: 78.3 (47.0 ms at 250 MHz, modelled at 150)
 M22_WORST=45.94          # PLAN.md M2.2 status, cut20 after the logo move
 STEP1_LIMIT=1.0          # PLAN.md M3 "Budget and bench" row 1
 

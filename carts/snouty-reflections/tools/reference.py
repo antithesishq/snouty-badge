@@ -1492,6 +1492,7 @@ VARIANTS = {
     "cut20": {"no_glass": True, "water_shadows": "off", **IRIS_CUT},
     "full15": {"fps": 15, "glass_primary": "env", **IRIS_CUT},
     "half30": {"fps": 30, "scale": 2},
+    "tufty20": {"glass_primary": "env", **IRIS_CUT},  # full15 at 20 fps
 }
 
 
