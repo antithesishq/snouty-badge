@@ -115,24 +115,39 @@ for circuit traces.
 |---|-----------------|--------|--------|-------------|------------------------------------------------------------------------------------------------------|
 | 1 | `ship.png`      | 32x24  | 3      | n/a (pose)  | Snouty in a small open-cockpit ship, facing right: 0 level, 1 banking up, 2 banking down. Snouty's head about 12 px tall, Iris emblem on the hull. Report the 6x6 hitbox. |
 | 2 | `thruster.png`  | 8x8    | 4      | 3           | Flame loop, drawn to sit against the ship's tail at a reported offset (e.g. (-6, 10) from ship cell origin). |
-| 3 | `bolt.png`      | 16x8   | 2      | 2           | Zapper bolt: Coral core, cream leading tip, 12x4 visible. Frame 1 is a slight flicker of frame 0.  |
+| 3 | `bolt.png`      | 16x8   | 6      | 2           | Player bolts, two flicker frames each (M6). 0-1 FUZZER zap: Coral core, cream leading tip, 12x4 visible. 2-3 ASSERT beam segment: 2 px Anti-White bar at y 3..4 over x 1..14 with Coral caps and glow (the cart also draws beams as rects). 4-5 BISECT seeker: purple dart pointing right, cream nose, about 9x6 body centred, short flickering tail. |
 | 4 | `bugs_small.png`| 8x8    | 4      | 4 (gnat)    | 0-1 gnat wing loop (6x6 visible, green). 2-3 round enemy bullet, 2-frame pulse (6x6 visible).       |
 | 5 | `bugs.png`      | 16x16  | 10     | 5           | 0-1 wasp (yellow/black, arrow silhouette), 2-3 beetle (dome, dark green, tan belly), 4-5 spider (round, 8 legs, eyes), 6-7 moth (triangle, big pale wings), 8 needle bullet (8x4 visible, horizontal), 9 spare (was a bomb pickup; the bomb was dropped 2026-09-27, so any 16x16 bug-themed extra is welcome or leave it blank). |
 | 6 | `boss.png`      | 48x48  | 5      | 6           | The Heisenbug: a big beetle/roach hybrid with a question-mark motif on its shell, facing left. 0-3 idle wing loop, 4 teleport silhouette (see 6). Visible ~44x40. |
 | 7 | `fx_small.png`  | 16x16  | 8      | 3           | 0-4 small explosion, 5-7 hit spark (8x8 visible centered, white/yellow).                           |
 | 8 | `fx_big.png`    | 32x32  | 6      | 4           | Big explosion for boss and player, orange/yellow/white, last frame dark debris.                    |
-| 9 | `hud.png`       | 12x8   | 4      | n/a         | 0 Snouty head icon (rewind stock; 10x6 visible, see the 2026-09-29 notes), 1 and 2 spare (were bomb icons; the fuel bar is drawn in code), 3 heart. 1 px transparent border. |
+| 9 | `hud.png`       | 12x8   | 4      | n/a         | 0 Snouty head icon (rewind stock; 10x6 visible, see the 2026-09-29 notes), 1 RETRY shield (M6; Coral heater shield, cream rim, 8x6 visible, drawn centred above the ship cell at y - 6 while the shield is up), 2 spare (was a bomb icon; the fuel bar is drawn in code), 3 heart. 1 px transparent border. |
 |10 | `title.png`     | 128x40 | 1      | n/a         | Lettering "SNOUTY BUGHUNT" in two lines ("SNOUTY" / "BUGHUNT"; the game was called "Snouty vs. the Bugs" until 2026-09-29), chunky 16-bit game logo style, Snouty purples with cream highlights and "BUGHUNT" in Coral. Transparent background. |
 |11 | `bg_far.png`    | 256x120| 1      | n/a         | Opaque, tiles seamlessly left-right. Deep space with a faint nebula and a distant "motherboard planet" horizon along the bottom third. Low contrast: everything here sits behind bullets. Up to 15 colors preferred. |
 |12 | `bg_near.png`   | 256x24 | 1      | n/a         | Transparent above, tiles seamlessly left-right. Circuit-board terrain: traces, pads, a chip or two, in teal and dark blue. Slightly higher contrast than far, still darker than any bullet. |
+|13 | `pickups.png`   | 16x16  | 6      | n/a         | M6 crates (SPEC.md 5.4), see the note below: 0 FUZZER "F", 1 ASSERT "A", 2 BISECT "B", 3 FORK (branching path), 4 RETRY (shield), 5 CORE HOURS (CPU chip). 1 px transparent border. |
 
 
-Optional, only after 1 to 12 are approved:
+**Crates (`pickups.png`, M6).** Bugs drop crates that grant a weapon, a
+fork, a retry shield or fuel (SPEC.md 5.4). Every crate is the same 14x14
+chamfered box: 1 px `#17121e` outline, a lit top row and left column, a
+shaded right column and bottom lip, and a 10x9 face carrying one bold
+glyph (5x7 letters, 1 px strokes, a 1 px drop shadow in the crate's shade
+tone). Colours: FUZZER Coral with a white `F`, ASSERT teal with a white
+`A`, BISECT green with a white `B`, FORK purple with a white Y-shaped
+branch (a fork in the path), RETRY cream with a Coral shield, CORE HOURS
+yellow with a dark CPU chip and its pins (the datacenter's core hours).
+Square, solid and boxy on purpose: enemy bullets are small round discs
+and 8x4 needles, bugs are irregular silhouettes, so a crate reads as
+neither. The six hues share their lit and shade tones to stay inside 15
+colours. The cart collides crates against the whole 32x24 ship cell.
+
+Optional, only after 1 to 13 are approved:
 
 | # | File              | Cell   | Frames | Notes                                                              |
 |---|-------------------|--------|--------|--------------------------------------------------------------------|
-|13 | `snouty_portrait.png` | 48x48 | 1  | Title-screen Snouty waving from the cockpit, for the title card. Not currently wanted: a bust-only placeholder was tried 2026-09-29 and dropped; the title card draws the ship sprite. |
-|14 | `bestiary.png`    | 16x16  | 5      | Clean single frames of each bug for the title bestiary.            |
+|14 | `snouty_portrait.png` | 48x48 | 1  | Title-screen Snouty waving from the cockpit, for the title card. Not currently wanted: a bust-only placeholder was tried 2026-09-29 and dropped; the title card draws the ship sprite. |
+|15 | `bestiary.png`    | 16x16  | 5      | Clean single frames of each bug for the title bestiary.            |
 
 ## 8. Delivery format (per study, mirrors Run Study 05)
 

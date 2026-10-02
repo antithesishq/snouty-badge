@@ -43,7 +43,9 @@ KEY = (255, 0, 255)  # convert_gfx maps this to palette index 0 (skipped by draw
 
 
 # --------------------------------------------------------------------------
-# Manifest. Must match PLAN.md "Asset contract" and build.zig `images`.
+# Manifest. Must match SPEC.md section 12, PLAN.md "Asset contract" and
+# build.zig `images`. M6 (2026-10-02): bolt.png grew to 6 cells (zap, assert
+# beam, bisect seeker), new pickups.png (six crates), hud.png cell 1 = shield.
 # --------------------------------------------------------------------------
 @dataclass(frozen=True)
 class Sheet:
@@ -68,12 +70,13 @@ MANIFEST: dict[str, Sheet] = {
     for s in [
         Sheet("ship.png", 96, 24, 32, 24, 3, True),
         Sheet("thruster.png", 32, 8, 8, 8, 4, True),
-        Sheet("bolt.png", 32, 8, 16, 8, 2, True),
+        Sheet("bolt.png", 96, 8, 16, 8, 6, True),
         Sheet("bugs_small.png", 32, 8, 8, 8, 4, True),
         Sheet("fx_small.png", 128, 16, 16, 16, 8, True),
         Sheet("hud.png", 48, 8, 12, 8, 4, True),
         Sheet("bg_far.png", 256, 120, 256, 120, 1, False, tile_x=True),
         Sheet("bg_near.png", 256, 24, 256, 24, 1, True, tile_x=True),
+        Sheet("pickups.png", 96, 16, 16, 16, 6, True),
         # Later milestones (ASSETS.md section 7). Accepted from a study but
         # only useful once build.zig lists them.
         Sheet("bugs.png", 160, 16, 16, 16, 10, True),
@@ -314,8 +317,17 @@ def draw_thruster() -> np.ndarray:
 
 
 # --------------------------------------------------------------------------
-# bolt.png  (2 cells 16x8). 12x4 visible at x 2..13, y 2..5. Coral core,
-# cream leading tip on the right, dark red tail.
+# bolt.png  (6 cells 16x8, one per player bolt kind, two flicker frames
+# each; SPEC.md 5.4).
+#   0-1 FUZZER zap: 12x4 visible at x 2..13, y 2..5. Coral core, cream
+#       leading tip on the right, dark red tail (unchanged since M1).
+#   2-3 ASSERT beam segment: a 2 px Anti-White bar at y 3..4 over x 1..14
+#       with Coral end caps and a Coral glow on y 2 and 5; frame 1 has a
+#       shorter glow and two cream glints in the core. The cart draws beams as rects (thickness by
+#       level); these cells are the fallback / tile for a beam segment.
+#   4-5 BISECT seeker: an 9x6 purple dart pointing right at x 4..12, y 1..6
+#       (body centred on the cell), swept fins, cream nose, and a short
+#       purple/cream tail at x 1..3 that grows by a pixel in frame 1.
 # --------------------------------------------------------------------------
 BOLT_CMAP = {"o": OUTLINE, "R": DARKRED, "r": RED, "C": CORAL, "c": CREAM,
              "w": ANTIWHITE, "p": PURPLE2}
@@ -339,9 +351,48 @@ BOLTS = [
 ]
 
 
+BEAMS = [
+    ["................",
+     "................",
+     "..CCCCCCCCCCCC..",
+     ".CwwwwwwwwwwwwC.",
+     ".CwwwwwwwwwwwwC.",
+     "..CCCCCCCCCCCC..",
+     "................",
+     "................"],
+    ["................",
+     "................",
+     "...CCCCCCCCCC...",
+     ".CwwwcwwwwwcwwC.",
+     ".CwwcwwwwwcwwwC.",
+     "...CCCCCCCCCC...",
+     "................",
+     "................"],
+]
+SEEKERS = [
+    ["................",
+     "....ooo.........",
+     "....o44oo.......",
+     "..4co4444ccwo...",
+     "..3co3333ccwo...",
+     "....o22oo.......",
+     "....ooo.........",
+     "................"],
+    ["................",
+     "....ooo.........",
+     "....o44oo.......",
+     ".c4co4444ccwo...",
+     ".p3co3333ccwo...",
+     "....o22oo.......",
+     "....ooo.........",
+     "................"],
+]
+BOLT_CMAP.update({"2": PURPLE2, "3": PURPLE3, "4": PURPLE4})
+
+
 def draw_bolt() -> np.ndarray:
     a = new_sheet(MANIFEST["bolt.png"])
-    for i, f in enumerate(BOLTS):
+    for i, f in enumerate(BOLTS + BEAMS + SEEKERS):
         paint(a, f, i * 16, 0, BOLT_CMAP)
     return a
 
@@ -512,8 +563,12 @@ def draw_fx_small() -> np.ndarray:
 
 
 # --------------------------------------------------------------------------
-# hud.png (4 cells 12x8, 1 px transparent border): Snouty head (rewind
-# stock), two spares (were the bomb icons), heart. The head cell went from
+# hud.png (4 cells 12x8, 1 px transparent border): 0 Snouty head (rewind
+# stock), 1 RETRY shield (M6: floats centred above the ship cell at y - 6
+# while the shield is up; 8x6 visible, a Coral heater shield with a cream
+# rim, red on the shaded right side and a glint top left; wide, flat-topped
+# and straight-sided so it never reads as the red heart in cell 3), 2 spare
+# (was a bomb icon), 3 heart. The head cell went from
 # 8x8 to 12x8 on 2026-09-29: at 6x6 visible the profile read as a rat (a
 # tapering snout and a 1 px ear). 10x6 fits the real features: a round 2 px
 # ear on the back of the dome, a 2x2 cream eye with a forward pupil and a
@@ -531,15 +586,17 @@ HUD_HEAD = [
     ".2222...222.",
     "............",
 ]
-HUD_SMALL = [  # 8x8 designs, centred in the 12x8 cell
-    ["........",
-     "..cccc..",
-     ".cooooc.",
-     ".coCCoc.",
-     ".coCCoc.",
-     ".cooooc.",
-     "..cccc..",
-     "........"],
+HUD_SHIELD = [
+    "............",
+    "..cccccccc..",
+    "..cCwCCCrc..",
+    "..cCCCCCrc..",
+    "..cCCCCCrc..",
+    "...cCCCrc...",
+    "....cccc....",
+    "............",
+]
+HUD_SMALL = [  # 8x8 designs, centred in the 12x8 cell (cells 2 and 3)
     ["........",
      "..gggg..",
      ".goooog.",
@@ -563,8 +620,97 @@ def draw_hud() -> np.ndarray:
     sheet = MANIFEST["hud.png"]
     a = new_sheet(sheet)
     paint(a, HUD_HEAD, 0, 0, HUD_CMAP)
+    paint(a, HUD_SHIELD, sheet.cell_w, 0, HUD_CMAP)
     for i, f in enumerate(HUD_SMALL):
-        paint(a, f, (i + 1) * sheet.cell_w + 2, 0, HUD_CMAP)
+        paint(a, f, (i + 2) * sheet.cell_w + 2, 0, HUD_CMAP)
+    return a
+
+
+# --------------------------------------------------------------------------
+# pickups.png (6 cells 16x16, M6 crates, SPEC.md 5.4): 0 FUZZER "F",
+# 1 ASSERT "A", 2 BISECT "B", 3 FORK (a branching path), 4 RETRY (shield),
+# 5 CORE HOURS (a CPU chip with pins). Every crate is the same 14x14
+# chamfered box at x 1..14, y 1..14: 1 px dark outline, a lit top row and
+# left column, a shaded right column and bottom lip, and a 10x9 face that
+# carries a 5x7 glyph (1 px strokes) with a 1 px drop shadow to the lower
+# right. Square, solid and boxy on purpose: the enemy bullets are small
+# round discs and needles and the bugs are irregular silhouettes, so a
+# crate never reads as either. Fifteen colours shared by six hues (the
+# light/shade tones double up across crates to stay inside 4 bits).
+# --------------------------------------------------------------------------
+LIGHTTEAL = hx("8fe3d6")  # assert crate lit edge (teal family, one step up)
+CRATE = [
+    "................",
+    "..oooooooooooo..",
+    ".ohhhhhhhhhhhho.",
+    ".ohbbbbbbbbbbso.",
+    ".ohbbbbbbbbbbso.",
+    ".ohbbbbbbbbbbso.",
+    ".ohbbbbbbbbbbso.",
+    ".ohbbbbbbbbbbso.",
+    ".ohbbbbbbbbbbso.",
+    ".ohbbbbbbbbbbso.",
+    ".ohbbbbbbbbbbso.",
+    ".ohbbbbbbbbbbso.",
+    ".ohbbbbbbbbbbso.",
+    ".osssssssssssso.",
+    "..oooooooooooo..",
+    "................",
+]
+GLYPHS = {
+    "F": ["#####", "#....", "#....", "####.", "#....", "#....", "#...."],
+    "A": [".###.", "#...#", "#...#", "#####", "#...#", "#...#", "#...#"],
+    "B": ["####.", "#...#", "#...#", "####.", "#...#", "#...#", "####."],
+    # a fork in a path: two branch tips with nodes, merging into one trunk
+    "Y": ["#...#", "#...#", ".#.#.", "..#..", "..#..", "..#..", ".###."],
+}
+# Full-face glyphs (drawn as is, no drop shadow), 10x9 at face (3, 3).
+RETRY_FACE = [
+    "..........",
+    ".oooooooo.",
+    ".oCCwCCro.",
+    ".oCwCCCro.",
+    ".oCCCCCro.",
+    ".oCCCCCro.",
+    "..oCCCro..",
+    "...oCro...",
+    "....oo....",
+]
+CHIP_FACE = [
+    "..........",
+    "...o.o.o..",
+    "..ooooooo.",
+    ".ooOOOOOoo",
+    "..oOwwwOo.",
+    ".ooOwwwOoo",
+    "..oOOOOOo.",
+    "..ooooooo.",
+    "...o.o.o..",
+]
+CRATES = [  # glyph, body, lit edge, shade, glyph colour
+    ("F", CORAL, CREAM, RED, ANTIWHITE),
+    ("A", TEAL, LIGHTTEAL, DARKTEAL, ANTIWHITE),
+    ("B", GREEN, LIGHTGREEN, DARKTEAL, ANTIWHITE),
+    ("Y", PURPLE3, PURPLE4, PURPLE2, ANTIWHITE),
+    (RETRY_FACE, CREAM, ANTIWHITE, TAN, CORAL),
+    (CHIP_FACE, YELLOW, CREAM, TAN, OUTLINE),
+]
+
+
+def draw_pickups() -> np.ndarray:
+    a = new_sheet(MANIFEST["pickups.png"])
+    for i, (glyph, body, lit, shade, ink) in enumerate(CRATES):
+        cmap = {"o": OUTLINE, "h": lit, "b": body, "s": shade, "#": ink, "d": shade,
+                "C": CORAL, "r": RED, "w": ANTIWHITE, "O": OUTLINE}
+        x0 = i * 16
+        paint(a, CRATE, x0, 0, cmap)
+        if isinstance(glyph, str):
+            g = GLYPHS[glyph]
+            shadow = [r.replace("#", "d") for r in g]
+            paint(a, shadow, x0 + 6, 5, cmap)
+            paint(a, g, x0 + 5, 4, cmap)
+        else:
+            paint(a, glyph, x0 + 3, 3, cmap)
     return a
 
 
@@ -729,7 +875,8 @@ def draw_bg_near() -> np.ndarray:
 
 # --------------------------------------------------------------------------
 # bugs.png (10 cells 16x16, all enemies face left): 0-1 wasp, 2-3 beetle,
-# 4-5 spider, 6-7 moth, 8 needle bullet, 9 bomb pickup. Five distinct
+# 4-5 spider, 6-7 moth, 8 needle bullet, 9 spare (the old bomb pickup,
+# unused since the bomb was dropped; crates live in pickups.png). Five distinct
 # silhouettes (ASSETS.md section 5): arrow, dome, round-with-legs, delta.
 # --------------------------------------------------------------------------
 DKGREEN = hx("24552a")  # beetle shell shadow (placeholder mix, bug greens)
@@ -881,7 +1028,7 @@ NEEDLE = [  # 8x4 visible at x 4..11, y 6..9: centered, cell top-left = center -
 
 
 def bomb_pickup() -> list[str]:
-    # hud.png's bomb icon at 16x16: cream ring, dark gap, Coral iris with a
+    # Spare cell (unused by the cart). hud.png's old bomb icon at 16x16: cream ring, dark gap, Coral iris with a
     # red pupil and a cream catch-light.
     def f(x, y):
         d = math.hypot(x - 7.5, y - 7.5)
@@ -1274,6 +1421,7 @@ PLACEHOLDER_DRAW = {
     "bugs_small.png": draw_bugs_small,
     "fx_small.png": draw_fx_small,
     "hud.png": draw_hud,
+    "pickups.png": draw_pickups,
     "bg_far.png": draw_bg_far,
     "bg_near.png": draw_bg_near,
     "bugs.png": draw_bugs,
@@ -1452,11 +1600,17 @@ def mockup() -> np.ndarray:
     put("thruster.png", 0, 10, 60)
     for x in (52, 76):
         put("bolt.png", 0, x, 60)
+    for x in (44, 68):            # assert beam segments, the row above
+        put("bolt.png", 2, x, 50)
+    put("bolt.png", 4, 58, 70)    # bisect seeker
     for cx, cy in [(100, 76), (92, 82), (108, 70), (72, 40), (64, 92)]:
         put("bugs_small.png", 2 + (cx // 4) % 2, cx - 4, cy - 4)
     for cx, cy in [(120, 90), (104, 94), (88, 98), (60, 30)]:
         put("bugs.png", 8, cx - 8, cy - 8)  # needle: center - (8, 8)
-    put("bugs.png", 9, 140, 60)   # bomb pickup
+    put("pickups.png", 0, 140, 58)  # crates (M6): fuzzer, fork, retry
+    put("pickups.png", 3, 142, 36)
+    put("pickups.png", 4, 40, 84)
+    put("hud.png", 1, 26, 46)     # retry shield over the ship (x + 10, y - 6)
     put("fx_small.png", 2, 126, 100)
     put("fx_big.png", 2, 40, 12)
     f[1:7, 68:100] = ANTIWHITE      # fuel bar frame (drawn in code)
