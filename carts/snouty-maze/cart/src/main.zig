@@ -45,7 +45,45 @@ pub fn start() void {
     cart.set_vsync_enabled(1000.0 / 60.0);
     cart.set_double_buffer_mode(.no_copy_full_frame);
     textures.init();
-    reseed(cart.rand());
+    reseed(if (clock_seeded) cart.rand() ^ clock_mix() else cart.rand());
+}
+
+/// Badge builds only: cart.rand() samples a register that reads 0 on the
+/// RP2350 (the SYCL badge and the Tufty alike), so the seed always fell
+/// back to rng's fixed constant and every boot walked the same mazes. The
+/// badge build mixes in the microsecond clock instead: in an arcade start()
+/// runs when someone picks the cart, so it varies; and the first button
+/// press stirs the stream once more, for a power-on straight into the cart
+/// (the first maze is then fixed, the ones after it are not). Every wasm
+/// build keeps cart.rand() alone (preview.mjs --seed still reproduces runs
+/// through debug_set_seed).
+const clock_seeded = !cart.is_wasm;
+var stirred = false;
+
+/// The microsecond clock through murmur3's 32-bit finaliser, so nearby
+/// times give unrelated seeds.
+fn clock_mix() u32 {
+    const t = cart.micros_since_boot();
+    var h: u32 = @as(u32, @truncate(t)) ^ @as(u32, @truncate(t >> 32)) ^ 0x9e3779b9;
+    h ^= h >> 16;
+    h *%= 0x85ebca6b;
+    h ^= h >> 13;
+    h *%= 0xc2b2ae35;
+    h ^= h >> 16;
+    return h;
+}
+
+/// On the first press of any button, xor the clock into the rng state
+/// (never leaving it 0, which xorshift cannot leave).
+fn stir_on_first_press() void {
+    if (stirred) return;
+    const any = input.pressed(.a) or input.pressed(.b) or input.pressed(.start) or
+        input.pressed(.select) or input.pressed(.up) or input.pressed(.down) or
+        input.pressed(.left) or input.pressed(.right);
+    if (!any) return;
+    stirred = true;
+    random.state ^= clock_mix();
+    if (random.state == 0) random.state = 0x9e3779b9;
 }
 
 fn reseed(s: u32) void {
@@ -63,6 +101,7 @@ fn new_maze() void {
 
 pub fn update() void {
     input.update(read_controls());
+    if (clock_seeded) stir_on_first_press();
 
     // B+Select (either order) toggles fly, compiled in only with
     // -Ddebug_overlay=true (debug_set_camera still enters fly on wasm);
