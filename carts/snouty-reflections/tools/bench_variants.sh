@@ -40,7 +40,8 @@
 #   5 frozen    sunset, midnight, noon: tools/scripts/m4_freeze_<preset>.json
 #               (preset by Select, A at update 100), 1300 updates: 1,199
 #               frozen updates after the A update. Gate: every frozen
-#               update's busy ms at most 47.0 ms. The A update itself
+#               update's busy ms at most the frame period minus 3 ms
+#               (47.0 ms at 20 fps, 30.33 ms for half30). The A update itself
 #               (real-time frame + pt.begin) is shown apart ("A upd").
 #               Report: passes after the run, the update at which done()
 #               (passes reach 256), the seconds from A to 256 passes at 20
@@ -230,9 +231,15 @@ EOF
 }
 
 # ---------------------------------------------------------------- M4 mode
-M4_BUDGET=47.0
+# The frame rate and the frozen-update gate follow the variant (review G3):
+# the period minus 3 ms, 47.0 ms at 20 fps as M4 set it, 30.33 at 30 fps.
+case "$M3_VARIANT" in
+    full15) M4_FPS=15 ;;
+    half30) M4_FPS=30 ;;
+    *) M4_FPS=20 ;;
+esac
+M4_BUDGET=$(python3 -c "print(f'{1000 / $M4_FPS - 3:.2f}')")
 M4_FRAMES=1300           # A at update 100, then 1,200 frozen updates
-M4_FPS=20
 M4_MAX_PASSES=256        # pt.max_passes
 M4_MOVE_LIMIT="${M4_MOVE_LIMIT:-0.1}"
 M4_SCRIPTS="${M4_SCRIPTS:-$CART_DIR/tools/scripts}"   # where m4_freeze_*.json and m4_frozen_stick.json live
@@ -261,7 +268,7 @@ bench_pt() {
     local out="$CART_DIR/out/bench_m4_$name"
     "$BENCH" --version >/dev/null || { echo "bench_variants: badge-bench setup failed" >&2; return 1; }
     echo "bench_variants: row $name: $frames frames ($elf, $(basename "$script"))" >&2
-    PYTHONPATH="$ROOT/badge-bench" "$ROOT/badge-bench/.venv/bin/python" - "$elf" "$script" "$frames" "$out" \
+    M4_BUDGET="$M4_BUDGET" PYTHONPATH="$ROOT/badge-bench" "$ROOT/badge-bench/.venv/bin/python" - "$elf" "$script" "$frames" "$out" \
         >/dev/null <<'PY' || { echo "bench_variants: badge-bench failed for row $name" >&2; return 1; }
 import json, os, sys
 import badge_bench.cli as CLI
@@ -312,7 +319,7 @@ def run_hooked(*a, **kw):
     return run(*a, **kw)
 RUN.run = run_hooked
 
-rc = CLI.main([elf_path, "--script", script, "--frames", frames, "--every", frames, "--budget-ms", "47.0",
+rc = CLI.main([elf_path, "--script", script, "--frames", frames, "--every", frames, "--budget-ms", os.environ.get("M4_BUDGET", "47.0"),
                "--json", "--out", out])
 if rc == 0:
     p = os.path.join(out, "bench.json")

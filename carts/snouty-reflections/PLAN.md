@@ -1445,3 +1445,17 @@ status; tag `snouty-reflections/m4`; merge to main.
   - `docs/preview_m4_freeze.gif` (5 s attract, freeze, first passes, then
     a time lapse to 256 passes), `docs/m4_freeze_strip.png`. Tagged
     `snouty-reflections/m4`.
+- 2026-10-02 (review G3, workstream C7): the frozen slice was a fixed
+  36 ms, which assumed cut20's 50 ms frame; half30 (30 fps) overran its
+  33.3 ms period on every converging update. `pt.slice_us` is now
+  `variant.pt_slice_for(fps)`: the frame period minus `pt_reserve_us`
+  (14 ms, the measured ~7 ms outside the deadline loop plus margin).
+  cut20 and full20 keep 36 ms (cut20's code is byte-identical), full15
+  52.7 ms, half30 19.3 ms, so half30 stays at 30 fps frozen. Bench row 5
+  (now gated at the variant's period minus 3 ms): half30 worst 26.16 /
+  26.24 / 26.30 ms (sunset / midnight / noon) against 30.33, ~140 passes
+  in 40 s; cut20 unchanged (docs/RUNNING.md section 12). Host test:
+  `tools/check_variants.sh`. **Show-day check:** hardware pacing of half30
+  frozen mode cannot be seen in the simulator (it traces a fixed column
+  count per update); on a badge, freeze a half30 build and confirm the OS
+  fps overlay stays at 30 while the image converges.

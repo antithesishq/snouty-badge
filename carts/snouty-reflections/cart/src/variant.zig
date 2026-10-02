@@ -61,14 +61,55 @@ const iris_cut: Config = .{ .fps = 0, .iris_in_chrome = false, .iris_in_water = 
 /// budget allows noon's but not the rings (33.1 ms in sunset with them).
 const m3_cut: Config = .{ .fps = 0, .rings = false, .noon_shadows = false, .noon_third_sphere = false };
 
-const config: Config = switch (variant) {
-    .full20 => .{ .fps = 20, .iris_in_chrome = iris_cut.iris_in_chrome, .iris_in_water = iris_cut.iris_in_water, .iris_samples = iris_cut.iris_samples, .rings = m3_cut.rings, .noon_shadows = m3_cut.noon_shadows, .noon_third_sphere = m3_cut.noon_third_sphere },
-    .cut20 => .{ .fps = 20, .glass_enabled = false, .water_shadows = .off, .iris_in_chrome = iris_cut.iris_in_chrome, .iris_in_water = iris_cut.iris_in_water, .iris_samples = iris_cut.iris_samples, .rings = m3_cut.rings, .noon_shadows = m3_cut.noon_shadows, .noon_third_sphere = m3_cut.noon_third_sphere, .class_split = true },
-    .full15 => .{ .fps = 15, .glass_primary = .env, .iris_in_chrome = iris_cut.iris_in_chrome, .iris_in_water = iris_cut.iris_in_water, .iris_samples = iris_cut.iris_samples, .rings = m3_cut.rings, .noon_shadows = m3_cut.noon_shadows, .noon_third_sphere = m3_cut.noon_third_sphere },
-    .half30 => .{ .fps = 30, .render_scale = 2, .rings = m3_cut.rings },
-};
+/// The table for every variant (`config_of(variant)` is this build's).
+pub fn config_of(v: Variant) Config {
+    return switch (v) {
+        .full20 => .{ .fps = 20, .iris_in_chrome = iris_cut.iris_in_chrome, .iris_in_water = iris_cut.iris_in_water, .iris_samples = iris_cut.iris_samples, .rings = m3_cut.rings, .noon_shadows = m3_cut.noon_shadows, .noon_third_sphere = m3_cut.noon_third_sphere },
+        .cut20 => .{ .fps = 20, .glass_enabled = false, .water_shadows = .off, .iris_in_chrome = iris_cut.iris_in_chrome, .iris_in_water = iris_cut.iris_in_water, .iris_samples = iris_cut.iris_samples, .rings = m3_cut.rings, .noon_shadows = m3_cut.noon_shadows, .noon_third_sphere = m3_cut.noon_third_sphere, .class_split = true },
+        .full15 => .{ .fps = 15, .glass_primary = .env, .iris_in_chrome = iris_cut.iris_in_chrome, .iris_in_water = iris_cut.iris_in_water, .iris_samples = iris_cut.iris_samples, .rings = m3_cut.rings, .noon_shadows = m3_cut.noon_shadows, .noon_third_sphere = m3_cut.noon_third_sphere },
+        .half30 => .{ .fps = 30, .render_scale = 2, .rings = m3_cut.rings },
+    };
+}
+
+const config: Config = config_of(variant);
 
 pub const fps: u32 = config.fps;
+
+// ---- Frozen path tracer pacing (pt.zig, review G3) ----
+
+/// Microseconds of every frozen update kept free of path tracing: what
+/// runs outside pt.step's deadline loop (input, pt.display()'s full-screen
+/// dither, dither.end_frame, the overshoot of the column that crosses the
+/// deadline; 6.9 ms worst in the M4 cut20 bench, 42.89 ms busy for a
+/// 36 ms slice, docs/RUNNING.md "Frozen path tracer pacing" for every
+/// variant) plus the M4 gate's margin to the period and some slack for
+/// the vsync wait. Shared by every variant: display() does not depend on
+/// the render scale, and the frozen scene is the same in every variant.
+pub const pt_reserve_us: u32 = 14_000;
+
+/// The vsync period at `f` frames per second, in whole microseconds.
+pub fn frame_period_us(f: u32) u32 {
+    return 1_000_000 / f;
+}
+
+/// Tracing time per frozen update at `f` frames per second: the frame
+/// period minus `pt_reserve_us`. cut20 (50 ms): 36 ms, as M4 shipped;
+/// half30 (33.3 ms): 19.3 ms, so frozen mode keeps 30 fps.
+pub fn pt_slice_for(f: u32) u32 {
+    return frame_period_us(f) - pt_reserve_us;
+}
+
+/// This build's slice (pt.slice_us).
+pub const pt_slice_us: u32 = pt_slice_for(config.fps);
+
+comptime {
+    // Every variant leaves time for the display after its slice.
+    for (@typeInfo(Variant).@"enum".field_values) |raw| {
+        const v: Variant = @fromBackingInt(raw);
+        const f = config_of(v).fps;
+        if (f == 0 or frame_period_us(f) <= pt_reserve_us) @compileError("pt slice: frame period too short for pt_reserve_us");
+    }
+}
 pub const render_scale: u32 = config.render_scale;
 pub const glass_enabled: bool = config.glass_enabled;
 pub const water_shadows: scene.WaterShadows = config.water_shadows;

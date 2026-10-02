@@ -584,8 +584,43 @@ top of the M4 section (or the environment). The ELF cache is the M3 one:
 run `REBUILD=1` after changing the cart. Reports land in
 `out/bench_m4_<row>/`; `BENCH_FRAMES=N` shortens the runs.
 
+`M3_VARIANT=half30 tools/bench_variants.sh --m4 5` benches another
+variant: the row 5 gate and the seconds-to-256 figure follow its frame
+rate (the period minus 3 ms: 47.0 ms at 20 fps, 63.67 at 15, 30.33 at 30).
+
 ```sh
 tools/bench_variants.sh --m4              # rows 5, 6, 1, 2 (about 20 to 25 minutes on an idle VM)
 REBUILD=1 tools/bench_variants.sh --m4 5  # rebuild the ELFs first, row 5 only
 M3_ROW1=45.60 tools/bench_variants.sh --m4 1
 ```
+
+## 12. Frozen path tracer pacing
+
+On the badge `pt.step` traces whole columns until `pt.slice_us` after the
+start of the update, then `display()` dithers the accumulator. The slice is
+the variant's frame period minus `variant.pt_reserve_us` (14,000 us), so
+every variant keeps its frame rate while frozen (review G3: a fixed 36 ms
+slice overran half30's 33.3 ms period on every converging update):
+
+| Variant | fps | Period (us) | Slice (us) |
+|---------|-----|-------------|------------|
+| `full20` | 20 | 50,000 | 36,000 |
+| `cut20` (shipped) | 20 | 50,000 | 36,000 (unchanged from M4; the ELF's code is identical) |
+| `full15` | 15 | 66,666 | 52,666 |
+| `half30` | 30 | 33,333 | 19,333 |
+
+The reserve is the measured time a frozen update spends outside the
+deadline loop (input, `display()`, `dither.end_frame`, the overshoot of the
+column that crosses the deadline) plus margin. Measured with
+`tools/bench_variants.sh --m4 5` (calibrated busy ms, worst frozen update
+minus the slice): cut20 6.89 ms (M4: 42.89 ms worst for a 36 ms slice),
+half30 6.97 ms (26.30 ms worst for 19.33 ms, 2026-10-02). With 14 ms
+reserved, half30's worst frozen update is 26.30 ms against a 30.33 ms gate;
+at 30 fps it reaches about 140 passes in the 40 s the row runs (212 to 228
+busy ms per pass) where cut20 reaches 256 in about 58 s.
+`tools/check_variants.sh` (host test, `tests/variant_unit.zig`) checks
+slice < period for every variant in `build.zig`'s enum; `variant.zig` also
+refuses at compile time a variant whose period is not longer than the
+reserve. The simulator traces a fixed `pt.wasm_columns_per_update` instead
+of timing, so frozen pacing is a badge-bench and show-day check only.
+

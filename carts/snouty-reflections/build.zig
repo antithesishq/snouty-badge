@@ -39,6 +39,24 @@ pub fn add(b: *Build, sycl_badge_dep: *Build.Dependency, opts: common.Options) v
     // `zig build check-float` (shared step): install, then fail if the cart ELF links any
     // soft-float or libm routine (f64 math, or f32 work the M33 FPU cannot do).
     common.add_float_check(b, opts, "snouty-reflections", opts.cart_mode);
+
+    // `zig build test` (shared step): the variant table's host test
+    // (tests/variant_unit.zig, review 2026-10-01 G3): the frozen path tracer's
+    // slice is shorter than the frame period in every variant. variant.zig is
+    // pure apart from build_options, so it runs with the selected options.
+    const variant_host = b.createModule(.{
+        .root_source_file = b.path(dir ++ "cart/src/variant.zig"),
+        .target = b.graph.host,
+        .optimize = .Debug,
+        .imports = &.{.{ .name = "build_options", .module = options.createModule() }},
+    });
+    const variant_tests = b.addTest(.{ .root_module = b.createModule(.{
+        .root_source_file = b.path(dir ++ "tests/variant_unit.zig"),
+        .target = b.graph.host,
+        .optimize = .Debug,
+        .imports = &.{.{ .name = "variant", .module = variant_host }},
+    }) });
+    opts.test_step.dependOn(&b.addRunArtifact(variant_tests).step);
 }
 
 /// Perf variants; the table is in cart/src/variant.zig.

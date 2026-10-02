@@ -38,9 +38,11 @@ const dot = math.dot;
 
 /// Passes after which the image counts as converged and step() stops.
 pub const max_passes: u32 = 256;
-/// Tracing time per update (the rest of the 50 ms frame is display(), the
-/// dither and the overshoot of the last column).
-pub const slice_us: u32 = 36_000;
+/// Tracing time per update: the variant's frame period minus
+/// `variant.pt_reserve_us` (the rest is display(), the dither and the
+/// overshoot of the last column). cut20 36 ms of 50, half30 19.3 ms of
+/// 33.3 (review G3: a fixed 36 ms overran half30's 30 fps period).
+pub const slice_us: u32 = variant.pt_slice_us;
 /// wasm has no clock: step() traces exactly this many columns per update
 /// there. The integrator sets it from the bench rate.
 pub const wasm_columns_per_update: u32 = 36; // badge-bench cut20: 256 passes in ~1150 updates (4.5 per pass)
