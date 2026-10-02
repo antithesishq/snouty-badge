@@ -14,6 +14,11 @@
 //! each batch with `GEAR_SST_DIR` and collects the per-file lines it prints
 //! (PASS lines only with `GEAR_SST_VERBOSE=1`; failures and the summary
 //! always print).
+//!
+//! Without the directory the test is skipped (`error.SkipZigTest`), so
+//! `zig build test` counts it as a skip, not a pass. With
+//! `SNOUTY_FIXTURES=required` (set by `zig build test-z80-strict`) an absent
+//! directory is `error.FixtureMissing`, a failure.
 const std = @import("std");
 const core = @import("core");
 
@@ -254,7 +259,20 @@ fn run_file(gpa: std.mem.Allocator, text: []const u8, name: []const u8, quiet: b
 
 const default_dirs = [_][]const u8{ "carts/snouty-gear/tests/roms/z80/v1", "tests/roms/z80/v1" };
 
+/// True when `SNOUTY_FIXTURES=required` (the strict oracle step): absent
+/// fixtures fail instead of skipping.
+pub fn fixtures_required() bool {
+    const v = std.testing.environ.getPosix("SNOUTY_FIXTURES") orelse return false;
+    return std.mem.eql(u8, v, "required");
+}
+
 test "z80: SingleStepTests (tests/roms/z80/v1/*.json)" {
+    _ = try run_suite();
+}
+
+/// Runs every JSON file in the SingleStepTests directory and returns the
+/// number of cases executed; skips (or, strict, fails) when it is absent.
+pub fn run_suite() !u64 {
     const io = std.testing.io;
     const gpa = std.testing.allocator;
     const env_dir = std.testing.environ.getPosix("GEAR_SST_DIR");
@@ -270,8 +288,12 @@ test "z80: SingleStepTests (tests/roms/z80/v1/*.json)" {
         break;
     }
     if (!found) {
+        if (fixtures_required()) {
+            std.debug.print("z80: SingleStepTests FIXTURE MISSING: tests/roms/z80/v1 absent (tools/fetch_test_roms.sh --single-step)\n", .{});
+            return error.FixtureMissing;
+        }
         std.debug.print("z80: SingleStepTests skipped: tests/roms/z80/v1 absent (tools/fetch_test_roms.sh --single-step)\n", .{});
-        return;
+        return error.SkipZigTest;
     }
     defer dir.close(io);
 
@@ -307,4 +329,12 @@ test "z80: SingleStepTests (tests/roms/z80/v1/*.json)" {
     const ms = start.durationTo(std.Io.Timestamp.now(io, .awake)).toMilliseconds();
     std.debug.print("z80: SingleStepTests {d} files ({d} failed), {d} cases ({d} failed), {d} ms\n", .{ names.items.len, files_failed, cases, cases_failed, ms });
     try std.testing.expectEqual(@as(u64, 0), cases_failed);
+    if (names.items.len == 0) {
+        if (fixtures_required()) {
+            std.debug.print("z80: SingleStepTests FIXTURE MISSING: no .json files in the directory\n", .{});
+            return error.FixtureMissing;
+        }
+        return error.SkipZigTest;
+    }
+    return cases;
 }

@@ -60,7 +60,12 @@ flash image, `.data` + `.bss` the RAM) against SPEC.md section 13.
 zig build test-genesis -Dcart=snouty-genesis -Dcart-mode=xip   # this cart only
 zig build test                                                 # every cart's host tests
 zig build test-genesis -Dcart=snouty-genesis -Dcart-mode=xip -Dtest-filter=smoke
+zig build test-m68k-strict -Dcart=snouty-genesis -Dcart-mode=xip   # 68000 oracle only; fails if fixtures are absent
 ```
+
+Without `tests/roms/68000/*.json.gz` (`tools/fetch_test_roms.sh`) the
+default run reports the SingleStepTests as skipped, not passed;
+`test-m68k-strict` fails instead and prints the case counts.
 
 The size test prints `@sizeOf(Md)` and `@sizeOf(Keyframe)` (Zig shows a
 passing test's stderr with its command line; that is not a failure).

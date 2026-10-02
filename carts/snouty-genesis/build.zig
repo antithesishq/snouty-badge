@@ -120,6 +120,24 @@ pub fn add(b: *Build, sycl_badge_dep: *Build.Dependency, opts: common.Options) v
     opts.test_step.dependOn(&run.step);
     // This cart's tests alone (the shared `test` step runs every cart's).
     b.step("test-genesis", "Run snouty-genesis host tests").dependOn(&run.step);
+
+    // Strict 68000 oracle gate (not part of `test`): SingleStepTests with
+    // SNOUTY_FIXTURES=required, so absent fixtures fail instead of
+    // skipping. No fetch here: tools/fetch_test_roms.sh first.
+    const strict = b.addTest(.{
+        .name = "snouty-genesis-m68k-oracle",
+        .filters = &.{"m68k strict"},
+        .root_module = b.createModule(.{
+            .root_source_file = b.path(dir ++ "tests/m68k_oracle.zig"),
+            .target = b.graph.host,
+            .optimize = test_optimize,
+            .imports = &.{.{ .name = "core", .module = core_host }},
+        }),
+    });
+    const strict_run = b.addRunArtifact(strict);
+    strict_run.setEnvironmentVariable("SNOUTY_FIXTURES", "required");
+    strict_run.has_side_effects = true;
+    b.step("test-m68k-strict", "Run the snouty-genesis 68000 oracle tests; fail if fixtures are absent").dependOn(&strict_run.step);
 }
 
 /// `-Dmd-rom` as given: `~/x.bin` (expanded here, the shell leaves `=~`

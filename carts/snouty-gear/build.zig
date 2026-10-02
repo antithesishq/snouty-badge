@@ -70,7 +70,29 @@ pub fn add(b: *Build, sycl_badge_dep: *Build.Dependency, opts: common.Options) v
             .imports = &.{.{ .name = "core", .module = core_host }},
         }),
     });
-    opts.test_step.dependOn(&b.addRunArtifact(tests).step);
+    const run = b.addRunArtifact(tests);
+    // The tests read ROMs and fixtures at run time (not build inputs), so a
+    // cached result would hide a fixture appearing or vanishing: run every time.
+    run.has_side_effects = true;
+    opts.test_step.dependOn(&run.step);
+
+    // Strict Z80 oracle gate (not part of `test`): SingleStepTests, ZEXDOC
+    // and ZEXALL with SNOUTY_FIXTURES=required, so absent fixtures fail
+    // instead of skipping. No fetch here: tools/fetch_test_roms.sh first.
+    const strict = b.addTest(.{
+        .name = "snouty-gear-z80-oracle",
+        .filters = &.{"z80 strict"},
+        .root_module = b.createModule(.{
+            .root_source_file = b.path(dir ++ "tests/z80_oracle.zig"),
+            .target = b.graph.host,
+            .optimize = test_optimize,
+            .imports = &.{.{ .name = "core", .module = core_host }},
+        }),
+    });
+    const strict_run = b.addRunArtifact(strict);
+    strict_run.setEnvironmentVariable("SNOUTY_FIXTURES", "required");
+    strict_run.has_side_effects = true;
+    b.step("test-z80-strict", "Run the snouty-gear Z80 oracle tests; fail if fixtures are absent").dependOn(&strict_run.step);
 }
 
 const RomPath = struct { lazy: Build.LazyPath, text: []const u8 };

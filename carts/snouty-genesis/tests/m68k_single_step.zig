@@ -19,8 +19,10 @@
 //!
 //! Environment: `M68K_SST_DIR` (default tests/roms/68000 from the repo root
 //! or the cart), `M68K_SST_FILTER` (substring of the file name),
-//! `M68K_SST_SHOW` (failures printed per file, default 3). Skips cleanly
-//! when the directory is absent or empty.
+//! `M68K_SST_SHOW` (failures printed per file, default 3). Skipped
+//! (`error.SkipZigTest`, counted as a skip, not a pass) when the directory
+//! is absent or empty; with `SNOUTY_FIXTURES=required` (set by
+//! `zig build test-m68k-strict`) that is `error.FixtureMissing`, a failure.
 const std = @import("std");
 const core = @import("core");
 const m68k = core.m68k;
@@ -305,13 +307,13 @@ test "m68k: decode table and two-level decode agree on every opcode" {
 }
 
 test "m68k: SingleStepTests (tests/roms/68000/*.json.gz), fetch window" {
-    try suite(true, null);
+    _ = try suite(true, null);
 }
 
 /// The files whose instructions fetch the most (branches, jumps, returns,
 /// exceptions, long immediates), run again with the fetch going through
 /// `read16` (a bus without `code_window`).
-const bus_fetch_files = [_][]const u8{
+pub const bus_fetch_files = [_][]const u8{
     "Bcc.json.gz",     "BSR.json.gz",  "DBcc.json.gz",  "JMP.json.gz",
     "JSR.json.gz",     "RTS.json.gz",  "RTE.json.gz",   "RTR.json.gz",
     "TRAP.json.gz",    "CHK.json.gz",  "DIVU.json.gz",  "MOVE.l.json.gz",
@@ -319,10 +321,28 @@ const bus_fetch_files = [_][]const u8{
 };
 
 test "m68k: SingleStepTests, bus fetch (subset)" {
-    try suite(false, &bus_fetch_files);
+    _ = try suite(false, &bus_fetch_files);
 }
 
-fn suite(comptime window: bool, only: ?[]const []const u8) !void {
+/// True when `SNOUTY_FIXTURES=required` (the strict oracle step): absent
+/// fixtures fail instead of skipping.
+pub fn fixtures_required() bool {
+    const v = std.testing.environ.getPosix("SNOUTY_FIXTURES") orelse return false;
+    return std.mem.eql(u8, v, "required");
+}
+
+fn no_fixtures() error{ FixtureMissing, SkipZigTest } {
+    if (fixtures_required()) {
+        std.debug.print("m68k: SingleStepTests FIXTURE MISSING: no test files in tests/roms/68000 (tools/fetch_test_roms.sh)\n", .{});
+        return error.FixtureMissing;
+    }
+    std.debug.print("m68k: SingleStepTests skipped: no test files (tools/fetch_test_roms.sh)\n", .{});
+    return error.SkipZigTest;
+}
+
+/// Runs the SingleStepTests files (all, or those in `only`) and returns the
+/// number of cases executed; skips (or, strict, fails) without fixtures.
+pub fn suite(comptime window: bool, only: ?[]const []const u8) !u32 {
     const io = std.testing.io;
     const gpa = std.testing.allocator;
     const env = std.testing.environ;
@@ -338,10 +358,7 @@ fn suite(comptime window: bool, only: ?[]const []const u8) !void {
         found = true;
         break;
     }
-    if (!found) {
-        std.debug.print("m68k: SingleStepTests skipped: no test files (tools/fetch_test_roms.sh)\n", .{});
-        return;
-    }
+    if (!found) return no_fixtures();
     defer dir.close(io);
 
     var names: std.ArrayList([]u8) = .empty;
@@ -360,10 +377,7 @@ fn suite(comptime window: bool, only: ?[]const []const u8) !void {
         }
         try names.append(gpa, try gpa.dupe(u8, entry.name));
     }
-    if (names.items.len == 0) {
-        std.debug.print("m68k: SingleStepTests skipped: no test files (tools/fetch_test_roms.sh)\n", .{});
-        return;
-    }
+    if (names.items.len == 0) return no_fixtures();
     std.mem.sort([]u8, names.items, {}, struct {
         fn lt(_: void, x: []u8, y: []u8) bool {
             return std.mem.lessThan(u8, x, y);
@@ -404,6 +418,7 @@ fn suite(comptime window: bool, only: ?[]const []const u8) !void {
     std.debug.print("m68k: SingleStepTests ({s}) {d} files, {d} cases: {d} pass, {d} address-error (skipped), {d} disputed, {d} state fail, {d} cycle-only fail; {d} ms\n", .{ if (window) "fetch window" else "bus fetch", names.items.len, total.total, total.pass, total.addr, total.disputed, total.state, total.cycles, ms });
     try std.testing.expectEqual(@as(u32, 0), total.state);
     try std.testing.expectEqual(@as(u32, 0), total.cycles);
+    return total.total;
 }
 
 // ---- Unit tests: what SingleStepTests does not cover (interrupts, STOP,

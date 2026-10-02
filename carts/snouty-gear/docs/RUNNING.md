@@ -70,7 +70,13 @@ carts/snouty-gear/tools/fetch_test_roms.sh --single-step       # plus a 36-file 
 carts/snouty-gear/tools/fetch_test_roms.sh --single-step-all   # streams the whole 1.2 GB suite in batches, logs tests/roms/z80/results.txt
 zig build test                                 # every cart's host tests
 zig build test -Dtest-filter=bus               # only names containing "bus"
+zig build test-z80-strict -Dcart=snouty-gear   # Z80 oracles only; fails if a fixture is absent
 ```
+
+Without the fetched fixtures `zig build test` reports the SingleStepTests,
+ZEXDOC and ZEXALL tests as skipped, not passed; `test-z80-strict` runs them
+with `SNOUTY_FIXTURES=required` (ZEXALL in Debug too), fails on a missing
+fixture and prints the case counts.
 
 Test names carry a prefix per area, so `-Dtest-filter=` picks one:
 

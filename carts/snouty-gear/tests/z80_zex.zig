@@ -1,5 +1,6 @@
 //! ZEXDOC and ZEXALL, Maxim's SMS port v0.21 (tests/roms/zexdoc.sms and
-//! zexall.sms from tools/fetch_test_roms.sh; skipped with a note if absent).
+//! zexall.sms from tools/fetch_test_roms.sh; skipped (`error.SkipZigTest`)
+//! with a note if absent).
 //! They print through the SDSC debug console (port FD data, FC control),
 //! so a minimal bus of our own captures that text: ROM 0000-BFFF straight
 //! from the 64 KB file (no mapper; writes to FFFC-FFFF just land in RAM),
@@ -13,6 +14,9 @@
 //! binary takes minutes for that, so in Debug only ZEXDOC runs and ZEXALL is
 //! skipped with a note unless `GEAR_ZEXALL=1`; any release test build
 //! (`-Dtest-optimize=fast|safe|small`) runs both. `GEAR_ZEX=0` skips both.
+//! With `SNOUTY_FIXTURES=required` (set by `zig build test-z80-strict`) an
+//! absent ROM is `error.FixtureMissing`, ZEXALL runs in Debug too and
+//! `GEAR_ZEX=0` is ignored.
 const std = @import("std");
 const builtin = @import("builtin");
 const core = @import("core");
@@ -73,11 +77,17 @@ fn load(name: []const u8) ?[]const u8 {
     return null;
 }
 
-fn run_zex(name: []const u8) !void {
+/// Runs one ZEX ROM to "Tests complete" and returns its OK line count;
+/// skips (or, strict, fails) when the ROM is absent.
+pub fn run_zex(name: []const u8) !u32 {
     const io = std.testing.io;
     const rom = load(name) orelse {
+        if (fixtures_required()) {
+            std.debug.print("z80: {s} FIXTURE MISSING: tests/roms/{s} absent (tools/fetch_test_roms.sh)\n", .{ name, name });
+            return error.FixtureMissing;
+        }
         std.debug.print("z80: {s} skipped: tests/roms/{s} absent (tools/fetch_test_roms.sh)\n", .{ name, name });
-        return;
+        return error.SkipZigTest;
     };
     const bus = try std.testing.allocator.create(ZexBus);
     defer std.testing.allocator.destroy(bus);
@@ -115,22 +125,37 @@ fn run_zex(name: []const u8) !void {
         std.debug.print("z80: {s} FAILED ({s}), console text:\n{s}\n", .{ name, if (complete) "complete" else "T-state cap reached", text });
         return error.ZexFailed;
     }
+    return ok_lines;
 }
 
 fn env(name: []const u8) ?[]const u8 {
     return std.testing.environ.getPosix(name);
 }
 
+/// True when `SNOUTY_FIXTURES=required` (the strict oracle step).
+pub fn fixtures_required() bool {
+    const v = env("SNOUTY_FIXTURES") orelse return false;
+    return std.mem.eql(u8, v, "required");
+}
+
+fn zex_disabled() bool {
+    if (fixtures_required()) return false;
+    const v = env("GEAR_ZEX") orelse return false;
+    if (!std.mem.eql(u8, v, "0")) return false;
+    std.debug.print("z80: ZEX skipped: GEAR_ZEX=0\n", .{});
+    return true;
+}
+
 test "z80: zexdoc.sms" {
-    if (env("GEAR_ZEX")) |v| if (std.mem.eql(u8, v, "0")) return;
-    try run_zex("zexdoc.sms");
+    if (zex_disabled()) return error.SkipZigTest;
+    _ = try run_zex("zexdoc.sms");
 }
 
 test "z80: zexall.sms" {
-    if (env("GEAR_ZEX")) |v| if (std.mem.eql(u8, v, "0")) return;
-    if (builtin.mode == .debug and env("GEAR_ZEXALL") == null) {
+    if (zex_disabled()) return error.SkipZigTest;
+    if (builtin.mode == .debug and env("GEAR_ZEXALL") == null and !fixtures_required()) {
         std.debug.print("z80: zexall.sms skipped in a Debug build (GEAR_ZEXALL=1 or -Dtest-optimize=fast runs it)\n", .{});
-        return;
+        return error.SkipZigTest;
     }
-    try run_zex("zexall.sms");
+    _ = try run_zex("zexall.sms");
 }
