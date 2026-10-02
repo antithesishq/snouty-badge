@@ -26,6 +26,9 @@
 //! panel's bottom line (`scrub_line_y`) reads "Scrub: live / 3.5s" or
 //! "Scrub: -1.5 / 3.5s" (position behind live / history held), dim while
 //! there is no history, "Scrub: no memory" when the arena had no room.
+//! On Resume at the live position it names the action instead,
+//! "Left/Right: rewind" or "Rewind: no history", and a footer under it
+//! reads "B: back to game" (lib/hint.zig, review 2026-10-01 UX-05).
 //! Resuming from a scrubbed position plays on from there and drops the
 //! future. After a scrub step the panel gives way to that line in a bar at
 //! the bottom (`scrub_view`) so the restored frame, drawn by `rewind.step`,
@@ -46,6 +49,7 @@ const debug = @import("debug.zig");
 const input = @import("input.zig");
 const romsrc = @import("romsrc.zig");
 const rewind = @import("rewind.zig");
+const hint = @import("hint");
 
 pub const version = "0.3.0-m3";
 
@@ -198,14 +202,20 @@ fn adjust() void {
 
 const band_h = 36;
 const panel_x = 4;
-const panel_y = 40;
+/// The panel starts right under the band and runs to the bottom edge (it
+/// was y 40, 86 px, until the footer needed the 4 px: review 2026-10-01
+/// UX-05), rows 10 px as before.
+const panel_y = band_h;
 const panel_w = cart.screen_width - 2 * panel_x;
-const panel_h = 86;
+const panel_h = cart.screen_height - panel_y;
 const row_h = 10;
 const text_x = panel_x + 4;
 const first_row_y = panel_y + 3;
-/// The panel's bottom line (y 113): "Scrub: ...".
+/// The panel's bottom line (y 109): "Scrub: ...", or on Resume the
+/// rewind hint (`hint.resume_line`); "B: back" on About.
 pub const scrub_line_y = first_row_y + item_count * row_h;
+/// The footer under it (y 119): how to leave the menu (`hint.back`).
+const footer_y = scrub_line_y + row_h;
 /// The scrub bar shown after a step (`scrub_view`): the panel's bottom
 /// strip, so the panel hides it entirely when it comes back.
 const bar_h = 10;
@@ -216,8 +226,8 @@ const screen_cols = cart.screen_width / 8;
 /// Characters that fit inside the panel at the row text indent.
 const panel_cols = (panel_w - (text_x - panel_x) - 2) / 8;
 
-const band_color: cart.DisplayColor = .rgb(0x0A1A50);
-const title_color: cart.DisplayColor = .rgb(0xFFFFFF);
+pub const band_color: cart.DisplayColor = .rgb(0x0A1A50);
+pub const title_color: cart.DisplayColor = .rgb(0xFFFFFF);
 const name_color: cart.DisplayColor = .rgb(0xFFD040);
 const tagline_color: cart.DisplayColor = .rgb(0xB8C8F0);
 const panel_color: cart.DisplayColor = .rgb(0x000000);
@@ -287,8 +297,11 @@ fn draw(gg: *const core.Gg) void {
         }
         cart.text(.{ .str = label(item), .x = text_x, .y = y, .text_color = color });
     }
-    const live = rewind.keyframe_capacity() != 0 and rewind.history_frames() != 0;
-    cart.text(.{ .str = scrub_text(&buf), .x = text_x, .y = scrub_line_y, .text_color = if (live) row_color else dim_color });
+    const has_memory = rewind.keyframe_capacity() != 0;
+    const live = has_memory and rewind.history_frames() != 0;
+    const bottom = hint.resume_line(cursor == .resume_game, has_memory, rewind.depth_frames(), rewind.history_frames()) orelse scrub_text(&buf);
+    cart.text(.{ .str = bottom, .x = text_x, .y = scrub_line_y, .text_color = if (live) row_color else dim_color });
+    cart.text(.{ .str = hint.back, .x = text_x, .y = footer_y, .text_color = dim_color });
 }
 
 /// The scrub line for the current position, or "Scrub: no memory" when
@@ -468,6 +481,8 @@ fn check_width(comptime s: []const u8, comptime cols: usize) void {
 comptime {
     if (panel_cols != 18) @compileError("panel_cols changed: recheck the layout");
     if (scrub_line_y + row_h > panel_y + panel_h) @compileError("scrub line outside the panel");
+    if (footer_y + 8 > panel_y + panel_h - 1) @compileError("menu footer outside the panel");
+    if (hint.panel_cols != panel_cols) @compileError("hint.panel_cols does not match this panel");
     check_width(title, screen_cols);
     check_width(tagline_1, screen_cols);
     check_width(tagline_2, screen_cols);

@@ -9,6 +9,9 @@
 //! voice from the PSG (frontend/audio.zig). The time scrubber
 //! (frontend/rewind.zig, SPEC.md 10) records a keyframe every 30 game frames
 //! and the pad of every frame; the menu's Left/Right scrub through them.
+//! Control hints (lib/hint.zig): "Hold Select: menu" on the splash and in
+//! a strip at the bottom for the first 3 s of play (gone at the first
+//! fresh press); the menu has its own.
 //! See SPEC.md (design), PLAN.md (milestone contract), CLAUDE.md (toolchain).
 const cart = @import("cart-api");
 const core = @import("core");
@@ -21,6 +24,7 @@ const menu = @import("frontend/menu.zig");
 const splash = @import("frontend/splash.zig");
 const audio = @import("frontend/audio.zig");
 const rewind = @import("frontend/rewind.zig");
+const hint = @import("hint");
 
 comptime {
     cart.export_start_code();
@@ -36,6 +40,8 @@ var controls_state: input.State = .{};
 
 /// Menu opens since boot.
 var menu_opens: u32 = 0;
+/// "Hold Select: menu" over the first seconds of play (lib/hint.zig).
+var play_hint: hint.Overlay = .{};
 
 /// Badge frames since boot; paces the second chime note.
 var frames_seen: u32 = 0;
@@ -79,6 +85,7 @@ pub fn update() void {
             if (splash.update(controls_state.edge.any_pressed())) {
                 controls_state.suppress_held();
                 state = .running;
+                play_hint.start(hint.play_seconds * 60);
                 run_frame(t0);
             }
         },
@@ -103,6 +110,7 @@ pub fn update() void {
 fn run_frame(t1: u64) void {
     const in = controls_state.game_frame();
     if (in.open_menu) {
+        play_hint.stop();
         menu_opens += 1;
         state = .menu;
         menu.open();
@@ -120,6 +128,10 @@ fn run_frame(t1: u64) void {
     debug.record(@truncate(t2 -% t1));
     if (debug.enabled) romsrc.draw_report();
     debug.draw();
+    // A press held over from the splash is suppressed, not fresh.
+    const e = controls_state.edge;
+    const fresh = (input.Edge{ .prev = e.prev, .cur = e.cur & ~controls_state.suppress }).any_pressed();
+    play_hint.update_and_draw(cart, text.draw, fresh, cart.screen_height - hint.strip_h, menu.title_color, menu.band_color);
 }
 
 pub fn read_controls() cart.Controls {
