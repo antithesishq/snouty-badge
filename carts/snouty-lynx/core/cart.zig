@@ -13,14 +13,18 @@
 //!   units), bank 1 at 6, version at 8, cart name 10..41, manufacturer
 //!   42..57, rotation 58, AUDIN use 59, EEPROM type 60. The header is
 //!   trusted; data follows at offset 64. Files may be shorter than the bank
-//!   (homebrew often is): the missing bytes read 0xFF.
+//!   (homebrew often is): the missing bytes read 0xFF. Data past the
+//!   declared bank (trailing padding) is ignored, up to the same 512 KB of
+//!   data a headerless file may have: a headered file over 512 KB + 64
+//!   bytes is refused like a headerless one over 512 KB, never clipped.
 //! - Headerless (`.lyx`, or a raw dump named `.lnx`, SPEC.md 18.3): the
 //!   block size is inferred from the file size, rounded up to the next
 //!   supported bank (128 KB -> 512 B blocks, 256 KB -> 1 KB, 512 KB -> 2 KB).
 //!
 //! Refused (SPEC.md section 11, the same rules as tools/romcheck.py): a
-//! bank 1, a rotated screen, an unknown bank 0 size, a file over 512 KB,
-//! an empty file. An EEPROM is a warning, not a refusal (not emulated).
+//! bank 1, a rotated screen, an unknown bank 0 size, over 512 KB of data
+//! (a headerless file over 512 KB, a headered one over 512 KB + the 64-byte
+//! header), an empty file. An EEPROM is a warning, not a refusal (not emulated).
 //!
 //! Where the bytes live (embedded slice, the badge drive by pointer, the
 //! 13.1 packed cache) is the frontend's business: no romfs, cart-api or
@@ -113,6 +117,7 @@ pub fn parse(head: []const u8, file_size: u32) Layout {
         if (bank1 != 0) return refuse(l, .bank1);
         if (l.rotation != 0) return refuse(l, .rotation);
         if (file_size <= header_size) return refuse(l, .empty);
+        if (file_size - header_size > max_size) return refuse(l, .too_big);
         l.data_size = @min(file_size - header_size, l.bank_size());
         return l;
     }

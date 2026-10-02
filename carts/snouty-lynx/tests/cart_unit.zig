@@ -91,6 +91,29 @@ test "cart: headered refusals and the EEPROM warning" {
     try testing.expect(l.warn_eeprom());
 }
 
+test "cart: a headered file over 512 KB of data is refused, not clipped (EM-05)" {
+    // parse() sees the first 64 bytes and the file size, as the drive scan
+    // and the embedded path give it.
+    const h = header(512, 0, 0, 0);
+    // The review's case: a 128 KB bank declared, 600 KB on the drive.
+    try testing.expectEqual(cart.Refusal.too_big, cart.parse(&h, 600 * 1024).verdict);
+    // The bound is the headerless one plus the header, for every bank size.
+    for ([_]u16{ 256, 512, 1024, 2048 }) |bank0| {
+        const hb = header(bank0, 0, 0, 0);
+        try testing.expectEqual(cart.Refusal.too_big, cart.parse(&hb, cart.max_size + 64 + 1).verdict);
+        const l = cart.parse(&hb, cart.max_size + 64);
+        try testing.expectEqual(cart.Refusal.ok, l.verdict);
+        try testing.expectEqual(l.bank_size(), l.data_size);
+    }
+    // A whole 128 KB bank plus its header: ok, every byte used.
+    const full = cart.parse(&h, 128 * 1024 + 64);
+    try testing.expectEqual(cart.Refusal.ok, full.verdict);
+    try testing.expectEqual(@as(u32, 128 * 1024), full.data_size);
+    // Short homebrew still runs.
+    try testing.expectEqual(cart.Refusal.ok, cart.parse(&h, 64 + 3000).verdict);
+    try testing.expectEqualStrings("over 512 KB", cart.Refusal.too_big.text());
+}
+
 test "cart: headerless block size from the file size" {
     // Only the size matters for a headerless file; `head` is its first bytes.
     var head: [64]u8 = @splat(0);

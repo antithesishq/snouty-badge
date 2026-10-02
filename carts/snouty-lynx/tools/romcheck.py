@@ -103,6 +103,8 @@ def main(path):
         if len(payload) < bank0:
             notes.append(f'image is {len(payload)} B, shorter than its {bank0 // 1024} KB bank: '
                          'reads past the end return FF')
+        elif len(payload) > 512 * 1024:
+            problems.append(f'{len(payload) // 1024} KB after the header: over 512 KB (core/cart.zig refuses it)')
         elif len(payload) > bank0:
             notes.append(f'{len(payload) - bank0} B after bank 0 ignored')
     else:
