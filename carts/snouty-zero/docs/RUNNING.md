@@ -11,18 +11,29 @@ Cold Aisle (countdown PROVISIONING, 3, 2, 1, DEPLOY), with the Anteater
 sprite, rails that bounce, a fall off an open edge or a thermal meltdown
 costing a 20-tick hit-stop and a reset to the centerline (the rewind
 replaces that in M3), lap and sector counting, and the HUD (lap, clock,
-speed, thermal bar). Start restarts the race once it is COMMITTED.
+speed, thermal bar). M2 is the race: four named rivals (ARGMAX red,
+DROPOUT yellow, BACKPROP green, OVERFIT magenta) and six grey batch
+traffic machines, machine collisions, Overclock on Up (costs 250 of the
+1000 thermal, needs 100), overclock pads, throttled zones, hot spots,
+hops, the rank top-right, the minimap bottom-right, and a results screen
+2.5 s after the finish (rank, time, best lap, rewinds, thermal); Start
+restarts the race from there. The rewind (B) and the menus arrive with M3.
 
-Controls (SPEC section 4) at M1:
+Controls (SPEC section 4) at M2:
 
 | Input | Race |
 |---|---|
 | Left / Right | steer (rate falls with speed) |
 | A (hold) | accelerate |
 | Down | brake; with Left/Right the tight turn (more yaw, less grip) |
-| Start | restart after the finish |
-| Select | toggle the M0 free camera (debug: Left/Right yaw, A forward, B back, Up/Down height) |
-| Up, B | Overclock and rewind arrive with M2 and M3 |
+| Up | Overclock: 90 ticks of boost for 250 thermal (needs 100 left) |
+| Start | on the results screen: new race |
+| Select | toggle the minimap size (32 / 48 px) |
+| B | rewind arrives with M3 |
+
+The M0 free camera is still there for debugging the floor through the
+`debug_set_freecam` export (`--call debug_set_freecam:1`: Left/Right
+yaw, A forward, B back, Up/Down height while the race runs unsteered).
 
 Start+Select returns to the badge menu and the joystick click toggles the
 OS FPS overlay; both belong to the OS. The cart never writes the neopixels
@@ -98,6 +109,13 @@ python3 ../../tools/make_gif.py out/ preview.gif --scale 3 --ms 170
 
 Input scripts live in `tools/scripts/`:
 
+- `m2_player.json` (6000 frames): A held throughout, Up (Overclock) at
+  300, Right 330-400, Right+Down 520-600, Left 700-760, Select at 1800
+  (large minimap). The badge-bench default from M2 (1500 frames: the
+  grid start has every machine on screen).
+- `m2_race.json`: `[]`, no input; with `--call debug_set_autopilot:1` the
+  autopilot races the rivals to the results screen (about 5800 frames).
+
 - `m1_drive.json` (3600 frames): A held throughout, Right 330-400,
   Right+Down 520-600, Left 700-760: the countdown (200 ticks), the top
   straight, the first corner. The badge-bench default from M1.
@@ -125,6 +143,10 @@ Debug exports (zero-argument wasm functions, usable with `--dump-exports`,
 | `debug_thermal` | thermal bar 0..1000 |
 | `debug_crashes` | crash hit-stops started since boot |
 | `debug_best_lap` | best lap in ticks (0 until a lap is done) |
+| `debug_rank` | player rank 1..5 |
+| `debug_screen` | 0 race, 1 results |
+| `debug_machine_px(i)`, `debug_machine_py(i)`, `debug_machine_lap(i)` | machine i (0 player, 1..4 rivals, 5..10 traffic); one-argument exports |
+| `debug_set_autopilot(v)`, `debug_set_freecam(v)` | setup calls (`--call NAME:1`) |
 
 ## 6. Flashing
 

@@ -17,8 +17,10 @@ pub var current: *const track.Track = &track.cold_aisle;
 
 const world_mask: i32 = (1024 << fixed.Q) - 1;
 
-/// Puts `count` machines on the grid behind the start line (player first)
-/// and starts the countdown.
+/// Puts `count` machines on the track and starts the countdown: the
+/// rivals (1..4) on a two-column grid behind the start line, the player
+/// behind them (F-Zero style), the traffic (5..10) already cruising around
+/// the lap, two per third. Deterministic.
 pub fn reset(t: *const track.Track, count: u8) void {
     current = t;
     world.w = .{};
@@ -26,27 +28,97 @@ pub fn reset(t: *const track.Track, count: u8) void {
     world.w.countdown = 4 * tuning.countdown_step;
     world.w.msg = .provisioning;
     world.w.msg_ticks = @intCast(tuning.countdown_step);
-    const s0 = t.sample(0);
-    // Grid: two columns, rows 28 px apart behind the line; the player at the back
-    // of the first pair? No: F-Zero puts the player last on the grid. Player
-    // goes at the back row, rivals ahead in finishing order of the previous race.
-    for (0..count) |i| {
+    world.w.lap_px = @intCast(lap_length(t));
+    const n: usize = count;
+    const rivals: usize = @min(n, tuning.traffic_first) -| 1;
+    for (0..n) |i| {
         const m = &world.w.machines[i];
         m.* = .{};
-        const row: i32 = @intCast(i / 2);
-        const col: i32 = if (i % 2 == 0) -1 else 1;
-        // Player (0) is at the back: rows counted from the back.
-        const back = 20 + row * 28;
-        const side = col * 18;
-        const tx = fixed.cos(s0.tangent);
-        const ty = fixed.sin(s0.tangent);
-        m.x = ((@as(i32, s0.x) << fixed.Q) - tx * back + (-ty) * side) & world_mask;
-        m.y = ((@as(i32, s0.y) << fixed.Q) - ty * back + tx * side) & world_mask;
-        m.heading = s0.tangent;
-        m.progress = nearest_sample(m, 0);
+        if (i < tuning.traffic_first) {
+            // Grid: rival k (0-based) in row k / 2, column left/right; the
+            // player one row behind the last rival row, in the middle.
+            var row: i32 = undefined;
+            var side: i32 = 0;
+            if (i == world.player) {
+                row = @intCast((rivals + 1) / 2);
+            } else {
+                row = @intCast((i - 1) / 2);
+                side = if ((i - 1) % 2 == 0) -tuning.grid_side else tuning.grid_side;
+            }
+            const p = line_point_behind(t, tuning.grid_first_row + row * tuning.grid_row_gap);
+            place(m, p, side, 0);
+            m.progress = nearest_sample(m, 0);
+        } else {
+            const k = i - tuning.traffic_first;
+            const si = tuning.traffic_samples[k % tuning.traffic_samples.len];
+            const s = t.sample(si);
+            const c = ai.character(i);
+            const lane = if (c.alternate_lane and (i & 1) != 0) -c.lane else c.lane;
+            const cruise = @divTrunc(tuning.top_speed * @as(i32, c.speed_pct), 255);
+            place(m, .{ .x = @as(i32, s.x) << fixed.Q, .y = @as(i32, s.y) << fixed.Q, .tangent = s.tangent }, lane, cruise);
+            m.progress = si;
+        }
         m.active = true;
     }
-    for (count..world.machine_count) |i| world.w.machines[i].active = false;
+    for (n..world.machine_count) |i| world.w.machines[i].active = false;
+    update_ranks();
+}
+
+const LinePoint = struct { x: i32, y: i32, tangent: fixed.Turn };
+
+/// Length of segment i -> i+1 in Q8 world px.
+fn segment_q8(t: *const track.Track, i: usize) i32 {
+    const a = t.sample(i);
+    const b = t.sample(i + 1);
+    const dx = wrap_px(@as(i32, b.x) - @as(i32, a.x));
+    const dy = wrap_px(@as(i32, b.y) - @as(i32, a.y));
+    return @intCast(fixed.isqrt(@intCast((dx * dx + dy * dy) << 16)));
+}
+
+/// Lap length in world px: the sum of the 256 centerline segments.
+pub fn lap_length(t: *const track.Track) i32 {
+    var sum: i32 = 0;
+    for (0..256) |i| sum += segment_q8(t, i);
+    return sum >> 8;
+}
+
+/// The centerline point `dist` px behind sample 0 (interpolated), Q16.
+fn line_point_behind(t: *const track.Track, dist: i32) LinePoint {
+    var left: i32 = dist << 8;
+    var i: usize = 0;
+    while (true) {
+        const prev = (i + 255) & 255;
+        const seg = segment_q8(t, prev);
+        if (left <= seg or seg == 0) {
+            const a = t.sample(i);
+            const b = t.sample(prev);
+            const dx = wrap_px(@as(i32, b.x) - @as(i32, a.x));
+            const dy = wrap_px(@as(i32, b.y) - @as(i32, a.y));
+            const f: i64 = if (seg == 0) 0 else @divTrunc(@as(i64, left) << 16, seg); // Q16 fraction
+            return .{
+                .x = (@as(i32, a.x) << fixed.Q) + @as(i32, @intCast((dx * f))),
+                .y = (@as(i32, a.y) << fixed.Q) + @as(i32, @intCast((dy * f))),
+                .tangent = b.tangent +% @as(u16, @bitCast(@as(i16, @intCast((fixed.turn_diff(b.tangent, a.tangent) * (65536 - f)) >> 16)))),
+            };
+        }
+        left -= seg;
+        i = prev;
+    }
+}
+
+/// Put a machine at a line point, `side` px to the right, moving at `spd` (Q16).
+fn place(m: *Machine, p: LinePoint, side: i32, spd: i32) void {
+    const tx = fixed.cos(p.tangent);
+    const ty = fixed.sin(p.tangent);
+    m.x = (p.x + (-ty) * side) & world_mask;
+    m.y = (p.y + tx * side) & world_mask;
+    m.heading = p.tangent;
+    m.vx = fixed.mul(tx, spd);
+    m.vy = fixed.mul(ty, spd);
+}
+
+inline fn wrap_px(d: i32) i32 {
+    return ((d + 512) & 1023) - 512;
 }
 
 /// Simulate one tick with the player's buttons. Rivals drive themselves.
@@ -65,8 +137,10 @@ pub fn simulate(buttons: Buttons) void {
                 w.phase = .racing;
                 set_msg(.deploy, tuning.message_ticks);
             }
-            // Machines sit still; the player may lean.
+            // Machines sit still; the player may lean. Up held through
+            // DEPLOY does not fire an Overclock on the first tick.
             w.machines[0].steer = steer_of(buttons);
+            w.machines[0].up_was = buttons.up;
         },
         .racing, .finished => {
             w.tick +%= 1;
@@ -76,6 +150,8 @@ pub fn simulate(buttons: Buttons) void {
                 const b: Buttons = if (i == world.player and w.phase == .racing) buttons else ai.drive(m, i);
                 step_machine(m, b, i);
             }
+            collide_all();
+            update_ranks();
         },
     }
 }
@@ -108,6 +184,8 @@ pub fn speed(m: *const Machine) i32 {
 
 /// Physics for one machine (SPEC 5.1 steps 1..5).
 fn step_machine(m: *Machine, b: Buttons, index: usize) void {
+    const up_edge = b.up and !m.up_was;
+    m.up_was = b.up;
     if (m.hitstop > 0) {
         m.hitstop -= 1;
         if (m.hitstop == 0) recover(m);
@@ -116,6 +194,14 @@ fn step_machine(m: *Machine, b: Buttons, index: usize) void {
     if (m.immune > 0) m.immune -= 1;
     if (m.shake > 0) m.shake -= 1;
     if (m.boost > 0) m.boost -= 1;
+    // Overclock (SPEC 4, 5.2): the press edge, enough thermal, no boost running.
+    if (up_edge and m.boost == 0 and m.thermal >= tuning.thermal_overclock_min) {
+        // Floor at 1: Overclock alone never melts the machine down.
+        m.thermal = @intCast(@max(1, @as(i32, m.thermal) - tuning.thermal_overclock));
+        m.boost = tuning.overclock_ticks;
+    }
+    // The player keeps the base tuning; rivals and traffic use their character.
+    const c: *const ai.Character = if (index == world.player) &base_character else ai.character(index);
     const in_air = m.hop > 0;
     if (in_air) m.hop -= 1;
 
@@ -125,8 +211,9 @@ fn step_machine(m: *Machine, b: Buttons, index: usize) void {
     m.steer = steer_of(b);
 
     // 1. Thrust and brake.
-    if (b.a and !m.finished) {
+    if (b.a and (!m.finished or index != world.player)) {
         var a = tuning.accel;
+        if (c.top_q8 != 256) a = (a * c.top_q8) >> 8;
         if (m.boost > 0) a = @divTrunc(a * tuning.overclock_thrust, 256);
         m.vx += fixed.mul(hx, a);
         m.vy += fixed.mul(hy, a);
@@ -148,7 +235,8 @@ fn step_machine(m: *Machine, b: Buttons, index: usize) void {
         const along = fixed.mul(m.vx, hx) + fixed.mul(m.vy, hy);
         var lat = fixed.mul(m.vx, -hy) + fixed.mul(m.vy, hx);
         const tight = b.down and m.steer != 0;
-        const g = if (m.on_throttled) tuning.grip_throttled else if (tight) tuning.grip_tight else tuning.grip;
+        var g = if (m.on_throttled) tuning.grip_throttled else if (tight) tuning.grip_tight else tuning.grip;
+        if (c.grip_q8 != 256) g = fixed.one - (((fixed.one - g) * c.grip_q8) >> 8);
         lat = fixed.mul(lat, g);
         m.vx = fixed.mul(along, hx) + fixed.mul(lat, -hy);
         m.vy = fixed.mul(along, hy) + fixed.mul(lat, hx);
@@ -163,6 +251,7 @@ fn step_machine(m: *Machine, b: Buttons, index: usize) void {
                 rate = @divTrunc(rate * pct, 100);
             }
             if (tight) rate = @divTrunc(rate * tuning.steer_tight_num, tuning.steer_tight_den);
+            if (c.steer_q8 != 256) rate = (rate * c.steer_q8) >> 8;
             const d: i32 = rate * m.steer;
             m.heading +%= @bitCast(@as(i16, @intCast(d)));
         }
@@ -177,6 +266,8 @@ fn step_machine(m: *Machine, b: Buttons, index: usize) void {
     if (!in_air) resolve_tiles(m, old_x, old_y);
     update_progress(m, index);
 }
+
+const base_character = ai.Character{};
 
 /// Corner offsets of the 24x12 footprint for a heading, world px (not Q16).
 fn corners(m: *const Machine) [4][2]i32 {
@@ -358,7 +449,7 @@ fn update_progress(m: *Machine, index: usize) void {
         if (old < 170 and new >= 170 and (m.sectors & 1) != 0) m.sectors |= 2;
         if (new < old) {
             // Crossed the start line forward.
-            if (m.sectors == 3 and !m.finished) {
+            if (m.sectors == 3 and !m.finished and index < tuning.traffic_first) {
                 const lap_time = world.w.tick -% m.lap_start;
                 if (m.best_lap == 0 or lap_time < m.best_lap) m.best_lap = lap_time;
                 m.lap_start = world.w.tick;
@@ -380,6 +471,165 @@ fn update_progress(m: *Machine, index: usize) void {
     } else if (backward) {
         // Driving backwards over the line: no credit, and a forward recrossing needs the sectors again.
         if (new > old and (new - old) > 128) m.sectors = 0;
+    }
+}
+
+// --- Machine against machine (SPEC 5.3) --------------------------------------
+
+fn can_collide(m: *const Machine) bool {
+    return m.active and m.hitstop == 0 and m.hop == 0 and m.crash == .none;
+}
+
+/// Circles of radius `machine_radius`: push apart by half the penetration
+/// each, exchange 30% of the closing normal velocity, thermal damage.
+fn collide_all() void {
+    const w = &world.w;
+    const n: usize = w.active_count;
+    const r2: i32 = 2 * tuning.machine_radius;
+    const reach: i32 = r2 << fixed.Q;
+    const lim: i32 = (r2 << 8) * (r2 << 8);
+    const half: i32 = 512 << fixed.Q;
+    var i: usize = 0;
+    while (i < n) : (i += 1) {
+        const a = &w.machines[i];
+        if (!can_collide(a)) continue;
+        var j = i + 1;
+        while (j < n) : (j += 1) {
+            const b = &w.machines[j];
+            if (!can_collide(b)) continue;
+            const dx = ((b.x -% a.x +% half) & world_mask) - half;
+            const dy = ((b.y -% a.y +% half) & world_mask) - half;
+            if (dx >= reach or dx <= -reach or dy >= reach or dy <= -reach) continue;
+            const dx8 = dx >> 8;
+            const dy8 = dy >> 8;
+            const d2 = dx8 * dx8 + dy8 * dy8;
+            if (d2 >= lim) continue;
+            contact(a, i, b, j, dx8, dy8, d2);
+            if (!can_collide(a)) break;
+        }
+    }
+}
+
+fn contact(a: *Machine, ia: usize, b: *Machine, ib: usize, dx8: i32, dy8: i32, d2: i32) void {
+    const dist: i32 = @intCast(fixed.isqrt(@intCast(d2))); // Q8
+    // Unit normal from a to b, Q16 (straight along +x when centred).
+    var nx: i32 = fixed.one;
+    var ny: i32 = 0;
+    if (dist > 0) {
+        nx = @divTrunc(dx8 << 16, dist);
+        ny = @divTrunc(dy8 << 16, dist);
+    }
+    // Push apart: half the penetration each.
+    const pen8 = (2 * tuning.machine_radius << 8) - dist;
+    const push = pen8 << 7; // Q16, half of pen8 << 8
+    const px = fixed.mul(nx, push);
+    const py = fixed.mul(ny, push);
+    a.x = (a.x -% px) & world_mask;
+    a.y = (a.y -% py) & world_mask;
+    b.x = (b.x +% px) & world_mask;
+    b.y = (b.y +% py) & world_mask;
+    // Closing speed along the normal.
+    const vna = fixed.mul(a.vx, nx) + fixed.mul(a.vy, ny);
+    const vnb = fixed.mul(b.vx, nx) + fixed.mul(b.vy, ny);
+    const closing = vna - vnb;
+    if (closing <= 0) return;
+    const dv = (closing * tuning.collision_exchange) >> 8;
+    a.vx -= fixed.mul(nx, dv);
+    a.vy -= fixed.mul(ny, dv);
+    b.vx += fixed.mul(nx, dv);
+    b.vy += fixed.mul(ny, dv);
+    if (closing < tuning.collision_min_speed) return;
+    const ca: *const ai.Character = if (ia == world.player) &base_character else ai.character(ia);
+    const cb: *const ai.Character = if (ib == world.player) &base_character else ai.character(ib);
+    hit(a, ca);
+    hit(b, cb);
+    if (ia == world.player and closing >= tuning.collision_crash_speed) crash(a, .collision);
+    for ([2]*Machine{ a, b }) |m| {
+        if (m.thermal <= 0 and m.crash == .none) {
+            m.thermal = 0;
+            crash(m, .meltdown);
+        }
+    }
+}
+
+fn hit(m: *Machine, c: *const ai.Character) void {
+    if (c.contact_keep != fixed.one) {
+        m.vx = fixed.mul(m.vx, c.contact_keep);
+        m.vy = fixed.mul(m.vy, c.contact_keep);
+    }
+    if (m.immune > 0) return;
+    m.thermal -= @intCast(tuning.thermal_collision * c.damage_mul);
+    m.immune = tuning.collision_immune_ticks;
+    m.shake = 4;
+}
+
+// --- Progress and rank (SPEC 7) ---------------------------------------------
+
+/// Fine progress: lap * 65536 + sample * 256 + the fraction (0..255) of the
+/// way to the next sample. Before the line is first crossed with sector 2
+/// seen (the grid, or a lap in progress at samples >= 170 without sector 2)
+/// the sample belongs to the previous lap.
+pub fn fine_progress(m: *const Machine) i32 {
+    var base: usize = m.progress;
+    var a = current.sample(base);
+    var b = current.sample(base + 1);
+    var px = wrap_px((m.x >> fixed.Q) - @as(i32, a.x));
+    var py = wrap_px((m.y >> fixed.Q) - @as(i32, a.y));
+    var ex = wrap_px(@as(i32, b.x) - @as(i32, a.x));
+    var ey = wrap_px(@as(i32, b.y) - @as(i32, a.y));
+    var proj = px * ex + py * ey;
+    if (proj < 0) {
+        // Behind the nearest sample: on the previous segment.
+        base = (base + 255) & 255;
+        b = a;
+        a = current.sample(base);
+        px = wrap_px((m.x >> fixed.Q) - @as(i32, a.x));
+        py = wrap_px((m.y >> fixed.Q) - @as(i32, a.y));
+        ex = wrap_px(@as(i32, b.x) - @as(i32, a.x));
+        ey = wrap_px(@as(i32, b.y) - @as(i32, a.y));
+        proj = px * ex + py * ey;
+    }
+    const len2 = ex * ex + ey * ey;
+    const frac: i32 = if (len2 == 0 or proj <= 0) 0 else @min(255, @divTrunc(proj * 256, len2));
+    var lap: i32 = m.lap;
+    if (base >= 170 and (m.sectors & 2) == 0) lap -= 1;
+    return lap * 65536 + @as(i32, @intCast(base)) * 256 + frac;
+}
+
+/// Progress in world px along the centerline (the rubber band's measure).
+pub fn progress_px(m: *const Machine) i32 {
+    return @intCast((@as(i64, fine_progress(m)) * world.w.lap_px) >> 16);
+}
+
+/// Ranks 1..5 for machines 0..4 (never traffic): finished machines first in
+/// finish order, then by fine progress, ties to the lower index. A
+/// finished machine's rank is final: only machines that finished earlier
+/// are ahead of it, so recomputing it gives the same value.
+fn update_ranks() void {
+    const w = &world.w;
+    const n: usize = @min(w.active_count, tuning.ranked_count);
+    var fine: [tuning.ranked_count]i32 = undefined;
+    for (0..n) |i| fine[i] = if (w.machines[i].finished) 0 else fine_progress(&w.machines[i]);
+    for (0..n) |i| {
+        const m = &w.machines[i];
+        if (!m.active) {
+            m.rank = 0;
+            continue;
+        }
+        var r: u8 = 1;
+        for (0..n) |j| {
+            if (j == i) continue;
+            const o = &w.machines[j];
+            if (!o.active) continue;
+            const ahead = if (o.finished and m.finished)
+                o.finish_tick < m.finish_tick or (o.finish_tick == m.finish_tick and j < i)
+            else if (o.finished != m.finished)
+                o.finished
+            else
+                fine[j] > fine[i] or (fine[j] == fine[i] and j < i);
+            if (ahead) r += 1;
+        }
+        m.rank = r;
     }
 }
 
@@ -495,4 +745,176 @@ test "lap needs both sectors" {
     update_progress(m, 0);
     try std.testing.expectEqual(@as(u8, 1), m.lap);
     try std.testing.expectEqual(@as(u8, 0), m.sectors);
+}
+
+/// Print the completable-test race summary (finish ticks, crashes, rivals).
+const report_race = false;
+
+fn ranks_are_permutation() bool {
+    var seen: u8 = 0;
+    for (world.w.machines[0..tuning.ranked_count]) |m| {
+        if (m.rank < 1 or m.rank > tuning.ranked_count) return false;
+        seen |= @as(u8, 1) << @intCast(m.rank - 1);
+    }
+    return seen == 0x1F;
+}
+
+test "grid and traffic placement" {
+    reset(&track.cold_aisle, world.machine_count);
+    try std.testing.expect(world.w.lap_px > 3800 and world.w.lap_px < 4300);
+    const ms = &world.w.machines;
+    // Nobody overlaps; everyone on a drivable tile.
+    for (0..world.machine_count) |i| {
+        try std.testing.expect(ms[i].active);
+        const a = current.attr_at(ms[i].x >> fixed.Q, ms[i].y >> fixed.Q);
+        try std.testing.expect(a != .off and a != .rail);
+        for (i + 1..world.machine_count) |j| {
+            const dx = wrap_px((ms[j].x >> fixed.Q) - (ms[i].x >> fixed.Q));
+            const dy = wrap_px((ms[j].y >> fixed.Q) - (ms[i].y >> fixed.Q));
+            try std.testing.expect(dx * dx + dy * dy >= 4 * tuning.machine_radius * tuning.machine_radius);
+        }
+    }
+    // The player starts last; traffic is moving and never ranks.
+    try std.testing.expectEqual(@as(u8, 5), ms[0].rank);
+    try std.testing.expect(ranks_are_permutation());
+    for (ms[tuning.traffic_first..]) |m| {
+        try std.testing.expectEqual(@as(u8, 0), m.rank);
+        try std.testing.expect(speed(&m) > fixed.one);
+        const d: i32 = m.progress;
+        try std.testing.expect(d >= tuning.traffic_clear_samples and d <= 255 - tuning.traffic_clear_samples);
+    }
+}
+
+test "simulate is deterministic with 11 machines" {
+    reset(&track.cold_aisle, world.machine_count);
+    run_countdown();
+    var buttons: Buttons = .{ .a = true };
+    for (0..300) |t| {
+        buttons = ai.drive(&world.w.machines[0], 0);
+        buttons.up = (t % 97) == 5;
+        simulate(buttons);
+    }
+    const snap = world.w;
+    for (0..300) |t| {
+        var b = ai.drive(&world.w.machines[0], 0);
+        b.left = b.left or (t / 30) % 4 == 1;
+        simulate(b);
+    }
+    const end_a = world.w;
+    world.w = snap;
+    for (0..300) |t| {
+        var b = ai.drive(&world.w.machines[0], 0);
+        b.left = b.left or (t / 30) % 4 == 1;
+        simulate(b);
+    }
+    try std.testing.expect(worlds_equal(&end_a, &world.w));
+}
+
+test "every committed track is completable with the field present" {
+    for (track.tracks) |t| {
+        reset(t, world.machine_count);
+        run_countdown();
+        var crashes: u32 = 0;
+        var collision_crashes: u32 = 0;
+        var ticks: u32 = 0;
+        var last_crash: world.Crash = .none;
+        while (world.w.phase != .finished and ticks < 60 * 150) : (ticks += 1) {
+            const m = &world.w.machines[0];
+            simulate(ai.drive(m, 0));
+            if (m.crash != .none and last_crash == .none) {
+                crashes += 1;
+                if (m.crash == .collision) collision_crashes += 1;
+            }
+            last_crash = m.crash;
+            if (ticks % 100 == 0) {
+                try std.testing.expect(ranks_are_permutation());
+                for (world.w.machines[tuning.traffic_first..]) |tm| try std.testing.expectEqual(@as(u8, 0), tm.rank);
+            }
+        }
+        const p = &world.w.machines[0];
+        var rivals_done: u32 = 0;
+        for (world.w.machines[1..tuning.traffic_first]) |r| rivals_done += @intFromBool(r.finished);
+        if (report_race) {
+            std.debug.print("\n{s}: finish {d} ticks, best lap {d}, rank {d}, crashes {d} (collision {d}), thermal {d}, rivals finished {d}\n", .{ t.name, p.finish_tick, p.best_lap, p.rank, crashes, collision_crashes, p.thermal, rivals_done });
+            for (world.w.machines[1..tuning.traffic_first], 1..) |r, i| std.debug.print("  rival {d}: lap {d} rank {d} finished {} at {d} thermal {d} best {d}\n", .{ i, r.lap, r.rank, r.finished, r.finish_tick, r.thermal, r.best_lap });
+        }
+        try std.testing.expectEqual(world.Phase.finished, world.w.phase);
+        try std.testing.expectEqual(tuning.laps, p.lap);
+        try std.testing.expect(p.finish_tick < 60 * 150);
+        try std.testing.expect(crashes <= 1);
+        try std.testing.expect(p.rank >= 1 and p.rank <= 5);
+        // Run on until the rivals finish: they lap the track too.
+        var more: u32 = 0;
+        while (more < 60 * 60) : (more += 1) {
+            simulate(.{});
+            var done = true;
+            for (world.w.machines[1..tuning.traffic_first]) |r| done = done and r.finished;
+            if (done) break;
+        }
+        for (world.w.machines[1..tuning.traffic_first]) |r| try std.testing.expect(r.finished);
+        try std.testing.expect(ranks_are_permutation());
+    }
+}
+
+test "machines that overlap head-on are pushed apart and lose thermal" {
+    reset(&track.cold_aisle, 2);
+    run_countdown();
+    const a = &world.w.machines[0];
+    const b = &world.w.machines[1];
+    const s = current.sample(60);
+    a.* = .{ .x = (@as(i32, s.x) - 8) << fixed.Q, .y = @as(i32, s.y) << fixed.Q, .vx = fixed.one, .heading = 0, .progress = 60 };
+    b.* = .{ .x = (@as(i32, s.x) + 8) << fixed.Q, .y = @as(i32, s.y) << fixed.Q, .vx = -fixed.one, .heading = 32768, .progress = 60 };
+    collide_all();
+    const dx = (b.x - a.x) >> fixed.Q;
+    try std.testing.expect(dx >= 2 * tuning.machine_radius - 1);
+    try std.testing.expectEqual(@as(i16, 1000 - 60), a.thermal);
+    try std.testing.expectEqual(@as(i16, 1000 - 60), b.thermal);
+    // 30% of the 2 px/tick closing speed exchanged: each now at 0.4 px/tick.
+    try std.testing.expect(@abs(a.vx - fixed.one * 2 / 5) < 256);
+    try std.testing.expect(@abs(b.vx + fixed.one * 2 / 5) < 256);
+    try std.testing.expectEqual(world.Crash.none, a.crash);
+    // OVERFIT takes double damage; a 4 px/tick closing hit on the player is a COLLISION crash.
+    reset(&track.cold_aisle, 5);
+    run_countdown();
+    const p = &world.w.machines[0];
+    const o = &world.w.machines[4];
+    p.* = .{ .x = (@as(i32, s.x) - 8) << fixed.Q, .y = @as(i32, s.y) << fixed.Q, .vx = 2 * fixed.one, .progress = 60 };
+    o.* = .{ .x = (@as(i32, s.x) + 8) << fixed.Q, .y = @as(i32, s.y) << fixed.Q, .vx = -2 * fixed.one, .progress = 60 };
+    collide_all();
+    try std.testing.expectEqual(@as(i16, 1000 - 120), o.thermal);
+    try std.testing.expectEqual(world.Crash.collision, p.crash);
+    try std.testing.expectEqual(world.Message.collision, world.w.msg);
+}
+
+test "Overclock on the Up press edge" {
+    reset(&track.cold_aisle, 1);
+    run_countdown();
+    const m = &world.w.machines[0];
+    m.thermal = 1000;
+    simulate(.{ .up = true });
+    try std.testing.expectEqual(tuning.overclock_ticks, m.boost);
+    try std.testing.expectEqual(@as(i16, 750), m.thermal);
+    // Holding Up does not fire again once the boost ends.
+    m.boost = 1;
+    simulate(.{ .up = true });
+    simulate(.{ .up = true });
+    try std.testing.expectEqual(@as(u8, 0), m.boost);
+    try std.testing.expectEqual(@as(i16, 750), m.thermal);
+    // Too little thermal: nothing.
+    simulate(.{});
+    m.thermal = 90;
+    simulate(.{ .up = true });
+    try std.testing.expectEqual(@as(u8, 0), m.boost);
+    try std.testing.expectEqual(@as(i16, 90), m.thermal);
+}
+
+test "SNOUTY is neutral and the characters differ" {
+    const s = ai.characters[0];
+    try std.testing.expectEqual(@as(i32, 256), s.top_q8);
+    try std.testing.expectEqual(@as(i32, 256), s.steer_q8);
+    try std.testing.expectEqual(@as(i32, 256), s.grip_q8);
+    try std.testing.expect(ai.characters[1].top_q8 > ai.characters[3].top_q8);
+    try std.testing.expect(ai.characters[3].steer_q8 > ai.characters[1].steer_q8);
+    try std.testing.expectEqual(@as(i32, 2), ai.characters[4].damage_mul);
+    try std.testing.expect(ai.character(7) == &ai.traffic);
 }

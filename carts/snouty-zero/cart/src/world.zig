@@ -39,7 +39,7 @@ pub const Machine = struct {
     sectors: u8 = 0,
     /// Nearest centerline sample (0..255).
     progress: u8 = 0,
-    /// Fine progress for rank: lap * 256 + sample, plus the fraction (M2).
+    /// Thermal bar 0..thermal_max (SPEC 5.2).
     thermal: i16 = @intCast(tuning.thermal_max),
     /// Ticks left in the air / boosted / immune / shaking.
     hop: u8 = 0,
@@ -62,6 +62,11 @@ pub const Machine = struct {
     /// Crash in progress (hit-stop countdown) and its cause.
     crash: Crash = .none,
     hitstop: u8 = 0,
+    /// Up held last tick: Overclock fires on the press edge (SPEC 4).
+    up_was: bool = false,
+    /// Race position 1..5 for the player and rivals (0 for traffic and
+    /// inactive machines); final for a machine once it has `finished`.
+    rank: u8 = 0,
 };
 
 pub const Phase = enum(u8) { countdown, racing, finished };
@@ -79,6 +84,9 @@ pub const World = struct {
     msg_ticks: u8 = 0,
     /// Number of machines racing (1 in M1 solo, 11 with rivals and traffic).
     active_count: u8 = 1,
+    /// Lap length in world px along the centerline (set by sim.reset from
+    /// the track; progress in px for the rubber band).
+    lap_px: u16 = 0,
 };
 
 pub const Message = enum(u8) { none, provisioning, three, two, one, deploy, final_lap, committed, fall, meltdown, collision };

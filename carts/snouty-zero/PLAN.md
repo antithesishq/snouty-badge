@@ -280,6 +280,73 @@ and the "every committed track is completable" test.
 - bench: the stress scene (four rivals and traffic on screen) worst frame
   recorded; still under 50% of budget.
 
+### M2 status
+
+- 2026-10-02: DONE. Track A (Opus agent): `ai.characters` (SNOUTY,
+  ARGMAX 1.08x top / 0.85x steer, DROPOUT lane wander +-22 px / 240
+  ticks, BACKPROP 0.94x top / 1.17x steer / 1.25x grip, OVERFIT 1.03x top
+  / 2x damage / loses 15% speed per contact; traffic at 55% on +-8 px
+  lanes), rubber band in permille from `sim.progress_px`, passing logic
+  `ai.avoid` (without it the rivals melted each other down), circle
+  collisions (radius 10, 30% exchange, 60 thermal, COLLISION crash for
+  the player above 4 px/tick closing), Overclock on the Up edge (cannot
+  take thermal below 1), rank from `fine_progress`, traffic spread two
+  per third of the lap. Track B: liveries by body-colour match, rank,
+  minimap (32/48 on Select, 1-bit buffers built per race), results
+  screen 150 ticks after the finish, Overclock-ready mark. Tests: 11
+  machines deterministic over 600 ticks; completable Cold Aisle with the
+  field present: SNOUTY finishes at tick 5676, 0 crashes, rank 2 (BACKPROP
+  wins by 30 ticks); grid, collision, Overclock, rank-permutation tests.
+  Preview `m2_race.json` + autopilot reaches the results screen at frame
+  ~5830 (`debug_screen` 1). Bench (`m2_player.json`, 1500 frames, grid
+  start with the whole field on screen): **mean 3.45 ms, worst 3.86 ms**
+  (23%). `api.text` is 19% of the frame (10 drop-shadowed HUD strings):
+  an own font blit is the first M4 fast path. ELF `.text` 91.1 KB, `.bss`
+  10.5 KB. `docs/preview_m2.gif`.
+
+## M3 Rewind and content
+
+Goal: the Antithesis mechanic and the game around the race: hold-B rewind
+on the snapshot bar, crash auto-rewind with the cause named, splash,
+title, attract, menu (Quick Race, Grand Prix, Sound), pause menu, six
+tracks across Edge and Spine with the Spine league art, the sound toggle
+with its few tones.
+
+### Tracks
+
+- **Track A: content** (`tools/leagues.py` Spine painters + horizon,
+  five new `.track` files: Substation Sprint, Exhaust Ridge (Edge); Fiber
+  Backbone, Rack Row 7, Tape Vault (Spine); `assets/gen/*`, `build.zig`
+  data_files list, `track.zig` table, RLE for the maps if the RAM figure
+  needs it): every track passes the completable test with 11 machines.
+- **Track B: rewind and screens** (`history.zig`, `rewind.zig` overlay,
+  `main.zig` state machine Splash -> Title -> Attract/Menu -> Race ->
+  Results -> Menu / Grand Prix standings, `menu.zig`, `sound.zig`,
+  `hud.zig` snapshot bar, scripts, docs): SPEC 5.4 exactly: 180-tick bar,
+  refill 1 per 10 ticks and full at the start line, 2 ticks per frame
+  back while B is held with the dimmed frame and `<<`, resume with 30
+  immune ticks; crash = 20-tick hit-stop then auto rewind of 120 ticks
+  if the bar holds 90, otherwise `JOB KILLED` and RETIRED.
+
+### Fixed interfaces
+
+```zig
+// history.zig (meta-state, never rewound)
+pub fn reset() void;                 // new race
+pub fn record() void;                // top of each live tick: log buttons, keyframe every 60
+pub fn restore(tick: u32) bool;      // rebuild world.w at `tick`
+pub fn earliest_tick() u32;
+// sim.zig gains: pub fn simulate_logged(buttons) (live) and the silent replay path
+```
+
+### Done criteria
+
+- tests: `restore(t)` equals the direct state for every t in a 600-tick
+  run (11 machines); all six tracks completable; RAM figure recorded.
+- preview: `m3_rewind.json` shows a hold-B rewind and a crash auto-rewind
+  (`debug_rewinds`, `debug_tick` going backwards); `docs/preview_m3.gif`.
+- bench: the rewind frame (2 simulate ticks + dimmed draw) recorded.
+
 ## Deferred questions for Adrian
 
 1. (M0) Camera height 64 / focal 128: the near floor shows a 16 px seam
@@ -294,3 +361,8 @@ and the "every committed track is completable" test.
    (more spline points) and the SPEC rate; a play test decides.
 4. (M1) A crash (fall, meltdown) resets to the centerline after the
    hit-stop until M3 brings the rewind.
+5. (M2) The player starts 5th, alone on the back row (F-Zero style);
+   rivals keep driving after they finish; Overclock leaves at least 1
+   thermal rather than melting the machine on the spot; the autopilot's
+   laps are 30 s (SPEC hoped for 20-25): top speed / drag are the knobs
+   if the race should feel faster.

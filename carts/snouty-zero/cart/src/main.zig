@@ -1,6 +1,6 @@
 //! Snouty Zero: an F-Zero style Mode 7 hover racer on a planet-sized AI
 //! datacenter. SPEC.md is the design, PLAN.md the milestone contract.
-//! M1: a solo 3-lap race on Cold Aisle with the Anteater, countdown and HUD.
+//! M2: a full race against four rivals and traffic, results screen.
 const cart = @import("cart-api");
 const build_options = @import("build_options");
 const input = @import("input.zig");
@@ -14,6 +14,17 @@ const sim = @import("sim.zig");
 const sprites = @import("sprites.zig");
 const hud = @import("hud.zig");
 const ai = @import("ai.zig");
+const results = @import("results.zig");
+
+/// Screens: the race (countdown, racing, the cool-down after the finish)
+/// and the results.
+const Screen = enum { race, results };
+var screen: Screen = .race;
+/// Ticks since the player finished (the results come after `results_after`).
+var finished_ticks: u32 = 0;
+const results_after: u32 = 150;
+/// Machines in a race: the player, 4 rivals, 6 traffic.
+pub const race_machines: u8 = 11;
 
 comptime {
     cart.export_start_code();
@@ -23,7 +34,7 @@ comptime {
 var frame: u32 = 0;
 /// Microseconds spent in the last frame's simulate + render (hardware timer; 0 on wasm).
 var render_us: u32 = 0;
-/// Select toggles the M0 free camera (debugging the floor).
+/// The M0 free camera (debug_set_freecam; debugging the floor).
 var free_cam: bool = false;
 /// The autopilot drives the player (attract mode in M2; `debug_set_autopilot` now).
 pub var autopilot: bool = false;
@@ -34,22 +45,38 @@ var last_crash: world.Crash = .none;
 pub fn start() void {
     cart.set_vsync_enabled(1000.0 / 60.0);
     cart.set_double_buffer_mode(.no_copy_full_frame);
+    sprites.init();
     new_race(&track.cold_aisle);
 }
 
 fn new_race(t: *const track.Track) void {
     render.set_track(t);
-    sim.reset(t, 1);
+    hud.init_minimap(t);
+    sim.reset(t, race_machines);
     const p = &world.w.machines[world.player];
     camera.follow(p.x, p.y, p.heading, true);
+    screen = .race;
+    finished_ticks = 0;
+    results.rewinds = 0;
 }
 
 pub fn update() void {
     input.update(read_controls());
     const t0 = cart.micros_since_boot();
 
-    if (input.pressed(.select)) free_cam = !free_cam;
-    if (input.pressed(.start) and world.w.phase == .finished) new_race(sim.current);
+    if (screen == .results) {
+        if (input.pressed(.start)) new_race(sim.current);
+        results.draw(frame);
+        render_us = @truncate(cart.micros_since_boot() - t0);
+        frame +%= 1;
+        if (cart.is_wasm) present_wasm();
+        return;
+    }
+    if (input.pressed(.select)) hud.minimap_large = !hud.minimap_large;
+    if (world.w.phase == .finished) {
+        finished_ticks += 1;
+        if (finished_ticks >= results_after or input.pressed(.start)) screen = .results;
+    }
 
     const pressed: world.Buttons = @bitCast(@as(u16, @bitCast(input.current)));
     const buttons: world.Buttons = if (autopilot) ai.drive(&world.w.machines[world.player], 0) else pressed;
@@ -118,6 +145,12 @@ comptime {
         @export(&debug_crashes, .{ .name = "debug_crashes" });
         @export(&debug_best_lap, .{ .name = "debug_best_lap" });
         @export(&debug_set_autopilot, .{ .name = "debug_set_autopilot" });
+        @export(&debug_set_freecam, .{ .name = "debug_set_freecam" });
+        @export(&debug_rank, .{ .name = "debug_rank" });
+        @export(&debug_screen, .{ .name = "debug_screen" });
+        @export(&debug_machine_px, .{ .name = "debug_machine_px" });
+        @export(&debug_machine_py, .{ .name = "debug_machine_py" });
+        @export(&debug_machine_lap, .{ .name = "debug_machine_lap" });
     }
 }
 
@@ -179,6 +212,29 @@ fn debug_crashes() callconv(.c) u32 {
 /// --call debug_set_autopilot:1 hands the player to the centerline autopilot.
 fn debug_set_autopilot(v: u32) callconv(.c) void {
     autopilot = v != 0;
+}
+/// --call debug_set_freecam:1 switches to the M0 free camera (Left/Right
+/// yaw, A forward, B back, Up/Down height); the race keeps running unsteered.
+fn debug_set_freecam(v: u32) callconv(.c) void {
+    free_cam = v != 0;
+}
+/// Player rank 1..5 (0 before the first tick).
+fn debug_rank() callconv(.c) u32 {
+    return world.w.machines[world.player].rank;
+}
+/// 0 race, 1 results.
+fn debug_screen() callconv(.c) u32 {
+    return @backingInt(screen);
+}
+/// Machine i's world position and laps (two-argument exports for --call-at style checks).
+fn debug_machine_px(i: u32) callconv(.c) u32 {
+    return @bitCast(world.w.machines[i % world.machine_count].x >> fixed.Q);
+}
+fn debug_machine_py(i: u32) callconv(.c) u32 {
+    return @bitCast(world.w.machines[i % world.machine_count].y >> fixed.Q);
+}
+fn debug_machine_lap(i: u32) callconv(.c) u32 {
+    return world.w.machines[i % world.machine_count].lap;
 }
 fn debug_best_lap() callconv(.c) u32 {
     return world.w.machines[world.player].best_lap;

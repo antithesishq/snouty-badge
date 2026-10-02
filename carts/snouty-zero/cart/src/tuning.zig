@@ -80,3 +80,43 @@ pub const laps: u8 = 3;
 pub const hover_height: i32 = 3;
 /// Camera yaw lag: 1/8 of the heading difference per tick.
 pub const cam_lag_shift: u5 = 3;
+
+// --- M2 race: rivals, traffic, collisions, rank (SPEC 5.3, 7) ----------------
+
+/// Machine indices: 0 player, 1..4 rivals (ranked), 5..10 traffic.
+pub const rival_first: usize = 1;
+pub const traffic_first: usize = 5;
+pub const ranked_count: usize = 5;
+/// Machine circle radius for machine-against-machine contact, world px.
+pub const machine_radius: i32 = 10;
+/// Share of the relative normal velocity exchanged on contact (0.3, 1/256).
+pub const collision_exchange: i32 = 77;
+/// A contact closing at this relative normal speed or more (Q16.16 px/tick)
+/// involving the player is a COLLISION crash.
+pub const collision_crash_speed: i32 = 4 << 16;
+/// No thermal damage below this closing speed (resting contact), Q16.16.
+pub const collision_min_speed: i32 = 1 << 15; // 0.5 px/tick
+/// Collision immunity after a damaging contact, ticks (one hit per bump).
+pub const collision_immune_ticks: u8 = 12;
+/// Rubber band (SPEC 5.3): target scale 1 + clamp(gap / 1500, -8%, +10%),
+/// in 1/1000.
+pub const rubber_px: i32 = 1500;
+pub const rubber_min_permille: i32 = -80;
+pub const rubber_max_permille: i32 = 100;
+/// Grid: rows behind the start line, px; first row distance; column offset.
+pub const grid_first_row: i32 = 20;
+pub const grid_row_gap: i32 = 30;
+pub const grid_side: i32 = 18;
+/// Traffic: no traffic within this many samples of the start line; the
+/// six start samples (two per third of the lap).
+pub const traffic_clear_samples: u8 = 24;
+pub const traffic_samples = [6]u8{ 40, 72, 106, 140, 186, 218 };
+/// AI passing (ai.avoid): look this far ahead (px) within this lateral
+/// band for a slower machine; pass it this far to its side, keeping this
+/// margin from the edge; ease off to its speed when this close behind.
+pub const avoid_ahead: i32 = 64;
+pub const avoid_width: i32 = 22;
+pub const avoid_pass: i32 = 26;
+pub const avoid_margin: i32 = 16;
+pub const avoid_brake: i32 = 30;
+pub const avoid_brake_width: i32 = 14;

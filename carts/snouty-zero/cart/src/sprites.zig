@@ -77,7 +77,52 @@ pub fn blit_scaled(
 const anteater_pal = sheet_palette(gfx.anteater);
 const shadow_pal = sheet_palette(gfx.shadow);
 const machine_pal = sheet_palette(gfx.machine);
-const fx_pal = sheet_palette(gfx.fx);
+pub const fx_pal = sheet_palette(gfx.fx);
+
+/// The machine sheet's four body shades (ASSETS.md), dark to light, as
+/// convert_gfx quantises them (floor(31 * v / 255), not DisplayColor.rgb).
+const body_rgb = [4]u32{ 0x3C3C50, 0x6A6A8C, 0x9A9AC0, 0xD0D0F0 };
+
+fn quantise(rgb: u32) cart.DisplayColor {
+    const r = (rgb >> 16) & 255;
+    const g = (rgb >> 8) & 255;
+    const b = rgb & 255;
+    return .{ .r = @intCast(r * 31 / 255), .g = @intCast(g * 63 / 255), .b = @intCast(b * 31 / 255) };
+}
+
+/// Rival and traffic liveries (SPEC 3): ARGMAX, DROPOUT, BACKPROP, OVERFIT,
+/// batch traffic. Each is a base colour; the four shades are 35%, 60%,
+/// 85% and 100% of it. Also the minimap dot colours.
+pub const livery_rgb = [5]u32{ 0xE8483C, 0xF0C030, 0x40D070, 0xD050E0, 0x8C8C94 };
+
+fn shade(rgb: u32, pct: u32) cart.DisplayColor {
+    const r = ((rgb >> 16) & 255) * pct / 100;
+    const g = ((rgb >> 8) & 255) * pct / 100;
+    const b = (rgb & 255) * pct / 100;
+    return .rgb((r << 16) | (g << 8) | b);
+}
+
+/// Machine palettes per livery, built by `init` (the sheet's index order
+/// is whatever convert_gfx saw first, so match by colour value).
+var livery_pals: [5]Palette = undefined;
+
+pub fn init() void {
+    const shades = [4]u32{ 35, 60, 85, 100 };
+    for (&livery_pals, livery_rgb) |*pal, base| {
+        pal.* = machine_pal;
+        for (gfx.machine.colors, 0..) |c, i| {
+            for (body_rgb, 0..) |body, k| {
+                const q = quantise(body);
+                if (c.r == q.r and c.g == q.g and c.b == q.b) pal[i] = .from_color(shade(base, shades[k]));
+            }
+        }
+    }
+}
+
+/// Livery of machine `index`: rivals 1..4 -> 0..3, traffic -> 4.
+pub fn livery_of(index: usize) usize {
+    return if (index >= 1 and index <= 4) index - 1 else 4;
+}
 
 /// Hop arc height in world px at the top.
 const hop_height: i32 = 20;
@@ -128,6 +173,6 @@ fn draw_machine(m: *const world.Machine, index: u8, p: camera.Projected) void {
         const d = fixed.turn_diff(camera.cam.yaw, m.heading);
         const ad = @abs(d);
         const frame: u32 = if (ad < 5000) 0 else if (ad < 20000) (if (d < 0) 1 else 2) else (if (d < 0) 3 else 4);
-        blit_scaled(gfx.machine, 32, 16, frame, p.sx, p.sy - lift_px, p.scale, &machine_pal, opts);
+        blit_scaled(gfx.machine, 32, 16, frame, p.sx, p.sy - lift_px, p.scale, &livery_pals[livery_of(index)], opts);
     }
 }

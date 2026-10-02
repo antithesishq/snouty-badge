@@ -5,6 +5,8 @@ const fixed = @import("fixed.zig");
 const tuning = @import("tuning.zig");
 const world = @import("world.zig");
 const sim = @import("sim.zig");
+const track = @import("track.zig");
+const sprites = @import("sprites.zig");
 
 pub const white = cart.DisplayColor.rgb(0xFCFBF9);
 pub const coral = cart.DisplayColor.rgb(0xF18271);
@@ -52,9 +54,84 @@ pub fn format_clock(out: *[7]u8, ticks: u32) void {
     put_uint(out[5..7], cs % 100, '0');
 }
 
+/// Minimap (SPEC 6.4): the track outline drawn once per race from the
+/// centerline into 1-bit buffers at 32 and 48 px (Select toggles), the
+/// machines as 2x2 dots (traffic 1x1), bottom-right.
+const minimap_sizes = [2]u8{ 32, 48 };
+var minimap_buf: [2][48 * 48]u8 = undefined;
+pub var minimap_large: bool = false;
+
+pub fn init_minimap(t: *const track.Track) void {
+    for (minimap_sizes, 0..) |size, k| {
+        const buf = &minimap_buf[k];
+        @memset(buf, 0);
+        // Half-width stroke: plot each sample and the point one step toward the next.
+        for (0..256) |i| {
+            const a = t.sample(i);
+            const b = t.sample((i + 1) & 255);
+            var step: u32 = 0;
+            while (step < 4) : (step += 1) {
+                const x = (@as(i32, a.x) * (4 - @as(i32, @intCast(step))) + @as(i32, b.x) * @as(i32, @intCast(step))) >> 2;
+                const y = (@as(i32, a.y) * (4 - @as(i32, @intCast(step))) + @as(i32, b.y) * @as(i32, @intCast(step))) >> 2;
+                const mx: usize = @intCast(@divTrunc(x * size, 1024));
+                const my: usize = @intCast(@divTrunc(y * size, 1024));
+                buf[my * 48 + mx] = 1;
+            }
+        }
+    }
+}
+
+fn draw_minimap() void {
+    const k: usize = if (minimap_large) 1 else 0;
+    const size: i32 = minimap_sizes[k];
+    const x0: i32 = 160 - size - 2;
+    const y0: i32 = 128 - size - 2;
+    const buf = &minimap_buf[k];
+    const line: cart.Pixel = .from_color(white);
+    const bg: cart.Pixel = .from_color(anti_black);
+    for (0..@intCast(size)) |x| {
+        const col = &cart.framebuffer[@intCast(x0 + @as(i32, @intCast(x)))];
+        for (0..@intCast(size)) |y| {
+            const on = buf[y * 48 + x] != 0;
+            // Dim checkerboard background so the floor shows through.
+            if (on) {
+                col[@intCast(y0 + @as(i32, @intCast(y)))] = line;
+            } else if (((x + y) & 1) == 0) {
+                col[@intCast(y0 + @as(i32, @intCast(y)))] = bg;
+            }
+        }
+    }
+    // Machines: traffic first (grey 1x1), rivals (2x2 livery), player (2x2 white) on top.
+    const w = &world.w;
+    var i: usize = w.active_count;
+    while (i > 0) {
+        i -= 1;
+        const m = &w.machines[i];
+        if (!m.active) continue;
+        const mx = x0 + @divTrunc((m.x >> fixed.Q) * size, 1024);
+        const my = y0 + @divTrunc((m.y >> fixed.Q) * size, 1024);
+        const color: cart.DisplayColor = if (i == world.player) white else .rgb(sprites.livery_rgb[sprites.livery_of(i)]);
+        const d: u32 = if (i >= 5) 1 else 2;
+        cart.rect(.{ .x = mx, .y = my, .width = d, .height = d, .fill_color = color });
+    }
+}
+
+fn rank_text(rank: u8) []const u8 {
+    return switch (rank) {
+        1 => "1ST",
+        2 => "2ND",
+        3 => "3RD",
+        4 => "4TH",
+        5 => "5TH",
+        else => "---",
+    };
+}
+
 pub fn draw() void {
     const w = &world.w;
     const m = &w.machines[world.player];
+    // Top-right: rank (only with rivals in the race).
+    if (w.active_count > 1) text(rank_text(m.rank), 134, 1, if (m.rank == 1) cyan else white);
     // Top-left: LAP n/3.
     var lap_buf: [7]u8 = "LAP 1/3".*;
     lap_buf[4] = '1' + @as(u8, @min(m.lap, tuning.laps - 1));
@@ -69,7 +146,10 @@ pub fn draw() void {
     const tbs: u32 = @intCast(@max(0, (sim.speed(m) * 80) >> fixed.Q));
     put_uint(spd_buf[0..4], @min(tbs, 9999), ' ');
     text(&spd_buf, 2, 104, white);
-    draw_bar(2, 114, @intCast(@max(0, m.thermal)), tuning.thermal_max, orange);
+    draw_bar(2, 114, @intCast(@max(0, m.thermal)), tuning.thermal_max, if (m.boost > 0) white else orange);
+    // Overclock ready mark beside the bar when the bar can pay for one.
+    if (m.thermal >= tuning.thermal_overclock_min and m.boost == 0) text("OC", 44, 112, cyan);
+    draw_minimap();
     draw_message();
 }
 
