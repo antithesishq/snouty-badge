@@ -24,6 +24,11 @@
 //! Every boot (start, a picker choice, the menu's Reset) forgets the
 //! history.
 //!
+//! Control hints (lib/hint.zig): "Hold Select: menu" on the splash and
+//! over the status strip's last line for the first 3 s of play after the
+//! splash or the picker (gone at the first fresh press); the menu has its
+//! own.
+//!
 //! No sound (the badge speaker is unused in this project) and the
 //! neopixels are never written (docs/NEOPIXELS.md). SPEC.md is the design,
 //! PLAN.md the milestone contract, CLAUDE.md the conventions.
@@ -39,6 +44,7 @@ const splash = @import("frontend/splash.zig");
 const picker = @import("frontend/picker.zig");
 const strip = @import("frontend/strip.zig");
 const rewind = @import("frontend/rewind.zig");
+const hint = @import("hint");
 
 comptime {
     cart.export_start_code();
@@ -59,6 +65,9 @@ var controls_state: input.State = .{};
 
 /// Menu opens since boot.
 var menu_opens: u32 = 0;
+/// "Hold Select: menu" over the status strip's last line for the first
+/// seconds of play (lib/hint.zig).
+var play_hint: hint.Overlay = .{};
 
 pub fn start() void {
     cart.set_vsync_enabled(1000.0 / 60.0);
@@ -85,7 +94,7 @@ pub fn update() void {
 
     switch (state) {
         .splash => if (splash.update(controls_state.edge.any_pressed())) {
-            if (after_splash == .pick) picker.reset();
+            if (after_splash == .pick) picker.reset() else play_hint.start(hint.play_seconds * 60);
             picker.from_menu = false;
             enter(after_splash, t0);
         },
@@ -142,6 +151,7 @@ pub fn boot(c: core.Cart) void {
 fn pick_frame(t0: u64) void {
     const choice = picker.update(live_edge()) orelse return;
     if (choice) |i| boot(romsrc.open(i));
+    play_hint.start(hint.play_seconds * 60);
     enter(.running, t0);
 }
 
@@ -165,6 +175,7 @@ fn menu_frame() void {
 fn run_frame(t1: u64) void {
     const in = controls_state.game_frame();
     if (in.open_menu) {
+        play_hint.stop();
         menu_opens +%= 1;
         // Held buttons (the d-pad, A) must not act in the menu.
         controls_state.suppress_held();
@@ -190,6 +201,9 @@ fn run_frame(t1: u64) void {
     video.show(lynx.frame());
     if (state == .help) draw_help();
     strip.draw(&lynx);
+    // Over the strip's last line (the ROM detail), so no picture is hidden.
+    // A press held over from the splash or picker is suppressed, not fresh.
+    play_hint.update_and_draw(cart, text.draw, live_edge().any_pressed(), cart.screen_height - hint.strip_h, strip.accent, strip.bg);
 }
 
 /// The drive has a volume but no playable Lynx ROM (Snouty Genesis's M2

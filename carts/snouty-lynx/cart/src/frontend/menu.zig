@@ -32,7 +32,10 @@
 //! press). The panel's bottom line (`scrub_line_y`) reads "Scrub: live /
 //! 3.5s" or "Scrub: -1.5 / 3.5s" (position behind live / history held),
 //! dim while there is no history, "Scrub: no memory" when the arena had no
-//! room. Resuming from a scrubbed position plays on from there and drops
+//! room; on Resume at the live position it names the action instead,
+//! "Left/Right: rewind" or "Rewind: no history", and a footer in the free
+//! line under it reads "B: back to game" (lib/hint.zig, review 2026-10-01
+//! UX-05). Resuming from a scrubbed position plays on from there and drops
 //! the future (main.zig, `rewind.resume_if_parked`). After a scrub step the
 //! panel gives way to that line in a bar at the bottom (`scrub_view`) so
 //! the restored frame, drawn by `rewind.step`, is visible; Left/Right keep
@@ -56,6 +59,7 @@ const input = @import("input.zig");
 const romsrc = @import("romsrc.zig");
 const text = @import("text.zig");
 const rewind = @import("rewind.zig");
+const hint = @import("hint");
 
 pub const version = "0.3.0-m3";
 
@@ -256,6 +260,8 @@ const first_row_y = panel_y + 2;
 /// The panel's bottom line (y 110): "B: back" on About, "Scrub: ..." on
 /// the rows. Fixed below the last row even when Pick ROM is hidden.
 pub const scrub_line_y = first_row_y + item_count * row_h;
+/// The footer under it (y 119): how to leave the menu (`hint.back`).
+const footer_y = scrub_line_y + row_h;
 /// The scrub bar shown after a step (`scrub_view`): the panel's bottom
 /// strip (y 118..127, over the status strip's last line), so the panel
 /// hides it entirely when it comes back.
@@ -343,8 +349,11 @@ fn draw(l: *const core.Lynx) void {
         }
         y += row_h;
     }
-    const live = rewind.capacity_slots() != 0 and rewind.history_frames() != 0;
-    text.draw(scrub_text(&buf), text_x, scrub_line_y, if (live) row_color else dim_color, panel_color);
+    const has_memory = rewind.capacity_slots() != 0;
+    const live = has_memory and rewind.history_frames() != 0;
+    const bottom = hint.resume_line(cursor == .resume_game, has_memory, rewind.depth_frames(), rewind.history_frames()) orelse scrub_text(&buf);
+    text.draw(bottom, text_x, scrub_line_y, if (live) row_color else dim_color, panel_color);
+    text.draw(hint.back, text_x, footer_y, dim_color, panel_color);
 }
 
 /// The scrub line for the current position, or "Scrub: no memory" when
@@ -524,6 +533,8 @@ fn check_width(comptime s: []const u8, comptime cols: usize) void {
 comptime {
     if (panel_cols != 18) @compileError("panel_cols changed: recheck the layout");
     if (scrub_line_y + row_h > panel_y + panel_h) @compileError("bottom line outside the panel");
+    if (footer_y + 8 > panel_y + panel_h - 1) @compileError("menu footer outside the panel");
+    if (hint.panel_cols != panel_cols) @compileError("hint.panel_cols does not match this panel");
     if (panel_y + panel_h > cart.screen_height) @compileError("panel below the screen");
     if (first_row_y - 1 <= panel_y) @compileError("first cursor bar on the panel frame");
     check_width(title, screen_cols);

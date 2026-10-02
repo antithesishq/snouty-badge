@@ -34,6 +34,13 @@ the drive open the picker after the splash (A plays, B runs the first);
 a drive with none shows the add-a-ROM help over the embedded ROM (A or B
 dismisses it).
 
+On-screen hints (`lib/hint.zig`, shared with Boy, Gear and Genesis): the
+splash and the first 3 s of play after the splash or the picker show "Hold
+Select: menu" (over the status strip's last line, gone at the first button
+press); in the menu the bottom line on Resume reads "Left/Right: rewind"
+("Rewind: no history" before the first record; the `Scrub:` readout once
+parked or on other rows) and the footer reads "B: back to game".
+
 ## 0. Pull and run (review)
 
 ```sh

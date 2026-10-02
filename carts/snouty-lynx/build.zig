@@ -143,7 +143,8 @@ fn resolve_rom(b: *Build, opt: ?[]const u8) RomFile {
     return .{ .lazy = b.path(arg), .name = std.fs.path.basename(arg) };
 }
 
-/// Adds `core`, `romfs` (lib/romfs.zig), `iris` (lib/iris_mark.zig), `drive`
+/// Adds `core`, `romfs` (lib/romfs.zig), `iris` (lib/iris_mark.zig), `hint`
+/// (lib/hint.zig), `drive`
 /// (cart/src/frontend/drive.zig as a module, shared with the host tests) and
 /// the generated `rom` to the cart. `rom` holds the embedded ROM (`data`,
 /// copied next to the generated rom.zig so @embedFile can see it), its file
@@ -156,6 +157,8 @@ fn build_cart_modules(b: *Build, cart: *Build.Module, cart_api: *Build.Module, s
     cart.addImport("romfs", romfs);
     // The Iris mark the splash draws (SPEC.md section 12), shared with the other emulators.
     cart.addImport("iris", b.createModule(.{ .root_source_file = b.path("lib/iris_mark.zig") }));
+    // The control hints (splash, first seconds of play, menu), shared with Boy, Gear, Genesis.
+    cart.addImport("hint", b.createModule(.{ .root_source_file = b.path("lib/hint.zig") }));
     cart.addImport("drive", b.createModule(.{
         .root_source_file = b.path(dir ++ "cart/src/frontend/drive.zig"),
         .imports = &.{
