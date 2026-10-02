@@ -5,6 +5,8 @@ badge), plus the tools used to make and measure them. One Zig build produces
 every cart; each cart has its own directory with its design, plan, assets and
 tools.
 
+Caution! This repo is a fun side project and I make no guarantees about performance or stability. These are working great on my hardware, but flash at your own risk!
+
 ## Start here
 
 1. **Play a prebuilt cart on a badge**: copy its `.uf2` onto the badge's
