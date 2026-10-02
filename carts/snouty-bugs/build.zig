@@ -18,6 +18,15 @@ pub fn add(b: *Build, sycl_badge_dep: *Build.Dependency, opts: common.Options) v
         .root_source_file = b.path(dir ++ "cart/src/main.zig"),
         .custom_builder = &build_cart_assets,
     });
+
+    // `zig build test` (shared step): host unit tests for the pure modules
+    // (no cart API, no gfx): the boss HP table.
+    const tests = b.addTest(.{ .root_module = b.createModule(.{
+        .root_source_file = b.path(dir ++ "cart/src/boss_hp.zig"),
+        .target = b.graph.host,
+        .optimize = .Debug,
+    }) });
+    opts.test_step.dependOn(&b.addRunArtifact(tests).step);
 }
 
 /// One entry per PNG in assets/gen/. `bits` is palette bits per pixel (4 =

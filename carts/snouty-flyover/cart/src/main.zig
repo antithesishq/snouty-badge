@@ -29,7 +29,7 @@ pub fn start() void {
     cart.set_double_buffer_mode(.no_copy_full_frame);
     render.init();
     model.init();
-    world.advance_to(camera.cam.y >> fixed.Q);
+    world.advance_to(camera.cam_row());
     camera.init();
     text.show_card3("MEMORY LANE", "generated on badge", text.fps_line);
 }
@@ -54,7 +54,7 @@ fn fly() void {
     camera.update(stick, frame);
 
     const t0 = cart.micros_since_boot();
-    const cam_row = camera.cam.y >> fixed.Q;
+    const cam_row = camera.cam_row();
     world.advance_to(cam_row);
     world.tick(frame, cam_row, stick.verb);
     if (world.entered_segment()) |seg| show_segment_card(seg);
@@ -84,7 +84,7 @@ var skips: u32 = 0;
 /// transition frames. noinline (with skip_frame): inlined into update() the
 /// two ring-generation paths grew the cart's _start by about 11 KB of .text.
 noinline fn start_skip() void {
-    const target = world.next_bus_row(camera.cam.y >> fixed.Q);
+    const target = world.next_bus_row(camera.cam_row());
     camera.jump_to(target);
     world.skip_reset(target);
     // A short jump keeps the old district's last rows (target - keep_behind
@@ -101,7 +101,7 @@ noinline fn start_skip() void {
 /// and draw black with the card; no flight, no district tick, no march.
 noinline fn skip_frame() void {
     const t0 = cart.micros_since_boot();
-    const done = world.advance_partial(camera.cam.y >> fixed.Q, skip_rows);
+    const done = world.advance_partial(camera.cam_row(), skip_rows);
     if (skipping > 1 or done) skipping -= 1;
     const black: cart.Pixel = .from_color(.{ .r = 0, .g = 0, .b = 0 });
     for (cart.framebuffer) |*column| @memset(column, black);
@@ -131,7 +131,7 @@ fn draw_overlay() void {
     put_uint(buf[0..6], @min(render_us, 999_999));
     const fps: u32 = if (render_us == 0) 999 else @min(1_000_000 / render_us, 999);
     put_uint(buf[9..12], fps);
-    put_uint(buf[15..21], @intCast(@max(camera.cam.y >> fixed.Q, 0)));
+    put_uint(buf[15..21], @intCast(@max(camera.cam_row(), 0)));
     cart.text(.{
         .str = &buf,
         .x = 160 - 8 * @as(i32, buf.len),
@@ -188,10 +188,10 @@ comptime {
 
 /// Segment under the camera: kind (0 bus, 1 heap, 2 sort, ...) and index.
 fn debug_segment_kind() callconv(.c) u32 {
-    return @backingInt(world.segment_at(camera.cam.y >> fixed.Q).kind);
+    return @backingInt(world.segment_at(camera.cam_row()).kind);
 }
 fn debug_segment_index() callconv(.c) u32 {
-    return world.segment_at(camera.cam.y >> fixed.Q).index;
+    return world.segment_at(camera.cam_row()).index;
 }
 fn debug_live_kind() callconv(.c) u32 {
     return @backingInt(world.live().kind);
@@ -258,7 +258,7 @@ fn debug_render_us() callconv(.c) u32 {
     return render_us;
 }
 fn debug_cam_y() callconv(.c) u32 {
-    return @bitCast(camera.cam.y >> fixed.Q);
+    return @bitCast(camera.cam_row());
 }
 fn debug_cam_x() callconv(.c) u32 {
     return @bitCast(camera.cam.x >> fixed.Q);
@@ -276,30 +276,11 @@ fn debug_cam_roll() callconv(.c) u32 {
 fn debug_horizon() callconv(.c) u32 {
     return @bitCast(camera.cam.horizon);
 }
-/// Regenerates every row the ring should hold around the camera, outside the
-/// live district and the Bus under the camera (whose ticks edit cells: the
-/// district's dataflow, the Bus packets), and counts the cells that differ
-/// from the ring (0 = ring consistent), plus 1000000 per row in the window
-/// that generated_row() does not report as present.
+/// Ring consistency around the camera (world.check): cells that differ from
+/// gen_row outside the live district and the Bus under the camera, plus
+/// 1000000 per row in the window that is not in the ring; 0 = consistent.
 fn debug_world_check() callconv(.c) u32 {
-    var h: [world.W]u8 = undefined;
-    var c: [world.W]u8 = undefined;
-    var bad: u32 = 0;
-    const row0 = camera.cam.y >> fixed.Q;
-    const live = world.live();
-    const under = world.segment_at(row0);
-    var y = row0 - world.keep_behind;
-    while (y < row0 + world.gen_ahead) : (y += 1) {
-        if (!world.generated_row(y)) bad += 1_000_000;
-        if (y >= live.y0 and y < live.y0 + live.len) continue;
-        if (under.kind == .bus and y >= under.y0 and y < under.y0 + under.len) continue;
-        world.gen_row(y, &h, &c);
-        const i: usize = @intCast(y & (world.DEPTH - 1));
-        for (h, c, world.height[i], world.colour[i]) |eh, ec, rh, rc| {
-            bad += @intFromBool(eh != rh) + @intFromBool(ec != rc);
-        }
-    }
-    return bad;
+    return world.check(camera.cam_row());
 }
 /// Ring cell at world (x, y), or 0xFFFF if row y is not in the ring.
 fn debug_map_height(x: i32, y: i32) callconv(.c) u32 {

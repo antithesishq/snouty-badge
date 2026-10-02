@@ -332,7 +332,9 @@ pub fn draw(frame: u32) void {
     // Per-column horizon shear: cam.roll rows across the whole screen.
     const roll80 = @divTrunc(cam.roll, sw / 2);
     const cx = cam.x;
-    const cy = cam.y;
+    // The march only needs the row modulo the ring depth, and it already
+    // wraps with +%: the low 32 bits of the i64 Q16 y are enough.
+    const cy: i32 = @truncate(cam.y);
     const alt = cam.alt;
     const h_cam: i32 = world.height[@intCast((cy >> fixed.Q) & (world.DEPTH - 1))][@intCast((cx >> fixed.Q) & (world.W - 1))];
     const sky = if (sky_flash != 0) &sky_flash_rel else &sky_rel;

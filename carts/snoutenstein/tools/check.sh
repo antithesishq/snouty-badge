@@ -93,6 +93,13 @@ node ../../tools/preview.mjs $W --frames 900 --quiet --out out/takeover --script
   --at "699 debug_demo == 1" --at "700 debug_demo == 0" --at "700 debug_mode == 1" --at "700 debug_meter == 600" \
   --expect "debug_mode == 1" --expect "debug_desync == 0"
 node tools/check_determinism.mjs $W --script tools/scripts/m5_takeover.json --frames 900
+# Review 2026-10-01 G1: UP at update 1900 takes the demo over during its
+# hold-B rewind; the rewind is committed and the meter refilled at the same
+# tick, counted once (live == replay, no desync).
+node ../../tools/preview.mjs $W --frames 1960 --quiet --out out/takeover_rewind --press UP:1900-1900 \
+  --dump-exports debug_mode,debug_rewinds,debug_desync,debug_demo \
+  --at "1899 debug_mode == 6" --at "1899 debug_rewinds == 0" --at "1900 debug_rewinds == 1" --at "1900 debug_demo == 0" \
+  --expect "debug_rewinds == 1" --expect "debug_desync == 0"
 # M5.2: the secret door in the test level's start room looks like the wall
 # until walked into, then slides open into the corridor below (py > 8).
 node ../../tools/preview.mjs $W --frames 340 --quiet --out out/secret --script tools/scripts/m5_secret.json \
