@@ -146,9 +146,11 @@ pub fn draw() void {
         cx[i] = @intCast(xr >> 10);
         cy[i] = @intCast(yt >> 10);
         cz[i] = @intCast(zt >> 10);
-        // Project to Q4 pixels: anchor + coord * scale / z.
-        sx[i] = clamp16((anchor_x << 4) + @as(i32, @intCast(@divTrunc(@as(i64, xr) * (scale << 4), zt))));
-        sy[i] = clamp16((anchor_y << 4) - @as(i32, @intCast(@divTrunc(@as(i64, yt) * (scale << 4), zt))));
+        // Project to Q4 pixels: anchor + coord * scale / z. Coordinates stay
+        // within 8 units (|xr| < 2^19), so the products fit i32 and the
+        // divide is the hardware one.
+        sx[i] = clamp16((anchor_x << 4) + @divTrunc(xr * (scale << 4), zt));
+        sy[i] = clamp16((anchor_y << 4) - @divTrunc(yt * (scale << 4), zt));
     }
 
     // Cull, light and sort (insertion sort, far to near).
@@ -172,11 +174,13 @@ pub fn draw() void {
         const nx = e1y * e2z - e1z * e2y;
         const ny = e1z * e2x - e1x * e2z;
         const nz = e1x * e2y - e1y * e2x;
+        // Shade by the cosine n.L / |n| against the thresholds 90/256 and
+        // 180/256, compared as squares so there is no square root or divide:
+        // (n.L)^2 >= t^2 |n|^2 with n.L in Q8 (light is Q8 unit).
         const nl: i64 = @as(i64, nx) * light[0] + @as(i64, ny) * light[1] + @as(i64, nz) * light[2];
-        const nn: u64 = @as(u64, @intCast(@as(i64, nx) * nx + @as(i64, ny) * ny + @as(i64, nz) * nz));
-        const len: i64 = @intCast(isqrt(nn)); // |n| in Q6 units squared... same scale as nl / 256
-        const ratio: i64 = if (len == 0) 0 else @divTrunc(nl, len); // Q8 cosine
-        shade_of[ti] = if (ratio <= 0) 0 else if (ratio < 90) 1 else if (ratio < 180) 2 else 3;
+        const nn: i64 = @as(i64, nx) * nx + @as(i64, ny) * ny + @as(i64, nz) * nz;
+        const nl2 = nl * nl;
+        shade_of[ti] = if (nl <= 0) 0 else if (nl2 >= nn * (180 * 180)) 3 else if (nl2 >= nn * (90 * 90)) 2 else 1;
         const key: i16 = @intCast(@as(i32, cz[a]) + cz[b] + cz[c]);
         // Insert far first (largest key first).
         var j = n;
@@ -236,15 +240,4 @@ fn fill(x0: i32, y0: i32, x1: i32, y1: i32, x2: i32, y2: i32, px: cart.Pixel) vo
 
 inline fn clamp16(v: i32) i16 {
     return @intCast(@max(-32768, @min(32767, v)));
-}
-
-/// Integer square root of a u64.
-fn isqrt(v: u64) u64 {
-    if (v == 0) return 0;
-    var x: u64 = @as(u64, 1) << @intCast((64 - @clz(v) + 1) / 2);
-    while (true) {
-        const y = (x + v / x) / 2;
-        if (y >= x) return x;
-        x = y;
-    }
 }
