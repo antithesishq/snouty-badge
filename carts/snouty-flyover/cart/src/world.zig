@@ -368,6 +368,30 @@ pub fn skip_reset(cam_row: i32) void {
     bus_index = no_segment;
 }
 
+/// Ring consistency for a camera on row0 (debug_world_check and the host
+/// tests): regenerates every row the ring should hold around the camera,
+/// outside the live district and the Bus under the camera (whose ticks edit
+/// cells), and counts the cells that differ from the ring (0 = consistent),
+/// plus 1000000 per row in the window that generated_row() does not report.
+pub fn check(row0: i32) u32 {
+    var h: [W]u8 = undefined;
+    var c: [W]u8 = undefined;
+    var bad: u32 = 0;
+    const under = segment_at(row0);
+    var y = row0 - keep_behind;
+    while (y < row0 + gen_ahead) : (y += 1) {
+        if (!generated_row(y)) bad += 1_000_000;
+        if (y >= live_seg.y0 and y < live_seg.y0 + live_seg.len) continue;
+        if (under.kind == .bus and y >= under.y0 and y < under.y0 + under.len) continue;
+        gen_row(y, &h, &c);
+        const i: usize = @intCast(y & (DEPTH - 1));
+        for (h, c, height[i], colour[i]) |eh, ec, rh, rc| {
+            bad += @intFromBool(eh != rh) + @intFromBool(ec != rc);
+        }
+    }
+    return bad;
+}
+
 /// The segment the camera crossed into this frame, reported once.
 pub fn entered_segment() ?Segment {
     defer entered = null;

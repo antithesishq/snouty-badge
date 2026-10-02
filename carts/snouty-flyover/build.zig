@@ -36,6 +36,22 @@ pub fn add(b: *Build, sycl_badge_dep: *Build.Dependency, opts: common.Options) v
     // `zig build check-float` (shared step): the cart is all-integer; fail if the ELF
     // links any soft-float or libm routine.
     common.add_float_check(b, opts, "snouty-flyover", opts.cart_mode);
+
+    // `zig build test` (shared step): host unit tests for the flight model and
+    // the map ring (cart/src/host_tests.zig). They get the real cart API for
+    // its types and the same build options as the cart.
+    const cart_api = b.createModule(.{ .root_source_file = sycl_badge_dep.path("src/os/cart/api.zig") });
+    const tests = b.addTest(.{ .root_module = b.createModule(.{
+        .root_source_file = b.path(dir ++ "cart/src/host_tests.zig"),
+        .target = b.graph.host,
+        .optimize = .Debug,
+        .imports = &.{
+            .{ .name = "cart-api", .module = cart_api },
+            .{ .name = "build_options", .module = options.createModule() },
+            .{ .name = "iris", .module = b.createModule(.{ .root_source_file = b.path("lib/iris_mark.zig") }) },
+        },
+    }) });
+    opts.test_step.dependOn(&b.addRunArtifact(tests).step);
 }
 
 var build_options: ?*Build.Step.Options = null;

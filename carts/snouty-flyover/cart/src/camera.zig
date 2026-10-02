@@ -71,9 +71,12 @@ const boost_fog_out: u8 = 1;
 // --- State ------------------------------------------------------------------
 
 pub const Cam = struct {
-    /// Position in Q16 cells; y only increases, x wraps at world.W.
+    /// Position in Q16 cells; x wraps at world.W. y only increases and is
+    /// i64 so it never wraps (an i32 Q16 y overflowed at row 32768, about
+    /// 25 minutes of cruise or 128 Select skips); every row derived from it
+    /// is an i32 (cam_row()), which lasts thousands of hours.
     x: i32 = 128 * fixed.one,
-    y: i32 = 0,
+    y: i64 = 0,
     alt: i32 = 56 * fixed.one,
     /// 1/1024 turn, 0 = +y, positive toward +x.
     yaw: i32 = 0,
@@ -84,6 +87,12 @@ pub const Cam = struct {
 };
 
 pub var cam: Cam = .{};
+
+/// The world row under the camera (the integral part of cam.y). Every
+/// consumer of the camera's row goes through this.
+pub fn cam_row() i32 {
+    return @intCast(cam.y >> fixed.Q);
+}
 
 /// What the flight model flies with, from the player or the autopilot:
 /// steer and pitch in Q16 (-1..1), boost = A held, verb = B pressed (edge).
@@ -162,7 +171,7 @@ pub fn pilot(frame: u32) Stick {
         idle += 1;
         if (idle >= idle_frames) autopilot = true;
     }
-    const row = cam.y >> fixed.Q;
+    const row = cam_row();
     defer prev_row = row;
     if (!autopilot) return manual;
     return auto_stick(frame, row);
@@ -213,7 +222,7 @@ pub fn init() void {
     drop_q = 0;
     render.fog_pull = 0;
     speed = cruise;
-    cam.alt = (@as(i32, ground(cam.x, cam.y)) + start_above) * fixed.one;
+    cam.alt = (@as(i32, ground(cam.x, cam_row())) + start_above) * fixed.one;
     cruise_alt = cam.alt;
     autopilot = true;
     idle = 0;
@@ -226,7 +235,7 @@ pub fn init() void {
 /// once-per-segment B so the next district's verb still fires. The
 /// autopilot flag is left as it is.
 pub fn jump_to(row: i32) void {
-    cam.y = row << fixed.Q;
+    cam.y = @as(i64, row) << fixed.Q;
     cam.yaw = 0;
     cam.roll = 0;
     yaw_q = 0;
@@ -236,7 +245,7 @@ pub fn jump_to(row: i32) void {
 
 /// Terrain height of the cell under the camera (for the debug exports).
 pub fn ground_under() u8 {
-    return ground(cam.x, cam.y);
+    return ground(cam.x, cam_row());
 }
 
 pub fn update(stick: Stick, frame: u32) void {
@@ -283,7 +292,7 @@ pub fn update(stick: Stick, frame: u32) void {
     if (autopilot) {
         // Hold floor + the live district's cruise altitude.
         const live_seg = world.live();
-        const want_alt = (@as(i32, world.floor) + world.info(live_seg.kind).alt_at((cam.y >> fixed.Q) - live_seg.y0)) * fixed.one;
+        const want_alt = (@as(i32, world.floor) + world.info(live_seg.kind).alt_at(cam_row() - live_seg.y0)) * fixed.one;
         cruise_alt += @max(-ap_climb, @min(ap_climb, want_alt - cruise_alt));
     } else {
         cruise_alt += @divTrunc(fixed.mul(tilt, climb_max), pitch_range);
@@ -296,13 +305,12 @@ pub fn update(stick: Stick, frame: u32) void {
     const target = @max(cruise_alt, (@as(i32, ahead_max(rows, width)) + clear_above) * fixed.one);
     const gap = target - cam.alt;
     cam.alt += gap >> if (gap > spring_fast_gap * fixed.one) spring_fast_shift else spring_shift;
-    const floor = (@as(i32, ground(cam.x, cam.y)) + min_above) * fixed.one;
+    const floor = (@as(i32, ground(cam.x, cam_row())) + min_above) * fixed.one;
     cam.alt = @max(cam.alt, floor);
 }
 
-/// Terrain height under a Q16 position (0 if the row is not in the ring).
-fn ground(x: i32, y: i32) u8 {
-    const row = y >> fixed.Q;
+/// Terrain height under Q16 x on world row `row` (0 if the row is not in the ring).
+fn ground(x: i32, row: i32) u8 {
     if (!world.generated_row(row)) return 0;
     const col: usize = @intCast((x >> fixed.Q) & (world.W - 1));
     return world.height[@intCast(row & (world.DEPTH - 1))][col];
@@ -312,7 +320,7 @@ fn ground(x: i32, y: i32) u8 {
 /// cells centred on the flight line (which leans with the yaw). Only rows in
 /// the ring are read (the scan stops at the first one it does not hold).
 fn ahead_max(rows: i32, width: i32) u8 {
-    const row0 = cam.y >> fixed.Q;
+    const row0 = cam_row();
     const lean = sin(cam.yaw); // Q16 x cells per row
     var best: u8 = 0;
     var i: i32 = 0;

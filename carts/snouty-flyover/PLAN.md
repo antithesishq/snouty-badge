@@ -1027,3 +1027,25 @@ Goal: three visible finishes, no interface changes, bench unchanged.
     calibrated bench is the reference), Adrian's review of the M4 GIFs, and
     the recorded not-done items (Tree rotation, dam hold/pass, the free
     list word).
+
+### Review 2026-10-01 G2: camera row overflow (stream C1)
+
+- The camera's forward position `cam.y` was an i32 Q16 value: it wrapped
+  negative at row 32768 (about 25 minutes of cruise, or 128 Select skips)
+  while the ring's generation head stayed in the positive region, so
+  terrain stopped. `cam.y` is now i64 Q16; every row derived from it is an
+  i32 through `camera.cam_row()` (main.zig, the flight model probes, the
+  world tick, segments, districts, `debug_cam_y`), and render.zig marches
+  with the low 32 bits (it only needs the row modulo the ring depth and
+  already wraps with `+%`). The ring check moved from main.zig into
+  `world.check(row)` so the host test can use it; `debug_world_check`
+  calls it.
+- Tests: `cart/src/host_tests.zig` (on `zig build test`) flies the
+  autopilot from row 32512 to 33024 and asserts the ring window and
+  `world.check` every frame (crashes on overflow with the old i32 y);
+  `tools/check.sh` runs `check_render.sh` plus the 130-skip soak
+  (`tools/scripts/skip_soak.json`: `debug_cam_y` 32513 at 634, 32769 at
+  639, 33289 at the end, `debug_world_check == 0`).
+- The 2400-update golden is unchanged (12/12 hashes). Calibrated
+  badge-bench, 2400-frame attract: worst 15.08 ms (frame 1823; was 15.07),
+  mean 8.35 busy (was 8.34), p95 12.59; 69% of the 22 ms budget.
