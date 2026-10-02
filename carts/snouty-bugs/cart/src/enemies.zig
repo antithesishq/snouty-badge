@@ -15,6 +15,7 @@ const rng = @import("rng.zig");
 const waves = @import("waves.zig");
 const world = @import("world.zig");
 const boss_hp = @import("boss_hp.zig");
+const pickups = @import("pickups.zig");
 
 pub const Kind = enum(u8) { gnat, wasp, beetle, spider, moth, boss };
 
@@ -436,6 +437,11 @@ fn update_boss(e: *Enemy) void {
             const i = (e.timer % boss_bob_period) * 256 / boss_bob_period;
             const y = e.base_y + boss_bob_amplitude * sin_table[i];
             e.y = @min(@max(y, boss_min_y), boss_max_y);
+            // Each change of fire phase drops a crate (PLAN.md M6).
+            if (e.fire_tick > 0 and e.fire_tick % boss_fire_phase_len == 0) {
+                const c = e.center();
+                pickups.spawn_drop(c[0], c[1]);
+            }
             boss_fire(e);
             e.fire_tick += 1;
             e.timer += 1;
