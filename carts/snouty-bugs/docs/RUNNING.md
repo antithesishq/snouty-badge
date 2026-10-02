@@ -27,6 +27,44 @@ will toggle sound once audio lands; [docs/SOUND.md](../../../docs/SOUND.md)).
 There is no bomb and, as yet, no attract mode: the title waits for a press.
 After a game ends the cart returns to the title.
 
+## Powerups (M6)
+
+Bugs drop crates: a Memory Leak beetle shot down, every fifth gnat shot
+down, and the Heisenbug each time its fire pattern changes (a bug rammed
+by the ship drops nothing). A crate is a 16x16 chamfered box with one bold
+glyph that drifts left at half a pixel per tick on a gentle bob and leaves
+at the left edge; up to four are on screen. Fly into it to collect it: any
+overlap with the whole ship sprite counts, not just the small hitbox.
+Every crate scores 100.
+
+| Crate | Looks like | Grants |
+|---|---|---|
+| F (FUZZER) | Coral, white `F` | The default zapper, upgraded: single, twin, 3-way, 5-way, 5-way with random spread |
+| A (ASSERT) | Teal, white `A` | Fast beams that go through every bug in their row: 1 beam, more damage, 2 beams, more damage, 3 beams |
+| B (BISECT) | Green, white `B` | Homing seekers, 1 to 5, steering tighter per level |
+| FORK | Purple, white Y-shaped branch | A ghost ship (dithered, no thruster) that replays your own path from 24 ticks ago and fires wherever you fired then; up to three, 24 ticks apart. Ghosts cannot be hit and collect nothing |
+| RETRY | Cream, Coral shield | A one-hit shield, shown as a small shield icon above the ship. The next hit is absorbed: `FLAKY, RETRYING`, the bullet or bug that hit you vanishes, a moment of invulnerability (the ship blinks), and no rewind head or fuel is spent |
+| CORE HOURS | Yellow, CPU chip | A third of the fuel bar (60) at once, up to full |
+
+A weapon crate of the kind you already fire adds a level (1 to 5); a
+crate of another kind switches weapon and keeps the level. At level 5, a
+fourth fork or a second shield the crate scores 500 instead. The crates
+come in a fixed order, no randomness: your current weapon, core hours,
+your weapon, fork, the next weapon kind (F, then A, then B, then F), retry,
+your weapon, fork, and round again, so stacking is the default and a swap
+is on offer every eight crates. A new game starts at F1, the plain zapper.
+
+The HUD's status slot, between the score and the fuel bar, shows the
+weapon as its letter and level (`F1`, `A3`, `B5`); during a rewind it
+shows `<<` instead.
+
+Everything a crate gives belongs to the world, so a rewind (the automatic
+one after a hit, or hold-B) that goes back past a collection takes it away
+again: the weapon drops back a level, a fork or the shield is gone, and the
+crate is back on screen to be grabbed a second time. Core hours pay once:
+fuel is not part of the world, so the rewind does not take it back, and a
+core hours crate rewound away and collected again pays nothing more.
+
 ## 1. Prerequisites
 
 See `../../docs/RUNNING.md` at the repository root (Zig version and download,
@@ -178,7 +216,10 @@ The M2 scripts:
   and B 3320..3334 (30 ticks, fuel 180 to 150) in the 54 s wave. The inputs
   keep their update indices, so after a hold the sweep runs ahead of the
   world and threads the pattern differently. It must still be playing at
-  4000 with all three rewinds, and the score must beat M1's 570 (834).
+  4000 with all three rewinds, and the score must beat M1's 570 (1640 since
+  M6). Since M6 it also collects crates: F2 at 803, F3 at 1628, a fork at
+  2222, the A crate (A3) at 2236, a second fork, the shield and A4 at
+  3604..3628 (pinned in its sidecar).
 - `m2_hit.json`: starts at 30 and does nothing else for 1000 ticks. The
   beetle's spread hits the idle ship at update 748: the game enters REWIND
   (state 4) for 80 updates, then resumes at 828 with the game tick back to
@@ -192,19 +233,21 @@ toggles god mode (hits are ignored) and `debug_warp` jumps the wave clock to
 the 66 s WARNING so the boss arrives about 6 s later.
 
 - `m3_boss.json`: the M2 sweep without the B holds, god at 31, warp at 32;
-  the boss spawns at about 393, dies under constant fire at about 1008; then
-  "+500", "STAGE 2", and the table restarts at about 1190.
+  the boss spawns at about 393; its first fire phase change (697) drops an
+  F crate, collected at 841, and with twin zaps it runs out of HP at 922
+  (about 1008 before M6); "+500" and "STAGE 2" at 983, and the table
+  restarts at 1103.
 - `m3_loop.json`: the same input for 2000 ticks; the stage-2 table spawns
-  again (the 8 s beetle at about 1670, now with 5 HP).
+  again (the 8 s beetle at 1583, now with 5 HP; F3 kills it by 1602).
 
 The M4 scripts check the rewind itself. `debug_history_check` restores the
 world from the newest keyframe and the input log and compares it field by
 field with the live world: 0 means identical (2 means the check is refused on
 that frame: title, dying, or the 20 bug-report frames).
 
-- `m4_identity.json`: `m2_play`'s input with identity checks at eight ticks,
-  two of them during a hold-B rewind and two on the first live tick after a
-  release.
+- `m4_identity.json`: `m2_play`'s input with identity checks at twelve ticks,
+  two of them during a hold-B rewind, two on the first live tick after a
+  release, and three with a fork ghost and beams in flight.
 - `m4_identity_boss.json`: `m3_boss`'s input (god + warp) with checks through
   the boss fight, a teleport, the death sequence and the stage clear.
 - `m4_early.json`: flies into the first gnat string at update 84, before 120
@@ -230,10 +273,44 @@ bomb exports `debug_bombs` and `debug_bomb_timer` are gone.
   left), the second 72 for the 72 it has by then (fuel 0, 36 playback
   frames), and the third, with fuel 8 under the floor of 45, is fatal: DYING
   at 1076, title at 1136.
-- `m5_graze.json`: the `m2_play` sweep with a 20-frame hold at 1964 (fuel 140)
+- `m5_graze.json`: the `m2_play` sweep with a 20-frame hold at 1960 (fuel 140)
   instead of its two holds; the shifted sweep grazes a bullet at 2121
-  without being hit and the fuel reads 156, above the 154 refill alone could
-  give.
+  without being hit and the fuel reads 157, above the 155 refill alone could
+  give. (The hold was at 1964 until M6; the F2 crate changed the timing.)
+
+The M6 scripts check the crates (section "Powerups"). The exports they read:
+`debug_weapon` (kind * 10 + level, kind 0 F, 1 A, 2 B: `3` is F3, `13` A3,
+`25` B5), `debug_forks` (0..3), `debug_shield` (0 or 1), `debug_pickups`
+(crates on screen), `debug_drops` (crates dropped this game), `debug_cores`
+(core hours collected) and `debug_bolts` (the ship's and ghosts' shots in
+flight, pool of 64). `m1_play` also pins the plainest case of a rewind
+undoing a collection: F2 at 166, a hit at 167, F1 again at 187 during the
+playback.
+
+- `m6_pickup.json`: the `m2_play` sweep with one long hold-B (806..885, 160
+  ticks) right after the first F crate is collected at 803: the hold takes
+  F2 back at 807 and puts the crate back on screen, the ship grabs it again
+  at 1043; the core hours crate at 1383 lifts the fuel from 70 to 130; F3
+  at 1868, a fork at 2432, and the A crate at 2498 turns F3 into A3.
+- `m6_cores.json`: `m6_pickup`'s input plus a short hold (1390..1399) just
+  after the core hours crate is collected at 1383 (fuel 70 to 130): the hold
+  un-collects it but keeps the fuel, and grabbing it again at 1411 pays
+  nothing more.
+- `m6_fork.json`: `m2_play`'s input plus a third hold at 3632..3646 that
+  goes back past the second fork, A4 and the shield (forks 2 to 1 at 3645,
+  then re-collected at 3650). Identity checks with one and two ghosts and
+  their beams in flight, during holds and on the first frames after them.
+- `m6_retry.json`: `m2_play`'s input run on to 4990 (idle ship, no god
+  mode). The shield from 3625 absorbs a hit at 4726: no rewind, no fuel,
+  still PLAYING, nothing lands for 60 ticks; the next hit (4786) is a normal
+  rewind, whose playback brings the shield back, and it absorbs the same hit
+  again at 4926.
+- `m6_retry_hc.json`: the same in hardcore (B on the title): the absorbed
+  hits leave the fuel at 180 and 66, while the unshielded ones cost 120 and
+  72.
+- `m6_identity.json`: a 12000-update god-mode sweep with three holds: A5,
+  B5, F5 (with its random spread), three forks and two stage clears, with
+  identity checks throughout (it is 0 on every frame after the title).
 
 `docs/preview_m5.gif` is one hold-B rewind, updates 690..760 of `m5_manual`:
 

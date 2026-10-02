@@ -1,13 +1,17 @@
 # m2_play: the preview GIF script. A on the title at 30, hold still and fire through the
 # opening gnat strings (60-239), then sweep up 40 / hold 20 / down 40 / hold 20 to 3960.
-# Since M5 there is no bomb; two short hold-B rewinds do its job. Without them the sweep is
-# hit by the moth + beetle wave at update 2242 (game tick 2212) and, replaying the same
-# fate, spends every rewind and dies at game tick 2212 again (update 2842).
+# Since M5 there is no bomb; two short hold-B rewinds do its job. Before M6, without them
+# the sweep was hit by the moth + beetle wave at update 2242 and died there; with the M6
+# weapons it survives that wave anyway and is first hit at 3384 (then 3624, 3780: no
+# rewinds left at the end), so the holds now shape the run rather than save it.
 # - B 2084..2093 (10 frames = 20 ticks): game tick 2053 -> 2033, fuel 180 -> 160. The
 #   inputs keep their update indices, so after the release the sweep runs 30 ticks ahead of
-#   the world (10 frames not simulated + 20 ticks undone) and slips through that wave.
+#   the world (10 frames not simulated + 20 ticks undone).
 # - B 3320..3334 (15 frames = 30 ticks) in the 54 s wave: game tick 3258 -> 3228, fuel
-#   180 -> 150 (the refill had topped it up again), score 653 -> 573 (it rewinds too).
+#   180 -> 150 (the refill had topped it up again), score 1170 -> 1070 (it rewinds too).
 # The press frame is already MANUAL (state 5); the release frame is PLAYING without a tick.
-# Survives the loop with all 3 rewinds, score 834, 4 grazes, fuel back to 180 at the end.
---frames 4000 --dump-exports debug_state,debug_score,debug_rewinds,debug_fuel,debug_grazes --expect "debug_score > 570" --expect "debug_state == 1" --expect "debug_rewinds == 3" --at "2083 debug_state == 1" --at "2084 debug_state == 5" --at "2093 debug_fuel == 160" --at "2094 debug_state == 1" --at "2094 debug_game_tick == 2033" --at "3320 debug_state == 5" --at "3335 debug_state == 1" --at "3335 debug_fuel == 150"
+# M6 crates on the way (m6_pickup and m6_fork pin them in detail): the first beetle dies at
+# 592 and drops an F (weapon 1 = F1 until 802, F2 from 803), F3 at 1628, fork 1 at 2222,
+# the A crate at 2236 swaps to A3 (13), fork 2 at 3604, shield at 3625, A4 at 3628.
+# Survives the loop with all 3 rewinds, score 1640, no graze, fuel back to 180 at the end.
+--frames 4000 --dump-exports debug_state,debug_score,debug_rewinds,debug_fuel,debug_grazes,debug_weapon,debug_forks --expect "debug_score > 570" --expect "debug_state == 1" --expect "debug_rewinds == 3" --expect "debug_weapon == 14" --expect "debug_forks == 2" --at "802 debug_weapon == 1" --at "803 debug_weapon == 2" --at "1628 debug_weapon == 3" --at "2083 debug_state == 1" --at "2084 debug_state == 5" --at "2093 debug_fuel == 160" --at "2094 debug_state == 1" --at "2094 debug_game_tick == 2033" --at "2222 debug_forks == 1" --at "2236 debug_weapon == 13" --at "3320 debug_state == 5" --at "3335 debug_state == 1" --at "3335 debug_fuel == 150" --at "3625 debug_shield == 1"

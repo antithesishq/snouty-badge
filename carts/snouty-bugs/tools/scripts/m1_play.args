@@ -1,2 +1,12 @@
-# m1_play: the docs/RUNNING.md section 5 example (1800 ticks; against the M1 build: score 570, lives 2).
---frames 1800 --dump-exports debug_state,debug_score,debug_lives,debug_enemies --expect "debug_state == 1" --expect "debug_score > 0"
+# m1_play: the docs/RUNNING.md section 5 example (1800 ticks; against the M1 build: score 570,
+# lives 2; since M6: score 760, F3). It also pins the case a rewind crosses a collection:
+# the 5th gnat shot down dies at update 151 (game tick 121) and drops an F crate (drops 1,
+# pickups 1); the ship flies into it at 166 (tick 136): F1 -> F2 (weapon 1 -> 2), +100,
+# pickups 0. Next tick (167) a gnat hits it: REWIND, target 17, lives 3 -> 2. The 20
+# bug-report frames hold tick 137; the playback then steps back 2 ticks per frame and at 187
+# (tick 135, before the grab) the weapon is F1 again and the crate is back on screen
+# (pickups 1, score 70). At 195 (tick 119) even the drop is undone (drops 0, pickups 0).
+# Resume at 247 with tick 17, F1. The replayed run differs (input keeps its update indices):
+# the F crate drops again at 328, the cores crate at 367; F2 at 427 (tick 197), cores at
+# 449 (tick 219), F3 at 963.
+--frames 1800 --dump-exports debug_state,debug_score,debug_lives,debug_enemies,debug_weapon --at "150 debug_drops == 0" --at "151 debug_drops == 1" --at "151 debug_pickups == 1" --at "165 debug_weapon == 1" --at "166 debug_weapon == 2" --at "166 debug_pickups == 0" --at "166 debug_score == 170" --at "167 debug_state == 4" --at "167 debug_rewind_target == 17" --at "186 debug_weapon == 2" --at "187 debug_state == 4" --at "187 debug_weapon == 1" --at "187 debug_pickups == 1" --at "187 debug_score == 70" --at "195 debug_drops == 0" --at "247 debug_state == 1" --at "247 debug_game_tick == 17" --at "247 debug_weapon == 1" --at "300 debug_history_check == 0" --at "426 debug_weapon == 1" --at "427 debug_weapon == 2" --at "449 debug_cores == 1" --expect "debug_state == 1" --expect "debug_score > 0" --expect "debug_weapon == 3"

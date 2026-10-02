@@ -12,6 +12,7 @@ const player = @import("player.zig");
 const enemies = @import("enemies.zig");
 const bullets = @import("bullets.zig");
 const fx = @import("fx.zig");
+const pickups = @import("pickups.zig");
 const waves = @import("waves.zig");
 const draw = @import("draw.zig");
 
@@ -28,10 +29,14 @@ pub const World = struct {
     input: input.State = .{},
     player: player.State = .{},
     enemies: [24]enemies.Enemy = @splat(.{}),
-    bolts: [24]bullets.Bolt = @splat(.{}),
+    /// Player shots (PLAN.md M6: 64, for the 5-way fuzzer and three forks).
+    bolts: [64]bullets.Bolt = @splat(.{}),
     /// SPEC.md section 6: pool of 96.
     enemy_bullets: [96]bullets.EnemyBullet = @splat(.{}),
     fx: [16]fx.Fx = @splat(.{}),
+    /// Powerup crates (PLAN.md M6), and the drop sequence cursor.
+    pickups: [4]pickups.Pickup = @splat(.{}),
+    drops: pickups.Drops = .{},
     waves: waves.State = .{},
     bg: draw.BgState = .{},
 };

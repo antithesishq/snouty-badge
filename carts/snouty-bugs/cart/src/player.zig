@@ -1,5 +1,7 @@
-//! Ship: movement, banking, zapper, invulnerability, score. The ship
-//! state is `world.w.player`; the rewind stock and the rewind fuel are
+//! Ship: movement, banking, the weapon (M6: fuzzer, assert, bisect at
+//! levels 1..5), the trail ring and the forks (ghost ships replaying it),
+//! the retry shield, invulnerability, score. The ship state is
+//! `world.w.player`; the rewind stock and the rewind fuel are
 //! meta-state kept in `main.zig` (PLAN.md M5: a rewind moves the World's
 //! clock, so anything spent from inside the World would be refunded).
 const cart = @import("cart-api");
@@ -7,6 +9,8 @@ const gfx = @import("gfx");
 const draw = @import("draw.zig");
 const input = @import("input.zig");
 const bullets = @import("bullets.zig");
+const enemies = @import("enemies.zig");
+const rng = @import("rng.zig");
 const world = @import("world.zig");
 
 pub const cell_w = 32;
@@ -32,6 +36,24 @@ const score_cap: u32 = 999_999;
 
 pub const Pose = enum(u32) { level = 0, up = 1, down = 2 };
 
+/// The three weapons (PLAN.md M6 "Numbers"); the crate kinds 0..2 match.
+pub const Weapon = enum(u8) { fuzzer, assert, bisect };
+pub const max_level: u8 = 5;
+pub const max_forks: u8 = 3;
+/// Ghost k (1-based) replays the trail `fork_delay * k` ticks back.
+pub const fork_delay: u32 = 24;
+pub const trail_len = 80;
+/// Ticks of `FLAKY, RETRYING` and of invulnerability after the shield pops.
+pub const retry_ticks: u32 = 60;
+
+/// One tick of the ship's history: the floor of its cell top-left and
+/// whether it fired a volley that tick.
+pub const TrailEntry = struct {
+    x: u8 = 0,
+    y: u8 = 0,
+    fired: bool = false,
+};
+
 /// Ship state, stored in `world.w.player`. Defaults are the spawn values.
 pub const State = struct {
     x: f32 = spawn_x,
@@ -49,6 +71,23 @@ pub const State = struct {
     next_rewind_score: u32 = 10_000,
     /// Ticks left of the `GO!` pop after a rewind resume.
     go_pop: u32 = 0,
+    // M6 powerups: everything a crate grants lives here, in the World.
+    weapon: Weapon = .fuzzer,
+    level: u8 = 1,
+    /// Ghost ships, 0..3.
+    forks: u8 = 0,
+    /// The retry shield, 0..1.
+    shield: u8 = 0,
+    /// Core hours crates collected (monotonic); `main.zig` pays fuel for
+    /// them against a meta high water.
+    cores: u32 = 0,
+    /// Gnats shot down by bolts this game; every 5th drops a crate.
+    gnat_kills: u32 = 0,
+    /// Ticks left of the `FLAKY, RETRYING` pop after the shield took a hit.
+    retry_pop: u32 = 0,
+    /// The ship's position every tick, at `trail[tick % 80]`, recorded
+    /// whether or not a fork exists (so a fork has history at once).
+    trail: [trail_len]TrailEntry = @splat(.{}),
 };
 
 pub fn update() void {
@@ -75,13 +114,122 @@ pub fn update() void {
     }
 
     if (p.fire_cooldown > 0) p.fire_cooldown -= 1;
+    var fired = false;
     if (input.held(.a) and p.fire_cooldown == 0) {
-        _ = bullets.spawn_bolt(p.x + 28, p.y + 8);
+        fire_volley(p.x, p.y);
         p.fire_cooldown = fire_interval;
+        fired = true;
+    }
+    const t = world.w.game_tick;
+    p.trail[t % trail_len] = .{
+        .x = @intFromFloat(@floor(p.x)),
+        .y = @intFromFloat(@floor(p.y)),
+        .fired = fired,
+    };
+    // The ghosts fire after the ship, so its volley has the pool first.
+    var k: u32 = 1;
+    while (k <= p.forks) : (k += 1) {
+        if (t < fork_delay * k) continue;
+        const e = p.trail[(t - fork_delay * k) % trail_len];
+        if (e.fired) fire_volley(@floatFromInt(e.x), @floatFromInt(e.y));
     }
 
     if (p.invuln > 0) p.invuln -= 1;
     if (p.go_pop > 0) p.go_pop -= 1;
+    if (p.retry_pop > 0) p.retry_pop -= 1;
+}
+
+const zap_speed: f32 = 4.0;
+const beam_speed: f32 = 6.0;
+const seeker_speed: f32 = 3.5;
+
+fn sin256(a: i32) f32 {
+    return enemies.sin_table[@as(u8, @truncate(@as(u32, @bitCast(a))))];
+}
+
+/// Velocity at `angle` 1/256 turns from straight right. Angle 0 is exactly
+/// (speed, 0), so the level-1 zap moves exactly as the M5 zapper did.
+fn velocity(v: f32, angle: i32) [2]f32 {
+    if (angle == 0) return .{ v, 0 };
+    return .{ v * sin256(angle + 64), v * sin256(angle) };
+}
+
+fn zap(x: f32, y: f32, angle: i32) void {
+    const v = velocity(zap_speed, angle);
+    _ = bullets.spawn_bolt(.{ .kind = .zap, .x = x + 28, .y = y + 8, .vx = v[0], .vy = v[1] });
+}
+
+/// One volley of the current weapon from a ship (or ghost) whose cell
+/// top-left is (x, y): PLAN.md M6 "Numbers". Every bolt's hitbox center
+/// starts at the nose, (x + 36, y + 12) plus the level's offsets.
+fn fire_volley(x: f32, y: f32) void {
+    const p = &world.w.player;
+    switch (p.weapon) {
+        .fuzzer => switch (p.level) {
+            0, 1 => zap(x, y, 0),
+            2 => {
+                zap(x, y - 3, 0);
+                zap(x, y + 3, 0);
+            },
+            3 => for ([_]i32{ 0, 8, -8 }) |a| zap(x, y, a),
+            4 => for ([_]i32{ 0, 8, -8, 16, -16 }) |a| zap(x, y, a),
+            else => for ([_]i32{ 0, 8, -8, 16, -16 }) |a| zap(x, y, a + rng.range(-4, 4)),
+        },
+        .assert => {
+            const dmg: u8 = switch (p.level) {
+                0, 1, 2 => 1,
+                3, 4 => 2,
+                else => 3,
+            };
+            const offsets: []const f32 = switch (p.level) {
+                0, 1, 2 => &.{0},
+                3, 4 => &.{ -4, 4 },
+                else => &.{ 0, -6, 6 },
+            };
+            for (offsets) |dy| {
+                _ = bullets.spawn_bolt(.{
+                    .kind = .beam,
+                    .damage = dmg,
+                    .x = x + 36 - bullets.beam_len / 2,
+                    .y = y + 12 - bullets.beam_h / 2 + dy,
+                    .vx = beam_speed,
+                });
+            }
+        },
+        .bisect => {
+            const lvl: u32 = @max(p.level, 1);
+            const gain = 0.08 + 0.04 * @as(f32, @floatFromInt(lvl - 1));
+            var i: u32 = 0;
+            while (i < lvl) : (i += 1) {
+                // 0, +10, -10, +20, -20 (1/256 turns).
+                const step: i32 = @intCast((i + 1) / 2);
+                const a: i32 = if (i % 2 == 1) 10 * step else -10 * step;
+                const v = velocity(seeker_speed, a);
+                _ = bullets.spawn_bolt(.{ .kind = .seeker, .x = x + 28, .y = y + 8, .vx = v[0], .vy = v[1], .gain = gain });
+            }
+        },
+    }
+}
+
+/// The trail entry ghost `k` (1-based) stands on in the tick just
+/// simulated, or null before there is that much history.
+pub fn ghost_entry(k: u32) ?TrailEntry {
+    const p = &world.w.player;
+    if (world.w.game_tick == 0) return null;
+    const last = world.w.game_tick - 1;
+    if (last < fork_delay * k) return null;
+    return p.trail[(last - fork_delay * k) % trail_len];
+}
+
+/// The forks: the ship cell in the ship's current pose at each ghost's
+/// trail entry, checkerboard-dithered, no thruster, farthest first.
+pub fn draw_ghosts() void {
+    const p = &world.w.player;
+    var k: u32 = p.forks;
+    while (k >= 1) : (k -= 1) {
+        const e = ghost_entry(k) orelse continue;
+        draw.draw_sprite(gfx.ship, cell_w, cell_h, @backingInt(p.pose), e.x, e.y, .{ .skip_odd = true });
+    }
 }
 
 pub fn invulnerable() bool {
@@ -114,6 +262,8 @@ pub fn draw_ship(tick: u32) void {
         draw.draw_sprite(gfx.thruster, 8, 8, (tick / 3) % 4, ix + thruster_off[0], iy + thruster_off[1], .{});
         draw.draw_sprite(gfx.ship, cell_w, cell_h, @backingInt(p.pose), ix, iy, .{});
     }
+    // The retry shield: `hud.png` cell 1 (12x8) centered above the cell.
+    if (p.shield > 0) draw.draw_sprite(gfx.hud, 12, 8, 1, ix + 10, iy - 6, .{});
     if (p.invuln > 0) {
         const hb = hitbox();
         // 1 px dot at the hitbox center.

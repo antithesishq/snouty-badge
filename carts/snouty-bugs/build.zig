@@ -53,6 +53,7 @@ const images = [_]Image{
     .{ .file = "fx_small.png", .bits = 4, .transparent = true },
     .{ .file = "fx_big.png", .bits = 4, .transparent = true },
     .{ .file = "hud.png", .bits = 4, .transparent = true },
+    .{ .file = "pickups.png", .bits = 4, .transparent = true },
     .{ .file = "bg_far.png", .bits = 4, .transparent = false },
     .{ .file = "bg_near.png", .bits = 4, .transparent = true },
     .{ .file = "iris_16.png", .bits = 4, .transparent = true },

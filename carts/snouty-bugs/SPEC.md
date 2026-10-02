@@ -193,6 +193,57 @@ that between one resume and the next hit, so a player who keeps getting hit
 runs out within a few hits instead of rewinding one frame forever. There
 is no consolation refill after a hit.
 
+### 5.4 Powerups: crates, weapons, the fork (M6)
+
+Bugs drop crates. Collecting one (any overlap with the 32x24 ship cell)
+scores 100 and grants something; everything granted lives in the World, so
+a rewind that crosses the collection takes it away again and the crate is
+back on screen to be grabbed a second time. That is Raiden's power loss
+without a special rule: the snapshot is the whole world.
+
+**Weapons.** Three kinds, each a crate with a letter, stacking to level 5
+on the same kind and swapping kind (level kept) on a different one. Every
+weapon fires on A at the zapper's cadence. The HUD status slot shows the
+weapon as letter plus level (`F3`). Default: FUZZER level 1, which is the
+plain zapper.
+
+| Crate | Weapon  | Bolt                     | Levels 1..5                                                    |
+|-------|---------|--------------------------|----------------------------------------------------------------|
+| F     | FUZZER  | zap, dies on hit, 4 px/t | single; twin; 3-way; 5-way; 5-way with random angle jitter    |
+| A     | ASSERT  | beam, pierces, 6 px/t    | 1 beam; damage up; 2 beams; damage up; 3 beams (dmg 1,1,2,2,3) |
+| B     | BISECT  | seeker, homes, 3.5 px/t  | 1; 2; 3; 4; 5 seekers, steering tighter per level             |
+
+The fuzzer covers the screen (literally fuzzing), the assert goes through
+every bug in its row (narrow, exact, nothing gets past), the bisect finds
+the culprit. A crate at max level, or a fork or retry you already have,
+scores 500 instead.
+
+**FORK.** A ghost ship that replays the player's own trajectory from 24
+ticks ago and fires the current weapon whenever the ship fired then. A
+second fork sits 48 ticks behind, a third 72. Ghosts have no hitbox and
+collect nothing; they are drawn with the every-other-pixel dither of the
+Heisenbug and the pause screen, so they read as branches rather than
+ships. The World records the ship's position every tick for this, so the
+ghosts rewind with everything else and a fork collected is history-ready
+at once.
+
+**RETRY.** A one-hit shield (a small icon floats above the ship). When it
+absorbs a hit the message line reads `FLAKY, RETRYING`, the offender
+vanishes, the ship gets 60 ticks of invulnerability, and no rewind or fuel
+is spent.
+
+**CORE HOURS.** A third of the fuel bar (60 ticks). Fuel is meta-state, so
+this is paid against a high-water mark on a World counter: a crate rewound
+away and collected again pays once (section 13.1).
+
+**Drops.** A Memory Leak beetle killed by a bolt (leaks drop memory); every
+fifth gnat shot down; each change of the Heisenbug's fire phase. Crates
+drift left at 0.5 px/tick on a gentle sine and leave at the left edge.
+Crate kinds follow a fixed sequence (no randomness): current weapon, core
+hours, current weapon, fork, the next weapon kind, retry, current weapon,
+fork, and round again. Stacking is the default; a swap is on offer every
+eight crates. Pool of 4 crates.
+
 ## 6. Enemies (the bugs)
 
 Every enemy: position (f32), a movement program, HP, a fire program, score.
@@ -334,7 +385,8 @@ table, or if `y == random` from the PRNG within [16, 104].
 ## 10. HUD, title, game over
 
 - HUD (y 0..7): score as 6 digits in the built-in 8x8 font at x=0; a
-  status slot at x 48..63 (`<<` blinking during any rewind playback); the
+  status slot at x 48..63 (weapon letter + level, e.g. `F3`; `<<` blinking
+  there during any rewind playback); the
   fuel bar at x 68..99 (1 px Anti-White frame, y 1..6; Coral fill 30x4
   inside, red below the hardcore floor); rewinds as Snouty-head icons 12x8
   right-aligned at x 100..159 (up to 5 shown), or `HARD` in Coral in
@@ -388,13 +440,14 @@ is what the code expects. Sizes in bytes are the packed 4-bit index arrays.
 |-----------------------|--------|--------|-----------|--------|--------------------------------------------------|
 | `ship.png`            | 32x24  | 3      | 96x24     | 1,152  | level, bank up, bank down; cockpit hitbox marked  |
 | `thruster.png`        | 8x8    | 4      | 32x8      | 128    | flame loop                                       |
-| `bolt.png`            | 16x8   | 2      | 32x8      | 128    | zapper bolt flicker                              |
+| `bolt.png`            | 16x8   | 6      | 96x8      | 384    | zap flicker x2, assert beam x2, bisect seeker x2 |
 | `bugs_small.png`      | 8x8    | 4      | 32x8      | 128    | gnat 2-frame wing loop, bullet round 2 frames    |
 | `bugs.png`            | 16x16  | 10     | 160x16    | 1,280  | wasp x2, beetle x2, spider x2, moth x2, needle bullet, spare (was bomb pickup) |
 | `boss.png`            | 48x48  | 5      | 240x48    | 5,760  | 4 idle wing frames + 1 flicker/teleport frame    |
 | `fx_small.png`        | 16x16  | 8      | 128x16    | 1,024  | explosion x5, spark x3                           |
 | `fx_big.png`          | 32x32  | 6      | 192x32    | 3,072  | big explosion                                    |
-| `hud.png`             | 12x8   | 4      | 48x8      | 192    | Snouty head (rewind stock), spare, spare (were bomb icons), heart |
+| `hud.png`             | 12x8   | 4      | 48x8      | 192    | Snouty head (rewind stock), retry shield, spare, heart |
+| `pickups.png`         | 16x16  | 6      | 96x16     | 768    | crates: F, A, B, fork, retry, core hours          |
 | `title.png`           | 128x40 | 1      | 128x40    | 2,560  | logo lettering                                   |
 | `bg_far.png`          | 256x120| 1      | 256x120   | 15,360 | tileable horizontally; opaque, 8-bit allowed (30,720 B) |
 | `bg_near.png`         | 256x24 | 1      | 256x24    | 3,072  | tileable horizontally; transparent over far layer |
@@ -533,11 +586,14 @@ subagents, as with `snouty-badge`.
   hardware timing check.
 - **M5 Rewind bar**: the bomb goes; hold-B rewind paid from the fuel bar
   (5.2), hardcore mode (5.3), fuel HUD, title mode select.
-- **M6 Attract mode**: title, autopilot demo, takeover, game over, pause,
+- **M6 Powerups** (5.4): weapon crates (FUZZER, ASSERT, BISECT) stacking
+  to level 5, the FORK ghost ships replaying the trail, RETRY shield, CORE
+  HOURS fuel, drops from beetles, gnat strings and boss phases.
+- **M7 Attract mode**: title, autopilot demo, takeover, game over, pause,
   deterministic soak test. Decide autopilot vs replay here. The demo shows
   both rewinds.
-- **M7 Polish**: final art drop-in, audio, Select sound toggle, title
-  bestiary, tuning from hardware play.
+- **M8 Polish**: final art drop-in, Select sound toggle, title bestiary,
+  tuning from hardware play.
 
 Parallel tracks: art (external agent, per `ASSETS.md`) runs alongside M1 to
 M3 using placeholder sprites; the asset prep script is written against the
@@ -595,4 +651,10 @@ brief so the real sheets drop in without code changes.
   draws the game's ship sprite instead. The game's title is "Snouty
   Bughunt" (was "Snouty vs. the Bugs"; repo, cart and doc names unchanged).
   Review image `docs/snouty_icons_2026-09-29.png`.
-
+- 2026-10-02: Powerups designed (5.4) at Adrian's request: Raiden-style
+  stacking weapon crates as testing tools plus the FORK (ghost ships
+  replaying the player's own trail), RETRY and CORE HOURS. M6 Powerups;
+  attract mode becomes M7, polish M8. See PLAN.md M6.
+- 2026-10-02: M6 built and tagged `snouty-bugs/m6`: crates, the three
+  weapons, forks, retry, core hours, drops (`docs/preview_m6.gif`). See
+  PLAN.md M6 and its status entry. Next: M7 attract mode.

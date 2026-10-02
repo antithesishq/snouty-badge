@@ -15,6 +15,7 @@ const enemies = @import("enemies.zig");
 const waves = @import("waves.zig");
 const collide = @import("collide.zig");
 const fx = @import("fx.zig");
+const pickups = @import("pickups.zig");
 const hud = @import("hud.zig");
 const world = @import("world.zig");
 const history = @import("history.zig");
@@ -59,6 +60,8 @@ var fuel_acc: u32 = 0;
 /// nothing (the `rewind_award_high_water` pattern).
 var graze_high_water: u32 = 0;
 var clear_high_water: u32 = 0;
+/// Highest `w.player.cores` already paid out as fuel (CORE HOURS crates).
+var cores_high_water: u32 = 0;
 /// Frames spent in the current hold-B rewind (1 on the press frame).
 var manual_frame: u32 = 0;
 /// Hardcore game (SPEC.md 5.3, chosen with B on the title): no rewind
@@ -80,6 +83,8 @@ const rewind_depth: u32 = rewind.playback_frames * rewind.ticks_per_frame;
 const fuel_max: u32 = 180;
 const fuel_refill_every: u32 = 10;
 const graze_fuel: u32 = 2;
+/// Fuel per CORE HOURS crate (PLAN.md M6): a third of the bar.
+const cores_fuel: u32 = 60;
 /// Hardcore: a hit met with less fuel than this is death (SPEC.md 5.3).
 const fatal_floor: u32 = 45;
 
@@ -143,6 +148,7 @@ pub fn update() void {
         .playing => {
             draw_scene();
             if (world.w.player.go_pop > 0) rewind.draw_go(world.w.player.go_pop);
+            if (world.w.player.retry_pop > 0) rewind.draw_retry(world.w.player.retry_pop);
         },
         .dying => {
             draw_scene();
@@ -193,6 +199,7 @@ fn new_game(hard: bool) void {
     fuel_acc = 0;
     graze_high_water = 0;
     clear_high_water = 0;
+    cores_high_water = 0;
     manual_frame = 0;
     history.reset();
     state = .playing;
@@ -210,7 +217,19 @@ pub fn simulate(mode: world.Mode) void {
     enemies.update();
     bullets.update();
     bullets.update_enemy_bullets();
-    const hit = collide.run();
+    pickups.update();
+    var hit = collide.run();
+    // The retry shield takes the hit inside the World, in both modes: the
+    // offender goes as in god mode, 60 ticks of invulnerability and the
+    // `FLAKY, RETRYING` pop, and no meta logic ever sees the hit.
+    if (hit.by != .none and !god and world.w.player.shield > 0) {
+        collide.remove_offender(hit);
+        const p = &world.w.player;
+        p.shield = 0;
+        p.invuln = player.retry_ticks;
+        p.retry_pop = player.retry_ticks;
+        hit = .{};
+    }
     // A live hit that will be rewound leaves the world as it is (the
     // restore replaces it); any other hit (god mode, death, or one met
     // while replaying history, which can only be a god-mode hit) removes
@@ -294,6 +313,11 @@ fn award_fuel() void {
         fuel = @min(fuel + graze_fuel * (grazes - graze_high_water), fuel_max);
         graze_high_water = grazes;
     }
+    const cores = world.w.player.cores;
+    if (cores > cores_high_water) {
+        fuel = @min(fuel + cores_fuel * (cores - cores_high_water), fuel_max);
+        cores_high_water = cores;
+    }
     const clears = world.w.waves.stage_clears;
     if (clears > clear_high_water) {
         fuel = fuel_max;
@@ -361,12 +385,16 @@ fn simulate_dying() void {
     world.w.game_tick +%= 1;
 }
 
-/// Draw order: bg, enemies, ship, bolts, enemy bullets, fx, HUD, stage
-/// text. The ship is hidden while DYING.
+/// Draw order: bg, enemies, crates, ghosts, ship, bolts, enemy bullets,
+/// fx, HUD, stage text. The ship and its ghosts are hidden while DYING.
 fn draw_scene() void {
     draw.draw_bg();
     enemies.draw_enemies();
-    if (state != .dying) player.draw_ship(world.w.game_tick);
+    pickups.draw_pickups();
+    if (state != .dying) {
+        player.draw_ghosts();
+        player.draw_ship(world.w.game_tick);
+    }
     bullets.draw_bolts(world.w.game_tick);
     bullets.draw_enemy_bullets();
     fx.draw_fx();
@@ -399,6 +427,12 @@ comptime {
         @export(&debug_fuel, .{ .name = "debug_fuel" });
         @export(&debug_manual_frame, .{ .name = "debug_manual_frame" });
         @export(&debug_hardcore, .{ .name = "debug_hardcore" });
+        @export(&debug_weapon, .{ .name = "debug_weapon" });
+        @export(&debug_forks, .{ .name = "debug_forks" });
+        @export(&debug_shield, .{ .name = "debug_shield" });
+        @export(&debug_pickups, .{ .name = "debug_pickups" });
+        @export(&debug_cores, .{ .name = "debug_cores" });
+        @export(&debug_drops, .{ .name = "debug_drops" });
     }
 }
 
@@ -473,7 +507,7 @@ fn debug_history_check() callconv(.c) u32 {
     if (!history.restore(world.w.game_tick)) return 2;
     return if (history.worlds_equal(&history_aside, &world.w)) 0 else 1;
 }
-/// Module-level (4 KB) rather than on the stack.
+/// Module-level (6 KB) rather than on the stack.
 var history_aside: world.World = undefined;
 fn debug_game_tick() callconv(.c) u32 {
     return world.w.game_tick;
@@ -492,6 +526,28 @@ fn debug_manual_frame() callconv(.c) u32 {
 }
 fn debug_hardcore() callconv(.c) u32 {
     return @intFromBool(hardcore);
+}
+/// kind * 10 + level, kind 0 fuzzer, 1 assert, 2 bisect.
+fn debug_weapon() callconv(.c) u32 {
+    const p = &world.w.player;
+    return @as(u32, @backingInt(p.weapon)) * 10 + p.level;
+}
+fn debug_forks() callconv(.c) u32 {
+    return world.w.player.forks;
+}
+fn debug_shield() callconv(.c) u32 {
+    return world.w.player.shield;
+}
+/// Live crates.
+fn debug_pickups() callconv(.c) u32 {
+    return pickups.live_count();
+}
+fn debug_cores() callconv(.c) u32 {
+    return world.w.player.cores;
+}
+/// Crates spawned this game (World counter).
+fn debug_drops() callconv(.c) u32 {
+    return world.w.drops.count;
 }
 
 /// Button state. Upstream's platform_wasm.zig exposes `controls` but never

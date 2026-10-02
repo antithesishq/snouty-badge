@@ -5,6 +5,7 @@ const enemies = @import("enemies.zig");
 const player = @import("player.zig");
 const fx = @import("fx.zig");
 const world = @import("world.zig");
+const pickups = @import("pickups.zig");
 
 /// What touched the ship this tick.
 pub const HitBy = enum(u8) { none, enemy, bullet };
@@ -85,21 +86,47 @@ pub fn remove_offender(hit: Hit) void {
     }
 }
 
+/// Zaps and seekers die on their first hit; a beam pierces, damaging each
+/// enemy slot at most once (`hit_mask`). A spark at each hit. A kill by a
+/// bolt may drop a crate (beetle; every 5th gnat); a ram kill does not.
 fn bolts_vs_enemies() void {
     for (&world.w.bolts) |*b| {
         if (!b.active) continue;
-        for (&world.w.enemies) |*e| {
+        const bb = bullets.bolt_hitbox(b.*);
+        for (&world.w.enemies, 0..) |*e, i| {
             if (!e.live() or !e.hittable()) continue;
+            const bit = @as(u32, 1) << @intCast(i);
+            if (b.kind == .beam and b.hit_mask & bit != 0) continue;
             const s = e.size();
-            if (!overlap(b.x, b.y, bullets.bolt_w, bullets.bolt_h, e.x, e.y, s[0], s[1])) continue;
-            b.active = false;
-            fx.spawn(.spark, @intFromFloat(@floor(b.x + bullets.bolt_w)), @intFromFloat(@floor(b.y + bullets.bolt_h / 2)));
-            switch (enemies.damage(e, 1)) {
+            if (!overlap(bb[0], bb[1], bb[2], bb[3], e.x, e.y, s[0], s[1])) continue;
+            fx.spawn(.spark, @intFromFloat(@floor(bb[0] + bb[2])), @intFromFloat(@floor(bb[1] + bb[3] / 2)));
+            switch (enemies.damage(e, b.damage)) {
                 .alive => e.flash = if (e.kind == .boss) 1 else 2,
-                .killed => kill(e),
+                .killed => {
+                    const c = e.center();
+                    kill(e);
+                    drop_for_kill(e.kind, c);
+                },
                 .boss_dying => {},
             }
+            if (b.kind == .beam) {
+                b.hit_mask |= bit;
+                continue;
+            }
+            b.active = false;
             break;
         }
+    }
+}
+
+fn drop_for_kill(kind: enemies.Kind, c: [2]f32) void {
+    switch (kind) {
+        .beetle => pickups.spawn_drop(c[0], c[1]),
+        .gnat => {
+            const p = &world.w.player;
+            p.gnat_kills += 1;
+            if (p.gnat_kills % 5 == 0) pickups.spawn_drop(c[0], c[1]);
+        },
+        else => {},
     }
 }

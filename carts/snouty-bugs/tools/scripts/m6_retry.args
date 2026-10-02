@@ -1,0 +1,15 @@
+# m6_retry: the RETRY shield, no god mode (god never consumes it). m2_play's input exactly
+# (the sweep to 3960 with its two holds), run on to 4990 with the ship idle after 3960.
+# - 3625 (game tick 3518): the retry crate (crate 6 of the sequence) is grabbed, shield 0 -> 1.
+# - 4726 (tick 4619): the idle ship is hit with the shield up. The shield takes it inside
+#   the simulation: shield 1 -> 0, state stays 1 (PLAYING, no REWIND), rewinds stay 3, fuel
+#   180 untouched (m6_retry_hc shows the fuel side where a hit would cost it), and 60 ticks
+#   of invulnerability: nothing lands through 4785 (tick 4678).
+# - 4786 (tick 4679, the first tick the invulnerability is over): the next hit is a normal
+#   one: REWIND, rewinds 3 -> 2, target 4559 (hit - 120). During the playback the world goes
+#   back past the absorbing hit, so at 4836 (tick 4617) the shield is up again; the resume at
+#   4866 (tick 4559) keeps it, and the idle ship replays its fate: absorbed again at 4926
+#   (tick 4619, rewinds still 2), next real hit at 4986 (rewinds 1).
+# debug_history_check is 0 right after the absorbing hit, through the invulnerability and
+# after the resume (2 on the bug-report frames, 4786..4805, by design).
+--frames 4990 --dump-exports debug_state,debug_shield,debug_rewinds,debug_fuel,debug_lives --at "3624 debug_shield == 0" --at "3625 debug_shield == 1" --at "4725 debug_shield == 1" --at "4725 debug_rewinds == 3" --at "4726 debug_game_tick == 4619" --at "4726 debug_shield == 0" --at "4726 debug_state == 1" --at "4726 debug_rewinds == 3" --at "4726 debug_fuel == 180" --at "4727 debug_history_check == 0" --at "4750 debug_state == 1" --at "4760 debug_history_check == 0" --at "4785 debug_state == 1" --at "4785 debug_rewinds == 3" --at "4785 debug_lives == 3" --at "4786 debug_state == 4" --at "4786 debug_rewinds == 2" --at "4786 debug_rewind_target == 4559" --at "4835 debug_shield == 0" --at "4836 debug_shield == 1" --at "4866 debug_state == 1" --at "4866 debug_game_tick == 4559" --at "4866 debug_shield == 1" --at "4870 debug_history_check == 0" --at "4925 debug_shield == 1" --at "4926 debug_shield == 0" --at "4926 debug_state == 1" --at "4926 debug_rewinds == 2" --at "4930 debug_history_check == 0" --at "4985 debug_state == 1" --at "4986 debug_state == 4" --at "4986 debug_rewinds == 1" --expect "debug_rewinds == 1"

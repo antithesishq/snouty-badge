@@ -1,7 +1,8 @@
 //! The rewind's visuals (SPEC.md 5.1, 5.2, 5.3, 10): the frozen bug
 //! report, the reverse playback overlay, the hold-B (manual) rewind
-//! overlay, the dying bar (with hardcore's `UNRECOVERABLE`) and the `GO!`
-//! pop. Draw only: main.zig runs the state machine and history.zig
+//! overlay, the dying bar (with hardcore's `UNRECOVERABLE`), the `GO!`
+//! pop and the retry shield's `FLAKY, RETRYING` (M6). Draw only: main.zig
+//! runs the state machine and history.zig
 //! restores the world; this module only reads `world.w`.
 const cart = @import("cart-api");
 const draw = @import("draw.zig");
@@ -49,6 +50,8 @@ const go_pop_ticks: u32 = 6;
 var report_bar_y: i32 = bar_mid;
 var go_y: i32 = bar_mid + text_dy;
 var go_last: u32 = 0;
+var retry_y: i32 = bar_mid + text_dy;
+var retry_last: u32 = 0;
 
 /// Top row of the bar for the ship's current position.
 fn bar_top() i32 {
@@ -159,4 +162,13 @@ pub fn draw_go(ticks_left: u32) void {
         draw.text(str, x + 1, go_y + 1, draw.coral);
     }
     draw.centered_text(str, go_y, draw.anti_white);
+}
+
+/// `FLAKY, RETRYING` in Coral on the bar's text line, the row picked once
+/// per pop as `draw_go` does; `ticks_left` counts player.retry_ticks down.
+pub fn draw_retry(ticks_left: u32) void {
+    if (ticks_left == 0) return;
+    if (ticks_left >= retry_last) retry_y = bar_top() + text_dy;
+    retry_last = ticks_left;
+    draw.centered_text("FLAKY, RETRYING", retry_y, draw.coral);
 }

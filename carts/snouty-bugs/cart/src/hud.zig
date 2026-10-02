@@ -17,7 +17,8 @@ const max_rewind_icons = 5;
 /// `hud.png` cell: 12x8 since 2026-09-29 (the 8x8 head read as a rat).
 /// Five icons fill x 100..159, right of the fuel bar.
 const icon_w: i32 = 12;
-/// Status slot x 48..63, left empty by the HUD; rewind.zig draws `<<` there.
+/// Status slot x 48..63: the weapon as letter + level (`F3`); rewind.zig
+/// patches it and draws `<<` there during a rewind.
 pub const status_x: i32 = 48;
 pub const status_w: u32 = 16;
 /// Fuel bar: 1 px Anti-White frame x 68..99, y 1..6; fill inside it,
@@ -35,7 +36,7 @@ const hard_x: i32 = 128;
 const title_ship_x: i32 = 64;
 const title_ship_y: i32 = 62;
 
-/// HUD row: score (x 0..47), the status slot (x 48..63, empty here), the
+/// HUD row: score (x 0..47), the status slot (x 48..63, the weapon), the
 /// fuel bar (x 68..99) and, on the right, the rewind stock as up to 5
 /// right-aligned 12x8 Snouty heads or `HARD` in hardcore. All arguments are
 /// main.zig's meta-state; `rewinds` is ignored when `hardcore`.
@@ -50,6 +51,7 @@ pub fn draw_hud(rewinds: u32, fuel: u32, fuel_max: u32, fatal_floor: u32, hardco
         v /= 10;
     }
     draw.text(&buf, 0, 0, draw.anti_white);
+    draw_weapon();
     draw_fuel(fuel, fuel_max, fatal_floor, hardcore);
     if (hardcore) {
         draw.text("HARD", hard_x, 0, draw.coral);
@@ -60,6 +62,15 @@ pub fn draw_hud(rewinds: u32, fuel: u32, fuel_max: u32, fatal_floor: u32, hardco
         const x: i32 = @as(i32, cart.screen_width) - icon_w * @as(i32, @intCast(k + 1));
         draw.draw_sprite(gfx.hud, icon_w, 8, 0, x, 0, .{});
     }
+}
+
+/// `F3`, `A1`, `B5`: the weapon letter and level in the status slot, in
+/// Coral so it reads apart from the score digits ending at x 47.
+fn draw_weapon() void {
+    const p = &world.w.player;
+    const letters = "FAB";
+    const slot = [2]u8{ letters[@backingInt(p.weapon)], '0' + @as(u8, @min(p.level, 9)) };
+    draw.text(&slot, status_x, 0, draw.coral);
 }
 
 /// The fuel bar: frame, then a fill of `fuel * 30 / fuel_max` px (rounded
