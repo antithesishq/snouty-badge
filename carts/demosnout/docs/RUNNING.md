@@ -154,5 +154,7 @@ ms over the part's own frames; the rule is every part's worst frame under
 
 ## 9. Flash the badge
 
-Copy `zig-out/firmware/demosnout.uf2` onto the badge's USB drive,
-replacing `CURRENT.UF2`.
+Install it as in [docs/INSTALL.md](../../../docs/INSTALL.md): copy
+`zig-out/firmware/demosnout.uf2` (repository root) onto the badge's
+`SYCLBADGE` drive, eject, and pick it in the badge menu. Start+Select
+returns to the menu.

@@ -17,14 +17,8 @@ repository root. This cart also needs curl (for `tools/fetch_test_roms.sh`);
 ## 2. Checkout layout
 
 Cloning the repository with its `sycl-badge/` submodule is described in
-`../../docs/RUNNING.md` at the repository root. Until the `monorepo` branch
-is on GitHub it lives on the exe.dev VM:
-
-```sh
-git clone -b monorepo exedev@animated-badge.exe.xyz:/home/exedev/snouty-badge
-cd snouty-badge && git submodule update --init
-cd carts/snouty-boy
-```
+[`docs/RUNNING.md`](../../../docs/RUNNING.md) section 2 at the
+repository root; this cart is `carts/snouty-boy/` in that checkout.
 
 Milestones are annotated tags (`git tag -n1 'snouty-boy/*'`: `snouty-boy/m1`,
 `/m3`, `/m4`); work in progress is on `m<N>-*` branches.
@@ -375,24 +369,15 @@ Boy frame.
 
 ## 8. Flash the badge
 
-Carts go onto the badge's own USB drive; this is not the RP2350 bootloader
-(from the sycl-badge README "Flash a UF2 to the Badge" and the user manual,
-<https://zigembeddedgroup.github.io/sycl-badge/>):
+Install it as in [docs/INSTALL.md](../../../docs/INSTALL.md) (the badge's
+`SYCLBADGE` drive, not the RP2350 bootloader): copy
+`zig-out/firmware/snouty-boy.uf2` (repository root) onto the drive, copy
+any `.gb`/`.gbc` files next to it (section 9), eject, and start Snouty Boy
+from the OS menu.
 
-1. Plug the badge into your computer over USB-C and switch it on. It mounts
-   as a mass-storage drive named `SYCLBADGE`.
-2. Copy `zig-out/firmware/snouty-boy.uf2` (repository root) onto the drive, replacing
-   `CURRENT.UF2`. The badge shows a progress indicator while it copies.
-3. The cart starts when the copy finishes.
-4. To play a ROM from the drive, copy `.gb`/`.gbc` files next to the UF2
-   and eject before playing (section 9).
-
-An XIP build (`-Dcart-mode=xip`, section 4) is `snouty-boy-xip.uf2`; copy
-that one instead, the same way (XIP launch is still unproven on hardware).
-
-Holding the `RESET` and `BOOT_SEL` buttons (releasing `RESET` first) mounts
-the RP2350 bootloader drive instead; that is for flashing the badge OS
-(`sycl-os-kernel.uf2`), not carts.
+An XIP build (`-Dcart-mode=xip`, section 4) is `snouty-boy-xip.uf2`;
+install that one instead (XIP launch is still unproven on hardware). It is
+only needed for an embedded ROM above about 64 KB.
 
 On the badge the overlay's numbers are real: `avg`/`max` are the
 microseconds `gb.step_frame` takes per Game Boy frame (M1 target under

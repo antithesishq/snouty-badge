@@ -18,7 +18,7 @@ animations, `out/<style>/` generated packs.
 
 ## Reviewing on your laptop
 
-    git clone -b monorepo exedev@animated-badge.exe.xyz:/home/exedev/snouty-badge && cd snouty-badge && git submodule update --init
+    git clone --recursive git@github.com:antithesishq/snouty-badge.git && cd snouty-badge
     open snouty-art/out/study05/run/snouty_run_preview.gif    # 4x, scrolling ground
     open snouty-art/out/study05/run/snouty_run_contact_sheet.png
     open snouty-art/out/study05/jump/snouty_jump_preview.gif

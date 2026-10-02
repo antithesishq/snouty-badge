@@ -14,16 +14,8 @@ art in `tools/prepare_assets.py --placeholders`).
 ## 2. Getting the code
 
 Cloning the repository with its `sycl-badge/` submodule is described in
-`../../docs/RUNNING.md` at the repository root. Until the `monorepo` branch
-is on GitHub it lives on the exe.dev VM `animated-badge.exe.xyz` at
-`/home/exedev/snouty-badge`:
-
-```sh
-git clone -b monorepo exedev@animated-badge.exe.xyz:/home/exedev/snouty-badge
-cd snouty-badge && git submodule update --init
-# later, to update: git pull (or rsync -a --exclude zig-out --exclude .zig-cache --exclude zig-pkg \
-#   exedev@animated-badge.exe.xyz:/home/exedev/snouty-badge/ snouty-badge/)
-```
+[`docs/RUNNING.md`](../../../docs/RUNNING.md) section 2 at the
+repository root; update with `git pull` and `git submodule update --init`.
 
 Milestones are annotated tags (`git tag -n1 'snouty-maze/*'`:
 `snouty-maze/a1`, `/a2`, `/m0`..`/m3`); `git checkout snouty-maze/m1` gives
@@ -387,9 +379,10 @@ the `gfx` module. Goldens in `tests/golden/` are baselined on the w95 art.
 
 ## 7. Flash the badge
 
-1. Connect the badge over USB-C. It shows up as a USB mass-storage drive.
-2. Copy `zig-out/firmware/snouty-maze.uf2` (repository root) onto the drive (replacing
-   `CURRENT.UF2`). The badge reboots into the cart.
+Install it as in [docs/INSTALL.md](../../../docs/INSTALL.md): copy
+`zig-out/firmware/snouty-maze.uf2` (repository root) onto the badge's
+`SYCLBADGE` drive, eject, and pick it in the badge menu. Start+Select
+returns to the menu.
 
 ## 8. Reading performance on the badge
 

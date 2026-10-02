@@ -112,7 +112,7 @@ Options (all from the root):
 
 | Option | Values (default first) | Meaning |
 |--------|------------------------|---------|
-| `-Dflyover_fps` | `30`, `60` | vsync lock; SPEC section 10 decides 60 from the M1/M2 bench |
+| `-Dflyover_fps` | `30`, `60` | vsync lock; the cart ships at 30 (decided at M2, SPEC section 10); 60 is for experiments only |
 | `-Dflyover_depth` | `256`, `128` | map ring depth in rows; 128 halves the map memory and the view distance (`world.gen_ahead`) |
 | `-Ddebug_overlay` | `false`, `true` | draws the frame time in microseconds, the fps it implies and the camera row, top right |
 
@@ -317,10 +317,10 @@ tools/check_render.sh path/to/other.wasm   # check a different build
 
 ## 6. Flashing
 
-1. Put the badge in bootloader mode and connect it over USB-C. It shows up
-   as a USB mass-storage drive.
-2. Copy `zig-out/firmware/snouty-flyover.uf2` (repository root) onto the drive.
-3. Pick the cart in the badge menu. Start+Select returns to the menu.
+Install it as in [docs/INSTALL.md](../../../docs/INSTALL.md): copy
+`zig-out/firmware/snouty-flyover.uf2` (repository root) onto the badge's
+`SYCLBADGE` drive (not the RP2350 bootloader drive), eject, and pick the
+cart in the badge menu. Start+Select returns to the menu.
 
 For on-badge timing flash a `-Ddebug_overlay=true` build, or press the
 joystick for the OS FPS overlay.

@@ -5,7 +5,8 @@ simulator, bench it, put a ROM on the badge drive and flash the cart.
 Commands run from the repository root unless noted; outputs land in the
 root `zig-out/`.
 
-Status: M2 (frontend) on `lynx/m2`. Boot splash (the Iris mark and
+Status: M4 (perf) done, on main; M2 is the frontend described here, M3
+the scrubber, M4 the perf pass (PLAN.md Status). Boot splash (the Iris mark and
 "SNOUTY LYNX" slide down onto a dark screen, 1.2 s, any button skips; the
 cart is silent), then the real core (`core/`: the 65C02, Mikey, Suzy, the
 boot without the boot ROM). Rows 102..127 are the status strip: "SNOUTY
@@ -289,14 +290,10 @@ file onto `SYCLBADGE`, **eject**, start the cart; the strip names the file.
 
 ## 7. Flash the badge
 
-As Snouty Boy (`carts/snouty-boy/docs/RUNNING.md` section 8):
-
-1. Plug the badge into your computer over USB-C and switch it on. It
-   mounts as a mass-storage drive named `SYCLBADGE`.
-2. Copy `zig-out/firmware/snouty-lynx.uf2` onto the drive, replacing
-   `CURRENT.UF2`, plus a `.lnx` file if you want one (section 6).
-3. The cart starts when the copy finishes. With a ROM on the drive, eject
-   before playing (docs/ROM_DRIVE.md section 2).
-
-Holding `RESET` and `BOOT_SEL` (releasing `RESET` first) mounts the RP2350
-bootloader instead; that is for the badge OS, not carts.
+Install it as in [docs/INSTALL.md](../../../docs/INSTALL.md) (the badge's
+`SYCLBADGE` drive, not the RP2350 bootloader): copy
+`zig-out/firmware/snouty-lynx.uf2` (repository root) onto the drive, plus
+a `.lnx` file if you want one (section 6), eject, and start Snouty Lynx
+from the OS menu. The default build also writes `snouty-lynx-xip.uf2`,
+the XIP cart with the longer scrub history (section 5); install that one
+instead to try it (XIP carts are not yet confirmed on a badge).

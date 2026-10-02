@@ -97,8 +97,8 @@ Reference carts: `sycl-badge/showcase/carts/dvd` (simplest asset pipeline),
 ```
 zig build                      # every cart, from the repository root
 zig build -Dcart=snouty-maze   # one cart
-zig build test                 # host tests (snouty-boy, snouty-maze)
-zig build check-float          # soft-float check (snouty-reflections, snouty-maze)
+zig build test                 # every cart's host tests and lib/'s
+zig build check-float          # soft-float check (reflections, maze, flyover, demosnout, zero)
 ```
 
 Outputs `zig-out/firmware/<binary>.uf2`, `.elf` and `zig-out/bin/<binary>.wasm`

@@ -25,8 +25,12 @@ Controls (SPEC.md section 3, M3):
 Free camera orbits at 36 deg/s (3 orbit steps per frame at 20 fps) and
 moves the height by 0.05 m per frame; it returns to attract by itself after
 20 s without input, keeping the angle, and the height eases back to 1.6 m.
-Frozen mode does not time out; in M3 the real-time tracer keeps drawing the
-frozen scene (M4 puts the path tracer behind the same button). Attract
+Freezing (A) stops time and, since M4, hands the screen to a progressive
+path tracer (SPEC.md section 5b, section 11 below): the picture starts as
+the real-time frame and converges over seconds, adding anti-aliasing,
+soft shadows, the glass sphere, glossy water and depth of field; A again
+resumes time where it stopped. A converged frozen image returns to
+attract by itself after 60 s without input. Attract
 switches to the next preset every orbit (30 s) with a 0.5 s fade out and in;
 the cycle pauses while frozen or in free camera. Dither modes, in B order:
 `bayer_temporal` (default), `blue_noise`, `palette16` (16 colours, the Amiga
@@ -380,13 +384,12 @@ the older amplified difference image (40 levels per unit per channel).
 
 ## 7. Flashing
 
-1. Put the badge in bootloader mode and connect it over USB-C. It shows up
-   as a USB mass-storage drive.
-2. Copy `zig-out/firmware/snouty-reflections.uf2` (repository root) onto the drive.
-3. The cart lives alongside the other carts in the badge menu; pick it
-   there. Start+Select returns to the menu.
+Install it as in [docs/INSTALL.md](../../../docs/INSTALL.md): copy
+`zig-out/firmware/snouty-reflections.uf2` (repository root) onto the
+badge's `SYCLBADGE` drive (not the RP2350 bootloader drive), eject, and
+pick it in the badge menu. Start+Select returns to the menu.
 
-To read the M1 timing, flash a `zig build -Dcart=snouty-reflections -Ddebug_overlay=true` build (render
+To read the timing on the badge, flash a `zig build -Dcart=snouty-reflections -Ddebug_overlay=true` build (render
 time drawn on screen) or press the joystick to show the OS FPS overlay.
 
 ## 8. Emulated cycle benchmark

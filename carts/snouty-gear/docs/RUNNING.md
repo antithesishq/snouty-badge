@@ -243,8 +243,9 @@ The badge's USB drive (`SYCLBADGE`, the OS romfs region) holds carts and
 any other file. With the default `drive` build:
 
 1. Plug in the badge, switch it on; the drive mounts.
-2. Copy `snouty-gear.uf2` onto it (replacing `CURRENT.UF2` as for any
-   cart), and copy one `.gg` file (or `.sms`) next to it. Best on a freshly
+2. Copy `snouty-gear.uf2` onto it (as for any cart,
+   [docs/INSTALL.md](../../../docs/INSTALL.md)), and copy one `.gg` file
+   (or `.sms`) next to it. Best on a freshly
    wiped drive, so the file is contiguous; a fragmented file still works
    through the per-cluster path and the report line says `frag`.
 3. **Eject the drive before playing.** The OS writes flash while a host
@@ -258,11 +259,12 @@ any other file. With the default `drive` build:
    `drive: no .gg/.sms file`, or the romfs error name).
 
 The ROM file also shows in the OS cart menu and fails to load if picked
-there; that is cosmetic. Until the real `lib/romfs.zig` reader lands (M0
-Track B) the drive path always reports `NoVolume`.
+there; that is cosmetic.
 
 ## 7. Flash the badge
 
-As Snouty Boy (`carts/snouty-boy/docs/RUNNING.md` section 8): copy
-`zig-out/firmware/snouty-gear.uf2` onto the badge drive. On the badge the
-overlay's `avg`/`max` are real `step_frame` microseconds.
+Install it as in [docs/INSTALL.md](../../../docs/INSTALL.md): copy
+`zig-out/firmware/snouty-gear.uf2` (repository root) onto the badge's
+`SYCLBADGE` drive with any ROM file (section 6), eject, and start Snouty
+Gear from the OS menu. On the badge the overlay's `avg`/`max` are real
+`step_frame` microseconds.
