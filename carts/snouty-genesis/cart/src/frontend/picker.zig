@@ -88,9 +88,10 @@ fn draw() void {
     for (lines[0..k], 0..) |l, j| {
         text.draw(l, 0, note_y + @as(i32, @intCast(j)) * 8, if (ok) help.accent_color else help.dim_color, help.black);
     }
-    // "A: play  B: test ROM", exactly the 20 columns.
-    text.draw("A: play", 0, hint_y, if (ok) help.row_color else help.dim_color, help.black);
-    text.draw("B: test ROM", 9 * 8, hint_y, help.row_color, help.black);
+    // "A: play  B: test ROM", exactly the 20 columns; on the Tufty (C is
+    // badge A, A+B badge B) "C: play  A+B: test", 18.
+    text.draw(if (input.tufty) "C: play" else "A: play", 0, hint_y, if (ok) help.row_color else help.dim_color, help.black);
+    text.draw(if (input.tufty) "A+B: test" else "B: test ROM", 9 * 8, hint_y, help.row_color, help.black);
 }
 
 /// `s` cut to `name_cols` characters, the last one '~' when cut.

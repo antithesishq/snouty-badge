@@ -15,9 +15,12 @@
 const cart = @import("cart-api");
 const core = @import("core");
 const text = @import("text.zig");
+const input = @import("input.zig");
 const tunables = core.tunables;
 
-pub var enabled: bool = true;
+/// On at boot on the SYCL badge; off with -Dbadge=tufty (`input.tufty`).
+/// The menu's Debug overlay row toggles it either way.
+pub var enabled: bool = !input.tufty;
 
 /// Set by the rewind self-check (M3) when a replayed keyframe differs from
 /// the recorded one. The overlay is then drawn on red, even when disabled

@@ -22,8 +22,14 @@ pub const black: cart.DisplayColor = .rgb(0x000000);
 pub const cols = cart.screen_width / 8;
 
 const headline = "No Genesis ROM found";
-const advice = "Copy a .gen, .md or .bin file to the SYCLBADGE drive, eject, restart.";
-const hint = "A: run test ROM";
+/// The Tufty has no USB drive: snouty-tufty writes the drive into the UF2
+/// from its -Dgenesis_rom option (4 lines either way).
+const advice = if (input.tufty)
+    "Build with -Dgenesis_rom=FILE (.gen, .md or .bin), flash the UF2."
+else
+    "Copy a .gen, .md or .bin file to the SYCLBADGE drive, eject, restart.";
+/// C is badge A on the Tufty.
+const hint = if (input.tufty) "C: run test ROM" else "A: run test ROM";
 
 const band_h = 12;
 const advice_y = 16;

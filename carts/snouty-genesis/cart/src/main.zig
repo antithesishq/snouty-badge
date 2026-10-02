@@ -206,7 +206,9 @@ fn run_update(t1: u64) void {
     debug.z80_state = debug.z80_label(&md);
     debug.draw();
     // A press held over from the splash, picker or help is suppressed, not fresh.
-    play_hint.update_and_draw(cart, text.draw, live_edge().any_pressed(), cart.screen_height - hint.strip_h, menu.title_color, menu.band_color);
+    if (input.tufty) {
+        play_hint.update_and_draw_line(cart, text.draw, input.hints.hold_select, live_edge().any_pressed(), cart.screen_height - hint.strip_h, menu.title_color, menu.band_color);
+    } else play_hint.update_and_draw(cart, text.draw, live_edge().any_pressed(), cart.screen_height - hint.strip_h, menu.title_color, menu.band_color);
 }
 
 /// One menu update over the frozen frame; the core is not stepped.

@@ -26,7 +26,7 @@ var rom_source: common.MdRomSource = .drive;
 /// A ROM file: its path and the name the report line shows.
 const RomFile = struct { lazy: Build.LazyPath, name: []const u8 };
 
-/// The `build_options` module (`sound`), set by `add` for `build_cart_modules`.
+/// The `build_options` module (`sound`, `badge`), set by `add` for `build_cart_modules`.
 var build_options: ?*Build.Step.Options = null;
 
 pub fn add(b: *Build, sycl_badge_dep: *Build.Dependency, opts: common.Options) void {
@@ -52,6 +52,9 @@ pub fn add(b: *Build, sycl_badge_dep: *Build.Dependency, opts: common.Options) v
     // toggles it (docs/SOUND.md).
     const options = b.addOptions();
     options.addOption(bool, "sound", opts.sound);
+    // -Dbadge=tufty (declared by the root build.zig; snouty-tufty only): the
+    // splash, menu, picker and help name the Tufty buttons (frontend/input.zig).
+    common.add_badge_option(options, opts);
     build_options = options;
 
     os_cart.add(b, sycl_badge_dep, .{
