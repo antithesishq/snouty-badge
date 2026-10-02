@@ -14,6 +14,7 @@ const player = @import("player.zig");
 const rng = @import("rng.zig");
 const waves = @import("waves.zig");
 const world = @import("world.zig");
+const boss_hp = @import("boss_hp.zig");
 
 pub const Kind = enum(u8) { gnat, wasp, beetle, spider, moth, boss };
 
@@ -155,9 +156,7 @@ const moth_exit_x: f32 = -40;
 const moth_fire_every: u32 = 20;
 const moth_bullet_speed: f32 = 1.5;
 
-// Boss (SPEC.md section 7, PLAN.md "Gameplay numbers for M3").
-const boss_base_hp: u32 = 60;
-const boss_hp_per_loop: u32 = 20;
+// Boss (SPEC.md section 7, PLAN.md "Gameplay numbers for M3"); its HP is in boss_hp.zig.
 const boss_speed: f32 = 1.0;
 const boss_stop_x: f32 = 104;
 const boss_bob_amplitude: f32 = 32;
@@ -217,13 +216,14 @@ fn start_hp(kind: Kind) u8 {
         .beetle => beetle_hp,
         .spider => spider_hp,
         .moth => moth_hp,
-        .boss => @intCast(@min(boss_max_hp(), 255)),
+        .boss => boss_hp.max_hp(world.w.waves.loop),
     };
 }
 
-/// Boss HP for the current loop: 60 + 20 per completed stage.
+/// Boss HP for the current loop: 60 + 20 per completed stage, capped at
+/// 255 (`Enemy.hp` is a u8); the spawn and the HUD bar share it.
 pub fn boss_max_hp() u32 {
-    return boss_base_hp + boss_hp_per_loop * @as(u32, world.w.waves.loop);
+    return boss_hp.max_hp(world.w.waves.loop);
 }
 
 /// Spawns one enemy of `kind` with its cell top-left at (x, y), appearing
