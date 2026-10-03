@@ -240,6 +240,9 @@ pub fn step(gb: *Gb, dir: i2) bool {
             }
         },
     }
+    // The menu runs in .copy_forward, where only marked rects reach the
+    // panel; without this a scrub step showed just the bar over the old menu.
+    cart.mark_dirty_rect(0, 0, cart.screen_width, cart.screen_height);
     return true;
 }
 

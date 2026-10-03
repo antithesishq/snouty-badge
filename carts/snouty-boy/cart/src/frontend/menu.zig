@@ -206,6 +206,9 @@ fn adjust(d: i2) void {
             const new = if (d < 0) old + video.palettes.len - 1 else old + 1;
             video.set_palette_index(new);
             video.remap_palette(old, video.palette_index);
+            // Recolored in place: the strips beside the panel reach the
+            // screen only when marked (.copy_forward).
+            cart.mark_dirty_rect(0, 0, cart.screen_width, cart.screen_height);
         },
         .scale => video.set_scale(if (video.scale == .squeeze) .crop else .squeeze),
         .sound => sound_enabled = !sound_enabled,
