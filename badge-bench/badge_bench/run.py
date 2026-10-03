@@ -102,7 +102,7 @@ def poke_value(elf, spec):
 
 
 def run(elf, frames, controls, pokes=(), seed=1, png_every=0, max_frame_ms=1000.0,
-        on_trace=None, log=None, flash_cycles=0, romfs=None, flash_read_cycles=0):
+        on_trace=None, log=None, flash_cycles=0, romfs=None, flash_read_cycles=0, lcd=False):
     """Emulate `frames` updates. controls: list of u16 per frame.
 
     A RAM cart (cart_ram.ld) is loaded into SRAM and started at _start with
@@ -114,9 +114,12 @@ def run(elf, frames, controls, pokes=(), seed=1, png_every=0, max_frame_ms=1000.
     many cycles per instruction fetched from flash (0: no XIP penalty modelled;
     calibrate against the OS overlay's XIP hit rate). romfs: drive image bytes
     mapped read-only at ROMFS_BASE (zero-padded to 4 KB); flash_read_cycles
-    adds that many cycles per data load from it."""
+    adds that many cycles per data load from it. lcd: the PNGs show the
+    modelled LCD (only each present's dirty rect reaches it, as on the badge)
+    instead of the presented framebuffer."""
     res = Result()
     res.xip = elf.is_xip()
+    lcd_img = bytearray(OS.FB_SIZE) if lcd else None
     mu = M.make_uc()
     cs = M.make_cs()
     blocks = {}                         # (addr << 16 | size) -> [addr, size, ninsn, cyc, count, taken, mem_cyc, fp_dep]
@@ -173,8 +176,10 @@ def run(elf, frames, controls, pokes=(), seed=1, png_every=0, max_frame_ms=1000.
             self.presents += 1
             self.present_idx = flags & 1
             f = self.frame
+            if lcd_img is not None:
+                fake.flush_lcd(lcd_img, self.present_idx, flags, legacy)
             if png_every and f >= 0 and f % png_every == 0:
-                res.pngs[f] = fake.framebuffer(self.present_idx)
+                res.pngs[f] = bytes(lcd_img) if lcd_img is not None else fake.framebuffer(self.present_idx)
             if self.phase == 'start':
                 # No DWT read between start() and the first present: this
                 # cart's _start is not the SDK loop. Fall back to present-to-

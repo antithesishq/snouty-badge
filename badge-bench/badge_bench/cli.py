@@ -57,6 +57,10 @@ def build_parser():
                     '(default out/<cart>)')
     ap.add_argument('--png', nargs='?', type=int, const=0, default=None, metavar='K',
                     help='write DIR/frame_NNNN.png every K-th frame (default K = --every)')
+    ap.add_argument('--lcd', action='store_true',
+                    help='--png shows the modelled LCD: only each present\'s dirty rect reaches it, '
+                         'as on the badge (pixels a .copy_forward cart writes without '
+                         'mark_dirty_rect stay off the screen)')
     ap.add_argument('--listing', action='store_true',
                     help='write DIR/listing.lst: annotated disassembly of the top 5 functions')
     ap.add_argument('--symbols', action='store_true', help='print the hot-function table')
@@ -165,7 +169,7 @@ def _main(a):
     res = RUN.run(elf, frames, controls, pokes, seed=a.seed, png_every=png_every,
                   max_frame_ms=a.max_frame_ms, on_trace=on_trace,
                   log=progress if a.progress else None, flash_cycles=a.flash_cycles,
-                  romfs=romfs_img, flash_read_cycles=a.flash_read_cycles)
+                  romfs=romfs_img, flash_read_cycles=a.flash_read_cycles, lcd=a.lcd)
     if cal:
         add_busy(res.frames, cal)
         st = R.stats(res.frames, budget, key='busy_ms')

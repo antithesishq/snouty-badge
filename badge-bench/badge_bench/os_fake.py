@@ -127,6 +127,27 @@ class FakeOS:
     def framebuffer(self, index):
         return bytes(self.mu.mem_read(FB_ADDR[index & 1], FB_SIZE))
 
+    def flush_lcd(self, lcd, index, flags, legacy=False):
+        """Copy what the OS would send to the LCD into `lcd` (FB_SIZE bytes,
+        same column-major layout): the whole framebuffer for a legacy present,
+        else only the dirty rect when PresentFlags bit 1 says there is one,
+        else nothing (kernel.zig: a v2 present without a rect is an empty
+        frame). Carts in .copy_forward that write pixels without
+        mark_dirty_rect leave those pixels off the screen."""
+        fb = self.framebuffer(index)
+        if legacy:
+            lcd[:] = fb
+            return
+        if not flags & 2:
+            return
+        x0, y0, x1, y1 = self.read('<4B', 'dirty_rect')
+        x1, y1 = min(x1, SCREEN_W), min(y1, SCREEN_H)
+        if x0 >= x1 or y0 >= y1:
+            return
+        for x in range(x0, x1):
+            a, b = 2 * (x * SCREEN_H + y0), 2 * (x * SCREEN_H + y1)
+            lcd[a:b] = fb[a:b]
+
     # ------------------------------------------------------------ peripherals
     def _note(self, periph, off, rw):
         k = (periph, off, rw)
