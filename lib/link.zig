@@ -115,6 +115,11 @@ pub const Stats = struct {
     framing_errors: u32 = 0,
     /// DATA packets dropped because the receive queue was full.
     queue_drops: u32 = 0,
+    /// Raw bytes out of the UART, before framing.
+    rx_bytes: u32 = 0,
+    /// Times the search locked, and handshakes that then timed out.
+    locks: u32 = 0,
+    handshake_timeouts: u32 = 0,
 };
 
 pub const Packet = struct {
@@ -219,7 +224,10 @@ pub fn Link(comptime Port: type) type {
                 // No line-drop check here: with a straight cable the partner
                 // may still be searching in the mode that leaves our receive
                 // line undriven; it locks within a dwell or two.
-                if (now -% self.state_since >= timing.handshake_timeout) return self.start_search(now);
+                if (now -% self.state_since >= timing.handshake_timeout) {
+                    self.stats.handshake_timeouts += 1;
+                    return self.start_search(now);
+                }
                 if (now -% self.last_hello >= timing.hello_every) {
                     self.last_hello = now;
                     self.send_hello(now, true);
@@ -259,6 +267,12 @@ pub fn Link(comptime Port: type) type {
             self.send_packet(now, .ping, &.{self.ping_id});
         }
 
+        /// Drop the link and search again (after a cart borrowed the pins,
+        /// e.g. the port's self test).
+        pub fn restart(self: *Self, now: u64) void {
+            if (self.state != .unavailable) self.start_search(now);
+        }
+
         // ---- searching ----
 
         fn start_search(self: *Self, now: u64) void {
@@ -294,6 +308,7 @@ pub fn Link(comptime Port: type) type {
 
         fn lock(self: *Self, now: u64) void {
             self.port.uart_start(self.tx_pin());
+            self.stats.locks += 1;
             self.state = .handshake;
             self.state_since = now;
             self.last_hello = now -% timing.hello_every;
@@ -332,7 +347,7 @@ pub fn Link(comptime Port: type) type {
             // line: until then it may be driving our transmit wire.
             if (self.state == .handshake and !self.port.read(self.tx_pin().other())) return;
             self.send_packet(now, .hello, &.{
-                @intFromBool(need_reply), @intFromEnum(self.mode),  self.app,
+                @intFromBool(need_reply), @backingInt(self.mode),     self.app,
                 protocol_version,         @truncate(self.nonce >> 8), @truncate(self.nonce),
             });
         }
@@ -341,7 +356,7 @@ pub fn Link(comptime Port: type) type {
             // HELLO opens with END: it flushes whatever half frame the
             // partner picked up while the lines were changing hands.
             if (kind == .hello) self.put(slip_end);
-            const k = @intFromEnum(kind);
+            const k = @backingInt(kind);
             self.put_escaped(k);
             var crc_buf: [1 + max_payload]u8 = undefined;
             crc_buf[0] = k;
@@ -397,6 +412,7 @@ pub fn Link(comptime Port: type) type {
         }
 
         fn parse(self: *Self, now: u64, byte: u8) void {
+            self.stats.rx_bytes += 1;
             if (byte == slip_end) {
                 if (self.frame_overlong) {
                     self.stats.overlong += 1;
@@ -436,7 +452,7 @@ pub fn Link(comptime Port: type) type {
             }
             self.stats.rx_packets += 1;
             self.last_rx = now;
-            switch (@as(Kind, @enumFromInt(f[0]))) {
+            switch (@as(Kind, @fromBackingInt(@intCast(f[0])))) {
                 .hello => {
                     if (body.len < 6) return;
                     const need_reply = body[0] != 0;
@@ -481,7 +497,9 @@ pub fn Link(comptime Port: type) type {
 
 /// The link carts use: PIO2 on the badge, `.unavailable` in the simulator.
 /// `var l = link.Badge.init(.{}, app_id, cart.rand());`
-pub const Badge = Link(@import("link_rp2350.zig").Port);
+pub const Badge = Link(rp2350.Port);
+/// The badge port's own extras: `self_test`, `regs` (diagnostics).
+pub const rp2350 = @import("link_rp2350.zig");
 
 /// The port for builds with no link hardware (the wasm simulator).
 pub const NullPort = struct {
