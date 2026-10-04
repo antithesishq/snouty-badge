@@ -97,7 +97,7 @@ pub fn free() u32 {
 
 /// Copy as many of `s` as fit, wrapping at the end of the buffer, then
 /// publish the new head. Returns the count written.
-pub fn push(s: []const u8) u32 {
+pub noinline fn push(s: []const u8) u32 {
     const n: u32 = @min(@as(u32, @intCast(s.len)), free());
     if (n == 0) return 0;
     const len: u32 = @intCast(buf.len);

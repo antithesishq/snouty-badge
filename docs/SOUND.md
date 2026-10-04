@@ -128,3 +128,26 @@ bullet states it for new carts.
 3. Snoutenstein's title reads "SELECT: SOUND OFF" and Select toggles it.
 4. Show day, one badge: each sounding cart boots silent; its toggle brings
    sound back; leaving and re-entering the cart is silent again.
+
+## 6. The newer firmware: carts stream their own samples (2026-10-04)
+
+The show badges run the newer upstream firmware (sycl-badge 97c093e
+"Streaming Audio, v1 Mixer", checked at 3392a1b). It ignores `CART_TONE`:
+`cart.tone2` plays nothing, and the IPC words it writes (0x2003509C..) are
+now the ring a cart streams 44.1 kHz u8 mono samples through
+(`audio_buffer_ptr/len/head/tail`). So on the badge no cart may call
+`cart.tone2` any more; the ABI is in `lib/stream_audio.zig`'s header.
+
+- `lib/tone_stream.zig`: `tone2` rebuilt in the cart (one voice, each
+  `play` cancels the last, square/triangle/saw, sine as triangle,
+  major/minor chords), rendered into the ring while a tone sounds and
+  idle otherwise. snouty-zero and snoutenstein use it on the badge and
+  keep `cart.tone2` / the `tone` import for the wasm simulator; their
+  `update` calls `tone_stream.update()` once per frame.
+- `lib/audio_feed.zig`: for emulators, which render their sound chip's
+  real output per stepped frame; rate control against the OS's clock.
+  Plan and status: docs/EMU_SOUND.md.
+- Old firmware: the start word reads as its CART_VOLUME and nothing plays.
+  The defaults of section 4 are unchanged (off, `-Dsound`, runtime toggle).
+- badge-bench consumes the ring like the newer OS (`--wav` writes it);
+  gaps between effects show as "underruns" there by design.
