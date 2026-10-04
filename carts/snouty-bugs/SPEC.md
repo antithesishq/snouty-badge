@@ -696,3 +696,10 @@ brief so the real sheets drop in without code changes.
 - 2026-10-04: Adrian: far too easy, especially holding A with powerups.
   M7 "Bullet hell for real" designed (5.5, PLAN.md M7); attract mode
   becomes M8, polish M9.
+- 2026-10-04: M7 built and tagged `snouty-bugs/m7`: rank, four stages
+  (UNIT TESTS, INTEGRATION, STAGING, PRODUCTION), the Thundering Herd
+  midboss, Heisenbug/Mandelbug/Schrodinbug/Bohrbug bosses with HP phases
+  and an escape, power loss on a hit, 1942 formation drops
+  (`docs/preview_m7.gif`). A human-paced bot takes 4/10/15/19 hits in
+  stages 1-4; a ship that holds A and never moves takes 50-78 a stage.
+  See PLAN.md M7 status. Next: M8 attract mode.

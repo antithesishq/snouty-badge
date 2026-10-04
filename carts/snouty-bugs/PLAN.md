@@ -2106,3 +2106,16 @@ only (no trap, no identity failure) for the re-pin track.
   real" planned above (rank, four stages, new bugs and bosses, pattern
   engine, powerup cuts, difficulty probe). Attract mode becomes M8,
   polish M9.
+- 2026-10-04: M7 built and tagged `snouty-bugs/m7` (`docs/preview_m7.gif`).
+  Tracks A (pattern engine, rank, power loss), B1 (four stages), B2 (four
+  bosses), C (art), D (probe bots, `tools/difficulty.sh`), the lead's
+  tuning pass and E (re-pinned gate, m7_rank/m7_power/m7_drops/m7_escape)
+  all merged. `tools/difficulty.sh` seed 1, hits per stage L1S1..L1S4,
+  L2S1: dodger 4/10/15/19/23 (24-seed means 5.3/8.7/9.7/19.0/21.2),
+  turret 50/55/72/73/78, sweep 20/68/78/47/64 (before M7: the sweep was
+  touched once in 3 minutes). Boss fights 17-64 s, none under 15 s.
+  badge-bench, A held and B held 90 frames: worst 9.18 ms (loop 2 stage
+  1), stage 4 waves 3.01 mean / 7.55 worst, bosses 6.2-7.4 ms worst; 0
+  frames over budget. ELF 112.6 KB text + 10.7 KB data + 85.6 KB bss =
+  208.9 KB (cap 220 KB). Gate: 27 scripts green, host tests, check-float.
+  Next: M8 attract mode.
