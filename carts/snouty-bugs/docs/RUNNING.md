@@ -373,12 +373,21 @@ ends and no rewind runs) through the four stages and loop 2's stage 1:
 |---|---|
 | 1 turret | holds A, never moves |
 | 2 sweep | holds A; up 40 ticks, still 20, down 40, still 20 |
-| 3 dodger | holds A and dodges: every tick it scores 25 short moves (a 5x5 grid of targets up to 24 px away) against the predicted paths of every enemy bullet and enemy over the next 30 ticks, nearer ticks weighted more, with small pulls toward crates, toward lining up a shot and toward the left-center; a decent player, not a great one, and the seed of the attract mode |
+| 3 dodger | holds A and dodges: it scores 25 short moves (a 5x5 grid of targets up to 24 px away) against the straight-line paths of the enemy bullets and enemies it has noticed, nearer ticks weighted more, with small pulls toward crates, toward lining up a shot and toward the left-center, and commits to the best until its next plan; a decent player, not a great one, and the seed of the attract mode |
+
+The dodger's human limits all follow one knob, `skill` at the top of
+`autopilot.zig` (0 beginner .. 1 sharp, default 0.5): it never notices a
+share of the bullets (0.25), sees the others only once they are 12 ticks
+old (200 ms), foresees no drag, acceleration, turn, split or re-aim, looks
+22 ticks ahead, re-plans every 7 ticks and adds a little noise (a hash of
+the tick, never the world rng) to every choice. The missed share moves the
+hit count most.
 
 ```sh
 tools/difficulty.sh                          # zig build, then all three bots (a few seconds)
 tools/difficulty.sh --no-build --bots 3 --stages 1
 tools/difficulty.sh --no-build --json out/difficulty.json
+tools/difficulty.sh --no-build --bosses 0,1,2,3   # boss rush: each boss on its own
 ```
 
 It prints one table, a row per bot and stage (`L1S1` .. `L1S4`, then
@@ -389,7 +398,9 @@ It prints one table, a row per bot and stage (`L1S1` .. `L1S4`, then
 | hits | probe hits in the stage (each one a rewind a real player would have spent) |
 | secs | seconds in the stage, from its first tick to the next stage's first |
 | boss s | seconds the boss was on the field (`debug_boss_hp` > 0) |
+| boss hits | the hits taken while it was |
 | boss | `killed`, or `escaped` (the stage ended without a clear: the boss timed out) |
+| phases | HP phases the boss reached (`debug_boss_phase`) |
 | rank | `debug_rank` at the stage's last tick (`-` on carts without it) |
 | wpn@boss, wpn | the weapon (`F`/`A`/`B` and level, from `debug_weapon`) when the boss arrived and at the stage's end |
 | forks | forks at the stage's end |
@@ -405,6 +416,14 @@ build, same table. Each bot is one run of `../../tools/preview.mjs` with
 game from the title on update 0), `--sample` for a per-update trace of the
 exports and `--until` to stop at the last stage; the trace stays in
 `out/difficulty/botN/frames.json`.
+
+`--bosses 0,1,2,3` runs a boss rush instead (0 Heisenbug, 1 Mandelbug,
+2 Schrodinbug, 3 Bohrbug): per bot and boss a fresh game plays stage 1 up
+to update `--warp-at` (default 3000, so the bot has collected some crates),
+then `debug_boss:ID` (set before the first update) and `debug_warp` bring
+that boss, and the run ends when the next stage starts. One row per bot
+and boss; its hits and secs include the stage-1 play before the warp, boss
+hits and boss s are the fight's. Traces in `out/difficulty/botN_bossID/`.
 
 ## 6. Flash the badge
 
