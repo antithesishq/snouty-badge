@@ -28,25 +28,6 @@ pub const hud_h = arena_y;
 /// (Adrian rejected edge-touching UI on another cart).
 pub const margin = 2;
 
-// ---------------------------------------------------------------- compat
-//
-// TODO(lead): Track S adds the `grind` and `stall` event kinds and
-// `World.sudden_death_ring` in parallel with this track. Until they are
-// merged these read as "absent"; after the S merge they resolve to the
-// real names on their own, and this section can shrink to plain field
-// reads (`w.sudden_death_ring`, `.grind`, `.stall`).
-pub const compat = struct {
-    pub fn is_kind(k: sim.EventKind, comptime name: []const u8) bool {
-        if (comptime !@hasField(sim.EventKind, name)) return false;
-        return k == @field(sim.EventKind, name);
-    }
-    /// The innermost sudden-death ring so far (0 = not started).
-    pub fn sd_ring(w: *const sim.World) u32 {
-        if (comptime !@hasField(sim.World, "sudden_death_ring")) return 0;
-        return w.sudden_death_ring;
-    }
-};
-
 /// Pixel rectangle, x0/y0 inclusive, x1/y1 exclusive, inside the screen.
 pub const Rect = struct {
     x0: u8 = 0,
@@ -166,7 +147,7 @@ pub const colors = struct {
     /// Sudden death's closing ring (SPEC 8: red).
     pub const death_rgb: u24 = 0xC81820;
     pub const death = rgb(death_rgb);
-    pub const death_hi = rgb(0xFF5048);
+    pub const death_dark = rgb(0x8C1018);
     pub const death_glow = rgb(mix24(floor_rgb, death_rgb, 72));
 
     /// Grind and stall sparks, hottest first.
@@ -469,7 +450,7 @@ pub fn Renderer(comptime S: type) type {
             S.mark_dirty(.{ .x0 = 0, .y0 = arena_y, .x1 = screen_w, .y1 = screen_h });
             self.need_full = false;
             self.last_tick = w.tick;
-            self.sd_drawn = compat.sd_ring(w);
+            self.sd_drawn = @as(u32, w.sudden_death_ring);
             self.heads = @splat(.empty);
             self.draw_hud(w, view.hud);
             if (view.heads) self.draw_heads(w);
@@ -513,10 +494,8 @@ pub fn Renderer(comptime S: type) type {
         }
 
         fn apply_events(self: *Self, w: *const sim.World) void {
-            for (w.events[0..w.n_events]) |e| {
-                // An if-chain, not a switch: Track S's new kinds may or may
-                // not exist yet (compat).
-                if (e.kind == .painted) {
+            for (w.events[0..w.n_events]) |e| switch (e.kind) {
+                .painted => {
                     self.paint_cell(w, e.x, e.y);
                     self.paint_glow(w, e.x, e.y);
                     // The newest cells cool down a step.
@@ -525,19 +504,18 @@ pub fn Renderer(comptime S: type) type {
                         const idx = w.log_at(e.cycle, k) orelse break;
                         self.paint_cell(w, @intCast(idx % sim.grid_w), @intCast(idx / sim.grid_w));
                     }
-                } else if (e.kind == .cleared) {
+                },
+                // A faded cell; a cell became a block (sudden death: a = its
+                // ring, red by `in_death_ring`; update_rings recolours the
+                // layout blocks already on a ring as it starts).
+                .cleared, .block => {
                     self.paint_cell(w, e.x, e.y);
                     self.paint_glow(w, e.x, e.y);
-                } else if (e.kind == .block) {
-                    // A cell became a block (sudden death: a = its ring,
-                    // red by `in_death_ring`; update_rings recolours the
-                    // blocks already on a ring as it starts).
-                    self.paint_cell(w, e.x, e.y);
-                    self.paint_glow(w, e.x, e.y);
-                } else if (e.kind == .crash) {
-                    self.repaint_trail(w, e.cycle);
-                }
-            }
+                },
+                .crash => self.repaint_trail(w, e.cycle),
+                // Effects only (fx_tick).
+                .turn, .grind, .stall => {},
+            };
         }
 
         /// The whole live trail of cycle i (it changed colour: derezzed).
@@ -563,7 +541,7 @@ pub fn Renderer(comptime S: type) type {
         /// Sudden death: rings drawn red as they close in, whatever events
         /// the rules sent (a block already on the ring turns red too).
         fn update_rings(self: *Self, w: *const sim.World) void {
-            const now = compat.sd_ring(w);
+            const now = @as(u32, w.sudden_death_ring);
             if (now < self.sd_drawn) {
                 // A new World: everything was repainted already.
                 self.sd_drawn = now;
@@ -666,9 +644,9 @@ pub fn Renderer(comptime S: type) type {
                 if (e.kind == .crash) {
                     self.spawn_burst(w, e.cycle, e.x, e.y);
                     if (view.tags & (@as(u8, 1) << @intCast(e.cycle & 3)) != 0) self.spawn_tag(e.cycle, @fromBackingInt(e.a), e.x, e.y);
-                } else if (compat.is_kind(e.kind, "grind")) {
+                } else if (e.kind == .grind) {
                     self.spawn_grind(w, e.cycle, e.x, e.y, @fromBackingInt(@as(u2, @truncate(e.a))));
-                } else if (compat.is_kind(e.kind, "stall")) {
+                } else if (e.kind == .stall) {
                     self.spawn_stall(w, e.cycle);
                 }
             }
@@ -828,6 +806,9 @@ pub fn Renderer(comptime S: type) type {
             }
             for (&self.tags) |*t| {
                 if (t.life == 0) continue;
+                // Never over a banner's text (LEVEL CLEAR right after the
+                // last program's crash).
+                if (self.banner_on and Rect.intersects(self.banner_rect, Rect.clip(t.x, t.y, tag_w(t.crash.name()), tag_h, arena_y))) continue;
                 self.draw_tag(w, t);
             }
         }
@@ -1121,17 +1102,11 @@ inline fn glow_of(v: u8, sd: u32, x: u32, y: u32) ?u16 {
     return if (in_death_ring(sd, x, y)) colors.death_glow else colors.block_glow;
 }
 
-/// The ring a cell lies on: its distance from the screen edge in cells
-/// (the rim is ring 0).
-pub fn ring_of(x: u32, y: u32) u32 {
-    return @min(@min(x, sim.grid_w - 1 - x), @min(y, sim.grid_h - 1 - y));
-}
-
 /// True if a block at (x, y) belongs to sudden death's closing rings
 /// (rings 1..sd): drawn red, not layout blue.
 inline fn in_death_ring(sd: u32, x: u32, y: u32) bool {
     if (sd == 0) return false;
-    const r = ring_of(x, y);
+    const r = sim.ring_of(x, y);
     return r >= 1 and r <= sd;
 }
 
@@ -1218,7 +1193,7 @@ pub fn cell_colors(w: *const sim.World, x: u8, y: u8) [4]u16 {
         const nl = w.grid[i - 1];
         const nr = w.grid[i + 1];
         if (nu | nd | nl | nr == 0) return c;
-        const sd = compat.sd_ring(w);
+        const sd = @as(u32, w.sudden_death_ring);
         const up = glow_of(nu, sd, x, y - 1);
         const down = glow_of(nd, sd, x, y + 1);
         const left = glow_of(nl, sd, x - 1, y);
@@ -1263,7 +1238,9 @@ pub fn cell_colors(w: *const sim.World, x: u8, y: u8) [4]u16 {
         }
         return c;
     }
-    if (in_death_ring(compat.sd_ring(w), x, y)) return .{ colors.death_hi, colors.death, colors.death, colors.death };
+    // Sudden death: solid red, alternate rings a shade darker, so the
+    // closing rings read as stripes.
+    if (in_death_ring(@as(u32, w.sudden_death_ring), x, y)) return @splat(if (sim.ring_of(x, y) & 1 != 0) colors.death else colors.death_dark);
     return .{ colors.block_hi, colors.block, colors.block, colors.block };
 }
 

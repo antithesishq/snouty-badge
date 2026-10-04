@@ -11,9 +11,11 @@
 //!
 //! M0 has movement, turns, the safe U-turn, the turn tax, collisions, crash
 //! kinds and kill credit, derez with the fade, trail logs and the round
-//! clock. M1 adds grinding, rubber, the energy bar and sudden death; their
-//! fields and tuning constants are already here and marked "M1".
+//! clock. M1 adds grinding, rubber, the energy bar, sudden death and the
+//! block layouts (`layouts.zig`), each behind its `Config` flag (all off by
+//! default, so a bare `Config` plays M0's rules).
 const std = @import("std");
+const layouts = @import("layouts.zig");
 
 pub const grid_w = 80;
 pub const grid_h = 60;
@@ -42,9 +44,11 @@ pub const tuning = struct {
     /// Turn tax: speed * 19/20 per applied turn, only while above base.
     pub const turn_tax_num: u32 = 19;
     pub const turn_tax_den: u32 = 20;
-    /// Decay toward the target speed: 1/512 of the excess per tick from
-    /// above (a boost lingers for seconds), 1/8 of the shortfall from below.
-    pub const decay_above_shift: u5 = 9;
+    /// Decay toward the target speed: 1/128 of the excess per tick from
+    /// above (a grind or boost lingers: 1.65x is still 1.4x a second later
+    /// and 1.25x after two), 1/8 of the shortfall from below. Braking
+    /// (energy, B) eases down at the fast rate too.
+    pub const decay_above_shift: u5 = 7;
     pub const decay_below_shift: u5 = 3;
     /// Turn queue depth (a fast double tap still lands).
     pub const queue_len = 2;
@@ -57,10 +61,14 @@ pub const tuning = struct {
     /// M0 rounds end in a draw after 90 s (M1's sudden death ends them).
     pub const round_cap_ticks: u32 = 90 * 60;
 
-    // M1: grinding (SPEC 4). Acceleration per tick with a trail cell
-    // (never rim or block) beside the cycle at lateral distance 1 or 2.
-    pub const grind1: u32 = 3 << 8;
-    pub const grind2: u32 = 1 << 8;
+    // M1: grinding (SPEC 4). Acceleration per tick, in 1/1024 of base
+    // speed, with a trail cell (any cycle's, never rim or block) beside
+    // the cycle at lateral distance 1 or 2. With the 1/128 decay, hugging
+    // a trail at distance 1 gives 1.3x after 0.5 s, 1.5x after 1 s, 1.8x
+    // after 2 s (the 2.2x cap after ~4.5 s); distance 2 gives 1.2x after 1 s.
+    pub const grind1: u32 = 11;
+    pub const grind2: u32 = 4;
+    pub const grind_unit: u32 = 1024;
     // M1: the energy bar. A boosts toward 3/2 base, B brakes toward 1/2.
     pub const energy_max: u16 = 1000;
     pub const boost_drain: u16 = 10;
@@ -74,9 +82,16 @@ pub const tuning = struct {
     // tick; 0 left is a crash. Recharges one per `rubber_recharge` ticks.
     pub const rubber_max: u8 = 12;
     pub const rubber_recharge: u8 = 8;
-    // M1: sudden death. From 30 s a ring of block cells closes in every second.
+    // M1: sudden death. From 30 s a ring of block cells closes in every
+    // second: ring k (1 = next to the rim) is laid by two sweeps over the
+    // `sudden_death_period` ticks starting at
+    // `sudden_death_ticks + (k - 1) * sudden_death_period`. Ring 29 is the
+    // last (the 22 x 2 middle), so every round ends by tick 3540.
     pub const sudden_death_ticks: u32 = 30 * 60;
     pub const sudden_death_period: u32 = 60;
+    pub const sudden_death_rings: u8 = @min(grid_w, grid_h) / 2 - 1;
+    // M1 layouts: the start cell and this many cells ahead stay free.
+    pub const start_clear: u8 = 5;
 };
 
 /// Trail log ring per cycle (cell indices). A round's live trail is far
@@ -217,9 +232,11 @@ pub const Cycle = struct {
     /// A and B held this tick (M1 energy reads them).
     boost: bool = false,
     brake: bool = false,
-    /// M1: rubber left (ticks of stall), its recharge counter, the energy
-    /// bar, stalled this tick, grinding this tick (0 none, 1 at distance 2,
-    /// 2 at distance 1: sparks).
+    /// M1: rubber left (ticks of stall; the meter's size is
+    /// `World.cfg.rubber`), its recharge counter, the energy bar
+    /// (0..`tuning.energy_max`), stalled this tick (against a wall at
+    /// p = one - 1), grinding this tick (0 none, 1 at distance 2, 2 at
+    /// distance 1: sparks). `grind` is the head cell's, updated every tick.
     rubber: u8 = 0,
     rubber_tick: u8 = 0,
     energy: u16 = 0,
@@ -254,7 +271,11 @@ pub const Config = struct {
     /// Base speed in percent (ladder loops, RUST's 1.1x, OPTIONS SPEED).
     speed_pct: u16 = 100,
     round_cap: u32 = tuning.round_cap_ticks,
-    /// M1.
+    /// M1. `grinding`: trails beside a cycle speed it up. `rubber`: the
+    /// stall meter in ticks (0 = no rubber; 12 is the default
+    /// `tuning.rubber_max`, HARDCORE 4). `energy`: A boosts, B brakes.
+    /// `sudden_death`: rings close in from 30 s (and `round_cap` is
+    /// ignored). `layout`: index into `layouts.all` (0 = open arena).
     grinding: bool = false,
     rubber: u8 = 0,
     energy: bool = false,
@@ -277,8 +298,17 @@ pub const EventKind = enum(u8) {
     crash,
     /// `cycle` turned at its head (x, y): a = new Dir.
     turn,
-    /// M1: cell (x, y) became a block (sudden death ring, layouts).
+    /// M1: cell (x, y) became a block. Sudden death: a = the ring index
+    /// (1..29). Layout blocks are drawn by `init`, which emits nothing
+    /// (a round start repaints everything).
     block,
+    /// M1: `cycle` is grinding a trail at distance 1: (x, y) is the trail
+    /// cell beside its head, a = the side (`Dir` from the head to it).
+    /// One per grinding side per tick (sparks).
+    grind,
+    /// M1: `cycle` is stalled on rubber at its head (x, y) against a wall:
+    /// a = its `Dir`, b = rubber left. One per stalled tick (flicker).
+    stall,
 };
 
 pub const Event = struct {
@@ -314,6 +344,36 @@ pub inline fn trail_owner(v: u8) ?u8 {
     return if (t >= 1 and t <= max_cycles) t - 1 else null;
 }
 
+/// The sudden-death ring of interior cell (x, y): its distance to the
+/// rim (1 = next to the rim, up to `tuning.sudden_death_rings`); 0 on the rim.
+pub fn ring_of(x: u32, y: u32) u8 {
+    return @intCast(@min(@min(x, y), @min(grid_w - 1 - x, grid_h - 1 - y)));
+}
+
+/// Half the cell count of ring k (its rectangle is (k, k) to
+/// (79 - k, 59 - k); the count is 2 (w + h) - 4, always even).
+fn ring_half(k: u8) u32 {
+    return (grid_w - 2 * @as(u32, k)) + (grid_h - 2 * @as(u32, k)) - 2;
+}
+
+/// Cell `s` of ring k, clockwise from its top-left corner: top row left to
+/// right, right column down, bottom row right to left, left column up.
+/// Cell `s + half` is cell `s` turned a half turn about the centre.
+fn ring_cell(k: u8, s: u32) [2]u8 {
+    const kk: u32 = k;
+    const rw = grid_w - 2 * kk;
+    const rh = grid_h - 2 * kk;
+    const x1 = grid_w - 1 - kk;
+    const y1 = grid_h - 1 - kk;
+    if (s < rw) return .{ @intCast(kk + s), @intCast(kk) };
+    var r = s - rw;
+    if (r < rh - 2) return .{ @intCast(x1), @intCast(kk + 1 + r) };
+    r -= rh - 2;
+    if (r < rw) return .{ @intCast(x1 - r), @intCast(y1) };
+    r -= rw;
+    return .{ @intCast(kk), @intCast(y1 - 1 - r) };
+}
+
 /// The whole simulation state. About 38 KB: keep it in a static, never on
 /// the stack (the cart has 32 KB of stack), and initialise it in place
 /// with `init`.
@@ -331,6 +391,9 @@ pub const World = struct {
     events: [max_events]Event,
     n_events: u8,
     events_lost: bool,
+    /// M1 sudden death: the ring being laid or last laid (1..29), 0 before
+    /// it starts. Goes 0 -> 1 on tick `tuning.sudden_death_ticks`.
+    sudden_death_ring: u8,
 
     pub fn init(w: *World, cfg: Config, seed: u32) void {
         std.debug.assert(cfg.n_cycles >= 1 and cfg.n_cycles <= max_cycles);
@@ -342,6 +405,7 @@ pub const World = struct {
         w.timed_out = false;
         w.n_events = 0;
         w.events_lost = false;
+        w.sudden_death_ring = 0;
         @memset(&w.grid, empty);
         for (0..grid_w) |x| {
             w.grid[index(x, 0)] = rim;
@@ -351,6 +415,7 @@ pub const World = struct {
             w.grid[index(0, y)] = rim;
             w.grid[index(grid_w - 1, y)] = rim;
         }
+        w.draw_layout(cfg.layout);
         for (&w.cycles, 0..) |*c, i| {
             c.* = .{};
             if (i >= cfg.n_cycles) continue;
@@ -368,8 +433,59 @@ pub const World = struct {
         }
     }
 
+    /// Draws `layouts.get(i)` as block cells, each rect mirrored across
+    /// both centre lines, then clears every start cell and the
+    /// `tuning.start_clear` cells ahead of it (all four starts, used or not).
+    fn draw_layout(w: *World, i: u8) void {
+        for (layouts.get(i).rects) |r| {
+            for (r.y..@as(usize, r.y) + r.h) |y| {
+                for (r.x..@as(usize, r.x) + r.w) |x| {
+                    if (x < 1 or x > grid_w - 2 or y < 1 or y > grid_h - 2) continue;
+                    w.grid[index(x, y)] = block;
+                    w.grid[index(grid_w - 1 - x, y)] = block;
+                    w.grid[index(x, grid_h - 1 - y)] = block;
+                    w.grid[index(grid_w - 1 - x, grid_h - 1 - y)] = block;
+                }
+            }
+        }
+        for (starts) |st| {
+            var x = st.x;
+            var y = st.y;
+            for (0..tuning.start_clear + 1) |_| {
+                w.grid[index(x, y)] = empty;
+                const n = w.next_cell(x, y, st.dir);
+                x = n[0];
+                y = n[1];
+            }
+        }
+    }
+
     pub fn base_speed(w: *const World) u32 {
         return tuning.base_speed * w.cfg.speed_pct / 100;
+    }
+
+    /// Ticks until alive cycle i crosses into its next cell at its current
+    /// speed: 1 when `will_step` is true. Exact for 1 (speed only changes
+    /// after a step's moves); further out, grinding, energy and turns
+    /// change the speed, so it is an estimate.
+    pub fn ticks_to_step(w: *const World, i: usize) u32 {
+        const c = &w.cycles[i];
+        if (c.speed == 0) return std.math.maxInt(u32);
+        return (tuning.one - c.p + c.speed - 1) / c.speed;
+    }
+
+    /// Cycle i's speed as a percentage of this round's base speed (100 =
+    /// base, 150 = a full boost, 220 = the cap).
+    pub fn speed_fraction(w: *const World, i: usize) u32 {
+        return w.cycles[i].speed * 100 / w.base_speed();
+    }
+
+    /// True if (x, y) is a sudden-death block (the renderer draws those
+    /// red): a block cell in a ring that has started closing.
+    pub fn is_sudden_death_block(w: *const World, x: u32, y: u32) bool {
+        if (w.sudden_death_ring == 0 or w.at(x, y) & ~fx_bit != block) return false;
+        const r = ring_of(x, y);
+        return r >= 1 and r <= w.sudden_death_ring;
     }
 
     pub inline fn at(w: *const World, x: u32, y: u32) u8 {
@@ -421,8 +537,10 @@ pub const World = struct {
         return t.dir;
     }
 
-    /// True if cycle i crosses into its next cell on the coming step at
-    /// its current speed (the AI decides on this tick: SPEC 5).
+    /// True if cycle i crosses into its next cell on the coming step (the
+    /// AI decides on this tick: SPEC 5). Exact: a step moves at the speed
+    /// set at the end of the previous step. True on every tick of a rubber
+    /// stall (the cycle keeps trying the edge).
     pub fn will_step(w: *const World, i: usize) bool {
         const c = &w.cycles[i];
         return c.state == .alive and w.result == .running and c.p + c.speed >= tuning.one;
@@ -455,24 +573,45 @@ pub const World = struct {
         w.events_lost = false;
         w.tick += 1;
         if (w.result == .running) {
-            for (0..w.cfg.n_cycles) |i| {
+            const n = w.cfg.n_cycles;
+            for (0..n) |i| {
                 if (w.cycles[i].state != .alive) continue;
                 w.take_input(i, inputs[i]);
             }
             var target: [max_cycles]?[2]u8 = @splat(null);
-            for (0..w.cfg.n_cycles) |i| {
+            for (0..n) |i| {
                 const c = &w.cycles[i];
                 if (c.state != .alive) continue;
-                w.update_speed(i);
+                const was_stalled = c.stalled;
+                c.stalled = false;
                 c.p += c.speed;
                 if (c.p < tuning.one) continue;
                 c.p -= tuning.one;
-                w.apply_turn(i);
-                // M1 rubber hooks in here: a blocked target with rubber
-                // left stalls at p = one - 1 instead of moving.
-                target[i] = w.next_cell(c.x, c.y, c.dir);
+                w.apply_turn(i, was_stalled);
+                const t = w.next_cell(c.x, c.y, c.dir);
+                if (w.cfg.rubber != 0 and c.rubber != 0 and is_wall(w.at(t[0], t[1]))) {
+                    // Rubber: a blocked step stalls at the cell edge and
+                    // drains the meter; empty, the step goes ahead and
+                    // crashes in `resolve`.
+                    c.p = tuning.one - 1;
+                    c.stalled = true;
+                    c.rubber -= 1;
+                    c.rubber_tick = 0;
+                    w.emit(.{ .kind = .stall, .cycle = @intCast(i), .x = c.x, .y = c.y, .a = @backingInt(c.dir), .b = c.rubber });
+                    continue;
+                }
+                target[i] = t;
             }
             w.resolve(target);
+            if (w.cfg.sudden_death) w.sudden_death();
+            // Speed for the coming tick, from this tick's cell and input
+            // (so `will_step` before a step is exact).
+            for (0..n) |i| {
+                if (w.cycles[i].state != .alive) continue;
+                w.update_grind(i);
+                w.update_speed(i);
+                w.update_rubber(i);
+            }
             w.update_result();
         }
         for (0..w.cfg.n_cycles) |i| {
@@ -520,8 +659,11 @@ pub const World = struct {
     }
 
     /// At a cell boundary: applies the head of the turn queue (one turn per
-    /// cell, so the minimum gap between turns is one cell).
-    fn apply_turn(w: *World, i: usize) void {
+    /// cell, so the minimum gap between turns is one cell). `stalled`: the
+    /// cycle stalled on rubber last tick and is still at the same edge; a
+    /// turn then applies at once if its cell is free and is dropped if not
+    /// (the stall goes on, another press can try again).
+    fn apply_turn(w: *World, i: usize, stalled: bool) void {
         const c = &w.cycles[i];
         if (c.queued == 0) return;
         const t = pop_turn(c);
@@ -532,6 +674,7 @@ pub const World = struct {
             const right = w.free_run(c.x, c.y, c.dir.cw(), tuning.uturn_lookahead);
             const left = w.free_run(c.x, c.y, c.dir.ccw(), tuning.uturn_lookahead);
             d = if (left > right) c.dir.ccw() else c.dir.cw();
+            if (stalled and w.blocked(c.x, c.y, d)) return;
             // The queue had only the U-turn in it, so there is room.
             c.queue[c.queued] = .{ .dir = t.dir, .guarded = true };
             c.queued += 1;
@@ -543,6 +686,7 @@ pub const World = struct {
             if (is_wall(w.at(n[0], n[1])) and !is_wall(w.at(s[0], s[1]))) d = c.dir;
         }
         if (d == c.dir or d == c.dir.opposite()) return;
+        if (stalled and w.blocked(c.x, c.y, d)) return;
         c.dir = d;
         c.turns += 1;
         const base = w.base_speed();
@@ -550,19 +694,119 @@ pub const World = struct {
         w.emit(.{ .kind = .turn, .cycle = @intCast(i), .x = c.x, .y = c.y, .a = @backingInt(d) });
     }
 
-    /// Speed eases toward the target: slowly from above, quickly from
-    /// below. M0's target is base speed; M1 adds boost/brake (energy) and
-    /// the grinding acceleration here.
+    fn blocked(w: *const World, x: u8, y: u8, d: Dir) bool {
+        const n = w.next_cell(x, y, d);
+        return is_wall(w.at(n[0], n[1]));
+    }
+
+    /// The speed for the coming tick. The target is base speed, or with
+    /// `cfg.energy` and a non-empty bar 3/2 base while A is held (boost) or
+    /// 1/2 base while B is held (brake; B wins if both). Grinding adds its
+    /// acceleration, then the speed eases toward the target: slowly from
+    /// above (a boost lingers), quickly from below and while braking.
+    /// Capped at 2.2x base.
     fn update_speed(w: *World, i: usize) void {
         const c = &w.cycles[i];
         const base = w.base_speed();
-        const target = base;
+        var target = base;
+        var fast = false;
+        if (w.cfg.energy) {
+            if ((c.boost or c.brake) and c.energy != 0) {
+                if (c.brake) {
+                    target = base * tuning.brake_num / tuning.brake_den;
+                    fast = true;
+                    c.energy -= @min(c.energy, tuning.brake_drain);
+                } else {
+                    target = base * tuning.boost_num / tuning.boost_den;
+                    c.energy -= @min(c.energy, tuning.boost_drain);
+                }
+            } else if (!c.boost and !c.brake) {
+                c.energy = @min(tuning.energy_max, c.energy + tuning.energy_recharge);
+            }
+        }
+        if (w.cfg.grinding and c.grind != 0) {
+            const g = if (c.grind == 2) tuning.grind1 else tuning.grind2;
+            c.speed += base * g / tuning.grind_unit;
+        }
         if (c.speed > target) {
-            c.speed -= @min(c.speed - target, ((c.speed - target) >> tuning.decay_above_shift) + 1);
+            const shift = if (fast) tuning.decay_below_shift else tuning.decay_above_shift;
+            c.speed -= @min(c.speed - target, ((c.speed - target) >> shift) + 1);
         } else if (c.speed < target) {
             c.speed += @min(target - c.speed, ((target - c.speed) >> tuning.decay_below_shift) + 1);
         }
         c.speed = @min(c.speed, base * tuning.max_speed_tenths / 10);
+    }
+
+    /// Grinding (SPEC 4): per side, a trail cell at lateral distance 1 is
+    /// level 2 (and a `grind` event), else a trail cell at distance 2
+    /// behind an empty distance-1 cell is level 1. Rim and blocks give
+    /// nothing and shield what is behind them.
+    fn update_grind(w: *World, i: usize) void {
+        const c = &w.cycles[i];
+        c.grind = 0;
+        if (!w.cfg.grinding) return;
+        for ([2]Dir{ c.dir.ccw(), c.dir.cw() }) |side| {
+            const n1 = w.next_cell(c.x, c.y, side);
+            const v1 = w.at(n1[0], n1[1]) & ~fx_bit;
+            if (trail_owner(v1) != null) {
+                c.grind = 2;
+                w.emit(.{ .kind = .grind, .cycle = @intCast(i), .x = n1[0], .y = n1[1], .a = @backingInt(side) });
+                continue;
+            }
+            // Rim and blocks shield; an empty cell is inside the rim, so
+            // the cell beyond it is in the grid.
+            if (v1 != empty) continue;
+            const n2 = w.next_cell(n1[0], n1[1], side);
+            if (trail_owner(w.at(n2[0], n2[1])) != null) c.grind = @max(c.grind, 1);
+        }
+    }
+
+    /// Rubber recharges one per `tuning.rubber_recharge` ticks while not
+    /// stalled, up to `cfg.rubber`.
+    fn update_rubber(w: *World, i: usize) void {
+        const c = &w.cycles[i];
+        if (w.cfg.rubber == 0 or c.stalled) return;
+        if (c.rubber >= w.cfg.rubber) {
+            c.rubber_tick = 0;
+            return;
+        }
+        c.rubber_tick += 1;
+        if (c.rubber_tick >= tuning.rubber_recharge) {
+            c.rubber_tick = 0;
+            c.rubber += 1;
+        }
+    }
+
+    /// Sudden death (SPEC 4): ring k is laid over `sudden_death_period`
+    /// ticks by two sweeps, clockwise from opposite corners (symmetric
+    /// under a half turn, like the starts). An empty cell becomes a block
+    /// (a `block` event, a = k); trail and blocks stay. A cycle whose head
+    /// is on a swept cell derezzes (ACCESS VIOLATION). At most 6 cells a tick.
+    fn sudden_death(w: *World) void {
+        if (w.tick < tuning.sudden_death_ticks) return;
+        const e = w.tick - tuning.sudden_death_ticks;
+        const k = e / tuning.sudden_death_period + 1;
+        if (k > tuning.sudden_death_rings) return;
+        const ring: u8 = @intCast(k);
+        w.sudden_death_ring = ring;
+        const o = e % tuning.sudden_death_period;
+        const half = ring_half(ring);
+        const s0 = o * half / tuning.sudden_death_period;
+        const s1 = (o + 1) * half / tuning.sudden_death_period;
+        for (s0..s1) |s| {
+            for ([2]u32{ @intCast(s), @intCast(s + half) }) |pos| {
+                const cell = ring_cell(ring, pos);
+                const idx = index(cell[0], cell[1]);
+                if (w.grid[idx] & ~fx_bit == empty) {
+                    w.grid[idx] = block;
+                    w.emit(.{ .kind = .block, .x = cell[0], .y = cell[1], .a = ring });
+                }
+                for (0..w.cfg.n_cycles) |j| {
+                    const c = &w.cycles[j];
+                    if (c.state == .alive and c.x == cell[0] and c.y == cell[1]) w.kill(j, .access_violation, no_cycle);
+                }
+            }
+        }
     }
 
     /// Collisions after every cycle has moved (SPEC 4), in index order.
@@ -675,7 +919,7 @@ pub const World = struct {
             w.winner = @ctz(w.alive_mask());
         } else if (alive == 0) {
             w.result = .draw;
-        } else if (w.tick >= w.cfg.round_cap) {
+        } else if (!w.cfg.sudden_death and w.tick >= w.cfg.round_cap) {
             w.result = .draw;
             w.timed_out = true;
         }
@@ -700,6 +944,7 @@ pub const World = struct {
         H.int(&h, w.tick);
         H.int(&h, @backingInt(w.result));
         H.int(&h, w.winner);
+        H.int(&h, w.sudden_death_ring);
         for (w.cycles, 0..) |c, i| {
             H.int(&h, c.x);
             H.int(&h, c.y);
@@ -710,7 +955,10 @@ pub const World = struct {
             H.int(&h, c.queued);
             for (c.queue[0..c.queued]) |t| H.int(&h, @as(u8, @bitCast(t)));
             H.int(&h, c.rubber);
+            H.int(&h, c.rubber_tick);
             H.int(&h, c.energy);
+            H.int(&h, @intFromBool(c.stalled));
+            H.int(&h, c.grind);
             H.int(&h, @backingInt(c.crash));
             H.int(&h, c.killer);
             H.int(&h, c.log_head);
@@ -725,6 +973,7 @@ pub const World = struct {
     pub fn same_state(a: *const World, b: *const World) bool {
         if (!std.mem.eql(u8, &a.grid, &b.grid)) return false;
         if (a.tick != b.tick or a.result != b.result or a.winner != b.winner) return false;
+        if (a.sudden_death_ring != b.sudden_death_ring) return false;
         for (a.cycles, b.cycles, 0..) |ca, cb, i| {
             if (!std.meta.eql(ca, cb)) return false;
             var k = ca.log_tail;
@@ -1023,4 +1272,516 @@ test "turn tax only above base speed" {
     in[0] = press(.left);
     step_to_next_cell(w, in, 0, 10);
     try testing.expect(w.cycles[0].speed >= base);
+}
+
+// ------------------------------------------------------------- M1 tests
+
+/// Lays a straight trail of cycle `owner` (value owner + 1) along row y.
+fn trail_row(w: *World, y: u8, owner: u8) void {
+    for (1..grid_w - 1) |x| w.grid[index(x, y)] = owner + 1;
+}
+
+test "grinding: a trail at distance 1 speeds up to ~1.5x in a second, and it lingers" {
+    const w = &tw[0];
+    w.init(.{ .n_cycles = 1, .grinding = true }, 1);
+    const c = &w.cycles[0];
+    trail_row(w, c.y - 1, 1);
+    var events: u32 = 0;
+    for (0..60) |_| {
+        w.step(idle_inputs());
+        for (w.events[0..w.n_events]) |e| {
+            if (e.kind != .grind) continue;
+            events += 1;
+            try testing.expectEqual(c.x, e.x);
+            try testing.expectEqual(c.y - 1, e.y);
+            try testing.expectEqual(@backingInt(Dir.up), e.a);
+        }
+    }
+    try testing.expectEqual(@as(u8, 2), c.grind);
+    try testing.expectEqual(@as(u32, 60), events);
+    const peak = w.speed_fraction(0);
+    try testing.expect(peak >= 140 and peak <= 160);
+    // Off the wall: still well above base two seconds later.
+    for (1..grid_w - 1) |x| w.grid[index(x, c.y - 1)] = empty;
+    for (0..60) |_| w.step(idle_inputs());
+    try testing.expectEqual(@as(u8, 0), c.grind);
+    const later = w.speed_fraction(0);
+    try testing.expect(later >= 125 and later < peak);
+    try testing.expectEqual(State.alive, c.state);
+
+    // Distance 2: level 1, a gentler push, no events.
+    w.init(.{ .n_cycles = 1, .grinding = true }, 1);
+    trail_row(w, c.y + 2, 0);
+    events = 0;
+    for (0..60) |_| {
+        w.step(idle_inputs());
+        for (w.events[0..w.n_events]) |e| events += @intFromBool(e.kind == .grind);
+    }
+    try testing.expectEqual(@as(u8, 1), c.grind);
+    try testing.expectEqual(@as(u32, 0), events);
+    const d2 = w.speed_fraction(0);
+    try testing.expect(d2 >= 110 and d2 < 130);
+}
+
+test "grinding: rim and blocks give nothing and shield, off without the flag" {
+    const w = &tw[0];
+    const c = &w.cycles[0];
+    // Along the top rim.
+    w.init(.{ .n_cycles = 1, .grinding = true }, 1);
+    w.grid[index(c.x, c.y)] = empty;
+    c.y = 1;
+    w.grid[index(c.x, 1)] = 1;
+    w.logs[0][0] = index(c.x, 1);
+    for (0..60) |_| w.step(idle_inputs());
+    try testing.expectEqual(@as(u8, 0), c.grind);
+    try testing.expectEqual(@as(u32, 100), w.speed_fraction(0));
+    // Blocks beside, a trail behind them.
+    w.init(.{ .n_cycles = 1, .grinding = true }, 1);
+    for (1..grid_w - 1) |x| w.grid[index(x, c.y + 1)] = block;
+    trail_row(w, c.y + 2, 1);
+    for (0..60) |_| w.step(idle_inputs());
+    try testing.expectEqual(@as(u8, 0), c.grind);
+    try testing.expectEqual(@as(u32, 100), w.speed_fraction(0));
+    // Flag off.
+    w.init(.{ .n_cycles = 1 }, 1);
+    trail_row(w, c.y - 1, 1);
+    for (0..60) |_| w.step(idle_inputs());
+    try testing.expectEqual(@as(u8, 0), c.grind);
+    try testing.expectEqual(@as(u32, 100), w.speed_fraction(0));
+}
+
+test "grinding: your own trail counts after a U-turn" {
+    const w = &tw[0];
+    w.init(.{ .n_cycles = 1, .grinding = true }, 1);
+    for (0..40) |_| w.step(idle_inputs());
+    var in = idle_inputs();
+    in[0] = press(.left);
+    step_to_next_cell(w, in, 0, 10);
+    step_to_next_cell(w, idle_inputs(), 0, 10);
+    step_to_next_cell(w, idle_inputs(), 0, 10);
+    try testing.expectEqual(Dir.left, w.cycles[0].dir);
+    try testing.expectEqual(@as(u8, 2), w.cycles[0].grind);
+}
+
+test "energy: A boosts to 1.5x and drains, B brakes to 0.5x, idle recharges" {
+    const w = &tw[0];
+    const c = &w.cycles[0];
+    var in = idle_inputs();
+    // Boost.
+    w.init(.{ .n_cycles = 1, .energy = true }, 1);
+    in[0] = .{ .boost = true };
+    for (0..30) |_| w.step(in);
+    try testing.expectEqual(@as(u16, 1000 - 30 * tuning.boost_drain), c.energy);
+    try testing.expect(w.speed_fraction(0) >= 145 and w.speed_fraction(0) <= 150);
+    // Held to empty: the boost ends, no recharge while A is still held.
+    for (0..80) |_| w.step(in);
+    try testing.expectEqual(@as(u16, 0), c.energy);
+    const at_empty = w.speed_fraction(0);
+    for (0..10) |_| w.step(in);
+    try testing.expectEqual(@as(u16, 0), c.energy);
+    try testing.expect(w.speed_fraction(0) < at_empty);
+    // Released: recharges 2 per tick.
+    for (0..10) |_| w.step(idle_inputs());
+    try testing.expectEqual(@as(u16, 10 * tuning.energy_recharge), c.energy);
+
+    // Brake, and B wins when both are held.
+    w.init(.{ .n_cycles = 1, .energy = true }, 1);
+    in[0] = .{ .boost = true, .brake = true };
+    for (0..30) |_| w.step(in);
+    try testing.expectEqual(@as(u16, 1000 - 30 * tuning.brake_drain), c.energy);
+    try testing.expect(w.speed_fraction(0) <= 52);
+    // Released: back to base quickly.
+    for (0..40) |_| w.step(idle_inputs());
+    try testing.expect(w.speed_fraction(0) >= 99);
+
+    // Flag off: A does nothing.
+    w.init(.{ .n_cycles = 1 }, 1);
+    in[0] = .{ .boost = true };
+    for (0..30) |_| w.step(in);
+    try testing.expectEqual(@as(u32, 100), w.speed_fraction(0));
+    try testing.expectEqual(tuning.energy_max, c.energy);
+}
+
+test "speed cap: never above 2.2x base" {
+    const w = &tw[0];
+    w.init(.{ .n_cycles = 1, .grinding = true, .energy = true }, 1);
+    const c = &w.cycles[0];
+    trail_row(w, c.y - 1, 1);
+    trail_row(w, c.y + 1, 1);
+    c.speed = 3 * w.base_speed();
+    var in = idle_inputs();
+    in[0] = .{ .boost = true };
+    for (0..40) |_| {
+        w.step(in);
+        try testing.expect(c.speed <= w.base_speed() * 22 / 10);
+        try testing.expect(c.speed < tuning.one);
+    }
+}
+
+/// Cycle 0 heading right from its start into a block column at x = wall_x.
+fn rubber_setup(w: *World, rubber: u8, wall_x: u8) void {
+    w.init(.{ .n_cycles = 1, .rubber = rubber }, 1);
+    for (1..grid_h - 1) |y| w.grid[index(wall_x, y)] = block;
+}
+
+test "rubber: a stall of cfg.rubber ticks, then the crash" {
+    const w = &tw[0];
+    const c = &w.cycles[0];
+    for ([_]u8{ 12, 4 }) |rubber| {
+        rubber_setup(w, rubber, 20);
+        var stalls: u32 = 0;
+        while (c.state == .alive and w.tick < 200) {
+            w.step(idle_inputs());
+            for (w.events[0..w.n_events]) |e| {
+                if (e.kind != .stall) continue;
+                stalls += 1;
+                try testing.expectEqual(@as(u8, 19), e.x);
+                try testing.expectEqual(c.rubber, e.b);
+                try testing.expect(c.stalled);
+                try testing.expectEqual(tuning.one - 1, c.p);
+            }
+        }
+        try testing.expectEqual(@as(u32, rubber), stalls);
+        try testing.expectEqual(Crash.access_violation, c.crash);
+        try testing.expectEqual(@as(u8, 19), c.x);
+    }
+    // No rubber: straight into the wall.
+    rubber_setup(w, 0, 20);
+    var stalls: u32 = 0;
+    while (c.state == .alive) {
+        w.step(idle_inputs());
+        for (w.events[0..w.n_events]) |e| stalls += @intFromBool(e.kind == .stall);
+    }
+    try testing.expectEqual(@as(u32, 0), stalls);
+    try testing.expectEqual(Crash.access_violation, c.crash);
+}
+
+test "rubber: a turn during a stall applies at once if free, else is dropped; the meter recharges" {
+    const w = &tw[0];
+    const c = &w.cycles[0];
+    rubber_setup(w, 12, 20);
+    w.grid[index(19, c.y + 1)] = block;
+    while (!c.stalled) w.step(idle_inputs());
+    for (0..3) |_| w.step(idle_inputs());
+    try testing.expect(c.stalled);
+    const left = c.rubber;
+    try testing.expectEqual(@as(u8, 12 - 4), left);
+    // Down is blocked: dropped, still stalled facing right.
+    var in = idle_inputs();
+    in[0] = press(.down);
+    w.step(in);
+    try testing.expect(c.stalled);
+    try testing.expectEqual(Dir.right, c.dir);
+    try testing.expectEqual(@as(u8, 0), c.queued);
+    // Up is free: taken on this very tick.
+    const y0 = c.y;
+    in[0] = press(.up);
+    w.step(in);
+    try testing.expect(!c.stalled);
+    try testing.expectEqual(Dir.up, c.dir);
+    try testing.expectEqual(y0 - 1, c.y);
+    try testing.expectEqual(State.alive, c.state);
+    // Recharge: one per 8 ticks, up to the meter.
+    const r0 = c.rubber;
+    for (0..8 * 3) |_| w.step(idle_inputs());
+    try testing.expectEqual(r0 + 3, c.rubber);
+    for (0..8 * 5) |_| w.step(idle_inputs());
+    try testing.expectEqual(@as(u8, 12), c.rubber);
+    try testing.expectEqual(State.alive, c.state);
+}
+
+test "rubber: a U-turn during a stall escapes sideways" {
+    const w = &tw[0];
+    const c = &w.cycles[0];
+    rubber_setup(w, 12, 20);
+    while (!c.stalled) w.step(idle_inputs());
+    var in = idle_inputs();
+    in[0] = press(.left);
+    w.step(in);
+    try testing.expect(!c.stalled);
+    try testing.expectEqual(Dir.down, c.dir);
+    step_to_next_cell(w, idle_inputs(), 0, 10);
+    try testing.expectEqual(Dir.left, c.dir);
+    try testing.expectEqual(State.alive, c.state);
+}
+
+test "rubber: two heads nose to nose stall, then DEADLOCK with no credit" {
+    const w = &tw[0];
+    w.init(.{ .n_cycles = 2, .rubber = 12 }, 1);
+    const a = &w.cycles[0];
+    const b = &w.cycles[1];
+    w.grid[index(a.x, a.y)] = empty;
+    w.grid[index(b.x, b.y)] = empty;
+    a.* = .{ .x = 30, .y = 20, .dir = .right, .state = .alive, .speed = w.base_speed(), .rubber = 12, .log_head = 1 };
+    b.* = .{ .x = 31, .y = 20, .dir = .left, .state = .alive, .speed = w.base_speed(), .rubber = 12, .log_head = 1 };
+    w.grid[index(30, 20)] = 1;
+    w.grid[index(31, 20)] = 2;
+    w.logs[0][0] = index(30, 20);
+    w.logs[1][0] = index(31, 20);
+    for (0..40) |_| w.step(idle_inputs());
+    try testing.expectEqual(Crash.deadlock, a.crash);
+    try testing.expectEqual(Crash.deadlock, b.crash);
+    try testing.expectEqual(@as(u8, 0), a.kills + b.kills);
+}
+
+test "sudden death: rings close from 30 s, trail stays, heads on the ring derez" {
+    const w = &tw[0];
+    w.init(.{ .n_cycles = 2, .sudden_death = true }, 1);
+    // A trail cell and a head on ring 1.
+    w.grid[index(5, 1)] = 2;
+    const c = &w.cycles[0];
+    w.grid[index(c.x, c.y)] = empty;
+    c.x = 1;
+    c.y = 30;
+    c.dir = .up;
+    w.grid[index(1, 30)] = 1;
+    w.logs[0][0] = index(1, 30);
+    w.tick = tuning.sudden_death_ticks - 1;
+    w.sudden_death();
+    try testing.expectEqual(@as(u8, 0), w.sudden_death_ring);
+    var blocks: u32 = 0;
+    for (0..tuning.sudden_death_period) |_| {
+        w.tick += 1;
+        w.n_events = 0;
+        w.sudden_death();
+        try testing.expectEqual(@as(u8, 1), w.sudden_death_ring);
+        try testing.expect(w.n_events <= 7);
+        for (w.events[0..w.n_events]) |e| {
+            if (e.kind != .block) continue;
+            blocks += 1;
+            try testing.expectEqual(@as(u8, 1), e.a);
+            try testing.expectEqual(@as(u8, 1), ring_of(e.x, e.y));
+            try testing.expect(w.is_sudden_death_block(e.x, e.y));
+        }
+    }
+    // Ring 1 has 2 * (78 + 58) - 4 = 268 cells, two of them were trail.
+    try testing.expectEqual(@as(u32, 268 - 2), blocks);
+    try testing.expectEqual(@as(u8, 2), w.at(5, 1));
+    try testing.expectEqual(Crash.access_violation, c.crash);
+    for (1..grid_h - 1) |y| {
+        for (1..grid_w - 1) |x| {
+            const r = ring_of(@intCast(x), @intCast(y));
+            if (r == 1) try testing.expect(is_wall(w.grid[index(x, y)])) else try testing.expect(w.grid[index(x, y)] != block);
+        }
+    }
+    // Every ring: by the last one the arena is full.
+    while (w.tick < tuning.sudden_death_ticks + tuning.sudden_death_rings * tuning.sudden_death_period) {
+        w.tick += 1;
+        w.n_events = 0;
+        w.sudden_death();
+    }
+    try testing.expectEqual(tuning.sudden_death_rings, w.sudden_death_ring);
+    for (w.grid) |v| try testing.expect(is_wall(v));
+}
+
+test "ring cells: every interior cell once, half-turn pairs" {
+    var seen: [cells]u8 = @splat(0);
+    var k: u8 = 1;
+    while (k <= tuning.sudden_death_rings) : (k += 1) {
+        const half = ring_half(k);
+        for (0..half) |s| {
+            const a = ring_cell(k, @intCast(s));
+            const b = ring_cell(k, @intCast(s + half));
+            try testing.expectEqual(@as(u8, grid_w - 1 - a[0]), b[0]);
+            try testing.expectEqual(@as(u8, grid_h - 1 - a[1]), b[1]);
+            try testing.expectEqual(k, ring_of(a[0], a[1]));
+            seen[index(a[0], a[1])] += 1;
+            seen[index(b[0], b[1])] += 1;
+        }
+    }
+    for (0..grid_h) |y| {
+        for (0..grid_w) |x| {
+            const interior = x > 0 and y > 0 and x < grid_w - 1 and y < grid_h - 1;
+            try testing.expectEqual(@as(u8, @intFromBool(interior)), seen[index(x, y)]);
+        }
+    }
+}
+
+/// A test driver: at each cell boundary (and during a stall) keep the
+/// heading unless a side has a longer free run; random A and B.
+fn drive(w: *const World, i: usize, r: *@import("rng.zig").Xorshift) Input {
+    var in: Input = .{ .boost = r.below(6) == 0, .brake = r.below(12) == 0 };
+    const c = &w.cycles[i];
+    if (!w.will_step(i)) return in;
+    const d0 = w.planned_dir(i);
+    var best = d0;
+    var best_run = w.free_run(c.x, c.y, d0, 30) * 4 + r.below(4);
+    for ([2]Dir{ d0.ccw(), d0.cw() }) |d| {
+        const run = w.free_run(c.x, c.y, d, 30) * 4 + r.below(4);
+        if (run > best_run) {
+            best = d;
+            best_run = run;
+        }
+    }
+    if (best != d0) in.press = Press.of(best);
+    return in;
+}
+
+test "sudden death: rounds always end before 1800 + 60 x 30 ticks" {
+    const w = &tw[0];
+    var r = @import("rng.zig").Xorshift.init(99);
+    var long_rounds: u32 = 0;
+    for (0..24) |round| {
+        w.init(.{
+            .n_cycles = @intCast(2 + round % 3),
+            .grinding = true,
+            .rubber = 12,
+            .energy = true,
+            .sudden_death = true,
+            .layout = @intCast(round % layouts.count),
+            .round_cap = 600,
+        }, @intCast(round));
+        while (w.result == .running) {
+            var in = idle_inputs();
+            for (0..w.cfg.n_cycles) |i| in[i] = drive(w, i, &r);
+            w.step(in);
+            if (w.tick < tuning.sudden_death_ticks) try testing.expectEqual(@as(u8, 0), w.sudden_death_ring);
+            try testing.expect(w.tick < tuning.sudden_death_ticks + 30 * tuning.sudden_death_period);
+        }
+        try testing.expect(!w.timed_out);
+        if (w.tick > tuning.sudden_death_ticks) long_rounds += 1;
+    }
+    // The driver is good enough that some rounds reach sudden death.
+    try testing.expect(long_rounds > 0);
+}
+
+test "will_step is exact and ticks_to_step agrees, with grinding, energy and rubber" {
+    const w = &tw[0];
+    var r = @import("rng.zig").Xorshift.init(5);
+    w.init(.{ .n_cycles = 4, .grinding = true, .rubber = 12, .energy = true, .sudden_death = true }, 3);
+    while (w.result == .running) {
+        var in = idle_inputs();
+        for (0..4) |i| in[i] = drive(w, i, &r);
+        var predicted: [4]bool = undefined;
+        var heads: [4]u32 = undefined;
+        for (0..4) |i| {
+            predicted[i] = w.will_step(i);
+            if (w.cycles[i].state == .alive) try testing.expectEqual(predicted[i], w.ticks_to_step(i) == 1);
+            heads[i] = w.cycles[i].log_head;
+        }
+        w.step(in);
+        for (0..4) |i| {
+            const c = &w.cycles[i];
+            if (c.state != .alive) continue;
+            const moved = c.log_head != heads[i];
+            // A predicted boundary moves the cycle or stalls it.
+            try testing.expectEqual(predicted[i], moved or c.stalled);
+        }
+    }
+    w.init(.{ .n_cycles = 1 }, 1);
+    try testing.expectEqual(@as(u32, 100), w.speed_fraction(0));
+    w.cycles[0].speed = w.base_speed() * 3 / 2;
+    try testing.expectEqual(@as(u32, 150), w.speed_fraction(0));
+    w.cycles[0].p = 0;
+    try testing.expectEqual(@as(u32, 3), w.ticks_to_step(0));
+}
+
+test "determinism: two Worlds stay identical for 5000 ticks with every M1 flag" {
+    const a = &tw[0];
+    const b = &tw[1];
+    var r = @import("rng.zig").Xorshift.init(1234);
+    var round: u32 = 0;
+    var ended: u32 = 0;
+    var t: u32 = 0;
+    while (t < 5000) : (t += 1) {
+        ended = if (a.result == .running) 0 else ended + 1;
+        if (t == 0 or ended == 90) {
+            const cfg: Config = .{
+                .n_cycles = @intCast(2 + round % 3),
+                .grinding = true,
+                .rubber = if (round % 2 == 0) 12 else 4,
+                .energy = true,
+                .sudden_death = true,
+                .layout = @intCast(round % layouts.count),
+                .speed_pct = @intCast(100 + 10 * (round % 3)),
+            };
+            a.init(cfg, round);
+            b.init(cfg, round);
+            round += 1;
+        }
+        var in = idle_inputs();
+        for (0..max_cycles) |i| {
+            const v = r.next();
+            in[i] = .{
+                .press = if (v & 7 == 0) @fromBackingInt(@as(u3, @intCast(1 + (v >> 3) % 4))) else .none,
+                .boost = (v >> 8) & 3 == 0,
+                .brake = (v >> 10) & 7 == 0,
+            };
+        }
+        a.step(in);
+        b.step(in);
+        try testing.expect(World.same_state(a, b));
+        try testing.expectEqual(a.hash(), b.hash());
+        try testing.expectEqual(a.n_events, b.n_events);
+        try testing.expect(!a.events_lost);
+        for (a.events[0..a.n_events], b.events[0..b.n_events]) |ea, eb| try testing.expect(std.meta.eql(ea, eb));
+    }
+    try testing.expect(round > 2);
+}
+
+test "layouts: in bounds, symmetric, start lines free, arena connected" {
+    const w = &tw[0];
+    const corridor = struct {
+        fn hit(x: usize, y: usize) bool {
+            for (starts) |s| {
+                for (0..tuning.start_clear + 1) |k| {
+                    const kx: i32 = @as(i32, s.x) + @as(i32, s.dir.dx()) * @as(i32, @intCast(k));
+                    const ky: i32 = @as(i32, s.y) + @as(i32, s.dir.dy()) * @as(i32, @intCast(k));
+                    if (kx == x and ky == y) return true;
+                }
+            }
+            return false;
+        }
+    };
+    for (layouts.all, 0..) |lay, li| {
+        // The data itself keeps clear of the start lines (init's clearing
+        // is only a safety net) and inside the rim.
+        for (lay.rects) |rc| {
+            try testing.expect(rc.x >= 1 and rc.y >= 1 and rc.x + rc.w <= grid_w - 1 and rc.y + rc.h <= grid_h - 1);
+            for (rc.y..rc.y + rc.h) |y| {
+                for (rc.x..rc.x + rc.w) |x| {
+                    try testing.expect(!corridor.hit(x, y));
+                    try testing.expect(!corridor.hit(grid_w - 1 - x, y));
+                    try testing.expect(!corridor.hit(x, grid_h - 1 - y));
+                    try testing.expect(!corridor.hit(grid_w - 1 - x, grid_h - 1 - y));
+                }
+            }
+        }
+        w.init(.{ .n_cycles = 4, .layout = @intCast(li) }, 1);
+        var n_blocks: u32 = 0;
+        for (0..grid_h) |y| {
+            for (0..grid_w) |x| {
+                const v = w.grid[index(x, y)];
+                try testing.expectEqual(v == block, w.grid[index(grid_w - 1 - x, grid_h - 1 - y)] == block);
+                n_blocks += @intFromBool(v == block);
+            }
+        }
+        try testing.expectEqual(li == 0, n_blocks == 0);
+        // Connected: a fill from cycle 0's start reaches every empty cell.
+        var seen: [cells]bool = @splat(false);
+        var queue: [cells]u16 = undefined;
+        var head: usize = 0;
+        var tail: usize = 1;
+        const s0 = index(w.cycles[0].x, w.cycles[0].y);
+        queue[0] = s0;
+        seen[s0] = true;
+        var reached: u32 = 0;
+        while (head < tail) : (head += 1) {
+            const at_i = queue[head];
+            reached += 1;
+            const x = at_i % grid_w;
+            const y = at_i / grid_w;
+            for ([4]u16{ index(x - 1, y), index(x + 1, y), index(x, y - 1), index(x, y + 1) }) |n| {
+                if (seen[n] or (is_wall(w.grid[n]) and trail_owner(w.grid[n]) == null)) continue;
+                seen[n] = true;
+                queue[tail] = n;
+                tail += 1;
+            }
+        }
+        var open: u32 = 0;
+        for (w.grid) |v| open += @intFromBool(!is_wall(v) or trail_owner(v) != null);
+        try testing.expectEqual(open, reached);
+    }
+    // Out of range is the open arena.
+    try testing.expectEqual(@as(usize, 0), layouts.get(200).rects.len);
 }

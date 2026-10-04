@@ -45,21 +45,29 @@ pub fn start() void {
     cart.set_vsync_enabled(1000.0 / 60.0);
     cart.set_double_buffer_mode(.copy_forward);
     renderer.reset();
-    autopilot = @intCast(@min(bench_autopilot, 2));
-    if (bench_seed != 0) return reseed(bench_seed);
-    reseed(if (clock_seeded) cart.rand() ^ clock_mix() else cart.rand());
+    autopilot = @intCast(@min(bench_autopilot, 3));
+    if (bench_seed != 0) {
+        reseed(bench_seed);
+    } else {
+        reseed(if (clock_seeded) cart.rand() ^ clock_mix() else cart.rand());
+    }
+    if (bench_level != 0) g.new_game(bench_level);
 }
 
 /// badge-bench hooks (firmware only, 0 on the badge): `--poke
 /// snouty_cycles_seed=N` starts from seed N (the seed the wasm build gets
-/// when cart.rand() first returns N), `--poke snouty_cycles_autopilot=2`
-/// lets T1 drive the player, with slips (badge-bench/carts/snouty-cycles.toml).
+/// when cart.rand() first returns N), `--poke snouty_cycles_autopilot=K`
+/// lets the autopilot drive the player (1 T1, 2 T1 with slips, 3 T3),
+/// `--poke snouty_cycles_level=N` skips the title and starts the ladder at
+/// level N (badge-bench/carts/snouty-cycles.toml, tools/check.sh bench).
 var bench_seed: u32 = 0;
 var bench_autopilot: u32 = 0;
+var bench_level: u32 = 0;
 comptime {
     if (!cart.is_wasm) {
         @export(&bench_seed, .{ .name = "snouty_cycles_seed" });
         @export(&bench_autopilot, .{ .name = "snouty_cycles_autopilot" });
+        @export(&bench_level, .{ .name = "snouty_cycles_level" });
     }
 }
 
@@ -142,6 +150,11 @@ comptime {
         @export(&debug_score, .{ .name = "debug_score" });
         @export(&debug_wins, .{ .name = "debug_wins" });
         @export(&debug_losses, .{ .name = "debug_losses" });
+        @export(&debug_level, .{ .name = "debug_level" });
+        @export(&debug_lives, .{ .name = "debug_lives" });
+        @export(&debug_high, .{ .name = "debug_high" });
+        @export(&debug_set_level, .{ .name = "debug_set_level" });
+        @export(&debug_sudden_death_ring, .{ .name = "debug_sudden_death_ring" });
         @export(&debug_world_tick, .{ .name = "debug_world_tick" });
         @export(&debug_world_hash, .{ .name = "debug_world_hash" });
     }
@@ -150,13 +163,34 @@ comptime {
 fn debug_tick() callconv(.c) u32 {
     return tick;
 }
-/// game.State: 0 title, 1 countdown, 2 play, 3 round over, 4 paused.
+/// game.State: 0 title, 1 menu, 2 howto, 3 intro, 4 countdown, 5 play,
+/// 6 derez, 7 clear, 8 game over, 9 paused.
 fn debug_state() callconv(.c) u32 {
     return @backingInt(g.state);
 }
-/// Round of the current match (0 on the title).
+/// Worlds started this game (attempts at levels; 0 on the title).
 fn debug_round() callconv(.c) u32 {
-    return g.round;
+    return g.rounds;
+}
+/// Ladder position (1-based, 13 = BASIC on the second loop; 0 off the ladder).
+fn debug_level() callconv(.c) u32 {
+    return g.level;
+}
+fn debug_lives() callconv(.c) u32 {
+    return g.lives;
+}
+/// Session high score.
+fn debug_high() callconv(.c) u32 {
+    return g.high;
+}
+/// Starts a new ladder game at position n (3 lives, score 0), skipping
+/// the title. Returns n.
+fn debug_set_level(n: u32) callconv(.c) u32 {
+    g.new_game(n);
+    return g.level;
+}
+fn debug_sudden_death_ring() callconv(.c) u32 {
+    return g.world.sudden_death_ring;
 }
 /// Bit i set while cycle i is alive (cycle 0 is the player).
 fn debug_alive_mask() callconv(.c) u32 {
@@ -187,21 +221,24 @@ fn debug_pixel_checksum() callconv(.c) u32 {
 fn debug_set_seed(s: u32) callconv(.c) void {
     reseed(s);
 }
-/// 1: T1 drives the player, 2: T1 with random slips (rounds end sooner);
-/// 0 off. Kept through reseeds. Returns the new value.
+/// 1: T1 drives the player, 2: T1 with random slips (rounds end sooner),
+/// 3: T3 SEARCH (the ladder bot); 0 off. Kept through reseeds. Returns
+/// the new value.
 fn debug_autopilot(level: u32) callconv(.c) u32 {
-    autopilot = @intCast(@min(level, 2));
+    autopilot = @intCast(@min(level, 3));
     g.autopilot = autopilot;
     return autopilot;
 }
 fn debug_score() callconv(.c) u32 {
     return g.score;
 }
+/// Levels cleared this game.
 fn debug_wins() callconv(.c) u32 {
-    return g.wins;
+    return g.clears;
 }
+/// Lives lost this game.
 fn debug_losses() callconv(.c) u32 {
-    return g.losses;
+    return g.deaths;
 }
 /// Ticks into the current World (round or attract round).
 fn debug_world_tick() callconv(.c) u32 {
