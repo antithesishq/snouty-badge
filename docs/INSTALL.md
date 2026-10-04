@@ -82,11 +82,18 @@ flash window, root `README.md`); it is installed exactly like a RAM cart.
   menu comes back.
 - The menu also lists ROM files and anything else on the drive; picking
   one of those fails with an error. That is cosmetic.
-- **Start + Select held together for half a second** stops the cart and
-  returns to the menu (the OS owns this chord).
+- **Start + Select held together for half a second** belongs to the OS.
+  On OS firmware up to sycl-badge a6ce19f (what our submodule pins) it stops
+  the cart and returns to the menu. Newer OS firmware (upstream from
+  2026-10-02) opens a settings box over the running cart instead: "Exit
+  cart" (A leaves the cart), Brightness and Volume (Left/Right); B, Start or
+  Select closes it and the cart carries on. The cart gets no input while
+  the box is open.
 - A joystick click toggles the OS FPS overlay (fps, and for XIP carts the
   flash cache hit rate) in the menu and in every cart.
 - Carts boot silent; each has its own sound toggle ([SOUND.md](SOUND.md)).
+  Newer OS firmware (upstream from 2026-09-27) ignores our carts' `tone2`
+  calls, so the toggle does nothing there.
 
 ## 4. The wrong drive: the RP2350 bootloader
 

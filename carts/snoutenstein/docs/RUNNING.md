@@ -26,7 +26,7 @@ authoritative table is `SPEC.md` section 3.
 | Playing | Start | Enter or Y | Pause; the pause screen lists these controls; Start again resumes |
 | Dead (red, frozen) | Hold B | Hold X or J | Rewind, the only way on (always at least 3 s) |
 | Level clear / victory | A or Start | Z or K / Enter or Y | Next card |
-| Anywhere | Hold Start + Select 0.5 s | (none) | Badge OS stops the cart and returns to its cart list |
+| Anywhere | Hold Start + Select 0.5 s | (none) | Badge OS stops the cart and returns to its cart list (newer OS firmware: opens its settings box; A on "Exit cart" leaves) |
 | Anywhere | Joystick click | Shift | Badge OS FPS overlay; the cart ignores it |
 | Simulator only | | Escape | Simulator menu (Continue, Save/Load state, Reset cart, ...); it freezes the cart and is not the badge OS |
 

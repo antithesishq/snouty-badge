@@ -18,7 +18,7 @@ WASD, so the `A` key is joystick left, not the A button).
 | Playing | Hold A | Hold Z or K | Fire |
 | Playing | Hold B | Hold X or J | Rewind the world 2 ticks per frame, paid from the fuel bar (refills slowly, and per graze); release to play on |
 | Playing | Start | Enter or Y | Pause; the pause screen lists these controls; Start again resumes |
-| Anywhere | Hold Start + Select 0.5 s | (none) | Badge OS stops the cart and returns to its cart list |
+| Anywhere | Hold Start + Select 0.5 s | (none) | Badge OS stops the cart and returns to its cart list (newer OS firmware: opens its settings box; A on "Exit cart" leaves) |
 | Anywhere | Joystick click | Shift | Badge OS FPS overlay; the cart ignores it |
 | Simulator only | | Escape | Simulator menu (Continue, Save/Load state, Reset cart, ...); it freezes the cart and is not the badge OS |
 

@@ -52,7 +52,9 @@ its design and milestone status.
   `Pixel.from_color(color)` (handles wasm vs hardware byte order).
 - Inputs: `cart.controls.*` (start, select, a, b, click, up, down, left, right).
   The OS owns Start+Select (exit to menu) and joystick click (FPS overlay);
-  never bind click.
+  never bind click. Newer upstream OS firmware opens a settings box on
+  Start+Select and keeps the cart running behind it, so a cart should react
+  to neither button while both are held (demosnout's `update` does this).
 - 5 neopixels (`cart.neopixels`, GRB): off for every cart. No cart writes a
   non-zero value to `cart.neopixels` (a coworker's badge shows the LEDs are
   unusably bright even at 1%, 2026-09-29; `docs/NEOPIXELS.md`), and

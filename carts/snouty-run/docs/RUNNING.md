@@ -13,7 +13,7 @@ the full key table).
 | Badge | Simulator | Does |
 |---|---|---|
 | A | Z or K | Jump (one press, one jump; ignored while airborne) |
-| Hold Start + Select 0.5 s | (none) | Badge OS stops the cart and returns to its cart list |
+| Hold Start + Select 0.5 s | (none) | Badge OS stops the cart and returns to its cart list (newer OS firmware: opens its settings box; A on "Exit cart" leaves) |
 | Joystick click | Shift | Badge OS FPS overlay; the cart ignores it |
 | | Escape | Simulator menu (Continue, Save/Load state, Reset cart, ...); it freezes the cart and is not the badge OS |
 

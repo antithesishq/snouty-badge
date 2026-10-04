@@ -67,7 +67,9 @@ pub fn update() void { ... }                     // 60 times a second
 - Input: read buttons through the template's `read_controls()` (fields
   `a, b, start, select, up, down, left, right`). Detect presses on the edge
   (`c.a and !prev_a`). Never use `click` (the OS owns it) and never make
-  Start+Select do anything (the OS exits to the menu on it).
+  Start+Select do anything (the OS exits to the menu on it, or on newer
+  firmware opens its settings box while the cart keeps running): while both
+  are held, react to neither.
 - Random: `cart.rand()` (u32). For a deterministic preview, seed your own
   small xorshift from a constant instead.
 - Keep the template's `start()` (60 fps vsync, `.no_copy_full_frame`):
