@@ -16,6 +16,7 @@
 const world = @import("../world.zig");
 const palette = @import("../palette.zig");
 const fixed = @import("../fixed.zig");
+const camera = @import("../camera.zig");
 
 pub const title: []const u8 = "SORT";
 pub const gloss: []const u8 = "quicksort, live";
@@ -70,6 +71,14 @@ const presort = true;
 /// another's flash waits (flash_pending, one slot: a later finisher takes
 /// it over) and flashes the frame after that one ends. 0 turns it off.
 const flash_frames: u8 = 6;
+/// B shuffles the running band while its last row is at least
+/// shuffle_min_ahead rows ahead, else the band at the work line; late in the
+/// district, with no band left there, the nearest band whose first row is
+/// where a mid-height bar shows on screen row shuffle_sy or further
+/// (camera.rows_ahead), else the furthest one still shuffle_min_ahead rows
+/// ahead. So B is refused only once every band is behind the camera.
+const shuffle_min_ahead: i32 = 6;
+const shuffle_sy: i32 = 100;
 
 comptime {
     if (bars * bar_w != world.W) @compileError("sort bars must cover the strip");
@@ -437,11 +446,28 @@ pub fn tick(frame: u32, cam_row: i32) void {
     }
 }
 
-/// B: shuffle the running band (or the next one ahead, sorted or not) in one
-/// frame and re-sort it at swaps_fast per frame.
+/// Late in the district: the band to shuffle in view (see shuffle_sy), or null.
+fn view_band(cam_row: i32) ?usize {
+    const near = camera.rows_ahead(shuffle_sy, world.floor + bar_h0 + bar_h_span / 2, shuffle_min_ahead);
+    var nearer: ?usize = null;
+    for (0..bands) |r| {
+        if (band_y0(r) + band_depth - 1 < cam_row + shuffle_min_ahead) continue;
+        if (band_y0(r) >= cam_row + near) return r;
+        nearer = r;
+    }
+    return nearer;
+}
+
+/// B: shuffle the running band (or the next one ahead, sorted or not, or
+/// late in the district the one in view) in one frame and re-sort it at
+/// swaps_fast per frame.
 pub fn verb() bool {
     const cam_row = last_cam_row;
-    const r = running orelse (next_band(cam_row, false) orelse (next_band(cam_row, true) orelse return false));
+    var ahead: ?usize = null;
+    if (running) |x| {
+        if (band_y0(x) + band_depth - 1 >= cam_row + shuffle_min_ahead) ahead = x;
+    }
+    const r = ahead orelse next_band(cam_row, false) orelse next_band(cam_row, true) orelse view_band(cam_row) orelse return false;
     shuffle(&live.vals[r], &shuffle_rng);
     live.sorters[r].start();
     cancel_flash(r);
