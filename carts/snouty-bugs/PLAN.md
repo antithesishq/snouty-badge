@@ -2146,3 +2146,25 @@ only (no trap, no identity failure) for the re-pin track.
   (headers say what moved; m1_play's sweep now ends in game over at
   1269, `docs/RUNNING.md` updated). Gate: 27 scripts green,
   `debug_history_check` never 1.
+- 2026-10-04: sound effects (SPEC.md section 11), branch `bugs-sound`.
+  `cart/src/audio.zig` diffs the displayed World once per frame (the
+  snoutenstein pattern), so the simulation, history and every gate
+  script are untouched: zapper (every third volley, volume 0.3), enemy
+  hit (a fresh spark), enemy death (a fresh explosion), crate (the ship
+  gained a weapon, level, fork, shield or core hour), boss enters
+  (`waves.phase` became `.boss`), extra life (the rewind stock grew),
+  retry pop (the shield went), bug report (REWIND's hit frame), the
+  110-880 Hz rewind sweep over the playback (looping while B is held)
+  and player death (DYING). The badge plays through `lib/tone_stream.zig`
+  (the newer firmware's streaming ring; never `cart.tone2`), wasm
+  through `tone2`. Off at boot unless `-Dsound=true`; Select toggles it
+  in every state (ignored while Start is held too, and Start is ignored
+  while Select is: the newer OS's chord), and the title shows
+  `SELECT: SOUND ON/OFF`. ELF text +2.2 KB, data +4.6 KB (the 4 KB
+  ring and its 512-byte scratch start at 128), bss +72 B: 215.9 KB of
+  the 220 KB cap. badge-bench, `m1_play` over 1800 frames: f28a206 mean
+  2.79 ms / worst 6.92; sound off 2.78 / 8.28 (the bench seeds the game
+  from the emulated clock, so another game); `-Dsound=true` 2.91 / 8.65,
+  0 frames over, streaming from frame 70 and 9.49 s of samples consumed.
+  Gate: 27 scripts green with sound off and on. Not mapped: the GO! pop,
+  grazes, a spare crate at the cap (silent), the boss's phase breaks.

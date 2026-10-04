@@ -18,12 +18,14 @@ WASD, so the `A` key is joystick left, not the A button).
 | Playing | Hold A | Hold Z or K | Fire |
 | Playing | Hold B | Hold X or J | Rewind the world 2 ticks per frame, paid from the fuel bar (refills slowly, and per graze); release to play on |
 | Playing | Start | Enter or Y | Pause; the pause screen lists these controls; Start again resumes |
+| Anywhere | Select | Backspace or T | Sound on/off (starts off unless built with `-Dsound=true`; the title shows `SELECT: SOUND ON/OFF`); ignored while Start is held too |
 | Anywhere | Hold Start + Select 0.5 s | (none) | Badge OS stops the cart and returns to its cart list (newer OS firmware: opens its settings box; A on "Exit cart" leaves) |
 | Anywhere | Joystick click | Shift | Badge OS FPS overlay; the cart ignores it |
 | Simulator only | | Escape | Simulator menu (Continue, Save/Load state, Reset cart, ...); it freezes the cart and is not the badge OS |
 
-No sound toggle: the cart makes no sound yet, so Select does nothing (it
-will toggle sound once audio lands; [docs/SOUND.md](../../../docs/SOUND.md)).
+Sound effects (SPEC.md section 11) play through the newer badge
+firmware's streaming ring, and through `tone2` in the simulator; the old
+firmware stays silent ([docs/SOUND.md](../../../docs/SOUND.md)).
 There is no bomb and, as yet, no attract mode: the title waits for a press.
 After a game ends the cart returns to the title.
 

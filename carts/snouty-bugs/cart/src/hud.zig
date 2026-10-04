@@ -148,12 +148,14 @@ fn number_label(buf: *[9]u8, comptime prefix: []const u8, n: u32) []const u8 {
 /// Title card over the dimmed, scrolling background: "SNOUTY" / "BUGHUNT",
 /// the ship (level pose, thruster looping, bobbing 1 px) where the head icon
 /// used to be, then "A PLAY" (normal game) and "B HARDCORE" (Coral) blinking
-/// together where M0 had "PRESS A".
-pub fn draw_title(tick: u32) void {
+/// together where M0 had "PRESS A". The sound toggle's state (Select) sits
+/// at the top, dim while off.
+pub fn draw_title(tick: u32, sound_on: bool) void {
     // The background layers start at y 8; clear the HUD row too, since
     // no_copy_full_frame leaves a stale frame there otherwise.
     cart.rect(.{ .x = 0, .y = 0, .width = cart.screen_width, .height = draw.hud_height, .fill_color = draw.anti_black });
     draw.darken_checker();
+    draw.centered_text(if (sound_on) "SELECT: SOUND ON" else "SELECT: SOUND OFF", 20, if (sound_on) draw.anti_white else draw.star_dim);
     draw.centered_text("SNOUTY", 40, draw.anti_white);
     draw.centered_text("BUGHUNT", 52, draw.coral);
     const ship_y: i32 = title_ship_y + @as(i32, @intCast((tick / 40) % 2));
