@@ -9,6 +9,10 @@
 //! noise and no sweep: "noise" rows play as low sawtooth; the two sweeps
 //! (door, rewind, Debugger burst) retrigger the tone every `sweep_step` ticks at the
 //! interpolated frequency from `tick`. The wasm simulator ignores the shape.
+//! The badge build renders the voice itself into the newer firmware's
+//! streaming ring (lib/tone_stream.zig): that OS ignores `tone2` and the
+//! old tone words are now the ring's, so only wasm calls `cart.tone2`;
+//! `update` once per cart update keeps the ring fed.
 //!
 //! Neopixels are off (docs/NEOPIXELS.md at the repository root, approved
 //! 2026-09-29: carts never write a non-zero neopixel value; a coworker's
@@ -23,6 +27,7 @@ const levels = @import("levels.zig");
 const sim = @import("sim.zig");
 const projectiles = @import("projectiles.zig");
 const build_options = @import("build_options");
+const tone_stream = @import("tone_stream");
 
 /// Sound (and the dormant LED effects). Starts as `-Dsound` says (off by
 /// default, docs/SOUND.md); Select on the title toggles it.
@@ -64,6 +69,8 @@ comptime {
 }
 
 const volume: f32 = 0.6;
+/// `volume` as tone_stream's linear peak level.
+const stream_level: u8 = tone_stream.level_from_volume(60);
 const sweep_step: u8 = 3;
 const led_max: u8 = 10; // cap for the dormant effects; compiled out unless -Dneopixels=true
 const key_flash_ticks: u8 = 6;
@@ -97,19 +104,30 @@ const rewind_led_lo: u32 = 3;
 const rewind_led_hi: u32 = 8;
 
 fn start_tone(freq: u16, ticks: u8, shape: Shape) void {
-    cart.tone2(.{
-        .frequency = @floatFromInt(freq),
-        .duration = @as(f32, @floatFromInt(ticks)) * (1.0 / 60.0),
-        .volume = volume,
-        .flags = .{ .shape = shape },
-    });
+    if (cart.is_wasm) {
+        cart.tone2(.{
+            .frequency = @floatFromInt(freq),
+            .duration = @as(f32, @floatFromInt(ticks)) * (1.0 / 60.0),
+            .volume = volume,
+            .flags = .{ .shape = shape },
+        });
+    } else {
+        tone_stream.play(freq, tone_stream.ticks(ticks), stream_level, @fromBackingInt(@intCast(@backingInt(shape))));
+    }
     sounding = true;
 }
 
 fn silence() void {
-    if (sounding) cart.tone2(cart.Tone2Options.stop);
+    if (sounding) {
+        if (cart.is_wasm) cart.tone2(cart.Tone2Options.stop) else tone_stream.stop();
+    }
     sounding = false;
     left = 0;
+}
+
+/// Once per cart update (renders the sounding tone into the ring).
+pub fn update() void {
+    tone_stream.update();
 }
 
 /// Start `ev` now unless a more important sound is still playing.

@@ -130,6 +130,7 @@ fn new_race(t: *const track.Track) void {
 var replay_max: u32 = 0;
 
 pub fn update() void {
+    defer sound.update();
     input.update(read_controls());
     history.replay_calls = 0;
     const t0 = cart.micros_since_boot();
