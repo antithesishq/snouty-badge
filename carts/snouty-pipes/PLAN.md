@@ -306,3 +306,13 @@ squeezed to 24 |cos| px, the mirrored back face in 70% grey. Exports
   ELF .text 65.6 KB, .bss 82 KB. GIFs `docs/preview_m3.gif` (steer run,
   rewind, game over) and `docs/preview_nametag.gif`. The bot scores
   110..225 on seeds 1..5 before its two crashes.
+- 2026-10-04 random joint style per scene (Adrian picked it over a button
+  combo after B became the nametag): `begin_scene` draws mixed / elbow /
+  ball from a separate `style_rng`, and `pick_joint` makes both of its rolls
+  in every style, so a seed's walks, colours and views don't depend on the
+  styles drawn. (Mixed used to skip the ball roll on a teapot turn, so
+  streams after a teapot differ from before; steer runs never hit one
+  first, so their goldens and check_cycle L..N passed untouched.) The
+  screensaver goldens moved and were re-baselined after a look;
+  grow_s2_t900 became grow_s2_t700 (tick 900 is now mid-wipe). New
+  check_cycle run O and host test.

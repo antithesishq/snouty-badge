@@ -33,8 +33,10 @@
 //      else (newer firmware opens its settings box over the cart).
 //   I  orbit: Right at 300; REBUILD (3) with orbit 1 at 301, GROW again by
 //      449 with no cells lost.
-//   J  B shows the nametag (the joint style stays mixed, 0); Up, Up, Down:
+//   J  B shows the nametag (debug_joint_style never changes); Up, Up, Down:
 //      debug_speed 2 (2x).
+//   O  random joint styles: A every 140 ticks from 200, 12 scenes; the style
+//      changes only between scenes and all three (mixed, elbow, ball) show.
 // The nametag (B in the screensaver, M3):
 //   K  B at tick 60, over the boot strip: the nametag replaces it
 //      (debug_nametag 1, debug_name_strip 0); its Iris mark flips like a
@@ -75,7 +77,7 @@ const DUMP = ["debug_state", "debug_tick", "debug_scene", "debug_filled", "debug
 
 function usage(msg) {
     if (msg) console.error(`check_cycle: ${msg}`);
-    console.error("usage: node tools/check_cycle.mjs [--wasm FILE] [--only A,B,...,N] [--seed S] [--cap N]");
+    console.error("usage: node tools/check_cycle.mjs [--wasm FILE] [--only A,B,...,O] [--seed S] [--cap N]");
     process.exit(2);
 }
 
@@ -171,9 +173,28 @@ const RUNS = [
         },
     },
     {
-        name: "J", what: "B shows the nametag (joint style stays mixed), Up Up Down leaves 2x", frames: 100,
-        press: ["B:10-10", "UP:20-20", "UP:30-30", "DOWN:40-40"], dump: ["debug_nametag", "debug_joint_style", "debug_speed"],
-        expect: ["debug_nametag == 1", "debug_joint_style == 0", "debug_speed == 2"],
+        name: "J", what: "B shows the nametag (the joint style stays put), Up Up Down leaves 2x", frames: 100,
+        press: ["B:10-10", "UP:20-20", "UP:30-30", "DOWN:40-40"], dump: ["debug_nametag", "debug_speed"],
+        sample: ["debug_joint_style"], expect: ["debug_nametag == 1", "debug_speed == 2"],
+        check: (v, meta) => {
+            const js = series(meta, "debug_joint_style");
+            if (!js) return "samples missing from frames.json";
+            return js.every((x) => x === js[0]) ? null : `B changed the joint style (${js[0]} -> ${js.find((x) => x !== js[0])})`;
+        },
+    },
+    {
+        name: "O", what: "each scene picks a joint style at random: A x 11 shows all three", frames: 1700,
+        press: Array.from({ length: 11 }, (_, i) => `A:${200 + i * 140}-${200 + i * 140}`),
+        sample: ["debug_joint_style", "debug_scene"], expect: ["debug_scene >= 12"],
+        check: (v, meta) => {
+            const js = series(meta, "debug_joint_style"), sc = series(meta, "debug_scene");
+            if (!js || !sc) return "samples missing from frames.json";
+            for (let i = 1; i < js.length; i++) {
+                if (js[i] !== js[i - 1] && sc[i] === sc[i - 1]) return `style changed mid-scene at tick ${i}`;
+            }
+            const seen = new Set(js);
+            return seen.size === 3 ? null : `only styles ${[...seen].join(",")} in 12 scenes`;
+        },
     },
     {
         name: "K", what: "B over the boot strip: nametag, coin flip at +45, kept through A, B hides it", frames: 320,

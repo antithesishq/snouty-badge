@@ -118,7 +118,7 @@ Screensaver:
 | Input | Action |
 |---|---|
 | A | New scene now (dissolve) |
-| B | Nametag strip on/off ("ADRIAN HATCH" / "ANTITHESIS" beside the Iris mark, the boot strip's style; it stays through new scenes, orbits and speed changes) (M3; joint-style cycling left B, the style stays mixed) |
+| B | Nametag strip on/off ("ADRIAN HATCH" / "ANTITHESIS" beside the Iris mark, the boot strip's style; it stays through new scenes, orbits and speed changes) (M3; joint-style cycling left B; since then each scene picks mixed, elbows or balls at random) |
 | Up / Down | Growth speed 1x / 2x / 4x / 8x |
 | Left / Right | Orbit the camera 45 degrees; the same pipes regrow fast from the new angle (M2) |
 | Start | Pause |
@@ -212,6 +212,8 @@ Far inside the ~274 KB RAM cart window.
 2. Grid: **12 x 10 x 12**, fatter pipes, vs the reference's 25^3.
 3. Concurrent pipes: **3**.
 4. Joint default: **mixed** (elbows, balls now and then), like the original.
+   Since 2026-10-04 (Adrian): a random style per scene (mixed, elbows,
+   balls), like the original's "Cycle".
 5. Scene end: **block dissolve over 1 s** vs the original's instant clear.
 6. Teapot: **yes, Utah teapot, 1 in 300 joints**. Snouty-themed easter egg
    (Iris mark or a Snouty head at a joint) as a second, rarer egg: **no for
