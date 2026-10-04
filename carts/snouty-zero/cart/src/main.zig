@@ -530,7 +530,7 @@ fn draw_overlay() void {
     cart.text(.{
         .str = &buf,
         .x = 160 - 8 * @as(i32, buf.len),
-        .y = 9,
+        .y = 13,
         .text_color = .{ .r = 31, .g = 63, .b = 31 },
         .background_color = .{ .r = 0, .g = 0, .b = 0 },
     });

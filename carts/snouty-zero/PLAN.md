@@ -524,6 +524,18 @@ cart reads the league's own arrays, the XIP cart keeps the copy.
   Host tests and check-float (both ELFs) pass. Nothing else changed: all
   nine tracks, three leagues and the machine select are in both carts.
 
+## M5.2 Screen edges
+
+2026-10-04, Adrian: some of the UI is cut off at the display edges. The
+title drew `SNOUTY ZERO` from x -8, the subtitle `ECUMENOPOLIS GRAND
+PRIX` is 184 px wide (now two lines on the splash and the title), and the
+17-character rows `MACHINE: ANTEATER` / `SUBSTATION SPRINT` ran off the
+right from the fixed x 44 (menu lists now centre the marker and items as
+one block on the longest row, never left of 44; the machine rows are
+space-padded to one length so the menu holds still). The race HUD moved
+from 1-2 px to a 4 px margin (`hud.margin`: lap, clock, rank, speed,
+bars, minimap). Bench unchanged: mean 2.09 ms, worst 4.81 ms.
+
 ## Hand-off
 
 All milestones are built, tested and on `origin/main` (tags
