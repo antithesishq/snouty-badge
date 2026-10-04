@@ -499,8 +499,9 @@ fn run(entry: Entry) void {
                     else => switch (e.edge) {
                         .top => enemies.spawn_ex(e.kind, off, -16, delay, e.pattern, .top, 0),
                         .bottom => enemies.spawn_ex(e.kind, off, 128, delay, e.pattern, .bottom, 0),
-                        .left => enemies.spawn_ex(e.kind, -16, off, delay, e.pattern, .left, 0),
-                        .right => enemies.spawn_ex(e.kind, enemies.spawn_x, off, delay, e.pattern, .right, 0),
+                        // Only fleas come from the left (their programs
+                        // move right); any other kind takes the right edge.
+                        .left, .right => enemies.spawn_ex(e.kind, enemies.spawn_x, off, delay, e.pattern, .right, 0),
                     },
                 };
                 if (m) |en| en.formation = id else formations.lost(id);
