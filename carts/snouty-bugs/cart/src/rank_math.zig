@@ -9,7 +9,7 @@
 pub const max_value: u32 = 1000;
 pub const stage_base = [4]u32{ 0, 150, 300, 450 };
 const per_loop: u32 = 400;
-/// stage_seconds = min(waves.t / 60, 120).
+/// stage_seconds = min(waves.clock() / 60, 120).
 const max_stage_seconds: u32 = 120;
 const per_level: u32 = 50;
 const per_fork: u32 = 50;
@@ -19,7 +19,7 @@ pub const Inputs = struct {
     /// 0..3; a later stage index uses the last base.
     stage: u8 = 0,
     loop: u8 = 0,
-    /// Ticks since the stage started (`waves.State.t`).
+    /// Ticks since the stage started (`waves.clock()`).
     t: u32 = 0,
     /// Weapon level 1..5 (0 reads as 1).
     level: u8 = 1,

@@ -93,9 +93,9 @@ pub fn remove_offender(hit: Hit) void {
 
 /// Zaps and seekers die on their first hit; a beam pierces, damaging each
 /// enemy slot at most once (`hit_mask`). A spark at each hit. A kill by a
-/// bolt counts for its formation (a complete one drops a crate), every
-/// second beetle drops one, and the rank may answer with revenge bullets
-/// (PLAN.md M7); a ram kill does none of that.
+/// bolt counts for its formation (a complete one drops a crate), a beetle
+/// drops one (every `beetle_drop_every`-th), and the rank may answer with
+/// revenge bullets (PLAN.md M7); a ram kill does none of that.
 fn bolts_vs_enemies() void {
     for (&world.w.bolts) |*b| {
         if (!b.active) continue;

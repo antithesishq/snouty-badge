@@ -7,6 +7,7 @@ const enemies = @import("enemies.zig");
 const world = @import("world.zig");
 const rank = @import("rank.zig");
 const waves = @import("waves.zig");
+const mode = @import("mode.zig");
 
 const max_rewind_icons = 5;
 /// `hud.png` cell: 12x8 since 2026-09-29 (the 8x8 head read as a rat).
@@ -24,18 +25,25 @@ const fuel_w: u32 = 32;
 const fuel_h: u32 = 6;
 const fuel_fill_w: u32 = fuel_w - 2;
 const fuel_fill_h: u32 = fuel_h - 2;
-/// `HARD` in hardcore, in place of the rewind icons.
-const hard_x: i32 = 128;
-/// Title card ship: the 32x24 level cell centred at y 62..85 (86 when it
+/// `HARD` in hardcore, `HARD+` (red) in super-hardcore, in place of the
+/// rewind icons, right-aligned.
+const hard_right: i32 = 160;
+/// Title card ship: the 32x24 level cell centred at y 54..77 (78 when it
 /// bobs), the thruster at player.zig's (-6, 8) offset.
 const title_ship_x: i32 = 64;
-const title_ship_y: i32 = 62;
+const title_ship_y: i32 = 54;
+/// Title mode menu: one line per `mode.Mode`, `title_menu_step` apart.
+const title_menu_y: i32 = 84;
+const title_menu_step: i32 = 10;
+const mode_names = [mode.count][]const u8{ "NORMAL", "HARDCORE", "SUPER-HARDCORE" };
 
 /// HUD row: score (x 0..47), the status slot (x 48..63, the weapon), the
 /// fuel bar (x 68..99) and, on the right, the rewind stock as up to 5
-/// right-aligned 12x8 Snouty heads or `HARD` in hardcore. All arguments are
-/// main.zig's meta-state; `rewinds` is ignored when `hardcore`.
-pub fn draw_hud(rewinds: u32, fuel: u32, fuel_max: u32, fatal_floor: u32, hardcore: bool) void {
+/// right-aligned 12x8 Snouty heads, or `HARD` / `HARD+` under hardcore
+/// rules. All arguments are main.zig's meta-state; `rewinds` is ignored
+/// under hardcore rules.
+pub fn draw_hud(rewinds: u32, fuel: u32, fuel_max: u32, fatal_floor: u32, m: mode.Mode) void {
+    const hardcore = m != .normal;
     cart.rect(.{ .x = 0, .y = 0, .width = cart.screen_width, .height = draw.hud_height, .fill_color = draw.anti_black });
     var buf: [6]u8 = undefined;
     var v = world.w.player.score;
@@ -49,7 +57,9 @@ pub fn draw_hud(rewinds: u32, fuel: u32, fuel_max: u32, fatal_floor: u32, hardco
     draw_weapon();
     draw_fuel(fuel, fuel_max, fatal_floor, hardcore);
     if (hardcore) {
-        draw.text("HARD", hard_x, 0, draw.coral);
+        const label: []const u8 = if (m == .super_hardcore) "HARD+" else "HARD";
+        const x = hard_right - @as(i32, @intCast(label.len * cart.font_width));
+        draw.text(label, x, 0, if (m == .super_hardcore) draw.red else draw.coral);
         return;
     }
     const n = @min(rewinds, max_rewind_icons);
@@ -147,23 +157,33 @@ fn number_label(buf: *[9]u8, comptime prefix: []const u8, n: u32) []const u8 {
 
 /// Title card over the dimmed, scrolling background: "SNOUTY" / "BUGHUNT",
 /// the ship (level pose, thruster looping, bobbing 1 px) where the head icon
-/// used to be, then "A PLAY" (normal game) and "B HARDCORE" (Coral) blinking
-/// together where M0 had "PRESS A". The sound toggle's state (Select) sits
-/// at the top, dim while off.
-pub fn draw_title(tick: u32, sound_on: bool) void {
+/// used to be, then the mode menu (up / down picks, A or Start plays): the
+/// picked mode in its color (white, Coral, red) between blinking `>` `<`,
+/// the others dim. The sound toggle's state (Select) sits at the top, dim
+/// while off.
+pub fn draw_title(tick: u32, pick: mode.Mode, sound_on: bool) void {
     // The background layers start at y 8; clear the HUD row too, since
     // no_copy_full_frame leaves a stale frame there otherwise.
     cart.rect(.{ .x = 0, .y = 0, .width = cart.screen_width, .height = draw.hud_height, .fill_color = draw.anti_black });
     draw.darken_checker();
-    draw.centered_text(if (sound_on) "SELECT: SOUND ON" else "SELECT: SOUND OFF", 20, if (sound_on) draw.anti_white else draw.star_dim);
-    draw.centered_text("SNOUTY", 40, draw.anti_white);
-    draw.centered_text("BUGHUNT", 52, draw.coral);
+    draw.centered_text(if (sound_on) "SELECT: SOUND ON" else "SELECT: SOUND OFF", 18, if (sound_on) draw.anti_white else draw.star_dim);
+    draw.centered_text("SNOUTY", 32, draw.anti_white);
+    draw.centered_text("BUGHUNT", 42, draw.coral);
     const ship_y: i32 = title_ship_y + @as(i32, @intCast((tick / 40) % 2));
     draw.draw_sprite(gfx.thruster, 8, 8, (tick / 3) % 4, title_ship_x - 6, ship_y + 8, .{});
     draw.draw_sprite(gfx.ship, 32, 24, 0, title_ship_x, ship_y, .{});
-    if ((tick / 30) % 2 == 0) {
-        draw.centered_text("A PLAY", 92, draw.anti_white);
-        draw.centered_text("B HARDCORE", 104, draw.coral);
+    const colors = [mode.count]cart.DisplayColor{ draw.anti_white, draw.coral, draw.red };
+    for (mode_names, 0..) |name, k| {
+        const y = title_menu_y + title_menu_step * @as(i32, @intCast(k));
+        const picked = k == @backingInt(pick);
+        draw.centered_text(name, y, if (picked) colors[k] else draw.star_dim);
+        if (picked and (tick / 30) % 2 == 0) {
+            const fw: i32 = @intCast(cart.font_width);
+            const w: i32 = @intCast(name.len * cart.font_width);
+            const x = @divTrunc(@as(i32, cart.screen_width) - w, 2);
+            draw.text(">", x - fw - 2, y, colors[k]);
+            draw.text("<", x + w + 2, y, colors[k]);
+        }
     }
     draw.centered_text("Antithesis", 116, draw.coral);
     draw.draw_sprite(gfx.iris_16, 16, 16, 0, 20, 112, .{});

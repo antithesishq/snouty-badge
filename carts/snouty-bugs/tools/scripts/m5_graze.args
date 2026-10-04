@@ -3,14 +3,19 @@
 # would cap the grant). Since M7 it plays in the endless probe mode (debug_probe at 31; a
 # normal game dies on this sweep), and the hold moved from 1960 to 1600 to find a clean graze
 # in the M7 waves, then to 1630 for the catch-up table clock (a thin field runs the stage
-# table faster; at 1600 the ship never re-lived the graze it took back). 1629: game tick
-# 1599, fuel 180, 13 grazes, 6 probe hits. 1649, the last held frame: 20 frames = 40 ticks,
-# game tick 1559, fuel 140; the hold took back the graze of 1627 (grazes 12) and the probe
-# hit of 1629 (hits 5). 1650: PLAYING, no tick.
-# - 1678 (tick 1587): the ship re-lives that graze: grazes 12 -> 13, but it is under the
-#   graze high-water mark, so it pays nothing (fuel 143 before and after).
-# - 1772 (tick 1681): a new graze: grazes 13 -> 14 and fuel 153 -> 155. Refill alone cannot
-#   get there: 122 live ticks since the release (1559 -> 1681) give at most 140 + (9 + 122) /
-#   10 = 153 (9 = the most the refill counter can carry in), and the fuel is 155.
+# table faster; at 1600 the ship never re-lived the graze it took back). Re-pinned for the
+# mode paces (NORMAL: the table clock hurries only on an empty field, the fire ramp counts
+# real ticks): the waves come later and fire less, so the counts are lower, but the hold at
+# 1630 still takes back a graze that the ship then re-lives. 1629: game tick 1599, fuel 180,
+# 8 grazes, 3 probe hits. 1649, the last held frame: 20 frames = 40 ticks, game tick 1559,
+# fuel 140; the hold took back the graze of 1597 (grazes 7; no probe hit falls inside it this
+# time, hits stay 3). 1650: PLAYING, no tick.
+# - 1666 (tick 1575): the ship grazes again: grazes 7 -> 8, but it is under the graze
+#   high-water mark, so it pays nothing (fuel 142 before and after).
+# - 1753 (tick 1662): a new graze: grazes 8 -> 9 and fuel 151 -> 153. Refill alone cannot
+#   get there: 103 live ticks since the release (1559 -> 1662) give at most 140 + (9 + 103) /
+#   10 = 151 (9 = the most the refill counter can carry in), and the fuel is 153.
+# (Under the catch-up clock: 13 grazes and 6 hits at 1629, the re-lived graze at 1678, the new
+# one at 1772.)
 # No rewind is spent (probe mode never rewinds; rewinds stay 3).
---frames 2200 --call-at "31 debug_probe" --dump-exports debug_state,debug_rewinds,debug_fuel,debug_grazes --at "1629 debug_state == 1" --at "1629 debug_game_tick == 1599" --at "1629 debug_fuel == 180" --at "1629 debug_grazes == 13" --at "1629 debug_hits == 6" --at "1630 debug_state == 5" --at "1649 debug_game_tick == 1559" --at "1649 debug_fuel == 140" --at "1649 debug_grazes == 12" --at "1649 debug_hits == 5" --at "1650 debug_state == 1" --at "1660 debug_history_check == 0" --at "1677 debug_grazes == 12" --at "1677 debug_fuel == 143" --at "1678 debug_grazes == 13" --at "1678 debug_fuel == 143" --at "1771 debug_grazes == 13" --at "1771 debug_fuel == 153" --at "1772 debug_game_tick == 1681" --at "1772 debug_grazes == 14" --at "1772 debug_fuel == 155" --at "1772 debug_history_check == 0" --expect "debug_state == 1" --expect "debug_rewinds == 3" --expect "debug_grazes >= 14"
+--frames 2200 --call-at "31 debug_probe" --dump-exports debug_state,debug_rewinds,debug_fuel,debug_grazes --at "1629 debug_state == 1" --at "1629 debug_game_tick == 1599" --at "1629 debug_fuel == 180" --at "1629 debug_grazes == 8" --at "1629 debug_hits == 3" --at "1630 debug_state == 5" --at "1649 debug_game_tick == 1559" --at "1649 debug_fuel == 140" --at "1649 debug_grazes == 7" --at "1649 debug_hits == 3" --at "1650 debug_state == 1" --at "1660 debug_history_check == 0" --at "1665 debug_grazes == 7" --at "1665 debug_fuel == 142" --at "1666 debug_grazes == 8" --at "1666 debug_fuel == 142" --at "1752 debug_grazes == 8" --at "1752 debug_fuel == 151" --at "1753 debug_game_tick == 1662" --at "1753 debug_grazes == 9" --at "1753 debug_fuel == 153" --at "1753 debug_history_check == 0" --expect "debug_state == 1" --expect "debug_rewinds == 3" --expect "debug_grazes >= 9"

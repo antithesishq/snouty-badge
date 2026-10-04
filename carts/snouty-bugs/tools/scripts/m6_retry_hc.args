@@ -1,18 +1,22 @@
 # m6_retry_hc: m6_retry in hardcore mode, where a hit is paid from the fuel bar, so the
 # shield's "no fuel spent" shows, and where a hit that rewinds strips every powerup. Same
-# input as m6_retry (god 31..3520, RIGHT 3670..3720) except B (not A) on the title at 30,
+# input as m6_retry (god 31..3520, RIGHT 3670..3720) except DOWN at 28 (HARDCORE) before A at 30,
 # which starts a hardcore game (hardcore 1, rewinds 0). The world is the same as m6_retry's
-# (no hit lands before 3780 either way), so the numbers line up with it until 3840.
+# (no hit lands before 3716 either way), so the numbers line up with it until 3863.
 # Re-pinned for the catch-up clock with m6_retry (god off 5000 -> 3520, RIGHT 5150..5200 ->
 # 3670..3720, the run from 5600 to 4200 updates, the ship B5 with three forks instead of F5
-# with two):
-# - 1687: shield 0 -> 1. 3780 (tick 3673): the shield absorbs the hit with fuel 180: fuel
-#   stays 180, state 1, shield 0, still B5 and three forks.
-# - 3840 (tick 3733): the unshielded hit costs the auto rewind's depth: 120, fuel 180 -> 60,
-#   target 3613. The playback restores the shield (3919: shield 1, B5, forks 3); the resume
-#   at 3920 (fuel 60) strips all of it: F1 (weapon 1), forks 0, shield 0, mercy 80.
-# - 3980 (tick 3673): no shield this time, so the hit rewinds with fuel 66: depth 66,
-#   target 3607 (before the last resume: the playback shows B5, three forks and the shield
-#   again at 4030), fuel 0; resume at 4033 strips them again.
-# - 4093: the next hit meets fuel 6 < the floor of 45: DYING, then TITLE at 4153.
---frames 4200 --call-at "31 debug_god" --call-at "3520 debug_god" --dump-exports debug_state,debug_hardcore,debug_shield,debug_fuel,debug_weapon,debug_forks --at "30 debug_hardcore == 1" --at "30 debug_rewinds == 0" --at "1687 debug_shield == 1" --at "3779 debug_fuel == 180" --at "3780 debug_shield == 0" --at "3780 debug_state == 1" --at "3780 debug_fuel == 180" --at "3780 debug_weapon == 25" --at "3780 debug_forks == 3" --at "3839 debug_state == 1" --at "3840 debug_state == 4" --at "3840 debug_fuel == 60" --at "3840 debug_rewind_target == 3613" --at "3919 debug_state == 4" --at "3919 debug_shield == 1" --at "3919 debug_weapon == 25" --at "3919 debug_forks == 3" --at "3920 debug_state == 1" --at "3920 debug_game_tick == 3613" --at "3920 debug_fuel == 60" --at "3920 debug_shield == 0" --at "3920 debug_weapon == 1" --at "3920 debug_forks == 0" --at "3920 debug_mercy == 80" --at "3930 debug_history_check == 0" --at "3979 debug_fuel == 66" --at "3980 debug_state == 4" --at "3980 debug_fuel == 0" --at "3980 debug_rewind_target == 3607" --at "4030 debug_shield == 1" --at "4030 debug_weapon == 25" --at "4033 debug_state == 1" --at "4033 debug_shield == 0" --at "4033 debug_weapon == 1" --at "4033 debug_forks == 0" --at "4050 debug_history_check == 0" --at "4092 debug_state == 1" --at "4093 debug_state == 3" --at "4093 debug_fuel == 6" --at "4153 debug_state == 0" --expect "debug_state == 0" --expect "debug_hardcore == 1"
+# with two). Re-pinned for the mode paces with m6_retry (HARDCORE runs NORMAL's pace: the
+# table clock hurries only on an empty field; the input is unchanged, the ship A5 with three
+# forks at the absorbing hit, the run 4400 updates):
+# - 2057: shield 0 -> 1. 3716 (tick 3609): the shield absorbs the hit with fuel 180: fuel
+#   stays 180, state 1, shield 0, still A5 and three forks.
+# - 3783 (tick 3676): the unshielded hit costs the auto rewind's depth: 120, fuel 180 -> 60,
+#   target 3556. The playback restores the shield (3862: shield 1, A5, forks 3); the resume
+#   at 3863 (fuel 60) strips all of it: F1 (weapon 1), forks 0, shield 0, mercy 80.
+# - 4120 (tick 3813): no shield this time, so the hit rewinds with fuel 86: depth 86, target
+#   3727, fuel 0; resume at 4183. (Under the catch-up clock this second hit came 60 updates
+#   after the resume and its rewind went back past it, so the playback showed the stripped
+#   powerups again; now it comes 257 updates later and its target is after the resume.)
+# - 4269 (tick 3813 again): the idle ship meets the same hit with fuel 8 < the floor of 45:
+#   DYING, then TITLE at 4329.
+--frames 4400 --call-at "31 debug_god" --call-at "3520 debug_god" --dump-exports debug_state,debug_hardcore,debug_shield,debug_fuel,debug_weapon,debug_forks --at "30 debug_hardcore == 1" --at "30 debug_rewinds == 0" --at "2057 debug_shield == 1" --at "3715 debug_fuel == 180" --at "3716 debug_shield == 0" --at "3716 debug_state == 1" --at "3716 debug_fuel == 180" --at "3716 debug_weapon == 15" --at "3716 debug_forks == 3" --at "3782 debug_state == 1" --at "3783 debug_state == 4" --at "3783 debug_fuel == 60" --at "3783 debug_rewind_target == 3556" --at "3862 debug_state == 4" --at "3862 debug_shield == 1" --at "3862 debug_weapon == 15" --at "3862 debug_forks == 3" --at "3863 debug_state == 1" --at "3863 debug_game_tick == 3556" --at "3863 debug_fuel == 60" --at "3863 debug_shield == 0" --at "3863 debug_weapon == 1" --at "3863 debug_forks == 0" --at "3863 debug_mercy == 80" --at "3870 debug_history_check == 0" --at "4119 debug_fuel == 86" --at "4120 debug_state == 4" --at "4120 debug_fuel == 0" --at "4120 debug_rewind_target == 3727" --at "4182 debug_state == 4" --at "4183 debug_state == 1" --at "4183 debug_game_tick == 3727" --at "4183 debug_weapon == 1" --at "4183 debug_forks == 0" --at "4200 debug_history_check == 0" --at "4268 debug_state == 1" --at "4269 debug_state == 3" --at "4269 debug_fuel == 8" --at "4329 debug_state == 0" --expect "debug_state == 0" --expect "debug_hardcore == 1"

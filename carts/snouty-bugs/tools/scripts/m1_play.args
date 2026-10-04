@@ -3,18 +3,24 @@
 # Re-pinned for the catch-up table clock (waves.zig: a thin field runs the stage table
 # faster): the waves come sooner and the sweep no longer lives through 1800 ticks of stage 1
 # (no sweep shape tried did, as m2_play found for the whole stage at M7). Its moves start 4
-# ticks later than before (UP from 64, not 60), so that a rewind still crosses a grab:
+# ticks later than before (UP from 64, not 60), so that a rewind still crosses a grab.
+# Re-pinned for the mode paces (NORMAL: the table clock hurries, 3 ticks a tick, only on an
+# empty field, and the fire ramp counts real stage ticks): the later waves come later and
+# fire less, so the sweep lives longer (its first hit at 1298, not 669) and that rewind still
+# crosses a grab (the input is unchanged):
 # - 232 (game tick 202): the first gnat string (a formation) is gone: crate 1, an F (drops
-#   0 -> 1, pickups 1), +200 on top of the gnat's 10 (score 40 -> 250). The cores crate at
-#   424, F2 at 436, crate 3 at 464.
-# - 623 (tick 593): the sweep flies into an F crate: F2 -> F3 (weapon 2 -> 3), score 1022,
+#   0 -> 1, pickups 1), +200 on top of the gnat's 10 (score 40 -> 250). F2 at 436, crate 2
+#   (cores) at 574, collected at 747; crate 3, an F, at 1067.
+# - 1208 (tick 1178): the sweep flies into it: F2 -> F3 (weapon 2 -> 3), score 1274,
 #   pickups 0.
-# - 669 (tick 639): a hit: REWIND, target 519, lives 3 -> 2. The 20 bug-report frames hold
-#   tick 639; the playback then steps back 2 ticks per frame and at 712 (tick 591, before the
-#   grab) the weapon is F2 again and the crate is back on screen (pickups 1, score 922).
-# - Resume at 749 with tick 519: the world of tick 519 had F2, and the auto rewind's power
-#   loss (M7) takes a level at the resume: F1, mercy 80.
-# - The replayed run is hit again at 821 (lives 1, resume at 901) and at 1083 (lives 0,
-#   resume at 1163), F2 again at 1223; the next hit at 1269 is GAME OVER (state 3, score
-#   1071, F2) and the title follows at 1329 (state 0) for the rest of the run.
---frames 1800 --dump-exports debug_state,debug_score,debug_lives,debug_enemies,debug_weapon --at "231 debug_drops == 0" --at "232 debug_drops == 1" --at "232 debug_pickups == 1" --at "232 debug_score == 250" --at "424 debug_cores == 1" --at "435 debug_weapon == 1" --at "436 debug_weapon == 2" --at "463 debug_drops == 2" --at "464 debug_drops == 3" --at "622 debug_weapon == 2" --at "623 debug_weapon == 3" --at "623 debug_pickups == 0" --at "623 debug_score == 1022" --at "668 debug_state == 1" --at "669 debug_state == 4" --at "669 debug_rewind_target == 519" --at "669 debug_lives == 2" --at "711 debug_weapon == 3" --at "712 debug_state == 4" --at "712 debug_weapon == 2" --at "712 debug_pickups == 1" --at "712 debug_score == 922" --at "748 debug_state == 4" --at "749 debug_state == 1" --at "749 debug_game_tick == 519" --at "749 debug_weapon == 1" --at "749 debug_mercy == 80" --at "821 debug_lives == 1" --at "1083 debug_lives == 0" --at "1268 debug_state == 1" --at "1269 debug_state == 3" --at "1329 debug_state == 0" --at "300 debug_history_check == 0" --at "780 debug_history_check == 0" --at "1000 debug_history_check == 0" --at "1200 debug_history_check == 0" --expect "debug_state == 0" --expect "debug_score == 1071" --expect "debug_lives == 0" --expect "debug_weapon == 2"
+# - 1298 (tick 1268): a hit: REWIND, target 1148, lives 3 -> 2. The 20 bug-report frames hold
+#   tick 1268; the playback then steps back 2 ticks per frame and at 1363 (tick 1176, before
+#   the grab) the weapon is F2 again and the crate is back on screen (pickups 1, score 1174).
+# - Resume at 1378 with tick 1148: the world of tick 1148 had F2, and the auto rewind's power
+#   loss (M7) takes a level at the resume: F1, mercy 80. The replayed sweep grabs the same
+#   crate again at 1408 (tick 1178): F2.
+# - The replayed run is hit again at 1535 (lives 1, resume at 1615, F1) and at 1791 (lives 0),
+#   whose rewind is still playing back at the end (state 4, score 1417, F1).
+# (Under the catch-up clock: F3 at 623, the hit at 669, F2 again at 712, resume at 749, GAME
+# OVER at 1269.)
+--frames 1800 --dump-exports debug_state,debug_score,debug_lives,debug_enemies,debug_weapon --at "231 debug_drops == 0" --at "232 debug_drops == 1" --at "232 debug_pickups == 1" --at "232 debug_score == 250" --at "435 debug_weapon == 1" --at "436 debug_weapon == 2" --at "573 debug_drops == 1" --at "574 debug_drops == 2" --at "746 debug_cores == 0" --at "747 debug_cores == 1" --at "1066 debug_drops == 2" --at "1067 debug_drops == 3" --at "1207 debug_weapon == 2" --at "1208 debug_weapon == 3" --at "1208 debug_pickups == 0" --at "1208 debug_score == 1274" --at "1297 debug_state == 1" --at "1298 debug_state == 4" --at "1298 debug_rewind_target == 1148" --at "1298 debug_lives == 2" --at "1362 debug_weapon == 3" --at "1363 debug_state == 4" --at "1363 debug_weapon == 2" --at "1363 debug_pickups == 1" --at "1363 debug_score == 1174" --at "1377 debug_state == 4" --at "1378 debug_state == 1" --at "1378 debug_game_tick == 1148" --at "1378 debug_weapon == 1" --at "1378 debug_mercy == 80" --at "1407 debug_weapon == 1" --at "1408 debug_weapon == 2" --at "1534 debug_state == 1" --at "1535 debug_state == 4" --at "1535 debug_lives == 1" --at "1615 debug_state == 1" --at "1615 debug_weapon == 1" --at "1790 debug_state == 1" --at "1791 debug_state == 4" --at "1791 debug_lives == 0" --at "300 debug_history_check == 0" --at "780 debug_history_check == 0" --at "1000 debug_history_check == 0" --at "1200 debug_history_check == 0" --at "1400 debug_history_check == 0" --at "1700 debug_history_check == 0" --expect "debug_state == 4" --expect "debug_score == 1417" --expect "debug_lives == 0" --expect "debug_weapon == 1"
