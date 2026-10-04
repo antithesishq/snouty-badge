@@ -94,6 +94,19 @@ pub fn cam_row() i32 {
     return @intCast(cam.y >> fixed.Q);
 }
 
+/// Rows ahead of the camera where ground of height `h` (cells) shows on
+/// screen row `sy` at the screen centre (the march's projection: row =
+/// horizon + (alt - h) * view_scale / z, view_scale 32; roll ignored), at
+/// least `near` and inside the ring window. A verb places its effect with
+/// this so it lands in view whatever the altitude and pitch: the bottom of
+/// the view is 20 rows ahead at the autopilot's Bus altitude and 40 rows at
+/// a manual 72, and the anteater covers the centre of rows 66..118.
+pub fn rows_ahead(sy: i32, h: i32, near: i32) i32 {
+    const below = @max(sy - cam.horizon, 1);
+    const above = @max((cam.alt >> fixed.Q) - h, 1);
+    return @min(@max(@divTrunc(above * 32, below), near), world.gen_ahead - 1);
+}
+
 /// What the flight model flies with, from the player or the autopilot:
 /// steer and pitch in Q16 (-1..1), boost = A held, verb = B pressed (edge).
 pub const Stick = struct { steer: i32 = 0, pitch: i32 = 0, boost: bool = false, verb: world.Verb = .none };
