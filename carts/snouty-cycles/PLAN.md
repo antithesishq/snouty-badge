@@ -89,12 +89,116 @@ Rules for the agent:
   - Light comptime.
   - No `@Vector` in comptime tables.
 
-## M1-M3
+## M1: the game (three Opus tracks)
 
-Planned after M0 lands. The track split will be sim (grinding, rubber, energy,
-sudden death, layouts), AI (T0, T2, T3, budget), and game/presentation (ladder,
-score, title and attract, menus, effects, HUD), plus a ladder bot as the content
-gate.
+M0 is merged (tag `snouty-cycles/m0`). M1 runs as three tracks at once, each
+in its own worktree and branch, cut from `cycles/m0`:
+
+| Track | Worktree | Branch |
+|---|---|---|
+| S | `/home/exedev/snouty-badge-cycles-sim` | `cycles/m1-sim` |
+| A | `/home/exedev/snouty-badge-cycles-ai` | `cycles/m1-ai` |
+| P | `/home/exedev/snouty-badge-cycles-game` | `cycles/m1-game` |
+
+The lead merges them into `cycles/m0` in that order (S, A, P), then runs
+the integrated gate.
+
+**File ownership is strict:**
+- S owns `sim.zig` and the new `layouts.zig`.
+- A owns `ai.zig`.
+- P owns `game.zig`, `render.zig`, the new `levels.zig`, `main.zig`, the docs and `tools/`.
+- `host_tests.zig` is shared, append-only: one import line per new module.
+- Anything outside your own files: write it into your hand-off as a request rather than editing.
+- Tracks commit on their own branch (small steps, the repo's message style, `Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>`).
+- Never push, tag or merge.
+
+**One rule for every track: the simulation stays deterministic.**
+- AI work budgets count work units (cells visited, nodes searched), never microseconds.
+- Rewind (M2) and the link duel (M3) replay the same inputs and must get the same result.
+- Calibrate units to time with badge-bench.
+
+### Track S: rules (`sim.zig`, `layouts.zig`)
+
+Each new rule is behind its `Config` flag, and every constant is in `tuning`.
+
+1. **Grinding** (SPEC 4): on entering a cell, check the lateral cells at distance 1 and 2 for trail.
+   - Rim and blocks give nothing.
+   - The boost decays slowly from above and fast from below.
+   - While a distance-1 grind is active, emit `grind` events (cycle, the wall-side cell x/y, a = side dir) once per tick, for P's sparks.
+   - `cycles[i].grind` holds the current level, 0..2.
+2. **Energy** (SPEC 4): A boosts, B brakes, both from one bar of 0..1000, recharging while neither is held. A cycle with an empty bar gets nothing. The speed cap is 2.2x base.
+3. **Rubber** (SPEC 4): a stall at the marked spot, with `stalled` set and a `stall` event each tick (for P's flicker and sparks).
+   - A turn queued or pressed during a stall applies at once if that cell is free.
+   - The meter is 12 ticks and recharges 1 per 8 ticks. Empty means a crash.
+   - The default is `Config.rubber` = 12; HARDCORE (M2) sets 4.
+4. **Sudden death** (SPEC 4): `Config.sudden_death`, starting at `tuning.sudden_death_ticks` = 1800.
+   - Every 60 ticks the next ring in becomes `block`, but cells that already hold trail stay trail.
+   - Each changed cell emits a `block` event, or one event per ring with a = ring index if 48 a tick is too few (agree it with P through the CLAUDE.md interface notes in your hand-off).
+   - A cycle on a new block cell crashes with ACCESS VIOLATION.
+   - Expose `sudden_death_ring` (0 = not started) for P's banner.
+   - It replaces M0's 90 s draw cap when on.
+5. **Layouts**: `layouts.zig` is a small table of block layouts (pillars, bars, a cross, a ring with gaps, about 8), drawn into the grid by `World.init` from `Config.layout` (0 = empty arena). Start cells and the 5 cells ahead of each start are always free. Data only, no comptime loops over big arrays.
+6. **Helpers for the AI and render tracks:**
+   - `ticks_to_step(i)`: ticks until the next cell boundary at the current speed.
+   - `speed_fraction(i)`: speed / base x 100.
+7. **Host tests:**
+   - Each mechanic.
+   - Two Worlds staying identical for 5000 ticks with all flags on and random A/B/presses.
+   - Rounds with sudden death always end before 1800 + 60 x 30 ticks.
+8. Update the Interfaces section of `carts/snouty-cycles/CLAUDE.md` for what you added. This is the one shared file S edits: append only, its own subsection.
+
+### Track A: programs (`ai.zig`)
+
+1. **Tiers per SPEC 5:**
+   - **T0 WANDER.**
+   - **T2 TERRITORY:**
+     - Multi-source BFS Voronoi; score 0.055 x cells + 0.194 x edges, as integer weights.
+     - A cut-cell penalty from a 3x3 neighbourhood table. The 256-entry table is generated at host time or written out as data, not comptime-heavy.
+     - Aggression toward the player's head.
+     - Wall-hugging fill once separated, with the parity bound.
+   - **T3 SEARCH:** alpha-beta against the nearest rival, Voronoi leaves in a 32x32 window, iterative deepening within a deterministic node budget.
+   - **Fallback:** T1's answer if the budget runs out.
+   - Use the energy bar too: T2/T3 boost to win a race for a cut-off and brake when the space ahead is tight. T0/T1 never use it.
+2. **Timing:** decide early. Decide on the first tick in a new cell, or when `ticks_to_step` <= 2, and keep the answer for the boundary. The work can be split over the ticks before the boundary; the per-tick work cap is a tuning constant.
+3. **Knobs per Brain:** reaction (cells), mistake_permille, vision radius. Expose `ai.preset(tier, level)` for P's ladder, returning a Brain config.
+4. **Host tests:**
+   - Tournament win rates over 40 seeded rounds each, recorded in your hand-off: T1 > T0, T2 > T1, T3 >= T2 (1v1, empty arena, rubber on).
+   - Determinism of decide (same world, same brain, same answer).
+   - Budget respected (count work units).
+5. **Bench:** add a debug-only autopilot level 3 = T3, requested from P through the hand-off; meanwhile test with a host harness.
+   - Measure T2/T3 decision cost with badge-bench using a temporary local poke or a host cycle estimate.
+   - Tune the per-tick cap so a frame with three T3s plus rendering stays under 8 ms calibrated.
+   - Record the numbers.
+6. **Gotcha:** the fill scratch is module state (not reentrant). Keep one scratch, and keep it under 40 KB total.
+
+### Track P: the game around it (`game.zig`, `render.zig`, `levels.zig`, `main.zig`, `tools/`, docs)
+
+1. **`levels.zig`:** the 12-level ladder from SPEC 6 (name, programs with tier and preset level, speed_pct, layout index, sudden death on). It loops after PROD at +10% speed.
+2. **Game flow:**
+   - Title: the attract round with 4 programs (use T2 once A lands; until then, whatever tier exists), then a menu: GRID LADDER, SKIRMISH (M2: show it greyed out or "SOON"), OPTIONS (M2, same), HOW TO PLAY (one card of controls).
+   - Ladder: level intro banner ("LEVEL 6 / C / 1 PROGRAM"), countdown, play, LEVEL CLEAR plus score tally, next level.
+   - **Lives** (M1 stand-in for M2's snapshots): 3 pips in the HUD. A derez costs one, and the level restarts. At 0 the game ends with a CORE DUMPED card: score, level reached, session high score in RAM. A level clear gives a life back, up to a maximum of 3.
+   - Pause menu: RESUME / RESTART LEVEL / QUIT.
+3. **HUD (y 0..7), with at least a 2 px margin from the screen edges** (Adrian flagged edge-touching UI on Zero): level name, score, energy bar, life pips. Keep it legible at 8x8.
+4. **Effects:**
+   - Grind sparks from `grind` events (1-3 px, life 4-8 ticks).
+   - Stall flicker plus sparks from `stall`.
+   - A derez particle burst (16 particles, 40 ticks).
+   - Sudden-death ring drawn red, with a SUDDEN DEATH banner when `sudden_death_ring` goes 0 to 1.
+   - Crash-name banners (SEGFAULT, DEREZZED, OUT OF BOUNDS, ACCESS VIOLATION, RACE CONDITION, DEADLOCK). Show the player's own crash big; programs' crashes as a small tag near the crash for 30 ticks.
+   - Every transient is erased by `repaint_rect` (CLAUDE.md rendering rules). Keep the render host test (incremental == full repaint) passing.
+5. **`main.zig`:** debug exports for the ladder bot (`debug_level`, `debug_lives`, `debug_set_level(n)`, `debug_score`, `debug_autopilot` levels 0-3, where 3 is T3 once A lands).
+6. **Ladder bot = the content gate** (`tools/ladder_bot.mjs` or a check.sh step): with autopilot 3, each level 1..12 is cleared within 3 lives on at least 4 of 5 seeds (`debug_set_level` jumps there).
+   - Until A lands, wire it with T1 and expect failures on later levels; the lead re-runs it after integration.
+   - Also refresh `tools/check.sh` (the bench script now plays ladder levels 1, 6 and 12 with sudden death), the toml, and `docs/RUNNING.md`.
+7. **Preview GIF** `docs/preview_m1.gif`: title, menu, a level, sparks, a derez, level clear.
+
+### Integration (lead)
+
+- Merge S, then A, then P into `cycles/m0`.
+- Run the whole gate plus the ladder bot with T3.
+- Run badge-bench on levels 1, 6 and 12. Worst frame 12 ms or less.
+- Tag `snouty-cycles/m1`, merge to main, push.
 
 ## Status
 
