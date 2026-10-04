@@ -14,7 +14,10 @@
 //!   A         toggle frozen (t, orbit and the preset cycle stop)
 //!   B         next dither mode
 //!   Select    next preset at once, no fade; restarts the attract cycle
-//!   Start     back to attract, unfrozen
+//!   Start     back to attract, unfrozen; in attract (unfrozen), music
+//!             on/off (music.zig) with a `toast_frames` note on screen
+//! Start and Select do nothing while both are held: the newer OS firmware
+//! opens its settings box on that chord.
 //! Free camera returns to attract after `free_timeout_frames` updates with
 //! no input, but not while frozen. In attract (unfrozen) the height eases
 //! back to the default by 0.05 per frame.
@@ -45,6 +48,7 @@ const scene = @import("scene.zig");
 const camera = @import("camera.zig");
 const trace = @import("trace.zig");
 const pt = @import("pt.zig");
+const music = @import("music.zig");
 
 pub const State = enum(u32) { attract = 0, free = 1 };
 
@@ -187,13 +191,21 @@ fn next_preset() void {
     preset = @fromBackingInt(@intCast((@backingInt(preset) + 1) % preset_count));
 }
 
+/// Updates the "MUSIC ON/OFF" note stays up after a toggle (main.zig).
+pub const toast_length: u32 = fps * 3 / 2;
+pub var toast_frames: u32 = 0;
+
 /// Buttons for this update (input.update already called).
 pub fn handle_input() void {
     var any = false;
+    const chord = input.held(.start) and input.held(.select);
 
-    if (input.pressed(.start)) {
+    if (input.pressed(.start) and !chord) {
         any = true;
-        go_attract();
+        if (variant.music and state == .attract and !frozen) {
+            music.toggle();
+            toast_frames = toast_length;
+        } else go_attract();
     }
     if (input.pressed(.a)) {
         any = true;
@@ -208,7 +220,7 @@ pub fn handle_input() void {
         // Accumulation kept: display() quantises in the new mode.
         dither.next_mode();
     }
-    if (input.pressed(.select)) {
+    if (input.pressed(.select) and !chord) {
         any = true;
         next_preset();
         cycle = 0;

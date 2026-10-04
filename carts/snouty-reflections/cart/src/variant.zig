@@ -49,6 +49,9 @@ const Config = struct {
     /// M3: a second render instance for the presets without a second sphere
     /// (trace.Class); +17 KB, -1.4 ms in sunset.
     class_split: bool = false,
+    /// The background music (music.zig, SPEC.md section 8): ~5.5 KB of
+    /// .text with its notes, 8.7 KB of .bss.
+    music: bool = true,
 };
 
 /// The logo knobs cut20 needs (PLAN.md M2.2 "Budget and order of work":
@@ -67,13 +70,15 @@ pub fn config_of(v: Variant) Config {
         .full20 => .{ .fps = 20, .iris_in_chrome = iris_cut.iris_in_chrome, .iris_in_water = iris_cut.iris_in_water, .iris_samples = iris_cut.iris_samples, .rings = m3_cut.rings, .noon_shadows = m3_cut.noon_shadows, .noon_third_sphere = m3_cut.noon_third_sphere },
         .cut20 => .{ .fps = 20, .glass_enabled = false, .water_shadows = .off, .iris_in_chrome = iris_cut.iris_in_chrome, .iris_in_water = iris_cut.iris_in_water, .iris_samples = iris_cut.iris_samples, .rings = m3_cut.rings, .noon_shadows = m3_cut.noon_shadows, .noon_third_sphere = m3_cut.noon_third_sphere, .class_split = true },
         .full15 => .{ .fps = 15, .glass_primary = .env, .iris_in_chrome = iris_cut.iris_in_chrome, .iris_in_water = iris_cut.iris_in_water, .iris_samples = iris_cut.iris_samples, .rings = m3_cut.rings, .noon_shadows = m3_cut.noon_shadows, .noon_third_sphere = m3_cut.noon_third_sphere },
-        .half30 => .{ .fps = 30, .render_scale = 2, .rings = m3_cut.rings },
+        // No music: its .text would put half30 at 141 KB of the 136 KB budget.
+        .half30 => .{ .fps = 30, .render_scale = 2, .rings = m3_cut.rings, .music = false },
     };
 }
 
 const config: Config = config_of(variant);
 
 pub const fps: u32 = config.fps;
+pub const music: bool = config.music;
 
 // ---- Frozen path tracer pacing (pt.zig, review G3) ----
 

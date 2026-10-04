@@ -44,7 +44,7 @@ pixel per frame; this cart is the same idea at 20 frames per second.
   120 KB (section 13).
 - Inputs: joystick 4-way, A, B, Start, Select. Start+Select (250 ms) and
   joystick click are OS-owned; never bound.
-- Audio: `tone2`, one buzzer voice, unused (section 8). Neopixels: off; the cart never writes
+- Audio: background music through the newer firmware's streaming ring (section 8); never `tone2`. Neopixels: off; the cart never writes
   non-zero values (root `docs/NEOPIXELS.md`; a coworker's badge shows the
   LEDs are unusably bright even at 1%, 2026-09-29).
 - Rendering mode `.no_copy_full_frame`, full redraw every frame, vsync via
@@ -64,7 +64,7 @@ before audio was dropped (section 8).
 | A              | Freeze                            | Freeze                               | Unfreeze: time resumes where it stopped      |
 | B              | Cycle dither mode (section 5.5)   | Cycle dither mode                    | Cycle dither mode (accumulation kept)        |
 | Select         | Next scene preset (section 6)     | Next scene preset                    | Next preset; restarts accumulation           |
-| Start          | (nothing)                         | Return to attract orbit              | Unfreeze and return to attract orbit         |
+| Start          | Music on/off (section 8)          | Return to attract orbit              | Unfreeze and return to attract orbit         |
 
 Free camera returns to attract by itself after 20 s without input; frozen
 mode returns to attract 60 s after its image has converged with no input
@@ -314,12 +314,33 @@ frozen.
 
 ## 8. Audio
 
-None. Adrian, 2026-09-30: feedback from the badge is that its speaker
-sounds bad, so audio is not worth development time. The cart never calls
-`tone`/`tone2`, has no sound toggle and no music; Select cycles presets
-instead (section 3). This supersedes the chiptune plan and the
-`-Dsound` default-off note (branch `sound-off`, root `docs/SOUND.md`):
-whichever merges second keeps this text.
+Background music since 2026-10-04 (Adrian: "peaceful and serene chiptune
+music ... sound should be toggleable"). This replaces the 2026-09-30 "no
+audio" decision (the badge speaker sounds bad) for this cart only.
+
+- The piece: Erik Satie, *Gymnopedie No. 1* (1888), from the Mutopia
+  Project's public-domain typesetting (`tools/music/gymnopedie_1.ly` and
+  `.mid`, Mutopia-2014/12/14-37). `tools/gen_music.py` turns the MIDI into
+  `cart/src/music_data.zig` (348 notes, 1.4 KB): body, ending 1, body,
+  ending 2, two bars' rest, loop; about 3.6 minutes at 64 bpm.
+- The arrangement (`cart/src/music.zig`): eight voices. The melody is a
+  soft 25% pulse with delayed vibrato; an echo voice repeats it 3/8 of a
+  beat later and quieter (the NES trick for reverb); the chords are
+  triangles, rolled upwards one sixteenth of a beat per note; the bass is
+  a triangle, an octave up below C3 so the small speaker carries it.
+- The badge: the newer firmware's streaming ring (root `docs/SOUND.md`
+  section 7, `lib/stream_audio.zig`). Synthesis at 22.05 kHz, upsampled
+  2x, integers only; `update` keeps ~113 ms queued (one 50 ms frame plus a
+  slow one) in an 8 KB ring. Measured cost in section 13's status line.
+- The simulator: lead, echo and bass on the WASM-4 APU's pulse and
+  triangle channels through `tone`; no chords there.
+- Default off (root `docs/SOUND.md`: every cart boots silent;
+  `-Dsound=true` starts it on). Start in the attract orbit toggles it and
+  shows "MUSIC ON" / "MUSIC OFF" for 1.5 s; off fades out within ~0.2 s
+  and pauses the song, on resumes it. Start and Select do nothing while
+  both are held (the newer firmware's settings chord).
+- Variants: on in cut20, full20 and full15; compiled out of half30, whose
+  `.text` has no room for it (`variant.music`).
 
 ## 9. Architecture
 

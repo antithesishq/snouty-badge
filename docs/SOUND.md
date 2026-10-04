@@ -44,7 +44,7 @@ should start loud; nothing else in a cart decides it.
 | snouty-gear | yes, the PSG streamed (section 7) + boot chime | same shape as Boy; the wasm build drives the simulator's `tone` import itself | `-Dsound` (off) | menu row "Sound: On/Off"; `debug_settings` bit 0 |
 | snouty-genesis | yes, PSG/YM2612 tone voice | `frontend/audio.zig` `enabled` | `-Dsound` (off) | badge A in the menu placeholder ("A: sound on/off"); the M2 menu's Sound row takes over; `debug_sound_on` |
 | snouty-bugs | yes, SPEC section 11 effects via `lib/tone_stream.zig` | `cart/src/audio.zig` `enabled` | `-Dsound` (off) | Select, any time (state on the title) |
-| snouty-reflections | not yet (SPEC section 8, M4 arpeggio) | | `-Dsound` (off) | Select |
+| snouty-reflections | yes, background music (Gymnopedie No. 1) streamed by `cart/src/music.zig` (section 7); not in half30 | `music.enabled` | `-Dsound` (off) | Start in the attract orbit ("MUSIC ON/OFF") |
 | snouty-lynx | not yet (spec only, section 9) | | `-Dsound` (off) | menu |
 | snouty-zero | yes, 6 tones via `lib/tone_stream.zig` | `cart/src/sound.zig` `enabled` | `-Dsound` (off) | menu item "SOUND: ON/OFF" |
 | snouty-run | no | | | |
