@@ -9,4 +9,5 @@ test {
     _ = @import("ai.zig");
     _ = @import("render.zig");
     _ = @import("game.zig");
+    _ = @import("layouts.zig");
 }
