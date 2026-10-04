@@ -848,6 +848,59 @@ sections 4-5. Not `core/rom.zig`, `core/bus.zig`, `romsrc.zig`, `drive.zig`.
    hit rate.
 
 
+## M5 RAM cart: contract
+
+2026-10-04: the SYCL organizers told Adrian that XIP carts will not
+perform on the badge (execution from flash thrashes with the OS). Adrian
+is almost sure they meant this feature and will check on hardware; until
+then **nothing XIP is removed**. Reading ROM data from the badge drive is
+validated (someone else's port does it), so drive ROMs stay. M5 adds a
+RAM variant `snouty-genesis.uf2` beside the unchanged XIP cart
+`snouty-genesis-xip.uf2`; a plain `-Dcart-mode=ram` builds both (the
+snouty-zero M5.1 / snouty-lynx pattern, `os_cart.Options.xip_custom_builder`,
+a `build_options` flag per variant).
+
+Budget: the RAM cart's `.text` + `.data` + `.bss` must fit the 307,456 B
+window less the 32 KB stack (274,688 B), with at least 4 KB to spare. On
+origin/main ac6c1f2 the XIP ELF is `.text` 232,768 + `.bss` 170,076
+(`main.md` 157,376), so about 128 KB has to go. Biggest code symbols:
+`Md.run_z80` 76,110 (inlined Gear Z80), `Md.step_frame` 36,890,
+`Vdp.render_line` 11,428, the embedded test ROM 16,385, `_start` 8,432.
+
+Cuts, in this order, each measured (size and bench) before the next:
+
+1. **Z80 stub** (RAM variant only, comptime): no Z80 core linked. The
+   68000-side contract stays: bus request / reset handshake answers as the
+   real hardware does, the YM2612 status reads not-busy, Z80 RAM writes
+   from the 68000 land in (or are dropped from) the smallest state that
+   keeps games that read it back working. Sound is off by default and
+   Adrian ruled out audio work, so the RAM cart is silent (Sound row
+   hidden).
+2. **No scrubber** in the RAM variant (comptime: no undo hooks on the write
+   paths, no ring, the menu row hidden). The XIP cart keeps it.
+3. **Embedded test ROM** out of the RAM variant if needed: with no drive
+   ROM it shows the existing no-ROM help screen.
+4. **Size-optimised cold code** (frontend, menus, picker, help, drive scan)
+   as separate ReleaseSmall modules; the 68000 and VDP hot paths stay
+   ReleaseFast.
+5. Anything else found on the way, recorded here with its size.
+
+Rules: the 68000, VDP and timing stay exact (goldens of the XIP cart
+unchanged; the RAM variant gets its own golden for the stubbed Z80); 30 Hz
+present and the M1 budget hold for the RAM ELF (Miniplanets <= 31 ms mean,
+< 33 ms worst, calibrated busy ms); the simulator (wasm) keeps the full
+feature set (scrub, Z80); `sycl-badge/` is read-only; no comptime-heavy
+generation (Adrian builds on a Mac where heavy comptime runs out of memory: host generators only); build.zig never branches
+on file existence. If the cuts cannot reach the budget without hurting
+the 68000/VDP or the frame rate, stop and record the gap table instead.
+
+Done: RAM ELF fits with >= 4 KB spare; `zig build`, `zig build test`,
+`check-float` (both ELFs) green; bench table RAM vs XIP (test ROM,
+Miniplanets contiguous and fragmented); Miniplanets and the test ROM
+play from the drive in the RAM variant (bench with the romfs image);
+README / docs/INSTALL.md / docs/RUNNING.md / RUNNING.md no longer say
+"XIP only"; tag `snouty-genesis/m5`, merged to main.
+
 ## Status
 
 - 2026-09-29: SPEC.md, this plan and `docs/ROM_STREAMING.md` drafted;
