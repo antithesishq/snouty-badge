@@ -62,13 +62,13 @@ No triangle meshes for the pipes. Each primitive is drawn by casting a ray
 per pixel inside its screen bounding box and solving the intersection
 analytically, so every pipe is a perfect smooth cylinder at any size.
 
-- **Straight segment**: axis-aligned cylinder, radius 0.18 cell. Ray vs
+- **Straight segment**: axis-aligned cylinder, radius 0.22 cell. Ray vs
   axis-aligned cylinder is a 2D circle quadratic plus an interval clip on
   the axis. A segment grows over 4 frames (default 15 segments/s per pipe),
   each frame drawing the next quarter of its length.
-- **Ball joint**: sphere, radius 0.27 cell. Also caps the start and end of
+- **Ball joint**: sphere, radius 0.32 cell. Also caps the start and end of
   each pipe.
-- **Elbow joint**: quarter torus (major radius 0.5 cell, minor 0.18). Ray
+- **Elbow joint**: quarter torus (major radius 0.5 cell, minor 0.22). Ray
   vs torus is a quartic, so this one is sphere-traced against the torus SDF,
   at most 24 steps, only inside its bbox.
 - **Teapot**: a low-poly Utah teapot (~240 triangles, tessellated on the host

@@ -9,6 +9,7 @@ const input = @import("input.zig");
 const camera = @import("camera.zig");
 const director = @import("director.zig");
 const draw = @import("render/draw.zig");
+const overlay = @import("render/overlay.zig");
 
 comptime {
     cart.export_start_code();
@@ -33,6 +34,15 @@ const R = draw.Renderer(Screen);
 var tick: u32 = 0;
 var render_us: u32 = 0;
 var seed: u32 = 0;
+/// Commands run on the last tick (debug_cmds).
+var cmds_run: u32 = 0;
+
+/// Timing readout: on at boot in -Ddebug_overlay builds, where Select
+/// toggles it; compiled out otherwise.
+const debug_build = build_options.debug_overlay;
+var debug_on: bool = debug_build;
+var last_update_us: u64 = 0;
+var fps_x10: u32 = 0;
 
 pub fn start() void {
     cart.set_vsync_enabled(1000.0 / 60.0);
@@ -85,7 +95,11 @@ pub fn update() void {
         .right = input.pressed(.right),
     };
     director.step(held, pressed);
+    if (debug_build and !chord and input.pressed(.select)) debug_on = !debug_on;
 
+    // Overlays sit on the persistent picture: put back what they covered,
+    // draw this tick's pieces, then save and draw the overlays again.
+    overlay.restore();
     const t0 = cart.micros_since_boot();
     for (director.commands()) |c| switch (c) {
         .cell => |cell| R.draw_cell(&director.cam, cell.p, cell.s0, cell.s1),
@@ -95,8 +109,21 @@ pub fn update() void {
         },
         .clear_blocks => |b| R.clear_blocks(b.from, b.to),
     };
+    cmds_run = @intCast(director.commands().len);
     director.commands_done();
-    render_us = @truncate(cart.micros_since_boot() - t0);
+    const t1 = cart.micros_since_boot();
+    render_us = @truncate(t1 - t0);
+    if (t0 > last_update_us) fps_x10 = @intCast(@min(9999, 10_000_000 / (t0 - last_update_us)));
+    last_update_us = t0;
+
+    overlay.draw(director.name_strip(), if (debug_build and debug_on) .{
+        .render_us = render_us,
+        .fps_x10 = fps_x10,
+        .filled = director.filled(),
+        .alive = director.alive(),
+        .scene = director.scene,
+        .speed = @as(u32, 1) << director.speed,
+    } else null);
 
     tick +%= 1;
     if (cart.is_wasm) present_wasm();
@@ -110,6 +137,20 @@ comptime {
         @export(&debug_render_us, .{ .name = "debug_render_us" });
         @export(&debug_pixel_checksum, .{ .name = "debug_pixel_checksum" });
         @export(&debug_set_seed, .{ .name = "debug_set_seed" });
+        @export(&debug_scene, .{ .name = "debug_scene" });
+        @export(&debug_filled, .{ .name = "debug_filled" });
+        @export(&debug_alive, .{ .name = "debug_alive" });
+        @export(&debug_pipes, .{ .name = "debug_pipes" });
+        @export(&debug_view, .{ .name = "debug_view" });
+        @export(&debug_teapots, .{ .name = "debug_teapots" });
+        @export(&debug_force_teapot, .{ .name = "debug_force_teapot" });
+        @export(&debug_name_strip, .{ .name = "debug_name_strip" });
+        @export(&debug_cmds, .{ .name = "debug_cmds" });
+        @export(&debug_orbit, .{ .name = "debug_orbit" });
+        @export(&debug_speed, .{ .name = "debug_speed" });
+        @export(&debug_joint_style, .{ .name = "debug_joint_style" });
+        @export(&debug_paused, .{ .name = "debug_paused" });
+        @export(&debug_history, .{ .name = "debug_history" });
     }
 }
 
@@ -117,7 +158,7 @@ fn debug_tick() callconv(.c) u32 {
     return tick;
 }
 fn debug_state() callconv(.c) u32 {
-    return @intFromEnum(director.state);
+    return @backingInt(director.state);
 }
 fn debug_render_us() callconv(.c) u32 {
     return render_us;
@@ -133,6 +174,64 @@ fn debug_pixel_checksum() callconv(.c) u32 {
 /// Reseeds and restarts from a cleared screen.
 fn debug_set_seed(s: u32) callconv(.c) void {
     reseed(s);
+}
+/// Scenes started since the last reset (1 after boot).
+fn debug_scene() callconv(.c) u32 {
+    return director.scene;
+}
+/// Cells filled this scene.
+fn debug_filled() callconv(.c) u32 {
+    return director.filled();
+}
+/// Pipes alive (growing, or drawing their end cell).
+fn debug_alive() callconv(.c) u32 {
+    return director.alive();
+}
+/// Pipes started this scene.
+fn debug_pipes() callconv(.c) u32 {
+    return director.pipes_started;
+}
+/// View index of the current scene (camera.views).
+fn debug_view() callconv(.c) u32 {
+    return director.view_index;
+}
+/// Teapots drawn since boot.
+fn debug_teapots() callconv(.c) u32 {
+    return director.teapots;
+}
+/// The next turn of any pipe is a teapot, whatever the joint style and the
+/// one-per-scene cap. Returns 1.
+fn debug_force_teapot() callconv(.c) u32 {
+    director.force_teapot = true;
+    return 1;
+}
+/// 1 while the boot name strip is on screen.
+fn debug_name_strip() callconv(.c) u32 {
+    return @intFromBool(director.name_strip());
+}
+/// Commands run on the last tick.
+fn debug_cmds() callconv(.c) u32 {
+    return cmds_run;
+}
+/// Camera orbit in eighths of a turn (0..7, Left/Right).
+fn debug_orbit() callconv(.c) u32 {
+    return @intCast(director.orbit);
+}
+/// Growth speed: 1, 2, 4 or 8 (Up/Down).
+fn debug_speed() callconv(.c) u32 {
+    return @as(u32, 1) << director.speed;
+}
+/// Joint style: 0 mixed, 1 elbow, 2 ball (B).
+fn debug_joint_style() callconv(.c) u32 {
+    return @backingInt(director.joint_style);
+}
+/// 1 while paused (Start).
+fn debug_paused() callconv(.c) u32 {
+    return @intFromBool(director.paused);
+}
+/// Cells of the current scene in the history ring.
+fn debug_history() callconv(.c) u32 {
+    return director.history_count();
 }
 
 /// Button state. Upstream's platform_wasm.zig never fills `controls` from

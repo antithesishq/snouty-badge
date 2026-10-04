@@ -128,7 +128,7 @@ pub fn view(index: usize, orbit: i32) Camera {
     return fitted(dir);
 }
 
-const overscan: f32 = 1.08;
+const overscan: f32 = 1.25;
 
 fn fitted(dir: Vec3) Camera {
     // Mostly vertical views take +z as up, so the up hint never lines up with fwd.

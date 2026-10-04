@@ -1,0 +1,5 @@
+# snouty-pipes: Windows 3D Pipes screensaver clone, autopilot, 60 fps, .copy_forward.
+budget_ms = 16.7
+frames = 720
+script = "carts/snouty-pipes/tools/scripts/bench_m1.json"
+note = "M1: boot with the name strip (0..119), pipes growing, A at 400 forces a scene end: the 60-tick block dissolve (401..460), then the next scene grows from another view; carts/snouty-pipes/tools/check.sh gates on worst busy ms <= 12 and --lcd == framebuffer"

@@ -12,4 +12,6 @@ test {
     _ = @import("render/draw.zig");
     _ = @import("render/zbuf.zig");
     _ = @import("render/shade.zig");
+    _ = @import("render/trace.zig");
+    _ = @import("render/teapot.zig");
 }

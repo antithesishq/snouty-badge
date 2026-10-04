@@ -48,7 +48,7 @@ zig build check-float -Dcart=snouty-pipes
 
 Cell geometry (all tracks): a cell's path runs from its entry face
 `centre - din*0.5` to its exit face `centre + dout*0.5`. Pipe radius
-`r_pipe = 0.18`, ball joint and caps radius `r_ball = 0.27`, elbow = quarter
+`r_pipe = 0.22`, ball joint and caps radius `r_ball = 0.32`, elbow = quarter
 torus, major radius 0.5, minor `r_pipe`, centred on `centre - din*0.5 +
 dout*0.5`. Constants live in `draw.zig` (`pub const r_pipe`, `r_ball`).
 Parameter s in [0, 1] runs along the path by arc length (straight: the
@@ -159,3 +159,18 @@ start: ball at s = 0 then out-half; end: in-half then ball at s = 1).
 - 2026-10-04 M0 scaffold: build wiring, root build.zig entry, interfaces
   above as compiling stubs, `camera.zig` done with tests. The SPEC's "one
   cylinder on screen" moved into M1 Track A.
+- 2026-10-04 M1 + M2 done (three Opus tracks, lead integration). Track B
+  finished M1 early and built every M2 control in the same pass (orbit with
+  a 16-cells-per-tick rebuild from the history ring, speed 1x..8x, joint
+  style cycling, A = new scene, Start = pause), and Track A wired Track C's
+  teapot, so M2 needed no second round. Lead tweaks after the first
+  frames: r_pipe 0.18 -> 0.22, r_ball 0.27 -> 0.32 (pipes were ~3 px
+  wide), camera overscan 1.08 -> 1.25 (the box filled ~60% of the screen),
+  teapot 0.6 -> 1.3 cells (it read as a bump on the pipe), and pick_color
+  avoids hue-wheel neighbours of living pipes. Gate `tools/check.sh`: PASS
+  (39+ host tests, check-float, teapot mesh fresh, 8 goldens, check_cycle
+  A..J, LCD == framebuffer on 72 frames). Calibrated badge-bench worst
+  2.47 ms (seeds 1..10, 720 frames each); orbit rebuild + 8x speed
+  (`tools/scripts/bench_orbit.json`, 1000 frames) worst 4.86 ms. Review
+  GIFs `docs/preview_m1.gif` (boot, growth, dissolve, scene 2) and
+  `docs/preview_m2.gif` (orbit regrow, speed-up). Next: M3 steer mode.
