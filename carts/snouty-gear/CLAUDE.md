@@ -58,7 +58,8 @@ longer explanations, this one summarises.
   2, Start; Select hold 500 ms = emulator menu (M2); Select double tap
   with the second press held = fast forward (`input.GameInput.fast`,
   main.zig `run_frame`, knobs in `frontend/tuning.zig`;
-  docs/FAST_FORWARD.md at the root).
+  docs/FAST_FORWARD.md at the root); Left during it = chorded rewind
+  (`input.Rewind`, the menu's `draw_scrub_bar` and `input.Repeat`).
 
 ## Building
 

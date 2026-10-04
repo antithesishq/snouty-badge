@@ -1407,3 +1407,88 @@ Open: hardware listen on Adrian's badge (levels, the 14.7 kHz FM
 aliasing); 22.05 kHz needs about 1 ms more off the worst updates (FM
 operator state in registers or skipping silent operators); the 636 B of
 RAM left.
+
+## Fast forward (2026-10-04)
+
+Genesis track of root docs/FAST_FORWARD.md (branch `emu-ff-genesis`),
+after Snouty Gear's. The RAM cart is what counts: the show firmware has
+no XIP.
+
+- Input (`frontend/input.zig`, `GameInput.fast`): a Select press released
+  before the 500 ms menu hold opens a window of
+  `tuning.ff_tap_window_updates` (6 updates, 200 ms). A second press
+  inside it starts fast forward at once. Fast forward lasts while Select
+  is held, never runs the menu timer, and its release delivers nothing.
+  Unlike Gear, the Genesis tap is a game button (the layout's third,
+  Genesis A by default), so it is **held back**: it reaches the game
+  when the window runs out with no second press (200 ms later than
+  before), and the double tap drops it. A long hold still opens the menu.
+  Start in the window or during fast forward cancels both (the OS chord).
+  `suppress_held` clears the window, the pending tap and fast forward.
+- Stepping (`app.zig` `run_update`, knobs in `frontend/tuning.zig`):
+  unrendered frames (`step_frame(pad, false)`, as the first frame of
+  every 1x update) until `ff_max_frames` (8 = 4x) or until the time so
+  far plus the dearest unrendered frame (this update's, seeded by the
+  last one) plus the last rendered frame would pass `ff_budget_us`
+  (28,000 of the 33.3 ms). Never fewer than the 1x pair. Then one rendered
+  frame. wasm always runs 8 (its clock is a stub). Every frame goes
+  through `rewind.record_frame`.
+- Sound: synthesis off for the whole fast-forward update (the update
+  buffer holds two frames), the stream ramps out as in the menu (the
+  XIP/wasm tone stops), and the first 1x update resyncs and resumes it.
+- Indicator: `>>4x` (frames over the 1x pair, `>>1.5x` for odd counts)
+  in the top right, under the debug overlay's lines (`debug.lines()`).
+  The game repaints the whole screen every update, so nothing is left
+  behind. The overlay's `emu` counts the frames actually stepped.
+  `debug_ff_frames` export. Hints: the play strip shows "Hold Select:
+  menu" then "2x Sel+hold: fast" for 3 s each, and the menu footer takes
+  turns between "B: back to game" and "2x Sel+hold: fast" every 2 s.
+- Tests: 6 `input:` tests (`tests/input_unit.zig`, input.zig as a host
+  module with the SDK's cart-api): the menu hold, a tap delivered at the
+  window's end as the layout's button, double tap + hold = fast forward
+  with no tap and no menu, the window's last update, Start in the window
+  and in fast forward, and `suppress_held`. 3 `determinism:` tests (test
+  ROM and Miniplanets 600 frames, Sonic 1 2400 frames from
+  `~/roms/genesis/sonic1.bin`, skipped when absent): batches of 8 with
+  the last rendered equal 1x pacing after every batch, and Left through
+  the fast-forward console's undo records gives the 1x console's state
+  at every boundary. The VDP sprite-table cache (derived, rebuilt lazily
+  on the first rendered line after a change) is compared only where both
+  consoles have it in use. Everything else matched, including the sticky
+  sprite status bits. Genesis 177 + 18 tests. `zig build test` exit 0
+  (832/834, 2 skipped). `check-float` PASS for both ELFs.
+- Preview (`tools/scripts/ff_play.json`, 540 updates, test ROM):
+  `debug_ff_frames` is 8 on both holds (256-330, 485-520) and 2
+  elsewhere. A lone tap released at 352 shows Genesis A (pad 16) at
+  358-359. `debug_menu_opens` is 1 (only the long hold at 370).
+  `docs/ff_2026-10-04.png`: both hint strips, `>>4x`, 1x after release,
+  both menu footers.
+- badge-bench, RAM cart, calibrated busy ms over the fast-forward updates
+  (frames per update from a temporary `cart.trace` build, not committed;
+  scripts `tools/scripts/ff_test.json`, `ff_mini.json`, `ff_sonic1.json`
+  with the romfs images of section "M4"):
+
+  | ROM (FF updates) | mean | p95 | max | over 33.3 | frames per update |
+  |---|---:|---:|---:|---:|---|
+  | test ROM (166-300) | 22.24 | 22.27 | 22.27 | 0 | 8 every update (4x) |
+  | Miniplanets (346-560) | 23.77 | 23.80 | 23.82 | 0 | 3 every update (1.5x) |
+  | Sonic 1, Green Hill (626-1000) | 24.93 | 27.59 | 28.93 | 0 | 3.27 mean (3: 273, 4: 101, 5: 1; 1.64x) |
+
+  0 updates over budget in any run. At 1x nothing changed against the base
+  build (mean / max): test ROM `m2_play` 8.88 / 24.45, Miniplanets
+  `m2_mini300` 15.26 / 23.60, Sonic 1 `snd_sonic1` 16.80 / 27.03. The
+  `--lcd` PNGs show no `>>Nx` left after release. The XIP cart on
+  Miniplanets gets 2 frames per update in fast forward (1x, 25.09 ms
+  mean, 0 over): its Z80 leaves no room. That does not matter, because
+  the show firmware has no XIP.
+- Sizes, RAM cart: `.text` 113,952 -> 114,392, `.data` 152 -> 156,
+  `.bss` 154,156 -> 154,180, 3,828 B left between `__bss_end__` and
+  `__stack_limit__` (was 4,292). UF2 541,184 -> 542,208. XIP `.text`
+  +688.
+- Deviations: the budget estimate is the dearest unrendered frame plus
+  the last rendered one, not Gear's twice the dearest frame. With Gear's
+  rule, Miniplanets and Sonic 1 stayed at the 1x pair, because a rendered
+  frame (Smooth H40) costs about 1.5x an unrendered one. The window knob
+  is `ff_tap_window_updates`, so the unit is in the name.
+  `tools/scripts/m2_play.json`'s Select tap (136-137) now reaches the
+  game 6 updates later.

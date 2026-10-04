@@ -7,12 +7,21 @@
 //!   SPEC.md sections 5 and 18 item 5). Default: badge B = B, badge A = C,
 //!   Select tap = A.
 //! - Select tap (released before `hold_updates`): the layout's third button
-//!   (A by default), sent for `tap_frames` Genesis frames from the release
-//!   (late by the tap's length).
+//!   (A by default), sent for `tap_frames` Genesis frames once the
+//!   fast-forward window after it (`tuning.ff_tap_window_updates`, 200 ms)
+//!   has run out with no second press: late by the tap's length plus
+//!   200 ms.
 //! - Select held for `hold_updates` (500 ms): `GameInput.open_menu` is set
 //!   once and app.zig opens the emulator menu (frontend/menu.zig).
 //! - Start pressed while Select is held is the OS exit chord: the hold is
 //!   cancelled and no A is sent. Start itself still goes to the game.
+//! - Double tap and hold Select: fast forward (`GameInput.fast`,
+//!   docs/FAST_FORWARD.md at the root). A second Select press inside the
+//!   tap's window drops the held-back tap and starts fast forward at
+//!   once; it lasts while Select stays held, never runs the menu timer,
+//!   and its release delivers nothing. Start during the window or during
+//!   fast forward cancels everything (the OS chord). The d-pad and the
+//!   other buttons reach the game as usual.
 //!
 //! Buttons held across a state change are suppressed until released
 //! (`suppress_held`). The joystick click belongs to the OS and is never
@@ -20,6 +29,10 @@
 const cart = @import("cart-api");
 const core = @import("core");
 const Pad = core.Pad;
+const tuning = @import("tuning.zig");
+
+/// The badge's buttons (`cart.Controls`), for host tests.
+pub const Controls = cart.Controls;
 
 /// Select held this many updates (at 30 Hz, 500 ms) opens the menu.
 pub const hold_updates = 15;
@@ -28,6 +41,8 @@ pub const tap_frames = 4;
 /// Genesis frames per update: A lasts `tap_frames / frames_per_update`
 /// updates.
 const frames_per_update = core.tunables.render_every;
+/// Updates a tap's button is sent for (`tap_frames`, rounded up).
+pub const tap_updates = (tap_frames + frames_per_update - 1) / frames_per_update;
 
 /// The six assignments of Genesis A, B and C to badge B, badge A and the
 /// Select tap, in the menu's cycling order. The names read as the menu
@@ -150,13 +165,22 @@ pub const GameInput = struct {
     pad: u16,
     /// Select reached `hold_updates` this update (app.zig opens the menu).
     open_menu: bool,
+    /// Fast forward (Select double tapped and held): app.zig steps up to
+    /// `tuning.ff_max_frames` Genesis frames this update, all with `pad`.
+    fast: bool = false,
 };
 
-/// The Select tap/hold state machine plus the suppress mask.
+/// The Select tap/hold/double-tap state machine plus the suppress mask.
 pub const State = struct {
     edge: Edge = .{},
     holding: bool = false,
     held_updates: u16 = 0,
+    /// Updates left in which a Select press starts fast forward (counts
+    /// down from `tuning.ff_tap_window_updates` after a tap, whose button
+    /// waits for it to run out); 0 = closed.
+    tap_window: u8 = 0,
+    /// Fast forward is on (the second press of a double tap, still held).
+    fast: bool = false,
     /// Updates A is still held for after a tap.
     tap_left: u8 = 0,
     /// Buttons ignored until released (Controls bits).
@@ -168,11 +192,14 @@ pub const State = struct {
         s.suppress &= s.edge.cur;
     }
 
-    /// Ignore every held button until released and forget a Select hold.
+    /// Ignore every held button until released and forget a Select hold,
+    /// a held-back tap and fast forward.
     pub fn suppress_held(s: *State) void {
         s.suppress = s.edge.cur;
         s.holding = false;
         s.held_updates = 0;
+        s.tap_window = 0;
+        s.fast = false;
         s.tap_left = 0;
     }
 
@@ -180,10 +207,28 @@ pub const State = struct {
     pub fn game_frame(s: *State) GameInput {
         const e = s.edge;
         const live: cart.Controls = @bitCast(e.cur & ~s.suppress);
+        const fresh_select = live.select and e.pressed(.select);
         var pad = pad_from_controls(live);
         var open_menu = false;
 
-        if (live.select and e.pressed(.select)) {
+        if (s.fast) {
+            // Start+Select is the OS chord; letting go delivers nothing.
+            if (e.held(.start) or !e.held(.select)) s.fast = false;
+        } else if (s.tap_window != 0) {
+            if (e.held(.start)) {
+                s.tap_window = 0; // The OS chord: drop the tap.
+            } else if (fresh_select) {
+                // The second press: fast forward, no tap, no menu timer.
+                s.tap_window = 0;
+                s.fast = true;
+            } else {
+                s.tap_window -= 1;
+                // No second press: the held-back tap goes to the game now.
+                if (s.tap_window == 0) s.tap_left = tap_updates;
+            }
+        }
+
+        if (!s.fast and fresh_select) {
             s.holding = true;
             s.held_updates = 0;
         }
@@ -197,15 +242,17 @@ pub const State = struct {
                     open_menu = true;
                 }
             } else {
-                s.holding = false; // Released early: a tap (layout's third button).
-                s.tap_left = (tap_frames + frames_per_update - 1) / frames_per_update;
+                // Released early: a tap, held back while a second press
+                // could still make it the fast-forward double tap.
+                s.holding = false;
+                s.tap_window = tuning.ff_tap_window_updates;
             }
         }
         if (s.tap_left > 0) {
             pad |= layout.tap_bit();
             s.tap_left -= 1;
         }
-        return .{ .pad = pad, .open_menu = open_menu };
+        return .{ .pad = pad, .open_menu = open_menu, .fast = s.fast };
     }
 };
 

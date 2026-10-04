@@ -10,7 +10,9 @@ tones and noise, streamed at 44.1 kHz to the new firmware's audio ring;
 off at boot, the menu's Sound row turns it on), in the simulator it plays
 as one voice. Left/Right in
 the menu scrub time back and forth, as in Snouty Boy. Tap Select, then
-press and hold it, to fast forward (up to 4x, silent, `>>4x` in the corner).
+press and hold it, to fast forward (up to 4x, silent, `>>4x` in the corner);
+Left during that hold rewinds (Left/Right step, let go of Select to play
+on).
 
 Status: M3 (time scrubber) done; history in PLAN.md. The console is
 emulated (Z80, VDP, Sega mapper, ports, PSG) behind a boot splash, a menu
