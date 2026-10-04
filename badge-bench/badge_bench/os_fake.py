@@ -2,7 +2,9 @@
 
 Everything here mirrors sycl-badge/src/os/cart/platform_cart_ram.zig (the
 cart side of the interface), os_abi.zig (the shared IPC block) and
-os/ipc/mailbox.zig (message ids). If the SDK changes, change it here.
+os/ipc/mailbox.zig (message ids). If the SDK changes, change it here. The
+streaming audio of the newer firmware (upstream 3392a1b; the pinned SDK
+has no API for it) is audio.py.
 
 Memory map served to the cart:
 
@@ -21,6 +23,7 @@ Anything else is unmapped, and an access to it is a crash.
 import random
 import struct
 
+from . import audio as AU
 from . import model as M
 
 SRAM_BASE, SRAM_SIZE = 0x20000000, 0x80000
@@ -61,7 +64,11 @@ DWT_CTRL, DWT_CYCCNT = 0x000, 0x004
 SYNC_TIME_REQ_CLR, SYNC_TIME_ACK_CLR, SYNC_TIME_REQ_TIME = 0x2a000001, 0x2a000002, 0x2a000003
 FRAMEBUFFER_READY, FRAMEBUFFER_DONE = 0x25000001, 0x25000002
 CART_RUNNING, CART_FINISHED, CART_CRASHED = 0x20000001, 0x20000002, 0x20000003
-T_CART_TRACE, T_CART_TONE, T_FRAMEBUFFER_READY_V2, T_CART_VOLUME = 0x26, 0x27, 0x28, 0x29
+T_CART_TRACE, T_CART_TONE, T_FRAMEBUFFER_READY_V2 = 0x26, 0x27, 0x28
+# Type 0x29 is audio in the newer firmware, compared as whole words
+# (upstream 3392a1b kernel.zig handle_cart_message, os_abi.zig): 0x29000000
+# CART_VOLUME, 0x29000001 CART_STOP_AUDIO (acked with 0x29000003),
+# 0x29000002 CART_START_AUDIO; the stream itself is audio.py.
 
 # cart.Controls bits (api.zig). CLICK is owned by the OS (joystick press).
 BUTTONS = {'START': 1 << 0, 'SELECT': 1 << 1, 'A': 1 << 2, 'B': 1 << 3, 'CLICK': 1 << 4,
@@ -262,6 +269,17 @@ class FakeOS:
             self.to_cart.append(FRAMEBUFFER_DONE)
             self.host.on_present(0, legacy=True)
             return
+        if w == AU.CART_START_AUDIO:
+            self.host.on_message('audio_start')
+            return
+        if w == AU.CART_STOP_AUDIO:      # kernel.zig: ack first, then stop
+            self.to_cart.append(AU.OS_ACK_STOP_AUDIO)
+            self.host.on_message('audio_stop')
+            return
+        if w == AU.CART_VOLUME:
+            v, = self.read('<f', 'global_volume')
+            self.host.on_message('volume', v)
+            return
         kind, payload = w >> 24, w & 0xffffff
         if kind == T_FRAMEBUFFER_READY_V2:
             # PresentFlags: bit0 framebuffer index, bit1 dirty rect, bit2
@@ -275,8 +293,5 @@ class FakeOS:
         elif kind == T_CART_TONE:
             freq, dur, vol, flags = self.read('<fffI', 'tone_freq')
             self.host.on_message('tone', dict(freq=freq, duration=dur, volume=vol, flags=flags))
-        elif kind == T_CART_VOLUME:
-            v, = self.read('<f', 'global_volume')
-            self.host.on_message('volume', v)
         else:
             self.host.on_message('unknown', w)

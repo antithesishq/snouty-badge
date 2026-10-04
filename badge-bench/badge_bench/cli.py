@@ -11,6 +11,7 @@ from . import model as M
 from . import report as R
 from . import run as RUN
 from .elf import BenchError, CartElf
+from .audio import SAMPLE_RATE as AUDIO_RATE, wav_bytes
 from .listing import listing
 from .png import write_fb
 from .script import controls_table, load_script, parse_press
@@ -92,6 +93,11 @@ def build_parser():
                          'calibrate/calibration.toml when it exists)')
     ap.add_argument('--no-calibrate', action='store_true',
                     help='the raw model (default costs, no contention), even if calibrate/calibration.toml exists')
+    ap.add_argument('--wav', metavar='FILE.wav',
+                    help='write the samples the newer firmware\'s audio mixer consumed from the '
+                         'cart\'s stream (8-bit unsigned mono 44,100 Hz WAV, from its '
+                         'CART_START_AUDIO on, silence where the ring ran dry); nothing is '
+                         'written if the cart never starts audio')
     ap.add_argument('--version', action='version', version=f'badge-bench {__version__}')
     return ap
 
@@ -169,7 +175,8 @@ def _main(a):
     res = RUN.run(elf, frames, controls, pokes, seed=a.seed, png_every=png_every,
                   max_frame_ms=a.max_frame_ms, on_trace=on_trace,
                   log=progress if a.progress else None, flash_cycles=a.flash_cycles,
-                  romfs=romfs_img, flash_read_cycles=a.flash_read_cycles, lcd=a.lcd)
+                  romfs=romfs_img, flash_read_cycles=a.flash_read_cycles, lcd=a.lcd,
+                  keep_audio=bool(a.wav))
     if cal:
         add_busy(res.frames, cal)
         st = R.stats(res.frames, budget, key='busy_ms')
@@ -207,6 +214,18 @@ def _main(a):
         other = [w for w in wrote if not w.endswith('.png')]
         print(f"wrote {out}/: " + ', '.join(
             ([f"{len(pngs)} PNGs"] if pngs else []) + [os.path.basename(w) for w in other] + ['report.txt']))
+    if a.wav:
+        if res.audio_stream is None:
+            print(f"badge-bench: the cart never sent CART_START_AUDIO; {a.wav} not written")
+        else:
+            d = os.path.dirname(a.wav)
+            if d:
+                os.makedirs(d, exist_ok=True)
+            with open(a.wav, 'wb') as fh:
+                fh.write(wav_bytes(res.audio_stream))
+            n = len(res.audio_stream)
+            print(f"wrote {a.wav}: {n:,} samples ({n / AUDIO_RATE:.2f} s) at {AUDIO_RATE} Hz, "
+                  "8-bit unsigned mono")
     if res.crash:
         return EXIT_CRASH
     if res.hang:

@@ -20,6 +20,17 @@ reported separately.
 Controls for update #i are written at boundary i; neopixels, the user LED
 and tones are read at boundary i+1; the framebuffer named in present()'s
 message is captured when the message is sent.
+
+Wall time (for streaming audio only, audio.py). The fake OS answers every
+present at once, so modelled cycles are CPU time. On the badge a cart with
+vsync on waits for the LCD: a frame lasts at least the LCD period the OS
+sets for its vsync_frame_ms (audio.lcd_frame_ms; 16.74 ms for 1000/60).
+Wall cycles = modelled cycles + the sum of those waits, each added at the
+frame boundary (the cart sits in present() then). The OS mixer's 512-sample
+turns are scheduled on wall cycles and run from the block hook as soon as
+the cart's clock passes them, so the cart sees the tail move mid-update as
+on the badge. Nothing of this runs for a cart that never sends
+CART_START_AUDIO.
 """
 import struct
 
@@ -30,6 +41,7 @@ from unicorn import (UC_HOOK_BLOCK, UC_HOOK_INTR, UC_HOOK_MEM_FETCH_UNMAPPED, UC
 from unicorn import arm_const as A
 from unicorn.arm_const import UC_ARM_REG_LR, UC_ARM_REG_PC, UC_ARM_REG_SP
 
+from . import audio as AU
 from . import model as M
 from . import elf as E
 from . import os_fake as OS
@@ -84,6 +96,9 @@ class Result:
         self.vsync = None
         self.os = None
         self.scratch = []       # SRAM8/9 accesses (out of bounds of the cart's RAM)
+        self.audio = None       # audio.Consumer.summary() once the cart started streaming
+        self.audio_frames = []  # (frame, queued at its end, consumed, underrun) once started
+        self.audio_stream = None  # the mixed samples (keep_audio)
 
 
 def poke_value(elf, spec):
@@ -102,7 +117,8 @@ def poke_value(elf, spec):
 
 
 def run(elf, frames, controls, pokes=(), seed=1, png_every=0, max_frame_ms=1000.0,
-        on_trace=None, log=None, flash_cycles=0, romfs=None, flash_read_cycles=0, lcd=False):
+        on_trace=None, log=None, flash_cycles=0, romfs=None, flash_read_cycles=0, lcd=False,
+        keep_audio=False):
     """Emulate `frames` updates. controls: list of u16 per frame.
 
     A RAM cart (cart_ram.ld) is loaded into SRAM and started at _start with
@@ -116,7 +132,8 @@ def run(elf, frames, controls, pokes=(), seed=1, png_every=0, max_frame_ms=1000.
     mapped read-only at ROMFS_BASE (zero-padded to 4 KB); flash_read_cycles
     adds that many cycles per data load from it. lcd: the PNGs show the
     modelled LCD (only each present's dirty rect reaches it, as on the badge)
-    instead of the presented framebuffer."""
+    instead of the presented framebuffer. keep_audio: keep the stream the OS
+    mixer consumed (res.audio_stream) for --wav."""
     res = Result()
     res.xip = elf.is_xip()
     lcd_img = bytearray(OS.FB_SIZE) if lcd else None
@@ -129,6 +146,15 @@ def run(elf, frames, controls, pokes=(), seed=1, png_every=0, max_frame_ms=1000.
     max_frame_cyc = int(max_frame_ms * M.CYCLES_PER_MS)
     limit = 10 * max_frame_cyc          # cycle count at which the current window is a hang
     decode_err = []
+    audio = None                        # audio.Consumer after the first CART_START_AUDIO
+    audio_due = float('inf')            # modelled cycles of its next mix
+    wait_total = 0.0                    # vsync wait so far: wall cycles = cyc + wait_total
+    lcd_period = {}                     # vsync_frame_ms -> LCD period in cycles
+
+    def audio_sync():
+        nonlocal audio_due
+        audio.run_until(cyc + wait_total)
+        audio_due = audio.next_due - wait_total
 
     class Host:
         phase = 'boot'      # boot -> align -> start -> run
@@ -152,6 +178,7 @@ def run(elf, frames, controls, pokes=(), seed=1, png_every=0, max_frame_ms=1000.
             return self.frame
 
         def on_message(self, kind, *a):
+            nonlocal audio, audio_due
             f = self.frame
             if kind == 'sync':
                 self.phase = 'align'
@@ -163,6 +190,17 @@ def run(elf, frames, controls, pokes=(), seed=1, png_every=0, max_frame_ms=1000.
                 res.tones.append((f, a[0]))
             elif kind == 'volume':
                 res.volumes.append((f, a[0]))
+            elif kind == 'audio_start':
+                if audio is None:
+                    audio = AU.Consumer(mu, keep_stream=keep_audio)
+                audio.frame = f
+                audio.start(cyc + wait_total)
+                audio_sync()
+            elif kind == 'audio_stop':
+                if audio is not None:
+                    audio.frame = f
+                    audio.stop()
+                    audio_due = float('inf')
             elif kind == 'status':
                 res.status_words.append((f, a[0]))
                 if a[0] in (OS.CART_FINISHED, OS.CART_CRASHED):
@@ -215,6 +253,21 @@ def run(elf, frames, controls, pokes=(), seed=1, png_every=0, max_frame_ms=1000.
                 else:
                     self.extra_reads += 1
 
+        def wait_vsync(self, d):
+            """A frame of `d` modelled cycles just ended: add the LCD wait."""
+            nonlocal wait_total
+            fl, vms = fake.vsync()
+            if fl & 1 and vms > 0:
+                p = lcd_period.get(vms)
+                if p is None:
+                    p = lcd_period[vms] = AU.lcd_frame_ms(vms) * M.CYCLES_PER_MS
+                if d < p:
+                    wait_total += p - d
+            if audio is not None:
+                audio_sync()
+                audio.frame = self.frame + 1
+                res.audio_frames.append((self.frame, audio.queued(), audio.consumed, audio.underrun))
+
         def boundary(self):
             """End frame self.frame (if any) and begin the next."""
             nonlocal limit
@@ -235,6 +288,7 @@ def run(elf, frames, controls, pokes=(), seed=1, png_every=0, max_frame_ms=1000.
                     tones=len(res.tones) - self.tone_count, mem_cyc=mem - w_mem))
                 if log:
                     log(res.frames[-1])
+                self.wait_vsync(d)
             if k >= frames:
                 self.stopping = True
                 mu.emu_stop()
@@ -316,6 +370,8 @@ def run(elf, frames, controls, pokes=(), seed=1, png_every=0, max_frame_ms=1000.
         if flash_cycles and addr >= E.FLASH_BASE:
             cyc += flash_cycles * b[2]   # XIP fetch penalty, per instruction executed from flash
         b[4] += 1
+        if cyc >= audio_due:
+            audio_sync()
         if cyc > limit:
             uc.emu_stop()
 
@@ -399,6 +455,12 @@ def run(elf, frames, controls, pokes=(), seed=1, png_every=0, max_frame_ms=1000.
     for (p, off, rw), n in sorted(fake.unknown.items()):
         res.warnings.append(f"unmodelled {p} register {'read' if rw == 'r' else 'write'} at "
                             f"offset {off:#05x} ({n} times); returned 0 / ignored")
+    if audio is not None:
+        res.audio = audio.summary()
+        res.audio_stream = audio.stream
+        if audio.bad:
+            res.warnings.append(f"audio ring words out of range in {audio.bad} mixes (first "
+                                f"{audio.bad_detail}); mixed as silence, tail untouched")
     w = neopixel_warning(res.frames)
     if w:
         res.warnings.append(w)
