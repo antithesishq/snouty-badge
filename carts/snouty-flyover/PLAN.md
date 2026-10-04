@@ -1168,7 +1168,9 @@ writes bounded and reported.
   `m2_verbs`, `m3_verbs`. Calibrated bench: attract worst 15.09 ms (frame
   1823, was 15.08), mean 8.27; `m3_verbs` worst 28.95 ms at frame 2141,
   the Select skip's black frame, identical on origin/main (pre-existing,
-  2 frames over the 22 ms budget, not touched here). Sizes `.text`
+  2 frames over the 22 ms budget, not touched here). B every 12 ticks
+  through every kind (manual flight, 2300 frames): worst 15.06 ms, mean
+  8.09, none over. Sizes `.text`
   79,784 B, `.data` 208 B, `.bss` 162,912 B. GIF
   `docs/preview_m42_b_everywhere.gif` (`tools/scripts/m42_b_everywhere.json`:
   manual flight, one B mid-segment in every kind).
