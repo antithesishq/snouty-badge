@@ -6,10 +6,13 @@
 //! first playable one (the picker, frontend/picker.zig, offers the others
 //! when there are several and `open`s the chosen one), CRC it and
 //! build the core's block table (flash pointers for contiguous blocks, the
-//! per-cluster path for the rest). No volume, no file, or only refused
-//! files: the embedded ROM, with the reason in `fallback`. The simulator
-//! (wasm) and `-Dlynx-rom-source=embed` always embed. The core never sees
-//! romfs (SPEC.md section 7).
+//! per-cluster path for the rest). No volume, no file, only refused files
+//! or a file that no longer maps: no ROM (`origin == .none`, the reason in
+//! `reason`), and main.zig shows the no-ROM screen. A drive build embeds no
+//! ROM: every use of `rom.data` sits behind `!use_drive`, so the badge cart
+//! carries none of its bytes. The simulator (wasm) and
+//! `-Dlynx-rom-source=embed` always embed. The core never sees romfs
+//! (SPEC.md section 7).
 const cart = @import("cart-api");
 const core = @import("core");
 const rom = @import("rom");
@@ -17,21 +20,18 @@ const romfs = @import("romfs");
 const drive = @import("drive");
 const debug = @import("debug.zig");
 
-pub const Origin = enum(u32) { embedded = 0, drive = 1 };
+pub const Origin = enum(u32) { embedded = 0, drive = 1, none = 2 };
 
 /// True when this build reads the badge drive (false in wasm and embed builds).
 pub const use_drive = !cart.is_wasm and rom.source == .drive;
 
 pub var origin: Origin = .embedded;
-/// CRC32 of the drive file (0 for the embedded ROM).
+/// CRC32 of the drive file (0 for the embedded ROM and none).
 pub var crc: u32 = 0;
 /// Size in bytes of the running ROM file (header included).
 pub var size: u32 = 0;
 /// `core.cart.parse` of the running ROM.
 pub var layout: core.cart.Layout = .{};
-/// The drive volume opened but holds no playable Lynx file: the screen
-/// shows the how-to-add-a-ROM help (main.zig).
-pub var no_rom_on_drive: bool = false;
 
 /// Cluster table and the chosen file's source: both outlive the Cart,
 /// whose fragmented blocks read through them.
@@ -41,10 +41,10 @@ var scanned: drive.Scan = undefined;
 var scanned_ok = false;
 var chosen: usize = 0;
 
-/// Why the drive was not used for the embedded ROM ("NoVolume", "X.LNX:
-/// rotated", "skipped"); null for a drive ROM or when it was not asked.
-pub var fallback: ?[]const u8 = null;
-var fallback_buf: [48]u8 = undefined;
+/// Why the drive gave no ROM ("NoVolume", "X.LNX: rotated", "no .lnx/.lyx
+/// file"); null while a ROM runs. The no-ROM screen shows it.
+pub var reason: ?[]const u8 = null;
+var reason_buf: [48]u8 = undefined;
 /// The drive file runs partly through the per-cluster path.
 pub var fragmented: bool = false;
 
@@ -55,7 +55,7 @@ pub fn candidates() []const drive.Candidate {
 }
 
 /// Index in `candidates()` of the running drive file, null for the
-/// embedded ROM.
+/// embedded ROM and none.
 pub fn chosen_index() ?usize {
     return if (origin == .drive) chosen else null;
 }
@@ -68,7 +68,11 @@ pub fn playable_count() u32 {
 
 /// File name of the running ROM: the drive entry or the embedded ROM's.
 pub fn name() []const u8 {
-    return if (origin == .drive) scanned.candidates[chosen].file_name() else rom.name;
+    return switch (origin) {
+        .drive => scanned.candidates[chosen].file_name(),
+        .embedded => rom.name,
+        .none => "",
+    };
 }
 
 /// The ROM's display name: the header title when there is one, else the
@@ -103,38 +107,42 @@ pub const Choice = enum {
     /// Several playable drive files: the picker (the cart from `select`
     /// is the first of them, B keeps it).
     pick,
-    /// A drive volume without a playable file: the help over the
-    /// embedded ROM.
+    /// No usable ROM on the drive (drive builds): the no-ROM screen, for
+    /// good. The cart from `select` is an empty one, never stepped.
     help,
 };
 
+pub const Selection = struct { cart: core.Cart, next: Choice };
+
 /// Choose the ROM. Call once from `start()`.
-pub fn select() struct { cart: core.Cart, next: Choice } {
-    if (!use_drive) return .{ .cart = embedded(null, null), .next = .run };
+pub fn select() Selection {
+    if (!use_drive) return .{ .cart = embedded(), .next = .run };
     const base = romfs.Image.badge();
     scanned = drive.scan(base, &clusters);
     scanned_ok = true;
-    if (scanned.err) |e| return .{ .cart = embedded(@errorName(e), null), .next = .run };
-    const i = scanned.first_playable() orelse {
-        no_rom_on_drive = true;
-        const c = if (scanned.count > 0) embedded(null, &scanned.candidates[0]) else embedded("no .lnx/.lyx file", null);
-        return .{ .cart = c, .next = .help };
-    };
-    return .{ .cart = open(i), .next = if (scanned.playable_count > 1) .pick else .run };
+    if (scanned.err) |e| return no_rom(@errorName(e), null);
+    const i = scanned.first_playable() orelse
+        return if (scanned.count > 0) no_rom(null, &scanned.candidates[0]) else no_rom("no .lnx/.lyx file", null);
+    const c = open(i) orelse return .{ .cart = .empty(&layout), .next = .help };
+    return .{ .cart = c, .next = if (scanned.playable_count > 1) .pick else .run };
 }
 
 /// Open drive candidate `i` (a playable one from `candidates()`) for the
 /// picker: maps it into the shared cluster table and `Source`, recomputes
 /// the CRC and the report. The caller re-`init_in_place`s the core with
 /// the result before anything reads the old Cart again. A file that no
-/// longer maps gives the embedded ROM with the reason.
-pub noinline fn open(i: usize) core.Cart {
+/// longer maps gives null, no ROM with the reason: the caller shows the
+/// no-ROM screen (the old Cart's cluster table may be overwritten).
+pub noinline fn open(i: usize) ?core.Cart {
     const base = romfs.Image.badge();
     const cand = &scanned.candidates[i];
-    const c = drive.open(base, cand, &clusters, &source) catch |e| return embedded(@errorName(e), null);
+    const c = drive.open(base, cand, &clusters, &source) catch |e| {
+        _ = no_rom(@errorName(e), null);
+        return null;
+    };
     chosen = i;
     origin = .drive;
-    fallback = null;
+    reason = null;
     layout = cand.layout;
     size = cand.entry.size;
     crc = source.mapped.crc32();
@@ -143,27 +151,40 @@ pub noinline fn open(i: usize) core.Cart {
     return c;
 }
 
-/// The embedded ROM. `why` or `refused` say why the drive was not used
-/// (both null: it was not asked).
-pub noinline fn embedded(why: ?[]const u8, refused: ?*const drive.Candidate) core.Cart {
+/// The embedded ROM (wasm and embed builds only: a drive build must not
+/// reference `rom.data`, or its bytes land in the badge cart).
+noinline fn embedded() core.Cart {
+    if (use_drive) @compileError("rom.data referenced in a drive build");
     origin = .embedded;
     crc = 0;
     fragmented = false;
     size = @intCast(rom.data.len);
     layout = core.cart.parse(rom.data, size);
     set_title();
-    fallback = null;
-    if (why) |s| {
-        fallback = fallback_buf[0..debug.put(&fallback_buf, s)];
-    }
-    if (refused) |c| {
-        var n = debug.put(&fallback_buf, c.file_name());
-        n += debug.put(fallback_buf[n..], ": ");
-        n += debug.put(fallback_buf[n..], c.note());
-        fallback = fallback_buf[0..n];
-    }
     if (layout.verdict != .ok) return core.Cart.empty(&layout);
     return core.Cart.from_slice(&layout, rom.data);
+}
+
+/// No ROM (drive builds): `why` or `refused` say why the drive gave none.
+/// The cart is an empty one for the core to hold; main.zig never steps it.
+noinline fn no_rom(why: ?[]const u8, refused: ?*const drive.Candidate) Selection {
+    origin = .none;
+    crc = 0;
+    size = 0;
+    fragmented = false;
+    layout = .{};
+    set_title();
+    reason = null;
+    if (why) |s| {
+        reason = reason_buf[0..debug.put(&reason_buf, s)];
+    }
+    if (refused) |c| {
+        var n = debug.put(&reason_buf, c.file_name());
+        n += debug.put(reason_buf[n..], ": ");
+        n += debug.put(reason_buf[n..], c.note());
+        reason = reason_buf[0..n];
+    }
+    return .{ .cart = .empty(&layout), .next = .help };
 }
 
 /// "128 KB" or "576 B".

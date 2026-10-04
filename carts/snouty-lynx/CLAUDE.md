@@ -3,8 +3,9 @@
 Badge cart for the Software You Can Love (SYCL) conference, built for
 Antithesis: an Atari Lynx emulator in Zig. The badge build reads its ROM
 from a `.lnx`/`.lyx` file on the badge's USB drive (docs/ROM_DRIVE.md at
-the repository root) and falls back to an embedded ROM; the simulator
-always embeds. `SPEC.md` is the design, `PLAN.md` the current milestone's
+the repository root) and embeds no ROM (no usable drive ROM: the no-ROM
+screen, `main.zig` `draw_help`); the simulator and `-Dlynx-rom-source=embed`
+embed `roms/raycast.lnx`. `SPEC.md` is the design, `PLAN.md` the current milestone's
 contract. Snouty Lynx copies `../snouty-gear` (the template: a RAM-cart
 emulator reading the drive through `lib/romfs.zig`) and
 `../snouty-genesis` (drive scan as a module, the no-ROM help); their
@@ -35,11 +36,11 @@ CLAUDE.md and docs have the longer explanations.
   interface contract between these files.
 - `cart/src/` — the badge frontend. `main.zig` exports `start()`/`update()`,
   the wasm shims and exports, the state machine (splash -> running | pick | help, running <-> menu,
-  menu -> pick -> running), the status strip and the no-ROM help. `frontend/`: `video` (Lynx frame ->
+  menu -> pick -> running | help), the status strip and the no-ROM screen. `frontend/`: `video` (Lynx frame ->
   rows 0..101, 16-entry palette cache), `input` (pad word, Select tap =
   Option 1, Select hold = menu), `drive` (drive scan and Cart from a drive
-  file; a module of its own, host-tested), `romsrc` (drive or embedded
-  ROM, the report line), `splash` (Iris mark, `lib/iris_mark.zig`),
+  file; a module of its own, host-tested), `romsrc` (drive ROM, embedded
+  ROM in wasm/embed builds only, or none with the reason), `splash` (Iris mark, `lib/iris_mark.zig`),
   `debug` (step timing, FPS), `text` (Snouty Gear's fast font, verbatim),
   `menu` (the
   frozen-frame menu: Resume, Buttons swap, Press Option 2, Restart
@@ -81,6 +82,8 @@ from the repository root only.
   filesystem), `-Dlynx-rom-source=drive|embed|pack` (`pack`, SPEC.md 13.1,
   is not built: it prints a note and builds `drive`), `-Dcart-optimize=`.
 - Generated `rom` module: `data`, `name`, `source` (`.drive`/`.embed`).
+  Drive badge builds must not reference `rom.data` (romsrc.zig keeps every
+  use behind `!use_drive`), so the ROM's bytes stay out of the UF2.
 - `zig build test-lynx` (this cart) or `zig build test` (all);
   `-Dtest-filter=cart`, `-Dtest-optimize=`. `zig build run-lynx -- ...`
   runs a ROM headless (tools/run_rom.zig).
