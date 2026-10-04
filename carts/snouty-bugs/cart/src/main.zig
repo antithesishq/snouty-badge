@@ -468,6 +468,7 @@ comptime {
         @export(&debug_stage, .{ .name = "debug_stage" });
         @export(&debug_boss_hp, .{ .name = "debug_boss_hp" });
         @export(&debug_stage_clears, .{ .name = "debug_stage_clears" });
+        @export(&debug_escaped, .{ .name = "debug_escaped" });
         @export(&debug_phase, .{ .name = "debug_phase" });
         @export(&debug_god, .{ .name = "debug_god" });
         @export(&debug_warp, .{ .name = "debug_warp" });
@@ -535,6 +536,10 @@ fn debug_boss_hp() callconv(.c) u32 {
 }
 fn debug_stage_clears() callconv(.c) u32 {
     return world.w.waves.stage_clears;
+}
+/// 1 when the last stage ended with its boss escaping (`waves.State.escaped`).
+fn debug_escaped() callconv(.c) u32 {
+    return @intFromBool(world.w.waves.escaped);
 }
 fn debug_phase() callconv(.c) u32 {
     return @backingInt(world.w.waves.phase);
