@@ -21,8 +21,12 @@ comptime {
 
 /// Mercy added by a hit that is rewound (or counted by the probe).
 pub const mercy_per_hit: u16 = 80;
-/// Mercy decays by 1 every this many game ticks.
-const mercy_decay_every: u32 = 120;
+/// Mercy never exceeds this (three hits' worth), so a bad stretch buys a
+/// short reprieve, not minutes at rank 0 that also cancel the loop bonus.
+pub const mercy_cap: u16 = 240;
+/// Mercy decays by 1 every this many game ticks (2 a second: a full 240
+/// is gone in two minutes).
+const mercy_decay_every: u32 = 30;
 
 /// Revenge bullet: an aimed pellet at base speed 1.0, a 3-way fan 10/256
 /// apart at high rank.

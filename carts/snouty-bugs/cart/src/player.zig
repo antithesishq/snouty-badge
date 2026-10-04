@@ -242,13 +242,13 @@ fn fire_volley(x: f32, y: f32, level: u8) void {
 
 /// Raiden's power loss (PLAN.md M7), charged in the World at the resume of
 /// an auto rewind (normal and hardcore) and on each probe hit: one weapon
-/// level (not below 1), one fork, and +80 rank mercy. Not on a hold-B
+/// level (not below 1), one fork, and +80 rank mercy (capped at 240). Not on a hold-B
 /// rewind, not on a retry-shield pop.
 pub fn on_rewound_hit() void {
     const p = &world.w.player;
     p.level = @max(1, p.level -| 1);
     p.forks -|= 1;
-    world.w.mercy +|= rank.mercy_per_hit;
+    world.w.mercy = @min(world.w.mercy +| rank.mercy_per_hit, rank.mercy_cap);
 }
 
 /// The trail entry ghost `k` (1-based) stands on in the tick just

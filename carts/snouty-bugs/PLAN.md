@@ -1173,7 +1173,7 @@ value = clamp(stage_base[stage] + 400 * loop + stage_seconds
               + 25 * (level - 1) + 30 * forks - mercy, 0, 1000)
 stage_base = { 0, 150, 300, 450 }
 stage_seconds = min(waves.t / 60, 120)       (resets at each stage start)
-mercy (World u16): +80 at each auto-rewind resume, -1 every 120 ticks, >= 0
+mercy (World u16): +80 at each auto-rewind resume, capped at 240, -1 every 30 ticks
 r = value / 1000
 ```
 
