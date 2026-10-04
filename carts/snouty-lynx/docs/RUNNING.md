@@ -185,8 +185,9 @@ python3 tools/make_gif.py carts/snouty-lynx/out/ carts/snouty-lynx/docs/m2_menu.
 
 Exports: `debug_frame_count`,
 `debug_state` (0 splash, 1 running, 2 menu, 3 picker, 4 no-ROM help),
-`debug_menu_opens`, `debug_settings` (bit 0 unused: no sound; bit 2 A/B
-swapped, bit 3 debug overlay on), `debug_hold_pad` (the `core.Pad` bits the
+`debug_menu_opens`, `debug_settings` (bit 0 sound on, never in the wasm
+build, which has no streaming audio; bit 2 A/B swapped, bit 3 debug
+overlay on), `debug_hold_pad` (the `core.Pad` bits the
 last Press Option 2 / Restart row asked for: 4 or 264),
 `debug_pad` (`core.Pad` bits: A 1, B
 2, Option 2 4, Option 1 8, right 16, left 32, down 64, up 128, Pause 256),

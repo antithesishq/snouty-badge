@@ -67,7 +67,9 @@ its design and milestone status.
   row or a button). A cart's sound flag is initialised from
   `build_options.sound` (`-Dsound=true` builds a sound-on set) and only
   that toggle changes it; the OS keeps no volume setting across cart
-  starts (`docs/SOUND.md`).
+  starts (`docs/SOUND.md`). The exception is snouty-lynx, which streams
+  PCM on the newer firmware through `lib/stream_audio.zig` and boots with
+  sound on (`docs/SOUND.md` section 7).
 - Flash: 8000 pages of 256 bytes available via the cart API (`Zone`).
 - Cart RAM window 307 KB (`0x20035100..0x20080000`, 32 KB of it stack). A RAM
   cart holds code, read-only data and state there; keep `size -A` of `.text`
