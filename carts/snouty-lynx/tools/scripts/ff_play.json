@@ -2,7 +2,7 @@
   {"from": 40, "to": 41, "hold": ["A"]},
   {"from": 250, "to": 252, "hold": ["SELECT"]},
   {"from": 258, "to": 440, "hold": ["SELECT"]},
-  {"from": 260, "to": 290, "hold": ["LEFT"]},
+  {"from": 260, "to": 290, "hold": ["RIGHT"]},
   {"from": 291, "to": 400, "hold": ["UP"]},
   {"from": 401, "to": 440, "hold": ["UP", "RIGHT"]},
   {"from": 470, "to": 472, "hold": ["SELECT"]},

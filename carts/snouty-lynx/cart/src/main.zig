@@ -33,12 +33,16 @@
 //! others skip the display conversion, `video.show`, and the strip), none
 //! with sound (`audio_render` off, the stream ramps out as in the menu),
 //! every one recorded for the scrubber; the speed (`>>2x`, `>>1.5x`) sits
-//! in the picture's top right corner meanwhile.
+//! in the picture's top right corner meanwhile. Left during that hold
+//! turns it into the chorded rewind (`input.Rewind`): the game freezes
+//! under the menu's scrub bar (`menu.draw_scrub_bar`), Left/Right step
+//! time through `rewind.step` as in the menu, and letting go of Select
+//! resumes from there as the menu's resume does.
 //!
 //! Control hints (lib/hint.zig): "Hold Select: menu" on the splash and
 //! over the status strip's last line for the first 3 s of play after the
-//! splash or the picker, then "2x Sel+hold: fast" for 3 s more (gone at
-//! the first fresh press); the menu has its own.
+//! splash or the picker, then "2x Sel+hold: fast" and "then Left: rewind"
+//! for 3 s each (gone at the first fresh press); the menu has its own.
 //!
 //! Sound (M5, PLAN.md "M5 Sound: contract"): every stepped frame's
 //! `audio_out` goes to the new firmware's streaming ring
@@ -83,9 +87,9 @@ var controls_state: input.State = .{};
 
 /// Menu opens since boot.
 var menu_opens: u32 = 0;
-/// "Hold Select: menu", then `menu.fast_hint`, over the status strip's
-/// last line for the first seconds of play (lib/hint.zig):
-/// `hint.play_seconds` each.
+/// "Hold Select: menu", then `menu.fast_hint` and `menu.rewind_hint`, over
+/// the status strip's last line for the first seconds of play
+/// (lib/hint.zig): `hint.play_seconds` each.
 var play_hint: hint.Overlay = .{};
 const play_hint_updates = hint.play_seconds * 60;
 /// The core stepped in this update with sound (else the sound ramps out).
@@ -129,7 +133,7 @@ pub fn update() void {
 
     switch (state) {
         .splash => if (splash.update(controls_state.edge.any_pressed())) {
-            if (after_splash == .pick) picker.reset() else play_hint.start(2 * play_hint_updates);
+            if (after_splash == .pick) picker.reset() else play_hint.start(3 * play_hint_updates);
             picker.from_menu = false;
             enter(after_splash, t0);
         },
@@ -162,8 +166,7 @@ fn enter(next: State, t0: u64) void {
 /// The edge with suppressed (held-over) buttons masked out, so a button
 /// that left the previous state does not act in the next.
 fn live_edge() input.Edge {
-    const e = controls_state.edge;
-    return .{ .prev = e.prev, .cur = e.cur & ~controls_state.suppress };
+    return controls_state.live_edge();
 }
 
 /// (Re)start the core on `c` (start and the picker; the menu's Reset makes
@@ -180,7 +183,7 @@ pub fn boot(c: core.Cart) void {
 fn pick_frame(t0: u64) void {
     const choice = picker.update(live_edge()) orelse return;
     if (choice) |i| boot(romsrc.open(i) orelse return enter(.help, t0));
-    play_hint.start(2 * play_hint_updates);
+    play_hint.start(3 * play_hint_updates);
     enter(.running, t0);
 }
 
@@ -214,6 +217,35 @@ fn run_frame(t1: u64) void {
         _ = menu.update(&lynx, live_edge());
         return;
     }
+
+    // Chorded rewind (Left during fast forward): the game stays frozen
+    // under the menu's scrub bar and Left/Right step time as in the menu;
+    // letting go of Select resumes as the menu does (input.zig suppressed
+    // the held buttons) and steps this frame. Nothing is stepped
+    // meanwhile, so `update` ramps the sound out (`stepped` stays false).
+    switch (in.rewind) {
+        .enter, .on => {
+            if (in.rewind == .enter) {
+                play_hint.stop();
+                menu.freeze_frame();
+                // The last presented frame carries the `>>` indicator:
+                // redraw the picture and the strip without it.
+                video.show(lynx.frame());
+                strip.draw(&lynx);
+                cart.mark_dirty_rect(0, 0, cart.screen_width, cart.screen_height);
+            }
+            rewinding = true;
+            if (in.scrub != 0) _ = rewind.step(&lynx, in.scrub);
+            menu.draw_scrub_bar(true);
+            return;
+        },
+        .exit => {
+            rewinding = false;
+            menu.close();
+        },
+        .off => {},
+    }
+
     // After a scrub the console is parked on a record boundary: playing on
     // from there drops the future.
     rewind.resume_if_parked(&lynx);
@@ -258,10 +290,13 @@ fn run_frame(t1: u64) void {
     // Over the strip's last line (the ROM detail), so no picture is hidden.
     // A press held over from the splash or picker is suppressed, not fresh.
     if (play_hint.tick(live_edge().any_pressed())) {
-        const s = if (play_hint.left >= play_hint_updates) hint.hold_select else menu.fast_hint;
+        const s = if (play_hint.left >= 2 * play_hint_updates) hint.hold_select else if (play_hint.left >= play_hint_updates) menu.fast_hint else menu.rewind_hint;
         hint.draw_strip(cart, text.draw, s, cart.screen_height - hint.strip_h, strip.accent, strip.bg);
     }
 }
+
+/// The chorded rewind is showing (the `debug_chord_rewind` export).
+var rewinding: bool = false;
 
 /// One game frame with `pad` (plus a menu row's held buttons for their
 /// frames), recorded for the scrubber and the overlay.
@@ -377,6 +412,7 @@ comptime {
         @export(&debug_scrub_capacity, .{ .name = "debug_scrub_capacity" });
         @export(&debug_scrub_arena, .{ .name = "debug_scrub_arena" });
         @export(&debug_ff_frames, .{ .name = "debug_ff_frames" });
+        @export(&debug_chord_rewind, .{ .name = "debug_chord_rewind" });
     }
 }
 
@@ -522,6 +558,11 @@ fn debug_scrub_arena() callconv(.c) u32 {
 }
 
 // ---- Fast forward ----
+
+/// 1 while the chorded rewind shows (fast forward turned into rewind).
+fn debug_chord_rewind() callconv(.c) u32 {
+    return @intFromBool(state == .running and rewinding);
+}
 
 /// Game frames the last update stepped (1 at 1x, up to 8 while fast
 /// forwarding on the badge, 4 in the simulator; 0 in an update that
