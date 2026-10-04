@@ -9,7 +9,7 @@ and its outputs are in the root `zig-out/`.
 
 ## 1. Prerequisites
 
-Zig `0.17.0-dev.1936+5a625d5f3`, Node.js 20+, Python 3 (with Pillow for
+Zig `0.17.0`, Node.js 20+, Python 3 (with Pillow for
 the generators and GIFs) and git: see the root
 [`docs/RUNNING.md`](../../../docs/RUNNING.md), sections 1 and 2.
 badge-bench makes its own Python environment on first run.

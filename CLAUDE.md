@@ -40,23 +40,24 @@ its design and milestone status.
 - `build.zig`, `build.zig.zon`, `build/common.zig` — the one Zig package.
   Shared options (`-Dcart`, `-Dcart-mode`, `-Ddebug_overlay`, `-Dsound`, `-Drom`, ...)
   and the shared `test` and `check-float` steps are declared here and passed
-  to each cart. `build/os_cart.zig` builds a cart in RAM mode (upstream's
-  `add_os_cart`) or XIP mode (`build/xip/entry.zig` as root, `cart_xip.ld`,
-  artifact `<binary>-xip`); `-Dcart-mode=ram|xip|both`.
+  to each cart. `build/os_cart.zig` builds a cart in RAM mode (a mirror of
+  upstream's `add_os_cart` that takes microzig from our build.zig.zon) or
+  XIP mode (`build/xip/entry.zig` as root, `cart_xip.ld`, artifact
+  `<binary>-xip`); `-Dcart-mode=ram|xip|both`.
 - `tools/` — the shared cart tools: `preview.mjs` (headless wasm runner: PNG
   frames, `frames.json`, input scripts, export checks), `serve-cart.mjs` (wasm
   server for the simulator, picks the cart from the cwd), `make_gif.py`,
   `check_float.mjs`, `uf2_info.py`. Cart docs call them as `../../tools/x`.
 - `sycl-badge/` — upstream SDK as a git submodule, pinned. Read-only; do not
   patch it. `src/os/system/tracy_protocol.zig` at the root is a symlink into
-  it that `add_os_cart` needs.
+  it that the cart build needs.
 - `badge-bench/` — emulated cycle benchmark (`bench.sh <elf>`); its own
   `carts/<binary>.toml` files hold per-cart defaults (a different `carts/`).
   `badge-bench/calibrate/` is a cart too (`-Dcart=badge-calibrate`): the
   hardware calibration kernels and `fit.py`; see its SPEC.md and PLAN.md.
 - `snouty-art/` — code-driven sprite pipeline; `tools/install_badge.py` and
   `tools/build_maze.py` write into the carts' `assets/`.
-- Zig `0.17.0-dev.1936+5a625d5f3` at `~/.local/bin/zig`
+- Zig `0.17.0` at `~/.local/bin/zig`
   (`export PATH="$HOME/.local/bin:$PATH"`). Node 22 and Python 3 are installed.
 
 ## Target hardware (SYCL Badge V2)
@@ -125,10 +126,12 @@ zig build check-float          # soft-float check (reflections, maze, flyover, d
 ```
 
 Outputs `zig-out/firmware/<binary>.uf2`, `.elf` and `zig-out/bin/<binary>.wasm`
-at the root. `add_os_cart` (upstream `build.zig`) builds the thumb firmware and
-the wasm from the same module; a cart's `custom_builder` adds its `gfx` or
-other modules. `build.zig.zon` mirrors upstream's `microzig` and `zigimg`
-entries because the converters call `b.dependency("zigimg")` on this builder.
+at the root. `build/os_cart.zig` (upstream's `add_os_cart`, mirrored) builds
+the thumb firmware and the wasm from the same module; a cart's
+`custom_builder` adds its `gfx` or other modules. `build.zig.zon` declares
+`microzig` (0.17.12, newer than the SDK submodule's 0.17.7, which Zig 0.17.0
+cannot build) and mirrors upstream's `zigimg`, because the converters call
+`b.dependency("zigimg")` on this builder.
 Packages land in `zig-pkg/` (gitignored). Never commit generated `gfx.zig`;
 do commit `assets/gen/*.png`.
 

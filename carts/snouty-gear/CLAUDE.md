@@ -63,7 +63,7 @@ longer explanations, this one summarises.
 
 ## Building
 
-Zig `0.17.0-dev.1936+5a625d5f3` at `~/.local/bin/zig`
+Zig `0.17.0` at `~/.local/bin/zig`
 (`export PATH="$HOME/.local/bin:$PATH"`); optimize modes are spelled
 `.debug/.safe/.fast/.small`. `zig build` runs from the repository root
 only (it calls this cart's `build.zig` `pub fn add`).

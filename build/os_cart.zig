@@ -1,6 +1,8 @@
 //! Builds one cart for the SYCL Badge V2 in RAM mode, XIP mode or both.
 //!
-//! RAM mode is upstream's `add_os_cart` unchanged. XIP mode mirrors it with
+//! RAM mode mirrors upstream's `add_os_cart` (the pinned SDK's copy takes
+//! microzig from the SDK's own build.zig.zon, whose 0.17.7 does not build
+//! with Zig 0.17.0; this one takes it from ours). XIP mode mirrors it with
 //! three differences: the firmware root is `build/xip/entry.zig` (vector
 //! table plus a reset handler that initialises memory and calls the SDK's
 //! `_start`), the linker script is the SDK's `cart_xip.ld` (code and
@@ -11,7 +13,6 @@ const std = @import("std");
 const Build = std.Build;
 
 const microzig = @import("microzig");
-const sycl_badge = @import("sycl_badge");
 
 const MicroBuild = microzig.MicroBuild(.{ .rp2xxx = true });
 
@@ -63,28 +64,48 @@ pub fn add(b: *Build, dep: *Build.Dependency, options: Options) void {
                 add_xip(b, dep, options, false);
             },
             .xip => {
-                add_ram_firmware(b, dep, options);
+                _ = add_ram_firmware(b, dep, options);
                 add_xip(b, dep, options, true);
             },
         },
     }
 }
 
+/// Upstream's `add_os_cart`: the RAM firmware, and the simulator wasm from a
+/// copy of the firmware's root module, as upstream builds it.
 fn add_ram(b: *Build, dep: *Build.Dependency, options: Options) void {
-    sycl_badge.add_os_cart(b, dep, .{
-        .name = options.name,
-        .optimize = options.optimize,
-        .root_source_file = options.root_source_file,
-        .custom_builder = options.custom_builder,
+    const ram = add_ram_firmware(b, dep, options) orelse return;
+
+    const wasm_target = b.resolveTargetQuery(.{
+        .cpu_arch = .wasm32,
+        .os_tag = .freestanding,
     });
+    const wasm_module = b.allocator.create(Build.Module) catch @panic("oom");
+    wasm_module.* = ram.fw.exe.root_module.*;
+    wasm_module.resolved_target = wasm_target;
+    const wasm = b.addExecutable(.{
+        .name = options.name,
+        .root_module = wasm_module,
+    });
+    wasm.entry = .disabled;
+    wasm.import_memory = true;
+    wasm.initial_memory = 64 * 65536;
+    wasm.max_memory = 64 * 65536;
+    wasm.stack_size = 14752;
+    wasm.global_base = 160 * 128 * 2 + 0x1e;
+    wasm.rdynamic = true;
+    b.installArtifact(wasm);
+    if (ram.asset_step) |step| wasm.step.dependOn(step);
 }
 
+const RamFirmware = struct { fw: *MicroBuild.Firmware, asset_step: ?*Build.Step };
+
 /// Upstream's `add_os_cart` without its wasm: the same target, root, linker
-/// script, imports and installs, so the RAM firmware is built as `add_ram`
-/// builds it. For `wasm_from = .xip` only.
-fn add_ram_firmware(b: *Build, dep: *Build.Dependency, options: Options) void {
-    const mz_dep = dep.builder.dependency("microzig", .{});
-    const mb = MicroBuild.init(b, mz_dep) orelse return;
+/// script, imports and installs. `add_ram` adds the wasm; `wasm_from = .xip`
+/// uses it alone.
+fn add_ram_firmware(b: *Build, dep: *Build.Dependency, options: Options) ?RamFirmware {
+    const mz_dep = b.dependency("microzig", .{});
+    const mb = MicroBuild.init(b, mz_dep) orelse return null;
     const badge_v2_target = badge_v2(mb, dep);
 
     const cart_api_module = b.createModule(.{
@@ -133,6 +154,7 @@ fn add_ram_firmware(b: *Build, dep: *Build.Dependency, options: Options) void {
     mb.install_firmware(fw, .{ .format = .elf });
     mb.install_firmware(fw, .{ .format = .{ .uf2 = .{ .family_id = .RP2350_ARM_S } } });
     if (asset_step) |step| fw.exe.step.dependOn(step);
+    return .{ .fw = fw, .asset_step = asset_step };
 }
 
 /// Same target as upstream's sycl_badge_v2_microzig_target (private there).
@@ -146,7 +168,7 @@ fn badge_v2(mb: *MicroBuild, dep: *Build.Dependency) *microzig.Target {
 }
 
 fn add_xip(b: *Build, dep: *Build.Dependency, options: Options, with_wasm: bool) void {
-    const mz_dep = dep.builder.dependency("microzig", .{});
+    const mz_dep = b.dependency("microzig", .{});
     const mb = MicroBuild.init(b, mz_dep) orelse return;
 
     // Same target as upstream's sycl_badge_v2_microzig_target (private there).

@@ -82,7 +82,7 @@ CLAUDE.md files have the long explanations, this one summarises.
 
 ## Building
 
-Zig `0.17.0-dev.1936+5a625d5f3` at `~/.local/bin/zig`
+Zig `0.17.0` at `~/.local/bin/zig`
 (`export PATH="$HOME/.local/bin:$PATH"`). Zig 0.17 spells optimize modes
 `.debug/.safe/.fast/.small`. Commands here run from this cart's directory
 (`carts/snouty-boy/`) unless noted; only `zig build` runs from the repository

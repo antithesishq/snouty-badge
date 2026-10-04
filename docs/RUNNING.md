@@ -20,35 +20,27 @@ are marked **team VM only**.
 Supported: Linux x86_64 and macOS on Apple silicon (aarch64). You need
 git, curl and `tar` with xz support (both systems have them), plus:
 
-**Zig `0.17.0-dev.1936+5a625d5f3` exactly** (upstream sycl-badge pins
-it; another Zig will not build). It is a nightly that ziglang.org no
-longer serves (`https://ziglang.org/builds/zig-x86_64-linux-0.17.0-dev.1936+5a625d5f3.tar.xz`
-answers 404), so take it from the Mach community mirror. This installs it
-under `~/.local/opt` and works from any directory:
+**Zig `0.17.0`**, the release. Until 2026-10-05 the repository pinned
+the nightly `0.17.0-dev.1936+5a625d5f3`; it now uses microzig 0.17.12,
+built and tested with the release only. This installs it from
+ziglang.org under `~/.local/opt` and works from any directory:
 
 ```sh
 # Linux x86_64. On an Apple-silicon Mac use instead:
-#   ZIG=zig-aarch64-macos-0.17.0-dev.1936+5a625d5f3
-ZIG=zig-x86_64-linux-0.17.0-dev.1936+5a625d5f3
+#   ZIG=zig-aarch64-macos-0.17.0
+ZIG=zig-x86_64-linux-0.17.0
 mkdir -p ~/.local/opt
-curl -fL -o ~/.local/opt/$ZIG.tar.xz "https://pkg.machengine.org/zig/$ZIG.tar.xz"
+curl -fL -o ~/.local/opt/$ZIG.tar.xz "https://ziglang.org/download/0.17.0/$ZIG.tar.xz"
 tar -xJf ~/.local/opt/$ZIG.tar.xz -C ~/.local/opt
 export PATH="$HOME/.local/opt/$ZIG:$PATH"   # put this line (with ZIG=...) in ~/.bashrc or ~/.zshrc too
-zig version                                  # must print 0.17.0-dev.1936+5a625d5f3
+zig version                                  # must print 0.17.0
 ```
 
-Checked on 2026-10-02: `pkg.machengine.org` answers both the Linux
-x86_64 and the macOS aarch64 file names with a redirect to
-`pkg.hexops.org`, which serves them (57 MB and 54 MB); the Linux tarball
-was downloaded and unpacked and its `zig version` printed the pinned
-version (the macOS one was checked for availability only, not run). The
-mirror also has `.minisig` signatures next to each tarball.
-
-Second route, `zigup` (<https://github.com/marler8997/zigup>):
-`zigup 0.17.0-dev.1936+5a625d5f3`. It downloads dev builds from
-`ziglang.org/builds/`, so it fails with the 404 above for as long as
-ziglang.org does not serve this nightly; it was not tried here. Use the
-mirror.
+The Mach community mirror (`https://pkg.machengine.org/zig/$ZIG.tar.xz`)
+serves the same files. A build that fails inside `regz` or `translate-c`
+with an error about `GlobalLinkage` is a checkout from before the switch
+(microzig 0.17.7) built with the release: pull `main`. No cache needs
+deleting.
 
 **Node.js 20 or newer** (the simulator and the carts' `tools/`):
 
