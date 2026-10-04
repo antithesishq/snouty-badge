@@ -33,6 +33,10 @@ pub const stack_guard = 1024;
 
 // ---- Fast forward (main.zig, docs/FAST_FORWARD.md at the root) ----
 
+/// Frames after a short Select press (released before the menu hold) in
+/// which a second press starts fast forward (frontend/input.zig): 200 ms.
+pub const ff_tap_window = 12;
+
 /// Game frames at most in one fast-forward update, the rendered one
 /// included: the speed cap (4x at 60 Hz). The simulator, whose
 /// `micros_since_boot` is a stub, always runs this many.
