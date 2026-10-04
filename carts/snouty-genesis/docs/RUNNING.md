@@ -7,7 +7,9 @@ Commands run from the repository root; outputs land in the root `zig-out/`.
 Status: M5 (a RAM cart beside the XIP cart, section 2). Boot: a 1.2 s splash (the Iris mark and "SNOUTY GENESIS";
 any button skips it), then the game, or on the badge the ROM picker when
 the drive holds several Genesis ROMs and a help screen when it holds none.
-Holding Select for 500 ms opens the emulator menu (section 5). In the XIP
+Holding Select for 500 ms opens the emulator menu (section 5); tapping
+Select and then pressing and holding it fast forwards (up to 4x, section
+5). In the XIP
 cart and the simulator, sound is off at boot unless built with
 `-Dsound=true` (root docs/SOUND.md) and the menu's Sound row turns it on,
 and in the menu Left/Right scrub time back and forward in half-second
@@ -294,9 +296,22 @@ smooth right.
 ## 5. Controls and the menu
 
 D-pad, badge B = Genesis B, badge A = Genesis C, Start = Start; a Select
-tap (under 500 ms) = Genesis A, sent for 4 Genesis frames from the release
-(SPEC.md section 5). Holding Select for 500 ms pauses the game under the
-menu:
+tap (under 500 ms) = Genesis A, sent for 4 Genesis frames from 200 ms
+after the release (SPEC.md section 5).
+
+Fast forward (root docs/FAST_FORWARD.md): tap Select, then within 200 ms
+press it again and hold it. The game runs up to 4x (8 Genesis frames per
+update, only the last drawn, within 28 ms of the 33 ms update, so slower
+on a heavy game), silent, with `>>4x` (the speed this update; `>>1.5x`
+and so on below the cap) in the top right corner under the debug
+overlay; the d-pad and the other buttons still reach the game. Letting
+go of Select returns to 1x and sends nothing; the tap before it is
+dropped. That is why a lone Select tap waits 200 ms before it becomes
+Genesis A. Start during the window or the fast forward cancels both
+(Start+Select stays the OS's). Every fast-forwarded frame is recorded, so
+the scrubber can step back through it.
+
+Holding Select for 500 ms pauses the game under the menu:
 
 - Up/Down move, A chooses, B or a Select tap resumes; Left/Right (or A)
   cycle a setting row. On the other rows (Resume, where the menu opens,
@@ -331,10 +346,12 @@ The title band shows the ROM's name from its header (Miniplanets says
 
 On-screen hints (`lib/hint.zig`, shared with Boy, Gear and Lynx): the
 splash and the first 3 s of play after the splash, picker or help screen
-show "Hold Select: menu" (a strip at the bottom, gone at the first button
-press); in the menu the bottom line on Resume reads "Left/Right: rewind"
-("Rewind: no history" before the first record; the `Scrub:` readout once
-parked or on other rows) and the footer reads "B: back to game". The menu
+show "Hold Select: menu", then for 3 s more "2x Sel+hold: fast" (a strip
+at the bottom, gone at the first button press); in the menu the bottom
+line on Resume reads "Left/Right: rewind" ("Rewind: no history" before
+the first record; the `Scrub:` readout once parked or on other rows) and
+the footer takes turns every 2 s between "B: back to game" and "2x
+Sel+hold: fast". The menu
 rows are 8 px apart since the footer was added (9 px in M4).
 
 Time scrubber (SPEC.md section 10; the XIP cart and the simulator only:
