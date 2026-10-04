@@ -71,7 +71,7 @@ CLAUDE.md and docs have the longer explanations.
 
 ## Building
 
-Zig `0.17.0-dev.1936+5a625d5f3` at `~/.local/bin/zig`; `zig build` runs
+Zig `0.17.0` at `~/.local/bin/zig`; `zig build` runs
 from the repository root only.
 
 - `zig build -Dcart=snouty-lynx` -> `zig-out/firmware/snouty-lynx.uf2`,

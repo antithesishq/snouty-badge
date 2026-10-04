@@ -60,7 +60,7 @@ coworker's badge shows the LEDs unusably bright even at 1%).
   pixel; palettes are `Pixel` tables built at comptime or in `start()`.
 - `.no_copy_full_frame`, redraw everything every frame. Upstream `blit` is
   never used.
-- This Zig (`0.17.0-dev.1936`) has no `**` array repetition (use `@splat`),
+- This Zig (`0.17.0`) has no `**` array repetition (use `@splat`),
   `std.mem.trimEnd` not `trimRight`, `@export(&fn, .{ .name })`.
 - Keep comptime light. The macOS build of this Zig fails with a
   compiler-internal `error: OutOfMemory` on heavy comptime (the old comptime
@@ -73,7 +73,7 @@ coworker's badge shows the LEDs unusably bright even at 1%).
 
 ## Building and previewing
 
-Zig `0.17.0-dev.1936+5a625d5f3` at `~/.local/bin/zig`
+Zig `0.17.0` at `~/.local/bin/zig`
 (`export PATH="$HOME/.local/bin:$PATH"`). Commands in this file run from this
 cart's directory (`carts/snoutenstein/`) unless noted; `zig build` runs from
 the repository root, two levels up. There `zig build -Dcart=snoutenstein` (or

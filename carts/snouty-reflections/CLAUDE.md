@@ -39,7 +39,7 @@ simulator quirks.
 
 ## Building
 
-Zig `0.17.0-dev.1936+5a625d5f3` at `~/.local/bin/zig`
+Zig `0.17.0` at `~/.local/bin/zig`
 (`export PATH="$HOME/.local/bin:$PATH"`). Commands here run from this cart's
 directory (`carts/snouty-reflections/`) unless noted; only `zig build` runs
 from the repository root (`../..`). `zig build` there writes
