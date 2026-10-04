@@ -126,6 +126,13 @@ for circuit traces.
 |11 | `bg_far.png`    | 256x120| 1      | n/a         | Opaque, tiles seamlessly left-right. Deep space with a faint nebula and a distant "motherboard planet" horizon along the bottom third. Low contrast: everything here sits behind bullets. Up to 15 colors preferred. |
 |12 | `bg_near.png`   | 256x24 | 1      | n/a         | Transparent above, tiles seamlessly left-right. Circuit-board terrain: traces, pads, a chip or two, in teal and dark blue. Slightly higher contrast than far, still darker than any bullet. |
 |13 | `pickups.png`   | 16x16  | 6      | n/a         | M6 crates (SPEC.md 5.4), see the note below: 0 FUZZER "F", 1 ASSERT "A", 2 BISECT "B", 3 FORK (branching path), 4 RETRY (shield), 5 CORE HOURS (CPU chip). 1 px transparent border. |
+|16 | `bugs2.png`     | 16x16  | 12     | 5           | M7 bugs, see the M7 note below: 0-1 centipede head (Stack Overflow), 2-3 centipede segment, 4-5 flea (Null Pointer; 0 crouched, 1 leaping; faces right), 6-7 ladybug (Infinite Loop; 0 shell shut, 1 flying), 8-9 mite (Buffer Overflow; ground turret, two walk frames, feet on row 14), 10-11 zombie (Use After Free; the husk is cell 10 drawn dithered). |
+|17 | `herd.png`      | 32x32  | 2      | 6           | M7 midboss Thundering Herd: an aphid queen, mother of the gnat swarms, facing left; wing loop. |
+|18 | `boss2.png`     | 48x48  | 5      | 6           | Mandelbug (stage 2 boss): a top-down bug whose body is the Mandelbrot set facing left. 0-3 idle (halo colour cycle, legs), 4 alt = glowing / splitting. |
+|19 | `boss3.png`     | 48x48  | 5      | 6           | Schrodinbug (stage 3 boss): a cat-eared bug peeking out of a cardboard box with a psi on it. 0-3 idle, 4 alt = collapse (popped out, eyes wide). |
+|20 | `boss4.png`     | 48x48  | 5      | 6           | Bohrbug (stage 4 boss): an armoured rhinoceros-beetle tank with an atom on its hull. 0-3 idle (treads roll, electrons orbit), 4 alt = charge. |
+|21 | `shots.png`     | 8x8    | 4      | 4           | M7 pellet bullet: 0-1 pellet pulse (4x4 dot at x 2..5, y 2..5, pink rim, white core), 2-3 Coral variant (spare). |
+|22 | `orb.png`       | 16x16  | 2      | 4           | M7 orb bullet: 12x12 at x 2..13, hot-pink ring, Coral body, white core; 2-frame pulse. |
 
 
 **Crates (`pickups.png`, M6).** Bugs drop crates that grant a weapon, a
@@ -141,6 +148,97 @@ Square, solid and boxy on purpose: enemy bullets are small round discs
 and 8x4 needles, bugs are irregular silhouettes, so a crate reads as
 neither. The six hues share their lit and shade tones to stay inside 15
 colours. The cart collides crates against the whole 32x24 ship cell.
+
+**M7 sheets (2026-10-04, PLAN.md "M7 Bullet hell for real").** Drawn by
+`tools/prepare_assets.py` like the rest; review image
+`docs/m7_art_review.png` (`--review`). Shared rules: enemies face left
+except the flea; white, cream and Coral never fill a large area of a bug
+or boss, so enemy bullets stay the brightest warm things on screen; every
+cell keeps the 1 px empty border and its drawing at the same place in
+every frame.
+
+- **Enemy bullets are warm, the player's are not their colour.** Pellet
+  (`shots.png`): a 4x4 dot at cell x 2..5, y 2..5 (draw at bullet centre
+  - (4, 4)), 2x2 white core, light pink rim (frame 0) / hot-pink rim with
+  dark corners (frame 1). Pink rather than Coral because the FUZZER zap in
+  `bolt.png` has been Coral since M1; shape (dot vs 12x4 bar) and the pink
+  keep them apart. Cells 2-3: the same dot with a Coral rim (frame 1 has
+  red corners), spare for split children or revenge bullets. Orb
+  (`orb.png`): 12x12 at x 2..13 (draw at centre - (8, 8)), dark outline,
+  hot-pink ring, Coral body, white core with a pink rim and a glint; frame
+  1 grows the core. Both read on bg_far, bg_near and over every boss.
+- **Centipede** (`bugs2` 0-3), top-down. A segment is a tall teal plate
+  (x 4..11, y 2..13 with outline, centre (7.5, 7.5)) cut into three
+  stacked "frames" by two dark seams (the call stack), one tan leg pair
+  above and below (x 4..11, rows 1 and 14) that swings between the two
+  frames. The head is rounder and darker (centre (8.5, 7.5)), yellow eyes,
+  tan fangs at x 2..3 and antennae reaching forward to x 1..2. Chain: draw
+  the tail segment first and the head last, segment cells 8 to 9 px apart
+  along the path (the review mock uses 9 with a sine weave); alternate
+  cells 2 and 3 along the chain so the legs ripple.
+- **Flea** (`bugs2` 4-5), side view facing RIGHT (it jumps in from behind
+  the ship): a hunched brown oval with banded segments, a tiny head low at
+  the front (red eye at x 13), the huge tan hind leg folded in a Z under
+  the body (4, crouched/landed) or kicked out behind and down (5,
+  airborne; the body is 1 px higher). Pick the cell by state, not by a
+  loop.
+- **Ladybug** (`bugs2` 6-7), top-down facing left: red shell, dark seam,
+  four 2x2 black spots, black head with two cream eye dots; 7 has the wing
+  cases parted and grey wings out (flying). Alternate 6/7 every few ticks
+  while it flies its loops.
+- **Mite** (`bugs2` 8-9), side view facing left, a ground turret: feet on
+  cell row 14, so draw it at ground row - 15 (the near layer's top edge is
+  at screen y 111..114 depending on the segment). Steel dome (x 3..14,
+  y 5..11) with a yellow/dark hazard band, cream bytes spilling over the
+  top, red eye at (5, 10). The gun barrel points up-left; its yellow
+  muzzle is at cell (2..3, 3..4): emit from (3, 4). Two walk frames.
+- **Zombie** (`bugs2` 10-11), top-down facing left: a sick-green moth gone
+  undead, four ragged wing lobes with bites out of the trailing edges, a
+  dark body, red eyes, two forelegs stretched straight ahead. The husk is
+  cell 10 drawn with `skip_odd`; the wings are deliberately large flat
+  pale fills (rows 1..14) so the shape survives the 50 % checkerboard (see
+  the review image). The forelegs are 1 px and vanish in the husk; that is
+  fine, the husk should read as a dead shell.
+- **Thundering Herd** (`herd.png`), the midboss: an aphid queen facing
+  left, x 2..30, y 1..30. Fat green pear abdomen (about x 9..30, y 9..26)
+  with a row of light-green eggs along the flank (about x 12..28, y 20..23),
+  two cornicle tubes with yellow tips on her back, a small head with a red
+  eye and a yellow crown at x 2..10, long tan antennae swept back, grey
+  wings up (0) and back (1). Suggested emitters: flowers from the cell
+  centre (16, 16); gnat strings released from the egg row (about (18, 22)).
+- **Mandelbug** (`boss2.png`): top-down, the body is the Mandelbrot set
+  (sampled at 0.052 per px, the real axis on row 24): the main cardioid is
+  the body (x 25..45, y 12..36), the period-2 bulb the head (x 15..24,
+  y 20..28, yellow eyes at x 13..14), the filament on row 24 a long
+  proboscis from x 1. Every smaller bulb is its own outlined segment and
+  each component carries its own nested copies (multiplier level sets), so
+  the bug is made of smaller copies of itself. The body's bright core (the
+  cardioid's centre, c = 0) is at (39, 24): a good emitter, as is the cell
+  centre (24, 24) at the neck. Two tan leg pairs reach rows 2..46. Cells
+  0-3 cycle the 1 px escape-time halo (fractal colour cycling) and step
+  the legs. Cell 4: the bulbs pushed 2 px off the body (splitting), the
+  body lit, a wider yellow halo. Collision: the body, about x 14..45,
+  y 12..36.
+- **Schrodinbug** (`boss3.png`): a grey cat-eared bug in an open cardboard
+  box, 3/4 view. Box front x 8..35, y 27..44 with a purple psi; side face
+  x 36..42; flaps out to x 2 and x 41. Head centred (22, 20) (bobs 1 px),
+  yellow slit eyes at x 17 and 26 looking left, purple ball-tipped
+  antennae up to row 1, two claws over the rim, a striped tail curling up
+  at x 35..46. The cell centre (24, 24) is the chin over the rim, a fine
+  emitter. Big flat fills on purpose: both bodies are drawn dithered while
+  superposed. Cell 4 (collapse): flaps blown flat, the bug popped 7 px up
+  out of the box with its torso showing, eyes wide and round, mouth open.
+  Collision: about x 8..42, y 10..44.
+- **Bohrbug** (`boss4.png`): side view facing left, an armoured
+  rhinoceros-beetle tank. Riveted gunmetal hull x 9..45, y 13..35 with two
+  plate seams; tank treads x 5..43, y 35..45 (four road wheels, teeth that
+  roll one step per idle cell, so 0-3 loop exactly); a visored head x 4..15
+  with a yellow eye slit on row 28; a horn sweeping forward and up to its
+  tip at about (5, 5) (the cannon muzzle). On the hull an atom: nucleus at
+  (28, 23) (the natural emitter), three 1 px teal orbits, electrons a
+  quarter turn further each cell. Cell 4 (charge): horn and seams yellow,
+  visor bright, electrons flung onto wider orbits. No white anywhere.
+  Collision: about x 6..45, y 13..45.
 
 Optional, only after 1 to 13 are approved:
 
