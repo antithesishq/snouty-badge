@@ -20,8 +20,18 @@
 //!   tap's window drops the held-back tap and starts fast forward at
 //!   once; it lasts while Select stays held, never runs the menu timer,
 //!   and its release delivers nothing. Start during the window or during
-//!   fast forward cancels everything (the OS chord). The d-pad and the
-//!   other buttons reach the game as usual.
+//!   fast forward cancels everything (the OS chord). Where the scrubber
+//!   exists (`chord_rewind`: the XIP cart and the simulator) Left is
+//!   reserved during fast forward; the d-pad's other directions and the
+//!   buttons reach the game as usual.
+//! - Chorded rewind (`chord_rewind` builds): a fresh Left press during fast
+//!   forward turns the rest of that Select hold into rewind
+//!   (`GameInput.rewind`): the game is not stepped, Left/Right step time
+//!   with the menu's auto-repeat (`Repeat`, `GameInput.scrub`, the first
+//!   step back at once), nothing reaches the game, and Start (the OS
+//!   chord) only pauses the stepping. Letting go of Select resumes from the
+//!   scrubbed position with every held button suppressed, as the menu's
+//!   resume does.
 //!
 //! Buttons held across a state change are suppressed until released
 //! (`suppress_held`). The joystick click belongs to the OS and is never
@@ -43,6 +53,9 @@ pub const tap_frames = 4;
 const frames_per_update = core.tunables.render_every;
 /// Updates a tap's button is sent for (`tap_frames`, rounded up).
 pub const tap_updates = (tap_frames + frames_per_update - 1) / frames_per_update;
+/// The chorded rewind exists where the scrubber does (`core.undo.enabled`:
+/// not in the RAM cart, PLAN.md M5); without it Left is not reserved.
+pub const chord_rewind = core.undo.enabled;
 
 /// The six assignments of Genesis A, B and C to badge B, badge A and the
 /// Select tap, in the menu's cycling order. The names read as the menu
@@ -159,6 +172,54 @@ pub const Edge = struct {
 const all_buttons: u16 = mask(.start) | mask(.select) | mask(.a) | mask(.b) |
     mask(.up) | mask(.down) | mask(.left) | mask(.right);
 
+/// Scrub auto-repeat (SPEC.md 5): a Left or Right press steps at once,
+/// then every `repeat_updates` while held (4 steps a second at 30 Hz).
+/// Shared by the menu's scrubber and the chorded rewind.
+pub const Repeat = struct {
+    pub const repeat_updates = 8;
+
+    /// Direction of the held key, 0 when none.
+    dir: i2 = 0,
+    left: u8 = 0,
+
+    /// This update's step: -1 back, 1 forward, 0 none.
+    pub fn step(r: *Repeat, e: Edge) i2 {
+        const d: i2 = if (e.pressed(.left)) -1 else if (e.pressed(.right)) 1 else 0;
+        if (d != 0) {
+            r.dir = d;
+            r.left = repeat_updates;
+            return d;
+        }
+        if (r.dir == 0) return 0;
+        const still = if (r.dir < 0) e.held(.left) else e.held(.right);
+        if (!still) {
+            r.dir = 0;
+            return 0;
+        }
+        r.left -= 1;
+        if (r.left != 0) return 0;
+        r.left = repeat_updates;
+        return r.dir;
+    }
+
+    pub fn stop(r: *Repeat) void {
+        r.dir = 0;
+    }
+};
+
+/// The chorded rewind's phase in a running update (app.zig).
+pub const Rewind = enum {
+    /// Play (1x or fast forward).
+    off,
+    /// Rewind starts this update: freeze the picture, then as `on`.
+    enter,
+    /// The game is frozen; step time by `GameInput.scrub`.
+    on,
+    /// Select was let go: resume from the scrubbed position, stepping this
+    /// update as usual (held buttons are already suppressed).
+    exit,
+};
+
 /// Result of one running update's input.
 pub const GameInput = struct {
     /// Pad word for both `Md.step_frame` calls of the update.
@@ -168,6 +229,10 @@ pub const GameInput = struct {
     /// Fast forward (Select double tapped and held): app.zig steps up to
     /// `tuning.ff_max_frames` Genesis frames this update, all with `pad`.
     fast: bool = false,
+    /// Chorded rewind (Left during fast forward).
+    rewind: Rewind = .off,
+    /// While `rewind` is `enter` or `on`: step time back (-1) or forward (1).
+    scrub: i2 = 0,
 };
 
 /// The Select tap/hold/double-tap state machine plus the suppress mask.
@@ -181,6 +246,9 @@ pub const State = struct {
     tap_window: u8 = 0,
     /// Fast forward is on (the second press of a double tap, still held).
     fast: bool = false,
+    /// The fast-forward hold turned into rewind (Left), Select still held.
+    rewinding: bool = false,
+    repeat: Repeat = .{},
     /// Updates A is still held for after a tap.
     tap_left: u8 = 0,
     /// Buttons ignored until released (Controls bits).
@@ -193,7 +261,7 @@ pub const State = struct {
     }
 
     /// Ignore every held button until released and forget a Select hold,
-    /// a held-back tap and fast forward.
+    /// a held-back tap, fast forward and the chorded rewind.
     pub fn suppress_held(s: *State) void {
         s.suppress = s.edge.cur;
         s.holding = false;
@@ -201,6 +269,14 @@ pub const State = struct {
         s.tap_window = 0;
         s.fast = false;
         s.tap_left = 0;
+        s.rewinding = false;
+        s.repeat.stop();
+    }
+
+    /// This update's edge with the suppressed (held-over) buttons masked
+    /// out, so they never read as pressed.
+    pub fn live_edge(s: *const State) Edge {
+        return .{ .prev = s.edge.prev, .cur = s.edge.cur & ~s.suppress };
     }
 
     /// Input for an update in which the game runs.
@@ -210,6 +286,18 @@ pub const State = struct {
         const fresh_select = live.select and e.pressed(.select);
         var pad = pad_from_controls(live);
         var open_menu = false;
+
+        if (chord_rewind) {
+            if (s.rewinding) return s.rewind_update();
+            if (s.fast and live.left and e.pressed(.left) and e.held(.select) and !e.held(.start)) {
+                s.fast = false;
+                s.rewinding = true;
+                s.repeat.stop();
+                var g = s.rewind_update();
+                g.rewind = .enter;
+                return g;
+            }
+        }
 
         if (s.fast) {
             // Start+Select is the OS chord; letting go delivers nothing.
@@ -252,7 +340,23 @@ pub const State = struct {
             pad |= layout.tap_bit();
             s.tap_left -= 1;
         }
+        if (chord_rewind and s.fast) pad &= ~Pad.left; // Reserved: Left starts rewind.
         return .{ .pad = pad, .open_menu = open_menu, .fast = s.fast };
+    }
+
+    /// An update of the chorded rewind: no game input, a scrub step from
+    /// Left/Right with auto-repeat, held still while Start is down (the OS
+    /// chord); Select let go ends it.
+    fn rewind_update(s: *State) GameInput {
+        const e = s.edge;
+        if (!e.held(.select)) {
+            // As the menu's resume: everything held waits for a release.
+            s.suppress_held();
+            return .{ .pad = pad_from_controls(@bitCast(e.cur & ~s.suppress)), .open_menu = false, .rewind = .exit };
+        }
+        var scrub: i2 = 0;
+        if (e.held(.start)) s.repeat.stop() else scrub = s.repeat.step(s.live_edge());
+        return .{ .pad = 0, .open_menu = false, .rewind = .on, .scrub = scrub };
     }
 };
 

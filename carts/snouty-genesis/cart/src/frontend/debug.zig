@@ -88,13 +88,6 @@ fn percent(scale: u16) u32 {
     return (@as(u32, scale) * 100 + tunables.scale_one / 2) / tunables.scale_one;
 }
 
-/// Text lines `draw` puts at the top of the screen (0 when it draws
-/// nothing): the fast-forward indicator (app.zig) sits under them.
-pub fn lines() i32 {
-    if ((!enabled and !alarm) or step_count == 0) return 0;
-    return if (audio.streamed and audio.enabled) 4 else 3;
-}
-
 pub fn draw() void {
     if (!enabled and !alarm) return;
     const n = @min(step_count, window);

@@ -188,3 +188,127 @@ test "input: suppress_held forgets the window, the tap and fast forward" {
         try expectEqual(@as(u16, 0), g.pad);
     }
 }
+
+// ---- Chorded rewind (Left during fast forward) ----
+
+/// A double tap whose second press is held: fast forward on, `held` down
+/// with Select from the second press on.
+fn fast_with(s: *input.State, held: []const Btn) !void {
+    try tap(s, 2);
+    var buf: [8]Btn = undefined;
+    buf[0] = .select;
+    @memcpy(buf[1..][0..held.len], held);
+    try expect(update(s, buf[0 .. held.len + 1]).fast);
+}
+
+test "input: Left during fast forward enters rewind and steps back at once" {
+    var s: input.State = .{};
+    try fast_with(&s, &.{});
+    try expect(update(&s, &.{.select}).fast);
+    const g = update(&s, &.{ .select, .left });
+    try expectEqual(input.Rewind.enter, g.rewind);
+    try expectEqual(@as(i2, -1), g.scrub);
+    try expect(!g.fast and !g.open_menu);
+    try expectEqual(@as(u16, 0), g.pad);
+    // Held far past the menu threshold: rewind, never the menu.
+    for (0..3 * input.hold_updates) |_| {
+        const h = update(&s, &.{.select});
+        try expectEqual(input.Rewind.on, h.rewind);
+        try expect(!h.open_menu and !h.fast);
+    }
+}
+
+test "input: rewind steps with the menu's auto-repeat, Right forward" {
+    var s: input.State = .{};
+    try fast_with(&s, &.{});
+    try expectEqual(@as(i2, -1), update(&s, &.{ .select, .left }).scrub);
+    // Left held: the next step after `repeat_updates`, then every as many.
+    var steps: u32 = 0;
+    for (0..3 * input.Repeat.repeat_updates) |i| {
+        const g = update(&s, &.{ .select, .left });
+        try expectEqual(input.Rewind.on, g.rewind);
+        if (g.scrub != 0) {
+            try expectEqual(@as(i2, -1), g.scrub);
+            try expectEqual(@as(usize, 0), (i + 1) % input.Repeat.repeat_updates);
+            steps += 1;
+        }
+    }
+    try expectEqual(@as(u32, 3), steps);
+    _ = update(&s, &.{.select});
+    try expectEqual(@as(i2, 1), update(&s, &.{ .select, .right }).scrub);
+    try expectEqual(@as(i2, 0), update(&s, &.{ .select, .right }).scrub);
+}
+
+test "input: Left never reaches the game in fast forward or rewind; Right does in fast forward" {
+    var s: input.State = .{};
+    try fast_with(&s, &.{});
+    const g = update(&s, &.{ .select, .right, .b });
+    try expect(g.fast);
+    try expectEqual(Pad.right | Pad.b, g.pad);
+    // In rewind nothing reaches the game.
+    try expectEqual(input.Rewind.enter, update(&s, &.{ .select, .left }).rewind);
+    for (0..20) |_| {
+        const h = update(&s, &.{ .select, .left, .right, .a, .b, .up });
+        try expectEqual(@as(u16, 0), h.pad);
+    }
+}
+
+test "input: a Left held when fast forward starts is reserved, not rewind" {
+    var s: input.State = .{};
+    _ = update(&s, &.{.left});
+    try fast_with(&s, &.{.left});
+    for (0..20) |_| {
+        const g = update(&s, &.{ .select, .left });
+        try expect(g.fast);
+        try expectEqual(input.Rewind.off, g.rewind);
+        try expectEqual(@as(u16, 0), g.pad);
+    }
+    // Let go and press again: that fresh press enters rewind.
+    _ = update(&s, &.{.select});
+    try expectEqual(input.Rewind.enter, update(&s, &.{ .select, .left }).rewind);
+}
+
+test "input: letting go of Select resumes with held buttons suppressed" {
+    var s: input.State = .{};
+    try fast_with(&s, &.{});
+    _ = update(&s, &.{ .select, .left });
+    _ = update(&s, &.{ .select, .left, .right });
+    const g = update(&s, &.{ .left, .right });
+    try expectEqual(input.Rewind.exit, g.rewind);
+    try expect(!g.fast and !g.open_menu);
+    try expectEqual(@as(u16, 0), g.pad);
+    // Play at 1x; Left and Right wait for their release.
+    for (0..10) |_| {
+        const h = update(&s, &.{ .left, .right });
+        try expectEqual(input.Rewind.off, h.rewind);
+        try expect(!h.fast);
+        try expectEqual(@as(u16, 0), h.pad);
+    }
+    _ = update(&s, &.{});
+    try expectEqual(Pad.left, update(&s, &.{.left}).pad);
+    // No window from that release: a Select press is a plain one.
+    try expect(!update(&s, &.{.select}).fast);
+    try expect(s.holding);
+}
+
+test "input: Start in rewind keeps the position, nothing reaches the game" {
+    var s: input.State = .{};
+    try fast_with(&s, &.{});
+    _ = update(&s, &.{ .select, .left });
+    for (0..3 * input.Repeat.repeat_updates) |_| {
+        const g = update(&s, &.{ .select, .left, .start });
+        try expectEqual(input.Rewind.on, g.rewind);
+        try expectEqual(@as(i2, 0), g.scrub);
+        try expectEqual(@as(u16, 0), g.pad);
+    }
+    // Start up again: still rewinding, a fresh Left steps.
+    try expectEqual(@as(i2, 0), update(&s, &.{ .select, .left }).scrub);
+    _ = update(&s, &.{.select});
+    try expectEqual(@as(i2, -1), update(&s, &.{ .select, .left }).scrub);
+    // suppress_held ends it.
+    s.suppress_held();
+    try expect(!s.rewinding);
+    const g = update(&s, &.{ .select, .left });
+    try expectEqual(input.Rewind.off, g.rewind);
+    try expectEqual(@as(u16, 0), g.pad);
+}

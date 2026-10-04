@@ -181,6 +181,31 @@ fn run_update(t1: u64) void {
         return;
     }
 
+    // Chorded rewind (Left during fast forward): the game stays frozen
+    // under the menu's scrub bar and Left/Right step time as in the menu;
+    // letting go of Select resumes as the menu does (input.zig suppressed
+    // the held buttons) and steps this update.
+    switch (in.rewind) {
+        .enter, .on => {
+            if (in.rewind == .enter) {
+                play_hint.stop();
+                menu.freeze_frame();
+            }
+            rewinding = true;
+            frames_stepped = 0;
+            audio.silence();
+            if (in.scrub != 0) _ = rewind.step(&md, in.scrub);
+            menu.draw_scrub_bar(true);
+            return;
+        },
+        .exit => {
+            rewinding = false;
+            menu.close();
+            video.apply(&md);
+        },
+        .off => {},
+    }
+
     // After a scrub the console is parked on a record boundary: playing on
     // drops the records ahead.
     rewind.resume_if_parked(&md);
@@ -221,26 +246,36 @@ fn run_update(t1: u64) void {
     if (debug.enabled) romsrc.draw_report();
     debug.z80_state = debug.z80_label(&md);
     debug.draw();
-    if (in.fast) draw_fast(n);
     // A press held over from the splash, picker or help is suppressed, not fresh.
     if (play_hint.tick(live_edge().any_pressed())) {
         const s = if (play_hint.left >= play_hint_updates) hint.hold_select else menu.fast_hint;
         hint.draw_strip(cart, text.draw, s, cart.screen_height - hint.strip_h, menu.title_color, menu.band_color);
     }
+    if (in.fast) draw_fast(n);
 }
 
+/// The chorded rewind is showing (the `debug_chord_rewind` export).
+pub var rewinding: bool = false;
+
 /// `>>4x` (Genesis frames this update over the 1x pair; `>>1.5x` for an odd
-/// count) in the top right corner, under the debug overlay's lines while
-/// that shows. The game redraws the whole screen every update
-/// (`.no_copy_full_frame`), so it is gone the update fast forward stops.
+/// count) in the bottom right corner, over the hint strip and the report
+/// line, inside the menu's scrub bar rectangle: a chorded rewind freezes
+/// the last fast-forward frame and its bar then covers the indicator. The
+/// game redraws the whole screen every update (`.no_copy_full_frame`), so
+/// it is gone the update fast forward stops.
 fn draw_fast(n: u32) void {
     var buf: [6]u8 = undefined;
     var i = debug.put(&buf, ">>");
     i += debug.put_num(buf[i..], @min(n / frames_per_update, 9));
     if (n % frames_per_update != 0) i += debug.put(buf[i..], ".5");
     i += debug.put(buf[i..], "x");
-    const x: i32 = @intCast(cart.screen_width - 8 * i);
-    text.draw(buf[0..i], x, 8 * debug.lines(), menu.title_color, menu.band_color);
+    const x: i32 = @intCast(menu.bar_x + menu.bar_w - 1 - 8 * i);
+    text.draw(buf[0..i], x, menu.bar_top + 1, menu.title_color, menu.band_color);
+}
+
+comptime {
+    // The indicator (6 glyphs at most) lies inside the scrub bar's frame.
+    if (menu.bar_height < 10 or menu.bar_top + 1 + 8 > cart.screen_height or menu.bar_w < 2 + 8 * 6) @compileError("indicator outside the scrub bar");
 }
 
 /// One menu update over the frozen frame; the core is not stepped.
