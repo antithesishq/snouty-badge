@@ -53,15 +53,16 @@
 //! the channels' underflows Mikey events (`Mikey.aud_event`), so timer 1
 //! counts at the right tick (rare: no known game links it).
 //!
-//! Speed: a catch-up runs the underflows in time order, but a channel
-//! whose borrow nobody counts runs alone up to the next other underflow
-//! (`run_channel`), and squares and constants (normal mode, tap 0 only or
-//! no taps: Blue Lightning parks its music channels as 1 MHz squares, 16,667
-//! underflows a frame each) go in closed form together (`joint`), with
-//! bin values bit-identical to one underflow at a time (a test checks).
-//! Settled silence fills bins with 128 directly.
+//! Speed (`run`): the underflows go in time order; a channel whose borrow
+//! nobody counts takes its underflow in line (what can change it is
+//! computed once per run), fast squares and constants (normal mode, tap 0
+//! only or no taps, period up to `joint_period`: Blue Lightning parks its
+//! music channels as 1 MHz squares, 16,667 underflows a frame each) go in
+//! closed form together (`joint`), with bin values bit-identical to one
+//! underflow at a time (a test checks), and settled silence fills bins
+//! with 128 directly.
 //!
-//! Mix (`mono_level`): per channel the left and right weights in 1/16
+//! Mix (`weight`): per channel the left and right weights in 1/16
 //! (16 = full, 0 = MSTEREO off, the ATTEN nibble when MPAN selects it),
 //! averaged to mono: contribution = OUTPUT * (left + right) in 1/32. With
 //! the reset values (all 0: every channel in both ears, no attenuation)
@@ -456,46 +457,74 @@ pub inline fn sync_clocks(m: *Mikey) void {
 }
 
 /// The underflows up to tick t, in time order (same-tick ones in the
-/// order timer 7's, then channel 0 to 3). Squares and constants whose
-/// borrow nobody counts go in closed form together (`joint`) up to the
-/// next other underflow; another channel whose borrow nobody counts runs
-/// on its own up to the next other underflow (`run_channel`); anything
-/// else goes one tick at a time.
+/// order timer 7's, then channel 0 to 3). A channel whose borrow nobody
+/// counts (`alone`) takes its underflow in line; fast squares and
+/// constants go in closed form together (`joint`) up to the next other
+/// underflow; anything else (links, one-shots) goes through the general
+/// path one tick at a time.
 noinline fn run(m: *Mikey, out: Out, t: Tick) void {
     const a = &m.audio;
-    while (a.next <= t) {
-        const x = a.next;
-        const t7 = t7_next(m, a.time);
-        var set: u4 = 0;
-        var rest = t7;
-        for (&a.ch, 0..) |*ch, k| {
-            if (square(m, @intCast(k))) set |= @as(u4, 1) << @intCast(k) else rest = @min(rest, ch.timer.expire);
-        }
-        if (set != 0 and rest > x) {
-            const end = @min(@min(t, rest - 1), a.r.win_end -| 1);
-            if (end >= x and underflows(a, set, end) >= toggle_min) {
-                joint(m, out, set, end);
-                relink(m);
-                continue;
-            }
-        }
-        var c: u8 = 4;
-        var other = t7;
-        for (&a.ch, 0..) |*ch, k| {
-            const e = ch.timer.expire;
-            if (c == 4 and e == x and t7 != x) c = @intCast(k) else other = @min(other, e);
-        }
-        if (c < 4 and other > x and alone(m, @intCast(c))) {
-            a.time = run_channel(m, out, @intCast(c), @min(t, other - 1));
-        } else {
-            if (t7 == x) borrow_in(m, out, 0, x);
-            for (0..4) |k| {
-                if (a.ch[k].timer.expire == x) expire_channel(m, out, @intCast(k), x);
-            }
-            a.time = x;
-        }
-        relink(m);
+    // Nothing below changes inside a run (only register writes do).
+    var solo: [4]bool = undefined;
+    var w: [4]i32 = undefined;
+    var per: [4]Tick = undefined;
+    var fast: u4 = 0;
+    for (&a.ch, 0..) |*ch, k| {
+        const c: u2 = @intCast(k);
+        solo[k] = alone(m, c);
+        w[k] = weight(a, c);
+        per[k] = period(&ch.timer);
+        if (solo[k] and ch.taps <= 1 and ch.timer.ctla & Control.integrate == 0 and per[k] <= joint_period) fast |= @as(u4, 1) << c;
     }
+    var t7n = t7_next(m, a.time);
+    while (true) {
+        var x = t7n;
+        var c: u8 = 4;
+        for (&a.ch, 0..) |*ch, k| {
+            if (ch.timer.expire < x) {
+                x = ch.timer.expire;
+                c = @intCast(k);
+            }
+        }
+        if (x > t) break;
+        if (c < 4 and fast & (@as(u4, 1) << @intCast(c)) != 0) {
+            var live: u4 = 0;
+            var rest = t7n;
+            for (&a.ch, 0..) |*ch, k| {
+                const bit = @as(u4, 1) << @intCast(k);
+                if (fast & bit != 0 and ch.timer.expire != never) live |= bit else rest = @min(rest, ch.timer.expire);
+            }
+            if (rest > x) {
+                const end = @min(@min(t, rest - 1), a.r.win_end -| 1);
+                if (end >= x and underflows(a, live, end) >= toggle_min) {
+                    joint(m, out, live, end);
+                    continue;
+                }
+            }
+        }
+        if (c < 4 and solo[c]) {
+            const ch = &a.ch[c];
+            const tm = &ch.timer;
+            ch.clock_poly();
+            const v = @as(i32, @as(i8, @bitCast(ch.output))) * w[c];
+            if (v != ch.contrib) {
+                level_change(&a.r, out, x, v - ch.contrib);
+                ch.contrib = v;
+            }
+            tm.done = tm.ctla & Ctla.reset_done == 0;
+            tm.value = tm.backup;
+            tm.expire = x + per[c];
+            a.time = x;
+            continue;
+        }
+        if (t7n == x) borrow_in(m, out, 0, x);
+        for (0..4) |k| {
+            if (a.ch[k].timer.expire == x) expire_channel(m, out, @intCast(k), x);
+        }
+        a.time = x;
+        t7n = t7_next(m, a.time);
+    }
+    relink(m);
 }
 
 /// Channel c reloads and its borrow out clocks nothing (no linked
@@ -507,33 +536,10 @@ fn alone(m: *const Mikey, c: u2) bool {
     return !(n.linked() and n.running());
 }
 
-/// The underflows of channel c (`alone`) from its `expire` up to tick
-/// `end`, with nothing else happening in between: what `expire_channel`
-/// does for each, in one loop. Returns the tick of the last one.
-fn run_channel(m: *Mikey, out: Out, c: u2, end: Tick) Tick {
-    const a = &m.audio;
-    const ch = &a.ch[c];
-    const t = &ch.timer;
-    const p = (@as(Tick, t.backup) + 1) << t.shift();
-    const w = weight(a, c);
-    var x = t.expire;
-    var last = x;
-    while (true) {
-        ch.clock_poly();
-        const v = @as(i32, @as(i8, @bitCast(ch.output))) * w;
-        if (v != ch.contrib) {
-            level_change(&a.r, out, x, v - ch.contrib);
-            ch.contrib = v;
-        }
-        last = x;
-        x += p;
-        if (x > end) break;
-    }
-    t.done = t.ctla & Ctla.reset_done == 0;
-    t.value = t.backup;
-    t.expire = x;
-    return last;
-}
+/// Squares and constants with a period up to this many ticks (four or
+/// more underflows a bin) go in closed form (`joint`): slower ones change
+/// less often than a closed form costs per bin.
+pub const joint_period: Tick = 90;
 
 /// Underflows (of all the `joint` channels together) from which the
 /// closed form takes over. A 1 MHz square (backup 0 at 1 us, as Blue
@@ -541,13 +547,6 @@ fn run_channel(m: *Mikey, out: Out, c: u2, end: Tick) Tick {
 /// a frame. (A variable only so the tests can switch the closed form off
 /// and compare.)
 pub var toggle_min: u32 = 16;
-
-/// Channel c is free-running, `alone`, in normal mode with tap 0 only (a
-/// square: OUTPUT alternates +/-VOLUME) or no taps (a constant).
-fn square(m: *const Mikey, c: u2) bool {
-    const ch = &m.audio.ch[c];
-    return ch.timer.expire != never and ch.taps <= 1 and ch.timer.ctla & Control.integrate == 0 and alone(m, c);
-}
 
 fn period(t: *const Timer) Tick {
     return (@as(Tick, t.backup) + 1) << t.shift();
