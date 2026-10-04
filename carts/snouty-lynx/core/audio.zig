@@ -42,9 +42,9 @@
 //!
 //! Laziness: nothing runs per underflow on Mikey's event list. The
 //! channels are caught up (`catch_up`) when the CPU reads or writes any
-//! audio register, before any timer register write (timer 7 may feed
-//! audio 0; timer 1 may become linked), before a timer 7 read, at a
-//! rebase, when timer 7 borrows into a linked audio 0 through Mikey's
+//! audio register and at a rebase; their clocks only (`sync_clocks`)
+//! before any timer register write (timer 7 may feed audio 0, timer 1
+//! may become linked) and before a timer 7 read; when timer 7 borrows into a linked audio 0 through Mikey's
 //! own underflow path (timer 7 an interrupt event, linked, or a software
 //! borrow), and at the end of `step_frame`. A free-running quiet timer 7
 //! feeding audio 0 is followed in closed form (its underflows are an
@@ -56,10 +56,9 @@
 //! Speed (`run`): the underflows go in time order; while a fast channel
 //! (two or more underflows a bin) runs, the channels whose borrow nobody
 //! counts go together bin by bin up to the next other underflow (`bulk`):
-//! squares and constants
-//! (normal mode, tap 0 only or no taps; Blue Lightning parks its music
-//! channels as 1 MHz squares, 16,667 underflows a frame each) in closed
-//! form, the others (its 1 MHz integrating noise) stepped in a tight loop,
+//! squares and constants (normal mode, tap 0 only or no taps; Blue
+//! Lightning parks its music channels as 1 MHz squares, 16,667 underflows
+//! a frame each) in closed form, the others (its 1 MHz integrating noise) stepped in a tight loop,
 //! with bin values bit-identical to one underflow at a time (a test
 //! checks); otherwise such a channel takes its underflow in line (what can
 //! change that is computed once per run). Settled silence fills bins with
@@ -75,11 +74,13 @@
 //! Bins: the summed level is a step function of the 16 MHz clock; each of
 //! the frame's 735 bins (edges at `frame_start + floor(i * n / 735)`) gets
 //! its exact time average (a box filter), rendered progressively in time
-//! order as the catch-ups go (`render_to`), the gain applied and clamped
-//! around 128. The level at a change past the frame's end (an instruction
+//! order as the catch-ups go (`render_to`), DC-blocked (`dc_shift`), the
+//! gain applied (`gain_eighths`) and clamped around 128. The level at a change past the frame's end (an instruction
 //! or a sprite run overshooting it) goes into a small log replayed at the
 //! next `begin_frame` (`log_len` entries; beyond that a change is merged
-//! into the last entry, a timing error of at most that overshoot).
+//! into the last entry, a timing error of at most that overshoot). A
+//! boot re-run mid-frame (`Lynx.reboot`) silences the channels at that
+//! tick and keeps the frame's renderer.
 //!
 //! Simplified (with reasons):
 //! - OTHER bits 2-0 (last clock, borrow in, borrow out) read 0, as the
