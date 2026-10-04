@@ -1344,7 +1344,8 @@ looks up the stage's boss):
 `waves.State` gains `stage: u8` (0..3). Flow per stage: `STAGE n` +
 name pop for 120 ticks at the start, waves table (~70 s, sorted by tick),
 an optional midboss entry in the table (the table clock pauses while the
-midboss is alive, so it cannot be skipped by waiting), `WARNING` 6 s, the
+midboss is alive, so it cannot be skipped by waiting), `WARNING` 6 s (3 s
+since the pacing pass, see Status), the
 boss, the clear (+500, fuel refill) or the escape, a 120-tick breather,
 next stage. After stage 4: stage 1 with `loop + 1`, popped as `LOOP 2`.
 `Entry` gains `formation: bool` (open a formation of `count` with drop)
@@ -2128,3 +2129,20 @@ only (no trap, no identity failure) for the re-pin track.
   `m6_retry_hc` re-pinned: the shield no longer survives the first ram, so
   the next hit rewinds (fuel 66 -> 0) and the one after is fatal. Gate:
   27 scripts green.
+- 2026-10-04: pacing pass (Adrian: "too much dead time between attack
+  waves ... there should be stuff on screen throughout the level and
+  occasional gaps"). The tables space waves on a fixed clock, so a ship
+  that clears a wave quickly waits for the next timestamp: the dodger
+  found the field empty 24 / 43 / 12 / 9 % of stages 1-4 (seed 1). Now
+  `waves.zig` runs the table clock `catchup` (4) ticks a tick while fewer
+  than `field_floor` (3) enemies are on the field or due to enter (after
+  the STAGE pop, never past the WARNING), and the WARNING lasts 3 s, not
+  6. Dodger seed 1: empty 10 / 10 / 4 / 4 %, the only gaps over 1.5 s
+  the STAGE pop and the WARNING. Hits per stage over 8 seeds 5.2 / 7.9 /
+  9.8 / 18.8 / 21.8 -> 7.5 / 7.1 / 10.5 / 18.4 / 20.0 (stage 1 now above
+  its 3-6 target); a fast player's stages are shorter (dodger waves
+  79 -> 53 s in stage 1). Everything on the stage clock (fire ramp,
+  rank's stage seconds) moves with it. All 16 timeline scripts re-pinned
+  (headers say what moved; m1_play's sweep now ends in game over at
+  1269, `docs/RUNNING.md` updated). Gate: 27 scripts green,
+  `debug_history_check` never 1.

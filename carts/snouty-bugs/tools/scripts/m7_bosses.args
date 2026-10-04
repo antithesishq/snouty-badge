@@ -1,16 +1,16 @@
 # m7_bosses (track B2, M7 bosses): the identity check through all four bosses, each in its
 # busiest phase, with splits, turns and re-aims in flight and a hold-B rewind in each fight.
 # Endless probe mode from 31. Input: A at 30, then from 60 the M2 sweep holding A (up 40 / hold
-# 20 / down 40 / hold 20); B held 800..819, 2750..2769, 4600..4629 and 6300..6329. The bosses
+# 20 / down 40 / hold 20); B held 680..699, 2630..2649, 4600..4629 and 6300..6329. The bosses
 # are forced with the test hook debug_boss (id | start phase << 4, not World state; set only
 # while no boss is alive) and reached with debug_warp; debug_next_stage clears each one away:
 #   32 Heisenbug from its final phase (P3: teleports, pellet rings, sniper lines); it dies
-#      ~1830 (stage_clears 1).
-#   2001 Mandelbug from P2 (orbs whose splits split again); P2 times out ~3670 (no crate),
+#      ~1470 (stage_clears 1 at 1531).
+#   2001 Mandelbug from P2 (orbs whose splits split again); P2 times out ~3507 (no crate),
 #      P3 (aimed walls, split rings).
 #   3901 Schrodinbug from P3 (two bodies, mirrored stop-and-go rings and spirals).
 #   5501 Bohrbug from its final phase (tracking walls, curving spirals, stop-and-go rain); the
-#      sweep kills it ~7180 (stage_clears 2; the next table runs by 7900, phase 0).
+#      sweep kills it ~6870 (stage_clears 2 at 6930; the next table runs by 7900, phase 0).
 # debug_history_check (0 = the World rebuilt from keyframe + input log is identical) is pinned
 # every 10 updates, on every held frame and on the two after each release; 0 on every frame
 # 40..8399 when written. Written with waves.stage_count 1, where each debug_next_stage was a
@@ -18,11 +18,16 @@
 # (all four bosses in loop 0): the Heisenbug now dies ~1650 instead of ~1300 and the Bohrbug
 # is killed instead of escaping. The id, phase and identity pins did not change. Re-pinned by
 # the M7 tuning pass (boss HP 360 / 360 / 240 / 340, boss fire pace): the Heisenbug dies ~1830,
-# so its clear is pinned at 1900 instead of 1800.
+# so its clear is pinned at 1900 instead of 1800. Re-pinned for the catch-up clock: the
+# WARNING lasts 3 s (was 6), so each boss enters 180 updates after its warp instead of 361
+# and every fight runs 180 updates earlier. The holds at 800 and 2750 then fell in near-empty
+# stretches (0 and 28 bullets), so they moved 120 updates earlier, to 680 (20 bullets in
+# flight) and 2630 (63), keeping the sweep's phase; the per-frame identity pins moved with
+# them. The other two holds, the id / phase pins and the 1900 / 7900 pins did not change.
 --frames 8400
 --call-at "31 debug_probe" --call-at "32 debug_boss:32" --call-at "33 debug_warp" --call-at "2000 debug_next_stage" --call-at "2001 debug_boss:17" --call-at "2002 debug_warp" --call-at "3900 debug_next_stage" --call-at "3901 debug_boss:34" --call-at "3902 debug_warp" --call-at "5500 debug_next_stage" --call-at "5501 debug_boss:67" --call-at "5502 debug_warp"
 --dump-exports debug_state,debug_hits,debug_stage_clears,debug_stage_index,debug_boss_id
---at "400 debug_boss_id == 0" --at "400 debug_boss_phase == 2" --at "799 debug_bullets > 0" --at "1900 debug_stage_clears == 1" --at "1900 debug_boss_id == 255" --at "2400 debug_boss_id == 1" --at "2400 debug_boss_phase == 1" --at "2749 debug_bullets > 40" --at "3700 debug_boss_phase == 2" --at "4300 debug_boss_id == 2" --at "4300 debug_boss_phase == 2" --at "4599 debug_bullets > 30" --at "5900 debug_boss_id == 3" --at "5900 debug_boss_phase == 4" --at "6299 debug_bullets > 30" --at "7900 debug_phase == 0" --at "7900 debug_boss_id == 255" --at "7900 debug_stage_clears == 2"
+--at "400 debug_boss_id == 0" --at "400 debug_boss_phase == 2" --at "679 debug_bullets > 0" --at "1900 debug_stage_clears == 1" --at "1900 debug_boss_id == 255" --at "2400 debug_boss_id == 1" --at "2400 debug_boss_phase == 1" --at "2629 debug_bullets > 40" --at "3700 debug_boss_phase == 2" --at "4300 debug_boss_id == 2" --at "4300 debug_boss_phase == 2" --at "4599 debug_bullets > 30" --at "5900 debug_boss_id == 3" --at "5900 debug_boss_phase == 4" --at "6299 debug_bullets > 30" --at "7900 debug_phase == 0" --at "7900 debug_boss_id == 255" --at "7900 debug_stage_clears == 2"
 --at "40 debug_history_check == 0" --at "50 debug_history_check == 0" --at "60 debug_history_check == 0" --at "70 debug_history_check == 0" --at "80 debug_history_check == 0" --at "90 debug_history_check == 0"
 --at "100 debug_history_check == 0" --at "110 debug_history_check == 0" --at "120 debug_history_check == 0" --at "130 debug_history_check == 0" --at "140 debug_history_check == 0" --at "150 debug_history_check == 0"
 --at "160 debug_history_check == 0" --at "170 debug_history_check == 0" --at "180 debug_history_check == 0" --at "190 debug_history_check == 0" --at "200 debug_history_check == 0" --at "210 debug_history_check == 0"
@@ -162,13 +167,13 @@
 --at "8200 debug_history_check == 0" --at "8210 debug_history_check == 0" --at "8220 debug_history_check == 0" --at "8230 debug_history_check == 0" --at "8240 debug_history_check == 0" --at "8250 debug_history_check == 0"
 --at "8260 debug_history_check == 0" --at "8270 debug_history_check == 0" --at "8280 debug_history_check == 0" --at "8290 debug_history_check == 0" --at "8300 debug_history_check == 0" --at "8310 debug_history_check == 0"
 --at "8320 debug_history_check == 0" --at "8330 debug_history_check == 0" --at "8340 debug_history_check == 0" --at "8350 debug_history_check == 0" --at "8360 debug_history_check == 0" --at "8370 debug_history_check == 0"
---at "8380 debug_history_check == 0" --at "8390 debug_history_check == 0" --at "801 debug_history_check == 0" --at "802 debug_history_check == 0" --at "803 debug_history_check == 0" --at "804 debug_history_check == 0"
---at "805 debug_history_check == 0" --at "806 debug_history_check == 0" --at "807 debug_history_check == 0" --at "808 debug_history_check == 0" --at "809 debug_history_check == 0" --at "811 debug_history_check == 0"
---at "812 debug_history_check == 0" --at "813 debug_history_check == 0" --at "814 debug_history_check == 0" --at "815 debug_history_check == 0" --at "816 debug_history_check == 0" --at "817 debug_history_check == 0"
---at "818 debug_history_check == 0" --at "819 debug_history_check == 0" --at "2751 debug_history_check == 0" --at "2752 debug_history_check == 0" --at "2753 debug_history_check == 0" --at "2754 debug_history_check == 0"
---at "2755 debug_history_check == 0" --at "2756 debug_history_check == 0" --at "2757 debug_history_check == 0" --at "2758 debug_history_check == 0" --at "2759 debug_history_check == 0" --at "2761 debug_history_check == 0"
---at "2762 debug_history_check == 0" --at "2763 debug_history_check == 0" --at "2764 debug_history_check == 0" --at "2765 debug_history_check == 0" --at "2766 debug_history_check == 0" --at "2767 debug_history_check == 0"
---at "2768 debug_history_check == 0" --at "2769 debug_history_check == 0" --at "4601 debug_history_check == 0" --at "4602 debug_history_check == 0" --at "4603 debug_history_check == 0" --at "4604 debug_history_check == 0"
+--at "8380 debug_history_check == 0" --at "8390 debug_history_check == 0" --at "681 debug_history_check == 0" --at "682 debug_history_check == 0" --at "683 debug_history_check == 0" --at "684 debug_history_check == 0"
+--at "685 debug_history_check == 0" --at "686 debug_history_check == 0" --at "687 debug_history_check == 0" --at "688 debug_history_check == 0" --at "689 debug_history_check == 0" --at "691 debug_history_check == 0"
+--at "692 debug_history_check == 0" --at "693 debug_history_check == 0" --at "694 debug_history_check == 0" --at "695 debug_history_check == 0" --at "696 debug_history_check == 0" --at "697 debug_history_check == 0"
+--at "698 debug_history_check == 0" --at "699 debug_history_check == 0" --at "2631 debug_history_check == 0" --at "2632 debug_history_check == 0" --at "2633 debug_history_check == 0" --at "2634 debug_history_check == 0"
+--at "2635 debug_history_check == 0" --at "2636 debug_history_check == 0" --at "2637 debug_history_check == 0" --at "2638 debug_history_check == 0" --at "2639 debug_history_check == 0" --at "2641 debug_history_check == 0"
+--at "2642 debug_history_check == 0" --at "2643 debug_history_check == 0" --at "2644 debug_history_check == 0" --at "2645 debug_history_check == 0" --at "2646 debug_history_check == 0" --at "2647 debug_history_check == 0"
+--at "2648 debug_history_check == 0" --at "2649 debug_history_check == 0" --at "4601 debug_history_check == 0" --at "4602 debug_history_check == 0" --at "4603 debug_history_check == 0" --at "4604 debug_history_check == 0"
 --at "4605 debug_history_check == 0" --at "4606 debug_history_check == 0" --at "4607 debug_history_check == 0" --at "4608 debug_history_check == 0" --at "4609 debug_history_check == 0" --at "4611 debug_history_check == 0"
 --at "4612 debug_history_check == 0" --at "4613 debug_history_check == 0" --at "4614 debug_history_check == 0" --at "4615 debug_history_check == 0" --at "4616 debug_history_check == 0" --at "4617 debug_history_check == 0"
 --at "4618 debug_history_check == 0" --at "4619 debug_history_check == 0" --at "4621 debug_history_check == 0" --at "4622 debug_history_check == 0" --at "4623 debug_history_check == 0" --at "4624 debug_history_check == 0"
@@ -177,6 +182,6 @@
 --at "6308 debug_history_check == 0" --at "6309 debug_history_check == 0" --at "6311 debug_history_check == 0" --at "6312 debug_history_check == 0" --at "6313 debug_history_check == 0" --at "6314 debug_history_check == 0"
 --at "6315 debug_history_check == 0" --at "6316 debug_history_check == 0" --at "6317 debug_history_check == 0" --at "6318 debug_history_check == 0" --at "6319 debug_history_check == 0" --at "6321 debug_history_check == 0"
 --at "6322 debug_history_check == 0" --at "6323 debug_history_check == 0" --at "6324 debug_history_check == 0" --at "6325 debug_history_check == 0" --at "6326 debug_history_check == 0" --at "6327 debug_history_check == 0"
---at "6328 debug_history_check == 0" --at "6329 debug_history_check == 0" --at "820 debug_history_check == 0" --at "821 debug_history_check == 0" --at "2770 debug_history_check == 0" --at "2771 debug_history_check == 0"
+--at "6328 debug_history_check == 0" --at "6329 debug_history_check == 0" --at "700 debug_history_check == 0" --at "701 debug_history_check == 0" --at "2650 debug_history_check == 0" --at "2651 debug_history_check == 0"
 --at "4630 debug_history_check == 0" --at "4631 debug_history_check == 0" --at "6330 debug_history_check == 0" --at "6331 debug_history_check == 0"
 --expect "debug_state == 1" --expect "debug_stage_index >= 4"
