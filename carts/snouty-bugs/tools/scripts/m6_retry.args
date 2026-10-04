@@ -1,22 +1,28 @@
 # m6_retry: the RETRY shield in a normal game. m2_play's input (the sweep to 3960 with its two
 # holds) plus RIGHT 3670..3720. The sweep cannot live through stage 1 in a normal game, so it
 # collects the shield in god mode (debug_god at 31; god never consumes the shield) and god
-# goes off again at 3520, in the Heisenbug's fight (no hit lands in the 200 ticks before, so
-# every rewind replays from a god-free keyframe).
+# goes off again at 3520, before the Heisenbug's fight (no hit lands in the ~200 ticks after,
+# so every rewind replays from a god-free keyframe).
 # Re-pinned for the catch-up clock (the stage-1 boss now comes at 2823, and from 5000, the old
 # god-off point, a rewind replayed god-mode hits): god off moved from 5000 to 3520 and the
 # RIGHT from 5150..5200 to 3670..3720, the run from 5700 to 4200 updates.
-# - 1687: the retry crate is grabbed, shield 0 -> 1.
-# - 3780 (game tick 3673): the ship is hit with the shield up. The shield takes it inside the
+# Re-pinned for the mode paces (NORMAL: the table clock hurries, 3 ticks a tick, only on an
+# empty field): the waves come later, so the sweep meets its crates later and the Heisenbug
+# comes at 3604 (WARNING 3424), still after god off at 3520; the input is unchanged and the run
+# grows to 4400 updates to reach the next real hit.
+# - 2057: the retry crate is grabbed, shield 0 -> 1. 3608: the A crate makes A5 (15).
+# - 3716 (game tick 3609): the ship is hit with the shield up. The shield takes it inside the
 #   simulation: shield 1 -> 0, state stays 1 (PLAYING, no REWIND), rewinds stay 3, fuel 180
 #   untouched (m6_retry_hc shows the fuel side where a hit would cost it), and 60 ticks of
 #   invulnerability.
-# - 3840 (tick 3733): the boss's fire again, unshielded, so a normal hit: REWIND, rewinds
-#   3 -> 2, target 3613 (hit - 120). During the playback the world goes back past the
-#   absorbing hit, so at 3890 (tick 3671) the shield is up again; the resume at 3920 (tick
-#   3613) keeps it and charges the M7 power loss (B5 -> B4, forks 3 -> 2, mercy 80). The ship
-#   meets the same fire again and the shield absorbs it at 3980 (tick 3673 once more),
-#   rewinds still 2. The next real hit is at 4040 (tick 3733, rewinds 1).
+# - 3783 (tick 3676): the next hit, unshielded, so a normal one: REWIND, rewinds 3 -> 2,
+#   target 3556 (hit - 120). During the playback the world goes back past the absorbing hit,
+#   so at 3836 (tick 3608) the shield is up again; the resume at 3863 (tick 3556) keeps it and
+#   charges the M7 power loss (A5 -> A4, forks 3 -> 2, mercy 80). The weaker ship takes
+#   another path through the fight and the restored shield absorbs a later hit at 4159 (tick
+#   3852), rewinds still 2. The next real hit is at 4249 (tick 3942, rewinds 1).
+#   (Under the catch-up clock: shield at 1687, absorbed at 3780, the hit at 3840, resume at
+#   3920, absorbed again at 3980, the next hit at 4040.)
 # debug_history_check is 0 right after the absorbing hit, through the invulnerability and
-# after the resume (2 on the bug-report frames, 3840..3859, by design).
---frames 4200 --call-at "31 debug_god" --call-at "3520 debug_god" --dump-exports debug_state,debug_shield,debug_rewinds,debug_fuel,debug_lives --at "1686 debug_shield == 0" --at "1687 debug_shield == 1" --at "3779 debug_shield == 1" --at "3779 debug_rewinds == 3" --at "3780 debug_game_tick == 3673" --at "3780 debug_shield == 0" --at "3780 debug_state == 1" --at "3780 debug_rewinds == 3" --at "3780 debug_fuel == 180" --at "3781 debug_history_check == 0" --at "3810 debug_history_check == 0" --at "3839 debug_state == 1" --at "3839 debug_rewinds == 3" --at "3839 debug_lives == 3" --at "3840 debug_state == 4" --at "3840 debug_rewinds == 2" --at "3840 debug_rewind_target == 3613" --at "3889 debug_shield == 0" --at "3890 debug_shield == 1" --at "3920 debug_state == 1" --at "3920 debug_game_tick == 3613" --at "3920 debug_shield == 1" --at "3920 debug_weapon == 24" --at "3920 debug_forks == 2" --at "3920 debug_mercy == 80" --at "3930 debug_history_check == 0" --at "3979 debug_shield == 1" --at "3980 debug_shield == 0" --at "3980 debug_game_tick == 3673" --at "3980 debug_state == 1" --at "3980 debug_rewinds == 2" --at "3990 debug_history_check == 0" --at "4039 debug_state == 1" --at "4040 debug_state == 4" --at "4040 debug_rewinds == 1" --expect "debug_rewinds == 1"
+# after the resume (2 on the bug-report frames, 3783..3802, by design).
+--frames 4400 --call-at "31 debug_god" --call-at "3520 debug_god" --dump-exports debug_state,debug_shield,debug_rewinds,debug_fuel,debug_lives --at "2056 debug_shield == 0" --at "2057 debug_shield == 1" --at "3608 debug_weapon == 15" --at "3715 debug_shield == 1" --at "3715 debug_rewinds == 3" --at "3716 debug_game_tick == 3609" --at "3716 debug_shield == 0" --at "3716 debug_state == 1" --at "3716 debug_rewinds == 3" --at "3716 debug_fuel == 180" --at "3717 debug_history_check == 0" --at "3750 debug_history_check == 0" --at "3782 debug_state == 1" --at "3782 debug_rewinds == 3" --at "3782 debug_lives == 3" --at "3783 debug_state == 4" --at "3783 debug_rewinds == 2" --at "3783 debug_rewind_target == 3556" --at "3835 debug_shield == 0" --at "3836 debug_shield == 1" --at "3863 debug_state == 1" --at "3863 debug_game_tick == 3556" --at "3863 debug_shield == 1" --at "3863 debug_weapon == 14" --at "3863 debug_forks == 2" --at "3863 debug_mercy == 80" --at "3870 debug_history_check == 0" --at "4158 debug_shield == 1" --at "4159 debug_shield == 0" --at "4159 debug_game_tick == 3852" --at "4159 debug_state == 1" --at "4159 debug_rewinds == 2" --at "4170 debug_history_check == 0" --at "4248 debug_state == 1" --at "4249 debug_state == 4" --at "4249 debug_rewinds == 1" --at "4399 debug_history_check == 0" --expect "debug_rewinds == 1"

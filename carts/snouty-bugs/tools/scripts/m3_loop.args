@@ -1,13 +1,17 @@
 # m3_loop: m3_boss's run carried on into the next stage (the sweep continued to 4299). Until
 # M7 one table looped and this pinned the stage-2 beetle's crate; since M7 a clear moves on to
 # the next of four stages, so it pins stage 2 (INTEGRATION) starting after the Heisenbug's
-# clear (3338) and the 120-tick breather: its table starts at 3458 (phase 0) and its first
+# clear (3421) and the 120-tick breather: its table starts at 3541 (phase 0) and its first
 # entry, a centipede (head + 5 segments, 14 ticks apart) opened as a formation, enters at
-# 3578, when the stage pop ends (the catch-up clock only runs after the pop). The A4 sweep
-# shoots down every part of it; the last segment at 3696 completes the formation: crate 10
-# drops (drops 9 -> 10) and +200 on top of the segment's 20 (score 4008 -> 4228). Crate 10 is
-# the cores crate of the sequence; the sweep collects it at 3915 (cores 1 -> 2, +100).
+# 3661, when the stage pop ends (the table clock only hurries after the pop). The A3 sweep
+# shoots down every part of it; the last segment at 3802 completes the formation: crate 7
+# drops (drops 6 -> 7) and +200 on top of the segment's 20 (score 3194 -> 3414). Crate 7 is
+# the weapon crate of the sequence (the A); the sweep collects it at 3968 (A3 -> A4, +100).
 # Re-pinned for the catch-up clock: stage 1 dropped more crates before the warp, so the
 # formation's crate moved from the RETRY (crate 6, shield 0 -> 1 at 4208) to the cores crate
-# (the shield came from crate 6 in stage 1, at 1687); the clear moved from 3662 to 3338.
---frames 4300 --call-at "31 debug_god" --call-at "1700 debug_warp" --dump-exports debug_state,debug_stage_index,debug_phase,debug_enemies,debug_shield --at "3457 debug_phase == 3" --at "3458 debug_phase == 0" --at "3458 debug_stage_index == 1" --at "3577 debug_enemies == 0" --at "3578 debug_enemies == 1" --at "3695 debug_drops == 9" --at "3695 debug_score == 4008" --at "3696 debug_drops == 10" --at "3696 debug_score == 4228" --at "3696 debug_pickups == 1" --at "3914 debug_cores == 1" --at "3915 debug_cores == 2" --at "3915 debug_pickups == 0" --at "3915 debug_shield == 1" --at "4000 debug_history_check == 0" --at "4299 debug_history_check == 0" --expect "debug_stage_index == 1" --expect "debug_state == 1"
+# (crate 10, collected at 3915; the shield came from crate 6 in stage 1, at 1687); the clear
+# moved from 3662 to 3338. Re-pinned for the mode paces (NORMAL: the table hurries only on an
+# empty field): stage 1 drops fewer crates before the boss again (the shield, crate 6, comes
+# from the boss's second break at 2846, see m3_boss), so the formation's crate is crate 7,
+# the A; the clear moved from 3338 to 3421, the centipede from 3578 to 3661.
+--frames 4300 --call-at "31 debug_god" --call-at "1700 debug_warp" --dump-exports debug_state,debug_stage_index,debug_phase,debug_enemies,debug_shield --at "3540 debug_phase == 3" --at "3541 debug_phase == 0" --at "3541 debug_stage_index == 1" --at "3660 debug_enemies == 0" --at "3661 debug_enemies == 1" --at "3801 debug_drops == 6" --at "3801 debug_score == 3194" --at "3802 debug_drops == 7" --at "3802 debug_score == 3414" --at "3802 debug_pickups == 1" --at "3967 debug_weapon == 13" --at "3968 debug_weapon == 14" --at "3968 debug_pickups == 0" --at "3968 debug_shield == 1" --at "4000 debug_history_check == 0" --at "4299 debug_history_check == 0" --expect "debug_stage_index == 1" --expect "debug_state == 1"
