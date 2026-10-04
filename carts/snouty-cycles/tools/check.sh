@@ -17,7 +17,7 @@
 #           the same seed twice gives the same World hash and screen; with no
 #           input after A the player's round still ends (round 2 starts).
 #   bench   badge-bench, calibrated, with badge-bench/carts/snouty-cycles.toml
-#           (900 frames: the title over the attract round, A at 60, then
+#           (1800 frames: the title over the attract round, A at 60, then
 #           autopilot rounds: countdown, play, crash, round over, next round):
 #           worst `busy ms` frame <= BENCH_MAX_MS (default 12, SPEC section
 #           12), no crash or hang; plus one timing-only run per seed in

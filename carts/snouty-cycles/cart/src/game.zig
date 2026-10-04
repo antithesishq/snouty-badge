@@ -48,7 +48,7 @@ pub const tuning = struct {
     pub const self_crash_points: u32 = 250;
     pub const clear_points: u32 = 1000;
     /// Autopilot 2's chance of a random move per decision (per mille).
-    pub const sloppy_permille: u16 = 40;
+    pub const sloppy_permille: u16 = 80;
 };
 
 /// M0's one opponent: ladder level 3 (SPEC 6: 1x T1). M1 swaps in levels.zig.
@@ -250,7 +250,6 @@ pub const Game = struct {
         switch (g.state) {
             .title => {
                 v.hud.left = .of("SNOUTY CYCLES", 1, colors.text);
-                v.hud.right = .of("M0", 1, colors.dim);
                 var b: render.Banner = .{ .iris = true, .cy = 66 };
                 b.add("SNOUTY", 2, colors.title_a);
                 b.add("CYCLES", 2, colors.title_b);

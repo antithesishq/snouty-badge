@@ -43,7 +43,8 @@ pub const Brain = struct {
     tier: Tier = .avoid,
     rng: rng.Xorshift = .init(1),
     /// Human-feel knobs (SPEC 5), all off in M0: reaction delay in cells
-    /// (M1), the chance of a random legal move per decision (per mille),
+    /// (M1), the chance of a random move into a free cell per decision
+    /// instead of the tier's choice (per mille),
     /// vision radius in cells (M1; 0 = the whole arena).
     reaction: u8 = 0,
     mistake_permille: u16 = 0,
@@ -68,8 +69,17 @@ pub fn decide(b: *Brain, w: *const sim.World, i: usize) sim.Input {
         .wander, .avoid, .territory, .search => avoid(b, w, i),
     };
     if (b.mistake_permille != 0 and b.rng.chance(b.mistake_permille)) {
+        // A slip: any move whose next cell is free, the planned one included.
         const cands = [3]sim.Dir{ c.dir, c.dir.ccw(), c.dir.cw() };
-        d = cands[b.rng.below(3)];
+        const k = b.rng.below(3);
+        for (0..3) |j| {
+            const m = cands[(k + j) % 3];
+            const t = w.next_cell(c.x, c.y, m);
+            if (!sim.is_wall(w.at(t[0], t[1]))) {
+                d = m;
+                break;
+            }
+        }
     }
     if (d == w.planned_dir(i)) return .idle;
     return .{ .press = sim.Press.of(d) };
