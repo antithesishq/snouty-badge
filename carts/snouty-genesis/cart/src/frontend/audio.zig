@@ -126,10 +126,12 @@ pub fn attach(md: *core.Md) void {
 pub const UpdateBuf = [if (streamed) core.sound.max_samples else 0]u8;
 
 /// Before the update's frames: render them (into `buf`) or not, as Sound
-/// says. `update` takes the samples before `buf` goes out of scope.
-pub fn before_frames(md: *const core.Md, buf: *UpdateBuf) void {
+/// says; never while fast forwarding (`fast`: more frames than `buf`
+/// holds, and no sound plays then). `update` takes the samples before
+/// `buf` goes out of scope.
+pub fn before_frames(md: *const core.Md, buf: *UpdateBuf, fast: bool) void {
     if (!streamed) return;
-    synth.set_render(md, enabled);
+    synth.set_render(md, enabled and !fast);
     synth.begin_update(buf);
 }
 
@@ -159,14 +161,17 @@ pub fn playing_hz() u32 {
     return if (playing) |p| p.hz else 0;
 }
 
-/// Once per update, after the frames ran.
-pub fn update(md: *const core.Md) void {
+/// Once per update, after the frames ran. Fast forward (`fast`) is
+/// silent: the stream ramps out as in the menu, or the tone stops; the
+/// first update at 1x starts it again (the synthesis resynced from the
+/// registers, `before_frames`).
+pub fn update(md: *const core.Md, fast: bool) void {
     if (streamed) {
         const samples = synth.take();
-        if (enabled) feed.frame(samples) else feed.stop();
+        if (enabled and !fast) feed.frame(samples) else feed.stop();
         return;
     }
-    if (!available or !enabled) return stop();
+    if (fast or !available or !enabled) return stop();
     const t = md.tone() orelse return stop();
     if (t.hz < min_hz or t.hz > max_hz) return stop();
     if (playing) |p| if (p.hz == t.hz and p.level == t.level) {
