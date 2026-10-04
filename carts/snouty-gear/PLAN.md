@@ -712,3 +712,72 @@ SPEC 10/13 numbers; tag `snouty-gear/m3`; merge to main and push
   capture, splash, menu, scrub); M4 perf ideas (sprite candidate mask,
   decoded tile cache) or M5 shared emulator frontend with Snouty Boy;
   Snouty Genesis M3 can now copy this scrubber.
+
+## Sound on the new firmware (2026-10-04)
+
+Track B of root docs/EMU_SOUND.md (branch `emu-sound-gear`). The show
+badges run newer upstream firmware that ignores `tone2` and plays only a
+cart-owned ring of 44.1 kHz u8 samples, so the one-voice buzzer was
+silent there. Adrian: keep sound off by default, make it work.
+
+- Core (`core/psg.zig` `Synth`, `Gg.audio_render` / `audio_out` /
+  `audio_len` / `synth`, `Gg.psg_write` / `psg_stereo` from the bus): the
+  whole SN76489 from SMS Power's page: three tone counters (half period
+  16 x period T-states, periods 0/1 constant +1), the Sega 16-bit noise
+  register (taps 0 and 3, reset to 0x8000 on a noise write, shift on
+  every second counter zero, rates 0x10/0x20/0x40 or tone 2), the 2 dB
+  table, port 06 averaged to mono, bipolar outputs. Event-driven box
+  filter: time advances to the next of (bin end, a counter's zero, now),
+  integrating level x T-states exactly; bins are 81 or 82 T-states with
+  the 81.17 fraction carried. Writes are timed at their instruction's
+  start (`psg_now` = VDP line x 228 + line T-states). `gain` = 48 from
+  Sonic (title + Green Hill, 4,000 host frames: peak 126 of 127, p99
+  63-74, no clipping). Render state is outside keyframes; reset/restore
+  resyncs it. Off: one branch per PSG write and two per frame.
+- Frontend: badge builds stream via `audio_feed`
+  (`Feed(.{ .nominal = 736, .max_src = 738, .ring_bytes = 4096 })`);
+  `idle` (splash, menu) ramps out; the menu clears `audio_render` so
+  scrub replays render nothing; the chime is a 1046/2093 Hz square burst
+  through the feed. No `tone2`/`tone` call is compiled into the badge
+  build (badge-bench: 0 `CART_TONE`, 0 volume words). Wasm keeps the
+  simulator `tone` voice path as before. The overlay's line 3 adds
+  `q <queued> u <underruns>` while Sound is on.
+- Tests: 12 new `sound:` tests in `tests/sound_unit.zig` (a second is
+  44,100 samples; pitch for periods 254/1023/100; periods 0/1 constant and
+  volume-write playback; periodic and white noise sequences against a
+  reference; noise reset on a noise write only; the 2 dB table rendered;
+  port 06 sides and channel sums; the box filter on a 56 kHz and a
+  1,118 Hz square; Waternet 735-737 samples per frame, total exact to one
+  over 600 frames; rendering leaves console state identical; scrub
+  restore replays identical samples). Cart suite 107/107 (95 + 12);
+  `zig build test` 387 pass, 4 skipped (Lynx fixtures), exit 0.
+- Other carts: every other cart's loaded image is identical to the plan
+  commit's (`objcopy -O binary` of the ELFs). The UF2s of snouty-bugs,
+  snouty-reflections and snouty-genesis differ from
+  /home/exedev/emu-sound/baseline in one byte, the embedded ELF header's
+  section-header offset (debug info carries the worktree path); the
+  plan-commit worktree `int` shows the same one-byte drift for bugs. All
+  other UF2s byte-identical.
+- badge-bench (calibrated busy ms, `snouty-gear.toml`, Waternet romfs,
+  1000 updates): plan commit mean 3.03 / worst 6.89; this branch, sound
+  off (default build) mean 3.06 / worst 6.95, 0 over (+0.03 mean);
+  `-Dsound=true` mean 3.47 / worst 7.44 (45% of budget), 0 over. Audio
+  share: `Synth.run_to` 53.5 k cycles per frame (0.36 ms), the feed
+  4.2 k (0.03 ms), so ~0.4 ms mean; worst frame +0.49 ms. Sonic from the
+  drive with sound on (same script, title and attract): mean 5.17 /
+  worst 6.90, 0 over, `run_to` 49.6 k cycles. Streaming: queue in play
+  1,309..2,125 (mean 1,634; Sonic 1,438..2,064); ring underruns only
+  where the cart stops pushing by design (splash after the chime, frames
+  59-71; the two menus), none in play, so the feed's `u` stays 0.
+- Sizes (fast, drive source): `.text` 174,052 -> 180,772 (+6.7 KB),
+  `.data` 468 -> 5,420 (the Feed's 4 KB ring and push scratch are
+  initialised to 128), `.bss` 41,828 -> 43,388 (`audio_out`, the synth,
+  the chime buffer); uf2 435,200 -> 461,824. The scrub arena
+  (`__stack_limit__ - __bss_end__ - 1 KB`) shrinks 55,148 -> 42,916 B:
+  about 12 keyframes of Waternet instead of 15, Sonic ~9 (from the M3
+  sizing numbers; not measured on the cart).
+- Not modelled: the real chip's 0/+1 outputs and their decay (bipolar
+  instead), the clock/16 prescaler phase (T-state resolution), period-0
+  as 0x400 (TI chips only). SMS Power says the Game Gear's own speaker
+  ignores port 06; the contract's average is kept (the badge is not a
+  GG speaker). WAVs skipped (Adrian at the show, 2026-10-04: speed first).
