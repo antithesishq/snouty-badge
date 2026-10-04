@@ -1,8 +1,8 @@
 //! step_frame timing, FPS and the core's per-frame work (SPEC.md section
 //! 14), trimmed from Snouty Gear's overlay
 //! (carts/snouty-gear/cart/src/frontend/debug.zig): the numbers are kept
-//! every frame; `line` and `line2` format them for the status strip when
-//! `enabled`. Allocation-free and std.fmt-free. In wasm `micros_since_boot`
+//! every frame; `line`, `line2` and `audio_line` format them for the
+//! status strip when `enabled`. Allocation-free and std.fmt-free. In wasm `micros_since_boot`
 //! adds 1000 per call, so only hardware numbers mean anything.
 
 /// Off at boot; the menu's "Debug overlay" row toggles it (the strip then
@@ -113,6 +113,17 @@ pub fn line2(buf: *[32]u8) []const u8 {
     i += put(buf[i..], " px");
     i += put_num(buf[i..], pixels_per_frame);
     return buf[0..@min(i, 20)];
+}
+
+/// "qNNNN/N" (the audio queue in samples and the underruns since the
+/// start, frontend/audio.zig); the strip fits it in the ROM name's place.
+pub fn audio_line(buf: *[32]u8, queued: u32, underruns: u32) []const u8 {
+    var i: usize = 0;
+    i += put(buf[i..], "q");
+    i += put_num(buf[i..], queued);
+    i += put(buf[i..], "/");
+    i += put_num(buf[i..], underruns);
+    return buf[0..i];
 }
 
 pub fn put(dst: []u8, s: []const u8) usize {

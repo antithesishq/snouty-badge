@@ -247,8 +247,9 @@ channels are emulated (LFSR, integrate mode, the DAC writes games use for
 sampled sound, Lynx II stereo and attenuation mixed to mono) and streamed
 as 44.1 kHz unsigned 8-bit PCM through the newer badge firmware's audio
 ring; the firmware this repository pins (and the wasm simulator) has no
-such ring, so there the cart is silent. Menu row "Sound: On/Off", on at
-boot in this cart (root docs/SOUND.md). The earlier plan (the loudest
+such ring, so there the cart is silent. Menu row "Sound: On/Off", off at
+boot unless built with `-Dsound=true` (root docs/SOUND.md; Adrian,
+2026-10-04). The earlier plan (the loudest
 square channel reduced to one `tone2` voice) is dropped: the new firmware
 ignores `tone2`.
 
