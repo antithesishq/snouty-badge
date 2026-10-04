@@ -1,33 +1,133 @@
-//! APU state -> one tone2 voice (SPEC.md section 9). Owner: M3 track E.
-//! `core.apu.pick_voice` chooses the channel; this module converts it to a
-//! buzzer tone and only calls `tone2` when the audible result changes.
-//! Allocation-free; f32 is fine here (frontend, not core).
+//! The console's sound to the speaker (SPEC.md section 9).
 //!
-//! Integrator: call `update(&gb)` once per badge frame after `step_frame`
-//! (also while paused in the menu, so a toggle to off stops the tone);
-//! keep `enabled` equal to the menu's sound setting; `chime(0)` / `chime(1)`
-//! for the two notes of the boot chime.
+//! Badge: the core renders all four channels at 44,100 Hz
+//! (`core.apu` "Sample generation") into `snd`, and every stepped frame's
+//! samples go to the newer firmware's streaming ring through the shared
+//! `audio_feed` (lib/audio_feed.zig, docs/EMU_SOUND.md at the root). The
+//! badge build never calls `cart.tone2` or the `tone` import: on the new
+//! firmware those write the old tone words, which are now the ring's
+//! ptr/len/head/tail. On old firmware the badge is silent (the show badges
+//! run the new one; no detection).
 //!
-//! Simulator (wasm). The upstream wasm shim turns `duration = -1` into
-//! `0xFFFFFFFF`, which the simulator's WASM-4 style worklet unpacks as a
-//! 255-frame attack, decay, sustain and release: every tone starts with a
-//! 4 s fade-in from silence, so music that changes note every few frames
-//! is never heard (found in snouty-gear with Sonic, 2026-09-29; this cart
-//! had the same defect). The badge OS plays an infinite tone correctly, so
-//! only the wasm build bypasses `cart.tone2` and calls the simulator's
-//! `tone` import itself with WASM-4 packing: no attack, a short sustain
-//! re-issued every frame while the voice is audible (the worklet keeps the
-//! phase of a channel that is still playing, so this is one continuous
-//! tone), pulse channel at 50% duty for the square voice and the worklet's
-//! triangle channel for the wave channel. The same import is what
-//! `cart.tone2` reaches on wasm; hardware builds compile none of it.
+//! Integrator (main.zig): `attach` once the console exists;
+//! `before_step` before and `frame` after every `step_frame`; `pause` when
+//! the menu opens (its scrub replays render nothing); `idle` in every
+//! update that does not step the game (splash, picker, menu, halted: the
+//! feed ramps out once, or plays the boot chime); keep `enabled` equal to
+//! the menu's Sound setting; `chime(0)` / `chime(1)` for the two notes of
+//! the boot chime. `menu_tick` in menu frames (wasm only does anything).
+//!
+//! Simulator (wasm), unchanged since 2026-09-30: it has no streaming audio,
+//! so `core.apu.pick_voice` chooses one channel from the register model and
+//! this module plays it through the simulator's `tone` import. The upstream
+//! wasm shim turns `duration = -1` into `0xFFFFFFFF`, which the simulator's
+//! WASM-4 style worklet unpacks as a 255-frame attack, decay, sustain and
+//! release: every tone starts with a 4 s fade-in from silence, so music
+//! that changes note every few frames is never heard (found in snouty-gear
+//! with Sonic, 2026-09-29; this cart had the same defect). So the wasm build
+//! calls the `tone` import itself with WASM-4 packing: no attack, a short
+//! sustain re-issued every frame while the voice is audible (the worklet
+//! keeps the phase of a channel that is still playing, so this is one
+//! continuous tone), pulse channel at 50% duty for the square voice and the
+//! worklet's triangle channel for the wave channel. f32 is fine here
+//! (frontend, not core).
 const cart = @import("cart-api");
 const core = @import("core");
 const apu = core.apu;
+const audio_feed = @import("audio_feed");
 
-/// Sound approximation on/off (the menu's Sound row; off at boot unless
-/// built with `-Dsound=true`; SPEC.md 18.6).
+/// Sound on/off (the menu's Sound row; off at boot unless built with
+/// `-Dsound=true`; SPEC.md 18.6).
 pub var enabled: bool = true;
+
+// ---- Badge path: streaming ----
+
+/// One Game Boy frame is 738.4 samples (738 or 739 from the core).
+pub const Feed = audio_feed.Feed(.{ .nominal = 738, .max_src = 739, .ring_bytes = 4096 });
+/// The ring the OS reads (it must outlive every update), and the core's
+/// render state and output (`Gb.snd`). Both start `undefined` so they
+/// land in .bss, not as 9 KB of initial values in the UF2; `init` sets
+/// what must start defined.
+var feed: Feed = undefined;
+var snd: apu.Snd = undefined;
+
+/// Call once in `start()`.
+pub fn init() void {
+    if (cart.is_wasm) return;
+    // The buffers' contents are never read before they are written.
+    feed = .{ .ring = undefined, .scratch = undefined };
+    snd.reset();
+}
+
+/// Give the console its render memory (badge only).
+pub fn attach(gb: *core.Gb) void {
+    if (cart.is_wasm) return;
+    gb.snd = &snd;
+}
+
+/// Before `step_frame`: render while sound is on.
+pub fn before_step(gb: *core.Gb) void {
+    if (cart.is_wasm) return;
+    apu.set_render(gb, enabled);
+}
+
+/// After `step_frame`: the frame's samples to the ring (wasm: the voice).
+pub fn frame(gb: *core.Gb) void {
+    if (cart.is_wasm) return update(gb);
+    const s = apu.samples(gb);
+    if (enabled and s.len > 0) feed.frame(s) else feed.stop();
+}
+
+/// The menu opened: scrub replays must not render.
+pub fn pause(gb: *core.Gb) void {
+    if (cart.is_wasm) return;
+    apu.set_render(gb, false);
+}
+
+/// A menu frame: the wasm voice holds or stops (the badge's `idle` ramps out).
+pub fn menu_tick(gb: *const core.Gb) void {
+    if (cart.is_wasm) update(gb);
+}
+
+/// Boot chime on the badge: samples left of the current note and its
+/// phase step (16.16 of a cycle per sample).
+var chime_left: u32 = 0;
+var chime_inc: u32 = 0;
+var chime_phase: u32 = 0;
+/// The chime's square swings +-40 around silence.
+const chime_amp = 40;
+
+/// Every update that did not step the game: the chime, else a ramp-out.
+pub fn idle() void {
+    if (cart.is_wasm) return;
+    if (chime_left == 0 or !enabled) {
+        chime_left = 0;
+        feed.stop();
+        return;
+    }
+    // The core's output buffer is free while the game is not stepping.
+    const buf = snd.out[0..738];
+    for (buf) |*v| {
+        if (chime_left == 0) {
+            v.* = 128;
+            continue;
+        }
+        chime_left -= 1;
+        chime_phase +%= chime_inc;
+        v.* = if ((chime_phase & 0x8000) != 0) 128 + chime_amp else 128 - chime_amp;
+    }
+    feed.frame(buf);
+}
+
+/// The ring's queue and underruns, for the debug overlay.
+pub fn queued() u32 {
+    return if (cart.is_wasm) 0 else feed.queued();
+}
+pub fn underruns() u32 {
+    return if (cart.is_wasm) 0 else feed.underruns;
+}
+
+// ---- Wasm path: one simulator voice ----
 
 /// Frequencies outside this range are treated as silence (games park a
 /// channel at period 2047, which would be 131 kHz).
@@ -80,32 +180,22 @@ const sim = struct {
 
 fn stop() void {
     if (!playing) return;
-    if (cart.is_wasm) sim.stop(last_shape) else cart.tone2(cart.Tone2Options.stop);
+    sim.stop(last_shape);
     playing = false;
 }
 
-pub fn update(gb: *const core.Gb) void {
+fn update(gb: *const core.Gb) void {
     if (!enabled) return stop();
     const v = apu.pick_voice(gb);
     if (v.channel == 0) return stop();
     const hz = apu.period_to_hz(v.channel, v.period);
     if (hz < min_hz or hz > max_hz) return stop();
     const shape: Shape = if (v.channel == 3) .triangle else .square;
-    if (cart.is_wasm) {
-        // Re-issued every frame: the simulator plays finite tones only. A
-        // shape change moves to another worklet channel; silence the old
-        // one so its remaining sustain does not overlap the new voice.
-        if (playing and shape != last_shape) sim.stop(last_shape);
-        sim.play(hz, volume_f32(v.volume), shape, sim.sustain_frames);
-    } else {
-        if (playing and hz == last_hz and shape == last_shape and v.volume == last_volume) return;
-        cart.tone2(.{
-            .frequency = @floatFromInt(hz),
-            .duration = -1.0,
-            .volume = volume_f32(v.volume),
-            .flags = .{ .shape = shape },
-        });
-    }
+    // Re-issued every frame: the simulator plays finite tones only. A
+    // shape change moves to another worklet channel; silence the old
+    // one so its remaining sustain does not overlap the new voice.
+    if (playing and shape != last_shape) sim.stop(last_shape);
+    sim.play(hz, volume_f32(v.volume), shape, sim.sustain_frames);
     playing = true;
     last_hz = hz;
     last_shape = shape;
@@ -113,20 +203,18 @@ pub fn update(gb: *const core.Gb) void {
 }
 
 /// DMG-style boot chime: step 0 = 1046 Hz, step 1 = 2093 Hz, 60 ms each.
-/// Plays regardless of the voice state; the next `update` re-issues the
-/// game's voice if one is audible.
+/// Wasm: a simulator tone, regardless of the voice state (the next
+/// `update` re-issues the game's voice if one is audible). Badge: a square
+/// burst through the feed, played by `idle`.
 pub fn chime(step: u8) void {
     if (!enabled) return;
-    if (cart.is_wasm) {
-        sim.play(if (step == 0) 1046 else 2093, 1.0, .square, 4); // 4 frames, about 60 ms
-    } else {
-        cart.tone2(.{
-            .frequency = if (step == 0) 1046.0 else 2093.0,
-            .duration = 0.06,
-            .volume = 1.0,
-            .flags = .{ .shape = .square },
-        });
+    const hz: u32 = if (step == 0) 1046 else 2093;
+    if (!cart.is_wasm) {
+        chime_left = audio_feed.sample_rate * 60 / 1000;
+        chime_inc = (hz << 16) / audio_feed.sample_rate;
+        return;
     }
+    sim.play(hz, 1.0, .square, 4); // 4 frames, about 60 ms
     // The chime cancelled whatever was playing. Mark the buzzer idle so
     // `update` does not stop the chime early when the game is silent, and
     // re-sends the game's voice if one is audible.

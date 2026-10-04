@@ -206,7 +206,41 @@ T-states), sprite line cap, whether skipped squeeze lines evaluate sprites
 
 ## 9. Audio
 
-One `tone2` voice, following Snouty Boy section 9:
+Off at boot, the menu's Sound row toggles it (`build_options.sound`).
+
+Badge (since 2026-10-04, root docs/EMU_SOUND.md): the show badges run
+newer upstream firmware that ignores `tone2` and plays a cart-owned ring
+of 44.1 kHz unsigned 8-bit mono samples. `core/psg.zig` `Synth`
+synthesises the SN76489 from the console's own clock (SMS Power's SN76489
+page):
+
+- Three tone channels: counters at clock/16 reloading from the 10-bit
+  period, a flip each reload (`3579545 / (32 x period)` Hz); periods 0
+  and 1 give a constant +1 (Sega's chip; sample playback by volume
+  writes). Noise: the Sega 16-bit shift register (white: bit 0 XOR bit 3
+  into bit 15; periodic: bit 0), reset to 0x8000 on a noise register
+  write, shifting every second zero of its counter (0x10/0x20/0x40 or
+  tone 2's period). Attenuation: SMS Power's 2 dB table, 15 = off.
+  Outputs bipolar. Port 06 (stereo) averaged to mono; one gain constant
+  (`psg.gain`, from Sonic's levels).
+- Box filter (the mean level over each 81.17 T-state output bin,
+  integrated exactly between flips), rendered lazily: the bus catches the
+  synthesis up before every PSG or port 06 write (at the instruction's
+  start time, `Gg.psg_now`) and `step_frame` at the frame's end. After a
+  frame `Gg.audio_out[0..audio_len]` holds exactly its console time
+  (735.95 samples on average, the fraction carried).
+- `Gg.audio_render` false (Sound off, the menu, the simulator): nothing is
+  rendered and the register model runs exactly as before. Render-only
+  state (`Gg.synth`) is outside keyframes; a reset or restore resyncs it,
+  so a scrub step replays the same sound every time.
+- The frontend streams through `lib/audio_feed.zig`
+  (`Feed(.{ .nominal = 736, .max_src = 738, .ring_bytes = 4096 })`) and
+  ramps out in every update that does not step the game. It never calls
+  `tone2` (on the new firmware that clobbers the ring words). Old
+  firmware: silent.
+
+Simulator (wasm, unchanged): one `tone` voice, following Snouty Boy
+section 9:
 
 - Candidates: the three tone channels with attenuation below 15 and a
   period above a floor (periods 0 and 1 are the "DC" tricks samples use;
@@ -214,8 +248,9 @@ One `tone2` voice, following Snouty Boy section 9:
 - Pick the loudest; ties go to channel 0, 1, 2. Frequency
   `3579545 / (32 x period)` Hz, square wave, volume from the attenuation
   (2 dB steps) mapped to 0.2..1.0.
-- Issue `tone2` only when frequency or volume changes, once per frame;
-  stop when nothing is audible. Menu toggle, default on.
+- Re-issued every frame through the simulator's `tone` import (the
+  upstream `tone2` shim fades every note in over 4 s); stopped when
+  nothing is audible.
 
 ## 10. Time scrubbing
 

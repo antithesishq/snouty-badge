@@ -449,10 +449,19 @@ table, or if `y == random` from the PRNG within [16, 104].
 
 ## 11. Audio
 
-All effects through `tone2`; each call cancels the previous one, so priority
-order (later wins in the same tick): player death > rewind > extra life >
-enemy death > player hit spark > zapper. The zapper is quiet (volume 0.3) and only
-plays on every third bolt so it does not drown everything.
+One voice, each tone cancelling the last (`cart/src/audio.zig`). On the
+badge the cart renders it into the newer firmware's streaming ring through
+`lib/tone_stream.zig` (that OS ignores `tone2`, whose IPC words are now the
+ring, so the badge build never calls `cart.tone2`); the wasm build plays
+the same tones through `tone2` for the simulator. Events are found
+render-side by diffing the World once per displayed frame, so the
+simulation, replay and rewind are the same with sound on or off.
+
+Priority (a sound still playing is cut only by a higher one): player
+death > rewind (bug report and sweep) > retry shield pop > extra life >
+boss enters > crate > enemy death > enemy hit (the spark) > zapper. The
+zapper is quiet (volume 0.3) and only plays on every third volley so it
+does not drown everything; the rest play at 0.6.
 
 | Event         | Shape    | Frequency                          | Duration |
 |---------------|----------|------------------------------------|----------|
@@ -464,8 +473,16 @@ plays on every third bolt so it does not drown everything.
 | Rewind        | triangle | 110 to 880 Hz, retriggered every 4 ticks in 15 steps (no sweep in `tone2`) | 0.07 s each |
 | Extra life    | major    | 660 Hz                             | 0.30 s   |
 | Boss enters   | minor    | 82 Hz                              | 0.80 s   |
+| Crate (M6)    | major    | 880 Hz                             | 0.12 s   |
+| Retry pop (M6)| sawtooth | 330 Hz                             | 0.15 s   |
 
-Select toggles sound. Sound starts off unless the cart is built with
+The rewind sweep plays over the auto rewind's reverse playback and loops
+while B is held. A crate sounds when it changes the ship (weapon, level,
+fork, shield, core hours); a spare crate at the cap is silent.
+
+Select toggles sound in every state (never while Start is also held: the
+newer OS opens its settings box on Start+Select); the title shows
+`SELECT: SOUND ON/OFF`. Sound starts off unless the cart is built with
 `-Dsound=true` (`build_options.sound`, the repository rule in
 docs/SOUND.md). The neopixels stay dark (section 2).
 
@@ -641,8 +658,8 @@ subagents, as with `snouty-badge`.
 - **M8 Attract mode**: title, autopilot demo (grown from M7's probe
   dodger), takeover, game over, pause, deterministic soak test. The demo
   shows both rewinds.
-- **M9 Polish**: Select sound toggle, title bestiary, tuning from
-  hardware play.
+- **M9 Polish**: title bestiary, tuning from hardware play (the Select
+  sound toggle landed early, with the effects of section 11, 2026-10-04).
 
 Parallel tracks: art (external agent, per `ASSETS.md`) runs alongside M1 to
 M3 using placeholder sprites; the asset prep script is written against the

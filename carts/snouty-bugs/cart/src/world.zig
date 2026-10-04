@@ -17,9 +17,10 @@ const formations = @import("formations.zig");
 const waves = @import("waves.zig");
 const draw = @import("draw.zig");
 
-/// How `simulate()` runs a tick: `.live` emits audio effects,
-/// `.silent` (`history.restore` catch-up) runs the same world-side
-/// simulation without them and without touching meta-state.
+/// How `simulate()` runs a tick: `.live` is logged and may change
+/// meta-state, `.silent` (`history.restore` catch-up) runs the same
+/// world-side simulation without touching meta-state. Audio is neither:
+/// `audio.zig` diffs the displayed World once per frame.
 pub const Mode = enum { live, silent };
 
 pub const World = struct {

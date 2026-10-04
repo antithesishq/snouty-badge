@@ -7,8 +7,9 @@
 //! (frontend/menu.zig, opened by a 500 ms Select hold, frontend/input.zig)
 //! -> running; or, in the badge drive build when the drive has no usable
 //! ROM, no_rom (frontend/splash.zig `draw_no_rom`) for good: there is no
-//! embedded ROM to fall back on. The core is stepped only while running. Sound is one tone2
-//! voice from the PSG (frontend/audio.zig). The time scrubber
+//! embedded ROM to fall back on. The core is stepped only while running.
+//! Sound (frontend/audio.zig): on the badge the core renders the PSG and
+//! the samples stream to the OS; in the simulator one `tone` voice. The time scrubber
 //! (frontend/rewind.zig, SPEC.md 10) records a keyframe every 30 game frames
 //! and the pad of every frame; the menu's Left/Right scrub through them.
 //! Control hints (lib/hint.zig): "Hold Select: menu" on the splash and in
@@ -74,8 +75,9 @@ pub fn update() void {
     const t0 = cart.micros_since_boot();
     debug.frame_tick(t0);
 
-    // Sound follows the menu toggle; the tone holds while the core is paused
-    // and stops at once when sound is switched off (audio.update handles it).
+    // Sound follows the menu toggle. While the core is paused the badge
+    // ramps out (audio.idle); the simulator's tone holds and stops at once
+    // when sound is switched off.
     audio.enabled = menu.sound_enabled;
 
     switch (state) {
@@ -89,6 +91,7 @@ pub fn update() void {
                 chime_second_at = 0;
                 audio.chime(1);
             }
+            audio.idle(&gg);
             if (splash.update(controls_state.edge.any_pressed())) {
                 controls_state.suppress_held();
                 state = .running;
@@ -98,7 +101,9 @@ pub fn update() void {
         },
         .running => run_frame(t0),
         .menu => {
-            audio.update(&gg);
+            // Scrub steps replay frames: no sound to render for them.
+            gg.audio_render = false;
+            audio.idle(&gg);
             if (menu.update(&gg, controls_state.live_edge()) == .resume_game) {
                 menu.close();
                 controls_state.suppress_held();
@@ -106,7 +111,10 @@ pub fn update() void {
                 run_frame(cart.micros_since_boot());
             }
         },
-        .no_rom => splash.draw_no_rom(romsrc.failure orelse ""),
+        .no_rom => {
+            audio.idle(&gg);
+            splash.draw_no_rom(romsrc.failure orelse "");
+        },
     }
 
     frames_seen +%= 1;
@@ -128,6 +136,7 @@ fn run_frame(t1: u64) void {
         return;
     }
 
+    gg.audio_render = audio.renders();
     gg.step_frame(in.pad);
     rewind.record_frame(&gg, in.pad);
     const t2 = cart.micros_since_boot();

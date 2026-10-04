@@ -11,6 +11,12 @@ const common = @import("../../build/common.zig");
 const dir = "carts/snouty-bugs/";
 
 pub fn add(b: *Build, sycl_badge_dep: *Build.Dependency, opts: common.Options) void {
+    // -Dsound=true starts with sound on; off by default, Select toggles it
+    // (SPEC.md section 11, docs/SOUND.md).
+    const options = b.addOptions();
+    options.addOption(bool, "sound", opts.sound);
+    build_options = options;
+
     os_cart.add(b, sycl_badge_dep, .{
         .mode = opts.cart_mode,
         .name = "snouty-bugs",
@@ -62,9 +68,15 @@ const images = [_]Image{
     .{ .file = "orb.png", .bits = 4, .transparent = true },
 };
 
+/// Set by `add` before `os_cart.add` calls `build_cart_assets`.
+var build_options: ?*Build.Step.Options = null;
+
 /// Converts the PNGs in assets/gen/ into a `gfx` module at build time,
-/// mirroring sycl-badge/showcase/carts/dvd/build.zig.
+/// mirroring sycl-badge/showcase/carts/dvd/build.zig. Also adds
+/// `build_options` and `tone_stream` (the badge's streaming audio).
 fn build_cart_assets(b: *Build, cart: *Build.Module, cart_api: *Build.Module, step: *Build.Step) void {
+    if (build_options) |o| cart.addImport("build_options", o.createModule());
+    cart.addImport("tone_stream", b.createModule(.{ .root_source_file = b.path("lib/tone_stream.zig") }));
     const convert = b.addExecutable(.{
         .name = "convert_gfx",
         .root_module = b.createModule(.{

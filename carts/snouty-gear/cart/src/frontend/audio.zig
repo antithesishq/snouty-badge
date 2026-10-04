@@ -1,31 +1,40 @@
-//! PSG -> one tone2 voice (SPEC.md section 9), adapted from Snouty Boy.
-//! `core.psg.Psg.voice()` chooses the channel (loudest tone channel, noise
-//! and periods below 2 dropped, ties to the lowest channel); this module
-//! turns it into a square buzzer tone and only calls `tone2` when the
-//! audible result (frequency or volume) changes. Allocation-free; f32 is
-//! fine here (frontend, not core).
+//! Sound (SPEC.md section 9). Two paths:
 //!
-//! main.zig calls `update(&gg)` once per badge frame after `step_frame` and
-//! on every menu frame (so switching sound off stops the tone while
-//! paused), keeps `enabled` equal to the menu's sound setting, and plays
-//! `chime(0)` / `chime(1)` for the two notes of the boot chime.
+//! Badge (the new firmware's streaming audio, docs/EMU_SOUND.md). The core
+//! renders the PSG itself (`Gg.audio_render`, set by main.zig from
+//! `renders()`): after every stepped frame `update` hands `gg.audio_out` to
+//! the shared `audio_feed` (lib/audio_feed.zig), which keeps the OS's
+//! 44.1 kHz ring (lib/stream_audio.zig) near two frames full. Every update
+//! that does not step the game (splash, menu, scrub, Sound off) calls
+//! `idle`, which ramps out once and then pushes nothing. The boot chime is
+//! a two-note square burst pushed the same way. The badge build never
+//! calls `cart.tone2` or the `tone` import: on the new firmware those
+//! write the old tone words, which are now the ring's pointer, length and
+//! indices. On old firmware the badge is silent (the show badges run the
+//! new one).
 //!
-//! Simulator (wasm). The upstream wasm shim turns `duration = -1` into
-//! `0xFFFFFFFF`, which the simulator's WASM-4 style worklet unpacks as a
-//! 255-frame attack, decay, sustain and release: every tone starts with a
-//! 4 s fade-in from silence, so music that changes note every few frames
-//! is never heard (found with Sonic, 2026-09-29). The badge OS plays an
-//! infinite tone correctly, so only the wasm build bypasses `cart.tone2`
-//! and calls the simulator's `tone` import itself with WASM-4 packing: no
-//! attack, a short sustain re-issued every frame while the voice is
-//! audible (the worklet keeps the phase of a channel that is still
-//! playing, so this is one continuous tone), 50% duty. The same import is
-//! what `cart.tone2` reaches on wasm; hardware builds compile none of it.
+//! Simulator (wasm): unchanged since M2, one square voice from
+//! `core.psg.Psg.voice()` (loudest tone channel, noise and periods below 2
+//! dropped, ties to the lowest channel). The upstream wasm shim turns
+//! `duration = -1` into `0xFFFFFFFF`, which the simulator's WASM-4 style
+//! worklet unpacks as a 255-frame attack, decay, sustain and release:
+//! every tone starts with a 4 s fade-in from silence, so music that
+//! changes note every few frames is never heard (found with Sonic,
+//! 2026-09-29). So the wasm build calls the simulator's `tone` import
+//! itself with WASM-4 packing: no attack, a short sustain re-issued every
+//! frame while the voice is audible (the worklet keeps the phase of a
+//! channel that is still playing, so this is one continuous tone), 50%
+//! duty. f32 is fine here (frontend, not core).
+//!
+//! main.zig keeps `enabled` equal to the menu's sound setting, calls
+//! `update(&gg)` after each `step_frame`, `idle(&gg)` in every update that
+//! does not step, and `chime(0)` / `chime(1)` for the two boot notes.
 const cart = @import("cart-api");
 const core = @import("core");
+const audio_feed = @import("audio_feed");
 
-/// Sound approximation on/off; main.zig keeps it equal to the menu's
-/// `sound_enabled` every frame.
+/// Sound on/off; main.zig keeps it equal to the menu's `sound_enabled`
+/// every frame.
 pub var enabled: bool = true;
 
 /// Cap on every tone the cart plays (the game's voice and the chime), 0..1
@@ -79,52 +88,114 @@ const sim = struct {
     }
 };
 
+// ---- Badge path (streaming) ----
+
+/// The feed: 736 samples per Game Gear frame (735.95), up to 738 in one.
+/// Lives in RAM for as long as the cart runs (the OS reads its ring).
+const Feed = audio_feed.Feed(.{ .nominal = 736, .max_src = core.psg.max_frame_samples, .ring_bytes = 4096 });
+var feed: Feed = .{};
+
+/// Whether the core should render this frame (badge only; the simulator
+/// plays `voice()` instead).
+pub fn renders() bool {
+    return enabled and !cart.is_wasm;
+}
+
+/// Samples queued for the OS, for the debug overlay (0 in wasm).
+pub fn queued() u32 {
+    if (comptime cart.is_wasm) return 0;
+    return feed.queued();
+}
+
+/// Updates that found the ring empty while playing (0 in wasm).
+pub fn underruns() u32 {
+    if (comptime cart.is_wasm) return 0;
+    return feed.underruns;
+}
+
+/// The boot chime on the badge: note 1 (1046 Hz) for 60 ms, note 2
+/// (2093 Hz) from 4 frames later for 60 ms, a square at `chime_amp`.
+const chime_note_len = audio_feed.sample_rate * 60 / 1000;
+const chime_second_at = 4 * 736;
+const chime_len = chime_second_at + chime_note_len;
+const chime_amp = 48;
+/// Samples of the chime played so far; `chime_len` when idle.
+var chime_pos: u32 = chime_len;
+var chime_buf: [736]u8 = undefined;
+
+fn chime_frame() void {
+    for (&chime_buf, 0..) |*b, i| {
+        const t = chime_pos + @as(u32, @intCast(i));
+        var v: i32 = 0;
+        if (t < chime_note_len or (t >= chime_second_at and t < chime_len)) {
+            const hz: u32 = if (t < chime_note_len) 1046 else 2093;
+            // Half periods of a square at `hz`: high on the even ones.
+            const half = (t * hz * 2) / audio_feed.sample_rate;
+            v = if (half & 1 == 0) chime_amp else -chime_amp;
+        }
+        b.* = @intCast(128 + v);
+    }
+    chime_pos = @min(chime_pos + chime_buf.len, chime_len);
+    feed.frame(&chime_buf);
+}
+
+// ---- Shared entry points ----
+
 fn stop() void {
     if (!playing) return;
-    if (cart.is_wasm) sim.stop() else cart.tone2(cart.Tone2Options.stop);
+    sim.stop();
     playing = false;
 }
 
-/// Once per badge frame after `step_frame`, and every menu frame too.
+/// After every `step_frame`.
 pub fn update(gg: *const core.Gg) void {
+    if (comptime cart.is_wasm) {
+        sim_update(gg);
+    } else if (enabled and gg.audio_len > 0) {
+        feed.frame(gg.audio_out[0..gg.audio_len]);
+    } else {
+        feed.stop();
+    }
+}
+
+/// Every update that does not step the game (splash, menu, scrub).
+pub fn idle(gg: *const core.Gg) void {
+    if (comptime cart.is_wasm) {
+        sim_update(gg);
+    } else if (enabled and chime_pos < chime_len) {
+        chime_frame();
+    } else {
+        feed.stop();
+    }
+}
+
+/// The simulator's voice, once per update.
+fn sim_update(gg: *const core.Gg) void {
     if (!enabled) return stop();
     const v = gg.psg.voice() orelse return stop();
     if (v.hz < min_hz or v.hz > max_hz) return stop();
-    if (cart.is_wasm) {
-        // Re-issued every frame: the simulator plays finite tones only.
-        sim.play(v.hz, volume_f32(v.atten), sim.sustain_frames);
-    } else {
-        if (playing and v.hz == last_hz and v.atten == last_atten) return;
-        cart.tone2(.{
-            .frequency = @floatFromInt(v.hz),
-            .duration = -1.0,
-            .volume = volume_f32(v.atten),
-            .flags = .{ .shape = .square },
-        });
-    }
+    // Re-issued every frame: the simulator plays finite tones only.
+    sim.play(v.hz, volume_f32(v.atten), sim.sustain_frames);
     playing = true;
     last_hz = v.hz;
     last_atten = v.atten;
 }
 
 /// Boot chime (SPEC.md 12): step 0 = 1046 Hz, step 1 = 2093 Hz, 60 ms each
-/// at full volume. Plays regardless of the voice state; the next `update`
-/// re-issues the game's voice if one is audible.
+/// at full volume. On the badge step 0 starts the whole two-note burst
+/// (`idle` pushes it) and step 1 does nothing. In the simulator it plays
+/// regardless of the voice state; the next update re-issues the game's
+/// voice if one is audible.
 pub fn chime(step: u8) void {
     if (!enabled) return;
-    const hz: u32 = if (step == 0) 1046 else 2093;
-    if (cart.is_wasm) {
+    if (comptime cart.is_wasm) {
+        const hz: u32 = if (step == 0) 1046 else 2093;
         sim.play(hz, max_volume, 4); // 4 frames, about 60 ms
-    } else {
-        cart.tone2(.{
-            .frequency = @floatFromInt(hz),
-            .duration = 0.06,
-            .volume = max_volume,
-            .flags = .{ .shape = .square },
-        });
+        // The chime cancelled whatever was playing. Mark the voice idle so
+        // the next update does not stop the chime early when the game is
+        // silent, and re-sends the game's voice if one is audible.
+        playing = false;
+    } else if (step == 0) {
+        chime_pos = 0;
     }
-    // The chime cancelled whatever was playing. Mark the buzzer idle so
-    // `update` does not stop the chime early when the game is silent, and
-    // re-sends the game's voice if one is audible.
-    playing = false;
 }

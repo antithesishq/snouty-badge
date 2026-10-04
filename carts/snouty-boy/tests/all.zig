@@ -18,4 +18,5 @@ test {
     _ = @import("kstore_unit.zig");
     _ = @import("serial_unit.zig");
     _ = @import("flow_unit.zig");
+    _ = @import("sound_unit.zig");
 }

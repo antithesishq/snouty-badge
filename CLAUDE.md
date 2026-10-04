@@ -70,7 +70,7 @@ its design and milestone status.
   starts (`docs/SOUND.md`). The show badges' newer firmware ignores `tone2`
   and its IPC words are now the streaming-audio ring: badge builds never
   call `cart.tone2`; use `lib/tone_stream.zig` (effects) or
-  `lib/audio_feed.zig` (emulators), docs/SOUND.md section 6.
+  `lib/audio_feed.zig` (emulators), docs/SOUND.md section 7.
 - Flash: 8000 pages of 256 bytes available via the cart API (`Zone`).
 - Cart RAM window 307 KB (`0x20035100..0x20080000`, 32 KB of it stack). A RAM
   cart holds code, read-only data and state there; keep `size -A` of `.text`

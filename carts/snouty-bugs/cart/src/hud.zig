@@ -159,12 +159,14 @@ fn number_label(buf: *[9]u8, comptime prefix: []const u8, n: u32) []const u8 {
 /// the ship (level pose, thruster looping, bobbing 1 px) where the head icon
 /// used to be, then the mode menu (up / down picks, A or Start plays): the
 /// picked mode in its color (white, Coral, red) between blinking `>` `<`,
-/// the others dim.
-pub fn draw_title(tick: u32, pick: mode.Mode) void {
+/// the others dim. The sound toggle's state (Select) sits at the top, dim
+/// while off.
+pub fn draw_title(tick: u32, pick: mode.Mode, sound_on: bool) void {
     // The background layers start at y 8; clear the HUD row too, since
     // no_copy_full_frame leaves a stale frame there otherwise.
     cart.rect(.{ .x = 0, .y = 0, .width = cart.screen_width, .height = draw.hud_height, .fill_color = draw.anti_black });
     draw.darken_checker();
+    draw.centered_text(if (sound_on) "SELECT: SOUND ON" else "SELECT: SOUND OFF", 18, if (sound_on) draw.anti_white else draw.star_dim);
     draw.centered_text("SNOUTY", 32, draw.anti_white);
     draw.centered_text("BUGHUNT", 42, draw.coral);
     const ship_y: i32 = title_ship_y + @as(i32, @intCast((tick / 40) % 2));
