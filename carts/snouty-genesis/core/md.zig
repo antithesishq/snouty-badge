@@ -28,6 +28,7 @@ pub const psg = @import("psg.zig");
 pub const rom = @import("rom.zig");
 pub const tunables = @import("tunables.zig");
 pub const undo = @import("undo.zig");
+pub const sound = @import("sound.zig");
 
 pub const RomSource = rom.RomSource;
 pub const LineSink = vdp.LineSink;
@@ -132,6 +133,9 @@ pub const Md = struct {
     not_wait_loop: u32 align(4) = 0xFFFF_FFFF,
     /// The SRAM range the header declares (derived from `rom` by `reset`).
     sram_map: rom.SramMap = .{},
+    /// The streamed sound's renderer (core/sound.zig; the RAM cart only,
+    /// a zero-size field elsewhere), set by the frontend; not console state.
+    snd: if (sound.enabled) ?*sound.Sound else void align(4) = if (sound.enabled) null else {},
     /// `tone()`'s answer, recomputed at the end of every frame and on
     /// `reset`/`restore` (derived from `ym` and `psg`).
     tone_cache: ?Tone align(4) = null,
@@ -154,6 +158,7 @@ pub const Md = struct {
     pub fn init_in_place(md: *Md, src: RomSource) void {
         md.rom = src;
         md.line_sink = null;
+        if (sound.enabled) md.snd = null;
         md.reset();
     }
 
@@ -189,6 +194,7 @@ pub const Md = struct {
         var b = md.bus_for();
         md.cpu.reset(&b);
         md.tone_cache = md.pick_tone();
+        if (sound.active(md)) |s| s.resync(md);
     }
 
     /// One Genesis frame (262 lines). `pad` is held for the whole frame;
@@ -200,6 +206,8 @@ pub const Md = struct {
         var b = md.bus_for();
         var zb = md.z80bus_for();
         const scaled_frame: u32 = vdp.m68k_cycles_per_frame * tunables.cpu_scale / tunables.scale_one;
+        // Not held across the line loop (a register the 68000 needs).
+        if (sound.active(md)) |s| s.begin_frame();
         var line: u32 = 0;
         while (line < vdp.lines_per_frame) : (line += 1) {
             if (sink) |s| if (md.vdp.row_for_line(@intCast(line))) |row| md.vdp.render_line(row, s);
@@ -213,6 +221,7 @@ pub const Md = struct {
         }
         md.frame_count +%= 1;
         md.tone_cache = md.pick_tone();
+        if (sound.active(md)) |s| s.end_frame(md);
     }
 
     /// 68000 cycles of line `line` when the frame has `total`: the frame's

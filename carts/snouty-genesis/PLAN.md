@@ -1311,3 +1311,99 @@ Deviations from the contract and things to decide:
     scrub step cost. Bench-side: the Z80 bank window could use `run_at`;
     `run_z80` at 76 KB is the inlining of Gear's core and the first
     candidate if flash gets tight.
+
+## Sound on the new firmware (2026-10-04)
+
+Contract: root docs/EMU_SOUND.md Track C, changed the same day by Adrian
+(at the show with a badge): upstream firmware has dropped XIP, so **only
+the RAM cart matters**; give it sound, speed over polish, no WAV work.
+The show badges' firmware ignores `tone2` and plays only a cart-owned
+ring of 44.1 kHz u8 samples (lib/stream_audio.zig).
+
+What the RAM cart plays: its Z80 is the stub, so only what the 68000
+writes to the chips itself. Sonic 1 (SMPS on the 68000) has its FM + PSG
+music; its DAC drums and the SEGA voice are the Z80's and stay silent.
+Z80-driven games (Miniplanets' Echo engine) stay silent. The XIP cart and
+the wasm are unchanged (byte-identical XIP UF2; `build_options.synth` is
+false there and they keep the one-voice `tone` path).
+
+Built (branch `emu-sound-genesis`):
+
+- `core/ym2612.zig` `Fm`: phase generator (F-number, block, detune after
+  the block shift with the 17-bit wrap, multiple), envelope generator
+  (AR/D1R/D2R/RR, SL, key scaling, the EG counter every 3 chip samples,
+  shift and increment rows, exponential attack; batched 4 clocks at a
+  time, levels up to 170 us late), log-sine / exponent tables
+  (`core/ym_tables.zig` from `tools/gen_ym_tables.py`, no float, no
+  comptime), TL, the 8 algorithms as route masks, op1 feedback, channel 3
+  special mode, LFO AM and PM (PM as a triangle of the PMS depth on the
+  F-number), the DAC as a held level, L/R averaged to mono (reset with
+  both on, as Nuked-OPN2). Left out: SSG-EG, CSM, operator pipeline
+  delays, 9-bit DAC truncation/ladder, busy flag.
+- `core/psg.zig` `Synth`: three tones (periods 0/1 constant high), Sega
+  16-bit noise (white taps 0+3, periodic, reset on a noise write), 2 dB
+  table, box-filtered per 44.1 kHz bin in 64-sample chunks.
+- `core/sound.zig`: lazy catch-up at each YM2612 / PSG write (console
+  time from the 68000's line and cycle) and at frame end; Q12 bin
+  positions with the fraction carried (two frames = 1,471 or 1,472
+  samples); DC blocker (~20 Hz); `mix_gain` 512 (Sonic 1: peaks +-90..128,
+  RMS ~23, clip runs of at most 3 samples). Render-only state outside
+  `Md`'s keyframes; `resync` on power-on, Z80 RESET and rendering on.
+- `tunables.fm_rate_div` = **3** (FM evaluated at 14,700 Hz and held;
+  PSG and output at 44.1 kHz).
+- Frontend: `audio_feed` `Feed(.{ .nominal = 1472, .max_src = 1474,
+  .ring_bytes = 4608 })`, `frame` after each stepped update, `stop`
+  otherwise; never `tone2` in the RAM cart; the Sound row (off at boot,
+  `-Dsound=true` flips it) now in the RAM cart; overlay line `snd qN uN`.
+
+Room (the RAM cart had 7,964 B between `__bss_end__` and
+`__stack_limit__`; there is no scrub history in the RAM cart to give up):
+code +10.1 KB (`.text` 107,444 -> 117,560), `.bss` +3.4 KB net (feed
+6,288 + synth 756, less 8 KB of SRAM and 2 KB of cluster table). Given
+up: cartridge SRAM space 16 -> 8 KB (an odd-byte SRAM declared over 16 KB
+shows its first 4 KB) and the drive cluster table 1280 -> 768 KB (larger
+than any ROM that fits beside the ~540 KB cart UF2 on the 1280 KB
+drive); the update's 1,474-sample buffer is lent from `run_update`'s
+stack. Left: **636 B** (`__stack_limit__` - `__bss_end__`), under the old
+4 KB rule. RAM UF2 533,504 -> 548,352 B.
+
+badge-bench (calibrated busy ms, RAM cart, Sonic 1 from
+`out/romfs_sonic.img` with `tools/scripts/snd_sonic1.json`, 900 updates:
+Sega logo, title music from ~280, Green Hill Zone from ~540, running
+right; Sound on from boot via `-Dsound=true`):
+
+| Build | mean | worst | over 33.3 | sound's cost mean / max |
+|---|---:|---:|---:|---:|
+| sound off | 16.79 | 27.03 | 0 | |
+| FM 44.1 kHz | 23.21 | 38.90 | 16 | 6.7 / 12.0 |
+| FM 22.05 kHz | 20.69 | 34.29 | 3 | 4.1 / 7.4 |
+| **FM 14.7 kHz** | 19.84 | 32.76 | **0** | 3.2 / 5.9 |
+
+Underruns 0 in every run (queue min 2,468 at 14.7 kHz). The worst
+updates are GHZ's first seconds (update ~598, 27 ms with sound off), so
+the 14.7 kHz default has 0.5 ms to spare there. A first cut cost 9 ms
+mean at 44.1 kHz; the envelope step masks and 4-clock batches, the
+chunked PSG with a no-flip fast path and the `mute` skip took it to the
+figures above.
+
+Sound off costs nothing measurable: Miniplanets `m2_mini300` (336 updates)
+15.26 / 23.60 vs the plan commit's 15.20 / 23.67 (the chip-write hooks
+are a pointer test; Miniplanets with Sound on, silent: 17.76 / 26.50 at
+the first cut, 0 over).
+
+Tests: `zig build test-genesis` 188/188 (170 full core, unchanged goldens;
+18 RAM-cart, of which 13 new `sound:` in `tests/sound_synth.zig`, run from
+`tests/ram_variant.zig` since only the RAM cart's core has the synth):
+pitch from F-number/block/multiple/detune, envelope phases and the rate
+doubling, every algorithm's carriers vs modulators, feedback, channel 3
+special mode, DAC and pan, PSG pitch / box filter / attenuation, noise
+LFSR sequences, a write landing in its bin, two frames = 1,471/1,472
+samples, rendering does not change the console and off renders nothing.
+`zig build check-float` PASS. Every other cart untouched (no file outside
+this cart changed). WAV made on the way (gitignored, never committed):
+`out/sonic_r3.wav`.
+
+Open: hardware listen on Adrian's badge (levels, the 14.7 kHz FM
+aliasing); 22.05 kHz needs about 1 ms more off the worst updates (FM
+operator state in registers or skipping silent operators); the 636 B of
+RAM left.

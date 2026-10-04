@@ -78,7 +78,10 @@ pub fn report() []const u8 {
 
 /// Cluster table for `romfs.Volume.map` (5 KB) and the mapped file; both
 /// must outlive the RomSource, whose cluster path reads through `clusters`.
-var clusters: [romfs.max_clusters]u16 = undefined;
+/// The RAM cart's holds 768 KB (3 KB), the largest ROM that fits on the
+/// drive beside its own ~540 KB UF2, so its sound (core/sound.zig) fits; a
+/// larger file is listed as not playable (TooManyClusters).
+var clusters: [if (core.sound.enabled) 1536 else romfs.max_clusters]u16 = undefined;
 var mapped: romfs.Mapped = undefined;
 
 /// The drive: `romfs.size` bytes at `romfs.base_addr`.
