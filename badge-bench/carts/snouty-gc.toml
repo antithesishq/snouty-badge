@@ -1,0 +1,6 @@
+# snouty-gc: Mode 7 combat racer on the Snouty Zero engine, 60 fps. RAM cart
+# zig-out/firmware/snouty-gc.elf (the shipped artifact; XIP is a no-go on SYCL).
+budget_ms = 16.7
+frames = 600
+script = "carts/snouty-gc/tools/scripts/m0_race.json"
+note = "M0: Start, Start, A through the splash, title and menu into a Quick Race on Landfill Loop (race from frame 21, GO at 221), then the autopilot's recorded drive (tools/record_script.py): the six-car grid start and the first corners (PLAN.md M0 status)"
