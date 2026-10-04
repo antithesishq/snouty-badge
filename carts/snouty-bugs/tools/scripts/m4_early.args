@@ -1,6 +1,11 @@
-# m4_early: A at 30, then UP briefly and RIGHT into the y-40 gnat string: hit at update 84
-# (game tick 54), less than 120 ticks of history, so the rewind goes back to tick 0. Since M5
-# the playback length follows the depth, (54 + 1) / 2 = 27 frames: bug report 85..103 (20
-# updates with 84), playback 104..130 (game tick 52, 50, ... 0), resume at update 131 with
-# game tick 0 and rewinds 2.
---frames 400 --dump-exports debug_state,debug_rewinds,debug_game_tick --at "84 debug_state == 4" --at "84 debug_rewind_target == 0" --at "130 debug_state == 4" --at "130 debug_game_tick == 0" --at "131 debug_state == 1" --at "131 debug_game_tick == 0" --at "131 debug_rewinds == 2" --at "250 debug_history_check == 0" --expect "debug_state == 1"
+# m4_early: a hit before 120 ticks of history exist rewinds to tick 0. A at 30, then RIGHT
+# 32..140. Since M7 the first gnat string comes at 2 s (game tick 120), too late for that, so
+# the test hook debug_spray at 60 (game tick 30; it spawns a fixed set of engine bullets from
+# (140, 64), among them three pellets that brake and re-aim at the ship, and checkpoints the
+# history) supplies the bullets: the ship flying right meets one at update 85 (game tick 55).
+# The rewind goes back to tick 0 (the spray is not input, so the replayed world has none of
+# it: bullets 0 at the resume). The playback length follows the depth, (55 + 1) / 2 = 28
+# frames: bug report 85..104 (20 updates), playback 105..132 (game tick 53, 51, ... 0),
+# resume at update 133 with game tick 0 and rewinds 2. (Until M7: UP 32..39 and RIGHT into
+# the y-40 string, hit at 84, resume at 131.)
+--frames 400 --call-at "60 debug_spray" --dump-exports debug_state,debug_rewinds,debug_game_tick --at "84 debug_state == 1" --at "85 debug_state == 4" --at "85 debug_game_tick == 55" --at "85 debug_rewind_target == 0" --at "104 debug_state == 4" --at "105 debug_game_tick == 53" --at "132 debug_state == 4" --at "132 debug_game_tick == 0" --at "133 debug_state == 1" --at "133 debug_game_tick == 0" --at "133 debug_rewinds == 2" --at "133 debug_bullets == 0" --at "110 debug_history_check == 0" --at "250 debug_history_check == 0" --expect "debug_state == 1"
