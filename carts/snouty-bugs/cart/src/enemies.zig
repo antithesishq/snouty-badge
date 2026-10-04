@@ -161,8 +161,9 @@ pub const gnat_spawn_x: f32 = spawn_x;
 // tick, scaled by `bullets.spawn_shot`.
 
 /// No volley is fired while the emitter is this close to the ship's
-/// hitbox center (bullets never spawn on top of the ship).
-const safe_radius: f32 = 22;
+/// hitbox center (no point-blank fire: bullets never spawn too close to
+/// the ship to be seen).
+const safe_radius: f32 = 40;
 
 const gnat_speed: f32 = 1.0;
 const gnat_amplitude: f32 = 8.0;
@@ -198,12 +199,14 @@ const beetle_fan_n = 5;
 const beetle_fan_step = 12;
 const beetle_shot_speed: f32 = 0.9;
 const beetle_ring_n = 10;
+/// HP of the plain fan beetle (pattern 0, stage 1's); the others 14.
+const beetle_hp_plain: u16 = 6;
 const beetle_wall_every: u32 = 60;
 const beetle_wall_n = 13;
 const beetle_wall_gap: f32 = 13;
 const beetle_wall_speed: f32 = 0.8;
 /// The wall's gap opens this far from the ship's y.
-const beetle_wall_far: f32 = 48;
+const beetle_wall_far: f32 = 28;
 const beetle_orb_speed: f32 = 0.7;
 const beetle_orb_split_at: u16 = 50;
 const beetle_orb_children = 6;
@@ -215,7 +218,10 @@ const spider_hang_min = 24;
 const spider_hang_max = 72;
 const spider_hang: u32 = 180;
 const spider_first: u32 = 10;
-const spider_fire_every: u32 = 18;
+/// The plain sprinkler (pattern 0) fires often (its sweep reads as a
+/// curtain, not as aimed fire); pattern 1's pellets every 18.
+const spider_fire_every: u32 = 10;
+const spider_fire_every_p1: u32 = 18;
 const spider_arc_n = 5;
 const spider_arc_step = 8;
 /// The arc's middle sweeps 128 +- 40 (left, swinging down and up).
@@ -224,6 +230,8 @@ const spider_sweep_step: u8 = 12;
 const spider_shot_speed: f32 = 0.8;
 /// The thread hangs from just under the HUD.
 const thread_top: i32 = 8;
+/// HP of the plain spider (pattern 0); pattern 1 has 8.
+const spider_hp_plain: u16 = 8;
 
 const moth_speed: f32 = 1.2;
 const moth_retarget_every: u32 = 30;
@@ -236,10 +244,12 @@ const moth_exit_x: f32 = -40;
 const moth_first: u32 = 0;
 const moth_fire_every: u32 = 20;
 const moth_pair_step = 8;
+/// HP of the needle moth (pattern 0); the stop-and-go moth has 6.
+const moth_hp_plain: u16 = 6;
 const moth_needle_speed: f32 = 1.4;
 /// Pattern 1: a ring of stop-and-go pellets (brake, then re-aim).
-const moth_sg_every: u32 = 45;
-const moth_sg_n = 6;
+const moth_sg_every: u32 = 60;
+const moth_sg_n = 4;
 const moth_sg_speed: f32 = 1.5;
 const moth_sg_drag: f32 = 0.93;
 const moth_sg_aim_at: u16 = 40;
@@ -310,23 +320,23 @@ const zombie_speed: f32 = 0.55;
 const zombie_amplitude: f32 = 10;
 const zombie_period: u32 = 120;
 const zombie_first: u32 = 0;
-const zombie_fire_every: u32 = 35;
+const zombie_fire_every: u32 = 50;
 const zombie_fan_step = 14;
 const zombie_shot_speed: f32 = 1.0;
 const zombie_husk: u32 = 90;
 const zombie_husk_drift: f32 = 0.5;
-const zombie_ring_n = 12;
+const zombie_ring_n = 8;
 const zombie_ring_speed: f32 = 0.9;
 
 /// Thundering Herd (midboss): holds at x 112, gnat strings from her egg
 /// row, flowers (two rings half a step apart, one fast, one slow); leaves
-/// after 25 s.
+/// after 12 s.
 const herd_speed: f32 = 0.8;
 const herd_hold_x: f32 = 112;
 const herd_y: f32 = 36;
 const herd_bob: f32 = 16;
 const herd_bob_period: u32 = 240;
-const herd_stay: u32 = 25 * 60;
+const herd_stay: u32 = 12 * 60;
 const herd_leave_speed: f32 = 1.0;
 const herd_string_every: u32 = 120;
 const herd_flower_first: u32 = 40;
@@ -356,23 +366,23 @@ fn alloc() ?*Enemy {
 }
 
 /// Base (rank 0) HP of a regular kind; `spawn` scales it by rank.
-/// Centipede: head 10, segment 4. Herd by version (pattern 0..2).
+/// Centipede: head 14, segment 5. Herd by version (pattern 0..2).
 fn base_hp(kind: Kind, variant: u8, pattern: u8) u16 {
     return switch (kind) {
         .gnat => 1,
         .wasp => 2,
-        .beetle => 24,
-        .spider => 12,
-        .moth => 8,
-        .centipede => if (variant == 0) 24 else 8,
-        .flea => 12,
+        .beetle => if (pattern == 0) beetle_hp_plain else 14,
+        .spider => if (pattern == 0) spider_hp_plain else 8,
+        .moth => if (pattern == 0) moth_hp_plain else 6,
+        .centipede => if (variant == 0) 14 else 5,
+        .flea => 8,
         .ladybug => 6,
-        .mite => 36,
-        .zombie => 16,
+        .mite => 20,
+        .zombie => 10,
         .herd => switch (pattern) {
-            0 => 400,
-            1 => 520,
-            else => 640,
+            0 => 80,
+            1 => 100,
+            else => 120,
         },
         .boss => 1,
     };
@@ -472,7 +482,7 @@ pub fn spawn_gnat_string(y: f32, drop: bool) void {
 /// formation `id` (0 = none).
 pub fn spawn_gnat_string_ex(x: f32, y: f32, id: u8, pattern: u8) void {
     for (0..string_len) |i| {
-        const e = spawn_ex(.gnat, x, y, @intCast(i * string_spacing), pattern, .right, 0) orelse {
+        const e = spawn_ex(.gnat, x, y, @intCast(i * string_spacing), pattern, .right, @intCast(i)) orelse {
             formations.lost(id);
             continue;
         };
@@ -546,21 +556,58 @@ fn countdown(c: *u32, at: [2]f32, every: u32) bool {
     return !near_ship(at);
 }
 
-/// Sixteenths of a fire interval by stage, on top of the rank: the
-/// content's own difficulty curve. From the second loop on every stage
+/// Sixteenths of a fire interval by stage, on top of the rank. Tuned
+/// with the difficulty probe (PLAN.md M7 "Tuning"): the curve comes from
+/// what each table puts on the field and from the rank (stage base 0 ..
+/// 450), so PRODUCTION, the busiest table at the highest rank, needs the
+/// slowest countdowns of the four. From the second loop on every stage
 /// fires at `loop_pace` sixths of that again (the rank's mercy can hold a
-/// struggling player's rank at 0 for minutes, so the loop's own +400
+/// struggling player's rank near 0 for minutes, so the loop's own +400
 /// alone would not make loop 2 harder).
-const stage_pace = [4]u32{ 16, 9, 9, 7 };
+const stage_pace = [4]u32{ 56, 32, 40, 56 };
 const loop_pace: u32 = 2;
 const loop_pace_of: u32 = 6;
+/// The shape of a stage, on top of its pace: intervals start at
+/// `ramp_start` sixteenths of the pace and tighten linearly to 16 / 16
+/// at `ramp_peak` on the stage clock (each stage opens gently and gets
+/// denser), then ease back to `lull` sixteenths over `lull_ticks`: a lull
+/// before the WARNING to collect the last crates in.
+const ramp_start: u32 = 28;
+const ramp_peak: u32 = 50 * 60;
+const lull: u32 = 26;
+const lull_ticks: u32 = 14 * 60;
 
-/// A fire interval at this stage, loop and rank (at least 1 tick).
+/// The ramp at stage clock `t`, in 1/64 sixteenths.
+fn ramp(t: u32) u32 {
+    if (t < ramp_peak) return 64 * 16 + 64 * (ramp_start - 16) * (ramp_peak - t) / ramp_peak;
+    return 64 * 16 + 64 * (lull - 16) * @min(t - ramp_peak, lull_ticks) / lull_ticks;
+}
+
+/// The fire that is not on a countdown (a gnat crossing its line, a
+/// wasp stopping, a ladybug's loop, a flea's apex) is thinned by stage
+/// instead: only every `member_stride`-th member of a gnat string, wasp
+/// vee or ladybug four fires (counting from the leader, `Enemy.variant`),
+/// and a flea fires at every `member_stride`-th apex. From the second
+/// loop on, all of them.
+const member_stride = [4]u8{ 3, 2, 2, 1 };
+
+fn stride() u8 {
+    const st = &world.w.waves;
+    if (st.loop > 0) return 1;
+    return member_stride[@min(st.stage, member_stride.len - 1)];
+}
+
+fn member_fires(e: *const Enemy) bool {
+    return e.variant % stride() == 0;
+}
+
+/// A fire interval at this stage, loop, stage clock and rank (at least 1
+/// tick).
 fn reload(every: u32) u32 {
     const st = &world.w.waves;
     var k = stage_pace[@min(st.stage, stage_pace.len - 1)];
     if (st.loop > 0) k = @max(k * loop_pace / loop_pace_of, 1);
-    return @max(rank.interval(every) * k / 16, 1);
+    return @max(rank.interval(every) * k * ramp(st.t) / (256 * 64), 1);
 }
 
 /// The main fire countdown (`aux`) from the cell center.
@@ -629,7 +676,7 @@ fn update_gnat(e: *Enemy) void {
         2 => crossed(before, e.x, gnat_fire_x2) or crossed(before, e.x, gnat_fire_x3),
         else => false,
     };
-    if (fire) {
+    if (fire and member_fires(e)) {
         const c = e.center();
         if (!near_ship(c)) patterns.aimed(c[0], c[1], .{ .speed = gnat_shot_speed, .shape = .pellet, .source = .gnat });
     }
@@ -661,7 +708,7 @@ fn update_wasp(e: *Enemy) void {
                 e.phase = .pause;
                 e.timer = 0;
                 const c = e.center();
-                if (!near_ship(c)) {
+                if (!near_ship(c) and member_fires(e)) {
                     const shot: bullets.Shot = .{ .speed = wasp_shot_speed, .shape = .pellet, .source = .wasp };
                     patterns.fan(c[0], c[1], if (e.pattern == 0) 3 else 5, wasp_fan_step, shot);
                 }
@@ -710,6 +757,9 @@ fn update_beetle(e: *Enemy) void {
         },
         else => e.x -= beetle_speed,
     }
+    // A leaving beetle crawls across the whole field toward the ship's
+    // column: it holds its fire (it said its piece while it sat).
+    if (e.phase == .leave) return;
     const every = if (e.pattern == 2) beetle_wall_every else beetle_fire_every;
     if (!fire_due(e, every)) return;
     const c = e.center();
@@ -765,7 +815,7 @@ fn update_spider(e: *Enemy) void {
         },
         else => e.y -= spider_speed,
     }
-    if (e.phase == .climb or !fire_due(e, spider_fire_every)) return;
+    if (e.phase == .climb or !fire_due(e, if (e.pattern == 1) spider_fire_every_p1 else spider_fire_every)) return;
     const c = e.center();
     const mid: i32 = 128 + @as(i32, @intFromFloat(spider_sweep * sin256(e.ring_phase)));
     e.ring_phase +%= spider_sweep_step;
@@ -881,6 +931,10 @@ fn update_flea(e: *Enemy) void {
 
 fn flea_fire(e: *Enemy) void {
     const c = e.center();
+    // `aux` counts the apexes: the first fires, then every stride-th.
+    const apex = e.aux;
+    e.aux += 1;
+    if (apex % stride() != 0) return;
     if (!in_field(c) or near_ship(c)) return;
     const shot: bullets.Shot = .{ .speed = flea_shot_speed, .shape = .pellet, .source = .flea };
     switch (e.pattern) {
@@ -909,7 +963,7 @@ fn update_ladybug(e: *Enemy) void {
             const top: u32 = if (s > 0) 192 else 64;
             if (a % 256 == top) {
                 const c = e.center();
-                if (in_field(c) and !near_ship(c)) {
+                if (in_field(c) and !near_ship(c) and member_fires(e)) {
                     const n: u32 = if (e.pattern == 2) ladybug_ring_n + 2 else ladybug_ring_n;
                     patterns.ring(c[0], c[1], n + rank.extra(2), @intCast(e.age % 32), .{ .speed = ladybug_shot_speed, .shape = .pellet, .source = .ladybug });
                 }
@@ -1020,7 +1074,7 @@ fn update_zombie(e: *Enemy) void {
     }
 }
 
-/// The midboss: in to x 112, then holds and bobs for 25 s, releasing a
+/// The midboss: in to x 112, then holds and bobs for 12 s, releasing a
 /// gnat string from her egg row every 120 ticks and firing flowers; then
 /// leaves to the right (no crates). Version `pattern` 0..2 (stages 2..4):
 /// 0 flowers of 10 + 10; 1 every third flower's slow ring is stop-and-go

@@ -128,12 +128,14 @@ fn bolts_vs_enemies() void {
     }
 }
 
-/// Every second Memory Leak beetle killed by a bolt drops a crate
-/// (PLAN.md M7; the M6 every-fifth-gnat rule is gone, gnat strings drop
-/// as formations).
+/// Every `beetle_drop_every`-th Memory Leak beetle killed by a bolt drops
+/// a crate (PLAN.md M7; the M6 every-fifth-gnat rule is gone, gnat
+/// strings drop as formations).
+const beetle_drop_every: u32 = 1;
+
 fn drop_for_kill(kind: enemies.Kind, c: [2]f32) void {
     if (kind != .beetle) return;
     const p = &world.w.player;
     p.beetle_kills += 1;
-    if (p.beetle_kills % 2 == 0) pickups.spawn_drop(c[0], c[1]);
+    if (p.beetle_kills % beetle_drop_every == 0) pickups.spawn_drop(c[0], c[1]);
 }

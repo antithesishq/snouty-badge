@@ -49,20 +49,20 @@ fn s(sec: u32) u32 {
 /// fires soon after it shows; from 20 s the gnat strings fire too.
 const stage1 = [_]Entry{
     .{ .at = s(2), .kind = .gnat, .y = 40, .formation = true },
-    .{ .at = s(4), .kind = .gnat, .y = 88 },
+    .{ .at = s(4), .kind = .gnat, .y = 88, .formation = true },
     .{ .at = s(7), .kind = .wasp, .y = 56, .count = 3, .spacing = 8, .dy = 18 },
     .{ .at = s(10), .kind = .beetle, .y = 40 },
     .{ .at = s(12), .kind = .gnat, .y = 96 },
     .{ .at = s(14), .kind = .spider },
     .{ .at = s(15), .kind = .wasp, .y = 30, .count = 3, .spacing = 8, .dy = 16 },
     .{ .at = s(17), .kind = .moth, .count = 2, .spacing = 30 },
-    .{ .at = s(20), .kind = .gnat, .y = 30, .pattern = 1 },
+    .{ .at = s(20), .kind = .gnat, .y = 30, .pattern = 1, .formation = true },
     .{ .at = s(21), .kind = .gnat, .y = 90, .pattern = 1 },
     .{ .at = s(23), .kind = .beetle, .y = 80 },
     .{ .at = s(24), .kind = .wasp, .y = 40, .count = 3, .spacing = 8, .dy = 18 },
     .{ .at = s(26), .kind = .spider, .count = 2, .spacing = 60 },
     .{ .at = s(29), .kind = .moth, .count = 2, .spacing = 30 },
-    .{ .at = s(29), .kind = .gnat, .pattern = 1 },
+    .{ .at = s(29), .kind = .gnat, .pattern = 1, .formation = true },
     .{ .at = s(32), .kind = .wasp, .y = 92, .count = 3, .spacing = 8, .dy = 16 },
     .{ .at = s(33), .kind = .wasp, .y = 28, .count = 3, .spacing = 8, .dy = 16 },
     .{ .at = s(35), .kind = .beetle, .y = 28 },
@@ -73,7 +73,7 @@ const stage1 = [_]Entry{
     .{ .at = s(44), .kind = .moth, .count = 3, .spacing = 30 },
     .{ .at = s(45), .kind = .wasp, .y = 64, .count = 3, .spacing = 8, .dy = 18 },
     .{ .at = s(48), .kind = .beetle, .y = 60 },
-    .{ .at = s(49), .kind = .gnat, .y = 24, .pattern = 1 },
+    .{ .at = s(49), .kind = .gnat, .y = 24, .pattern = 1, .formation = true },
     .{ .at = s(50), .kind = .gnat, .y = 100, .pattern = 1 },
     .{ .at = s(52), .kind = .wasp, .y = 30, .count = 3, .spacing = 8, .dy = 16 },
     .{ .at = s(53), .kind = .wasp, .y = 92, .count = 3, .spacing = 8, .dy = 16 },
@@ -82,7 +82,7 @@ const stage1 = [_]Entry{
     .{ .at = s(57), .kind = .beetle, .y = 36 },
     .{ .at = s(57), .kind = .beetle, .y = 84 },
     .{ .at = s(60), .kind = .gnat, .y = 24, .pattern = 1 },
-    .{ .at = s(61), .kind = .gnat, .y = 64, .pattern = 1 },
+    .{ .at = s(61), .kind = .gnat, .y = 64, .pattern = 1, .formation = true },
     .{ .at = s(62), .kind = .gnat, .y = 100, .pattern = 1 },
     .{ .at = s(63), .kind = .wasp, .y = 56, .count = 3, .spacing = 8, .dy = 20 },
     .{ .at = s(65), .kind = .spider, .count = 2, .spacing = 40 },
@@ -98,102 +98,103 @@ const stage1 = [_]Entry{
 /// bottom, fleas from behind; the Thundering Herd at 35 s.
 const stage2 = [_]Entry{
     .{ .at = s(2), .kind = .centipede, .y = 40, .formation = true },
-    .{ .at = s(5), .kind = .gnat, .y = 96, .pattern = 1 },
-    .{ .at = s(7), .kind = .ladybug, .y = 120, .count = 4, .spacing = 16, .edge = .top },
+    .{ .at = s(5), .kind = .gnat, .y = 96, .pattern = 1, .formation = true },
+    .{ .at = s(7), .kind = .ladybug, .y = 126, .count = 4, .spacing = 16, .edge = .top },
     .{ .at = s(10), .kind = .flea, .y = 80 },
     .{ .at = s(11), .kind = .wasp, .y = 60, .count = 3, .spacing = 8, .dy = 18, .pattern = 1 },
-    .{ .at = s(13), .kind = .ladybug, .y = 100, .count = 4, .spacing = 16, .edge = .bottom },
+    .{ .at = s(13), .kind = .ladybug, .y = 106, .count = 4, .spacing = 16, .edge = .bottom },
     .{ .at = s(16), .kind = .beetle, .y = 40, .pattern = 1 },
     .{ .at = s(16), .kind = .flea, .y = 60, .count = 2, .spacing = 30 },
     .{ .at = s(17), .kind = .centipede, .y = 88 },
     .{ .at = s(20), .kind = .flea, .y = 70, .count = 2, .spacing = 50 },
     .{ .at = s(21), .kind = .moth, .count = 2, .spacing = 30 },
-    .{ .at = s(24), .kind = .ladybug, .y = 130, .count = 4, .spacing = 16, .edge = .top, .formation = true },
-    .{ .at = s(25), .kind = .ladybug, .y = 90, .count = 4, .spacing = 16, .edge = .bottom },
-    .{ .at = s(27), .kind = .gnat, .y = 30, .pattern = 1 },
+    .{ .at = s(24), .kind = .ladybug, .y = 136, .count = 4, .spacing = 16, .edge = .top, .formation = true },
+    .{ .at = s(25), .kind = .ladybug, .y = 100, .count = 4, .spacing = 16, .edge = .bottom },
+    .{ .at = s(27), .kind = .gnat, .y = 30, .pattern = 1, .formation = true },
     .{ .at = s(28), .kind = .gnat, .y = 96, .pattern = 1 },
     .{ .at = s(29), .kind = .spider, .count = 2, .spacing = 50 },
     .{ .at = s(30), .kind = .flea, .y = 80, .count = 2, .spacing = 30, .pattern = 1 },
     .{ .at = s(32), .kind = .wasp, .y = 80, .count = 3, .spacing = 8, .dy = 20, .pattern = 1, .edge = .top },
     .{ .at = s(35), .kind = .herd },
-    .{ .at = s(38), .kind = .centipede, .y = 64, .pattern = 1 },
-    .{ .at = s(40), .kind = .flea, .y = 60 },
-    .{ .at = s(40), .kind = .flea, .y = 90, .pattern = 1 },
-    .{ .at = s(42), .kind = .ladybug, .y = 110, .count = 4, .spacing = 16, .edge = .top },
-    .{ .at = s(44), .kind = .beetle, .y = 88, .pattern = 1 },
-    .{ .at = s(44), .kind = .moth, .count = 2, .spacing = 30 },
-    .{ .at = s(45), .kind = .ladybug, .y = 70, .count = 4, .spacing = 16, .edge = .bottom },
-    .{ .at = s(47), .kind = .ladybug, .y = 120, .count = 4, .spacing = 16, .edge = .bottom },
-    .{ .at = s(48), .kind = .gnat, .y = 50, .pattern = 1 },
-    .{ .at = s(50), .kind = .wasp, .y = 30, .count = 3, .spacing = 8, .dy = 16, .pattern = 1 },
-    .{ .at = s(51), .kind = .wasp, .y = 92, .count = 3, .spacing = 8, .dy = 16, .pattern = 1 },
-    .{ .at = s(53), .kind = .centipede, .y = 40 },
-    .{ .at = s(54), .kind = .flea, .y = 80, .pattern = 1 },
-    .{ .at = s(56), .kind = .spider, .count = 2, .spacing = 40 },
-    .{ .at = s(57), .kind = .ladybug, .y = 130, .count = 4, .spacing = 16, .edge = .top },
-    .{ .at = s(57), .kind = .flea, .y = 60, .count = 2, .spacing = 30 },
-    .{ .at = s(59), .kind = .beetle, .y = 40, .pattern = 1 },
-    .{ .at = s(59), .kind = .beetle, .y = 88 },
-    .{ .at = s(62), .kind = .flea, .y = 70, .count = 3, .spacing = 40 },
-    .{ .at = s(64), .kind = .ladybug, .y = 120, .count = 4, .spacing = 16, .edge = .top },
-    .{ .at = s(65), .kind = .ladybug, .y = 90, .count = 4, .spacing = 16, .edge = .bottom },
-    .{ .at = s(67), .kind = .gnat, .y = 40, .pattern = 2 },
-    .{ .at = s(68), .kind = .gnat, .y = 88, .pattern = 2 },
+    .{ .at = s(37), .kind = .centipede, .y = 64, .pattern = 1 },
+    .{ .at = s(39), .kind = .flea, .y = 60 },
+    .{ .at = s(39), .kind = .flea, .y = 90, .pattern = 1 },
+    .{ .at = s(40), .kind = .ladybug, .y = 116, .count = 4, .spacing = 16, .edge = .top },
+    .{ .at = s(42), .kind = .beetle, .y = 88, .pattern = 1 },
+    .{ .at = s(42), .kind = .moth, .count = 2, .spacing = 30 },
+    .{ .at = s(43), .kind = .ladybug, .y = 100, .count = 4, .spacing = 16, .edge = .bottom },
+    .{ .at = s(44), .kind = .ladybug, .y = 126, .count = 4, .spacing = 16, .edge = .bottom },
+    .{ .at = s(45), .kind = .gnat, .y = 50, .pattern = 1, .formation = true },
+    .{ .at = s(46), .kind = .wasp, .y = 30, .count = 3, .spacing = 8, .dy = 16, .pattern = 1 },
+    .{ .at = s(47), .kind = .wasp, .y = 92, .count = 3, .spacing = 8, .dy = 16, .pattern = 1 },
+    .{ .at = s(49), .kind = .centipede, .y = 40 },
+    .{ .at = s(50), .kind = .flea, .y = 80, .pattern = 1 },
+    .{ .at = s(51), .kind = .spider, .count = 2, .spacing = 40 },
+    .{ .at = s(52), .kind = .ladybug, .y = 136, .count = 4, .spacing = 16, .edge = .top },
+    .{ .at = s(52), .kind = .flea, .y = 60, .count = 2, .spacing = 30 },
+    .{ .at = s(53), .kind = .beetle, .y = 40, .pattern = 1 },
+    .{ .at = s(53), .kind = .beetle, .y = 88 },
+    .{ .at = s(56), .kind = .flea, .y = 70, .count = 3, .spacing = 40 },
+    .{ .at = s(57), .kind = .ladybug, .y = 126, .count = 4, .spacing = 16, .edge = .top },
+    .{ .at = s(58), .kind = .ladybug, .y = 100, .count = 4, .spacing = 16, .edge = .bottom },
+    .{ .at = s(59), .kind = .gnat, .y = 40, .pattern = 2 },
+    .{ .at = s(60), .kind = .gnat, .y = 88, .pattern = 2 },
     // The last wave flies the spawn line: a crate before the WARNING
     // for a ship that has not moved (the probe's turret).
-    .{ .at = s(69), .kind = .gnat, .y = 58, .formation = true },
+    .{ .at = s(61), .kind = .gnat, .y = 58, .formation = true },
 };
 
 /// Stage 3, STAGING: ground mites and zombies, walls with gaps (beetle
 /// pattern 2), stop-and-go moths, two kinds at once; Herd v2 at 35 s.
 const stage3 = [_]Entry{
     .{ .at = s(2), .kind = .mite },
-    .{ .at = s(3), .kind = .gnat, .y = 40, .pattern = 1 },
-    .{ .at = s(6), .kind = .zombie, .y = 48, .count = 2, .spacing = 40, .dy = 20 },
+    .{ .at = s(3), .kind = .gnat, .y = 40, .pattern = 1, .formation = true },
+    .{ .at = s(6), .kind = .zombie, .y = 48, .count = 2, .spacing = 40, .dy = 20, .formation = true },
     .{ .at = s(9), .kind = .beetle, .y = 56, .pattern = 2 },
     .{ .at = s(10), .kind = .mite },
-    .{ .at = s(13), .kind = .ladybug, .y = 120, .count = 4, .spacing = 16, .edge = .top, .pattern = 1, .formation = true },
+    .{ .at = s(13), .kind = .ladybug, .y = 126, .count = 4, .spacing = 16, .edge = .top, .pattern = 1, .formation = true },
     .{ .at = s(15), .kind = .flea, .y = 70, .pattern = 1 },
-    .{ .at = s(17), .kind = .zombie, .y = 70, .count = 2, .spacing = 40, .dy = 24 },
+    .{ .at = s(17), .kind = .zombie, .y = 70, .count = 2, .spacing = 40, .dy = 24, .formation = true },
     .{ .at = s(17), .kind = .moth, .pattern = 1 },
     .{ .at = s(20), .kind = .centipede, .y = 40, .pattern = 1 },
     .{ .at = s(20), .kind = .mite },
     .{ .at = s(23), .kind = .beetle, .y = 30, .pattern = 2 },
-    .{ .at = s(23), .kind = .gnat, .y = 96, .pattern = 2 },
-    .{ .at = s(26), .kind = .ladybug, .y = 100, .count = 4, .spacing = 16, .edge = .bottom, .pattern = 1 },
+    .{ .at = s(23), .kind = .gnat, .y = 96, .pattern = 2, .formation = true },
+    .{ .at = s(26), .kind = .ladybug, .y = 106, .count = 4, .spacing = 16, .edge = .bottom, .pattern = 1, .formation = true },
     .{ .at = s(26), .kind = .flea, .y = 80, .count = 2, .spacing = 40 },
     .{ .at = s(29), .kind = .wasp, .y = 60, .count = 3, .spacing = 8, .dy = 18, .pattern = 1 },
     .{ .at = s(29), .kind = .mite, .pattern = 1 },
-    .{ .at = s(32), .kind = .zombie, .y = 40, .count = 2, .spacing = 30, .dy = 30, .pattern = 1 },
+    .{ .at = s(32), .kind = .zombie, .y = 40, .count = 2, .spacing = 30, .dy = 30, .pattern = 1, .formation = true },
     .{ .at = s(32), .kind = .spider, .count = 2, .spacing = 40, .pattern = 1 },
     .{ .at = s(35), .kind = .herd, .pattern = 1 },
     .{ .at = s(37), .kind = .mite, .count = 2, .spacing = 90 },
-    .{ .at = s(38), .kind = .beetle, .y = 80, .pattern = 2 },
-    .{ .at = s(38), .kind = .moth, .pattern = 1 },
-    .{ .at = s(41), .kind = .centipede, .y = 70, .pattern = 1, .formation = true },
-    .{ .at = s(41), .kind = .flea, .y = 60, .pattern = 1 },
-    .{ .at = s(44), .kind = .ladybug, .y = 130, .count = 4, .spacing = 16, .edge = .top, .pattern = 1 },
-    .{ .at = s(45), .kind = .ladybug, .y = 90, .count = 4, .spacing = 16, .edge = .bottom, .pattern = 1 },
-    .{ .at = s(47), .kind = .zombie, .y = 56, .count = 3, .spacing = 40, .dy = 24, .pattern = 1 },
-    .{ .at = s(48), .kind = .gnat, .y = 30, .pattern = 2 },
-    .{ .at = s(50), .kind = .beetle, .y = 40, .pattern = 2 },
-    .{ .at = s(50), .kind = .mite, .pattern = 1 },
-    .{ .at = s(53), .kind = .flea, .y = 80, .count = 2, .spacing = 30, .pattern = 1 },
-    .{ .at = s(53), .kind = .wasp, .y = 70, .count = 3, .spacing = 8, .dy = 20, .pattern = 1, .edge = .top },
-    .{ .at = s(56), .kind = .centipede, .y = 40, .pattern = 2 },
-    .{ .at = s(56), .kind = .ladybug, .y = 110, .count = 4, .spacing = 16, .edge = .bottom, .pattern = 2 },
-    .{ .at = s(59), .kind = .moth, .count = 2, .spacing = 30, .pattern = 1 },
-    .{ .at = s(59), .kind = .spider, .count = 2, .spacing = 40, .pattern = 1 },
-    .{ .at = s(60), .kind = .mite },
-    .{ .at = s(62), .kind = .beetle, .y = 88, .pattern = 1 },
-    .{ .at = s(62), .kind = .zombie, .y = 40, .count = 2, .spacing = 30, .dy = 30, .pattern = 1 },
-    .{ .at = s(65), .kind = .flea, .y = 70, .count = 2, .spacing = 40, .pattern = 2 },
-    .{ .at = s(65), .kind = .ladybug, .y = 120, .count = 4, .spacing = 16, .edge = .top, .pattern = 2 },
-    .{ .at = s(68), .kind = .gnat, .y = 40, .pattern = 2 },
-    .{ .at = s(68), .kind = .gnat, .y = 88, .pattern = 2 },
+    .{ .at = s(37), .kind = .beetle, .y = 80, .pattern = 2 },
+    .{ .at = s(37), .kind = .moth, .pattern = 1 },
+    .{ .at = s(40), .kind = .centipede, .y = 70, .pattern = 1, .formation = true },
+    .{ .at = s(40), .kind = .flea, .y = 60, .pattern = 1 },
+    .{ .at = s(42), .kind = .ladybug, .y = 136, .count = 4, .spacing = 16, .edge = .top, .pattern = 1, .formation = true },
+    .{ .at = s(43), .kind = .ladybug, .y = 100, .count = 4, .spacing = 16, .edge = .bottom, .pattern = 1, .formation = true },
+    .{ .at = s(44), .kind = .zombie, .y = 56, .count = 3, .spacing = 40, .dy = 24, .pattern = 1, .formation = true },
+    .{ .at = s(45), .kind = .gnat, .y = 30, .pattern = 2, .formation = true },
+    .{ .at = s(46), .kind = .beetle, .y = 40, .pattern = 2 },
+    .{ .at = s(46), .kind = .mite, .pattern = 1 },
+    .{ .at = s(49), .kind = .flea, .y = 80, .count = 2, .spacing = 30, .pattern = 1 },
+    .{ .at = s(49), .kind = .wasp, .y = 70, .count = 3, .spacing = 8, .dy = 20, .pattern = 1, .edge = .top },
+    .{ .at = s(51), .kind = .centipede, .y = 40, .pattern = 2 },
+    .{ .at = s(51), .kind = .ladybug, .y = 116, .count = 4, .spacing = 16, .edge = .bottom, .pattern = 2, .formation = true },
+    .{ .at = s(53), .kind = .moth, .count = 2, .spacing = 30, .pattern = 1 },
+    .{ .at = s(53), .kind = .spider, .count = 2, .spacing = 40, .pattern = 1 },
+    .{ .at = s(54), .kind = .mite },
+    .{ .at = s(56), .kind = .beetle, .y = 88, .pattern = 1 },
+    .{ .at = s(56), .kind = .zombie, .y = 40, .count = 2, .spacing = 30, .dy = 30, .pattern = 1, .formation = true },
+    .{ .at = s(57), .kind = .gnat, .y = 36, .formation = true },
+    .{ .at = s(58), .kind = .flea, .y = 70, .count = 2, .spacing = 40, .pattern = 2 },
+    .{ .at = s(58), .kind = .ladybug, .y = 126, .count = 4, .spacing = 16, .edge = .top, .pattern = 2, .formation = true },
+    .{ .at = s(60), .kind = .gnat, .y = 40, .pattern = 2, .formation = true },
+    .{ .at = s(60), .kind = .gnat, .y = 88, .pattern = 2, .formation = true },
     // The last wave flies the spawn line: a crate before the WARNING
     // for a ship that has not moved (the probe's turret).
-    .{ .at = s(69), .kind = .gnat, .y = 58, .formation = true },
+    .{ .at = s(61), .kind = .gnat, .y = 58, .formation = true },
 };
 
 /// Stage 4, PRODUCTION: everything, overlapping formations, curtains from
@@ -203,16 +204,16 @@ const stage3 = [_]Entry{
 const stage4 = [_]Entry{
     .{ .at = s(2), .kind = .centipede, .y = 40, .pattern = 2 },
     .{ .at = s(2), .kind = .mite, .pattern = 1 },
-    .{ .at = s(5), .kind = .ladybug, .y = 120, .count = 4, .spacing = 16, .edge = .top, .pattern = 2, .formation = true },
-    .{ .at = s(5), .kind = .ladybug, .y = 80, .count = 4, .spacing = 16, .edge = .bottom, .pattern = 2 },
+    .{ .at = s(5), .kind = .ladybug, .y = 126, .count = 4, .spacing = 16, .edge = .top, .pattern = 2, .formation = true },
+    .{ .at = s(5), .kind = .ladybug, .y = 100, .count = 4, .spacing = 16, .edge = .bottom, .pattern = 2, .formation = true },
     .{ .at = s(8), .kind = .beetle, .y = 64, .pattern = 2 },
     .{ .at = s(9), .kind = .flea, .y = 80, .count = 2, .spacing = 40, .pattern = 1 },
-    .{ .at = s(11), .kind = .zombie, .y = 40, .count = 2, .spacing = 30, .dy = 30, .pattern = 1 },
+    .{ .at = s(11), .kind = .zombie, .y = 40, .count = 2, .spacing = 30, .dy = 30, .pattern = 1, .formation = true },
     .{ .at = s(12), .kind = .moth, .pattern = 1 },
     .{ .at = s(14), .kind = .beetle, .y = 30, .pattern = 3 },
     .{ .at = s(14), .kind = .mite, .pattern = 1 },
-    .{ .at = s(17), .kind = .ladybug, .y = 110, .count = 4, .spacing = 16, .edge = .top, .pattern = 1 },
-    .{ .at = s(17), .kind = .gnat, .y = 96, .pattern = 2 },
+    .{ .at = s(17), .kind = .ladybug, .y = 116, .count = 4, .spacing = 16, .edge = .top, .pattern = 1, .formation = true },
+    .{ .at = s(17), .kind = .gnat, .y = 96, .pattern = 2, .formation = true },
     .{ .at = s(20), .kind = .flea, .y = 70, .count = 2, .spacing = 40, .pattern = 2 },
     .{ .at = s(20), .kind = .wasp, .y = 70, .count = 3, .spacing = 8, .dy = 20, .pattern = 1, .edge = .top },
     .{ .at = s(21), .kind = .wasp, .y = 110, .count = 3, .spacing = 8, .dy = 20, .pattern = 1, .edge = .bottom },
@@ -220,38 +221,38 @@ const stage4 = [_]Entry{
     .{ .at = s(23), .kind = .spider, .count = 2, .spacing = 40, .pattern = 1 },
     .{ .at = s(26), .kind = .beetle, .y = 40, .pattern = 2 },
     .{ .at = s(26), .kind = .flea, .y = 80, .count = 2, .spacing = 30, .pattern = 1 },
-    .{ .at = s(29), .kind = .zombie, .y = 56, .count = 3, .spacing = 40, .dy = 24, .pattern = 1 },
+    .{ .at = s(29), .kind = .zombie, .y = 56, .count = 3, .spacing = 40, .dy = 24, .pattern = 1, .formation = true },
     .{ .at = s(29), .kind = .mite, .pattern = 1 },
-    .{ .at = s(32), .kind = .ladybug, .y = 130, .count = 4, .spacing = 16, .edge = .top, .pattern = 2 },
-    .{ .at = s(32), .kind = .ladybug, .y = 90, .count = 4, .spacing = 16, .edge = .bottom, .pattern = 2 },
+    .{ .at = s(32), .kind = .ladybug, .y = 136, .count = 4, .spacing = 16, .edge = .top, .pattern = 2, .formation = true },
+    .{ .at = s(32), .kind = .ladybug, .y = 100, .count = 4, .spacing = 16, .edge = .bottom, .pattern = 2, .formation = true },
     .{ .at = s(34), .kind = .moth, .count = 2, .spacing = 30, .pattern = 1 },
     .{ .at = s(35), .kind = .herd, .pattern = 2 },
     .{ .at = s(37), .kind = .mite, .count = 2, .spacing = 90, .pattern = 1 },
-    .{ .at = s(39), .kind = .beetle, .y = 88, .pattern = 3 },
-    .{ .at = s(39), .kind = .flea, .y = 70, .count = 2, .spacing = 40, .pattern = 1 },
-    .{ .at = s(42), .kind = .centipede, .y = 60, .pattern = 2, .formation = true },
-    .{ .at = s(42), .kind = .ladybug, .y = 120, .count = 4, .spacing = 16, .edge = .top, .pattern = 1 },
-    .{ .at = s(45), .kind = .beetle, .y = 50, .pattern = 2 },
-    .{ .at = s(45), .kind = .flea, .y = 80, .count = 3, .spacing = 30, .pattern = 2 },
-    .{ .at = s(48), .kind = .zombie, .y = 50, .count = 3, .spacing = 30, .dy = 26, .pattern = 1 },
-    .{ .at = s(48), .kind = .spider, .count = 3, .spacing = 40, .pattern = 1 },
-    .{ .at = s(51), .kind = .ladybug, .y = 100, .count = 4, .spacing = 16, .edge = .bottom, .pattern = 2 },
-    .{ .at = s(51), .kind = .wasp, .y = 30, .count = 3, .spacing = 8, .dy = 16, .pattern = 1 },
-    .{ .at = s(52), .kind = .wasp, .y = 92, .count = 3, .spacing = 8, .dy = 16, .pattern = 1 },
-    .{ .at = s(54), .kind = .centipede, .y = 40, .pattern = 1 },
-    .{ .at = s(54), .kind = .mite, .count = 2, .spacing = 60, .pattern = 1 },
-    .{ .at = s(57), .kind = .beetle, .y = 30, .pattern = 3 },
-    .{ .at = s(57), .kind = .beetle, .y = 84, .pattern = 2 },
-    .{ .at = s(60), .kind = .flea, .y = 70, .count = 3, .spacing = 30, .pattern = 1 },
-    .{ .at = s(60), .kind = .moth, .count = 2, .spacing = 30, .pattern = 1 },
-    .{ .at = s(63), .kind = .ladybug, .y = 120, .count = 4, .spacing = 16, .edge = .top, .pattern = 2 },
-    .{ .at = s(63), .kind = .ladybug, .y = 80, .count = 4, .spacing = 16, .edge = .bottom, .pattern = 2 },
-    .{ .at = s(66), .kind = .zombie, .y = 40, .count = 2, .spacing = 30, .dy = 40, .pattern = 1 },
-    .{ .at = s(66), .kind = .gnat, .y = 64, .pattern = 2 },
-    .{ .at = s(68), .kind = .beetle, .y = 64, .pattern = 2 },
+    .{ .at = s(38), .kind = .beetle, .y = 88, .pattern = 3 },
+    .{ .at = s(38), .kind = .flea, .y = 70, .count = 2, .spacing = 40, .pattern = 1 },
+    .{ .at = s(40), .kind = .centipede, .y = 60, .pattern = 2, .formation = true },
+    .{ .at = s(40), .kind = .ladybug, .y = 126, .count = 4, .spacing = 16, .edge = .top, .pattern = 1, .formation = true },
+    .{ .at = s(43), .kind = .beetle, .y = 50, .pattern = 2 },
+    .{ .at = s(43), .kind = .flea, .y = 80, .count = 2, .spacing = 30, .pattern = 2 },
+    .{ .at = s(45), .kind = .zombie, .y = 50, .count = 3, .spacing = 30, .dy = 26, .pattern = 1, .formation = true },
+    .{ .at = s(45), .kind = .spider, .count = 2, .spacing = 40, .pattern = 1 },
+    .{ .at = s(47), .kind = .ladybug, .y = 106, .count = 4, .spacing = 16, .edge = .bottom, .pattern = 2, .formation = true },
+    .{ .at = s(47), .kind = .wasp, .y = 30, .count = 3, .spacing = 8, .dy = 16, .pattern = 1 },
+    .{ .at = s(50), .kind = .centipede, .y = 40, .pattern = 1 },
+    .{ .at = s(50), .kind = .mite, .pattern = 1 },
+    .{ .at = s(52), .kind = .beetle, .y = 30, .pattern = 3 },
+    .{ .at = s(52), .kind = .beetle, .y = 84, .pattern = 2 },
+    .{ .at = s(54), .kind = .flea, .y = 70, .count = 2, .spacing = 30, .pattern = 1 },
+    .{ .at = s(54), .kind = .moth, .count = 2, .spacing = 30, .pattern = 1 },
+    .{ .at = s(56), .kind = .ladybug, .y = 126, .count = 4, .spacing = 16, .edge = .top, .pattern = 2, .formation = true },
+    .{ .at = s(56), .kind = .ladybug, .y = 100, .count = 4, .spacing = 16, .edge = .bottom, .pattern = 2, .formation = true },
+    .{ .at = s(57), .kind = .gnat, .y = 84, .formation = true },
+    .{ .at = s(59), .kind = .zombie, .y = 40, .count = 2, .spacing = 30, .dy = 40, .pattern = 1, .formation = true },
+    .{ .at = s(59), .kind = .gnat, .y = 64, .pattern = 2, .formation = true },
+    .{ .at = s(60), .kind = .beetle, .y = 64, .pattern = 2 },
     // The last wave flies the spawn line: a crate before the WARNING
     // for a ship that has not moved (the probe's turret).
-    .{ .at = s(69), .kind = .gnat, .y = 58, .formation = true },
+    .{ .at = s(61), .kind = .gnat, .y = 58, .formation = true },
 };
 
 /// Stage 1 from the second loop on also runs this: the bugs of the later
@@ -260,14 +261,14 @@ const stage4 = [_]Entry{
 const stage1_loop = [_]Entry{
     .{ .at = s(6), .kind = .flea, .y = 80, .count = 2, .spacing = 40, .pattern = 1 },
     .{ .at = s(12), .kind = .mite, .pattern = 1 },
-    .{ .at = s(18), .kind = .ladybug, .y = 120, .count = 4, .spacing = 16, .edge = .top, .pattern = 1 },
+    .{ .at = s(18), .kind = .ladybug, .y = 126, .count = 4, .spacing = 16, .edge = .top, .pattern = 1 },
     .{ .at = s(24), .kind = .zombie, .y = 40, .count = 2, .spacing = 30, .dy = 40, .pattern = 1 },
     .{ .at = s(30), .kind = .flea, .y = 70, .count = 3, .spacing = 30, .pattern = 2 },
-    .{ .at = s(36), .kind = .ladybug, .y = 90, .count = 4, .spacing = 16, .edge = .bottom, .pattern = 2 },
+    .{ .at = s(36), .kind = .ladybug, .y = 100, .count = 4, .spacing = 16, .edge = .bottom, .pattern = 2 },
     .{ .at = s(42), .kind = .mite, .count = 2, .spacing = 60, .pattern = 1 },
     .{ .at = s(48), .kind = .flea, .y = 60, .count = 2, .spacing = 40, .pattern = 1 },
-    .{ .at = s(54), .kind = .ladybug, .y = 120, .count = 4, .spacing = 16, .edge = .top, .pattern = 2 },
-    .{ .at = s(54), .kind = .ladybug, .y = 80, .count = 4, .spacing = 16, .edge = .bottom, .pattern = 2 },
+    .{ .at = s(54), .kind = .ladybug, .y = 126, .count = 4, .spacing = 16, .edge = .top, .pattern = 2 },
+    .{ .at = s(54), .kind = .ladybug, .y = 100, .count = 4, .spacing = 16, .edge = .bottom, .pattern = 2 },
     .{ .at = s(60), .kind = .zombie, .y = 50, .count = 3, .spacing = 30, .dy = 26, .pattern = 1 },
     .{ .at = s(64), .kind = .flea, .y = 80, .count = 3, .spacing = 30, .pattern = 1 },
 };
@@ -282,11 +283,17 @@ pub const stage_count: u8 = tables.len;
 /// Stage names (the `STAGE n` pop, PLAN.md M7).
 pub const stage_names = [stage_count][]const u8{ "UNIT TESTS", "INTEGRATION", "STAGING", "PRODUCTION" };
 
-/// 72 s: the table is done; "WARNING" until the boss enters (the table
-/// clock, which waits while the midboss lives).
-pub const warning_at: u32 = s(72);
-/// 78 s: the boss enters.
-pub const boss_at: u32 = s(78);
+/// When the table is done and "WARNING" shows until the boss enters, by
+/// stage (the table clock, which waits while the midboss lives): 72 s
+/// for UNIT TESTS, 64 s for the stages with a midboss, whose hold (up to
+/// about 14 s) comes on top, so every stage's waves last 70-85 s.
+const warning_ats = [stage_count]u32{ s(72), s(64), s(64), s(64) };
+/// The boss enters this long after the WARNING.
+const warning_len: u32 = s(6);
+
+pub fn warning_at() u32 {
+    return warning_ats[@min(world.w.waves.stage, stage_count - 1)];
+}
 /// Ticks of the `STAGE n` pop at the start of a stage's table.
 pub const stage_pop: u32 = 120;
 /// Ticks of `.cleared` between the boss death and the table restarting.
@@ -349,8 +356,8 @@ pub fn update() void {
         st.next_loop = 0;
         st.phase = .waves;
     }
-    if (st.phase == .waves and st.t >= warning_at) st.phase = .warning;
-    if (st.phase == .warning and st.t >= boss_at) {
+    if (st.phase == .waves and st.t >= warning_at()) st.phase = .warning;
+    if (st.phase == .warning and st.t >= warning_at() + warning_len) {
         // A full pool delays the boss by a tick rather than losing it.
         if (enemies.spawn(.boss, boss_x, boss_y, 0) != null) st.phase = .boss;
     }
@@ -439,7 +446,7 @@ pub fn stage_index() u32 {
 pub fn warp_to_warning() void {
     const st = &world.w.waves;
     if (st.phase != .waves) return;
-    st.t = warning_at;
+    st.t = warning_at();
     st.next = @intCast(table().len);
     st.next_loop = @intCast(loop_tables[@min(st.stage, stage_count - 1)].len);
     st.phase = .warning;
@@ -495,17 +502,20 @@ fn run(entry: Entry) void {
             for (0..e.count) |i| {
                 const off = across + vee(i) * @as(f32, @floatFromInt(e.dy));
                 const delay: u32 = @intCast(i * e.spacing);
+                // Wasps and ladybugs know their place in the group
+                // (`enemies.member_fires`).
+                const member: u8 = if (e.kind == .wasp or e.kind == .ladybug) @intCast(i) else 0;
                 const m = switch (e.kind) {
                     // Spiders draw their own column each when random.
                     .spider => enemies.spawn_ex(.spider, pick(spider_min_x, spider_max_x, e.y), 0, delay, e.pattern, .top, 0),
                     .flea => enemies.spawn_ex(.flea, 0, off, delay, e.pattern, .left, 0),
                     .mite => enemies.spawn_ex(.mite, enemies.spawn_x, 0, delay, e.pattern, .right, 0),
                     else => switch (e.edge) {
-                        .top => enemies.spawn_ex(e.kind, off, -16, delay, e.pattern, .top, 0),
-                        .bottom => enemies.spawn_ex(e.kind, off, 128, delay, e.pattern, .bottom, 0),
+                        .top => enemies.spawn_ex(e.kind, off, -16, delay, e.pattern, .top, member),
+                        .bottom => enemies.spawn_ex(e.kind, off, 128, delay, e.pattern, .bottom, member),
                         // Only fleas come from the left (their programs
                         // move right); any other kind takes the right edge.
-                        .left, .right => enemies.spawn_ex(e.kind, enemies.spawn_x, off, delay, e.pattern, .right, 0),
+                        .left, .right => enemies.spawn_ex(e.kind, enemies.spawn_x, off, delay, e.pattern, .right, member),
                     },
                 };
                 if (m) |en| en.formation = id else formations.lost(id);
