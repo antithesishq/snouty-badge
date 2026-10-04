@@ -88,6 +88,31 @@ pub fn rear_name(r: world.Rear) []const u8 {
     };
 }
 
+/// The pickups' names (SPEC 6.3): the roulette's landing caption by the
+/// HUD box and the pickup feed lines. At most 16 characters (the caption
+/// ends at x 136 and starts no closer than 4 px to the edge).
+pub fn pickup_name(p: world.Pickup) []const u8 {
+    return switch (p) {
+        .prefetch => "PREFETCH",
+        .honeypot => "HONEYPOT",
+        .duck => "RUBBER DUCK",
+        .hot_patch => "HOT PATCH",
+        .spaghetti => "SPAGHETTI CODE",
+        .fork_bomb => "FORK BOMB",
+        .bit_flip => "BIT FLIP",
+        .deadlock => "DEADLOCK",
+        .ddos => "DDOS",
+        .heisenbug => "HEISENBUG",
+        .race_condition => "RACE CONDITION",
+        .kernel_panic => "KERNEL PANIC",
+        .captcha => "CAPTCHA",
+        .sudo => "SUDO",
+        .zero_day => "ZERO-DAY",
+        .prompt_injection => "PROMPT INJECTION",
+        .none => "",
+    };
+}
+
 /// Splits `line` for a pop-up `width` characters wide: the first part ends
 /// at the last space that fits (or is the whole line). Returns the split
 /// index; the second part starts after the space.
@@ -113,4 +138,15 @@ test "bios fit four lines of 19 characters, pop-up lines wrap in two" {
     }
     try std.testing.expectEqual(@as(usize, 11), wrap("WHO TOUCHED PROD?", 15));
     try std.testing.expectEqual(@as(usize, 5), wrap("GG EZ", 15));
+}
+
+test "pickup names fit the caption and match the icon order" {
+    const std = @import("std");
+    var n: usize = 0;
+    while (n <= @intFromEnum(world.Pickup.prompt_injection)) : (n += 1) {
+        const name = pickup_name(@enumFromInt(n));
+        try std.testing.expect(name.len > 0 and name.len <= 16);
+    }
+    try std.testing.expectEqualStrings("KERNEL PANIC", pickup_name(.kernel_panic));
+    try std.testing.expectEqual(@as(u8, 11), @intFromEnum(world.Pickup.kernel_panic));
 }

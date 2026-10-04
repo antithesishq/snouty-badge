@@ -223,15 +223,20 @@ fn draw_race(look: bool) void {
     hills.base_progress = c.progress;
     render.shake = @max(c.shake, fx.shake);
     render.frame = frame;
+    // KERNEL PANIC on this badge's car: the blue screen instead of the race.
+    if (hud.bluescreen_on(c)) return hud.draw_bluescreen(&w, follow);
     const saved = camera.cam;
     if (look) {
         camera.look_back(c.x, c.y);
         hills.backward = true;
     }
+    render.row_jitter = c.bit_flip > 0 and c.wreck == .none;
     render.draw();
+    sprites.draw_floor_lines(&w, frame);
     sprites.draw_world(&w, .{ .follow = follow, .look_back = look, .frame = frame });
     fx.draw_beams(&w);
     hud.draw(&w, follow, .{ .frame = frame, .look_back = look });
+    hud.draw_after(frame);
     camera.cam = saved;
     hills.backward = false;
 }

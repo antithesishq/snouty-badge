@@ -126,3 +126,137 @@ pub fn step(w: *World, follow: u8, frame: u32) void {
 fn flasher_index(follow: u8) u8 {
     return (follow + 1) % world.car_count;
 }
+
+// --- Pickup gags forced onto a car (M2 preview hooks) ------------------------------
+
+/// What `force_effect` puts on a car (the wasm `debug_effect` export). A
+/// debug path like the scene above: it writes the World directly so the
+/// preview scripts can show each gag on a chosen frame; the sim then runs
+/// the state on (`simulate` stays pure, nothing here is in a race).
+pub const Effect = enum(u8) {
+    none,
+    kernel_panic,
+    bit_flip,
+    captcha,
+    ddos,
+    deadlock,
+    heisenbug,
+    sudo,
+    race_condition,
+    spaghetti,
+    duck,
+    prefetch,
+    honeypot,
+    zero_day,
+    duck_pop,
+    hot_patch,
+    crate_pop,
+};
+
+/// The car right ahead of `i` in progress (or the next index), for the
+/// effects that need a second car.
+fn other_of(w: *const World, i: usize) usize {
+    var best: usize = (i + 1) % world.car_count;
+    var best_d: i32 = 1 << 30;
+    const me = &w.cars[i];
+    for (&w.cars, 0..) |*o, j| {
+        if (j == i or !o.active or o.wreck != .none) continue;
+        const dx = (o.x -% me.x) >> fixed.Q;
+        const dy = (o.y -% me.y) >> fixed.Q;
+        const d = dx * dx + dy * dy;
+        if (d < best_d) {
+            best_d = d;
+            best = j;
+        }
+    }
+    return best;
+}
+
+pub fn force_effect(w: *World, i_: usize, e: Effect) void {
+    const i = i_ % world.car_count;
+    const c = &w.cars[i];
+    const ci: u8 = @intCast(i);
+    const src: u8 = @intCast(other_of(w, i));
+    const o = &w.cars[src];
+    switch (e) {
+        .none => {},
+        .kernel_panic => {
+            c.frozen = 90;
+            c.frozen_by = .panic;
+            c.vx = 0;
+            c.vy = 0;
+            weapons.emit(w, .effect, src, ci, @intFromEnum(world.Pickup.kernel_panic), c.x, c.y);
+        },
+        .bit_flip => {
+            c.bit_flip = 180;
+            weapons.emit(w, .effect, src, ci, @intFromEnum(world.Pickup.bit_flip), c.x, c.y);
+        },
+        .captcha => {
+            c.captcha = 120;
+            c.captcha_cursor = 0;
+            c.captcha_done = 0;
+            // Three lit cells of the nine from the World's own seed.
+            var lit: u16 = 0;
+            var r: u32 = w.rng | 1;
+            var n: u32 = 0;
+            while (n < 3) {
+                r ^= r << 13;
+                r ^= r >> 17;
+                r ^= r << 5;
+                const bit = @as(u16, 1) << @intCast(r % 9);
+                if (lit & bit == 0) {
+                    lit |= bit;
+                    n += 1;
+                }
+            }
+            c.captcha_lit = lit;
+            weapons.emit(w, .effect, src, ci, @intFromEnum(world.Pickup.captcha), c.x, c.y);
+        },
+        .ddos => {
+            for (&w.drones, 0..) |*d, k| {
+                const a: fixed.Turn = @intCast(k * 8192);
+                d.* = .{ .x = c.x +% fixed.cos(a) * 16, .y = c.y +% fixed.sin(a) * 16, .state = .orbit, .owner = src, .target = ci, .ttl = 180, .angle = @intCast(k * 32) };
+            }
+            weapons.emit(w, .effect, src, ci, @intFromEnum(world.Pickup.ddos), c.x, c.y);
+        },
+        .deadlock => {
+            c.chain = src;
+            c.chain_ticks = 150;
+            o.chain = ci;
+            o.chain_ticks = 150;
+            weapons.emit(w, .effect, world.no_car, ci, @intFromEnum(world.Pickup.deadlock), c.x, c.y);
+        },
+        .heisenbug => c.heisen = 240,
+        .sudo => c.sudo = 300,
+        .race_condition => {
+            c.swap_with = src;
+            c.swap_ticks = 6;
+            o.swap_with = ci;
+            o.swap_ticks = 6;
+        },
+        .spaghetti => {
+            c.tangle = 60;
+            c.strand = 180;
+            weapons.emit(w, .effect, src, ci, @intFromEnum(world.Pickup.spaghetti), c.x, c.y);
+        },
+        .duck => c.duck = 600,
+        .prefetch => c.prefetch = 90,
+        .honeypot => {
+            c.spin = 30;
+            weapons.emit(w, .effect, src, ci, @intFromEnum(world.Pickup.honeypot), c.x, c.y);
+        },
+        .zero_day => {
+            weapons.emit(w, .use, src, @intFromEnum(world.Pickup.zero_day), ci, c.x, c.y);
+            weapons.emit(w, .effect, src, ci, @intFromEnum(world.Pickup.zero_day), c.x, c.y);
+            c.last_hit_by = src;
+            c.last_hit_ticks = 0;
+            sim.wreck(w, i, .zero_day);
+        },
+        .duck_pop => {
+            c.duck = 0;
+            weapons.emit(w, .effect, src, ci, @intFromEnum(world.Pickup.duck), c.x, c.y);
+        },
+        .hot_patch => c.patch = 60,
+        .crate_pop => weapons.emit(w, .roll, ci, @intFromEnum(world.Pickup.sudo), 0, c.x +% fixed.cos(c.heading) * 30, c.y +% fixed.sin(c.heading) * 30),
+    }
+}
