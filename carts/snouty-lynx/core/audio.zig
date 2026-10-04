@@ -188,7 +188,7 @@ pub const Channel = struct {
 };
 
 /// Changes logged past the frame's end (see the file comment).
-pub const log_len = 16;
+pub const log_len = 8;
 
 /// The frame renderer: the summed level integrated into the bins of the
 /// current frame, in time order. Scalars (and the small log) only: it is
