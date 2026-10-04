@@ -668,6 +668,89 @@ Gate green; pickup scenario tests and the soak pass; stress bench under
   (recorded on `gc/spec`'s M0 menu flow: re-record it again after the
   integration with the M1 select). `host_tests.zig` lists the new files.
 
+## M3 Content and flow
+
+Goal: six tracks over two leagues with their hazards, GARBAGE COLLECTION
+mode, and the full flow (splash, title, attract, menus, pause, results).
+SPEC 3.2, 3.3, 8 and 19.4 (hazard kinds are generic from the start, so
+the M7 track packs can reuse them).
+
+### Track A: content and mode simulation (Opus agent, worktree /home/exedev/snouty-badge-gc, branch gc/spec; runs while M2 Track B finishes)
+
+Owns what M2 Track A owned (`world.zig`, `sim.zig`, `weapons.zig`,
+`pickups.zig`, `ai.zig`, `tuning.zig`, `racers.zig` gameplay, `track.zig`
+data accessors, the tests, `tools/build_tracks.py`, `tools/leagues.py`,
+`cart/src/tracks/*.track`, the generated track and league `.bin`s), plus
+new `hazards.zig`, `gc_mode.zig` and their tests. It must not edit the
+presentation files (see M2 Track B). `render.zig` reads the league slices
+already. If the Runoff league needs a renderer change, write it down for
+Track B.
+
+1. **M3.0 interface first** (own commit, documented under "M3.0
+   Interface"): `Setup.mode` (race, gc) and the World fields for GC state:
+   the marked car, sweep count, collected flags, survivor, events `mark`
+   and `collect`. Also the hazard state in the World (`hazards: [N]Hazard`
+   with kind, phase timer, mover position) and the hazard kinds of SPEC
+   19.4 (timed blast, crossing mover, turret reserved for the Perimeter,
+   breakable crust reserved for M7), with their track-data layout. The
+   service bay is a tile attribute. Events: `blast` (hazard fires) and
+   `hazard_hit`.
+2. **Hazards** (generic, parameterised by the track file): the Dumps
+   **Sweeper** (a crossing mover: path, speed, size, 60 damage and a
+   shove), the Runoff **exhaust vent** (a timed blast: position,
+   direction, width, period 240, 30 ticks on, 20 damage and a push), and
+   the **service bay** (repairs 1 armor per 4 ticks). AIs avoid an active
+   blast or mover where they can.
+3. **The Runoff league** in `tools/leagues.py`: a 128-tile set (cracked
+   salt pan, teal coolant puddles, pipe-tunnel walls, outflow mouths,
+   salt-crust edges), the two-layer horizon (cooling towers over a
+   cracked horizon), palette, fog. Read SPEC 3.2. The look must read
+   clearly at speed: a calm background texture and a clear track edge.
+   (M0's Dumps sand shimmered. Calm the Dumps background a little too,
+   if it is cheap.)
+4. **Five new tracks** (SPEC 3.2 names): Dumps: **Monitor Dunes** (hills,
+   a Sweeper lane), **Cathode Flats** (fast, wide, pits); Runoff: **Salt
+   Pan Sprint** (fast oval-ish with vents), **Outflow Canyon** (tight,
+   walls, a pipe tunnel, vents), **Coolant Basin** (coolant slicks, a
+   ramp over the basin). Each has crate rows, at least one hazard, a
+   service bay on most, and its own character. Add a Sweeper to Landfill
+   Loop if it fits. Every track passes the completable test (combat off)
+   and the combat soak.
+5. **GARBAGE COLLECTION mode** (SPEC 8.2, mark and sweep): a sweep point
+   at the sector 2 line and the start line. The last car is MARKED, and
+   any weapon hit by the marked car on another car passes the mark on.
+   At the next sweep point the marked car is COLLECTED (`active = false`,
+   a `collect` event) and the new last car is marked. A wreck while
+   marked is an immediate collection. The last car running wins. A soak:
+   20 seeded GC races each end with exactly one car.
+6. **Track rotation data** for the menus: a table of the six tracks with
+   name, league and lap count.
+7. Tests, gate green, World under the cap (raise it with a reason if
+   needed), bench worst under 8 ms on the busiest new track (record a
+   race script there), PLAN "M3 status" Track A paragraph and deferred
+   questions, commits with the `Co-Authored-By: Claude Opus 5.5
+   <noreply@anthropic.com>` line, push gc/spec. No tag, no merge.
+
+### Track B: flow and mode presentation (after M2 is integrated)
+
+The menu (QUICK RACE | GARBAGE COLLECTION | LINK greyed | Sound), the
+track row over six tracks, GC visuals (the MARKED tag and red outline,
+the claw lifting a car out, `GC: freed KIDDIE`, the survivor screen, a
+collected human watching the leader), the hazards drawn (Sweeper sprite,
+vent blast), the Runoff horizon if it needs renderer work, the title, and
+attract with the scripted KERNEL PANIC on the leader in lap 2, plus pause
+and results for GC. Written in detail when M2 lands.
+
+### M3 gate
+
+Gate green; all six tracks completable; the GC soak ends with one car;
+bench under 8 ms; `docs/preview_m3.gif`; tag `snouty-gc/m3`; merged to
+main.
+
+### M3 status
+
+(empty)
+
 ## Deferred questions
 
 SPEC 17 holds the design defaults. Taken during M0 (Track A):
