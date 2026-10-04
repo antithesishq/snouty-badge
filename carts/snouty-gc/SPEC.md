@@ -144,7 +144,7 @@ are the AI field, so there is always a full grid of six.
 | **SNOUTY** | ANTEATER | WORKSTATION | SPEAR PHISH | LOGIC BOMB | Snouty (study05 head) with a black **eyepatch** over the left eye, scar under it, a squint in the other | ATE BUGS. NOW HUNTS / THEM. LOST AN EYE / TO A HEISENBUG IN / PROD. IT KNOWS. | FOUND YOU. | CAN'T REPRO... |
 | **LEGACY** | BIG IRON | MAINFRAME | BROADCAST | FIREWALL | grey beard, thick bifocals, a punch card tucked in the hat band | RACING SINCE THE / MAINFRAMES. HAS / DECLINED EVERY / UPDATE. EVERY ONE. | BACK IN MY DAY. | WORKS ON MY BOX. |
 | **KIDDIE** | CTRL-V | THIN CLIENT | PING | MEMORY LEAK | teen in a hoodie, welding goggles pushed up, gap-tooth grin, one thumbs-up | COPIED EVERY GUN / FROM A FORUM. READ / NONE OF THE DOCS. / 9 OF 10 FINGERS. | GG EZ | LAG!! |
-| **SYSADMIN** | UPTIME | WORKSTATION | FIBER LANCE | BIT ROT | headset, dark eye bags, a steaming mug with a skull on it | NO SLEEP SINCE THE / AIS CAME ONLINE. / RUNS ON SPITE AND / RECYCLED COFFEE. | TICKET CLOSED. | WHO TOUCHED PROD? |
+| **SYSADMIN** | UPTIME | WORKSTATION | FIBER LANCE | BIT ROT | headset, dark eye bags, a steaming mug with a skull on it | NO SLEEP SINCE THE / MACHINES WOKE UP. / RUNS ON SPITE AND / RECYCLED COFFEE. | TICKET CLOSED. | WHO TOUCHED PROD? |
 | **ROOTKIT** | PERSIST | THIN CLIENT | FIBER LANCE | MEMORY LEAK | a hood in full shadow, only two green eyes and a smirk | NOBODY SAW ROOTKIT / GET IN THE CAR. / ROOTKIT WAS ALWAYS / IN THE CAR. | I WAS HERE FIRST. | ...I PERSIST. |
 | **BOTNET** | ZOMBIE | MAINFRAME | PING | BIT ROT | four cousins crammed into one frame, mismatched hats, one asleep | 14 COUSINS, ONE / BUS, A MAJORITY / VOTE ON EVERY TURN. / TURNS ARE LATE. | WE ARE MANY. | WHO VOTED LEFT? |
 
