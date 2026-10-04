@@ -98,6 +98,9 @@ pub const State = struct {
     stage_clears: u8 = 0,
     /// `game_tick` when the last boss died (0 = never).
     clear_tick: u32 = 0,
+    /// The last stage ended with the boss escaping (its final phase timed
+    /// out): no +500, no fuel refill (`stage_clears` untouched).
+    escaped: bool = false,
 };
 
 pub fn update() void {
@@ -142,6 +145,7 @@ fn advance() void {
 /// whose index (and rank) applies from now.
 pub fn boss_cleared() void {
     const st = &world.w.waves;
+    st.escaped = false;
     st.stage_clears +%= 1;
     st.clear_tick = world.w.game_tick;
     advance();
@@ -153,6 +157,17 @@ pub fn boss_cleared() void {
 /// formations, moves the stage index on as a clear does (not again during
 /// the breather after a clear, which already did), and starts the table
 /// from its first entry: no breather, +500, fuel refill or `stage_clears`
+/// Called by a boss whose final phase timed out once it has left the
+/// screen (PLAN.md M7 "Decisions": nobody is stuck on a boss). The stage
+/// advances as after a clear, without the +500 or the fuel refill.
+pub fn boss_escaped() void {
+    const st = &world.w.waves;
+    st.escaped = true;
+    st.clear_tick = world.w.game_tick;
+    advance();
+    st.phase = .cleared;
+}
+
 /// count. The caller checkpoints the history.
 pub fn next_stage() void {
     const w = &world.w;
