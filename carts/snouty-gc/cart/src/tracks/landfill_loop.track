@@ -8,15 +8,14 @@
 # Control point 0 is the start line; features on point i apply to the
 # segment from point i to i+1; a segment without `open` has wreckage walls.
 #
-# Planned (comments only until the feature words exist):
-#   crates  M2: an RMA crate row mid top straight (segment 1) and one after
-#           the switchback (segment 15).
-#   bay     M2: a service bay on the west side (segment 18), Zero's cold aisle.
+# RMA crate rows (M2): mid top straight (segment 1, four across), the
+# middle straight (segment 12) and after the switchback (segment 16).
+# Planned: a service bay on the west side (segment 18), Zero's cold aisle.
 league dumps
 width 58
 # x    y    half   features
  300  130   60                     # start line
- 560  120   60                     # top straight (M2: crate row)
+ 560  120   60     crates          # top straight: a row of four crates
  790  150   58
  890  280   56     open:left       # the pit edge: east side, no wall on the left
  900  480   56     open:left
@@ -27,11 +26,11 @@ width 58
  210  880   56     hill            # the dunes: a swell of the floor round the west bend
  130  760   54     hill
  220  650   54
- 520  660   54
+ 520  660   54     crates          # middle straight: three crates
  700  610   52
  740  470   52                     # inner switchback
  640  380   52
- 430  440   54     # (M2: crate row)
+ 430  440   54     crates          # after the switchback: three crates
  300  390   54
- 170  300   56                     # west side (M2: service bay)
+ 170  300   56                     # west side (planned: service bay)
  180  190   58

@@ -15,4 +15,5 @@ test {
     _ = @import("weapons.zig");
     _ = @import("weapons_test.zig");
     _ = @import("pickups.zig");
+    _ = @import("pickups_test.zig");
 }

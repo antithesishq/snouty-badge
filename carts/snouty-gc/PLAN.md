@@ -499,8 +499,8 @@ under the 2,560 cap.
   `swap_with` + `swap_ticks` (RACE CONDITION tearing on both cars, then
   the swap).
 - **Projectiles**: `ProjKind.panic`, the KERNEL PANIC packet (`target` =
-  the car it runs to; `seg` = the centerline sample it runs toward,
-  internal; velocity gives its heading).
+  the car it runs to; `seg` = the centerline sample it runs toward and
+  `ttl` = its direction, both internal; velocity gives its heading).
 - **Drops**: `DropKind.fork` (one `&`; `size`/`dir` internal), `honeypot`
   (the fake crate: alternate `pickups.png` cells 18/19 on odd frames),
   `spaghetti` (the 24 px tangle, flat).
@@ -523,10 +523,11 @@ under the 2,560 cap.
   cars) the tick a RACE CONDITION trades them. A shot-down drone or a drop
   destroyed by SUDO is an `explode` of radius 0 (a spark); a FORK BOMB hit
   is an `explode` of radius 8.
-- **Render-side helpers** (pure reads, in `pickups.zig`):
-  `duck_pos(c)` (the duck's world position behind its car), and
-  `chain_anchor(w, i)` (the far end of car i's chain: the partner, or the
-  nearest track edge for a wall chain).
+- **Render-side helpers** (pure reads, in `pickups.zig`, both returning
+  a `pickups.Point` {x, y} in Q16): `duck_pos(c)` (the duck's world
+  position behind its car), and `chain_anchor(w, i)` (the far end of car
+  i's chain: the partner, or the nearest track edge for a wall chain).
+  Also usable: `pickups.tier_of(p)`, `pickups.drones_live(w)`.
 
 ### Track A: pickup simulation (Opus agent, worktree /home/exedev/snouty-badge-gc, branch gc/spec; starts while M1 Track B is still running)
 

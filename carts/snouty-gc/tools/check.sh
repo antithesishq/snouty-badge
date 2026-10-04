@@ -18,7 +18,8 @@
 #              drive (debug_world_sum): input scripts reproduce a race;
 #            - a Quick Race driven by the autopilot reaches the results
 #              screen with SNOUTY's 3 laps done, combat on (from M1 a car
-#              may be wrecked when the results come up), and the World
+#              may be wrecked when the results come up; from M2 pickups make
+#              it about 7,300 ticks, so it gets 9,000 frames), and the World
 #              under the 2,560 B cap of sim_test;
 #            - the attract demo starts after 10 s idle on the title.
 #   bench    badge-bench (calibrated) on badge-bench/carts/snouty-gc.toml,
@@ -113,7 +114,7 @@ if want preview; then
     a=$(grep -o 'debug_world_sum=[-0-9]*' "$out/replay.txt")
     b=$(grep -o 'debug_world_sum=[-0-9]*' "$out/autopilot.txt")
     if [ -n "$a" ] && [ "$a" = "$b" ]; then echo "ok   m0_race.json replays the autopilot's race ($a)"; else echo "FAIL m0_race.json replay '$a' != autopilot '$b'"; st=1; fi
-    run_preview race --frames 6000 --call debug_start_race:0 --call debug_set_autopilot:1 \
+    run_preview race --frames 9000 --call debug_start_race:0 --call debug_set_autopilot:1 \
         --until 'debug_screen == 5' --expect 'debug_screen == 5' --expect 'debug_lap == 3' \
         --expect 'debug_phase == 2' --expect 'debug_world_size < 2560' \
         --dump-exports debug_tick,debug_rank,debug_best_lap,debug_world_size || st=1
