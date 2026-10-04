@@ -8,7 +8,7 @@
 //!
 //! Badge build with `rom.source == .drive` (`use_drive`): `scan` opens the
 //! FAT12 volume at `romfs.base_addr` and lists the root's
-//! `.gen`/`.md`/`.bin` files with `core.rom.check`'s verdict (main.zig then
+//! `.gen`/`.md`/`.bin` files with `core.rom.check`'s verdict (app.zig then
 //! starts the one playable file, shows the picker for several or the help
 //! screen for none). `select` maps the chosen file again and builds a
 //! `core.RomSource`: the flash pointer when the file is one contiguous run,

@@ -26,41 +26,65 @@ var rom_source: common.MdRomSource = .drive;
 /// A ROM file: its path and the name the report line shows.
 const RomFile = struct { lazy: Build.LazyPath, name: []const u8 };
 
-/// The `build_options` module (`sound`), set by `add` for `build_cart_modules`.
+/// No `-Dmd-rom`: the embedded ROM is the shipped test ROM, which the RAM
+/// cart embeds without its zero padding (`rom_module_ram`).
+var rom_is_default = true;
+
+/// The `build_options` modules of the two variants (`sound`, `z80`,
+/// `scrub`), set by `add` for the custom builders.
 var build_options: ?*Build.Step.Options = null;
+var build_options_xip: ?*Build.Step.Options = null;
+
+/// What a variant carries (PLAN.md M5): the XIP cart (and the simulator
+/// wasm) the full set, the RAM cart neither the Z80 nor the scrubber.
+const Variant = struct {
+    /// The Z80 core runs the sound driver; false: the arbiter stub
+    /// (core/z80bus.zig) and no sound.
+    z80: bool,
+    /// The time scrubber (core/undo.zig, frontend/rewind.zig).
+    scrub: bool,
+};
+const full: Variant = .{ .z80 = true, .scrub = true };
+const ram_cart: Variant = .{ .z80 = false, .scrub = false };
+
+fn variant_options(b: *Build, sound: bool, v: Variant) *Build.Step.Options {
+    const options = b.addOptions();
+    // -Dsound=true starts with sound on; off by default, A in the menu
+    // toggles it (docs/SOUND.md). Without the Z80 the cart is silent.
+    options.addOption(bool, "sound", sound and v.z80);
+    options.addOption(bool, "z80", v.z80);
+    options.addOption(bool, "scrub", v.scrub);
+    return options;
+}
 
 pub fn add(b: *Build, sycl_badge_dep: *Build.Dependency, opts: common.Options) void {
-    // XIP only (SPEC.md section 13): the console state and the code do not
-    // both fit a RAM cart. Named on -Dcart in RAM mode, stop and say so; in
-    // an all-carts build (no -Dcart) build the XIP cart anyway, so the plain
-    // `zig build` keeps compiling this cart. `both` builds the XIP cart only.
-    const explicit = if (opts.only) |list| std.mem.eql(u8, list, "snouty-genesis") else false;
-    if (opts.cart_mode == .ram and explicit) {
-        std.debug.print(
-            \\snouty-genesis: this cart builds as an XIP cart only (carts/snouty-genesis/SPEC.md
-            \\section 13: code plus ~140 KB of console state do not fit a RAM cart).
-            \\Pass -Dcart-mode=xip:
-            \\    zig build -Dcart=snouty-genesis -Dcart-mode=xip
-            \\
-        , .{});
-        std.process.exit(1);
-    }
-
     rom_file = resolve_rom(b, opts.md_rom);
+    rom_is_default = opts.md_rom == null;
     rom_source = opts.md_rom_source;
-    // -Dsound=true starts with sound on; off by default, A in the menu
-    // toggles it (docs/SOUND.md).
-    const options = b.addOptions();
-    options.addOption(bool, "sound", opts.sound);
-    build_options = options;
+    cart_optimize = opts.cart_optimize;
+    build_options = variant_options(b, opts.sound, ram_cart);
+    build_options_xip = variant_options(b, opts.sound, full);
 
+    // Two variants (PLAN.md M5): the RAM cart `snouty-genesis` (no Z80, no
+    // scrubber: code plus the ~150 KB console fit the 268 KB RAM window) and
+    // the XIP cart `snouty-genesis-xip` (SPEC.md section 13: everything).
+    // -Dcart-mode=ram (the default) builds both, like snouty-zero and
+    // snouty-lynx; the simulator wasm comes from the XIP variant's modules so
+    // it keeps the Z80 and the scrubber.
+    const mode: os_cart.Mode = if (opts.cart_mode == .ram) .both else opts.cart_mode;
     os_cart.add(b, sycl_badge_dep, .{
-        .mode = .xip,
+        .mode = mode,
         .name = "snouty-genesis",
         .optimize = opts.cart_optimize,
         .root_source_file = b.path(dir ++ "cart/src/main.zig"),
-        .custom_builder = &build_cart_modules,
+        .custom_builder = &build_cart_modules_ram,
+        .xip_custom_builder = &build_cart_modules_xip,
+        .wasm_from = .xip,
     });
+
+    // `zig build check-float` (shared step): the core and the frontend are
+    // all-integer; fail if an ELF links any soft-float or libm routine.
+    common.add_float_check(b, opts, "snouty-genesis", mode);
 
     // Host tests: the core is badge-agnostic and runs natively. Test ROMs
     // come from tools/fetch_test_roms.sh (tests/roms/, gitignored).
@@ -74,7 +98,10 @@ pub fn add(b: *Build, sycl_badge_dep: *Build.Dependency, opts: common.Options) v
         .root_source_file = b.path(dir ++ "core/md.zig"),
         .target = b.graph.host,
         .optimize = test_optimize,
-        .imports = &.{.{ .name = "z80", .module = z80_host }},
+        .imports = &.{
+            .{ .name = "z80", .module = z80_host },
+            .{ .name = "build_options", .module = variant_options(b, false, full).createModule() },
+        },
     });
     const rom_host = b.createModule(.{
         .root_source_file = rom_module(b),
@@ -113,13 +140,47 @@ pub fn add(b: *Build, sycl_badge_dep: *Build.Dependency, opts: common.Options) v
             },
         }),
     });
+    // The RAM cart's core (PLAN.md M5): no Z80, no scrubber, and its
+    // trimmed test ROM; a binary of its own (tests/ram_variant.zig).
+    const core_host_ram = b.createModule(.{
+        .root_source_file = b.path(dir ++ "core/md.zig"),
+        .target = b.graph.host,
+        .optimize = test_optimize,
+        .imports = &.{
+            .{ .name = "z80", .module = z80_host },
+            .{ .name = "build_options", .module = variant_options(b, false, ram_cart).createModule() },
+        },
+    });
+    const ram_tests = b.addTest(.{
+        .name = "snouty-genesis-ram-tests",
+        .filters = if (opts.test_filter) |f| &.{f} else &.{},
+        .root_module = b.createModule(.{
+            .root_source_file = b.path(dir ++ "tests/ram_variant.zig"),
+            .target = b.graph.host,
+            .optimize = test_optimize,
+            .imports = &.{
+                .{ .name = "core", .module = core_host_ram },
+                .{ .name = "rom", .module = rom_host },
+                .{ .name = "rom_ram", .module = b.createModule(.{
+                    .root_source_file = rom_module_ram(b),
+                    .target = b.graph.host,
+                    .optimize = test_optimize,
+                }) },
+            },
+        }),
+    });
+    const ram_run = b.addRunArtifact(ram_tests);
+    ram_run.has_side_effects = true;
+    opts.test_step.dependOn(&ram_run.step);
     const run = b.addRunArtifact(tests);
     // The tests read ROMs and scripts at run time (not build inputs) and
     // print the golden hashes: run them every time, never from the cache.
     run.has_side_effects = true;
     opts.test_step.dependOn(&run.step);
     // This cart's tests alone (the shared `test` step runs every cart's).
-    b.step("test-genesis", "Run snouty-genesis host tests").dependOn(&run.step);
+    const test_genesis = b.step("test-genesis", "Run snouty-genesis host tests");
+    test_genesis.dependOn(&run.step);
+    test_genesis.dependOn(&ram_run.step);
 
     // Strict 68000 oracle gate (not part of `test`): SingleStepTests with
     // SNOUTY_FIXTURES=required, so absent fixtures fail instead of
@@ -191,33 +252,137 @@ fn rom_module(b: *Build) Build.LazyPath {
     return p;
 }
 
-/// Adds `build_options`, `core` (with `z80`), `romfs` (lib/romfs.zig, the
-/// drive reader), `iris` (lib/iris_mark.zig), `hint` (lib/hint.zig), the generated `rom` and `drive` (the drive scan,
+/// The RAM cart's `rom` module (PLAN.md M5 cut 3): the shipped test ROM
+/// without its trailing zero padding (16 KB -> 2.9 KB, tools/trim_rom.zig;
+/// `tests/ram_variant.zig` checks the trimmed ROM plays the M1 golden run
+/// identically), any `-Dmd-rom` as it is. Made once per build graph.
+var rom_zig_ram: ?Build.LazyPath = null;
+var rom_step_ram: *Build.Step = undefined;
+
+fn rom_module_ram(b: *Build) Build.LazyPath {
+    if (!rom_is_default) {
+        const p = rom_module(b);
+        rom_step_ram = rom_step;
+        return p;
+    }
+    if (rom_zig_ram) |p| return p;
+    const wf = b.addWriteFiles();
+    _ = wf.addCopyFile(trimmed_rom(b), "rom.bin");
+    const p = wf.add("rom.zig", b.fmt(
+        \\//! Generated by carts/snouty-genesis/build.zig (the RAM cart: the test
+        \\//! ROM without its zero padding, tools/trim_rom.zig).
+        \\pub const data: []const u8 = @embedFile("rom.bin");
+        \\pub const name = "{f}";
+        \\pub const Source = enum {{ drive, embed }};
+        \\pub const source: Source = .{s};
+        \\
+    , .{ std.zig.fmtString(rom_file.name), @tagName(rom_source) }));
+    rom_zig_ram = p;
+    rom_step_ram = &wf.step;
+    return p;
+}
+
+/// `rom_file` through tools/trim_rom.zig (a host program run at build time).
+fn trimmed_rom(b: *Build) Build.LazyPath {
+    const tool = b.addExecutable(.{
+        .name = "snouty-genesis-trim-rom",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path(dir ++ "tools/trim_rom.zig"),
+            .target = b.graph.host,
+            .optimize = .Debug,
+        }),
+    });
+    const run = b.addRunArtifact(tool);
+    run.addFileArg(rom_file.lazy);
+    return run.addOutputFileArg("rom.bin");
+}
+
+/// Adds `build_options` (the variant's), `core` (with `z80` and the same
+/// `build_options`), `video` (frontend/video.zig: the line sink), `app`
+/// (frontend/app.zig: the state machine and every other frontend file),
+/// `romfs` (lib/romfs.zig, the drive reader), `iris` (lib/iris_mark.zig),
+/// `hint` (lib/hint.zig), the generated `rom` and `drive` (the drive scan,
 /// cart/src/frontend/drive.zig, a module so the host tests share it) to the
 /// cart.
-fn build_cart_modules(b: *Build, cart: *Build.Module, cart_api: *Build.Module, step: *Build.Step) void {
-    _ = cart_api;
-    cart.addImport("build_options", build_options.?.createModule());
-    const z80 = b.createModule(.{ .root_source_file = b.path(gear_core ++ "z80.zig") });
+fn build_cart_modules_ram(b: *Build, cart: *Build.Module, cart_api: *Build.Module, step: *Build.Step) void {
+    // PLAN.md M5 cut 4: the frontend, the drive reader and the splash art
+    // are cold (menus, picker, help, start-up), so the RAM cart builds them
+    // ReleaseSmall; the core and the line sink keep the cart's mode. The
+    // cart API module (upstream's text, rect and blit, the start code) is
+    // cold too.
+    cart_api.optimize = .ReleaseSmall;
+    build_cart_modules(b, cart, cart_api, step, build_options.?, .{ .hot = cart_optimize, .cold = .ReleaseSmall, .trimmed_rom = true });
+}
+
+fn build_cart_modules_xip(b: *Build, cart: *Build.Module, cart_api: *Build.Module, step: *Build.Step) void {
+    build_cart_modules(b, cart, cart_api, step, build_options_xip.?, .{});
+}
+
+/// How a variant's modules are built: optimize modes (null inherits the
+/// cart's) and which `rom` module it embeds.
+const Modes = struct {
+    hot: ?std.builtin.OptimizeMode = null,
+    cold: ?std.builtin.OptimizeMode = null,
+    /// The test ROM without its zero padding (`rom_module_ram`).
+    trimmed_rom: bool = false,
+};
+
+/// `-Dcart-optimize`, set by `add` for `build_cart_modules_ram`.
+var cart_optimize: std.builtin.OptimizeMode = .ReleaseFast;
+
+fn build_cart_modules(b: *Build, cart: *Build.Module, cart_api: *Build.Module, step: *Build.Step, opts: *Build.Step.Options, modes: Modes) void {
+    const rom_zig_path = if (modes.trimmed_rom) rom_module_ram(b) else rom_module(b);
+    const rom_gen_step = if (modes.trimmed_rom) rom_step_ram else rom_step;
+    const options = opts.createModule();
+    cart.addImport("build_options", options);
+    const z80 = b.createModule(.{ .root_source_file = b.path(gear_core ++ "z80.zig"), .optimize = modes.hot });
     const core = b.createModule(.{
         .root_source_file = b.path(dir ++ "core/md.zig"),
-        .imports = &.{.{ .name = "z80", .module = z80 }},
+        .optimize = modes.hot,
+        .imports = &.{
+            .{ .name = "z80", .module = z80 },
+            .{ .name = "build_options", .module = options },
+        },
     });
-    const romfs = b.createModule(.{ .root_source_file = b.path("lib/romfs.zig") });
-    const rom = b.createModule(.{ .root_source_file = rom_module(b) });
-    cart.addImport("core", core);
-    cart.addImport("romfs", romfs);
-    cart.addImport("rom", rom);
-    cart.addImport("iris", b.createModule(.{ .root_source_file = b.path("lib/iris_mark.zig") }));
+    const romfs = b.createModule(.{ .root_source_file = b.path("lib/romfs.zig"), .optimize = modes.cold });
+    const rom = b.createModule(.{ .root_source_file = rom_zig_path, .optimize = modes.cold });
+    const iris = b.createModule(.{ .root_source_file = b.path("lib/iris_mark.zig"), .optimize = modes.cold });
     // The control hints (splash, first seconds of play, menu), shared with Boy, Gear, Lynx.
-    cart.addImport("hint", b.createModule(.{ .root_source_file = b.path("lib/hint.zig") }));
-    cart.addImport("drive", b.createModule(.{
+    const hint = b.createModule(.{ .root_source_file = b.path("lib/hint.zig"), .optimize = modes.cold });
+    const drive = b.createModule(.{
         .root_source_file = b.path(dir ++ "cart/src/frontend/drive.zig"),
+        .optimize = modes.cold,
         .imports = &.{
             .{ .name = "core", .module = core },
             .{ .name = "rom", .module = rom },
             .{ .name = "romfs", .module = romfs },
         },
-    }));
-    step.dependOn(rom_step);
+    });
+    const video = b.createModule(.{
+        .root_source_file = b.path(dir ++ "cart/src/frontend/video.zig"),
+        .optimize = modes.hot,
+        .imports = &.{
+            .{ .name = "cart-api", .module = cart_api },
+            .{ .name = "core", .module = core },
+        },
+    });
+    const app = b.createModule(.{
+        .root_source_file = b.path(dir ++ "cart/src/frontend/app.zig"),
+        .optimize = modes.cold,
+        .imports = &.{
+            .{ .name = "cart-api", .module = cart_api },
+            .{ .name = "build_options", .module = options },
+            .{ .name = "core", .module = core },
+            .{ .name = "video", .module = video },
+            .{ .name = "rom", .module = rom },
+            .{ .name = "romfs", .module = romfs },
+            .{ .name = "drive", .module = drive },
+            .{ .name = "iris", .module = iris },
+            .{ .name = "hint", .module = hint },
+        },
+    });
+    cart.addImport("core", core);
+    cart.addImport("video", video);
+    cart.addImport("app", app);
+    step.dependOn(rom_gen_step);
 }

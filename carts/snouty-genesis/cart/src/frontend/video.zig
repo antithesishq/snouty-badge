@@ -189,7 +189,7 @@ pub var scale: core.vdp.LineMode = .squeeze;
 /// column pair averaged (`Vdp.h_mode`), applied by `apply` with `scale`.
 pub var smooth: bool = true;
 
-/// Put `scale` and `smooth` into the console. main.zig calls it after `init_in_place`,
+/// Put `scale` and `smooth` into the console. app.zig calls it after `init_in_place`,
 /// after a Reset (`Vdp.reset` puts the mode back to squeeze) and when the
 /// menu closes. (M3: a `Keyframe` restore brings back the recorded `Vdp`,
 /// so it must re-apply too.)

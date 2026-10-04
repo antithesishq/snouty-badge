@@ -34,6 +34,10 @@ pub const LineSink = vdp.LineSink;
 pub const Cpu = m68k.M68k(bus.Bus);
 pub const Z80 = z80bus.Cpu;
 
+/// Bytes of Z80 RAM the console holds: 8 KB, or none with the Z80 stub
+/// (the 68000 reads the stub's RAM as 0, core/z80bus.zig).
+pub const z80_ram_size: usize = if (tunables.z80_enabled) 0x2000 else 0;
+
 pub const out_w = vdp.out_w;
 pub const out_h = vdp.out_h;
 
@@ -140,8 +144,9 @@ pub const Md = struct {
     /// byte `addr - sram_map.lo` of the header-declared range. Console
     /// state (in keyframes). Unused when the header declares none.
     sram: [rom.sram_max]u8 = @splat(0),
-    /// A00000-A01FFF / Z80 0000-1FFF.
-    z80_ram: [0x2000]u8 = @splat(0),
+    /// A00000-A01FFF / Z80 0000-1FFF. Empty without the Z80
+    /// (`z80_ram_size`).
+    z80_ram: [z80_ram_size]u8 = @splat(0),
 
     /// Build the console around `src` in place, reset to power-on. The
     /// console is ~153 KB: always a static, never a stack temporary (32 KB
@@ -368,7 +373,8 @@ pub const Md = struct {
     /// clock carries its fraction. Held by BUSREQ or RESET (or switched
     /// off) it does not run and its carry waits.
     fn run_z80(md: *Md, zb: *z80bus.Z80Bus) void {
-        if (!tunables.z80_enabled or md.arbiter.busreq or md.arbiter.z80_reset) return;
+        if (!tunables.z80_enabled) return;
+        if (md.arbiter.busreq or md.arbiter.z80_reset) return;
         const share: u32 = vdp.z80_cycles_per_line * tunables.z80_scale;
         var used: u32 = md.z80_carry;
         while (used < share) {
@@ -392,6 +398,9 @@ pub const Md = struct {
     /// SPEC.md section 9: the FM pick against the PSG pick, the louder
     /// wins, FM on a tie (`ym2612.pick_tone`).
     fn pick_tone(md: *const Md) ?Tone {
+        // Without the Z80 there is no sound driver and the cart is silent
+        // (PLAN.md M5): no tone, and no code for the pick.
+        if (!tunables.z80_enabled) return null;
         return ym2612.pick_tone(&md.ym, &md.psg);
     }
 
@@ -419,7 +428,7 @@ pub const Md = struct {
         sram_active: rom.SramMap,
         dma_stall: u32,
         z80: Z80,
-        z80_ram: [0x2000]u8,
+        z80_ram: [z80_ram_size]u8,
         z80_bank: u16,
         arbiter: Arbiter,
         z80_int: bool,

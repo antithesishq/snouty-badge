@@ -1,7 +1,7 @@
 //! `Md.tone()` -> the badge's one `tone2` voice (SPEC.md section 9). Calls
 //! `tone2` only when the note changes, and stops the buzzer when nothing
 //! is keyed on. f32 is fine here (frontend, not core). M1 Track C owns
-//! this file; main.zig toggles `enabled` (A in the M1 menu placeholder, the
+//! this file; app.zig toggles `enabled` (A in the M1 menu placeholder, the
 //! menu's Sound row from M2).
 //!
 //! Volume: `Tone.level` 0..15 maps linearly onto tone2 volume 0.2..1.0
@@ -24,9 +24,14 @@ const cart = @import("cart-api");
 const core = @import("core");
 const build_options = @import("build_options");
 
+/// Sound exists in this build: the tone comes from the Z80's sound driver
+/// (YM2612 and PSG), so the RAM cart, which has the Z80 stub, is silent
+/// and its menu has no Sound row (PLAN.md M5).
+pub const available = core.tunables.z80_enabled;
+
 /// Sound on/off. Starts as `-Dsound` says (off by default, docs/SOUND.md);
-/// the menu toggles it.
-pub var enabled: bool = build_options.sound;
+/// the menu toggles it. Always false without `available`.
+pub var enabled: bool = build_options.sound and available;
 
 /// Frequencies outside this range are treated as silence.
 const min_hz: u16 = 20;
@@ -87,7 +92,7 @@ pub fn playing_hz() u32 {
 
 /// Once per update, after the frames ran.
 pub fn update(md: *const core.Md) void {
-    if (!enabled) return stop();
+    if (!available or !enabled) return stop();
     const t = md.tone() orelse return stop();
     if (t.hz < min_hz or t.hz > max_hz) return stop();
     if (playing) |p| if (p.hz == t.hz and p.level == t.level) {

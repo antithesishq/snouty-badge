@@ -3,11 +3,11 @@
 //! Genesis ROM. It says how to add one, lists up to four of the files that
 //! were found and refused (`NAME: reason`, dimmed) and offers the embedded
 //! ROM, which in a badge build is always the shipped test ROM. A or B
-//! leaves. Drive builds only: main.zig reaches it behind `romsrc.use_drive`.
+//! leaves. Drive builds only: app.zig reaches it behind `romsrc.use_drive`.
 //! Full redraw every update, colours as the menu's (Snouty Gear's scheme).
 const cart = @import("cart-api");
 const input = @import("input.zig");
-const video = @import("video.zig");
+const video = @import("video");
 const text = @import("text.zig");
 const romsrc = @import("romsrc.zig");
 
@@ -33,7 +33,7 @@ const list_y = 56;
 const list_last_y = 110;
 const hint_y = cart.screen_height - 8;
 
-/// One update. True when the user leaves (A or B): main.zig then runs the
+/// One update. True when the user leaves (A or B): app.zig then runs the
 /// embedded ROM.
 pub fn update(e: input.Edge) bool {
     if (e.pressed(.a) or e.pressed(.b)) return true;

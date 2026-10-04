@@ -70,7 +70,7 @@ pub fn fps() u32 {
     return @intCast((@as(u64, n) * 1_000_000 + sum / 2) / sum);
 }
 
-/// The Z80's state for line 3, set by main.zig before `draw`: "on",
+/// The Z80's state for line 3, set by app.zig before `draw`: "on",
 /// "req" (the 68000 holds its bus), "rst" (held in reset) or "off"
 /// (`tunables.z80_enabled` false).
 pub var z80_state: []const u8 = "on";

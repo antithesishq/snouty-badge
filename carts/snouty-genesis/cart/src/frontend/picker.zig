@@ -7,11 +7,11 @@
 //! does not run. Under the list, the selected file's header name, or the
 //! reason it is refused. Up/Down move (wrapping), A plays the selected file
 //! (playable rows only), B runs the embedded test ROM instead. Full redraw
-//! every update. Drive builds only: main.zig reaches it behind
+//! every update. Drive builds only: app.zig reaches it behind
 //! `romsrc.use_drive`.
 const cart = @import("cart-api");
 const input = @import("input.zig");
-const video = @import("video.zig");
+const video = @import("video");
 const text = @import("text.zig");
 const romsrc = @import("romsrc.zig");
 const help = @import("help.zig");

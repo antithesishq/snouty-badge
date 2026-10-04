@@ -26,12 +26,12 @@
 //!
 //! Resuming. The first frame stepped after a scrub must drop the records
 //! ahead (they hold the future) and open a fresh record from the parked
-//! state: main.zig calls `resume_if_parked` at the top of every running
+//! state: app.zig calls `resume_if_parked` at the top of every running
 //! update, before `step_frame` (`core.undo.resume_here`).
 const std = @import("std");
 const cart = @import("cart-api");
 const core = @import("core");
-const video = @import("video.zig");
+const video = @import("video");
 const tuning = @import("tuning.zig");
 const undo = core.undo;
 
@@ -45,8 +45,18 @@ else
 /// blocks (PLAN.md Track B).
 const min_slots = 2 * small_slots + 64;
 
+/// The scrubber is in this build (`core.undo.enabled`: the XIP cart and the
+/// simulator, not the RAM cart, PLAN.md M5). Without it `init` returns
+/// false, every function below is a no-op and the menu hides the scrub
+/// line.
+pub const available = undo.enabled;
+
 /// `init` found room; every other function is a no-op until then.
-var ready: bool = false;
+var ready_flag: bool = false;
+
+inline fn ready() bool {
+    return available and ready_flag;
+}
 
 // ---- Arena ----
 
@@ -73,14 +83,15 @@ fn find_arena() []align(4) u8 {
 /// when fewer than `min_slots` fit. Call once in `start`, before the
 /// console exists (the arena does not depend on the ROM).
 pub fn init() bool {
+    if (!available) return false;
     arena = find_arena();
-    ready = false;
+    ready_flag = false;
     if (arena.len / @sizeOf(undo.Slot) < min_slots) {
         undo.init(arena[0..0]);
         return false;
     }
     undo.init(arena);
-    ready = true;
+    ready_flag = true;
     return true;
 }
 
@@ -88,31 +99,32 @@ pub fn init() bool {
 /// of `begin` (new console, also after Pick ROM) and after the menu's Reset
 /// (`Md.reset` writes the memories directly, past the write hooks).
 pub fn reset(md: *core.Md) void {
-    if (ready) undo.reset(md) else undo.disable();
+    if (!available) return;
+    if (ready()) undo.reset(md) else undo.disable();
 }
 
 /// Call after every stepped Genesis frame.
 pub fn record_frame(md: *core.Md) void {
-    if (ready) undo.record_frame(md);
+    if (ready()) undo.record_frame(md);
 }
 
 /// Call before the first `step_frame` of a running update: after a scrub
 /// the console is parked on a record boundary, and playing on from there
 /// drops the future.
 pub fn resume_if_parked(md: *core.Md) void {
-    if (ready and undo.parked()) undo.resume_here(md);
+    if (ready() and undo.parked()) undo.resume_here(md);
 }
 
 /// True if a step in `dir` (-1 back, 1 forward) would move.
 pub fn can_step(dir: i2) bool {
-    return ready and undo.can_step(dir);
+    return ready() and undo.can_step(dir);
 }
 
 /// Move one record back (dir < 0) or forward (dir > 0) and draw the
 /// restored state into the back buffer. False, changing nothing, at either
 /// end of the history.
 pub fn step(md: *core.Md, dir: i2) bool {
-    if (!ready or !undo.step(md, dir)) return false;
+    if (!ready() or !undo.step(md, dir)) return false;
     show(md);
     return true;
 }
@@ -131,27 +143,27 @@ pub fn show(md: *core.Md) void {
 
 /// Frames behind live (0 live).
 pub fn depth_frames() u32 {
-    return if (ready) undo.depth_frames() else 0;
+    return if (ready()) undo.depth_frames() else 0;
 }
 
 /// Frames reachable back from live.
 pub fn history_frames() u32 {
-    return if (ready) undo.history_frames() else 0;
+    return if (ready()) undo.history_frames() else 0;
 }
 
 /// Closed records held.
 pub fn record_count() usize {
-    return if (ready) undo.record_count() else 0;
+    return if (ready()) undo.record_count() else 0;
 }
 
 /// Slots the ring holds (0: no room, scrubber off).
 pub fn capacity_slots() usize {
-    return if (ready) undo.capacity_slots() else 0;
+    return if (ready()) undo.capacity_slots() else 0;
 }
 
 /// Slots in use by closed records and the open one.
 pub fn slots_in_use() usize {
-    return if (ready) undo.slots_in_use() else 0;
+    return if (ready()) undo.slots_in_use() else 0;
 }
 
 /// Arena bytes found (0 before `init`), whether or not it was enough.

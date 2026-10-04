@@ -48,6 +48,11 @@ const md_mod = @import("md.zig");
 const rom = @import("rom.zig");
 const Md = md_mod.Md;
 
+/// The scrubber is in this build (`build_options.scrub`: the XIP cart and
+/// the simulator). Without it the hooks below compile to nothing and the
+/// frontend never calls the rest (PLAN.md M5: the RAM cart).
+pub const enabled: bool = @import("build_options").scrub;
+
 pub const block_size = 64;
 pub const Slot = extern struct {
     id: u16,
@@ -69,7 +74,7 @@ const small_id: u16 = @as(u16, @backingInt(Region.small)) << 12;
 
 const wr_blocks = 0x10000 / block_size;
 const vr_blocks = 0x10000 / block_size;
-const zr_blocks = 0x2000 / block_size;
+const zr_blocks = md_mod.z80_ram_size / block_size;
 const sr_blocks = rom.sram_max / block_size;
 
 var need_wr: [wr_blocks]u8 = @splat(0);
@@ -263,18 +268,21 @@ pub fn lost_history() bool {
 
 /// Work RAM byte address (a word never straddles a block).
 pub inline fn touch_wr(addr: u16) void {
+    if (!enabled) return;
     const b = addr >> 6;
     if (need_wr[b] != 0) save(.work_ram, b);
 }
 
 /// VRAM byte address.
 pub inline fn touch_vr(addr: u16) void {
+    if (!enabled) return;
     const b = addr >> 6;
     if (need_vr[b] != 0) save(.vram, b);
 }
 
 /// A VRAM run of `bytes` from `addr`, wrapping at 64 KB (DMA).
 pub fn touch_vr_range(addr: u16, bytes: u32) void {
+    if (!enabled) return;
     if (bytes == 0) return;
     if (bytes >= 0x10000) {
         var b: u16 = 0;
@@ -292,12 +300,14 @@ pub fn touch_vr_range(addr: u16, bytes: u32) void {
 
 /// Z80 RAM address (0000-1FFF).
 pub inline fn touch_zr(addr: u13) void {
+    if (!enabled) return;
     const b = addr >> 6;
     if (need_zr[b] != 0) save(.z80_ram, b);
 }
 
 /// Cartridge SRAM: index into `md.sram`.
 pub inline fn touch_sr(addr: u14) void {
+    if (!enabled) return;
     const b = addr >> 6;
     if (need_sr[b] != 0) save(.sram, b);
 }

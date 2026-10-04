@@ -20,15 +20,18 @@
 //! Keys: Up/Down move (wrapping), A chooses, B or a Select tap (a press that
 //! began inside the menu) resumes. Left/Right or A cycle a setting row
 //! (Buttons, Scale, Smooth H40, Sound, Debug overlay). A Scale or Smooth
-//! H40 change takes effect on the first frame after resuming (main.zig
+//! H40 change takes effect on the first frame after resuming (app.zig
 //! calls `video.apply` whenever the menu closes) or on the next scrub step,
 //! which redraws the whole screen.
+//!
+//! RAM cart (PLAN.md M5): no Sound row (`audio.available`), no scrub line
+//! and no scrubbing (`rewind.available`); the rest as in the XIP cart.
 //!
 //! Time scrubber (SPEC.md 5 and 10, frontend/rewind.zig), Gear's UI. On
 //! every row that is not a setting (Resume, where the menu opens, Reset,
 //! Pick ROM, About) Left/Right step time back/forward one record (0.5 s),
 //! repeating 4 times a second while held; a Left/Right held over from the
-//! game does nothing (main.zig suppresses held buttons on open, and the
+//! game does nothing (app.zig suppresses held buttons on open, and the
 //! repeat only starts from a press). The panel's bottom line
 //! (`scrub_line_y`) reads "Scrub: live / 3.5s" or "Scrub: -1.5 / 3.5s"
 //! (position behind live / history held), dim while there is no history,
@@ -41,7 +44,7 @@
 //! keep scrubbing, B or a Select tap resume, and Up/Down/A bring the full
 //! menu back. The bar lies inside the panel's rectangle, so the panel
 //! covers it completely when it comes back. Reset and Pick ROM forget the
-//! history (`rewind.reset` here, and in main.zig's `begin`).
+//! history (`rewind.reset` here, and in app.zig's `begin`).
 //!
 //! Colours: Gear's fixed scheme, a navy title band with white and yellow
 //! text, a black panel with a blue frame, white rows and a yellow cursor
@@ -49,7 +52,7 @@
 const std = @import("std");
 const cart = @import("cart-api");
 const core = @import("core");
-const video = @import("video.zig");
+const video = @import("video");
 const debug = @import("debug.zig");
 const input = @import("input.zig");
 const audio = @import("audio.zig");
@@ -60,7 +63,7 @@ const hint = @import("hint");
 
 pub const version = "0.4.0-m4";
 
-/// What main.zig does after a menu update.
+/// What app.zig does after a menu update.
 pub const Result = enum {
     stay,
     /// Close, suppress held buttons, apply the scale, run a game update.
@@ -79,7 +82,12 @@ fn pick_available() bool {
 }
 
 fn visible(item: Item) bool {
-    return item != .pick_rom or pick_available();
+    return switch (item) {
+        .pick_rom => pick_available(),
+        // The RAM cart has no sound (no Z80) and no scrubber (PLAN.md M5).
+        .sound => audio.available,
+        else => true,
+    };
 }
 
 var cursor: Item = .resume_game;
@@ -147,7 +155,7 @@ pub fn update(md: *core.Md, e: input.Edge) Result {
                 .resume_game => return .resume_game,
                 .reset => {
                     // `Md.reset` writes the memories directly, past the
-                    // undo hooks: forget the history. main.zig re-applies
+                    // undo hooks: forget the history. app.zig re-applies
                     // the scale on resume too (Vdp.reset puts line_mode
                     // back to squeeze).
                     md.reset();
@@ -197,7 +205,7 @@ fn left_right(md: *core.Md, e: input.Edge) void {
         repeat_dir = 0;
         if (is_setting(cursor)) {
             adjust(d);
-        } else {
+        } else if (rewind.available) {
             on_scrub(md, d);
             repeat_dir = d;
             repeat_left = repeat_updates;
@@ -340,11 +348,17 @@ fn draw(md: *const core.Md) void {
         }
         y += row_h;
     }
+    if (rewind.available) draw_scrub_line(&buf);
+    text.draw(hint.back, text_x, footer_y, dim_color, panel_color);
+}
+
+/// The panel's bottom line (scrubber builds only): the scrub position, or
+/// on Resume at live the rewind hint.
+fn draw_scrub_line(buf: *[24]u8) void {
     const has_memory = rewind.capacity_slots() != 0;
     const live = has_memory and rewind.history_frames() != 0;
-    const bottom = hint.resume_line(cursor == .resume_game, has_memory, rewind.depth_frames(), rewind.history_frames()) orelse scrub_text(&buf);
+    const bottom = hint.resume_line(cursor == .resume_game, has_memory, rewind.depth_frames(), rewind.history_frames()) orelse scrub_text(buf);
     text.draw(bottom, text_x, scrub_line_y, if (live) row_color else dim_color, panel_color);
-    text.draw(hint.back, text_x, footer_y, dim_color, panel_color);
 }
 
 /// The scrub line for the current position, or "Scrub: no memory" when

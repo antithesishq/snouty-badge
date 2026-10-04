@@ -1,14 +1,16 @@
-# snouty-genesis: Genesis emulator, XIP cart only (SPEC.md section 13), two
-# Genesis frames per update presented at 30 Hz (60/30, SPEC.md section 8):
-# budget 33.3 ms per update. M2: the boot splash (36 updates), then the
-# real frame loop on the test ROM read from the drive image, driven by the
-# M2 input script (M1's shifted past the splash).
+# snouty-genesis: Genesis emulator, two Genesis frames per update presented
+# at 30 Hz (60/30, SPEC.md section 8): budget 33.3 ms per update. M2: the
+# boot splash (36 updates), then the real frame loop on the test ROM read
+# from the drive image, driven by the M2 input script (M1's shifted past the
+# splash).
 #
-# Not picked by ELF name (the XIP ELF is snouty-genesis-xip.elf, whose
-# basename has the -xip suffix); from the repository root:
-#   zig build -Dcart=snouty-genesis -Dcart-mode=xip
+# Picked by name for the RAM cart zig-out/firmware/snouty-genesis.elf (M5:
+# no Z80, no scrubber); the XIP cart snouty-genesis-xip.elf (everything) is
+# not, so pass this file with --config for it. From the repository root:
+#   zig build -Dcart=snouty-genesis
 #   python3 tools/make_romfs.py carts/snouty-genesis/out/romfs_test.img \
 #       carts/snouty-genesis/roms/snouty-test.bin=TEST.GEN
+#   badge-bench/bench.sh zig-out/firmware/snouty-genesis.elf --symbols
 #   badge-bench/bench.sh zig-out/firmware/snouty-genesis-xip.elf \
 #       --config badge-bench/carts/snouty-genesis.toml --symbols
 # The romfs image is required: the default build reads the badge drive and
@@ -18,9 +20,9 @@
 # leaves it for the embedded ROM), several files show the picker. To bench
 # Miniplanets from the drive, pass --romfs carts/snouty-genesis/out/romfs_mini.img
 # --script carts/snouty-genesis/tools/scripts/m2_mini300.json --frames 336.
-# M3 time scrubber on Miniplanets (menu opens at 314, eight scrub steps,
-# two resumes; the steps' render_still cost is in the menu updates): the
-# same --romfs with --script carts/snouty-genesis/tools/scripts/m3_scrub.json
+# M3 time scrubber on Miniplanets (XIP cart only; menu opens at 314, eight
+# scrub steps, two resumes; the steps' render_still cost is in the menu
+# updates): the same --romfs with --script carts/snouty-genesis/tools/scripts/m3_scrub.json
 # --frames 540. The default run below stays the test ROM.
 budget_ms = 33.3
 # 156 updates: 36 splash, then the 120 of M1 (boot with display on about

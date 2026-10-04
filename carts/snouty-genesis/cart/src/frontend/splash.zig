@@ -7,7 +7,7 @@
 //! no further work. The bottom line says how to open the emulator menu
 //! (`hint.hold_select`, lib/hint.zig). The cart has no palette, so the colours are fixed here.
 const cart = @import("cart-api");
-const video = @import("video.zig");
+const video = @import("video");
 const iris = @import("iris");
 const hint = @import("hint");
 

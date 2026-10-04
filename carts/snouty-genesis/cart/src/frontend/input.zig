@@ -10,7 +10,7 @@
 //!   (A by default), sent for `tap_frames` Genesis frames from the release
 //!   (late by the tap's length).
 //! - Select held for `hold_updates` (500 ms): `GameInput.open_menu` is set
-//!   once and main.zig opens the emulator menu (frontend/menu.zig).
+//!   once and app.zig opens the emulator menu (frontend/menu.zig).
 //! - Start pressed while Select is held is the OS exit chord: the hold is
 //!   cancelled and no A is sent. Start itself still goes to the game.
 //!
@@ -148,7 +148,7 @@ const all_buttons: u16 = mask(.start) | mask(.select) | mask(.a) | mask(.b) |
 pub const GameInput = struct {
     /// Pad word for both `Md.step_frame` calls of the update.
     pad: u16,
-    /// Select reached `hold_updates` this update (main.zig opens the menu).
+    /// Select reached `hold_updates` this update (app.zig opens the menu).
     open_menu: bool,
 };
 

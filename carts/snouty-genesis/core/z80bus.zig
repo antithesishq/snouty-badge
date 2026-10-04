@@ -41,6 +41,7 @@ const md_mod = @import("md.zig");
 const Md = md_mod.Md;
 const rom = @import("rom.zig");
 const undo = @import("undo.zig");
+const tunables = @import("tunables.zig");
 
 /// 68000 address of the first work RAM byte reachable through the window
 /// (work RAM is mirrored across E00000-FFFFFF).
@@ -66,7 +67,7 @@ pub const Z80Bus = struct {
     }
 
     pub inline fn read(self: *Z80Bus, addr: u16) u8 {
-        if (addr < 0x4000) return self.md.z80_ram[addr & 0x1FFF];
+        if (addr < 0x4000) return if (tunables.z80_enabled) self.md.z80_ram[addr & 0x1FFF] else 0;
         if (addr >= 0x8000) return self.read_window(addr);
         if (addr < 0x6000) return self.md.ym.read_status();
         return 0xFF;
@@ -74,6 +75,7 @@ pub const Z80Bus = struct {
 
     pub inline fn write(self: *Z80Bus, addr: u16, v: u8) void {
         if (addr < 0x4000) {
+            if (!tunables.z80_enabled) return;
             undo.touch_zr(@truncate(addr));
             self.md.z80_ram[addr & 0x1FFF] = v;
         } else if (addr >= 0x8000) {
@@ -163,8 +165,26 @@ fn window_read_slow(md: *const Md, addr: u16) u8 {
     return 0xFF;
 }
 
-/// The Z80 as the Genesis runs it: Gear's interpreter over this bus.
-pub const Cpu = z80.Z80(Z80Bus);
+/// The Z80 as the Genesis runs it: Gear's interpreter over this bus, or
+/// the stub without `tunables.z80_enabled`.
+pub const Cpu = if (tunables.z80_enabled) z80.Z80(Z80Bus) else Stub;
+
+/// The RAM cart's Z80 (PLAN.md M5, SPEC.md section 9 "Z80 off"): no core
+/// is linked and nothing runs. What the 68000 sees stays as the hardware
+/// shows it as far as games check it: BUSREQ and RESET are recorded and
+/// BUSREQ reads granted at once (`bus.zig`), the YM2612 keeps its register
+/// model and its timers (status bit 7, busy, is never set), the PSG and
+/// the bank register take their writes. Z80 RAM is not kept: 68000 writes
+/// are dropped and reads return 0, which is what a sound driver's
+/// command slot reads once the driver has taken the command. Games that
+/// hand a command over and wait for the slot to clear (Echo, Miniplanets'
+/// engine: three slots at 1FF4/1FE8/1FDC and a busy byte at 1FC0) go on;
+/// a driver that must set a flag before the game proceeds would hang
+/// either way. The PC is kept for the overlay and the `debug_z80_pc`
+/// export.
+pub const Stub = struct {
+    pc: u16 = 0,
+};
 
 /// Z80 state after its RESET line (power on, or the 68000 pulsing
 /// A11200): PC, I, R and the IFFs 0, IM 0 (the driver sets IM 1; Gear's
@@ -174,6 +194,7 @@ pub const Cpu = z80.Z80(Z80Bus);
 /// halted. Replaces Gear's Game Gear post-BIOS `reset` (SP DFF0, IM 1).
 pub fn reset_genesis(cpu: *Cpu) void {
     cpu.* = .{};
+    if (!tunables.z80_enabled) return;
     cpu.a = 0xFF;
     cpu.f = 0xFF;
     cpu.sp = 0xFFFF;
@@ -193,6 +214,7 @@ pub fn reset_line(md: *Md) void {
 /// interrupt acceptance; a halted Z80 stops within 3). The caller carries
 /// the overshoot and skips the call while BUSREQ or RESET holds the Z80.
 pub fn run(md: *Md, budget: u32) u32 {
+    if (!tunables.z80_enabled) return budget;
     var zb = Z80Bus.init(md);
     var used: u32 = 0;
     while (used < budget) {
@@ -202,7 +224,7 @@ pub fn run(md: *Md, budget: u32) u32 {
     return used;
 }
 
-// Analyse (and so compile) `Cpu.step` in every build that imports this file.
+// Analyse (and so compile) `Cpu.step` in every build that has the Z80.
 comptime {
-    _ = &Cpu.step;
+    if (tunables.z80_enabled) _ = &Cpu.step;
 }

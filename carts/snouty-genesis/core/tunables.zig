@@ -20,6 +20,8 @@ pub const z80_scale: u16 = scale_one;
 /// gets, over `scale_one`. Underclock before dropping emulated frames.
 pub const cpu_scale: u16 = scale_one;
 
-/// False: the Z80 does not run and the arbiter stub answers for it
-/// (SPEC.md section 9, "Z80 off").
-pub const z80_enabled: bool = true;
+/// False: no Z80 core is linked and the arbiter stub answers for it
+/// (SPEC.md section 9, "Z80 off"; core/z80bus.zig). Set per build variant
+/// (`build_options.z80`, carts/snouty-genesis/build.zig): the XIP cart and
+/// the simulator have the Z80, the RAM cart has the stub (PLAN.md M5).
+pub const z80_enabled: bool = @import("build_options").z80;
