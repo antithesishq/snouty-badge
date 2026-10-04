@@ -1241,3 +1241,17 @@ render check). check.sh now reads the demo level from the data file.
   revived lasts >= 300 even without aiming, reserve + revive survives
   600); m3_death asserts HP >= 25 and grace 120 after the rewind. bss
   93.5 KB (+2.5 KB patch ring).
+- 2026-10-04: more bugs (Adrian: "increase the enemy count in every level
+  and add a couple wasps to the first level"). Build Farm 9 -> 13 (two
+  wasps, in the brick hub and the pipe hall, plus two gnats; the opening
+  cable-tray room is untouched, so the ai.zig/rewind.zig opening balance
+  tests still hold), Staging 15 -> 23, Production 22 -> 33 plus one zapper
+  charge in the cable-tray room, E1M1 20 -> 37 (re-imported at
+  `--difficulty hard`, the same map with Wolf3D's hard-only actors). The
+  attract demo (Production) was re-authored: the old log died in the vent
+  hall before its showcase rewind. Same route through the death-and-rewind
+  in the vent hall, the Coral key and the hotfix; the brick-room fight now
+  aims at the flanking gnats, and the log ends there alive (3,445 ticks,
+  57 s; was 4,108) because the zapper runs dry on that room's beetle.
+  Bench: attract worst 10.26 ms (was 9.76), m4_rewind 5.48, m6_debugger
+  5.72, all far under 16.7.

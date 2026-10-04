@@ -5,10 +5,10 @@ pub const Run = struct { buttons: u16, ticks: u16 };
 
 pub const level_index: u8 = 2;
 pub const seed: u32 = 0x5EED0001;
-pub const total_ticks: u32 = 4108;
+pub const total_ticks: u32 = 3445;
 /// sim.hash_gameplay of the state after the last tick as recorded in the
 /// simulator; 0 = not recorded yet (tools/record_demo.sh).
-pub const final_hash: u32 = 0x636B911C;
+pub const final_hash: u32 = 0x912C5884;
 
 pub const runs = [_]Run{
     .{ .buttons = 0x0000, .ticks = 30 },
@@ -25,7 +25,10 @@ pub const runs = [_]Run{
     .{ .buttons = 0x0020, .ticks = 284 },
     .{ .buttons = 0x0008, .ticks = 210 },
     .{ .buttons = 0x0040, .ticks = 10 },
-    .{ .buttons = 0x0004, .ticks = 242 },
+    .{ .buttons = 0x0004, .ticks = 280 },
+    .{ .buttons = 0x0100, .ticks = 68 },
+    .{ .buttons = 0x0004, .ticks = 15 },
+    .{ .buttons = 0x0080, .ticks = 68 },
     .{ .buttons = 0x0000, .ticks = 20 },
     .{ .buttons = 0x0100, .ticks = 5 },
     .{ .buttons = 0x0020, .ticks = 312 },
@@ -44,19 +47,10 @@ pub const runs = [_]Run{
     .{ .buttons = 0x0104, .ticks = 10 },
     .{ .buttons = 0x0100, .ticks = 4 },
     .{ .buttons = 0x0004, .ticks = 85 },
-    .{ .buttons = 0x0002, .ticks = 1 },
-    .{ .buttons = 0x0000, .ticks = 70 },
+    .{ .buttons = 0x0100, .ticks = 14 },
     .{ .buttons = 0x0004, .ticks = 30 },
-    .{ .buttons = 0x0000, .ticks = 20 },
-    .{ .buttons = 0x0100, .ticks = 5 },
-    .{ .buttons = 0x0020, .ticks = 220 },
-    .{ .buttons = 0x0000, .ticks = 40 },
-    .{ .buttons = 0x0080, .ticks = 55 },
-    .{ .buttons = 0x0020, .ticks = 256 },
-    .{ .buttons = 0x0100, .ticks = 4 },
-    .{ .buttons = 0x0004, .ticks = 28 },
-    .{ .buttons = 0x0000, .ticks = 12 },
-    .{ .buttons = 0x0080, .ticks = 27 },
-    .{ .buttons = 0x0020, .ticks = 115 },
-    .{ .buttons = 0x0000, .ticks = 100 },
+    .{ .buttons = 0x0080, .ticks = 24 },
+    .{ .buttons = 0x0004, .ticks = 40 },
+    .{ .buttons = 0x0100, .ticks = 10 },
+    .{ .buttons = 0x0000, .ticks = 13 },
 };
