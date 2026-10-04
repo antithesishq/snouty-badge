@@ -21,6 +21,7 @@ const carts = [_]Cart{
     .{ .dir = "demosnout", .binary = "demosnout", .add = &@import("carts/demosnout/build.zig").add },
     .{ .dir = "siwoo", .binary = "siwoo", .add = &@import("carts/siwoo/build.zig").add },
     .{ .dir = "snouty-zero", .binary = "snouty-zero", .add = &@import("carts/snouty-zero/build.zig").add },
+    .{ .dir = "snouty-pipes", .binary = "snouty-pipes", .add = &@import("carts/snouty-pipes/build.zig").add },
     .{ .dir = "badge-calibrate", .binary = "badge-calibrate", .add = &@import("badge-bench/calibrate/build.zig").add },
 };
 
