@@ -887,3 +887,47 @@ determinism tests are unchanged by that.
   4.25 / p95 6.68 / max 6.96 ms, 0 over; fast-forward updates 688-980:
   mean 6.40 / p95 6.79 / max 6.79, 0 over, 4 frames in all 293 updates
   (temporary `cart.trace` build). `--lcd` frame 990 shows no `>>4x` left.
+
+### Chorded rewind (2026-10-04, root docs/FAST_FORWARD.md "Chorded rewind")
+
+- Input (`frontend/input.zig`): Left pressed during fast forward (Start
+  not held) turns the rest of the hold into rewind, `GameInput.rewind`
+  `.enter` then `.on`, with `scrub` from `input.Repeat` (the menu's
+  auto-repeat moved here and shared: a press steps at once, then every
+  15 frames). Nothing reaches the game; Start holds the position; Select
+  let go gives `.exit` after `suppress_held`. During fast forward Left is
+  masked out of the pad.
+- main.zig: `.enter` stops the play hint and freezes the picture
+  (`menu.freeze_frame`, factored out of `menu.open`: frontbuffer copy and
+  `.copy_forward`); `.enter`/`.on` set `audio_render = false`, call
+  `audio.idle`, `rewind.step` and `menu.draw_scrub_bar(true)` (factored out
+  of the menu's scrub view; with no history it reads "Rewind: no
+  history"); `.exit` calls `menu.close` and steps the frame as the menu's
+  resume does. The `>>4x` indicator moved to the bottom right, inside the
+  bar's rectangle, so the frozen last fast-forward frame never shows it
+  under the bar. Export `debug_chord_rewind`.
+- Hints: the menu footer rotates "B: back to game", "2x Sel+hold: fast",
+  "then Left: rewind" every 2 s; the play strip is unchanged.
+  `docs/ff_2026-10-04.png` redone.
+- Tests: 6 new `input:` tests (Left enters rewind and steps back at once;
+  repeat 5 steps in 61 frames and Right 2 in 16; no button reaches the
+  game, Left masked in fast forward; release resumes with held buttons
+  suppressed and no tap window; Start holds the position; Left with
+  Start in fast forward does not enter). Cart suite 123/123.
+  `tools/check_chord_rewind.sh`: three steps back through the chord and
+  through the menu both land on game frame 570 and, 330 frames after
+  resuming, give identical console exports (PC, SP, mapper, VDP, PSG,
+  IRQ counts, history) and identical picture rows: exit 0.
+- badge-bench (Waternet, m2_play's presses, `--lcd --png 1`), per update:
+
+  | Update | chord (Select 680-681, 685-715; Left 690, 697, 704) | menu (Select 680-720; Left 715, 722, 729; B 740) |
+  |---|---|---|
+  | enter / open | 3.66 ms (copy + first step) | 2.65 (open) |
+  | scrub step | 3.41, 3.40 | 3.40, 3.41, 3.40 |
+  | frozen, no step | 0.46 | 0.46 |
+  | resume | 2.71 | 2.71 |
+
+  Whole runs (800 updates) mean 3.25 / 3.22, max 6.96 (frame 341), 0 over.
+  `--lcd` PNGs: the bar replaces `>>4x` on entry and the update after
+  release shows the full game frame, no bar or indicator left. 1x
+  regression (`snouty-gear.toml`): 3.06 / p95 6.62 / max 6.96, 0 over.

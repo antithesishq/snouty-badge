@@ -215,7 +215,8 @@ Controls (badge / simulator key):
 | Start        | Start                        | nothing                          |
 | Select tap   | nothing (reserved)           | Resume                           |
 | Select hold 500 ms | opens the menu         | -                                |
-| Select tap, then press and hold | fast forward (up to 4x, silent, `>>4x` top right) | - |
+| Select tap, then press and hold | fast forward (up to 4x, silent, `>>4x` bottom right) | - |
+| ... then Left (Select still held) | rewind: Left/Right step 0.5 s, let go of Select to play on | - |
 
 Start+Select (exit to the OS menu) and the joystick click belong to the OS.
 
@@ -226,7 +227,7 @@ press); in the menu the bottom line on
 Resume reads "Left/Right: rewind" ("Rewind: no history" before the first
 keyframe; the `Scrub:` readout once parked or on other rows) and the
 footer reads "B: back to game", taking turns every 2 s with
-"2x Sel+hold: fast".
+"2x Sel+hold: fast" and "then Left: rewind".
 
 ### Fast forward
 
@@ -234,8 +235,8 @@ Tap Select, then press it again within 200 ms and hold it: the game runs up to f
 frame (each update steps unrendered frames until four ran or about 13 ms
 of the 16.7 ms went, then one rendered frame; knobs `ff_max_frames` and
 `ff_budget_us` in `cart/src/frontend/tuning.zig`), silent, with `>>4x`
-(the frames that update) in the top right corner, under the debug overlay
-while that is on. The d-pad and buttons reach the game as usual. Let go
+(the frames that update) in the bottom right corner. The d-pad and
+buttons reach the game as usual, except Left, which is the rewind. Let go
 of Select: back to 1x, nothing delivered. The second press never runs
 the menu timer; a single long hold still opens the menu at 500 ms. A
 Select tap with no second press within `ff_tap_window` (12 frames,
@@ -246,7 +247,21 @@ so the history holds the fast-forwarded frames. In the simulator it is
 always 4x (no real clock there). `tools/scripts/ff_play.json` walks it
 in the headless preview (`--sample debug_frame_count,debug_ff_frames`:
 `debug_ff_frames` is the frames the last update stepped);
-`docs/ff_2026-10-04.png` shows the hints, `>>4x` and the menu footer.
+`docs/ff_2026-10-04.png` shows the play hint, `>>4x`, the chorded
+rewind's bar, the frame after resuming and two menu footers.
+
+Chorded rewind: press Left while fast forwarding (Select still held) and
+the rest of that hold is rewind. The game freezes under the menu's scrub
+bar (`Scrub: -1.1 / 7.1s`, or `Rewind: no history`), the first Left steps
+back 0.5 s at once, Left/Right step back and forward with the menu's
+repeat (4 a second while held), nothing reaches the game, and Start (the
+OS chord) holds the position. Let go of Select: play goes on from the
+scrubbed position and the future is dropped, exactly as resuming from the
+menu (held buttons wait for their release). `sh
+carts/snouty-gear/tools/check_chord_rewind.sh` checks that three steps
+through the chord and through the menu leave the same console
+(`tools/scripts/rewind_chord.json`, `rewind_menu.json`; exit 0 when they
+match); `debug_chord_rewind` is 1 while it shows.
 
 ### Menu
 
