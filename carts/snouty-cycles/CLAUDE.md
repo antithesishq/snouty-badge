@@ -99,6 +99,72 @@ and builds `render.View`s; only `main` touches the cart API. Nothing but
   renderer; `g.repaint` asks main for a full repaint (main clears it).
   `g.autopilot`: 0 the player drives, 1 T1 drives, 2 T1 with slips.
 
+### M1 rules (track S: `sim.zig`, `layouts.zig`)
+
+Every M1 rule is behind its `Config` flag and all are off in a bare
+`Config`, so M0's rules hold until the game turns them on. The ladder's
+config is `.{ .n_cycles, .speed_pct, .grinding = true, .rubber =
+sim.tuning.rubber_max (12; HARDCORE 4), .energy = true, .sudden_death =
+true, .layout = n }`.
+
+- **Step order changed**: the speed update now runs *after* the moves
+  (per alive cycle: `update_grind`, `update_speed`, rubber recharge), so a
+  step moves at the speed set by the previous one and **`will_step(i)`
+  is exact** even with grinding and boost. A/B pressed on tick t change
+  the speed from tick t+1. Order: inputs, moves (turns, rubber stalls),
+  `resolve`, sudden death, grind/speed/rubber, `update_result`, fades.
+- **Grinding** (`cfg.grinding`): each tick, per side of the head, a trail
+  cell (any cycle's, dying ones too) at lateral distance 1 gives
+  `cycles[i].grind` = 2 and a `grind` event; else a trail at distance 2
+  behind an empty cell gives 1. Rim and blocks give nothing and shield.
+  Acceleration per tick is `tuning.grind1` = 11 / `grind2` = 4 in
+  1/1024 of base speed. With `decay_above_shift` = 7 (1/128 of the excess
+  per tick; was 9): distance 1 for 1 s = 1.51x, 2 s = 1.83x, cap 2.2x
+  after ~4.5 s; off the wall 1.51x falls to 1.31x after 1 s, 1.19x after
+  2 s. Distance 2 for 1 s = ~1.18x.
+- **Energy** (`cfg.energy`): `cycles[i].energy` 0..1000. A with a
+  non-empty bar: target 1.5x, drains 10/tick (1.7 s of boost). B: target
+  0.5x, drains 6/tick, eased at the fast 1/8 rate; B wins when both are
+  held. Recharges 2/tick only while neither is held (holding A on an
+  empty bar gives nothing and no recharge). Cap 2.2x base always.
+- **Rubber** (`cfg.rubber` = meter size, 0 = off): at a cell boundary a
+  wall ahead with `cycles[i].rubber` > 0 stalls the cycle at `p = one -
+  1`, `stalled` = true, rubber - 1, a `stall` event every stalled tick;
+  with 0 left the step goes ahead and crashes. During a stall a queued or
+  newly pressed turn applies on that same tick if its cell is free and
+  is **dropped** if not (press again); a U-turn press resolves to the
+  freer side, so it is the quick escape. Recharge 1 per 8 ticks while not
+  stalled. Two heads nose to nose both stall, then DEADLOCK.
+- **Sudden death** (`cfg.sudden_death`, which also ignores `round_cap`):
+  from tick `tuning.sudden_death_ticks` (1800) ring k (1 = next to the
+  rim, `sim.ring_of(x, y)`) is laid over the 60 ticks from `1800 + (k -
+  1) * 60` by two sweeps going clockwise from the top-left and
+  bottom-right corners (symmetric under a half turn). At most 6 cells a
+  tick: each empty one becomes `block` with a **per-cell `block` event,
+  a = k** (trail stays trail); a head on a swept cell derezzes with
+  ACCESS VIOLATION (no credit). `w.sudden_death_ring` = the ring being
+  laid (0 before; 0 -> 1 on tick 1800: the banner), up to
+  `tuning.sudden_death_rings` = 29, the last; every round ends by tick
+  3540. `w.is_sudden_death_block(x, y)` says whether a block is a
+  sudden-death one (draw it red); layout blocks inside closed rings count.
+- **Layouts** (`cfg.layout`, `layouts.zig`): `layouts.all[i]` = `name` +
+  `rects`, `layouts.count` (9: 0 OPEN, 1 PILLARS, 2 BARS, 3 CROSS, 4
+  RING, 5 LANES, 6 CORNERS, 7 CHECKER, 8 COLUMNS), `layouts.get(i)` (out
+  of range = OPEN). `init` draws them as `block` with each rect mirrored
+  across both centre lines and emits no events (the round start's full
+  repaint shows them). Start cells and the 5 cells ahead stay free; every
+  layout leaves the arena connected.
+- **New events** (`EventKind`, appended): `grind` (cycle, x/y = the
+  trail cell beside the head, a = the side `Dir`; one per grinding side
+  per tick) and `stall` (cycle, x/y = head, a = its `Dir`, b = rubber
+  left; one per stalled tick). Worst case per tick stays within the 48.
+- **Helpers**: `w.ticks_to_step(i)` (ticks until the next boundary at the
+  current speed; 1 iff `will_step`; further out an estimate),
+  `w.speed_fraction(i)` (speed as % of the round's base: 100, 150 boost,
+  220 cap), `sim.ring_of(x, y)`, `w.is_sudden_death_block(x, y)`.
+- `hash()`/`same_state` also cover `rubber_tick`, `stalled`, `grind` and
+  `sudden_death_ring`.
+
 ## Rendering rules that are easy to break
 
 - **Mark every write.** `.copy_forward` sends only the marked dirty rect
