@@ -5,12 +5,14 @@
 //! `step_frame` time over the last 60 frames; line 2: frames per second from
 //! `micros_since_boot` deltas between `update()` calls, over 60 frames, then
 //! the scrubber's page-store use in KB; line 3: the keyframes held
-//! (frontend/rewind.zig).
+//! (frontend/rewind.zig), then while Sound is on the samples queued for
+//! the OS and the feed's underrun count (frontend/audio.zig; 0 in wasm).
 //! In wasm builds `micros_since_boot` is an upstream stub that adds 1000 per
 //! call (so the overlay shows 1000us and 500 fps in the simulator and in
 //! preview.mjs); only hardware numbers mean anything.
 const cart = @import("cart-api");
 const text = @import("text.zig");
+const audio = @import("audio.zig");
 
 pub var enabled: bool = true;
 
@@ -94,6 +96,12 @@ pub fn draw() void {
     i += put_num(buf[i..], pool_kb);
     i += put(buf[i..], "K\nkf ");
     i += put_num(buf[i..], keyframes);
+    if (audio.enabled) {
+        i += put(buf[i..], " q ");
+        i += put_num(buf[i..], audio.queued());
+        i += put(buf[i..], " u ");
+        i += put_num(buf[i..], audio.underruns());
+    }
     text.draw(buf[0..i], 0, 0, .rgb(0xFFFFFF), .rgb(if (alarm) 0xFF0000 else 0x000000));
 }
 

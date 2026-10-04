@@ -23,8 +23,9 @@ longer explanations, this one summarises.
   state machine; `frontend/` has video (squeeze/crop and the CRAM ->
   `Pixel` cache), input (pad byte, A/B swap, Select-hold state machine),
   debug (overlay), romsrc (drive or embedded ROM, the report line, About
-  facts), splash, menu (settings, Reset, About), audio (`Psg.voice` ->
-  `tone2`).
+  facts), splash, menu (settings, Reset, About), audio (badge: the core's
+  `Gg.audio_out` -> `audio_feed`, the new firmware's streaming ring;
+  wasm: `Psg.voice` -> the simulator's `tone` import).
 - `tests/` — host tests (`zig build test`), entry `tests/all.zig`.
   `tests/roms/` is gitignored; `tools/fetch_test_roms.sh` fills it.
 - `roms/` — the shipped ROM `waternet.gg` and its license. `*.gg`/`*.sms`
@@ -87,6 +88,13 @@ only (it calls this cart's `build.zig` `pub fn add`).
 - Core: fixed arrays, integer math, deterministic. Hot paths avoid function
   pointers except the one `LineSink` call per line and the ROM fallback for
   fragmented drive files.
+- Sound (docs/EMU_SOUND.md at the root): `core/psg.zig` `Synth` renders
+  the PSG when `Gg.audio_render` is set (the frontend sets it from the
+  Sound row on the badge only, and clears it in the menu); off, the
+  register model runs exactly as before. Render state is not in
+  keyframes: a reset or restore resyncs it. Badge builds must never call
+  `cart.tone2` or the `tone` import (on the new firmware those words are
+  the audio ring's). Tests: `-Dtest-filter=sound:`.
 - Simulator quirks (upstream `main`): the wasm platform never presents and
   the simulator reads a legacy framebuffer at 0x20 with red/blue swapped;
   buttons arrive at 0x04. `main.zig` has `present_wasm()`/`read_controls()`

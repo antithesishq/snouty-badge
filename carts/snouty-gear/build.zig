@@ -116,7 +116,7 @@ fn exists(b: *Build, rel: []const u8) bool {
     return true;
 }
 
-/// Adds `build_options`, `core`, `romfs` (lib/romfs.zig, the drive reader), `iris` (lib/iris_mark.zig), `hint` (lib/hint.zig) and `rom` to the
+/// Adds `build_options`, `core`, `romfs` (lib/romfs.zig, the drive reader), `iris` (lib/iris_mark.zig), `hint` (lib/hint.zig), `audio_feed` (lib/audio_feed.zig) and `rom` to the
 /// cart. `rom` is generated: the embedded ROM (`data`, copied next to the
 /// generated rom.zig so @embedFile can see it), its file name (`name`) and
 /// where the badge build gets its ROM (`source`, `.drive` or `.embed`).
@@ -129,6 +129,8 @@ fn build_cart_modules(b: *Build, cart: *Build.Module, cart_api: *Build.Module, s
     cart.addImport("iris", b.createModule(.{ .root_source_file = b.path("lib/iris_mark.zig") }));
     // The control hints (splash, first seconds of play, menu), shared with Boy, Genesis, Lynx.
     cart.addImport("hint", b.createModule(.{ .root_source_file = b.path("lib/hint.zig") }));
+    // The badge's streaming sound (docs/EMU_SOUND.md), shared with Boy and Genesis.
+    cart.addImport("audio_feed", b.createModule(.{ .root_source_file = b.path("lib/audio_feed.zig") }));
 
     const wf = b.addWriteFiles();
     _ = wf.addCopyFile(rom_path, "rom.bin");

@@ -6,22 +6,33 @@ from the repository root unless noted; outputs land in the root `zig-out/`.
 
 Status: M3. The core emulates the Game Gear: Z80, VDP (mode 4, scanline
 renderer, interrupts), Sega mapper with cart RAM, Game Gear port decode and
-the PSG register model. The frontend has the boot splash, one-voice sound
+the PSG (registers, and 44.1 kHz synthesis for the badge). The frontend has the boot splash, sound,
 the emulator menu and the time scrubber (section 5).
 
 Boot splash: the Snouty mark and "SNOUTY GEAR" slide down onto a dark blue
 screen for 0.8 s, a two-note chime (1046 Hz, then 2093 Hz) plays as they
 land, and the game starts at 1.2 s (72 frames). Any button skips it.
 
-Sound: the buzzer plays one voice, the loudest Game Gear tone channel as a
-square wave (noise and inaudible periods dropped), louder or softer with the
-channel's attenuation. It holds while the menu is open; Sound: Off in the
-menu stops it. The badge plays it through its speaker; the simulator
-through the browser (click the page once so the browser lets audio start).
-In the simulator the cart drives the audio worklet directly: upstream's
-wasm shim turns an infinite `tone2` into a 4 s fade-in that music never
-gets past (frontend/audio.zig explains). `audio.max_volume` caps every
-tone the cart plays.
+Sound is off at boot (`-Dsound=true` builds it on); the menu's Sound row
+toggles it (root docs/SOUND.md).
+
+- Badge: the core synthesises the whole PSG (three square channels, the
+  noise channel, 2 dB attenuation, the stereo port averaged to mono) at
+  44,100 Hz and the cart streams it to the new OS firmware's audio ring
+  (`lib/audio_feed.zig`, root docs/EMU_SOUND.md). It needs the newer
+  firmware (sycl-badge upstream 97c093e or later); on the old firmware the
+  badge is silent. The menu, a scrub step and the splash after the chime
+  ramp to silence. The chime is a two-note square burst through the same
+  ring. With the debug overlay on, line 3 ends with `q` (samples queued
+  for the OS, ~1,472 when settled) and `u` (updates that found the ring
+  empty while playing; should stay 0).
+- Simulator: one voice, the loudest tone channel as a square wave (noise
+  and inaudible periods dropped), louder or softer with the channel's
+  attenuation, held while the menu is open; click the page once so the
+  browser lets audio start. The cart drives the audio worklet directly:
+  upstream's wasm shim turns an infinite `tone2` into a 4 s fade-in that
+  music never gets past (frontend/audio.zig explains). `audio.max_volume`
+  caps it.
 
 ## 1. Prerequisites
 
@@ -215,7 +226,8 @@ footer reads "B: back to game".
 ### Menu
 
 Hold Select for half a second: the game pauses under the menu (the frame
-stays visible behind it) and the sound holds its note. The band reads
+stays visible behind it) and the sound fades out (the simulator's voice
+holds its note). The band reads
 SNOUTY GEAR, the ROM's file name and "verified by deterministic replay".
 Rows: Resume; Buttons (`B=1 A=2`, or swapped `A=1 B=2`); Scale (Squeeze
 drops every ninth line, Crop shows lines 8..135; seen after resuming);
