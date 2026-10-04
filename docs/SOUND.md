@@ -40,8 +40,8 @@ should start loud; nothing else in a cart decides it.
 | Cart | Makes sound? | Flag | Boot default | Runtime toggle |
 |---|---|---|---|---|
 | snoutenstein | yes, 13 SFX | `cart/src/audio.zig` `enabled` | `-Dsound` (off) | Select on the title screen ("SELECT: SOUND ON/OFF") |
-| snouty-boy | yes, all four APU channels streamed (section 6) + boot chime | `frontend/menu.zig` `sound_enabled`, copied into `audio.enabled` each frame | `-Dsound` (off) | menu row "Sound: On/Off" |
-| snouty-gear | yes, the PSG streamed (section 6) + boot chime | same shape as Boy; the wasm build drives the simulator's `tone` import itself | `-Dsound` (off) | menu row "Sound: On/Off"; `debug_settings` bit 0 |
+| snouty-boy | yes, all four APU channels streamed (section 7) + boot chime | `frontend/menu.zig` `sound_enabled`, copied into `audio.enabled` each frame | `-Dsound` (off) | menu row "Sound: On/Off" |
+| snouty-gear | yes, the PSG streamed (section 7) + boot chime | same shape as Boy; the wasm build drives the simulator's `tone` import itself | `-Dsound` (off) | menu row "Sound: On/Off"; `debug_settings` bit 0 |
 | snouty-genesis | yes, PSG/YM2612 tone voice | `frontend/audio.zig` `enabled` | `-Dsound` (off) | badge A in the menu placeholder ("A: sound on/off"); the M2 menu's Sound row takes over; `debug_sound_on` |
 | snouty-bugs | yes, SPEC section 11 effects via `lib/tone_stream.zig` | `cart/src/audio.zig` `enabled` | `-Dsound` (off) | Select, any time (state on the title) |
 | snouty-reflections | not yet (SPEC section 8, M4 arpeggio) | | `-Dsound` (off) | Select |
@@ -130,7 +130,7 @@ bullet states it for new carts.
 4. Show day, one badge: each sounding cart boots silent; its toggle brings
    sound back; leaving and re-entering the cart is silent again.
 
-## 6. The newer firmware: carts stream their own samples (2026-10-04)
+## 7. The newer firmware: carts stream their own samples (2026-10-04)
 
 The show badges run the newer upstream firmware (sycl-badge 97c093e
 "Streaming Audio, v1 Mixer", checked at 3392a1b). It ignores `CART_TONE`:
