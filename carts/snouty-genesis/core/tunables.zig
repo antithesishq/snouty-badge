@@ -31,4 +31,4 @@ pub const z80_enabled: bool = @import("build_options").z80;
 /// sample and the value held for the others: 1 = 44,100 Hz, 2 = 22,050,
 /// 3 = 14,700. The PSG and the output stay at 44.1 kHz. Measured per rate
 /// in PLAN.md "Sound on the new firmware (2026-10-04)".
-pub const fm_rate_div: u32 = 1;
+pub const fm_rate_div: u32 = 3;

@@ -179,7 +179,7 @@ pub const Sound = struct {
                 // A one-pole DC blocker (~20 Hz): a DAC left enabled at a
                 // constant value, or the PSG's held-high periods, would
                 // otherwise sit off centre and eat half the headroom.
-                s.dc_y = x - s.dc_x + @as(i32, @intCast((@as(i64, s.dc_y) * dc_pole) >> 15));
+                s.dc_y = x - s.dc_x + @as(i32, @intCast((@as(i64, s.dc_y) * dc_pole + (1 << 14)) >> 15));
                 s.dc_x = x;
                 const v = (s.dc_y * mix_gain) >> 16;
                 d.* = @intCast(@max(0, @min(255, v + 128)));

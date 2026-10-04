@@ -98,21 +98,22 @@ inline fn mean(acc: i32, vol: i32) i32 {
     return ((acc * vol) >> 8) * inv_bin >> 18;
 }
 
+/// A silent channel's counter over `bins`: the flips without the levels.
+fn run_silent(left: *i32, high: *bool, half: i32, bins: []const i32) void {
+    var total: i32 = 0;
+    for (bins) |b| total += b;
+    left.* -= total;
+    if (left.* > 0) return;
+    const k = @divTrunc(-left.*, half) + 1;
+    left.* += k * half;
+    if (k & 1 != 0) high.* = !high.*;
+}
+
 /// One tone channel over `bins`: a bin without a flip adds the level
 /// (the common case: periods above 5 flip less than once a bin), one with
 /// flips adds the integral's mean.
 noinline fn tone(left: *i32, high: *bool, half: i32, vol: i32, bins: []const i32, mix: []i32) void {
-    if (vol == 0) {
-        // Silent: only keep the counter running.
-        for (bins) |b| {
-            left.* -= b;
-            while (left.* <= 0) {
-                left.* += half;
-                high.* = !high.*;
-            }
-        }
-        return;
-    }
+    if (vol == 0) return run_silent(left, high, half, bins);
     for (bins, mix) |bin, *m| {
         if (left.* > bin) {
             left.* -= bin;
@@ -180,6 +181,8 @@ pub const Synth = struct {
         const rate = p.noise & 3;
         const nhalf: i32 = if (rate == 3) @as(i32, @max(p.tone[2], 1)) * count_clocks else (@as(i32, 0x10) << @intCast(rate)) * count_clocks;
         const white = p.noise & 4 != 0;
+        // Silent noise only keeps its counter (the LFSR waits).
+        if (nvol == 0) return run_silent(&s.left[3], &s.high[3], nhalf, bins);
         for (bins, mix) |bin, *m| {
             const lvl: i32 = if (s.lfsr & 1 != 0) nvol else -nvol;
             if (s.left[3] > bin) {

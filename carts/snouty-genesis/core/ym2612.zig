@@ -365,6 +365,9 @@ pub const Chan = struct {
     /// Every operator released to silence: the channel is skipped until
     /// the next key-on.
     silent: bool = true,
+    /// No carrier can sound (all at full attenuation): skip the
+    /// operators. Set by `eg_tick`; cleared by a key-on or a refresh.
+    mute: bool = true,
 };
 
 pub const Fm = struct {
@@ -433,6 +436,7 @@ pub const Fm = struct {
             const o = &f.op[c][i];
             if (now & bit != 0 and ch.keyed & bit == 0) {
                 ch.silent = false;
+                ch.mute = false;
                 o.phase = 0;
                 if (o.rate[0] >= 62) {
                     o.level = 0;
@@ -452,6 +456,7 @@ pub const Fm = struct {
     fn refresh(f: *Fm, y: *const Ym2612, c: usize) void {
         const ch = &f.ch[c];
         ch.dirty = false;
+        ch.mute = false;
         const regs = &y.regs[c / 3];
         const k: usize = c % 3;
         const b0 = regs[0xB0 + k];
@@ -511,7 +516,7 @@ pub const Fm = struct {
         while (f.eg_frac >= 1 << 16) {
             f.eg_frac -= 1 << 16;
             f.eg_cnt +%= 1;
-            f.eg_tick();
+            if (f.eg_cnt & 3 == 0) f.eg_tick();
         }
         const lfo = y.regs[0][0x22];
         if (lfo & 8 != 0) {
@@ -533,15 +538,8 @@ pub const Fm = struct {
                 acc += (f.dac * ch.pan) >> 1;
                 continue;
             }
-            if (ch.silent) continue;
+            if (ch.silent or ch.mute) continue;
             const ops = &f.op[c];
-            // Silent when every carrier's envelope is at the bottom.
-            const car = carriers[ch.alg];
-            var live = false;
-            inline for (0..4) |i| {
-                if (car & (1 << i) != 0 and ops[i].att < 4092) live = true;
-            }
-            if (!live) continue;
             const fbm: i32 = if (ch.fb != 0) (ch.prev[0] + ch.prev[1]) >> @intCast(10 - @as(u4, ch.fb)) else 0;
             const o1 = op_out(&ops[0], fbm);
             ch.prev[1] = ch.prev[0];
@@ -560,46 +558,63 @@ pub const Fm = struct {
     }
 
     /// One envelope clock for every operator that is not silent.
+    /// Four envelope clocks for every operator that is not silent: the
+    /// EG counter has just reached a multiple of 4, `eg_cnt - 3 ..
+    /// eg_cnt`. An operator whose step mask is 3 or more steps at most once
+    /// in such a window (at its end); masks 1 and 0 step 2 and 4 times.
+    /// A state change ends its window early. Levels land up to 3 clocks
+    /// (170 us) late, which nobody hears, for a quarter of the work.
     noinline fn eg_tick(f: *Fm) void {
-        const cnt = f.eg_cnt;
+        const c4 = f.eg_cnt;
         const am_wave: u32 = if (f.lfo_cnt < 64) @as(u32, f.lfo_cnt) * 2 else (127 - @as(u32, f.lfo_cnt)) * 2;
         for (&f.ch, &f.op) |*ch, *ops| {
             if (ch.silent) continue;
             const am: u32 = if (ch.ams != 0) am_wave >> ams_shift[ch.ams] else 0;
+            const car = carriers[ch.alg];
             var any = false;
-            for (ops) |*o| {
+            var live = false;
+            for (ops, 0..) |*o, i| {
                 if (o.state == .release and o.level >= 1023) continue;
                 any = true;
-                if (cnt & o.eg_mask != 0 or o.eg_rate < 2) {
+                defer if (car & (@as(u4, 1) << @intCast(i)) != 0 and o.att < 4092) {
+                    live = true;
+                };
+                const em = o.eg_mask;
+                if (o.eg_rate < 2 or (em >= 3 and c4 & em != 0)) {
                     if (am != 0 and o.am) o.att = att_of(o, am);
                     continue;
                 }
-                const r = o.eg_rate;
-                const shift: u5 = if (r < 48) @intCast(11 - (r >> 2)) else 0;
-                const inc = eg_inc(r, @truncate(cnt >> shift));
+                const step: u32 = if (em >= 3) 4 else em + 1;
+                var cnt: u32 = if (em >= 3) c4 else c4 -% 3 +% em;
+                const state0 = o.state;
                 var lv: i32 = o.level;
-                switch (o.state) {
-                    .attack => {
-                        lv += (~lv * @as(i32, inc)) >> 4;
-                        if (lv <= 0) {
-                            lv = 0;
-                            o.state = .decay;
-                            set_eg(o);
-                        }
-                    },
-                    .decay => {
-                        lv += inc;
-                        if (lv >= o.sl) {
-                            o.state = .sustain;
-                            set_eg(o);
-                        }
-                    },
-                    .sustain, .release => lv += inc,
+                while (true) {
+                    const r = o.eg_rate;
+                    const shift: u5 = if (r < 48) @intCast(11 - (r >> 2)) else 0;
+                    const inc = eg_inc(r, @truncate(cnt >> shift));
+                    switch (o.state) {
+                        .attack => {
+                            lv += (~lv * @as(i32, inc)) >> 4;
+                            if (lv <= 0) {
+                                lv = 0;
+                                o.state = .decay;
+                            }
+                        },
+                        .decay => {
+                            lv += inc;
+                            if (lv >= o.sl) o.state = .sustain;
+                        },
+                        .sustain, .release => lv = @min(lv + inc, 1023),
+                    }
+                    if (o.state != state0 or cnt == c4) break;
+                    cnt +%= step;
                 }
                 o.level = @intCast(@min(lv, 1023));
+                if (o.state != state0) set_eg(o);
                 o.att = if (o.state == .release and o.level >= 1023) 4092 else att_of(o, if (o.am) am else 0);
             }
-            if (!any) ch.silent = true;
+            ch.silent = !any;
+            ch.mute = !live;
         }
     }
 };

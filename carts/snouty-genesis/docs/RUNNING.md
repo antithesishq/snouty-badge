@@ -33,7 +33,13 @@ zig build -Dcart=snouty-genesis -Dcart-mode=xip  # the XIP cart and the wasm onl
   the default artifact. The OS loads it into cart RAM and runs it there.
   It has no Z80: a stub answers the 68000 instead (`core/z80bus.zig`:
   BUSREQ and RESET as on hardware, Z80 RAM reads 0, the YM2612 status
-  never busy), so it is silent and its menu has no Sound row; and it has
+  never busy). Sound (2026-10-04): it synthesises the YM2612 and the PSG
+  from the 68000's own writes and streams them to the new firmware's
+  audio ring (core/sound.zig, the menu's Sound row, off at boot): Sonic
+  1's music plays (its DAC drums, a Z80 job, do not), a game whose music
+  is the Z80's (Miniplanets' Echo engine) is silent. Old firmware plays
+  nothing (no `tone2` any more). It keeps 8 KB of cartridge SRAM space
+  (the XIP cart 16 KB) and reads ROMs up to 768 KB from the drive. It has
   no time scrubber (no scrub line, Left/Right do nothing outside the
   setting rows). The 68000 and the VDP are the XIP cart's: the test ROM's
   and Miniplanets' golden pictures are identical (`tests/ram_variant.zig`).
@@ -305,8 +311,11 @@ menu:
   and shows the average of each pair, so thin H40 text and 1-pixel
   details stay visible (SPEC.md section 6). H32 games look the same either
   way. Takes effect on resume.
-- `Sound: Off/On` (the one tone voice; off at boot, root docs/SOUND.md).
-  Not in the RAM cart, which has no Z80 and no sound.
+- `Sound: Off/On` (off at boot, root docs/SOUND.md). The RAM cart: the
+  streamed FM + PSG synthesis of what the 68000 writes (Z80-driven music
+  stays silent); the overlay's fourth line `snd q1472 u0` is the ring's
+  queue in samples and the underrun count. The XIP cart and the
+  simulator: the one tone voice.
 - `Debug overlay: On/Off` (also hides the ROM report line).
 - `Reset`: the console from its reset vector, settings kept.
 - `Pick ROM` (only on the badge with ROM files on the drive): back to the
@@ -358,7 +367,7 @@ Genesis B, Z or K = badge A = Genesis C, Enter = Start, Backspace = Select
 The simulator runs the full feature set (the XIP cart's: Z80, sound,
 scrubber), whichever carts the build wrote.
 
-Sound: one voice (`Md.tone()`), a square tone at the level's volume, off
+Sound in the simulator (and the XIP cart): one voice (`Md.tone()`), a square tone at the level's volume, off
 at boot unless built with `-Dsound=true` (badge A in the menu toggles it;
 root docs/SOUND.md). The badge plays it through its speaker; the simulator through the browser
 (click the page once so the browser lets audio start). In the simulator
@@ -510,7 +519,8 @@ any other file. With the default `drive` build:
 
 Install it as in [docs/INSTALL.md](../../../docs/INSTALL.md): copy
 `zig-out/firmware/snouty-genesis.uf2` (repository root; the RAM cart,
-silent and without the scrubber) onto the badge's `SYCLBADGE` drive with
+without the scrubber; streamed sound from the 68000's chip writes, off
+until the menu's Sound row) onto the badge's `SYCLBADGE` drive with
 the ROM files (section 8), eject, and start Snouty Genesis from the OS
 menu. `snouty-genesis-xip.uf2` is the XIP cart with sound and the
 scrubber; XIP carts are not yet confirmed on hardware (the SYCL organizers
