@@ -5,11 +5,22 @@
 //! - D-pad to d-pad, badge A to A (outer), badge B to B (inner), Start to
 //!   Pause. The menu's Buttons row swaps A and B (`swap_ab`).
 //! - Select tap (released before `hold_frames`): Option 1 for `tap_frames`
-//!   game frames.
+//!   game frames, held back until the fast-forward window below runs out
+//!   (`tuning.ff_tap_window`, 200 ms later than a plain tap would be).
 //! - Select held `hold_frames` (500 ms): `GameInput.open_menu` is set once
 //!   and main.zig opens the emulator menu (frontend/menu.zig).
 //! - Start pressed while Select is held is the OS exit chord: the hold is
 //!   cancelled.
+//! - Double tap and hold Select: fast forward (`GameInput.fast`,
+//!   docs/FAST_FORWARD.md at the root). A Select press released before
+//!   `hold_frames` opens a window of `tuning.ff_tap_window` frames; a second
+//!   press inside it starts fast forward at once, which lasts while Select
+//!   stays held, and the first tap's Option 1 is dropped. That press never
+//!   runs the menu timer and its release delivers nothing. A window that
+//!   runs out with no second press delivers the held-back Option 1. Start
+//!   during the window or during fast forward cancels it and drops the tap
+//!   (the OS chord). The d-pad and the other buttons reach the game as
+//!   usual.
 //! - Option 2 and the Pause + Option 1 restart are menu rows (main.zig ORs
 //!   `menu.hold_pad` into the pad for a few frames), never buttons.
 //!
@@ -17,6 +28,10 @@
 const cart = @import("cart-api");
 const core = @import("core");
 const Pad = core.Pad;
+const tuning = @import("tuning.zig");
+
+/// The badge's buttons (`cart.Controls`), for host tests.
+pub const Controls = cart.Controls;
 
 /// Select held this long (frames at 60 Hz) opens the emulator menu.
 pub const hold_frames = 30;
@@ -85,6 +100,9 @@ pub const GameInput = struct {
     pad: u16,
     /// Select reached `hold_frames` this frame.
     open_menu: bool,
+    /// Fast forward (Select double tapped and held): main.zig steps
+    /// several game frames this update, all with `pad`.
+    fast: bool = false,
 };
 
 pub const State = struct {
@@ -93,6 +111,12 @@ pub const State = struct {
     held_frames: u16 = 0,
     /// Game frames Option 1 still stays down after a tap.
     opt1_left: u8 = 0,
+    /// Frames left in which a Select press starts fast forward (counts
+    /// down from `tuning.ff_tap_window` after a short press, which waits
+    /// for it to run out before it becomes Option 1); 0 = closed.
+    tap_window: u8 = 0,
+    /// Fast forward is on (the second press of a double tap, still held).
+    fast: bool = false,
     /// Buttons ignored until released (Controls bits).
     suppress: u16 = 0,
 
@@ -102,21 +126,43 @@ pub const State = struct {
         s.suppress &= s.edge.cur;
     }
 
-    /// Ignore every held button until released and forget a Select hold.
+    /// Ignore every held button until released and forget a Select hold,
+    /// a pending tap and fast forward.
     pub fn suppress_held(s: *State) void {
         s.suppress = s.edge.cur;
         s.holding = false;
         s.held_frames = 0;
+        s.opt1_left = 0;
+        s.tap_window = 0;
+        s.fast = false;
     }
 
     /// Input for a frame in which the game runs.
     pub fn game_frame(s: *State) GameInput {
         const e = s.edge;
         const live: cart.Controls = @bitCast(e.cur & ~s.suppress);
+        const fresh_select = live.select and e.pressed(.select);
         var pad = pad_from_controls(live);
         var open_menu = false;
 
-        if (live.select and e.pressed(.select)) {
+        if (s.fast) {
+            // Start+Select is the OS chord; letting go delivers nothing.
+            if (e.held(.start) or !e.held(.select)) s.fast = false;
+        } else if (s.tap_window != 0) {
+            if (e.held(.start)) {
+                s.tap_window = 0; // The OS chord: the tap is dropped.
+            } else if (fresh_select) {
+                // The second press: fast forward, no menu timer, no tap.
+                s.tap_window = 0;
+                s.fast = true;
+            } else {
+                s.tap_window -= 1;
+                // No second press: the held-back tap is Option 1.
+                if (s.tap_window == 0) s.opt1_left = tap_frames;
+            }
+        }
+
+        if (!s.fast and fresh_select) {
             s.holding = true;
             s.held_frames = 0;
         }
@@ -130,15 +176,18 @@ pub const State = struct {
                     open_menu = true;
                 }
             } else {
-                s.holding = false; // A tap: Option 1.
-                s.opt1_left = tap_frames;
+                // A tap: Option 1 once the window runs out, unless a
+                // second press soon after makes it the fast-forward
+                // double tap.
+                s.holding = false;
+                s.tap_window = tuning.ff_tap_window;
             }
         }
         if (s.opt1_left > 0) {
             s.opt1_left -= 1;
             pad |= Pad.opt1;
         }
-        return .{ .pad = pad, .open_menu = open_menu };
+        return .{ .pad = pad, .open_menu = open_menu, .fast = s.fast };
     }
 };
 

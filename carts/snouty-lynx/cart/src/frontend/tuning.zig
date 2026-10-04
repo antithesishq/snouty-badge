@@ -2,7 +2,8 @@
 //! Scrub: contract" freezes the names), as in Snouty Genesis's
 //! frontend/tuning.zig. The record interval, block size and record cap are
 //! the core's (`core.undo.frames_per_record`, `block_size`, `max_records`):
-//! they are part of the undo format, not a frontend choice.
+//! they are part of the undo format, not a frontend choice. The
+//! fast-forward knob (Snouty Gear's name and number) is at the end.
 
 /// Bytes kept free between the arena and the stack limit on the badge
 /// (frontend/rewind.zig `find_arena`).
@@ -22,3 +23,10 @@ pub const stack_guard = 1024;
 /// M5 Track B (the 4 KB streaming ring, 830 B of push scratch, 1.5 KB of
 /// sound code): 0x2006a058, 56,232 B. Re-measure when the cart grows.
 pub const wasm_arena_bytes = 56_232;
+
+// ---- Fast forward (frontend/input.zig, docs/FAST_FORWARD.md at the root) ----
+
+/// Frames after a short Select press (released before the menu hold) in
+/// which a second press starts fast forward (frontend/input.zig): 200 ms.
+/// The tap itself (Option 1) is held back until the window runs out.
+pub const ff_tap_window = 12;
