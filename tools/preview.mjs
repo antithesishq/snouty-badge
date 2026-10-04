@@ -5,8 +5,9 @@
 //                          [--start-skip S] [--fb-addr auto|dwarf|sim|0xADDR]
 //                          [--seed N] [--controls BITS] [--press [BTN:]T1-T2[,...]] [--script FILE.json]
 //                          [--dump-exports NAME[,NAME...]] [--expect "NAME OP VALUE"]...
-//                          [--at "T NAME OP VALUE"]... [--call-at "T NAME"]... [--quiet] [--raw-colors]
+//                          [--at "T NAME OP VALUE"]... [--call-at "T NAME[:ARG]"]... [--quiet] [--raw-colors]
 //                          [--call NAME[:ARG]]... [--pose x,y,z,yaw,pitch,roll]
+//                          [--sample NAME[,NAME...]] [--sample-every K] [--until "NAME OP VALUE"]
 //
 // Runs start(), then N x update(). Every K-th update after the first S updates,
 // the displayed framebuffer is decoded and written to DIR/frame_XXXX.png
@@ -31,9 +32,19 @@
 // with --frames 1800, T = 1799 is the moment the end-of-run exports are read);
 // results go to frames.json "at", and a FAIL also exits 3. --call-at T NAME
 // calls NAME right after update #T and records {tick, name, value} under
-// "calls". Both accept either separate arguments (--at 1799 debug_score '>' 0)
+// "calls"; --call-at T NAME:ARG passes one integer argument (NAME must then
+// take exactly one). Both accept either separate arguments (--at 1799 debug_score '>' 0)
 // or one quoted string (--at "1799 debug_score > 0"), are repeatable, and run
 // in command-line order when they share a tick. T must be < N.
+// --sample NAME[,NAME...] calls those zero-arg exports after every K-th update
+// (--sample-every K, default 1; after update 0, K, 2K, ...) and records them
+// in frames.json "samples" as { every, ticks: [update indices], values:
+// { NAME: [...] } }, for tools that want a per-tick trace (the difficulty probe).
+// --until "NAME OP VALUE" ends the run early, right after the first update
+// where it holds (checked after that update's --at/--call-at items); N stays
+// the cap. frames.json "ran" is the number of updates run and "until" the
+// update index where it held (null if it never did); --at items past the stop
+// count as failed (actual null).
 // --quiet writes no PNGs and skips framebuffer decoding (soak runs).
 //
 // Setup calls: after start() and before the first update(), each --call NAME
@@ -125,10 +136,11 @@ function usage(msg) {
     console.error("usage: node tools/preview.mjs <cart.wasm> --frames N [--every K] [--out DIR] [--start-skip S]\n" +
         "                          [--fb-addr auto|dwarf|sim|0xADDR] [--seed N] [--controls BITS]\n" +
         "                          [--press [BTN:]T1-T2[,...]] [--script FILE.json] [--dump-exports NAME[,NAME...]]\n" +
-        "                          [--expect \"NAME OP VALUE\"]... [--at \"T NAME OP VALUE\"]... [--call-at \"T NAME\"]...\n" +
+        "                          [--expect \"NAME OP VALUE\"]... [--at \"T NAME OP VALUE\"]... [--call-at \"T NAME[:ARG]\"]...\n" +
         "                          [--quiet] [--raw-colors] [--call NAME[:ARG]]... [--pose x,y,z,yaw,pitch,roll]\n" +
+        "                          [--sample NAME[,NAME...]] [--sample-every K] [--until \"NAME OP VALUE\"]\n" +
         "  BTN: A B START SELECT UP DOWN LEFT RIGHT (bare T1-T2 = A); OP: == != < <= > >=\n" +
-        "  --at/--call-at: T is the 0-based update index (< N); also as separate args: --at T NAME OP VALUE, --call-at T NAME");
+        "  --at/--call-at: T is the 0-based update index (< N); also as separate args: --at T NAME OP VALUE, --call-at T NAME[:ARG]");
     process.exit(2);
 }
 // cart.Controls bit positions (sycl-badge src/os/cart/api.zig). CLICK (bit 4) is OS-owned and never set.
@@ -158,7 +170,7 @@ function parseExpect(s) {
 // separate arguments: consume arguments until the joined text parses (at most
 // `max`), never swallowing the next --flag.
 const AT_RE = /^\s*(\d+)\s+([A-Za-z_$][\w$.]*)\s*(==|!=|<=|>=|<|>)\s*(-?\d+)\s*$/;
-const CALL_AT_RE = /^\s*(\d+)\s+([A-Za-z_$][\w$.]*)\s*$/;
+const CALL_AT_RE = /^\s*(\d+)\s+([A-Za-z_$][\w$.]*)\s*(?::\s*(-?\d+)\s*)?$/;
 function takeWords(flag, re, max, want) {
     const words = [];
     while (words.length < max && argIndex + 1 < argv.length && !argv[argIndex + 1].startsWith("--")) {
@@ -181,7 +193,8 @@ function parsePose(s) {
 let argIndex = 0;
 const argv = process.argv.slice(2);
 const opts = { frames: null, every: 1, out: "out", startSkip: 0, fbAddr: "auto", seed: 1, controls: 0, press: [], rawColors: false,
-    script: null, dumpExports: [], expect: [], quiet: false, timed: [], calls: [], pose: null };
+    script: null, dumpExports: [], expect: [], quiet: false, timed: [], calls: [], pose: null,
+    sample: [], sampleEvery: 1, until: null };
 let wasmPath = null;
 for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
@@ -206,14 +219,17 @@ for (let i = 0; i < argv.length; i++) {
             break;
         }
         case "--call-at": {
-            const m = takeWords(a, CALL_AT_RE, 2, '"T NAME", integer T'); i = argIndex;
-            opts.timed.push({ kind: "call", tick: Number(m[1]), name: m[2] });
+            const m = takeWords(a, CALL_AT_RE, 2, '"T NAME" or "T NAME:ARG", integer T and ARG'); i = argIndex;
+            opts.timed.push({ kind: "call", tick: Number(m[1]), name: m[2], arg: m[3] === undefined ? null : Number(m[3]) });
             break;
         }
         case "--quiet": opts.quiet = true; break;
         case "--call": opts.calls.push(parseCall(val())); break;
         case "--pose": opts.pose = parsePose(val()); break;
         case "--raw-colors": opts.rawColors = true; break;
+        case "--sample": for (const n of val().split(",").map((s) => s.trim())) { if (!n) usage("--sample: empty name"); if (!opts.sample.includes(n)) opts.sample.push(n); } break;
+        case "--sample-every": opts.sampleEvery = int(); if (opts.sampleEvery < 1) usage("--sample-every must be >= 1"); break;
+        case "--until": opts.until = parseExpect(val()); break;
         case "-h": case "--help": usage();
         default:
             if (a.startsWith("--") || wasmPath) usage(`unexpected argument '${a}'`);
@@ -489,7 +505,18 @@ catch (e) { console.error(`preview: instantiation failed: ${e.message}`); proces
 // --dump-exports / --expect / --at / --call-at names must be zero-arg function exports; check before running.
 {
     const wanted = [...opts.dumpExports];
-    for (const t of opts.timed) if (!wanted.includes(t.name)) wanted.push(t.name);
+    for (const t of opts.timed) if (t.arg == null && !wanted.includes(t.name)) wanted.push(t.name);
+    // --call-at T NAME:ARG: a one-argument function export.
+    for (const t of opts.timed) {
+        if (t.arg == null) continue;
+        const f = instance.exports[t.name];
+        if (typeof f !== "function" || f.length !== 1) {
+            console.error(`preview: --call-at ${t.tick} ${t.name}:${t.arg}: '${t.name}' ${typeof f !== "function" ? "is not an exported function" : `takes ${f.length} argument(s), not 1`}`);
+            process.exit(2);
+        }
+    }
+    for (const n of opts.sample) if (!wanted.includes(n)) wanted.push(n);
+    if (opts.until && !wanted.includes(opts.until.name)) wanted.push(opts.until.name);
     const callable = exportNames.filter((n) => typeof instance.exports[n] === "function" && instance.exports[n].length === 0 && n !== "start" && n !== "update" && n !== "_start" && n !== "_initialize");
     const bad = wanted.filter((n) => !callable.includes(n));
     if (bad.length) {
@@ -497,7 +524,7 @@ catch (e) { console.error(`preview: instantiation failed: ${e.message}`); proces
             : typeof instance.exports[n] !== "function" ? `'${n}' is not a function`
             : ["start", "update", "_start", "_initialize"].includes(n) ? `'${n}' is an entry point, not a query`
             : `'${n}' takes ${instance.exports[n].length} argument(s)`).join("; ");
-        console.error(`preview: --dump-exports/--expect/--at/--call-at: ${why}. Zero-arg function exports in ${wasmPath}: ${callable.join(", ") || "none"} (all exports: ${exportNames.join(", ") || "none"})`);
+        console.error(`preview: --dump-exports/--expect/--at/--call-at/--sample/--until: ${why}. Zero-arg function exports in ${wasmPath}: ${callable.join(", ") || "none"} (all exports: ${exportNames.join(", ") || "none"})`);
         process.exit(2);
     }
 }
@@ -610,10 +637,10 @@ if (opts.pose) { try { instance.exports.debug_set_camera(...opts.pose); } catch 
 const written = [];
 let changed = false;
 const OPS = { "==": (a, b) => a === b, "!=": (a, b) => a !== b, "<": (a, b) => a < b, "<=": (a, b) => a <= b, ">": (a, b) => a > b, ">=": (a, b) => a >= b };
-// Calls a checked zero-arg export and returns its integer result (as JS sees it).
-function callExport(n, flag) {
+// Calls a checked export (zero-arg, or one integer `arg`) and returns its integer result (as JS sees it).
+function callExport(n, flag, arg = null) {
     let v;
-    try { v = instance.exports[n](); } catch (e) { trap(`${n}()`, e); }
+    try { v = arg === null ? instance.exports[n]() : instance.exports[n](arg); } catch (e) { trap(arg === null ? `${n}()` : `${n}(${arg})`, e); }
     if (typeof v === "bigint") v = Number(v);
     if (typeof v !== "number") { console.error(`preview: ${flag}: ${n}() returned nothing (it must return an integer)`); process.exit(2); }
     return v;
@@ -621,10 +648,11 @@ function callExport(n, flag) {
 const atResults = [], callResults = [];
 function runTimed(i) {
     for (const t of timedAt.get(i)) {
-        const actual = callExport(t.name, t.kind === "at" ? "--at" : "--call-at");
+        const actual = callExport(t.name, t.kind === "at" ? "--at" : "--call-at", t.kind === "call" ? t.arg : null);
         if (t.kind === "call") {
-            callResults.push({ tick: i, name: t.name, value: actual });
-            console.error(`preview: call after update #${i}: ${t.name} = ${actual}`);
+            const label = t.arg == null ? t.name : `${t.name}:${t.arg}`;
+            callResults.push({ tick: i, name: label, value: actual });
+            console.error(`preview: call after update #${i}: ${label} = ${actual}`);
         } else {
             const pass = OPS[t.op](actual, t.value);
             atResults.push({ tick: i, expr: t.expr, name: t.name, op: t.op, value: t.value, actual, pass });
@@ -632,6 +660,8 @@ function runTimed(i) {
         }
     }
 }
+const samples = opts.sample.length ? { every: opts.sampleEvery, ticks: [], values: Object.fromEntries(opts.sample.map((n) => [n, []])) } : null;
+let ran = opts.frames, untilTick = null;
 const t0 = Date.now();
 for (let i = 0; i < opts.frames; i++) {
     let addr = opts.quiet ? 0 : displayedBufferAddr();
@@ -651,14 +681,28 @@ for (let i = 0; i < opts.frames; i++) {
         written.push({ file: name, update: i, buffer: (addr - fbBase) / FB_BYTES | 0 });
     }
     if (timedAt.has(i)) runTimed(i);
+    if (samples && i % opts.sampleEvery === 0) {
+        samples.ticks.push(i);
+        for (const n of opts.sample) samples.values[n].push(callExport(n, "--sample"));
+    }
+    if (opts.until && OPS[opts.until.op](callExport(opts.until.name, "--until"), opts.until.value)) {
+        ran = i + 1; untilTick = i;
+        console.error(`preview: --until ${opts.until.expr} holds after update #${i}; stopping`);
+        break;
+    }
+}
+// --at items the run never reached (it stopped early on --until) fail.
+for (const t of opts.timed) if (t.kind === "at" && t.tick >= ran) {
+    atResults.push({ tick: t.tick, expr: t.expr, name: t.name, op: t.op, value: t.value, actual: null, pass: false });
+    console.error(`preview: FAIL ${t.expr} after update #${t.tick}: not reached (the run stopped after update #${ran - 1})`);
 }
 const runMs = Date.now() - t0;
 if (written.length && !changed) warn(`framebuffer region at 0x${fbBase.toString(16)} never changed since instantiation; frames are blank`);
 
-// Query exports after the last update().
+// Query exports after the last update() that ran.
 const exportValues = {};
 for (const n of opts.dumpExports) exportValues[n] = callExport(n, "--dump-exports");
-if (opts.dumpExports.length) console.error(`preview: exports after update #${opts.frames - 1}: ${opts.dumpExports.map((n) => `${n}=${exportValues[n]}`).join(" ")}`);
+if (opts.dumpExports.length) console.error(`preview: exports after update #${ran - 1}: ${opts.dumpExports.map((n) => `${n}=${exportValues[n]}`).join(" ")}`);
 const expectResults = opts.expect.map((e) => {
     const actual = exportValues[e.name], pass = OPS[e.op](actual, e.value);
     console.error(`preview: ${pass ? "PASS" : "FAIL"} ${e.expr} (${e.name} = ${actual})`);
@@ -675,12 +719,13 @@ const meta = {
     quiet: opts.quiet, rawColors: opts.rawColors, setupCalls: opts.calls.map((c) => c.text), pose: opts.pose,
     imports: imports.map((i) => `${i.module}.${i.name}`), moduleExports: exportNames,
     exports: exportValues, expect: expectResults, at: atResults, calls: callResults,
+    ...(opts.until ? { until: untilTick, untilExpr: opts.until.expr } : {}), ran, ...(samples ? { samples } : {}),
     framebuffer: { source: fbSource, base: `0x${fbBase.toString(16)}`, buffer1: fbSource === "dwarf" || fbSource === "export" ? `0x${(fbBase + FB_BYTES).toString(16)}` : null, drawPointer: hasPtr ? `0x${ptrVar.addr.toString(16)}` : null },
     dataSegments: dataSegs.map((d) => ({ off: d.off === null ? null : `0x${d.off.toString(16)}`, size: d.size })),
     warnings, frames: written,
 };
 fs.writeFileSync(path.join(opts.out, "frames.json"), JSON.stringify(meta, null, 2) + "\n");
-console.error(`preview: ${written.length} frame(s) from ${opts.frames} update(s) -> ${opts.out}/ (framebuffer ${fbSource} @ 0x${fbBase.toString(16)}, ${runMs} ms)`);
+console.error(`preview: ${written.length} frame(s) from ${ran} update(s) -> ${opts.out}/ (framebuffer ${fbSource} @ 0x${fbBase.toString(16)}, ${runMs} ms)`);
 if (failed) {
     const list = [...atResults.filter((r) => !r.pass).map((r) => `${r.expr} after update #${r.tick} (got ${r.actual})`),
         ...expectResults.filter((r) => !r.pass).map((r) => `${r.expr} at the end (got ${r.actual})`)];

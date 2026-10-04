@@ -1,11 +1,13 @@
-# m5_manual: m2_hit's input (A at 30, then idle) plus B held for updates 700..719, before
-# the 8 s beetle's spread would hit at 748. 699: PLAYING, game tick 669, fuel 180. The press
-# frame 700 is already MANUAL (state 5) and has stepped back once: game tick 667, fuel 178,
-# manual frame 1. 719, the last held frame: manual frame 20, game tick 629 (40 lower, 2 per
-# frame), fuel 140. 720, the release: PLAYING again, no tick simulated (629); 721 is live
-# (630). The world is a restored history state during the hold and a checkpoint follows the
-# resume, so the identity check is 0 throughout. The idle ship then meets the spread again:
-# hit at 809 (game tick 718 as in m2_hit, 60 updates later: 20 frames of hold + 40 ticks
-# re-lived), rewinds 3 -> 2, target 598, resume at 889 with game tick 598. The normal-mode
-# auto rewind is free: fuel stays 151 through it (140 + 9 refills + one graze of 2).
---frames 1000 --dump-exports debug_state,debug_game_tick,debug_fuel,debug_rewinds --at "699 debug_state == 1" --at "699 debug_game_tick == 669" --at "699 debug_fuel == 180" --at "700 debug_state == 5" --at "700 debug_game_tick == 667" --at "700 debug_fuel == 178" --at "700 debug_manual_frame == 1" --at "710 debug_history_check == 0" --at "719 debug_state == 5" --at "719 debug_manual_frame == 20" --at "719 debug_game_tick == 629" --at "719 debug_fuel == 140" --at "720 debug_state == 1" --at "720 debug_game_tick == 629" --at "720 debug_fuel == 140" --at "720 debug_history_check == 0" --at "721 debug_state == 1" --at "721 debug_game_tick == 630" --at "730 debug_history_check == 0" --at "808 debug_state == 1" --at "808 debug_fuel == 151" --at "809 debug_state == 4" --at "809 debug_game_tick == 718" --at "809 debug_rewind_target == 598" --at "809 debug_rewinds == 2" --at "888 debug_state == 4" --at "889 debug_state == 1" --at "889 debug_game_tick == 598" --at "889 debug_fuel == 151" --expect "debug_state == 1"
+# m5_manual: m2_hit's input (A at 30, then idle) plus B held for updates 480..499, before
+# the wasp's ram would hit at 524 (since M7; until M7 the hold was 700..719 before the 8 s
+# beetle's spread at 748). 479: PLAYING, game tick 449, fuel 180. The press frame 480 is
+# already MANUAL (state 5) and has stepped back once: game tick 447, fuel 178, manual frame 1.
+# 499, the last held frame: manual frame 20, game tick 409 (40 lower, 2 per frame), fuel 140.
+# 500, the release: PLAYING again, no tick simulated (409); 501 is live (410). The world is a
+# restored history state during the hold and a checkpoint follows the resume, so the
+# identity check is 0 throughout. The idle ship then meets the wasp again: hit at 585 (game
+# tick 494 as in m2_hit, 61 updates later: 20 frames of hold + 40 ticks re-lived + the
+# release frame), rewinds 3 -> 2, target 374, resume at 665 with game tick 374. The
+# normal-mode auto rewind is free: fuel stays 149 through it (140 + 9 refills). The same
+# fate repeats at 785 and 985, so the run ends in REWIND (state 4).
+--frames 1000 --dump-exports debug_state,debug_game_tick,debug_fuel,debug_rewinds --at "479 debug_state == 1" --at "479 debug_game_tick == 449" --at "479 debug_fuel == 180" --at "480 debug_state == 5" --at "480 debug_game_tick == 447" --at "480 debug_fuel == 178" --at "480 debug_manual_frame == 1" --at "490 debug_history_check == 0" --at "499 debug_state == 5" --at "499 debug_manual_frame == 20" --at "499 debug_game_tick == 409" --at "499 debug_fuel == 140" --at "500 debug_state == 1" --at "500 debug_game_tick == 409" --at "500 debug_fuel == 140" --at "500 debug_history_check == 0" --at "501 debug_state == 1" --at "501 debug_game_tick == 410" --at "510 debug_history_check == 0" --at "584 debug_state == 1" --at "584 debug_fuel == 149" --at "585 debug_state == 4" --at "585 debug_game_tick == 494" --at "585 debug_rewind_target == 374" --at "585 debug_rewinds == 2" --at "664 debug_state == 4" --at "665 debug_state == 1" --at "665 debug_game_tick == 374" --at "665 debug_fuel == 149" --expect "debug_state == 4"

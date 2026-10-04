@@ -5,6 +5,8 @@ const gfx = @import("gfx");
 const draw = @import("draw.zig");
 const enemies = @import("enemies.zig");
 const world = @import("world.zig");
+const rank = @import("rank.zig");
+const waves = @import("waves.zig");
 
 const max_rewind_icons = 5;
 /// `hud.png` cell: 12x8 since 2026-09-29 (the 8x8 head read as a rat).
@@ -88,13 +90,26 @@ const stage_text_y: i32 = 56;
 /// WARNING is shown `warning_on` ticks of every `warning_period`.
 const warning_period: u32 = 40;
 const warning_on: u32 = 20;
-/// After a clear: "+500" for this many ticks, then "STAGE n" as long.
+/// After a clear: "+500" (or "ESCAPED") for this many ticks.
 const clear_text_ticks: u32 = 60;
+/// The stage pop: `LOOP n` (from the second loop), `STAGE n`, the name.
+const pop_loop_y: i32 = 40;
+const pop_stage_y: i32 = 52;
+const pop_name_y: i32 = 62;
 
-/// Over the sprites, under the pause overlay: the flashing WARNING, the
-/// boss HP bar, and "+500" then "STAGE n" after a clear.
+/// Over the sprites, under the pause overlay: the `STAGE n` pop at the
+/// start of a stage, the flashing WARNING, the boss HP bar, and "+500"
+/// (or "ESCAPED") after the boss.
 pub fn draw_stage_text() void {
     const st = &world.w.waves;
+    if (st.phase == .waves and st.t < waves.stage_pop) {
+        var buf: [9]u8 = undefined;
+        if (st.loop > 0 and st.stage == 0) {
+            draw.centered_text(number_label(&buf, "LOOP ", @as(u32, st.loop) + 1), pop_loop_y, draw.coral);
+        }
+        draw.centered_text(number_label(&buf, "STAGE ", @as(u32, st.stage) + 1), pop_stage_y, draw.anti_white);
+        draw.centered_text(waves.stage_names[@min(st.stage, waves.stage_count - 1)], pop_name_y, draw.coral);
+    }
     if (st.phase == .warning and st.t % warning_period < warning_on) {
         draw.centered_text("WARNING", stage_text_y, draw.coral);
     }
@@ -102,27 +117,20 @@ pub fn draw_stage_text() void {
         // The bar goes when the death sequence starts.
         if (b.phase != .dying and b.hp > 0) {
             cart.rect(.{ .x = bar_x, .y = bar_y, .width = bar_w, .height = bar_h, .fill_color = draw.anti_black });
-            const max = enemies.boss_max_hp();
+            const max = enemies.boss_max_hp_of(b.*);
             const fill: u32 = @min(bar_w, bar_w * @as(u32, b.hp) / @max(max, 1));
             if (fill > 0) {
                 cart.rect(.{ .x = bar_x, .y = bar_y, .width = fill, .height = bar_h, .fill_color = draw.coral });
             }
         }
     }
-    if (st.clear_tick != 0) {
-        const since = world.w.game_tick -% st.clear_tick;
-        if (since < clear_text_ticks) {
-            draw.centered_text("+500", stage_text_y, draw.anti_white);
-        } else if (since < 2 * clear_text_ticks) {
-            var buf: [9]u8 = undefined;
-            draw.centered_text(stage_label(&buf, @as(u32, st.loop) + 1), stage_text_y, draw.anti_white);
-        }
+    if (st.phase == .cleared and world.w.game_tick -% st.clear_tick < clear_text_ticks) {
+        draw.centered_text(if (st.escaped) "ESCAPED" else "+500", stage_text_y, draw.anti_white);
     }
 }
 
-/// "STAGE n" into `buf` (n up to 3 digits).
-fn stage_label(buf: *[9]u8, n: u32) []const u8 {
-    const prefix = "STAGE ";
+/// `prefix` and `n` (up to 3 digits) into `buf`.
+fn number_label(buf: *[9]u8, comptime prefix: []const u8, n: u32) []const u8 {
     @memcpy(buf[0..prefix.len], prefix);
     var digits: [3]u8 = undefined;
     var v = @min(n, 999);
@@ -160,19 +168,37 @@ pub fn draw_title(tick: u32) void {
     draw.draw_sprite(gfx.iris_16, 16, 16, 0, 124, 112, .{});
 }
 
-/// Pause overlay: the frozen scene dimmed, then "PAUSED" and the in-game
-/// controls on a dark panel (x 12..147, y 34..107). Keys in Coral at
-/// x 20, actions at x 92 (at most 6 characters).
+/// Pause overlay: the frozen scene dimmed, then "PAUSED", the in-game
+/// controls and `RANK nnn` (PLAN.md M7, for testers) on a dark panel
+/// (x 12..147, y 34..107). Keys in Coral at x 20, actions at x 92 (at most
+/// 6 characters).
 pub fn draw_pause() void {
     draw.darken_checker();
     cart.rect(.{ .x = 12, .y = 34, .width = 136, .height = 74, .fill_color = draw.anti_black, .stroke_color = draw.star_dim });
-    draw.centered_text("PAUSED", 40, draw.anti_white);
+    draw.centered_text("PAUSED", 38, draw.anti_white);
     for (pause_help, 0..) |row, i| {
-        const y: i32 = 54 + 10 * @as(i32, @intCast(i));
+        const y: i32 = 50 + 10 * @as(i32, @intCast(i));
         draw.text(row[0], 20, y, draw.coral);
         draw.text(row[1], 92, y, draw.anti_white);
     }
-    draw.centered_text("REWIND USES FUEL", 96, draw.star_dim);
+    draw.centered_text("REWIND USES FUEL", 89, draw.star_dim);
+    var buf: [9]u8 = undefined;
+    draw.centered_text(rank_label(&buf, rank.value()), 98, draw.anti_white);
+}
+
+/// "RANK nnn" into `buf`: three digits, four for the maximum 1000.
+fn rank_label(buf: *[9]u8, value: u32) []const u8 {
+    const prefix = "RANK ";
+    @memcpy(buf[0..prefix.len], prefix);
+    const digits: usize = if (value >= 1000) 4 else 3;
+    var v = @min(value, 9999);
+    var k = digits;
+    while (k > 0) {
+        k -= 1;
+        buf[prefix.len + k] = '0' + @as(u8, @intCast(v % 10));
+        v /= 10;
+    }
+    return buf[0 .. prefix.len + digits];
 }
 
 /// Key, action (main.zig's playing state and player.zig).

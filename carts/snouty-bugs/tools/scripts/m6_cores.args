@@ -1,13 +1,14 @@
-# m6_cores: CORE HOURS pays once. m6_pickup's input to 1500 (the sweep and its long hold at
-# 806..885 that leaves the bar at 20) plus a hold-B at 1390..1399 just after the core hours
-# crate is collected. Fuel is meta state (not in the World), so the grant is paid by main.zig
-# against a high-water mark on the World counter debug_cores.
-# - 1383 (game tick 1112): crate collected, cores 0 -> 1, fuel 70 -> 130 (+60), score 330.
-# - B 1390..1399 (10 frames = 20 ticks, 2 fuel each): 1392 is back at tick 1112, still
-#   collected; 1393 (tick 1110) is before the grab: cores 0, score 230, the crate back on
-#   screen. The fuel is NOT given back by the rewind: 122 (130 minus the hold's 8). 1399:
-#   tick 1098, fuel 110. 1400: the release (PLAYING, no tick).
-# - 1411 (tick 1109): the ship grabs the same crate again: cores 1, score 330 (the +100 is
-#   World state and comes back), but the fuel stays 111 (the refill alone; 1412: 112):
-#   cores never rises above its high-water mark of 1, so nothing more is paid.
---frames 1500 --dump-exports debug_state,debug_cores,debug_fuel,debug_score --at "1382 debug_fuel == 70" --at "1383 debug_cores == 1" --at "1383 debug_fuel == 130" --at "1392 debug_cores == 1" --at "1393 debug_state == 5" --at "1393 debug_cores == 0" --at "1393 debug_score == 230" --at "1393 debug_fuel == 122" --at "1393 debug_history_check == 0" --at "1399 debug_game_tick == 1098" --at "1399 debug_fuel == 110" --at "1400 debug_state == 1" --at "1410 debug_cores == 0" --at "1411 debug_cores == 1" --at "1411 debug_score == 330" --at "1411 debug_fuel == 111" --at "1412 debug_fuel == 112" --at "1450 debug_history_check == 0" --expect "debug_state == 1" --expect "debug_cores == 1"
+# m6_cores: CORE HOURS pays once. m6_pickup's input to 1849 (the sweep in probe mode and its
+# long hold at 903..982 that leaves the bar at 20) plus a hold-B at 1747..1756 just after the
+# core hours crate is collected. Fuel is meta state (not in the World), so the grant is paid
+# by main.zig against a high-water mark on the World counter debug_cores. (Re-pinned for M7:
+# the crate is collected at 1740 instead of 1383; see m6_pickup.)
+# - 1740 (game tick 1469): crate collected, cores 0 -> 1, fuel 101 -> 161 (+60), score 1004.
+# - B 1747..1756 (10 frames = 20 ticks, 2 fuel each): 1749 is back at tick 1469, still
+#   collected; 1750 (tick 1467) is before the grab: cores 0, score 904, the crate back on
+#   screen. The fuel is NOT given back by the rewind: 154 (162 minus the hold's 8). 1756:
+#   tick 1455, fuel 142. 1757: the release (PLAYING, no tick).
+# - 1766 (tick 1464): the ship grabs the same crate again: cores 1, score 1004 (the +100 is
+#   World state and comes back), but the fuel stays 143 (the refill alone): cores never rises
+#   above its high-water mark of 1, so nothing more is paid.
+--frames 1850 --call-at "31 debug_probe" --dump-exports debug_state,debug_cores,debug_fuel,debug_score --at "1739 debug_fuel == 101" --at "1740 debug_cores == 1" --at "1740 debug_fuel == 161" --at "1749 debug_cores == 1" --at "1750 debug_state == 5" --at "1750 debug_cores == 0" --at "1750 debug_score == 904" --at "1750 debug_pickups == 1" --at "1750 debug_fuel == 154" --at "1750 debug_history_check == 0" --at "1756 debug_game_tick == 1455" --at "1756 debug_fuel == 142" --at "1757 debug_state == 1" --at "1765 debug_cores == 0" --at "1766 debug_cores == 1" --at "1766 debug_score == 1004" --at "1766 debug_fuel == 143" --at "1770 debug_fuel == 143" --at "1800 debug_history_check == 0" --expect "debug_state == 1" --expect "debug_cores == 1"

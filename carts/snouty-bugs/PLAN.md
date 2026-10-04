@@ -1079,6 +1079,924 @@ Track A, 2026-10-02. Choices where the contract was silent or ambiguous:
   frame under 16.7 ms with headroom.
 - `docs/preview_m6.gif`: crates collected, ghosts, a beam, a retry.
 
+## M7 Bullet hell for real (started 2026-10-04)
+
+Adrian, 2026-10-04: "Snouty bughunt is way too easy currently. We need to
+make this a true bullet hell shooter that has increasingly difficult and
+complex attack patterns as the game goes on, take inspiration from the
+greats like 1942 and RaidenX. Right now you basically have to try to get
+hit, especially if you hold down the fire button. Now that we have
+powerups, the player is especially overpowered."
+
+Measured on origin/main e5d9e13 before any change (god mode, hits counted,
+10,800 updates = 3 minutes): a ship that sweeps up and down holding A was
+touched **once** and cleared two full stage loops; one that sits still at
+the spawn point holding A was touched 20 times in the first minute, 0 times
+in the first 30 s. The loop-0 boss has 60 HP and the ASSERT at level 5
+deals about 90 a second, so it dies in under a second. Attract mode moves
+to M8, polish to M9. SPEC.md 5.5 has the design summary; this section is
+the contract.
+
+### What changes, in one list
+
+1. **Four stages instead of one looping table**, each with its own bugs,
+   formations, a midboss (stages 2-4) and its own boss, then a second loop
+   that is harder again. Stage names: 1 `UNIT TESTS`, 2 `INTEGRATION`,
+   3 `STAGING`, 4 `PRODUCTION`.
+2. **Rank** (Raiden / Battle Garegga): one World number 0..1000 that rises
+   with the stage, the time spent in it, the loop and the player's
+   firepower, and falls a little when the player is hit. It scales enemy
+   bullet speed, fire rate, the number of bullets in a pattern, enemy HP,
+   and turns on revenge bullets. A strong player gets a harder game; a
+   struggling one gets some slack.
+3. **A pattern engine.** Enemy bullets learn to accelerate, decelerate,
+   curve, split and re-aim; two new shapes (pellet, orb); pool 96 -> 128;
+   tighter hitboxes so the screen can hold far more bullets and still be
+   fair (the bullet-hell bargain).
+4. **New bugs** (1942 / Raiden staples, reskinned): a weaving centipede,
+   fleas that jump in from *behind* the ship, ladybugs flying loops in from
+   the top and bottom, ground mites riding the near layer like Raiden's
+   tanks, zombies that revive once, a swarm midboss. Old bugs get real HP
+   and fire on entry, so holding A no longer kills everything before it
+   shoots.
+5. **Three new bosses** plus a harder Heisenbug, each with HP-gated
+   phases (bullet cancel and a crate at each break) and a timeout so a
+   weak player is never stuck.
+6. **Powerups cut down to size**: weapon damage rebalanced (ASSERT level 5
+   was ~90 damage a second, now 40); ghosts fire a level-1 shot instead of
+   the full volley; a hit that triggers the auto rewind also costs one
+   weapon level and one fork (Raiden's power loss); crates come from whole
+   formations (1942's POW) instead of every fifth gnat.
+7. **A difficulty probe**: deterministic bots (turret, sweeper, dodger)
+   played headlessly through all four stages in an endless god mode, so
+   the difficulty curve is a table of numbers, not a feeling.
+
+### Decisions fixed here
+
+- **Rank lives in the World.** Every input to it (stage, loop, stage
+  clock, weapon level, forks, a mercy counter) is World state, so a rewind
+  rewinds the rank too and replays stay exact. It is computed, not stored,
+  except `mercy`.
+- **The power loss is applied at the resume of an auto rewind**, as a
+  World edit right after `history.restore(rewind_target)`, next to the
+  invulnerability grant, before `history.checkpoint()`. So it is honest
+  (the rewound World is the 2-s-old one, then the cost is charged) and
+  history sees it. Hold-B rewinds cost no power (fuel already pays). The
+  retry shield costs no power. Hardcore pays it too.
+- **Bullets scale with rank at spawn**, inside `bullets.spawn_shot`:
+  content code writes base (rank 0) speeds and never multiplies by hand.
+  Fire intervals and bullet counts are scaled explicitly by content with
+  `rank.interval(base)` and `rank.extra(k)`.
+- **No new rng in the bullet engine.** Splits, re-aims and turns are pure
+  functions of the bullet and the ship position. Content may draw from the
+  world rng (as moths and the Heisenbug already do), in pool order.
+- **Bosses have a timeout** (Touhou's spell timer, simplified): each
+  non-final phase ends after its time limit even with HP left (no crate
+  for a timed-out phase), and the final phase ends after its limit with
+  the boss escaping off the right edge (no +500, no fuel refill, the stage
+  still advances). Nobody is ever stuck on a boss, and the probe always
+  reaches the next stage.
+- **Enemy HP becomes u16** (bosses go to the thousands).
+- Sound: none (Adrian 2026-09-30).
+- Perf: the bullet pool grows to 128 only if badge-bench keeps the worst
+  frame of the stage-4 boss under 14 ms (84%) with a hold-B rewind in it;
+  otherwise 112, then 96. Bullet drawing stays an 8x8 cell at most except
+  the orb.
+- RAM (SYCL is RAM carts only, ~274.7 KB for text + data + bss): the
+  M6 cart is 92 KB. `@sizeOf(World)` grows to roughly 11 KB. (Lead,
+  2026-10-04: the history ring went from 4 keyframes every 60 ticks to 8
+  every 30 so a hold-B frame over a full stage-4 wave replays at most 29
+  ticks: worst 17-18 ms -> 10.5-11.9 ms on badge-bench. The cap is
+  therefore 220 KB, not 160; the cart is 208 KB.)
+
+### Rank (`rank.zig`, new, track A)
+
+```
+value = clamp(stage_base[stage] + 400 * loop + stage_seconds
+              + 25 * (level - 1) + 30 * forks - mercy, 0, 1000)
+stage_base = { 0, 150, 300, 450 }
+stage_seconds = min(waves.t / 60, 120)       (resets at each stage start)
+mercy (World u16): +80 at each auto-rewind resume, capped at 240, -1 every 30 ticks
+r = value / 1000
+```
+
+Effects (all functions of `r`, read at the moment of use):
+
+| What | Formula | Where |
+|------|---------|-------|
+| Enemy bullet speed | base x (1 + 0.5 r), capped per shape: round 2.0, needle 2.6, pellet 2.2, orb 1.6 | `bullets.spawn_shot` and split / aim children |
+| Fire interval | round(base x (1 - 0.4 r)), at least base / 2 and 1 | content: `rank.interval(base)` |
+| Extra bullets | floor(r x (k + 1)), at most k | content: `n + rank.extra(k)` |
+| Regular enemy HP | round(base x (1 + 0.6 r)), at least 1 | `enemies.spawn` via `rank.hp(base)` |
+| Revenge bullets | on a bolt kill of a non-gnat when loop >= 1 or r >= 0.6, of a gnat when loop >= 1: one aimed pellet (3-way fan, 10/256 apart, when r >= 0.85) at base speed 1.0, only if the kill is more than 40 px from the hitbox center | `rank.revenge(kind, cx, cy)`, called from `collide` |
+
+The loop modifiers in `waves.zig` (`speed_mul`, `bullet_speed`,
+`fire_interval`, `extra_hp`) are deleted; rank replaces them. The pause
+screen shows `RANK nnn` (0..1000) in the help box so a tester can see it.
+
+### Bullet engine (track A: `bullets.zig`, `patterns.zig`)
+
+`EnemyBullet` keeps its fields and gains:
+
+```zig
+pub const Shape = enum(u8) { round, needle, pellet, orb };
+pub const Event = enum(u8) { none, split, aim };
+// new fields, defaults = today's behaviour
+drag: f32 = 1,       // v *= drag every tick (< 1 slows, > 1 speeds up)
+vmax: f32 = 0,       // if > 0, |v| is clamped to it after drag and accel
+ax: f32 = 0,         // added to v every tick
+ay: f32 = 0,
+turn: i8 = 0,        // heading += turn / 256 turn every tick ...
+turn_left: u8 = 0,   // ... for this many ticks
+event: Event = .none,
+event_at: u16 = 0,   // the bullet's age at which the event fires
+ev_n: u8 = 0,        // split: children; aim: bullets in the aimed fan (1 = just re-aim)
+ev_speed: u8 = 0,    // child / re-aim base speed in 1/16 px per tick (rank-scaled when it fires)
+gen: u8 = 0,         // split: children split again (same event_at, ev_n, ev_speed) while gen > 0
+```
+
+Per tick, in order: turn (rotate v by the table), drag, accel, vmax clamp,
+move, age, event (if `age == event_at`), cull. Events:
+
+- `split`: the bullet dies and leaves a ring of `ev_n` pellets at its
+  position, the first along its heading (rotation of its unit velocity by
+  `i * 256 / ev_n`, no atan2), speed `ev_speed / 16` rank-scaled. Children
+  carry `split` with `gen - 1` while `gen > 0`. Children that do not fit in
+  the pool are dropped.
+- `aim`: velocity becomes `aim(x, y) * ev_speed / 16` (rank-scaled), drag
+  1, accel 0, no more turning; with `ev_n > 1` the bullet itself is the
+  middle of a fan of `ev_n` (8/256 apart) and the extra ones are spawned.
+  Stop-and-go = `drag 0.94` plus `aim` at age 50.
+
+Shapes and hitboxes (the bullet-hell bargain: smaller boxes, many more
+bullets):
+
+| Shape | Drawn | Hitbox (centered) | Art |
+|-------|-------|-------------------|-----|
+| round  | 6x6 ball in an 8x8 cell | 4x4 (was 6x6) | `bugs_small` cells 2-3, as today |
+| needle | 8x4 | 6x2 (was 8x4) | `bugs` cell 8, as today |
+| pellet | 4x4 dot in an 8x8 cell | 2x2 | `shots.png` cells 0-1 (new) |
+| orb    | 12x12 in a 16x16 cell | 8x8 | `orb.png` cells 0-1 (new) |
+
+The ship's hitbox shrinks from 6x6 to **4x4**, same center: offset
+(15, 10) in the cell. The graze margin stays 4 px. The invulnerability
+dot stays at the center.
+
+API (old pattern signatures go; track A ports today's callers):
+
+```zig
+pub const Shot = struct {
+    speed: f32,                 // base, rank 0
+    shape: Shape = .round,
+    source: enemies.Kind,
+    drag: f32 = 1, vmax: f32 = 0,
+    accel: f32 = 0,             // along the initial heading: ax, ay = dir * accel
+    turn: i8 = 0, turn_left: u8 = 0,
+    event: Event = .none, event_at: u16 = 0, ev_n: u8 = 0, ev_speed: u8 = 0, gen: u8 = 0,
+};
+// bullets.zig
+pub fn spawn_shot(x: f32, y: f32, dir: [2]f32, shot: Shot) ?*EnemyBullet  // dir is a unit vector
+pub fn cancel_all() u32       // every enemy bullet -> +10 score, spark fx for the first 8; returns count
+// patterns.zig (x, y = emitter center; angles in 1/256 turns, 0 = right, 64 = down)
+pub fn aim(x, y) [2]f32
+pub fn aimed(x, y, shot)
+pub fn fan(x, y, n, step_256, shot)        // aimed, n bullets step apart (the old `spread`)
+pub fn arc(x, y, n, span_256, shot)        // aimed, n bullets over span, ends included
+pub fn ring(x, y, n, phase_256, shot)
+pub fn ring_aimed(x, y, n, shot)           // ring whose first bullet points at the ship
+pub fn at_angle(x, y, angle_256, shot)     // the old `shot`
+pub fn line(x, y, n, speed_step, shot)     // n aimed bullets, speeds speed + i * speed_step (a sniper line)
+pub fn wall(x, y_top, y_bottom, n, gap_y, gap_half, shot) // n bullets evenly on a vertical line moving left (angle 128), skipping |y - gap_y| < gap_half
+```
+
+### Formations and drops (track A: `formations.zig`, new; `pickups.zig`, `collide.zig`)
+
+1942's rule: shoot down the whole formation, get the POW.
+
+- World `formations: [8]Formation{ id: u8 = 0 (free), size: u8, killed: u8, gone: u8, drop: bool }`,
+  `next_formation_id: u8` (wraps, skips 0). `Enemy` gains `formation: u8 = 0`.
+- `formations.open(size, drop) u8`: claims a free slot, returns its id (0 if
+  none free: the enemies just have no formation).
+- `formations.killed(id, cx, cy)`: on a bolt kill; when `killed == size`
+  and `drop`: `pickups.spawn_drop(cx, cy)` plus 200 points; slot freed.
+- `formations.lost(id)`: an enemy of it left the field or rammed the ship;
+  the slot is freed once `killed + gone == size`, without a drop.
+- Drop sources after M7: a completed formation with `drop`; every second
+  Memory Leak beetle killed by a bolt (World counter); the midboss (two
+  crates on death); each boss HP phase break (one crate; a timed-out phase
+  gives none). The "every fifth gnat" rule is deleted. Crate kinds keep
+  the M6 sequence.
+
+### Player (track A: `player.zig`, `main.zig`)
+
+Weapon volleys, single-target damage per volley (volley every 6 ticks):
+
+| Level | FUZZER (unchanged geometry) | ASSERT (beams: y offset / damage) | BISECT (seekers, gain) |
+|-------|------|------|------|
+| 1 | 1 zap | 0/d1 | 1, 0.08 |
+| 2 | 2 zaps (y -3, +3) | 0/d2 | 2, 0.10 |
+| 3 | 3-way | -4/d1, +4/d1 | 2, 0.14 |
+| 4 | 5-way | 0/d1, -6/d1, +6/d1 | 3, 0.16 |
+| 5 | 5-way, jitter | 0/d2, -6/d1, +6/d1 | 4, 0.20 |
+
+So a single target takes at most ~40 a second from the ship at level 5.
+
+- **Forks fire a level-1 volley** of the current weapon (one zap, one d1
+  beam, one seeker at gain 0.08) whenever the ship fired 24k ticks ago.
+- **Power loss**: `player.on_rewound_hit()`, called in `main.step_rewind`
+  at resume (normal and hardcore): `level = max(1, level - 1)`,
+  `forks -|= 1`, `mercy += 80`. Not on hold-B, not on a shield pop.
+- Endless probe mode (wasm `debug_probe`, toggles): like god mode, but a
+  hit removes the offender, applies `on_rewound_hit()` in the World at
+  once, grants 60 ticks of invulnerability and counts the hit; no rewind
+  runs. Applied in both simulate modes (the flag is constant through a
+  probe run, as `god` is) so the identity check still holds.
+
+### Kinds, bosses, messages (track A defines, track B fills)
+
+```zig
+pub const Kind = enum(u8) { gnat, wasp, beetle, spider, moth, boss, centipede, flea, ladybug, mite, zombie, herd };
+pub const BossId = enum(u8) { heisenbug, mandelbug, schrodinbug, bohrbug };   // Enemy.variant for .boss
+```
+
+`Enemy` gains `variant: u8` (boss id; centipede 0 = head, 1 = segment),
+`formation: u8`, `aux: u32` and `aux2: f32` (free per-kind state for
+track B), `hp` becomes `u16`. Bug messages (`rewind.message`; `.boss`
+looks up the stage's boss):
+
+| Kind | Message |
+|------|---------|
+| centipede | `STACK OVERFLOW` |
+| flea | `NULL POINTER DEREF` |
+| ladybug | `INFINITE LOOP` |
+| mite | `BUFFER OVERFLOW` |
+| zombie | `USE AFTER FREE` |
+| herd (midboss) | `THUNDERING HERD` |
+| boss: Heisenbug | `UNDEFINED BEHAVIOR` (as today) |
+| boss: Mandelbug | `EMERGENT BEHAVIOR` |
+| boss: Schrodinbug | `IT NEVER WORKED` |
+| boss: Bohrbug | `REPRODUCIBLE CRASH` |
+
+### Stages (track B1: `waves.zig`, `enemies.zig`, `hud.zig` stage text)
+
+`waves.State` gains `stage: u8` (0..3). Flow per stage: `STAGE n` +
+name pop for 120 ticks at the start, waves table (~70 s, sorted by tick),
+an optional midboss entry in the table (the table clock pauses while the
+midboss is alive, so it cannot be skipped by waiting), `WARNING` 6 s, the
+boss, the clear (+500, fuel refill) or the escape, a 120-tick breather,
+next stage. After stage 4: stage 1 with `loop + 1`, popped as `LOOP 2`.
+`Entry` gains `formation: bool` (open a formation of `count` with drop)
+and a `pattern: u8` variant so one kind can run several movement / fire
+programs (B1 defines the table).
+
+Design intent per stage (B1 owns the numbers; the probe decides them):
+
+- **1 UNIT TESTS** (gnat, wasp, beetle, spider, moth): learn the game,
+  but a careless player gets hit. Every kind fires within 30 ticks of
+  becoming visible. Gnat strings are formations; from 20 s some strings
+  fire one aimed pellet each when they cross x 120. Beetle HP 12, 5-way
+  fan; spider 6, rotating 7-arc; moth 5, aimed needle pairs; wasp 2 and
+  arrives in threes. Boss Heisenbug.
+- **2 INTEGRATION** adds the centipede (head 10 HP + 5 segments of 4,
+  weaving sine, a ripple of aimed pellets down its body), ladybug loops
+  (formations of 4 entering from the top or bottom edge, an 8-ring at the
+  top of each loop), fleas from behind (a 30-tick warning chevron at the
+  left edge first). Midboss Thundering Herd at ~35 s. Boss Mandelbug.
+- **3 STAGING** adds ground mites (walk the near layer at the layer's
+  scroll speed, 16 HP, aimed needle bursts and an upward fan) and zombies
+  (die into a husk, revive after 90 ticks with half HP and a 12-ring),
+  walls with gaps, two kinds at once. Midboss Herd v2. Boss Schrodinbug.
+- **4 PRODUCTION**: everything, overlapping formations, curtains from two
+  sides. Midboss Herd v3. Boss Bohrbug.
+- **Loop 2+**: the same four stages with rank +400 (revenge bullets on).
+
+Midboss Thundering Herd (`herd`, 32x32): holds at x 112, HP ~300 (x
+rank), releases a gnat string from itself every 120 ticks and fires
+flowers (two rings of 10, half a step apart, one fast one slow); leaves
+after 25 s if alive (no crates); death: `cancel_all`, two crates, 1,000
+points.
+
+### Bosses (track B2: `bosses.zig`, new, holding all boss code)
+
+Common: HP-gated phases (break at the listed fractions), each break runs
+`bullets.cancel_all()`, drops one crate and gives 60 ticks of no fire; a
+non-final phase that times out moves on without the crate; the final
+phase times out into an escape (fly off right, stage advances without
+the +500 or the fuel refill). Boss HP is x (1 + 0.3 x loop), not ranked.
+Starting HP (tune with the probe so the turret bot takes 30-60 s, the
+dodger 25-45 s):
+
+- **Heisenbug** (stage 1, 500 HP, phases at 100/66/33 %, 20 s limits,
+  final 30 s): keeps its teleport. P1 rotating 12-ring + aimed 3-stream;
+  P2 counter-rotating double spiral and a ring at each reappearance; P3
+  teleports every 120 ticks, a 16-ring of pellets and a sniper `line` at
+  each reappearance.
+- **Mandelbug** (stage 2, 800 HP, 4 phases): fractal. Orbs that split
+  into 6 pellets; then splits of splits (gen 1); aimed walls plus split
+  rings; final: everything splits.
+- **Schrodinbug** (stage 3, 900 HP, 4 phases): two bodies, one real, both
+  drawn dithered (superposed) until a bolt touches one: the touched body
+  collapses (solid if real; a phantom bursts into a ring and reforms).
+  Mirrored patterns (the phantom fires the y-flipped copy), stop-and-go
+  bullets (drag then `aim`), crossing curtains.
+- **Bohrbug** (stage 4, 1,600 HP, 5 phases): the final exam, totally
+  reproducible. Walls with a gap that tracks the ship; double flowers;
+  stop-and-go rain; curving spirals (`turn`); the last phase layers three
+  of them.
+
+### Art (track C: `tools/prepare_assets.py`, `assets/gen/`, `build.zig`, `ASSETS.md`)
+
+Code-drawn like the rest (Adrian 2026-09-27: placeholders are final art).
+
+| Sheet | Cell | Cells |
+|-------|------|-------|
+| `bugs2.png` | 16x16 | 12: centipede head x2, centipede segment x2, flea x2, ladybug x2, mite x2, zombie x2 (the husk is a zombie cell drawn dithered) |
+| `herd.png` | 32x32 | 2 (wing loop) |
+| `boss2.png` Mandelbug, `boss3.png` Schrodinbug, `boss4.png` Bohrbug | 48x48 | 5 each: 4 idle + 1 alt (hurt / collapse / charge) |
+| `shots.png` | 8x8 | 4: pellet x2 (4x4 dot centered), spare x2 |
+| `orb.png` | 16x16 | 2 (12x12 orb centered, pulse) |
+
+Bullets must contrast with every background layer; enemy bullets are
+warm (Coral / pink / white cores), the player's bolts stay cool. Each
+boss reads as its own bug at 160x128 and differs from the Heisenbug in
+silhouette, not only color.
+
+### Probe (track D: `autopilot.zig`, `tools/difficulty.sh`)
+
+Bots drive the ship through the normal input path (logged by history, so
+rewinds and the identity check work with them):
+
+- `turret` (1): holds A, never moves.
+- `sweep` (2): holds A; up 40 ticks, still 20, down 40, still 20, as the
+  M2 sweep.
+- `dodger` (3): holds A; danger map over a 2D grid of reachable positions
+  from predicted bullet / enemy positions over the next ~30 ticks; steers
+  to crates when safe. The seed of M8's attract autopilot. Never draws
+  from the world rng.
+
+`tools/difficulty.sh` runs each bot in endless probe mode from a fresh
+game for the full four stages (plus loop-2 stage 1) and prints one table:
+per bot and stage, hits, seconds to clear (boss time separately), rank at
+the stage's end, weapon and forks at the stage's end, and whether the boss
+was killed or escaped. Deterministic: same build, same table.
+
+Wasm exports track A adds: `debug_probe()` (toggle, returns the flag),
+`debug_hits()` (probe hits so far), `debug_rank()`, `debug_stage_index()`
+(stage + 4 x loop), `debug_next_stage()` (jumps to the start of the next
+stage: clears enemies, bullets and crates, checkpoints the history),
+`debug_bot(n)` takes an arg (0 = off) and `main.update` reads controls
+from `autopilot.controls(bot, tick)` while it is on (A ships a stub that
+returns no buttons; D implements).
+
+### Difficulty targets (the acceptance table)
+
+Hits per stage in endless probe mode (each hit is one rewind a real
+player would have spent):
+
+| Bot | Stage 1 | Stage 2 | Stage 3 | Stage 4 | Loop 2, stage 1 |
+|-----|---------|---------|---------|---------|-----------------|
+| turret | >= 12 | >= 20 | >= 30 | >= 40 | >= 40 |
+| sweep  | >= 6  | >= 12 | >= 20 | >= 30 | >= 30 |
+| dodger | 1..5  | more than stage 1 | more than stage 2 | more than stage 3 | >= stage 4 |
+
+Plus: no boss dies in under 15 s to any bot; the turret bot reaches each
+boss with the weapon at level 2 or more at least once (crates still
+come); the dodger, which is not a great player, gets through stage 1 with
+at most 5 hits (a first-time human with 3 rewinds can see the first
+boss).
+
+### Tracks
+
+- **Phase 1, in parallel** (git worktrees, disjoint files):
+  - **A engine** (Opus): `rank.zig`, `formations.zig`, `autopilot.zig`
+    (stub), `bullets.zig`, `patterns.zig`, `player.zig`, `pickups.zig`,
+    `collide.zig`, `world.zig`, `main.zig`, `rewind.zig` (messages),
+    `boss_hp.zig` (u16), `hud.zig` (boss bar u16, pause rank), and the
+    minimal `enemies.zig` edits to compile (Kind / BossId / fields, u16
+    HP, ported pattern calls, formation `lost` on cull, rank HP at spawn).
+    Stand-in art for the new sheets may be generated locally, never
+    committed. Old content keeps playing (stage 1 only) when A is done.
+  - **C art** (Opus): the sheets above.
+  - **D probe** (Opus): `autopilot.zig` and `tools/difficulty.sh`
+    against the interface above (with a local stub of A's exports until
+    A lands).
+- **Phase 2, after A and C are merged**: the lead moves the boss code
+  from `enemies.zig` into `bosses.zig` (mechanical), then in parallel:
+  - **B1 stages** (Opus): `waves.zig`, `enemies.zig`, `hud.zig` stage
+    text: four stage tables, the new regular kinds and the midboss,
+    rework of the five old kinds.
+  - **B2 bosses** (Opus): `bosses.zig`: the four bosses.
+  Both tune against `tools/difficulty.sh`.
+- **Phase 3**: lead integrates, tunes to the targets, benches; **E
+  harness and docs** (Opus): re-pin every `tools/scripts/` script to the
+  new game, new `m7_*` scripts (rank, power loss, split / aim identity,
+  formation drop, stage skip through all four bosses, boss timeout), the
+  GIF, `docs/RUNNING.md`.
+
+### Deviations (A)
+
+Track A (engine), 2026-10-04. Choices where the contract was silent, and
+the few places it was read loosely:
+
+- **Modules.** The rank formula and effects table are pure in
+  `rank_math.zig` (host tests in `zig build test`, wired next to
+  `boss_hp.zig` in this cart's `build.zig`); `rank.zig` feeds them from
+  the World. `BossId` lives in the pure `boss_hp.zig` (re-exported as
+  `enemies.BossId`) with `boss_hp.for_stage(stage) BossId`; boss HP is
+  `max_hp(id, loop) u16`, still 60 + 20 per loop for every boss, no cap.
+- **Mercy** is `world.w.mercy: u16` (saturating +80 in
+  `player.on_rewound_hit`), decayed by `rank.update()` at the top of
+  `simulate` (before `waves.update`) when `game_tick % 120 == 0`.
+- **Stage and loop until B1.** `waves.stage_count = 1`: every boss clear
+  moves the stage index on (`advance`: stage + 1, or stage 0 and loop + 1
+  after the last stage; `t = 0`) at the clear, so the next stage's rank
+  applies during the breather. With one table every clear is a loop (as
+  M6 counted it): loop 1 = rank +400 after the first boss, revenge on.
+  `debug_stage` still returns `loop`; `debug_stage_index` = stage + 4 x
+  loop. B1 sets `stage_count = 4`.
+- **`waves.next_stage()`** (`debug_next_stage`): clears enemies (the boss
+  too), enemy bullets, crates and formations (bolts and fx stay), moves
+  the stage on as a clear does (not a second time during the breather
+  after a clear, which already did), restarts the table at its first
+  entry; no +500, no fuel refill, no `stage_clears`. The export
+  checkpoints the history only while playing or paused.
+- **Event timing.** Events are collected while the pool moves and run
+  after it, in pool order, so children and fan bullets never move in
+  their spawn tick whichever slot they land in; the event bullet is culled
+  after its event. A split outside the field leaves nothing. A standing
+  bullet's heading is straight left. `aim` also clears `vmax` (the new
+  speed is the one). An `aim` fan with even `ev_n` keeps the bullet at
+  index (n - 1) / 2, the half step below the middle. `event_at = 0` never
+  fires. Turn, drag and accel are skipped when they are no-ops, so a
+  default bullet moves bit for bit as before.
+- **Cull** by shape: the center leaves x [-m, 160 + m) or y [8 - m,
+  128 + m), m = 4 (the M2 bounds), 8 for the orb.
+- **`cancel_all`** scores `10 * n` in one `add_score` and sparks at the
+  first 8 bullet centers in pool order.
+- **Emitter types**: counts `u32`, `step_256` / `span_256` `u32`, absolute
+  angles and phases `i32` (wrapping, so counter-rotation is a negative
+  step), `speed_step` and wall coordinates `f32`. `wall` with one bullet
+  puts it midway; its heading is exactly (-1, 0), not the table's angle
+  128. `ring_aimed`'s first bullet is the aim vector itself. `Shot.accel`
+  is not rank-scaled. `spawn_shot` computes the rank once per bullet.
+- **Formations.** `open(0, _)` returns 0; ids skip 0 and ids still in use.
+  Gnats of a string that do not fit in the enemy pool count as lost at
+  once, so the slot still frees. `formations.clear()` frees all.
+  `enemies.spawn_gnat_string(y, drop)`: every M6 string opens with
+  `drop = true` until B1's `Entry.formation`. A gnat leaving past x -8
+  and the off-field cull both call `lost`, as does a ram
+  (`collide.remove_offender`).
+- **Drops.** `player.gnat_kills` is replaced by `player.beetle_kills`
+  (every second beetle killed by a bolt drops). On a bolt kill the order
+  is: kill, `formations.killed`, the beetle drop, `rank.revenge`. The
+  M6 boss phase-change drop is kept until B2.
+- **Revenge** pellets carry the killed kind as `source` (its bug message);
+  the distance is to the ship's hitbox center; a boss never revenges (its
+  death is not a `.killed`).
+- **Probe mode.** Hits count in the World (`player.probe_hits`), so a
+  hold-B rewind un-counts what it rewinds (the bots never hold B). The
+  retry shield takes a hit first, as it would for a player; probe wins
+  over `god` when both are on; the grant is 60 ticks (`resume_invuln`).
+- **Bots.** `autopilot.controls(bot, world.w.game_tick)` replaces the
+  hardware/script controls in every state, title included (a bot holding
+  A starts a game); `debug_bot(n)` clamps n to 255 and returns it.
+  `tools/preview.mjs` gained `--call-at "T NAME:ARG"` (one integer
+  argument; the zero-argument form is unchanged).
+- **Extra test exports**: `debug_mercy()`, and `debug_spray()`, which
+  spawns a fixed set of engine bullets from (140, 64) (8 turning rounds, 2
+  orbs splitting into 6 pellets that split again into 3, 3 stop-and-go
+  pellets re-aiming as fans of 3, an accelerating capped needle) and
+  checkpoints; `tools/scripts/m7_identity` uses it to put splits, re-aims
+  and turns in flight across hold-B rewinds without new stage content.
+- **Placeholder kinds** (centipede .. herd) until B1: 16x16 (herd 32x32),
+  base HP 2 (herd 30), points 30 / 30 / 40 / 60 / 50 / 1000, fly left 1 px
+  per tick without firing, drawn with `bugs` cells 0-1 (the herd as 2x2
+  beetle cells).
+- **Weapons.** A ghost's level-1 FUZZER volley is one straight zap (no
+  jitter, no rng draw). BISECT angles stay 0, +10, -10, +20 by seeker.
+- **Power loss** runs in `step_rewind` after `restore` and
+  `invalidate_after`, before the invulnerability grant and the
+  checkpoint.
+- **Pause** panel rows moved up 2-4 px to fit `RANK nnn` (y 98; four
+  digits at 1000).
+- **Art.** Stand-in `shots.png` / `orb.png` were committed first so the
+  engine compiled; the merge of `bugs/m7-difficulty` (track C's sheets)
+  replaced them and their `build.zig` rows with track C's.
+- **Sizes**: `@sizeOf(World)` 10,520 (was 6,340); the World's defaults
+  are in `.data` as before (the bullet pool's `drag = 1` is non-zero).
+
+### Deviations (B2)
+
+Track B2 (bosses), 2026-10-04. All boss code is in `bosses.zig`; in
+`enemies.zig` only the `.boss` cases of `size`, `hittable`, the damage
+path (`bosses.damage`) and `boss()` (skips the phantom).
+
+**The common frame.** HP-gated phases, each with a limit (20 s, the
+final 30 s). A break (HP at the phase's threshold) runs
+`bullets.cancel_all()`, drops one crate at the boss, and rests 60 ticks
+(no fire; bolts are absorbed, no damage). A non-final phase that times
+out drops its HP to the threshold and moves on the same way without the
+crate. The final phase timing out flies the boss (and the phantom) off
+the right edge at 1.5 px per tick, not hittable, then
+`waves.boss_escaped()`. Death: `cancel_all`, the phantom pops, the M3
+explosion sequence, +500 and `waves.boss_cleared()`. Additions:
+
+- **Phase floor**: no phase breaks before 6 s (360 ticks): HP stops at
+  the threshold until then. This is what keeps a strong ship from
+  melting a boss (no boss under 15 s for any ship: 3 phases x 6 s + 2
+  rests = 20 s for the Heisenbug, 27 s, 27 s and 34 s for the others).
+- **Body boxes**: a boss's (x, y) is the top-left of its body box from
+  ASSETS.md M7 sheets (Mandelbug 14,12 32x25; Schrodinbug 8,10 35x35;
+  Bohrbug 6,13 40x33; the Heisenbug keeps its whole 48x48 cell), so bolts
+  and rams meet the body, not the legs; `draw_boss` draws the cell at the
+  box minus the offset. The wave still spawns the boss by its cell
+  position; the first update converts it.
+- **Telegraph**: a heavy volley (countdown A of a phase marked `heavy`)
+  shows the alt cell for its last 24 ticks (Mandelbug glow, Schrodinbug
+  pop-out, Bohrbug charge; the Heisenbug's teleport flicker is its own
+  tell, and it now also materialises for 16 ticks before it can be hit or
+  fire). No bullet spawns within 18 px of the ship's hitbox center
+  (walls check per bullet).
+- **Hit flash** on one frame in eight (under steady fire a boss flashed
+  on a quarter of the frames and hid the telegraph).
+- **State** fits the existing Enemy fields: `aux` is a packed struct (HP
+  phase, phase clock, rest, countdown B, a flag, phantom, init), `fire_tick`
+  countdown A, `ring_phase` countdown C or a second angle, `timer` the
+  movement clock, `aux2` per boss. Countdowns reload with
+  `rank.interval(base)`; counts add `rank.extra(k)`. No new Enemy or
+  World fields.
+- **Movement** keeps every boss near the middle third (Mandelbug +-12 px,
+  Bohrbug +-16, Schrodinbug bodies 4..32 px either side of y 68) so a ship
+  in line can hurt it; the Heisenbug keeps its M3 bob and teleport.
+- **Test hooks** (not World state, constant through a run, read once at
+  a boss's first update): `bugs_force_boss` / `bugs_force_phase`
+  (exported, so badge-bench can `--poke` them; wasm `debug_boss(id |
+  phase << 4)`), wasm `debug_boss_id`, `debug_boss_phase`,
+  `debug_boss_clock`. In `main.zig`, its own commit: `bugs_bench_stage`
+  (poke N > 0: every game starts in probe mode N - 1 stages on, at the
+  boss warning).
+
+**The bosses** (base intervals in ticks at rank 0; HP fractions are the
+phase's span):
+
+| Boss, HP | Phase (HP, limit) | Pattern |
+|---|---|---|
+| Heisenbug 320 | P1 100-66 %, 20 s | rotating ring of 12 (+4) rounds every 34; aimed 3-needle sniper line every 50; teleport every 300 |
+| | P2 66-33 %, 20 s | counter-rotating double spiral (2 pellet arms one way, 2 round arms the other) every 7; aimed ring of 12 (+4) at each reappearance; teleport every 240 |
+| | P3 33-0 %, 30 s | teleport every 120; at each reappearance a 16 (+4) pellet ring and a 5-needle sniper line; aimed 3 (+2) fan every 40 |
+| Mandelbug 480 | P1 100-75 %, 20 s | 3 orbs (fan) that split into 6 (+2) pellets at age 45, every 70 (telegraphed); aimed 3-pellet fan every 45; 2-pellet line from the proboscis every 26 |
+| | P2 75-50 %, 20 s | 3 orbs that split into 4 whose children split into 4 again (gen 1), every 90; 5 (+2) round fan every 40; pellet line every 30 |
+| | P3 50-25 %, 20 s | wall of 17 rounds with a weaving gap every 80; ring of 8 (+4) pellets that split into 3 at age 50, every 70; aimed pellet every 24 |
+| | P4 25-0 %, 30 s | 2 orbs splitting 3 x 3 (gen 1) every 80; split rings every 50; aimed 3-pellet fan every 24 |
+| Schrodinbug 240 | all | two bodies mirrored about y 68 (the real one on a side the rng picks at each phase); both fire, the lower one the y-flipped copy; a touched real body collapses (solid) until the next phase, a touched phantom bursts into an aimed 8 (+4) pellet ring and reforms for 90 ticks (no fire, not hittable) |
+| | P1 100-75 %, 20 s | per body a stop-and-go arc of 9 pellets (drag 0.95, re-aim at age 50) every 60; aimed round every 30 |
+| | P2 75-50 %, 20 s | crossing curtains: per body one round every 6, sweeping between down-left and left, the two streams crossing; stop-and-go ring of 10 (+2) per body every 90 |
+| | P3 50-25 %, 20 s | stop-and-go ring of 14 (+4) per body every 75; mirrored spirals every 8 |
+| | P4 25-0 %, 30 s | curtains every 7; stop-and-go ring of 12 (+4) per body every 90; 3-needle line every 40 |
+| Bohrbug 420 | P1 100-80 %, 20 s | wall of 17 rounds every 60 whose gap tracks the ship but sits 20 px above it, then below, alternating (at most 30 px from the last gap): a ship that sits still meets the wall; horn needle every 20; 3-pellet fan every 50 |
+| | P2 80-60 %, 20 s | double flowers: rings of 12 (+4) fast pellets and slow rounds half a step apart, rotating, every 40; horn needle every 32 |
+| | P3 60-40 %, 20 s | stop-and-go rain: one pellet every 4 thrown left over a cone at 1.2-2.2, braked, re-aimed at age 64 (a golden-ratio walk, no rng); 5 (+2) needle fan every 70 |
+| | P4 40-20 %, 20 s | 3-arm spiral every 5 whose bullets curve (turn 2/256 a tick for 40 ticks), the curl flipping every 4 s; 4-needle sniper line every 80 |
+| | P5 20-0 %, 30 s | the wall every 90, a 2-arm curving spiral every 7 and the rain every 9 at once |
+
+The Mandelbug and Bohrbug walls share `weave_gap`. HP is far below the
+contract's 500 / 800 / 900 / 1600: a turret bot is hit about once a
+second, so the power loss keeps it at level 1, and with the bosses
+moving it deals only 3-9 damage a second; the contract HPs made every
+turret fight time out. The phase floor, not HP, sets a strong ship's
+time.
+
+**Measured** (endless probe mode, a boss reached by `debug_next_stage`
+x k + `debug_warp` with `waves.stage_count` set to 4 locally, so each
+boss fights at its stage's rank; the bot starts the fight at weapon
+level 1-2; seconds from spawn to gone; hits during the fight; bullet
+peaks per tick):
+
+| Boss | turret s / hits | sweep s / hits | dodger s / hits | pool peak |
+|---|---|---|---|---|
+| Heisenbug | 47 / 27 | 62 / 27 | 23 / 0 | 56 (P2) |
+| Mandelbug | 50 / 38 | 91 escaped / 51 | 28 / 0 | 98 (P2) |
+| Schrodinbug | 51 / 37 | 57 / 29 | 30 / 0 | 89 (P3) |
+| Bohrbug | 50 / 35 | 91 / 54 | 32 / 0 | 80 (P2) |
+| Bohrbug, loop 2 | 63 / 47 | 105 / 63 | 42 / 1 | 73 (P5) |
+
+The dodger (track D's, run locally) is not hit by any loop-1 boss: it
+reads every bullet's future including drag; the bosses are dense enough
+to hit the turret about once a second and the sweep 30-60 times a fight.
+
+**badge-bench** (calibrated busy ms; each boss forced into its busiest
+phase with `--poke bugs_bench_stage=2 --poke bugs_force_boss=K --poke
+bugs_force_phase=P`, so loop 1 at rank ~400, a turret holding A from 30
+and B held 800..859; 1300 updates, the fight from about 460):
+
+```
+badge-bench/bench.sh zig-out/firmware/snouty-bugs.elf --frames 1300 --press A:30-1299 \
+    --press B:800-859 --poke bugs_bench_stage=2 --poke bugs_force_boss=3 \
+    --poke bugs_force_phase=4 --symbols
+```
+
+| Boss, phase | fight mean | worst outside the hold | worst in the hold | hold frames > 14 ms |
+|---|---|---|---|---|
+| Heisenbug P2 | 8.99 | 9.94 | 14.86 | 6 of 60 |
+| Mandelbug P2 | 9.91 | 10.80 | 17.33 | 27 |
+| Schrodinbug P3 | 9.71 | 10.55 | 16.10 | 22 |
+| Bohrbug P5 | 9.59 | 10.07 | 16.62 | 23 |
+
+Playing frames stay under 11 ms; the hold-B frames go over the 14 ms
+target by up to 3.3 ms. A hold frame restores a keyframe and replays up
+to 59 ticks; with 80-100 bullets and a full bolt pool each simulated
+tick costs about 0.12 ms (bullet moves and events, the bolt-vs-enemy and
+bullet-vs-ship passes), so the catch-up, not the boss code, is the cost.
+Levers for the lead (outside this track's files): keyframes every 30
+ticks (SPEC.md 13.1's fallback), or the pool at 112 / 96 per the
+decision above.
+
+### Deviations (B1)
+
+Track B1 (stages), 2026-10-04. `waves.zig`, `enemies.zig` (not the boss
+lines), `hud.zig` stage text. Every number below is a knob at the top of
+`enemies.zig` or in the stage tables.
+
+- **Fire on countdowns.** Every regular fire program runs on a countdown
+  (`aux`, a second one in `fire_tick`) reloaded at fire time, so a rising
+  rank never shifts a modulus. A countdown at 0 waits until the emitter is
+  inside the field; a volley is skipped (and the countdown reloaded) when
+  the emitter is within 22 px of the ship's hitbox center, so bullets never
+  spawn on the ship. Reload = `rank.interval(base) x pace / 16`, with
+  **pace** 16 / 9 / 9 / 7 for stages 1-4 and a third of that from the
+  second loop (`stage_pace`, `loop_pace`): the content's own difficulty
+  curve on top of the rank. The rank alone could not carry it: the probe
+  showed the dodger, once powered up, killing everything as it enters, and
+  the mercy term (+80 per hit, -1 per 2 s, uncapped) pins a struggling
+  player's rank at 0 for minutes, which also cancels loop 2's +400.
+- **Enemy fields.** `Enemy` gains `pattern: u8` (the program) and `edge`.
+  `Phase` gains `warn`, `jump`, `land`, `loop`, `husk`, `hold`. `spawn`
+  keeps its signature (program 0, right edge); `spawn_ex(kind, x, y,
+  delay, pattern, edge, variant)` is the full one; `spawn_gnat_string(y,
+  drop)` stays, `spawn_gnat_string_ex(x, y, id, pattern)` and
+  `spawn_centipede(y, id, pattern)` are new, `herd_alive()` is what the
+  table clock waits on.
+- **Kill hooks.** `damage()` at 0 HP calls `regular_death()` for regular
+  kinds (the boss lines are untouched): a zombie's first death turns it
+  into a husk and returns `.alive`; the herd's death runs
+  `bullets.cancel_all()`, drops two crates 20 px apart and a big explosion,
+  then returns `.killed` so `collide.kill` scores the 1,000.
+  `Enemy.hittable()` is false for a flea behind its chevron and a husk
+  (neither shot, rammed nor steered at by seekers). Points: centipede head
+  100, segment 20, flea 40, ladybug 30, mite 60, zombie 50 (+25 for the
+  husk), herd 1,000.
+- **HP above the contract's.** Stage 1 asked beetle 12, spider 6, moth
+  5; stage 2 centipede 10 + 4, mite 16, herd about 300. With those, a
+  powered ship killed everything before its first volley; the table below
+  has the numbers used (wasp 2 as asked).
+- **Big-bug flash.** The herd flashes on the first tick of a hit only
+  (under constant fire it was white all the time).
+
+Kinds (base HP x `rank.hp`, base intervals in ticks before pace and rank;
+p = `pattern`):
+
+| Kind | HP | Movement | Fire |
+|------|----|----------|------|
+| gnat | 1 | strings of 5, 1 px/tick, wobble 8 (p2: 14) | p0 none; p1 aimed pellet crossing x 120; p2 crossing x 136 and 84 |
+| wasp | 2 | threes in a vee; in at 2.5 to x 120 (or from the top / bottom edge to y 22 / 90), 20-tick pause, charge | on stopping: aimed 3-fan of pellets (p1+: 5-fan) |
+| beetle | 24 | in at 0.5 to x 112 (p2: 136), sits 240, leaves | every 24: p0 aimed 5-fan of rounds (+ rank.extra(2)); p1 fan / rotating 10-ring alternating; p2 (every 60) a 13-round wall, gap 26 px opening 48 px from the ship's y; p3 fan / aimed orb that splits into 6 pellets at age 50 |
+| spider | 12 | drops from the top, hangs 180 at y 24..72, climbs | every 18: 5-arc (8/256 apart) around a middle that sweeps 128 +- 40 (a sprinkler); p1 7 faster pellets |
+| moth | 8 | M2 wander (rng), 600 ticks | p0 aimed needle pairs every 20; p1 a 6-ring of stop-and-go pellets every 45 (drag 0.93, re-aim at age 40) |
+| centipede | head 24, segment 8 | head + 5 segments on one sine path (0.6 px/tick, amplitude 16, p1 28), each 14 ticks behind | the ripple: every 50, head first, each segment 6 ticks later; p0 aimed pellet; p1 aimed 3-fan; p2 the head an aimed 10-ring |
+| flea | 12 | 30-tick chevron at the left edge on its line, then jumps in from behind (vx 1.1, gravity 0.09, jumps vy -2.5, p1 -3.0, 12 ticks on the ground) | at each apex: p0 aimed 3-fan of pellets; p1 8-ring; p2 sniper line of 3 needles |
+| ladybug | 6 | fours from the top or bottom edge, 1.6 px/tick, drifting 0.4 left; one loop of radius 18 (64 ticks; p1 two), out the far edge | a ring of 10 (+extra) at the top of each loop; p2 12, plus an aimed pellet as the loop starts |
+| mite | 36 | locked to the near layer's scroll (integer steps of `bg.tick`), feet on the lower of the layer's tops under its feet, 1 px/tick steps | from the muzzle: needle bursts of 3 (p1 4), 6 apart, every 60; a 5-fan (p1 7) of pellets up-left every 70 |
+| zombie | 16 | 0.55 px/tick left on a slow sine (amplitude 10) | every 35: p0 aimed 3-fan of rounds; p1 5-fan of pellets. First death: husk (cell 10 dithered, drifts 0.5), revives after 90 with half HP and a 12-ring of pellets |
+| herd | 400 / 520 / 640 (v1-v3) | in to x 112, holds 25 s bobbing +- 16, leaves right | a gnat string from the egg row every 120 (gnat program = version + 1, so they fire); flowers every 50 / 42 / 36: two rings of 10 (v3: 12) + extra, half a step apart, pellets 1.2 and rounds 0.7; v2+ every third slow ring stops and re-aims; v3 also an aimed 3-needle line every 70 |
+
+Stages (each about 70 s of waves, WARNING at 72 s on the table clock,
+the boss at 78 s; the herd entry at 35 s holds the clock while she lives):
+
+| Stage | New | Ideas |
+|-------|-----|-------|
+| 1 UNIT TESTS | gnat, wasp, beetle, spider, moth | wasp threes, beetle fans, spider sprinklers, needle pairs; strings fire from 20 s; two crate strings and a last one on the spawn line |
+| 2 INTEGRATION | centipede, ladybug (top and bottom), flea | ripples, loops with rings, crossfire from behind (flea pairs at 16, 30, 57 s), pace 9/16; herd v1; beetle p1 rings, wasp 5-fans from above |
+| 3 STAGING | mite, zombie, walls (beetle p2) | fire from the ground, revivals, walls with far gaps, stop-and-go rings, two kinds per wave; herd v2 |
+| 4 PRODUCTION | splitting orb beetle (p3) | everything at pace 7/16: ladybug fours from both edges at once, walls from the right while fleas come from behind, wasps from top and bottom; herd v3 |
+| loop 2 | | the same tables at a third of the pace, every gnat string fires, the herd one version up, and stage 1 adds a loop table (fleas, mites, ladybugs, zombies) |
+
+- **Formations** are on a few waves per stage (the first centipede or
+  ladybug four, a gnat string or two, and a last dropping string at 69 s
+  on the spawn line, y 58, so the turret bot meets a boss powered up at
+  least once). With every gnat string dropping, the probe saw 10-23
+  crates a stage; now 2-7, plus the beetle rule and the herd's two.
+- **Entry.** `pattern`, `formation`, `edge` (top / bottom for wasps and
+  ladybugs; fleas always left; others the right), `dy` (vee offsets 0,
+  -dy, +dy, ...). `y` is the coordinate along the edge. `State` gains
+  `next_loop` for the loop tables.
+- **Scripts.** `tools/scripts/m7_stages` warps through the four tables
+  and into loop 2 in probe mode with a B hold in each, pinning
+  `debug_history_check == 0` every 10 updates (1,126 checks).
+  `m7_bosses`' outcome pins were re-pinned for four stages (the
+  Heisenbug dies at about 1650, the Bohrbug is killed rather than
+  escaping); its id, phase and identity pins hold.
+- **HUD.** `STAGE n` (y 52) and the name (y 62, Coral) for the first 120
+  ticks of each table, `LOOP n` above (y 40) from the second loop; `+500`
+  or `ESCAPED` for 60 ticks after the boss. The old `STAGE n` after a
+  clear is gone (the pop replaces it).
+
+Probe (`tools/difficulty.sh` from bugs/m7-probe, used locally, not
+committed by B1; B2's four bosses merged), hits per stage, boss fights
+included:
+
+| Bot | S1 | S2 | S3 | S4 | L2 S1 |
+|-----|----|----|----|----|-------|
+| turret (target >= 12/20/30/40/40) | 70 | 110 | 109 | 117 | 89 |
+| sweep (>= 6/12/20/30/30) | 81 | 112 | 113 | 145 | 71 |
+| dodger, one game (1..5, then rising) | 1 | 7 | 8 | 22 | 30 |
+| dodger, a fresh game warped to each stage | 1 | 13 | 21 | 29 | 29 |
+
+The dodger is chaotic: a hit costs a level and a fork and adds mercy, so
+small changes swing a chained run by 10 hits a stage; the fresh-start row
+(F1, no forks, `debug_next_stage` at the start) is the steadier curve.
+The turret reaches the stage-3 boss at A2 and the stage-4 boss at B2.
+Peaks: 20 of 24 enemies; the 128-bullet pool is full at moments in
+stages 2-4 and loop 2 for every bot (mean on screen: stage 1 20-33,
+stage 4 70-80), so later patterns are clipped by the pool there.
+
+Bench: badge-bench on a stage-4 build (a local edit started the game in
+stage 4 with god mode, not committed), the m7_stages sweep holding A from
+update 30, B held at 1700..1719 (28 s into PRODUCTION, the pool full at
+moments, 84 bullets on screen on average, up to 14 enemies), after the
+merge of B2's sprite speedup: mean 3.54 ms, p95 4.01 ms, worst 15.56 ms
+on the first hold-B frame (93 % of the budget, 0 frames over); without
+the hold the worst frame is 4.67 ms. A 100-frame hold at 15 s
+(900..999) peaks at 17.9 ms (6 frames over). The hold frames are the
+history replay of up to 59 ticks: B1's per-tick code is small
+(`enemies.update` about 800 cycles a tick, the fire countdowns about
+600), the replay is dominated by the engine's per-tick collision and
+bullet passes, which grow with the full bullet pool. So the 14 ms target
+for a hold-B frame is missed by 1.6 ms in a full stage-4 wave; the
+contract's fallback (pool 112 or 96) or fewer keyframe ticks to replay
+are the levers, not stage content. Iterating arrays by value (`for
+(world.w.enemy_bullets) |b|` copies the array) costs about 0.25 ms of
+memcpy a frame in `bullets.zig` (tried locally by pointer: mean 3.54 ->
+3.30 ms, worst unchanged; not committed, engine file).
+
+### Tuning (lead's pass)
+
+Lead, 2026-10-04, branch `bugs/m7-tune`. The merged M7 overshot: the
+dodger (`skill` 0.5) took 28 / 46 / 54 / 60 / 47 hits in the five rows of
+`tools/difficulty.sh` and met every boss at weapon level 1-2. Targets
+for this pass (seed 1, bots unchanged): dodger 3-6 / 6-11 / 9-15 / 12-20,
+loop 2 at least stage 4 minus 2, strictly rising; dodger weapon >= 2 at
+the stage-2 boss and >= 3 at the stage-3 or stage-4 boss; turret >= 20 /
+30 / 40 / 50 and sweep >= 12 / 20 / 30 / 40; waves 70-85 s, boss fights
+20-60 s for the dodger, no boss under 15 s for any bot.
+
+**What the probe showed.** The dodger's hits follow its blind spot: it
+never notices a quarter of the bullets and stays put unless it sees a
+threat, so nearly every hit is an *aimed* bullet it did not see. Its hit
+count tracks the number of aimed bullets (re-aims included), not the
+number of bullets on screen: at a quarter of the merged fire rate it
+still took 5 hits in stage 1 and 24 in stage 4. Halving the countdown
+fire took only a quarter off. So the pass thins aimed fire and keeps the
+patterns that are not aimed (rings, sprinklers, curtains, spirals). The
+other findings: a leaving beetle crawled across the whole field firing
+point-blank; beetle walls opened their gap 48 px away, out of reach of a
+22-tick plan; ladybugs looped right on the ship's column; the 25-s herd
+held the table clock so stages 2-4 lasted 107 s; and power snowballs in
+both directions (a hit costs a level, a level kills faster), so one
+seed's runs swing by 5-10 hits a stage.
+
+**What changed** (every number is a knob at the top of its file):
+
+- `enemies.zig` fire pace. `stage_pace` 16 / 9 / 9 / 7 -> **56 / 32 / 40
+  / 56** sixteenths (PRODUCTION's table is the busiest and its rank base
+  is 450, so it needs the slowest countdowns), and a **stage shape**
+  (`ramp`): intervals start at 28/16 of the pace, tighten to 16/16 at
+  50 s, then ease to 26/16 over the last 14 s (a lull before the WARNING
+  to collect the last crates). Loop 2 keeps `loop_pace` 2/6.
+- **`member_stride` 3 / 2 / 2 / 1** (all from loop 2): the fire that is
+  not on a countdown is thinned the same way: only every n-th gnat of a
+  string (each now knows its place, `variant`), wasp of a vee and ladybug
+  of a four fires, and a flea fires at every n-th apex.
+- **No point-blank fire**: `safe_radius` 22 -> 40; a leaving beetle holds
+  its fire; beetle walls open their gap 28 px from the ship (was 48).
+- Aimed fire: zombies every 50 (35), revive ring 8 (12); stop-and-go moth
+  ring 4 (6) every 60 (45); the plain spider's sprinkler (not aimed)
+  every 10 (18), its p1 every 18.
+- Regular HP (the dodger aims, the turret does not, so this separates
+  them): beetle 6 (plain) / 14, spider 8 / 8, moth 6 / 6, centipede head
+  14 / segment 5, flea 8, mite 20, zombie 10 (were 24, 12, 8, 24 / 8, 12,
+  36, 16).
+- Herd: stays 12 s (25), HP 80 / 100 / 120 (400 / 520 / 640), so a
+  powered ship kills her for the two crates. `waves.zig`: the WARNING is
+  per stage, **72 s in stage 1 and 64 s in stages 2-4** (the herd's hold
+  comes on top); the stage 2-4 entries after the herd are compressed from
+  35-69 s into 35-61 s. Ladybug fours enter at x 100-136 (were 70-130).
+- Crates (`drop sources`): every beetle killed by a bolt drops (was every
+  second); more formations: 5 more gnat strings in stage 1, 3 in stage 2,
+  and in stages 3-4 every gnat string, ladybug four and zombie group, plus
+  a crate string at 57 s. The dodger now sees 14 / 14 / 21 / 16 / 14
+  crates a stage and gains about 5 weapon levels a stage from them
+  (24-seed means).
+- Rank (`rank_math.zig`): **50 per weapon level and 50 per fork** (25 and
+  30): the designed stabiliser, so a powered ship meets a harder game.
+  Structure, mercy (80 per hit, cap 240) and the effects table unchanged;
+  host tests updated.
+- Bosses (`bosses.zig`): `boss_pace` **40 / 24 / 24 / 40** sixteenths
+  (Heisenbug, Mandelbug, Schrodinbug, Bohrbug; loop 2 at 12/16 of that),
+  and the *aimed* volleys slowed against the rest: Heisenbug P1 line every
+  100 (50), P3 fan every 80 (40); Mandelbug P1 fan 80 (45) and line 60
+  (26), P2 fan 70 (40) and line 60 (30), P3 / P4 aimed shots 50 (24);
+  Schrodinbug P1 aimed round 60 (30), P4 needle line 80 (40); Bohrbug P1
+  horn needle 45 (20) and fan 80 (50), P2 needle 60 (32), P4 line 120
+  (80). `boss_hp.zig`: Heisenbug 360 (320), Mandelbug 360 (480), Bohrbug
+  340 (420), Schrodinbug 240; a weak ship's fight is shorter, the phase
+  floor still holds a strong one.
+- Probe tools: wasm `debug_seed(n)` seeds the world rng of every new game
+  (0 = the clock) and `tools/difficulty.sh --seed N` uses it for N != 1
+  (before, every seed played the same game); `debug_last_hit` (kind + 1,
+  +100 for a ram) says what the last probe hit was.
+
+**Seed 1** (`tools/difficulty.sh`, final):
+
+```
+bot     stage  hits   secs  boss s  boss hits  boss    phases  rank  wpn@boss  wpn  forks
+turret  L1S1     50  137.1    58.1         22  killed       3     0        F1   A1      0
+turret  L1S2     55  119.4    35.8         22  killed       4    21        A2   B1      0
+turret  L1S3     72  129.4    43.7         27  killed       4   177        F2   F1      0
+turret  L1S4     73  123.3    36.0         19  killed       5   319        A2   B1      0
+turret  L2S1     78  144.5    63.5         23  killed       3   284        F2   F1      0
+sweep   L1S1     20  123.2    44.1         10  killed       3     0        B1   B1      0
+sweep   L1S2     68  165.5    84.2         36  killed       4    33        F1   F1      0
+sweep   L1S3     78  162.4    75.1         36  killed       4   184        F1   A1      0
+sweep   L1S4     47  121.2    34.0          9  killed       5   319        B1   B1      0
+sweep   L2S1     64  151.8    71.8         25  killed       3   282        A1   A1      0
+dodger  L1S1      4   98.2    19.2          0  killed       3    13        A2   B2      1
+dodger  L1S2     10  106.7    32.3          7  killed       4    17        F3   A1      0
+dodger  L1S3     15  114.6    31.4          6  killed       4   177        B3   F1      0
+dodger  L1S4     19  120.6    33.4          5  killed       5   378        F2   A1      1
+dodger  L2S1     23  116.5    35.5          1  killed       3   293        B1   F1      0
+```
+
+**Seeds 2 and 3**, dodger (hits, boss s, wpn@boss):
+
+| Seed | L1S1 | L1S2 | L1S3 | L1S4 | L2S1 |
+|---|---|---|---|---|---|
+| 2 | 4, 19.2 s, A2 | 10, 29.1 s, F5 | 8, 21.0 s, F4 | 23, 29.6 s, B2 | 15, 24.4 s, A1 |
+| 3 | 6, 29.7 s, A1 | 3, 22.6 s, F5 | 11, 22.1 s, B3 | 21, 30.9 s, F3 | 28, 45.9 s, B2 |
+
+**24 seeds** (mean hits, sd; dodger waves / boss seconds; median weapon
+at the boss). One seed is one chained game, and the power snowball makes
+single seeds swing; the means are the steadier curve:
+
+| Bot | L1S1 | L1S2 | L1S3 | L1S4 | L2S1 |
+|---|---|---|---|---|---|
+| dodger 0.5 | 5.3 (1.6) | 8.7 (4.6) | 9.7 (4.9) | 19.0 (6.4) | 21.2 (4.8) |
+| waves / boss s | 78 / 24 | 75 / 29 | 80 / 27 | 85 / 33 | 80 / 45 |
+| wpn@boss median | 2 | 4 | 3 | 2 | 1 |
+| dodger 0.25 | 9.5 | 18.8 | 16.5 | 29.3 | 30.0 |
+| dodger 0.75 | 4.3 | 2.4 | 2.5 | 4.6 | 4.7 |
+| turret | 46.8 | 56.0 | 63.1 | 76.8 | 80.5 |
+| sweep | 20.6 | 58.0 | 66.5 | 51.8 | 58.9 |
+
+Skill 0.25 and 0.75 (the knob edited locally, not committed), seed 1:
+0.25: 11 / 28 / 20 / 28 / 24 hits; 0.75: 2 / 2 / 1 / 6 / 3 (it reaches
+level 5 by the stage-2 boss and cruises; its boss fights are 18-27 s,
+the phase floor).
+
+Boss fights: the shortest of any bot in these runs is about 17 s (the
+Heisenbug against the skill-0.25 and 0.75 dodgers); at skill 0.5 the
+Heisenbug takes 19-37 s (19.2 s on seed 1: P1 and P2 at the 6-s floor
+and a short P3), loop 2's 25-64 s. Bullets on screen during the waves
+for the dodger: mean 4 / 4 / 12 / 20 / 26 (24 seeds), peaks 20 / 65 / 49
+/ 81 / 112 (one run).
+
+**badge-bench** (calibrated busy ms, turret holding A, two 90-frame B
+holds): stage 4 from its first wave (`--poke bugs_bench_stage=4 --poke
+bugs_bench_waves=1`, B 2400-2489 and 3600-3689, 4800 frames) mean 3.01,
+worst 7.55 (a hold frame); loop 2 stage 1 (`bugs_bench_stage=5`) mean
+3.25, worst 9.18; the Bohrbug's final phase (`bugs_bench_stage=4
+bugs_force_boss=3 bugs_force_phase=4`, B 800-889) mean 2.90, worst 6.70.
+0 frames over 14 ms.
+
+Regression scripts: `m7_identity` and `m7_stages` pass unchanged;
+`m7_bosses`' Heisenbug clear moved from ~1650 to ~1830, pinned at 1900;
+every `debug_history_check` pin is 0. m1-m6 still fail on balance pins
+only (no trap, no identity failure) for the re-pin track.
+
+### Verification for M7
+
+- `tools/check.sh` all green; `debug_history_check == 0` on every frame of
+  a probe run through all four stages and on frames with splitting,
+  turning and re-aiming bullets in flight, during a hold-B and after an
+  auto-rewind resume with the power loss.
+- `tools/difficulty.sh` table meets the targets; the table goes in the
+  status entry.
+- badge-bench: the stage-4 boss's busiest phase with a hold-B rewind in
+  it, worst frame under 14 ms; mean reported. RAM total (text + data +
+  bss) reported, under 160 KB.
+- `zig build test` (host tests: rank formula, boss HP table).
+- `docs/preview_m7.gif`: a stage-1 wave, then each boss's busiest phase
+  (via `debug_next_stage`).
+
 ## Status
 
 - 2026-09-26: M0 scaffold committed. M1 plan written; stand-in sheets
@@ -1181,3 +2099,23 @@ Track A, 2026-10-02. Choices where the contract was silent or ambiguous:
   no longer needs its holds to survive, so the game got easier for a
   player who collects (balance pass still pending a human). Next: M7
   attract mode (the autopilot should collect crates and hold B).
+- 2026-10-04: Adrian: the game is far too easy, especially holding A with
+  powerups; make it a real bullet hell with patterns that escalate as the
+  game goes on (1942, Raiden X). Measured: an up/down sweep holding A was
+  touched once in 3 minutes and cleared two loops. M7 "Bullet hell for
+  real" planned above (rank, four stages, new bugs and bosses, pattern
+  engine, powerup cuts, difficulty probe). Attract mode becomes M8,
+  polish M9.
+- 2026-10-04: M7 built and tagged `snouty-bugs/m7` (`docs/preview_m7.gif`).
+  Tracks A (pattern engine, rank, power loss), B1 (four stages), B2 (four
+  bosses), C (art), D (probe bots, `tools/difficulty.sh`), the lead's
+  tuning pass and E (re-pinned gate, m7_rank/m7_power/m7_drops/m7_escape)
+  all merged. `tools/difficulty.sh` seed 1, hits per stage L1S1..L1S4,
+  L2S1: dodger 4/10/15/19/23 (24-seed means 5.3/8.7/9.7/19.0/21.2),
+  turret 50/55/72/73/78, sweep 20/68/78/47/64 (before M7: the sweep was
+  touched once in 3 minutes). Boss fights 17-64 s, none under 15 s.
+  badge-bench, A held and B held 90 frames: worst 9.18 ms (loop 2 stage
+  1), stage 4 waves 3.01 mean / 7.55 worst, bosses 6.2-7.4 ms worst; 0
+  frames over budget. ELF 112.6 KB text + 10.7 KB data + 85.6 KB bss =
+  208.9 KB (cap 220 KB). Gate: 27 scripts green, host tests, check-float.
+  Next: M8 attract mode.

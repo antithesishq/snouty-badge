@@ -1,7 +1,13 @@
-# m3_boss: the M2 sweep, plus the wasm test hooks: god mode at 31 (hits are
-# ignored) and warp at 32 (waves jump to the 66 s WARNING). Boss spawns 393 (phase 2), fights
-# from ~457. Since M6 its first fire phase change (240 fighting ticks, update 697) drops a
-# crate, the F of the drop sequence, which the sweep collects at 841: twin zaps (F2), so the
-# boss's HP runs out at 922 instead of ~1008. Death sequence, then "+500" and "STAGE 2" at
-# 983 (phase 3, stage_clears 1), waves resume at 1103 (phase 0).
---frames 1400 --call-at "31 debug_god" --call-at "32 debug_warp" --dump-exports debug_state,debug_stage,debug_stage_clears,debug_boss_hp,debug_phase,debug_score --at "100 debug_phase == 1" --at "500 debug_boss_hp > 0" --at "500 debug_phase == 2" --at "696 debug_drops == 0" --at "697 debug_drops == 1" --at "840 debug_weapon == 1" --at "841 debug_weapon == 2" --at "982 debug_stage_clears == 0" --at "983 debug_stage_clears == 1" --expect "debug_stage_clears == 1" --expect "debug_stage == 1" --expect "debug_state == 1" --expect "debug_score > 500"
+# m3_boss: the M2 sweep, plus the wasm test hooks: god mode at 31 (hits are ignored) and warp
+# (waves jump to the boss WARNING). Re-pinned for M7: the Heisenbug has 360 HP in three HP
+# phases with a 6 s floor each, so the F1 ship that the old warp at 32 brought could not
+# break a phase (P1 timed out after 20 s); the warp is at 1700 now, after the sweep has
+# collected F2 (900) and F3 (1653) in stage 1. WARNING at 1700 (phase 1), the boss spawns at
+# 2061 (phase 2, boss id 0, HP phase 0). Its first HP break (2484, at the 6 s floor) cancels
+# the bullets and drops crate 4 (drops 3 -> 4, +70 for the cancelled bullets), a fork, which
+# the sweep collects at 2622; the second break (2939) drops crate 5, the A, collected at 3136
+# (F3 -> A3). HP out at 3601, death sequence, then "+500" at 3662: stage_clears 1, the stage
+# index moves on to stage 2 (INTEGRATION; debug_stage, the loop, stays 0), and its table
+# starts at 3782 (phase 0). (Until M7: warp at 32, an F crate at the first fire-phase change
+# collected at 841, clear at 983, debug_stage 1.)
+--frames 4000 --call-at "31 debug_god" --call-at "1700 debug_warp" --dump-exports debug_state,debug_stage,debug_stage_index,debug_stage_clears,debug_boss_hp,debug_phase,debug_score --at "100 debug_phase == 0" --at "1699 debug_weapon == 3" --at "1700 debug_phase == 1" --at "2060 debug_boss_id == 255" --at "2061 debug_phase == 2" --at "2061 debug_boss_id == 0" --at "2483 debug_boss_phase == 0" --at "2483 debug_drops == 3" --at "2484 debug_boss_phase == 1" --at "2484 debug_drops == 4" --at "2484 debug_bullets == 0" --at "2621 debug_forks == 0" --at "2622 debug_forks == 1" --at "2939 debug_boss_phase == 2" --at "2939 debug_drops == 5" --at "3135 debug_weapon == 3" --at "3136 debug_weapon == 13" --at "3600 debug_boss_hp > 0" --at "3601 debug_boss_hp == 0" --at "3661 debug_stage_clears == 0" --at "3662 debug_stage_clears == 1" --at "3662 debug_stage_index == 1" --at "3781 debug_phase == 3" --at "3782 debug_phase == 0" --expect "debug_stage_clears == 1" --expect "debug_stage_index == 1" --expect "debug_stage == 0" --expect "debug_state == 1" --expect "debug_score > 500"

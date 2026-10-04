@@ -1,3 +1,6 @@
-# m4_identity_boss: m3_boss's input (god + warp): identity through the boss fight, a teleport
-# (about 757..797), the death sequence (1008..1068) and the stage clear.
---frames 1400 --call-at "31 debug_god" --call-at "32 debug_warp" --dump-exports debug_state,debug_stage_clears --at "500 debug_history_check == 0" --at "800 debug_history_check == 0" --at "1030 debug_history_check == 0" --at "1100 debug_history_check == 0" --at "1300 debug_history_check == 0" --expect "debug_stage_clears == 1"
+# m4_identity_boss: m3_boss's input (god at 31; since M7 the warp is at 1700, see m3_boss):
+# identity through the Heisenbug's three HP phases (breaks at 2484 and 2939, each cancelling
+# the bullets and dropping a crate), its teleports, the death sequence (HP out at 3601, clear
+# at 3662) and the breather into stage 2 (its table from 3782). 0 on every frame from 31 when
+# re-pinned.
+--frames 3950 --call-at "31 debug_god" --call-at "1700 debug_warp" --dump-exports debug_state,debug_stage_clears --at "1800 debug_history_check == 0" --at "2100 debug_history_check == 0" --at "2484 debug_history_check == 0" --at "2485 debug_history_check == 0" --at "2800 debug_history_check == 0" --at "2939 debug_history_check == 0" --at "3200 debug_history_check == 0" --at "3500 debug_history_check == 0" --at "3630 debug_history_check == 0" --at "3662 debug_history_check == 0" --at "3700 debug_history_check == 0" --at "3800 debug_history_check == 0" --at "3949 debug_history_check == 0" --expect "debug_stage_clears == 1"

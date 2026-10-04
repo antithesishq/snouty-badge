@@ -1,12 +1,15 @@
 # m6_retry_hc: m6_retry in hardcore mode, where a hit is paid from the fuel bar, so the
-# shield's "no fuel spent" shows. Same input as m2_play except B (not A) on the title at 30,
-# which starts a hardcore game (hardcore 1, rewinds 0). The world is the same as m6_retry's
-# (no hit lands before 4726 either way), so the numbers line up with it:
-# - 3625: shield 0 -> 1. 4726 (tick 4619): the shield absorbs the hit with fuel 180: fuel
+# shield's "no fuel spent" shows. Same input as m6_retry (god 31..5000, RIGHT 5150..5200)
+# except B (not A) on the title at 30, which starts a hardcore game (hardcore 1, rewinds 0).
+# The world is the same as m6_retry's (no hit lands before 5126 either way), so the numbers
+# line up with it (re-pinned for M7 with it):
+# - 2429: shield 0 -> 1. 5126 (tick 5019): the shield absorbs the hit with fuel 180: fuel
 #   stays 180, state 1, shield 0.
-# - 4786 (tick 4679): an unshielded hit costs the auto rewind's depth: 120, fuel 180 -> 60,
-#   target 4559. The playback restores the shield, resume at 4866 with fuel 60.
-# - 4926 (tick 4619 again): absorbed with fuel 66 (6 refills since the resume); fuel is
-#   still 66 on that update (67 at 4927 is the next refill), state 1.
-# - 4986 (tick 4679): unshielded hit with fuel 72: depth 72, fuel 0, target 4607.
---frames 5000 --dump-exports debug_state,debug_hardcore,debug_shield,debug_fuel --at "30 debug_hardcore == 1" --at "30 debug_rewinds == 0" --at "3625 debug_shield == 1" --at "4725 debug_fuel == 180" --at "4726 debug_shield == 0" --at "4726 debug_state == 1" --at "4726 debug_fuel == 180" --at "4785 debug_state == 1" --at "4786 debug_state == 4" --at "4786 debug_fuel == 60" --at "4786 debug_rewind_target == 4559" --at "4866 debug_state == 1" --at "4866 debug_shield == 1" --at "4866 debug_fuel == 60" --at "4925 debug_fuel == 66" --at "4926 debug_shield == 0" --at "4926 debug_state == 1" --at "4926 debug_fuel == 66" --at "4930 debug_history_check == 0" --at "4986 debug_state == 4" --at "4986 debug_fuel == 0" --at "4986 debug_rewind_target == 4607" --expect "debug_hardcore == 1"
+# - 5207 (tick 5100): the unshielded ram costs the auto rewind's depth: 120, fuel 180 -> 60,
+#   target 4980. The playback restores the shield, resume at 5287 with fuel 60; hardcore
+#   pays the M7 power loss at the resume too (F5 -> F4, forks 2 -> 1).
+# - 5347 (tick 5040): absorbed with fuel 66 (fuel 65 the update before, 66 is that tick's
+#   refill, and still 66 on the next), state 1.
+# - 5599 (tick 5292): unshielded hit with fuel 93: depth 93, fuel 0, target 5199; 47
+#   playback frames, resume at 5666.
+--frames 5700 --call-at "31 debug_god" --call-at "5000 debug_god" --dump-exports debug_state,debug_hardcore,debug_shield,debug_fuel --at "30 debug_hardcore == 1" --at "30 debug_rewinds == 0" --at "2429 debug_shield == 1" --at "5125 debug_fuel == 180" --at "5126 debug_shield == 0" --at "5126 debug_state == 1" --at "5126 debug_fuel == 180" --at "5206 debug_state == 1" --at "5207 debug_state == 4" --at "5207 debug_fuel == 60" --at "5207 debug_rewind_target == 4980" --at "5287 debug_state == 1" --at "5287 debug_shield == 1" --at "5287 debug_fuel == 60" --at "5287 debug_weapon == 4" --at "5287 debug_forks == 1" --at "5346 debug_fuel == 65" --at "5347 debug_shield == 0" --at "5347 debug_state == 1" --at "5347 debug_fuel == 66" --at "5348 debug_fuel == 66" --at "5350 debug_history_check == 0" --at "5599 debug_state == 4" --at "5599 debug_fuel == 0" --at "5599 debug_rewind_target == 5199" --at "5666 debug_state == 1" --expect "debug_hardcore == 1"

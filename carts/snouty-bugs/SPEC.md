@@ -244,6 +244,31 @@ hours, current weapon, fork, the next weapon kind, retry, current weapon,
 fork, and round again. Stacking is the default; a swap is on offer every
 eight crates. Pool of 4 crates.
 
+### 5.5 Difficulty: rank, stages, power loss (M7)
+
+Adrian, 2026-10-04: too easy, especially holding A with powerups; make it
+a real bullet hell whose patterns escalate (1942, Raiden X). The design,
+with every number in PLAN.md M7:
+
+- **Rank** (Raiden, Battle Garegga): a World value 0..1000 from the
+  stage, the time spent in it, the loop and the player's firepower,
+  minus a mercy term a hit adds to. It speeds enemy bullets up, shortens
+  fire intervals, adds bullets to patterns, adds enemy HP and turns on
+  revenge bullets. The stronger you are, the harder it pushes back.
+- **Four stages**, `UNIT TESTS`, `INTEGRATION`, `STAGING`,
+  `PRODUCTION`, each adding bugs and pattern ideas, midbosses from stage
+  2, four different bosses with HP-gated phases, then a second loop.
+- **A pattern engine**: bullets that accelerate, brake, curve, split and
+  re-aim; pellets and orbs; a 128-bullet pool. The ship's hitbox shrinks
+  to 4x4 and bullet hitboxes shrink with it, so dense screens stay fair.
+- **Power loss**: a hit that triggers the auto rewind costs one weapon
+  level and one fork once the world is restored. Ghosts fire a level-1
+  shot. Crates come from whole formations (1942's POW), every
+  beetle, the midboss and each boss phase break.
+
+This supersedes the 1.5 px/tick speed cap of section 6 (rank-scaled caps
+per shape, 2.0 to 2.6) and the loop modifiers of section 9.
+
 ## 6. Enemies (the bugs)
 
 Every enemy: position (f32), a movement program, HP, a fire program, score.
@@ -452,7 +477,14 @@ is what the code expects. Sizes in bytes are the packed 4-bit index arrays.
 | `bg_far.png`          | 256x120| 1      | 256x120   | 15,360 | tileable horizontally; opaque, 8-bit allowed (30,720 B) |
 | `bg_near.png`         | 256x24 | 1      | 256x24    | 3,072  | tileable horizontally; transparent over far layer |
 | `iris_16.png`         | 16x16  | 1      | 16x16     | 128    | from snouty-badge, already exists                 |
-| Total                 |        |        |           | ~34 KB | (~49 KB with an 8-bit far layer)                 |
+| `bugs2.png`           | 16x16  | 12     | 192x16    | 1,536  | M7: centipede head x2, segment x2, flea (crouch, leap), ladybug x2, mite x2, zombie x2 (husk = cell 10 dithered) |
+| `herd.png`            | 32x32  | 2      | 64x32     | 1,024  | M7 midboss Thundering Herd, wing loop             |
+| `boss2.png`           | 48x48  | 5      | 240x48    | 5,760  | M7 Mandelbug: 4 idle + alt (glowing / splitting)  |
+| `boss3.png`           | 48x48  | 5      | 240x48    | 5,760  | M7 Schrodinbug: 4 idle + alt (collapse)           |
+| `boss4.png`           | 48x48  | 5      | 240x48    | 5,760  | M7 Bohrbug: 4 idle + alt (charge)                 |
+| `shots.png`           | 8x8    | 4      | 32x8      | 128    | M7 pellet x2 (4x4 dot centred), Coral variant x2  |
+| `orb.png`             | 16x16  | 2      | 32x16     | 256    | M7 orb x2 (12x12 centred, pulse)                  |
+| Total                 |        |        |           | ~54 KB | (~69 KB with an 8-bit far layer); M7 adds 20,224 B |
 
 Bullets and the fuel bar are the only things drawn procedurally besides text
 and the starfield. Everything else is art.
@@ -589,11 +621,14 @@ subagents, as with `snouty-badge`.
 - **M6 Powerups** (5.4): weapon crates (FUZZER, ASSERT, BISECT) stacking
   to level 5, the FORK ghost ships replaying the trail, RETRY shield, CORE
   HOURS fuel, drops from beetles, gnat strings and boss phases.
-- **M7 Attract mode**: title, autopilot demo, takeover, game over, pause,
-  deterministic soak test. Decide autopilot vs replay here. The demo shows
-  both rewinds.
-- **M8 Polish**: final art drop-in, Select sound toggle, title bestiary,
-  tuning from hardware play.
+- **M7 Bullet hell for real** (5.5): rank, four stages, new bugs,
+  midbosses and bosses, the pattern engine, power loss, the difficulty
+  probe (bots in an endless god mode, PLAN.md M7 targets).
+- **M8 Attract mode**: title, autopilot demo (grown from M7's probe
+  dodger), takeover, game over, pause, deterministic soak test. The demo
+  shows both rewinds.
+- **M9 Polish**: Select sound toggle, title bestiary, tuning from
+  hardware play.
 
 Parallel tracks: art (external agent, per `ASSETS.md`) runs alongside M1 to
 M3 using placeholder sprites; the asset prep script is written against the
@@ -658,3 +693,13 @@ brief so the real sheets drop in without code changes.
 - 2026-10-02: M6 built and tagged `snouty-bugs/m6`: crates, the three
   weapons, forks, retry, core hours, drops (`docs/preview_m6.gif`). See
   PLAN.md M6 and its status entry. Next: M7 attract mode.
+- 2026-10-04: Adrian: far too easy, especially holding A with powerups.
+  M7 "Bullet hell for real" designed (5.5, PLAN.md M7); attract mode
+  becomes M8, polish M9.
+- 2026-10-04: M7 built and tagged `snouty-bugs/m7`: rank, four stages
+  (UNIT TESTS, INTEGRATION, STAGING, PRODUCTION), the Thundering Herd
+  midboss, Heisenbug/Mandelbug/Schrodinbug/Bohrbug bosses with HP phases
+  and an escape, power loss on a hit, 1942 formation drops
+  (`docs/preview_m7.gif`). A human-paced bot takes 4/10/15/19 hits in
+  stages 1-4; a ship that holds A and never moves takes 50-78 a stage.
+  See PLAN.md M7 status. Next: M8 attract mode.

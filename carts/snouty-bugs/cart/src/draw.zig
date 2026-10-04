@@ -31,6 +31,14 @@ fn sheet_pixels(comptime sheet: type) [sheet.colors.len]cart.Pixel {
     return out;
 }
 
+/// Palette index `i` of a 4-bit sheet: two pixels per byte, the even one in
+/// the low nibble (`convert_gfx` packing, bit offset 0). A direct read is
+/// about a quarter of the cost of the generic `PackedIntSlice.get`, which
+/// was half of every frame in M7's badge-bench profile.
+inline fn nibble(bytes: []const u8, i: usize) u8 {
+    return (bytes[i >> 1] >> @intCast((i & 1) << 2)) & 0xF;
+}
+
 /// Draws cell `index` of a horizontal strip (`cell_w` x `cell_h` cells,
 /// source x = index * cell_w) with its top-left at (x, y). Palette index 0
 /// is transparent. Clipped to the screen.
@@ -53,6 +61,7 @@ pub fn draw_sprite(
     const row_end: i32 = @min(ch, sh - y);
     if (col_begin >= col_end or row_begin >= row_end) return;
     const src_x0: usize = index * cell_w;
+    const bytes = sheet.indices.bytes;
     var col = col_begin;
     while (col < col_end) : (col += 1) {
         const dx = x + col;
@@ -62,7 +71,7 @@ pub fn draw_sprite(
             const dy = y + row;
             if (opts.skip_odd and ((dx + dy) & 1) == 1) continue;
             const src: usize = @as(usize, @intCast(row)) * sheet.width + src_x0 + @as(usize, @intCast(col));
-            const idx = sheet.indices.get(src);
+            const idx = nibble(bytes, src);
             if (idx == 0) continue;
             column[@intCast(dy)] = if (opts.flash_white) white else pixels[idx];
         }
@@ -135,7 +144,7 @@ fn draw_far(scroll: u32) void {
         const src_x = (x + scroll) % sheet.width;
         const column = cart.framebuffer[x][y0..][0..sheet.height];
         for (column, 0..) |*px, row| {
-            px.* = pixels[sheet.indices.get(row * sheet.width + src_x)];
+            px.* = pixels[nibble(sheet.indices.bytes, row * sheet.width + src_x)];
         }
     }
 }
@@ -148,7 +157,7 @@ fn draw_near(scroll: u32) void {
         const src_x = (x + scroll) % sheet.width;
         const column = cart.framebuffer[x][y0..][0..sheet.height];
         for (column, 0..) |*px, row| {
-            const idx = sheet.indices.get(row * sheet.width + src_x);
+            const idx = nibble(sheet.indices.bytes, row * sheet.width + src_x);
             if (idx != 0) px.* = pixels[idx];
         }
     }

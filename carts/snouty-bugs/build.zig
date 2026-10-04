@@ -20,13 +20,15 @@ pub fn add(b: *Build, sycl_badge_dep: *Build.Dependency, opts: common.Options) v
     });
 
     // `zig build test` (shared step): host unit tests for the pure modules
-    // (no cart API, no gfx): the boss HP table.
-    const tests = b.addTest(.{ .root_module = b.createModule(.{
-        .root_source_file = b.path(dir ++ "cart/src/boss_hp.zig"),
-        .target = b.graph.host,
-        .optimize = .Debug,
-    }) });
-    opts.test_step.dependOn(&b.addRunArtifact(tests).step);
+    // (no cart API, no gfx): the boss HP table and the rank formula.
+    for ([_][]const u8{ "boss_hp.zig", "rank_math.zig" }) |file| {
+        const tests = b.addTest(.{ .root_module = b.createModule(.{
+            .root_source_file = b.path(b.fmt(dir ++ "cart/src/{s}", .{file})),
+            .target = b.graph.host,
+            .optimize = .Debug,
+        }) });
+        opts.test_step.dependOn(&b.addRunArtifact(tests).step);
+    }
 }
 
 /// One entry per PNG in assets/gen/. `bits` is palette bits per pixel (4 =
@@ -49,6 +51,15 @@ const images = [_]Image{
     .{ .file = "bg_near.png", .bits = 4, .transparent = true },
     .{ .file = "iris_16.png", .bits = 4, .transparent = true },
     .{ .file = "title.png", .bits = 4, .transparent = true },
+    // M7 (PLAN.md "M7 Bullet hell for real", Art): new bugs, the midboss,
+    // the stage 2-4 bosses and the pellet / orb enemy bullets.
+    .{ .file = "bugs2.png", .bits = 4, .transparent = true },
+    .{ .file = "herd.png", .bits = 4, .transparent = true },
+    .{ .file = "boss2.png", .bits = 4, .transparent = true },
+    .{ .file = "boss3.png", .bits = 4, .transparent = true },
+    .{ .file = "boss4.png", .bits = 4, .transparent = true },
+    .{ .file = "shots.png", .bits = 4, .transparent = true },
+    .{ .file = "orb.png", .bits = 4, .transparent = true },
 };
 
 /// Converts the PNGs in assets/gen/ into a `gfx` module at build time,

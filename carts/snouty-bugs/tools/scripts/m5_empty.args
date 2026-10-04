@@ -4,5 +4,6 @@
 # press). 490: PLAYING again although B is still down (running dry resumes; a fresh press
 # is needed to rewind again, so the trickle of refill cannot jitter the world), and it stays
 # PLAYING to the end of the hold. The refill is 1 per 10 live ticks: fuel 1 at 491, 10 at
-# 590, 20 at 690. The identity check is 0 after the resume.
---frames 800 --dump-exports debug_state,debug_game_tick,debug_fuel --at "399 debug_state == 1" --at "399 debug_game_tick == 369" --at "399 debug_fuel == 180" --at "400 debug_state == 5" --at "488 debug_state == 5" --at "489 debug_fuel == 0" --at "489 debug_manual_frame == 90" --at "489 debug_game_tick == 189" --at "490 debug_state == 1" --at "490 debug_fuel == 0" --at "491 debug_fuel == 1" --at "500 debug_history_check == 0" --at "599 debug_state == 1" --at "590 debug_fuel == 10" --at "690 debug_fuel == 20" --expect "debug_state == 1"
+# 590, 20 at 690. The identity check is 0 after the resume. Since M7 the run stops at 790:
+# the stage-1 wasp that rams the idle ship at game tick 494 (m2_hit) arrives at 795.
+--frames 790 --dump-exports debug_state,debug_game_tick,debug_fuel --at "399 debug_state == 1" --at "399 debug_game_tick == 369" --at "399 debug_fuel == 180" --at "400 debug_state == 5" --at "488 debug_state == 5" --at "489 debug_fuel == 0" --at "489 debug_manual_frame == 90" --at "489 debug_game_tick == 189" --at "490 debug_state == 1" --at "490 debug_fuel == 0" --at "491 debug_fuel == 1" --at "500 debug_history_check == 0" --at "599 debug_state == 1" --at "590 debug_fuel == 10" --at "690 debug_fuel == 20" --expect "debug_state == 1"

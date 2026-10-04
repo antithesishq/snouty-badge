@@ -1,0 +1,16 @@
+# m7_drops (M7 drops, PLAN.md M7 "Formations and drops"): 1942's rule. A crate comes from a
+# whole formation shot down (+200 on top of the last kill) or from any beetle killed by a
+# bolt; a formation that loses a member (it flies off or rams the ship) drops nothing, and
+# kinds outside formations drop nothing (the M6 "every fifth gnat" rule is gone). Input:
+# m3_boss's sweep in god mode (debug_god at 31) to 1699, stage 1 (UNIT TESTS).
+# - The two opening gnat strings (2 s, y 40, and 4 s, y 88) are formations: nine of their ten
+#   gnats are shot down (248..369, score 90), but one rams the god-mode ship at 313 and is
+#   lost, so neither is complete: no crate (drops 0 at 500).
+# - 462..480: a wasp vee (no formation) shot down, +90: no crate.
+# - 751: a beetle shot down (+50): crate 1 (drops 1, pickups 1).
+# - 1107 and 1175: a spider and a moth (+40 each): no crate.
+# - 1290: the last gnat of the 20 s string (a formation, all five shot down 1247..1290):
+#   +10 +200 (score 584 -> 794) and crate 2.
+# - 1460: the second beetle: crate 3.
+# debug_history_check is 0 with the crates in flight.
+--frames 1700 --call-at "31 debug_god" --dump-exports debug_state,debug_drops,debug_score --at "369 debug_score == 90" --at "500 debug_drops == 0" --at "500 debug_score == 180" --at "750 debug_drops == 0" --at "751 debug_drops == 1" --at "751 debug_score == 230" --at "751 debug_pickups == 1" --at "760 debug_history_check == 0" --at "1106 debug_drops == 1" --at "1107 debug_score == 503" --at "1175 debug_score == 543" --at "1175 debug_drops == 1" --at "1289 debug_drops == 1" --at "1289 debug_score == 584" --at "1290 debug_drops == 2" --at "1290 debug_score == 794" --at "1300 debug_history_check == 0" --at "1459 debug_drops == 2" --at "1460 debug_drops == 3" --at "1460 debug_score == 894" --at "1470 debug_history_check == 0" --expect "debug_state == 1" --expect "debug_drops == 3"

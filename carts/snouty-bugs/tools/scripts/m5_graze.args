@@ -1,12 +1,14 @@
-# m5_graze: the m2_play sweep (without its two holds) plus B held for updates 1960..1979,
-# so the bar is spent before the ship meets bullets and a graze can show up in it (a full
-# bar would cap the grant). 1959: game tick 1929, fuel 180, weapon F3 (03: the crates of
-# M6 are collected at 803 and 1628 as in m2_play). 1979, the last held frame: 20 frames =
-# 40 ticks, game tick 1889, fuel 140. 1980: PLAYING, no tick. The shifted sweep then
-# brushes a bullet at update 2121 (game tick 2030) without being hit: grazes 0 -> 1 and
-# fuel 154 -> 157 on that tick (the graze's 2 plus a refill). Refill alone cannot get there:
-# 141 live ticks since the release (1889 -> 2030) give at most 140 + (9 + 141) / 10 = 155
-# (9 = the most the refill counter can carry in), and the fuel is 157. No hit, rewinds 3.
-# Until M6 the hold was 1964..1983; since the F2 crate kills faster, that timing slips past
-# the bullet (grazes 0); four updates earlier brings the same graze back (same update).
---frames 2200 --dump-exports debug_state,debug_rewinds,debug_fuel,debug_grazes --at "1959 debug_state == 1" --at "1959 debug_game_tick == 1929" --at "1959 debug_fuel == 180" --at "1959 debug_weapon == 3" --at "1960 debug_state == 5" --at "1979 debug_game_tick == 1889" --at "1979 debug_fuel == 140" --at "1980 debug_state == 1" --at "2000 debug_history_check == 0" --at "2120 debug_grazes == 0" --at "2120 debug_fuel == 154" --at "2121 debug_game_tick == 2030" --at "2121 debug_grazes == 1" --at "2121 debug_fuel == 157" --expect "debug_state == 1" --expect "debug_rewinds == 3" --expect "debug_grazes == 1"
+# m5_graze: the m2_play sweep (without its two holds) plus B held for updates 1600..1619, so
+# the bar is spent before the ship meets bullets and a graze can show up in it (a full bar
+# would cap the grant). Since M7 it plays in the endless probe mode (debug_probe at 31; a
+# normal game dies on this sweep by 1627), and the hold moved from 1960 to 1600 to find a
+# clean graze in the M7 waves. 1599: game tick 1569, fuel 180, 6 grazes, 4 probe hits. 1619,
+# the last held frame: 20 frames = 40 ticks, game tick 1529, fuel 140; the hold took back the
+# graze of 1585 (grazes 5) and the probe hit of 1590 (hits 3). 1620: PLAYING, no tick.
+# - 1638 (tick 1547): the ship re-lives that graze: grazes 5 -> 6, but it is under the graze
+#   high-water mark, so it pays nothing (fuel 142 before and after).
+# - 1714 (tick 1623): a new graze: grazes 6 -> 7 and fuel 150 -> 152. Refill alone cannot
+#   get there: 94 live ticks since the release (1529 -> 1623) give at most 140 + (9 + 94) / 10
+#   = 150 (9 = the most the refill counter can carry in), and the fuel is 152.
+# No rewind is spent (probe mode never rewinds; rewinds stay 3).
+--frames 2200 --call-at "31 debug_probe" --dump-exports debug_state,debug_rewinds,debug_fuel,debug_grazes --at "1599 debug_state == 1" --at "1599 debug_game_tick == 1569" --at "1599 debug_fuel == 180" --at "1599 debug_grazes == 6" --at "1599 debug_hits == 4" --at "1600 debug_state == 5" --at "1619 debug_game_tick == 1529" --at "1619 debug_fuel == 140" --at "1619 debug_grazes == 5" --at "1619 debug_hits == 3" --at "1620 debug_state == 1" --at "1630 debug_history_check == 0" --at "1637 debug_grazes == 5" --at "1637 debug_fuel == 142" --at "1638 debug_grazes == 6" --at "1638 debug_fuel == 142" --at "1713 debug_grazes == 6" --at "1713 debug_fuel == 150" --at "1714 debug_game_tick == 1623" --at "1714 debug_grazes == 7" --at "1714 debug_fuel == 152" --at "1714 debug_history_check == 0" --expect "debug_state == 1" --expect "debug_rewinds == 3" --expect "debug_grazes >= 7"
