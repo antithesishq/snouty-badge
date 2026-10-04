@@ -28,7 +28,8 @@ const R = render.Renderer(Screen);
 
 /// 38 KB of World inside: a static, never on the stack.
 var g: game.Game = undefined;
-var renderer: R = .{};
+/// Reset in start(): its overlay stays out of .data.
+var renderer: R = undefined;
 
 var tick: u32 = 0;
 var render_us: u32 = 0;
@@ -43,6 +44,7 @@ var prev: game.Buttons = .{};
 pub fn start() void {
     cart.set_vsync_enabled(1000.0 / 60.0);
     cart.set_double_buffer_mode(.copy_forward);
+    renderer.reset();
     autopilot = @intCast(@min(bench_autopilot, 2));
     if (bench_seed != 0) return reseed(bench_seed);
     reseed(if (clock_seeded) cart.rand() ^ clock_mix() else cart.rand());

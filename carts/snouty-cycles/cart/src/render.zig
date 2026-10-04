@@ -243,6 +243,8 @@ pub fn Renderer(comptime S: type) type {
         /// never needs redrawing when trails or heads pass under it.
         ov: [screen_w][arena_h]u8 = undefined,
         ov_colors: [8]u16 = @splat(0),
+        /// Each banner line's ink box (for a colour-only change).
+        line_rects: [4]Rect = @splat(.empty),
         hud: Hud = .{},
         /// The World tick whose events were applied.
         last_tick: u32 = 0xFFFF_FFFF,
@@ -251,6 +253,21 @@ pub fn Renderer(comptime S: type) type {
         const ov_shadow = 1;
         const ov_iris = 2;
         const ov_line0 = 3;
+
+        /// Sets every field but the overlay to its default, in place: a
+        /// `.{}` literal would put the 19 KB overlay in .data (the cart
+        /// keeps its renderer `undefined` in .bss and calls this).
+        pub fn reset(self: *Self) void {
+            self.heads = @splat(.empty);
+            self.banner = .{};
+            self.banner_rect = .empty;
+            self.banner_on = false;
+            self.ov_colors = @splat(0);
+            self.line_rects = @splat(.empty);
+            self.hud = .{};
+            self.last_tick = 0xFFFF_FFFF;
+            self.need_full = true;
+        }
 
         /// Next frame repaints everything (a new round, a mode change).
         pub fn invalidate(self: *Self) void {
@@ -280,8 +297,19 @@ pub fn Renderer(comptime S: type) type {
         pub fn full_repaint(self: *Self, w: *const sim.World, view: View) void {
             self.banner_on = false;
             if (view.banner) |b| self.load_banner(b);
-            for (0..sim.grid_w) |x| {
-                for (0..sim.grid_h) |y| self.put_cell(w, @intCast(x), @intCast(y));
+            // The bare floor first, a column at a time, then only the cells
+            // that differ from it: walls, glowing floor, the banner box.
+            for (0..screen_w) |x| {
+                const col = if (x & 7 == 0) &floor_line_column else &floor_column;
+                for (col, arena_y..) |c, y| S.put(@intCast(x), @intCast(y), c);
+            }
+            for (0..sim.grid_w) |xi| {
+                const x: u8 = @intCast(xi);
+                for (0..sim.grid_h) |yi| {
+                    const y: u8 = @intCast(yi);
+                    if (bare_floor(w, x, y) and !self.in_banner(2 * @as(u32, x), arena_y + 2 * @as(u32, y))) continue;
+                    self.put_cell(w, x, y);
+                }
             }
             S.mark_dirty(.{ .x0 = 0, .y0 = arena_y, .x1 = screen_w, .y1 = screen_h });
             self.need_full = false;
@@ -424,6 +452,16 @@ pub fn Renderer(comptime S: type) type {
         fn set_banner(self: *Self, w: *const sim.World, want: ?Banner) void {
             if (want) |b| {
                 if (self.banner_on and std.meta.eql(b, self.banner)) return;
+                if (self.banner_on and same_but_colors(b, self.banner)) {
+                    // A blink: recolour the lines that changed, nothing else.
+                    for (b.lines[0..b.n], self.banner.lines[0..b.n], 0..) |l, old, i| {
+                        if (l.color == old.color) continue;
+                        self.ov_colors[ov_line0 + i] = l.color;
+                        self.repaint_rect(w, self.line_rects[i]);
+                    }
+                    self.banner = b;
+                    return;
+                }
             } else if (!self.banner_on) return;
             var r = if (self.banner_on) self.banner_rect else Rect.empty;
             self.banner_on = false;
@@ -468,8 +506,18 @@ pub fn Renderer(comptime S: type) type {
                 // The shadow one pixel down-right, then the ink over it.
                 raster(l.str(), x0 + 1, y + 1, l.scale, target, ov_shadow);
                 raster(l.str(), x0, y, l.scale, target, idx);
+                self.line_rects[i] = Rect.clip(x0, y, lw, 8 * @as(i32, l.scale), arena_y);
                 y += 8 * @as(i32, l.scale) + Banner.line_gap;
             }
+        }
+
+        /// Same text, scales and layout; only line colours may differ.
+        fn same_but_colors(a: Banner, b: Banner) bool {
+            if (a.n != b.n or a.iris != b.iris or a.cy != b.cy) return false;
+            for (a.lines[0..a.n], b.lines[0..b.n]) |la, lb| {
+                if (la.len != lb.len or la.scale != lb.scale or !std.mem.eql(u8, la.str(), lb.str())) return false;
+            }
+            return true;
         }
 
         const OverlayTarget = struct {
@@ -564,6 +612,26 @@ const floor_cells = [4][4]u16{
     .{ colors.line, colors.floor, colors.line, colors.floor },
     .{ colors.cross, colors.line, colors.line, colors.floor },
 };
+
+/// The floor's pixel columns: a column on a grid line (x % 8 == 0) and
+/// any other, top to bottom over the arena.
+const floor_line_column = blk: {
+    var c: [arena_h]u16 = undefined;
+    for (&c, 0..) |*p, y| p.* = if (y & 7 == 0) colors.cross else colors.line;
+    break :blk c;
+};
+const floor_column = blk: {
+    var c: [arena_h]u16 = undefined;
+    for (&c, 0..) |*p, y| p.* = if (y & 7 == 0) colors.line else colors.floor;
+    break :blk c;
+};
+
+/// True if cell (x, y) draws as the bare floor: empty, no wall beside it.
+fn bare_floor(w: *const sim.World, x: u8, y: u8) bool {
+    const i = sim.index(x, y);
+    if (w.grid[i] != sim.empty) return false;
+    return w.grid[i - sim.grid_w] | w.grid[i + sim.grid_w] | w.grid[i - 1] | w.grid[i + 1] == 0;
+}
 
 /// The glow a wall value casts on the floor next to it, or null.
 inline fn glow_of(v: u8) ?u16 {
@@ -712,6 +780,8 @@ test "every put is inside a marked rect, and incremental frames match a full rep
             var b: Banner = .{};
             b.add("RUN", 2, colors.white);
             b.add(if (t % 80 < 40) "LEVEL 3" else "PASCAL", 1, colors.hud_text);
+            // A blinking line: a colour-only change.
+            b.add("PRESS A", 1, if (t % 14 < 7) colors.white else colors.hud_dim);
             view.banner = b;
         }
         view.hud.right = .of(if (t % 300 < 150) "0500" else "1000", 1, colors.hud_text);
