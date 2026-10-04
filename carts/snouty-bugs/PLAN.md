@@ -1490,6 +1490,98 @@ boss).
   formation drop, stage skip through all four bosses, boss timeout), the
   GIF, `docs/RUNNING.md`.
 
+### Deviations (A)
+
+Track A (engine), 2026-10-04. Choices where the contract was silent, and
+the few places it was read loosely:
+
+- **Modules.** The rank formula and effects table are pure in
+  `rank_math.zig` (host tests in `zig build test`, wired next to
+  `boss_hp.zig` in this cart's `build.zig`); `rank.zig` feeds them from
+  the World. `BossId` lives in the pure `boss_hp.zig` (re-exported as
+  `enemies.BossId`) with `boss_hp.for_stage(stage) BossId`; boss HP is
+  `max_hp(id, loop) u16`, still 60 + 20 per loop for every boss, no cap.
+- **Mercy** is `world.w.mercy: u16` (saturating +80 in
+  `player.on_rewound_hit`), decayed by `rank.update()` at the top of
+  `simulate` (before `waves.update`) when `game_tick % 120 == 0`.
+- **Stage and loop until B1.** `waves.stage_count = 1`: every boss clear
+  moves the stage index on (`advance`: stage + 1, or stage 0 and loop + 1
+  after the last stage; `t = 0`) at the clear, so the next stage's rank
+  applies during the breather. With one table every clear is a loop (as
+  M6 counted it): loop 1 = rank +400 after the first boss, revenge on.
+  `debug_stage` still returns `loop`; `debug_stage_index` = stage + 4 x
+  loop. B1 sets `stage_count = 4`.
+- **`waves.next_stage()`** (`debug_next_stage`): clears enemies (the boss
+  too), enemy bullets, crates and formations (bolts and fx stay), moves
+  the stage on as a clear does (not a second time during the breather
+  after a clear, which already did), restarts the table at its first
+  entry; no +500, no fuel refill, no `stage_clears`. The export
+  checkpoints the history only while playing or paused.
+- **Event timing.** Events are collected while the pool moves and run
+  after it, in pool order, so children and fan bullets never move in
+  their spawn tick whichever slot they land in; the event bullet is culled
+  after its event. A split outside the field leaves nothing. A standing
+  bullet's heading is straight left. `aim` also clears `vmax` (the new
+  speed is the one). An `aim` fan with even `ev_n` keeps the bullet at
+  index (n - 1) / 2, the half step below the middle. `event_at = 0` never
+  fires. Turn, drag and accel are skipped when they are no-ops, so a
+  default bullet moves bit for bit as before.
+- **Cull** by shape: the center leaves x [-m, 160 + m) or y [8 - m,
+  128 + m), m = 4 (the M2 bounds), 8 for the orb.
+- **`cancel_all`** scores `10 * n` in one `add_score` and sparks at the
+  first 8 bullet centers in pool order.
+- **Emitter types**: counts `u32`, `step_256` / `span_256` `u32`, absolute
+  angles and phases `i32` (wrapping, so counter-rotation is a negative
+  step), `speed_step` and wall coordinates `f32`. `wall` with one bullet
+  puts it midway; its heading is exactly (-1, 0), not the table's angle
+  128. `ring_aimed`'s first bullet is the aim vector itself. `Shot.accel`
+  is not rank-scaled. `spawn_shot` computes the rank once per bullet.
+- **Formations.** `open(0, _)` returns 0; ids skip 0 and ids still in use.
+  Gnats of a string that do not fit in the enemy pool count as lost at
+  once, so the slot still frees. `formations.clear()` frees all.
+  `enemies.spawn_gnat_string(y, drop)`: every M6 string opens with
+  `drop = true` until B1's `Entry.formation`. A gnat leaving past x -8
+  and the off-field cull both call `lost`, as does a ram
+  (`collide.remove_offender`).
+- **Drops.** `player.gnat_kills` is replaced by `player.beetle_kills`
+  (every second beetle killed by a bolt drops). On a bolt kill the order
+  is: kill, `formations.killed`, the beetle drop, `rank.revenge`. The
+  M6 boss phase-change drop is kept until B2.
+- **Revenge** pellets carry the killed kind as `source` (its bug message);
+  the distance is to the ship's hitbox center; a boss never revenges (its
+  death is not a `.killed`).
+- **Probe mode.** Hits count in the World (`player.probe_hits`), so a
+  hold-B rewind un-counts what it rewinds (the bots never hold B). The
+  retry shield takes a hit first, as it would for a player; probe wins
+  over `god` when both are on; the grant is 60 ticks (`resume_invuln`).
+- **Bots.** `autopilot.controls(bot, world.w.game_tick)` replaces the
+  hardware/script controls in every state, title included (a bot holding
+  A starts a game); `debug_bot(n)` clamps n to 255 and returns it.
+  `tools/preview.mjs` gained `--call-at "T NAME:ARG"` (one integer
+  argument; the zero-argument form is unchanged).
+- **Extra test exports**: `debug_mercy()`, and `debug_spray()`, which
+  spawns a fixed set of engine bullets from (140, 64) (8 turning rounds, 2
+  orbs splitting into 6 pellets that split again into 3, 3 stop-and-go
+  pellets re-aiming as fans of 3, an accelerating capped needle) and
+  checkpoints; `tools/scripts/m7_identity` uses it to put splits, re-aims
+  and turns in flight across hold-B rewinds without new stage content.
+- **Placeholder kinds** (centipede .. herd) until B1: 16x16 (herd 32x32),
+  base HP 2 (herd 30), points 30 / 30 / 40 / 60 / 50 / 1000, fly left 1 px
+  per tick without firing, drawn with `bugs` cells 0-1 (the herd as 2x2
+  beetle cells).
+- **Weapons.** A ghost's level-1 FUZZER volley is one straight zap (no
+  jitter, no rng draw). BISECT angles stay 0, +10, -10, +20 by seeker.
+- **Power loss** runs in `step_rewind` after `restore` and
+  `invalidate_after`, before the invulnerability grant and the
+  checkpoint.
+- **Pause** panel rows moved up 2-4 px to fit `RANK nnn` (y 98; four
+  digits at 1000).
+- **Art.** On the lead's instruction the stand-in `shots.png` (32x8) and
+  `orb.png` (32x16) and their `build.zig` rows were committed in their
+  own commit for track C to replace (the contract said not to).
+- **Sizes**: `@sizeOf(World)` 10,520 (was 6,340); the World's defaults
+  are in `.data` as before (the bullet pool's `drag = 1` is non-zero).
+
 ### Verification for M7
 
 - `tools/check.sh` all green; `debug_history_check == 0` on every frame of
