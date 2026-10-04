@@ -157,14 +157,14 @@ fn run_frame(t1: u64) void {
         gg.audio_render = false;
         const sink = gg.line_sink;
         gg.line_sink = null;
-        var dearest: u64 = last_frame_us;
+        var slowest: u64 = last_frame_us;
         var t = t1;
         while (n < tuning.ff_max_frames) : (n += 1) {
-            if (!cart.is_wasm and t -% t1 + 2 * dearest > tuning.ff_budget_us) break;
+            if (!cart.is_wasm and t -% t1 + 2 * slowest > tuning.ff_budget_us) break;
             gg.step_frame(in.pad);
             rewind.record_frame(&gg, in.pad);
             const now = cart.micros_since_boot();
-            dearest = @max(dearest, now -% t);
+            slowest = @max(slowest, now -% t);
             t = now;
         }
         gg.line_sink = sink;
