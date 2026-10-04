@@ -48,8 +48,11 @@ const funcsel_sio: u32 = 5;
 const funcsel_pio2: u32 = 8;
 
 const pads_bank0_base: u32 = 0x40038000;
-/// IE | DRIVE 4 mA | PDE | SCHMITT; ISO, OD, PUE and SLEWFAST clear.
-const pad_value: u32 = 0x40 | 0x10 | 0x04 | 0x02;
+/// IE | PDE | SCHMITT, DRIVE 2 mA (the weakest: plenty for 1 Mbaud on a
+/// short cable, and it limits the current if two outputs ever meet on a
+/// wire, on top of the header's 100 R per side); ISO, OD, PUE and
+/// SLEWFAST clear.
+const pad_value: u32 = 0x40 | 0x04 | 0x02;
 
 const sio_base: u32 = 0xD0000000;
 const sio_gpio_in = sio_base + 0x004;
