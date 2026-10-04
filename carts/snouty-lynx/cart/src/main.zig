@@ -25,10 +25,20 @@
 //! Every boot (start, a picker choice, the menu's Reset) forgets the
 //! history.
 //!
+//! Fast forward (docs/FAST_FORWARD.md at the root): while the second
+//! press of a Select double tap is held (frontend/input.zig), each update
+//! spans `tuning.ff_periods` badge frames (a Lynx frame is too dear for
+//! two in one) and steps up to `tuning.ff_max_frames` game frames per
+//! period within `tuning.ff_budget_us`, only the last one shown (the
+//! others skip the display conversion, `video.show`, and the strip), none
+//! with sound (`audio_render` off, the stream ramps out as in the menu),
+//! every one recorded for the scrubber; the speed (`>>2x`, `>>1.5x`) sits
+//! in the picture's top right corner meanwhile.
+//!
 //! Control hints (lib/hint.zig): "Hold Select: menu" on the splash and
 //! over the status strip's last line for the first 3 s of play after the
-//! splash or the picker (gone at the first fresh press); the menu has its
-//! own.
+//! splash or the picker, then "2x Sel+hold: fast" for 3 s more (gone at
+//! the first fresh press); the menu has its own.
 //!
 //! Sound (M5, PLAN.md "M5 Sound: contract"): every stepped frame's
 //! `audio_out` goes to the new firmware's streaming ring
@@ -51,6 +61,7 @@ const picker = @import("frontend/picker.zig");
 const strip = @import("frontend/strip.zig");
 const rewind = @import("frontend/rewind.zig");
 const audio = @import("frontend/audio.zig");
+const tuning = @import("frontend/tuning.zig");
 const hint = @import("hint");
 
 comptime {
@@ -72,11 +83,25 @@ var controls_state: input.State = .{};
 
 /// Menu opens since boot.
 var menu_opens: u32 = 0;
-/// "Hold Select: menu" over the status strip's last line for the first
-/// seconds of play (lib/hint.zig).
+/// "Hold Select: menu", then `menu.fast_hint`, over the status strip's
+/// last line for the first seconds of play (lib/hint.zig):
+/// `hint.play_seconds` each.
 var play_hint: hint.Overlay = .{};
-/// The core stepped in this update (else the sound ramps out).
+const play_hint_updates = hint.play_seconds * 60;
+/// The core stepped in this update with sound (else the sound ramps out).
 var stepped: bool = false;
+/// Game frames the last update stepped: 1 at 1x, up to `ff_cap` while
+/// fast forwarding (the `>>2x` indicator and the `debug_ff_frames` export).
+var frames_stepped: u32 = 0;
+/// Microseconds the last shown game frame took (step and record): the
+/// first estimate of a frame's cost in the next fast-forward update.
+var last_frame_us: u64 = 0;
+/// Badge frames a fast-forward update spans: `tuning.ff_periods` on the
+/// badge; 1 in the simulator, which has no clock to fill them by (it runs
+/// `tuning.ff_max_frames` every update, 4x).
+const ff_periods = if (cart.is_wasm) 1 else tuning.ff_periods;
+/// Game frames at most in one fast-forward update.
+const ff_cap = tuning.ff_max_frames * ff_periods;
 
 pub fn start() void {
     cart.set_vsync_enabled(1000.0 / 60.0);
@@ -104,7 +129,7 @@ pub fn update() void {
 
     switch (state) {
         .splash => if (splash.update(controls_state.edge.any_pressed())) {
-            if (after_splash == .pick) picker.reset() else play_hint.start(hint.play_seconds * 60);
+            if (after_splash == .pick) picker.reset() else play_hint.start(2 * play_hint_updates);
             picker.from_menu = false;
             enter(after_splash, t0);
         },
@@ -155,7 +180,7 @@ pub fn boot(c: core.Cart) void {
 fn pick_frame(t0: u64) void {
     const choice = picker.update(live_edge()) orelse return;
     if (choice) |i| boot(romsrc.open(i) orelse return enter(.help, t0));
-    play_hint.start(hint.play_seconds * 60);
+    play_hint.start(2 * play_hint_updates);
     enter(.running, t0);
 }
 
@@ -177,6 +202,7 @@ fn menu_frame() void {
 }
 
 fn run_frame(t1: u64) void {
+    frames_stepped = 0;
     const in = controls_state.game_frame();
     if (in.open_menu) {
         play_hint.stop();
@@ -188,30 +214,84 @@ fn run_frame(t1: u64) void {
         _ = menu.update(&lynx, live_edge());
         return;
     }
-    var pad = in.pad;
-    if (menu.hold_frames_left > 0) {
-        menu.hold_frames_left -= 1;
-        pad |= menu.hold_pad;
-    }
     // After a scrub the console is parked on a record boundary: playing on
     // from there drops the future.
     rewind.resume_if_parked(&lynx);
-    // Sound off (or wasm): the core may skip filling `audio_out`. Set every
-    // frame: a boot (`init_in_place`) turns it back on.
-    lynx.audio_render = audio.enabled;
-    lynx.step_frame(pad);
-    rewind.record_frame(&lynx);
+
+    // Fast forward: the frames before the last one are not shown (no
+    // display conversion, no strip) and none renders sound; the console
+    // steps exactly as at 1x (tests/ff_determinism.zig).
+    var n: u32 = 1;
+    if (in.fast) {
+        lynx.audio_render = false;
+        var slowest: u64 = last_frame_us;
+        var t = t1;
+        while (n < ff_cap) : (n += 1) {
+            if (!cart.is_wasm and t -% t1 + 2 * slowest > tuning.ff_budget_us) break;
+            step(in.pad);
+            const now = cart.micros_since_boot();
+            slowest = @max(slowest, now -% t);
+            t = now;
+        }
+    } else {
+        // Sound off (or wasm): the core may skip filling `audio_out`. Set
+        // every frame: a boot (`init_in_place`) turns it back on.
+        lynx.audio_render = audio.enabled;
+    }
+    frames_stepped = n;
+
+    const t_last = cart.micros_since_boot();
+    step(in.pad);
     const t2 = cart.micros_since_boot();
+    last_frame_us = t2 -% t_last;
     debug.record(@truncate(t2 -% t1));
-    debug.record_core(lynx.instr_count(), lynx.pixels_drawn());
-    audio.frame(&lynx);
-    stepped = true;
+    // While fast the stream ramps out (as in the menu) and resumes, primed,
+    // on the first 1x frame.
+    if (!in.fast) {
+        audio.frame(&lynx);
+        stepped = true;
+    }
 
     video.show(lynx.frame());
     strip.draw(&lynx);
+    if (in.fast) draw_fast(n);
     // Over the strip's last line (the ROM detail), so no picture is hidden.
     // A press held over from the splash or picker is suppressed, not fresh.
-    play_hint.update_and_draw(cart, text.draw, live_edge().any_pressed(), cart.screen_height - hint.strip_h, strip.accent, strip.bg);
+    if (play_hint.tick(live_edge().any_pressed())) {
+        const s = if (play_hint.left >= play_hint_updates) hint.hold_select else menu.fast_hint;
+        hint.draw_strip(cart, text.draw, s, cart.screen_height - hint.strip_h, strip.accent, strip.bg);
+    }
+}
+
+/// One game frame with `pad` (plus a menu row's held buttons for their
+/// frames), recorded for the scrubber and the overlay.
+fn step(pad: u16) void {
+    var p = pad;
+    if (menu.hold_frames_left > 0) {
+        menu.hold_frames_left -= 1;
+        p |= menu.hold_pad;
+    }
+    lynx.step_frame(p);
+    rewind.record_frame(&lynx);
+    debug.record_core(lynx.instr_count(), lynx.pixels_drawn());
+}
+
+/// The speed, `n` frames over `ff_periods` badge frames (`>>2x`,
+/// `>>1.5x`), in the picture's top right corner, rows 0..7: the debug
+/// overlay and the play hint are in the status strip below the picture.
+/// The game redraws the whole screen every update (`.no_copy_full_frame`),
+/// so it is gone the update fast forward stops; `text.draw` marks its own
+/// dirty rect.
+fn draw_fast(n: u32) void {
+    comptime {
+        if (ff_periods > 2 or ff_cap > 9 * ff_periods) @compileError("the indicator shows one digit and halves");
+    }
+    var buf: [6]u8 = undefined;
+    var k = debug.put(&buf, ">>");
+    k += debug.put_num(buf[k..3], n / ff_periods);
+    if (n % ff_periods != 0) k += debug.put(buf[k..], ".5");
+    k += debug.put(buf[k..], "x");
+    text.draw(buf[0..k], @intCast(cart.screen_width - 8 * k), video.top, strip.accent, strip.bg);
 }
 
 /// The no-ROM screen (drive builds): how to add a ROM, then why the drive
@@ -296,6 +376,7 @@ comptime {
         @export(&debug_scrub_slots, .{ .name = "debug_scrub_slots" });
         @export(&debug_scrub_capacity, .{ .name = "debug_scrub_capacity" });
         @export(&debug_scrub_arena, .{ .name = "debug_scrub_arena" });
+        @export(&debug_ff_frames, .{ .name = "debug_ff_frames" });
     }
 }
 
@@ -438,4 +519,13 @@ fn debug_scrub_capacity() callconv(.c) u32 {
 /// Arena bytes found (in wasm `tuning.wasm_arena_bytes`).
 fn debug_scrub_arena() callconv(.c) u32 {
     return @intCast(rewind.arena_bytes());
+}
+
+// ---- Fast forward ----
+
+/// Game frames the last update stepped (1 at 1x, up to 8 while fast
+/// forwarding on the badge, 4 in the simulator; 0 in an update that
+/// stepped none).
+fn debug_ff_frames() callconv(.c) u32 {
+    return if (state == .running) frames_stepped else 0;
 }

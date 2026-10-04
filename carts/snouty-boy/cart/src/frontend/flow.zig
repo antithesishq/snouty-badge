@@ -13,7 +13,7 @@
 //! opens. Released and pressed again, the button acts as usual.
 pub const input = @import("input.zig");
 
-pub const State = enum(u32) { splash = 0, running = 1, menu = 2, pick = 3, halted = 4 };
+pub const State = enum(u32) { splash = 0, running = 1, menu = 2, pick = 3, halted = 4, rewind = 5 };
 
 /// What a menu update asks for (frontend/menu.zig `Result`).
 pub const MenuResult = enum { stay, resume_game };
@@ -34,6 +34,15 @@ pub const MenuResult = enum { stay, resume_game };
 ///   one drawn.
 /// - `menu_open(ctx)`, `menu_frame(ctx, e: input.Edge) MenuResult`,
 ///   `menu_close(ctx)`: the emulator menu over the frozen game.
+/// - `rewind_open(ctx)`, `rewind_frame(ctx, dir: i2)`, `rewind_close(ctx)`:
+///   the chorded rewind (Left during a fast-forward hold, frontend/input.zig):
+///   the game frozen as for the menu, `dir` a time step this frame (-1 back
+///   0.5 s, 1 forward, 0 none; Left/Right with the menu's auto-repeat,
+///   `input.ScrubRepeat`), only the scrub bar on screen. Letting go of
+///   Select closes it and the game resumes from there in the same update,
+///   as after the menu (`suppress_held`, so a held Left or Right does not
+///   reach the game). No button reaches the game meanwhile; Start (the OS
+///   chord with the held Select) does nothing.
 /// - `halted_frame(ctx)`: draw the halted screen.
 pub fn Flow(comptime Ctx: type) type {
     return struct {
@@ -43,6 +52,8 @@ pub fn Flow(comptime Ctx: type) type {
         controls: input.State = .{},
         /// Leave the splash for the picker instead of the game.
         pick_after_splash: bool = false,
+        /// Left/Right auto-repeat in the chorded rewind.
+        scrub: input.ScrubRepeat = .{},
 
         /// One badge frame with that frame's controls.
         pub fn update(f: *Self, ctx: *Ctx, c: input.Controls) void {
@@ -68,6 +79,14 @@ pub fn Flow(comptime Ctx: type) type {
                     f.state = .running;
                     f.run(ctx);
                 },
+                .rewind => {
+                    const e = f.controls.live_edge();
+                    if (e.held(.select)) return ctx.rewind_frame(f.scrub.update(e));
+                    ctx.rewind_close();
+                    f.controls.suppress_held();
+                    f.state = .running;
+                    f.run(ctx);
+                },
             }
         }
 
@@ -86,7 +105,7 @@ pub fn Flow(comptime Ctx: type) type {
         }
 
         /// One game update (one frame, several when fast forwarding), or
-        /// opening the menu instead of stepping.
+        /// opening the menu or the chorded rewind instead of stepping.
         fn run(f: *Self, ctx: *Ctx) void {
             const in = f.controls.game_frame();
             if (in.open_menu) {
@@ -96,6 +115,14 @@ pub fn Flow(comptime Ctx: type) type {
                 f.controls.suppress_held();
                 ctx.menu_open();
                 _ = ctx.menu_frame(f.controls.live_edge());
+                return;
+            }
+            if (in.rewind) {
+                f.state = .rewind;
+                f.scrub = .{};
+                ctx.rewind_open();
+                // The Left press that started it is the first step back.
+                ctx.rewind_frame(f.scrub.update(f.controls.live_edge()));
                 return;
             }
             ctx.step(in.pad, f.controls.live_edge().any_pressed(), in.fast);

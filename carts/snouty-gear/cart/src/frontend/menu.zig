@@ -29,7 +29,9 @@
 //! On Resume at the live position it names the action instead,
 //! "Left/Right: rewind" or "Rewind: no history", and a footer under it
 //! reads "B: back to game" (lib/hint.zig, review 2026-10-01 UX-05),
-//! taking turns every 2 s with "2x Sel+hold: fast" (fast forward, main.zig).
+//! taking turns every 2 s with "2x Sel+hold: fast" (fast forward, main.zig)
+//! and "then Left: rewind" (the chorded rewind, which shows only this
+//! menu's scrub bar: `draw_scrub_bar`).
 //! Resuming from a scrubbed position plays on from there and drops the
 //! future. After a scrub step the panel gives way to that line in a bar at
 //! the bottom (`scrub_view`) so the restored frame, drawn by `rewind.step`,
@@ -73,15 +75,17 @@ var scrub_view: bool = false;
 /// of the hold that opened the menu does not count.
 var select_armed: bool = false;
 
-/// Scrub auto-repeat (SPEC.md 5: 4 steps per second while held).
-const repeat_frames = 15;
-/// Direction of the held scrub key, 0 when none.
-var repeat_dir: i2 = 0;
-var repeat_left: u8 = 0;
+/// Scrub auto-repeat (SPEC.md 5: 4 steps per second while held), shared
+/// with the chorded rewind.
+var repeat: input.Repeat = .{};
 
 /// The fast-forward double tap's hint (input.zig `GameInput.fast`): the
-/// in-play strip's second line, and the footer's turn with `hint.back`.
+/// in-play strip's second line, and a footer turn.
 pub const fast_hint = "2x Sel+hold: fast";
+/// The chorded rewind's hint, the footer turn after `fast_hint`.
+pub const rewind_hint = "then Left: rewind";
+/// The footer's turns: how to leave, fast forward, chorded rewind.
+const footers = [_][]const u8{ hint.back, fast_hint, rewind_hint };
 /// Menu updates each footer line stays (2 s).
 const footer_turn = 120;
 /// Menu updates since `open`, for the footer's turns.
@@ -94,9 +98,16 @@ pub fn open() void {
     showing_about = false;
     scrub_view = false;
     select_armed = false;
-    repeat_dir = 0;
+    repeat.stop();
     cursor = .resume_game;
     updates_open = 0;
+    freeze_frame();
+}
+
+/// Keep the last presented frame on screen while the game is paused (the
+/// menu, the chorded rewind): copy it into the back buffer and switch to
+/// `.copy_forward` (see the file comment). `close` switches back.
+pub fn freeze_frame() void {
     if (!cart.is_wasm) {
         const n = cart.screen_width * cart.screen_height / 2;
         const src: *const [n]u32 = @ptrCast(cart.frontbuffer);
@@ -106,7 +117,8 @@ pub fn open() void {
     cart.set_double_buffer_mode(.copy_forward);
 }
 
-/// Leave the menu; the caller steps the game in the same frame.
+/// Leave the menu (or the chorded rewind); the caller steps the game in
+/// the same frame.
 pub fn close() void {
     cart.set_double_buffer_mode(.no_copy_full_frame);
 }
@@ -127,7 +139,7 @@ pub fn update(gg: *core.Gg, e: input.Edge) Result {
         // Up/Down/A bring the full menu back without acting.
         if (e.pressed(.up) or e.pressed(.down) or e.pressed(.a)) {
             scrub_view = false;
-            repeat_dir = 0;
+            repeat.stop();
         } else left_right(gg, e);
     } else {
         if (e.pressed(.b) or select_tap) return .resume_game;
@@ -172,29 +184,13 @@ fn on_scrub(gg: *core.Gg, dir: i2) void {
 
 /// Left/Right: flip a setting on a setting row, else scrub with auto-repeat.
 fn left_right(gg: *core.Gg, e: input.Edge) void {
-    const d: i2 = if (e.pressed(.left)) -1 else if (e.pressed(.right)) 1 else 0;
-    if (d != 0) {
-        repeat_dir = 0;
-        if (is_setting(cursor)) {
-            adjust();
-        } else {
-            on_scrub(gg, d);
-            repeat_dir = d;
-            repeat_left = repeat_frames;
-        }
+    if (is_setting(cursor)) {
+        repeat.stop();
+        if (e.pressed(.left) or e.pressed(.right)) adjust();
         return;
     }
-    if (repeat_dir == 0) return;
-    const still = if (repeat_dir < 0) e.held(.left) else e.held(.right);
-    if (!still or is_setting(cursor)) {
-        repeat_dir = 0;
-        return;
-    }
-    repeat_left -= 1;
-    if (repeat_left == 0) {
-        on_scrub(gg, repeat_dir);
-        repeat_left = repeat_frames;
-    }
+    const d = repeat.step(e);
+    if (d != 0) on_scrub(gg, d);
 }
 
 /// Left/Right (or A) on a setting row flips it: every setting has two
@@ -279,8 +275,7 @@ fn draw(gg: *const core.Gg) void {
     if (scrub_view) {
         // Only the bar: the rest is the restored frame, redrawn in full by
         // every scrub step (frontend/rewind.zig).
-        cart.rect(.{ .x = panel_x, .y = bar_y, .width = panel_w, .height = bar_h, .fill_color = band_color, .stroke_color = frame_color });
-        centered(scrub_text(&buf), bar_y + 1, title_color);
+        draw_scrub_bar(false);
         return;
     }
 
@@ -312,9 +307,27 @@ fn draw(gg: *const core.Gg) void {
     const live = has_memory and rewind.history_frames() != 0;
     const bottom = hint.resume_line(cursor == .resume_game, has_memory, rewind.depth_frames(), rewind.history_frames()) orelse scrub_text(&buf);
     cart.text(.{ .str = bottom, .x = text_x, .y = scrub_line_y, .text_color = if (live) row_color else dim_color });
-    const footer = if ((updates_open -% 1) / footer_turn % 2 == 0) hint.back else fast_hint;
+    const footer = footers[(updates_open -% 1) / footer_turn % footers.len];
     cart.text(.{ .str = footer, .x = text_x, .y = footer_y, .text_color = dim_color });
 }
+
+/// The scrub bar (the panel's bottom strip): the menu after a scrub step,
+/// and the whole display of the chorded rewind (main.zig), which passes
+/// `chord` so an empty history reads `hint.rewind_empty` rather than
+/// "Scrub: live / 0.0s". Lies inside the panel's rectangle and inside
+/// the strip `main.draw_fast` uses, so it covers both.
+pub fn draw_scrub_bar(chord: bool) void {
+    var buf: [24]u8 = undefined;
+    const empty = chord and rewind.keyframe_capacity() != 0 and rewind.history_frames() == 0;
+    cart.rect(.{ .x = panel_x, .y = bar_y, .width = panel_w, .height = bar_h, .fill_color = band_color, .stroke_color = frame_color });
+    centered(if (empty) hint.rewind_empty else scrub_text(&buf), bar_y + 1, title_color);
+}
+
+/// The scrub bar's rectangle (main.zig keeps its `>>4x` inside it).
+pub const bar_x = panel_x;
+pub const bar_w = panel_w;
+pub const bar_top = bar_y;
+pub const bar_height = bar_h;
 
 /// The scrub line for the current position, or "Scrub: no memory" when
 /// the scrubber found no room (frontend/rewind.zig `init`).
@@ -506,6 +519,7 @@ comptime {
     check_width("1024 KB, 64 banks", panel_cols);
     check_width(back_hint, panel_cols);
     check_width(fast_hint, panel_cols);
+    check_width(rewind_hint, panel_cols);
     check_width(no_memory, panel_cols);
     check_width("Scrub: -9.9 / 9.9s", panel_cols);
     check_width("Scrub: live / 9.9s", panel_cols);
