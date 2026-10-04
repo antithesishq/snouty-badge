@@ -2,6 +2,7 @@
 //! datacenter. SPEC.md is the design, PLAN.md the milestone contract.
 //! M3: splash, title, attract, menus, Quick Race and Grand Prix, the hold-B
 //! rewind and the crash auto-rewind on the snapshot bar, pause, sound.
+const std = @import("std");
 const cart = @import("cart-api");
 const build_options = @import("build_options");
 const input = @import("input.zig");
@@ -76,6 +77,7 @@ var crashes: u32 = 0;
 var last_msg: world.Message = .none;
 var last_lap: u8 = 0;
 var finish_note: u32 = 0;
+var ko_note: u32 = 0;
 /// Attract demo: frames left of its scripted B hold.
 var attract_b: u32 = 0;
 
@@ -122,6 +124,7 @@ fn new_race(t: *const track.Track) void {
     last_msg = .none;
     last_lap = 0;
     finish_note = 0;
+    ko_note = 0;
     attract_b = 0;
     go(.race);
 }
@@ -444,6 +447,10 @@ fn sound_cues() void {
                 sound.finish(0);
                 finish_note = 8;
             },
+            .ko => {
+                sound.ko(0);
+                ko_note = 6;
+            },
             else => {},
         }
         last_msg = w.msg;
@@ -451,6 +458,10 @@ fn sound_cues() void {
     if (finish_note > 0) {
         finish_note -= 1;
         if (finish_note == 1) sound.finish(1);
+    }
+    if (ko_note > 0) {
+        ko_note -= 1;
+        if (ko_note == 1) sound.ko(1);
     }
     if (p.shake == 4 and p.crash == .none) sound.rail_click();
 }
@@ -609,6 +620,8 @@ comptime {
         @export(&debug_gp_points, .{ .name = "debug_gp_points" });
         @export(&debug_start_race, .{ .name = "debug_start_race" });
         @export(&debug_force_crash, .{ .name = "debug_force_crash" });
+        @export(&debug_force_ko, .{ .name = "debug_force_ko" });
+        @export(&debug_kos, .{ .name = "debug_kos" });
         @export(&debug_rebuilds, .{ .name = "debug_rebuilds" });
         @export(&debug_replay_calls, .{ .name = "debug_replay_calls" });
         @export(&debug_replay_max, .{ .name = "debug_replay_max" });
@@ -703,6 +716,35 @@ fn debug_force_crash() callconv(.c) u32 {
     const p = &world.w.machines[world.player];
     if (p.active and p.crash == .none and screen == .race) sim.crash(p, .fall);
     return world.w.tick;
+}
+/// --call-at T debug_force_ko: the live rival or batch job nearest the
+/// player, credited to the player, melts down on the spot: a knockout
+/// (SPEC 5.5) for scripting the wreck. Returns its index, 0 if none.
+fn debug_force_ko() callconv(.c) u32 {
+    const w = &world.w;
+    const p = &w.machines[world.player];
+    if (screen != .race) return 0;
+    var best: u32 = 0;
+    var best_d: i64 = std.math.maxInt(i64);
+    for (w.machines[1..w.active_count], 1..) |*m, i| {
+        if (!m.active or m.crash != .none or m.finished) continue;
+        const dx: i64 = ((((m.x -% p.x) >> fixed.Q) + 512) & 1023) - 512;
+        const dy: i64 = ((((m.y -% p.y) >> fixed.Q) + 512) & 1023) - 512;
+        if (dx * dx + dy * dy < best_d) {
+            best_d = dx * dx + dy * dy;
+            best = @intCast(i);
+        }
+    }
+    if (best == 0) return 0;
+    const m = &w.machines[best];
+    m.hit_by_player = tuning.ko_credit_ticks;
+    m.thermal = 0;
+    sim.crash(m, .meltdown);
+    return best;
+}
+/// Machines the player knocked out this race (SPEC 5.5).
+fn debug_kos() callconv(.c) u32 {
+    return world.w.kos;
 }
 /// --call debug_set_machine:N picks the player's physics character (0 SNOUTY, 1..4 the rivals').
 fn debug_set_machine(n: u32) callconv(.c) void {

@@ -6,5 +6,7 @@ test {
     _ = @import("stream_audio.zig");
     _ = @import("audio_feed.zig");
     _ = @import("tone_stream.zig");
+    _ = @import("link.zig");
     _ = @import("tests/romfs_unit.zig");
+    _ = @import("tests/link_unit.zig");
 }

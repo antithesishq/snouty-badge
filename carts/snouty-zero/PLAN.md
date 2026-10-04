@@ -565,10 +565,55 @@ the ring, mixes in range, glides, fades off) and the pitch model. Bench
 idle and rev, the climb with speed, silence in each hit-stop and the
 warble through the auto rewinds, no gaps while racing.
 
+## M5.5 Knockouts
+
+2026-10-04, Adrian: "Can you destroy enemies? Like by smashing into them at
+high speeds or knocking them off the track?" Before this, no: a rival that
+melted down or fell reset on the centerline after the hit-stop, and contact
+did a flat 60 thermal. SPEC 5.5 is the design. Work, one track (small):
+
+- `world.zig`: `Machine.ko` (wrecking, then out) and `Machine.hit_by_player`
+  (credit countdown, ticks), `World.kos` and `World.msg_who`, `Message.ko`;
+  World stays under the 640-byte keyframe bound.
+- `sim.zig`: ram damage in `contact` when the player is the rammer;
+  credit; `crash` on a credited non-player machine sets `ko`; the
+  hit-stop end takes a KO'd machine out (`active = false`) instead of
+  `recover`; traffic starts at `tuning.traffic_thermal`.
+- `sprites.zig`: wreck flash and a spark burst every few ticks while `ko`;
+  `hud.zig`: the KO message; `results.zig`: a KOS row; `sound.zig`: `ko`.
+- Host tests: a rear-end ram damages the victim more than a side bump and
+  more than the rammer; a credited meltdown and a credited fall knock out
+  (rank 0, inactive after the wreck, the player ranks up, GP points 0); an
+  uncredited rival meltdown still recovers; the completable races allow
+  KO'd rivals; determinism with KOs.
+
+Done when `zig build`, `zig build test`, `zig build check-float` pass, the
+bench worst frame stays within the M5.4 figure, and a scripted KO shows the
+wreck in the headless preview.
+
+### M5.5 status
+
+- 2026-10-04: DONE. Host tests: ram damage (rear-end 380 on a batch job,
+  Overclocked more, a side bump less, the player only 60 when rammed), a
+  credited meltdown knocks out (wreck, then inactive, rank 0, the player
+  ranks up), uncredited crashes still recover, credit runs out after 120
+  ticks, a credited fall knocks out, a finished machine never does, and a
+  test driver that rams the field on Cold Aisle gets 2+ KOs in 60 s
+  deterministically. A probe with that driver over a whole race: 5 to 9
+  KOs on most tracks, the driver melting itself down once or twice doing
+  it; the plain autopilot knocks out one rival in nine races (Weights
+  Loop), so attract demos rarely show one. Preview
+  (`--call debug_start_race:0 --call debug_set_autopilot:1 --call-at "330
+  debug_force_ko"`): BACKPROP KILLED, the wreck flashes and sparks, rank 5TH
+  to 4TH. Bench (`m3_bench.json`, 1700 frames): **mean 2.08 ms, worst 4.81
+  ms** (29%), M5.4 was 2.07 / 4.78. RAM ELF 199,604 + 5,300 + 53,952 B,
+  about 15 KB free below the stack. `zig build test` (all carts) and
+  check-float pass.
+
 ## Hand-off
 
 All milestones are built, tested and on `origin/main` (tags
-`snouty-zero/m0` .. `m5`, `m5.1`). What only Adrian can do: flash
+`snouty-zero/m0` .. `m5`, `m5.1` .. `m5.5`). What only Adrian can do: flash
 `zig-out/firmware/snouty-zero.uf2` from main and play (the feel of the
 tuning constants is what the emulated bench cannot answer), and, to check
 the organizers' XIP verdict, the same game as `snouty-zero-xip.uf2`
@@ -606,3 +651,10 @@ decisions taken by default.
    thermal rather than melting the machine on the spot; the autopilot's
    laps are 30 s (SPEC hoped for 20-25): top speed / drag are the knobs
    if the race should feel faster.
+9. (M5.5) Knockouts are the player's alone: ram damage only when the
+   player is the rammer, and a crash only knocks out a machine the player
+   touched in the last 2 s, so rivals never vanish on their own and the
+   AI tuning is unchanged. A determined rammer can clear most of the
+   field; the knobs are `tuning.ram_damage_per_px` (200),
+   `ram_overclock_q8` (1.5x), `ko_credit_ticks` (120) and
+   `traffic_thermal` (400). A rewind brings knocked-out machines back.

@@ -109,6 +109,12 @@ pub const Occupancy = struct {
         if (self.bits[i >> 5] & m == 0) self.filled += 1;
         self.bits[i >> 5] |= m;
     }
+    pub fn unset(self: *Occupancy, x: u32, y: u32, z: u32) void {
+        const i = index(x, y, z);
+        const m = @as(u32, 1) << @intCast(i & 31);
+        if (self.bits[i >> 5] & m != 0) self.filled -= 1;
+        self.bits[i >> 5] &= ~m;
+    }
     pub fn clear(self: *Occupancy) void {
         self.* = .{};
     }
@@ -225,16 +231,35 @@ pub fn step_from(x: u5, y: u5, z: u5, d: Dir) ?[3]u5 {
 /// taken or boxed in; otherwise marks it occupied. One rng draw per axis
 /// plus one for the heading, whether it succeeds or not.
 pub fn spawn(occ: *Occupancy, r: *rng.Xorshift, color: u4) ?Pipe {
+    return spawn_in(occ, r, color, .{ 0, 0, 0 }, .{ nx, ny, nz });
+}
+
+/// `spawn` limited to the cells in [lo, hi) (steer mode's play box). The
+/// same rng draws as `spawn`, which is this over the whole grid.
+pub fn spawn_in(occ: *Occupancy, r: *rng.Xorshift, color: u4, lo: [3]u5, hi: [3]u5) ?Pipe {
     const p: Pipe = .{
-        .x = @intCast(r.below(nx)),
-        .y = @intCast(r.below(ny)),
-        .z = @intCast(r.below(nz)),
+        .x = @intCast(lo[0] + r.below(hi[0] - lo[0])),
+        .y = @intCast(lo[1] + r.below(hi[1] - lo[1])),
+        .z = @intCast(lo[2] + r.below(hi[2] - lo[2])),
         .heading = all_dirs[r.below(6)],
         .color = color,
     };
     if (occ.get(p.x, p.y, p.z) or !p.can_move_any(occ)) return null;
     occ.set(p.x, p.y, p.z);
     return p;
+}
+
+/// Marks every cell outside [lo, hi) occupied: steer mode's walls, so the
+/// walk and the crash test treat them like pipes.
+pub fn fill_outside(occ: *Occupancy, lo: [3]u5, hi: [3]u5) void {
+    for (0..nz) |z| {
+        for (0..ny) |y| {
+            for (0..nx) |x| {
+                const inside = x >= lo[0] and x < hi[0] and y >= lo[1] and y < hi[1] and z >= lo[2] and z < hi[2];
+                if (!inside) occ.set(@intCast(x), @intCast(y), @intCast(z));
+            }
+        }
+    }
 }
 
 test "walks never overlap or leave the box over 10k seeded steps" {
