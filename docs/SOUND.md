@@ -47,7 +47,7 @@ should start loud; nothing else in a cart decides it.
 | snouty-bugs | yes, SPEC section 11 effects via `lib/tone_stream.zig` | `cart/src/audio.zig` `enabled` | `-Dsound` (off) | Select, any time (state on the title) |
 | snouty-reflections | yes, background music (Gymnopedie No. 1) streamed by `cart/src/music.zig` (section 7); not in half30 | `music.enabled` | `-Dsound` (off) | Start in the attract orbit ("MUSIC ON/OFF") |
 | snouty-lynx | yes, Mikey's four channels as 44.1 kHz PCM, new firmware only (section 8) | `frontend/audio.zig` `enabled` | `-Dsound` (off) | menu row "Sound: On/Off" (not in the wasm build); `debug_settings` bit 0 |
-| snouty-zero | yes, 6 tones via `lib/tone_stream.zig` | `cart/src/sound.zig` `enabled` | `-Dsound` (off) | menu item "SOUND: ON/OFF" |
+| snouty-zero | yes, 6 tones + the engine drone via `lib/tone_stream.zig` | `cart/src/sound.zig` `enabled` | `-Dsound` (off) | menu item "SOUND: ON/OFF" |
 | snouty-run | no | | | |
 | snouty-maze | no, by decision (2026-09-27, "it'll be annoying") | | | |
 
@@ -143,7 +143,8 @@ now the ring a cart streams 44.1 kHz u8 mono samples through
 - `lib/tone_stream.zig`: `tone2` rebuilt in the cart (one voice, each
   `play` cancels the last, square/triangle/saw, sine as triangle,
   major/minor chords), rendered into the ring while a tone sounds and
-  idle otherwise. snouty-zero and snoutenstein use it on the badge and
+  idle otherwise; plus an optional held `drone` mixed under the tones
+  (snouty-zero's engine). snouty-zero and snoutenstein use it on the badge and
   keep `cart.tone2` / the `tone` import for the wasm simulator; their
   `update` calls `tone_stream.update()` once per frame.
 - `lib/audio_feed.zig`: for emulators, which render their sound chip's
