@@ -462,6 +462,81 @@ and a real fight; tag `snouty-gc/m1`; merged to main.
   (the autopilot now fires, so the M0 recording no longer replayed its
   race).
 
+## M2 Pickups
+
+Goal: RMA crates on the track, the roulette, rank-weighted rolls and the
+15 non-league pickups of SPEC 6.3 with their gags, AI pickup policies
+(SPEC 6.5 item 3). PROMPT INJECTION waits for the Perimeter league.
+
+### Track A: pickup simulation (Opus agent, worktree /home/exedev/snouty-badge-gc, branch gc/spec; starts while M1 Track B is still running)
+
+Owns what M1 Track A owned (`world.zig`, `sim.zig`, `weapons.zig`,
+`ai.zig`, `tuning.zig`, `racers.zig` gameplay, `sim_test.zig`,
+`weapons_test.zig`), plus new `pickups.zig` and `pickups_test.zig`,
+`track.zig`'s data accessors (not the renderer's league slices), and
+`tools/build_tracks.py` plus `cart/src/tracks/*.track` and the generated
+track `.bin`s for the crate rows. It must not edit M1 Track B's files
+(see M1 Track B). M1 Track B merges `gc/spec` in before it finishes.
+
+1. **M2.0 interface first**, as its own commit before the behaviour, and
+   documented here under "M2.0 Interface": the World and Car fields the
+   presentation will read. That means `Car.pickup` (an enum in SPEC 6.3
+   order, plus `none`), the roulette ticks, per-car status timers (bit
+   flip, deadlock partner and ticks, captcha with the human mini-game
+   state: cursor cell, lit mask, cleared mask; sudo, heisenbug, prefetch,
+   spaghetti drag, frozen with the KERNEL PANIC cause, the rubber duck),
+   crate state (positions come from the track; respawn timers in the
+   World), and new projectile, drop and event kinds: the KERNEL PANIC
+   packet, a DDOS drone pool (8), FORK BOMB, HONEYPOT, SPAGHETTI,
+   RACE CONDITION swap, roll result, and pickup used. Same contract as
+   M1.0: only `simulate` writes, the presentation reads.
+2. **Crates on the track**: a `crates` feature word in the `.track` format
+   (a row of 3 or 4 spawns across the track at a centerline sample);
+   `build_tracks.py` writes the crate positions into the track data; at
+   least two crate rows on Landfill Loop; each crate respawns 180 ticks
+   after it is taken. The generator stays byte-deterministic.
+3. **Rolls**: driving through a crate with no pickup starts the 45-tick
+   roulette; the result comes from the world PRNG by rank tier (SPEC 6.4).
+   KERNEL PANIC is excluded for 1st, and ZERO-DAY is limited to 5th and 6th
+   and once per car per race. B uses the pickup, and Down+B uses it
+   backward where SPEC gives a direction.
+4. **The 15 pickups** exactly as SPEC 6.3 (numbers into `tuning.zig`).
+   The CAPTCHA mini-game runs in the sim from the human's input byte (A
+   on a lit cell under the sweeping cursor clears it), so it plays
+   identically on both badges of a link race. AIs "solve" by character
+   (KIDDIE slowest). HEISENBUG makes a car untargetable by locks and the
+   AI, and it passes through cars and drops. RUBBER DUCK takes homing
+   targets and the first hit from behind. SUDO makes a car invulnerable,
+   ramming deals 40, and drops it touches are destroyed.
+5. **AI pickup policies** per crew (SPEC 4.3 and 6.5).
+6. **Tests**: a scenario per pickup (SPEC 12 lists the key asserts), roll
+   odds over many seeded rolls within tolerance of the table, crate
+   respawn, the chaos soak extended with pickups (20 races finish, no car
+   stuck for more than 600 ticks, no pool overflow), and determinism with
+   pickups on.
+7. Gate green, PLAN "M2 status" Track A paragraph, deferred questions,
+   commits with the `Co-Authored-By: Claude Opus 5.5
+   <noreply@anthropic.com>` line, push gc/spec. No tag, no merge.
+
+### Track B: pickup presentation (after M1 is tagged)
+
+HUD pickup box and roulette, crates and the pickup world objects
+(duck, `&` bombs, drones, packet, honeypot, spaghetti, chains), the human
+gags (KERNEL PANIC blue screen, BIT FLIP blink and jitter, the CAPTCHA
+grid you play, spaghetti strand, tearing for RACE CONDITION, HEISENBUG
+flicker, SUDO `#`), and the preview GIF with FORK BOMB, KERNEL PANIC on
+the player and a CAPTCHA solve. Written in detail when M1 lands.
+
+### M2 gate
+
+Gate green; pickup scenario tests and the soak pass; stress bench under
+8 ms worst with pickups in play; `docs/preview_m2.gif`; tag
+`snouty-gc/m2`; merged to main.
+
+### M2 status
+
+(empty)
+
 ## Deferred questions
 
 SPEC 17 holds the design defaults. Taken during M0 (Track A):
