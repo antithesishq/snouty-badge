@@ -238,6 +238,10 @@ pub const Audio = struct {
     /// false for a Mikey on its own (tests): the state runs, nothing is
     /// written.
     in_console: bool = false,
+    /// Audio 3's borrow is in Mikey's timer chain (`borrow_timer1`): a
+    /// borrow coming back round to audio 0 through timer 7 is dropped (a
+    /// chain linked all the way round would otherwise never end).
+    busy: bool = false,
     r: Render = .{},
 };
 
@@ -427,7 +431,9 @@ noinline fn underflow(m: *Mikey, out: Out, c_in: u2, x: Tick) void {
 /// Audio 3's borrow out into timer 1 (it counts only if linked). Out of
 /// line: Mikey's timer chain stays in line in Mikey's own paths.
 noinline fn borrow_timer1(m: *Mikey, x: Tick) void {
+    m.audio.busy = true;
     m.borrow_in(1, x);
+    m.audio.busy = false;
 }
 
 /// A clock into channel c from its predecessor (it counts only if linked).
@@ -680,7 +686,7 @@ noinline fn joint(m: *Mikey, out: Out, set: u4, end: Tick) void {
 /// interrupt event, linked, or a software borrow): clock a linked audio 0.
 pub noinline fn timer7_borrow(m: *Mikey, at: Tick) void {
     const c0 = &m.audio.ch[0].timer;
-    if (!c0.linked() or !c0.running()) return;
+    if (!c0.linked() or !c0.running() or m.audio.busy) return;
     catch_up(m, at);
     borrow_in(m, sink(m), 0, at);
     relink(m);

@@ -301,6 +301,17 @@ test "audio: audio 3 clocks a linked timer 1 (its interrupt on time)" {
     try expectEqual(mikey.ticks_never, m.aud_event);
 }
 
+test "audio: a chain linked all the way round ends" {
+    // Timer 1 -> 3 -> 5 -> 7 -> audio 0 -> 1 -> 2 -> 3 -> timer 1, every
+    // count and backup 0: a software borrow into timer 1 runs the ring
+    // once (the borrow back into audio 0 is dropped) instead of forever.
+    var m: Mikey = .{};
+    for ([_]u8{ 1, 3, 5, 7 }) |i| m.write(i * 4 + 1, C.reload | C.count | C.linked);
+    for (0..4) |c| m.write(reg(A.control, @intCast(c)), C.reload | C.count | C.linked);
+    m.write(1 * 4 + 3, mikey.Ctlb.borrow_in);
+    for (0..4) |c| try expectEqual(@as(u16, 1), shift12(&m, @intCast(c)));
+}
+
 /// Zero crossings around 128 (a sample at 128 keeps the last side, which
 /// carries over from the previous frame).
 fn crossings(samples: []const u8, side: *?bool) u32 {
