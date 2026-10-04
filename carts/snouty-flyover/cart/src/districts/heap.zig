@@ -3,8 +3,9 @@
 //! down the flight line, and the free list as a pulse-A chain hopping from
 //! freed block to freed block. Dataflow: every tick_every frames one block
 //! away from the flight line frees (sinks, turns teal) or mallocs (rises,
-//! turns amber). Verb: the GC sweep, a white wall moving away from the
-//! camera; the unreferenced blocks it passes collapse into rubble.
+//! turns amber). Verb: mark and sweep: the unreferenced blocks ahead grey
+//! out, then a white wall moves away from the camera and the grey blocks
+//! it passes collapse into rubble.
 //!
 //! The layout (block list) is a pure function of the segment seed. `gen` is
 //! the cache row() paints from, keyed by seed; `live` is the segment being
@@ -86,13 +87,20 @@ const anim_frames = 8;
 const free_to = 8;
 const malloc_to = 40;
 
-/// GC sweep: a gc_rows-deep wall at floor + gc_h, starting gc_start rows
-/// ahead of the camera and moving gc_speed rows per frame to the district
-/// end; victims collapse over collapse_frames to floor + rubble_h.
+/// Colour of a marked (garbage) block until the wall collapses it: the
+/// palette's unassigned grey pair (palette.zig 208-254), a dead block.
+const garbage: u8 = 208;
+/// GC sweep: a gc_rows-deep wall, floor + gc_h high and draped wall_lift
+/// over the blocks it crosses, starting where its foot shows on screen row
+/// gc_sy (camera.rows_ahead, at least gc_start rows ahead and at most half
+/// the way to the district end) and moving gc_speed rows per frame to the
+/// district end; victims collapse over collapse_frames to floor + rubble_h.
 const gc_start = 12;
+const gc_sy = 104;
 const gc_rows = 2;
-const gc_speed = 4;
+const gc_speed = 3;
 const gc_h = 24;
+const wall_lift = 6;
 const collapse_frames = 10;
 const rubble_h = 2;
 /// Rubble colour: palette.rubble + rubble_shade + (x % 2), indices 21..22,
@@ -257,11 +265,13 @@ fn free_list_row(lay: *const Layout, ly: i32, h: *[W]u8, c: *[W]u8) void {
 
 /// Dynamic state bits: `changed` = differs from row() (re-applied after a
 /// regen), `alloc` = currently allocated, `rubble` = collapsed (colour by x),
-/// `victim` = collapsing or collapsed by the GC.
+/// `victim` = collapsing or collapsed by the GC, `unref` = allocated and
+/// unreferenced (the next sweep's garbage).
 const d_changed: u8 = 1;
 const d_alloc: u8 = 2;
 const d_rubble: u8 = 4;
 const d_victim: u8 = 8;
+const d_unref: u8 = 16;
 
 /// Per live block: current height and colour, and the rise/sink animation
 /// from `from` to `to` with `left` of `len` frames to go.
@@ -272,10 +282,14 @@ var seg: world.Segment = .{ .kind = .heap, .y0 = 0, .len = 0, .seed = 1, .index 
 var tick_rng: fixed.Rng = .{ .s = 1 };
 /// Camera row at the last tick (verb() takes no arguments and runs after tick).
 var cam_row_last: i32 = 0;
-/// GC sweep: running, wall top row (world y), and the row it started at.
+/// GC sweep: running, wall top row (world y), and the row it collects from
+/// (gc_start rows ahead of the camera at the press: the blocks between there
+/// and the wall's first row collapse at once, as if it rose under the
+/// camera); sweeps started this visit (restarts not counted).
 var sweep_on = false;
 var wall_y: i32 = 0;
 var wall_y0: i32 = 0;
+var sweeps: u32 = 0;
 
 /// The segment becomes live: rebuild the layout from its seed, reset dynamics.
 pub fn enter(s: world.Segment) void {
@@ -283,9 +297,11 @@ pub fn enter(s: world.Segment) void {
     build(&live, s.seed);
     tick_rng = seeded(s.seed, 0x71C4_5EED);
     for (live.b[0..live.n], dyn[0..live.n]) |b, *d| {
-        d.* = .{ .h = b.h, .c = b.c, .from = b.h, .to = b.h, .left = 0, .len = 1, .flags = if (b.flags & flag_freed == 0) d_alloc else 0 };
+        const flags: u8 = if (b.flags & flag_freed != 0) 0 else if (b.flags & flag_unref != 0) d_alloc | d_unref else d_alloc;
+        d.* = .{ .h = b.h, .c = b.c, .from = b.h, .to = b.h, .left = 0, .len = 1, .flags = flags };
     }
     sweep_on = false;
+    sweeps = 0;
 }
 
 /// Write block i's current state into ring row y (world row inside the block).
@@ -301,7 +317,7 @@ fn apply_row(i: usize, r: world.Rows) void {
 }
 
 /// Write block i's current state into every one of its rows in the ring.
-fn apply_block(i: usize) void {
+noinline fn apply_block(i: usize) void {
     const b = live.b[i];
     var y = seg.y0 + b.y;
     const y1 = y + b.d;
@@ -354,7 +370,7 @@ fn malloc_or_free(cam_row: i32) void {
         if (x_dist(cam_x, b.x, b.w) < tick_min_dx) continue;
         if (d.flags & d_alloc != 0) {
             dyn[i].c = palette.heap_free;
-            dyn[i].flags &= ~d_alloc;
+            dyn[i].flags &= ~(d_alloc | d_unref);
             start_anim(i, F + free_to, anim_frames);
         } else {
             dyn[i].c = palette.heap_alloc[0];
@@ -381,7 +397,7 @@ pub fn tick(frame: u32, cam_row: i32) void {
             for (live.b[0..live.n], dyn[0..live.n], 0..) |b, d, i| {
                 const near = seg.y0 + b.y;
                 if (near > wall_y) break;
-                if (b.flags & flag_unref == 0 or d.flags & (d_changed | d_victim) != 0) continue;
+                if (d.flags & (d_unref | d_victim) != d_unref or d.left != 0) continue;
                 if (near + b.d <= wall_y0) continue;
                 dyn[i].flags |= d_victim;
                 start_anim(i, F + rubble_h, collapse_frames);
@@ -401,24 +417,47 @@ pub fn tick(frame: u32, cam_row: i32) void {
     if (sweep_on) paint_wall();
 }
 
+/// The wall: white, floor + gc_h high, draped wall_lift over taller cells.
 fn paint_wall() void {
     var y = wall_y;
     while (y < wall_y + gc_rows) : (y += 1) {
         const r = world.rows(y) orelse continue;
-        @memset(r.h, @intCast(F + gc_h));
+        for (r.h) |*h| h.* = @max(h.* + wall_lift, F + gc_h);
         @memset(r.c, palette.white);
     }
 }
 
-/// B pressed while this district is live: start the GC sweep gc_start rows
-/// ahead of the camera (or at the district start), one sweep at a time.
+/// B pressed while this district is live: mark (the unreferenced blocks
+/// ahead grey out), then sweep: the wall starts in view ahead of the camera
+/// (or at the district start). A press during a sweep starts the wall again
+/// from the camera; a new sweep after one has run finds new garbage
+/// (unref_pct of the allocated blocks it will cross).
 pub fn verb() bool {
-    if (sweep_on) return false;
-    const start = @max(cam_row_last + gc_start, seg.y0);
-    if (start + gc_rows > seg.y0 + seg.len) return false;
+    const y_end = seg.y0 + seg.len;
+    const ahead = camera.rows_ahead(gc_sy, F + gc_h, gc_start);
+    const start = @max(cam_row_last + @min(ahead, @max(gc_start, @divTrunc(y_end - cam_row_last, 2))), seg.y0);
+    if (start + gc_rows > y_end) return false;
+    const from = @max(cam_row_last + gc_start, seg.y0);
+    if (sweep_on) {
+        var y = wall_y;
+        while (y < wall_y + gc_rows) : (y += 1) restore_row(y);
+    } else {
+        // Mark: the garbage ahead greys out (after a first sweep, new
+        // garbage first: unref_pct of the allocated blocks ahead).
+        for (live.b[0..live.n], dyn[0..live.n], 0..) |b, *d, i| {
+            if (d.flags & (d_alloc | d_victim) != d_alloc or d.left != 0) continue;
+            if (seg.y0 + b.y + b.d <= from) continue;
+            if (sweeps > 0 and roll(&tick_rng, unref_pct)) d.flags |= d_unref;
+            if (d.flags & d_unref == 0) continue;
+            d.c = garbage;
+            d.flags |= d_changed;
+            apply_block(i);
+        }
+        sweeps += 1;
+    }
     sweep_on = true;
     wall_y = start;
-    wall_y0 = start;
+    wall_y0 = from;
     paint_wall();
     return true;
 }

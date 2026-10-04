@@ -11,15 +11,12 @@
 //! channel centres are recomputed per row (a few dozen sines), so the
 //! district has no layout cache.
 //!
-//! Verb (B: burst the pipe, PLAN.md M3 "Pipeline flood ahead"): the channels
-//! ahead of the camera flood: every non-water cell within `flood_half` of a
-//! stream or spring channel centre, from 10 rows ahead of the camera (never
-//! before the dams) to two rows short of the springs, sinks one cell per
-//! frame to the water line, white while it sinks (at most 19 frames from
-//! the floor's top), holds `hold_frames`, then the rows are restored one per frame from the far end
-//! through world.regen_row. From over the lake (and the Bus before it) the
-//! flood covers the stream sections between the dams and the merge point,
-//! as in M2.
+//! Verb (B: burst the pipe, PLAN.md M4.2 "B everywhere"): the pipe bursts
+//! where the camera looks, anywhere in the district: two white jets shoot
+//! up beside the flight line and the ground between them floods with
+//! pulse-A rings running outward, which settle into a mirror pool and
+//! drain (the rows are restored through world.regen_row). A press during a
+//! burst starts a new one.
 const world = @import("../world.zig");
 const palette = @import("../palette.zig");
 const fixed = @import("../fixed.zig");
@@ -29,10 +26,9 @@ pub const title: []const u8 = "PIPELINE";
 pub const gloss: []const u8 = "packets to the lake";
 pub const caption: []const u8 = "B: burst the pipe";
 pub const alt: i32 = 18;
-/// Late enough that the flooded stream sections (local rows 122..149) are in
-/// view from over the lake when the autopilot's burst runs (30 put them 90
-/// rows out).
-pub const verb_at: i32 = 70;
+/// Over the lake at the skim altitude, before the climb over the dams (from
+/// local row ~76) would carry the view off the burst just ahead.
+pub const verb_at: i32 = 24;
 
 const W = world.W;
 const F: i32 = world.floor;
@@ -80,21 +76,58 @@ const cap_h: i32 = 28;
 /// Autopilot altitude over the lake, relative to world.floor: 10 cells over
 /// the water (the concept's skim). After the lake the district's `alt`.
 const lake_alt: i32 = @as(i32, water) + 10 - F;
-/// Burst: from over the lake rows flood_ly0..merge_ly-1 (between the dams
-/// and the merge point); from the channels max(cam + flood_ahead, flood_ly0)
-/// ..flood_ly1-1. Cells within flood_half of a stream (or, from merge_ly,
-/// spring channel) centre sink one cell per frame for sink_frames, hold
-/// hold_frames, then the rows restore one per frame.
-const flood_ly0: i32 = dam_ly + dam_rows;
-const flood_ly1: i32 = spring_ly - 2;
-const flood_ahead: i32 = 10;
-const flood_half: i32 = 12;
-const sink_frames: u32 = 20;
-/// Colour of a flooding cell until it reaches the water line: the night
-/// floor and the water are both dark blue, so the sinking channels show as
-/// white water (the flood ahead reads from altitude).
-const foam: u8 = palette.white;
-const hold_frames: u32 = 40;
+/// Burst (B, PLAN.md M4.2 "B everywhere"): the pipe bursts ahead of the
+/// camera, on its x leaning with the heading. Water floods an ellipse
+/// of ground whose near and far edges show on screen rows burst_sy_near and
+/// burst_sy_far (camera.rows_ahead), growing to full over foam_frames;
+/// after foam_hold the foam settles into a mirror pool (the cells sink to
+/// the water line) from the centre out over pool_frames, holds pool_hold,
+/// and the burst ends. Cells above flood_max_h (dams, springs) stand in the
+/// flood. Two jets of white water shoot up beside the flight line. A press
+/// during a burst starts a new one from the camera's new position; the old
+/// burst's rows drain (are restored) drain_rows per frame, far end first.
+const burst_sy_near: i32 = 108;
+const burst_sy_far: i32 = 76;
+/// Ellipse half-depth (rows) and half-width (cells): rx = rx_per_z16 / 16
+/// of the centre's distance, about 0.75 of the view's half-width there.
+const burst_ry_min: i32 = 8;
+const burst_ry_max: i32 = 40;
+const burst_rx_min: i32 = 16;
+const burst_rx_max: i32 = 56;
+const rx_per_z16: i32 = 10;
+const flood_max_h: i32 = F + 8;
+const foam_frames: i32 = 12;
+const foam_hold: i32 = 10;
+const pool_frames: i32 = 10;
+const pool_hold: i32 = 20;
+const burst_frames: i32 = foam_frames + foam_hold + pool_frames + pool_hold;
+/// Colour of the flood until it settles: rings of the pulse-A comet
+/// (palette rotation runs them outward), ring_steps of them from the centre
+/// to the rim, on an octagonal distance (max + min / 2 of the per-axis
+/// distances, each ring_steps * 16 at the rim).
+const ring_steps: i32 = 3;
+/// Jets: jet_w x jet_rows cells at the ellipse centre row, jet_dx cells
+/// either side of its x: at least jet_dx_min (inner edge 22 cells out,
+/// clear of the flight model's clearance scan, 16 cells either side plus
+/// the heading's lean, so they do not lift the camera) and jet_dx_per_z16
+/// / 16 of their distance (beside the anteater on screen); none closer
+/// than jet_z_min rows, where they would be off screen. They rise to
+/// jet_over above the camera (jet_h_min..jet_h_max) over jet_up frames, hold
+/// jet_hold and fall to flood_max_h over jet_down.
+const jet_w: i32 = 6;
+const jet_rows: i32 = 3;
+const jet_dx_min: i32 = 25;
+const jet_z_min: i32 = 32;
+const jet_dx_per_z16: i32 = 9;
+const jet_over: i32 = 6;
+const jet_h_min: i32 = F + 24;
+const jet_h_max: i32 = 240;
+const jet_up: i32 = 4;
+const jet_hold: i32 = 18;
+const jet_down: i32 = 8;
+const jet_frames: i32 = jet_up + jet_hold + jet_down;
+/// Rows a drain restores per frame (whole rows through world.regen_row).
+const drain_rows: i32 = 2;
 
 // --- Geometry ---------------------------------------------------------------
 
@@ -243,16 +276,36 @@ pub fn alt_at(ly: i32) i32 {
 
 // --- Live state -------------------------------------------------------------
 
-const Phase = enum { idle, sink, hold, restore };
+/// The running burst, in world cells and rows. foam_q and pool_q are the
+/// ellipse fractions painted so far (Q8, 0..256); [y0, y1) its rows inside
+/// the district; the jets cover rows [jet_y, jet_y + jet_rows) at
+/// cx +- jet_dx, rising to jet_top.
+const Burst = struct {
+    t: i32 = 0,
+    cx: i32 = 0,
+    cy: i32 = 0,
+    rx: i32 = 1,
+    ry: i32 = 1,
+    y0: i32 = 0,
+    y1: i32 = 0,
+    foam_q: i32 = 0,
+    pool_q: i32 = 0,
+    jet_y: i32 = 0,
+    jet_dx: i32 = 0,
+    jet_top: i32 = 0,
+    jets: bool = false,
+    /// Q16 ring units per cell across and per row along.
+    kx: i32 = 0,
+    ky: i32 = 0,
+};
 
 var live_y0: i32 = 0;
-var phase: Phase = .idle;
-/// Frames into the sink or hold phase; the next row to restore.
-var phase_t: u32 = 0;
-var restore_ly: i32 = 0;
-/// The running burst's local rows [burst_ly0, burst_ly1).
-var burst_ly0: i32 = flood_ly0;
-var burst_ly1: i32 = merge_ly;
+var burst_on = false;
+var burst: Burst = .{};
+/// Rows waiting to drain (be restored), [drain_lo, drain_hi), empty when
+/// drain_lo >= drain_hi.
+var drain_lo: i32 = 0;
+var drain_hi: i32 = 0;
 /// Camera row at the last tick (the verb runs after the tick, same frame).
 var tick_row: i32 = 0;
 
@@ -260,108 +313,224 @@ var tick_row: i32 = 0;
 var frame_cells: u32 = 0;
 pub var max_frame_cells: u32 = 0;
 
-/// Debug: phase (0 idle, 1 sink, 2 hold, 3 restore) | frames in it << 8.
+/// Debug: phase (0 idle, 1 foam, 2 pool, 3 draining) | frames into the burst << 8.
 pub fn debug_state() u32 {
-    return @as(u32, @backingInt(phase)) | phase_t << 8;
+    const ph: u32 = if (burst_on) (if (burst.t < foam_frames + foam_hold) 1 else 2) else if (drain_lo < drain_hi) 3 else 0;
+    return ph | @as(u32, @intCast(if (burst_on) burst.t else 0)) << 8;
 }
 
-/// The segment becomes live: no burst.
+/// The segment becomes live: no burst, nothing to drain.
 pub fn enter(seg: world.Segment) void {
     live_y0 = seg.y0;
-    phase = .idle;
-    phase_t = 0;
+    burst_on = false;
+    drain_lo = 0;
+    drain_hi = 0;
 }
 
-/// One sink step over the flood area: every non-water cell within
-/// flood_half of a stream centre (below merge_ly) or a spring channel centre
-/// (from merge_ly; the two channels of a pair as one span where they
-/// overlap), the dash thread excepted, drops a cell; cells reaching the
-/// water line turn water.
-fn sink_step() void {
-    var ly = burst_ly0;
-    while (ly < burst_ly1) : (ly += 1) {
-        const rw = world.rows(live_y0 + ly) orelse continue;
-        if (ly < merge_ly) {
-            for (0..merged.len) |mi| {
-                const cx = stream_x(mi, ly) >> fixed.Q;
-                sink_span(rw, cx - flood_half, cx + flood_half);
-            }
-        } else {
-            for (0..merged.len) |pi| {
-                const a = spring_x(2 * pi, ly) >> fixed.Q;
-                const b = spring_x(2 * pi + 1, ly) >> fixed.Q;
-                const lo = @min(a, b);
-                const hi = @max(a, b);
-                if (hi - lo <= 2 * flood_half) {
-                    sink_span(rw, lo - flood_half, hi + flood_half);
-                } else {
-                    sink_span(rw, lo - flood_half, lo + flood_half);
-                    sink_span(rw, hi - flood_half, hi + flood_half);
-                }
-            }
-        }
+inline fn clamp(v: i32, lo: i32, hi: i32) i32 {
+    return @max(lo, @min(hi, v));
+}
+
+/// floor(sqrt(v)), bit by bit.
+fn isqrt(v: u32) i32 {
+    var rem = v;
+    var root: u32 = 0;
+    var bit: u32 = 1 << 30;
+    while (bit > rem) bit >>= 2;
+    while (bit != 0) : (bit >>= 2) {
+        if (rem >= root + bit) {
+            rem -= root + bit;
+            root = (root >> 1) + bit;
+        } else root >>= 1;
     }
+    return @intCast(root);
 }
 
-/// Sink cells x0..x1 (inclusive, x wraps) of one row by a cell (noinline:
-/// four inlined copies cost about 0.9 KB of .text).
-noinline fn sink_span(rw: world.Rows, x0: i32, x1: i32) void {
+/// Half-width in cells of the burst ellipse scaled by q (Q8) on the row dy
+/// from its centre, -1 when the row is outside it.
+noinline fn half_width(b: *const Burst, q: i32, dy: i32) i32 {
+    const r = (q * b.rx * b.ry) >> 8;
+    const d = @as(i32, @intCast(@abs(dy))) * b.rx;
+    if (q == 0 or d > r) return -1;
+    const s: u32 = @intCast(r * r - d * d);
+    return @divTrunc(isqrt(s), b.ry);
+}
+
+const Fill = enum { foam, pool };
+
+/// Flood cells x0..x1 (inclusive, x wraps) of one row, v its ring distance
+/// along: foam paints the ground with the rings (water rises to water + 1),
+/// pool sinks it to the mirror; cells above flood_max_h stand (noinline:
+/// called from four places).
+noinline fn flood_span(rw: world.Rows, x0: i32, x1: i32, fill_kind: Fill, v: i32) void {
     var x = x0;
     while (x <= x1) : (x += 1) {
         const k: usize = @intCast(x & (W - 1));
-        const cc = rw.c[k];
-        if (rw.h[k] <= water) continue;
-        if (cc >= palette.pulse_a_dash and cc < palette.pulse_a_dash + 16) continue;
-        rw.h[k] -= 1;
-        rw.c[k] = if (rw.h[k] == water) palette.water_idx else foam;
-        frame_cells += 1;
+        if (rw.h[k] > flood_max_h) continue;
+        switch (fill_kind) {
+            .foam => {
+                const u = (@as(i32, @intCast(@abs(x - burst.cx))) * burst.kx) >> fixed.Q;
+                const d = @max(u, v) + (@min(u, v) >> 1);
+                rw.h[k] = @max(rw.h[k], water + 1);
+                rw.c[k] = @intCast(palette.pulse_a + (d & 15));
+            },
+            .pool => {
+                rw.h[k] = water;
+                rw.c[k] = palette.water_idx;
+            },
+        }
+    }
+    frame_cells += @intCast(x1 - x0 + 1);
+}
+
+/// Grow the flood on row y from fraction q0 to q1: the cells inside the
+/// q1 ellipse and outside the q0 one (q0 0: all of them).
+fn grow_row(rw: world.Rows, dy: i32, q0: i32, q1: i32, fill_kind: Fill) void {
+    const b = &burst;
+    const ho = half_width(b, q1, dy);
+    if (ho < 0) return;
+    const hi = half_width(b, q0, dy);
+    const v = (@as(i32, @intCast(@abs(dy))) * b.ky) >> fixed.Q;
+    if (hi < 0) {
+        flood_span(rw, b.cx - ho, b.cx + ho, fill_kind, v);
+    } else if (ho > hi) {
+        flood_span(rw, b.cx - ho, b.cx - hi - 1, fill_kind, v);
+        flood_span(rw, b.cx + hi + 1, b.cx + ho, fill_kind, v);
     }
 }
 
-/// Per-frame: run the burst (sink, hold, restore).
+/// Jet height at burst frame t (0 when it has ended).
+fn jet_h(t: i32) i32 {
+    const top = burst.jet_top;
+    if (t < jet_up) return flood_max_h + @divTrunc((top - flood_max_h) * (t + 1), jet_up);
+    if (t < jet_up + jet_hold) return top;
+    if (t < jet_frames) return top - @divTrunc((top - flood_max_h) * (t - jet_up - jet_hold), jet_down);
+    return 0;
+}
+
+/// Paint the jets' cells on row y at height hv.
+noinline fn jets_row(rw: world.Rows, y: i32, hv: i32) void {
+    const b = &burst;
+    if (!b.jets or hv == 0 or y < b.jet_y or y >= b.jet_y + jet_rows) return;
+    for ([2]i32{ b.cx - b.jet_dx, b.cx + b.jet_dx }) |jx| {
+        world.span(rw.h, rw.c, jx - @divTrunc(jet_w, 2), jet_w, @intCast(hv), palette.white);
+        frame_cells += jet_w;
+    }
+}
+
+/// The running burst's state on a freshly regenerated row y.
+fn reapply_row(rw: world.Rows, y: i32) void {
+    if (!burst_on or y < burst.y0 or y >= burst.y1) return;
+    const dy = y - burst.cy;
+    grow_row(rw, dy, 0, burst.foam_q, .foam);
+    grow_row(rw, dy, 0, burst.pool_q, .pool);
+    jets_row(rw, y, jet_h(burst.t));
+}
+
+/// Queue rows [y0, y1) to drain.
+fn drain_add(y0: i32, y1: i32) void {
+    if (drain_lo >= drain_hi) {
+        drain_lo = y0;
+        drain_hi = y1;
+    } else {
+        drain_lo = @min(drain_lo, y0);
+        drain_hi = @max(drain_hi, y1);
+    }
+}
+
+/// Restore row y (static content) and put the running burst back on it.
+noinline fn restore_row(y: i32) void {
+    world.regen_row(y);
+    frame_cells += W;
+    if (world.rows(y)) |rw| reapply_row(rw, y);
+}
+
+/// One frame of the burst: the foam, then the pool, grow; the jets rise
+/// and fall (their rows restore when they end); at the end the burst's
+/// rows join the drain.
+fn burst_step() void {
+    const b = &burst;
+    b.t += 1;
+    const t = b.t;
+    const foam_q = @min(256, @divTrunc(256 * t, foam_frames));
+    const pool_q = clamp(@divTrunc(256 * (t - foam_frames - foam_hold), pool_frames), 0, 256);
+    const jh = jet_h(t);
+    var y = b.y0;
+    while (y < b.y1) : (y += 1) {
+        const rw = world.rows(y) orelse continue;
+        const dy = y - b.cy;
+        if (foam_q != b.foam_q) grow_row(rw, dy, b.foam_q, foam_q, .foam);
+        if (pool_q != b.pool_q) grow_row(rw, dy, b.pool_q, pool_q, .pool);
+        jets_row(rw, y, jh);
+    }
+    b.foam_q = foam_q;
+    b.pool_q = pool_q;
+    if (t == jet_frames and b.jets) {
+        y = b.jet_y;
+        while (y < b.jet_y + jet_rows) : (y += 1) restore_row(y);
+    }
+    if (t >= burst_frames) {
+        burst_on = false;
+        drain_add(b.y0, b.y1);
+    }
+}
+
+/// Per-frame: drain a few queued rows (far end first, rows the ring has
+/// dropped behind the camera skipped), then run the burst.
 pub fn tick(frame: u32, cam_row: i32) void {
     _ = frame;
     tick_row = cam_row;
     frame_cells = 0;
     defer max_frame_cells = @max(max_frame_cells, frame_cells);
-    switch (phase) {
-        .idle => {},
-        .sink => {
-            sink_step();
-            phase_t += 1;
-            if (phase_t >= sink_frames) {
-                phase = .hold;
-                phase_t = 0;
-            }
-        },
-        .hold => {
-            phase_t += 1;
-            if (phase_t >= hold_frames) {
-                phase = .restore;
-                restore_ly = burst_ly1 - 1;
-            }
-        },
-        .restore => {
-            world.regen_row(live_y0 + restore_ly);
-            frame_cells += W;
-            restore_ly -= 1;
-            if (restore_ly < burst_ly0) phase = .idle;
-        },
+    drain_lo = @max(drain_lo, cam_row - world.keep_behind);
+    var n: i32 = 0;
+    while (n < drain_rows and drain_lo < drain_hi) : (n += 1) {
+        drain_hi -= 1;
+        restore_row(drain_hi);
     }
+    if (burst_on) burst_step();
 }
 
-/// B: burst the pipe ahead of the camera (ignored while a burst is running,
-/// and within flood_ahead rows of the flood's far end, where nothing is left
-/// ahead to flood).
+/// B: burst the pipe ahead of the camera, anywhere in the district (a press
+/// during a burst starts a new one; the old one drains). Ignored only in
+/// the district's last rows, with nothing ahead to flood.
 pub fn verb() bool {
-    if (phase != .idle) return false;
-    const cam_ly = tick_row - live_y0;
-    const ly0 = if (cam_ly < lake_rows) flood_ly0 else @max(cam_ly + flood_ahead, flood_ly0);
-    const ly1 = if (cam_ly < lake_rows) merge_ly else flood_ly1;
-    if (ly0 >= ly1) return false;
-    burst_ly0 = ly0;
-    burst_ly1 = ly1;
-    phase = .sink;
-    phase_t = 0;
+    const end = live_y0 + world.district_len;
+    if (tick_row + jet_rows + 1 >= end) return false;
+    if (burst_on) {
+        // The old jets go at once; the rest of the old flood drains.
+        burst_on = false;
+        if (burst.jets and burst.t < jet_frames) {
+            var y = burst.jet_y;
+            while (y < burst.jet_y + jet_rows) : (y += 1) restore_row(y);
+        }
+        drain_add(burst.y0, burst.y1);
+    }
+    // Ground height the ellipse is fitted to: the lake's water or the floor.
+    const hg: i32 = if (tick_row - live_y0 < lake_rows) water + 1 else F;
+    const zn = camera.rows_ahead(burst_sy_near, hg, 4);
+    const zf = camera.rows_ahead(burst_sy_far, hg, zn + 2 * burst_ry_min);
+    const ry = clamp(@divTrunc(zf - zn, 2), burst_ry_min, burst_ry_max);
+    const zc = @min(zn + ry, end - 2 - tick_row);
+    const lean = camera.sin(camera.cam.yaw); // Q16 x cells per row
+    const cx = (camera.cam.x + lean * zc) >> fixed.Q;
+    const jet_y = @min(tick_row + zc - @divTrunc(jet_rows, 2), end - jet_rows);
+    const zj = jet_y - tick_row;
+    const rx = clamp(@divTrunc(zc * rx_per_z16, 16), burst_rx_min, burst_rx_max);
+    burst = .{
+        .cx = cx,
+        .cy = tick_row + zc,
+        .rx = rx,
+        .ry = ry,
+        .kx = @divTrunc(ring_steps * 16 * fixed.one, rx),
+        .ky = @divTrunc(ring_steps * 16 * fixed.one, ry),
+        .y0 = @max(tick_row + zc - ry, live_y0),
+        .y1 = @min(tick_row + zc + ry + 1, end),
+        .jet_y = jet_y,
+        .jet_dx = @max(jet_dx_min, @divTrunc(zj * jet_dx_per_z16, 16)),
+        .jet_top = clamp((camera.cam.alt >> fixed.Q) + jet_over, jet_h_min, jet_h_max),
+        .jets = zj >= jet_z_min,
+    };
+    burst_on = true;
     return true;
 }
