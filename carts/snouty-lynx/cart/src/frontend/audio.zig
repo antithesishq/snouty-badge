@@ -9,9 +9,17 @@
 //! apart, so each frame pushes `735 + (target - queued) / 8` samples,
 //! clamped to `min_push..max_push`, resampled from the 735 by nearest
 //! neighbour: the queue settles at `target` (two frames, ~33 ms) and the
-//! pitch moves only as much as the drift needs (well under 1% when the
-//! update rate is steady). A frame over budget lets the queue run down
-//! and the next pushes catch up.
+//! pitch moves only as much as the drift needs. A frame over budget lets
+//! the queue run down and the next pushes catch up.
+//!
+//! `queued` there is smoothed (`smooth_shift`: a running mean over ~8
+//! frames, reset at every start/resume). The OS takes 512 samples at a
+//! time (one DMA buffer, ~0.7 frame), so the raw queue at a push jumps by
+//! up to 512 from frame to frame with the DMA phase; fed raw into the
+//! formula that is a +-32-sample push wobble, a 60 Hz vibrato of 2.6% rms
+//! (8.6% peak to peak). Smoothed: 0.3% rms, 1.3% peak to peak, settling
+//! in ~20 frames after a resume, no underrun at 1% clock drift either way
+//! (a model of the OS's reads, tests/stream_unit.zig).
 //!
 //! Stopping and resuming. When the game stops stepping (the menu, a scrub,
 //! the picker; Sound off counts too) one `ramp_len`-sample ramp from the
@@ -57,9 +65,14 @@ var playing: bool = false;
 /// The last sample pushed, where the ramp starts.
 var last: u8 = silence;
 
+/// The queue's running mean in 1/16 samples (`smooth_shift`: each frame
+/// moves it 1/8 of the way to the queue).
+var q_smooth: i32 = 0;
+pub const smooth_shift = 3;
+
 /// Frames that found the ring empty while playing.
 pub var underruns: u32 = 0;
-/// `stream.queued()` at the last frame push, before it.
+/// `stream.queued()` at the last frame push, before it (raw).
 pub var last_queued: u32 = 0;
 
 /// Samples to push for a frame given the queue: `735 + (target -
@@ -101,7 +114,8 @@ pub noinline fn frame(l: *const core.Lynx) void {
         started = true;
     }
     const q0 = stream.queued();
-    if (!playing) {
+    const resumed = !playing;
+    if (resumed) {
         // The start or a resume: prime the queue with a frame of silence.
         @memset(scratch[0..n_frame], silence);
         _ = stream.push(scratch[0..n_frame]);
@@ -111,7 +125,9 @@ pub noinline fn frame(l: *const core.Lynx) void {
     }
     const q = stream.queued();
     last_queued = q;
-    const n = push_count(q);
+    const q16: i32 = @intCast(q * 16);
+    if (resumed) q_smooth = q16 else q_smooth += (q16 - q_smooth) >> smooth_shift;
+    const n = push_count(@intCast(@max(q_smooth, 0) >> 4));
     resample(&l.audio_out, scratch[0..n]);
     _ = stream.push(scratch[0..n]);
     last = scratch[n - 1];

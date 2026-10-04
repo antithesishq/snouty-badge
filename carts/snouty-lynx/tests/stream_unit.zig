@@ -146,10 +146,50 @@ test "stream: the queue settles at the target under drift, stop ramps, resume pr
 
     // Sound off: one ramp out, nothing more.
     audio.enabled = false;
-    defer audio.enabled = true;
     const q_off = stream.queued();
     audio.frame(&lynx);
     try testing.expectEqual(q_off + audio.ramp_len, stream.queued());
     audio.frame(&lynx);
     try testing.expectEqual(q_off + audio.ramp_len, stream.queued());
+    audio.enabled = true;
+
+    // A 441 Hz square wave across frame edges (period 100 samples, phase
+    // carried from frame to frame) on a badge 0.5% fast: the OS hears it
+    // at 441 Hz within the rate control's wobble, with no glitch where
+    // frames join (every run between edges is ~50 samples long).
+    const fast: u64 = 44100 * 16583 / 1_000_000;
+    var phase: u32 = 0;
+    const starved0 = os.starved;
+    for (0..240) |_| {
+        for (&lynx.audio_out) |*o| {
+            o.* = if (phase < 50) 192 else 64;
+            phase = (phase + 1) % 100;
+        }
+        audio.frame(&lynx);
+        try os.advance(fast);
+    }
+    try testing.expectEqual(starved0, os.starved);
+    const tail = os.out.items[os.out.items.len - 44100 ..];
+    // Runs between edges; the first (cut by the window) is not counted.
+    var rising: u32 = 0;
+    var run: u32 = 0;
+    var edges: u32 = 0;
+    var shortest: u32 = 1000;
+    var longest: u32 = 0;
+    for (tail[1..], tail[0 .. tail.len - 1]) |cur, prev| {
+        run += 1;
+        if (cur != prev) {
+            if (cur > prev) rising += 1;
+            if (edges > 0) {
+                shortest = @min(shortest, run);
+                longest = @max(longest, run);
+            }
+            edges += 1;
+            run = 0;
+        }
+    }
+    // The badge runs 0.5% fast, so the game's time does too: 441 Hz *
+    // 735 / 731.3 = 443 Hz, as the rate control must give.
+    try testing.expect(rising >= 441 and rising <= 446);
+    try testing.expect(shortest >= 49 and longest <= 51);
 }
