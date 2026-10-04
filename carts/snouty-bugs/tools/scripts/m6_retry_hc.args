@@ -1,6 +1,6 @@
 # m6_retry_hc: m6_retry in hardcore mode, where a hit is paid from the fuel bar, so the
 # shield's "no fuel spent" shows, and where a hit that rewinds strips every powerup. Same
-# input as m6_retry (god 31..3520, RIGHT 3670..3720) except B (not A) on the title at 30,
+# input as m6_retry (god 31..3520, RIGHT 3670..3720) except DOWN at 28 (HARDCORE) before A at 30,
 # which starts a hardcore game (hardcore 1, rewinds 0). The world is the same as m6_retry's
 # (no hit lands before 3780 either way), so the numbers line up with it until 3840.
 # Re-pinned for the catch-up clock with m6_retry (god off 5000 -> 3520, RIGHT 5150..5200 ->

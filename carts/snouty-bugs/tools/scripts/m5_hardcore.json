@@ -1,3 +1,4 @@
 [
-  {"from": 30, "to": 31, "hold": ["B"]}
+  {"from": 28, "to": 28, "hold": ["DOWN"]},
+  {"from": 30, "to": 31, "hold": ["A"]}
 ]

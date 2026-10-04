@@ -1,0 +1,8 @@
+# m7_ghost: FORK ghosts have no hitbox (SPEC.md 5.4), in every mode: only the ship's 4x4
+# hitbox is ever tested. A at 30 starts a NORMAL game; UP 40..69 moves the ship 45 px up, so
+# ghost 1 (24 ticks behind on the trail) is still low. At 70 (game tick 40) debug_ghost_shot
+# gives the ship a fork and parks a still 8x8 orb centred on the ghost's would-be hitbox: the
+# ghost stands in it, then replays up and out of it. Nothing happens: state 1, rewinds 3,
+# the orb still out, through 119. Control: DOWN 100..139 brings the ship itself into the
+# same orb, and at 120 (game tick 86) the ship is hit: REWIND (state 4), rewinds 3 -> 2.
+--frames 200 --call-at "70 debug_ghost_shot" --dump-exports debug_state,debug_rewinds,debug_bullets,debug_forks --at "69 debug_forks == 0" --at "70 debug_forks == 1" --at "70 debug_bullets == 1" --at "71 debug_state == 1" --at "90 debug_state == 1" --at "99 debug_rewinds == 3" --at "99 debug_bullets == 1" --at "100 debug_history_check == 0" --at "119 debug_state == 1" --at "119 debug_rewinds == 3" --at "119 debug_bullets == 1" --at "120 debug_state == 4" --at "120 debug_rewinds == 2" --expect "debug_mode == 0"
