@@ -42,7 +42,9 @@ pub const Front = enum(u8) { ping, broadcast, lance, phish };
 pub const Rear = enum(u8) { leak, bomb, rot, firewall };
 
 /// A moving shot (SPEC 6.1). Pool slot is free when `kind == .none`.
-pub const ProjKind = enum(u8) { none, ping, broadcast, phish };
+/// `panic` (M2) is the KERNEL PANIC packet (SPEC 6.3): it runs along the
+/// centerline at twice the top speed to its `target`, then homes onto it.
+pub const ProjKind = enum(u8) { none, ping, broadcast, phish, panic };
 pub const Projectile = struct {
     /// World position, Q16.16 (wrapping like cars).
     x: i32 = 0,
@@ -55,13 +57,23 @@ pub const Projectile = struct {
     owner: u8 = 0,
     /// Ticks left to live.
     ttl: u8 = 0,
-    /// SPEAR PHISH homing target car index, or `no_car`.
+    /// SPEAR PHISH homing target car index, or `no_car`. KERNEL PANIC: the
+    /// car it runs to.
     target: u8 = no_car,
+    /// KERNEL PANIC only: the centerline sample it is running toward (its
+    /// `ttl` is unused: it lives until it hits or its target leaves).
+    seg: u8 = 0,
 };
-pub const proj_count = 48;
+/// 48 in M1; the M1 soak peaked at 21 live shots, and the M2 `seg` byte
+/// made each slot 20 bytes.
+pub const proj_count = 40;
 
-/// Something lying on the floor (SPEC 6.2). Free when `kind == .none`.
-pub const DropKind = enum(u8) { none, leak, bomb, caltrop, firewall };
+/// Something lying on the floor (SPEC 6.2, and the M2 pickups of 6.3).
+/// Free when `kind == .none`. `fork` is one FORK BOMB `&` (they fork every
+/// 60 ticks, up to 8, gone at age 480); `honeypot` the fake RMA crate;
+/// `spaghetti` the 24 px cable tangle. All three are consumed by the car
+/// that touches them.
+pub const DropKind = enum(u8) { none, leak, bomb, caltrop, firewall, fork, honeypot, spaghetti };
 pub const Drop = struct {
     x: i32 = 0,
     y: i32 = 0,
@@ -69,17 +81,70 @@ pub const Drop = struct {
     owner: u8 = 0,
     /// Ticks since dropped (arming, growth, expiry).
     age: u16 = 0,
-    /// Kind-specific: puddle radius px (leak), half width px (firewall).
+    /// Kind-specific: puddle radius px (leak), half width px (firewall);
+    /// fork: the generation (bits 0..1) and drift side (bit 2), internal.
     size: u8 = 0,
-    /// Heading the drop was laid at (firewall orientation), turns >> 8.
+    /// Heading the drop was laid at (firewall orientation; fork: the drift
+    /// axis is across it), turns >> 8.
     dir: u8 = 0,
 };
-pub const drop_count = 32;
+/// 32 in M1; M2 adds up to 8 FORK BOMBs a use.
+pub const drop_count = 40;
+
+/// The held pickup (SPEC 6.3), in table order so that `@intFromEnum(p)` is
+/// the cell of `pickups.png` (ASSETS.md); `none` is 16, the roulette blank
+/// cell. Tiers (SPEC 6.4): A prefetch..spaghetti, B fork_bomb..
+/// race_condition, C kernel_panic..zero_day; `prompt_injection` is the
+/// Perimeter league's and never rolls on the Dumps.
+pub const Pickup = enum(u8) {
+    prefetch = 0,
+    honeypot,
+    duck,
+    hot_patch,
+    spaghetti,
+    fork_bomb,
+    bit_flip,
+    deadlock,
+    ddos,
+    heisenbug,
+    race_condition,
+    kernel_panic,
+    captcha,
+    sudo,
+    zero_day,
+    prompt_injection,
+    none = 16,
+};
+
+/// A DDOS packet drone (SPEC 6.3). `flying` from the user to the target
+/// (straight, over walls), then `orbit`ing it for `ttl` ticks: 2 damage a
+/// drone every 30 ticks, the target's top speed -20%. Shots kill it (1 HP).
+pub const DroneState = enum(u8) { none, flying, orbit };
+pub const Drone = struct {
+    /// World position, Q16.16.
+    x: i32 = 0,
+    y: i32 = 0,
+    state: DroneState = .none,
+    owner: u8 = 0,
+    target: u8 = 0,
+    /// Orbit ticks left (counts only while orbiting).
+    ttl: u8 = 0,
+    /// Orbit angle, turns >> 8.
+    angle: u8 = 0,
+};
+/// One DDOS swarm (a second DDOS replaces the oldest drones).
+pub const drone_count = 8;
+/// RMA crate spawns per track (rows of 3 or 4, `track.crate_spots`).
+pub const crate_max = 16;
+
+/// Why a car is frozen in place (`Car.frozen`): KERNEL PANIC (M2); GC's
+/// claw may add a cause in M3.
+pub const Freeze = enum(u8) { none, panic };
 
 /// Render-facing log of what happened (kill feed, ACK, taunts, beams,
 /// explosions). The sim appends; rendering keeps its own cursor (`seq`)
 /// and never writes. A ring, so the World stays plain data.
-pub const EventKind = enum(u8) { none, hit, wreck, lance, explode, respawn };
+pub const EventKind = enum(u8) { none, hit, wreck, lance, explode, respawn, roll, use, effect, swap };
 pub const Event = struct {
     /// Monotonic event number (World.event_seq at append).
     seq: u16 = 0,
@@ -87,6 +152,14 @@ pub const Event = struct {
     /// hit: attacker, victim, damage. wreck: victim, killer (`no_car` for a
     /// fall), cause (Wreck). lance: owner, target or `no_car`, length px.
     /// explode: car or `no_car`, radius px. respawn: car.
+    /// M2: roll: car, pickup rolled (`Pickup`), crate index (x, y = the
+    /// crate; the car's roulette runs `Car.roll_ticks`). use: user, pickup,
+    /// target car or `no_car` (x, y = where it lands or strikes). effect:
+    /// source car or `no_car`, affected car, pickup (x, y = the affected
+    /// car): a one-off impact for the gags and fx (KERNEL PANIC hit, BIT FLIP
+    /// strike, DEADLOCK chain, DDOS arrival, HONEYPOT burst, SPAGHETTI
+    /// tangle, RUBBER DUCK popped (affected = the duck's owner), ZERO-DAY).
+    /// swap: the two cars of a RACE CONDITION, the tick they trade places.
     a: u8 = 0,
     b: u8 = 0,
     c: u8 = 0,
@@ -198,6 +271,57 @@ pub const Car = struct {
     /// and the consecutive ticks it has been there (the reaction delay).
     aim: u8 = no_car,
     aim_ticks: u8 = 0,
+
+    // --- Pickups (M2, SPEC 6.3). Timers count down a tick at a time; 0 = off.
+    /// The held pickup; while `roll_ticks > 0` it is the roulette's hidden
+    /// result (`FETCHING...`) and B does nothing.
+    pickup: Pickup = .none,
+    roll_ticks: u8 = 0,
+    /// ZERO-DAY rolled once already this race.
+    zero_day_used: bool = false,
+    /// B held last tick (B uses the pickup on its press edge).
+    b_was: bool = false,
+    /// PREFETCH boost (+40% top speed, wall damage halved).
+    prefetch: u8 = 0,
+    /// RUBBER DUCK on its tether behind the car.
+    duck: u16 = 0,
+    /// HOT PATCH repair running (40 armor over 60 ticks).
+    patch: u8 = 0,
+    /// SPAGHETTI: tangled (speed held to 40%), then dragging a strand
+    /// (top speed -10%).
+    tangle: u8 = 0,
+    strand: u8 = 0,
+    /// HONEYPOT spin (no steering, the car turns and sheds speed).
+    spin: u8 = 0,
+    /// BIT FLIP: Left and Right swapped.
+    bit_flip: u8 = 0,
+    /// DEADLOCK: chained to `chain` (or to the nearest wall when `chain` is
+    /// `no_car`) while `chain_ticks > 0`; speed held to 30%.
+    chain: u8 = no_car,
+    chain_ticks: u8 = 0,
+    /// HEISENBUG: unobservable (no locks, no AI attention, passes through
+    /// cars and drops; drawn on odd frames).
+    heisen: u8 = 0,
+    /// Frozen in place (KERNEL PANIC: 90 ticks, the first 30 the blue
+    /// screen on a human's badge) and why.
+    frozen: u8 = 0,
+    frozen_by: Freeze = .none,
+    /// CAPTCHA: ticks left until it frees the car (speed held to 10%). The
+    /// mini-game (humans; AIs only wait): `captcha_cursor` 0..8 sweeps the
+    /// 3x3 grid, cells are bits of `captcha_lit` (traffic lights) and
+    /// `captcha_done` (cleared); A on a lit cell clears it, A on an unlit
+    /// one clears the board again; all lit cells cleared frees the car.
+    captcha: u8 = 0,
+    captcha_cursor: u8 = 0,
+    captcha_lit: u16 = 0,
+    captcha_done: u16 = 0,
+    /// SUDO: root (invulnerable, +20% top speed, rams deal 40 and bounce,
+    /// drops it touches are destroyed).
+    sudo: u16 = 0,
+    /// RACE CONDITION: tearing for `swap_ticks` with `swap_with`, then the
+    /// two cars trade places (set on both cars).
+    swap_with: u8 = no_car,
+    swap_ticks: u8 = 0,
 };
 
 pub const Phase = enum(u8) { countdown, racing, finished };
@@ -236,4 +360,9 @@ pub const World = struct {
     event_seq: u16 = 0,
     /// Weapons, ramming and wall damage on (Setup.combat).
     combat: bool = true,
+    /// M2: each crate spawn's respawn timer, indexed like
+    /// `track.crate_spots`: 0 = the crate is there, else ticks until it is.
+    crates: [crate_max]u8 = @splat(0),
+    /// DDOS drones.
+    drones: [drone_count]Drone = @splat(.{}),
 };

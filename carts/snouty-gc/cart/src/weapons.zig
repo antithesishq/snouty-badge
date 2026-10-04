@@ -389,6 +389,7 @@ fn update_drops(w: *World) void {
                     sim.damage(w, j, d.owner, tuning.firewall_dmg);
                 }
             },
+            .fork, .honeypot, .spaghetti => {},
         }
     }
 }
@@ -477,6 +478,7 @@ fn update_projs(w: *World) void {
                     emit(w, .explode, j, 12, 0, shot.x, shot.y);
                     sim.damage(w, j, shot.owner, tuning.phish_dmg);
                 },
+                .panic => {},
             }
             continue;
         }

@@ -12,6 +12,9 @@
 //! so `select` must have run for the track being looked at.
 const std = @import("std");
 const assets = @import("assets");
+const fixed = @import("fixed.zig");
+const tuning = @import("tuning.zig");
+const world = @import("world.zig");
 
 pub const map_side = 128;
 /// Tiles per league (SPEC 13.2): 128 x 64 bytes = 8 KB.
@@ -66,6 +69,9 @@ pub const League = struct {
 /// Centerline sample `flags` bits (PLAN.md "Generated data formats").
 pub const flag_wall: u8 = 1 << 0;
 pub const flag_open: u8 = 1 << 1;
+/// An RMA crate row across the track at this sample (M2; the generator's
+/// `crates` feature sets it on one sample, the middle of its segment).
+pub const flag_crates: u8 = 1 << 2;
 pub const flag_coolant: u8 = 1 << 3;
 pub const flag_bay: u8 = 1 << 4;
 pub const flag_vent: u8 = 1 << 5;
@@ -123,11 +129,47 @@ pub var map_ram: [map_side * map_side]u8 = undefined;
 /// The track whose map is in `map_ram`. Meaningful once `select` has run.
 pub var current: *const Track = &landfill_loop;
 
-/// Unpack `t`'s map into `map_ram` and make it `current`. Call at race
-/// start (sim.reset), before any tile lookup on `t`; ~16 K byte copies.
+/// An RMA crate spawn (SPEC 3.3), world px. `World.crates[k]` is spawn k's
+/// respawn timer (0 = the crate is there).
+pub const CrateSpot = struct { x: u16, y: u16 };
+/// The selected track's crate spawns, `crate_spots[0..crate_n]`, in
+/// centerline order, each row left to right across the direction of travel
+/// (filled by `select`, like `map_ram`: a cache of the track data).
+pub var crate_spots: [world.crate_max]CrateSpot = undefined;
+pub var crate_n: u8 = 0;
+
+/// Unpack `t`'s map into `map_ram`, find its crate spawns and make it
+/// `current`. Call at race start (sim.reset), before any tile lookup on
+/// `t`; ~16 K byte copies.
 pub fn select(t: *const Track) void {
     unpack_map(t.map_packed, &map_ram);
+    crate_n = find_crates(t, &crate_spots);
     current = t;
+}
+
+/// The crate spawns of `t`: a row at every sample flagged `flag_crates`,
+/// 4 crates where the half width is at least `tuning.crate_row4_half`, else
+/// 3, `tuning.crate_gap` px apart and centred on the line. At most
+/// `world.crate_max` (the generator checks the tracks stay under it).
+pub fn find_crates(t: *const Track, out: *[world.crate_max]CrateSpot) u8 {
+    var n: usize = 0;
+    for (0..256) |i| {
+        const s = t.sample(i);
+        if (s.flags & flag_crates == 0) continue;
+        const count: i32 = if (s.half >= tuning.crate_row4_half) 4 else 3;
+        const rx = -fixed.sin(s.tangent);
+        const ry = fixed.cos(s.tangent);
+        var k: i32 = 0;
+        while (k < count and n < out.len) : (k += 1) {
+            const lat = @divTrunc((2 * k - (count - 1)) * tuning.crate_gap, 2);
+            out[n] = .{
+                .x = @intCast((@as(i32, s.x) + ((rx * lat) >> fixed.Q)) & 1023),
+                .y = @intCast((@as(i32, s.y) + ((ry * lat) >> fixed.Q)) & 1023),
+            };
+            n += 1;
+        }
+    }
+    return @intCast(n);
 }
 
 /// Unpack a packed map stream (PLAN.md "Generated data formats",
