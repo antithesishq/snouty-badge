@@ -769,10 +769,11 @@ silent there. Adrian: keep sound off by default, make it work.
   1,309..2,125 (mean 1,634; Sonic 1,438..2,064); ring underruns only
   where the cart stops pushing by design (splash after the chime, frames
   59-71; the two menus), none in play, so the feed's `u` stays 0.
-- Sizes (fast, drive source): `.text` 174,052 -> 180,772 (+6.7 KB),
+- Sizes (fast, drive source, plan commit -> this branch): `.text`
+  175,108 -> 180,772 (+5.7 KB),
   `.data` 468 -> 5,420 (the Feed's 4 KB ring and push scratch are
   initialised to 128), `.bss` 41,828 -> 43,388 (`audio_out`, the synth,
-  the chime buffer); uf2 435,200 -> 461,824. The scrub arena
+  the chime buffer); uf2 437,248 -> 461,824. The scrub arena
   (`__stack_limit__ - __bss_end__ - 1 KB`) shrinks 55,148 -> 42,916 B:
   about 12 keyframes of Waternet instead of 15, Sonic ~9 (from the M3
   sizing numbers; not measured on the cart).
