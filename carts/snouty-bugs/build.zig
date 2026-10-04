@@ -45,6 +45,9 @@ const images = [_]Image{
     .{ .file = "fx_big.png", .bits = 4, .transparent = true },
     .{ .file = "hud.png", .bits = 4, .transparent = true },
     .{ .file = "pickups.png", .bits = 4, .transparent = true },
+    // PLAN.md M7 Art: pellet (8x8 x4) and orb (16x16 x2) enemy bullets.
+    .{ .file = "shots.png", .bits = 4, .transparent = true },
+    .{ .file = "orb.png", .bits = 4, .transparent = true },
     .{ .file = "bg_far.png", .bits = 4, .transparent = false },
     .{ .file = "bg_near.png", .bits = 4, .transparent = true },
     .{ .file = "iris_16.png", .bits = 4, .transparent = true },
