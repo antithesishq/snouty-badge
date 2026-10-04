@@ -199,6 +199,12 @@ warnings). Other options:
   (`--at 1799 debug_score '>' 0`, `--call-at 900 debug_score`); the quoted form
   saves quoting the operator. A T at or beyond N is a usage error
 - `--quiet`: write no PNGs, only `frames.json` (fast soak runs)
+- `--sample debug_hits,debug_weapon` (with `--sample-every K`, default 1):
+  call these zero-argument exports after every K-th update and record them
+  in `frames.json` under `samples` (`every`, `ticks`, `values: {NAME: [...]}`)
+- `--until "debug_stage_index >= 5"`: stop right after the first update where
+  it holds (`--frames` stays the cap); `frames.json` records `ran` (updates
+  run) and `until` (where it held), and `--at` checks past the stop fail
 - `--raw-colors`: decode colors as the cart API defines them instead of as the
   simulator displays them (only matters for carts that do not pre-swap)
 
@@ -355,6 +361,69 @@ script, PASS or FAIL with the exported values and any failed checks, keeps the
 full stderr in `out/check/NAME/preview.log`, and exits 1 if any script failed.
 `CART_WASM` points it at another build. From M2 on this is the gate before a
 commit: add a script and its sidecar for every new behaviour worth keeping.
+
+### Difficulty probe: `tools/difficulty.sh`
+
+The M7 difficulty curve as numbers (PLAN.md M7 "Probe" and "Difficulty
+targets"). Three bots from `cart/src/autopilot.zig` each play a fresh game
+in endless probe mode (a hit is counted and costs power, but the game never
+ends and no rewind runs) through the four stages and loop 2's stage 1:
+
+| Bot | Plays |
+|---|---|
+| 1 turret | holds A, never moves |
+| 2 sweep | holds A; up 40 ticks, still 20, down 40, still 20 |
+| 3 dodger | holds A and dodges: it scores 25 short moves (a 5x5 grid of targets up to 24 px away) against the straight-line paths of the enemy bullets and enemies it has noticed, nearer ticks weighted more, with small pulls toward crates, toward lining up a shot and toward the left-center, and commits to the best until its next plan; a decent player, not a great one, and the seed of the attract mode |
+
+The dodger's human limits all follow one knob, `skill` at the top of
+`autopilot.zig` (0 beginner .. 1 sharp, default 0.5): it never notices a
+share of the bullets (0.25), sees the others only once they are 12 ticks
+old (200 ms), foresees no drag, acceleration, turn, split or re-aim, looks
+22 ticks ahead, re-plans every 7 ticks and adds a little noise (a hash of
+the tick, never the world rng) to every choice. The missed share moves the
+hit count most.
+
+```sh
+tools/difficulty.sh                          # zig build, then all three bots (a few seconds)
+tools/difficulty.sh --no-build --bots 3 --stages 1
+tools/difficulty.sh --no-build --json out/difficulty.json
+tools/difficulty.sh --no-build --bosses 0,1,2,3   # boss rush: each boss on its own
+```
+
+It prints one table, a row per bot and stage (`L1S1` .. `L1S4`, then
+`L2S1`: loop and stage), and a total per bot:
+
+| Column | Meaning |
+|---|---|
+| hits | probe hits in the stage (each one a rewind a real player would have spent) |
+| secs | seconds in the stage, from its first tick to the next stage's first |
+| boss s | seconds the boss was on the field (`debug_boss_hp` > 0) |
+| boss hits | the hits taken while it was |
+| boss | `killed`, or `escaped` (the stage ended without a clear: the boss timed out) |
+| phases | HP phases the boss reached (`debug_boss_phase`) |
+| rank | `debug_rank` at the stage's last tick (`-` on carts without it) |
+| wpn@boss, wpn | the weapon (`F`/`A`/`B` and level, from `debug_weapon`) when the boss arrived and at the stage's end |
+| forks | forks at the stage's end |
+
+A `*` after the stage means the run hit its cap (`--frames`, default 15,000
+updates per stage) inside that stage. Options: `--bots 1,2,3`, `--stages N`
+(stop once the stage index, stage + 4 x loop, reaches N; default 5),
+`--frames CAP`, `--seed N` (preview's `cart.rand()` seed; the game's own seed
+comes from the deterministic wasm clock), `--json FILE` (the rows plus the
+wasm's sha256), `--no-build`; `CART_WASM` points it at another build. Same
+build, same table. Each bot is one run of `../../tools/preview.mjs` with
+`--call debug_probe --call debug_bot:N` (the bot holds A, so it starts the
+game from the title on update 0), `--sample` for a per-update trace of the
+exports and `--until` to stop at the last stage; the trace stays in
+`out/difficulty/botN/frames.json`.
+
+`--bosses 0,1,2,3` runs a boss rush instead (0 Heisenbug, 1 Mandelbug,
+2 Schrodinbug, 3 Bohrbug): per bot and boss a fresh game plays stage 1 up
+to update `--warp-at` (default 3000, so the bot has collected some crates),
+then `debug_boss:ID` (set before the first update) and `debug_warp` bring
+that boss, and the run ends when the next stage starts. One row per bot
+and boss; its hits and secs include the stage-1 play before the warp, boss
+hits and boss s are the fight's. Traces in `out/difficulty/botN_bossID/`.
 
 ## 6. Flash the badge
 

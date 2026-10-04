@@ -231,8 +231,8 @@ python3 ../../tools/make_gif.py out/ preview.gif --scale 3 --ms 66
 
 One tool serves every cart: `--press [BTN:]T1-T2`, `--script FILE.json`,
 `--seed`, `--dump-exports`, `--expect`, `--at`, `--call-at` (bugs, boy),
-`--call`, `--pose` (maze); `--help` lists them. Each cart's RUNNING.md has
-its scripts and gates.
+`--call`, `--pose` (maze), `--sample`, `--until` (bugs' difficulty probe);
+`--help` lists them. Each cart's RUNNING.md has its scripts and gates.
 
 ## 6. Benchmark before flashing
 
