@@ -30,12 +30,6 @@ pub const typical_pages_per_keyframe = 8;
 /// store's reference count is a u8).
 pub const max_keyframes = 64;
 
-// ---- Debug overlay (frontend/debug.zig, SPEC.md 14) ----
-
-/// Overlay on at boot (the menu toggles it). About 0.05 ms per frame with
-/// the direct glyph blitter.
-pub const debug_overlay = true;
-
 // ---- Fast forward (main.zig `Ctx.step`, docs/FAST_FORWARD.md at the root) ----
 
 /// Game frames per update at most while fast forwarding: 4x at 60 Hz.

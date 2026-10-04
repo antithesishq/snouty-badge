@@ -48,6 +48,9 @@ pub fn add(b: *Build, sycl_badge_dep: *Build.Dependency, opts: common.Options) v
     // -Dsound=true starts with sound on; off by default, the menu's Sound row
     // toggles it (docs/SOUND.md).
     options.addOption(bool, "sound", opts.sound);
+    // -Ddebug_overlay=true starts with the timing overlay on; off by default,
+    // the menu's Debug overlay row toggles it.
+    options.addOption(bool, "debug_overlay", opts.debug_overlay);
     build_options = options;
     font_path = sycl_badge_dep.path("src/font.zig");
 

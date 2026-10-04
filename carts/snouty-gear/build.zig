@@ -25,7 +25,7 @@ var rom_source: Source = .drive;
 /// What the cart sees as `rom.source` (`pack` is not built yet and builds as `drive`).
 const Source = enum { drive, embed };
 
-/// The `build_options` module (`sound`), set by `add` for `build_cart_modules`.
+/// The `build_options` module (`sound`, `debug_overlay`), set by `add` for `build_cart_modules`.
 var build_options: ?*Build.Step.Options = null;
 
 pub fn add(b: *Build, sycl_badge_dep: *Build.Dependency, opts: common.Options) void {
@@ -45,6 +45,9 @@ pub fn add(b: *Build, sycl_badge_dep: *Build.Dependency, opts: common.Options) v
     // toggles it (docs/SOUND.md).
     const options = b.addOptions();
     options.addOption(bool, "sound", opts.sound);
+    // -Ddebug_overlay=true starts with the timing overlay on; off by default,
+    // the menu's Debug overlay row toggles it.
+    options.addOption(bool, "debug_overlay", opts.debug_overlay);
     build_options = options;
 
     os_cart.add(b, sycl_badge_dep, .{

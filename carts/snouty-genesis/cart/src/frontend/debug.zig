@@ -18,7 +18,8 @@ const text = @import("text.zig");
 const audio = @import("audio.zig");
 const tunables = core.tunables;
 
-pub var enabled: bool = true;
+/// On at boot only in -Ddebug_overlay=true builds; the menu toggles it.
+pub var enabled: bool = @import("build_options").debug_overlay;
 
 /// Set by the rewind self-check (M3) when a replayed keyframe differs from
 /// the recorded one. The overlay is then drawn on red, even when disabled

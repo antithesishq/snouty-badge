@@ -13,7 +13,8 @@ pub const CartMode = @import("os_cart.zig").Mode;
 
 pub const Options = struct {
     cart_mode: CartMode,
-    /// -Ddebug_overlay: on-screen render timing (snouty-reflections, snouty-maze).
+    /// -Ddebug_overlay: on-screen render timing (snouty-reflections, snouty-maze,
+    /// demosnout, snouty-zero, snouty-flyover); the emulators' overlay on at boot.
     debug_overlay: bool,
     /// -Dneopixels: let a cart light the neopixels. Default false: the badge
     /// LEDs are painfully bright even at 1%, so every cart leaves them dark
