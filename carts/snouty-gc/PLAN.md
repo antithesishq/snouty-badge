@@ -645,14 +645,56 @@ track `.bin`s for the crate rows. It must not edit M1 Track B's files
    commits with the `Co-Authored-By: Claude Opus 5.5
    <noreply@anthropic.com>` line, push gc/spec. No tag, no merge.
 
-### Track B: pickup presentation (after M1 is tagged)
+### Track B: pickup presentation (Opus agent, worktree /home/exedev/snouty-badge-gc-present, branch gc/present)
 
-HUD pickup box and roulette, crates and the pickup world objects
-(duck, `&` bombs, drones, packet, honeypot, spaghetti, chains), the human
-gags (KERNEL PANIC blue screen, BIT FLIP blink and jitter, the CAPTCHA
-grid you play, spaghetti strand, tearing for RACE CONDITION, HEISENBUG
-flicker, SUDO `#`), and the preview GIF with FORK BOMB, KERNEL PANIC on
-the player and a CAPTCHA solve. Written in detail when M1 lands.
+M1 is tagged (`snouty-gc/m1`, on main c010781f). `gc/present` has merged
+the M2.0 interface (b55a19bf), so the build fails until the two `sprites.zig`
+switches handle the new projectile and drop kinds: that is the first fix.
+Track B owns the same files as M1 Track B (`main.zig`, `select.zig`,
+`roster_text.zig`, `fx.zig`, `hud.zig`, `sprites.zig`, `camera.zig`,
+`menu.zig`, `results.zig`, `stress.zig`, `render.zig` hooks, `hills.zig`,
+`build.zig`, `tools/scripts/`, `docs/`), and never edits Track A's
+(`world.zig`, `sim.zig`, `weapons.zig`, `pickups.zig`, `ai.zig`,
+`tuning.zig`, `racers.zig`, `track.zig`, the tests, `build_tracks.py`,
+the `.track` files). It renders only from the M2.0 interface and merges
+`gc/spec` in again whenever Track A pushes behaviour.
+
+1. **HUD pickup box** (top right): the held pickup's `pickups.png` cell,
+   the roulette while `roll_ticks > 0` (cycling cells, caption
+   `FETCHING...`, landing on the hidden result at 0), blank when empty.
+2. **World objects** in the depth list: crates (cell 17, hidden while the
+   respawn timer runs), the HONEYPOT crate (cells 18/19), FORK BOMB `&`,
+   SPAGHETTI tangle (flat), the KERNEL PANIC packet, DDOS drones, the
+   RUBBER DUCK at `pickups.duck_pos`, DEADLOCK chain lines to
+   `pickups.chain_anchor`, the cable strand behind a stranded car.
+3. **Car states**: HEISENBUG drawn on odd frames only, SUDO's `#` above
+   the car and a flashing palette, KERNEL PANIC frozen car tinted blue with
+   `:(` above it, CAPTCHA grid glyph over each captcha'd AI, RACE CONDITION
+   tearing (row-offset slices of the sprite) on both cars during
+   `swap_ticks`, the PREFETCH boost flame, the HONEYPOT spin.
+4. **The human gags** on the followed car's badge only: the KERNEL PANIC
+   blue screen while `frozen > 60` (full screen, `:(` and `YOUR RIG RAN
+   INTO A PROBLEM`, about 30 ticks), BIT FLIP (the HUD blinks `BIT FLIP`
+   with a mirrored arrow, plus a 1 px per-row floor jitter), the **CAPTCHA
+   mini-game** (a 48x48 3x3 grid centred over the floor from
+   `captcha_lit`, `captcha_done` and `captcha_cursor`, with traffic lights
+   in the lit cells, the cursor sweeping, cleared cells ticked, and the
+   caption `SELECT ALL SQUARES WITH TRAFFIC LIGHTS` wrapped to fit, then
+   `PRESS A`), DDOS (the speed reading stutters), and the pickup kill-feed
+   lines (`ZERO-DAY`, `KERNEL PANIC > KIDDIE`).
+5. **Effects** from `roll`, `use`, `effect` and `swap` events: the crate
+   pop, the honey `<honey>` tags burst, the duck pop, the ZERO-DAY flash,
+   the swap glitch. A short `use` caption over the user is optional.
+6. **Stress scene** extended with pickup objects (8 drones, 8 fork bombs,
+   chains, packet, crates); the stress bench stays under 8 ms worst.
+7. **Previews**: `docs/preview_m2.gif` showing a FORK BOMB growing, a
+   KERNEL PANIC on the player (blue screen), and a CAPTCHA solve. Add
+   debug exports that force a pickup into the followed car's slot and an
+   effect onto it, so the preview script can show each gag
+   deterministically (render-side debug hooks only; the sim stays pure).
+8. Gate green in the worktree, commits with the `Co-Authored-By: Claude
+   Opus 5.5 <noreply@anthropic.com>` line, push `gc/present`. The lead
+   merges both branches.
 
 ### M2 gate
 
