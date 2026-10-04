@@ -63,6 +63,23 @@ pub const Gg = struct {
     /// Current pad (Pad bits), set by `step_frame`.
     pad: u8 = 0,
 
+    // ---- Sound (docs/EMU_SOUND.md; not console state) ----
+    /// Render the PSG into `audio_out`; set by the frontend from its Sound
+    /// setting. False: nothing is rendered and the register model runs as
+    /// it always has. Kept by `reset`.
+    audio_render: bool = false,
+    /// The last `step_frame`'s sound: `audio_len` unsigned 8-bit mono
+    /// samples at 44.1 kHz (128 = silence) covering exactly that frame's
+    /// console time (735.95 on average, the fraction carried; up to 737 when an instruction runs past the frame end). 0 when
+    /// `audio_render` is false.
+    audio_out: [psg.max_frame_samples]u8 = @splat(128),
+    audio_len: u16 = 0,
+    /// The PSG's render-only state (phases, the noise shift register).
+    /// Not in keyframes: a reset or restore makes the next rendered frame
+    /// start from a clean phase (`Synth.resync`), a few ms of different
+    /// phase after a scrub step and no more.
+    synth: psg.Synth = .{},
+
     // ---- Frame bookkeeping ----
     /// T-states the last `step_frame` ran (about `frame_tstates`; the
     /// overshoot past line 261 stays in the VDP's line position, so the
@@ -103,6 +120,7 @@ pub const Gg = struct {
         gg.rom = r;
         gg.line_sink = null;
         gg.console_sink = null;
+        gg.audio_render = false;
         gg.reset();
     }
 
@@ -121,6 +139,8 @@ pub const Gg = struct {
         gg.io_control = 0xFF;
         gg.vdp.reset();
         gg.psg.reset();
+        gg.synth.live = false;
+        gg.audio_len = 0;
         gg.pad = 0;
         gg.frame_t = 0;
         gg.frame_count = 0;
@@ -132,6 +152,10 @@ pub const Gg = struct {
     /// `pad` is held for the whole frame.
     pub fn step_frame(gg: *Gg, pad: u8) void {
         gg.pad = pad;
+        gg.audio_len = 0;
+        if (gg.audio_render) {
+            if (!gg.synth.live) gg.synth.resync(&gg.psg, gg.psg_now());
+        } else gg.synth.live = false;
         const sink = gg.line_sink;
         var b = gg.bus_for();
         // T-states run, from the VDP position: the loop ends on the first
@@ -149,6 +173,40 @@ pub const Gg = struct {
         }
         gg.frame_t = (vdp.lines_per_frame - line0) * vdp.tstates_per_line + gg.vdp.line_tstates - lt0;
         gg.frame_count +%= 1;
+        if (gg.synth.live) {
+            // The VDP wrapped to line 0: "now" is past the frame's end.
+            gg.synth.run_to(&gg.psg, frame_tstates + gg.vdp.line_tstates, &gg.audio_out, &gg.audio_len);
+            gg.synth.rebase(frame_tstates);
+        }
+    }
+
+    /// Console time for the PSG: T-states into the current frame, at the
+    /// start of the instruction running (a write lands at most one
+    /// instruction early, under a third of a sample).
+    pub inline fn psg_now(gg: *const Gg) u32 {
+        return @as(u32, gg.vdp.line) * vdp.tstates_per_line + gg.vdp.line_tstates;
+    }
+
+    /// A byte to the PSG port: the synthesis catches up to now under the
+    /// old registers first.
+    pub fn psg_write(gg: *Gg, v: u8) void {
+        if (!gg.synth.live) return gg.psg.write(v);
+        const now = gg.psg_now();
+        gg.synth.run_to(&gg.psg, now, &gg.audio_out, &gg.audio_len);
+        gg.psg.write(v);
+        gg.synth.after_write(&gg.psg, now);
+    }
+
+    /// Port 06, the Game Gear stereo mask.
+    pub fn psg_stereo(gg: *Gg, v: u8) void {
+        if (!gg.synth.live) {
+            gg.psg.stereo = v;
+            return;
+        }
+        const now = gg.psg_now();
+        gg.synth.run_to(&gg.psg, now, &gg.audio_out, &gg.audio_len);
+        gg.psg.stereo = v;
+        gg.synth.refresh(&gg.psg);
     }
 
     /// Rebuild `read_map` from `mapper` and `rom`.
@@ -212,6 +270,7 @@ pub const Gg = struct {
             if (comptime std.mem.eql(u8, name, "vdp")) gg.vdp.load_state(&k.vdp) else @field(gg, name) = @field(k, name);
         }
         gg.frame_t = 0;
+        gg.synth.live = false;
         gg.sync_map();
     }
 
@@ -272,6 +331,7 @@ pub const Gg = struct {
         gg.irq_frame_count = k.irq_frame_count;
         gg.irq_line_count = k.irq_line_count;
         gg.frame_t = 0;
+        gg.synth.live = false;
         gg.sync_map();
     }
 };
