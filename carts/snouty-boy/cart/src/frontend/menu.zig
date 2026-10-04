@@ -37,6 +37,12 @@
 //! is visible; Left/Right keep scrubbing, B or a Select tap resume, and
 //! Up/Down/A bring the full menu back. A neopixel history meter (one LED per
 //! fifth) is dormant behind -Dneopixels=true (docs/NEOPIXELS.md).
+//!
+//! Chorded rewind (docs/FAST_FORWARD.md, frontend/flow.zig): Left during a
+//! fast-forward hold freezes the game the same way (`rewind_open`), steps
+//! time through the same `rewind.step` and draws the same bar
+//! (`draw_scrub_bar`, "Rewind: no history" when there is none) until
+//! Select is let go; `close` ends both.
 const std = @import("std");
 const cart = @import("cart-api");
 const core = @import("core");
@@ -70,10 +76,7 @@ var scrub_view: bool = false;
 var select_armed: bool = false;
 
 /// Scrub auto-repeat (SPEC.md 5: 4 steps per second while held).
-const repeat_frames = 15;
-/// Direction of the held scrub key, 0 when none.
-var repeat_dir: i2 = 0;
-var repeat_left: u8 = 0;
+var scrub_repeat: input.ScrubRepeat = .{};
 
 /// Neopixel color for one lit fifth of history; every channel at most 10.
 const led_on: cart.NeopixelColor = .{ .g = 10, .r = 4, .b = 0 };
@@ -88,8 +91,27 @@ pub fn open() void {
     showing_about = false;
     scrub_view = false;
     select_armed = false;
-    repeat_dir = 0;
+    scrub_repeat.stop();
     cursor = .resume_game;
+    freeze();
+}
+
+/// Enter the chorded rewind: the game frozen as for the menu, nothing
+/// drawn yet (`rewind_frame` steps and draws the bar); `close` leaves it.
+pub fn rewind_open() void {
+    freeze();
+}
+
+/// One chorded-rewind frame: step time by `dir` (0 none, -1 back 0.5 s,
+/// 1 forward) as the menu's Left/Right do, then the scrub bar.
+pub fn rewind_frame(gb: *core.Gb, dir: i2) void {
+    if (dir != 0) _ = rewind.step(gb, dir);
+    set_leds(rewind.history_fraction());
+    draw_scrub_bar();
+}
+
+/// Freeze the screen on the last presented frame (see the file comment).
+fn freeze() void {
     if (!cart.is_wasm) {
         const n = cart.screen_width * cart.screen_height / 2;
         const src: *const [n]u32 = @ptrCast(cart.frontbuffer);
@@ -127,29 +149,13 @@ fn is_setting(item: Item) bool {
 
 /// Left/Right: cycle a setting on a setting row, else scrub with auto-repeat.
 fn left_right(gb: *core.Gb, e: input.Edge) void {
-    const d: i2 = if (e.pressed(.left)) -1 else if (e.pressed(.right)) 1 else 0;
-    if (d != 0) {
-        repeat_dir = 0;
-        if (is_setting(cursor)) {
-            adjust(d);
-        } else {
-            on_scrub(gb, d);
-            repeat_dir = d;
-            repeat_left = repeat_frames;
-        }
+    if (is_setting(cursor)) {
+        scrub_repeat.stop();
+        if (e.pressed(.left)) adjust(-1) else if (e.pressed(.right)) adjust(1);
         return;
     }
-    if (repeat_dir == 0) return;
-    const still = if (repeat_dir < 0) e.held(.left) else e.held(.right);
-    if (!still or is_setting(cursor)) {
-        repeat_dir = 0;
-        return;
-    }
-    repeat_left -= 1;
-    if (repeat_left == 0) {
-        on_scrub(gb, repeat_dir);
-        repeat_left = repeat_frames;
-    }
+    const d = scrub_repeat.update(e);
+    if (d != 0) on_scrub(gb, d);
 }
 
 /// One menu frame: handle input, then draw. Returns `.resume_game` when the
@@ -166,7 +172,7 @@ pub fn update(gb: *core.Gb, e: input.Edge) Result {
         // Up/Down/A bring the full menu back without acting.
         if (e.pressed(.up) or e.pressed(.down) or e.pressed(.a)) {
             scrub_view = false;
-            repeat_dir = 0;
+            scrub_repeat.stop();
         } else left_right(gb, e);
     } else {
         if (e.pressed(.b) or select_tap) return .resume_game;
@@ -265,19 +271,30 @@ fn centered(s: []const u8, y: i32, color: cart.DisplayColor) void {
     cart.text(.{ .str = s, .x = @divTrunc(@as(i32, cart.screen_width) - w, 2), .y = y, .text_color = color });
 }
 
+/// Only a bar at the bottom, "Scrub: -1.5 / 3.5s" ("Rewind: no history"
+/// without any): the rest is the frozen frame, redrawn in full by every
+/// scrub step (frontend/rewind.zig). After a menu scrub step and all
+/// through the chorded rewind; it also covers the `>>` indicator in the
+/// bottom-right corner (frontend/debug.zig `draw_fast`).
+fn draw_scrub_bar() void {
+    const history = rewind.history_frames();
+    var buf: [24]u8 = undefined;
+    const s = if (history == 0) hint.rewind_empty else scrub_label(&buf, rewind.depth_frames(), history);
+    cart.rect(.{ .x = 0, .y = cart.screen_height - bar_h, .width = cart.screen_width, .height = bar_h, .fill_color = video.shade_color(3) });
+    centered(s, cart.screen_height - bar_h + 1, video.shade_color(0));
+}
+const bar_h = 10;
+comptime {
+    if (bar_h < 8) @compileError("the scrub bar must cover the >> indicator");
+}
+
 fn draw(gb: *const core.Gb) void {
     const bg = video.shade_color(0);
     const fg = video.shade_color(3);
     const dim = video.shade_color(2);
     var buf: [24]u8 = undefined;
 
-    if (scrub_view) {
-        // Only a bar at the bottom: the rest is the restored frame, redrawn
-        // in full by every scrub step (frontend/rewind.zig).
-        cart.rect(.{ .x = 0, .y = cart.screen_height - 10, .width = cart.screen_width, .height = 10, .fill_color = fg });
-        centered(scrub_label(&buf, rewind.depth_frames(), rewind.history_frames()), cart.screen_height - 9, bg);
-        return;
-    }
+    if (scrub_view) return draw_scrub_bar();
 
     // Title band: SPEC.md 12 and 18 item 9.
     cart.rect(.{ .x = 0, .y = 0, .width = cart.screen_width, .height = band_h, .fill_color = fg });
@@ -330,8 +347,11 @@ const about_cols = (panel_w - (text_x - panel_x) - 2) / 8;
 
 /// About (SPEC.md 5, PLAN.md M5): version, header title, mapper and size,
 /// where the ROM came from and its file name, CRC32 and the model the
-/// console runs as (DMG or CGB, SPEC.md 19), and the fragmented-bank count
-/// (drive); in the footer row the fast-forward chord (`input.fast_hint`).
+/// console runs as (DMG or CGB, SPEC.md 19); a drive ROM with banks split
+/// across clusters reads "Fragmented: N" (banks) in place of "Source:
+/// drive". Under them the fast-forward and chorded-rewind gestures, which
+/// no menu row offers (`input.fast_hint`, `input.rewind_hint`), and
+/// "B: back" in the footer row.
 fn draw_about(gb: *const core.Gb, fg: cart.DisplayColor, dim: cart.DisplayColor) void {
     const info = &romsrc.info;
     var b0: [24]u8 = undefined;
@@ -355,29 +375,28 @@ fn draw_about(gb: *const core.Gb, fg: cart.DisplayColor, dim: cart.DisplayColor)
 
     w = .{ .buf = &b3 };
     if (info.source == .drive and info.fragmented != 0) {
-        w.put("fragmented: ");
+        w.put("Fragmented: ");
         w.num(info.fragmented);
-        w.put(if (info.fragmented == 1) " bank" else " banks");
-    }
-    const last = w.done();
+    } else w.put(if (info.source == .drive) "Source: drive" else "Source: embedded");
+    const source = w.done();
 
     const lines = [_][]const u8{
         cat(&b0, "Version ", version),
         rom_title(header(&gb.rom)),
         mbc_size,
-        if (info.source == .drive) "Source: drive" else "Source: embedded",
+        source,
         fit(&b4, info.name()),
         crc,
-        last,
     };
     var y: i32 = first_row_y;
     for (lines) |l| {
         cart.text(.{ .str = l, .x = text_x, .y = y, .text_color = fg });
         y += row_h;
     }
-    cart.text(.{ .str = "B: back", .x = text_x, .y = scrub_line_y, .text_color = dim });
-    // The in-game chord, which no menu row offers.
-    cart.text(.{ .str = input.fast_hint, .x = text_x, .y = footer_y, .text_color = dim });
+    // The in-game gestures, which no menu row offers.
+    cart.text(.{ .str = input.fast_hint, .x = text_x, .y = scrub_line_y - row_h, .text_color = dim });
+    cart.text(.{ .str = input.rewind_hint, .x = text_x, .y = scrub_line_y, .text_color = dim });
+    cart.text(.{ .str = "B: back", .x = text_x, .y = footer_y, .text_color = dim });
 }
 
 /// `s` cut to `about_cols` characters, the last one replaced by '~' when
