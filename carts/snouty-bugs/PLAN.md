@@ -1838,6 +1838,150 @@ are the levers, not stage content. Iterating arrays by value (`for
 memcpy a frame in `bullets.zig` (tried locally by pointer: mean 3.54 ->
 3.30 ms, worst unchanged; not committed, engine file).
 
+### Tuning (lead's pass)
+
+Lead, 2026-10-04, branch `bugs/m7-tune`. The merged M7 overshot: the
+dodger (`skill` 0.5) took 28 / 46 / 54 / 60 / 47 hits in the five rows of
+`tools/difficulty.sh` and met every boss at weapon level 1-2. Targets
+for this pass (seed 1, bots unchanged): dodger 3-6 / 6-11 / 9-15 / 12-20,
+loop 2 at least stage 4 minus 2, strictly rising; dodger weapon >= 2 at
+the stage-2 boss and >= 3 at the stage-3 or stage-4 boss; turret >= 20 /
+30 / 40 / 50 and sweep >= 12 / 20 / 30 / 40; waves 70-85 s, boss fights
+20-60 s for the dodger, no boss under 15 s for any bot.
+
+**What the probe showed.** The dodger's hits follow its blind spot: it
+never notices a quarter of the bullets and stays put unless it sees a
+threat, so nearly every hit is an *aimed* bullet it did not see. Its hit
+count tracks the number of aimed bullets (re-aims included), not the
+number of bullets on screen: at a quarter of the merged fire rate it
+still took 5 hits in stage 1 and 24 in stage 4. Halving the countdown
+fire took only a quarter off. So the pass thins aimed fire and keeps the
+patterns that are not aimed (rings, sprinklers, curtains, spirals). The
+other findings: a leaving beetle crawled across the whole field firing
+point-blank; beetle walls opened their gap 48 px away, out of reach of a
+22-tick plan; ladybugs looped right on the ship's column; the 25-s herd
+held the table clock so stages 2-4 lasted 107 s; and power snowballs in
+both directions (a hit costs a level, a level kills faster), so one
+seed's runs swing by 5-10 hits a stage.
+
+**What changed** (every number is a knob at the top of its file):
+
+- `enemies.zig` fire pace. `stage_pace` 16 / 9 / 9 / 7 -> **56 / 32 / 40
+  / 56** sixteenths (PRODUCTION's table is the busiest and its rank base
+  is 450, so it needs the slowest countdowns), and a **stage shape**
+  (`ramp`): intervals start at 28/16 of the pace, tighten to 16/16 at
+  50 s, then ease to 26/16 over the last 14 s (a lull before the WARNING
+  to collect the last crates). Loop 2 keeps `loop_pace` 2/6.
+- **`member_stride` 3 / 2 / 2 / 1** (all from loop 2): the fire that is
+  not on a countdown is thinned the same way: only every n-th gnat of a
+  string (each now knows its place, `variant`), wasp of a vee and ladybug
+  of a four fires, and a flea fires at every n-th apex.
+- **No point-blank fire**: `safe_radius` 22 -> 40; a leaving beetle holds
+  its fire; beetle walls open their gap 28 px from the ship (was 48).
+- Aimed fire: zombies every 50 (35), revive ring 8 (12); stop-and-go moth
+  ring 4 (6) every 60 (45); the plain spider's sprinkler (not aimed)
+  every 10 (18), its p1 every 18.
+- Regular HP (the dodger aims, the turret does not, so this separates
+  them): beetle 6 (plain) / 14, spider 8 / 8, moth 6 / 6, centipede head
+  14 / segment 5, flea 8, mite 20, zombie 10 (were 24, 12, 8, 24 / 8, 12,
+  36, 16).
+- Herd: stays 12 s (25), HP 80 / 100 / 120 (400 / 520 / 640), so a
+  powered ship kills her for the two crates. `waves.zig`: the WARNING is
+  per stage, **72 s in stage 1 and 64 s in stages 2-4** (the herd's hold
+  comes on top); the stage 2-4 entries after the herd are compressed from
+  35-69 s into 35-61 s. Ladybug fours enter at x 100-136 (were 70-130).
+- Crates (`drop sources`): every beetle killed by a bolt drops (was every
+  second); more formations: 5 more gnat strings in stage 1, 3 in stage 2,
+  and in stages 3-4 every gnat string, ladybug four and zombie group, plus
+  a crate string at 57 s. The dodger now sees 14 / 14 / 21 / 16 / 14
+  crates a stage and gains about 5 weapon levels a stage from them
+  (24-seed means).
+- Rank (`rank_math.zig`): **50 per weapon level and 50 per fork** (25 and
+  30): the designed stabiliser, so a powered ship meets a harder game.
+  Structure, mercy (80 per hit, cap 240) and the effects table unchanged;
+  host tests updated.
+- Bosses (`bosses.zig`): `boss_pace` **40 / 24 / 24 / 40** sixteenths
+  (Heisenbug, Mandelbug, Schrodinbug, Bohrbug; loop 2 at 12/16 of that),
+  and the *aimed* volleys slowed against the rest: Heisenbug P1 line every
+  100 (50), P3 fan every 80 (40); Mandelbug P1 fan 80 (45) and line 60
+  (26), P2 fan 70 (40) and line 60 (30), P3 / P4 aimed shots 50 (24);
+  Schrodinbug P1 aimed round 60 (30), P4 needle line 80 (40); Bohrbug P1
+  horn needle 45 (20) and fan 80 (50), P2 needle 60 (32), P4 line 120
+  (80). `boss_hp.zig`: Heisenbug 360 (320), Mandelbug 360 (480), Bohrbug
+  340 (420), Schrodinbug 240; a weak ship's fight is shorter, the phase
+  floor still holds a strong one.
+- Probe tools: wasm `debug_seed(n)` seeds the world rng of every new game
+  (0 = the clock) and `tools/difficulty.sh --seed N` uses it for N != 1
+  (before, every seed played the same game); `debug_last_hit` (kind + 1,
+  +100 for a ram) says what the last probe hit was.
+
+**Seed 1** (`tools/difficulty.sh`, final):
+
+```
+bot     stage  hits   secs  boss s  boss hits  boss    phases  rank  wpn@boss  wpn  forks
+turret  L1S1     50  137.1    58.1         22  killed       3     0        F1   A1      0
+turret  L1S2     55  119.4    35.8         22  killed       4    21        A2   B1      0
+turret  L1S3     72  129.4    43.7         27  killed       4   177        F2   F1      0
+turret  L1S4     73  123.3    36.0         19  killed       5   319        A2   B1      0
+turret  L2S1     78  144.5    63.5         23  killed       3   284        F2   F1      0
+sweep   L1S1     20  123.2    44.1         10  killed       3     0        B1   B1      0
+sweep   L1S2     68  165.5    84.2         36  killed       4    33        F1   F1      0
+sweep   L1S3     78  162.4    75.1         36  killed       4   184        F1   A1      0
+sweep   L1S4     47  121.2    34.0          9  killed       5   319        B1   B1      0
+sweep   L2S1     64  151.8    71.8         25  killed       3   282        A1   A1      0
+dodger  L1S1      4   98.2    19.2          0  killed       3    13        A2   B2      1
+dodger  L1S2     10  106.7    32.3          7  killed       4    17        F3   A1      0
+dodger  L1S3     15  114.6    31.4          6  killed       4   177        B3   F1      0
+dodger  L1S4     19  120.6    33.4          5  killed       5   378        F2   A1      1
+dodger  L2S1     23  116.5    35.5          1  killed       3   293        B1   F1      0
+```
+
+**Seeds 2 and 3**, dodger (hits, boss s, wpn@boss):
+
+| Seed | L1S1 | L1S2 | L1S3 | L1S4 | L2S1 |
+|---|---|---|---|---|---|
+| 2 | 4, 19.2 s, A2 | 10, 29.1 s, F5 | 8, 21.0 s, F4 | 23, 29.6 s, B2 | 15, 24.4 s, A1 |
+| 3 | 6, 29.7 s, A1 | 3, 22.6 s, F5 | 11, 22.1 s, B3 | 21, 30.9 s, F3 | 28, 45.9 s, B2 |
+
+**24 seeds** (mean hits, sd; dodger waves / boss seconds; median weapon
+at the boss). One seed is one chained game, and the power snowball makes
+single seeds swing; the means are the steadier curve:
+
+| Bot | L1S1 | L1S2 | L1S3 | L1S4 | L2S1 |
+|---|---|---|---|---|---|
+| dodger 0.5 | 5.3 (1.6) | 8.7 (4.6) | 9.7 (4.9) | 19.0 (6.4) | 21.2 (4.8) |
+| waves / boss s | 78 / 24 | 75 / 29 | 80 / 27 | 85 / 33 | 80 / 45 |
+| wpn@boss median | 2 | 4 | 3 | 2 | 1 |
+| dodger 0.25 | 9.5 | 18.8 | 16.5 | 29.3 | 30.0 |
+| dodger 0.75 | 4.3 | 2.4 | 2.5 | 4.6 | 4.7 |
+| turret | 46.8 | 56.0 | 63.1 | 76.8 | 80.5 |
+| sweep | 20.6 | 58.0 | 66.5 | 51.8 | 58.9 |
+
+Skill 0.25 and 0.75 (the knob edited locally, not committed), seed 1:
+0.25: 11 / 28 / 20 / 28 / 24 hits; 0.75: 2 / 2 / 1 / 6 / 3 (it reaches
+level 5 by the stage-2 boss and cruises; its boss fights are 18-27 s,
+the phase floor).
+
+Boss fights: the shortest of any bot in these runs is about 17 s (the
+Heisenbug against the skill-0.25 and 0.75 dodgers); at skill 0.5 the
+Heisenbug takes 19-37 s (19.2 s on seed 1: P1 and P2 at the 6-s floor
+and a short P3), loop 2's 25-64 s. Bullets on screen during the waves
+for the dodger: mean 4 / 4 / 12 / 20 / 26 (24 seeds), peaks 20 / 65 / 49
+/ 81 / 112 (one run).
+
+**badge-bench** (calibrated busy ms, turret holding A, two 90-frame B
+holds): stage 4 from its first wave (`--poke bugs_bench_stage=4 --poke
+bugs_bench_waves=1`, B 2400-2489 and 3600-3689, 4800 frames) mean 3.01,
+worst 7.55 (a hold frame); loop 2 stage 1 (`bugs_bench_stage=5`) mean
+3.25, worst 9.18; the Bohrbug's final phase (`bugs_bench_stage=4
+bugs_force_boss=3 bugs_force_phase=4`, B 800-889) mean 2.90, worst 6.70.
+0 frames over 14 ms.
+
+Regression scripts: `m7_identity` and `m7_stages` pass unchanged;
+`m7_bosses`' Heisenbug clear moved from ~1650 to ~1830, pinned at 1900;
+every `debug_history_check` pin is 0. m1-m6 still fail on balance pins
+only (no trap, no identity failure) for the re-pin track.
+
 ### Verification for M7
 
 - `tools/check.sh` all green; `debug_history_check == 0` on every frame of
