@@ -262,6 +262,15 @@ pub fn set_scale(s: Scale) void {
     if (console) |gb| gb.set_lines_wanted(wanted_masks[@backingInt(s)]);
 }
 
+/// Pixel work on or off for the frames that follow (`Gb.lines_wanted`):
+/// off for the frames fast forward skips, back on (the scale's lines) for
+/// the one it draws. A skipped frame emits no lines, so `finish_frame` runs
+/// only after the drawn one. No effect on console state.
+pub fn set_drawing(on: bool) void {
+    const gb = console orelse return;
+    gb.set_lines_wanted(if (on) wanted_masks[@backingInt(scale)] else @splat(0));
+}
+
 /// The line sink for `gb` (call after `init`): in CGB mode the context is
 /// the console, whose `pal_dirty` flag is checked once per line.
 pub fn sink(gb: *core.Gb) core.LineSink {

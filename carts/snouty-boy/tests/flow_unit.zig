@@ -22,6 +22,8 @@ const Fake = struct {
     playable: [2]bool = .{ true, true },
     begun: ?usize = null,
     steps: u32 = 0,
+    /// Of `steps`, those asked to fast forward.
+    fast_steps: u32 = 0,
     last_pad: u8 = 0,
     menu_opens: u32 = 0,
     menu_frames: u32 = 0,
@@ -39,8 +41,9 @@ const Fake = struct {
         return true;
     }
     pub fn play_begin(_: *Fake) void {}
-    pub fn step(f: *Fake, pad: u8, _: bool) void {
+    pub fn step(f: *Fake, pad: u8, _: bool, fast: bool) void {
         f.steps += 1;
+        if (fast) f.fast_steps += 1;
         f.last_pad = pad;
     }
     pub fn menu_open(f: *Fake) void {
@@ -160,6 +163,67 @@ test "flow: an A or B pressed as the Select hold opens the menu does not act on 
         try testing.expectEqual(@as(u32, 1), fake.menu_opens);
         try testing.expectEqual(@as(u32, 1), fake.menu_acts);
     }
+}
+
+test "flow: tap then hold Select fast forwards without a tap or the menu" {
+    var fake: Fake = .{};
+    var fl: Flow = .{};
+    frames(&fl, &fake, &.{.a}, 1); // skip the splash
+    frames(&fl, &fake, &.{}, 2);
+    try testing.expectEqual(flow.State.running, fl.state);
+
+    // A single tap reaches the game only after the double-tap window: the
+    // release frame and `ff_tap_window` more.
+    frames(&fl, &fake, &.{.select}, 3);
+    frames(&fl, &fake, &.{}, input.ff_tap_window);
+    try testing.expectEqual(@as(u8, 0), fake.last_pad);
+    frames(&fl, &fake, &.{}, 1);
+    try testing.expectEqual(core.Pad.select, fake.last_pad);
+    frames(&fl, &fake, &.{}, input.tap_frames + 2);
+    try testing.expectEqual(@as(u8, 0), fake.last_pad);
+
+    // Tap, then press and hold for three times the menu threshold: every
+    // update fast forwards, Right reaches the game, no menu.
+    frames(&fl, &fake, &.{.select}, 3);
+    frames(&fl, &fake, &.{}, 5);
+    const steps = fake.steps;
+    frames(&fl, &fake, &.{.select}, 3 * input.hold_frames);
+    frames(&fl, &fake, &.{ .select, .right }, 4);
+    try testing.expectEqual(flow.State.running, fl.state);
+    try testing.expectEqual(@as(u32, 0), fake.menu_opens);
+    try testing.expectEqual(steps + 3 * input.hold_frames + 4, fake.steps);
+    try testing.expectEqual(3 * input.hold_frames + 4, fake.fast_steps);
+    try testing.expectEqual(core.Pad.right, fake.last_pad);
+
+    // Let go: 1x again and no Select tap, ever.
+    const fast = fake.fast_steps;
+    for (0..input.ff_tap_window + input.tap_frames + 2) |_| {
+        frames(&fl, &fake, &.{}, 1);
+        try testing.expectEqual(@as(u8, 0), fake.last_pad);
+    }
+    try testing.expectEqual(fast, fake.fast_steps);
+
+    // Start+Select during fast forward: back to 1x, Start reaches the game,
+    // no menu and no tap after it.
+    frames(&fl, &fake, &.{.select}, 2);
+    frames(&fl, &fake, &.{}, 2);
+    frames(&fl, &fake, &.{.select}, 5);
+    try testing.expectEqual(fast + 5, fake.fast_steps);
+    frames(&fl, &fake, &.{ .select, .start }, 2 * input.hold_frames);
+    try testing.expectEqual(fast + 5, fake.fast_steps);
+    try testing.expectEqual(core.Pad.start, fake.last_pad);
+    try testing.expectEqual(flow.State.running, fl.state);
+    for (0..input.ff_tap_window + input.tap_frames + 2) |_| {
+        frames(&fl, &fake, &.{}, 1);
+        try testing.expectEqual(@as(u8, 0), fake.last_pad);
+    }
+    try testing.expectEqual(@as(u32, 0), fake.menu_opens);
+
+    // A single long hold still opens the menu at the threshold.
+    frames(&fl, &fake, &.{.select}, input.hold_frames - 1);
+    try testing.expectEqual(flow.State.running, fl.state);
+    frames(&fl, &fake, &.{.select}, 1);
+    try testing.expectEqual(flow.State.menu, fl.state);
 }
 
 test "flow: picker cursor starts on the first playable file and skips no row" {

@@ -10,7 +10,10 @@
 //! run the new one; no detection).
 //!
 //! Integrator (main.zig): `attach` once the console exists;
-//! `before_step` before and `frame` after every `step_frame`; `pause` when
+//! `before_step` before and `frame` after every `step_frame` at 1x;
+//! `fast_forward` instead of both in an update that fast forwards (silent:
+//! nothing rendered, the stream ramps out once and resumes primed on the
+//! first 1x frame, so the gap counts no underrun); `pause` when
 //! the menu opens (its scrub replays render nothing); `idle` in every
 //! update that does not step the game (splash, picker, menu, halted: the
 //! feed ramps out once, or plays the boot chime); keep `enabled` equal to
@@ -76,6 +79,15 @@ pub fn frame(gb: *core.Gb) void {
     if (cart.is_wasm) return update(gb);
     const s = apu.samples(gb);
     if (enabled and s.len > 0) feed.frame(s) else feed.stop();
+}
+
+/// An update that fast forwards (Select tapped, then held): render nothing for its
+/// frames and ramp the stream out (wasm: silence the voice). The next 1x
+/// `before_step` turns rendering on again from a reset render state.
+pub fn fast_forward(gb: *core.Gb) void {
+    if (cart.is_wasm) return stop();
+    apu.set_render(gb, false);
+    feed.stop();
 }
 
 /// The menu opened: scrub replays must not render.

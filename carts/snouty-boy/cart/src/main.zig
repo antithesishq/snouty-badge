@@ -17,9 +17,16 @@
 //! `halted` is the refusal to run: no ROM on the drive (the badge build
 //! embeds none), or fewer than 2 keyframes fit (frontend/rewind.zig).
 //!
-//! Control hints (lib/hint.zig): "Hold Select: menu" on the splash and in
-//! a strip at the bottom for the first 3 s of play after the splash or the
-//! picker (gone at the first fresh press); the menu has its own.
+//! Fast forward (docs/FAST_FORWARD.md at the root): while Select is held
+//! after a double tap (frontend/input.zig) an update steps up to
+//! `tuning.ff_max_frames` frames within `tuning.ff_budget_us`, all but the
+//! last without pixel work or sound, every one recorded for the scrubber,
+//! and draws ">>N.Nx" in the bottom-right corner (`step_fast`).
+//!
+//! Control hints (lib/hint.zig): "Hold Select: menu" on the splash; that
+//! line and "2x Sel+hold: fast" in a two-line strip at the bottom for the
+//! first 3 s of play after the splash or the picker (gone at the first
+//! fresh press); the menu has its own.
 //! See SPEC.md (design), PLAN.md (milestone contract), CLAUDE.md (toolchain).
 const cart = @import("cart-api");
 const core = @import("core");
@@ -33,6 +40,7 @@ const rewind = @import("frontend/rewind.zig");
 const romsrc = @import("frontend/romsrc.zig");
 const picker = @import("frontend/picker.zig");
 const flow = @import("frontend/flow.zig");
+const tuning = @import("frontend/tuning.zig");
 const hint = @import("hint");
 
 comptime {
@@ -90,7 +98,8 @@ fn begin(rom: ?core.Rom) bool {
 pub fn update() void {
     // Timestamp every badge frame (paused or not) so the FPS counter sees
     // real frame intervals; `debug.record` measures only step_frame.
-    debug.frame_tick(cart.micros_since_boot());
+    update_us = cart.micros_since_boot();
+    debug.frame_tick(update_us);
 
     // Sound follows the menu toggle. Every update that does not step the
     // game lets the stream ramp out (or plays the boot chime) on the badge.
@@ -135,24 +144,49 @@ const Ctx = struct {
         play_hint.start(hint.play_seconds * 60);
     }
 
-    /// One game frame; `fresh` is a press not held over from the last
-    /// screen, which dismisses the play hint.
-    pub fn step(_: *Ctx, pad: u8, fresh: bool) void {
-        audio.before_step(gb);
+    /// One game update; `fresh` is a press not held over from the last
+    /// screen, which dismisses the play hint; `fast` steps several frames
+    /// (`step_fast`).
+    pub fn step(_: *Ctx, pad: u8, fresh: bool, fast: bool) void {
         const t1 = cart.micros_since_boot();
+        if (fast) {
+            audio.fast_forward(gb);
+            step_fast(pad);
+        } else {
+            audio.before_step(gb);
+            ff_x16 = 0;
+        }
+        const t_draw = if (fast) cart.micros_since_boot() else t1;
         gb.step_frame(pad);
         const t2 = cart.micros_since_boot();
         stepped = true;
-        audio.frame(gb);
+        if (!fast) audio.frame(gb);
         debug.sound_on = !cart.is_wasm and audio.enabled;
         debug.audio_queue = audio.queued();
         debug.audio_underruns = audio.underruns();
         rewind.record_frame(gb, pad);
 
         video.finish_frame();
-        debug.record(@truncate(t2 -% t1));
+        if (fast) {
+            // Every frame of the update with its keyframe work: what the
+            // time box spends.
+            const t3 = cart.micros_since_boot();
+            draw_us = @truncate(t3 -% t_draw);
+            debug.record(@truncate(t3 -% t1));
+        } else {
+            // At 1x the step alone, as always (no extra clock read).
+            draw_us = @truncate(t2 -% t1);
+            debug.record(@truncate(t2 -% t1));
+        }
         debug.draw();
-        play_hint.update_and_draw(cart, null, fresh, cart.screen_height - hint.strip_h, video.shade_color(0), video.shade_color(3));
+        if (play_hint.tick(fresh)) {
+            const y = cart.screen_height - 2 * hint.strip_h;
+            const fg = video.shade_color(0);
+            const bg = video.shade_color(3);
+            hint.draw_strip(cart, null, hint.hold_select, y, fg, bg);
+            hint.draw_strip(cart, null, input.fast_hint, y + hint.strip_h, fg, bg);
+        }
+        if (fast) debug.draw_fast(ff_x16, .from_color(video.shade_color(0)), .from_color(video.shade_color(3)));
     }
 
     pub fn menu_open(_: *Ctx) void {
@@ -200,6 +234,67 @@ fn draw_halted() void {
 
 /// The game was stepped in this update (else `audio.idle`).
 var stepped = false;
+
+/// `micros_since_boot` at the top of this update: the fast-forward time
+/// box counts from there.
+var update_us: u64 = 0;
+/// Microseconds the last drawn frame took (fast: step and record; 1x: the
+/// step), and the last skipped one (step and record): the fast-forward
+/// time box's estimates for the next ones.
+var draw_us: u32 = 0;
+var skip_us: u32 = 0;
+/// Game frames per 60 Hz refresh while fast forwarding, in 1/16,
+/// averaged over about 8 updates (">>2.5x"); 0 at 1x.
+var ff_x16: u32 = 0;
+
+/// The skipped frames of a fast update: frames with the pixel work off
+/// (`video.set_drawing`), each recorded for the scrubber like any other,
+/// while the time used since the update began plus one more skipped frame
+/// and the drawn one fit the time box (wasm: `tuning.ff_max_frames - 1`
+/// of them, `micros_since_boot` is a stub there). The caller steps the
+/// drawn frame. Every frame gets the same pad, so the history replays
+/// exactly as at 1x (tests/determinism.zig).
+///
+/// The time box is one refresh (`tuning.ff_budget_us`, up to
+/// `ff_max_frames` frames) when a skipped and a drawn frame fit it. A game
+/// too heavy for that (DMG Tetris busy-waits for VBlank: a frame costs
+/// about 8.5 ms with or without pixels) gets two refreshes instead
+/// (`tuning.ff_slow_budget_us`, up to twice the frames): the update misses
+/// one vsync on purpose and the picture runs at 30 Hz while the game runs
+/// faster than 1x.
+fn step_fast(pad: u8) void {
+    video.set_drawing(false);
+    var n: u32 = 1; // the drawn frame
+    var refreshes: u32 = 1;
+    if (cart.is_wasm) {
+        while (n < tuning.ff_max_frames) : (n += 1) {
+            gb.step_frame(pad);
+            rewind.record_frame(gb, pad);
+        }
+    } else {
+        // Before the first skipped frame is measured, a drawn frame (the
+        // dearer kind) stands in for it.
+        const est = @as(u64, if (skip_us != 0) skip_us else draw_us) + draw_us;
+        var budget: u64 = tuning.ff_budget_us;
+        var max_frames: u32 = tuning.ff_max_frames;
+        if (cart.micros_since_boot() -% update_us + est > budget) {
+            budget = tuning.ff_slow_budget_us;
+            max_frames *= 2;
+            refreshes = 2;
+        }
+        while (n < max_frames) : (n += 1) {
+            const t = cart.micros_since_boot();
+            const e = @as(u64, if (skip_us != 0) skip_us else draw_us) + draw_us;
+            if (t -% update_us + e > budget) break;
+            gb.step_frame(pad);
+            rewind.record_frame(gb, pad);
+            skip_us = @truncate(cart.micros_since_boot() -% t);
+        }
+    }
+    video.set_drawing(true);
+    const x16 = n * 16 / refreshes;
+    ff_x16 = if (ff_x16 == 0) x16 else ff_x16 + x16 / 8 - ff_x16 / 8;
+}
 
 /// Badge frames since boot; paces the second chime note.
 var frames_seen: u32 = 0;

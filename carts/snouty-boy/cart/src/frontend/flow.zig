@@ -27,8 +27,11 @@ pub const MenuResult = enum { stay, resume_game };
 ///   false when it cannot run (the halted screen follows).
 /// - `play_begin(ctx)`: the game starts, after the splash or the picker (not
 ///   after the menu closes).
-/// - `step(ctx, pad: u8, fresh: bool)`: one game frame with that pad byte;
-///   `fresh` is a press this frame that is not held over from the last screen.
+/// - `step(ctx, pad: u8, fresh: bool, fast: bool)`: one game update with that
+///   pad byte; `fresh` is a press this frame that is not held over from the
+///   last screen; `fast` is the fast-forward gesture (Select tapped, then
+///   pressed and held, frontend/input.zig): several frames, only the last
+///   one drawn.
 /// - `menu_open(ctx)`, `menu_frame(ctx, e: input.Edge) MenuResult`,
 ///   `menu_close(ctx)`: the emulator menu over the frozen game.
 /// - `halted_frame(ctx)`: draw the halted screen.
@@ -82,7 +85,8 @@ pub fn Flow(comptime Ctx: type) type {
             f.run(ctx);
         }
 
-        /// One game frame, or opening the menu instead of stepping.
+        /// One game update (one frame, several when fast forwarding), or
+        /// opening the menu instead of stepping.
         fn run(f: *Self, ctx: *Ctx) void {
             const in = f.controls.game_frame();
             if (in.open_menu) {
@@ -94,7 +98,7 @@ pub fn Flow(comptime Ctx: type) type {
                 _ = ctx.menu_frame(f.controls.live_edge());
                 return;
             }
-            ctx.step(in.pad, f.controls.live_edge().any_pressed());
+            ctx.step(in.pad, f.controls.live_edge().any_pressed(), in.fast);
         }
     };
 }

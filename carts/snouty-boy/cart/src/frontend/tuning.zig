@@ -30,8 +30,21 @@ pub const typical_pages_per_keyframe = 8;
 /// store's reference count is a u8).
 pub const max_keyframes = 64;
 
-// ---- Debug overlay (frontend/debug.zig, SPEC.md 14) ----
+// ---- Fast forward (main.zig `Ctx.step`, docs/FAST_FORWARD.md at the root) ----
 
-/// Overlay on at boot (the menu toggles it). About 0.05 ms per frame with
-/// the direct glyph blitter.
-pub const debug_overlay = true;
+/// Game frames per update at most while fast forwarding: 4x at 60 Hz.
+/// All but the last skip their pixel work (`Gb.lines_wanted` cleared) and
+/// render no sound.
+pub const ff_max_frames = 4;
+/// Microseconds of the 16.7 ms update, counted from its start, that the
+/// skipped frames plus the final drawn frame may use (estimated from the
+/// last measured frames); the rest is headroom for the overlay, the
+/// present and a slow frame. On the badge only: in wasm
+/// `micros_since_boot` is a stub, so there every fast update steps
+/// `ff_max_frames`.
+pub const ff_budget_us = 13_000;
+/// The same for a game whose skipped frame plus drawn frame do not fit
+/// `ff_budget_us` (DMG Tetris): the update takes two refreshes (33.3 ms)
+/// on purpose and may step `2 * ff_max_frames` frames in this many
+/// microseconds, so it still runs faster than 1x.
+pub const ff_slow_budget_us = 28_000;

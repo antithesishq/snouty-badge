@@ -331,7 +331,7 @@ const about_cols = (panel_w - (text_x - panel_x) - 2) / 8;
 /// About (SPEC.md 5, PLAN.md M5): version, header title, mapper and size,
 /// where the ROM came from and its file name, CRC32 and the model the
 /// console runs as (DMG or CGB, SPEC.md 19), and the fragmented-bank count
-/// (drive).
+/// (drive); in the footer row the fast-forward chord (`input.fast_hint`).
 fn draw_about(gb: *const core.Gb, fg: cart.DisplayColor, dim: cart.DisplayColor) void {
     const info = &romsrc.info;
     var b0: [24]u8 = undefined;
@@ -376,6 +376,8 @@ fn draw_about(gb: *const core.Gb, fg: cart.DisplayColor, dim: cart.DisplayColor)
         y += row_h;
     }
     cart.text(.{ .str = "B: back", .x = text_x, .y = scrub_line_y, .text_color = dim });
+    // The in-game chord, which no menu row offers.
+    cart.text(.{ .str = input.fast_hint, .x = text_x, .y = footer_y, .text_color = dim });
 }
 
 /// `s` cut to `about_cols` characters, the last one replaced by '~' when
