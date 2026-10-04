@@ -99,6 +99,79 @@ gate.
 ## Status
 
 - 2026-10-04: SPEC written from the prior-art research (SPEC section 1). M0 started.
+- 2026-10-04: **M0 done** on `cycles/m0` (not merged, not tagged; the lead
+  reviews). Items 1-8 built: scaffold and wiring, `sim.zig`, `ai.zig` (T1),
+  `render.zig`, `game.zig`, debug exports, `tools/check.sh`, the hand-off
+  below. `carts/snouty-cycles/CLAUDE.md` has an "Interfaces" section for
+  the M1 tracks.
+  - Gate `tools/check.sh`: PASS (build, test, float, font, cycle, bench, lcd).
+  - Host tests: 22 (sim 10, ai 4, render 2, game 4, rng 1, the root), plus
+    `lib/`'s. They cover the turn queue, the U-turn from 300 random spots,
+    every crash kind, RACE CONDITION, DEADLOCK in and out of step, the
+    fade, the turn tax, T1 rounds ending (15 of 20 by a crash, mean 71 s),
+    two Worlds identical for 5000 ticks, every put inside a marked rect
+    and incremental frames equal to a full repaint (2400 ticks, banners
+    coming and going and blinking), the game loop to round 3, pause and
+    the Start+Select guard.
+  - badge-bench (calibrated, toml run: 1800 frames, autopilot 2): busy ms
+    mean 0.36, p95 0.64, worst 4.28 at frame 0 (the title's first frame:
+    full repaint under the big title box); a round start's full repaint
+    2.40 (frames 60, 1576), the crash frame 2.93 (1426: the dead trail
+    repaints dim, the YOU LOSE box goes up), a plain tick ~0.3 (0.27 of it
+    the OS's copy-forward memcpy), the four-program attract ~1.1. Seeds
+    2..6: worst 4.28, means 0.37-0.38. `--lcd` == framebuffer on all 360
+    compared frames.
+  - ELF: `.text` 40,320, `.data` 12, `.bss` 76,816 (World 38 KB with
+    32 KB of trail logs, AI fill scratch 19 KB, banner overlay 19 KB);
+    UF2 236 KB (the RAM image includes .bss). Wasm 333 KB.
+  - `docs/preview_m0.gif`: seed 7, title and attract, A, countdown, a
+    round on autopilot 2, the program boxes itself in, SEGFAULT, YOU WIN.
+
+### M0 deviations from SPEC and this plan
+
+- Units: progress and speed are 1/65536 cell, not 1/256 (same values;
+  the extra bits let the 1/512 decay and the 0.95 turn tax be integers).
+- U-turn: accepted only with an empty queue (it takes two turns), and its
+  reverse half is skipped when blocked while carrying on sideways is free.
+- Head-on: a cycle stepping into the head of a facing cycle that has not
+  moved this tick is DEADLOCK for both (no credit), not DEREZZED, so a
+  head-on never depends on which cell boundary came first.
+- Trail logs: a 4096-entry ring per cycle (32 KB of the World).
+- Banners: the box is an overlay mask (computed, not saved pixels) over
+  the dimmed arena; cells and heads under it go through the mask, so it
+  never redraws when something passes under it. Erasing is still by
+  repainting cells.
+- Countdown banner: the digit and the level name only ("3" / "PASCAL"),
+  narrow so the start cells stay visible; RUN at scale 2 for 40 ticks.
+- Looks added: floor pixels next to a wall glow in its colour; a dead
+  cycle's wall dims until it fades.
+- Title: already over an attract round (four T1 programs) with the Iris
+  mark; PLAN asked for text only. M1 swaps in T2 and the menu.
+- Pause: Start resumes, B quits to the title (M1's menu replaces it).
+- Scoring: SPEC 6's kill 500, self-crash 250 (not RACE/DEADLOCK) and
+  1000 x level (3) per round won; no high score yet.
+- Autopilot has levels (0 off, 1 T1, 2 T1 slipping 8% of decisions into a
+  random free cell); the firmware poke `snouty_cycles_autopilot` sets it.
+  A Brain's `mistake_permille` slip is a random move into a free cell.
+- Bench run: 1800 frames, not 900, so a crash and the next round's full
+  repaint are in it with the slipping autopilot.
+- Memory: 117 KB of RAM image at M0 against SPEC's "about 120 KB for the
+  whole cart". M2's keyframes will pass it; the RAM window is 307 KB, so
+  the real limit is ~250 KB.
+- Goldens: none in M0 (optional).
+
+### Notes for the M1 tracks
+
+- `ai.decide` decides on the tick `will_step` predicts at the current
+  speed. Once grinding or boost change speed between ticks, a prediction
+  can miss and the cycle goes straight through a cell undecided; decide a
+  tick or two early (or on the first tick of each cell) when adding T2/T3.
+- The renderer repaints only what events name: sudden death's ring and
+  layouts must emit `block` events (or call `invalidate`), and sparks or
+  particles need their rects erased like the heads' (`repaint_rect`).
+- `cell_colors` and `bare_floor` read empty cells' neighbours without
+  bounds checks (the rim guarantees them); WRAP (M2) must change both and
+  `World.next_cell`.
 
 ## Deferred questions for Adrian
 
