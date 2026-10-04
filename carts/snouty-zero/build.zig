@@ -149,6 +149,8 @@ fn build_cart_modules_xip(b: *Build, cart: *Build.Module, cart_api: *Build.Modul
 fn build_cart_modules(b: *Build, cart: *Build.Module, cart_api: *Build.Module, step: *Build.Step, opts: *Build.Step.Options) void {
     cart.addImport("build_options", opts.createModule());
     cart.addImport("assets", assets_module(b));
+    // Sound on the newer firmware: tone2 rendered into the streaming ring.
+    cart.addImport("tone_stream", b.createModule(.{ .root_source_file = b.path("lib/tone_stream.zig") }));
 
     // The `gfx` module: the PNGs in `images` through the per-cart converter
     // (snouty-maze / snouty-bugs pattern), generated at build time.

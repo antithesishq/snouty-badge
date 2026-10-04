@@ -3,7 +3,7 @@
 Status: decided by Adrian 2026-09-30 (section 4), implemented on branch
 `sound-off` the same day. Companion to docs/NEOPIXELS.md, which this
 follows in shape. Since 2026-10-04 Snouty Lynx streams its sound on the
-new firmware (section 7), under the same rule.
+new firmware (sections 7 and 8), under the same rule.
 
 ## 1. The rule
 
@@ -46,7 +46,7 @@ should start loud; nothing else in a cart decides it.
 | snouty-genesis | yes, PSG/YM2612 tone voice | `frontend/audio.zig` `enabled` | `-Dsound` (off) | badge A in the menu placeholder ("A: sound on/off"); the M2 menu's Sound row takes over; `debug_sound_on` |
 | snouty-bugs | not yet (SPEC section 11, M6/M7) | | `-Dsound` (off) | Select |
 | snouty-reflections | not yet (SPEC section 8, M4 arpeggio) | | `-Dsound` (off) | Select |
-| snouty-lynx | yes, Mikey's four channels as 44.1 kHz PCM, new firmware only (section 7) | `frontend/audio.zig` `enabled` | `-Dsound` (off) | menu row "Sound: On/Off" (not in the wasm build); `debug_settings` bit 0 |
+| snouty-lynx | yes, Mikey's four channels as 44.1 kHz PCM, new firmware only (section 8) | `frontend/audio.zig` `enabled` | `-Dsound` (off) | menu row "Sound: On/Off" (not in the wasm build); `debug_settings` bit 0 |
 | snouty-run | no | | | |
 | snouty-maze | no, by decision (2026-09-27, "it'll be annoying") | | | |
 
@@ -130,16 +130,39 @@ bullet states it for new carts.
 4. Show day, one badge: each sounding cart boots silent; its toggle brings
    sound back; leaving and re-entering the cart is silent again.
 
-## 7. Streaming audio (new firmware)
+## 7. The newer firmware: carts stream their own samples (2026-10-04)
+
+The show badges run the newer upstream firmware (sycl-badge 97c093e
+"Streaming Audio, v1 Mixer", checked at 3392a1b). It ignores `CART_TONE`:
+`cart.tone2` plays nothing, and the IPC words it writes (0x2003509C..) are
+now the ring a cart streams 44.1 kHz u8 mono samples through
+(`audio_buffer_ptr/len/head/tail`). So on the badge no cart may call
+`cart.tone2` any more; the ABI is in `lib/stream_audio.zig`'s header.
+
+- `lib/tone_stream.zig`: `tone2` rebuilt in the cart (one voice, each
+  `play` cancels the last, square/triangle/saw, sine as triangle,
+  major/minor chords), rendered into the ring while a tone sounds and
+  idle otherwise. snouty-zero and snoutenstein use it on the badge and
+  keep `cart.tone2` / the `tone` import for the wasm simulator; their
+  `update` calls `tone_stream.update()` once per frame.
+- `lib/audio_feed.zig`: for emulators, which render their sound chip's
+  real output per stepped frame; rate control against the OS's clock.
+  Plan and status: docs/EMU_SOUND.md.
+- Old firmware: the start word reads as its CART_VOLUME and nothing plays.
+  The defaults of section 4 are unchanged (off, `-Dsound`, runtime toggle).
+- badge-bench consumes the ring like the newer OS (`--wav` writes it);
+  gaps between effects show as "underruns" there by design.
+
+## 8. The streaming-audio ABI in detail
 
 The badges now run newer OS firmware (sycl-badge upstream from 97c093e
 "Streaming Audio, v1 Mixer", checked at 3392a1b). It drops the `tone`
 voice (our carts' `tone2` calls are ignored there, docs/INSTALL.md) and
 instead plays a ring of samples the cart owns. The pinned SDK (a6ce19f)
-has no API for it, so `lib/stream_audio.zig` speaks the ABI itself; Snouty
-Lynx (M5, `carts/snouty-lynx/PLAN.md` "M5 Sound: contract") is the only
-user so far. Any cart can use it: `start(buf)`, `queued()`, `free()`,
-`push(samples)`.
+has no API for it, so `lib/stream_audio.zig` speaks the ABI itself
+(`start(buf)`, `queued()`, `free()`, `push(samples)`); section 7 lists the
+helpers built on it. Snouty Lynx (M5, `carts/snouty-lynx/PLAN.md` "M5
+Sound: contract") feeds it directly from its own `frontend/audio.zig`.
 
 - Format: unsigned 8-bit mono at 44,100 Hz, 128 = silence (the mixer,
   `drivers/audio.zig` `mix_audio_samples`, maps 0..255 to -volume..+volume;
@@ -172,7 +195,6 @@ user so far. Any cart can use it: `start(buf)`, `queued()`, `free()`,
 - Old firmware: `0x29000002` has the type byte 0x29 of its CART_VOLUME,
   which re-applies `global_volume` (`0x200350AC`, never written) and plays
   nothing; the ring words land on the unused `tone_*` words. Harmless, no
-  firmware detection needed. badge-bench (old-firmware model) counts the
-  word as a CART_VOLUME message until it learns the ring.
+  firmware detection needed.
 - The pinned web simulator has no streaming audio: wasm builds stay
   silent.

@@ -1303,9 +1303,11 @@ So a single target takes at most ~40 a second from the ship at level 5.
 
 - **Forks fire a level-1 volley** of the current weapon (one zap, one d1
   beam, one seeker at gain 0.08) whenever the ship fired 24k ticks ago.
-- **Power loss**: `player.on_rewound_hit()`, called in `main.step_rewind`
-  at resume (normal and hardcore): `level = max(1, level - 1)`,
+- **Power loss**: `player.on_rewound_hit(hardcore)`, called in
+  `main.step_rewind` at resume: `level = max(1, level - 1)`,
   `forks -|= 1`, `mercy += 80`. Not on hold-B, not on a shield pop.
+  (2026-10-04, Adrian: hardcore strips every powerup instead: fuzzer
+  level 1, forks 0, shield 0; mercy as before.)
 - Endless probe mode (wasm `debug_probe`, toggles): like god mode, but a
   hit removes the offender, applies `on_rewound_hit()` in the World at
   once, grants 60 ticks of invulnerability and counts the hit; no rewind
@@ -1342,7 +1344,8 @@ looks up the stage's boss):
 `waves.State` gains `stage: u8` (0..3). Flow per stage: `STAGE n` +
 name pop for 120 ticks at the start, waves table (~70 s, sorted by tick),
 an optional midboss entry in the table (the table clock pauses while the
-midboss is alive, so it cannot be skipped by waiting), `WARNING` 6 s, the
+midboss is alive, so it cannot be skipped by waiting), `WARNING` 6 s (3 s
+since the pacing pass, see Status), the
 boss, the clear (+500, fuel refill) or the escape, a 120-tick breather,
 next stage. After stage 4: stage 1 with `loop + 1`, popped as `LOOP 2`.
 `Entry` gains `formation: bool` (open a formation of `count` with drop)
@@ -2119,3 +2122,27 @@ only (no trap, no identity failure) for the re-pin track.
   frames over budget. ELF 112.6 KB text + 10.7 KB data + 85.6 KB bss =
   208.9 KB (cap 220 KB). Gate: 27 scripts green, host tests, check-float.
   Next: M8 attract mode.
+- 2026-10-04: hardcore power loss (Adrian: "lose your powerups when you
+  get hit in hardcore"). A hit that rewinds in hardcore now resets the
+  ship to the level-1 fuzzer with no forks and no retry shield (even one
+  the rewind restored); normal mode keeps M7's one level and one fork.
+  `m6_retry_hc` re-pinned: the shield no longer survives the first ram, so
+  the next hit rewinds (fuel 66 -> 0) and the one after is fatal. Gate:
+  27 scripts green.
+- 2026-10-04: pacing pass (Adrian: "too much dead time between attack
+  waves ... there should be stuff on screen throughout the level and
+  occasional gaps"). The tables space waves on a fixed clock, so a ship
+  that clears a wave quickly waits for the next timestamp: the dodger
+  found the field empty 24 / 43 / 12 / 9 % of stages 1-4 (seed 1). Now
+  `waves.zig` runs the table clock `catchup` (4) ticks a tick while fewer
+  than `field_floor` (3) enemies are on the field or due to enter (after
+  the STAGE pop, never past the WARNING), and the WARNING lasts 3 s, not
+  6. Dodger seed 1: empty 10 / 10 / 4 / 4 %, the only gaps over 1.5 s
+  the STAGE pop and the WARNING. Hits per stage over 8 seeds 5.2 / 7.9 /
+  9.8 / 18.8 / 21.8 -> 7.5 / 7.1 / 10.5 / 18.4 / 20.0 (stage 1 now above
+  its 3-6 target); a fast player's stages are shorter (dodger waves
+  79 -> 53 s in stage 1). Everything on the stage clock (fire ramp,
+  rank's stage seconds) moves with it. All 16 timeline scripts re-pinned
+  (headers say what moved; m1_play's sweep now ends in game over at
+  1269, `docs/RUNNING.md` updated). Gate: 27 scripts green,
+  `debug_history_check` never 1.

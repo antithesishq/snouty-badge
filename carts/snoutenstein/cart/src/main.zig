@@ -91,6 +91,7 @@ pub fn start() void {
 }
 
 pub fn update() void {
+    defer audio.update();
     const pad: state.Buttons = @bitCast(@as(u16, @bitCast(read_controls())));
     defer prev_pad = pad;
     tick_total += 1;

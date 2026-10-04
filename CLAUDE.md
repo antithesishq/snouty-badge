@@ -67,9 +67,11 @@ its design and milestone status.
   row or a button). A cart's sound flag is initialised from
   `build_options.sound` (`-Dsound=true` builds a sound-on set) and only
   that toggle changes it; the OS keeps no volume setting across cart
-  starts (`docs/SOUND.md`). snouty-lynx streams PCM on the newer
-  firmware through `lib/stream_audio.zig` (`docs/SOUND.md` section 7),
-  under the same off-by-default rule.
+  starts (`docs/SOUND.md`). The show badges' newer firmware ignores `tone2`
+  and its IPC words are now the streaming-audio ring: badge builds never
+  call `cart.tone2`; use `lib/tone_stream.zig` (effects) or
+  `lib/audio_feed.zig` (emulators), docs/SOUND.md sections 7 and 8
+  (snouty-lynx has its own feed in `frontend/audio.zig`).
 - Flash: 8000 pages of 256 bytes available via the cart API (`Zone`).
 - Cart RAM window 307 KB (`0x20035100..0x20080000`, 32 KB of it stack). A RAM
   cart holds code, read-only data and state there; keep `size -A` of `.text`
@@ -157,3 +159,13 @@ place and leave headroom. Budget is 16.7 ms per `update()` for 60 fps carts.
   `docs/`, and a short "how to pull and run this" section (Adrian reviews
   locally in the simulator and on the badge).
 - Commit messages: short imperative subject, body explains why.
+- Push every merge to `main` to `origin` straight away (`git push origin
+  main`). Several sessions work in parallel and each starts from
+  `origin/main`, so an unpushed merge is invisible to the others. Merge
+  only with the cart's gate green (its `tools/check.sh`, `zig build test`
+  where it has host tests), and push tags with their merge.
+- Work on a branch in a worktree (`git worktree add -b <branch>
+  ../snouty-badge-<name> origin/main`), then remove the worktree and
+  delete the branch once it is merged and pushed. Before removing any
+  worktree, check that it is yours and has no uncommitted work: other
+  sessions create worktrees at any time.

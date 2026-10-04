@@ -262,7 +262,9 @@ with every number in PLAN.md M7:
   re-aim; pellets and orbs; a 128-bullet pool. The ship's hitbox shrinks
   to 4x4 and bullet hitboxes shrink with it, so dense screens stay fair.
 - **Power loss**: a hit that triggers the auto rewind costs one weapon
-  level and one fork once the world is restored. Ghosts fire a level-1
+  level and one fork once the world is restored; in hardcore it costs
+  every powerup (back to the level-1 FUZZER, no forks, no RETRY shield;
+  Adrian, 2026-10-04). Ghosts fire a level-1
   shot. Crates come from whole formations (1942's POW), every
   beetle, the midboss and each boss phase break.
 

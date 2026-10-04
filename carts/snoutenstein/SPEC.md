@@ -154,7 +154,7 @@ a  gnat   w wasp   b beetle   s spider   H Heisenbug (boss)
   hand-written files, and `tools/import_wolf.py` (section 6.1) for
   Wolfenstein 3D maps.
 - Three levels of our own, 2 to 4 minutes each: **Build Farm** (learn walking,
-  doors, one key, gnats), **Staging** (two keys, wasps and spiders,
+  doors, one key, gnats and two wasps), **Staging** (two keys, wasps and spiders,
   first rewind-battery hunt), **Production** (three keys, all enemies,
   the Heisenbug behind the Gold door). Level end: an intermission card
   with time, kills, rewinds used, then the next level. After Production:
