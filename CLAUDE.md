@@ -21,7 +21,9 @@ its design and milestone status.
   `snouty-maze`, `snouty-gear`, `snouty-genesis`, `snouty-lynx`,
   `snouty-flyover`, `demosnout`, `snouty-zero` (XIP only), `snouty-pipes`, `siwoo` (a name
   badge: demosnout's head plus a chrome name), `snouty-link` (the link-cable
-  test; `lib/link.zig` is the badge-to-badge link, docs/LINK.md).
+  test; `lib/link.zig` is the badge-to-badge link, docs/LINK.md),
+  `paperclips` (a port of Universal Paperclips, with the authors'
+  permission).
 - `build.zig`, `build.zig.zon`, `build/common.zig` — the one Zig package.
   Shared options (`-Dcart`, `-Dcart-mode`, `-Ddebug_overlay`, `-Dsound`, `-Drom`, ...)
   and the shared `test` and `check-float` steps are declared here and passed
