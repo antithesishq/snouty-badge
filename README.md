@@ -30,7 +30,7 @@ Sourced by hand from the cart registration in the root `build.zig` and each
 cart's `PLAN.md` (milestone history and benchmark numbers live there, not
 here). Mode: **RAM** is the usual cart, copied into the 307 KB cart RAM
 window; **XIP** runs code from the 256 KB cart flash window
-(`<binary>-xip.uf2`, section below); **XIP only** carts have no RAM build.
+(`<binary>-xip.uf2`, section below).
 "Booted on a badge" means the 2026-09-29 smoke pass: a coworker built
 `main` at `b9abad4` and launched every cart it had, a boot check, not a
 play test; later commits are unchecked, and no XIP build is confirmed to
@@ -45,7 +45,7 @@ have run on a badge.
 | `snouty-boy` | `snouty-boy` | Game Boy and Game Boy Color emulator with time scrubber | M8 done (tag `snouty-boy/m6`) | RAM (XIP optional) | saves not kept; an embedded ROM over ~64 KB needs XIP | booted 2026-09-29, not play-tested |
 | `snouty-maze` | `snouty-maze` | Windows 3D Maze screensaver on a software rasterizer | M4 done | RAM | none recorded | booted 2026-09-29, not play-tested |
 | `snouty-gear` | `snouty-gear` | Game Gear emulator with time scrubber | M3 done | RAM (XIP optional) | an embedded ROM over ~128 KB stops the badge ELF linking | booted 2026-09-29 (at M2), not play-tested |
-| `snouty-genesis` | `snouty-genesis` | Genesis / Mega Drive emulator with time scrubber, 30 Hz | M4 done | XIP only | drive ROMs up to ~900 KB; no SVP, no mapper over 4 MB | not confirmed: was in the 2026-09-29 build (at M1), but as XIP |
+| `snouty-genesis` | `snouty-genesis` | Genesis / Mega Drive emulator, 30 Hz; the XIP cart adds sound and the time scrubber | M5 done | RAM, plus XIP built by default | RAM cart silent (no Z80) and without the scrubber; drive ROMs up to ~750 KB beside the RAM cart (~810 KB beside the XIP one); no SVP, no mapper over 4 MB | not confirmed: was in the 2026-09-29 build (at M1), but as XIP |
 | `snouty-lynx` | `snouty-lynx` | Atari Lynx emulator with time scrubber | M4 done | RAM, plus XIP built by default | scrubber holds 1-2 s in the RAM cart (3-6 s in the XIP one) | not yet |
 | `snouty-flyover` | `snouty-flyover` | voxel flyover through a landscape of data structures | M4.1 done | RAM | locked to 30 fps | not yet |
 | `demosnout` | `demosnout` | demoscene production, 114 s loop | M3 done | RAM | silent by design | not yet |
@@ -118,8 +118,9 @@ found", "Watcher was disconnected" and a missing wasm are in
 
 By default a cart is a RAM cart: the OS copies the whole image into the
 307 KB cart RAM window and code, read-only data and state share it. Snouty
-Boy, Snouty Gear, Snouty Lynx and Snouty Zero are RAM carts like the
-native ones; Snouty Genesis is XIP only (below).
+Boy, Snouty Gear, Snouty Lynx, Snouty Zero and Snouty Genesis are RAM
+carts like the native ones (Snouty Genesis's RAM cart leaves out the Z80
+sound core and the time scrubber to fit; its XIP cart, below, keeps them).
 
 Each emulator cart embeds a small, freely licensed fallback ROM and, on the
 badge, prefers a ROM file on the badge drive. The drive is the OS's
@@ -138,10 +139,10 @@ With `-Dcart-mode=xip` (or `both`) the same source is also linked as an
 execute-in-place cart: code and read-only data live in the badge's 256 KB
 cart flash window and run from there through the XIP cache, and all of cart
 RAM is left for `.data` and `.bss`. A cart needs it when its code plus
-state exceeds cart RAM: Snouty Genesis builds only that way (a plain
-`zig build` builds its XIP cart anyway; naming it with `-Dcart` needs
-`-Dcart-mode=xip`), Snouty Lynx builds both by default for its longer
-scrub history, Snouty Zero builds both by default (same game, for a
+state exceeds cart RAM: Snouty Genesis builds both by default (the XIP
+cart has the Z80 sound driver and the time scrubber, which do not fit
+beside the console in the RAM cart), Snouty Lynx builds both by default
+for its longer scrub history, Snouty Zero builds both by default (same game, for a
 RAM-versus-XIP comparison on hardware), and Snouty Boy needs it only for a big embedded
 ROM. XIP carts are not yet confirmed on hardware. The XIP build is
 `zig-out/firmware/<binary>-xip.uf2`, installed the same way.

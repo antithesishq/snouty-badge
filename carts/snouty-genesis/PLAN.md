@@ -901,6 +901,110 @@ play from the drive in the RAM variant (bench with the romfs image);
 README / docs/INSTALL.md / docs/RUNNING.md / RUNNING.md no longer say
 "XIP only"; tag `snouty-genesis/m5`, merged to main.
 
+### M5 status
+
+2026-10-04, branch `genesis/m5-ram` (worktree
+`/home/exedev/snouty-badge-genesis`), on `4a143f7`. Built, tested and
+benched; not tagged or merged (Adrian integrates).
+
+The RAM cart `snouty-genesis.uf2` drops, against the XIP cart: the Z80
+core (stub: no sound, no Sound row), the time scrubber (no scrub line, no
+undo hooks), the test ROM's 13 KB of zero padding. It keeps the 68000,
+VDP, timing, YM2612/PSG register models and timers, the drive, picker,
+help, menu, overlay and Smooth H40. `-Dcart-mode=ram` (default) and
+`both` build both carts, `xip` the XIP cart alone; the simulator wasm is
+built from the XIP variant (new `os_cart.Options.wasm_from = .xip`).
+
+Sizes per cut, contract order, each the RAM cart's modules linked with
+the XIP script so it links while over (`size -A`, `.text` includes
+`.rodata`; `.ARM.extab`/`.exidx` counted). The real window is the
+linker's `LENGTH = 0x4AF00` (306,944 B) less 32 KB of stack =
+**274,176 B**, 512 B less than the 274,688 above:
+
+| Step | `.text` | `.bss` | total | left of 274,176 |
+|---|---:|---:|---:|---:|
+| XIP cart (unchanged features) | 232,656 | 170,076 | 404,232 | -130,056 |
+| 1. Z80 stub (no core, no Z80 RAM, no tone pick) | 152,772 | 161,684 | 315,860 | -41,684 |
+| 2. no scrubber | 144,304 | 157,204 | 302,692 | -28,516 |
+| 3. test ROM without padding (16 KB -> 3 KB) | 130,964 | 157,204 | 289,352 | -15,176 |
+| 4a. frontend + drive + romfs + rom + iris + hint ReleaseSmall | 114,448 | 157,204 | 273,172 | +1,004 |
+| 4b. cart-api ReleaseSmall too | 107,756 | 157,204 | 266,520 | +7,656 |
+| **RAM link** `snouty-genesis.elf` | 107,444 | 157,204 | | **7,964** (`__stack_limit__` - `__bss_end__`) |
+
+(`.data` 148-168 B in every row. The RAM link adds the 20 B
+`.cart_descriptor`.) Final headroom 7,964 B, over the 4 KB asked. The
+XIP cart: `.text` 232,656 (M4 tree 232,768: -112 B from moving the state
+machine into its own module), `.bss` 170,076, unchanged features. UF2s:
+RAM 533,504 B (the RAM image carries `.bss`), XIP 468,480 B; with a
+512 KB ROM only one of them fits on the 1270 KB drive.
+
+badge-bench, calibrated `busy ms`, mean / worst over the whole run (36
+splash updates included), 0 updates over 33.3 ms in every run:
+
+| Run | RAM cart | XIP cart |
+|---|---|---|
+| test ROM contiguous (`m2_play`, 156) | 8.87 / 24.26 | 9.22 / 26.48 |
+| test ROM fragmented-4 | 9.02 / 24.26 | 9.37 / 26.48 |
+| Miniplanets contiguous (`m2_mini300`, 336) | 15.20 / 23.67 | 20.78 / 29.14 |
+| Miniplanets fragmented-4 | 15.62 / 24.67 | 21.20 / 29.50 |
+
+The RAM cart is 5.6 ms faster on Miniplanets (the Z80's share, now
+gone); the ReleaseSmall frontend costs nothing visible (the game updates
+are core and line sink). The worst updates are the boot/level load
+(update 47) and the first game update after the splash (36).
+
+Tests: `zig build test` 720/727, 7 skipped (fixtures), 0 failed; genesis
+170/170 (`snouty-genesis-tests`, full core; `golden` asserted unchanged,
+`golden-mini` lines unchanged: `frames 0x246F566FF41A43A4, 62 tone
+changes 0xE68656F23938261E, state 0x3B9FFCB07C1C9047`) plus 5/5 in the
+new `snouty-genesis-ram-tests` (`tests/ram_variant.zig`: the variant has
+no Z80/Z80 RAM/scrubber; the trimmed test ROM is a prefix of the full one
+with only zeros cut; the stub as the 68000 sees it (BUSREQ/RESET, Z80 RAM
+reads 0, YM status and timer A, bank register, Z80 never runs, no tone);
+the test ROM's M1 golden run with the stub from the trimmed and the full
+ROM, asserted equal to `golden`'s eight checkpoint hashes; Miniplanets
+600 frames with the stub, frame hash asserted equal to `golden-mini`'s
+`0x246F566FF41A43A4` and 25 of the 35 Up-held updates changing the
+picture). `zig build` (all carts) green, every other cart's uf2, elf and
+wasm byte-identical to the base commit's. `zig build check-float` PASS
+for both Genesis ELFs (the cart had no check before; added). Wasm: Z80
+on, scrub capacity 1520 slots, 16 KB test ROM, `m2_menu.json` still ends
+`debug_settings=75`. Screens checked in badge-bench: the RAM cart's menu
+without Sound row and scrub line, the help screen's A runs the 3 KB test
+ROM (`z80:off` on the overlay).
+
+Deviations from the contract and things to decide:
+
+- Stub semantics: SPEC section 9's old "Z80 off" kept Z80 RAM as plain
+  memory; with that, Miniplanets (Echo-style engine: a busy byte at 1FC0,
+  three command slots at 1FF4/1FE8/1FDC that the 68000 polls for 0) froze
+  at the first level. The stub keeps no Z80 RAM and reads it as 0 (saves
+  8 KB of `.bss` too). A game that checks a driver upload by reading it
+  back, or waits for its driver to set a nonzero flag, would hang;
+  none known among the test ROMs. SPEC section 9 updated.
+- Cut 3 is a trim, not a drop: the help screen and the picker keep "run
+  test ROM". `tools/trim_rom.zig` (a host tool run by the build) cuts
+  trailing zeros to the next whole KB; cutting exactly at the last
+  nonzero byte changed the test ROM's picture from frame 20 (its data
+  ends in zero bytes it reads), so the KB margin plus the golden test is
+  the guard. Only applied to the default ROM; a `-Dmd-rom` is embedded
+  whole. About/report show `3 KB` in the RAM cart.
+- Cut 4 needed a structural change: the state machine moved from
+  `main.zig` to `frontend/app.zig` (module `app`), the line sink is module
+  `video`, and frontend files import `@import("video")`. The XIP cart
+  builds the same modules at its own mode, so it is the same program.
+  `cart_api.optimize` is set on upstream's module object in the RAM
+  custom builder.
+- The contract's budget figure is 512 B high (above). Contract's
+  `Md.run_z80` 76 KB matched; `step_frame` grew from 37 to 46 KB in the
+  RAM cart because `render_line` (one caller left without `render_still`)
+  is inlined into it.
+- Open for Adrian: hardware check of the RAM cart (launch, Miniplanets
+  from the drive, the overlay's numbers); whether attendees' ROMs need the
+  Z80 (games whose 68000 waits on the driver will hang in the RAM cart:
+  the XIP cart is the answer if XIP works); tag `snouty-genesis/m5`,
+  merge.
+
 ## Status
 
 - 2026-09-29: SPEC.md, this plan and `docs/ROM_STREAMING.md` drafted;

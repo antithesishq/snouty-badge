@@ -4,13 +4,14 @@ Build the cart, run the host tests, preview it headless or in the web
 simulator, benchmark it, put a ROM on the badge drive and flash the cart.
 Commands run from the repository root; outputs land in the root `zig-out/`.
 
-Status: M4. Boot: a 1.2 s splash (the Iris mark and "SNOUTY GENESIS";
+Status: M5 (a RAM cart beside the XIP cart, section 2). Boot: a 1.2 s splash (the Iris mark and "SNOUTY GENESIS";
 any button skips it), then the game, or on the badge the ROM picker when
 the drive holds several Genesis ROMs and a help screen when it holds none.
-Holding Select for 500 ms opens the emulator menu (section 5). Sound is off
-at boot unless built with `-Dsound=true` (root docs/SOUND.md); the menu's
-Sound row turns it on. In the menu Left/Right scrub time back and forward
-in half-second steps (section 5). H40 games show every column pair
+Holding Select for 500 ms opens the emulator menu (section 5). In the XIP
+cart and the simulator, sound is off at boot unless built with
+`-Dsound=true` (root docs/SOUND.md) and the menu's Sound row turns it on,
+and in the menu Left/Right scrub time back and forward in half-second
+steps (section 5); the RAM cart has neither (section 2). H40 games show every column pair
 averaged (the menu's `Smooth H40` row, on by default); a fragmented drive
 ROM runs at the speed of a contiguous one, and its CRC32 is computed in
 the background over the first two seconds of play (section 7).
@@ -21,20 +22,34 @@ Zig, Node.js and Python 3 as in `docs/RUNNING.md` at the repository root.
 
 ## 2. Build
 
-This is an XIP cart only (SPEC.md section 13):
+Two carts from one source (PLAN.md M5, SPEC.md section 13):
 
 ```sh
-zig build -Dcart=snouty-genesis -Dcart-mode=xip
+zig build -Dcart=snouty-genesis                  # both carts and the wasm
+zig build -Dcart=snouty-genesis -Dcart-mode=xip  # the XIP cart and the wasm only
 ```
 
-- `zig-out/firmware/snouty-genesis-xip.uf2`: the badge cart
-- `zig-out/firmware/snouty-genesis-xip.elf`: same program, for `size -A`
-  and badge-bench
-- `zig-out/bin/snouty-genesis.wasm`: simulator and `tools/preview.mjs`
+- `zig-out/firmware/snouty-genesis.uf2` (and `.elf`): **the RAM cart**,
+  the default artifact. The OS loads it into cart RAM and runs it there.
+  It has no Z80: a stub answers the 68000 instead (`core/z80bus.zig`:
+  BUSREQ and RESET as on hardware, Z80 RAM reads 0, the YM2612 status
+  never busy), so it is silent and its menu has no Sound row; and it has
+  no time scrubber (no scrub line, Left/Right do nothing outside the
+  setting rows). The 68000 and the VDP are the XIP cart's: the test ROM's
+  and Miniplanets' golden pictures are identical (`tests/ram_variant.zig`).
+  Its embedded test ROM is the shipped one without its zero padding
+  (3 KB; the report line says `3 KB`). The frontend is built
+  ReleaseSmall, the core and the line sink ReleaseFast.
+- `zig-out/firmware/snouty-genesis-xip.uf2` (and `.elf`): **the XIP cart**,
+  everything (the Z80 sound driver and the one tone voice, the scrubber),
+  code executing from the 256 KB cart flash window. Not yet run on a
+  badge; the SYCL organizers expect XIP carts to be slow there.
+- `zig-out/bin/snouty-genesis.wasm`: simulator and `tools/preview.mjs`,
+  always with the XIP cart's features (Z80, sound, scrubber) and the full
+  16 KB test ROM.
 
-`zig build -Dcart=snouty-genesis` (RAM mode, the default) stops at
-configure time and says to pass `-Dcart-mode=xip`. A plain `zig build`
-(all carts) builds this one as XIP whatever `-Dcart-mode` says.
+`-Dcart-mode=ram` (the default) and `both` build both carts; a plain `zig
+build` (all carts) does too.
 
 Options:
 
@@ -42,7 +57,9 @@ Options:
   `carts/snouty-genesis/roms/snouty-test.bin`). Repository-relative,
   cart-relative (`-Dmd-rom=roms/x.bin`), absolute, or `~/x.bin` (expanded
   by the build, since the shell leaves `=~` alone). The report line reads
-  `ROM: embedded snouty-test.bin 16 KB`. Keep an embedded badge ROM small: every KB of
+  `ROM: embedded snouty-test.bin 16 KB` (3 KB in the RAM cart, whose copy
+  of the default test ROM has no padding; any other `-Dmd-rom` is embedded
+  whole in both). Keep an embedded badge ROM small: every KB of
   cart image costs 2 KB of drive space (SPEC.md section 13). Commercial
   ROMs stay local (`*.gen`, `*.smd` and this cart's `roms/*.bin`,
   `roms/*.md` are gitignored).
@@ -51,17 +68,29 @@ Options:
   the embedded ROM. The wasm build always embeds.
 - `-Dcart-optimize=fast|small|safe|debug` (default `fast`).
 
-Sizes: `size -A zig-out/firmware/snouty-genesis-xip.elf` (`.text` is the
-flash image, `.data` + `.bss` the RAM) against SPEC.md section 13.
+Sizes: `size -A zig-out/firmware/snouty-genesis.elf` (RAM cart: `.text` +
+`.data` + `.bss` share the 306,944 B window with the 32 KB stack, so at
+most 274,176 B; `arm-none-eabi-nm` shows `__bss_end__` below
+`__stack_limit__`, about 7.8 KB apart at M5, and the link fails with "BSS
+overflows into stack region" past it) and `size -A
+zig-out/firmware/snouty-genesis-xip.elf` (XIP cart: `.text` is the flash
+image, `.data` + `.bss` the RAM) against SPEC.md section 13.
 
 ## 3. Host tests
 
 ```sh
-zig build test-genesis -Dcart=snouty-genesis -Dcart-mode=xip   # this cart only
-zig build test                                                 # every cart's host tests
-zig build test-genesis -Dcart=snouty-genesis -Dcart-mode=xip -Dtest-filter=smoke
-zig build test-m68k-strict -Dcart=snouty-genesis -Dcart-mode=xip   # 68000 oracle only; fails if fixtures are absent
+zig build test-genesis -Dcart=snouty-genesis   # this cart only
+zig build test                                 # every cart's host tests
+zig build test-genesis -Dcart=snouty-genesis -Dtest-filter=smoke
+zig build test-m68k-strict -Dcart=snouty-genesis   # 68000 oracle only; fails if fixtures are absent
 ```
+
+Two test binaries: `snouty-genesis-tests` (`tests/all.zig`, the full
+core as the XIP cart and the simulator build it) and
+`snouty-genesis-ram-tests` (`tests/ram_variant.zig`, the RAM cart's core:
+the Z80 stub as the 68000 sees it, the trimmed test ROM, and the golden
+runs of the test ROM and Miniplanets with the stub, which give the full
+core's pictures).
 
 Without `tests/roms/68000/*.json.gz` (`tools/fetch_test_roms.sh`) the
 default run reports the SingleStepTests as skipped, not passed;
@@ -110,7 +139,7 @@ While `golden_hashes` is empty and `golden_tone_hash` is 0 the test only
 prints them:
 
 ```sh
-zig build test-genesis -Dcart=snouty-genesis -Dcart-mode=xip -Dtest-filter=golden 2>&1 | grep -A12 "golden:"
+zig build test-genesis -Dcart=snouty-genesis -Dtest-filter=golden 2>&1 | grep -A12 "golden:"
 ```
 
 Procedure (integration): look at the preview frames at the same updates
@@ -277,6 +306,7 @@ menu:
   details stay visible (SPEC.md section 6). H32 games look the same either
   way. Takes effect on resume.
 - `Sound: Off/On` (the one tone voice; off at boot, root docs/SOUND.md).
+  Not in the RAM cart, which has no Z80 and no sound.
 - `Debug overlay: On/Off` (also hides the ROM report line).
 - `Reset`: the console from its reset vector, settings kept.
 - `Pick ROM` (only on the badge with ROM files on the drive): back to the
@@ -296,7 +326,9 @@ press); in the menu the bottom line on Resume reads "Left/Right: rewind"
 parked or on other rows) and the footer reads "B: back to game". The menu
 rows are 8 px apart since the footer was added (9 px in M4).
 
-Time scrubber (SPEC.md section 10). The cart keeps an undo record every 30
+Time scrubber (SPEC.md section 10; the XIP cart and the simulator only:
+the RAM cart has no scrubber, no bottom line in the menu, and Left/Right
+do nothing outside the setting rows). The cart keeps an undo record every 30
 Genesis frames (0.5 s) in the RAM left free after the console. In the menu,
 on a row that is not a setting, Left steps 0.5 s back and Right 0.5 s
 forward (holding one repeats about 4 times a second); a Left or Right
@@ -323,6 +355,9 @@ terminal, `npm run dev` in `sycl-badge/simulator` in another, then
 Genesis B, Z or K = badge A = Genesis C, Enter = Start, Backspace = Select
 (tap: Genesis A).
 
+The simulator runs the full feature set (the XIP cart's: Z80, sound,
+scrubber), whichever carts the build wrote.
+
 Sound: one voice (`Md.tone()`), a square tone at the level's volume, off
 at boot unless built with `-Dsound=true` (badge A in the menu toggles it;
 root docs/SOUND.md). The badge plays it through its speaker; the simulator through the browser
@@ -334,15 +369,17 @@ infinite `tone2` into a 4 s fade-in that music never gets past
 ## 7. Benchmark
 
 ```sh
-zig build -Dcart=snouty-genesis -Dcart-mode=xip
+zig build -Dcart=snouty-genesis
 python3 tools/make_romfs.py carts/snouty-genesis/out/romfs_test.img \
   carts/snouty-genesis/roms/snouty-test.bin=TEST.GEN
+badge-bench/bench.sh zig-out/firmware/snouty-genesis.elf --symbols      # the RAM cart
 badge-bench/bench.sh zig-out/firmware/snouty-genesis-xip.elf \
-  --config badge-bench/carts/snouty-genesis.toml --symbols
+  --config badge-bench/carts/snouty-genesis.toml --symbols               # the XIP cart
 ```
 
-The toml is not picked up by name (the ELF's basename has `-xip`), hence
-`--config`. It runs 156 updates under `tools/scripts/m2_play.json`: the
+The RAM cart's ELF picks up `badge-bench/carts/snouty-genesis.toml` by
+name; the XIP cart's does not (its basename has `-xip`), hence `--config`.
+It runs 156 updates under `tools/scripts/m2_play.json`: the
 36-update splash, then the M1 sequence on the test ROM read from the drive
 image (one ROM file: no picker), against the 33.3 ms budget; the M1
 targets are a mean under 31 ms and a worst update under 33 ms (calibrated,
@@ -386,10 +423,25 @@ fragmented: a smaller pad (e.g. 16 KB) fragments only the ROM's first
 DMAs straight from each cluster run (`rom.run_at`), so a fragmented file
 should bench within about 1 ms of the contiguous one. The picker and help
 screens can be captured the same way (`--png 10`, `--press DOWN:40-41`,
-`--out DIR`; there is no wasm path to them). The Z80's share: rebuild with
-`tunables.z80_scale = 0` (or `z80_enabled = false`) and compare.
+`--out DIR`; there is no wasm path to them). The Z80's share: compare the
+RAM cart (the Z80 stub) with the XIP cart on the same run.
+
+M5 numbers (calibrated `busy ms`, mean / worst over the whole run, no
+update over budget):
+
+| Run | RAM cart | XIP cart |
+|---|---|---|
+| test ROM contiguous (default toml, 156 updates) | 8.87 / 24.26 | 9.22 / 26.48 |
+| test ROM `--fragment 4` | 9.02 / 24.26 | 9.37 / 26.48 |
+| Miniplanets contiguous (`m2_mini300`, 336) | 15.20 / 23.67 | 20.78 / 29.14 |
+| Miniplanets `--fragment 4` | 15.62 / 24.67 | 21.20 / 29.50 |
+
+The difference is the Z80 (about 5.6 ms per update on Miniplanets).
 
 ### Flash sensitivity (for show day)
+
+This is about the XIP cart: the RAM cart runs its code from RAM, and only
+its drive ROM reads (`--flash-read-cycles`) go to flash.
 
 badge-bench models flash as zero-wait memory. The XIP cache is 16 KB,
 shared with the OS and with the drive ROM's data reads, and no badge has
@@ -430,7 +482,8 @@ The badge's USB drive (`SYCLBADGE`, the OS romfs region) holds carts and
 any other file. With the default `drive` build:
 
 1. Plug in the badge, switch it on; the drive mounts.
-2. Copy `snouty-genesis-xip.uf2` onto it, and one `.gen` (or `.md`, `.bin`)
+2. Copy `snouty-genesis.uf2` (the RAM cart; or `snouty-genesis-xip.uf2`,
+   section 9) onto it, and one `.gen` (or `.md`, `.bin`)
    Genesis ROM next to it. Best on a freshly wiped drive, so the file is
    contiguous; a fragmented one runs through the cluster table and the
    report says so.
@@ -447,14 +500,21 @@ any other file. With the default `drive` build:
    With the overlay on, the bottom lines read
    `ROM: drive contiguous NAME 512 KB crc 1A2B3C4D` (or `fragmented`; plus
    `(i of N)` with several files); with no volume they read
-   `ROM: embedded snouty-test.bin 16 KB, drive: NoVolume`.
+   `ROM: embedded snouty-test.bin 16 KB, drive: NoVolume` (`3 KB` in the
+   RAM cart). Drive space: the RAM cart's UF2 is 521 KB (the OS image
+   holds `.bss` too) and the XIP cart's 458 KB, so about 750 KB (RAM) or
+   810 KB (XIP) of the 1270 KB volume is left for ROMs: 512 KB ROMs fit,
+   with either cart but not both.
 
 ## 9. Flash the badge
 
 Install it as in [docs/INSTALL.md](../../../docs/INSTALL.md): copy
-`zig-out/firmware/snouty-genesis-xip.uf2` (repository root; there is no
-RAM build) onto the badge's `SYCLBADGE` drive with the ROM files (section
-8), eject, and start Snouty Genesis from the OS menu. XIP
-carts are not yet confirmed on hardware (an open item, not a gate: no
-badge until the show). On the badge the overlay's `avg`/`max`
+`zig-out/firmware/snouty-genesis.uf2` (repository root; the RAM cart,
+silent and without the scrubber) onto the badge's `SYCLBADGE` drive with
+the ROM files (section 8), eject, and start Snouty Genesis from the OS
+menu. `snouty-genesis-xip.uf2` is the XIP cart with sound and the
+scrubber; XIP carts are not yet confirmed on hardware (the SYCL organizers
+expect them to perform badly; an open item, not a gate: no badge until
+the show). With a 512 KB ROM on the drive there is room for one of the
+two carts, not both (section 8). On the badge the overlay's `avg`/`max`
 are real update microseconds.

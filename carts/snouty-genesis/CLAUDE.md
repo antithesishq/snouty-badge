@@ -47,11 +47,13 @@ ownership and interface contract.
 
 ## Target hardware (SYCL Badge V2)
 
-- RP2354B Cortex-M33 at 150 MHz, Core 1 runs the cart. **XIP cart only**:
-  code and read-only data (the embedded ROM too) in the 256 KB cart flash
-  window, `.data`/`.bss` in the 307 KB RAM window (32 KB stack). The drive
-  ROM is read by pointer from the XIP flash window (romfs at `0x10080000`,
-  1280 KB).
+- RP2354B Cortex-M33 at 150 MHz, Core 1 runs the cart. Two carts (M5): the
+  **RAM cart** `snouty-genesis` (no Z80, no scrubber; code, data and state
+  in the 307 KB RAM window, 32 KB of it stack) and the **XIP cart**
+  `snouty-genesis-xip`, everything: code and read-only data (the
+  embedded ROM too) in the 256 KB cart flash window, `.data`/`.bss` in the
+  RAM window. Both read the drive ROM by pointer from the XIP flash window
+  (romfs at `0x10080000`, 1280 KB).
 - Screen 160x128 RGB565, column-major `cart.framebuffer[x][y]`. The core
   emits badge rows directly: 160 tagged pixels per row, 128 rows (the line
   and column tables of SPEC.md section 6 live in the VDP).
@@ -67,30 +69,43 @@ Zig `0.17.0-dev.1936+5a625d5f3` at `~/.local/bin/zig`
 `.debug/.safe/.fast/.small`. `zig build` runs from the repository root
 only (it calls this cart's `build.zig` `pub fn add`).
 
-- `zig build -Dcart=snouty-genesis -Dcart-mode=xip` →
-  `zig-out/firmware/snouty-genesis-xip.uf2`, `.elf`,
-  `zig-out/bin/snouty-genesis.wasm`. Without `-Dcart-mode=xip` a build
-  that names only this cart stops at configure time with a message
-  (SPEC.md section 13); `both` builds the XIP cart only; an all-carts
-  `zig build` or a `-Dcart` list with other carts builds it as XIP
-  regardless of `-Dcart-mode`.
+- `zig build -Dcart=snouty-genesis` (`-Dcart-mode=ram`, the default, or
+  `both`) → `zig-out/firmware/snouty-genesis.uf2`/`.elf` (RAM cart) and
+  `snouty-genesis-xip.uf2`/`.elf` (XIP cart), `zig-out/bin/snouty-genesis.wasm`
+  (built from the XIP cart's modules: Z80 and scrubber). `-Dcart-mode=xip`
+  builds the XIP cart and the wasm only. The variants differ only through
+  `build_options` (`z80`, `scrub`, `sound`; the core imports it too:
+  `tunables.z80_enabled`, `undo.enabled`) and module optimize modes (RAM
+  cart: `app`, `drive`, `romfs`, `rom`, `iris`, `hint` and cart-api
+  ReleaseSmall; `core` and `video` ReleaseFast), plus the RAM cart's
+  trimmed test ROM (`tools/trim_rom.zig`). Keep the RAM ELF's
+  `__bss_end__` at least 4 KB under `__stack_limit__` (`arm-none-eabi-nm`).
+- Module layout: `cart/src/main.zig` (root: exports, wasm shims) imports
+  `app` (`cart/src/frontend/app.zig`: the state machine, rooted in
+  `frontend/`, so every frontend file but `video.zig` and `drive.zig`
+  belongs to it) and `video` (the line sink, its own module so it stays
+  ReleaseFast). Frontend files import the line sink as `@import("video")`,
+  never by path.
 - `-Dmd-rom=path` picks the embedded ROM (repo-relative, cart-relative
   `roms/x.bin`, absolute or `~/x.bin`); default `roms/snouty-test.bin`
   (16 KB, built from `tools/testrom/`). `-Dmd-rom-source=drive|embed`
   (default `drive`); `-Dcart-optimize=fast|small|safe|debug`.
 - The generated `rom` module (cart and host tests) has `data` (the
   embedded ROM), `name` (its file name) and `source` (`.drive` or
-  `.embed`).
+  `.embed`). The RAM cart's has the default test ROM without its zero
+  padding (3 KB, `tools/trim_rom.zig`).
 - **Configure cache rule**: this Zig caches the configure phase's build
   graph keyed by the build files and the options. A graph decision taken
   from anything else (a file's existence, an environment variable) is
   frozen at the first configure and silently reused; M0 lost an hour to a
   placeholder ROM chosen that way. Decide from options only.
-- `zig build test-genesis -Dcart=snouty-genesis -Dcart-mode=xip` → this
-  cart's host tests only; `zig build test` → every built cart's (plus
+- `zig build test-genesis -Dcart=snouty-genesis` → this
+  cart's host tests only (`snouty-genesis-tests` for the full core,
+  `snouty-genesis-ram-tests` for the RAM cart's, `tests/ram_variant.zig`); `zig build test` → every built cart's (plus
   lib/). `-Dtest-filter=smoke` (names carry an area prefix: `smoke:`,
   `md:`, `rom:`), `-Dtest-optimize=`.
-- `size -A zig-out/firmware/snouty-genesis-xip.elf` against SPEC.md section 13.
+- `size -A zig-out/firmware/snouty-genesis.elf` and `-xip.elf` against
+  SPEC.md section 13.
 - Headless: `node tools/preview.mjs zig-out/bin/snouty-genesis.wasm --frames 60 --every 30 --out carts/snouty-genesis/out/`
   (from the root), then look at the PNGs.
 - `zig fmt carts/snouty-genesis` before committing.

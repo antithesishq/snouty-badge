@@ -32,14 +32,14 @@ The badge file is `zig-out/firmware/<binary>.uf2`:
 | snouty-boy | `snouty-boy.uf2` | `snouty-boy-xip.uf2` (with `-Dcart-mode=xip`) only for an embedded ROM over about 64 KB; ROMs: [Boy section 9](../carts/snouty-boy/docs/RUNNING.md#9-roms-from-the-badge-drive) |
 | snouty-maze | `snouty-maze.uf2` | |
 | snouty-gear | `snouty-gear.uf2` | ROMs: [Gear section 6](../carts/snouty-gear/docs/RUNNING.md#6-a-rom-on-the-badge-drive) |
-| snouty-genesis | `snouty-genesis-xip.uf2` | XIP only, there is no RAM build; ROMs: [Genesis section 8](../carts/snouty-genesis/docs/RUNNING.md#8-a-rom-on-the-badge-drive) |
+| snouty-genesis | `snouty-genesis.uf2` | silent and without the time scrubber; the default build also writes `snouty-genesis-xip.uf2` (sound and the scrubber, executing from flash, never run on a badge; with a 512 KB ROM only one of the two fits on the drive); ROMs: [Genesis section 8](../carts/snouty-genesis/docs/RUNNING.md#8-a-rom-on-the-badge-drive) |
 | snouty-lynx | `snouty-lynx.uf2` | the default build also writes `snouty-lynx-xip.uf2` (longer rewind history, never run on a badge); ROMs: [Lynx README](../carts/snouty-lynx/README.md#a-rom-on-the-badge-drive) |
 | snouty-flyover | `snouty-flyover.uf2` | |
 | demosnout | `demosnout.uf2` | |
 | snouty-zero | `snouty-zero.uf2` | the default build also writes `snouty-zero-xip.uf2` (the same game executing from flash, for a hardware comparison) |
 | badge-calibrate | `badge-calibrate.uf2` | a measuring tool, not a game ([its README](../badge-bench/calibrate/README.md)) |
 
-A plain `zig build` writes all of these, the XIP-only ones included.
+A plain `zig build` writes all of these, the default XIP ones included.
 `<binary>-xip.uf2` is an execute-in-place cart (code in the 256 KB cart
 flash window, root `README.md`); it is installed exactly like a RAM cart.
 `python3 tools/uf2_info.py FILE.uf2` prints which window a UF2 targets.

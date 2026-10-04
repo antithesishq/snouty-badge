@@ -32,8 +32,9 @@ that replays bit for bit.
   (`docs/ROM_STREAMING.md`) removes the second objection for ROMs up to
   about 900 KB on stock firmware (section 13), which covers the 512 KB
   class (Sonic 1, Streets of Rage, Columns, many homebrew titles).
-- It exercises the XIP cart mode for real: this cart cannot be a RAM cart
-  (section 13).
+- It exercises the XIP cart mode for real: the full cart cannot be a RAM
+  cart (section 13). Since M5 a reduced RAM cart (no Z80, no scrubber)
+  is built beside it, because XIP carts may not perform on the badge.
 - Snouty Gear's Z80 core is the Genesis sound CPU, so sound reuses it
   from M1.
 
@@ -185,9 +186,13 @@ Snouty Boy) and adapted: video, input (Select tap and hold), menu, rewind,
 splash, debug, plus `romfs.zig` (section 11). If Snouty Gear's M5 shared
 frontend module exists by then, use it instead.
 
-Build: `carts/snouty-genesis/build.zig`, XIP mode only
-(`-Dcart-mode=xip`; a RAM build fails with a message pointing at section
-13), with its own ROM option `-Dmd-rom=path` for the embedded source.
+Build: `carts/snouty-genesis/build.zig`, two carts since M5 (section
+13): the RAM cart `snouty-genesis` (the Z80 stub of section 9, no
+scrubber, the frontend ReleaseSmall) and the XIP cart
+`snouty-genesis-xip` (everything); `-Dcart-mode=ram` (the default) and
+`both` build both, `xip` the XIP cart alone; the simulator wasm always
+has the XIP cart's features. Its own ROM option `-Dmd-rom=path` picks the
+embedded source.
 
 ## 8. Performance budget
 
@@ -276,11 +281,18 @@ and the badge's one `tone2` voice plays one note chosen from them.
   `build_options.sound` says (`-Dsound`, off by default: root
   docs/SOUND.md). Badge A in the M1 menu placeholder toggles it; the M2
   menu's Sound row takes that over.
-- **Z80 off** (tunable and menu item, fallback 4 of section 8): the
-  arbiter stub. BUSREQ reports granted at once, RESET is recorded, Z80 RAM
-  is plain memory, the YM2612 status reads "not busy" and the tone comes
-  from 68000-side PSG writes only. Games that wait for their driver's
-  handshake hang in this mode; the overlay shows the mode.
+- **Z80 off** (`tunables.z80_enabled`, set per build variant: the RAM
+  cart since M5): the arbiter stub, and no Z80 core linked. BUSREQ
+  reports granted at once, RESET is recorded, the YM2612 keeps its
+  register model and timers and its status never reads busy, the PSG and
+  the bank register take their writes. Z80 RAM is not kept: 68000 writes
+  are dropped and reads return 0, which is what a sound driver's command
+  slot reads once the driver has taken the command (Miniplanets' engine
+  waits for a free slot and froze with Z80 RAM as plain memory, the
+  pre-M5 design of this mode). A driver that must set a flag before the
+  game goes on would hang either way. No tone at all (no Sound row); the
+  overlay shows `z80:off`. With the test ROM and Miniplanets the pictures
+  are the same as with the Z80 (`tests/ram_variant.zig`).
 
 ## 10. Time scrubbing
 
@@ -427,9 +439,14 @@ screen says to copy a `.gen` file to the badge's USB drive.
 
 ## 13. Memory budget
 
-XIP cart only. A RAM cart would have to hold the code (about 110 KB) and
-about 137 KB of console state in the 268 KB window, leaving nothing for
-the rewind ring. Estimates, measured with `size -A` at each milestone:
+Two carts since M5 (PLAN.md "M5 RAM cart"). The full cart is XIP only: a
+RAM cart would have to hold the code (233 KB at M4, 76 KB of it the
+inlined Z80) and about 154 KB of console state in the 268 KB window. The
+RAM cart fits by leaving out the Z80 core (stub, section 9), the
+scrubber, the test ROM's zero padding, and by building the cold frontend
+ReleaseSmall: `.text` 107 KB + `.bss` 154 KB, about 7.8 KB below the
+stack (PLAN.md M5 status has the table per cut). The estimates below are
+the XIP cart's, measured with `size -A` at each milestone:
 
 | Flash (256 KB cart window)           | Estimate   |
 |--------------------------------------|-----------:|
@@ -583,3 +600,8 @@ disjoint files.
   Left for hardware: RAM-text (needs a linker-script section the SDK's
   `cart_xip.ld` lacks; the hot code is bigger than the free RAM, see
   RUNNING.md), the fallback defaults, the XIP hit rate.
+- 2026-10-04 (M5): the SYCL organizers expect XIP carts not to perform
+  on the badge, so a RAM cart `snouty-genesis.uf2` now sits beside the
+  unchanged XIP cart (sections 7, 9, 13; PLAN.md "M5 RAM cart"). It has
+  no Z80 (the stub, now with Z80 RAM reading 0), no sound, no scrubber;
+  the 68000, the VDP and the timing are the XIP cart's.

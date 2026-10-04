@@ -116,7 +116,7 @@ Outputs, one set per cart:
 Binaries (the 13 carts of the root `build.zig`, plus the calibration
 tool): `snouty` (cart `snouty-run`), `snouty-bugs`, `snoutenstein`,
 `snouty-reflections`, `snouty-boy`, `snouty-maze`, `snouty-gear`,
-`snouty-genesis` (XIP only: `snouty-genesis-xip`), `snouty-lynx` (plus
+`snouty-genesis` (plus `snouty-genesis-xip` by default), `snouty-lynx` (plus
 `snouty-lynx-xip` by default), `snouty-flyover`, `demosnout`,
 `snouty-zero` (plus `snouty-zero-xip` by default), `siwoo` and `badge-calibrate`.
 `zig build -Dcart-mode=xip` (or `both`) adds the execute-in-place variant
@@ -132,7 +132,7 @@ downloaded fixtures (the Z80 and 68000 SingleStepTests, ZEXDOC/ZEXALL, the
 Lynx test ROMs) report as **skipped**, not passed, when the files are
 absent; the strict conformance gates
 `zig build test-z80-strict -Dcart=snouty-gear` and
-`zig build test-m68k-strict -Dcart=snouty-genesis -Dcart-mode=xip` fail
+`zig build test-m68k-strict -Dcart=snouty-genesis` fail
 instead and print the executed case counts (fetch the fixtures with each
 cart's `tools/fetch_test_roms.sh` first). `zig build check-float` fails if
 a float-heavy cart links soft-float or libm routines; it inspects the ELF
@@ -247,8 +247,8 @@ leave headroom. `badge-bench/README.md` has the details.
 ## 7. Flash the badge
 
 [INSTALL.md](INSTALL.md) is the one recipe: copy
-`zig-out/firmware/<binary>.uf2` (or `<binary>-xip.uf2` for the XIP-only
-carts) onto the badge's `SYCLBADGE` drive, eject, start the cart from the
+`zig-out/firmware/<binary>.uf2` (or `<binary>-xip.uf2` for a cart's XIP
+variant) onto the badge's `SYCLBADGE` drive, eject, start the cart from the
 OS menu, Start+Select back. It also covers ROM files for the emulator
 carts and the RP2350 bootloader drive that is easy to mistake for it.
 
