@@ -1255,3 +1255,13 @@ render check). check.sh now reads the demo level from the data file.
   57 s; was 4,108) because the zapper runs dry on that room's beetle.
   Bench: attract worst 10.26 ms (was 9.76), m4_rewind 5.48, m6_debugger
   5.72, all far under 16.7.
+- 2026-10-04: weapons carry between levels (Adrian: a hidden weapon found
+  in one level should be usable in the next). `sim.Loadout` (weapon,
+  spray/Debugger flags, all three ammo counts) is captured by main.zig at
+  the intermission and applied after `sim.init` on the next level and on a
+  restart of it; the title and the demo clear it. The zapper is floored at
+  its fresh 40; keys, HP and the meter stay per level. Applied before
+  `rewind.reset`, so the first keyframe holds it and replay is unchanged.
+  GameState untouched, demo hash unchanged. New `m6_carry.json` in
+  `tools/check.sh`: Debugger from the test level arrives on E1M1 with 2
+  charges; host test in sim.zig.

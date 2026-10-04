@@ -159,6 +159,11 @@ a  gnat   w wasp   b beetle   s spider   H Heisenbug (boss)
   the Heisenbug behind the Gold door). Level end: an intermission card
   with time, kills, rewinds used, then the next level. After Production:
   a victory card, then the title.
+- Weapons carry between levels (Adrian, 2026-10-04): the selected weapon,
+  the spray and Debugger (once found) and all ammo go into the next level;
+  the zapper never starts below its fresh 40. Keys, HP and the rewind
+  meter reset per level. A level restart restores the loadout the player
+  entered with; a game from the title or the demo starts fresh.
 - Doors slide open over 30 ticks when walked into, stay open 180 ticks,
   close unless something stands in them. Locked doors need the matching
   key; bumping one without it flashes the key slot in the HUD and plays a

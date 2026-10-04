@@ -1,0 +1,18 @@
+[
+  {"from": 10, "to": 10, "hold": ["START"]},
+  {"from": 20, "to": 37, "hold": ["RIGHT"]},
+  {"from": 50, "to": 104, "hold": ["UP"]},
+  {"from": 120, "to": 188, "hold": ["LEFT"]},
+  {"from": 200, "to": 202, "hold": ["A"]},
+  {"from": 210, "to": 224, "hold": ["RIGHT"]},
+  {"from": 230, "to": 245, "hold": ["UP"]},
+  {"from": 250, "to": 285, "hold": ["RIGHT"]},
+  {"from": 290, "to": 396, "hold": ["UP"]},
+  {"from": 397, "to": 432, "hold": ["LEFT"]},
+  {"from": 433, "to": 511, "hold": ["UP"]},
+  {"from": 512, "to": 547, "hold": ["RIGHT"]},
+  {"from": 548, "to": 1086, "hold": ["UP"]},
+  {"from": 1087, "to": 1122, "hold": ["RIGHT"]},
+  {"from": 1123, "to": 1336, "hold": ["UP"]},
+  {"from": 1436, "to": 1436, "hold": ["A"]}
+]

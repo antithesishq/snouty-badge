@@ -105,6 +105,43 @@ pub fn fire_rate(w: state.Weapon) u8 {
     };
 }
 
+/// The weapons and ammo the player takes from one level into the next
+/// (main.zig captures it at the exit and re-applies it on a level restart).
+/// Keys, HP and the rewind meter stay per level.
+pub const Loadout = struct {
+    weapon: state.Weapon,
+    ammo_zapper: u8,
+    ammo_spray: u8,
+    ammo_debugger: u8,
+    has_spray: bool,
+    has_debugger: bool,
+};
+
+pub fn loadout(p: *const state.Player) Loadout {
+    return .{
+        .weapon = p.weapon,
+        .ammo_zapper = p.ammo_zapper,
+        .ammo_spray = p.ammo_spray,
+        .ammo_debugger = p.ammo_debugger,
+        .has_spray = p.has_spray,
+        .has_debugger = p.has_debugger,
+    };
+}
+
+/// Apply a carried loadout to a freshly `init`ed state. The zapper never
+/// starts below its fresh-level charge, so carrying is never worse than
+/// a new game.
+pub fn equip(s: *GameState, l: Loadout) void {
+    const p = &s.player;
+    const fresh: state.Player = .{ .x = 0, .y = 0, .angle = 0 };
+    p.ammo_zapper = @max(fresh.ammo_zapper, l.ammo_zapper);
+    p.ammo_spray = l.ammo_spray;
+    p.ammo_debugger = l.ammo_debugger;
+    p.has_spray = l.has_spray;
+    p.has_debugger = l.has_debugger;
+    p.weapon = l.weapon;
+}
+
 /// Fresh state at the start of `level`.
 pub fn init(s: *GameState, level: *const Level, level_index: u8, seed: u32) void {
     // Every field has a default and no struct has padding (state.zig
@@ -790,6 +827,30 @@ const debugger_level_src =
     \\1S>&&&&.1
     \\111111111
 ;
+
+test "a loadout carries weapons and ammo into a fresh level" {
+    var pickup_level_st: level_parse.Parsed = undefined;
+    const pickup_level = try level_parse.parse_level(&pickup_level_st, "pickups", pickup_level_src, 0);
+    var s: GameState = undefined;
+    init(&s, &pickup_level, 0, 1);
+    s.player.has_debugger = true;
+    s.player.ammo_debugger = 5;
+    s.player.weapon = .debugger;
+    s.player.ammo_zapper = 7;
+    s.player.keys = 7;
+    s.player.hp = 30;
+    const carried = loadout(&s.player);
+    init(&s, &pickup_level, 1, 2);
+    equip(&s, carried);
+    try testing.expect(s.player.has_debugger);
+    try testing.expectEqual(@as(u8, 5), s.player.ammo_debugger);
+    try testing.expectEqual(state.Weapon.debugger, s.player.weapon);
+    try testing.expect(!s.player.has_spray);
+    // The zapper is topped up to its fresh charge; keys and HP do not carry.
+    try testing.expectEqual(@as(u8, 40), s.player.ammo_zapper);
+    try testing.expectEqual(@as(u8, 0), s.player.keys);
+    try testing.expectEqual(@as(i16, 100), s.player.hp);
+}
 
 test "pickups clear their bit and clamp" {
     var pickup_level_st: level_parse.Parsed = undefined;
