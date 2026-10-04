@@ -1,9 +1,9 @@
 //! Mikey (SPEC.md sections 3 and 7): the eight timers and their link
 //! chains, interrupts (INTSET/INTRST), the palette, the display registers
-//! (DISPCTL, DISPADR, PBKUP), the audio register model (stored, never
-//! heard: no sound in this project, docs/SOUND.md at the repository root),
-//! IODIR/IODAT/SYSCTL1, the UART stubbed idle. PLAN.md "Frozen for M1" says
-//! what the rest of the core sees.
+//! (DISPCTL, DISPADR, PBKUP), the four audio channels (`audio`, their
+//! model and mix in core/audio.zig, M5), IODIR/IODAT/SYSCTL1, the UART
+//! stubbed idle. PLAN.md "Frozen for M1" says what the rest of the core
+//! sees.
 //!
 //! Sources: the Epyx hardware appendix (https://www.monlynx.de/lynx/hardware.html),
 //! the timer chapter (lynx8.html), display (lynx5.html), CPU sleep
@@ -55,9 +55,12 @@
 //!
 //! Simplifications (none affects known games; integration may revisit):
 //!
-//! - The audio channels' timers ($FD24-$FD27 etc.) are stored registers
-//!   only: they are not clocked, so the tail of chain B (timer 7 -> audio
-//!   0 -> 1 -> 2 -> 3 -> timer 1) is cut. Timer 1 linked never counts.
+//! - Chain B runs on through the audio channels (timer 7 -> audio 0 -> 1
+//!   -> 2 -> 3 -> timer 1, core/audio.zig): the channels are caught up
+//!   lazily (before every timer write and timer 7 read, on audio register
+//!   accesses, at the frame end); timer 7's underflow clocks a linked
+//!   audio 0, audio 3's clocks a linked timer 1. Only while timer 1 is
+//!   linked and counting are the channels' underflows events (`aud_event`).
 //! - CTLB borrow-in/out and last clock read 0.
 //! - UART: transmitter always ready and empty (SERCTL reads $A0), nothing
 //!   received; with TXINTEN set the serial interrupt (INTSET bit 4) is held
@@ -121,9 +124,11 @@ pub const Ctlb = struct {
 /// SERCTL read: transmitter buffer empty and transmitter done.
 pub const serctl_idle: u8 = 0x80 | 0x20;
 
-/// The timer clocked by timer i's underflow when it is linked (0xFF: none,
-/// or the audio chain, which is not modelled).
+/// The timer clocked by timer i's underflow when it is linked (0xFF: none;
+/// timer 7 clocks audio 0, core/audio.zig).
 const link_next = [8]u8{ 2, 3, 4, 5, 0xFF, 7, 0xFF, 0xFF };
+
+const audio = @import("audio.zig");
 
 /// Timer 2 counts 101..0 on the visible lines (101 = the top line).
 pub const last_visible_line: u8 = 101;
@@ -173,17 +178,17 @@ pub const Timer = struct {
     /// Tick of the next underflow of a running unlinked timer, else never.
     expire: Tick = ticks_never,
 
-    fn shift(t: *const Timer) u5 {
+    pub fn shift(t: *const Timer) u5 {
         return @intCast(4 + @as(u32, t.ctla & Ctla.clock_mask));
     }
-    fn linked(t: *const Timer) bool {
+    pub fn linked(t: *const Timer) bool {
         return t.ctla & Ctla.clock_mask == Ctla.linked;
     }
     /// Counting: enabled, and not a one-shot that has finished.
-    fn running(t: *const Timer) bool {
+    pub fn running(t: *const Timer) bool {
         return t.ctla & Ctla.count != 0 and (t.ctla & Ctla.reload != 0 or !t.done);
     }
-    fn free_running(t: *const Timer) bool {
+    pub fn free_running(t: *const Timer) bool {
         return t.running() and !t.linked();
     }
 };
@@ -202,8 +207,11 @@ pub const Mikey = struct {
     now: Tick = 0,
     /// Earliest of `timer_event` and `dma_next`.
     next_event: Tick = 0,
-    /// Earliest `expire` of the timers that are events.
+    /// Earliest `expire` of the timers that are events, and `aud_event`.
     timer_event: Tick = ticks_never,
+    /// The audio channels' next underflow while timer 1 is linked and
+    /// counting (audio 3 clocks it), else never.
+    aud_event: Tick = ticks_never,
     /// Tick of the next display burst or refresh (see `dma_ticks_per_burst`).
     dma_next: Tick = 0,
     /// Display bursts left on the current visible line (0: refresh).
@@ -240,12 +248,18 @@ pub const Mikey = struct {
     steal: u32 = 0,
     /// A display burst fell in `steal`: the CPU's DRAM page is lost.
     steal_burst: bool = false,
-    /// Every other register as last written (audio, stereo, attenuation,
-    /// MTEST): read back as stored.
+    /// The four audio channels, the stereo registers and the frame
+    /// renderer (core/audio.zig).
+    audio: audio.Audio = .{},
+    /// Every other register as last written (MTEST, the unallocated
+    /// addresses): read back as stored.
     regs: [256]u8 = @splat(0),
 
+    /// Power-on state at tick `now`. The audio renderer is not kept: see
+    /// `Lynx.reboot` for a boot re-run in the middle of a frame.
     pub fn reset(m: *Mikey, now: Tick) void {
         m.* = .{ .now = now };
+        m.audio.time = now;
         m.dma_next = refresh_at_or_after(now);
         m.next_event = m.dma_next;
     }
@@ -284,6 +298,11 @@ pub const Mikey = struct {
                 m.next_event = @min(m.timer_event, m.dma_next);
                 continue;
             }
+            if (m.aud_event == t_ev) {
+                audio.catch_up(m, t_ev);
+                m.reschedule();
+                continue;
+            }
             var i: u3 = 0;
             while (true) : (i += 1) {
                 if (m.event_mask & (@as(u8, 1) << i) != 0 and m.timers[i].expire == t_ev) break;
@@ -310,6 +329,7 @@ pub const Mikey = struct {
         if (t.ctla & Ctla.irq_enable != 0 and i != 4) m.intset |= @as(u8, 1) << i;
         if (t.ctla & Ctla.reload != 0) t.value = t.backup;
         if (i == 2) m.vblank_count +%= 1;
+        if (i == 7) audio.timer7_borrow(m, at);
         const n = link_next[i];
         if (n != 0xFF) m.borrow_in(@intCast(n), at);
         if (i == 0) m.line_start(at);
@@ -354,8 +374,8 @@ pub const Mikey = struct {
         }
     }
 
-    /// A clock from the previous timer of the chain.
-    fn borrow_in(m: *Mikey, i: u3, at: Tick) void {
+    /// A clock from the previous timer of the chain (audio 3 for timer 1).
+    pub fn borrow_in(m: *Mikey, i: u3, at: Tick) void {
         const t = &m.timers[i];
         if (!t.linked() or !t.running()) return;
         if (t.value > 0) {
@@ -377,7 +397,9 @@ pub const Mikey = struct {
     }
 
     fn reschedule(m: *Mikey) void {
-        var next = ticks_never;
+        const t1 = &m.timers[1];
+        m.aud_event = if (t1.linked() and t1.ctla & Ctla.count != 0) m.audio.next else ticks_never;
+        var next = m.aud_event;
         var mask: u8 = 0;
         for (&m.timers, 0..) |*t, k| {
             const i: u3 = @intCast(k);
@@ -446,6 +468,9 @@ pub const Mikey = struct {
 
     fn timer_write(m: *Mikey, addr: u8, v: u8) void {
         const i: u3 = @intCast(addr >> 2);
+        // The channels run up to now under the old settings first (timer
+        // 7 may clock audio 0, timer 1 may become linked behind audio 3).
+        audio.catch_up(m, m.now);
         m.settle_all();
         m.freeze(i);
         const t = &m.timers[i];
@@ -465,11 +490,15 @@ pub const Mikey = struct {
             },
         }
         m.thaw(i);
+        audio.relink(m);
         m.reschedule();
     }
 
     fn timer_read(m: *Mikey, addr: u8) u8 {
         const i: u3 = @intCast(addr >> 2);
+        // Settling a quiet timer 7 forgets its past underflows, which a
+        // linked audio 0 may not have counted yet.
+        if (i == 7) audio.catch_up(m, m.now);
         const t = &m.timers[i];
         return switch (addr & 3) {
             0 => t.backup,
@@ -488,6 +517,7 @@ pub const Mikey = struct {
     /// A register read at $FD00 + addr.
     pub fn read(m: *Mikey, addr: u8) u8 {
         if (addr < 0x20) return m.timer_read(addr);
+        if (audio.is_audio_reg(addr)) return audio.read(m, addr);
         return switch (addr) {
             Reg.intrst, Reg.intset => m.pending(),
             Reg.magrdy0, Reg.magrdy1, Reg.audin => 0,
@@ -515,6 +545,12 @@ pub const Mikey = struct {
     /// CPUSLEEP side effects are the bus's; this stores the values.
     pub fn write(m: *Mikey, addr: u8, v: u8) void {
         if (addr < 0x20) return m.timer_write(addr, v);
+        if (audio.is_audio_reg(addr)) {
+            audio.write(m, addr, v);
+            // The channels' clocks are events only behind a linked timer 1.
+            if (m.timers[1].linked()) m.reschedule();
+            return;
+        }
         m.regs[addr] = v;
         switch (addr) {
             Reg.intrst => m.intset &= ~v,
@@ -545,10 +581,13 @@ pub const Mikey = struct {
     /// value that may lie further back, `dma_line_end`, clamps at 0 and is
     /// not read before the next line start sets it.
     pub fn rebase(m: *Mikey, d: Tick) void {
+        audio.catch_up(m, m.now);
         m.settle_all();
         m.now -= d;
         m.next_event -|= d;
         if (m.timer_event != ticks_never) m.timer_event -|= d;
+        if (m.aud_event != ticks_never) m.aud_event -|= d;
+        audio.rebase(m, d);
         m.dma_next -|= d;
         m.dma_line_end -|= d;
         for (&m.timers) |*t| {
@@ -565,6 +604,7 @@ pub const Mikey = struct {
     /// Timer i's count without side effects on the catch-up state, for
     /// tests and diagnostics.
     pub fn timer_count(m: *Mikey, i: u3) u8 {
+        if (i == 7) audio.catch_up(m, m.now);
         return m.count(i);
     }
 };

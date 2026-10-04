@@ -203,6 +203,8 @@ pub const Lynx = struct {
     /// `undo.reset` after this (and after `init_in_place`).
     pub fn reset(l: *Lynx) void {
         @memset(&l.audio_out, audio.silence);
+        // A fresh Mikey (the audio renderer starts here; `reboot` keeps it).
+        l.mikey = .{};
         l.ticks = 0;
         l.tick_base = 0;
         l.frame_end = 0;
@@ -226,7 +228,13 @@ pub const Lynx = struct {
         const instr = l.cpu.instr_count;
         l.cpu = .{};
         l.cpu.instr_count = instr;
+        // The channels fall silent at this tick; the frame being rendered
+        // goes on (a boot re-run may come mid-frame).
+        audio.mute(&l.mikey);
+        const render = l.mikey.audio.r;
         l.mikey.reset(l.ticks);
+        l.mikey.audio.r = render;
+        l.mikey.audio.in_console = true;
         l.suzy.reset();
         l.port = .{};
         l.fetch_cost = bus.Ticks.fetch_full;
@@ -266,10 +274,12 @@ pub const Lynx = struct {
             n += 1;
         }
         if (l.ticks >= rebase_at) l.rebase();
+        audio.begin_frame(&l.mikey, l.frame_end, n);
         l.frame_end += n;
         while (l.ticks < l.frame_end) {
             if (l.halted or l.sleeping) l.step_one() else l.run_cpu(false);
         }
+        audio.end_frame(&l.mikey, l.frame_end);
         l.frame_count +%= 1;
     }
 
