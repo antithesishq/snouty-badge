@@ -5,7 +5,7 @@
 #
 #   tools/oracle/run.sh [--quick] [--no-build] [SCRIPT_NAME...]
 #
-#   --quick     skip the long scripts (deep*)
+#   --quick     skip the long scripts (deep*, prestige*: the whole game)
 #   --no-build  use the runner already in zig-out/bin (or out/oracle/)
 #   names       only these scripts (file names without .json)
 #
@@ -55,7 +55,7 @@ if [ ${#names[@]} -gt 0 ]; then
 else
     for f in "$here"/scripts/*.json; do
         b="$(basename "$f" .json)"
-        [ $quick -eq 1 ] && [[ "$b" == deep* ]] && continue
+        [ $quick -eq 1 ] && [[ "$b" == deep* || "$b" == prestige* ]] && continue
         scripts+=("$f")
     done
 fi

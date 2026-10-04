@@ -15,7 +15,7 @@ None that fail the comparison.
   `victoryDiv` against `victory_visible`; drop the panel field or keep it
   in step so the UI cannot read the stale one.
 
-## Status by script (working tree of 2026-10-04 23:30, after ad5d3c80)
+## Status by script (2026-10-04: committed ad5d3c80 and the working tree after it; full run.sh 4.3 min)
 
 | script | seed | virtual time | reaches | result |
 |---|---|---|---|---|
