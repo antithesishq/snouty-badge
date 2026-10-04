@@ -6,4 +6,5 @@ test {
     std.testing.refAllDecls(@This());
     _ = @import("rng.zig");
     _ = @import("sim.zig");
+    _ = @import("ai.zig");
 }
