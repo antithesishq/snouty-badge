@@ -288,7 +288,7 @@ fn check_for_battle_end(g: *Game) void {
     if (g.battles_len == 0) return;
     if (g.num_left_ships == 0 or g.num_right_ships == 0) {
         if (g.project_flag(.p121) == 1) {
-            g.victory_visible = true;
+            g.panels.victory_div = true;
             if (g.num_left_ships == 0) {
                 if (g.honor_count == 0) {
                     g.bonus_honor = 0;
@@ -321,7 +321,7 @@ fn check_for_battle_end(g: *Game) void {
 }
 
 fn end_battle(g: *Game) void {
-    g.victory_visible = false;
+    g.panels.victory_div = false;
     g.honor_count = 0;
     g.battle_clock = 0;
     g.master_battle_clock = 0;

@@ -172,16 +172,152 @@ test "tournament round chain runs on the 50 ms timeouts" {
     try expect(std.mem.startsWith(u8, g.message(0).?, "RANDOM scored "));
 }
 
-fn hypno_done(g: *const Game) bool {
-    return g.project_flag(.p35) == 1;
+test "a new project blinks: hidden phases for 12 ticks of 30 ms" {
+    var g: Game = undefined;
+    game.init(&g, 21);
+    game.advance_ms(&g, 10);
+    g.comp_flag = 1;
+    g.projects_flag = 1;
+    game.advance_ms(&g, 10); // RevTracker (p42) shows at 20 ms
+    const i: u8 = @backingInt(P.p42);
+    try expect(game.is_active(&g, .p42));
+    try expect(!g.proj_hidden[i]);
+    game.advance_ms(&g, 30); // first toggle at 50 ms
+    try expect(g.proj_hidden[i]);
+    g.standard_ops = 600;
+    game.advance_ms(&g, 10);
+    try expect(game.enabled(&g, .{ .buy_project = i }));
+    try expect(!game.available(&g, .{ .buy_project = i }));
+    game.advance_ms(&g, 30 * 11);
+    try expect(!g.proj_hidden[i]);
+    try expectEqual(@as(f64, 0), g.blink_counter);
+    try expect(game.available(&g, .{ .buy_project = i }));
 }
 
-test "autoplayer reaches the HypnoDrones" {
+test "cheats" {
+    var g: Game = undefined;
+    game.init(&g, 4);
+    game.advance_ms(&g, 10);
+    game.act(&g, .cheat_clips);
+    try expectEqual(@as(f64, 100000000), g.clips);
+    try expectEqualStrings("you just cheated", g.message(0).?);
+    game.act(&g, .cheat_money);
+    try expectEqual(@as(f64, 10000000), g.funds);
+    game.act(&g, .cheat_trust);
+    try expectEqual(@as(f64, 3), g.trust);
+    game.act(&g, .cheat_ops);
+    try expectEqual(@as(f64, 10000), g.standard_ops);
+    game.act(&g, .cheat_creat);
+    try expect(g.creativity_on);
+    game.act(&g, .cheat_yomi);
+    try expectEqual(@as(f64, 1000000), g.yomi);
+    game.act(&g, .set_battle_number);
+    try expectEqual(@as(f64, 7), g.battle_numbers[1]);
+    game.act(&g, .zero_matter);
+    try expectEqual(@as(f64, 0), g.available_matter);
+    game.act(&g, .cheat_hypno);
+    game.advance_ms(&g, 32);
+    try expect(g.panels.hypno_drone_event_div);
+    game.advance_ms(&g, 32 * 119);
+    try expect(!g.panels.hypno_drone_event_div);
+    game.act(&g, .cheat_prestige_u);
+    try expectEqual(@as(f64, 1), g.prestige_u);
+    game.act(&g, .reset_prestige);
+    try expectEqual(@as(f64, 0), g.prestige_u);
+}
+
+test "prestige: The Universe Within restarts the universe, the clock goes on" {
+    var g: Game = undefined;
+    game.init(&g, 77);
+    game.advance_ms(&g, 1005);
+    const rng_before = g.rng.x;
+    g.comp_flag = 1;
+    g.projects_flag = 1;
+    g.set_flag(.p147);
+    g.creativity = 300000;
+    game.advance_ms(&g, 10);
+    const idx: u8 = @backingInt(P.p201);
+    try expect(game.is_active(&g, .p201));
+    try expect(game.enabled(&g, .{ .buy_project = idx }));
+    const count = g.msg_count;
+    game.act(&g, .{ .buy_project = idx });
+    // A new page: prestige kept, everything else fresh, the RNG and the
+    // clock go on, the timers run from the reload.
+    try expectEqual(@as(u32, 1), g.restarts);
+    try expectEqual(@as(f64, 1), g.prestige_s);
+    try expectEqual(@as(f64, 0), g.creativity);
+    try expectEqual(@as(f64, 0), g.clips);
+    try expectEqual(@as(u64, 1015), g.now_ms);
+    try expectEqual(@as(u64, 1015), g.load_ms);
+    try expect(g.rng.x != rng_before);
+    try expectEqualStrings("Welcome to Universal Paperclips", g.message(0).?);
+    try expectEqual(count + 2, g.msg_count); // "Entering Simulated Universe." + welcome
+    try expectEqual(@as(f64, 1), g.pow_mod); // refresh() ran updatePower
+    try expect(!g.panels.tournament_results_table);
+    game.advance_ms(&g, 10);
+    try expect(g.panels.prestige_div);
+    try expectEqual(@as(f64, 1), g.ticks);
+    // Creativity runs 10% faster: 400 / (1 + 0.1) ticks per point.
+    g.creativity_on = true;
+    g.comp_flag = 1;
+    g.operations = 1000;
+    g.standard_ops = 1000;
+    game.advance_ms(&g, 10 * 364);
+    try expectEqual(@as(f64, 1), g.creativity);
+}
+
+test "a battle: drifters attack, ships restart, the canvas shows" {
+    var g: Game = undefined;
+    game.init(&g, 99);
+    game.advance_ms(&g, 10);
+    g.human_flag = 0;
+    g.space_flag = 1;
+    g.probe_count = 5e8;
+    g.drifter_count = 2e8;
+    g.unused_clips = 1e30;
+    var tries: u32 = 0;
+    while (g.battles_len == 0 and tries < 100) : (tries += 1) game.advance_ms(&g, 10);
+    try expectEqual(@as(u8, 1), g.battles_len);
+    try expectEqual(@as(u8, 1), g.battle_flag);
+    try expectEqual(combat_kind.drifter_attack, g.battle_name.kind);
+    try expect(g.num_left_ships > 0 and g.num_right_ships > 0);
+    game.advance_ms(&g, 20);
+    try expect(g.panels.battle_canvas_div and g.panels.drifter_div);
+    // Fight it out.
+    game.advance_ms(&g, 60_000);
+    try expect(g.probes_lost_combat > 0 or g.drifters_killed > 0);
+    var b: [64]u8 = undefined;
+    var o = fmt.Out.init(&b);
+    g.battle_name.write(&o);
+    try expect(std.mem.startsWith(u8, o.slice(), "Drifter Attack "));
+}
+
+const combat_kind = game.combat.BattleNameKind;
+
+fn credits(g: *const Game) bool {
+    return game.credits_done(g);
+}
+
+test "autoplayer plays the whole game to the credits" {
     var g: Game = undefined;
     game.init(&g, 2026);
-    var bot = bot_mod.Bot{ .stage1_only = true };
-    const t = bot_mod.play(&g, &bot, 4 * 3600 * 1000, hypno_done);
-    std.debug.print("\nautoplayer: HypnoDrones released at {d} virtual s (clips {d}, trust {d})\n", .{ t / 1000, g.clips, g.trust });
-    try expect(hypno_done(&g));
-    try expect(g.human_flag == 0);
+    var bot = bot_mod.Bot{};
+    var hypno: u64 = 0;
+    var space: u64 = 0;
+    var achieved: u64 = 0;
+    while (g.now_ms < 9 * 3600 * 1000 and !game.credits_done(&g)) {
+        game.advance_ms(&g, 100);
+        bot.step(&g);
+        if (hypno == 0 and g.project_flag(.p35) == 1) hypno = g.now_ms;
+        if (space == 0 and g.space_flag == 1) space = g.now_ms;
+        if (achieved == 0 and g.milestone_flag >= 15) achieved = g.now_ms;
+    }
+    std.debug.print("\nautoplayer (seed 2026): HypnoDrones {d} s, space {d} s, Universal Paperclips {d} s, credits {d} s (virtual)\n", .{ hypno / 1000, space / 1000, achieved / 1000, g.now_ms / 1000 });
+    try expect(hypno > 0 and hypno < 4 * 3600 * 1000);
+    try expect(space > 0);
+    try expect(game.credits_done(&g));
+    try expectEqualStrings("&#169; 2017 Everybody House Games", g.message(0).?);
+    var b: [128]u8 = undefined;
+    try expectEqualStrings("30,000,000,000,000,000,000,000,000,000,000,000,000,000,000,000,000,000,000", game.clips_text(&g, &b));
+    try expect(!g.panels.comp_div and !g.panels.projects_div and !g.panels.creation_div);
 }

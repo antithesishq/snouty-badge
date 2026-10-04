@@ -25,6 +25,8 @@ pub const projects = @import("projects.zig");
 pub const combat = @import("combat.zig");
 pub const stocks = @import("stocks.zig");
 pub const strategy = @import("strategy.zig");
+/// The heuristic autoplayer (tests, scripts, benchmarks).
+pub const bot = @import("bot.zig");
 
 pub const P = projects.P;
 pub const InvestStrat = stocks.InvestStrat;
@@ -95,7 +97,7 @@ const btn_count = @typeInfo(Btn).@"enum".field_names.len;
 
 /// Every element whose `style.display` the JS toggles (true = shown,
 /// `display = ""`), named after its id in snake_case. `victory_div` is the
-/// `visibility` one (see also `Game.victory_visible`).
+/// `visibility` one.
 pub const Panels = struct {
     auto_clipper_div: bool = true,
     auto_tourney_control: bool = true,
@@ -235,9 +237,16 @@ pub const QChip = struct {
 
 pub const QCompDisplay = enum(u8) { blank, need_chips, qops };
 
-const Timeout = struct {
+/// A setTimeout/setInterval made at run time, fired after the seven fixed
+/// intervals in creation order: the tournament chain, the project blink
+/// (30 ms, `blink()`), the HypnoDrones overlay blink (32 ms, `longBlink`).
+const Timer = struct {
     due: u64,
-    kind: enum(u8) { clear_grid, round_loop },
+    kind: Kind,
+    proj: u8 = 0,
+    gen: u16 = 0,
+
+    const Kind = enum(u8) { clear_grid, round_loop, blink, long_blink };
 };
 
 const msg_buf_len = 4096;
@@ -248,17 +257,25 @@ const MsgEntry = struct { start: u16, len: u16 };
 pub const Game = struct {
     // ---- clock and RNG ----
     now_ms: u64 = 0,
+    /// The page (re)load time: the fixed intervals run from here (a reload
+    /// registers them anew, the clock goes on).
+    load_ms: u64 = 0,
     rng: rng_mod.Rng = rng_mod.Rng.init(1),
-    timeouts: [8]Timeout = undefined,
-    timeouts_len: u8 = 0,
+    timers: [32]Timer = undefined,
+    timers_len: u8 = 0,
     /// Bumped by every restart (project 200/201/217, RESET): the page
     /// reload of the original. The UI can go back to the title.
     restarts: u32 = 0,
     /// localStorage "savePrestige" exists (session-only here).
     has_save_prestige: bool = false,
-    /// Virtual ms of the last hypnoDroneEvent() (the "Release the
-    /// HypnoDrones" overlay the JS blinks for 120 x 32 ms), null if none.
-    hypno_event_ms: ?u64 = null,
+    /// `longBlinkCounter`: the "Release the HypnoDrones" overlay
+    /// (`panels.hypno_drone_event_div`, toggled every 32 ms): its text is
+    /// "Release" (counter 0..30), "<br /><br /><br />Release" (31..39),
+    /// "<br />Release" (46..54), "Release<br/>the<br/>Hypno<br/>Drones" (56+),
+    /// unchanged in between.
+    long_blink_counter: f64 = 0,
+    /// `blinkCounter`, shared by every project blink.
+    blink_counter: f64 = 0,
     /// Set by a project/button that calls `reset()`; `act` restarts.
     restart_pending: bool = false,
 
@@ -268,7 +285,8 @@ pub const Game = struct {
     msg_first: u16 = 0, // oldest entry index in the ring
     msg_len: u16 = 0,
     msg_write: u16 = 0,
-    /// Messages ever displayed (including the welcome line).
+    /// Messages ever displayed, across restarts (each page load's welcome
+    /// line counts once).
     msg_count: u32 = 0,
 
     // ---- DOM state ----
@@ -606,8 +624,7 @@ pub const Game = struct {
     bonus_honor: f64 = 0,
     honor_reward: f64 = 0,
     battle_numbers: [combat.battle_names.len]f64 = @splat(1),
-    /// `victoryDiv` visibility and its texts.
-    victory_visible: bool = true,
+    /// `victoryDiv` texts (its visibility is `panels.victory_div`).
     battle_result: combat.BattleResult = .victory,
     honor_amount: f64 = 200,
 
@@ -615,6 +632,10 @@ pub const Game = struct {
     proj_uses: [projects.count]i16 = @splat(1),
     proj_flag: [projects.count]u8 = @splat(0),
     proj_disabled: [projects.count]bool = @splat(false),
+    /// The button's `visibility: hidden` phases of its blink (a click
+    /// during them lands on nothing); `proj_gen` counts its creations.
+    proj_hidden: [projects.count]bool = @splat(false),
+    proj_gen: [projects.count]u16 = @splat(0),
     /// `activeProjects` in display order, indices into projects.defs.
     active: [projects.count]u8 = undefined,
     active_len: u8 = 0,
@@ -652,10 +673,14 @@ pub const Game = struct {
         return g.disabled[@backingInt(b)];
     }
 
-    pub fn set_timeout(g: *Game, ms: u64, kind: anytype) void {
-        if (g.timeouts_len >= g.timeouts.len) return;
-        g.timeouts[g.timeouts_len] = .{ .due = g.now_ms + ms, .kind = kind };
-        g.timeouts_len += 1;
+    pub fn set_timeout(g: *Game, ms: u64, kind: Timer.Kind) void {
+        g.add_timer(.{ .due = g.now_ms + ms, .kind = kind });
+    }
+
+    fn add_timer(g: *Game, t: Timer) void {
+        if (g.timers_len >= g.timers.len) return;
+        g.timers[g.timers_len] = t;
+        g.timers_len += 1;
     }
 
     // ---- messages ----
@@ -741,7 +766,7 @@ fn load(g: *Game) void {
 /// `refresh()` (called at load when a prestige save exists).
 fn refresh(g: *Game) void {
     g.tourney_in_prog = 0;
-    g.victory_visible = false;
+    g.panels.victory_div = false;
     g.panels.tournament_results_table = false;
     update_drone_prices(g);
     update_upgrades(g);
@@ -752,19 +777,26 @@ fn refresh(g: *Game) void {
     if (g.battles_len > 0) g.battles_len -= 1;
 }
 
-/// `reset()` + the reload: a new game, prestige kept.
+/// `reset()` + the reload: a new page (fresh globals, timers registered
+/// from now), prestige kept from the session's "localStorage"; the clock
+/// and the RNG go on.
 fn restart(g: *Game) void {
     const r = g.rng;
     const pu = g.prestige_u;
     const ps = g.prestige_s;
     const save = g.has_save_prestige;
     const n = g.restarts;
+    const now = g.now_ms;
+    const count = g.msg_count;
     g.* = .{};
     g.rng = r;
-    g.prestige_u = pu;
-    g.prestige_s = ps;
+    g.prestige_u = if (save) pu else 0;
+    g.prestige_s = if (save) ps else 0;
     g.has_save_prestige = save;
     g.restarts = n + 1;
+    g.now_ms = now;
+    g.load_ms = now;
+    g.msg_count = count;
     load(g);
 }
 
@@ -780,27 +812,63 @@ pub fn advance_ms(g: *Game, ms: u32) void {
 fn step_ms(g: *Game) void {
     g.now_ms += 1;
     const t = g.now_ms;
-    if (t % 16 == 0) combat.update(g);
-    if (t % 100 == 0) stocks.display_tick(g);
-    if (t % 1000 == 0) stocks.shop_tick(g);
-    if (t % 2500 == 0) stocks.sell_tick(g);
-    if (t % 100 == 0) g.pick = @floatFromInt(g.strat_picker);
-    if (t % 10 == 0) main_loop(g);
-    if (t % 100 == 0) slow_loop(g);
-    // Timeouts in registration order; firing may add later ones.
+    const p = t - g.load_ms;
+    if (p % 16 == 0) combat.update(g);
+    if (p % 100 == 0) stocks.display_tick(g);
+    if (p % 1000 == 0) stocks.shop_tick(g);
+    if (p % 2500 == 0) stocks.sell_tick(g);
+    if (p % 100 == 0) g.pick = @floatFromInt(g.strat_picker);
+    if (p % 10 == 0) main_loop(g);
+    if (p % 100 == 0) slow_loop(g);
+    // Run-time timers in registration order; firing may add later ones.
     var i: usize = 0;
-    while (i < g.timeouts_len) {
-        if (g.timeouts[i].due == t) {
-            const kind = g.timeouts[i].kind;
+    while (i < g.timers_len) {
+        const tm = g.timers[i];
+        if (tm.due != t) {
+            i += 1;
+            continue;
+        }
+        var keep = false;
+        switch (tm.kind) {
+            .clear_grid => strategy.clear_grid(g),
+            .round_loop => strategy.round_loop(g),
+            .blink => keep = blink_tick(g, tm.proj, tm.gen),
+            .long_blink => keep = long_blink_tick(g),
+        }
+        if (keep) {
+            g.timers[i].due += if (tm.kind == .blink) 30 else 32;
+            i += 1;
+        } else {
             var j = i + 1;
-            while (j < g.timeouts_len) : (j += 1) g.timeouts[j - 1] = g.timeouts[j];
-            g.timeouts_len -= 1;
-            switch (kind) {
-                .clear_grid => strategy.clear_grid(g),
-                .round_loop => strategy.round_loop(g),
-            }
-        } else i += 1;
+            while (j < g.timers_len) : (j += 1) g.timers[j - 1] = g.timers[j];
+            g.timers_len -= 1;
+        }
     }
+}
+
+/// One `toggleVisibility` of `blink(projectButtonN)`; false once cleared.
+fn blink_tick(g: *Game, proj: u8, gen: u16) bool {
+    const live = g.proj_gen[proj] == gen and active_index(g, proj) != null;
+    g.blink_counter += 1;
+    if (g.blink_counter >= 12) {
+        g.blink_counter = 0;
+        if (live) g.proj_hidden[proj] = false;
+        return false;
+    }
+    if (live) g.proj_hidden[proj] = !g.proj_hidden[proj];
+    return true;
+}
+
+/// One `longToggleVisibility` of `longBlink("hypnoDroneEventDiv")`.
+fn long_blink_tick(g: *Game) bool {
+    g.long_blink_counter += 1;
+    if (g.long_blink_counter >= 120) {
+        g.long_blink_counter = 0;
+        g.panels.hypno_drone_event_div = false;
+        return false;
+    }
+    g.panels.hypno_drone_event_div = !g.panels.hypno_drone_event_div;
+    return true;
 }
 
 // ===========================================================================
@@ -889,6 +957,10 @@ fn manage_projects(g: *Game) void {
     for (0..projects.count) |i| {
         const p: P = @fromBackingInt(@intCast(i));
         if (project_trigger(g, p) and g.proj_uses[i] > 0) {
+            // displayProjects: a new button, then blink(project.id).
+            g.proj_gen[i] +%= 1;
+            g.proj_hidden[i] = false;
+            g.add_timer(.{ .due = g.now_ms + 30, .kind = .blink, .proj = @intCast(i), .gen = g.proj_gen[i] });
             g.proj_uses[i] -= 1;
             g.active[g.active_len] = @intCast(i);
             g.active_len += 1;
@@ -1860,7 +1932,7 @@ pub fn project_description(p: P) []const u8 {
 }
 
 fn hypno_drone_event(g: *Game) void {
-    g.hypno_event_ms = g.now_ms;
+    g.add_timer(.{ .due = g.now_ms + 32, .kind = .long_blink });
 }
 
 // ===========================================================================
@@ -3001,6 +3073,47 @@ pub fn enabled(g: *const Game, a: Action) bool {
     }
     if (btn_of(a)) |b| return !g.is_disabled(b);
     return true;
+}
+
+/// The control is on screen in the original: every panel that contains it
+/// shows (see `g.panels`). The UI shows rows by panels anyway; the bots use
+/// `available` (shown and enabled), what a browser player can click.
+pub fn shown(g: *const Game, a: Action) bool {
+    const p = &g.panels;
+    return switch (a) {
+        .make_paperclip => true,
+        .lower_price, .raise_price, .buy_ads => p.business_div,
+        .buy_wire => p.manufacturing_div,
+        .toggle_wire_buyer => p.manufacturing_div and p.wire_buyer_div,
+        .make_clipper => p.manufacturing_div and p.auto_clipper_div,
+        .make_mega_clipper => p.manufacturing_div and p.mega_clipper_div,
+        .add_proc => p.comp_div and p.processor_display,
+        .add_mem => p.comp_div,
+        .q_compute => p.comp_div and p.q_computing and p.btn_qcompute,
+        .buy_project => |i| p.projects_div and i < projects.count and !g.proj_hidden[i],
+        .invest_deposit, .invest_withdraw, .set_invest_strat => p.investment_engine,
+        .invest_upgrade => p.investment_engine_upgrade,
+        .set_strat_pick, .run_tourney, .reveal_grid, .reveal_results => p.strategy_engine,
+        .new_tourney => p.tournament_management,
+        .toggle_auto_tourney => p.tournament_management and p.auto_tourney_control,
+        .make_factory, .factory_reboot => p.creation_div and p.factory_div,
+        .make_harvester, .harvester_reboot => p.wire_production_div and p.harvester_div,
+        .make_wire_drone, .wire_drone_reboot => p.wire_production_div and p.wire_drone_div,
+        .make_farm, .make_battery, .farm_reboot, .battery_reboot => p.power_div,
+        .entertain_swarm => p.comp_div and p.swarm_engine and p.entertain_button_div,
+        .synch_swarm => p.comp_div and p.swarm_engine and p.synch_button_div,
+        .set_slider => p.comp_div and p.swarm_slider_div,
+        .make_probe => p.space_div,
+        .probe_stat_up, .probe_stat_down => |st| p.probe_design_div and (st != .combat or p.combat_button_div),
+        .increase_probe_trust => p.increase_probe_trust_div,
+        .increase_max_trust => p.increase_max_trust_div,
+        .reset_all, .cheat_clips, .cheat_money, .cheat_trust, .cheat_ops, .cheat_creat, .cheat_yomi, .reset_prestige, .cheat_hypno, .cheat_prestige_u, .cheat_prestige_s, .set_battle_number, .zero_matter => true,
+    };
+}
+
+/// `shown` and `enabled`: a click a browser player could make now.
+pub fn available(g: *const Game, a: Action) bool {
+    return shown(g, a) and enabled(g, a);
 }
 
 /// A click (or a select/slider change). Ignored when `enabled` is false.
