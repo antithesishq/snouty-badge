@@ -3,7 +3,9 @@
 A Game Boy and Game Boy Color emulator cart for the SYCL Badge V2, written
 in Zig for Antithesis. It runs full screen: 144 lines squeezed onto the
 badge's 160x128 display by dropping every ninth line, the D-pad and
-A/B/Start/Select mapped straight through. Behind a Select long-hold: an
+A/B/Start/Select mapped straight through. Tap Select, then press and hold
+it, to fast forward (2x to 4x, `docs/RUNNING.md`). Behind a Select
+long-hold: an
 emulator menu with palettes (or, for Color games, raw or GBC-LCD colour),
 four-channel sound streamed to the badge's newer firmware (off by default,
 a menu toggle), and a time scrubber that steps backwards and forwards

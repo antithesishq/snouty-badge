@@ -218,17 +218,39 @@ Keys (from `sycl-badge/simulator/README.md`) and what they do here:
 | Z or K             | A              | A                                           |
 | X or J             | B              | B                                           |
 | Enter or Y         | Start          | Start                                       |
-| Backspace or T     | Select, tap    | Select, delivered on release (3 frames)     |
+| Backspace or T     | Select, tap    | Select (3 frames), 200 ms after the release |
 | Backspace or T     | Select, hold 0.5 s | opens the emulator menu, game paused    |
+| Backspace or T, tap then hold | Select, tap then press and hold | fast forward while held (up to 4x) |
 | Shift              | Joystick click | nothing (the OS owns it)                    |
 | Escape             | System menu    | leaves the cart                             |
 
 Select is never passed straight through (SPEC.md section 5): while it is
 held the game sees nothing; released within 500 ms (30 frames) the game gets
-a short Select press; held 500 ms, the emulator menu opens instead. Holding
+a short Select press 200 ms later (the fast-forward window below); held
+500 ms, the emulator menu opens instead. Holding
 Start and Select together for 250 ms exits the cart on the badge (the OS
 owns that chord), so Game Boy soft-reset combos do not work; Start pressed
 during a Select hold cancels both the tap and the menu.
+
+Fast forward (root `docs/FAST_FORWARD.md`): tap Select, then press it again
+within 200 ms and hold it (`input.ff_tap_window`, 12 frames). Fast forward
+runs from that second press while Select is held; the first tap never
+reaches the game, the second press never starts the menu timer, and letting
+go returns to 1x and delivers nothing. The d-pad and the other buttons
+reach the game as usual meanwhile. Each badge update steps up to 4 game
+frames (`tuning.ff_max_frames`) within about 13 ms (`tuning.ff_budget_us`),
+drawing only the last, so the game runs 2x to 4x depending on how heavy it
+is; a game too heavy for that (DMG Tetris busy-waits for VBlank) gets up to
+8 frames in two refreshes instead (`tuning.ff_slow_budget_us`, the picture
+at 30 Hz). `>>4.0x` in the bottom-right corner shows the speed, game frames
+per 60 Hz refresh. Sound is silent and every frame goes into the
+scrubber's history as usual. Start during the 200 ms window or during fast
+forward is the OS chord: nothing is delivered. In the simulator and
+`preview.mjs` (no real clock) every fast update steps 4 frames, e.g.
+`node ../../tools/preview.mjs <rex-runner wasm> --frames 420 --script
+tools/scripts/ff_rex.json` (`docs/fast_forward.gif`: Rex Runner at 1x, at
+4x, at 1x again). While fast forwarding, the debug overlay's `avg`/`max`
+time every frame of the update, not one step.
 
 In the menu (drawn over the frozen game frame):
 
@@ -240,8 +262,10 @@ In the menu (drawn over the frozen game frame):
 | B, Select tap  | resume (B also leaves About)                               |
 
 On-screen hints (`lib/hint.zig`, shared with Gear, Genesis and Lynx): the
-splash and the first 3 s of play after the splash or the picker show "Hold
-Select: menu" (a strip at the bottom, gone at the first button press); in
+splash shows "Hold Select: menu"; the first 3 s of play after the splash or
+the picker show it with "2x Sel+hold: fast" under it (a two-line strip at
+the bottom, gone at the first button press); About ends with "2x
+Sel+hold: fast"; in
 the menu, the bottom line on Resume reads "Left/Right: rewind" ("Rewind: no
 history" before the first keyframe; the `Scrub:` readout once parked or on
 other rows) and the footer reads "B: back to game".
