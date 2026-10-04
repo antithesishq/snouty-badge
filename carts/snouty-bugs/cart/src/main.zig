@@ -217,9 +217,19 @@ fn new_game(hard: bool) void {
     clear_high_water = 0;
     cores_high_water = 0;
     manual_frame = 0;
+    if (bugs_bench_stage > 0) {
+        probe = true;
+        for (1..bugs_bench_stage) |_| waves.next_stage();
+        waves.warp_to_warning();
+    }
     history.reset();
     state = .playing;
 }
+
+/// badge-bench hook (`--poke bugs_bench_stage=N`, PLAN.md M7 "Deviations
+/// (B2)"): N > 0 starts every game in probe mode, N - 1 stages on, at the
+/// boss warning, so a bench reaches a boss in 7 s instead of 72.
+export var bugs_bench_stage: u8 = 0;
 
 /// One tick of play, in the PLAN.md update order; the caller has already
 /// run `input.update` for it. `.live` ticks are logged (and keyframed) by
