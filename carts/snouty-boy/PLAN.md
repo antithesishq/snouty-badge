@@ -719,3 +719,79 @@ its bench counts the picker's silence as underruns. WAVs were dropped
 
 Open: Adrian's ear on the badge (gain, noise drums); the Rebound bench
 script's picker timing.
+
+## Fast forward (2026-10-04)
+
+Contract: root `docs/FAST_FORWARD.md` (trigger changed by Adrian the same
+day from Select+Right to the double tap). Branch `emu-ff-boy`.
+
+- Input (`frontend/input.zig`): a short Select press holds its tap back
+  for `ff_tap_window` (12 frames, 200 ms) after the release; a second press
+  inside the window is fast forward from that press while Select is held
+  (no tap, no menu timer, nothing on release); no second press: the tap
+  as before, 200 ms later. Start in the window or during fast forward
+  drops everything. Only Select is masked; the d-pad and A/B/Start reach
+  the game. `GameInput.fast`, `Ctx.step(pad, fresh, fast)`.
+- Stepping (`main.zig` `step_fast`): skipped frames with
+  `lines_wanted` cleared (`video.set_drawing`) and no sound rendering, each
+  through `rewind.record_frame`, while time since the update began plus
+  estimates of one more skipped frame and the drawn frame fit
+  `tuning.ff_budget_us` (13 ms, up to `ff_max_frames` 4), then the drawn
+  frame. Deviation from the plan: a game whose skipped plus drawn frame do
+  not fit 13 ms (DMG Tetris busy-waits for VBlank: ~5.8 ms skipped, ~8.6 ms
+  drawn, so it stayed at 1x) gets two refreshes on purpose
+  (`ff_slow_budget_us` 28 ms, up to 8 frames, picture at 30 Hz): 2x.
+  Wasm (clock stub): always 4 frames.
+- Sound: `audio.fast_forward` turns rendering off and ramps the stream
+  out; the first 1x frame resumes it primed, so the cart's underrun count
+  stays 0.
+- Indicator `>>4.0x` (frames per 60 Hz refresh, averaged) bottom right;
+  the next frame's full redraw removes it (checked with badge-bench
+  `--lcd`). Hints: "2x Sel+hold: fast" under "Hold Select: menu" in the
+  play strip, and at the foot of About.
+- Tests: comptime tests in `input.zig` (delayed tap, double tap and hold,
+  other buttons pass, late second press opens the menu, Start in the window
+  and during fast forward), a flow test, and `tests/determinism.zig` fast
+  forward batches (1 to 4 frames, pixel work and sound off but the last)
+  equal to 1x frame by frame in state and drawn lines on 2048-gb,
+  rex-runner and rebound. Cart 153 tests pass; `zig build test` and
+  `check-float` green; every other cart's UF2 byte-identical to emu-ff.
+- Size (fast, default build): .text 89,188 -> 90,976, .bss 27,324 ->
+  27,348, UF2 236,544 -> 240,128; the arena is ~1.8 KB smaller.
+
+badge-bench, calibrated busy ms mean / p95 / max. Fast forward scripts: the
+PLAN.md sound-section presses to reach play, then `SELECT:1000-1002,
+SELECT:1006-1599` (Tetris also LEFT and A inside); 2048 `START:30-31,
+START:120-121, SELECT:200-202, SELECT:206-700` with DOWN, LEFT and RIGHT
+inside; Rex Runner `START:30-31, START:200-202, SELECT:300-302,
+SELECT:306-800, A:400-402`. Speed from `step_frame` calls (`--json` hot
+list) over the fast window:
+
+| ROM | Fast window | Over 16.7 ms | Frames per update | Speed |
+|---|---:|---:|---:|---:|
+| Tetris (DMG) | 26.19 / 26.53 / 26.79 | 594 of 594, by design (two refreshes, under 33.3) | 4.0 | 2.0x |
+| Tetris DX (CGB) | 10.98 / 11.61 / 12.26 | 0 | 4.0 | 4.0x |
+| 2048 (DMG) | 6.94 / 7.10 / 15.16 | 0 | 3.97 | 4.0x |
+| Rex Runner (CGB) | 7.41 / 8.41 / 25.90 | 4 (464-467, see below) | 4.0 | 4.0x |
+| Tetris DX, `-Dsound=true` | 10.99 / 11.62 / 12.27 | 0 | 4.0 | 4.0x |
+
+Rex Runner 464-467: the game-over frames cost ~3x a running frame; one
+update overshot to 17.99 ms (the estimate trails by a frame), the next
+three took the two-refresh path (25-26 ms). 2048's maxima are the frames
+a tile move lands in. Sound on: overlay `u 0` throughout; the bench's OS
+pads silence only inside the fast window (1008-1599) and the queue is
+back above 1,000 samples on the first 1x update.
+
+1x, the sound-section scripts (bf44cc3 plan commit -> this branch):
+Tetris 8.51 / 8.92 / 13.38 -> 8.57 / 9.30 / 13.40, Tetris DX 4.26 / 5.10 /
+11.41 -> 4.32 / 5.15 / 11.79, 2048 (`snouty-boy.toml`) 4.02 / 5.98 / 9.29
+-> 4.09 / 6.00 / 9.31, all 0 over. The ~0.06 ms: the overlay's glyph
+blitter is no longer inlined (it takes a position now) and the play hint
+strip has two lines in the first 3 s.
+
+Preview: `tools/scripts/ff_rex.json` on a Rex Runner wasm,
+`docs/fast_forward.gif` and `docs/fast_forward_sheet.png` (1x, `>>4.0x`,
+1x).
+
+Open: Adrian on the badge (feel of the 200 ms tap delay, Tetris at 2x with
+a 30 Hz picture).
