@@ -4,16 +4,19 @@
 # - B 2084..2093 (10 frames = 20 ticks): game tick 2053 -> 2033, fuel 180 -> 160. The
 #   inputs keep their update indices, so after the release the sweep runs 30 ticks ahead of
 #   the world (10 frames not simulated + 20 ticks undone).
-# - B 3320..3334 (15 frames = 30 ticks) in the 54 s wave: game tick 3258 -> 3228, fuel
-#   180 -> 150 (the refill had topped it up again).
+# - B 3320..3334 (15 frames = 30 ticks), since the catch-up clock in the stage-1 boss fight:
+#   game tick 3258 -> 3228, fuel 180 -> 150 (the refill had topped it up again).
 # The press frame is already MANUAL (state 5); the release frame is PLAYING without a tick.
 # Since M7 (Bullet hell for real) the sweep cannot live through stage 1 any more: in a normal
-# game it spends its three rewinds by 1627 and dies. So it now plays in the endless probe mode
+# game it spends its three rewinds and dies. So it plays in the endless probe mode
 # (debug_probe at 31: a hit is counted in debug_hits and charges the power loss, a level and a
 # fork, plus 80 mercy, at once; no rewind, the game goes on), and the old "survives with all
 # three rewinds" pin becomes M7's acceptance bound for the sweep in stage 1: at least 6 hits
-# (PLAN.md M7 "Difficulty targets"; 10 when re-pinned). Crates on the way: F2 at 900 (the
-# beetle's F), the hit at 1022 takes it back (F1, mercy 136 -> 216), fork 1 at 2010, the A
-# crate at 2402 swaps F1 for A1 (11), the retry shield at 2433 absorbs the hit at 2684
-# (shield 0, hits still 6), F2 again at 3855. Identity 0 on every frame from 31 when written.
---frames 4000 --call-at "31 debug_probe" --dump-exports debug_state,debug_score,debug_hits,debug_fuel,debug_grazes,debug_weapon,debug_forks --expect "debug_score > 570" --expect "debug_state == 1" --expect "debug_hits >= 6" --expect "debug_phase == 0" --at "899 debug_weapon == 1" --at "900 debug_weapon == 2" --at "1021 debug_hits == 2" --at "1022 debug_hits == 3" --at "1022 debug_weapon == 1" --at "1022 debug_mercy == 216" --at "2010 debug_forks == 1" --at "2083 debug_state == 1" --at "2084 debug_state == 5" --at "2093 debug_fuel == 160" --at "2094 debug_state == 1" --at "2094 debug_game_tick == 2033" --at "2402 debug_weapon == 11" --at "2433 debug_shield == 1" --at "2683 debug_shield == 1" --at "2684 debug_shield == 0" --at "2684 debug_hits == 6" --at "3320 debug_state == 5" --at "3334 debug_game_tick == 3228" --at "3335 debug_state == 1" --at "3335 debug_fuel == 150" --at "1500 debug_history_check == 0" --at "2090 debug_history_check == 0" --at "3000 debug_history_check == 0" --at "3999 debug_history_check == 0"
+# (PLAN.md M7 "Difficulty targets"; 14 when re-pinned for the catch-up clock).
+# Re-pinned for the catch-up table clock (a thin field runs the stage table faster): the
+# waves come sooner, so every crate moved earlier and stage 1's table ends inside the run
+# (WARNING at 2883, the boss at 3063: phase 2 at the end, until then 0). Crates on the way:
+# F2 at 780, the hit at 1128 takes it back (F1, mercy 213), fork 1 at 1345 (lost to the hit
+# at 1378), the A crate at 1619 swaps F1 for A1 (11), the retry shield at 1650 absorbs the
+# hit at 1705 (shield 0, hits still 6). Identity 0 on every frame from 31 when written.
+--frames 4000 --call-at "31 debug_probe" --dump-exports debug_state,debug_score,debug_hits,debug_fuel,debug_grazes,debug_weapon,debug_forks,debug_phase --expect "debug_score > 570" --expect "debug_state == 1" --expect "debug_hits >= 6" --expect "debug_phase == 2" --at "779 debug_weapon == 1" --at "780 debug_weapon == 2" --at "1127 debug_hits == 2" --at "1128 debug_hits == 3" --at "1128 debug_weapon == 1" --at "1128 debug_mercy == 213" --at "1345 debug_forks == 1" --at "1619 debug_weapon == 11" --at "1650 debug_shield == 1" --at "1704 debug_shield == 1" --at "1705 debug_shield == 0" --at "1705 debug_hits == 6" --at "2083 debug_state == 1" --at "2084 debug_state == 5" --at "2093 debug_fuel == 160" --at "2094 debug_state == 1" --at "2094 debug_game_tick == 2033" --at "2882 debug_phase == 0" --at "2883 debug_phase == 1" --at "3063 debug_phase == 2" --at "3320 debug_state == 5" --at "3334 debug_game_tick == 3228" --at "3335 debug_state == 1" --at "3335 debug_fuel == 150" --at "1500 debug_history_check == 0" --at "2090 debug_history_check == 0" --at "3000 debug_history_check == 0" --at "3999 debug_history_check == 0"

@@ -16,6 +16,10 @@ pub const orange = cart.DisplayColor.rgb(0xF59A3C);
 pub const cyan = cart.DisplayColor.rgb(0x4FD8F0);
 pub const dim = cart.DisplayColor.rgb(0x3A3340);
 
+/// Distance of the HUD from the screen edges: the outermost pixels sit
+/// under the badge's bezel (the HUD used 1-2 px before).
+const margin: i32 = 4;
+
 /// Message bar rows (SPEC 6.4: a centred bar at y 56).
 const bar_y: i32 = 56;
 const bar_h: u32 = 16;
@@ -85,8 +89,8 @@ pub fn init_minimap(t: *const track.Track) void {
 fn draw_minimap() void {
     const k: usize = if (minimap_large) 1 else 0;
     const size: i32 = minimap_sizes[k];
-    const x0: i32 = 160 - size - 2;
-    const y0: i32 = 128 - size - 2;
+    const x0: i32 = 160 - size - margin;
+    const y0: i32 = 128 - size - margin;
     const buf = &minimap_buf[k];
     const line: cart.Pixel = .from_color(white);
     const bg: cart.Pixel = .from_color(anti_black);
@@ -145,28 +149,28 @@ pub fn dim_scanlines() void {
 pub fn draw() void {
     const w = &world.w;
     const m = &w.machines[world.player];
-    // Top-right: rank (only with rivals in the race).
-    if (w.active_count > 1) text(rank_text(m.rank), 134, 1, if (m.rank == 1) cyan else white);
+    // Top-right: rank (only with rivals in the race), its shadow inside the margin.
+    if (w.active_count > 1) text(rank_text(m.rank), 160 - margin - 25, margin, if (m.rank == 1) cyan else white);
     // Top-left: LAP n/3.
     var lap_buf: [7]u8 = "LAP 1/3".*;
     lap_buf[4] = '1' + @as(u8, @min(m.lap, tuning.laps - 1));
     lap_buf[6] = '0' + @as(u8, tuning.laps);
-    text(&lap_buf, 2, 1, white);
-    // Top-centre (x 64..120; the lap text ends at 58, the rank starts at 134): the race clock.
+    text(&lap_buf, margin, margin, white);
+    // Top-centre (x 66..122; the lap text ends at 60, the rank starts at 131): the race clock.
     var clock: [7]u8 = undefined;
     format_clock(&clock, if (m.finished) m.finish_tick else w.tick);
-    text(&clock, 64, 1, white);
+    text(&clock, 66, margin, white);
     // Bottom-left: speed in Tb/s, then the thermal bar.
     var spd_buf: [8]u8 = "   0Tb/s".*;
     const tbs: u32 = @intCast(@max(0, (sim.speed(m) * 80) >> fixed.Q));
     put_uint(spd_buf[0..4], @min(tbs, 9999), ' ');
-    text(&spd_buf, 2, 104, white);
-    draw_bar(2, 114, @intCast(@max(0, m.thermal)), tuning.thermal_max, if (m.boost > 0) white else orange);
+    text(&spd_buf, margin, 102, white);
+    draw_bar(margin, 112, @intCast(@max(0, m.thermal)), tuning.thermal_max, if (m.boost > 0) white else orange);
     // Overclock ready mark beside the bar when the bar can pay for one.
-    if (m.thermal >= tuning.thermal_overclock_min and m.boost == 0) text("OC", 44, 112, cyan);
+    if (m.thermal >= tuning.thermal_overclock_min and m.boost == 0) text("OC", margin + 42, 110, cyan);
     // The snapshot bar (cyan) under the thermal bar; `<<` blinks while rewinding.
-    draw_bar(2, 120, @intCast(snapshot_ticks), @intCast(snapshot_max), cyan);
-    if (rewinding and (w.tick / 4) % 2 == 0) text("<<", 44, 118, cyan);
+    draw_bar(margin, 118, @intCast(snapshot_ticks), @intCast(snapshot_max), cyan);
+    if (rewinding and (w.tick / 4) % 2 == 0) text("<<", margin + 42, 116, cyan);
     draw_minimap();
     draw_message();
 }
