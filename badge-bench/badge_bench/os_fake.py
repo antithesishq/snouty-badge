@@ -17,6 +17,12 @@ Memory map served to the cart:
   0x40060000 page         ROSC: STATUS.RANDOMBIT (cart.rand()), seeded PRNG
   0xE0001000 page         DWT: CTRL, CYCCNT from modelled cycles
   0xE000E000 page         SCS as RAM (CPACR set so the FPU is on)
+  0x40020000, 0x40028000, 0x40038000, 0x50400000
+                          RESETS (all aliases), IO_BANK0, PADS_BANK0, PIO2:
+                          lib/link.zig's registers with no cable plugged in
+                          (writes ignored, SIO GPIO_IN reads 0, so the link
+                          stays searching; RESET_DONE reads done, PIO2 FSTAT
+                          reads its FIFOs empty)
 
 Anything else is unmapped, and an access to it is a crash.
 """
@@ -59,6 +65,11 @@ ROSC_BASE = 0x40060000
 ROSC_STATUS, ROSC_RANDOMBIT = 0x0C, 0x1C
 DWT_BASE = 0xE0001000
 DWT_CTRL, DWT_CYCCNT = 0x000, 0x004
+SIO_GPIO_IN = 0x004
+SIO_GPIO_WRITES = (0x018, 0x020, 0x038, 0x040)   # GPIO_OUT_SET/CLR, GPIO_OE_SET/CLR
+RESETS_BASE, IO_BANK0_BASE, PADS_BANK0_BASE = 0x40020000, 0x40028000, 0x40038000
+PIO2_BASE = 0x50400000
+PIO_FSTAT_EMPTY = 0x0F000F00                     # TXEMPTY and RXEMPTY, all four SMs
 
 # ---- mailbox (os/ipc/mailbox.zig MessageType)
 SYNC_TIME_REQ_CLR, SYNC_TIME_ACK_CLR, SYNC_TIME_REQ_TIME = 0x2a000001, 0x2a000002, 0x2a000003
@@ -102,6 +113,12 @@ class FakeOS:
         mu.mmio_map(TIMER0_BASE, 0x1000, self._timer_read, None, self._ignore_write('TIMER0'), None)
         mu.mmio_map(ROSC_BASE, 0x1000, self._rosc_read, None, self._ignore_write('ROSC'), None)
         mu.mmio_map(DWT_BASE, 0x1000, self._dwt_read, None, self._dwt_write, None)
+        # lib/link.zig, no cable: expected traffic, so nothing is noted.
+        nop_write = lambda uc, off, size, value, _: None
+        mu.mmio_map(RESETS_BASE, 0x4000, lambda uc, off, size, _: 0xffffffff if off == 0x8 else 0, None, nop_write, None)
+        mu.mmio_map(IO_BANK0_BASE, 0x1000, lambda uc, off, size, _: 0, None, nop_write, None)
+        mu.mmio_map(PADS_BANK0_BASE, 0x1000, lambda uc, off, size, _: 0, None, nop_write, None)
+        mu.mmio_map(PIO2_BASE, 0x1000, lambda uc, off, size, _: PIO_FSTAT_EMPTY if off == 0x4 else 0, None, nop_write, None)
 
     # ------------------------------------------------------------ shared memory
     def init_ipc(self):
@@ -188,6 +205,8 @@ class FakeOS:
             return self.to_cart.pop(0) if self.to_cart else 0
         if off == SIO_CPUID:
             return 1                     # carts run on core 1
+        if off == SIO_GPIO_IN:
+            return 0                     # no link cable: header pins low
         if SIO_SPINLOCK0 <= off <= SIO_SPINLOCK31 and off % 4 == 0:
             bit = 1 << ((off - SIO_SPINLOCK0) // 4)
             if self.spinlocks & bit:
@@ -202,6 +221,8 @@ class FakeOS:
             self._message(value & 0xffffffff)
         elif SIO_SPINLOCK0 <= off <= SIO_SPINLOCK31 and off % 4 == 0:
             self.spinlocks &= ~(1 << ((off - SIO_SPINLOCK0) // 4))
+        elif off in SIO_GPIO_WRITES:
+            pass                         # lib/link.zig driving a header pin
         else:
             self._note('SIO', off, 'w')
 
