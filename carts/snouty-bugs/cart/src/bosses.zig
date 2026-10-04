@@ -972,10 +972,10 @@ fn bohr_spiral(e: *Enemy, a: *Aux, c: [2]f32, arms: u32) void {
 pub fn draw_boss(e: Enemy, x: i32, y: i32, opts: draw.SpriteOpts, own_in: draw.SpriteOpts) void {
     const id = id_of(e);
     // Under steady fire a boss is hit nearly every tick: its white flash
-    // shows on one frame in four at most, so the body (and the alt-cell
+    // shows on one frame in eight at most, so the body (and the alt-cell
     // telegraph) stays readable.
     var own = own_in;
-    own.flash_white = opts.flash_white or (e.flash > 0 and (e.phase == .dying or e.age % 4 == 0));
+    own.flash_white = opts.flash_white or (e.flash > 0 and (e.phase == .dying or e.age % 8 == 0));
     const b = box(id);
     const cx = x - @as(i32, @intFromFloat(b.ox));
     const cy = y - @as(i32, @intFromFloat(b.oy));
