@@ -122,7 +122,7 @@ pub fn update() void {
     if (p.fire_cooldown > 0) p.fire_cooldown -= 1;
     var fired = false;
     if (input.held(.a) and p.fire_cooldown == 0) {
-        fire_volley(p.x, p.y);
+        fire_volley(p.x, p.y, p.level);
         p.fire_cooldown = fire_interval;
         fired = true;
     }
@@ -132,12 +132,13 @@ pub fn update() void {
         .y = @intFromFloat(@floor(p.y)),
         .fired = fired,
     };
-    // The ghosts fire after the ship, so its volley has the pool first.
+    // The ghosts fire after the ship, so its volley has the pool first;
+    // a ghost fires a level-1 volley of the current weapon (PLAN.md M7).
     var k: u32 = 1;
     while (k <= p.forks) : (k += 1) {
         if (t < fork_delay * k) continue;
         const e = p.trail[(t - fork_delay * k) % trail_len];
-        if (e.fired) fire_volley(@floatFromInt(e.x), @floatFromInt(e.y));
+        if (e.fired) fire_volley(@floatFromInt(e.x), @floatFromInt(e.y), 1);
     }
 
     if (p.invuln > 0) p.invuln -= 1;
@@ -165,13 +166,48 @@ fn zap(x: f32, y: f32, angle: i32) void {
     _ = bullets.spawn_bolt(.{ .kind = .zap, .x = x + 28, .y = y + 8, .vx = v[0], .vy = v[1] });
 }
 
-/// One volley of the current weapon from a ship (or ghost) whose cell
-/// top-left is (x, y): PLAN.md M6 "Numbers". Every bolt's hitbox center
-/// starts at the nose, (x + 36, y + 12) plus the level's offsets.
-fn fire_volley(x: f32, y: f32) void {
+/// One ASSERT beam of a volley: y offset from the nose and damage.
+const Beam = struct { dy: f32, damage: u8 };
+
+/// ASSERT volleys per level (PLAN.md M7 "Player": at most ~40 damage a
+/// second on one target at level 5).
+fn assert_volley(level: u8) []const Beam {
+    return switch (level) {
+        0, 1 => &.{.{ .dy = 0, .damage = 1 }},
+        2 => &.{.{ .dy = 0, .damage = 2 }},
+        3 => &.{ .{ .dy = -4, .damage = 1 }, .{ .dy = 4, .damage = 1 } },
+        4 => &.{ .{ .dy = 0, .damage = 1 }, .{ .dy = -6, .damage = 1 }, .{ .dy = 6, .damage = 1 } },
+        else => &.{ .{ .dy = 0, .damage = 2 }, .{ .dy = -6, .damage = 1 }, .{ .dy = 6, .damage = 1 } },
+    };
+}
+
+/// BISECT seekers per level and their steering gain (PLAN.md M7).
+fn bisect_count(level: u8) u32 {
+    return switch (level) {
+        0, 1 => 1,
+        2, 3 => 2,
+        4 => 3,
+        else => 4,
+    };
+}
+fn bisect_gain(level: u8) f32 {
+    return switch (level) {
+        0, 1 => 0.08,
+        2 => 0.10,
+        3 => 0.14,
+        4 => 0.16,
+        else => 0.20,
+    };
+}
+
+/// One volley of the current weapon at `level` from a ship (or a ghost, at
+/// level 1) whose cell top-left is (x, y): PLAN.md M6 "Numbers" with the
+/// M7 rebalance. Every bolt's hitbox center starts at the nose,
+/// (x + 36, y + 12) plus the level's offsets.
+fn fire_volley(x: f32, y: f32, level: u8) void {
     const p = &world.w.player;
     switch (p.weapon) {
-        .fuzzer => switch (p.level) {
+        .fuzzer => switch (level) {
             0, 1 => zap(x, y, 0),
             2 => {
                 zap(x, y - 3, 0);
@@ -181,33 +217,20 @@ fn fire_volley(x: f32, y: f32) void {
             4 => for ([_]i32{ 0, 8, -8, 16, -16 }) |a| zap(x, y, a),
             else => for ([_]i32{ 0, 8, -8, 16, -16 }) |a| zap(x, y, a + rng.range(-4, 4)),
         },
-        .assert => {
-            const dmg: u8 = switch (p.level) {
-                0, 1, 2 => 1,
-                3, 4 => 2,
-                else => 3,
-            };
-            const offsets: []const f32 = switch (p.level) {
-                0, 1, 2 => &.{0},
-                3, 4 => &.{ -4, 4 },
-                else => &.{ 0, -6, 6 },
-            };
-            for (offsets) |dy| {
-                _ = bullets.spawn_bolt(.{
-                    .kind = .beam,
-                    .damage = dmg,
-                    .x = x + 36 - bullets.beam_len / 2,
-                    .y = y + 12 - bullets.beam_h / 2 + dy,
-                    .vx = beam_speed,
-                });
-            }
+        .assert => for (assert_volley(level)) |beam| {
+            _ = bullets.spawn_bolt(.{
+                .kind = .beam,
+                .damage = beam.damage,
+                .x = x + 36 - bullets.beam_len / 2,
+                .y = y + 12 - bullets.beam_h / 2 + beam.dy,
+                .vx = beam_speed,
+            });
         },
         .bisect => {
-            const lvl: u32 = @max(p.level, 1);
-            const gain = 0.08 + 0.04 * @as(f32, @floatFromInt(lvl - 1));
+            const gain = bisect_gain(level);
             var i: u32 = 0;
-            while (i < lvl) : (i += 1) {
-                // 0, +10, -10, +20, -20 (1/256 turns).
+            while (i < bisect_count(level)) : (i += 1) {
+                // 0, +10, -10, +20 (1/256 turns).
                 const step: i32 = @intCast((i + 1) / 2);
                 const a: i32 = if (i % 2 == 1) 10 * step else -10 * step;
                 const v = velocity(seeker_speed, a);
