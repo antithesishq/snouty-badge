@@ -192,9 +192,12 @@ Simulator keys (from `sycl-badge/simulator/README.md`):
 
 In the game, A fires, the joystick flies and Start pauses. B held during play
 rewinds the world 2 ticks per frame, paid from the fuel bar in the HUD (it
-refills slowly, and a little per graze). On the title, A or Start starts a
-normal game and B starts a hardcore one (no rewind stock: a hit is paid from
-the fuel bar, and a hit with less than 45 fuel ends the game).
+refills slowly, and a little per graze). On the title, up / down picks the
+mode and A or Start plays it: NORMAL, HARDCORE (no rewind stock: a hit is
+paid from the fuel bar, a hit with less than 45 fuel ends the game, and a
+hit costs every powerup) or SUPER-HARDCORE (hardcore at the faster pace:
+the next waves crowd in whenever the field thins and the difficulty ramps
+with them; HUD `HARD+`).
 
 Known upstream simulator quirks (current sycl-badge `main`):
 
@@ -276,10 +279,10 @@ hardcore play a normal game. Every script pins `debug_history_check == 0`
 `m1_play.json` is the sweep for 1800 ticks; `m1_pause.json` starts the
 game, fires 60-300, presses START at 300 and 420 (pause, unpause), then
 fires 430-600. `m1_play` also pins the plainest case of a rewind undoing a
-collection: F3 at 623, a hit at 669, F2 again (crate back on screen) at 712
-during the playback and F1 at the resume (749: the power loss). Since the
-catch-up clock the plain sweep does not survive stage 1: it is hit again
-at 821 and 1083 and the game is over at 1269 (title from 1329).
+collection: F3 at 1208, a hit at 1298, F2 again (crate back on screen) at
+1363 during the playback and F1 at the resume (1378: the power loss). The
+plain sweep does not survive stage 1: it is hit again at 1535 and 1791,
+whose rewind is still playing back at the end of the 1800 ticks.
 
 The M2 scripts:
 
@@ -298,10 +301,11 @@ The M2 scripts:
 The M3 scripts use the wasm-only test hooks `debug_god` (toggles god mode)
 and `debug_warp` (jumps the stage clock to the boss `WARNING`):
 
-- `m3_boss.json`: the sweep in god mode, warp at 1700 (after F2 and F3):
-  the Heisenbug spawns at 2061, its HP breaks at 2484 and 2939 each drop a
-  crate (a fork, then the A), it dies at 3601, `+500` and the clear at 3662
-  (stage index 1, `INTEGRATION`), whose table starts at 3782.
+- `m3_boss.json`: the sweep in god mode, warp at 1700 (after F2, the core
+  hours and F3; a fork is collected in the WARNING at 1783): the Heisenbug
+  spawns at 1881, its HP breaks at 2304 and 2664 each drop a crate (the A,
+  then the RETRY), its HP is out at 3360, `+500` and the clear at 3421
+  (stage index 1, `INTEGRATION`), whose table starts at 3541.
 - `m3_loop.json`: the same run on to 4300: stage 2's first centipede (a
   formation) is shot down whole at 4042 and drops the RETRY crate.
 
@@ -333,7 +337,8 @@ title, 1 playing, 2 paused, 3 dying, 4 auto rewind, 5 hold-B rewind).
 - `m5_empty.json`: B held for 200 updates from 400. The bar is empty after 90
   frames (game tick 180 lower), play resumes while B is still down and stays
   live until a fresh press, and the refill brings the fuel to 10 by 590.
-- `m5_hardcore.json`: B on the title at 30 starts a hardcore game (rewinds 0),
+- `m5_hardcore.json`: DOWN at 28 (HARDCORE) and A at 30 on the title start a
+  hardcore game (rewinds 0),
   then the ship idles. The first hit (524) rewinds 120 ticks for 120 fuel (60
   left), the second (724) 72 for the 72 it has by then (fuel 0, 36 playback
   frames), and the third, with fuel 7 under the floor of 45, is fatal: DYING
@@ -367,10 +372,11 @@ flight, pool of 64).
   (2429), god off at 5000 in the Heisenbug fight; it absorbs a hit at 5126
   (no rewind, no fuel), the ship then flies into the boss (5207): a normal
   rewind whose playback brings the shield back, which absorbs again at 5347.
-- `m6_retry_hc.json`: the same in hardcore (B on the title): the absorbed
-  hit leaves the fuel at 180, the unshielded ram costs 120, and the resume
-  strips every powerup (F5, two forks and the restored shield -> F1, none),
-  so the next hit rewinds (fuel 66 -> 0) and the one after is fatal.
+- `m6_retry_hc.json`: the same in hardcore (DOWN, then A on the title): the
+  absorbed hit leaves the fuel at 180, the unshielded ram costs 120, the
+  resume strips every powerup (the weapon, the forks and the restored
+  shield -> F1, none), and the hits after it drain the bar until one under
+  the floor is fatal.
 - `m6_identity.json`: a 12000-update god-mode sweep through two stages and
   their bosses with three holds: F5 (with its random spread), A5, B5, three
   forks and two stage clears, identity checks throughout (0 on every frame
@@ -409,6 +415,12 @@ Bohrbug, 4+ the stage's own), `debug_spray` (the engine bullet set above),
 - `m7_escape.json`: an unhurt Heisenbug forced into P2: P2 times out after
   20 s without a crate, P3 after 30 s, and it escapes: `debug_escaped` 1,
   the stage moves on to `INTEGRATION`, no +500, no clear, no fuel refill.
+- `m7_ghost.json`: FORK ghosts have no hitbox: `debug_ghost_shot` parks a
+  still orb on ghost 1's would-be hitbox and nothing happens; then the
+  ship itself flies into the same orb and is hit (116, a REWIND).
+
+The ticks above are NORMAL's pace since the three modes (2026-10-04); each
+sidecar's header is the authority on the exact numbers.
 
 `docs/preview_m5.gif` is one hold-B rewind, updates 690..760 of `m5_manual`:
 

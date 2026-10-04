@@ -1,4 +1,4 @@
-# m5_hardcore: B at 30 on the title starts a hardcore game (state 1 on that update, hardcore
+# m5_hardcore: DOWN at 28 then A at 30 on the title start a hardcore game (state 1 on that update, hardcore
 # 1, rewinds 0, fuel 180), then the ship idles into the stage-1 wasp's ram as in m2_hit
 # (since M7; until M7 the 8 s beetle's spread at 748). First hit at 524 (game tick 494): the
 # rewind is paid from the bar, depth min(120, 180) = 120, fuel 180 -> 60, target 374, 20 + 60

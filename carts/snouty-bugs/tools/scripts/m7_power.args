@@ -9,18 +9,27 @@
 # in a rewind playback and changed nothing) and the hold moved from 5100 to 5040, after the
 # first shield block. Three forks at 5000, so the fork floor is not reached here (m7_rank's
 # resumes at forks 0 pin it).
-# - 5011 (tick 4904): the retry shield absorbs a hit: shield 0, still B5 and three forks.
-# - Hold-B 5040..5049 (20 ticks, fuel 180 -> 160): B5 and three forks before, during (5049,
+# Re-pinned for the mode paces (NORMAL: the table clock hurries, 3 ticks a tick, only on an
+# empty field; the fire ramp counts real ticks): the stages run longer again, so at 5000 the
+# idle ship (the sweep ends at 3960) is in the Heisenbug's fight (spawned 3604) with A5
+# (weapon 15, from 3608), three forks and the shield; the input is unchanged and the run grows
+# from 5750 to 6000 updates. The first rewind's target is after the shield block, so its
+# playback does not bring the shield back (under the catch-up clock every rewind did); the
+# second goes back past the first resume instead, which shows that the cost is World state.
+# - 5004 (tick 4897): the retry shield absorbs a hit: shield 0, still A5 and three forks.
+# - Hold-B 5040..5049 (20 ticks, fuel 180 -> 160): A5 and three forks before, during (5049,
 #   tick 4912) and after the release (5050): no cost.
-# - 5126 (tick 4988): hit, auto rewind to 4868 (rewinds 2), before the shield block. The
-#   playback frames show the restored World (5205: B5, forks 3, the shield back); the resume
-#   at 5206 charges the cost: B5 -> B4 (weapon 25 -> 24), forks 3 -> 2, mercy 0 -> 80.
-# - 5290: the restored shield absorbs again: B4, forks 2 kept.
-# - 5350: hit (rewinds 1), resume at 5430 at tick 4892: B4 -> B3, forks 2 -> 1, mercy 79 ->
-#   159; the shield is back and blocks at 5490.
-# - 5554: hit (rewinds 0), resume at 5634 at tick 4896: B3 -> B2, forks 1 -> 0, mercy 159 ->
-#   239; the shield blocks at 5694. The run stops at 5750: the next hit (5754) has no rewind
-#   left and ends the game.
+# - 5451 (tick 5313): hit, auto rewind to 5193 (rewinds 2). The playback frames show the
+#   World of then (5530: A5, forks 3); the resume at 5531 charges the cost: A5 -> A4 (weapon
+#   15 -> 14), forks 3 -> 2, mercy 0 -> 80.
+# - 5629 (tick 5291): hit (rewinds 1), target 5171, before the last resume: the playback
+#   undoes its cost (5698: A5, forks 3, mercy 0 again), and the resume at 5709 at tick 5171
+#   charges one level and one fork once more: A4, forks 2, mercy 80.
+# - 5829 (tick 5291 again): hit (rewinds 0), resume at 5909 at tick 5171, the World of the
+#   last resume (5908: A4, forks 2, mercy 80): A4 -> A3, forks 2 -> 1, mercy 80 -> 160. The
+#   run stops at 6000: the next hit (6037) has no rewind left and ends the game.
+# (Under the catch-up clock: B5 at 5000, shield block at 5011, hits at 5126, 5350 and 5554,
+# each resume after a restored shield, B2 and mercy 239 at the end.)
 # m6_retry_hc pins the same cost in a hardcore game. debug_history_check is 0 after each
 # resume and during the hold.
---frames 5750 --call-at "31 debug_god" --call-at "5000 debug_god" --dump-exports debug_state,debug_weapon,debug_forks,debug_rewinds,debug_mercy --at "5010 debug_shield == 1" --at "5011 debug_shield == 0" --at "5011 debug_state == 1" --at "5011 debug_weapon == 25" --at "5011 debug_forks == 3" --at "5039 debug_weapon == 25" --at "5039 debug_forks == 3" --at "5040 debug_state == 5" --at "5049 debug_state == 5" --at "5049 debug_game_tick == 4912" --at "5049 debug_weapon == 25" --at "5049 debug_forks == 3" --at "5049 debug_history_check == 0" --at "5050 debug_state == 1" --at "5050 debug_weapon == 25" --at "5050 debug_forks == 3" --at "5050 debug_fuel == 160" --at "5050 debug_mercy == 0" --at "5126 debug_state == 4" --at "5126 debug_rewinds == 2" --at "5126 debug_rewind_target == 4868" --at "5205 debug_state == 4" --at "5205 debug_weapon == 25" --at "5205 debug_forks == 3" --at "5205 debug_shield == 1" --at "5206 debug_state == 1" --at "5206 debug_game_tick == 4868" --at "5206 debug_weapon == 24" --at "5206 debug_forks == 2" --at "5206 debug_mercy == 80" --at "5210 debug_history_check == 0" --at "5289 debug_shield == 1" --at "5290 debug_shield == 0" --at "5290 debug_weapon == 24" --at "5290 debug_forks == 2" --at "5350 debug_rewinds == 1" --at "5429 debug_weapon == 24" --at "5429 debug_mercy == 79" --at "5430 debug_state == 1" --at "5430 debug_game_tick == 4892" --at "5430 debug_weapon == 23" --at "5430 debug_forks == 1" --at "5430 debug_mercy == 159" --at "5440 debug_history_check == 0" --at "5490 debug_shield == 0" --at "5554 debug_rewinds == 0" --at "5633 debug_weapon == 23" --at "5634 debug_state == 1" --at "5634 debug_game_tick == 4896" --at "5634 debug_weapon == 22" --at "5634 debug_forks == 0" --at "5634 debug_mercy == 239" --at "5644 debug_history_check == 0" --at "5694 debug_shield == 0" --expect "debug_state == 1" --expect "debug_weapon == 22"
+--frames 6000 --call-at "31 debug_god" --call-at "5000 debug_god" --dump-exports debug_state,debug_weapon,debug_forks,debug_rewinds,debug_mercy --at "3608 debug_weapon == 15" --at "5000 debug_boss_id == 0" --at "5003 debug_shield == 1" --at "5004 debug_shield == 0" --at "5004 debug_state == 1" --at "5004 debug_weapon == 15" --at "5004 debug_forks == 3" --at "5039 debug_weapon == 15" --at "5039 debug_forks == 3" --at "5040 debug_state == 5" --at "5049 debug_state == 5" --at "5049 debug_game_tick == 4912" --at "5049 debug_weapon == 15" --at "5049 debug_forks == 3" --at "5049 debug_history_check == 0" --at "5050 debug_state == 1" --at "5050 debug_weapon == 15" --at "5050 debug_forks == 3" --at "5050 debug_fuel == 160" --at "5050 debug_mercy == 0" --at "5450 debug_state == 1" --at "5451 debug_state == 4" --at "5451 debug_rewinds == 2" --at "5451 debug_rewind_target == 5193" --at "5530 debug_state == 4" --at "5530 debug_weapon == 15" --at "5530 debug_forks == 3" --at "5531 debug_state == 1" --at "5531 debug_game_tick == 5193" --at "5531 debug_weapon == 14" --at "5531 debug_forks == 2" --at "5531 debug_mercy == 80" --at "5540 debug_history_check == 0" --at "5629 debug_state == 4" --at "5629 debug_rewinds == 1" --at "5629 debug_rewind_target == 5171" --at "5697 debug_weapon == 14" --at "5698 debug_weapon == 15" --at "5698 debug_forks == 3" --at "5698 debug_mercy == 0" --at "5709 debug_state == 1" --at "5709 debug_game_tick == 5171" --at "5709 debug_weapon == 14" --at "5709 debug_forks == 2" --at "5709 debug_mercy == 80" --at "5720 debug_history_check == 0" --at "5829 debug_state == 4" --at "5829 debug_rewinds == 0" --at "5908 debug_weapon == 14" --at "5908 debug_mercy == 80" --at "5909 debug_state == 1" --at "5909 debug_game_tick == 5171" --at "5909 debug_weapon == 13" --at "5909 debug_forks == 1" --at "5909 debug_mercy == 160" --at "5920 debug_history_check == 0" --at "5999 debug_history_check == 0" --expect "debug_state == 1" --expect "debug_weapon == 13"

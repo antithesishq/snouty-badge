@@ -607,7 +607,7 @@ fn reload(every: u32) u32 {
     const st = &world.w.waves;
     var k = stage_pace[@min(st.stage, stage_pace.len - 1)];
     if (st.loop > 0) k = @max(k * loop_pace / loop_pace_of, 1);
-    return @max(rank.interval(every) * k * ramp(st.t) / (256 * 64), 1);
+    return @max(rank.interval(every) * k * ramp(waves.clock()) / (256 * 64), 1);
 }
 
 /// The main fire countdown (`aux`) from the cell center.

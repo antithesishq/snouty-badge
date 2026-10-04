@@ -3,13 +3,17 @@
 # phases with a 6 s floor each, so the F1 ship that the old warp at 32 brought could not
 # break a phase (P1 timed out after 20 s); the warp is at 1700 now, after the sweep has
 # powered up in stage 1. Re-pinned for the catch-up clock (the table runs 4x on a thin field,
-# the WARNING lasts 3 s): stage 1's waves come sooner, so by 1700 the sweep has collected F2
-# (780), F3 (1292), a fork (1345) and an A (1597: A3, weapon 13). WARNING at 1700 (phase 1),
-# the boss spawns at 1881 (phase 2, boss id 0, HP phase 0). Its first HP break (2389) cancels
-# the bullets and drops crate 8 (drops 7 -> 8), a fork, which the sweep collects at 2618
-# (forks 1 -> 2); the second break (2801) drops crate 9, an A, collected at 2930 (A3 -> A4).
-# HP out at 3277, death sequence, then "+500" at 3338: stage_clears 1, the stage index moves
-# on to stage 2 (INTEGRATION; debug_stage, the loop, stays 0), and its table starts at 3458
-# (phase 0). (Until the catch-up clock: F3 at the warp, boss at 2061, breaks at 2484 and 2939,
-# clear at 3662; until M7: warp at 32, clear at 983, debug_stage 1.)
---frames 4000 --call-at "31 debug_god" --call-at "1700 debug_warp" --dump-exports debug_state,debug_stage,debug_stage_index,debug_stage_clears,debug_boss_hp,debug_phase,debug_score --at "100 debug_phase == 0" --at "1699 debug_weapon == 13" --at "1700 debug_phase == 1" --at "1880 debug_boss_id == 255" --at "1881 debug_phase == 2" --at "1881 debug_boss_id == 0" --at "2388 debug_boss_phase == 0" --at "2388 debug_drops == 7" --at "2389 debug_boss_phase == 1" --at "2389 debug_drops == 8" --at "2389 debug_bullets == 0" --at "2617 debug_forks == 1" --at "2618 debug_forks == 2" --at "2800 debug_boss_phase == 1" --at "2801 debug_boss_phase == 2" --at "2801 debug_drops == 9" --at "2929 debug_weapon == 13" --at "2930 debug_weapon == 14" --at "3276 debug_boss_hp > 0" --at "3277 debug_boss_hp == 0" --at "3337 debug_stage_clears == 0" --at "3338 debug_stage_clears == 1" --at "3338 debug_stage_index == 1" --at "3457 debug_phase == 3" --at "3458 debug_phase == 0" --expect "debug_stage_clears == 1" --expect "debug_stage_index == 1" --expect "debug_stage == 0" --expect "debug_state == 1" --expect "debug_score > 500"
+# the WARNING lasts 3 s): stage 1's waves come sooner, so by 1700 the sweep had collected F2,
+# F3, a fork and an A (A3 at the warp, boss at 1881, breaks at 2389 and 2801, clear at 3338).
+# Re-pinned for the mode paces (NORMAL: the table hurries, 3 ticks a tick, only on an empty
+# field; the fire ramp counts real ticks): the waves come later again, so by 1700 the sweep
+# has F2 (852), the cores (1358) and F3 (1534), and crate 4, a fork (dropped 1594), is still
+# on screen; it is collected in the WARNING at 1783. WARNING at 1700 (phase 1), the boss
+# spawns at 1881 (phase 2, boss id 0, HP phase 0). Its first HP break (2304) cancels the
+# bullets (+70) and drops crate 5 (drops 4 -> 5), the A, which the sweep collects at 2468
+# (F3 -> A3, weapon 13); the second break (2664) drops crate 6, the RETRY, collected at 2846
+# (shield 1). HP out at 3360, death sequence, then "+500" at 3421: stage_clears 1, the stage
+# index moves on to stage 2 (INTEGRATION; debug_stage, the loop, stays 0), and its table
+# starts at 3541 (phase 0). (Until the catch-up clock: F3 at the warp, boss at 2061, breaks
+# at 2484 and 2939, clear at 3662; until M7: warp at 32, clear at 983, debug_stage 1.)
+--frames 4000 --call-at "31 debug_god" --call-at "1700 debug_warp" --dump-exports debug_state,debug_stage,debug_stage_index,debug_stage_clears,debug_boss_hp,debug_phase,debug_score --at "100 debug_phase == 0" --at "1699 debug_weapon == 3" --at "1699 debug_drops == 4" --at "1700 debug_phase == 1" --at "1782 debug_forks == 0" --at "1783 debug_forks == 1" --at "1880 debug_boss_id == 255" --at "1881 debug_phase == 2" --at "1881 debug_boss_id == 0" --at "2303 debug_boss_phase == 0" --at "2303 debug_drops == 4" --at "2304 debug_boss_phase == 1" --at "2304 debug_drops == 5" --at "2304 debug_bullets == 0" --at "2304 debug_score == 1926" --at "2467 debug_weapon == 3" --at "2468 debug_weapon == 13" --at "2663 debug_boss_phase == 1" --at "2664 debug_boss_phase == 2" --at "2664 debug_drops == 6" --at "2845 debug_shield == 0" --at "2846 debug_shield == 1" --at "3359 debug_boss_hp > 0" --at "3360 debug_boss_hp == 0" --at "3420 debug_stage_clears == 0" --at "3421 debug_stage_clears == 1" --at "3421 debug_stage_index == 1" --at "3540 debug_phase == 3" --at "3541 debug_phase == 0" --expect "debug_stage_clears == 1" --expect "debug_stage_index == 1" --expect "debug_stage == 0" --expect "debug_state == 1" --expect "debug_score > 500"

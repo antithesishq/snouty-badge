@@ -1,16 +1,20 @@
 # m6_cores: CORE HOURS pays once. m6_pickup's input to 1849 (the sweep in probe mode and its
-# long hold at 903..982 that leaves the bar at 20) plus a hold-B at 1346..1351 just after the
+# long hold at 855..934 that leaves the bar at 20) plus a hold-B at 1638..1643 just after the
 # core hours crate is collected. Fuel is meta state (not in the World), so the grant is paid
 # by main.zig against a high-water mark on the World counter debug_cores. (Re-pinned for M7:
 # the crate was collected at 1740 instead of 1383. Re-pinned for the catch-up table clock, a
-# thin field runs the stage table faster: the crate comes at 1340, and the hold, 1747..1756
-# before, is 1346..1351, 6 frames, so the ship still flies into the crate after the release.)
-# - 1340 (game tick 1069): crate collected, cores 0 -> 1, fuel 55 -> 115 (+60), score 1033.
-# - B 1346..1351 (6 frames = 12 ticks, 2 fuel each): 1347 is back at tick 1070, still
-#   collected; 1348 (tick 1068) is before the grab: cores 0, score 933, the crate back on
-#   screen. The fuel is NOT given back by the rewind: 110 (116 minus the hold's 6). 1351:
-#   tick 1062, fuel 104. 1352: the release (PLAYING, no tick).
-# - 1359 (tick 1069): the ship grabs the same crate again: cores 1, score 1033 (the +100 is
-#   World state and comes back), but the fuel stays 105 (the refill alone): cores never rises
+# thin field runs the stage table faster: the crate came at 1340, and the hold, 1747..1756
+# before, was 1346..1351, 6 frames, so the ship still flies into the crate after the release.
+# Re-pinned for the mode paces, NORMAL's table clock hurrying only on an empty field: the long
+# hold moved with m6_pickup's to 855..934 (it had stayed at 903..982 through the catch-up
+# re-pin), the crate comes at 1632, and the short hold moved from 1346..1351 to 1638..1643,
+# still 6 updates after the grab.)
+# - 1632 (game tick 1361): crate collected, cores 0 -> 1, fuel 104 -> 164 (+60), score 998.
+# - B 1638..1643 (6 frames = 12 ticks, 2 fuel each): 1639 is back at tick 1362, still
+#   collected; 1640 (tick 1360) is before the grab: cores 0, score 898, the crate back on
+#   screen. The fuel is NOT given back by the rewind: 158 (164 minus the hold's 6). 1643:
+#   tick 1354, fuel 152. 1644: the release (PLAYING, no tick).
+# - 1651 (tick 1361): the ship grabs the same crate again: cores 1, score 998 (the +100 is
+#   World state and comes back), but the fuel stays 153 (the refill alone): cores never rises
 #   above its high-water mark of 1, so nothing more is paid.
---frames 1850 --call-at "31 debug_probe" --dump-exports debug_state,debug_cores,debug_fuel,debug_score --at "1339 debug_fuel == 55" --at "1340 debug_cores == 1" --at "1340 debug_fuel == 115" --at "1340 debug_score == 1033" --at "1347 debug_cores == 1" --at "1348 debug_state == 5" --at "1348 debug_cores == 0" --at "1348 debug_score == 933" --at "1348 debug_pickups == 2" --at "1348 debug_fuel == 110" --at "1348 debug_history_check == 0" --at "1351 debug_game_tick == 1062" --at "1351 debug_fuel == 104" --at "1352 debug_state == 1" --at "1358 debug_cores == 0" --at "1359 debug_cores == 1" --at "1359 debug_score == 1033" --at "1359 debug_fuel == 105" --at "1365 debug_fuel == 105" --at "1400 debug_history_check == 0" --expect "debug_state == 1" --expect "debug_cores == 1"
+--frames 1850 --call-at "31 debug_probe" --dump-exports debug_state,debug_cores,debug_fuel,debug_score --at "934 debug_fuel == 20" --at "1631 debug_fuel == 104" --at "1632 debug_cores == 1" --at "1632 debug_fuel == 164" --at "1632 debug_score == 998" --at "1639 debug_cores == 1" --at "1640 debug_state == 5" --at "1640 debug_cores == 0" --at "1640 debug_score == 898" --at "1640 debug_pickups == 1" --at "1640 debug_fuel == 158" --at "1640 debug_history_check == 0" --at "1643 debug_game_tick == 1354" --at "1643 debug_fuel == 152" --at "1644 debug_state == 1" --at "1650 debug_cores == 0" --at "1651 debug_cores == 1" --at "1651 debug_score == 998" --at "1651 debug_fuel == 153" --at "1657 debug_fuel == 153" --at "1700 debug_history_check == 0" --expect "debug_state == 1" --expect "debug_cores == 1"

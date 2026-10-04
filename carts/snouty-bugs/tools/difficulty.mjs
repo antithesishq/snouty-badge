@@ -6,7 +6,9 @@
 // stage, hits, seconds in the stage, boss seconds and hits taken while the
 // boss was on the field, boss killed or escaped,
 // rank at the stage's end, the weapon when the boss arrived and at the end,
-// and forks at the end.
+// and forks at the end, and how thin the field was while the stage's table
+// ran: the share of those ticks with no enemy on it (empty) and the mean
+// enemy count (field).
 //
 // With --bosses 0,1,2,3 it runs a boss rush instead: per bot and boss id
 // (0 Heisenbug, 1 Mandelbug, 2 Schrodinbug, 3 Bohrbug) a fresh game plays
@@ -16,7 +18,10 @@
 //
 //   node tools/difficulty.mjs [--wasm FILE] [--bots 1,2,3] [--stages N]
 //                             [--bosses ID,...] [--warp-at T]
-//                             [--frames CAP] [--seed N] [--json OUT.json] [--out DIR]
+//                             [--frames CAP] [--seed N] [--mode M] [--json OUT.json] [--out DIR]
+//
+// --mode picks the title mode the bots play (0 NORMAL, the default,
+// 1 HARDCORE, 2 SUPER-HARDCORE) with debug_pick before the first update.
 //
 // Usually run through tools/difficulty.sh, which builds first. Each bot is
 // one run of the shared ../../tools/preview.mjs (in parallel): --call
@@ -31,7 +36,8 @@
 // (stage + 4 * loop; falls back to debug_stage, the loop counter, on carts
 // before M7), and when present debug_rank, debug_boss_hp, debug_stage_clears,
 // debug_weapon (kind * 10 + level), debug_forks, debug_state,
-// debug_boss_phase (the phases column), debug_seed(n) (seeds other than 1).
+// debug_boss_phase (the phases column), debug_seed(n) (seeds other than 1),
+// debug_enemies and debug_phase (empty, field), debug_pick(n) (--mode).
 // A missing optional export shows as "-". --bosses also needs debug_boss(n)
 // and debug_warp.
 import fs from "node:fs";
@@ -53,7 +59,8 @@ function usage(msg) {
         "                                 [--frames CAP] [--seed N] [--json OUT.json] [--out DIR]\n" +
         "  --stages N: stop once the stage index (stage + 4 * loop) reaches N; default 5 = the four stages and loop 2's stage 1\n" +
         "  --bosses ID,...: boss rush instead (0 Heisenbug, 1 Mandelbug, 2 Schrodinbug, 3 Bohrbug), warped to at update --warp-at (3000)\n" +
-        "  --frames CAP: updates per run at most (default 15000 per stage, or --warp-at + 15000 per boss)");
+        "  --frames CAP: updates per run at most (default 15000 per stage, or --warp-at + 15000 per boss)\n" +
+        "  --mode M: title mode (0 NORMAL, 1 HARDCORE, 2 SUPER-HARDCORE)");
     process.exit(2);
 }
 
@@ -72,6 +79,7 @@ for (let i = 0; i < argv.length; i++) {
         case "--warp-at": opts.warpAt = int(1); break;
         case "--frames": opts.frames = int(1); break;
         case "--seed": opts.seed = int(0); break;
+        case "--mode": opts.mode = int(0); break;
         case "--json": opts.json = path.resolve(val()); break;
         case "--out": opts.out = path.resolve(val()); break;
         case "-h": case "--help": usage();
@@ -92,13 +100,14 @@ if (!stageExport) { console.error(`difficulty: ${opts.wasm} exports neither debu
 if (opts.bosses) for (const need of ["debug_boss", "debug_warp"]) {
     if (!exportNames.has(need)) { console.error(`difficulty: --bosses: ${opts.wasm} does not export ${need}`); process.exit(1); }
 }
-const optional = ["debug_rank", "debug_boss_hp", "debug_stage_clears", "debug_weapon", "debug_forks", "debug_state", "debug_boss_phase"].filter((n) => exportNames.has(n));
+if (opts.mode !== undefined && !exportNames.has("debug_pick")) { console.error(`difficulty: --mode: ${opts.wasm} does not export debug_pick`); process.exit(1); }
+const optional = ["debug_rank", "debug_boss_hp", "debug_stage_clears", "debug_weapon", "debug_forks", "debug_state", "debug_boss_phase", "debug_enemies", "debug_phase"].filter((n) => exportNames.has(n));
 const sampled = [stageExport, "debug_hits", ...optional];
 
 function runJob(bot, boss) {
     const out = path.join(opts.out, boss === null ? `bot${bot}` : `bot${bot}_boss${boss}`);
     const args = [preview, opts.wasm, "--frames", String(opts.frames), "--quiet", "--out", out, "--seed", String(opts.seed),
-        "--call", "debug_probe", "--call", `debug_bot:${bot}`, "--sample", sampled.join(","), "--until", `${stageExport} >= ${opts.stages}`];
+        "--call", "debug_probe", ...(opts.mode !== undefined ? ["--call", `debug_pick:${opts.mode}`] : []), "--call", `debug_bot:${bot}`, "--sample", sampled.join(","), "--until", `${stageExport} >= ${opts.stages}`];
     if (boss !== null) args.push("--call", `debug_boss:${boss}`, "--call-at", `${opts.warpAt} debug_warp`);
     // Seed 1 is the game the headless clock gives; any other seed also
     // seeds the world rng (spawn positions, moth paths, boss teleports).
@@ -141,6 +150,12 @@ function stageRows(frames) {
             const ph = get("debug_boss_phase", i);
             if (ph !== null && ph !== 255) phases = Math.max(phases ?? 0, ph + 1);
         }
+        let tableTicks = 0, emptyTicks = 0, fieldSum = 0;
+        if ("debug_enemies" in v && "debug_phase" in v) for (let i = a; i <= b; i++) if (v.debug_phase[i] === 0) {
+            tableTicks++;
+            fieldSum += v.debug_enemies[i];
+            if (v.debug_enemies[i] === 0) emptyTicks++;
+        }
         let boss = "-";
         if (!ended) boss = bossStart === null ? "not yet" : "fighting";
         else if ("debug_stage_clears" in v) boss = get("debug_stage_clears", b + 1) > (a > 0 ? get("debug_stage_clears", a - 1) : 0) ? "killed" : "escaped";
@@ -155,6 +170,8 @@ function stageRows(frames) {
             weapon_at_boss: bossStart === null ? null : get("debug_weapon", bossStart),
             weapon: get("debug_weapon", b),
             forks: get("debug_forks", b),
+            empty_pct: tableTicks ? Math.round((100 * emptyTicks) / tableTicks) : null,
+            field: tableTicks ? +(fieldSum / tableTicks).toFixed(1) : null,
             first_tick: s.ticks[a], last_tick: s.ticks[b],
         });
         a = b + 1;
@@ -184,6 +201,7 @@ const cols = [
     ["secs", (r) => r.seconds.toFixed(1)], ["boss s", (r) => (r.boss_seconds === null ? "-" : r.boss_seconds.toFixed(1))],
     ["boss hits", (r) => r.boss_hits ?? "-"], ["boss", (r) => r.boss], ["phases", (r) => r.phases ?? "-"], ["rank", (r) => r.rank ?? "-"], ["wpn@boss", (r) => weaponText(r.weapon_at_boss)],
     ["wpn", (r) => weaponText(r.weapon)], ["forks", (r) => r.forks ?? "-"],
+    ["empty%", (r) => r.empty_pct ?? "-"], ["field", (r) => (r.field === null ? "-" : r.field.toFixed(1))],
 ];
 const lines = [];
 for (const b of results) {
@@ -193,7 +211,7 @@ for (const b of results) {
 }
 const widths = cols.map(([h], i) => Math.max(h.length, ...lines.map((l) => l[i].length)));
 const fmt = (cells) => cells.map((c, i) => (i < 2 || i === 6 ? c.padEnd(widths[i]) : c.padStart(widths[i]))).join("  ").trimEnd();
-console.log(`difficulty: ${path.relative(process.cwd(), opts.wasm)} seed ${opts.seed}, ` +
+console.log(`difficulty: ${path.relative(process.cwd(), opts.wasm)} seed ${opts.seed}${opts.mode !== undefined ? `, mode ${opts.mode}` : ""}, ` +
     (opts.bosses ? `boss rush (warp at update ${opts.warpAt}; hits and secs include stage 1 before it)` : `${opts.stages} stage(s)`) +
     `, cap ${opts.frames} updates, stage export ${stageExport}`);
 console.log(fmt(cols.map(([h]) => h)));
@@ -206,7 +224,7 @@ console.log(`stage LxSy = loop x, stage y; * = still running at the cap${capped.
 
 if (opts.json) {
     const meta = { wasm: opts.wasm, wasm_sha256: crypto.createHash("sha256").update(wasmBuf).digest("hex"), seed: opts.seed,
-        stages: opts.stages, bosses: opts.bosses, warp_at: opts.bosses ? opts.warpAt : null, frame_cap: opts.frames, stage_export: stageExport, sampled };
+        stages: opts.stages, mode: opts.mode ?? 0, bosses: opts.bosses, warp_at: opts.bosses ? opts.warpAt : null, frame_cap: opts.frames, stage_export: stageExport, sampled };
     fs.mkdirSync(path.dirname(opts.json), { recursive: true });
     fs.writeFileSync(opts.json, JSON.stringify({ meta, bots: results }, null, 2) + "\n");
     console.log(`difficulty: wrote ${path.relative(process.cwd(), opts.json)}`);

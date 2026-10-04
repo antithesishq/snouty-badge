@@ -23,6 +23,7 @@ const history = @import("history.zig");
 const rewind = @import("rewind.zig");
 const rank = @import("rank.zig");
 const autopilot = @import("autopilot.zig");
+const game_mode = @import("mode.zig");
 const audio = @import("audio.zig");
 
 comptime {
@@ -84,10 +85,13 @@ var clear_high_water: u32 = 0;
 var cores_high_water: u32 = 0;
 /// Frames spent in the current hold-B rewind (1 on the press frame).
 var manual_frame: u32 = 0;
-/// Hardcore game (SPEC.md 5.3, chosen with B on the title): no rewind
-/// stock; a hit rewinds as far as the fuel allows, or is fatal under
-/// `fatal_floor`.
+/// Hardcore rules (SPEC.md 5.3: HARDCORE or SUPER-HARDCORE on the title,
+/// `game_mode.hardcore()`): no rewind stock; a hit rewinds as far as the fuel
+/// allows, or is fatal under `fatal_floor`. Set with `game_mode.current` by
+/// `new_game`.
 var hardcore: bool = false;
+/// The mode under the title cursor (up / down); kept between games.
+var title_pick: game_mode.Mode = .normal;
 /// Playback frames of the auto rewind in progress: half its depth,
 /// rounded up (60 for a full 120-tick rewind).
 var rewind_frames: u32 = rewind.playback_frames;
@@ -132,10 +136,11 @@ pub fn update() void {
     switch (state) {
         .title => {
             if (input.meta_pressed(.a) or start_pressed) {
-                new_game(false);
-            } else if (input.meta_pressed(.b)) {
-                new_game(true);
+                new_game(title_pick);
             } else {
+                const n = @backingInt(title_pick);
+                if (input.meta_pressed(.up)) title_pick = @enumFromInt((n + game_mode.count - 1) % game_mode.count);
+                if (input.meta_pressed(.down)) title_pick = @enumFromInt((n + 1) % game_mode.count);
                 draw.tick_bg();
             }
         },
@@ -188,7 +193,7 @@ pub fn update() void {
     switch (state) {
         .title => {
             draw.draw_bg();
-            hud.draw_title(tick_total, audio.enabled);
+            hud.draw_title(tick_total, title_pick, audio.enabled);
         },
         .playing => {
             draw_scene();
@@ -228,8 +233,8 @@ pub fn update() void {
 /// A fresh World, except that the background and the input edge detector
 /// carry over so the sky scrolls on from the title and the button that
 /// started the game is not seen as a new press. Meta-state is reset for
-/// a normal or a hardcore game (no rewind stock), fuel full.
-fn new_game(hard: bool) void {
+/// the mode `m` (no rewind stock under hardcore rules), fuel full.
+fn new_game(m: game_mode.Mode) void {
     const w = &world.w;
     const bg = w.bg;
     w.* = .{};
@@ -237,8 +242,9 @@ fn new_game(hard: bool) void {
     w.input = input.meta;
     const t: u32 = if (seed_override != 0) seed_override else @truncate(cart.micros_since_boot());
     rng.seed(if (t == 0) 0x5EED else t);
-    hardcore = hard;
-    rewinds = if (hard) 0 else start_rewinds;
+    game_mode.current = m;
+    hardcore = game_mode.hardcore();
+    rewinds = if (hardcore) 0 else start_rewinds;
     rewind_award_high_water = 0;
     fuel = fuel_max;
     fuel_acc = 0;
@@ -473,7 +479,7 @@ fn draw_scene() void {
     bullets.draw_bolts(world.w.game_tick);
     bullets.draw_enemy_bullets();
     fx.draw_fx();
-    hud.draw_hud(rewinds, fuel, fuel_max, fatal_floor, hardcore);
+    hud.draw_hud(rewinds, fuel, fuel_max, fatal_floor, game_mode.current);
     hud.draw_stage_text();
 }
 
@@ -503,6 +509,9 @@ comptime {
         @export(&debug_fuel, .{ .name = "debug_fuel" });
         @export(&debug_manual_frame, .{ .name = "debug_manual_frame" });
         @export(&debug_hardcore, .{ .name = "debug_hardcore" });
+        @export(&debug_mode, .{ .name = "debug_mode" });
+        @export(&debug_pick, .{ .name = "debug_pick" });
+        @export(&debug_ghost_shot, .{ .name = "debug_ghost_shot" });
         @export(&debug_weapon, .{ .name = "debug_weapon" });
         @export(&debug_forks, .{ .name = "debug_forks" });
         @export(&debug_shield, .{ .name = "debug_shield" });
@@ -616,6 +625,33 @@ fn debug_manual_frame() callconv(.c) u32 {
 }
 fn debug_hardcore() callconv(.c) u32 {
     return @intFromBool(hardcore);
+}
+/// The mode of the game in progress (or the last one): 0 NORMAL,
+/// 1 HARDCORE, 2 SUPER-HARDCORE.
+fn debug_mode() callconv(.c) u32 {
+    return @backingInt(game_mode.current);
+}
+/// Test hook for `m7_ghost` (SPEC.md 5.4: ghosts have no hitbox): gives
+/// the ship a fork if it has none and parks a still orb on the spot where
+/// ghost 1's hitbox would be. Spawned outside `simulate`, so it
+/// checkpoints the history while playing. Returns 1 if the orb is out, 0
+/// before the ghost has a trail to stand on.
+fn debug_ghost_shot() callconv(.c) u32 {
+    const p = &world.w.player;
+    if (p.forks == 0) p.forks = 1;
+    const e = player.ghost_entry(1) orelse return 0;
+    const hb = player.hitbox();
+    const cx = @as(f32, @floatFromInt(e.x)) + (hb[0] - p.x) + hb[2] / 2;
+    const cy = @as(f32, @floatFromInt(e.y)) + (hb[1] - p.y) + hb[3] / 2;
+    patterns.at_angle(cx, cy, 0, .{ .speed = 0, .shape = .orb, .source = .moth });
+    if (state == .playing) history.checkpoint();
+    return 1;
+}
+/// Test hook: moves the title cursor to mode `n` (the difficulty probe's
+/// `--mode`). Returns the pick.
+fn debug_pick(n: u32) callconv(.c) u32 {
+    title_pick = @enumFromInt(@min(n, game_mode.count - 1));
+    return @backingInt(title_pick);
 }
 /// kind * 10 + level, kind 0 fuzzer, 1 assert, 2 bisect.
 fn debug_weapon() callconv(.c) u32 {

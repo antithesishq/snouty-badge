@@ -11,6 +11,7 @@ const bullets = @import("bullets.zig");
 const enemies = @import("enemies.zig");
 const patterns = @import("patterns.zig");
 const player = @import("player.zig");
+const waves = @import("waves.zig");
 
 comptime {
     // `rank_math.speed_caps` is indexed by the shape's backing value.
@@ -38,7 +39,7 @@ pub fn value() u32 {
     return math.value(.{
         .stage = w.waves.stage,
         .loop = w.waves.loop,
-        .t = w.waves.t,
+        .t = waves.clock(),
         .level = w.player.level,
         .forks = w.player.forks,
         .mercy = w.mercy,

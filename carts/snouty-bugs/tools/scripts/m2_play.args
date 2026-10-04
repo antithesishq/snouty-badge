@@ -4,19 +4,25 @@
 # - B 2084..2093 (10 frames = 20 ticks): game tick 2053 -> 2033, fuel 180 -> 160. The
 #   inputs keep their update indices, so after the release the sweep runs 30 ticks ahead of
 #   the world (10 frames not simulated + 20 ticks undone).
-# - B 3320..3334 (15 frames = 30 ticks), since the catch-up clock in the stage-1 boss fight:
-#   game tick 3258 -> 3228, fuel 180 -> 150 (the refill had topped it up again).
+# - B 3320..3334 (15 frames = 30 ticks): game tick 3258 -> 3228, fuel 180 -> 150 (the
+#   refill had topped it up again). Under the catch-up clock it fell in the stage-1 boss
+#   fight; since the mode paces it is in stage 1's waves again.
 # The press frame is already MANUAL (state 5); the release frame is PLAYING without a tick.
 # Since M7 (Bullet hell for real) the sweep cannot live through stage 1 any more: in a normal
 # game it spends its three rewinds and dies. So it plays in the endless probe mode
 # (debug_probe at 31: a hit is counted in debug_hits and charges the power loss, a level and a
 # fork, plus 80 mercy, at once; no rewind, the game goes on), and the old "survives with all
 # three rewinds" pin becomes M7's acceptance bound for the sweep in stage 1: at least 6 hits
-# (PLAN.md M7 "Difficulty targets"; 14 when re-pinned for the catch-up clock).
-# Re-pinned for the catch-up table clock (a thin field runs the stage table faster): the
-# waves come sooner, so every crate moved earlier and stage 1's table ends inside the run
-# (WARNING at 2883, the boss at 3063: phase 2 at the end, until then 0). Crates on the way:
-# F2 at 780, the hit at 1128 takes it back (F1, mercy 213), fork 1 at 1345 (lost to the hit
-# at 1378), the A crate at 1619 swaps F1 for A1 (11), the retry shield at 1650 absorbs the
-# hit at 1705 (shield 0, hits still 6). Identity 0 on every frame from 31 when written.
---frames 4000 --call-at "31 debug_probe" --dump-exports debug_state,debug_score,debug_hits,debug_fuel,debug_grazes,debug_weapon,debug_forks,debug_phase --expect "debug_score > 570" --expect "debug_state == 1" --expect "debug_hits >= 6" --expect "debug_phase == 2" --at "779 debug_weapon == 1" --at "780 debug_weapon == 2" --at "1127 debug_hits == 2" --at "1128 debug_hits == 3" --at "1128 debug_weapon == 1" --at "1128 debug_mercy == 213" --at "1345 debug_forks == 1" --at "1619 debug_weapon == 11" --at "1650 debug_shield == 1" --at "1704 debug_shield == 1" --at "1705 debug_shield == 0" --at "1705 debug_hits == 6" --at "2083 debug_state == 1" --at "2084 debug_state == 5" --at "2093 debug_fuel == 160" --at "2094 debug_state == 1" --at "2094 debug_game_tick == 2033" --at "2882 debug_phase == 0" --at "2883 debug_phase == 1" --at "3063 debug_phase == 2" --at "3320 debug_state == 5" --at "3334 debug_game_tick == 3228" --at "3335 debug_state == 1" --at "3335 debug_fuel == 150" --at "1500 debug_history_check == 0" --at "2090 debug_history_check == 0" --at "3000 debug_history_check == 0" --at "3999 debug_history_check == 0"
+# (PLAN.md M7 "Difficulty targets"; 14 when re-pinned for the catch-up clock, 15 for the
+# mode paces).
+# Re-pinned for the mode paces (NORMAL: the table clock hurries, 3 ticks a tick, only on an
+# empty field, and the fire ramp counts real stage ticks): the table runs slower than under
+# the catch-up clock (floor 3, 4 ticks a tick), so every crate moved later and stage 1's
+# table no longer ends inside the run (WARNING at 4110: phase 0 at the end, as before the
+# catch-up; under it WARNING 2883, boss 3063). Crates on the way: F2 at 852, the hit at 870
+# takes it back (F1, mercy 142), the cores crate at 1341, F2 again at 1653 (lost to the hit
+# at 1716), fork 1 at 1866 (lost to the hit at 2136), the A crate at 2208 swaps F1 for A1
+# (11), the retry shield at 2365 absorbs the hit at 2448 (shield 0, hits still 6). (Under
+# the catch-up clock: F2 780, hit 1128, fork 1345, A 1619, shield 1650, absorbed at 1705.)
+# Identity 0 on every frame from 31 when written.
+--frames 4000 --call-at "31 debug_probe" --dump-exports debug_state,debug_score,debug_hits,debug_fuel,debug_grazes,debug_weapon,debug_forks,debug_phase --expect "debug_score > 570" --expect "debug_state == 1" --expect "debug_hits >= 6" --expect "debug_phase == 0" --at "851 debug_weapon == 1" --at "852 debug_weapon == 2" --at "869 debug_hits == 1" --at "870 debug_hits == 2" --at "870 debug_weapon == 1" --at "870 debug_mercy == 142" --at "1341 debug_cores == 1" --at "1866 debug_forks == 1" --at "2136 debug_forks == 0" --at "2207 debug_weapon == 1" --at "2208 debug_weapon == 11" --at "2365 debug_shield == 1" --at "2447 debug_shield == 1" --at "2448 debug_shield == 0" --at "2448 debug_hits == 6" --at "2083 debug_state == 1" --at "2084 debug_state == 5" --at "2093 debug_fuel == 160" --at "2094 debug_state == 1" --at "2094 debug_game_tick == 2033" --at "3999 debug_phase == 0" --at "3320 debug_state == 5" --at "3334 debug_game_tick == 3228" --at "3335 debug_state == 1" --at "3335 debug_fuel == 150" --at "1500 debug_history_check == 0" --at "2090 debug_history_check == 0" --at "3000 debug_history_check == 0" --at "3999 debug_history_check == 0"
