@@ -550,6 +550,21 @@ pick finishes all nine tracks under the autopilot with at most one crash,
 ARGMAX ahead of ANTEATER and BACKPROP. Bench with the default script:
 worst frame 28-29% of budget, unchanged.
 
+## M5.4 Engine sound
+
+2026-10-04, Adrian: "Can we add engine noises to snouty zero?" The badge
+renders its own stream now, so `lib/tone_stream.zig` gained a drone: a
+held background voice (two sawtooths 1/64 apart, pitch and level gliding
+over ~12 ms) mixed under the one-shot tones; carts that never call it
+render as before. `cart/src/engine.zig` maps the player's state to pitch
+and level (SPEC 9), `main.zig` `engine_cue` feeds it every frame, the
+simulator gets a re-struck channel-1 pulse. Host tests: the drone (holds
+the ring, mixes in range, glides, fades off) and the pitch model. Bench
+(`m3_bench.json`): sound off unchanged (mean 2.07, worst 4.78 ms); with
+`-Dsound=true` mean 2.24, worst 5.16 ms, and the `--wav` shows the grid
+idle and rev, the climb with speed, silence in each hit-stop and the
+warble through the auto rewinds, no gaps while racing.
+
 ## Hand-off
 
 All milestones are built, tested and on `origin/main` (tags

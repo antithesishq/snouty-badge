@@ -19,6 +19,12 @@
 //! pads silence. A tone started from silence reaches the speaker on the
 //! OS's next DMA buffer; one that cuts a sounding tone waits behind the
 //! queued samples (at most `target`). No float: phase is a u32.
+//!
+//! Drone: a held background voice under the tones (Snouty Zero's
+//! engine), two sawtooths 1/64 apart so they beat. `drone` sets its pitch
+//! and level, typically every update; both glide there (~12 ms), and a
+//! level of 0 fades it out and off. Carts that never call `drone` render
+//! exactly as before.
 const builtin = @import("builtin");
 const stream = @import("stream_audio.zig");
 
@@ -53,6 +59,15 @@ var age: u32 = 0;
 var release_left: u32 = 0;
 /// The level the release starts from (the last rendered value - 128).
 var last: i32 = 0;
+
+/// The drone: on until its level has faded to 0; phase increment and
+/// level (Q8, 0..127 << 8) gliding toward their targets.
+var drone_on = false;
+var d_inc: u32 = 0;
+var d_inc_target: u32 = 0;
+var d_phase: [2]u32 = @splat(0);
+var d_level: i32 = 0;
+var d_level_target: i32 = 0;
 
 /// Old `tone2` volume (0.0..1.0 as 0..100) to a linear peak level.
 pub fn level_from_volume(percent: u32) u8 {
@@ -112,9 +127,28 @@ pub fn stop() void {
     release_left = edge;
 }
 
-/// True while a tone or its release is still being rendered.
+/// Hold the drone at `hz` and `peak` (gliding from where it is); `hz` or
+/// `peak` 0 fades it out. A drone starting from off fades in at `hz`.
+pub fn drone(hz: u32, peak: u8) void {
+    if (comptime is_wasm) return;
+    if (hz == 0 or peak == 0) return drone_stop();
+    d_inc_target = inc_for(hz, 1);
+    if (!drone_on) {
+        d_inc = d_inc_target;
+        d_level = 0;
+        drone_on = true;
+    }
+    d_level_target = @as(i32, peak) << 8;
+}
+
+/// Fade the drone out (then it is off).
+pub fn drone_stop() void {
+    d_level_target = 0;
+}
+
+/// True while a tone, its release or the drone is still being rendered.
 pub fn sounding() bool {
-    return left > 0 or release_left > 0;
+    return left > 0 or release_left > 0 or drone_on;
 }
 
 /// Call once per cart update.
@@ -171,9 +205,29 @@ fn render(out: []u8) u32 {
             release_left -= 1;
             v = @divTrunc(last * @as(i32, @intCast(release_left)), edge);
         }
+        if (drone_on) v += drone_sample();
         o.* = @intCast(@max(0, @min(255, silence + v)));
     }
     return @intCast(out.len);
+}
+
+/// One drone sample (-127..127), stepping the glides; turns the drone off
+/// once its level has faded to 0.
+fn drone_sample() i32 {
+    // 1/256 of the pitch gap and 1/512 of the level gap per sample. The
+    // arithmetic shift floors, so a falling level reaches 0 exactly.
+    const gap: i64 = @as(i64, d_inc_target) - @as(i64, d_inc);
+    d_inc = @intCast(@as(i64, d_inc) + (gap >> 8));
+    d_level += (d_level_target - d_level) >> 9;
+    if (d_level == 0 and d_level_target == 0) {
+        drone_on = false;
+        return 0;
+    }
+    const a: i32 = @as(i32, @intCast(d_phase[0] >> 24)) - 128;
+    const b: i32 = @as(i32, @intCast(d_phase[1] >> 24)) - 128;
+    d_phase[0] +%= d_inc;
+    d_phase[1] +%= d_inc +% (d_inc >> 6);
+    return @divTrunc((a + b) * (d_level >> 8), 256);
 }
 
 // ---- Host tests ----
@@ -186,6 +240,8 @@ fn reset_for_test(r: *stream.Ring) void {
     started = false;
     left = 0;
     release_left = 0;
+    drone_on = false;
+    d_level_target = 0;
 }
 
 test "tone_stream: a square tone fills to the target, ends in a release, then nothing" {
@@ -233,4 +289,45 @@ test "tone_stream: level_from_volume and time helpers" {
     try testing.expectEqual(@as(u8, 127), level_from_volume(150));
     try testing.expectEqual(@as(u32, 735), ticks(1));
     try testing.expectEqual(@as(u32, 4410), ms(100));
+}
+
+test "tone_stream: the drone holds the ring, mixes under a tone, fades out and off" {
+    var r: stream.Ring = undefined;
+    reset_for_test(&r);
+    drone(110, 40);
+    try testing.expect(sounding());
+    // Held: every update tops the ring up again.
+    for (0..4) |_| {
+        update();
+        try testing.expectEqual(@as(u32, target), stream.queued());
+        r.tail = r.head;
+    }
+    // Faded in by now: peaks near the level, never past it.
+    var lo: u8 = 255;
+    var hi: u8 = 0;
+    for (ring) |s| {
+        lo = @min(lo, s);
+        hi = @max(hi, s);
+    }
+    try testing.expect(hi >= 128 + 15 and hi <= 128 + 40);
+    try testing.expect(lo <= 128 - 15 and lo >= 128 - 41);
+    // A full-level tone on top stays in range.
+    play(880, ms(20), 127, .square);
+    update();
+    r.tail = r.head;
+    // Pitch glides to the new target.
+    drone(220, 40);
+    update();
+    try testing.expectEqual(inc_for(220, 1), d_inc_target);
+    try testing.expect(d_inc > inc_for(200, 1));
+    r.tail = r.head;
+    // Off: the level fades to 0 within a ring's worth, then nothing.
+    drone_stop();
+    update();
+    r.tail = r.head;
+    update();
+    try testing.expect(!sounding());
+    r.tail = r.head;
+    update();
+    try testing.expectEqual(@as(u32, 0), stream.queued());
 }

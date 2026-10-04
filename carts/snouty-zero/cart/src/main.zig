@@ -143,6 +143,7 @@ pub fn update() void {
         .results => results_frame(),
         .standings => standings_frame(),
     }
+    engine_cue();
     render_us = @truncate(cart.micros_since_boot() - t0);
     replay_max = @max(replay_max, history.replay_calls);
     if (build_options.debug_overlay) draw_overlay();
@@ -452,6 +453,25 @@ fn sound_cues() void {
         if (finish_note == 1) sound.finish(1);
     }
     if (p.shake == 4 and p.crash == .none) sound.rail_click();
+}
+
+/// The engine drone (SPEC 9): the player's machine while racing, silent
+/// everywhere else, in the crash hit-stop, after JOB KILLED and in the
+/// attract demo.
+fn engine_cue() void {
+    const w = &world.w;
+    const p = &w.machines[world.player];
+    if (screen != .race or mode == .attract or hitstop_left > 0 or killed_left > 0 or !p.active) return sound.engine_off();
+    sound.engine(.{
+        .speed = sim.speed(p),
+        .throttle = (input.held(.a) or autopilot) and !p.finished,
+        .boost = p.boost > 0,
+        .air = p.hop > 0,
+        .rough = p.on_throttled,
+        .grid = w.phase == .countdown,
+        .rewind = rewinding or auto_left > 0,
+        .frame = frame,
+    });
 }
 
 // --- Pause -----------------------------------------------------------------------

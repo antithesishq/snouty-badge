@@ -30,8 +30,10 @@ simulator quirks.
 - Inputs `cart.controls.*`: start, select, a, b, click, up, down, left, right.
   The OS owns Start+Select (exit to menu) and joystick click (FPS overlay);
   never bind click.
-- Audio `cart.tone2`, one voice: unused, no audio in this cart (SPEC.md section 8). 5 neopixels (`cart.neopixels`): off; this
-  cart never writes non-zero values (root `docs/NEOPIXELS.md`; a coworker's
+- Audio: background music (`cart/src/music.zig`, SPEC.md section 8)
+  streamed into the newer firmware's ring (`lib/stream_audio.zig`); never
+  `cart.tone2`. Notes are generated: `python3 tools/gen_music.py`.
+- 5 neopixels (`cart.neopixels`): off; this cart never writes non-zero values (root `docs/NEOPIXELS.md`; a coworker's
   badge shows the LEDs are unusably bright even at 1%, 2026-09-29).
 - Budget (since M4): ELF `.text`+`.data` at most 136 KB, `.bss` at most
   136 KB, their sum at most 250 KB. The 80 KB path-tracer accumulator shares
