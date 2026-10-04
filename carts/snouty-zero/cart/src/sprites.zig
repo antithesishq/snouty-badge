@@ -6,6 +6,7 @@ const gfx = @import("gfx");
 const fixed = @import("fixed.zig");
 const tuning = @import("tuning.zig");
 const world = @import("world.zig");
+const sim = @import("sim.zig");
 const camera = @import("camera.zig");
 const render = @import("render.zig");
 
@@ -208,9 +209,14 @@ fn draw_machine(m: *const world.Machine, index: u8, p: camera.Projected) void {
     }
     const flash = m.immune > 0 and (m.immune / 2) % 2 == 0 and m.crash == .none;
     const opts = BlitOpts{ .flat = if (flash) @as(?cart.Pixel, .from_color(.rgb(0xFCFBF9))) else null };
-    if (index == world.player) {
+    if (index == world.player and sim.player_character == 0) {
         const frame: u32 = if (m.hop > 0) 3 else if (m.steer < 0) 1 else if (m.steer > 0) 2 else 0;
         blit_scaled(gfx.anteater, 40, 24, frame, p.sx, p.sy - lift_px, p.scale, &anteater_pal, opts);
+    } else if (index == world.player) {
+        // A rival's machine from the machine select: its livery, leaning
+        // into the steer with the rear-quarter views.
+        const frame: u32 = if (m.steer < 0) 1 else if (m.steer > 0) 2 else 0;
+        blit_scaled(gfx.machine, 32, 16, frame, p.sx, p.sy - lift_px, p.scale, &livery_pals[livery_of(sim.player_character)], opts);
     } else {
         // Yaw view from the heading relative to the camera.
         const d = fixed.turn_diff(camera.cam.yaw, m.heading);
