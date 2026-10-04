@@ -55,9 +55,10 @@ longer explanations, this one summarises.
   lines 0..143 are squeezed to 128 rows (`y - y / 9`, every ninth dropped).
 - Inputs `cart.controls.*`; the OS owns Start+Select (exit) and click.
   Mapping (SPEC.md section 5): d-pad, badge B = button 1, badge A = button
-  2, Start; Select hold 500 ms = emulator menu (M2); Select then Right,
-  both held = fast forward (`input.GameInput.fast`, main.zig `run_frame`,
-  knobs in `frontend/tuning.zig`; docs/FAST_FORWARD.md at the root).
+  2, Start; Select hold 500 ms = emulator menu (M2); Select double tap
+  with the second press held = fast forward (`input.GameInput.fast`,
+  main.zig `run_frame`, knobs in `frontend/tuning.zig`;
+  docs/FAST_FORWARD.md at the root).
 
 ## Building
 
