@@ -6,7 +6,9 @@ an invisible 12 x 10 x 12 grid, each primitive ray cast per pixel
 (analytic cylinders and spheres, sphere-traced elbows, a rasterized Utah
 teapot), Phong shaded and dithered. The camera holds still while pipes
 grow, so a frame draws only the new pieces into the OS's `.copy_forward`
-framebuffer. `SPEC.md` is the design and milestone list, `PLAN.md` the
+framebuffer. Select switches to steer mode (M3): one pipe is the
+player's, steered screen-relative through a small play box, with a time
+rewind on the first crash. `SPEC.md` is the design and milestone list, `PLAN.md` the
 current milestone's contract between parallel tracks and the status log.
 The repository's `CLAUDE.md` has what every cart shares (hardware, cart
 API, build wiring); this file adds the cart's specifics.
@@ -16,18 +18,29 @@ API, build wiring); this file adds the cart's specifics.
 - `cart/src/` — the Zig cart, one module per concern (SPEC.md section 8).
   `main.zig`: `start`/`update`, the wasm shims, debug exports.
   `grid.zig`: sizes, `Dir`, `Prim` (one cell of one pipe in 32 bits),
-  occupancy, the pipe walk. `director.zig`: the scene state machine (boot,
-  grow, dissolve, rebuild), spawn and death, joint style, speed, the history
-  ring; it emits draw commands that `main.zig` runs through the renderer.
-  `camera.zig`: the 8 fitted views, rays (hit t = view depth), projection.
-  `render/`: `draw.zig` (per-cell drawing, dirty rects, the dissolve),
+  occupancy, the pipe walk (`spawn_in`/`fill_outside` for steer mode's
+  play box). `director.zig`: the scene state machine (boot, grow,
+  dissolve, rebuild; steer, rewind, game over), spawn and death, joint
+  style, speed, the nametag flag, the history ring, and the steer section
+  (runners that draw with no lag, snapshots, rewind, the overlay data); it
+  emits draw commands that `main.zig` runs through the renderer.
+  `steer.zig`: the screen-relative control mapping and the turn queue.
+  `camera.zig`: the 8 fitted views plus the 4 steer views, rays (hit t =
+  view depth), projection.
+  `render/`: `draw.zig` (per-cell drawing, dirty rects, the dissolve, the
+  steer box outline and floor grid, steer mode's fatter radii),
   `trace.zig` (ray vs cylinder, sphere, quarter torus), `shade.zig`
   (Phong, palette, 4x4 dither), `zbuf.zig` (u16 z buffer), `teapot.zig` +
-  `teapot_mesh.zig` (the easter egg), `overlay.zig` (name strip, debug
-  text). `host_tests.zig` is the root for `zig build test`.
+  `teapot_mesh.zig` (the easter egg), `overlay.zig` (title strip and
+  nametag with the coin-flipping Iris, steer HUD, banner, head marker,
+  floor spot, game-over card, debug text). `host_tests.zig` is the root
+  for `zig build test`.
 - `tools/` — `check.sh` (the whole gate), `check_golden.mjs`,
   `check_cycle.mjs`, `gen_teapot.py` (writes `render/teapot_mesh.zig`),
-  `scripts/` (input scripts; `bench_m1.json` is badge-bench's). The headless
+  `steer_bot.mjs` (plays steer mode headless, writes input scripts),
+  `scripts/` (input scripts; `bench_m1.json` is badge-bench's, `bench_steer.json`
+  the steer bench run, `steer_survive.json` and `steer_gif.json` check_cycle's,
+  the goldens' and the GIF's; all three steer ones come from `steer_bot.mjs`). The headless
   runner (`preview.mjs`), `serve-cart.mjs`, `make_gif.py` and
   `check_float.mjs` are shared, in `../../tools/`.
 - `tests/golden/` — golden PNGs and `poses.json` for `check_golden.mjs`.
@@ -51,7 +64,17 @@ API, build wiring); this file adds the cart's specifics.
   pipes, joints and the teapot intersect cleanly in any order.
 - **Overlays sit on a persistent picture.** The overlay saves the pixels
   under itself, restores them first thing next frame, then the director's
-  commands draw, then it saves and draws again.
+  commands draw, then it saves and draws again. Overlays can overlap (the
+  head marker passes under the HUD), so `restore` runs in the reverse
+  order of `draw`; anything an overlay draws must lie inside its saved
+  region (text shadows too). The floor spot reads `zbuf` and draws only on
+  empty pixels.
+- **Steer runs replay from snapshots.** A rewind restores occupancy, rng,
+  history head and the runners, then regrows from the history ring; a
+  runner's head cell enters the history only once its exit is known, and
+  the regrow draws runner heads only as far as they have got. Anything new
+  that a run mutates must go into `Run`/`Snap` or the rewind stops being
+  exact (host test "first crash rewinds ...").
 - **Sinks.** `draw.zig` and `teapot.zig` are generic over a sink `S` with
   `put(x, y, c: u16)` (DisplayColor bits) and `mark_dirty(camera.Rect)`;
   `main.zig`'s `Screen` writes the framebuffer, host tests use arrays.
@@ -65,7 +88,10 @@ API, build wiring); this file adds the cart's specifics.
   framebuffers are the OS's; the cart's z buffer is its own 40 KB.
 - RAM cart only (no XIP). Memory is small: z buffer 40 KB, history ring
   8 KB, teapot tables ~5 KB.
-- Inputs as SPEC section 6. The OS owns Start+Select and the joystick
+- Inputs as SPEC section 6 (screensaver: A new scene, B nametag,
+  Up/Down speed, Left/Right orbit, Start pause, Select steer mode;
+  steer: the stick turns on screen, A/B into/out of the screen, Select
+  out, A again on the card). The OS owns Start+Select and the joystick
   click; the cart ignores Start and Select while both are held.
 - No audio (repo policy for non-emulator carts), neopixels off (never
   written).
@@ -86,7 +112,7 @@ zig build check-float -Dcart=snouty-pipes
 
 Then from this directory: `tools/check.sh` (the whole gate; steps can be
 named: `tools/check.sh golden cycle`). `-Ddebug_overlay=true` starts with
-the debug overlay on and lets Select toggle it. This cart's `build.zig` is
+the debug overlay on and lets Select+B toggle it. This cart's `build.zig` is
 a module (`pub fn add`) called by the root `build.zig`; running `zig build`
 in this directory fails ("import of file outside module path").
 
@@ -104,8 +130,12 @@ node tools/check_cycle.mjs             # screensaver loop on the debug exports
 ```
 
 The debug exports (`debug_state`, `debug_scene`, `debug_filled`,
-`debug_force_teapot`, ...) are listed in PLAN.md (Track B item 4) and
-`docs/RUNNING.md` section 6; `check_cycle.mjs` depends on their names.
+`debug_force_teapot`, the steer and nametag ones, ...) are listed in
+`docs/RUNNING.md` section 6; `check_cycle.mjs` and `steer_bot.mjs` depend
+on their names. The firmware exports one symbol for badge-bench,
+`snouty_pipes_seed` (`--poke snouty_pipes_seed=270369` = the wasm seed of
+`preview.mjs --seed 1`), so bench and headless runs of a steer script
+match.
 
 ## Conventions
 

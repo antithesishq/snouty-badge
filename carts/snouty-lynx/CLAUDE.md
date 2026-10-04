@@ -40,7 +40,8 @@ CLAUDE.md and docs have the longer explanations.
   menu -> pick -> running | help), the status strip and the no-ROM screen. `frontend/`: `video` (Lynx frame ->
   rows 0..101, 16-entry palette cache), `input` (pad word, Select tap =
   Option 1 after the 200 ms double-tap window, Select hold = menu,
-  Select double tap and hold = fast forward, main.zig `run_frame`), `drive` (drive scan and Cart from a drive
+  Select double tap and hold = fast forward, Left during it = the
+  chorded rewind, `Repeat` shared with the menu; main.zig `run_frame`), `drive` (drive scan and Cart from a drive
   file; a module of its own, host-tested), `romsrc` (drive ROM, embedded
   ROM in wasm/embed builds only, or none with the reason), `splash` (Iris mark, `lib/iris_mark.zig`),
   `debug` (step timing, FPS), `text` (Snouty Gear's fast font, verbatim),
@@ -65,7 +66,9 @@ CLAUDE.md and docs have the longer explanations.
   `stream_unit.zig` (the frontend's sound path against a model of the
   firmware's 512-sample reads), `input_unit.zig` (frontend/input.zig with
   the SDK's cart-api for `Controls`: menu hold, held-back tap, fast
-  forward), `ff_determinism.zig` (fast-forward stepping equals 1x). `tests/roms/` is gitignored.
+  forward, chorded rewind), `ff_determinism.zig` (fast-forward stepping
+  equals 1x). `tools/check_chord_rewind.sh`: the chorded rewind and the
+  menu scrubber land on the same frame and play on identically (wasm). `tests/roms/` is gitignored.
 - `roms/` — `raycast.lnx` (shipped, Apache-2.0, `LICENSE-raycast.txt`,
   `docs/ROM_CANDIDATES.md`) and `placeholder.lnx` (576 B,
   `tools/make_placeholder_rom.py`, not a Lynx program, only for the drive

@@ -197,6 +197,7 @@ Debug exports (zero-argument wasm functions, usable with `--dump-exports`,
 | `debug_set_machine(n)`, `debug_machine` | machine select: 0 Anteater (base physics), 1..4 the rivals' machines (`ai.player_machines`) |
 | `debug_start_race(n)` | setup call: skip the menus into a Quick Race on track n (0..8 in `track.tracks` order: Edge 0..2, Spine 3..5, Core 6..8) |
 | `debug_force_crash` | `--call-at T debug_force_crash`: the player falls (SEGMENT FAULT) |
+| `debug_force_ko`, `debug_kos` | `--call-at T debug_force_ko`: the live machine nearest the player melts down credited to the player, a knockout (SPEC 5.5), returns its index; knockouts this race |
 | `debug_snapshot` | snapshot bar in ticks, 0..180 |
 | `debug_rewinds` | rewinds this race (hold-B holds + auto rewinds) |
 | `debug_rewinding` | 0 live, 1 hold-B rewind, 2 auto-rewind playback, 3 crash hit-stop, 4 JOB KILLED |

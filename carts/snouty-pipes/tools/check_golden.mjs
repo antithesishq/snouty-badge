@@ -6,9 +6,11 @@
 //
 // Reads tests/golden/poses.json, an array of
 //   { "name": "grow_s1_t300", "seed": 1, "frames": 300,
-//     "calls": ["debug_force_teapot"], "press": ["A:200-200"] }
-// (calls, press optional; frames defaults to 1). For each entry it runs
-//   node ../../tools/preview.mjs <wasm> --seed S [--call C]... [--press P]...
+//     "calls": ["debug_force_teapot"], "press": ["A:200-200"],
+//     "script": "tools/scripts/steer_survive.json" }
+// (calls, press, script optional; script is relative to this cart; frames
+// defaults to 1). For each entry it runs
+//   node ../../tools/preview.mjs <wasm> --seed S [--call C]... [--press P]... [--script F]
 //        --frames F --start-skip F-1 --out out/golden/<name>/
 // so only the last frame is written (the frame shown after update F-1), and
 // compares that PNG pixel-exactly with tests/golden/<name>.png. The picture
@@ -72,6 +74,7 @@ for (const [i, p] of poses.entries()) {
     if (p.press !== undefined && !(Array.isArray(p.press) && p.press.every((c) => typeof c === "string"))) usage(`${where} (${p.name}): "press" must be an array of strings`);
     if (p.calls !== undefined && !(Array.isArray(p.calls) && p.calls.every((c) => typeof c === "string"))) usage(`${where} (${p.name}): "calls" must be an array of strings`);
     if (p.frames !== undefined && !(Number.isInteger(p.frames) && p.frames >= 1)) usage(`${where} (${p.name}): "frames" must be an integer >= 1`);
+    if (p.script !== undefined && (typeof p.script !== "string" || !fs.existsSync(path.join(ROOT, p.script)))) usage(`${where} (${p.name}): "script" must name a file under the cart`);
 }
 if (opts.only) {
     const unknown = opts.only.filter((n) => !seen.has(n));
@@ -160,6 +163,7 @@ for (const p of poses) {
     const args = [PREVIEW, opts.wasm, "--seed", String(p.seed)];
     for (const c of p.calls ?? []) args.push("--call", c);
     for (const b of p.press ?? []) args.push("--press", b);
+    if (p.script) args.push("--script", path.join(ROOT, p.script));
     args.push("--frames", String(frames), "--start-skip", String(frames - 1), "--every", "1", "--out", out);
     fs.rmSync(out, { recursive: true, force: true });
     const r = spawnSync(process.execPath, args, { cwd: ROOT, encoding: "utf8" });

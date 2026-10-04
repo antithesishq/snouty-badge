@@ -20,13 +20,20 @@
 #           2), no crash or hang; plus one timing-only run per seed in
 #           BENCH_SEEDS (default 2..10, SPEC section 11; the badge build mixes the modelled
 #           clock into the seed, so --seed gives another walk).
+#           Plus the steer run (M3): tools/scripts/bench_steer.json, 3100
+#           frames (tools/steer_bot.mjs playing seed 1: Select at 150, a long
+#           run, a crash + rewind with a ~380-cell regrow, a second crash,
+#           the game-over card, A again, Select out, B's nametag over the
+#           growing screensaver with a coin flip), seeded with --poke
+#           snouty_pipes_seed=270369 so the firmware replays the headless run.
 #   lcd     the same run twice, PNG every 10th frame: with --lcd (what the
 #           badge's LCD gets: only each present's dirty rect) and without
 #           (the framebuffer). Every pair must be identical. The cart draws
 #           incrementally in .copy_forward, so a pixel written without
 #           mark_dirty_rect never reaches the badge's screen while the
 #           simulator, which shows the whole framebuffer, looks right.
-#           (bench and lcd share the --lcd run.)
+#           (bench and lcd share the --lcd run.) The steer run gets the
+#           same pair.
 #
 # Output under out/ (gitignored). Exit 0 when every step passes, else 1
 # (the failing steps are listed at the end).
@@ -42,6 +49,9 @@ bench="$root/badge-bench/bench.sh"
 out="$cart/out/check"
 max_ms="${BENCH_MAX_MS:-12}"
 seeds="${BENCH_SEEDS-2 3 4 5 6 7 8 9 10}"
+# The steer run: the script and the seed the wasm build gets from
+# preview.mjs --seed 1 (cart.rand()'s first value), poked into the firmware.
+steer=(--script "$cart/tools/scripts/bench_steer.json" --frames 3100 --poke snouty_pipes_seed=270369)
 
 steps=("$@")
 [ ${#steps[@]} -eq 0 ] && steps=(build test float teapot golden cycle bench lcd)
@@ -100,8 +110,12 @@ if want bench || want lcd; then
         pids=()
         "$bench" "$elf" --json --lcd --png 10 --out "$out/bench/lcd" > "$out/bench/lcd.txt" 2>&1 &
         pids+=($!)
+        "$bench" "$elf" "${steer[@]}" --json --lcd --png 10 --out "$out/bench/steer_lcd" > "$out/bench/steer_lcd.txt" 2>&1 &
+        pids+=($!)
         if want lcd; then
             "$bench" "$elf" --png 10 --out "$out/bench/fb" > "$out/bench/fb.txt" 2>&1 &
+            pids+=($!)
+            "$bench" "$elf" "${steer[@]}" --png 10 --out "$out/bench/steer_fb" > "$out/bench/steer_fb.txt" 2>&1 &
             pids+=($!)
         fi
         if want bench; then
@@ -117,7 +131,7 @@ if want bench || want lcd; then
         if want bench; then
             status=$bench_status
             [ "$status" = 0 ] || echo "check: a badge-bench run failed (crash, hang or setup error); see $out/bench/*.txt"
-            for j in "$out/bench/lcd/bench.json" "$out/bench"/seed*/bench.json; do
+            for j in "$out/bench/lcd/bench.json" "$out/bench/steer_lcd/bench.json" "$out/bench"/seed*/bench.json; do
                 [ -f "$j" ] || continue
                 python3 - "$j" "$max_ms" <<'EOF' || status=1
 import json, sys
@@ -140,17 +154,20 @@ EOF
 
         if want lcd; then
             status=0
-            n=0
-            for f in "$out/bench/fb"/frame_*.png; do
-                [ -f "$f" ] || { status=1; echo "check: no framebuffer PNGs"; break; }
-                g="$out/bench/lcd/$(basename "$f")"
-                n=$((n + 1))
-                if ! cmp -s "$f" "$g"; then
-                    [ "$status" = 0 ] && echo "FAIL $(basename "$f"): the modelled LCD differs from the framebuffer (a write without mark_dirty_rect?)"
-                    status=1
-                fi
+            for run in "" steer_; do
+                n=0
+                for f in "$out/bench/${run}fb"/frame_*.png; do
+                    [ -f "$f" ] || { status=1; echo "check: no ${run}fb framebuffer PNGs"; break; }
+                    g="$out/bench/${run}lcd/$(basename "$f")"
+                    n=$((n + 1))
+                    if ! cmp -s "$f" "$g"; then
+                        echo "FAIL ${run}$(basename "$f"): the modelled LCD differs from the framebuffer (a write without mark_dirty_rect?)"
+                        status=1
+                    fi
+                done
+                echo "     ${run:-m1_}run: $n frames compared"
             done
-            [ "$status" = 0 ] && echo "ok   $n frames: the modelled LCD equals the framebuffer"
+            [ "$status" = 0 ] && echo "ok   the modelled LCD equals the framebuffer in every frame"
             result lcd "$status"
         fi
     fi

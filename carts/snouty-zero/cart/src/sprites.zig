@@ -141,15 +141,22 @@ var prev_shake: [world.machine_count]u8 = @splat(0);
 /// Once per live frame: spawn sparks for machines whose shake just started.
 pub fn tick_effects() void {
     for (world.w.machines[0..world.w.active_count], 0..) |*m, i| {
-        if (m.shake > 0 and prev_shake[i] == 0) {
-            sparks[next_spark] = .{ .x = m.x, .y = m.y, .age = 0 };
-            next_spark = (next_spark + 1) % sparks.len;
-        }
+        if (m.shake > 0 and prev_shake[i] == 0) spawn_spark(m.x, m.y);
         prev_shake[i] = m.shake;
+        // A wreck (SPEC 5.5) throws a spark every 2 ticks, scattered by the countdown.
+        if (m.active and m.ko and m.hitstop % 2 == 0) {
+            const k: i32 = m.hitstop;
+            spawn_spark(m.x + (((k * 5) & 15) - 8) * fixed.one, m.y + (((k * 3) & 15) - 8) * fixed.one);
+        }
     }
     for (&sparks) |*sp| {
         if (sp.age < 16) sp.age += 1;
     }
+}
+
+fn spawn_spark(x: i32, y: i32) void {
+    sparks[next_spark] = .{ .x = x, .y = y, .age = 0 };
+    next_spark = (next_spark + 1) % sparks.len;
 }
 
 pub fn reset_effects() void {
@@ -207,7 +214,9 @@ fn draw_machine(m: *const world.Machine, index: u8, p: camera.Projected) void {
         const fl: u32 = if ((m.boost / 3) % 2 == 0) 4 else 5;
         blit_scaled(gfx.fx, 16, 16, fl, p.sx, p.sy - lift_px + 6, p.scale, &fx_pal, .{});
     }
-    const flash = m.immune > 0 and (m.immune / 2) % 2 == 0 and m.crash == .none;
+    // A wreck flickers: hidden every other 2 ticks, white the rest.
+    if (m.ko and (m.hitstop / 2) % 2 == 0) return;
+    const flash = (m.immune > 0 and (m.immune / 2) % 2 == 0 and m.crash == .none) or m.ko;
     const opts = BlitOpts{ .flat = if (flash) @as(?cart.Pixel, .from_color(.rgb(0xFCFBF9))) else null };
     if (index == world.player and sim.player_character == 0) {
         const frame: u32 = if (m.hop > 0) 3 else if (m.steer < 0) 1 else if (m.steer > 0) 2 else 0;

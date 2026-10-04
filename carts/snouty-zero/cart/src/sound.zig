@@ -49,6 +49,10 @@ pub fn deploy() void {
 pub fn rail_click() void {
     play(220, 30, 50);
 }
+/// A knockout (SPEC 5.5): call with step 0 then, a few frames later, 1.
+pub fn ko(step: u8) void {
+    play(if (step == 0) 660 else 330, 90, 60);
+}
 /// Two notes: call with step 0 then, a few frames later, 1.
 pub fn finish(step: u8) void {
     play(if (step == 0) 1046 else 1568, 120, 70);

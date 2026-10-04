@@ -125,17 +125,38 @@ pub fn view(index: usize, orbit: i32) Camera {
     const c = math.cos_turns(a);
     const s = math.sin_turns(a);
     const dir = math.normalize(math.vec3(d0[0] * c + d0[2] * s, d0[1], -d0[0] * s + d0[2] * c));
-    return fitted(dir);
+    return fitted(dir, .{ @as(f32, grid.nx) * 0.5, @as(f32, grid.ny) * 0.5, @as(f32, grid.nz) * 0.5 }, overscan);
 }
 
 const overscan: f32 = 1.25;
 
-fn fitted(dir: Vec3) Camera {
+/// Steer mode views (M3): three-quarter views from above, each with one
+/// grid axis clearly into the screen, one clearly across and one clearly
+/// up, so the screen-relative controls read (director.zig maps them). The
+/// four are the same shot from four sides of the play box.
+pub const steer_views = [_][3]f32{
+    .{ 0.32, 0.52, 1.0 },
+    .{ 1.0, 0.52, -0.32 },
+    .{ -0.32, 0.52, -1.0 },
+    .{ -1.0, 0.52, 0.32 },
+};
+
+/// Steer mode keeps the whole play box on screen, with a margin for the HUD.
+const steer_overscan: f32 = 0.96;
+
+/// Camera for steer view `index` (wrapped), framed on a box of half extents
+/// `half` (cells) centred on the origin, entirely on screen.
+pub fn steer_view(index: usize, half: [3]f32) Camera {
+    const d = steer_views[index % steer_views.len];
+    return fitted(math.normalize(math.vec3(d[0], d[1], d[2])), half, steer_overscan);
+}
+
+fn fitted(dir: Vec3, half: [3]f32, over: f32) Camera {
     // Mostly vertical views take +z as up, so the up hint never lines up with fwd.
     const up_hint = if (@abs(dir[1]) > 0.9) math.vec3(0, 0, -1) else math.vec3(0, 1, 0);
-    const hx = @as(f32, grid.nx) * 0.5;
-    const hy = @as(f32, grid.ny) * 0.5;
-    const hz = @as(f32, grid.nz) * 0.5;
+    const hx = half[0];
+    const hy = half[1];
+    const hz = half[2];
     var lo: f32 = 6.0;
     var hi: f32 = 80.0;
     for (0..24) |_| {
@@ -155,7 +176,7 @@ fn fitted(dir: Vec3) Camera {
             }
             extent = @max(extent, @max(@abs(sp[0] - cx) / cx, @abs(sp[1] - cy) / cy));
         }
-        if (extent > overscan) lo = d else hi = d;
+        if (extent > over) lo = d else hi = d;
     }
     return Camera.look_at(dir * math.splat(hi), math.splat(0), up_hint);
 }

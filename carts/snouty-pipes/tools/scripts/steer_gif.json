@@ -1,0 +1,17 @@
+[
+  {"from":150,"to":150,"hold":["SELECT"]},
+  {"from":210,"to":210,"hold":["UP"]},
+  {"from":330,"to":330,"hold":["RIGHT"]},
+  {"from":430,"to":430,"hold":["DOWN"]},
+  {"from":490,"to":490,"hold":["LEFT"]},
+  {"from":565,"to":565,"hold":["UP"]},
+  {"from":595,"to":595,"hold":["RIGHT"]},
+  {"from":640,"to":640,"hold":["B"]},
+  {"from":685,"to":685,"hold":["LEFT"]},
+  {"from":864,"to":864,"hold":["LEFT"]},
+  {"from":1004,"to":1004,"hold":["DOWN"]},
+  {"from":1028,"to":1028,"hold":["RIGHT"]},
+  {"from":1040,"to":1040,"hold":["A"]},
+  {"from":1064,"to":1064,"hold":["RIGHT"]},
+  {"from":1136,"to":1136,"hold":["UP"]}
+]

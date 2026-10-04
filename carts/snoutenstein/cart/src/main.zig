@@ -70,7 +70,7 @@ var level_index: u8 = 0;
 /// a game started from the title or the demo.
 var entry_loadout: ?sim.Loadout = null;
 /// The input applied last tick (pad or demo log): edge detection for the
-/// mode machine. `prev_pad` is the pad alone, for the takeover edge.
+/// mode machine. `prev_pad` is the pad alone, for the interrupt edge.
 var prev_in: state.Buttons = .{};
 var prev_pad: state.Buttons = .{};
 var render_us: u32 = 0;
@@ -100,14 +100,14 @@ pub fn update() void {
     defer prev_pad = pad;
     tick_total += 1;
 
-    // Which input drives this tick: the pad, or the demo log. A takeover
-    // edge on the pad ends the demo without stepping; the pad is live from
-    // the next tick on (SPEC.md 11).
+    // Which input drives this tick: the pad, or the demo log. Any button
+    // edge on the pad ends the demo and goes back to the title; the press
+    // is spent there, so the menu is what the player sees (SPEC.md 11).
     var in: state.Buttons = pad;
     if (demo_active) {
         demo_ticks += 1;
-        if (takeover_edge(pad)) {
-            take_over();
+        if (interrupt_edge(pad)) {
+            end_demo(false);
         } else if (demo_ticks >= demo_max) {
             end_demo(false);
         } else if (demo.next()) |db| {
@@ -282,28 +282,20 @@ fn start_demo() void {
     demo_dead = 0;
 }
 
-/// A, B, Start or the joystick pressed on the pad while the demo runs.
-fn takeover_edge(pad: state.Buttons) bool {
+/// A, B, Start, Select or the joystick pressed on the pad while the demo
+/// runs. The demo plays a later level, so it is not handed over: the
+/// player lands on the title menu instead.
+fn interrupt_edge(pad: state.Buttons) bool {
     const now: u16 = @bitCast(pad);
     const before: u16 = @bitCast(prev_pad);
-    const mask: u16 = @bitCast(state.Buttons{ .a = true, .b = true, .start = true, .up = true, .down = true, .left = true, .right = true });
+    const mask: u16 = @bitCast(state.Buttons{ .a = true, .b = true, .start = true, .select = true, .up = true, .down = true, .left = true, .right = true });
     return (now & ~before & mask) != 0;
-}
-
-/// SPEC.md 11: the world stays as it is, the meter is refilled and the pad
-/// is live from the next tick. The refill is recorded as a rewind patch so
-/// replays and the keyframe self-check reproduce it.
-fn take_over() void {
-    if (mode == .rewinding) end_rewind();
-    if (mode == .playing or mode == .dead or mode == .paused) rewind.set_meter(&game, sim.max_rewind);
-    demo_active = false;
-    hud.meter_override = null;
 }
 
 /// The demo ends on its own when the log runs out (`log_done`: compare the
 /// gameplay hash with the recorded one, alive or dead; that is the hardware
 /// determinism test), on the 3 min cap, after sitting dead for 2 s with no
-/// rewind in the log, or once a level ends.
+/// rewind in the log, once a level ends, or when the pad interrupts it.
 fn end_demo(log_done: bool) void {
     if (log_done and (mode == .playing or mode == .dead) and demo.final_hash != 0) {
         demo_result = if (sim.hash_gameplay(&game) == demo.final_hash) .ok else .desync;

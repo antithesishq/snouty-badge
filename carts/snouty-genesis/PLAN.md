@@ -1492,3 +1492,63 @@ no XIP.
   is `ff_tap_window_updates`, so the unit is in the name.
   `tools/scripts/m2_play.json`'s Select tap (136-137) now reaches the
   game 6 updates later.
+
+## Chorded rewind (2026-10-04)
+
+Root docs/FAST_FORWARD.md "Chorded rewind", after Gear (e83aaf5b,
+89d7976d). It only exists where the scrubber does (`input.chord_rewind`
+= `core.undo.enabled`: the XIP cart and the simulator). **The RAM cart,
+the one the show firmware runs, has no scrubber (M5)**, so there Left
+during fast forward stays game input and nothing else changes.
+
+- Input (`frontend/input.zig`): a fresh Left press during fast forward
+  (Select held, no Start) gives `GameInput.rewind = .enter` with a step
+  back at once (`scrub = -1`). A Left held from before fast forward does
+  not count. Then `.on` with `scrub` from `input.Repeat` (the menu's
+  auto-repeat, now shared: a step per press, then every 8 updates while
+  held). The pad is 0 throughout, and Start stops the stepping. Select
+  released gives `.exit` after `suppress_held`. Left is masked out of
+  the pad during fast forward.
+- Frontend (`app.zig` `run_update`): enter calls `menu.freeze_frame`
+  (factored out of `menu.open`). Every rewind update silences the audio,
+  calls `rewind.step` and draws `menu.draw_scrub_bar(true)`, the menu's
+  scrub-view bar (factored out; "Rewind: no history" when empty). Exit
+  does `menu.close`, `video.apply` and then the usual update, whose
+  `resume_if_parked` drops the future, as the menu's resume does.
+  `>>4x` moved to the bottom right inside the bar's rectangle (Gear's
+  fix: a rewind with nothing to step to would otherwise freeze the
+  indicator on screen). `debug_chord_rewind` export. The menu footer
+  turns through "B: back to game", "2x Sel+hold: fast" and "then Left:
+  rewind" (the last only with the scrubber).
+- Tests: 6 new `input:` tests (enter and the immediate step, the repeat
+  and Right forward, nothing reaches the game in rewind while Right does
+  in fast forward, a held Left reserved, release resumes with Left/Right
+  suppressed and opens no window, Start holds the position,
+  `suppress_held` ends it). Genesis 183 + 18. `zig build test` exit 0.
+  `check-float` PASS for both ELFs.
+- Menu vs chord (`tools/check_chord_rewind.sh`, wasm, test ROM, scripts
+  `tools/scripts/rewind_menu.json` / `rewind_chord.json`): three menu
+  steps and four chord steps (fast forward ran 32 frames further) both
+  land on Genesis frame 270. 315 updates after resuming, both are at
+  frame 900 with identical exports (68000 and Z80 registers, VDP line,
+  pad, tone, scrub history, depth, records, slots) and an identical
+  picture. PASS.
+- badge-bench `--lcd`, XIP cart (the only badge build with the
+  scrubber), calibrated busy ms per update:
+
+  | Run | scrub step (menu) | scrub step (chord) | chord entry | idle rewind update | over 33.3 |
+  |---|---:|---:|---:|---:|---:|
+  | test ROM (`rewind_menu/chord.json`) | 6.9 | 6.9 | 7.1 | 0.3 | 0 (both, max 26.4) |
+  | Miniplanets (`rewind_menu/chord_mini.json`) | 8.2-8.3 | 8.3 | 8.5 | 0.3 | 0 (both, max 29.0) |
+
+  The chord costs what the menu does. Entry adds the 40 KB frame copy
+  (`freeze_frame`), as the menu's open does (1.2 ms there with the panel
+  drawn). The modelled LCD shows the bar gone on the first update after
+  release (the same one-present lag as the menu's B). The XIP cart's
+  fast forward before the chord ran 1x on Miniplanets and 23.8 ms
+  updates on the test ROM (its Z80 leaves little room).
+  RAM cart unchanged by the refactor: Miniplanets `m2_mini300`
+  15.11 / 23.43 ms, `ff_mini` FF updates 23.62 / 23.66, 0 over.
+- Sizes: RAM cart `__bss_end__` 0x2007710c -> 0x20077130 (3,792 B left).
+- Deviations: chord-less RAM cart (above). `docs/ff_2026-10-04.png` gains
+  a third row (the chord: `>>4x`, entry, after four steps, resumed).
