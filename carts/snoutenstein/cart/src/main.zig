@@ -65,6 +65,10 @@ var card_ticks: u32 = 0;
 var game: state.GameState = undefined;
 var level: *const levels.Level = &levels.all[0];
 var level_index: u8 = 0;
+/// Weapons and ammo the player brought into this level: captured at the
+/// exit, applied on the next level and again on a restart of it; null on
+/// a game started from the title or the demo.
+var entry_loadout: ?sim.Loadout = null;
 /// The input applied last tick (pad or demo log): edge detection for the
 /// mode machine. `prev_pad` is the pad alone, for the takeover edge.
 var prev_in: state.Buttons = .{};
@@ -152,6 +156,7 @@ fn run_mode(b: state.Buttons) void {
             // scripted runs use it). Select: sound (SPEC.md section 3).
             // Nothing for `attract_after` ticks: the recorded demo.
             title_ticks += 1;
+            entry_loadout = null;
             if (pressed(b, .a)) {
                 new_game(0);
             } else if (pressed(b, .b)) {
@@ -219,6 +224,7 @@ fn run_mode(b: state.Buttons) void {
             card_ticks += 1;
             if (card_ticks >= card_max or (card_ticks >= card_min and (pressed(b, .a) or pressed(b, .start)))) {
                 if (next_level(level_index)) |next| {
+                    entry_loadout = sim.loadout(&game.player);
                     new_game(next);
                 } else {
                     mode = .victory;
@@ -249,6 +255,7 @@ fn new_game_seeded(index: u8, seed: u32) void {
     level_index = index;
     level = &levels.all[level_index];
     sim.init(&game, level, level_index, seed);
+    if (entry_loadout) |l| sim.equip(&game, l);
     rewind.reset(&game);
     hud.set_rewinding(false);
     hud.meter_override = null;
@@ -266,6 +273,7 @@ fn to_title() void {
 
 /// The title idled: play the recorded demo (Production, fixed seed).
 fn start_demo() void {
+    entry_loadout = null;
     new_game_seeded(demo.level_index, demo.seed);
     demo.reset();
     demo_active = true;
@@ -482,6 +490,7 @@ fn debug_start_demo() callconv(.c) void {
 /// Setup call: the demo level with the demo seed in normal play, so a demo
 /// script can be authored and its hash recorded without a rebuild.
 fn debug_new_game_seeded() callconv(.c) void {
+    entry_loadout = null;
     new_game_seeded(demo.level_index, demo.seed);
 }
 /// 1 when the sprite/blit nibble reads agree with PackedIntSlice.get.
