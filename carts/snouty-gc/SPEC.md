@@ -101,6 +101,12 @@ Track names, in league order:
 - Runoff: **Salt Pan Sprint**, **Outflow Canyon**, **Coolant Basin**.
 - Perimeter: **Fenceline**, **Substation Ruins**, **The Last Mile**.
 
+More leagues come as **track packs**: files copied onto the badge
+drive, loaded at race start (section 19). The first two planned packs
+are **The Boneyard** (an aircraft boneyard full of future aircraft and
+spacecraft wreckage) and **The Seabed** (a dried ocean floor with
+shipwrecks and whale skeletons).
+
 ### 3.3 Track features
 
 Track features are tile attributes painted by the generator, as in Zero
@@ -747,10 +753,18 @@ Merge to main as soon as a milestone is badge-ready.
   and fast paths; a balance pass that errs dangerous. **Done when:** a full
   two-league circuit is playable start to finish.
 - **M6 Stretch** (pick with Adrian): the Perimeter league (sentries,
-  PROMPT INJECTION, the ending card) behind the RAM cut in 13.2; a `KILL
+  PROMPT INJECTION, the ending card), built in behind the RAM cut in
+  13.2, or as the first track pack once M7 exists; a `KILL
   -9` arena battle mode (one open Mode 7 arena, pickups only, last car
   running, best on two badges); rewind back for single-player (17.7); a
   Tufty port (on the `tufty` branch, as the other carts were).
+- **M7 Track packs** (future goal, Adrian 2026-10-04): section 19. The
+  pack format and loader, scenery props, `tools/build_pack.py`, the pack
+  picker, link-race pack matching, then **The Boneyard** and **The
+  Seabed** as the first two packs (three tracks each). **Done when:** a
+  pack copied onto the badge drive shows in the league picker and races,
+  the built-in leagues still work with no pack present, and a corrupt or
+  foreign pack is refused with a message, never a crash.
 
 ## 17. Decisions (taken by default, 2026-10-04)
 
@@ -785,6 +799,10 @@ Merge to main as soon as a milestone is badge-ready.
     nonce. The career is single-player.
 14. **Racer roster and bios as in 4.1.** Snouty wears the eyepatch over
     the left eye.
+15. **Track packs are data only** (section 19): art, tracks and props.
+    Behaviour (hazards, pickups) stays in the cart, and a pack picks from
+    the hazard kinds the cart knows. Read from the drive, copied into one
+    RAM slot at race start. Files are `NAME.GCP` (FAT 8.3).
 
 ## 18. Facts to check in M0
 
@@ -801,9 +819,159 @@ Merge to main as soon as a milestone is badge-ready.
   same API (`init`, `poll`, `send`, `recv`, `connected`, `nonce`,
   `partner_nonce`, `session`) before M4 starts.
 
+## 19. Future: track packs
+
+Adrian, 2026-10-04: load track packs from separate files on the badge so
+that many more tracks can be made and swapped. This is a goal for M7, not
+M0 to M6. M0 to M6 only keep the door open: the active league and track
+are a runtime struct of slices chosen at race start, never comptime
+constants inside the hot loops.
+
+### 19.1 What a pack is
+
+A pack is one file, `NAME.GCP` (FAT 8.3 name), that the user copies onto
+the badge's USB drive next to the emulator ROMs. `lib/romfs.zig` (the
+FAT12 reader the emulators use: `Volume.open_badge`, `find` by
+extension, `map`, `chunk`, `crc32`) finds and reads it. A pack holds one
+league:
+
+| Part | Size | Notes |
+|---|---|---|
+| Header | 64 B | magic `GCPK`, format version, pack name (16 chars), league name, track count, the hazard kinds it uses, CRC32 of the rest |
+| Palette | 512 B | as the built-in leagues |
+| Tileset | 8 or 16 KB | 128 or 256 tiles of 8x8 at 8 bpp |
+| Horizon | 12 KB | the two-layer strip, as built-in |
+| Props sheet | up to 6 KB | scenery billboards at 4 bpp (19.3) |
+| Per track (1 to 4) | 7 to 10 KB each | name, LZ map, attributes, centerline, features (crates, chips, hazards, props) |
+
+A three-track pack is about 50 to 60 KB, so the 1,280 KB drive holds the
+emulator ROMs and a shelf of packs.
+
+### 19.2 Loading
+
+- **Picker.** The track menu lists the built-in leagues first, then every
+  `.GCP` on the drive by its pack name. Packs are scanned when the menu
+  opens, header and CRC only, with the CRC in the background over a few
+  frames as Snouty Genesis does for drive ROMs.
+- **RAM slot.** At race start the pack's palette, tileset, horizon,
+  props and the chosen track's data are copied into one RAM slot (about
+  32 KB of `.bss` for a 128-tile pack). The map unpacks into the existing
+  16 KB map buffer. The renderer reads through the same slices as for a
+  built-in league, so there is no second code path in the floor loop.
+  Reading art from the drive's flash window per pixel would put XIP cache
+  misses in the hot loop, which is why the pack is copied. Built-in
+  leagues keep pointing at `.rodata`.
+- **RAM budget.** The slot competes with the 25 KB of spare RAM in 13.2.
+  M7 makes the room either by moving the Perimeter league out of the
+  cart into a pack, or by shrinking a built-in horizon to 4 bpp. M7
+  measures before choosing.
+- **Safety.** Every offset and length in a pack is checked against the
+  file size before use, the CRC must match, unknown versions are refused,
+  and a track must pass a centerline sanity check (closed loop, start
+  line, sane widths). A bad pack shows `PACK DAMAGED` in the picker and
+  cannot be picked. The romfs reader already refuses broken volumes and
+  chains.
+- **Link races.** `SETUP` carries the pack's CRC32. If the guest has no
+  pack with that CRC, both badges show `PEER NEEDS BONEYARD.GCP` and go
+  back to the setup screen.
+- **Simulator and tests.** The wasm build has no drive, so a build
+  option `-Dgc-pack=<file>` embeds one pack for the simulator. Host tests
+  build packs with the tool and read them through `romfs.Image.whole`,
+  including truncated and corrupted copies.
+
+### 19.3 Props: scenery that sticks up
+
+The new leagues need things that stand up off the floor: tail fins,
+rocket boosters, ship hulls, whale ribs. Mode 7 alone only does the
+floor, so M7 adds **props**: billboards placed by the track file (`prop
+<kind> x y`), drawn through the same depth-sorted scaled blit as the cars.
+A prop is either solid (a collision circle, so it acts as a wall) or
+decorative. A pack brings its own props sheet. Built-in leagues can use
+props too (monitor stacks in the Dumps, cooling towers in the Runoff),
+which is why props sit in the engine and not in the pack loader. Props
+count against the 64-object sprite cap, with the farthest dropped first.
+
+### 19.4 Hazards a pack may use
+
+Packs are data only. A pack can place any hazard kind the cart knows,
+with its own timing and art, but it cannot add a new behaviour. The
+cart's hazard kinds, generalised in M7 from the built-in ones:
+
+| Kind | Built-in use | Pack parameters |
+|---|---|---|
+| timed blast | exhaust vent (Runoff) | position, direction, width, period, damage, push |
+| crossing mover | the Sweeper (Dumps) | path (two points), speed, size, damage |
+| turret | sentry (Perimeter) | position, range, fire period, target rule (leader, nearest) |
+| slick | coolant | (a tile attribute) |
+| pit | open edge | (a tile attribute) |
+| breakable crust | (new in M7) | a tile region that turns into a pit for 300 ticks after a car crosses it |
+
+### 19.5 The Boneyard
+
+*The Hyperscalers grounded everything that carried people, then
+everything that carried anything. The data moves as light now. Every
+aircraft ever built ended up here, in rows, in the desert, and nobody
+came back for them.*
+
+An aircraft boneyard under hard sun: rows of mothballed airliners with
+taped-up windows and engines bagged in white, Cold War bombers, then
+deeper in, the future: tilt-rotor cargo drones stacked like plates,
+scramjet test articles, a crashed orbital shuttle on its belly, a
+fallen space-station ring half buried in sand, rocket boosters standing
+nose-down like fence posts, and one starship hull nobody admits to
+recognising.
+
+- **Floor**: cracked runway concrete with faded markings, taxiway
+  stripes, sand drifts, shadows painted under wings, a scorched reentry
+  furrow.
+- **Horizon**: endless tail fins, a vertical booster, heat shimmer, the
+  shuttle's tail sticking up.
+- **Props**: tail fin, bagged engine, landing gear, rocket booster, a
+  broken wing tip, a satellite dish, the shuttle's nose.
+- **Hazards**: *jet blast* (timed blast: a turbine the AIs forgot to
+  shut down spools up across the taxiway), *tumbleweed debris* (crossing
+  mover: a loose cowling rolls across the runway), *breakable crust*
+  over the reentry furrow.
+- **Tracks**: **Mothball Mile** (a fast loop down the airliner rows and
+  under the wings), **Wing Row** (tight weaving between parked bombers,
+  pinch points under tails), **Reentry Field** (the spacecraft end: the
+  shuttle, the station ring as a banked turn, the booster forest, and a
+  ramp off the shuttle's wing).
+
+### 19.6 The Seabed
+
+*They used the ocean as a heat sink until it was gone. What was down
+there is still down there, just dry now.*
+
+A dried ocean floor: salt crust and grey sand, rust-red ships lying
+on their sides, a container ship with its stacks spilled into a maze,
+whale skeletons whose ribs stand up like arches, a submarine on its
+keel, a toppled oil rig on its legs, and the fat ruptured trunk of an
+old transatlantic data cable (the old internet's backbone) snaking
+across the plain.
+
+- **Floor**: salt crust with polygon cracks, rippled sand, dead coral
+  fields, cable ruts, tide-pool slicks.
+- **Horizon**: wreck silhouettes, the oil rig, the long dry shelf where
+  the coast used to be, a pale sky.
+- **Props**: whale ribs (left and right, so a track drives *through* a
+  skeleton), ship bows, anchors, a periscope, shipping containers,
+  barnacled buoys, the cable's broken end.
+- **Hazards**: *tide pools* (slick), *salt crust* (breakable crust),
+  *container slide* (crossing mover: a container slides off a listing
+  stack across the track), *steam vent* (timed blast from the cable's
+  ruptured repeaters).
+- **Tracks**: **Shipbreaker Shoals** (a loop round the listing wrecks
+  and through a container-stack maze), **Whalefall** (a high-speed run
+  through a line of whale skeletons, rib arches as gates), **Cable
+  Trench** (following the severed cable down into the trench, with a
+  ramp across the break).
+
 ## Status
 
 - 2026-10-04: first draft (ee52bffc). Same day, revised to Adrian's
   notes: rewind dropped, two-badge link multiplayer added, racer select
   with portraits, personalities and own cars, Snouty with an eyepatch.
   Build approved; `PLAN.md` comes with M0.
+- 2026-10-04: track packs added as a future goal (section 19, M7) with
+  The Boneyard and The Seabed as the first two packs.
