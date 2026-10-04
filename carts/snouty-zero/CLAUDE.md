@@ -17,7 +17,7 @@ before changing anything. The repository-wide rules are in the root
 - `world.zig` (the plain World struct), `sim.zig` (one tick, no cart API),
   `ai.zig` (characters, autopilot), `history.zig` (keyframes + window
   cache, the rewind), `sprites.zig` (scaled blit, machines, effects),
-  `hud.zig`, `font.zig`, `menu.zig`, `results.zig`, `sound.zig`,
+  `hud.zig`, `font.zig`, `menu.zig`, `results.zig`, `sound.zig`, `engine.zig`,
   `hills.zig` (height profile from flag bit 7).
 
 ## Data

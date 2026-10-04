@@ -188,8 +188,11 @@ pub fn trim(s: []const u8) []const u8 {
 
 // ---- Cartridge SRAM (SPEC.md section 11) ----
 
-/// Largest SRAM kept (in RAM, not saved).
-pub const sram_max: u32 = 16 * 1024;
+/// Largest SRAM kept (in RAM, not saved). The RAM cart keeps 8 KB of
+/// address space (its streamed sound needed the other 8 KB, PLAN.md "Sound
+/// on the new firmware (2026-10-04)"): an odd-byte SRAM declared over 16 KB
+/// shows its first 4 KB there.
+pub const sram_max: u32 = if (@import("build_options").synth) 8 * 1024 else 16 * 1024;
 
 /// Where the 68000 sees the cartridge SRAM: `lo..hi` inclusive, bytes at
 /// `sram[addr - lo]` (odd- or even-byte SRAM leaves every other byte of

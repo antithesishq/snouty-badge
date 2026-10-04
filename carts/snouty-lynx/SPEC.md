@@ -243,13 +243,16 @@ of emulation).
 
 ## 9. Audio
 
-Four LFSR channels reduced to one `tone2` voice. A channel whose feedback
-taps and shift pattern give a square wave (the common music setting) has a
-pitch of timer rate / period; pick the loudest such channel (absolute
-volume), ties by channel number; drop noise-like tap settings. Update
-`tone2` only on change, once per frame. Menu toggle; the default comes from
-`-Dsound` (off, root docs/SOUND.md). Sampled
-audio (DAC writes through volume) is ignored.
+Rewritten 2026-10-04 (M5, PLAN.md "M5 Sound: contract"): Mikey's four
+channels are emulated (LFSR, integrate mode, the DAC writes games use for
+sampled sound, Lynx II stereo and attenuation mixed to mono) and streamed
+as 44.1 kHz unsigned 8-bit PCM through the newer badge firmware's audio
+ring; the firmware this repository pins (and the wasm simulator) has no
+such ring, so there the cart is silent. Menu row "Sound: On/Off", off at
+boot unless built with `-Dsound=true` (root docs/SOUND.md; Adrian,
+2026-10-04). The earlier plan (the loudest
+square channel reduced to one `tone2` voice) is dropped: the new firmware
+ignores `tone2`.
 
 ## 10. Time scrubbing
 

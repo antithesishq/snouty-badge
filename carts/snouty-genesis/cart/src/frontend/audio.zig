@@ -1,3 +1,15 @@
+//! Two paths (PLAN.md "Sound on the new firmware (2026-10-04)").
+//!
+//! RAM cart (`streamed`, core/sound.zig): the YM2612 and the PSG are
+//! synthesised from the 68000's writes and streamed into the new
+//! firmware's audio ring through `audio_feed` (lib/audio_feed.zig): one
+//! `frame` per update that stepped the game (the update's ~1,472 samples),
+//! `stop` in every update that did not (menu, picker, Sound off). It never
+//! calls `cart.tone2` or the `tone` import: on the new firmware those
+//! write the old tone words, which are now the ring's words. On old
+//! firmware the badge is silent. The ring is .bss (4.5 KB).
+//!
+//! XIP cart and simulator (unchanged since M1, below):
 //! `Md.tone()` -> the badge's one `tone2` voice (SPEC.md section 9). Calls
 //! `tone2` only when the note changes, and stops the buzzer when nothing
 //! is keyed on. f32 is fine here (frontend, not core). M1 Track C owns
@@ -23,11 +35,15 @@
 const cart = @import("cart-api");
 const core = @import("core");
 const build_options = @import("build_options");
+const audio_feed = @import("audio_feed");
 
-/// Sound exists in this build: the tone comes from the Z80's sound driver
-/// (YM2612 and PSG), so the RAM cart, which has the Z80 stub, is silent
-/// and its menu has no Sound row (PLAN.md M5).
-pub const available = core.tunables.z80_enabled;
+/// The RAM cart streams synthesised sound (core/sound.zig).
+pub const streamed = core.sound.enabled;
+
+/// Sound exists in this build: the XIP cart's tone comes from the Z80's
+/// sound driver, the RAM cart's stream from what the 68000 writes to the
+/// chips itself (no Z80 there: a Z80-driven game is silent).
+pub const available = core.tunables.z80_enabled or streamed;
 
 /// Sound on/off. Starts as `-Dsound` says (off by default, docs/SOUND.md);
 /// the menu toggles it. Always false without `available`.
@@ -73,7 +89,60 @@ const sim = struct {
     }
 };
 
+// ---- Streamed path (RAM cart) ----
+
+/// One update's samples at most (`core.sound.max_samples`, two frames).
+const Feed = audio_feed.Feed(.{
+    .nominal = 1472,
+    .max_src = core.sound.max_samples,
+    .ring_bytes = 4608,
+});
+var feed: Feed = undefined;
+var synth: core.sound.Sound = undefined;
+
+/// Once at `start` (field by field: a default `Feed` would be a 6 KB image).
+pub fn init() void {
+    if (!streamed) return;
+    @memset(&feed.ring, audio_feed.silence);
+    @memset(&feed.scratch, audio_feed.silence);
+    feed.started = false;
+    feed.playing = false;
+    feed.last = audio_feed.silence;
+    feed.q_smooth = 0;
+    feed.underruns = 0;
+    feed.last_queued = 0;
+    synth.init();
+}
+
+/// After `md.init_in_place`: give the console its renderer.
+pub fn attach(md: *core.Md) void {
+    if (!streamed) return;
+    synth.render = false;
+    md.snd = &synth;
+}
+
+/// One update's samples (`core.sound.max_samples`), lent by `run_update`
+/// from its stack: the RAM cart has no static room for it.
+pub const UpdateBuf = [if (streamed) core.sound.max_samples else 0]u8;
+
+/// Before the update's frames: render them (into `buf`) or not, as Sound
+/// says. `update` takes the samples before `buf` goes out of scope.
+pub fn before_frames(md: *const core.Md, buf: *UpdateBuf) void {
+    if (!streamed) return;
+    synth.set_render(md, enabled);
+    synth.begin_update(buf);
+}
+
+/// The ring's queue (samples) and the underruns, for the debug overlay.
+pub fn queued() u32 {
+    return if (streamed) feed.queued() else 0;
+}
+pub fn underruns() u32 {
+    return if (streamed) feed.underruns else 0;
+}
+
 fn stop() void {
+    if (streamed) return feed.stop();
     if (playing == null) return;
     if (cart.is_wasm) sim.stop() else cart.tone2(cart.Tone2Options.stop);
     tone_calls +%= 1;
@@ -92,6 +161,11 @@ pub fn playing_hz() u32 {
 
 /// Once per update, after the frames ran.
 pub fn update(md: *const core.Md) void {
+    if (streamed) {
+        const samples = synth.take();
+        if (enabled) feed.frame(samples) else feed.stop();
+        return;
+    }
     if (!available or !enabled) return stop();
     const t = md.tone() orelse return stop();
     if (t.hz < min_hz or t.hz > max_hz) return stop();

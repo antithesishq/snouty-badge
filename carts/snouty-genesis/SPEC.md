@@ -281,6 +281,24 @@ and the badge's one `tone2` voice plays one note chosen from them.
   `build_options.sound` says (`-Dsound`, off by default: root
   docs/SOUND.md). Badge A in the M1 menu placeholder toggles it; the M2
   menu's Sound row takes that over.
+- **Streamed sound, the RAM cart (2026-10-04, PLAN.md "Sound on the new
+  firmware")**: the show badges' newer firmware ignores `tone2` and plays
+  only a cart-owned ring of 44.1 kHz unsigned 8-bit mono samples, and
+  cannot run XIP carts. The RAM cart (`build_options.synth`) synthesises
+  the chips from the register model: `ym2612.Fm` (phase generator with
+  detune and multiple, envelope generator with key scaling, log-sine and
+  exponent tables, TL, the eight algorithms, op1 feedback, channel 3
+  special mode, LFO AM and PM, the DAC as a held level, L/R averaged to
+  mono; no SSG-EG, no CSM, no 9-bit DAC truncation) evaluated every
+  `tunables.fm_rate_div`-th sample, and `psg.Synth` (three tones, Sega's
+  16-bit noise, 2 dB steps, box-filtered at 44.1 kHz). `core/sound.zig`
+  renders lazily at each chip write (the 68000's line and cycle) and at
+  frame end, through a DC blocker and `mix_gain`; the frontend streams
+  through lib/audio_feed. Render-only state, outside keyframes. With the
+  Z80 stubbed only the 68000's own writes play: Sonic 1's SMPS music (not
+  its Z80 DAC drums, nor its SEGA voice); Z80-driven games (Miniplanets'
+  Echo) are silent. Sound off by default (the menu's Sound row). The XIP
+  cart and the simulator keep the one voice below.
 - **Z80 off** (`tunables.z80_enabled`, set per build variant: the RAM
   cart since M5): the arbiter stub, and no Z80 core linked. BUSREQ
   reports granted at once, RESET is recorded, the YM2612 keeps its
@@ -290,8 +308,8 @@ and the badge's one `tone2` voice plays one note chosen from them.
   slot reads once the driver has taken the command (Miniplanets' engine
   waits for a free slot and froze with Z80 RAM as plain memory, the
   pre-M5 design of this mode). A driver that must set a flag before the
-  game goes on would hang either way. No tone at all (no Sound row); the
-  overlay shows `z80:off`. With the test ROM and Miniplanets the pictures
+  game goes on would hang either way. No tone voice (its sound is the
+  stream above); the overlay shows `z80:off`. With the test ROM and Miniplanets the pictures
   are the same as with the Z80 (`tests/ram_variant.zig`).
 
 ## 10. Time scrubbing

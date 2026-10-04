@@ -786,7 +786,11 @@ silent there. Adrian: keep sound off by default, make it work.
 ## Fast forward (2026-10-04)
 
 Gear track of root docs/FAST_FORWARD.md (branch `emu-ff-gear`). Adrian:
-hold-to-fast-forward, the usual emulator feature.
+hold-to-fast-forward, the usual emulator feature. Shipped first with a
+Select+Right chord (tag `snouty-gear/ff`, recorded below); Adrian then
+made the trigger a Select double tap with the second press held ("Double
+tap" at the end of this section). Stepping, sound, indicator and the
+determinism tests are unchanged by that.
 
 - Input (`frontend/input.zig`, `GameInput.fast`): Right pressed while
   Select is held starts it, and it lasts while both stay held; no menu,
@@ -853,3 +857,33 @@ hold-to-fast-forward, the usual emulator feature.
   "4 per update" read as the 4x cap); the menu has no free line, so the
   footer alternates instead of a new row; the indicator moves to y 24
   while the debug overlay (on by default) covers the top rows.
+
+### Double tap (2026-10-04, after `snouty-gear/ff`)
+
+- Input (`frontend/input.zig`): a Select press released before the 500 ms
+  hold opens `ff_tap_window` (12 frames, 200 ms, `frontend/tuning.zig`);
+  a second press inside it starts fast forward at once, lasting while
+  Select is held; that press never runs the menu timer and its release
+  delivers nothing. A window that runs out does nothing (Gear's Select
+  tap is reserved, so nothing is held back). Start during the window or
+  fast forward cancels. Right and the rest reach the game again; Select
+  is the only masked button (it was never in the pad). The Right masking
+  and suppress of the chord are gone.
+- Hints: "2x Sel+hold: fast" in the play strip (after "Hold Select:
+  menu") and in the menu footer's turn; `docs/ff_2026-10-04.png` redone.
+- Tests: `tests/input_unit.zig` rewritten, 8 `input:` tests (menu hold;
+  double tap and hold, d-pad passes, release delivers nothing and opens
+  no window; window's last frame counts and one later is a plain press;
+  long hold opens no window; Select+Right is game input; Start in the
+  window and in fast forward; Start+Select on the hold; `suppress_held`).
+  Cart suite 117/117; `zig build test` exit 0; `check-float` PASS.
+- Preview (`tools/scripts/ff_play.json` now double taps: Select 680-682
+  then 688-860, 900-902 then 906-940, and 960-962 then 980-999 past the
+  window): `debug_ff_frames` 4 on 688-860 and 906-940, 1 elsewhere
+  (including 980-999), `debug_frame_count` 616 -> 1308 over 687-860,
+  `debug_menu_opens` 0.
+- badge-bench, Waternet, m2_play's presses then `SELECT:680-682,
+  SELECT:688-980` (`--no-config --frames 1000 --lcd`): whole run mean
+  4.25 / p95 6.68 / max 6.96 ms, 0 over; fast-forward updates 688-980:
+  mean 6.40 / p95 6.79 / max 6.79, 0 over, 4 frames in all 293 updates
+  (temporary `cart.trace` build). `--lcd` frame 990 shows no `>>4x` left.

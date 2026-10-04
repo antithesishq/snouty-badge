@@ -33,8 +33,10 @@ ownership and interface contract.
   (60/30: `tunables.render_every` frames per update, the last rendered)
   and holds the wasm simulator shims; `frontend/` has video (tagged index
   -> `Pixel` cache with shadow/highlight), input (pad word, Select tap = A,
-  Select hold = menu), audio (`Md.tone()` -> `tone2` on change; the wasm
-  build drives the simulator's `tone` import itself, see the file), debug
+  Select hold = menu), audio (the RAM cart: `core/sound.zig`'s samples
+  through `audio_feed` into the new firmware's ring, never `tone2`; the
+  XIP cart: `Md.tone()` -> `tone2` on change; the wasm build drives the
+  simulator's `tone` import itself, see the file), debug
   (overlay), text (fast font), romsrc (drive or embedded ROM, the report
   line), picker, help (the no-ROM screen).
 - `tests/` — host tests, entry `tests/all.zig`. `tests/roms/` is
@@ -75,12 +77,16 @@ only (it calls this cart's `build.zig` `pub fn add`).
   `snouty-genesis-xip.uf2`/`.elf` (XIP cart), `zig-out/bin/snouty-genesis.wasm`
   (built from the XIP cart's modules: Z80 and scrubber). `-Dcart-mode=xip`
   builds the XIP cart and the wasm only. The variants differ only through
-  `build_options` (`z80`, `scrub`, `sound`; the core imports it too:
-  `tunables.z80_enabled`, `undo.enabled`) and module optimize modes (RAM
+  `build_options` (`z80`, `scrub`, `synth`, `sound`; the core imports it too:
+  `tunables.z80_enabled`, `undo.enabled`, `sound.enabled` = the RAM
+  cart's FM + PSG synthesis, `tunables.fm_rate_div` its FM rate) and module optimize modes (RAM
   cart: `app`, `drive`, `romfs`, `rom`, `iris`, `hint` and cart-api
   ReleaseSmall; `core` and `video` ReleaseFast), plus the RAM cart's
   trimmed test ROM in embed builds (`tools/trim_rom.zig`). Keep the RAM
-  ELF's `__bss_end__` at least 4 KB under `__stack_limit__` (`arm-none-eabi-nm`).
+  ELF's `__bss_end__` under `__stack_limit__` (`arm-none-eabi-nm`): 4 KB to
+  spare until the sound took most of it (PLAN.md "Sound on the new
+  firmware"; the update's sample buffer lives on the stack in
+  `run_update`).
 - Module layout: `cart/src/main.zig` (root: exports, wasm shims) imports
   `app` (`cart/src/frontend/app.zig`: the state machine, rooted in
   `frontend/`, so every frontend file but `video.zig` and `drive.zig`

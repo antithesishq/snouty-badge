@@ -215,31 +215,33 @@ Controls (badge / simulator key):
 | Start        | Start                        | nothing                          |
 | Select tap   | nothing (reserved)           | Resume                           |
 | Select hold 500 ms | opens the menu         | -                                |
-| Select, then Right, both held | fast forward (up to 4x, silent, `>>4x` top right) | - |
+| Select tap, then press and hold | fast forward (up to 4x, silent, `>>4x` top right) | - |
 
 Start+Select (exit to the OS menu) and the joystick click belong to the OS.
 
 On-screen hints (`lib/hint.zig`, shared with Boy, Genesis and Lynx): the
 splash and the first 3 s of play show "Hold Select: menu" (a strip at the
-bottom, then "Sel+Right: fast" for 3 s more, gone at the first button
+bottom, then "2x Sel+hold: fast" for 3 s more, gone at the first button
 press); in the menu the bottom line on
 Resume reads "Left/Right: rewind" ("Rewind: no history" before the first
 keyframe; the `Scrub:` readout once parked or on other rows) and the
 footer reads "B: back to game", taking turns every 2 s with
-"Sel+Right: fast".
+"2x Sel+hold: fast".
 
 ### Fast forward
 
-Hold Select, then hold Right: the game runs up to four frames per badge
+Tap Select, then press it again within 200 ms and hold it: the game runs up to four frames per badge
 frame (each update steps unrendered frames until four ran or about 13 ms
 of the 16.7 ms went, then one rendered frame; knobs `ff_max_frames` and
 `ff_budget_us` in `cart/src/frontend/tuning.zig`), silent, with `>>4x`
 (the frames that update) in the top right corner, under the debug overlay
-while that is on. Right does not reach the game meanwhile. Let go of
-Right: back to 1x, and the Select hold that opens the menu counts from
-zero again. Let go of Select: back to 1x, no Select tap, and a Right
-still held waits for its release. Start cancels it, as it cancels the
-menu hold (Start+Select is the OS's). The scrubber records every frame,
+while that is on. The d-pad and buttons reach the game as usual. Let go
+of Select: back to 1x, nothing delivered. The second press never runs
+the menu timer; a single long hold still opens the menu at 500 ms. A
+Select tap with no second press within `ff_tap_window` (12 frames,
+`tuning.zig`) does nothing, as before (the Game Gear has no Select).
+Start during that window or during fast forward cancels it
+(Start+Select is the OS's). The scrubber records every frame,
 so the history holds the fast-forwarded frames. In the simulator it is
 always 4x (no real clock there). `tools/scripts/ff_play.json` walks it
 in the headless preview (`--sample debug_frame_count,debug_ff_frames`:

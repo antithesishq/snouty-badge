@@ -42,6 +42,7 @@ const Md = md_mod.Md;
 const rom = @import("rom.zig");
 const undo = @import("undo.zig");
 const tunables = @import("tunables.zig");
+const sound = @import("sound.zig");
 
 /// 68000 address of the first work RAM byte reachable through the window
 /// (work RAM is mirrored across E00000-FFFFFF).
@@ -82,11 +83,11 @@ pub const Z80Bus = struct {
             self.write_window(addr, v);
         } else if (addr < 0x6000) {
             const part: u1 = @truncate(addr >> 1);
-            if (addr & 1 == 0) self.md.ym.write_addr(part, v) else self.md.ym.write_data(part, v);
+            if (addr & 1 == 0) self.md.ym.write_addr(part, v) else sound.ym_data(self.md, part, v);
         } else if (addr < 0x6100) {
             write_bank(self.md, v);
         } else if (addr >= 0x7F10 and addr < 0x7F18 and addr & 1 != 0) {
-            self.md.psg.write(v);
+            sound.psg_write(self.md, v);
         }
     }
 
@@ -207,6 +208,7 @@ pub fn reset_genesis(cpu: *Cpu) void {
 pub fn reset_line(md: *Md) void {
     reset_genesis(&md.z80);
     md.ym.reset();
+    sound.ym_was_reset(md);
 }
 
 /// Run the Z80 for at least `budget` cycles (one line slice) and return

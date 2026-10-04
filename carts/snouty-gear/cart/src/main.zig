@@ -12,13 +12,13 @@
 //! the samples stream to the OS; in the simulator one `tone` voice. The time scrubber
 //! (frontend/rewind.zig, SPEC.md 10) records a keyframe every 30 game frames
 //! and the pad of every frame; the menu's Left/Right scrub through them.
-//! Fast forward (docs/FAST_FORWARD.md at the root): while Select then
-//! Right are held, each update steps up to `tuning.ff_max_frames` game
+//! Fast forward (docs/FAST_FORWARD.md at the root): while the second
+//! press of a Select double tap is held, each update steps up to `tuning.ff_max_frames` game
 //! frames within `tuning.ff_budget_us`, only the last one rendered and none
 //! with sound, every one recorded for the scrubber; `>>4x` sits in the
 //! top right corner meanwhile.
 //! Control hints (lib/hint.zig): "Hold Select: menu" on the splash and in
-//! a strip at the bottom for the first 3 s of play, then "Sel+Right: fast"
+//! a strip at the bottom for the first 3 s of play, then "2x Sel+hold: fast"
 //! for 3 s more (gone at the first fresh press); the menu has its own.
 //! See SPEC.md (design), PLAN.md (milestone contract), CLAUDE.md (toolchain).
 const cart = @import("cart-api");

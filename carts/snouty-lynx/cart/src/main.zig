@@ -1,4 +1,4 @@
-//! Snouty Lynx: Atari Lynx emulator cart (M3: the scrubber). The Iris-mark
+//! Snouty Lynx: Atari Lynx emulator cart (M5: sound). The Iris-mark
 //! splash (frontend/splash.zig), then the game: the core steps 1/60 s of
 //! Lynx time per update and its last completed frame goes to rows 0..101,
 //! the 26-row status strip below it (SPEC.md section 6) has the title and
@@ -30,9 +30,14 @@
 //! splash or the picker (gone at the first fresh press); the menu has its
 //! own.
 //!
-//! No sound (the badge speaker is unused in this project) and the
-//! neopixels are never written (docs/NEOPIXELS.md). SPEC.md is the design,
-//! PLAN.md the milestone contract, CLAUDE.md the conventions.
+//! Sound (M5, PLAN.md "M5 Sound: contract"): every stepped frame's
+//! `audio_out` goes to the new firmware's streaming ring
+//! (frontend/audio.zig over lib/stream_audio.zig); an update that steps
+//! nothing (splash, menu, scrub, picker) ramps it out. The menu's Sound
+//! row (off at boot as in every cart, `-Dsound=true` starts it on; not in
+//! the wasm build, the simulator has no streaming audio) toggles it. The neopixels are never written
+//! (docs/NEOPIXELS.md). SPEC.md is the design, PLAN.md the milestone
+//! contract, CLAUDE.md the conventions.
 const cart = @import("cart-api");
 const core = @import("core");
 const video = @import("frontend/video.zig");
@@ -45,6 +50,7 @@ const splash = @import("frontend/splash.zig");
 const picker = @import("frontend/picker.zig");
 const strip = @import("frontend/strip.zig");
 const rewind = @import("frontend/rewind.zig");
+const audio = @import("frontend/audio.zig");
 const hint = @import("hint");
 
 comptime {
@@ -69,6 +75,8 @@ var menu_opens: u32 = 0;
 /// "Hold Select: menu" over the status strip's last line for the first
 /// seconds of play (lib/hint.zig).
 var play_hint: hint.Overlay = .{};
+/// The core stepped in this update (else the sound ramps out).
+var stepped: bool = false;
 
 pub fn start() void {
     cart.set_vsync_enabled(1000.0 / 60.0);
@@ -92,6 +100,7 @@ pub fn update() void {
     controls_state.poll(read_controls());
     const t0 = cart.micros_since_boot();
     debug.frame_tick(t0);
+    stepped = false;
 
     switch (state) {
         .splash => if (splash.update(controls_state.edge.any_pressed())) {
@@ -106,6 +115,8 @@ pub fn update() void {
         // the wasm and embed builds.
         .pick => if (romsrc.use_drive) pick_frame(t0),
     }
+    // The game stopped (menu, scrub, picker): one ramp to silence.
+    if (!stepped) audio.stop();
 
     if (cart.is_wasm) present_wasm();
 }
@@ -185,11 +196,16 @@ fn run_frame(t1: u64) void {
     // After a scrub the console is parked on a record boundary: playing on
     // from there drops the future.
     rewind.resume_if_parked(&lynx);
+    // Sound off (or wasm): the core may skip filling `audio_out`. Set every
+    // frame: a boot (`init_in_place`) turns it back on.
+    lynx.audio_render = audio.enabled;
     lynx.step_frame(pad);
     rewind.record_frame(&lynx);
     const t2 = cart.micros_since_boot();
     debug.record(@truncate(t2 -% t1));
     debug.record_core(lynx.instr_count(), lynx.pixels_drawn());
+    audio.frame(&lynx);
+    stepped = true;
 
     video.show(lynx.frame());
     strip.draw(&lynx);
@@ -381,10 +397,11 @@ fn debug_instr_per_frame() callconv(.c) u32 {
 fn debug_menu_opens() callconv(.c) u32 {
     return menu_opens;
 }
-/// Menu settings: bit 0 unused (no sound in this cart), bit 2 A/B
-/// swapped, bit 3 debug overlay on.
+/// Menu settings: bit 0 sound on (never in wasm), bit 2 A/B swapped,
+/// bit 3 debug overlay on.
 fn debug_settings() callconv(.c) u32 {
     var v: u32 = 0;
+    if (audio.enabled) v |= 1;
     if (input.swap_ab) v |= 4;
     if (debug.enabled) v |= 8;
     return v;

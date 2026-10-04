@@ -15,6 +15,9 @@ pub fn add(b: *Build, sycl_badge_dep: *Build.Dependency, opts: common.Options) v
     // -Ddebug_overlay=true draws frame timing in the top-left corner (declared by the root build.zig).
     const options = b.addOptions();
     options.addOption(bool, "debug_overlay", opts.debug_overlay);
+    // -Dsound=true starts with the music on; off by default, Start in the
+    // attract orbit toggles it (root docs/SOUND.md, SPEC.md section 8).
+    options.addOption(bool, "sound", opts.sound);
     // -Dreflections_variant picks frame rate, render scale and scene knobs; cart/src/variant.zig
     // maps it to constants (PLAN.md "M2.1 Perf variants").
     const variant = b.option(Variant, "reflections_variant", "snouty-reflections: cut20 (default, shipped), full20, full15 or half30") orelse .cut20;
@@ -57,6 +60,15 @@ pub fn add(b: *Build, sycl_badge_dep: *Build.Dependency, opts: common.Options) v
         .imports = &.{.{ .name = "variant", .module = variant_host }},
     }) });
     opts.test_step.dependOn(&b.addRunArtifact(variant_tests).step);
+
+    // The music sequencer and synth (cart/src/music.zig's own tests).
+    const music_tests = b.addTest(.{ .root_module = b.createModule(.{
+        .root_source_file = b.path(dir ++ "cart/src/music.zig"),
+        .target = b.graph.host,
+        .optimize = .Debug,
+        .imports = &.{.{ .name = "stream_audio", .module = b.createModule(.{ .root_source_file = b.path("lib/stream_audio.zig") }) }},
+    }) });
+    opts.test_step.dependOn(&b.addRunArtifact(music_tests).step);
 }
 
 /// Perf variants; the table is in cart/src/variant.zig.
@@ -66,9 +78,10 @@ const Bench = enum { none, height, motion_off };
 
 var build_options: ?*Build.Step.Options = null;
 
+/// `build_options` and `stream_audio` (the badge's streaming audio, root lib/).
 fn add_options(b: *Build, cart: *Build.Module, cart_api: *Build.Module, step: *Build.Step) void {
-    _ = b;
     _ = cart_api;
     _ = step;
     if (build_options) |o| cart.addImport("build_options", o.createModule());
+    cart.addImport("stream_audio", b.createModule(.{ .root_source_file = b.path("lib/stream_audio.zig") }));
 }

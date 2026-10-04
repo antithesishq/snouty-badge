@@ -10,6 +10,14 @@ window) and presents at 30 Hz with two Genesis frames per update. The 68000 runs
 one-voice tone, and an emulator menu sits behind a Select hold, with time
 scrubbing by deterministic replay (as Snouty Boy and Snouty Gear).
 
+Sound (2026-10-04): the show badges' firmware plays only a streamed
+44.1 kHz sample ring and has no XIP, so the RAM cart now synthesises the
+YM2612 (FM, six channels) and the PSG from what the 68000 writes to them
+and streams it (core/sound.zig). Its Z80 is a stub, so Sonic 1 (SMPS on
+the 68000) has its music without the Z80's DAC drums, and Z80-driven
+games such as Miniplanets stay silent. Sound is off at boot; the menu's
+Sound row turns it on. PLAN.md "Sound on the new firmware".
+
 Status: M4 (perf) done; history in PLAN.md. M3 added the time scrubber,
 M4 drive ROMs at contiguous speed even when fragmented and Smooth H40 on
 by default. Up to M2: the 68000, VDP, Z80 sound side and the one tone voice run

@@ -8,8 +8,11 @@ noon, storm) cycle in attract mode with a fade; the spheres bob and ring the
 water and the sun drifts (M3). The
 cart is locked to its variant's frame rate (20 fps for the shipped `cut20`,
 `cart.set_vsync_enabled(1000.0 / 20.0)`), so one `update()` is one frame
-and the scene animates by frame count, not wall time. There is no audio
-(SPEC.md section 8): the cart never calls `tone`.
+and the scene animates by frame count, not wall time. Background music
+(Satie's Gymnopedie No. 1 as a chiptune, SPEC.md section 8) boots off;
+Start in the attract orbit toggles it ("MUSIC ON" / "MUSIC OFF" bottom
+left), `-Dsound=true` builds it on. The simulator plays the melody and
+bass only.
 
 Controls (SPEC.md section 3, M3):
 
@@ -20,7 +23,7 @@ Controls (SPEC.md section 3, M3):
 | A              | Freeze                            | Freeze                               | Unfreeze: time resumes where it stopped      |
 | B              | Cycle dither mode                 | Cycle dither mode                    | Cycle dither mode                            |
 | Select         | Next scene preset                 | Next scene preset                    | Next preset                                  |
-| Start          | (nothing)                         | Return to attract orbit              | Unfreeze and return to attract orbit         |
+| Start          | Music on/off                      | Return to attract orbit              | Unfreeze and return to attract orbit         |
 
 Free camera orbits at 36 deg/s (3 orbit steps per frame at 20 fps) and
 moves the height by 0.05 m per frame; it returns to attract by itself after

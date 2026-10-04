@@ -6,14 +6,15 @@ onto the badge's USB drive; the badge cart carries no ROM of its own (the
 web simulator embeds one). The Lynx's 160x102 picture sits 1:1 at the top of the
 badge's 160x128 screen with a 26-row status strip below it. The core
 emulates the 65C02, Suzy's sprite engine and math unit, and Mikey's
-timers and palette; the menu has a time scrubber (SPEC.md).
+timers and palette; the menu has a time scrubber (SPEC.md). On the badges'
+new OS firmware it plays the Lynx's sound through the speaker (M5).
 
-Status: M4 (perf) done; M0-M4 are on main, history in PLAN.md. The
+Status: M0-M5 are on main, history in PLAN.md. The
 Iris-mark splash, then the game (the real core since M1: the 65C02, Mikey,
 Suzy, the boot without the boot ROM), the strip with "SNOUTY LYNX", the
 ROM name and where it came from, the emulator menu and picker (M2) and the
-time scrubber (M3). No sound (the badge speaker is unused in this project);
-the neopixels stay off. The simulator's embedded ROM is `roms/raycast.lnx`,
+time scrubber (M3), the sound (M5, below; off by default); the neopixels
+stay off. The simulator's embedded ROM is `roms/raycast.lnx`,
 42Bastian's textured raycaster (Apache-2.0, `roms/LICENSE-raycast.txt`);
 the boot path that decrypts a cart's loader without the Lynx boot ROM is
 `core/boot.zig` (`docs/BOOT.md`).
@@ -44,12 +45,25 @@ Pick ROM forget the history.
 |--------------------------|--------------------------------------------------------|
 | Resume                   | Back to the game                                       |
 | Buttons: A=A B=B         | Swap badge A and B                                     |
+| Sound: Off               | Sound on or off (off at boot, `-Dsound=true` starts it on; not in the simulator) |
 | Press Option 2           | Resume with Option 2 held for 4 frames                 |
 | Restart Pause+Opt1       | Resume with Pause + Option 1 held for 4 frames (the Lynx restart chord) |
-| Debug overlay: Off       | The strip shows fps, step times, instructions, Suzy pixels |
+| Debug overlay: Off       | The strip shows fps, step times, instructions, Suzy pixels, and with sound on the audio queue and underruns ("q1470/0") in place of the ROM name |
 | Reset                    | Power on again (the boot reruns)                       |
 | Pick ROM                 | The drive's ROM list (only with two or more playable files) |
 | About                    | Version, file, header title and maker, size, source, CRC |
+
+Sound (M5). The badges' new OS firmware (sycl-badge upstream from
+"Streaming Audio, v1 Mixer") plays a ring of 44.1 kHz samples the cart
+fills; the cart sends the Lynx's four audio channels there, 735 samples
+a frame. It boots silent like every cart (../../docs/SOUND.md): the menu's
+Sound row turns it on, and `zig build -Dcart=snouty-lynx -Dsound=true`
+builds a cart that starts with it on. The volume is the firmware's:
+Start + Select opens its settings box (Volume with Left/Right). In the menu,
+a scrub and the picker the sound fades out (a 64-sample ramp) and comes
+back with the game. The old firmware plays nothing (no harm), and the web
+simulator has no streaming audio, so the simulator build is silent and
+has no Sound row.
 
 ```sh
 (cd ../.. && zig build -Dcart=snouty-lynx)   # ../../zig-out/firmware/snouty-lynx.uf2, ../../zig-out/bin/snouty-lynx.wasm

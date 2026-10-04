@@ -29,7 +29,7 @@
 //! On Resume at the live position it names the action instead,
 //! "Left/Right: rewind" or "Rewind: no history", and a footer under it
 //! reads "B: back to game" (lib/hint.zig, review 2026-10-01 UX-05),
-//! taking turns every 2 s with "Sel+Right: fast" (fast forward, main.zig).
+//! taking turns every 2 s with "2x Sel+hold: fast" (fast forward, main.zig).
 //! Resuming from a scrubbed position plays on from there and drops the
 //! future. After a scrub step the panel gives way to that line in a bar at
 //! the bottom (`scrub_view`) so the restored frame, drawn by `rewind.step`,
@@ -79,9 +79,9 @@ const repeat_frames = 15;
 var repeat_dir: i2 = 0;
 var repeat_left: u8 = 0;
 
-/// The fast-forward chord's hint (input.zig `GameInput.fast`): the
+/// The fast-forward double tap's hint (input.zig `GameInput.fast`): the
 /// in-play strip's second line, and the footer's turn with `hint.back`.
-pub const fast_hint = "Sel+Right: fast";
+pub const fast_hint = "2x Sel+hold: fast";
 /// Menu updates each footer line stays (2 s).
 const footer_turn = 120;
 /// Menu updates since `open`, for the footer's turns.

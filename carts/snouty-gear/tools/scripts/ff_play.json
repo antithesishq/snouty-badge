@@ -20,8 +20,10 @@
   { "from": 612, "to": 619, "hold": ["LEFT"] },
   { "from": 632, "to": 635, "hold": ["B"] },
   { "from": 652, "to": 659, "hold": ["UP"] },
-  { "from": 680, "to": 860, "hold": ["SELECT"] },
-  { "from": 690, "to": 850, "hold": ["RIGHT"] },
-  { "from": 900, "to": 960, "hold": ["SELECT"] },
-  { "from": 905, "to": 940, "hold": ["RIGHT"] }
+  { "from": 680, "to": 682, "hold": ["SELECT"] },
+  { "from": 688, "to": 860, "hold": ["SELECT"] },
+  { "from": 900, "to": 902, "hold": ["SELECT"] },
+  { "from": 906, "to": 940, "hold": ["SELECT"] },
+  { "from": 960, "to": 962, "hold": ["SELECT"] },
+  { "from": 980, "to": 999, "hold": ["SELECT"] }
 ]
