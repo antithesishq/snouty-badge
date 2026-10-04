@@ -199,3 +199,10 @@ pub fn chime(step: u8) void {
         chime_pos = 0;
     }
 }
+
+/// Instead of `update` while fast forwarding: the core renders nothing
+/// then, so the badge ramps out as in the menu, and the simulator's voice
+/// stops at once instead of holding its note.
+pub fn mute() void {
+    if (comptime cart.is_wasm) stop() else feed.stop();
+}

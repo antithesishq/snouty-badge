@@ -28,7 +28,8 @@
 //! there is no history, "Scrub: no memory" when the arena had no room.
 //! On Resume at the live position it names the action instead,
 //! "Left/Right: rewind" or "Rewind: no history", and a footer under it
-//! reads "B: back to game" (lib/hint.zig, review 2026-10-01 UX-05).
+//! reads "B: back to game" (lib/hint.zig, review 2026-10-01 UX-05),
+//! taking turns every 2 s with "Sel+Right: fast" (fast forward, main.zig).
 //! Resuming from a scrubbed position plays on from there and drops the
 //! future. After a scrub step the panel gives way to that line in a bar at
 //! the bottom (`scrub_view`) so the restored frame, drawn by `rewind.step`,
@@ -78,6 +79,14 @@ const repeat_frames = 15;
 var repeat_dir: i2 = 0;
 var repeat_left: u8 = 0;
 
+/// The fast-forward chord's hint (input.zig `GameInput.fast`): the
+/// in-play strip's second line, and the footer's turn with `hint.back`.
+pub const fast_hint = "Sel+Right: fast";
+/// Menu updates each footer line stays (2 s).
+const footer_turn = 120;
+/// Menu updates since `open`, for the footer's turns.
+var updates_open: u32 = 0;
+
 /// Enter the menu. Called in the frame the Select hold threshold is
 /// reached, before anything is drawn; the caller then calls `update` once
 /// in the same frame.
@@ -87,6 +96,7 @@ pub fn open() void {
     select_armed = false;
     repeat_dir = 0;
     cursor = .resume_game;
+    updates_open = 0;
     if (!cart.is_wasm) {
         const n = cart.screen_width * cart.screen_height / 2;
         const src: *const [n]u32 = @ptrCast(cart.frontbuffer);
@@ -105,6 +115,7 @@ pub fn close() void {
 /// Returns `.resume_game` when the game should run again (the caller calls
 /// `close`, suppresses held buttons and runs a game frame).
 pub fn update(gg: *core.Gg, e: input.Edge) Result {
+    updates_open +%= 1;
     if (e.pressed(.select)) select_armed = true;
     const select_tap = select_armed and e.released(.select);
     if (select_tap) select_armed = false;
@@ -301,7 +312,8 @@ fn draw(gg: *const core.Gg) void {
     const live = has_memory and rewind.history_frames() != 0;
     const bottom = hint.resume_line(cursor == .resume_game, has_memory, rewind.depth_frames(), rewind.history_frames()) orelse scrub_text(&buf);
     cart.text(.{ .str = bottom, .x = text_x, .y = scrub_line_y, .text_color = if (live) row_color else dim_color });
-    cart.text(.{ .str = hint.back, .x = text_x, .y = footer_y, .text_color = dim_color });
+    const footer = if ((updates_open -% 1) / footer_turn % 2 == 0) hint.back else fast_hint;
+    cart.text(.{ .str = footer, .x = text_x, .y = footer_y, .text_color = dim_color });
 }
 
 /// The scrub line for the current position, or "Scrub: no memory" when
@@ -493,6 +505,7 @@ comptime {
     check_width("CRC 00000000", panel_cols);
     check_width("1024 KB, 64 banks", panel_cols);
     check_width(back_hint, panel_cols);
+    check_width(fast_hint, panel_cols);
     check_width(no_memory, panel_cols);
     check_width("Scrub: -9.9 / 9.9s", panel_cols);
     check_width("Scrub: live / 9.9s", panel_cols);

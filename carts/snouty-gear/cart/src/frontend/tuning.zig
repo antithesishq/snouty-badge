@@ -30,3 +30,16 @@ pub const typical_pages_per_keyframe = 24;
 pub const max_keyframes = 32;
 /// Bytes kept free between the arena and the stack limit on the badge.
 pub const stack_guard = 1024;
+
+// ---- Fast forward (main.zig, docs/FAST_FORWARD.md at the root) ----
+
+/// Game frames at most in one fast-forward update, the rendered one
+/// included: the speed cap (4x at 60 Hz). The simulator, whose
+/// `micros_since_boot` is a stub, always runs this many.
+pub const ff_max_frames = 4;
+/// Microseconds of the 16.7 ms update that fast forward may use, measured
+/// from just before the first frame. Another unrendered frame is stepped
+/// only while the time so far plus twice the dearest frame of this update
+/// (the next unrendered one and the final rendered one) stays within it:
+/// 3.7 ms of headroom for the overlay, the present and a dearer frame.
+pub const ff_budget_us = 13_000;
