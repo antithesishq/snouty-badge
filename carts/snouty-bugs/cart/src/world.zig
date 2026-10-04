@@ -13,6 +13,7 @@ const enemies = @import("enemies.zig");
 const bullets = @import("bullets.zig");
 const fx = @import("fx.zig");
 const pickups = @import("pickups.zig");
+const formations = @import("formations.zig");
 const waves = @import("waves.zig");
 const draw = @import("draw.zig");
 
@@ -31,12 +32,19 @@ pub const World = struct {
     enemies: [24]enemies.Enemy = @splat(.{}),
     /// Player shots (PLAN.md M6: 64, for the 5-way fuzzer and three forks).
     bolts: [64]bullets.Bolt = @splat(.{}),
-    /// SPEC.md section 6: pool of 96.
-    enemy_bullets: [96]bullets.EnemyBullet = @splat(.{}),
+    /// PLAN.md M7: pool of 128 (was 96).
+    enemy_bullets: [bullets.enemy_pool_len]bullets.EnemyBullet = @splat(.{}),
     fx: [16]fx.Fx = @splat(.{}),
     /// Powerup crates (PLAN.md M6), and the drop sequence cursor.
     pickups: [4]pickups.Pickup = @splat(.{}),
     drops: pickups.Drops = .{},
+    /// Enemy formations (PLAN.md M7, 1942's POW): `formations.zig`.
+    formations: [formations.slots]formations.Formation = @splat(.{}),
+    /// Next formation id to hand out (wraps, skips 0).
+    next_formation_id: u8 = 1,
+    /// Rank mercy (PLAN.md M7 "Rank"): +80 at each auto-rewind resume (and
+    /// each probe hit), -1 every 120 ticks; subtracted from the rank.
+    mercy: u16 = 0,
     waves: waves.State = .{},
     bg: draw.BgState = .{},
 };

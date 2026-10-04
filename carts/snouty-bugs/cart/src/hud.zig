@@ -5,6 +5,7 @@ const gfx = @import("gfx");
 const draw = @import("draw.zig");
 const enemies = @import("enemies.zig");
 const world = @import("world.zig");
+const rank = @import("rank.zig");
 
 const max_rewind_icons = 5;
 /// `hud.png` cell: 12x8 since 2026-09-29 (the 8x8 head read as a rat).
@@ -102,7 +103,7 @@ pub fn draw_stage_text() void {
         // The bar goes when the death sequence starts.
         if (b.phase != .dying and b.hp > 0) {
             cart.rect(.{ .x = bar_x, .y = bar_y, .width = bar_w, .height = bar_h, .fill_color = draw.anti_black });
-            const max = enemies.boss_max_hp();
+            const max = enemies.boss_max_hp_of(b.*);
             const fill: u32 = @min(bar_w, bar_w * @as(u32, b.hp) / @max(max, 1));
             if (fill > 0) {
                 cart.rect(.{ .x = bar_x, .y = bar_y, .width = fill, .height = bar_h, .fill_color = draw.coral });
@@ -160,19 +161,37 @@ pub fn draw_title(tick: u32) void {
     draw.draw_sprite(gfx.iris_16, 16, 16, 0, 124, 112, .{});
 }
 
-/// Pause overlay: the frozen scene dimmed, then "PAUSED" and the in-game
-/// controls on a dark panel (x 12..147, y 34..107). Keys in Coral at
-/// x 20, actions at x 92 (at most 6 characters).
+/// Pause overlay: the frozen scene dimmed, then "PAUSED", the in-game
+/// controls and `RANK nnn` (PLAN.md M7, for testers) on a dark panel
+/// (x 12..147, y 34..107). Keys in Coral at x 20, actions at x 92 (at most
+/// 6 characters).
 pub fn draw_pause() void {
     draw.darken_checker();
     cart.rect(.{ .x = 12, .y = 34, .width = 136, .height = 74, .fill_color = draw.anti_black, .stroke_color = draw.star_dim });
-    draw.centered_text("PAUSED", 40, draw.anti_white);
+    draw.centered_text("PAUSED", 38, draw.anti_white);
     for (pause_help, 0..) |row, i| {
-        const y: i32 = 54 + 10 * @as(i32, @intCast(i));
+        const y: i32 = 50 + 10 * @as(i32, @intCast(i));
         draw.text(row[0], 20, y, draw.coral);
         draw.text(row[1], 92, y, draw.anti_white);
     }
-    draw.centered_text("REWIND USES FUEL", 96, draw.star_dim);
+    draw.centered_text("REWIND USES FUEL", 89, draw.star_dim);
+    var buf: [9]u8 = undefined;
+    draw.centered_text(rank_label(&buf, rank.value()), 98, draw.anti_white);
+}
+
+/// "RANK nnn" into `buf`: three digits, four for the maximum 1000.
+fn rank_label(buf: *[9]u8, value: u32) []const u8 {
+    const prefix = "RANK ";
+    @memcpy(buf[0..prefix.len], prefix);
+    const digits: usize = if (value >= 1000) 4 else 3;
+    var v = @min(value, 9999);
+    var k = digits;
+    while (k > 0) {
+        k -= 1;
+        buf[prefix.len + k] = '0' + @as(u8, @intCast(v % 10));
+        v /= 10;
+    }
+    return buf[0 .. prefix.len + digits];
 }
 
 /// Key, action (main.zig's playing state and player.zig).

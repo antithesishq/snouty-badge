@@ -1,12 +1,15 @@
 //! Spawner and stage flow: the SPEC.md section 9 stage-1 table as data,
 //! then the stage phases (PLAN.md "Gameplay numbers for M3"): at 66 s the
 //! table goes quiet (`.warning`), at 72 s the boss enters (`.boss`), its
-//! death clears the stage (`.cleared`, a 120-tick breather) and the table
-//! starts over with `loop` one higher. The loop modifiers (bullet speed,
-//! fire interval, extra HP) are read by the fire programs in `enemies.zig`.
+//! death clears the stage (`.cleared`, a 120-tick breather) and the next
+//! stage starts. Since M7 the difficulty comes from `rank.zig` (the loop
+//! modifiers are gone) and the state carries a stage index: there is one
+//! table so far, so `stage_count` is 1 and every clear is also a new loop;
+//! track B1 adds the other three tables (PLAN.md M7 "Stages").
 const enemies = @import("enemies.zig");
 const rng = @import("rng.zig");
 const world = @import("world.zig");
+const formations = @import("formations.zig");
 
 const Kind = enemies.Kind;
 
@@ -84,8 +87,11 @@ pub const State = struct {
     t: u32 = 0,
     /// Index of the next entry of `stage1` to run.
     next: u8 = 0,
-    /// Completed stages (drives the loop modifiers).
+    /// Completed loops through all `stage_count` stages (rank +400 each).
+    /// With one stage table so far, every boss clear is a new loop.
     loop: u8 = 0,
+    /// Current stage index, 0..stage_count-1 (0 = UNIT TESTS).
+    stage: u8 = 0,
     phase: StagePhase = .waves,
     /// Monotonic count of boss kills; `main` refills the rewind fuel when
     /// it passes its high water.
@@ -97,6 +103,7 @@ pub const State = struct {
 pub fn update() void {
     const st = &world.w.waves;
     if (st.phase == .cleared and world.w.game_tick -% st.clear_tick >= breather) {
+        // The stage index already moved on at the clear (`advance`).
         st.t = 0;
         st.next = 0;
         st.phase = .waves;
@@ -115,13 +122,54 @@ pub fn update() void {
     st.t += 1;
 }
 
-/// Called by the boss on the last tick of its death sequence.
+/// Stage tables so far (track B1 makes it 4).
+pub const stage_count: u8 = 1;
+
+/// Moves the stage index on: the next stage, or stage 0 of the next loop
+/// after the last one; the stage clock restarts (rank's stage_seconds).
+fn advance() void {
+    const st = &world.w.waves;
+    st.stage += 1;
+    if (st.stage >= stage_count) {
+        st.stage = 0;
+        st.loop +|= 1;
+    }
+    st.t = 0;
+}
+
+/// Called by the boss on the last tick of its death sequence: the clear
+/// (+fuel via `stage_clears`), then a breather before the next stage,
+/// whose index (and rank) applies from now.
 pub fn boss_cleared() void {
     const st = &world.w.waves;
     st.stage_clears +%= 1;
     st.clear_tick = world.w.game_tick;
-    st.loop +|= 1;
+    advance();
     st.phase = .cleared;
+}
+
+/// Debug hook (`debug_next_stage`): jumps to the start of the next stage at
+/// once. Clears the enemies (the boss too), enemy bullets, crates and
+/// formations, moves the stage index on as a clear does (not again during
+/// the breather after a clear, which already did), and starts the table
+/// from its first entry: no breather, +500, fuel refill or `stage_clears`
+/// count. The caller checkpoints the history.
+pub fn next_stage() void {
+    const w = &world.w;
+    w.enemies = @splat(.{});
+    w.enemy_bullets = @splat(.{});
+    w.pickups = @splat(.{});
+    formations.clear();
+    if (w.waves.phase == .cleared) w.waves.t = 0 else advance();
+    w.waves.next = 0;
+    w.waves.phase = .waves;
+}
+
+/// The stage across loops, stage + 4 x loop (PLAN.md M7's numbering for
+/// four stages per loop).
+pub fn stage_index() u32 {
+    const st = &world.w.waves;
+    return @as(u32, st.stage) + 4 * @as(u32, st.loop);
 }
 
 /// Debug hook: jump to the 66 s mark (the rest of the table is skipped).
@@ -135,55 +183,14 @@ pub fn warp_to_warning() void {
     st.phase = .warning;
 }
 
-// Loop modifiers (SPEC.md section 9). The tables hold 1.1^k and 0.9^k for
-// k in 0..8, built at comptime by repeated multiplication (no pow); later
-// loops use the last entry, which the caps have already reached.
-const loop_table_len = 8;
-const speed_table: [loop_table_len]f32 = power_table(1.1);
-const interval_table: [loop_table_len]f32 = power_table(0.9);
-const max_bullet_speed: f32 = 2.0;
-
-fn power_table(comptime base: f32) [loop_table_len]f32 {
-    var t: [loop_table_len]f32 = @splat(1.0);
-    for (1..loop_table_len) |k| t[k] = t[k - 1] * base;
-    return t;
-}
-
-fn loop_index() usize {
-    return @min(world.w.waves.loop, loop_table_len - 1);
-}
-
-/// 1.1^loop (uncapped); use `bullet_speed` for a capped speed.
-pub fn speed_mul() f32 {
-    return speed_table[loop_index()];
-}
-
-/// `base` * 1.1^loop, capped at 2.0 px/tick. Loop 0 returns `base`.
-pub fn bullet_speed(base: f32) f32 {
-    if (world.w.waves.loop == 0) return base;
-    return @min(base * speed_mul(), max_bullet_speed);
-}
-
-/// `base` * 0.9^loop rounded, floored at `base` / 2 (and at 1). Loop 0
-/// returns `base`.
-pub fn fire_interval(base: u32) u32 {
-    if (world.w.waves.loop == 0) return base;
-    const scaled: u32 = @intFromFloat(@round(@as(f32, @floatFromInt(base)) * interval_table[loop_index()]));
-    return @max(scaled, base / 2, 1);
-}
-
-/// Extra HP for beetles and spiders at spawn: one per completed stage.
-pub fn extra_hp() u8 {
-    return world.w.waves.loop;
-}
-
 fn pick(lo: i32, hi: i32, y: i16) f32 {
     return @floatFromInt(if (y == random) rng.range(lo, hi) else y);
 }
 
 fn run(e: Entry) void {
     switch (e.kind) {
-        .gnat => enemies.spawn_gnat_string(pick(min_y, max_y, e.y)),
+        // Every gnat string is a formation that drops (PLAN.md M7).
+        .gnat => enemies.spawn_gnat_string(pick(min_y, max_y, e.y), true),
         .spider => for (0..e.count) |i| {
             const col = pick(spider_min_x, spider_max_x, e.y);
             _ = enemies.spawn(.spider, col, 0, @intCast(i * e.spacing));

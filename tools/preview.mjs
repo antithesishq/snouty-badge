@@ -5,7 +5,7 @@
 //                          [--start-skip S] [--fb-addr auto|dwarf|sim|0xADDR]
 //                          [--seed N] [--controls BITS] [--press [BTN:]T1-T2[,...]] [--script FILE.json]
 //                          [--dump-exports NAME[,NAME...]] [--expect "NAME OP VALUE"]...
-//                          [--at "T NAME OP VALUE"]... [--call-at "T NAME"]... [--quiet] [--raw-colors]
+//                          [--at "T NAME OP VALUE"]... [--call-at "T NAME[:ARG]"]... [--quiet] [--raw-colors]
 //                          [--call NAME[:ARG]]... [--pose x,y,z,yaw,pitch,roll]
 //
 // Runs start(), then N x update(). Every K-th update after the first S updates,
@@ -31,7 +31,8 @@
 // with --frames 1800, T = 1799 is the moment the end-of-run exports are read);
 // results go to frames.json "at", and a FAIL also exits 3. --call-at T NAME
 // calls NAME right after update #T and records {tick, name, value} under
-// "calls". Both accept either separate arguments (--at 1799 debug_score '>' 0)
+// "calls"; --call-at T NAME:ARG passes one integer argument (NAME must then
+// take exactly one). Both accept either separate arguments (--at 1799 debug_score '>' 0)
 // or one quoted string (--at "1799 debug_score > 0"), are repeatable, and run
 // in command-line order when they share a tick. T must be < N.
 // --quiet writes no PNGs and skips framebuffer decoding (soak runs).
@@ -125,10 +126,10 @@ function usage(msg) {
     console.error("usage: node tools/preview.mjs <cart.wasm> --frames N [--every K] [--out DIR] [--start-skip S]\n" +
         "                          [--fb-addr auto|dwarf|sim|0xADDR] [--seed N] [--controls BITS]\n" +
         "                          [--press [BTN:]T1-T2[,...]] [--script FILE.json] [--dump-exports NAME[,NAME...]]\n" +
-        "                          [--expect \"NAME OP VALUE\"]... [--at \"T NAME OP VALUE\"]... [--call-at \"T NAME\"]...\n" +
+        "                          [--expect \"NAME OP VALUE\"]... [--at \"T NAME OP VALUE\"]... [--call-at \"T NAME[:ARG]\"]...\n" +
         "                          [--quiet] [--raw-colors] [--call NAME[:ARG]]... [--pose x,y,z,yaw,pitch,roll]\n" +
         "  BTN: A B START SELECT UP DOWN LEFT RIGHT (bare T1-T2 = A); OP: == != < <= > >=\n" +
-        "  --at/--call-at: T is the 0-based update index (< N); also as separate args: --at T NAME OP VALUE, --call-at T NAME");
+        "  --at/--call-at: T is the 0-based update index (< N); also as separate args: --at T NAME OP VALUE, --call-at T NAME[:ARG]");
     process.exit(2);
 }
 // cart.Controls bit positions (sycl-badge src/os/cart/api.zig). CLICK (bit 4) is OS-owned and never set.
@@ -158,7 +159,7 @@ function parseExpect(s) {
 // separate arguments: consume arguments until the joined text parses (at most
 // `max`), never swallowing the next --flag.
 const AT_RE = /^\s*(\d+)\s+([A-Za-z_$][\w$.]*)\s*(==|!=|<=|>=|<|>)\s*(-?\d+)\s*$/;
-const CALL_AT_RE = /^\s*(\d+)\s+([A-Za-z_$][\w$.]*)\s*$/;
+const CALL_AT_RE = /^\s*(\d+)\s+([A-Za-z_$][\w$.]*)\s*(?::\s*(-?\d+)\s*)?$/;
 function takeWords(flag, re, max, want) {
     const words = [];
     while (words.length < max && argIndex + 1 < argv.length && !argv[argIndex + 1].startsWith("--")) {
@@ -206,8 +207,8 @@ for (let i = 0; i < argv.length; i++) {
             break;
         }
         case "--call-at": {
-            const m = takeWords(a, CALL_AT_RE, 2, '"T NAME", integer T'); i = argIndex;
-            opts.timed.push({ kind: "call", tick: Number(m[1]), name: m[2] });
+            const m = takeWords(a, CALL_AT_RE, 2, '"T NAME" or "T NAME:ARG", integer T and ARG'); i = argIndex;
+            opts.timed.push({ kind: "call", tick: Number(m[1]), name: m[2], arg: m[3] === undefined ? null : Number(m[3]) });
             break;
         }
         case "--quiet": opts.quiet = true; break;
@@ -489,7 +490,16 @@ catch (e) { console.error(`preview: instantiation failed: ${e.message}`); proces
 // --dump-exports / --expect / --at / --call-at names must be zero-arg function exports; check before running.
 {
     const wanted = [...opts.dumpExports];
-    for (const t of opts.timed) if (!wanted.includes(t.name)) wanted.push(t.name);
+    for (const t of opts.timed) if (t.arg == null && !wanted.includes(t.name)) wanted.push(t.name);
+    // --call-at T NAME:ARG: a one-argument function export.
+    for (const t of opts.timed) {
+        if (t.arg == null) continue;
+        const f = instance.exports[t.name];
+        if (typeof f !== "function" || f.length !== 1) {
+            console.error(`preview: --call-at ${t.tick} ${t.name}:${t.arg}: '${t.name}' ${typeof f !== "function" ? "is not an exported function" : `takes ${f.length} argument(s), not 1`}`);
+            process.exit(2);
+        }
+    }
     const callable = exportNames.filter((n) => typeof instance.exports[n] === "function" && instance.exports[n].length === 0 && n !== "start" && n !== "update" && n !== "_start" && n !== "_initialize");
     const bad = wanted.filter((n) => !callable.includes(n));
     if (bad.length) {
@@ -610,10 +620,10 @@ if (opts.pose) { try { instance.exports.debug_set_camera(...opts.pose); } catch 
 const written = [];
 let changed = false;
 const OPS = { "==": (a, b) => a === b, "!=": (a, b) => a !== b, "<": (a, b) => a < b, "<=": (a, b) => a <= b, ">": (a, b) => a > b, ">=": (a, b) => a >= b };
-// Calls a checked zero-arg export and returns its integer result (as JS sees it).
-function callExport(n, flag) {
+// Calls a checked export (zero-arg, or one integer `arg`) and returns its integer result (as JS sees it).
+function callExport(n, flag, arg = null) {
     let v;
-    try { v = instance.exports[n](); } catch (e) { trap(`${n}()`, e); }
+    try { v = arg === null ? instance.exports[n]() : instance.exports[n](arg); } catch (e) { trap(arg === null ? `${n}()` : `${n}(${arg})`, e); }
     if (typeof v === "bigint") v = Number(v);
     if (typeof v !== "number") { console.error(`preview: ${flag}: ${n}() returned nothing (it must return an integer)`); process.exit(2); }
     return v;
@@ -621,10 +631,11 @@ function callExport(n, flag) {
 const atResults = [], callResults = [];
 function runTimed(i) {
     for (const t of timedAt.get(i)) {
-        const actual = callExport(t.name, t.kind === "at" ? "--at" : "--call-at");
+        const actual = callExport(t.name, t.kind === "at" ? "--at" : "--call-at", t.kind === "call" ? t.arg : null);
         if (t.kind === "call") {
-            callResults.push({ tick: i, name: t.name, value: actual });
-            console.error(`preview: call after update #${i}: ${t.name} = ${actual}`);
+            const label = t.arg == null ? t.name : `${t.name}:${t.arg}`;
+            callResults.push({ tick: i, name: label, value: actual });
+            console.error(`preview: call after update #${i}: ${label} = ${actual}`);
         } else {
             const pass = OPS[t.op](actual, t.value);
             atResults.push({ tick: i, expr: t.expr, name: t.name, op: t.op, value: t.value, actual, pass });

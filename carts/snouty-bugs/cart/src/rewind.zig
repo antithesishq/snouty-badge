@@ -12,6 +12,7 @@ const enemies = @import("enemies.zig");
 const collide = @import("collide.zig");
 const player = @import("player.zig");
 const hud = @import("hud.zig");
+const boss_hp = @import("boss_hp.zig");
 
 /// Hit-stop with the bug report.
 pub const report_ticks: u32 = 20;
@@ -78,6 +79,8 @@ fn draw_rewind_mark(frame: u32) void {
     if ((frame / blink_frames) % 2 == 0) draw.text("<<", hud.status_x, 0, draw.coral);
 }
 
+/// The bug message (SPEC.md 5.1, PLAN.md M7 "Kinds, bosses, messages");
+/// `.boss` names the current stage's boss.
 pub fn message(kind: enemies.Kind) []const u8 {
     return switch (kind) {
         .gnat => "OFF BY ONE",
@@ -85,7 +88,22 @@ pub fn message(kind: enemies.Kind) []const u8 {
         .beetle => "OUT OF MEMORY",
         .spider => "DEADLOCK",
         .moth => "ACCESS VIOLATION",
-        .boss => "UNDEFINED BEHAVIOR",
+        .centipede => "STACK OVERFLOW",
+        .flea => "NULL POINTER DEREF",
+        .ladybug => "INFINITE LOOP",
+        .mite => "BUFFER OVERFLOW",
+        .zombie => "USE AFTER FREE",
+        .herd => "THUNDERING HERD",
+        .boss => boss_message(boss_hp.for_stage(world.w.waves.stage)),
+    };
+}
+
+pub fn boss_message(id: enemies.BossId) []const u8 {
+    return switch (id) {
+        .heisenbug => "UNDEFINED BEHAVIOR",
+        .mandelbug => "EMERGENT BEHAVIOR",
+        .schrodinbug => "IT NEVER WORKED",
+        .bohrbug => "REPRODUCIBLE CRASH",
     };
 }
 
