@@ -118,9 +118,11 @@ var prev_tick: u32 = 0;
 var have_prev: bool = false;
 
 // Per-call scratch (module level, not on the stack).
-/// Hitbox center of each candidate at each sample tick.
-var cand_x: [n_cand][sample_t.len]f32 = undefined;
-var cand_y: [n_cand][sample_t.len]f32 = undefined;
+/// Hitbox center x of the candidates in column i (x offset i) and center
+/// y of those in row j (y offset j), at each sample tick: candidate
+/// c = j * 5 + i moves the two axes independently.
+var col_x: [offsets.len][sample_t.len]f32 = undefined;
+var row_y: [offsets.len][sample_t.len]f32 = undefined;
 var danger: [n_cand]f32 = undefined;
 
 fn sign(v: f32) f32 {
@@ -166,10 +168,42 @@ fn track_enemies(tick: u32) void {
     have_prev = true;
 }
 
+/// The part of the segment s in [0, 1] where |a + (b - a) s| < r (soft
+/// radius 1) and where it is < `rh` (hard), as [lo, hi) pairs; empty when
+/// lo >= hi.
+const Spans = struct { lo: f32, hi: f32, hard_lo: f32, hard_hi: f32 };
+
+fn spans(a: f32, b: f32, rh: f32) Spans {
+    const d = b - a;
+    if (@abs(d) < 1e-6) {
+        const soft: f32 = if (@abs(a) < 1) 1 else 0;
+        const hard: f32 = if (@abs(a) < rh) 1 else 0;
+        return .{ .lo = 0, .hi = soft, .hard_lo = 0, .hard_hi = hard };
+    }
+    const inv = 1 / d;
+    const s0 = (-1 - a) * inv;
+    const s1 = (1 - a) * inv;
+    const h0 = (-rh - a) * inv;
+    const h1 = (rh - a) * inv;
+    return .{
+        .lo = @max(@min(s0, s1), 0),
+        .hi = @min(@max(s0, s1), 1),
+        .hard_lo = @max(@min(h0, h1), 0),
+        .hard_hi = @min(@max(h0, h1), 1),
+    };
+}
+
 /// Adds one moving object's danger to every candidate. (px, py) are its
 /// predicted centers at the sample ticks; (hx, hy) the half-extents of
 /// its box plus the ship's hitbox (a center inside them is a hit); (cx,
 /// cy) the ship's hitbox center now.
+///
+/// Per segment, in units of the soft box (hard box + margin), the
+/// relative path of each column (x) and each row (y) is a line; the
+/// candidate's path is inside the soft box while both are within 1, an
+/// interval of the segment. Its depth there (the max norm at the
+/// interval's middle) gives the cost, and an overlap with the hard box
+/// adds `hit_cost`. Exact for boxes, and only 10 divisions a segment.
 fn add_threat(px: *const [sample_t.len]f32, py: *const [sample_t.len]f32, hx: f32, hy: f32, cx: f32, cy: f32) void {
     // Whole path out of reach of every candidate: skip it.
     const reach = offsets[offsets.len - 1] + hx + seg_margin[n_seg - 1];
@@ -196,29 +230,33 @@ fn add_threat(px: *const [sample_t.len]f32, py: *const [sample_t.len]f32, hx: f3
             @max(py[k], py[k + 1]) < cy - r - ay or @min(py[k], py[k + 1]) > cy + r + ay) continue;
         const inv_ax = 1 / ax;
         const inv_ay = 1 / ay;
-        // Soft-to-hard rescale of the normalized distance.
-        const sx = ax / (hx + hard_pad);
-        const sy = ay / (hy + hard_pad);
         const wgt = seg_weight[k];
-        for (0..n_cand) |c| {
-            // Relative path over the segment in margin-normalized units;
-            // its closest point to the origin.
-            const r_u0 = (px[k] - cand_x[c][k]) * inv_ax;
-            const r_v0 = (py[k] - cand_y[c][k]) * inv_ay;
-            const du = (px[k + 1] - cand_x[c][k + 1]) * inv_ax - r_u0;
-            const dv = (py[k + 1] - cand_y[c][k + 1]) * inv_ay - r_v0;
-            const dd = du * du + dv * dv;
-            var s: f32 = 0;
-            if (dd > 0) s = clamp(-(r_u0 * du + r_v0 * dv) / dd, 0, 1);
-            // Boxes, not ellipses: the max norm at that point (corners
-            // count; an ellipse lets a big body clip the ship).
-            const qu = @abs(r_u0 + du * s);
-            const qv = @abs(r_v0 + dv * s);
-            const d = @max(qu, qv);
-            if (d >= 1) continue;
-            var cost = wgt * (1 - d * d);
-            if (qu * sx < 1 and qv * sy < 1) cost += wgt * hit_cost;
-            danger[c] += cost;
+        var cu: [offsets.len]Spans = undefined;
+        var col_u0: [offsets.len]f32 = undefined;
+        var col_du: [offsets.len]f32 = undefined;
+        var any_col = false;
+        for (0..offsets.len) |i| {
+            col_u0[i] = (px[k] - col_x[i][k]) * inv_ax;
+            col_du[i] = (px[k + 1] - col_x[i][k + 1]) * inv_ax - col_u0[i];
+            cu[i] = spans(col_u0[i], col_u0[i] + col_du[i], (hx + hard_pad) * inv_ax);
+            any_col = any_col or cu[i].lo < cu[i].hi;
+        }
+        if (!any_col) continue;
+        for (0..offsets.len) |j| {
+            const v0 = (py[k] - row_y[j][k]) * inv_ay;
+            const dv = (py[k + 1] - row_y[j][k + 1]) * inv_ay - v0;
+            const rv = spans(v0, v0 + dv, (hy + hard_pad) * inv_ay);
+            if (rv.lo >= rv.hi) continue;
+            for (0..offsets.len) |i| {
+                const lo = @max(cu[i].lo, rv.lo);
+                const hi = @min(cu[i].hi, rv.hi);
+                if (lo >= hi) continue;
+                const mid = (lo + hi) / 2;
+                const d = @max(@abs(col_u0[i] + col_du[i] * mid), @abs(v0 + dv * mid));
+                var cost = wgt * (1 - d * d);
+                if (@max(cu[i].hard_lo, rv.hard_lo) < @min(cu[i].hard_hi, rv.hard_hi)) cost += wgt * hit_cost;
+                danger[j * offsets.len + i] += cost;
+            }
         }
     }
 }
@@ -234,16 +272,16 @@ fn dodge(tick: u32) cart.Controls {
 
     // Candidate paths: each axis moves toward its (clamped) target at
     // ship speed and stops there.
-    for (0..n_cand) |c| {
-        const dx = clamp(p.x + offsets[c % offsets.len], ship_min_x, ship_max_x) - p.x;
-        const dy = clamp(p.y + offsets[c / offsets.len], ship_min_y, ship_max_y) - p.y;
+    for (offsets, 0..) |o, i| {
+        const dx = clamp(p.x + o, ship_min_x, ship_max_x) - p.x;
+        const dy = clamp(p.y + o, ship_min_y, ship_max_y) - p.y;
         for (sample_t, 0..) |t, k| {
             const step = ship_speed * t;
-            cand_x[c][k] = cx + sign(dx) * @min(step, @abs(dx));
-            cand_y[c][k] = cy + sign(dy) * @min(step, @abs(dy));
+            col_x[i][k] = cx + sign(dx) * @min(step, @abs(dx));
+            row_y[i][k] = cy + sign(dy) * @min(step, @abs(dy));
         }
-        danger[c] = 0;
     }
+    danger = @splat(0);
 
     var px: [sample_t.len]f32 = undefined;
     var py: [sample_t.len]f32 = undefined;
