@@ -366,7 +366,7 @@ pub fn Renderer(comptime S: type) type {
                     self.paint_glow(w, e.x, e.y);
                 },
                 .crash => self.repaint_trail(w, e.cycle),
-                .turn => {},
+                .turn, .grind, .stall => {},
             };
         }
 
