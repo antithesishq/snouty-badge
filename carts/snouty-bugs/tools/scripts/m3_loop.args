@@ -1,5 +1,9 @@
-# m3_loop: m3_boss's input for 2000 ticks: after the 120-tick breather the table restarts
-# (phase 0 at 1103) and stage 2 enemies spawn again. With the F2 from the boss's crate (841)
-# and the F3 collected at 1416 the stage-2 8 s beetle (HP 5) spawns at 1583 and dies at
-# 1602, dropping crate 4 (until M6 the zapper took until ~1697, so 1690 was pinned).
---frames 2000 --call-at "31 debug_god" --call-at "32 debug_warp" --dump-exports debug_state,debug_stage,debug_phase,debug_enemies --at "1300 debug_phase == 0" --at "1415 debug_weapon == 2" --at "1416 debug_weapon == 3" --at "1590 debug_enemies > 0" --at "1601 debug_drops == 3" --at "1602 debug_drops == 4" --expect "debug_stage == 1" --expect "debug_state == 1"
+# m3_loop: m3_boss's run carried on into the next stage (the sweep continued to 4299). Until
+# M7 one table looped and this pinned the stage-2 beetle's crate; since M7 a clear moves on to
+# the next of four stages, so it pins stage 2 (INTEGRATION) starting after the Heisenbug's
+# clear (3662) and the 120-tick breather: its table starts at 3782 (phase 0) and its first
+# entry, a centipede (head + 5 segments, 14 ticks apart) opened as a formation, enters at
+# 3902. The A3 sweep shoots down every part of it; the last segment at 4042 completes the
+# formation: crate 6 drops (drops 5 -> 6) and +200 on top of the segment's 20 (score 2533 ->
+# 2753). Crate 6 is the RETRY of the sequence; the sweep collects it at 4208 (shield 1).
+--frames 4300 --call-at "31 debug_god" --call-at "1700 debug_warp" --dump-exports debug_state,debug_stage_index,debug_phase,debug_enemies,debug_shield --at "3781 debug_phase == 3" --at "3782 debug_phase == 0" --at "3782 debug_stage_index == 1" --at "3901 debug_enemies == 0" --at "3902 debug_enemies == 1" --at "4041 debug_drops == 5" --at "4041 debug_score == 2533" --at "4042 debug_drops == 6" --at "4042 debug_score == 2753" --at "4042 debug_pickups == 1" --at "4207 debug_shield == 0" --at "4208 debug_shield == 1" --at "4000 debug_history_check == 0" --at "4299 debug_history_check == 0" --expect "debug_stage_index == 1" --expect "debug_state == 1"
