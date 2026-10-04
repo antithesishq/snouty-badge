@@ -193,7 +193,7 @@ fn track_enemies(tick: u32) void {
     if (have_prev and tick == prev_tick) return;
     const consecutive = have_prev and tick == prev_tick +% 1;
     if (!consecutive) have_plan = false;
-    for (world.w.enemies, 0..) |e, i| {
+    for (&world.w.enemies, 0..) |*e, i| {
         const live = e.live();
         var vx: f32 = 0;
         var vy: f32 = 0;
@@ -348,14 +348,14 @@ fn plan(tick: u32) void {
 
     var px: [sample_t.len]f32 = undefined;
     var py: [sample_t.len]f32 = undefined;
-    for (world.w.enemy_bullets, 0..) |b, i| {
+    for (&world.w.enemy_bullets, 0..) |*b, i| {
         if (!b.active or b.age < reaction) continue;
         if (hash01(@intCast(i), tick -% @as(u32, @intCast(b.age))) < miss_rate) continue;
         predict_bullet(b, &px, &py);
-        const bb = bullets.hitbox(b);
+        const bb = bullets.hitbox(b.*);
         add_threat(&px, &py, half_w + bb[2] / 2, half_h + bb[3] / 2, cx, cy);
     }
-    for (world.w.enemies, 0..) |e, i| {
+    for (&world.w.enemies, 0..) |*e, i| {
         if (!e.live()) continue;
         const s = e.size();
         const ex = e.x + s[0] / 2;
@@ -397,7 +397,7 @@ fn plan(tick: u32) void {
 /// lines from its velocity now. Drag, acceleration, turns, splits and
 /// re-aims are not foreseen (a human reads a bullet's direction, not its
 /// program).
-fn predict_bullet(b: bullets.EnemyBullet, px: *[sample_t.len]f32, py: *[sample_t.len]f32) void {
+fn predict_bullet(b: *const bullets.EnemyBullet, px: *[sample_t.len]f32, py: *[sample_t.len]f32) void {
     for (sample_t, 0..) |t, k| {
         px[k] = b.x + b.vx * t;
         py[k] = b.y + b.vy * t;
@@ -408,7 +408,7 @@ fn predict_bullet(b: bullets.EnemyBullet, px: *[sample_t.len]f32, py: *[sample_t
 fn aim_bonus(tx: f32, ty: f32) f32 {
     const nose_y = ty + 12;
     var bonus: f32 = 0;
-    for (world.w.enemies) |e| {
+    for (&world.w.enemies) |*e| {
         if (!e.live()) continue;
         const s = e.size();
         if (e.x + s[0] < tx + 36) continue;
@@ -425,7 +425,7 @@ fn crate_bonus(tx: f32, ty: f32) f32 {
     const scx = tx + player.cell_w / 2;
     const scy = ty + player.cell_h / 2;
     var bonus: f32 = 0;
-    for (world.w.pickups) |k| {
+    for (&world.w.pickups) |*k| {
         if (!k.active) continue;
         const kx = k.x + half - crate_drift * crate_lead;
         const ky = k.y + half;
