@@ -1,6 +1,7 @@
 //! Ship: movement, banking, the weapon (M6: fuzzer, assert, bisect at
 //! levels 1..5), the trail ring and the forks (ghost ships replaying it),
-//! the retry shield, invulnerability, score. The ship state is
+//! the retry shield, invulnerability, score, and the M7 power loss
+//! (`on_rewound_hit`). The ship state is
 //! `world.w.player`; the rewind stock and the rewind fuel are
 //! meta-state kept in `main.zig` (PLAN.md M5: a rewind moves the World's
 //! clock, so anything spent from inside the World would be refunded).
@@ -12,14 +13,16 @@ const bullets = @import("bullets.zig");
 const enemies = @import("enemies.zig");
 const rng = @import("rng.zig");
 const world = @import("world.zig");
+const rank = @import("rank.zig");
 
 pub const cell_w = 32;
 pub const cell_h = 24;
 
 // Hard-coded until the real ship sheet reports its own (PLAN.md M1).
-const hitbox_off = [2]f32{ 14, 9 };
+// M7: 4x4 (was 6x6 at (14, 9)), same center.
+const hitbox_off = [2]f32{ 15, 10 };
 const thruster_off = [2]i32{ -6, 8 };
-pub const hitbox_size: f32 = 6;
+pub const hitbox_size: f32 = 4;
 
 const speed: f32 = 1.5;
 const min_x: f32 = 0;
@@ -81,8 +84,11 @@ pub const State = struct {
     /// Core hours crates collected (monotonic); `main.zig` pays fuel for
     /// them against a meta high water.
     cores: u32 = 0,
-    /// Gnats shot down by bolts this game; every 5th drops a crate.
-    gnat_kills: u32 = 0,
+    /// Memory Leak beetles shot down by bolts this game; every second one
+    /// drops a crate (PLAN.md M7).
+    beetle_kills: u32 = 0,
+    /// Hits taken in the endless probe mode (`debug_hits`); 0 otherwise.
+    probe_hits: u32 = 0,
     /// Ticks left of the `FLAKY, RETRYING` pop after the shield took a hit.
     retry_pop: u32 = 0,
     /// The ship's position every tick, at `trail[tick % 80]`, recorded
@@ -211,6 +217,17 @@ fn fire_volley(x: f32, y: f32) void {
     }
 }
 
+/// Raiden's power loss (PLAN.md M7), charged in the World at the resume of
+/// an auto rewind (normal and hardcore) and on each probe hit: one weapon
+/// level (not below 1), one fork, and +80 rank mercy. Not on a hold-B
+/// rewind, not on a retry-shield pop.
+pub fn on_rewound_hit() void {
+    const p = &world.w.player;
+    p.level = @max(1, p.level -| 1);
+    p.forks -|= 1;
+    world.w.mercy +|= rank.mercy_per_hit;
+}
+
 /// The trail entry ghost `k` (1-based) stands on in the tick just
 /// simulated, or null before there is that much history.
 pub fn ghost_entry(k: u32) ?TrailEntry {
@@ -268,8 +285,8 @@ pub fn draw_ship(tick: u32) void {
         const hb = hitbox();
         // 1 px dot at the hitbox center.
         cart.hline(.{
-            .x = @as(i32, @intFromFloat(hb[0])) + 3,
-            .y = @as(i32, @intFromFloat(hb[1])) + 3,
+            .x = @as(i32, @intFromFloat(hb[0])) + 2,
+            .y = @as(i32, @intFromFloat(hb[1])) + 2,
             .len = 1,
             .color = draw.cream,
         });
