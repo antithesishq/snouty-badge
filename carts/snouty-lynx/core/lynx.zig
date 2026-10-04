@@ -50,6 +50,7 @@ pub const mikey = @import("mikey.zig");
 pub const suzy = @import("suzy.zig");
 pub const undo = @import("undo.zig");
 pub const boot = @import("boot.zig");
+pub const audio = @import("audio.zig");
 
 pub const Cart = cart.Cart;
 
@@ -182,11 +183,18 @@ pub const Lynx = struct {
     /// Boots re-run because PC entered ROM space elsewhere than a trap.
     rom_resets: u32,
 
+    /// The last `step_frame`'s sound (core/audio.zig); not console state.
+    audio_out: [audio.samples_per_frame]u8,
+    /// Fill `audio_out` in `step_frame` (the frontend clears it while the
+    /// sound is off; the channels run either way: they are CPU-visible).
+    audio_render: bool,
+
     /// Set up in place (the console is ~75 KB: never build one on the
     /// stack, 32 KB on the badge).
     pub fn init_in_place(l: *Lynx, c: Cart) void {
         l.cart = c;
         l.idle_sleep = false;
+        l.audio_render = true;
         l.reset();
     }
 
@@ -194,6 +202,7 @@ pub const Lynx = struct {
     /// rewritten past the scrubber's hooks: the frontend calls
     /// `undo.reset` after this (and after `init_in_place`).
     pub fn reset(l: *Lynx) void {
+        @memset(&l.audio_out, audio.silence);
         l.ticks = 0;
         l.tick_base = 0;
         l.frame_end = 0;
@@ -209,15 +218,25 @@ pub const Lynx = struct {
         l.rom_resets = 0;
         l.display = .{};
         l.cpu = .{};
-        l.reboot();
+        l.reboot(false);
     }
 
-    /// The boot without touching the clock (reset, or a jump into ROM).
-    fn reboot(l: *Lynx) void {
+    /// The boot without touching the clock (reset, or a jump into ROM:
+    /// `mid_frame`, when the frame's sound so far is kept and the channels
+    /// fall silent at this tick).
+    fn reboot(l: *Lynx, mid_frame: bool) void {
         const instr = l.cpu.instr_count;
         l.cpu = .{};
         l.cpu.instr_count = instr;
-        l.mikey.reset(l.ticks);
+        if (mid_frame) {
+            audio.mute(&l.mikey);
+            const render = l.mikey.audio.r;
+            l.mikey.reset(l.ticks);
+            l.mikey.audio.r = render;
+        } else {
+            l.mikey.reset(l.ticks);
+        }
+        l.mikey.audio.in_console = true;
         l.suzy.reset();
         l.port = .{};
         l.fetch_cost = bus.Ticks.fetch_full;
@@ -257,10 +276,12 @@ pub const Lynx = struct {
             n += 1;
         }
         if (l.ticks >= rebase_at) l.rebase();
+        audio.begin_frame(&l.mikey, l.frame_end, n);
         l.frame_end += n;
         while (l.ticks < l.frame_end) {
             if (l.halted or l.sleeping) l.step_one() else l.run_cpu(false);
         }
+        audio.end_frame(&l.mikey, l.frame_end);
         l.frame_count +%= 1;
     }
 
@@ -442,7 +463,7 @@ pub const Lynx = struct {
                 l.rom_resets +%= 1;
                 // The boot clears and rewrites all of RAM past the bus.
                 undo.touch_range(0, 0x10000);
-                l.reboot();
+                l.reboot(true);
             },
         }
     }
@@ -660,7 +681,7 @@ pub const Lynx = struct {
     };
 
     /// The `Lynx` fields `Small` leaves out on purpose (see `Small`).
-    pub const small_excluded = [_][]const u8{ "ram", "cart", "display", "idle_sleep" };
+    pub const small_excluded = [_][]const u8{ "ram", "cart", "display", "idle_sleep", "audio_out", "audio_render" };
 
     pub fn save_small(l: *const Lynx, out: *Small) void {
         @memset(std.mem.asBytes(out), 0);

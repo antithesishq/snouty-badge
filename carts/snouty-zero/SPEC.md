@@ -341,8 +341,18 @@ the cart simple; a decision for Adrian, section 17).
 
 The toggle only. With sound on: a countdown beep, the `DEPLOY` tone, a
 short rail-hit click and a two-note finish. All through the `tone`
-import directly (the simulator tone-shim rule, `docs/SOUND.md`). No
-engine sound: the speaker policy and the one-voice limit make it noise.
+import directly (the simulator tone-shim rule, `docs/SOUND.md`).
+
+Engine (M5.4, 2026-10-04, Adrian asked): a held drone under the tones
+while racing. Pitch follows the player's speed (70 Hz at rest, 290 Hz at
+top speed), up an eighth in the air and under Overclock, 150 Hz when A
+revs it on the grid, a +-6% shudder on throttled tiles and a +-25% tape
+warble while rewinding; louder under thrust. Silent off the race, in
+pause, in the crash hit-stop, after JOB KILLED and in the attract demo.
+The model is `cart/src/engine.zig`; on the badge it is
+`lib/tone_stream.zig`'s drone (two sawtooths 1/64 apart, mixed under the
+tones in the cart's own stream, so the one-voice limit is gone), in the
+simulator a 25% pulse on channel 1 re-struck every frame.
 
 ## 10. Architecture
 

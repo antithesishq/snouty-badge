@@ -120,6 +120,18 @@ pub const traffic = Character{
 /// Index 0 SNOUTY, 1..4 the rivals (SPEC 3 order).
 pub const characters = [5]Character{ snouty, argmax, dropout, backprop, overfit };
 
+/// Machine select: the player's handling per menu machine (0 ANTEATER, then
+/// the rivals' machines in SPEC 3 order). Physics fields only, stronger than
+/// the rivals' own multipliers so the pick is felt in the hands, and kept
+/// apart from them so the AI tuning does not move.
+pub const player_machines = [5]Character{
+    .{}, // ANTEATER: the base tuning
+    .{ .top_q8 = 302, .steer_q8 = 192 }, // ARGMAX: 1.18x top speed, 0.75x turn
+    .{ .steer_q8 = 320, .grip_q8 = 128 }, // DROPOUT: 1.25x turn, half the grip (slides)
+    .{ .top_q8 = 230, .steer_q8 = 333, .grip_q8 = 384 }, // BACKPROP: 0.9x top, 1.3x turn, 1.5x grip
+    .{ .top_q8 = 282, .damage_mul = 2, .contact_keep = 52429 }, // OVERFIT: 1.1x top, 2x damage, keeps 0.8 per hit
+};
+
 /// The character of machine `i`: 0 SNOUTY, 1..4 rivals, 5..10 traffic.
 pub fn character(i: usize) *const Character {
     return if (i < characters.len) &characters[i] else &traffic;

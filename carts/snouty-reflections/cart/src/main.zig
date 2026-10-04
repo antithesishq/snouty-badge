@@ -12,6 +12,7 @@ const build_options = @import("build_options");
 const trace = @import("trace.zig");
 const pt = @import("pt.zig");
 const arena = @import("arena.zig");
+const music = @import("music.zig");
 
 comptime {
     cart.export_start_code();
@@ -29,6 +30,10 @@ pub fn start() void {
     cart.set_double_buffer_mode(.no_copy_full_frame);
     dither.init();
     trace.init();
+    // Off unless built with -Dsound=true (root docs/SOUND.md); Start in
+    // attract toggles it.
+    music.enabled = variant.music and build_options.sound;
+    if (cart.is_wasm and variant.music) music.on_note = &sim_note;
 }
 
 pub fn update() void {
@@ -36,6 +41,10 @@ pub fn update() void {
     const t_update = cart.micros_since_boot();
     input.update(read_controls());
     app.handle_input();
+    // After the toggle, and inside the path tracer's slice (t_update).
+    if (variant.music) {
+        if (cart.is_wasm) music.sim_update() else music.update();
+    }
 
     const view = app.view();
     const kind = app.frame_kind();
@@ -62,10 +71,54 @@ pub fn update() void {
     }
     render_us = @truncate(cart.micros_since_boot() - t0);
     if (build_options.debug_overlay) overlay.draw(render_us);
+    if (app.toast_frames > 0) {
+        app.toast_frames -= 1;
+        draw_toast();
+    }
 
     app.advance();
     frame +%= 1;
     if (cart.is_wasm) present_wasm();
+}
+
+/// "MUSIC ON" / "MUSIC OFF" after a Start in attract, bottom left in the
+/// OS font (the only text this cart draws outside the debug overlay).
+fn draw_toast() void {
+    cart.text(.{
+        .str = if (music.enabled) "MUSIC ON" else "MUSIC OFF",
+        .x = 2,
+        .y = 118,
+        .text_color = .{ .r = 31, .g = 63, .b = 31 },
+        .background_color = .{ .r = 0, .g = 0, .b = 0 },
+    });
+}
+
+/// The simulator has no streaming audio: the lead, its echo and the bass
+/// go to the WASM-4 APU's two pulse channels and its triangle (`tone`
+/// directly: attack/decay/sustain/release frames packed in the duration
+/// word, volumes sustain | peak << 8, flags channel | duty << 2). The
+/// chords have no channel left and stay silent there.
+fn sim_note(n: music.Note) void {
+    if (!cart.is_wasm) return;
+    const channel: u32 = switch (n.voice) {
+        0 => 0,
+        1 => 1,
+        else => if (n.bass == 1) 2 else return,
+    };
+    const frames: u32 = @as(u32, n.dur) * music.step_samples * 60 / music.rate;
+    const base: u32 = switch (channel) {
+        0 => 30,
+        1 => 12,
+        else => 40,
+    };
+    const peak = base * (5 + @as(u32, n.vel)) / 8;
+    const attack: u32 = 1;
+    const decay: u32 = 6;
+    const release: u32 = 12;
+    const sustain: u32 = @min(frames -| (attack + decay), 255);
+    struct {
+        extern fn tone(frequency: u32, duration: u32, volume: u32, flags: u32) void;
+    }.tone(music.hz_of(n.pitch), attack << 24 | decay << 16 | release << 8 | sustain, peak * 2 / 3 | peak << 8, channel | 1 << 2);
 }
 
 // Debug exports for the headless harness (wasm only).

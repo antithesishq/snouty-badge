@@ -1459,3 +1459,34 @@ status; tag `snouty-reflections/m4`; merge to main.
   frozen mode cannot be seen in the simulator (it traces a fixed column
   count per update); on a badge, freeze a half30 build and confirm the OS
   fps overlay stays at 30 while the image converges.
+
+## M5.1 Music (2026-10-04)
+
+Adrian: "peaceful and serene chiptune music ... sound should be
+toggleable". Contract in SPEC.md section 8; built in one pass (no tracks).
+
+- Source: Satie, Gymnopedie No. 1, Mutopia's public-domain typesetting
+  (`tools/music/`). `tools/gen_music.py` -> `cart/src/music_data.zig`
+  (348 notes, u32 each). One MIDI fix-up: LilyPond cuts the melody's tied
+  F#4 (bars 9-12) where the chords repeat the same pitch; the generator
+  restores the score's durations and asserts the cut it expects.
+- `cart/src/music.zig`: 8 voices, 22.05 kHz synthesis upsampled 2x,
+  integer only, `noinline` entry points (inlined into `_start` it cost
+  3.9 KB). Knobs at the top: tempo 64 bpm, per-instrument gain/ADSR/
+  vibrato, `target` 5000 queued, 8 KB ring in `.bss`.
+- `variant.music`: off in half30 (with it, `.text` + `.data` = 144.6 KB
+  of the 136 KB budget).
+- Start in attract toggles it ("MUSIC ON/OFF" toast for 1.5 s); Start and
+  Select ignored while both are held.
+
+Status (2026-10-04):
+- Sizes cut20 `.text` + `.data` 131,356 (base 123,984), `.bss` 118,584;
+  half30 unchanged at 137,280.
+- Bench, cut20 sunset, 600 frames, calibrated busy ms: base worst 45.60 /
+  mean 43.26; music off 45.67 / 43.33; music on 46.64 / 44.02. Ring: 0
+  underruns, queue min 2,952 of 5,000. Midnight and noon (~49.3-49.7 ms
+  without music) not re-benched; Adrian will judge on the badge whether
+  ~+1 ms there matters.
+- Host tests (`zig build test`): table invariants, pitch table, the
+  simulator path, ring fill and fade-out, and a whole pass with no
+  clipping (peak 126 of 127, rms 22).

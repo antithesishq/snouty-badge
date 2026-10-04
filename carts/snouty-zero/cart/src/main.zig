@@ -143,6 +143,7 @@ pub fn update() void {
         .results => results_frame(),
         .standings => standings_frame(),
     }
+    engine_cue();
     render_us = @truncate(cart.micros_since_boot() - t0);
     replay_max = @max(replay_max, history.replay_calls);
     if (build_options.debug_overlay) draw_overlay();
@@ -205,13 +206,15 @@ fn menu_frame() void {
     render.frame = frame;
     camera.cam.yaw +%= 8;
     render.draw();
-    cart.rect(.{ .x = 0, .y = 28, .width = 160, .height = 72, .fill_color = hud.anti_black });
+    // The main menu's box runs one line longer for the machine's handling blurb.
+    cart.rect(.{ .x = 0, .y = 28, .width = 160, .height = if (screen == .main_menu) 84 else 72, .fill_color = hud.anti_black });
     switch (screen) {
         .main_menu => {
             menu_nav(&main_list);
             const sound_item: []const u8 = if (sound.enabled) "SOUND: ON" else "SOUND: OFF";
             const machine_item = menu.machine_items[sim.player_character];
             menu.draw_list("SNOUTY ZERO", &.{ "QUICK RACE", "GRAND PRIX", machine_item, sound_item }, &main_list, 36);
+            hud.centered(menu.machine_blurbs[sim.player_character], 100, hud.orange);
             // The machine row cycles with Left/Right too.
             if (main_list.cursor == 2 and (input.pressed(.right) or input.pressed(.left))) {
                 sim.player_character = @intCast((sim.player_character + (if (input.pressed(.right)) @as(u8, 1) else 4)) % 5);
@@ -450,6 +453,25 @@ fn sound_cues() void {
         if (finish_note == 1) sound.finish(1);
     }
     if (p.shake == 4 and p.crash == .none) sound.rail_click();
+}
+
+/// The engine drone (SPEC 9): the player's machine while racing, silent
+/// everywhere else, in the crash hit-stop, after JOB KILLED and in the
+/// attract demo.
+fn engine_cue() void {
+    const w = &world.w;
+    const p = &w.machines[world.player];
+    if (screen != .race or mode == .attract or hitstop_left > 0 or killed_left > 0 or !p.active) return sound.engine_off();
+    sound.engine(.{
+        .speed = sim.speed(p),
+        .throttle = (input.held(.a) or autopilot) and !p.finished,
+        .boost = p.boost > 0,
+        .air = p.hop > 0,
+        .rough = p.on_throttled,
+        .grid = w.phase == .countdown,
+        .rewind = rewinding or auto_left > 0,
+        .frame = frame,
+    });
 }
 
 // --- Pause -----------------------------------------------------------------------

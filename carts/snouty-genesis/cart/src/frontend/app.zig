@@ -54,6 +54,7 @@ pub noinline fn start() void {
     text.init();
     video.init();
     debug.frames_per_update = frames_per_update;
+    audio.init();
     // False when the arena has no room: the game runs untracked and the
     // menu reads "Scrub: no memory".
     _ = rewind.init();
@@ -83,6 +84,7 @@ fn choose_rom() void {
 /// or when the picker or the help screen is left.
 fn begin(src: core.RomSource) void {
     md.init_in_place(src);
+    audio.attach(&md);
     md.line_sink = video.sink();
     video.apply(&md);
     have_md = true;
@@ -170,6 +172,8 @@ fn run_update(t1: u64) void {
     // After a scrub the console is parked on a record boundary: playing on
     // drops the records ahead.
     rewind.resume_if_parked(&md);
+    var sound_buf: audio.UpdateBuf = undefined;
+    audio.before_frames(&md, &sound_buf);
     var f: u8 = 1;
     while (f <= frames_per_update) : (f += 1) {
         md.step_frame(in.pad, f == frames_per_update);

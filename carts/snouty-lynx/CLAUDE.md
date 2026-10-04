@@ -26,8 +26,9 @@ CLAUDE.md and docs have the longer explanations.
   `Pad` (low byte = JOYSTICK $FCB0 layout, bit 8 = Pause). `cpu65.zig`:
   the Rockwell 65C02 over a generic Bus, cycle-exact against
   SingleStepTests (docs/CPU.md). `mikey.zig`: timers, interrupts, display
-  registers, palette, DMA/refresh bus steal, cart strobes, audio registers
-  stored only. `suzy.zig`: sprite engine, collision, math unit
+  registers, palette, DMA/refresh bus steal, cart strobes. `audio.zig`:
+  Mikey's four audio channels (LFSR, integrate, DAC, links, Lynx II
+  stereo) and their mix into `Lynx.audio_out` (M5). `suzy.zig`: sprite engine, collision, math unit
   (docs/SUZY.md). `bus.zig`: memory map, MAPCTL overlays, tick costs,
   page-mode stream, `CartPort`. `cart.zig`: the cart as 256 block pointers
   and the `.lnx`/headerless parser. `undo.zig`: the scrubber's undo-record
@@ -43,27 +44,33 @@ CLAUDE.md and docs have the longer explanations.
   ROM in wasm/embed builds only, or none with the reason), `splash` (Iris mark, `lib/iris_mark.zig`),
   `debug` (step timing, FPS), `text` (Snouty Gear's fast font, verbatim),
   `menu` (the
-  frozen-frame menu: Resume, Buttons swap, Press Option 2, Restart
+  frozen-frame menu: Resume, Buttons swap, Sound, Press Option 2, Restart
   Pause+Opt1, Debug overlay, Reset, Pick ROM, About; PLAN.md M2), `picker`
   (the drive file list, restarts into the chosen file), `rewind` (the time
   scrubber over `core.undo`: arena from the linker symbols, M3), `tuning`
-  (stack guard, wasm arena), `strip` (the status strip). `debug.enabled`
-  is off at boot and a menu row. No sound anywhere.
+  (stack guard, wasm arena), `strip` (the status strip), `audio` (M5:
+  `audio_out` into the streaming ring of `lib/stream_audio.zig`, rate
+  control, ramp out / prime on resume; host-tested by
+  `tests/stream_unit.zig`). `debug.enabled` is off at boot and a menu row;
+  `audio.enabled` (Sound) is `build_options.sound` at boot (off unless
+  `-Dsound=true`) and a menu row (not in wasm).
 - `tests/` — host tests, entry `tests/all.zig` (one `_ = @import` line per
   file): `cpu65_single_step.zig` (SingleStepTests rockwell65c02, data from
   `tools/fetch_test_roms.sh`), `suzy_unit.zig`, `math_unit.zig`,
   `mikey_unit.zig` (timers, bus, port, traps, sleep), `golden.zig` +
   `runner.zig` (scripted runs of the shipped ROM and drhelius's lynx-tests
   carts, frame hashes), `boot_*.zig`, `cart_unit.zig`, `drive_unit.zig`
-  (against `tests/fixtures/*.img` from `tests/fixtures/make_fixtures.py`).
-  `tests/roms/` is gitignored.
+  (against `tests/fixtures/*.img` from `tests/fixtures/make_fixtures.py`),
+  `stream_unit.zig` (the frontend's sound path against a model of the
+  firmware's 512-sample reads). `tests/roms/` is gitignored.
 - `roms/` — `raycast.lnx` (shipped, Apache-2.0, `LICENSE-raycast.txt`,
   `docs/ROM_CANDIDATES.md`) and `placeholder.lnx` (576 B,
   `tools/make_placeholder_rom.py`, not a Lynx program, only for the drive
   fixtures). `*.lnx`/`*.lyx` are gitignored at the root; commercial dumps
   live in `~/roms/lynx/` on the VM.
 - `tools/` — `run_rom.zig` (`zig build run-lynx -- <rom> <script|-> <updates>
-  <outdir>`: headless run, frame images and hashes, docs/RUNNING.md 2a),
+  <outdir>`: headless run, frame images and hashes, `--wav` sound,
+  docs/RUNNING.md 2a),
   `fetch_test_roms.sh`, `romcheck.py`, `bootrom_crosscheck.py` (needs
   Adrian's local boot ROM, never in the repo), `make_placeholder_rom.py`,
   `scripts/*.json` (preview and badge-bench input). Shared tools
@@ -97,8 +104,13 @@ from the repository root only.
   host generators or runtime init.
 - The console is ~66 KB: a static, `init_in_place`, never by value.
 - Neopixels: never written (docs/NEOPIXELS.md; `debug_led_max` must read 0).
-  Sound: none (the badge speaker is unused in this project; Mikey's audio
-  registers are stored, never heard).
+  Sound (M5, the one cart with sound since the 2026-09-30 "no audio" call,
+  PLAN.md "M5 Sound: contract"): only through the new firmware's streaming
+  ring (`lib/stream_audio.zig`: never `tone2`, never CART_STOP_AUDIO),
+  off at boot unless `-Dsound=true` (docs/SOUND.md), the menu's Sound row
+  toggles it; off clears `audio_render` and pushes nothing;
+  the wasm build is silent and hides the row. `core/` produces
+  `audio_out` and stays float-free.
 - ROMs: `*.lnx`/`*.lyx` are gitignored at the root; only shipped ROMs with
   a license get an exception line. Adrian's dumps (`~/roms/lynx/`, 128 KB
   headerless) are for local `-Dlynx-rom=` builds and `out/` romfs images only.

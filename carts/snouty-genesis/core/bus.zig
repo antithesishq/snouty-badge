@@ -38,6 +38,7 @@ const m68k = @import("m68k.zig");
 const tunables = @import("tunables.zig");
 const z80bus = @import("z80bus.zig");
 const undo = @import("undo.zig");
+const sound = @import("sound.zig");
 const Md = md_mod.Md;
 const Pad = md_mod.Pad;
 
@@ -371,7 +372,7 @@ fn vdp_write16(md: *Md, addr: u24, v: u16) void {
             var b: Bus = .{ .md = md };
             md.dma_stall += md.vdp.write_control(v, &b);
         },
-        0x10...0x17 => md.psg.write(@truncate(v)),
+        0x10...0x17 => sound.psg_write(md, @truncate(v)),
         else => {},
     }
 }
@@ -380,7 +381,7 @@ fn vdp_write8(md: *Md, addr: u24, v: u8) void {
     const r = addr & 0x1F;
     if (r >= 0x10) {
         // The PSG sits on the odd byte (C00011, mirrors 13/15/17).
-        if (r < 0x18 and r & 1 != 0) md.psg.write(v);
+        if (r < 0x18 and r & 1 != 0) sound.psg_write(md, v);
         return;
     }
     vdp_write16(md, addr, @as(u16, v) << 8 | v);

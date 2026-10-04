@@ -21,9 +21,9 @@ const world_mask: i32 = (1024 << fixed.Q) - 1;
 /// rivals (1..4) on a two-column grid behind the start line, the player
 /// behind them (F-Zero style), the traffic (5..10) already cruising around
 /// the lap, two per third. Deterministic.
-/// Machine select (M5): the character whose physics the player drives
-/// (0 SNOUTY = the base tuning, 1..4 the rivals' multipliers). Meta-state
-/// set by the menu before `reset`.
+/// Machine select (M5): the machine the player drives, an index into
+/// `ai.player_machines` (0 ANTEATER = the base tuning) and the sprite drawn.
+/// Meta-state set by the menu before `reset`.
 pub var player_character: u8 = 0;
 
 pub fn reset(t: *const track.Track, count: u8) void {
@@ -189,9 +189,9 @@ pub fn speed(m: *const Machine) i32 {
 }
 
 /// Physics for one machine (SPEC 5.1 steps 1..5).
-/// The player's physics character: the base unless a rival's was selected.
+/// The player's physics: the handling of the machine picked in the menu.
 fn player_char() *const ai.Character {
-    return if (player_character >= 1 and player_character <= 4) &ai.characters[player_character] else &base_character;
+    return &ai.player_machines[player_character % ai.player_machines.len];
 }
 
 fn step_machine(m: *Machine, b: Buttons, index: usize) void {
@@ -211,7 +211,7 @@ fn step_machine(m: *Machine, b: Buttons, index: usize) void {
         m.thermal = @intCast(@max(1, @as(i32, m.thermal) - tuning.thermal_overclock));
         m.boost = tuning.overclock_ticks;
     }
-    // The player keeps the base tuning; rivals and traffic use their character.
+    // The player drives the selected machine; rivals and traffic use their character.
     const c: *const ai.Character = if (index == world.player) player_char() else ai.character(index);
     const in_air = m.hop > 0;
     if (in_air) m.hop -= 1;
@@ -277,8 +277,6 @@ fn step_machine(m: *Machine, b: Buttons, index: usize) void {
     if (!in_air) resolve_tiles(m, old_x, old_y);
     update_progress(m, index);
 }
-
-const base_character = ai.Character{};
 
 /// Corner offsets of the 24x12 footprint for a heading, world px (not Q16).
 fn corners(m: *const Machine) [4][2]i32 {
@@ -864,6 +862,36 @@ test "every committed track is completable with the field present" {
         }
         for (world.w.machines[1..tuning.traffic_first]) |r| try std.testing.expect(r.finished);
         try std.testing.expect(ranks_are_permutation());
+    }
+}
+
+test "every machine select pick completes every track" {
+    defer player_character = 0;
+    try std.testing.expect(eql(ai.Character, &ai.player_machines[0], &ai.Character{}));
+    var finish: [ai.player_machines.len]u32 = undefined;
+    for (track.tracks) |t| {
+        for (0..ai.player_machines.len) |k| {
+            player_character = @intCast(k);
+            reset(t, 1);
+            run_countdown();
+            var crashes: u32 = 0;
+            var ticks: u32 = 0;
+            var last_crash: world.Crash = .none;
+            while (world.w.phase != .finished and ticks < 60 * 150) : (ticks += 1) {
+                const m = &world.w.machines[0];
+                simulate(ai.drive(m, 0));
+                if (m.crash != .none and last_crash == .none) crashes += 1;
+                last_crash = m.crash;
+            }
+            const p = &world.w.machines[0];
+            if (report_race) std.debug.print("\n{s} machine {d}: finish {d} ticks, best lap {d}, crashes {d}\n", .{ t.name, k, p.finish_tick, p.best_lap, crashes });
+            try std.testing.expectEqual(world.Phase.finished, world.w.phase);
+            try std.testing.expect(crashes <= 1);
+            finish[k] = p.finish_tick;
+        }
+        // The picks are felt: ARGMAX's top speed beats ANTEATER and BACKPROP
+        // under the same autopilot.
+        try std.testing.expect(finish[1] < finish[0] and finish[1] < finish[3]);
     }
 }
 

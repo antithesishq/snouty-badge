@@ -9,4 +9,5 @@ test {
     _ = @import("sim.zig");
     _ = @import("ai.zig");
     _ = @import("history.zig");
+    _ = @import("engine.zig");
 }

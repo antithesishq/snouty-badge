@@ -93,7 +93,10 @@ flash window, root `README.md`); it is installed exactly like a RAM cart.
   flash cache hit rate) in the menu and in every cart.
 - Carts boot silent; each has its own sound toggle ([SOUND.md](SOUND.md)).
   Newer OS firmware (upstream from 2026-09-27) ignores our carts' `tone2`
-  calls, so the toggle does nothing there.
+  calls, so the toggle does nothing there. The exception is Snouty Lynx:
+  it streams the Lynx's sound on that newer firmware once its menu row
+  "Sound: On/Off" is on (off at boot unless built with `-Dsound=true`; the
+  volume is in the OS's Start+Select box) and is silent on the older one ([SOUND.md section 8](SOUND.md#8-the-streaming-audio-abi-in-detail)).
 
 ## 4. The wrong drive: the RP2350 bootloader
 
