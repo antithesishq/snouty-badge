@@ -215,6 +215,8 @@ def text(meta, res, st, hot, every, top, show_symbols):
                  f"{t0['freq']:.0f} Hz, {t0['duration']:.2f}, volume {t0['volume']:.2f})")
     if res.volumes:
         L.append(f"volume: {len(res.volumes)} CART_VOLUME messages, last {res.volumes[-1][1]:.2f}")
+    if res.audio:
+        L.extend(audio_lines(res.audio))
     if res.traces:
         L.append(f"traces: {len(res.traces)} CART_TRACE messages (see above / --json)")
     if res.unknown_msgs:
@@ -247,6 +249,23 @@ def text(meta, res, st, hot, every, top, show_symbols):
     return '\n'.join(L) + '\n'
 
 
+def audio_lines(a):
+    """The streaming-audio summary (audio.Consumer.summary())."""
+    rate = a['sample_rate']
+    L = [f"audio: streaming started in frame {a['started_frame']} (ring {a['ring_len']} samples at "
+         f"{a['ring_ptr']:#010x}"
+         + (f", {a['starts']} starts" if a['starts'] > 1 else '')
+         + (f", {a['stops']} CART_STOP_AUDIO" if a['stops'] else '')
+         + f"); {a['mixes']} mixes of {a['mix_samples']}: {a['consumed']:,} samples consumed "
+         f"({a['consumed'] / rate:.2f} s)"]
+    under = (f"underruns {a['underrun']:,} samples in {a['underrun_mixes']} mixes"
+             + (f" (first in frame {a['first_underrun']})" if a['first_underrun'] is not None else ''))
+    q = (f"queue at each mix min {a['queue_min']} mean {a['queue_mean']:.0f} max {a['queue_max']}"
+         if a['queue_mixes'] else "no samples queued yet")
+    L.append(f"  start-up silence {a['lead_in']:,} samples; {under}; {q}")
+    return L
+
+
 def crash_lines(c):
     where = 'start-up' if c.get('frame', -1) < 0 else f"frame {c['frame']}"
     L = [f"CRASH in {where}: {c['detail']}"]
@@ -277,4 +296,7 @@ def to_json(meta, res, st, hot, top=50):
         volumes=[dict(frame=f, volume=v) for f, v in res.volumes],
         unknown_fifo=[dict(frame=f, word=w) for f, w in res.unknown_msgs],
         warnings=res.warnings, scratch_accesses=res.scratch, crash=res.crash, hang=res.hang,
-        model=dict(clock_hz=M.CLOCK_HZ, ipc_base=OS.IPC_BASE))
+        model=dict(clock_hz=M.CLOCK_HZ, ipc_base=OS.IPC_BASE),
+        **({} if res.audio is None else dict(audio=dict(
+            res.audio, frames=[dict(frame=f, queued=q, consumed=c, underrun=u)
+                               for f, q, c, u in res.audio_frames]))))
