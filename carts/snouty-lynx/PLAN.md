@@ -733,6 +733,9 @@ Mac before flashing. Tag `snouty-lynx/m5`, merge to main, push.
 
 ## Status
 
+- 2026-10-04: Fast forward done on `emu-ff-lynx` (Select double tap and
+  hold; the tap is held back 200 ms; two-period updates, ~1.5x on raycast
+  and Hard Drivin'): "Fast forward" at the end of this file.
 - 2026-10-04: M5 sound DONE (Tracks A, B and C merged on `lynx/m5-sound`,
   tag `snouty-lynx/m5`). Mikey's four channels (12-bit LFSR, integrate
   mode, link chain timer 7 -> audio 0..3 -> timer 1, Lynx II ATTEN/MPAN/
@@ -1192,3 +1195,106 @@ added `tests/all.zig` or `carts/snouty-lynx/.gitignore`, merge the
 imports / lines (`tests/roms/`, `out/`). Track B's `-Dlynx-rom` default
 should be `roms/raycast.lnx`. M1 must trap $FE00 and $FE4A (docs/BOOT.md
 "What M1 needs").
+
+## Fast forward (2026-10-04)
+
+Lynx track of root docs/FAST_FORWARD.md (branch `emu-ff-lynx` off
+`emu-ff` 397f77b), after M5 sound. Trigger as Adrian decided: tap Select,
+then press and hold it. Snouty Gear's implementation is the reference
+(`GameInput.fast`, `ff_tap_window`, `ff_max_frames`, `ff_budget_us`).
+
+- Input (`frontend/input.zig`): a Select press released before the 500 ms
+  hold opens a 12-frame window (`tuning.ff_tap_window`, 200 ms); a second
+  press inside it sets `fast` at once, for as long as Select is held, never
+  runs the menu timer, and its release delivers nothing. The Lynx's Select
+  tap is Option 1, so it is HELD BACK (Adrian, "across the board"): it
+  reaches the game (3 frames) only when the window runs out with no
+  second press, 200 ms later than before, and the double tap drops it.
+  Start in the window or during fast forward cancels both (the OS chord).
+  `suppress_held` (menu, picker, splash) clears the tap, the window and
+  fast forward. The menu's `hold_pad` rows (Option 2, Pause+Option 1) are
+  untouched: main.zig's `step` ORs them into each stepped frame's pad,
+  fast or not. The runner's input model (tests/runner.zig) holds the tap
+  back the same way (no golden script taps Select).
+- Stepping (`main.zig` `run_frame`/`step`): frames before the last skip
+  `video.show` and the strip (the core still copies its display at
+  vertical blank, an 8 KB memcpy: console output, not state), all run with
+  `audio_render` off (the renderer's state, part of `Small`, runs the same;
+  only the sample stores stop), each goes through `rewind.record_frame` and
+  `debug.record_core`. DEVIATION from the plan's one-period update: a
+  fast-forward update spans `ff_periods` = 2 vsync periods. With Gear's
+  rule in one period (the time so far plus twice the dearest frame within
+  13 ms) a second frame needs frames under 6.5 ms; the Lynx's cost 6-10 ms
+  on the badge (raycast walking ~7.5, Hard Drivin' driving ~8.5, its title
+  11-12, Blue Lightning's attract 9-11). badge-bench, trace build (raycast
+  with an earlier ff_play.json), budget per one period: 13 ms 1.03x on
+  raycast; 14 ms 1.05x raycast, 1.03x HD title, 1.00x HD driving; 16 ms
+  1.50x raycast but 14 of 218 updates over 16.7 (each a dropped vsync). Two periods with the same rule
+  (`ff_budget_us` = 2 x 16,667 - 3,700 = 29,633) fit three or four frames:
+  never slower in theory (floor(B2/s) >= 2 floor(B1/s) since B2 > 2 B1),
+  and measured faster everywhere. The picture changes 30 times a second
+  while fast. Cap `ff_max_frames` = 4 per period (8 per update, the 4x
+  cap). wasm: no clock, one period, 4 frames every update (4x).
+- Sound: `audio.frame` is skipped while fast, so `update`'s `!stepped`
+  path ramps the stream out once (as for the menu); the first 1x frame
+  primes it again (frontend/audio.zig).
+- Indicator: `>>2x` / `>>1.5x` (frames / periods) on rows 0..7 at the
+  picture's top right, accent on the strip's background; the debug
+  overlay and the play hint live in the strip below the picture, so
+  nothing overlaps. `.no_copy_full_frame` repaints the whole screen every
+  update: badge-bench `--lcd` frames 441-443 and 511-512 (the updates
+  after each release) show no trace of it.
+- Hints: the in-play strip shows "Hold Select: menu" for 3 s, then
+  `menu.fast_hint` "2x Sel+hold: fast" for 3 s (gone at the first fresh
+  press); the menu footer takes turns every 2 s between "B: back to game"
+  and it (Gear's arrangement; `lib/hint.zig` unchanged).
+- Tests: `tests/input_unit.zig`, 8 `input:` tests (frontend/input.zig on
+  the host with the SDK's cart-api for `Controls`: menu hold with no
+  Option 1; a tap is Option 1 on the 12th frame after release for 3
+  frames; double tap and hold = fast with the d-pad passing, no tap, no
+  menu, release delivers nothing; the window's last frame counts and the
+  next does not; a long hold opens no window; Start in the window and in
+  fast forward; Start+Select on the hold; `suppress_held` drops a waiting
+  tap, a tap being delivered and fast forward). `tests/ff_determinism.zig`,
+  2 `ff:` tests: 600 frames in batches of 4 silent recorded frames equal
+  600 at 1x with sound, RAM and `Small` field by field and the picture
+  after every batch, on raycast (m1_play pads) and Hard Drivin' (local
+  dump, its title music). The runner model test now waits out the window.
+  `zig build test-lynx` 138/138 (128 + 10).
+- Preview (`tools/scripts/ff_play.json`, 900 updates; `docs/RUNNING.md`
+  section 3): `debug_ff_frames` 4 on 258-440 and 476-510, 1 elsewhere in
+  play (frame count 222 -> 950 over 258-440), no Option 1 from either
+  double tap, Option 1 (`debug_pad` 8) on 555-557 after the lone tap at
+  540-542 and on 593-595 after the 21-update press, the menu at 709 (opens
+  1), LEDs 0. `docs/ff_2026-10-04.png`: both play hints, `>>4x`, 1x after
+  release, both menu footers.
+- badge-bench, calibrated busy ms, RAM ELF, ReleaseFast, sound off;
+  frames per update from a temporary `cart.trace` build (not committed).
+  Fast-forward updates are meant to run to ~30 ms, so "over" counts
+  updates over 33.3 ms there:
+
+  | Run (updates fast) | busy mean | p95 | max | over | frames per update | effective speed |
+  |---|---:|---:|---:|---:|---|---:|
+  | raycast, ff_play.json (218) | 25.53 | 30.35 | 30.61 | 0 | 3.24 (3: 166, 4: 52) | 1.62x |
+  | Hard Drivin' title, hd_ff.json 106-560 (455) | 23.57 | 28.44 | 31.12 | 0 | 2.24 (2: 394, 3: 11, 4: 50) | 1.12x |
+  | Hard Drivin' driving, 1306-1790 (485) | 25.92 | 27.66 | 33.44 | 1 | 2.94 (1: 2, 2: 23, 3: 460) | 1.49x |
+  | Blue Lightning attract, 106-700 (595) | 23.73 | 29.45 | 32.89 | 0 | 2.51 (2: 377, 3: 130, 4: 88) | 1.26x |
+
+  The one update over 33.3 ms (HD 1555, 33.44) is two 8.5 ms frames and
+  then HD's ~16 ms dashboard redraw (the 1x worst, 1088, is 15.56) as the
+  shown frame: that update takes three vsync periods once. The 1x updates
+  in those runs: raycast max 10.55, HD max 15.77, BL max 10.72, none over
+  16.7. Hard Drivin's title frames cost 11-12 ms, so two periods hold only
+  two of them there (1x); its 7 ms title phases run at 2x.
+- 1x unchanged (the same commands on emu-ff 397f77b and this branch):
+  m3_scrub (the toml, 480) mean 6.17 / p95 9.51 / max 10.76 both; m2_play
+  400 6.75 / 9.04 / 10.27 both; Hard Drivin' hd_drive 1,800 8.84 / 11.75 /
+  15.56 -> 8.85 / 11.75 / 15.56; 0 over in all.
+- Sizes (RAM ELF, drive build): `.text` 103,804 -> 104,964 (+1,160: the
+  fast-forward loop and `draw_fast` in `run_frame`, `step` out of line),
+  `.bss` 92,440 -> 92,456; `__bss_end__` 0x200655a8 -> 0x20065a50, arena
+  75,352 -> 74,160 B after the guard (~17 of ~1,100 slots); uf2 396,800 ->
+  399,360.
+- Not done: the indicator shows halves only (two periods); a game whose
+  frames cost over ~14 ms gains nothing (two fit in two periods); the
+  hardware numbers are show day's.
