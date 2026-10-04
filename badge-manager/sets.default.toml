@@ -35,6 +35,9 @@ roms = [".md", ".bin"]
 [carts.snouty-flyover]
 title = "Memory Lane"
 
+[carts.snouty-pipes]
+title = "Snouty Pipes"
+
 [carts.badge-calibrate]
 title = "Badge calibrate"
 

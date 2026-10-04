@@ -30,8 +30,8 @@ const RomFile = struct { lazy: Build.LazyPath, name: []const u8 };
 /// cart embeds without its zero padding (`rom_module_ram`).
 var rom_is_default = true;
 
-/// The `build_options` modules of the two variants (`sound`, `z80`,
-/// `scrub`), set by `add` for the custom builders.
+/// The `build_options` modules of the two variants (`sound`,
+/// `debug_overlay`, `z80`, `scrub`, `synth`), set by `add` for the custom builders.
 var build_options: ?*Build.Step.Options = null;
 var build_options_xip: ?*Build.Step.Options = null;
 
@@ -52,11 +52,14 @@ const Variant = struct {
 const full: Variant = .{ .z80 = true, .scrub = true, .synth = false };
 const ram_cart: Variant = .{ .z80 = false, .scrub = false, .synth = true };
 
-fn variant_options(b: *Build, sound: bool, v: Variant) *Build.Step.Options {
+fn variant_options(b: *Build, sound: bool, debug_overlay: bool, v: Variant) *Build.Step.Options {
     const options = b.addOptions();
     // -Dsound=true starts with sound on; off by default, the menu's Sound
     // row toggles it (docs/SOUND.md).
     options.addOption(bool, "sound", sound and (v.z80 or v.synth));
+    // -Ddebug_overlay=true starts with the timing overlay on; off by
+    // default, the menu's Debug overlay row toggles it.
+    options.addOption(bool, "debug_overlay", debug_overlay);
     options.addOption(bool, "z80", v.z80);
     options.addOption(bool, "scrub", v.scrub);
     options.addOption(bool, "synth", v.synth);
@@ -68,8 +71,8 @@ pub fn add(b: *Build, sycl_badge_dep: *Build.Dependency, opts: common.Options) v
     rom_is_default = opts.md_rom == null;
     rom_source = opts.md_rom_source;
     cart_optimize = opts.cart_optimize;
-    build_options = variant_options(b, opts.sound, ram_cart);
-    build_options_xip = variant_options(b, opts.sound, full);
+    build_options = variant_options(b, opts.sound, opts.debug_overlay, ram_cart);
+    build_options_xip = variant_options(b, opts.sound, opts.debug_overlay, full);
 
     // Two variants (PLAN.md M5): the RAM cart `snouty-genesis` (no Z80, no
     // scrubber: code plus the ~150 KB console fit the 268 KB RAM window) and
@@ -106,7 +109,7 @@ pub fn add(b: *Build, sycl_badge_dep: *Build.Dependency, opts: common.Options) v
         .optimize = test_optimize,
         .imports = &.{
             .{ .name = "z80", .module = z80_host },
-            .{ .name = "build_options", .module = variant_options(b, false, full).createModule() },
+            .{ .name = "build_options", .module = variant_options(b, false, false, full).createModule() },
         },
     });
     const rom_host = b.createModule(.{
@@ -154,7 +157,7 @@ pub fn add(b: *Build, sycl_badge_dep: *Build.Dependency, opts: common.Options) v
         .optimize = test_optimize,
         .imports = &.{
             .{ .name = "z80", .module = z80_host },
-            .{ .name = "build_options", .module = variant_options(b, false, ram_cart).createModule() },
+            .{ .name = "build_options", .module = variant_options(b, false, false, ram_cart).createModule() },
         },
     });
     const ram_tests = b.addTest(.{

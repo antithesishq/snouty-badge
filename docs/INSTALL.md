@@ -37,6 +37,7 @@ The badge file is `zig-out/firmware/<binary>.uf2`:
 | snouty-flyover | `snouty-flyover.uf2` | |
 | demosnout | `demosnout.uf2` | |
 | snouty-zero | `snouty-zero.uf2` | the default build also writes `snouty-zero-xip.uf2` (the same game executing from flash, for a hardware comparison) |
+| snouty-pipes | `snouty-pipes.uf2` | |
 | badge-calibrate | `badge-calibrate.uf2` | a measuring tool, not a game ([its README](../badge-bench/calibrate/README.md)) |
 
 A plain `zig build` writes all of these, the default XIP ones included.

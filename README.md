@@ -50,6 +50,7 @@ have run on a badge.
 | `snouty-flyover` | `snouty-flyover` | voxel flyover through a landscape of data structures | M4.1 done | RAM | locked to 30 fps | not yet |
 | `demosnout` | `demosnout` | demoscene production, 114 s loop | M3 done | RAM | silent by design | not yet |
 | `snouty-zero` | `snouty-zero` | F-Zero style Mode 7 hover racer | M5.1 done | RAM, plus XIP built by default | none known | not yet |
+| `snouty-pipes` | `snouty-pipes` | Windows 3D Pipes screensaver: ray-cast pipes drawn incrementally, teapot easter egg, orbit | M2 done | RAM | none known | not yet |
 | `siwoo` | `siwoo` | name badge for Siwoo Yoon: demosnout's Snouty head over "SIWOO YOON" in chrome | done | RAM | made for the Tufty 2350 (Supabase Select badge); see its SPEC.md | not yet |
 | `badge-calibrate` | `badge-calibrate` | hardware calibration cart for badge-bench (`badge-bench/calibrate/`) | C3 done (badge fit applied) | RAM | a tool, not a game | ran on a badge 2026-09-28 (`badge-2026-09-28-pass5.txt`) |
 

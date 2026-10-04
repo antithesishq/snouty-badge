@@ -21,6 +21,7 @@ const carts = [_]Cart{
     .{ .dir = "demosnout", .binary = "demosnout", .add = &@import("carts/demosnout/build.zig").add },
     .{ .dir = "siwoo", .binary = "siwoo", .add = &@import("carts/siwoo/build.zig").add },
     .{ .dir = "snouty-zero", .binary = "snouty-zero", .add = &@import("carts/snouty-zero/build.zig").add },
+    .{ .dir = "snouty-pipes", .binary = "snouty-pipes", .add = &@import("carts/snouty-pipes/build.zig").add },
     .{ .dir = "badge-calibrate", .binary = "badge-calibrate", .add = &@import("badge-bench/calibrate/build.zig").add },
 };
 
@@ -31,7 +32,7 @@ pub fn build(b: *Build) void {
 
     const opts = common.Options{
         .cart_mode = b.option(common.CartMode, "cart-mode", "ram (default): the usual RAM cart; xip: execute in place from the 256 KB cart flash window (<binary>-xip.uf2); both") orelse .ram,
-        .debug_overlay = b.option(bool, "debug_overlay", "Draw render timing on screen (snouty-reflections, snouty-maze, demosnout, snouty-zero)") orelse false,
+        .debug_overlay = b.option(bool, "debug_overlay", "Draw render timing on screen (snouty-reflections, snouty-maze, demosnout, snouty-zero, snouty-flyover); start the emulators (snouty-boy, snouty-gear, snouty-genesis) with their debug overlay on") orelse false,
         .neopixels = b.option(bool, "neopixels", "Let carts light the neopixels (snoutenstein, snouty-maze, snouty-boy). Default off: the LEDs are painfully bright on hardware, see docs/NEOPIXELS.md") orelse false,
         .sound = b.option(bool, "sound", "Start every cart with sound on (snoutenstein, snouty-boy, snouty-gear, snouty-genesis, snouty-zero). Default off: carts boot silent and their menu item or button turns sound on, see docs/SOUND.md") orelse false,
         .rom = b.option([]const u8, "rom", "snouty-boy: Game Boy ROM for the simulator and -Drom-source=embed builds (default carts/snouty-boy/tests/roms/dmg-acid2.gb, or roms/2048.gb when that is absent); the default badge build embeds none"),
