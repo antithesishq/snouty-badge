@@ -25,8 +25,9 @@
 //! flags), `ring_phase` countdown C or a second angle, `spiral_angle` an
 //! angle, `aux2` per boss (Mandelbug unused, Schrodinbug the side of the
 //! real body, Bohrbug the wall gap y). Countdowns reload with
-//! `rank.interval(base)` when they fire. Bullet speeds are base speeds;
-//! `bullets.spawn_shot` scales them by rank.
+//! `rank.interval(base)` at the boss's pace (`boss_pace`) when they fire.
+//! Bullet speeds are base speeds; `bullets.spawn_shot` scales them by
+//! rank.
 //!
 //! The Schrodinbug's second body is a second `.boss` enemy (same variant)
 //! with `Aux.phantom` set; the real body moves it and fires its mirrored
@@ -432,23 +433,36 @@ fn clear_of_ship(p: [2]f32) bool {
     return dx * dx + dy * dy >= min_spawn_dist * min_spawn_dist;
 }
 
+/// Sixteenths of every fire interval by boss, on top of the rank (the
+/// probe's tuning knob, PLAN.md M7 "Tuning"); from the second loop on
+/// `loop_pace` sixteenths of that again.
+const boss_pace = [4]u32{ 40, 24, 24, 40 };
+const loop_pace: u32 = 12;
+
+/// A countdown's reload: `rank.interval(base)` at this boss's pace.
+fn paced(e: *const Enemy, base: u32) u32 {
+    var k = boss_pace[@backingInt(id_of(e.*))];
+    if (world.w.waves.loop > 0) k = k * loop_pace / 16;
+    return @max(rank.interval(base) * k / 16, 1);
+}
+
 /// Countdown A: true when it fires (then reloaded at rank).
 fn due_a(e: *Enemy, base: u32) bool {
     if (e.fire_tick > 1) {
         e.fire_tick -= 1;
         return false;
     }
-    e.fire_tick = rank.interval(base);
+    e.fire_tick = paced(e, base);
     return true;
 }
 
 /// Countdown B (in `Aux.cd`).
-fn due_b(a: *Aux, base: u32) bool {
+fn due_b(e: *const Enemy, a: *Aux, base: u32) bool {
     if (a.cd > 1) {
         a.cd -= 1;
         return false;
     }
-    a.cd = @intCast(@min(rank.interval(base), 255));
+    a.cd = @intCast(@min(paced(e, base), 255));
     return true;
 }
 
@@ -458,7 +472,7 @@ fn due_c(e: *Enemy, base: u32) bool {
         e.ring_phase -= 1;
         return false;
     }
-    e.ring_phase = @intCast(@min(rank.interval(base), 255));
+    e.ring_phase = @intCast(@min(paced(e, base), 255));
     return true;
 }
 
@@ -578,9 +592,9 @@ fn heisen_fire(e: *Enemy, a: *Aux) void {
                 patterns.ring(c[0], c[1], 12 + rank.extra(4), e.spiral_angle, shot(0.8, .round));
                 e.spiral_angle +%= 11;
             }
-            if (due_b(a, 50)) patterns.line(c[0], c[1], 3, 0.25, shot(1.3, .needle));
+            if (due_b(e, a, 100)) patterns.line(c[0], c[1], 3, 0.25, shot(1.3, .needle));
         },
-        1 => if (due_b(a, 7)) {
+        1 => if (due_b(e, a, 7)) {
             // Two arms each way, one turning clockwise, one counter.
             const cw: i32 = e.spiral_angle;
             const ccw: i32 = e.ring_phase;
@@ -591,7 +605,7 @@ fn heisen_fire(e: *Enemy, a: *Aux) void {
             e.spiral_angle +%= 9;
             e.ring_phase -%= 9;
         },
-        else => if (due_b(a, 40)) {
+        else => if (due_b(e, a, 80)) {
             patterns.fan(c[0], c[1], 3 + rank.extra(2), 14, shot(0.9, .round));
         },
     }
@@ -640,8 +654,8 @@ fn mandel(e: *Enemy, a: *Aux) void {
                 .ev_n = 6 + @as(u8, @intCast(rank.extra(2))),
                 .ev_speed = 14,
             });
-            if (due_b(a, 45)) patterns.fan(head[0], head[1], 3, 12, shot(1.1, .pellet));
-            if (due_c(e, 26)) patterns.line(tip[0], tip[1], 2, 0.3, shot(1.2, .pellet));
+            if (due_b(e, a, 80)) patterns.fan(head[0], head[1], 3, 12, shot(1.1, .pellet));
+            if (due_c(e, 60)) patterns.line(tip[0], tip[1], 2, 0.3, shot(1.2, .pellet));
         },
         1 => {
             if (due_a(e, 90)) patterns.fan(head[0], head[1], 3, 36, .{
@@ -654,12 +668,12 @@ fn mandel(e: *Enemy, a: *Aux) void {
                 .ev_speed = 13,
                 .gen = 1,
             });
-            if (due_b(a, 40)) patterns.fan(head[0], head[1], 5 + rank.extra(2), 14, shot(0.9, .round));
-            if (due_c(e, 30)) patterns.line(tip[0], tip[1], 2, 0.3, shot(1.2, .pellet));
+            if (due_b(e, a, 70)) patterns.fan(head[0], head[1], 5 + rank.extra(2), 14, shot(0.9, .round));
+            if (due_c(e, 60)) patterns.line(tip[0], tip[1], 2, 0.3, shot(1.2, .pellet));
         },
         2 => {
             if (due_a(e, 80)) wall(cell(e)[0] + 10, 17, weave_gap(e, a), 12, shot(0.85, .round));
-            if (due_b(a, 70)) {
+            if (due_b(e, a, 70)) {
                 patterns.ring(core[0], core[1], 8 + rank.extra(4), e.spiral_angle, .{
                     .speed = 0.75,
                     .shape = .pellet,
@@ -671,7 +685,7 @@ fn mandel(e: *Enemy, a: *Aux) void {
                 });
                 e.spiral_angle +%= 16;
             }
-            if (due_c(e, 24)) patterns.aimed(tip[0], tip[1], shot(1.3, .pellet));
+            if (due_c(e, 50)) patterns.aimed(tip[0], tip[1], shot(1.3, .pellet));
         },
         else => {
             if (due_a(e, 80)) patterns.fan(head[0], head[1], 2, 40, .{
@@ -684,7 +698,7 @@ fn mandel(e: *Enemy, a: *Aux) void {
                 .ev_speed = 14,
                 .gen = 1,
             });
-            if (due_b(a, 50)) {
+            if (due_b(e, a, 50)) {
                 patterns.ring(core[0], core[1], 8 + rank.extra(2), e.spiral_angle, .{
                     .speed = 0.75,
                     .shape = .pellet,
@@ -696,7 +710,7 @@ fn mandel(e: *Enemy, a: *Aux) void {
                 });
                 e.spiral_angle +%= 16;
             }
-            if (due_c(e, 24)) patterns.fan(tip[0], tip[1], 3, 10, shot(1.2, .pellet));
+            if (due_c(e, 50)) patterns.fan(tip[0], tip[1], 3, 10, shot(1.2, .pellet));
         },
     }
 }
@@ -784,20 +798,20 @@ fn schrod(e: *Enemy, a: *Aux) void {
     switch (a.stage) {
         0 => {
             heavy = due_a(e, 60);
-            light = due_b(a, 30);
+            light = due_b(e, a, 60);
         },
         1 => {
             heavy = due_a(e, 90);
-            light = due_b(a, 6);
+            light = due_b(e, a, 6);
         },
         2 => {
             heavy = due_a(e, 75);
-            light = due_b(a, 8);
+            light = due_b(e, a, 8);
         },
         else => {
             heavy = due_a(e, 90);
-            light = due_b(a, 7);
-            third = due_c(e, 40);
+            light = due_b(e, a, 7);
+            third = due_c(e, 80);
         },
     }
     schrod_volley(e, a.stage, real_flip, heavy, light, third);
@@ -891,24 +905,24 @@ fn bohr(e: *Enemy, a: *Aux) void {
     switch (a.stage) {
         0 => {
             if (due_a(e, 60)) bohr_wall(e, a, 0.9);
-            if (due_b(a, 20)) patterns.aimed(horn[0], horn[1], shot(1.6, .needle));
-            if (due_c(e, 50)) patterns.fan(nucleus[0], nucleus[1], 3, 16, shot(1.0, .pellet));
+            if (due_b(e, a, 45)) patterns.aimed(horn[0], horn[1], shot(1.6, .needle));
+            if (due_c(e, 80)) patterns.fan(nucleus[0], nucleus[1], 3, 16, shot(1.0, .pellet));
         },
         1 => {
-            if (due_b(a, 40)) bohr_flower(e, nucleus);
-            if (due_c(e, 32)) patterns.aimed(horn[0], horn[1], shot(1.5, .needle));
+            if (due_b(e, a, 40)) bohr_flower(e, nucleus);
+            if (due_c(e, 60)) patterns.aimed(horn[0], horn[1], shot(1.5, .needle));
         },
         2 => {
-            if (due_b(a, 4)) bohr_rain(e, horn);
+            if (due_b(e, a, 4)) bohr_rain(e, horn);
             if (due_a(e, 70)) patterns.fan(horn[0], horn[1], 5 + rank.extra(2), 12, shot(1.3, .needle));
         },
         3 => {
-            if (due_b(a, 5)) bohr_spiral(e, a, nucleus, 3);
-            if (due_a(e, 80)) patterns.line(horn[0], horn[1], 4, 0.25, shot(1.2, .needle));
+            if (due_b(e, a, 5)) bohr_spiral(e, a, nucleus, 3);
+            if (due_a(e, 120)) patterns.line(horn[0], horn[1], 4, 0.25, shot(1.2, .needle));
         },
         else => {
             if (due_a(e, 90)) bohr_wall(e, a, 0.85);
-            if (due_b(a, 7)) bohr_spiral(e, a, nucleus, 2);
+            if (due_b(e, a, 7)) bohr_spiral(e, a, nucleus, 2);
             if (due_c(e, 9)) bohr_rain(e, horn);
         },
     }
