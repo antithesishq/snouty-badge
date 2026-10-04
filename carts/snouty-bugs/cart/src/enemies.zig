@@ -548,17 +548,18 @@ fn countdown(c: *u32, at: [2]f32, every: u32) bool {
 
 /// Sixteenths of a fire interval by stage, on top of the rank: the
 /// content's own difficulty curve. From the second loop on every stage
-/// fires at `loop_pace` fifths of that again (the rank's mercy can hold a
+/// fires at `loop_pace` sixths of that again (the rank's mercy can hold a
 /// struggling player's rank at 0 for minutes, so the loop's own +400
 /// alone would not make loop 2 harder).
-const stage_pace = [4]u32{ 16, 11, 10, 7 };
+const stage_pace = [4]u32{ 16, 9, 9, 7 };
 const loop_pace: u32 = 2;
+const loop_pace_of: u32 = 6;
 
 /// A fire interval at this stage, loop and rank (at least 1 tick).
 fn reload(every: u32) u32 {
     const st = &world.w.waves;
     var k = stage_pace[@min(st.stage, stage_pace.len - 1)];
-    if (st.loop > 0) k = k * loop_pace / 5;
+    if (st.loop > 0) k = @max(k * loop_pace / loop_pace_of, 1);
     return @max(rank.interval(every) * k / 16, 1);
 }
 
@@ -1049,7 +1050,7 @@ fn update_herd(e: *Enemy) void {
     }
     const c = e.center();
     if (countdown(&e.fire_tick, c, herd_string_every)) {
-        spawn_gnat_string_ex(e.x + herd_eggs[0], e.y + herd_eggs[1] - 4, 0, v);
+        spawn_gnat_string_ex(e.x + herd_eggs[0], e.y + herd_eggs[1] - 4, 0, v + 1);
     }
     if (fire_due(e, herd_flower_every[v])) {
         const n = herd_flower_n[v] + rank.extra(2);
