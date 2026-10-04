@@ -35,3 +35,17 @@ pub const max_keyframes = 64;
 /// Overlay on at boot (the menu toggles it). About 0.05 ms per frame with
 /// the direct glyph blitter.
 pub const debug_overlay = true;
+
+// ---- Fast forward (main.zig `Ctx.step`, docs/FAST_FORWARD.md at the root) ----
+
+/// Game frames per update at most while Select+Right is held: 4x at 60 Hz.
+/// All but the last skip their pixel work (`Gb.lines_wanted` cleared) and
+/// render no sound.
+pub const ff_max_frames = 4;
+/// Microseconds of the 16.7 ms update, counted from its start, that the
+/// skipped frames plus the final drawn frame may use (estimated from the
+/// last measured frames); the rest is headroom for the overlay, the
+/// present and a slow frame. On the badge only: in wasm
+/// `micros_since_boot` is a stub, so there every fast update steps
+/// `ff_max_frames`.
+pub const ff_budget_us = 13_000;

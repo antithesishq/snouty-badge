@@ -109,7 +109,20 @@ pub fn draw() void {
         i += put(buf[i..], " u ");
         i += put_num(buf[i..], audio_underruns);
     }
-    draw_text(buf[0..i], white, if (alarm) red else black);
+    draw_text(buf[0..i], 0, 0, white, if (alarm) red else black);
+}
+
+/// The fast-forward indicator, ">>3x" (the frames stepped per update,
+/// averaged), in the bottom-right corner over the drawn frame. Drawn in
+/// every fast update, so the next frame (fully redrawn in
+/// `.no_copy_full_frame`) removes it when fast forward ends.
+pub fn draw_fast(frames_x16: u32, fg: cart.Pixel, bg: cart.Pixel) void {
+    var buf: [8]u8 = undefined;
+    var i: usize = put(&buf, ">>");
+    i += put_num(buf[i..], (frames_x16 + 8) / 16);
+    buf[i] = 'x';
+    i += 1;
+    draw_text(buf[0..i], cart.screen_width - i * 8, cart.screen_height - 8, fg, bg);
 }
 
 const white: cart.Pixel = .from_color(.rgb(0xFFFFFF));
@@ -120,16 +133,16 @@ const red: cart.Pixel = .from_color(.rgb(0xFF0000));
 /// Byte-identical to the table `cart.text` uses, so the linker keeps one copy.
 const font = @import("font").font;
 
-/// `cart.text` at (0, 0), scale 1, opaque background, without its generic
+/// `cart.text` at (`x0`, `y0`), scale 1, opaque background, without its generic
 /// per-pixel clipping and scaling: the overlay is drawn every frame, and
 /// `cart.text` cost about 0.65 ms of it (badge-bench). The framebuffer is
 /// column-major, so each glyph column is 8 consecutive halfword stores.
-fn draw_text(str: []const u8, fg: cart.Pixel, bg: cart.Pixel) void {
-    var cx: usize = 0;
-    var cy: usize = 0;
+fn draw_text(str: []const u8, x0: usize, y0: usize, fg: cart.Pixel, bg: cart.Pixel) void {
+    var cx: usize = x0;
+    var cy: usize = y0;
     for (str) |ch| {
         if (ch == '\n') {
-            cx = 0;
+            cx = x0;
             cy += 8;
             continue;
         }
