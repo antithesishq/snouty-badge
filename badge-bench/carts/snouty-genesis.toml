@@ -16,8 +16,8 @@
 # The romfs image is required: the default build reads the badge drive and
 # without an image the run faults reading the boot sector (a bench
 # artefact). With one ROM file the game starts straight after the splash;
-# an empty image shows the no-ROM help screen instead (--press A:38-39
-# leaves it for the embedded ROM), several files show the picker. To bench
+# an empty image shows the no-ROM screen instead (the default build has no
+# embedded ROM, so it stays there), several files show the picker. To bench
 # Miniplanets from the drive, pass --romfs carts/snouty-genesis/out/romfs_mini.img
 # --script carts/snouty-genesis/tools/scripts/m2_mini300.json --frames 336.
 # M3 time scrubber on Miniplanets (XIP cart only; menu opens at 314, eight

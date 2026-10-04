@@ -393,10 +393,10 @@ pointer for contiguous ROMs, or a cluster table (section 1 of
 
 - **Embedded** (`-Dmd-rom=path`, default the shipped ROM in `roms/`):
   linked into flash as `.rodata`. The simulator, the headless preview,
-  badge-bench and the host tests use this source. Size limit: whatever
-  section 13 leaves in the 256 KB window, and the badge build keeps it
-  small (a tiny test ROM or none) because every KB of cart flash image
-  costs 2 KB of `romfs` (section 13).
+  `-Dmd-rom-source=embed` builds and the host tests use this source. The
+  default badge build embeds none (2026-10-04: every KB of cart flash
+  image costs 2 KB of `romfs`, section 13); badge-bench maps a drive
+  image.
 - **Streamed from `romfs`** (badge only): the shared FAT12 reader
   `lib/romfs.zig` (Snouty Gear M0; `Volume.open`, `find`, `map`,
   `Mapped.contiguous`/`chunk`) lists root files with extension `.GEN`,
@@ -434,8 +434,9 @@ reads "SNOUTY GENESIS", the ROM's domestic name from its header, and
 "verified by deterministic replay". The
 neopixels are off: the cart never writes non-zero values (root
 `docs/NEOPIXELS.md`; a coworker's badge shows the LEDs are unusably bright
-even at 1%, 2026-09-29). If no ROM is found on the drive, a help
-screen says to copy a `.gen` file to the badge's USB drive.
+even at 1%, 2026-09-29). If no ROM is found on the drive, a no-ROM
+screen says to copy a `.gen` file to the badge's USB drive, with the
+reason, and stays (there is no embedded ROM to fall back on).
 
 ## 13. Memory budget
 
@@ -454,7 +455,7 @@ the XIP cart's, measured with `size -A` at each milestone:
 | Z80 core and tables (Snouty Gear's)  | ~24 KB     |
 | 68000 decode table                   | 0-64 KB    |
 | Render tables, fonts, splash         | ~8 KB      |
-| Embedded ROM (badge build)           | 0-8 KB     |
+| Embedded ROM (badge build: none)     | 0 KB       |
 | Total                                | 142-214 KB |
 
 | RAM (~275 KB of XIP data window)      | Estimate   |

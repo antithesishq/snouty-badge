@@ -29,7 +29,8 @@ pub var md: core.Md = undefined;
 const frames_per_update = core.tunables.render_every;
 
 /// 0 splash, 1 running, 2 menu, 3 pick (drive picker), 4 help (no ROM on
-/// the drive). `pick` and `help` only happen in drive builds.
+/// the drive: frontend/help.zig, never left). `pick` and `help` only happen
+/// in drive builds.
 pub const State = enum(u32) { splash = 0, running = 1, menu = 2, pick = 3, help = 4 };
 pub var state: State = .splash;
 /// Where the splash leads: `running` (the ROM was chosen in `start`),
@@ -61,14 +62,16 @@ pub noinline fn start() void {
 }
 
 /// The ROM decision of PLAN.md "Frontend states": the embedded ROM when the
-/// drive is not used or has no volume, the one playable drive file, the
-/// picker for several, the help screen for none.
+/// drive is not used (wasm, embed builds), the one playable drive file, the
+/// picker for several, the no-ROM screen for none (no volume included): a
+/// drive build has no embedded ROM to fall back on.
 fn choose_rom() void {
-    if (!romsrc.use_drive) return begin(romsrc.embedded(null));
+    if (!romsrc.use_drive) return begin(romsrc.embedded());
     const s = &romsrc.scan_result;
-    if (s.err) |e| return begin(romsrc.embedded(@errorName(e)));
-    if (s.playable_count == 1) return begin(romsrc.select(s.first_playable().?));
-    if (s.playable_count > 1) {
+    if (s.playable_count == 1) {
+        if (romsrc.select(s.first_playable().?)) |src| return begin(src);
+        after_splash = .help;
+    } else if (s.playable_count > 1) {
         picker.reset();
         after_splash = .pick;
     } else {
@@ -97,7 +100,7 @@ pub noinline fn update() void {
         // Only a drive build gets here; the check keeps the picker and the
         // help screen out of the wasm and embed builds.
         .pick => if (romsrc.use_drive) pick_update(t0),
-        .help => if (romsrc.use_drive) help_update(t0),
+        .help => if (romsrc.use_drive) help.draw(),
     }
 }
 
@@ -118,7 +121,7 @@ fn leave_splash(t0: u64) void {
             run_update(t0);
         },
         .pick => if (romsrc.use_drive) pick_update(t0),
-        .help => if (romsrc.use_drive) help_update(t0),
+        .help => if (romsrc.use_drive) help.draw(),
         else => {},
     }
 }
@@ -130,18 +133,16 @@ fn live_edge() input.Edge {
     return .{ .prev = e.prev, .cur = e.cur & ~controls_state.suppress };
 }
 
-/// One picker update (drive builds). On a choice start that ROM (or the
-/// embedded one for B) and run its first frames in the same update.
+/// One picker update (drive builds). On a choice start that ROM and run
+/// its first frames in the same update; if it no longer maps, the no-ROM
+/// screen instead.
 fn pick_update(t0: u64) void {
-    const choice = picker.update(live_edge()) orelse return;
-    begin(if (choice) |i| romsrc.select(i) else romsrc.embedded("skipped"));
-    start_running(t0);
-}
-
-/// One help-screen update (drive builds); A or B runs the embedded ROM.
-fn help_update(t0: u64) void {
-    if (!help.update(live_edge())) return;
-    begin(romsrc.embedded("no ROM on the drive"));
+    const i = picker.update(live_edge()) orelse return;
+    const src = romsrc.select(i) orelse {
+        state = .help;
+        return help.draw();
+    };
+    begin(src);
     start_running(t0);
 }
 

@@ -230,7 +230,9 @@ fn exists(b: *Build, rel: []const u8) bool {
 /// The generated `rom` module (the cart and the host tests both import it):
 /// the embedded ROM (`data`, copied next to the generated rom.zig so
 /// @embedFile can see it), its file name (`name`) and where the badge build gets its ROM
-/// (`source`, `.drive` or `.embed`). Made once per build graph.
+/// (`source`, `.drive` or `.embed`). Made once per build graph. A drive
+/// badge build never references `data`, so its bytes reach only the
+/// simulator wasm, the embed builds and the host tests.
 var rom_zig: ?Build.LazyPath = null;
 var rom_step: *Build.Step = undefined;
 
@@ -319,7 +321,8 @@ fn build_cart_modules_xip(b: *Build, cart: *Build.Module, cart_api: *Build.Modul
 }
 
 /// How a variant's modules are built: optimize modes (null inherits the
-/// cart's) and which `rom` module it embeds.
+/// cart's) and which `rom` module it embeds (`-Dmd-rom-source=embed` only:
+/// a drive build embeds none).
 const Modes = struct {
     hot: ?std.builtin.OptimizeMode = null,
     cold: ?std.builtin.OptimizeMode = null,
@@ -331,8 +334,12 @@ const Modes = struct {
 var cart_optimize: std.builtin.OptimizeMode = .ReleaseFast;
 
 fn build_cart_modules(b: *Build, cart: *Build.Module, cart_api: *Build.Module, step: *Build.Step, opts: *Build.Step.Options, modes: Modes) void {
-    const rom_zig_path = if (modes.trimmed_rom) rom_module_ram(b) else rom_module(b);
-    const rom_gen_step = if (modes.trimmed_rom) rom_step_ram else rom_step;
+    // A drive build links no embedded ROM (frontend/romsrc.zig never
+    // reads `rom.data` there), so it needs no trimmed copy either; the host
+    // tests still get theirs.
+    const trimmed = modes.trimmed_rom and rom_source == .embed;
+    const rom_zig_path = if (trimmed) rom_module_ram(b) else rom_module(b);
+    const rom_gen_step = if (trimmed) rom_step_ram else rom_step;
     const options = opts.createModule();
     cart.addImport("build_options", options);
     const z80 = b.createModule(.{ .root_source_file = b.path(gear_core ++ "z80.zig"), .optimize = modes.hot });

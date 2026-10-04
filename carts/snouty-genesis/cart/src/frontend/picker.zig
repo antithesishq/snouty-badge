@@ -6,9 +6,9 @@
 //! unplayable files are listed dimmed so the user sees why a copied file
 //! does not run. Under the list, the selected file's header name, or the
 //! reason it is refused. Up/Down move (wrapping), A plays the selected file
-//! (playable rows only), B runs the embedded test ROM instead. Full redraw
-//! every update. Drive builds only: app.zig reaches it behind
-//! `romsrc.use_drive`.
+//! (playable rows only); there is no other way out (a drive build has no
+//! embedded ROM). Full redraw every update. Drive builds only: app.zig
+//! reaches it behind `romsrc.use_drive`.
 const cart = @import("cart-api");
 const input = @import("input.zig");
 const video = @import("video");
@@ -30,16 +30,15 @@ pub fn reset() void {
     }
 }
 
-/// One picker update. Returns null to stay, or the choice: a candidate
-/// index, or null inside for the embedded ROM.
-pub fn update(e: input.Edge) ??usize {
+/// One picker update. Returns null to stay, or the chosen candidate index.
+/// app.zig only enters the picker with candidates to show.
+pub fn update(e: input.Edge) ?usize {
     const list = romsrc.candidates();
     const n = list.len;
-    if (n == 0) return @as(?usize, null);
+    if (n == 0) return null;
     if (cursor >= n) reset();
     if (e.pressed(.up)) cursor = (cursor + n - 1) % n;
     if (e.pressed(.down)) cursor = (cursor + 1) % n;
-    if (e.pressed(.b)) return @as(?usize, null);
     if (e.pressed(.a) and list[cursor].playable()) return cursor;
     draw();
     return null;
@@ -88,9 +87,7 @@ fn draw() void {
     for (lines[0..k], 0..) |l, j| {
         text.draw(l, 0, note_y + @as(i32, @intCast(j)) * 8, if (ok) help.accent_color else help.dim_color, help.black);
     }
-    // "A: play  B: test ROM", exactly the 20 columns.
     text.draw("A: play", 0, hint_y, if (ok) help.row_color else help.dim_color, help.black);
-    text.draw("B: test ROM", 9 * 8, hint_y, help.row_color, help.black);
 }
 
 /// `s` cut to `name_cols` characters, the last one '~' when cut.
