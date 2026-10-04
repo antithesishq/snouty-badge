@@ -60,6 +60,32 @@ means above.
 - **Hints:** the play hint strip and the menu's help/controls text mention
   "2x Sel+hold: fast" (or similar).
 
+## Chorded rewind (Adrian, 2026-10-04)
+
+The menu scrubber stays. A shortcut joins it on the same gesture:
+
+- During a fast-forward hold (Select still held after the double tap),
+  pressing **Left** turns the rest of that hold into rewind. The game
+  freezes; Left steps back 0.5 s and Right steps forward, with the menu's
+  auto-repeat (4 steps a second while held), through the same
+  `rewind.step` the menu uses.
+- On screen: only the menu's scrub bar at the bottom, the same one the menu
+  collapses to after a scrub step ("Scrub: -1.5 / 3.5s", position behind
+  live and the seconds of history; "Rewind: no history" when there is
+  none). Draw it with the menu's own code (factor it out), so the two
+  stay identical. No `>>` indicator while rewinding.
+- Letting go of Select resumes play from the scrubbed position and drops
+  the future, exactly as resuming from the menu does (same audio resume,
+  same `suppress_held`, so a Left or Right still held does not reach the
+  game).
+- During fast forward Left is reserved for this and never reaches the
+  game; Right and the other buttons still do. In rewind no button reaches
+  the game.
+- Start during rewind: treat it like the menu does with the OS chord
+  (nothing reaches the game; the position stays).
+- Hints: the About/help text and the cart docs gain "then Left: rewind"
+  (or similar); the play strip may stay as it is if there is no room.
+
 ## Tracks
 
 Each cart is its own Opus track in its own worktree off `emu-ff`, merged
@@ -91,3 +117,6 @@ is at the show flashing from main).
 - 2026-10-04: Gear shipped with Select+Right (origin/main 0b4ae62, tag
   snouty-gear/ff). Adrian then switched the trigger to the double tap and
   hold above; Boy and Gear are being changed to it.
+- 2026-10-04: Gear (397f77bc) and Boy (89c58526) shipped with the double
+  tap. Adrian added the chorded rewind above; Boy and Gear first, Genesis
+  and Lynx after their fast forward lands.
