@@ -10,6 +10,7 @@ const camera = @import("camera.zig");
 const director = @import("director.zig");
 const draw = @import("render/draw.zig");
 const overlay = @import("render/overlay.zig");
+const steer = @import("steer.zig");
 
 comptime {
     cart.export_start_code();
@@ -31,14 +32,18 @@ const Screen = struct {
 };
 const R = draw.Renderer(Screen);
 
+/// Steer mode's play box outline and floor grid: dim blue greys.
+const frame_color: u16 = @bitCast(cart.DisplayColor.rgb(0x405478));
+const floor_color: u16 = @bitCast(cart.DisplayColor.rgb(0x1c2638));
+
 var tick: u32 = 0;
 var render_us: u32 = 0;
 var seed: u32 = 0;
 /// Commands run on the last tick (debug_cmds).
 var cmds_run: u32 = 0;
 
-/// Timing readout: on at boot in -Ddebug_overlay builds, where Select
-/// toggles it; compiled out otherwise.
+/// Timing readout: on at boot in -Ddebug_overlay builds, where Select+B
+/// toggles it (plain Select is steer mode); compiled out otherwise.
 const debug_build = build_options.debug_overlay;
 var debug_on: bool = debug_build;
 var last_update_us: u64 = 0;
@@ -47,7 +52,17 @@ var fps_x10: u32 = 0;
 pub fn start() void {
     cart.set_vsync_enabled(1000.0 / 60.0);
     cart.set_double_buffer_mode(.copy_forward);
+    if (bench_seed != 0) return reseed(bench_seed);
     reseed(if (clock_seeded) cart.rand() ^ clock_mix() else cart.rand());
+}
+
+/// badge-bench hook (firmware only, 0 on the badge): `--poke
+/// snouty_pipes_seed=N` starts from seed N, the seed the wasm build gets
+/// when cart.rand() first returns N, so a steer script recorded headless
+/// (tools/steer_bot.mjs) replays the same run on the bench.
+var bench_seed: u32 = 0;
+comptime {
+    if (!cart.is_wasm) @export(&bench_seed, .{ .name = "snouty_pipes_seed" });
 }
 
 /// Badge builds only: cart.rand() reads 0 on the RP2350, so the badge mixes
@@ -76,6 +91,9 @@ pub fn update() void {
     // Newer firmware opens its settings box on Start+Select over the running
     // cart: react to neither while both are held.
     const chord = input.held(.start) and input.held(.select);
+    // -Ddebug_overlay builds: Select with B held toggles the readout instead
+    // of steer mode.
+    const debug_toggle = debug_build and !chord and input.held(.b) and input.pressed(.select);
     const held: director.Input = if (chord) .{} else .{
         .a = input.held(.a),
         .b = input.held(.b),
@@ -89,17 +107,19 @@ pub fn update() void {
         .a = input.pressed(.a),
         .b = input.pressed(.b),
         .start = input.pressed(.start),
+        .select = input.pressed(.select) and !debug_toggle,
         .up = input.pressed(.up),
         .down = input.pressed(.down),
         .left = input.pressed(.left),
         .right = input.pressed(.right),
     };
     director.step(held, pressed);
-    if (debug_build and !chord and input.pressed(.select)) debug_on = !debug_on;
+    if (debug_toggle) debug_on = !debug_on;
 
     // Overlays sit on the persistent picture: put back what they covered,
     // draw this tick's pieces, then save and draw the overlays again.
     overlay.restore();
+    draw.set_steer(director.in_run);
     const t0 = cart.micros_since_boot();
     for (director.commands()) |c| switch (c) {
         .cell => |cell| R.draw_cell(&director.cam, cell.p, cell.s0, cell.s1),
@@ -108,6 +128,7 @@ pub fn update() void {
             R.clear_all();
         },
         .clear_blocks => |b| R.clear_blocks(b.from, b.to),
+        .frame => |f| R.box_edges(&director.cam, f.lo, f.hi, frame_color, floor_color),
     };
     cmds_run = @intCast(director.commands().len);
     director.commands_done();
@@ -116,7 +137,8 @@ pub fn update() void {
     if (t0 > last_update_us) fps_x10 = @intCast(@min(9999, 10_000_000 / (t0 - last_update_us)));
     last_update_us = t0;
 
-    overlay.draw(director.name_strip(), if (debug_build and debug_on) .{
+    const strip: overlay.StripKind = if (director.nametag) .nametag else if (director.name_strip()) .title else .none;
+    overlay.draw(strip, director.steer_overlay(), if (debug_build and debug_on) .{
         .render_us = render_us,
         .fps_x10 = fps_x10,
         .filled = director.filled(),
@@ -151,6 +173,20 @@ comptime {
         @export(&debug_joint_style, .{ .name = "debug_joint_style" });
         @export(&debug_paused, .{ .name = "debug_paused" });
         @export(&debug_history, .{ .name = "debug_history" });
+        @export(&debug_nametag, .{ .name = "debug_nametag" });
+        @export(&debug_iris_width, .{ .name = "debug_iris_width" });
+        @export(&debug_steer, .{ .name = "debug_steer" });
+        @export(&debug_score, .{ .name = "debug_score" });
+        @export(&debug_best, .{ .name = "debug_best" });
+        @export(&debug_rewinds_left, .{ .name = "debug_rewinds_left" });
+        @export(&debug_crashes, .{ .name = "debug_crashes" });
+        @export(&debug_head_x, .{ .name = "debug_head_x" });
+        @export(&debug_head_y, .{ .name = "debug_head_y" });
+        @export(&debug_head_z, .{ .name = "debug_head_z" });
+        @export(&debug_steer_map, .{ .name = "debug_steer_map" });
+        @export(&debug_heading, .{ .name = "debug_heading" });
+        @export(&debug_occupied, .{ .name = "debug_occupied" });
+        @export(&debug_steer_rate, .{ .name = "debug_steer_rate" });
     }
 }
 
@@ -221,7 +257,7 @@ fn debug_orbit() callconv(.c) u32 {
 fn debug_speed() callconv(.c) u32 {
     return @as(u32, 1) << director.speed;
 }
-/// Joint style: 0 mixed, 1 elbow, 2 ball (B).
+/// Joint style: 0 mixed, 1 elbow, 2 ball (no longer on a button: always 0).
 fn debug_joint_style() callconv(.c) u32 {
     return @backingInt(director.joint_style);
 }
@@ -232,6 +268,66 @@ fn debug_paused() callconv(.c) u32 {
 /// Cells of the current scene in the history ring.
 fn debug_history() callconv(.c) u32 {
     return director.history_count();
+}
+
+/// 1 while the nametag strip is up (B in the screensaver).
+fn debug_nametag() callconv(.c) u32 {
+    return @intFromBool(director.nametag);
+}
+/// Width the strip's Iris mark was last drawn at: 24 at rest, less while
+/// it flips like a coin.
+fn debug_iris_width() callconv(.c) u32 {
+    return overlay.iris_width;
+}
+/// 1 in steer mode's states (4 steer, 5 rewind, 6 game over).
+fn debug_steer() callconv(.c) u32 {
+    return @intFromBool(switch (director.state) {
+        .steer, .rewind, .game_over => true,
+        else => false,
+    });
+}
+/// Player cells this steer run.
+fn debug_score() callconv(.c) u32 {
+    return director.score();
+}
+/// Best steer score this session.
+fn debug_best() callconv(.c) u32 {
+    return director.best;
+}
+/// Rewinds left this run (1 at the start, 0 after the first crash).
+fn debug_rewinds_left() callconv(.c) u32 {
+    return director.rewinds_left;
+}
+/// Crashes this run (2 = game over).
+fn debug_crashes() callconv(.c) u32 {
+    return director.crashes;
+}
+/// The player's head cell (grid coordinates).
+fn debug_head_x() callconv(.c) u32 {
+    return director.head_cell()[0];
+}
+fn debug_head_y() callconv(.c) u32 {
+    return director.head_cell()[1];
+}
+fn debug_head_z() callconv(.c) u32 {
+    return director.head_cell()[2];
+}
+/// The control mapping, 3 bits per control (up, down, left, right, A into,
+/// B out), each a grid.Dir (0 +x, 1 -x, 2 +y, 3 -y, 4 +z, 5 -z).
+fn debug_steer_map() callconv(.c) u32 {
+    return steer.pack(director.map);
+}
+/// The player's direction of travel (a grid.Dir).
+fn debug_heading() callconv(.c) u32 {
+    return @backingInt(director.heading());
+}
+/// 1 if grid cell (x, y, z) is occupied, walls and outside included.
+fn debug_occupied(x: u32, y: u32, z: u32) callconv(.c) u32 {
+    return @intFromBool(director.occupied(x, y, z));
+}
+/// The player's speed in progress units per tick (240 per cell).
+fn debug_steer_rate() callconv(.c) u32 {
+    return director.player_rate();
 }
 
 /// Button state. Upstream's platform_wasm.zig never fills `controls` from

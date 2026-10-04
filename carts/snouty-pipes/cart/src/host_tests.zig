@@ -9,6 +9,7 @@ test {
     _ = @import("grid.zig");
     _ = @import("camera.zig");
     _ = @import("director.zig");
+    _ = @import("steer.zig");
     _ = @import("render/draw.zig");
     _ = @import("render/zbuf.zig");
     _ = @import("render/shade.zig");

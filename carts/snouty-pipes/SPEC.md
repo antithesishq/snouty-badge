@@ -1,7 +1,9 @@
 # Snouty Pipes: cart spec
 
-Status: DRAFT for Adrian's review, 2026-10-04. No code yet. Section 12 lists
-the decisions, each with the default that gets built if nobody objects.
+Status: M0-M3 built 2026-10-04; Adrian took every section 12 default and
+approved M3 ("Build it - just execute the whole plan"). Later additions
+(B nametag with coin-flipping Iris marks) and M3's as-built changes are in
+PLAN.md.
 
 Reference: Windows NT/98/XP "3D Pipes" screensaver, plus the three.js
 recreation at https://github.com/xlostincode/three-d-pipes (MIT, ~900 lines
@@ -111,14 +113,32 @@ frame cap and shown as a fast regrow, which looks intentional.
 
 Autopilot always runs. Buttons change it, and it never needs input.
 
+Screensaver:
+
 | Input | Action |
 |---|---|
 | A | New scene now (dissolve) |
-| B | Joint style: mixed (default) -> elbows -> balls |
+| B | Nametag strip on/off ("ADRIAN HATCH" / "ANTITHESIS" beside the Iris mark, the boot strip's style; it stays through new scenes, orbits and speed changes) (M3; joint-style cycling left B, the style stays mixed) |
 | Up / Down | Growth speed 1x / 2x / 4x / 8x |
 | Left / Right | Orbit the camera 45 degrees; the same pipes regrow fast from the new angle (M2) |
 | Start | Pause |
-| Select | Debug overlay (fps, primitives, cells filled) only with `-Ddebug_overlay` |
+| Select | Steer mode (M3): dissolve into a run where one pipe is yours |
+| Select + B | Debug overlay (fps, primitives, cells filled), only with `-Ddebug_overlay` |
+
+Steer mode (M3; PLAN.md "Plan: M3"):
+
+| Input | Action |
+|---|---|
+| Up / Down / Left / Right | Turn your (silver) pipe that way on screen at the next cell centre; held = keeps turning that way when it can; reversals are ignored |
+| A / B | Dive into / come out of the screen |
+| Start | Pause |
+| Select | Back to the screensaver (dissolve) |
+| A (game-over card) | Play again |
+
+The boot strip reads "SNOUTY PIPES" over "SELECT: STEER" and shows for
+the first 2 s of every screensaver scene; the Iris mark on it (and on the
+nametag) flips like a coin 45 ticks after the strip appears and every 5 s
+after that.
 
 Start+Select and joystick click belong to the OS and are never bound; while
 Start and Select are both held the cart reacts to neither (newer firmware
@@ -215,7 +235,8 @@ Far inside the ~274 KB RAM cart window.
   clean. Tag `snouty-pipes/m1`, merge to main and push (badge-ready).
 - **M2 controls and extras**: teapot, orbit with progressive rebuild, speed,
   joint cycling, pause, name strip. Same gate, tag, merge.
-- **M3 steer mode (proposal)**: one pipe is yours. The joystick turns it on
+- **M3 steer mode** (approved and built 2026-10-04; PLAN.md has the
+  contract and what changed in practice): one pipe is yours. The joystick turns it on
   screen (up/down/left/right), A and B dive into or out of the screen; the
   others grow on autopilot. Hitting a pipe or the wall ends the run, score =
   segments. Snouty twist: on a crash, time rewinds a few segments (the
