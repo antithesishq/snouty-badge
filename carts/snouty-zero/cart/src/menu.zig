@@ -87,6 +87,8 @@ pub const names = [5][]const u8{ "SNOUTY", "ARGMAX", "DROPOUT", "BACKPROP", "OVE
 /// Main menu machine row (M5 machine select: the player drives that character's physics).
 /// Space-padded to one length so the menu does not shift as the row cycles.
 pub const machine_items = [5][]const u8{ "MACHINE: ANTEATER", "MACHINE: ARGMAX  ", "MACHINE: DROPOUT ", "MACHINE: BACKPROP", "MACHINE: OVERFIT " };
+/// One line under the menu: how the picked machine handles (`ai.player_machines`).
+pub const machine_blurbs = [5][]const u8{ "BALANCED", "FAST, WIDE TURNS", "SHARP TURNS, SLIDES", "SLOWER, GRIPPY", "FAST, FRAGILE" };
 
 fn put_uint(out: []u8, v: u32) void {
     var n = v;
