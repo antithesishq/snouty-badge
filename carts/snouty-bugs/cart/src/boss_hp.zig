@@ -3,8 +3,8 @@
 //! u16 since M7; the spawn and the HUD bar's denominator both come from
 //! `max_hp`, so a fresh boss always shows a full bar (review 2026-10-01 G6).
 //!
-//! Every boss still uses the M3 Heisenbug numbers (60 + 20 per completed
-//! loop); track B2 sets the real per-boss values (PLAN.md M7).
+//! Boss HP is not ranked: base x (1 + 0.3 x loop), rounded down, at most
+//! 65535 (PLAN.md M7 "Bosses", track B2).
 
 /// `Enemy.variant` of a `.boss`: which of the four bosses it is.
 pub const BossId = enum(u8) { heisenbug, mandelbug, schrodinbug, bohrbug };
@@ -15,27 +15,42 @@ pub fn for_stage(stage: u8) BossId {
     return @fromBackingInt(@intCast(stage % 4));
 }
 
-const base: u32 = 60;
-const per_loop: u32 = 20;
+/// Loop-0 HP per boss (PLAN.md M7 "Deviations (B2)" has the tuning).
+pub fn base(boss: BossId) u32 {
+    return switch (boss) {
+        .heisenbug => 320,
+        .mandelbug => 480,
+        .schrodinbug => 270,
+        .bohrbug => 420,
+    };
+}
 
-/// Boss HP for `boss` in loop `loop`: 60 + 20 per loop for now, at most
-/// 65535.
+/// Boss HP for `boss` in loop `loop`: base x (1 + 0.3 loop), rounded
+/// down, at most 65535.
 pub fn max_hp(boss: BossId, loop: u8) u16 {
-    _ = boss;
-    return @intCast(@min(base + per_loop * @as(u32, loop), 0xFFFF));
+    const hp = base(boss) * (10 + 3 * @as(u32, loop)) / 10;
+    return @intCast(@min(hp, 0xFFFF));
 }
 
 const testing = @import("std").testing;
 
-test "boss HP grows 20 per loop from 60" {
-    try testing.expectEqual(@as(u16, 60), max_hp(.heisenbug, 0));
-    try testing.expectEqual(@as(u16, 80), max_hp(.heisenbug, 1));
-    try testing.expectEqual(@as(u16, 240), max_hp(.heisenbug, 9));
+test "loop-0 boss HP is the base" {
+    try testing.expectEqual(@as(u16, 500), max_hp(.heisenbug, 0));
+    try testing.expectEqual(@as(u16, 800), max_hp(.mandelbug, 0));
+    try testing.expectEqual(@as(u16, 900), max_hp(.schrodinbug, 0));
+    try testing.expectEqual(@as(u16, 1600), max_hp(.bohrbug, 0));
 }
 
-test "boss HP is no longer capped at the u8 limit" {
-    try testing.expectEqual(@as(u16, 260), max_hp(.heisenbug, 10));
-    try testing.expectEqual(@as(u16, 5160), max_hp(.bohrbug, 255));
+test "boss HP grows 30 percent of the base per loop" {
+    try testing.expectEqual(@as(u16, 650), max_hp(.heisenbug, 1));
+    try testing.expectEqual(@as(u16, 1040), max_hp(.mandelbug, 1));
+    try testing.expectEqual(@as(u16, 1280), max_hp(.mandelbug, 2));
+    try testing.expectEqual(@as(u16, 2080), max_hp(.bohrbug, 1));
+}
+
+test "boss HP saturates at the u16 limit" {
+    try testing.expectEqual(@as(u16, 0xFFFF), max_hp(.bohrbug, 255));
+    try testing.expectEqual(@as(u16, 38750), max_hp(.heisenbug, 255));
 }
 
 test "each stage has its own boss" {
