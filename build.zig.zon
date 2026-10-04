@@ -20,8 +20,8 @@
         // b.dependency("zigimg"), and add_os_cart initialises MicroBuild on
         // this builder, so both must be declared here too.
         .microzig = .{
-            .url = "https://github.com/ZigEmbeddedGroup/microzig/releases/download/0.17.7/microzig.tar.gz",
-            .hash = "microzig-0.17.7-D20YSb7KAAAdJvjGJpx-9NG8th__5s2OaJbug645qrgM",
+            .url = "https://github.com/ZigEmbeddedGroup/microzig/releases/download/0.17.12/microzig.tar.gz",
+            .hash = "microzig-0.17.12-D20YSbDKAAA_aWCmmydsldbUrhmCUzNFqseEIAE4__5g",
         },
         .zigimg = .{
             .url = "git+https://github.com/SpexGuy/zigimg?ref=sycl_badge#9db3abb43ad18dd45512d83d812816dc8840b7e1",
