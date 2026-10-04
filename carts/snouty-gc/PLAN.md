@@ -315,16 +315,69 @@ or remove interface ones), `sim.zig`, new `weapons.zig`, `ai.zig`,
    does not draw the new pools yet: Track B does). Commit with
    `Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>`, push gc/spec.
 
-### Track B: presentation (Opus agent, starts when the art track lands)
+### Track B: presentation (Opus agent, worktree /home/exedev/snouty-badge-gc-present, branch gc/present off gc/spec 7b2d1eb3)
 
-Owns `main.zig`, `select.zig` (new), `roster_text.zig` (new: bios,
-taunts, wrecked lines), `fx.zig` (new), `hud.zig`, `sprites.zig`,
-`menu.zig`, `results.zig`, `build.zig` (wiring `assets/gen/art/`), and
-`tools/scripts/`. Draws the racer select (SPEC 8.1), the racer's own car
-sheets, projectiles, drops (flat decals via a non-uniform blit),
-reticle, beams, explosions, smoke, the armor bar and ammo pips, the kill
-feed, `ACK` and the taunt pop-ups, all from the World and its events.
-Details are written when the art lands.
+The art landed (merged 3c6a5356; `ASSETS.md` lists every sheet, its cells,
+and the lines for `build.zig`). Track B owns `main.zig`, new `select.zig`,
+new `roster_text.zig` (bios, taunts, wrecked lines; SPEC 4.1 table,
+SYSADMIN line 2 = `MACHINES WOKE UP.`), new `fx.zig`, `hud.zig`,
+`sprites.zig`, `camera.zig`, `menu.zig`, `results.zig`, the look-back and
+jitter hooks in `render.zig`, `build.zig`, `tools/scripts/`, `docs/`.
+It must not edit Track A's files (`world.zig`, `sim.zig`, `weapons.zig`,
+`ai.zig`, `tuning.zig`, `racers.zig`, `sim_test.zig`, `weapons_test.zig`).
+It renders only from the M1.0 interface, so the two merge cleanly.
+
+1. **Wire the art** into `build.zig` per ASSETS.md (the art `fx.png`
+   clashes with Zero's `fx.png` by name: rename one module symbol). Drop
+   the placeholder re-paletted machine sprite and Zero's sheets the cart
+   no longer uses.
+2. **Cars**: each racer's own sheet. Pick the cell from the angle between
+   the camera and the car heading (rear, rear quarter, side; mirrored for
+   the other side), the airborne cell while `hop > 0`, the wreck cell plus
+   flames from `fx` for the hulk (the first 90 ticks of a wreck), nothing
+   after that until the respawn, blinking while `immune`, a white hit flash
+   while `hit_flash`. Smoke puffs below 50% armor and black smoke with
+   sparks below 25%, render-side in `fx.zig`.
+3. **The 64-object depth list** in `sprites.zig`: cars, projectiles
+   (`weapons.png` cells, SPEAR PHISH by view), drops. Flat drops (puddle,
+   caltrops, firewall base) go through a **non-uniform scaled blit**
+   (height x squash) so they lie on the floor; the firewall flames stand
+   up. Farthest culled first.
+4. **Effects from events** (`fx.zig`, render-side particle ring, cursor
+   over `World.events` by `seq`, never written back): explosions (4
+   frames), sparks (radius 0), the FIBER LANCE beam (6 frames, a 1 to 2 px
+   line from car to target or along the heading for `length` px), muzzle
+   flash, respawn flicker. The fish-hook reticle on the followed car's
+   `lock` target (`hud.png`), and the charge glow while `charge > 0`.
+5. **HUD** (SPEC 10 layout, 4 px margins): lap, rank, armor bar
+   green-to-red, front ammo count and rear ammo pips, burst pips, the kill
+   feed line from `wreck` events (`KILLER > VICTIM`, or `VICTIM` plus the
+   cause for a fall), `ACK` above the victim on the followed car's `hit`
+   events, and the **taunt pop-up** (a 24x24 half-scale portrait plus the
+   line, top left, 90 ticks): the killer's taunt when they wreck the
+   followed car, and the victim's wrecked line when the followed car makes
+   the kill. Per-car messages for wrecks (`WRECKED BY SYSADMIN`,
+   `SEGMENT FAULT`).
+6. **Racer select** (`select.zig`, SPEC 8.1, matching
+   `docs/art_select_mock.png`): portrait, name, car, the car turning on
+   its yaw cells, SPD/ARM/DMG bars, the two weapon names with the `A` and
+   `↓A` glyphs, the bio, `< A PICK >`. The flow is Title, then Start, then
+   select (A picks), then the track row (one track for now, Left/Right is
+   ready for more), then the countdown. The picked racer drives car slot
+   `human = 0`; the other five are AI. The splash uses Snouty's
+   eyepatched portrait. Results show each row's half-scale portrait, and
+   the winner's full portrait and taunt.
+7. **Look back** while Select is held (camera yaw + 180 degrees, own car
+   hidden, `BEHIND` over the horizon), render-side only.
+8. **A render stress scene**: a debug export that fills the World pools
+   (six cars on screen, all projectile kinds, every drop kind, two
+   explosions) without the sim, and `tools/scripts/m1_render_stress.json`,
+   benched worst frame (plain and `--lcd`) recorded in "M1 status".
+   Preview scripts for the select across all six racers and a race.
+9. `tools/check.sh` green in the worktree, commits on `gc/present` with
+   the `Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>` line,
+   branch pushed. The lead merges `gc/present` into `gc/spec` after
+   Track A lands and runs the integrated gate.
 
 ### M1 gate
 
