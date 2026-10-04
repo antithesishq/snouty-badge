@@ -16,7 +16,9 @@
 //! press of a Select double tap is held, each update steps up to `tuning.ff_max_frames` game
 //! frames within `tuning.ff_budget_us`, only the last one rendered and none
 //! with sound, every one recorded for the scrubber; `>>4x` sits in the
-//! top right corner meanwhile.
+//! bottom right corner meanwhile. Left during that hold turns it into the
+//! chorded rewind: the game freezes under the menu's scrub bar, Left/Right
+//! step time, letting go of Select resumes from there (`input.Rewind`).
 //! Control hints (lib/hint.zig): "Hold Select: menu" on the splash and in
 //! a strip at the bottom for the first 3 s of play, then "2x Sel+hold: fast"
 //! for 3 s more (gone at the first fresh press); the menu has its own.
@@ -149,6 +151,32 @@ fn run_frame(t1: u64) void {
         return;
     }
 
+    // Chorded rewind (Left during fast forward): the game stays frozen
+    // under the menu's scrub bar and Left/Right step time as in the menu;
+    // letting go of Select resumes as the menu does (input.zig suppressed
+    // the held buttons) and steps this frame.
+    switch (in.rewind) {
+        .enter, .on => {
+            if (in.rewind == .enter) {
+                play_hint.stop();
+                menu.freeze_frame();
+            }
+            rewinding = true;
+            frames_stepped = 0;
+            // Scrub steps replay frames: no sound to render for them.
+            gg.audio_render = false;
+            audio.idle(&gg);
+            if (in.scrub != 0) _ = rewind.step(&gg, in.scrub);
+            menu.draw_scrub_bar(true);
+            return;
+        },
+        .exit => {
+            rewinding = false;
+            menu.close();
+        },
+        .off => {},
+    }
+
     // Fast forward: the frames before the last one run without the line
     // sink (no pixel work; sprites are still evaluated for the VDP flags,
     // so the console state is the same) and without sound.
@@ -183,7 +211,6 @@ fn run_frame(t1: u64) void {
     debug.record(@truncate(t2 -% t1));
     if (debug.enabled) romsrc.draw_report();
     debug.draw();
-    if (in.fast) draw_fast(n);
     // A press held over from the splash is suppressed, not fresh.
     const e = controls_state.edge;
     const fresh = (input.Edge{ .prev = e.prev, .cur = e.cur & ~controls_state.suppress }).any_pressed();
@@ -191,21 +218,32 @@ fn run_frame(t1: u64) void {
         const s = if (play_hint.left >= play_hint_updates) hint.hold_select else menu.fast_hint;
         hint.draw_strip(cart, text.draw, s, cart.screen_height - hint.strip_h, menu.title_color, menu.band_color);
     }
+    if (in.fast) draw_fast(n);
 }
+
+/// The chorded rewind is showing (the `debug_chord_rewind` export).
+var rewinding: bool = false;
 
 /// Microseconds the last rendered game frame took (step and record): the
 /// first estimate of a frame's cost in the next fast-forward update.
 var last_frame_us: u64 = 0;
 
-/// `>>4x` (frames this update) in the top right corner, under the debug
-/// overlay's three lines while that shows. The game redraws the whole
-/// screen every frame (`.no_copy_full_frame`), so it is gone the update
-/// fast forward stops; `text.draw` marks its own dirty rect.
+/// `>>4x` (frames this update) in the bottom right corner, over the hint
+/// strip and the report line, inside the menu's scrub bar rectangle: a
+/// chorded rewind freezes the last fast-forward frame and its bar then
+/// covers the indicator. The game redraws the whole screen every frame
+/// (`.no_copy_full_frame`), so it is gone the update fast forward stops;
+/// `text.draw` marks its own dirty rect.
 fn draw_fast(n: u32) void {
     var buf: [4]u8 = ">>0x".*;
     buf[2] = '0' + @as(u8, @intCast(@min(n, 9)));
-    const y: i32 = if (debug.enabled or debug.alarm) 24 else 0;
-    text.draw(&buf, cart.screen_width - 8 * buf.len, y, menu.title_color, menu.band_color);
+    const x: i32 = menu.bar_x + menu.bar_w - 1 - 8 * buf.len;
+    text.draw(&buf, x, menu.bar_top + 1, menu.title_color, menu.band_color);
+}
+
+comptime {
+    // The indicator lies inside the scrub bar, strictly within its frame.
+    if (menu.bar_height < 10 or menu.bar_top + 1 + 8 > cart.screen_height) @compileError("indicator outside the scrub bar");
 }
 
 pub fn read_controls() cart.Controls {
@@ -271,6 +309,7 @@ comptime {
         @export(&debug_pool_bytes, .{ .name = "debug_pool_bytes" });
         @export(&debug_arena_bytes, .{ .name = "debug_arena_bytes" });
         @export(&debug_ff_frames, .{ .name = "debug_ff_frames" });
+        @export(&debug_chord_rewind, .{ .name = "debug_chord_rewind" });
     }
 }
 
@@ -429,7 +468,13 @@ fn debug_arena_bytes() callconv(.c) u32 {
 
 // ---- Fast forward ----
 
-/// Game frames the last update stepped (1 at 1x, 0 while not running).
+/// 1 while the chorded rewind shows (fast forward turned into rewind).
+fn debug_chord_rewind() callconv(.c) u32 {
+    return @intFromBool(state == .running and rewinding);
+}
+
+/// Game frames the last update stepped (1 at 1x, 0 while not running or
+/// in the chorded rewind).
 fn debug_ff_frames() callconv(.c) u32 {
     return if (state == .running) frames_stepped else 0;
 }
