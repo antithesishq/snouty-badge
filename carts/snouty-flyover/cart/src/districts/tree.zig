@@ -420,6 +420,7 @@ pub fn tick(frame: u32, cam_row: i32) void {
 
 /// B pressed while this district is live: insert a key (a search for it
 /// from the root, then its mound), dropping the running search.
-pub fn verb() void {
+pub fn verb() bool {
     insert_pending = true;
+    return true;
 }

@@ -353,14 +353,15 @@ pub fn tick(frame: u32, cam_row: i32) void {
 /// B: burst the pipe ahead of the camera (ignored while a burst is running,
 /// and within flood_ahead rows of the flood's far end, where nothing is left
 /// ahead to flood).
-pub fn verb() void {
-    if (phase != .idle) return;
+pub fn verb() bool {
+    if (phase != .idle) return false;
     const cam_ly = tick_row - live_y0;
     const ly0 = if (cam_ly < lake_rows) flood_ly0 else @max(cam_ly + flood_ahead, flood_ly0);
     const ly1 = if (cam_ly < lake_rows) merge_ly else flood_ly1;
-    if (ly0 >= ly1) return;
+    if (ly0 >= ly1) return false;
     burst_ly0 = ly0;
     burst_ly1 = ly1;
     phase = .sink;
     phase_t = 0;
+    return true;
 }

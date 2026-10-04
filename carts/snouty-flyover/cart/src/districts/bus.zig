@@ -164,13 +164,14 @@ noinline fn paint(y: i32, x: i32, lit: bool) void {
 
 /// Launch a packet on lane `lane` at packet_ahead rows past the camera, if
 /// it fits before the Bus end and a slot is free.
-fn launch(lane: usize) void {
+fn launch(lane: usize) bool {
     const y = last_row + packet_ahead;
-    if (n_packets >= max_packets or y < seg.y0 or y + packet_len > seg.y0 + seg.len) return;
+    if (n_packets >= max_packets or y < seg.y0 or y + packet_len > seg.y0 + seg.len) return false;
     packets[n_packets] = .{ .y = y, .x = lane_x[lane] };
     n_packets += 1;
     total_sent +%= 1;
     paint(y, lane_x[lane], true);
+    return true;
 }
 
 /// Per-frame dataflow on the Bus under the camera: the autopilot's packet
@@ -193,7 +194,7 @@ pub fn tick(frame: u32, cam_row: i32) void {
         j += 1;
     }
     n_packets = j;
-    if (cross and camera.autopilot) verb();
+    if (cross and camera.autopilot) _ = verb();
 }
 
 /// The lane a packet takes from camera cell cx (see lane_clear).
@@ -213,6 +214,6 @@ fn lane_for(cx: i32) usize {
 }
 
 /// B on the Bus under the camera: a packet beside the camera.
-pub fn verb() void {
-    launch(lane_for((camera.cam.x >> fixed.Q) & (world.W - 1)));
+pub fn verb() bool {
+    return launch(lane_for((camera.cam.x >> fixed.Q) & (world.W - 1)));
 }

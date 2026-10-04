@@ -439,9 +439,9 @@ pub fn tick(frame: u32, cam_row: i32) void {
 
 /// B: shuffle the running band (or the next one ahead, sorted or not) in one
 /// frame and re-sort it at swaps_fast per frame.
-pub fn verb() void {
+pub fn verb() bool {
     const cam_row = last_cam_row;
-    const r = running orelse (next_band(cam_row, false) orelse (next_band(cam_row, true) orelse return));
+    const r = running orelse (next_band(cam_row, false) orelse (next_band(cam_row, true) orelse return false));
     shuffle(&live.vals[r], &shuffle_rng);
     live.sorters[r].start();
     cancel_flash(r);
@@ -449,4 +449,5 @@ pub fn verb() void {
     running = r;
     fast = true;
     max_frame_bars = @max(max_frame_bars, frame_bars);
+    return true;
 }

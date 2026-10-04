@@ -356,9 +356,10 @@ noinline fn settle_step() void {
 
 /// B pressed while this district is live: rehash the rows ahead, one
 /// sweep at a time (it starts once a growing terrace has finished).
-pub fn verb() void {
-    if (rehash_t != 0 or settle_j < n_rows) return;
+pub fn verb() bool {
+    if (rehash_t != 0 or settle_j < n_rows) return false;
     rehash_pending = true;
+    return true;
 }
 
 fn start_rehash(cam_row: i32) void {

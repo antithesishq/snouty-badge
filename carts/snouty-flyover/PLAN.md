@@ -1049,3 +1049,78 @@ Goal: three visible finishes, no interface changes, bench unchanged.
 - The 2400-update golden is unchanged (12/12 hashes). Calibrated
   badge-bench, 2400-frame attract: worst 15.08 ms (frame 1823; was 15.07),
   mean 8.35 busy (was 8.34), p95 12.59; 69% of the 22 ms budget.
+
+## M4.2 B everywhere (Adrian, 2026-10-04)
+
+Adrian on the badge: "The anteater looks artifacted - like pieces are
+missing. And the B button doesn't seem to do anything in most of the
+areas."
+
+The anteater: fixed first (e3883676). The mesh was wound inside out on
+most parts, so the cart drew the far inner walls and the terrain showed
+through the open neck and leg joints; the generator now orients every face.
+
+The B button: every district's `verb()` now returns whether it took the
+press (`world.Verb` dispatch counts the player's presses, export
+`debug_b_last`), and `tools/check_verbs.py` measures what a press shows: in
+manual flight on the centre line and 24 cells off it, one press early, mid
+and late in each segment, the most pixels above the caption that differ
+from the same flight without the press over the next 45 frames. Before
+this milestone (min 1200 px, about 7% of the view):
+
+| kind     | early | mid  | late | taken at B every 12 ticks |
+|----------|-------|------|------|---------------------------|
+| Bus      | 92 / 63 | 22 / 0 | refused | 33 of 43 |
+| Heap     | 2055 / 1093 | 3031 / 1270 | 2937 / 6810 | 15 of 35 |
+| Sort     | 5230 / 3594 | 4188 / 2902 | refused (no band ahead) | 20 of 21 |
+| Tree     | 545 / 797 | 378 / 345 | 0 / 0 | 21 of 21 |
+| Hash     | 1424 / 1453 | 328 / 202 | 0 / 0 | 13 of 21 |
+| Stack    | 4390 / 4008 | 2802 / 3974 | 9515 / 11978 | 20 of 21 |
+| Pipeline | 112 / 161 | 475 / 760 | 0 / 0 | 3 of 22 |
+
+(centre / off-centre px.) Causes: the effects land where the camera does
+not look. The march puts ground of height h on screen row horizon + (alt -
+h) * 32 / z, so the bottom of the view is about 20 rows ahead at the
+autopilot's Bus altitude and 40 rows at a manual 72; the anteater covers
+the centre of rows 66..118. The Bus packet starts 12 rows ahead (below the
+screen) and is refused in the Bus's last rows; the Tree insert is a thin
+path off to the side; the Hash rehash only drains table rows still ahead
+(none by mid-district); the Pipeline burst sinks a few cells around the
+camera and then holds and restores for over 100 frames, refusing presses.
+
+New shared helper: `camera.rows_ahead(sy, h, near)` gives the rows ahead
+where ground of height h shows on screen row sy at the current altitude
+and pitch. Effects should land at screen rows 66..100, beside the anteater
+or ahead of it, on both flight lines.
+
+### Tracks (Opus agents, one worktree each, district files only)
+
+- **Bus** (`districts/bus.zig`): the packet starts on screen (via
+  `rows_ahead`) on the lane nearest the camera, stays visible for most of
+  its run, and a press late in the Bus still shows something.
+- **Tree** (`districts/tree.zig`): the insert reads from the flight line:
+  big, bright and ahead of the camera, early to late.
+- **Hash + Sort** (`districts/hash.zig`, `districts/sort.zig`): a rehash
+  has visible work at any point in the district (not only on rows still
+  ahead at the first press); Sort late in the district shuffles something
+  in view (the last band, even behind the work line).
+- **Pipeline + Heap** (`districts/pipeline.zig`, `districts/heap.zig`): a
+  burst is visible ahead of the camera and a press during a running burst
+  does something (restart, extend or a second burst); the Heap's sweep
+  likewise (a press during a sweep starts a new wall or speeds it up), and
+  the early off-centre press clears the bar.
+
+Rules for every track: no edits outside the track's files (ask for a
+shared change instead); `row()` stays pure; dynamic edits through
+`world.rows()` and restored on leave as now; Q16 integer only; per-frame
+writes bounded and reported.
+
+### Done criteria for M4.2
+
+- `tools/check_verbs.py` PASS (every kind, early/mid/late, both lines,
+  1200 px) and each kind takes at least half the presses at B every 12
+  ticks.
+- Build, check-float, `check_render.sh` regenerated (the autopilot's verbs
+  change the attract), `tools/check.sh` passes, `zig build test`.
+- Calibrated bench over the attract and `m3_verbs`: worst at most 22 ms.
+- Sizes within 75 KB / 165 KB.

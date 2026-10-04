@@ -412,12 +412,13 @@ fn paint_wall() void {
 
 /// B pressed while this district is live: start the GC sweep gc_start rows
 /// ahead of the camera (or at the district start), one sweep at a time.
-pub fn verb() void {
-    if (sweep_on) return;
+pub fn verb() bool {
+    if (sweep_on) return false;
     const start = @max(cam_row_last + gc_start, seg.y0);
-    if (start + gc_rows > seg.y0 + seg.len) return;
+    if (start + gc_rows > seg.y0 + seg.len) return false;
     sweep_on = true;
     wall_y = start;
     wall_y0 = start;
     paint_wall();
+    return true;
 }
