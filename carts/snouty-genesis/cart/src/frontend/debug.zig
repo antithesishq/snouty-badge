@@ -15,6 +15,7 @@
 const cart = @import("cart-api");
 const core = @import("core");
 const text = @import("text.zig");
+const audio = @import("audio.zig");
 const tunables = core.tunables;
 
 pub var enabled: bool = true;
@@ -101,7 +102,7 @@ pub fn draw() void {
     // "avg NNNN max NNNNus": the font is 8 px wide, so 20 characters fill
     // the 160 px screen; the unit is written once to keep 4-digit values
     // on screen.
-    var buf: [80]u8 = undefined;
+    var buf: [if (audio.streamed) 100 else 80]u8 = undefined;
     var i: usize = 0;
     i += put(buf[i..], "avg ");
     i += put_num(buf[i..], avg);
@@ -122,6 +123,13 @@ pub fn draw() void {
     i += put_num(buf[i..], percent(tunables.z80_scale));
     i += put(buf[i..], " c");
     i += put_num(buf[i..], percent(tunables.cpu_scale));
+    if (audio.streamed and audio.enabled) {
+        // "snd q1472 u0": the stream's queue (samples) and underruns.
+        i += put(buf[i..], "\nsnd q");
+        i += put_num(buf[i..], audio.queued());
+        i += put(buf[i..], " u");
+        i += put_num(buf[i..], audio.underruns());
+    }
     text.draw(buf[0..i], 0, 0, .rgb(0xFFFFFF), .rgb(if (alarm) 0xFF0000 else 0x000000));
 }
 

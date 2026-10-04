@@ -50,6 +50,10 @@ const golden_hashes = [_]u64{
 const golden_mini_frames: u64 = 0x246F566FF41A43A4;
 const golden_mini_state: u64 = 0x1E1A9DB657441517;
 
+test {
+    _ = @import("sound_synth.zig");
+}
+
 test "ram: the variant has no Z80 core, no Z80 RAM and no scrubber" {
     try expectEqual(@as(usize, 0), core.z80_ram_size);
     try expect(@sizeOf(core.Z80) <= 4);

@@ -64,3 +64,107 @@ pub const Psg = struct {
         return .{ .hz = @intCast(clock / (32 * @as(u32, p.tone[i]))), .level = 15 - p.atten[i] };
     }
 };
+
+// ---- Synthesis (PLAN.md "Sound on the new firmware (2026-10-04)") ----
+//
+// The SN76489 as an instrument, for the RAM cart's streamed sound
+// (core/sound.zig); render-only state outside `Md`. Sources: the SN76489
+// datasheet and SMS Power's "SN76489" page (Maxim): tone counters clocked
+// at clock / 16 that flip the output each time they count down the
+// 10-bit period (f = clock / (32 * period)); periods 0 and 1 give a
+// constant high output on Sega's chips, which sample playback relies on;
+// noise from a 16-bit LFSR with Sega's taps (bits 0 and 3, white) or bit
+// 0 alone (periodic), shifted on every second count-down of its counter
+// (rate clock / 512, / 1024, / 2048 or tone 2's), reset to 0x8000 by any
+// noise register write, output bit 0; attenuation 2 dB per step, 15 off
+// (core/ym_tables.zig `psg_vol`). Outputs are bipolar (+-volume).
+//
+// Box filter: each 44.1 kHz sample is the mean level over its bin (the
+// counters run in master clocks, 240 per count, and a bin is 1217 or 1218
+// of them), so a 100 kHz square comes out as its mean, not a whine.
+
+const tables = @import("ym_tables.zig");
+
+/// Master clocks per PSG count (16 PSG clocks of master / 15).
+const count_clocks: i32 = 240;
+/// Master clocks per 44.1 kHz sample, Q16 (53693175 / 44100).
+const bin_q16: u32 = 79_792_198;
+/// 2^26 / 1217.53: a bin's integral to its mean.
+const inv_bin: i64 = 55_117;
+
+pub const Synth = struct {
+    /// Master clocks to each counter's next count-down (tones 0-2, noise).
+    left: [4]i32 = @splat(count_clocks),
+    /// Output flip-flops (tones) and the noise counter's half step.
+    high: [4]bool = @splat(false),
+    lfsr: u16 = 0x8000,
+    /// The bin length's fraction (Q16 master clocks).
+    frac: u32 = 0,
+
+    pub fn reset(s: *Synth) void {
+        s.* = .{};
+    }
+
+    /// After a write to the PSG port: a noise register write resets the LFSR.
+    pub fn written(s: *Synth, p: *const Psg) void {
+        if (p.latch == 6) s.lfsr = 0x8000;
+    }
+
+    /// One 44.1 kHz sample: the four channels' mean levels summed.
+    pub fn sample(s: *Synth, p: *const Psg) i32 {
+        s.frac += bin_q16;
+        const bin: i32 = @intCast(s.frac >> 16);
+        s.frac &= 0xFFFF;
+        var total: i64 = 0;
+        for (0..3) |c| {
+            const vol: i64 = tables.psg_vol[p.atten[c]];
+            const period = p.tone[c];
+            if (period <= 1) {
+                // Constant high (Sega): the level is the volume.
+                total += vol * bin;
+                continue;
+            }
+            const half: i32 = @as(i32, period) * count_clocks;
+            if (vol == 0) {
+                // Silent: only keep the counter running.
+                s.left[c] -= bin;
+                while (s.left[c] <= 0) {
+                    s.left[c] += half;
+                    s.high[c] = !s.high[c];
+                }
+                continue;
+            }
+            var rem = bin;
+            var acc: i32 = 0;
+            while (s.left[c] <= rem) {
+                acc += if (s.high[c]) s.left[c] else -s.left[c];
+                rem -= s.left[c];
+                s.high[c] = !s.high[c];
+                s.left[c] = half;
+            }
+            acc += if (s.high[c]) rem else -rem;
+            s.left[c] -= rem;
+            total += vol * acc;
+        }
+        // Noise.
+        const nvol: i64 = tables.psg_vol[p.atten[3]];
+        const rate = p.noise & 3;
+        const nhalf: i32 = if (rate == 3) @as(i32, @max(p.tone[2], 1)) * count_clocks else (@as(i32, 0x10) << @intCast(rate)) * count_clocks;
+        var rem = bin;
+        var acc: i32 = 0;
+        while (s.left[3] <= rem) {
+            acc += if (s.lfsr & 1 != 0) s.left[3] else -s.left[3];
+            rem -= s.left[3];
+            s.left[3] = nhalf;
+            s.high[3] = !s.high[3];
+            if (s.high[3]) {
+                const fb: u16 = if (p.noise & 4 != 0) (s.lfsr ^ (s.lfsr >> 3)) & 1 else s.lfsr & 1;
+                s.lfsr = (s.lfsr >> 1) | (fb << 15);
+            }
+        }
+        acc += if (s.lfsr & 1 != 0) rem else -rem;
+        s.left[3] -= rem;
+        total += nvol * acc;
+        return @intCast((total * inv_bin) >> 26);
+    }
+};

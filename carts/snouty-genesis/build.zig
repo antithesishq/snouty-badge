@@ -43,17 +43,23 @@ const Variant = struct {
     z80: bool,
     /// The time scrubber (core/undo.zig, frontend/rewind.zig).
     scrub: bool,
+    /// YM2612 + PSG synthesis streamed to the new firmware's audio ring
+    /// (core/sound.zig, PLAN.md "Sound on the new firmware"): the RAM cart
+    /// only, where the 68000's own writes to the chips are what plays.
+    /// The XIP cart and the simulator keep the one-voice `tone` path.
+    synth: bool,
 };
-const full: Variant = .{ .z80 = true, .scrub = true };
-const ram_cart: Variant = .{ .z80 = false, .scrub = false };
+const full: Variant = .{ .z80 = true, .scrub = true, .synth = false };
+const ram_cart: Variant = .{ .z80 = false, .scrub = false, .synth = true };
 
 fn variant_options(b: *Build, sound: bool, v: Variant) *Build.Step.Options {
     const options = b.addOptions();
-    // -Dsound=true starts with sound on; off by default, A in the menu
-    // toggles it (docs/SOUND.md). Without the Z80 the cart is silent.
-    options.addOption(bool, "sound", sound and v.z80);
+    // -Dsound=true starts with sound on; off by default, the menu's Sound
+    // row toggles it (docs/SOUND.md).
+    options.addOption(bool, "sound", sound and (v.z80 or v.synth));
     options.addOption(bool, "z80", v.z80);
     options.addOption(bool, "scrub", v.scrub);
+    options.addOption(bool, "synth", v.synth);
     return options;
 }
 
@@ -349,6 +355,9 @@ fn build_cart_modules(b: *Build, cart: *Build.Module, cart_api: *Build.Module, s
     const iris = b.createModule(.{ .root_source_file = b.path("lib/iris_mark.zig"), .optimize = modes.cold });
     // The control hints (splash, first seconds of play, menu), shared with Boy, Gear, Lynx.
     const hint = b.createModule(.{ .root_source_file = b.path("lib/hint.zig"), .optimize = modes.cold });
+    // The new firmware's streaming ring and its rate control (the RAM
+    // cart's sound; it imports lib/stream_audio.zig by file).
+    const audio_feed = b.createModule(.{ .root_source_file = b.path("lib/audio_feed.zig"), .optimize = modes.cold });
     const drive = b.createModule(.{
         .root_source_file = b.path(dir ++ "cart/src/frontend/drive.zig"),
         .optimize = modes.cold,
@@ -379,6 +388,7 @@ fn build_cart_modules(b: *Build, cart: *Build.Module, cart_api: *Build.Module, s
             .{ .name = "drive", .module = drive },
             .{ .name = "iris", .module = iris },
             .{ .name = "hint", .module = hint },
+            .{ .name = "audio_feed", .module = audio_feed },
         },
     });
     cart.addImport("core", core);
