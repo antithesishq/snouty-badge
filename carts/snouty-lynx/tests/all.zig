@@ -2,7 +2,7 @@
 //! test-lynx` (this cart) from the repository root; `-Dtest-filter=cart`
 //! for a subset (test names carry an area prefix: `cart:`, `drive:`,
 //! `lynx:`, `boot:`, `cpu65:`, `suzy:`, `mikey:`, `golden:`, `stream:`,
-//! `audio:`, `input:`). A new test file is one `_ = @import(...)`
+//! `audio:`, `input:`, `ff:`). A new test file is one `_ = @import(...)`
 //! line here.
 const std = @import("std");
 const core = @import("core");
@@ -25,4 +25,5 @@ test {
     _ = @import("stream_unit.zig");
     _ = @import("audio_unit.zig");
     _ = @import("input_unit.zig");
+    _ = @import("ff_determinism.zig");
 }
