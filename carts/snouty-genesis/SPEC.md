@@ -104,15 +104,19 @@ A 3-button pad (A, B, C, Start). The badge has A, B, Start and Select.
 | D-pad                  | D-pad                                                  |
 | B                      | B                                                      |
 | A                      | C                                                      |
-| Select, tap (< 500 ms) | A (sent for 4 frames on release)                       |
+| Select, tap (< 500 ms) | A (sent for 4 frames, 200 ms after the release)        |
 | Start                  | Start                                                  |
 | Select, hold 500 ms    | Emulator menu opens, game paused                       |
+| Select, tap then hold  | Fast forward (up to 4x) while held (second press      |
+|                        | within 200 ms of the tap; the tap is then dropped)     |
 | In menu                | as Snouty Boy: Up/Down move, A choose, B resume,       |
 |                        | Left/Right step time 0.5 s back and forward            |
 
 B and C are the buttons most games use most (Sonic jumps on any; Streets
-of Rage attacks on B and jumps on C). Genesis A on a Select tap arrives on
-release, so it is late; a menu item remaps the three (for example A on
+of Rage attacks on B and jumps on C). Genesis A on a Select tap arrives
+200 ms after the release (the fast-forward window, root
+docs/FAST_FORWARD.md: a second press inside it is the double tap), so it
+is late; a menu item remaps the three (for example A on
 badge A, C on the tap) per ROM. Section 18 item 5. Start+Select and the
 joystick click are OS-owned as always. The 6-button pad is out of scope.
 
