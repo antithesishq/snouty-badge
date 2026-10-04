@@ -54,6 +54,7 @@ var play_hint: hint.Overlay = .{};
 pub fn start() void {
     cart.set_vsync_enabled(1000.0 / 60.0);
     cart.set_double_buffer_mode(.no_copy_full_frame);
+    audio.init();
     // DMG look for the splash and the picker; `begin` switches to the
     // chosen ROM's model.
     video.init(.dmg);
@@ -74,8 +75,10 @@ fn begin(r: core.Rom) bool {
     video.init(model);
     const l = rewind.layout(&r) orelse return false;
     gb = l.gb;
-    gb.* = core.Gb.init(r, model, l.cart_ram);
+    // In place: a `Gb` returned by value would land on the stack first.
+    gb.init_in(r, model, l.cart_ram);
     gb.line_sink = video.sink(gb);
+    audio.attach(gb);
     have_gb = true;
     rewind.reset(gb);
     return true;
@@ -86,11 +89,13 @@ pub fn update() void {
     // real frame intervals; `debug.record` measures only step_frame.
     debug.frame_tick(cart.micros_since_boot());
 
-    // Sound follows the menu toggle; the tone holds while the core is paused
-    // and stops at once when sound is switched off (audio.update handles it).
+    // Sound follows the menu toggle. Every update that does not step the
+    // game lets the stream ramp out (or plays the boot chime) on the badge.
     audio.enabled = menu.sound_enabled;
 
+    stepped = false;
     fl.update(&ctx, @bitCast(read_controls()));
+    if (!stepped) audio.idle();
 
     frames_seen +%= 1;
     if (cart.is_wasm) present_wasm();
@@ -130,12 +135,16 @@ const Ctx = struct {
     /// One game frame; `fresh` is a press not held over from the last
     /// screen, which dismisses the play hint.
     pub fn step(_: *Ctx, pad: u8, fresh: bool) void {
+        audio.before_step(gb);
         const t1 = cart.micros_since_boot();
         gb.step_frame(pad);
         const t2 = cart.micros_since_boot();
+        stepped = true;
+        audio.frame(gb);
+        debug.sound_on = !cart.is_wasm and audio.enabled;
+        debug.audio_queue = audio.queued();
+        debug.audio_underruns = audio.underruns();
         rewind.record_frame(gb, pad);
-
-        audio.update(gb);
 
         video.finish_frame();
         debug.record(@truncate(t2 -% t1));
@@ -144,12 +153,13 @@ const Ctx = struct {
     }
 
     pub fn menu_open(_: *Ctx) void {
+        audio.pause(gb);
         play_hint.stop();
         menu.open();
     }
 
     pub fn menu_frame(_: *Ctx, e: input.Edge) flow.MenuResult {
-        audio.update(gb);
+        audio.menu_tick(gb);
         return switch (menu.update(gb, e)) {
             .stay => .stay,
             .resume_game => .resume_game,
@@ -174,6 +184,9 @@ fn draw_halted() void {
     const lines = [_][]const u8{ "SNOUTY BOY", "", "Not enough RAM for", "the time scrubber", "with this ROM.", "", "Start+Select: exit" };
     for (lines, 0..) |l, i| cart.text(.{ .str = l, .x = 4, .y = 24 + @as(i32, @intCast(i)) * 10, .text_color = ink });
 }
+
+/// The game was stepped in this update (else `audio.idle`).
+var stepped = false;
 
 /// Badge frames since boot; paces the second chime note.
 var frames_seen: u32 = 0;
