@@ -352,6 +352,29 @@ test "audio: a square wave's pitch from BACKUP and the clock select" {
     }
 }
 
+test "audio: the clock rebase keeps a square's pitch" {
+    const l = halted();
+    poke(l, A.volume, 64);
+    poke(l, A.feedback, 0x01);
+    poke(l, A.backup, 249);
+    poke(l, A.control, C.reload | C.count | 1);
+    // The clock is rebased before it reaches 2^30 ticks (frame ~4,026).
+    while (l.tick_base == 0) {
+        l.step_frame(0);
+        if (l.frame_count == 3990) break;
+    }
+    try expectEqual(@as(u64, 0), l.tick_base);
+    var n: u32 = 0;
+    var side: ?bool = null;
+    for (0..60) |_| {
+        l.step_frame(0);
+        n += crossings(&l.audio_out, &side);
+    }
+    try expect(l.tick_base != 0);
+    // 1 kHz for one second: 2,000 crossings.
+    try expect(n + 2 >= 2000 and n <= 2000 + 2);
+}
+
 test "audio: a DAC write lands in its bin" {
     const l = halted();
     l.step_frame(0);
