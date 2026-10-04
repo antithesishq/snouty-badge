@@ -53,9 +53,11 @@ const play_hint_updates = hint.play_seconds * 60 / frames_per_update;
 /// 1x, up to `tuning.ff_max_frames` while fast forwarding (the `>>4x`
 /// indicator and the `debug_ff_frames` export).
 pub var frames_stepped: u32 = 0;
-/// Microseconds the last rendered Genesis frame took (step and record):
-/// the first estimate of a frame's cost in the next fast-forward update.
+/// Microseconds the last rendered Genesis frame took (step, record and the
+/// CRC tick) and the last unrendered one (step and record): fast forward's
+/// estimates of what the update's remaining frames will cost.
 var last_frame_us: u64 = 0;
+var last_skip_us: u64 = 0;
 
 pub noinline fn start() void {
     // Presents at 60 / render_every Hz (30 by default).
@@ -187,21 +189,21 @@ fn run_update(t1: u64) void {
     // The frames before the last run without the line sink (Genesis frames
     // render only on the last of an update, at 1x too) and, while fast
     // forwarding, without sound. Fast forward steps them until
-    // `tuning.ff_max_frames` or `tuning.ff_budget_us` (time so far plus
-    // twice the dearest frame must fit), never fewer than the 1x pair.
+    // `tuning.ff_max_frames`, or until the time so far plus the dearest
+    // unrendered frame and the last rendered one would pass
+    // `tuning.ff_budget_us`; never fewer than the 1x pair.
     var n: u32 = 1;
     const max: u32 = if (in.fast) tuning.ff_max_frames else frames_per_update;
-    var slowest: u64 = last_frame_us;
+    var skip_us: u64 = last_skip_us;
     var t = t1;
     while (n < max) : (n += 1) {
-        if (n >= frames_per_update and !cart.is_wasm and t -% t1 + 2 * slowest > tuning.ff_budget_us) break;
+        if (n >= frames_per_update and !cart.is_wasm and t -% t1 + skip_us + last_frame_us > tuning.ff_budget_us) break;
         md.step_frame(in.pad, false);
         rewind.record_frame(&md);
-        if (in.fast) {
-            const now = cart.micros_since_boot();
-            slowest = @max(slowest, now -% t);
-            t = now;
-        }
+        const now = cart.micros_since_boot();
+        last_skip_us = now -% t;
+        skip_us = @max(skip_us, last_skip_us);
+        t = now;
     }
     frames_stepped = n;
     debug.frames_per_update = n;

@@ -31,9 +31,10 @@ pub const ff_tap_window_updates = 6;
 pub const ff_max_frames = 8;
 /// Microseconds of the 33.3 ms update that fast forward may use, measured
 /// from the top of the update. Another unrendered frame is stepped only
-/// while the time so far plus twice the dearest frame of this update (the
-/// next unrendered one and the final rendered one; the previous update's
-/// rendered frame to start with) stays within it: 5.3 ms of headroom for
-/// the overlay, the present and a dearer frame. Fast forward never steps
-/// fewer than the 1x pair.
+/// while the time so far plus the dearest unrendered frame (this update's,
+/// or the last one before it) and the last rendered frame stays within it:
+/// 5.3 ms of headroom for the overlay, the present and a dearer frame.
+/// (Gear's "twice the dearest frame" held Miniplanets and Sonic 1 to 1x
+/// here: a rendered Genesis frame costs about 1.5x an unrendered one.)
+/// Fast forward never steps fewer than the 1x pair.
 pub const ff_budget_us = 28_000;
