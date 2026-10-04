@@ -173,8 +173,13 @@ pub const Channel = struct {
         c.taps = (f & 0x3F) | (@as(u16, c.timer.ctla & Control.tap7)) | ((f & 0xC0) << 4);
     }
 
-    /// One clock of the polynomial counter and the waveshaper.
-    fn clock_poly(c: *Channel) void {
+    /// One clock of the polynomial counter and the waveshaper (out of
+    /// line for the cold paths; `run`'s loop has it in line, `step`).
+    noinline fn clock_poly(c: *Channel) void {
+        c.step();
+    }
+
+    inline fn step(c: *Channel) void {
         const bit: u16 = (@popCount(c.shift & c.taps) & 1) ^ 1;
         c.shift = ((c.shift << 1) | bit) & 0xFFF;
         const vol: i8 = @bitCast(c.volume);
@@ -511,7 +516,7 @@ noinline fn run(m: *Mikey, out: Out, t: Tick) void {
         if (c < 4 and solo[c]) {
             const ch = &a.ch[c];
             const tm = &ch.timer;
-            ch.clock_poly();
+            ch.step();
             const v = @as(i32, @as(i8, @bitCast(ch.output))) * w[c];
             if (v != ch.contrib) {
                 level_change(&a.r, out, x, v - ch.contrib);
