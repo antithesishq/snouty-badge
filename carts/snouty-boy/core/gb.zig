@@ -191,6 +191,10 @@ pub const Gb = struct {
     /// Where rendered lines go. Not part of the console state: excluded
     /// from keyframes by `snapshot`, set once by the frontend.
     line_sink: ?LineSink = null,
+    /// The link cable to a partner Game Boy (core/serial.zig), set by the
+    /// frontend while one is connected. Not console state: excluded from
+    /// keyframes, kept by `reset`.
+    link: ?serial.Wire = null,
     /// Visible lines the frontend wants rendered, one bit per LY (bit
     /// `ly & 31` of word `ly >> 5`), default all. The PPU skips the pixel
     /// work of a cleared line (no `line_sink` call) but still does its
@@ -236,6 +240,7 @@ pub const Gb = struct {
         gb.model = model;
         gb.cart_ram = cart_ram;
         gb.line_sink = null;
+        gb.link = null;
         gb.lines_wanted = @splat(0xFFFF_FFFF);
         gb.snd = null;
         gb.audio_render = false;
@@ -256,7 +261,8 @@ pub const Gb = struct {
         const wanted = gb.lines_wanted;
         const snd = gb.snd;
         const render = gb.audio_render;
-        gb.* = .{ .rom = rom, .line_sink = sink, .model = model, .cart_ram = cart_ram, .lines_wanted = wanted, .snd = snd, .audio_render = render };
+        const link = gb.link;
+        gb.* = .{ .rom = rom, .line_sink = sink, .link = link, .model = model, .cart_ram = cart_ram, .lines_wanted = wanted, .snd = snd, .audio_render = render };
         if (render) snd.?.reset();
         @memset(cart_ram, 0);
         gb.mbc = mmu.Mbc.from_header(&gb.rom);
@@ -416,6 +422,7 @@ pub const Gb = struct {
         if (ppu.lcd_on(gb)) e = @min(e, ((gb.ppu.next_t -| gb.ppu.line_t) + dpm - 1) >> sh);
         if (gb.io[Reg.nr52] & 0x80 != 0) e = @min(e, ((apu.seq_period_dots -| gb.apu.seq_t) + dpm - 1) >> sh);
         if (gb.io[Reg.tac] & 0x04 != 0) e = @min(e, timer.m_to_overflow(gb));
+        if (gb.link != null) e = @min(e, serial.next_event_m(gb));
         gb.ev_m = e;
     }
 
