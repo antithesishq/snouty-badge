@@ -310,6 +310,121 @@ test "determinism: page store over rebound (CGB)" {
     try store_determinism_file("roms/rebound.gbc", .cgb);
 }
 
+/// Hash of the lines a console emitted since the last `take` (FNV-1a over
+/// LY and pixels), for comparing drawn frames.
+const LineHash = struct {
+    h: u64 = 0xcbf29ce484222325,
+    lines: u32 = 0,
+
+    fn on_line(ctx: *anyopaque, ly: u8, line: *const [core.screen_w]u8) void {
+        const self: *LineHash = @ptrCast(@alignCast(ctx));
+        self.lines += 1;
+        self.h = (self.h ^ ly) *% 0x100000001b3;
+        for (line) |b| self.h = (self.h ^ b) *% 0x100000001b3;
+    }
+
+    fn sink(self: *LineHash) core.LineSink {
+        return .{ .ctx = self, .func = &on_line };
+    }
+
+    fn take(self: *LineHash) struct { u64, u32 } {
+        const r = .{ self.h, self.lines };
+        self.* = .{};
+        return r;
+    }
+};
+
+var snd_a: core.apu.Snd = .{};
+var snd_b: core.apu.Snd = .{};
+
+/// Fast forward (docs/FAST_FORWARD.md, main.zig `step_fast`): the cart
+/// steps a batch of frames with one pad, the pixel work of all but the last
+/// off (`lines_wanted` cleared) and no sound rendered, then the last one
+/// drawn. Console `b` runs 1x stretches and such batches of 1 to 4 frames
+/// (the time box varies them on the badge); console `a` runs every frame at
+/// 1x with sound and every line. After every batch both must hold the same
+/// state and the drawn frame the same lines.
+fn fast_forward_matches(path: []const u8, model: core.Model) !void {
+    const gpa = std.testing.allocator;
+    const rom = try load_rom_at(gpa, path);
+    defer gpa.free(rom);
+    const pads = try gpa.alloc(u8, frames);
+    defer gpa.free(pads);
+    script(pads);
+    for (pads[40..44]) |*p| p.* = Pad.start;
+
+    const r = core.Rom.from_slice(rom);
+    const ram_len = core.mmu.cart_ram_len(&r);
+    const a = try gpa.create(Gb);
+    defer gpa.destroy(a);
+    const b = try gpa.create(Gb);
+    defer gpa.destroy(b);
+    a.* = Gb.init(r, model, ram_a[0..ram_len]);
+    b.* = Gb.init(r, model, ram_b[0..ram_len]);
+    var ha: LineHash = .{};
+    var hb: LineHash = .{};
+    a.line_sink = ha.sink();
+    b.line_sink = hb.sink();
+    a.snd = &snd_a;
+    b.snd = &snd_b;
+    core.apu.set_render(a, true);
+    const ka = try gpa.create(Gb.Keyframe);
+    defer gpa.destroy(ka);
+    const kb = try gpa.create(Gb.Keyframe);
+    defer gpa.destroy(kb);
+
+    const sizes = [_]usize{ 4, 3, 4, 2, 4, 1, 4, 4 };
+    const all_lines: [5]u32 = @splat(0xFFFF_FFFF);
+    var f: usize = 0;
+    var batch: usize = 0;
+    var fast_frames: usize = 0;
+    while (f < frames) : (batch += 1) {
+        // Every third batch at 1x with sound, the others fast.
+        const fast = batch % 3 != 0;
+        const n = @min(if (fast) sizes[batch % sizes.len] else 5, frames - f);
+        // A fast update gives every frame the pad of its first.
+        if (fast) @memset(pads[f..][0..n], pads[f]);
+        core.apu.set_render(b, !fast);
+        for (0..n) |i| {
+            a.step_frame(pads[f + i]);
+            const drawn = !fast or i + 1 == n;
+            b.set_lines_wanted(if (drawn) all_lines else @splat(0));
+            b.step_frame(pads[f + i]);
+            if (!drawn) try std.testing.expectEqual(@as(u32, 0), hb.lines);
+            const want = ha.take();
+            if (drawn) {
+                const got = hb.take();
+                if (got[0] != want[0] or got[1] != want[1]) {
+                    std.debug.print("{s}: frame {d}: drawn lines differ\n", .{ path, f + i });
+                    return error.FastForwardDiverged;
+                }
+            }
+        }
+        if (fast) fast_frames += n;
+        f += n;
+        a.snapshot(ka);
+        b.snapshot(kb);
+        if (diff(kb, ka)) |field| {
+            std.debug.print("{s}: frame {d}: field '{s}' differs after a fast batch\n", .{ path, f, field });
+            return error.FastForwardDiverged;
+        }
+    }
+    try std.testing.expect(fast_frames > frames / 2);
+    try std.testing.expect(!std.meta.eql(ka.wram, @as(@TypeOf(ka.wram), @splat(0))));
+}
+
+test "determinism: fast forward batches equal 1x on 2048-gb" {
+    try fast_forward_matches("roms/2048.gb", .dmg);
+}
+
+test "determinism: fast forward batches equal 1x on rex-runner (CGB)" {
+    try fast_forward_matches("roms/rex-runner.gb", .cgb);
+}
+
+test "determinism: fast forward batches equal 1x on rebound (CGB)" {
+    try fast_forward_matches("roms/rebound.gbc", .cgb);
+}
+
 /// A drive file's shape (M5): the image's 512-byte sectors stored in reverse
 /// order, so no bank is contiguous and every ROM read takes the per-sector
 /// slow path of `core.Rom`.
