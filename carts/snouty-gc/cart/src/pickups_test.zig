@@ -183,6 +183,7 @@ test "roll odds: tiers by rank within 1.5 points of SPEC 6.4, uniform in a tier,
         const odds = tuning.roll_odds[r - 1];
         for (0..3) |t| {
             const pct1000 = tiers[t] * 1000 / n;
+            if (report) std.debug.print("\nrank {d} tier {d}: {d} per mille (table {d}0)", .{ r, t, pct1000, odds[t] });
             try expect(@abs(@as(i32, @intCast(pct1000)) - @as(i32, odds[t]) * 10) <= 15);
         }
         if (r == 1) try expectEqual(@as(u32, 0), each[@intFromEnum(Pickup.kernel_panic)]);

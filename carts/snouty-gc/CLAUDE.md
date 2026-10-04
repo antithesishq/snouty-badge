@@ -23,14 +23,19 @@ here: every forked file names its Zero source and commit on its first line.
 - `weapons.zig`: the 4 front and 4 rear weapons (SPEC 6.1, 6.2), the
   projectile and drop pools, hits, the SPEAR PHISH lock, the event ring
   writer `emit`; part of `simulate`.
+- `pickups.zig` (M2): RMA crates, the roulette and rank-weighted rolls,
+  the 15 pickups (SPEC 6.3) and their status effects, the KERNEL PANIC
+  packet, DDOS drones, FORK BOMB forking; part of `simulate`, hooked in
+  by `sim` and `weapons`. Render helpers `duck_pos`, `chain_anchor`.
 - `ai.zig`: the centerline driver per racer `Crew` with its combat
-  character (aim, reaction, drops; `update_aim` is called by `sim`); also
-  the autopilot.
+  character (aim, reaction, drops; `update_aim` is called by `sim`) and
+  pickup policy (`want_use`, CAPTCHA solve ticks); also the autopilot.
 - `racers.zig`: roster (names, cars, chassis, placeholder liveries).
 - `tuning.zig`: every constant (driving, chassis multipliers, AI).
 - `track.zig`: runtime `League`/`Track` structs of slices (the built-in
   ones embed `assets`; a pack in RAM can fill them later, SPEC 19), the map
-  unpacker, `map_ram`.
+  unpacker, `map_ram`, and the crate spawns `crate_spots` (from the
+  centerline samples flagged `flag_crates`, the `.track` word `crates`).
 - `render.zig` (row-loop floor, horizon, fog), `camera.zig`, `hills.zig`,
   `sprites.zig`, `hud.zig`, `font.zig`, `menu.zig`, `results.zig`,
   `sound.zig` + `engine.zig` (Zero's tones and drone), `input.zig` (edges,
@@ -38,8 +43,9 @@ here: every forked file names its Zero source and commit on its first line.
 - Host tests: `host_tests.zig` root, `sim_test.zig` (determinism, laps,
   completable with combat off, chassis), `weapons_test.zig` (a scenario
   per weapon on a frozen arena, ramming, wrecks, hulks, kill credit, AI
-  combat, the 20-race combat soak), tests in `track.zig`, `fixed.zig`,
-  `engine.zig`.
+  combat, the 20-race combat soak), `pickups_test.zig` (roll odds,
+  crates, a scenario per pickup, AI policies, the pickup soak), tests in
+  `track.zig`, `fixed.zig`, `engine.zig`.
 
 ## Data
 
