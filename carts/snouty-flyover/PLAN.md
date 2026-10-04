@@ -1123,4 +1123,52 @@ writes bounded and reported.
 - Build, check-float, `check_render.sh` regenerated (the autopilot's verbs
   change the attract), `tools/check.sh` passes, `zig build test`.
 - Calibrated bench over the attract and `m3_verbs`: worst at most 22 ms.
-- Sizes within 75 KB / 165 KB.
+- Sizes: `.text + .data` under 80 KB (raised from 75 KB: four verbs
+  grew the code; the whole cart must stay under the 275 KB RAM window),
+  `.bss` under 165 KB.
+
+### M4.2 status
+
+- 2026-10-04: done on branch `flyover/fix`. Four Opus tracks, one
+  worktree each, paused for a VM disk resize and resumed from WIP
+  commits; merged without conflicts.
+  - Bus (38c6fc37): a packet is a word across all four lanes (white lane
+    cells, pulse-A gaps), started on screen row 90 by `rows_ahead`, held a
+    few frames then 1 to 4 rows a frame, 36 frames; its top stays 16
+    cells under the camera's target altitude so it never lifts the
+    camera; late presses run on into the next district's rows (saved and
+    put back field by field); all packets come down 2 rows before the Bus
+    end.
+  - Tree (6979eafe): the new leaf lands where screen row 100 meets the
+    floor, about 40 px beside the centre, alternating sides; the search
+    lights the path from the root to the nearest parent, a lit branch
+    grows to it and a 14x8 white leaf rises in 6 frames.
+  - Hash (ebd1d5a1): a press rehashes up to two table sections in view
+    (bucket rows on screen rows 66..100, else the nearest ahead): the row
+    sinks pink and rises with 16 buckets instead of 8; the small table
+    doubles to four rows. One press queues during a rehash.
+  - Sort (96d7506b): late in the district the band in view is shuffled
+    instead of refusing.
+  - Pipeline (11c928c6): the burst floods an ellipse on the camera's line
+    between screen rows 108 and 76 (pulse rings, then a mirror pool) with
+    two white jets beside the flight line; a press during a burst starts a
+    new one; the autopilot bursts at local row 24 (was 70).
+  - Heap (11c928c6): a sweep marks the garbage ahead grey, the wall starts
+    where its foot shows (screen row 104), drapes over the mesas and moves
+    3 rows a frame; a press during a sweep restarts it; a later sweep marks
+    new garbage.
+  - Also: the M4.1 preview frames committed by mistake (`out_a`, `out_m`,
+    `out_v`, `out_v2`, 2,672 PNGs) are gone and ignored.
+- Gate: `tools/check_verbs.py` PASS on all 42 presses (lowest: Heap early
+  off-centre 1,325 px, Bus late off-centre 1,511); B every 12 ticks taken:
+  Bus 41/43, Heap 33/35, Sort 19/21, Tree 18/21, Hash 13/21, Stack 20/21,
+  Pipeline 21/22 (refusals only in segments' last rows, or one queued
+  rehash). check-float, `zig build test`, `tools/check.sh` (hashes
+  regenerated) pass; `debug_world_check` 0 at the end of attract,
+  `m2_verbs`, `m3_verbs`. Calibrated bench: attract worst 15.09 ms (frame
+  1823, was 15.08), mean 8.27; `m3_verbs` worst 28.95 ms at frame 2141,
+  the Select skip's black frame, identical on origin/main (pre-existing,
+  2 frames over the 22 ms budget, not touched here). Sizes `.text`
+  79,784 B, `.data` 208 B, `.bss` 162,912 B. GIF
+  `docs/preview_m42_b_everywhere.gif` (`tools/scripts/m42_b_everywhere.json`:
+  manual flight, one B mid-segment in every kind).
