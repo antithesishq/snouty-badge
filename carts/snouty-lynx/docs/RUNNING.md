@@ -133,6 +133,8 @@ zig build run-lynx -- carts/snouty-lynx/roms/raycast.lnx \
   carts/snouty-lynx/tools/scripts/m1_play.json 300 out/run-raycast
 zig build run-lynx -- carts/snouty-lynx/tests/roms/lynx-tests/timers.lnx - 300 out/run-timers --quiet --every 0
 zig build run-lynx -- ~/roms/lynx/hard_drivin.lnx - 1500 out/run-hd --every 150   # local dump, never committed
+zig build run-lynx -- carts/snouty-lynx/roms/raycast.lnx \
+  carts/snouty-lynx/tools/scripts/m1_play.json 600 out/run-raycast --quiet --wav out/run-raycast/raycast.wav
 ```
 
 Arguments: the ROM (headered `.lnx` or a headerless dump), the input
@@ -146,8 +148,12 @@ display frames, PC). `frame_UUUU.ppm` (160x102, the 12-bit palette
 widened) is written every `--every N` updates (default 30), at each
 `--at U,U,...` and at the last update. `--quiet` prints only those
 updates and the summary; `--idle-sleep` switches CPUSLEEP to the
-sleep-until-interrupt model (`core/lynx.zig`). Paths are relative to the
-repository root. Convert with any image tool (`python3 -c "from PIL import
+sleep-until-interrupt model (`core/lynx.zig`). `--wav FILE` writes the
+run's sound: `Lynx.audio_out` after every update (735 samples, 1/60 s;
+735 samples of silence, 128, for the splash updates that do not step the
+core) as an 8-bit unsigned mono 44,100 Hz WAV, the badge firmware's
+streaming format before the frontend's rate control (docs/AUDIO.md).
+Paths are relative to the repository root. Convert with any image tool (`python3 -c "from PIL import
 Image; Image.open('f.ppm').save('f.png')"`).
 
 ## 3. Headless preview
