@@ -1,0 +1,6 @@
+# snouty-cycles: Tron light cycles, 60 fps, .copy_forward, incremental drawing.
+budget_ms = 16.7
+frames = 900
+script = "carts/snouty-cycles/tools/scripts/bench_m0.json"
+pokes = ["snouty_cycles_autopilot=2"]
+note = "M0: the title over a 4-program attract round (0..59), A at 60, then you (T1 autopilot with slips) against one T1 program: countdown, play, a crash, the round-over banner while the wall fades, the next round; carts/snouty-cycles/tools/check.sh gates on worst busy ms <= 12 and --lcd == framebuffer"
