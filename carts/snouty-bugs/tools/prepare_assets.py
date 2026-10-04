@@ -14,7 +14,10 @@ Two modes:
       alpha 0 to the #FF00FF key and writes assets/gen/<name>.png.
 
 Either mode (or neither) can add `--contact docs/placeholders.png`, which
-tiles every sheet in assets/gen at 4x with labels plus a 160x128 mockup.
+tiles every sheet in assets/gen at 4x with labels plus a 160x128 mockup,
+and `--review docs/m7_art_review.png`, which shows the M7 sheets at 4x on
+the game background, the dithered husk / superposed boss, and four 160x128
+mock frames at 3x (PLAN.md "M7 Bullet hell for real", Art).
 
 Both modes validate every written sheet against the manifest below (exact
 size, cell grid, <= 15 opaque colors after RGB565 quantisation, 16 for the
@@ -2410,6 +2413,206 @@ def write_contact(path: Path) -> None:
 
 
 # --------------------------------------------------------------------------
+# M7 review sheet (--review): every M7 sheet at 4x on the game's own far
+# background, labelled, the zombie husk and the superposed Schrodinbug as
+# the cart draws them (every other pixel skipped), and four 160x128 mock
+# frames at 3x (midboss with the new bugs, then each new boss with its
+# bullets), so readability is judged at badge scale.
+# --------------------------------------------------------------------------
+M7_SHEETS = ["bugs2.png", "herd.png", "boss2.png", "boss3.png", "boss4.png", "shots.png", "orb.png"]
+M7_LABELS = {
+    "bugs2.png": "centipede head x2, segment x2, flea (crouch, leap), ladybug x2, mite x2, zombie x2",
+    "herd.png": "Thundering Herd (midboss), wing loop",
+    "boss2.png": "Mandelbug: idle x4 (halo cycles), alt = glowing / splitting",
+    "boss3.png": "Schrodinbug: idle x4, alt = collapse",
+    "boss4.png": "Bohrbug: idle x4 (treads roll, electrons orbit), alt = charge",
+    "shots.png": "pellet x2 (pulse), hot pellet x2 (spare variant)",
+    "orb.png": "orb x2 (pulse)",
+}
+
+
+def _on_far(a: np.ndarray, m: np.ndarray, skip_odd: bool = False, y_off: int = 24) -> np.ndarray:
+    """The sheet pasted over a tiled strip of bg_far (rows from y_off)."""
+    far, _ = load_gen("bg_far.png")
+    h, w = a.shape[:2]
+    reps = w // far.shape[1] + 1
+    bg = np.tile(far[y_off : y_off + h], (1, reps, 1))[:, :w].copy()
+    if skip_odd:
+        yy, xx = np.mgrid[0:h, 0:w]
+        m = m & (((xx + yy) & 1) == 0)
+    bg[m] = a[m]
+    return bg
+
+
+def _mock_base(scroll: int = 40) -> np.ndarray:
+    """A 160x128 frame: far layer, a few stars, near layer, HUD strip with
+    the fuel bar and three rewind heads."""
+    f = np.zeros((128, 160, 3), np.uint8)
+    far, _ = load_gen("bg_far.png")
+    f[8:128] = np.roll(far, -scroll, axis=1)[:, :160]
+    rng = random.Random(scroll)
+    for _ in range(14):
+        x, y = rng.randrange(160), rng.randrange(9, 104)
+        f[y, x] = ANTIWHITE if rng.random() < 0.5 else GREY
+    near, nm = load_gen("bg_near.png")
+    blit(f, np.roll(near, -scroll * 2, axis=1)[:, :160], np.roll(nm, -scroll * 2, axis=1)[:, :160], 0, 104)
+    f[:8] = ANTIBLACK
+    f[1:7, 68:100] = ANTIWHITE
+    f[2:6, 69:89] = CORAL
+    f[2:6, 89:99] = ANTIBLACK
+    for i in range(3):
+        blit(f, *cell_of("hud.png", 0), 160 - 12 * (i + 1), 0)
+    return f
+
+
+def _mock_ship(f: np.ndarray, x: int, y: int, bolts: int = 3) -> None:
+    blit(f, *cell_of("thruster.png", 1), x - 6, y + 8)
+    blit(f, *cell_of("ship.png", 0), x, y)
+    for i in range(bolts):
+        blit(f, *cell_of("bolt.png", i % 2), x + 30 + 22 * i, y + 6)
+
+
+def _sprite(f: np.ndarray, name: str, i: int, x: int, y: int, skip_odd: bool = False) -> None:
+    a, m = cell_of(name, i)
+    if skip_odd:
+        h, w = m.shape
+        yy, xx = np.mgrid[0:h, 0:w]
+        m = m & (((xx + x + yy + y) & 1) == 0)
+    blit(f, a, m, x, y)
+
+
+def _pellet(f: np.ndarray, cx: float, cy: float, i: int = 0) -> None:
+    _sprite(f, "shots.png", i, round(cx) - 4, round(cy) - 4)
+
+
+def _orb(f: np.ndarray, cx: float, cy: float, i: int = 0) -> None:
+    _sprite(f, "orb.png", i, round(cx) - 8, round(cy) - 8)
+
+
+def _ring(f, cx, cy, n, r, phase=0.0, kind=0):
+    for k in range(n):
+        a = 2 * math.pi * (k / n + phase)
+        x, y = cx + r * math.cos(a), cy + r * math.sin(a)
+        if 9 <= y <= 124 and 0 <= x <= 159:
+            _pellet(f, x, y, kind)
+
+
+def m7_mock(scene: int) -> np.ndarray:
+    """Scenes: 0 stage 2 with the Thundering Herd and the new bugs,
+    1 Mandelbug, 2 Schrodinbug (both bodies superposed), 3 Bohrbug."""
+    f = _mock_base(scroll=37 * scene + 20)
+    if scene == 0:
+        # centipede weaving in from the right: head first, segments 9 px apart
+        for i in range(5, -1, -1):
+            x = 58 + 9 * i
+            y = 22 + round(5 * math.sin(i * 0.9))
+            _sprite(f, "bugs2.png", 0 if i == 0 else 2 + i % 2, x, y)
+        _sprite(f, "herd.png", 0, 112, 40)
+        _sprite(f, "bugs2.png", 6, 92, 78)   # ladybug looping
+        _sprite(f, "bugs2.png", 7, 74, 90)
+        _sprite(f, "bugs2.png", 5, 6, 30)    # flea leaping in from behind
+        _sprite(f, "bugs2.png", 8, 120, 96)  # mite on the near layer
+        _sprite(f, "bugs2.png", 10, 40, 74)  # zombie and a husk
+        _sprite(f, "bugs2.png", 11, 132, 14, skip_odd=True)
+        _ring(f, 128, 56, 10, 20, 0.0)
+        _ring(f, 128, 56, 10, 34, 0.05, 2)
+        for k in range(3):
+            _pellet(f, 64 - 9 * k, 34 + 4 * k)
+        _mock_ship(f, 14, 52)
+    elif scene == 1:
+        _sprite(f, "boss2.png", 0, 104, 34)
+        for x, y in ((92, 30), (70, 64), (98, 96)):
+            _orb(f, x, y, (x // 8) % 2)
+        for k in range(6):  # an orb that just split into six pellets
+            a = 2 * math.pi * k / 6
+            _pellet(f, 52 + 8 * math.cos(a), 44 + 8 * math.sin(a), k % 2)
+        _ring(f, 76, 88, 6, 6, 0.08, 2)
+        for k in range(12):  # the outer ring of a split of splits
+            a = 2 * math.pi * k / 12
+            _pellet(f, 128 + 40 * math.cos(a), 58 + 40 * math.sin(a), k % 2)
+        _sprite(f, "bugs2.png", 6, 30, 16)
+        _mock_ship(f, 12, 70, 2)
+    elif scene == 2:
+        _sprite(f, "boss3.png", 1, 106, 14, skip_odd=True)  # real or phantom?
+        _sprite(f, "boss3.png", 1, 106, 64, skip_odd=True)
+        for k in range(9):  # mirrored curtains, stop-and-go pellets
+            _pellet(f, 96 - 7 * k, 30 + 3 * k, k % 2)
+            _pellet(f, 96 - 7 * k, 98 - 3 * k, k % 2)
+        for k in range(5):
+            _pellet(f, 60 + 6 * k, 64, 2 + k % 2)
+        _orb(f, 70, 40)
+        _sprite(f, "bugs2.png", 9, 36, 96)    # mite on the ground
+        _sprite(f, "bugs2.png", 10, 54, 14)   # zombie
+        _mock_ship(f, 12, 54, 2)
+    else:
+        _sprite(f, "boss4.png", 0, 106, 38)
+        gap = 70
+        for y in range(14, 122, 6):  # a wall with a gap that tracks the ship
+            if abs(y - gap) > 10:
+                _pellet(f, 84, y, (y // 6) % 2)
+        for k in range(7):  # a curving spiral arm
+            a = 0.5 + k * 0.45
+            _pellet(f, 130 + (10 + 6 * k) * math.cos(a), 60 + (10 + 6 * k) * math.sin(a), 2 + k % 2)
+        for x, y in ((60, 30), (52, 100)):
+            _orb(f, x, y, 1)
+        _sprite(f, "bugs2.png", 8, 20, 96)    # mites on the near layer
+        _sprite(f, "bugs2.png", 9, 64, 97)
+        _sprite(f, "bugs2.png", 4, 4, 20)     # flea crouched behind the ship
+        _mock_ship(f, 18, 62, 2)
+    return f
+
+
+def write_m7_review(path: Path) -> None:
+    from PIL import ImageDraw, ImageFont
+    k = CONTACT_SCALE
+    items = []
+    for name in M7_SHEETS:
+        a, m = load_gen(name)
+        img = _on_far(a, m).repeat(k, 0).repeat(k, 1)
+        s = MANIFEST[name]
+        for i in range(1, s.frames):
+            img[:, i * s.cell_w * k] = CONTACT_BG
+        items.append((f"{name}  {s.frames} x {s.cell_w}x{s.cell_h}, {k}x: {M7_LABELS[name]}", img))
+    # As the cart draws them dithered: the zombie husk, both Schrodinbug bodies.
+    za, zm = load_gen("bugs2.png")
+    husk = np.concatenate([_on_far(za[:, 160:192], zm[:, 160:192], skip_odd=True),
+                           np.zeros((16, 8, 3), np.uint8) + np.array(CONTACT_BG, np.uint8)], axis=1)
+    sa, sm = load_gen("boss3.png")
+    sup = _on_far(sa[:, :96], sm[:, :96], skip_odd=True)
+    row = np.zeros((48, 40 + 96, 3), np.uint8)
+    row[:] = CONTACT_BG
+    row[16:32, :40] = husk
+    row[:, 40:] = sup
+    items.append(("dithered as drawn (skip_odd): zombie husk x2, superposed Schrodinbug x2", row.repeat(k, 0).repeat(k, 1)))
+    mocks = [m7_mock(i).repeat(3, 0).repeat(3, 1) for i in range(4)]
+    gap = np.zeros((mocks[0].shape[0], 12, 3), np.uint8) + np.array(CONTACT_BG, np.uint8)
+    items.append(("mock 160x128 at 3x: stage 2 midboss + new bugs | Mandelbug orbs and splits",
+                  np.concatenate([mocks[0], gap, mocks[1]], axis=1)))
+    items.append(("mock 160x128 at 3x: Schrodinbug superposed pair | Bohrbug wall + spiral, mites on the ground",
+                  np.concatenate([mocks[2], gap, mocks[3]], axis=1)))
+    pad, label_h = 12, 20
+    width = max(i.shape[1] for _, i in items) + 2 * pad
+    height = sum(i.shape[0] + label_h + pad for _, i in items) + pad
+    out = np.zeros((height, width, 3), np.uint8)
+    out[:] = CONTACT_BG
+    y = pad
+    labels = []
+    for label, img in items:
+        labels.append((y, label))
+        y += label_h
+        out[y : y + img.shape[0], pad : pad + img.shape[1]] = img
+        y += img.shape[0] + pad
+    im = Image.fromarray(out, "RGB")
+    d = ImageDraw.Draw(im)
+    font = ImageFont.load_default(size=14)
+    for ly, label in labels:
+        d.text((pad, ly), label, fill=CONTACT_INK, font=font)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    im.save(path, optimize=True)
+    print(f"M7 review sheet {path} {width}x{height}")
+
+
+# --------------------------------------------------------------------------
 # Modes
 # --------------------------------------------------------------------------
 def run_placeholders() -> int:
@@ -2490,12 +2693,15 @@ def main() -> int:
     g.add_argument("--placeholders", action="store_true", help="draw placeholder art into assets/gen/")
     g.add_argument("--study", type=Path, help="import a delivered Bugs_Study_NN folder")
     ap.add_argument("--snap", type=Path, help="GIMP .gpl palette to snap study colors to")
+    ap.add_argument("--review", type=Path, metavar="PNG",
+                    help="afterwards (or alone) write the M7 art review sheet, "
+                         "e.g. docs/m7_art_review.png")
     ap.add_argument("--contact", type=Path, metavar="PNG",
                     help="afterwards (or alone) write a 4x labelled contact sheet of assets/gen, "
                          "e.g. docs/placeholders.png")
     args = ap.parse_args()
-    if not (args.placeholders or args.study or args.contact):
-        ap.error("one of --placeholders, --study or --contact is required")
+    if not (args.placeholders or args.study or args.contact or args.review):
+        ap.error("one of --placeholders, --study, --contact or --review is required")
     OUT.mkdir(parents=True, exist_ok=True)
     status = 0
     if args.placeholders:
@@ -2504,6 +2710,8 @@ def main() -> int:
         status = run_study(args.study, args.snap)
     if args.contact:
         write_contact(args.contact)
+    if args.review:
+        write_m7_review(args.review)
     return status
 
 if __name__ == "__main__":
