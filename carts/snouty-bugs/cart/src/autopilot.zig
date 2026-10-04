@@ -4,21 +4,23 @@
 //! `cart.Controls`; `main.update` feeds it through the normal input path,
 //! so history logs it like any other input and rewinds replay it exactly.
 //!
-//! Bots never touch the World and never draw from the world rng (any
-//! jitter is a hash of the tick). The dodger keeps a little state of its
+//! Bots never touch the World and never draw from the world rng (the
+//! noise is a hash of the tick). The dodger keeps a little state of its
 //! own outside the World (the enemy positions it saw on the previous tick,
-//! to estimate their velocities); it is reset whenever the tick it is
-//! given is not the next one (a new game, a rewind), so the same game
-//! always gets the same controls.
+//! to estimate their velocities, and the move it committed to); it is
+//! reset whenever the tick it is given is not the next one (a new game, a
+//! rewind), so the same game always gets the same controls.
 //!
 //!   1 turret: holds A, never moves.
 //!   2 sweep:  holds A; up 40 ticks, still 20, down 40, still 20 (the M2 sweep).
-//!   3 dodger: holds A; picks, every tick, the cheapest of 25 short moves
-//!             (a 5x5 grid of target offsets) by a danger map built from
-//!             the predicted paths of every enemy bullet and enemy over the
-//!             next 30 ticks, nearer ticks weighted more, plus small pulls
-//!             toward crates, toward lining up a shot, and toward the
-//!             left-center of the field.
+//!   3 dodger: holds A; every `replan_every` ticks picks the cheapest of 25
+//!             short moves (a 5x5 grid of target offsets) by a danger map
+//!             built from the straight-line paths of every enemy bullet and
+//!             enemy over the next `lookahead` ticks, nearer ticks weighted
+//!             more, plus small pulls toward crates, toward lining up a
+//!             shot and toward the left-center, plus a little noise; then
+//!             flies that move until the next plan. It stands in for a
+//!             decent human, so it has human limits (`skill` below).
 const cart = @import("cart-api");
 const world = @import("world.zig");
 const player = @import("player.zig");
@@ -31,7 +33,10 @@ const no_buttons: cart.Controls = @bitCast(@as(u16, 0));
 
 /// The controls bot `bot` (a `Bot` value; unknown values press nothing)
 /// wants for the tick `tick` about to be simulated.
-pub fn controls(bot: u8, tick: u32) cart.Controls {
+/// Never inlined, nor is `dodge`: their frames then live on the stack only
+/// while they run, not in `main.update`'s, which already holds a World
+/// temporary at a new game (the wasm shadow stack is 14.7 KB).
+pub noinline fn controls(bot: u8, tick: u32) cart.Controls {
     var c = no_buttons;
     switch (bot) {
         @backingInt(Bot.turret) => c.a = true,
@@ -48,8 +53,31 @@ pub fn controls(bot: u8, tick: u32) cart.Controls {
 
 // ---------------------------------------------------------------- dodger
 //
-// Knobs, all in one place. Cost units: a bullet grazing the soft margin
-// in the next 3 ticks costs up to 1; a predicted hit adds `hit_cost`.
+// Skill: the one knob. 0 = a beginner, 1 = sharp. The dodger never sees
+// drag, acceleration, turns, splits or re-aims coming (it extrapolates
+// straight lines), and at the default 0.5 it never notices a quarter of
+// the bullets, does not see the others until they are 12 ticks old (a
+// 200 ms reaction time), re-plans every 7 ticks (committing to its move
+// in between), looks 22 ticks ahead and adds up to 0.3 of noise to every
+// move's cost (a near miss costs about 1). The derived constants can be
+// set directly. Of these the missed share moves the hit count most.
+pub const skill: f32 = 0.5;
+/// Ticks a bullet must have flown before the dodger reacts to it (20 at
+/// skill 0, 4 at skill 1).
+const reaction: u32 = @intFromFloat(@round(20 - 16 * skill));
+/// Share of bullets the dodger never notices (attention: a busy screen
+/// hides some), drawn once per bullet from a hash of its slot and spawn
+/// tick (0.5 at skill 0, none at skill 1).
+const miss_rate: f32 = 0.5 * (1 - skill);
+/// Ticks between plans (10 at skill 0, 4 at skill 1).
+const replan_every: u32 = @intFromFloat(@round(10 - 6 * skill));
+/// Ticks of foresight (14 at skill 0, 30 at skill 1).
+const lookahead: f32 = 14 + 16 * skill;
+/// Cost noise per move and plan (0.6 at skill 0, none at skill 1).
+const noise: f32 = 0.6 * (1 - skill);
+
+// The other knobs. Cost units: a bullet grazing the soft margin in the
+// next few ticks costs up to 1; a predicted hit adds `hit_cost`.
 
 /// Ship speed per axis (player.zig `speed`); the diagonal is not
 /// normalised, so each axis moves independently.
@@ -68,14 +96,28 @@ const offsets = [5]f32{ -24, -12, 0, 12, 24 };
 const n_cand = offsets.len * offsets.len;
 /// The middle candidate: stay.
 const stay = n_cand / 2;
-/// Predicted ticks; consecutive pairs are the segments a path is tested on.
-const sample_t = [7]f32{ 0, 3, 6, 10, 15, 21, 30 };
+/// Predicted ticks, as fractions of `lookahead`; consecutive pairs are the
+/// segments a path is tested on.
+const sample_frac = [6]f32{ 0, 0.14, 0.3, 0.5, 0.75, 1 };
+const sample_t: [sample_frac.len]f32 = blk: {
+    var t: [sample_frac.len]f32 = undefined;
+    for (&t, sample_frac) |*v, f| v.* = @round(f * lookahead);
+    break :blk t;
+};
 const n_seg = sample_t.len - 1;
 /// Weight of each segment: 1 / (1 + t_start / 5), near ticks count more.
-const seg_weight = [n_seg]f32{ 1.0, 0.625, 0.4545, 0.3333, 0.25, 0.1923 };
+const seg_weight: [n_seg]f32 = blk: {
+    var w: [n_seg]f32 = undefined;
+    for (&w, 0..) |*v, k| v.* = 1 / (1 + sample_t[k] / 5);
+    break :blk w;
+};
 /// Soft margin around the hitbox for each segment: 3 + 0.2 * t_end px.
 /// The farther ahead, the less a prediction is worth trusting.
-const seg_margin = [n_seg]f32{ 3.6, 4.2, 5.0, 6.0, 7.2, 9.0 };
+const seg_margin: [n_seg]f32 = blk: {
+    var m: [n_seg]f32 = undefined;
+    for (&m, 0..) |*v, k| v.* = 3 + 0.2 * sample_t[k + 1];
+    break :blk m;
+};
 /// Extra cost of a predicted overlap with the real hitbox, per segment weight.
 const hit_cost: f32 = 6;
 /// Pad (px) on the hard half-extents (a predicted hit).
@@ -98,8 +140,6 @@ const crate_reward: f32 = 1.2;
 const crate_range: f32 = 100;
 const crate_lead: f32 = 15;
 const crate_drift: f32 = 0.5;
-/// Tie-break jitter, a hash of the tick (re-drawn every 16 ticks).
-const jitter: f32 = 0.04;
 /// A small bonus for staying put, so equal options do not dither.
 const stay_bonus: f32 = 0.01;
 /// Enemy velocities above this (px per tick, per axis) are slot reuse or
@@ -116,6 +156,12 @@ var enemy_vx: [n_enemies]f32 = @splat(0);
 var enemy_vy: [n_enemies]f32 = @splat(0);
 var prev_tick: u32 = 0;
 var have_prev: bool = false;
+/// The committed move: its target (cell top-left) and the tick it was
+/// planned on.
+var target_x: f32 = 0;
+var target_y: f32 = 0;
+var plan_tick: u32 = 0;
+var have_plan: bool = false;
 
 // Per-call scratch (module level, not on the stack).
 /// Hitbox center x of the candidates in column i (x offset i) and center
@@ -146,6 +192,7 @@ fn hash01(a: u32, b: u32) f32 {
 fn track_enemies(tick: u32) void {
     if (have_prev and tick == prev_tick) return;
     const consecutive = have_prev and tick == prev_tick +% 1;
+    if (!consecutive) have_plan = false;
     for (world.w.enemies, 0..) |e, i| {
         const live = e.live();
         var vx: f32 = 0;
@@ -261,11 +308,24 @@ fn add_threat(px: *const [sample_t.len]f32, py: *const [sample_t.len]f32, hx: f3
     }
 }
 
-/// Never inlined: its frame then lives on the stack only while it runs,
-/// not in `main.update`'s, which already holds a World temporary at a new
-/// game (the wasm shadow stack is 14.7 KB).
+/// Flies the committed move, re-planning when it is due. Never inlined
+/// (see `controls`).
 noinline fn dodge(tick: u32) cart.Controls {
     track_enemies(tick);
+    if (!have_plan or tick -% plan_tick >= replan_every) plan(tick);
+    const p = &world.w.player;
+    var out = no_buttons;
+    out.a = true;
+    const dx = target_x - p.x;
+    const dy = target_y - p.y;
+    const deadband = ship_speed / 2;
+    if (dx > deadband) out.right = true else if (dx < -deadband) out.left = true;
+    if (dy > deadband) out.down = true else if (dy < -deadband) out.up = true;
+    return out;
+}
+
+/// Picks the move to commit to until the next plan.
+fn plan(tick: u32) void {
     const p = &world.w.player;
     const hb = player.hitbox();
     const half_w = hb[2] / 2;
@@ -288,8 +348,9 @@ noinline fn dodge(tick: u32) cart.Controls {
 
     var px: [sample_t.len]f32 = undefined;
     var py: [sample_t.len]f32 = undefined;
-    for (world.w.enemy_bullets) |b| {
-        if (!b.active) continue;
+    for (world.w.enemy_bullets, 0..) |b, i| {
+        if (!b.active or b.age < reaction) continue;
+        if (hash01(@intCast(i), tick -% @as(u32, @intCast(b.age))) < miss_rate) continue;
         predict_bullet(b, &px, &py);
         const bb = bullets.hitbox(b);
         add_threat(&px, &py, half_w + bb[2] / 2, half_h + bb[3] / 2, cx, cy);
@@ -318,7 +379,7 @@ noinline fn dodge(tick: u32) cart.Controls {
             @max(0, 1 - (tx - ship_min_x) / edge_px_x));
         cost -= aim_bonus(tx, ty);
         cost -= crate_bonus(tx, ty);
-        cost += jitter * hash01(tick >> 4, @intCast(c));
+        cost += noise * hash01(tick, @intCast(c));
         if (c == stay) cost -= stay_bonus;
         if (c == 0 or cost < best_cost) {
             best = c;
@@ -326,48 +387,20 @@ noinline fn dodge(tick: u32) cart.Controls {
         }
     }
 
-    var out = no_buttons;
-    out.a = true;
-    const dx = clamp(p.x + offsets[best % offsets.len], ship_min_x, ship_max_x) - p.x;
-    const dy = clamp(p.y + offsets[best / offsets.len], ship_min_y, ship_max_y) - p.y;
-    const deadband = ship_speed / 2;
-    if (dx > deadband) out.right = true else if (dx < -deadband) out.left = true;
-    if (dy > deadband) out.down = true else if (dy < -deadband) out.up = true;
-    return out;
+    target_x = clamp(p.x + offsets[best % offsets.len], ship_min_x, ship_max_x);
+    target_y = clamp(p.y + offsets[best / offsets.len], ship_min_y, ship_max_y);
+    plan_tick = tick;
+    have_plan = true;
 }
 
-/// Predicted centers of an enemy bullet at the sample ticks. Straight
-/// lines, plus drag and acceleration when the bullet engine has them
-/// (PLAN.md M7; turns, splits and re-aims are not foreseen: the dodger is
-/// a decent player, not an oracle).
+/// Predicted centers of an enemy bullet at the sample ticks: straight
+/// lines from its velocity now. Drag, acceleration, turns, splits and
+/// re-aims are not foreseen (a human reads a bullet's direction, not its
+/// program).
 fn predict_bullet(b: bullets.EnemyBullet, px: *[sample_t.len]f32, py: *[sample_t.len]f32) void {
-    const E = bullets.EnemyBullet;
-    var drag: f32 = 1;
-    var ax: f32 = 0;
-    var ay: f32 = 0;
-    if (comptime @hasField(E, "drag")) drag = b.drag;
-    if (comptime @hasField(E, "ax")) ax = b.ax;
-    if (comptime @hasField(E, "ay")) ay = b.ay;
-    if (drag == 1) {
-        for (sample_t, 0..) |t, k| {
-            const acc = 0.5 * t * (t + 1);
-            px[k] = b.x + b.vx * t + ax * acc;
-            py[k] = b.y + b.vy * t + ay * acc;
-        }
-        return;
-    }
-    // Per tick v *= drag then x += v: after t ticks the path is
-    // v * (d + d^2 + ... + d^t); d^t by a running product.
-    var dt: f32 = 1;
-    var t_prev: f32 = 0;
     for (sample_t, 0..) |t, k| {
-        var n = t - t_prev;
-        while (n > 0) : (n -= 1) dt *= drag;
-        t_prev = t;
-        const travel = drag * (1 - dt) / (1 - drag);
-        const acc = 0.5 * t * (t + 1);
-        px[k] = b.x + b.vx * travel + ax * acc;
-        py[k] = b.y + b.vy * travel + ay * acc;
+        px[k] = b.x + b.vx * t;
+        py[k] = b.y + b.vy * t;
     }
 }
 
