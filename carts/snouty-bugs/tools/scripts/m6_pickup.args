@@ -1,21 +1,26 @@
 # m6_pickup: crates and their grants. m2_play's sweep (A at 30, still fire 60..239, then
-# up 40 / hold 20 / down 40 / hold 20) to 2560, plus one long hold-B at 806..885 that
+# up 40 / hold 20 / down 40 / hold 20) to 2700, plus one long hold-B at 903..982 that
 # rewinds across a collection. The drop sequence is [W, cores, W, fork, X, retry, W, fork]
 # (W = current weapon kind, X = the next one); debug_weapon = kind * 10 + level, F 0, A 1.
-# - 592 (game tick 562): the first beetle dies under the zap and drops crate 1, an F (drops
-#   0 -> 1, pickups 1); it drifts left with the bob, still in flight at 600.
-# - 803 (tick 773): the sweep runs into it: F1 -> F2 (weapon 1 -> 2), score 50 -> 150 (+100).
-# - B 806..885 (80 frames = 160 ticks, 2 fuel per frame): 806 is the first held frame and
-#   back at tick 773, still F2; 807 (tick 771) is before the grab: F1 again, score 50, the
-#   crate back on screen (pickups 1). 885: tick 615, fuel 20. 886: PLAYING, no tick.
-#   80 frames + 160 ticks = 240 updates = two periods of the sweep, so after the release the
-#   ship replays (one tick off) the same path and grabs the same crate again at 1043 (tick
-#   772): F2, score 150.
-# - 1171: crate 2, CORE HOURS. Fuel is 20 + the refill (1 per 10 live ticks) = 70 at 1382;
-#   the grab at 1383 (tick 1112) pays 60: cores 0 -> 1, fuel 70 -> 130. (In m2_play the bar
-#   is full at that grab, 1143, so the grant is lost to the 180 cap; hence the hold.)
-# - 1656: crate 3, an F again; 1868: F3 (weapon 3).
-# - 2209: crate 4, a fork; 2284: crate 5, the swap (X after F = A); 2432: fork 1; 2498:
-#   the A crate turns F3 into A3 (weapon 3 -> 13): kind changes, level kept.
+# Re-pinned for M7: endless probe mode from 31 (a normal game dies on this sweep in stage 1;
+# a probe hit costs a level and a fork at once), the hold moved from 806 to 903 (the first
+# crate now comes from a beetle at 751 and is collected at 900), and the M7 drop sources:
+# - 751 (game tick 721): a beetle shot down drops crate 1, an F (every beetle killed by a
+#   bolt drops; drops 0 -> 1, pickups 1, +50 for the beetle); it drifts left with the bob.
+# - 900 (tick 870): the sweep runs into it: F1 -> F2 (weapon 1 -> 2), score 231 -> 331.
+# - B 903..982 (80 frames = 160 ticks, 2 fuel per frame): 903 is the first held frame and
+#   back at tick 870, still F2; 904 (tick 868) is before the grab: F1 again, score 231, the
+#   crate back on screen (pickups 1). By 978 (tick 720) even the drop is undone (drops 0).
+#   982: tick 712, fuel 20. 983: PLAYING, no tick. The beetle dies again at 992 (tick 721)
+#   and drops the same crate. 80 frames + 160 ticks = 240 updates = two periods of the
+#   sweep, so the ship replays (one tick off) the same path and grabs it again at 1140 (tick
+#   869): F2, score 331.
+# - 1262: a probe hit takes the level back (F1).
+# - 1536 (tick 1265): the last gnat of a string, a formation, is shot down: crate 2, CORE
+#   HOURS, and +200 on top of the gnat's 10 (score 583 -> 793). Fuel is 20 + the refill
+#   (1 per 10 live ticks) = 101 at 1739; the grab at 1740 (tick 1469) pays 60: cores 0 -> 1,
+#   fuel 101 -> 161. (Without the hold the bar is full there and the grant is lost.)
+# - 2251: fork 1 (crate 4); 2612: crate 5, the A, turns F1 into A1 (weapon 1 -> 11): kind
+#   changes, level kept.
 # debug_history_check is 0 with the crate in flight, during the hold and after it.
---frames 2560 --dump-exports debug_state,debug_weapon,debug_forks,debug_cores,debug_drops,debug_score,debug_fuel --at "591 debug_drops == 0" --at "592 debug_drops == 1" --at "600 debug_pickups == 1" --at "600 debug_history_check == 0" --at "802 debug_weapon == 1" --at "803 debug_weapon == 2" --at "803 debug_pickups == 0" --at "803 debug_score == 150" --at "806 debug_state == 5" --at "806 debug_weapon == 2" --at "807 debug_weapon == 1" --at "807 debug_pickups == 1" --at "807 debug_score == 50" --at "850 debug_history_check == 0" --at "885 debug_state == 5" --at "885 debug_game_tick == 615" --at "885 debug_fuel == 20" --at "886 debug_state == 1" --at "886 debug_weapon == 1" --at "887 debug_history_check == 0" --at "1042 debug_weapon == 1" --at "1043 debug_weapon == 2" --at "1043 debug_score == 150" --at "1171 debug_drops == 2" --at "1382 debug_cores == 0" --at "1382 debug_fuel == 70" --at "1383 debug_cores == 1" --at "1383 debug_fuel == 130" --at "1656 debug_drops == 3" --at "1867 debug_weapon == 2" --at "1868 debug_weapon == 3" --at "2284 debug_drops == 5" --at "2431 debug_forks == 0" --at "2432 debug_forks == 1" --at "2497 debug_weapon == 3" --at "2498 debug_weapon == 13" --at "2559 debug_history_check == 0" --expect "debug_state == 1" --expect "debug_weapon == 13" --expect "debug_cores == 1" --expect "debug_forks == 1" --expect "debug_drops == 5"
+--frames 2700 --call-at "31 debug_probe" --dump-exports debug_state,debug_weapon,debug_forks,debug_cores,debug_drops,debug_score,debug_fuel --at "750 debug_drops == 0" --at "751 debug_drops == 1" --at "751 debug_score == 230" --at "760 debug_pickups == 1" --at "760 debug_history_check == 0" --at "899 debug_weapon == 1" --at "900 debug_weapon == 2" --at "900 debug_pickups == 0" --at "900 debug_score == 331" --at "903 debug_state == 5" --at "903 debug_weapon == 2" --at "904 debug_weapon == 1" --at "904 debug_pickups == 1" --at "904 debug_score == 231" --at "940 debug_history_check == 0" --at "977 debug_drops == 1" --at "978 debug_drops == 0" --at "982 debug_state == 5" --at "982 debug_game_tick == 712" --at "982 debug_fuel == 20" --at "983 debug_state == 1" --at "983 debug_weapon == 1" --at "984 debug_history_check == 0" --at "992 debug_drops == 1" --at "1139 debug_weapon == 1" --at "1140 debug_weapon == 2" --at "1140 debug_score == 331" --at "1262 debug_weapon == 1" --at "1535 debug_drops == 1" --at "1536 debug_drops == 2" --at "1536 debug_score == 793" --at "1739 debug_cores == 0" --at "1739 debug_fuel == 101" --at "1740 debug_cores == 1" --at "1740 debug_fuel == 161" --at "2250 debug_forks == 0" --at "2251 debug_forks == 1" --at "2611 debug_weapon == 1" --at "2612 debug_weapon == 11" --at "2699 debug_history_check == 0" --expect "debug_state == 1" --expect "debug_weapon == 11" --expect "debug_cores == 1" --expect "debug_drops == 5"
