@@ -19,9 +19,10 @@ const App = app_mod.App;
 pub fn frame(app: *App) void {
     switch (app.screen) {
         .title => title.screen(app),
-        .game => if (app.hypno_on) hypno(app) else game_screen(app),
+        // The overlay blinks: every other 32 ms the page shows through.
+        .game => if (app.hypno_on and app.game.panels.hypno_drone_event_div) hypno(app) else game_screen(app),
         .log => log_screen(app),
-        .wall => if (app.hypno_on) hypno(app) else wall(app),
+        .wall => wall(app),
     }
 }
 
@@ -104,7 +105,7 @@ fn rows(app: *App) void {
     const scroll = app.scroll[pi];
 
     var line: usize = 0;
-    for (list, 0..) |r, i| {
+    for (list, 0..) |*r, i| {
         defer line += r.lines;
         if (line + r.lines <= scroll) continue;
         if (line >= scroll + area) break;
@@ -114,11 +115,11 @@ fn rows(app: *App) void {
 
     // Scroll marks: a small triangle on the right when rows are hidden.
     var total: usize = 0;
-    for (list) |r| total += r.lines;
+    for (list) |*r| total += r.lines;
     if (scroll > 0) mark_up(L.rows_y);
     if (scroll + area < total) mark_down(L.rows_y + @as(i32, @intCast(area)) * L.row_h - 3);
 
-    if (area < L.rows_visible and list.len > 0) footer(app, list[cursor]);
+    if (area < L.rows_visible and list.len > 0) footer(app, &list[cursor]);
 }
 
 fn mark_up(y: i32) void {
@@ -131,7 +132,7 @@ fn mark_down(y: i32) void {
     draw.hline(155, y + 2, 1, .grey);
 }
 
-fn row(app: *App, r: pages.Row, y: i32, selected: bool) void {
+fn row(app: *App, r: *const pages.Row, y: i32, selected: bool) void {
     const fg: draw.Color = if (selected) .white else .black;
     const off: draw.Color = if (selected) .dim else .grey;
     if (selected) draw.fill_rect(0, y - 1, draw.width, @as(i32, r.lines) * L.row_h + 1, .black);
@@ -155,7 +156,7 @@ fn row(app: *App, r: pages.Row, y: i32, selected: bool) void {
             const x = L.text_x + font.width(r.left.len) + 3;
             draw.hline(x, y + 3, L.right_x - x, if (selected) .white else .grey);
         },
-        .button, .project => {
+        .button, .project => if (!r.blank) {
             const c: draw.Color = if (r.enabled) fg else off;
             const label_w = font.width(r.left.len);
             const right_w = if (r.right.len > 0) font.width(r.right.len) + 6 else 0;
@@ -208,7 +209,7 @@ fn row(app: *App, r: pages.Row, y: i32, selected: bool) void {
 }
 
 /// The work/think range input: "Work [----o----] Think".
-fn slider(r: pages.Row, y: i32, selected: bool) void {
+fn slider(r: *const pages.Row, y: i32, selected: bool) void {
     const fg: draw.Color = if (selected) .white else .black;
     const x0 = draw.text(r.left, L.text_x, y, fg) + 4;
     const x1 = L.right_x - font.width(r.right.len) - 4;
@@ -293,7 +294,7 @@ fn grid(g: *const G.Game, y: i32, selected: bool) void {
 
 // -- footer: the selected row's detail (projects) ------------------------
 
-fn footer(app: *App, r: pages.Row) void {
+fn footer(app: *App, r: *const pages.Row) void {
     const top = L.rows_y + @as(i32, @intCast(app.list_lines())) * L.row_h;
     draw.hline(0, top + 1, draw.width, .grey);
     if (r.detail.len == 0) return;
@@ -374,6 +375,7 @@ fn log_screen(app: *App) void {
             _ = draw.text(msg[sp.start..sp.end], 8, line_y, if (k == 0) .black else .black);
             line_y -= L.row_h;
         }
+        line_y -= 2; // a little air between messages
     }
     if (app.log_scroll > budget_skip and app.log_scroll > 0) mark_down(draw.height - 4);
     if (any_hidden_above) mark_up(top);
@@ -386,22 +388,19 @@ fn log_screen(app: *App) void {
 fn hypno(app: *App) void {
     // The original's longBlink: every 32 ms the overlay toggles; its text
     // grows from "Release" to "Release the Hypno Drones".
-    const t = app.game.hypno_event_ms orelse app.game.now_ms;
-    const step = (app.game.now_ms - t) / 32;
-    const shown = step % 2 == 0;
-    draw.clear(if (shown) .black else .white);
-    if (!shown) return;
+    const step = app.game.long_blink_counter;
+    draw.clear(.black);
     const words: []const []const u8 = if (step > 55)
         &.{ "Release", "the", "Hypno", "Drones" }
     else
         &.{"Release"};
-    const offset: i32 = if (step > 30 and step < 40) 3 else if (step > 45 and step < 55) 1 else 0;
-    const lh: i32 = 22;
-    const h = @as(i32, @intCast(words.len)) * lh;
-    var y = @divTrunc(draw.height - h, 2) + offset * 8;
+    // The original's <br /> line breaks in front of "Release", its huge
+    // white type at the top of a black band.
+    const offset: i32 = if (step > 30 and step < 46) 3 else if (step > 45 and step <= 55) 1 else 0;
+    const lh: i32 = 26;
+    var y: i32 = 4 + offset * lh;
     for (words) |w| {
-        const wpx = @as(i32, @intCast(w.len)) * 12 - 2;
-        _ = draw.text_px(w, @divTrunc(draw.width - wpx, 2), y, draw.width, draw.px(.white), 2);
+        _ = draw.text_px(w, 4, y, draw.width, draw.px(.white), 3);
         y += lh;
     }
 }

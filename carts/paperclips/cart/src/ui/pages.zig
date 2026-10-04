@@ -127,6 +127,8 @@ pub const Row = struct {
     fade: u8 = 255,
     /// A widget's value (the slider position).
     value: u8 = 0,
+    /// Drawn empty this frame (a new project blinks as it appears).
+    blank: bool = false,
 
     pub fn selectable(r: Row) bool {
         return r.act != null or r.act_b != null;
@@ -362,6 +364,7 @@ const Builder = struct {
                 .act = .{ .buy_project = i },
                 .enabled = G.enabled(g, .{ .buy_project = i }),
                 .detail = b.join(&.{ tag, " ", G.project_description(p) }),
+                .blank = g.proj_hidden[i],
             });
         }
         if (g.active_len == 0) b.note(0, "(no projects yet)", false);
@@ -659,7 +662,7 @@ const Builder = struct {
         g.battle_name.write(&o);
         const name = b.a.keep(o.slice());
         b.readout(1, name, b.join(&.{ "Scale ", b.crunch(g.unit_size, 0), ":1" }));
-        if (g.panels.victory_div and g.victory_visible) {
+        if (g.panels.victory_div) {
             const res: []const u8 = if (g.battle_result == .victory) "VICTORY" else "DEFEAT";
             b.readout(2, res, b.join(&.{ if (g.battle_result == .victory) "+" else "", b.loc(g.honor_amount), " honor" }));
         }

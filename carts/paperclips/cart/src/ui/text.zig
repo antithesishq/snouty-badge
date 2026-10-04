@@ -21,18 +21,24 @@ pub const Arena = struct {
         var total: usize = 0;
         for (parts) |p| total += p.len;
         if (a.n + total > a.buf.len) return "";
-        // Parts may point into scratch (past a.n); build at the end of the
-        // buffer is unsafe then, so copy through a temp.
-        var tmp: [256]u8 = undefined;
-        var t: usize = 0;
+        // Parts may live in the arena's free space (formatted there and
+        // not kept), right where the result goes: then build the result
+        // past the end of all of them and slide it back.
+        var hi: usize = a.n;
+        const base = @intFromPtr(&a.buf[0]);
         for (parts) |p| {
-            const k = @min(p.len, tmp.len - t);
-            @memcpy(tmp[t .. t + k], p[0..k]);
-            t += k;
+            const at = @intFromPtr(p.ptr);
+            if (p.len > 0 and at >= base + a.n and at < base + a.buf.len) hi = @max(hi, at - base + p.len);
         }
-        @memcpy(a.buf[a.n .. a.n + t], tmp[0..t]);
-        const s = a.buf[a.n .. a.n + t];
-        a.n += t;
+        if (hi + total > a.buf.len) return "";
+        var t: usize = hi;
+        for (parts) |p| {
+            for (p, 0..) |ch, k| a.buf[t + k] = ch;
+            t += p.len;
+        }
+        if (hi != a.n) std.mem.copyForwards(u8, a.buf[a.n .. a.n + total], a.buf[hi .. hi + total]);
+        const s = a.buf[a.n .. a.n + total];
+        a.n += total;
         return s;
     }
 

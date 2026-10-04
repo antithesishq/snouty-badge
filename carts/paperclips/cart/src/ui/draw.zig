@@ -42,8 +42,10 @@ pub inline fn px(c: Color) cart.Pixel {
 }
 
 pub fn clear(c: Color) void {
-    const p = px(c);
-    for (cart.framebuffer) |*col| @memset(col, p);
+    // Two pixels per 32-bit store: the whole frame is 10,240 words.
+    const p: u32 = @as(u16, @bitCast(px(c)));
+    const words: *[cart.screen_width * cart.screen_height / 2]u32 = @ptrCast(cart.framebuffer);
+    @memset(words, p | p << 16);
 }
 
 pub fn fill_rect(x0: i32, y0: i32, w: i32, h: i32, c: Color) void {

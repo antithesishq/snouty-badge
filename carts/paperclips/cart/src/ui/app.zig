@@ -53,6 +53,22 @@ var game_storage: G.Game = undefined;
 var rows_storage: pages.RowList = .{};
 var arena_storage: text.Arena = .{};
 
+/// The row ids seen so far (a plain bit array: std's bit sets take
+/// themselves by value, a 256-byte copy per test on the badge).
+const Bits = struct {
+    w: [pages.max_ids / 32]u32 = @splat(0),
+
+    fn isSet(b: *const Bits, i: usize) bool {
+        return b.w[i >> 5] & (@as(u32, 1) << @intCast(i & 31)) != 0;
+    }
+    fn set(b: *Bits, i: usize) void {
+        b.w[i >> 5] |= @as(u32, 1) << @intCast(i & 31);
+    }
+    fn unset(b: *Bits, i: usize) void {
+        b.w[i >> 5] &= ~(@as(u32, 1) << @intCast(i & 31));
+    }
+};
+
 pub const App = struct {
     screen: Screen = .title,
     /// The game and the per-frame buffers live outside the struct (module
@@ -72,7 +88,7 @@ pub const App = struct {
     scroll: [pages.page_count]u16 = @splat(0),
     news: [pages.page_count]bool = @splat(false),
     was_visible: [pages.page_count]bool = @splat(false),
-    seen: std.StaticBitSet(pages.max_ids) = .empty,
+    seen: Bits = .{},
     scan_next: u8 = 0,
 
     prev: Buttons = .{},
@@ -93,6 +109,9 @@ pub const App = struct {
     /// Frames since a new message arrived (render flashes the ticker).
     msg_age: u32 = 1000,
     hypno_on: bool = false,
+    /// Bench only (paperclips_bench_flags bit 0): the game clock stands
+    /// still, so a run times the UI alone.
+    frozen: bool = false,
     /// Set by new_game: the first tick takes stock of the pages without
     /// marking news (before the game's first 10 ms tick every panel shows).
     first_tick: bool = false,
@@ -119,7 +138,7 @@ pub const App = struct {
         app.cursor_ix = @splat(0);
         app.scroll = @splat(0);
         app.news = @splat(false);
-        app.seen = .empty;
+        app.seen = .{};
         app.clock_phase = 0;
         app.reset_ui();
     }
@@ -132,7 +151,7 @@ pub const App = struct {
         app.scroll = @splat(0);
         app.news = @splat(false);
         app.was_visible = @splat(false);
-        app.seen = .empty;
+        app.seen = .{};
         app.first_tick = true;
         app.restarts_seen = app.game.restarts;
         app.ticker_count = msg_count(app.game);
@@ -221,7 +240,7 @@ pub const App = struct {
         }
 
         if (rows.len == 0) return;
-        const row = rows[ix];
+        const row = &rows[ix];
 
         // A: press, and repeat while held on repeat rows.
         if (now.a) app.held_frames_a += 1 else app.held_frames_a = 0;
@@ -277,7 +296,7 @@ pub const App = struct {
     /// One frame of game time: 17, 17, 16 ms (60 fps), then the derived
     /// UI state (news marks, rows to draw).
     fn tick(app: *App) void {
-        if (!app.at_wall()) {
+        if (!app.at_wall() and !app.frozen) {
             G.advance_ms(app.game, frame_ms(app.clock_phase));
         }
         app.clock_phase = (app.clock_phase + 1) % 3;
@@ -289,11 +308,9 @@ pub const App = struct {
             app.screen = .title;
         }
 
-        // The HypnoDrones overlay: 120 steps of 32 ms from the event.
-        app.hypno_on = false;
-        if (app.game.hypno_event_ms) |t| {
-            app.hypno_on = app.game.now_ms - t < knobs.hypno_steps * 32;
-        }
+        // The HypnoDrones overlay: the game blinks it every 32 ms for 120
+        // steps (longBlink); the screen is the overlay while it runs.
+        app.hypno_on = app.game.long_blink_counter > 0 or app.game.panels.hypno_drone_event_div;
         if (app.at_wall() and !app.hypno_on and app.screen == .game) app.screen = .wall;
 
         if (app.first_tick) {
@@ -341,7 +358,7 @@ pub const App = struct {
     fn scan(app: *App, p: Page, mark: bool) void {
         app.arena.reset();
         pages.build(app.game, p, app.rows, app.arena);
-        for (app.rows.slice()) |r| {
+        for (app.rows.slice()) |*r| {
             if (r.id >= pages.max_ids) continue;
             if (!app.seen.isSet(r.id)) {
                 app.seen.set(r.id);
@@ -354,13 +371,12 @@ pub const App = struct {
     /// A project that left the list counts as new if it comes back
     /// ("Beg for More Wire" does).
     fn forget_gone_projects(app: *App) void {
-        var present: std.StaticBitSet(pages.max_ids - pages.project_id_base) = .empty;
-        for (app.rows.slice()) |r| {
-            if (r.id >= pages.project_id_base and r.id < pages.max_ids) present.set(r.id - pages.project_id_base);
+        var present: [256]bool = @splat(false);
+        for (app.rows.slice()) |*r| {
+            if (r.id >= pages.project_id_base and r.id < pages.project_id_base + present.len) present[r.id - pages.project_id_base] = true;
         }
-        var i: usize = pages.project_id_base;
-        while (i < pages.max_ids) : (i += 1) {
-            if (app.seen.isSet(i) and !present.isSet(i - pages.project_id_base)) app.seen.unset(i);
+        for (present, 0..) |here, k| {
+            if (!here) app.seen.unset(pages.project_id_base + @as(u16, @intCast(k)));
         }
     }
 
@@ -372,12 +388,12 @@ pub const App = struct {
         const pi = @intFromEnum(app.page);
         app.news[pi] = false;
         const rows = app.rows.slice();
-        for (rows) |r| if (r.id < pages.max_ids) app.seen.set(r.id);
+        for (rows) |*r| if (r.id < pages.max_ids) app.seen.set(r.id);
         if (app.page == .projects) app.forget_gone_projects();
         if (rows.len == 0) return;
         var ix: usize = @min(app.cursor_ix[pi], rows.len - 1);
         var found = false;
-        for (rows, 0..) |r, i| if (r.id == app.cursor_id[pi]) {
+        for (rows, 0..) |*r, i| if (r.id == app.cursor_id[pi]) {
             ix = i;
             found = true;
             break;
@@ -422,7 +438,7 @@ pub const App = struct {
     }
 
     pub fn page_has_details(app: *const App) bool {
-        for (app.rows.slice()) |r| if (r.detail.len > 0) return true;
+        for (app.rows.slice()) |*r| if (r.detail.len > 0) return true;
         return false;
     }
 
@@ -434,10 +450,10 @@ pub const App = struct {
         if (rows.len == 0) return;
         const area = app.list_lines();
         var top: usize = 0;
-        for (rows[0..app.cursor_ix[pi]]) |r| top += r.lines;
+        for (rows[0..app.cursor_ix[pi]]) |*r| top += r.lines;
         const bottom = top + rows[app.cursor_ix[pi]].lines;
         var total: usize = 0;
-        for (rows) |r| total += r.lines;
+        for (rows) |*r| total += r.lines;
         var s: usize = app.scroll[pi];
         if (top < s) s = top;
         if (bottom > s + area) s = bottom - area;

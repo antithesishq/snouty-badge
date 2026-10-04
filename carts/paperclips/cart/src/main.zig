@@ -24,10 +24,14 @@ var app: app_mod.App = .{};
 var bench: u32 = 0;
 /// `--poke paperclips_seed=N`: the game's seed (else the clock's).
 var bench_seed: u32 = 0;
+/// `--poke paperclips_bench_flags=1`: the game clock stands still (times
+/// the UI alone).
+var bench_flags: u32 = 0;
 comptime {
     if (!cart.is_wasm) {
         @export(&bench, .{ .name = "paperclips_bench" });
         @export(&bench_seed, .{ .name = "paperclips_seed" });
+        @export(&bench_flags, .{ .name = "paperclips_bench_flags" });
     }
 }
 
@@ -39,6 +43,7 @@ pub fn start() void {
     const seed: u64 = if (bench_seed != 0) bench_seed else if (cart.is_wasm) cart.rand() else clock_mix();
     app.init(seed);
     if (bench != 0) bench_setup(bench);
+    app.frozen = bench_flags & 1 != 0;
 }
 
 /// Badge builds: cart.rand() reads 0 on the RP2350, so the seed comes
@@ -76,27 +81,34 @@ pub fn update() void {
 fn bench_setup(n: u32) void {
     app.cheats = true;
     app.new_game();
-    // Two virtual minutes: start() runs before the bench's first frame and
-    // must stay under its 1 s hang limit on the emulated badge.
-    debug_prepare(120);
+    debug_prepare(40, 100);
+    app.update(.{}); // the first tick: the pages exist from here
     var page: u32 = 1;
     while (page < n) : (page += 1) app.switch_page(1);
 }
 
-/// Shared by bench_setup and the wasm debug export: money and trust from
-/// the cheats, then `seconds` of virtual time buying what a player would.
-fn debug_prepare(seconds: u32) void {
-    var i: u32 = 0;
-    while (i < 3) : (i += 1) G.act(app.game, .cheat_money);
-    i = 0;
-    while (i < 20) : (i += 1) G.act(app.game, .cheat_trust);
+/// Shared by bench_setup and the wasm debug export: a late stage-1 game in
+/// few virtual seconds. Each step takes the cheats (money, trust,
+/// operations, creativity, yomi), buys wire, the first affordable project
+/// and the machines, then runs the clock `step_ms`. The bench runs this in
+/// start(), on the emulated badge, under its 1 s limit: keep it short.
+fn debug_prepare(steps: u32, step_ms: u32) void {
     var k: u32 = 0;
-    while (k < seconds) : (k += 1) {
-        // Buy what the money allows, as a player would.
-        inline for (.{ .make_clipper, .make_mega_clipper, .buy_ads, .add_proc, .add_mem, .buy_wire }) |act| {
+    while (k < steps) : (k += 1) {
+        inline for (.{ .cheat_money, .cheat_trust, .cheat_ops, .cheat_creat, .cheat_yomi }) |act| G.act(app.game, act);
+        while (app.game.wire < 2000 and G.enabled(app.game, .buy_wire)) G.act(app.game, .buy_wire);
+        for (app.game.active[0..app.game.active_len]) |p| {
+            // Not the HypnoDrones: the bench wants stage 1.
+            if (p == @intFromEnum(G.P.p35)) continue;
+            if (G.enabled(app.game, .{ .buy_project = p })) {
+                G.act(app.game, .{ .buy_project = p });
+                break;
+            }
+        }
+        inline for (.{ .make_clipper, .make_mega_clipper, .add_proc, .add_mem, .buy_ads }) |act| {
             if (G.enabled(app.game, act)) G.act(app.game, act);
         }
-        G.advance_ms(app.game, 1000);
+        G.advance_ms(app.game, step_ms);
     }
     app.rebuild();
 }
@@ -174,7 +186,7 @@ fn debug_human() callconv(.c) u32 {
 /// Starts a game (if none) and runs debug_prepare: a late stage-1 state.
 fn debug_prepare_export() callconv(.c) u32 {
     if (!app.playing) app.new_game();
-    debug_prepare(600);
+    debug_prepare(120, 1000);
     return 1;
 }
 fn debug_unlock_cheats() callconv(.c) u32 {
