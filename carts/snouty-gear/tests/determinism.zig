@@ -13,6 +13,11 @@
 //! evicted: `get(age)` must reproduce every full keyframe, `matches` must
 //! agree, and the restored console must replay to the next keyframe.
 //! Ported from Snouty Boy's tests/determinism.zig in M3.
+//!
+//! Fast forward: the same ROM stepped in batches of four, all but the last
+//! frame of each without the line sink and without sound, must match a
+//! 1x run with sink and sound after every batch (Waternet; Sonic when
+//! `$HOME/sonic.gg` exists).
 const std = @import("std");
 const core = @import("core");
 const Gg = core.Gg;
@@ -278,4 +283,104 @@ test "determinism: keyframe round trip is exact" {
     a.ram[5] = 0xAA;
     a.restore(k);
     try std.testing.expectEqual(@as(u8, 0), a.ram[5]);
+}
+
+// ---- Fast forward (main.zig, docs/FAST_FORWARD.md at the root) ----
+
+/// The frontend's sink, minus the pixels: the squeeze's every ninth line
+/// skipped (only its sprites evaluated), the rest emitted to a no-op.
+const SqueezeSink = struct {
+    skip: [core.screen_h]bool,
+    lines: u32 = 0,
+
+    fn init() SqueezeSink {
+        var s: SqueezeSink = .{ .skip = undefined };
+        for (&s.skip, 0..) |*k, y| k.* = y % 9 == 8;
+        return s;
+    }
+
+    fn on_line(ctx: *anyopaque, _: u8, _: *const [core.screen_w]u5, _: *const [32]u16) void {
+        const self: *SqueezeSink = @ptrCast(@alignCast(ctx));
+        self.lines += 1;
+    }
+
+    fn sink(self: *SqueezeSink) core.LineSink {
+        return .{ .ctx = self, .func = &on_line, .skip = &self.skip };
+    }
+};
+
+/// Frames per fast-forward update in the test (`tuning.ff_max_frames`).
+const ff_batch = 4;
+
+/// `rom` for `pads.len` frames at 1x (every frame rendered, with sound)
+/// and in fast-forward batches (all but each batch's last frame without
+/// the sink and without sound): the consoles must agree after every batch.
+fn ff_matches_1x(rom: []const u8, pads: []const u8) !void {
+    const gpa = std.testing.allocator;
+    const a = try gpa.create(Gg);
+    defer gpa.destroy(a);
+    const b = try gpa.create(Gg);
+    defer gpa.destroy(b);
+    const ka = try gpa.create(Gg.Keyframe);
+    defer gpa.destroy(ka);
+    const kb = try gpa.create(Gg.Keyframe);
+    defer gpa.destroy(kb);
+    var sink_a = SqueezeSink.init();
+    var sink_b = SqueezeSink.init();
+
+    a.init_in_place(core.Rom.from_slice(rom));
+    a.line_sink = sink_a.sink();
+    a.audio_render = true;
+    b.init_in_place(core.Rom.from_slice(rom));
+
+    var f: usize = 0;
+    var rendered: u32 = 0;
+    while (f < pads.len) {
+        const n = @min(ff_batch, pads.len - f);
+        // One update's pad for the whole batch, as input.zig gives it.
+        const pad = pads[f];
+        for (0..n) |i| {
+            a.step_frame(pad);
+            const last = i + 1 == n;
+            b.line_sink = if (last) sink_b.sink() else null;
+            b.audio_render = last;
+            b.step_frame(pad);
+        }
+        rendered += 1;
+        f += n;
+        a.snapshot(ka);
+        b.snapshot(kb);
+        if (diff(ka, kb)) |field| {
+            std.debug.print("frame {d}: field '{s}' differs between 1x and fast forward\n", .{ f, field });
+            return error.FastForwardDiverged;
+        }
+    }
+    // Fast forward really skipped the pixel work of all but one frame in
+    // each batch (none at all while the display is off).
+    try std.testing.expect(sink_b.lines <= rendered * core.screen_h);
+    try std.testing.expect(sink_a.lines > sink_b.lines);
+}
+
+test "determinism: fast-forward batches (no sink, no sound) equal 1x, Waternet" {
+    const rom = try load_rom();
+    var pads: [frames]u8 = undefined;
+    script(&pads);
+    try ff_matches_1x(rom, &pads);
+}
+
+test "determinism: fast-forward batches (no sink, no sound) equal 1x, Sonic" {
+    // Sprites, collisions and line interrupts in play: `$HOME/sonic.gg`
+    // (local only, never in the repository), skipped when missing.
+    const home = std.testing.environ.getPosix("HOME") orelse return error.SkipZigTest;
+    var path_buf: [512]u8 = undefined;
+    const path = try std.fmt.bufPrint(&path_buf, "{s}/sonic.gg", .{home});
+    const rom = std.Io.Dir.cwd().readFile(std.testing.io, path, &rom_buf) catch return error.SkipZigTest;
+    var pads: [1200]u8 = undefined;
+    @memset(&pads, 0);
+    for ([_]usize{ 200, 320, 440 }) |at| @memset(pads[at..][0..8], Pad.start);
+    for (pads[460..], 460..) |*p, i| {
+        p.* = Pad.right;
+        if ((i - 460) % 45 < 8) p.* |= Pad.b1;
+    }
+    try ff_matches_1x(rom, &pads);
 }
