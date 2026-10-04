@@ -260,7 +260,7 @@ pub fn simulate(mode: world.Mode) void {
     // the World at once, in both modes; the retry shield still goes first.
     if (hit.by != .none and probe and world.w.player.shield == 0) {
         collide.remove_offender(hit);
-        player.on_rewound_hit();
+        player.on_rewound_hit(hardcore);
         const p = &world.w.player;
         p.invuln = probe_invuln;
         p.probe_hits += 1;
@@ -419,8 +419,9 @@ fn step_rewind() void {
     _ = history.restore(rewind_target);
     history.invalidate_after(rewind_target);
     // Raiden's power loss (PLAN.md M7), charged on the restored World so
-    // the checkpoint below records it: one level, one fork, +80 mercy.
-    player.on_rewound_hit();
+    // the checkpoint below records it: one level, one fork, +80 mercy
+    // (hardcore: every powerup).
+    player.on_rewound_hit(hardcore);
     world.w.player.invuln = rewind.resume_invuln;
     world.w.player.go_pop = rewind.go_ticks;
     history.checkpoint();

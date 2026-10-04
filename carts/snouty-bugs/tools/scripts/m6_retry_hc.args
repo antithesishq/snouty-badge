@@ -1,15 +1,15 @@
 # m6_retry_hc: m6_retry in hardcore mode, where a hit is paid from the fuel bar, so the
-# shield's "no fuel spent" shows. Same input as m6_retry (god 31..5000, RIGHT 5150..5200)
-# except B (not A) on the title at 30, which starts a hardcore game (hardcore 1, rewinds 0).
-# The world is the same as m6_retry's (no hit lands before 5126 either way), so the numbers
-# line up with it (re-pinned for M7 with it):
+# shield's "no fuel spent" shows, and where a hit that rewinds strips every powerup. Same
+# input as m6_retry (god 31..5000, RIGHT 5150..5200) except B (not A) on the title at 30,
+# which starts a hardcore game (hardcore 1, rewinds 0). The world is the same as m6_retry's
+# (no hit lands before 5126 either way), so the numbers line up with it until 5207:
 # - 2429: shield 0 -> 1. 5126 (tick 5019): the shield absorbs the hit with fuel 180: fuel
-#   stays 180, state 1, shield 0.
+#   stays 180, state 1, shield 0, still F5 and two forks.
 # - 5207 (tick 5100): the unshielded ram costs the auto rewind's depth: 120, fuel 180 -> 60,
-#   target 4980. The playback restores the shield, resume at 5287 with fuel 60; hardcore
-#   pays the M7 power loss at the resume too (F5 -> F4, forks 2 -> 1).
-# - 5347 (tick 5040): absorbed with fuel 66 (fuel 65 the update before, 66 is that tick's
-#   refill, and still 66 on the next), state 1.
-# - 5599 (tick 5292): unshielded hit with fuel 93: depth 93, fuel 0, target 5199; 47
-#   playback frames, resume at 5666.
---frames 5700 --call-at "31 debug_god" --call-at "5000 debug_god" --dump-exports debug_state,debug_hardcore,debug_shield,debug_fuel --at "30 debug_hardcore == 1" --at "30 debug_rewinds == 0" --at "2429 debug_shield == 1" --at "5125 debug_fuel == 180" --at "5126 debug_shield == 0" --at "5126 debug_state == 1" --at "5126 debug_fuel == 180" --at "5206 debug_state == 1" --at "5207 debug_state == 4" --at "5207 debug_fuel == 60" --at "5207 debug_rewind_target == 4980" --at "5287 debug_state == 1" --at "5287 debug_shield == 1" --at "5287 debug_fuel == 60" --at "5287 debug_weapon == 4" --at "5287 debug_forks == 1" --at "5346 debug_fuel == 65" --at "5347 debug_shield == 0" --at "5347 debug_state == 1" --at "5347 debug_fuel == 66" --at "5348 debug_fuel == 66" --at "5350 debug_history_check == 0" --at "5599 debug_state == 4" --at "5599 debug_fuel == 0" --at "5599 debug_rewind_target == 5199" --at "5666 debug_state == 1" --expect "debug_hardcore == 1"
+#   target 4980. The playback restores the shield (5286: shield 1, F5, forks 2); the resume
+#   at 5287 (fuel 60) strips all of it: F1 (weapon 1), forks 0, shield 0, mercy 80.
+# - 5347 (tick 5040): no shield this time, so the hit rewinds with fuel 66: depth 66,
+#   target 4974 (before the last resume: the playback shows F5, two forks and the shield
+#   again at 5399), fuel 0; resume at 5400 strips them again.
+# - 5462: the next hit meets fuel 8 < the floor of 45: DYING, then TITLE at 5522.
+--frames 5600 --call-at "31 debug_god" --call-at "5000 debug_god" --dump-exports debug_state,debug_hardcore,debug_shield,debug_fuel,debug_weapon,debug_forks --at "30 debug_hardcore == 1" --at "30 debug_rewinds == 0" --at "2429 debug_shield == 1" --at "5125 debug_fuel == 180" --at "5126 debug_shield == 0" --at "5126 debug_state == 1" --at "5126 debug_fuel == 180" --at "5126 debug_weapon == 5" --at "5126 debug_forks == 2" --at "5206 debug_state == 1" --at "5207 debug_state == 4" --at "5207 debug_fuel == 60" --at "5207 debug_rewind_target == 4980" --at "5286 debug_state == 4" --at "5286 debug_shield == 1" --at "5286 debug_weapon == 5" --at "5286 debug_forks == 2" --at "5287 debug_state == 1" --at "5287 debug_game_tick == 4980" --at "5287 debug_fuel == 60" --at "5287 debug_shield == 0" --at "5287 debug_weapon == 1" --at "5287 debug_forks == 0" --at "5287 debug_mercy == 80" --at "5300 debug_history_check == 0" --at "5346 debug_fuel == 65" --at "5347 debug_state == 4" --at "5347 debug_fuel == 0" --at "5347 debug_rewind_target == 4974" --at "5399 debug_shield == 1" --at "5399 debug_weapon == 5" --at "5400 debug_state == 1" --at "5400 debug_shield == 0" --at "5400 debug_weapon == 1" --at "5400 debug_forks == 0" --at "5420 debug_history_check == 0" --at "5461 debug_state == 1" --at "5462 debug_state == 3" --at "5462 debug_fuel == 8" --at "5522 debug_state == 0" --expect "debug_state == 0" --expect "debug_hardcore == 1"

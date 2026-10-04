@@ -108,10 +108,11 @@ intervals (to 0.6x), adds bullets to patterns, adds regular enemy HP (up
 to x1.6) and from 600 (or in loop 2) makes killed bugs fire a revenge
 pellet. It is computed from World state, so a rewind rewinds it too.
 
-**Power loss** (Raiden): a hit that triggers the auto rewind, in a normal
-or a hardcore game, costs one weapon level (never below 1) and one fork
-once the world is restored, and adds 80 **mercy** (rank -80; at most
-240, decaying 2 a second). A hold-B rewind or the retry shield costs no
+**Power loss** (Raiden): a hit that triggers the auto rewind in a normal
+game costs one weapon level (never below 1) and one fork once the world
+is restored; in a hardcore game it costs every powerup (FUZZER level 1,
+no forks, no RETRY shield, even one the rewind brought back). Either way
+it adds 80 **mercy** (rank -80; at most 240, decaying 2 a second). A hold-B rewind or the retry shield costs no
 power (`m7_power`, `m7_rank`).
 
 ## 1. Prerequisites
@@ -363,8 +364,9 @@ flight, pool of 64).
   (no rewind, no fuel), the ship then flies into the boss (5207): a normal
   rewind whose playback brings the shield back, which absorbs again at 5347.
 - `m6_retry_hc.json`: the same in hardcore (B on the title): the absorbed
-  hits leave the fuel at 180 and 66, the unshielded ones cost 120 and 93,
-  and the resume charges the power loss as in a normal game.
+  hit leaves the fuel at 180, the unshielded ram costs 120, and the resume
+  strips every powerup (F5, two forks and the restored shield -> F1, none),
+  so the next hit rewinds (fuel 66 -> 0) and the one after is fatal.
 - `m6_identity.json`: a 12000-update god-mode sweep through two stages and
   their bosses with three holds: F5 (with its random spread), A5, B5, three
   forks and two stage clears, identity checks throughout (0 on every frame

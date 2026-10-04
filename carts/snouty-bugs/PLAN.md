@@ -1303,9 +1303,11 @@ So a single target takes at most ~40 a second from the ship at level 5.
 
 - **Forks fire a level-1 volley** of the current weapon (one zap, one d1
   beam, one seeker at gain 0.08) whenever the ship fired 24k ticks ago.
-- **Power loss**: `player.on_rewound_hit()`, called in `main.step_rewind`
-  at resume (normal and hardcore): `level = max(1, level - 1)`,
+- **Power loss**: `player.on_rewound_hit(hardcore)`, called in
+  `main.step_rewind` at resume: `level = max(1, level - 1)`,
   `forks -|= 1`, `mercy += 80`. Not on hold-B, not on a shield pop.
+  (2026-10-04, Adrian: hardcore strips every powerup instead: fuzzer
+  level 1, forks 0, shield 0; mercy as before.)
 - Endless probe mode (wasm `debug_probe`, toggles): like god mode, but a
   hit removes the offender, applies `on_rewound_hit()` in the World at
   once, grants 60 ticks of invulnerability and counts the hit; no rewind
@@ -2119,3 +2121,10 @@ only (no trap, no identity failure) for the re-pin track.
   frames over budget. ELF 112.6 KB text + 10.7 KB data + 85.6 KB bss =
   208.9 KB (cap 220 KB). Gate: 27 scripts green, host tests, check-float.
   Next: M8 attract mode.
+- 2026-10-04: hardcore power loss (Adrian: "lose your powerups when you
+  get hit in hardcore"). A hit that rewinds in hardcore now resets the
+  ship to the level-1 fuzzer with no forks and no retry shield (even one
+  the rewind restored); normal mode keeps M7's one level and one fork.
+  `m6_retry_hc` re-pinned: the shield no longer survives the first ram, so
+  the next hit rewinds (fuel 66 -> 0) and the one after is fatal. Gate:
+  27 scripts green.
