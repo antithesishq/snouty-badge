@@ -13,8 +13,7 @@ const dir = "carts/paperclips/";
 /// The `game` module: the port of the original's JavaScript (track L,
 /// cart/src/game/). The cart, the UI host tests and the oracle runner all
 /// import it as "game".
-// TEMPORARY (track U): the UI stub until track L commits game/game.zig.
-const game_root = dir ++ "cart/src/ui/stub_game.zig";
+const game_root = dir ++ "cart/src/game/game.zig";
 
 pub fn add(b: *Build, sycl_badge_dep: *Build.Dependency, opts: common.Options) void {
     // RAM cart only (XIP is gone from the show firmware). ReleaseFast: the
@@ -22,7 +21,7 @@ pub fn add(b: *Build, sycl_badge_dep: *Build.Dependency, opts: common.Options) v
     os_cart.add(b, sycl_badge_dep, .{
         .mode = .ram,
         .name = "paperclips",
-        .optimize = .ReleaseFast,
+        .optimize = .ReleaseSmall,
         .root_source_file = b.path(dir ++ "cart/src/main.zig"),
         .custom_builder = &build_cart_modules,
     });

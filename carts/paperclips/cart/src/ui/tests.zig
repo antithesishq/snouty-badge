@@ -95,7 +95,7 @@ test "every visible page builds within the row and text limits" {
     var arena: text.Arena = .{};
     for (0..pages.page_count) |i| {
         const p: pages.Page = @enumFromInt(i);
-        pages.build(&app.game, p, &list, &arena);
+        pages.build(app.game, p, &list, &arena);
         try std.testing.expect(list.n < pages.max_rows);
         try std.testing.expect(arena.n < arena.buf.len);
     }

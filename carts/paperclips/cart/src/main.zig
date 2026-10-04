@@ -76,25 +76,27 @@ pub fn update() void {
 fn bench_setup(n: u32) void {
     app.cheats = true;
     app.new_game();
-    debug_prepare();
+    // Two virtual minutes: start() runs before the bench's first frame and
+    // must stay under its 1 s hang limit on the emulated badge.
+    debug_prepare(120);
     var page: u32 = 1;
     while (page < n) : (page += 1) app.switch_page(1);
 }
 
-/// Shared by bench_setup and the wasm debug export: money, trust and
-/// operations to unlock the stage-1 panels, then ten virtual minutes.
-fn debug_prepare() void {
+/// Shared by bench_setup and the wasm debug export: money and trust from
+/// the cheats, then `seconds` of virtual time buying what a player would.
+fn debug_prepare(seconds: u32) void {
     var i: u32 = 0;
-    while (i < 3) : (i += 1) G.act(&app.game, .cheat_money);
+    while (i < 3) : (i += 1) G.act(app.game, .cheat_money);
     i = 0;
-    while (i < 20) : (i += 1) G.act(&app.game, .cheat_trust);
+    while (i < 20) : (i += 1) G.act(app.game, .cheat_trust);
     var k: u32 = 0;
-    while (k < 600) : (k += 1) {
+    while (k < seconds) : (k += 1) {
         // Buy what the money allows, as a player would.
         inline for (.{ .make_clipper, .make_mega_clipper, .buy_ads, .add_proc, .add_mem, .buy_wire }) |act| {
-            if (G.enabled(&app.game, act)) G.act(&app.game, act);
+            if (G.enabled(app.game, act)) G.act(app.game, act);
         }
-        G.advance_ms(&app.game, 1000);
+        G.advance_ms(app.game, 1000);
     }
     app.rebuild();
 }
@@ -152,7 +154,7 @@ fn debug_presses() callconv(.c) u32 {
 }
 fn debug_msgs() callconv(.c) u32 {
     if (!app.playing) return 0;
-    return app_mod.msg_count(&app.game);
+    return app_mod.msg_count(app.game);
 }
 /// Bit i set: page i has a news mark.
 fn debug_news() callconv(.c) u32 {
@@ -172,7 +174,7 @@ fn debug_human() callconv(.c) u32 {
 /// Starts a game (if none) and runs debug_prepare: a late stage-1 state.
 fn debug_prepare_export() callconv(.c) u32 {
     if (!app.playing) app.new_game();
-    debug_prepare();
+    debug_prepare(600);
     return 1;
 }
 fn debug_unlock_cheats() callconv(.c) u32 {
@@ -185,7 +187,7 @@ fn debug_advance(ms: u32) callconv(.c) u32 {
     var left = ms;
     while (left > 0) {
         const step = @min(left, 1000);
-        G.advance_ms(&app.game, step);
+        G.advance_ms(app.game, step);
         left -= step;
     }
     app.rebuild();
@@ -202,7 +204,7 @@ fn debug_cheat(n: u32) callconv(.c) u32 {
     if (!app.playing) app.new_game();
     const acts = [_]G.Action{ .cheat_clips, .cheat_money, .cheat_trust, .cheat_ops, .cheat_creat, .cheat_yomi };
     if (n >= acts.len) return 0;
-    G.act(&app.game, acts[n]);
+    G.act(app.game, acts[n]);
     app.rebuild();
     return 1;
 }

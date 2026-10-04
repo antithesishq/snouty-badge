@@ -43,14 +43,21 @@ pub const knobs = struct {
 
 /// Whether the game module plays past the HypnoDrones (track L's stage 2).
 /// Until it does, the cart stops there with the M1 wall.
-pub const stage2_ready = @hasDecl(G, "stage2_ready") and G.stage2_ready;
+/// game.zig may declare `pub const stage2_ready = false;` to stop there.
+pub const stage2_ready = if (@hasDecl(G, "stage2_ready")) G.stage2_ready else true;
 
 /// Up Up Down Down Left Right Left Right B A, on the title.
 const konami = [_]std.meta.FieldEnum(Buttons){ .up, .up, .down, .down, .left, .right, .left, .right, .b, .a };
 
+var game_storage: G.Game = undefined;
+var rows_storage: pages.RowList = .{};
+var arena_storage: text.Arena = .{};
+
 pub const App = struct {
     screen: Screen = .title,
-    game: G.Game = undefined,
+    /// The game and the per-frame buffers live outside the struct (module
+    /// globals below) so resetting the App copies a small default.
+    game: *G.Game = &game_storage,
     playing: bool = false,
     cheats: bool = false,
     /// Frames since the cheat code was entered (title message).
@@ -85,12 +92,15 @@ pub const App = struct {
     ticker_frames: u32 = 0,
     /// Frames since a new message arrived (render flashes the ticker).
     msg_age: u32 = 1000,
-    hypno_ms: u32 = 0,
     hypno_on: bool = false,
-    human_prev: bool = true,
+    /// Set by new_game: the first tick takes stock of the pages without
+    /// marking news (before the game's first 10 ms tick every panel shows).
+    first_tick: bool = false,
+    /// The game's restart counter last seen (a new universe resets the UI).
+    restarts_seen: u32 = 0,
 
-    rows: pages.RowList = .{},
-    arena: text.Arena = .{},
+    rows: *pages.RowList = &rows_storage,
+    arena: *text.Arena = &arena_storage,
     /// A count of how many presses reached the game (debug export).
     presses: u32 = 0,
 
@@ -101,7 +111,7 @@ pub const App = struct {
 
     /// Starts a game (the title's A).
     pub fn new_game(app: *App) void {
-        G.init(&app.game, app.seed);
+        G.init(app.game, app.seed);
         app.playing = true;
         app.screen = .game;
         app.page = .business;
@@ -110,16 +120,23 @@ pub const App = struct {
         app.scroll = @splat(0);
         app.news = @splat(false);
         app.seen = .empty;
-        app.human_prev = true;
         app.clock_phase = 0;
-        app.ticker_count = msg_count(&app.game);
-        // Whatever exists at the start is not news.
-        for (0..pages.page_count) |i| {
-            const p: Page = @enumFromInt(i);
-            app.was_visible[i] = pages.visible(&app.game, p, app.cheats);
-            if (app.was_visible[i]) app.scan(p, false);
-        }
-        app.rebuild();
+        app.reset_ui();
+    }
+
+    /// Back to the first page with no news: a new game or a new universe.
+    fn reset_ui(app: *App) void {
+        app.page = .business;
+        app.cursor_id = @splat(0xFFFF);
+        app.cursor_ix = @splat(0);
+        app.scroll = @splat(0);
+        app.news = @splat(false);
+        app.was_visible = @splat(false);
+        app.seen = .empty;
+        app.first_tick = true;
+        app.restarts_seen = app.game.restarts;
+        app.ticker_count = msg_count(app.game);
+        app.rows.n = 0;
     }
 
     pub fn update(app: *App, now: Buttons) void {
@@ -234,8 +251,8 @@ pub const App = struct {
     fn press(app: *App, act: G.Action, enabled: bool) void {
         // The row's enabled flag was computed for the frame on screen; ask
         // again in case an earlier press this frame changed it.
-        if (!enabled or !G.enabled(&app.game, act)) return;
-        G.act(&app.game, act);
+        if (!enabled or !G.enabled(app.game, act)) return;
+        G.act(app.game, act);
         app.presses += 1;
     }
 
@@ -260,24 +277,36 @@ pub const App = struct {
     /// One frame of game time: 17, 17, 16 ms (60 fps), then the derived
     /// UI state (news marks, rows to draw).
     fn tick(app: *App) void {
-        if (app.hypno_on) {
-            app.hypno_ms += frame_ms(app.clock_phase);
-            if (app.hypno_ms >= knobs.hypno_steps * 32) app.hypno_on = false;
-        }
         if (!app.at_wall()) {
-            G.advance_ms(&app.game, frame_ms(app.clock_phase));
+            G.advance_ms(app.game, frame_ms(app.clock_phase));
         }
         app.clock_phase = (app.clock_phase + 1) % 3;
 
-        const human = app.game.human_flag == 1;
-        if (app.human_prev and !human) {
-            app.hypno_on = true;
-            app.hypno_ms = 0;
+        // A restart (the original reloads the page): the title, then the
+        // next universe from its first page.
+        if (app.game.restarts != app.restarts_seen) {
+            app.reset_ui();
+            app.screen = .title;
         }
-        app.human_prev = human;
+
+        // The HypnoDrones overlay: 120 steps of 32 ms from the event.
+        app.hypno_on = false;
+        if (app.game.hypno_event_ms) |t| {
+            app.hypno_on = app.game.now_ms - t < knobs.hypno_steps * 32;
+        }
         if (app.at_wall() and !app.hypno_on and app.screen == .game) app.screen = .wall;
 
-        const mc = msg_count(&app.game);
+        if (app.first_tick) {
+            app.first_tick = false;
+            for (0..pages.page_count) |i| {
+                const p: Page = @enumFromInt(i);
+                app.was_visible[i] = pages.visible(app.game, p, app.cheats);
+                if (app.was_visible[i]) app.scan(p, false);
+            }
+            if (!app.was_visible[@intFromEnum(app.page)]) app.switch_page(1);
+        }
+
+        const mc = msg_count(app.game);
         if (mc != app.ticker_count) {
             app.ticker_count = mc;
             app.ticker_frames = 0;
@@ -288,7 +317,7 @@ pub const App = struct {
         // Pages that appeared or vanished; keep the current page valid.
         for (0..pages.page_count) |i| {
             const p: Page = @enumFromInt(i);
-            const v = pages.visible(&app.game, p, app.cheats);
+            const v = pages.visible(app.game, p, app.cheats);
             if (v and !app.was_visible[i]) app.news[i] = true;
             if (!v) app.news[i] = false;
             app.was_visible[i] = v;
@@ -311,7 +340,7 @@ pub const App = struct {
     /// Builds page `p` and marks its new rows (news when `mark`).
     fn scan(app: *App, p: Page, mark: bool) void {
         app.arena.reset();
-        pages.build(&app.game, p, &app.rows, &app.arena);
+        pages.build(app.game, p, app.rows, app.arena);
         for (app.rows.slice()) |r| {
             if (r.id >= pages.max_ids) continue;
             if (!app.seen.isSet(r.id)) {
@@ -339,7 +368,7 @@ pub const App = struct {
     /// the cursor on the same row (by id) as rows come and go.
     pub fn rebuild(app: *App) void {
         app.arena.reset();
-        pages.build(&app.game, app.page, &app.rows, &app.arena);
+        pages.build(app.game, app.page, app.rows, app.arena);
         const pi = @intFromEnum(app.page);
         app.news[pi] = false;
         const rows = app.rows.slice();
@@ -493,7 +522,7 @@ pub fn msg_count(g: *const G.Game) u32 {
     return g.msg_count;
 }
 
-pub fn message(g: *const G.Game, k: u32) ?[]const u8 {
-    return G.message(g, k);
+pub fn message(g: *const G.Game, k: usize) ?[]const u8 {
+    return g.message(k);
 }
 pub const pages_count = @import("pages.zig").page_count;

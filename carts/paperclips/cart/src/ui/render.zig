@@ -12,6 +12,7 @@ const L = @import("layout.zig");
 const numfmt = @import("numfmt.zig");
 const text = @import("text.zig");
 const title = @import("title.zig");
+const combat_view = @import("combat_view.zig");
 
 const App = app_mod.App;
 
@@ -26,7 +27,7 @@ pub fn frame(app: *App) void {
 
 fn game_screen(app: *App) void {
     draw.clear(.white);
-    header(&app.game);
+    header(app.game);
     status_line(app);
     tab_bar(app);
     rows(app);
@@ -36,8 +37,8 @@ fn game_screen(app: *App) void {
 // -- header: "Paperclips: n", big while it fits --------------------------
 
 fn header(g: *const G.Game) void {
-    var buf: [64]u8 = undefined;
-    const n = clip_count(g, &buf);
+    var buf: [96]u8 = undefined;
+    const n = G.clips_text(g, &buf);
     const label = "Paperclips:";
     const label_w = font.width(label.len);
     const big_w = @as(i32, @intCast(n.len)) * 12 - 2;
@@ -46,27 +47,23 @@ fn header(g: *const G.Game) void {
         _ = draw.text_px(n, draw.width - 1 - big_w, 0, draw.width, draw.px(.black), 2);
     } else if (big_w <= draw.width - 2) {
         _ = draw.text_px(n, @divTrunc(draw.width - big_w, 2), 0, draw.width, draw.px(.black), 2);
-    } else {
+    } else if (n.len <= L.cols - 1) {
         _ = draw.text(label, 2, 0, .black);
-        if (n.len <= L.cols) {
-            _ = draw.text_right(n, L.right_x, 8, .black);
-        } else {
-            // Past 26 digits: the original's tooltip form.
-            const c = numfmt.compact(&buf, g.clips);
-            _ = draw.text_right(c, L.right_x, 8, .black);
-        }
+        _ = draw.text_right(n, L.right_x, 8, .black);
+    } else {
+        // Longer than a line (stage 3 and the ending): the digits in two
+        // lines under no label, split at a comma.
+        var cut = n.len - (L.cols - 1);
+        while (cut < n.len and n[cut] != ',') cut += 1;
+        cut = @min(cut + 1, n.len);
+        if (cut > L.cols) cut = n.len - (L.cols - 1);
+        _ = draw.text_right(n[0..cut], L.right_x, 0, .black);
+        _ = draw.text_right(n[cut..], L.right_x, 8, .black);
     }
 }
 
-/// The original's header text: Math.ceil(clips).toLocaleString().
-fn clip_count(g: *const G.Game, buf: []u8) []const u8 {
-    const c = @ceil(g.clips);
-    if (c < 1.8e19) return numfmt.commas_u(buf, @intFromFloat(c));
-    return numfmt.compact(buf, c);
-}
-
 fn status_line(app: *App) void {
-    const s = pages.status(&app.game, &app.arena, L.cols);
+    const s = pages.status(app.game, app.arena, L.cols);
     _ = draw.text(s, 2, L.status_y, .black);
 }
 
@@ -170,17 +167,30 @@ fn row(app: *App, r: pages.Row, y: i32, selected: bool) void {
                 if (!r.enabled) draw.frame(L.text_x - 2, y - 1, face_w, L.row_h, .faint);
             }
             _ = draw.text_clip(r.left, L.text_x, y, max_label, c);
-            if (r.right.len > 0) _ = draw.text_right(r.right, L.right_x, y, fg);
+            if (r.right.len > 0) {
+                if (r.fade == 255) {
+                    _ = draw.text_right(r.right, L.right_x, y, fg);
+                } else {
+                    // The quantum display fades out (its CSS opacity).
+                    const f: u32 = r.fade;
+                    const level: u32 = if (selected) f else 255 - f;
+                    const x0 = L.right_x - font.width(r.right.len);
+                    _ = draw.text_px(r.right, x0, y, draw.width, draw.pixel_of(level << 16 | level << 8 | level), 1);
+                }
+            }
         },
         .value => {
-            _ = draw.text(r.left, L.text_x, y, fg);
             // "< $0.25 >": the arrows show which way A and B move it.
-            const vx = draw.text_right(r.right, L.right_x - 7, y, fg);
+            const vx = L.right_x - 7 - font.width(r.right.len);
+            _ = draw.text_clip(r.left, L.text_x, y, vx - 8, fg);
+            _ = draw.text_right(r.right, L.right_x - 7, y, fg);
             _ = draw.text(&.{font.tri_right}, L.right_x - 5, y, if (r.enabled) fg else off);
             _ = draw.text(&.{font.tri_left}, vx - 7, y, if (r.enabled_b) fg else off);
         },
-        .chips => chips(&app.game, y),
-        .grid => grid(&app.game, y, selected),
+        .chips => chips(app.game, y),
+        .battle => combat_view.draw(app.game, 2, y - 1, draw.width - 4, @as(i32, r.lines) * L.row_h - 1),
+        .slider => slider(r, y, selected),
+        .grid => grid(app.game, y, selected),
         .stock_head => {
             stock_cols(.{ "Stk", "Amt", "Price", "Total", "P/L" }, y, if (selected) .white else .grey);
             draw.hline(L.text_x, y + 7, L.right_x - L.text_x, if (selected) .white else .faint);
@@ -197,6 +207,17 @@ fn row(app: *App, r: pages.Row, y: i32, selected: bool) void {
     }
 }
 
+/// The work/think range input: "Work [----o----] Think".
+fn slider(r: pages.Row, y: i32, selected: bool) void {
+    const fg: draw.Color = if (selected) .white else .black;
+    const x0 = draw.text(r.left, L.text_x, y, fg) + 4;
+    const x1 = L.right_x - font.width(r.right.len) - 4;
+    _ = draw.text_right(r.right, L.right_x, y, fg);
+    draw.hline(x0, y + 3, x1 - x0, if (selected) .white else .grey);
+    const knob = x0 + @divTrunc((x1 - x0 - 4) * @as(i32, r.value), 200);
+    draw.fill_rect(knob, y, 4, 7, fg);
+}
+
 /// Five columns: the symbol left, the numbers right-aligned.
 fn stock_cols(parts: [5][]const u8, y: i32, c: draw.Color) void {
     _ = draw.text(parts[0], L.text_x, y, c);
@@ -211,38 +232,48 @@ fn chips(g: *const G.Game, y: i32) void {
     const gap: i32 = 4;
     const x0: i32 = L.text_x + 3;
     for (g.q_chips, 0..) |c, i| {
+        if (!g.panels.q_chip[i]) continue;
         const x = x0 + @as(i32, @intCast(i)) * (size + gap);
         const v = std.math.clamp(c.value, 0, 1);
         // Opacity of a black square over white.
         const level: u32 = @intFromFloat(@round(255 - v * 255));
         const shade = level << 16 | level << 8 | level;
         draw.fill_rect_px(x, y + 1, size, size, draw.pixel_of(shade));
-        draw.frame(x - 1, y, size + 2, size + 2, if (c.active == 1) .grey else .faint);
+        draw.frame(x - 1, y, size + 2, size + 2, if (c.active != 0) .grey else .faint);
     }
 }
 
 /// The payoff grid: column and row labels and the four cells, the cell
-/// last played shaded.
+/// being played shaded, the two strategies of the round below.
 fn grid(g: *const G.Game, y: i32, selected: bool) void {
     const fg: draw.Color = if (selected) .white else .black;
     const x_lab: i32 = L.text_x;
-    const x_a: i32 = 76;
-    const x_b: i32 = 118;
-    const cell_w: i32 = 40;
-    var buf: [8]u8 = undefined;
+    const x_a: i32 = 82;
+    const x_b: i32 = 122;
+    const cell_w: i32 = 38;
+    var buf: [16]u8 = undefined;
+    const la: []const u8 = if (g.grid_labels_set) G.strategy.choice_a_names[g.grid_labels] else "Move A";
+    const lb: []const u8 = if (g.grid_labels_set) G.strategy.choice_b_names[g.grid_labels] else "Move B";
     // Column heads "A" and "B"; the row labels carry the move names.
     _ = draw.text("A", x_a + 9, y, fg);
     _ = draw.text("B", x_b + 9, y, fg);
     const vals = [4]f64{ g.aa, g.ab, g.ba, g.bb };
     const cross = [4]f64{ g.aa, g.ba, g.ab, g.bb };
+    const lit: usize = switch (g.payoff_cell) {
+        .none => 99,
+        .aa => 0,
+        .ab => 1,
+        .ba => 2,
+        .bb => 3,
+    };
     for (0..2) |ry| {
         const yy = y + L.row_h * @as(i32, @intCast(ry + 1));
         _ = draw.text(if (ry == 0) "A" else "B", x_lab, yy, fg);
-        _ = draw.text_clip(if (ry == 0) g.label_a else g.label_b, x_lab + 9, yy, x_a - 4, fg);
+        _ = draw.text_clip(if (ry == 0) la else lb, x_lab + 9, yy, x_a - 4, fg);
         for (0..2) |cx| {
             const k = ry * 2 + cx;
             const x = if (cx == 0) x_a else x_b;
-            if (g.lit_cell == k + 1 and !selected) draw.fill_rect(x - 2, yy - 1, cell_w - 2, L.row_h, .faint);
+            if (lit == k) draw.fill_rect(x - 2, yy - 1, cell_w - 2, L.row_h, if (selected) .grey else .faint);
             var n: usize = numfmt.plain_u(&buf, @intFromFloat(@max(0, vals[k]))).len;
             buf[n] = ',';
             n += 1;
@@ -250,14 +281,13 @@ fn grid(g: *const G.Game, y: i32, selected: bool) void {
             _ = draw.text(buf[0..n], x, yy, fg);
         }
     }
-    // The two strategies playing this round.
-    const hs: []const u8 = if (g.tourney_in_prog == 1 and g.current_round > 0) g.strats[g.h_strat].name else "";
-    const vs: []const u8 = if (g.tourney_in_prog == 1 and g.current_round > 0) g.strats[g.v_strat].name else "";
-    const yy = y + L.row_h * 3;
-    if (hs.len > 0) {
-        _ = draw.text_clip(hs, x_lab, yy, 78, fg);
-        _ = draw.text(" vs ", 72, yy, if (selected) .white else .grey);
-        _ = draw.text_clip(vs, 96, yy, draw.width, fg);
+    if (g.strat_names_shown) {
+        const yy = y + L.row_h * 3;
+        const hs = G.strategy.names[g.h_strat];
+        const vs = G.strategy.names[g.v_strat];
+        const x = draw.text(hs, x_lab, yy, fg);
+        const x2 = draw.text(" vs ", x, yy, if (selected) .white else .grey);
+        _ = draw.text(vs, x2, yy, fg);
     }
 }
 
@@ -289,7 +319,7 @@ fn footer(app: *App, r: pages.Row) void {
 
 fn ticker(app: *App) void {
     draw.hline(0, L.rule_y, draw.width, .grey);
-    const msg = app_mod.message(&app.game, 0) orelse return;
+    const msg = app_mod.message(app.game, 0) orelse return;
     var spans: [8]text.Span = undefined;
     const width = L.cols - 1;
     const n = @min(text.wrap(msg, width, &spans), spans.len);
@@ -325,7 +355,7 @@ fn log_screen(app: *App) void {
     var line_y: i32 = top + @as(i32, @intCast(lines_on_screen - 1)) * L.row_h;
     var k: u32 = 0;
     var any_hidden_above = false;
-    outer: while (app_mod.message(&app.game, k)) |msg| : (k += 1) {
+    outer: while (app_mod.message(app.game, k)) |msg| : (k += 1) {
         var spans: [8]text.Span = undefined;
         const n = @min(text.wrap(msg, L.cols - 1, &spans), spans.len);
         var li = n;
@@ -356,7 +386,8 @@ fn log_screen(app: *App) void {
 fn hypno(app: *App) void {
     // The original's longBlink: every 32 ms the overlay toggles; its text
     // grows from "Release" to "Release the Hypno Drones".
-    const step = app.hypno_ms / 32;
+    const t = app.game.hypno_event_ms orelse app.game.now_ms;
+    const step = (app.game.now_ms - t) / 32;
     const shown = step % 2 == 0;
     draw.clear(if (shown) .black else .white);
     if (!shown) return;
@@ -377,7 +408,7 @@ fn hypno(app: *App) void {
 
 fn wall(app: *App) void {
     draw.clear(.white);
-    header(&app.game);
+    header(app.game);
     draw.hline(0, 20, draw.width, .grey);
     draw.text_center("Release the HypnoDrones:", 34, .black);
     draw.text_center("stage 1 complete.", 44, .black);

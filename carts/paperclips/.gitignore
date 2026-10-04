@@ -1,0 +1,3 @@
+# Preview frames, check and badge-bench runs (tools/check.sh, docs/RUNNING.md).
+out/
+__pycache__/
