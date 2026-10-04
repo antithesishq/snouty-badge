@@ -263,7 +263,7 @@ with every number in PLAN.md M7:
   to 4x4 and bullet hitboxes shrink with it, so dense screens stay fair.
 - **Power loss**: a hit that triggers the auto rewind costs one weapon
   level and one fork once the world is restored. Ghosts fire a level-1
-  shot. Crates come from whole formations (1942's POW), every second
+  shot. Crates come from whole formations (1942's POW), every
   beetle, the midboss and each boss phase break.
 
 This supersedes the 1.5 px/tick speed cap of section 6 (rank-scaled caps
