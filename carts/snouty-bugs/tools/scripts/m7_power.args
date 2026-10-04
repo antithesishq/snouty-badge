@@ -1,17 +1,26 @@
 # m7_power (M7 power loss, PLAN.md M7 "Player"): a hit that triggers the auto rewind costs one
 # weapon level (never below 1) and one fork (never below 0) at the resume, plus 80 mercy;
-# hold-B rewinds and the retry shield cost no power. Input: m6_retry's (the sweep in god mode
-# to collect F5, two forks and the shield; god off at 5000; RIGHT 5150..5200 into the
-# Heisenbug) plus a hold-B at 5100..5109.
-# - Hold-B 5100..5109 (20 ticks, fuel 180 -> 160): F5 and two forks before, during (5109,
-#   tick 4972) and after the release (5110): no cost.
-# - 5154 (tick 5016): the retry shield absorbs a hit: shield 0, still F5 and two forks.
-# - 5238 (tick 5100): rammed, auto rewind to 4980 (rewinds 2). The playback frames show the
-#   restored World (5317: F5, forks 2, the shield back); the resume at 5318 charges the cost:
-#   F5 -> F4 (weapon 5 -> 4), forks 2 -> 1, mercy 0 -> 80.
-# - 5378: the restored shield absorbs again: F4, forks 1 kept.
-# - 5630: hit (rewinds 1), resume at 5710: F4 -> F3, forks 1 -> 0, mercy 73 -> 153.
-# - 5835: hit (rewinds 0), resume at 5915: F3 -> F2, forks stay 0, mercy 153 -> 233.
+# hold-B rewinds and the retry shield cost no power. Input: m6_retry's sweep (god mode from
+# 31 to collect power, forks and the shield; god off at 5000), plus a hold-B at 5040..5049.
+# Re-pinned for the catch-up clock (waves.zig: the stage clock runs 4 ticks a tick while fewer
+# than 3 enemies are on the field): the sweep now kills the Heisenbug by 3908 and is in stage
+# 2 (INTEGRATION) at 5000 with B5 (weapon 25), three forks and the shield, and its waves hit
+# the ship without help, so m6_retry's RIGHT 5150..5200 into the Heisenbug is gone (it fell
+# in a rewind playback and changed nothing) and the hold moved from 5100 to 5040, after the
+# first shield block. Three forks at 5000, so the fork floor is not reached here (m7_rank's
+# resumes at forks 0 pin it).
+# - 5011 (tick 4904): the retry shield absorbs a hit: shield 0, still B5 and three forks.
+# - Hold-B 5040..5049 (20 ticks, fuel 180 -> 160): B5 and three forks before, during (5049,
+#   tick 4912) and after the release (5050): no cost.
+# - 5126 (tick 4988): hit, auto rewind to 4868 (rewinds 2), before the shield block. The
+#   playback frames show the restored World (5205: B5, forks 3, the shield back); the resume
+#   at 5206 charges the cost: B5 -> B4 (weapon 25 -> 24), forks 3 -> 2, mercy 0 -> 80.
+# - 5290: the restored shield absorbs again: B4, forks 2 kept.
+# - 5350: hit (rewinds 1), resume at 5430 at tick 4892: B4 -> B3, forks 2 -> 1, mercy 79 ->
+#   159; the shield is back and blocks at 5490.
+# - 5554: hit (rewinds 0), resume at 5634 at tick 4896: B3 -> B2, forks 1 -> 0, mercy 159 ->
+#   239; the shield blocks at 5694. The run stops at 5750: the next hit (5754) has no rewind
+#   left and ends the game.
 # m6_retry_hc pins the same cost in a hardcore game. debug_history_check is 0 after each
 # resume and during the hold.
---frames 5950 --call-at "31 debug_god" --call-at "5000 debug_god" --dump-exports debug_state,debug_weapon,debug_forks,debug_rewinds,debug_mercy --at "5099 debug_weapon == 5" --at "5099 debug_forks == 2" --at "5100 debug_state == 5" --at "5109 debug_state == 5" --at "5109 debug_game_tick == 4972" --at "5109 debug_weapon == 5" --at "5109 debug_forks == 2" --at "5109 debug_history_check == 0" --at "5110 debug_state == 1" --at "5110 debug_weapon == 5" --at "5110 debug_forks == 2" --at "5110 debug_mercy == 0" --at "5153 debug_shield == 1" --at "5154 debug_shield == 0" --at "5154 debug_state == 1" --at "5154 debug_weapon == 5" --at "5154 debug_forks == 2" --at "5238 debug_state == 4" --at "5238 debug_rewinds == 2" --at "5238 debug_rewind_target == 4980" --at "5317 debug_state == 4" --at "5317 debug_weapon == 5" --at "5317 debug_forks == 2" --at "5318 debug_state == 1" --at "5318 debug_game_tick == 4980" --at "5318 debug_weapon == 4" --at "5318 debug_forks == 1" --at "5318 debug_mercy == 80" --at "5320 debug_history_check == 0" --at "5378 debug_shield == 0" --at "5378 debug_weapon == 4" --at "5378 debug_forks == 1" --at "5630 debug_rewinds == 1" --at "5709 debug_weapon == 4" --at "5710 debug_weapon == 3" --at "5710 debug_forks == 0" --at "5710 debug_mercy == 153" --at "5720 debug_history_check == 0" --at "5835 debug_rewinds == 0" --at "5914 debug_weapon == 3" --at "5915 debug_state == 1" --at "5915 debug_weapon == 2" --at "5915 debug_forks == 0" --at "5915 debug_mercy == 233" --at "5930 debug_history_check == 0" --expect "debug_state == 1" --expect "debug_weapon == 2"
+--frames 5750 --call-at "31 debug_god" --call-at "5000 debug_god" --dump-exports debug_state,debug_weapon,debug_forks,debug_rewinds,debug_mercy --at "5010 debug_shield == 1" --at "5011 debug_shield == 0" --at "5011 debug_state == 1" --at "5011 debug_weapon == 25" --at "5011 debug_forks == 3" --at "5039 debug_weapon == 25" --at "5039 debug_forks == 3" --at "5040 debug_state == 5" --at "5049 debug_state == 5" --at "5049 debug_game_tick == 4912" --at "5049 debug_weapon == 25" --at "5049 debug_forks == 3" --at "5049 debug_history_check == 0" --at "5050 debug_state == 1" --at "5050 debug_weapon == 25" --at "5050 debug_forks == 3" --at "5050 debug_fuel == 160" --at "5050 debug_mercy == 0" --at "5126 debug_state == 4" --at "5126 debug_rewinds == 2" --at "5126 debug_rewind_target == 4868" --at "5205 debug_state == 4" --at "5205 debug_weapon == 25" --at "5205 debug_forks == 3" --at "5205 debug_shield == 1" --at "5206 debug_state == 1" --at "5206 debug_game_tick == 4868" --at "5206 debug_weapon == 24" --at "5206 debug_forks == 2" --at "5206 debug_mercy == 80" --at "5210 debug_history_check == 0" --at "5289 debug_shield == 1" --at "5290 debug_shield == 0" --at "5290 debug_weapon == 24" --at "5290 debug_forks == 2" --at "5350 debug_rewinds == 1" --at "5429 debug_weapon == 24" --at "5429 debug_mercy == 79" --at "5430 debug_state == 1" --at "5430 debug_game_tick == 4892" --at "5430 debug_weapon == 23" --at "5430 debug_forks == 1" --at "5430 debug_mercy == 159" --at "5440 debug_history_check == 0" --at "5490 debug_shield == 0" --at "5554 debug_rewinds == 0" --at "5633 debug_weapon == 23" --at "5634 debug_state == 1" --at "5634 debug_game_tick == 4896" --at "5634 debug_weapon == 22" --at "5634 debug_forks == 0" --at "5634 debug_mercy == 239" --at "5644 debug_history_check == 0" --at "5694 debug_shield == 0" --expect "debug_state == 1" --expect "debug_weapon == 22"

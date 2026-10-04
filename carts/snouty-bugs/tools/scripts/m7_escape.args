@@ -5,14 +5,17 @@
 # the HUD shows ESCAPED instead of +500). Input: A at 30 to start, then the ship never fires;
 # god mode (debug_god at 31); the test hook debug_boss:16 (boss id 0, the Heisenbug,
 # starting in HP phase 1 = P2) and debug_warp at 33; B held 3000..3089 to empty the fuel bar.
-# - 394: the Heisenbug spawns in P2 (HP 237 of 360). Nothing hurts it.
-# - 1657: P2's 20 s limit (boss clock 1199 at 1656): the phase moves on to P3 with HP set to
+# Re-pinned for the catch-up clock: the WARNING lasts 3 s (was 6), so everything after the
+# warp is 180 updates earlier (boss at 214, was 394), and the fuel at the escape is 72 (was
+# 100: less refill time between the B release and the escape).
+# - 214: the Heisenbug spawns in P2 (HP 237 of 360). Nothing hurts it.
+# - 1477: P2's 20 s limit (boss clock 1199 at 1476): the phase moves on to P3 with HP set to
 #   its threshold (118), the bullets are cancelled (+220), but no crate (drops stays 0).
 # - B 3000..3089 (90 frames, 180 ticks): the bar is empty (fuel 0 at 3089, 0 at the release).
-# - 3728: P3's 30 s limit (boss clock 1800); the boss flies off right (still boss id 0), and
-#   at 3768 it is gone: escaped 1, stage index 0 -> 1 (INTEGRATION, rank 120 -> 150), phase 3
-#   (the breather), stage_clears 0, score 290 (no +500), fuel 100 (only the slow refill: a
+# - 3548: P3's 30 s limit (boss clock 1800); the boss flies off right (still boss id 0), and
+#   at 3588 it is gone: escaped 1, stage index 0 -> 1 (INTEGRATION, rank 120 -> 150), phase 3
+#   (the breather), stage_clears 0, score 290 (no +500), fuel 72 (only the slow refill: a
 #   clear would have filled the bar to 180).
-# - 3888: stage 2's table starts (phase 0).
+# - 3708: stage 2's table starts (phase 0).
 # debug_history_check is 0 through the fight, the hold, the escape and the breather.
---frames 4300 --call-at "31 debug_god" --call-at "32 debug_boss:16" --call-at "33 debug_warp" --dump-exports debug_state,debug_escaped,debug_stage_index,debug_stage_clears,debug_drops --at "393 debug_boss_id == 255" --at "394 debug_boss_id == 0" --at "394 debug_boss_phase == 1" --at "394 debug_boss_hp == 237" --at "1656 debug_boss_phase == 1" --at "1656 debug_boss_clock == 1199" --at "1657 debug_boss_phase == 2" --at "1657 debug_boss_hp == 118" --at "1657 debug_drops == 0" --at "1657 debug_bullets == 0" --at "1700 debug_history_check == 0" --at "3089 debug_state == 5" --at "3089 debug_fuel == 0" --at "3090 debug_state == 1" --at "3100 debug_history_check == 0" --at "3727 debug_boss_clock < 1800" --at "3728 debug_boss_clock == 1800" --at "3728 debug_boss_id == 0" --at "3750 debug_history_check == 0" --at "3767 debug_boss_id == 0" --at "3767 debug_escaped == 0" --at "3767 debug_stage_index == 0" --at "3767 debug_fuel == 100" --at "3768 debug_boss_id == 255" --at "3768 debug_escaped == 1" --at "3768 debug_stage_index == 1" --at "3768 debug_phase == 3" --at "3768 debug_stage_clears == 0" --at "3768 debug_score == 290" --at "3768 debug_fuel == 100" --at "3768 debug_rank == 150" --at "3768 debug_history_check == 0" --at "3887 debug_phase == 3" --at "3888 debug_phase == 0" --at "4299 debug_history_check == 0" --expect "debug_escaped == 1" --expect "debug_stage_index == 1" --expect "debug_stage_clears == 0" --expect "debug_drops == 0"
+--frames 4300 --call-at "31 debug_god" --call-at "32 debug_boss:16" --call-at "33 debug_warp" --dump-exports debug_state,debug_escaped,debug_stage_index,debug_stage_clears,debug_drops --at "213 debug_boss_id == 255" --at "214 debug_boss_id == 0" --at "214 debug_boss_phase == 1" --at "214 debug_boss_hp == 237" --at "1476 debug_boss_phase == 1" --at "1476 debug_boss_clock == 1199" --at "1477 debug_boss_phase == 2" --at "1477 debug_boss_hp == 118" --at "1477 debug_drops == 0" --at "1477 debug_bullets == 0" --at "1700 debug_history_check == 0" --at "3089 debug_state == 5" --at "3089 debug_fuel == 0" --at "3090 debug_state == 1" --at "3100 debug_history_check == 0" --at "3547 debug_boss_clock < 1800" --at "3548 debug_boss_clock == 1800" --at "3548 debug_boss_id == 0" --at "3570 debug_history_check == 0" --at "3587 debug_boss_id == 0" --at "3587 debug_escaped == 0" --at "3587 debug_stage_index == 0" --at "3587 debug_fuel == 72" --at "3588 debug_boss_id == 255" --at "3588 debug_escaped == 1" --at "3588 debug_stage_index == 1" --at "3588 debug_phase == 3" --at "3588 debug_stage_clears == 0" --at "3588 debug_score == 290" --at "3588 debug_fuel == 72" --at "3588 debug_rank == 150" --at "3588 debug_history_check == 0" --at "3707 debug_phase == 3" --at "3708 debug_phase == 0" --at "4299 debug_history_check == 0" --expect "debug_escaped == 1" --expect "debug_stage_index == 1" --expect "debug_stage_clears == 0" --expect "debug_drops == 0"

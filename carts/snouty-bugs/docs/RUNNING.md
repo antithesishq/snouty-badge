@@ -83,8 +83,9 @@ bullet hell: four stages, then the loop again with a higher rank.
 
 A stage opens with `STAGE n` and its name (`LOOP n` above it from the
 second loop), runs about 65-75 s of waves (the herd holds the stage's clock
-while she lives; she leaves after 12 s), then `WARNING` for 6 s and the
-boss, then `+500` (a kill: the fuel bar refills) or `ESCAPED`, and a 2 s
+while she lives; she leaves after 12 s; with fewer than 3 bugs on the field
+the clock runs 4x, so the next wave comes in instead of a wait and a fast
+player's stage is shorter), then `WARNING` for 3 s and the boss, then `+500` (a kill: the fuel bar refills) or `ESCAPED`, and a 2 s
 breather. After `PRODUCTION` comes loop 2's stage 1, with rank +400,
 revenge bullets and an extra table of later bugs.
 
@@ -273,9 +274,10 @@ hardcore play a normal game. Every script pins `debug_history_check == 0`
 `m1_play.json` is the sweep for 1800 ticks; `m1_pause.json` starts the
 game, fires 60-300, presses START at 300 and 420 (pause, unpause), then
 fires 430-600. `m1_play` also pins the plainest case of a rewind undoing a
-collection: F3 at 906, a hit at 950, F2 again (crate back on screen) at 992
-during the playback, F1 at the resume (1030: the power loss) and F2 again
-at 1087.
+collection: F3 at 623, a hit at 669, F2 again (crate back on screen) at 712
+during the playback and F1 at the resume (749: the power loss). Since the
+catch-up clock the plain sweep does not survive stage 1: it is hit again
+at 821 and 1083 and the game is over at 1269 (title from 1329).
 
 The M2 scripts:
 
@@ -441,7 +443,7 @@ convert out/gif_m7/raw.gif -layers Optimize docs/preview_m7.gif   # ImageMagick:
 node ../../tools/preview.mjs ../../zig-out/bin/snouty-bugs.wasm --frames 1800 --every 6 --out out/ \
   --script tools/scripts/m1_play.json \
   --dump-exports debug_state,debug_score,debug_lives,debug_enemies \
-  --expect "debug_state == 1" --expect "debug_score > 0"
+  --expect "debug_state == 0" --expect "debug_score > 0"
 node ../../tools/preview.mjs ../../zig-out/bin/snouty-bugs.wasm --frames 18000 --quiet --out out/soak/ \
   --script tools/scripts/m1_play.json --dump-exports debug_state,debug_score
 ```
