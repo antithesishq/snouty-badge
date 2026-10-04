@@ -57,7 +57,7 @@ badge-bench <cart.elf> [--script FILE.json] [--press BTN:T1-T2 ...] [--frames N]
             [--symbols] [--top N] [--poke SYM=VALUE ...] [--json] [--seed N]
             [--max-frame-ms 1000] [--traces N] [--config FILE | --no-config]
             [--progress] [--calibrate FILE.toml] [--flash-cycles N]
-            [--romfs IMAGE] [--flash-read-cycles N]
+            [--romfs IMAGE] [--flash-read-cycles N] [--wav FILE.wav]
 ```
 
 Put the ELF first (`--png` takes an optional number and would otherwise
@@ -76,7 +76,7 @@ try to read the ELF path as one).
 | `--listing` | Write `DIR/listing.lst`: capstone disassembly of the 5 hottest functions, each instruction annotated with executions and modelled cycles per frame. |
 | `--symbols` | Print the hot-function table (top 20, `--top N`). |
 | `--poke SYM=VALUE` | Write VALUE into global SYM (its ELF symbol size if 1, 2 or 4 bytes, else a u32) after loading and before `_start`, like the reflections runner did for `dither.mode`. Repeatable. `start()` runs after the poke and may overwrite it. |
-| `--json` | Write `DIR/bench.json`: every frame (insns, cycles, ms, taken branches, memory-class cycles `mem_cyc`, presents, framebuffer index, controls, neopixels (five `[r, g, b]`; any non-zero byte also adds the `neopixels written` warning), user LED, tone count; `busy_ms` when calibrated), the summary, the top 50 functions (each with `taken`, `mnemonics` = {base mnemonic: executions over the run} and `class_cyc` = {model class: cycles over the run}), traces, tones, warnings, crash/hang; `meta.calibration` when calibrated. |
+| `--json` | Write `DIR/bench.json`: every frame (insns, cycles, ms, taken branches, memory-class cycles `mem_cyc`, presents, framebuffer index, controls, neopixels (five `[r, g, b]`; any non-zero byte also adds the `neopixels written` warning), user LED, tone count; `busy_ms` when calibrated), the summary, the top 50 functions (each with `taken`, `mnemonics` = {base mnemonic: executions over the run} and `class_cyc` = {model class: cycles over the run}), traces, tones, warnings, crash/hang; `meta.calibration` when calibrated; `audio` once the cart starts streaming (Streaming audio). |
 | `--seed N` | Seed of the PRNG behind `cart.rand()` (default 1). |
 | `--max-frame-ms MS` | A frame that runs longer than this (modelled) without reaching the next loop iteration is a hang (default 1000). |
 | `--traces N` | Print at most N `cart.trace()` strings live (default 20; all of them go to the JSON). |
@@ -87,6 +87,7 @@ try to read the ELF path as one).
 | `--flash-read-cycles N` | Add N cycles per data load from the `--romfs` image. Default 0 (zero-wait, like SRAM). |
 | `--calibrate FILE.toml` | Price the model classes with the fitted `[costs]` of a `calibrate/fit.py` calibration file (rounded to 0.25 cycle) and report two numbers per frame: `idle ms` (the calibrated count) and `busy ms` = idle + memory-class cycles x (factor - 1) x min(1, dma_ms / idle ms), the DMA contention of `[contention]`. Verdict and over-budget count use busy ms. Default: `calibrate/calibration.toml` when it exists (the header says so). See Calibration. |
 | `--no-calibrate` | The raw model (default costs, no stall, no contention): one `ms` column, the historical floor. `tests/test_reflections.sh` uses it. |
+| `--wav FILE.wav` | Write what the newer firmware's audio mixer took from the cart's stream, from its `CART_START_AUDIO` on: 8-bit unsigned mono 44,100 Hz, silence (128) wherever a 512-sample buffer found the ring short. Nothing is written for a cart that never starts audio. See Streaming audio. |
 
 Exit status: 0 all frames ran; 1 setup error (unreadable or non-ARM ELF,
 missing symbol, bad script or config); 2 usage error; 4 the cart crashed
@@ -95,6 +96,52 @@ not an error.
 
 Output: the report on stdout; with `--png`, `--listing` or `--json` also
 `DIR/report.txt`.
+
+## Streaming audio
+
+The newer badge firmware (sycl-badge upstream 3392a1b, "Streaming Audio,
+v1 Mixer"; the pinned SDK has no API for it, carts speak the ABI
+themselves) plays a cart-owned ring of unsigned 8-bit mono samples at
+44,100 Hz. Its four IPC words are where the pinned layout has the tone
+fields: `audio_buffer_ptr` `0x2003509C`, `audio_buffer_len` `0x200350A0`,
+`audio_buffer_head` `0x200350A4` (the cart's) and `audio_buffer_tail`
+`0x200350A8` (the OS's). `badge_bench/audio.py` mirrors the OS
+(`drivers/audio.zig`): on `CART_START_AUDIO` it mixes two 512-sample
+buffers at once, then one more every 512 samples of wall time; each mix
+takes up to 512 queued samples from the tail with the OS's exact wrap
+arithmetic, writes the tail back into the cart's memory and pads the rest
+with silence. The turns run from the block hook as soon as the cart's
+clock passes them, so the cart sees its tail move mid-update as on the
+badge.
+
+Wall time: the fake OS answers presents at once, so for the mixer a frame
+lasts at least the LCD period the OS sets for the cart's vsync request
+(`find_framerate_setting` in `drivers/lcd.zig`: 1000/60 ms gives
+16.74 ms, 59.74 Hz, so a cart pushing exactly 735 samples a frame runs
+~190 samples/s short; its rate control has to absorb that). With vsync off
+wall time is the modelled cycles (the LCD transfer is not modelled).
+The calibrated DMA contention (`busy ms`) is not in the audio clock.
+
+Report (only for a cart that started audio; every other cart's report and
+JSON are unchanged), here a throwaway test-tone build of snouty-lynx under
+`m3_scrub.json` (the tone starts at update 59; the menu opens at 314 and
+the tone stops pushing, hence the underruns):
+
+```
+audio: streaming started in frame 59 (ring 4096 samples at 0x200543f8); 609 mixes of 512: 237,596 samples consumed (5.39 s)
+  start-up silence 1,024 samples; underruns 73,188 samples in 144 mixes (first in frame 316); queue at each mix min 0 mean 1522 max 2422
+```
+
+`start-up silence` is the padding before the first real sample (the two
+buffers mixed at the start word, before the cart's first push lands);
+`underruns` everything padded after it. The queue (head - tail, samples)
+is sampled at each mix from the first non-empty one on. `bench.json` gets
+an `audio` object with these numbers and `frames`: the queue, samples
+consumed and underrun samples at the end of every frame from the start.
+A ring whose words are out of range (an index at or past `len`, a ring
+outside SRAM) is mixed as silence with its tail untouched and warned
+about. `--wav FILE.wav` writes the mixed stream. Unit tests:
+`tests/test_audio.py`.
 
 ## RAM carts and XIP carts
 
@@ -144,7 +191,7 @@ ids). All in `badge_bench/os_fake.py`.
 |---|---|---|
 | `0x20000000..0x20080000` | SRAM | plain RAM; the ELF's PT_LOAD segments are copied in, `.bss` zeroed, SP = `0x20080000` (`__stack_top__`), LR = sentinel, PC = `_start` |
 | `0x20020000` | `abi.ipc_data` | two framebuffers (`0x20020000`, `0x2002A000`), tracy ring, trace buffer (`+0x15000`), neopixels (`+0x15080`), controls (`+0x15090`), light (`0x800`) and battery (`0xFFF`) levels, dirty rect, tone fields, tracy words (left 0: tracy inactive), vsync flags/ms, clear colour |
-| `0xD0000050/54/58` | SIO FIFO | `SYNC_TIME_REQ_CLR` -> `SYNC_TIME_ACK_CLR`; `SYNC_TIME_REQ_TIME` -> two words (the modelled cycle count); every present message (`0x28` tag, `PresentFlags`) or legacy `FRAMEBUFFER_READY` -> `FRAMEBUFFER_DONE` at once (the LCD flush is instant); `CART_TRACE` (`0x26`, the string in the trace buffer is printed); `CART_TONE` (`0x27`) and `CART_VOLUME` (`0x29`) recorded with the tone/volume fields; `CART_RUNNING/FINISHED/CRASHED` recorded (the last two stop the run); anything else recorded as unknown |
+| `0xD0000050/54/58` | SIO FIFO | `SYNC_TIME_REQ_CLR` -> `SYNC_TIME_ACK_CLR`; `SYNC_TIME_REQ_TIME` -> two words (the modelled cycle count); every present message (`0x28` tag, `PresentFlags`) or legacy `FRAMEBUFFER_READY` -> `FRAMEBUFFER_DONE` at once (the LCD flush is instant); `CART_TRACE` (`0x26`, the string in the trace buffer is printed); `CART_TONE` (`0x27`) recorded with the tone fields; the newer firmware's whole words `CART_VOLUME` (`0x29000000`, recorded with `global_volume`), `CART_STOP_AUDIO` (`0x29000001`, answered `0x29000003`, the mixer stops) and `CART_START_AUDIO` (`0x29000002`, the mixer starts: Streaming audio); `CART_RUNNING/FINISHED/CRASHED` recorded (the last two stop the run); anything else (other `0x29` words too) recorded as unknown |
 | `0xD0000000`, `0xD0000100..17C` | SIO CPUID, spinlocks | CPUID reads 1 (core 1); spinlocks work (used by the tracy path) |
 | `0x400B0008/0C/24/28` | TIMER0 TIMEHR/TIMELR/TIMERAWH/TIMERAWL | microseconds = modelled cycles / 150, TIMELR latches TIMEHR as on the RP2350. `micros_since_boot()` therefore reads modelled time and self-timing carts behave as they would at that speed |
 | `0xE0001000/04` | DWT CTRL, CYCCNT | CYCCNT = modelled cycles |
@@ -502,6 +549,8 @@ Reproduce (from this directory, after `zig build` at the repository root;
 ```sh
 tests/test_reflections.sh
 tests/test_lcd_scrub.sh        # after zig build -Dcart=snouty-lynx
+.venv/bin/python tests/test_audio.py           # the streaming-audio consumer
+.venv/bin/python tests/test_neopixel_warning.py
 ./bench.sh ../zig-out/firmware/snouty-bugs.elf   --every 60 --png --symbols --json --listing
 ./bench.sh ../zig-out/firmware/snouty-boy.elf     --every 60 --png --symbols --json --listing
 ./bench.sh ../zig-out/firmware/snouty-maze.elf   --every 60 --png --symbols --json --listing
@@ -515,13 +564,15 @@ bench.sh            entry point: creates .venv, installs requirements.txt, runs 
 badge_bench/        cli.py (arguments), run.py (emulation and frame windows), os_fake.py
                     (the fake OS), model.py (cycle model, unicorn/capstone setup), elf.py
                     (ELF, symbols, DWARF lines), script.py (input), config.py (toml),
-                    report.py (tables, stats, hot list, JSON), png.py, listing.py,
+                    report.py (tables, stats, hot list, JSON), audio.py (the newer
+                    firmware's streaming-audio mixer), png.py, listing.py,
                     classes.py (model classes and default costs, no emulator imports)
 carts/<name>.toml   per-cart defaults (not the repository's carts/ sources)
 calibrate/          badge-calibrate cart, fit.py, the badge capture and calibration.toml
                     (applied by default)
 tests/              test_reflections.sh (validation 1, --calibrate FILE for calibrated ms),
                     test_calibrate_selftest.sh + make_calibrate_fixture.py (fit.py gate),
-                    test_neopixel_warning.py (neopixel guard on synthetic frames)
+                    test_neopixel_warning.py (neopixel guard on synthetic frames),
+                    test_audio.py (the audio consumer on a fake ring)
 out/                default output directory (gitignored)
 ```

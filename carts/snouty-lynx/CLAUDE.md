@@ -67,7 +67,8 @@ CLAUDE.md and docs have the longer explanations.
   fixtures). `*.lnx`/`*.lyx` are gitignored at the root; commercial dumps
   live in `~/roms/lynx/` on the VM.
 - `tools/` — `run_rom.zig` (`zig build run-lynx -- <rom> <script|-> <updates>
-  <outdir>`: headless run, frame images and hashes, docs/RUNNING.md 2a),
+  <outdir>`: headless run, frame images and hashes, `--wav` sound,
+  docs/RUNNING.md 2a),
   `fetch_test_roms.sh`, `romcheck.py`, `bootrom_crosscheck.py` (needs
   Adrian's local boot ROM, never in the repo), `make_placeholder_rom.py`,
   `scripts/*.json` (preview and badge-bench input). Shared tools
