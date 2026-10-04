@@ -19,12 +19,13 @@ KB and the scrubber holds 5 to 25 s of history.
 3. Eject the drive before playing (the OS may write flash while the cart
    runs), then start Snouty Boy from the badge menu.
 4. One playable file starts straight after the splash. Several: a picker
-   lists them (Up/Down, A plays, B runs the embedded ROM instead; files the
-   cart cannot play are shown dimmed with the reason). Colour games are
-   marked "Color" and play in colour; the header decides, not the file
-   extension.
-5. No ROM file on the drive (or no readable drive): the ROM embedded in the
-   UF2 runs instead, `roms/2048.gb` or `tests/roms/dmg-acid2.gb` by default.
+   lists them (Up/Down, A plays; files the cart cannot play are shown
+   dimmed with the reason). Colour games are marked "Color" and play in
+   colour; the header decides, not the file extension.
+5. No ROM file on the drive (or no readable drive, or nothing playable):
+   the cart says "No ROM on the badge drive", how to add one and why, and
+   stays there (Start+Select leaves). The default UF2 has no ROM built in,
+   which keeps it small on the drive (about 200 KB instead of 266 KB).
 
 The About screen in the menu says where the running ROM came from (drive or
 embedded), its CRC32 and whether it runs as a DMG or a CGB.
@@ -44,7 +45,8 @@ A ROM above roughly 64 KB (Rebound is 128 KB) needs the XIP cart
 (`-Dcart-mode=xip`, `snouty-boy-xip.uf2`): code and ROM run from the 256 KB
 cart flash window, so all of the RAM is scrub history. A RAM build with too
 big a ROM links but shows "Not enough RAM" at start. The web simulator has
-no drive and always runs the embedded ROM (`-Drom`).
+no drive and always runs the embedded ROM (`-Drom`, default
+`tests/roms/dmg-acid2.gb` or `roms/2048.gb`).
 
 Status: M1..M5 tagged; M6/M7 (Game Boy Color) and M8 (Color on the drive
 loader) built, see PLAN.md. Hardware checks pending.
