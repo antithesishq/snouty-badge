@@ -19,16 +19,23 @@ Skipped frames do no pixel work (Boy's `lines_wanted`, Genesis already
 renders only the last frame of an update), so they cost less than the
 means above.
 
-## Behaviour (Adrian confirmed the chord 2026-10-04; the rest are defaults)
+## Behaviour (Adrian decided the trigger 2026-10-04; the rest are defaults)
 
-- **Trigger: hold Select, then hold Right.** There is no free badge button:
-  A, B, Start and the d-pad go to the game, Select-hold opens the menu, the
-  click and Start+Select belong to the OS. Select is already a modifier, so
-  Right pressed while Select is held starts fast forward and it lasts while
-  both are held. That Select press then delivers no tap (no Game Boy
-  Select, no Genesis A, no Lynx Option 1) and does not open the menu. Let go
-  of Right: back to 1x, and the Select hold starts counting again from zero.
-  Let go of Select: back to 1x, no tap.
+- **Trigger: tap Select, then press and hold it** (a double tap whose second
+  press is held). Fast forward runs from that second press while Select is
+  held; letting go returns to 1x and delivers nothing to the game. The
+  second press never starts the 500 ms menu timer. A single long hold still
+  opens the menu. There is no free badge button, and the first chord
+  (hold Select, then Right) was dropped because holding Select brings up
+  the menu; A+B was rejected because games press it.
+- **The first tap is held back** for `ff_tap_window` (12 frames, 200 ms)
+  after its release: a second Select press inside the window turns it into
+  fast forward and the tap is dropped; otherwise the tap is delivered as
+  before, 200 ms later than it used to be. Adrian: (b) "across the board",
+  so Genesis (Select tap = a Genesis button) and Lynx (Option 1) take the
+  same delay. Gear's Select tap does nothing, so it needs only the window.
+- Start pressed during the window or during fast forward is the OS exit
+  chord: cancel everything, deliver nothing (as the Select hold does now).
 - **Speed: time-boxed, capped at 4x.** In a fast-forward update the cart steps
   game frames with rendering off until either `ff_max_frames` (4 per 60 Hz
   update; Genesis 8 per 30 Hz update) have run or `ff_budget_us` of the
@@ -37,8 +44,7 @@ means above.
   33.3 ms one). In wasm `micros_since_boot` is a stub, so use the fixed frame
   count there.
 - **Pad:** every frame of a fast-forward update gets the same pad byte, with
-  Select and Right masked out (the d-pad Right is part of the chord, not game
-  input).
+  Select masked out; the d-pad and the other buttons go to the game as usual.
 - **Sound:** silent while fast forwarding (ramp out the same way the menu
   does), and resume on release. Samples from skipped frames are not rendered
   (`audio_render = false` or equivalent), so fast forward costs nothing in
@@ -52,7 +58,7 @@ means above.
   must not leave a stale rectangle on the LCD (dirty rect, see
   emulator-scrub-dirty-rect: badge-bench `--lcd`).
 - **Hints:** the play hint strip and the menu's help/controls text mention
-  "Select+Right: fast".
+  "2x Sel+hold: fast" (or similar).
 
 ## Tracks
 
@@ -82,3 +88,6 @@ is at the show flashing from main).
 ## Status
 
 - 2026-10-04: plan written; Boy and Gear tracks started.
+- 2026-10-04: Gear shipped with Select+Right (origin/main 0b4ae62, tag
+  snouty-gear/ff). Adrian then switched the trigger to the double tap and
+  hold above; Boy and Gear are being changed to it.
