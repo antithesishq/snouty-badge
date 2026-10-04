@@ -4,33 +4,40 @@ Snouty GC (`snouty-gc`, subtitle GARBAGE COLLECTION) is a SYCL Badge V2
 cart: a Mode 7 combat racer on the Snouty Zero engine (`../SPEC.md`). 60 fps
 (`cart.set_vsync_enabled(1000.0 / 60.0)`), one `update()` per frame.
 
-M0 is the fork: Zero's floor, horizon, fog, sprites, camera, font and AI,
-retuned for wheels, with no rewind, no thermal bar and no traffic. The cart
-boots to a placeholder splash and title (10 s idle starts an AI-only attract
-race), a menu (QUICK RACE, SOUND), and a 3-lap race on **Landfill Loop** in
-the Dumps league: SNOUTY (you, the purple car) against LEGACY, KIDDIE,
-SYSADMIN, ROOTKIT and BOTNET driven by the AI, each on its own chassis
-(SPEC 4.2). Every car is Zero's rival machine re-paletted in its racer's
-livery until the art track's own cars land in M1. No weapons, armor or
-pickups yet. The track: the board road (flattened circuit boards with cable
-ruts), wreckage walls, an open pit edge down the east side (leave the road
-and the car drops in: SEGMENT FAULT, out for 2 s, then back on the line),
-a coolant spill (slippery), the ramp over a pit on the bottom straight, and
-the dunes round the west bend (a swell of the floor). Results show the
-field in order; Start goes back to the menu.
+M1 (guns and racers) on top of the M0 fork (Zero's floor, horizon, fog,
+camera, font and AI, retuned for wheels; no rewind, thermal bar or
+traffic): the cart boots to a splash of Snouty's eyepatched portrait and
+the title (10 s idle starts an AI-only attract race). **Start** opens the
+**racer select**: Left/Right cycle SNOUTY, LEGACY, KIDDIE, SYSADMIN,
+ROOTKIT and BOTNET (portrait, car on a turntable, SPD/ARM/DMG, the two
+weapons, the bio), Down moves to the track row (Landfill Loop, the only
+track so far), **A** races the racer shown against the other five, each in
+its own car with its own weapons (SPEC 4.1). The race is a 3-lap fight on
+**Landfill Loop** in the Dumps (board road, wreckage walls, the open pit
+edge on the east side, a coolant spill, the ramp over a pit, the dunes):
+armor, ramming, wrecks that burn as hulks and respawn after the WATCHDOG
+delay, the kill feed, taunt pop-ups, `ACK` over cars you hit, smoke as
+armor drops. Results: the winner's card, then the field (A steps through,
+then back to the select). Pickups are M2 (the box top right stays empty).
 
-Controls at M0 (SPEC 5.1):
+Controls at M1 (SPEC 5.1):
 
 | Input | Race |
 |---|---|
 | (nothing) | the throttle is always on |
 | Left / Right | steer (rate falls with speed) |
 | Down | brake; with Left/Right the powerslide (less grip, faster turn) |
-| Down + A, Down + B | do not brake (aim back; the rear weapon and pickups come in M1/M2) |
-| Up | BURST: +35% top speed for 1 s, one charge per lap (the pip by BURST) |
-| A / B | nothing yet (front weapon M1, pickup M2); A confirms and B backs out in menus |
-| Select | nothing yet (hold to look back, M3) |
+| A | front weapon (hold to auto-fire PING, hold and release for FIBER LANCE, SPEAR PHISH fires on its lock) |
+| Down + A | rear weapon (drop behind); does not brake |
+| Up | BURST: +35% top speed for 1 s, one charge per lap (the bolt by the ammo) |
+| B | nothing yet (pickups, M2); B backs out of the select |
+| Select (hold) | look back: the camera turns round, `BEHIND` over the horizon |
 | Start | pause (Resume, Restart, Quit, Sound) |
+
+HUD: LAP and rank along the top, the pickup box top right, the kill feed
+and the taunt pop-up under them, bottom left the speed, `A` and the front
+ammo with the BURST bolts, `Down+A` and the rear ammo pips, the armor bar;
+the minimap bottom right.
 
 Start+Select belongs to the OS (exit, or the settings box on newer
 firmware): while both are held the cart reacts to neither. The joystick
@@ -89,14 +96,33 @@ python3 ../../tools/make_gif.py out/m0/ docs/preview_m0.gif --scale 2 --ms 130
 
 `docs/preview_m0.gif` is that run (the autopilot driving SNOUTY from the
 grid through the first half lap: the coolant spill, the ramp over its
-pit, the dunes; real time).
+pit, the dunes; real time). The M1 previews:
+
+```sh
+# the splash, title, all six racers on the select, the track row, the pick
+node ../../tools/preview.mjs ../../zig-out/bin/snouty-gc.wasm --frames 400 --every 4 \
+    --press START:60-60 --press START:80-80 \
+    --press RIGHT:130-130,RIGHT:170-170,RIGHT:210-210,RIGHT:250-250,RIGHT:290-290,RIGHT:330-330 \
+    --press DOWN:350-350 --press A:375-375 --out out/m1s/
+python3 ../../tools/make_gif.py out/m1s/ docs/preview_m1_select.gif --scale 2 --ms 66
+# a combat race, the autopilot driving SNOUTY, look back held at 1000..1090
+node ../../tools/preview.mjs ../../zig-out/bin/snouty-gc.wasm --frames 1300 --every 5 --start-skip 300 \
+    --call debug_start_race:0 --call debug_set_autopilot:1 --press SELECT:1000-1090 --out out/m1r/
+python3 ../../tools/make_gif.py out/m1r/ docs/preview_m1_race.gif --scale 2 --ms 83
+# the render stress scene
+node ../../tools/preview.mjs ../../zig-out/bin/snouty-gc.wasm --frames 200 --every 20 --call debug_stress:1 --out out/stress/
+```
 
 Input scripts in `tools/scripts/`:
 
 - `m0_race.json` (600 frames): Start at 2 (splash), Start at 10 (title), A
   at 20 (QUICK RACE), then the autopilot's own drive recorded frame by frame
   by `tools/record_script.py` (the race seed comes from the frame counter,
-  so the replay is the same race). The badge-bench default.
+  so the replay is the same race). The badge-bench default. Start at 10
+  opens the racer select on SNOUTY and A at 20 races him, so the M0 script
+  still drives the same flow.
+- `m1_render_stress.json` (600 frames, with `--poke gc_stress=1`): the
+  render stress scene, Select (look back) held at 400..460.
 
 Debug exports (zero-argument wasm functions for `--dump-exports`,
 `--expect`, `--at`, `--until`):
@@ -105,8 +131,11 @@ Debug exports (zero-argument wasm functions for `--dump-exports`,
 |---|---|
 | `debug_frame`, `debug_render_us` | frames since start; render time (0 in wasm) |
 | `debug_pixel_checksum` | sum of all framebuffer words |
-| `debug_screen` | 0 splash, 1 title, 2 main menu, 3 race, 4 pause, 5 results |
-| `debug_mode` | 0 quick race, 1 attract |
+| `debug_screen` | 0 splash, 1 title, 2 racer select, 3 race, 4 pause, 5 results |
+| `debug_mode` | 0 quick race, 1 attract, 2 the render stress scene |
+| `debug_select_racer`, `debug_results_card` | the racer the select shows; results card (0 winner, 1 field) |
+| `debug_drawn`, `debug_gathered` | objects the depth list drew (cap 64) / gathered last frame |
+| `debug_event_seq` | the World's next event seq |
 | `debug_follow` | the car this badge draws (0..5, = racer id) |
 | `debug_px`, `debug_py`, `debug_heading`, `debug_speed` | followed car: world position, heading (u16 turn), speed in 1/100 px per tick (300 = a WORKSTATION's top speed) |
 | `debug_lap`, `debug_progress`, `debug_rank`, `debug_best_lap`, `debug_burst` | followed car: laps done, centerline sample, rank 1..6, best lap ticks, BURST ticks * 256 + charges |
@@ -115,8 +144,8 @@ Debug exports (zero-argument wasm functions for `--dump-exports`,
 | `debug_tile_under` | attribute under the followed car (0 off, 1 surface, 2 wall, 4 coolant, 5 bay, 6 vent, 7 ramp, 8 start, 9/10 sectors) |
 | `debug_input` | the race byte human slot 0 got on the last tick |
 | `debug_world_size`, `debug_world_sum` | `@sizeOf(World)`; a fingerprint of the world |
-| `debug_car_px(i)`, `debug_car_py(i)`, `debug_car_lap(i)`, `debug_car_rank(i)`, `debug_car_racer(i)`, `debug_car_human(i)` | car i (one-argument exports) |
-| `debug_set_autopilot(v)`, `debug_start_race(n)` | setup calls (`--call NAME:ARG`): the autopilot drives the player; skip to a Quick Race on track n |
+| `debug_car_px(i)`, `debug_car_py(i)`, `debug_car_lap(i)`, `debug_car_rank(i)`, `debug_car_racer(i)`, `debug_car_human(i)`, `debug_car_armor(i)` | car i (one-argument exports) |
+| `debug_set_autopilot(v)`, `debug_start_race(n)`, `debug_stress(v)` | setup calls (`--call NAME:ARG`): the autopilot drives the player; skip to a Quick Race on track n; v = 1 starts the render stress scene (stress.zig: the World's pools filled without the sim) |
 
 ## 4. Flashing
 
@@ -132,7 +161,12 @@ script and 600 frames):
 ```sh
 badge-bench/bench.sh zig-out/firmware/snouty-gc.elf --symbols
 badge-bench/bench.sh zig-out/firmware/snouty-gc.elf --lcd --png 100
+# the render stress scene (six cars, every projectile and drop slot, explosions)
+badge-bench/bench.sh zig-out/firmware/snouty-gc.elf --symbols --poke gc_stress=1 \
+    --script carts/snouty-gc/tools/scripts/m1_render_stress.json
 ```
+
+`gc_stress` is an exported global the cart reads in `start()`.
 
 Read the `busy ms` column. Milestone numbers are in `PLAN.md`.
 
@@ -145,6 +179,7 @@ python3 tools/gen_sin.py          # cart/src/gen/sin.zig
 python3 tools/gen_font.py         # assets/gen/font.bin from the SDK font
 ```
 
-The engine's placeholder sprite sheets (`assets/gen/machine.png`,
-`shadow.png`, `fx.png`, `snouty_head.png`) are Zero's, copied
-(`../ASSETS_ENGINE.md`); the art track's sheets go in `assets/gen/art/`.
+The engine sheets left from Zero (`assets/gen/shadow.png`, and
+`exhaust.png`, Zero's `fx.png` renamed) are described in
+`../ASSETS_ENGINE.md`; the art track's sheets (`python3
+tools/draw_art.py`) are in `assets/gen/art/` (`../ASSETS.md`).

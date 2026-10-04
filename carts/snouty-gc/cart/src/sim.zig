@@ -1,7 +1,9 @@
 //! Forked from snouty-zero/cart/src/sim.zig at f8f6962.
 //! One race tick (SPEC 5, 11): wheeled driving with the auto-throttle,
 //! tile attributes under the footprint, walls, wrecks and respawn, car
-//! contacts, laps and sectors, rank, the countdown.
+//! contacts, laps and sectors, rank, the countdown; from M1 armor, damage
+//! and kill credit, ramming, wall damage, hulks, and the weapons
+//! (`weapons.zig`) and AI aim (`ai.zig`) it drives.
 //!
 //! `simulate(w, inputs)` is a pure function of `(World, inputs)`: no cart
 //! API, no clock, no floats, no globals written (the M4 lockstep rests on
@@ -16,6 +18,7 @@ const track = @import("track.zig");
 const world = @import("world.zig");
 const racers = @import("racers.zig");
 const ai = @import("ai.zig");
+const weapons = @import("weapons.zig");
 
 const World = world.World;
 const Car = world.Car;
@@ -36,6 +39,7 @@ pub fn reset(w: *World, setup: world.Setup) void {
     track.select(t);
     w.* = .{};
     w.track = setup.track;
+    w.combat = setup.combat;
     w.rng = if (setup.seed == 0) 1 else setup.seed;
     w.countdown = 4 * tuning.countdown_step;
     w.msg = .ready;
@@ -50,7 +54,11 @@ pub fn reset(w: *World, setup: world.Setup) void {
             .grip_q8 = ch.grip_q8,
             .mass_q8 = ch.mass_q8,
             .armor_max = ch.armor,
+            .armor = ch.armor,
+            .front = racers.roster[i].front,
+            .rear = racers.roster[i].rear,
         };
+        weapons.refill(c);
         for (setup.humans, 0..) |r, slot| {
             if (r == i) c.human = @intCast(slot);
         }
@@ -174,6 +182,8 @@ pub fn simulate(w: *World, inputs: [2]u8) void {
                 const in: Input = if (c.human < 2) .of(inputs[c.human]) else .{};
                 c.steer = steer_of(in);
                 c.up_was = in.up;
+                c.a_was = in.a and !in.down;
+                c.rear_was = in.a and in.down;
             }
         },
         .racing, .finished => {
@@ -186,10 +196,18 @@ pub fn simulate(w: *World, inputs: [2]u8) void {
             }
             for (&w.cars, 0..) |*c, i| {
                 if (!c.active) continue;
-                step_car(w, c, ins[i]);
+                step_car(w, i, ins[i]);
+                weapons.fire(w, i, ins[i]);
             }
             collide_all(w);
+            weapons.update(w);
             update_ranks(w);
+            // The lock and the AI aim for the next tick (what the reticle
+            // shows is what the next A fires at).
+            for (0..world.car_count) |i| {
+                weapons.update_lock(w, i);
+                ai.update_aim(w, i);
+            }
             check_finished(w);
         },
     }
@@ -205,7 +223,7 @@ fn car_msg(c: *Car, msg: world.Message, ticks: u32) void {
     c.msg_ticks = @intCast(ticks);
 }
 
-fn step_rng(s: u32) u32 {
+pub fn step_rng(s: u32) u32 {
     var x = s;
     x ^= x << 13;
     x ^= x >> 17;
@@ -243,17 +261,22 @@ fn drag_keep_of(c: *const Car) i32 {
 }
 
 /// Driving for one car (SPEC 5.1, 5.2; Zero SPEC 5.1 steps 1..5).
-fn step_car(w: *World, c: *Car, in: Input) void {
+fn step_car(w: *World, i: usize, in: Input) void {
+    const c = &w.cars[i];
     const up_edge = in.up and !c.up_was;
     c.up_was = in.up;
     if (c.shake > 0) c.shake -= 1;
+    if (c.hit_flash > 0) c.hit_flash -= 1;
+    if (c.hitstop > 0) c.hitstop -= 1;
+    c.last_hit_ticks +|= 1;
     if (c.wreck != .none) {
         c.wreck_ticks -|= 1;
-        if (c.wreck_ticks == 0) respawn(w, c);
+        if (c.wreck_ticks == 0) respawn(w, i);
         return;
     }
     if (c.immune > 0) c.immune -= 1;
     if (c.burst > 0) c.burst -= 1;
+    if (c.rot_ticks > 0) c.rot_ticks -= 1;
     // BURST (Up): the press edge, a charge left, none running.
     if (up_edge and c.burst == 0 and c.burst_charges > 0 and !c.finished) {
         c.burst_charges -= 1;
@@ -284,11 +307,16 @@ fn step_car(w: *World, c: *Car, in: Input) void {
     const keep = drag_keep_of(c);
     c.vx = fixed.mul(c.vx, keep);
     c.vy = fixed.mul(c.vy, keep);
+    // BIT ROT: over 80% of the top speed, shed speed as a brake does.
+    if (c.rot_ticks > 0 and spd > (top_of(c) * tuning.rot_top_q8) >> 8) {
+        c.vx -= fixed.mul(c.vx, tuning.brake);
+        c.vy -= fixed.mul(c.vy, tuning.brake);
+    }
     // 3. Grip: along = v . h, lateral = v . right (right = (-hy, hx)).
     if (!in_air) {
         const along = fixed.mul(c.vx, hx) + fixed.mul(c.vy, hy);
         var lat = fixed.mul(c.vx, -hy) + fixed.mul(c.vy, hx);
-        var g = if (c.on_coolant) tuning.grip_coolant else if (c.slide) tuning.grip_slide else tuning.grip;
+        var g = if (c.on_coolant or c.on_leak) tuning.grip_coolant else if (c.slide) tuning.grip_slide else tuning.grip;
         if (c.grip_q8 != 256) g = fixed.one - (((fixed.one - g) * @as(i32, c.grip_q8)) >> 8);
         lat = fixed.mul(lat, g);
         c.vx = fixed.mul(along, hx) + fixed.mul(lat, -hy);
@@ -315,8 +343,8 @@ fn step_car(w: *World, c: *Car, in: Input) void {
     c.y = (c.y +% c.vy) & world_mask;
     c.on_coolant = false;
     c.on_bay = false;
-    if (!in_air) resolve_tiles(w, c, old_x, old_y);
-    if (c.wreck == .none) update_progress(w, c);
+    if (!in_air) resolve_tiles(w, i, old_x, old_y);
+    if (c.wreck == .none) update_progress(w, i);
 }
 
 /// Corner offsets of the 24x12 footprint for a heading, world px (not Q16).
@@ -337,7 +365,8 @@ fn corners(c: *const Car) [4][2]i32 {
 
 /// Tile attributes under the corners: walls push back and reflect, a fully
 /// off-track footprint is a fall into the pit, features flag the car.
-fn resolve_tiles(w: *World, c: *Car, old_x: i32, old_y: i32) void {
+fn resolve_tiles(w: *World, i: usize, old_x: i32, old_y: i32) void {
+    const c = &w.cars[i];
     const t = track_of(w);
     const cs = corners(c);
     var off_count: u8 = 0;
@@ -385,17 +414,33 @@ fn resolve_tiles(w: *World, c: *Car, old_x: i32, old_y: i32) void {
             c.x = (c.x +% nxq) & world_mask;
             c.y = (c.y +% nyq) & world_mask;
         }
-        // Reflect the normal velocity component with restitution; lose speed.
-        const vn = fixed.mul(c.vx, nxq) + fixed.mul(c.vy, nyq);
+        // Reflect the normal velocity component with restitution; lose
+        // speed. v -= (1 + e) (v . n) n / |n|^2: the diagonal normal (1, 1)
+        // has |n|^2 = 2. (Zero subtracts (1 + e) vn from both components
+        // whatever the normal, which also flings the car along the wall;
+        // fixed here, not in Zero.)
+        const diagonal = nxq != 0 and nyq != 0;
+        var vn = fixed.mul(c.vx, nxq) + fixed.mul(c.vy, nyq);
+        if (diagonal) vn = @divTrunc(vn, 2);
         if (vn < 0) {
-            c.vx -= fixed.mul(vn, (256 + tuning.wall_restitution) << 8);
-            c.vy -= fixed.mul(vn, (256 + tuning.wall_restitution) << 8);
+            const k = fixed.mul(vn, (256 + tuning.wall_restitution) << 8);
+            c.vx -= fixed.mul(k, nxq);
+            c.vy -= fixed.mul(k, nyq);
             c.vx = fixed.mul(c.vx, tuning.wall_speed_keep);
             c.vy = fixed.mul(c.vy, tuning.wall_speed_keep);
             c.shake = 4;
+            // Impact speed along the unit normal (diagonal: |vn| x sqrt 2).
+            const impact = if (diagonal) fixed.mul(-vn, 92682) else -vn;
+            damage(w, i, world.no_car, wall_damage(impact));
         }
     }
-    if (off_count == 4 and c.immune == 0) wreck(c, .fall);
+    if (off_count == 4 and c.immune == 0 and c.wreck == .none) wreck(w, i, .fall);
+}
+
+/// Wall (and hulk) impact damage for a normal speed into it, Q16.
+fn wall_damage(vn: i32) i32 {
+    if (vn <= tuning.wall_dmg_min) return 0;
+    return ((vn - tuning.wall_dmg_min) * tuning.wall_dmg) >> fixed.Q;
 }
 
 fn any_wall(t: *const track.Track, c: *const Car) bool {
@@ -405,8 +450,44 @@ fn any_wall(t: *const track.Track, c: *const Car) bool {
     return false;
 }
 
-/// Wreck a car (SPEC 5.3): it stops and is out for the WATCHDOG delay.
-pub fn wreck(c: *Car, cause: world.Wreck) void {
+/// Damage (SPEC 5.3): armor falls by `amount`; at 0 the car is wrecked.
+/// `attacker` is the car responsible or `no_car` (a wall); a rival's hit
+/// starts the kill-credit window. Wrecked, immune (respawn) and finished
+/// cars take none, and nothing is dealt with combat off.
+pub fn damage(w: *World, victim: usize, attacker: u8, amount: i32) void {
+    if (!w.combat or amount <= 0) return;
+    const c = &w.cars[victim];
+    if (!c.active or c.wreck != .none or c.immune > 0 or c.finished) return;
+    const dmg: u8 = @intCast(@min(amount, 255));
+    if (attacker != world.no_car and attacker != victim) {
+        c.last_hit_by = attacker;
+        c.last_hit_ticks = 0;
+    }
+    if (c.hit_flash == 0 or dmg >= tuning.hit_event_min) {
+        weapons.emit(w, .hit, attacker, @intCast(victim), dmg, c.x, c.y);
+    }
+    c.hit_flash = tuning.hit_flash_ticks;
+    if (dmg >= c.armor) {
+        c.armor = 0;
+        wreck(w, victim, .armor);
+    } else c.armor -= dmg;
+}
+
+/// A wrecked car (armor or ZERO-DAY, not a fall) is a burning hulk that
+/// blocks like a wall for the first `hulk_ticks` of its WATCHDOG delay.
+pub fn is_hulk(c: *const Car) bool {
+    return c.active and (c.wreck == .armor or c.wreck == .zero_day) and
+        c.wreck_ticks > tuning.watchdog_ticks - tuning.hulk_ticks;
+}
+
+/// Wreck a car (SPEC 5.3): it stops and is out for the WATCHDOG delay,
+/// frozen for its hit-stop. The kill goes to the last rival to hit it
+/// within `credit_ticks` (a fall too), else to nobody.
+pub fn wreck(w: *World, i: usize, cause: world.Wreck) void {
+    const c = &w.cars[i];
+    if (c.wreck != .none) return;
+    const killer: u8 = if (c.last_hit_by != world.no_car and c.last_hit_by != i and
+        c.last_hit_ticks < tuning.credit_ticks) c.last_hit_by else world.no_car;
     c.wreck = cause;
     c.wreck_ticks = tuning.watchdog_ticks;
     c.vx = 0;
@@ -414,9 +495,21 @@ pub fn wreck(c: *Car, cause: world.Wreck) void {
     c.hop = 0;
     c.burst = 0;
     c.shake = 8;
+    c.charge = 0;
+    c.lock = world.no_car;
+    c.rot_ticks = 0;
+    c.on_leak = false;
+    c.last_hit_by = world.no_car;
+    c.wrecks +|= 1;
+    if (killer != world.no_car) w.cars[killer].kills +|= 1;
+    weapons.emit(w, .wreck, @intCast(i), killer, @backingInt(cause), c.x, c.y);
+    if (cause != .fall) {
+        c.hitstop = tuning.hitstop_ticks;
+        weapons.emit(w, .explode, @intCast(i), tuning.wreck_blast_px, 0, c.x, c.y);
+    }
     car_msg(c, switch (cause) {
         .fall => .fall,
-        // M1 (Track A) gives armor / ZERO-DAY wrecks their own messages.
+        // The presentation reads armor and ZERO-DAY wrecks from the event.
         .none, .armor, .zero_day => .none,
     }, tuning.message_ticks);
 }
@@ -425,7 +518,8 @@ pub fn wreck(c: *Car, cause: world.Wreck) void {
 /// wreck (or the last one before it with floor under it, so a car that
 /// fell into a ramp pit comes back before the ramp), facing along it,
 /// stopped, immune.
-fn respawn(w: *const World, c: *Car) void {
+fn respawn(w: *World, i: usize) void {
+    const c = &w.cars[i];
     const t = track_of(w);
     var k: u8 = 0;
     while (k < 32 and t.attr_at(t.sample(c.progress).x, t.sample(c.progress).y) == .off) : (k += 1) c.progress -%= 1;
@@ -437,6 +531,10 @@ fn respawn(w: *const World, c: *Car) void {
     c.vy = 0;
     c.immune = tuning.respawn_immune;
     c.wreck = .none;
+    c.hitstop = 0;
+    // Full armor, kept ammo (SPEC 5.3).
+    c.armor = c.armor_max;
+    weapons.emit(w, .respawn, @intCast(i), 0, 0, c.x, c.y);
 }
 
 /// Squared distance from the car to sample i, in world px^2 (wrapping).
@@ -466,10 +564,20 @@ pub fn nearest_sample(t: *const track.Track, c: *const Car, from: u8) u8 {
 
 /// Progress, sectors and laps from the centerline (Zero SPEC 7). Crossing
 /// the line also refills the BURST charges (SPEC 5.1).
-fn update_progress(w: *World, c: *Car) void {
+fn update_progress(w: *World, i: usize) void {
+    const c = &w.cars[i];
+    const t = track_of(w);
     const old = c.progress;
-    const new = nearest_sample(track_of(w), c, old);
+    const new = nearest_sample(t, c, old);
     c.progress = new;
+    // Off its leg: further from the centerline than any road reaches (it
+    // was pushed through a wall onto another part of the track). A fall
+    // puts it back (SEGMENT FAULT), credited to whoever pushed it.
+    const off = @as(i32, t.sample(new).half) + tuning.off_leg_px;
+    if (c.hop == 0 and c.immune == 0 and dist2_to_sample(t, c, new) > off * off) {
+        wreck(w, i, .fall);
+        return;
+    }
     const diff: i32 = @as(i32, new) - @as(i32, old);
     // Forward step (allowing the wrap 255 -> 0).
     const forward = (diff > 0 and diff < 128) or diff < -128;
@@ -485,6 +593,8 @@ fn update_progress(w: *World, c: *Car) void {
                 c.lap_start = w.tick;
                 c.lap += 1;
                 c.burst_charges = tuning.burst_per_lap;
+                // Ammo refills on the line (SPEC 6).
+                weapons.refill(c);
                 if (c.lap == tuning.laps - 1) car_msg(c, .final_lap, tuning.message_ticks);
                 if (c.lap >= tuning.laps) {
                     c.finished = true;
@@ -516,14 +626,16 @@ fn check_finished(w: *World) void {
     if ((humans > 0 and humans_done == humans) or (humans == 0 and any_done)) w.phase = .finished;
 }
 
-// --- Car against car (Zero SPEC 5.3) ------------------------------------------
+// --- Car against car (Zero SPEC 5.3, GC SPEC 5.3) ------------------------------
 
 fn can_collide(c: *const Car) bool {
     return c.active and c.hop == 0 and c.wreck == .none;
 }
 
 /// Circles of radius `car_radius`: push apart by half the penetration
-/// each, exchange 30% of the closing normal velocity, split by mass.
+/// each, exchange 30% of the closing normal velocity, split by mass, and
+/// ram damage both ways. A hulk is a wall: the live car alone is pushed
+/// out and bounces.
 pub fn collide_all(w: *World) void {
     const r2: i32 = 2 * tuning.car_radius;
     const reach: i32 = r2 << fixed.Q;
@@ -532,11 +644,14 @@ pub fn collide_all(w: *World) void {
     var i: usize = 0;
     while (i < world.car_count) : (i += 1) {
         const a = &w.cars[i];
-        if (!can_collide(a)) continue;
+        const a_hulk = is_hulk(a);
+        if (!can_collide(a) and !a_hulk) continue;
         var j = i + 1;
         while (j < world.car_count) : (j += 1) {
             const b = &w.cars[j];
-            if (!can_collide(b)) continue;
+            const b_hulk = is_hulk(b);
+            if (!can_collide(b) and !b_hulk) continue;
+            if (a_hulk and b_hulk) continue;
             const dx = ((b.x -% a.x +% half) & world_mask) - half;
             const dy = ((b.y -% a.y +% half) & world_mask) - half;
             if (dx >= reach or dx <= -reach or dy >= reach or dy <= -reach) continue;
@@ -544,29 +659,82 @@ pub fn collide_all(w: *World) void {
             const dy8 = dy >> 8;
             const d2 = dx8 * dx8 + dy8 * dy8;
             if (d2 >= lim) continue;
-            contact(a, b, dx8, dy8, d2);
+            // (dx, dy) points from a to b; hulk_contact wants hulk -> car.
+            if (a_hulk) {
+                hulk_contact(w, j, dx8, dy8, d2);
+            } else if (b_hulk) {
+                hulk_contact(w, i, -dx8, -dy8, d2);
+            } else contact(w, i, j, dx8, dy8, d2);
         }
     }
 }
 
-fn contact(a: *Car, b: *Car, dx8: i32, dy8: i32, d2: i32) void {
-    const dist: i32 = @intCast(fixed.isqrt(@intCast(d2))); // Q8
-    // Unit normal from a to b, Q16 (straight along +x when centred).
-    var nx: i32 = fixed.one;
-    var ny: i32 = 0;
-    if (dist > 0) {
-        nx = @divTrunc(dx8 << 16, dist);
-        ny = @divTrunc(dy8 << 16, dist);
+/// Move a car by (dx, dy) Q16 unless that puts a corner in a wall: a
+/// contact never shoves a car through a wreckage wall onto the next leg
+/// (the velocity exchange still parts them).
+fn nudge(w: *const World, c: *Car, dx: i32, dy: i32) void {
+    const ox = c.x;
+    const oy = c.y;
+    c.x = (c.x +% dx) & world_mask;
+    c.y = (c.y +% dy) & world_mask;
+    if (any_wall(track_of(w), c)) {
+        c.x = ox;
+        c.y = oy;
     }
+}
+
+/// Unit normal (Q16) along (dx8, dy8) of length sqrt(d2) (Q8), and that length.
+const Normal = struct { nx: i32, ny: i32, dist: i32 };
+fn normal_of(dx8: i32, dy8: i32, d2: i32) Normal {
+    const dist: i32 = @intCast(fixed.isqrt(@intCast(d2))); // Q8
+    if (dist == 0) return .{ .nx = fixed.one, .ny = 0, .dist = 0 };
+    return .{ .nx = @divTrunc(dx8 << 16, dist), .ny = @divTrunc(dy8 << 16, dist), .dist = dist };
+}
+
+/// Car `i` against a hulk; (dx8, dy8) points from the hulk to the car.
+fn hulk_contact(w: *World, i: usize, dx8: i32, dy8: i32, d2: i32) void {
+    const c = &w.cars[i];
+    const n = normal_of(dx8, dy8, d2);
+    const pen8 = (2 * tuning.car_radius << 8) - n.dist;
+    nudge(w, c, fixed.mul(n.nx, pen8 << 8), fixed.mul(n.ny, pen8 << 8));
+    const vn = fixed.mul(c.vx, n.nx) + fixed.mul(c.vy, n.ny);
+    if (vn >= 0) return;
+    const k = fixed.mul(vn, (256 + tuning.wall_restitution) << 8);
+    c.vx -= fixed.mul(k, n.nx);
+    c.vy -= fixed.mul(k, n.ny);
+    c.vx = fixed.mul(c.vx, tuning.wall_speed_keep);
+    c.vy = fixed.mul(c.vy, tuning.wall_speed_keep);
+    c.shake = 4;
+    damage(w, i, world.no_car, wall_damage(-vn));
+}
+
+/// Ram damage to `victim` from `attacker` closing at `closing` (Q16
+/// px/tick) along the normal `n` from attacker to victim (SPEC 5.3).
+fn ram_damage(attacker: *const Car, victim: *const Car, closing: i32, nx: i32, ny: i32) i32 {
+    var dmg: i64 = @as(i64, closing) * tuning.ram_dmg * attacker.mass_q8;
+    dmg = @divTrunc(dmg, victim.mass_q8);
+    if (racers.roster[attacker.racer % racers.count].chassis == .mainframe) {
+        // The plough: the victim in the front quarter.
+        const facing = fixed.mul(fixed.cos(attacker.heading), nx) + fixed.mul(fixed.sin(attacker.heading), ny);
+        if (facing >= tuning.plough_cos) dmg *= tuning.plough_mul;
+    }
+    return @intCast(@min(dmg >> fixed.Q, 255));
+}
+
+fn contact(w: *World, ia: usize, ib: usize, dx8: i32, dy8: i32, d2: i32) void {
+    const a = &w.cars[ia];
+    const b = &w.cars[ib];
+    // Unit normal from a to b, Q16 (straight along +x when centred).
+    const n = normal_of(dx8, dy8, d2);
+    const nx = n.nx;
+    const ny = n.ny;
     // Push apart: half the penetration each.
-    const pen8 = (2 * tuning.car_radius << 8) - dist;
+    const pen8 = (2 * tuning.car_radius << 8) - n.dist;
     const push = pen8 << 7; // Q16, half of pen8 << 8
     const px = fixed.mul(nx, push);
     const py = fixed.mul(ny, push);
-    a.x = (a.x -% px) & world_mask;
-    a.y = (a.y -% py) & world_mask;
-    b.x = (b.x +% px) & world_mask;
-    b.y = (b.y +% py) & world_mask;
+    nudge(w, a, -px, -py);
+    nudge(w, b, px, py);
     // Closing speed along the normal.
     const vna = fixed.mul(a.vx, nx) + fixed.mul(a.vy, ny);
     const vnb = fixed.mul(b.vx, nx) + fixed.mul(b.vy, ny);
@@ -586,6 +754,13 @@ fn contact(a: *Car, b: *Car, dx8: i32, dy8: i32, d2: i32) void {
     if (closing >= tuning.collision_shake_speed) {
         a.shake = 4;
         b.shake = 4;
+    }
+    // Ramming: each car rams the other (SPEC 5.3).
+    if (closing >= tuning.ram_min_speed) {
+        const to_b = ram_damage(a, b, closing, nx, ny);
+        const to_a = ram_damage(b, a, closing, -nx, -ny);
+        damage(w, ib, @intCast(ia), to_b);
+        damage(w, ia, @intCast(ib), to_a);
     }
 }
 

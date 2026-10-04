@@ -71,10 +71,30 @@ var build_options: ?*Build.Step.Options = null;
 /// key. Each becomes `gfx.<stem>` with width, height, colors, indices.
 const Image = struct { file: []const u8, bits: u8, transparent: bool };
 const images = [_]Image{
+    // Zero's engine sheets kept (ASSETS_ENGINE.md): the car shadow, and
+    // Zero's fx.png renamed exhaust.png for the BURST flame (the art
+    // track's fx.png owns the `fx` name).
     .{ .file = "shadow.png", .bits = 4, .transparent = true },
-    .{ .file = "machine.png", .bits = 4, .transparent = true },
-    .{ .file = "fx.png", .bits = 4, .transparent = true },
-    .{ .file = "snouty_head.png", .bits = 4, .transparent = true },
+    .{ .file = "exhaust.png", .bits = 4, .transparent = true },
+    // art track (tools/draw_art.py); see ASSETS.md
+    .{ .file = "art/portrait_snouty.png", .bits = 4, .transparent = false },
+    .{ .file = "art/portrait_legacy.png", .bits = 4, .transparent = false },
+    .{ .file = "art/portrait_kiddie.png", .bits = 4, .transparent = false },
+    .{ .file = "art/portrait_sysadmin.png", .bits = 4, .transparent = false },
+    .{ .file = "art/portrait_rootkit.png", .bits = 4, .transparent = false },
+    .{ .file = "art/portrait_botnet.png", .bits = 4, .transparent = false },
+    .{ .file = "art/car_snouty.png", .bits = 4, .transparent = true },
+    .{ .file = "art/car_legacy.png", .bits = 4, .transparent = true },
+    .{ .file = "art/car_kiddie.png", .bits = 4, .transparent = true },
+    .{ .file = "art/car_sysadmin.png", .bits = 4, .transparent = true },
+    .{ .file = "art/car_rootkit.png", .bits = 4, .transparent = true },
+    .{ .file = "art/car_botnet.png", .bits = 4, .transparent = true },
+    .{ .file = "art/weapons.png", .bits = 4, .transparent = true },
+    .{ .file = "art/decals.png", .bits = 4, .transparent = true },
+    .{ .file = "art/pickups.png", .bits = 4, .transparent = true },
+    .{ .file = "art/fx.png", .bits = 4, .transparent = true },
+    .{ .file = "art/claw.png", .bits = 4, .transparent = true },
+    .{ .file = "art/hud.png", .bits = 4, .transparent = true },
 };
 
 /// The `assets` module: a generated assets.zig with one `@embedFile` per

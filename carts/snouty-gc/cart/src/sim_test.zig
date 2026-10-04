@@ -169,7 +169,10 @@ test "auto-throttle: with no input the car drives to its top speed" {
 
 test "Down brakes, but not with A or B (aim back)" {
     var w: World = undefined;
-    sim.reset(&w, solo(1));
+    // Combat off: Down+A drops a LOGIC BOMB into the pack otherwise.
+    var setup = solo(1);
+    setup.combat = false;
+    sim.reset(&w, setup);
     run_countdown(&w);
     for (0..90) |_| sim.simulate(&w, .{ 0, 0 });
     var braked = w;
@@ -282,7 +285,8 @@ test "car contact: pushed apart, the heavier car keeps more of its speed" {
 const RaceResult = struct { finish: u32, wrecks: u32, rank: u8, best: u32 };
 fn autopilot_race(t: u8, racer: u8, seed: u32, limit: u32) RaceResult {
     var w: World = undefined;
-    sim.reset(&w, .{ .track = t, .seed = seed, .humans = .{ racer, world.no_human } });
+    // Combat off: the content gate is the track, not the fight (SPEC 12).
+    sim.reset(&w, .{ .track = t, .seed = seed, .humans = .{ racer, world.no_human }, .combat = false });
     run_countdown(&w);
     var wrecks: u32 = 0;
     var ticks: u32 = 0;
@@ -298,7 +302,7 @@ fn autopilot_race(t: u8, racer: u8, seed: u32, limit: u32) RaceResult {
     return .{ .finish = if (c.finished) c.finish_tick else std.math.maxInt(u32), .wrecks = wrecks, .rank = c.rank, .best = c.best_lap };
 }
 
-test "every committed track is completable: the autopilot drives 3 laps with no fall" {
+test "every committed track is completable: the autopilot drives 3 laps with no fall (combat off)" {
     // About 22 s a lap (SPEC 5.2); the bound is 50 s a lap.
     const limit: u32 = 60 * 50 * @as(u32, tuning.laps);
     for (0..track.tracks.len) |t| {
@@ -310,7 +314,7 @@ test "every committed track is completable: the autopilot drives 3 laps with no 
     }
 }
 
-test "every racer's chassis completes Landfill Loop under the autopilot" {
+test "every racer's chassis completes Landfill Loop under the autopilot (combat off)" {
     const limit: u32 = 60 * 50 * @as(u32, tuning.laps);
     for (0..racers.count) |r| {
         const res = autopilot_race(0, @intCast(r), 11, limit);

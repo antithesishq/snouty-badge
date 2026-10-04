@@ -7,18 +7,28 @@
 //! World it is given, no globals, no cart API.
 //!
 //! Physics multipliers moved out of the characters into the cars' chassis
-//! (SPEC 4.2); a `Crew` here is only how a racer drives. M1 adds aim,
-//! drops and pickups (SPEC 4.3, 6.5).
+//! (SPEC 4.2); a `Crew` here is how a racer drives and fights (SPEC 4.3,
+//! 6.5): target preference, reaction delay, aim noise, when to drop, and
+//! LEGACY's ramming, ROOTKIT's stalking. Pickups are M2.
+//!
+//! `drive` reads the World only. The one piece of AI state, the aim and
+//! its reaction counter (`Car.aim`, `aim_ticks`), is kept by `sim` through
+//! `update_aim`, which draws its aim noise from the world PRNG.
 const std = @import("std");
 const fixed = @import("fixed.zig");
 const tuning = @import("tuning.zig");
 const world = @import("world.zig");
 const track = @import("track.zig");
 const sim = @import("sim.zig");
+const weapons = @import("weapons.zig");
 
 const World = world.World;
 const Car = world.Car;
 const Input = world.Input;
+const no_car = world.no_car;
+
+/// Whom a crew shoots at, among the cars in its weapon's reach (SPEC 4.3).
+pub const Target = enum(u8) { nearest, leader, human };
 
 pub const Crew = struct {
     /// Lane offset from the centerline, world px (positive = right of travel).
@@ -46,17 +56,41 @@ pub const Crew = struct {
     burst_curve: i32 = 6000,
     /// Pass slower cars ahead.
     avoid: bool = true,
+    /// Combat (SPEC 4.3, 6.5). Target preference among cars in reach.
+    target: Target = .nearest,
+    /// Ticks a target must stay in reach (SPEAR PHISH: locked) before the
+    /// crew fires.
+    reaction: u8 = 8,
+    /// Aim noise, px: the reach test's half width moves by a world-PRNG
+    /// amount in [-jitter / 2, jitter] each tick, so a sloppy crew fires
+    /// off the line (and misses) and sometimes hesitates.
+    jitter: i32 = 4,
+    /// Rear drops: also into corners with any car behind (SNOUTY's mines);
+    /// with a car further off the line behind (LEGACY's firewall).
+    drop_corners: bool = false,
+    drop_wide: bool = false,
+    /// Steer into a car alongside (LEGACY).
+    rammer: bool = false,
+    /// Sit behind the aimed-at car instead of passing it (ROOTKIT).
+    stalk: bool = false,
 };
 
 /// Per racer, SPEC 4.1 order. Driving style only, for M0; M1 widens these
 /// into SPEC 4.3's crews. SNOUTY is also the autopilot (attract, tests).
 pub const crews = [6]Crew{
-    .{}, // SNOUTY: patient, the line
-    .{ .lane = -10, .min_speed_pct = 66, .full_brake_turn = 12000, .avoid = false }, // LEGACY: slow, holds its line, pushes
-    .{ .lane = 10, .min_speed_pct = 78, .slide_turn = 2400 }, // KIDDIE: fast in, slides
-    .{ .lookahead = 7, .min_speed_pct = 76 }, // SYSADMIN: clean lines
-    .{ .lane = 6, .wander_px = 14, .wander_rate = 65536 / 300 }, // ROOTKIT: drifts across the lane
-    .{ .lane = -6, .wander_px = 20, .wander_rate = 65536 / 200, .speed_pct = 245 }, // BOTNET: a committee at the wheel
+    // SNOUTY: patient, the line; waits for a lock, mines the corners.
+    .{ .reaction = 12, .jitter = 2, .drop_corners = true },
+    // LEGACY: slow, holds its line, pushes; rams anything beside it,
+    // walls of fire for anyone behind.
+    .{ .lane = -10, .min_speed_pct = 66, .full_brake_turn = 12000, .avoid = false, .reaction = 4, .jitter = 10, .rammer = true, .drop_wide = true },
+    // KIDDIE: fast in, slides; sprays at anything the moment it is there.
+    .{ .lane = 10, .min_speed_pct = 78, .slide_turn = 2400, .reaction = 1, .jitter = 14 },
+    // SYSADMIN: clean lines, long snipes, hunts the humans first.
+    .{ .lookahead = 7, .min_speed_pct = 76, .reaction = 6, .jitter = 2, .target = .human },
+    // ROOTKIT: drifts across the lane, sits behind its mark and snipes.
+    .{ .lane = 6, .wander_px = 14, .wander_rate = 65536 / 300, .reaction = 8, .jitter = 4, .stalk = true },
+    // BOTNET: a committee at the wheel; always goes for the leader.
+    .{ .lane = -6, .wander_px = 20, .wander_rate = 65536 / 200, .speed_pct = 245, .reaction = 6, .jitter = 8, .target = .leader },
 };
 
 pub fn crew_of(c: *const Car) *const Crew {
@@ -115,7 +149,11 @@ fn drive_crew(w: *const World, i: usize, cr: *const Crew) Input {
     // Lane offset along the target's right vector.
     var lane = lane_of(w, cr, i);
     var block_spd: i32 = std.math.maxInt(i32);
-    if (cr.avoid) avoid(w, i, &lane, &block_spd);
+    const fight = w.combat and w.phase == .racing and !c.finished and c.wreck == .none;
+    const stalking = fight and cr.stalk and stalk(w, i, &lane, &block_spd);
+    if (cr.avoid and !stalking) avoid(w, i, &lane, &block_spd);
+    if (fight and cr.rammer) ram(w, i, &lane);
+    if (w.combat) dodge_firewalls(w, i, &lane);
     const tx = fixed.cos(target.tangent);
     const ty = fixed.sin(target.tangent);
     const gx = @as(i32, target.x) + ((-ty * lane) >> fixed.Q);
@@ -150,7 +188,173 @@ fn drive_crew(w: *const World, i: usize, cr: *const Crew) Input {
     {
         b.up = true;
     }
+    if (fight) arm(w, i, cr, &b, curve);
     return b;
+}
+
+/// Fire and drop (SPEC 6.5) on top of the driving input `b`. The rear
+/// weapon is Down+A on a press edge; the front weapon is A without Down,
+/// so a tick that brakes does not fire (the brake wins, except that a held
+/// LANCE is let go: fired if charged, fizzled if not).
+fn arm(w: *const World, i: usize, cr: *const Crew, b: *Input, curve: i32) void {
+    const c = &w.cars[i];
+    if (c.ammo_rear > 0 and c.rear_cd == 0 and !c.rear_was and want_drop(w, i, cr, curve)) {
+        b.down = true;
+        b.a = true;
+        return;
+    }
+    const braking = b.down;
+    switch (c.front) {
+        .lance => {
+            if (c.charge > 0) {
+                const fire_now = c.charge >= tuning.lance_charge and c.aim_ticks >= cr.reaction;
+                b.a = !(fire_now or braking);
+            } else if (!braking and c.ammo_front > 0 and c.fire_cd == 0) {
+                // Charge only on a straight.
+                const t = sim.track_of(w);
+                b.a = curve + curvature(t, @as(usize, c.progress) + cr.curve_ahead, cr.burst_window - cr.curve_ahead) < tuning.ai_lance_straight;
+            }
+        },
+        else => b.a = !braking and c.ammo_front > 0 and c.aim_ticks >= cr.reaction,
+    }
+}
+
+/// A car behind on the line (SPEC 6.5), or, for a `drop_corners` crew, any
+/// car behind going into a corner.
+fn want_drop(w: *const World, i: usize, cr: *const Crew, curve: i32) bool {
+    const c = &w.cars[i];
+    const lat_lim = if (cr.drop_wide) tuning.ai_drop_wide_lat else tuning.ai_drop_lat;
+    for (&w.cars, 0..) |*o, j| {
+        if (j == i or !weapons.targetable(o) or o.hop != 0) continue;
+        const r = weapons.rel(c, o);
+        if (r.along >= 0 or r.along < -tuning.ai_drop_behind) continue;
+        if (@abs(r.lat) <= lat_lim) return true;
+        if (cr.drop_corners and curve >= tuning.ai_drop_corner) return true;
+    }
+    return false;
+}
+
+/// The car the crew would shoot this tick: in the front weapon's reach
+/// (widened or narrowed by `jit` px), by the crew's preference; `no_car`.
+fn pick_target(w: *const World, i: usize, cr: *const Crew, jit: i32) u8 {
+    const c = &w.cars[i];
+    var best: u8 = no_car;
+    var best_key: i32 = std.math.maxInt(i32);
+    for (&w.cars, 0..) |*o, j| {
+        if (j == i or !weapons.targetable(o) or o.hop != 0 or o.immune != 0) continue;
+        const r = weapons.rel(c, o);
+        if (r.along <= 0) continue;
+        const reach: i32, const half: i32 = switch (c.front) {
+            .ping => .{ @as(i32, tuning.ping_ttl) * 5, tuning.car_radius + tuning.shot_radius },
+            .broadcast => .{ @as(i32, tuning.broadcast_ttl) * 5, tuning.car_radius + ((r.along * 93) >> 8) },
+            .lance => .{ tuning.lance_range, tuning.car_radius + ((r.along * tuning.lance_spread_q8) >> 8) },
+            .phish => .{ tuning.phish_range, tuning.car_radius + ((r.along * tuning.phish_spread_q8) >> 8) },
+        };
+        if (r.along > reach or @abs(r.lat) > half + jit) continue;
+        const key: i32 = switch (cr.target) {
+            .nearest => r.along,
+            .leader => @as(i32, o.rank) * 1024 + r.along,
+            .human => (if (o.human == world.no_human) @as(i32, 1024) else 0) + r.along,
+        };
+        if (key < best_key) {
+            best_key = key;
+            best = @intCast(j);
+        }
+    }
+    return best;
+}
+
+/// The aim and its reaction counter for the next tick (called by `sim`
+/// for every car, the humans too, for the autopilot). SPEAR PHISH crews
+/// aim at their lock.
+pub fn update_aim(w: *World, i: usize) void {
+    const c = &w.cars[i];
+    const cr = crew_of(c);
+    var cand: u8 = no_car;
+    if (w.combat and w.phase == .racing and c.wreck == .none and !c.finished and c.ammo_front > 0) {
+        if (c.front == .phish) {
+            cand = c.lock;
+        } else {
+            const span: u32 = @intCast(@divTrunc(3 * cr.jitter, 2) + 1);
+            const jit = @as(i32, @intCast(weapons.rand(w) % span)) - @divTrunc(cr.jitter, 2);
+            cand = pick_target(w, i, cr, jit);
+        }
+    }
+    if (cand != no_car and cand == c.aim) {
+        c.aim_ticks +|= 1;
+    } else {
+        c.aim = cand;
+        c.aim_ticks = @intFromBool(cand != no_car);
+    }
+}
+
+/// The car's lateral offset from the centerline at its sample, px (right
+/// of travel positive), and that sample's half width.
+fn own_lateral(w: *const World, c: *const Car) struct { lat: i32, half: i32 } {
+    const s = sim.track_of(w).sample(c.progress);
+    const sx = fixed.cos(s.tangent);
+    const sy = fixed.sin(s.tangent);
+    const ox = wrap_px((c.x >> fixed.Q) - @as(i32, s.x));
+    const oy = wrap_px((c.y >> fixed.Q) - @as(i32, s.y));
+    return .{ .lat = (ox * -sy + oy * sx) >> fixed.Q, .half = s.half };
+}
+
+/// LEGACY: a car alongside pulls the lane toward it.
+fn ram(w: *const World, i: usize, lane: *i32) void {
+    const c = &w.cars[i];
+    const own = own_lateral(w, c);
+    const room = own.half - tuning.avoid_margin;
+    for (&w.cars, 0..) |*o, j| {
+        if (j == i or !weapons.targetable(o) or o.hop != 0 or o.immune != 0) continue;
+        const r = weapons.rel(c, o);
+        if (@abs(r.along) > tuning.ai_ram_along or @abs(r.lat) > tuning.ai_ram_lat) continue;
+        lane.* = std.math.clamp(own.lat + r.lat * 2, -room, room);
+        return;
+    }
+}
+
+/// ROOTKIT: sit in the aimed-at car's lane behind it, at its speed when
+/// close. True while stalking (no passing then).
+fn stalk(w: *const World, i: usize, lane: *i32, block_spd: *i32) bool {
+    const c = &w.cars[i];
+    if (c.aim == no_car) return false;
+    const o = &w.cars[c.aim % world.car_count];
+    const r = weapons.rel(c, o);
+    if (r.along <= 0 or r.along > tuning.ai_stalk_range) return false;
+    const own = own_lateral(w, c);
+    const room = own.half - tuning.avoid_margin;
+    lane.* = std.math.clamp(own.lat + r.lat, -room, room);
+    if (r.along < 2 * tuning.avoid_brake) block_spd.* = sim.speed(o);
+    return true;
+}
+
+/// Steer round a FIREWALL ahead whose span covers the lane (SPEC 6.2):
+/// pass outside its nearer end when there is room on the track.
+pub fn dodge_firewalls(w: *const World, i: usize, lane: *i32) void {
+    const c = &w.cars[i];
+    var own: ?@TypeOf(own_lateral(w, c)) = null;
+    for (&w.drops) |*d| {
+        if (d.kind != .firewall) continue;
+        const dx = wrap_px((d.x - c.x) >> fixed.Q);
+        const dy = wrap_px((d.y - c.y) >> fixed.Q);
+        const hx = fixed.cos(c.heading);
+        const hy = fixed.sin(c.heading);
+        const along = (dx * hx + dy * hy) >> fixed.Q;
+        if (along <= 0 or along > tuning.ai_firewall_ahead) continue;
+        if (own == null) own = own_lateral(w, c);
+        const o = own.?;
+        const center = o.lat + ((dx * -hy + dy * hx) >> fixed.Q);
+        const span: i32 = @as(i32, d.size) + tuning.ai_firewall_pass;
+        if (@abs(lane.* - center) > span) continue;
+        const room = o.half - tuning.ai_firewall_margin;
+        const left = center - span;
+        const right = center + span;
+        const left_ok = left >= -room;
+        const right_ok = right <= room;
+        if (left_ok and (!right_ok or lane.* - left <= right - lane.*)) {
+            lane.* = left;
+        } else if (right_ok) lane.* = right;
+    }
 }
 
 /// Pass a slower car ahead: aim at a lane beside it, on the side with room

@@ -8,19 +8,19 @@ the art track's: `tools/draw_art.py` into `assets/gen/art/`, described in
 
 ## The engine's sprite sheets (Zero's, copied)
 
-`assets/gen/machine.png`, `shadow.png`, `fx.png` and `snouty_head.png` are
-Zero's sheets copied byte for byte (drawn by
-`carts/snouty-zero/tools/prepare_assets.py`, not forked: they are
-placeholders here). The Anteater sheet is not copied. M0 uses them as:
+`assets/gen/shadow.png` and `exhaust.png` are Zero's sheets copied byte
+for byte (drawn by `carts/snouty-zero/tools/prepare_assets.py`, not
+forked). Since M1 (Track B) the cart uses them as:
 
-- `machine.png`: every car (SPEC 4.1's six racers), re-paletted at start-up
-  (`sprites.init`) by replacing the four machine body shades with 35%, 60%,
-  85% and 100% of the racer's livery colour (`racers.roster[].livery`, also
-  the minimap dot). The followed car uses frames 0..2 (rear, rear-quarter
-  left/right) as its lean; the others pick the yaw view from the heading.
 - `shadow.png`: under every car (checkerboard skip).
-- `fx.png`: wall and contact sparks (frames 0..3), the BURST flame (4, 5).
-- `snouty_head.png`: the placeholder splash (frame 0 at 4x) until M3.
+- `exhaust.png` (Zero's `fx.png`, renamed because the art track's
+  `art/fx.png` owns the `gfx.fx` name): only the BURST flame, frames 4
+  and 5. Its sparks (0..3) are superseded by the art's.
+
+M1 retired `machine.png` (the M0 re-paletted placeholder cars: the art
+track's `car_<racer>.png` replaced them) and `snouty_head.png` (the
+placeholder splash: the eyepatched portrait replaced it). The manifest
+below is Zero's and still names them.
 
 ### Manifest (Zero ASSETS.md)
 

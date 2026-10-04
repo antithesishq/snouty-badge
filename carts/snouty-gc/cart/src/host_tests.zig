@@ -6,10 +6,13 @@ const std = @import("std");
 test {
     std.testing.refAllDecls(@This());
     _ = @import("fixed.zig");
+    _ = @import("roster_text.zig");
     _ = @import("track.zig");
     _ = @import("sim.zig");
     _ = @import("ai.zig");
     _ = @import("racers.zig");
     _ = @import("engine.zig");
     _ = @import("sim_test.zig");
+    _ = @import("weapons.zig");
+    _ = @import("weapons_test.zig");
 }

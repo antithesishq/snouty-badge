@@ -186,6 +186,18 @@ pub const Car = struct {
     /// badge that follows it, and its ticks left.
     msg: Message = .none,
     msg_ticks: u8 = 0,
+    /// Track A additions (M1). BIT ROT slow: ticks left at -20% top speed.
+    rot_ticks: u8 = 0,
+    /// Ticks until the rear weapon may drop again.
+    rear_cd: u8 = 0,
+    /// On a MEMORY LEAK puddle: set by the drop update, read by the next
+    /// tick's grip (coolant grip and the yaw kick).
+    on_leak: bool = false,
+    /// AI aim (SPEC 6.5), kept by `sim` for every car and read only by
+    /// `ai.drive`: the car in the front weapon's cone (`no_car` for none)
+    /// and the consecutive ticks it has been there (the reaction delay).
+    aim: u8 = no_car,
+    aim_ticks: u8 = 0,
 };
 
 pub const Phase = enum(u8) { countdown, racing, finished };
@@ -196,6 +208,8 @@ pub const Setup = struct {
     track: u8 = 0,
     seed: u32 = 0x1234_5678,
     humans: [2]u8 = .{ no_human, no_human },
+    /// Weapons and damage on (false only for the completable tests).
+    combat: bool = true,
 };
 
 pub const World = struct {
@@ -220,4 +234,6 @@ pub const World = struct {
     /// Event ring: slot = seq % event_count; `event_seq` is the next seq.
     events: [event_count]Event = @splat(.{}),
     event_seq: u16 = 0,
+    /// Weapons, ramming and wall damage on (Setup.combat).
+    combat: bool = true,
 };

@@ -315,16 +315,69 @@ or remove interface ones), `sim.zig`, new `weapons.zig`, `ai.zig`,
    does not draw the new pools yet: Track B does). Commit with
    `Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>`, push gc/spec.
 
-### Track B: presentation (Opus agent, starts when the art track lands)
+### Track B: presentation (Opus agent, worktree /home/exedev/snouty-badge-gc-present, branch gc/present off gc/spec 7b2d1eb3)
 
-Owns `main.zig`, `select.zig` (new), `roster_text.zig` (new: bios,
-taunts, wrecked lines), `fx.zig` (new), `hud.zig`, `sprites.zig`,
-`menu.zig`, `results.zig`, `build.zig` (wiring `assets/gen/art/`), and
-`tools/scripts/`. Draws the racer select (SPEC 8.1), the racer's own car
-sheets, projectiles, drops (flat decals via a non-uniform blit),
-reticle, beams, explosions, smoke, the armor bar and ammo pips, the kill
-feed, `ACK` and the taunt pop-ups, all from the World and its events.
-Details are written when the art lands.
+The art landed (merged 3c6a5356; `ASSETS.md` lists every sheet, its cells,
+and the lines for `build.zig`). Track B owns `main.zig`, new `select.zig`,
+new `roster_text.zig` (bios, taunts, wrecked lines; SPEC 4.1 table,
+SYSADMIN line 2 = `MACHINES WOKE UP.`), new `fx.zig`, `hud.zig`,
+`sprites.zig`, `camera.zig`, `menu.zig`, `results.zig`, the look-back and
+jitter hooks in `render.zig`, `build.zig`, `tools/scripts/`, `docs/`.
+It must not edit Track A's files (`world.zig`, `sim.zig`, `weapons.zig`,
+`ai.zig`, `tuning.zig`, `racers.zig`, `sim_test.zig`, `weapons_test.zig`).
+It renders only from the M1.0 interface, so the two merge cleanly.
+
+1. **Wire the art** into `build.zig` per ASSETS.md (the art `fx.png`
+   clashes with Zero's `fx.png` by name: rename one module symbol). Drop
+   the placeholder re-paletted machine sprite and Zero's sheets the cart
+   no longer uses.
+2. **Cars**: each racer's own sheet. Pick the cell from the angle between
+   the camera and the car heading (rear, rear quarter, side; mirrored for
+   the other side), the airborne cell while `hop > 0`, the wreck cell plus
+   flames from `fx` for the hulk (the first 90 ticks of a wreck), nothing
+   after that until the respawn, blinking while `immune`, a white hit flash
+   while `hit_flash`. Smoke puffs below 50% armor and black smoke with
+   sparks below 25%, render-side in `fx.zig`.
+3. **The 64-object depth list** in `sprites.zig`: cars, projectiles
+   (`weapons.png` cells, SPEAR PHISH by view), drops. Flat drops (puddle,
+   caltrops, firewall base) go through a **non-uniform scaled blit**
+   (height x squash) so they lie on the floor; the firewall flames stand
+   up. Farthest culled first.
+4. **Effects from events** (`fx.zig`, render-side particle ring, cursor
+   over `World.events` by `seq`, never written back): explosions (4
+   frames), sparks (radius 0), the FIBER LANCE beam (6 frames, a 1 to 2 px
+   line from car to target or along the heading for `length` px), muzzle
+   flash, respawn flicker. The fish-hook reticle on the followed car's
+   `lock` target (`hud.png`), and the charge glow while `charge > 0`.
+5. **HUD** (SPEC 10 layout, 4 px margins): lap, rank, armor bar
+   green-to-red, front ammo count and rear ammo pips, burst pips, the kill
+   feed line from `wreck` events (`KILLER > VICTIM`, or `VICTIM` plus the
+   cause for a fall), `ACK` above the victim on the followed car's `hit`
+   events, and the **taunt pop-up** (a 24x24 half-scale portrait plus the
+   line, top left, 90 ticks): the killer's taunt when they wreck the
+   followed car, and the victim's wrecked line when the followed car makes
+   the kill. Per-car messages for wrecks (`WRECKED BY SYSADMIN`,
+   `SEGMENT FAULT`).
+6. **Racer select** (`select.zig`, SPEC 8.1, matching
+   `docs/art_select_mock.png`): portrait, name, car, the car turning on
+   its yaw cells, SPD/ARM/DMG bars, the two weapon names with the `A` and
+   `↓A` glyphs, the bio, `< A PICK >`. The flow is Title, then Start, then
+   select (A picks), then the track row (one track for now, Left/Right is
+   ready for more), then the countdown. The picked racer drives car slot
+   `human = 0`; the other five are AI. The splash uses Snouty's
+   eyepatched portrait. Results show each row's half-scale portrait, and
+   the winner's full portrait and taunt.
+7. **Look back** while Select is held (camera yaw + 180 degrees, own car
+   hidden, `BEHIND` over the horizon), render-side only.
+8. **A render stress scene**: a debug export that fills the World pools
+   (six cars on screen, all projectile kinds, every drop kind, two
+   explosions) without the sim, and `tools/scripts/m1_render_stress.json`,
+   benched worst frame (plain and `--lcd`) recorded in "M1 status".
+   Preview scripts for the select across all six racers and a race.
+9. `tools/check.sh` green in the worktree, commits on `gc/present` with
+   the `Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>` line,
+   branch pushed. The lead merges `gc/present` into `gc/spec` after
+   Track A lands and runs the integrated gate.
 
 ### M1 gate
 
@@ -334,6 +387,220 @@ explosions) under 8 ms worst; `docs/preview_m1.gif` with a racer select
 and a real fight; tag `snouty-gc/m1`; merged to main.
 
 ### M1 status
+
+- 2026-10-04: **Track A (combat simulation) DONE** on `gc/spec`. New
+  `weapons.zig` (firing from the race byte, the projectile and drop pools,
+  hit resolution, the SPEAR PHISH lock, the event ring writer) and
+  `weapons_test.zig`; `sim.zig` gains armor and `damage`, `wreck` with
+  kill credit, ramming by mass and closing speed with MAINFRAME's plough,
+  wall damage by impact, hulks, per-car hit-stop, respawn with full armor
+  and kept ammo, the per-lap ammo refill, and calls into the weapons and
+  the AI aim; `ai.zig` crews gain SPEC 4.3/6.5 characters (target
+  preference, reaction delay, aim noise from the world PRNG, drop rules,
+  LEGACY rams, ROOTKIT stalks, everyone steers round a FIREWALL, LANCE
+  charged on straights). Every number is in `tuning.zig` (SPEC values where
+  SPEC gives one, the dangerous side where it does not). Interface: no
+  field renamed or removed; added `Car.rot_ticks`, `rear_cd`, `on_leak`,
+  `aim`, `aim_ticks`, `World.combat`, `Setup.combat` (default true; false
+  only for the completable tests, SPEC 12). `Car.a_was` holds "A without
+  Down" last tick. Render-side helpers: `sim.is_hulk(c)` (draw the burning
+  hulk: `sprites.draw_cars` still hides every wrecked car),
+  `weapons.projs_live`/`drops_live`.
+- Events as M1.0 specified: `hit` (attacker or `no_car` for a wall/hulk,
+  victim, damage; damage under `hit_event_min` = 2, i.e. a FIREWALL tick,
+  logs only when no hit flash is running), `wreck` (victim, killer or
+  `no_car`, `Wreck` cause), `lance` (owner, target or `no_car`, length px
+  capped at 255: the beam reaches 300, so use the event's x, y end point),
+  `explode` (`a` = the wrecked or hit car or `no_car`, `b` = radius px: 24
+  for a wreck and a LOGIC BOMB, 12 for a SPEAR PHISH hit, 0 for a spark on
+  a wall or hulk), `respawn` (car). An armor wreck sets no per-car
+  `Message` (the `Message` enum belongs to hud.zig's switch): the
+  presentation keys its text on the `wreck` event.
+- Tests (`zig build test-gc`): **51 pass** (25 before). New in
+  `weapons_test.zig`: PING (cadence, damage, ammo per volley, range, never
+  the owner, empty), BROADCAST (fan, damage, knock, cooldown, reach), FIBER
+  LANCE (fizzle free, charge cap, hit, miss off the line, first car in line
+  takes it, a wall stops it), SPEAR PHISH (lock cone, range, behind, nearest,
+  not on wrecks; homing within 600 turns/tick hits a dodging target; no lock
+  flies straight; 3 a lap), shots pass under airborne and immune cars and
+  spark on walls and hulks, rear press edge and cooldown (Down+A never fires
+  the front), LOGIC BOMB (arming, trigger, blast radius, push, spares cars
+  outside 24 px), MEMORY LEAK (growth 6 to 18, slick and yaw kick, expiry at
+  600), BIT ROT (row, damage per caltrop, consumed, slow), FIREWALL (1 a
+  tick inside, nothing beside, no event flood, expiry), pools at cap reuse
+  slots, ramming (formula both ways, plough x2 from the front only, grazes
+  free, combat off), wreck (credit, events, hit-stop while the world runs,
+  hulk blocks a car driven at it for 90 ticks, respawn at 120 with full
+  armor, kept ammo, immunity), kill credit (180-tick window, falls, walls,
+  own drops), loadouts and the line refill, combat off, AI aim and
+  reaction, target preference (BOTNET the leader, SYSADMIN the human),
+  drops (KIDDIE on its line, LEGACY wide), LANCE charge and release,
+  firewall dodge; determinism with combat (a seeded 6-AI fight twice, two
+  worlds interleaved with both humans firing). The M0 random-input
+  determinism tests now run with combat on.
+- **Soak** (20 seeded 6-AI races, combat on, run until all six finish):
+  all finish in 6,641 to 7,962 ticks (the clean autopilot needs 4,968 for
+  3 laps); longest no-progress run **228 ticks** (gate 600); pools peak at
+  21 of 48 shots and 32 of 32 drops (BIT ROT's six caltrops a drop; the
+  oldest is reused); 19 wrecks a race on average (374 in all; 1 fall),
+  every car wrecked 1 to 8 times; up to 741 events a race. The SNOUTY
+  autopilot as the human in a full combat race (10 seeds): mean finish
+  6,222 ticks, 4 wrecks a race, ranks 2 to 6. Damage by source over those
+  10 races: BOTNET 6,574, SNOUTY 4,271, SYSADMIN 3,961, LEGACY 3,000,
+  KIDDIE 2,712, ROOTKIT 1,483, walls and hulks 395.
+- **`@sizeOf(World)` = 1,964 B** (Car 84; cap 2,560).
+- Gate: `tools/check.sh` green (build, test via test-gc, check-float,
+  tracks, preview, bench). Bench on the re-recorded `m0_race.json` (600
+  frames, combat on): mean 3.08 ms, worst 3.92 ms (frame 20, the race
+  start), `--lcd` identical; `sim.simulate` (with the weapons and AI aim
+  inlined) is 2.4% of cycles. The stress scene is Track B's script.
+- Changes outside Track A's files, for the gate: `tools/check.sh` (the
+  preview's World bound 1024 -> 2560, matching sim_test's cap, since the
+  M1.0 pools already made it 1,940 B; the "no car wrecked when the results
+  come up" expectation dropped, as combat makes it legitimate) and
+  `tools/scripts/m0_race.json` re-recorded with `tools/record_script.py`
+  (the autopilot now fires, so the M0 recording no longer replayed its
+  race).
+- 2026-10-04: **Track B (presentation) DONE** on `gc/present` (gc/spec
+  with Track A merged in; not merged back, not tagged). The art is wired
+  (`build.zig` per ASSETS.md; Zero's `fx.png` renamed `exhaust.png` for
+  the BURST flame, `machine.png` and `snouty_head.png` retired) and every
+  sheet goes through one runtime `sprites.Sheet` and blit with separate
+  width and height. New `select.zig`, `roster_text.zig` (bios, taunts,
+  wrecked lines, weapon names, HUD liveries, stat bars; host-tested),
+  `fx.zig`, `stress.zig`. **Cars**: the racer's own sheet, cell from the
+  camera-to-heading angle (rear under 22.5 degrees, quarter under 67.5,
+  else side, mirrored for the left; no front view exists), the followed
+  car leans into its steer, airborne cell while `hop`, `sim.is_hulk` draws
+  the wreck cell with flames, immunity blinks, `hit_flash` white, a lance
+  charge glows (faster, then white when full). **Depth list**: cars,
+  projectiles (PING, BROADCAST, SPEAR PHISH by view), drops (MEMORY LEAK
+  and BIT ROT as squashed decals, LOGIC BOMB dark until armed then
+  blinking, FIREWALL as 16 px segments of bricks with standing flames) and
+  particles, sorted far first on u32 keys, 64 drawn, the farthest culled
+  first except cars (never culled). **fx.zig** reads the event ring with
+  its own `last_seq` (never writes): explosions (radius from `explode`),
+  sparks, respawn spark ring, grey smoke under 50% armor and black smoke
+  with sparks under 25% and from hulks, muzzle flashes when `ammo_front`
+  drops, lance beams (12 projected points from the owner to the event's
+  x, y, 6 ticks), the kill feed, taunt pop-up, ACKs, the wreck note
+  (`WRECKED BY X`, `ZERO-DAY`; a fall keeps the sim's `SEGMENT FAULT`),
+  the armor-bar flash and a 12-tick shake on the victim's badge.
+  **HUD** (4 px margins): LAP left, rank centre, the empty pickup box
+  (roulette blank) right; feed y 23; pop-up y 33 (24x24 portrait, name,
+  the line wrapped at 15); message bar y 62; bottom left (all left of x
+  61, clear of the car sprite): MPH, `A` + front count + BURST bolts,
+  `Down+A` + rear pips, armor bar 40x4 green/yellow/red; minimap with
+  the art liveries, wrecked cars blink; SPEAR PHISH reticle on `lock`;
+  `BEHIND` while looking back. The race clock left the race HUD (SPEC 10
+  has none; results keep the times). **Flow**: splash (Snouty's
+  eyepatched portrait at 2x), title, Start to the **racer select** (as the
+  mock: Left/Right racers, Down to the track row, A or Start races, B to
+  the title), countdown, race, results (the winner's card, then the field
+  with 24x16 portrait bands, best lap, time, kills, wrecks), then the
+  select again. M0's QUICK RACE/SOUND menu is gone; Sound is in pause.
+  The picked racer drives car `human = 0`. **Look back** (Select held):
+  the camera turns round `cam_behind` ahead of the car for that frame
+  only, the hills march backward (`hills.backward`), own car hidden.
+  **Stress scene**: `export var gc_stress` (bench `--poke gc_stress=1`) or
+  the wasm `debug_stress:1`: six cars in view (a hulk, a hit-flasher, a
+  charger, a smoker), all 48 projectiles, all 32 drops (8 FIREWALLs = 40
+  segments), two explosions, a beam, a hit and a wreck event every 30 / 90
+  ticks, the view sweeping +-14 degrees; 125 to 136 objects gathered, 64
+  drawn. `tools/scripts/m1_render_stress.json` holds Select 400..460.
+- Track B bench (calibrated, 600 frames): **stress mean 4.72 ms, worst
+  5.13 ms** (frame 94; p95 5.06), `--lcd` identical; look-back frames 3.2
+  ms (22 objects). The sprites cost about 1.6 ms of it: `blit_rect` 26%
+  of cycles (85 blits a frame), the list (gather, project, sort) 0.4 ms;
+  SPEC 18's 64-object estimate of 1 ms holds for the blits alone. Two
+  cheapenings: the list sorts u32 keys (distance << 8 | slot) instead of
+  entries, and `hills.height_ahead` caches the height under the camera
+  (it was two 64-bit divides per projected point; 192 a frame).
+  `m0_race.json` (a real combat race): mean 3.69 ms, worst 4.92 ms (frame
+  285), `--lcd` identical (Track A alone 3.08 / 3.92). RAM ELF `size -A`:
+  **.text 136,636 + .data 6,676 + .bss 29,804** (+ 592 exidx/extab/
+  descriptor) = 173,708 B: **100,468 B (98 KB) free** under the 274,176 B
+  window less the stack. `tools/check.sh` green: it now also runs a select
+  preview (Start, Right x3 = SYSADMIN, B, Start, Left = BOTNET, A races
+  car 5), a stress preview (64 drawn of more gathered) and the stress
+  bench plain and `--lcd` under 8 ms. `docs/preview_m1_select.gif` (splash,
+  title, all six racers, the track row, the pick) and
+  `docs/preview_m1_race.gif` (an autopilot combat race: wrecks with the
+  taunt pop-up, the kill feed, the reticle, a MEMORY LEAK, look back).
+  Deferred questions 24 to 31.
+
+## M2 Pickups
+
+Goal: RMA crates on the track, the roulette, rank-weighted rolls and the
+15 non-league pickups of SPEC 6.3 with their gags, AI pickup policies
+(SPEC 6.5 item 3). PROMPT INJECTION waits for the Perimeter league.
+
+### Track A: pickup simulation (Opus agent, worktree /home/exedev/snouty-badge-gc, branch gc/spec; starts while M1 Track B is still running)
+
+Owns what M1 Track A owned (`world.zig`, `sim.zig`, `weapons.zig`,
+`ai.zig`, `tuning.zig`, `racers.zig` gameplay, `sim_test.zig`,
+`weapons_test.zig`), plus new `pickups.zig` and `pickups_test.zig`,
+`track.zig`'s data accessors (not the renderer's league slices), and
+`tools/build_tracks.py` plus `cart/src/tracks/*.track` and the generated
+track `.bin`s for the crate rows. It must not edit M1 Track B's files
+(see M1 Track B). M1 Track B merges `gc/spec` in before it finishes.
+
+1. **M2.0 interface first**, as its own commit before the behaviour, and
+   documented here under "M2.0 Interface": the World and Car fields the
+   presentation will read. That means `Car.pickup` (an enum in SPEC 6.3
+   order, plus `none`), the roulette ticks, per-car status timers (bit
+   flip, deadlock partner and ticks, captcha with the human mini-game
+   state: cursor cell, lit mask, cleared mask; sudo, heisenbug, prefetch,
+   spaghetti drag, frozen with the KERNEL PANIC cause, the rubber duck),
+   crate state (positions come from the track; respawn timers in the
+   World), and new projectile, drop and event kinds: the KERNEL PANIC
+   packet, a DDOS drone pool (8), FORK BOMB, HONEYPOT, SPAGHETTI,
+   RACE CONDITION swap, roll result, and pickup used. Same contract as
+   M1.0: only `simulate` writes, the presentation reads.
+2. **Crates on the track**: a `crates` feature word in the `.track` format
+   (a row of 3 or 4 spawns across the track at a centerline sample);
+   `build_tracks.py` writes the crate positions into the track data; at
+   least two crate rows on Landfill Loop; each crate respawns 180 ticks
+   after it is taken. The generator stays byte-deterministic.
+3. **Rolls**: driving through a crate with no pickup starts the 45-tick
+   roulette; the result comes from the world PRNG by rank tier (SPEC 6.4).
+   KERNEL PANIC is excluded for 1st, and ZERO-DAY is limited to 5th and 6th
+   and once per car per race. B uses the pickup, and Down+B uses it
+   backward where SPEC gives a direction.
+4. **The 15 pickups** exactly as SPEC 6.3 (numbers into `tuning.zig`).
+   The CAPTCHA mini-game runs in the sim from the human's input byte (A
+   on a lit cell under the sweeping cursor clears it), so it plays
+   identically on both badges of a link race. AIs "solve" by character
+   (KIDDIE slowest). HEISENBUG makes a car untargetable by locks and the
+   AI, and it passes through cars and drops. RUBBER DUCK takes homing
+   targets and the first hit from behind. SUDO makes a car invulnerable,
+   ramming deals 40, and drops it touches are destroyed.
+5. **AI pickup policies** per crew (SPEC 4.3 and 6.5).
+6. **Tests**: a scenario per pickup (SPEC 12 lists the key asserts), roll
+   odds over many seeded rolls within tolerance of the table, crate
+   respawn, the chaos soak extended with pickups (20 races finish, no car
+   stuck for more than 600 ticks, no pool overflow), and determinism with
+   pickups on.
+7. Gate green, PLAN "M2 status" Track A paragraph, deferred questions,
+   commits with the `Co-Authored-By: Claude Opus 5.5
+   <noreply@anthropic.com>` line, push gc/spec. No tag, no merge.
+
+### Track B: pickup presentation (after M1 is tagged)
+
+HUD pickup box and roulette, crates and the pickup world objects
+(duck, `&` bombs, drones, packet, honeypot, spaghetti, chains), the human
+gags (KERNEL PANIC blue screen, BIT FLIP blink and jitter, the CAPTCHA
+grid you play, spaghetti strand, tearing for RACE CONDITION, HEISENBUG
+flicker, SUDO `#`), and the preview GIF with FORK BOMB, KERNEL PANIC on
+the player and a CAPTCHA solve. Written in detail when M1 lands.
+
+### M2 gate
+
+Gate green; pickup scenario tests and the soak pass; stress bench under
+8 ms worst with pickups in play; `docs/preview_m2.gif`; tag
+`snouty-gc/m2`; merged to main.
+
+### M2 status
 
 (empty)
 
@@ -374,3 +641,76 @@ SPEC 17 holds the design defaults. Taken during M0 (Track A):
     minimap dots), until the art track's car sheets.
 12. **Select** does nothing in the M0 race (look-back is M3); the minimap
     is 32 px fixed (Zero's Select toggle is gone).
+
+Taken during M1 (Track A, combat simulation):
+
+13. **Wall bounce fixed**: Zero's rail reflection subtracts `(1 + e) vn`
+    from both velocity components whatever the normal, which flings a car
+    along the wall faster than it hit it. With wall damage that turned
+    scrapes into 60-damage hits and most falls into the pits. GC reflects
+    along the normal (`v -= (1 + e)(v.n) n / |n|^2`); Zero is untouched.
+    The clean autopilot's 3 laps are unchanged (4,968 ticks).
+14. **Wall damage** (SPEC 3.3 gives no number): 4 per px/tick of normal
+    impact speed over 1 px/tick, so a 3 px/tick head-on costs 8. Hulks
+    are walls for it.
+15. **Contacts never push a car into a wall** (a hulk's push-out could
+    shove a car through a two-tile wall onto the next leg), and a car more
+    than its sample's half width + 32 px off the centerline is off its leg:
+    a fall (SEGMENT FAULT), credited to whoever hit it last.
+16. **Drops spare their owner for 60 ticks**, then hit anyone; a LOGIC
+    BOMB's blast hurts every car within 24 px, its owner included.
+    Unexploded bombs clear after 30 s, caltrops after 20 s (SPEC silent).
+17. **Immune (respawned), airborne and finished cars**: shots pass through
+    or under them and drops ignore them; finished cars neither fire nor
+    take damage. The AI does not aim at immune or airborne cars.
+18. **Ramming is mutual**: each car rams the other with the SPEC formula;
+    closing under 0.25 px/tick deals nothing (pack grinding). The plough
+    applies when the victim is within 45 degrees of the MAINFRAME's nose:
+    LEGACY at 3 px/tick into a KIDDIE deals 82, a wreck in one hit.
+19. **Unspecified weapon timings**: PING one ammo a twin volley; BROADCAST
+    24-tick cooldown; LANCE 20-tick cooldown after a shot; SPEAR PHISH
+    launched at the car's velocity + 3 px/tick, 40-tick cooldown; rear
+    weapons on the Down+A press edge with a 30-tick cooldown. FIREWALL
+    flame is 24 px deep (a car crossing at speed takes about 8). BIT ROT's
+    slow brakes the car while it is over 80% of its top speed.
+20. **Hit-stop** is only the per-car counter (12 ticks, for the
+    presentation); the WATCHDOG delay runs from the wreck, not after it.
+21. **AI characters** (`ai.crews`): reaction ticks / aim noise px: SNOUTY
+    12 (of lock) / 2, LEGACY 4 / 10, KIDDIE 1 / 14, SYSADMIN 6 / 2,
+    ROOTKIT 8 / 4, BOTNET 6 / 8. SYSADMIN prefers humans, BOTNET the
+    leader, the rest the nearest. A braking AI does not fire; a LANCE
+    holder that must brake lets go (a charged beam fires blind).
+22. **Ammo refills only on a credited lap** (the sectors seen), so backing
+    over the line does not reload.
+23. **Balance** is left where the soak puts it (19 wrecks a 6-AI race; the
+    autopilot human wrecked about 4 times a race and about 21 s slower than
+    a clean race). Adrian's play test sets the numbers in `tuning.zig`.
+
+Taken during M1 (Track B, presentation):
+
+24. **Flow**: Title, Start, the racer select, A races (SPEC 8.1's "two
+    presses"); the track row is reached with Down on the select (one track,
+    Left/Right ready). M0's main menu (QUICK RACE, SOUND) is gone until
+    the M3 modes need a menu; the sound toggle lives in pause. Pause QUIT
+    and the results go back to the select.
+25. **No race clock in the race HUD** (SPEC 10 lists none and the pickup
+    box took its row); the results show finish times and best laps.
+26. **Rank in the top centre**, the pickup box drawn empty (the roulette
+    blank) from M1 so the layout is final; feed at y 23 and pop-up at y 33
+    (under the box, not y 8 as SPEC 10's table has it: the 8x8 font needs
+    the rows), message bar moved from y 56 to y 62.
+27. **Cars are never culled** by the 64-object cap; among the rest the
+    farthest go first.
+28. **No front view**: past 67.5 degrees off the camera every car (and
+    SPEAR PHISH) shows its side view, mirrored by the nose's side.
+29. **Results** are two cards (the winner's, then the field) because six
+    half-scale portraits and the winner's full one do not fit 128 px; the
+    rows show a 24x16 band (portrait rows 8..39) at half scale.
+30. **Liveries**: the HUD (minimap, select, results, feed) uses the art
+    track's suggested colours (`roster_text.color`); `racers.livery` (the
+    M0 placeholders, sim side) is unused by rendering now.
+31. **Effects mapping**: a `hit` sparks on the victim, `ACK` only over cars
+    the followed car hit; a `wreck` makes no explosion of its own (the
+    sim's `explode` radius 24 follows it); explosions are drawn 1.5 x
+    radius + 8 world px across; the muzzle flash keys on `ammo_front`
+    dropping.
