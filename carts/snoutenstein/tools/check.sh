@@ -75,7 +75,8 @@ node tools/check_determinism.mjs $W --script tools/scripts/m1_walk.json --frames
 # M5: the demo data file matches its script (hash kept); the title idles
 # 600 ticks into the demo and the demo returns to the title when its log
 # ends; the embedded log replays to the recorded hash (DEMO OK); UP at
-# update 700 takes the demo over without stepping and refills the meter.
+# update 700 interrupts the demo back to the title (the press is spent
+# there, the demo plays a later level), and A at 800 starts the campaign.
 demo_hash=$(grep -o 'final_hash: u32 = 0x[0-9A-F]*' cart/src/demos/build_farm.zig | sed 's/.*= //')
 demo_level=$(grep -o 'level_index: u8 = [0-9]*' cart/src/demos/build_farm.zig | sed 's/.*= //')
 python3 tools/gen_demo.py tools/scripts/demo_build_farm.json --out out/demo_check.zig --hash "$demo_hash" --level "$demo_level" >/dev/null
@@ -89,19 +90,19 @@ node ../../tools/preview.mjs $W --frames $((600 + demo_ticks + 30)) --quiet --ou
 node ../../tools/preview.mjs $W --frames $((demo_ticks + 5)) --quiet --out out/demo --call debug_start_demo \
   --dump-exports debug_mode,debug_demo,debug_demo_result,debug_tick,debug_desync \
   --expect "debug_demo_result == 1" --expect "debug_mode == 0" --expect "debug_desync == 0"
-node ../../tools/preview.mjs $W --frames 900 --quiet --out out/takeover --script tools/scripts/m5_takeover.json \
-  --dump-exports debug_mode,debug_demo,debug_tick,debug_meter,debug_desync \
-  --call-at "699 debug_tick" --call-at "700 debug_tick" \
-  --at "699 debug_demo == 1" --at "700 debug_demo == 0" --at "700 debug_mode == 1" --at "700 debug_meter == 600" \
-  --expect "debug_mode == 1" --expect "debug_desync == 0"
-node tools/check_determinism.mjs $W --script tools/scripts/m5_takeover.json --frames 900
-# Review 2026-10-01 G1: UP at update 1900 takes the demo over during its
-# hold-B rewind; the rewind is committed and the meter refilled at the same
-# tick, counted once (live == replay, no desync).
-node ../../tools/preview.mjs $W --frames 1960 --quiet --out out/takeover_rewind --press UP:1900-1900 \
+node ../../tools/preview.mjs $W --frames 900 --quiet --out out/interrupt --script tools/scripts/m5_interrupt.json \
+  --dump-exports debug_mode,debug_demo,debug_level,debug_tick,debug_desync \
+  --at "699 debug_demo == 1" --at "699 debug_mode == 1" --at "700 debug_demo == 0" --at "700 debug_mode == 0" \
+  --at "799 debug_mode == 0" --at "800 debug_mode == 1" --at "800 debug_level == 0" --at "800 debug_tick == 0" \
+  --expect "debug_mode == 1" --expect "debug_level == 0" --expect "debug_demo == 0" --expect "debug_desync == 0"
+node tools/check_determinism.mjs $W --script tools/scripts/m5_interrupt.json --frames 900
+# Review 2026-10-01 G1: UP at update 1900 interrupts the demo during its
+# hold-B rewind; the rewind is committed once and the cart lands on the
+# title with no desync.
+node ../../tools/preview.mjs $W --frames 1960 --quiet --out out/interrupt_rewind --press UP:1900-1900 \
   --dump-exports debug_mode,debug_rewinds,debug_desync,debug_demo \
   --at "1899 debug_mode == 6" --at "1899 debug_rewinds == 0" --at "1900 debug_rewinds == 1" --at "1900 debug_demo == 0" \
-  --expect "debug_rewinds == 1" --expect "debug_desync == 0"
+  --at "1900 debug_mode == 0" --expect "debug_mode == 0" --expect "debug_desync == 0"
 # M5.2: the secret door in the test level's start room looks like the wall
 # until walked into, then slides open into the corridor below (py > 8).
 node ../../tools/preview.mjs $W --frames 340 --quiet --out out/secret --script tools/scripts/m5_secret.json \

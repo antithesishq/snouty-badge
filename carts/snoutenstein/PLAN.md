@@ -1265,3 +1265,10 @@ render check). check.sh now reads the demo level from the data file.
   GameState untouched, demo hash unchanged. New `m6_carry.json` in
   `tools/check.sh`: Debugger from the test level arrives on E1M1 with 2
   charges; host test in sim.zig.
+- 2026-10-04: interrupting the attract demo goes to the title (Adrian: the
+  demo plays Production, so handing it over makes no sense). Any edge on
+  A, B, Start, Select or the joystick ends the demo without stepping and
+  shows the menu; the press is spent there. `take_over` and
+  `rewind.set_meter` (and its same-tick test) are gone; `m5_takeover.json`
+  became `m5_interrupt.json` (UP at 700 lands on the title, A at 800
+  starts Build Farm at tick 0). Demo data and hash unchanged.
