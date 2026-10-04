@@ -1,94 +1,288 @@
-//! Spawner and stage flow: the SPEC.md section 9 stage-1 table as data,
-//! then the stage phases (PLAN.md "Gameplay numbers for M3"): at 66 s the
-//! table goes quiet (`.warning`), at 72 s the boss enters (`.boss`), its
-//! death clears the stage (`.cleared`, a 120-tick breather) and the next
-//! stage starts. Since M7 the difficulty comes from `rank.zig` (the loop
-//! modifiers are gone) and the state carries a stage index: there is one
-//! table so far, so `stage_count` is 1 and every clear is also a new loop;
-//! track B1 adds the other three tables (PLAN.md M7 "Stages").
+//! Spawner and stage flow (PLAN.md M7 "Stages"): four stages, `UNIT
+//! TESTS`, `INTEGRATION`, `STAGING` and `PRODUCTION`, one table each,
+//! then the loop again (`loop + 1`, rank +400). Per stage: the `STAGE n`
+//! pop (hud.zig) over the first 120 ticks of the table, the table (about
+//! 70 s, sorted by tick; a midboss entry pauses the table clock while the
+//! herd lives, so it cannot be waited out), `.warning` for 6 s, the boss
+//! (`.boss`), its death (`.cleared`, +500 and a fuel refill) or escape (no
+//! +500, no refill), a 120-tick breather, the next stage. The difficulty
+//! comes from `rank.zig` and from what each table puts on the field.
 const enemies = @import("enemies.zig");
 const rng = @import("rng.zig");
 const world = @import("world.zig");
 const formations = @import("formations.zig");
 
 const Kind = enemies.Kind;
+const Edge = enemies.Edge;
 
 /// `y` value meaning "draw from the world rng".
 const random: i16 = -1;
 
-/// One scripted spawn. Gnat entries spawn one string of 5 at `y` (count and
-/// spacing are ignored). Other kinds spawn `count` enemies, the i-th with
-/// `i * spacing` ticks of delay; each draws its own random y when `y` is
-/// `random`. Spider: `y` is its column x (random: [64, 136]).
+/// One scripted spawn. `y` is the cell y for the right and left edges and
+/// the cell x for the top and bottom edges (spider: its column x; mite and
+/// herd: ignored), `random` draws it from the world rng. Gnat entries
+/// spawn one string of 5 (count and spacing are ignored); centipede entries
+/// one centipede (head and 5 segments). Other kinds spawn `count`, the
+/// i-th `i * spacing` ticks later, offset across the edge by `vee(i) * dy`
+/// px (0, -dy, +dy, -2 dy, ...: a vee when the spacing is short).
+/// `formation`: the members form one formation that drops a crate when
+/// all are shot down (1942's POW). `pattern` picks the kind's movement /
+/// fire program (enemies.zig). `edge` (wasps and ladybugs): where they
+/// come in; fleas always come from the left, behind the ship.
 pub const Entry = struct {
     at: u32,
     kind: Kind,
     y: i16 = random,
     count: u8 = 1,
     spacing: u8 = 0,
+    dy: i8 = 0,
+    pattern: u8 = 0,
+    formation: bool = false,
+    edge: Edge = .right,
 };
 
 fn s(sec: u32) u32 {
     return sec * 60;
 }
 
-/// Stage 1, sorted by `at`.
-pub const stage1 = [_]Entry{
-    // 0 s: learn the zapper.
-    .{ .at = s(0), .kind = .gnat, .y = 40 },
-    .{ .at = s(0), .kind = .gnat, .y = 80 },
-    // 8 s
-    .{ .at = s(8), .kind = .beetle, .y = 64 },
-    // 14 s
-    .{ .at = s(14), .kind = .gnat, .y = 30 },
-    .{ .at = s(14), .kind = .wasp, .y = 100 },
-    // 22 s
-    .{ .at = s(22), .kind = .spider, .count = 2, .spacing = spider_stagger },
-    .{ .at = s(22), .kind = .gnat },
-    // 32 s
-    .{ .at = s(32), .kind = .moth, .count = 2 },
-    .{ .at = s(32), .kind = .beetle, .y = 40 },
-    .{ .at = s(32), .kind = .beetle, .y = 88 },
-    // 44 s
-    .{ .at = s(44), .kind = .wasp, .count = 3, .spacing = 30 },
-    .{ .at = s(44), .kind = .spider },
-    // 54 s
-    .{ .at = s(54), .kind = .moth, .count = 3 },
-    .{ .at = s(54), .kind = .beetle },
-    .{ .at = s(54), .kind = .gnat },
-    .{ .at = s(54), .kind = .gnat },
+/// Stage 1, UNIT TESTS: the five old bugs. Learn the game, but every kind
+/// fires soon after it shows; from 20 s the gnat strings fire too.
+const stage1 = [_]Entry{
+    .{ .at = s(2), .kind = .gnat, .y = 40, .formation = true },
+    .{ .at = s(4), .kind = .gnat, .y = 88 },
+    .{ .at = s(7), .kind = .wasp, .y = 56, .count = 3, .spacing = 8, .dy = 18 },
+    .{ .at = s(10), .kind = .beetle, .y = 40 },
+    .{ .at = s(12), .kind = .gnat, .y = 96 },
+    .{ .at = s(14), .kind = .spider },
+    .{ .at = s(15), .kind = .wasp, .y = 30, .count = 3, .spacing = 8, .dy = 16 },
+    .{ .at = s(17), .kind = .moth, .count = 2, .spacing = 30 },
+    .{ .at = s(20), .kind = .gnat, .y = 30, .pattern = 1 },
+    .{ .at = s(21), .kind = .gnat, .y = 90, .pattern = 1 },
+    .{ .at = s(23), .kind = .beetle, .y = 80 },
+    .{ .at = s(24), .kind = .wasp, .y = 40, .count = 3, .spacing = 8, .dy = 18 },
+    .{ .at = s(26), .kind = .spider, .count = 2, .spacing = 60 },
+    .{ .at = s(29), .kind = .moth, .count = 2, .spacing = 30 },
+    .{ .at = s(29), .kind = .gnat, .pattern = 1 },
+    .{ .at = s(32), .kind = .wasp, .y = 92, .count = 3, .spacing = 8, .dy = 16 },
+    .{ .at = s(33), .kind = .wasp, .y = 28, .count = 3, .spacing = 8, .dy = 16 },
+    .{ .at = s(35), .kind = .beetle, .y = 28 },
+    .{ .at = s(35), .kind = .beetle, .y = 92 },
+    .{ .at = s(38), .kind = .gnat, .y = 50, .pattern = 1, .formation = true },
+    .{ .at = s(39), .kind = .gnat, .y = 80, .pattern = 1 },
+    .{ .at = s(41), .kind = .spider, .count = 2, .spacing = 40 },
+    .{ .at = s(44), .kind = .moth, .count = 3, .spacing = 30 },
+    .{ .at = s(45), .kind = .wasp, .y = 64, .count = 3, .spacing = 8, .dy = 18 },
+    .{ .at = s(48), .kind = .beetle, .y = 60 },
+    .{ .at = s(49), .kind = .gnat, .y = 24, .pattern = 1 },
+    .{ .at = s(50), .kind = .gnat, .y = 100, .pattern = 1 },
+    .{ .at = s(52), .kind = .wasp, .y = 30, .count = 3, .spacing = 8, .dy = 16 },
+    .{ .at = s(53), .kind = .wasp, .y = 92, .count = 3, .spacing = 8, .dy = 16 },
+    .{ .at = s(54), .kind = .spider, .count = 2, .spacing = 40 },
+    .{ .at = s(56), .kind = .moth, .count = 2, .spacing = 30 },
+    .{ .at = s(57), .kind = .beetle, .y = 36 },
+    .{ .at = s(57), .kind = .beetle, .y = 84 },
+    .{ .at = s(60), .kind = .gnat, .y = 24, .pattern = 1 },
+    .{ .at = s(61), .kind = .gnat, .y = 64, .pattern = 1 },
+    .{ .at = s(62), .kind = .gnat, .y = 100, .pattern = 1 },
+    .{ .at = s(63), .kind = .wasp, .y = 56, .count = 3, .spacing = 8, .dy = 20 },
+    .{ .at = s(65), .kind = .spider, .count = 2, .spacing = 40 },
+    .{ .at = s(66), .kind = .moth, .count = 2, .spacing = 30 },
+    .{ .at = s(68), .kind = .gnat, .y = 40, .pattern = 1 },
+    .{ .at = s(68), .kind = .gnat, .y = 88, .pattern = 1 },
 };
 
-/// SPEC.md gives no spacing for "spider x2"; 60 ticks keeps two random
-/// columns from dropping on top of each other at the same moment.
-const spider_stagger = 60;
+/// Stage 2, INTEGRATION: the centipede, ladybug loops from the top and the
+/// bottom, fleas from behind; the Thundering Herd at 35 s.
+const stage2 = [_]Entry{
+    .{ .at = s(2), .kind = .centipede, .y = 40, .formation = true },
+    .{ .at = s(5), .kind = .gnat, .y = 96, .pattern = 1 },
+    .{ .at = s(7), .kind = .ladybug, .y = 120, .count = 4, .spacing = 16, .edge = .top },
+    .{ .at = s(10), .kind = .flea, .y = 80 },
+    .{ .at = s(11), .kind = .wasp, .y = 60, .count = 3, .spacing = 8, .dy = 18, .pattern = 1 },
+    .{ .at = s(13), .kind = .ladybug, .y = 100, .count = 4, .spacing = 16, .edge = .bottom },
+    .{ .at = s(16), .kind = .beetle, .y = 40, .pattern = 1 },
+    .{ .at = s(17), .kind = .centipede, .y = 88 },
+    .{ .at = s(20), .kind = .flea, .y = 70, .count = 2, .spacing = 50 },
+    .{ .at = s(21), .kind = .moth, .count = 2, .spacing = 30 },
+    .{ .at = s(24), .kind = .ladybug, .y = 130, .count = 4, .spacing = 16, .edge = .top, .formation = true },
+    .{ .at = s(25), .kind = .ladybug, .y = 90, .count = 4, .spacing = 16, .edge = .bottom },
+    .{ .at = s(27), .kind = .gnat, .y = 30, .pattern = 1 },
+    .{ .at = s(28), .kind = .gnat, .y = 96, .pattern = 1 },
+    .{ .at = s(29), .kind = .spider, .count = 2, .spacing = 50 },
+    .{ .at = s(32), .kind = .wasp, .y = 80, .count = 3, .spacing = 8, .dy = 20, .pattern = 1, .edge = .top },
+    .{ .at = s(35), .kind = .herd },
+    .{ .at = s(38), .kind = .centipede, .y = 64, .pattern = 1 },
+    .{ .at = s(40), .kind = .flea, .y = 60 },
+    .{ .at = s(40), .kind = .flea, .y = 90, .pattern = 1 },
+    .{ .at = s(42), .kind = .ladybug, .y = 110, .count = 4, .spacing = 16, .edge = .top },
+    .{ .at = s(44), .kind = .beetle, .y = 88, .pattern = 1 },
+    .{ .at = s(44), .kind = .moth, .count = 2, .spacing = 30 },
+    .{ .at = s(47), .kind = .ladybug, .y = 120, .count = 4, .spacing = 16, .edge = .bottom },
+    .{ .at = s(48), .kind = .gnat, .y = 50, .pattern = 1 },
+    .{ .at = s(50), .kind = .wasp, .y = 30, .count = 3, .spacing = 8, .dy = 16, .pattern = 1 },
+    .{ .at = s(51), .kind = .wasp, .y = 92, .count = 3, .spacing = 8, .dy = 16, .pattern = 1 },
+    .{ .at = s(53), .kind = .centipede, .y = 40 },
+    .{ .at = s(54), .kind = .flea, .y = 80, .pattern = 1 },
+    .{ .at = s(56), .kind = .spider, .count = 2, .spacing = 40 },
+    .{ .at = s(57), .kind = .ladybug, .y = 130, .count = 4, .spacing = 16, .edge = .top },
+    .{ .at = s(59), .kind = .beetle, .y = 40, .pattern = 1 },
+    .{ .at = s(59), .kind = .beetle, .y = 88 },
+    .{ .at = s(62), .kind = .flea, .y = 70, .count = 3, .spacing = 40 },
+    .{ .at = s(64), .kind = .ladybug, .y = 120, .count = 4, .spacing = 16, .edge = .top },
+    .{ .at = s(65), .kind = .ladybug, .y = 90, .count = 4, .spacing = 16, .edge = .bottom },
+    .{ .at = s(67), .kind = .gnat, .y = 40, .pattern = 2 },
+    .{ .at = s(68), .kind = .gnat, .y = 88, .pattern = 2 },
+};
 
-/// 66 s: the table is done; "WARNING" until the boss enters.
-pub const stage_len: u32 = s(66);
-pub const warning_at: u32 = stage_len;
-/// 72 s: the boss enters.
-pub const boss_at: u32 = s(72);
+/// Stage 3, STAGING: ground mites and zombies, walls with gaps (beetle
+/// pattern 2), stop-and-go moths, two kinds at once; Herd v2 at 35 s.
+const stage3 = [_]Entry{
+    .{ .at = s(2), .kind = .mite },
+    .{ .at = s(3), .kind = .gnat, .y = 40, .pattern = 1 },
+    .{ .at = s(6), .kind = .zombie, .y = 48, .count = 2, .spacing = 40, .dy = 20 },
+    .{ .at = s(9), .kind = .beetle, .y = 56, .pattern = 2 },
+    .{ .at = s(10), .kind = .mite },
+    .{ .at = s(13), .kind = .ladybug, .y = 120, .count = 4, .spacing = 16, .edge = .top, .pattern = 1, .formation = true },
+    .{ .at = s(15), .kind = .flea, .y = 70, .pattern = 1 },
+    .{ .at = s(17), .kind = .zombie, .y = 70, .count = 2, .spacing = 40, .dy = 24 },
+    .{ .at = s(17), .kind = .moth, .pattern = 1 },
+    .{ .at = s(20), .kind = .centipede, .y = 40, .pattern = 1 },
+    .{ .at = s(20), .kind = .mite },
+    .{ .at = s(23), .kind = .beetle, .y = 30, .pattern = 2 },
+    .{ .at = s(23), .kind = .gnat, .y = 96, .pattern = 2 },
+    .{ .at = s(26), .kind = .ladybug, .y = 100, .count = 4, .spacing = 16, .edge = .bottom, .pattern = 1 },
+    .{ .at = s(26), .kind = .flea, .y = 80, .count = 2, .spacing = 40 },
+    .{ .at = s(29), .kind = .wasp, .y = 60, .count = 3, .spacing = 8, .dy = 18, .pattern = 1 },
+    .{ .at = s(29), .kind = .mite, .pattern = 1 },
+    .{ .at = s(32), .kind = .zombie, .y = 40, .count = 2, .spacing = 30, .dy = 30, .pattern = 1 },
+    .{ .at = s(32), .kind = .spider, .count = 2, .spacing = 40, .pattern = 1 },
+    .{ .at = s(35), .kind = .herd, .pattern = 1 },
+    .{ .at = s(37), .kind = .mite, .count = 2, .spacing = 90 },
+    .{ .at = s(38), .kind = .beetle, .y = 80, .pattern = 2 },
+    .{ .at = s(38), .kind = .moth, .pattern = 1 },
+    .{ .at = s(41), .kind = .centipede, .y = 70, .pattern = 1, .formation = true },
+    .{ .at = s(41), .kind = .flea, .y = 60, .pattern = 1 },
+    .{ .at = s(44), .kind = .ladybug, .y = 130, .count = 4, .spacing = 16, .edge = .top, .pattern = 1 },
+    .{ .at = s(45), .kind = .ladybug, .y = 90, .count = 4, .spacing = 16, .edge = .bottom, .pattern = 1 },
+    .{ .at = s(47), .kind = .zombie, .y = 56, .count = 3, .spacing = 40, .dy = 24, .pattern = 1 },
+    .{ .at = s(48), .kind = .gnat, .y = 30, .pattern = 2 },
+    .{ .at = s(50), .kind = .beetle, .y = 40, .pattern = 2 },
+    .{ .at = s(50), .kind = .mite, .pattern = 1 },
+    .{ .at = s(53), .kind = .flea, .y = 80, .count = 2, .spacing = 30, .pattern = 1 },
+    .{ .at = s(53), .kind = .wasp, .y = 70, .count = 3, .spacing = 8, .dy = 20, .pattern = 1, .edge = .top },
+    .{ .at = s(56), .kind = .centipede, .y = 40, .pattern = 2 },
+    .{ .at = s(56), .kind = .ladybug, .y = 110, .count = 4, .spacing = 16, .edge = .bottom, .pattern = 2 },
+    .{ .at = s(59), .kind = .moth, .count = 2, .spacing = 30, .pattern = 1 },
+    .{ .at = s(59), .kind = .spider, .count = 2, .spacing = 40, .pattern = 1 },
+    .{ .at = s(60), .kind = .mite },
+    .{ .at = s(62), .kind = .beetle, .y = 88, .pattern = 1 },
+    .{ .at = s(62), .kind = .zombie, .y = 40, .count = 2, .spacing = 30, .dy = 30, .pattern = 1 },
+    .{ .at = s(65), .kind = .flea, .y = 70, .count = 2, .spacing = 40, .pattern = 2 },
+    .{ .at = s(65), .kind = .ladybug, .y = 120, .count = 4, .spacing = 16, .edge = .top, .pattern = 2 },
+    .{ .at = s(68), .kind = .gnat, .y = 40, .pattern = 2 },
+    .{ .at = s(68), .kind = .gnat, .y = 88, .pattern = 2 },
+};
+
+/// Stage 4, PRODUCTION: everything, overlapping formations, curtains from
+/// two sides (walls from the right while fleas come from behind, ladybugs
+/// from the top and the bottom at once), the splitting orb beetle; Herd v3
+/// at 35 s.
+const stage4 = [_]Entry{
+    .{ .at = s(2), .kind = .centipede, .y = 40, .pattern = 2 },
+    .{ .at = s(2), .kind = .mite, .pattern = 1 },
+    .{ .at = s(5), .kind = .ladybug, .y = 120, .count = 4, .spacing = 16, .edge = .top, .pattern = 2, .formation = true },
+    .{ .at = s(5), .kind = .ladybug, .y = 80, .count = 4, .spacing = 16, .edge = .bottom, .pattern = 2 },
+    .{ .at = s(8), .kind = .beetle, .y = 64, .pattern = 2 },
+    .{ .at = s(9), .kind = .flea, .y = 80, .count = 2, .spacing = 40, .pattern = 1 },
+    .{ .at = s(11), .kind = .zombie, .y = 40, .count = 2, .spacing = 30, .dy = 30, .pattern = 1 },
+    .{ .at = s(12), .kind = .moth, .pattern = 1 },
+    .{ .at = s(14), .kind = .beetle, .y = 30, .pattern = 3 },
+    .{ .at = s(14), .kind = .mite, .pattern = 1 },
+    .{ .at = s(17), .kind = .ladybug, .y = 110, .count = 4, .spacing = 16, .edge = .top, .pattern = 1 },
+    .{ .at = s(17), .kind = .gnat, .y = 96, .pattern = 2 },
+    .{ .at = s(20), .kind = .flea, .y = 70, .count = 2, .spacing = 40, .pattern = 2 },
+    .{ .at = s(20), .kind = .wasp, .y = 70, .count = 3, .spacing = 8, .dy = 20, .pattern = 1, .edge = .top },
+    .{ .at = s(21), .kind = .wasp, .y = 110, .count = 3, .spacing = 8, .dy = 20, .pattern = 1, .edge = .bottom },
+    .{ .at = s(23), .kind = .centipede, .y = 88, .pattern = 1 },
+    .{ .at = s(23), .kind = .spider, .count = 2, .spacing = 40, .pattern = 1 },
+    .{ .at = s(26), .kind = .beetle, .y = 40, .pattern = 2 },
+    .{ .at = s(26), .kind = .flea, .y = 80, .count = 2, .spacing = 30, .pattern = 1 },
+    .{ .at = s(29), .kind = .zombie, .y = 56, .count = 3, .spacing = 40, .dy = 24, .pattern = 1 },
+    .{ .at = s(29), .kind = .mite, .pattern = 1 },
+    .{ .at = s(32), .kind = .ladybug, .y = 130, .count = 4, .spacing = 16, .edge = .top, .pattern = 2 },
+    .{ .at = s(32), .kind = .ladybug, .y = 90, .count = 4, .spacing = 16, .edge = .bottom, .pattern = 2 },
+    .{ .at = s(34), .kind = .moth, .count = 2, .spacing = 30, .pattern = 1 },
+    .{ .at = s(35), .kind = .herd, .pattern = 2 },
+    .{ .at = s(37), .kind = .mite, .count = 2, .spacing = 90, .pattern = 1 },
+    .{ .at = s(39), .kind = .beetle, .y = 88, .pattern = 3 },
+    .{ .at = s(39), .kind = .flea, .y = 70, .count = 2, .spacing = 40, .pattern = 1 },
+    .{ .at = s(42), .kind = .centipede, .y = 60, .pattern = 2, .formation = true },
+    .{ .at = s(42), .kind = .ladybug, .y = 120, .count = 4, .spacing = 16, .edge = .top, .pattern = 1 },
+    .{ .at = s(45), .kind = .beetle, .y = 50, .pattern = 2 },
+    .{ .at = s(45), .kind = .flea, .y = 80, .count = 3, .spacing = 30, .pattern = 2 },
+    .{ .at = s(48), .kind = .zombie, .y = 50, .count = 3, .spacing = 30, .dy = 26, .pattern = 1 },
+    .{ .at = s(48), .kind = .spider, .count = 3, .spacing = 40, .pattern = 1 },
+    .{ .at = s(51), .kind = .ladybug, .y = 100, .count = 4, .spacing = 16, .edge = .bottom, .pattern = 2 },
+    .{ .at = s(51), .kind = .wasp, .y = 30, .count = 3, .spacing = 8, .dy = 16, .pattern = 1 },
+    .{ .at = s(52), .kind = .wasp, .y = 92, .count = 3, .spacing = 8, .dy = 16, .pattern = 1 },
+    .{ .at = s(54), .kind = .centipede, .y = 40, .pattern = 1 },
+    .{ .at = s(54), .kind = .mite, .count = 2, .spacing = 60, .pattern = 1 },
+    .{ .at = s(57), .kind = .beetle, .y = 30, .pattern = 3 },
+    .{ .at = s(57), .kind = .beetle, .y = 84, .pattern = 2 },
+    .{ .at = s(60), .kind = .flea, .y = 70, .count = 3, .spacing = 30, .pattern = 1 },
+    .{ .at = s(60), .kind = .moth, .count = 2, .spacing = 30, .pattern = 1 },
+    .{ .at = s(63), .kind = .ladybug, .y = 120, .count = 4, .spacing = 16, .edge = .top, .pattern = 2 },
+    .{ .at = s(63), .kind = .ladybug, .y = 80, .count = 4, .spacing = 16, .edge = .bottom, .pattern = 2 },
+    .{ .at = s(66), .kind = .zombie, .y = 40, .count = 2, .spacing = 30, .dy = 40, .pattern = 1 },
+    .{ .at = s(66), .kind = .gnat, .y = 64, .pattern = 2 },
+    .{ .at = s(68), .kind = .beetle, .y = 64, .pattern = 2 },
+};
+
+/// The stage tables, `stage_count` of them.
+const tables = [_][]const Entry{ &stage1, &stage2, &stage3, &stage4 };
+pub const stage_count: u8 = tables.len;
+
+/// Stage names (the `STAGE n` pop, PLAN.md M7).
+pub const stage_names = [stage_count][]const u8{ "UNIT TESTS", "INTEGRATION", "STAGING", "PRODUCTION" };
+
+/// 72 s: the table is done; "WARNING" until the boss enters (the table
+/// clock, which waits while the midboss lives).
+pub const warning_at: u32 = s(72);
+/// 78 s: the boss enters.
+pub const boss_at: u32 = s(78);
+/// Ticks of the `STAGE n` pop at the start of a stage's table.
+pub const stage_pop: u32 = 120;
 /// Ticks of `.cleared` between the boss death and the table restarting.
 pub const breather: u32 = 120;
 /// Boss spawn point (cell top-left).
 const boss_x: f32 = 168;
 const boss_y: f32 = 40;
+/// Midboss spawn point (cell top-left of the 32x32 herd).
+const herd_x: f32 = 168;
+const herd_y: f32 = 36;
 
 const min_y = 16;
 const max_y = 104;
+const min_x = 40;
+const max_x = 140;
 const spider_min_x = 64;
 const spider_max_x = 136;
+/// Fleas come in on lines between these cell y.
+const flea_min_y = 40;
+const flea_max_y = 96;
+const string_len = 5;
+const centipede_len = 6;
 
 pub const StagePhase = enum(u8) { waves, warning, boss, cleared };
 
 /// Spawner state, stored in `world.w.waves`.
 pub const State = struct {
-    /// Ticks since the start of the current pass through the table.
+    /// Ticks since the start of the current stage (paused while the
+    /// midboss is on the field).
     t: u32 = 0,
-    /// Index of the next entry of `stage1` to run.
+    /// Index of the next entry of the stage's table to run.
     next: u8 = 0,
     /// Completed loops through all `stage_count` stages (rank +400 each).
-    /// With one stage table so far, every boss clear is a new loop.
     loop: u8 = 0,
     /// Current stage index, 0..stage_count-1 (0 = UNIT TESTS).
     stage: u8 = 0,
@@ -102,6 +296,10 @@ pub const State = struct {
     /// out): no +500, no fuel refill (`stage_clears` untouched).
     escaped: bool = false,
 };
+
+fn table() []const Entry {
+    return tables[@min(world.w.waves.stage, stage_count - 1)];
+}
 
 pub fn update() void {
     const st = &world.w.waves;
@@ -117,16 +315,16 @@ pub fn update() void {
         if (enemies.spawn(.boss, boss_x, boss_y, 0) != null) st.phase = .boss;
     }
     if (st.phase == .waves) {
-        while (st.next < stage1.len and stage1[st.next].at <= st.t) {
-            run(stage1[st.next]);
+        // The midboss holds the table: its stage cannot be waited out.
+        if (enemies.herd_alive()) return;
+        const tb = table();
+        while (st.next < tb.len and tb[st.next].at <= st.t) {
+            run(tb[st.next]);
             st.next += 1;
         }
     }
     st.t += 1;
 }
-
-/// Stage tables so far (track B1 makes it 4).
-pub const stage_count: u8 = 1;
 
 /// Moves the stage index on: the next stage, or stage 0 of the next loop
 /// after the last one; the stage clock restarts (rank's stage_seconds).
@@ -152,11 +350,6 @@ pub fn boss_cleared() void {
     st.phase = .cleared;
 }
 
-/// Debug hook (`debug_next_stage`): jumps to the start of the next stage at
-/// once. Clears the enemies (the boss too), enemy bullets, crates and
-/// formations, moves the stage index on as a clear does (not again during
-/// the breather after a clear, which already did), and starts the table
-/// from its first entry: no breather, +500, fuel refill or `stage_clears`
 /// Called by a boss whose final phase timed out once it has left the
 /// screen (PLAN.md M7 "Decisions": nobody is stuck on a boss). The stage
 /// advances as after a clear, without the +500 or the fuel refill.
@@ -168,6 +361,11 @@ pub fn boss_escaped() void {
     st.phase = .cleared;
 }
 
+/// Debug hook (`debug_next_stage`): jumps to the start of the next stage at
+/// once. Clears the enemies (the boss too), enemy bullets, crates and
+/// formations, moves the stage index on as a clear does (not again during
+/// the breather after a clear, which already did), and starts the table
+/// from its first entry: no breather, +500, fuel refill or `stage_clears`
 /// count. The caller checkpoints the history.
 pub fn next_stage() void {
     const w = &world.w;
@@ -187,14 +385,14 @@ pub fn stage_index() u32 {
     return @as(u32, st.stage) + 4 * @as(u32, st.loop);
 }
 
-/// Debug hook: jump to the 66 s mark (the rest of the table is skipped).
+/// Debug hook: jump to the warning (the rest of the table is skipped).
 /// Only acts while the table is running, so it can never spawn a second
 /// boss.
 pub fn warp_to_warning() void {
     const st = &world.w.waves;
     if (st.phase != .waves) return;
     st.t = warning_at;
-    st.next = stage1.len;
+    st.next = @intCast(table().len);
     st.phase = .warning;
 }
 
@@ -202,17 +400,52 @@ fn pick(lo: i32, hi: i32, y: i16) f32 {
     return @floatFromInt(if (y == random) rng.range(lo, hi) else y);
 }
 
+/// Member offsets across the edge: 0, -1, +1, -2, +2, ... (a vee).
+fn vee(i: usize) f32 {
+    const k: f32 = @floatFromInt((i + 1) / 2);
+    return if (i % 2 == 1) -k else k;
+}
+
 fn run(e: Entry) void {
     switch (e.kind) {
-        // Every gnat string is a formation that drops (PLAN.md M7).
-        .gnat => enemies.spawn_gnat_string(pick(min_y, max_y, e.y), true),
-        .spider => for (0..e.count) |i| {
-            const col = pick(spider_min_x, spider_max_x, e.y);
-            _ = enemies.spawn(.spider, col, 0, @intCast(i * e.spacing));
+        .gnat => {
+            const id = if (e.formation) formations.open(string_len, true) else 0;
+            enemies.spawn_gnat_string_ex(enemies.gnat_spawn_x, pick(min_y, max_y, e.y), id, e.pattern);
         },
-        else => for (0..e.count) |i| {
-            const y = pick(min_y, max_y, e.y);
-            _ = enemies.spawn(e.kind, enemies.spawn_x, y, @intCast(i * e.spacing));
+        .centipede => {
+            const id = if (e.formation) formations.open(centipede_len, true) else 0;
+            enemies.spawn_centipede(pick(min_y + 8, max_y - 8, e.y), id, e.pattern);
+        },
+        .herd => _ = enemies.spawn_ex(.herd, herd_x, herd_y, 0, e.pattern, .right, 0),
+        else => {
+            const id = if (e.formation) formations.open(e.count, true) else 0;
+            // One position per entry (a random one drawn once), then the
+            // vee offsets.
+            const across = switch (e.kind) {
+                .spider => 0,
+                .flea => pick(flea_min_y, flea_max_y, e.y),
+                else => switch (e.edge) {
+                    .top, .bottom => pick(min_x, max_x, e.y),
+                    else => pick(min_y, max_y, e.y),
+                },
+            };
+            for (0..e.count) |i| {
+                const off = across + vee(i) * @as(f32, @floatFromInt(e.dy));
+                const delay: u32 = @intCast(i * e.spacing);
+                const m = switch (e.kind) {
+                    // Spiders draw their own column each when random.
+                    .spider => enemies.spawn_ex(.spider, pick(spider_min_x, spider_max_x, e.y), 0, delay, e.pattern, .top, 0),
+                    .flea => enemies.spawn_ex(.flea, 0, off, delay, e.pattern, .left, 0),
+                    .mite => enemies.spawn_ex(.mite, enemies.spawn_x, 0, delay, e.pattern, .right, 0),
+                    else => switch (e.edge) {
+                        .top => enemies.spawn_ex(e.kind, off, -16, delay, e.pattern, .top, 0),
+                        .bottom => enemies.spawn_ex(e.kind, off, 128, delay, e.pattern, .bottom, 0),
+                        .left => enemies.spawn_ex(e.kind, -16, off, delay, e.pattern, .left, 0),
+                        .right => enemies.spawn_ex(e.kind, enemies.spawn_x, off, delay, e.pattern, .right, 0),
+                    },
+                };
+                if (m) |en| en.formation = id else formations.lost(id);
+            }
         },
     }
 }

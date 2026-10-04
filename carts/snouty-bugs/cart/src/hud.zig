@@ -6,6 +6,7 @@ const draw = @import("draw.zig");
 const enemies = @import("enemies.zig");
 const world = @import("world.zig");
 const rank = @import("rank.zig");
+const waves = @import("waves.zig");
 
 const max_rewind_icons = 5;
 /// `hud.png` cell: 12x8 since 2026-09-29 (the 8x8 head read as a rat).
@@ -89,13 +90,26 @@ const stage_text_y: i32 = 56;
 /// WARNING is shown `warning_on` ticks of every `warning_period`.
 const warning_period: u32 = 40;
 const warning_on: u32 = 20;
-/// After a clear: "+500" for this many ticks, then "STAGE n" as long.
+/// After a clear: "+500" (or "ESCAPED") for this many ticks.
 const clear_text_ticks: u32 = 60;
+/// The stage pop: `LOOP n` (from the second loop), `STAGE n`, the name.
+const pop_loop_y: i32 = 40;
+const pop_stage_y: i32 = 52;
+const pop_name_y: i32 = 62;
 
-/// Over the sprites, under the pause overlay: the flashing WARNING, the
-/// boss HP bar, and "+500" then "STAGE n" after a clear.
+/// Over the sprites, under the pause overlay: the `STAGE n` pop at the
+/// start of a stage, the flashing WARNING, the boss HP bar, and "+500"
+/// (or "ESCAPED") after the boss.
 pub fn draw_stage_text() void {
     const st = &world.w.waves;
+    if (st.phase == .waves and st.t < waves.stage_pop) {
+        var buf: [9]u8 = undefined;
+        if (st.loop > 0 and st.stage == 0) {
+            draw.centered_text(number_label(&buf, "LOOP ", @as(u32, st.loop) + 1), pop_loop_y, draw.coral);
+        }
+        draw.centered_text(number_label(&buf, "STAGE ", @as(u32, st.stage) + 1), pop_stage_y, draw.anti_white);
+        draw.centered_text(waves.stage_names[@min(st.stage, waves.stage_count - 1)], pop_name_y, draw.coral);
+    }
     if (st.phase == .warning and st.t % warning_period < warning_on) {
         draw.centered_text("WARNING", stage_text_y, draw.coral);
     }
@@ -110,20 +124,13 @@ pub fn draw_stage_text() void {
             }
         }
     }
-    if (st.clear_tick != 0) {
-        const since = world.w.game_tick -% st.clear_tick;
-        if (since < clear_text_ticks) {
-            draw.centered_text("+500", stage_text_y, draw.anti_white);
-        } else if (since < 2 * clear_text_ticks) {
-            var buf: [9]u8 = undefined;
-            draw.centered_text(stage_label(&buf, @as(u32, st.loop) + 1), stage_text_y, draw.anti_white);
-        }
+    if (st.phase == .cleared and world.w.game_tick -% st.clear_tick < clear_text_ticks) {
+        draw.centered_text(if (st.escaped) "ESCAPED" else "+500", stage_text_y, draw.anti_white);
     }
 }
 
-/// "STAGE n" into `buf` (n up to 3 digits).
-fn stage_label(buf: *[9]u8, n: u32) []const u8 {
-    const prefix = "STAGE ";
+/// `prefix` and `n` (up to 3 digits) into `buf`.
+fn number_label(buf: *[9]u8, comptime prefix: []const u8, n: u32) []const u8 {
     @memcpy(buf[0..prefix.len], prefix);
     var digits: [3]u8 = undefined;
     var v = @min(n, 999);
