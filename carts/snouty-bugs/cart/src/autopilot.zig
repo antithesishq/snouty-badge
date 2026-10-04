@@ -261,7 +261,10 @@ fn add_threat(px: *const [sample_t.len]f32, py: *const [sample_t.len]f32, hx: f3
     }
 }
 
-fn dodge(tick: u32) cart.Controls {
+/// Never inlined: its frame then lives on the stack only while it runs,
+/// not in `main.update`'s, which already holds a World temporary at a new
+/// game (the wasm shadow stack is 14.7 KB).
+noinline fn dodge(tick: u32) cart.Controls {
     track_enemies(tick);
     const p = &world.w.player;
     const hb = player.hitbox();
