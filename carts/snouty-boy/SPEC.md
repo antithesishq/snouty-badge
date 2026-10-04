@@ -175,7 +175,7 @@ Frontend (badge side):
 cart/src/main.zig          start()/update(); owns Gb, Frontend, Rewind
 cart/src/frontend/video.zig   line sink: 2-bit line -> RGB565 columns with
                               the squeeze/crop line map and current palette
-cart/src/frontend/audio.zig   APU state -> one tone2 voice (section 9)
+cart/src/frontend/audio.zig   APU samples -> the streaming ring; wasm: one voice (section 9)
 cart/src/frontend/input.zig   controls -> joypad byte; Select-hold state
                               machine with deferred delivery
 cart/src/frontend/menu.zig    overlay menu drawn with api.text/rect
@@ -213,19 +213,39 @@ comptime-specialized MBC, and the skipped ninth lines.
 
 ## 9. Audio
 
-The buzzer has one voice, so the frontend chooses one channel per frame:
+Rewritten 2026-10-04 (root docs/EMU_SOUND.md, PLAN.md "Sound on the new
+firmware"). The show badges run newer upstream firmware, which ignores
+`CART_TONE` and plays only a cart-owned ring of 44.1 kHz unsigned 8-bit
+mono samples (`lib/stream_audio.zig`). So:
 
-- Candidates: ch1 and ch2 (square) and ch3 (wave, played as triangle) that
-  are enabled in NR52, have a live length counter, and have envelope
-  volume above 0. Noise (ch4) is dropped.
-- Pick the highest envelope volume; ties go ch1, ch2, ch3. Frequency is
-  `131072 / (2048 - x)` Hz for squares and `65536 / (2048 - x)` for wave.
-  Volume maps 1..15 to 0.2..1.0.
-- `tone2` is issued only when the chosen frequency, shape or volume
-  changes, with infinite duration; `Tone2Options.stop` when nothing is
-  audible. Update rate is once per badge frame (16.7 ms), which is coarse
-  for arpeggios but fine for melodies and effects.
-- Menu toggle, default on (section 18, item 6). Global volume left to the OS.
+- The core renders all four channels (`core/apu.zig` "Sample generation"):
+  squares with duty, sweep and envelope; the wave channel from wave RAM
+  with its output level; noise from the 15/7-bit LFSR with its envelope
+  and length; DAC enables, NR51 routing and NR50 volume mixed to mono (a
+  channel on one side is half as loud as on both); one gain constant
+  (`apu.gain`, chosen from Tetris and Tetris DX levels); a first-order
+  high-pass at ~27 Hz like the console's output capacitor. Each output
+  sample is the mean level over its 95/96-dot bin (box filter). Rendering
+  is lazy: pending time is rendered before an APU register write, before
+  a frame sequencer step and at the end of the frame. A frame leaves 738
+  or 739 samples (738.4: the partial bin carries over) in `Gb.snd.out`,
+  `Gb.audio_len` of them; CGB double speed changes nothing (time is dots).
+- `Gb.audio_render` (off by default) gates all of it; off, the register
+  model runs exactly as before and a sound-off build pays a branch per
+  subsystem flush. Render state is not console state: keyframes do not
+  hold it, a restore resets it.
+- Badge frontend: every stepped frame's samples go through the shared
+  `audio_feed` (rate control against the OS's clock, ramp-out when the
+  game stops stepping). No `tone2` and no `tone` import on the badge (on
+  the new firmware they would overwrite the ring words). On old firmware
+  the badge is silent. The boot chime is a 60 ms square burst per note
+  through the feed.
+- Wasm (simulator, which has no streaming audio): unchanged, one voice
+  from `pick_voice` (the loudest of ch1..3, square or triangle) through
+  the simulator's `tone` import.
+- Menu Sound row, off at boot unless built with `-Dsound=true` (section
+  18 item 6). The debug overlay's fourth line shows the ring's queue and
+  underrun count while sound is on.
 
 ## 10. Time scrubbing (the Antithesis feature)
 
@@ -321,7 +341,7 @@ for a single-game cart: `-Drom-source=embed -Drom=...`, with
 
 - On `start()`: 1.2 s splash where the Antithesis Iris mark (the shared
   1-bit 24x24 bitmap in `lib/iris_mark.zig`, drawn at 2x in the palette's
-  darkest shade) scrolls down from the top like the DMG logo, then the two-note DMG-style chime through `tone2`
+  darkest shade) scrolls down from the top like the DMG logo, then the two-note DMG-style chime (a square burst through the streaming ring, section 9)
   (1 kHz then 2 kHz, 60 ms each), then the game. Select-hold skips.
 - Title bar in the menu: "SNOUTY BOY" in the badge font, the ROM's header
   title, and the tag line "verified by deterministic replay".
