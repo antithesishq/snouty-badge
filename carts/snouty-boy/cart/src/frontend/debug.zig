@@ -3,7 +3,9 @@
 //! `step_frame` time over the last 60 frames; line 2: frames per second from
 //! `micros_since_boot` deltas between `update()` calls, over 60 frames,
 //! then the scrubber's page-store use in KB; line 3: the keyframes held and
-//! where the ROM came from (E embedded, D drive, frontend/romsrc.zig).
+//! where the ROM came from (E embedded, D drive, frontend/romsrc.zig);
+//! line 4, on the badge with sound on: the streaming ring's queue in
+//! samples and the updates that found it empty (frontend/audio.zig).
 //! In wasm builds `micros_since_boot` is an upstream stub that adds 1000 per
 //! call (so the overlay shows 1000us and 500 fps in the simulator and in
 //! preview.mjs); only hardware numbers mean anything.
@@ -23,6 +25,10 @@ pub var keyframes: u32 = 0;
 /// ROM source letter: 'E' embedded, 'D' drive (frontend/romsrc.zig), set
 /// by main.zig.
 pub var source_letter: u8 = 'E';
+/// Sound streaming state, set by main.zig after every stepped frame.
+pub var sound_on: bool = false;
+pub var audio_queue: u32 = 0;
+pub var audio_underruns: u32 = 0;
 
 const window = 60;
 
@@ -82,7 +88,7 @@ pub fn draw() void {
     // "avg NNNN max NNNNus": the font is 8 px wide, so 20 characters fill
     // the 160 px screen; the unit is written once to keep 4-digit values
     // on screen.
-    var buf: [64]u8 = undefined;
+    var buf: [96]u8 = undefined;
     var i: usize = 0;
     i += put(buf[i..], "avg ");
     i += put_num(buf[i..], avg);
@@ -97,6 +103,12 @@ pub fn draw() void {
     buf[i] = ' ';
     buf[i + 1] = source_letter;
     i += 2;
+    if (sound_on) {
+        i += put(buf[i..], "\nq ");
+        i += put_num(buf[i..], audio_queue);
+        i += put(buf[i..], " u ");
+        i += put_num(buf[i..], audio_underruns);
+    }
     draw_text(buf[0..i], white, if (alarm) red else black);
 }
 

@@ -157,6 +157,18 @@ pub const Gb = struct {
     /// Current joypad state (Pad bits), set by `step_frame`.
     pad: u8 = 0,
 
+    // ---- Sound samples (owner: core/apu.zig "Sample generation") ----
+    /// Render the APU into `snd` (set with `apu.set_render`). Off: the
+    /// register model runs as it always did and nothing is rendered. Not
+    /// console state; `reset` keeps it.
+    audio_render: bool = false,
+    /// Samples the last `step_frame` left in `snd.out` (`apu.samples`).
+    audio_len: u16 = 0,
+    /// Render state and output, owned by the caller (3.7 KB, kept out of
+    /// `Gb` so the hot fields keep their offsets). Not console state;
+    /// `reset` keeps the pointer, `load_small` resets what it points at.
+    snd: ?*apu.Snd = null,
+
     // ---- Frame bookkeeping (owner: core/gb.zig) ----
     /// Dots run so far in the current `step_frame` call.
     frame_dots: u32 = 0,
@@ -217,6 +229,19 @@ pub const Gb = struct {
         return gb;
     }
 
+    /// `init` into memory the caller already has (the badge's arena): no
+    /// 50 KB `Gb` temporary on the 32 KB stack.
+    pub fn init_in(gb: *Gb, rom: Rom, model: Model, cart_ram: []u8) void {
+        gb.rom = rom;
+        gb.model = model;
+        gb.cart_ram = cart_ram;
+        gb.line_sink = null;
+        gb.lines_wanted = @splat(0xFFFF_FFFF);
+        gb.snd = null;
+        gb.audio_render = false;
+        gb.reset();
+    }
+
     /// `init` around a contiguous image (host tests, an embedded ROM).
     pub fn init_slice(bytes: []const u8, model: Model, cart_ram: []u8) Gb {
         return init(Rom.from_slice(bytes), model, cart_ram);
@@ -229,7 +254,10 @@ pub const Gb = struct {
         const model = gb.model;
         const cart_ram = gb.cart_ram;
         const wanted = gb.lines_wanted;
-        gb.* = .{ .rom = rom, .line_sink = sink, .model = model, .cart_ram = cart_ram, .lines_wanted = wanted };
+        const snd = gb.snd;
+        const render = gb.audio_render;
+        gb.* = .{ .rom = rom, .line_sink = sink, .model = model, .cart_ram = cart_ram, .lines_wanted = wanted, .snd = snd, .audio_render = render };
+        if (render) snd.?.reset();
         @memset(cart_ram, 0);
         gb.mbc = mmu.Mbc.from_header(&gb.rom);
         mmu.remap_rom(gb);
@@ -258,6 +286,7 @@ pub const Gb = struct {
         // Everything outside the core (frontend, keyframes) sees caught-up
         // subsystems.
         gb.sync();
+        if (gb.audio_render) apu.end_frame(gb);
         gb.frame_count +%= 1;
     }
 
@@ -463,6 +492,8 @@ pub const Gb = struct {
         gb.pre_m = 0;
         gb.pend_m = 0;
         gb.ev_m = 0;
+        if (gb.snd) |snd| snd.reset();
+        gb.audio_len = 0;
     }
 
     /// The console state as byte regions, in a fixed order: the packed

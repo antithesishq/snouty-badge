@@ -8,6 +8,12 @@
 //!   is set once and main.zig opens the emulator menu (frontend/menu.zig).
 //! - Start pressed while Select is held is the OS exit chord: the hold is
 //!   cancelled. Start itself still goes to the game.
+//! - Right pressed while Select is held starts fast forward
+//!   (`GameInput.fast`, docs/FAST_FORWARD.md at the root), which lasts
+//!   while both stay held. Right does not reach the game meanwhile. Letting
+//!   go of Right returns to 1x and the Select hold counts from zero again;
+//!   letting go of Select returns to 1x with no tap, and a Right still held
+//!   waits for its release. Start cancels it as it cancels the hold.
 //!
 //! Buttons held across a state change are suppressed until released
 //! (`suppress_held`); the menu reads `State.live_edge()`, the edge with them
@@ -17,6 +23,9 @@
 const cart = @import("cart-api");
 const core = @import("core");
 const Pad = core.Pad;
+
+/// The badge's buttons (`cart.Controls`), for host tests.
+pub const Controls = cart.Controls;
 
 /// Select held this long (frames at 60 Hz) opens the emulator menu.
 pub const hold_frames = 30;
@@ -89,6 +98,9 @@ pub const GameInput = struct {
     pad: u8,
     /// Select reached `hold_frames` this frame (the menu opens here).
     open_menu: bool,
+    /// Fast forward (Select then Right, both held): main.zig steps several
+    /// game frames this update, all with `pad`.
+    fast: bool = false,
 };
 
 /// The Select long-hold state machine plus the suppress mask.
@@ -96,6 +108,8 @@ pub const State = struct {
     edge: Edge = .{},
     holding: bool = false,
     held_frames: u16 = 0,
+    /// Fast forward is on (Select then Right, both still held).
+    fast: bool = false,
     /// Buttons ignored until released (Controls bits).
     suppress: u16 = 0,
     /// Last frame's `live_edge().cur`, so a suppressed button reads neither
@@ -120,15 +134,30 @@ pub const State = struct {
         s.suppress = s.edge.cur;
         s.holding = false;
         s.held_frames = 0;
+        s.fast = false;
     }
 
     /// Input for a frame in which the game runs.
     pub fn game_frame(s: *State) GameInput {
         const e = s.edge;
-        const live: cart.Controls = @bitCast(e.cur & ~s.suppress);
-        const pad = pad_from_controls(live);
         var open_menu = false;
 
+        if (s.fast) {
+            if (e.held(.start)) {
+                // Start+Select: the OS chord, as for the hold.
+                s.end_fast();
+                s.holding = false;
+            } else if (!e.held(.select)) {
+                s.end_fast(); // No tap either.
+            } else if (!e.held(.right)) {
+                // Back to 1x; the Select hold starts counting again.
+                s.fast = false;
+                s.holding = true;
+                s.held_frames = 0;
+            }
+        }
+
+        const live: cart.Controls = @bitCast(e.cur & ~s.suppress);
         if (live.select and e.pressed(.select)) {
             s.holding = true;
             s.held_frames = 0;
@@ -137,16 +166,30 @@ pub const State = struct {
             if (e.held(.start)) {
                 s.holding = false; // Start+Select: the OS exit chord.
             } else if (e.held(.select)) {
-                s.held_frames +|= 1;
-                if (s.held_frames >= hold_frames) {
+                if (live.right and e.pressed(.right)) {
                     s.holding = false;
-                    open_menu = true;
+                    s.fast = true;
+                } else {
+                    s.held_frames +|= 1;
+                    if (s.held_frames >= hold_frames) {
+                        s.holding = false;
+                        open_menu = true;
+                    }
                 }
             } else {
                 s.holding = false; // A tap: reserved, nothing happens.
             }
         }
-        return .{ .pad = pad, .open_menu = open_menu };
+
+        var pad = pad_from_controls(@bitCast(e.cur & ~s.suppress));
+        if (s.fast) pad &= ~Pad.right;
+        return .{ .pad = pad, .open_menu = open_menu, .fast = s.fast };
+    }
+
+    /// Leave fast forward; a Right still held waits for its release.
+    fn end_fast(s: *State) void {
+        s.fast = false;
+        s.suppress |= s.edge.cur & mask(.right);
     }
 };
 

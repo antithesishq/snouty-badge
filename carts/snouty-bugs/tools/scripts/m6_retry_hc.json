@@ -1,5 +1,6 @@
 [
-{"from": 30, "to": 30, "hold": ["B"]},
+{"from": 28, "to": 28, "hold": ["DOWN"]},
+{"from": 30, "to": 30, "hold": ["A"]},
 {"from": 60, "to": 239, "hold": ["A"]},
 {"from": 240, "to": 279, "hold": ["A", "UP"]},
 {"from": 280, "to": 299, "hold": ["A"]},

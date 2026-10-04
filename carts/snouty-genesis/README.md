@@ -3,8 +3,9 @@
 A Sega Genesis (Mega Drive) emulator cart for the SYCL Badge V2, written in
 Zig for Antithesis. The badge build plays a `.gen`/`.md`/`.bin` ROM copied
 onto the badge's USB drive, read in place from flash (no reflash per game,
-ROMs up to about 900 KB), with a small test ROM embedded as the fallback and
-as the simulator's ROM. It is an XIP cart (code in the 256 KB cart flash
+ROMs up to about 900 KB); with none there it shows a no-ROM screen saying
+how to add one. A small test ROM is embedded only in the simulator (and
+`-Dmd-rom-source=embed` builds). It is an XIP cart (code in the 256 KB cart flash
 window) and presents at 30 Hz with two Genesis frames per update. The 68000 runs at full speed, the Z80 sound CPU from Snouty Gear drives a
 one-voice tone, and an emulator menu sits behind a Select hold, with time
 scrubbing by deterministic replay (as Snouty Boy and Snouty Gear).

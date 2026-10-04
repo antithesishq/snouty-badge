@@ -10,8 +10,10 @@ const common = @import("../../build/common.zig");
 /// This cart's directory, relative to the repository root that build.zig runs from.
 const dir = "carts/snouty-gear/";
 
-/// The shipped ROM (MIT, roms/LICENSE-waternet): the embedded fallback and
-/// the simulator's ROM unless `-Dgg-rom` names another.
+/// The shipped ROM (MIT, roms/LICENSE-waternet): the simulator's ROM and
+/// the `-Dgg-rom-source=embed` badge build's, unless `-Dgg-rom` names
+/// another. The default badge build (`drive`) links no ROM bytes: the
+/// frontend never references `rom.data` there (frontend/romsrc.zig).
 const default_rom = dir ++ "roms/waternet.gg";
 
 /// ROM to embed and where the badge build looks for its ROM. Module-level
@@ -34,7 +36,7 @@ pub fn add(b: *Build, sycl_badge_dep: *Build.Dependency, opts: common.Options) v
         .drive => .drive,
         .embed => .embed,
         .pack => blk: {
-            std.debug.print("snouty-gear: -Dgg-rom-source=pack: not built yet (SPEC 13.1); building the RAM cart with the drive ROM and {s} embedded\n", .{rom_name});
+            std.debug.print("snouty-gear: -Dgg-rom-source=pack: not built yet (SPEC 13.1); building the drive cart (no embedded ROM)\n", .{});
             break :blk .drive;
         },
     };
@@ -61,13 +63,32 @@ pub fn add(b: *Build, sycl_badge_dep: *Build.Dependency, opts: common.Options) v
         .target = b.graph.host,
         .optimize = test_optimize,
     });
+    // frontend/input.zig (the Select hold and fast-forward chord) for
+    // tests/input_unit.zig: it needs only `cart.Controls` from the cart API,
+    // which the host compiles lazily.
+    const input_host = b.createModule(.{
+        .root_source_file = b.path(dir ++ "cart/src/frontend/input.zig"),
+        .target = b.graph.host,
+        .optimize = test_optimize,
+        .imports = &.{
+            .{ .name = "core", .module = core_host },
+            .{ .name = "cart-api", .module = b.createModule(.{
+                .root_source_file = sycl_badge_dep.path("src/os/cart/api.zig"),
+                .target = b.graph.host,
+                .optimize = test_optimize,
+            }) },
+        },
+    });
     const tests = b.addTest(.{
         .filters = if (opts.test_filter) |f| &.{f} else &.{},
         .root_module = b.createModule(.{
             .root_source_file = b.path(dir ++ "tests/all.zig"),
             .target = b.graph.host,
             .optimize = test_optimize,
-            .imports = &.{.{ .name = "core", .module = core_host }},
+            .imports = &.{
+                .{ .name = "core", .module = core_host },
+                .{ .name = "input", .module = input_host },
+            },
         }),
     });
     const run = b.addRunArtifact(tests);
@@ -116,9 +137,10 @@ fn exists(b: *Build, rel: []const u8) bool {
     return true;
 }
 
-/// Adds `build_options`, `core`, `romfs` (lib/romfs.zig, the drive reader), `iris` (lib/iris_mark.zig), `hint` (lib/hint.zig) and `rom` to the
+/// Adds `build_options`, `core`, `romfs` (lib/romfs.zig, the drive reader), `iris` (lib/iris_mark.zig), `hint` (lib/hint.zig), `audio_feed` (lib/audio_feed.zig) and `rom` to the
 /// cart. `rom` is generated: the embedded ROM (`data`, copied next to the
-/// generated rom.zig so @embedFile can see it), its file name (`name`) and
+/// generated rom.zig so @embedFile can see it; only linked where the
+/// frontend references it: wasm and `.embed`), its file name (`name`) and
 /// where the badge build gets its ROM (`source`, `.drive` or `.embed`).
 fn build_cart_modules(b: *Build, cart: *Build.Module, cart_api: *Build.Module, step: *Build.Step) void {
     _ = cart_api;
@@ -129,6 +151,8 @@ fn build_cart_modules(b: *Build, cart: *Build.Module, cart_api: *Build.Module, s
     cart.addImport("iris", b.createModule(.{ .root_source_file = b.path("lib/iris_mark.zig") }));
     // The control hints (splash, first seconds of play, menu), shared with Boy, Genesis, Lynx.
     cart.addImport("hint", b.createModule(.{ .root_source_file = b.path("lib/hint.zig") }));
+    // The badge's streaming sound (docs/EMU_SOUND.md), shared with Boy and Genesis.
+    cart.addImport("audio_feed", b.createModule(.{ .root_source_file = b.path("lib/audio_feed.zig") }));
 
     const wf = b.addWriteFiles();
     _ = wf.addCopyFile(rom_path, "rom.bin");

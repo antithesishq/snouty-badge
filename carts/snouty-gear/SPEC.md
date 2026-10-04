@@ -11,8 +11,9 @@ milestones are at the bottom.
 A full-speed Sega Game Gear emulator written in Zig, built as an
 ordinary RAM cart. The game is a ROM file the user copies onto the
 badge's USB drive, read in place from flash (shared design in
-`docs/ROM_DRIVE.md`); one open-licensed homebrew ROM is embedded as the
-fallback when no file is found and for the web simulator. The Game Gear's visible
+`docs/ROM_DRIVE.md`); one open-licensed homebrew ROM is embedded for the
+web simulator only (since 2026-10-04 the badge build embeds none and shows
+a "No ROM on the badge drive" screen when no file is found). The Game Gear's visible
 screen is 160x144, exactly the badge's width, so the picture maps 1:1
 horizontally and, as in Snouty Boy, 144 lines are squeezed to 128 by
 dropping every ninth one. The Game Gear pad is a d-pad, 1, 2 and Start,
@@ -160,12 +161,14 @@ core/vdp.zig      registers, control-port latch, VRAM/CRAM access, counters,
 core/psg.zig      SN76489 register model: latch/data writes, periods,
                   attenuations, noise mode (no sample synthesis)
 core/rom.zig      bank pointer table (from the drive file, the embedded
-                  ROM or the packed fallback), size and mapper detection
+                  ROM (simulator, `embed`) or the packed fallback), size
+                  and mapper detection
 ```
 
 The core only ever sees `rom.banks: [N][*]const u8` of 16 KB banks. Where
 the bytes live is the frontend's business (`lib/romdrive.zig` for the
-drive, `@embedFile` for the fallback, section 13.1 for packing).
+drive, `@embedFile` for the simulator and `embed` builds, section 13.1
+for packing).
 
 Frontend: copied from `carts/snouty-boy/cart/src/frontend/` and adapted
 (video, input, menu, rewind, splash, debug, audio). The first copy is
@@ -178,8 +181,8 @@ Build: `carts/snouty-gear/build.zig` with its own ROM options:
 `-Dgg-rom=path` picks the embedded ROM (the existing root `-Drom` is Snouty
 Boy's; a shared option would silently feed a Game Boy ROM to the Game Gear
 cart) and `-Dgg-rom-source=drive|embed|pack` (default `drive`: the drive
-file with the embedded ROM as fallback; `pack` is section 13.1). The wasm
-build always embeds.
+file only, no ROM bytes linked, a "No ROM on the badge drive" screen when
+there is none; `pack` is section 13.1). The wasm build always embeds.
 
 ## 8. Performance budget
 
@@ -203,7 +206,41 @@ T-states), sprite line cap, whether skipped squeeze lines evaluate sprites
 
 ## 9. Audio
 
-One `tone2` voice, following Snouty Boy section 9:
+Off at boot, the menu's Sound row toggles it (`build_options.sound`).
+
+Badge (since 2026-10-04, root docs/EMU_SOUND.md): the show badges run
+newer upstream firmware that ignores `tone2` and plays a cart-owned ring
+of 44.1 kHz unsigned 8-bit mono samples. `core/psg.zig` `Synth`
+synthesises the SN76489 from the console's own clock (SMS Power's SN76489
+page):
+
+- Three tone channels: counters at clock/16 reloading from the 10-bit
+  period, a flip each reload (`3579545 / (32 x period)` Hz); periods 0
+  and 1 give a constant +1 (Sega's chip; sample playback by volume
+  writes). Noise: the Sega 16-bit shift register (white: bit 0 XOR bit 3
+  into bit 15; periodic: bit 0), reset to 0x8000 on a noise register
+  write, shifting every second zero of its counter (0x10/0x20/0x40 or
+  tone 2's period). Attenuation: SMS Power's 2 dB table, 15 = off.
+  Outputs bipolar. Port 06 (stereo) averaged to mono; one gain constant
+  (`psg.gain`, from Sonic's levels).
+- Box filter (the mean level over each 81.17 T-state output bin,
+  integrated exactly between flips), rendered lazily: the bus catches the
+  synthesis up before every PSG or port 06 write (at the instruction's
+  start time, `Gg.psg_now`) and `step_frame` at the frame's end. After a
+  frame `Gg.audio_out[0..audio_len]` holds exactly its console time
+  (735.95 samples on average, the fraction carried).
+- `Gg.audio_render` false (Sound off, the menu, the simulator): nothing is
+  rendered and the register model runs exactly as before. Render-only
+  state (`Gg.synth`) is outside keyframes; a reset or restore resyncs it,
+  so a scrub step replays the same sound every time.
+- The frontend streams through `lib/audio_feed.zig`
+  (`Feed(.{ .nominal = 736, .max_src = 738, .ring_bytes = 4096 })`) and
+  ramps out in every update that does not step the game. It never calls
+  `tone2` (on the new firmware that clobbers the ring words). Old
+  firmware: silent.
+
+Simulator (wasm, unchanged): one `tone` voice, following Snouty Boy
+section 9:
 
 - Candidates: the three tone channels with attenuation below 15 and a
   period above a floor (periods 0 and 1 are the "DC" tricks samples use;
@@ -211,8 +248,9 @@ One `tone2` voice, following Snouty Boy section 9:
 - Pick the loudest; ties go to channel 0, 1, 2. Frequency
   `3579545 / (32 x period)` Hz, square wave, volume from the attenuation
   (2 dB steps) mapped to 0.2..1.0.
-- Issue `tone2` only when frequency or volume changes, once per frame;
-  stop when nothing is audible. Menu toggle, default on.
+- Re-issued every frame through the simulator's `tone` import (the
+  upstream `tone2` shim fades every note in over 4 s); stopped when
+  nothing is audible.
 
 ## 10. Time scrubbing
 
@@ -288,8 +326,9 @@ is Adrian's business, as with Super Mario Land on Snouty Boy).
 - ROM source on the badge: a `.gg` (or `.sms`) file on the badge drive,
   per `docs/ROM_DRIVE.md`. Any size the drive holds works (up to about
   950 KB free with this cart alone; the largest Game Gear games are
-  512 KB). The embedded ROM, chosen with `-Dgg-rom`, is only the fallback
-  and the simulator's ROM, so it keeps the 128 KB limit above.
+  512 KB). The embedded ROM, chosen with `-Dgg-rom`, is only the
+  simulator's ROM (and the `embed` build's), so it keeps the 128 KB limit
+  above.
 - Local stress target (never shipped): **Sonic the Hedgehog, Game Gear**
   (Sega/Ancient 1991, 256 KB, Sega mapper, no cart RAM; header region code
   0x6 at `7FFF`, md5 `8a95b36139206a5ba13a38bb626aee25`). It is the 8-bit
@@ -350,13 +389,14 @@ Snouty Boy's (82 KB fast with the frontend) because the Z80 has four prefix
 groups.
 
 Default build: a RAM cart with the ROM on the drive, so the ROM costs no
-cart RAM at all. The embedded fallback ROM does (it is in the RAM image).
+cart RAM at all. Since 2026-10-04 the default build embeds no ROM; an
+`embed` build's ROM is in the RAM image.
 
 | Item                              | RAM cart, drive ROM   |
 |-----------------------------------|----------------------:|
 | Code + frontend (ReleaseFast)     | ~95 KB                |
 | Splash, fonts, tables             | ~6 KB                 |
-| Embedded fallback ROM             | 32-64 KB              |
+| Embedded ROM (`embed` builds only) | 32-64 KB             |
 | Drive file map (fragmented case)  | <= 4 KB               |
 | Live console + cart RAM 8 KB      | ~33 KB                |
 | Frontend state, input log         | ~3 KB                 |

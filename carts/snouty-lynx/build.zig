@@ -10,8 +10,10 @@ const common = @import("../../build/common.zig");
 /// This cart's directory, relative to the repository root that build.zig runs from.
 const dir = "carts/snouty-lynx/";
 
-/// The embedded ROM unless `-Dlynx-rom` names another: 42Bastian's textured
-/// raycaster (Apache-2.0, roms/LICENSE-raycast.txt, docs/ROM_CANDIDATES.md).
+/// The embedded ROM (wasm and `-Dlynx-rom-source=embed` builds; a drive
+/// badge build references none of it) unless `-Dlynx-rom` names another:
+/// 42Bastian's textured raycaster (Apache-2.0, roms/LICENSE-raycast.txt,
+/// docs/ROM_CANDIDATES.md).
 /// tools/make_placeholder_rom.py still builds roms/placeholder.lnx for the
 /// drive fixtures.
 const default_rom = dir ++ "roms/raycast.lnx";
@@ -35,7 +37,7 @@ pub fn add(b: *Build, sycl_badge_dep: *Build.Dependency, opts: common.Options) v
         .drive => .drive,
         .embed => .embed,
         .pack => blk: {
-            std.debug.print("snouty-lynx: -Dlynx-rom-source=pack: not built yet (SPEC.md 13.1); building the RAM cart with the drive ROM and {s} embedded\n", .{rom_file.name});
+            std.debug.print("snouty-lynx: -Dlynx-rom-source=pack: not built yet (SPEC.md 13.1); building the drive cart (no embedded ROM)\n", .{});
             break :blk .drive;
         },
     };
@@ -176,8 +178,10 @@ fn resolve_rom(b: *Build, opt: ?[]const u8) RomFile {
 /// (`sound`), `drive`
 /// (cart/src/frontend/drive.zig as a module, shared with the host tests) and
 /// the generated `rom` to the cart. `rom` holds the embedded ROM (`data`,
-/// copied next to the generated rom.zig so @embedFile can see it), its file
-/// name (`name`) and where the badge build gets its ROM (`source`).
+/// copied next to the generated rom.zig so @embedFile can see it; only
+/// wasm and embed builds reference it, so a drive badge build carries none
+/// of its bytes), its file name (`name`) and where the badge build gets its
+/// ROM (`source`).
 fn build_cart_modules(b: *Build, cart: *Build.Module, cart_api: *Build.Module, step: *Build.Step) void {
     _ = cart_api;
     const core = b.createModule(.{ .root_source_file = b.path(dir ++ "core/lynx.zig") });

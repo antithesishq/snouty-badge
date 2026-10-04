@@ -411,14 +411,12 @@ fn put_secs(dst: []u8, frames: u32) usize {
 
 /// About (PLAN.md M2 Track A): version, file name, header name, size,
 /// source, region letters and SRAM as the header declares them, then the
-/// drive's CRC32 and "fragmented" (no direct flash pointer), or why the
-/// drive was not used for an embedded ROM.
+/// drive's CRC32 and "fragmented" (no direct flash pointer).
 fn draw_about(md: *const core.Md) void {
     var b0: [24]u8 = undefined;
     var b1: [24]u8 = undefined;
     var b2: [24]u8 = undefined;
     var b3: [24]u8 = undefined;
-    var b4: [24]u8 = undefined;
     var b5: [24]u8 = undefined;
     var b6: [24]u8 = undefined;
 
@@ -450,9 +448,6 @@ fn draw_about(md: *const core.Md) void {
         if (romsrc.crc_known) w.hex32(romsrc.crc) else w.put("....");
         line7 = w.done();
         if (romsrc.origin == .drive_fragmented) line8 = "fragmented";
-    } else if (romsrc.fallback) |why| {
-        line7 = "Drive not used:";
-        line8 = fit(&b4, why, panel_cols);
     }
 
     const lines = [_][]const u8{
@@ -542,7 +537,6 @@ comptime {
     check_width("Version " ++ version, panel_cols);
     check_width("Source: embedded", panel_cols);
     check_width("Region JUE SRAM", panel_cols);
-    check_width("Drive not used:", panel_cols);
     check_width("CRC 00000000", panel_cols);
     check_width("4096 KB", panel_cols);
     check_width(back_hint, panel_cols);

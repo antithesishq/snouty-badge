@@ -1,7 +1,8 @@
-//! Register-level model of sound channels 1..3 for the frontend's single
-//! voice (SPEC.md section 9). No samples are produced: the model tracks what
-//! a listener would hear per channel (enabled, period, envelope volume) so
-//! the frontend can pick one voice for the badge buzzer.
+//! Register-level model of sound channels 1..3 (SPEC.md section 9), plus
+//! sample generation for all four channels at the badge's 44,100 Hz
+//! (docs/EMU_SOUND.md at the root; "Sample generation" below). The
+//! register model is what the CPU sees and what keyframes hold; the
+//! wasm build's single simulator voice reads it through `pick_voice`.
 //!
 //! Modelled: frame sequencer at 512 Hz (2048 M-cycles per step; length on
 //! steps 0/2/4/6, sweep on 2/6, envelope on 7), trigger, length counters,
@@ -14,7 +15,12 @@
 //! enable, negate-mode clear).
 //!
 //! All state is integers in `Apu` (extern, no padding) plus the registers in
-//! `gb.io`, so a keyframe copy captures it exactly (SPEC.md 10.3).
+//! `gb.io`, so a keyframe copy captures it exactly (SPEC.md 10.3). The
+//! renderer's own state (`Snd`) is not console state: see below.
+//!
+//! Sources: Pan Docs "Audio", "Audio Registers" and "Audio details"
+//! (gbdev.io/pandocs), the gbdev wiki "Gameboy sound hardware" page.
+const std = @import("std");
 const gb_mod = @import("gb.zig");
 const Gb = gb_mod.Gb;
 
@@ -117,6 +123,11 @@ pub fn read_reg(gb: *const Gb, reg: u8) u8 {
 
 /// Write of 0xFF10..0xFF3F (`reg` is the offset from 0xFF00).
 pub fn write_reg(gb: *Gb, reg: u8, v: u8) void {
+    // The sound so far was made with the registers as they were.
+    if (gb.audio_render) {
+        render_keep(gb, 0);
+        noise_write(gb, reg, v);
+    }
     if (reg >= 0x30) {
         gb.io[reg] = v; // wave RAM
         return;
@@ -215,6 +226,16 @@ fn trigger(gb: *Gb, i: usize) void {
         c.env_timer = env_reload(nrx2);
     }
     c.on = @intFromBool(dac_on(gb, i));
+    if (gb.audio_render) {
+        const r = gb.snd.?;
+        switch (i) {
+            c1, c2 => r.sq[i].ctr = sq_period(period_regs(gb, if (i == c1) nr13 else nr23)),
+            else => {
+                r.w_pos = 0;
+                r.w_ctr = wave_period(period_regs(gb, nr33));
+            },
+        }
+    }
     if (i == c1) {
         const nr10v = gb.io[nr10];
         const per = (nr10v >> 4) & 7;
@@ -245,11 +266,14 @@ fn sweep_calc(gb: *Gb) u16 {
 /// runs at 512 Hz at either CPU speed (SPEC.md 19.1).
 /// Inlined into the per-instruction tick; a sequencer step calls out.
 pub inline fn tick(gb: *Gb, dots: u16) void {
+    if (gb.audio_render) gb.snd.?.pend += dots;
     if (!powered(gb)) return;
     const a = &gb.apu;
     a.seq_t += dots;
     while (a.seq_t >= seq_period_dots) {
         a.seq_t -= seq_period_dots;
+        // The step happened `seq_t` dots ago: render up to it first.
+        if (gb.audio_render) render_keep(gb, a.seq_t);
         step_sequencer(gb);
     }
 }
@@ -265,6 +289,7 @@ pub fn step_sequencer(gb: *Gb) void {
         clock_envelope(gb, c1, gb.io[nr12]);
         clock_envelope(gb, c2, gb.io[nr22]);
     }
+    if (gb.audio_render) clock_noise(gb, s);
     sync_nr52(gb);
 }
 
@@ -359,4 +384,444 @@ pub fn period_to_hz(channel: u8, period: u16) u32 {
     const num: u32 = if (channel == 3) 65536 else 131072;
     const d: u32 = 2048 - @as(u32, period & 0x7FF);
     return (num + d / 2) / d;
+}
+
+// ---- Sample generation (docs/EMU_SOUND.md at the root) ----
+//
+// With `gb.audio_render` set (and `gb.snd` given), every stepped frame
+// leaves the sound of exactly its console time in `snd.out[0..gb.audio_len]`:
+// unsigned 8-bit mono at 44,100 Hz, 128 = silence, 738 or 739 samples a
+// frame (70,224 dots / 95.109 dots per sample = 738.4; the fraction is the
+// partial bin carried to the next frame). Time is counted in dots, which
+// are real time at either CPU speed, so CGB double speed changes nothing
+// here.
+//
+// Lazy: `tick` only adds the dots to `snd.pend`. The pending time is
+// rendered with the registers as they are when they are about to change:
+// before every APU register or wave RAM write (mmu.write_io has synced the
+// subsystems by then), before every frame sequencer step (length, sweep,
+// envelopes) and at the end of the frame. Reads change nothing audible.
+//
+// Box filter: sample bins are whole dots, 95 or 96 by a Bresenham walk
+// (95 + 1201/11025, exactly 4,194,304 / 44,100), and each output is the
+// mean level over its bin: per channel the number of dots at each level is
+// integrated over the bin (`acc`), so a square far above 22 kHz gives its
+// mean, not an alias.
+//
+// Per channel (Pan Docs "Audio details"): the squares step their 8-step
+// duty pattern every (2048 - period) * 4 dots, the wave channel its 32
+// 4-bit samples every (2048 - period) * 2 dots, the noise channel its LFSR
+// every (divisor 0 ? 8 : 16 * divisor) << shift dots (shift 14, 15: no
+// clocks). A channel sounds while it is on and its DAC is on, at its
+// digital level 0..15 (square: duty bit * envelope volume; wave: the
+// nibble >> 0/1/2 by NR32, code 0 mute; noise: inverted LFSR bit 0 *
+// envelope volume). NR51 routes each channel left and/or right and NR50
+// scales each side by 1..8; mono is the sum of both sides, so a channel on
+// one side only is half as loud as on both.
+//
+// Left out: the DACs' analog offset (a DAC switching on or off would pop;
+// the levels are mixed unsigned and the DC goes through the high-pass
+// filter below instead, as the console's output capacitor does, so a
+// silent or toggling channel does not thump), the wave channel's
+// one-sample start delay and its "buffer" first sample, the square duty
+// position reset on power off, Vin, and PCM12/PCM34 (read 0 as before).
+//
+// Channel 4 is not in the register model (NR52 bit 3 reads 0 as before):
+// its length, envelope and LFSR are render state here, clocked only while
+// rendering.
+//
+// Render state (`Snd`) is not console state: keyframes do not hold it,
+// `Gb.load_small` and turning rendering on reset it (a restored position
+// starts its phases and the noise channel afresh: a few ms of slightly
+// different sound, never garbage). It is caller-owned memory (3.7 KB) so
+// that the hot `Gb` fields keep their offsets.
+
+/// Most samples one frame gives (`gb.audio_len`).
+pub const max_samples = 739;
+const acc_len = max_samples + 1;
+
+/// Output gain: the mean mixed level (0..960: four channels x 15 x both
+/// sides x NR50 8) after the high-pass filter, times `gain` / 256, around
+/// 128. Measured on Tetris (DMG) and Tetris DX (CGB) over a minute each
+/// of title, menus and play (host run, 2026-10-04): the 99.9th percentile
+/// swing is about +-250 levels, so 80 / 256 puts it at +-77 (Tetris) and
+/// +-95 (Tetris DX) of the +-127 available, loud for the badge's weak
+/// speaker; 5 and 99 of ~2.6 million samples clip (clamped, longest run
+/// 16 samples, on note attacks the high-pass overshoots). 96 clipped
+/// runs of 28 samples, 200 clipped all the time.
+pub const gain: i32 = 80;
+
+const duty_patterns = [4]u8{ 0x80, 0x81, 0xE1, 0x7E };
+
+pub const Sq = struct {
+    /// Dots to the next duty step (1..period).
+    ctr: u32 = 1,
+    pos: u3 = 0,
+};
+
+/// The renderer's state and output (see above). `reset` makes a fresh
+/// one; the frontend keeps it in .bss uninitialised until then.
+pub const Snd = struct {
+    sq: [2]Sq = .{ .{}, .{} },
+    w_ctr: u32 = 1,
+    w_pos: u5 = 0,
+    n_ctr: u32 = 1,
+    lfsr: u16 = 0x7FFF,
+    n_on: bool = false,
+    n_vol: u8 = 0,
+    n_env: u8 = 0,
+    n_len: u16 = 0,
+    /// Dots ticked and not rendered yet.
+    pend: u32 = 0,
+    /// Bins completed this frame; `acc[bin]` is the one being filled.
+    bin: u32 = 0,
+    /// Dots left in the current bin, its length, and the Bresenham carry.
+    left: u32 = 95,
+    cur_len: u32 = 95,
+    frac: u32 = 0,
+    /// Length of this frame's bin 0 and the carry after it, to recover
+    /// every bin's length when the frame is finished.
+    f_len0: u32 = 95,
+    f_frac: u32 = 0,
+    /// More bins than `max_samples` this frame (an LCD switched on
+    /// mid-frame makes a frame up to twice as long); the rest is dropped.
+    over: bool = false,
+    /// High-pass filter: last input and output (level x 16).
+    hp_x: i32 = 0,
+    hp_y: i32 = 0,
+    hp_primed: bool = false,
+    /// Level-dots per bin, weighted by the mixer.
+    acc: [acc_len]u32 = @splat(0),
+    out: [max_samples]u8 = @splat(128),
+
+    /// A fresh state, without building a 3.7 KB default to copy.
+    pub fn reset(s: *Snd) void {
+        s.* = .{ .acc = undefined, .out = undefined };
+        @memset(&s.acc, 0);
+    }
+};
+
+/// Turn rendering on or off (the frontend's Sound setting). On from off
+/// starts from a fresh `Snd`; `gb.snd` must be set first.
+pub fn set_render(gb: *Gb, on: bool) void {
+    if (on and !gb.audio_render) gb.snd.?.reset();
+    gb.audio_render = on;
+    gb.audio_len = 0;
+}
+
+/// The last stepped frame's samples (empty when not rendering).
+pub fn samples(gb: *const Gb) []const u8 {
+    const s = gb.snd orelse return &.{};
+    return s.out[0..gb.audio_len];
+}
+
+inline fn next_len(frac: *u32) u32 {
+    frac.* += 1201;
+    if (frac.* >= 11025) {
+        frac.* -= 11025;
+        return 96;
+    }
+    return 95;
+}
+
+pub fn sq_period(x: u16) u32 {
+    return (2048 - @as(u32, x & 0x7FF)) * 4;
+}
+
+pub fn wave_period(x: u16) u32 {
+    return (2048 - @as(u32, x & 0x7FF)) * 2;
+}
+
+/// LFSR clock period in dots from NR43, 0 = never clocked (shift 14, 15).
+pub fn noise_period(nr43v: u8) u32 {
+    const shift: u5 = @intCast(nr43v >> 4);
+    if (shift >= 14) return 0;
+    const div: u32 = nr43v & 7;
+    return (if (div == 0) @as(u32, 8) else 16 * div) << shift;
+}
+
+/// One LFSR clock (gbdev wiki form: XOR of bits 0 and 1 into bit 14, and
+/// into bit 6 too in 7-bit mode; the channel is high while bit 0 is 0).
+pub inline fn lfsr_step(l: u16, short: bool) u16 {
+    const x: u16 = (l ^ (l >> 1)) & 1;
+    var n = (l >> 1) | (x << 14);
+    if (short) n = (n & ~@as(u16, 0x40)) | (x << 6);
+    return n;
+}
+
+/// A square over one render span: level-dots in the next `n` dots,
+/// advancing the duty position. Steps inside are skipped by whole
+/// 8-step cycles, so a parked 131 kHz square costs no more than a note.
+pub const SqSpan = struct {
+    st: *Sq,
+    p: u32,
+    pat: u8,
+    vol: u32,
+
+    inline fn bit(self: *const SqSpan, pos: u3) u32 {
+        return (self.pat >> pos) & 1;
+    }
+
+    pub fn sum(self: *const SqSpan, n: u32) u32 {
+        const st = self.st;
+        if (n < st.ctr) {
+            st.ctr -= n;
+            return self.bit(st.pos) * n * self.vol;
+        }
+        var hi = self.bit(st.pos) * st.ctr;
+        var r = n - st.ctr;
+        var pos = st.pos +% 1;
+        const p = self.p;
+        if (r >= p) {
+            const k = r / p;
+            r -= k * p;
+            hi += (k >> 3) * @popCount(self.pat) * p;
+            var j = k & 7;
+            while (j > 0) : (j -= 1) {
+                hi += self.bit(pos) * p;
+                pos +%= 1;
+            }
+        }
+        hi += self.bit(pos) * r;
+        st.pos = pos;
+        st.ctr = p - r;
+        return hi * self.vol;
+    }
+};
+
+/// The wave channel over one render span (same scheme, 32 steps).
+pub const WaveSpan = struct {
+    s: *Snd,
+    ram: *const [16]u8,
+    p: u32,
+    shift: u3,
+
+    inline fn lvl(self: *const WaveSpan, pos: u5) u32 {
+        const b = self.ram[pos >> 1];
+        const nib = if ((pos & 1) == 0) b >> 4 else b & 15;
+        return nib >> self.shift;
+    }
+
+    pub fn sum(self: *const WaveSpan, n: u32) u32 {
+        const s = self.s;
+        if (n < s.w_ctr) {
+            s.w_ctr -= n;
+            return self.lvl(s.w_pos) * n;
+        }
+        var acc = self.lvl(s.w_pos) * s.w_ctr;
+        var r = n - s.w_ctr;
+        var pos = s.w_pos +% 1;
+        const p = self.p;
+        if (r >= p) {
+            const k = r / p;
+            r -= k * p;
+            if (k >= 32) {
+                var cyc: u32 = 0;
+                for (0..32) |i| cyc += self.lvl(@intCast(i));
+                acc += (k >> 5) * cyc * p;
+            }
+            var j = k & 31;
+            while (j > 0) : (j -= 1) {
+                acc += self.lvl(pos) * p;
+                pos +%= 1;
+            }
+        }
+        acc += self.lvl(pos) * r;
+        s.w_pos = pos;
+        s.w_ctr = p - r;
+        return acc;
+    }
+};
+
+/// The noise channel over one render span (one LFSR clock per step).
+pub const NoiseSpan = struct {
+    s: *Snd,
+    p: u32,
+    short: bool,
+    vol: u32,
+
+    pub fn sum(self: *const NoiseSpan, n: u32) u32 {
+        const s = self.s;
+        var l = s.lfsr;
+        if (self.p == 0) return (~l & 1) * n * self.vol;
+        if (n < s.n_ctr) {
+            s.n_ctr -= n;
+            return (~l & 1) * n * self.vol;
+        }
+        var hi: u32 = (~l & 1) * s.n_ctr;
+        var r = n - s.n_ctr;
+        l = lfsr_step(l, self.short);
+        const p = self.p;
+        while (r >= p) : (r -= p) {
+            hi += (~l & 1) * p;
+            l = lfsr_step(l, self.short);
+        }
+        hi += (~l & 1) * r;
+        s.lfsr = l;
+        s.n_ctr = p - r;
+        return hi * self.vol;
+    }
+};
+
+/// Add `w` x a channel's level-dots over the next `span` dots into the
+/// bins from the current one on. With `w` 0 the channel only advances.
+fn add_span(s: *Snd, ch: anytype, w: u32, span: u32) void {
+    if (w == 0) {
+        _ = ch.sum(span);
+        return;
+    }
+    var bin = s.bin;
+    var left = s.left;
+    var frac = s.frac;
+    var rem = span;
+    while (rem > 0) {
+        const take = @min(rem, left);
+        s.acc[bin] += ch.sum(take) * w;
+        rem -= take;
+        left -= take;
+        if (left == 0) {
+            if (bin < max_samples) bin += 1;
+            left = next_len(&frac);
+        }
+    }
+}
+
+/// Move the bin cursor `span` dots on (after every channel has added).
+fn advance(s: *Snd, span: u32) void {
+    var rem = span;
+    while (rem >= s.left) {
+        rem -= s.left;
+        if (s.bin < max_samples) s.bin += 1 else s.over = true;
+        s.cur_len = next_len(&s.frac);
+        s.left = s.cur_len;
+        // The overflow bin is reused, so it starts empty each time.
+        if (s.bin == max_samples and s.over) s.acc[max_samples] = 0;
+    }
+    s.left -= rem;
+}
+
+/// Render the pending dots but the last `keep`.
+fn render_keep(gb: *Gb, keep: u32) void {
+    const s = gb.snd.?;
+    if (s.pend <= keep) return;
+    const span = s.pend - keep;
+    s.pend = keep;
+    render(gb, s, span);
+}
+
+fn render(gb: *Gb, s: *Snd, span: u32) void {
+    if (powered(gb)) {
+        const a = &gb.apu;
+        const io = &gb.io;
+        const nr50v = io[0x24];
+        const nr51v: u32 = io[0x25];
+        const lv: u32 = ((nr50v >> 4) & 7) + 1;
+        const rv: u32 = (nr50v & 7) + 1;
+        var w: [4]u32 = undefined;
+        for (0..4) |c| w[c] = ((nr51v >> @intCast(4 + c)) & 1) * lv + ((nr51v >> @intCast(c)) & 1) * rv;
+        if (a.ch[c1].on != 0) {
+            const sq: SqSpan = .{ .st = &s.sq[0], .p = sq_period(a.current_period), .pat = duty_patterns[io[nr11] >> 6], .vol = a.ch[c1].volume };
+            add_span(s, &sq, if (sq.vol == 0) 0 else w[0], span);
+        }
+        if (a.ch[c2].on != 0) {
+            const sq: SqSpan = .{ .st = &s.sq[1], .p = sq_period(period_regs(gb, nr23)), .pat = duty_patterns[io[nr21] >> 6], .vol = a.ch[c2].volume };
+            add_span(s, &sq, if (sq.vol == 0) 0 else w[1], span);
+        }
+        if (a.ch[c3].on != 0 and dac_on(gb, c3)) {
+            const code = (io[nr32] >> 5) & 3;
+            const wv: WaveSpan = .{ .s = s, .ram = io[0x30..0x40], .p = wave_period(period_regs(gb, nr33)), .shift = if (code == 0) 0 else @intCast(code - 1) };
+            add_span(s, &wv, if (code == 0) 0 else w[2], span);
+        }
+        if (s.n_on) {
+            const nr43v = io[nr43];
+            const nz: NoiseSpan = .{ .s = s, .p = noise_period(nr43v), .short = (nr43v & 8) != 0, .vol = s.n_vol };
+            add_span(s, &nz, if (nz.vol == 0) 0 else w[3], span);
+        }
+    }
+    advance(s, span);
+}
+
+/// Finish the frame: render what is pending, turn the completed bins into
+/// `snd.out`, carry the partial bin. Called by `Gb.step_frame`.
+pub fn end_frame(gb: *Gb) void {
+    const s = gb.snd.?;
+    render_keep(gb, 0);
+    const n = s.bin;
+    var len = s.f_len0;
+    var frac = s.f_frac;
+    for (0..n) |i| {
+        // Mean level x 16 over the bin.
+        const x: i32 = @intCast(s.acc[i] * 16 / len);
+        if (!s.hp_primed) {
+            s.hp_primed = true;
+            s.hp_x = x;
+        }
+        // y += x - x' - y / 256: a first-order high-pass at ~27 Hz, about
+        // the console's output capacitor (Pan Docs "Audio details").
+        s.hp_y += x - s.hp_x - (s.hp_y >> 8);
+        s.hp_x = x;
+        const v = 128 + ((s.hp_y * gain) >> 12);
+        s.out[i] = @intCast(std.math.clamp(v, 0, 255));
+        len = next_len(&frac);
+    }
+    gb.audio_len = @intCast(n);
+    const carry = if (s.over) 0 else s.acc[n];
+    @memset(s.acc[0 .. n + 1], 0);
+    s.acc[0] = carry;
+    s.bin = 0;
+    s.over = false;
+    s.f_len0 = s.cur_len;
+    s.f_frac = s.frac;
+}
+
+// Channel 4 render state (not in the register model).
+
+const nr42 = 0x21;
+const nr43 = 0x22;
+const nr44 = 0x23;
+
+fn noise_write(gb: *Gb, reg: u8, v: u8) void {
+    const s = gb.snd.?;
+    switch (reg) {
+        nr41 => s.n_len = 64 - @as(u16, v & 0x3F),
+        nr42 => if (powered(gb) and (v & 0xF8) == 0) {
+            s.n_on = false;
+        },
+        nr44 => if (powered(gb) and (v & 0x80) != 0) {
+            const nr42v = gb.io[nr42];
+            if (s.n_len == 0) s.n_len = 64;
+            s.n_vol = nr42v >> 4;
+            s.n_env = env_reload(nr42v);
+            s.lfsr = 0x7FFF;
+            s.n_ctr = @max(1, noise_period(gb.io[nr43]));
+            s.n_on = (nr42v & 0xF8) != 0;
+        },
+        nr52 => if ((v & 0x80) == 0) {
+            s.n_on = false;
+            s.n_vol = 0;
+        },
+        else => {},
+    }
+}
+
+/// Channel 4's share of a sequencer step `step` (length on even steps,
+/// envelope on step 7), as channels 1..3 get theirs.
+fn clock_noise(gb: *Gb, step: u8) void {
+    const s = gb.snd.?;
+    if ((step & 1) == 0 and (gb.io[nr44] & 0x40) != 0 and s.n_len != 0) {
+        s.n_len -= 1;
+        if (s.n_len == 0) s.n_on = false;
+    }
+    if (step == 7) {
+        const nr42v = gb.io[nr42];
+        if ((nr42v & 7) == 0) return;
+        if (s.n_env > 0) s.n_env -= 1;
+        if (s.n_env != 0) return;
+        s.n_env = env_reload(nr42v);
+        if ((nr42v & 0x08) != 0) {
+            if (s.n_vol < 15) s.n_vol += 1;
+        } else {
+            if (s.n_vol > 0) s.n_vol -= 1;
+        }
+    }
 }

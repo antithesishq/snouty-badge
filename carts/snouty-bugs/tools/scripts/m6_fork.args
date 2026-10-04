@@ -8,15 +8,21 @@
 # Re-pinned for the catch-up clock (waves come sooner on a thin field, so the sweep powers up
 # and meets its crates earlier): the first hold moved from 2084..2093 to 2070..2079 and the
 # third from 4050..4064 to 2595..2609, to straddle the fork grabs again; the 3320 hold stays.
-# - 1345: fork 1. 2058 (game tick 2028): fork 2. B 2070..2079 (10 frames = 20 ticks,
-#   2039 -> 2019): 2074 is back at tick 2029, forks 2; 2075 (tick 2027) is before the grab:
-#   forks 1. 2080 is the release (PLAYING, no tick), 2081 the first live tick; the sweep then
-#   runs 20 ticks ahead and misses the crate.
-# - Weapon (kind * 10 + level): A5 (15) at 2428. 2586 (tick 2525): fork 2 again, two ghosts.
-#   B 2595..2609 (15 frames = 30 ticks, 2533 -> 2503): 2598 is back at tick 2525, forks 2;
-#   2599 (tick 2523) is before the grab: forks 1. 2610 the release, 2611 the first live tick.
-#   The shifted sweep grabs the same crate again at 2632 (tick 2525): forks 2 to the end.
-# - B5 (25) at 2959, in the Heisenbug's fight. The 3320..3334 hold runs with two ghosts and
-#   their seekers in flight: 3330 is a held frame (state 5), 3335 the release (no tick), 3336
-#   the first live tick. The boss dies at 4053 (stage 2); 4300: more than 20 bolts.
---frames 4400 --call-at "31 debug_god" --dump-exports debug_state,debug_weapon,debug_forks,debug_shield,debug_bolts,debug_rewinds --at "1344 debug_forks == 0" --at "1345 debug_forks == 1" --at "2057 debug_forks == 1" --at "2058 debug_forks == 2" --at "2069 debug_history_check == 0" --at "2070 debug_state == 5" --at "2074 debug_forks == 2" --at "2074 debug_game_tick == 2029" --at "2075 debug_forks == 1" --at "2075 debug_history_check == 0" --at "2079 debug_state == 5" --at "2079 debug_game_tick == 2019" --at "2079 debug_history_check == 0" --at "2080 debug_state == 1" --at "2080 debug_forks == 1" --at "2080 debug_history_check == 0" --at "2081 debug_history_check == 0" --at "2428 debug_weapon == 15" --at "2585 debug_forks == 1" --at "2586 debug_forks == 2" --at "2594 debug_history_check == 0" --at "2595 debug_state == 5" --at "2598 debug_forks == 2" --at "2599 debug_forks == 1" --at "2599 debug_history_check == 0" --at "2609 debug_state == 5" --at "2609 debug_game_tick == 2503" --at "2609 debug_history_check == 0" --at "2610 debug_state == 1" --at "2610 debug_forks == 1" --at "2610 debug_history_check == 0" --at "2611 debug_history_check == 0" --at "2631 debug_forks == 1" --at "2632 debug_forks == 2" --at "2700 debug_history_check == 0" --at "2958 debug_weapon == 15" --at "2959 debug_weapon == 25" --at "3300 debug_bolts > 10" --at "3300 debug_history_check == 0" --at "3330 debug_state == 5" --at "3330 debug_forks == 2" --at "3330 debug_history_check == 0" --at "3335 debug_state == 1" --at "3335 debug_history_check == 0" --at "3336 debug_history_check == 0" --at "4053 debug_stage_clears == 1" --at "4300 debug_bolts > 20" --at "4300 debug_history_check == 0" --at "4399 debug_history_check == 0" --expect "debug_state == 1" --expect "debug_forks == 2" --expect "debug_rewinds == 3"
+# Re-pinned for the mode paces (NORMAL: the table clock hurries, 3 ticks a tick, only on an
+# empty field): the waves come later and the forks with them (at 2070 and 2595 the holds
+# crossed no fork grab), so the first hold moved from 2070..2079 to 1795..1804 and the third
+# from 2595..2609 to 2608..2622, 12 and 9 updates after a fork grab as before; the 3320 hold
+# stays, now with three ghosts in flight.
+# - 1783 (game tick 1753): fork 1. B 1795..1804 (10 frames = 20 ticks, 1764 -> 1744): 1799
+#   is back at tick 1754, forks 1; 1800 (tick 1752) is before the grab: forks 0. 1805 is the
+#   release (PLAYING, no tick), 1806 the first live tick; the sweep then runs 30 updates
+#   ahead of the world and grabs the same crate again at 1879 (tick 1818).
+# - 2599 (tick 2538): fork 2, two ghosts. B 2608..2622 (15 frames = 30 ticks, 2546 -> 2516):
+#   2611 is back at tick 2538, forks 2; 2612 (tick 2536) is before the grab: forks 1. 2623 the
+#   release, 2624 the first live tick. The shifted sweep grabs the same crate again at 2716
+#   (tick 2609).
+# - Weapon (kind * 10 + level): F5 at 3096; 3262: fork 3, three ghosts. The 3320..3334 hold
+#   runs with the three ghosts and their bolts in flight (more than 30): 3330 is a held frame
+#   (state 5), 3335 the release (no tick), 3336 the first live tick. A5 (15) at 3671, the
+#   Heisenbug at 3676, still alive at the end (it died at 4053 under the catch-up clock).
+--frames 4400 --call-at "31 debug_god" --dump-exports debug_state,debug_weapon,debug_forks,debug_shield,debug_bolts,debug_rewinds --at "1782 debug_forks == 0" --at "1783 debug_forks == 1" --at "1794 debug_history_check == 0" --at "1795 debug_state == 5" --at "1799 debug_forks == 1" --at "1799 debug_game_tick == 1754" --at "1800 debug_forks == 0" --at "1800 debug_history_check == 0" --at "1804 debug_state == 5" --at "1804 debug_game_tick == 1744" --at "1804 debug_history_check == 0" --at "1805 debug_state == 1" --at "1805 debug_forks == 0" --at "1805 debug_history_check == 0" --at "1806 debug_history_check == 0" --at "1878 debug_forks == 0" --at "1879 debug_forks == 1" --at "2598 debug_forks == 1" --at "2599 debug_forks == 2" --at "2607 debug_history_check == 0" --at "2608 debug_state == 5" --at "2611 debug_forks == 2" --at "2612 debug_forks == 1" --at "2612 debug_history_check == 0" --at "2622 debug_state == 5" --at "2622 debug_game_tick == 2516" --at "2622 debug_history_check == 0" --at "2623 debug_state == 1" --at "2623 debug_forks == 1" --at "2623 debug_history_check == 0" --at "2624 debug_history_check == 0" --at "2715 debug_forks == 1" --at "2716 debug_forks == 2" --at "2700 debug_history_check == 0" --at "3096 debug_weapon == 5" --at "3261 debug_forks == 2" --at "3262 debug_forks == 3" --at "3300 debug_bolts > 30" --at "3300 debug_history_check == 0" --at "3330 debug_state == 5" --at "3330 debug_forks == 3" --at "3330 debug_bolts > 30" --at "3330 debug_history_check == 0" --at "3335 debug_state == 1" --at "3335 debug_history_check == 0" --at "3336 debug_history_check == 0" --at "3670 debug_weapon == 5" --at "3671 debug_weapon == 15" --at "3676 debug_boss_id == 0" --at "4300 debug_bolts > 10" --at "4300 debug_history_check == 0" --at "4399 debug_history_check == 0" --expect "debug_state == 1" --expect "debug_forks == 3" --expect "debug_rewinds == 3"

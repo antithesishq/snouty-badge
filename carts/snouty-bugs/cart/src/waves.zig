@@ -4,7 +4,7 @@
 //! pop (hud.zig) over the first 120 ticks of the table, the table (about
 //! 70 s, sorted by tick; a midboss entry pauses the table clock while the
 //! herd lives, so it cannot be waited out; a thin field runs it faster,
-//! `catchup`), `.warning` for 3 s, the boss
+//! `mode.pace`), `.warning` for 3 s, the boss
 //! (`.boss`), its death (`.cleared`, +500 and a fuel refill) or escape (no
 //! +500, no refill), a 120-tick breather, the next stage. The difficulty
 //! comes from `rank.zig` and from what each table puts on the field.
@@ -12,6 +12,7 @@ const enemies = @import("enemies.zig");
 const rng = @import("rng.zig");
 const world = @import("world.zig");
 const formations = @import("formations.zig");
+const mode = @import("mode.zig");
 
 const Kind = enemies.Kind;
 const Edge = enemies.Edge;
@@ -295,12 +296,12 @@ const warning_len: u32 = s(3);
 /// `field_floor` enemies are on the field (or still due to enter), the
 /// table clock runs `catchup` ticks a tick, so the next wave comes in
 /// instead of leaving the ship nothing to shoot. A gap of n seconds in a
-/// table lasts n / catchup seconds on an empty field. Everything on the
-/// stage clock moves with it (the fire ramp, rank's stage seconds, the
-/// WARNING), so a player who clears waves fast plays a shorter, denser
-/// stage.
-const field_floor: u32 = 3;
-const catchup: u32 = 4;
+/// table lasts n / catchup seconds on an empty field. Both numbers come
+/// from the mode (`mode.pace`): NORMAL and HARDCORE only on an empty field
+/// (floor 1), 3 ticks a tick, with the fire ramp and rank's stage seconds
+/// on real ticks (`clock`); SUPER-HARDCORE floor 3, 4 ticks a tick, with
+/// them on the table clock, so a player who clears waves fast plays a
+/// shorter, denser and quicker-ramping stage.
 
 pub fn warning_at() u32 {
     return warning_ats[@min(world.w.waves.stage, stage_count - 1)];
@@ -332,9 +333,13 @@ pub const StagePhase = enum(u8) { waves, warning, boss, cleared };
 
 /// Spawner state, stored in `world.w.waves`.
 pub const State = struct {
-    /// Ticks since the start of the current stage (paused while the
-    /// midboss is on the field).
+    /// The table clock: ticks since the start of the current stage
+    /// (paused while the midboss is on the field, faster on a thin
+    /// field).
     t: u32 = 0,
+    /// Ticks since the start of the current stage, paused with `t` but
+    /// never run faster: the difficulty clock outside SUPER-HARDCORE.
+    elapsed: u32 = 0,
     /// Index of the next entry of the stage's table to run.
     next: u8 = 0,
     /// Index of the next entry of the stage's loop table (second loop on).
@@ -363,6 +368,7 @@ pub fn update() void {
     if (st.phase == .cleared and world.w.game_tick -% st.clear_tick >= breather) {
         // The stage index already moved on at the clear (`advance`).
         st.t = 0;
+        st.elapsed = 0;
         st.next = 0;
         st.next_loop = 0;
         st.phase = .waves;
@@ -387,13 +393,23 @@ pub fn update() void {
                 st.next_loop += 1;
             }
         }
-        if (st.t >= stage_pop and field_count() < field_floor) {
+        const pc = mode.pace();
+        if (st.t >= stage_pop and field_count() < pc.field_floor) {
             // Stops at the WARNING so it starts on its first tick.
-            st.t = @min(st.t + catchup, @max(st.t + 1, warning_at()));
+            st.t = @min(st.t + pc.catchup, @max(st.t + 1, warning_at()));
+            st.elapsed += 1;
             return;
         }
     }
     st.t += 1;
+    st.elapsed += 1;
+}
+
+/// The stage clock the difficulty reads (the fire ramp, rank's stage
+/// seconds): the table clock in SUPER-HARDCORE, real stage ticks otherwise.
+pub fn clock() u32 {
+    const st = &world.w.waves;
+    return if (mode.pace().rush) st.t else st.elapsed;
 }
 
 /// Enemies on the field or waiting to enter (a member's spawn delay).
@@ -413,6 +429,7 @@ fn advance() void {
         st.loop +|= 1;
     }
     st.t = 0;
+    st.elapsed = 0;
 }
 
 /// Called by the boss on the last tick of its death sequence: the clear
@@ -450,7 +467,10 @@ pub fn next_stage() void {
     w.enemy_bullets = @splat(.{});
     w.pickups = @splat(.{});
     formations.clear();
-    if (w.waves.phase == .cleared) w.waves.t = 0 else advance();
+    if (w.waves.phase == .cleared) {
+        w.waves.t = 0;
+        w.waves.elapsed = 0;
+    } else advance();
     w.waves.next = 0;
     w.waves.next_loop = 0;
     w.waves.phase = .waves;
@@ -470,6 +490,7 @@ pub fn warp_to_warning() void {
     const st = &world.w.waves;
     if (st.phase != .waves) return;
     st.t = warning_at();
+    st.elapsed = st.t;
     st.next = @intCast(table().len);
     st.next_loop = @intCast(loop_tables[@min(st.stage, stage_count - 1)].len);
     st.phase = .warning;

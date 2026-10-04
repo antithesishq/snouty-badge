@@ -8,9 +8,8 @@
 //! The rule (review EM-01): every transition calls `suppress_held`, and
 //! every screen but the game reads `input.State.live_edge()`, so the button
 //! that leaves one screen never acts on the next one in the same or a later
-//! update. The A that skips the splash does not also pick the first ROM, the
-//! B does not run the embedded one, a Down does not move the cursor, and an A
-//! or B pressed together with the Select hold does not close the menu it
+//! update. The A that skips the splash does not also pick the first ROM, a
+//! Down does not move the cursor, and an A or B pressed together with the Select hold does not close the menu it
 //! opens. Released and pressed again, the button acts as usual.
 pub const input = @import("input.zig");
 
@@ -22,9 +21,9 @@ pub const MenuResult = enum { stay, resume_game };
 /// `Ctx` provides, all called from `update`:
 ///
 /// - `splash_frame(ctx, skip: bool) bool`: one splash frame; true when it is over.
-/// - `pick_frame(ctx, e: input.Edge) ??usize`: one picker frame; a choice ends it
-///   (an index, or null inside for the embedded ROM).
-/// - `begin_choice(ctx, choice: ?usize) bool`: create the console for that choice;
+/// - `pick_frame(ctx, e: input.Edge) ?usize`: one picker frame; a choice (a
+///   candidate index) ends it.
+/// - `begin_choice(ctx, choice: usize) bool`: create the console for that choice;
 ///   false when it cannot run (the halted screen follows).
 /// - `play_begin(ctx)`: the game starts, after the splash or the picker (not
 ///   after the menu closes).
@@ -103,14 +102,14 @@ pub fn Flow(comptime Ctx: type) type {
 /// The picker's cursor and choice over `playable` (one flag per listed
 /// file); frontend/picker.zig draws it. The cursor starts on the first
 /// playable file; Up/Down move (wrapping), A plays the file under the cursor
-/// when it is playable, B chooses the embedded ROM.
+/// when it is playable. There is no way out but a file: the badge build
+/// embeds no ROM.
 pub const Picker = struct {
     cursor: usize = 0,
     placed: bool = false,
 
-    /// Returns null to stay, or the choice: a candidate index, or null
-    /// inside for the embedded ROM.
-    pub fn update(p: *Picker, e: input.Edge, playable: []const bool) ??usize {
+    /// Returns null to stay, or the chosen candidate index.
+    pub fn update(p: *Picker, e: input.Edge, playable: []const bool) ?usize {
         const n = playable.len;
         if (!p.placed) {
             p.placed = true;
@@ -124,7 +123,6 @@ pub const Picker = struct {
         if (n == 0) return null;
         if (e.pressed(.up)) p.cursor = (p.cursor + n - 1) % n;
         if (e.pressed(.down)) p.cursor = (p.cursor + 1) % n;
-        if (e.pressed(.b)) return @as(?usize, null);
         if (e.pressed(.a) and playable[p.cursor]) return p.cursor;
         return null;
     }

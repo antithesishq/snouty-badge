@@ -3,8 +3,9 @@
 Seventh badge cart for the Software You Can Love (SYCL) conference, built
 for Antithesis: a Sega Game Gear emulator in Zig. The badge build reads its
 ROM from a `.gg`/`.sms` file on the badge's USB drive (docs/ROM_DRIVE.md at
-the repository root) and falls back to an embedded ROM (Waternet, MIT). The
-simulator always embeds. `SPEC.md` is the design; `PLAN.md` is the current
+the repository root) and embeds none: with no usable ROM on the drive it
+shows a "No ROM on the badge drive" screen. The simulator always embeds
+Waternet (MIT). `SPEC.md` is the design; `PLAN.md` is the current
 milestone's file ownership and interface contract. Snouty Gear copies
 `../snouty-boy` wherever it can; that cart's CLAUDE.md and docs have the
 longer explanations, this one summarises.
@@ -20,14 +21,16 @@ longer explanations, this one summarises.
   fallback callback. Host-testable.
 - `cart/src/` — the badge frontend. `main.zig` exports `start()`/`update()`
   and holds the wasm simulator shims and the splash -> running -> menu
-  state machine; `frontend/` has video (squeeze/crop and the CRAM ->
+  state machine (or no_rom); `frontend/` has video (squeeze/crop and the CRAM ->
   `Pixel` cache), input (pad byte, A/B swap, Select-hold state machine),
   debug (overlay), romsrc (drive or embedded ROM, the report line, About
-  facts), splash, menu (settings, Reset, About), audio (`Psg.voice` ->
-  `tone2`).
+  facts), splash (and the no-ROM screen), menu (settings, Reset, About),
+  audio (badge: the core's `Gg.audio_out` -> `audio_feed`, the new
+  firmware's streaming ring; wasm: `Psg.voice` -> the simulator's `tone`
+  import).
 - `tests/` — host tests (`zig build test`), entry `tests/all.zig`.
   `tests/roms/` is gitignored; `tools/fetch_test_roms.sh` fills it.
-- `roms/` — the shipped ROM `waternet.gg` and its license. `*.gg`/`*.sms`
+- `roms/` — the simulator's ROM `waternet.gg` and its license. `*.gg`/`*.sms`
   are gitignored at the root (commercial ROMs never enter the repo; Sonic
   lives at `~/sonic.gg` on the VM, read-only).
 - `tools/` — `fetch_test_roms.sh` (ZEXDOC/ZEXALL; `--single-step` adds a
@@ -44,14 +47,17 @@ longer explanations, this one summarises.
 ## Target hardware (SYCL Badge V2)
 
 - RP2354B Cortex-M33 at 150 MHz, Core 1 runs the cart from RAM. Cart RAM
-  307 KB total incl. 32 KB stack; code, embedded ROM and state live there.
+  307 KB total incl. 32 KB stack; code and state live there (an embedded
+  ROM too, with `-Dgg-rom-source=embed`).
   The drive ROM is read by pointer from the XIP flash window (romfs at
   `0x10080000`, 1280 KB).
 - Screen 160x128 RGB565, column-major `cart.framebuffer[x][y]`. Game Gear
   lines 0..143 are squeezed to 128 rows (`y - y / 9`, every ninth dropped).
 - Inputs `cart.controls.*`; the OS owns Start+Select (exit) and click.
   Mapping (SPEC.md section 5): d-pad, badge B = button 1, badge A = button
-  2, Start; Select hold 500 ms = emulator menu (M2).
+  2, Start; Select hold 500 ms = emulator menu (M2); Select then Right,
+  both held = fast forward (`input.GameInput.fast`, main.zig `run_frame`,
+  knobs in `frontend/tuning.zig`; docs/FAST_FORWARD.md at the root).
 
 ## Building
 
@@ -62,12 +68,14 @@ only (it calls this cart's `build.zig` `pub fn add`).
 
 - `zig build -Dcart=snouty-gear` → `zig-out/firmware/snouty-gear.uf2`,
   `.elf`, `zig-out/bin/snouty-gear.wasm`. `-Dgg-rom=path` picks the embedded
-  ROM (repo-relative, cart-relative `roms/x.gg`, absolute or `~/x.gg`);
+  ROM (wasm and `embed` builds only) (repo-relative, cart-relative `roms/x.gg`, absolute or `~/x.gg`);
   `-Dgg-rom-source=drive|embed|pack` (default `drive`; `pack` is SPEC.md
   13.1, not built yet: it prints a note and builds the `drive` cart);
   `-Dcart-optimize=fast|small|safe|debug`.
 - The generated `rom` module has `data` (the embedded ROM), `name` (its
-  file name) and `source` (`.drive` or `.embed`).
+  file name) and `source` (`.drive` or `.embed`). The badge `drive` build
+  must never reference `rom.data` outside a comptime-false branch
+  (`romsrc.use_drive`), or the ROM's bytes are linked into the UF2 again.
 - `zig build test` → every cart's host tests; `-Dtest-filter=bus` (test names carry an area prefix: `bus:`, `psg:`, `z80:`...),
   `-Dtest-optimize=`.
 - `size -A zig-out/firmware/snouty-gear.elf` against SPEC.md section 13.
@@ -87,6 +95,13 @@ only (it calls this cart's `build.zig` `pub fn add`).
 - Core: fixed arrays, integer math, deterministic. Hot paths avoid function
   pointers except the one `LineSink` call per line and the ROM fallback for
   fragmented drive files.
+- Sound (docs/EMU_SOUND.md at the root): `core/psg.zig` `Synth` renders
+  the PSG when `Gg.audio_render` is set (the frontend sets it from the
+  Sound row on the badge only, and clears it in the menu); off, the
+  register model runs exactly as before. Render state is not in
+  keyframes: a reset or restore resyncs it. Badge builds must never call
+  `cart.tone2` or the `tone` import (on the new firmware those words are
+  the audio ring's). Tests: `-Dtest-filter=sound:`.
 - Simulator quirks (upstream `main`): the wasm platform never presents and
   the simulator reads a legacy framebuffer at 0x20 with red/blue swapped;
   buttons arrive at 0x04. `main.zig` has `present_wasm()`/`read_controls()`

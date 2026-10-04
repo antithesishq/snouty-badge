@@ -6,7 +6,7 @@
 # weapon and forks).
 #
 #   tools/difficulty.sh [--no-build] [--bots 1,2,3] [--stages N] [--bosses 0,1,2,3] [--json OUT.json]
-#                       [--frames CAP] [--seed N]
+#                       [--frames CAP] [--seed N] [--mode M]
 #
 # Everything but --no-build goes to tools/difficulty.mjs (see its header).
 # Per-bot traces land in out/difficulty/botN/ (frames.json, preview.log).

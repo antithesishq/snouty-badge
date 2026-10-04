@@ -6,7 +6,8 @@ after `../snouty-boy` and `../snouty-gear`, which it copies wherever it
 can (their CLAUDE.md and docs have the longer explanations). The badge
 build reads its ROM from a `.gen`/`.md`/`.bin` file on the badge's USB
 drive in place (docs/ROM_DRIVE.md at the repository root, `docs/ROM_STREAMING.md`
-here) and falls back to the embedded ROM; the simulator always embeds.
+here) and embeds no ROM (none on the drive: the no-ROM screen,
+`frontend/help.zig`); the simulator always embeds.
 `SPEC.md` is the design; `PLAN.md` is the current milestone's file
 ownership and interface contract.
 
@@ -35,7 +36,7 @@ ownership and interface contract.
   Select hold = menu), audio (`Md.tone()` -> `tone2` on change; the wasm
   build drives the simulator's `tone` import itself, see the file), debug
   (overlay), text (fast font), romsrc (drive or embedded ROM, the report
-  line).
+  line), picker, help (the no-ROM screen).
 - `tests/` — host tests, entry `tests/all.zig`. `tests/roms/` is
   gitignored; Track R's `tools/fetch_test_roms.sh` fills it.
 - `roms/` — Track R's shipped test ROM `snouty-test.bin` and its licence.
@@ -51,8 +52,8 @@ ownership and interface contract.
   **RAM cart** `snouty-genesis` (no Z80, no scrubber; code, data and state
   in the 307 KB RAM window, 32 KB of it stack) and the **XIP cart**
   `snouty-genesis-xip`, everything: code and read-only data (the
-  embedded ROM too) in the 256 KB cart flash window, `.data`/`.bss` in the
-  RAM window. Both read the drive ROM by pointer from the XIP flash window
+  embedded ROM too in an embed build) in the 256 KB cart flash window,
+  `.data`/`.bss` in the RAM window. Both read the drive ROM by pointer from the XIP flash window
   (romfs at `0x10080000`, 1280 KB).
 - Screen 160x128 RGB565, column-major `cart.framebuffer[x][y]`. The core
   emits badge rows directly: 160 tagged pixels per row, 128 rows (the line
@@ -78,8 +79,8 @@ only (it calls this cart's `build.zig` `pub fn add`).
   `tunables.z80_enabled`, `undo.enabled`) and module optimize modes (RAM
   cart: `app`, `drive`, `romfs`, `rom`, `iris`, `hint` and cart-api
   ReleaseSmall; `core` and `video` ReleaseFast), plus the RAM cart's
-  trimmed test ROM (`tools/trim_rom.zig`). Keep the RAM ELF's
-  `__bss_end__` at least 4 KB under `__stack_limit__` (`arm-none-eabi-nm`).
+  trimmed test ROM in embed builds (`tools/trim_rom.zig`). Keep the RAM
+  ELF's `__bss_end__` at least 4 KB under `__stack_limit__` (`arm-none-eabi-nm`).
 - Module layout: `cart/src/main.zig` (root: exports, wasm shims) imports
   `app` (`cart/src/frontend/app.zig`: the state machine, rooted in
   `frontend/`, so every frontend file but `video.zig` and `drive.zig`
@@ -89,11 +90,16 @@ only (it calls this cart's `build.zig` `pub fn add`).
 - `-Dmd-rom=path` picks the embedded ROM (repo-relative, cart-relative
   `roms/x.bin`, absolute or `~/x.bin`); default `roms/snouty-test.bin`
   (16 KB, built from `tools/testrom/`). `-Dmd-rom-source=drive|embed`
-  (default `drive`); `-Dcart-optimize=fast|small|safe|debug`.
+  (default `drive`); `-Dcart-optimize=fast|small|safe|debug`. A drive
+  build (both badge carts) links no embedded ROM: `romsrc.embedded` is a
+  compile error there and nothing else it analyzes reads `rom.data`, so
+  `@embedFile` emits nothing (the wasm, built from the same modules but
+  never `use_drive`, keeps it). Keep it that way: every KB of cart image
+  costs 2 KB of drive space.
 - The generated `rom` module (cart and host tests) has `data` (the
   embedded ROM), `name` (its file name) and `source` (`.drive` or
-  `.embed`). The RAM cart's has the default test ROM without its zero
-  padding (3 KB, `tools/trim_rom.zig`).
+  `.embed`). The RAM cart's (embed builds) has the default test ROM
+  without its zero padding (3 KB, `tools/trim_rom.zig`).
 - **Configure cache rule**: this Zig caches the configure phase's build
   graph keyed by the build files and the options. A graph decision taken
   from anything else (a file's existence, an environment variable) is

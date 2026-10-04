@@ -433,8 +433,7 @@ pub fn boot_error_text(l: *const core.Lynx) ?[]const u8 {
 
 /// About (PLAN.md M2): version, file name, header title and manufacturer
 /// (headered ROMs), size and block size, source, then while lines remain:
-/// the core's boot error, why the drive was not used (embedded ROM), the
-/// drive's CRC32, "fragmented", the EEPROM warning.
+/// the core's boot error, the drive's CRC32, "fragmented", the EEPROM warning.
 fn draw_about(l: *const core.Lynx) void {
     var bufs: [about_lines][24]u8 = undefined;
     var lines: [about_lines][]const u8 = undefined;
@@ -480,15 +479,7 @@ fn draw_about(l: *const core.Lynx) void {
         lines[n] = w.done();
         n += 1;
     }
-    if (!drive) {
-        if (romsrc.fallback) |why| {
-            if (n + 2 <= about_lines) {
-                lines[n] = "Drive not used:";
-                lines[n + 1] = fit(&bufs[n + 1], why, panel_cols);
-                n += 2;
-            }
-        }
-    } else {
+    if (drive) {
         if (n < about_lines) {
             w = .{ .buf = &bufs[n] };
             w.put("CRC ");
@@ -568,7 +559,6 @@ comptime {
     check_width("Sound: Off", panel_cols);
     check_width("Version " ++ version, panel_cols);
     check_width("Source: embedded", panel_cols);
-    check_width("Drive not used:", panel_cols);
     check_width("CRC 00000000", panel_cols);
     check_width("512 KB, 2048 B blk", panel_cols);
     check_width("Boot: BadCheckByte", panel_cols);

@@ -20,7 +20,7 @@ const Button = input.Button;
 const Fake = struct {
     picker: flow.Picker = .{},
     playable: [2]bool = .{ true, true },
-    begun: ?(?usize) = null,
+    begun: ?usize = null,
     steps: u32 = 0,
     last_pad: u8 = 0,
     menu_opens: u32 = 0,
@@ -31,10 +31,10 @@ const Fake = struct {
     pub fn splash_frame(_: *Fake, skip: bool) bool {
         return skip;
     }
-    pub fn pick_frame(f: *Fake, e: input.Edge) ??usize {
+    pub fn pick_frame(f: *Fake, e: input.Edge) ?usize {
         return f.picker.update(e, &f.playable);
     }
-    pub fn begin_choice(f: *Fake, choice: ?usize) bool {
+    pub fn begin_choice(f: *Fake, choice: usize) bool {
         f.begun = choice;
         return true;
     }
@@ -89,7 +89,7 @@ test "flow: the button that skips the splash does not act on the picker" {
         try testing.expectEqual(flow.State.pick, fl.state);
         frames(&fl, &fake, &.{skip}, 20);
         try testing.expectEqual(flow.State.pick, fl.state);
-        try testing.expectEqual(@as(?(?usize), null), fake.begun);
+        try testing.expectEqual(@as(?usize, null), fake.begun);
         try testing.expectEqual(@as(usize, 0), fake.picker.cursor);
         try testing.expectEqual(@as(u32, 0), fake.steps);
 
@@ -99,7 +99,7 @@ test "flow: the button that skips the splash does not act on the picker" {
         frames(&fl, &fake, &.{skip}, 1);
         switch (skip) {
             .a => {
-                try testing.expectEqual(@as(?(?usize), @as(?usize, 0)), fake.begun);
+                try testing.expectEqual(@as(?usize, 0), fake.begun);
                 try testing.expectEqual(flow.State.running, fl.state);
                 // The A that chose the ROM does not reach the game either.
                 try testing.expectEqual(@as(u8, 0), fake.last_pad);
@@ -109,22 +109,19 @@ test "flow: the button that skips the splash does not act on the picker" {
                 frames(&fl, &fake, &.{.a}, 1);
                 try testing.expectEqual(core.Pad.a, fake.last_pad);
             },
-            .b => {
-                try testing.expectEqual(@as(?(?usize), @as(?usize, null)), fake.begun);
-                try testing.expectEqual(flow.State.running, fl.state);
-            },
             .down => {
                 try testing.expectEqual(flow.State.pick, fl.state);
                 try testing.expectEqual(@as(usize, 1), fake.picker.cursor);
                 frames(&fl, &fake, &.{}, 1);
                 frames(&fl, &fake, &.{.a}, 1);
-                try testing.expectEqual(@as(?(?usize), @as(?usize, 1)), fake.begun);
+                try testing.expectEqual(@as(?usize, 1), fake.begun);
                 try testing.expectEqual(flow.State.running, fl.state);
             },
-            // Select does nothing on the picker; the screen stays.
-            .select => {
+            // B and Select do nothing on the picker (the badge build embeds
+            // no ROM to run instead); the screen stays.
+            .b, .select => {
                 try testing.expectEqual(flow.State.pick, fl.state);
-                try testing.expectEqual(@as(?(?usize), null), fake.begun);
+                try testing.expectEqual(@as(?usize, null), fake.begun);
             },
             else => unreachable,
         }
@@ -169,10 +166,12 @@ test "flow: picker cursor starts on the first playable file and skips no row" {
     var p: flow.Picker = .{};
     const playable = [_]bool{ false, true, true };
     const none: input.Edge = .{};
-    try testing.expectEqual(@as(??usize, null), p.update(none, &playable));
+    try testing.expectEqual(@as(?usize, null), p.update(none, &playable));
     try testing.expectEqual(@as(usize, 1), p.cursor);
     // A on an unplayable row does nothing.
-    try testing.expectEqual(@as(??usize, null), p.update(.{ .cur = @bitCast(ctl(&.{.up})) }, &playable));
+    try testing.expectEqual(@as(?usize, null), p.update(.{ .cur = @bitCast(ctl(&.{.up})) }, &playable));
     try testing.expectEqual(@as(usize, 0), p.cursor);
-    try testing.expectEqual(@as(??usize, null), p.update(.{ .cur = @bitCast(ctl(&.{.a})) }, &playable));
+    try testing.expectEqual(@as(?usize, null), p.update(.{ .cur = @bitCast(ctl(&.{.a})) }, &playable));
+    // B is no way out (no embedded ROM in the badge build).
+    try testing.expectEqual(@as(?usize, null), p.update(.{ .cur = @bitCast(ctl(&.{.b})) }, &playable));
 }

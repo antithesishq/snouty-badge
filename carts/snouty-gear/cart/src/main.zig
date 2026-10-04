@@ -5,13 +5,21 @@
 //!
 //! States: splash (frontend/splash.zig) -> running -> menu
 //! (frontend/menu.zig, opened by a 500 ms Select hold, frontend/input.zig)
-//! -> running. The core is stepped only while running. Sound is one tone2
-//! voice from the PSG (frontend/audio.zig). The time scrubber
+//! -> running; or, in the badge drive build when the drive has no usable
+//! ROM, no_rom (frontend/splash.zig `draw_no_rom`) for good: there is no
+//! embedded ROM to fall back on. The core is stepped only while running.
+//! Sound (frontend/audio.zig): on the badge the core renders the PSG and
+//! the samples stream to the OS; in the simulator one `tone` voice. The time scrubber
 //! (frontend/rewind.zig, SPEC.md 10) records a keyframe every 30 game frames
 //! and the pad of every frame; the menu's Left/Right scrub through them.
+//! Fast forward (docs/FAST_FORWARD.md at the root): while Select then
+//! Right are held, each update steps up to `tuning.ff_max_frames` game
+//! frames within `tuning.ff_budget_us`, only the last one rendered and none
+//! with sound, every one recorded for the scrubber; `>>4x` sits in the
+//! top right corner meanwhile.
 //! Control hints (lib/hint.zig): "Hold Select: menu" on the splash and in
-//! a strip at the bottom for the first 3 s of play (gone at the first
-//! fresh press); the menu has its own.
+//! a strip at the bottom for the first 3 s of play, then "Sel+Right: fast"
+//! for 3 s more (gone at the first fresh press); the menu has its own.
 //! See SPEC.md (design), PLAN.md (milestone contract), CLAUDE.md (toolchain).
 const cart = @import("cart-api");
 const core = @import("core");
@@ -24,6 +32,7 @@ const menu = @import("frontend/menu.zig");
 const splash = @import("frontend/splash.zig");
 const audio = @import("frontend/audio.zig");
 const rewind = @import("frontend/rewind.zig");
+const tuning = @import("frontend/tuning.zig");
 const hint = @import("hint");
 
 comptime {
@@ -34,14 +43,21 @@ comptime {
 /// the stack (32 KB on the badge, 14.7 KB in wasm).
 var gg: core.Gg = undefined;
 
-pub const State = enum(u32) { splash = 0, running = 1, menu = 2 };
+pub const State = enum(u32) { splash = 0, running = 1, menu = 2, no_rom = 3 };
 var state: State = .splash;
 var controls_state: input.State = .{};
 
 /// Menu opens since boot.
 var menu_opens: u32 = 0;
-/// "Hold Select: menu" over the first seconds of play (lib/hint.zig).
+/// "Hold Select: menu", then `menu.fast_hint`, over the first seconds of play
+/// (lib/hint.zig): `hint.play_seconds` each.
 var play_hint: hint.Overlay = .{};
+const play_hint_updates = hint.play_seconds * 60;
+
+/// Game frames the last update stepped: 1 at 1x, up to
+/// `tuning.ff_max_frames` while fast forwarding (the `>>4x` indicator and
+/// the `debug_ff_frames` export).
+var frames_stepped: u32 = 0;
 
 /// Badge frames since boot; paces the second chime note.
 var frames_seen: u32 = 0;
@@ -52,7 +68,12 @@ pub fn start() void {
     cart.set_double_buffer_mode(.no_copy_full_frame);
     text.init();
     video.init();
-    gg.init_in_place(romsrc.select());
+    // No ROM on the drive: `gg` stays uninitialised and is never touched.
+    const r = romsrc.select() orelse {
+        state = .no_rom;
+        return;
+    };
+    gg.init_in_place(r);
     gg.line_sink = video.sink();
     // False when the arena has no room for two keyframes: the scrubber
     // stays off ("Scrub: no memory"), the game runs as before.
@@ -67,8 +88,9 @@ pub fn update() void {
     const t0 = cart.micros_since_boot();
     debug.frame_tick(t0);
 
-    // Sound follows the menu toggle; the tone holds while the core is paused
-    // and stops at once when sound is switched off (audio.update handles it).
+    // Sound follows the menu toggle. While the core is paused the badge
+    // ramps out (audio.idle); the simulator's tone holds and stops at once
+    // when sound is switched off.
     audio.enabled = menu.sound_enabled;
 
     switch (state) {
@@ -82,22 +104,29 @@ pub fn update() void {
                 chime_second_at = 0;
                 audio.chime(1);
             }
+            audio.idle(&gg);
             if (splash.update(controls_state.edge.any_pressed())) {
                 controls_state.suppress_held();
                 state = .running;
-                play_hint.start(hint.play_seconds * 60);
+                play_hint.start(2 * play_hint_updates);
                 run_frame(t0);
             }
         },
         .running => run_frame(t0),
         .menu => {
-            audio.update(&gg);
+            // Scrub steps replay frames: no sound to render for them.
+            gg.audio_render = false;
+            audio.idle(&gg);
             if (menu.update(&gg, controls_state.live_edge()) == .resume_game) {
                 menu.close();
                 controls_state.suppress_held();
                 state = .running;
                 run_frame(cart.micros_since_boot());
             }
+        },
+        .no_rom => {
+            audio.idle(&gg);
+            splash.draw_no_rom(romsrc.failure orelse "");
         },
     }
 
@@ -120,20 +149,63 @@ fn run_frame(t1: u64) void {
         return;
     }
 
+    // Fast forward: the frames before the last one run without the line
+    // sink (no pixel work; sprites are still evaluated for the VDP flags,
+    // so the console state is the same) and without sound.
+    var n: u32 = 1;
+    if (in.fast) {
+        gg.audio_render = false;
+        const sink = gg.line_sink;
+        gg.line_sink = null;
+        var slowest: u64 = last_frame_us;
+        var t = t1;
+        while (n < tuning.ff_max_frames) : (n += 1) {
+            if (!cart.is_wasm and t -% t1 + 2 * slowest > tuning.ff_budget_us) break;
+            gg.step_frame(in.pad);
+            rewind.record_frame(&gg, in.pad);
+            const now = cart.micros_since_boot();
+            slowest = @max(slowest, now -% t);
+            t = now;
+        }
+        gg.line_sink = sink;
+    } else gg.audio_render = audio.renders();
+    frames_stepped = n;
+
+    const t_last = cart.micros_since_boot();
     gg.step_frame(in.pad);
     rewind.record_frame(&gg, in.pad);
     const t2 = cart.micros_since_boot();
+    last_frame_us = t2 -% t_last;
 
-    audio.update(&gg);
+    if (in.fast) audio.mute() else audio.update(&gg);
 
     video.finish_frame();
     debug.record(@truncate(t2 -% t1));
     if (debug.enabled) romsrc.draw_report();
     debug.draw();
+    if (in.fast) draw_fast(n);
     // A press held over from the splash is suppressed, not fresh.
     const e = controls_state.edge;
     const fresh = (input.Edge{ .prev = e.prev, .cur = e.cur & ~controls_state.suppress }).any_pressed();
-    play_hint.update_and_draw(cart, text.draw, fresh, cart.screen_height - hint.strip_h, menu.title_color, menu.band_color);
+    if (play_hint.tick(fresh)) {
+        const s = if (play_hint.left >= play_hint_updates) hint.hold_select else menu.fast_hint;
+        hint.draw_strip(cart, text.draw, s, cart.screen_height - hint.strip_h, menu.title_color, menu.band_color);
+    }
+}
+
+/// Microseconds the last rendered game frame took (step and record): the
+/// first estimate of a frame's cost in the next fast-forward update.
+var last_frame_us: u64 = 0;
+
+/// `>>4x` (frames this update) in the top right corner, under the debug
+/// overlay's three lines while that shows. The game redraws the whole
+/// screen every frame (`.no_copy_full_frame`), so it is gone the update
+/// fast forward stops; `text.draw` marks its own dirty rect.
+fn draw_fast(n: u32) void {
+    var buf: [4]u8 = ">>0x".*;
+    buf[2] = '0' + @as(u8, @intCast(@min(n, 9)));
+    const y: i32 = if (debug.enabled or debug.alarm) 24 else 0;
+    text.draw(&buf, cart.screen_width - 8 * buf.len, y, menu.title_color, menu.band_color);
 }
 
 pub fn read_controls() cart.Controls {
@@ -198,6 +270,7 @@ comptime {
         @export(&debug_keyframe_cap, .{ .name = "debug_keyframe_cap" });
         @export(&debug_pool_bytes, .{ .name = "debug_pool_bytes" });
         @export(&debug_arena_bytes, .{ .name = "debug_arena_bytes" });
+        @export(&debug_ff_frames, .{ .name = "debug_ff_frames" });
     }
 }
 
@@ -213,7 +286,7 @@ fn debug_step_us() callconv(.c) u32 {
 fn debug_lines() callconv(.c) u32 {
     return video.last_frame_lines;
 }
-/// Frontend state: 0 splash, 1 running, 2 menu.
+/// Frontend state: 0 splash, 1 running, 2 menu, 3 no ROM.
 fn debug_state() callconv(.c) u32 {
     return @backingInt(state);
 }
@@ -352,4 +425,11 @@ fn debug_pool_bytes() callconv(.c) u32 {
 /// Arena bytes the store was laid out in (72 KB static in wasm).
 fn debug_arena_bytes() callconv(.c) u32 {
     return @intCast(rewind.arena_bytes());
+}
+
+// ---- Fast forward ----
+
+/// Game frames the last update stepped (1 at 1x, 0 while not running).
+fn debug_ff_frames() callconv(.c) u32 {
+    return if (state == .running) frames_stepped else 0;
 }

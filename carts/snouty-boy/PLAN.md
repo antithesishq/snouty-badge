@@ -661,3 +661,61 @@ tone re-issued per frame with attack 0.
 
 See SPEC.md section 17. M2 needs the ROM Adrian supplies (or a homebrew
 pulled at Claude's judgement if it blocks work).
+
+## Sound on the new firmware (2026-10-04)
+
+Contract: root `docs/EMU_SOUND.md` (Track A). Adrian heard nothing from
+Tetris DX with Sound on: the show badges' firmware ignores `CART_TONE` and
+plays only a cart-owned 44.1 kHz u8 ring. Done on branch `emu-sound-boy`:
+
+- Core (`core/apu.zig` "Sample generation"): all four channels rendered
+  lazily (before APU writes, sequencer steps, end of frame), box filter
+  over 95/96-dot bins, NR50/NR51 to mono, ~27 Hz high-pass, `apu.gain` 80
+  (Tetris / Tetris DX 99.9th percentile swing +-77 / +-95 of 127; 5 and 99
+  of ~2.6 M samples clip, longest run 16). 738/739 samples per frame
+  (`Gb.audio_len`, `apu.samples`). `Gb.audio_render` gates it; render
+  state (`apu.Snd`, 3.7 KB) is caller-owned, outside keyframes, reset on
+  restore. Channel 4 lives in render state only (NR52 bit 3 still reads 0).
+  Left out: DAC offset pops, wave start delay, duty reset on power off,
+  Vin, PCM12/34. `Gb.init_in` initialises in place (by value it put a
+  50 KB temporary on the 32 KB stack once `reset` grew: a start-up crash
+  in badge-bench).
+- Frontend: `audio_feed` `Feed(738, 739, 4096)`; no `tone2`/`tone` on the
+  badge; chime = 60 ms square bursts through the feed; `idle` ramps out in
+  every non-stepping update; the menu turns rendering off (scrub replays
+  cost nothing). Overlay line 4 `q N u N`. Wasm path unchanged.
+- Tests: 12 `sound:` tests (`tests/sound_unit.zig`); cart total 148 test
+  blocks + the entry block, all pass; full `zig build test` 552 pass, 4
+  skipped (Lynx, as before). This cart has no `check-float`.
+- Every other cart's UF2 byte-identical to the plan-commit baseline
+  (`/home/exedev/emu-sound/baseline/SHA256SUMS`).
+- Size (fast, default build): .text 115,876 -> 122,744; .data 116 -> 120;
+  .bss 18,588 -> 27,324 (ring 4 KB + feed scratch, `Snd` 3.7 KB);
+  `__bss_end__` 0x2005619c -> 0x20059efc: the arena (console + cart RAM +
+  page store) is 15,712 bytes smaller, a few keyframes fewer.
+
+badge-bench, calibrated busy ms mean / p95 / max (drive images built with
+`tools/make_romfs.py`; Tetris presses `START:30-31,START:200-203,
+START:350-353,START:500-503,START:650-653,START:800-803,LEFT:1000-1003,
+RIGHT:1100-1103,A:1200-1202,LEFT:1300-1303,DOWN:1400-1440`, 1800 frames;
+Tetris reaches play, Tetris DX its name-entry screen with music):
+
+| Run | plan commit | sound off | `-Dsound=true` |
+|---|---:|---:|---:|
+| 2048 (`snouty-boy.toml`, one-file image) | 3.98 / 5.92 / 9.19 | 4.02 / 5.98 / 9.29 | 4.37 / 6.35 / 9.72 |
+| Rebound (`snouty-boy-color.toml`, boy-m8 image) | 1.85 / 9.54 / 19.49 | 1.86 / 9.65 / 19.70 | 1.94 / 10.01 / 20.15 |
+| Tetris DX (CGB) | | 4.26 / 5.10 / 11.41 | 5.18 / 6.63 / 12.30 |
+| Tetris (DMG) | | 8.51 / 8.92 / 13.38 | 9.50 / 10.15 / 15.01 |
+
+Sound off is within 0.05 ms mean of the plan commit. Sound on: 0 updates
+over budget on 2048, Tetris and Tetris DX; underruns 0 (queue min 1514,
+mean ~2100); the audio share is about 0.9-1.0 ms mean, 0.9-1.6 ms worst
+(on minus off; in the TDX symbol table `render_keep` 6.4%, noise 3.4%,
+wave 2.6%, the feed 0.6% of cycles). The Rebound script no longer reaches
+the game before update ~1450 (it sits in the picker, in the plan-commit
+build too; its one over-budget frame 1413 is the same in all three), so
+its bench counts the picker's silence as underruns. WAVs were dropped
+(Adrian, 2026-10-04: he flashes builds himself at the show).
+
+Open: Adrian's ear on the badge (gain, noise drums); the Rebound bench
+script's picker timing.

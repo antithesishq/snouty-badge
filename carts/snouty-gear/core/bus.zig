@@ -159,14 +159,14 @@ pub const Bus = struct {
             0 => {
                 if (port <= 0x05) return; // Start port and link port.
                 if (port == 0x06) {
-                    gg.psg.stereo = v;
+                    gg.psg_stereo(v);
                 } else if (port & 1 == 0) {
                     gg.mem_control = v;
                 } else {
                     gg.io_control = v;
                 }
             },
-            1 => gg.psg.write(v),
+            1 => gg.psg_write(v),
             2 => if (port & 1 == 0) gg.vdp.write_data(v) else gg.vdp.write_control(v),
             else => if (port == 0xFD) {
                 if (gg.console_sink) |s| s.emit(v);

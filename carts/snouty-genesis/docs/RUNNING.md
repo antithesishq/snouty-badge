@@ -37,8 +37,9 @@ zig build -Dcart=snouty-genesis -Dcart-mode=xip  # the XIP cart and the wasm onl
   no time scrubber (no scrub line, Left/Right do nothing outside the
   setting rows). The 68000 and the VDP are the XIP cart's: the test ROM's
   and Miniplanets' golden pictures are identical (`tests/ram_variant.zig`).
-  Its embedded test ROM is the shipped one without its zero padding
-  (3 KB; the report line says `3 KB`). The frontend is built
+  Built with `-Dmd-rom-source=embed`, its embedded test ROM is the shipped
+  one without its zero padding (3 KB; the report line says `3 KB`); the
+  default drive build embeds no ROM. The frontend is built
   ReleaseSmall, the core and the line sink ReleaseFast.
 - `zig-out/firmware/snouty-genesis-xip.uf2` (and `.elf`): **the XIP cart**,
   everything (the Z80 sound driver and the one tone voice, the scrubber),
@@ -64,8 +65,9 @@ Options:
   ROMs stay local (`*.gen`, `*.smd` and this cart's `roms/*.bin`,
   `roms/*.md` are gitignored).
 - `-Dmd-rom-source=drive|embed`: `drive` (default) reads the ROM from the
-  badge drive and uses the embedded ROM if there is none; `embed` uses only
-  the embedded ROM. The wasm build always embeds.
+  badge drive only and links no embedded ROM (no playable ROM there: the
+  no-ROM screen); `embed` uses only the embedded ROM. The wasm build
+  always embeds.
 - `-Dcart-optimize=fast|small|safe|debug` (default `fast`).
 
 Sizes: `size -A zig-out/firmware/snouty-genesis.elf` (RAM cart: `.text` +
@@ -388,8 +390,8 @@ the M1 numbers with the per-update output from update 36 on). The romfs
 image is required: the default build reads the drive, and without an
 image the run faults reading the boot sector (a bench artefact). An empty
 image (`python3 tools/make_romfs.py carts/snouty-genesis/out/romfs.img`)
-shows the help screen instead of the game; `--press A:38-39` leaves it for
-the embedded ROM. Miniplanets from the drive:
+shows the no-ROM screen instead of the game, and stays there (the drive
+build has no embedded ROM). Miniplanets from the drive:
 `python3 tools/make_romfs.py carts/snouty-genesis/out/romfs_mini.img carts/snouty-genesis/roms/miniplanets.bin=MINI.GEN`
 with `--romfs carts/snouty-genesis/out/romfs_mini.img --script
 carts/snouty-genesis/tools/scripts/m2_mini300.json --frames 336`. The
@@ -493,10 +495,12 @@ any other file. With the default `drive` build:
    name and size per row, the selected file's header name under the list,
    files that cannot run dimmed with the reason (`no SEGA header`, `SMD
    interleaved: convert to .bin`, `mapper or over 4 MB: unsupported`, `SVP
-   chip: unsupported`); Up/Down, A plays, B runs the embedded test ROM
-   (`docs/m2_picker.png`). With a drive but no Genesis file a help screen
-   says to copy one and lists the skipped files; A runs the test ROM
-   (`docs/m2_help.png`). The menu's `Pick ROM` row returns to the picker.
+   chip: unsupported`); Up/Down, A plays (`docs/m2_picker.png`). With no
+   playable Genesis file (or no drive volume, or a file that no longer
+   maps) the no-ROM screen says to copy one, gives the reason (`Drive:
+   NoVolume`, `Drive: no .gen/.md/.bin files`) and lists the skipped
+   files (`docs/m2_help.png`); the cart stays there, Start+Select leaves
+   through the OS. The menu's `Pick ROM` row returns to the picker.
    With the overlay on, the bottom lines read
    `ROM: drive contiguous NAME 512 KB crc 1A2B3C4D` (or `fragmented`; plus
    `(i of N)` with several files); with no volume they read

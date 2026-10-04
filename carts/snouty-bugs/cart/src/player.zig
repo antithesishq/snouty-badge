@@ -32,7 +32,7 @@ const max_y: f32 = 125 - cell_h;
 const spawn_x: f32 = 16;
 const spawn_y: f32 = 64 - cell_h / 2;
 
-const fire_interval: u32 = 6;
+pub const fire_interval: u32 = 6;
 const bank_hold: u32 = 6;
 pub const invuln_ticks: u32 = 120;
 const score_cap: u32 = 999_999;

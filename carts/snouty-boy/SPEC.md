@@ -175,7 +175,7 @@ Frontend (badge side):
 cart/src/main.zig          start()/update(); owns Gb, Frontend, Rewind
 cart/src/frontend/video.zig   line sink: 2-bit line -> RGB565 columns with
                               the squeeze/crop line map and current palette
-cart/src/frontend/audio.zig   APU state -> one tone2 voice (section 9)
+cart/src/frontend/audio.zig   APU samples -> the streaming ring; wasm: one voice (section 9)
 cart/src/frontend/input.zig   controls -> joypad byte; Select-hold state
                               machine with deferred delivery
 cart/src/frontend/menu.zig    overlay menu drawn with api.text/rect
@@ -213,19 +213,39 @@ comptime-specialized MBC, and the skipped ninth lines.
 
 ## 9. Audio
 
-The buzzer has one voice, so the frontend chooses one channel per frame:
+Rewritten 2026-10-04 (root docs/EMU_SOUND.md, PLAN.md "Sound on the new
+firmware"). The show badges run newer upstream firmware, which ignores
+`CART_TONE` and plays only a cart-owned ring of 44.1 kHz unsigned 8-bit
+mono samples (`lib/stream_audio.zig`). So:
 
-- Candidates: ch1 and ch2 (square) and ch3 (wave, played as triangle) that
-  are enabled in NR52, have a live length counter, and have envelope
-  volume above 0. Noise (ch4) is dropped.
-- Pick the highest envelope volume; ties go ch1, ch2, ch3. Frequency is
-  `131072 / (2048 - x)` Hz for squares and `65536 / (2048 - x)` for wave.
-  Volume maps 1..15 to 0.2..1.0.
-- `tone2` is issued only when the chosen frequency, shape or volume
-  changes, with infinite duration; `Tone2Options.stop` when nothing is
-  audible. Update rate is once per badge frame (16.7 ms), which is coarse
-  for arpeggios but fine for melodies and effects.
-- Menu toggle, default on (section 18, item 6). Global volume left to the OS.
+- The core renders all four channels (`core/apu.zig` "Sample generation"):
+  squares with duty, sweep and envelope; the wave channel from wave RAM
+  with its output level; noise from the 15/7-bit LFSR with its envelope
+  and length; DAC enables, NR51 routing and NR50 volume mixed to mono (a
+  channel on one side is half as loud as on both); one gain constant
+  (`apu.gain`, chosen from Tetris and Tetris DX levels); a first-order
+  high-pass at ~27 Hz like the console's output capacitor. Each output
+  sample is the mean level over its 95/96-dot bin (box filter). Rendering
+  is lazy: pending time is rendered before an APU register write, before
+  a frame sequencer step and at the end of the frame. A frame leaves 738
+  or 739 samples (738.4: the partial bin carries over) in `Gb.snd.out`,
+  `Gb.audio_len` of them; CGB double speed changes nothing (time is dots).
+- `Gb.audio_render` (off by default) gates all of it; off, the register
+  model runs exactly as before and a sound-off build pays a branch per
+  subsystem flush. Render state is not console state: keyframes do not
+  hold it, a restore resets it.
+- Badge frontend: every stepped frame's samples go through the shared
+  `audio_feed` (rate control against the OS's clock, ramp-out when the
+  game stops stepping). No `tone2` and no `tone` import on the badge (on
+  the new firmware they would overwrite the ring words). On old firmware
+  the badge is silent. The boot chime is a 60 ms square burst per note
+  through the feed.
+- Wasm (simulator, which has no streaming audio): unchanged, one voice
+  from `pick_voice` (the loudest of ch1..3, square or triangle) through
+  the simulator's `tone` import.
+- Menu Sound row, off at boot unless built with `-Dsound=true` (section
+  18 item 6). The debug overlay's fourth line shows the ring's queue and
+  underrun count while sound is on.
 
 ## 10. Time scrubbing (the Antithesis feature)
 
@@ -292,17 +312,21 @@ it is needed by M2, and M1 runs on `dmg-acid2` and the Blargg ROMs.
 
 ### 11.1 ROMs from the badge drive (M5, 2026-09-29)
 
-The embedded ROM is the fallback only. On the badge the cart looks for
+Since 2026-10-04 the default badge build embeds no ROM (Adrian: every ROM
+byte in the UF2 costs two on the 1280 KB drive). On the badge the cart looks for
 `.gb`/`.gbc` files on the USB drive (the OS `romfs` FAT12 region of the
 internal flash) and reads the chosen one in place through the XIP flash
 window, by pointer: nothing is copied into RAM, so the ROM no longer
 trades against scrub depth and may be up to 1 MB (64 banks). Shared design
 and its open hardware checks: `docs/ROM_DRIVE.md` at the repository root;
 the FAT12 reader is `lib/romfs.zig`, shared with Snouty Gear. One file
-starts directly, several show a picker after the splash, none (or a
-fragmented file's unmappable banks, an unreadable volume) fall back as
-described in PLAN.md M5. `-Drom-source=embed` restores the old behaviour;
-the web simulator always embeds. Eject the drive before playing: the OS
+starts directly, several show a picker after the splash (A plays; there is
+nothing else to choose), none (or nothing playable, a file that cannot be
+mapped, an unreadable volume) shows a no-ROM screen that says to copy a
+`.gb`/`.gbc` file to the drive, with the reason, and stays (the OS menu
+leaves). Until 2026-10-04 an embedded fallback ROM ran instead (PLAN.md
+M5). `-Drom-source=embed` restores the pre-M5 behaviour; the web simulator
+always embeds. Eject the drive before playing: the OS
 may write flash while the cart runs. Cart RAM is still not saved between
 runs (no flash writes from the cart).
 
@@ -317,7 +341,7 @@ for a single-game cart: `-Drom-source=embed -Drom=...`, with
 
 - On `start()`: 1.2 s splash where the Antithesis Iris mark (the shared
   1-bit 24x24 bitmap in `lib/iris_mark.zig`, drawn at 2x in the palette's
-  darkest shade) scrolls down from the top like the DMG logo, then the two-note DMG-style chime through `tone2`
+  darkest shade) scrolls down from the top like the DMG logo, then the two-note DMG-style chime (a square burst through the streaming ring, section 9)
   (1 kHz then 2 kHz, 60 ms each), then the game. Select-hold skips.
 - Title bar in the menu: "SNOUTY BOY" in the badge font, the ROM's header
   title, and the tag line "verified by deterministic replay".
@@ -355,8 +379,8 @@ A 128 KB game leaves about 60 KB for keyframes, so it needs section 10.4
 to offer more than 1.5 s of history. That is the reason the ROM should be
 small, not any CPU limit.
 
-M5 changes the table: a drive ROM costs no RAM at all (only the 32 KB
-embedded fallback still does), the keyframe pool is sized at run time from
+M5 changes the table: a drive ROM costs no RAM at all (the 32 KB
+embedded fallback did until 2026-10-04, when it went), the keyframe pool is sized at run time from
 the RAM left between `.bss` and the stack, and its slot size follows the
 running ROM's cart RAM (0, 2 or 8 KB), so a RAM-less game gets more
 keyframes than one with 8 KB of save RAM. Because that pool is no longer
@@ -562,6 +586,7 @@ ship it as zeros.
 | Build (fast, 2026-09-29) | .text | .bss | Arena | 2048-gb (2 KB RAM) | Rex Runner (8 KB) | Rebound (0) |
 |---|---:|---:|---:|---|---|---|
 | default: drive, 32 KB fallback embedded, RAM | 115 KB | 18 KB | 136 KB | 19 kf, 80 KB pool | 18 kf, 74 KB | 20 kf, 82 KB |
+| default since 2026-10-04: drive, no ROM embedded, RAM | 80 KB | 18 KB | 168 KB | more (not re-measured) | more | more |
 | `embed` rex-runner, RAM | 107 KB | 4 KB | 158 KB | - | 23 kf, 95 KB | - |
 | `embed` rebound, XIP (code + ROM in flash) | flash | 4 KB | 262 KB | - | - | 50 kf, 202 KB |
 

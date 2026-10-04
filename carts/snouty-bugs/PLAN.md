@@ -2146,3 +2146,50 @@ only (no trap, no identity failure) for the re-pin track.
   (headers say what moved; m1_play's sweep now ends in game over at
   1269, `docs/RUNNING.md` updated). Gate: 27 scripts green,
   `debug_history_check` never 1.
+- 2026-10-04: sound effects (SPEC.md section 11), branch `bugs-sound`.
+  `cart/src/audio.zig` diffs the displayed World once per frame (the
+  snoutenstein pattern), so the simulation, history and every gate
+  script are untouched: zapper (every third volley, volume 0.3), enemy
+  hit (a fresh spark), enemy death (a fresh explosion), crate (the ship
+  gained a weapon, level, fork, shield or core hour), boss enters
+  (`waves.phase` became `.boss`), extra life (the rewind stock grew),
+  retry pop (the shield went), bug report (REWIND's hit frame), the
+  110-880 Hz rewind sweep over the playback (looping while B is held)
+  and player death (DYING). The badge plays through `lib/tone_stream.zig`
+  (the newer firmware's streaming ring; never `cart.tone2`), wasm
+  through `tone2`. Off at boot unless `-Dsound=true`; Select toggles it
+  in every state (ignored while Start is held too, and Start is ignored
+  while Select is: the newer OS's chord), and the title shows
+  `SELECT: SOUND ON/OFF`. ELF text +2.2 KB, data +4.6 KB (the 4 KB
+  ring and its 512-byte scratch start at 128), bss +72 B: 215.9 KB of
+  the 220 KB cap. badge-bench, `m1_play` over 1800 frames: f28a206 mean
+  2.79 ms / worst 6.92; sound off 2.78 / 8.28 (the bench seeds the game
+  from the emulated clock, so another game); `-Dsound=true` 2.91 / 8.65,
+  0 frames over, streaming from frame 70 and 9.49 s of samples consumed.
+  Gate: 27 scripts green with sound off and on. Not mapped: the GO! pop,
+  grazes, a spare crate at the cap (silent), the boss's phase breaks.
+- 2026-10-04: three modes (players: too hard since the pacing pass;
+  Adrian: make the first two modes easier, keep the current pace as
+  SUPER-HARDCORE, up / down picks the mode and A or Start plays, a FORK
+  ghost never takes a hit). `mode.zig` holds the title's pick (meta,
+  constant through a game) and each mode's pace: NORMAL and HARDCORE run
+  the table clock 3 ticks a tick only on an empty field (floor 1), and
+  the fire ramp and rank's stage seconds read `waves.clock()` =
+  `waves.State.elapsed`, real stage ticks (paused with the table during a
+  midboss); SUPER-HARDCORE keeps floor 3, 4 ticks a tick and the table
+  clock for both, with the hardcore rules and `HARD+` in red on the HUD.
+  The title menu replaces "A PLAY" / "B HARDCORE"; B does nothing there.
+  Probe, sweep and dodger over 8 seeds, mean enemies on the field while
+  the table runs (dodger L1S1-S4): before the pacing pass 2.4 / 1.4 / 3.5
+  / 5.0, the pacing pass 4.0 / 3.0 / 4.4 / 5.2, NORMAL now 2.9 / 2.1 / 4.2
+  / 4.4; empty share of L1S1 23 -> 6 -> 12 %; dodger stage 1 102 -> 76
+  -> 89 s. The bots' hit counts barely move between the three (they
+  dodge one bullet at a time; the density is what a person feels).
+  Tried and dropped: floor 2 at 2 ticks a tick (L1S1 3.1), floor 1 at 4
+  (3.1). `difficulty.mjs --mode N` and the `empty%` / `field` columns;
+  hooks `debug_mode`, `debug_pick(n)`, `debug_ghost_shot`. Ghosts already
+  had no hitbox (only `player.hitbox()` is tested); new `m7_ghost` pins
+  it with a control hit. All timeline scripts re-pinned to NORMAL's pace
+  (f12c2e1; m6_pickup, m6_cores, m6_fork and m6_identity moved a hold to
+  keep crossing a grab or a boss spawn). Gate: 28 scripts green,
+  `debug_history_check` never 1. ELF 216.2 KB (cap 220) with the sound.

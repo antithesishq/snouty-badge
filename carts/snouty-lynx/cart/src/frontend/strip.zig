@@ -24,7 +24,7 @@ pub const cols = cart.screen_width / 8;
 /// audio queue and underruns "q1470/0" instead); the origin ("drive 128 KB", "embedded 27 KB")
 /// or with the overlay on the step times; then the core's boot error if
 /// any, else with the overlay on instructions and Suzy pixels, else the
-/// detail (the drive CRC and flags, or why the drive was not used).
+/// detail (the drive CRC and flags).
 /// Out of line: the game frame and `rewind.show` share one copy.
 pub noinline fn draw(l: *const core.Lynx) void {
     video.fill_rows(video.strip_y, video.strip_h, bg);
@@ -59,8 +59,8 @@ pub noinline fn draw(l: *const core.Lynx) void {
     }
 }
 
-/// "crc 1A2B3C4D frag raw" (drive) or "drive: NoVolume" (embedded with a
-/// reason), cut to the strip's width; empty otherwise.
+/// "crc 1A2B3C4D frag raw" (drive), cut to the strip's width; empty
+/// otherwise.
 fn detail_line(buf: *[32]u8) []const u8 {
     var n: usize = 0;
     if (romsrc.origin == .drive) {
@@ -70,9 +70,6 @@ fn detail_line(buf: *[32]u8) []const u8 {
         if (romsrc.fragmented) n += debug.put(buf[n..], " frag");
         if (!romsrc.layout.headered) n += debug.put(buf[n..], " raw");
         if (romsrc.layout.warn_eeprom()) n += debug.put(buf[n..], " no-EEP");
-    } else if (romsrc.fallback) |why| {
-        n += debug.put(buf[n..], "drive: ");
-        n += debug.put(buf[n..], why);
     }
     return fit(buf[0..cols], buf[0..@min(n, buf.len)], cols);
 }

@@ -6,22 +6,33 @@ from the repository root unless noted; outputs land in the root `zig-out/`.
 
 Status: M3. The core emulates the Game Gear: Z80, VDP (mode 4, scanline
 renderer, interrupts), Sega mapper with cart RAM, Game Gear port decode and
-the PSG register model. The frontend has the boot splash, one-voice sound
+the PSG (registers, and 44.1 kHz synthesis for the badge). The frontend has the boot splash, sound,
 the emulator menu and the time scrubber (section 5).
 
 Boot splash: the Snouty mark and "SNOUTY GEAR" slide down onto a dark blue
 screen for 0.8 s, a two-note chime (1046 Hz, then 2093 Hz) plays as they
 land, and the game starts at 1.2 s (72 frames). Any button skips it.
 
-Sound: the buzzer plays one voice, the loudest Game Gear tone channel as a
-square wave (noise and inaudible periods dropped), louder or softer with the
-channel's attenuation. It holds while the menu is open; Sound: Off in the
-menu stops it. The badge plays it through its speaker; the simulator
-through the browser (click the page once so the browser lets audio start).
-In the simulator the cart drives the audio worklet directly: upstream's
-wasm shim turns an infinite `tone2` into a 4 s fade-in that music never
-gets past (frontend/audio.zig explains). `audio.max_volume` caps every
-tone the cart plays.
+Sound is off at boot (`-Dsound=true` builds it on); the menu's Sound row
+toggles it (root docs/SOUND.md).
+
+- Badge: the core synthesises the whole PSG (three square channels, the
+  noise channel, 2 dB attenuation, the stereo port averaged to mono) at
+  44,100 Hz and the cart streams it to the new OS firmware's audio ring
+  (`lib/audio_feed.zig`, root docs/EMU_SOUND.md). It needs the newer
+  firmware (sycl-badge upstream 97c093e or later); on the old firmware the
+  badge is silent. The menu, a scrub step and the splash after the chime
+  ramp to silence. The chime is a two-note square burst through the same
+  ring. With the debug overlay on, line 3 ends with `q` (samples queued
+  for the OS, ~1,472 when settled) and `u` (updates that found the ring
+  empty while playing; should stay 0).
+- Simulator: one voice, the loudest tone channel as a square wave (noise
+  and inaudible periods dropped), louder or softer with the channel's
+  attenuation, held while the menu is open; click the page once so the
+  browser lets audio start. The cart drives the audio worklet directly:
+  upstream's wasm shim turns an infinite `tone2` into a 4 s fade-in that
+  music never gets past (frontend/audio.zig explains). `audio.max_volume`
+  caps it.
 
 ## 1. Prerequisites
 
@@ -41,20 +52,22 @@ zig build -Dcart=snouty-gear
 
 Options:
 
-- `-Dgg-rom=PATH`: the ROM to embed (default
-  `carts/snouty-gear/roms/waternet.gg`). Repository-relative, cart-relative
+- `-Dgg-rom=PATH`: the ROM to embed in the wasm build and with
+  `-Dgg-rom-source=embed` (default `carts/snouty-gear/roms/waternet.gg`).
+  The default badge build (`drive`) embeds no ROM. Repository-relative, cart-relative
   (`-Dgg-rom=roms/x.gg`), absolute, or `~/x.gg` (expanded by the build,
   since the shell leaves `=~` alone). Keep an embedded ROM at 128 KB or
   less (SPEC.md section 11); to try Sonic in the simulator:
   `zig build -Dcart=snouty-gear -Dgg-rom=~/sonic.gg` (local only, never
-  commit it; the root `.gitignore` ignores `*.gg`/`*.sms`). The wasm
-  builds; the badge ELF then fails to link (`.bss` overflows cart RAM by
-  about 23 KB with 256 KB embedded), which is expected: on the badge Sonic
-  comes from the drive (section 6).
-- `-Dgg-rom-source=drive|embed|pack`: `drive` (default) reads the ROM from
-  the badge drive and uses the embedded ROM if there is none; `embed` uses
-  only the embedded ROM; `pack` (SPEC.md 13.1) is not built yet, prints a
-  note and builds the `drive` cart. The wasm build always embeds.
+  commit it; the root `.gitignore` ignores `*.gg`/`*.sms`). On the badge
+  Sonic comes from the drive (section 6); an `embed` badge build with it
+  fails to link (`.bss` overflows cart RAM by about 23 KB).
+- `-Dgg-rom-source=drive|embed|pack`: `drive` (default) reads the ROM
+  only from the badge drive and links no ROM bytes (the UF2 is 128 KB
+  smaller, 256 KB less of the 1280 KB drive); with no usable ROM there the
+  cart shows "No ROM on the badge drive" (section 6). `embed` uses only
+  the embedded ROM; `pack` (SPEC.md 13.1) is not built yet, prints a note
+  and builds the `drive` cart. The wasm build always embeds.
 - `-Dcart-optimize=fast|small|safe|debug` (default `fast`).
 
 `python3 carts/snouty-gear/tools/romcheck.py ROM.gg` prints the header
@@ -152,7 +165,7 @@ sequence is the `press` list of `badge-bench/carts/snouty-gear.toml`.
 clock is a stub); the bottom line is the ROM report (both only while the
 debug overlay is on). Exports:
 `debug_frame_count`, `debug_step_us`, `debug_lines` (144), `debug_state`
-(0 splash, 1 running, 2 menu), `debug_pad` (`core.Pad` bits: up 1, down 2, left 4, right 8,
+(0 splash, 1 running, 2 menu, 3 no ROM: badge only), `debug_pad` (`core.Pad` bits: up 1, down 2, left 4, right 8,
 button 1 16, button 2 32, Start 64), `debug_rom_source` (0 embedded,
 1 drive), `debug_rom_size`, `debug_rom_banks`, `debug_rom_crc` (drive only),
 `debug_cram_rebuilds`, `debug_menu_opens`, `debug_tone_hz` (what the buzzer
@@ -202,20 +215,42 @@ Controls (badge / simulator key):
 | Start        | Start                        | nothing                          |
 | Select tap   | nothing (reserved)           | Resume                           |
 | Select hold 500 ms | opens the menu         | -                                |
+| Select, then Right, both held | fast forward (up to 4x, silent, `>>4x` top right) | - |
 
 Start+Select (exit to the OS menu) and the joystick click belong to the OS.
 
 On-screen hints (`lib/hint.zig`, shared with Boy, Genesis and Lynx): the
 splash and the first 3 s of play show "Hold Select: menu" (a strip at the
-bottom, gone at the first button press); in the menu the bottom line on
+bottom, then "Sel+Right: fast" for 3 s more, gone at the first button
+press); in the menu the bottom line on
 Resume reads "Left/Right: rewind" ("Rewind: no history" before the first
 keyframe; the `Scrub:` readout once parked or on other rows) and the
-footer reads "B: back to game".
+footer reads "B: back to game", taking turns every 2 s with
+"Sel+Right: fast".
+
+### Fast forward
+
+Hold Select, then hold Right: the game runs up to four frames per badge
+frame (each update steps unrendered frames until four ran or about 13 ms
+of the 16.7 ms went, then one rendered frame; knobs `ff_max_frames` and
+`ff_budget_us` in `cart/src/frontend/tuning.zig`), silent, with `>>4x`
+(the frames that update) in the top right corner, under the debug overlay
+while that is on. Right does not reach the game meanwhile. Let go of
+Right: back to 1x, and the Select hold that opens the menu counts from
+zero again. Let go of Select: back to 1x, no Select tap, and a Right
+still held waits for its release. Start cancels it, as it cancels the
+menu hold (Start+Select is the OS's). The scrubber records every frame,
+so the history holds the fast-forwarded frames. In the simulator it is
+always 4x (no real clock there). `tools/scripts/ff_play.json` walks it
+in the headless preview (`--sample debug_frame_count,debug_ff_frames`:
+`debug_ff_frames` is the frames the last update stepped);
+`docs/ff_2026-10-04.png` shows the hints, `>>4x` and the menu footer.
 
 ### Menu
 
 Hold Select for half a second: the game pauses under the menu (the frame
-stays visible behind it) and the sound holds its note. The band reads
+stays visible behind it) and the sound fades out (the simulator's voice
+holds its note). The band reads
 SNOUTY GEAR, the ROM's file name and "verified by deterministic replay".
 Rows: Resume; Buttons (`B=1 A=2`, or swapped `A=1 B=2`); Scale (Squeeze
 drops every ninth line, Crop shows lines 8..135; seen after resuming);
@@ -223,8 +258,7 @@ Sound On/Off; Debug overlay On/Off (FPS, `step_frame` time and the ROM
 report line); Reset (restarts the game and resumes); About. About lists
 the version, file name, size and 16 KB bank count, the source (drive or
 embedded), the mapper slots as written (`Map 00 01 02 FC=00`), and the
-drive CRC32 plus `fragmented`, or for an embedded ROM on the badge why the
-drive was not used. B or a Select tap resumes; held buttons reach the game
+drive CRC32 plus `fragmented`. B or a Select tap resumes; held buttons reach the game
 only after they are released. `tools/scripts/m2_menu.json` walks it in the
 headless preview (`--dump-exports debug_state,debug_settings,debug_menu_opens`).
 A button pressed on the very update the hold opens the menu waits for its
@@ -265,9 +299,11 @@ any other file. With the default `drive` build:
 4. Start Snouty Gear. The bottom line reads
    `ROM: drive NAME 256 KB crc 1A2B3C4D` (plus `(1 of N)` when several
    ROM files are on the drive: the first one in the directory wins). If
-   there is no volume or no ROM file it reads
-   `ROM: embedded waternet.gg 64 KB, drive: NoVolume` (or
-   `drive: no .gg/.sms file`, or the romfs error name).
+   there is no volume or no ROM file the cart shows "No ROM on the badge
+   drive", how to copy a `.gg`/`.sms` ROM onto it, and the reason
+   (`NoVolume`, `no .gg/.sms file`, or another romfs error name). It stays
+   there; Start+Select leaves through the OS menu. There is no embedded
+   fallback on the badge.
 
 The ROM file also shows in the OS cart menu and fails to load if picked
 there; that is cosmetic.

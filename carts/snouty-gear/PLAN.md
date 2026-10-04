@@ -712,3 +712,144 @@ SPEC 10/13 numbers; tag `snouty-gear/m3`; merge to main and push
   capture, splash, menu, scrub); M4 perf ideas (sprite candidate mask,
   decoded tile cache) or M5 shared emulator frontend with Snouty Boy;
   Snouty Genesis M3 can now copy this scrubber.
+
+## Sound on the new firmware (2026-10-04)
+
+Track B of root docs/EMU_SOUND.md (branch `emu-sound-gear`). The show
+badges run newer upstream firmware that ignores `tone2` and plays only a
+cart-owned ring of 44.1 kHz u8 samples, so the one-voice buzzer was
+silent there. Adrian: keep sound off by default, make it work.
+
+- Core (`core/psg.zig` `Synth`, `Gg.audio_render` / `audio_out` /
+  `audio_len` / `synth`, `Gg.psg_write` / `psg_stereo` from the bus): the
+  whole SN76489 from SMS Power's page: three tone counters (half period
+  16 x period T-states, periods 0/1 constant +1), the Sega 16-bit noise
+  register (taps 0 and 3, reset to 0x8000 on a noise write, shift on
+  every second counter zero, rates 0x10/0x20/0x40 or tone 2), the 2 dB
+  table, port 06 averaged to mono, bipolar outputs. Event-driven box
+  filter: time advances to the next of (bin end, a counter's zero, now),
+  integrating level x T-states exactly; bins are 81 or 82 T-states with
+  the 81.17 fraction carried. Writes are timed at their instruction's
+  start (`psg_now` = VDP line x 228 + line T-states). `gain` = 48 from
+  Sonic (title + Green Hill, 4,000 host frames: peak 126 of 127, p99
+  63-74, no clipping). Render state is outside keyframes; reset/restore
+  resyncs it. Off: one branch per PSG write and two per frame.
+- Frontend: badge builds stream via `audio_feed`
+  (`Feed(.{ .nominal = 736, .max_src = 738, .ring_bytes = 4096 })`);
+  `idle` (splash, menu) ramps out; the menu clears `audio_render` so
+  scrub replays render nothing; the chime is a 1046/2093 Hz square burst
+  through the feed. No `tone2`/`tone` call is compiled into the badge
+  build (badge-bench: 0 `CART_TONE`, 0 volume words). Wasm keeps the
+  simulator `tone` voice path as before. The overlay's line 3 adds
+  `q <queued> u <underruns>` while Sound is on.
+- Tests: 12 new `sound:` tests in `tests/sound_unit.zig` (a second is
+  44,100 samples; pitch for periods 254/1023/100; periods 0/1 constant and
+  volume-write playback; periodic and white noise sequences against a
+  reference; noise reset on a noise write only; the 2 dB table rendered;
+  port 06 sides and channel sums; the box filter on a 56 kHz and a
+  1,118 Hz square; Waternet 735-737 samples per frame, total exact to one
+  over 600 frames; rendering leaves console state identical; scrub
+  restore replays identical samples). Cart suite 107/107 (95 + 12);
+  `zig build test` 387 pass, 4 skipped (Lynx fixtures), exit 0.
+- Other carts: every other cart's loaded image is identical to the plan
+  commit's (`objcopy -O binary` of the ELFs). The UF2s of snouty-bugs,
+  snouty-reflections and snouty-genesis differ from
+  /home/exedev/emu-sound/baseline in one byte, the embedded ELF header's
+  section-header offset (debug info carries the worktree path); the
+  plan-commit worktree `int` shows the same one-byte drift for bugs. All
+  other UF2s byte-identical.
+- badge-bench (calibrated busy ms, `snouty-gear.toml`, Waternet romfs,
+  1000 updates): plan commit mean 3.03 / worst 6.89; this branch, sound
+  off (default build) mean 3.06 / worst 6.95, 0 over (+0.03 mean);
+  `-Dsound=true` mean 3.47 / worst 7.44 (45% of budget), 0 over. Audio
+  share: `Synth.run_to` 53.5 k cycles per frame (0.36 ms), the feed
+  4.2 k (0.03 ms), so ~0.4 ms mean; worst frame +0.49 ms. Sonic from the
+  drive with sound on (same script, title and attract): mean 5.17 /
+  worst 6.90, 0 over, `run_to` 49.6 k cycles. Streaming: queue in play
+  1,309..2,125 (mean 1,634; Sonic 1,438..2,064); ring underruns only
+  where the cart stops pushing by design (splash after the chime, frames
+  59-71; the two menus), none in play, so the feed's `u` stays 0.
+- Sizes (fast, drive source, plan commit -> this branch): `.text`
+  175,108 -> 180,772 (+5.7 KB),
+  `.data` 468 -> 5,420 (the Feed's 4 KB ring and push scratch are
+  initialised to 128), `.bss` 41,828 -> 43,388 (`audio_out`, the synth,
+  the chime buffer); uf2 437,248 -> 461,824. The scrub arena
+  (`__stack_limit__ - __bss_end__ - 1 KB`) shrinks 55,148 -> 42,916 B:
+  about 12 keyframes of Waternet instead of 15, Sonic ~9 (from the M3
+  sizing numbers; not measured on the cart).
+- Not modelled: the real chip's 0/+1 outputs and their decay (bipolar
+  instead), the clock/16 prescaler phase (T-state resolution), period-0
+  as 0x400 (TI chips only). SMS Power says the Game Gear's own speaker
+  ignores port 06; the contract's average is kept (the badge is not a
+  GG speaker). WAVs skipped (Adrian at the show, 2026-10-04: speed first).
+
+## Fast forward (2026-10-04)
+
+Gear track of root docs/FAST_FORWARD.md (branch `emu-ff-gear`). Adrian:
+hold-to-fast-forward, the usual emulator feature.
+
+- Input (`frontend/input.zig`, `GameInput.fast`): Right pressed while
+  Select is held starts it, and it lasts while both stay held; no menu,
+  no tap, Right masked out of the pad. Right released: 1x and the Select
+  hold counts from zero; Select released: 1x, a Right still held waits for
+  its release (suppress mask). Start cancels it as it cancels the hold
+  (Start+Select stays the OS's). Right held first and Select after is game
+  input plus the menu hold, as before.
+- Stepping (`main.zig` `run_frame`, knobs `ff_max_frames` = 4 and
+  `ff_budget_us` = 13,000 in `frontend/tuning.zig`): frames before the
+  last run with `line_sink = null` (the VDP still evaluates sprites for
+  the overflow and collision flags, the path the scrubber's replay already
+  uses) and `audio_render = false`; another one only while the time so
+  far plus twice the dearest frame of the update (the previous rendered
+  frame to start with) stays within the budget; then one rendered frame.
+  Every frame goes through `rewind.record_frame`. `ff_max_frames` counts
+  the rendered frame (4 = the 4x cap). wasm: always 4 (the clock is a
+  stub). The overlay's avg/max is the whole update's stepping.
+- Sound: `audio.mute()` instead of `audio.update` while fast (badge: the
+  feed ramps out as in the menu; simulator: the voice stops); resumes,
+  resynced, on the first 1x frame.
+- Indicator: `>>4x` (frames this update) top right, at y 24 under the
+  debug overlay while that shows; the game repaints the whole screen every
+  frame in `.no_copy_full_frame`, so nothing is left behind (badge-bench
+  `--lcd` PNGs after release show no trace). Hints: the in-play strip
+  shows "Hold Select: menu" for 3 s then "Sel+Right: fast" for 3 s; the
+  menu footer takes turns every 2 s between "B: back to game" and
+  "Sel+Right: fast". `docs/ff_2026-10-04.png` (preview: both strips,
+  `>>4x`, both footers).
+- Tests: 8 `input:` tests (`tests/input_unit.zig`, frontend/input.zig on
+  the host with the SDK's `cart-api` for `Controls` only: chord on and
+  off, no menu, Right not passed, hold restart, Right first, Start+Select,
+  `suppress_held`); 2 determinism tests (Waternet 600 frames, Sonic 1200
+  when `~/sonic.gg` exists): batches of 4 with 3 frames sink-less and
+  silent equal a 1x run with the squeeze sink and sound, field by field
+  after every batch. Cart suite 117/117 (107 + 10). `zig build
+  check-float` PASS.
+- Preview (`tools/scripts/ff_play.json`, 1000 updates): `debug_ff_frames`
+  4 during both holds, `debug_frame_count` +4 per update (618 -> 1262 over
+  updates 689-850), `debug_menu_opens` 0 throughout (Select held 181 and
+  61 updates), 1 again on release.
+- badge-bench (calibrated busy ms; frames per update from a temporary
+  `cart.trace` build, not committed):
+
+  | Run | updates | busy mean | p95 | max | over 16.7 | frames per update |
+  |---|---:|---:|---:|---:|---:|---|
+  | 1x, `snouty-gear.toml` (Waternet) | 1000 | 3.06 | 6.62 | 6.95 | 0 | 1 (plan commit: 3.06 / 6.62 / 6.95) |
+  | Waternet, Select+Right updates 690-970 | 281 | 6.40 | 6.79 | 6.80 | 0 | 4 every update (cap) |
+  | Sonic title and attract demo, FF 110-1090 | 981 | 9.09 | 10.36 | 13.37 | 0 | 1.85 mean (1: 155, 2: 822, 3: 4) |
+  | Sonic in Green Hill, FF 610-1490 | 881 | 10.64 | 11.83 | 12.58 | 0 | 1.87 mean (1: 117, 2: 761, 3: 3) |
+
+  Whole runs: Waternet FF run mean 4.21 / max 6.95, Sonic 8.24 / 13.37,
+  0 over. Skipped frames save little on Sonic (5.1-5.75 ms per game frame
+  at FF against ~5.7 at 1x): the Z80 dominates, so the 13 ms budget buys
+  about 2x there; Waternet (1.6 ms per frame at FF) hits the 4x cap.
+  Commands: `--no-config --frames 1000 --romfs carts/snouty-gear/out/romfs.img
+  --press "<m2_play's game presses>,SELECT:680-980,RIGHT:690-970"` and
+  `--no-config --frames 1200 --romfs <romfs with ~/sonic.gg>
+  --press "SELECT:100-1100,RIGHT:110-1090"` (Green Hill: Start at 200,
+  320, 440, FF 610-1490 with B held).
+- Sizes (fast, drive): `.text` 117,728 -> 118,928 (+1.2 KB), `.data`
+  5,420, `.bss` 43,380 -> 43,396; uf2 335,872 -> 337,920.
+- Deviations: `ff_max_frames` includes the rendered frame (the plan's
+  "4 per update" read as the 4x cap); the menu has no free line, so the
+  footer alternates instead of a new row; the indicator moves to y 24
+  while the debug overlay (on by default) covers the top rows.

@@ -10,9 +10,11 @@ const common = @import("../../build/common.zig");
 /// This cart's directory, relative to the repository root that build.zig runs from.
 const dir = "carts/snouty-boy/";
 
-/// ROM to embed in the cart. Set with `zig build -Drom=carts/snouty-boy/roms/game.gb`
-/// (a path relative to this cart's directory is accepted too). Read by
-/// `build_cart_modules`, whose signature has no user context.
+/// ROM to embed in the wasm build and a `-Drom-source=embed` badge build (the
+/// default drive build references none of it). Set with
+/// `zig build -Drom=carts/snouty-boy/roms/game.gb` (a path relative to this
+/// cart's directory is accepted too). Read by `build_cart_modules`, whose
+/// signature has no user context.
 var rom_path: []const u8 = dir ++ "tests/roms/dmg-acid2.gb";
 
 /// Committed, freely licensed fallback when the default test ROM has not been
@@ -100,11 +102,13 @@ fn exists(b: *Build, rel: []const u8) bool {
     return true;
 }
 
-/// Adds the `core`, `romfs`, `iris`, `hint`, `rom` and `build_options` modules to the cart. `rom.data` is the
+/// Adds the `core`, `romfs`, `iris`, `hint`, `audio_feed`, `rom` and `build_options` modules to the cart. `rom.data` is the
 /// embedded ROM (the file is copied next to a generated rom.zig so @embedFile
 /// can see it), `rom.name` its file name for the About screen, `rom.source`
 /// the `-Drom-source` choice. The same module serves the badge and the wasm
-/// build; the frontend ignores `source` in wasm, which has no drive.
+/// build; the frontend ignores `source` in wasm, which has no drive, and
+/// references `data` only where it does not use the drive, so the drive
+/// build's firmware has no ROM bytes in it (frontend/romsrc.zig).
 fn build_cart_modules(b: *Build, cart: *Build.Module, cart_api: *Build.Module, step: *Build.Step) void {
     _ = cart_api;
     cart.addImport("build_options", build_options.?.createModule());
@@ -116,6 +120,8 @@ fn build_cart_modules(b: *Build, cart: *Build.Module, cart_api: *Build.Module, s
     cart.addImport("iris", b.createModule(.{ .root_source_file = b.path("lib/iris_mark.zig") }));
     // The control hints (splash, first seconds of play, menu), shared with Gear, Genesis, Lynx.
     cart.addImport("hint", b.createModule(.{ .root_source_file = b.path("lib/hint.zig") }));
+    // The streaming-audio feed shared with Gear and Genesis (docs/EMU_SOUND.md).
+    cart.addImport("audio_feed", b.createModule(.{ .root_source_file = b.path("lib/audio_feed.zig") }));
 
     const wf = b.addWriteFiles();
     _ = wf.addCopyFile(b.path(rom_path), "rom.gb");

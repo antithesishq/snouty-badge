@@ -9,12 +9,13 @@
 //! The ROM (frontend/romsrc.zig, SPEC.md 11.1): on the badge `start()` looks
 //! at the drive first. With more than one playable `.gb`/`.gbc` file there
 //! the `pick` state (frontend/picker.zig) follows the splash and the console
-//! is created only once a file is chosen; otherwise the one drive file or
-//! the embedded ROM is chosen at `start()`. The ROM's header picks the
-//! model (DMG, or CGB when 0x143 has bit 7, SPEC.md 19) and the cart RAM
-//! size; `rewind.layout` then places the console, that cart RAM and the
-//! keyframe store in the RAM above `.bss`. `halted` is the refusal to run when fewer than 2
-//! keyframes fit there (frontend/rewind.zig).
+//! is created only once a file is chosen; otherwise the one drive file (or,
+//! in the wasm and `-Drom-source=embed` builds, the embedded ROM) is chosen
+//! at `start()`. The ROM's header picks the model (DMG, or CGB when 0x143 has
+//! bit 7, SPEC.md 19) and the cart RAM size; `rewind.layout` then places the
+//! console, that cart RAM and the keyframe store in the RAM above `.bss`.
+//! `halted` is the refusal to run: no ROM on the drive (the badge build
+//! embeds none), or fewer than 2 keyframes fit (frontend/rewind.zig).
 //!
 //! Control hints (lib/hint.zig): "Hold Select: menu" on the splash and in
 //! a strip at the bottom for the first 3 s of play after the splash or the
@@ -54,6 +55,7 @@ var play_hint: hint.Overlay = .{};
 pub fn start() void {
     cart.set_vsync_enabled(1000.0 / 60.0);
     cart.set_double_buffer_mode(.no_copy_full_frame);
+    audio.init();
     // DMG look for the splash and the picker; `begin` switches to the
     // chosen ROM's model.
     video.init(.dmg);
@@ -65,17 +67,21 @@ pub fn start() void {
     }
 }
 
-/// Lay out cart RAM and the keyframe store for `r`, then create the
-/// console in the model its header asks for. False when fewer than 2
-/// keyframes fit (the halted screen follows).
-fn begin(r: core.Rom) bool {
+/// Lay out cart RAM and the keyframe store for `rom`, then create the
+/// console in the model its header asks for. False when there is no ROM
+/// (`romsrc.missing`) or fewer than 2 keyframes fit (the halted screen
+/// follows).
+fn begin(rom: ?core.Rom) bool {
+    const r = rom orelse return false;
     debug.source_letter = if (romsrc.info.source == .drive) 'D' else 'E';
     const model = core.default_model(&r);
     video.init(model);
     const l = rewind.layout(&r) orelse return false;
     gb = l.gb;
-    gb.* = core.Gb.init(r, model, l.cart_ram);
+    // In place: a `Gb` returned by value would land on the stack first.
+    gb.init_in(r, model, l.cart_ram);
     gb.line_sink = video.sink(gb);
+    audio.attach(gb);
     have_gb = true;
     rewind.reset(gb);
     return true;
@@ -86,11 +92,13 @@ pub fn update() void {
     // real frame intervals; `debug.record` measures only step_frame.
     debug.frame_tick(cart.micros_since_boot());
 
-    // Sound follows the menu toggle; the tone holds while the core is paused
-    // and stops at once when sound is switched off (audio.update handles it).
+    // Sound follows the menu toggle. Every update that does not step the
+    // game lets the stream ramp out (or plays the boot chime) on the badge.
     audio.enabled = menu.sound_enabled;
 
+    stepped = false;
     fl.update(&ctx, @bitCast(read_controls()));
+    if (!stepped) audio.idle();
 
     frames_seen +%= 1;
     if (cart.is_wasm) present_wasm();
@@ -114,12 +122,12 @@ const Ctx = struct {
 
     /// Only a drive build gets a choice; the check keeps the picker and the
     /// drive code out of the wasm build.
-    pub fn pick_frame(_: *Ctx, e: input.Edge) ??usize {
+    pub fn pick_frame(_: *Ctx, e: input.Edge) ?usize {
         return if (romsrc.use_drive) picker.update(e) else null;
     }
 
-    pub fn begin_choice(_: *Ctx, choice: ?usize) bool {
-        return if (romsrc.use_drive) begin(if (choice) |i| romsrc.select(i) else romsrc.embedded("skipped")) else false;
+    pub fn begin_choice(_: *Ctx, choice: usize) bool {
+        return if (romsrc.use_drive) begin(romsrc.select(choice)) else false;
     }
 
     /// The game starts after the splash or the picker (not after the menu).
@@ -130,12 +138,16 @@ const Ctx = struct {
     /// One game frame; `fresh` is a press not held over from the last
     /// screen, which dismisses the play hint.
     pub fn step(_: *Ctx, pad: u8, fresh: bool) void {
+        audio.before_step(gb);
         const t1 = cart.micros_since_boot();
         gb.step_frame(pad);
         const t2 = cart.micros_since_boot();
+        stepped = true;
+        audio.frame(gb);
+        debug.sound_on = !cart.is_wasm and audio.enabled;
+        debug.audio_queue = audio.queued();
+        debug.audio_underruns = audio.underruns();
         rewind.record_frame(gb, pad);
-
-        audio.update(gb);
 
         video.finish_frame();
         debug.record(@truncate(t2 -% t1));
@@ -144,12 +156,13 @@ const Ctx = struct {
     }
 
     pub fn menu_open(_: *Ctx) void {
+        audio.pause(gb);
         play_hint.stop();
         menu.open();
     }
 
     pub fn menu_frame(_: *Ctx, e: input.Edge) flow.MenuResult {
-        audio.update(gb);
+        audio.menu_tick(gb);
         return switch (menu.update(gb, e)) {
             .stay => .stay,
             .resume_game => .resume_game,
@@ -165,15 +178,28 @@ const Ctx = struct {
     }
 };
 
-/// Fewer than 2 keyframes fit next to this ROM: say so instead of running a
-/// game the scrubber cannot rewind (PLAN.md M5, M8). Only a ROM embedded
-/// in a RAM build can get here (build it with -Dcart-mode=xip).
+/// No ROM on the drive: say what to do, with the reason dimmed below (the
+/// badge build embeds no ROM, so there is nothing else to run). Otherwise
+/// fewer than 2 keyframes fit next to this ROM: say so instead of running a
+/// game the scrubber cannot rewind (PLAN.md M5, M8). Only a ROM embedded in
+/// a RAM build can get there (build it with -Dcart-mode=xip).
 fn draw_halted() void {
     video.blank(0);
     const ink = video.shade_color(3);
+    if (romsrc.missing) |why| {
+        const lines = [_][]const u8{ "SNOUTY BOY", "", "No ROM on the badge", "drive.", "", "Copy a .gb or .gbc", "file to the drive,", "eject, then restart", "this cart.", "", "", "Start+Select: exit" };
+        for (lines, 0..) |l, i| cart.text(.{ .str = l, .x = 4, .y = 4 + @as(i32, @intCast(i)) * 10, .text_color = ink });
+        const dim = video.shade_color(2);
+        cart.text(.{ .str = "Why:", .x = 4, .y = 94, .text_color = dim });
+        cart.text(.{ .str = why[0..@min(why.len, 14)], .x = 44, .y = 94, .text_color = dim });
+        return;
+    }
     const lines = [_][]const u8{ "SNOUTY BOY", "", "Not enough RAM for", "the time scrubber", "with this ROM.", "", "Start+Select: exit" };
     for (lines, 0..) |l, i| cart.text(.{ .str = l, .x = 4, .y = 24 + @as(i32, @intCast(i)) * 10, .text_color = ink });
 }
+
+/// The game was stepped in this update (else `audio.idle`).
+var stepped = false;
 
 /// Badge frames since boot; paces the second chime note.
 var frames_seen: u32 = 0;

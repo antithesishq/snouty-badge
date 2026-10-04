@@ -41,12 +41,13 @@ should start loud; nothing else in a cart decides it.
 | Cart | Makes sound? | Flag | Boot default | Runtime toggle |
 |---|---|---|---|---|
 | snoutenstein | yes, 13 SFX | `cart/src/audio.zig` `enabled` | `-Dsound` (off) | Select on the title screen ("SELECT: SOUND ON/OFF") |
-| snouty-boy | yes, APU voice + boot chime | `frontend/menu.zig` `sound_enabled`, copied into `audio.enabled` each frame | `-Dsound` (off) | menu row "Sound: On/Off" |
-| snouty-gear | yes, PSG voice + boot chime | same shape as Boy; the wasm build drives the simulator's `tone` import itself | `-Dsound` (off) | menu row "Sound: On/Off"; `debug_settings` bit 0 |
+| snouty-boy | yes, all four APU channels streamed (section 7) + boot chime | `frontend/menu.zig` `sound_enabled`, copied into `audio.enabled` each frame | `-Dsound` (off) | menu row "Sound: On/Off" |
+| snouty-gear | yes, the PSG streamed (section 7) + boot chime | same shape as Boy; the wasm build drives the simulator's `tone` import itself | `-Dsound` (off) | menu row "Sound: On/Off"; `debug_settings` bit 0 |
 | snouty-genesis | yes, PSG/YM2612 tone voice | `frontend/audio.zig` `enabled` | `-Dsound` (off) | badge A in the menu placeholder ("A: sound on/off"); the M2 menu's Sound row takes over; `debug_sound_on` |
-| snouty-bugs | not yet (SPEC section 11, M6/M7) | | `-Dsound` (off) | Select |
+| snouty-bugs | yes, SPEC section 11 effects via `lib/tone_stream.zig` | `cart/src/audio.zig` `enabled` | `-Dsound` (off) | Select, any time (state on the title) |
 | snouty-reflections | not yet (SPEC section 8, M4 arpeggio) | | `-Dsound` (off) | Select |
 | snouty-lynx | yes, Mikey's four channels as 44.1 kHz PCM, new firmware only (section 8) | `frontend/audio.zig` `enabled` | `-Dsound` (off) | menu row "Sound: On/Off" (not in the wasm build); `debug_settings` bit 0 |
+| snouty-zero | yes, 6 tones via `lib/tone_stream.zig` | `cart/src/sound.zig` `enabled` | `-Dsound` (off) | menu item "SOUND: ON/OFF" |
 | snouty-run | no | | | |
 | snouty-maze | no, by decision (2026-09-27, "it'll be annoying") | | | |
 

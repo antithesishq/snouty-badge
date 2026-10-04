@@ -2,18 +2,19 @@
 
 An Atari Lynx emulator cart for the SYCL Badge V2, written in Zig for
 Antithesis. On the badge it plays a `.lnx` (or headerless `.lyx`) ROM copied
-onto the badge's USB drive, with an embedded ROM as the fallback and as the
-simulator's ROM. The Lynx's 160x102 picture sits 1:1 at the top of the
+onto the badge's USB drive; the badge cart carries no ROM of its own (the
+web simulator embeds one). The Lynx's 160x102 picture sits 1:1 at the top of the
 badge's 160x128 screen with a 26-row status strip below it. The core
 emulates the 65C02, Suzy's sprite engine and math unit, and Mikey's
 timers and palette; the menu has a time scrubber (SPEC.md). On the badges'
 new OS firmware it plays the Lynx's sound through the speaker (M5).
 
-Status: M5 (sound) in progress; M0-M4 are on main, history in PLAN.md. The
+Status: M0-M5 are on main, history in PLAN.md. The
 Iris-mark splash, then the game (the real core since M1: the 65C02, Mikey,
 Suzy, the boot without the boot ROM), the strip with "SNOUTY LYNX", the
 ROM name and where it came from, the emulator menu and picker (M2) and the
-time scrubber (M3), the sound (M5, below); the neopixels stay off. The embedded fallback ROM is `roms/raycast.lnx`,
+time scrubber (M3), the sound (M5, below; off by default); the neopixels
+stay off. The simulator's embedded ROM is `roms/raycast.lnx`,
 42Bastian's textured raycaster (Apache-2.0, `roms/LICENSE-raycast.txt`);
 the boot path that decrypts a cart's loader without the Lynx boot ROM is
 `core/boot.zig` (`docs/BOOT.md`).
@@ -88,9 +89,11 @@ default build (`-Dlynx-rom-source=drive`):
    `raw` for a headerless file, `frag` for a fragmented one). With two or
    more playable files a list opens after the splash: Up/Down, A plays, B
    runs the first; the menu's Pick ROM row brings it back and restarts
-   into the chosen file. With no Lynx file on the drive a help box says
-   how to add one and the embedded ROM runs underneath (A or B hides the
-   box); a refused file (rotated screen, bank 1) is named with the reason.
+   into the chosen file. With no playable Lynx file on the drive (or no
+   drive volume) the cart shows "No Lynx ROM on the badge drive." with how
+   to add one and the reason (`drive: no .lnx/.lyx file`, `drive:
+   NoVolume`, or a refused file such as `drive: ROT.LNX: rotated`), and
+   stays there; leave through the OS menu.
 
 The ROM file also shows in the OS cart menu and fails to load if picked
 there; that is cosmetic. Commercial ROMs never enter the repository

@@ -12,7 +12,7 @@ cart is silent), then the real core (`core/`: the 65C02, Mikey, Suzy, the
 boot without the boot ROM). Rows 102..127 are the status strip: "SNOUTY
 LYNX" and the ROM name (header title, else file name); then the origin
 ("drive 27 KB" / "embedded 27 KB") and the detail (the drive CRC and
-`frag`/`raw`/`no-EEP`, or why the drive was not used), or with the debug
+`frag`/`raw`/`no-EEP`), or with the debug
 overlay on (a menu row, off at boot) fps, mean (`u`) and worst (`w`) step
 microseconds, then instructions (`i`) and Suzy pixels (`px`) of the last
 frame. A boot error replaces the last line.
@@ -32,8 +32,10 @@ over the restored picture; Left/Right keep scrubbing, B or a Select tap
 play on from there (the history ahead is dropped), Up/Down/A bring the
 panel back. Reset and Pick ROM forget the history. Several playable files on
 the drive open the picker after the splash (A plays, B runs the first);
-a drive with none shows the add-a-ROM help over the embedded ROM (A or B
-dismisses it).
+a drive build without a usable ROM (no volume, no playable file) shows
+the no-ROM screen ("No Lynx ROM on the badge drive.", how to add one, and
+`drive: <reason>`) and stays there: the badge cart embeds no ROM, the OS
+menu leaves.
 
 On-screen hints (`lib/hint.zig`, shared with Boy, Gear and Genesis): the
 splash and the first 3 s of play after the splash or the picker show "Hold
@@ -74,12 +76,13 @@ Options:
   or `~/x.lnx` (expanded by the build, the shell leaves `=~` alone).
   Headered `.lnx` and headerless dumps both work. To try a local dump in
   the simulator: `zig build -Dcart=snouty-lynx -Dlynx-rom=~/roms/lynx/hard_drivin.lnx`
-  (local only, never commit it; `*.lnx`/`*.lyx` are gitignored). A 128 KB
-  embedded ROM adds 128 KB to the cart image; on the badge ROMs come from
-  the drive (section 6).
+  (local only, never commit it; `*.lnx`/`*.lyx` are gitignored). Only the
+  wasm and `-Dlynx-rom-source=embed` builds embed it (a 128 KB ROM adds
+  128 KB to that cart image); on the badge ROMs come from the drive
+  (section 6).
 - `-Dlynx-rom-source=drive|embed|pack`: `drive` (default) reads the ROM
-  from the badge drive and uses the embedded ROM if there is none; `embed`
-  uses only the embedded ROM; `pack` (SPEC.md 13.1) is not built yet,
+  from the badge drive and embeds none (no usable drive ROM shows the
+  no-ROM screen); `embed` uses only the embedded ROM; `pack` (SPEC.md 13.1) is not built yet,
   prints a note and builds the `drive` cart. The wasm build always embeds.
 - `-Dcart-optimize=fast|small|safe|debug` (default `fast`).
 
@@ -190,14 +193,14 @@ python3 tools/make_gif.py carts/snouty-lynx/out/ carts/snouty-lynx/docs/m2_menu.
 ```
 
 Exports: `debug_frame_count`,
-`debug_state` (0 splash, 1 running, 2 menu, 3 picker, 4 no-ROM help),
+`debug_state` (0 splash, 1 running, 2 menu, 3 picker, 4 no-ROM screen),
 `debug_menu_opens`, `debug_settings` (bit 0 sound on, never in the wasm
 build, which has no streaming audio; bit 2 A/B swapped, bit 3 debug
 overlay on), `debug_hold_pad` (the `core.Pad` bits the
 last Press Option 2 / Restart row asked for: 4 or 264),
 `debug_pad` (`core.Pad` bits: A 1, B
 2, Option 2 4, Option 1 8, right 16, left 32, down 64, up 128, Pause 256),
-`debug_rom_source` (0 embedded, 1 drive), `debug_rom_size` (file bytes),
+`debug_rom_source` (0 embedded, 1 drive, 2 none), `debug_rom_size` (file bytes),
 `debug_rom_block_size`, `debug_rom_direct_blocks`, `debug_rom_headered`,
 `debug_rom_crc` (drive only), `debug_palette_rebuilds`, `debug_led_max`
 (largest neopixel channel; must be 0); from M1 the core's diagnostics:
@@ -248,7 +251,7 @@ Terminal 2: `cd sycl-badge/simulator && npm install && npm run dev`, then
 <http://localhost:1234>. Keys: arrows/WASD d-pad, Z or K = badge A = Lynx
 A, X or J = badge B = Lynx B, Enter = Start = Pause, Backspace = Select
 (tap = Option 1; held half a second = the menu). The simulator always
-runs the embedded ROM, so it never shows the picker or the help.
+runs the embedded ROM, so it never shows the picker or the no-ROM screen.
 
 ## 5. badge-bench
 
@@ -290,7 +293,9 @@ badge-bench/bench.sh zig-out/firmware/snouty-lynx.elf --romfs out/lynx-two.img \
 
 `frame_0045.png` is the picker, `frame_0100.png` the game with `AGAIN.LNX`
 (About names the file). `tests/fixtures/m0_none.img` (only a refused
-`ROT.LNX`) shows the help band. With a local dump:
+`ROT.LNX`) shows the no-ROM screen (`drive: ROT.LNX: rotated`); so does
+an empty `tools/make_romfs.py out/empty.img` (`drive: no .lnx/.lyx file`).
+With a local dump:
 
 ```sh
 python3 tools/make_romfs.py out/lynx-romfs.img ~/roms/lynx/hard_drivin.lnx

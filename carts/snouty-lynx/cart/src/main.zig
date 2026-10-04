@@ -7,12 +7,13 @@
 //! microseconds, instructions and Suzy pixels per frame.
 //!
 //! States (PLAN.md "M2 Frontend"): splash -> running | pick | help,
-//! running <-> menu, menu -> pick -> running. After the splash the embedded
-//! ROM (wasm, `-Dlynx-rom-source=embed`, no drive volume) or the one
-//! playable drive file runs at once; several playable files open the picker
-//! (frontend/picker.zig; B keeps the first); a volume without a playable
-//! file runs the embedded ROM under the add-a-ROM help band (help: A or B
-//! dismisses it). A 500 ms Select hold opens the menu (frontend/menu.zig)
+//! running <-> menu, menu -> pick -> running | help. After the splash the
+//! embedded ROM (wasm, `-Dlynx-rom-source=embed`) or the one playable drive
+//! file runs at once; several playable files open the picker
+//! (frontend/picker.zig; B keeps the first); a drive build (it embeds no
+//! ROM) without a usable one (no volume, no playable file, a file that no
+//! longer maps) shows the no-ROM screen and stays there (help; the OS menu
+//! leaves the cart). A 500 ms Select hold opens the menu (frontend/menu.zig)
 //! over the frozen frame; the core is not stepped while the menu or the
 //! picker is up. Choosing a file in the picker restarts the core on it
 //! (`romsrc.open`, `Lynx.init_in_place`).
@@ -60,9 +61,9 @@ comptime {
 /// the stack (32 KB on the badge, 14.7 KB in wasm).
 var lynx: core.Lynx = undefined;
 
-/// 0 splash, 1 running, 2 menu, 3 pick (drive picker), 4 help (no ROM on
-/// the drive, the embedded ROM runs under the help band). `pick` and
-/// `help` only happen in drive builds.
+/// 0 splash, 1 running, 2 menu, 3 pick (drive picker), 4 help (no usable
+/// ROM on the drive: the no-ROM screen, the core is never stepped). `pick`
+/// and `help` only happen in drive builds.
 pub const State = enum(u32) { splash = 0, running = 1, menu = 2, pick = 3, help = 4 };
 var state: State = .splash;
 /// Where the splash leads (`romsrc.select`'s choice).
@@ -108,7 +109,7 @@ pub fn update() void {
             enter(after_splash, t0);
         },
         .running => run_frame(t0),
-        .help => help_frame(t0),
+        .help => draw_help(),
         .menu => menu_frame(),
         // Only a drive build gets here; the check keeps the picker out of
         // the wasm and embed builds.
@@ -127,7 +128,7 @@ fn enter(next: State, t0: u64) void {
     state = next;
     switch (next) {
         .running => run_frame(t0),
-        .help => help_frame(t0),
+        .help => draw_help(),
         .pick => if (romsrc.use_drive) pick_frame(t0),
         .splash, .menu => {},
     }
@@ -138,14 +139,6 @@ fn enter(next: State, t0: u64) void {
 fn live_edge() input.Edge {
     const e = controls_state.edge;
     return .{ .prev = e.prev, .cur = e.cur & ~controls_state.suppress };
-}
-
-/// The embedded ROM under the add-a-ROM help band; A or B dismisses the
-/// band (the press does not reach the game).
-fn help_frame(t0: u64) void {
-    const e = live_edge();
-    if (e.pressed(.a) or e.pressed(.b)) return enter(.running, t0);
-    run_frame(t0);
 }
 
 /// (Re)start the core on `c` (start and the picker; the menu's Reset makes
@@ -161,7 +154,7 @@ pub fn boot(c: core.Cart) void {
 /// file; B keeps the cart that runs.
 fn pick_frame(t0: u64) void {
     const choice = picker.update(live_edge()) orelse return;
-    if (choice) |i| boot(romsrc.open(i));
+    if (choice) |i| boot(romsrc.open(i) orelse return enter(.help, t0));
     play_hint.start(hint.play_seconds * 60);
     enter(.running, t0);
 }
@@ -215,30 +208,40 @@ fn run_frame(t1: u64) void {
     stepped = true;
 
     video.show(lynx.frame());
-    if (state == .help) draw_help();
     strip.draw(&lynx);
     // Over the strip's last line (the ROM detail), so no picture is hidden.
     // A press held over from the splash or picker is suppressed, not fresh.
     play_hint.update_and_draw(cart, text.draw, live_edge().any_pressed(), cart.screen_height - hint.strip_h, strip.accent, strip.bg);
 }
 
-/// The drive has a volume but no playable Lynx ROM (Snouty Genesis's M2
-/// help, in a band over the picture; the embedded ROM runs underneath).
-/// The last line names the first refused file and why, if there is one.
+/// The no-ROM screen (drive builds): how to add a ROM, then why the drive
+/// gave none ("drive: NoVolume", "drive: X.LNX: rotated"), word-wrapped to
+/// the screen width, in the status strip's colours on black. Redrawn every
+/// update (the buffers swap); no key leaves it.
 fn draw_help() void {
-    const lines = [_][]const u8{ "No Lynx ROM found.", "Copy a .lnx file to", "SYCLBADGE, eject and", "restart the cart." };
+    const lines = [_][]const u8{ "No Lynx ROM on the", "badge drive.", "", "Copy a .lnx file to", "SYCLBADGE, eject and", "restart the cart." };
     const black: cart.DisplayColor = .rgb(0x000000);
-    const y0 = 24;
-    video.fill_rows(y0 - 3, lines.len * 10 + 16, black);
-    for (lines, 0..) |l, k| text.draw(l, 0, y0 + @as(i32, @intCast(k)) * 10, if (k == 0) strip.accent else strip.ink, black);
-    const found = romsrc.candidates();
-    if (found.len == 0) return;
-    var buf: [strip.cols]u8 = undefined;
-    var n: usize = 0;
-    n += debug.put(buf[n..], found[0].file_name());
-    n += debug.put(buf[n..], ": ");
-    n += debug.put(buf[n..], found[0].note());
-    text.draw(buf[0..n], 0, y0 + lines.len * 10 + 2, strip.dim, black);
+    const y0 = 16;
+    video.fill_rows(0, cart.screen_height, black);
+    for (lines, 0..) |l, k| text.draw(l, 0, y0 + @as(i32, @intCast(k)) * 10, if (k < 2) strip.accent else strip.ink, black);
+    const why = romsrc.reason orelse return;
+    var buf: [64]u8 = undefined;
+    var n = debug.put(&buf, "drive: ");
+    n += debug.put(buf[n..], why);
+    // Wrapped at the last space that fits, else cut at the screen width.
+    var rest: []const u8 = buf[0..n];
+    var y: i32 = y0 + lines.len * 10 + 10;
+    while (rest.len > 0 and y + 8 <= cart.screen_height) : (y += 10) {
+        var k = @min(rest.len, strip.cols);
+        if (k < rest.len) {
+            var sp = k;
+            while (sp > 0 and rest[sp] != ' ') sp -= 1;
+            if (sp > 0) k = sp;
+        }
+        text.draw(rest[0..k], 0, y, strip.dim, black);
+        rest = rest[k..];
+        if (rest.len > 0 and rest[0] == ' ') rest = rest[1..];
+    }
 }
 
 pub fn read_controls() cart.Controls {
@@ -308,7 +311,7 @@ fn debug_state() callconv(.c) u32 {
 fn debug_pad() callconv(.c) u32 {
     return lynx.pad;
 }
-/// 0 embedded ROM, 1 drive file.
+/// 0 embedded ROM, 1 drive file, 2 none (the no-ROM screen).
 fn debug_rom_source() callconv(.c) u32 {
     return @backingInt(romsrc.origin);
 }

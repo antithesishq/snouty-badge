@@ -45,9 +45,9 @@ ship is theirs, mid-flight, no reset.
 
 | Input             | Title / game over            | Playing                                  | Demo                          |
 |-------------------|------------------------------|------------------------------------------|-------------------------------|
-| Joystick          | (nothing)                    | Move ship, 8 directions                  | Take over (see section 8)     |
-| A                 | Start a game                 | Zapper. Hold for autofire                | Take over                     |
-| B                 | Start a hardcore game        | Hold: rewind time (spends fuel)          | Take over                     |
+| Joystick          | Up / down: pick the mode     | Move ship, 8 directions                  | Take over (see section 8)     |
+| A                 | Start a game (picked mode)   | Zapper. Hold for autofire                | Take over                     |
+| B                 | (nothing)                    | Hold: rewind time (spends fuel)          | Take over                     |
 | Start             | Start a game                 | Pause / unpause                          | Take over                     |
 | Select            | Toggle sound                 | Toggle sound                             | Toggle sound                  |
 | Click             | OS: FPS overlay              | OS: FPS overlay                          | OS: FPS overlay               |
@@ -181,8 +181,10 @@ section 11 while held.
 
 ### 5.3 Hardcore mode
 
-B on the title starts a hardcore game: no rewind stock (the HUD shows `HARD`
-where the icons would be), so a hit is paid from the fuel bar. The bug
+The title offers three modes, picked with up / down and started with A or
+Start: NORMAL, HARDCORE and SUPER-HARDCORE. A hardcore game has no rewind
+stock (the HUD shows `HARD` where the icons would be), so a hit is paid
+from the fuel bar. The bug
 report runs as in 5.1, then the world rewinds as far as fuel allows, up to
 120 ticks, and that much fuel is spent. If fuel is below the fatal floor of
 45 ticks when the hit lands, the hit is fatal: the report names the bug,
@@ -192,6 +194,14 @@ costs at least 45 or ends the game, and the bar refills far slower than
 that between one resume and the next hit, so a player who keeps getting hit
 runs out within a few hits instead of rewinding one frame forever. There
 is no consolation refill after a hit.
+
+SUPER-HARDCORE (2026-10-04) plays by the hardcore rules at a harsher pace
+(the HUD shows `HARD+` in red): once the field thins below three bugs the
+stage clock runs four times as fast, and the fire ramp and the rank's stage
+seconds run with it. NORMAL and HARDCORE only hurry the next wave in (three
+times as fast) while the field is empty, and their difficulty follows real
+time, so clearing waves fast brings the next one sooner but no harder.
+FORK ghosts have no hitbox in any mode (5.4).
 
 ### 5.4 Powerups: crates, weapons, the fork (M6)
 
@@ -425,10 +435,12 @@ table, or if `y == random` from the PRNG within [16, 104].
   bug message centered in Coral at y=56; frame dimmed every other scanline
   during playback. Game over after a hit with no rewinds shows the same bug
   message above "GAME OVER".
-- Title: "SNOUTY" (y 40) / "BUGHUNT" (y 52, Coral) in the 8x8 font over a
+- Title: "SNOUTY" (y 32) / "BUGHUNT" (y 42, Coral) in the 8x8 font over a
   slowly scrolling background (the `title.png` logo, 128x40 at (16, 20), is
   built but not drawn yet); the ship's level cell with its thruster loop
-  bobbing 1 px at (64, 62); "A PLAY" (y 92) and "B HARDCORE" (y 104, Coral) blinking; small "Antithesis" in
+  bobbing 1 px at (64, 54); the mode menu "NORMAL" / "HARDCORE" /
+  "SUPER-HARDCORE" at y 84, 94, 104, the picked one in white, Coral or red
+  between blinking `>` `<`, the others dim; small "Antithesis" in
   Coral at y=116 with Iris marks (reuse `iris_16.png` from snouty-badge).
 - Game over: the fatal bug message, "GAME OVER" 8x8 font, score, best score
   this boot, then title.
@@ -437,10 +449,19 @@ table, or if `y == random` from the PRNG within [16, 104].
 
 ## 11. Audio
 
-All effects through `tone2`; each call cancels the previous one, so priority
-order (later wins in the same tick): player death > rewind > extra life >
-enemy death > player hit spark > zapper. The zapper is quiet (volume 0.3) and only
-plays on every third bolt so it does not drown everything.
+One voice, each tone cancelling the last (`cart/src/audio.zig`). On the
+badge the cart renders it into the newer firmware's streaming ring through
+`lib/tone_stream.zig` (that OS ignores `tone2`, whose IPC words are now the
+ring, so the badge build never calls `cart.tone2`); the wasm build plays
+the same tones through `tone2` for the simulator. Events are found
+render-side by diffing the World once per displayed frame, so the
+simulation, replay and rewind are the same with sound on or off.
+
+Priority (a sound still playing is cut only by a higher one): player
+death > rewind (bug report and sweep) > retry shield pop > extra life >
+boss enters > crate > enemy death > enemy hit (the spark) > zapper. The
+zapper is quiet (volume 0.3) and only plays on every third volley so it
+does not drown everything; the rest play at 0.6.
 
 | Event         | Shape    | Frequency                          | Duration |
 |---------------|----------|------------------------------------|----------|
@@ -452,8 +473,16 @@ plays on every third bolt so it does not drown everything.
 | Rewind        | triangle | 110 to 880 Hz, retriggered every 4 ticks in 15 steps (no sweep in `tone2`) | 0.07 s each |
 | Extra life    | major    | 660 Hz                             | 0.30 s   |
 | Boss enters   | minor    | 82 Hz                              | 0.80 s   |
+| Crate (M6)    | major    | 880 Hz                             | 0.12 s   |
+| Retry pop (M6)| sawtooth | 330 Hz                             | 0.15 s   |
 
-Select toggles sound. Sound starts off unless the cart is built with
+The rewind sweep plays over the auto rewind's reverse playback and loops
+while B is held. A crate sounds when it changes the ship (weapon, level,
+fork, shield, core hours); a spare crate at the cap is silent.
+
+Select toggles sound in every state (never while Start is also held: the
+newer OS opens its settings box on Start+Select); the title shows
+`SELECT: SOUND ON/OFF`. Sound starts off unless the cart is built with
 `-Dsound=true` (`build_options.sound`, the repository rule in
 docs/SOUND.md). The neopixels stay dark (section 2).
 
@@ -629,8 +658,8 @@ subagents, as with `snouty-badge`.
 - **M8 Attract mode**: title, autopilot demo (grown from M7's probe
   dodger), takeover, game over, pause, deterministic soak test. The demo
   shows both rewinds.
-- **M9 Polish**: Select sound toggle, title bestiary, tuning from
-  hardware play.
+- **M9 Polish**: title bestiary, tuning from hardware play (the Select
+  sound toggle landed early, with the effects of section 11, 2026-10-04).
 
 Parallel tracks: art (external agent, per `ASSETS.md`) runs alongside M1 to
 M3 using placeholder sprites; the asset prep script is written against the

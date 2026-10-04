@@ -18,8 +18,9 @@ badge. The Lynx screen is 160x102, exactly the badge's width, so it is shown
 1:1 with no scaling and 26 rows to spare for a status and scrub bar. The
 game is a `.lnx` file the user copies onto the badge's USB drive, read in
 place from flash by an ordinary RAM cart (shared design in
-`docs/ROM_DRIVE.md`); a licensed homebrew ROM is embedded as the fallback
-and for the web simulator. Holding Select opens
+`docs/ROM_DRIVE.md`); a licensed homebrew ROM is embedded for the web
+simulator only (the badge cart embeds none since 2026-10-04: a drive without
+a usable ROM shows a no-ROM screen). Holding Select opens
 the same menu and time scrubber as the other emulators, with the delta
 keyframes designed for Snouty Gear.
 
@@ -211,8 +212,8 @@ voice setter). If Snouty Gear's M5 "shared frontend module" has landed,
 use it; otherwise copy from Snouty Gear and note it for extraction.
 
 Build: `carts/snouty-lynx/build.zig` with `-Dlynx-rom=path` (the embedded
-ROM) and `-Dlynx-rom-source=drive|embed|pack` (default `drive` with the
-embedded ROM as fallback; `pack` is section 13.1 and the only mode that
+ROM) and `-Dlynx-rom-source=drive|embed|pack` (default `drive`, no ROM in
+the cart, a no-ROM screen when the drive has none; `pack` is section 13.1 and the only mode that
 needs XIP). The wasm build always embeds.
 
 ## 8. Performance budget
