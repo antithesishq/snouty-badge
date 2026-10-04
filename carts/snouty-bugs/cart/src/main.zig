@@ -23,6 +23,7 @@ const history = @import("history.zig");
 const rewind = @import("rewind.zig");
 const rank = @import("rank.zig");
 const autopilot = @import("autopilot.zig");
+const audio = @import("audio.zig");
 
 comptime {
     cart.export_start_code();
@@ -116,14 +117,21 @@ pub fn start() void {
 }
 
 pub fn update() void {
+    defer audio.update();
     // A bot drives the same input path (meta and World detectors, the
     // history log) as the buttons would.
     const c = if (bot != 0) autopilot.controls(bot, world.w.game_tick) else read_controls();
     input.update_meta(c);
+    // Start+Select is the OS's chord (the newer firmware opens its
+    // settings box over the cart): react to neither button while both
+    // are held. Select toggles sound in every state (SPEC.md 3, 11).
+    const chord = c.start and c.select;
+    const start_pressed = input.meta_pressed(.start) and !chord;
+    if (input.meta_pressed(.select) and !chord) audio.toggle();
 
     switch (state) {
         .title => {
-            if (input.meta_pressed(.a) or input.meta_pressed(.start)) {
+            if (input.meta_pressed(.a) or start_pressed) {
                 new_game(false);
             } else if (input.meta_pressed(.b)) {
                 new_game(true);
@@ -132,7 +140,7 @@ pub fn update() void {
             }
         },
         .playing => {
-            if (input.meta_pressed(.start)) {
+            if (start_pressed) {
                 state = .paused;
             } else if (input.meta_pressed(.b) and can_step()) {
                 // The press frame rewinds instead of simulating, so a tap
@@ -152,7 +160,7 @@ pub fn update() void {
             if (input.meta.current.b and can_step()) manual_step() else manual_resume();
         },
         .paused => {
-            if (input.meta_pressed(.start)) state = .playing;
+            if (start_pressed) state = .playing;
         },
         .dying => {
             simulate_dying();
@@ -163,10 +171,24 @@ pub fn update() void {
         .rewind => step_rewind(),
     }
 
+    audio.frame(.{
+        .mode = switch (state) {
+            .title, .paused => .quiet,
+            .playing => .play,
+            .dying => .dying,
+            .rewind => .rewind,
+            .manual => .manual,
+        },
+        .rewinds = rewinds,
+        .rewind_age = rewind_age,
+        .report_ticks = rewind.report_ticks,
+        .manual_frame = manual_frame,
+    });
+
     switch (state) {
         .title => {
             draw.draw_bg();
-            hud.draw_title(tick_total);
+            hud.draw_title(tick_total, audio.enabled);
         },
         .playing => {
             draw_scene();
@@ -285,7 +307,8 @@ pub fn simulate(mode: world.Mode) void {
     // the hit meets (before this tick's refill).
     const rewinding = hit.by != .none and mode == .live and !god and can_auto_rewind();
     if (hit.by != .none and !rewinding) collide.remove_offender(hit);
-    // audio effects check `mode` here (M6)
+    // Audio is render-side (audio.zig diffs the World once per frame), so
+    // `.silent` ticks need nothing here.
     fx.update();
     draw.tick_bg();
     world.w.game_tick +%= 1;
