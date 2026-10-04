@@ -65,7 +65,7 @@ pub const tuning = struct {
     // speed, with a trail cell (any cycle's, never rim or block) beside
     // the cycle at lateral distance 1 or 2. With the 1/128 decay, hugging
     // a trail at distance 1 gives 1.3x after 0.5 s, 1.5x after 1 s, 1.8x
-    // after 2 s (the 2.2x cap after ~3.5 s); distance 2 gives 1.2x after 1 s.
+    // after 2 s (the 2.2x cap after ~4.5 s); distance 2 gives 1.2x after 1 s.
     pub const grind1: u32 = 11;
     pub const grind2: u32 = 4;
     pub const grind_unit: u32 = 1024;
