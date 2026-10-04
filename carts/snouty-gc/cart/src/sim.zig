@@ -416,7 +416,8 @@ pub fn wreck(c: *Car, cause: world.Wreck) void {
     c.shake = 8;
     car_msg(c, switch (cause) {
         .fall => .fall,
-        .none => .none,
+        // M1 (Track A) gives armor / ZERO-DAY wrecks their own messages.
+        .none, .armor, .zero_day => .none,
     }, tuning.message_ticks);
 }
 

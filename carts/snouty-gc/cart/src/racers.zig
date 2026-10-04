@@ -2,6 +2,7 @@
 //! liveries in SPEC order. M0 keeps only what driving needs; M1 adds the
 //! loadouts, bios, taunts and the crew characters (SPEC 4.3). No cart API.
 const tuning = @import("tuning.zig");
+const world = @import("world.zig");
 
 pub const snouty: u8 = 0;
 pub const legacy: u8 = 1;
@@ -21,15 +22,18 @@ pub const Racer = struct {
     /// re-paletted with it, and it is the minimap dot. The art track's own
     /// car sheets replace the sprite in M1.
     livery: u32,
+    /// Starting loadout (SPEC 4.1).
+    front: world.Front,
+    rear: world.Rear,
 };
 
 pub const roster = [count]Racer{
-    .{ .name = "SNOUTY", .car = "ANTEATER", .chassis = .workstation, .livery = 0x9A50E8 },
-    .{ .name = "LEGACY", .car = "BIG IRON", .chassis = .mainframe, .livery = 0xD86A30 },
-    .{ .name = "KIDDIE", .car = "CTRL-V", .chassis = .thin_client, .livery = 0xF04890 },
-    .{ .name = "SYSADMIN", .car = "UPTIME", .chassis = .workstation, .livery = 0x40D070 },
-    .{ .name = "ROOTKIT", .car = "PERSIST", .chassis = .thin_client, .livery = 0x4A5868 },
-    .{ .name = "BOTNET", .car = "ZOMBIE", .chassis = .mainframe, .livery = 0xF0C030 },
+    .{ .name = "SNOUTY", .car = "ANTEATER", .chassis = .workstation, .livery = 0x9A50E8, .front = .phish, .rear = .bomb },
+    .{ .name = "LEGACY", .car = "BIG IRON", .chassis = .mainframe, .livery = 0xD86A30, .front = .broadcast, .rear = .firewall },
+    .{ .name = "KIDDIE", .car = "CTRL-V", .chassis = .thin_client, .livery = 0xF04890, .front = .ping, .rear = .leak },
+    .{ .name = "SYSADMIN", .car = "UPTIME", .chassis = .workstation, .livery = 0x40D070, .front = .lance, .rear = .rot },
+    .{ .name = "ROOTKIT", .car = "PERSIST", .chassis = .thin_client, .livery = 0x4A5868, .front = .lance, .rear = .leak },
+    .{ .name = "BOTNET", .car = "ZOMBIE", .chassis = .mainframe, .livery = 0xF0C030, .front = .ping, .rear = .rot },
 };
 
 pub fn chassis(kind: ChassisKind) tuning.Chassis {

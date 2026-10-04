@@ -252,6 +252,91 @@ reviewed by the lead; tag `snouty-gc/m0`; merged to main.
 - `docs/preview_m0.gif` (the autopilot from the grid through the first half
   lap: the coolant spill, the ramp over its pit, the dunes), `docs/RUNNING.md`.
 
+## M1 Guns and racers
+
+Goal: a 3-lap Quick Race with any racer is a real fight. SPEC 4 (roster,
+own cars, portraits, bios, taunts), 5.3 (armor, ramming, wrecks, hulks,
+respawn, smoke) and 6.1, 6.2, 6.5 (all 8 equipped weapons, AI aim and
+drop). Pickups are M2.
+
+### M1.0 Interface (lead, committed before the tracks start)
+
+`world.zig` gains `Front`, `Rear`, `Projectile` (pool of 48), `Drop` (pool
+of 32), `Event` (ring of 16, `event_seq`), `no_car`, `Wreck.armor` and
+`.zero_day`, and the `Car` combat fields (`armor`, `front`, `rear`, levels,
+ammo, `fire_cd`, `charge`, `lock`, `last_hit_by`/`last_hit_ticks`,
+per-car `hitstop`, `hit_flash`, press edges, `kills`, `wrecks`).
+`racers.zig` gains each racer's `front`/`rear` loadout. World is 1,940 B
+(test cap 2,560: no rewind copies, so it only bounds the M4 CRC).
+Contract:
+
+- Only `sim.simulate` writes these. Rendering reads the pools and the
+  event ring with its own cursor (`last_seq` in main.zig) and never writes.
+- **Events** are the only way the presentation learns about one-off
+  happenings: `hit` (attacker, victim, damage) for `ACK` and the hit flash,
+  `wreck` (victim, killer or `no_car`, cause) for the kill feed and the
+  taunt pop-ups, `lance` (owner, target, length) for the beam,
+  `explode` (car, radius, x, y) for explosions, `respawn`.
+- **Hit-stop is per car** (deferred question 2 settled): the wrecked
+  car freezes 12 ticks; the world never stops, so a link race never
+  freezes both badges. The shake is render-side, on the victim's badge.
+- A wrecked car stays where it died as a burning **hulk** for the first
+  90 ticks of its WATCHDOG delay and blocks like a wall, then vanishes
+  until the respawn.
+
+### Track A: combat simulation (Opus agent, worktree /home/exedev/snouty-badge-gc, branch gc/spec)
+
+Owns `world.zig` (beyond the interface: may add fields, must not rename
+or remove interface ones), `sim.zig`, new `weapons.zig`, `ai.zig`,
+`tuning.zig`, `racers.zig` gameplay fields (`Crew` characters, SPEC 4.3),
+`sim_test.zig`, new `weapons_test.zig`.
+
+1. Armor from chassis, damage, kill credit (last hit within 180 ticks,
+   else a fall is uncredited), ramming damage by mass and relative speed
+   with MAINFRAME's front-quarter plough x2, wreck at armor 0, per-car
+   hit-stop, hulk, WATCHDOG respawn with full armor and kept ammo, 60
+   ticks of immunity, `kills`/`wrecks` tallies, events.
+2. The 4 front weapons and 4 rear weapons exactly as SPEC 6.1/6.2, with
+   per-lap ammo refill on the start line, Down+A rear, and A/Down+A not
+   braking. Projectiles: walls kill them (spark = `explode` radius 0),
+   they pass under airborne cars, they never hit their owner. FIBER LANCE
+   is hitscan along the heading. SPEAR PHISH lock in a 24-degree cone
+   within 400 px, homing at 600 turns/tick.
+3. AI aim and drop (SPEC 6.5) per crew character, deterministic from the
+   world PRNG.
+4. Scenario tests for each weapon (hits, damage, ammo, refill, cooldowns,
+   lance fizzle, phish lock and homing, bomb arming, leak growth and
+   expiry, caltrops consumed, firewall damage per tick), ramming, wreck,
+   hulk, respawn, kill credit; a seeded 6-AI combat soak of 20 races that
+   all finish with no car stuck for more than 600 ticks and no pool
+   overflow (slots are reused or the oldest is dropped, never an
+   out-of-bounds write); determinism with combat on.
+5. Keep the cart building and the M0 gate green throughout (render code
+   does not draw the new pools yet: Track B does). Commit with
+   `Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>`, push gc/spec.
+
+### Track B: presentation (Opus agent, starts when the art track lands)
+
+Owns `main.zig`, `select.zig` (new), `roster_text.zig` (new: bios,
+taunts, wrecked lines), `fx.zig` (new), `hud.zig`, `sprites.zig`,
+`menu.zig`, `results.zig`, `build.zig` (wiring `assets/gen/art/`), and
+`tools/scripts/`. Draws the racer select (SPEC 8.1), the racer's own car
+sheets, projectiles, drops (flat decals via a non-uniform blit),
+reticle, beams, explosions, smoke, the armor bar and ammo pips, the kill
+feed, `ACK` and the taunt pop-ups, all from the World and its events.
+Details are written when the art lands.
+
+### M1 gate
+
+`tools/check.sh` green; weapon scenario tests and the combat soak pass;
+the stress bench script (six cars on screen, every weapon firing, two
+explosions) under 8 ms worst; `docs/preview_m1.gif` with a racer select
+and a real fight; tag `snouty-gc/m1`; merged to main.
+
+### M1 status
+
+(empty)
+
 ## Deferred questions
 
 SPEC 17 holds the design defaults. Taken during M0 (Track A):

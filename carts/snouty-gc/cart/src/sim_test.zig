@@ -26,7 +26,9 @@ fn solo(seed: u32) world.Setup {
 
 test "World size (a CRC over it every 32 ticks must stay cheap)" {
     std.debug.print("\n@sizeOf(World) = {d} bytes, @sizeOf(Car) = {d}\n", .{ @sizeOf(World), @sizeOf(world.Car) });
-    try std.testing.expect(@sizeOf(World) < 1024);
+    // M1 pools (48 shots, 32 drops, 16 events) put it near 2 KB; no rewind
+    // keeps copies of it, so the cap only bounds the M4 CRC cost.
+    try std.testing.expect(@sizeOf(World) <= 2560);
 }
 
 test "simulate twice from one state is equal" {
