@@ -53,6 +53,14 @@
 //! the channels' underflows Mikey events (`Mikey.aud_event`), so timer 1
 //! counts at the right tick (rare: no known game links it).
 //!
+//! Speed: a catch-up runs the underflows in time order, but a channel
+//! whose borrow nobody counts runs alone up to the next other underflow
+//! (`run_channel`), and squares and constants (normal mode, tap 0 only or
+//! no taps: Blue Lightning parks its music channels as 1 MHz squares, 16,667
+//! underflows a frame each) go in closed form together (`joint`), with
+//! bin values bit-identical to one underflow at a time (a test checks).
+//! Settled silence fills bins with 128 directly.
+//!
 //! Mix (`mono_level`): per channel the left and right weights in 1/16
 //! (16 = full, 0 = MSTEREO off, the ATTEN nibble when MPAN selects it),
 //! averaged to mono: contribution = OUTPUT * (left + right) in 1/32. With
@@ -273,6 +281,18 @@ fn render_to(r: *Render, out: Out, t_in: Tick) void {
     if (t <= r.time) return;
     var time = r.time;
     var acc = r.acc;
+    if (t >= r.edge and r.level == 0 and acc == 0 and r.hp_in == 0 and r.hp_out >= 0 and r.hp_out < 1 << dc_shift) {
+        // Settled silence (most frames of a silent game): the DC blocker
+        // is at a fixed point that rounds to 128 (`finish_bin` keeps a
+        // positive output below 2^dc_shift as it is), so every bin up to
+        // the one holding t is 128 and nothing else changes.
+        const k = @min(((t - r.win_start + 1) * samples_per_frame - 1) / r.win_len, samples_per_frame);
+        if (out) |o| @memset(o[r.bin..k], silence);
+        r.bin = k;
+        r.bin_start = r.win_start + k * r.win_len / samples_per_frame;
+        r.edge = r.win_start + (k + 1) * r.win_len / samples_per_frame;
+        time = r.bin_start;
+    }
     while (t >= r.edge) {
         acc += r.level * @as(i32, @intCast(r.edge - time));
         const s = finish_bin(r, acc, r.edge - r.bin_start);
@@ -420,18 +440,212 @@ pub fn catch_up(m: *Mikey, t: Tick) void {
     const a = &m.audio;
     const out = sink(m);
     if (t > a.time) {
-        while (a.next <= t) {
-            const x = a.next;
-            if (t7_next(m, a.time) == x) borrow_in(m, out, 0, x);
+        if (a.next <= t) run(m, out, t);
+        a.time = t;
+    }
+    render_to(&a.r, out, t);
+}
+
+/// The underflows up to tick t, in time order (same-tick ones in the
+/// order timer 7's, then channel 0 to 3). Squares and constants whose
+/// borrow nobody counts go in closed form together (`joint`) up to the
+/// next other underflow; another channel whose borrow nobody counts runs
+/// on its own up to the next other underflow (`run_channel`); anything
+/// else goes one tick at a time.
+noinline fn run(m: *Mikey, out: Out, t: Tick) void {
+    const a = &m.audio;
+    while (a.next <= t) {
+        const x = a.next;
+        const t7 = t7_next(m, a.time);
+        var set: u4 = 0;
+        var rest = t7;
+        for (&a.ch, 0..) |*ch, k| {
+            if (square(m, @intCast(k))) set |= @as(u4, 1) << @intCast(k) else rest = @min(rest, ch.timer.expire);
+        }
+        if (set != 0 and rest > x) {
+            const end = @min(@min(t, rest - 1), a.r.win_end -| 1);
+            if (end >= x and underflows(a, set, end) >= toggle_min) {
+                joint(m, out, set, end);
+                relink(m);
+                continue;
+            }
+        }
+        var c: u8 = 4;
+        var other = t7;
+        for (&a.ch, 0..) |*ch, k| {
+            const e = ch.timer.expire;
+            if (c == 4 and e == x and t7 != x) c = @intCast(k) else other = @min(other, e);
+        }
+        if (c < 4 and other > x and alone(m, @intCast(c))) {
+            a.time = run_channel(m, out, @intCast(c), @min(t, other - 1));
+        } else {
+            if (t7 == x) borrow_in(m, out, 0, x);
             for (0..4) |k| {
                 if (a.ch[k].timer.expire == x) expire_channel(m, out, @intCast(k), x);
             }
             a.time = x;
-            relink(m);
         }
-        a.time = t;
+        relink(m);
     }
-    render_to(&a.r, out, t);
+}
+
+/// Channel c reloads and its borrow out clocks nothing (no linked
+/// successor counting, or audio 3 with timer 1 not linked).
+fn alone(m: *const Mikey, c: u2) bool {
+    const t = &m.audio.ch[c].timer;
+    if (t.ctla & Ctla.reload == 0) return false;
+    const n = if (c == 3) &m.timers[1] else &m.audio.ch[c + 1].timer;
+    return !(n.linked() and n.running());
+}
+
+/// The underflows of channel c (`alone`) from its `expire` up to tick
+/// `end`, with nothing else happening in between: what `expire_channel`
+/// does for each, in one loop. Returns the tick of the last one.
+fn run_channel(m: *Mikey, out: Out, c: u2, end: Tick) Tick {
+    const a = &m.audio;
+    const ch = &a.ch[c];
+    const t = &ch.timer;
+    const p = (@as(Tick, t.backup) + 1) << t.shift();
+    const w = weight(a, c);
+    var x = t.expire;
+    var last = x;
+    while (true) {
+        ch.clock_poly();
+        const v = @as(i32, @as(i8, @bitCast(ch.output))) * w;
+        if (v != ch.contrib) {
+            level_change(&a.r, out, x, v - ch.contrib);
+            ch.contrib = v;
+        }
+        last = x;
+        x += p;
+        if (x > end) break;
+    }
+    t.done = t.ctla & Ctla.reset_done == 0;
+    t.value = t.backup;
+    t.expire = x;
+    return last;
+}
+
+/// Underflows (of all the `joint` channels together) from which the
+/// closed form takes over. A 1 MHz square (backup 0 at 1 us, as Blue
+/// Lightning parks its music channels between notes) is 16,667 underflows
+/// a frame. (A variable only so the tests can switch the closed form off
+/// and compare.)
+pub var toggle_min: u32 = 16;
+
+/// Channel c is free-running, `alone`, in normal mode with tap 0 only (a
+/// square: OUTPUT alternates +/-VOLUME) or no taps (a constant).
+fn square(m: *const Mikey, c: u2) bool {
+    const ch = &m.audio.ch[c];
+    return ch.timer.expire != never and ch.taps <= 1 and ch.timer.ctla & Control.integrate == 0 and alone(m, c);
+}
+
+fn period(t: *const Timer) Tick {
+    return (@as(Tick, t.backup) + 1) << t.shift();
+}
+
+/// Underflows of the channels in `set` up to tick `end`.
+fn underflows(a: *const Audio, set: u4, end: Tick) u32 {
+    var n: u32 = 0;
+    for (&a.ch, 0..) |*ch, k| {
+        if (set & (@as(u4, 1) << @intCast(k)) == 0 or ch.timer.expire > end) continue;
+        n += (end - ch.timer.expire) / period(&ch.timer) + 1;
+    }
+    return n;
+}
+
+/// One `joint` channel: its contribution `prev` until its next underflow
+/// `x0`, then `va`, `vb`, `va`, ... every `p` ticks.
+const Lane = struct {
+    x0: Tick,
+    p: Tick,
+    prev: i64,
+    va: i64,
+    vb: i64,
+
+    /// The integral of the contribution from `t0` to `s`.
+    fn integral(l: *const Lane, t0: Tick, s: Tick) i64 {
+        if (s <= l.x0) return l.prev * (s - t0);
+        const d = s - l.x0;
+        const j = d / l.p;
+        const rem = d - j * l.p;
+        const ev: i64 = (j + 1) / 2;
+        const od: i64 = j / 2;
+        return l.prev * (l.x0 - t0) + (ev * l.va + od * l.vb) * l.p + @as(i64, rem) * (if (j & 1 == 0) l.va else l.vb);
+    }
+};
+
+/// The channels in `set` (`square`) from `Audio.time` to tick `end`
+/// (inside the frame, before any other underflow) in closed form: each
+/// one's integral over a span is arithmetic, so every bin gets exactly
+/// the integer sum one change at a time gives, and each channel ends in
+/// the same state: after 12 clocks its shift register repeats with period
+/// 2 (or 1), so only the last 12 or 13 clocks are run.
+fn joint(m: *Mikey, out: Out, set: u4, end: Tick) void {
+    const a = &m.audio;
+    const r = &a.r;
+    const t0 = a.time;
+    render_to(r, out, t0);
+    var lanes: [4]Lane = undefined;
+    var ks: [4]u2 = undefined;
+    var n: usize = 0;
+    var base: i32 = r.level;
+    for (0..4) |k| {
+        if (set & (@as(u4, 1) << @intCast(k)) == 0) continue;
+        const ch = &a.ch[k];
+        const w = weight(a, @intCast(k));
+        var probe = ch.*;
+        probe.clock_poly();
+        const va = @as(i32, @as(i8, @bitCast(probe.output))) * w;
+        probe.clock_poly();
+        const vb = @as(i32, @as(i8, @bitCast(probe.output))) * w;
+        lanes[n] = .{ .x0 = ch.timer.expire, .p = period(&ch.timer), .prev = ch.contrib, .va = va, .vb = vb };
+        ks[n] = @intCast(k);
+        base -= ch.contrib;
+        n += 1;
+    }
+    var u = t0;
+    var iu: [4]i64 = @splat(0);
+    var acc = r.acc;
+    while (true) {
+        const v = @min(r.edge, end);
+        var sum: i64 = @as(i64, base) * (v - u);
+        for (lanes[0..n], iu[0..n]) |*l, *i| {
+            const iv = l.integral(t0, v);
+            sum += iv - i.*;
+            i.* = iv;
+        }
+        acc += @intCast(sum);
+        u = v;
+        if (v == r.edge) {
+            const smp = finish_bin(r, acc, r.edge - r.bin_start);
+            if (out) |o| o[r.bin] = smp;
+            acc = 0;
+            r.bin_start = r.edge;
+            r.bin += 1;
+            r.edge = r.win_start + (r.bin + 1) * r.win_len / samples_per_frame;
+        }
+        if (v == end) break;
+    }
+    r.acc = acc;
+    r.time = end;
+    var level = base;
+    for (lanes[0..n], ks[0..n]) |*l, c| {
+        const ch = &a.ch[c];
+        const t = &ch.timer;
+        if (end >= l.x0) {
+            const k = (end - l.x0) / l.p + 1;
+            const clocks = if (k <= 13) k else 12 + ((k - 12) & 1);
+            for (0..clocks) |_| ch.clock_poly();
+            ch.contrib = @as(i32, @as(i8, @bitCast(ch.output))) * weight(a, c);
+            t.done = t.ctla & Ctla.reset_done == 0;
+            t.value = t.backup;
+            t.expire = l.x0 + k * l.p;
+        }
+        level += ch.contrib;
+    }
+    r.level = level;
+    a.time = end;
 }
 
 /// Timer 7 borrowed through Mikey's underflow path at tick `at` (an

@@ -419,6 +419,54 @@ test "audio: stereo and attenuation mixed to mono" {
     }
 }
 
+/// Fast squares (tap 0, 1 us, backup 0 and 2), a constant (no taps) at
+/// 2 us, a slow noise channel, and DAC writes and volume changes from the
+/// bus at odd ticks: 20 frames of `audio_out` and the final channel state.
+fn fast_run(l: *Lynx, out: *[20][audio.samples_per_frame]u8) void {
+    poke(l, reg(A.volume, 0), 77);
+    poke(l, reg(A.feedback, 0), 0x01);
+    poke(l, reg(A.control, 0), C.reload | C.count | 0);
+    poke(l, reg(A.volume, 1), @bitCast(@as(i8, -128)));
+    poke(l, reg(A.feedback, 1), 0x01);
+    poke(l, reg(A.backup, 1), 2);
+    poke(l, reg(A.control, 1), C.reload | C.count | 0);
+    poke(l, reg(A.volume, 2), 50);
+    poke(l, reg(A.backup, 2), 0);
+    poke(l, reg(A.control, 2), C.reload | C.count | 1);
+    poke(l, reg(A.volume, 3), 33);
+    poke(l, reg(A.feedback, 3), 0x2E);
+    poke(l, reg(A.backup, 3), 40);
+    poke(l, reg(A.control, 3), C.reload | C.count | 1);
+    for (out, 0..) |*o, f| {
+        l.step_frame(0);
+        o.* = l.audio_out;
+        poke(l, reg(A.volume, 0), @intCast(20 + f * 5));
+        poke(l, reg(A.output, 2), @intCast(f * 3));
+        if (f == 7) poke(l, reg(A.mstereo, 0), 0x01);
+    }
+}
+
+test "audio: the closed form for fast squares equals one underflow at a time" {
+    const S2 = struct {
+        var a: [20][audio.samples_per_frame]u8 = undefined;
+        var b: [20][audio.samples_per_frame]u8 = undefined;
+        var ma: Mikey = undefined;
+    };
+    defer audio.toggle_min = 16;
+    audio.toggle_min = 16;
+    fast_run(halted(), &S2.a);
+    S2.ma = S.l.mikey;
+    audio.toggle_min = std.math.maxInt(u32);
+    fast_run(halted(), &S2.b);
+    for (S2.a, S2.b) |x, y| try expectEqual(x, y);
+    try expect(std.meta.eql(S2.ma.audio, S.l.mikey.audio));
+    var moved = false;
+    for (S2.a) |x| {
+        for (x) |s| moved = moved or s != audio.silence;
+    }
+    try expect(moved);
+}
+
 test "audio: scrub round trip (a restored state renders the same next frame)" {
     const l = halted();
     // A square, a noise channel and an integrating one, all running.
