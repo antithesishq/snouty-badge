@@ -30,6 +30,11 @@
 //!   fn search(p, drive: Pin) void        SIO: drive `drive` high, the
 //!                                        other pin an input (pull-down)
 //!   fn read(p, pin: Pin) bool            pin level
+//!   fn probe(p, pin: Pin) bool           searching only: is something
+//!                                        driving this input high? (pulls
+//!                                        it low for a moment first: an
+//!                                        RP2350 pad with its pull-down can
+//!                                        float latched high, erratum E9)
 //!   fn uart_start(p, tx: Pin) void       UART, tx on `tx`, rx on the other
 //!   fn uart_put(p, byte: u8) bool        false: transmit FIFO full
 //!   fn uart_get(p) ?u8
@@ -78,6 +83,9 @@ pub const timing = struct {
     /// Searching: the listen pin must read high at two polls this far apart
     /// (and never low between) before we lock.
     pub const lock_span: u64 = 5_000;
+    /// Searching: at most one probe of the listen pin this often (each one
+    /// briefly pulls against the partner's driver).
+    pub const probe_every: u64 = 1_000;
     /// Handshake: HELLO period, and give up (search again) after this long.
     pub const hello_every: u64 = 20_000;
     pub const handshake_timeout: u64 = 1_500_000;
@@ -147,6 +155,7 @@ pub fn Link(comptime Port: type) type {
         // Searching.
         dwell_until: u64 = 0,
         high_since: ?u64 = null,
+        last_probe: u64 = 0,
 
         // Handshake / connected.
         state_since: u64 = 0,
@@ -294,7 +303,9 @@ pub fn Link(comptime Port: type) type {
 
         fn poll_search(self: *Self, now: u64) void {
             if (self.dwell_until == 0) return self.enter_mode(now, self.mode);
-            if (self.port.read(self.tx_pin().other())) {
+            if (now -% self.last_probe < timing.probe_every) return;
+            self.last_probe = now;
+            if (self.port.probe(self.tx_pin().other())) {
                 const since = self.high_since orelse now;
                 self.high_since = since;
                 if (now -% since >= timing.lock_span) return self.lock(now);
@@ -506,6 +517,9 @@ pub const NullPort = struct {
     pub const available = false;
     pub fn search(_: *NullPort, _: Pin) void {}
     pub fn read(_: *NullPort, _: Pin) bool {
+        return false;
+    }
+    pub fn probe(_: *NullPort, _: Pin) bool {
         return false;
     }
     pub fn uart_start(_: *NullPort, _: Pin) void {}

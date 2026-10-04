@@ -48,12 +48,16 @@ const funcsel_sio: u32 = 5;
 const funcsel_pio2: u32 = 8;
 
 const pads_bank0_base: u32 = 0x40038000;
-/// IE | DRIVE 4 mA | PDE | SCHMITT; ISO, OD, PUE and SLEWFAST clear.
-const pad_value: u32 = 0x40 | 0x10 | 0x04 | 0x02;
+/// IE | PDE | SCHMITT, DRIVE 2 mA (the weakest: plenty for 1 Mbaud on a
+/// short cable, and it limits the current if two outputs ever meet on a
+/// wire, on top of the header's 100 R per side); ISO, OD, PUE and
+/// SLEWFAST clear.
+const pad_value: u32 = 0x40 | 0x04 | 0x02;
 
 const sio_base: u32 = 0xD0000000;
 const sio_gpio_in = sio_base + 0x004;
 const sio_gpio_out_set = sio_base + 0x018;
+const sio_gpio_out_clr = sio_base + 0x020;
 const sio_gpio_oe_set = sio_base + 0x038;
 const sio_gpio_oe_clr = sio_base + 0x040;
 
@@ -125,6 +129,21 @@ pub const Rp2350 = struct {
 
     pub fn read(_: *Rp2350, pin: Pin) bool {
         return (reg(sio_gpio_in).* >> gpio(pin)) & 1 != 0;
+    }
+
+    /// RP2350 erratum E9: an input pad with its pull-down enabled can hold
+    /// a floating pin at ~2 V, reading high, after something drove it high
+    /// (our own search drives each pin in turn). Drive the pin low for a
+    /// moment, let go and read: only a line that something drives comes
+    /// back high. The listen pin is an SIO input while searching.
+    pub fn probe(_: *Rp2350, pin: Pin) bool {
+        const bit = @as(u32, 1) << gpio(pin);
+        reg(sio_gpio_out_clr).* = bit;
+        reg(sio_gpio_oe_set).* = bit;
+        wait_us(2);
+        reg(sio_gpio_oe_clr).* = bit;
+        wait_us(5);
+        return reg(sio_gpio_in).* & bit != 0;
     }
 
     pub fn uart_start(_: *Rp2350, tx: Pin) void {
@@ -240,6 +259,10 @@ pub const SelfTest = struct {
     /// means the transmitter never moved the pad.
     edges: u32 = 0,
     framing: bool = false,
+    /// The pin read back while SIO drove it low, then high: 0 and 1 if
+    /// SIO, IO_BANK0 and the pad work at all.
+    sio_low: bool = true,
+    sio_high: bool = false,
     regs: Regs = undefined,
 
     pub fn ok(t: *const SelfTest) bool {
@@ -254,7 +277,16 @@ pub fn self_test(pin: Pin) SelfTest {
     var t: SelfTest = .{};
     if (!is_badge) return t;
     const n = gpio(pin);
+    const bit = @as(u32, 1) << n;
     set_pad(n);
+    set_funcsel(n, funcsel_sio);
+    reg(sio_gpio_out_clr).* = bit;
+    reg(sio_gpio_oe_set).* = bit;
+    wait_us(5);
+    t.sio_low = reg(sio_gpio_in).* & bit != 0;
+    reg(sio_gpio_out_set).* = bit;
+    wait_us(5);
+    t.sio_high = reg(sio_gpio_in).* & bit != 0;
     start(n, n);
     wait_us(50);
     while (get()) |_| {}

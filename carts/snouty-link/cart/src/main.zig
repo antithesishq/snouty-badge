@@ -49,6 +49,9 @@ var tests: [2]link.rp2350.SelfTest = undefined;
 var tested = false;
 var a_was_down = false;
 var b_was_down = false;
+var select_was_down = false;
+/// SELECT: the register page instead of the link page.
+var show_regs = false;
 
 pub fn start() void {
     cart.set_vsync_enabled(1000.0 / 60.0);
@@ -79,6 +82,10 @@ pub fn update() void {
         l.restart(cart.micros_since_boot());
     }
     b_was_down = b_down;
+
+    const select_down = mine.select and !mine.start;
+    if (select_down and !select_was_down) show_regs = !show_regs;
+    select_was_down = select_down;
 
     l.poll(t0);
     if (l.session != session_seen) {
@@ -145,7 +152,9 @@ fn draw(mine: u16) void {
     say(6, 0, state_str, state_color);
 
     const s = l.stats;
-    switch (l.state) {
+    if (show_regs and link.rp2350.is_badge) {
+        draw_regs(&buf);
+    } else switch (l.state) {
         .unavailable => {
             say(0, 2, "THE SIMULATOR HAS", fg);
             say(0, 3, "NO UART HEADER.", fg);
@@ -186,20 +195,22 @@ fn draw(mine: u16) void {
         },
     }
 
-    if (l.state != .unavailable) {
+    if (l.state != .unavailable and !show_regs) {
         if (tested) {
             for (tests, 0..) |t, i| {
                 const name: []const u8 = if (i == 0) "PIN1" else "PIN3";
                 if (t.ok()) {
                     say(0, 6 + @as(i32, @intCast(i)), fmt(&buf, "{s} OK E{d}", .{ name, t.edges }), good);
                 } else {
-                    say(0, 6 + @as(i32, @intCast(i)), fmt(&buf, "{s} N{d} E{d} {X:0>2}{X:0>2} P{d}{d}", .{
-                        name, t.n, t.edges, t.got[0], t.got[1], t.regs.pc0, t.regs.pc1,
+                    say(0, 6 + @as(i32, @intCast(i)), fmt(&buf, "{s} N{d} E{d} S{d}{d} P{d}{d}", .{
+                        name,                    t.n,                      t.edges,
+                        @intFromBool(t.sio_low), @intFromBool(t.sio_high), t.regs.pc0,
+                        t.regs.pc1,
                     }), bad);
                 }
             }
         } else {
-            say(0, 6, "A: SELF TEST B: BAUD", dim);
+            say(0, 6, "A:TEST B:BAUD SL:REG", dim);
         }
     }
 
@@ -214,6 +225,23 @@ fn draw(mine: u16) void {
 
     pad(4, 101, "ME", mine);
     pad(84, 101, "PEER", if (l.connected()) partner_buttons else 0);
+}
+
+/// SELECT page: IO_BANK0 CTRL (function select) and STATUS, the pad, the
+/// pin's level for both header pins; PIO2 CTRL, FDEBUG, FLEVEL and
+/// whether RESETS holds PIO2.
+fn draw_regs(buf: []u8) void {
+    const r = link.rp2350.regs();
+    const names = [2][]const u8{ "P1", "P3" };
+    for (0..2) |i| {
+        const row: i32 = 1 + 2 * @as(i32, @intCast(i));
+        const level_now = l.port.read(if (i == 0) .a else .b);
+        say(0, row, fmt(buf, "{s} CT{X:0>2} PD{X:0>3} {s}", .{ names[i], r.ctrl_pins[i] & 0x1F, r.pads[i], level(level_now) }), fg);
+        say(0, row + 1, fmt(buf, "   ST {X:0>8}", .{r.status[i]}), fg);
+    }
+    say(0, 5, fmt(buf, "PIO {X:0>8} R{d}", .{ r.ctrl, @intFromBool(r.resets_pio2_held) }), fg);
+    say(0, 6, fmt(buf, "FD {X:0>8}", .{r.fdebug}), fg);
+    say(0, 7, fmt(buf, "FL {X:0>8} I{X:0>2}", .{ r.flevel, r.irq & 0xFF }), fg);
 }
 
 /// Buttons as lit boxes: a cross for the stick, then B and A, SELECT and

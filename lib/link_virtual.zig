@@ -74,6 +74,10 @@ pub const Port = struct {
         return Cable.drives_high(p.them(), p.cable.far_pin(pin));
     }
 
+    pub fn probe(p: *Port, pin: Pin) bool {
+        return p.read(pin);
+    }
+
     pub fn uart_start(p: *Port, tx: Pin) void {
         p.me().* = .{ .uart_tx = tx };
     }
