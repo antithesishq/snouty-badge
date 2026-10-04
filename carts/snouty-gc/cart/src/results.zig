@@ -3,8 +3,8 @@
 //! portrait, name, car, time, kills and their taunt, and the followed
 //! car's own place and best lap under it. Then the field by rank, each row
 //! with the racer's half-scale portrait (the 24x16 face band of it: six
-//! 24-row portraits do not fit 128 px), name, kills and wrecks, finish
-//! time and best lap. CYCLES join in the career (M5). Draw only.
+//! 24-row portraits do not fit 128 px), name and best lap, finish time,
+//! kills and wrecks. CYCLES join in the career (M5). Draw only.
 const cart = @import("cart-api");
 const world = @import("world.zig");
 const racers = @import("racers.zig");
@@ -109,9 +109,13 @@ pub fn draw_table(w: *const world.World, follow: u8, frame: u32) void {
         // Half scale: rows 8..39 of the 48x48 portrait into 24x16.
         sprites.blit_rect(&sprites.portraits[racer], 0, 8, 48, 32, 14, y, 24, 16, .{});
         hud.text(racers.roster[racer].name, 42, y, hud.livery(racer));
-        var kbuf: [8]u8 = undefined;
-        const t = tally(&kbuf, c.kills, c.wrecks);
-        hud.text(t, 156 - @as(i32, @intCast(t.len)) * 8, y, hud.grey);
+        // Line 1 right: the best lap as SS"CC (laps are under a minute).
+        if (c.best_lap > 0) {
+            var best: [7]u8 = undefined;
+            hud.format_clock(&best, c.best_lap);
+            hud.text(best[2..], 156 - 5 * 8, y, hud.grey);
+        }
+        // Line 2: the finish time (or the lap reached), kills and wrecks.
         var clock: [7]u8 = undefined;
         if (c.finished) {
             hud.format_clock(&clock, c.finish_tick);
@@ -119,11 +123,10 @@ pub fn draw_table(w: *const world.World, follow: u8, frame: u32) void {
         } else {
             var lap: [5]u8 = "LAP 1".*;
             lap[4] = @as(u8, '1') + @min(c.lap, 2);
-            hud.text(&lap, 42, y + 9, hud.dim);
+            hud.text(&lap, 42, y + 9, hud.grey);
         }
-        if (c.best_lap > 0) {
-            hud.format_clock(&clock, c.best_lap);
-            hud.text(&clock, 100, y + 9, hud.grey);
-        }
+        var kbuf: [8]u8 = undefined;
+        const t = tally(&kbuf, c.kills, c.wrecks);
+        hud.text(t, 156 - @as(i32, @intCast(t.len)) * 8, y + 9, hud.grey);
     }
 }

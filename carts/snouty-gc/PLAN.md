@@ -461,6 +461,73 @@ and a real fight; tag `snouty-gc/m1`; merged to main.
   `tools/scripts/m0_race.json` re-recorded with `tools/record_script.py`
   (the autopilot now fires, so the M0 recording no longer replayed its
   race).
+- 2026-10-04: **Track B (presentation) DONE** on `gc/present` (gc/spec
+  with Track A merged in; not merged back, not tagged). The art is wired
+  (`build.zig` per ASSETS.md; Zero's `fx.png` renamed `exhaust.png` for
+  the BURST flame, `machine.png` and `snouty_head.png` retired) and every
+  sheet goes through one runtime `sprites.Sheet` and blit with separate
+  width and height. New `select.zig`, `roster_text.zig` (bios, taunts,
+  wrecked lines, weapon names, HUD liveries, stat bars; host-tested),
+  `fx.zig`, `stress.zig`. **Cars**: the racer's own sheet, cell from the
+  camera-to-heading angle (rear under 22.5 degrees, quarter under 67.5,
+  else side, mirrored for the left; no front view exists), the followed
+  car leans into its steer, airborne cell while `hop`, `sim.is_hulk` draws
+  the wreck cell with flames, immunity blinks, `hit_flash` white, a lance
+  charge glows (faster, then white when full). **Depth list**: cars,
+  projectiles (PING, BROADCAST, SPEAR PHISH by view), drops (MEMORY LEAK
+  and BIT ROT as squashed decals, LOGIC BOMB dark until armed then
+  blinking, FIREWALL as 16 px segments of bricks with standing flames) and
+  particles, sorted far first on u32 keys, 64 drawn, the farthest culled
+  first except cars (never culled). **fx.zig** reads the event ring with
+  its own `last_seq` (never writes): explosions (radius from `explode`),
+  sparks, respawn spark ring, grey smoke under 50% armor and black smoke
+  with sparks under 25% and from hulks, muzzle flashes when `ammo_front`
+  drops, lance beams (12 projected points from the owner to the event's
+  x, y, 6 ticks), the kill feed, taunt pop-up, ACKs, the wreck note
+  (`WRECKED BY X`, `ZERO-DAY`; a fall keeps the sim's `SEGMENT FAULT`),
+  the armor-bar flash and a 12-tick shake on the victim's badge.
+  **HUD** (4 px margins): LAP left, rank centre, the empty pickup box
+  (roulette blank) right; feed y 23; pop-up y 33 (24x24 portrait, name,
+  the line wrapped at 15); message bar y 62; bottom left (all left of x
+  61, clear of the car sprite): MPH, `A` + front count + BURST bolts,
+  `Down+A` + rear pips, armor bar 40x4 green/yellow/red; minimap with
+  the art liveries, wrecked cars blink; SPEAR PHISH reticle on `lock`;
+  `BEHIND` while looking back. The race clock left the race HUD (SPEC 10
+  has none; results keep the times). **Flow**: splash (Snouty's
+  eyepatched portrait at 2x), title, Start to the **racer select** (as the
+  mock: Left/Right racers, Down to the track row, A or Start races, B to
+  the title), countdown, race, results (the winner's card, then the field
+  with 24x16 portrait bands, best lap, time, kills, wrecks), then the
+  select again. M0's QUICK RACE/SOUND menu is gone; Sound is in pause.
+  The picked racer drives car `human = 0`. **Look back** (Select held):
+  the camera turns round `cam_behind` ahead of the car for that frame
+  only, the hills march backward (`hills.backward`), own car hidden.
+  **Stress scene**: `export var gc_stress` (bench `--poke gc_stress=1`) or
+  the wasm `debug_stress:1`: six cars in view (a hulk, a hit-flasher, a
+  charger, a smoker), all 48 projectiles, all 32 drops (8 FIREWALLs = 40
+  segments), two explosions, a beam, a hit and a wreck event every 30 / 90
+  ticks, the view sweeping +-14 degrees; 125 to 136 objects gathered, 64
+  drawn. `tools/scripts/m1_render_stress.json` holds Select 400..460.
+- Track B bench (calibrated, 600 frames): **stress mean 4.72 ms, worst
+  5.13 ms** (frame 94; p95 5.06), `--lcd` identical; look-back frames 3.2
+  ms (22 objects). The sprites cost about 1.6 ms of it: `blit_rect` 26%
+  of cycles (85 blits a frame), the list (gather, project, sort) 0.4 ms;
+  SPEC 18's 64-object estimate of 1 ms holds for the blits alone. Two
+  cheapenings: the list sorts u32 keys (distance << 8 | slot) instead of
+  entries, and `hills.height_ahead` caches the height under the camera
+  (it was two 64-bit divides per projected point; 192 a frame).
+  `m0_race.json` (a real combat race): mean 3.69 ms, worst 4.92 ms (frame
+  285), `--lcd` identical (Track A alone 3.08 / 3.92). RAM ELF `size -A`:
+  **.text 136,636 + .data 6,676 + .bss 29,804** (+ 592 exidx/extab/
+  descriptor) = 173,708 B: **100,468 B (98 KB) free** under the 274,176 B
+  window less the stack. `tools/check.sh` green: it now also runs a select
+  preview (Start, Right x3 = SYSADMIN, B, Start, Left = BOTNET, A races
+  car 5), a stress preview (64 drawn of more gathered) and the stress
+  bench plain and `--lcd` under 8 ms. `docs/preview_m1_select.gif` (splash,
+  title, all six racers, the track row, the pick) and
+  `docs/preview_m1_race.gif` (an autopilot combat race: wrecks with the
+  taunt pop-up, the kill feed, the reticle, a MEMORY LEAK, look back).
+  Deferred questions 24 to 31.
 
 ## M2 Pickups
 
@@ -618,3 +685,32 @@ Taken during M1 (Track A, combat simulation):
 23. **Balance** is left where the soak puts it (19 wrecks a 6-AI race; the
     autopilot human wrecked about 4 times a race and about 21 s slower than
     a clean race). Adrian's play test sets the numbers in `tuning.zig`.
+
+Taken during M1 (Track B, presentation):
+
+24. **Flow**: Title, Start, the racer select, A races (SPEC 8.1's "two
+    presses"); the track row is reached with Down on the select (one track,
+    Left/Right ready). M0's main menu (QUICK RACE, SOUND) is gone until
+    the M3 modes need a menu; the sound toggle lives in pause. Pause QUIT
+    and the results go back to the select.
+25. **No race clock in the race HUD** (SPEC 10 lists none and the pickup
+    box took its row); the results show finish times and best laps.
+26. **Rank in the top centre**, the pickup box drawn empty (the roulette
+    blank) from M1 so the layout is final; feed at y 23 and pop-up at y 33
+    (under the box, not y 8 as SPEC 10's table has it: the 8x8 font needs
+    the rows), message bar moved from y 56 to y 62.
+27. **Cars are never culled** by the 64-object cap; among the rest the
+    farthest go first.
+28. **No front view**: past 67.5 degrees off the camera every car (and
+    SPEAR PHISH) shows its side view, mirrored by the nose's side.
+29. **Results** are two cards (the winner's, then the field) because six
+    half-scale portraits and the winner's full one do not fit 128 px; the
+    rows show a 24x16 band (portrait rows 8..39) at half scale.
+30. **Liveries**: the HUD (minimap, select, results, feed) uses the art
+    track's suggested colours (`roster_text.color`); `racers.livery` (the
+    M0 placeholders, sim side) is unused by rendering now.
+31. **Effects mapping**: a `hit` sparks on the victim, `ACK` only over cars
+    the followed car hit; a `wreck` makes no explosion of its own (the
+    sim's `explode` radius 24 follows it); explosions are drawn 1.5 x
+    radius + 8 world px across; the muzzle flash keys on `ammo_front`
+    dropping.

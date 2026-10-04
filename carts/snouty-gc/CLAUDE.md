@@ -31,8 +31,18 @@ here: every forked file names its Zero source and commit on its first line.
 - `track.zig`: runtime `League`/`Track` structs of slices (the built-in
   ones embed `assets`; a pack in RAM can fill them later, SPEC 19), the map
   unpacker, `map_ram`.
-- `render.zig` (row-loop floor, horizon, fog), `camera.zig`, `hills.zig`,
-  `sprites.zig`, `hud.zig`, `font.zig`, `menu.zig`, `results.zig`,
+- `sprites.zig`: the runtime `Sheet` (every 4-bit art sheet), one blit
+  with separate width and height (flat decals), the race's depth list
+  (cars, projectiles, drops, particles; 64 drawn, cars never culled).
+- `fx.zig`: render-side effects and HUD notices from the World's event
+  ring (own cursor, never writes): explosions, sparks, smoke, muzzle
+  flashes, lance beams, kill feed, taunt pop-up, ACK, wreck note, shake.
+- `select.zig` (the racer select, SPEC 8.1), `roster_text.zig` (bios,
+  taunts, wrecked lines, weapon names, HUD liveries, stat bars),
+  `stress.zig` (the render stress scene: `gc_stress` / `debug_stress`).
+- `render.zig` (row-loop floor, horizon, fog), `camera.zig` (follow, look
+  back, culling projection), `hills.zig`,
+  `hud.zig`, `font.zig`, `menu.zig`, `results.zig`,
   `sound.zig` + `engine.zig` (Zero's tones and drone), `input.zig` (edges,
   the Start+Select chord mask, `race_byte`).
 - Host tests: `host_tests.zig` root, `sim_test.zig` (determinism, laps,
