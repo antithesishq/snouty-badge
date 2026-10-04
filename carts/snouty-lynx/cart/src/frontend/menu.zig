@@ -1,8 +1,9 @@
 //! Emulator menu (SPEC.md sections 5 and 12, PLAN.md "M2 Frontend"),
 //! copied from Snouty Genesis's frontend/menu.zig (itself Snouty Gear's)
-//! with the Lynx rows: Resume, Buttons (A/B swap), Press Option 2,
-//! Restart (Pause + Option 1), Debug overlay, Reset, Pick ROM (a drive
-//! with several playable files) and About; 9 px rows as Genesis. Gear's
+//! with the Lynx rows: Resume, Buttons (A/B swap), Sound (M5; not in the
+//! wasm build), Press Option 2, Restart (Pause + Option 1), Debug overlay,
+//! Reset, Pick ROM (a drive with several playable files) and About; 8 px
+//! rows as Genesis M4 (nine rows, the bottom line and the footer). Gear's
 //! M5 shared frontend has not landed: this is a copy, to be extracted with
 //! the others. Opened by holding Select for 500 ms (frontend/input.zig),
 //! drawn over the frozen game frame; the core is not stepped while it is
@@ -21,7 +22,9 @@
 //!
 //! Keys: Up/Down move (wrapping), A chooses, B or a Select tap (a press that
 //! began inside the menu) resumes. Left/Right or A cycle a setting row
-//! (Buttons, Debug overlay).
+//! (Buttons, Sound, Debug overlay). Sound (frontend/audio.zig, On at
+//! boot) Off stops the stream (a ramp to silence) and clears
+//! `l.audio_render` so the core skips filling `audio_out`.
 //!
 //! Time scrubber (SPEC.md 5 and 10, frontend/rewind.zig), Genesis's UI. On
 //! every row that is not a setting (Resume, where the menu opens, Press
@@ -59,9 +62,10 @@ const input = @import("input.zig");
 const romsrc = @import("romsrc.zig");
 const text = @import("text.zig");
 const rewind = @import("rewind.zig");
+const audio = @import("audio.zig");
 const hint = @import("hint");
 
-pub const version = "0.3.0-m3";
+pub const version = "0.5.0-m5";
 
 /// The title the menu band and the status strip show.
 pub const title = "SNOUTY LYNX";
@@ -83,7 +87,7 @@ pub var hold_frames_left: u8 = 0;
 /// Game frames a held-button row holds its buttons.
 const hold_frames = 4;
 
-const Item = enum { resume_game, buttons, opt2, restart, debug, reset, pick_rom, about };
+const Item = enum { resume_game, buttons, sound, opt2, restart, debug, reset, pick_rom, about };
 const item_count = @typeInfo(Item).@"enum".field_names.len;
 
 /// The Pick ROM row exists only when the drive has more than one playable
@@ -93,7 +97,12 @@ fn pick_available() bool {
 }
 
 fn visible(item: Item) bool {
-    return item != .pick_rom or pick_available();
+    return switch (item) {
+        .pick_rom => pick_available(),
+        // The pinned simulator has no streaming audio.
+        .sound => !cart.is_wasm,
+        else => true,
+    };
 }
 
 var cursor: Item = .resume_game;
@@ -173,7 +182,7 @@ pub fn update(l: *core.Lynx, e: input.Edge) Result {
                 },
                 .pick_rom => return .pick_rom,
                 .about => showing_about = true,
-                .buttons, .debug => adjust(),
+                .buttons, .sound, .debug => adjust(l),
             }
         }
     }
@@ -199,7 +208,7 @@ fn move(d: i2) void {
 }
 
 fn is_setting(item: Item) bool {
-    return item == .buttons or item == .debug;
+    return item == .buttons or item == .sound or item == .debug;
 }
 
 /// Time scrubber step (SPEC.md section 10): Left = back 0.5 s, Right =
@@ -216,7 +225,7 @@ noinline fn left_right(l: *core.Lynx, e: input.Edge) void {
     if (d != 0) {
         repeat_dir = 0;
         if (is_setting(cursor)) {
-            adjust();
+            adjust(l);
         } else {
             on_scrub(l, d);
             repeat_dir = d;
@@ -237,10 +246,14 @@ noinline fn left_right(l: *core.Lynx, e: input.Edge) void {
     }
 }
 
-/// Both settings have two values, so Left, Right and A all flip them.
-fn adjust() void {
+/// Every setting has two values, so Left, Right and A all flip them.
+fn adjust(l: *core.Lynx) void {
     switch (cursor) {
         .buttons => input.swap_ab = !input.swap_ab,
+        .sound => {
+            audio.enabled = !audio.enabled;
+            l.audio_render = audio.enabled;
+        },
         .debug => debug.enabled = !debug.enabled,
         else => {},
     }
@@ -254,14 +267,20 @@ const panel_x = 4;
 const panel_y = band_h;
 const panel_w = cart.screen_width - 2 * panel_x;
 const panel_h = cart.screen_height - panel_y;
-const row_h = 9;
+/// 8 px rows, the font's own line pitch (M2-M4: 9), so nine rows (Sound
+/// joined in M5), the bottom line and the footer fit the panel, as in
+/// Genesis M4. The cursor bar is one pixel taller (`bar_rows`), from a
+/// pixel above the row's glyphs to its descenders.
+const row_h = 8;
+const bar_rows = row_h + 1;
 const text_x = panel_x + 4;
 const first_row_y = panel_y + 2;
 /// The panel's bottom line (y 110): "B: back" on About, "Scrub: ..." on
-/// the rows. Fixed below the last row even when Pick ROM is hidden.
+/// the rows. Fixed below the ninth row even when Pick ROM or Sound is
+/// hidden.
 pub const scrub_line_y = first_row_y + item_count * row_h;
 /// The footer under it (y 119): how to leave the menu (`hint.back`).
-const footer_y = scrub_line_y + row_h;
+const footer_y = scrub_line_y + 9;
 /// The scrub bar shown after a step (`scrub_view`): the panel's bottom
 /// strip (y 118..127, over the status strip's last line), so the panel
 /// hides it entirely when it comes back.
@@ -295,6 +314,7 @@ fn label(item: Item) []const u8 {
     return switch (item) {
         .resume_game => "Resume",
         .buttons => if (input.swap_ab) "Buttons: A=B B=A" else "Buttons: A=A B=B",
+        .sound => if (audio.enabled) "Sound: On" else "Sound: Off",
         .opt2 => "Press Option 2",
         // "Restart: Pause+Opt1" is 19 columns, one more than the panel.
         .restart => "Restart Pause+Opt1",
@@ -342,7 +362,7 @@ fn draw(l: *const core.Lynx) void {
         const item: Item = @fromBackingInt(@intCast(i));
         if (!visible(item)) continue;
         if (item == cursor) {
-            cart.rect(.{ .x = panel_x + 2, .y = y - 1, .width = panel_w - 4, .height = row_h, .fill_color = cursor_color });
+            cart.rect(.{ .x = panel_x + 2, .y = y - 1, .width = panel_w - 4, .height = bar_rows, .fill_color = cursor_color });
             text.draw(label(item), text_x, y, cursor_text_color, cursor_color);
         } else {
             text.draw(label(item), text_x, y, row_color, panel_color);
@@ -532,6 +552,7 @@ fn check_width(comptime s: []const u8, comptime cols: usize) void {
 
 comptime {
     if (panel_cols != 18) @compileError("panel_cols changed: recheck the layout");
+    if (scrub_line_y != 110 or footer_y != 119) @compileError("bottom lines moved: recheck the layout");
     if (scrub_line_y + row_h > panel_y + panel_h) @compileError("bottom line outside the panel");
     if (footer_y + 8 > panel_y + panel_h - 1) @compileError("menu footer outside the panel");
     if (hint.panel_cols != panel_cols) @compileError("hint.panel_cols does not match this panel");
@@ -543,6 +564,7 @@ comptime {
     check_width("Buttons: A=B B=A", panel_cols);
     check_width("Restart Pause+Opt1", panel_cols);
     check_width("Debug overlay: Off", panel_cols);
+    check_width("Sound: Off", panel_cols);
     check_width("Version " ++ version, panel_cols);
     check_width("Source: embedded", panel_cols);
     check_width("Drive not used:", panel_cols);
@@ -555,7 +577,7 @@ comptime {
     check_width("Scrub: -9.9 / 9.9s", panel_cols);
     check_width("Scrub: live / 9.9s", panel_cols);
     check_width("Scrub: -99 / 99s", panel_cols);
-    // The last row's cursor bar ends at scrub_line_y - 2.
+    // The last row's cursor bar ends at scrub_line_y - 1.
     if (bar_y + 1 < scrub_line_y) @compileError("scrub bar overlaps the rows");
     if (bar_y + bar_h > panel_y + panel_h) @compileError("scrub bar outside the panel");
 }

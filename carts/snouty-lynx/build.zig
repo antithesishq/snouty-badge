@@ -72,6 +72,22 @@ pub fn add(b: *Build, sycl_badge_dep: *Build.Dependency, opts: common.Options) v
             .{ .name = "romfs", .module = romfs_host },
         },
     });
+    // The frontend's sound path (M5): lib/stream_audio.zig and
+    // frontend/audio.zig need no cart-api, so they run natively too.
+    const stream_host = b.createModule(.{
+        .root_source_file = b.path("lib/stream_audio.zig"),
+        .target = b.graph.host,
+        .optimize = test_optimize,
+    });
+    const audio_host = b.createModule(.{
+        .root_source_file = b.path(dir ++ "cart/src/frontend/audio.zig"),
+        .target = b.graph.host,
+        .optimize = test_optimize,
+        .imports = &.{
+            .{ .name = "core", .module = core_host },
+            .{ .name = "stream_audio", .module = stream_host },
+        },
+    });
     const tests = b.addTest(.{
         .name = "snouty-lynx-tests",
         .filters = if (opts.test_filter) |f| &.{f} else &.{},
@@ -83,6 +99,8 @@ pub fn add(b: *Build, sycl_badge_dep: *Build.Dependency, opts: common.Options) v
                 .{ .name = "core", .module = core_host },
                 .{ .name = "romfs", .module = romfs_host },
                 .{ .name = "drive", .module = drive_host },
+                .{ .name = "stream_audio", .module = stream_host },
+                .{ .name = "frontend_audio", .module = audio_host },
             },
         }),
     });
@@ -144,7 +162,7 @@ fn resolve_rom(b: *Build, opt: ?[]const u8) RomFile {
 }
 
 /// Adds `core`, `romfs` (lib/romfs.zig), `iris` (lib/iris_mark.zig), `hint`
-/// (lib/hint.zig), `drive`
+/// (lib/hint.zig), `stream_audio` (lib/stream_audio.zig), `drive`
 /// (cart/src/frontend/drive.zig as a module, shared with the host tests) and
 /// the generated `rom` to the cart. `rom` holds the embedded ROM (`data`,
 /// copied next to the generated rom.zig so @embedFile can see it), its file
@@ -159,6 +177,8 @@ fn build_cart_modules(b: *Build, cart: *Build.Module, cart_api: *Build.Module, s
     cart.addImport("iris", b.createModule(.{ .root_source_file = b.path("lib/iris_mark.zig") }));
     // The control hints (splash, first seconds of play, menu), shared with Boy, Gear, Genesis.
     cart.addImport("hint", b.createModule(.{ .root_source_file = b.path("lib/hint.zig") }));
+    // The new firmware's streaming-audio ring (M5 sound, frontend/audio.zig).
+    cart.addImport("stream_audio", b.createModule(.{ .root_source_file = b.path("lib/stream_audio.zig") }));
     cart.addImport("drive", b.createModule(.{
         .root_source_file = b.path(dir ++ "cart/src/frontend/drive.zig"),
         .imports = &.{
