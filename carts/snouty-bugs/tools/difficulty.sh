@@ -5,7 +5,7 @@
 # and stage (hits, seconds, boss seconds, boss killed or escaped, rank,
 # weapon and forks).
 #
-#   tools/difficulty.sh [--no-build] [--bots 1,2,3] [--stages N] [--json OUT.json]
+#   tools/difficulty.sh [--no-build] [--bots 1,2,3] [--stages N] [--bosses 0,1,2,3] [--json OUT.json]
 #                       [--frames CAP] [--seed N]
 #
 # Everything but --no-build goes to tools/difficulty.mjs (see its header).
