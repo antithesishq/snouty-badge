@@ -21,7 +21,10 @@
 //! after a double tap (frontend/input.zig) an update steps up to
 //! `tuning.ff_max_frames` frames within `tuning.ff_budget_us`, all but the
 //! last without pixel work or sound, every one recorded for the scrubber,
-//! and draws ">>N.Nx" in the bottom-right corner (`step_fast`).
+//! and draws ">>N.Nx" in the bottom-right corner (`step_fast`). Left
+//! during that hold is the chorded rewind: the game frozen, Left/Right step
+//! time with the menu's scrub bar, and letting go of Select resumes from
+//! there (frontend/flow.zig, `Ctx.rewind_*`).
 //!
 //! Control hints (lib/hint.zig): "Hold Select: menu" on the splash; that
 //! line and "2x Sel+hold: fast" in a two-line strip at the bottom for the
@@ -207,6 +210,23 @@ const Ctx = struct {
         menu.close();
     }
 
+    /// The chorded rewind (frontend/flow.zig): the menu's freeze, sound
+    /// pause, scrub step and bar, without the panel.
+    pub fn rewind_open(_: *Ctx) void {
+        audio.pause(gb);
+        play_hint.stop();
+        menu.rewind_open();
+    }
+
+    pub fn rewind_frame(_: *Ctx, dir: i2) void {
+        audio.menu_tick(gb);
+        menu.rewind_frame(gb, dir);
+    }
+
+    pub fn rewind_close(_: *Ctx) void {
+        menu.close();
+    }
+
     pub fn halted_frame(_: *Ctx) void {
         draw_halted();
     }
@@ -378,7 +398,7 @@ fn debug_lines() callconv(.c) u32 {
 fn debug_palette() callconv(.c) u32 {
     return @intCast(video.palette_index);
 }
-/// Frontend state: 0 splash, 1 running, 2 menu, 3 pick, 4 halted.
+/// Frontend state: 0 splash, 1 running, 2 menu, 3 pick, 4 halted, 5 rewind.
 fn debug_state() callconv(.c) u32 {
     return @backingInt(fl.state);
 }

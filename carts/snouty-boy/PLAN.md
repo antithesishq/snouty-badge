@@ -795,3 +795,72 @@ Preview: `tools/scripts/ff_rex.json` on a Rex Runner wasm,
 
 Open: Adrian on the badge (feel of the 200 ms tap delay, Tetris at 2x with
 a 30 Hz picture).
+
+## Chorded rewind (2026-10-04)
+
+Contract: root `docs/FAST_FORWARD.md`, "Chorded rewind" (724a25b6).
+Branch `emu-ff-boy`.
+
+- Input (`frontend/input.zig`): a fresh Left during fast forward sets
+  `GameInput.rewind` once and ends fast forward; Left never reaches the
+  game while fast forwarding (a Left held from before stays masked until
+  pressed afresh), Right and the rest do. `input.ScrubRepeat` is the
+  menu's Left/Right auto-repeat (`repeat_frames` 15, 4 steps a second),
+  now shared by the menu and the flow.
+- Flow (`frontend/flow.zig`): state `rewind` (debug_state 5). The Left
+  press steps back at once; with Select held, Left/Right step through
+  `Ctx.rewind_frame(dir)`; no button reaches the game and Start changes
+  nothing. Letting go of Select: `rewind_close`, `suppress_held`, and the
+  game steps in the same update, as after the menu.
+- Badge side (`main.zig` `Ctx.rewind_*`, `frontend/menu.zig`): the menu's
+  freeze (`freeze`, copy-forward), `audio.pause`, the same `rewind.step`
+  and the same bar (`draw_scrub_bar`, shared with the menu's scrub view;
+  "Rewind: no history" without any). The bar covers the `>>` corner.
+  About: rows "2x Sel+hold: fast", "then Left: rewind", "B: back"; the
+  fragmented-bank count moved onto the Source row ("Fragmented: N").
+- Tests: comptime tests in `input.zig` (held Left masked and no rewind,
+  fresh Left rewinds, Left at 1x, `ScrubRepeat` timing), two flow tests
+  (entry, held-Left repeat, Right, taps, A/B/Up/Start ignored, release
+  resumes with no tap and the held Left suppressed, the menu still
+  opens). Boy suite 155 tests. Determinism, chord against menu, on the
+  Rex Runner wasm: `tools/scripts/rewind_eq_menu.json` and
+  `rewind_eq_chord.json` both reach game frame 198 (menu hold vs double
+  tap and 7 fast updates), step back three times to 120 and resume;
+  frames 290..419 of the first equal frames 264..393 of the second below
+  the debug overlay (frame count, pad and picture, two jumps in it).
+- Size (fast): .text 90,976 -> 91,292, UF2 240,128 -> 240,640.
+
+badge-bench, `--lcd`, chorded rewind against the menu scrub with the same
+keys (B = 1000 for Tetris DX and Tetris after the sound-section start
+presses, 200 for 2048, 300 for Rex Runner): chord `SELECT:B-B+2,
+SELECT:B+6-B+399`, menu `SELECT:B-B+40, B:B+400-B+401`, both
+`LEFT:B+60-B+61, LEFT:B+100-B+160, RIGHT:B+200-B+201, RIGHT:B+240-B+330`
+(6 steps back, 6 forward to live, 2 past it). Busy ms:
+
+| ROM | Path | Frozen update | Scrub step | Step back to live | Over 16.7 |
+|---|---|---:|---:|---:|---:|
+| Tetris DX | chord | 0.49 | 5.0-6.3 | 83.5 | 1 (that step) |
+| Tetris DX | menu | 0.49 | 5.1-6.0 | 35.5 | 1 (that step) |
+| Tetris | chord | 0.49 | 9.5-9.8 | 179.0 | 1 (that step) |
+| Tetris | menu | 0.49 | 9.5 | 73.8 | 1 (that step) |
+| 2048 | chord | 0.48 | 4.6-4.9 | 7.6 | 0 |
+| 2048 | menu | 0.48 | 4.6 | 61.7 | 1 (that step) |
+| Rex Runner | chord | 0.48 | 4.5-11.3 | 76.8 | 1 (that step) |
+| Rex Runner | menu | 0.48 | 4.0-4.6 | 88.9 | 1 (that step) |
+
+The step forward onto the live position replays the logged frames since
+the newest keyframe (up to 29 `step_frame`s, `rewind.step`), the existing
+menu cost; how long it takes depends on where live sat between keyframes
+when the scrub began, not on the path. Every other update is within
+budget; after the release 1x is back (max 3.8-9.0 ms). `--lcd`
+(Tetris DX chord, every frame): `>>4.0x` until the Left press, then only
+the bar, and the first frame after the release has neither. 1x unchanged:
+2048 (`snouty-boy.toml`) 4.09 / 6.00 / 9.31, Tetris DX 4.32 / 5.15 / 11.79.
+
+Preview: `tools/scripts/rewind_rex.json` on a Rex Runner wasm,
+`docs/rewind.gif`, `docs/rewind_sheet.png` (1x, `>>4.0x` into a cactus,
+`Scrub: -0.2`, `-1.2`, `-0.7`, played on).
+
+Open: Adrian on the badge. A step back to live can take a few refreshes
+in heavy games (as in the menu); capping that replay would be a change to
+`rewind.step` for both paths.

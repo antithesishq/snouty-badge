@@ -16,8 +16,13 @@
 //!   (docs/FAST_FORWARD.md at the root, "tap, then press and hold"):
 //!   `GameInput.fast` is set from that press for as long as Select stays
 //!   held. The held-back tap is dropped, this press never starts the menu
-//!   timer, and its release delivers nothing. Every other button reaches the
-//!   game as usual.
+//!   timer, and its release delivers nothing. Left is reserved and never
+//!   reaches the game during fast forward; every other button does.
+//! - Left pressed during fast forward is the chorded rewind
+//!   (docs/FAST_FORWARD.md, "Chorded rewind"): `GameInput.rewind` is set
+//!   once and fast forward ends. The caller freezes the game, steps time
+//!   with Left/Right (`ScrubRepeat`, the menu's auto-repeat) and resumes
+//!   when Select is let go (frontend/flow.zig).
 //! - Start during the window or during fast forward is the OS exit chord
 //!   too: the pending tap is dropped, fast forward ends, nothing is
 //!   delivered.
@@ -61,6 +66,45 @@ pub const ff_tap_window = 12;
 /// The fast-forward gesture, for the play hint strip and the About screen
 /// (17 glyphs: fits the 160 px screen and the 18-glyph menu panel).
 pub const fast_hint = "2x Sel+hold: fast";
+/// The chorded rewind that follows it, for the About screen (17 glyphs).
+pub const rewind_hint = "then Left: rewind";
+
+/// Scrub auto-repeat (SPEC.md 5): a held Left/Right steps again every this
+/// many frames, 4 steps per second.
+pub const repeat_frames = 15;
+
+/// Left/Right time steps with auto-repeat, shared by the menu scrubber
+/// (frontend/menu.zig) and the chorded rewind (frontend/flow.zig): a press
+/// steps at once, then every `repeat_frames` while it stays held.
+pub const ScrubRepeat = struct {
+    /// Direction of the held key, 0 when none.
+    dir: i2 = 0,
+    left: u8 = 0,
+
+    /// This frame's step: -1 back, 1 forward, 0 none. Left wins a tie.
+    pub fn update(r: *ScrubRepeat, e: Edge) i2 {
+        const d: i2 = if (e.pressed(.left)) -1 else if (e.pressed(.right)) 1 else 0;
+        if (d != 0) {
+            r.dir = d;
+            r.left = repeat_frames;
+            return d;
+        }
+        if (r.dir == 0) return 0;
+        const still = if (r.dir < 0) e.held(.left) else e.held(.right);
+        if (!still) {
+            r.dir = 0;
+            return 0;
+        }
+        r.left -= 1;
+        if (r.left > 0) return 0;
+        r.left = repeat_frames;
+        return r.dir;
+    }
+
+    pub fn stop(r: *ScrubRepeat) void {
+        r.dir = 0;
+    }
+};
 
 pub fn pad_from_controls(c: Controls) u8 {
     var pad: u8 = 0;
@@ -131,6 +175,9 @@ pub const GameInput = struct {
     /// Fast forward (Select tapped, then pressed and held): step several
     /// frames with this pad, drawing only the last (main.zig `Ctx.step`).
     fast: bool = false,
+    /// Left pressed during fast forward: freeze the game and scrub until
+    /// Select is let go (the chorded rewind); do not step.
+    rewind: bool = false,
 };
 
 /// The Select long-hold state machine plus the suppress mask.
@@ -207,6 +254,9 @@ pub const State = struct {
         }
         // Released, or the Start+Select chord: back to 1x, nothing delivered.
         if (s.fast and (!live.select or e.held(.start))) s.fast = false;
+        // Left during fast forward: the chorded rewind takes over the hold.
+        const rewind = s.fast and live.left and e.pressed(.left);
+        if (rewind) s.fast = false;
         if (s.holding) {
             if (e.held(.start)) {
                 // Start+Select: the OS exit chord. Cancel the hold.
@@ -225,11 +275,13 @@ pub const State = struct {
             }
         }
         var pad = pad_from_controls(live) & ~Pad.select;
+        // Left is the rewind key while fast forwarding.
+        if (s.fast or rewind) pad &= ~Pad.left;
         if (s.tap_left > 0) {
             pad |= Pad.select;
             s.tap_left -= 1;
         }
-        return .{ .pad = pad, .open_menu = open_menu, .fast = s.fast };
+        return .{ .pad = pad, .open_menu = open_menu, .fast = s.fast, .rewind = rewind };
     }
 };
 
@@ -404,4 +456,55 @@ comptime {
         s.poll(none);
         if (s.game_frame().pad != 0) @compileError("chord after fast forward must not tap");
     }
+}
+
+comptime {
+    @setEvalBranchQuota(40_000);
+    const none = ctl(&.{});
+    const sel = ctl(&.{.select});
+
+    // Fast forward with Left held from before: Left never reaches the game
+    // and, not pressed afresh, does not start the rewind.
+    var s: State = .{};
+    s.poll(ctl(&.{.left}));
+    var g = s.game_frame();
+    if (g.pad != Pad.left) @compileError("Left at 1x");
+    s.poll(ctl(&.{ .select, .left }));
+    _ = s.game_frame();
+    s.poll(ctl(&.{.left}));
+    _ = s.game_frame();
+    s.poll(ctl(&.{ .select, .left }));
+    g = s.game_frame();
+    if (!g.fast or g.rewind or g.pad != 0) @compileError("held Left: fast, Left masked, no rewind");
+    s.poll(ctl(&.{ .select, .left, .right }));
+    g = s.game_frame();
+    if (!g.fast or g.rewind or g.pad != Pad.right) @compileError("fast: Left masked, Right passes");
+    s.poll(sel);
+    _ = s.game_frame();
+    // A fresh Left: the rewind, once; fast forward is over.
+    s.poll(ctl(&.{ .select, .left }));
+    g = s.game_frame();
+    if (!g.rewind or g.fast or g.pad & Pad.left != 0) @compileError("Left during fast forward rewinds");
+
+    // Left at 1x is the game's.
+    s = .{};
+    s.poll(ctl(&.{.left}));
+    g = s.game_frame();
+    if (g.rewind or g.pad != Pad.left) @compileError("Left at 1x");
+
+    // ScrubRepeat: a press steps at once, a hold every `repeat_frames`,
+    // a release stops it.
+    var r: ScrubRepeat = .{};
+    var e: Edge = .{};
+    var steps: [3 * repeat_frames + 2]i2 = undefined;
+    for (&steps, 0..) |*st, i| {
+        e.update(if (i <= 2 * repeat_frames) ctl(&.{.left}) else none);
+        st.* = r.update(e);
+    }
+    for (steps, 0..) |st, i| {
+        const want: i2 = if (i == 0 or i == repeat_frames or i == 2 * repeat_frames) -1 else 0;
+        if (st != want) @compileError("ScrubRepeat timing");
+    }
+    e.update(ctl(&.{.right}));
+    if (r.update(e) != 1) @compileError("ScrubRepeat Right");
 }
