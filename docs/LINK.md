@@ -111,7 +111,23 @@ packet dropped by the CRC; unplug and replug; partner restart; silent
 partner timeout; ping. The PIO programs match microzig's assembler for
 RP2350 word for word. The cart runs in badge-bench (12 ms a frame by
 design: it polls the link until 12 ms into each frame so pings come back
-at wire speed). **Not yet run on a badge.**
+at wire speed).
+
+**Hardware, 2026-10-04 (show day).** Carl's badge: self test OK on both
+pins; with a Raspberry Pi Debug Probe at 115200 the badge locks on the
+probe's line, its HELLOs reach the terminal and 20 typed characters gave
+20 received bytes. Carl's badge and a fresh badge on the probe kit's
+JST-SH cable at 1 Mbaud: CONNECTED, STRAIGHT, each badge shows the
+other's buttons instantly. RTT read ~2.4 ms: the test cart only polls
+after drawing, so that is its own frame schedule (the wire round trip is
+~0.1 ms). About 40 packets LOST, rising occasionally: the 8-byte FIFO
+overflows when a DATA packet and a PONG arrive while the cart draws. Fix
+first in M1 (DMA receive ring on firmware that aborts cart DMA at exit).
+Adrian's own badge: GPIO29 reads high with nothing attached even right
+after being driven low, and PIO never moved GPIO28 (registers all
+correct): treat its UART header as faulty. RP2350-E9: a pull-down input
+can float latched high, so the search probes the listen pin (drive low
+2 us, release, read) before trusting a high.
 
 **Hardware check (Adrian):** flash `snouty-link.uf2` on two badges, join
 the UART headers, start Snouty Link on both. Expected within a second:
