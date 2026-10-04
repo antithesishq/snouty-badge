@@ -101,7 +101,7 @@ pub const Enemy = struct {
             .wasp, .beetle, .spider, .moth => .{ 16, 16 },
             .centipede, .flea, .ladybug, .mite, .zombie => .{ 16, 16 },
             .herd => .{ 32, 32 },
-            .boss => .{ 48, 48 },
+            .boss => bosses.size(e),
         };
     }
 
@@ -121,18 +121,15 @@ pub const Enemy = struct {
         };
     }
 
-    /// Whether player shots can hit it: false while the boss flickers, is
-    /// vanished or is dying.
+    /// Whether player shots can hit it: a boss decides (`bosses.hittable`:
+    /// not while it teleports, is vanished, dying or escaping).
     pub fn hittable(e: Enemy) bool {
         // A flea behind its warning chevron and a zombie's husk are
         // neither shot nor rammed (and seekers ignore them).
         if (e.kind == .flea and e.phase == .warn) return false;
         if (e.kind == .zombie and e.phase == .husk) return false;
         if (e.kind != .boss) return true;
-        return switch (e.phase) {
-            .flicker, .vanished, .dying => false,
-            else => true,
-        };
+        return bosses.hittable(e);
     }
 
     /// Cell center: the emitter position for its bullets.
@@ -1167,7 +1164,7 @@ pub const DamageResult = enum(u8) { alive, killed, boss_dying };
 /// and stage clear; the caller does nothing more. Damage is applied whatever
 /// the boss phase (bolts are gated by `hittable`).
 pub fn damage(e: *Enemy, amount: u16) DamageResult {
-    if (e.kind == .boss and e.phase == .dying) return .boss_dying;
+    if (e.kind == .boss) return bosses.damage(e, amount);
     e.hp -|= amount;
     if (e.hp > 0) return .alive;
     if (e.kind != .boss) return regular_death(e);
@@ -1177,10 +1174,11 @@ pub fn damage(e: *Enemy, amount: u16) DamageResult {
     return .boss_dying;
 }
 
-/// The boss while active (entering, fighting, teleporting or dying).
+/// The boss while active (entering, fighting, teleporting, dying or
+/// escaping): the real body, never the Schrodinbug's phantom.
 pub fn boss() ?*Enemy {
     for (&world.w.enemies) |*e| {
-        if (e.active and e.kind == .boss) return e;
+        if (e.active and e.kind == .boss and !bosses.is_phantom(e.*)) return e;
     }
     return null;
 }

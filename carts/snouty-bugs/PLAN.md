@@ -1582,6 +1582,132 @@ the few places it was read loosely:
 - **Sizes**: `@sizeOf(World)` 10,520 (was 6,340); the World's defaults
   are in `.data` as before (the bullet pool's `drag = 1` is non-zero).
 
+### Deviations (B2)
+
+Track B2 (bosses), 2026-10-04. All boss code is in `bosses.zig`; in
+`enemies.zig` only the `.boss` cases of `size`, `hittable`, the damage
+path (`bosses.damage`) and `boss()` (skips the phantom).
+
+**The common frame.** HP-gated phases, each with a limit (20 s, the
+final 30 s). A break (HP at the phase's threshold) runs
+`bullets.cancel_all()`, drops one crate at the boss, and rests 60 ticks
+(no fire; bolts are absorbed, no damage). A non-final phase that times
+out drops its HP to the threshold and moves on the same way without the
+crate. The final phase timing out flies the boss (and the phantom) off
+the right edge at 1.5 px per tick, not hittable, then
+`waves.boss_escaped()`. Death: `cancel_all`, the phantom pops, the M3
+explosion sequence, +500 and `waves.boss_cleared()`. Additions:
+
+- **Phase floor**: no phase breaks before 6 s (360 ticks): HP stops at
+  the threshold until then. This is what keeps a strong ship from
+  melting a boss (no boss under 15 s for any ship: 3 phases x 6 s + 2
+  rests = 20 s for the Heisenbug, 27 s, 27 s and 34 s for the others).
+- **Body boxes**: a boss's (x, y) is the top-left of its body box from
+  ASSETS.md M7 sheets (Mandelbug 14,12 32x25; Schrodinbug 8,10 35x35;
+  Bohrbug 6,13 40x33; the Heisenbug keeps its whole 48x48 cell), so bolts
+  and rams meet the body, not the legs; `draw_boss` draws the cell at the
+  box minus the offset. The wave still spawns the boss by its cell
+  position; the first update converts it.
+- **Telegraph**: a heavy volley (countdown A of a phase marked `heavy`)
+  shows the alt cell for its last 24 ticks (Mandelbug glow, Schrodinbug
+  pop-out, Bohrbug charge; the Heisenbug's teleport flicker is its own
+  tell, and it now also materialises for 16 ticks before it can be hit or
+  fire). No bullet spawns within 18 px of the ship's hitbox center
+  (walls check per bullet).
+- **Hit flash** on one frame in eight (under steady fire a boss flashed
+  on a quarter of the frames and hid the telegraph).
+- **State** fits the existing Enemy fields: `aux` is a packed struct (HP
+  phase, phase clock, rest, countdown B, a flag, phantom, init), `fire_tick`
+  countdown A, `ring_phase` countdown C or a second angle, `timer` the
+  movement clock, `aux2` per boss. Countdowns reload with
+  `rank.interval(base)`; counts add `rank.extra(k)`. No new Enemy or
+  World fields.
+- **Movement** keeps every boss near the middle third (Mandelbug +-12 px,
+  Bohrbug +-16, Schrodinbug bodies 4..32 px either side of y 68) so a ship
+  in line can hurt it; the Heisenbug keeps its M3 bob and teleport.
+- **Test hooks** (not World state, constant through a run, read once at
+  a boss's first update): `bugs_force_boss` / `bugs_force_phase`
+  (exported, so badge-bench can `--poke` them; wasm `debug_boss(id |
+  phase << 4)`), wasm `debug_boss_id`, `debug_boss_phase`,
+  `debug_boss_clock`. In `main.zig`, its own commit: `bugs_bench_stage`
+  (poke N > 0: every game starts in probe mode N - 1 stages on, at the
+  boss warning).
+
+**The bosses** (base intervals in ticks at rank 0; HP fractions are the
+phase's span):
+
+| Boss, HP | Phase (HP, limit) | Pattern |
+|---|---|---|
+| Heisenbug 320 | P1 100-66 %, 20 s | rotating ring of 12 (+4) rounds every 34; aimed 3-needle sniper line every 50; teleport every 300 |
+| | P2 66-33 %, 20 s | counter-rotating double spiral (2 pellet arms one way, 2 round arms the other) every 7; aimed ring of 12 (+4) at each reappearance; teleport every 240 |
+| | P3 33-0 %, 30 s | teleport every 120; at each reappearance a 16 (+4) pellet ring and a 5-needle sniper line; aimed 3 (+2) fan every 40 |
+| Mandelbug 480 | P1 100-75 %, 20 s | 3 orbs (fan) that split into 6 (+2) pellets at age 45, every 70 (telegraphed); aimed 3-pellet fan every 45; 2-pellet line from the proboscis every 26 |
+| | P2 75-50 %, 20 s | 3 orbs that split into 4 whose children split into 4 again (gen 1), every 90; 5 (+2) round fan every 40; pellet line every 30 |
+| | P3 50-25 %, 20 s | wall of 17 rounds with a weaving gap every 80; ring of 8 (+4) pellets that split into 3 at age 50, every 70; aimed pellet every 24 |
+| | P4 25-0 %, 30 s | 2 orbs splitting 3 x 3 (gen 1) every 80; split rings every 50; aimed 3-pellet fan every 24 |
+| Schrodinbug 240 | all | two bodies mirrored about y 68 (the real one on a side the rng picks at each phase); both fire, the lower one the y-flipped copy; a touched real body collapses (solid) until the next phase, a touched phantom bursts into an aimed 8 (+4) pellet ring and reforms for 90 ticks (no fire, not hittable) |
+| | P1 100-75 %, 20 s | per body a stop-and-go arc of 9 pellets (drag 0.95, re-aim at age 50) every 60; aimed round every 30 |
+| | P2 75-50 %, 20 s | crossing curtains: per body one round every 6, sweeping between down-left and left, the two streams crossing; stop-and-go ring of 10 (+2) per body every 90 |
+| | P3 50-25 %, 20 s | stop-and-go ring of 14 (+4) per body every 75; mirrored spirals every 8 |
+| | P4 25-0 %, 30 s | curtains every 7; stop-and-go ring of 12 (+4) per body every 90; 3-needle line every 40 |
+| Bohrbug 420 | P1 100-80 %, 20 s | wall of 17 rounds every 60 whose gap tracks the ship but sits 20 px above it, then below, alternating (at most 30 px from the last gap): a ship that sits still meets the wall; horn needle every 20; 3-pellet fan every 50 |
+| | P2 80-60 %, 20 s | double flowers: rings of 12 (+4) fast pellets and slow rounds half a step apart, rotating, every 40; horn needle every 32 |
+| | P3 60-40 %, 20 s | stop-and-go rain: one pellet every 4 thrown left over a cone at 1.2-2.2, braked, re-aimed at age 64 (a golden-ratio walk, no rng); 5 (+2) needle fan every 70 |
+| | P4 40-20 %, 20 s | 3-arm spiral every 5 whose bullets curve (turn 2/256 a tick for 40 ticks), the curl flipping every 4 s; 4-needle sniper line every 80 |
+| | P5 20-0 %, 30 s | the wall every 90, a 2-arm curving spiral every 7 and the rain every 9 at once |
+
+The Mandelbug and Bohrbug walls share `weave_gap`. HP is far below the
+contract's 500 / 800 / 900 / 1600: a turret bot is hit about once a
+second, so the power loss keeps it at level 1, and with the bosses
+moving it deals only 3-9 damage a second; the contract HPs made every
+turret fight time out. The phase floor, not HP, sets a strong ship's
+time.
+
+**Measured** (endless probe mode, a boss reached by `debug_next_stage`
+x k + `debug_warp` with `waves.stage_count` set to 4 locally, so each
+boss fights at its stage's rank; the bot starts the fight at weapon
+level 1-2; seconds from spawn to gone; hits during the fight; bullet
+peaks per tick):
+
+| Boss | turret s / hits | sweep s / hits | dodger s / hits | pool peak |
+|---|---|---|---|---|
+| Heisenbug | 47 / 27 | 62 / 27 | 23 / 0 | 56 (P2) |
+| Mandelbug | 50 / 38 | 91 escaped / 51 | 28 / 0 | 98 (P2) |
+| Schrodinbug | 51 / 37 | 57 / 29 | 30 / 0 | 89 (P3) |
+| Bohrbug | 50 / 35 | 91 / 54 | 32 / 0 | 80 (P2) |
+| Bohrbug, loop 2 | 63 / 47 | 105 / 63 | 42 / 1 | 73 (P5) |
+
+The dodger (track D's, run locally) is not hit by any loop-1 boss: it
+reads every bullet's future including drag; the bosses are dense enough
+to hit the turret about once a second and the sweep 30-60 times a fight.
+
+**badge-bench** (calibrated busy ms; each boss forced into its busiest
+phase with `--poke bugs_bench_stage=2 --poke bugs_force_boss=K --poke
+bugs_force_phase=P`, so loop 1 at rank ~400, a turret holding A from 30
+and B held 800..859; 1300 updates, the fight from about 460):
+
+```
+badge-bench/bench.sh zig-out/firmware/snouty-bugs.elf --frames 1300 --press A:30-1299 \
+    --press B:800-859 --poke bugs_bench_stage=2 --poke bugs_force_boss=3 \
+    --poke bugs_force_phase=4 --symbols
+```
+
+| Boss, phase | fight mean | worst outside the hold | worst in the hold | hold frames > 14 ms |
+|---|---|---|---|---|
+| Heisenbug P2 | 8.99 | 9.94 | 14.86 | 6 of 60 |
+| Mandelbug P2 | 9.91 | 10.80 | 17.33 | 27 |
+| Schrodinbug P3 | 9.71 | 10.55 | 16.10 | 22 |
+| Bohrbug P5 | 9.59 | 10.07 | 16.62 | 23 |
+
+Playing frames stay under 11 ms; the hold-B frames go over the 14 ms
+target by up to 3.3 ms. A hold frame restores a keyframe and replays up
+to 59 ticks; with 80-100 bullets and a full bolt pool each simulated
+tick costs about 0.12 ms (bullet moves and events, the bolt-vs-enemy and
+bullet-vs-ship passes), so the catch-up, not the boss code, is the cost.
+Levers for the lead (outside this track's files): keyframes every 30
+ticks (SPEC.md 13.1's fallback), or the pool at 112 / 96 per the
+decision above.
+
 ### Verification for M7
 
 - `tools/check.sh` all green; `debug_history_check == 0` on every frame of
