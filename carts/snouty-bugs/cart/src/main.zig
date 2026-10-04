@@ -16,10 +16,13 @@ const waves = @import("waves.zig");
 const collide = @import("collide.zig");
 const fx = @import("fx.zig");
 const pickups = @import("pickups.zig");
+const patterns = @import("patterns.zig");
 const hud = @import("hud.zig");
 const world = @import("world.zig");
 const history = @import("history.zig");
 const rewind = @import("rewind.zig");
+const rank = @import("rank.zig");
+const autopilot = @import("autopilot.zig");
 
 comptime {
     cart.export_start_code();
@@ -43,6 +46,15 @@ var dying_ticks: u32 = 0;
 var fatal_kind: enemies.Kind = .gnat;
 /// Test hook (wasm `debug_god`): hits are ignored.
 var god: bool = false;
+/// Endless probe mode (wasm `debug_probe`, PLAN.md M7): a hit removes the
+/// offender, charges `player.on_rewound_hit` in the World at once, grants
+/// `probe_invuln` ticks and counts in `w.player.probe_hits`; no rewind
+/// runs. Constant through a probe run (like `god`), so applying it in both
+/// simulate modes keeps the identity check exact.
+var probe: bool = false;
+/// Difficulty-probe bot (wasm `debug_bot`, 0 = off): while non-zero,
+/// `update` reads its controls from `autopilot.controls`.
+var bot: u8 = 0;
 /// The REWIND sequence: the hit, `w.game_tick` right after it, the tick
 /// play resumes from, and frames spent in REWIND (0 on the hit frame).
 var rewind_hit: collide.Hit = .{};
@@ -87,6 +99,8 @@ const graze_fuel: u32 = 2;
 const cores_fuel: u32 = 60;
 /// Hardcore: a hit met with less fuel than this is death (SPEC.md 5.3).
 const fatal_floor: u32 = 45;
+/// Probe mode: invulnerability after a counted hit (the resume grant).
+const probe_invuln: u32 = rewind.resume_invuln;
 
 pub fn start() void {
     cart.set_vsync_enabled(1000.0 / 60.0);
@@ -95,7 +109,9 @@ pub fn start() void {
 }
 
 pub fn update() void {
-    const c = read_controls();
+    // A bot drives the same input path (meta and World detectors, the
+    // history log) as the buttons would.
+    const c = if (bot != 0) autopilot.controls(bot, world.w.game_tick) else read_controls();
     input.update_meta(c);
 
     switch (state) {
@@ -201,9 +217,19 @@ fn new_game(hard: bool) void {
     clear_high_water = 0;
     cores_high_water = 0;
     manual_frame = 0;
+    if (bugs_bench_stage > 0) {
+        probe = true;
+        for (1..bugs_bench_stage) |_| waves.next_stage();
+        waves.warp_to_warning();
+    }
     history.reset();
     state = .playing;
 }
+
+/// badge-bench hook (`--poke bugs_bench_stage=N`, PLAN.md M7 "Deviations
+/// (B2)"): N > 0 starts every game in probe mode, N - 1 stages on, at the
+/// boss warning, so a bench reaches a boss in 7 s instead of 72.
+export var bugs_bench_stage: u8 = 0;
 
 /// One tick of play, in the PLAN.md update order; the caller has already
 /// run `input.update` for it. `.live` ticks are logged (and keyframed) by
@@ -212,6 +238,7 @@ fn new_game(hard: bool) void {
 /// same world-side simulation with no history, meta-state, audio or light.
 pub fn simulate(mode: world.Mode) void {
     if (mode == .live) history.record();
+    rank.update();
     waves.update();
     player.update();
     enemies.update();
@@ -219,6 +246,16 @@ pub fn simulate(mode: world.Mode) void {
     bullets.update_enemy_bullets();
     pickups.update();
     var hit = collide.run();
+    // Probe mode (PLAN.md M7) counts the hit and charges the power loss in
+    // the World at once, in both modes; the retry shield still goes first.
+    if (hit.by != .none and probe and world.w.player.shield == 0) {
+        collide.remove_offender(hit);
+        player.on_rewound_hit();
+        const p = &world.w.player;
+        p.invuln = probe_invuln;
+        p.probe_hits += 1;
+        hit = .{};
+    }
     // The retry shield takes the hit inside the World, in both modes: the
     // offender goes as in god mode, 60 ticks of invulnerability and the
     // `FLAKY, RETRYING` pop, and no meta logic ever sees the hit.
@@ -370,6 +407,9 @@ fn step_rewind() void {
     }
     _ = history.restore(rewind_target);
     history.invalidate_after(rewind_target);
+    // Raiden's power loss (PLAN.md M7), charged on the restored World so
+    // the checkpoint below records it: one level, one fork, +80 mercy.
+    player.on_rewound_hit();
     world.w.player.invuln = rewind.resume_invuln;
     world.w.player.go_pop = rewind.go_ticks;
     history.checkpoint();
@@ -433,6 +473,14 @@ comptime {
         @export(&debug_pickups, .{ .name = "debug_pickups" });
         @export(&debug_cores, .{ .name = "debug_cores" });
         @export(&debug_drops, .{ .name = "debug_drops" });
+        @export(&debug_probe, .{ .name = "debug_probe" });
+        @export(&debug_hits, .{ .name = "debug_hits" });
+        @export(&debug_rank, .{ .name = "debug_rank" });
+        @export(&debug_mercy, .{ .name = "debug_mercy" });
+        @export(&debug_stage_index, .{ .name = "debug_stage_index" });
+        @export(&debug_next_stage, .{ .name = "debug_next_stage" });
+        @export(&debug_bot, .{ .name = "debug_bot" });
+        @export(&debug_spray, .{ .name = "debug_spray" });
     }
 }
 
@@ -548,6 +596,59 @@ fn debug_cores() callconv(.c) u32 {
 /// Crates spawned this game (World counter).
 fn debug_drops() callconv(.c) u32 {
     return world.w.drops.count;
+}
+
+/// Test hook: toggles the endless probe mode (PLAN.md M7). Returns the
+/// new flag.
+fn debug_probe() callconv(.c) u32 {
+    probe = !probe;
+    return @intFromBool(probe);
+}
+/// Hits counted by the probe mode this game (World counter).
+fn debug_hits() callconv(.c) u32 {
+    return world.w.player.probe_hits;
+}
+/// Rank 0..1000 (PLAN.md M7).
+fn debug_rank() callconv(.c) u32 {
+    return rank.value();
+}
+fn debug_mercy() callconv(.c) u32 {
+    return world.w.mercy;
+}
+/// stage + 4 x loop.
+fn debug_stage_index() callconv(.c) u32 {
+    return waves.stage_index();
+}
+/// Test hook: jumps to the start of the next stage (`waves.next_stage`:
+/// enemies, enemy bullets and crates cleared). An edit from outside
+/// `simulate`, so it checkpoints the history while playing or paused.
+/// Returns the new stage index.
+fn debug_next_stage() callconv(.c) u32 {
+    waves.next_stage();
+    if (state == .playing or state == .paused) history.checkpoint();
+    return waves.stage_index();
+}
+/// Test hook: selects the difficulty-probe bot (0 = off, buttons again).
+/// Returns the bot now driving.
+fn debug_bot(n: u32) callconv(.c) u32 {
+    bot = @intCast(@min(n, 255));
+    return bot;
+}
+/// Test hook for the pattern engine's identity checks: from (140, 64), a
+/// ring of 8 turning round bullets, two orbs that split into 6 pellets
+/// (whose children split again into 3), three stop-and-go pellets (drag,
+/// then an aimed fan of 3 at age 50) and an accelerating needle with a
+/// speed cap. Spawned outside `simulate`, so it checkpoints the history
+/// while playing. Returns the live enemy bullets.
+fn debug_spray() callconv(.c) u32 {
+    const x: f32 = 140;
+    const y: f32 = 64;
+    patterns.ring(x, y, 8, 0, .{ .speed = 0.8, .source = .moth, .turn = 2, .turn_left = 60 });
+    patterns.ring(x, y, 2, 96, .{ .speed = 0.6, .shape = .orb, .source = .boss, .event = .split, .event_at = 40, .ev_n = 6, .ev_speed = 14, .gen = 1 });
+    patterns.fan(x, y, 3, 20, .{ .speed = 1.5, .shape = .pellet, .source = .spider, .drag = 0.94, .event = .aim, .event_at = 50, .ev_n = 3, .ev_speed = 20 });
+    patterns.at_angle(x, y, 128, .{ .speed = 0.2, .shape = .needle, .source = .wasp, .accel = 0.05, .vmax = 2.0 });
+    if (state == .playing) history.checkpoint();
+    return bullets.live_enemy_bullets();
 }
 
 /// Button state. Upstream's platform_wasm.zig exposes `controls` but never

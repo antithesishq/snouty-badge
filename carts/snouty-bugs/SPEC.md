@@ -477,7 +477,14 @@ is what the code expects. Sizes in bytes are the packed 4-bit index arrays.
 | `bg_far.png`          | 256x120| 1      | 256x120   | 15,360 | tileable horizontally; opaque, 8-bit allowed (30,720 B) |
 | `bg_near.png`         | 256x24 | 1      | 256x24    | 3,072  | tileable horizontally; transparent over far layer |
 | `iris_16.png`         | 16x16  | 1      | 16x16     | 128    | from snouty-badge, already exists                 |
-| Total                 |        |        |           | ~34 KB | (~49 KB with an 8-bit far layer)                 |
+| `bugs2.png`           | 16x16  | 12     | 192x16    | 1,536  | M7: centipede head x2, segment x2, flea (crouch, leap), ladybug x2, mite x2, zombie x2 (husk = cell 10 dithered) |
+| `herd.png`            | 32x32  | 2      | 64x32     | 1,024  | M7 midboss Thundering Herd, wing loop             |
+| `boss2.png`           | 48x48  | 5      | 240x48    | 5,760  | M7 Mandelbug: 4 idle + alt (glowing / splitting)  |
+| `boss3.png`           | 48x48  | 5      | 240x48    | 5,760  | M7 Schrodinbug: 4 idle + alt (collapse)           |
+| `boss4.png`           | 48x48  | 5      | 240x48    | 5,760  | M7 Bohrbug: 4 idle + alt (charge)                 |
+| `shots.png`           | 8x8    | 4      | 32x8      | 128    | M7 pellet x2 (4x4 dot centred), Coral variant x2  |
+| `orb.png`             | 16x16  | 2      | 32x16     | 256    | M7 orb x2 (12x12 centred, pulse)                  |
+| Total                 |        |        |           | ~54 KB | (~69 KB with an 8-bit far layer); M7 adds 20,224 B |
 
 Bullets and the fuel bar are the only things drawn procedurally besides text
 and the starfield. Everything else is art.

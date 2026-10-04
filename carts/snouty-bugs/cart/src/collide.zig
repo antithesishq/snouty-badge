@@ -6,6 +6,8 @@ const player = @import("player.zig");
 const fx = @import("fx.zig");
 const world = @import("world.zig");
 const pickups = @import("pickups.zig");
+const formations = @import("formations.zig");
+const rank = @import("rank.zig");
 
 /// What touched the ship this tick.
 pub const HitBy = enum(u8) { none, enemy, bullet };
@@ -74,21 +76,26 @@ pub fn run() Hit {
 }
 
 /// The M3 aftermath of a hit: the bullet vanishes, a rammer dies (the
-/// boss survives a ram).
+/// boss survives a ram). A rammer is lost to its formation (no drop).
 pub fn remove_offender(hit: Hit) void {
     switch (hit.by) {
         .none => {},
         .bullet => world.w.enemy_bullets[hit.index].active = false,
         .enemy => {
             const e = &world.w.enemies[hit.index];
-            if (e.kind != .boss) kill(e);
+            if (e.kind != .boss) {
+                kill(e);
+                formations.lost(e.formation);
+            }
         },
     }
 }
 
 /// Zaps and seekers die on their first hit; a beam pierces, damaging each
 /// enemy slot at most once (`hit_mask`). A spark at each hit. A kill by a
-/// bolt may drop a crate (beetle; every 5th gnat); a ram kill does not.
+/// bolt counts for its formation (a complete one drops a crate), every
+/// second beetle drops one, and the rank may answer with revenge bullets
+/// (PLAN.md M7); a ram kill does none of that.
 fn bolts_vs_enemies() void {
     for (&world.w.bolts) |*b| {
         if (!b.active) continue;
@@ -105,7 +112,9 @@ fn bolts_vs_enemies() void {
                 .killed => {
                     const c = e.center();
                     kill(e);
+                    formations.killed(e.formation, c[0], c[1]);
                     drop_for_kill(e.kind, c);
+                    rank.revenge(e.kind, c[0], c[1]);
                 },
                 .boss_dying => {},
             }
@@ -119,14 +128,12 @@ fn bolts_vs_enemies() void {
     }
 }
 
+/// Every second Memory Leak beetle killed by a bolt drops a crate
+/// (PLAN.md M7; the M6 every-fifth-gnat rule is gone, gnat strings drop
+/// as formations).
 fn drop_for_kill(kind: enemies.Kind, c: [2]f32) void {
-    switch (kind) {
-        .beetle => pickups.spawn_drop(c[0], c[1]),
-        .gnat => {
-            const p = &world.w.player;
-            p.gnat_kills += 1;
-            if (p.gnat_kills % 5 == 0) pickups.spawn_drop(c[0], c[1]);
-        },
-        else => {},
-    }
+    if (kind != .beetle) return;
+    const p = &world.w.player;
+    p.beetle_kills += 1;
+    if (p.beetle_kills % 2 == 0) pickups.spawn_drop(c[0], c[1]);
 }
