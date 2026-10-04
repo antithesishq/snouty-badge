@@ -552,7 +552,202 @@ Each change measured; keep what pays; the before/after table in the
 Status. `zig build test-lynx` 108/108 unchanged, `zig fmt`, both cart
 modes build, preview of m3_scrub.json still passes its checks.
 
+## M5 Sound: contract
+
+Written 2026-10-04. Adrian: "Let's build sound support, I want to hear it
+through the terrible speaker playing it. The badges have the new firmware."
+This reverses the project's "no sound" rule for this cart only (root
+docs/SOUND.md; the 2026-09-30 "no audio work" call stands for the others).
+Integration worktree `/home/exedev/snouty-badge-lynx-sound`, branch
+`lynx/m5-sound` (from origin/main 074557f); plan commit = this section, the
+SPEC.md section 9 rewrite and the frozen interface stub below. Three Opus
+tracks, each in its own worktree off the plan commit; they commit on their
+branch, I merge, tag `snouty-lynx/m5`, merge to main and push.
+
+### The badge side (verified 2026-10-04 against sycl-badge upstream 3392a1b)
+
+The new firmware (commit 97c093e "Streaming Audio, v1 Mixer") drops the
+`tone` voice and plays a cart-owned ring of unsigned 8-bit mono samples at
+44,100 Hz (128 = silence; `drivers/audio.zig` `mix_audio_samples` maps
+0..255 to -vol..+vol). Our pin (a6ce19f) has no API for it, so the cart
+speaks the ABI itself (no pin bump, SYCL upstream drift note):
+
+- IPC block base `0x20020000` (same in both firmwares). The old
+  `tone_freq/duration/volume/flags` words are now, at `0x2003509C`,
+  `0x200350A0`, `0x200350A4`, `0x200350A8`: `audio_buffer_ptr` (u32
+  address, buffer `align(8)`), `audio_buffer_len` (u32), `audio_buffer_head`
+  (u32, cart writes: next sample the cart will write), `audio_buffer_tail`
+  (u32, OS writes: next sample the OS will read). Empty when head == tail;
+  the cart may fill up to len-1. Indices wrap at len.
+- Start: write ptr, len, head = 0, tail = 0, `dmb`, then FIFO word
+  `0x29000002` (CART_START_AUDIO) to SIO FIFO_WR `0xD0000054` (wait for
+  FIFO_ST `0xD0000050` bit 1 RDY first, as the pinned runtime does).
+  Submitting = write samples at head, `dmb`, store the new head.
+- The OS mixes 512 samples per DMA buffer (~11.6 ms), two buffers ping-
+  pong; on underrun it pads with silence. It stops audio itself when the
+  cart exits (kernel `audio.stop()`).
+- Never send CART_STOP_AUDIO (`0x29000001`): the OS answers with a FIFO
+  word (`0x29000003`) the pinned runtime does not expect. To go quiet,
+  stop submitting (the OS pads with silence).
+- Old firmware: `0x29000002` has type byte 0x29 = its CART_VOLUME, which
+  re-applies `global_volume` (`0x200350AC`, which we never write) and
+  plays nothing. Harmless; no firmware detection needed.
+- The wasm simulator (pinned) has no streaming audio: the wasm build is
+  silent and hides the Sound row.
+
+### Frozen interface (in the plan commit)
+
+- `core/audio.zig`: `sample_rate = 44100`, `samples_per_frame = 735`
+  (1/60 s exactly), `silence = 128`. Track A grows the channel model here.
+- `Lynx.audio_out: [735]u8`: after every `step_frame`, the sound of exactly
+  that frame's Lynx time (the frame's `n` ticks split into 735 bins on the
+  16 MHz clock, bin edges at `frame_start + floor(i * n / 735)`).
+  `Lynx.audio_render: bool` (true after `init_in_place`): when false,
+  `step_frame` may skip filling `audio_out` (it keeps its last content);
+  the channels keep running regardless (their registers are CPU-visible
+  and part of determinism). Both are in `Lynx.small_excluded`.
+- Audio state that the CPU can see (registers, counters, shift registers,
+  outputs, stereo and attenuation) lives in `Mikey` (so `Lynx.Small`, the
+  scrubber and determinism cover it with no extra work).
+- `lib/stream_audio.zig` (Track B, shared, for any cart later):
+  `pub const sample_rate = 44100;` `pub fn start(buf: []align(8) u8) void`,
+  `pub fn queued() u32`, `pub fn free() u32`, `pub fn push(s: []const u8)
+  u32` (copies with wrap, returns the count written), all over a
+  `Ring = extern struct { ptr: u32, len: u32, head: u32, tail: u32 }`
+  reached through a pointer the caller can replace (host tests use a plain
+  struct; the badge build uses `@ptrFromInt(0x2003509C)`), plus the FIFO
+  send. The badge path compiles only for the badge target.
+
+### Track A: the channels (`core/audio.zig`, `core/mikey.zig`, tests)
+
+Branch `lynx/m5-a`, worktree `/home/exedev/snouty-badge-lynx-m5a`.
+
+Model Mikey's four audio channels from the public documents (the Epyx
+hardware appendix and audio chapter at monlynx.de, cc65 `_mikey.h`; Felix
+and Handy may be read for behaviour the documents leave open, nothing
+copied; cite in the file comment as mikey.zig does):
+
+- Registers `$FD20-$FD3F`, eight per channel: VOLUME (signed), FEEDBACK
+  (tap select), OUTPUT (signed, current output; a CPU write sets it: the
+  "DAC" path games use for sampled sound), SHIFT (low 8 bits of the 12-bit
+  shift register), BACKUP, CONTROL (taps bit 7, integrate, reload, enable,
+  clock select), COUNTER, OTHER (shift bits 11-8, last clock, borrow in /
+  out). Lynx II: ATTEN_A-D `$FD40-$FD43`, MPAN `$FD44`, MSTEREO `$FD50`.
+  Read-back exactly as hardware where documented.
+- Clocking as the timers (same prescaler edges, `16 << sel` ticks; sel 7 =
+  linked): chain timer 7 -> audio 0 -> 1 -> 2 -> 3 -> timer 1 (the
+  `mikey.zig` simplification "the tail of chain B is cut" goes away).
+- On each underflow: the 12-bit LFSR shifts, the new bit is the
+  complement of the XOR of the selected taps (check the polarity against
+  the documents, it decides square vs inverted), and OUTPUT becomes
+  +VOLUME / -VOLUME (normal) or accumulates +/-VOLUME with clamping to
+  -128..127 (integrate mode).
+- Mix to mono: per channel the left and right levels (MSTEREO disables,
+  ATTEN via MPAN on the Lynx II; a Lynx I game never writes them, so the
+  reset values must give plain sums), averaged to mono; the four summed;
+  gain and clamp into 0..255 around 128. Choose the gain from the real
+  games' levels (Hard Drivin' and Blue Lightning from `~/roms/lynx/`,
+  raycast): loud (the speaker is weak) without clipping the common case.
+  One named constant, its reasoning in a comment.
+- Bins: integrate level x duration exactly (box filter) into 735 bins per
+  frame. Per channel independently into a shared i32 accumulator is fine
+  (no cross-channel ordering needed except through links).
+- Speed: channels are lazy. Catch up a channel when the CPU reads or
+  writes any audio register, when a link needs its borrow, and at the end
+  of `step_frame`; never an event per underflow on Mikey's `next_event`
+  unless timer 1 is linked behind audio 3 (rare; an event is fine there).
+  Budget: on the calibrated badge-bench, the m2_play and m3_scrub scripts
+  and the local Hard Drivin' drive script (`out/hd_drive.json` in
+  `/home/exedev/snouty-badge-lynx`) keep 0 updates over 16.67 ms; report
+  the audio share (mean and worst ms) per script. If a channel runs faster
+  than ~one underflow per 4 bins, a closed-form or table fast path that is
+  bit-identical is welcome; measure first.
+- Behaviour: golden frame hashes and lynx-tests rows unchanged, unless a
+  game reads audio registers or links timer 1 (then a separate commit
+  re-pins the hashes it changes with the reason). New unit tests
+  (`tests/audio_unit.zig`, prefix `audio:`): LFSR sequences for known tap
+  settings, a square wave's pitch from BACKUP and clock select, integrate
+  clamping, DAC writes landing in the right bin, link chain timer 7 ->
+  audio 0, register read-back, stereo/attenuation mix, scrub round trip
+  (restore -> identical `audio_out` on the next frame).
+
+### Track B: badge plumbing and frontend
+
+Branch `lynx/m5-b`, worktree `/home/exedev/snouty-badge-lynx-m5b`.
+
+- `lib/stream_audio.zig` as frozen above, with host tests (wrap, full
+  ring, empty, len-1 capacity) wired into `zig build test`.
+- `cart/src/frontend/audio.zig`: a 4,096-byte ring (`align(8)`, .bss;
+  the scrub arena shrinks by that, report the new arena size), `start`
+  on the first running frame. Each running frame push the core's 735
+  samples with rate control: target queue 1,470 (two frames); push
+  `735 + (target - queued) / 8` samples clamped to 640..830, resampled from
+  the 735 by nearest neighbour (a pitch wobble well under 1%). When the
+  game stops stepping (menu, picker, scrub, help) push one 64-sample ramp
+  from the last sample to 128 and then nothing; on resume push 735
+  samples of silence first, then the frame.
+- Sound row in the menu ("Sound: On/Off", settings bit 0, after
+  Buttons). Boots off, following docs/SOUND.md: the row's boot value is
+  `build_options.sound` (`-Dsound=true` flips it), as in Boy, Gear and
+  Genesis (Adrian, 2026-10-04, answering the question this contract first
+  deferred; it first said "Boots On"). Off sets `l.audio_render = false`
+  and pushes nothing (the start word waits for the first frame with sound
+  on). Hidden in the wasm build.
+- Debug overlay: one more figure, the audio queue (samples) and underruns
+  since start (an underrun = `queued() == 0` at a push).
+- Docs: README, CLAUDE.md (the "Sound: none" rule), root docs/SOUND.md
+  (the Lynx row, a "Streaming audio (new firmware)" section with the ABI
+  above), docs/INSTALL.md controls line if it mentions sound,
+  `version = "0.5.0-m5"`.
+- Both cart modes build; other carts' UF2s byte-identical to a build of
+  the plan commit.
+
+### Track C: hearing it off the badge
+
+Branch `lynx/m5-c`, worktree `/home/exedev/snouty-badge-lynx-m5c`.
+
+- `tools/run_rom.zig`: `--wav <file>` writes `audio_out` of every update
+  as an 8-bit unsigned mono 44,100 Hz WAV (works with the stub: silence).
+- badge-bench (`badge-bench/badge_bench/os_fake.py`, `run.py`, `cli.py`):
+  the new firmware's audio. On FIFO word `0x29000002` read ptr/len from the
+  IPC block and start consuming: per 512 samples of wall time (the bench
+  clock, 44.1 kHz) advance `audio_buffer_tail` by up to 512 queued samples,
+  as the OS does. Report: audio started (frame), samples consumed,
+  underrun samples, queue min/mean/max; `--wav <file>` writes the consumed
+  stream (silence for underruns), so the cart's real ELF can be listened
+  to. Old-firmware words (`0x29` type) must no longer count as unknown.
+  Bench unit tests for the consumer. Nothing changes for carts that never
+  start audio (every other cart's report identical).
+- A short `docs/AUDIO.md` in this cart: how to make the WAVs (run-lynx and
+  bench), and the listening checklist below.
+
+### Integration (me)
+
+Merge A, B, C on `lynx/m5-sound`; `zig build`, `zig build test`,
+`zig build check-float` (the core stays float-free), lynx tests; bench
+m2_play, m3_scrub and hd_drive with `--wav`; run-lynx WAVs of raycast,
+Hard Drivin' and Blue Lightning: pitch and level sanity (numpy: no
+clipping run, RMS, dominant frequency matches the register-derived one,
+no 60 Hz click); copy the WAVs to `out/` for Adrian to listen to on his
+Mac before flashing. Tag `snouty-lynx/m5`, merge to main, push.
+
 ## Status
+
+- 2026-10-04: M5 sound DONE (Tracks A, B and C merged on `lynx/m5-sound`,
+  tag `snouty-lynx/m5`). Mikey's four channels (12-bit LFSR, integrate
+  mode, link chain timer 7 -> audio 0..3 -> timer 1, Lynx II ATTEN/MPAN/
+  MSTEREO) are box-filtered into 735 bins a frame with a ~7 Hz integer DC
+  blocker (beyond the contract: Blue Lightning parks its channels at DC)
+  and mix gain 3/8. The frontend streams them through the new firmware's
+  ring (`lib/stream_audio.zig`) with q smoothed over ~8 frames (a
+  deviation from the raw-q contract). Sound boots OFF (Adrian, via the
+  emulator sound policy): the menu Sound row or `-Dsound=true` turns it
+  on; help mode plays sound. `test-lynx` 128/128. Bench, RAM ELF built
+  with `-Dsound=true`, busy ms: m2_play 6.78 mean / 10.30 worst, m3_scrub
+  6.19 / 10.80, 0 over; Hard Drivin' (Track A) 8.85 / 15.56, 0 over (93%
+  of budget on its worst frame). Cost: ~8 KB `.text`, scrub arena 63,776
+  -> 55,168 B (922 -> 796 slots). WAV review skipped: Adrian tests on the
+  badge.
 
 - 2026-10-01: M4 perf pass on `lynx/m4` (host side; every target met).
   Emulated behaviour unchanged: the same frame hash, ticks, instructions,

@@ -2,7 +2,8 @@
 
 Status: decided by Adrian 2026-09-30 (section 4), implemented on branch
 `sound-off` the same day. Companion to docs/NEOPIXELS.md, which this
-follows in shape.
+follows in shape. Since 2026-10-04 Snouty Lynx streams its sound on the
+new firmware (sections 7 and 8), under the same rule.
 
 ## 1. The rule
 
@@ -45,7 +46,7 @@ should start loud; nothing else in a cart decides it.
 | snouty-genesis | yes, PSG/YM2612 tone voice | `frontend/audio.zig` `enabled` | `-Dsound` (off) | badge A in the menu placeholder ("A: sound on/off"); the M2 menu's Sound row takes over; `debug_sound_on` |
 | snouty-bugs | yes, SPEC section 11 effects via `lib/tone_stream.zig` | `cart/src/audio.zig` `enabled` | `-Dsound` (off) | Select, any time (state on the title) |
 | snouty-reflections | yes, background music (Gymnopedie No. 1) streamed by `cart/src/music.zig` (section 7); not in half30 | `music.enabled` | `-Dsound` (off) | Start in the attract orbit ("MUSIC ON/OFF") |
-| snouty-lynx | not yet (spec only, section 9) | | `-Dsound` (off) | menu |
+| snouty-lynx | yes, Mikey's four channels as 44.1 kHz PCM, new firmware only (section 8) | `frontend/audio.zig` `enabled` | `-Dsound` (off) | menu row "Sound: On/Off" (not in the wasm build); `debug_settings` bit 0 |
 | snouty-zero | yes, 6 tones via `lib/tone_stream.zig` | `cart/src/sound.zig` `enabled` | `-Dsound` (off) | menu item "SOUND: ON/OFF" |
 | snouty-run | no | | | |
 | snouty-maze | no, by decision (2026-09-27, "it'll be annoying") | | | |
@@ -152,3 +153,49 @@ now the ring a cart streams 44.1 kHz u8 mono samples through
   The defaults of section 4 are unchanged (off, `-Dsound`, runtime toggle).
 - badge-bench consumes the ring like the newer OS (`--wav` writes it);
   gaps between effects show as "underruns" there by design.
+
+## 8. The streaming-audio ABI in detail
+
+The badges now run newer OS firmware (sycl-badge upstream from 97c093e
+"Streaming Audio, v1 Mixer", checked at 3392a1b). It drops the `tone`
+voice (our carts' `tone2` calls are ignored there, docs/INSTALL.md) and
+instead plays a ring of samples the cart owns. The pinned SDK (a6ce19f)
+has no API for it, so `lib/stream_audio.zig` speaks the ABI itself
+(`start(buf)`, `queued()`, `free()`, `push(samples)`); section 7 lists the
+helpers built on it. Snouty Lynx (M5, `carts/snouty-lynx/PLAN.md` "M5
+Sound: contract") feeds it directly from its own `frontend/audio.zig`.
+
+- Format: unsigned 8-bit mono at 44,100 Hz, 128 = silence (the mixer,
+  `drivers/audio.zig` `mix_audio_samples`, maps 0..255 to -volume..+volume;
+  the volume is the OS's, set in its Start+Select settings box).
+- The ring: a cart buffer, `align(8)`, described by four u32 words of the
+  IPC block (base `0x20020000`, the same in both firmwares), where the old
+  firmware had `tone_freq/duration/volume/flags`:
+
+  | Address      | Word                | Written by | Meaning                              |
+  |--------------|---------------------|------------|--------------------------------------|
+  | `0x2003509C` | `audio_buffer_ptr`  | cart       | the buffer's address                 |
+  | `0x200350A0` | `audio_buffer_len`  | cart       | its length in samples                |
+  | `0x200350A4` | `audio_buffer_head` | cart       | the next sample the cart will write  |
+  | `0x200350A8` | `audio_buffer_tail` | OS         | the next sample the OS will read     |
+
+  Empty when head == tail; the cart fills at most len - 1; indices wrap at
+  len.
+- Start: write ptr, len, head = 0, tail = 0, `dmb`, then the SIO FIFO word
+  `0x29000002` (CART_START_AUDIO): wait for FIFO_ST (`0xD0000050`) bit 1
+  (RDY), write FIFO_WR (`0xD0000054`), `sev`, as the pinned runtime sends
+  its words. Submit: write samples at head, `dmb`, store the new head.
+- The OS fills one 512-sample DMA buffer at a time (~11.6 ms, two
+  ping-pong), pads an underrun with silence, and stops audio itself when
+  the cart exits. Because it reads 512 samples at a time the queue a cart
+  sees jumps by up to 512 between frames; Snouty Lynx smooths it before
+  its rate control (`frontend/audio.zig`).
+- Never send CART_STOP_AUDIO (`0x29000001`): the OS answers with a FIFO
+  word (`0x29000003`) the pinned runtime does not expect. To go quiet, stop
+  submitting (Snouty Lynx pushes a 64-sample ramp to 128 first, no click).
+- Old firmware: `0x29000002` has the type byte 0x29 of its CART_VOLUME,
+  which re-applies `global_volume` (`0x200350AC`, never written) and plays
+  nothing; the ring words land on the unused `tone_*` words. Harmless, no
+  firmware detection needed.
+- The pinned web simulator has no streaming audio: wasm builds stay
+  silent.

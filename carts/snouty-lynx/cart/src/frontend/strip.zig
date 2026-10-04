@@ -10,6 +10,7 @@ const text = @import("text.zig");
 const debug = @import("debug.zig");
 const romsrc = @import("romsrc.zig");
 const menu = @import("menu.zig");
+const audio = @import("audio.zig");
 
 pub const bg: cart.DisplayColor = .rgb(0x101828);
 pub const ink: cart.DisplayColor = .rgb(0xF0F0E8);
@@ -19,7 +20,8 @@ pub const warn: cart.DisplayColor = .rgb(0xFF6040);
 pub const cols = cart.screen_width / 8;
 
 /// Rows 102..127, three 8 px lines: "SNOUTY LYNX" and the ROM name (header
-/// title, else file name); the origin ("drive 128 KB", "embedded 27 KB")
+/// title, else file name; with the overlay on and sound playing, the
+/// audio queue and underruns "q1470/0" instead); the origin ("drive 128 KB", "embedded 27 KB")
 /// or with the overlay on the step times; then the core's boot error if
 /// any, else with the overlay on instructions and Suzy pixels, else the
 /// detail (the drive CRC and flags).
@@ -31,7 +33,13 @@ pub noinline fn draw(l: *const core.Lynx) void {
 
     text.draw(menu.title, 0, y0, accent, bg);
     const name_x = menu.title.len + 1;
-    text.draw(fit(&buf, romsrc.title_name(), cols - name_x), name_x * 8, y0, ink, bg);
+    if (debug.enabled and audio.enabled) {
+        // The audio queue and underruns instead of the name (M5).
+        const a = debug.audio_line(&buf, audio.queued(), audio.underruns);
+        text.draw(fit(&buf, a, cols - name_x), name_x * 8, y0, accent, bg);
+    } else {
+        text.draw(fit(&buf, romsrc.title_name(), cols - name_x), name_x * 8, y0, ink, bg);
+    }
 
     var b2: [32]u8 = undefined;
     if (debug.enabled) {

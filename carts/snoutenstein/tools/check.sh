@@ -116,4 +116,13 @@ node ../../tools/preview.mjs $W --frames 340 --every 10 --out out/debugger --scr
   --at "202 debug_projectiles == 1" --at "208 debug_projectiles == 0" --at "262 debug_ammo == 1" --at "300 debug_projectiles == 1" \
   --expect "debug_mode == 1" --expect "debug_kills == 1" --expect "debug_projectiles == 0" --expect "debug_hp == 88" --expect "debug_desync == 0"
 node tools/check_determinism.mjs $W --script tools/scripts/m6_debugger.json --frames 340
+# Weapons carry between levels: pick up the Debugger in the test level, spend
+# one charge on the gnat, walk the m2_exit route to the exit (intermission at
+# ~1300); E1M1 starts with the Debugger selected and 2 charges, HP back to 100.
+node ../../tools/preview.mjs $W --frames 1540 --every 20 --out out/carry --script tools/scripts/m6_carry.json \
+  --dump-exports debug_mode,debug_level,debug_weapon,debug_ammo,debug_hp,debug_desync \
+  --at "1300 debug_level == 3" --at "1300 debug_weapon == 3" \
+  --expect "debug_mode == 1" --expect "debug_level == 4" --expect "debug_weapon == 3" --expect "debug_ammo == 2" \
+  --expect "debug_hp == 100" --expect "debug_desync == 0"
+node tools/check_determinism.mjs $W --script tools/scripts/m6_carry.json --frames 1540
 echo "check: all passed"

@@ -17,6 +17,8 @@ pub const stack_guard = 1024;
 /// The badge's figure at M3 integration: `__stack_limit__` 0x20078000 -
 /// `__bss_end__` 0x200683b0 - `stack_guard` = 63,568 B (ReleaseFast, exec
 /// not inlined; docs/SCRUB.md). M4 (the opcode switch inside the run
-/// loop, .text 728 B smaller): `__bss_end__` 0x20068118, 64,232 B.
-/// Re-measure when the cart grows.
-pub const wasm_arena_bytes = 64_232;
+/// loop, .text 728 B smaller): `__bss_end__` 0x20068118, 64,232 B. M5
+/// plan commit (`audio_out` and later M4 changes): 0x200686e0, 62,752 B;
+/// M5 Track B (the 4 KB streaming ring, 830 B of push scratch, 1.5 KB of
+/// sound code): 0x2006a058, 56,232 B. Re-measure when the cart grows.
+pub const wasm_arena_bytes = 56_232;

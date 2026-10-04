@@ -782,3 +782,74 @@ silent there. Adrian: keep sound off by default, make it work.
   as 0x400 (TI chips only). SMS Power says the Game Gear's own speaker
   ignores port 06; the contract's average is kept (the badge is not a
   GG speaker). WAVs skipped (Adrian at the show, 2026-10-04: speed first).
+
+## Fast forward (2026-10-04)
+
+Gear track of root docs/FAST_FORWARD.md (branch `emu-ff-gear`). Adrian:
+hold-to-fast-forward, the usual emulator feature.
+
+- Input (`frontend/input.zig`, `GameInput.fast`): Right pressed while
+  Select is held starts it, and it lasts while both stay held; no menu,
+  no tap, Right masked out of the pad. Right released: 1x and the Select
+  hold counts from zero; Select released: 1x, a Right still held waits for
+  its release (suppress mask). Start cancels it as it cancels the hold
+  (Start+Select stays the OS's). Right held first and Select after is game
+  input plus the menu hold, as before.
+- Stepping (`main.zig` `run_frame`, knobs `ff_max_frames` = 4 and
+  `ff_budget_us` = 13,000 in `frontend/tuning.zig`): frames before the
+  last run with `line_sink = null` (the VDP still evaluates sprites for
+  the overflow and collision flags, the path the scrubber's replay already
+  uses) and `audio_render = false`; another one only while the time so
+  far plus twice the dearest frame of the update (the previous rendered
+  frame to start with) stays within the budget; then one rendered frame.
+  Every frame goes through `rewind.record_frame`. `ff_max_frames` counts
+  the rendered frame (4 = the 4x cap). wasm: always 4 (the clock is a
+  stub). The overlay's avg/max is the whole update's stepping.
+- Sound: `audio.mute()` instead of `audio.update` while fast (badge: the
+  feed ramps out as in the menu; simulator: the voice stops); resumes,
+  resynced, on the first 1x frame.
+- Indicator: `>>4x` (frames this update) top right, at y 24 under the
+  debug overlay while that shows; the game repaints the whole screen every
+  frame in `.no_copy_full_frame`, so nothing is left behind (badge-bench
+  `--lcd` PNGs after release show no trace). Hints: the in-play strip
+  shows "Hold Select: menu" for 3 s then "Sel+Right: fast" for 3 s; the
+  menu footer takes turns every 2 s between "B: back to game" and
+  "Sel+Right: fast". `docs/ff_2026-10-04.png` (preview: both strips,
+  `>>4x`, both footers).
+- Tests: 8 `input:` tests (`tests/input_unit.zig`, frontend/input.zig on
+  the host with the SDK's `cart-api` for `Controls` only: chord on and
+  off, no menu, Right not passed, hold restart, Right first, Start+Select,
+  `suppress_held`); 2 determinism tests (Waternet 600 frames, Sonic 1200
+  when `~/sonic.gg` exists): batches of 4 with 3 frames sink-less and
+  silent equal a 1x run with the squeeze sink and sound, field by field
+  after every batch. Cart suite 117/117 (107 + 10). `zig build
+  check-float` PASS.
+- Preview (`tools/scripts/ff_play.json`, 1000 updates): `debug_ff_frames`
+  4 during both holds, `debug_frame_count` +4 per update (618 -> 1262 over
+  updates 689-850), `debug_menu_opens` 0 throughout (Select held 181 and
+  61 updates), 1 again on release.
+- badge-bench (calibrated busy ms; frames per update from a temporary
+  `cart.trace` build, not committed):
+
+  | Run | updates | busy mean | p95 | max | over 16.7 | frames per update |
+  |---|---:|---:|---:|---:|---:|---|
+  | 1x, `snouty-gear.toml` (Waternet) | 1000 | 3.06 | 6.62 | 6.95 | 0 | 1 (plan commit: 3.06 / 6.62 / 6.95) |
+  | Waternet, Select+Right updates 690-970 | 281 | 6.40 | 6.79 | 6.80 | 0 | 4 every update (cap) |
+  | Sonic title and attract demo, FF 110-1090 | 981 | 9.09 | 10.36 | 13.37 | 0 | 1.85 mean (1: 155, 2: 822, 3: 4) |
+  | Sonic in Green Hill, FF 610-1490 | 881 | 10.64 | 11.83 | 12.58 | 0 | 1.87 mean (1: 117, 2: 761, 3: 3) |
+
+  Whole runs: Waternet FF run mean 4.21 / max 6.95, Sonic 8.24 / 13.37,
+  0 over. Skipped frames save little on Sonic (5.1-5.75 ms per game frame
+  at FF against ~5.7 at 1x): the Z80 dominates, so the 13 ms budget buys
+  about 2x there; Waternet (1.6 ms per frame at FF) hits the 4x cap.
+  Commands: `--no-config --frames 1000 --romfs carts/snouty-gear/out/romfs.img
+  --press "<m2_play's game presses>,SELECT:680-980,RIGHT:690-970"` and
+  `--no-config --frames 1200 --romfs <romfs with ~/sonic.gg>
+  --press "SELECT:100-1100,RIGHT:110-1090"` (Green Hill: Start at 200,
+  320, 440, FF 610-1490 with B held).
+- Sizes (fast, drive): `.text` 117,728 -> 118,928 (+1.2 KB), `.data`
+  5,420, `.bss` 43,380 -> 43,396; uf2 335,872 -> 337,920.
+- Deviations: `ff_max_frames` includes the rendered frame (the plan's
+  "4 per update" read as the 4x cap); the menu has no free line, so the
+  footer alternates instead of a new row; the indicator moves to y 24
+  while the debug overlay (on by default) covers the top rows.

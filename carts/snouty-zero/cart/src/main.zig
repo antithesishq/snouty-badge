@@ -205,13 +205,15 @@ fn menu_frame() void {
     render.frame = frame;
     camera.cam.yaw +%= 8;
     render.draw();
-    cart.rect(.{ .x = 0, .y = 28, .width = 160, .height = 72, .fill_color = hud.anti_black });
+    // The main menu's box runs one line longer for the machine's handling blurb.
+    cart.rect(.{ .x = 0, .y = 28, .width = 160, .height = if (screen == .main_menu) 84 else 72, .fill_color = hud.anti_black });
     switch (screen) {
         .main_menu => {
             menu_nav(&main_list);
             const sound_item: []const u8 = if (sound.enabled) "SOUND: ON" else "SOUND: OFF";
             const machine_item = menu.machine_items[sim.player_character];
             menu.draw_list("SNOUTY ZERO", &.{ "QUICK RACE", "GRAND PRIX", machine_item, sound_item }, &main_list, 36);
+            hud.centered(menu.machine_blurbs[sim.player_character], 100, hud.orange);
             // The machine row cycles with Left/Right too.
             if (main_list.cursor == 2 and (input.pressed(.right) or input.pressed(.left))) {
                 sim.player_character = @intCast((sim.player_character + (if (input.pressed(.right)) @as(u8, 1) else 4)) % 5);

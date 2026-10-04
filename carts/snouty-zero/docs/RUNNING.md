@@ -35,9 +35,11 @@ floor rises to a crest and falls away, visual only), the rail-hit shake,
 spark bursts and exhaust flames, the blinking horizon LEDs, an own font
 blit and a rewind that costs at most 10 replayed ticks a frame. M5 adds
 the Core league (Hot Aisle, Kernel Ring, Weights Loop: hot-aisle grating
-over orange glow, red haze) and a MACHINE row in the main menu (drive the
-Anteater with a rival's physics: ARGMAX fast and slow-turning, DROPOUT,
-BACKPROP cornering, OVERFIT brittle; Left/Right or A cycle it). Maps are
+over orange glow, red haze) and a MACHINE row in the main menu (Left/Right
+or A cycle it; the line under the menu says how it handles): the Anteater,
+or a rival's machine drawn in its livery (ARGMAX 1.18x top speed and 0.75x
+turn, DROPOUT sharp turns but half the grip, BACKPROP slower with 1.3x turn
+and 1.5x grip, OVERFIT 1.1x top speed and fragile in contact). Maps are
 stored packed and the selected track is unpacked into RAM at race start.
 M5 made the cart XIP only; M5.1 brought the RAM cart back (the XIP
 variant's copy of the league art was what overflowed cart RAM) and keeps
@@ -192,7 +194,7 @@ Debug exports (zero-argument wasm functions, usable with `--dump-exports`,
 | `debug_screen` | 0 splash, 1 title, 2 main menu, 3 league pick, 4 track pick, 5 race, 6 pause, 7 results, 8 standings |
 | `debug_machine_px(i)`, `debug_machine_py(i)`, `debug_machine_lap(i)` | machine i (0 player, 1..4 rivals, 5..10 traffic); one-argument exports |
 | `debug_set_autopilot(v)`, `debug_set_freecam(v)` | setup calls (`--call NAME:1`) |
-| `debug_set_machine(n)`, `debug_machine` | machine select: 0 Anteater (base physics), 1..4 the rivals' characters |
+| `debug_set_machine(n)`, `debug_machine` | machine select: 0 Anteater (base physics), 1..4 the rivals' machines (`ai.player_machines`) |
 | `debug_start_race(n)` | setup call: skip the menus into a Quick Race on track n (0..8 in `track.tracks` order: Edge 0..2, Spine 3..5, Core 6..8) |
 | `debug_force_crash` | `--call-at T debug_force_crash`: the player falls (SEGMENT FAULT) |
 | `debug_snapshot` | snapshot bar in ticks, 0..180 |
