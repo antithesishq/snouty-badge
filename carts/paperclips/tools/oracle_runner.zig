@@ -222,9 +222,13 @@ const Msgs = struct {
 
     fn collect(m: *Msgs, gpa: std.mem.Allocator) !void {
         if (g.restarts != m.restarts) {
-            // A reload: the port starts a new console (welcome line again).
+            // A reload: a new console whose oldest line is the welcome
+            // line. Whatever the task printed before reloading is gone
+            // (the JS side drops it too); the lines after the welcome
+            // line are new, whether or not msg_count went on counting.
             m.restarts = g.restarts;
-            m.seen = 1;
+            const avail: u64 = g.messages_available();
+            m.seen = @as(u64, g.msg_count) - (if (avail > 0) avail - 1 else 0);
             try m.list.append(gpa, "<reload>");
         }
         const total: u64 = g.msg_count;
