@@ -535,6 +535,66 @@ Goal: RMA crates on the track, the roulette, rank-weighted rolls and the
 15 non-league pickups of SPEC 6.3 with their gags, AI pickup policies
 (SPEC 6.5 item 3). PROMPT INJECTION waits for the Perimeter league.
 
+### M2.0 Interface (Track A, committed before the pickup behaviour)
+
+Same contract as M1.0: only `sim.simulate` writes these; rendering reads
+the World, the pools and the event ring (its own `seq` cursor) and never
+writes. Nothing was renamed or removed; `proj_count` went 48 -> 40 (the
+M1 soak peaked at 21; the new `Projectile.seg` byte made a slot 20 B) and
+`drop_count` 32 -> 40 (room for a FORK BOMB's 8). World 2,436 B (Car 112),
+under the 2,560 cap.
+
+- **`world.Pickup`**: SPEC 6.3 table order, `prefetch = 0` ..
+  `prompt_injection = 15`, `none = 16`, so `@intFromEnum(p)` is the
+  `pickups.png` cell and `none` is the roulette blank (cell 16). Tiers:
+  A `prefetch`..`spaghetti`, B `fork_bomb`..`race_condition`, C
+  `kernel_panic`..`zero_day`. `prompt_injection` never rolls on the Dumps.
+- **Car** (timers in ticks, 0 = off): `pickup` (held; while `roll_ticks
+  > 0` it is the roulette's hidden result: draw `FETCHING...`, B does
+  nothing), `roll_ticks` (45 at a crate), `zero_day_used`, `b_was`;
+  `prefetch` (boost), `duck` (u16, RUBBER DUCK on its tether), `patch`
+  (HOT PATCH repairing), `tangle` (SPAGHETTI: held to 40%) then `strand`
+  (dragging a cable strand, -10%), `spin` (HONEYPOT spin-out), `bit_flip`
+  (Left/Right swapped: the HUD blink and the 1 px jitter on a human's
+  badge), `chain` + `chain_ticks` (DEADLOCK: chained to car `chain`, or to
+  the nearest wall when `chain == no_car`), `heisen` (HEISENBUG: draw on
+  odd frames only), `frozen` + `frozen_by` (`Freeze.panic`: KERNEL PANIC;
+  the blue screen is the first 30 of its 90 ticks, i.e. `frozen > 60`),
+  `captcha` (ticks until freed) with the mini-game `captcha_cursor`
+  (0..8, row-major 3x3), `captcha_lit` and `captcha_done` (9-bit cell
+  masks: traffic lights, cleared), `sudo` (u16, root: the `#`),
+  `swap_with` + `swap_ticks` (RACE CONDITION tearing on both cars, then
+  the swap).
+- **Projectiles**: `ProjKind.panic`, the KERNEL PANIC packet (`target` =
+  the car it runs to; `seg` = the centerline sample it runs toward,
+  internal; velocity gives its heading).
+- **Drops**: `DropKind.fork` (one `&`; `size`/`dir` internal), `honeypot`
+  (the fake crate: alternate `pickups.png` cells 18/19 on odd frames),
+  `spaghetti` (the 24 px tangle, flat).
+- **DDOS drones**: `World.drones: [8]Drone` (`state` none/flying/orbit,
+  x/y Q16, `owner`, `target`, `ttl`, `angle`); the target's speed reading
+  stutters while any drone orbits it.
+- **Crates**: positions come from the track: `track.crate_spots[0..
+  track.crate_n]` (world px, filled by `track.select` from the centerline
+  samples flagged `track.flag_crates`); `World.crates[k]` is spawn k's
+  respawn timer, 0 = the crate is there (draw `pickups.png` cell 17).
+- **Events** (`EventKind` gains `roll`, `use`, `effect`, `swap`; see the
+  field comments in `world.zig`): `roll` (car, rolled pickup, crate index;
+  x, y the crate) when a car takes a crate; `use` (user, pickup, target or
+  `no_car`; x, y where it lands or strikes) when B uses one; `effect`
+  (source or `no_car`, affected car, pickup; x, y the affected car) for a
+  one-off impact: KERNEL PANIC hit, BIT FLIP strike, DEADLOCK chain (one per
+  chained car), DDOS swarm arrival, HONEYPOT burst (`<honey>` tags),
+  SPAGHETTI tangle, RUBBER DUCK popped (affected = the duck's owner),
+  ZERO-DAY (plus its `wreck` event, cause `zero_day`); `swap` (the two
+  cars) the tick a RACE CONDITION trades them. A shot-down drone or a drop
+  destroyed by SUDO is an `explode` of radius 0 (a spark); a FORK BOMB hit
+  is an `explode` of radius 8.
+- **Render-side helpers** (pure reads, in `pickups.zig`):
+  `duck_pos(c)` (the duck's world position behind its car), and
+  `chain_anchor(w, i)` (the far end of car i's chain: the partner, or the
+  nearest track edge for a wall chain).
+
 ### Track A: pickup simulation (Opus agent, worktree /home/exedev/snouty-badge-gc, branch gc/spec; starts while M1 Track B is still running)
 
 Owns what M1 Track A owned (`world.zig`, `sim.zig`, `weapons.zig`,

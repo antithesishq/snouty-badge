@@ -267,3 +267,16 @@ pub const ai_ram_along: i32 = 24;
 pub const ai_ram_lat: i32 = 34;
 /// A `stalk` crew (ROOTKIT) sits behind a target ahead within this range.
 pub const ai_stalk_range: i32 = 110;
+
+// --- Pickups (SPEC 6.3, 6.4), M2 ---------------------------------------------
+
+/// RMA crate rows (SPEC 3.3): crates `crate_gap` px apart across the track,
+/// 4 in a row where the sample's half width is at least `crate_row4_half`,
+/// else 3. A car whose centre comes within `crate_touch` px of a crate
+/// takes it; it respawns `crate_respawn` ticks later.
+pub const crate_gap: i32 = 20;
+pub const crate_row4_half: u8 = 56;
+pub const crate_touch: i32 = car_radius + 6;
+pub const crate_respawn: u8 = 180;
+/// RUBBER DUCK: bobs this far behind its car on the tether, world px.
+pub const duck_behind: i32 = 18;
