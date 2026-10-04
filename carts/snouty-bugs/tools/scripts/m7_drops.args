@@ -3,14 +3,18 @@
 # bolt; a formation that loses a member (it flies off or rams the ship) drops nothing, and
 # kinds outside formations drop nothing (the M6 "every fifth gnat" rule is gone). Input:
 # m3_boss's sweep in god mode (debug_god at 31) to 1699, stage 1 (UNIT TESTS).
-# - The two opening gnat strings (2 s, y 40, and 4 s, y 88) are formations: nine of their ten
-#   gnats are shot down (248..369, score 90), but one rams the god-mode ship at 313 and is
-#   lost, so neither is complete: no crate (drops 0 at 500).
-# - 462..480: a wasp vee (no formation) shot down, +90: no crate.
-# - 751: a beetle shot down (+50): crate 1 (drops 1, pickups 1).
-# - 1107 and 1175: a spider and a moth (+40 each): no crate.
-# - 1290: the last gnat of the 20 s string (a formation, all five shot down 1247..1290):
-#   +10 +200 (score 584 -> 794) and crate 2.
-# - 1460: the second beetle: crate 3.
+# Re-pinned for the catch-up clock (waves.zig: the stage clock runs 4 ticks a tick while fewer
+# than 3 enemies are on the field, so every wave after the first comes sooner than its table
+# second):
+# - The two opening gnat strings (y 40 at update 151, y 88 at 268) are formations: eight of
+#   their ten gnats are shot down (248..366, score 80) and two get past the ship and are lost,
+#   so neither is complete: no crate (drops 0 at 500).
+# - 394..460: a wasp vee (no formation) shot down, +90 (score 170): no crate.
+# - 631: a beetle shot down (+50): crate 1 (drops 1, pickups 1; at 751 until the catch-up).
+# - 807 and 829: a spider and a moth (+40 each): no crate.
+# - 896: the last gnat of the 20 s string (a formation, all five shot down 879..896):
+#   +10 +200 (score 543 -> 753) and crate 2 (at 1290 until the catch-up).
+# - 1071: the second beetle: crate 3 (at 1460 until the catch-up).
+# - The faster table brings four more crates by 1700 (two formations, two beetles): drops 7.
 # debug_history_check is 0 with the crates in flight.
---frames 1700 --call-at "31 debug_god" --dump-exports debug_state,debug_drops,debug_score --at "369 debug_score == 90" --at "500 debug_drops == 0" --at "500 debug_score == 180" --at "750 debug_drops == 0" --at "751 debug_drops == 1" --at "751 debug_score == 230" --at "751 debug_pickups == 1" --at "760 debug_history_check == 0" --at "1106 debug_drops == 1" --at "1107 debug_score == 503" --at "1175 debug_score == 543" --at "1175 debug_drops == 1" --at "1289 debug_drops == 1" --at "1289 debug_score == 584" --at "1290 debug_drops == 2" --at "1290 debug_score == 794" --at "1300 debug_history_check == 0" --at "1459 debug_drops == 2" --at "1460 debug_drops == 3" --at "1460 debug_score == 894" --at "1470 debug_history_check == 0" --expect "debug_state == 1" --expect "debug_drops == 3"
+--frames 1700 --call-at "31 debug_god" --dump-exports debug_state,debug_drops,debug_score --at "366 debug_score == 80" --at "500 debug_drops == 0" --at "500 debug_score == 170" --at "630 debug_drops == 0" --at "631 debug_drops == 1" --at "631 debug_score == 220" --at "631 debug_pickups == 1" --at "640 debug_history_check == 0" --at "806 debug_drops == 1" --at "807 debug_score == 462" --at "829 debug_score == 502" --at "829 debug_drops == 1" --at "895 debug_drops == 1" --at "895 debug_score == 543" --at "896 debug_drops == 2" --at "896 debug_score == 753" --at "905 debug_history_check == 0" --at "1070 debug_drops == 2" --at "1071 debug_drops == 3" --at "1071 debug_score == 933" --at "1080 debug_history_check == 0" --expect "debug_state == 1" --expect "debug_drops == 7"
