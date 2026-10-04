@@ -10,8 +10,10 @@ const common = @import("../../build/common.zig");
 /// This cart's directory, relative to the repository root that build.zig runs from.
 const dir = "carts/snouty-gear/";
 
-/// The shipped ROM (MIT, roms/LICENSE-waternet): the embedded fallback and
-/// the simulator's ROM unless `-Dgg-rom` names another.
+/// The shipped ROM (MIT, roms/LICENSE-waternet): the simulator's ROM and
+/// the `-Dgg-rom-source=embed` badge build's, unless `-Dgg-rom` names
+/// another. The default badge build (`drive`) links no ROM bytes: the
+/// frontend never references `rom.data` there (frontend/romsrc.zig).
 const default_rom = dir ++ "roms/waternet.gg";
 
 /// ROM to embed and where the badge build looks for its ROM. Module-level
@@ -34,7 +36,7 @@ pub fn add(b: *Build, sycl_badge_dep: *Build.Dependency, opts: common.Options) v
         .drive => .drive,
         .embed => .embed,
         .pack => blk: {
-            std.debug.print("snouty-gear: -Dgg-rom-source=pack: not built yet (SPEC 13.1); building the RAM cart with the drive ROM and {s} embedded\n", .{rom_name});
+            std.debug.print("snouty-gear: -Dgg-rom-source=pack: not built yet (SPEC 13.1); building the drive cart (no embedded ROM)\n", .{});
             break :blk .drive;
         },
     };
@@ -118,7 +120,8 @@ fn exists(b: *Build, rel: []const u8) bool {
 
 /// Adds `build_options`, `core`, `romfs` (lib/romfs.zig, the drive reader), `iris` (lib/iris_mark.zig), `hint` (lib/hint.zig) and `rom` to the
 /// cart. `rom` is generated: the embedded ROM (`data`, copied next to the
-/// generated rom.zig so @embedFile can see it), its file name (`name`) and
+/// generated rom.zig so @embedFile can see it; only linked where the
+/// frontend references it: wasm and `.embed`), its file name (`name`) and
 /// where the badge build gets its ROM (`source`, `.drive` or `.embed`).
 fn build_cart_modules(b: *Build, cart: *Build.Module, cart_api: *Build.Module, step: *Build.Step) void {
     _ = cart_api;

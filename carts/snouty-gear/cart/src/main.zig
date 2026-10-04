@@ -5,7 +5,9 @@
 //!
 //! States: splash (frontend/splash.zig) -> running -> menu
 //! (frontend/menu.zig, opened by a 500 ms Select hold, frontend/input.zig)
-//! -> running. The core is stepped only while running. Sound is one tone2
+//! -> running; or, in the badge drive build when the drive has no usable
+//! ROM, no_rom (frontend/splash.zig `draw_no_rom`) for good: there is no
+//! embedded ROM to fall back on. The core is stepped only while running. Sound is one tone2
 //! voice from the PSG (frontend/audio.zig). The time scrubber
 //! (frontend/rewind.zig, SPEC.md 10) records a keyframe every 30 game frames
 //! and the pad of every frame; the menu's Left/Right scrub through them.
@@ -34,7 +36,7 @@ comptime {
 /// the stack (32 KB on the badge, 14.7 KB in wasm).
 var gg: core.Gg = undefined;
 
-pub const State = enum(u32) { splash = 0, running = 1, menu = 2 };
+pub const State = enum(u32) { splash = 0, running = 1, menu = 2, no_rom = 3 };
 var state: State = .splash;
 var controls_state: input.State = .{};
 
@@ -52,7 +54,12 @@ pub fn start() void {
     cart.set_double_buffer_mode(.no_copy_full_frame);
     text.init();
     video.init();
-    gg.init_in_place(romsrc.select());
+    // No ROM on the drive: `gg` stays uninitialised and is never touched.
+    const r = romsrc.select() orelse {
+        state = .no_rom;
+        return;
+    };
+    gg.init_in_place(r);
     gg.line_sink = video.sink();
     // False when the arena has no room for two keyframes: the scrubber
     // stays off ("Scrub: no memory"), the game runs as before.
@@ -99,6 +106,7 @@ pub fn update() void {
                 run_frame(cart.micros_since_boot());
             }
         },
+        .no_rom => splash.draw_no_rom(romsrc.failure orelse ""),
     }
 
     frames_seen +%= 1;
@@ -213,7 +221,7 @@ fn debug_step_us() callconv(.c) u32 {
 fn debug_lines() callconv(.c) u32 {
     return video.last_frame_lines;
 }
-/// Frontend state: 0 splash, 1 running, 2 menu.
+/// Frontend state: 0 splash, 1 running, 2 menu, 3 no ROM.
 fn debug_state() callconv(.c) u32 {
     return @backingInt(state);
 }

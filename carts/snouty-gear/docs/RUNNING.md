@@ -41,20 +41,22 @@ zig build -Dcart=snouty-gear
 
 Options:
 
-- `-Dgg-rom=PATH`: the ROM to embed (default
-  `carts/snouty-gear/roms/waternet.gg`). Repository-relative, cart-relative
+- `-Dgg-rom=PATH`: the ROM to embed in the wasm build and with
+  `-Dgg-rom-source=embed` (default `carts/snouty-gear/roms/waternet.gg`).
+  The default badge build (`drive`) embeds no ROM. Repository-relative, cart-relative
   (`-Dgg-rom=roms/x.gg`), absolute, or `~/x.gg` (expanded by the build,
   since the shell leaves `=~` alone). Keep an embedded ROM at 128 KB or
   less (SPEC.md section 11); to try Sonic in the simulator:
   `zig build -Dcart=snouty-gear -Dgg-rom=~/sonic.gg` (local only, never
-  commit it; the root `.gitignore` ignores `*.gg`/`*.sms`). The wasm
-  builds; the badge ELF then fails to link (`.bss` overflows cart RAM by
-  about 23 KB with 256 KB embedded), which is expected: on the badge Sonic
-  comes from the drive (section 6).
-- `-Dgg-rom-source=drive|embed|pack`: `drive` (default) reads the ROM from
-  the badge drive and uses the embedded ROM if there is none; `embed` uses
-  only the embedded ROM; `pack` (SPEC.md 13.1) is not built yet, prints a
-  note and builds the `drive` cart. The wasm build always embeds.
+  commit it; the root `.gitignore` ignores `*.gg`/`*.sms`). On the badge
+  Sonic comes from the drive (section 6); an `embed` badge build with it
+  fails to link (`.bss` overflows cart RAM by about 23 KB).
+- `-Dgg-rom-source=drive|embed|pack`: `drive` (default) reads the ROM
+  only from the badge drive and links no ROM bytes (the UF2 is 128 KB
+  smaller, 256 KB less of the 1280 KB drive); with no usable ROM there the
+  cart shows "No ROM on the badge drive" (section 6). `embed` uses only
+  the embedded ROM; `pack` (SPEC.md 13.1) is not built yet, prints a note
+  and builds the `drive` cart. The wasm build always embeds.
 - `-Dcart-optimize=fast|small|safe|debug` (default `fast`).
 
 `python3 carts/snouty-gear/tools/romcheck.py ROM.gg` prints the header
@@ -152,7 +154,7 @@ sequence is the `press` list of `badge-bench/carts/snouty-gear.toml`.
 clock is a stub); the bottom line is the ROM report (both only while the
 debug overlay is on). Exports:
 `debug_frame_count`, `debug_step_us`, `debug_lines` (144), `debug_state`
-(0 splash, 1 running, 2 menu), `debug_pad` (`core.Pad` bits: up 1, down 2, left 4, right 8,
+(0 splash, 1 running, 2 menu, 3 no ROM: badge only), `debug_pad` (`core.Pad` bits: up 1, down 2, left 4, right 8,
 button 1 16, button 2 32, Start 64), `debug_rom_source` (0 embedded,
 1 drive), `debug_rom_size`, `debug_rom_banks`, `debug_rom_crc` (drive only),
 `debug_cram_rebuilds`, `debug_menu_opens`, `debug_tone_hz` (what the buzzer
@@ -223,8 +225,7 @@ Sound On/Off; Debug overlay On/Off (FPS, `step_frame` time and the ROM
 report line); Reset (restarts the game and resumes); About. About lists
 the version, file name, size and 16 KB bank count, the source (drive or
 embedded), the mapper slots as written (`Map 00 01 02 FC=00`), and the
-drive CRC32 plus `fragmented`, or for an embedded ROM on the badge why the
-drive was not used. B or a Select tap resumes; held buttons reach the game
+drive CRC32 plus `fragmented`. B or a Select tap resumes; held buttons reach the game
 only after they are released. `tools/scripts/m2_menu.json` walks it in the
 headless preview (`--dump-exports debug_state,debug_settings,debug_menu_opens`).
 A button pressed on the very update the hold opens the menu waits for its
@@ -265,9 +266,11 @@ any other file. With the default `drive` build:
 4. Start Snouty Gear. The bottom line reads
    `ROM: drive NAME 256 KB crc 1A2B3C4D` (plus `(1 of N)` when several
    ROM files are on the drive: the first one in the directory wins). If
-   there is no volume or no ROM file it reads
-   `ROM: embedded waternet.gg 64 KB, drive: NoVolume` (or
-   `drive: no .gg/.sms file`, or the romfs error name).
+   there is no volume or no ROM file the cart shows "No ROM on the badge
+   drive", how to copy a `.gg`/`.sms` ROM onto it, and the reason
+   (`NoVolume`, `no .gg/.sms file`, or another romfs error name). It stays
+   there; Start+Select leaves through the OS menu. There is no embedded
+   fallback on the badge.
 
 The ROM file also shows in the OS cart menu and fails to load if picked
 there; that is cosmetic.

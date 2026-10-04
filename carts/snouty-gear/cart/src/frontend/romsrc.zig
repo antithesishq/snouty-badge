@@ -5,9 +5,14 @@
 //! `romfs.base_addr`, take the first `.gg`/`.sms` file, map its clusters,
 //! CRC it and build the core's bank table: a direct flash pointer for each
 //! 16 KB bank that is one contiguous run (`Mapped.chunk`), the per-cluster
-//! `Mapped.read` path for the rest. Any error, or no file, falls back to the
-//! embedded ROM. The simulator (wasm) and `-Dgg-rom-source=embed` always use
-//! the embedded ROM. The core never sees romfs (SPEC.md section 7).
+//! `Mapped.read` path for the rest. Any error, or no file, means no ROM:
+//! `select` returns null, `failure` says why and main.zig shows the
+//! "No ROM on the badge drive" screen (frontend/splash.zig). This build
+//! never references `rom.data`, so the embedded ROM's bytes are not in the
+//! image (the badge drive has room for 1280 KB of UF2s, and a UF2 costs
+//! twice its payload). The simulator (wasm) and `-Dgg-rom-source=embed`
+//! always use the embedded ROM. The core never sees romfs (SPEC.md
+//! section 7).
 const cart = @import("cart-api");
 const core = @import("core");
 const rom = @import("rom");
@@ -17,7 +22,11 @@ const text = @import("text.zig");
 
 pub const Origin = enum(u32) { embedded = 0, drive = 1 };
 
-pub var origin: Origin = .embedded;
+/// The badge drive build: the ROM comes only from the drive and the
+/// embedded one is comptime-unreachable (not linked).
+pub const use_drive = !cart.is_wasm and rom.source == .drive;
+
+pub const origin: Origin = if (use_drive) .drive else .embedded;
 /// ROM files found on the drive (0 when not looked or no volume).
 pub var drive_matches: u32 = 0;
 /// CRC32 of the drive file (0 for the embedded ROM).
@@ -25,10 +34,10 @@ pub var crc: u32 = 0;
 /// Size in bytes of the running ROM: the drive file's directory size, or
 /// the embedded ROM's length (the core's `Rom.size` is capped at 256 banks).
 pub var size: u32 = 0;
-/// Why the drive was tried and the embedded ROM runs instead (a romfs
-/// error name or "no .gg/.sms file"); null when the drive ROM runs or the
-/// drive was never tried (simulator, `-Dgg-rom-source=embed`).
-pub var fallback: ?[]const u8 = null;
+/// Why the drive gave no ROM (a romfs error name or "no .gg/.sms file");
+/// null when the drive ROM runs or the drive was never tried (simulator,
+/// `-Dgg-rom-source=embed`).
+pub var failure: ?[]const u8 = null;
 /// The chosen drive entry; `name` points into it. Static, as `entries`.
 var drive_entry: romfs.Entry = .{};
 
@@ -36,15 +45,15 @@ var drive_entry: romfs.Entry = .{};
 /// (long name if the host wrote one, up to 64 bytes) or the embedded
 /// ROM's file name. A Game Gear header carries no title.
 pub fn name() []const u8 {
-    return if (origin == .drive) drive_entry.slice() else rom.name;
+    return if (comptime use_drive) drive_entry.slice() else rom.name;
 }
 
 var report_buf: [160]u8 = undefined;
 var report_len: usize = 0;
 
 /// The report line, e.g. "ROM: embedded waternet.gg 64 KB",
-/// "ROM: drive sonic.gg 256 KB crc 1A2B3C4D" or
-/// "ROM: embedded waternet.gg 64 KB, drive: NoVolume".
+/// "ROM: drive sonic.gg 256 KB crc 1A2B3C4D" or "ROM: none, drive:
+/// NoVolume".
 pub fn report() []const u8 {
     return report_buf[0..report_len];
 }
@@ -55,20 +64,21 @@ var clusters: [romfs.max_clusters]u16 = undefined;
 var mapped: romfs.Mapped = undefined;
 var entries: [8]romfs.Entry = undefined;
 
-/// Choose the ROM. Call once from `start()`.
-pub fn select() core.Rom {
-    if (cart.is_wasm or rom.source == .embed) return embedded(null);
+/// Choose the ROM. Call once from `start()`. Null: the drive has no
+/// usable ROM (`failure` says why); only the badge drive build returns it.
+pub fn select() ?core.Rom {
+    if (comptime !use_drive) return embedded();
     return from_drive();
 }
 
-fn from_drive() core.Rom {
-    const vol = romfs.Volume.open_badge() catch |e| return embedded(@errorName(e));
+fn from_drive() ?core.Rom {
+    const vol = romfs.Volume.open_badge() catch |e| return none(@errorName(e));
     const n = vol.find(&.{ "gg", "sms" }, &entries);
     drive_matches = @intCast(n);
-    if (n == 0) return embedded("no .gg/.sms file");
+    if (n == 0) return none("no .gg/.sms file");
     const e = entries[0];
     drive_entry = e;
-    mapped = vol.map(e, &clusters) catch |err| return embedded(@errorName(err));
+    mapped = vol.map(e, &clusters) catch |err| return none(@errorName(err));
     crc = mapped.crc32();
 
     var r: core.Rom = .{
@@ -83,7 +93,6 @@ fn from_drive() core.Rom {
         // `read`, which stops at the end of the file.
         if (off + core.rom.bank_size <= r.size) r.banks[i] = mapped.chunk(off, core.rom.bank_size);
     }
-    origin = .drive;
     size = mapped.size;
 
     var w: Writer = .{};
@@ -108,22 +117,26 @@ fn read_mapped(ctx: *const anyopaque, offset: u32) u8 {
     return m.read(offset);
 }
 
-/// The embedded ROM; `why` says why the drive was not used (null: it was
-/// not asked for).
-fn embedded(why: ?[]const u8) core.Rom {
-    origin = .embedded;
+/// No ROM on the drive: record `why` for the no-ROM screen.
+fn none(why: []const u8) ?core.Rom {
+    failure = why;
+    var w: Writer = .{};
+    w.put("ROM: none, drive: ");
+    w.put(why);
+    w.done();
+    return null;
+}
+
+/// The embedded ROM (simulator, `-Dgg-rom-source=embed`). Never analysed
+/// in the badge drive build, so `rom.data` is not linked there.
+fn embedded() core.Rom {
     size = @intCast(rom.data.len);
-    fallback = why;
     var w: Writer = .{};
     w.put("ROM: embedded ");
     w.put(rom.name);
     w.put(" ");
     w.num(@intCast(rom.data.len / 1024));
     w.put(" KB");
-    if (why) |s| {
-        w.put(", drive: ");
-        w.put(s);
-    }
     w.done();
     return core.Rom.from_slice(rom.data);
 }
