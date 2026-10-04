@@ -218,15 +218,25 @@ pub const Lynx = struct {
         l.rom_resets = 0;
         l.display = .{};
         l.cpu = .{};
-        l.reboot();
+        l.reboot(false);
     }
 
-    /// The boot without touching the clock (reset, or a jump into ROM).
-    fn reboot(l: *Lynx) void {
+    /// The boot without touching the clock (reset, or a jump into ROM:
+    /// `mid_frame`, when the frame's sound so far is kept and the channels
+    /// fall silent at this tick).
+    fn reboot(l: *Lynx, mid_frame: bool) void {
         const instr = l.cpu.instr_count;
         l.cpu = .{};
         l.cpu.instr_count = instr;
-        l.mikey.reset(l.ticks);
+        if (mid_frame) {
+            audio.mute(&l.mikey);
+            const render = l.mikey.audio.r;
+            l.mikey.reset(l.ticks);
+            l.mikey.audio.r = render;
+        } else {
+            l.mikey.reset(l.ticks);
+        }
+        l.mikey.audio.in_console = true;
         l.suzy.reset();
         l.port = .{};
         l.fetch_cost = bus.Ticks.fetch_full;
@@ -266,10 +276,12 @@ pub const Lynx = struct {
             n += 1;
         }
         if (l.ticks >= rebase_at) l.rebase();
+        audio.begin_frame(&l.mikey, l.frame_end, n);
         l.frame_end += n;
         while (l.ticks < l.frame_end) {
             if (l.halted or l.sleeping) l.step_one() else l.run_cpu(false);
         }
+        audio.end_frame(&l.mikey, l.frame_end);
         l.frame_count +%= 1;
     }
 
@@ -451,7 +463,7 @@ pub const Lynx = struct {
                 l.rom_resets +%= 1;
                 // The boot clears and rewrites all of RAM past the bus.
                 undo.touch_range(0, 0x10000);
-                l.reboot();
+                l.reboot(true);
             },
         }
     }

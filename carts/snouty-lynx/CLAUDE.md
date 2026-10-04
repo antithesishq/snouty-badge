@@ -25,8 +25,9 @@ CLAUDE.md and docs have the longer explanations.
   `Pad` (low byte = JOYSTICK $FCB0 layout, bit 8 = Pause). `cpu65.zig`:
   the Rockwell 65C02 over a generic Bus, cycle-exact against
   SingleStepTests (docs/CPU.md). `mikey.zig`: timers, interrupts, display
-  registers, palette, DMA/refresh bus steal, cart strobes, audio registers
-  stored only. `suzy.zig`: sprite engine, collision, math unit
+  registers, palette, DMA/refresh bus steal, cart strobes. `audio.zig`:
+  Mikey's four audio channels (LFSR, integrate, DAC, links, Lynx II
+  stereo) and their mix into `Lynx.audio_out` (M5). `suzy.zig`: sprite engine, collision, math unit
   (docs/SUZY.md). `bus.zig`: memory map, MAPCTL overlays, tick costs,
   page-mode stream, `CartPort`. `cart.zig`: the cart as 256 block pointers
   and the `.lnx`/headerless parser. `undo.zig`: the scrubber's undo-record

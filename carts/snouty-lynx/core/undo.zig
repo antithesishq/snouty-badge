@@ -319,7 +319,7 @@ inline fn rec_at(age: u32) *Rec {
 
 /// Open a record at the ring's head from `l`: the small state, then the
 /// dirty bytes cleared (every block not yet saved).
-fn open_record(l: *Lynx) void {
+noinline fn open_record(l: *Lynx) void {
     const n: u32 = @intCast(slots.len);
     recs[open_i] = .{ .start = (tail + used) % n, .len = 0 };
     open_frames = 0;
