@@ -8,4 +8,5 @@ test {
     _ = @import("sim.zig");
     _ = @import("ai.zig");
     _ = @import("render.zig");
+    _ = @import("game.zig");
 }
