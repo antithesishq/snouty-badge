@@ -7,12 +7,15 @@
 //! lists up to `max_candidates` `.gb`/`.gbc` files and checks each header;
 //! `select` maps the chosen file's cluster chain and hands the core a
 //! `core.Rom` built from one flash pointer per 512-byte sector, so the ROM is
-//! read in place and costs no RAM. Anything that goes wrong falls back to the
-//! embedded ROM (`rom.data`) and keeps the reason for the About screen.
+//! read in place and costs no RAM. This build embeds no ROM: when nothing on
+//! the drive can run, `choose_default`/`select` return null and keep the
+//! reason in `missing` for the no-ROM screen (main.zig).
 //!
 //! The wasm build (web simulator, preview.mjs) and `-Drom-source=embed` use
-//! only the embedded ROM: `use_drive` is comptime false there, so none of the
-//! romfs code or its tables are compiled in.
+//! only the embedded ROM (`rom.data`): `use_drive` is comptime false there,
+//! so none of the romfs code or its tables are compiled in. `rom.data` is
+//! referenced only where `use_drive` is false, so a drive build carries no
+//! ROM bytes.
 const cart = @import("cart-api");
 const core = @import("core");
 const rom = @import("rom");
@@ -32,9 +35,6 @@ pub const Info = struct {
     crc: u32 = 0,
     /// 16 KB banks read through the per-sector slow path (fragmented file).
     fragmented: u32 = 0,
-    /// Why the drive was tried and the embedded ROM runs instead; null when
-    /// the drive ROM runs or the drive was never tried.
-    fallback: ?[]const u8 = null,
 
     pub fn name(i: *const Info) []const u8 {
         return i.name_buf[0..i.name_len];
@@ -48,6 +48,11 @@ pub const Info = struct {
 };
 
 pub var info: Info = .{};
+
+/// Why the drive gave nothing to run (a volume error, "no ROM file", ...),
+/// for the no-ROM screen; null while a ROM runs or in a build without the
+/// drive path.
+pub var missing: ?[]const u8 = null;
 
 /// One file on the drive with the extension we look for.
 pub const Candidate = struct {
@@ -140,30 +145,28 @@ fn check(vol: *const romfs.Volume, c: *Candidate) void {
 }
 
 /// The ROM to run when there is no choice to make: the one playable drive
-/// file, or the embedded ROM. Call after `scan` when `playable_count <= 1`.
-pub fn choose_default() core.Rom {
-    return if (use_drive) default_drive() else embedded(null);
+/// file, or the embedded ROM in a build without the drive path. Null when the
+/// drive has none (`missing` says why). Call after `scan` when
+/// `playable_count <= 1`.
+pub fn choose_default() ?core.Rom {
+    return if (use_drive) default_drive() else embedded();
 }
 
-fn default_drive() core.Rom {
-    if (scan_failure) |why| return embedded(why);
+fn default_drive() ?core.Rom {
+    if (scan_failure) |why| return none(why);
     for (candidates[0..candidate_count], 0..) |c, i| {
         if (c.playable) return select(i);
     }
-    return embedded("none playable");
+    return none("none playable");
 }
 
-/// Map candidate `i` and build the core's view of it. Falls back to the
-/// embedded ROM, keeping the reason, if the file cannot be mapped.
-pub fn select(i: usize) core.Rom {
-    return if (use_drive) select_drive(i) else embedded(null);
-}
-
-fn select_drive(i: usize) core.Rom {
-    if (i >= candidate_count or !candidates[i].playable) return embedded("not playable");
+/// Map drive candidate `i` and build the core's view of it. Null, keeping
+/// the reason in `missing`, if the file cannot be mapped.
+pub fn select(i: usize) ?core.Rom {
+    if (i >= candidate_count or !candidates[i].playable) return none("not playable");
     const c = &candidates[i];
-    const vol = romfs.Volume.open_badge() catch |e| return embedded(@errorName(e));
-    const m = vol.map(c.entry, &clusters) catch |e| return embedded(@errorName(e));
+    const vol = romfs.Volume.open_badge() catch |e| return none(@errorName(e));
+    const m = vol.map(c.entry, &clusters) catch |e| return none(@errorName(e));
     const size: u32 = @min(m.size, core.rom_mod.max_bytes);
     const n: usize = (size + romfs.sector_size - 1) / romfs.sector_size;
     for (sectors[0..n], 0..) |*s, k| {
@@ -171,7 +174,7 @@ fn select_drive(i: usize) core.Rom {
         const len: u32 = @min(romfs.sector_size, size - off);
         // One sector per cluster in this FAT12 geometry, so every sector of
         // the file is one contiguous chunk; null means the map is broken.
-        s.* = m.chunk(off, len) orelse return embedded("bad sector map");
+        s.* = m.chunk(off, len) orelse return none("bad sector map");
     }
     const r = core.Rom.from_sectors(size, sectors[0..n]);
     info = .{
@@ -184,15 +187,20 @@ fn select_drive(i: usize) core.Rom {
     return r;
 }
 
-/// The embedded ROM. `why`: the drive was tried and this is the reason it is
-/// not used (null when the drive was not asked for).
-pub fn embedded(why: ?[]const u8) core.Rom {
+fn none(why: []const u8) ?core.Rom {
+    missing = why;
+    return null;
+}
+
+/// The embedded ROM; only in a build without the drive path, so a drive
+/// build references no `rom.data`.
+fn embedded() core.Rom {
+    if (use_drive) @compileError("a drive build embeds no ROM");
     const r = core.Rom.from_slice(rom.data);
     info = .{
         .source = .embedded,
         .size = r.len,
         .crc = r.crc32(),
-        .fallback = why,
     };
     info.set_name(rom.name);
     return r;

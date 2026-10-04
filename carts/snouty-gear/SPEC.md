@@ -11,8 +11,9 @@ milestones are at the bottom.
 A full-speed Sega Game Gear emulator written in Zig, built as an
 ordinary RAM cart. The game is a ROM file the user copies onto the
 badge's USB drive, read in place from flash (shared design in
-`docs/ROM_DRIVE.md`); one open-licensed homebrew ROM is embedded as the
-fallback when no file is found and for the web simulator. The Game Gear's visible
+`docs/ROM_DRIVE.md`); one open-licensed homebrew ROM is embedded for the
+web simulator only (since 2026-10-04 the badge build embeds none and shows
+a "No ROM on the badge drive" screen when no file is found). The Game Gear's visible
 screen is 160x144, exactly the badge's width, so the picture maps 1:1
 horizontally and, as in Snouty Boy, 144 lines are squeezed to 128 by
 dropping every ninth one. The Game Gear pad is a d-pad, 1, 2 and Start,
@@ -160,12 +161,14 @@ core/vdp.zig      registers, control-port latch, VRAM/CRAM access, counters,
 core/psg.zig      SN76489 register model: latch/data writes, periods,
                   attenuations, noise mode (no sample synthesis)
 core/rom.zig      bank pointer table (from the drive file, the embedded
-                  ROM or the packed fallback), size and mapper detection
+                  ROM (simulator, `embed`) or the packed fallback), size
+                  and mapper detection
 ```
 
 The core only ever sees `rom.banks: [N][*]const u8` of 16 KB banks. Where
 the bytes live is the frontend's business (`lib/romdrive.zig` for the
-drive, `@embedFile` for the fallback, section 13.1 for packing).
+drive, `@embedFile` for the simulator and `embed` builds, section 13.1
+for packing).
 
 Frontend: copied from `carts/snouty-boy/cart/src/frontend/` and adapted
 (video, input, menu, rewind, splash, debug, audio). The first copy is
@@ -178,8 +181,8 @@ Build: `carts/snouty-gear/build.zig` with its own ROM options:
 `-Dgg-rom=path` picks the embedded ROM (the existing root `-Drom` is Snouty
 Boy's; a shared option would silently feed a Game Boy ROM to the Game Gear
 cart) and `-Dgg-rom-source=drive|embed|pack` (default `drive`: the drive
-file with the embedded ROM as fallback; `pack` is section 13.1). The wasm
-build always embeds.
+file only, no ROM bytes linked, a "No ROM on the badge drive" screen when
+there is none; `pack` is section 13.1). The wasm build always embeds.
 
 ## 8. Performance budget
 
@@ -323,8 +326,9 @@ is Adrian's business, as with Super Mario Land on Snouty Boy).
 - ROM source on the badge: a `.gg` (or `.sms`) file on the badge drive,
   per `docs/ROM_DRIVE.md`. Any size the drive holds works (up to about
   950 KB free with this cart alone; the largest Game Gear games are
-  512 KB). The embedded ROM, chosen with `-Dgg-rom`, is only the fallback
-  and the simulator's ROM, so it keeps the 128 KB limit above.
+  512 KB). The embedded ROM, chosen with `-Dgg-rom`, is only the
+  simulator's ROM (and the `embed` build's), so it keeps the 128 KB limit
+  above.
 - Local stress target (never shipped): **Sonic the Hedgehog, Game Gear**
   (Sega/Ancient 1991, 256 KB, Sega mapper, no cart RAM; header region code
   0x6 at `7FFF`, md5 `8a95b36139206a5ba13a38bb626aee25`). It is the 8-bit
@@ -385,13 +389,14 @@ Snouty Boy's (82 KB fast with the frontend) because the Z80 has four prefix
 groups.
 
 Default build: a RAM cart with the ROM on the drive, so the ROM costs no
-cart RAM at all. The embedded fallback ROM does (it is in the RAM image).
+cart RAM at all. Since 2026-10-04 the default build embeds no ROM; an
+`embed` build's ROM is in the RAM image.
 
 | Item                              | RAM cart, drive ROM   |
 |-----------------------------------|----------------------:|
 | Code + frontend (ReleaseFast)     | ~95 KB                |
 | Splash, fonts, tables             | ~6 KB                 |
-| Embedded fallback ROM             | 32-64 KB              |
+| Embedded ROM (`embed` builds only) | 32-64 KB             |
 | Drive file map (fragmented case)  | <= 4 KB               |
 | Live console + cart RAM 8 KB      | ~33 KB                |
 | Frontend state, input log         | ~3 KB                 |

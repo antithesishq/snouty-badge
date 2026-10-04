@@ -55,6 +55,13 @@ its flash image (Snouty Genesis: 236-380 KB). Either way 512 KB ROMs fit
 with room to spare, 1 MB does not in practice, and every other cart on
 the drive eats into this.
 
+Since 2026-10-04 the default (`drive`) badge build of every emulator cart
+carries no ROM of its own, which saves twice the old fallback ROM's size
+on the drive. Default RAM-cart UF2s before and after: Snouty Boy 271,872 ->
+204,288 B, Snouty Gear 437,248 -> 306,176 B, Snouty Lynx 420,352 ->
+364,544 B, Snouty Genesis 533,504 -> 526,336 B. With Snouty Boy at ~200 KB, a
+1 MB Game Boy ROM fits beside it on an otherwise empty drive.
+
 Keeping big buffers (the rewind ring) out of `.bss` would shrink a RAM
 cart's UF2 by their size, for example by placing them in the free RAM
 between the end of `.bss` and the stack at `start()`. Worth checking in
@@ -78,7 +85,8 @@ the first cart's M0; not needed for Sonic-sized ROMs.
 - Find the file: scan the root directory (short and long names) for the
   cart's extension (`.gg`/`.sms` for Snouty Gear, `.lnx` for Snouty Lynx).
   One match: use it. Several: the cart's menu lists them (a restart picks
-  another). None: use the embedded fallback ROM (section 7).
+  another). None: the default build carries no ROM, so the cart shows a
+  "no ROM on the badge drive" screen with the reason (section 5).
 - Map it: walk the cluster chain from the FAT and build a table of flash
   addresses. The fast path is a contiguous file (always true when the file
   is copied onto a freshly wiped drive, and usually true otherwise); then
@@ -99,7 +107,9 @@ are unaffected (the ROM is read-only).
 
 | Build                    | ROM source                                          |
 |--------------------------|-----------------------------------------------------|
-| Badge (RAM cart)         | drive file; embedded fallback ROM if none            |
+| Badge (default `drive`)  | drive file only; no ROM in the cart, a "no ROM"     |
+|                          | screen if none                                      |
+| Badge (`embed`)          | the embedded ROM only (single-game cart)            |
 | Web simulator (wasm)     | embedded ROM from `-D<cart>-rom=path` (no romfs)    |
 | Host tests               | a FAT12 image built by `tools/make_romfs.py`, so    |
 |                          | the parser is tested against real layouts (fresh,   |

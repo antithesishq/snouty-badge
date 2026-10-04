@@ -292,17 +292,21 @@ it is needed by M2, and M1 runs on `dmg-acid2` and the Blargg ROMs.
 
 ### 11.1 ROMs from the badge drive (M5, 2026-09-29)
 
-The embedded ROM is the fallback only. On the badge the cart looks for
+Since 2026-10-04 the default badge build embeds no ROM (Adrian: every ROM
+byte in the UF2 costs two on the 1280 KB drive). On the badge the cart looks for
 `.gb`/`.gbc` files on the USB drive (the OS `romfs` FAT12 region of the
 internal flash) and reads the chosen one in place through the XIP flash
 window, by pointer: nothing is copied into RAM, so the ROM no longer
 trades against scrub depth and may be up to 1 MB (64 banks). Shared design
 and its open hardware checks: `docs/ROM_DRIVE.md` at the repository root;
 the FAT12 reader is `lib/romfs.zig`, shared with Snouty Gear. One file
-starts directly, several show a picker after the splash, none (or a
-fragmented file's unmappable banks, an unreadable volume) fall back as
-described in PLAN.md M5. `-Drom-source=embed` restores the old behaviour;
-the web simulator always embeds. Eject the drive before playing: the OS
+starts directly, several show a picker after the splash (A plays; there is
+nothing else to choose), none (or nothing playable, a file that cannot be
+mapped, an unreadable volume) shows a no-ROM screen that says to copy a
+`.gb`/`.gbc` file to the drive, with the reason, and stays (the OS menu
+leaves). Until 2026-10-04 an embedded fallback ROM ran instead (PLAN.md
+M5). `-Drom-source=embed` restores the pre-M5 behaviour; the web simulator
+always embeds. Eject the drive before playing: the OS
 may write flash while the cart runs. Cart RAM is still not saved between
 runs (no flash writes from the cart).
 
@@ -355,8 +359,8 @@ A 128 KB game leaves about 60 KB for keyframes, so it needs section 10.4
 to offer more than 1.5 s of history. That is the reason the ROM should be
 small, not any CPU limit.
 
-M5 changes the table: a drive ROM costs no RAM at all (only the 32 KB
-embedded fallback still does), the keyframe pool is sized at run time from
+M5 changes the table: a drive ROM costs no RAM at all (the 32 KB
+embedded fallback did until 2026-10-04, when it went), the keyframe pool is sized at run time from
 the RAM left between `.bss` and the stack, and its slot size follows the
 running ROM's cart RAM (0, 2 or 8 KB), so a RAM-less game gets more
 keyframes than one with 8 KB of save RAM. Because that pool is no longer
@@ -562,6 +566,7 @@ ship it as zeros.
 | Build (fast, 2026-09-29) | .text | .bss | Arena | 2048-gb (2 KB RAM) | Rex Runner (8 KB) | Rebound (0) |
 |---|---:|---:|---:|---|---|---|
 | default: drive, 32 KB fallback embedded, RAM | 115 KB | 18 KB | 136 KB | 19 kf, 80 KB pool | 18 kf, 74 KB | 20 kf, 82 KB |
+| default since 2026-10-04: drive, no ROM embedded, RAM | 80 KB | 18 KB | 168 KB | more (not re-measured) | more | more |
 | `embed` rex-runner, RAM | 107 KB | 4 KB | 158 KB | - | 23 kf, 95 KB | - |
 | `embed` rebound, XIP (code + ROM in flash) | flash | 4 KB | 262 KB | - | - | 50 kf, 202 KB |
 

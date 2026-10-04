@@ -42,9 +42,9 @@ have run on a badge.
 | `snouty-bugs` | `snouty-bugs` | bullet-hell shooter with rewind-on-hit | M5 done | RAM | no attract demo yet (SPEC M6): waits on its title card | booted 2026-09-29, not play-tested |
 | `snoutenstein` | `snoutenstein` | raycaster FPS with time rewind | M6 done | RAM | weapon feel and boss balance unchecked on hardware | booted 2026-09-29 (at M5.1), not play-tested |
 | `snouty-reflections` | `snouty-reflections` | real-time ray tracer over water; A freezes into a path tracer | M4 done | RAM | locked to 20 fps (shipped `cut20` variant) | booted 2026-09-29 (at M2), not play-tested |
-| `snouty-boy` | `snouty-boy` | Game Boy and Game Boy Color emulator with time scrubber | M8 done (tag `snouty-boy/m6`) | RAM (XIP optional) | saves not kept; an embedded ROM over ~64 KB needs XIP | booted 2026-09-29, not play-tested |
+| `snouty-boy` | `snouty-boy` | Game Boy and Game Boy Color emulator with time scrubber | M8 done (tag `snouty-boy/m6`) | RAM (XIP optional) | saves not kept; with `-Drom-source=embed`, a ROM over ~64 KB needs XIP | booted 2026-09-29, not play-tested |
 | `snouty-maze` | `snouty-maze` | Windows 3D Maze screensaver on a software rasterizer | M4 done | RAM | none recorded | booted 2026-09-29, not play-tested |
-| `snouty-gear` | `snouty-gear` | Game Gear emulator with time scrubber | M3 done | RAM (XIP optional) | an embedded ROM over ~128 KB stops the badge ELF linking | booted 2026-09-29 (at M2), not play-tested |
+| `snouty-gear` | `snouty-gear` | Game Gear emulator with time scrubber | M3 done | RAM (XIP optional) | with `-Dgg-rom-source=embed`, a ROM over ~128 KB stops the badge ELF linking | booted 2026-09-29 (at M2), not play-tested |
 | `snouty-genesis` | `snouty-genesis` | Genesis / Mega Drive emulator, 30 Hz; the XIP cart adds sound and the time scrubber | M5 done | RAM, plus XIP built by default | RAM cart silent (no Z80) and without the scrubber; drive ROMs up to ~750 KB beside the RAM cart (~810 KB beside the XIP one); no SVP, no mapper over 4 MB | not confirmed: was in the 2026-09-29 build (at M1), but as XIP |
 | `snouty-lynx` | `snouty-lynx` | Atari Lynx emulator with time scrubber | M4 done | RAM, plus XIP built by default | scrubber holds 1-2 s in the RAM cart (3-6 s in the XIP one) | not yet |
 | `snouty-flyover` | `snouty-flyover` | voxel flyover through a landscape of data structures | M4.1 done | RAM | locked to 30 fps | not yet |
@@ -53,13 +53,15 @@ have run on a badge.
 | `siwoo` | `siwoo` | name badge for Siwoo Yoon: demosnout's Snouty head over "SIWOO YOON" in chrome | done | RAM | made for the Tufty 2350 (Supabase Select badge); see its SPEC.md | not yet |
 | `badge-calibrate` | `badge-calibrate` | hardware calibration cart for badge-bench (`badge-bench/calibrate/`) | C3 done (badge fit applied) | RAM | a tool, not a game | ran on a badge 2026-09-28 (`badge-2026-09-28-pass5.txt`) |
 
-ROMs for the emulator carts. Every one embeds a freely licensed fallback
-ROM, which the simulator always runs (it has no badge drive); the badge
-build prefers a ROM file on the badge drive and falls back to the embedded
-one. How to copy ROMs onto the drive: [docs/INSTALL.md](docs/INSTALL.md)
+ROMs for the emulator carts. The default badge build carries no ROM: it
+plays a ROM file from the badge drive, and with none there it shows a
+"no ROM on the badge drive" screen. The simulator has no badge drive and
+runs a freely licensed embedded ROM instead; `-D<cart>-rom-source=embed`
+puts that ROM (or the one given with `-D<cart>-rom`) inside the badge cart
+too, for a single-game cart. How to copy ROMs onto the drive: [docs/INSTALL.md](docs/INSTALL.md)
 and the section linked per cart.
 
-| Cart | Embedded fallback | Build options | Drive files | Details |
+| Cart | Simulator / `embed` ROM | Build options | Drive files | Details |
 |---|---|---|---|---|
 | `snouty-boy` | `tests/roms/dmg-acid2.gb` once `tools/fetch_test_roms.sh` has run, else `roms/2048.gb` | `-Drom=PATH` (repository- or cart-relative), `-Drom-source=drive\|embed` | `.gb`, `.gbc` up to 1 MB (drive space permitting); a picker for several | [RUNNING section 9](carts/snouty-boy/docs/RUNNING.md#9-roms-from-the-badge-drive) |
 | `snouty-gear` | `roms/waternet.gg` (MIT) | `-Dgg-rom=PATH` (`~/`, absolute, repository- or cart-relative), `-Dgg-rom-source=drive\|embed` (`pack` not built yet) | `.gg`, `.sms`; the first one found plays | [RUNNING section 6](carts/snouty-gear/docs/RUNNING.md#6-a-rom-on-the-badge-drive) |
@@ -122,14 +124,16 @@ Boy, Snouty Gear, Snouty Lynx, Snouty Zero and Snouty Genesis are RAM
 carts like the native ones (Snouty Genesis's RAM cart leaves out the Z80
 sound core and the time scrubber to fit; its XIP cart, below, keeps them).
 
-Each emulator cart embeds a small, freely licensed fallback ROM and, on the
-badge, prefers a ROM file on the badge drive. The drive is the OS's
+On the badge, each emulator cart plays a ROM file from the badge drive and
+carries no ROM of its own (the simulator runs a small, freely licensed
+embedded one). The drive is the OS's
 `romfs` region of the internal 2 MB flash, so the user copies a ROM file
 onto it next to the cart's UF2, and at start the cart finds it in the
 FAT12 volume and reads ROM bytes by pointer from the flash window. Nothing
 is copied or compressed, so a drive ROM costs no cart RAM. About 800 KB of
 the 1280 KB drive is left for ROMs once a RAM cart's UF2 is on it; 512 KB
-ROMs fit, 1 MB ones do not in practice. Eject the drive before playing,
+ROMs fit easily; a 1 MB ROM fits beside a ~270 KB cart UF2 only if
+little else is on the drive. Eject the drive before playing,
 because the OS can write flash while a cart runs. The shared loader is
 `lib/romfs.zig`; the design, the hardware checks it still needs and the
 fallback (packing the ROM into the cart image) are in

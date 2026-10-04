@@ -85,8 +85,9 @@ no handler for either call.
   A host write mid-game briefly takes flash out of XIP mode and could
   corrupt a read (not verified on hardware). Rule: don't copy files while
   playing.
-- The simulator and badge-bench have no `romfs`, so the ROM source is an
-  interface with an embedded fallback (SPEC.md section 11).
+- The simulator has no `romfs`, so the ROM source is an interface with an
+  embedded source (SPEC.md section 11); the badge build embeds no ROM and
+  badge-bench maps a drive image (`--romfs`).
 - Writes and save data (`write_flash_page`) need a new Core 0 mailbox
   handler running from `.ram_text` (as `storage.writeSector` does) and a
   firmware reflash. Out of scope; upstream it if ever needed.

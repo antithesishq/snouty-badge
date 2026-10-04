@@ -3,8 +3,9 @@
 //! file found (frontend/romsrc.zig, at most 8): name and size; unplayable
 //! files are listed dimmed so the user sees why a copied file is missing.
 //! Below the list, the selected file's note (why it cannot be played, or
-//! hints such as "Color" or "no RTC"). Up/Down move, A plays the selected file, B
-//! runs the embedded ROM instead (`flow.Picker`, host-tested). Full redraw
+//! hints such as "Color" or "no RTC"). Up/Down move, A plays the selected file
+//! (`flow.Picker`, host-tested); the badge build embeds no ROM to run instead.
+//! Full redraw
 //! every frame, like the game. main.zig passes the live edge
 //! (frontend/flow.zig), so the button that skipped the splash does not act
 //! here.
@@ -16,9 +17,8 @@ const romsrc = @import("romsrc.zig");
 
 var picker: flow.Picker = .{};
 
-/// One picker frame. Returns null to stay, or the choice: a candidate index,
-/// or null inside for the embedded ROM.
-pub fn update(e: input.Edge) ??usize {
+/// One picker frame. Returns null to stay, or the chosen candidate index.
+pub fn update(e: input.Edge) ?usize {
     const n = romsrc.candidate_count;
     var playable: [romsrc.max_candidates]bool = undefined;
     for (romsrc.candidates[0..n], playable[0..n]) |c, *p| p.* = c.playable;
@@ -56,7 +56,6 @@ fn draw() void {
     const sel = &romsrc.candidates[picker.cursor];
     cart.text(.{ .str = sel.note(), .x = 2, .y = 98, .text_color = if (sel.playable) fg else dim });
     cart.text(.{ .str = "A: play", .x = 2, .y = 110, .text_color = if (sel.playable) fg else dim });
-    cart.text(.{ .str = "B: embedded ROM", .x = 2, .y = 119, .text_color = fg });
 }
 
 /// "64K": the size rounded up to whole KB, at most 5 characters (1 MB is

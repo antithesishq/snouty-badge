@@ -354,15 +354,14 @@ fn put_secs(dst: []u8, frames: u32) usize {
 
 /// About (PLAN.md M2 Track A): version, ROM file name, size and bank
 /// count, source, mapper slots as written, and then the drive's CRC32 and
-/// "fragmented" (a bank without a direct flash pointer), or why the drive
-/// was not used for an embedded ROM.
+/// "fragmented" (a bank without a direct flash pointer). The menu only
+/// opens on a running ROM, so a drive build here always has a drive ROM.
 fn draw_about(gg: *const core.Gg) void {
     var b0: [24]u8 = undefined;
     var b1: [24]u8 = undefined;
     var b2: [24]u8 = undefined;
     var b3: [24]u8 = undefined;
     var b4: [24]u8 = undefined;
-    var b5: [24]u8 = undefined;
 
     var w: Line = .{ .buf = &b0 };
     w.put("Version ");
@@ -396,14 +395,11 @@ fn draw_about(gg: *const core.Gg) void {
         w.hex32(romsrc.crc);
         line6 = w.done();
         if (!gg.rom.all_direct()) line7 = "fragmented";
-    } else if (romsrc.fallback) |why| {
-        line6 = "Drive not used:";
-        line7 = fit(&b4, why, panel_cols);
     }
 
     const lines = [_][]const u8{
         ver,
-        fit(&b5, romsrc.name(), panel_cols),
+        fit(&b4, romsrc.name(), panel_cols),
         size,
         if (romsrc.origin == .drive) "Source: drive" else "Source: embedded",
         map,

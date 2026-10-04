@@ -1,6 +1,6 @@
 # snouty-gear: Game Gear emulator, 60 fps. M3: the boot splash (72 frames,
 # what the badge shows first), then the emulated console playing Waternet
-# from the drive image below (the embedded copy is the fallback) while the
+# from the drive image below (the badge build embeds no ROM) while the
 # time scrubber records (a keyframe every 30 game frames), then two menu
 # passes that scrub.
 budget_ms = 16.7

@@ -25,7 +25,8 @@ pub const Options = struct {
     /// carts boot silent and a menu item or button turns sound on for the
     /// session (docs/SOUND.md).
     sound: bool,
-    /// -Drom: Game Boy ROM to embed (snouty-boy).
+    /// -Drom: Game Boy ROM for snouty-boy's simulator and `-Drom-source=embed`
+    /// builds (the default badge build embeds none).
     rom: ?[]const u8,
     /// -Dcart-optimize: optimize mode for snouty-boy's cart.
     cart_optimize: std.builtin.OptimizeMode,
@@ -58,13 +59,14 @@ pub const Options = struct {
     check_float_step: *Build.Step,
 };
 
-/// -Dgg-rom-source (snouty-gear, docs/ROM_DRIVE.md): `drive` reads a ROM file
-/// from the badge's USB drive with the embedded ROM as fallback; `embed` uses
-/// only the embedded ROM; `pack` is the XIP bank-packer fallback (not built yet).
+/// -Drom-source (snouty-boy), -Dgg-rom-source (snouty-gear), -Dlynx-rom-source
+/// (snouty-lynx), docs/ROM_DRIVE.md: `drive` reads a ROM file from the badge's
+/// USB drive and puts no ROM in the badge cart; `embed` uses only the embedded
+/// ROM; `pack` is the XIP bank-packer fallback (not built yet).
 pub const RomSource = enum { drive, embed, pack };
 
 /// -Dmd-rom-source (snouty-genesis): `drive` reads a `.gen`/`.md`/`.bin`
-/// file from the badge's USB drive with the embedded ROM as fallback;
+/// file from the badge's USB drive and puts no ROM in the badge cart;
 /// `embed` uses only the embedded ROM.
 pub const MdRomSource = enum { drive, embed };
 

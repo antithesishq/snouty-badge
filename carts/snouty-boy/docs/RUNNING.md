@@ -25,8 +25,9 @@ Milestones are annotated tags (`git tag -n1 'snouty-boy/*'`: `snouty-boy/m1`,
 
 ## 3. Test ROMs
 
-The emulator embeds one Game Boy ROM at build time; the default is
-`tests/roms/dmg-acid2.gb`. The test ROMs are freely redistributable but not
+The web simulator build (and a `-Drom-source=embed` badge build) embeds one
+Game Boy ROM; the default is `tests/roms/dmg-acid2.gb`. The default badge
+build embeds none (section 9). The test ROMs are freely redistributable but not
 committed (`tests/roms/` is gitignored), so fetch them once (without them
 the build prints a note and embeds the committed `roms/2048.gb` instead):
 
@@ -63,8 +64,8 @@ This writes, in the root `zig-out/`:
 
 Options:
 
-- `-Drom=path/to/game.gb`: the ROM to embed: the drive build's fallback, or
-  with `-Drom-source=embed` the only ROM (default
+- `-Drom=path/to/game.gb`: the ROM to embed in the wasm build, and with
+  `-Drom-source=embed` in the badge build (default
   `tests/roms/dmg-acid2.gb`, falling back to `roms/2048.gb`). The path is
   relative to the repository root, e.g. `-Drom=carts/snouty-boy/roms/2048.gb`;
   a path relative to this cart such as `-Drom=roms/2048.gb` also works. The
@@ -74,8 +75,8 @@ Options:
 - `-Dcart-optimize=fast|small|safe|debug`: optimize mode for the cart
   (default `fast`, SPEC.md section 8).
 - `-Drom-source=drive|embed`: where the badge build gets its ROM (default
-  `drive`: a `.gb`/`.gbc` file on the badge's USB drive, the embedded ROM
-  as fallback; `embed`: the embedded ROM only, as before M5). See section
+  `drive`: a `.gb`/`.gbc` file on the badge's USB drive and no ROM built
+  in; `embed`: the embedded ROM only, as before M5). See section
   9. The wasm build always runs the embedded ROM. `pack` belongs to Snouty
   Gear and is refused here.
 - `-Dcart-mode=ram|xip|both` (shared with every cart): `ram` (default) is
@@ -94,7 +95,7 @@ Options:
 The three builds that must always link:
 
 ```sh
-zig build -Dcart=snouty-boy                                                        # drive (default), fallback ROM embedded
+zig build -Dcart=snouty-boy                                                        # drive (default), no ROM embedded
 zig build -Dcart=snouty-boy -Drom-source=embed -Drom=carts/snouty-boy/roms/rex-runner.gb
 zig build -Dcart=snouty-boy -Drom-source=embed -Drom=carts/snouty-boy/roms/rebound.gbc -Dcart-mode=xip
 ```
@@ -107,18 +108,20 @@ to 32 KB) and the page store: per keyframe a table (2 bytes per 512-byte
 page of state) and typically 8 pool pages, at most 64 keyframes, the pool
 gets the rest. When not even two keyframe tables and half a full keyframe
 fit, the cart shows the halted screen instead of the game. Computed from
-the linker symbols (fast, 2026-09-29):
+the linker symbols (fast, 2026-09-29; the default build's arena grew from
+136 to 168 KB on 2026-10-04 when its 32 KB fallback ROM went, so its
+keyframe counts are now lower bounds):
 
 | Build | Arena | 2048-gb (DMG, 2 KB RAM) | rex-runner (CGB, 8 KB RAM) | rebound (CGB, no RAM) |
 |---|---:|---|---|---|
-| default (drive) | 136 KB | 160 pages (80 KB), 19 kf | 147 pages (74 KB), 18 kf | 164 pages (82 KB), 20 kf |
+| default (drive) | 168 KB | 160 pages (80 KB), 19 kf | 147 pages (74 KB), 18 kf | 164 pages (82 KB), 20 kf |
 | `embed` rex-runner (RAM) | 158 KB | - | 189 pages (95 KB), 23 kf | - |
 | `embed` rebound (XIP) | 262 KB | - | - | 404 pages (202 KB), 50 kf |
 
 A clean build of this cart takes a couple of minutes (all carts: several);
 incremental rebuilds take seconds.
 `size ../../zig-out/firmware/snouty-boy.elf` shows `.text` (code plus the embedded
-ROM), `.data` and `.bss` against the cart RAM budget in SPEC.md sections 13
+ROM, if any), `.data` and `.bss` against the cart RAM budget in SPEC.md sections 13
 and 19.4 (`snouty-boy-xip.elf` for the XIP cart, whose `.text` is in flash).
 The arena is in none of them: it is `__stack_limit__ - 1024 -
 align4(__bss_end__)` (`nm ../../zig-out/firmware/snouty-boy.elf | grep -E
@@ -278,7 +281,7 @@ Buttons still held when the menu closes (or the splash is skipped) reach
 the game only after being released and pressed again. The boot splash
 (1.2 s) is skipped by any button.
 
-What you should see: the Snouty splash, then the embedded ROM's screen, 144 Game Boy lines squeezed
+What you should see (simulator, embedded ROM): the Snouty splash, then the embedded ROM's screen, 144 Game Boy lines squeezed
 to the badge's 128 rows by dropping every ninth line, in DMG green, with the
 debug overlay in the top-left corner:
 
@@ -384,7 +387,7 @@ from the OS menu.
 
 An XIP build (`-Dcart-mode=xip`, section 4) is `snouty-boy-xip.uf2`;
 install that one instead (XIP launch is still unproven on hardware). It is
-only needed for an embedded ROM above about 64 KB.
+only needed for a `-Drom-source=embed` ROM above about 64 KB.
 
 On the badge the overlay's numbers are real: `avg`/`max` are the
 microseconds `gb.step_frame` takes per Game Boy frame (M1 target under
@@ -395,6 +398,9 @@ microseconds `gb.step_frame` takes per Game Boy frame (M1 target under
 Since M5 the badge build (`-Drom-source=drive`, the default) looks for Game
 Boy and Game Boy Color ROM files on the badge's own USB drive and reads the chosen one in
 place from flash, so the ROM costs no cart RAM and may be up to 1 MB.
+Since 2026-10-04 that build embeds no ROM at all (the UF2 is about 200 KB
+instead of 266 KB; a UF2 costs twice its payload on the 1280 KB drive, so
+this leaves room for a bigger game).
 Design and its open questions: `docs/ROM_DRIVE.md` at the repository root;
 SPEC.md section 11.1.
 
@@ -416,25 +422,28 @@ What happens:
   0x14D, or the drive error). Playable files may carry hints: "Color" (the
   header asks for a Game Boy Color, so it runs in CGB mode, M8), "no RTC"
   (MBC3 clock not emulated), "mapper?" (a mapper the core does not know),
-  "RAM>32K" (cart RAM over 32 KB is cut). Up/Down move, A plays, B runs the
-  embedded ROM.
-- None, no readable drive, or a file that cannot be mapped: the embedded
-  ROM (`-Drom`, `roms/2048.gb` or the acid2 test ROM) runs, as before.
+  "RAM>32K" (cart RAM over 32 KB is cut). Up/Down move, A plays; the only
+  way out without playing is the OS menu (Start+Select).
+- None, no readable drive, nothing playable, or a file that cannot be
+  mapped: a screen right after start says "No ROM on the badge drive.",
+  "Copy a .gb or .gbc file to the drive, eject, then restart this cart."
+  and "Why: <reason>" ("no ROM file", "none playable", "NoVolume" for an
+  unformatted drive, ...). It stays up; Start+Select leaves (the
+  frontend state is `halted`, as for "Not enough RAM").
 
 Menu > About shows the ROM's header title, mapper and size, "Source:
 drive" with the file name (cut to 18 characters) or "Source: embedded"
-with the embedded file's name, its CRC32 and the model (DMG or CGB),
-"fragmented: N banks" when a
-drive file is not contiguous (those banks go through a slower per-sector
-path), and "drive: <reason>" when the drive was tried and the embedded ROM
-runs instead. The debug overlay's third line is the keyframe count and `D`
-(drive) or `E` (embedded).
+with the embedded file's name (simulator and `-Drom-source=embed`), its
+CRC32 and the model (DMG or CGB), and "fragmented: N banks" when a drive
+file is not contiguous (those banks go through a slower per-sector path).
+The debug overlay's third line is the keyframe count and `D` (drive) or
+`E` (embedded).
 
 The ROM file also shows in the OS cart menu, where picking it fails to load;
 that is cosmetic. Cart RAM (saves) is not kept between runs.
 
 Build options: `-Drom-source=embed` builds the pre-M5 behaviour (the drive
-is never looked at); `-Drom=...` still picks the fallback ROM. The web
+is never looked at, `-Drom=...` picks the ROM built in). The web
 simulator and `preview.mjs` always run the embedded ROM, so the drive path
 is only exercised on the badge and in badge-bench (9.1). An embedded ROM
 above about 64 KB needs `-Dcart-mode=xip` (section 4); flash
@@ -472,6 +481,10 @@ second file (`--press START:30-31,DOWN:45-46,A:60-61`) runs Blargg's
 This was done on 2026-09-29 in a scratch merge of M5 with `gear/m0`; the
 numbers above are from that build. M8 benches the Color ROMs the same way
 (PLAN.md M8 status, `badge-bench/carts/snouty-boy-color.toml`).
+
+An empty drive (`python3 tools/make_romfs.py out/empty.img`, no files) or
+an all-0xFF image (unformatted) shows the no-ROM screen from the first
+frame (`--frames 60 --png 30`; "Why: no ROM file" / "Why: NoVolume").
 
 Still open on hardware (docs/ROM_DRIVE.md section 6): that reading a file
 by pointer through the XIP flash window works and is fast enough (FPS with

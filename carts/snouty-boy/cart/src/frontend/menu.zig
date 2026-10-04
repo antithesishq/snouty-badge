@@ -330,8 +330,8 @@ const about_cols = (panel_w - (text_x - panel_x) - 2) / 8;
 
 /// About (SPEC.md 5, PLAN.md M5): version, header title, mapper and size,
 /// where the ROM came from and its file name, CRC32 and the model the
-/// console runs as (DMG or CGB, SPEC.md 19), and either the
-/// fragmented-bank count (drive) or why the drive lost (embedded).
+/// console runs as (DMG or CGB, SPEC.md 19), and the fragmented-bank count
+/// (drive).
 fn draw_about(gb: *const core.Gb, fg: cart.DisplayColor, dim: cart.DisplayColor) void {
     const info = &romsrc.info;
     var b0: [24]u8 = undefined;
@@ -354,15 +354,10 @@ fn draw_about(gb: *const core.Gb, fg: cart.DisplayColor, dim: cart.DisplayColor)
     const crc = w.done();
 
     w = .{ .buf = &b3 };
-    if (info.source == .drive) {
-        if (info.fragmented != 0) {
-            w.put("fragmented: ");
-            w.num(info.fragmented);
-            w.put(if (info.fragmented == 1) " bank" else " banks");
-        }
-    } else if (info.fallback) |why| {
-        w.put("drive: ");
-        w.put(why);
+    if (info.source == .drive and info.fragmented != 0) {
+        w.put("fragmented: ");
+        w.num(info.fragmented);
+        w.put(if (info.fragmented == 1) " bank" else " banks");
     }
     const last = w.done();
 

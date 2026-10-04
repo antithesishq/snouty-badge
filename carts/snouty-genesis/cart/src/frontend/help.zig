@@ -1,12 +1,13 @@
-//! No-ROM help screen (SPEC.md section 12, PLAN.md M2 Track B): shown
-//! after the splash when the badge drive has a volume but no playable
-//! Genesis ROM. It says how to add one, lists up to four of the files that
-//! were found and refused (`NAME: reason`, dimmed) and offers the embedded
-//! ROM, which in a badge build is always the shipped test ROM. A or B
-//! leaves. Drive builds only: app.zig reaches it behind `romsrc.use_drive`.
-//! Full redraw every update, colours as the menu's (Snouty Gear's scheme).
+//! No-ROM screen (SPEC.md section 12, PLAN.md M2 Track B): shown after
+//! the splash when the badge drive has no playable Genesis ROM (no volume,
+//! no ROM file, every file refused), or when the chosen file no longer
+//! maps. A drive build has no embedded ROM, so the cart stays here; the
+//! OS's Start+Select leaves. It says how to add a ROM, why none runs
+//! (`romsrc.no_rom`, accent) and lists up to four of the files that were
+//! found and refused (`NAME: reason`, dimmed). Drive builds only: app.zig
+//! reaches it behind `romsrc.use_drive`. Full redraw every update, colours
+//! as the menu's (Snouty Gear's scheme).
 const cart = @import("cart-api");
-const input = @import("input.zig");
 const video = @import("video");
 const text = @import("text.zig");
 const romsrc = @import("romsrc.zig");
@@ -21,27 +22,21 @@ pub const black: cart.DisplayColor = .rgb(0x000000);
 /// Characters of the 8 px font across the screen.
 pub const cols = cart.screen_width / 8;
 
-const headline = "No Genesis ROM found";
+const headline = "No ROM on the drive";
 const advice = "Copy a .gen, .md or .bin file to the SYCLBADGE drive, eject, restart.";
-const hint = "A: run test ROM";
+const hint = "Start+Select: menu";
 
 const band_h = 12;
 const advice_y = 16;
 const line_h = 9;
-/// First line of the skipped-file list and the last row it may use.
+/// First line of the reason and the skipped-file list, and the last row
+/// they may use.
 const list_y = 56;
 const list_last_y = 110;
 const hint_y = cart.screen_height - 8;
 
-/// One update. True when the user leaves (A or B): app.zig then runs the
-/// embedded ROM.
-pub fn update(e: input.Edge) bool {
-    if (e.pressed(.a) or e.pressed(.b)) return true;
-    draw();
-    return false;
-}
-
-fn draw() void {
+/// Draw the screen (every update; no input: the OS menu leaves).
+pub fn draw() void {
     video.blank(0);
     cart.rect(.{ .x = 0, .y = 0, .width = cart.screen_width, .height = band_h, .fill_color = band_color });
     text.draw(headline, 0, 2, accent_color, band_color);
@@ -50,24 +45,35 @@ fn draw() void {
     const n = wrap(advice, cols, &lines);
     for (lines[0..n], 0..) |l, k| text.draw(l, 0, advice_y + @as(i32, @intCast(k)) * line_h, row_color, black);
 
-    // Refused files, each wrapped to whole lines, while they fit.
+    // Why no drive ROM runs, then the refused files, each wrapped to whole
+    // lines, while they fit.
     var y: i32 = list_y;
-    var shown: usize = 0;
     var buf: [96]u8 = undefined;
+    if (romsrc.no_rom) |why| y = draw_wrapped(join(&buf, "Drive", why), y, accent_color);
+    var shown: usize = 0;
     for (romsrc.candidates()) |*c| {
         if (shown == 4) break;
-        const s = join(&buf, c.file_name(), c.note());
-        const k = wrap(s, cols, &lines);
-        if (k == 0) continue;
-        if (y + @as(i32, @intCast(k - 1)) * 8 > list_last_y) break;
-        for (lines[0..k]) |l| {
-            text.draw(l, 0, y, dim_color, black);
-            y += 8;
-        }
-        y += 2;
+        if (c.playable()) continue;
+        const y_next = draw_wrapped(join(&buf, c.file_name(), c.note()), y, dim_color);
+        if (y_next == y) break;
+        y = y_next;
         shown += 1;
     }
-    text.draw(hint, 0, hint_y, row_color, black);
+    text.draw(hint, 0, hint_y, dim_color, black);
+}
+
+/// `s` word-wrapped from row `y` if all of it fits above `list_last_y`;
+/// returns the next free row (`y` itself when nothing was drawn).
+fn draw_wrapped(s: []const u8, y0: i32, color: cart.DisplayColor) i32 {
+    var lines: [6][]const u8 = undefined;
+    const k = wrap(s, cols, &lines);
+    if (k == 0 or y0 + @as(i32, @intCast(k - 1)) * 8 > list_last_y) return y0;
+    var y = y0;
+    for (lines[0..k]) |l| {
+        text.draw(l, 0, y, color, black);
+        y += 8;
+    }
+    return y + 2;
 }
 
 /// "NAME: reason" into `buf` (cut at its end).
