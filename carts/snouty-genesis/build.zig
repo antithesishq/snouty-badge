@@ -131,6 +131,22 @@ pub fn add(b: *Build, sycl_badge_dep: *Build.Dependency, opts: common.Options) v
             .{ .name = "romfs", .module = romfs_host },
         },
     });
+    // frontend/input.zig (the Select tap, hold and fast-forward double
+    // tap) for tests/input_unit.zig: it needs only `cart.Controls` from the
+    // cart API, which the host compiles lazily.
+    const input_host = b.createModule(.{
+        .root_source_file = b.path(dir ++ "cart/src/frontend/input.zig"),
+        .target = b.graph.host,
+        .optimize = test_optimize,
+        .imports = &.{
+            .{ .name = "core", .module = core_host },
+            .{ .name = "cart-api", .module = b.createModule(.{
+                .root_source_file = sycl_badge_dep.path("src/os/cart/api.zig"),
+                .target = b.graph.host,
+                .optimize = test_optimize,
+            }) },
+        },
+    });
     const tests = b.addTest(.{
         .name = "snouty-genesis-tests",
         .filters = if (opts.test_filter) |f| &.{f} else &.{},
@@ -143,6 +159,7 @@ pub fn add(b: *Build, sycl_badge_dep: *Build.Dependency, opts: common.Options) v
                 .{ .name = "rom", .module = rom_host },
                 .{ .name = "romfs", .module = romfs_host },
                 .{ .name = "drive", .module = drive_host },
+                .{ .name = "input", .module = input_host },
             },
         }),
     });
