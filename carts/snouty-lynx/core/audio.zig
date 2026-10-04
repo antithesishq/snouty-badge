@@ -446,6 +446,15 @@ pub fn catch_up(m: *Mikey, t: Tick) void {
     render_to(&a.r, out, t);
 }
 
+/// The channels' clocks up to Mikey's `now`, nothing rendered (before a
+/// timer register access: only the clocking matters there). One compare
+/// when nothing is due.
+pub inline fn sync_clocks(m: *Mikey) void {
+    const a = &m.audio;
+    if (a.next <= m.now) run(m, sink(m), m.now);
+    if (m.now > a.time) a.time = m.now;
+}
+
 /// The underflows up to tick t, in time order (same-tick ones in the
 /// order timer 7's, then channel 0 to 3). Squares and constants whose
 /// borrow nobody counts go in closed form together (`joint`) up to the

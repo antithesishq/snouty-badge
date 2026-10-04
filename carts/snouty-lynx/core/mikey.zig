@@ -470,7 +470,7 @@ pub const Mikey = struct {
         const i: u3 = @intCast(addr >> 2);
         // The channels run up to now under the old settings first (timer
         // 7 may clock audio 0, timer 1 may become linked behind audio 3).
-        audio.catch_up(m, m.now);
+        audio.sync_clocks(m);
         m.settle_all();
         m.freeze(i);
         const t = &m.timers[i];
@@ -498,7 +498,7 @@ pub const Mikey = struct {
         const i: u3 = @intCast(addr >> 2);
         // Settling a quiet timer 7 forgets its past underflows, which a
         // linked audio 0 may not have counted yet.
-        if (i == 7) audio.catch_up(m, m.now);
+        if (i == 7) audio.sync_clocks(m);
         const t = &m.timers[i];
         return switch (addr & 3) {
             0 => t.backup,
@@ -604,7 +604,7 @@ pub const Mikey = struct {
     /// Timer i's count without side effects on the catch-up state, for
     /// tests and diagnostics.
     pub fn timer_count(m: *Mikey, i: u3) u8 {
-        if (i == 7) audio.catch_up(m, m.now);
+        if (i == 7) audio.sync_clocks(m);
         return m.count(i);
     }
 };
