@@ -53,14 +53,16 @@
 //! the channels' underflows Mikey events (`Mikey.aud_event`), so timer 1
 //! counts at the right tick (rare: no known game links it).
 //!
-//! Speed (`run`): the underflows go in time order; a channel whose borrow
-//! nobody counts takes its underflow in line (what can change it is
-//! computed once per run), fast squares and constants (normal mode, tap 0
-//! only or no taps, period up to `joint_period`: Blue Lightning parks its
-//! music channels as 1 MHz squares, 16,667 underflows a frame each) go in
-//! closed form together (`joint`), with bin values bit-identical to one
-//! underflow at a time (a test checks), and settled silence fills bins
-//! with 128 directly.
+//! Speed (`run`): the underflows go in time order; when the channels whose
+//! borrow nobody counts have enough underflows before anything else
+//! happens, they go together bin by bin (`bulk`): squares and constants
+//! (normal mode, tap 0 only or no taps; Blue Lightning parks its music
+//! channels as 1 MHz squares, 16,667 underflows a frame each) in closed
+//! form, the others (its 1 MHz integrating noise) stepped in a tight loop,
+//! with bin values bit-identical to one underflow at a time (a test
+//! checks); otherwise such a channel takes its underflow in line (what can
+//! change that is computed once per run). Settled silence fills bins with
+//! 128 directly.
 //!
 //! Mix (`weight`): per channel the left and right weights in 1/16
 //! (16 = full, 0 = MSTEREO off, the ATTEN nibble when MPAN selects it),
@@ -474,26 +476,26 @@ pub inline fn sync_clocks(m: *Mikey) void {
 }
 
 /// The underflows up to tick t, in time order (same-tick ones in the
-/// order timer 7's, then channel 0 to 3). A channel whose borrow nobody
-/// counts (`alone`) takes its underflow in line; fast squares and
-/// constants go in closed form together (`joint`) up to the next other
-/// underflow; anything else (links, one-shots) goes through the general
-/// path one tick at a time.
+/// order timer 7's, then channel 0 to 3). The channels whose borrow
+/// nobody counts (`alone`) go together bin by bin (`bulk`) up to the next
+/// other underflow when that pays, else each takes its underflow in line;
+/// anything else (links, one-shots) goes through the general path one
+/// tick at a time.
 noinline fn run(m: *Mikey, out: Out, t: Tick) void {
     const a = &m.audio;
     // Nothing below changes inside a run (only register writes do).
     var solo: [4]bool = undefined;
     var w: [4]i32 = undefined;
     var per: [4]Tick = undefined;
-    var fast: u4 = 0;
     for (&a.ch, 0..) |*ch, k| {
         const c: u2 = @intCast(k);
         solo[k] = alone(m, c);
         w[k] = weight(a, c);
         per[k] = period(&ch.timer);
-        if (solo[k] and ch.taps <= 1 and ch.timer.ctla & Control.integrate == 0 and per[k] <= joint_period) fast |= @as(u4, 1) << c;
     }
     var t7n = t7_next(m, a.time);
+    // `bulk` is not tried again before this tick once it did not pay.
+    var bulk_from: Tick = 0;
     while (true) {
         var x = t7n;
         var c: u8 = 4;
@@ -504,19 +506,19 @@ noinline fn run(m: *Mikey, out: Out, t: Tick) void {
             }
         }
         if (x > t) break;
-        if (c < 4 and fast & (@as(u4, 1) << @intCast(c)) != 0) {
+        if (c < 4 and solo[c] and x >= bulk_from) {
             var live: u4 = 0;
             var rest = t7n;
-            for (&a.ch, 0..) |*ch, k| {
-                const bit = @as(u4, 1) << @intCast(k);
-                if (fast & bit != 0 and ch.timer.expire != never) live |= bit else rest = @min(rest, ch.timer.expire);
+            for (&a.ch, solo, 0..) |*ch, so, k| {
+                if (so and ch.timer.expire != never) live |= @as(u4, 1) << @intCast(k) else rest = @min(rest, ch.timer.expire);
             }
             if (rest > x) {
                 const end = @min(@min(t, rest - 1), a.r.win_end -| 1);
-                if (end >= x and underflows(a, live, end) >= toggle_min) {
-                    joint(m, out, live, end);
+                if (end >= x and underflows(a, live, end) >= bulk_min) {
+                    bulk(m, out, live, end, &w, &per);
                     continue;
                 }
+                bulk_from = rest;
             }
         }
         if (c < 4 and solo[c]) {
@@ -553,17 +555,11 @@ fn alone(m: *const Mikey, c: u2) bool {
     return !(n.linked() and n.running());
 }
 
-/// Squares and constants with a period up to this many ticks (four or
-/// more underflows a bin) go in closed form (`joint`): slower ones change
-/// less often than a closed form costs per bin.
-pub const joint_period: Tick = 90;
-
-/// Underflows (of all the `joint` channels together) from which the
-/// closed form takes over. A 1 MHz square (backup 0 at 1 us, as Blue
-/// Lightning parks its music channels between notes) is 16,667 underflows
-/// a frame. (A variable only so the tests can switch the closed form off
-/// and compare.)
-pub var toggle_min: u32 = 16;
+/// Underflows (of the `bulk` channels together, up to the next other
+/// underflow) from which `bulk` takes over from one underflow at a time:
+/// below it the per-bin walk and the setup cost more than they save. (A
+/// variable only so the tests can switch `bulk` off and compare.)
+pub var bulk_min: u32 = 16;
 
 fn period(t: *const Timer) Tick {
     return (@as(Tick, t.backup) + 1) << t.shift();
@@ -579,29 +575,48 @@ fn underflows(a: *const Audio, set: u4, end: Tick) u32 {
     return n;
 }
 
-/// One `joint` channel from tick `pos` on: its contribution `cur` until
-/// its next underflow `x0`, then `nxt`, `nn`, `nxt`, `nn`, ... every `p`
-/// ticks (`nn` = `cur` once it has alternated: A, B, A, ...).
+/// One `bulk` channel from the run's current tick on: its contribution
+/// `cur` until its next underflow `x0`, then one every `p` ticks. A square
+/// or a constant (`alt`: normal mode, tap 0 only or no taps) alternates
+/// `nxt`, `nn`, `nxt`, ... in closed form; any other channel is stepped
+/// underflow by underflow (`ch`).
 const Lane = struct {
+    ch: *Channel,
+    alt: bool,
+    w: i32,
     x0: Tick,
     p: Tick,
     cur: i32,
-    nxt: i32,
-    nn: i32,
+    nxt: i32 = 0,
+    nn: i32 = 0,
     /// Underflows passed.
     k: u32 = 0,
 
     /// The integral of the contribution from `u` to `v` (at most a bin
-    /// apart, and `p` at most `joint_period`: it stays in an i32), moving
-    /// the lane to `v`.
-    noinline fn span(l: *Lane, u: Tick, v: Tick) i32 {
+    /// apart: it stays in an i32), moving the lane to `v`.
+    fn span(l: *Lane, u: Tick, v: Tick) i32 {
         if (v < l.x0) return l.cur * @as(i32, @intCast(v - u));
+        if (!l.alt) {
+            var sum: i32 = 0;
+            var pos = u;
+            while (l.x0 <= v) {
+                sum += l.cur * @as(i32, @intCast(l.x0 - pos));
+                pos = l.x0;
+                l.ch.step();
+                l.cur = @as(i32, @as(i8, @bitCast(l.ch.output))) * l.w;
+                l.x0 += l.p;
+                l.k += 1;
+            }
+            return sum + l.cur * @as(i32, @intCast(v - pos));
+        }
         const d = v - l.x0;
         const j = d / l.p;
         const rem: i32 = @intCast(d - j * l.p);
         const ev: i32 = @intCast((j + 1) / 2);
         const od: i32 = @intCast(j / 2);
         const even = j & 1 == 0;
+        // ev + od segments of p ticks lie inside the bin: their sum stays
+        // within a bin's ticks times a contribution.
         const sum = l.cur * @as(i32, @intCast(l.x0 - u)) + (ev * l.nxt + od * l.nn) * @as(i32, @intCast(l.p)) + rem * (if (even) l.nxt else l.nn);
         l.x0 += (j + 1) * l.p;
         l.k += j + 1;
@@ -616,32 +631,32 @@ const Lane = struct {
     }
 };
 
-/// The channels in `set` (fast squares and constants) from `Audio.time`
-/// to tick `end` (inside the frame, before any other underflow) in closed
-/// form: each one's integral over a bin is arithmetic, so every bin gets
-/// exactly the integer sum one change at a time gives, and each channel
-/// ends in the same state: after 12 clocks its shift register repeats
-/// with period 2 (or 1), so only the last 12 or 13 clocks are run.
-noinline fn joint(m: *Mikey, out: Out, set: u4, end: Tick) void {
+/// The channels in `set` (each `alone`, free-running) from `Audio.time`
+/// to tick `end` (inside the frame, before any other underflow), bin by
+/// bin: every bin gets exactly the integer sum one change at a time
+/// gives. A stepped lane is run as `run` would; an alternating one in
+/// closed form, ending in the same state (after 12 clocks its shift
+/// register repeats with period 2 or 1, so only the last 12 or 13 clocks
+/// are run).
+noinline fn bulk(m: *Mikey, out: Out, set: u4, end: Tick, w: *const [4]i32, per: *const [4]Tick) void {
     const a = &m.audio;
     const r = &a.r;
     const t0 = a.time;
     render_to(r, out, t0);
     var lanes: [4]Lane = undefined;
-    var ks: [4]u2 = undefined;
     var n: usize = 0;
     var base: i32 = r.level;
-    for (0..4) |k| {
+    for (&a.ch, 0..) |*ch, k| {
         if (set & (@as(u4, 1) << @intCast(k)) == 0) continue;
-        const ch = &a.ch[k];
-        const w = weight(a, @intCast(k));
-        var probe = ch.*;
-        probe.clock_poly();
-        const va = @as(i32, @as(i8, @bitCast(probe.output))) * w;
-        probe.clock_poly();
-        const vb = @as(i32, @as(i8, @bitCast(probe.output))) * w;
-        lanes[n] = .{ .x0 = ch.timer.expire, .p = period(&ch.timer), .cur = ch.contrib, .nxt = va, .nn = vb };
-        ks[n] = @intCast(k);
+        const l = &lanes[n];
+        l.* = .{ .ch = ch, .alt = ch.taps <= 1 and ch.timer.ctla & Control.integrate == 0, .w = w[k], .x0 = ch.timer.expire, .p = per[k], .cur = ch.contrib };
+        if (l.alt) {
+            var probe = ch.*;
+            probe.clock_poly();
+            l.nxt = @as(i32, @as(i8, @bitCast(probe.output))) * w[k];
+            probe.clock_poly();
+            l.nn = @as(i32, @as(i8, @bitCast(probe.output))) * w[k];
+        }
         base -= ch.contrib;
         n += 1;
     }
@@ -665,12 +680,14 @@ noinline fn joint(m: *Mikey, out: Out, set: u4, end: Tick) void {
     r.acc = acc;
     r.time = end;
     var level = base;
-    for (lanes[0..n], ks[0..n]) |*l, c| {
-        const ch = &a.ch[c];
+    for (lanes[0..n]) |*l| {
+        const ch = l.ch;
         const t = &ch.timer;
         if (l.k != 0) {
-            const clocks = if (l.k <= 13) l.k else 12 + ((l.k - 12) & 1);
-            for (0..clocks) |_| ch.clock_poly();
+            if (l.alt) {
+                const clocks = if (l.k <= 13) l.k else 12 + ((l.k - 12) & 1);
+                for (0..clocks) |_| ch.clock_poly();
+            }
             ch.contrib = l.cur;
             t.done = t.ctla & Ctla.reset_done == 0;
             t.value = t.backup;
