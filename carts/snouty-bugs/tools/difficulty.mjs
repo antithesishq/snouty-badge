@@ -23,14 +23,17 @@
 // debug_probe and --call debug_bot:N before the first update (the bot holds A,
 // so it starts the game from the title on update 0), --sample for the per-tick
 // trace and --until to stop once the stage index reaches N. Same build, same
-// seed, same table.
+// seed, same table. Seed 1 is the game the headless clock seeds (the default
+// table); any other --seed also calls debug_seed (when exported) so the world
+// rng, and with it spawn positions, moth paths and boss teleports, differs.
 //
 // Exports used: debug_probe, debug_bot(n), debug_hits, debug_stage_index
 // (stage + 4 * loop; falls back to debug_stage, the loop counter, on carts
 // before M7), and when present debug_rank, debug_boss_hp, debug_stage_clears,
 // debug_weapon (kind * 10 + level), debug_forks, debug_state,
-// debug_boss_phase (the phases column). A missing optional export shows as
-// "-". --bosses also needs debug_boss(n) and debug_warp.
+// debug_boss_phase (the phases column), debug_seed(n) (seeds other than 1).
+// A missing optional export shows as "-". --bosses also needs debug_boss(n)
+// and debug_warp.
 import fs from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
@@ -97,6 +100,9 @@ function runJob(bot, boss) {
     const args = [preview, opts.wasm, "--frames", String(opts.frames), "--quiet", "--out", out, "--seed", String(opts.seed),
         "--call", "debug_probe", "--call", `debug_bot:${bot}`, "--sample", sampled.join(","), "--until", `${stageExport} >= ${opts.stages}`];
     if (boss !== null) args.push("--call", `debug_boss:${boss}`, "--call-at", `${opts.warpAt} debug_warp`);
+    // Seed 1 is the game the headless clock gives; any other seed also
+    // seeds the world rng (spawn positions, moth paths, boss teleports).
+    if (opts.seed !== 1 && exportNames.has("debug_seed")) args.push("--call", `debug_seed:${(Math.imul(opts.seed, 2654435761) >>> 0) & 0x7fffffff}`);
     return new Promise((resolve, reject) => {
         const child = spawn(process.execPath, args, { stdio: ["ignore", "ignore", "pipe"] });
         let err = "";

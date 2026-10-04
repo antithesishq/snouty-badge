@@ -52,6 +52,13 @@ var god: bool = false;
 /// runs. Constant through a probe run (like `god`), so applying it in both
 /// simulate modes keeps the identity check exact.
 var probe: bool = false;
+/// Test hook (wasm `debug_seed`): when non-zero, every new game seeds
+/// the world rng with it instead of the clock, so the difficulty probe
+/// can play other games than the headless clock's one.
+var seed_override: u32 = 0;
+/// What the last probe hit was (`debug_last_hit`): kind + 1, plus 100 for
+/// a ram; 0 before any. Diagnostics only, not World state.
+var last_probe_hit: u32 = 0;
 /// Difficulty-probe bot (wasm `debug_bot`, 0 = off): while non-zero,
 /// `update` reads its controls from `autopilot.controls`.
 var bot: u8 = 0;
@@ -206,7 +213,7 @@ fn new_game(hard: bool) void {
     w.* = .{};
     w.bg = bg;
     w.input = input.meta;
-    const t: u32 = @truncate(cart.micros_since_boot());
+    const t: u32 = if (seed_override != 0) seed_override else @truncate(cart.micros_since_boot());
     rng.seed(if (t == 0) 0x5EED else t);
     hardcore = hard;
     rewinds = if (hard) 0 else start_rewinds;
@@ -257,6 +264,7 @@ pub fn simulate(mode: world.Mode) void {
         const p = &world.w.player;
         p.invuln = probe_invuln;
         p.probe_hits += 1;
+        last_probe_hit = @as(u32, @backingInt(hit.kind)) + 1 + if (hit.by == .enemy) @as(u32, 100) else 0;
         hit = .{};
     }
     // The retry shield takes the hit inside the World, in both modes: the
@@ -478,6 +486,8 @@ comptime {
         @export(&debug_drops, .{ .name = "debug_drops" });
         @export(&debug_probe, .{ .name = "debug_probe" });
         @export(&debug_hits, .{ .name = "debug_hits" });
+        @export(&debug_last_hit, .{ .name = "debug_last_hit" });
+        @export(&debug_seed, .{ .name = "debug_seed" });
         @export(&debug_rank, .{ .name = "debug_rank" });
         @export(&debug_mercy, .{ .name = "debug_mercy" });
         @export(&debug_stage_index, .{ .name = "debug_stage_index" });
@@ -610,6 +620,17 @@ fn debug_probe() callconv(.c) u32 {
 /// Hits counted by the probe mode this game (World counter).
 fn debug_hits() callconv(.c) u32 {
     return world.w.player.probe_hits;
+}
+/// Test hook: the world rng seed of every new game from now on (0 = the
+/// clock, as on the badge). Returns it.
+fn debug_seed(n: u32) callconv(.c) u32 {
+    seed_override = n;
+    return n;
+}
+/// What the last probe hit was: enemy kind + 1 (`enemies.Kind` order),
+/// plus 100 when the enemy itself rammed the ship; 0 before any.
+fn debug_last_hit() callconv(.c) u32 {
+    return last_probe_hit;
 }
 /// Rank 0..1000 (PLAN.md M7).
 fn debug_rank() callconv(.c) u32 {

@@ -408,8 +408,11 @@ It prints one table, a row per bot and stage (`L1S1` .. `L1S4`, then
 A `*` after the stage means the run hit its cap (`--frames`, default 15,000
 updates per stage) inside that stage. Options: `--bots 1,2,3`, `--stages N`
 (stop once the stage index, stage + 4 x loop, reaches N; default 5),
-`--frames CAP`, `--seed N` (preview's `cart.rand()` seed; the game's own seed
-comes from the deterministic wasm clock), `--json FILE` (the rows plus the
+`--frames CAP`, `--seed N` (1, the default, is the game the deterministic
+wasm clock seeds; any other N also seeds the world rng through the
+`debug_seed` test hook, so spawn positions, moth paths and boss teleports
+differ: run a few to see the spread, the dodger's runs vary a lot from seed
+to seed), `--json FILE` (the rows plus the
 wasm's sha256), `--no-build`; `CART_WASM` points it at another build. Same
 build, same table. Each bot is one run of `../../tools/preview.mjs` with
 `--call debug_probe --call debug_bot:N` (the bot holds A, so it starts the
