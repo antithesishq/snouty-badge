@@ -16,9 +16,16 @@ here: every forked file names its Zero source and commit on its first line.
   3 right, 4 A, 5 B, 6 Start, 7 Select), `Setup` (track, seed, the two
   humans' racers).
 - `sim.zig`: `reset(w, setup)` and `simulate(w, inputs: [2]u8)`, pure in
-  `(World, inputs)`: auto-throttle driving, walls, wrecks and the WATCHDOG
-  respawn, contacts by mass, laps, rank. No cart API, no globals written.
-- `ai.zig`: the centerline driver per racer `Crew`; also the autopilot.
+  `(World, inputs)`: auto-throttle driving, walls, armor and `damage`,
+  wrecks with kill credit, hulks and the WATCHDOG respawn, contacts and
+  ramming by mass, laps (and the ammo refill), rank. No cart API, no
+  globals written.
+- `weapons.zig`: the 4 front and 4 rear weapons (SPEC 6.1, 6.2), the
+  projectile and drop pools, hits, the SPEAR PHISH lock, the event ring
+  writer `emit`; part of `simulate`.
+- `ai.zig`: the centerline driver per racer `Crew` with its combat
+  character (aim, reaction, drops; `update_aim` is called by `sim`); also
+  the autopilot.
 - `racers.zig`: roster (names, cars, chassis, placeholder liveries).
 - `tuning.zig`: every constant (driving, chassis multipliers, AI).
 - `track.zig`: runtime `League`/`Track` structs of slices (the built-in
@@ -29,7 +36,10 @@ here: every forked file names its Zero source and commit on its first line.
   `sound.zig` + `engine.zig` (Zero's tones and drone), `input.zig` (edges,
   the Start+Select chord mask, `race_byte`).
 - Host tests: `host_tests.zig` root, `sim_test.zig` (determinism, laps,
-  completable, chassis), tests in `track.zig`, `fixed.zig`, `engine.zig`.
+  completable with combat off, chassis), `weapons_test.zig` (a scenario
+  per weapon on a frozen arena, ramming, wrecks, hulks, kill credit, AI
+  combat, the 20-race combat soak), tests in `track.zig`, `fixed.zig`,
+  `engine.zig`.
 
 ## Data
 

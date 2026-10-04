@@ -388,7 +388,79 @@ and a real fight; tag `snouty-gc/m1`; merged to main.
 
 ### M1 status
 
-(empty)
+- 2026-10-04: **Track A (combat simulation) DONE** on `gc/spec`. New
+  `weapons.zig` (firing from the race byte, the projectile and drop pools,
+  hit resolution, the SPEAR PHISH lock, the event ring writer) and
+  `weapons_test.zig`; `sim.zig` gains armor and `damage`, `wreck` with
+  kill credit, ramming by mass and closing speed with MAINFRAME's plough,
+  wall damage by impact, hulks, per-car hit-stop, respawn with full armor
+  and kept ammo, the per-lap ammo refill, and calls into the weapons and
+  the AI aim; `ai.zig` crews gain SPEC 4.3/6.5 characters (target
+  preference, reaction delay, aim noise from the world PRNG, drop rules,
+  LEGACY rams, ROOTKIT stalks, everyone steers round a FIREWALL, LANCE
+  charged on straights). Every number is in `tuning.zig` (SPEC values where
+  SPEC gives one, the dangerous side where it does not). Interface: no
+  field renamed or removed; added `Car.rot_ticks`, `rear_cd`, `on_leak`,
+  `aim`, `aim_ticks`, `World.combat`, `Setup.combat` (default true; false
+  only for the completable tests, SPEC 12). `Car.a_was` holds "A without
+  Down" last tick. Render-side helpers: `sim.is_hulk(c)` (draw the burning
+  hulk: `sprites.draw_cars` still hides every wrecked car),
+  `weapons.projs_live`/`drops_live`.
+- Events as M1.0 specified: `hit` (attacker or `no_car` for a wall/hulk,
+  victim, damage; damage under `hit_event_min` = 2, i.e. a FIREWALL tick,
+  logs only when no hit flash is running), `wreck` (victim, killer or
+  `no_car`, `Wreck` cause), `lance` (owner, target or `no_car`, length px
+  capped at 255: the beam reaches 300, so use the event's x, y end point),
+  `explode` (`a` = the wrecked or hit car or `no_car`, `b` = radius px: 24
+  for a wreck and a LOGIC BOMB, 12 for a SPEAR PHISH hit, 0 for a spark on
+  a wall or hulk), `respawn` (car). An armor wreck sets no per-car
+  `Message` (the `Message` enum belongs to hud.zig's switch): the
+  presentation keys its text on the `wreck` event.
+- Tests (`zig build test-gc`): **51 pass** (25 before). New in
+  `weapons_test.zig`: PING (cadence, damage, ammo per volley, range, never
+  the owner, empty), BROADCAST (fan, damage, knock, cooldown, reach), FIBER
+  LANCE (fizzle free, charge cap, hit, miss off the line, first car in line
+  takes it, a wall stops it), SPEAR PHISH (lock cone, range, behind, nearest,
+  not on wrecks; homing within 600 turns/tick hits a dodging target; no lock
+  flies straight; 3 a lap), shots pass under airborne and immune cars and
+  spark on walls and hulks, rear press edge and cooldown (Down+A never fires
+  the front), LOGIC BOMB (arming, trigger, blast radius, push, spares cars
+  outside 24 px), MEMORY LEAK (growth 6 to 18, slick and yaw kick, expiry at
+  600), BIT ROT (row, damage per caltrop, consumed, slow), FIREWALL (1 a
+  tick inside, nothing beside, no event flood, expiry), pools at cap reuse
+  slots, ramming (formula both ways, plough x2 from the front only, grazes
+  free, combat off), wreck (credit, events, hit-stop while the world runs,
+  hulk blocks a car driven at it for 90 ticks, respawn at 120 with full
+  armor, kept ammo, immunity), kill credit (180-tick window, falls, walls,
+  own drops), loadouts and the line refill, combat off, AI aim and
+  reaction, target preference (BOTNET the leader, SYSADMIN the human),
+  drops (KIDDIE on its line, LEGACY wide), LANCE charge and release,
+  firewall dodge; determinism with combat (a seeded 6-AI fight twice, two
+  worlds interleaved with both humans firing). The M0 random-input
+  determinism tests now run with combat on.
+- **Soak** (20 seeded 6-AI races, combat on, run until all six finish):
+  all finish in 6,641 to 7,962 ticks (the clean autopilot needs 4,968 for
+  3 laps); longest no-progress run **228 ticks** (gate 600); pools peak at
+  21 of 48 shots and 32 of 32 drops (BIT ROT's six caltrops a drop; the
+  oldest is reused); 19 wrecks a race on average (374 in all; 1 fall),
+  every car wrecked 1 to 8 times; up to 741 events a race. The SNOUTY
+  autopilot as the human in a full combat race (10 seeds): mean finish
+  6,222 ticks, 4 wrecks a race, ranks 2 to 6. Damage by source over those
+  10 races: BOTNET 6,574, SNOUTY 4,271, SYSADMIN 3,961, LEGACY 3,000,
+  KIDDIE 2,712, ROOTKIT 1,483, walls and hulks 395.
+- **`@sizeOf(World)` = 1,964 B** (Car 84; cap 2,560).
+- Gate: `tools/check.sh` green (build, test via test-gc, check-float,
+  tracks, preview, bench). Bench on the re-recorded `m0_race.json` (600
+  frames, combat on): mean 3.08 ms, worst 3.92 ms (frame 20, the race
+  start), `--lcd` identical; `sim.simulate` (with the weapons and AI aim
+  inlined) is 2.4% of cycles. The stress scene is Track B's script.
+- Changes outside Track A's files, for the gate: `tools/check.sh` (the
+  preview's World bound 1024 -> 2560, matching sim_test's cap, since the
+  M1.0 pools already made it 1,940 B; the "no car wrecked when the results
+  come up" expectation dropped, as combat makes it legitimate) and
+  `tools/scripts/m0_race.json` re-recorded with `tools/record_script.py`
+  (the autopilot now fires, so the M0 recording no longer replayed its
+  race).
 
 ## Deferred questions
 
@@ -427,3 +499,47 @@ SPEC 17 holds the design defaults. Taken during M0 (Track A):
     minimap dots), until the art track's car sheets.
 12. **Select** does nothing in the M0 race (look-back is M3); the minimap
     is 32 px fixed (Zero's Select toggle is gone).
+
+Taken during M1 (Track A, combat simulation):
+
+13. **Wall bounce fixed**: Zero's rail reflection subtracts `(1 + e) vn`
+    from both velocity components whatever the normal, which flings a car
+    along the wall faster than it hit it. With wall damage that turned
+    scrapes into 60-damage hits and most falls into the pits. GC reflects
+    along the normal (`v -= (1 + e)(v.n) n / |n|^2`); Zero is untouched.
+    The clean autopilot's 3 laps are unchanged (4,968 ticks).
+14. **Wall damage** (SPEC 3.3 gives no number): 4 per px/tick of normal
+    impact speed over 1 px/tick, so a 3 px/tick head-on costs 8. Hulks
+    are walls for it.
+15. **Contacts never push a car into a wall** (a hulk's push-out could
+    shove a car through a two-tile wall onto the next leg), and a car more
+    than its sample's half width + 32 px off the centerline is off its leg:
+    a fall (SEGMENT FAULT), credited to whoever hit it last.
+16. **Drops spare their owner for 60 ticks**, then hit anyone; a LOGIC
+    BOMB's blast hurts every car within 24 px, its owner included.
+    Unexploded bombs clear after 30 s, caltrops after 20 s (SPEC silent).
+17. **Immune (respawned), airborne and finished cars**: shots pass through
+    or under them and drops ignore them; finished cars neither fire nor
+    take damage. The AI does not aim at immune or airborne cars.
+18. **Ramming is mutual**: each car rams the other with the SPEC formula;
+    closing under 0.25 px/tick deals nothing (pack grinding). The plough
+    applies when the victim is within 45 degrees of the MAINFRAME's nose:
+    LEGACY at 3 px/tick into a KIDDIE deals 82, a wreck in one hit.
+19. **Unspecified weapon timings**: PING one ammo a twin volley; BROADCAST
+    24-tick cooldown; LANCE 20-tick cooldown after a shot; SPEAR PHISH
+    launched at the car's velocity + 3 px/tick, 40-tick cooldown; rear
+    weapons on the Down+A press edge with a 30-tick cooldown. FIREWALL
+    flame is 24 px deep (a car crossing at speed takes about 8). BIT ROT's
+    slow brakes the car while it is over 80% of its top speed.
+20. **Hit-stop** is only the per-car counter (12 ticks, for the
+    presentation); the WATCHDOG delay runs from the wreck, not after it.
+21. **AI characters** (`ai.crews`): reaction ticks / aim noise px: SNOUTY
+    12 (of lock) / 2, LEGACY 4 / 10, KIDDIE 1 / 14, SYSADMIN 6 / 2,
+    ROOTKIT 8 / 4, BOTNET 6 / 8. SYSADMIN prefers humans, BOTNET the
+    leader, the rest the nearest. A braking AI does not fire; a LANCE
+    holder that must brake lets go (a charged beam fires blind).
+22. **Ammo refills only on a credited lap** (the sectors seen), so backing
+    over the line does not reload.
+23. **Balance** is left where the soak puts it (19 wrecks a 6-AI race; the
+    autopilot human wrecked about 4 times a race and about 21 s slower than
+    a clean race). Adrian's play test sets the numbers in `tuning.zig`.
