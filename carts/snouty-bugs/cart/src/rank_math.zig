@@ -3,7 +3,7 @@
 //! runs them on the host. `rank.zig` feeds them from the World.
 //!
 //! value = clamp(stage_base[stage] + 400 * loop + stage_seconds
-//!               + 25 * (level - 1) + 30 * forks - mercy, 0, 1000)
+//!               + 50 * (level - 1) + 50 * forks - mercy, 0, 1000)
 //! r = value / 1000
 
 pub const max_value: u32 = 1000;
@@ -11,8 +11,8 @@ pub const stage_base = [4]u32{ 0, 150, 300, 450 };
 const per_loop: u32 = 400;
 /// stage_seconds = min(waves.t / 60, 120).
 const max_stage_seconds: u32 = 120;
-const per_level: u32 = 25;
-const per_fork: u32 = 30;
+const per_level: u32 = 50;
+const per_fork: u32 = 50;
 
 /// Everything the rank is computed from (all World state).
 pub const Inputs = struct {
@@ -100,10 +100,10 @@ test "rank adds stage, loop, seconds, level and forks" {
     try testing.expectEqual(@as(u32, 400), value(.{ .loop = 1 }));
     try testing.expectEqual(@as(u32, 1), value(.{ .t = 119 }));
     try testing.expectEqual(@as(u32, 120), value(.{ .t = 60 * 500 }));
-    try testing.expectEqual(@as(u32, 100), value(.{ .level = 5 }));
+    try testing.expectEqual(@as(u32, 200), value(.{ .level = 5 }));
     try testing.expectEqual(@as(u32, 0), value(.{ .level = 0 }));
-    try testing.expectEqual(@as(u32, 90), value(.{ .forks = 3 }));
-    try testing.expectEqual(@as(u32, 300 + 30 + 75 + 60), value(.{ .stage = 2, .t = 1800, .level = 4, .forks = 2 }));
+    try testing.expectEqual(@as(u32, 150), value(.{ .forks = 3 }));
+    try testing.expectEqual(@as(u32, 300 + 30 + 150 + 100), value(.{ .stage = 2, .t = 1800, .level = 4, .forks = 2 }));
 }
 
 test "mercy subtracts and the value clamps to 0..1000" {
