@@ -17,7 +17,9 @@
 #            - tools/scripts/m0_race.json replayed equals the autopilot's own
 #              drive (debug_world_sum): input scripts reproduce a race;
 #            - a Quick Race driven by the autopilot reaches the results
-#              screen with SNOUTY's 3 laps done and no wreck in progress;
+#              screen with SNOUTY's 3 laps done, combat on (from M1 a car
+#              may be wrecked when the results come up), and the World
+#              under the 2,560 B cap of sim_test;
 #            - the attract demo starts after 10 s idle on the title.
 #   bench    badge-bench (calibrated) on badge-bench/carts/snouty-gc.toml,
 #            once plain and once with --lcd: worst `busy ms` <= BENCH_MAX_MS
@@ -113,7 +115,7 @@ if want preview; then
     if [ -n "$a" ] && [ "$a" = "$b" ]; then echo "ok   m0_race.json replays the autopilot's race ($a)"; else echo "FAIL m0_race.json replay '$a' != autopilot '$b'"; st=1; fi
     run_preview race --frames 6000 --call debug_start_race:0 --call debug_set_autopilot:1 \
         --until 'debug_screen == 5' --expect 'debug_screen == 5' --expect 'debug_lap == 3' \
-        --expect 'debug_phase == 2' --expect 'debug_wrecks == 0' --expect 'debug_world_size < 1024' \
+        --expect 'debug_phase == 2' --expect 'debug_world_size < 2560' \
         --dump-exports debug_tick,debug_rank,debug_best_lap,debug_world_size || st=1
     run_preview attract --frames 760 --press START:2-2 --at '700 debug_screen == 3' --at '700 debug_mode == 1' \
         --expect 'debug_follow == 0' --dump-exports debug_screen,debug_mode,debug_tick || st=1
