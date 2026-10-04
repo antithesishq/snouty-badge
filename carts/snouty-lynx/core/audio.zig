@@ -53,9 +53,10 @@
 //! the channels' underflows Mikey events (`Mikey.aud_event`), so timer 1
 //! counts at the right tick (rare: no known game links it).
 //!
-//! Speed (`run`): the underflows go in time order; when the channels whose
-//! borrow nobody counts have enough underflows before anything else
-//! happens, they go together bin by bin (`bulk`): squares and constants
+//! Speed (`run`): the underflows go in time order; when the fast channels
+//! (two or more underflows a bin) whose borrow nobody counts have enough
+//! underflows before anything else happens, they go together bin by bin
+//! (`bulk`): squares and constants
 //! (normal mode, tap 0 only or no taps; Blue Lightning parks its music
 //! channels as 1 MHz squares, 16,667 underflows a frame each) in closed
 //! form, the others (its 1 MHz integrating noise) stepped in a tight loop,
@@ -476,15 +477,17 @@ pub inline fn sync_clocks(m: *Mikey) void {
 }
 
 /// The underflows up to tick t, in time order (same-tick ones in the
-/// order timer 7's, then channel 0 to 3). The channels whose borrow
-/// nobody counts (`alone`) go together bin by bin (`bulk`) up to the next
-/// other underflow when that pays, else each takes its underflow in line;
+/// order timer 7's, then channel 0 to 3). The fast channels whose borrow
+/// nobody counts (`alone`, `bulk_period`) go together bin by bin (`bulk`)
+/// up to the next other underflow when that pays; a channel whose borrow
+/// nobody counts takes its underflow in line;
 /// anything else (links, one-shots) goes through the general path one
 /// tick at a time.
 noinline fn run(m: *Mikey, out: Out, t: Tick) void {
     const a = &m.audio;
     // Nothing below changes inside a run (only register writes do).
     var solo: [4]bool = undefined;
+    var fast: [4]bool = undefined;
     var w: [4]i32 = undefined;
     var per: [4]Tick = undefined;
     for (&a.ch, 0..) |*ch, k| {
@@ -492,6 +495,7 @@ noinline fn run(m: *Mikey, out: Out, t: Tick) void {
         solo[k] = alone(m, c);
         w[k] = weight(a, c);
         per[k] = period(&ch.timer);
+        fast[k] = solo[k] and per[k] <= bulk_period;
     }
     var t7n = t7_next(m, a.time);
     // `bulk` is not tried again before this tick once it did not pay.
@@ -506,11 +510,11 @@ noinline fn run(m: *Mikey, out: Out, t: Tick) void {
             }
         }
         if (x > t) break;
-        if (c < 4 and solo[c] and x >= bulk_from) {
+        if (c < 4 and fast[c] and x >= bulk_from) {
             var live: u4 = 0;
             var rest = t7n;
-            for (&a.ch, solo, 0..) |*ch, so, k| {
-                if (so and ch.timer.expire != never) live |= @as(u4, 1) << @intCast(k) else rest = @min(rest, ch.timer.expire);
+            for (&a.ch, fast, 0..) |*ch, f, k| {
+                if (f and ch.timer.expire != never) live |= @as(u4, 1) << @intCast(k) else rest = @min(rest, ch.timer.expire);
             }
             if (rest > x) {
                 const end = @min(@min(t, rest - 1), a.r.win_end -| 1);
@@ -560,6 +564,11 @@ fn alone(m: *const Mikey, c: u2) bool {
 /// below it the per-bin walk and the setup cost more than they save. (A
 /// variable only so the tests can switch `bulk` off and compare.)
 pub var bulk_min: u32 = 16;
+
+/// Only channels with at least two underflows a bin go in bulk (period
+/// up to half a bin): a slower one changes less often than a bin walk
+/// costs (Hard Drivin's music, 100-500 us, is cheaper one at a time).
+pub const bulk_period: Tick = 181;
 
 fn period(t: *const Timer) Tick {
     return (@as(Tick, t.backup) + 1) << t.shift();
