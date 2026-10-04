@@ -39,6 +39,9 @@ pub const Options = struct {
     root_source_file: Build.LazyPath,
     /// Adds the cart's own modules (assets, options) to the user cart module.
     custom_builder: ?CustomBuilder = null,
+    /// The XIP variant's builder when it must differ from `custom_builder`
+    /// (snouty-zero: a build option saying which variant this is).
+    xip_custom_builder: ?CustomBuilder = null,
     mode: Mode = .ram,
 };
 
@@ -98,7 +101,7 @@ fn add_xip(b: *Build, dep: *Build.Dependency, options: Options, with_wasm: bool)
     fw.exe.root_module.addImport("user_cart", user_cart_module);
     fw.exe.root_module.addImport("cart-api", cart_api_module);
 
-    const asset_step: ?*Build.Step = if (options.custom_builder) |builder| blk: {
+    const asset_step: ?*Build.Step = if (options.xip_custom_builder orelse options.custom_builder) |builder| blk: {
         const shared_step = b.allocator.create(Build.Step.TopLevel) catch @panic("oom");
         shared_step.* = .{
             .step = .init(.{

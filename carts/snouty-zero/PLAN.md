@@ -505,14 +505,34 @@ would overflow the 256 KB XIP window too:
   remain the hardware unknown, as for Genesis). `docs/preview_m5.gif`
   (Weights Loop, the BACKPROP character).
 
+## M5.1 RAM cart again
+
+2026-10-04: the SYCL organizers told Adrian that XIP carts will not
+perform on the badge (execution from flash thrashes with the OS; Adrian
+will confirm on hardware that they meant this feature). The M5 XIP ELF
+was 196.5 KB `.text` + 80.6 KB `.bss`, 2.4 KB over the RAM window less
+the 32 KB stack, and 28.7 KB of that `.bss` was the XIP-only RAM copy of
+the active league's tiles and horizon. M5.1 builds both variants
+(`build_options.xip`, `os_cart.Options.xip_custom_builder`): the RAM
+cart reads the league's own arrays, the XIP cart keeps the copy.
+
+### M5.1 status
+
+- 2026-10-04: DONE. RAM ELF `.text` 196,244 + `.data` 636 + `.bss`
+  51,816 B: 24.9 KB free below the 32 KB stack. Bench (`m3_bench.json`,
+  1700 frames) RAM and XIP alike: **mean 2.09 ms, worst 4.81 ms** (29%).
+  Host tests and check-float (both ELFs) pass. Nothing else changed: all
+  nine tracks, three leagues and the machine select are in both carts.
+
 ## Hand-off
 
-All five milestones are built, tested and on `origin/main` (tags
-`snouty-zero/m0` .. `m5`). What only Adrian can do: flash
-`zig-out/firmware/snouty-zero-xip.uf2` from main and play (the XIP cart's
-flash-cache behaviour and the feel of the tuning constants are the two
-things the emulated bench cannot answer); the deferred questions below
-are the decisions taken by default.
+All milestones are built, tested and on `origin/main` (tags
+`snouty-zero/m0` .. `m5`, `m5.1`). What only Adrian can do: flash
+`zig-out/firmware/snouty-zero.uf2` from main and play (the feel of the
+tuning constants is what the emulated bench cannot answer), and, to check
+the organizers' XIP verdict, the same game as `snouty-zero-xip.uf2`
+beside it (RUNNING.md section 6); the deferred questions below are the
+decisions taken by default.
 
 ## Deferred questions for Adrian
 
@@ -529,9 +549,8 @@ are the decisions taken by default.
 4. (M1) A crash (fall, meltdown) resets to the centerline after the
    hit-stop until M3 brings the rewind.
 8. (M5) The stretch pick: the Core league plus a machine select, no flash
-   saves; the cart becomes XIP-only (flash `snouty-zero-xip.uf2`), which
-   is the one hardware-sensitive change of the whole cart (the flash
-   cache); the M4 RAM build is tagged `snouty-zero/m4` as the fallback.
+   saves. M5 made the cart XIP-only; M5.1 made the RAM cart the default
+   again, with the XIP cart beside it.
 7. (M4) Hills are visual only (the simulation stays flat); crest height
    26 world px; the horizon strip does not move with them. The tuning
    pass used the defaults (no play notes yet); the autopilot's 30 s laps

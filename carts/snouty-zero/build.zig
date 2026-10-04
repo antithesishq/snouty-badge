@@ -68,35 +68,31 @@ pub fn add(b: *Build, sycl_badge_dep: *Build.Dependency, opts: common.Options) v
     options.addOption(bool, "sound", opts.sound);
     const floor_loop = b.option(FloorLoop, "zero_floor", "snouty-zero: floor inner loop, row (default, PLAN.md M0 status) or column") orelse .row;
     options.addOption(FloorLoop, "floor_loop", floor_loop);
+    // RAM and XIP variants (PLAN.md M5.1): the same cart, except the XIP one
+    // copies the active league's art to RAM at race start (build_options.xip).
+    // -Dcart-mode=ram (the default) builds both, like snouty-lynx.
+    options.addOption(bool, "xip", false);
     build_options = options;
+    const xip_options = b.addOptions();
+    xip_options.addOption(bool, "debug_overlay", opts.debug_overlay);
+    xip_options.addOption(bool, "sound", opts.sound);
+    xip_options.addOption(FloorLoop, "floor_loop", floor_loop);
+    xip_options.addOption(bool, "xip", true);
+    build_options_xip = xip_options;
 
-    // XIP only from M5 (SPEC 13, PLAN.md M5): nine tracks plus three leagues
-    // do not fit the RAM window next to the state, so code and read-only data
-    // execute from the 256 KB cart flash window and the active track's art is
-    // copied to RAM at race start. -Dcart-mode=ram named explicitly stops the
-    // build with this message; an all-carts build builds the XIP cart regardless.
-    const explicit = if (opts.only) |list| std.mem.eql(u8, list, "snouty-zero") else false;
-    if (opts.cart_mode == .ram and explicit) {
-        std.debug.print(
-            \\snouty-zero: this cart builds as an XIP cart only (carts/snouty-zero/PLAN.md M5).
-            \\Pass -Dcart-mode=xip:
-            \\    zig build -Dcart=snouty-zero -Dcart-mode=xip
-            \\The artifact is zig-out/firmware/snouty-zero-xip.uf2 (and .elf).
-            \\
-        , .{});
-        std.process.exit(1);
-    }
+    const mode: os_cart.Mode = if (opts.cart_mode == .ram) .both else opts.cart_mode;
     os_cart.add(b, sycl_badge_dep, .{
-        .mode = .xip,
+        .mode = mode,
         .name = "snouty-zero",
         .optimize = .ReleaseFast,
         .root_source_file = b.path(dir ++ "cart/src/main.zig"),
-        .custom_builder = &build_cart_modules,
+        .custom_builder = &build_cart_modules_ram,
+        .xip_custom_builder = &build_cart_modules_xip,
     });
 
     // `zig build check-float` (shared step): the cart is all-integer; fail if the ELF
     // links any soft-float or libm routine.
-    common.add_float_check(b, opts, "snouty-zero", .xip);
+    common.add_float_check(b, opts, "snouty-zero", mode);
 
     // `zig build test` (shared step): host tests for the modules without a cart
     // API dependency (cart/src/host_tests.zig lists them).
@@ -111,6 +107,7 @@ pub fn add(b: *Build, sycl_badge_dep: *Build.Dependency, opts: common.Options) v
 }
 
 var build_options: ?*Build.Step.Options = null;
+var build_options_xip: ?*Build.Step.Options = null;
 
 /// One entry per sprite sheet in assets/gen/ (drawn by tools/prepare_assets.py;
 /// ASSETS.md has the manifest). `bits` is palette bits per pixel (4 = up to 15
@@ -141,8 +138,16 @@ fn assets_module(b: *Build) *Build.Module {
     return b.createModule(.{ .root_source_file = assets_zig });
 }
 
-fn build_cart_modules(b: *Build, cart: *Build.Module, cart_api: *Build.Module, step: *Build.Step) void {
-    cart.addImport("build_options", build_options.?.createModule());
+fn build_cart_modules_ram(b: *Build, cart: *Build.Module, cart_api: *Build.Module, step: *Build.Step) void {
+    build_cart_modules(b, cart, cart_api, step, build_options.?);
+}
+
+fn build_cart_modules_xip(b: *Build, cart: *Build.Module, cart_api: *Build.Module, step: *Build.Step) void {
+    build_cart_modules(b, cart, cart_api, step, build_options_xip.?);
+}
+
+fn build_cart_modules(b: *Build, cart: *Build.Module, cart_api: *Build.Module, step: *Build.Step, opts: *Build.Step.Options) void {
+    cart.addImport("build_options", opts.createModule());
     cart.addImport("assets", assets_module(b));
 
     // The `gfx` module: the PNGs in `images` through the per-cart converter

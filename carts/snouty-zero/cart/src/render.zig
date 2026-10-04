@@ -38,10 +38,14 @@ var fog_pixel: cart.Pixel = undefined;
 var league: *const track.League = &track.edge;
 var current: *const track.Track = &track.cold_aisle;
 
-/// RAM copies of the active league's art (M5, XIP cart): the floor loop and
-/// the horizon strip read these, never the flash window (SPEC 18.3).
-var tiles_ram: [track.tile_count * 64]u8 = undefined;
-var horizon_ram: [12352]u8 = undefined;
+/// RAM copies of the active league's art, XIP cart only (M5): the floor loop
+/// and the horizon strip never read the flash window (SPEC 18.3). The RAM
+/// cart's art is in RAM already, so it reads the league's own arrays (M5.1).
+var tiles_ram: [if (build_options.xip) track.tile_count * 64 else 0]u8 = undefined;
+var horizon_ram: [if (build_options.xip) 12352 else 0]u8 = undefined;
+/// What the floor loop and the horizon strip read: the copies or the league's art.
+var tiles_art: *const [track.tile_count * 64]u8 = track.edge.tiles;
+var horizon_art: *const [12352]u8 = track.edge.horizon;
 
 /// Shake ticks left (rail hits, SPEC 6.2): the horizon row and the floor
 /// jitter by one pixel on alternate ticks. Set by main from the player's shake.
@@ -66,8 +70,15 @@ fn color565(v: u16) cart.DisplayColor {
 pub fn set_track(t: *const track.Track) void {
     current = t;
     league = t.league;
-    @memcpy(&tiles_ram, league.tiles);
-    @memcpy(&horizon_ram, league.horizon);
+    if (build_options.xip) {
+        @memcpy(&tiles_ram, league.tiles);
+        @memcpy(&horizon_ram, league.horizon);
+        tiles_art = &tiles_ram;
+        horizon_art = &horizon_ram;
+    } else {
+        tiles_art = league.tiles;
+        horizon_art = league.horizon;
+    }
     const fog_c: cart.DisplayColor = color565(league.pal_rgb565(0));
     fog_pixel = .from_color(fog_c);
     for (0..256) |i| {
@@ -164,8 +175,8 @@ pub fn draw() void {
 
 /// Two-layer parallax strip over rows 0..31, the fog colour on row 32.
 fn draw_horizon(yaw: fixed.Turn) void {
-    const front: *const [512 * 32 / 2]u8 = horizon_ram[0 .. 512 * 32 / 2];
-    const back: *const [256 * 32 / 2]u8 = horizon_ram[512 * 32 / 2 ..][0 .. 256 * 32 / 2];
+    const front: *const [512 * 32 / 2]u8 = horizon_art[0 .. 512 * 32 / 2];
+    const back: *const [256 * 32 / 2]u8 = horizon_art[512 * 32 / 2 ..][0 .. 256 * 32 / 2];
     const scroll_f: u32 = @as(u32, yaw) >> 7; // 512 px per turn
     const scroll_b: u32 = @as(u32, yaw) >> 8; // 256 px per turn, half rate
     const j: usize = @intCast(jitter());
@@ -219,7 +230,7 @@ fn draw_floor(cam: camera.Cam) void {
 /// sequential halfwords; two multiply-accumulates per pixel.
 fn floor_columns() void {
     const map = &track.map_ram;
-    const tiles = &tiles_ram;
+    const tiles = tiles_art;
     var x: usize = 0;
     while (x < @as(usize, @intCast(screen_w))) : (x += 1) {
         const col = &cart.framebuffer[x];
@@ -239,7 +250,7 @@ fn floor_columns() void {
 /// stride (SPEC 18 comparison).
 fn floor_rows() void {
     const map = &track.map_ram;
-    const tiles = &tiles_ram;
+    const tiles = tiles_art;
     var y: usize = floor_y0;
     while (y < 128) : (y += 1) {
         var wx: u32 = @bitCast(row_x0[y]);

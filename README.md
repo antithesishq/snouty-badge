@@ -49,7 +49,7 @@ have run on a badge.
 | `snouty-lynx` | `snouty-lynx` | Atari Lynx emulator with time scrubber | M4 done | RAM, plus XIP built by default | scrubber holds 1-2 s in the RAM cart (3-6 s in the XIP one) | not yet |
 | `snouty-flyover` | `snouty-flyover` | voxel flyover through a landscape of data structures | M4.1 done | RAM | locked to 30 fps | not yet |
 | `demosnout` | `demosnout` | demoscene production, 114 s loop | M3 done | RAM | silent by design | not yet |
-| `snouty-zero` | `snouty-zero` | F-Zero style Mode 7 hover racer | M5 done | XIP only | needs `-Dcart-mode=xip` when named with `-Dcart` | not yet |
+| `snouty-zero` | `snouty-zero` | F-Zero style Mode 7 hover racer | M5.1 done | RAM, plus XIP built by default | none known | not yet |
 | `siwoo` | `siwoo` | name badge for Siwoo Yoon: demosnout's Snouty head over "SIWOO YOON" in chrome | done | RAM | made for the Tufty 2350 (Supabase Select badge); see its SPEC.md | not yet |
 | `badge-calibrate` | `badge-calibrate` | hardware calibration cart for badge-bench (`badge-bench/calibrate/`) | C3 done (badge fit applied) | RAM | a tool, not a game | ran on a badge 2026-09-28 (`badge-2026-09-28-pass5.txt`) |
 
@@ -118,8 +118,8 @@ found", "Watcher was disconnected" and a missing wasm are in
 
 By default a cart is a RAM cart: the OS copies the whole image into the
 307 KB cart RAM window and code, read-only data and state share it. Snouty
-Boy, Snouty Gear and Snouty Lynx are RAM carts like the native ones;
-Snouty Genesis and Snouty Zero are XIP only (below).
+Boy, Snouty Gear, Snouty Lynx and Snouty Zero are RAM carts like the
+native ones; Snouty Genesis is XIP only (below).
 
 Each emulator cart embeds a small, freely licensed fallback ROM and, on the
 badge, prefers a ROM file on the badge drive. The drive is the OS's
@@ -138,10 +138,11 @@ With `-Dcart-mode=xip` (or `both`) the same source is also linked as an
 execute-in-place cart: code and read-only data live in the badge's 256 KB
 cart flash window and run from there through the XIP cache, and all of cart
 RAM is left for `.data` and `.bss`. A cart needs it when its code plus
-state exceeds cart RAM: Snouty Genesis and Snouty Zero build only that way
-(a plain `zig build` builds their XIP carts anyway; naming them with
-`-Dcart` needs `-Dcart-mode=xip`), Snouty Lynx builds both by default for
-its longer scrub history, and Snouty Boy needs it only for a big embedded
+state exceeds cart RAM: Snouty Genesis builds only that way (a plain
+`zig build` builds its XIP cart anyway; naming it with `-Dcart` needs
+`-Dcart-mode=xip`), Snouty Lynx builds both by default for its longer
+scrub history, Snouty Zero builds both by default (same game, for a
+RAM-versus-XIP comparison on hardware), and Snouty Boy needs it only for a big embedded
 ROM. XIP carts are not yet confirmed on hardware. The XIP build is
 `zig-out/firmware/<binary>-xip.uf2`, installed the same way.
 `tools/uf2_info.py` shows which window a UF2 targets (the loader refuses a

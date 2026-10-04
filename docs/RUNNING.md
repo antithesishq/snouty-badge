@@ -118,7 +118,7 @@ tool): `snouty` (cart `snouty-run`), `snouty-bugs`, `snoutenstein`,
 `snouty-reflections`, `snouty-boy`, `snouty-maze`, `snouty-gear`,
 `snouty-genesis` (XIP only: `snouty-genesis-xip`), `snouty-lynx` (plus
 `snouty-lynx-xip` by default), `snouty-flyover`, `demosnout`,
-`snouty-zero` (XIP only: `snouty-zero-xip`), `siwoo` and `badge-calibrate`.
+`snouty-zero` (plus `snouty-zero-xip` by default), `siwoo` and `badge-calibrate`.
 `zig build -Dcart-mode=xip` (or `both`) adds the execute-in-place variant
 `zig-out/firmware/<binary>-xip.uf2` and `.elf` for the other carts, which
 runs code from the cart flash window and keeps all cart RAM for data;

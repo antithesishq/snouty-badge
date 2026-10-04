@@ -36,7 +36,7 @@ The badge file is `zig-out/firmware/<binary>.uf2`:
 | snouty-lynx | `snouty-lynx.uf2` | the default build also writes `snouty-lynx-xip.uf2` (longer rewind history, never run on a badge); ROMs: [Lynx README](../carts/snouty-lynx/README.md#a-rom-on-the-badge-drive) |
 | snouty-flyover | `snouty-flyover.uf2` | |
 | demosnout | `demosnout.uf2` | |
-| snouty-zero | `snouty-zero-xip.uf2` | XIP only, there is no RAM build |
+| snouty-zero | `snouty-zero.uf2` | the default build also writes `snouty-zero-xip.uf2` (the same game executing from flash, for a hardware comparison) |
 | badge-calibrate | `badge-calibrate.uf2` | a measuring tool, not a game ([its README](../badge-bench/calibrate/README.md)) |
 
 A plain `zig build` writes all of these, the XIP-only ones included.
