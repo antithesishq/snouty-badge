@@ -17,14 +17,14 @@
 //! `halted` is the refusal to run: no ROM on the drive (the badge build
 //! embeds none), or fewer than 2 keyframes fit (frontend/rewind.zig).
 //!
-//! Fast forward (docs/FAST_FORWARD.md at the root): while Select+Right is
-//! held (frontend/input.zig) an update steps up to `tuning.ff_max_frames`
-//! frames within `tuning.ff_budget_us`, all but the last without pixel work
-//! or sound, every one recorded for the scrubber, and draws ">>Nx" in the
-//! bottom-right corner (`step_fast`).
+//! Fast forward (docs/FAST_FORWARD.md at the root): while Select is held
+//! after a double tap (frontend/input.zig) an update steps up to
+//! `tuning.ff_max_frames` frames within `tuning.ff_budget_us`, all but the
+//! last without pixel work or sound, every one recorded for the scrubber,
+//! and draws ">>N.Nx" in the bottom-right corner (`step_fast`).
 //!
 //! Control hints (lib/hint.zig): "Hold Select: menu" on the splash; that
-//! line and "Sel+Right: fast" in a two-line strip at the bottom for the
+//! line and "2x Sel+hold: fast" in a two-line strip at the bottom for the
 //! first 3 s of play after the splash or the picker (gone at the first
 //! fresh press); the menu has its own.
 //! See SPEC.md (design), PLAN.md (milestone contract), CLAUDE.md (toolchain).

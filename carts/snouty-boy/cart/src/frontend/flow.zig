@@ -29,8 +29,9 @@ pub const MenuResult = enum { stay, resume_game };
 ///   after the menu closes).
 /// - `step(ctx, pad: u8, fresh: bool, fast: bool)`: one game update with that
 ///   pad byte; `fresh` is a press this frame that is not held over from the
-///   last screen; `fast` is the Select+Right fast-forward chord
-///   (frontend/input.zig): several frames, only the last one drawn.
+///   last screen; `fast` is the fast-forward gesture (Select tapped, then
+///   pressed and held, frontend/input.zig): several frames, only the last
+///   one drawn.
 /// - `menu_open(ctx)`, `menu_frame(ctx, e: input.Edge) MenuResult`,
 ///   `menu_close(ctx)`: the emulator menu over the frozen game.
 /// - `halted_frame(ctx)`: draw the halted screen.

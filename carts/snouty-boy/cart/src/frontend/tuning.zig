@@ -38,7 +38,7 @@ pub const debug_overlay = true;
 
 // ---- Fast forward (main.zig `Ctx.step`, docs/FAST_FORWARD.md at the root) ----
 
-/// Game frames per update at most while Select+Right is held: 4x at 60 Hz.
+/// Game frames per update at most while fast forwarding: 4x at 60 Hz.
 /// All but the last skip their pixel work (`Gb.lines_wanted` cleared) and
 /// render no sound.
 pub const ff_max_frames = 4;

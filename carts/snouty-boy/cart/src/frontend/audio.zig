@@ -81,7 +81,7 @@ pub fn frame(gb: *core.Gb) void {
     if (enabled and s.len > 0) feed.frame(s) else feed.stop();
 }
 
-/// An update that fast forwards (Select+Right): render nothing for its
+/// An update that fast forwards (Select tapped, then held): render nothing for its
 /// frames and ramp the stream out (wasm: silence the voice). The next 1x
 /// `before_step` turns rendering on again from a reset render state.
 pub fn fast_forward(gb: *core.Gb) void {

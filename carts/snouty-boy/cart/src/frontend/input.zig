@@ -5,20 +5,22 @@
 //!   sees Select up.
 //! - Released before `hold_frames` (30 frames, 500 ms): the game gets a
 //!   Select press lasting `tap_frames` frames, so it registers even in games
-//!   that poll the joypad once per frame.
+//!   that poll the joypad once per frame, but only once `ff_tap_window`
+//!   frames (200 ms) have passed without a second press.
 //! - Held for `hold_frames`: `GameInput.open_menu` is set once; the game is
 //!   paused by the caller and no Select is delivered.
 //! - Start pressed while Select is held is the OS exit chord (250 ms): the
 //!   hold is cancelled, so neither a tap nor the menu follows. Start itself
 //!   still goes to the game as usual.
-//! - Right pressed while that Select hold counts is the fast-forward chord
-//!   (docs/FAST_FORWARD.md at the root): `GameInput.fast` is set while both
-//!   stay held, the game sees neither Select nor Right, and the hold neither
-//!   taps nor opens the menu. Right let go first: back to 1x and the Select
-//!   hold counts again from zero (the menu can still open; its release still
-//!   taps nothing). Select let go first: back to 1x, no tap, and the held
-//!   Right waits for a release before it reaches the game. Start during fast
-//!   forward ends it like any Start+Select chord.
+//! - A second Select press inside that window is fast forward
+//!   (docs/FAST_FORWARD.md at the root, "tap, then press and hold"):
+//!   `GameInput.fast` is set from that press for as long as Select stays
+//!   held. The held-back tap is dropped, this press never starts the menu
+//!   timer, and its release delivers nothing. Every other button reaches the
+//!   game as usual.
+//! - Start during the window or during fast forward is the OS exit chord
+//!   too: the pending tap is dropped, fast forward ends, nothing is
+//!   delivered.
 //!
 //! Buttons held across a state change (splash skipped, picker left, menu
 //! opened or closed) are suppressed until released (`suppress_held`), so the
@@ -52,10 +54,13 @@ pub const Controls = packed struct(u16) {
 pub const hold_frames = 30;
 /// Frames a Select tap is delivered to the game for.
 pub const tap_frames = 3;
+/// Frames after the release of a short Select press in which a second press
+/// starts fast forward (200 ms); without one, the tap starts on the last.
+pub const ff_tap_window = 12;
 
-/// The fast-forward chord, for the play hint strip and the About screen
-/// (15 glyphs: fits the 160 px screen and the 18-glyph menu panel).
-pub const fast_hint = "Sel+Right: fast";
+/// The fast-forward gesture, for the play hint strip and the About screen
+/// (17 glyphs: fits the 160 px screen and the 18-glyph menu panel).
+pub const fast_hint = "2x Sel+hold: fast";
 
 pub fn pad_from_controls(c: Controls) u8 {
     var pad: u8 = 0;
@@ -123,8 +128,8 @@ pub const GameInput = struct {
     pad: u8,
     /// Select reached `hold_frames` this frame: open the menu, do not step.
     open_menu: bool,
-    /// Select+Right is held: step several frames with this pad, drawing only
-    /// the last (main.zig `Ctx.step`).
+    /// Fast forward (Select tapped, then pressed and held): step several
+    /// frames with this pad, drawing only the last (main.zig `Ctx.step`).
     fast: bool = false,
 };
 
@@ -138,12 +143,12 @@ pub const State = struct {
     held_frames: u16 = 0,
     /// Remaining frames of a delivered Select tap.
     tap_left: u8 = 0,
-    /// Fast forward is on: Right went down during the counted Select hold
-    /// and both are still held.
+    /// Frames left of the window after a short Select press (0: none); its
+    /// tap is delivered when the window runs out.
+    window: u8 = 0,
+    /// Fast forward is on: Select was pressed again inside the window and is
+    /// still held.
     fast: bool = false,
-    /// The current Select hold was used for fast forward, so its release
-    /// taps nothing.
-    chorded: bool = false,
     /// Buttons ignored until released (Controls bits).
     suppress: u16 = 0,
     /// Last frame's `live_edge().cur`, so a suppressed button reads neither
@@ -171,60 +176,55 @@ pub const State = struct {
         s.holding = false;
         s.held_frames = 0;
         s.tap_left = 0;
+        s.window = 0;
         s.fast = false;
-        s.chorded = false;
     }
 
     /// Input for a frame in which the game runs.
     pub fn game_frame(s: *State) GameInput {
         const e = s.edge;
-        var live: Controls = @bitCast(e.cur & ~s.suppress);
+        const live: Controls = @bitCast(e.cur & ~s.suppress);
         var open_menu = false;
 
         if (live.select and e.pressed(.select)) {
-            s.holding = true;
-            s.held_frames = 0;
-            s.chorded = false;
-        }
-        if (s.fast and (e.held(.start) or !live.select or !live.right)) {
-            s.fast = false;
-            if (live.select and !e.held(.start)) {
-                // Right let go, Select still held: count the hold afresh.
+            if (s.window > 0) {
+                // The second press of a double tap: fast forward, no tap,
+                // no menu timer.
+                s.window = 0;
+                s.fast = true;
+            } else {
                 s.holding = true;
                 s.held_frames = 0;
-            } else if (live.right) {
-                // Select let go (or Start+Select): the Right of the chord
-                // reaches the game only once pressed again.
-                s.suppress |= mask(.right);
-                live.right = false;
+            }
+        } else if (s.window > 0) {
+            if (e.held(.start)) {
+                // Start+Select: the OS exit chord. Drop the tap.
+                s.window = 0;
+            } else {
+                s.window -= 1;
+                if (s.window == 0) s.tap_left = tap_frames;
             }
         }
+        // Released, or the Start+Select chord: back to 1x, nothing delivered.
+        if (s.fast and (!live.select or e.held(.start))) s.fast = false;
         if (s.holding) {
             if (e.held(.start)) {
                 // Start+Select: the OS exit chord. Cancel the hold.
                 s.holding = false;
             } else if (e.held(.select)) {
-                if (live.right and e.pressed(.right)) {
-                    // Select+Right: fast forward, no tap, no menu.
+                s.held_frames +|= 1;
+                if (s.held_frames >= hold_frames) {
                     s.holding = false;
-                    s.fast = true;
-                    s.chorded = true;
-                } else {
-                    s.held_frames +|= 1;
-                    if (s.held_frames >= hold_frames) {
-                        s.holding = false;
-                        open_menu = true;
-                    }
+                    open_menu = true;
                 }
             } else {
-                // Released before the menu threshold: a tap, unless this
-                // hold fast-forwarded.
+                // Released before the menu threshold: a tap, unless a
+                // second press follows within the window.
                 s.holding = false;
-                if (!s.chorded) s.tap_left = tap_frames;
+                s.window = ff_tap_window;
             }
         }
         var pad = pad_from_controls(live) & ~Pad.select;
-        if (s.fast) pad &= ~Pad.right;
         if (s.tap_left > 0) {
             pad |= Pad.select;
             s.tap_left -= 1;
@@ -258,13 +258,18 @@ comptime {
     const none = ctl(&.{});
     const sel = ctl(&.{.select});
 
-    // Tap: 5 frames held, then release -> no Select while held, then
-    // exactly `tap_frames` frames of Select.
+    // Tap: 5 frames held, then release -> no Select while held nor during
+    // the double-tap window, then exactly `tap_frames` frames of Select.
     var s: State = .{};
     for (0..5) |_| {
         s.poll(sel);
         const g = s.game_frame();
         if (g.pad & Pad.select != 0 or g.open_menu) @compileError("select leaked while held");
+    }
+    for (0..ff_tap_window) |_| {
+        s.poll(none);
+        const g = s.game_frame();
+        if (g.pad != 0 or g.fast) @compileError("tap delivered inside the window");
     }
     for (0..tap_frames) |_| {
         s.poll(none);
@@ -312,89 +317,91 @@ comptime {
     @setEvalBranchQuota(40_000);
     const none = ctl(&.{});
     const sel = ctl(&.{.select});
-    const sel_right = ctl(&.{ .select, .right });
-    const right = ctl(&.{.right});
 
-    // Select, then Right: fast forward from the Right press for as long as
-    // both are held, well past the menu threshold; the game sees neither.
+    // Tap, then press and hold: fast forward from the second press for as
+    // long as Select is held, well past the menu threshold; no tap, no
+    // menu, and every other button reaches the game.
     var s: State = .{};
-    for (0..5) |_| {
+    for (0..4) |_| {
         s.poll(sel);
-        if (s.game_frame().fast) @compileError("fast before Right");
+        _ = s.game_frame();
     }
-    for (0..hold_frames * 2) |_| {
-        s.poll(sel_right);
+    for (0..ff_tap_window - 1) |_| {
+        s.poll(none);
+        _ = s.game_frame();
+    }
+    for (0..hold_frames * 2) |i| {
+        s.poll(if (i % 10 < 3) ctl(&.{ .select, .right, .a }) else sel);
         const g = s.game_frame();
-        if (!g.fast or g.open_menu or g.pad != 0) @compileError("fast: no menu, no Select, no Right");
+        if (!g.fast or g.open_menu) @compileError("double tap and hold: fast, no menu");
+        const want: u8 = if (i % 10 < 3) Pad.right | Pad.a else 0;
+        if (g.pad != want) @compileError("fast: other buttons pass, Select does not");
     }
-    // Right let go: 1x, and the hold counts from zero, so the menu opens
-    // `hold_frames` frames later, not at once.
-    var opened: u32 = 0;
-    for (0..hold_frames + 5) |i| {
-        s.poll(sel);
-        const g = s.game_frame();
-        if (g.fast or g.pad != 0) @compileError("fast after Right let go");
-        if (g.open_menu) {
-            if (i + 1 != hold_frames) @compileError("menu: the hold must count again from zero");
-            opened += 1;
-        }
-    }
-    if (opened != 1) @compileError("menu after fast forward must open once");
-
-    // Select+Right pressed together count as the chord too; Select let go
-    // first: 1x, no tap, and the held Right stays from the game until it is
-    // pressed again.
-    s = .{};
-    s.poll(sel_right);
-    if (!s.game_frame().fast) @compileError("Select and Right together");
-    s.poll(right);
-    if (s.game_frame().fast) @compileError("fast after Select let go");
-    for (0..tap_frames + 2) |_| {
-        s.poll(right);
-        if (s.game_frame().pad != 0) @compileError("no tap, no Right after the chord");
-    }
-    s.poll(none);
-    if (s.game_frame().pad != 0) @compileError("no tap at all after the chord");
-    s.poll(right);
-    if (s.game_frame().pad != Pad.right) @compileError("Right pressed again");
-
-    // Right let go first, then a quick Select release: still no tap.
-    s = .{};
-    s.poll(sel);
-    _ = s.game_frame();
-    s.poll(sel_right);
-    _ = s.game_frame();
-    s.poll(sel);
-    _ = s.game_frame();
-    for (0..tap_frames + 1) |_| {
+    // Let go: 1x, and nothing is delivered.
+    for (0..ff_tap_window + tap_frames + 2) |_| {
         s.poll(none);
         const g = s.game_frame();
-        if (g.pad != 0 or g.fast or g.open_menu) @compileError("a fast-forward hold must not tap");
+        if (g.fast or g.pad != 0 or g.open_menu) @compileError("fast forward release must deliver nothing");
     }
+    // The next single tap is an ordinary one again.
+    s.poll(sel);
+    _ = s.game_frame();
+    var taps: u32 = 0;
+    for (0..ff_tap_window + tap_frames + 2) |_| {
+        s.poll(none);
+        const g = s.game_frame();
+        if (g.fast) @compileError("a single tap is not fast forward");
+        if (g.pad & Pad.select != 0) taps += 1;
+    }
+    if (taps != tap_frames) @compileError("tap after fast forward");
 
-    // Start during fast forward is the Start+Select chord: 1x, Start goes
-    // to the game, Right does not, and neither tap nor menu follows.
+    // A second press after the window has run out is a new hold, not fast
+    // forward: held long enough, it opens the menu.
     s = .{};
     s.poll(sel);
     _ = s.game_frame();
-    s.poll(sel_right);
+    for (0..ff_tap_window + tap_frames) |_| {
+        s.poll(none);
+        _ = s.game_frame();
+    }
+    var opened: u32 = 0;
+    for (0..hold_frames + 2) |_| {
+        s.poll(sel);
+        const g = s.game_frame();
+        if (g.fast) @compileError("late second press is not fast forward");
+        if (g.open_menu) opened += 1;
+    }
+    if (opened != 1) @compileError("late second press: menu");
+
+    // Start during the window drops the tap.
+    s = .{};
+    s.poll(sel);
     _ = s.game_frame();
+    s.poll(none);
+    _ = s.game_frame();
+    s.poll(ctl(&.{.start}));
+    if (s.game_frame().pad != Pad.start) @compileError("Start in the window");
+    for (0..ff_tap_window + tap_frames) |_| {
+        s.poll(none);
+        if (s.game_frame().pad != 0) @compileError("Start must drop the pending tap");
+    }
+
+    // Start during fast forward: 1x, Start goes to the game, and neither a
+    // tap nor the menu follows.
+    s = .{};
+    s.poll(sel);
+    _ = s.game_frame();
+    s.poll(none);
+    _ = s.game_frame();
+    s.poll(sel);
+    if (!s.game_frame().fast) @compileError("second press inside the window");
     for (0..hold_frames + 5) |_| {
-        s.poll(ctl(&.{ .select, .right, .start }));
+        s.poll(ctl(&.{ .select, .start }));
         const g = s.game_frame();
         if (g.fast or g.open_menu or g.pad != Pad.start) @compileError("Start+Select ends fast forward");
     }
-    s.poll(none);
-    if (s.game_frame().pad != 0) @compileError("chord after fast forward must not tap");
-
-    // Right held before Select is pressed: no chord (Right is game input),
-    // and the Select tap works as always.
-    s = .{};
-    s.poll(right);
-    _ = s.game_frame();
-    s.poll(sel_right);
-    const g0 = s.game_frame();
-    if (g0.fast or g0.pad != Pad.right) @compileError("Right first is not the chord");
-    s.poll(right);
-    if (s.game_frame().pad != Pad.right | Pad.select) @compileError("tap with Right held");
+    for (0..ff_tap_window + tap_frames) |_| {
+        s.poll(none);
+        if (s.game_frame().pad != 0) @compileError("chord after fast forward must not tap");
+    }
 }
