@@ -30,6 +30,7 @@ the boot path that decrypts a cart's loader without the Lynx boot ROM is
 | Select, tap              | Option 1 (200 ms after the release: the double-tap window) |
 | Select, hold 500 ms      | Emulator menu (the game pauses under it)               |
 | Select, tap, then press and hold | Fast forward while held (silent, `>>2x` or `>>1.5x` top right) |
+| Left during that hold    | Chorded rewind: the game freezes, Left/Right step time; let go of Select to play on |
 | Left/Right in the menu   | Time scrubber: 0.5 s back / forward (not on a setting row) |
 | Start + Select           | Back to the badge OS (the OS's chord)                  |
 
@@ -49,7 +50,14 @@ That tap is not Option 1 (a lone tap still is, 200 ms later than it
 used to be). A Lynx frame costs 6-10 ms on the badge, so the speed is
 what fits: about 1.5x in raycast and Hard Drivin', up to 4x for light
 frames (docs/RUNNING.md, PLAN.md "Fast forward"). The scrubber keeps
-every fast-forwarded frame.
+every fast-forwarded frame. Left is reserved while fast forwarding:
+pressing it turns the rest of the hold into rewind (the chorded rewind).
+The game freezes under the menu's scrub bar ("Scrub: -1.7 / 1.7s", or
+"Rewind: no history"), Left steps back a record (1 s) at once and
+Left/Right step back and forward with the menu's repeat; no button
+reaches the game and Start holds the position. Letting go of Select
+plays on from there and drops the later history, as resuming from the
+menu does.
 
 | Row                      | Does                                                   |
 |--------------------------|--------------------------------------------------------|

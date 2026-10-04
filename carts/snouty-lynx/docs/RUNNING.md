@@ -44,8 +44,9 @@ Select: menu" (over the status strip's last line, gone at the first button
 press); in the menu the bottom line on Resume reads "Left/Right: rewind"
 ("Rewind: no history" before the first record; the `Scrub:` readout once
 parked or on other rows) and the footer reads "B: back to game", taking
-turns every 2 s with "2x Sel+hold: fast". The in-play hint shows "2x
-Sel+hold: fast" for 3 s after "Hold Select: menu".
+turns every 2 s with "2x Sel+hold: fast" and "then Left: rewind". The
+in-play hint shows "2x Sel+hold: fast" and then "then Left: rewind" for
+3 s each after "Hold Select: menu".
 
 Fast forward (root docs/FAST_FORWARD.md, PLAN.md "Fast forward"): tap
 Select, then press it again within 200 ms (`tuning.ff_tap_window`, 12
@@ -62,6 +63,27 @@ never runs the menu timer. A lone Select tap is Option 1 once the window
 runs out with no second press (the double tap drops it). Start in the
 window or during fast forward cancels both (Start+Select is the OS's).
 The scrubber records every frame.
+
+Chorded rewind (root docs/FAST_FORWARD.md "Chorded rewind", PLAN.md
+"Chorded rewind"): during the fast-forward hold Left is reserved (Right
+and the rest still reach the game); a fresh Left press (not one already
+held when fast forward started, and not with Start) turns the rest of
+the hold into rewind. The picture freezes (`menu.freeze_frame`, redrawn
+without the `>>`), the first step back happens at once and Left/Right
+then step one record (60 frames, 1 s) back or forward with the menu's
+repeat (`input.Repeat`, 4 a second while held), through the same
+`rewind.step`; the only thing drawn is the menu's scrub bar
+(`menu.draw_scrub_bar`: "Scrub: -1.7 / 1.7s", or "Rewind: no history").
+No button reaches the game; Start holds the position. Letting go of
+Select resumes exactly as the menu's resume: held buttons wait for a
+release, the history ahead of the position is dropped, the sound comes
+back primed. `debug_chord_rewind` is 1 while it shows.
+`tools/check_chord_rewind.sh` checks that the chord and the menu land on
+the same frame and play on identically:
+
+```sh
+sh carts/snouty-lynx/tools/check_chord_rewind.sh   # "chorded rewind matches the menu path", exit 0
+```
 
 ## 0. Pull and run (review)
 
@@ -252,15 +274,19 @@ node tools/preview.mjs zig-out/bin/snouty-lynx.wasm --frames 480 --every 5 \
 Fast forward, `tools/scripts/ff_play.json`, 900 updates: A at 40, no
 input until 250 (the play hints: "Hold Select: menu", then "2x Sel+hold:
 fast" from 220), a Select tap 250-252 and the second press 258-440 (fast
-forward, Left 260-290, Up 291-400, Up+Right 401-440), again 470-472 and
+forward, Right 260-290 (Left would start the chorded rewind), Up
+291-400, Up+Right 401-440), again 470-472 and
 476-510 with Down, a lone tap 540-542 (Option 1 on 555-557), a 21-update
 press 560-580 (a tap too: Option 1 on 593-595), Up+Right 600-660, the
 menu hold 680-720 (open at 709; its footer turns to "2x Sel+hold: fast"
-at 829). `docs/ff_2026-10-04.png` is a contact sheet of updates 100, 230,
-300, 450, 760 and 860:
+at 829 and "then Left: rewind" at 949). `docs/ff_2026-10-04.png` is a
+contact sheet: this script (1,000 updates) at 100, 230, 300, 760, 860
+and 960, a run with only A at 40 at 420 (the third play hint), and
+`tools/scripts/rewind_chord.json` at 310 (the chorded rewind's first
+step) and 336 (Select let go):
 
 ```sh
-node tools/preview.mjs zig-out/bin/snouty-lynx.wasm --frames 900 --every 10 \
+node tools/preview.mjs zig-out/bin/snouty-lynx.wasm --frames 1000 --every 10 \
   --script carts/snouty-lynx/tools/scripts/ff_play.json --out carts/snouty-lynx/out/ff/ \
   --sample debug_frame_count,debug_ff_frames,debug_pad --sample-every 1 \
   --at "300 debug_ff_frames == 4" --at "490 debug_ff_frames == 4" --at "450 debug_ff_frames == 1" \

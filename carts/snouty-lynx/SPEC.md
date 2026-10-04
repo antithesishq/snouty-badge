@@ -162,6 +162,7 @@ Game-level accuracy, verified per title, not cycle accuracy.
 | Select, tap            | Option 1 (held back 200 ms for the double tap below)    |
 | Select, hold 500 ms    | Emulator menu opens, game paused                        |
 | Select, tap + hold     | Fast forward while held (root docs/FAST_FORWARD.md)     |
+| Left in that hold      | Chorded rewind: frozen, Left/Right step time            |
 | Menu items             | "Press Option 2", "Press Pause + Option 1" (restart)    |
 | In menu                | as Snouty Boy: Up/Down move, A choose, B resume,        |
 |                        | Left/Right step time 0.5 s back and forward             |
