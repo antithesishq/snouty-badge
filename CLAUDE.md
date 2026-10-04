@@ -155,3 +155,13 @@ place and leave headroom. Budget is 16.7 ms per `update()` for 60 fps carts.
   `docs/`, and a short "how to pull and run this" section (Adrian reviews
   locally in the simulator and on the badge).
 - Commit messages: short imperative subject, body explains why.
+- Push every merge to `main` to `origin` straight away (`git push origin
+  main`). Several sessions work in parallel and each starts from
+  `origin/main`, so an unpushed merge is invisible to the others. Merge
+  only with the cart's gate green (its `tools/check.sh`, `zig build test`
+  where it has host tests), and push tags with their merge.
+- Work on a branch in a worktree (`git worktree add -b <branch>
+  ../snouty-badge-<name> origin/main`), then remove the worktree and
+  delete the branch once it is merged and pushed. Before removing any
+  worktree, check that it is yours and has no uncommitted work: other
+  sessions create worktrees at any time.
