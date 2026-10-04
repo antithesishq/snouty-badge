@@ -49,6 +49,15 @@ const images = [_]Image{
     .{ .file = "bg_near.png", .bits = 4, .transparent = true },
     .{ .file = "iris_16.png", .bits = 4, .transparent = true },
     .{ .file = "title.png", .bits = 4, .transparent = true },
+    // M7 (PLAN.md "M7 Bullet hell for real", Art): new bugs, the midboss,
+    // the stage 2-4 bosses and the pellet / orb enemy bullets.
+    .{ .file = "bugs2.png", .bits = 4, .transparent = true },
+    .{ .file = "herd.png", .bits = 4, .transparent = true },
+    .{ .file = "boss2.png", .bits = 4, .transparent = true },
+    .{ .file = "boss3.png", .bits = 4, .transparent = true },
+    .{ .file = "boss4.png", .bits = 4, .transparent = true },
+    .{ .file = "shots.png", .bits = 4, .transparent = true },
+    .{ .file = "orb.png", .bits = 4, .transparent = true },
 };
 
 /// Converts the PNGs in assets/gen/ into a `gfx` module at build time,
