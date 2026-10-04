@@ -83,6 +83,15 @@ MANIFEST: dict[str, Sheet] = {
         Sheet("boss.png", 240, 48, 48, 48, 5, True),
         Sheet("fx_big.png", 192, 32, 32, 32, 6, True),
         Sheet("title.png", 128, 40, 128, 40, 1, True),
+        # M7 (PLAN.md "M7 Bullet hell for real", Art): new bugs, the
+        # midboss, three bosses and two enemy bullet shapes.
+        Sheet("bugs2.png", 192, 16, 16, 16, 12, True),
+        Sheet("herd.png", 64, 32, 32, 32, 2, True),
+        Sheet("boss2.png", 240, 48, 48, 48, 5, True),
+        Sheet("boss3.png", 240, 48, 48, 48, 5, True),
+        Sheet("boss4.png", 240, 48, 48, 48, 5, True),
+        Sheet("shots.png", 32, 8, 8, 8, 4, True),
+        Sheet("orb.png", 32, 16, 16, 16, 2, True),
     ]
 }
 PLACEHOLDER_SHEETS = [n for n, s in MANIFEST.items() if s.in_build]
@@ -1414,6 +1423,739 @@ def draw_title() -> np.ndarray:
     return a
 
 
+# ==========================================================================
+# M7 sheets (PLAN.md "M7 Bullet hell for real", Art track C). Same recipe as
+# the boss: layered boolean masks on a char canvas, each layer with its own
+# 1 px outline, then a char -> colour map per sheet. Enemies face left.
+# Enemy bullets (pellet, orb) are warm (Coral, pink, white cores) so they
+# never read as the player's bolts and stay the brightest things on screen;
+# none of the new bugs or bosses uses white, cream or Coral in a large area.
+# ==========================================================================
+PINK = hx("ff9eb8")  # enemy bullet rim (warm, lighter than Coral)
+HOTPINK = hx("e8467c")  # enemy bullet outer ring on the second pulse frame
+SICK = hx("a7c48a")  # zombie wings: sickly pale green
+SICKDARK = hx("5b7a55")  # zombie shading
+GUNMETAL = hx("3e4a6b")  # Bohrbug armour shade
+LIGHTSTEEL = hx("a9b3c9")  # Bohrbug armour lit edge
+CARDBOARD = hx("b98a52")  # Schrodinbug box face
+
+
+def _grid(n: int, m: int | None = None) -> tuple[np.ndarray, np.ndarray]:
+    ys, xs = np.mgrid[0 : (m or n), 0:n]
+    return xs.astype(float), ys.astype(float)
+
+
+def _canvas(n: int, m: int | None = None) -> np.ndarray:
+    return np.full((m or n, n), ".", "<U1")
+
+
+def _poly(n: int, pts, r: float, m: int | None = None) -> np.ndarray:
+    """Pixels within r of the polyline through pts (vectorised _seg_mask)."""
+    xs, ys = _grid(n, m)
+    best = np.full(xs.shape, 1e9)
+    for (ax, ay), (bx, by) in zip(pts, pts[1:]):
+        dx, dy = bx - ax, by - ay
+        L2 = dx * dx + dy * dy or 1e-9
+        t = np.clip(((xs - ax) * dx + (ys - ay) * dy) / L2, 0, 1)
+        best = np.minimum(best, np.hypot(xs - ax - t * dx, ys - ay - t * dy))
+    return best <= r
+
+
+def _ell(n: int, cx: float, cy: float, rx: float, ry: float, m: int | None = None, p: float = 2) -> np.ndarray:
+    xs, ys = _grid(n, m)
+    return np.abs((xs - cx) / rx) ** p + np.abs((ys - cy) / ry) ** p <= 1
+
+
+def _rows(c: np.ndarray) -> list[str]:
+    """Char canvas -> rows with the 1 px empty cell border enforced."""
+    h, w = c.shape
+    c = c.copy()
+    c[0, :] = c[-1, :] = "."
+    c[:, 0] = c[:, -1] = "."
+    return ["".join(r) for r in c]
+
+
+def _put(c: np.ndarray, pts, ch: str) -> None:
+    for x, y in pts:
+        if 0 <= y < c.shape[0] and 0 <= x < c.shape[1]:
+            c[y, x] = ch
+
+
+def _curve(p0, p1, p2, n: int = 24) -> list[tuple[int, int]]:
+    return [(round((1 - t) ** 2 * p0[0] + 2 * (1 - t) * t * p1[0] + t * t * p2[0]),
+             round((1 - t) ** 2 * p0[1] + 2 * (1 - t) * t * p1[1] + t * t * p2[1]))
+            for t in (k / n for k in range(0, n + 1))]
+
+
+# --------------------------------------------------------------------------
+# shots.png (4 cells 8x8) and orb.png (2 cells 16x16): the M7 enemy bullet
+# shapes. Pellet: a 4x4 dot at x 2..5, y 2..5 (centred: draw the cell at
+# bullet centre - (4, 4)), a 2x2 white core, corners cut; frame 0 has a
+# light pink rim, frame 1 a hot-pink rim with dark corners, so it pulses.
+# Pink, not Coral: the player's FUZZER zap is Coral (bolt.png), and the
+# pellet is the commonest enemy bullet. Cells 2-3 are a Coral variant
+# (frame 1 with red corners) the code may use for split children or
+# revenge bullets. Orb: 12x12 at x 2..13 (draw at centre - (8, 8)): 1 px
+# dark outline, hot-pink ring, Coral body, a white core with a pink rim
+# and a white glint top left; frame 1 grows the core by a ring.
+# --------------------------------------------------------------------------
+SHOT_CMAP = {"o": OUTLINE, "C": CORAL, "p": PINK, "P": HOTPINK, "w": WHITE,
+             "c": CREAM, "r": RED}
+PELLETS = [
+    ["........",
+     "........",
+     "...pp...",
+     "..pwwp..",
+     "..pwwp..",
+     "...pp...",
+     "........",
+     "........"],
+    ["........",
+     "........",
+     "..oPPo..",
+     "..PwwP..",
+     "..PwwP..",
+     "..oPPo..",
+     "........",
+     "........"],
+    ["........",
+     "........",
+     "...CC...",
+     "..CwwC..",
+     "..CwwC..",
+     "...CC...",
+     "........",
+     "........"],
+    ["........",
+     "........",
+     "..rCCr..",
+     "..CwwC..",
+     "..CwwC..",
+     "..rCCr..",
+     "........",
+     "........"],
+]
+
+
+def draw_shots() -> np.ndarray:
+    a = new_sheet(MANIFEST["shots.png"])
+    for i, f in enumerate(PELLETS):
+        paint(a, f, i * 8, 0, SHOT_CMAP)
+    return a
+
+
+def orb(frame: int) -> list[str]:
+    xs, ys = _grid(16)
+    d = np.hypot(xs - 7.5, ys - 7.5)
+    c = _canvas(16)
+    c[d <= 6.0] = "o"
+    c[d <= 5.0] = "P"
+    c[d <= 4.1] = "C"
+    core = 2.3 if frame == 0 else 3.2
+    c[d <= core + 0.9] = "p"
+    c[d <= core] = "w"
+    g = (5, 5) if frame == 0 else (5, 4)
+    _put(c, [g, (g[0] + 1, g[1]), (g[0], g[1] + 1)], "w")
+    return _rows(c)
+
+
+def draw_orb() -> np.ndarray:
+    a = new_sheet(MANIFEST["orb.png"])
+    for i in range(2):
+        paint(a, orb(i), i * 16, 0, SHOT_CMAP)
+    return a
+
+
+# --------------------------------------------------------------------------
+# bugs2.png (12 cells 16x16): 0-1 centipede head, 2-3 centipede segment,
+# 4-5 flea, 6-7 ladybug, 8-9 mite, 10-11 zombie. Two-frame loops (legs or
+# wings) except the flea (0 crouched, 1 leaping) and the mite (two walk
+# frames). All face left except the flea, which faces right: it jumps in
+# from behind the ship.
+# --------------------------------------------------------------------------
+BUGS2_CMAP = {"o": OUTLINE, "t": TEAL, "T": DARKTEAL, "l": LIGHTTEAL, "n": TAN,
+              "y": YELLOW, "b": BROWN1, "B": BROWN2, "r": RED, "R": DARKRED,
+              "c": CREAM, "g": GREY, "s": STEEL, "z": SICK, "Z": SICKDARK}
+
+
+def centipede(frame: int, head: bool) -> list[str]:
+    # Top-down. A segment is a tall rounded plate (x 4..11, y 3..12, centre
+    # (7.5, 7.5)) cut into three stacked "frames" by two dark seams (a call
+    # stack), with a tan leg pair above and below that swings between
+    # frames. The head is a rounder, darker plate with yellow eyes, tan
+    # fangs and long antennae reaching forward; its centre is (8.5, 7.5).
+    xs, ys = _grid(16)
+    c = _canvas(16)
+    if head:
+        sw = 0 if frame == 0 else 1
+        for y0, y1 in ((4, 1), (11, 14)):  # antennae, forward and out
+            _put(c, _curve((5, y0), (3, y0 + (y1 - y0) // 2), (1 + sw, y1 + (1 if y1 < 7 else -1)), 6), "n")
+        body = _ell(16, 8.5, 7.5, 4.6, 5.0, p=2.4)
+        fill = np.where(xs < 8, "t", "T")
+        fill[(xs - 7) ** 2 + (ys - 5) ** 2 < 2.2] = "l"
+        _layer(c, body, fill)
+        _put(c, [(6, 5), (6, 10), (7, 5), (7, 10)], "y")
+        _put(c, [(6, 5), (6, 10)], "o")
+        fang = [(3, 6), (2, 7)] if frame == 0 else [(3, 6), (3, 7)]
+        _put(c, fang + [(x, 15 - y) for x, y in fang], "n")
+        _put(c, [(11, 2), (12, 1), (11, 13), (12, 14)], "n")  # first leg pair
+        return _rows(c)
+    body = _ell(16, 7.5, 7.5, 4.0, 5.1, p=3.0)
+    fill = np.where(xs < 7, "t", "T")
+    fill[(xs < 6) & (ys < 7)] = "l"
+    _layer(c, body, fill)
+    c[[5, 10], 5:11] = "o"  # stack seams
+    sw = -1 if frame == 0 else 1
+    for lx in (5, 10):
+        _put(c, [(lx, 2), (lx + sw, 1), (lx, 13), (lx + sw, 14)], "n")
+    return _rows(c)
+
+
+def flea(frame: int) -> list[str]:
+    # Side view facing RIGHT: a hunched brown oval with banded segments, a
+    # tiny head low at the front with a red eye and a beak; the huge tan
+    # hind leg folded in a Z under the body (frame 0, crouched) or kicked
+    # straight out behind and down (frame 1, leaping, body 1 px higher).
+    xs, ys = _grid(16)
+    c = _canvas(16)
+    y0 = 0 if frame == 0 else -1
+    u, v = (xs - 7.5) / 5.4, (ys - 6.5 - y0) / 4.2
+    body = (u * 0.94 + v * 0.34) ** 2 + (v * 0.94 - u * 0.34) ** 2 <= 1
+    fill = np.where(v < -0.35, "n", np.where(v > 0.5, "b", "B"))
+    fill[((xs.astype(int) - 3) % 3 == 0) & (v > -0.45)] = "b"  # segment bands
+    _layer(c, body, fill)
+    head = _ell(16, 12.6, 9.0 + y0, 2.0, 1.9)
+    _layer(c, head, "B")
+    _put(c, [(13, 8 + y0)], "r")
+    _put(c, [(14, 10 + y0)], "o")  # beak
+    if frame == 0:
+        hind = [(7, 9), (3, 11), (8, 13), (10, 14)]
+        small = [[(10, 10), (11, 14)], [(9, 10), (8, 14)]]
+    else:
+        hind = [(7, 8), (4, 11), (1, 14)]
+        small = [[(11, 9), (13, 13)], [(9, 9), (9, 13)]]
+    for leg in small:
+        _put(c, _curve(leg[0], leg[0], leg[1], 5), "n")
+    _layer(c, _poly(16, hind, 0.75), "n")
+    return _rows(c)
+
+
+def ladybug(frame: int) -> list[str]:
+    # Top-down, facing left: a round red shell with a cream gloss, a dark
+    # seam down the middle and four black spots, a black head with two
+    # cream eye spots. Frame 1 (flying) lifts the wing cases apart, the
+    # grey wings fanning out behind.
+    xs, ys = _grid(16)
+    c = _canvas(16)
+    split = frame == 1
+    if split:
+        for y_tip in (2, 13):
+            _layer(c, _poly(16, [(8, 7.5), (14, y_tip)], 1.5), "g")
+    head = _ell(16, 3.6, 7.5, 2.1, 2.6)
+    _layer(c, head, "o", outline=False)
+    shell = _ell(16, 8.5, 7.5, 5.5, 5.5) & (xs > 3.5)
+    if split:
+        top = shell & (ys < 7.5) & (xs + (7.5 - ys) * 0.4 < 13.5)
+        bot = shell & (ys > 7.5) & (xs + (ys - 7.5) * 0.4 < 13.5)
+        shell = np.roll(top, -1, 0) | np.roll(bot, 1, 0)
+    fill = np.where(xs + ys * 0.6 > 15.5, "R", "r")
+    _layer(c, shell, fill)
+    dy = 1 if split else 0
+    for sx, sy in ((6.5, 4.5 - dy), (10.5, 4.5 - dy), (6.5, 10.5 + dy), (10.5, 10.5 + dy)):
+        c[((xs - sx) ** 2 + (ys - sy) ** 2 <= 0.6) & shell] = "o"  # 2x2 spots
+    if not split:
+        c[7:9, 5:14] = np.where(shell[7:9, 5:14], "o", c[7:9, 5:14])  # seam
+    _put(c, [(5, 4 - dy)], "c")  # gloss
+    _put(c, [(3, 6), (3, 9)], "c")
+    return _rows(c)
+
+
+def mite(frame: int) -> list[str]:
+    # Side view, facing left, standing on the ground: feet on row 14. A
+    # steel turret dome with a yellow/dark hazard band, overflowing at the
+    # top (cream "bytes" spilling over the rim: a buffer overflow), a red
+    # eye low at the front, and a gun barrel pointing up and left from the
+    # front of the dome, yellow muzzle at (2, 3). Two walk frames.
+    xs, ys = _grid(16)
+    c = _canvas(16)
+    _layer(c, _poly(16, [(6.5, 7.5), (3, 4)], 1.0), "g")
+    dome = _ell(16, 8.5, 10.0, 5.6, 5.0) & (ys <= 11.5)
+    fill = np.where(ys < 7.5, "g", "s")
+    band = (ys >= 9) & (ys <= 10)
+    fill[band] = np.where(((xs + ys).astype(int) % 4 < 2)[band], "y", "o")
+    _layer(c, dome, fill)
+    legs = [(4, 12, 3), (7, 12, 6), (10, 12, 10), (13, 12, 13)]
+    for i, (hx_, hy, fx_) in enumerate(legs):
+        f = fx_ + (1 if (i + frame) % 2 else 0) - (1 if i < 2 else 0)
+        _put(c, [(hx_, hy), ((hx_ + f) // 2, 13), (f, 14)], "n")
+    _put(c, [(5, 10)], "r")
+    spill = [(7, 4), (8, 4), (10, 4), (9, 3), (11, 5), (12, 5)]
+    if frame == 1:
+        spill = [(7, 4), (9, 4), (10, 4), (8, 3), (11, 5), (12, 6)]
+    _put(c, spill, "c")
+    _put(c, [(2, 3), (3, 3), (2, 4)], "y")  # muzzle
+    return _rows(c)
+
+
+ZOMBIE_TOP = [  # rows 1..7; rows 8..14 mirror them. z pale wing, Z dark.
+    ["...ooooo........",
+     "..ozzzzzoo......",
+     "..ozzzzzzzoo.o..",
+     "...ozzzZzzzzozo.",
+     "....oozzZzzzzzo.",
+     ".ZZZ..ooZZzz.zo.",
+     "...ooRZZZZZZZoo."],
+    ["................",
+     "....oooo........",
+     "...ozzzzoo.oo...",
+     "...ozzzZzzozzo..",
+     "....ozzzZzzzzo..",
+     "ZZZ..ooZZzz.zo..",
+     "..ooRZZZZZZZoo.."],
+]
+
+
+def zombie(frame: int) -> list[str]:
+    # Top-down, facing left: a pale sick-green moth gone undead. Four
+    # ragged wing lobes with bites out of the trailing edges, a dark body,
+    # red eyes, and two forelegs stretched straight ahead like a movie
+    # zombie's arms. The wings are big flat light fills on purpose: the
+    # dead husk is this cell drawn with every other pixel skipped, so the
+    # shape must survive a 50 % checkerboard.
+    top = ZOMBIE_TOP[frame]
+    rows = ["." * 16] + top + top[::-1] + ["." * 16]
+    return _rows(np.array([list(r) for r in rows]))
+
+
+def draw_bugs2() -> np.ndarray:
+    a = new_sheet(MANIFEST["bugs2.png"])
+    cells = [centipede(0, True), centipede(1, True), centipede(0, False), centipede(1, False),
+             flea(0), flea(1), ladybug(0), ladybug(1), mite(0), mite(1), zombie(0), zombie(1)]
+    for i, f in enumerate(cells):
+        paint(a, f, i * 16, 0, BUGS2_CMAP)
+    return a
+
+
+
+# --------------------------------------------------------------------------
+# herd.png (2 cells 32x32): the midboss Thundering Herd, an aphid queen
+# (the mother of the gnat swarms) in side view facing left. A fat green
+# pear-shaped abdomen carrying a brood of light-green eggs, two cornicle
+# tubes on her back, a small head with a red eye and a yellow crown, long
+# tan antennae swept back over her, grey wings that beat (0 up, 1 down).
+# --------------------------------------------------------------------------
+HERD_CMAP = {"o": OUTLINE, "m": MIDDARK, "g": GREY, "G": GREEN, "l": LIGHTGREEN,
+             "D": DKGREEN, "y": YELLOW, "r": RED, "R": DARKRED, "n": TAN,
+             "b": BROWN1, "L": LIGHTTAN}
+
+
+def herd(frame: int) -> list[str]:
+    n = 32
+    xs, ys = _grid(n)
+    c = _canvas(n)
+    # Far wing, then near wing, rooted behind the head on the back.
+    tips = [((25, 2), (19, 2)), ((29, 9), (24, 5))][frame]
+    for tip, col in ((tips[1], "m"), (tips[0], "g")):
+        root = (13, 11)
+        L = math.hypot(tip[0] - root[0], tip[1] - root[1])
+        t = np.clip(((xs - root[0]) * (tip[0] - root[0]) + (ys - root[1]) * (tip[1] - root[1])) / L ** 2, 0, 1)
+        d = np.hypot(xs - root[0] - t * (tip[0] - root[0]), ys - root[1] - t * (tip[1] - root[1]))
+        w = 0.8 + 3.2 * np.sin(np.pi * np.minimum(1, t / 0.9)) ** 0.7
+        _layer(c, (d <= w) & (t > 0.02), col)
+    # Legs (behind the belly), thin and dark, walking in the air.
+    legs = [[(10, 24), (7, 27), (8, 30)], [(15, 25), (13, 28), (12, 30)], [(20, 25), (21, 28), (19, 30)]]
+    if frame:
+        legs = [[(x + (j == 2), y) for j, (x, y) in enumerate(l)] for l in legs]
+    _layer(c, _poly(n, [p for l in legs for p in l][:3], 0.5) | _poly(n, legs[1], 0.5) | _poly(n, legs[2], 0.5), "b")
+    # Abdomen: a pear, wide at the back, banded, lit from the upper left.
+    u, v = (xs - 19.5) / 10.5, (ys - 17.0) / 8.6
+    belly = u ** 2 + v ** 2 * (1.25 - 0.35 * u) <= 1
+    fill = np.where(u * 0.4 + v > 0.55, "D", "G")
+    fill[(u + 0.35) ** 2 + (v + 0.5) ** 2 < 0.09] = "l"
+    fill[(((xs.astype(int) - 14) % 5) == 0) & (v > -0.2) & (fill == "G")] = "D"
+    _layer(c, belly, fill)
+    # Brood: a row of eggs along the flank.
+    for ex, ey in ((14, 21), (18, 22), (22, 22), (26, 20)):
+        egg = _ell(n, ex, ey, 1.6, 1.3)
+        _layer(c, egg, "l")
+        _put(c, [(ex - 1, ey)], "L")
+    # Cornicles: two short tubes on the back, yellow tips.
+    for base, tip in (((24, 11), (27, 6)), ((27, 13), (30, 9))):
+        _layer(c, _poly(n, [base, tip], 0.7), "D")
+        _put(c, [tip], "y")
+    # Head and thorax.
+    thorax = _ell(n, 11.0, 17.5, 3.8, 4.4)
+    _layer(c, thorax, np.where(ys < 16, "l", "G"))
+    head = _ell(n, 6.0, 18.0, 3.6, 3.4)
+    _layer(c, head, np.where(ys > 19, "D", "G"))
+    _layer(c, _ell(n, 5.0, 17.0, 1.5, 1.6), np.where(ys > 17, "R", "r"), outline=False)
+    _put(c, [(4, 16)], "y")
+    _layer(c, _poly(n, [(4, 21), (3, 24)], 0.5), "n")  # beak
+    # Crown: three yellow points on the head.
+    crown = ["o.o.o", "yoyoy", "yyyyy", "ooooo"]
+    for dy, row in enumerate(crown):
+        for dx, ch in enumerate(row):
+            if ch != ".":
+                c[11 + dy, 4 + dx] = ch
+    # Antennae: long, swept back over the wings.
+    sw = 0 if frame == 0 else 1
+    _put(c, _curve((6, 11), (6, 4), (13 + sw, 2), 20), "n")
+    _put(c, _curve((8, 12), (10, 6), (17 + sw, 5 - sw), 20), "n")
+    return _rows(c)
+
+
+def draw_herd() -> np.ndarray:
+    a = new_sheet(MANIFEST["herd.png"])
+    for i in range(2):
+        paint(a, herd(i), i * 32, 0, HERD_CMAP)
+    return a
+
+
+# --------------------------------------------------------------------------
+# boss2.png (5 cells 48x48): the Mandelbug, stage 2. Top-down, its body IS
+# the Mandelbrot set facing left: the main cardioid is the body, the
+# period-2 bulb the head (two yellow eyes), the filament on the real axis
+# a long proboscis, and every smaller bulb is a smaller segment of the
+# same shape, each period its own colour with its own outline (segments
+# made of segments). Six jointed legs, two antennae. A thin escape-time
+# halo rims the body; cells 0-3 cycle its bands (fractal colour cycling)
+# and step the legs. Cell 4 (alt, glowing / splitting): the bulbs pushed
+# off the body, everything lit, a wider halo.
+# --------------------------------------------------------------------------
+MANDEL_CMAP = {"o": OUTLINE, "D": DKGREEN, "G": GREEN, "l": LIGHTGREEN, "y": YELLOW,
+               "t": TEAL, "T": DARKTEAL, "L": LIGHTTEAL, "n": TAN, "B": BROWN2,
+               "3": PURPLE3, "4": PURPLE4, "m": MIDDARK}
+MANDEL_S = 0.052  # complex units per pixel
+MANDEL_CX = 27.0  # pixel x of c = -0.6 (the cardioid cusp c = 0.25 lands at x 43)
+MANDEL_AXIS = 24  # pixel row of the real axis (sampled exactly: the filament shows)
+
+
+def _mandel(n: int, cx: float, cy: float, scale: float, it: int = 80) -> tuple[np.ndarray, np.ndarray]:
+    """(escape count, period, |multiplier|) per pixel for the set drawn
+    with pixel (cx, cy) at c = -0.6. Escaped points get period 0; points
+    that stay bounded get the period of the cycle their orbit settles into
+    (1 for the cardioid, 2 for the head bulb, ...), 9 if none is found.
+    Level sets of the multiplier are smaller copies of each bulb's own
+    outline (nested cardioids in the body, nested circles in the bulbs)."""
+    xs, ys = _grid(n)
+    c = (-0.6 + (xs - cx) * scale) + 1j * ((ys - cy) * scale)
+    z = np.zeros_like(c)
+    k = np.full(c.shape, it)
+    alive = np.ones(c.shape, bool)
+    for i in range(it):
+        z[alive] = z[alive] ** 2 + c[alive]
+        esc = alive & (np.abs(z) > 2)
+        k[esc] = i
+        alive &= ~esc
+    for _ in range(400):  # settle onto the attracting cycle
+        z[alive] = z[alive] ** 2 + c[alive]
+        alive &= np.abs(z) <= 2  # slow escapers count as outside
+    period = np.where(alive, 9, 0)
+    lam = np.ones(c.shape)  # |multiplier| of the cycle: 0 at the centre, 1 at the rim
+    w = z.copy()
+    prod = np.ones_like(z)
+    found = ~alive
+    for p in range(1, 9):
+        prod[alive] = prod[alive] * 2 * w[alive]
+        w[alive] = w[alive] ** 2 + c[alive]
+        hit = alive & ~found & (np.abs(w - z) < 1e-4)
+        period[hit] = p
+        lam[hit] = np.abs(prod[hit])
+        found |= hit
+    return k, period, lam
+
+
+def mandel_frame(frame: int, alt: bool = False) -> list[str]:
+    n = BOSS_N
+    xs, ys = _grid(n)
+    c = _canvas(n)
+    k, period, lam = _mandel(n, MANDEL_CX, MANDEL_AXIS, MANDEL_S)
+    if alt:  # split: push the head bulb left and the side bulbs outward
+        moved = np.zeros_like(period)
+        mlam = np.ones_like(lam)
+        for p in range(1, 10):
+            m = period == p
+            if p == 1:
+                parts = [(m, 0, 0)]
+            elif p == 2:
+                parts = [(m, 0, -2)]
+            else:
+                parts = [(m & (ys < MANDEL_AXIS), -2, 0), (m & (ys > MANDEL_AXIS), 2, 0),
+                         (m & (ys == MANDEL_AXIS), 0, -2)]
+            for part, dy, dx in parts:
+                dst = np.roll(np.roll(part, dy, 0), dx, 1)
+                moved[dst] = p
+                mlam[dst] = np.roll(np.roll(lam, dy, 0), dx, 1)[dst]
+        period, lam = moved, mlam
+    body = period > 0
+    hx_ = MANDEL_CX + (-1.0 + 0.6) / MANDEL_S  # head bulb centre x (c = -1)
+    # Legs (between the side bulbs) and antennae, tan, stepping per frame.
+    sw = [0, 1, 0, -1][frame % 4]
+    for i, (hip, knee, foot) in enumerate((((26, 16), (23, 8), (19, 3)),
+                                           ((40, 15), (42, 8), (44, 3)))):
+        s_ = sw if i == 0 else -sw
+        for mirror in (False, True):
+            pts = [hip, (knee[0] + s_, knee[1]), (foot[0] + s_, foot[1])]
+            if mirror:
+                pts = [(x, 2 * MANDEL_AXIS - y) for x, y in pts]
+            _layer(c, _poly(n, pts, 0.55), "B" if mirror else "n")
+    # Halo: exterior pixels touching the body, banded by escape count.
+    ring = _dilate4(body) & ~body
+    halo = _dilate4(ring) & ~body & ~ring & (k >= 6)
+    if alt:
+        halo = _dilate4(_dilate4(ring)) & ~body & ~ring & (k >= 3)
+    c[halo] = "T"  # a dark teal glow, with a quarter of it sparkling
+    c[halo & ((k + frame) % 4 == 0)] = "y" if alt else "L"
+    c[halo & ((k + frame) % 4 == 2)] = "y" if alt else "T"
+    # Components back to front, each with its own outline.
+    band = np.where(lam < 0.3, 2, np.where(lam < 0.65, 1, 0))  # rim, mid, core
+    tones = {1: "DGl", 2: "TtL", 3: "Gly", 4: "334"}
+    if alt:
+        tones = {1: "Gly", 2: "tLy", 3: "lyy", 4: "4yy"}
+    for p in range(1, 10):
+        m = period == p
+        if m.any():
+            t = tones.get(p, "lyy")
+            _layer(c, m, np.array([t[0], t[1], t[2]])[band])
+    # The filament (on the axis, left of the head) as a proboscis.
+    fil = (ys == MANDEL_AXIS) & (xs < hx_ - 5) & (xs >= 1)
+    c[fil & (c == ".")] = "n"
+    c[fil & (c == "T")] = "n"
+    # Head: two eyes looking left.
+    ex = int(round(hx_)) - 2
+    for ey in (MANDEL_AXIS - 2, MANDEL_AXIS + 2):
+        _put(c, [(ex, ey), (ex + 1, ey)], "y")
+        _put(c, [(ex, ey)], "o")
+    return _rows(c)
+
+
+
+def draw_boss2() -> np.ndarray:
+    a = new_sheet(MANIFEST["boss2.png"])
+    for i in range(4):
+        paint(a, mandel_frame(i), i * BOSS_N, 0, MANDEL_CMAP)
+    paint(a, mandel_frame(0, alt=True), 4 * BOSS_N, 0, MANDEL_CMAP)
+    return a
+
+
+# --------------------------------------------------------------------------
+# boss3.png (5 cells 48x48): the Schrodinbug, stage 3. A grey cat-eared
+# bug peeking out of an open cardboard box (3/4 view, box front x 8..35,
+# y 27..44, a purple psi on it): big yellow slit eyes looking left, a pair
+# of antennae with ball tips between the ears, two claws hooked over the
+# rim, a striped tail curling up out of the back. A square, boxy
+# silhouette (no relation to the Heisenbug's oval), drawn as big flat
+# fills so the superposed (dithered) bodies still read. Cells 0-3: idle
+# (head bob, ear twitch, tail sway, antennae). Cell 4 (collapse): the
+# flaps blown flat, the bug popped up out of the box, eyes wide.
+# --------------------------------------------------------------------------
+SCHRO_CMAP = {"o": OUTLINE, "d": DARK, "m": MIDDARK, "k": CARDBOARD, "B": BROWN2,
+              "b": BROWN1, "L": LIGHTTAN, "s": STEEL, "g": GREY, "S": LIGHTSTEEL,
+              "y": YELLOW, "2": PURPLE2, "3": PURPLE3, "4": PURPLE4, "R": DARKRED}
+PSI = [
+    "o.ooo.o",
+    "o..o..o",
+    "o..o..o",
+    ".ooooo.",
+    "...o...",
+    "...o...",
+    "..ooo..",
+]
+# Per idle frame: head dy, ear twitch (0/1), tail tip, antenna tip dx.
+SCHRO_POSES = [(0, 0, (44, 14), 0), (-1, 0, (45, 16), 1), (0, 1, (43, 17), 0), (1, 0, (44, 15), -1)]
+
+
+def schro_frame(frame: int, collapse: bool = False) -> list[str]:
+    n = BOSS_N
+    xs, ys = _grid(n)
+    c = _canvas(n)
+    hdy, twitch, tail_tip, adx = SCHRO_POSES[frame] if not collapse else (-7, 0, (44, 9), 2)
+    # Back flap and side flap (behind the cat).
+    back = (ys >= 19) & (ys <= 23) & (xs >= 14 + (23 - ys)) & (xs <= 41 + (23 - ys) * 0.3)
+    if collapse:
+        back = (ys >= 21) & (ys <= 23) & (xs >= 12) & (xs <= 43)
+    _layer(c, back, "b")
+    # Tail: striped, curling up out of the back right corner.
+    tx, ty = tail_tip
+    tail_pts = _curve((35, 31), (47, 30), (tx, ty), 14) + _curve((tx, ty), (tx - 1, ty - 4), (tx - 4, ty - 4), 6)
+    tail = _poly(n, tail_pts, 1.1)
+    tfill = np.where(((xs + ys).astype(int) // 2) % 2 == 0, "g", "s")
+    _layer(c, tail, tfill)
+    # Head: a round grey cat head, ears, tabby stripes, slit eyes.
+    hy = 20 + hdy
+    head = _ell(n, 22.0, hy, 9.5, 7.5)
+    for ex, tw in ((15.5, twitch), (28.5, 0)):
+        tip_y = hy - 13 + tw
+        ear = (ys >= tip_y) & (ys <= hy - 4) & (np.abs(xs - ex) <= (ys - tip_y) * 0.55)
+        head |= ear
+    hfill = np.where((xs - 18) ** 2 + (ys - hy + 4) ** 2 < 14, "S", "g")
+    hfill[ys > hy + 3] = "s"
+    _layer(c, head, hfill)
+    for ex in (15.5, 28.5):  # inner ears
+        tip_y = hy - 11 + (twitch if ex < 20 else 0)
+        inner = (ys >= tip_y) & (ys <= hy - 6) & (np.abs(xs - ex) <= (ys - tip_y) * 0.3)
+        c[inner] = "R"
+    for sx in (20, 22, 24):  # tabby stripes on the forehead
+        c[hy - 6 : hy - 3, sx] = np.where(head[hy - 6 : hy - 3, sx], "s", c[hy - 6 : hy - 3, sx])
+    wide = collapse
+    for ex in (17, 26):  # eyes, looking left
+        eye = _ell(n, ex, hy + 0.5, 2.6, 2.6 if wide else 2.0)
+        _layer(c, eye, "y")
+        if wide:
+            _put(c, [(ex - 1, hy), (ex - 1, hy + 1), (ex, hy), (ex, hy + 1)], "o")
+        else:
+            _put(c, [(ex - 1, hy - 1), (ex - 1, hy), (ex - 1, hy + 1), (ex - 1, hy + 2)], "o")
+    _put(c, [(21, hy + 4), (22, hy + 4)], "R")  # nose
+    if wide:
+        _put(c, [(21, hy + 6), (22, hy + 6)], "o")  # open mouth
+    # Antennae: from between the ears, ball tips.
+    for root, mid, tip in (((20, hy - 7), (17, hy - 13), (14 + adx, hy - 16)),
+                           ((24, hy - 7), (26, hy - 14), (30 + adx, hy - 17))):
+        tip = (tip[0], max(2, tip[1]))
+        _put(c, _curve(root, mid, tip, 12), "m")
+        _layer(c, _ell(n, tip[0], tip[1], 1.2, 1.2), "4")
+    if collapse:  # body and legs visible above the box
+        torso = _ell(n, 23.0, 25.0, 7.0, 5.0)
+        _layer(c, torso, "s")
+        for lx in (17, 22, 27):
+            _layer(c, _poly(n, [(lx, 26), (lx - 3, 30)], 0.6), "m")
+    # Box: front face, right side face (3/4 view), front flaps.
+    front = (xs >= 8) & (xs <= 35) & (ys >= 27) & (ys <= 44)
+    side = (xs >= 36) & (xs <= 42) & (ys >= 27 - (xs - 35) * 0.6) & (ys <= 44 - (xs - 35) * 0.6)
+    _layer(c, side, "B")
+    ffill = np.where(ys == 27, "L", "k")
+    ffill[(xs == 8) | (ys == 44)] = "B"
+    _layer(c, front, ffill)
+    c[33:41, 21:23] = np.where(c[33:41, 21:23] == "k", "B", c[33:41, 21:23])  # tape seam
+    paint_rows = PSI
+    for dy, row in enumerate(paint_rows):  # the psi, purple on the cardboard
+        for dx, ch in enumerate(row):
+            if ch == "o":
+                c[33 + dy, 12 + dx] = "2"
+    if collapse:
+        lflap = (ys >= 25) & (ys <= 27) & (xs >= 1) & (xs <= 9)
+        rflap = (ys >= 22 - (xs - 42) * 0.2) & (ys <= 24) & (xs >= 42) & (xs <= 46)
+    else:
+        lflap = (ys >= 21) & (ys <= 27) & (xs >= 3 + (ys - 21) * 0.8) & (xs <= 13 + (ys - 21) * 0.2)
+        lflap &= xs < 8 + (ys - 21) * 1.0
+        rflap = (ys >= 15) & (ys <= 27 - (xs - 35) * 0.6) & (xs >= 36) & (xs <= 41) & (ys >= 15 + (xs - 36))
+    _layer(c, lflap, "L")
+    _layer(c, rflap, "k")
+    # Claws over the rim (not in the collapse frame: the bug is up).
+    if not collapse:
+        for cx in (13, 29):
+            claw = _ell(n, cx, 27.0, 2.2, 1.5)
+            _layer(c, claw, "S")
+            _put(c, [(cx - 2, 28), (cx, 28)], "o")
+    return _rows(c)
+
+
+def draw_boss3() -> np.ndarray:
+    a = new_sheet(MANIFEST["boss3.png"])
+    for i in range(4):
+        paint(a, schro_frame(i), i * BOSS_N, 0, SCHRO_CMAP)
+    paint(a, schro_frame(0, collapse=True), 4 * BOSS_N, 0, SCHRO_CMAP)
+    return a
+
+
+# --------------------------------------------------------------------------
+# boss4.png (5 cells 48x48): the Bohrbug, stage 4. A heavy armoured
+# rhinoceros beetle built like a tank, side view facing left: a long horn
+# (the cannon) sweeping forward and up from a visored head, a flat-topped
+# riveted gunmetal hull, and tank treads instead of legs. On the hull an
+# atom: a nucleus of yellow and purple balls at about (27, 24) with three
+# electron orbits. Cells 0-3: the treads roll one tooth per cell and the
+# electrons step a quarter orbit (both loop exactly). Cell 4 (charge):
+# horn and seams glow yellow, the electrons flung onto wide orbits.
+# --------------------------------------------------------------------------
+BOHR_CMAP = {"o": OUTLINE, "d": DARK, "m": MIDDARK, "G": GUNMETAL, "s": STEEL,
+             "S": LIGHTSTEEL, "g": GREY, "t": TEAL, "L": LIGHTTEAL, "y": YELLOW,
+             "3": PURPLE3, "4": PURPLE4, "Y": FXYELLOW, "T": DARKTEAL}
+BOHR_NUCLEUS = (28.0, 23.0)
+
+
+def bohr_frame(frame: int, charge: bool = False) -> list[str]:
+    n = BOSS_N
+    xs, ys = _grid(n)
+    c = _canvas(n)
+    # Treads: a rounded belt x 5..43, y 35..45, teeth on the rim that roll.
+    belt = _ell(n, 24.0, 40.0, 19.5, 5.6, p=3.0)
+    bfill = np.full((n, n), "d", "<U1")
+    rim = belt & ~(_ell(n, 24.0, 40.0, 18.0, 4.2, p=3.0))
+    teeth = ((xs.astype(int) + frame) % 4 < 2) & rim & ((ys <= 36) | (ys >= 44))
+    teeth |= rim & ((ys.astype(int) + frame) % 4 < 2) & ((xs <= 6) | (xs >= 42))
+    bfill[teeth] = "g"
+    _layer(c, belt, bfill)
+    for wx in (10, 18, 26, 34):  # road wheels
+        w = _ell(n, wx + 0.5, 40.0, 3.0, 3.0)
+        c[w] = "s"
+        c[w & ~_ell(n, wx + 0.5, 40.0, 2.2, 2.2)] = "m"
+        _put(c, [(wx, 40), (wx + 1, 40)], "o")
+    for wx in (6.5, 41.5):  # drive sprockets
+        c[_ell(n, wx, 40.0, 2.0, 2.0)] = "m"
+    # Hull: flat-topped armour dome, gunmetal, lit top-left edge.
+    hull = _ell(n, 27.0, 34.0, 18.0, 21.0, p=2.6) & (ys <= 35) & (ys >= 13)
+    hfill = np.where(ys < 18, "s", np.where(ys > 30, "G", "s"))
+    hfill[(ys == 22) | (ys == 29)] = "G"  # plate seams
+    hfill[(xs + ys < 38) & (ys < 22)] = "S"
+    glow = "y" if charge else "G"
+    hfill[((ys == 22) | (ys == 29)) & charge] = glow
+    _layer(c, hull, hfill)
+    for rx in range(13, 44, 5):  # rivets on the skirt
+        if hull[32, rx]:
+            c[32, rx] = "S"
+    # Head: a squat armoured head under the front of the hull, visor slit.
+    head = _ell(n, 10.0, 29.0, 5.6, 5.4)
+    _layer(c, head, np.where(ys < 27, "s", "G"))
+    c[28, 5:12] = np.where(head[28, 5:12], "y" if not charge else "Y", c[28, 5:12])
+    # Horn: thick at the root, curving forward and up to a point.
+    pts = _curve((11, 26), (1, 23), (5, 5), 24)
+    horn = np.zeros((n, n), bool)
+    lit = np.zeros((n, n), bool)
+    for i, (px, py) in enumerate(pts):
+        r = 3.4 - 2.6 * i / (len(pts) - 1)
+        horn |= (xs - px) ** 2 + (ys - py) ** 2 <= r * r
+        lit |= (xs - px + 1) ** 2 + (ys - py + 0.5) ** 2 <= max(0.0, r - 1.3) ** 2
+    if charge:
+        hornfill = np.where(lit, "Y", "y")
+    else:
+        hornfill = np.where(lit, "S", "s")
+    _layer(c, horn, hornfill)
+    # Atom: three orbits, electrons, nucleus.
+    nx, ny = BOHR_NUCLEUS
+    R = (11.0, 4.0) if not charge else (13.5, 5.0)
+    orbit_col = "t" if not charge else "L"
+    for k_, ang in enumerate((0.0, math.pi / 3, 2 * math.pi / 3)):
+        ca, sa = math.cos(ang), math.sin(ang)
+        u = ((xs - nx) * ca + (ys - ny) * sa) / R[0]
+        v = (-(xs - nx) * sa + (ys - ny) * ca) / R[1]
+        filled = u * u + v * v <= 1
+        ring = filled & _dilate4(~filled) & hull
+        c[ring] = orbit_col
+        th = 2 * math.pi * (frame / 4 + k_ / 3)
+        ex = nx + R[0] * math.cos(th) * ca - R[1] * math.sin(th) * sa
+        ey = ny + R[0] * math.cos(th) * sa + R[1] * math.sin(th) * ca
+        e = _ell(n, round(ex), round(ey), 1.3, 1.3)
+        _layer(c, e, "L" if not charge else "y")
+    balls = [(-1.3, -1.3, "y"), (1.3, -1.3, "3"), (-1.3, 1.3, "3"), (1.3, 1.3, "y"), (0, 0, "4")]
+    nucleus = np.zeros((n, n), bool)
+    nfill = np.full((n, n), "3", "<U1")
+    for bx, by, col in balls:
+        m = _ell(n, nx + bx, ny + by, 1.6, 1.6)
+        nucleus |= m
+        nfill[m] = col
+    _layer(c, nucleus, nfill)
+    return _rows(c)
+
+
+def draw_boss4() -> np.ndarray:
+    a = new_sheet(MANIFEST["boss4.png"])
+    for i in range(4):
+        paint(a, bohr_frame(i), i * BOSS_N, 0, BOHR_CMAP)
+    paint(a, bohr_frame(0, charge=True), 4 * BOSS_N, 0, BOHR_CMAP)
+    return a
+
+
 PLACEHOLDER_DRAW = {
     "ship.png": draw_ship,
     "thruster.png": draw_thruster,
@@ -1428,6 +2170,13 @@ PLACEHOLDER_DRAW = {
     "fx_big.png": draw_fx_big,
     "boss.png": draw_boss,
     "title.png": draw_title,
+    "bugs2.png": draw_bugs2,
+    "shots.png": draw_shots,
+    "orb.png": draw_orb,
+    "herd.png": draw_herd,
+    "boss2.png": draw_boss2,
+    "boss3.png": draw_boss3,
+    "boss4.png": draw_boss4,
 }
 
 
