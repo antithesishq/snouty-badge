@@ -194,14 +194,18 @@ Then open <http://localhost:1234>. The hosted simulator at
 <https://badgesim.microzig.tech/> also fetches from `localhost:2468` and should
 work with the same watcher in Chrome; if it does not load, use the local UI.
 
-Sound: the buzzer plays one voice, the channel `core.apu.pick_voice` picks,
-as a square (or, for the wave channel, triangle) tone at the envelope's
-volume. Sound is off at boot unless built with `-Dsound=true`; the menu's
-Sound row toggles it (root docs/SOUND.md). The badge plays it through its
-speaker; the simulator through the browser (click the page once so the
-browser lets audio start). In the simulator the cart drives the audio
-worklet directly: upstream's wasm shim turns an infinite `tone2` into a
-4 s fade-in that music never gets past (`frontend/audio.zig` explains).
+Sound: off at boot unless built with `-Dsound=true`; the menu's Sound row
+toggles it (root docs/SOUND.md). On the badge the core renders all four
+Game Boy channels at 44.1 kHz and streams them to the newer firmware's
+audio ring (SPEC.md 9); the show badges run that firmware. On the old
+firmware the badge stays silent (no `tone2` is sent: on the new firmware
+those words are the ring's). With the debug overlay on, line 4 reads
+`q N u N`: samples queued in the ring (about 1,476 when settled) and the
+updates that found it empty. In the simulator, which has no streaming
+audio, the cart plays one voice (the loudest of channels 1..3) through
+the audio worklet directly (click the page once so the browser lets audio
+start): upstream's wasm shim turns an infinite `tone2` into a 4 s fade-in
+that music never gets past (`frontend/audio.zig` explains).
 
 Keys (from `sycl-badge/simulator/README.md`) and what they do here:
 

@@ -5,7 +5,8 @@ in Zig for Antithesis. It runs full screen: 144 lines squeezed onto the
 badge's 160x128 display by dropping every ninth line, the D-pad and
 A/B/Start/Select mapped straight through. Behind a Select long-hold: an
 emulator menu with palettes (or, for Color games, raw or GBC-LCD colour),
-one-voice sound, and a time scrubber that steps backwards and forwards
+four-channel sound streamed to the badge's newer firmware (off by default,
+a menu toggle), and a time scrubber that steps backwards and forwards
 through keyframes, verified by deterministic replay. Keyframes live in a
 page store that shares unchanged 512-byte pages, so a keyframe costs a few
 KB and the scrubber holds 5 to 25 s of history.

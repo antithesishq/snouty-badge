@@ -52,9 +52,13 @@ CLAUDE.md files have the long explanations, this one summarises.
   `Pixel.from_color(DisplayColor.rgb(0xRRGGBB))`.
 - Inputs `cart.controls.*`: start, select, a, b, click, up, down, left,
   right. The OS owns Start+Select (exit) and click; never bind click.
-- Audio `cart.tone2(...)`, one voice, each call cancels the previous. The
-  wasm build calls the simulator's `tone` import itself instead (upstream's
-  shim breaks infinite tones; `frontend/audio.zig` explains).
+- Audio: the core renders four channels at 44.1 kHz (`core/apu.zig`
+  "Sample generation", gated by `Gb.audio_render`) and the badge build
+  streams them through `../../lib/audio_feed.zig` to the newer firmware's
+  ring (SPEC.md 9). The badge build never calls `cart.tone2` or the `tone`
+  import (on the new firmware those clobber the ring words). The wasm
+  build keeps one voice through the simulator's `tone` import
+  (upstream's shim breaks infinite tones; `frontend/audio.zig` explains).
 - `read_flash`/`write_flash_page` are stubs on hardware, so the ROM is read
   by pointer: `cart/src/frontend/romsrc.zig` finds `.gb`/`.gbc` files on the
   badge drive (the OS `romfs` FAT12 region at 0x10080000) through the shared
