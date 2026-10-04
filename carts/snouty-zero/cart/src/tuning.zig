@@ -98,6 +98,13 @@ pub const collision_crash_speed: i32 = 4 << 16;
 pub const collision_min_speed: i32 = 1 << 15; // 0.5 px/tick
 /// Collision immunity after a damaging contact, ticks (one hit per bump).
 pub const collision_immune_ticks: u8 = 12;
+/// Knockouts (SPEC 5.5): ram damage per px/tick of closing speed when the
+/// player is the rammer (Q16 closing * this >> 16), the Overclock bonus in
+/// 1/256, the credit window after a hit, and the batch jobs' thermal.
+pub const ram_damage_per_px: i32 = 200;
+pub const ram_overclock_q8: i32 = 384;
+pub const ko_credit_ticks: u8 = 120;
+pub const traffic_thermal: i16 = 400;
 /// Rubber band (SPEC 5.3): target scale 1 + clamp(gap / 1500, -8%, +10%),
 /// in 1/1000.
 pub const rubber_px: i32 = 1500;

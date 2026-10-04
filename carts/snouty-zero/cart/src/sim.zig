@@ -63,6 +63,7 @@ pub fn reset(t: *const track.Track, count: u8) void {
             const cruise = @divTrunc(tuning.top_speed * @as(i32, c.speed_pct), 255);
             place(m, .{ .x = @as(i32, s.x) << fixed.Q, .y = @as(i32, s.y) << fixed.Q, .tangent = s.tangent }, lane, cruise);
             m.progress = si;
+            m.thermal = tuning.traffic_thermal;
         }
         m.active = true;
     }
@@ -199,10 +200,14 @@ fn step_machine(m: *Machine, b: Buttons, index: usize) void {
     m.up_was = b.up;
     if (m.hitstop > 0) {
         m.hitstop -= 1;
-        if (m.hitstop == 0) recover(m);
+        if (m.hitstop == 0) {
+            // A knockout leaves the race after its wreck (SPEC 5.5).
+            if (m.ko) m.active = false else recover(m);
+        }
         return;
     }
     if (m.immune > 0) m.immune -= 1;
+    if (m.hit_by_player > 0) m.hit_by_player -= 1;
     if (m.shake > 0) m.shake -= 1;
     if (m.boost > 0) m.boost -= 1;
     // Overclock (SPEC 4, 5.2): the press edge, enough thermal, no boost running.
@@ -385,13 +390,27 @@ fn any_rail(m: *const Machine) bool {
     return false;
 }
 
-/// Start the hit-stop; M3 turns this into the rewind decision.
+/// Start the hit-stop; M3 turns this into the rewind decision. Another
+/// machine the player hit within the credit window, still racing, is
+/// knocked out instead (SPEC 5.5): it wrecks through the hit-stop and
+/// leaves the race.
 pub fn crash(m: *Machine, cause: world.Crash) void {
+    const w = &world.w;
     m.crash = cause;
     m.hitstop = tuning.hitstop_ticks;
     m.vx = 0;
     m.vy = 0;
-    if (m == &world.w.machines[world.player]) {
+    const p = &w.machines[world.player];
+    if (m != p and m.hit_by_player > 0 and !m.finished and !m.ko) {
+        m.ko = true;
+        m.boost = 0;
+        w.kos +|= 1;
+        if (p.crash == .none) {
+            w.msg_who = @intCast((@intFromPtr(m) - @intFromPtr(p)) / @sizeOf(Machine));
+            set_msg(.ko, tuning.message_ticks);
+        }
+    }
+    if (m == p) {
         set_msg(switch (cause) {
             .fall => .fall,
             .meltdown => .meltdown,
@@ -542,6 +561,9 @@ fn contact(a: *Machine, ia: usize, b: *Machine, ib: usize, dx8: i32, dy8: i32, d
     const vnb = fixed.mul(b.vx, nx) + fixed.mul(b.vy, ny);
     const closing = vna - vnb;
     if (closing <= 0) return;
+    // The player is always `a` (index 0 comes first): any push credits a
+    // later crash of `b` to the player (SPEC 5.5).
+    if (ia == world.player) b.hit_by_player = tuning.ko_credit_ticks;
     const dv = (closing * tuning.collision_exchange) >> 8;
     a.vx -= fixed.mul(nx, dv);
     a.vy -= fixed.mul(ny, dv);
@@ -550,8 +572,15 @@ fn contact(a: *Machine, ia: usize, b: *Machine, ib: usize, dx8: i32, dy8: i32, d
     if (closing < tuning.collision_min_speed) return;
     const ca: *const ai.Character = if (ia == world.player) player_char() else ai.character(ia);
     const cb: *const ai.Character = if (ib == world.player) player_char() else ai.character(ib);
-    hit(a, ca);
-    hit(b, cb);
+    // Ram damage on `b` when the player's own speed into it is at least
+    // `b`'s share of the closing speed.
+    var ram: i32 = 0;
+    if (ia == world.player and vna >= -vnb) {
+        ram = (closing * tuning.ram_damage_per_px) >> fixed.Q;
+        if (a.boost > 0) ram = (ram * tuning.ram_overclock_q8) >> 8;
+    }
+    hit(a, ca, 0);
+    hit(b, cb, ram);
     if (ia == world.player and closing >= tuning.collision_crash_speed) crash(a, .collision);
     for ([2]*Machine{ a, b }) |m| {
         if (m.thermal <= 0 and m.crash == .none) {
@@ -561,13 +590,13 @@ fn contact(a: *Machine, ia: usize, b: *Machine, ib: usize, dx8: i32, dy8: i32, d
     }
 }
 
-fn hit(m: *Machine, c: *const ai.Character) void {
+fn hit(m: *Machine, c: *const ai.Character, ram: i32) void {
     if (c.contact_keep != fixed.one) {
         m.vx = fixed.mul(m.vx, c.contact_keep);
         m.vy = fixed.mul(m.vy, c.contact_keep);
     }
     if (m.immune > 0) return;
-    m.thermal -= @intCast(tuning.thermal_collision * c.damage_mul);
+    m.thermal = @intCast(@max(-tuning.thermal_max, @as(i32, m.thermal) - (tuning.thermal_collision + ram) * c.damage_mul));
     m.immune = tuning.collision_immune_ticks;
     m.shake = 4;
 }
@@ -759,13 +788,20 @@ test "lap needs both sectors" {
 /// Print the completable-test race summary (finish ticks, crashes, rivals).
 const report_race = false;
 
+/// The live ranked machines hold ranks 1..k exactly; knocked-out ones 0.
 fn ranks_are_permutation() bool {
     var seen: u8 = 0;
+    var live: u3 = 0;
     for (world.w.machines[0..tuning.ranked_count]) |m| {
+        if (!m.active) {
+            if (m.rank != 0) return false;
+            continue;
+        }
         if (m.rank < 1 or m.rank > tuning.ranked_count) return false;
         seen |= @as(u8, 1) << @intCast(m.rank - 1);
+        live += 1;
     }
-    return seen == 0x1F;
+    return seen == (@as(u8, 1) << live) - 1;
 }
 
 test "grid and traffic placement" {
@@ -857,10 +893,11 @@ test "every committed track is completable with the field present" {
         while (more < 60 * 60) : (more += 1) {
             simulate(.{});
             var done = true;
-            for (world.w.machines[1..tuning.traffic_first]) |r| done = done and r.finished;
+            for (world.w.machines[1..tuning.traffic_first]) |r| done = done and (r.finished or !r.active);
             if (done) break;
         }
-        for (world.w.machines[1..tuning.traffic_first]) |r| try std.testing.expect(r.finished);
+        // A rival the autopilot happened to knock out (SPEC 5.5) is out.
+        for (world.w.machines[1..tuning.traffic_first]) |r| try std.testing.expect(r.finished or !r.active);
         try std.testing.expect(ranks_are_permutation());
     }
 }
@@ -906,13 +943,16 @@ test "machines that overlap head-on are pushed apart and lose thermal" {
     collide_all();
     const dx = (b.x - a.x) >> fixed.Q;
     try std.testing.expect(dx >= 2 * tuning.machine_radius - 1);
+    // The player rams as much as it is rammed: 60 each, plus the ram
+    // damage of the 2 px/tick closing on the rival (SPEC 5.5).
     try std.testing.expectEqual(@as(i16, 1000 - 60), a.thermal);
-    try std.testing.expectEqual(@as(i16, 1000 - 60), b.thermal);
+    try std.testing.expectEqual(@as(i16, 1000 - 60 - 400), b.thermal);
     // 30% of the 2 px/tick closing speed exchanged: each now at 0.4 px/tick.
     try std.testing.expect(@abs(a.vx - fixed.one * 2 / 5) < 256);
     try std.testing.expect(@abs(b.vx + fixed.one * 2 / 5) < 256);
     try std.testing.expectEqual(world.Crash.none, a.crash);
-    // OVERFIT takes double damage; a 4 px/tick closing hit on the player is a COLLISION crash.
+    // OVERFIT takes double damage (so this ram knocks it out); a 4 px/tick
+    // closing hit on the player is a COLLISION crash.
     reset(&track.cold_aisle, 5);
     run_countdown();
     const p = &world.w.machines[0];
@@ -920,7 +960,8 @@ test "machines that overlap head-on are pushed apart and lose thermal" {
     p.* = .{ .x = (@as(i32, s.x) - 8) << fixed.Q, .y = @as(i32, s.y) << fixed.Q, .vx = 2 * fixed.one, .progress = 60 };
     o.* = .{ .x = (@as(i32, s.x) + 8) << fixed.Q, .y = @as(i32, s.y) << fixed.Q, .vx = -2 * fixed.one, .progress = 60 };
     collide_all();
-    try std.testing.expectEqual(@as(i16, 1000 - 120), o.thermal);
+    try std.testing.expectEqual(@as(i16, 0), o.thermal); // 1000 - 2 * (60 + 800), melted down
+    try std.testing.expect(o.ko);
     try std.testing.expectEqual(world.Crash.collision, p.crash);
     try std.testing.expectEqual(world.Message.collision, world.w.msg);
 }
@@ -956,4 +997,140 @@ test "SNOUTY is neutral and the characters differ" {
     try std.testing.expect(ai.characters[3].steer_q8 > ai.characters[1].steer_q8);
     try std.testing.expectEqual(@as(i32, 2), ai.characters[4].damage_mul);
     try std.testing.expect(ai.character(7) == &ai.traffic);
+}
+
+// --- Knockouts (SPEC 5.5) -----------------------------------------------------
+
+/// Two machines on Cold Aisle's sample 60 heading +x: the player `gap` px
+/// behind machine `victim`, at `pv` and `vv` px/tick (Q16).
+fn line_up(victim: usize, gap: i32, pv: i32, vv: i32) struct { p: *Machine, v: *Machine } {
+    reset(&track.cold_aisle, world.machine_count);
+    run_countdown();
+    const s = current.sample(60);
+    const p = &world.w.machines[0];
+    const v = &world.w.machines[victim];
+    const th = v.thermal;
+    p.* = .{ .x = (@as(i32, s.x) - gap) << fixed.Q, .y = @as(i32, s.y) << fixed.Q, .vx = pv, .progress = 60 };
+    v.* = .{ .x = @as(i32, s.x) << fixed.Q, .y = @as(i32, s.y) << fixed.Q, .vx = vv, .progress = 60, .thermal = th };
+    return .{ .p = p, .v = v };
+}
+
+test "a rear-end ram hurts the victim, a side bump less, the rammer only 60" {
+    // Full speed into a batch job at 55%: 1.6 px/tick closing, 320 of ram.
+    const rear = line_up(7, 19, 236000, 129792);
+    collide_all();
+    try std.testing.expectEqual(tuning.traffic_thermal, rear.v.thermal + 60 + ((236000 - 129792) * tuning.ram_damage_per_px >> fixed.Q));
+    try std.testing.expectEqual(@as(i16, 1000 - 60), rear.p.thermal);
+    try std.testing.expect(rear.v.hit_by_player == tuning.ko_credit_ticks);
+    // On a rival (1000 thermal): Overclocked is half as much ram again,
+    // a 0.7 px/tick bump much less.
+    const plain = line_up(1, 19, 236000, 129792);
+    collide_all();
+    const plain_left = plain.v.thermal;
+    const oc = line_up(1, 19, 236000, 129792);
+    oc.p.boost = 10;
+    collide_all();
+    try std.testing.expect(oc.v.thermal < plain_left - 100);
+    const side = line_up(1, 19, 45875, 0);
+    collide_all();
+    try std.testing.expect(side.v.thermal > plain_left + 100);
+    // Rammed from behind by a rival, the player takes only the 60.
+    reset(&track.cold_aisle, world.machine_count);
+    run_countdown();
+    const s = current.sample(60);
+    const p = &world.w.machines[0];
+    const r = &world.w.machines[1];
+    p.* = .{ .x = (@as(i32, s.x) + 19) << fixed.Q, .y = @as(i32, s.y) << fixed.Q, .vx = fixed.one, .progress = 60 };
+    r.* = .{ .x = @as(i32, s.x) << fixed.Q, .y = @as(i32, s.y) << fixed.Q, .vx = 3 * fixed.one, .progress = 60 };
+    collide_all();
+    try std.testing.expectEqual(@as(i16, 1000 - 60), p.thermal);
+    try std.testing.expectEqual(@as(i16, 1000 - 60), r.thermal);
+}
+
+test "a credited meltdown knocks a rival out of the race" {
+    const u = line_up(2, 19, 236000, 129792);
+    u.v.thermal = 100;
+    collide_all();
+    try std.testing.expect(u.v.ko);
+    try std.testing.expectEqual(world.Crash.meltdown, u.v.crash);
+    try std.testing.expectEqual(@as(u8, 1), world.w.kos);
+    try std.testing.expectEqual(world.Message.ko, world.w.msg);
+    try std.testing.expectEqual(@as(u8, 2), world.w.msg_who);
+    // It wrecks through the hit-stop, then is gone: no rank, no contact.
+    for (0..tuning.hitstop_ticks + 1) |_| simulate(.{});
+    try std.testing.expect(!u.v.active);
+    try std.testing.expectEqual(@as(u8, 0), u.v.rank);
+    try std.testing.expect(ranks_are_permutation());
+    try std.testing.expect(u.p.rank <= 4);
+}
+
+test "an uncredited crash still recovers; credit runs out" {
+    reset(&track.cold_aisle, world.machine_count);
+    run_countdown();
+    const r = &world.w.machines[3];
+    crash(r, .meltdown);
+    try std.testing.expect(!r.ko);
+    for (0..tuning.hitstop_ticks + 1) |_| simulate(.{});
+    try std.testing.expect(r.active);
+    try std.testing.expectEqual(world.Crash.none, r.crash);
+    // Hit by the player, then left alone past the window.
+    r.hit_by_player = tuning.ko_credit_ticks;
+    for (0..tuning.ko_credit_ticks) |_| simulate(.{});
+    crash(r, .fall);
+    try std.testing.expect(!r.ko);
+    // A credited fall knocks out; a finished machine never is.
+    const f = &world.w.machines[4];
+    f.hit_by_player = 10;
+    crash(f, .fall);
+    try std.testing.expect(f.ko);
+    const g = &world.w.machines[1];
+    g.hit_by_player = 10;
+    g.finished = true;
+    crash(g, .fall);
+    try std.testing.expect(!g.ko);
+}
+
+/// Test driver: the autopilot, but when a live machine is ahead within 70
+/// px and a 40 px band, steer at it, hold A and Overclock into it.
+fn ram_drive(m: *const Machine) Buttons {
+    var b = ai.drive(m, 0);
+    const hx = fixed.cos(m.heading);
+    const hy = fixed.sin(m.heading);
+    var best: i32 = 70;
+    var target: ?*const Machine = null;
+    for (world.w.machines[1..world.w.active_count]) |*o| {
+        if (!o.active or o.ko or o.hop != 0) continue;
+        const dx = wrap_px((o.x - m.x) >> fixed.Q);
+        const dy = wrap_px((o.y - m.y) >> fixed.Q);
+        const along = (dx * hx + dy * hy) >> fixed.Q;
+        const lat = (dx * -hy + dy * hx) >> fixed.Q;
+        if (along > 0 and along < best and @abs(lat) < 40) {
+            best = along;
+            target = o;
+        }
+    }
+    if (target) |o| {
+        const want = fixed.atan2(wrap_px((o.y - m.y) >> fixed.Q), wrap_px((o.x - m.x) >> fixed.Q));
+        const err = fixed.turn_diff(m.heading, want);
+        b.left = err < -300;
+        b.right = err > 300;
+        b.a = true;
+        b.down = false;
+        b.up = !m.up_was and m.boost == 0 and m.thermal > 450;
+    }
+    return b;
+}
+
+test "ramming the field knocks machines out, deterministically" {
+    reset(&track.cold_aisle, world.machine_count);
+    run_countdown();
+    for (0..1800) |_| simulate(ram_drive(&world.w.machines[0]));
+    const snap = world.w;
+    for (0..1800) |_| simulate(ram_drive(&world.w.machines[0]));
+    const end_a = world.w;
+    try std.testing.expect(end_a.kos >= 2);
+    try std.testing.expect(ranks_are_permutation());
+    world.w = snap;
+    for (0..1800) |_| simulate(ram_drive(&world.w.machines[0]));
+    try std.testing.expect(worlds_equal(&end_a, &world.w));
 }
