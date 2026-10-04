@@ -525,9 +525,9 @@ def draw_car(fn):
         if (x * 7 + y * 13) % 23 == 0 and c.px[y][x] != pal["OUT"]:
             c.px[y][x] = pal["TAIL"]
     cells.append(c)
-    # airborne: nose up a little, wheels hanging on extended suspension
-    hang = [ell((pm.c[0], pm.c[1], pm.c[2] - 0.08), pm.r, pm.mat) if pm.wheel else pm for pm in prims]
-    cells.append(fit(hang, rot(pitch=5), pal))
+    # airborne: nose up 3 degrees, wheels hanging on extended suspension
+    hang = [ell((pm.c[0], pm.c[1], pm.c[2] - 0.05), pm.r, pm.mat) if pm.wheel else pm for pm in prims]
+    cells.append(fit(hang, rot(pitch=3), pal))
     sheet = Canvas(CW * 5, CH)
     for i, cell in enumerate(cells):
         sheet.paste(cell, i * CW, 0)
