@@ -17,6 +17,12 @@ pub var profile: [256]u8 = @splat(0);
 pub var any: bool = false;
 /// The followed car's centerline sample (render-side, set per frame).
 pub var base_progress: u8 = 0;
+/// Look back (main.zig, Select held): distances ahead of the camera run
+/// back down the track from the followed car.
+pub var backward: bool = false;
+/// Cache of the height under the camera (`height_ahead`).
+var cam_key: u32 = 0xFFFF_FFFF;
+var cam_h: i32 = 0;
 /// Lap length in world px (from the World at race start).
 var lap_px: i32 = 0;
 
@@ -24,6 +30,7 @@ var lap_px: i32 = 0;
 /// a half-sine bump.
 pub fn init(t: *const track.Track, lap: u16) void {
     lap_px = lap;
+    cam_key = 0xFFFF_FFFF;
     profile = @splat(0);
     any = false;
     var i: usize = 0;
@@ -84,7 +91,17 @@ pub noinline fn height_ahead(z: i32, cam_behind: i32) i32 {
     if (!any) return 0;
     const spx = sample_px();
     if (spx == 0) return 0;
-    const ahead_samples = fixed.div(z - cam_behind, spx >> fixed.Q);
-    const cam_samples = fixed.div(-cam_behind, spx >> fixed.Q);
-    return height_at(ahead_samples) - height_at(cam_samples);
+    var ahead_samples = fixed.div(z - cam_behind, spx >> fixed.Q);
+    // Look back: the camera sits ahead of the car facing back down the track.
+    if (backward) ahead_samples = -ahead_samples;
+    // The floor under the camera changes only with the base sample (M1:
+    // the sprite list projects up to 192 points a frame).
+    const key: u32 = @as(u32, base_progress) | @as(u32, @intFromBool(backward)) << 8 | @as(u32, @intCast(cam_behind & 0xFFFF)) << 9 | @as(u32, @intCast(spx & 0x7F)) << 25;
+    if (key != cam_key) {
+        var cam_samples = fixed.div(-cam_behind, spx >> fixed.Q);
+        if (backward) cam_samples = -cam_samples;
+        cam_h = height_at(cam_samples);
+        cam_key = key;
+    }
+    return height_at(ahead_samples) - cam_h;
 }

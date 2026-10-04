@@ -1,10 +1,10 @@
 //! Forked from snouty-zero/cart/src/menu.zig at f8f6962.
-//! Menus and screens (SPEC 8.1), M0 placeholders: splash, title, and a
-//! small vertical-list menu. Zero's league and track pickers and the Grand
-//! Prix standings are gone; M1 adds the racer select, M3 the real splash,
-//! title and attract. main.zig owns the state machine.
+//! Menus and screens (SPEC 8.1): the splash (Snouty's eyepatched portrait,
+//! M1), the title, and the vertical list the pause menu uses. Zero's
+//! league and track pickers and the Grand Prix standings are gone; the
+//! racer select is select.zig, M3 the real title and attract. main.zig
+//! owns the state machine.
 const cart = @import("cart-api");
-const gfx = @import("gfx");
 const hud = @import("hud.zig");
 const sprites = @import("sprites.zig");
 
@@ -24,19 +24,19 @@ pub const List = struct {
     }
 };
 
-const head_pal = sprites.sheet_palette(gfx.snouty_head);
-
 pub fn clear() void {
     cart.rect(.{ .x = 0, .y = 0, .width = 160, .height = 128, .fill_color = hud.anti_black });
 }
 
-/// Splash (placeholder until M3's eyepatched portrait): Snouty's head
-/// large, the title under it.
+/// Splash (SPEC 8.1): Snouty's eyepatched portrait at 2x in his livery
+/// frame, the title and subtitle under it.
 pub fn draw_splash(frame: u32) void {
     clear();
-    sprites.blit_scaled(gfx.snouty_head, 12, 8, 0, 80, 64, 1024, &head_pal, .{});
-    hud.centered(title_str, 80, hud.white);
-    if (frame > 30) hud.centered(subtitle, 96, hud.coral);
+    cart.rect(.{ .x = 31, .y = 4, .width = 98, .height = 98, .fill_color = hud.livery(0) });
+    sprites.blit_cell(&sprites.portraits[0], 0, 32, 5, 96, 96, .{});
+    hud.centered(title_str, 104, hud.white);
+    hud.text(title_str, 80 - @as(i32, title_str.len) * 4 + 1, 104, hud.white); // bold
+    if (frame > 30) hud.centered(subtitle, 115, hud.coral);
 }
 
 /// Title over the live floor (drawn by the caller): title, subtitle, Press Start.

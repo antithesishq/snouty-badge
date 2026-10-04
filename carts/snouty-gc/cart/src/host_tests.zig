@@ -6,6 +6,7 @@ const std = @import("std");
 test {
     std.testing.refAllDecls(@This());
     _ = @import("fixed.zig");
+    _ = @import("roster_text.zig");
     _ = @import("track.zig");
     _ = @import("sim.zig");
     _ = @import("ai.zig");
