@@ -43,15 +43,29 @@ pub const Options = struct {
     /// (snouty-zero: a build option saying which variant this is).
     xip_custom_builder: ?CustomBuilder = null,
     mode: Mode = .ram,
+    /// Which variant the simulator wasm is built from in `.both` mode. `.ram`
+    /// (the default) is upstream's: `add_os_cart` builds it from the RAM
+    /// firmware's module. `.xip` builds the RAM firmware without a wasm and
+    /// the wasm from the XIP variant's modules (snouty-genesis: the RAM cart
+    /// drops the Z80 and the scrubber, the simulator keeps them).
+    wasm_from: WasmFrom = .ram,
 };
+
+pub const WasmFrom = enum { ram, xip };
 
 pub fn add(b: *Build, dep: *Build.Dependency, options: Options) void {
     switch (options.mode) {
         .ram => add_ram(b, dep, options),
         .xip => add_xip(b, dep, options, true),
-        .both => {
-            add_ram(b, dep, options);
-            add_xip(b, dep, options, false);
+        .both => switch (options.wasm_from) {
+            .ram => {
+                add_ram(b, dep, options);
+                add_xip(b, dep, options, false);
+            },
+            .xip => {
+                add_ram_firmware(b, dep, options);
+                add_xip(b, dep, options, true);
+            },
         },
     }
 }
@@ -62,6 +76,72 @@ fn add_ram(b: *Build, dep: *Build.Dependency, options: Options) void {
         .optimize = options.optimize,
         .root_source_file = options.root_source_file,
         .custom_builder = options.custom_builder,
+    });
+}
+
+/// Upstream's `add_os_cart` without its wasm: the same target, root, linker
+/// script, imports and installs, so the RAM firmware is built as `add_ram`
+/// builds it. For `wasm_from = .xip` only.
+fn add_ram_firmware(b: *Build, dep: *Build.Dependency, options: Options) void {
+    const mz_dep = dep.builder.dependency("microzig", .{});
+    const mb = MicroBuild.init(b, mz_dep) orelse return;
+    const badge_v2_target = badge_v2(mb, dep);
+
+    const cart_api_module = b.createModule(.{
+        .root_source_file = dep.builder.path("src/os/cart/api.zig"),
+    });
+    const user_cart_module = b.createModule(.{
+        .root_source_file = options.root_source_file,
+        .imports = &.{
+            .{ .name = "cart-api", .module = cart_api_module },
+        },
+    });
+    const fw = mb.add_firmware(.{
+        .name = options.name,
+        .target = badge_v2_target,
+        .optimize = options.optimize,
+        .root_source_file = options.root_source_file,
+        .linker_script = .{
+            .file = dep.builder.path("src/cart/cart_ram.ld"),
+            .generate = .none,
+            .assert_microzig_main = false,
+        },
+    });
+    fw.exe.root_module.addImport("user_cart", user_cart_module);
+    fw.exe.root_module.addImport("cart-api", cart_api_module);
+
+    const asset_step: ?*Build.Step = if (options.custom_builder) |builder| blk: {
+        const shared_step = b.allocator.create(Build.Step.TopLevel) catch @panic("oom");
+        shared_step.* = .{
+            .step = .init(.{
+                .name = b.fmt("{s} assets", .{options.name}),
+                .tag = .top_level,
+                .owner = b,
+            }),
+            .description = "Reusable build node for cart assets",
+        };
+        builder(b, fw.exe.root_module, cart_api_module, &shared_step.step);
+        break :blk &shared_step.step;
+    } else null;
+
+    const board_mod = fw.core_mod.import_table.get("board").?;
+    cart_api_module.addImport("board", board_mod);
+    cart_api_module.addImport("tracy_protocol", b.createModule(.{
+        .root_source_file = b.path("src/os/system/tracy_protocol.zig"),
+    }));
+
+    mb.install_firmware(fw, .{ .format = .elf });
+    mb.install_firmware(fw, .{ .format = .{ .uf2 = .{ .family_id = .RP2350_ARM_S } } });
+    if (asset_step) |step| fw.exe.step.dependOn(step);
+}
+
+/// Same target as upstream's sycl_badge_v2_microzig_target (private there).
+fn badge_v2(mb: *MicroBuild, dep: *Build.Dependency) *microzig.Target {
+    return mb.ports.rp2xxx.boards.raspberrypi.pico2_arm.derive(.{
+        .board = .{
+            .name = "SYCL Badge V2",
+            .root_source_file = dep.builder.path("src/board_v2.zig"),
+        },
     });
 }
 
