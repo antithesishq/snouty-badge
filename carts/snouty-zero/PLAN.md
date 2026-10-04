@@ -565,6 +565,32 @@ the ring, mixes in range, glides, fades off) and the pitch model. Bench
 idle and rev, the climb with speed, silence in each hit-stop and the
 warble through the auto rewinds, no gaps while racing.
 
+## M5.5 Knockouts
+
+2026-10-04, Adrian: "Can you destroy enemies? Like by smashing into them at
+high speeds or knocking them off the track?" Before this, no: a rival that
+melted down or fell reset on the centerline after the hit-stop, and contact
+did a flat 60 thermal. SPEC 5.5 is the design. Work, one track (small):
+
+- `world.zig`: `Machine.ko` (wrecking, then out) and `Machine.hit_by_player`
+  (credit countdown, ticks), `World.kos` and `World.msg_who`, `Message.ko`;
+  World stays under the 640-byte keyframe bound.
+- `sim.zig`: ram damage in `contact` when the player is the rammer;
+  credit; `crash` on a credited non-player machine sets `ko`; the
+  hit-stop end takes a KO'd machine out (`active = false`) instead of
+  `recover`; traffic starts at `tuning.traffic_thermal`.
+- `sprites.zig`: wreck flash and a spark burst every few ticks while `ko`;
+  `hud.zig`: the KO message; `results.zig`: a KOS row; `sound.zig`: `ko`.
+- Host tests: a rear-end ram damages the victim more than a side bump and
+  more than the rammer; a credited meltdown and a credited fall knock out
+  (rank 0, inactive after the wreck, the player ranks up, GP points 0); an
+  uncredited rival meltdown still recovers; the completable races allow
+  KO'd rivals; determinism with KOs.
+
+Done when `zig build`, `zig build test`, `zig build check-float` pass, the
+bench worst frame stays within the M5.4 figure, and a scripted ram run in
+badge-bench shows a KO.
+
 ## Hand-off
 
 All milestones are built, tested and on `origin/main` (tags

@@ -192,6 +192,36 @@ The Antithesis mechanic, the same design as Snouty vs. the Bugs 5.1 and
 - Attract mode records the autopilot's input the same way, so demo races
   show rewinds, which sells the mechanic to passers-by.
 
+### 5.5 Knockouts: ram them, wreck them (M5.5)
+
+The player can take rivals and traffic out of the race for good, F-Zero
+style. Two ways, both on the existing rules:
+
+- **Ram.** When the player is the rammer in a contact (the player's own
+  velocity along the contact normal is at least the other machine's
+  share of the closing speed), the victim takes ram damage on top of the
+  60 each: `closing_px_per_tick * 200`, half as much again when the
+  player is Overclocked, doubled for OVERFIT (`damage_mul`). A full-speed
+  rear-end on a batch job closes at about 1.6 px/tick, so 380; a side
+  swipe about 0.7, so 200. Rivals and the player take only the 60 when
+  they are the ones hit, so the AI tuning and the player's own risk do
+  not move (the 4 px/tick COLLISION crash still applies to the player).
+- **Wreck.** A machine the player hit in the last 120 ticks (2 s) that
+  then melts down (thermal 0) or falls off an open edge is **knocked
+  out**: a 20-tick wreck (it stops, flashes, throws sparks), then it
+  leaves the race. A crash the player did not cause stays what it was: a
+  hit-stop and a reset on the centerline. So a KO is always the player's
+  doing; rivals never vanish on their own.
+
+Batch jobs start with 400 thermal (one Overclocked ram or two plain rams
+end them); rivals start with the full 1000 and spend it on Overclock as
+before, so a rival late in a race goes in one or two rams. A knocked-out
+rival has no rank, finishes nothing and scores 0 Grand Prix points; the
+player moves up past it. The message bar names it, in cyan:
+`ARGMAX KILLED`, `BATCH KILLED`, with a short falling tone. The results
+screen counts `KOS`. Everything is in the World struct, so a rewind
+brings a knocked-out machine back, and the KO count with it.
+
 ## 6. Rendering
 
 ### 6.1 Screen layout
@@ -332,7 +362,8 @@ Race: Start -> Pause (Resume | Restart | Quit | Sound)
 ```
 
 Races are 3 laps. The results screen shows the rank, the race time, the
-best lap, the rewinds used and the thermal remaining, then `COMMITTED`.
+best lap, the rewinds used, the knockouts (5.5) and the thermal
+remaining, then `COMMITTED`.
 The splash is a Snouty face, not the Iris mark (that is for emulators).
 Best lap per track is kept in RAM only; there is no save to flash (keep
 the cart simple; a decision for Adrian, section 17).
