@@ -80,7 +80,7 @@ is at the show flashing from main).
 - Host tests for the input state machine (chord starts and stops FF, no tap,
   no menu, Start+Select chord still cancels) and for determinism (N frames at
   FF give the same console as N frames at 1x with the same pads).
-- badge-bench with a script holding Select+Right: 0 updates over budget,
+- badge-bench with a script doing the double tap and hold: 0 updates over budget,
   reported frames per update (the achieved speed), no regression at 1x.
 - Preview (wasm) contact sheet or GIF showing the `>>` indicator.
 - Cart PLAN.md gets a short "Fast forward" status section with the numbers.
