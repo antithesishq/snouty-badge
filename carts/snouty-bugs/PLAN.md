@@ -1708,6 +1708,133 @@ Levers for the lead (outside this track's files): keyframes every 30
 ticks (SPEC.md 13.1's fallback), or the pool at 112 / 96 per the
 decision above.
 
+### Deviations (B1)
+
+Track B1 (stages), 2026-10-04. `waves.zig`, `enemies.zig` (not the boss
+lines), `hud.zig` stage text. Every number below is a knob at the top of
+`enemies.zig` or in the stage tables.
+
+- **Fire on countdowns.** Every regular fire program runs on a countdown
+  (`aux`, a second one in `fire_tick`) reloaded at fire time, so a rising
+  rank never shifts a modulus. A countdown at 0 waits until the emitter is
+  inside the field; a volley is skipped (and the countdown reloaded) when
+  the emitter is within 22 px of the ship's hitbox center, so bullets never
+  spawn on the ship. Reload = `rank.interval(base) x pace / 16`, with
+  **pace** 16 / 9 / 9 / 7 for stages 1-4 and a third of that from the
+  second loop (`stage_pace`, `loop_pace`): the content's own difficulty
+  curve on top of the rank. The rank alone could not carry it: the probe
+  showed the dodger, once powered up, killing everything as it enters, and
+  the mercy term (+80 per hit, -1 per 2 s, uncapped) pins a struggling
+  player's rank at 0 for minutes, which also cancels loop 2's +400.
+- **Enemy fields.** `Enemy` gains `pattern: u8` (the program) and `edge`.
+  `Phase` gains `warn`, `jump`, `land`, `loop`, `husk`, `hold`. `spawn`
+  keeps its signature (program 0, right edge); `spawn_ex(kind, x, y,
+  delay, pattern, edge, variant)` is the full one; `spawn_gnat_string(y,
+  drop)` stays, `spawn_gnat_string_ex(x, y, id, pattern)` and
+  `spawn_centipede(y, id, pattern)` are new, `herd_alive()` is what the
+  table clock waits on.
+- **Kill hooks.** `damage()` at 0 HP calls `regular_death()` for regular
+  kinds (the boss lines are untouched): a zombie's first death turns it
+  into a husk and returns `.alive`; the herd's death runs
+  `bullets.cancel_all()`, drops two crates 20 px apart and a big explosion,
+  then returns `.killed` so `collide.kill` scores the 1,000.
+  `Enemy.hittable()` is false for a flea behind its chevron and a husk
+  (neither shot, rammed nor steered at by seekers). Points: centipede head
+  100, segment 20, flea 40, ladybug 30, mite 60, zombie 50 (+25 for the
+  husk), herd 1,000.
+- **HP above the contract's.** Stage 1 asked beetle 12, spider 6, moth
+  5; stage 2 centipede 10 + 4, mite 16, herd about 300. With those, a
+  powered ship killed everything before its first volley; the table below
+  has the numbers used (wasp 2 as asked).
+- **Big-bug flash.** The herd flashes on the first tick of a hit only
+  (under constant fire it was white all the time).
+
+Kinds (base HP x `rank.hp`, base intervals in ticks before pace and rank;
+p = `pattern`):
+
+| Kind | HP | Movement | Fire |
+|------|----|----------|------|
+| gnat | 1 | strings of 5, 1 px/tick, wobble 8 (p2: 14) | p0 none; p1 aimed pellet crossing x 120; p2 crossing x 136 and 84 |
+| wasp | 2 | threes in a vee; in at 2.5 to x 120 (or from the top / bottom edge to y 22 / 90), 20-tick pause, charge | on stopping: aimed 3-fan of pellets (p1+: 5-fan) |
+| beetle | 24 | in at 0.5 to x 112 (p2: 136), sits 240, leaves | every 24: p0 aimed 5-fan of rounds (+ rank.extra(2)); p1 fan / rotating 10-ring alternating; p2 (every 60) a 13-round wall, gap 26 px opening 48 px from the ship's y; p3 fan / aimed orb that splits into 6 pellets at age 50 |
+| spider | 12 | drops from the top, hangs 180 at y 24..72, climbs | every 18: 5-arc (8/256 apart) around a middle that sweeps 128 +- 40 (a sprinkler); p1 7 faster pellets |
+| moth | 8 | M2 wander (rng), 600 ticks | p0 aimed needle pairs every 20; p1 a 6-ring of stop-and-go pellets every 45 (drag 0.93, re-aim at age 40) |
+| centipede | head 24, segment 8 | head + 5 segments on one sine path (0.6 px/tick, amplitude 16, p1 28), each 14 ticks behind | the ripple: every 50, head first, each segment 6 ticks later; p0 aimed pellet; p1 aimed 3-fan; p2 the head an aimed 10-ring |
+| flea | 12 | 30-tick chevron at the left edge on its line, then jumps in from behind (vx 1.1, gravity 0.09, jumps vy -2.5, p1 -3.0, 12 ticks on the ground) | at each apex: p0 aimed 3-fan of pellets; p1 8-ring; p2 sniper line of 3 needles |
+| ladybug | 6 | fours from the top or bottom edge, 1.6 px/tick, drifting 0.4 left; one loop of radius 18 (64 ticks; p1 two), out the far edge | a ring of 10 (+extra) at the top of each loop; p2 12, plus an aimed pellet as the loop starts |
+| mite | 36 | locked to the near layer's scroll (integer steps of `bg.tick`), feet on the lower of the layer's tops under its feet, 1 px/tick steps | from the muzzle: needle bursts of 3 (p1 4), 6 apart, every 60; a 5-fan (p1 7) of pellets up-left every 70 |
+| zombie | 16 | 0.55 px/tick left on a slow sine (amplitude 10) | every 35: p0 aimed 3-fan of rounds; p1 5-fan of pellets. First death: husk (cell 10 dithered, drifts 0.5), revives after 90 with half HP and a 12-ring of pellets |
+| herd | 400 / 520 / 640 (v1-v3) | in to x 112, holds 25 s bobbing +- 16, leaves right | a gnat string from the egg row every 120 (gnat program = version + 1, so they fire); flowers every 50 / 42 / 36: two rings of 10 (v3: 12) + extra, half a step apart, pellets 1.2 and rounds 0.7; v2+ every third slow ring stops and re-aims; v3 also an aimed 3-needle line every 70 |
+
+Stages (each about 70 s of waves, WARNING at 72 s on the table clock,
+the boss at 78 s; the herd entry at 35 s holds the clock while she lives):
+
+| Stage | New | Ideas |
+|-------|-----|-------|
+| 1 UNIT TESTS | gnat, wasp, beetle, spider, moth | wasp threes, beetle fans, spider sprinklers, needle pairs; strings fire from 20 s; two crate strings and a last one on the spawn line |
+| 2 INTEGRATION | centipede, ladybug (top and bottom), flea | ripples, loops with rings, crossfire from behind (flea pairs at 16, 30, 57 s), pace 9/16; herd v1; beetle p1 rings, wasp 5-fans from above |
+| 3 STAGING | mite, zombie, walls (beetle p2) | fire from the ground, revivals, walls with far gaps, stop-and-go rings, two kinds per wave; herd v2 |
+| 4 PRODUCTION | splitting orb beetle (p3) | everything at pace 7/16: ladybug fours from both edges at once, walls from the right while fleas come from behind, wasps from top and bottom; herd v3 |
+| loop 2 | | the same tables at a third of the pace, every gnat string fires, the herd one version up, and stage 1 adds a loop table (fleas, mites, ladybugs, zombies) |
+
+- **Formations** are on a few waves per stage (the first centipede or
+  ladybug four, a gnat string or two, and a last dropping string at 69 s
+  on the spawn line, y 58, so the turret bot meets a boss powered up at
+  least once). With every gnat string dropping, the probe saw 10-23
+  crates a stage; now 2-7, plus the beetle rule and the herd's two.
+- **Entry.** `pattern`, `formation`, `edge` (top / bottom for wasps and
+  ladybugs; fleas always left; others the right), `dy` (vee offsets 0,
+  -dy, +dy, ...). `y` is the coordinate along the edge. `State` gains
+  `next_loop` for the loop tables.
+- **Scripts.** `tools/scripts/m7_stages` warps through the four tables
+  and into loop 2 in probe mode with a B hold in each, pinning
+  `debug_history_check == 0` every 10 updates (1,126 checks).
+  `m7_bosses`' outcome pins were re-pinned for four stages (the
+  Heisenbug dies at about 1650, the Bohrbug is killed rather than
+  escaping); its id, phase and identity pins hold.
+- **HUD.** `STAGE n` (y 52) and the name (y 62, Coral) for the first 120
+  ticks of each table, `LOOP n` above (y 40) from the second loop; `+500`
+  or `ESCAPED` for 60 ticks after the boss. The old `STAGE n` after a
+  clear is gone (the pop replaces it).
+
+Probe (`tools/difficulty.sh` from bugs/m7-probe, used locally, not
+committed by B1; B2's four bosses merged), hits per stage, boss fights
+included:
+
+| Bot | S1 | S2 | S3 | S4 | L2 S1 |
+|-----|----|----|----|----|-------|
+| turret (target >= 12/20/30/40/40) | 70 | 110 | 109 | 117 | 89 |
+| sweep (>= 6/12/20/30/30) | 81 | 112 | 113 | 145 | 71 |
+| dodger, one game (1..5, then rising) | 1 | 7 | 8 | 22 | 30 |
+| dodger, a fresh game warped to each stage | 1 | 13 | 21 | 29 | 29 |
+
+The dodger is chaotic: a hit costs a level and a fork and adds mercy, so
+small changes swing a chained run by 10 hits a stage; the fresh-start row
+(F1, no forks, `debug_next_stage` at the start) is the steadier curve.
+The turret reaches the stage-3 boss at A2 and the stage-4 boss at B2.
+Peaks: 20 of 24 enemies; the 128-bullet pool is full at moments in
+stages 2-4 and loop 2 for every bot (mean on screen: stage 1 20-33,
+stage 4 70-80), so later patterns are clipped by the pool there.
+
+Bench: badge-bench on a stage-4 build (a local edit started the game in
+stage 4 with god mode, not committed), the m7_stages sweep holding A from
+update 30, B held at 1700..1719 (28 s into PRODUCTION, the pool full at
+moments, 84 bullets on screen on average, up to 14 enemies), after the
+merge of B2's sprite speedup: mean 3.54 ms, p95 4.01 ms, worst 15.56 ms
+on the first hold-B frame (93 % of the budget, 0 frames over); without
+the hold the worst frame is 4.67 ms. A 100-frame hold at 15 s
+(900..999) peaks at 17.9 ms (6 frames over). The hold frames are the
+history replay of up to 59 ticks: B1's per-tick code is small
+(`enemies.update` about 800 cycles a tick, the fire countdowns about
+600), the replay is dominated by the engine's per-tick collision and
+bullet passes, which grow with the full bullet pool. So the 14 ms target
+for a hold-B frame is missed by 1.6 ms in a full stage-4 wave; the
+contract's fallback (pool 112 or 96) or fewer keyframe ticks to replay
+are the levers, not stage content. Iterating arrays by value (`for
+(world.w.enemy_bullets) |b|` copies the array) costs about 0.25 ms of
+memcpy a frame in `bullets.zig` (tried locally by pointer: mean 3.54 ->
+3.30 ms, worst unchanged; not committed, engine file).
+
 ### Verification for M7
 
 - `tools/check.sh` all green; `debug_history_check == 0` on every frame of
