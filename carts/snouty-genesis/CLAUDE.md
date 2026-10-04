@@ -64,7 +64,8 @@ ownership and interface contract.
   Mapping (SPEC.md section 5): d-pad, badge B = B, badge A = C, Start;
   Select tap = A (4 Genesis frames, 200 ms after the release); Select hold
   500 ms = emulator menu (M2); Select tap then hold = fast forward (root
-  docs/FAST_FORWARD.md, `tuning.ff_*`). Neopixels are never written (root docs/NEOPIXELS.md).
+  docs/FAST_FORWARD.md, `tuning.ff_*`), then Left = chorded rewind (scrubber
+  builds only: `input.chord_rewind`). Neopixels are never written (root docs/NEOPIXELS.md).
 
 ## Building
 

@@ -303,13 +303,27 @@ Fast forward (root docs/FAST_FORWARD.md): tap Select, then within 200 ms
 press it again and hold it. The game runs up to 4x (8 Genesis frames per
 update, only the last drawn, within 28 ms of the 33 ms update, so slower
 on a heavy game), silent, with `>>4x` (the speed this update; `>>1.5x`
-and so on below the cap) in the top right corner under the debug
-overlay; the d-pad and the other buttons still reach the game. Letting
+and so on below the cap) in the bottom right corner; the d-pad and the
+other buttons still reach the game, except Left in the XIP cart and the
+simulator (reserved for the chorded rewind below). Letting
 go of Select returns to 1x and sends nothing; the tap before it is
 dropped. That is why a lone Select tap waits 200 ms before it becomes
 Genesis A. Start during the window or the fast forward cancels both
 (Start+Select stays the OS's). Every fast-forwarded frame is recorded, so
 the scrubber can step back through it.
+
+Chorded rewind (the XIP cart and the simulator, which have the scrubber;
+the RAM cart has none, so there Left during fast forward is game input):
+while fast forwarding, press Left. The game freezes under the menu's
+scrub bar ("Scrub: -1.5 / 6.2s", or "Rewind: no history"), the first
+step back (0.5 s) happens at once, and Left/Right step back and forward
+as in the menu (4 steps a second while held). No button reaches the
+game; Start pauses the stepping. Letting go of Select resumes from that
+position and drops the future, exactly as resuming from the menu (a
+Left or Right still held waits for its release).
+`carts/snouty-genesis/tools/check_chord_rewind.sh` (run from the root
+after a build) checks that three menu steps and the chord land on the
+same frame and that both runs are identical 315 updates later.
 
 Holding Select for 500 ms pauses the game under the menu:
 
@@ -350,8 +364,8 @@ show "Hold Select: menu", then for 3 s more "2x Sel+hold: fast" (a strip
 at the bottom, gone at the first button press); in the menu the bottom
 line on Resume reads "Left/Right: rewind" ("Rewind: no history" before
 the first record; the `Scrub:` readout once parked or on other rows) and
-the footer takes turns every 2 s between "B: back to game" and "2x
-Sel+hold: fast". The menu
+the footer takes turns every 2 s between "B: back to game", "2x
+Sel+hold: fast" and (with the scrubber) "then Left: rewind". The menu
 rows are 8 px apart since the footer was added (9 px in M4).
 
 Time scrubber (SPEC.md section 10; the XIP cart and the simulator only:

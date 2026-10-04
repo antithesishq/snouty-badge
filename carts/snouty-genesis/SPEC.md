@@ -109,6 +109,8 @@ A 3-button pad (A, B, C, Start). The badge has A, B, Start and Select.
 | Select, hold 500 ms    | Emulator menu opens, game paused                       |
 | Select, tap then hold  | Fast forward (up to 4x) while held (second press      |
 |                        | within 200 ms of the tap; the tap is then dropped)     |
+| ... then Left          | Chorded rewind (scrubber builds): game frozen under    |
+|                        | the scrub bar, Left/Right step 0.5 s, Select resumes   |
 | In menu                | as Snouty Boy: Up/Down move, A choose, B resume,       |
 |                        | Left/Right step time 0.5 s back and forward            |
 

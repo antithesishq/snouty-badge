@@ -10,7 +10,9 @@ window) and presents at 30 Hz with two Genesis frames per update. The 68000 runs
 one-voice tone, and an emulator menu sits behind a Select hold, with time
 scrubbing by deterministic replay (as Snouty Boy and Snouty Gear).
 Tapping Select and then holding it fast forwards up to 4x (a lone Select
-tap is Genesis A, 200 ms after the release; docs/RUNNING.md section 5).
+tap is Genesis A, 200 ms after the release); Left during that hold
+rewinds in half-second steps where the scrubber exists (the XIP cart and
+the simulator; docs/RUNNING.md section 5).
 
 Sound (2026-10-04): the show badges' firmware plays only a streamed
 44.1 kHz sample ring and has no XIP, so the RAM cart now synthesises the
