@@ -254,7 +254,7 @@ fn base_hp(kind: Kind) u16 {
 /// HP of the active boss `b` at full health (its id, this loop); the spawn
 /// and the HUD bar share it.
 pub fn boss_max_hp_of(b: Enemy) u32 {
-    return boss_hp.max_hp(@enumFromInt(b.variant), world.w.waves.loop);
+    return boss_hp.max_hp(@fromBackingInt(@intCast(b.variant)), world.w.waves.loop);
 }
 
 /// Spawns one enemy of `kind` with its cell top-left at (x, y), appearing

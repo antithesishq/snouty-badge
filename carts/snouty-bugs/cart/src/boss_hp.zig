@@ -12,7 +12,7 @@ pub const BossId = enum(u8) { heisenbug, mandelbug, schrodinbug, bohrbug };
 /// The boss of stage index `stage` (0 = UNIT TESTS .. 3 = PRODUCTION);
 /// a later index wraps.
 pub fn for_stage(stage: u8) BossId {
-    return @enumFromInt(stage % 4);
+    return @fromBackingInt(@intCast(stage % 4));
 }
 
 const base: u32 = 60;
