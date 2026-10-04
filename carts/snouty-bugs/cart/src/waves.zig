@@ -89,6 +89,9 @@ const stage1 = [_]Entry{
     .{ .at = s(66), .kind = .moth, .count = 2, .spacing = 30 },
     .{ .at = s(68), .kind = .gnat, .y = 40, .pattern = 1 },
     .{ .at = s(68), .kind = .gnat, .y = 88, .pattern = 1 },
+    // The last wave flies the spawn line: a crate before the WARNING
+    // for a ship that has not moved (the probe's turret).
+    .{ .at = s(69), .kind = .gnat, .y = 58, .formation = true },
 };
 
 /// Stage 2, INTEGRATION: the centipede, ladybug loops from the top and the
@@ -132,6 +135,9 @@ const stage2 = [_]Entry{
     .{ .at = s(65), .kind = .ladybug, .y = 90, .count = 4, .spacing = 16, .edge = .bottom },
     .{ .at = s(67), .kind = .gnat, .y = 40, .pattern = 2 },
     .{ .at = s(68), .kind = .gnat, .y = 88, .pattern = 2 },
+    // The last wave flies the spawn line: a crate before the WARNING
+    // for a ship that has not moved (the probe's turret).
+    .{ .at = s(69), .kind = .gnat, .y = 58, .formation = true },
 };
 
 /// Stage 3, STAGING: ground mites and zombies, walls with gaps (beetle
@@ -181,6 +187,9 @@ const stage3 = [_]Entry{
     .{ .at = s(65), .kind = .ladybug, .y = 120, .count = 4, .spacing = 16, .edge = .top, .pattern = 2 },
     .{ .at = s(68), .kind = .gnat, .y = 40, .pattern = 2 },
     .{ .at = s(68), .kind = .gnat, .y = 88, .pattern = 2 },
+    // The last wave flies the spawn line: a crate before the WARNING
+    // for a ship that has not moved (the probe's turret).
+    .{ .at = s(69), .kind = .gnat, .y = 58, .formation = true },
 };
 
 /// Stage 4, PRODUCTION: everything, overlapping formations, curtains from
@@ -236,7 +245,31 @@ const stage4 = [_]Entry{
     .{ .at = s(66), .kind = .zombie, .y = 40, .count = 2, .spacing = 30, .dy = 40, .pattern = 1 },
     .{ .at = s(66), .kind = .gnat, .y = 64, .pattern = 2 },
     .{ .at = s(68), .kind = .beetle, .y = 64, .pattern = 2 },
+    // The last wave flies the spawn line: a crate before the WARNING
+    // for a ship that has not moved (the probe's turret).
+    .{ .at = s(69), .kind = .gnat, .y = 58, .formation = true },
 };
+
+/// Stage 1 from the second loop on also runs this: the bugs of the later
+/// stages come back to UNIT TESTS, from behind, above and below, where a
+/// fully powered ship cannot shoot them as they enter.
+const stage1_loop = [_]Entry{
+    .{ .at = s(6), .kind = .flea, .y = 80, .count = 2, .spacing = 40, .pattern = 1 },
+    .{ .at = s(12), .kind = .mite, .pattern = 1 },
+    .{ .at = s(18), .kind = .ladybug, .y = 120, .count = 4, .spacing = 16, .edge = .top, .pattern = 1 },
+    .{ .at = s(24), .kind = .zombie, .y = 40, .count = 2, .spacing = 30, .dy = 40, .pattern = 1 },
+    .{ .at = s(30), .kind = .flea, .y = 70, .count = 3, .spacing = 30, .pattern = 2 },
+    .{ .at = s(36), .kind = .ladybug, .y = 90, .count = 4, .spacing = 16, .edge = .bottom, .pattern = 2 },
+    .{ .at = s(42), .kind = .mite, .count = 2, .spacing = 60, .pattern = 1 },
+    .{ .at = s(48), .kind = .flea, .y = 60, .count = 2, .spacing = 40, .pattern = 1 },
+    .{ .at = s(54), .kind = .ladybug, .y = 120, .count = 4, .spacing = 16, .edge = .top, .pattern = 2 },
+    .{ .at = s(54), .kind = .ladybug, .y = 80, .count = 4, .spacing = 16, .edge = .bottom, .pattern = 2 },
+    .{ .at = s(60), .kind = .zombie, .y = 50, .count = 3, .spacing = 30, .dy = 26, .pattern = 1 },
+    .{ .at = s(64), .kind = .flea, .y = 80, .count = 3, .spacing = 30, .pattern = 1 },
+};
+
+/// Extra waves by stage from the second loop on (run beside the table).
+const loop_tables = [_][]const Entry{ &stage1_loop, &.{}, &.{}, &.{} };
 
 /// The stage tables, `stage_count` of them.
 const tables = [_][]const Entry{ &stage1, &stage2, &stage3, &stage4 };
@@ -282,6 +315,8 @@ pub const State = struct {
     t: u32 = 0,
     /// Index of the next entry of the stage's table to run.
     next: u8 = 0,
+    /// Index of the next entry of the stage's loop table (second loop on).
+    next_loop: u8 = 0,
     /// Completed loops through all `stage_count` stages (rank +400 each).
     loop: u8 = 0,
     /// Current stage index, 0..stage_count-1 (0 = UNIT TESTS).
@@ -307,6 +342,7 @@ pub fn update() void {
         // The stage index already moved on at the clear (`advance`).
         st.t = 0;
         st.next = 0;
+        st.next_loop = 0;
         st.phase = .waves;
     }
     if (st.phase == .waves and st.t >= warning_at) st.phase = .warning;
@@ -321,6 +357,13 @@ pub fn update() void {
         while (st.next < tb.len and tb[st.next].at <= st.t) {
             run(tb[st.next]);
             st.next += 1;
+        }
+        if (st.loop > 0) {
+            const lt = loop_tables[@min(st.stage, stage_count - 1)];
+            while (st.next_loop < lt.len and lt[st.next_loop].at <= st.t) {
+                run(lt[st.next_loop]);
+                st.next_loop += 1;
+            }
         }
     }
     st.t += 1;
@@ -375,6 +418,7 @@ pub fn next_stage() void {
     formations.clear();
     if (w.waves.phase == .cleared) w.waves.t = 0 else advance();
     w.waves.next = 0;
+    w.waves.next_loop = 0;
     w.waves.phase = .waves;
 }
 
@@ -393,6 +437,7 @@ pub fn warp_to_warning() void {
     if (st.phase != .waves) return;
     st.t = warning_at;
     st.next = @intCast(table().len);
+    st.next_loop = @intCast(loop_tables[@min(st.stage, stage_count - 1)].len);
     st.phase = .warning;
 }
 
@@ -406,7 +451,21 @@ fn vee(i: usize) f32 {
     return if (i % 2 == 1) -k else k;
 }
 
-fn run(e: Entry) void {
+/// From the second loop on, every gnat string fires and the herd comes
+/// one version harder, on top of the rank's +400 and the faster pace
+/// (`enemies.loop_pace`).
+fn remix(kind: Kind, pattern: u8) u8 {
+    if (world.w.waves.loop == 0) return pattern;
+    return switch (kind) {
+        .herd => @min(pattern + 1, 2),
+        .gnat => @max(pattern, 1),
+        else => pattern,
+    };
+}
+
+fn run(entry: Entry) void {
+    var e = entry;
+    e.pattern = remix(e.kind, e.pattern);
     switch (e.kind) {
         .gnat => {
             const id = if (e.formation) formations.open(string_len, true) else 0;

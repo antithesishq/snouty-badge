@@ -504,7 +504,8 @@ pub fn spawn_centipede(y: f32, id: u8, pattern: u8) void {
 
 /// The midboss (Thundering Herd) is on the field: the stage table waits.
 pub fn herd_alive() bool {
-    for (world.w.enemies) |e| {
+    // By pointer: iterating the array by value copies all of it.
+    for (&world.w.enemies) |*e| {
         if (e.active and e.kind == .herd) return true;
     }
     return false;
@@ -550,14 +551,17 @@ fn countdown(c: *u32, at: [2]f32, every: u32) bool {
 
 /// Sixteenths of a fire interval by stage, on top of the rank: the
 /// content's own difficulty curve. From the second loop on every stage
-/// fires `loop_pace` sixteenths faster again.
-const stage_pace = [4]u32{ 16, 12, 11, 10 };
-const loop_pace: u32 = 6;
+/// fires at `loop_pace` fifths of that again (the rank's mercy can hold a
+/// struggling player's rank at 0 for minutes, so the loop's own +400
+/// alone would not make loop 2 harder).
+const stage_pace = [4]u32{ 16, 11, 10, 7 };
+const loop_pace: u32 = 2;
 
 /// A fire interval at this stage, loop and rank (at least 1 tick).
 fn reload(every: u32) u32 {
     const st = &world.w.waves;
-    const k = stage_pace[@min(st.stage, stage_pace.len - 1)] - if (st.loop > 0) loop_pace else 0;
+    var k = stage_pace[@min(st.stage, stage_pace.len - 1)];
+    if (st.loop > 0) k = k * loop_pace / 5;
     return @max(rank.interval(every) * k / 16, 1);
 }
 
@@ -1078,8 +1082,8 @@ fn update_herd(e: *Enemy) void {
 }
 
 pub fn draw_enemies() void {
-    for (world.w.enemies) |e| {
-        if (e.live()) draw_enemy(e, .{});
+    for (&world.w.enemies) |*e| {
+        if (e.live()) draw_enemy(e.*, .{});
     }
 }
 
@@ -1183,6 +1187,6 @@ pub fn boss() ?*Enemy {
 
 pub fn live_count() u32 {
     var n: u32 = 0;
-    for (world.w.enemies) |e| n += @intFromBool(e.live());
+    for (&world.w.enemies) |*e| n += @intFromBool(e.live());
     return n;
 }
