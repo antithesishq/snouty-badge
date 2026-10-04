@@ -50,6 +50,7 @@ pub const mikey = @import("mikey.zig");
 pub const suzy = @import("suzy.zig");
 pub const undo = @import("undo.zig");
 pub const boot = @import("boot.zig");
+pub const audio = @import("audio.zig");
 
 pub const Cart = cart.Cart;
 
@@ -182,11 +183,18 @@ pub const Lynx = struct {
     /// Boots re-run because PC entered ROM space elsewhere than a trap.
     rom_resets: u32,
 
+    /// The last `step_frame`'s sound (core/audio.zig); not console state.
+    audio_out: [audio.samples_per_frame]u8,
+    /// Fill `audio_out` in `step_frame` (the frontend clears it while the
+    /// sound is off; the channels run either way: they are CPU-visible).
+    audio_render: bool,
+
     /// Set up in place (the console is ~75 KB: never build one on the
     /// stack, 32 KB on the badge).
     pub fn init_in_place(l: *Lynx, c: Cart) void {
         l.cart = c;
         l.idle_sleep = false;
+        l.audio_render = true;
         l.reset();
     }
 
@@ -194,6 +202,7 @@ pub const Lynx = struct {
     /// rewritten past the scrubber's hooks: the frontend calls
     /// `undo.reset` after this (and after `init_in_place`).
     pub fn reset(l: *Lynx) void {
+        @memset(&l.audio_out, audio.silence);
         l.ticks = 0;
         l.tick_base = 0;
         l.frame_end = 0;
@@ -660,7 +669,7 @@ pub const Lynx = struct {
     };
 
     /// The `Lynx` fields `Small` leaves out on purpose (see `Small`).
-    pub const small_excluded = [_][]const u8{ "ram", "cart", "display", "idle_sleep" };
+    pub const small_excluded = [_][]const u8{ "ram", "cart", "display", "idle_sleep", "audio_out", "audio_render" };
 
     pub fn save_small(l: *const Lynx, out: *Small) void {
         @memset(std.mem.asBytes(out), 0);
