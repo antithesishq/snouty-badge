@@ -3,7 +3,8 @@
 //! then the loop again (`loop + 1`, rank +400). Per stage: the `STAGE n`
 //! pop (hud.zig) over the first 120 ticks of the table, the table (about
 //! 70 s, sorted by tick; a midboss entry pauses the table clock while the
-//! herd lives, so it cannot be waited out), `.warning` for 6 s, the boss
+//! herd lives, so it cannot be waited out; a thin field runs it faster,
+//! `catchup`), `.warning` for 3 s, the boss
 //! (`.boss`), its death (`.cleared`, +500 and a fuel refill) or escape (no
 //! +500, no refill), a 120-tick breather, the next stage. The difficulty
 //! comes from `rank.zig` and from what each table puts on the field.
@@ -289,7 +290,17 @@ pub const stage_names = [stage_count][]const u8{ "UNIT TESTS", "INTEGRATION", "S
 /// about 14 s) comes on top, so every stage's waves last 70-85 s.
 const warning_ats = [stage_count]u32{ s(72), s(64), s(64), s(64) };
 /// The boss enters this long after the WARNING.
-const warning_len: u32 = s(6);
+const warning_len: u32 = s(3);
+/// Catch-up: once the `STAGE n` pop is over, while fewer than
+/// `field_floor` enemies are on the field (or still due to enter), the
+/// table clock runs `catchup` ticks a tick, so the next wave comes in
+/// instead of leaving the ship nothing to shoot. A gap of n seconds in a
+/// table lasts n / catchup seconds on an empty field. Everything on the
+/// stage clock moves with it (the fire ramp, rank's stage seconds, the
+/// WARNING), so a player who clears waves fast plays a shorter, denser
+/// stage.
+const field_floor: u32 = 3;
+const catchup: u32 = 4;
 
 pub fn warning_at() u32 {
     return warning_ats[@min(world.w.waves.stage, stage_count - 1)];
@@ -376,8 +387,20 @@ pub fn update() void {
                 st.next_loop += 1;
             }
         }
+        if (st.t >= stage_pop and field_count() < field_floor) {
+            // Stops at the WARNING so it starts on its first tick.
+            st.t = @min(st.t + catchup, @max(st.t + 1, warning_at()));
+            return;
+        }
     }
     st.t += 1;
+}
+
+/// Enemies on the field or waiting to enter (a member's spawn delay).
+fn field_count() u32 {
+    var n: u32 = 0;
+    for (&world.w.enemies) |*e| n += @intFromBool(e.active);
+    return n;
 }
 
 /// Moves the stage index on: the next stage, or stage 0 of the next loop
