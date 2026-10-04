@@ -112,16 +112,19 @@ pub fn draw() void {
     draw_text(buf[0..i], 0, 0, white, if (alarm) red else black);
 }
 
-/// The fast-forward indicator, ">>3x" (the frames stepped per update,
+/// The fast-forward indicator, ">>2.5x" (game frames per 60 Hz refresh,
 /// averaged), in the bottom-right corner over the drawn frame. Drawn in
 /// every fast update, so the next frame (fully redrawn in
 /// `.no_copy_full_frame`) removes it when fast forward ends.
 pub fn draw_fast(frames_x16: u32, fg: cart.Pixel, bg: cart.Pixel) void {
+    const tenths = @min((frames_x16 * 10 + 8) / 16, 99);
     var buf: [8]u8 = undefined;
     var i: usize = put(&buf, ">>");
-    i += put_num(buf[i..], (frames_x16 + 8) / 16);
-    buf[i] = 'x';
-    i += 1;
+    buf[i] = @intCast('0' + tenths / 10);
+    buf[i + 1] = '.';
+    buf[i + 2] = @intCast('0' + tenths % 10);
+    buf[i + 3] = 'x';
+    i += 4;
     draw_text(buf[0..i], cart.screen_width - i * 8, cart.screen_height - 8, fg, bg);
 }
 

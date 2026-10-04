@@ -49,3 +49,8 @@ pub const ff_max_frames = 4;
 /// `micros_since_boot` is a stub, so there every fast update steps
 /// `ff_max_frames`.
 pub const ff_budget_us = 13_000;
+/// The same for a game whose skipped frame plus drawn frame do not fit
+/// `ff_budget_us` (DMG Tetris): the update takes two refreshes (33.3 ms)
+/// on purpose and may step `2 * ff_max_frames` frames in this many
+/// microseconds, so it still runs faster than 1x.
+pub const ff_slow_budget_us = 28_000;

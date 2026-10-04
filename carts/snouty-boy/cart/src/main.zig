@@ -156,7 +156,7 @@ const Ctx = struct {
             audio.before_step(gb);
             ff_x16 = 0;
         }
-        const t_draw = cart.micros_since_boot();
+        const t_draw = if (fast) cart.micros_since_boot() else t1;
         gb.step_frame(pad);
         const t2 = cart.micros_since_boot();
         stepped = true;
@@ -165,12 +165,19 @@ const Ctx = struct {
         debug.audio_queue = audio.queued();
         debug.audio_underruns = audio.underruns();
         rewind.record_frame(gb, pad);
-        draw_us = @truncate(cart.micros_since_boot() -% t_draw);
 
         video.finish_frame();
-        // At 1x the step alone, as always; fast, every frame of the update
-        // with its keyframe work (what the time box spends).
-        debug.record(@truncate(if (fast) cart.micros_since_boot() -% t1 else t2 -% t1));
+        if (fast) {
+            // Every frame of the update with its keyframe work: what the
+            // time box spends.
+            const t3 = cart.micros_since_boot();
+            draw_us = @truncate(t3 -% t_draw);
+            debug.record(@truncate(t3 -% t1));
+        } else {
+            // At 1x the step alone, as always (no extra clock read).
+            draw_us = @truncate(t2 -% t1);
+            debug.record(@truncate(t2 -% t1));
+        }
         debug.draw();
         if (play_hint.tick(fresh)) {
             const y = cart.screen_height - 2 * hint.strip_h;
@@ -231,38 +238,62 @@ var stepped = false;
 /// `micros_since_boot` at the top of this update: the fast-forward time
 /// box counts from there.
 var update_us: u64 = 0;
-/// Microseconds the last drawn frame took (step and record), and the last
-/// skipped one: the fast-forward time box's estimates for the next ones.
+/// Microseconds the last drawn frame took (fast: step and record; 1x: the
+/// step), and the last skipped one (step and record): the fast-forward
+/// time box's estimates for the next ones.
 var draw_us: u32 = 0;
 var skip_us: u32 = 0;
-/// Frames per fast update in 1/16, averaged over about 8 updates (">>Nx");
-/// 0 at 1x.
+/// Game frames per 60 Hz refresh while fast forwarding, in 1/16,
+/// averaged over about 8 updates (">>2.5x"); 0 at 1x.
 var ff_x16: u32 = 0;
 
-/// The skipped frames of a fast update: up to `tuning.ff_max_frames - 1`
-/// frames with the pixel work off (`video.set_drawing`), each recorded for
-/// the scrubber like any other, while the time used since the update began
-/// plus one more skipped frame and the drawn one fit `tuning.ff_budget_us`
-/// (wasm: always, `micros_since_boot` is a stub there). The caller steps
-/// the drawn frame. Every frame gets the same pad, so the history replays
+/// The skipped frames of a fast update: frames with the pixel work off
+/// (`video.set_drawing`), each recorded for the scrubber like any other,
+/// while the time used since the update began plus one more skipped frame
+/// and the drawn one fit the time box (wasm: `tuning.ff_max_frames - 1`
+/// of them, `micros_since_boot` is a stub there). The caller steps the
+/// drawn frame. Every frame gets the same pad, so the history replays
 /// exactly as at 1x (tests/determinism.zig).
+///
+/// The time box is one refresh (`tuning.ff_budget_us`, up to
+/// `ff_max_frames` frames) when a skipped and a drawn frame fit it. A game
+/// too heavy for that (DMG Tetris busy-waits for VBlank: a frame costs
+/// about 8.5 ms with or without pixels) gets two refreshes instead
+/// (`tuning.ff_slow_budget_us`, up to twice the frames): the update misses
+/// one vsync on purpose and the picture runs at 30 Hz while the game runs
+/// faster than 1x.
 fn step_fast(pad: u8) void {
     video.set_drawing(false);
     var n: u32 = 1; // the drawn frame
-    while (n < tuning.ff_max_frames) : (n += 1) {
-        const t = cart.micros_since_boot();
-        if (!cart.is_wasm) {
-            // Before the first skipped frame is measured, a drawn frame
-            // (the dearer kind) stands in for it.
-            const est = @as(u64, if (skip_us != 0) skip_us else draw_us) + draw_us;
-            if (t -% update_us + est > tuning.ff_budget_us) break;
+    var refreshes: u32 = 1;
+    if (cart.is_wasm) {
+        while (n < tuning.ff_max_frames) : (n += 1) {
+            gb.step_frame(pad);
+            rewind.record_frame(gb, pad);
         }
-        gb.step_frame(pad);
-        rewind.record_frame(gb, pad);
-        skip_us = @truncate(cart.micros_since_boot() -% t);
+    } else {
+        // Before the first skipped frame is measured, a drawn frame (the
+        // dearer kind) stands in for it.
+        const est = @as(u64, if (skip_us != 0) skip_us else draw_us) + draw_us;
+        var budget: u64 = tuning.ff_budget_us;
+        var max_frames: u32 = tuning.ff_max_frames;
+        if (cart.micros_since_boot() -% update_us + est > budget) {
+            budget = tuning.ff_slow_budget_us;
+            max_frames *= 2;
+            refreshes = 2;
+        }
+        while (n < max_frames) : (n += 1) {
+            const t = cart.micros_since_boot();
+            const e = @as(u64, if (skip_us != 0) skip_us else draw_us) + draw_us;
+            if (t -% update_us + e > budget) break;
+            gb.step_frame(pad);
+            rewind.record_frame(gb, pad);
+            skip_us = @truncate(cart.micros_since_boot() -% t);
+        }
     }
     video.set_drawing(true);
-    ff_x16 = if (ff_x16 == 0) n * 16 else ff_x16 + (n * 16) / 8 - ff_x16 / 8;
+    const x16 = n * 16 / refreshes;
+    ff_x16 = if (ff_x16 == 0) x16 else ff_x16 + x16 / 8 - ff_x16 / 8;
 }
 
 /// Badge frames since boot; paces the second chime note.
