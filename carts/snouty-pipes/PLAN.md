@@ -154,6 +154,50 @@ start: ball at s = 0 then out-half; end: in-half then ball at s = 1).
    `CLAUDE.md` for the cart (model: the maze's), review GIF
    `docs/preview_m1.gif` once A and B land (`../../tools/make_gif.py`).
 
+## Plan: M3 (steer mode)
+
+Adrian approved M3 on 2026-10-04 ("keep going through steer mode"). One
+Opus agent builds it (it lives almost entirely in `director.zig`, so
+parallel tracks would collide); the lead reviews, runs the gate, merges.
+
+- **Enter/leave**: Select toggles steer mode from any screensaver state
+  (the `-Ddebug_overlay` Select toggle moves to Select+B in such builds).
+  The boot name strip gets a second line or alternates with
+  "SELECT: STEER" so people find it; also shown on the game-over card.
+- **Run**: dissolve, then a three-quarter view (fixed for the run, no
+  orbit), 2 autopilot pipes plus the player's pipe in a fixed colour that
+  the autopilot avoids. The player's pipe moves by itself, starting at 3
+  cells/s and +1 cell/s every 15 cells up to 8.
+- **Controls, screen-relative**: the grid axis most aligned with the
+  camera's `fwd` is depth (A = into the screen, B = out of it); of the
+  other two, the one most aligned with `right` is Left/Right, the last is
+  Up/Down (sign from the projection). A press sets the next turn (buffered
+  until the next cell); a reversal is ignored. Joystick held = repeat.
+- **No lag**: the walker draws one cell behind; the player's head must not.
+  Draw the head cell's in-half as soon as the pipe enters it, and the rest
+  once the exit is known (player turns use ball joints, so the in-half is
+  always a straight piece).
+- **Head marker**: a small blinking marker at the head's projected position
+  through the overlay save/restore, so the head can be found among pipes.
+- **Crash**: moving into an occupied cell or the wall. The first crash of a
+  run rewinds (the Snouty twist): restore a snapshot from 6 player cells
+  ago (occupancy, slots, rng, history count; a small ring of snapshots, one
+  per player cell), clear, and regrow the scene from the history ring as
+  the visible rewind, then play on. The second crash ends the run.
+- **HUD**: score (player cells) and the rewind token, top left, through the
+  overlay save/restore. Game over: a card with SCORE / BEST (session best,
+  no flash save), "A: AGAIN  SELECT: EXIT".
+- **States** (stable numbers): steer = 4, rewind = 5, game_over = 6.
+- **Exports**: `debug_steer` (1 in steer states), `debug_score`,
+  `debug_best`, `debug_rewinds_left`, `debug_crashes`, `debug_head_x/y/z`,
+  `debug_steer_map` (packed axis map, for tests).
+- **Gate**: host tests (mapping is a permutation of the six directions for
+  every view, rewind restores the exact snapshot, crash rules, score),
+  check_cycle runs for steer (enter, survive a scripted path, crash ->
+  rewind -> crash -> game over, A again, Select out), a golden or two,
+  badge-bench script with a crash + rewind (worst <= 12 ms) and `--lcd`
+  clean, `docs/preview_m3.gif`. Tag `snouty-pipes/m3`, merge, push.
+
 ## Status
 
 - 2026-10-04 M0 scaffold: build wiring, root build.zig entry, interfaces
