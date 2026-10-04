@@ -19,7 +19,7 @@ Skipped frames do no pixel work (Boy's `lines_wanted`, Genesis already
 renders only the last frame of an update), so they cost less than the
 means above.
 
-## Behaviour (defaults; Adrian can change any of them)
+## Behaviour (Adrian confirmed the chord 2026-10-04; the rest are defaults)
 
 - **Trigger: hold Select, then hold Right.** There is no free badge button:
   A, B, Start and the d-pad go to the game, Select-hold opens the menu, the
