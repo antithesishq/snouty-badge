@@ -203,8 +203,6 @@ pub const Lynx = struct {
     /// `undo.reset` after this (and after `init_in_place`).
     pub fn reset(l: *Lynx) void {
         @memset(&l.audio_out, audio.silence);
-        // A fresh Mikey (the audio renderer starts here; `reboot` keeps it).
-        l.mikey = .{};
         l.ticks = 0;
         l.tick_base = 0;
         l.frame_end = 0;
@@ -220,20 +218,24 @@ pub const Lynx = struct {
         l.rom_resets = 0;
         l.display = .{};
         l.cpu = .{};
-        l.reboot();
+        l.reboot(false);
     }
 
-    /// The boot without touching the clock (reset, or a jump into ROM).
-    fn reboot(l: *Lynx) void {
+    /// The boot without touching the clock (reset, or a jump into ROM:
+    /// `mid_frame`, when the frame's sound so far is kept and the channels
+    /// fall silent at this tick).
+    fn reboot(l: *Lynx, mid_frame: bool) void {
         const instr = l.cpu.instr_count;
         l.cpu = .{};
         l.cpu.instr_count = instr;
-        // The channels fall silent at this tick; the frame being rendered
-        // goes on (a boot re-run may come mid-frame).
-        audio.mute(&l.mikey);
-        const render = l.mikey.audio.r;
-        l.mikey.reset(l.ticks);
-        l.mikey.audio.r = render;
+        if (mid_frame) {
+            audio.mute(&l.mikey);
+            const render = l.mikey.audio.r;
+            l.mikey.reset(l.ticks);
+            l.mikey.audio.r = render;
+        } else {
+            l.mikey.reset(l.ticks);
+        }
         l.mikey.audio.in_console = true;
         l.suzy.reset();
         l.port = .{};
@@ -461,7 +463,7 @@ pub const Lynx = struct {
                 l.rom_resets +%= 1;
                 // The boot clears and rewrites all of RAM past the bus.
                 undo.touch_range(0, 0x10000);
-                l.reboot();
+                l.reboot(true);
             },
         }
     }

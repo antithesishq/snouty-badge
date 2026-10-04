@@ -267,7 +267,7 @@ pub const dc_shift: u5 = 10;
 
 /// Bin i finished with `acc` level x ticks over `width` ticks: its mean,
 /// DC-blocked (y = x - x' + y' * (1 - 2^-dc_shift)), the gain, the clamp.
-fn finish_bin(r: *Render, acc: i32, width: u32) u8 {
+noinline fn finish_bin(r: *Render, acc: i32, width: u32) u8 {
     const x = @divFloor(acc, @as(i32, @intCast(width)));
     r.hp_out = ((x - r.hp_in) << 8) + r.hp_out - (r.hp_out >> dc_shift);
     r.hp_in = x;
@@ -277,7 +277,7 @@ fn finish_bin(r: *Render, acc: i32, width: u32) u8 {
 
 /// Integrate the level up to tick `t_in` (at most the frame's end),
 /// writing every bin completed on the way.
-fn render_to(r: *Render, out: Out, t_in: Tick) void {
+noinline fn render_to(r: *Render, out: Out, t_in: Tick) void {
     const t = @min(t_in, r.win_end);
     if (t <= r.time) return;
     var time = r.time;
@@ -337,7 +337,7 @@ fn remix(a: *Audio, out: Out, c: u2, x: Tick) void {
 /// A new frame of `n` ticks from `start` (`Lynx.step_frame`, before it
 /// runs): the bins restart, the changes logged past the last frame's end
 /// are rendered.
-pub fn begin_frame(m: *Mikey, start: Tick, n: u32) void {
+pub noinline fn begin_frame(m: *Mikey, start: Tick, n: u32) void {
     const r = &m.audio.r;
     r.win_start = start;
     r.win_len = n;
@@ -364,7 +364,7 @@ pub fn begin_frame(m: *Mikey, start: Tick, n: u32) void {
 
 /// The frame's end (`Lynx.step_frame`, Mikey caught up past `end`): the
 /// channels run to it and every bin is written.
-pub fn end_frame(m: *Mikey, end: Tick) void {
+pub noinline fn end_frame(m: *Mikey, end: Tick) void {
     catch_up(m, end);
 }
 
@@ -398,7 +398,7 @@ pub fn relink(m: *Mikey) void {
 /// Borrow out of channel c at tick x: its counter reloads, the poly
 /// counter clocks, the output is re-mixed, and the clock goes down the
 /// chain (audio c+1, or timer 1 after audio 3).
-fn underflow(m: *Mikey, out: Out, c_in: u2, x: Tick) void {
+noinline fn underflow(m: *Mikey, out: Out, c_in: u2, x: Tick) void {
     const a = &m.audio;
     var c = c_in;
     while (true) {
@@ -408,7 +408,7 @@ fn underflow(m: *Mikey, out: Out, c_in: u2, x: Tick) void {
         if (t.ctla & Ctla.reload != 0) t.value = t.backup;
         ch.clock_poly();
         remix(a, out, c, x);
-        if (c == 3) return m.borrow_in(1, x);
+        if (c == 3) return borrow_timer1(m, x);
         c += 1;
         const n = &a.ch[c].timer;
         if (!n.linked() or !n.running()) return;
@@ -419,6 +419,12 @@ fn underflow(m: *Mikey, out: Out, c_in: u2, x: Tick) void {
     }
 }
 
+/// Audio 3's borrow out into timer 1 (it counts only if linked). Out of
+/// line: Mikey's timer chain stays in line in Mikey's own paths.
+noinline fn borrow_timer1(m: *Mikey, x: Tick) void {
+    m.borrow_in(1, x);
+}
+
 /// A clock into channel c from its predecessor (it counts only if linked).
 fn borrow_in(m: *Mikey, out: Out, c: u2, x: Tick) void {
     const t = &m.audio.ch[c].timer;
@@ -427,7 +433,7 @@ fn borrow_in(m: *Mikey, out: Out, c: u2, x: Tick) void {
 }
 
 /// Underflow of a free-running channel at its `expire` tick x.
-fn expire_channel(m: *Mikey, out: Out, c: u2, x: Tick) void {
+noinline fn expire_channel(m: *Mikey, out: Out, c: u2, x: Tick) void {
     const t = &m.audio.ch[c].timer;
     t.value = 0;
     t.expire = never;
@@ -437,7 +443,7 @@ fn expire_channel(m: *Mikey, out: Out, c: u2, x: Tick) void {
 
 /// Run the channels to tick t (no-op for the clocks if they are there
 /// already) and render up to it.
-pub fn catch_up(m: *Mikey, t: Tick) void {
+pub noinline fn catch_up(m: *Mikey, t: Tick) void {
     const a = &m.audio;
     const out = sink(m);
     if (t > a.time) {
@@ -562,34 +568,50 @@ fn underflows(a: *const Audio, set: u4, end: Tick) u32 {
     return n;
 }
 
-/// One `joint` channel: its contribution `prev` until its next underflow
-/// `x0`, then `va`, `vb`, `va`, ... every `p` ticks.
+/// One `joint` channel from tick `pos` on: its contribution `cur` until
+/// its next underflow `x0`, then `nxt`, `nn`, `nxt`, `nn`, ... every `p`
+/// ticks (`nn` = `cur` once it has alternated: A, B, A, ...).
 const Lane = struct {
     x0: Tick,
     p: Tick,
-    prev: i64,
-    va: i64,
-    vb: i64,
+    cur: i32,
+    nxt: i32,
+    nn: i32,
+    /// Underflows passed.
+    k: u32 = 0,
 
-    /// The integral of the contribution from `t0` to `s`.
-    fn integral(l: *const Lane, t0: Tick, s: Tick) i64 {
-        if (s <= l.x0) return l.prev * (s - t0);
-        const d = s - l.x0;
+    /// The integral of the contribution from `u` to `v` (at most a bin
+    /// apart, and `p` at most `joint_period`: it stays in an i32), moving
+    /// the lane to `v`.
+    noinline fn span(l: *Lane, u: Tick, v: Tick) i32 {
+        if (v < l.x0) return l.cur * @as(i32, @intCast(v - u));
+        const d = v - l.x0;
         const j = d / l.p;
-        const rem = d - j * l.p;
-        const ev: i64 = (j + 1) / 2;
-        const od: i64 = j / 2;
-        return l.prev * (l.x0 - t0) + (ev * l.va + od * l.vb) * l.p + @as(i64, rem) * (if (j & 1 == 0) l.va else l.vb);
+        const rem: i32 = @intCast(d - j * l.p);
+        const ev: i32 = @intCast((j + 1) / 2);
+        const od: i32 = @intCast(j / 2);
+        const even = j & 1 == 0;
+        const sum = l.cur * @as(i32, @intCast(l.x0 - u)) + (ev * l.nxt + od * l.nn) * @as(i32, @intCast(l.p)) + rem * (if (even) l.nxt else l.nn);
+        l.x0 += (j + 1) * l.p;
+        l.k += j + 1;
+        if (even) {
+            l.cur = l.nxt;
+            l.nxt = l.nn;
+            l.nn = l.cur;
+        } else {
+            l.cur = l.nn;
+        }
+        return sum;
     }
 };
 
-/// The channels in `set` (`square`) from `Audio.time` to tick `end`
-/// (inside the frame, before any other underflow) in closed form: each
-/// one's integral over a span is arithmetic, so every bin gets exactly
-/// the integer sum one change at a time gives, and each channel ends in
-/// the same state: after 12 clocks its shift register repeats with period
-/// 2 (or 1), so only the last 12 or 13 clocks are run.
-fn joint(m: *Mikey, out: Out, set: u4, end: Tick) void {
+/// The channels in `set` (fast squares and constants) from `Audio.time`
+/// to tick `end` (inside the frame, before any other underflow) in closed
+/// form: each one's integral over a bin is arithmetic, so every bin gets
+/// exactly the integer sum one change at a time gives, and each channel
+/// ends in the same state: after 12 clocks its shift register repeats
+/// with period 2 (or 1), so only the last 12 or 13 clocks are run.
+noinline fn joint(m: *Mikey, out: Out, set: u4, end: Tick) void {
     const a = &m.audio;
     const r = &a.r;
     const t0 = a.time;
@@ -607,23 +629,17 @@ fn joint(m: *Mikey, out: Out, set: u4, end: Tick) void {
         const va = @as(i32, @as(i8, @bitCast(probe.output))) * w;
         probe.clock_poly();
         const vb = @as(i32, @as(i8, @bitCast(probe.output))) * w;
-        lanes[n] = .{ .x0 = ch.timer.expire, .p = period(&ch.timer), .prev = ch.contrib, .va = va, .vb = vb };
+        lanes[n] = .{ .x0 = ch.timer.expire, .p = period(&ch.timer), .cur = ch.contrib, .nxt = va, .nn = vb };
         ks[n] = @intCast(k);
         base -= ch.contrib;
         n += 1;
     }
     var u = t0;
-    var iu: [4]i64 = @splat(0);
     var acc = r.acc;
     while (true) {
         const v = @min(r.edge, end);
-        var sum: i64 = @as(i64, base) * (v - u);
-        for (lanes[0..n], iu[0..n]) |*l, *i| {
-            const iv = l.integral(t0, v);
-            sum += iv - i.*;
-            i.* = iv;
-        }
-        acc += @intCast(sum);
+        acc += base * @as(i32, @intCast(v - u));
+        for (lanes[0..n]) |*l| acc += l.span(u, v);
         u = v;
         if (v == r.edge) {
             const smp = finish_bin(r, acc, r.edge - r.bin_start);
@@ -641,14 +657,13 @@ fn joint(m: *Mikey, out: Out, set: u4, end: Tick) void {
     for (lanes[0..n], ks[0..n]) |*l, c| {
         const ch = &a.ch[c];
         const t = &ch.timer;
-        if (end >= l.x0) {
-            const k = (end - l.x0) / l.p + 1;
-            const clocks = if (k <= 13) k else 12 + ((k - 12) & 1);
+        if (l.k != 0) {
+            const clocks = if (l.k <= 13) l.k else 12 + ((l.k - 12) & 1);
             for (0..clocks) |_| ch.clock_poly();
-            ch.contrib = @as(i32, @as(i8, @bitCast(ch.output))) * weight(a, c);
+            ch.contrib = l.cur;
             t.done = t.ctla & Ctla.reset_done == 0;
             t.value = t.backup;
-            t.expire = l.x0 + k * l.p;
+            t.expire = l.x0;
         }
         level += ch.contrib;
     }
@@ -658,7 +673,7 @@ fn joint(m: *Mikey, out: Out, set: u4, end: Tick) void {
 
 /// Timer 7 borrowed through Mikey's underflow path at tick `at` (an
 /// interrupt event, linked, or a software borrow): clock a linked audio 0.
-pub fn timer7_borrow(m: *Mikey, at: Tick) void {
+pub noinline fn timer7_borrow(m: *Mikey, at: Tick) void {
     const c0 = &m.audio.ch[0].timer;
     if (!c0.linked() or !c0.running()) return;
     catch_up(m, at);
@@ -668,7 +683,7 @@ pub fn timer7_borrow(m: *Mikey, at: Tick) void {
 
 /// Silence every channel now (a boot re-run: `Lynx.reboot` keeps the
 /// renderer across `Mikey.reset`, which zeroes the channels).
-pub fn mute(m: *Mikey) void {
+pub noinline fn mute(m: *Mikey) void {
     catch_up(m, m.now);
     const a = &m.audio;
     const out = sink(m);
@@ -679,7 +694,7 @@ pub fn mute(m: *Mikey) void {
 }
 
 /// Move every clock value back by `d` (`Mikey.rebase`, after a catch-up).
-pub fn rebase(m: *Mikey, d: Tick) void {
+pub noinline fn rebase(m: *Mikey, d: Tick) void {
     const a = &m.audio;
     for (&a.ch) |*c| {
         if (c.timer.expire != never) c.timer.expire -|= d;
@@ -719,7 +734,7 @@ fn thaw(m: *const Mikey, t: *Timer) void {
 
 /// An audio register read at $FD00 + addr (`is_audio_reg`), Mikey's
 /// clock at the access.
-pub fn read(m: *Mikey, addr: u8) u8 {
+pub noinline fn read(m: *Mikey, addr: u8) u8 {
     catch_up(m, m.now);
     const a = &m.audio;
     if (addr >= Reg.atten_a) {
@@ -746,7 +761,7 @@ pub fn read(m: *Mikey, addr: u8) u8 {
 
 /// An audio register write at $FD00 + addr (`is_audio_reg`). Mikey
 /// reschedules after it (`Mikey.write`).
-pub fn write(m: *Mikey, addr: u8, v: u8) void {
+pub noinline fn write(m: *Mikey, addr: u8, v: u8) void {
     catch_up(m, m.now);
     const a = &m.audio;
     const out = sink(m);
