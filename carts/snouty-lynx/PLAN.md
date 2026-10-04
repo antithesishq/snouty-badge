@@ -733,6 +733,22 @@ Mac before flashing. Tag `snouty-lynx/m5`, merge to main, push.
 
 ## Status
 
+- 2026-10-04: M5 sound DONE (Tracks A, B and C merged on `lynx/m5-sound`,
+  tag `snouty-lynx/m5`). Mikey's four channels (12-bit LFSR, integrate
+  mode, link chain timer 7 -> audio 0..3 -> timer 1, Lynx II ATTEN/MPAN/
+  MSTEREO) are box-filtered into 735 bins a frame with a ~7 Hz integer DC
+  blocker (beyond the contract: Blue Lightning parks its channels at DC)
+  and mix gain 3/8. The frontend streams them through the new firmware's
+  ring (`lib/stream_audio.zig`) with q smoothed over ~8 frames (a
+  deviation from the raw-q contract). Sound boots OFF (Adrian, via the
+  emulator sound policy): the menu Sound row or `-Dsound=true` turns it
+  on; help mode plays sound. `test-lynx` 128/128. Bench, RAM ELF built
+  with `-Dsound=true`, busy ms: m2_play 6.78 mean / 10.30 worst, m3_scrub
+  6.19 / 10.80, 0 over; Hard Drivin' (Track A) 8.85 / 15.56, 0 over (93%
+  of budget on its worst frame). Cost: ~8 KB `.text`, scrub arena 63,776
+  -> 55,168 B (922 -> 796 slots). WAV review skipped: Adrian tests on the
+  badge.
+
 - 2026-10-01: M4 perf pass on `lynx/m4` (host side; every target met).
   Emulated behaviour unchanged: the same frame hash, ticks, instructions,
   IRQs, pixels, sleep ticks and display frames at every update of
