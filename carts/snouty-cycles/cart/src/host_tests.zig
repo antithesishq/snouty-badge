@@ -7,4 +7,5 @@ test {
     _ = @import("rng.zig");
     _ = @import("sim.zig");
     _ = @import("ai.zig");
+    _ = @import("render.zig");
 }
