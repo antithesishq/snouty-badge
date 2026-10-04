@@ -160,6 +160,8 @@ function checkCheckpoint(cj, cz) {
       const q = /^qChip(\d)$/.exec(id);
       if (q) z = zp.q_chip ? zp.q_chip[Number(q[1])] : undefined;
       else if (id === "hypnoDroneEventDiv" && "hypno_event_ms" in cz.fields) z = hypnoShown(cz.fields.hypno_event_ms, cj.ms);
+      // The port keeps victoryDiv's visibility in g.victory_visible.
+      else if (id === "victoryDiv" && "victory_visible" in cz.fields) z = cz.fields.victory_visible;
       else z = zp[zigId(id)];
       if (z === undefined) continue;
       if (diff(v, z, 0)) add(`panel ${id}`, v, z, "flag");

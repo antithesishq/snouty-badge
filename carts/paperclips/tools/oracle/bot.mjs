@@ -28,12 +28,14 @@ for (let i = 2; i < process.argv.length; i++) {
   else if (a === "--out-dir") args.outDir = process.argv[++i];
   else if (a === "--stage") args.stage = Number(process.argv[++i]);
   else if (a === "-q") args.quiet = true;
+  else if (a === "--report") args.report = Number(process.argv[++i]);
+  else if (a === "--accept") args.accept = true;
   else throw new Error(`unknown arg ${a}`);
 }
 
 const STEP = 100;
 const o = new Oracle(args.seed);
-const g = o.g;
+let g = o.g;
 const actions = [];
 const events = {}; // name -> ms (first time)
 
@@ -67,7 +69,9 @@ function opsCost(p) {
 }
 
 // Projects never bought by the bot.
-const SKIP = new Set(["219", "217", "200", "201", "147"]);
+// --accept takes the Drift King's offer (Accept, then The Universe Next
+// Door: prestige and a page reload) instead of Reject (the ending).
+const SKIP = new Set(args.accept ? ["219", "217", "201", "148"] : ["219", "217", "200", "201", "147"]);
 
 let step = 0;
 let lastPrice = 0;
@@ -257,31 +261,195 @@ function buyProjects() {
 
 // ------------------------------------------------------------- stage 2 ----
 
+// Per 10 ms tick, as the main loop computes them.
+function harvestPerTick() {
+  const db = g.droneBoost > 1 ? g.droneBoost * Math.floor(g.harvesterLevel) : 1;
+  return Math.max(g.powMod, 0.0001) * db * Math.floor(g.harvesterLevel) * g.harvesterRate * ((200 - Number(g.sliderPos)) / 100);
+}
+function wirePerTick() {
+  const db = g.droneBoost > 1 ? g.droneBoost * Math.floor(g.wireDroneLevel) : 1;
+  return Math.max(g.powMod, 0.0001) * db * Math.floor(g.wireDroneLevel) * g.wireDroneRate * ((200 - Number(g.sliderPos)) / 100);
+}
+function factoryPerTick() {
+  const fb = g.factoryBoost > 1 ? g.factoryBoost * g.factoryLevel : 1;
+  return Math.max(g.powMod, 0.0001) * fb * Math.floor(g.factoryLevel) * g.factoryRate;
+}
+function powerSupply() { return g.farmLevel * g.farmRate / 100; }
+function powerDemand(extraFactories = 0, extraDrones = 0) {
+  return ((g.harvesterLevel + g.wireDroneLevel + extraDrones) * g.dronePowerRate) / 100 + ((g.factoryLevel + extraFactories) * g.factoryPowerRate) / 100;
+}
+
+// The biggest affordable batch (button enabled) of a buy verb.
+function buyBatch(verb, ns, maxN = Infinity) {
+  for (const n of ns) {
+    if (n > maxN) continue;
+    if (tryAct(verb, n)) return n;
+  }
+  return 0;
+}
+
+let lastSlider = -1;
 function stage2() {
   buyProjects();
   trustAlloc();
   quantum();
   strategy();
-  if (g.wire >= 1 && g.factoryLevel === 0 && g.clipmakerLevel === 0) tryAct("make_paperclip");
+  swarmCare();
+
+  // Bootstrap: one factory, one harvester, one wire drone, even on a
+  // power deficit (everything then runs at supply/demand).
+  // (Clips come only from factories: none until the first is up.)
+  if (g.factoryLevel === 0) { if (g.factoryFlag) tryAct("make_factory"); return; }
+  if (g.harvesterFlag && g.harvesterLevel === 0) { tryAct("make_harvester", 1); return; }
+  if (g.wireDroneFlag && g.wireDroneLevel === 0) { tryAct("make_wire_drone", 1); return; }
+  if (!g.project127.flag) return;
+
+  // Farms make 0.5, a factory takes 2, a drone 0.01. On a deficit only a
+  // farm raises output, so save for one.
+  const farms = (needSupply) => {
+    const need = Math.max(1, Math.ceil((needSupply - powerSupply()) / 0.5));
+    return buyBatch("make_farm", [100, 10, 1], need * 2);
+  };
+  if (powerSupply() < powerDemand()) { farms(powerDemand()); return; }
+
+  // Storage for Space Exploration (10M MW-s): batteries and spare farms
+  // once the matter runs low or clips are plentiful.
+  const late = g.availableMatter < 6e27 * 0.05 || g.unusedClips > 1e26;
+  if (late) {
+    if (g.batteryLevel * g.batterySize < 1.2e7) buyBatch("make_battery", [100, 10, 1]);
+    if (powerSupply() - powerDemand() < 2000 && g.farmLevel < 6000) farms(powerDemand() + 2000);
+  }
+  if (g.availableMatter <= 0) {
+    // All matter is wire and all wire is clips: take the machines apart
+    // for their clips if Space Exploration still needs some.
+    if (g.acquiredMatter <= 0 && g.wire < 1 && g.unusedClips < 5e27) {
+      if (g.factoryLevel > 0) tryAct("factory_reboot");
+      else if (g.harvesterLevel > 0) tryAct("harvester_reboot");
+      else if (g.wireDroneLevel > 0) tryAct("wire_drone_reboot");
+    }
+    return;
+  }
+
+  // Factories keep up with the wire; drones keep up with each other.
+  const w = wirePerTick();
+  const f = factoryPerTick();
+  if (g.factoryFlag && (f < w * 1.2 || g.wire > f * 200)) {
+    if (powerSupply() >= powerDemand(1, 0)) tryAct("make_factory");
+    else farms(powerDemand(1, 0));
+    return;
+  }
+  const room = Math.floor((powerSupply() - powerDemand()) / 0.01);
+  if (room < 1) { farms(powerDemand(0, 100)); return; }
+  if (g.harvesterLevel <= g.wireDroneLevel) buyBatch("make_harvester", [1000, 100, 10, 1], room);
+  else buyBatch("make_wire_drone", [1000, 100, 10, 1], room);
+}
+
+// Swarm: work/think slider, boredom and disorganization.
+function swarmCare() {
+  if (!g.swarmFlag) return;
+  // Think (gifts: processors and memory) until memory covers the big
+  // projects, then mostly work.
+  const want = g.memory < 150 ? 100 : 20;
+  if (want !== lastSlider && !o.check("set_slider", want)) {
+    if (tryAct("set_slider", want)) lastSlider = want;
+  }
+  if (g.swarmStatus === 5) tryAct("synch_swarm");
+  if (g.swarmStatus === 3) tryAct("entertain_swarm");
+}
+
+// ------------------------------------------------------------- stage 3 ----
+
+const STATS = ["speed", "nav", "rep", "haz", "fac", "harv", "wire", "combat"];
+const statVar = { speed: "probeSpeed", nav: "probeNav", rep: "probeRep", haz: "probeHaz", fac: "probeFac", harv: "probeHarv", wire: "probeWire", combat: "probeCombat" };
+
+function probeTargets(T) {
+  const t = { speed: 0, nav: 0, rep: 0, haz: 0, fac: 0, harv: 0, wire: 0, combat: 0 };
+  // Hazards kill 1% of the probes per tick at haz 0, replication adds
+  // 0.005% per rep point: haz and rep first, then one each of the rest.
+  const order = ["rep", "haz", "haz", "fac", "harv", "wire", "speed", "nav", "rep"];
+  let left = T;
+  for (const k of order) if (left > 0) { t[k]++; left--; }
+  if (left > 0) {
+    const fight = g.drifterCount > 0 ? Math.min(Math.round(left * 0.25), 12) : 0;
+    const haz = Math.min(Math.round(left * 0.35), 6);
+    const sp = Math.floor(left / 12);
+    t.combat += fight;
+    t.haz += haz;
+    t.speed += sp;
+    t.nav += sp;
+    t.rep += left - fight - haz - 2 * sp;
+  }
+  return t;
+}
+
+let probesLaunched = 0;
+function stage3() {
+  buyProjects();
+  trustAlloc();
+  quantum();
+  strategy();
+  swarmCare();
+
+  if (g.dismantle >= 4) {
+    // The last clips are made by hand.
+    if (g.wire >= 1) tryAct("make_paperclip");
+    return;
+  }
+  if (!o.check("increase_max_trust")) tryAct("increase_max_trust");
+  if (!o.check("increase_probe_trust")) tryAct("increase_probe_trust");
+
+  const tgt = probeTargets(g.probeTrust);
+  let moved = false;
+  for (const k of STATS) {
+    if (g[statVar[k]] > tgt[k]) { if (tryAct("probe_stat_down", k)) { moved = true; break; } }
+  }
+  if (!moved) {
+    for (const k of STATS) {
+      if (g[statVar[k]] < tgt[k]) { if (tryAct("probe_stat_up", k)) { moved = true; break; } }
+    }
+  }
+  // Launch once the design uses all the trust it has.
+  if (!moved && g.probeTrust >= 9 && g.probeUsedTrust === g.probeTrust && g.probeCount < 1000) {
+    if (tryAct("make_probe")) probesLaunched++;
+  }
 }
 
 // ------------------------------------------------------------------ main ----
 
 let lastReport = 0;
+let doneAt = -1;
 const end = args.maxMs;
+let reloadAt = -1;
 for (;;) {
   o.advanceTo(o.now + STEP);
   step++;
+  g = o.g;
+  if (o.reloads > 0 && reloadAt < 0) {
+    // A new universe: the stage 1 policy starts over.
+    reloadAt = o.now;
+    note("reload");
+    clicking = true;
+    lastPrice = 0;
+    lastInvest = 0;
+    lastTourney = 0;
+    lastQ = 0;
+    lastSlider = -1;
+  }
+  if (reloadAt >= 0 && o.now >= reloadAt + 300000) break;
   const st = stage();
   note(`stage ${st}`);
   if (st === 1) stage1();
   else if (st === 2) stage2();
+  else if (args.stage >= 3) stage3();
   else break;
+  if (g.milestoneFlag >= 20 && doneAt < 0) doneAt = o.now;
+  if (doneAt >= 0 && o.now >= doneAt + 60000) break;
   if (hypnoAt >= 0 && args.stage < 2 && o.now >= hypnoAt + 60000) break;
   if (o.now >= end) break;
-  if (!args.quiet && o.now - lastReport >= 600000) {
+  if (!args.quiet && o.now - lastReport >= (args.report || (stage() > 1 ? 300000 : 600000))) {
     lastReport = o.now;
-    console.error(`[${fmtTime(o.now)}] clips ${Math.round(g.clips)} funds ${g.funds.toFixed(2)} trust ${g.trust} proc ${g.processors} mem ${g.memory} ops ${g.operations} creat ${Math.round(g.creativity)} yomi ${g.yomi} mkt ${g.marketingLvl} mega ${g.megaClipperLevel} auto ${g.clipmakerLevel} margin ${g.margin} bank ${g.bankroll} port ${g.portTotal} actions ${actions.length}`);
+    if (stage() > 1) console.error(`[${fmtTime(o.now)}] S${stage()} clips ${g.clips.toExponential(3)} unused ${g.unusedClips.toExponential(3)} wire ${g.wire.toExponential(2)} matter ${g.availableMatter.toExponential(3)} acq ${g.acquiredMatter.toExponential(2)} fac ${g.factoryLevel} harv ${g.harvesterLevel} wd ${g.wireDroneLevel} farm ${g.farmLevel} bat ${g.batteryLevel} pow ${g.powMod.toFixed(3)} stored ${Math.round(g.storedPower)} proc ${g.processors} mem ${g.memory} ops ${g.operations} creat ${Math.round(g.creativity)} yomi ${g.yomi} gifts ${g.swarmGifts} slider ${g.sliderPos} swarm ${g.swarmStatus} probes ${g.probeCount.toExponential(2)} ptrust ${g.probeTrust}/${g.maxTrust} [${STATS.map((k) => g[statVar[k]]).join(' ')}] lostH ${g.probesLostHaz.toExponential(2)} lostC ${g.probesLostCombat.toExponential(2)} battles ${g.battles.length} drift ${g.drifterCount.toExponential(2)} honor ${Math.round(g.honor)} found ${(g.foundMatter / g.totalMatter).toExponential(2)} actions ${actions.length}`);
+    else console.error(`[${fmtTime(o.now)}] clips ${Math.round(g.clips)} funds ${g.funds.toFixed(2)} trust ${g.trust} proc ${g.processors} mem ${g.memory} ops ${g.operations} creat ${Math.round(g.creativity)} yomi ${g.yomi} mkt ${g.marketingLvl} mega ${g.megaClipperLevel} auto ${g.clipmakerLevel} margin ${g.margin} bank ${g.bankroll} port ${g.portTotal} actions ${actions.length}`);
   }
 }
 
@@ -306,6 +474,8 @@ function write(name, endMs, every, note) {
 }
 
 console.error("events:", JSON.stringify(events));
-write("short", Math.min(300000, o.now), 1000, "bot: the first five minutes");
-if (hypnoAt >= 0) write("stage1", Math.min(o.now, hypnoAt + 60000), 5000, `bot: stage 1 to Release the HypnoDrones at ${hypnoAt} ms, plus 60 s`);
-if (args.stage >= 2) write("deep", o.now, 10000, "bot: as deep as it gets");
+console.error("final:", JSON.stringify({ ms: o.now, stage: stage(), milestoneFlag: g.milestoneFlag, dismantle: g.dismantle, finalClips: g.finalClips, clips: g.clips, probes: probesLaunched }));
+if (!args.accept) write("short", Math.min(300000, o.now), 1000, "bot: the first five minutes");
+if (hypnoAt >= 0 && !args.accept) write("stage1", Math.min(o.now, hypnoAt + 60000), 5000, `bot: stage 1 to Release the HypnoDrones at ${hypnoAt} ms, plus 60 s`);
+if (args.accept) write("prestige", o.now, 10000, "bot: the whole game, Accept and The Universe Next Door, then 5 minutes of the next universe");
+else if (args.stage >= 2) write("deep", o.now, 10000, "bot: as deep as it gets");
