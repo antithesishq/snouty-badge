@@ -125,12 +125,19 @@ def write_contact(path: Path, sheets: list[tuple[Sheet, Canvas]]) -> None:
     z = 3
     pad, lh = 12, 20
     blocks = []
+    pics = [(s, cv) for s, cv in sheets if s.name.startswith("portrait_")]
+    row = Image.new("RGB", (len(pics) * (48 * z + 8) - 8, 48 * z), BG)
+    for i, (s, cv) in enumerate(pics):
+        row.paste(cv.to_image(z), (i * (48 * z + 8), 0))
+    blocks.append(("portrait_<racer>.png  1 x 48x48 each, opaque: " + ", ".join(RACERS) + "; 3x", row))
     for s, cv in sheets:
+        if s.name.startswith("portrait_"):
+            continue
         w, h = cv.w * z, cv.h * z
         im = checker(w, h)
         big = cv.to_image(z)
         mask = Image.new("L", (cv.w, cv.h), 0)
-        mask.putdata([255 if px is not None else 0 for row in cv.px for px in row])
+        mask.putdata([255 if px is not None else 0 for row_ in cv.px for px in row_])
         im.paste(big, (0, 0), mask.resize(big.size, Image.NEAREST))
         d = ImageDraw.Draw(im)
         for i in range(1, s.frames):

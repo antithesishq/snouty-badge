@@ -22,9 +22,11 @@ canvas, stamps, outline, spherical shading, the 3x5 and 8x8 fonts),
 
 The script also writes two review images:
 
-- `docs/art_contact.png`: every sheet at 3x on a checkerboard, labelled,
-  with cell dividers, plus the six portraits at half scale (24x24
-  nearest), the size used in the race taunt pop-up.
+- `docs/art_contact.png`: every sheet at 3x, labelled. The six
+  portraits are side by side, and the other sheets show transparency as
+  a checkerboard, with cell dividers. At the bottom are the six
+  portraits at half scale (24x24 nearest), the size used in the race
+  taunt pop-up.
 - `docs/art_select_mock.png`: a 160x128 mock of the racer select (SPEC
   8.1) for each of the six racers, at 3x. The text is the cart's real
   8x8 font (`carts/snouty-zero/assets/gen/font.bin`, bit 7 = leftmost
