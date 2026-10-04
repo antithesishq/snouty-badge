@@ -1,5 +1,5 @@
 //! The Antithesis part (SPEC.md 13.1, PLAN.md "Interface A (history.zig)"):
-//! a ring of 4 World keyframes, one every 60 game ticks, and a ring of 256
+//! a ring of 8 World keyframes, one every 30 game ticks, and a ring of 256
 //! logged controls words, so any tick of the last few seconds can be
 //! rebuilt exactly by copying a keyframe and replaying the log through
 //! `simulate(.silent)`. History is meta-state: it lives here, not in the
@@ -9,13 +9,16 @@ const input = @import("input.zig");
 const world = @import("world.zig");
 const main = @import("main.zig");
 
-pub const keyframe_count = 4;
-pub const keyframe_every: u32 = 60;
+/// 8 x 30 ticks (M7; was 4 x 60): the same 240 ticks of reach, but a
+/// restore replays at most 29 silent ticks instead of 59, which kept the
+/// hold-B frames of a full stage-4 wave inside the frame budget.
+pub const keyframe_count = 8;
+pub const keyframe_every: u32 = 30;
 pub const log_len = 256;
 pub const invalid: u32 = 0xFFFF_FFFF;
 
 pub const State = struct {
-    /// slot = (tick / 60) % 4.
+    /// slot = (tick / 30) % 8.
     keyframes: [keyframe_count]world.World,
     /// Tick of each keyframe; `invalid` when the slot is empty.
     keyframe_tick: [keyframe_count]u32,
@@ -26,7 +29,7 @@ pub const State = struct {
     pre_input: [keyframe_count]bool,
 };
 
-/// Left undefined (so the 17 KB of keyframes are .bss, not .data) until
+/// Left undefined (so the ~85 KB of keyframes are .bss, not .data) until
 /// `reset`, which `main.start` and every new game call.
 var st: State = undefined;
 
@@ -50,7 +53,7 @@ fn log_at(tick: u32) cart.Controls {
 }
 
 /// Called at the top of `simulate(.live)`, after `input.update` for the
-/// tick: logs the controls and, every 60 ticks, saves a keyframe.
+/// tick: logs the controls and, every 30 ticks, saves a keyframe.
 pub fn record() void {
     const t = world.w.game_tick;
     st.log[t % log_len] = @bitCast(world.w.input.current);
@@ -63,7 +66,7 @@ pub fn record() void {
 }
 
 /// Saves the world as it is now (between ticks, before the next input
-/// update) as the keyframe of its 60-tick window. Called after anything
+/// update) as the keyframe of its 30-tick window. Called after anything
 /// outside `simulate` edits the World (the rewind resume grant, the debug
 /// warp), so no later restore replays across the edit without it.
 pub fn checkpoint() void {

@@ -220,7 +220,7 @@ fn new_game(hard: bool) void {
     if (bugs_bench_stage > 0) {
         probe = true;
         for (1..bugs_bench_stage) |_| waves.next_stage();
-        waves.warp_to_warning();
+        if (bugs_bench_waves == 0) waves.warp_to_warning();
     }
     history.reset();
     state = .playing;
@@ -230,6 +230,9 @@ fn new_game(hard: bool) void {
 /// (B2)"): N > 0 starts every game in probe mode, N - 1 stages on, at the
 /// boss warning, so a bench reaches a boss in 7 s instead of 72.
 export var bugs_bench_stage: u8 = 0;
+/// With `bugs_bench_stage`: nonzero starts at the stage's first wave
+/// instead of its boss warning (benches of the waves themselves).
+export var bugs_bench_waves: u8 = 0;
 
 /// One tick of play, in the PLAN.md update order; the caller has already
 /// run `input.update` for it. `.live` ticks are logged (and keyframed) by

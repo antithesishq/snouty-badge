@@ -1163,8 +1163,11 @@ the contract.
   otherwise 112, then 96. Bullet drawing stays an 8x8 cell at most except
   the orb.
 - RAM (SYCL is RAM carts only, ~274.7 KB for text + data + bss): the
-  M6 cart is 92 KB. M7 must stay under 160 KB total; `@sizeOf(World)`
-  grows to roughly 11 KB (5 copies: live + 4 keyframes).
+  M6 cart is 92 KB. `@sizeOf(World)` grows to roughly 11 KB. (Lead,
+  2026-10-04: the history ring went from 4 keyframes every 60 ticks to 8
+  every 30 so a hold-B frame over a full stage-4 wave replays at most 29
+  ticks: worst 17-18 ms -> 10.5-11.9 ms on badge-bench. The cap is
+  therefore 220 KB, not 160; the cart is 208 KB.)
 
 ### Rank (`rank.zig`, new, track A)
 
