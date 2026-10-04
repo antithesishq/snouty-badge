@@ -50,7 +50,8 @@ CLAUDE.md and docs have the longer explanations.
   `audio_out` into the streaming ring of `lib/stream_audio.zig`, rate
   control, ramp out / prime on resume; host-tested by
   `tests/stream_unit.zig`). `debug.enabled` is off at boot and a menu row;
-  `audio.enabled` (Sound) is on at boot and a menu row (not in wasm).
+  `audio.enabled` (Sound) is `build_options.sound` at boot (off unless
+  `-Dsound=true`) and a menu row (not in wasm).
 - `tests/` — host tests, entry `tests/all.zig` (one `_ = @import` line per
   file): `cpu65_single_step.zig` (SingleStepTests rockwell65c02, data from
   `tools/fetch_test_roms.sh`), `suzy_unit.zig`, `math_unit.zig`,
@@ -100,8 +101,9 @@ from the repository root only.
 - Neopixels: never written (docs/NEOPIXELS.md; `debug_led_max` must read 0).
   Sound (M5, the one cart with sound since the 2026-09-30 "no audio" call,
   PLAN.md "M5 Sound: contract"): only through the new firmware's streaming
-  ring (`lib/stream_audio.zig`: never `tone2`, never CART_STOP_AUDIO), On
-  at boot, the menu's Sound row turns it off and clears `audio_render`;
+  ring (`lib/stream_audio.zig`: never `tone2`, never CART_STOP_AUDIO),
+  off at boot unless `-Dsound=true` (docs/SOUND.md), the menu's Sound row
+  toggles it; off clears `audio_render` and pushes nothing;
   the wasm build is silent and hides the row. `core/` produces
   `audio_out` and stays float-free.
 - ROMs: `*.lnx`/`*.lyx` are gitignored at the root; only shipped ROMs with

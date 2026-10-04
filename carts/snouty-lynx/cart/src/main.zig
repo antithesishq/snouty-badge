@@ -33,8 +33,8 @@
 //! `audio_out` goes to the new firmware's streaming ring
 //! (frontend/audio.zig over lib/stream_audio.zig); an update that steps
 //! nothing (splash, menu, scrub, picker) ramps it out. The menu's Sound
-//! row (On at boot; not in the wasm build, the simulator has no streaming
-//! audio) turns it off. The neopixels are never written
+//! row (off at boot as in every cart, `-Dsound=true` starts it on; not in
+//! the wasm build, the simulator has no streaming audio) toggles it. The neopixels are never written
 //! (docs/NEOPIXELS.md). SPEC.md is the design, PLAN.md the milestone
 //! contract, CLAUDE.md the conventions.
 const cart = @import("cart-api");

@@ -687,11 +687,12 @@ Branch `lynx/m5-b`, worktree `/home/exedev/snouty-badge-lynx-m5b`.
   from the last sample to 128 and then nothing; on resume push 735
   samples of silence first, then the frame.
 - Sound row in the menu ("Sound: On/Off", settings bit 0, after
-  Buttons). **Boots On** in this cart (Adrian asked to hear it; the new
-  firmware's Start+Select box has a volume control); off sets
-  `l.audio_render = false` and stops pushing. Hidden in the wasm build.
-  Deferred question for Adrian: keep the Lynx loud by default, or follow
-  docs/SOUND.md's off-by-default with `-Dsound`?
+  Buttons). Boots off, following docs/SOUND.md: the row's boot value is
+  `build_options.sound` (`-Dsound=true` flips it), as in Boy, Gear and
+  Genesis (Adrian, 2026-10-04, answering the question this contract first
+  deferred; it first said "Boots On"). Off sets `l.audio_render = false`
+  and pushes nothing (the start word waits for the first frame with sound
+  on). Hidden in the wasm build.
 - Debug overlay: one more figure, the audio queue (samples) and underruns
   since start (an underrun = `queued() == 0` at a push).
 - Docs: README, CLAUDE.md (the "Sound: none" rule), root docs/SOUND.md

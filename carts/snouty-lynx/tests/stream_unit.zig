@@ -83,9 +83,15 @@ const Os = struct {
 };
 
 test "stream: the queue settles at the target under drift, stop ramps, resume primes" {
-    var r: stream.Ring = undefined;
+    var r: stream.Ring = .{ .ptr = 0, .len = 0, .head = 0, .tail = 0 };
     stream.ring = &r;
     @memset(&lynx.audio_out, 200);
+
+    // Off (the default build): a frame neither starts the ring nor pushes.
+    audio.enabled = false;
+    audio.frame(&lynx);
+    try testing.expectEqual(@as(u32, 0), r.len);
+    audio.enabled = true;
     var os: Os = .{ .r = &r };
     defer os.out.deinit(testing.allocator);
 

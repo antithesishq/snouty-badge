@@ -2,8 +2,8 @@
 
 Status: decided by Adrian 2026-09-30 (section 4), implemented on branch
 `sound-off` the same day. Companion to docs/NEOPIXELS.md, which this
-follows in shape. Exception since 2026-10-04: Snouty Lynx streams its
-sound on the new firmware and boots with it on (section 7).
+follows in shape. Since 2026-10-04 Snouty Lynx streams its sound on the
+new firmware (section 7), under the same rule.
 
 ## 1. The rule
 
@@ -46,7 +46,7 @@ should start loud; nothing else in a cart decides it.
 | snouty-genesis | yes, PSG/YM2612 tone voice | `frontend/audio.zig` `enabled` | `-Dsound` (off) | badge A in the menu placeholder ("A: sound on/off"); the M2 menu's Sound row takes over; `debug_sound_on` |
 | snouty-bugs | not yet (SPEC section 11, M6/M7) | | `-Dsound` (off) | Select |
 | snouty-reflections | not yet (SPEC section 8, M4 arpeggio) | | `-Dsound` (off) | Select |
-| snouty-lynx | yes, Mikey's four channels as 44.1 kHz PCM, new firmware only (section 7) | `frontend/audio.zig` `enabled` | **On** (Adrian, 2026-10-04; does not read `-Dsound`) | menu row "Sound: On/Off" (not in the wasm build); `debug_settings` bit 0 |
+| snouty-lynx | yes, Mikey's four channels as 44.1 kHz PCM, new firmware only (section 7) | `frontend/audio.zig` `enabled` | `-Dsound` (off) | menu row "Sound: On/Off" (not in the wasm build); `debug_settings` bit 0 |
 | snouty-run | no | | | |
 | snouty-maze | no, by decision (2026-09-27, "it'll be annoying") | | | |
 

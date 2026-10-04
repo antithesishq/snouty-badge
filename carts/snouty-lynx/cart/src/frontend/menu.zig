@@ -22,9 +22,10 @@
 //!
 //! Keys: Up/Down move (wrapping), A chooses, B or a Select tap (a press that
 //! began inside the menu) resumes. Left/Right or A cycle a setting row
-//! (Buttons, Sound, Debug overlay). Sound (frontend/audio.zig, On at
-//! boot) Off stops the stream (a ramp to silence) and clears
-//! `l.audio_render` so the core skips filling `audio_out`.
+//! (Buttons, Sound, Debug overlay). Sound (frontend/audio.zig; off at
+//! boot, `-Dsound=true` starts it on) Off stops the stream (a ramp to
+//! silence) and clears `l.audio_render` so the core skips filling
+//! `audio_out`.
 //!
 //! Time scrubber (SPEC.md 5 and 10, frontend/rewind.zig), Genesis's UI. On
 //! every row that is not a setting (Resume, where the menu opens, Press

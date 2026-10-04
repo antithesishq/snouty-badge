@@ -44,7 +44,7 @@ Pick ROM forget the history.
 |--------------------------|--------------------------------------------------------|
 | Resume                   | Back to the game                                       |
 | Buttons: A=A B=B         | Swap badge A and B                                     |
-| Sound: On                | Sound on or off (On at boot; not in the simulator)     |
+| Sound: Off               | Sound on or off (off at boot, `-Dsound=true` starts it on; not in the simulator) |
 | Press Option 2           | Resume with Option 2 held for 4 frames                 |
 | Restart Pause+Opt1       | Resume with Pause + Option 1 held for 4 frames (the Lynx restart chord) |
 | Debug overlay: Off       | The strip shows fps, step times, instructions, Suzy pixels, and with sound on the audio queue and underruns ("q1470/0") in place of the ROM name |
@@ -55,8 +55,9 @@ Pick ROM forget the history.
 Sound (M5). The badges' new OS firmware (sycl-badge upstream from
 "Streaming Audio, v1 Mixer") plays a ring of 44.1 kHz samples the cart
 fills; the cart sends the Lynx's four audio channels there, 735 samples
-a frame, and boots with sound On (Adrian's call for this cart; every other
-cart boots silent, ../../docs/SOUND.md). The volume is the firmware's:
+a frame. It boots silent like every cart (../../docs/SOUND.md): the menu's
+Sound row turns it on, and `zig build -Dcart=snouty-lynx -Dsound=true`
+builds a cart that starts with it on. The volume is the firmware's:
 Start + Select opens its settings box (Volume with Left/Right). In the menu,
 a scrub and the picker the sound fades out (a 64-sample ramp) and comes
 back with the game. The old firmware plays nothing (no harm), and the web

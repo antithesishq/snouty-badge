@@ -32,6 +32,7 @@
 //! was already playing (the debug overlay shows the count and the queue).
 const core = @import("core");
 const stream = @import("stream_audio");
+const build_options = @import("build_options");
 
 const n_frame = core.audio.samples_per_frame;
 const silence = core.audio.silence;
@@ -52,10 +53,11 @@ pub var ring: [ring_bytes]u8 align(8) = @splat(0);
 /// One push's samples: a resampled frame, the silence or the ramp.
 var scratch: [max_push]u8 = @splat(0);
 
-/// The Sound menu row (settings bit 0). On at boot in this cart (Adrian
-/// asked to hear it; the firmware's Start+Select box has a volume); never
-/// on in wasm.
-pub var enabled: bool = !is_wasm;
+/// The Sound menu row (settings bit 0). Off at boot as in every cart
+/// (docs/SOUND.md; `-Dsound=true` starts it on); never on in wasm. While
+/// off nothing is pushed, and the ring is not even started until the
+/// first frame with sound on.
+pub var enabled: bool = !is_wasm and build_options.sound;
 const is_wasm = @import("builtin").cpu.arch.isWasm();
 
 /// The ring was handed to the OS.
