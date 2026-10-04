@@ -60,8 +60,9 @@ pub const Projectile = struct {
     /// SPEAR PHISH homing target car index, or `no_car`. KERNEL PANIC: the
     /// car it runs to.
     target: u8 = no_car,
-    /// KERNEL PANIC only: the centerline sample it is running toward (its
-    /// `ttl` is unused: it lives until it hits or its target leaves).
+    /// KERNEL PANIC only: the centerline sample it is running toward. Its
+    /// `ttl` is its direction (0 forward, 1 backward when its target was
+    /// behind the user): it lives until it hits or its target leaves.
     seg: u8 = 0,
 };
 /// 48 in M1; the M1 soak peaked at 21 live shots, and the M2 `seg` byte

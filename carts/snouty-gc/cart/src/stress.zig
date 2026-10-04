@@ -13,6 +13,7 @@ const fixed = @import("fixed.zig");
 const tuning = @import("tuning.zig");
 const world = @import("world.zig");
 const weapons = @import("weapons.zig");
+const sim = @import("sim.zig");
 
 const World = world.World;
 
