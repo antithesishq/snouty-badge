@@ -52,6 +52,9 @@ const frame_q12: u32 = @intCast((@as(u64, frame_clocks) * q12_per_clock) >> 20);
 /// briefly rather than everything being quiet.
 pub const mix_gain: i32 = 512;
 
+/// Samples rendered per pass of `render_to` (its stack mix).
+const chunk = 64;
+
 /// The DC blocker's pole, Q15: 1 - 2 pi 20 / 44100.
 const dc_pole: i32 = 32674;
 
@@ -152,22 +155,36 @@ pub const Sound = struct {
         s.render_to(md, pos >> 12);
     }
 
-    fn render_to(s: *Sound, md: *const Md, n: u32) void {
-        const to = @min(n, frame_max);
+    fn render_to(s: *Sound, md: *const Md, upto: u32) void {
+        const to = @min(upto, frame_max);
         if (to <= s.done or s.base + frame_max > s.out.len) return;
-        const dst = s.out[s.base + s.done .. s.base + to];
-        for (dst) |*d| {
-            if (s.fm_div == 0) s.fm_val = s.fm.sample(&md.ym);
-            s.fm_div += 1;
-            if (s.fm_div == tunables.fm_rate_div) s.fm_div = 0;
-            // A one-pole DC blocker (~20 Hz): a DAC left enabled at a
-            // constant value, or the PSG's held-high periods, would
-            // otherwise sit off centre and eat half the headroom.
-            const x = s.fm_val + s.psg.sample(&md.psg);
-            s.dc_y = x - s.dc_x + @as(i32, @intCast((@as(i64, s.dc_y) * dc_pole) >> 15));
-            s.dc_x = x;
-            const v = (s.dc_y * mix_gain) >> 16;
-            d.* = @intCast(@max(0, @min(255, v + 128)));
+        var i: u32 = s.base + s.done;
+        const end = s.base + to;
+        // In chunks through a small mix on the stack: FM fills it, the PSG
+        // adds its bins, then the DC blocker and the gain make bytes.
+        var mix: [chunk]i32 = undefined;
+        var bins: [chunk]i32 = undefined;
+        while (i < end) {
+            const n = @min(chunk, end - i);
+            const m = mix[0..n];
+            for (m) |*v| {
+                if (s.fm_div == 0) s.fm_val = s.fm.sample(&md.ym);
+                s.fm_div += 1;
+                if (s.fm_div == tunables.fm_rate_div) s.fm_div = 0;
+                v.* = s.fm_val;
+            }
+            s.psg.next_bins(bins[0..n]);
+            s.psg.add(&md.psg, bins[0..n], m);
+            for (m, s.out[i..][0..n]) |x, *d| {
+                // A one-pole DC blocker (~20 Hz): a DAC left enabled at a
+                // constant value, or the PSG's held-high periods, would
+                // otherwise sit off centre and eat half the headroom.
+                s.dc_y = x - s.dc_x + @as(i32, @intCast((@as(i64, s.dc_y) * dc_pole) >> 15));
+                s.dc_x = x;
+                const v = (s.dc_y * mix_gain) >> 16;
+                d.* = @intCast(@max(0, @min(255, v + 128)));
+            }
+            i += n;
         }
         s.done = to;
     }

@@ -90,7 +90,48 @@ const count_clocks: i32 = 240;
 /// Master clocks per 44.1 kHz sample, Q16 (53693175 / 44100).
 const bin_q16: u32 = 79_792_198;
 /// 2^26 / 1217.53: a bin's integral to its mean.
-const inv_bin: i64 = 55_117;
+const inv_bin: i32 = 55_117;
+
+/// The mean level of a bin whose +-1 integral is `acc` master clocks.
+inline fn mean(acc: i32, vol: i32) i32 {
+    // |acc * vol| < 2^22; >> 8 keeps the product with inv_bin under 2^30.
+    return ((acc * vol) >> 8) * inv_bin >> 18;
+}
+
+/// One tone channel over `bins`: a bin without a flip adds the level
+/// (the common case: periods above 5 flip less than once a bin), one with
+/// flips adds the integral's mean.
+noinline fn tone(left: *i32, high: *bool, half: i32, vol: i32, bins: []const i32, mix: []i32) void {
+    if (vol == 0) {
+        // Silent: only keep the counter running.
+        for (bins) |b| {
+            left.* -= b;
+            while (left.* <= 0) {
+                left.* += half;
+                high.* = !high.*;
+            }
+        }
+        return;
+    }
+    for (bins, mix) |bin, *m| {
+        if (left.* > bin) {
+            left.* -= bin;
+            m.* += if (high.*) vol else -vol;
+            continue;
+        }
+        var rem = bin;
+        var acc: i32 = 0;
+        while (left.* <= rem) {
+            acc += if (high.*) left.* else -left.*;
+            rem -= left.*;
+            high.* = !high.*;
+            left.* = half;
+        }
+        acc += if (high.*) rem else -rem;
+        left.* -= rem;
+        m.* += mean(acc, vol);
+    }
+}
 
 pub const Synth = struct {
     /// Master clocks to each counter's next count-down (tones 0-2, noise).
@@ -110,61 +151,66 @@ pub const Synth = struct {
         if (p.latch == 6) s.lfsr = 0x8000;
     }
 
-    /// One 44.1 kHz sample: the four channels' mean levels summed.
-    pub fn sample(s: *Synth, p: *const Psg) i32 {
-        s.frac += bin_q16;
-        const bin: i32 = @intCast(s.frac >> 16);
-        s.frac &= 0xFFFF;
-        var total: i64 = 0;
+    /// The next `bins.len` bin lengths (master clocks, 1217 or 1218).
+    pub fn next_bins(s: *Synth, bins: []i32) void {
+        for (bins) |*b| {
+            s.frac += bin_q16;
+            b.* = @intCast(s.frac >> 16);
+            s.frac &= 0xFFFF;
+        }
+    }
+
+    /// Add the four channels' mean levels over `bins` (from `next_bins`)
+    /// to `mix`, one per bin.
+    pub fn add(s: *Synth, p: *const Psg, bins: []const i32, mix: []i32) void {
         for (0..3) |c| {
-            const vol: i64 = tables.psg_vol[p.atten[c]];
+            const vol: i32 = tables.psg_vol[p.atten[c]];
             const period = p.tone[c];
             if (period <= 1) {
                 // Constant high (Sega): the level is the volume.
-                total += vol * bin;
+                if (vol != 0) for (mix) |*m| {
+                    m.* += vol;
+                };
                 continue;
             }
-            const half: i32 = @as(i32, period) * count_clocks;
-            if (vol == 0) {
-                // Silent: only keep the counter running.
-                s.left[c] -= bin;
-                while (s.left[c] <= 0) {
-                    s.left[c] += half;
-                    s.high[c] = !s.high[c];
-                }
+            tone(&s.left[c], &s.high[c], @as(i32, period) * count_clocks, vol, bins, mix);
+        }
+        // Noise: the LFSR shifts when its counter's flip-flop goes high.
+        const nvol: i32 = tables.psg_vol[p.atten[3]];
+        const rate = p.noise & 3;
+        const nhalf: i32 = if (rate == 3) @as(i32, @max(p.tone[2], 1)) * count_clocks else (@as(i32, 0x10) << @intCast(rate)) * count_clocks;
+        const white = p.noise & 4 != 0;
+        for (bins, mix) |bin, *m| {
+            const lvl: i32 = if (s.lfsr & 1 != 0) nvol else -nvol;
+            if (s.left[3] > bin) {
+                s.left[3] -= bin;
+                m.* += lvl;
                 continue;
             }
             var rem = bin;
             var acc: i32 = 0;
-            while (s.left[c] <= rem) {
-                acc += if (s.high[c]) s.left[c] else -s.left[c];
-                rem -= s.left[c];
-                s.high[c] = !s.high[c];
-                s.left[c] = half;
+            while (s.left[3] <= rem) {
+                acc += if (s.lfsr & 1 != 0) s.left[3] else -s.left[3];
+                rem -= s.left[3];
+                s.left[3] = nhalf;
+                s.high[3] = !s.high[3];
+                if (s.high[3]) {
+                    const fb: u16 = if (white) (s.lfsr ^ (s.lfsr >> 3)) & 1 else s.lfsr & 1;
+                    s.lfsr = (s.lfsr >> 1) | (fb << 15);
+                }
             }
-            acc += if (s.high[c]) rem else -rem;
-            s.left[c] -= rem;
-            total += vol * acc;
+            acc += if (s.lfsr & 1 != 0) rem else -rem;
+            s.left[3] -= rem;
+            m.* += mean(acc, nvol);
         }
-        // Noise.
-        const nvol: i64 = tables.psg_vol[p.atten[3]];
-        const rate = p.noise & 3;
-        const nhalf: i32 = if (rate == 3) @as(i32, @max(p.tone[2], 1)) * count_clocks else (@as(i32, 0x10) << @intCast(rate)) * count_clocks;
-        var rem = bin;
-        var acc: i32 = 0;
-        while (s.left[3] <= rem) {
-            acc += if (s.lfsr & 1 != 0) s.left[3] else -s.left[3];
-            rem -= s.left[3];
-            s.left[3] = nhalf;
-            s.high[3] = !s.high[3];
-            if (s.high[3]) {
-                const fb: u16 = if (p.noise & 4 != 0) (s.lfsr ^ (s.lfsr >> 3)) & 1 else s.lfsr & 1;
-                s.lfsr = (s.lfsr >> 1) | (fb << 15);
-            }
-        }
-        acc += if (s.lfsr & 1 != 0) rem else -rem;
-        s.left[3] -= rem;
-        total += nvol * acc;
-        return @intCast((total * inv_bin) >> 26);
+    }
+
+    /// One 44.1 kHz sample of all four channels (tests).
+    pub fn sample(s: *Synth, p: *const Psg) i32 {
+        var bin: [1]i32 = undefined;
+        var m: [1]i32 = .{0};
+        s.next_bins(&bin);
+        s.add(p, &bin, &m);
+        return m[0];
     }
 };

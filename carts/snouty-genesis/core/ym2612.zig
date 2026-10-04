@@ -342,6 +342,10 @@ pub const Op = struct {
     sl: u16 = 0,
     /// Effective rates (0-63, key scaling in) per `EgState`.
     rate: [4]u8 = @splat(0),
+    /// The current state's rate and its step mask ((1 << shift) - 1: the
+    /// envelope steps when the EG counter & mask is 0), `set_eg`.
+    eg_rate: u8 = 0,
+    eg_mask: u32 = 0,
     state: EgState = .release,
     am: bool = false,
 };
@@ -435,8 +439,10 @@ pub const Fm = struct {
                     o.state = .decay;
                 } else o.state = .attack;
                 o.att = att_of(o, 0);
+                set_eg(o);
             } else if (now & bit == 0 and ch.keyed & bit != 0) {
                 o.state = .release;
+                set_eg(o);
             }
         }
         ch.keyed = now;
@@ -494,6 +500,7 @@ pub const Fm = struct {
             const sl: u16 = slrr >> 4;
             o.sl = if (sl == 15) 31 << 5 else sl << 5;
             if (!(o.state == .release and o.level >= 1023)) o.att = att_of(o, 0);
+            set_eg(o);
         }
     }
 
@@ -563,36 +570,34 @@ pub const Fm = struct {
             for (ops) |*o| {
                 if (o.state == .release and o.level >= 1023) continue;
                 any = true;
-                var changed = false;
-                const r = o.rate[@backingInt(o.state)];
-                if (r >= 2) {
-                    const shift: u5 = if (r < 48) @intCast(11 - (r >> 2)) else 0;
-                    if (cnt & ((@as(u32, 1) << shift) - 1) == 0) {
-                        const inc = eg_inc(r, @truncate(cnt >> shift));
-                        var lv: i32 = o.level;
-                        switch (o.state) {
-                            .attack => {
-                                lv += (~lv * @as(i32, inc)) >> 4;
-                                if (lv <= 0) {
-                                    lv = 0;
-                                    o.state = .decay;
-                                }
-                            },
-                            .decay => {
-                                lv += inc;
-                                if (lv >= o.sl) o.state = .sustain;
-                            },
-                            .sustain, .release => lv += inc,
+                if (cnt & o.eg_mask != 0 or o.eg_rate < 2) {
+                    if (am != 0 and o.am) o.att = att_of(o, am);
+                    continue;
+                }
+                const r = o.eg_rate;
+                const shift: u5 = if (r < 48) @intCast(11 - (r >> 2)) else 0;
+                const inc = eg_inc(r, @truncate(cnt >> shift));
+                var lv: i32 = o.level;
+                switch (o.state) {
+                    .attack => {
+                        lv += (~lv * @as(i32, inc)) >> 4;
+                        if (lv <= 0) {
+                            lv = 0;
+                            o.state = .decay;
+                            set_eg(o);
                         }
-                        o.level = @intCast(@min(lv, 1023));
-                        changed = true;
-                    }
+                    },
+                    .decay => {
+                        lv += inc;
+                        if (lv >= o.sl) {
+                            o.state = .sustain;
+                            set_eg(o);
+                        }
+                    },
+                    .sustain, .release => lv += inc,
                 }
-                if (o.state == .release and o.level >= 1023) {
-                    o.att = 4092;
-                } else if (changed or (am != 0 and o.am)) {
-                    o.att = att_of(o, if (o.am) am else 0);
-                }
+                o.level = @intCast(@min(lv, 1023));
+                o.att = if (o.state == .release and o.level >= 1023) 4092 else att_of(o, if (o.am) am else 0);
             }
             if (!any) ch.silent = true;
         }
@@ -617,6 +622,14 @@ const routes = [8]u16{
 /// All ones when bit `b` of a route is set, else 0.
 inline fn mask(rt: u16, comptime b: u4) i32 {
     return -@as(i32, (rt >> b) & 1);
+}
+
+/// The current state's rate and step mask into `eg_rate` / `eg_mask`.
+fn set_eg(o: *Op) void {
+    const r = o.rate[@backingInt(o.state)];
+    o.eg_rate = r;
+    const shift: u5 = if (r < 48) @intCast(11 - (r >> 2)) else 0;
+    o.eg_mask = (@as(u32, 1) << shift) - 1;
 }
 
 /// The sine's attenuation for envelope level, TL and an AM offset.

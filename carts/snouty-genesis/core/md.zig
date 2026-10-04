@@ -206,8 +206,8 @@ pub const Md = struct {
         var b = md.bus_for();
         var zb = md.z80bus_for();
         const scaled_frame: u32 = vdp.m68k_cycles_per_frame * tunables.cpu_scale / tunables.scale_one;
-        const snd = sound.active(md);
-        if (snd) |s| s.begin_frame();
+        // Not held across the line loop (a register the 68000 needs).
+        if (sound.active(md)) |s| s.begin_frame();
         var line: u32 = 0;
         while (line < vdp.lines_per_frame) : (line += 1) {
             if (sink) |s| if (md.vdp.row_for_line(@intCast(line))) |row| md.vdp.render_line(row, s);
@@ -221,7 +221,7 @@ pub const Md = struct {
         }
         md.frame_count +%= 1;
         md.tone_cache = md.pick_tone();
-        if (snd) |s| s.end_frame(md);
+        if (sound.active(md)) |s| s.end_frame(md);
     }
 
     /// 68000 cycles of line `line` when the frame has `total`: the frame's
