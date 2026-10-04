@@ -18,4 +18,5 @@ test {
     _ = @import("kstore_unit.zig");
     _ = @import("determinism.zig");
     _ = @import("scrub_sizing.zig");
+    _ = @import("input_unit.zig");
 }

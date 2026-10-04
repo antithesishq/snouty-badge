@@ -63,13 +63,32 @@ pub fn add(b: *Build, sycl_badge_dep: *Build.Dependency, opts: common.Options) v
         .target = b.graph.host,
         .optimize = test_optimize,
     });
+    // frontend/input.zig (the Select hold and fast-forward chord) for
+    // tests/input_unit.zig: it needs only `cart.Controls` from the cart API,
+    // which the host compiles lazily.
+    const input_host = b.createModule(.{
+        .root_source_file = b.path(dir ++ "cart/src/frontend/input.zig"),
+        .target = b.graph.host,
+        .optimize = test_optimize,
+        .imports = &.{
+            .{ .name = "core", .module = core_host },
+            .{ .name = "cart-api", .module = b.createModule(.{
+                .root_source_file = sycl_badge_dep.path("src/os/cart/api.zig"),
+                .target = b.graph.host,
+                .optimize = test_optimize,
+            }) },
+        },
+    });
     const tests = b.addTest(.{
         .filters = if (opts.test_filter) |f| &.{f} else &.{},
         .root_module = b.createModule(.{
             .root_source_file = b.path(dir ++ "tests/all.zig"),
             .target = b.graph.host,
             .optimize = test_optimize,
-            .imports = &.{.{ .name = "core", .module = core_host }},
+            .imports = &.{
+                .{ .name = "core", .module = core_host },
+                .{ .name = "input", .module = input_host },
+            },
         }),
     });
     const run = b.addRunArtifact(tests);
