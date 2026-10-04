@@ -1576,9 +1576,9 @@ the few places it was read loosely:
   checkpoint.
 - **Pause** panel rows moved up 2-4 px to fit `RANK nnn` (y 98; four
   digits at 1000).
-- **Art.** On the lead's instruction the stand-in `shots.png` (32x8) and
-  `orb.png` (32x16) and their `build.zig` rows were committed in their
-  own commit for track C to replace (the contract said not to).
+- **Art.** Stand-in `shots.png` / `orb.png` were committed first so the
+  engine compiled; the merge of `bugs/m7-difficulty` (track C's sheets)
+  replaced them and their `build.zig` rows with track C's.
 - **Sizes**: `@sizeOf(World)` 10,520 (was 6,340); the World's defaults
   are in `.data` as before (the bullet pool's `drag = 1` is non-zero).
 
