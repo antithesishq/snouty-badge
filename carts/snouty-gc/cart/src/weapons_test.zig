@@ -223,7 +223,7 @@ const Tally = struct {
                     self.last_lance = e;
                 },
                 .respawn => self.respawns += 1,
-                .none, .roll, .use, .effect, .swap => {},
+                .none, .roll, .use, .effect, .swap, .mark, .collect, .blast, .hazard_hit => {},
             }
         }
     }
