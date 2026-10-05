@@ -200,6 +200,82 @@ Each new rule is behind its `Config` flag, and every constant is in `tuning`.
 - Run badge-bench on levels 1, 6 and 12. Worst frame 12 ms or less.
 - Tag `snouty-cycles/m1`, merge to main, push.
 
+## M2: time travel and options (two Opus tracks)
+
+M1 is on main (tag `snouty-cycles/m1`). M2 is SPEC section 13's M2: snapshots and rewind, SKIRMISH, the OPTIONS modifiers, HARDCORE. It runs as two tracks, each in its own worktree and branch cut from `cycles/m0`:
+
+| Track | Worktree | Branch |
+|---|---|---|
+| O | `/home/exedev/snouty-badge-cycles-opts` | `cycles/m2-opts` |
+| R | `/home/exedev/snouty-badge-cycles-rewind` | `cycles/m2-rewind` |
+
+The M1 rules carry over:
+- **Strict file ownership.** If you need someone else's file, make only the minimal edit and list it in your hand-off.
+- **Determinism.** Rewind replays the same inputs and must reach the same World, byte for byte.
+- **Workflow.** Commit small steps on your own branch; never push, tag or merge.
+- **Gates.** `tools/check.sh` stays green, including the ladder bot. Worst calibrated frame 12 ms or less, and `--lcd` equal.
+
+### Track O: modifiers (`sim.zig`, `layouts.zig`, `render.zig`, `ai.zig` only where a modifier needs it)
+
+The `Config` fields `wrap`, `snake_len` and `gaps` exist but are inert. Make each one work (SPEC 6 OPTIONS), keeping all of them off by default:
+
+1. **SNAKE trails** (`snake_len` > 0, default 200 when on): a trail longer than `snake_len` clears its tail cell, one per step, emitting `cleared` events. Both grinding and the AI see the shorter walls.
+2. **GAPS** (Achtung): every 40-80 cells (from the cycle's own rng stream inside World, seeded from `World.seed`), a cycle leaves no wall for 3 cells.
+   - The head still occupies its cell, so collisions with heads still happen.
+   - The trail log needs a "gap" mark so that fades, rewind and snake handle gaps correctly.
+   - Render: gap cells show nothing (plain floor).
+3. **WRAP** (Surround): no rim, and cycles wrap at the edges.
+   - Fix `next_cell`, `update_grind`'s lookups, `cell_colors`/`bare_floor` neighbour reads (bounds), and the layouts' rim clamp.
+   - Sudden death in WRAP closes from the screen edge inwards as before (the first ring is the old rim ring).
+   - The AI's BFS and bitboard window must wrap too, or at minimum treat the edge as open. Measure the AI cost.
+   - Draw the screen border in a dim dashed style so players see that it is open.
+4. **HARDCORE** is only `rubber` = 4 in sim (the game wires it). Nothing to do but test it.
+5. **Host tests:**
+   - Each modifier.
+   - The 5000-tick twin-World determinism test with every modifier on, in random combinations.
+   - The render test (incremental frames equal a full repaint) with WRAP, GAPS and SNAKE on.
+   - AI tournaments still sane with modifiers on (T2 beats T1).
+6. Append an "M2 modifiers (track O)" subsection to the cart CLAUDE.md Interfaces section.
+
+### Track R: rewind, SKIRMISH, OPTIONS menu (`history.zig` new, `game.zig`, `levels.zig`, `main.zig`, `tools/`, docs)
+
+1. **`history.zig`, exact rewind (SPEC 9):**
+   - A ring of keyframes every 30 ticks covering at least 4 s, plus the player's input byte per tick and the AI Brains in each keyframe.
+   - A rewind to tick T restores the keyframe at or before T and replays to T. Call `ai.reset_pool()` after a restore.
+   - Memory budget: 48 KB or less for history. The World is 38 KB (32 KB of it trail logs), so do not keyframe whole Worlds. Keyframe the grid (4.8 KB) and the small per-cycle state, plus the log heads and lengths. The trail logs are append-only rings that keep their old entries, so a restore only resets their heads.
+   - Check that a fade or a SNAKE tail clear never overwrites a log entry that a rewind still needs. If one does, keyframe what is needed instead.
+   - Host test: run, rewind 120 ticks, replay the same inputs, and the World hash and bytes equal the original run. Repeat over many seeds, with sudden death, layouts and every M2 modifier on.
+   - Track O's modifiers will land after you branch. Write the test so it turns them on through `Config`, and it will pick them up at integration.
+2. **Snapshots replace M1's lives in the ladder:**
+   - 3 per game, shown as pips (snapshot icons).
+   - When you derez: freeze for 20 ticks with the crash banner, then REWIND. Trails visibly retract newest-first at 3x speed for the 2 s being undone, driven by `cleared` events from the trail logs or a renderer path you add, with a scanline tint and a REWIND banner. Then the replayed state is restored, the arena repaints, and a short countdown (2, 1, RUN) runs from your restored position.
+   - A program's derez is never rewound.
+   - With no snapshot left, the game ends with CORE DUMPED.
+   - A level clear gives +1, up to a maximum of 3.
+   - If a rewind lands within 30 ticks of another crash, that is fine: let the player try again while snapshots remain.
+3. **SKIRMISH:** a menu to pick programs (1-3), tier (T0..T3, shown as BASIC / PASCAL / C / ASM), layout (OPEN plus the 8), and speed. Then first to 3 round wins with Achtung scoring (+1 for each cycle you outlive). No snapshots. A match result card, and A for a rematch.
+4. **OPTIONS:**
+   - SPEED (SLOW 80%, NORMAL, FAST 125%).
+   - TRAILS (FULL / SNAKE).
+   - GAPS (OFF/ON).
+   - WRAP (OFF/ON).
+   - HARDCORE (OFF/ON: rubber 4, no snapshots in the ladder).
+   - They apply to the ladder and SKIRMISH, are kept for the session in RAM only, and are shown on the level intro when not default.
+   - Pass them through `Config`. They do nothing until Track O lands.
+5. **Debug exports and tools:**
+   - Exports: `debug_snapshots`, `debug_rewinds`, `debug_force_crash` (derez the player now), `debug_options(bits)`.
+   - A check that a forced crash rewinds and replays to the same hash as a recorded run, using the debug exports.
+   - Add a rewind to the bench script (the rewind frames must stay under 12 ms).
+   - Run the ladder bot with snapshots: each level cleared with 3 snapshots on 4 of 5 seeds.
+6. **Render:** `render.zig` belongs to Track O in M2. If the retraction needs a renderer hook (a tint, a View field), make the minimal edit and list it.
+7. **Previews:** `docs/preview_m2.gif` (a derez, the rewind retracting, the retry) and `docs/preview_skirmish.gif`. Update `docs/RUNNING.md`.
+
+### Integration (lead)
+
+- Merge O, then R.
+- Turn every modifier on in R's rewind test and the options.
+- Run the full gate and the ladder bot, tag `snouty-cycles/m2`, merge to main, push.
+
 ## Status
 
 - 2026-10-04: SPEC written from the prior-art research (SPEC section 1). M0 started.
