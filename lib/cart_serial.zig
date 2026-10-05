@@ -7,7 +7,13 @@
 //!
 //! The ABI (shipped in the fork's main 8ca6da6, 2026-10-05):
 //! - `ipc_data.os_flags` (u16 at 0x200350EA) bit 1 = cart serial supported.
-//!   Stock firmware leaves it 0.
+//!   Stock firmware leaves it 0. The ext-flash test firmware e2.2 (on
+//!   Adrian's badge, before the layout was settled in the fork's
+//!   fork/ABI.md, main c044a3d) also sets bit 1 and keeps its flash size
+//!   at 0x200350F4, so the port counts as supported only while that word
+//!   is 0 (the fork zeroes it at cart start) or already holds our own
+//!   rings: on e2.2 the cart then sees stock firmware instead of writing
+//!   over the flash size and waiting for a lobby that never answers.
 //! - `ipc_data.cart_serial` (u32 at 0x200350F4) = the address of a
 //!   `CartSerialRings` in cart RAM, 0 while closed. The OS zeroes it at
 //!   cart start and detaches at cart stop.
@@ -256,10 +262,13 @@ pub fn Badge(comptime opts: Options) type {
             return @truncate(@intFromPtr(&store.hdr));
         }
 
-        /// The firmware serves the port (`os_flags` bit 1).
+        /// The firmware serves the port: `os_flags` bit 1, and the slot is
+        /// 0 or ours (anything else is e2.2's flash size, see the top).
         pub fn supported(_: *Self) bool {
             if (comptime !is_badge) return false;
-            return os_flags().* & os_flag_supported != 0;
+            if (os_flags().* & os_flag_supported == 0) return false;
+            const v = slot().*;
+            return v == 0 or v == mine();
         }
 
         /// Publish the rings (zeroed indices the first time). False without
@@ -326,6 +335,9 @@ pub fn Virtual(comptime opts: Options) type {
         store: S = undefined,
         /// `os_flags` bit 1 (false: stock firmware).
         os_supported: bool = true,
+        /// A non-zero word in the slot before the first open (ext-flash
+        /// e2.2's flash size): the port counts as unsupported.
+        foreign_slot: u32 = 0,
         opened: bool = false,
         /// Status bit 0: a host program has the port open.
         host_open: bool = false,
@@ -334,10 +346,10 @@ pub fn Virtual(comptime opts: Options) type {
         deaf: bool = false,
 
         pub fn supported(self: *Self) bool {
-            return self.os_supported;
+            return self.os_supported and (self.opened or self.foreign_slot == 0);
         }
         pub fn open(self: *Self) bool {
-            if (!self.os_supported) return false;
+            if (!self.supported()) return false;
             if (self.opened) return true;
             self.store.reset();
             self.opened = true;

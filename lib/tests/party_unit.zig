@@ -104,6 +104,10 @@ test "client: states, the flush byte and HELLO" {
     var c = Client.init(.{ .os_supported = false }, opts);
     try expect(c.poll() == null);
     try expectEqual(party.State.unsupported, c.state());
+    // Ext-flash e2.2 sets bit 1 too, with its flash size in the slot.
+    c = Client.init(.{ .foreign_slot = 0x001C0000 }, opts);
+    try expect(c.poll() == null);
+    try expectEqual(party.State.unsupported, c.state());
 
     c = Client.init(.{}, opts);
     try expect(c.poll() == null);

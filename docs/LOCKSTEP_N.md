@@ -299,6 +299,12 @@ The ABI (shipped, `src/os/cart/os_abi.zig` at 8ca6da6): `CartSerialRings`,
 tx_buf, tx_cap, tx_write, tx_read, status), its address in the u32 at
 0x200350F4, `os_flags` (u16 at 0x200350EA) bit 1 = supported, `status`
 bit 0 = host open (DTR), bit 1 = attached (the OS serves the rings).
+The layout is recorded in the fork's `fork/ABI.md` (main c044a3d) beside
+the ext-flash OS's (bit 2, 0x200350F8-0x200350FC). The ext-flash test
+firmware e2.2, from before that, also sets bit 1 and keeps its flash size
+at 0x200350F4, so `supported` also needs that word to be 0 (the fork
+zeroes it at cart start) or our own rings; on e2.2 a cart sees stock
+firmware.
 What the OS checks on every pass (`src/os/system/cart_serial.zig`
 `validate`; a struct that fails is ignored, as if closed), and how
 `lib/cart_serial.zig` meets it:
