@@ -42,6 +42,8 @@ const link = @import("link");
 const net = @import("net.zig");
 const link_ui = @import("link_ui.zig");
 const career = @import("career.zig");
+const csave = @import("career_save.zig");
+const save_ui = @import("save_ui.zig");
 const garage = @import("garage.zig");
 const standings = @import("standings.zig");
 const pickup_page = @import("pickup_page.zig");
@@ -294,6 +296,7 @@ fn begin_race(m: Mode, setup: world.Setup, car: u8) void {
 pub fn update() void {
     defer sound.update();
     input.update(read_controls());
+    save_hook_top();
     const t0 = cart.micros_since_boot();
     frame_t0 = t0;
     // The floor bands pump the link in a link race (and in the probe).
@@ -313,6 +316,7 @@ pub fn update() void {
         .pickups => pickups_frame(),
     }
     engine_cue();
+    save_ui.draw(screen != .race and screen != .pause);
     render_us = @truncate(cart.micros_since_boot() - t0);
     if (build_options.debug_overlay) draw_overlay();
     frame +%= 1;
@@ -366,6 +370,7 @@ fn draw_backdrop() void {
 fn menu_frame() void {
     link_note -|= 1;
     draw_backdrop();
+    if (save_ui.chooser.open) return chooser_frame();
     menu_nav(&main_list);
     if (input.pressed(.b)) {
         to_title();
@@ -386,6 +391,7 @@ fn menu_frame() void {
             // else the racer select starts one.
             .circuit => {
                 sound.menu_confirm();
+                if (save_ui.saver.offers(prix_on and !prix.done)) return open_chooser();
                 if (prix_on and !prix.done) return to_garage();
                 race_mode = .circuit;
                 to_select();
@@ -756,6 +762,7 @@ fn results_frame() void {
         } else if (mode == .circuit) {
             // M5: the race is booked (CYCLES, points), then the standings.
             _ = prix.finish_race(&w);
+            save_ui.saver.request(&prix, .race);
             go(.standings);
             return standings.draw_standings(&prix, screen_frames);
         } else {
@@ -789,6 +796,7 @@ fn garage_frame() void {
             return;
         },
         .back => {
+            save_ui.saver.request(&prix, .menu);
             to_menu();
             draw_backdrop();
             menu.draw_main(&main_list, sound.enabled, link_ok(), link_note, frame);
@@ -840,6 +848,7 @@ fn card_frame() void {
         .unlock => to_garage(),
         .end => {
             prix_on = false;
+            save_ui.saver.request(&prix, .finished);
             backdrop();
             to_menu();
         },
@@ -854,6 +863,77 @@ fn show_league(l: u8) void {
     camera.init(512 << fixed.Q, 512 << fixed.Q, camera.cam.yaw);
     camera.cam.height = 96;
     render.hills_on = false;
+}
+
+// --- Cart saves (saves/gcp: career_save.zig, save_ui.zig; docs/RUNNING.md "Saves") ---
+
+/// A link session (the LINK lobby, the link select, a link race with its
+/// pause and results): no save may park the cart then.
+fn link_session() bool {
+    return linked or screen == .lobby or select.link != null;
+}
+
+/// The top of update(): the probe (once, on the splash or title), the
+/// OS's exit request, a save whose SAVING mark the last frame showed.
+fn save_hook_top() void {
+    save_ui.saver.boot(frame, screen == .splash or screen == .title);
+    save_ui.saver.frame_start(.{ .career = &prix, .on = prix_on, .link = link_session() });
+}
+
+/// CIRCUIT in the main menu with saves: CONTINUE CAREER / NEW CAREER.
+fn open_chooser() void {
+    save_ui.chooser.enter();
+    chooser_frame();
+}
+
+/// The chooser (career_save.Chooser) over the menu's floor: CONTINUE picks
+/// the career up where it was saved, NEW CAREER (confirmed when there is
+/// one to lose) opens the racer select, B goes back to the menu.
+fn chooser_frame() void {
+    const session = prix_on and !prix.done;
+    const can = save_ui.saver.can_continue(session);
+    const k = csave.Keys{
+        .up = input.pressed(.up),
+        .down = input.pressed(.down),
+        .a = input.pressed(.a) or input.pressed(.start),
+        .b = input.pressed(.b),
+    };
+    if (k.up or k.down) sound.menu_move();
+    if (k.a) sound.menu_confirm();
+    switch (save_ui.chooser.update(can, k)) {
+        .none => {},
+        .back => return menu.draw_main(&main_list, sound.enabled, link_ok(), link_note, frame),
+        .resume_career => {
+            if (!session) prix = save_ui.saver.take_staged();
+            prix_on = true;
+            player_racer = prix.racer;
+            race_mode = .circuit;
+            return resume_career();
+        },
+        .new_career => {
+            race_mode = .circuit;
+            to_select();
+            return select.draw(frame);
+        },
+    }
+    save_ui.draw_chooser(can, if (session) &prix else &save_ui.saver.staged);
+}
+
+/// A continued career: the garage, or the standings of a league whose
+/// third race was saved before it closed, or the end card.
+fn resume_career() void {
+    switch (csave.resume_at(&prix)) {
+        .garage => to_garage(),
+        .standings => {
+            go(.standings);
+            standings.draw_standings(&prix, screen_frames);
+        },
+        .end => {
+            card = .end;
+            go(.card);
+            standings.draw_end(&prix, screen_frames);
+        },
+    }
 }
 
 // --- Link (M4: SPEC 7, docs/NET.md section 3) ---------------------------------------

@@ -412,3 +412,63 @@ The engine sheets left from Zero (`assets/gen/shadow.png`, and
 `exhaust.png`, Zero's `fx.png` renamed) are described in
 `../ASSETS_ENGINE.md`; the art track's sheets (`python3
 tools/draw_art.py`) are in `assets/gen/art/` (`../ASSETS.md`).
+
+## 7. Saves (branch `saves/gcp`)
+
+With the patched badge OS that stores cart saves (sycl-badge branch
+`cart-saves`, root `docs/SAVES.md`), the SNOUTY GCP survives switching the
+badge off. On stock firmware, in the web simulator and in wasm builds
+nothing of this shows: the cart is the one described above.
+
+- **What is kept**: one key, `gcp/career` (181 bytes, one 4 KB store
+  block): the whole `career.Career` (racer, league and next race, open
+  leagues, tries, the wallet, every racer's league points, loadout, CYCLES
+  earned and spent, each AI's place in its plan, the circuit totals, the
+  last race's award, the last league's outcome). Quick Race, GARBAGE
+  COLLECTION, BATTLE, LINK and the SOUND toggle keep nothing. Format and
+  rules: `cart/src/career_save.zig`.
+- **When it saves**: when a race is booked (A on the results' field
+  table, as the standings come up), when B leaves the garage for the menu,
+  and when the settings box's **Exit cart** is picked (the OS waits for
+  the cart). Each time only if the career changed since the last save, so
+  B in and out of the garage costs nothing. A `SAVING` mark top right
+  holds the screen for the ~110 ms the badge is parked. Never mid-race,
+  and never during a LINK session (lobby, link select, link race). Leaving
+  the end card deletes the save (the circuit is over). Garage purchases
+  are saved by the next save point; switching off between buying and the
+  race result undoes them (with the CYCLES refunded).
+- **CIRCUIT in the main menu** opens `CONTINUE CAREER` / `NEW CAREER`
+  when there is a career (saved, or in this session). CONTINUE picks it
+  up in the garage (or on the standings, if the badge went off after a
+  league's third race; A then closes the league as before). NEW CAREER
+  asks first (`NO, KEEP IT` / `YES, START OVER`, NO under the cursor),
+  then opens the racer select; the old save is replaced at the new
+  career's first save point. Up/Down, A or Start, B back. Without saves
+  CIRCUIT works as before (straight to the garage while a Prix is on).
+- **A save it cannot use** (another build's format: `OLD SAVE: UNUSABLE`;
+  a bad checksum or field: `SAVE IS DAMAGED`) leaves NEW CAREER alone on
+  the chooser; the new career's first save replaces it.
+- **Errors**: the store's rate limit (8 commits, then one per 10 s) is
+  retried quietly at the next save point; any other failure shows once in
+  a red line at the top (`SAVE: NO SPACE`, `SAVE: FLASH ERROR`, ...), off
+  the race.
+- **The probe**: the cart asks the OS once, on its second frame (the
+  splash or the title). Stock firmware never answers, so that frame takes
+  250 ms; nothing moves on the splash then.
+
+Host tests: `cart/src/career_save_test.zig` (in `zig build test-gc`)
+against lib/save.zig's fake store. Bench (the recorded CIRCUIT race to its
+standings, `tools/scripts/saves_circuit_race.json`):
+
+```sh
+badge-bench/bench.sh zig-out/firmware/snouty-gc.elf --frames 7420 \
+    --script carts/snouty-gc/tools/scripts/saves_circuit_race.json --saves /tmp/gcp.json
+# the next boot: CIRCUIT, CONTINUE CAREER, the garage; then Exit cart
+badge-bench/bench.sh zig-out/firmware/snouty-gc.elf --frames 120 \
+    --script carts/snouty-gc/tools/scripts/saves_continue.json --saves /tmp/gcp.json --exit-at 100
+# stock firmware: the same race, no save request answered, no SAVING
+badge-bench/bench.sh zig-out/firmware/snouty-gc.elf --frames 7420 \
+    --script carts/snouty-gc/tools/scripts/saves_circuit_race.json --no-saves
+```
+
+`tools/check_saves.sh` runs those three and checks the results.

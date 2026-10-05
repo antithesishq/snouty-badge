@@ -51,6 +51,8 @@ pub fn add(b: *Build, sycl_badge_dep: *Build.Dependency, opts: common.Options) v
     tests_mod.addImport("assets", assets_module(b));
     tests_mod.addImport("link_host", link_host_module(b));
     tests_mod.addImport("lockstep", lockstep_module(b));
+    // Cart saves (root docs/SAVES.md; career_save.zig): lib/save.zig's host fake.
+    tests_mod.addImport("save", b.createModule(.{ .root_source_file = b.path("lib/save.zig") }));
     const tests = b.addTest(.{ .root_module = tests_mod });
     opts.test_step.dependOn(&b.addRunArtifact(tests).step);
     // `zig build test-gc`: this cart's host tests alone (the shared `test`
@@ -139,6 +141,8 @@ fn build_cart_modules(b: *Build, cart: *Build.Module, cart_api: *Build.Module, s
     cart.addImport("link", b.createModule(.{ .root_source_file = b.path("lib/link.zig") }));
     // net.zig is GC's names over the shared lockstep (root docs/LOCKSTEP.md).
     cart.addImport("lockstep", lockstep_module(b));
+    // Cart saves (root docs/SAVES.md): the CIRCUIT's `gcp/career`, career_save.zig.
+    cart.addImport("save", b.createModule(.{ .root_source_file = b.path("lib/save.zig") }));
 
     // The `gfx` module: the PNGs in `images` through the per-cart converter
     // (snouty-maze / snouty-bugs pattern), generated at build time.
