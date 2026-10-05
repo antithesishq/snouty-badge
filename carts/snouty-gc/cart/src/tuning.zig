@@ -432,3 +432,17 @@ pub const ai_hazard_min_q8: i32 = 40;
 /// Braking distance per px/tick of speed to shed (the brake takes about
 /// 4% a tick against the throttle).
 pub const ai_hazard_brake_px: i32 = 20;
+
+// --- Link race (M4, docs/NET.md section 3) ---------------------------------------
+
+/// A link race, the lobby and the link select keep pumping the link after
+/// drawing until this far into the frame (us from the top of `update`):
+/// the vsync wait is the one stretch where nothing reads the 8-byte
+/// receive FIFO (Snouty Boy's `link_pump_until_us`).
+pub const link_pump_until_us: u64 = 14_000;
+/// A link race pumps the link every this many floor rows (a row of 160
+/// pixels is about 17 us on the badge: 3 rows and the pump keep the gap
+/// under one packet's 80 us on the wire; badge-bench, PLAN M4 status).
+pub const link_pump_rows: usize = 3;
+/// Frames `PEER LEFT, AI DRIVING` stays up once the partner has gone.
+pub const link_left_note: u32 = 180;

@@ -96,12 +96,12 @@ fn portrait_sheet(comptime s: type) Sheet {
 
 /// The art track's sheets (ASSETS.md), per racer in SPEC 4.1 order.
 pub const portraits = [6]Sheet{
-    portrait_sheet(gfx.portrait_snouty),   portrait_sheet(gfx.portrait_legacy),
-    portrait_sheet(gfx.portrait_kiddie),   portrait_sheet(gfx.portrait_sysadmin),
-    portrait_sheet(gfx.portrait_rootkit),  portrait_sheet(gfx.portrait_botnet),
+    portrait_sheet(gfx.portrait_snouty),  portrait_sheet(gfx.portrait_legacy),
+    portrait_sheet(gfx.portrait_kiddie),  portrait_sheet(gfx.portrait_sysadmin),
+    portrait_sheet(gfx.portrait_rootkit), portrait_sheet(gfx.portrait_botnet),
 };
 pub const cars = [6]Sheet{
-    sheet(gfx.car_snouty, 32, 16),  sheet(gfx.car_legacy, 32, 16),  sheet(gfx.car_kiddie, 32, 16),
+    sheet(gfx.car_snouty, 32, 16),   sheet(gfx.car_legacy, 32, 16),  sheet(gfx.car_kiddie, 32, 16),
     sheet(gfx.car_sysadmin, 32, 16), sheet(gfx.car_rootkit, 32, 16), sheet(gfx.car_botnet, 32, 16),
 };
 pub const weapons = sheet(gfx.weapons, 8, 8);
@@ -425,6 +425,7 @@ pub fn draw_world(w: *const world.World, v: View) void {
         }
     }
     last_gathered = @intCast(count);
+    render.pump_at(.sprites);
     // Insertion sort, far first (the list is mostly in pool order, so small).
     var i: usize = 1;
     while (i < count) : (i += 1) {
@@ -437,12 +438,14 @@ pub fn draw_world(w: *const world.World, v: View) void {
     // car (six at most), so the race itself always shows.
     var cull: usize = if (count > draw_cap) count - draw_cap else 0;
     last_drawn = @intCast(count - cull);
-    for (keys[0..count]) |key| {
+    for (keys[0..count], 0..) |key, k| {
         const e = &list[key & 0xFF];
         if (cull > 0 and e.kind != .car) {
             cull -= 1;
             continue;
         }
+        // M4 link race: pump the link between objects (docs/NET.md).
+        if (k != 0) render.pump_at(.sprites);
         switch (e.kind) {
             .car => draw_car(&w.cars[e.index], e.index, e.index == v.follow, e.index == w.gc.marked, e.p, v.frame),
             .proj => draw_proj(&w.projs[e.index], e.p, v.frame),

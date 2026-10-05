@@ -90,6 +90,11 @@ pub fn reset(w: *World, setup: world.Setup) void {
         const j = w.rng % @as(u32, @intCast(k + 1));
         std.mem.swap(u8, &order[k], &order[j]);
     }
+    // CREWS (M4): the AI cars past the first `setup.crews` of the shuffle
+    // stay off the grid; the humans move up behind the ones kept.
+    const keep = @min(n, setup.crews);
+    for (order[keep..n]) |ci| w.cars[ci].active = false;
+    n = keep;
     for (0..2) |slot| {
         for (w.cars, 0..) |c, i| {
             if (c.human != slot) continue;
@@ -97,7 +102,7 @@ pub fn reset(w: *World, setup: world.Setup) void {
             n += 1;
         }
     }
-    for (order, 0..) |ci, slot| {
+    for (order[0..n], 0..) |ci, slot| {
         const c = &w.cars[ci];
         const row: i32 = @intCast(slot / 2);
         const side: i32 = if (slot % 2 == 0) -tuning.grid_side else tuning.grid_side;

@@ -44,7 +44,7 @@ Sweeper; the Runoff: Salt Pan Sprint, Outflow Canyon, Coolant Basin, with
 exhaust vents). The title (SNOUTY GC over the Dumps horizon, the six
 portraits along the bottom, PRESS START; 10 s idle starts the attract
 demo) leads to the **main menu**: QUICK RACE, GARBAGE COLLECTION, LINK
-(greyed, `NO LINK YET` until M4), SOUND. A picks, B goes back. Then the
+(M4, below), SOUND. A picks, B goes back. Then the
 racer select; Down to the track row, where Left/Right cycle the six
 tracks and the panel shows the track's name, league, the mode's rule,
 its hazards and its outline. **GARBAGE COLLECTION**: `SWEEP n` top left
@@ -62,6 +62,15 @@ steam across the road. **Attract**: an AI race on the next track each
 time, the camera cutting between cars every 5 s and onto a car a KERNEL
 PANIC freezes (the blue screen), `PRESS START` blinking; any button goes
 back to the title.
+
+M4 (LINK, SPEC 7): two badges joined by a JST-SH 3-pin cable on their
+UART headers race in one field, LINK RACE or LINK GC, with 4, 2 or no AI
+racers: the LINK screen (cable state, host and guest, the host's rules),
+the shared racer select (`TAKEN`, `READY`, the host's `A START`), a
+pause either badge opens and closes, `WAITING FOR PEER`, `PEER LEFT, AI
+DRIVING`, `DESYNC`. `docs/LINK_PLAY.md` is how to play it and the
+two-badge hardware check (never run on two badges yet). In the simulator
+LINK is greyed: `NO LINK IN SIMULATOR`.
 
 Controls at M1 (SPEC 5.1):
 
@@ -94,7 +103,7 @@ repository root (`../..`), and build outputs are in the root `zig-out/`.
 ## 1. Pull and build
 
 ```sh
-git fetch origin && git checkout gc/spec      # or the tag: git checkout snouty-gc/m0
+git fetch origin && git checkout gc/present   # or a tag: git checkout snouty-gc/m3
 git submodule update --init sycl-badge
 zig build -Dcart=snouty-gc                    # from the repository root
 ```
@@ -200,6 +209,33 @@ then frames 30..297 of `m3menu`, 930..1005, 1320..1350, 1854..1890,
 2124..2175, 3849..3966, 5763..5790, 5916..5970 and 5994..6075 of `g2`,
 1239..1296 of `vent` and 3459..3561 of `att` (every third) copied in
 that order into one directory and `make_gif.py --scale 2 --ms 50`.
+
+The M4 preview (`docs/preview_m4.gif`) is two runs: the menu (LINK
+greyed, `NO LINK IN SIMULATOR`) and the made-up LINK screens
+(`debug_link_view`: searching, the host's lobby changing the rules, the
+guest's, another cart, the host's select with both ready, the guest's on
+a taken racer), then a Quick Race with the link notices forced over it
+(`debug_link_notice`: WAITING FOR PEER, PEER LEFT, AI DRIVING):
+
+```sh
+node ../../tools/preview.mjs ../../zig-out/bin/snouty-gc.wasm --frames 470 --every 2 --start-skip 12 \
+    --press START:2-2 --press START:10-10 --press DOWN:14-14,DOWN:16-16 --press A:24-24 \
+    --call-at "75 debug_link_view:1" --call-at "130 debug_link_view:2" \
+    --press RIGHT:150-150 --press DOWN:165-165 --press RIGHT:175-175,RIGHT:185-185 --press DOWN:200-200 \
+    --press RIGHT:210-210 --press DOWN:225-225 --call-at "245 debug_link_view:3" --call-at "295 debug_link_view:4" \
+    --call-at "335 debug_link_view:5" --press RIGHT:355-355 --press A:375-375 --call-at "425 debug_link_view:6" --out out/m4a/
+node ../../tools/preview.mjs ../../zig-out/bin/snouty-gc.wasm --frames 560 --every 2 --start-skip 240 \
+    --call debug_start_race:1 --call debug_set_autopilot:1 \
+    --call-at "400 debug_link_notice:1" --call-at "480 debug_link_notice:2" --out out/m4b/
+```
+
+then `out/m4a` and `out/m4b` frames in that order into one directory and
+`make_gif.py --scale 2 --ms 50`. The pump-gap probe in badge-bench (from
+the repository root): `badge-bench/bench.sh zig-out/firmware/snouty-gc.elf
+--json --poke gc_pump_probe=1 --frames 3600 --script
+carts/snouty-gc/tools/scripts/m3_gc_race.json` (the `gc gaps:` traces in
+`bench.json`: the worst gap ending at each site, us: top, after the
+tick, horizon, floor, floor lines, sprites, HUD, after the HUD).
 
 Input scripts in `tools/scripts/` (`tools/record_script.py [--track N]
 [--gc] --frames F --out ...` records the autopilot's drive through the M3

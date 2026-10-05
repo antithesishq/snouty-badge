@@ -2,7 +2,8 @@
 //! Menus and screens (SPEC 8.1): the splash (Snouty's eyepatched portrait,
 //! M1), the title (M3: SNOUTY GC / GARBAGE COLLECTION over the Dumps
 //! horizon, the six portraits along the bottom, PRESS START), the main
-//! menu (M3: QUICK RACE, GARBAGE COLLECTION, LINK greyed until M4, SOUND)
+//! menu (M3: QUICK RACE, GARBAGE COLLECTION, LINK (M4; greyed in the
+//! simulator), SOUND)
 //! and the vertical list the pause menu uses. Zero's league and track
 //! pickers and the Grand Prix standings are gone; the racer select is
 //! select.zig. main.zig owns the state machine and draws the live floor
@@ -44,7 +45,7 @@ pub fn draw_splash(frame: u32) void {
 }
 
 /// SNOUTY GC at 2x with a coral drop, centred, top row at `y`.
-fn big_title(y: i32) void {
+pub fn big_title(y: i32) void {
     const x: i32 = 80 - @as(i32, title_str.len) * 8;
     hud.glyph_text(title_str, x + 2, y + 2, 2, false, hud.coral);
     hud.glyph_text(title_str, x, y, 2, false, hud.white);
@@ -85,10 +86,10 @@ const panel_hi = cart.DisplayColor.rgb(0x4A2440);
 /// The menu over the live floor: the title at 2x over the horizon, the
 /// rows centred on the longest (GARBAGE COLLECTION: 144 px, so no room for
 /// a `>` marker) in a panel, the cursor row coral on a highlight bar, LINK
-/// greyed, and a line about the row
-/// under the cursor. `link_note` > 0: A was pressed on LINK, NO LINK YET
-/// flashes in place of its line.
-pub fn draw_main(list: *const List, sound_on: bool, link_note: u32, frame: u32) void {
+/// greyed when there is no link (the simulator), and a line about the row
+/// under the cursor. `link_note` > 0: A was pressed on a greyed LINK, NO
+/// LINK IN SIMULATOR flashes in place of its line.
+pub fn draw_main(list: *const List, sound_on: bool, link_ok: bool, link_note: u32, frame: u32) void {
     big_title(8);
     const y0: i32 = 36;
     const pitch: i32 = 13;
@@ -99,23 +100,25 @@ pub fn draw_main(list: *const List, sound_on: bool, link_note: u32, frame: u32) 
         const y = y0 + @as(i32, @intCast(i)) * pitch;
         const sel = i == list.cursor;
         if (sel) hud.fill_rect(6, y - 2, 148, 11, panel_hi);
-        const greyed = i == @intFromEnum(Item.link);
+        const greyed = i == @backingInt(Item.link) and !link_ok;
         const color = if (greyed) hud.dim else if (sel) hud.coral else hud.white;
         hud.text(item, x, y, color);
     }
     _ = frame;
     // What the row under the cursor does.
-    const about = switch (@as(Item, @enumFromInt(list.cursor))) {
+    const about = switch (@as(Item, @fromBackingInt(@intCast(list.cursor)))) {
         .quick => "3 LAPS, SIX RACERS",
         .gc => "LAST CAR LEFT WINS",
-        .link => "NO LINK YET",
+        .link => if (link_ok) "TWO BADGES, A CABLE" else "NO LINK IN",
         .sound => "A TOGGLES THE SPEAKER",
     };
     const note_on = link_note > 0 and (link_note / 6) % 2 == 0;
-    const about_color = if (list.cursor == @intFromEnum(Item.link)) (if (note_on) hud.coral else hud.grey) else hud.grey;
+    const on_link = list.cursor == @backingInt(Item.link);
+    const about_color = if (on_link and !link_ok) (if (note_on) hud.coral else hud.grey) else hud.grey;
     hud.fill_rect(4, 92, 152, 32, hud.anti_black);
     hud.centered(about, 96, about_color);
-    if (list.cursor == @intFromEnum(Item.gc)) hud.centered("MARK AND SWEEP", 106, hud.dim);
+    if (list.cursor == @backingInt(Item.gc)) hud.centered("MARK AND SWEEP", 106, hud.dim);
+    if (on_link) hud.centered(if (link_ok) "LINK RACE, LINK GC" else "SIMULATOR", 106, if (link_ok) hud.dim else about_color);
     hud.centered("A SELECT  B BACK", 116, hud.dim);
 }
 
