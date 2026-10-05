@@ -54,6 +54,8 @@ const images = [_]Image{
     .{ .file = "bug_beetle.png", .bits = 4, .transparent = true },
     .{ .file = "bug_spider.png", .bits = 4, .transparent = true },
     .{ .file = "bug_boss.png", .bits = 4, .transparent = true },
+    // Deathmatch (M7): the other player's billboard.
+    .{ .file = "rival.png", .bits = 4, .transparent = true },
     .{ .file = "pickups.png", .bits = 4, .transparent = true },
     .{ .file = "projectiles.png", .bits = 4, .transparent = true },
     .{ .file = "weapons.png", .bits = 4, .transparent = true },

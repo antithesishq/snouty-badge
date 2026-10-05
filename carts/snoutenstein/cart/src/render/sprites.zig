@@ -68,12 +68,19 @@ fn burst_size(ttl: u8) f32 {
 /// Spiders (ceiling turrets) are drawn only within this perpendicular distance.
 pub const spider_range: f32 = 6.0;
 
+/// Deathmatch (M7): the other player's billboard (`rival.png` cell 0-4,
+/// all white for the hit flash), null in the campaign; and whether the
+/// bugs are drawn at all (BUGS OFF leaves their slots empty).
+pub const Rival = struct { x: f32, y: f32, cell: u8, white: bool };
+pub var rival: ?Rival = null;
+pub var show_enemies: bool = true;
+
 pub fn draw(s: *const state.GameState, level: *const levels.Level, px: f32, py: f32, dx: f32, dy: f32) void {
     count = 0;
     drawn = 0;
     const cam: Cam = .{ .px = px, .py = py, .dx = dx, .dy = dy };
 
-    const n_enemies = @min(level.enemies.len, state.max_enemies);
+    const n_enemies = if (show_enemies) @min(level.enemies.len, state.max_enemies) else 0;
     for (s.enemies[0..n_enemies]) |e| {
         const kind = e.kind;
         if (kind == .spider) {
@@ -114,6 +121,8 @@ pub fn draw(s: *const state.GameState, level: *const levels.Level, px: f32, py: 
         cam.add(fixed.to_f32(p.x), fixed.to_f32(p.y), size, .projectiles, cell, .centre, false);
     }
 
+    if (rival) |r| cam.add(r.x, r.y, 1.0, .rival, r.cell, .bottom, r.white);
+
     // Back to front: insertion sort by z, farthest first.
     var i: usize = 1;
     while (i < count) : (i += 1) {
@@ -135,6 +144,7 @@ pub fn draw(s: *const state.GameState, level: *const levels.Level, px: f32, py: 
             .boss => blit(gfx.bug_boss, 32, e, pal),
             .pickups => blit(gfx.pickups, 16, e, pal),
             .projectiles => blit(gfx.projectiles, 8, e, pal),
+            .rival => blit(gfx.rival, 32, e, pal),
         };
         if (any) drawn += 1;
     }

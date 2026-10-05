@@ -91,6 +91,7 @@ MANIFEST: dict[str, Sheet] = {
         Sheet("bug_spider.png", 32, 32, 7, True, edge_ok="t",
               edge_cols=(SPIDER_THREAD_X, SPIDER_THREAD_X)),
         Sheet("bug_boss.png", 32, 32, 8, True),
+        Sheet("rival.png", 32, 32, 5, True),
         Sheet("pickups.png", 16, 16, 8, True),
         Sheet("projectiles.png", 8, 8, 6, True),
         Sheet("weapons.png", 48, 32, 12, True, edge_ok="b"),
@@ -112,6 +113,7 @@ FRAME_NAMES = {
     "bug_beetle.png": BUG_FRAMES,
     "bug_spider.png": BUG_FRAMES,
     "bug_boss.png": BUG_FRAMES + ["flicker"],
+    "rival.png": ["front", "right side", "back", "left side", "down"],
     "pickups.png": ["Coral key", "Iris key", "Gold key", "hotfix", "zapper charge",
                     "spray can", "rewind battery", "Debugger cartridge"],
     "projectiles.png": ["spit 0", "spit 1", "web 0", "web 1", "debug bolt", "debug burst"],
@@ -1146,6 +1148,134 @@ def draw_bug(name: str) -> np.ndarray:
 
 
 # --------------------------------------------------------------------------
+# rival.png (deathmatch, M7): the other player, a rival Snouty in a Coral
+# shirt holding a zapper, 5 cells 32x32 bottom-anchored like the bugs:
+# front (facing the viewer), right side (facing screen right), back, left
+# side (the mirror), and down (the death view: lying on the floor, X eyes).
+# Purple fur as on the portrait, Coral shirt (Iris badge), dark trousers,
+# teal zapper. The engine draws the hit flash (all white), as for bugs.
+# --------------------------------------------------------------------------
+def rival_legs(c: np.ndarray, xs: list[int], y0: int = 24) -> None:
+    for x in xs:
+        rect(c, x, y0, x + 2, 28, "m")
+        rect(c, x, y0, x, 28, "d")
+        rect(c, x - (1 if x < 15 else 0), 29, x + 2 + (0 if x < 15 else 1), 29, "o")
+
+
+def rival_shirt(c: np.ndarray, cx: float, rx: float, badge: bool) -> None:
+    body = ellipse(N, N, cx, 20.5, rx, 6.2) & (np.arange(N)[:, None] >= 15) & (np.arange(N)[:, None] <= 25)
+    layer(c, body, shade(body, "C", "C", "R", cx, 20.5, rx, 6.2, hi=-0.9, lo=0.35))
+    if badge:
+        c[18:20, int(cx) + 2 : int(cx) + 4] = "4"
+
+
+def rival_front() -> np.ndarray:
+    c = canvas(N, N)
+    rival_legs(c, [12, 17])
+    rival_shirt(c, 15.5, 6.2, True)
+    # arms: left hangs, right holds the zapper forward
+    layer(c, seg_mask(N, N, [(9.5, 17), (8.5, 23)], 1.3), "3")
+    layer(c, seg_mask(N, N, [(21.5, 17), (22.5, 21)], 1.3), "3")
+    layer(c, ellipse(N, N, 8.5, 24, 1.6, 1.4), "4")
+    zap = np.zeros((N, N), bool)
+    zap[20:24, 21:26] = True
+    layer(c, zap, "s")
+    c[21, 22:25] = "T"
+    c[23, 24] = "T"
+    # head: ears, round head, the snout coming at the viewer
+    for ex in (10.0, 21.0):
+        layer(c, ellipse(N, N, ex, 4.5, 2.4, 2.4), "3")
+        c[ellipse(N, N, ex, 4.7, 1.1, 1.1)] = "2"
+    head = ellipse(N, N, 15.5, 9.5, 6.3, 5.4)
+    layer(c, head, shade(head, "4", "3", "2", 15.5, 9.5, 6.3, 5.4, hi=-0.45, lo=0.45))
+    for ex in (12.5, 18.5):
+        e = ellipse(N, N, ex, 8.5, 1.5, 1.9)
+        c[e] = "c"
+        c[8:10, int(ex)] = "o"
+    # angry brows: a rival
+    plot(c, [(11, 6), (12, 6), (13, 7)], "o")
+    plot(c, [(20, 6), (19, 6), (18, 7)], "o")
+    sn = poly_mask(N, N, [(13.6, 10.5), (17.4, 10.5), (16.6, 16.0), (14.4, 16.0)])
+    xs, _ = coords(N, N)
+    layer(c, sn, np.where(xs < 14.8, "4", np.where(xs > 16.2, "2", "3")))
+    c[15:17, 15:17] = "o"
+    return c
+
+
+def rival_side() -> np.ndarray:
+    """Facing screen right."""
+    c = canvas(N, N)
+    # tail behind (left), bushy
+    tail = ellipse_rot(7.5, 19.5, 2.8, 6.0, -25)
+    layer(c, tail, shade(tail, "3", "2", "1", 7.5, 19.5, 2.8, 6.0))
+    rival_legs(c, [12, 16])
+    rival_shirt(c, 14.5, 4.8, False)
+    # arm forward with the zapper pointing right
+    layer(c, seg_mask(N, N, [(14.5, 17.5), (19.5, 20.0)], 1.3), "3")
+    zap = np.zeros((N, N), bool)
+    zap[18:21, 19:27] = True
+    layer(c, zap, "s")
+    c[19, 21:26] = "T"
+    c[18, 26] = "T"
+    # head, ear, long anteater snout to the right
+    layer(c, ellipse(N, N, 11.5, 4.5, 2.2, 2.4), "3")
+    c[ellipse(N, N, 11.5, 4.8, 1.0, 1.0)] = "2"
+    head = ellipse(N, N, 13.5, 9.5, 5.4, 5.2)
+    layer(c, head, shade(head, "4", "3", "2", 13.5, 9.5, 5.4, 5.2, hi=-0.45, lo=0.45))
+    sn = poly_mask(N, N, [(17.0, 7.6), (27.5, 10.2), (27.5, 11.8), (17.0, 13.4)])
+    xs, ys = coords(N, N)
+    layer(c, sn, np.where(ys < 9.8, "4", np.where(ys > 11.8, "2", "3")))
+    c[10:12, 27:29] = "o"  # nose tip
+    e = ellipse(N, N, 15.5, 8.2, 1.4, 1.8)
+    c[e] = "c"
+    c[8:10, 16] = "o"
+    plot(c, [(14, 6), (15, 6), (16, 7)], "o")
+    return c
+
+
+def rival_back() -> np.ndarray:
+    c = canvas(N, N)
+    rival_legs(c, [12, 17])
+    # tail hanging behind the legs
+    tail = ellipse(N, N, 15.5, 24.0, 2.8, 5.0)
+    rival_shirt(c, 15.5, 6.2, False)
+    layer(c, tail, shade(tail, "3", "2", "1", 15.5, 24.0, 2.8, 5.0))
+    layer(c, seg_mask(N, N, [(9.5, 17), (8.5, 23)], 1.3), "3")
+    layer(c, seg_mask(N, N, [(21.5, 17), (22.5, 23)], 1.3), "3")
+    for ex in (10.0, 21.0):
+        layer(c, ellipse(N, N, ex, 4.5, 2.4, 2.4), "3")
+    head = ellipse(N, N, 15.5, 9.5, 6.3, 5.4)
+    layer(c, head, shade(head, "3", "2", "1", 15.5, 9.5, 6.3, 5.4, hi=-0.45, lo=0.45))
+    c[13, 13:19] = "2"  # the collar line
+    return c
+
+
+def rival_down() -> np.ndarray:
+    """The death view: the side drawing turned onto its back, X eyes."""
+    side = rival_side()
+    lying = np.rot90(side, k=1).copy()  # head to the left, feet up-right
+    lying = anchor_bottom(lying, 30)
+    # X eyes where the eye landed
+    ys, xs = np.nonzero(lying == "c")
+    if len(xs):
+        cx, cy = int(round(xs.mean())), int(round(ys.mean()))
+        rect(lying, cx - 1, cy - 1, cx + 1, cy + 1, "c")
+        eyes_x(lying, [(cx, cy)])
+    return lying
+
+
+RIVAL_FRAMES = ["front", "right side", "back", "left side", "down"]
+
+
+def draw_rival() -> np.ndarray:
+    side = rival_side()
+    cells = [rival_front(), side, rival_back(), mirror_x(side), rival_down()]
+    for cl in cells:
+        clear_border(cl)
+    return strip([to_rgb(cl, True) for cl in cells])
+
+
+# --------------------------------------------------------------------------
 # pickups.png: 8 cells 16x16, standing on the floor (bottom-centre anchor:
 # drawings rest on row 14). Keys, hotfix medkit, zapper charge cell, bug
 # spray can, rewind battery, Debugger cartridge (red breakpoint dot).
@@ -1707,6 +1837,7 @@ PLACEHOLDER_DRAW = {
     "bug_beetle.png": lambda: draw_bug("bug_beetle.png"),
     "bug_spider.png": lambda: draw_bug("bug_spider.png"),
     "bug_boss.png": lambda: draw_bug("bug_boss.png"),
+    "rival.png": draw_rival,
     "pickups.png": draw_pickups,
     "projectiles.png": draw_projectiles,
     "weapons.png": draw_weapons,

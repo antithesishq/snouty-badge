@@ -200,6 +200,19 @@ pub fn hash(w: *const World) u32 {
     return h;
 }
 
+/// `rival.png` cell for the other player `r` seen from `viewer`: 0 front
+/// (it faces the viewer, within 45 degrees), 1 its right side (it faces
+/// screen right), 2 back, 3 left side, 4 down (the death view).
+pub fn rival_cell(viewer: *const Player, r: *const Player, dead: bool) u8 {
+    if (dead) return 4;
+    const to_viewer = fixed.atan2(viewer.y - r.y, viewer.x - r.x);
+    const rel = fixed.angle_diff(r.angle, to_viewer);
+    const q: i32 = fixed.deg(45);
+    if (rel > -q and rel < q) return 0;
+    if (rel > 3 * q or rel < -3 * q) return 2;
+    return if (rel > 0) 3 else 1;
+}
+
 pub fn alive(m: *const Match, slot: usize) bool {
     return m.dead[slot] == 0 and m.players[slot].hp > 0;
 }
@@ -482,6 +495,20 @@ test "spawns face into the room and the players start apart" {
     try testing.expect(!sim.living(&w.gs.enemies[0]));
     new_world(&w, &L, true);
     try testing.expect(sim.living(&w.gs.enemies[0]));
+}
+
+test "the rival's billboard cell follows its facing" {
+    // Viewer at the west looking east at the rival 5 cells away.
+    const v: Player = .{ .x = fixed.from_int(1), .y = fixed.from_int(1), .angle = 0 };
+    var r: Player = .{ .x = fixed.from_int(6), .y = fixed.from_int(1), .angle = fixed.deg(180) };
+    try testing.expectEqual(@as(u8, 0), rival_cell(&v, &r, false)); // facing the viewer
+    r.angle = 0;
+    try testing.expectEqual(@as(u8, 2), rival_cell(&v, &r, false)); // walking away
+    r.angle = fixed.deg(90); // south: screen right for an east-looking viewer
+    try testing.expectEqual(@as(u8, 1), rival_cell(&v, &r, false));
+    r.angle = fixed.deg(270);
+    try testing.expectEqual(@as(u8, 3), rival_cell(&v, &r, false));
+    try testing.expectEqual(@as(u8, 4), rival_cell(&v, &r, true));
 }
 
 test "input bytes round-trip and never carry Start with Select" {
