@@ -12,6 +12,16 @@
 //! - HIST: one channel's raw histogram (Up / Down: channel 0 = the
 //!   reference SPAD, 1..9 the zones) with the detected objects marked; A
 //!   switches linear / log. Histogram dumps are on only on this page.
+//! - EYES (M2): the nine zone histograms as a scrolling waterfall
+//!   (eyes.zig) with the objects traced; A turns the sound mode on (the
+//!   hand's histogram as a wavetable at a pitch from its distance,
+//!   audio.zig), Up / Down pick its zone (AUTO = the nearest), B holds.
+//!   Histogram dumps are on here too.
+//! - DEPTH (M2): the slow-scan depth photo from user SPAD masks
+//!   (lib/tof_depth.zig; drawn by depth_view.zig): A cycles PHOTO / CLOUD
+//!   / MASK, Up / Down the exposure (frames per layout), B starts a new
+//!   photo, Select the fine pass (17 columns). Leaving the page restores
+//!   the normal SPAD map.
 //! - DIAG: driver state, last error with its raw status, sensor IDs and
 //!   versions, download time, I2C speed and line levels, bus scan,
 //!   counters and the driver's step log: one photo of it tells what failed
@@ -19,11 +29,17 @@
 //!   restarts, B restarts with a CPU reset and a fresh firmware download.
 //! With no sensor, LIVE and HIST show what to plug where, and the scan.
 //! Input is ignored while Start and Select are both held (the OS's).
-//! No sound.
+//! Sound only on EYES; the cart boots silent unless built with
+//! `-Dsound=true` (docs/SOUND.md), and badge builds stream into
+//! lib/stream_audio.zig's ring (never `cart.tone2`).
 const std = @import("std");
 const cart = @import("cart-api");
 const tof = @import("tof");
 const build_options = @import("build_options");
+const ui = @import("ui.zig");
+const eyes_mod = @import("eyes.zig");
+const depth_view = @import("depth_view.zig");
+const audio = @import("audio.zig");
 
 const types = tof.types;
 const i2c = tof.i2c;
@@ -36,7 +52,8 @@ const fake = build_options.tof_fake;
 const Sensor = tof.Sensor(fake);
 
 /// Bus time per update: 3 ms (a whole result at 400 kHz), 6 ms on HIST
-/// (histogram subpackets; a few sets a second at 400 kHz).
+/// and EYES (histogram subpackets; a few sets a second at 400 kHz) and
+/// DEPTH (the SPAD page write and read-back in one update each).
 const budget_live_us = 3000;
 const budget_hist_us = 6000;
 /// Bus scan addresses per update while the scan is on screen (a NACKed
@@ -45,21 +62,29 @@ const scan_per_update = 8;
 const frame_us: u64 = 16_667;
 const default_speed = 1; // i2c.speeds[1] = 400 kHz
 
-const Page = enum(u8) { live, hist, diag };
+const Page = enum(u8) { live, hist, eyes, depth, diag };
 
-const bg = cart.DisplayColor.rgb(0x101820);
-const panel = cart.DisplayColor.rgb(0x202830);
-const fg = cart.DisplayColor.rgb(0xE0E8F0);
-const dim = cart.DisplayColor.rgb(0x60707C);
-const good = cart.DisplayColor.rgb(0x40E070);
-const warn = cart.DisplayColor.rgb(0xF0C040);
-const bad = cart.DisplayColor.rgb(0xF05050);
-const accent = cart.DisplayColor.rgb(0x40C0F0);
-const black = cart.DisplayColor.rgb(0x000000);
-const white = cart.DisplayColor.rgb(0xFFFFFF);
+const bg = ui.bg;
+const panel = ui.panel;
+const fg = ui.fg;
+const dim = ui.dim;
+const good = ui.good;
+const warn = ui.warn;
+const bad = ui.bad;
+const accent = ui.accent;
+const black = ui.black;
+const white = ui.white;
+const heat = ui.heat;
+const ink_on = ui.ink_on;
+const log2_fix = ui.log2_fix;
+const clear = ui.clear;
+const say = ui.say;
+const say_px = ui.say_px;
+const trim = ui.trim;
+const fmt = ui.fmt;
 
 var sensor: Sensor = undefined;
-var scan: i2c.Scan = .{};
+var bus_scan: i2c.Scan = .{};
 var page: Page = .live;
 var orient: types.Orientation = .{};
 var hist_ch: u8 = 5;
@@ -68,6 +93,23 @@ var speed_i: usize = default_speed;
 var spad_wide = false;
 var ticks: u64 = 0;
 var prev_bits: u16 = 0;
+
+// EYES
+var eyes: eyes_mod.Eyes = .{};
+var pal: eyes_mod.Palettes = .{};
+/// The sound zone: 0 = the zone with the nearest object, 1..9 a zone.
+var eyes_zone: u8 = 0;
+var sound_on: bool = build_options.sound;
+var voice: audio.Voice = .{};
+var feeder: audio.Feeder = .{};
+var table: audio.Table = undefined;
+
+// DEPTH
+var scan: tof.depth.Scan = .{};
+var view: depth_view.View = .photo;
+/// Select acts on release, unless Start came in while it was held (the
+/// OS's Start+Select).
+var select_armed = false;
 
 /// Frame and histogram rates over the last second, in tenths of Hz.
 var rate_t0: u64 = 0;
@@ -84,6 +126,7 @@ pub fn start() void {
     cart.set_vsync_enabled(1000.0 / 60.0);
     cart.set_double_buffer_mode(.no_copy_full_frame);
     sensor = tof.open(fake, i2c.speeds[speed_i]);
+    pal.init();
     apply_config();
 }
 
@@ -100,12 +143,20 @@ pub fn update() void {
     } else poll_us = sensor.stats.last_spent_us;
     poll_max_window = @max(poll_max_window, poll_us);
 
-    if (page == .diag or sensor.state == .absent) scan.step(&sensor.bus, scan_per_update);
+    if (page == .diag or sensor.state == .absent) bus_scan.step(&sensor.bus, scan_per_update);
     update_rates(now);
+    var new_set = false;
+    if (page == .eyes) if (sensor.histograms()) |h| {
+        new_set = eyes.take(h, sensor.latest());
+    };
+    if (page == .depth and sensor.measuring()) scan.update(&sensor, now);
+    update_sound(new_set);
 
     switch (page) {
         .live => if (show_status_screen()) draw_status() else draw_live(),
         .hist => if (show_status_screen()) draw_status() else draw_hist(),
+        .eyes => if (show_status_screen()) draw_status() else draw_eyes(),
+        .depth => if (show_status_screen()) draw_status() else draw_depth(),
         .diag => draw_diag(),
     }
     draw_page_dots();
@@ -134,13 +185,18 @@ fn show_status_screen() bool {
 
 fn apply_config() void {
     const hz = i2c.speeds[speed_i];
-    sensor.budget_us = if (page == .hist) budget_hist_us else budget_live_us;
+    sensor.budget_us = switch (page) {
+        .hist, .eyes, .depth => budget_hist_us,
+        else => budget_live_us,
+    };
     sensor.configure(.{
-        .spad_map = if (spad_wide) 6 else 1,
+        // DEPTH measures through user masks (spad_map_id 14, set shot by
+        // shot by the scan); every other page the normal or wide map.
+        .spad_map = if (page == .depth) tof.spad.map_id else if (spad_wide) 6 else 1,
         // At 100 kHz a result read spans several updates; a 33 ms period
         // would overwrite it mid-read.
         .period_ms = if (hz < 400_000) 100 else 33,
-        .histograms = page == .hist,
+        .histograms = page == .hist or page == .eyes,
     });
 }
 
@@ -148,13 +204,23 @@ fn handle_input(c: cart.Controls) void {
     const bits: u16 = @bitCast(c);
     defer prev_bits = bits;
     // The OS owns Start+Select: react to nothing while both are held.
-    if (c.start and c.select) return;
+    if (c.start and c.select) {
+        select_armed = false;
+        return;
+    }
     const pressed: cart.Controls = @bitCast(bits & ~prev_bits);
+    const released: cart.Controls = @bitCast(prev_bits & ~bits);
+    if (pressed.select) select_armed = true;
+    if (c.start) select_armed = false;
+    const select_tap = released.select and select_armed;
+    if (released.select) select_armed = false;
 
     if (pressed.left or pressed.right) {
         const n = std.enums.values(Page).len;
         const i: u8 = @backingInt(page);
         page = @fromBackingInt(@intCast(if (pressed.right) (i + 1) % n else (i + n - 1) % n));
+        if (page == .eyes) eyes.reset();
+        if (page == .depth) scan.restart();
         apply_config();
         return;
     }
@@ -172,6 +238,22 @@ fn handle_input(c: cart.Controls) void {
             if (pressed.up) hist_ch = (hist_ch + types.hist_channels - 1) % types.hist_channels;
             if (pressed.down) hist_ch = (hist_ch + 1) % types.hist_channels;
             if (pressed.a) hist_log = !hist_log;
+        },
+        .eyes => {
+            if (pressed.a) sound_on = !sound_on;
+            if (pressed.b) eyes.hold = !eyes.hold;
+            if (pressed.up) eyes_zone = (eyes_zone + 9) % 10;
+            if (pressed.down) eyes_zone = (eyes_zone + 1) % 10;
+        },
+        .depth => {
+            if (pressed.a) view = @fromBackingInt(@intCast((@as(u8, @backingInt(view)) + 1) % 3));
+            if (pressed.b) scan.restart();
+            if (pressed.up) scan.exposure = @min(scan.exposure + 1, tof.depth.max_exposure);
+            if (pressed.down) scan.exposure = @max(scan.exposure - 1, 1);
+            if (select_tap) {
+                scan.fine = !scan.fine;
+                scan.restart();
+            }
         },
         .diag => {
             if (pressed.a) {
@@ -251,42 +333,6 @@ fn draw_cell(x: i32, y: i32, zi: u4, z: types.Zone) void {
     }
 }
 
-/// False colour by distance: red (near) through orange, yellow, green,
-/// blue to purple (2 m and beyond).
-fn heat(mm: u16) cart.DisplayColor {
-    const stops = [_]struct { mm: u32, rgb: u24 }{
-        .{ .mm = 0, .rgb = 0xFF2828 },
-        .{ .mm = 300, .rgb = 0xFF8C00 },
-        .{ .mm = 600, .rgb = 0xFFE600 },
-        .{ .mm = 900, .rgb = 0x3CC85A },
-        .{ .mm = 1300, .rgb = 0x28A0E6 },
-        .{ .mm = 2000, .rgb = 0x5A3CC8 },
-    };
-    const d: u32 = mm;
-    var i: usize = 0;
-    while (i + 2 < stops.len and d >= stops[i + 1].mm) i += 1;
-    const a = stops[i];
-    const b = stops[i + 1];
-    const t: u32 = @min(256, (@min(d, b.mm) -| a.mm) * 256 / (b.mm - a.mm));
-    return cart.DisplayColor.rgb(lerp_rgb(a.rgb, b.rgb, t));
-}
-
-fn lerp_rgb(a: u24, b: u24, t: u32) u24 {
-    var out: u24 = 0;
-    inline for (.{ 16, 8, 0 }) |s| {
-        const ca: u32 = (a >> s) & 0xFF;
-        const cb: u32 = (b >> s) & 0xFF;
-        const c = (ca * (256 - t) + cb * t) / 256;
-        out |= @as(u24, @intCast(c)) << s;
-    }
-    return out;
-}
-
-fn ink_on(c: cart.DisplayColor) cart.DisplayColor {
-    const lum = @as(u32, c.r) * 2 * 3 + @as(u32, c.g) * 6 + @as(u32, c.b) * 2;
-    return if (lum > 330) black else white;
-}
-
 // ---- HIST ----
 
 const plot_x = 16;
@@ -356,12 +402,116 @@ fn mark_target(t: types.Target, color: cart.DisplayColor, x: i32, y: i32, label:
     say_px(x, y, fmt(&buf, "{s} {d}MM C{d} B{d}", .{ label, t.mm, t.confidence, b }), color);
 }
 
-/// log2 in 1/16 steps (0 for 0).
-fn log2_fix(v: u32) u32 {
-    if (v == 0) return 0;
-    const e: u32 = 31 - @clz(v);
-    const frac: u32 = if (e >= 4) (v >> @intCast(e - 4)) & 0xF else (v << @intCast(4 - e)) & 0xF;
-    return e * 16 + frac + 1;
+// ---- EYES ----
+
+fn draw_eyes() void {
+    clear();
+    var buf: [28]u8 = undefined;
+    say(0, 0, "EYES", warn);
+    const h = sensor.histograms();
+    if (h == null) {
+        say_px(40, 0, fmt(&buf, "PKT {d}/30", .{@popCount(sensor.hist_mask)}), dim);
+    } else say_px(40, 0, fmt(&buf, "{d}.{d}/S", .{ hist_hz10 / 10, hist_hz10 % 10 }), fg);
+    if (eyes.hold) say_px(88, 0, "HOLD", bad);
+    const z = sound_zone();
+    eyes.draw(orient, &pal, if (sound_on) z else null);
+    say_px(0, 108, "R", dim);
+    // Footer: the sound zone and what it plays.
+    const zl: []const u8 = if (eyes_zone == 0) "A" else "";
+    if (z) |zi| {
+        const t = if (sensor.latest()) |f| f.zones[zi].near else types.Target{};
+        if (t.valid() and sound_on) {
+            say_px(0, 120, fmt(&buf, "Z{s}{d} {d}MM {d}HZ", .{ zl, @as(u8, zi) + 1, t.mm, audio.hz_of(voice.inc_target) }), accent);
+        } else if (t.valid()) {
+            say_px(0, 120, fmt(&buf, "Z{s}{d} {d}MM", .{ zl, @as(u8, zi) + 1, t.mm }), fg);
+        } else say_px(0, 120, fmt(&buf, "Z{s}{d} ----", .{ zl, @as(u8, zi) + 1 }), dim);
+    } else say_px(0, 120, "ZA -", dim);
+    say_px(136, 120, if (sound_on) "SND" else "OFF", if (sound_on) good else dim);
+}
+
+/// The zone the sound plays: the chosen one, or the one with the nearest
+/// object in the latest frame.
+fn sound_zone() ?u4 {
+    if (eyes_zone > 0) return @intCast(eyes_zone - 1);
+    const f = sensor.latest() orelse return null;
+    var best: ?u4 = null;
+    var best_mm: u16 = std.math.maxInt(u16);
+    for (f.zones, 0..) |zn, i| {
+        if (zn.near.valid() and zn.near.mm < best_mm) {
+            best_mm = zn.near.mm;
+            best = @intCast(i);
+        }
+    }
+    return best;
+}
+
+/// The EYES voice: a new table for every new histogram set of the sound
+/// zone, the pitch from its first object; silent (released) anywhere else.
+fn update_sound(new_set: bool) void {
+    const z = sound_zone();
+    var level: i32 = 0;
+    if (sound_on and page == .eyes and sensor.measuring()) if (z) |zi| {
+        if (new_set) if (sensor.histograms()) |h| {
+            audio.table_from_histogram(&h.bins[@as(usize, zi) + 1], &table);
+            voice.set_table(&table);
+        };
+        if (sensor.latest()) |f| {
+            const t = f.zones[zi].near;
+            if (t.valid()) {
+                const silent = voice.level < 512;
+                voice.set(audio.inc_for_mm(t.mm), audio.full, false);
+                if (silent) voice.jump();
+                level = audio.full;
+            }
+        }
+    };
+    if (level == 0) voice.set(voice.inc_target, 0, true);
+    if (cart.is_wasm) {
+        if (sound_on) {
+            feeder.render_only(&voice);
+            sim_tone();
+        }
+        return;
+    }
+    // The ring starts the first time sound is turned on (a silent cart
+    // never touches the audio path), then is fed every update.
+    if (sound_on or feeder.started) feeder.feed(&voice, !sound_on);
+}
+
+/// The web simulator has no streaming audio: re-strike its `tone` import
+/// every update for 3 frames at the voice's pitch (pulse 25 %; finite
+/// tones only, docs/SOUND.md). The timbre is the badge's only.
+const sim_shim = struct {
+    extern fn tone(frequency: u32, duration: u32, volume: u32, flags: u32) void;
+};
+
+fn sim_tone() void {
+    if (voice.level_target < 1024) return;
+    const volume: u32 = 60;
+    sim_shim.tone(audio.hz_of(voice.inc_target), 3, volume, 0 | (1 << 2));
+}
+
+// ---- DEPTH ----
+
+fn draw_depth() void {
+    clear();
+    say(0, 0, "DEPTH", warn);
+    const ctx: depth_view.Ctx = .{ .scan = &scan, .orient = orient, .model = cart.is_wasm or fake, .ticks = ticks };
+    switch (view) {
+        .photo => {
+            say_px(48, 0, "PHOTO", fg);
+            depth_view.draw_photo(ctx);
+        },
+        .cloud => {
+            say_px(48, 0, "CLOUD", fg);
+            depth_view.draw_cloud(ctx);
+        },
+        .mask => {
+            say_px(48, 0, "MASK", fg);
+            depth_view.draw_mask(ctx, &sensor);
+        },
+    }
+    say_px(0, 120, "A:VIEW B:NEW S:FINE", dim);
 }
 
 // ---- DIAG ----
@@ -395,7 +545,7 @@ fn draw_diag() void {
         i2c.speeds[speed_i] / 1000, @intFromBool(ln.sda), @intFromBool(ln.scl), d.stats.i2c_errors,
     }), if (ln.sda and ln.scl) fg else bad);
     say(0, 7, fmt(&buf, "AB{X:0>8} TO{d} RC{d}", .{ st.last_abort, st.timeouts, st.recoveries }), fg);
-    draw_scan(0, 8);
+    draw_bus_scan(0, 8);
     say(0, 9, fmt(&buf, "FR{d} MS{d} TN{d} CK{d}", .{ d.stats.frames, d.stats.missed, d.stats.torn, d.stats.bl_csum_mismatch }), fg);
     say(0, 10, fmt(&buf, "POLL{d}.{d}/{d}.{d}MS MT{d}", .{
         poll_us / 1000, poll_us / 100 % 10, poll_max_us / 1000, poll_max_us / 100 % 10, d.stats.mid_triplets,
@@ -409,14 +559,14 @@ fn draw_diag() void {
     say(0, 15, "A:SPEED B:RELOAD", dim);
 }
 
-fn draw_scan(col: i32, row: i32) void {
+fn draw_bus_scan(col: i32, row: i32) void {
     var buf: [32]u8 = undefined;
-    if (scan.passes == 0) {
+    if (bus_scan.passes == 0) {
         say(col, row, "SCAN ...", dim);
         return;
     }
     var addrs: [5]u7 = undefined;
-    const l = scan.list(&addrs);
+    const l = bus_scan.list(&addrs);
     if (l.len == 0) {
         say(col, row, "SCAN NONE", bad);
         return;
@@ -424,8 +574,8 @@ fn draw_scan(col: i32, row: i32) void {
     var w: usize = 0;
     w += (fmt(buf[w..], "SCAN", .{})).len;
     for (l) |a| w += (fmt(buf[w..], " {X:0>2}", .{a})).len;
-    if (scan.count() > l.len) w += (fmt(buf[w..], " +{d}", .{scan.count() - l.len})).len;
-    say(col, row, buf[0..w], if (scan.has(tof.address)) good else warn);
+    if (bus_scan.count() > l.len) w += (fmt(buf[w..], " +{d}", .{bus_scan.count() - l.len})).len;
+    say(col, row, buf[0..w], if (bus_scan.has(tof.address)) good else warn);
 }
 
 fn state_color() cart.DisplayColor {
@@ -451,7 +601,7 @@ fn draw_status() void {
         say(0, 8, "SYCL badge rev r2", warn);
         say(0, 9, "only: r1 boards have", warn);
         say(0, 10, "SDA/SCL swapped.", warn);
-        draw_scan(0, 12);
+        draw_bus_scan(0, 12);
         const ln = sensor.bus.lines();
         say(0, 13, fmt(&buf, "SDA {s} SCL {s} {d}K", .{ hl(ln.sda), hl(ln.scl), i2c.speeds[speed_i] / 1000 }), if (ln.sda and ln.scl) dim else bad);
         say(0, 15, "</>: PAGES  DIAG", dim);
@@ -476,36 +626,17 @@ fn draw_status() void {
 }
 
 fn draw_page_dots() void {
-    for (0..3) |i| {
+    const n = std.enums.values(Page).len;
+    for (0..n) |i| {
         const on = @backingInt(page) == i;
-        cart.rect(.{ .x = 142 + @as(i32, @intCast(i)) * 6, .y = 2, .width = 4, .height = 4, .fill_color = if (on) warn else dim });
+        cart.rect(.{ .x = 160 - @as(i32, @intCast(n - i)) * 6, .y = 2, .width = 4, .height = 4, .fill_color = if (on) warn else dim });
     }
 }
 
 // ---- helpers ----
 
-fn clear() void {
-    cart.rect(.{ .x = 0, .y = 0, .width = 160, .height = 128, .fill_color = bg });
-}
-
-fn say(col: i32, row: i32, str: []const u8, color: cart.DisplayColor) void {
-    cart.text(.{ .str = str, .x = col * 8, .y = row * 8, .text_color = color });
-}
-
-fn say_px(x: i32, y: i32, str: []const u8, color: cart.DisplayColor) void {
-    cart.text(.{ .str = str, .x = x, .y = y, .text_color = color });
-}
-
 fn hl(high: bool) []const u8 {
     return if (high) "HI" else "LO";
-}
-
-fn trim(s: []const u8, n: usize) []const u8 {
-    return s[0..@min(s.len, n)];
-}
-
-fn fmt(buf: []u8, comptime f: []const u8, args: anytype) []const u8 {
-    return std.fmt.bufPrint(buf, f, args) catch "?";
 }
 
 /// Button state. Upstream's platform_wasm.zig exposes `controls` but never

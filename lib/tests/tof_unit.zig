@@ -664,13 +664,22 @@ test "a depth photo: 9x10 in 10 shots, then 17x10 with the fine pass, matching t
             try std.testing.expect(p.state != .unset);
             if (p.has_depth()) ok += 1;
             // The pixel is the scene's depth at that pair at some moment of
-            // the scan (the ball moves), within the jitter.
+            // the scan, within the jitter, or between two frames 33 ms
+            // apart (an exposure of 2 averages an edge the ball crosses).
             if (!p.has_depth()) continue;
             var t = t_start;
             var match = false;
+            var prev: ?types.Target = null;
             while (t <= t_end and !match) : (t += 16_667) {
                 const want = scene_pixel(t, @intCast(c), @intCast(r));
-                match = want.valid() and @abs(@as(i32, p.mm) - want.mm) < 30;
+                if (!want.valid()) continue;
+                match = @abs(@as(i32, p.mm) - want.mm) < 30;
+                if (prev) |q| {
+                    const lo = @min(q.mm, want.mm);
+                    const hi = @max(q.mm, want.mm);
+                    match = match or (p.mm + 30 > lo and p.mm < hi + 30);
+                }
+                if (t >= t_start + 33_333) prev = scene_pixel(t - 33_333, @intCast(c), @intCast(r));
             }
             if (!match) std.debug.print("pixel {d},{d}: {any}\n", .{ c, r, p });
             try std.testing.expect(match);

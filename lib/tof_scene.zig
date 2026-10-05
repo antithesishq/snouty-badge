@@ -12,7 +12,9 @@
 //!   apart), so a SPAD on an edge returns two depths.
 //! - Scene: a wall at ~1150 mm, tilted (farther to the right), a floor
 //!   330 mm below the sensor, a box face at 700 mm on the right, and a
-//!   ball of radius 120 mm (the "hand") wandering at 330..480 mm.
+//!   ball of radius 100 mm (the "hand") drifting slowly at 360..510 mm
+//!   (slow enough for a photo of a few seconds; what moves during a scan
+//!   smears like a rolling shutter).
 //! - Signal per sample: reflectivity x (1 m / distance)^2. A zone's
 //!   returns are split at the nearest depth + `split_mm`: the near group
 //!   is the first object, the rest (if strong enough) the second, each the
@@ -42,7 +44,7 @@ pub const box_mm: i64 = 700;
 /// The box face, mm at its depth: x from .. to, y from .. to (+y down).
 pub const box_x = [2]i64{ 150, 420 };
 pub const box_y = [2]i64{ -60, 330 };
-pub const ball_r: i64 = 120;
+pub const ball_r: i64 = 100;
 /// Depth split between a zone's first and second object.
 pub const split_mm: u32 = 120;
 /// No return beyond this.
@@ -70,9 +72,9 @@ pub fn is_dead(x: i32, y: i32) bool {
 /// The ball's centre at `t_us` (mm).
 pub fn ball(t_us: u64) [3]i64 {
     return .{
-        -260 + @as(i64, tri(t_us, 6_000_000, 520)),
-        -110 + @as(i64, tri(t_us + 1_300_000, 4_400_000, 220)),
-        330 + @as(i64, tri(t_us, 5_000_000, 150)),
+        -240 + @as(i64, tri(t_us, 16_000_000, 480)),
+        -110 + @as(i64, tri(t_us + 3_000_000, 11_000_000, 220)),
+        360 + @as(i64, tri(t_us, 13_000_000, 150)),
     };
 }
 
