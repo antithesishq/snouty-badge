@@ -502,12 +502,16 @@ fn resolve_tiles(w: *World, i: usize, old_x: i32, old_y: i32) bool {
             .bay => c.on_bay = true,
             .ramp => if (c.hop == 0) {
                 c.hop = tuning.ramp_ticks;
+                c.air = tuning.ramp_ticks;
             },
             // The arena's one-way ramps (M6): only a car moving the way the
             // tile faces takes off.
             .kicker, .jump => if (c.hop == 0) {
                 const f = track.facing(t.tile_at(px, py));
-                if (f[0] * c.vx + f[1] * c.vy > 0) c.hop = if (attr == .kicker) tuning.kicker_ticks else tuning.ramp_ticks;
+                if (f[0] * c.vx + f[1] * c.vy > 0) {
+                    c.hop = if (attr == .kicker) tuning.kicker_ticks else tuning.ramp_ticks;
+                    c.air = c.hop;
+                }
             },
             else => {},
         }
