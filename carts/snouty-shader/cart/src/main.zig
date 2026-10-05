@@ -62,6 +62,7 @@ pub fn update() void {
         .right = c.right,
     }, hand.sensed());
     if (out.sound_changed) sound.set(app.sound);
+    if (out.mirror_changed) hand.set_mirror(app.mirror);
     if (out.program_changed) {
         programs.list[app.program].enter();
         sound.blip(app.program);

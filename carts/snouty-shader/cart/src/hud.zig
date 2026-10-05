@@ -39,6 +39,10 @@ pub fn draw(u: *const U) void {
             const s = param_line(&buf, pr.param_name, app.param());
             text.shadowed(s, text.centre_x(s, 1), 116, .rgb(0xffffff), 1);
         },
+        .mirror => {
+            const s: []const u8 = if (app.mirror) "MIRROR ON" else "MIRROR OFF";
+            text.shadowed(s, text.centre_x(s, 1), 116, .rgb(0x60ff90), 1);
+        },
         .sound => {
             const s: []const u8 = if (app.sound) "SOUND ON" else "SOUND OFF";
             text.shadowed(s, text.centre_x(s, 1), 116, .rgb(0xffd850), 1);
@@ -116,7 +120,7 @@ fn panel(u: *const U) void {
     var buf: [24]u8 = undefined;
     const pl = param_line(&buf, pr.param_name, app.param());
     text.condensed(pl, tx, 117, .rgb(0xffd850));
-    if (u.punch_age < 40) text.condensed("PUNCH", 160 - 2 - 5 * 7, 117, .rgb(0xff6060));
+    if (u.punch_age < 40) text.condensed("PUNCH", 160 - 2 - 5 * 7, 117, .rgb(0xff6060)) else if (app.mirror) text.condensed("MIRR", 160 - 2 - 4 * 7, 117, .rgb(0x60ff90));
 }
 
 /// "Xs0.00 Ys0.00" style: two labelled signed values, space-padded.

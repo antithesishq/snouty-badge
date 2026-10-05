@@ -107,6 +107,16 @@ pub fn reset() void {
     has_sensor = false;
 }
 
+/// MIRROR: flip the sensor's left-right. The estimator's background is
+/// per screen cell, so it starts afresh (it relearns within a few frames).
+pub fn set_mirror(on: bool) void {
+    sensor.set_mirror(on);
+    sensor_est = .{};
+    sensor_pose = .{};
+    sensor_cells = .{};
+    last_seq = 0xffff_ffff;
+}
+
 /// True while a real hand is over the sensor (attract stays off).
 pub fn sensed() bool {
     return source == .sensor and pose.present;

@@ -22,7 +22,15 @@ var ticks: u64 = 0;
 /// How the breakout faces (docs/TOF.md deferred question 2). The sensor
 /// looks at the viewer, so x is mirrored: move your hand to your right and
 /// the image reacts on the right of the screen. Settle from the hardware photos.
-pub const orientation: types.Orientation = .{ .flip_x = true };
+pub const default_orientation: types.Orientation = .{ .flip_x = true };
+/// The orientation in use: the default, or mirrored by the MIRROR toggle.
+pub var orientation: types.Orientation = default_orientation;
+
+/// MIRROR (Select): flip left-right relative to the default.
+pub fn set_mirror(on: bool) void {
+    orientation = default_orientation;
+    if (on) orientation.flip_x = !orientation.flip_x;
+}
 
 /// Once per update, before `sensor_frame`: a bounded slice of bus work.
 pub fn poll(now_us: u64) void {

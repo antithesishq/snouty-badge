@@ -4,7 +4,8 @@
 //!
 //! - Start+Select is the OS's chord: while both are held nothing reacts.
 //! - Start toggles sound on release, and only if Select never joined the
-//!   hold (so the exit chord never flips the sound).
+//!   hold (so the exit chord never flips the sound); Select toggles MIRROR
+//!   (the sensor's left-right) the same way.
 //! - B held: the inputs panel, and the stick steers the virtual hand (B + A
 //!   punches). Otherwise Left/Right pick the program, Up/Down its
 //!   parameter, A its palette.
@@ -31,13 +32,14 @@ pub const Buttons = struct {
     }
 };
 
-pub const Toast = enum { none, program, palette, param, sound };
+pub const Toast = enum { none, program, palette, param, sound, mirror };
 
 pub const Out = struct {
     stick: hand.Stick = .{},
     /// The program changed this tick (main calls its `enter`).
     program_changed: bool = false,
     sound_changed: bool = false,
+    mirror_changed: bool = false,
     attract_advanced: bool = false,
 };
 
@@ -45,6 +47,9 @@ pub var program: u8 = 0;
 pub var palettes: [programs.count]u8 = undefined;
 pub var params: [programs.count]u8 = @splat(config.param_default);
 pub var sound: bool = false;
+/// The sensor image is mirrored left-right from the default orientation
+/// (the breakout dangles on its cable and can face either way).
+pub var mirror: bool = false;
 pub var hud: bool = false;
 pub var idle: u32 = 0;
 pub var toast: Toast = .none;
@@ -53,6 +58,8 @@ pub var toast_left: u32 = 0;
 var prev: Buttons = .{};
 var start_held = false;
 var start_spoiled = false;
+var select_held = false;
+var select_spoiled = false;
 
 pub fn reset(first: u8, sound_on: bool) void {
     program = @intCast(first % programs.count);
@@ -66,6 +73,9 @@ pub fn reset(first: u8, sound_on: bool) void {
     prev = .{};
     start_held = false;
     start_spoiled = false;
+    mirror = false;
+    select_held = false;
+    select_spoiled = false;
 }
 
 pub fn param() u8 {
@@ -94,8 +104,9 @@ pub fn step(btn: Buttons, sensed: bool) Out {
     defer prev = btn;
 
     if (btn.start and btn.select) {
-        // The OS's chord: react to nothing, and Start's release is spoiled.
+        // The OS's chord: react to nothing; both releases are spoiled.
         start_spoiled = true;
+        select_spoiled = true;
         hud = false;
         return out;
     }
@@ -111,6 +122,19 @@ pub fn step(btn: Buttons, sensed: bool) Out {
             sound = !sound;
             out.sound_changed = true;
             show(.sound);
+        }
+    }
+    // Select: MIRROR on release, the same way.
+    if (btn.select and !prev.select) {
+        select_held = true;
+        select_spoiled = btn.start;
+    }
+    if (!btn.select and prev.select and select_held) {
+        select_held = false;
+        if (!select_spoiled) {
+            mirror = !mirror;
+            out.mirror_changed = true;
+            show(.mirror);
         }
     }
 
@@ -202,7 +226,7 @@ test "app: nothing reacts while Start and Select are both held" {
     _ = step(chord, false);
     for (others) |b| {
         const o = step(b, false);
-        try testing.expect(!o.program_changed and !o.sound_changed);
+        try testing.expect(!o.program_changed and !o.sound_changed and !o.mirror_changed);
         try testing.expect(!o.stick.active() and !o.stick.steer);
         _ = step(chord, false);
     }
@@ -223,6 +247,20 @@ test "app: nothing reacts while Start and Select are both held" {
     _ = step(.{ .start = true }, false);
     _ = step(.{}, false);
     try testing.expect(!sound);
+    try testing.expect(!mirror);
+}
+
+test "app: Select toggles mirror on release, never through the chord" {
+    reset(0, false);
+    _ = tap(.{ .select = true });
+    try testing.expect(mirror);
+    _ = step(.{ .select = true }, false);
+    _ = step(.{ .select = true, .start = true }, false);
+    _ = step(.{}, false);
+    try testing.expect(mirror);
+    try testing.expect(!sound);
+    _ = tap(.{ .select = true });
+    try testing.expect(!mirror);
 }
 
 test "app: Start toggles sound on release" {

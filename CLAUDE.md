@@ -32,7 +32,9 @@ its design and milestone status.
   driver, docs/TOF.md), `snouty-theremin` (a theremin played by hand over
   the sensor, or the stick; docs/TOF.md M1), `snouty-morph` (a demoscene
   mesh that follows and deforms with your hand over the same sensor;
-  `lib/tof_pose.zig` is the hand pose from its 3x3 zones, docs/TOF.md M3).
+  `lib/tof_pose.zig` is the hand pose from its 3x3 zones, docs/TOF.md M3),
+  `snouty-shader` (a Shadertoy-style gallery of abstract per-pixel shaders
+  whose uniforms are the same sensor's depth field and hand pose).
 - `build.zig`, `build.zig.zon`, `build/common.zig` — the one Zig package.
   Shared options (`-Dcart`, `-Dcart-mode`, `-Ddebug_overlay`, `-Dsound`, `-Drom`, ...)
   and the shared `test` and `check-float` steps are declared here and passed
@@ -117,7 +119,7 @@ Reference carts: `sycl-badge/showcase/carts/dvd` (simplest asset pipeline),
 zig build                      # every cart, from the repository root
 zig build -Dcart=snouty-maze   # one cart
 zig build test                 # every cart's host tests and lib/'s
-zig build check-float          # soft-float check (reflections, maze, flyover, demosnout, zero, gc, morph)
+zig build check-float          # soft-float check (reflections, maze, flyover, demosnout, zero, gc, morph, shader)
 ```
 
 Outputs `zig-out/firmware/<binary>.uf2`, `.elf` and `zig-out/bin/<binary>.wasm`

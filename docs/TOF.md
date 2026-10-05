@@ -202,6 +202,14 @@ commands 40 us).
   `lib/tof_synth.zig` (synthetic frames for tests and the ghost hand).
   Design and honest limits in carts/snouty-morph/SPEC.md.
 
+### M3.5: Snouty Shader (`snouty-shader`)
+
+- A Shadertoy-style gallery of six abstract per-pixel shaders whose
+  uniforms are the sensor: the 3x3 presence/depth field (Catmull-Rom
+  upsampled over the screen) and the tof_pose hand pose and punches.
+  snouty-morph's sensor wiring, orientation and ghost hand. Design in
+  carts/snouty-shader/SPEC.md, status and bench numbers in its PLAN.md.
+
 ### M4 (later): gestures and hand modes
 
 - `lib/tof_gesture.zig` (swipe, push/pull, height, presence) and hand
@@ -292,6 +300,15 @@ the three dots top right show which).
    hand; push toward it to bulge, jab for the shockwave. Say whether left
    and right come out mirrored in either cart (their orientation
    constants follow the LIVE photo).
+
+8. **Shader.** `snouty-shader.uf2`: hold B and the inputs panel's
+   source label (top right) turns HAND with a hand over the sensor; its
+   3x3 grid lights under your hand (warmer = nearer). Left/Right through
+   the six programs: the image should bend toward your hand (INK, CELLS),
+   ring under your fingers (RIPPLE), turn into lava where you reach (LAVA),
+   swirl and zoom about it (ECHO), and steer the tunnel (KALEIDO); a jab
+   flashes and kicks the palette. Say whether it feels mirrored, and
+   whether the punch fires too easily or not at all.
 
 Send the photos of LIVE (hand in a corner + which corner), HIST CH0 and
 CH5, and DIAG after boot, after the 1 MHz reload, and of anything that

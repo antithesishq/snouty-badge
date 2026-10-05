@@ -41,6 +41,7 @@ The badge file is `zig-out/firmware/<binary>.uf2`:
 | paperclips | `paperclips.uf2` | Universal Paperclips; a game lasts while the cart runs (no saves) |
 | raspberry-trail | `raspberry-trail.uf2` | The Raspberry Trail; a game lasts while the cart runs (no saves) |
 | snouty-theremin | `snouty-theremin.uf2` | the theremin; plays from the time-of-flight breakout on the Qwiic port, or the stick without it ([TOF.md](TOF.md)); boots with sound on |
+| snouty-shader | `snouty-shader.uf2` | the shader gallery; played by hand over the time-of-flight breakout on the Qwiic port ([TOF.md](TOF.md)), a ghost hand without it |
 | snouty-link | `snouty-link.uf2` | the link-cable test: two badges joined on their UART headers ([LINK.md](LINK.md)) |
 | badge-calibrate | `badge-calibrate.uf2` | a measuring tool, not a game ([its README](../badge-bench/calibrate/README.md)) |
 
