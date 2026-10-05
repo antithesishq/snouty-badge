@@ -15,13 +15,16 @@ tracks and an arena:
                  a props cell
   TEST SANDBOX   The Sandbox, with two props
 
-The props sheet tools/test_pack/props.png is drawn here too (4 cells of
+Beside it go the host tests' drive images drive_test.img and
+drive_frag.img (`drives`). The props sheet tools/test_pack/props.png is
+drawn here too (4 cells of
 32x48: a monitor stack, a cooling tower, a cone, a sign). Deterministic;
 check.sh rebuilds it and compares.
 """
 import argparse
 import shutil
 import struct
+import subprocess
 import sys
 import tempfile
 from pathlib import Path
@@ -134,6 +137,42 @@ def stage(d):
     shutil.copy(HERE / "pack.toml", d / "pack.toml")
 
 
+def drives(data, out_dir):
+    """The host tests' drive images (tools/make_romfs.py, truncated):
+    drive_test.img holds TEST.GCP, a bit-flipped copy (BROKEN.GCP), a
+    text file (JUNK.GCP), a version-2 copy (NEWER.GCP) and a ROM; a
+    second test pack whose clusters are handed out 2 at a time (FRAG.GCP:
+    split, so RECOPY PACK) is drive_frag.img. drive_empty.img is a drive
+    with no files (the default bench), drive_packs.img the content packs
+    and the test pack (the pack benches and previews)."""
+    rom = (CART.parent.parent / "tools" / "make_romfs.py")
+    with tempfile.TemporaryDirectory() as tmp:
+        t = Path(tmp)
+        (t / "TEST.GCP").write_bytes(data)
+        broken = bytearray(data)
+        broken[len(broken) // 2] ^= 0x10
+        (t / "BROKEN.GCP").write_bytes(bytes(broken))
+        (t / "JUNK.GCP").write_bytes(b"not a track pack\n" * 8)
+        newer = bytearray(data)
+        newer[4] = 2
+        (t / "NEWER.GCP").write_bytes(bytes(newer))
+        (t / "OTHER.GB").write_bytes(bytes(1024))
+        files = [str(t / f) for f in ("TEST.GCP", "BROKEN.GCP", "JUNK.GCP", "NEWER.GCP", "OTHER.GB")]
+        subprocess.run([sys.executable, str(rom), str(out_dir / "drive_test.img"), *files, "--truncate"],
+                       check=True, stdout=subprocess.DEVNULL)
+        # The bench's and the simulator's drives: none, and the content
+        # packs (Track B's copies in gen/packs) with the test pack.
+        subprocess.run([sys.executable, str(rom), str(out_dir / "drive_empty.img"), "--truncate"],
+                       check=True, stdout=subprocess.DEVNULL)
+        shelf = [str(out_dir / f) for f in ("DEADMALL.GCP", "BONEYARD.GCP") if (out_dir / f).exists()]
+        (t / "TEST.GCP").write_bytes(data)
+        subprocess.run([sys.executable, str(rom), str(out_dir / "drive_packs.img"), *shelf, str(t / "TEST.GCP"),
+                        "--truncate"], check=True, stdout=subprocess.DEVNULL)
+        (t / "FRAG.GCP").write_bytes(data)
+        subprocess.run([sys.executable, str(rom), str(out_dir / "drive_frag.img"), str(t / "FRAG.GCP"),
+                        "--fragment", "2", "--truncate"], check=True, stdout=subprocess.DEVNULL)
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--out", default=str(OUT))
@@ -142,8 +181,9 @@ def main():
         stage(Path(tmp))
         file, data, report = build_pack.build(Path(tmp))
     Path(a.out).write_bytes(data)
+    drives(data, Path(a.out).parent)
     print("\n".join(report))
-    print(f"  wrote {a.out}")
+    print(f"  wrote {a.out} and the drive images beside it")
     return 0
 
 
