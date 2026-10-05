@@ -21,7 +21,10 @@ CLAUDE.md files have the long explanations, this one summarises.
   and holds the wasm simulator shims; `frontend/` has video (DMG shade LUT,
   CGB palette-RAM LUT rebuilt on `gb.pal_dirty`), input, debug overlay,
   menu, splash, audio, rewind (the run-time arena: console, cart RAM, page
-  store), the ROM source (`romsrc.zig`) and the ROM picker (`picker.zig`).
+  store), the ROM source (`romsrc.zig`), the ROM picker (`picker.zig`) and
+  the battery save (`battery.zig`: cart RAM kept by the patched saves OS,
+  root docs/SAVES.md; no cart-api, host-tested in `tests/battery_unit.zig`;
+  docs/RUNNING.md section 11).
   `flow.zig` (screen flow: splash, pick, running, menu, halted, rewind) and
   `input.zig` have no cart-api import and run in the host tests
   (`tests/flow_unit.zig`): every transition suppresses held buttons and

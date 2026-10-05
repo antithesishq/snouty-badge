@@ -15,17 +15,40 @@ const joypad = @import("joypad.zig");
 const apu = @import("apu.zig");
 const Rom = @import("rom.zig").Rom;
 
-pub const MbcKind = enum(u8) { none, mbc1, mbc3, mbc5 };
+pub const MbcKind = enum(u8) { none, mbc1, mbc2, mbc3, mbc5 };
 
 /// Bytes of `Gb.cart_ram` a ROM can ever touch, from header byte 0x149: 0
 /// without RAM, 2 KB for code 1 (mirrored, see `Mbc.ram_mask`), 8 KB for
 /// code 2, 32 KB (4 banks) for code 3. Codes 4 and 5 (128, 64 KB) are capped
 /// at 32 KB: bank numbers wrap modulo 4 (SPEC.md 19.1, romcheck.py warns).
+/// An MBC2 (header 0x147 = 0x05/0x06) has its 512 x 4-bit RAM inside the
+/// controller and 0x149 = 0: 512 bytes, one nibble each (`Mbc.ram_fill`).
 /// The frontend sizes the live cart RAM and the keyframe store with it once
 /// the ROM is chosen (it may come from the drive, so at run time).
 pub fn cart_ram_len(rom: *const Rom) usize {
     if (rom.len < 0x150) return 0;
+    if (is_mbc2(rom.read(0x147))) return mbc2_ram_len;
     return ram_len_for(rom.read(0x149));
+}
+
+/// MBC2's built-in RAM: 512 half-bytes, stored one per byte.
+pub const mbc2_ram_len = 0x200;
+
+pub fn is_mbc2(cart_type: u8) bool {
+    return cart_type == 0x05 or cart_type == 0x06;
+}
+
+/// Header byte 0x147 says the cart RAM is battery-backed, for a controller
+/// this core emulates (`Mbc.from_header`): ROM+RAM+BATTERY 0x09, MBC1 0x03,
+/// MBC2 0x06, MBC3 0x0F/0x10/0x13, MBC5 0x1B/0x1E. MMM01 (0x0D), MBC7
+/// (0x22) and HuC1 (0xFF) also have batteries but run as no-MBC carts
+/// here, so their RAM is not theirs to keep. The frontend keeps the RAM of
+/// these across runs (frontend/battery.zig); 0x0F has a clock but no RAM.
+pub fn has_battery(cart_type: u8) bool {
+    return switch (cart_type) {
+        0x03, 0x06, 0x09, 0x0F, 0x10, 0x13, 0x1B, 0x1E => true,
+        else => false,
+    };
 }
 
 /// `cart_ram_len` from header byte 0x149 itself; comptime-callable.
@@ -115,6 +138,18 @@ fn read_hdma5(gb: *const Gb) u8 {
     return if (h.active) left else 0x80 | left;
 }
 
+/// The controller for header byte 0x147; unknown types run as none.
+pub fn kind_for(cart_type: u8) MbcKind {
+    return switch (cart_type) {
+        0x00, 0x08, 0x09 => .none,
+        0x01, 0x02, 0x03 => .mbc1,
+        0x05, 0x06 => .mbc2,
+        0x0F, 0x10, 0x11, 0x12, 0x13 => .mbc3,
+        0x19, 0x1A, 0x1B, 0x1C, 0x1D, 0x1E => .mbc5,
+        else => .none,
+    };
+}
+
 pub const Mbc = struct {
     kind: MbcKind = .none,
     /// Raw bank register as written (MBC1: low 5 bits; MBC3: 7 bits;
@@ -132,6 +167,9 @@ pub const Mbc = struct {
     ram_mask: u16 = 0x1FFF,
     /// MBC1 banking mode bit.
     mode: u8 = 0,
+    /// ORed into every byte written to cart RAM: 0xF0 on an MBC2, whose
+    /// RAM is 4 bits wide and reads its upper nibble as 1s; 0 otherwise.
+    ram_fill: u8 = 0,
     /// ROM size in 16 KB banks minus one, rounded up to a power of two.
     rom_bank_mask: u16 = 1,
     /// Cached byte offset of the bank mapped at 0x0000 (MBC1 mode 1 only).
@@ -152,15 +190,10 @@ pub const Mbc = struct {
         while (banks * 0x4000 < rom.len) banks *= 2;
         var m: Mbc = .{ .rom_bank_mask = @intCast(banks - 1) };
         if (rom.len < 0x150) return m;
-        m.kind = switch (rom.read(0x147)) {
-            0x00, 0x08, 0x09 => .none,
-            0x01, 0x02, 0x03 => .mbc1,
-            0x0F, 0x10, 0x11, 0x12, 0x13 => .mbc3,
-            0x19, 0x1A, 0x1B, 0x1C, 0x1D, 0x1E => .mbc5,
-            else => .none,
-        };
-        m.has_ram = rom.read(0x149) != 0;
+        m.kind = kind_for(rom.read(0x147));
+        m.has_ram = rom.read(0x149) != 0 or m.kind == .mbc2;
         m.ram_mask = @intCast(@max(cart_ram_len(rom), 1) - 1);
+        if (m.kind == .mbc2) m.ram_fill = 0xF0;
         // No controller: RAM (if any) is always mapped.
         if (m.kind == .none) m.ram_enabled = true;
         m.update();
@@ -184,6 +217,10 @@ pub const Mbc = struct {
                     bank0 = upper << 5;
                     ram = upper;
                 }
+            },
+            .mbc2 => {
+                bank = m.rom_bank & 0x0F;
+                if (bank == 0) bank = 1;
             },
             .mbc3 => {
                 bank = m.rom_bank & 0x7F;
@@ -212,6 +249,12 @@ pub const Mbc = struct {
                 1 => m.rom_bank = v & 0x1F,
                 2 => m.ram_bank = v & 3,
                 else => m.mode = v & 1,
+            },
+            // 0x0000..0x3FFF only; address bit 8 picks the register (Pan
+            // Docs "MBC2"): clear = RAM enable, set = ROM bank (4 bits).
+            .mbc2 => {
+                if (addr >= 0x4000) return;
+                if (addr & 0x100 == 0) m.ram_enabled = (v & 0x0F) == 0x0A else m.rom_bank = v & 0x0F;
             },
             .mbc3 => switch (addr >> 13) {
                 0 => m.ram_enabled = (v & 0x0F) == 0x0A,
@@ -400,7 +443,12 @@ pub fn write8(gb: *Gb, addr: u16, v: u8) void {
         },
         0x8, 0x9 => gb.vram[gb.banks.vram_off + (addr - 0x8000)] = v,
         0xA, 0xB => {
-            if (gb.mbc.ram_active) gb.cart_ram[(gb.mbc.ram_bank_offset + (addr - 0xA000)) & gb.mbc.ram_mask] = v;
+            if (gb.mbc.ram_active) {
+                gb.cart_ram[(gb.mbc.ram_bank_offset + (addr - 0xA000)) & gb.mbc.ram_mask] = v | gb.mbc.ram_fill;
+                // For the battery save (frontend/battery.zig): one store,
+                // only on the rare cart RAM write.
+                gb.sram_dirty = true;
+            }
         },
         0xC => gb.wram[addr - 0xC000] = v,
         0xD => gb.wram[gb.banks.wram_off + (addr - 0xD000)] = v,

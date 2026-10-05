@@ -20,4 +20,5 @@ test {
     _ = @import("link_unit.zig");
     _ = @import("flow_unit.zig");
     _ = @import("sound_unit.zig");
+    _ = @import("battery_unit.zig");
 }

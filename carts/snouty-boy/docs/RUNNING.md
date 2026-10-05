@@ -489,7 +489,8 @@ The debug overlay's third line is the keyframe count and `D` (drive) or
 `E` (embedded).
 
 The ROM file also shows in the OS cart menu, where picking it fails to load;
-that is cosmetic. Cart RAM (saves) is not kept between runs.
+that is cosmetic. Cart RAM (in-game saves) is kept between runs only on
+the patched saves OS (section 11); on stock firmware it is lost.
 
 Build options: `-Drom-source=embed` builds the pre-M5 behaviour (the drive
 is never looked at, `-Drom=...` picks the ROM built in). The web
@@ -555,3 +556,100 @@ the menu's scrubber are off. Tetris 2-player: on both, Start on the title
 and Right to 2PLAYER; press Start on one badge first (the master), then on
 the other. The host test `tests/link_unit.zig` plays exactly that with two
 consoles when `tests/roms/tetris.gb` is present (your own dump).
+
+## 11. Saves
+
+Battery-backed cart RAM (the in-game saves of Pokemon, Zelda, Tetris DX's
+high scores) is kept across runs, power-off and cart switches when the badge
+runs the patched SYCL OS with cart saves (root `docs/SAVES.md` section 1;
+branch `saves/*` only). On stock firmware, in the web simulator and in
+`preview.mjs` nothing of this exists: there is no Save row, About is as
+before, and cart RAM is lost when the cart stops. The only cost there is
+the OS probe, 250 ms once at start before the first frame.
+
+What is saved: carts whose header (0x147) says the RAM has a battery and
+whose controller the core emulates: ROM+RAM+BATTERY (0x09), MBC1 (0x03),
+MBC2 (0x06, 512 x 4 bits), MBC3 (0x10, 0x13; 0x0F has a clock but no RAM)
+and MBC5 (0x1B, 0x1E). MMM01, MBC7 and HuC1 run as no-MBC carts here and
+are not saved. MBC3's real-time clock is not emulated, so nothing of it is
+stored (games that need it keep complaining about the clock, as before).
+RAM over 64 KB (header code 4, 128 KB; the core keeps 32 KB of it anyway)
+is not saved: About says "SRAM 128K: no save".
+
+One save per game, key `boy/<header title>/<header checksum>` (About and
+the Save page show it). The blob is a 16-byte header (magic `SBSV`, format
+1, cart type, RAM code, MBC, RAM size) and the RAM; a stored blob whose
+size or header does not fit the ROM is ignored (fresh RAM) and replaced by
+the next save. The header makes a 4 KB-multiple RAM take one more 4 KB
+block: 2 KB costs 1 block (110 ms), 8 KB 3 (220 ms), 32 KB 9 (550 ms).
+
+When it saves (each save freezes the screen on "SAVING" for the times
+above; unchanged RAM costs nothing):
+
+- About 1 s after the game last wrote its RAM, at most once every 30 s, not
+  while fast forwarding or linked. A game that writes all the time is saved
+  only by the next three.
+- When the menu or the chorded rewind opens, if the game wrote anything
+  since the last save (not while linked).
+- When the OS settings box's "Exit cart" is picked (the OS shows
+  "Saving..." until the cart is done).
+- Menu > Save > "Save now".
+
+The OS limits saves to 8 in a burst, then one per 10 s; a refused save is
+retried quietly 10 s later. "SAVE FULL" (no room in the store) or "SAVE
+ERROR" flashes at the top of the game screen once and the menu row reads
+"Save: FULL" / "Save: ERROR"; the next in-game save or Save now tries
+again.
+
+Menu (only with saves on for this ROM): a "Save: <state>" row above About
+(saved, unsaved, empty, FULL, ERROR) and the rows 9 px apart so that eight
+fit. A on it opens the Save page: the key, the RAM size and the last result,
+then "Save now", "Delete save" (A, then A again: removes the stored save,
+empties the cart RAM and restarts the game) and "Back"; B or a Select tap
+goes back. Reset is a power cycle with a battery: the RAM is kept. About
+shows the key (cut to 18 characters) and "<size> <result>" ("2 KB loaded",
+"8 KB from .sav", "No battery RAM"), with the version moved into its
+footer. Nothing displaces an existing binding.
+
+`docs/saves_sheet.png` (badge-bench `--lcd`, 2048): an automatic save,
+the menu opening with a save pending, the Save page, About after the next
+boot.
+
+Rewind and fast forward: the save is what the game last wrote, as of the
+last save. Scrubbing never saves (the frames the scrubber replays write
+RAM too and are ignored), and the menu and the chorded rewind save first,
+so rewinding past a save does not unsave it. After resuming from a
+scrubbed moment the next in-game save writes the RAM of the resumed
+timeline. "Save now" while the menu shows a scrubbed moment saves that
+moment's RAM. Fast forward keeps the game's writes but saves only at 1x.
+
+Import: when the store has no save for the game, a `.sav` file named like
+the ROM (`Pokemon Red.gb` -> `Pokemon Red.sav`, any case) in the drive's
+top directory is read once at start, if its size is the RAM's (or, for MBC3
+with a clock, the RAM plus a 44 or 48-byte clock trailer, which is
+skipped). That is the raw SRAM dump other emulators write. It is written
+to the store at once; from then on the store's copy wins and the file is
+not read again (delete the save in the menu to import it afresh).
+
+Without a badge: `tests/battery_unit.zig` runs all of this against
+`lib/save.zig`'s fake store (`zig build test -Dtest-filter=battery`), and
+badge-bench serves saves by default (root `badge-bench/README.md` "Cart
+saves"):
+
+```
+# from the repository root, after zig build -Dcart=snouty-boy
+python3 tools/make_romfs.py out/one.img carts/snouty-boy/roms/2048.gb=2048.gb
+cd badge-bench
+./bench.sh ../zig-out/firmware/snouty-boy.elf --romfs ../out/one.img \
+    --saves ../out/boy-saves.json --exit-at 590 --every 1000
+# 2048 writes its RAM at update 320; one frame shows "[save 110 ms]",
+# "stored: boy/2048-gb    XXXX/8367 (2,064 B)". Run it again: a read, no
+# write ("2 KB loaded" on About). --no-saves: stock firmware, no requests
+# answered, start-up 250 ms longer, every frame as before.
+```
+
+Not checked on a badge yet: the patched OS, the real flash times, and that
+the audio stream and the link survive a save (the cart ramps the sound out
+before each save; no automatic or menu-open save happens while linked,
+but Save now and Exit cart do save).
+
