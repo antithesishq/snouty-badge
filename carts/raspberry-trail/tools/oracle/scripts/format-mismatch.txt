@@ -1,0 +1,6 @@
+seed 5
+# Transcript format: an answer of the wrong kind (SHOOT at the oxen
+# number prompt) gives X mismatch 860 and exit status 2.
+NO
+3
+SHOOT 1 0.5

@@ -240,7 +240,13 @@ implementation that runs **the unmodified listing**.
     An integral value prints as a decimal integer, anything else as `h`
     plus 16 hex digits of its IEEE bits.
   - `I <answer>` as the script gave it.
-  - `E <outcome>` at STOP/END.
+  - `E <outcome>` at STOP/END (an `Outcome` name), by the first of these
+    lines executed: 5470 arrived, 5060 starved, 5080 no_doctor_money, 5110
+    no_medicine, 1690 winter, 3520 massacred, 4260 snakebite; otherwise
+    reaching 5120 with K8=1 is injuries, with K8=0 pneumonia.
+  - `X eof` when the script ends first (exit 0); `X mismatch <line>` for an
+    answer of the wrong kind (exit 2). Blank and `#` lines in scripts are
+    ignored.
 - `zig build raspberry-trail-oracle` gives `zig-out/bin/raspberry-trail-oracle
   <script>`, which prints the engine's transcript (track L writes
   `tools/oracle_runner.zig`).

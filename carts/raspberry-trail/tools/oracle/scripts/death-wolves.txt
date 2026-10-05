@@ -1,0 +1,35 @@
+seed 2
+# Death: wild animals with fewer than 40 bullets: THE WOLVES
+# OVERPOWERED YOU, YOU DIED OF INJURIES.
+# goal: outcome injuries; lines 4370 5160; ends: E injuries
+# written by mkscripts.py (scenario 'death-wolves')
+# 190 need instructions?
+NO
+# 760 marksman (1-5)
+3
+# 860 oxen $
+250
+# 940 food $
+200
+# 990 ammunition $
+0
+# 1040 clothing $
+100
+# 1090 misc. supplies $
+100
+# 2180 (1) hunt (2) continue
+2
+# 2770 eat (1) poorly (2) moderately (3) well
+2
+# 2100 (1) fort (2) hunt (3) continue
+3
+# 2770 eat (1) poorly (2) moderately (3) well
+2
+# 6220 shot: TYPE BANG (wild animals)
+SHOOT 1 0.44
+# 5220 minister?
+YES
+# 5240 fancy funeral?
+NO
+# 5260 inform next of kin?
+YES

@@ -1,0 +1,12 @@
+seed 1
+# Transcript format: the script ends before the game does (X eof).
+# goal: -; ends: X eof
+# written by mkscripts.py (scenario 'format-eof')
+# 190 need instructions?
+NO
+# 760 marksman (1-5)
+3
+# 860 oxen $
+250
+# 940 food $
+150

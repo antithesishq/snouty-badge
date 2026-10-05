@@ -1,0 +1,91 @@
+seed 51
+# Death: no cash left, then an injury or serious illness:
+# YOU CAN'T AFFORD A DOCTOR, YOU DIED OF ...
+# goal: outcome no_doctor_money; lines 5090; ends: E no_doctor_money
+# written by mkscripts.py (scenario 'death-no-doctor-money')
+# 190 need instructions?
+NO
+# 760 marksman (1-5)
+3
+# 860 oxen $
+250
+# 940 food $
+200
+# 990 ammunition $
+50
+# 1040 clothing $
+100
+# 1090 misc. supplies $
+100
+# 2180 (1) hunt (2) continue
+2
+# 2770 eat (1) poorly (2) moderately (3) well
+2
+# 2100 (1) fort (2) hunt (3) continue
+3
+# 2770 eat (1) poorly (2) moderately (3) well
+2
+# 2180 (1) hunt (2) continue
+2
+# 2770 eat (1) poorly (2) moderately (3) well
+2
+# 2100 (1) fort (2) hunt (3) continue
+3
+# 2770 eat (1) poorly (2) moderately (3) well
+2
+# 2180 (1) hunt (2) continue
+2
+# 2770 eat (1) poorly (2) moderately (3) well
+2
+# 3000 riders: (1) run (2) attack (3) continue (4) circle
+1
+# 6220 shot: TYPE POW (bandits)
+SHOOT 1 1.47
+# 2100 (1) fort (2) hunt (3) continue
+3
+# 2770 eat (1) poorly (2) moderately (3) well
+2
+# 2180 (1) hunt (2) continue
+1
+# 6220 shot: TYPE WHAM (hunt)
+SHOOT 1 0.78
+# 2770 eat (1) poorly (2) moderately (3) well
+2
+# 2100 (1) fort (2) hunt (3) continue
+3
+# 2770 eat (1) poorly (2) moderately (3) well
+2
+# 2180 (1) hunt (2) continue
+2
+# 2770 eat (1) poorly (2) moderately (3) well
+2
+# 2100 (1) fort (2) hunt (3) continue
+2
+# 6220 shot: TYPE BANG (hunt)
+SHOOT 1 0.94
+# 2770 eat (1) poorly (2) moderately (3) well
+2
+# 6220 shot: TYPE WHAM (wild animals)
+SHOOT 1 1.40
+# 2180 (1) hunt (2) continue
+1
+# 6220 shot: TYPE WHAM (hunt)
+SHOOT 1 0.74
+# 2770 eat (1) poorly (2) moderately (3) well
+2
+# 2100 (1) fort (2) hunt (3) continue
+3
+# 2770 eat (1) poorly (2) moderately (3) well
+2
+# 2180 (1) hunt (2) continue
+1
+# 6220 shot: TYPE BLAM (hunt)
+SHOOT 1 0.88
+# 2770 eat (1) poorly (2) moderately (3) well
+2
+# 5220 minister?
+YES
+# 5240 fancy funeral?
+YES
+# 5260 inform next of kin?
+NO

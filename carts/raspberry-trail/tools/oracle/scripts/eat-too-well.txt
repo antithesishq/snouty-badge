@@ -1,0 +1,37 @@
+seed 1
+# Little food: eating well is refused (YOU CAN'T EAT THAT WELL, asks
+# again), the low food warning, and then starving (never hunting).
+# goal: outcome starved; lines 2840 1840; ends: E starved
+# written by mkscripts.py (scenario 'eat-too-well')
+# 190 need instructions?
+NO
+# 760 marksman (1-5)
+3
+# 860 oxen $
+300
+# 940 food $
+20
+# 990 ammunition $
+50
+# 1040 clothing $
+100
+# 1090 misc. supplies $
+100
+# 2180 (1) hunt (2) continue
+2
+# 2770 eat (1) poorly (2) moderately (3) well
+3
+# 2770 eat (1) poorly (2) moderately (3) well
+9
+# 2770 eat (1) poorly (2) moderately (3) well
+0
+# 2770 eat (1) poorly (2) moderately (3) well
+2
+# 2100 (1) fort (2) hunt (3) continue
+3
+# 5220 minister?
+NO
+# 5240 fancy funeral?
+NO
+# 5260 inform next of kin?
+NO
