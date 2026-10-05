@@ -107,7 +107,8 @@ var prev: game.Buttons = .{};
 const Net = net.Net(link.Badge);
 var lnk: Net = undefined;
 /// Simulator previews (`debug_link_view`): a made-up lockstep state shown
-/// instead of the real one (0 off; else LinkStatus + 1, bit 8 host).
+/// instead of the real one (0 off; else bits 0-7 the LinkStatus, bit 8
+/// host, bit 16 set).
 var link_view_fake: u32 = 0;
 
 pub fn start() void {
@@ -235,7 +236,12 @@ pub fn update() void {
     // The link runs in every mode (one poll a frame while searching), so
     // a session survives the menus; LINK DUEL reads it.
     const link_on = bench_link_off == 0;
-    if (link_on) lnk.begin(&g, frame_start);
+    if (link_on) {
+        lnk.begin(&g, frame_start);
+    } else {
+        // The same screens as with the link and no cable.
+        g.lk.status = .searching;
+    }
     if (link_view_fake != 0) fake_link_state();
     g.update(held, pressed);
     if (link_on) {
@@ -394,7 +400,7 @@ fn debug_skirmish(bits: u32) callconv(.c) u32 {
     g.new_match();
     return g.sk.programs;
 }
-/// 0 ladder, 1 SKIRMISH.
+/// 0 ladder, 1 SKIRMISH, 2 LINK DUEL.
 fn debug_mode() callconv(.c) u32 {
     return @backingInt(g.mode);
 }
@@ -405,14 +411,15 @@ fn debug_match() callconv(.c) u32 {
     for (g.sk.wins, 0..) |w, i| v |= @as(u32, w & 15) << @intCast(4 * i);
     return v | @as(u32, g.sk.points[0]) << 16;
 }
-/// Simulator previews of LINK DUEL's screens with no partner: opens LINK
-/// DUEL and shows lockstep state `s` (game.LinkStatus: 1 searching,
-/// 2 wrong cart, 3 lobby, 5 waiting) from now on, as the host when
-/// `host` is 1 (the guest sees the host's setup). 0 stops faking.
-fn debug_link_view(s: u32, host: u32) callconv(.c) u32 {
-    link_view_fake = if (s == 0) 0 else (s + 1) | (host & 1) << 8;
-    if (s != 0 and g.mode != .link) g.enter_link();
-    return s;
+/// Simulator previews of LINK DUEL's screens with no partner: shows
+/// lockstep state `v & 0xFF` (game.LinkStatus: 1 searching, 2 wrong cart,
+/// 3 wrong version, 4 lobby, 6 waiting) from now on instead of the real
+/// one, as the host when bit 8 is set (the guest sees the host's setup),
+/// opening LINK DUEL if needed. 0 stops faking. Returns v.
+fn debug_link_view(v: u32) callconv(.c) u32 {
+    link_view_fake = if (v & 0xFF == 0) 0 else v | 0x10000;
+    if (link_view_fake != 0 and g.mode != .link) g.enter_link();
+    return v;
 }
 /// A demo duel (you, or the autopilot, against the T2 program in the
 /// partner's slot) in arena `layout` with the current OPTIONS modifiers.
@@ -440,7 +447,7 @@ fn debug_link_wins() callconv(.c) u32 {
 
 fn fake_link_state() void {
     const lk = &g.lk;
-    lk.status = @fromBackingInt(@intCast((link_view_fake & 0xFF) - 1));
+    lk.status = @fromBackingInt(@intCast(link_view_fake & 0xFF));
     lk.host = link_view_fake & 0x100 != 0;
     lk.partner_name = "SNOUTY GC";
     lk.can_go = true;

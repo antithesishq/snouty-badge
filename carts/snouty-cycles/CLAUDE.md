@@ -21,7 +21,8 @@ cart API, build wiring); this file adds the cart's specifics.
   font (generated, do not edit); `host_tests.zig` the root for `zig build
   test`. M1 adds `levels.zig` (the ladder, block layouts; M2 its
   `Options` and SKIRMISH's config), M2 `history.zig` (keyframes, the
-  input log, retract and restore).
+  input log, retract and restore), M3 `net.zig` (LINK DUEL's adapter to
+  `lib/lockstep.zig`) and `net_test.zig` (its two-badge gate).
 - `tools/` — `check.sh` (the whole gate), `gen_font.py` (writes
   `cart/src/font8.zig` from `sycl-badge/src/font.zig`), `scripts/` (input
   scripts; `bench_m0.json` is badge-bench's). The headless runner
@@ -316,6 +317,69 @@ not bring back tail cells SNAKE cleared or gap cells (empty once left,
 - Banner lines go through `add_line` (noinline) and the cold game
   functions are `noinline`: ReleaseFast inlining of them cost ~7 KB of
   .text in a RAM cart.
+
+### M3 link duel (track L: `net.zig`, `game.zig` link states, `main.zig`)
+
+LINK DUEL (SPEC 10) runs on the shared `lib/lockstep.zig`
+(`docs/LOCKSTEP.md` at the root) over `lib/link.zig` (app id `'C'`,
+`lockstep.apps.cycles`). Both are built ReleaseSmall (the cart's
+`build.zig`: cold code, RAM).
+
+- **`net.zig`** is the adapter: `Glue` is the lockstep's game side
+  (`World` = `game.Game`, `simulate` = `g.duel_tick`, `hash` =
+  `g.duel_hash` = `sim.World.hash()` mixed with the duel's state, every
+  32 ticks; `hand_over` = `g.duel_hand_over`; 4 rules bytes; input delay
+  3; pause bit 0x20 = Start). `Net(L)` owns the lockstep and drives a
+  frame: `begin` (pump, the lockstep's state into `g.lk`, a started race
+  into `g.duel_begin`), then `g.update`, `end` (the game's requests:
+  leave, rules, the ready pick, go; then `submit` the frame's byte and one
+  `step`), `pump` between the sim and the render, and after the render
+  `retry` in a loop to 14 ms only while `busy(g)` (a race runs, or LINK
+  DUEL's cable screen handshakes: a HELLO is 10 wire bytes). With no
+  cable that is one `link.poll` a frame: 0.016 ms.
+- **The input byte** is `sim.Input`'s low 5 bits (press, A boost, B
+  brake) plus the pause bit. The host is slot 0 = cycle 0, the guest
+  slot 1 = cycle 1, so both Worlds are byte equal; `render.View.swap`
+  swaps colours 0 and 1 on the guest (`render.hue`), so each badge draws
+  itself blue and the partner orange.
+- **The whole match is one race.** `game.Link` (`g.lk`) holds the agreed
+  match (seed, `serial` = rounds started in this race for round seeds,
+  round, wins, rematch flags, prev bytes) and the local side (status,
+  role, requests, the host's setup rows, notices). `duel_tick(in)` is the
+  only thing that changes the agreed part: countdown (presses set the
+  start heading), play (`World.step`; the T2 program for a handed-over
+  slot), round_over (200 ticks), match_over (rematch when both A edges
+  are in), all in lockstep ticks, so both badges change rounds on the
+  same tick. `g.timer` counts lockstep ticks in these states;
+  `update_link` never touches it there. Anything new that changes the
+  duel must go through `duel_tick` and into `duel_hash`.
+- **Rules** (`Link.rules` / `set_rules`): arena, speed, modifier bits
+  (SNAKE, GAPS, WRAP, HARDCORE), and a match byte: FIRST TO (1-3) plus
+  both players' round wins, so a race started after a NO CONTEST carries
+  the match on (`lk.resync`: the host goes again as soon as it can).
+- **Flow** (`State` appended: 16 `link_lobby`, 17 `link_notice`; `Mode`
+  `link`): menu LINK DUEL -> the cable screen / lobby (host's rows or the
+  guest's view) -> GO -> countdown, play, round_over, match_over with
+  mode link. `desync` -> NO CONTEST (the lockstep stays in desync while
+  the notice is up, so the partner hears DESYNC, not a QUIT), then
+  `leave` and the lobby with `resync`. `peer_left` -> the program rides
+  to the round's end -> PEER LEFT -> menu. Start pauses both (the pause
+  bit is held in our bytes until the agreed `paused` flips, as a stalled
+  frame's byte is dropped); a d-pad press is re-sent until a tick carries
+  it back (repeating the planned heading does nothing).
+- **Tests**: `cart/src/net_test.zig` (the `link` gate, `zig build test
+  -Dcart=snouty-cycles -Dtest-filter="LINK DUEL"`): two Games on
+  `lib/link_virtual.zig` (the `link_host` module: link.zig and its
+  virtual cable copied under one root) through a rig with wire time,
+  random delay, byte loss and a 9-byte receive buffer (8-entry FIFO plus
+  the receive program's shift register), every lockstep tick hashed on
+  both badges and compared. `game.zig`'s LINK DUEL test checks every
+  screen's banner and a demo duel to the match card.
+- **Simulator and bench**: `debug_link_view`, `debug_link_demo`,
+  `debug_link_status`, `debug_link_round`, `debug_link_wins`; firmware
+  pokes `snouty_cycles_link` (1 cable screen, 2 demo duel),
+  `snouty_cycles_link_layout`, `snouty_cycles_link_off` (docs/RUNNING.md
+  sections 6, 7 and 9).
 
 ## Rendering rules that are easy to break
 
