@@ -112,8 +112,7 @@ standings, the match on a card with A for a rematch, B for the menu.
 125%), TRAILS (FULL, or SNAKE: walls 200 cells long), GAPS (holes in the
 walls), WRAP (no rim, the edges wrap), HARDCORE (rubber 4 and no
 snapshots). Left/Right or A change a row. They apply to the ladder and
-SKIRMISH from the next round. (SNAKE, GAPS and WRAP are Track O's M2
-rules; until they land they change nothing on screen.)
+SKIRMISH from the next round.
 
 | Input | Action |
 |---|---|

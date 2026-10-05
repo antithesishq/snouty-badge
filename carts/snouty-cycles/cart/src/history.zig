@@ -142,10 +142,12 @@ pub const History = struct {
         const s = t % tuning.ticks;
         h.stamp[s] = @truncate(t);
         h.input[s] = input;
+        var head_moved: [sim.max_cycles]u32 = @splat(0);
         var tail_moved: [sim.max_cycles]u32 = @splat(0);
         for (w.cycles, 0..) |c, i| {
             const hd = c.log_head -% h.last_head[i];
             const td = c.log_tail -% h.last_tail[i];
+            head_moved[i] = hd;
             tail_moved[i] = td;
             h.moves[s][i] = @as(u8, @intCast(@min(hd, 15))) | (@as(u8, @intCast(@min(td, 15))) << 4);
             h.last_head[i] = c.log_head;
@@ -156,7 +158,7 @@ pub const History = struct {
         for (w.events[0..w.n_events]) |e| {
             const old: ?u16 = switch (e.kind) {
                 .block => 0,
-                .cleared => owner_of_cleared(w, &tail_moved, sim.index(e.x, e.y)),
+                .cleared => owner_of_cleared(w, &head_moved, &tail_moved, sim.index(e.x, e.y)),
                 else => null,
             };
             const o = old orelse continue;
@@ -169,16 +171,24 @@ pub const History = struct {
         if (t % tuning.keyframe_every == 0) h.save(w, brains, aux);
     }
 
-    /// The trail value a cleared cell had: the cycle whose log tail moved
-    /// past it this step (a fade, a SNAKE clear), else unknown (null: the
-    /// retraction leaves it).
-    fn owner_of_cleared(w: *const sim.World, tail_moved: *const [sim.max_cycles]u32, idx: u16) ?u16 {
+    /// The trail value a cleared cell had (sim clears only a cycle's own
+    /// trail): the cycle whose step cleared it, found the way the step did
+    /// it. GAPS: the cell its head left was a gap entry (the entry before
+    /// the new head). A tail pop (SNAKE, fade): a popped entry that is not
+    /// a gap, or is the last one. Else unknown (null: not journaled).
+    fn owner_of_cleared(w: *const sim.World, head_moved: *const [sim.max_cycles]u32, tail_moved: *const [sim.max_cycles]u32, idx: u16) ?u16 {
         for (w.cycles, 0..) |c, i| {
+            if (head_moved[i] == 1 and c.trail_len() >= 2) {
+                const left = w.logs[i][(c.log_head -% 2) % sim.log_cap];
+                if (left & sim.log_gap != 0 and left & cell_bits == idx) return @intCast(i + 1);
+            }
             const n = tail_moved[i];
             if (n == 0 or n > sim.log_cap) continue;
             var k: u32 = c.log_tail -% n;
             while (k != c.log_tail) : (k +%= 1) {
-                if (w.logs[i][k % sim.log_cap] & cell_bits == idx) return @intCast(i + 1);
+                const e = w.logs[i][k % sim.log_cap];
+                if (e & sim.log_gap != 0 and k +% 1 != c.log_head) continue;
+                if (e & cell_bits == idx) return @intCast(i + 1);
             }
         }
         return null;
