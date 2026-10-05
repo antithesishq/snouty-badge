@@ -109,8 +109,8 @@ pub fn draw_main(list: *const List, sound_on: bool, link_ok: bool, link_note: u3
     const about = switch (@as(Item, @fromBackingInt(@intCast(list.cursor)))) {
         .quick => "3 LAPS, SIX RACERS",
         .gc => "LAST CAR LEFT WINS",
-        .link => if (link_ok) "TWO BADGES, A CABLE" else "NO LINK IN",
-        .sound => "A TOGGLES THE SPEAKER",
+        .link => if (link_ok) "2 BADGES, 1 CABLE" else "NO LINK IN",
+        .sound => "A TOGGLES SOUND",
     };
     const note_on = link_note > 0 and (link_note / 6) % 2 == 0;
     const on_link = list.cursor == @backingInt(Item.link);
