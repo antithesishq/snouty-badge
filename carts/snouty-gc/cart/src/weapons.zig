@@ -75,9 +75,9 @@ fn rear_fx(w: *const World, owner: u8, base: u8) u8 {
     return if (owner < world.car_count and w.cars[owner].rear_level >= 3) up25(base) else base;
 }
 
-/// May this car fire this tick?
+/// May this car fire this tick? Not in BATTLE's SAFE MODE.
 fn armed(w: *const World, c: *const Car) bool {
-    return w.combat and w.phase == .racing and c.active and c.wreck == .none and !c.finished;
+    return w.combat and w.phase == .racing and c.active and c.wreck == .none and !c.finished and c.safe == 0;
 }
 
 /// A car shots and drops can touch: on the ground, in the race, not

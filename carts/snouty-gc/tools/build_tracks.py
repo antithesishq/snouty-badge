@@ -950,7 +950,7 @@ def main():
         hills = validate_hills(trk, errs)
         crates = validate_crates(trk, tmap, ts, errs)
         validate_hazards(trk, tmap, ts, surf, errs)
-        counts = np.bincount(ts.attr[tmap].ravel(), minlength=11)
+        counts = np.bincount(ts.attr[tmap].ravel(), minlength=len(ATTR_NAMES))
         r, rx, ry, rseg = min_radius(trk)
         print(f"track {trk.name}: lap {trk.length:.0f} px, {len(trk.pts)} control points, "
               f"min clearance {clear:.0f} px, min radius {r:.0f} px at ({rx:.0f},{ry:.0f}) segment {rseg}, "
@@ -974,6 +974,11 @@ def main():
             errs.append(f"{trk.name}: map uses tile {tmap.max()}, over the {NTILES}-tile set")
         if r < 30:
             errs.append(f"{trk.name}: corner radius {r:.0f} px at ({rx:.0f},{ry:.0f}) under 30 px (the autopilot needs ~30)")
+    if not args.track:
+        # M6: the BATTLE arena (tools/build_arena.py), so one run (and
+        # check.sh's `tracks` step) covers every generated file.
+        import build_arena
+        sizes.update(build_arena.build(out, docs, errs))
     expect = {"pal": 512, "attr": NTILES, "center": 256 * 6}
     packed_total = 0
     for p, n in sorted(sizes.items()):
@@ -982,6 +987,8 @@ def main():
             packed_total += n
             if n >= 8192:
                 errs.append(f"{p.name}: packed {kind} is {n} bytes, budget under 8192")
+        elif kind == "arena":
+            pass
         elif kind == "feat":
             if n % HAZARD_RECORD:
                 errs.append(f"{p.name}: {n} bytes, not whole {HAZARD_RECORD}-byte records")

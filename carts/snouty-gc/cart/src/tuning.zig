@@ -510,3 +510,86 @@ pub const price_watchdog = [3]u16{ 500, 900, 1300 };
 /// racer that keeps winning gets a little stronger still.
 pub const ai_follow_pct: u32 = 75;
 pub const ai_own_pct: u32 = 0;
+
+// --- BATTLE, `KILL -9` (SPEC 8.3), M6: battle.zig, hunt.zig ------------------------
+
+/// The World's size cap (sim_test, career_test, check.sh): it bounds the
+/// lockstep CRC's cost. 2,560 B to M5; M6 raised it for BATTLE's fields
+/// (lives, SAFE MODE and the hunter's waypoint per car, `World.battle`).
+pub const world_cap: usize = 2624;
+
+/// The setup screen's LIVES and TIME rows in order (SPEC 8.3): lives per
+/// car (0 = INF) and the round in minutes (0 = NONE, not offered with INF).
+pub const battle_lives_opts = [5]u8{ 1, 3, 5, 9, 0 };
+pub const battle_minutes_opts = [4]u8{ 2, 3, 5, 0 };
+/// Ticks a minute (the round clock is `World.tick`).
+pub const battle_minute: u16 = 3600;
+/// Ammo and burst charges refill in full every this many ticks (20 s):
+/// battle has no laps.
+pub const battle_refill: u16 = 1200;
+/// SAFE MODE after a battle respawn: ticks the car blinks, cannot be hit
+/// and cannot fire.
+pub const battle_safe: u8 = 90;
+/// Damage in battle is this share of the race's (weapons, rams, walls,
+/// hazards; STACK SMASH is its own number): six hunters converge in an
+/// arena far more than a strung-out race field, and rounds at 3 lives
+/// should run 2 to 3 minutes (SPEC 8.3).
+pub const battle_damage_pct: i32 = 18;
+/// The arena's service bays repair at half the track rate: 1 armor every
+/// `battle_bay_every` ticks.
+pub const battle_bay_every: u32 = 8;
+/// The bit bucket's kickers (tile attribute `kicker`): airborne ticks, a
+/// longer jump than a ramp's `ramp_ticks`.
+pub const kicker_ticks: u8 = 64;
+/// STACK SMASH: damage to a car landed on (plus a ram bounce of
+/// `smash_bounce` Q16 px/tick away from the lander).
+pub const smash_damage: u8 = 40;
+pub const smash_bounce: i32 = 1 << 16;
+/// "Ahead" in an arena (SPEC 8.3): the front cone's half angle, as the
+/// cosine (Q16) of 45 degrees.
+pub const battle_cone_cos: i32 = 46341;
+
+// The hunter (hunt.zig). Clear-line rays: the side rays' offset and the
+// sample step, px.
+pub const hunt_clear_px: i32 = 6;
+pub const hunt_ray_step: i32 = 6;
+/// A retreating car holds at its bay until repaired to this share.
+pub const hunt_repaired_pct: u32 = 80;
+/// Target choice: px of preference for the car already aimed at; the
+/// target is led by its velocity times this many ticks.
+pub const hunt_stick_px: i32 = 40;
+pub const hunt_lead_ticks: i32 = 8;
+/// Waypoints: nearest nodes tried for a clear line; arrival radius, px;
+/// a jump leg's lateral tolerance, px, and heading tolerance (turn units);
+/// the waypoint's sight check runs every `hunt_every` ticks per car.
+pub const hunt_scan: u8 = 6;
+pub const hunt_reach: i32 = 28;
+pub const hunt_leg_lat: i32 = 40;
+pub const hunt_leg_turn: i32 = 9000;
+pub const hunt_every: u32 = 4;
+/// Drive straight at a target within this many px when the way is clear.
+pub const hunt_sight: i32 = 360;
+/// Brake into a turn sharper than this (turn units, about 70 degrees).
+pub const hunt_brake_turn: i32 = 12800;
+/// BURST at a target straight ahead farther than this, px (spare charges).
+pub const hunt_burst_px: i32 = 120;
+/// Closer than this to its target and slow, the hunter swings off to the
+/// side, px.
+pub const hunt_close_px: i32 = 40;
+/// A target closer than `hunt_extend_px` and more than `hunt_extend_turn`
+/// off the nose: the hunter drives straight out instead of turning in (no
+/// circling dogfights), then comes back round.
+pub const hunt_extend_turn: i32 = 18000;
+pub const hunt_extend_px: i32 = 140;
+/// Ticks of its velocity ahead the hunter looks for a pit (and brakes).
+pub const hunt_pit_ticks: i32 = 20;
+pub const hunt_pit_min: i32 = 40;
+/// A ramp on its course is fine at these speeds along it (a jump, a
+/// kicker; Q16 px/tick: tools/build_arena.py's clean speeds plus a
+/// margin), else the hunter keeps off it; it powerslides away from a pit
+/// only faster than `hunt_slide_speed`.
+pub const hunt_jump_speed: i32 = 1 << 17;
+pub const hunt_kicker_speed: i32 = 160000;
+pub const hunt_slide_speed: i32 = 1 << 17;
+/// Ticks ahead the hunter checks the Sweeper's path.
+pub const hunt_hazard_ahead: u32 = 36;

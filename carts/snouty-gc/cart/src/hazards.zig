@@ -180,9 +180,11 @@ fn hit(w: *World, k: usize, i: usize, dmg: u8) void {
 }
 
 /// Service bays (SPEC 3.3): a car on a bay tile gets 1 armor every
-/// `tuning.bay_every` ticks.
+/// `tuning.bay_every` ticks (in a BATTLE arena at half that rate, SPEC
+/// 8.3: a camper still loses).
 fn service(w: *World) void {
-    if (!w.combat or w.tick % tuning.bay_every != 0) return;
+    const every = if (w.mode == .battle) tuning.battle_bay_every else tuning.bay_every;
+    if (!w.combat or w.tick % every != 0) return;
     for (&w.cars) |*c| {
         if (c.on_bay and c.active and c.wreck == .none and c.armor < c.armor_max) c.armor += 1;
     }
