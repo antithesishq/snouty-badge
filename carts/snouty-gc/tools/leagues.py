@@ -8,7 +8,9 @@ rasterizer never depends on the league. Pillow-free: numpy only.
 
 Forked from Snouty Zero with its three leagues (Edge, Spine, Core) taken
 out and the tileset cut from 256 to 128 tiles (SPEC 13.2). M0 has the
-Dumps (e-waste landfill); the Runoff follows in M3.
+Dumps (e-waste landfill); M3 adds the Runoff (the dry cooling lake) and
+the hazard fittings (vent lanes and mouths, the Sweeper's lane and gates)
+and the outflow-pipe floor.
 """
 import math
 
@@ -35,7 +37,7 @@ EDGE_OPEN = 32      # + 4-neighbour mask: the lip of a pit (attr surface)
 WALL = 48           # + 4-neighbour mask: wreckage wall
 COOLANT = 68        # coolant puddle
 BAY = 69            # + axis: service bay stripes (M2 wires the repair)
-VENT = 71           # exhaust vent (the Runoff, M3)
+VENT = 71           # (Zero's hot spot; unused since M3's vents are lanes)
 RAMP = 72           # + direction (0 E, 1 S, 2 W, 3 N)
 START = 76
 SEC1 = 77           # + axis
@@ -43,6 +45,14 @@ SEC2 = 79           # + axis
 WALL_DIAG = 96      # + corner where the surface is (0 NE, 1 SE, 2 SW, 3 NW)
 EDGE_DIAG = 100     # + corner, pit-lip corner (attr surface)
 GAP = 104           # + 4-neighbour mask of drivable tiles: the pit past a ramp (attr off)
+# M3 hazard fittings and the pipe floor (+ axis: 0 travel along x, 1 along y).
+VENT_LANE = 81      # + axis: the scorched grate an exhaust vent fires across (attr vent)
+VENT_MOUTH = 83     # + axis: the vent's grille in the wall (attr wall)
+SWEEP_LANE = 85     # + axis: the Sweeper's striped crossing (attr surface)
+SWEEP_GATE = 87     # + axis: its hazard-striped gate in the wall (attr wall)
+PIPE = 89           # inside an outflow pipe: steel plate (attr surface)
+PIPE_RIB = 90       # + axis: a pipe rib across the travel (attr surface)
+PIT = 120           # the pit beyond an open edge (attr off): void with a faint glint
 N_, E_, S_, W_ = 1, 2, 4, 8
 
 
@@ -121,11 +131,14 @@ def hash01(*v):
     return (h ^ (h >> 15)) / 4294967296.0
 
 
-def paint_track_pieces(ts, P):
+def paint_track_pieces(ts, P, wall_style="scrap"):
     """Edges, walls, corner posts, feature tiles and pit tiles (21..119), the
     same shapes in every league; the palette names are the roles (wall_*,
-    lip*, cool_*, bay_*, vent_*, ramp_*, chk_*, seam_*, void*). Fills the
-    unused slots with tile 1."""
+    lip*, cool_*, bay_*, vent_*, ramp_*, chk_*, seam_*, void*, pipe*).
+    `wall_style` "scrap" is the Dumps' wreckage (a hazard stripe facing the
+    track, crushed scrap behind), "pipe" the Runoff's outflow pipes laid
+    along the track (a lit rim, the round body, rust). Fills the unused
+    slots with tile 1."""
     fl = P["floor"]
 
     # Cable ruts: two dark worn grooves along the travel axis with a strand.
@@ -151,6 +164,16 @@ def paint_track_pieces(ts, P):
 
     # Wreckage wall: hazard stripe facing the track, then crushed scrap.
     def wall_px(d, x, y):
+        if wall_style == "pipe":
+            # A pipe lying along the edge: lit rim, body, shadowed underside,
+            # a seam ring every 8 px and rust flecks.
+            if d == 0:
+                return P["pipe_hi"]
+            if d >= 6:
+                return P["wall_base"]
+            if hash01(x, y, 23) < 0.10:
+                return P["rust"]
+            return P["pipe"] if d <= 2 else P["pipe_dk"]
         if d <= 1:
             return P["wall_a"] if ((x + y) >> 1) & 1 else P["wall_b"]
         h = hash01(x // 2, y // 2, 7)
@@ -204,6 +227,36 @@ def paint_track_pieces(ts, P):
     ts.put(SEC2, "sector 2 seam (travel x)", A_SEC2, s2)
     ts.put(SEC2 + 1, "sector 2 seam (travel y)", A_SEC2, s2.T.copy())
 
+    # M3: an exhaust vent's lane (bars along the travel, glowing slots) and
+    # its grille in the wall; the Sweeper's striped crossing and its gate;
+    # the inside of an outflow pipe (plate and ribs). Axis 0 = travel along x.
+    lane = grid(lambda x, y: P["vent_rim"] if y in (0, 7) else (P["vent_glow"] if y % 2 == 1 and 1 <= x <= 6 else P["vent_dk"]))
+    ts.put(VENT_LANE, "vent lane (travel x)", A_VENT, lane)
+    ts.put(VENT_LANE + 1, "vent lane (travel y)", A_VENT, lane.T.copy())
+
+    def mouth(x, y):
+        if x in (0, 7) or y in (0, 7):
+            return P["vent_rim"]
+        return P["vent_glow"] if x in (2, 5) and 2 <= y <= 5 else P["vent_dk"]
+    m = grid(mouth)
+    ts.put(VENT_MOUTH, "vent mouth (travel x)", A_WALL, m)
+    ts.put(VENT_MOUTH + 1, "vent mouth (travel y)", A_WALL, m.T.copy())
+    sweep = grid(lambda x, y: P["wall_a"] if (x + y) & 7 in (0, 1) else (P["rut"] if x in (2, 5) else fl))
+    ts.put(SWEEP_LANE, "Sweeper crossing (travel x)", A_SURF, sweep)
+    ts.put(SWEEP_LANE + 1, "Sweeper crossing (travel y)", A_SURF, sweep.T.copy())
+    gate = grid(lambda x, y: P["wall_a"] if ((x + y) >> 1) & 1 else P["wall_b"])
+    ts.put(SWEEP_GATE, "Sweeper gate (travel x)", A_WALL, gate)
+    ts.put(SWEEP_GATE + 1, "Sweeper gate (travel y)", A_WALL, gate.T.copy())
+    if "pipe_floor" in P.ix:
+        ts.put(PIPE, "outflow pipe floor", A_SURF, grid(
+            lambda x, y: P["rib_dk"] if (x, y) in ((1, 1), (5, 5)) else P["pipe_floor"]))
+        rib = grid(lambda x, y: P["rib"] if x in (2, 3) else (P["rib_dk"] if x == 4 else P["pipe_floor"]))
+        ts.put(PIPE_RIB, "outflow pipe rib (travel x)", A_SURF, rib)
+        ts.put(PIPE_RIB + 1, "outflow pipe rib (travel y)", A_SURF, rib.T.copy())
+
+    ts.put(PIT, "pit beyond an open edge", A_OFF, grid(
+        lambda x, y: P["void_mid"] if hash01(x // 2, y // 2, 41) < 0.12 else P["void"]))
+
     # Pit past a ramp: void across the track with a lit lip on the sides
     # that touch drivable floor (4-neighbour mask).
     def gap_px(d, x, y):
@@ -227,7 +280,7 @@ def paint_track_pieces(ts, P):
 DUMPS_PAL = Palette([
     ("fog", (168, 140, 118)),
     # CRT-glass sand
-    ("sand", (118, 104, 92)), ("sand_lt", (138, 122, 106)), ("sand_dk", (92, 80, 72)),
+    ("sand", (118, 104, 92)), ("sand_lt", (128, 113, 100)), ("sand_dk", (106, 93, 83)),
     ("glass", (150, 196, 186)), ("glass_hi", (220, 246, 236)), ("shard", (64, 92, 88)),
     # cables and keys
     ("cable_r", (196, 56, 44)), ("cable_b", (52, 84, 170)), ("cable_k", (34, 30, 34)),
@@ -266,7 +319,9 @@ def paint_dumps_tiles(P):
     ts = Tileset(P)
 
     def sand(x, y, salt):
-        h = hash01(x, y, salt)
+        # 2x2 grains of low contrast: per-texel noise shimmered in the
+        # Mode 7 view at speed (M0), so the sand is calmer since M3.
+        h = hash01(x // 2, y // 2, salt)
         return P["sand_dk"] if h < 0.18 else (P["sand_lt"] if h < 0.36 else P["sand"])
     ts.put(DU_SAND, "CRT-glass sand", A_OFF, grid(lambda x, y: sand(x, y, 1)))
     ts.put(DU_SAND_LT, "sand ripple", A_OFF, grid(
@@ -344,7 +399,7 @@ def paint_dumps_background(tmap, free, rng):
         for tx in range(MAPN):
             if free[ty, tx]:
                 r = rng.random()
-                tmap[ty, tx] = DU_SAND_LT if r < 0.12 else DU_GLINT if r < 0.20 else DU_SAND
+                tmap[ty, tx] = DU_SAND_LT if r < 0.08 else DU_GLINT if r < 0.11 else DU_SAND
     avail = free.copy()
 
     def fits(x, y, w, h):
@@ -463,6 +518,235 @@ def paint_dumps_horizon(fog, rng):
     return f, b, fpal, bpal
 
 
+# ---------------------------------------------------------------- The Runoff
+# The dry cooling lake (SPEC 3.2): a pale cracked salt pan with teal brine
+# pools off the track; the track is a dark graded road of packed brine mud
+# with tyre tracks, walled with outflow pipes laid along it; open edges drop
+# into brine sinkholes behind a salt-crust lip. Horizon: cooling towers with
+# steam plumes and red warning LEDs over a flat, cracked horizon. The look
+# is calm on purpose: low-contrast salt, a strong edge between the pale pan
+# and the dark road (M0's Dumps sand shimmered at speed).
+RUNOFF_PAL = Palette([
+    ("fog", (198, 204, 202)),
+    # salt pan
+    ("salt", (212, 210, 200)), ("salt_lt", (220, 218, 208)), ("salt_dk", (202, 200, 190)),
+    ("crack", (184, 180, 168)), ("crack_dk", (166, 162, 150)), ("crust", (230, 228, 218)),
+    ("stain", (190, 168, 140)), ("stain_dk", (166, 142, 116)), ("algae", (168, 182, 150)),
+    ("brine", (52, 150, 150)), ("brine_dk", (30, 104, 108)), ("brine_hi", (150, 222, 214)),
+    ("grate", (96, 100, 102)), ("grate_dk", (54, 58, 60)),
+    # track surface: graded brine mud with tyre tracks
+    ("floor", (84, 92, 102)), ("floor_seam", (96, 104, 114)), ("lane_dot", (232, 204, 96)),
+    ("rut", (66, 72, 82)), ("rut_cable", (112, 120, 130)),
+    # outflow-pipe walls: rust-orange, so the edge reads against both the
+    # pale pan and the dark road
+    ("pipe", (180, 100, 52)), ("pipe_hi", (240, 176, 112)), ("pipe_dk", (112, 58, 34)),
+    ("rust", (130, 70, 40)), ("pipe_floor", (58, 64, 70)), ("rib", (150, 160, 166)), ("rib_dk", (36, 40, 46)),
+    ("wall_a", (236, 186, 44)), ("wall_b", (30, 30, 34)), ("scrap", (120, 126, 128)),
+    ("scrap_hi", (176, 184, 184)), ("scrap_rust", (150, 92, 60)), ("scrap_dk", (70, 76, 78)),
+    ("wall_base", (46, 52, 56)),
+    # salt-crust lips over brine sinkholes
+    ("lip", (236, 234, 224)), ("lip_dk", (172, 170, 158)),
+    ("void", (8, 34, 40)), ("void_mid", (18, 60, 66)),
+    # features
+    ("cool", (36, 178, 170)), ("cool_hi", (180, 250, 240)), ("cool_rim", (20, 112, 112)),
+    ("bay_floor", (48, 56, 76)), ("bay_stripe", (240, 200, 60)), ("bay_hi", (250, 240, 200)),
+    ("vent_rim", (112, 106, 100)), ("vent_dk", (40, 28, 26)), ("vent_glow", (252, 120, 36)),
+    ("ramp", (120, 116, 110)), ("ramp_hi", (164, 160, 152)), ("ramp_arrow", (250, 232, 120)),
+    ("chk_w", (236, 232, 220)), ("chk_k", (20, 20, 22)),
+    ("seam_lit", (150, 130, 60)), ("seam_glow", (250, 220, 110)),
+])
+
+# Runoff background tile meanings (indices 1..15 are per league).
+RU_CRACK_A = 1      # 1..4: a 16x16 tileable polygon-crack cell, TL TR BL BR
+RU_CRACK_B = 5      # 5..8: a second one
+RU_CRUST, RU_STAIN, RU_GRATE = 9, 10, 15
+RU_POOL = 11        # 11..14: 2x2 brine pool TL TR BL BR
+
+
+def crack_cell(seeds, salt):
+    """16x16 tileable salt pan with polygon cracks (Voronoi borders on the
+    torus), as palette roles."""
+    out = []
+    for y in range(16):
+        row = []
+        for x in range(16):
+            ds = sorted(min(math.hypot((x + 0.5 - sx + dx), (y + 0.5 - sy + dy))
+                            for dx in (-16, 0, 16) for dy in (-16, 0, 16)) for sx, sy in seeds)
+            h = hash01(x // 2, y // 2, salt)
+            if ds[1] - ds[0] < 0.9:
+                row.append("crack_dk" if h < 0.3 else "crack")
+            elif ds[1] - ds[0] < 1.9 and h < 0.3:
+                row.append("salt_dk")
+            else:
+                row.append("salt_lt" if h > 0.94 else "salt")
+        out.append(row)
+    return out
+
+
+def paint_runoff_tiles(P):
+    ts = Tileset(P)
+    for base, seeds, salt in ((RU_CRACK_A, ((3, 4), (11, 2), (6, 12), (14, 10)), 31),
+                              (RU_CRACK_B, ((2, 9), (9, 6), (13, 14), (12, 1)), 37)):
+        cell = crack_cell(seeds, salt)
+        for k, (oy, ox) in enumerate(((0, 0), (0, 8), (8, 0), (8, 8))):
+            ts.put(base + k, f"salt pan cracks {'AB'[base == RU_CRACK_B]} {'TL TR BL BR'.split()[k]}", A_OFF,
+                   grid(lambda x, y: P[cell[oy + y][ox + x]]))
+    ts.put(RU_CRUST, "salt crust ridge", A_OFF, grid(
+        lambda x, y: P["crust"] if abs(y - 3.5 - 1.5 * math.sin(x * 0.9)) < 1.0 else (
+            P["salt_dk"] if abs(y - 5 - 1.5 * math.sin(x * 0.9)) < 0.8 else P["salt"])))
+    ts.put(RU_STAIN, "mineral stain", A_OFF, grid(
+        lambda x, y: P["stain_dk"] if math.hypot(x - 3.5, y - 3.5) < 1.6 else (
+            P["stain"] if math.hypot(x - 3.5, y - 3.8) < 3.4 + 0.6 * math.sin(x + y) else P["salt"])))
+    ts.put(RU_GRATE, "drain grate", A_OFF, grid(
+        lambda x, y: P["grate_dk"] if 1 <= x <= 6 and 1 <= y <= 6 and x % 2 == 1 else (
+            P["grate"] if 1 <= x <= 6 and 1 <= y <= 6 else P["salt_dk"] if y == 7 or x == 7 else P["salt"])))
+    pool = np.zeros((16, 16), np.uint8)
+    for y in range(16):
+        for x in range(16):
+            r = math.hypot(x - 7.5, (y - 7.5) * 1.25) + 0.9 * math.sin(x * 0.7 + y * 0.4)
+            pool[y, x] = (P["salt"] if r > 7.4 else P["crust"] if r > 6.4 else P["brine_dk"] if r > 5.4
+                          else P["brine_hi"] if (x, y) in ((5, 5), (6, 5), (9, 8)) else P["brine"])
+    for k, (oy, ox) in enumerate(((0, 0), (0, 8), (8, 0), (8, 8))):
+        ts.put(RU_POOL + k, f"brine pool {'TL TR BL BR'.split()[k]}", A_OFF, pool[oy:oy + 8, ox:ox + 8])
+    # Track surface: graded brine mud, tyre-track seams every 16 px.
+    fl, fs = P["floor"], P["floor_seam"]
+    ts.put(SURF, "graded mud road", A_SURF, grid(lambda x, y: fl))
+    ts.put(SURF_DOT, "graded mud road marker", A_SURF, grid(
+        lambda x, y: P["lane_dot"] if 3 <= x <= 4 and 3 <= y <= 4 else fl))
+    ts.put(SURF_SEAM_V, "graded mud road seam left", A_SURF, grid(lambda x, y: fs if x == 0 else fl))
+    ts.put(SURF_SEAM_H, "graded mud road seam top", A_SURF, grid(lambda x, y: fs if y == 0 else fl))
+    ts.put(SURF_SEAM_X, "graded mud road seam corner", A_SURF, grid(lambda x, y: fs if x == 0 or y == 0 else fl))
+    paint_track_pieces(ts, P, wall_style="pipe")
+    return ts
+
+
+def paint_runoff_background(tmap, free, rng):
+    """Fill free tiles: the salt pan of polygon cracks (two 16x16 cells mixed
+    per 2x2 block), crust ridges, mineral stains, drain grates and 2x2 brine
+    pools."""
+    for by in range(0, MAPN, 2):
+        for bx in range(0, MAPN, 2):
+            base = RU_CRACK_B if rng.random() < 0.35 else RU_CRACK_A
+            for k, (dy, dx) in enumerate(((0, 0), (0, 1), (1, 0), (1, 1))):
+                if free[by + dy, bx + dx]:
+                    tmap[by + dy, bx + dx] = base + k
+    avail = free.copy()
+    for _ in range(60):
+        for _try in range(200):
+            x, y = rng.randrange(MAPN - 2), rng.randrange(MAPN - 2)
+            if avail[y:y + 2, x:x + 2].all():
+                tmap[y:y + 2, x:x + 2] = np.array([[RU_POOL, RU_POOL + 1], [RU_POOL + 2, RU_POOL + 3]])
+                avail[max(0, y - 1):y + 3, max(0, x - 1):x + 3] = False
+                break
+    for ty in range(MAPN):
+        for tx in range(MAPN):
+            if avail[ty, tx]:
+                r = rng.random()
+                if r < 0.025:
+                    tmap[ty, tx] = RU_CRUST
+                elif r < 0.04:
+                    tmap[ty, tx] = RU_STAIN
+                elif r < 0.046:
+                    tmap[ty, tx] = RU_GRATE
+
+
+def paint_runoff_horizon(fog, rng):
+    """Runoff horizon: front 512x32 (cooling towers with steam plumes and red
+    warning LEDs, a low pipeline, the flat salt horizon), back 256x32 (a pale
+    hazy sky, a white sun, far datacenter halls)."""
+    fpal = [fog, fog, (186, 192, 190), (160, 170, 174), (150, 158, 160), (122, 130, 134),
+            (94, 102, 108), (240, 242, 240), (206, 212, 212), (60, 66, 72), (214, 214, 206),
+            (110, 116, 118), (74, 80, 84), (52, 58, 66), (110, 40, 36), (255, 64, 40)]
+    # 0 transparent, 1 fog, 2 haze, 3 far tower, 4 tower lit, 5 tower mid, 6 tower shade,
+    # 7 steam, 8 steam shade, 9 tower rim, 10 salt horizon, 11/12 pipeline, 13 dark detail,
+    # 14 LED off (blink), 15 LED on
+    W, H = 512, 32
+    f = np.zeros((H, W), np.uint8)
+    ground = 29
+
+    def tower(cx, h, wb, colours):
+        """A hyperboloid cooling tower standing on the ground row; returns its top y."""
+        lit, mid, shade = colours
+        top = ground - h
+        ww, wt = wb * 0.62, wb * 0.70
+        for y in range(top, ground + 1):
+            t = (ground - y) / h
+            hw = ww + (wb - ww) * ((0.72 - t) / 0.72) ** 2 if t < 0.72 else ww + (wt - ww) * ((t - 0.72) / 0.28) ** 2
+            for x in range(int(round(cx - hw)), int(round(cx + hw)) + 1):
+                u = (x - cx) / max(hw, 1)
+                c = lit if u < -0.35 else (mid if u < 0.35 else shade)
+                if y == top:
+                    c = 9
+                f[y, x % W] = c
+        return top
+
+    for k in range(10):                       # far towers, pale
+        tower(k * 52 + rng.randint(0, 30), rng.randint(6, 10), rng.uniform(4, 6), (3, 3, 3))
+    plumes = []
+    x = rng.randint(0, 30)
+    while x < W - 20:                         # near towers in groups
+        n = rng.choice((1, 2, 2, 3))
+        for _ in range(n):
+            h, wb = rng.randint(13, 21), rng.uniform(7, 10)
+            top = tower(x, h, wb, (4, 5, 6))
+            f[top, x % W] = 15                # the warning LED on the rim
+            if rng.random() < 0.7:
+                plumes.append((x, top, wb * 0.7))
+            x += int(wb * 2 + rng.randint(2, 6))
+        x += rng.randint(30, 70)
+    for cx, top, w0 in plumes:                # steam rising and leaning with the wind
+        for y in range(top - 1, -1, -1):
+            t = (top - y) / max(top, 1)
+            px = cx + t * t * 22
+            r = w0 * (1.0 + t * 1.6) * (0.85 + 0.15 * math.sin(y * 0.8 + cx))
+            for xx in range(int(px - r), int(px + r) + 1):
+                d = abs(xx - px) / r
+                if d <= 1 and bayer4(xx, y) < 1.2 - d * 0.6 - t * 0.55:
+                    if f[y, xx % W] in (0, 3):
+                        f[y, xx % W] = 8 if xx > px + r * 0.3 else 7
+    for x in range(W):                        # a low pipeline on trestles here and there
+        if (x // 64) % 3 == 1:
+            f[ground - 2, x] = 11
+            f[ground - 1, x] = 12
+            if x % 9 == 0:
+                f[ground, x] = 13
+    f[ground - 0, :][f[ground - 0, :] == 0] = 10
+    f[ground + 1:] = 1                        # meets the fogged floor without a seam
+    f[f == 0] = 0
+
+    bpal = [(170, 196, 214), (178, 202, 216), (186, 206, 216), (192, 210, 216), (198, 212, 214),
+            (204, 214, 212), (206, 212, 208), (214, 216, 208), (150, 160, 170), (170, 178, 186),
+            (246, 246, 236), (255, 255, 248), (132, 142, 152), (220, 222, 216), fog, fog]
+    # 0..6 sky gradient, 7 haze band, 8/9 far halls dark/light, 10/11 sun halo/core,
+    # 12 hall detail, 13 thin cloud, 14 fog, 15 spare
+    BW = 256
+    b = np.zeros((H, BW), np.uint8)
+    for y in range(H):
+        for x in range(BW):
+            b[y, x] = min(6, int(y / 27 * 6 + bayer4(x, y)))
+            if y in (8, 9) and bayer4(x * 3 + y, y) < 0.35 + 0.3 * math.sin(x * 0.05):
+                b[y, x] = 13
+            if y == 22 and bayer4(x + y, y) < 0.5:
+                b[y, x] = 7
+    sx, sy = 60, 12
+    for y in range(H):
+        for x in range(BW):
+            d = math.hypot(x - sx, y - sy)
+            if d <= 3.0:
+                b[y, x] = 11
+            elif d <= 6.5 and bayer4(x, y) < 1 - (d - 3.0) / 3.5 * 0.8:
+                b[y, x] = 10
+    x = 0
+    while x < BW:                             # the Hyperscalers' halls, far off
+        w, h = rng.randint(10, 26), rng.randint(2, 4)
+        for xx in range(x, min(BW, x + w)):
+            for y in range(ground - h, ground + 1):
+                b[y, xx] = 12 if y == ground - h else (9 if (xx - x) % 6 == 0 else 8)
+        x += w + rng.randint(4, 24)
+    b[ground + 1:] = 14
+    return f, b, fpal, bpal
+
+
 def pack4(img):
     """Pack 4-bit pixels two per byte, low nibble = left pixel."""
     return (img[:, 0::2] | (img[:, 1::2] << 4)).astype(np.uint8).tobytes()
@@ -471,4 +755,6 @@ def pack4(img):
 LEAGUES = {
     "dumps": dict(pal=DUMPS_PAL, tiles=paint_dumps_tiles, background=paint_dumps_background,
                   horizon=paint_dumps_horizon),
+    "runoff": dict(pal=RUNOFF_PAL, tiles=paint_runoff_tiles, background=paint_runoff_background,
+                   horizon=paint_runoff_horizon),
 }
