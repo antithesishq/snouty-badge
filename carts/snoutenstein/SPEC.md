@@ -331,7 +331,8 @@ beating grin.
 boot -> TITLE (logo, "PRESS A", "powered by deterministic replay" tag line, 10 s)
      -> DEMO: replay a recorded input log on Production; "DEMO" blinks in the HUD
          (Adrian, 2026-09-29: the most interesting level; dying in the demo is fine)
-         -> any A/B/Start/joystick input -> PLAYING from that exact state (takeover)
+         -> any button or joystick input -> TITLE (the demo is a later level;
+            Adrian, 2026-10-04: interacting sends you to the menu)
          -> log ends or 3 min -> TITLE
 TITLE -> A/B/Start -> PLAYING, level 1, fresh state
 PLAYING -> exit door -> INTERMISSION (5 s or A) -> next level, or VICTORY -> TITLE
@@ -339,9 +340,10 @@ PLAYING -> HP 0 -> DEAD (frozen; hold B) -> PLAYING, or meter empty -> level res
 PLAYING -> Start -> PAUSED -> Start -> PLAYING
 ```
 
-Takeover keeps the world as is and hands the controls over on the next
-tick, with the meter refilled (recorded as a rewind patch so the keyframe
-self-check keeps agreeing). Select does not take over. The demo is a
+Interrupting the demo ends it on the spot and shows the title; the press
+is spent there, so it does not also pick a menu entry. (Until 2026-10-04
+the player took over the demo's world with the meter refilled; that
+dropped a newcomer into Production.) The demo is a
 fixed seed plus a run-length input log: authored as a `preview.mjs`
 script (`tools/scripts/demo_build_farm.json`), baked into `.text` by
 `tools/gen_demo.py` as `cart/src/demos/build_farm.zig` together with the

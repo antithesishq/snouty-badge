@@ -221,6 +221,7 @@ Keys (from `sycl-badge/simulator/README.md`) and what they do here:
 | Backspace or T     | Select, tap    | Select (3 frames), 200 ms after the release |
 | Backspace or T     | Select, hold 0.5 s | opens the emulator menu, game paused    |
 | Backspace or T, tap then hold | Select, tap then press and hold | fast forward while held (up to 4x) |
+| ... then Left arrow (WASD: A) | ... then Left (held Select) | chorded rewind: game frozen, Left/Right step 0.5 s, let go of Select to play on |
 | Shift              | Joystick click | nothing (the OS owns it)                    |
 | Escape             | System menu    | leaves the cart                             |
 
@@ -250,7 +251,26 @@ forward is the OS chord: nothing is delivered. In the simulator and
 `node ../../tools/preview.mjs <rex-runner wasm> --frames 420 --script
 tools/scripts/ff_rex.json` (`docs/fast_forward.gif`: Rex Runner at 1x, at
 4x, at 1x again). While fast forwarding, the debug overlay's `avg`/`max`
-time every frame of the update, not one step.
+time every frame of the update, not one step. During fast forward Left is
+reserved for the chorded rewind and never reaches the game (a Left held
+from before stays masked until released and pressed again).
+
+Chorded rewind (root `docs/FAST_FORWARD.md`, "Chorded rewind"): press Left
+while fast forwarding. The game freezes and steps back 0.5 s at once; with
+Select still held, Left steps back and Right forward 0.5 s at a time,
+repeating 4 times a second while held, exactly as the menu's scrubber
+(the same `rewind.step`). Only the menu's scrub bar shows, at the bottom
+("Scrub: -1.5 / 3.5s", or "Rewind: no history"); no `>>`. Let go of
+Select: the game plays on from that position and the future after it is
+dropped, as resuming from the menu does (a Left or Right still held waits
+for a release). No button reaches the game meanwhile, and Start (the OS
+chord with the held Select) changes nothing. `docs/rewind.gif`
+(`tools/scripts/rewind_rex.json`): Rex Runner at 1x, fast forwarded into
+a cactus, rewound 1.2 s, forward 0.5 s, played on; `docs/rewind_sheet.png`.
+`tools/scripts/rewind_eq_menu.json` and `rewind_eq_chord.json` reach game
+frame 198 by the menu and by fast forward, step back three times to frame
+120, resume and jump twice: frames 290..419 of the first equal frames
+264..393 of the second below the debug overlay (PLAN.md).
 
 In the menu (drawn over the frozen game frame):
 
@@ -265,7 +285,7 @@ On-screen hints (`lib/hint.zig`, shared with Gear, Genesis and Lynx): the
 splash shows "Hold Select: menu"; the first 3 s of play after the splash or
 the picker show it with "2x Sel+hold: fast" under it (a two-line strip at
 the bottom, gone at the first button press); About ends with "2x
-Sel+hold: fast"; in
+Sel+hold: fast", "then Left: rewind" and "B: back"; in
 the menu, the bottom line on Resume reads "Left/Right: rewind" ("Rewind: no
 history" before the first keyframe; the `Scrub:` readout once parked or on
 other rows) and the footer reads "B: back to game".
@@ -462,8 +482,9 @@ What happens:
 Menu > About shows the ROM's header title, mapper and size, "Source:
 drive" with the file name (cut to 18 characters) or "Source: embedded"
 with the embedded file's name (simulator and `-Drom-source=embed`), its
-CRC32 and the model (DMG or CGB), and "fragmented: N banks" when a drive
-file is not contiguous (those banks go through a slower per-sector path).
+CRC32 and the model (DMG or CGB); "Fragmented: N" replaces "Source: drive"
+when N banks of a drive file are not contiguous (those banks go through a
+slower per-sector path).
 The debug overlay's third line is the keyframe count and `D` (drive) or
 `E` (embedded).
 
@@ -503,7 +524,8 @@ The first run's frame 180 shows 2048 with the overlay line `kf N D` (M5
 showed `slots 6 D`, its pool form); the
 second shows the picker at frame 50 (`docs/m5_picker.png`) and the About
 screen at frame 280 (`docs/m5_about.png`: Source drive, CRC 4380CC7A, which
-is `zlib.crc32` of `roms/2048.gb`, "fragmented: 2 banks"). Picking the
+is `zlib.crc32` of `roms/2048.gb`, "fragmented: 2 banks", since
+2026-10-04 "Fragmented: 2"). Picking the
 second file (`--press START:30-31,DOWN:45-46,A:60-61`) runs Blargg's
 `cpu_instrs` from a fragmented 64 KB MBC1 file through the per-sector path.
 This was done on 2026-09-29 in a scratch merge of M5 with `gear/m0`; the
@@ -521,3 +543,15 @@ as zero-wait unless `--flash-read-cycles N` is given), how long finding and
 mapping takes at start (the bench's modelled start-up is 1.5 ms with one
 file), and that the drive still mounts and the OS menu still works with ROM
 files on it.
+
+## 10. Link cable (two badges)
+
+Two badges running Snouty Boy, joined by a 3-pin JST-SH cable between their
+UART headers (either orientation; docs/LINK.md at the root), act as a Game
+Boy link cable. "Link cable connected" shows for two seconds when the other
+badge is found (it must be running Snouty Boy too) and "Link cable
+unplugged" when it goes. While linked, fast forward, the chorded rewind and
+the menu's scrubber are off. Tetris 2-player: on both, Start on the title
+and Right to 2PLAYER; press Start on one badge first (the master), then on
+the other. The host test `tests/link_unit.zig` plays exactly that with two
+consoles when `tests/roms/tetris.gb` is present (your own dump).

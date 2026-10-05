@@ -29,6 +29,12 @@ const Fake = struct {
     menu_frames: u32 = 0,
     /// Menu frames that saw a fresh A or B (a row acted on, or a resume).
     menu_acts: u32 = 0,
+    rewind_opens: u32 = 0,
+    rewind_frames: u32 = 0,
+    rewind_closes: u32 = 0,
+    /// Chorded-rewind time steps taken, and their sum (0.5 s units).
+    scrub_steps: u32 = 0,
+    position: i32 = 0,
 
     pub fn splash_frame(_: *Fake, skip: bool) bool {
         return skip;
@@ -56,6 +62,17 @@ const Fake = struct {
         return if (act) .resume_game else .stay;
     }
     pub fn menu_close(_: *Fake) void {}
+    pub fn rewind_open(f: *Fake) void {
+        f.rewind_opens += 1;
+    }
+    pub fn rewind_frame(f: *Fake, dir: i2) void {
+        f.rewind_frames += 1;
+        f.position += dir;
+        if (dir != 0) f.scrub_steps += 1;
+    }
+    pub fn rewind_close(f: *Fake) void {
+        f.rewind_closes += 1;
+    }
     pub fn halted_frame(_: *Fake) void {}
 };
 
@@ -238,4 +255,119 @@ test "flow: picker cursor starts on the first playable file and skips no row" {
     try testing.expectEqual(@as(?usize, null), p.update(.{ .cur = @bitCast(ctl(&.{.a})) }, &playable));
     // B is no way out (no embedded ROM in the badge build).
     try testing.expectEqual(@as(?usize, null), p.update(.{ .cur = @bitCast(ctl(&.{.b})) }, &playable));
+}
+
+/// Into the game, then tap Select and press it again: fast forward.
+fn fast_forwarding(fl: *Flow, fake: *Fake) !void {
+    frames(fl, fake, &.{.a}, 1); // skip the splash
+    frames(fl, fake, &.{}, 2);
+    frames(fl, fake, &.{.select}, 2);
+    frames(fl, fake, &.{}, 2);
+    const fast = fake.fast_steps;
+    frames(fl, fake, &.{.select}, 5);
+    try testing.expectEqual(fast + 5, fake.fast_steps);
+}
+
+test "flow: Left during fast forward rewinds until Select is let go" {
+    var fake: Fake = .{};
+    var fl: Flow = .{};
+    try fast_forwarding(&fl, &fake);
+
+    // Right reaches the game while fast forwarding; Left never does.
+    frames(&fl, &fake, &.{ .select, .right }, 2);
+    try testing.expectEqual(core.Pad.right, fake.last_pad);
+    frames(&fl, &fake, &.{.select}, 1);
+
+    // Left: the game freezes and steps back once at once.
+    const steps = fake.steps;
+    frames(&fl, &fake, &.{ .select, .left }, 1);
+    try testing.expectEqual(flow.State.rewind, fl.state);
+    try testing.expectEqual(@as(u32, 1), fake.rewind_opens);
+    try testing.expectEqual(@as(i32, -1), fake.position);
+    // Held: another step back every `repeat_frames` (4 a second).
+    frames(&fl, &fake, &.{ .select, .left }, 2 * input.repeat_frames);
+    try testing.expectEqual(@as(i32, -3), fake.position);
+    frames(&fl, &fake, &.{.select}, 3);
+    try testing.expectEqual(@as(i32, -3), fake.position);
+    // Right steps forward, Left and Right taps once each.
+    frames(&fl, &fake, &.{ .select, .right }, 1);
+    frames(&fl, &fake, &.{.select}, 1);
+    frames(&fl, &fake, &.{ .select, .left }, 1);
+    frames(&fl, &fake, &.{.select}, 1);
+    frames(&fl, &fake, &.{ .select, .left }, 1);
+    try testing.expectEqual(@as(i32, -4), fake.position);
+    // Nothing reaches the game: A, B, Up, Start (the OS chord with the held
+    // Select) neither step it nor end the rewind, and the position stays.
+    frames(&fl, &fake, &.{ .select, .a, .b, .up }, 3);
+    frames(&fl, &fake, &.{ .select, .start }, 40);
+    frames(&fl, &fake, &.{.select}, 2);
+    try testing.expectEqual(flow.State.rewind, fl.state);
+    try testing.expectEqual(steps, fake.steps);
+    try testing.expectEqual(@as(i32, -4), fake.position);
+    try testing.expectEqual(@as(u32, 0), fake.menu_opens);
+
+    // Let go of Select with Left still held: resume in the same update with
+    // nothing on the pad; the held Left waits for a release.
+    frames(&fl, &fake, &.{.left}, 1);
+    try testing.expectEqual(flow.State.running, fl.state);
+    try testing.expectEqual(@as(u32, 1), fake.rewind_closes);
+    try testing.expectEqual(steps + 1, fake.steps);
+    try testing.expectEqual(@as(u8, 0), fake.last_pad);
+    const fast = fake.fast_steps;
+    for (0..input.ff_tap_window + input.tap_frames + 2) |_| {
+        frames(&fl, &fake, &.{.left}, 1);
+        try testing.expectEqual(@as(u8, 0), fake.last_pad);
+    }
+    try testing.expectEqual(fast, fake.fast_steps);
+    frames(&fl, &fake, &.{}, 1);
+    frames(&fl, &fake, &.{.left}, 1);
+    try testing.expectEqual(core.Pad.left, fake.last_pad);
+    try testing.expectEqual(@as(i32, -4), fake.position);
+
+    // The menu still opens on a long hold afterwards.
+    frames(&fl, &fake, &.{}, 1);
+    frames(&fl, &fake, &.{.select}, input.hold_frames);
+    try testing.expectEqual(flow.State.menu, fl.state);
+}
+
+test "flow: a Left held into fast forward stays the rewind key" {
+    var fake: Fake = .{};
+    var fl: Flow = .{};
+    frames(&fl, &fake, &.{.a}, 1);
+    frames(&fl, &fake, &.{}, 2);
+    // Walking left, then the double tap and hold: Left is masked while
+    // fast forwarding and, not pressed afresh, does not rewind.
+    frames(&fl, &fake, &.{.left}, 2);
+    try testing.expectEqual(core.Pad.left, fake.last_pad);
+    frames(&fl, &fake, &.{ .left, .select }, 2);
+    frames(&fl, &fake, &.{.left}, 2);
+    frames(&fl, &fake, &.{ .left, .select }, 10);
+    try testing.expectEqual(flow.State.running, fl.state);
+    try testing.expectEqual(@as(u32, 10), fake.fast_steps);
+    try testing.expectEqual(@as(u8, 0), fake.last_pad);
+    // Released and pressed again inside the hold: the rewind.
+    frames(&fl, &fake, &.{.select}, 1);
+    frames(&fl, &fake, &.{ .left, .select }, 1);
+    try testing.expectEqual(flow.State.rewind, fl.state);
+    try testing.expectEqual(@as(i32, -1), fake.position);
+    // Select let go at once: resume, no tap.
+    frames(&fl, &fake, &.{}, input.ff_tap_window + input.tap_frames + 2);
+    try testing.expectEqual(flow.State.running, fl.state);
+    try testing.expectEqual(@as(u8, 0), fake.last_pad);
+}
+
+test "flow: linked, the fast-forward gesture steps at 1x and Left does not rewind" {
+    var fake: Fake = .{};
+    var fl: Flow = .{ .linked = true };
+    frames(&fl, &fake, &.{.a}, 1); // skip the splash
+    frames(&fl, &fake, &.{}, 2);
+    frames(&fl, &fake, &.{.select}, 2);
+    frames(&fl, &fake, &.{}, 2);
+    const steps = fake.steps;
+    frames(&fl, &fake, &.{.select}, 5);
+    frames(&fl, &fake, &.{ .select, .left }, 5);
+    try testing.expectEqual(@as(u32, 0), fake.fast_steps);
+    try testing.expectEqual(@as(u32, 0), fake.rewind_opens);
+    try testing.expectEqual(flow.State.running, fl.state);
+    try testing.expectEqual(steps + 10, fake.steps);
 }

@@ -16,7 +16,7 @@ authoritative table is `SPEC.md` section 3.
 | Title | A | Z or K | Start the campaign |
 | Title | B / Start | X or J / Enter or Y | Start the imported E1M1 / the test level |
 | Title | Select | Backspace or T | Sound on/off; the cart boots silent ([docs/SOUND.md](../../../docs/SOUND.md)) |
-| Title | (leave it 10 s) | | Attract demo; A, B, Start or the joystick takes over |
+| Title | (leave it 10 s) | | Attract demo; any button or the joystick returns to the title |
 | Playing | Joystick up / down | Up / Down or W / S | Walk forward / back |
 | Playing | Joystick left / right | Left / Right or A / D | Turn (no strafe) |
 | Playing | A | Z or K | Fire / swat |
@@ -246,10 +246,10 @@ Left alone on the title for 10 s (600 ticks), the cart plays a recorded
 demo of Production: `sim.init` of level 2 with a fixed seed, driven by an
 input log baked into the cart (`cart/src/demos/build_farm.zig`) instead of
 the pad. A blinking "DEMO" sits at the top of the view while it runs. Any
-edge on A, B, Start or the joystick (up, down, left, right) takes over on
-the spot: the demo stops without stepping that tick, the rewind meter is
-refilled, and the controls are live from the next tick. Select is ignored
-during the demo. The demo returns to the title when the log runs out, after
+edge on A, B, Start, Select or the joystick (up, down, left, right) ends
+the demo without stepping that tick and shows the title; that press does
+not also pick a menu entry. The demo is a later level, so it is not handed
+over. The demo also returns to the title when the log runs out, after
 3 minutes, after 2 s dead, or once an intermission or victory card has
 shown.
 

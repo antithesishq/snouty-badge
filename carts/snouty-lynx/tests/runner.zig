@@ -16,8 +16,11 @@
 //!   until released, and the core steps once in that same update.
 //! - Then each update steps one Lynx frame with the pad word: d-pad, A ->
 //!   A (outer), B -> B (inner), START -> Pause; a SELECT press released
-//!   before 30 updates is Option 1 for 3 frames from the release; a longer
-//!   hold would open the menu (M2: ignored, as main.zig ignores it now).
+//!   before 30 updates is Option 1 for 3 frames once the 12-update
+//!   fast-forward window after the release runs out with no second press
+//!   (a second press drops it: the double tap, whose fast forward this
+//!   model does not step, one frame per update as ever); a longer hold
+//!   would open the menu (ignored here).
 const std = @import("std");
 const core = @import("core");
 const Pad = core.Pad;
@@ -35,10 +38,12 @@ pub const Btn = struct {
     pub const all: u16 = start | select | a | b | up | down | left | right;
 };
 
-/// frontend/splash.zig `frames`; frontend/input.zig `hold_frames`, `tap_frames`.
+/// frontend/splash.zig `frames`; frontend/input.zig `hold_frames`,
+/// `tap_frames`; frontend/tuning.zig `ff_tap_window`.
 pub const splash_frames = 72;
 pub const hold_frames = 30;
 pub const tap_frames = 3;
+pub const ff_tap_window = 12;
 
 pub fn button_bit(name: []const u8) ?u16 {
     const map = [_]struct { []const u8, u16 }{
@@ -81,6 +86,8 @@ pub const Frontend = struct {
     holding: bool = false,
     held_frames: u16 = 0,
     opt1_left: u8 = 0,
+    tap_window: u8 = 0,
+    fast: bool = false,
     /// Select holds that would have opened the menu (M2).
     menu_requests: u32 = 0,
 
@@ -99,6 +106,9 @@ pub const Frontend = struct {
             f.suppress = f.cur;
             f.holding = false;
             f.held_frames = 0;
+            f.opt1_left = 0;
+            f.tap_window = 0;
+            f.fast = false;
             f.running = true;
         }
         return f.game_frame();
@@ -115,7 +125,20 @@ pub const Frontend = struct {
         if (live & Btn.b != 0) pad |= Pad.b;
         if (live & Btn.start != 0) pad |= Pad.pause;
         const pressed_select = live & Btn.select != 0 and f.cur & ~f.prev & Btn.select != 0;
-        if (pressed_select) {
+        if (f.fast) {
+            if (f.cur & Btn.start != 0 or f.cur & Btn.select == 0) f.fast = false;
+        } else if (f.tap_window != 0) {
+            if (f.cur & Btn.start != 0) {
+                f.tap_window = 0;
+            } else if (pressed_select) {
+                f.tap_window = 0;
+                f.fast = true;
+            } else {
+                f.tap_window -= 1;
+                if (f.tap_window == 0) f.opt1_left = tap_frames;
+            }
+        }
+        if (!f.fast and pressed_select) {
             f.holding = true;
             f.held_frames = 0;
         }
@@ -130,7 +153,7 @@ pub const Frontend = struct {
                 }
             } else {
                 f.holding = false;
-                f.opt1_left = tap_frames;
+                f.tap_window = ff_tap_window;
             }
         }
         if (f.opt1_left > 0) {
@@ -219,12 +242,20 @@ test "golden: runner input model (splash skip, suppress, Select tap)" {
     try std.testing.expectEqual(@as(?u16, 0), fe.update(0));
     try std.testing.expectEqual(@as(?u16, Pad.up | Pad.b), fe.update(Btn.up | Btn.b));
     try std.testing.expectEqual(@as(?u16, Pad.pause), fe.update(Btn.start));
-    // Select tap: Option 1 for three frames from the release.
+    // Select tap: Option 1 for three frames once the fast-forward window
+    // after the release (12 updates) runs out.
     try std.testing.expectEqual(@as(?u16, 0), fe.update(Btn.select));
+    for (0..ff_tap_window) |_| try std.testing.expectEqual(@as(?u16, 0), fe.update(0));
     try std.testing.expectEqual(@as(?u16, Pad.opt1), fe.update(0));
     try std.testing.expectEqual(@as(?u16, Pad.opt1), fe.update(0));
     try std.testing.expectEqual(@as(?u16, Pad.opt1), fe.update(0));
     try std.testing.expectEqual(@as(?u16, 0), fe.update(0));
+    // A double tap drops it (the second press held is fast forward).
+    try std.testing.expectEqual(@as(?u16, 0), fe.update(Btn.select));
+    try std.testing.expectEqual(@as(?u16, 0), fe.update(0));
+    for (0..2 * hold_frames) |_| try std.testing.expectEqual(@as(?u16, Pad.up), fe.update(Btn.select | Btn.up));
+    for (0..2 * ff_tap_window) |_| try std.testing.expectEqual(@as(?u16, 0), fe.update(0));
+    try std.testing.expectEqual(@as(u32, 0), fe.menu_requests);
     // The splash also ends by itself.
     var fe2: Frontend = .{};
     var n: u32 = 0;

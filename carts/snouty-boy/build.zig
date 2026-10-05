@@ -123,6 +123,8 @@ fn build_cart_modules(b: *Build, cart: *Build.Module, cart_api: *Build.Module, s
     cart.addImport("iris", b.createModule(.{ .root_source_file = b.path("lib/iris_mark.zig") }));
     // The control hints (splash, first seconds of play, menu), shared with Gear, Genesis, Lynx.
     cart.addImport("hint", b.createModule(.{ .root_source_file = b.path("lib/hint.zig") }));
+    // The badge-to-badge link (docs/LINK.md): the Game Boy link cable.
+    cart.addImport("link", b.createModule(.{ .root_source_file = b.path("lib/link.zig") }));
     // The streaming-audio feed shared with Gear and Genesis (docs/EMU_SOUND.md).
     cart.addImport("audio_feed", b.createModule(.{ .root_source_file = b.path("lib/audio_feed.zig") }));
 

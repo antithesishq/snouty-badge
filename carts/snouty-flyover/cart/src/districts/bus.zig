@@ -3,9 +3,12 @@
 //! along the row so the pulse rotation makes the light travel (lanes 0 and 2
 //! in pulse A dash, away from the camera; lanes 1 and 3 in pulse B dash,
 //! towards it), and pylons beside the deck. Verb: send a packet, a white
-//! 3x3 block racing along a lane from just ahead of the camera to the Bus
-//! end. The Bus under the camera is entered and ticked by world.tick (it is
-//! never the live district); the autopilot's packet is scheduled here.
+//! block across all four lanes (each lane's cells a little higher) that
+//! starts where it shows just above the caption and races off down the deck,
+//! running on over the next district's rows when the Bus ends in front of
+//! it (PLAN.md M4.2). The Bus under the camera is entered and ticked by
+//! world.tick (it is never the live district); the autopilot's packet is
+//! scheduled here.
 const world = @import("../world.zig");
 const camera = @import("../camera.zig");
 const palette = @import("../palette.zig");
@@ -66,56 +69,68 @@ pub fn row(seed: u32, ly: i32, h: *[world.W]u8, c: *[world.W]u8) void {
     }
 }
 
-/// The static colour of deck cell x (deck_x0 <= x < deck_x1) on local row
-/// ly, as row() paints it; the deck height is world.floor + deck_h there.
-noinline fn deck_colour(ly: i32, x: i32) u8 {
-    if (x < deck_x0 + rim_w or x >= deck_x1 - rim_w) return palette.bus_rim;
-    for (lane_x, 0..) |lx, k| {
-        if (x == lx or x == @as(i32, lx) + 1) {
-            const base: u8 = if (k & 1 == 0) palette.pulse_a_dash else palette.pulse_b_dash;
-            return base + @as(u8, @intCast((ly + lane_phase * @as(i32, @intCast(k))) & 15));
-        }
-    }
-    return palette.bus_road;
-}
-
 // --- Packet knobs -----------------------------------------------------------
 
 /// Packets in flight at once; a press with all slots busy is dropped.
 const max_packets = 4;
-/// Packet footprint: packet_w cells from its lane's left cell, packet_len
-/// rows, packet_up cells above the deck, colour palette.white (a tall
-/// block top, so never a pulse index).
-const packet_w = 3;
-const packet_len = 3;
-const packet_up = 6;
-/// Rows per frame a packet moves, and how far ahead of the camera row it
-/// starts. PLAN asked for 6 and 6; at 6 rows per frame a packet crosses the
-/// ~40 rows left of the Bus in 7 frames, and from cam_row + 6 it starts
-/// under the bottom of the screen (at Bus altitude the bottom row sees about
-/// 13 rows ahead), so it is 3 rows per frame from cam_row + 12: on screen
-/// from its first frame for about 20 frames.
-const packet_speed = 3;
-const packet_ahead = 12;
-/// A packet runs on the lane nearest the camera x whose centre is at least
-/// lane_clear cells to the side: the anteater (sprite.zig, 44 px wide at the
-/// bottom centre) hides a lane closer than that from about 16 to 33 rows
-/// ahead, most of a packet's run. On the Bus centre line (the autopilot)
-/// this is lane 0. PLAN asked for the nearest lane (lane 1 for the
-/// autopilot), which the preview showed hidden behind the sprite.
-const lane_clear = 8;
-
-comptime {
-    // A packet must fit on the deck from every lane.
-    for (lane_x) |x| if (x + packet_w > deck_x1 - rim_w) @compileError("packet leaves the deck");
-}
+/// Packet footprint: a word on all four lanes, the deck between the rims
+/// (packet_x0 .. packet_x1) for packet_len rows, each lane's two cells
+/// white and packet_bit higher than the rest (cell_top, cell_colour). A
+/// single lane is too thin to read: from manual altitude 72 the deck shows
+/// from 31 rows ahead, where a 3-cell block is 8 px wide.
+const packet_x0 = deck_x0 + rim_w;
+const packet_x1 = deck_x1 - rim_w;
+const packet_w = packet_x1 - packet_x0;
+const packet_len = 4;
+const packet_bit = 3;
+/// Packet top: packet_below cells under the altitude the camera is heading
+/// for (the clearance scan in camera.zig keeps 12 cells over anything
+/// ahead, so a packet top, lane cells included, at least 13 under that
+/// never holds the camera up): a camera sinking d cells per frame has a
+/// target 2^spring_shift d below it (camera.zig's altitude spring), and the
+/// autopilot's is at most floor + the live district's alt_at. At most
+/// packet_up_max or half the camera's height over the deck above the deck,
+/// whichever is more (from high up the deck ahead is hidden by the
+/// anteater, and only a taller block shows beside it), and at least
+/// packet_up_min above it; a camera too low for that (the autopilot over a
+/// Bus before the Pipeline) gets a flat packet, the deck recoloured with
+/// nothing raised.
+const packet_below = 16;
+const packet_up_min = 4;
+const packet_up_max = 32;
+const spring_shift = 4;
+/// A packet starts where its top shows on screen row packet_sy (above the
+/// caption, beside the anteater) but at least packet_near rows ahead, and
+/// runs for packet_life frames, speeding up from packet_v0 by packet_acc
+/// per frame to packet_vmax (rows per frame in 1/16 rows): it holds beside
+/// the anteater for a few frames, then races off. From altitude 72 that is
+/// 20 to about 100 rows ahead, its top climbing from row 90 to row 69; late
+/// in the Bus the camera leaves (leave_rows) about 16 frames after a press.
+const packet_sy = 90;
+const packet_near = 8;
+const packet_v0 = 16;
+const packet_acc = 2;
+const packet_vmax = 64;
+const packet_life = 36;
+/// Late in the Bus the deck ahead is under the bottom of the screen, so a
+/// packet runs on over the next district's rows (only cells no higher than
+/// its top, each put back unless the district rewrote it). The Bus is ticked
+/// only while the camera is on it (world.tick), so every packet is taken
+/// down once the camera is within leave_rows of the Bus end (it moves under
+/// 2 rows per frame), and a press there is refused.
+const leave_rows = 2;
 
 // --- Live state -------------------------------------------------------------
 
 const Packet = struct {
-    /// World row of the packet's first row; its lane's left cell.
-    y: i32,
-    x: u8,
+    /// World row of the packet's first row in 1/16 rows (row = yq >> 4),
+    /// its top (cells), frames run.
+    yq: i32,
+    top: u8,
+    age: u8,
+    /// The cells under the footprint before paint().
+    under_h: [packet_len][packet_w]u8,
+    under_c: [packet_len][packet_w]u8,
 };
 
 /// The Bus under the camera (set by enter, which world.tick runs before
@@ -125,11 +140,15 @@ var packets: [max_packets]Packet = undefined;
 var n_packets: u32 = 0;
 /// Camera row seen by the last tick (packet start and the autopilot trigger).
 var last_row: i32 = 0;
+/// Camera altitude (Q16) seen by the last tick, and how far it fell since
+/// the tick before (Q16 cells, 0 when level or climbing).
+var last_alt: i32 = 0;
+var alt_fall: i32 = 0;
 /// Packets launched since boot (debug_bus_packets).
 var total_sent: u32 = 0;
 
 /// Packets in flight on the Bus under the camera. While this is non-zero the
-/// Bus's rows carry dynamic cells (debug_world_check must skip them).
+/// Bus's rows (and the next district's) carry dynamic cells.
 pub fn in_flight() u32 {
     return n_packets;
 }
@@ -139,80 +158,132 @@ pub fn sent() u32 {
     return total_sent;
 }
 
-/// The camera enters Bus `s`: clear the packet list (the previous Bus's rows
-/// were restored by world.tick or are being regenerated after a skip).
+/// The camera enters Bus `s`: clear the packet list (the previous Bus took
+/// its packets down before the camera left, or the ring is being
+/// regenerated after a skip).
 pub fn enter(s: world.Segment) void {
     seg = s;
     n_packets = 0;
     last_row = s.y0 - 1;
+    last_alt = camera.cam.alt;
+    alt_fall = 0;
 }
 
-/// Write the packet footprint at world row y, lane cell x: raised white
-/// (lit) or the static deck (lit = false). Rows outside the ring are skipped.
-noinline fn paint(y: i32, x: i32, lit: bool) void {
-    var r: i32 = 0;
-    while (r < packet_len) : (r += 1) {
-        const row_cells = world.rows(y + r) orelse continue;
-        var k: i32 = 0;
-        while (k < packet_w) : (k += 1) {
-            const i: usize = @intCast(x + k);
-            row_cells.h[i] = if (lit) world.floor + deck_h + packet_up else world.floor + deck_h;
-            row_cells.c[i] = if (lit) palette.white else deck_colour(y + r - seg.y0, x + k);
+/// Packet cell at strip cell x for a packet top `top`: a lane's two cells
+/// white and packet_bit higher, the cells between them pulse A comet with
+/// the phase running across the deck (the rotation sends glints sideways).
+fn cell_top(x: usize, top: u8) u8 {
+    return if (on_lane(x) and top > world.floor + deck_h) top + packet_bit else top;
+}
+fn cell_colour(x: usize) u8 {
+    return if (on_lane(x)) palette.white else palette.pulse_a + @as(u8, @intCast(x & 15));
+}
+fn on_lane(x: usize) bool {
+    for (lane_x) |lx| if (x == lx or x == lx + 1) return true;
+    return false;
+}
+
+/// Draw packet p, saving the cells under it. Cells higher than the
+/// packet are left alone (it passes behind a district's taller blocks);
+/// rows outside the ring are skipped and saved as 255, above any packet
+/// cell, so unpaint() leaves them alone even once the ring holds them.
+noinline fn paint(p: *Packet) void {
+    for (0..packet_len) |r| {
+        const row_cells = world.rows((p.yq >> 4) + @as(i32, @intCast(r))) orelse {
+            @memset(&p.under_h[r], 255);
+            continue;
+        };
+        for (0..packet_w) |k| {
+            const i = packet_x0 + k;
+            const t = cell_top(i, p.top);
+            p.under_h[r][k] = row_cells.h[i];
+            p.under_c[r][k] = row_cells.c[i];
+            if (row_cells.h[i] > t) continue;
+            row_cells.h[i] = t;
+            row_cells.c[i] = cell_colour(i);
         }
     }
 }
 
-/// Launch a packet on lane `lane` at packet_ahead rows past the camera, if
-/// it fits before the Bus end and a slot is free.
-fn launch(lane: usize) void {
-    const y = last_row + packet_ahead;
-    if (n_packets >= max_packets or y < seg.y0 or y + packet_len > seg.y0 + seg.len) return;
-    packets[n_packets] = .{ .y = y, .x = lane_x[lane] };
-    n_packets += 1;
-    total_sent +%= 1;
-    paint(y, lane_x[lane], true);
+/// Put back the cells packet p painted, each field only while it still
+/// holds the packet's value: a district tick may have rewritten a cell
+/// since (the Tree's search trail recolours its ridges every frame), and
+/// what it wrote stays.
+noinline fn unpaint(p: *const Packet) void {
+    for (0..packet_len) |r| {
+        const row_cells = world.rows((p.yq >> 4) + @as(i32, @intCast(r))) orelse continue;
+        for (0..packet_w) |k| {
+            const i = packet_x0 + k;
+            const t = cell_top(i, p.top);
+            if (p.under_h[r][k] > t) continue;
+            if (row_cells.h[i] == t) row_cells.h[i] = p.under_h[r][k];
+            if (row_cells.c[i] == cell_colour(i)) row_cells.c[i] = p.under_c[r][k];
+        }
+    }
 }
 
-/// Per-frame dataflow on the Bus under the camera: the autopilot's packet
-/// when the camera crosses verb_at, then every packet moves packet_speed
-/// rows (all restored first, then all drawn, so packets on one lane never
-/// erase each other); a packet whose next position passes the Bus end is
-/// retired, leaving the deck as row() made it.
+/// Launch a packet where its top shows on screen row packet_sy, if a slot
+/// is free and the camera is not about to leave the Bus.
+fn launch() bool {
+    if (n_packets >= max_packets or last_row + leave_rows >= seg.y0 + seg.len) return false;
+    const deck_top: i32 = world.floor + deck_h;
+    const cam_alt = camera.cam.alt >> fixed.Q;
+    var goal = (camera.cam.alt - (alt_fall << spring_shift)) >> fixed.Q;
+    if (camera.autopilot) {
+        const live = world.live();
+        goal = @min(goal, world.floor + world.info(live.kind).alt_at(last_row - live.y0));
+    }
+    const up = @min(@min(cam_alt, goal) - packet_below - deck_top, @max(packet_up_max, (cam_alt - deck_top) >> 1));
+    const top = deck_top + if (up < packet_up_min) 0 else @min(up, 254 - packet_bit - deck_top);
+    const p = &packets[n_packets];
+    p.* = .{
+        .yq = (last_row + camera.rows_ahead(packet_sy, top, packet_near)) << 4,
+        .top = @intCast(top),
+        .age = 0,
+        .under_h = undefined,
+        .under_c = undefined,
+    };
+    paint(p);
+    n_packets += 1;
+    total_sent +%= 1;
+    return true;
+}
+
+/// Per-frame dataflow on the Bus under the camera: every packet is taken
+/// down (newest first, so overlapping packets unwind in order), then each
+/// still running moves on and is drawn again (oldest first);
+/// near the Bus end all of them stay down. The autopilot's packet goes out
+/// when the camera crosses verb_at.
 pub fn tick(frame: u32, cam_row: i32) void {
     _ = frame;
     const trigger = seg.y0 + verb_at;
     const cross = last_row < trigger and cam_row >= trigger;
     last_row = cam_row;
-    for (packets[0..n_packets]) |p| paint(p.y, p.x, false);
+    alt_fall = @max(last_alt - camera.cam.alt, 0);
+    last_alt = camera.cam.alt;
+    var k = n_packets;
+    while (k > 0) {
+        k -= 1;
+        unpaint(&packets[k]);
+    }
+    if (cam_row + leave_rows >= seg.y0 + seg.len) {
+        n_packets = 0;
+        return;
+    }
     var j: u32 = 0;
-    for (packets[0..n_packets]) |p| {
-        const y = p.y + packet_speed;
-        if (y + packet_len > seg.y0 + seg.len) continue;
-        packets[j] = .{ .y = y, .x = p.x };
-        paint(y, p.x, true);
+    for (0..n_packets) |i| {
+        if (packets[i].age + 1 >= packet_life) continue;
+        if (j != i) packets[j] = packets[i];
+        packets[j].yq += @min(packet_v0 + packet_acc * @as(i32, packets[j].age), packet_vmax);
+        packets[j].age += 1;
+        paint(&packets[j]);
         j += 1;
     }
     n_packets = j;
-    if (cross and camera.autopilot) verb();
+    if (cross and camera.autopilot) _ = verb();
 }
 
-/// The lane a packet takes from camera cell cx (see lane_clear).
-fn lane_for(cx: i32) usize {
-    var best: usize = 0;
-    var best_d: i32 = 4 * world.W;
-    for (lane_x, 0..) |x, k| {
-        // Doubled coordinates: the lane centre is its right cell's left edge
-        // (2x + 2), the camera cell's centre 2cx + 1.
-        const d: i32 = @intCast(@abs(2 * cx + 1 - 2 * (@as(i32, x) + 1)));
-        if (d >= 2 * lane_clear and d < best_d) {
-            best_d = d;
-            best = k;
-        }
-    }
-    return best;
-}
-
-/// B on the Bus under the camera: a packet beside the camera.
-pub fn verb() void {
-    launch(lane_for((camera.cam.x >> fixed.Q) & (world.W - 1)));
+/// B on the Bus under the camera: a packet down the deck ahead.
+pub fn verb() bool {
+    return launch();
 }

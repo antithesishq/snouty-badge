@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Screensaver-loop check (M1): runs the cart headless through the shared
+// Screensaver-loop and steer mode check (M1..M3): runs the cart headless through the shared
 // ../../tools/preview.mjs and asserts on the debug exports (PLAN.md Track B
 // item 4) after the last update, at fixed ticks, and over per-tick samples.
 //
@@ -33,7 +33,27 @@
 //      else (newer firmware opens its settings box over the cart).
 //   I  orbit: Right at 300; REBUILD (3) with orbit 1 at 301, GROW again by
 //      449 with no cells lost.
-//   J  B: joint style mixed -> elbows (1); Up, Up, Down: debug_speed 2 (2x).
+//   J  B shows the nametag (debug_joint_style never changes); Up, Up, Down:
+//      debug_speed 2 (2x).
+//   O  random joint styles: A every 140 ticks from 200, 12 scenes; the style
+//      changes only between scenes and all three (mixed, elbow, ball) show.
+// The nametag (B in the screensaver, M3):
+//   K  B at tick 60, over the boot strip: the nametag replaces it
+//      (debug_nametag 1, debug_name_strip 0); its Iris mark flips like a
+//      coin 45 ticks later (debug_iris_width < 24 somewhere in 105..135, 24
+//      before); A at 150 dissolves and the nametag stays; B at 300 hides it.
+// Steer mode (M3; states 4 steer, 5 rewind, 6 game over):
+//   L  Select at 150: DISSOLVE, then a run in READY by 215 (debug_steer 1,
+//      score 0, one rewind) with debug_steer_map a permutation of the six
+//      grid directions, opposite controls opposite.
+//   M  a scripted path survives: tools/scripts/steer_survive.json (written
+//      by tools/steer_bot.mjs for seed 1) steers 1400 ticks with no crash,
+//      score >= 60.
+//   N  no steering: the pipe hits the wall, REWIND (5), steers again (4)
+//      with the score back by up to 6 cells and the rewind spent, hits the
+//      wall again: GAME OVER (6), best = score; A at 900 starts a fresh run
+//      (score 0, rewind back, 0 crashes); Select at 1100 leads back to the
+//      screensaver (GROW by 1170, debug_steer 0).
 // Every run dumps state, tick, scene, filled, alive, pipes, view, teapots
 // and prints them with the result.
 //
@@ -50,14 +70,14 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), ".."); /
 const REPO = path.resolve(ROOT, "../.."); // repository root, where zig build writes zig-out/
 const PREVIEW = path.join(REPO, "tools", "preview.mjs");
 const OUT_DIR = path.join(ROOT, "out", "cycle");
-const STATE_NAMES = ["BOOT", "GROW", "DISSOLVE", "REBUILD"];
+const STATE_NAMES = ["BOOT", "GROW", "DISSOLVE", "REBUILD", "STEER", "REWIND", "GAME_OVER"];
 const CELLS = 12 * 10 * 12; // grid.cell_count
 const MAX_CMDS = 64; // director.max_cmds
 const DUMP = ["debug_state", "debug_tick", "debug_scene", "debug_filled", "debug_alive", "debug_pipes", "debug_view", "debug_teapots"];
 
 function usage(msg) {
     if (msg) console.error(`check_cycle: ${msg}`);
-    console.error("usage: node tools/check_cycle.mjs [--wasm FILE] [--only A,B,...,J] [--seed S] [--cap N]");
+    console.error("usage: node tools/check_cycle.mjs [--wasm FILE] [--only A,B,...,O] [--seed S] [--cap N]");
     process.exit(2);
 }
 
@@ -139,8 +159,8 @@ const RUNS = [
     },
     {
         name: "H", what: "Start+Select held 200..260 (the OS chord): the cart ignores both", frames: 300,
-        press: ["START:200-260", "SELECT:200-260"], dump: ["debug_paused", "debug_joint_style"],
-        expect: ["debug_paused == 0", "debug_state == 1"],
+        press: ["START:200-260", "SELECT:200-260"], dump: ["debug_paused", "debug_steer"],
+        expect: ["debug_paused == 0", "debug_state == 1", "debug_steer == 0"],
     },
     {
         name: "I", what: "Right at tick 300 orbits: REBUILD, then GROW again from orbit 1", frames: 450,
@@ -153,9 +173,85 @@ const RUNS = [
         },
     },
     {
-        name: "J", what: "B cycles the joint style, Up Up Down leaves 2x", frames: 100,
-        press: ["B:10-10", "UP:20-20", "UP:30-30", "DOWN:40-40"], dump: ["debug_joint_style", "debug_speed"],
-        expect: ["debug_joint_style == 1", "debug_speed == 2"],
+        name: "J", what: "B shows the nametag (the joint style stays put), Up Up Down leaves 2x", frames: 100,
+        press: ["B:10-10", "UP:20-20", "UP:30-30", "DOWN:40-40"], dump: ["debug_nametag", "debug_speed"],
+        sample: ["debug_joint_style"], expect: ["debug_nametag == 1", "debug_speed == 2"],
+        check: (v, meta) => {
+            const js = series(meta, "debug_joint_style");
+            if (!js) return "samples missing from frames.json";
+            return js.every((x) => x === js[0]) ? null : `B changed the joint style (${js[0]} -> ${js.find((x) => x !== js[0])})`;
+        },
+    },
+    {
+        name: "O", what: "each scene picks a joint style at random: A x 11 shows all three", frames: 1700,
+        press: Array.from({ length: 11 }, (_, i) => `A:${200 + i * 140}-${200 + i * 140}`),
+        sample: ["debug_joint_style", "debug_scene"], expect: ["debug_scene >= 12"],
+        check: (v, meta) => {
+            const js = series(meta, "debug_joint_style"), sc = series(meta, "debug_scene");
+            if (!js || !sc) return "samples missing from frames.json";
+            for (let i = 1; i < js.length; i++) {
+                if (js[i] !== js[i - 1] && sc[i] === sc[i - 1]) return `style changed mid-scene at tick ${i}`;
+            }
+            const seen = new Set(js);
+            return seen.size === 3 ? null : `only styles ${[...seen].join(",")} in 12 scenes`;
+        },
+    },
+    {
+        name: "K", what: "B over the boot strip: nametag, coin flip at +45, kept through A, B hides it", frames: 320,
+        press: ["B:60-60", "A:150-150", "B:300-300"], dump: ["debug_nametag", "debug_iris_width"],
+        sample: ["debug_nametag", "debug_name_strip", "debug_iris_width", "debug_state"],
+        at: ["59 debug_name_strip == 1", "61 debug_nametag == 1", "61 debug_name_strip == 0", "299 debug_nametag == 1"],
+        expect: ["debug_nametag == 0", "debug_iris_width == 24"],
+        check: (v, meta) => {
+            const w = series(meta, "debug_iris_width"), st = series(meta, "debug_state");
+            if (!w || !st) return "samples missing from frames.json";
+            if (Math.min(...w.slice(60, 105)) !== 24) return `the mark flipped before tick 105 (${w.slice(60, 105)})`;
+            const dip = Math.min(...w.slice(105, 136));
+            if (dip >= 24) return "the mark never flipped in ticks 105..135";
+            if (!st.slice(150, 300).includes(2)) return "A did not dissolve";
+            return `info: iris width dips to ${dip}`;
+        },
+    },
+    {
+        name: "L", what: "Select at 150: a steer run in READY by tick 215, map a permutation", frames: 216,
+        press: ["SELECT:150-150"], dump: ["debug_steer", "debug_score", "debug_rewinds_left", "debug_steer_map", "debug_head_x", "debug_head_y", "debug_head_z"],
+        at: ["151 debug_state == 2", "151 debug_steer == 0"],
+        expect: ["debug_state == 4", "debug_steer == 1", "debug_score == 0", "debug_rewinds_left == 1", "debug_crashes == 0"],
+        check: (v) => {
+            const m = v.debug_steer_map;
+            const dirs = [0, 1, 2, 3, 4, 5].map((c) => (m >> (3 * c)) & 7);
+            if (new Set(dirs).size !== 6 || dirs.some((d) => d > 5)) return `debug_steer_map ${m} is not a permutation (${dirs})`;
+            for (const [a, b] of [[0, 1], [2, 3], [4, 5]]) if ((dirs[a] ^ 1) !== dirs[b]) return `controls ${a}/${b} are not opposite (${dirs})`;
+            return `info: map up/down/left/right/A/B = ${dirs.map((d) => ["+x", "-x", "+y", "-y", "+z", "-z"][d]).join(" ")}`;
+        },
+    },
+    {
+        name: "M", what: "steer: tools/scripts/steer_survive.json flies 1400 ticks without a crash", frames: 1400,
+        script: "tools/scripts/steer_survive.json", dump: ["debug_score", "debug_crashes", "debug_steer_rate"],
+        expect: ["debug_state == 4", "debug_crashes == 0", "debug_score >= 60"],
+    },
+    {
+        name: "N", what: "steer: wall, REWIND, wall, GAME OVER; A again; Select out", frames: 1170,
+        press: ["SELECT:150-150", "A:900-900", "SELECT:1100-1100"],
+        sample: ["debug_state", "debug_score", "debug_crashes", "debug_rewinds_left", "debug_best", "debug_steer"],
+        expect: ["debug_state == 1", "debug_steer == 0"],
+        at: ["960 debug_state == 4", "960 debug_score == 0", "960 debug_rewinds_left == 1", "960 debug_crashes == 0"],
+        check: (v, meta) => {
+            const st = series(meta, "debug_state"), sc = series(meta, "debug_score"), rw = series(meta, "debug_rewinds_left");
+            const best = series(meta, "debug_best");
+            if (!st || !sc || !rw || !best) return "samples missing from frames.json";
+            const r1 = st.indexOf(5);
+            if (r1 < 0) return "no REWIND";
+            const back = st.indexOf(4, r1);
+            if (back < 0) return "no STEER after the rewind";
+            if (rw[back] !== 0) return "the rewind was not spent";
+            if (sc[back] > sc[r1] || sc[r1] - sc[back] > 6) return `score went ${sc[r1]} -> ${sc[back]} over the rewind`;
+            const go = st.indexOf(6, back);
+            if (go < 0 || go > 899) return "no GAME OVER before tick 900";
+            if (best[go] !== sc[go]) return `best ${best[go]} != score ${sc[go]} at game over`;
+            if (st.slice(go, 900).some((x) => x !== 6)) return "left GAME OVER before A";
+            return `info: rewind at ${r1} (score ${sc[r1]} -> ${sc[back]}), game over at ${go} (score ${sc[go]})`;
+        },
     },
 ];
 
@@ -185,6 +281,7 @@ function preview(name, r, seed) {
     const args = [PREVIEW, opts.wasm, "--quiet", "--seed", String(seed), "--frames", String(r.frames), "--out", out];
     for (const c of r.calls ?? []) args.push("--call", c);
     for (const p of r.press ?? []) args.push("--press", p);
+    if (r.script) args.push("--script", path.join(ROOT, r.script));
     if (r.sample?.length) args.push("--sample", r.sample.join(","), "--sample-every", "1");
     if (r.until) args.push("--until", r.until);
     args.push("--dump-exports", [...DUMP, ...(r.dump ?? [])].join(","));

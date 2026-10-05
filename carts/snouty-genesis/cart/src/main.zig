@@ -20,10 +20,20 @@
 //! Left/Right swap through them, and playing on from a scrubbed position
 //! drops the future. See SPEC.md (design), PLAN.md (milestone contract),
 //! CLAUDE.md (toolchain). The console is created by `begin` once the ROM is
-//! known (`have_md`). Control hints (lib/hint.zig): "Hold Select: menu" on
-//! the splash and in a strip at the bottom for the first 3 s of play after
-//! the splash, picker or help screen (gone at the first fresh press); the
-//! menu has its own.
+//! known (`have_md`). Fast forward (docs/FAST_FORWARD.md at the root):
+//! while the second press of a Select double tap is held, each update steps
+//! up to `tuning.ff_max_frames` Genesis frames (4x) within
+//! `tuning.ff_budget_us`, only the last rendered and none with sound, every
+//! one recorded for the scrubber; `>>4x` sits in the bottom right corner
+//! meanwhile. Where the scrubber exists, Left during that hold turns it
+//! into the chorded rewind: the game freezes under the menu's scrub bar,
+//! Left/Right step time, letting go of Select resumes from there
+//! (`input.Rewind`). A single Select tap (a Genesis button) waits out the 200 ms
+//! in which a second press would make it the double tap. Control hints
+//! (lib/hint.zig): "Hold Select: menu" on the splash and in a strip at the
+//! bottom for the first 3 s of play after the splash, picker or help
+//! screen, then "2x Sel+hold: fast" for 3 s more (gone at the first fresh
+//! press); the menu has its own.
 //!
 //! This file is the root module: the cart exports, the simulator shims
 //! and the `debug_*` exports. The state machine is frontend/app.zig, a
@@ -102,6 +112,8 @@ comptime {
         @export(&debug_scrub_slots, .{ .name = "debug_scrub_slots" });
         @export(&debug_scrub_capacity, .{ .name = "debug_scrub_capacity" });
         @export(&debug_scrub_arena, .{ .name = "debug_scrub_arena" });
+        @export(&debug_ff_frames, .{ .name = "debug_ff_frames" });
+        @export(&debug_chord_rewind, .{ .name = "debug_chord_rewind" });
     }
 }
 
@@ -233,4 +245,17 @@ fn debug_scrub_capacity() callconv(.c) u32 {
 /// Arena bytes found (`tuning.wasm_arena_bytes` in wasm).
 fn debug_scrub_arena() callconv(.c) u32 {
     return @intCast(rewind.arena_bytes());
+}
+
+// ---- Fast forward ----
+
+/// 1 while the chorded rewind shows (fast forward turned into rewind).
+fn debug_chord_rewind() callconv(.c) u32 {
+    return @intFromBool(app.state == .running and app.rewinding);
+}
+
+/// Genesis frames the last update stepped (2 at 1x, up to 8 fast; 0 while
+/// not running or in the chorded rewind).
+fn debug_ff_frames() callconv(.c) u32 {
+    return if (app.state == .running) app.frames_stepped else 0;
 }

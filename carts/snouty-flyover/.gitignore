@@ -11,3 +11,4 @@ tools/emu/build/
 tools/emu/out/
 tools/emu/.venv/
 out/
+out_*/

@@ -182,6 +182,10 @@ pub fn draw_bar(x: i32, y: i32, value: i32, max: i32, color: cart.DisplayColor) 
     if (wdt > 0) cart.rect(.{ .x = x, .y = y, .width = wdt, .height = 4, .fill_color = color });
 }
 
+/// The knockout line per machine (SPEC 5.5): rivals by their short name
+/// (menu.names), traffic as batch jobs.
+const ko_text = [5][]const u8{ "", "ARGMAX KILLED", "DROPOUT KILLED", "BACKPROP KILLED", "OVERFIT KILLED" };
+
 fn message_text(msg: world.Message) []const u8 {
     return switch (msg) {
         .none => "",
@@ -196,6 +200,7 @@ fn message_text(msg: world.Message) []const u8 {
         .meltdown => "THERMAL SHUTDOWN",
         .collision => "COLLISION",
         .killed => "JOB KILLED",
+        .ko => if (world.w.msg_who < ko_text.len) ko_text[world.w.msg_who] else "BATCH KILLED",
     };
 }
 
@@ -205,7 +210,7 @@ fn draw_message() void {
     const str = message_text(w.msg);
     const color = switch (w.msg) {
         .fall, .meltdown, .collision, .killed => coral,
-        .deploy, .committed => cyan,
+        .deploy, .committed, .ko => cyan,
         else => white,
     };
     cart.rect(.{ .x = 0, .y = bar_y, .width = cart.screen_width, .height = bar_h, .fill_color = anti_black });

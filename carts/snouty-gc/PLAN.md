@@ -1234,6 +1234,124 @@ main.
   table, a vent firing on Salt Pan Sprint, the attract demo's blue screen.
   Deferred questions 70 to 86.
 
+## M4 Link
+
+Goal: two badges joined by the link cable race in one field (SPEC 7),
+deterministic lockstep over `lib/link.zig` (docs/LINK.md), LINK RACE and
+LINK GC, waiting, peer-left, and the desync check.
+
+### Track A: lockstep core (Opus agent, worktree /home/exedev/snouty-badge-gc-net, branch gc/net off main 20e2172a)
+
+Built and host-tested off main (which has `lib/link.zig` and the M2 sim)
+while M3 finishes on `gc/spec` and `gc/present`. It touches only new files
+plus the smallest wiring, so the lead's integration merge stays easy.
+Owns new `cart/src/net.zig`, new `cart/src/net_test.zig`, the
+`host_tests.zig` import line, the `link` import in `build.zig` (one
+line for the cart module and its test module), and new `docs/NET.md`.
+No `main.zig`, no menus, no rendering: that is Track B after M3 lands.
+
+1. **`net.zig`, generic over the link type** (`Net(comptime L: type)`,
+   with `L` = `link.Badge` on the badge, a `link.Link(link_virtual...)` in
+   tests, and a null link in wasm), so the same code runs in the cart and
+   in host tests. Entry points for main.zig: `init`, `pump(now)` (polls
+   the link; call it often), a setup state machine (`host` = the higher
+   HELLO nonce, `SETUP`, `PICK`, `GO` messages with a kind byte, SPEC 7.3),
+   `ready_for(tick)` / `inputs_for(tick) ?[2]u8`, `submit_local(tick,
+   byte)`, `state()` (searching, connected, setup, racing, waiting,
+   peer_left, desync), and the slot this badge drives.
+2. **Lockstep** (SPEC 7.2): input delay 2 ticks; each input packet is 5
+   payload bytes (tick low byte, inputs for t, t-1, t-2, one check byte),
+   so a whole packet fits the 8-entry RX FIFO. Lost packets are covered
+   by the repeats, with no retransmit protocol. The badge advances tick t
+   only with both inputs for t. WAITING shows after 30 frames without
+   them. When the link reports the peer gone (state not `.connected`, or
+   the `session` changed), `peer_left` hands the peer's car to the AI
+   (a `Car.human = no_human` change made through a function the sim
+   exposes or a documented field write before the next `simulate`;
+   coordinate by writing it down in PLAN).
+3. **Desync check**: a CRC8 over the `World` bytes every 32 ticks, sent a
+   byte at a time in the check byte. A mismatch is `desync`.
+4. **Pause and quit** travel in the input byte (Start), so they are part
+   of the lockstep. Quit is a setup message.
+5. **Host tests** (`net_test.zig`): two `Net` + two Worlds on a
+   `link_virtual` cable; 10 seeded link races with scripted inputs on
+   both ends, World bytes equal on both every tick; the same with 1%
+   injected byte loss (still in sync, finishes); unplugging mid-race
+   gives `peer_left` and the race finishes with the AI driving; a forced
+   World mutation on one side gives `desync` within 64 ticks; a GC-mode
+   link race to one survivor. Read `lib/link_virtual.zig` and
+   `lib/tests/link_unit.zig` for how the virtual cable runs.
+6. **Bench note**: measure the cost of `pump` with an idle and a busy link
+   in the host (cycles are not available; report the operation counts).
+   The real poll-gap measurement is Track B's, on the badge-bench.
+7. `docs/NET.md`: the protocol (message kinds, byte layouts, timing), how
+   main.zig drives it frame by frame (pump points: top of update, between
+   floor bands, in the waiting loop), and what Track B must build.
+8. Gate: `zig build test-gc` passes including the net tests, `zig build
+   -Dcart=snouty-gc` builds, check-float passes. PLAN "M4 status" Track
+   A paragraph and deferred questions; commits with the `Co-Authored-By:
+   Claude Opus 5.5 <noreply@anthropic.com>` line; push `gc/net`. No tag,
+   no merge.
+
+### Track B: link integration (after M3 and the RAM diet)
+
+Menus (LINK: cable state, host/guest, mode, track, crews; the shared racer
+select with one racer greyed per side), the race loop driving `net`
+(pump points in the frame, the WAITING overlay, PEER LEFT, DESYNC), each
+badge following its own car, simulator `NO LINK IN SIMULATOR`, a bench
+of the worst poll gap, and the hand-off on how to cable two badges.
+
+### M4 status
+
+**Track A (lockstep core), 2026-10-05, branch `gc/net`.** `cart/src/net.zig`
+(`Net(L)`, generic over the link), `cart/src/net_test.zig`, the `link`
+import for the cart module and a `link_host` test module in `build.zig`
+(L11), `docs/NET.md` (protocol, frame-by-frame driving, Track B's list).
+`main.zig`, `sim.zig` and `world.zig` are untouched; nothing imports
+`net.zig` in the cart yet, so the cart ELF is unchanged.
+
+- **API for main.zig** (docs/NET.md section 3): `Net(link.Badge).init(
+  link.Badge.init(.{}, net.app_id, cart.rand()))`; `pump(now)` often;
+  `state()` = offline / searching / wrong_cart / lobby / racing / waiting /
+  peer_left / desync; lobby: `role`, `set_rules` (host), `rules()`,
+  `set_pick(racer, ready)`, `peer_racer()`, `can_go()`, `go(now)` (host);
+  `take_started()` then `sim.reset(&w, world_setup())` and `follow =
+  local_car()`; race: `submit(now, byte)` once a frame, `step(&w)` at most
+  once a frame (retry in the waiting loop), `paused`, `left`,
+  `handed_over`; `leave(now)` for QUIT, after the results, after
+  peer_left or desync.
+- **Protocol**: control messages SETUP / PICK / GO / QUIT / DESYNC (2 to 4
+  bytes, kind byte first); the input packet is 5 bytes and always exactly
+  8 on the wire (salted CRC, no SLIP escapes; L9); input delay 2; each tick
+  in 3 consecutive packets; a stalled partner gets the window it lacks
+  (its newest tick tells); World hash every 32 ticks, 7-bit pieces in the
+  check byte; pause from Start edges in the agreed bytes.
+- **Tests** (`zig build test-gc`: 93 pass, 14 of them net): packets always
+  8 wire bytes (64 x 128 x 6 encodings); world_hash covers every field;
+  lobby roles over 24 seeds and both cable kinds, another cart, rules
+  reach the guest, racer clash blocks GO, GO through 5% byte loss; **10
+  seeded link races** on a clean cable, World hash equal at every tick and
+  final Worlds equal (75,698 ticks; 0.41% of packets lost to the FIFO
+  model; 0.28% of frames without a tick, at most 2 in a row); **10 races
+  with 1% byte loss** (8.75% of packets lost) in sync and finished (1.8%
+  of frames without a tick, at most 8 in a row, pumping to 14 ms; 4.4% /
+  13 without the pump loop); a LINK GC race in sync (L4); **unplug**
+  mid-race: both `peer_left` 42 ms later, each finishes with the AI on the
+  other car; **desync** found on both badges at most 32 ticks after one
+  World is changed (contract: 64); pause and resume on the same tick on
+  both; quit mid-race, then a rematch (race 2, new seed) in sync.
+- **Sizes**: `@sizeOf(Net(link.Badge))` = 568 bytes, the link 344 of them
+  (its 8-packet queue and 64-byte pending buffer); 16-byte local and
+  remote rings, four 8-byte hash slots; no other buffers.
+- **Cost** (operation counts; Track B benches the badge): an idle pump is
+  one `link.poll` (one FIFO read, one pin read) and a few compares; a
+  racing pump averages 1.99 FIFO reads; a packet in is 8 FIFO reads, a
+  6-byte CRC and ~30 operations; a packet out up to 3 salt CRCs plus the
+  link's CRC and 8 FIFO writes; `world_hash` is 1,356 field mixes every
+  32 ticks (estimate ~90 us on the badge).
+- `zig build -Dcart=snouty-gc` and `zig build check-float` pass;
+  `zig fmt` clean.
+
 ## Deferred questions
 
 SPEC 17 holds the design defaults. Taken during M0 (Track A):
@@ -1589,3 +1707,62 @@ Taken during M3 (Track B, flow and mode presentation):
     `debug_gc_marked`, `debug_gc_sweeps`, `debug_gc_collected`,
     `debug_gc_survivor`, `debug_alive`, `debug_hazard_state`, `debug_me`;
     `debug_screen` 6 is the main menu, `debug_mode` 3 GARBAGE COLLECTION.
+Taken during M4 (Track A, lockstep core; lettered L so the numbers of the
+M3 tracks running in parallel stay free):
+
+L1. **Hand-over to the AI**: `net.step` itself writes `Car.human =
+    world.no_human` for the partner's car before the first solo tick
+    (`handed_over` names the car). Only the surviving badge does it and
+    the partner is gone, so no tick has to be agreed. A sim-side
+    `sim.hand_to_ai(w, slot)` would be the tidier hook if the sim ever
+    caches anything per human; today it reads `c.human` every tick.
+L2. **API shape**: `step(&w)` calls `simulate` itself (so the hash, the
+    pause and the hand-over cannot be forgotten) instead of the planned
+    `ready_for(tick)` / `inputs_for(tick)`; `submit(now, byte)` picks the
+    tick itself (`submit_local(tick, byte)` in the plan).
+L3. **Crews are not in `world.Setup`**: the rules carry them (0..7, GO
+    and SETUP), `world_setup()` cannot pass them on. M3 / Track B should
+    add `Setup.crews` (sim.reset leaves cars off the grid) or main must
+    deactivate the same cars on both badges right after `sim.reset`,
+    before tick 0. The net tests race all six cars.
+L4. **LINK GC on this base**: main 20e2172a has the M3.0 interface
+    (`Mode.gc`, `World.gc`) but not the GC rules, so the GC-mode test runs
+    to the lap finish and checks sync only. After the M3 merge it runs the
+    real rules; if a GC race ends without `phase == .finished`, adjust the
+    test's done condition (`done_finished`).
+L5. **The race seed is not sent**: both badges derive it from the two
+    link nonces and the race id, so every race of a session differs and
+    GO stays 4 bytes. main's frame-counter seed is for single player.
+L6. **Pause**: a Start press edge in either human's byte toggles it on
+    that tick on both badges; paused ticks still run (the lockstep tick
+    and the hashes go on, `simulate` does not), so `net.tick` is not
+    `World.tick`. A finished race is never paused. main masks the pause
+    menu's presses (submit only the Start bit while paused).
+L7. **One tick per frame, no catch-up**: SPEC 13.1 left room for two
+    `simulate` calls in a frame, but catching up drains the 2-tick input
+    buffer (the badges then stall more); a stalled frame instead retries
+    `step` in the waiting loop and drops that frame's buttons.
+L8. **DESYNC message**: SPEC 7.2 only has the check byte, but the first
+    badge to find a desync stops stepping and so stops sending the pieces
+    that would show it to its partner; DESYNC tells it directly.
+L9. **Packet details vs SPEC 7.2**: the tick field is 6 bits plus 2 salt
+    bits (not the low 8 bits) and the check byte is a 7-bit piece of a
+    32-bit field-by-field hash (4 pieces, 28 bits per epoch) rather than a
+    CRC8 over the World bytes (padding bytes differ between badges, and a
+    CRC8 is one piece). Both make every input packet exactly 8 wire bytes.
+L10. **After the finish** both badges keep pumping and submitting until
+    their results are dismissed (the partner may still need a late tick);
+    `leave` then gives the partner `peer_left` / `.quit`, which main
+    ignores once its World is finished.
+L11. **Test wiring**: the host tests need `lib/link.zig` and
+    `lib/link_virtual.zig` (which imports link.zig by path) in one module,
+    so `build.zig` copies the three link files under a generated
+    `link_host.zig` root; more than the planned one line, no lib/ change.
+L12. **Racer clash**: the host's pick wins: `can_go` needs different
+    racers, and the guest adopts the racers in GO whatever its own pick
+    says by then. Rules carry track 0..15, crews 0..7, LINK RACE or LINK
+    GC (attract is not linkable).
+L13. **Nonce tie** (both HELLO nonces equal, 1 in 65536): `Net` restarts
+    the link for new nonces rather than inventing a tie-break.
+L14. **WAITING** is `step` failing for 500 ms (30 frames) in a row, so it
+    needs main to call `step` every frame of the race.

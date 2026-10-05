@@ -21,7 +21,10 @@
 //! after a double tap (frontend/input.zig) an update steps up to
 //! `tuning.ff_max_frames` frames within `tuning.ff_budget_us`, all but the
 //! last without pixel work or sound, every one recorded for the scrubber,
-//! and draws ">>N.Nx" in the bottom-right corner (`step_fast`).
+//! and draws ">>N.Nx" in the bottom-right corner (`step_fast`). Left
+//! during that hold is the chorded rewind: the game frozen, Left/Right step
+//! time with the menu's scrub bar, and letting go of Select resumes from
+//! there (frontend/flow.zig, `Ctx.rewind_*`).
 //!
 //! Control hints (lib/hint.zig): "Hold Select: menu" on the splash; that
 //! line and "2x Sel+hold: fast" in a two-line strip at the bottom for the
@@ -41,6 +44,7 @@ const romsrc = @import("frontend/romsrc.zig");
 const picker = @import("frontend/picker.zig");
 const flow = @import("frontend/flow.zig");
 const tuning = @import("frontend/tuning.zig");
+const linkport = @import("frontend/linkport.zig");
 const hint = @import("hint");
 
 comptime {
@@ -64,6 +68,7 @@ pub fn start() void {
     cart.set_vsync_enabled(1000.0 / 60.0);
     cart.set_double_buffer_mode(.no_copy_full_frame);
     audio.init();
+    linkport.init();
     // DMG look for the splash and the picker; `begin` switches to the
     // chosen ROM's model.
     video.init(.dmg);
@@ -106,8 +111,12 @@ pub fn update() void {
     audio.enabled = menu.sound_enabled;
 
     stepped = false;
+    if (have_gb) linkport.update(gb);
+    fl.linked = linkport.linked;
+    menu.linked = linkport.linked;
     fl.update(&ctx, @bitCast(read_controls()));
     if (!stepped) audio.idle();
+    if (have_gb) linkport.pump(gb, update_us);
 
     frames_seen +%= 1;
     if (cart.is_wasm) present_wasm();
@@ -164,7 +173,8 @@ const Ctx = struct {
         debug.sound_on = !cart.is_wasm and audio.enabled;
         debug.audio_queue = audio.queued();
         debug.audio_underruns = audio.underruns();
-        rewind.record_frame(gb, pad);
+        // Linked frames depend on the partner's bytes: they cannot replay.
+        if (!linkport.linked) rewind.record_frame(gb, pad);
 
         video.finish_frame();
         if (fast) {
@@ -187,6 +197,10 @@ const Ctx = struct {
             hint.draw_strip(cart, null, input.fast_hint, y + hint.strip_h, fg, bg);
         }
         if (fast) debug.draw_fast(ff_x16, .from_color(video.shade_color(0)), .from_color(video.shade_color(3)));
+        if (linkport.note_left > 0) {
+            linkport.note_left -= 1;
+            hint.draw_strip(cart, null, linkport.note, cart.screen_height - hint.strip_h, video.shade_color(0), video.shade_color(3));
+        }
     }
 
     pub fn menu_open(_: *Ctx) void {
@@ -204,6 +218,23 @@ const Ctx = struct {
     }
 
     pub fn menu_close(_: *Ctx) void {
+        menu.close();
+    }
+
+    /// The chorded rewind (frontend/flow.zig): the menu's freeze, sound
+    /// pause, scrub step and bar, without the panel.
+    pub fn rewind_open(_: *Ctx) void {
+        audio.pause(gb);
+        play_hint.stop();
+        menu.rewind_open();
+    }
+
+    pub fn rewind_frame(_: *Ctx, dir: i2) void {
+        audio.menu_tick(gb);
+        menu.rewind_frame(gb, dir);
+    }
+
+    pub fn rewind_close(_: *Ctx) void {
         menu.close();
     }
 
@@ -378,7 +409,7 @@ fn debug_lines() callconv(.c) u32 {
 fn debug_palette() callconv(.c) u32 {
     return @intCast(video.palette_index);
 }
-/// Frontend state: 0 splash, 1 running, 2 menu, 3 pick, 4 halted.
+/// Frontend state: 0 splash, 1 running, 2 menu, 3 pick, 4 halted, 5 rewind.
 fn debug_state() callconv(.c) u32 {
     return @backingInt(fl.state);
 }

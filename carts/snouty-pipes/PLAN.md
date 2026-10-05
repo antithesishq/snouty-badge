@@ -154,6 +154,125 @@ start: ball at s = 0 then out-half; end: in-half then ball at s = 1).
    `CLAUDE.md` for the cart (model: the maze's), review GIF
    `docs/preview_m1.gif` once A and B land (`../../tools/make_gif.py`).
 
+## Plan: M3 (steer mode)
+
+Adrian approved M3 on 2026-10-04 ("keep going through steer mode"). One
+Opus agent builds it (it lives almost entirely in `director.zig`, so
+parallel tracks would collide); the lead reviews, runs the gate, merges.
+
+- **Enter/leave**: Select toggles steer mode from any screensaver state
+  (the `-Ddebug_overlay` Select toggle moves to Select+B in such builds).
+  The boot name strip gets a second line or alternates with
+  "SELECT: STEER" so people find it; also shown on the game-over card.
+- **Run**: dissolve, then a three-quarter view (fixed for the run, no
+  orbit), 2 autopilot pipes plus the player's pipe in a fixed colour that
+  the autopilot avoids. The player's pipe moves by itself, starting at 3
+  cells/s and +1 cell/s every 15 cells up to 8.
+- **Controls, screen-relative**: the grid axis most aligned with the
+  camera's `fwd` is depth (A = into the screen, B = out of it); of the
+  other two, the one most aligned with `right` is Left/Right, the last is
+  Up/Down (sign from the projection). A press sets the next turn (buffered
+  until the next cell); a reversal is ignored. Joystick held = repeat.
+- **No lag**: the walker draws one cell behind; the player's head must not.
+  Draw the head cell's in-half as soon as the pipe enters it, and the rest
+  once the exit is known (player turns use ball joints, so the in-half is
+  always a straight piece).
+- **Head marker**: a small blinking marker at the head's projected position
+  through the overlay save/restore, so the head can be found among pipes.
+- **Crash**: moving into an occupied cell or the wall. The first crash of a
+  run rewinds (the Snouty twist): restore a snapshot from 6 player cells
+  ago (occupancy, slots, rng, history count; a small ring of snapshots, one
+  per player cell), clear, and regrow the scene from the history ring as
+  the visible rewind, then play on. The second crash ends the run.
+- **HUD**: score (player cells) and the rewind token, top left, through the
+  overlay save/restore. Game over: a card with SCORE / BEST (session best,
+  no flash save), "A: AGAIN  SELECT: EXIT".
+- **States** (stable numbers): steer = 4, rewind = 5, game_over = 6.
+- **Exports**: `debug_steer` (1 in steer states), `debug_score`,
+  `debug_best`, `debug_rewinds_left`, `debug_crashes`, `debug_head_x/y/z`,
+  `debug_steer_map` (packed axis map, for tests).
+- **Gate**: host tests (mapping is a permutation of the six directions for
+  every view, rewind restores the exact snapshot, crash rules, score),
+  check_cycle runs for steer (enter, survive a scripted path, crash ->
+  rewind -> crash -> game over, A again, Select out), a golden or two,
+  badge-bench script with a crash + rewind (worst <= 12 ms) and `--lcd`
+  clean, `docs/preview_m3.gif`. Tag `snouty-pipes/m3`, merge, push.
+
+Added by Adrian during M3 (2026-10-04): **B nametag.** In the screensaver
+B toggles a nametag strip ("ADRIAN HATCH" / "ANTITHESIS", the maze cart's
+text) in the boot strip's style, through the same save/restore; it stays
+through A, wipes, orbits and speed changes, entering steer hides it, and it
+replaces the boot strip if that is up. Joint-style cycling leaves B (the
+style stays mixed; `debug_joint_style` stays). The Iris mark on both
+strips flips like a coin (the maze's draw_iris on the 1-bit
+`lib/iris_mark.zig` bitmap): `flip_first` 45 ticks after the strip
+appears, every `flip_period` 300, one turn in `flip_ticks` 30, columns
+squeezed to 24 |cos| px, the mirrored back face in 70% grey. Exports
+`debug_nametag`, `debug_iris_width`.
+
+### M3 as built (what changed from the plan above, and why)
+
+- **Play box.** Runs happen in an 8 x 8 x 8 box in the middle of the grid
+  (cells 2..9, 1..8, 2..9); the cells around it are walls, pre-set in the
+  occupancy. The whole 12 x 10 x 12 grid on screen made pipes ~3 px wide
+  and the walls invisible; the cube fills the screen with fat pipes.
+- **Views.** Four steer views (`camera.steer_views`: one shot from the
+  four sides, eye direction (0.32, 0.52, 1) and turns of it), framed so the
+  whole box is on screen (overscan 0.96), picked by the run's rng. Not the
+  screensaver's 8 views: their three-quarter views put two axes at 45
+  degrees to the view, so A/B and Left/Right were ambiguous. Host test:
+  in every steer view, Up moves the head up the screen, Right right, A
+  away, and the depth axis is clearly the most aligned with the view.
+- **Readability.** The box's back edges and a floor grid are outlined
+  (dim, `Cmd.frame`, drawn on empty pixels without z so pipes cover them):
+  the cube outline alone read as a Necker cube and the walls were
+  invisible. Steer pipes are fatter (r 0.30 / ball 0.40 vs 0.22 / 0.32,
+  `draw.set_steer`). A grey spot on the floor under the head (overlay,
+  only on empty pixels) shows where the head is over the floor. The head
+  marker is four yellow corner brackets, blinking 2/3, steady during
+  READY, red and fast on a crash.
+- **No-lag growth, continuous.** Instead of "in-half on entry, the rest
+  once the exit is known" in two pops, every runner moves 240 units per
+  cell and draws exactly what it covered each tick: the in-half up to the
+  centre, the exit picked at the centre (buffered turn, held direction or
+  straight on), the next cell reserved, the out-half grown into it. So
+  the drawn tip is where the pipe is, smoothly. An exit into a taken cell
+  or the wall still grows to the face, then crashes (the pipe visibly
+  hits it).
+- **Autopilots too.** The two autopilots use the same runner (ball joints,
+  head drawn with no lag, exit by the walk at the centre), at the
+  player's speed: with the screensaver's one-cell-behind drawing, their
+  undrawn head cell was an invisible obstacle. They take hue-wheel
+  colours only (never silver), stop respawning at 40% of the box, and
+  never spawn within 3 cells of the player's head.
+- **Turn buffer** is two deep (Up then Left = a tight U); a press that
+  repeats or reverses the direction the pipe will go is dropped.
+- **Rewind.** First crash: CRASH! freeze 45 ticks, restore the snapshot
+  from 6 player cells ago (or the run start), clear, frame, regrow from
+  the history ring in about 40 ticks (1..16 cells a tick) under "<<
+  REWIND", runner heads drawn only as far as they had got, then READY 50
+  ticks. Everything else (autopilots, rng) replays exactly; only the
+  player's input differs. The score rewinds too, so the card shows where
+  the run ended.
+- **Overlays.** HUD = score and a `<<` rewind token (cyan, grey once
+  spent) top left; banners READY / CRASH! / << REWIND bottom centre; the
+  card says GAME OVER, SCORE, BEST (yellow on a new best), "A: AGAIN",
+  "SELECT: EXIT" on two lines (one line is 176 px, wider than the screen).
+  The title strip shows "SELECT: STEER" under "SNOUTY PIPES" for the first
+  2 s of every screensaver scene, not only after boot, so people who pick
+  up a badge mid-screensaver find steer mode.
+- **Debug overlay toggle** is Select+B in `-Ddebug_overlay` builds.
+- **Extra exports** for the bot: `debug_heading`, `debug_occupied(x, y,
+  z)`, `debug_steer_rate`; and the firmware symbol `snouty_pipes_seed`
+  (badge-bench `--poke`) so a headless steer script replays on the bench.
+- **Tools.** `tools/steer_bot.mjs` plays steer mode headless through the
+  exports (flood-fill bot, `--idle` to crash on purpose) and writes the
+  input scripts `steer_survive.json` (check_cycle M, golden),
+  `steer_gif.json` (GIF, rewind golden) and `bench_steer.json` (bench +
+  lcd). check_cycle runs J..N, goldens `nametag_s1_t400`, `steer_s1_t900`,
+  `rewind_s1_t845`, `gameover_s1_t700`; `boot_s1_t1`/`t60` re-baselined
+  for the strip's second line (nothing else moved).
+
 ## Status
 
 - 2026-10-04 M0 scaffold: build wiring, root build.zig entry, interfaces
@@ -174,3 +293,26 @@ start: ball at s = 0 then out-half; end: in-half then ball at s = 1).
   (`tools/scripts/bench_orbit.json`, 1000 frames) worst 4.86 ms. Review
   GIFs `docs/preview_m1.gif` (boot, growth, dissolve, scene 2) and
   `docs/preview_m2.gif` (orbit regrow, speed-up). Next: M3 steer mode.
+- 2026-10-04 M3 steer mode + B nametag built (one Opus agent; interrupted
+  once by the VM restart, WIP 004ae0ad). As-built notes above. Gate
+  `tools/check.sh`: PASS (52 host tests incl. mapping permutation for
+  every view and orbit, exact snapshot restore, crash rules, score/speed;
+  check-float; 12 goldens; check_cycle A..N; LCD == framebuffer on 72 M1
+  frames and 310 steer frames). Calibrated badge-bench: M1 run worst 1.64
+  ms, seeds 2..10 worst 3.31 ms; steer run (`bench_steer.json`, 3100
+  frames: a 185-cell run, crash + 380-cell rewind regrow, game over, A
+  again, Select out, nametag with a coin flip) worst 3.83 ms (the regrow's
+  first tick), mean 0.70; orbit + 8x (`bench_orbit.json`) worst 4.94 ms.
+  ELF .text 65.6 KB, .bss 82 KB. GIFs `docs/preview_m3.gif` (steer run,
+  rewind, game over) and `docs/preview_nametag.gif`. The bot scores
+  110..225 on seeds 1..5 before its two crashes.
+- 2026-10-04 random joint style per scene (Adrian picked it over a button
+  combo after B became the nametag): `begin_scene` draws mixed / elbow /
+  ball from a separate `style_rng`, and `pick_joint` makes both of its rolls
+  in every style, so a seed's walks, colours and views don't depend on the
+  styles drawn. (Mixed used to skip the ball roll on a teapot turn, so
+  streams after a teapot differ from before; steer runs never hit one
+  first, so their goldens and check_cycle L..N passed untouched.) The
+  screensaver goldens moved and were re-baselined after a look;
+  grow_s2_t900 became grow_s2_t700 (tick 900 is now mid-wipe). New
+  check_cycle run O and host test.

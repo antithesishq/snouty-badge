@@ -33,7 +33,7 @@ ownership and interface contract.
   (60/30: `tunables.render_every` frames per update, the last rendered)
   and holds the wasm simulator shims; `frontend/` has video (tagged index
   -> `Pixel` cache with shadow/highlight), input (pad word, Select tap = A,
-  Select hold = menu), audio (the RAM cart: `core/sound.zig`'s samples
+  Select hold = menu, Select double tap and hold = fast forward), audio (the RAM cart: `core/sound.zig`'s samples
   through `audio_feed` into the new firmware's ring, never `tone2`; the
   XIP cart: `Md.tone()` -> `tone2` on change; the wasm build drives the
   simulator's `tone` import itself, see the file), debug
@@ -62,8 +62,10 @@ ownership and interface contract.
   and column tables of SPEC.md section 6 live in the VDP).
 - Inputs `cart.controls.*`; the OS owns Start+Select (exit) and click.
   Mapping (SPEC.md section 5): d-pad, badge B = B, badge A = C, Start;
-  Select tap = A (4 Genesis frames on release); Select hold 500 ms =
-  emulator menu (M2). Neopixels are never written (root docs/NEOPIXELS.md).
+  Select tap = A (4 Genesis frames, 200 ms after the release); Select hold
+  500 ms = emulator menu (M2); Select tap then hold = fast forward (root
+  docs/FAST_FORWARD.md, `tuning.ff_*`), then Left = chorded rewind (scrubber
+  builds only: `input.chord_rewind`). Neopixels are never written (root docs/NEOPIXELS.md).
 
 ## Building
 

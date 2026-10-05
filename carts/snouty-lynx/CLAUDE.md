@@ -39,7 +39,9 @@ CLAUDE.md and docs have the longer explanations.
   the wasm shims and exports, the state machine (splash -> running | pick | help, running <-> menu,
   menu -> pick -> running | help), the status strip and the no-ROM screen. `frontend/`: `video` (Lynx frame ->
   rows 0..101, 16-entry palette cache), `input` (pad word, Select tap =
-  Option 1, Select hold = menu), `drive` (drive scan and Cart from a drive
+  Option 1 after the 200 ms double-tap window, Select hold = menu,
+  Select double tap and hold = fast forward, Left during it = the
+  chorded rewind, `Repeat` shared with the menu; main.zig `run_frame`), `drive` (drive scan and Cart from a drive
   file; a module of its own, host-tested), `romsrc` (drive ROM, embedded
   ROM in wasm/embed builds only, or none with the reason), `splash` (Iris mark, `lib/iris_mark.zig`),
   `debug` (step timing, FPS), `text` (Snouty Gear's fast font, verbatim),
@@ -48,7 +50,7 @@ CLAUDE.md and docs have the longer explanations.
   Pause+Opt1, Debug overlay, Reset, Pick ROM, About; PLAN.md M2), `picker`
   (the drive file list, restarts into the chosen file), `rewind` (the time
   scrubber over `core.undo`: arena from the linker symbols, M3), `tuning`
-  (stack guard, wasm arena), `strip` (the status strip), `audio` (M5:
+  (stack guard, wasm arena, the fast-forward knobs), `strip` (the status strip), `audio` (M5:
   `audio_out` into the streaming ring of `lib/stream_audio.zig`, rate
   control, ramp out / prime on resume; host-tested by
   `tests/stream_unit.zig`). `debug.enabled` is off at boot and a menu row;
@@ -62,7 +64,11 @@ CLAUDE.md and docs have the longer explanations.
   carts, frame hashes), `boot_*.zig`, `cart_unit.zig`, `drive_unit.zig`
   (against `tests/fixtures/*.img` from `tests/fixtures/make_fixtures.py`),
   `stream_unit.zig` (the frontend's sound path against a model of the
-  firmware's 512-sample reads). `tests/roms/` is gitignored.
+  firmware's 512-sample reads), `input_unit.zig` (frontend/input.zig with
+  the SDK's cart-api for `Controls`: menu hold, held-back tap, fast
+  forward, chorded rewind), `ff_determinism.zig` (fast-forward stepping
+  equals 1x). `tools/check_chord_rewind.sh`: the chorded rewind and the
+  menu scrubber land on the same frame and play on identically (wasm). `tests/roms/` is gitignored.
 - `roms/` — `raycast.lnx` (shipped, Apache-2.0, `LICENSE-raycast.txt`,
   `docs/ROM_CANDIDATES.md`) and `placeholder.lnx` (576 B,
   `tools/make_placeholder_rom.py`, not a Lynx program, only for the drive

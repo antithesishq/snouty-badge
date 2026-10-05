@@ -2,9 +2,13 @@
   { "name": "boot_s1_t1",       "seed": 1, "frames": 1 },
   { "name": "boot_s1_t60",      "seed": 1, "frames": 60 },
   { "name": "grow_s1_t300",     "seed": 1, "frames": 300 },
-  { "name": "grow_s2_t900",     "seed": 2, "frames": 900 },
+  { "name": "grow_s2_t700",     "seed": 2, "frames": 700 },
   { "name": "grow_s3_t1800",    "seed": 3, "frames": 1800 },
   { "name": "dissolve_s1_t231", "seed": 1, "frames": 231, "press": ["A:200-200"] },
   { "name": "scene2_s1_t400",   "seed": 1, "frames": 400, "press": ["A:200-200"] },
-  { "name": "teapot_s4_t600",   "seed": 4, "frames": 600, "calls": ["debug_force_teapot"] }
+  { "name": "teapot_s4_t600",   "seed": 4, "frames": 600, "calls": ["debug_force_teapot"] },
+  { "name": "nametag_s1_t400",  "seed": 1, "frames": 400, "press": ["B:200-200"] },
+  { "name": "steer_s1_t900",    "seed": 1, "frames": 900, "script": "tools/scripts/steer_survive.json" },
+  { "name": "rewind_s1_t845",   "seed": 1, "frames": 845, "script": "tools/scripts/steer_gif.json" },
+  { "name": "gameover_s1_t700", "seed": 1, "frames": 700, "press": ["SELECT:150-150"] }
 ]

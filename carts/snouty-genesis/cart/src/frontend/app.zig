@@ -19,6 +19,7 @@ const splash = @import("splash.zig");
 const picker = @import("picker.zig");
 const help = @import("help.zig");
 pub const rewind = @import("rewind.zig");
+const tuning = @import("tuning.zig");
 const hint = @import("hint");
 
 /// The console (~137 KB), a static initialised in place: never build it on
@@ -42,10 +43,21 @@ var controls_state: input.State = .{};
 
 /// Menu opens since boot.
 pub var menu_opens: u32 = 0;
-/// "Hold Select: menu" over the first seconds of play (lib/hint.zig).
+/// "Hold Select: menu", then `menu.fast_hint`, over the first seconds of
+/// play (lib/hint.zig): `hint.play_seconds` each.
 var play_hint: hint.Overlay = .{};
 /// `hint.play_seconds` in updates (30 a second by default).
 const play_hint_updates = hint.play_seconds * 60 / frames_per_update;
+
+/// Genesis frames the last running update stepped: `frames_per_update` at
+/// 1x, up to `tuning.ff_max_frames` while fast forwarding (the `>>4x`
+/// indicator and the `debug_ff_frames` export).
+pub var frames_stepped: u32 = 0;
+/// Microseconds the last rendered Genesis frame took (step, record and the
+/// CRC tick) and the last unrendered one (step and record): fast forward's
+/// estimates of what the update's remaining frames will cost.
+var last_frame_us: u64 = 0;
+var last_skip_us: u64 = 0;
 
 pub noinline fn start() void {
     // Presents at 60 / render_every Hz (30 by default).
@@ -119,7 +131,7 @@ fn leave_splash(t0: u64) void {
     state = after_splash;
     switch (state) {
         .running => {
-            play_hint.start(play_hint_updates);
+            play_hint.start(2 * play_hint_updates);
             run_update(t0);
         },
         .pick => if (romsrc.use_drive) pick_update(t0),
@@ -151,7 +163,7 @@ fn pick_update(t0: u64) void {
 fn start_running(t0: u64) void {
     controls_state.suppress_held();
     state = .running;
-    play_hint.start(play_hint_updates);
+    play_hint.start(2 * play_hint_updates);
     run_update(t0);
 }
 
@@ -169,28 +181,101 @@ fn run_update(t1: u64) void {
         return;
     }
 
+    // Chorded rewind (Left during fast forward): the game stays frozen
+    // under the menu's scrub bar and Left/Right step time as in the menu;
+    // letting go of Select resumes as the menu does (input.zig suppressed
+    // the held buttons) and steps this update.
+    switch (in.rewind) {
+        .enter, .on => {
+            if (in.rewind == .enter) {
+                play_hint.stop();
+                menu.freeze_frame();
+            }
+            rewinding = true;
+            frames_stepped = 0;
+            audio.silence();
+            if (in.scrub != 0) _ = rewind.step(&md, in.scrub);
+            menu.draw_scrub_bar(true);
+            return;
+        },
+        .exit => {
+            rewinding = false;
+            menu.close();
+            video.apply(&md);
+        },
+        .off => {},
+    }
+
     // After a scrub the console is parked on a record boundary: playing on
     // drops the records ahead.
     rewind.resume_if_parked(&md);
     var sound_buf: audio.UpdateBuf = undefined;
-    audio.before_frames(&md, &sound_buf);
-    var f: u8 = 1;
-    while (f <= frames_per_update) : (f += 1) {
-        md.step_frame(in.pad, f == frames_per_update);
+    audio.before_frames(&md, &sound_buf, in.fast);
+    // The frames before the last run without the line sink (Genesis frames
+    // render only on the last of an update, at 1x too) and, while fast
+    // forwarding, without sound. Fast forward steps them until
+    // `tuning.ff_max_frames`, or until the time so far plus the dearest
+    // unrendered frame and the last rendered one would pass
+    // `tuning.ff_budget_us`; never fewer than the 1x pair.
+    var n: u32 = 1;
+    const max: u32 = if (in.fast) tuning.ff_max_frames else frames_per_update;
+    var skip_us: u64 = last_skip_us;
+    var t = t1;
+    while (n < max) : (n += 1) {
+        if (n >= frames_per_update and !cart.is_wasm and t -% t1 + skip_us + last_frame_us > tuning.ff_budget_us) break;
+        md.step_frame(in.pad, false);
         rewind.record_frame(&md);
+        const now = cart.micros_since_boot();
+        last_skip_us = now -% t;
+        skip_us = @max(skip_us, last_skip_us);
+        t = now;
     }
+    frames_stepped = n;
+    debug.frames_per_update = n;
+    const t_last = cart.micros_since_boot();
+    md.step_frame(in.pad, true);
+    rewind.record_frame(&md);
     // The drive ROM's CRC32, 8 KB per update (a no-op once known).
     romsrc.crc_tick();
     const t2 = cart.micros_since_boot();
+    last_frame_us = t2 -% t_last;
 
-    audio.update(&md);
+    audio.update(&md, in.fast);
     video.finish_frame();
     debug.record(@truncate(t2 -% t1));
     if (debug.enabled) romsrc.draw_report();
     debug.z80_state = debug.z80_label(&md);
     debug.draw();
     // A press held over from the splash, picker or help is suppressed, not fresh.
-    play_hint.update_and_draw(cart, text.draw, live_edge().any_pressed(), cart.screen_height - hint.strip_h, menu.title_color, menu.band_color);
+    if (play_hint.tick(live_edge().any_pressed())) {
+        const s = if (play_hint.left >= play_hint_updates) hint.hold_select else menu.fast_hint;
+        hint.draw_strip(cart, text.draw, s, cart.screen_height - hint.strip_h, menu.title_color, menu.band_color);
+    }
+    if (in.fast) draw_fast(n);
+}
+
+/// The chorded rewind is showing (the `debug_chord_rewind` export).
+pub var rewinding: bool = false;
+
+/// `>>4x` (Genesis frames this update over the 1x pair; `>>1.5x` for an odd
+/// count) in the bottom right corner, over the hint strip and the report
+/// line, inside the menu's scrub bar rectangle: a chorded rewind freezes
+/// the last fast-forward frame and its bar then covers the indicator. The
+/// game redraws the whole screen every update (`.no_copy_full_frame`), so
+/// it is gone the update fast forward stops.
+fn draw_fast(n: u32) void {
+    var buf: [6]u8 = undefined;
+    var i = debug.put(&buf, ">>");
+    i += debug.put_num(buf[i..], @min(n / frames_per_update, 9));
+    if (n % frames_per_update != 0) i += debug.put(buf[i..], ".5");
+    i += debug.put(buf[i..], "x");
+    const x: i32 = @intCast(menu.bar_x + menu.bar_w - 1 - 8 * i);
+    text.draw(buf[0..i], x, menu.bar_top + 1, menu.title_color, menu.band_color);
+}
+
+comptime {
+    // The indicator (6 glyphs at most) lies inside the scrub bar's frame.
+    if (menu.bar_height < 10 or menu.bar_top + 1 + 8 > cart.screen_height or menu.bar_w < 2 + 8 * 6) @compileError("indicator outside the scrub bar");
 }
 
 /// One menu update over the frozen frame; the core is not stepped.

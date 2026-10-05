@@ -22,7 +22,7 @@ CLAUDE.md files have the long explanations, this one summarises.
   CGB palette-RAM LUT rebuilt on `gb.pal_dirty`), input, debug overlay,
   menu, splash, audio, rewind (the run-time arena: console, cart RAM, page
   store), the ROM source (`romsrc.zig`) and the ROM picker (`picker.zig`).
-  `flow.zig` (screen flow: splash, pick, running, menu, halted) and
+  `flow.zig` (screen flow: splash, pick, running, menu, halted, rewind) and
   `input.zig` have no cart-api import and run in the host tests
   (`tests/flow_unit.zig`): every transition suppresses held buttons and
   every screen but the game reads `input.State.live_edge()`.
@@ -34,8 +34,8 @@ CLAUDE.md files have the long explanations, this one summarises.
 - `roms/` — the committed ROMs, each with its LICENSE next to it: `2048.gb`
   (the embedded ROM when `tests/roms/dmg-acid2.gb` is missing), `rex-runner.gb` and `rebound.gbc` (the Color
   ROMs, M7); other `*.gb` are gitignored.
-- `tools/` — `fetch_test_roms.sh`, `romcheck.py`, `scripts/ff_rex.json` (a
-  preview input script for fast forward, `docs/RUNNING.md`). The headless wasm runner
+- `tools/` — `fetch_test_roms.sh`, `romcheck.py`, `scripts/` (preview
+  input scripts for fast forward and the chorded rewind, `docs/RUNNING.md`). The headless wasm runner
   (`preview.mjs`), `serve-cart.mjs` (serves the wasm on :2468) and
   `make_gif.py` are shared, in `../../tools/`.
 - `../../sycl-badge/` — upstream badge repo, read-only SDK, a git submodule

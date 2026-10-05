@@ -120,3 +120,10 @@ is at the show flashing from main).
 - 2026-10-04: Gear (397f77bc) and Boy (89c58526) shipped with the double
   tap. Adrian added the chorded rewind above; Boy and Gear first, Genesis
   and Lynx after their fast forward lands.
+- 2026-10-04: all four done and on main. Fast forward: Gear (Waternet 4x,
+  Sonic ~1.9x), Boy (4x; DMG Tetris 2x via a two-refresh fallback),
+  Genesis RAM cart (test ROM 4x, Sonic 1.64x, Miniplanets 1.5x), Lynx
+  (1.1-1.6x, two-refresh updates; Lynx frames are CPU-bound). Chorded
+  rewind: Gear, Boy, Lynx; Genesis in the XIP cart and the simulator only,
+  because the Genesis RAM cart has no scrubber. Tags `<cart>/ff` and
+  `<cart>/chord-rewind`. Not yet tried on a badge.

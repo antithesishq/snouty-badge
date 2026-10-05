@@ -62,6 +62,12 @@ pub const Machine = struct {
     /// Crash in progress (hit-stop countdown) and its cause.
     crash: Crash = .none,
     hitstop: u8 = 0,
+    /// Knocked out (SPEC 5.5): wrecking through the hit-stop, then out of
+    /// the race (`active` false) instead of the centerline reset.
+    ko: bool = false,
+    /// Ticks left in which a crash counts as the player's doing (set by a
+    /// damaging contact with the player).
+    hit_by_player: u8 = 0,
     /// Up held last tick: Overclock fires on the press edge (SPEC 4).
     up_was: bool = false,
     /// Race position 1..5 for the player and rivals (0 for traffic and
@@ -87,8 +93,12 @@ pub const World = struct {
     /// Lap length in world px along the centerline (set by sim.reset from
     /// the track; progress in px for the rubber band).
     lap_px: u16 = 0,
+    /// Machines the player knocked out this race (SPEC 5.5).
+    kos: u8 = 0,
+    /// The machine a `.ko` message names.
+    msg_who: u8 = 0,
 };
 
-pub const Message = enum(u8) { none, provisioning, three, two, one, deploy, final_lap, committed, fall, meltdown, collision, killed };
+pub const Message = enum(u8) { none, provisioning, three, two, one, deploy, final_lap, committed, fall, meltdown, collision, killed, ko };
 
 pub var w: World = .{};

@@ -281,10 +281,10 @@ pub fn tick(frame: u32, cam_row: i32) void {
 /// B: push a frame from cam_row + push_lead to the district end (ignored
 /// while the previous push is running or past the district end); overflow
 /// if the canyon there is already max_depth deep.
-pub fn verb() void {
-    if (pushing or pushes >= max_pushes) return;
+pub fn verb() bool {
+    if (pushing or pushes >= max_pushes) return false;
     const from = @max(last_cam_row + push_lead, live_y0);
-    if (from >= live_y0 + world.district_len) return;
+    if (from >= live_y0 + world.district_len) return false;
     const ovf = state_at(from).d >= max_depth;
     push_from[pushes] = from;
     push_ovf[pushes] = ovf;
@@ -293,4 +293,5 @@ pub fn verb() void {
     pushing = true;
     unwinding = false; // a push cancels the unwind
     if (ovf) render.sky_flash = overflow_flash;
+    return true;
 }

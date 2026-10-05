@@ -27,10 +27,21 @@ const Vec3 = math.Vec3;
 const Rect = camera.Rect;
 
 /// Pipe radius, ball joint and cap radius, elbow (torus) major radius, all
-/// in cells.
-pub const r_pipe: f32 = 0.22;
-pub const r_ball: f32 = 0.32;
+/// in cells. The radii are the screensaver's; steer mode draws fatter
+/// pipes (`set_steer`), its whole play box being on screen.
+pub var r_pipe: f32 = saver_pipe;
+pub var r_ball: f32 = saver_ball;
 pub const r_elbow: f32 = 0.5;
+const saver_pipe: f32 = 0.22;
+const saver_ball: f32 = 0.32;
+const steer_pipe: f32 = 0.30;
+const steer_ball: f32 = 0.40;
+
+/// Picks the steer mode radii (true) or the screensaver's (false).
+pub fn set_steer(on: bool) void {
+    r_pipe = if (on) steer_pipe else saver_pipe;
+    r_ball = if (on) steer_ball else saver_ball;
+}
 /// Teapot height in cells.
 pub const teapot_size: f32 = 1.3;
 
@@ -110,6 +121,84 @@ pub fn Renderer(comptime S: type) type {
                 }
                 box.add(x0, y0);
                 box.add(x0 + 3, y0 + 3);
+            }
+            box.mark();
+        }
+
+        /// Steer mode: the edges of the box [lo, hi] (world, whole cells)
+        /// that bound its back faces (those turned away from the eye), as
+        /// 1 px lines in `c`, over a grid of the cells on its floor (the
+        /// face under the camera's up) in `grid_c`. Drawn only on empty
+        /// pixels (z far) and without writing z: it goes down right after a
+        /// clear, and every pipe in the box, being in front of the back
+        /// faces, paints over it.
+        pub fn box_edges(cam: *const camera.Camera, lo: [3]f32, hi: [3]f32, c: u16, grid_c: u16) void {
+            const eye = [3]f32{ cam.eye[0], cam.eye[1], cam.eye[2] };
+            const up = [3]f32{ cam.up[0], cam.up[1], cam.up[2] };
+            var v: usize = 0;
+            for (1..3) |a| {
+                if (@abs(up[a]) > @abs(up[v])) v = a;
+            }
+            const floor = if (up[v] > 0) lo[v] else hi[v];
+            for ([2]usize{ (v + 1) % 3, (v + 2) % 3 }, 0..) |b, k| {
+                const o = if (k == 0) (v + 2) % 3 else (v + 1) % 3;
+                var g = lo[b] + 1;
+                while (g < hi[b] - 0.5) : (g += 1) {
+                    var p0: [3]f32 = undefined;
+                    p0[v] = floor;
+                    p0[b] = g;
+                    p0[o] = lo[o];
+                    var p1 = p0;
+                    p1[o] = hi[o];
+                    line(cam, math.vec3(p0[0], p0[1], p0[2]), math.vec3(p1[0], p1[1], p1[2]), grid_c);
+                }
+            }
+            // back[a][side]: the face at lo (side 0) or hi (side 1) on axis a.
+            var back: [3][2]bool = undefined;
+            for (0..3) |a| {
+                back[a][0] = eye[a] > lo[a];
+                back[a][1] = eye[a] < hi[a];
+            }
+            for (0..3) |a| {
+                const b = (a + 1) % 3;
+                const d = (a + 2) % 3;
+                for (0..4) |k| {
+                    const sb = k & 1;
+                    const sd = k >> 1;
+                    if (!back[b][sb] and !back[d][sd]) continue;
+                    var p0: [3]f32 = undefined;
+                    p0[a] = lo[a];
+                    p0[b] = if (sb == 1) hi[b] else lo[b];
+                    p0[d] = if (sd == 1) hi[d] else lo[d];
+                    var p1 = p0;
+                    p1[a] = hi[a];
+                    line(cam, math.vec3(p0[0], p0[1], p0[2]), math.vec3(p1[0], p1[1], p1[2]), c);
+                }
+            }
+        }
+
+        /// A 1 px line between two world points in front of the camera, on
+        /// empty pixels only, z untouched.
+        fn line(cam: *const camera.Camera, w0: Vec3, w1: Vec3, c: u16) void {
+            const a = cam.project(w0);
+            const b = cam.project(w1);
+            if (a[2] <= 0 or b[2] <= 0) return;
+            const dx = b[0] - a[0];
+            const dy = b[1] - a[1];
+            const n: u32 = @intFromFloat(@min(512.0, @ceil(@max(@abs(dx), @abs(dy)))));
+            const inv = 1.0 / @as(f32, @floatFromInt(@max(n, 1)));
+            var box: Box = .{};
+            var i: u32 = 0;
+            while (i <= n) : (i += 1) {
+                const t = @as(f32, @floatFromInt(i)) * inv;
+                const fx = @floor(a[0] + dx * t);
+                const fy = @floor(a[1] + dy * t);
+                if (fx < 0 or fy < 0 or fx >= camera.screen_w or fy >= camera.screen_h) continue;
+                const x: u32 = @intFromFloat(fx);
+                const y: u32 = @intFromFloat(fy);
+                if (zbuf.buf[x][y] != zbuf.far) continue;
+                S.put(x, y, c);
+                box.add(x, y);
             }
             box.mark();
         }
@@ -362,6 +451,24 @@ test "clear_blocks covers every block once and marks it" {
     try std.testing.expectEqual(@as(u32, camera.screen_w * camera.screen_h), A.puts);
     for (A.px) |col| for (col) |c| try std.testing.expectEqual(@as(u16, 0), c);
     for (zbuf.buf[0]) |z| try std.testing.expectEqual(zbuf.far, z);
+}
+
+test "box edges stay inside their marked rects and under pipes" {
+    const A = TestSurface('f');
+    const R = Renderer(A);
+    const cam = camera.steer_view(0, .{ 4, 4, 4 });
+    A.reset();
+    zbuf.clear();
+    R.box_edges(&cam, .{ -4, -4, -4 }, .{ 4, 4, 4 }, 0x1234, 0x0101);
+    try std.testing.expectEqual(@as(u32, 0), A.outside);
+    try std.testing.expect(!A.unmarked());
+    try std.testing.expect(A.puts > 300);
+    // Never on a pixel that already holds something nearer than far.
+    for (zbuf.buf) |col| for (col) |z| try std.testing.expectEqual(zbuf.far, z);
+    zbuf.buf[80][64] = 100;
+    const before = A.px[80][64];
+    R.box_edges(&cam, .{ -4, -4, -4 }, .{ 4, 4, 4 }, 0x4321, 0x0202);
+    try std.testing.expectEqual(before, A.px[80][64]);
 }
 
 test "pipe start and end draw their cap balls once" {
