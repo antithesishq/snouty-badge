@@ -6,7 +6,7 @@
 #   tools/check.sh                 # every step, in this order
 #   tools/check.sh cycle bench     # only the named steps
 #   BENCH_LEVELS="1 6" tools/check.sh bench    # ladder levels to time
-#   tools/check.sh ladder          # the ladder bot (not in the default list)
+#   tools/check.sh ladder          # only the ladder bot
 #
 # Steps:
 #   build   zig build -Dcart=snouty-cycles (ELF, UF2, wasm) at the repository root
@@ -15,17 +15,24 @@
 #   font    tools/gen_font.py --check (cart/src/font8.zig matches the OS font)
 #   cycle   headless runs of the wasm (../../tools/preview.mjs) on the debug
 #           exports: from the title (A opens the menu, A starts GRID LADDER)
-#           the slipping autopilot (debug_autopilot 2) plays 3 attempts;
+#           the slipping autopilot (debug_autopilot 2) reaches level 3;
 #           the same seed twice gives the same World hash and screen; with
-#           no input in the ladder your first life still ends (sudden death
-#           ends every round by tick 3540); debug_set_level 12 starts PROD.
+#           no input in the ladder 3 derezzes rewind and the 4th is CORE
+#           DUMPED (sudden death ends every round by tick 3540);
+#           debug_set_level 12 starts PROD; a forced derez (debug_force_crash)
+#           rewinds 2 s and resumes on the World hash a straight run had at
+#           that tick (levels 8 and 12, the second with the OPTIONS
+#           modifiers on); a SKIRMISH match reaches its card.
 #   bench   badge-bench, calibrated, with badge-bench/carts/snouty-cycles.toml
 #           (3600 frames: the title over the attract round, A at 60 opens
 #           the menu, A at 90 starts the ladder; level 1 on autopilot 3:
 #           intro, countdown, play, sudden death or a clear), plus ladder
 #           levels 1, 6 and 12 (BENCH_LEVELS) poked straight in
-#           (snouty_cycles_level) for 3600 frames each, so sudden death,
-#           layouts and three programs are in the timing: worst `busy ms`
+#           (snouty_cycles_level) for 3600 frames each, each with a derez
+#           forced at World tick BENCH_CRASH_AT (1500) so a rewind (freeze,
+#           retraction, replay, repaint) is in the timing, and a SKIRMISH
+#           match of 3 ASM programs (BENCH_SKIRMISH): so sudden death,
+#           layouts, rewinds and three programs are in the timing: worst `busy ms`
 #           frame <= BENCH_MAX_MS (default 12, SPEC section 12) in every
 #           run, no crash or hang. BENCH_SEED (default 2) seeds the level
 #           runs; command-line pokes replace the toml's, so the autopilot
@@ -37,9 +44,9 @@
 #           .copy_forward, so a pixel written without mark_dirty_rect never
 #           reaches the badge's screen while the simulator, which shows the
 #           whole framebuffer, looks right.
-#   ladder  (not in the default list until Track A's tiers land) the
-#           content gate: tools/ladder_bot.mjs, autopilot 3, every level
-#           1..12 cleared within 3 lives on at least 4 of 5 seeds.
+#   ladder  the content gate: tools/ladder_bot.mjs, autopilot 3, every
+#           level 1..12 cleared with its 3 snapshots (rewinds) on at least
+#           4 of 5 seeds.
 #
 # Output under out/ (gitignored). Exit 0 when every step passes, else 1
 # (the failing steps are listed at the end).
@@ -58,6 +65,10 @@ out="$cart/out/check"
 max_ms="${BENCH_MAX_MS:-12}"
 levels="${BENCH_LEVELS-1 6 12}"
 bench_seed="${BENCH_SEED:-2}"
+# Every level run derezzes you at this World tick (a rewind in the timing).
+crash_at="${BENCH_CRASH_AT:-1500}"
+# The SKIRMISH run: game.Skirmish.from_bits + 1 (15 = 3 ASM programs, OPEN).
+skirmish="${BENCH_SKIRMISH:-15}"
 
 all=(build test float font cycle bench lcd ladder)
 extra=(ladder)
@@ -97,16 +108,23 @@ if want cycle; then
     step "cycle: headless runs on the debug exports"
     status=0
     mkdir -p "$out/cycle"
-    # 1. The ladder loops: the slipping autopilot plays 3 attempts.
-    node "$preview" "$wasm" --frames 30000 --every 100000 --out "$out/cycle/rounds" \
-        --call debug_autopilot:2 --press A:60-61 --press A:90-91 \
+    # run NAME PREVIEW-ARGS...: a headless run; its summary lines shown,
+    # its exit status kept (3 on a failed --expect).
+    run() {
+        local name="$1"; shift
+        local log; log="$(node "$preview" "$wasm" --out "$out/cycle/$name" "$@" 2>&1)"
+        local st=$?
+        echo "$log" | grep -E "exports|expect|until|PASS|FAIL" | sed "s/^/     [$name] /"
+        [ "$st" = 0 ] || { echo "     [$name] exit $st"; status=1; }
+    }
+    # 1. The ladder goes on: the slipping autopilot clears 2 levels
+    #    (rewinds on its derezzes).
+    run rounds --frames 40000 --every 100000 --call debug_autopilot:2 --press A:60-61 --press A:90-91 \
         --until "debug_round >= 3" --expect "debug_round >= 3" \
-        --dump-exports debug_tick,debug_level,debug_lives,debug_wins,debug_losses,debug_score 2>&1 | grep -E "exports|expect|until|FAIL" \
-        || true
-    [ "${PIPESTATUS[0]}" = 0 ] || status=1
+        --dump-exports debug_tick,debug_level,debug_snapshots,debug_rewinds,debug_wins,debug_losses,debug_score
     # 2. Determinism: the same seed and inputs twice, same World and screen.
-    for run in a b; do
-        node "$preview" "$wasm" --frames 3000 --every 100000 --out "$out/cycle/det_$run" \
+    for r in a b; do
+        node "$preview" "$wasm" --frames 3000 --every 100000 --out "$out/cycle/det_$r" \
             --call debug_autopilot:2 --press A:60-61 --press A:90-91 \
             --dump-exports debug_world_hash,debug_pixel_checksum,debug_round,debug_score > /dev/null 2>&1 || status=1
     done
@@ -117,14 +135,50 @@ print("     determinism:", a, "==" if a == b else "!=", b)
 sys.exit(0 if a == b else 1)
 PYEOF
     then :; else status=1; fi
-    # 3. No input in the ladder: your first life still ends.
-    node "$preview" "$wasm" --frames 4500 --every 100000 --out "$out/cycle/idle" \
-        --press A:60-61 --press A:90-91 --until "debug_round >= 2" --expect "debug_round >= 2" 2>&1 | grep -E "exports|PASS|FAIL" || true
-    [ "${PIPESTATUS[0]}" = 0 ] || status=1
-    # 4. debug_set_level jumps into the ladder: PROD, four cycles, 3 lives.
-    node "$preview" "$wasm" --frames 300 --every 100000 --out "$out/cycle/level" \
-        --call debug_set_level:12 --expect "debug_level == 12" --expect "debug_lives == 3" --expect "debug_alive_mask == 15" 2>&1 | grep -E "PASS|FAIL" || true
-    [ "${PIPESTATUS[0]}" = 0 ] || status=1
+    # 3. No input in the ladder: three derezzes rewind, the fourth is
+    #    CORE DUMPED (sudden death ends every round by tick 3540).
+    run idle --frames 16000 --every 100000 --press A:60-61 --press A:90-91 \
+        --until "debug_state == 8" --expect "debug_state == 8" --expect "debug_rewinds == 3" --expect "debug_snapshots == 0"
+    # 4. debug_set_level jumps into the ladder: PROD, four cycles, 3 snapshots.
+    run level --frames 300 --every 100000 \
+        --call debug_set_level:12 --expect "debug_level == 12" --expect "debug_snapshots == 3" --expect "debug_alive_mask == 15"
+    # 5. Time travel is exact: a forced derez at update 1300 rewinds 2 s
+    #    and the round resumes on the World hash a straight run had at
+    #    that tick (levels 8 and 12, the second with every OPTIONS
+    #    modifier: speed FAST, SNAKE, GAPS, WRAP).
+    for spec in "8:0" "12:30"; do
+        lv="${spec%%:*}"; opt="${spec##*:}"
+        for r in straight rewind; do
+            extra=()
+            [ "$r" = rewind ] && extra=(--call-at "1300 debug_force_crash")
+            node "$preview" "$wasm" --frames 1700 --every 100000 --quiet --seed 4 --out "$out/cycle/tt_${lv}_$r" \
+                --call "debug_options:$opt" --call debug_autopilot:3 --call "debug_set_level:$lv" "${extra[@]}" \
+                --sample debug_state,debug_world_tick,debug_world_hash,debug_rewinds,debug_rewind_target > /dev/null 2>&1 || status=1
+        done
+        python3 - "$out/cycle/tt_${lv}_straight/frames.json" "$out/cycle/tt_${lv}_rewind/frames.json" "$lv" <<'PYEOF' || status=1
+import json, sys
+a, b = (json.load(open(p))["samples"] for p in sys.argv[1:3])
+va, vb = a["values"], b["values"]
+straight = {}
+for st, t, h in zip(va["debug_state"], va["debug_world_tick"], va["debug_world_hash"]):
+    if st == 5 and t not in straight: straight[t] = h
+# The first countdown after the rewind (state 4, one rewind done).
+for i, (st, rw) in enumerate(zip(vb["debug_state"], vb["debug_rewinds"])):
+    if st == 4 and rw == 1:
+        t, h, tgt = vb["debug_world_tick"][i], vb["debug_world_hash"][i], vb["debug_rewind_target"][i]
+        crash = [vb["debug_world_tick"][k] for k in range(i) if vb["debug_state"][k] == 10][0]
+        ok = t == tgt == max(0, crash - 120) and straight.get(t) == h
+        print("     %s rewind level %s: derez at tick %d, resumed at %d, hash %08x %s straight run's %s"
+              % ("ok  " if ok else "FAIL", sys.argv[3], crash, t, h & 0xffffffff, "==" if ok else "!=",
+                 "%08x" % (straight[t] & 0xffffffff) if t in straight else "(none)"))
+        sys.exit(0 if ok else 1)
+print("     FAIL rewind level %s: no rewind seen" % sys.argv[3])
+sys.exit(1)
+PYEOF
+    done
+    # 6. SKIRMISH: a match to its card (3 programs of PASCAL on PILLARS).
+    run skirmish --frames 20000 --every 100000 --call debug_autopilot:2 --call debug_skirmish:22 \
+        --until "debug_state == 15" --expect "debug_state == 15" --expect "debug_mode == 1" --dump-exports debug_match
     result cycle "$status"
 fi
 
@@ -156,16 +210,24 @@ if want bench || want lcd; then
             [ "$l" = "${levels##* }" ] && want lcd && lcd_flags=(--lcd --png 5)
             if want bench || [ ${#lcd_flags[@]} -gt 0 ]; then
                 "$bench" "$elf" --json "${lcd_flags[@]}" --seed "$bench_seed" --poke snouty_cycles_autopilot=3 \
-                    --poke "snouty_cycles_seed=$bench_seed" --poke "snouty_cycles_level=$l" --out "$out/bench/level$l" > "$out/bench/level$l.txt" 2>&1 &
+                    --poke "snouty_cycles_seed=$bench_seed" --poke "snouty_cycles_level=$l" --poke "snouty_cycles_crash_at=$crash_at" \
+                    --out "$out/bench/level$l" > "$out/bench/level$l.txt" 2>&1 &
                 pids+=($!)
             fi
             if [ ${#lcd_flags[@]} -gt 0 ]; then
                 "$bench" "$elf" --png 5 --seed "$bench_seed" --poke snouty_cycles_autopilot=3 \
-                    --poke "snouty_cycles_seed=$bench_seed" --poke "snouty_cycles_level=$l" --out "$out/bench/fb$l" > "$out/bench/fb$l.txt" 2>&1 &
+                    --poke "snouty_cycles_seed=$bench_seed" --poke "snouty_cycles_level=$l" --poke "snouty_cycles_crash_at=$crash_at" \
+                    --out "$out/bench/fb$l" > "$out/bench/fb$l.txt" 2>&1 &
                 pids+=($!)
                 lcd_pairs+=("fb$l:level$l")
             fi
         done
+        if want bench && [ -n "$skirmish" ]; then
+            "$bench" "$elf" --json --seed "$bench_seed" --poke snouty_cycles_autopilot=3 \
+                --poke "snouty_cycles_seed=$bench_seed" --poke "snouty_cycles_skirmish=$skirmish" \
+                --out "$out/bench/skirmish" > "$out/bench/skirmish.txt" 2>&1 &
+            pids+=($!)
+        fi
         bench_status=0
         for p in "${pids[@]}"; do wait "$p" || bench_status=1; done
         grep -E "^badge-bench:|^  frames|^calibrat|^  (busy|idle) ms|^verdict|warning" "$out/bench/lcd.txt" | head -12
@@ -173,7 +235,7 @@ if want bench || want lcd; then
         if want bench; then
             status=$bench_status
             [ "$status" = 0 ] || echo "check: a badge-bench run failed (crash, hang or setup error); see $out/bench/*.txt"
-            for j in "$out/bench/lcd/bench.json" "$out/bench"/level*/bench.json; do
+            for j in "$out/bench/lcd/bench.json" "$out/bench"/level*/bench.json "$out/bench"/skirmish/bench.json; do
                 [ -f "$j" ] || continue
                 python3 - "$j" "$max_ms" <<'PYEOF' || status=1
 import json, sys

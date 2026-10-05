@@ -476,7 +476,7 @@ pub fn Renderer(comptime S: type) type {
         }
 
         /// Repaints every cell under pixel rect r (arena part only), one mark.
-        fn repaint_rect(self: *Self, w: *const sim.World, r: Rect) void {
+        pub fn repaint_rect(self: *Self, w: *const sim.World, r: Rect) void {
             if (r.y1 <= arena_y or r.is_empty()) return;
             const y0 = @max(r.y0, arena_y);
             self.repaint_cells(w, r.x0 / 2, (y0 - arena_y) / 2, (r.x1 + 1) / 2, (r.y1 - arena_y + 1) / 2);

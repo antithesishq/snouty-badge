@@ -242,8 +242,8 @@ pub const History = struct {
 
     /// What one `retract` call did.
     pub const Retracted = struct {
-        /// A crashed cycle rides again (its trail changes colour: the
-        /// caller repaints the screen).
+        /// A crashed cycle rides again (a `crash` event with `Crash.none`
+        /// names it: the renderer repaints its trail, lit again).
         revived: bool = false,
         /// `target` reached (or no record left to undo).
         done: bool = false,
@@ -251,9 +251,10 @@ pub const History = struct {
 
     /// Undoes up to `n` ticks of the World, newest first, toward `target`
     /// (the picture of a rewind; `restore` makes it exact afterwards).
-    /// Leaves `cleared` events for every cell it empties or refills and a
+    /// Leaves `cleared` events for every cell it empties or refills, a
     /// `painted` event at each head that moved (the renderer re-colours the
-    /// newest cells), then lowers `w.tick`, so the renderer applies them
+    /// newest cells) and a `crash` event (a = `Crash.none`) for a cycle
+    /// that rides again, then lowers `w.tick`, so the renderer applies them
     /// as one World tick.
     pub fn retract(h: *History, w: *sim.World, n: u32) Retracted {
         var out: Retracted = .{};
@@ -302,6 +303,9 @@ pub const History = struct {
                 c.crash = .none;
                 c.killer = sim.no_cycle;
                 revived = true;
+                // The renderer repaints a crashed cycle's trail (now lit
+                // again) and bursts at its head: it rematerialises.
+                emit(w, .{ .kind = .crash, .cycle = @intCast(i), .x = c.x, .y = c.y, .a = @backingInt(sim.Crash.none), .b = sim.no_cycle });
             }
             const pops = m & 15;
             if (pops == 0) continue;

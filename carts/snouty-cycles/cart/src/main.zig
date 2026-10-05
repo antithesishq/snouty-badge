@@ -22,7 +22,7 @@ comptime {
 /// when the tint comes and goes).
 const Screen = struct {
     pub inline fn put(x: u32, y: u32, c: u16) void {
-        const out = if (tint_on and y >= render.arena_y and !in_box(x, y)) tint(c, y) else c;
+        const out = if (y < tint_end and y >= render.arena_y and !in_box(x, y)) tint(c, y) else c;
         cart.framebuffer[x][y] = .from_color(@bitCast(out));
     }
     pub fn mark_dirty(r: render.Rect) void {
@@ -32,7 +32,12 @@ const Screen = struct {
 };
 const R = render.Renderer(Screen);
 
-var tint_on = false;
+/// Pixel rows above this are tinted (arena_y: none).
+var tint_end: u32 = render.arena_y;
+/// The bright line at the wipe's front, drawn last frame (erased by
+/// repainting its cells).
+var wipe_line: ?u8 = null;
+const wipe_color = render.rgb(0xB8F4FF);
 /// The banner's box: its text and dimmed arena are not tinted.
 var tint_box: render.Rect = .empty;
 
@@ -141,12 +146,22 @@ fn clock_mix() u32 {
     return h;
 }
 
+/// A bright scanline across the arena at row y (outside the banner).
+fn draw_wipe_line(y: u8) void {
+    // Not through the banner's rows (stubs beside the box look broken).
+    if (y >= tint_box.y0 and y < tint_box.y1) return;
+    for (0..render.screen_w) |x| cart.framebuffer[x][y] = .from_color(@bitCast(wipe_color));
+    Screen.mark_dirty(.{ .x0 = 0, .y0 = y, .x1 = render.screen_w, .y1 = y + 1 });
+    wipe_line = y;
+}
+
 fn reseed(s: u32) void {
     seed = s;
     g.init(s);
     g.autopilot = autopilot;
     g.opts = .from_bits(options_bits);
     renderer.invalidate();
+    wipe_line = null;
 }
 
 fn buttons(c: cart.Controls) game.Buttons {
@@ -183,9 +198,24 @@ pub fn update() void {
             @memcpy(buf[n..][0..2], "us");
             v.hud.right = .of(buf[0 .. n + 2], 1, game.colors.warn);
         }
-        tint_on = g.tinted();
         tint_box = if (v.banner) |b| b.rect() else .empty;
+        // The tint wiping down: repaint the rows it reached this frame
+        // (and last frame's bright front line).
+        const end = render.arena_y + @as(u32, g.tinted());
+        if (wipe_line) |y| {
+            renderer.repaint_rect(&g.world, .{ .x0 = 0, .y0 = y, .x1 = render.screen_w, .y1 = y + 1 });
+            wipe_line = null;
+        }
+        if (end > tint_end) {
+            const from: u8 = @intCast(tint_end);
+            tint_end = end;
+            renderer.repaint_rect(&g.world, .{ .x0 = 0, .y0 = from, .x1 = render.screen_w, .y1 = @intCast(end) });
+        } else {
+            // Taking it off comes with a full repaint (the game's repaint).
+            tint_end = end;
+        }
         renderer.frame(&g.world, v);
+        if (g.state == .rewind and tint_end < render.screen_h and tint_end > render.arena_y) draw_wipe_line(@intCast(tint_end - 1));
     }
     render_us = @truncate(cart.micros_since_boot() - t0);
 

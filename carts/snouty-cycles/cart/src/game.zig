@@ -101,6 +101,9 @@ pub const tuning = struct {
     /// left: no replay frame passes ~8 ms.
     pub const replay_units: u64 = 14_000;
     pub const replay_max_ticks: u32 = 40;
+    /// The tint wipes down the arena this many pixel rows a frame as a
+    /// rewind starts (a full tinted repaint at once costs ~10 ms).
+    pub const wipe_rows: u8 = 20;
     /// After a rewind the autopilot (the ladder bot, the bench) rides as
     /// T2 this long, or it would make the same moves into the same crash.
     pub const autopilot_alt_ticks: u32 = 300;
@@ -280,8 +283,9 @@ pub const Game = struct {
     /// Main skips drawing this frame (the replay runs on a World the
     /// screen must not follow).
     hold_frame: bool,
-    /// The scanline tint over the arena (main's pixel sink applies it).
-    tint: bool,
+    /// The scanline tint over the arena: this many pixel rows from its top
+    /// (main's pixel sink applies it; it wipes down as a rewind starts).
+    tint_rows: u8,
     /// badge-bench and tools: derez the player when the World reaches
     /// this tick in play (once; 0 off).
     crash_at: u32,
@@ -332,7 +336,7 @@ pub const Game = struct {
         g.restored = false;
         g.run_cy = default_cy;
         g.hold_frame = false;
-        g.tint = false;
+        g.tint_rows = 0;
         g.autopilot_alt_until = 0;
         g.sudden_death_tick = 0;
     }
@@ -780,22 +784,19 @@ pub const Game = struct {
         g.snapshots -= 1;
         g.rewinds += 1;
         g.replaying = false;
-        g.tint = true;
-        // The tinted repaint; your trail lights up again as you ride again.
-        g.repaint = true;
+        g.tint_rows = 0;
         const me = &g.world.cycles[0];
         g.rewind_cy = if (me.y < sim.grid_h / 2) 100 else 30;
         g.goto(.rewind);
-        // The first ticks go back on this frame: a crashed cycle rides
-        // again before the tinted repaint shows it.
+        // The first ticks go back on this frame (you ride again at once).
         g.update_rewind();
     }
 
     noinline fn update_rewind(g: *Game) void {
         const w = &g.world;
         if (!g.replaying) {
+            g.tint_rows = @min(render.screen_h - render.arena_y, g.tint_rows + tuning.wipe_rows);
             const r = g.history.retract(w, history.tuning.retract_per_frame);
-            if (r.revived) g.repaint = true;
             if (r.done) {
                 g.replaying = true;
                 g.restored = false;
@@ -825,7 +826,7 @@ pub const Game = struct {
     noinline fn finish_rewind(g: *Game) void {
         g.replaying = false;
         g.restored = false;
-        g.tint = false;
+        g.tint_rows = 0;
         g.repaint = true;
         g.resuming = true;
         g.resume_press = null;
@@ -1029,9 +1030,10 @@ pub const Game = struct {
         return v;
     }
 
-    /// The scanline tint is on (main's pixel sink applies it).
-    pub fn tinted(g: *const Game) bool {
-        return g.tint;
+    /// Arena pixel rows under the scanline tint, from the top (main's
+    /// pixel sink applies it).
+    pub fn tinted(g: *const Game) u8 {
+        return g.tint_rows;
     }
 
     /// A banner centre away from your head (rows 34 or 98).
@@ -1611,7 +1613,7 @@ fn check_rewind(g: *Game, seed: u32, level: u32, crash: u32, opts: levels.Option
     idle(g, tuning.freeze_ticks);
     try testing.expectEqual(State.rewind, g.state);
     try testing.expectEqual(snaps - 1, g.snapshots);
-    try testing.expect(g.tint);
+    try testing.expect(g.tint_rows > 0);
     // Backwards at 3x: the World clock falls 3 ticks a frame.
     var frames: u32 = 0;
     var held: u32 = 0;
@@ -1627,7 +1629,7 @@ fn check_rewind(g: *Game, seed: u32, level: u32, crash: u32, opts: levels.Option
         if (frames > 400) return error.RewindHangs;
     }
     try testing.expectEqual(State.countdown, g.state);
-    try testing.expect(g.resuming and !g.tint);
+    try testing.expect(g.resuming and g.tint_rows == 0);
     const t = crash -| history.tuning.rewind_ticks;
     try testing.expectEqual(t, g.world.tick);
     if (t > 0) {
