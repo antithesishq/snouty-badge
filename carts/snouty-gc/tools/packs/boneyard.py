@@ -609,14 +609,23 @@ class Hangar18Arena(PA.PackArena):
                       ("wingtip", *w(24, 24)), ("engine", *w(63, 63))]
 
     def post(self, tmap):
-        """The saucer in its crater: hull panels where the pit is deepest
-        (attribute off either way), a ring of scorch round its rim."""
+        """The saucer in its crater: hull panels over the pit's middle
+        (attribute off either way); the fallen roof's sheets on the corner
+        islands (wing panels, rivet plates)."""
         O = PA.O
         for ty in range(O + 36, O + 52):
             for tx in range(O + 36, O + 52):
                 r = math.hypot(tx - O - 43.5, ty - O - 43.5)
-                if GAP <= tmap[ty, tx] < GAP + 16 and r < 6.0:
+                if GAP <= tmap[ty, tx] < GAP + 16 and r < 6.6:
                     tmap[ty, tx] = BY_PANEL
+        for x0 in (14, 60):
+            for y0 in (14, 60):
+                for ty in range(O + y0 + 1, O + y0 + 13, 2):
+                    for tx in range(O + x0 + 1, O + x0 + 13, 2):
+                        if (tx // 2 * 7 + ty // 2 * 3) % 5 == 0:
+                            tmap[ty:ty + 2, tx:tx + 2] = np.array([[BY_WING, BY_WING + 1], [BY_WING + 2, BY_WING + 3]])
+                        else:
+                            tmap[ty:ty + 2, tx:tx + 2] = BY_PANEL
 
 
 ARENA = Hangar18Arena

@@ -498,7 +498,14 @@ def build_pack(name, errs, review=None, report=True):
             if res is not arena:
                 preview(res, ts, rd / f"{name}_{res['stem']}_map.png")
             fr, lab = (pack_arena.mock_frames(res, ts, hz, cells) if res is arena else mock_frames(res, ts, hz, cells))
-            C.grid_of(fr, 4, 2, lab, f"{mod.TITLE}: {res['name']} (Mode 7 mock)").save(rd / f"{name}_{res['stem']}_mock.png")
+            g = C.grid_of(fr, 4, 2, lab, f"{mod.TITLE}: {res['name']} (Mode 7 mock)")
+            g.save(rd / f"{name}_{res['stem']}_mock.png")
+            # The contact sheet: the overhead map (half scale) beside the frames.
+            mp = Image.open(rev / (f"{res['stem']}_preview.png" if res is arena else f"{res['stem']}.png")).convert("RGB")
+            sheet = Image.new("RGB", (mp.width + g.width + 12, max(mp.height, g.height) + 12), C.BG)
+            sheet.paste(mp, (6, 6 + 22))
+            sheet.paste(g, (mp.width + 12, 6))
+            sheet.save(rd / f"{name}_{res['stem']}_contact.png")
     return dict(mod=mod, ts=ts, results=results, arena=arena, gcp=gcp)
 
 
