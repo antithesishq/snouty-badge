@@ -130,8 +130,13 @@ pub fn close() void {
 /// Time scrubber step (SPEC.md section 10): Left = back 0.5 s, Right =
 /// forward. Restores the keyframe into `gb` and redraws the frozen frame.
 fn on_scrub(gb: *core.Gb, dir: i2) void {
+    if (linked) return;
     if (rewind.step(gb, dir)) scrub_view = true;
 }
+
+/// A link cable partner is connected (frontend/linkport.zig): no scrubbing,
+/// it would leave the partner's game behind.
+pub var linked = false;
 
 /// Light the first `lit` of the five neopixels. Compiled out unless built
 /// with -Dneopixels=true (docs/NEOPIXELS.md): the badge LEDs are painfully bright.

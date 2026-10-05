@@ -2,17 +2,24 @@
 //! item 8, SPEC 18's 64-object question). A debug path that fills the
 //! World directly, without the sim: six cars in view ahead of SNOUTY (one
 //! a burning hulk, one hit-flashing, one charging a FIBER LANCE, SNOUTY
-//! smoking with a SPEAR PHISH lock), all 48 projectile slots (PING,
-//! BROADCAST, SPEAR PHISH) streaming up the road, all 32 drop slots (MEMORY
-//! LEAK, LOGIC BOMB, BIT ROT, FIREWALL), and every 30 ticks two explosions,
-//! a lance beam, a hit and a wreck event for the feed and pop-up. The view
-//! sweeps +-14 degrees so the list changes every frame. main.zig runs it
+//! smoking with a SPEAR PHISH lock), every projectile slot (PING,
+//! BROADCAST, SPEAR PHISH, a KERNEL PANIC packet) streaming up the road,
+//! every drop slot (MEMORY LEAK, LOGIC BOMB, BIT ROT, FIREWALL, FORK BOMB,
+//! a HONEYPOT, a SPAGHETTI tangle), and every 30 ticks two explosions, a
+//! lance beam, a hit and a wreck event for the feed and pop-up. M2 adds 8
+//! RMA crates in two rows, the 8 DDOS drones round a rival, a DEADLOCK
+//! chain, a RUBBER DUCK, a SPAGHETTI strand, SUDO, KERNEL PANIC, RACE
+//! CONDITION and HEISENBUG cars, and on SNOUTY in turn (150 frames each)
+//! the CAPTCHA board, BIT FLIP, DDOS, then the roulette. The view sweeps
+//! +-14 degrees so the list changes every frame. main.zig runs it
 //! instead of `sim.simulate` when `gc_stress` is set (badge-bench
 //! `--poke gc_stress=1`, or the wasm `debug_stress` export).
 const fixed = @import("fixed.zig");
 const tuning = @import("tuning.zig");
 const world = @import("world.zig");
 const weapons = @import("weapons.zig");
+const track = @import("track.zig");
+const sim = @import("sim.zig");
 
 const World = world.World;
 
@@ -61,18 +68,48 @@ pub fn fill(w: *World, follow: u8) void {
     me.lock = (follow + 1) % world.car_count;
     me.ammo_front = 3;
     me.ammo_rear = 3;
-    // Drops: 8 of each kind over 40..360 px ahead.
+    // Drops: a fifth of the pool each of MEMORY LEAK, LOGIC BOMB, BIT ROT,
+    // FIREWALL and FORK BOMB over 40..440 px ahead; one leak is a
+    // HONEYPOT and one a SPAGHETTI tangle.
     for (&w.drops, 0..) |*d, i| {
-        const kind: world.DropKind = switch (i % 4) {
+        const kind: world.DropKind = if (i == 0) .honeypot else if (i == 5) .spaghetti else switch (i % 5) {
             0 => .leak,
             1 => .bomb,
             2 => .caltrop,
-            else => .firewall,
+            3 => .firewall,
+            else => .fork,
         };
         const ii: i32 = @intCast(i);
         const p = ahead(40 + ii * 10, @mod(ii * 23, 70) - 35);
         d.* = .{ .x = p[0], .y = p[1], .kind = kind, .owner = @intCast(i % world.car_count), .age = @intCast(i * 20), .size = if (kind == .firewall) 32 else 6 + @as(u8, @intCast(i % 13)), .dir = @intCast(base_heading >> 8) };
     }
+    // RMA crates: two rows of four ahead (the scene's own spawns: a debug
+    // write of the track's crate cache, rebuilt by the next race's select).
+    track.crate_n = 8;
+    for (0..8) |n| {
+        const kk: i32 = @intCast(n);
+        const p = ahead(if (n < 4) 130 else 260, (@mod(kk, 4) * 2 - 3) * 10);
+        track.crate_spots[n] = .{ .x = @intCast((p[0] >> fixed.Q) & 1023), .y = @intCast((p[1] >> fixed.Q) & 1023) };
+    }
+    w.crates = @splat(0);
+    // Rival states: a DEADLOCK chain between two, a duck, a strand, root,
+    // a panic, a tearing pair, a HEISENBUG.
+    const r1 = (follow + 1) % world.car_count;
+    const r3 = (follow + 3) % world.car_count;
+    const r4 = (follow + 4) % world.car_count;
+    const r5 = (follow + 5) % world.car_count;
+    w.cars[r1].chain = @intCast(r3);
+    w.cars[r1].chain_ticks = 150;
+    w.cars[r3].chain = @intCast(r1);
+    w.cars[r3].chain_ticks = 150;
+    w.cars[r4].duck = 600;
+    w.cars[r4].frozen = 60;
+    w.cars[r4].frozen_by = .panic;
+    w.cars[r5].strand = 180;
+    w.cars[r5].sudo = 300;
+    w.cars[r3].swap_with = @intCast(r5);
+    w.cars[r1].heisen = 240;
+    me.duck = 600;
     step(w, follow, 0);
 }
 
@@ -89,13 +126,34 @@ pub fn step(w: *World, follow: u8, frame: u32) void {
         const ii: i32 = @intCast(i);
         const d: i32 = 24 + @mod(ii * 37 + @as(i32, @intCast(frame % 4096)) * 5, 380);
         const p = ahead(d, @mod(ii * 17, 60) - 30);
-        const kind: world.ProjKind = switch (i % 3) {
+        const kind: world.ProjKind = if (i == 1) .panic else switch (i % 3) {
             0 => .ping,
             1 => .broadcast,
             else => .phish,
         };
         pr.* = .{ .x = p[0], .y = p[1], .vx = @intCast((c * 5) >> 8), .vy = @intCast((s * 5) >> 8), .kind = kind, .owner = @intCast(i % world.car_count), .ttl = 100 };
     }
+    // The DDOS swarm orbiting the second rival (or SNOUTY in its phase).
+    const phase = (frame / 150) % 4;
+    const swarmed: u8 = if (phase == 2) follow else (follow + 2 + 1) % world.car_count;
+    const vc = &w.cars[swarmed];
+    for (&w.drones, 0..) |*d, k| {
+        const a: fixed.Turn = @truncate(k * 8192 + frame * 2048);
+        d.* = .{ .x = vc.x +% fixed.cos(a) * 16, .y = vc.y +% fixed.sin(a) * 16, .state = .orbit, .owner = 0, .target = swarmed, .ttl = 180, .angle = @truncate(k * 32 + frame * 8) };
+    }
+    // The RACE CONDITION pair tears for 6 frames of every 30.
+    const r3 = &w.cars[(follow + 3) % world.car_count];
+    const r5 = &w.cars[(follow + 5) % world.car_count];
+    r3.swap_ticks = if (frame % 30 < 6) 6 else 0;
+    r5.swap_ticks = r3.swap_ticks;
+    // SNOUTY's gags in turn: the CAPTCHA board, BIT FLIP, DDOS, the roulette.
+    me.captcha = if (phase == 0) @intCast(120 - (frame % 150) * 120 / 150) else 0;
+    me.captcha_lit = 0b100_010_001;
+    me.captcha_done = if (frame % 150 > 60) 0b000_000_001 else 0;
+    me.captcha_cursor = @intCast((frame / 5) % 9);
+    me.bit_flip = if (phase == 1) 180 else 0;
+    me.pickup = .kernel_panic;
+    me.roll_ticks = if (phase == 3) @intCast(45 - (frame % 45)) else 0;
     for (&w.drops) |*d| {
         d.age +%= 1;
         if (d.kind == .leak) d.size = 6 + @as(u8, @intCast((d.age / 10) % 13));
@@ -125,4 +183,173 @@ pub fn step(w: *World, follow: u8, frame: u32) void {
 
 fn flasher_index(follow: u8) u8 {
     return (follow + 1) % world.car_count;
+}
+
+// --- Pickup gags forced onto a car (M2 preview hooks) ------------------------------
+
+/// What `force_effect` puts on a car (the wasm `debug_effect` export). A
+/// debug path like the scene above: it writes the World directly so the
+/// preview scripts can show each gag on a chosen frame; the sim then runs
+/// the state on (`simulate` stays pure, nothing here is in a race).
+pub const Effect = enum(u8) {
+    none,
+    kernel_panic,
+    bit_flip,
+    captcha,
+    ddos,
+    deadlock,
+    heisenbug,
+    sudo,
+    race_condition,
+    spaghetti,
+    duck,
+    prefetch,
+    honeypot,
+    zero_day,
+    duck_pop,
+    hot_patch,
+    crate_pop,
+    /// A rival's FORK BOMB `&` on the centerline about 130 px ahead.
+    fork_ahead,
+};
+
+/// The car right ahead of `i` in progress (or the next index), for the
+/// effects that need a second car.
+fn other_of(w: *const World, i: usize, min_px: i32) usize {
+    var best: usize = (i + 1) % world.car_count;
+    var best_d: i32 = 1 << 30;
+    const me = &w.cars[i];
+    for (&w.cars, 0..) |*o, j| {
+        if (j == i or !o.active or o.wreck != .none) continue;
+        const dx = wrap((o.x -% me.x) >> fixed.Q);
+        const dy = wrap((o.y -% me.y) >> fixed.Q);
+        const d = dx * dx + dy * dy;
+        if (d < min_px * min_px) continue;
+        if (d < best_d) {
+            best_d = d;
+            best = j;
+        }
+    }
+    return best;
+}
+
+/// The nearest racing car ahead of car `i` (in front of its heading)
+/// within `range` px, or null.
+pub fn car_ahead(w: *const World, i: usize, range: i32) ?usize {
+    const me = &w.cars[i];
+    var best: ?usize = null;
+    var best_d: i32 = range * range;
+    for (&w.cars, 0..) |*o, j| {
+        if (j == i or !o.active or o.wreck != .none) continue;
+        const dx = wrap((o.x -% me.x) >> fixed.Q);
+        const dy = wrap((o.y -% me.y) >> fixed.Q);
+        if (dx * fixed.cos(me.heading) + dy * fixed.sin(me.heading) <= 0) continue;
+        const d = dx * dx + dy * dy;
+        if (d < best_d) {
+            best_d = d;
+            best = j;
+        }
+    }
+    return best;
+}
+
+fn wrap(d: i32) i32 {
+    return ((d + 512) & 1023) - 512;
+}
+
+pub fn force_effect(w: *World, i_: usize, e: Effect) void {
+    const i = i_ % world.car_count;
+    const c = &w.cars[i];
+    const ci: u8 = @intCast(i);
+    // A DEADLOCK partner out of contact (touching frees the pair).
+    const src: u8 = @intCast(other_of(w, i, if (e == .deadlock) 40 else 0));
+    const o = &w.cars[src];
+    switch (e) {
+        .none => {},
+        .kernel_panic => {
+            c.frozen = 90;
+            c.frozen_by = .panic;
+            c.vx = 0;
+            c.vy = 0;
+            weapons.emit(w, .effect, src, ci, @intFromEnum(world.Pickup.kernel_panic), c.x, c.y);
+        },
+        .bit_flip => {
+            c.bit_flip = 180;
+            weapons.emit(w, .effect, src, ci, @intFromEnum(world.Pickup.bit_flip), c.x, c.y);
+        },
+        .captcha => {
+            c.captcha = 120;
+            c.captcha_cursor = 0;
+            c.captcha_done = 0;
+            // Three lit cells of the nine from the World's own seed.
+            var lit: u16 = 0;
+            var r: u32 = w.rng | 1;
+            var n: u32 = 0;
+            while (n < 3) {
+                r ^= r << 13;
+                r ^= r >> 17;
+                r ^= r << 5;
+                const bit = @as(u16, 1) << @intCast(r % 9);
+                if (lit & bit == 0) {
+                    lit |= bit;
+                    n += 1;
+                }
+            }
+            c.captcha_lit = lit;
+            weapons.emit(w, .effect, src, ci, @intFromEnum(world.Pickup.captcha), c.x, c.y);
+        },
+        .ddos => {
+            for (&w.drones, 0..) |*d, k| {
+                const a: fixed.Turn = @intCast(k * 8192);
+                d.* = .{ .x = c.x +% fixed.cos(a) * 16, .y = c.y +% fixed.sin(a) * 16, .state = .orbit, .owner = src, .target = ci, .ttl = 180, .angle = @intCast(k * 32) };
+            }
+            weapons.emit(w, .effect, src, ci, @intFromEnum(world.Pickup.ddos), c.x, c.y);
+        },
+        .deadlock => {
+            c.chain = src;
+            c.chain_ticks = 150;
+            o.chain = ci;
+            o.chain_ticks = 150;
+            weapons.emit(w, .effect, world.no_car, ci, @intFromEnum(world.Pickup.deadlock), c.x, c.y);
+        },
+        .heisenbug => c.heisen = 240,
+        .sudo => c.sudo = 300,
+        .race_condition => {
+            c.swap_with = src;
+            c.swap_ticks = 6;
+            o.swap_with = ci;
+            o.swap_ticks = 6;
+        },
+        .spaghetti => {
+            c.tangle = 60;
+            c.strand = 180;
+            weapons.emit(w, .effect, src, ci, @intFromEnum(world.Pickup.spaghetti), c.x, c.y);
+        },
+        .duck => c.duck = 600,
+        .prefetch => c.prefetch = 90,
+        .honeypot => {
+            c.spin = 30;
+            weapons.emit(w, .effect, src, ci, @intFromEnum(world.Pickup.honeypot), c.x, c.y);
+        },
+        .zero_day => {
+            weapons.emit(w, .use, src, @intFromEnum(world.Pickup.zero_day), ci, c.x, c.y);
+            weapons.emit(w, .effect, src, ci, @intFromEnum(world.Pickup.zero_day), c.x, c.y);
+            c.last_hit_by = src;
+            c.last_hit_ticks = 0;
+            sim.wreck(w, i, .zero_day);
+        },
+        .duck_pop => {
+            c.duck = 0;
+            weapons.emit(w, .effect, src, ci, @intFromEnum(world.Pickup.duck), c.x, c.y);
+        },
+        .hot_patch => c.patch = 60,
+        .fork_ahead => {
+            const t = sim.track_of(w);
+            const smp = t.sample((@as(usize, c.progress) + 8) & 255);
+            const d = weapons.drop_slot(w);
+            d.* = .{ .x = @as(i32, smp.x) << fixed.Q, .y = @as(i32, smp.y) << fixed.Q, .kind = .fork, .owner = src, .dir = @intCast(@as(u16, smp.tangent) >> 8) };
+            weapons.emit(w, .use, src, @intFromEnum(world.Pickup.fork_bomb), world.no_car, d.x, d.y);
+        },
+        .crate_pop => weapons.emit(w, .roll, ci, @intFromEnum(world.Pickup.sudo), 0, c.x +% fixed.cos(c.heading) * 30, c.y +% fixed.sin(c.heading) * 30),
+    }
 }

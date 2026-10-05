@@ -15,7 +15,8 @@ PLAN.md "Generated data formats":
   <track>_attr.bin     128 attributes, one per tile index
   <track>_center.bin   256 samples x (x u16, y u16, tangent u16, half u8, flags u8)
                        flags: bit 0 wall, 1 open, 3 coolant, 4 bay, 5 vent,
-                       6 ramp, 7 hill (of the sample's segment); bit 2 unused
+                       6 ramp, 7 hill (of the sample's segment); bit 2 crates
+                       (on one sample only: an RMA crate row there)
 
 plus docs/<track>_preview.png (1:1 map with the centerline), and
 docs/<league>_tiles.png / docs/<league>_tiles.txt (contact sheet, index list).
@@ -49,6 +50,11 @@ Rasterizer rules:
     a run of hill samples: the Dumps' dunes). A run must be at least HILL_MIN
     samples (20..40 reads well) and must not touch a ramp segment or come within
     SEAM_CLEAR samples of the start line or a sector seam (0, 85, 170).
+  * crates (M2) paints nothing: it sets centerline flag bit 2 on the one
+    sample nearest the middle of the segment, where the cart puts a row of
+    RMA crates across the track (track.find_crates: 4 crates CRATE_GAP px
+    apart where the half width is >= CRATE_ROW4_HALF, else 3). The
+    validator checks every crate sits on plain road, at most CRATE_MAX.
   * `open` opens both sides of a segment; `open:left` / `open:right` only the
     driver's left or right side (the other side keeps its rail).
   * Off-track tiles 4-adjacent to surface become edge pieces chosen by the
@@ -112,6 +118,8 @@ HALF_LEN, HALF_WID = 12, 6   # tuning.zig car footprint
 # ramp segments and of the start line / sector seams by SEAM_CLEAR samples.
 HILL_MIN, SEAM_CLEAR = 12, 3
 SEAMS = (0, 85, 170)
+# RMA crate rows (tuning.zig crate_gap, crate_row4_half; world.crate_max).
+CRATE_GAP, CRATE_ROW4_HALF, CRATE_MAX, CRATE_BIT = 20, 56, 16, 2
 
 
 # ---------------------------------------------------------------- map packing
@@ -212,6 +220,9 @@ def parse_track(path):
             feats, hot, side = set(), 0, None
             for f in line[3:]:
                 name, _, n = f.partition(":")
+                if name == "crates":
+                    feats.add(name)
+                    continue
                 if name not in FLAG_BITS:
                     raise SystemExit(f"{path}:{ln}: unknown feature {f!r}")
                 feats.add(name)
@@ -278,7 +289,7 @@ class Track:
         for p in self.pts:
             f = 0 if p[5] == "both" else 1 << FLAG_BITS["wall"]   # one-sided open keeps a wall
             for name in p[3]:
-                if name != "wall":
+                if name not in ("wall", "crates"):
                     f |= 1 << FLAG_BITS[name]
             self.flags.append(f)
         self.dflags = np.array(self.flags)[self.seg]
@@ -288,6 +299,25 @@ class Track:
         nxt, prv = (k + 2) % nd, (k - 2) % nd
         ang = np.arctan2(self.dy[nxt] - self.dy[prv], self.dx[nxt] - self.dx[prv])
         self.turn = np.round(ang / (2 * np.pi) * 65536).astype(np.int64) % 65536
+        # Crate rows: the sample nearest the middle of each `crates` segment.
+        self.crate_rows = []
+        for i, p in enumerate(self.pts):
+            if "crates" in p[3]:
+                mid = (self.seg_start[i] + self.seg_start[i + 1]) / 2
+                self.crate_rows.append(int(np.argmin(np.abs(self.arc_dist(self.sidx * self.ds, mid)))))
+
+    def crates(self):
+        """Crate positions (x, y, sample) as track.find_crates places them."""
+        out = []
+        for k in sorted(self.crate_rows):
+            j = self.sidx[k]
+            x, y, h = int(round(self.dx[j])), int(round(self.dy[j])), int(round(self.dhalf[j]))
+            a = self.turn[k] / 65536 * 2 * math.pi
+            n = 4 if h >= CRATE_ROW4_HALF else 3
+            for c in range(n):
+                lat = (2 * c - (n - 1)) * CRATE_GAP // 2
+                out.append((x - math.sin(a) * lat, y + math.cos(a) * lat, k))
+        return out
 
     def arc_dist(self, a, b):
         """Signed wrapped arc distance a - b."""
@@ -488,8 +518,30 @@ def center_bytes(trk):
     for k, j in enumerate(trk.sidx):
         x, y = int(round(trk.dx[j])), int(round(trk.dy[j]))
         h = int(round(trk.dhalf[j]))
-        out += np.array([x, y, trk.turn[k]], "<u2").tobytes() + bytes([h, int(trk.dflags[j])])
+        f = int(trk.dflags[j]) | ((1 << CRATE_BIT) if k in trk.crate_rows else 0)
+        out += np.array([x, y, trk.turn[k]], "<u2").tobytes() + bytes([h, f])
     return bytes(out)
+
+
+def validate_crates(trk, tmap, ts, errs):
+    """Every crate on plain road (surface, no feature tile within 8 px), at
+    most CRATE_MAX in all, rows clear of the start line and sector seams."""
+    crates = trk.crates()
+    if len(crates) > CRATE_MAX:
+        errs.append(f"{trk.name}: {len(crates)} crates, over the {CRATE_MAX} the World holds")
+    a = ts.attr[tmap]
+    for x, y, k in crates:
+        for ox in (-8, 0, 8):
+            for oy in (-8, 0, 8):
+                tx, ty = int(x + ox) // T % MAPN, int(y + oy) // T % MAPN
+                if a[ty, tx] != A_SURF:
+                    errs.append(f"{trk.name}: crate at ({x:.0f},{y:.0f}) (sample {k}) not on plain road "
+                                f"(attribute {ATTR_NAMES[a[ty, tx]]} at {ox:+d},{oy:+d})")
+                    return crates
+    for k in trk.crate_rows:
+        if any(min((k - s) % NSAMP, (s - k) % NSAMP) < SEAM_CLEAR for s in SEAMS):
+            errs.append(f"{trk.name}: crate row at sample {k} too close to the start line or a sector seam")
+    return crates
 
 
 def validate(trk, tmap, ts, errs):
@@ -626,6 +678,8 @@ def write_preview(trk, tmap, ts, path):
     for k in (85, 170):
         j = trk.sidx[k]
         dr.ellipse([trk.dx[j] - 3, trk.dy[j] - 3, trk.dx[j] + 3, trk.dy[j] + 3], outline=(255, 255, 0))
+    for x, y, _ in trk.crates():
+        dr.rectangle([x - 4, y - 4, x + 4, y + 4], outline=(255, 255, 255))
     img.save(path, optimize=False)
 
 
@@ -706,6 +760,7 @@ def main():
         write_preview(trk, tmap, ts, docs / f"{trk.name}_preview.png")
         clear = validate(trk, tmap, ts, errs)
         hills = validate_hills(trk, errs)
+        crates = validate_crates(trk, tmap, ts, errs)
         counts = np.bincount(ts.attr[tmap].ravel(), minlength=11)
         r, rx, ry, rseg = min_radius(trk)
         print(f"track {trk.name}: lap {trk.length:.0f} px, {len(trk.pts)} control points, "
@@ -713,6 +768,9 @@ def main():
               f"{len(trk.hops)} ramp pit(s)")
         if hills:
             print("  hill samples (flag bit 7): " + ", ".join(f"{a}..{b} ({n})" for a, b, n in hills))
+        if crates:
+            rows = sorted(trk.crate_rows)
+            print(f"  crate rows (flag bit 2) at samples {', '.join(map(str, rows))}: {len(crates)} crates")
         print("  segment lengths: " + " ".join(f"{b - a:.0f}" for a, b in zip(trk.seg_start, trk.seg_start[1:])))
         print("  tiles per attribute: " + ", ".join(f"{ATTR_NAMES[i]} {c}" for i, c in enumerate(counts) if c))
         print(f"  start ({trk.dx[0]:.0f},{trk.dy[0]:.0f}) heading {trk.turn[0]}; sector1 sample 85 at "

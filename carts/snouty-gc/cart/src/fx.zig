@@ -9,6 +9,13 @@
 //! burning hulks and the muzzle flashes (an ammo count going down) come
 //! from the cars' state. Everything here depends on the World and `follow`
 //! alone, so a link race shows each badge its own car's notices.
+//!
+//! M2 (pickups): `roll` pops the crate, `use` draws the ZERO-DAY dart,
+//! `effect` gives the cosmic ray of a BIT FLIP, the `<honey>` tags of a
+//! HONEYPOT, the popped RUBBER DUCK (`QUACK`), sparks and the pickup feed
+//! lines (`KERNEL PANIC > KIDDIE`), `swap` the RACE CONDITION glitch; the
+//! KERNEL PANIC packet trails ghosts; the followed car's roulette landing
+//! shows the pickup's name, and a ZERO-DAY on it flashes the screen.
 const cart = @import("cart-api");
 const fixed = @import("fixed.zig");
 const tuning = @import("tuning.zig");
@@ -16,12 +23,16 @@ const world = @import("world.zig");
 const camera = @import("camera.zig");
 const sprites = @import("sprites.zig");
 const sim = @import("sim.zig");
+const font = @import("font.zig");
 
 const no_car = world.no_car;
 
 // --- Particles (world-anchored, drawn through the sprites depth list) ---------------
 
-pub const PKind = enum(u8) { none, explosion, spark, smoke, black_smoke, muzzle };
+/// M2: `pop` (a crate taken), `text` (a `<honey>` tag or `QUACK`, `size`
+/// is the `texts` index), `duck` (a popped RUBBER DUCK tumbling up), `ray`
+/// (BIT FLIP's cosmic ray), `ghost` (the KERNEL PANIC packet's trail).
+pub const PKind = enum(u8) { none, explosion, spark, smoke, black_smoke, muzzle, pop, text, duck, ray, ghost };
 pub const Particle = struct {
     kind: PKind = .none,
     /// World position, Q16.16.
@@ -30,9 +41,14 @@ pub const Particle = struct {
     /// Height over the floor, world px.
     lift: i16 = 0,
     age: u8 = 0,
-    /// Diameter, world px.
+    /// Diameter, world px (`text`: the string).
     size: u8 = 0,
+    /// Drift, world px per tick (the honey tags fly apart).
+    dx: i8 = 0,
+    dy: i8 = 0,
 };
+const texts = [_][]const u8{ "<honey>", "</honey>", "<honey/>", "QUACK" };
+const text_quack: u8 = 3;
 pub const particle_count = 48;
 pub var particles: [particle_count]Particle = @splat(.{});
 var next_particle: usize = 0;
@@ -45,6 +61,11 @@ fn life(k: PKind) u8 {
         .spark => 6,
         .smoke, .black_smoke => 24,
         .muzzle => 3,
+        .pop => 12,
+        .text => 40,
+        .duck => 36,
+        .ray => 10,
+        .ghost => 8,
     };
 }
 
@@ -57,7 +78,8 @@ pub fn spawn(kind: PKind, x: i32, y: i32, lift: i16, size: u8) void {
 
 /// SPEC 6.1: the beam is drawn for 6 ticks.
 pub const beam_ticks: u8 = 6;
-pub const Beam = struct { owner: u8 = no_car, x: i32 = 0, y: i32 = 0, age: u8 = 255 };
+/// `dart`: the ZERO-DAY's hitscan dart (red), not a FIBER LANCE.
+pub const Beam = struct { owner: u8 = no_car, x: i32 = 0, y: i32 = 0, age: u8 = 255, dart: bool = false };
 pub var beams: [4]Beam = @splat(.{});
 var next_beam: usize = 0;
 
@@ -71,7 +93,10 @@ pub const ack_ticks: u8 = 30;
 /// The followed car's own wreck message (WRECKED BY SYSADMIN, ZERO-DAY).
 pub const wreck_note_ticks: u8 = 90;
 
-pub const Feed = struct { ticks: u8 = 0, killer: u8 = no_car, victim: u8 = 0, cause: world.Wreck = .none };
+/// A wreck line (`pickup == .none`, not `swap`), or a pickup line
+/// (`KERNEL PANIC > KIDDIE`: `pickup` hit `victim`), or a RACE CONDITION
+/// swap (`killer <> victim`). Wreck lines are not overwritten by the others.
+pub const Feed = struct { ticks: u8 = 0, killer: u8 = no_car, victim: u8 = 0, cause: world.Wreck = .none, pickup: world.Pickup = .none, swap: bool = false };
 pub var feed: Feed = .{};
 /// `wrecked`: the racer's wrecked line (the followed car made the kill),
 /// else their taunt (they wrecked the followed car).
@@ -87,6 +112,24 @@ pub var armor_flash: u8 = 0;
 /// Render-side shake of the followed car (SPEC 5.3: on the victim's own screen).
 pub var shake: u8 = 0;
 pub const wreck_shake: u8 = 12;
+/// The followed car's roulette just landed: the pickup's name shows by the box.
+pub var land_ticks: u8 = 0;
+pub const land_show: u8 = 60;
+/// A ZERO-DAY struck or hit the followed car: the screen flashes.
+pub var zero_flash: u8 = 0;
+pub const zero_flash_ticks: u8 = 8;
+/// A RACE CONDITION swapped the followed car: the screen glitches.
+pub var glitch: u8 = 0;
+pub const glitch_ticks: u8 = 10;
+var prev_roll: u8 = 0;
+/// The CAPTCHA board was cleared by a miss (A on an unlit cell): `TRY AGAIN`.
+pub var captcha_fail: u8 = 0;
+var prev_done: u16 = 0;
+/// The followed car solved its CAPTCHA (freed before the wait ran out).
+pub var verified: u8 = 0;
+var prev_captcha: u8 = 0;
+/// Who sent the KERNEL PANIC that hit the followed car (the stop code).
+pub var panic_source: u8 = no_car;
 
 /// The event cursor: the next seq this badge has not shown.
 var last_seq: u16 = 0;
@@ -103,6 +146,15 @@ pub fn begin(w: *const world.World) void {
     wreck_note = .{};
     armor_flash = 0;
     shake = 0;
+    land_ticks = 0;
+    zero_flash = 0;
+    glitch = 0;
+    prev_roll = 0;
+    captcha_fail = 0;
+    prev_done = 0;
+    verified = 0;
+    prev_captcha = 0;
+    panic_source = no_car;
     last_seq = w.event_seq;
     for (&w.cars, 0..) |*c, i| prev_ammo[i] = c.ammo_front;
 }
@@ -115,16 +167,34 @@ pub fn tick(w: *const world.World, follow: u8, frame: u32) void {
         car_effects(c, i, frame);
         prev_ammo[i] = c.ammo_front;
     }
+    // The KERNEL PANIC packet leaves ghosts.
+    if (frame % 3 == 0) {
+        for (&w.projs) |*pr| {
+            if (pr.kind == .panic) spawn(.ghost, pr.x, pr.y, 5, 16);
+        }
+    }
+    const me = &w.cars[follow % world.car_count];
+    if (prev_roll > 0 and me.roll_ticks == 0 and me.pickup != .none) land_ticks = land_show;
+    prev_roll = me.roll_ticks;
+    if (me.captcha > 0 and prev_done != 0 and me.captcha_done == 0) captcha_fail = 30;
+    if (me.captcha_done != 0) captcha_fail = 0;
+    if (prev_captcha > 1 and me.captcha == 0 and me.wreck == .none and me.human != world.no_human) verified = 45;
+    prev_captcha = me.captcha;
+    prev_done = if (me.captcha > 0) me.captcha_done else 0;
 }
 
 fn age_all() void {
     for (&particles) |*p| {
         if (p.kind == .none) continue;
         p.age +|= 1;
+        p.x +%= @as(i32, p.dx) << (fixed.Q - 2);
+        p.y +%= @as(i32, p.dy) << (fixed.Q - 2);
         switch (p.kind) {
             .smoke, .black_smoke => {
                 if (p.age % 2 == 0) p.lift += 1;
             },
+            .pop, .text => p.lift += 1,
+            .duck => p.lift += @max(0, 4 - @as(i16, p.age / 6)),
             else => {},
         }
         if (p.age >= life(p.kind)) p.kind = .none;
@@ -136,6 +206,11 @@ fn age_all() void {
     wreck_note.ticks -|= 1;
     armor_flash -|= 1;
     shake -|= 1;
+    land_ticks -|= 1;
+    zero_flash -|= 1;
+    glitch -|= 1;
+    captcha_fail -|= 1;
+    verified -|= 1;
 }
 
 fn px_q(v: u16) i32 {
@@ -218,7 +293,94 @@ fn on_event(w: *const world.World, e: *const world.Event, follow: u8) void {
                 const a: fixed.Turn = k *% 16384 +% 8192;
                 spawn(.spark, c.x +% fixed.cos(a) * 10, c.y +% fixed.sin(a) * 10, 4, 12);
             }
+    } else if (kind == .roll) {
+            // A crate taken: it pops up and away with a spark.
+            spawn(.pop, px_q(e.x), px_q(e.y), 0, 16);
+            spawn(.spark, px_q(e.x), px_q(e.y), 6, 14);
+    } else if (kind == .use) {
+            on_use(w, e, follow);
+    } else if (kind == .effect) {
+            on_effect(w, e, follow);
+    } else if (kind == .swap) {
+            if (!valid_car(e.a) or !valid_car(e.b)) return;
+            spawn(.spark, w.cars[e.a].x, w.cars[e.a].y, 6, 16);
+            spawn(.spark, w.cars[e.b].x, w.cars[e.b].y, 6, 16);
+            if (e.a == follow or e.b == follow) glitch = glitch_ticks;
+            pickup_feed(.race_condition, e.a, e.b, true);
     }
+}
+
+fn pickup_of(v: u8) world.Pickup {
+    return if (v <= @intFromEnum(world.Pickup.prompt_injection)) @enumFromInt(v) else .none;
+}
+
+/// A pickup feed line, unless a wreck line is showing.
+fn pickup_feed(p: world.Pickup, a: u8, victim: u8, swap: bool) void {
+    if (!valid_car(victim)) return;
+    if (feed.ticks > 0 and feed.pickup == .none and !feed.swap) return;
+    feed = .{ .ticks = feed_ticks, .killer = a, .victim = victim, .pickup = p, .swap = swap };
+}
+
+fn on_use(w: *const world.World, e: *const world.Event, follow: u8) void {
+    if (!valid_car(e.a)) return;
+    if (pickup_of(e.b) == .zero_day) {
+        // The ZERO-DAY's dart: a red hitscan line to where it struck.
+        beams[next_beam] = .{ .owner = e.a, .x = px_q(e.x), .y = px_q(e.y), .age = 0, .dart = true };
+        next_beam = (next_beam + 1) % beams.len;
+        if (e.a == follow or e.c == follow) zero_flash = zero_flash_ticks;
+    }
+    _ = w;
+}
+
+fn on_effect(w: *const world.World, e: *const world.Event, follow: u8) void {
+    if (!valid_car(e.b)) return;
+    const x = px_q(e.x);
+    const y = px_q(e.y);
+    const p = pickup_of(e.c);
+    switch (p) {
+        .kernel_panic => {
+            if (e.b == follow) panic_source = e.a;
+            spawn(.spark, x, y, 8, 18);
+            spawn(.ghost, x, y, 6, 24);
+            pickup_feed(p, e.a, e.b, false);
+        },
+        .bit_flip => {
+            spawn(.ray, x, y, 0, 12);
+            spawn(.spark, x, y, 4, 14);
+            pickup_feed(p, e.a, e.b, false);
+        },
+        .deadlock, .ddos, .spaghetti => {
+            spawn(.spark, x, y, 5, 12);
+            pickup_feed(p, e.a, e.b, false);
+        },
+        .honeypot => {
+            // The fake crate bursts into `<honey>` tags.
+            spawn(.explosion, x, y, 0, 20);
+            spawn_text(x, y, 0, -3, 2);
+            spawn_text(x, y, 1, 3, 1);
+            spawn_text(x, y, 2, 0, -3);
+            pickup_feed(p, e.a, e.b, false);
+        },
+        .duck => {
+            // The duck took the hit: it tumbles up, QUACK.
+            const c = &w.cars[e.b];
+            const bx = c.x -% fixed.cos(c.heading) * 18;
+            const by = c.y -% fixed.sin(c.heading) * 18;
+            spawn(.duck, bx, by, 2, 12);
+            spawn(.spark, bx, by, 4, 12);
+            spawn_text(bx, by, text_quack, 0, 0);
+        },
+        .zero_day => {
+            if (e.a == follow or e.b == follow) zero_flash = zero_flash_ticks;
+            spawn(.spark, x, y, 6, 20);
+        },
+        else => spawn(.spark, x, y, 5, 10),
+    }
+}
+
+fn spawn_text(x: i32, y: i32, id: u8, dx: i8, dy: i8) void {
+    particles[next_particle] = .{ .kind = .text, .x = x, .y = y, .lift = 10, .size = id, .dx = dx, .dy = dy };
+    next_particle = (next_particle + 1) % particle_count;
 }
 
 /// Smoke states (SPEC 5.3): grey puffs below 50% armor, black smoke and
@@ -271,6 +433,47 @@ pub fn draw_particle(i: usize, p: camera.Projected) void {
             });
         },
         .muzzle => sprites.blit_sized(s, sprites.f_muzzle, p.sx, bottom, dw, dw, .{}),
+        .pop => {
+            const grow: i32 = @divTrunc(dw * (8 + @as(i32, pt.age)), 8);
+            sprites.blit_sized(&sprites.pickups, sprites.p_crate, p.sx, bottom, grow, grow, .{ .skip_odd = pt.age >= 5 });
+        },
+        .ghost => sprites.blit_sized(&sprites.weapons, sprites.w_panic, p.sx, bottom, @divTrunc(dw, 2), @divTrunc(dw, 2), .{ .skip_odd = true }),
+        .duck => {
+            const flip = (pt.age / 4) % 2 == 1;
+            sprites.blit_sized(&sprites.weapons, sprites.w_duck, p.sx, bottom, dw, dw, .{ .flip = flip });
+        },
+        .text => {
+            const str = texts[pt.size % texts.len];
+            if (pt.age > 30 and pt.age % 2 == 0) return;
+            const color: cart.Pixel = if (pt.size == text_quack) honey_white else honey_orange;
+            font.draw(str, p.sx - @as(i32, @intCast(str.len * 4)), bottom - 8, color, honey_shadow);
+        },
+        .ray => draw_ray(p.sx, bottom, pt.age),
+    }
+}
+
+const honey_orange: cart.Pixel = .from_color(.rgb(0xF59A3C));
+const honey_white: cart.Pixel = .from_color(.rgb(0xFCFBF9));
+const honey_shadow: cart.Pixel = .from_color(.rgb(0x16031B));
+const ray_core: cart.Pixel = .from_color(.rgb(0xFFFFFF));
+const ray_glow: cart.Pixel = .from_color(.rgb(0xB070FF));
+
+/// BIT FLIP's cosmic ray: a jagged bolt from the top of the screen down to
+/// the struck car, for the first frames of the particle.
+fn draw_ray(x: i32, y: i32, age: u8) void {
+    if (age >= 7) return;
+    const jag = [_]i32{ 0, 5, -3, 4, -4, 2, 0 };
+    var prev_x = x + jag[0];
+    var prev_y: i32 = 0;
+    var k: usize = 1;
+    while (k < jag.len) : (k += 1) {
+        const ny = @divTrunc(y * @as(i32, @intCast(k)), @as(i32, @intCast(jag.len - 1)));
+        const nx = x + jag[k] * @as(i32, @intFromBool(k + 1 < jag.len));
+        line(prev_x + 1, prev_y, nx + 1, ny, ray_glow, false);
+        line(prev_x - 1, prev_y, nx - 1, ny, ray_glow, false);
+        line(prev_x, prev_y, nx, ny, ray_core, false);
+        prev_x = nx;
+        prev_y = ny;
     }
 }
 
@@ -279,6 +482,7 @@ pub fn draw_particle(i: usize, p: camera.Projected) void {
 const beam_core: cart.Pixel = .from_color(.rgb(0xFFFFFF));
 const beam_glow: cart.Pixel = .from_color(.rgb(0x4FD8F0));
 const beam_fade: cart.Pixel = .from_color(.rgb(0x2A7890));
+const dart_red: cart.Pixel = .from_color(.rgb(0xE83838));
 /// The beam leaves the car at this height, world px.
 const beam_lift: i32 = 6;
 const beam_steps: i32 = 12;
@@ -294,8 +498,12 @@ pub fn draw_beams(w: *const world.World) void {
         var dy = (b.y -% c.y) & ((1024 << fixed.Q) - 1);
         if (dx >= 512 << fixed.Q) dx -= 1024 << fixed.Q;
         if (dy >= 512 << fixed.Q) dy -= 1024 << fixed.Q;
-        const core = if (b.age < 3) beam_core else beam_glow;
-        const glow = if (b.age < 3) beam_glow else beam_fade;
+        var core = if (b.age < 3) beam_core else beam_glow;
+        var glow = if (b.age < 3) beam_glow else beam_fade;
+        if (b.dart) {
+            core = if (b.age < 3) beam_core else dart_red;
+            glow = dart_red;
+        }
         var have_prev = false;
         var px0: i32 = 0;
         var py0: i32 = 0;
@@ -309,8 +517,8 @@ pub fn draw_beams(w: *const world.World) void {
             };
             const sy = p.sy - sprites.lift_px(beam_lift, p);
             if (have_prev) {
-                line(px0, py0 + 1, p.sx, sy + 1, glow);
-                line(px0, py0, p.sx, sy, core);
+                line(px0, py0 + 1, p.sx, sy + 1, glow, false);
+                line(px0, py0, p.sx, sy, core, false);
             }
             px0 = p.sx;
             py0 = sy;
@@ -319,8 +527,9 @@ pub fn draw_beams(w: *const world.World) void {
     }
 }
 
-/// Bresenham, clipped per pixel to the screen (beams are short).
-pub fn line(x0_: i32, y0_: i32, x1: i32, y1: i32, px: cart.Pixel) void {
+/// Bresenham, clipped per pixel to the screen (beams are short). `dashed`
+/// leaves every other pair of pixels out (a chain's links).
+pub fn line(x0_: i32, y0_: i32, x1: i32, y1: i32, px: cart.Pixel, dashed: bool) void {
     // Reject segments wholly off one side.
     if ((x0_ < 0 and x1 < 0) or (x0_ >= 160 and x1 >= 160) or (y0_ < 0 and y1 < 0) or (y0_ >= 128 and y1 >= 128)) return;
     var x0 = x0_;
@@ -332,7 +541,7 @@ pub fn line(x0_: i32, y0_: i32, x1: i32, y1: i32, px: cart.Pixel) void {
     var err = dx + dy;
     var n: u32 = 0;
     while (n < 400) : (n += 1) {
-        if (x0 >= 0 and x0 < 160 and y0 >= 0 and y0 < 128) cart.framebuffer[@intCast(x0)][@intCast(y0)] = px;
+        if (x0 >= 0 and x0 < 160 and y0 >= 0 and y0 < 128 and !(dashed and (n / 2) % 2 == 1)) cart.framebuffer[@intCast(x0)][@intCast(y0)] = px;
         if (x0 == x1 and y0 == y1) break;
         const e2 = 2 * err;
         if (e2 >= dy) {

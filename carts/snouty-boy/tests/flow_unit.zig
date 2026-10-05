@@ -355,3 +355,19 @@ test "flow: a Left held into fast forward stays the rewind key" {
     try testing.expectEqual(flow.State.running, fl.state);
     try testing.expectEqual(@as(u8, 0), fake.last_pad);
 }
+
+test "flow: linked, the fast-forward gesture steps at 1x and Left does not rewind" {
+    var fake: Fake = .{};
+    var fl: Flow = .{ .linked = true };
+    frames(&fl, &fake, &.{.a}, 1); // skip the splash
+    frames(&fl, &fake, &.{}, 2);
+    frames(&fl, &fake, &.{.select}, 2);
+    frames(&fl, &fake, &.{}, 2);
+    const steps = fake.steps;
+    frames(&fl, &fake, &.{.select}, 5);
+    frames(&fl, &fake, &.{ .select, .left }, 5);
+    try testing.expectEqual(@as(u32, 0), fake.fast_steps);
+    try testing.expectEqual(@as(u32, 0), fake.rewind_opens);
+    try testing.expectEqual(flow.State.running, fl.state);
+    try testing.expectEqual(steps + 10, fake.steps);
+}

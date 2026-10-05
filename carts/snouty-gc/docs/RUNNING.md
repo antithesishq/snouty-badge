@@ -18,7 +18,25 @@ edge on the east side, a coolant spill, the ramp over a pit, the dunes):
 armor, ramming, wrecks that burn as hulks and respawn after the WATCHDOG
 delay, the kill feed, taunt pop-ups, `ACK` over cars you hit, smoke as
 armor drops. Results: the winner's card, then the field (A steps through,
-then back to the select). Pickups are M2 (the box top right stays empty).
+then back to the select).
+
+M2 (pickups, SPEC 6.3): RMA crates in rows across the road (three rows on
+Landfill Loop). Driving through one with the box empty starts the roulette
+top right (`FETCHING...`, then the pickup's name); **B** uses it (Down+B
+drops HONEYPOT and SPAGHETTI behind). The 15 pickups have their gags, and
+the ones that hit you are drawn on your badge: the KERNEL PANIC blue
+screen (`:(`, `YOUR RIG RAN INTO A PROBLEM`, the stop code naming who sent
+it), then your car frozen blue; **CAPTCHA**, which you play (a cursor
+sweeps the 3x3 grid: press A on each square with a traffic light; A on an
+empty square clears the board, `TRY AGAIN`); BIT FLIP (Left and Right
+swapped, `<R BIT FLIP L>` blinking mirrored, the floor jitters); DDOS
+(drones orbit you, the speed reading stutters and serves a 503); a
+RACE CONDITION glitch; the ZERO-DAY flash. In the world: crates, the fake
+HONEYPOT crate with its flickering `?`, FORK BOMB `&`s that swell and
+split, SPAGHETTI tangles and strands, the blue KERNEL PANIC packet, DDOS
+drones, RUBBER DUCKs on tethers, DEADLOCK chains, SUDO's gold flash and
+`#`, HEISENBUG's flicker, the HONEYPOT spin, the kill feed's pickup lines
+(`KERNEL PANIC > KIDDIE`).
 
 Controls at M1 (SPEC 5.1):
 
@@ -30,7 +48,7 @@ Controls at M1 (SPEC 5.1):
 | A | front weapon (hold to auto-fire PING, hold and release for FIBER LANCE, SPEAR PHISH fires on its lock) |
 | Down + A | rear weapon (drop behind); does not brake |
 | Up | BURST: +35% top speed for 1 s, one charge per lap (the bolt by the ammo) |
-| B | nothing yet (pickups, M2); B backs out of the select |
+| B | use the held pickup; Down+B drops it behind (HONEYPOT, SPAGHETTI); B backs out of the select |
 | Select (hold) | look back: the camera turns round, `BEHIND` over the horizon |
 | Start | pause (Resume, Restart, Quit, Sound) |
 
@@ -113,6 +131,25 @@ python3 ../../tools/make_gif.py out/m1r/ docs/preview_m1_race.gif --scale 2 --ms
 node ../../tools/preview.mjs ../../zig-out/bin/snouty-gc.wasm --frames 200 --every 20 --call debug_stress:1 --out out/stress/
 ```
 
+The M2 preview (`docs/preview_m2.gif`): an autopilot race (mode 2 lets the
+pad's A and B through) where, from frame 1300, a CAPTCHA is forced on
+SNOUTY and solved with A on its lit squares (a miss at 1312 shows `TRY
+AGAIN`), the roulette lands a FORK BOMB, a rival's FORK BOMB lands ahead,
+and a KERNEL PANIC blue-screens SNOUTY while the `&` ahead forks into 2,
+then 4, before he drives into them:
+
+```sh
+node ../../tools/preview.mjs ../../zig-out/bin/snouty-gc.wasm --frames 1630 --every 2 --start-skip 1270 \
+    --call debug_start_race:0 --call debug_set_autopilot:2 \
+    --call-at "1300 debug_effect:3" --call-at "1360 debug_roll_pickup:5" \
+    --call-at "1410 debug_effect:17" --call-at "1413 debug_effect:1" \
+    --press A:1307-1307,A:1312-1312,A:1317-1317,A:1332-1332,A:1352-1352 --out out/m2/
+python3 ../../tools/make_gif.py out/m2/ docs/preview_m2.gif --scale 2 --ms 33
+```
+
+The lit squares come from the world PRNG at the call, so the A frames
+were read off a dry run's `--sample debug_captcha_cursor,debug_captcha_lit`.
+
 Input scripts in `tools/scripts/`:
 
 - `m0_race.json` (600 frames): Start at 2 (splash), Start at 10 (title), A
@@ -122,7 +159,12 @@ Input scripts in `tools/scripts/`:
   opens the racer select on SNOUTY and A at 20 races him, so the M0 script
   still drives the same flow.
 - `m1_render_stress.json` (600 frames, with `--poke gc_stress=1`): the
-  render stress scene, Select (look back) held at 400..460.
+  render stress scene, Select (look back) held at 400..460. Since M2 the
+  scene also has crates, drones, FORK BOMBs, a chain, ducks and the car
+  states, and runs SNOUTY's gags in turn (150 frames each: the CAPTCHA
+  board, BIT FLIP, DDOS, the roulette).
+- `m2_race.json` (3,000 frames): `record_script.py --frames 3000`, an
+  autopilot race with pickups in play (the gate benches it).
 
 Debug exports (zero-argument wasm functions for `--dump-exports`,
 `--expect`, `--at`, `--until`):
@@ -145,7 +187,10 @@ Debug exports (zero-argument wasm functions for `--dump-exports`,
 | `debug_input` | the race byte human slot 0 got on the last tick |
 | `debug_world_size`, `debug_world_sum` | `@sizeOf(World)`; a fingerprint of the world |
 | `debug_car_px(i)`, `debug_car_py(i)`, `debug_car_lap(i)`, `debug_car_rank(i)`, `debug_car_racer(i)`, `debug_car_human(i)`, `debug_car_armor(i)` | car i (one-argument exports) |
-| `debug_set_autopilot(v)`, `debug_start_race(n)`, `debug_stress(v)` | setup calls (`--call NAME:ARG`): the autopilot drives the player; skip to a Quick Race on track n; v = 1 starts the render stress scene (stress.zig: the World's pools filled without the sim) |
+| `debug_set_autopilot(v)`, `debug_start_race(n)`, `debug_stress(v)` | setup calls (`--call NAME:ARG`): the autopilot drives the player (v = 2: the pad's A, B and Select join it, and the pad alone plays a CAPTCHA board); skip to a Quick Race on track n; v = 1 starts the render stress scene (stress.zig: the World's pools filled without the sim) |
+| `debug_give_pickup(p)`, `debug_roll_pickup(p)`, `debug_give_ahead(p)` | M2 preview hooks (`--call-at "T NAME:P"`, P in SPEC 6.3 order: 0 PREFETCH .. 14 ZERO-DAY): pickup P into the followed car's slot, the same behind the 45-tick roulette, or to the nearest car ahead (its AI uses it) |
+| `debug_effect(k)` | M2 preview hook: `stress.Effect` k & 255 on the followed car (or car (k >> 8) - 1): 1 KERNEL PANIC, 2 BIT FLIP, 3 CAPTCHA, 4 DDOS, 5 DEADLOCK, 6 HEISENBUG, 7 SUDO, 8 RACE CONDITION, 9 SPAGHETTI, 10 RUBBER DUCK, 11 PREFETCH, 12 HONEYPOT spin, 13 ZERO-DAY, 14 duck pop, 15 HOT PATCH, 16 crate pop, 17 a rival's FORK BOMB ahead. These write the World (debug only); the sim runs the state on |
+| `debug_pickup`, `debug_frozen`, `debug_captcha`, `debug_captcha_cursor`, `debug_captcha_lit`, `debug_forks` | followed car: held pickup (16 none), frozen ticks, CAPTCHA ticks left, cursor cell, lit cells; live FORK BOMB `&`s |
 
 ## 4. Flashing
 

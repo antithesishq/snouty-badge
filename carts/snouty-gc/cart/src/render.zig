@@ -52,6 +52,9 @@ pub var shake: u32 = 0;
 pub var frame: u32 = 0;
 /// Hills on: the row tables come from the forward march every frame.
 pub var hills_on: bool = false;
+/// BIT FLIP on the followed car (M2, SPEC 10): every floor row slides 0 or
+/// 1 px sideways, a pattern that changes every frame. Set by main.
+pub var row_jitter: bool = false;
 /// Front palette entry 15 as drawn (`led_on`), swapped with entry 14 every 8 ticks (SPEC 6.4).
 var led_on: cart.Pixel = undefined;
 var led_off: cart.Pixel = undefined;
@@ -205,8 +208,9 @@ fn draw_floor(cam: camera.Cam) void {
         const fy = fixed.mul(s, z);
         const rx = fixed.mul(-s, sc);
         const ry = fixed.mul(c, sc);
-        row_x0[y] = cam.x +% fx -% rx * (half_w + jit);
-        row_y0[y] = cam.y +% fy -% ry * (half_w + jit);
+        const rj: i32 = if (row_jitter) @intCast(((y *% 0x45 +% frame *% 0x1D) >> 3) & 1) else 0;
+        row_x0[y] = cam.x +% fx -% rx * (half_w + jit + rj);
+        row_y0[y] = cam.y +% fy -% ry * (half_w + jit + rj);
         row_dx[y] = rx;
         row_dy[y] = ry;
     }
