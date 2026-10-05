@@ -50,6 +50,9 @@ pub fn supported() bool {
 /// scrub arena, the client (its HELLO joins the ROM's room). False when
 /// the arena is too small.
 pub fn open(crc: u32) bool {
+    // Stock firmware or the simulator: the screen says so, the scrub
+    // history stays.
+    if (!supported()) return true;
     if (port == null) {
         const mem = rewind.lend(@sizeOf(Port)) orelse return false;
         const p: *Port = @ptrCast(mem.ptr);
