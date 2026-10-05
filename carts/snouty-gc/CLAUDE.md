@@ -35,7 +35,10 @@ here: every forked file names its Zero source and commit on its first line.
   GC's names over the shared `lib/lockstep.zig` (root `docs/LOCKSTEP.md`;
   `net.Game` is GC as lockstep's game); `docs/NET.md` is its protocol and
   how main drives it. `net_m4.zig` is the M4 original, test only, for
-  `net_compat_test.zig` (the wire stays byte-identical to M4).
+  `net_compat_test.zig` (the wire stays byte-identical to M4). `net.Resume`
+  is the pause menu's RESUME (Start held until `paused` is off: `submit`
+  drops bytes while `step` stalls); main's pump loop runs while
+  `wants_pump()` (a race, or the link handshaking).
   `link_ui.zig` (M4): the LINK lobby screen, the race notices (`WAITING
   FOR PEER`, `PEER LEFT, AI DRIVING`), the `DESYNC` band. A link race
   pumps the link through the draw via `render.band_hook` /

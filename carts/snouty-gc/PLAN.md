@@ -1655,6 +1655,52 @@ the plan (9e86ef55), the sim side (f0b7e09e), the screens and polish
   chips' readability at speed, that a human can clear the Dumps (L37), the
   title's A, and the menu's five rows.
 
+### Integration (menu-fix, lockstep)
+
+**2026-10-05, branch `gc/integrate`** (worktree
+`/home/exedev/snouty-badge-gc-m5merge`, off main bf0cac90 = M5). Merged
+`gc/menu-fix` (PICKUPS page, the 18-char panel guard, the Snouty GCP
+rename and lockup, short hints) and `link/gc-lockstep` (net.zig over
+`lib/lockstep.zig`, `net_m4.zig` + `net_compat_test.zig`, WRONG VERSION),
+then origin/main (lockstep `wants_pump`, bf037753).
+
+- **Main menu**: QUICK RACE, GARBAGE COLLECTION, CIRCUIT, PICKUPS, LINK,
+  SOUND. Geometry in `menu_text.layout`, built for M6's 7 rows (BATTLE
+  after GARBAGE COLLECTION): lockup (SNOUTY 1x, GCP 2x) at y 3, ink to
+  y 20; rows 11 px apart in a panel `n * 11 + 5` tall, centred in
+  y 23..104 (7 rows: 23..104 exactly; the 6 shipped: 28..98); a bar from
+  y 107 to the bottom with one hint line at 109 over `A SELECT  B BACK`
+  at 119 (L46). `panel_text_test` checks 1 to 7 rows; the wasm
+  `debug_menu_battle:1` draws a made-up BATTLE row (check.sh `menu7`).
+  PICKUPS is `debug_screen` 11 (M5's 8 to 10 kept).
+- **Title**: `A  QUICK RACE` (grey) in PRESS START's off half (L48).
+- **Lockstep**: the wire stays M4's (`net_compat_test` passes); WRONG
+  VERSION adds `SAME BUILD ON BOTH`, `debug_link_view:7` fakes it.
+- **RESUME fix** (`net.Resume`, main.zig and net_test use the same
+  code): RESUME / B hold Start on every submitted byte until `paused`
+  turns off, after one kept byte without Start if the last kept byte had
+  it; `Net.submit` returns whether it kept the byte. One rising edge in
+  the kept bytes, so no double toggle. New test: 24 pauses under 1% byte
+  loss, RESUME picked inside a stall: all resume both badges on one
+  tick, once (10 of 24 had the first held Start dropped: M4 lost those);
+  plus a unit test of the edge rules (L50).
+- **wants_pump**: the after-draw pump loop runs while
+  `lnk.wants_pump()` (a race, or the link handshaking), so the LINK lobby
+  and link select keep pumping through a HELLO (10 wire bytes, 8-byte
+  FIFO). Searching and a settled lobby now pump once a frame (before,
+  GC's lobby looped to 14 ms in every state) (L51).
+- **Gate**: `check.sh` PASS (test via test-gc: other carts' runners fail
+  on missing ROMs). **148 tests** (M5 137 + menu-fix 5 + 3 net_compat +
+  layout + 2 RESUME). Golden checksums unchanged. Bench (calibrated,
+  `--lcd` identical, mean / worst ms): `m0_race` 3.63 / 5.19; stress 4.99
+  / 6.14; `m2_race` 3.55 / 5.19; `m3_outflow_race` 3.61 / 5.71;
+  `m3_gc_race` 3.46 / 5.64; `m5_circuit_race` 3.48 / 4.63; `m5_cards`
+  1.75 / 5.40; probe stress 5.10 / 6.27, probe GC 3.54 / 5.74.
+- **RAM**: `size -A` .text 164,520 + .data 7,688 + .bss 52,472 (+ 1,784
+  exidx/extab) = 226,464 B; **47,624 B free** from the end of .bss to
+  the stack (M5: 50,408 by the sum).
+- `docs/preview_pickups.gif` re-recorded with the new menu (three Downs).
+
 ## Deferred questions
 
 SPEC 17 holds the design defaults. Taken during M0 (Track A):
@@ -2205,3 +2251,24 @@ L44. **Debug paths**: `debug_prix_skip` (wasm) books made-up results so
 L45. **HUD**: up to four BURST bolts, packed 6 px apart past two so they
     stay left of the car; every floating tag (`TAGGED!`, `<honey>`, `+10`)
     is clamped to x 2..158.
+L46. **Menu layout for 7 rows**: the title lockup stays at 2x; the hint
+    panel is one line inside a bar with the footer, so menu-fix's second
+    hint lines (MARK AND SWEEP, AND WHO GETS THEM, LINK RACE, LINK GC)
+    are gone; rows stay 11 px apart. Alternatives were a 1x title or
+    10 px rows with two hint lines.
+L47. **Hint words**: CIRCUIT `2 PRIX, A GARAGE` (M5's `2 LEAGUES, A
+    GARAGE` is 19 chars); the simulator's LINK `SIMULATOR: NO LINK`
+    (one line, flashes coral on A).
+L48. **Title hint**: `A  QUICK RACE` blinks in turn with PRESS START
+    rather than on a line of its own (the band has no free line above the
+    portraits).
+L49. **PICKUPS screen number** is 11: M5's garage, standings and card
+    keep 8, 9 and 10 (check.sh and RUNNING.md use them).
+L50. **RESUME on both badges at once**: pause is a toggle, so if the
+    partner's Start resumes and this badge's held Start was already kept
+    for a later tick, the race pauses again (as at M4). The hold ends as
+    soon as `paused` is off, so it sends no edge it has not already sent.
+    Left as is.
+L51. **Lobby pumping**: GC's lobby and link select loop only while
+    `wants_pump()`; searching and a settled lobby pump once a frame (as
+    lockstep's doc says is enough). Untested on two badges.
