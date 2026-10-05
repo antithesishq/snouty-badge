@@ -98,6 +98,11 @@ shared library, the plan, and the hardware checks Adrian runs.
 - Sound: its own continuous-phase voice rendered into lib/stream_audio's
   ring. Boots with sound ON (the cart is an instrument); Select mutes and
   the mute state is shown on screen (deferred question 1).
+- Status 2026-10-05: built on branch `tof/theremin` against
+  `lib/tof_types.zig` only; `carts/snouty-theremin/cart/src/input.zig`
+  `sensor_frame` is the one place lib/tof.zig plugs in (it returns null
+  until then, so the stick plays). carts/snouty-theremin/PLAN.md has the
+  bench numbers and the cart's own questions.
 
 ### M2: Sensor Eyes and the depth photo (`snouty-sense` pages)
 

@@ -1,0 +1,5 @@
+# snouty-theremin: the theremin (docs/TOF.md M1), 60 fps, .no_copy_full_frame, streaming audio.
+budget_ms = 16.7
+frames = 900
+script = "carts/snouty-theremin/tools/scripts/melody.json"
+note = "M1: the stick plays (no sensor: badge-bench's I2C has none): B twice picks MAJOR, Ode to Joy on Up/Down taps, held glides up and down while A cycles TRI, SAW, SQR, a scale run, Right holds, A back to SINE, Select mutes at 841 (the wasm GIF switches to the demo hand at 559; here --poke snouty_theremin_fake=2 runs the demo hand from the start). The voice streams into the ring every update: the audio report must show no underruns after start-up."
