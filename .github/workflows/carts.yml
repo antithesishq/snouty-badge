@@ -1,0 +1,60 @@
+# Builds every cart on each push to main and republishes the UF2s on the
+# rolling `carts-latest` release:
+# https://github.com/antithesishq/snouty-badge/releases/tag/carts-latest
+name: carts
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+# A newer push replaces a release that is still building.
+concurrency:
+  group: carts-latest
+  cancel-in-progress: true
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+
+      - name: Install Zig 0.17.0
+        run: |
+          curl -sSfL https://ziglang.org/download/0.17.0/zig-x86_64-linux-0.17.0.tar.xz | tar -xJ -C "$RUNNER_TEMP"
+          echo "$RUNNER_TEMP/zig-x86_64-linux-0.17.0" >> "$GITHUB_PATH"
+
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/zig
+          key: zig-${{ hashFiles('build.zig.zon') }}-${{ github.sha }}
+          restore-keys: zig-${{ hashFiles('build.zig.zon') }}-
+
+      - name: Build every cart
+        run: zig build
+
+      - name: Collect UF2s
+        run: tools/release_carts.sh zig-out/firmware "$RUNNER_TEMP/release"
+
+      - name: Publish carts-latest
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          rel="$RUNNER_TEMP/release"
+          git tag -f carts-latest "$GITHUB_SHA"
+          git push -f origin carts-latest
+          if gh release view carts-latest >/dev/null 2>&1; then
+            gh release edit carts-latest --title "Badge carts (latest main)" --notes-file "$rel/NOTES.md"
+          else
+            gh release create carts-latest --title "Badge carts (latest main)" --notes-file "$rel/NOTES.md" --latest
+          fi
+          gh release upload carts-latest "$rel"/carts/*.uf2 --clobber
+          # Drop assets of carts that no longer build or were renamed.
+          gh release view carts-latest --json assets --jq '.assets[].name' | while read -r name; do
+            [ -f "$rel/carts/$name" ] || gh release delete-asset carts-latest "$name" --yes
+          done

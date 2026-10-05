@@ -9,7 +9,9 @@ Caution! This repo is a fun side project and I make no guarantees about performa
 
 ## Start here
 
-1. **Play a prebuilt cart on a badge**: copy its `.uf2` onto the badge's
+1. **Play a prebuilt cart on a badge**: download its `.uf2` from the
+   [carts-latest release](https://github.com/antithesishq/snouty-badge/releases/tag/carts-latest)
+   (rebuilt on every push to `main`), copy it onto the badge's
    `SYCLBADGE` drive, eject, pick it in the badge menu
    ([docs/INSTALL.md](docs/INSTALL.md)).
 2. **Try a cart in the simulator** (no badge needed): install the pinned

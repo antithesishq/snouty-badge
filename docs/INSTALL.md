@@ -19,9 +19,15 @@ build (`<binary>-xip.uf2`) is confirmed to have run on a badge. The root
 
 ## 1. Get the UF2
 
-Build from the repository root (`zig build` builds every cart, see
-[RUNNING.md](RUNNING.md)) or take a prebuilt file from whoever built it.
-The badge file is `zig-out/firmware/<binary>.uf2`:
+Download it from the
+[carts-latest release](https://github.com/antithesishq/snouty-badge/releases/tag/carts-latest),
+which `.github/workflows/carts.yml` rebuilds from every push to `main`
+(RAM carts only: no XIP builds, no `badge-calibrate`, no `siwoo`). The
+release page also works from a phone browser.
+
+Or build from the repository root (`zig build` builds every cart, see
+[RUNNING.md](RUNNING.md)). The badge file is
+`zig-out/firmware/<binary>.uf2`:
 
 | Cart | File to copy | Notes |
 |---|---|---|
