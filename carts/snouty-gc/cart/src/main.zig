@@ -292,7 +292,9 @@ fn select_frame() void {
             player_racer = select.racer;
             player_track = select.track_index;
             new_race(race_mode, player_track);
-            draw_race(false);
+            // The track's art and map were just unpacked (a few ms):
+            // this frame shows the select once more, the race starts next.
+            select.draw(frame);
             return;
         },
         .back => {
