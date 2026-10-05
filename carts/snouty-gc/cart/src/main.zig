@@ -1356,7 +1356,8 @@ comptime {
             "debug_battle_lives",     "debug_battle_elims",  "debug_battle_safe",    "debug_battle_left",
             "debug_battle_refill",    "debug_battle_out",    "debug_battle_leader",  "debug_battle_end",
             "debug_battle_set_lives", "debug_battle_kill",   "debug_battle_clock",   "debug_setup_row",
-            "debug_battle_arena",     "debug_stunt",         "debug_safe",
+            "debug_battle_arena",     "debug_stunt",         "debug_safe",           "debug_lobby_rules",
+            "debug_battle_stress",    "debug_me_out",
         }) |name| @export(&@field(@This(), name), .{ .name = name });
     }
 }
@@ -1625,6 +1626,25 @@ fn debug_setup_row() callconv(.c) u32 {
 fn debug_battle_arena() callconv(.c) u32 {
     return battle_ui.opts.arena;
 }
+/// The lobby's rules: mode (0 race, 1 gc, 2 battle) | track << 4 | crews
+/// << 8 | lives << 16 | minutes << 24.
+fn debug_lobby_rules() callconv(.c) u32 {
+    const r = lobby_rules;
+    const e = r.encode();
+    return @as(u32, e[0]) | @as(u32, r.track & 0xF) << 4 | @as(u32, r.crews) << 8 | @as(u32, r.lives) << 16 | @as(u32, r.minutes) << 24;
+}
+/// --call debug_battle_stress: the render stress scene in the arena with
+/// the battle HUD's stress (badge-bench's `--poke gc_battle=2`).
+fn debug_battle_stress() callconv(.c) void {
+    new_race(.battle, 0);
+    mode = .stress;
+    stress.fill(&w, follow);
+    fx.begin(&w);
+}
+/// BATTLE: the player's car is out of lives (1) or not (0).
+fn debug_me_out() callconv(.c) u32 {
+    return (w.battle.out >> @intCast(me)) & 1;
+}
 /// The followed car's SAFE MODE ticks.
 fn debug_safe() callconv(.c) u32 {
     return w.cars[follow].safe;
@@ -1689,15 +1709,18 @@ fn debug_battle_end() callconv(.c) u32 {
 fn debug_battle_set_lives(v: u32) callconv(.c) void {
     w.cars[(v & 0xFF) % world.car_count].lives = @intCast((v >> 8) & 0xFF);
 }
-fn debug_battle_kill(v: u32) callconv(.c) void {
+/// Returns 1 when it wrecked the victim (0: not in the round or already
+/// wrecked), so a preview's --call-at can use it.
+fn debug_battle_kill(v: u32) callconv(.c) u32 {
     const victim = (v & 0xFF) % world.car_count;
     const killer: u8 = @intCast((v >> 8) & 0xFF);
     const c = &w.cars[victim];
-    if (!c.active or c.wreck != .none) return;
+    if (!c.active or c.wreck != .none) return 0;
     c.last_hit_by = if (killer < world.car_count and killer != victim) killer else world.no_car;
     c.last_hit_ticks = 0;
     c.armor = 0;
     sim.wreck(&w, victim, .armor);
+    return 1;
 }
 fn debug_battle_clock(t: u32) callconv(.c) void {
     if (w.battle.limit == 0) return;

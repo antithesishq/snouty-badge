@@ -295,7 +295,7 @@ pub fn lobby_change(rules: *net.Rules, r: LobbyRow, step: i32, race_track: *u8) 
             for (link_modes, 0..) |m, i| {
                 if (m == rules.mode) k = i;
             }
-            rules.mode = link_modes[@intCast(@mod(@as(i32, @intCast(k)) + step, link_modes.len))];
+            rules.mode = link_modes[@intCast(@mod(@as(i32, @intCast(k)) + step, @as(i32, link_modes.len)))];
             if (was != .battle and rules.mode == .battle) {
                 race_track.* = rules.track;
                 rules.track = 0;
