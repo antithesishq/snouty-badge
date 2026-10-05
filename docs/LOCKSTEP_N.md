@@ -28,6 +28,7 @@ render state.
 | `lib/tests/party_unit.zig` | COBS and every v1 message against byte vectors, the client, the relay model |
 | `lib/tests/lockstep_n_unit.zig` | 2 to 17 badges on the relay model (section 7) |
 | `tools/party_e2e/main.zig`, `tools/party_e2e.sh` | N badges in one process over the real `badge lobby` (section 7.1); `zig build party-e2e` builds it, never part of a cart build |
+| `lib/party_host.zig` | `party`, `party_virtual` and `cart_serial` as one module for a cart's host tests (party_virtual imports party.zig itself, so they cannot be two modules); carts on the badge import the files directly |
 | `carts/snoutenstein/cart/src/party_host.zig` | the party deathmatch's pure core as one module root for host programs (party_e2e) |
 
 Carts import one module, `lib/lockstep_n.zig`, and reach the client as
@@ -355,7 +356,16 @@ way.
 who gets DATA(from = itself) at its place in the room's order). LockstepN
 does not use it (it applies its own byte locally and ignores DATA from
 itself); `party.Client.broadcast_echo` is there for carts that need a
-shared line, such as the Lynx ComLynx emulation.
+shared line. Finding from the Lynx ComLynx work
+(`carts/snouty-lynx/docs/COMLYNX.md`): a relay round trip is far too
+slow for a UART's own echo (Warbirds wants it within about 0.5 ms), so
+the Lynx echoes locally and sends only its GO through 0xFE. Self-echo is
+for control messages that must take their place in the room's order, not
+for per-byte traffic.
+
+End-to-end port ranges (fake simulator ports, never the real 7341-7356):
+Snoutenstein `tools/party_e2e.sh` 27341+, Genesis 27400-27449, Lynx
+`zig build lynx-e2e` 27500-27549.
 
 ## 6. Timing and the input delay
 
