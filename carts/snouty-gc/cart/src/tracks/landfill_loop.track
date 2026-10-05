@@ -10,7 +10,9 @@
 #
 # RMA crate rows (M2): mid top straight (segment 1, four across), the
 # middle straight (segment 12) and after the switchback (segment 16).
-# Planned: a service bay on the west side (segment 18), Zero's cold aisle.
+# M3: the Sweeper crosses the bottom straight just past the ramp's
+# landing (segment 8), and a service bay lane runs up the west side
+# (segment 18, the inside lane).
 league dumps
 width 58
 # x    y    half   features
@@ -22,7 +24,7 @@ width 58
  850  660   56
  740  790   56     coolant         # coolant spill through the bottom-right bend
  650  900   60     ramp            # bottom straight west: the ramp over a pit
- 380  900   60
+ 380  900   60     sweeper         # the Sweeper's lane, past the landing
  210  880   56     hill            # the dunes: a swell of the floor round the west bend
  130  760   54     hill
  220  650   54
@@ -32,5 +34,5 @@ width 58
  640  380   52
  430  440   54     crates          # after the switchback: three crates
  300  390   54
- 170  300   56                     # west side (planned: service bay)
+ 170  300   56     bay:right       # west side: the service bay lane
  180  190   58

@@ -38,6 +38,7 @@ The badge file is `zig-out/firmware/<binary>.uf2`:
 | demosnout | `demosnout.uf2` | |
 | snouty-zero | `snouty-zero.uf2` | the default build also writes `snouty-zero-xip.uf2` (the same game executing from flash, for a hardware comparison) |
 | snouty-pipes | `snouty-pipes.uf2` | |
+| paperclips | `paperclips.uf2` | Universal Paperclips; a game lasts while the cart runs (no saves) |
 | snouty-link | `snouty-link.uf2` | the link-cable test: two badges joined on their UART headers ([LINK.md](LINK.md)) |
 | badge-calibrate | `badge-calibrate.uf2` | a measuring tool, not a game ([its README](../badge-bench/calibrate/README.md)) |
 

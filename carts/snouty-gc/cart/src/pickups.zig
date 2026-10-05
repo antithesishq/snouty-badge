@@ -21,6 +21,7 @@ const tuning = @import("tuning.zig");
 const world = @import("world.zig");
 const track = @import("track.zig");
 const sim = @import("sim.zig");
+const gc_mode = @import("gc_mode.zig");
 const weapons = @import("weapons.zig");
 const ai = @import("ai.zig");
 
@@ -437,6 +438,8 @@ pub fn use(w: *World, i: usize, back: bool) void {
                 effect(w, me, t, p);
                 o.last_hit_by = me;
                 o.last_hit_ticks = 0;
+                // A weapon hit for GARBAGE COLLECTION's tag.
+                gc_mode.on_hit(w, me, t);
                 sim.wreck(w, t, .zero_day);
             }
         },
@@ -609,8 +612,12 @@ pub fn update_packet(w: *World, p: *world.Projectile) void {
     }
     const hittable = t.hop == 0 and t.immune == 0 and t.heisen == 0;
     const back = p.ttl == 1;
-    const gap: i8 = @bitCast(t.progress -% p.seg);
-    const reached = if (back) gap >= 0 else gap <= 0;
+    // How far the target is ahead of the packet along its run, in samples;
+    // "reached" when the packet is on it or just past it. (An i8 of the
+    // difference read a target more than half a lap ahead as passed, and
+    // the packet parked on the line until the target lapped round to it.)
+    const ahead_d: u8 = if (back) p.seg -% t.progress else t.progress -% p.seg;
+    const reached = ahead_d == 0 or @as(u16, ahead_d) + tuning.panic_passed >= 256;
     const near = blk: {
         const dx = dpx(p.x, t.x);
         const dy = dpx(p.y, t.y);
@@ -849,7 +856,7 @@ fn swap(w: *World, i: usize, j: usize) void {
         std.mem.swap(@TypeOf(@field(a.*, f)), &@field(a.*, f), &@field(b.*, f));
     }
     for ([2]*Car{ a, b }, [2]u8{ la, lb }) |c, old| {
-        if (c.lap > old and c.lap == tuning.laps - 1) {
+        if (c.lap > old and c.lap == w.laps - 1 and w.mode != .gc) {
             c.msg = .final_lap;
             c.msg_ticks = tuning.message_ticks;
         }

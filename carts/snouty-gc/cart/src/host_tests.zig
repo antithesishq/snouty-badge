@@ -17,4 +17,7 @@ test {
     _ = @import("weapons_test.zig");
     _ = @import("pickups.zig");
     _ = @import("pickups_test.zig");
+    _ = @import("hazards.zig");
+    _ = @import("gc_mode.zig");
+    _ = @import("content_test.zig");
 }

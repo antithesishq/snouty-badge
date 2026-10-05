@@ -23,6 +23,7 @@ const track = @import("track.zig");
 const sim = @import("sim.zig");
 const weapons = @import("weapons.zig");
 const pickups = @import("pickups.zig");
+const hazards = @import("hazards.zig");
 
 const World = world.World;
 const Car = world.Car;
@@ -85,6 +86,9 @@ pub const Crew = struct {
     /// Ticks this crew takes to "solve" a CAPTCHA (SPEC 6.3: 60 to 120,
     /// KIDDIE slowest).
     captcha_solve: u8 = 90,
+    /// Time the vents and go behind the Sweeper (M3, SPEC 3.3). KIDDIE
+    /// never read the docs and drives straight through.
+    heed_hazards: bool = true,
 };
 
 /// Per racer, SPEC 4.1 order. Driving style only, for M0; M1 widens these
@@ -96,7 +100,7 @@ pub const crews = [6]Crew{
     // walls of fire for anyone behind.
     .{ .lane = -10, .min_speed_pct = 66, .full_brake_turn = 12000, .avoid = false, .reaction = 4, .jitter = 10, .rammer = true, .drop_wide = true, .captcha_solve = 100 },
     // KIDDIE: fast in, slides; sprays at anything the moment it is there.
-    .{ .lane = 10, .min_speed_pct = 78, .slide_turn = 2400, .reaction = 1, .jitter = 14, .pickup_now = true, .captcha_solve = 120 },
+    .{ .lane = 10, .min_speed_pct = 78, .slide_turn = 2400, .reaction = 1, .jitter = 14, .pickup_now = true, .captcha_solve = 120, .heed_hazards = false },
     // SYSADMIN: clean lines, long snipes, hunts the humans first.
     .{ .lookahead = 7, .min_speed_pct = 76, .reaction = 6, .jitter = 2, .target = .human, .captcha_solve = 60 },
     // ROOTKIT: drifts across the lane, sits behind its mark and snipes.
@@ -166,6 +170,7 @@ fn drive_crew(w: *const World, i: usize, cr: *const Crew) Input {
     if (cr.avoid and !stalking) avoid(w, i, &lane, &block_spd);
     if (fight and cr.rammer) ram(w, i, &lane);
     if (w.combat) dodge_firewalls(w, i, &lane);
+    if (cr.heed_hazards and w.phase == .racing) dodge_hazards(w, i, &lane, &block_spd);
     const tx = fixed.cos(target.tangent);
     const ty = fixed.sin(target.tangent);
     const gx = @as(i32, target.x) + ((-ty * lane) >> fixed.Q);
@@ -233,7 +238,7 @@ const Use = enum { no, forward, back };
 fn want_use(w: *const World, i: usize, cr: *const Crew, curve: i32) Use {
     const c = &w.cars[i];
     if (c.pickup == .none or c.roll_ticks > 0 or c.b_was or c.frozen > 0) return .no;
-    const last_lap = c.lap + 1 >= tuning.laps;
+    const last_lap = sim.last_lap(w, c);
     const behind = car_behind(w, i, tuning.ai_drop_behind, tuning.ai_drop_lat * 2);
     if (cr.pickup_now) {
         return if ((c.pickup == .honeypot or c.pickup == .spaghetti) and behind) .back else .forward;
@@ -316,6 +321,9 @@ fn arm(w: *const World, i: usize, cr: *const Crew, b: *Input, curve: i32) void {
 /// A car behind on the line (SPEC 6.5), or, for a `drop_corners` crew, any
 /// car behind going into a corner.
 fn want_drop(w: *const World, i: usize, cr: *const Crew, curve: i32) bool {
+    // No mines on the grid: the field leaves the line first (M3: BOTNET's
+    // BIT ROT wrecked the human on the back row by tick 94 every race).
+    if (w.tick < tuning.ai_drop_grace) return false;
     const c = &w.cars[i];
     const lat_lim = if (cr.drop_wide) tuning.ai_drop_wide_lat else tuning.ai_drop_lat;
     for (&w.cars, 0..) |*o, j| {
@@ -448,6 +456,91 @@ pub fn dodge_firewalls(w: *const World, i: usize, lane: *i32) void {
         if (left_ok and (!right_ok or lane.* - left <= right - lane.*)) {
             lane.* = left;
         } else if (right_ok) lane.* = right;
+    }
+}
+
+/// Track hazards ahead (SPEC 3.3: "AIs avoid an active blast or mover
+/// where they can"), from the hazards' own clocks (`hazards.future`): wait
+/// for a vent that would be firing while the car crosses its lane (arrive
+/// as it stops); pass behind the Sweeper when its body would meet the car
+/// on its path, or slow down when there is no room behind it.
+fn dodge_hazards(w: *const World, i: usize, lane: *i32, block_spd: *i32) void {
+    const c = &w.cars[i];
+    if (c.wreck != .none or c.hop != 0) return;
+    const spd = sim.speed(c);
+    if (spd < fixed.one / 4) return;
+    const top = sim.top_of(c);
+    for (track.hazard_specs[0..track.hazard_n], 0..) |*h, k| {
+        if (h.kind != .blast and h.kind != .mover) continue;
+        // The car against the hazard's line: `along` its span from A (the
+        // mouth / end A), `lat` across it, `vn` its speed toward it.
+        const dx = wrap_px((c.x >> fixed.Q) - h.x0);
+        const dy = wrap_px((c.y >> fixed.Q) - h.y0);
+        const along = (dx * h.ux + dy * h.uy) >> fixed.Q;
+        const lat = (dx * -h.uy + dy * h.ux) >> fixed.Q;
+        if (along < -24 or along > h.len + 24) continue;
+        const vn = fixed.mul(c.vx, -h.uy) + fixed.mul(c.vy, h.ux);
+        if ((lat > 0) == (vn > 0) or vn == 0) continue; // moving away
+        const half_w: i32 = if (h.kind == .blast) h.size + tuning.hazard_reach else h.size + tuning.car_radius + tuning.ai_hazard_clear;
+        const dist = @as(i32, @intCast(@abs(lat))) - half_w;
+        if (dist <= 0 or dist > tuning.ai_hazard_ahead) continue;
+        const v = @max(@as(i32, @intCast(@abs(vn))), spd >> 1);
+        const eta: u32 = @intCast(@divTrunc(dist << fixed.Q, v));
+        const exit: u32 = @intCast(@divTrunc((dist + 2 * half_w + 2 * tuning.half_len) << fixed.Q, v));
+        if (h.kind == .blast) {
+            // Ticks until the firing that would catch the car ends.
+            const lo = eta -| tuning.ai_hazard_margin;
+            var t = lo;
+            var clear_at: u32 = 0;
+            while (t <= exit + tuning.ai_hazard_margin) : (t += 2) {
+                if (hazards.future(w, k, t).state == .active) clear_at = t;
+            }
+            if (clear_at == 0) continue;
+            while (clear_at < lo + h.period and hazards.future(w, k, clear_at).state == .active) clear_at += 1;
+            const wait: i32 = @intCast(clear_at + tuning.ai_hazard_margin);
+            // The pace that arrives as the firing ends, less the distance the
+            // brake needs to get down to it (it sheds about 4% a tick).
+            var want = @divTrunc(dist << fixed.Q, wait);
+            if (spd > want) {
+                const braking = ((spd - want) * tuning.ai_hazard_brake_px) >> fixed.Q;
+                want = @divTrunc(@max(0, dist - braking) << fixed.Q, wait);
+            }
+            if (dist > 24) want = @max(want, (top * tuning.ai_hazard_min_q8) >> 8);
+            block_spd.* = @min(block_spd.*, want);
+        } else {
+            // Where the mover's body will be along its path while the car
+            // crosses it; the side it has already swept is clear.
+            var hit_at: ?hazards.Phase = null;
+            var t = eta;
+            while (t <= exit) : (t += 3) {
+                const p = hazards.future(w, k, t);
+                if (p.state != .active) continue;
+                const mx = wrap_px((p.x >> fixed.Q) - h.x0);
+                const my = wrap_px((p.y >> fixed.Q) - h.y0);
+                const m_along = (mx * h.ux + my * h.uy) >> fixed.Q;
+                if (@abs(m_along - along) < half_w) {
+                    hit_at = p;
+                    break;
+                }
+            }
+            const p = hit_at orelse continue;
+            const mx = wrap_px((p.x >> fixed.Q) - h.x0);
+            const my = wrap_px((p.y >> fixed.Q) - h.y0);
+            const m_along = (mx * h.ux + my * h.uy) >> fixed.Q;
+            const dir: i32 = if (p.leg == 0) 1 else -1;
+            const behind = m_along - dir * (half_w + 6);
+            // The path crosses the track at its middle: along len / 2 is the
+            // centerline; the lane is the offset to the driver's right.
+            const s = sim.track_of(w).sample(c.progress);
+            const side = fixed.mul(h.ux, -fixed.sin(s.tangent)) + fixed.mul(h.uy, fixed.cos(s.tangent));
+            const want_lane = if (side >= 0) behind - (h.len >> 1) else (h.len >> 1) - behind;
+            const room = @as(i32, s.half) - tuning.avoid_margin;
+            if (@abs(want_lane) <= room) {
+                lane.* = want_lane;
+            } else {
+                block_spd.* = @min(block_spd.*, if (dist > 24) (top * tuning.ai_hazard_min_q8) >> 8 else 0);
+            }
+        }
     }
 }
 

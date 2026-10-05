@@ -3,20 +3,29 @@
 """Build the Snouty GC league art and track tables into assets/gen/.
 
     python3 tools/build_tracks.py                 (from the cart directory)
-    python3 tools/build_tracks.py --track landfill_loop --out assets/gen
+    python3 tools/build_tracks.py --track landfill_loop --out /tmp/x
 
 Reads cart/src/tracks/*.track (SPEC section 7) and writes the files of
-PLAN.md "Generated data formats":
+PLAN.md "Generated data formats" into cart/src/gen/tracks/ (M3: embedded
+by track.zig with @embedFile, so a new track needs no build.zig entry):
 
-  <league>_tiles.bin   128 tiles x 8x8 palette indices (8192 bytes)
+  <league>_tiles.bin   128 tiles x 8x8 palette indices (8192 bytes), packed
+                       like the maps (track.zig unpacks them into a RAM slot)
   <league>_pal.bin     256 x u16 RGB565, entry 0 = fog/horizon colour
   <league>_horizon.bin front 512x32 4bpp, back 256x32 4bpp, 2 x 16 x u16
+                       (12352 bytes), packed like the maps
+  <league>_attr.bin    128 attributes, one per tile index
   <track>_map.bin      128x128 tile indices, map[y][x], packed (below)
-  <track>_attr.bin     128 attributes, one per tile index
-  <track>_center.bin   256 samples x (x u16, y u16, tangent u16, half u8, flags u8)
+  <track>_center.bin   256 samples x 6 bytes: u32 (x bits 0..9, y 10..19, tangent
+                       >> 4 in 20..31), half u8, flags u8
                        flags: bit 0 wall, 1 open, 3 coolant, 4 bay, 5 vent,
                        6 ramp, 7 hill (of the sample's segment); bit 2 crates
                        (on one sample only: an RMA crate row there)
+  <track>_feat.bin     hazard records (track.zig HazardSpec, SPEC 19.4), 20
+                       bytes each, little endian: kind u8 (1 blast, 2 mover),
+                       warn u8, size u8, damage u8, x0 y0 x1 y1 u16, period
+                       u16, on u16, phase u16, push u8, speed u8 (1/32
+                       px/tick); empty when the track has none
 
 plus docs/<track>_preview.png (1:1 map with the centerline), and
 docs/<league>_tiles.png / docs/<league>_tiles.txt (contact sheet, index list).
@@ -30,8 +39,8 @@ Rasterizer rules:
     texels are in the mask (majority rule).
   * Every surface/near-surface tile is tagged with its nearest dense point:
     arc position, segment (control point i to i+1) and lateral distance.
-    Features on point i apply to segment i. bay paints the whole segment;
-    vent:N scatters N vent tiles on the segment.
+    Features on point i apply to segment i. bay paints the whole segment
+    (bay:left / bay:right only the driver's left or right lane of it).
   * Bands are straight cuts: the drivable tiles whose centre lies within
     (lo, hi] px along the tangent of a centerline point (snapped to 45
     degrees so bands are clean rows, columns or diagonals) and within the
@@ -55,6 +64,20 @@ Rasterizer rules:
     RMA crates across the track (track.find_crates: 4 crates CRATE_GAP px
     apart where the half width is >= CRATE_ROW4_HALF, else 3). The
     validator checks every crate sits on plain road, at most CRATE_MAX.
+  * Hazards (M3, SPEC 3.3, 19.4) sit at the segment middle, across the
+    track on the 45-degree-snapped tangent, clear of other bands:
+    `vent[:left|right][,period=N,on=N,warn=N,phase=N,damage=N,push=N,size=N]`
+    is a timed blast (an exhaust vent): its mouth is a grille in the wall on
+    that side (default left) and its lane, painted as a scorched grate band
+    (attribute vent), crosses the whole width. `sweeper[,period=..,warn=..,
+    phase=..,damage=..,push=..,size=..,speed=..]` is a crossing mover (the
+    Sweeper): it shuttles across between two parking spots beyond the
+    walls, through hazard-striped gates in them, over a chevron band
+    (attribute surface). Both need walls (no `open`) on their segment.
+    `pipe` paints the segment's floor as the inside of an outflow pipe
+    (ribbed steel; attribute surface; the Runoff's tunnels).
+  * Off-track tiles within `pit_band` tiles (a header line, default 4) of an
+    open edge's lip are pit (void), so a drop reads as one.
   * `open` opens both sides of a segment; `open:left` / `open:right` only the
     driver's left or right side (the other side keeps its rail).
   * Off-track tiles 4-adjacent to surface become edge pieces chosen by the
@@ -99,10 +122,12 @@ from leagues import (  # noqa: E402  (tools/leagues.py: tile vocabulary + league
     A_SURF, A_START, A_SEC1, A_SEC2, ATTR_NAMES, DRIVABLE, FLAG_BITS, SURF,
     SURF_DOT, SURF_SEAM_V, SURF_SEAM_H, SURF_SEAM_X, RUT, EDGE_OPEN, WALL, COOLANT,
     BAY, VENT, RAMP, START, SEC1, SEC2, WALL_DIAG, EDGE_DIAG, GAP, A_OFF, NTILES,
+    VENT_LANE, VENT_MOUTH, SWEEP_LANE, SWEEP_GATE, PIPE, PIPE_RIB, PIT, A_WALL,
     N_, E_, S_, W_, rgb565, pack4, LEAGUES
 )
 
 CART = Path(__file__).resolve().parent.parent
+OUT = CART / "cart" / "src" / "gen" / "tracks"
 T, MAPN, WORLD, NSAMP = 8, 128, 1024, 256
 MARGIN = 100   # px between the centerline and the map's wrap edges
 # Ramp pit: off-track tiles across the whole width, (GAP_LO, GAP_HI] px past
@@ -120,6 +145,18 @@ HILL_MIN, SEAM_CLEAR = 12, 3
 SEAMS = (0, 85, 170)
 # RMA crate rows (tuning.zig crate_gap, crate_row4_half; world.crate_max).
 CRATE_GAP, CRATE_ROW4_HALF, CRATE_MAX, CRATE_BIT = 20, 56, 16, 2
+# Hazards (world.hazard_max; track.zig HazardSpec, hazard_record). Defaults
+# are SPEC 3.3's: a vent fires on a 240-tick timer for 30 ticks (20 damage
+# and a sideways push); the Sweeper deals 60 and a shove. Speeds and pushes
+# in 1/32 px/tick. Kinds: world.HazardKind.
+HAZARD_MAX, HAZARD_RECORD = 4, 20
+K_BLAST, K_MOVER = 1, 2
+VENT_DEFAULTS = dict(period=240, on=30, warn=40, phase=0, damage=20, push=56, size=10)
+SWEEPER_DEFAULTS = dict(period=600, warn=60, phase=0, damage=60, push=64, size=18, speed=40)
+# The Sweeper parks this far beyond the road's edge (centre), the vent mouth
+# sits this far out (in the wall row).
+SWEEP_PARK, VENT_OUT = 34, 4
+HAZARD_WORDS = {"vent": VENT_DEFAULTS, "sweeper": SWEEPER_DEFAULTS}
 
 
 # ---------------------------------------------------------------- map packing
@@ -205,7 +242,7 @@ def unpack_map(p, size=16384):
 
 # ---------------------------------------------------------------- tracks
 def parse_track(path):
-    league, width, pts = None, 64, []
+    league, width, pts, pit_band = None, 64, [], 4
     for ln, raw in enumerate(path.read_text().splitlines(), 1):
         line = raw.split("#", 1)[0].split()
         if not line:
@@ -214,28 +251,42 @@ def parse_track(path):
             league = line[1]
         elif line[0] == "width":
             width = int(line[1])
+        elif line[0] == "pit_band":
+            pit_band = int(line[1])
         else:
             x, y = float(line[0]), float(line[1])
             half = float(line[2]) if len(line) > 2 else float(width)
-            feats, hot, side = set(), 0, None
+            feats, opts, side = set(), {}, None
             for f in line[3:]:
-                name, _, n = f.partition(":")
-                if name == "crates":
-                    feats.add(name)
-                    continue
-                if name not in FLAG_BITS:
+                name, _, rest = f.partition(":")
+                name, _, kv = name.partition(",")
+                args = [a for a in (rest.split(",") if rest else []) + (kv.split(",") if kv else []) if a]
+                if name not in FLAG_BITS and name not in ("crates", "sweeper", "pipe"):
                     raise SystemExit(f"{path}:{ln}: unknown feature {f!r}")
                 feats.add(name)
-                if name == "vent":
-                    hot = int(n or 1)
                 if name == "open":
-                    side = n or "both"
+                    side = args[0] if args else "both"
                     if side not in ("both", "left", "right"):
                         raise SystemExit(f"{path}:{ln}: open takes :left or :right (driver's side), got {f!r}")
-            pts.append((x, y, half, feats, hot, side))
+                elif name in ("bay", "vent"):
+                    pos = [a for a in args if "=" not in a]
+                    opts.setdefault(name, {})["side"] = pos[0] if pos else ("both" if name == "bay" else "left")
+                    if opts[name]["side"] not in ("both", "left", "right"):
+                        raise SystemExit(f"{path}:{ln}: {name} takes :left or :right, got {f!r}")
+                if name in HAZARD_WORDS:
+                    o = dict(HAZARD_WORDS[name])
+                    for a in args:
+                        if "=" in a:
+                            k, _, v = a.partition("=")
+                            if k not in o:
+                                raise SystemExit(f"{path}:{ln}: {name} has no option {k!r}")
+                            o[k] = int(v)
+                    o.update(opts.get(name, {}))
+                    opts[name] = o
+            pts.append((x, y, half, feats, 0, side, opts))
     if league not in LEAGUES or len(pts) < 4:
         raise SystemExit(f"{path}: needs a known league and at least 4 control points")
-    return league, pts
+    return league, pts, pit_band
 
 
 def catmull_rom(pts, per_seg=600):
@@ -267,7 +318,7 @@ def catmull_rom(pts, per_seg=600):
 class Track:
     def __init__(self, path):
         self.name = path.stem
-        self.league, self.pts = parse_track(path)
+        self.league, self.pts, self.pit_band = parse_track(path)
         n = len(self.pts)
         fine, u = catmull_rom(self.pts)
         seglen = np.hypot(*np.diff(fine, axis=0).T)
@@ -289,7 +340,7 @@ class Track:
         for p in self.pts:
             f = 0 if p[5] == "both" else 1 << FLAG_BITS["wall"]   # one-sided open keeps a wall
             for name in p[3]:
-                if name not in ("wall", "crates"):
+                if name in FLAG_BITS and name != "wall":
                     f |= 1 << FLAG_BITS[name]
             self.flags.append(f)
         self.dflags = np.array(self.flags)[self.seg]
@@ -391,7 +442,7 @@ def build_track(trk, ts, lg, rng):
     # Cable ruts: short runs of worn grooves along the travel axis, scattered
     # over the plain surface (the league's RUT tiles; purely visual).
     for ty, tx in np.argwhere(surf):
-        if plain(ty, tx) and tmap[ty, tx] != SURF_DOT and rng.random() < 0.07:
+        if plain(ty, tx) and tmap[ty, tx] != SURF_DOT and rng.random() < 0.04:
             tmap[ty, tx] = RUT + axis_of(tturn(jmap[ty, tx]))
     surf_list = [tuple(p) for p in np.argwhere(surf)]
 
@@ -407,17 +458,41 @@ def build_track(trk, ts, lg, rng):
                     and abs(trk.arc_dist(arc(ty, tx), j * trk.ds)) < 64:
                 res.append((ty, tx))
         return res
+    def lateral(ty, tx):
+        """Driver's-right offset of a tile centre from its nearest line point."""
+        j = jmap[ty, tx]
+        ox, oy = tx * T + 4 - trk.dx[j], ty * T + 4 - trk.dy[j]
+        tdx, tdy = trk.dx[(j + 2) % nd] - trk.dx[j - 2], trk.dy[(j + 2) % nd] - trk.dy[j - 2]
+        return (tdx * oy - tdy * ox) / math.hypot(tdx, tdy)   # y down: > 0 is the driver's right
+
+    def across_axes(j):
+        """Snapped unit tangent (ux, uy) and driver's right (rx, ry) at dense point j."""
+        a = round(turn_at(j) / (math.pi / 4)) * (math.pi / 4)
+        ux, uy = math.cos(a), math.sin(a)
+        return ux, uy, -uy, ux
     # 4. Segment features.
     bands = []   # band centre arcs, kept clear of hot spots
     hops = []    # dense index of each ramp's centre
+    trk.hazards = []   # (kind, dense index, options, (x0, y0), (x1, y1)) in control point order
     for i, p in enumerate(trk.pts):
-        feats = p[3]
+        feats, opts = p[3], p[6]
         a, b = trk.seg_start[i], trk.seg_start[i + 1]
         mid = (a + b) / 2
         if "bay" in feats:
+            side = opts["bay"]["side"]
             for ty, tx in surf_list:
-                if trk.seg[jmap[ty, tx]] == i:
+                if trk.seg[jmap[ty, tx]] == i and (side == "both" or (lateral(ty, tx) > 2) == (side == "right")
+                                                   and abs(lateral(ty, tx)) > 2):
                     tmap[ty, tx] = BAY + axis_of(tturn(jmap[ty, tx]))
+        if "pipe" in feats:
+            # Ribs every 24 px, straight across on the segment's snapped
+            # axis (a pipe segment should be a straight run).
+            jm = int(round(mid / trk.ds)) % nd
+            ux, uy, _, _ = across_axes(jm)
+            for ty, tx in surf_list:
+                if trk.seg[jmap[ty, tx]] == i and (plain(ty, tx) or tmap[ty, tx] in (SURF_DOT, RUT, RUT + 1)):
+                    along = (tx * T + 4 - trk.dx[jm]) * ux + (ty * T + 4 - trk.dy[jm]) * uy
+                    tmap[ty, tx] = PIPE_RIB + axis_of(tturn(jm)) if math.floor(along / 8) % 3 == 0 else PIPE
         for name, base in (("coolant", COOLANT), ("ramp", RAMP)):
             if name in feats:
                 bands.append(mid)
@@ -435,20 +510,34 @@ def build_track(trk, ts, lg, rng):
                     hops.append(jm)
                 for ty, tx in band(jm, -12, 12, surf_list):
                     tmap[ty, tx] = base + (dir4(jm) if base != COOLANT else 0)
-        if p[4]:
-            cand = [(ty, tx) for ty, tx in surf_list
-                    if trk.seg[jmap[ty, tx]] == i and plain(ty, tx)
-                    and math.hypot(tx * T + 4 - trk.dx[jmap[ty, tx]], ty * T + 4 - trk.dy[jmap[ty, tx]]) < trk.dhalf[jmap[ty, tx]] - 14
-                    and all(abs(trk.arc_dist(arc(ty, tx), m)) > 32 for m in bands)
-                    and abs(trk.arc_dist(arc(ty, tx), (a + b) / 2)) < (b - a) * 0.4]
-            placed = []
-            while len(placed) < p[4] and cand:
-                c = cand.pop(rng.randrange(len(cand)))
-                if all(abs(c[0] - q[0]) + abs(c[1] - q[1]) >= 4 for q in placed):
-                    placed.append(c)
-                    tmap[c] = VENT
-            if len(placed) < p[4]:
-                raise SystemExit(f"{trk.name}: segment {i} has room for only {len(placed)} vents")
+        for name in ("vent", "sweeper"):
+            if name not in feats:
+                continue
+            if p[5] is not None:
+                raise SystemExit(f"{trk.name}: {name} on segment {i} needs walls on both sides (no open)")
+            o = opts[name]
+            bands.append(mid)
+            jm = int(round(mid / trk.ds)) % nd
+            ux, uy, rx, ry = across_axes(jm)
+            h = trk.dhalf[jm]
+            cx, cy = trk.dx[jm], trk.dy[jm]
+            if name == "vent":
+                out = h + VENT_OUT
+                sgn = -1 if o["side"] == "left" else 1
+                e0 = (cx + sgn * rx * out, cy + sgn * ry * out)
+                e1 = (cx - sgn * rx * out, cy - sgn * ry * out)
+                for ty, tx in band(jm, -o["size"], o["size"], surf_list):
+                    if plain(ty, tx) or tmap[ty, tx] in (SURF_DOT, RUT, RUT + 1):
+                        tmap[ty, tx] = VENT_LANE + axis_of(tturn(jm))
+                trk.hazards.append((K_BLAST, jm, o, e0, e1))
+            else:
+                out = h + SWEEP_PARK
+                e0 = (cx - rx * out, cy - ry * out)
+                e1 = (cx + rx * out, cy + ry * out)
+                for ty, tx in band(jm, -o["size"], o["size"], surf_list):
+                    if plain(ty, tx) or tmap[ty, tx] in (SURF_DOT, RUT, RUT + 1):
+                        tmap[ty, tx] = SWEEP_LANE + axis_of(tturn(jm))
+                trk.hazards.append((K_MOVER, jm, o, e0, e1))
     # 5. Edges and walls from the 4-neighbour surface mask.
     pad = np.pad(surf, 1)
     m4 = (pad[:-2, 1:-1] * N_ | pad[1:-1, 2:] * E_ | pad[2:, 1:-1] * S_ | pad[1:-1, :-2] * W_).astype(int)
@@ -473,6 +562,18 @@ def build_track(trk, ts, lg, rng):
                     edge[ty, tx] = True
                     break
     open_edges = [tuple(q) for q in np.argwhere(edge & (ts.attr[tmap] == A_SURF))]
+    # 5b. Hazard fittings in the walls: the vent's grille on its mouth side,
+    #     the Sweeper's hazard-striped gates on both sides.
+    walls = [tuple(q) for q in np.argwhere(edge & (ts.attr[tmap] == A_WALL))]
+    for kind, jm, o, e0, e1 in trk.hazards:
+        if kind == K_BLAST:
+            sgn = -1 if o["side"] == "left" else 1
+            for ty, tx in band(jm, -o["size"], o["size"], walls):
+                if lateral(ty, tx) * sgn > 0:
+                    tmap[ty, tx] = VENT_MOUTH + axis_of(tturn(jm))
+        else:
+            for ty, tx in band(jm, -o["size"] - 4, o["size"] + 4, walls):
+                tmap[ty, tx] = SWEEP_GATE + axis_of(tturn(jm))
     # 6. Start line and sector seams (last, so they always win; they also
     #    cross open-edge tiles so the drivable strip is cut completely).
     for k, lo, hi, base in ((0, -8, 8, START), (85, -4, 4, SEC1), (170, -4, 4, SEC2)):
@@ -493,9 +594,25 @@ def build_track(trk, ts, lg, rng):
                     m |= bit
             tmap[ty, tx] = GAP + m
     trk.hops = hops
-    # 8. League background on everything else.
-    lg["background"](tmap, ~surf & ~edge, rng)
+    # 8. Pits beyond the open edges, so a drop reads as one (a band
+    #    `pit_band` tiles deep); then the league background on the rest.
+    free = ~surf & ~edge
+    pit = pit_mask(free, edge & (ts.attr[tmap] == A_SURF), trk.pit_band)
+    tmap[pit] = PIT
+    lg["background"](tmap, free & ~pit, rng)
     return tmap, surf
+
+
+def pit_mask(free, lips, depth):
+    """Free tiles within `depth` tiles (Chebyshev) of an open lip: the pit a
+    car drops into reads as one (the track's `pit_band`, default 4)."""
+    near = lips.copy()
+    for _ in range(depth):
+        g = near.copy()
+        g[1:] |= near[:-1]; g[:-1] |= near[1:]; g[:, 1:] |= near[:, :-1]; g[:, :-1] |= near[:, 1:]
+        g[1:, 1:] |= near[:-1, :-1]; g[:-1, :-1] |= near[1:, 1:]; g[1:, :-1] |= near[:-1, 1:]; g[:-1, 1:] |= near[1:, :-1]
+        near = g
+    return near & free
 
 
 def gap_ok(trk, jm, gap):
@@ -519,8 +636,57 @@ def center_bytes(trk):
         x, y = int(round(trk.dx[j])), int(round(trk.dy[j]))
         h = int(round(trk.dhalf[j]))
         f = int(trk.dflags[j]) | ((1 << CRATE_BIT) if k in trk.crate_rows else 0)
-        out += np.array([x, y, trk.turn[k]], "<u2").tobytes() + bytes([h, f])
+        t12 = ((int(trk.turn[k]) + 8) >> 4) & 4095
+        out += np.array([(x & 1023) | (y & 1023) << 10 | t12 << 20], "<u4").tobytes() + bytes([h, f])
     return bytes(out)
+
+
+def hazard_bytes(trk):
+    """The track's hazard records (track.zig hazard_record)."""
+    out = bytearray()
+    for kind, jm, o, e0, e1 in trk.hazards:
+        x0, y0, x1, y1 = (int(round(v)) & 1023 for v in (*e0, *e1))
+        on = o["on"] if kind == K_BLAST else 0
+        speed = o["speed"] if kind == K_MOVER else 0
+        out += bytes([kind, o["warn"], o["size"], o["damage"]])
+        out += np.array([x0, y0, x1, y1, o["period"], on, o["phase"] % o["period"]], "<u2").tobytes()
+        out += bytes([o["push"], speed])
+    assert len(out) == HAZARD_RECORD * len(trk.hazards)
+    return bytes(out)
+
+
+def validate_hazards(trk, tmap, ts, surf, errs):
+    """At most HAZARD_MAX; each cycle fits its period; clear of the start
+    line and sector seams; a Sweeper's path off the road never comes near
+    another part of the track."""
+    if len(trk.hazards) > HAZARD_MAX:
+        errs.append(f"{trk.name}: {len(trk.hazards)} hazards, over the {HAZARD_MAX} the World holds")
+    for kind, jm, o, e0, e1 in trk.hazards:
+        where = f"{trk.name}: {'vent' if kind == K_BLAST else 'sweeper'} at ({trk.dx[jm]:.0f},{trk.dy[jm]:.0f})"
+        if min(abs(trk.arc_dist(jm * trk.ds, trk.sidx[k] * trk.ds)) for k in SEAMS) < 40:
+            errs.append(f"{where}: within 40 px of the start line or a sector seam")
+        ln = math.hypot(e1[0] - e0[0], e1[1] - e0[1])
+        if kind == K_BLAST:
+            if o["on"] + o["warn"] >= o["period"]:
+                errs.append(f"{where}: on + warn must be under the period")
+            continue
+        travel = math.ceil(int(ln) * 32 / o["speed"])
+        if travel + o["warn"] >= o["period"] // 2:
+            errs.append(f"{where}: crossing {travel} + warn {o['warn']} ticks must be under half the period {o['period']}")
+        reach = o["size"] + 12
+        h = trk.dhalf[jm]
+        for t in np.linspace(0, 1, int(ln // 4) + 1):
+            x, y = e0[0] + (e1[0] - e0[0]) * t, e0[1] + (e1[1] - e0[1]) * t
+            if abs(t - 0.5) * ln <= h:
+                continue
+            ys, xs = np.mgrid[int(y - reach) // T:int(y + reach) // T + 1, int(x - reach) // T:int(x + reach) // T + 1]
+            for ty, tx in zip(ys.ravel(), xs.ravel()):
+                if 0 <= ty < MAPN and 0 <= tx < MAPN and surf[ty, tx] \
+                        and math.hypot(tx * T + 4 - x, ty * T + 4 - y) < reach:
+                    near, _ = nearest_dense(trk, np.array([[ty, tx]]))
+                    if abs(trk.arc_dist(near[0] * trk.ds, jm * trk.ds)) > 4 * h:
+                        errs.append(f"{where}: its path off the road passes another part of the track at ({x:.0f},{y:.0f})")
+                        return
 
 
 def validate_crates(trk, tmap, ts, errs):
@@ -680,18 +846,40 @@ def write_preview(trk, tmap, ts, path):
         dr.ellipse([trk.dx[j] - 3, trk.dy[j] - 3, trk.dx[j] + 3, trk.dy[j] + 3], outline=(255, 255, 0))
     for x, y, _ in trk.crates():
         dr.rectangle([x - 4, y - 4, x + 4, y + 4], outline=(255, 255, 255))
+    for kind, jm, o, e0, e1 in trk.hazards:   # vent lanes orange from the mouth, Sweeper paths yellow
+        if kind == K_BLAST:
+            dr.line([e0, e1], fill=(255, 120, 30), width=3)
+            dr.ellipse([e0[0] - 5, e0[1] - 5, e0[0] + 5, e0[1] + 5], fill=(255, 60, 20))
+        else:
+            dr.line([e0, e1], fill=(255, 230, 40), width=1)
+            for x, y in (e0, e1):
+                r = o["size"]
+                dr.ellipse([x - r, y - r, x + r, y + r], outline=(255, 230, 40), width=2)
     img.save(path, optimize=False)
+
+
+def packed_checked(raw, size):
+    """League art packed like a map, after checking its raw size and that it
+    round-trips."""
+    if len(raw) != size:
+        raise SystemExit(f"league art is {len(raw)} bytes, expected {size}")
+    p = pack_map(raw)
+    if unpack_map(p, size) != raw:
+        raise SystemExit("league art does not round-trip through the packer")
+    return p
 
 
 def write_league(name, lg, out, docs):
     ts = lg["tiles"](lg["pal"])
     rng = random.Random(zlib.crc32(name.encode()))
     f, b, fpal, bpal = lg["horizon"](lg["pal"].rgb[0], rng)
+    horizon = pack4(f) + pack4(b) + np.array([rgb565(c) for c in fpal], "<u2").tobytes() \
+        + np.array([rgb565(c) for c in bpal], "<u2").tobytes()
     files = {
-        out / f"{name}_tiles.bin": ts.tiles.tobytes(),
+        out / f"{name}_tiles.bin": packed_checked(ts.tiles.tobytes(), NTILES * 64),
         out / f"{name}_pal.bin": lg["pal"].table565().tobytes(),
-        out / f"{name}_horizon.bin": pack4(f) + pack4(b)
-        + np.array([rgb565(c) for c in fpal], "<u2").tobytes() + np.array([rgb565(c) for c in bpal], "<u2").tobytes(),
+        out / f"{name}_horizon.bin": packed_checked(horizon, 12352),
+        out / f"{name}_attr.bin": ts.attr.tobytes(),
     }
     for p, data in files.items():
         p.write_bytes(data)
@@ -718,7 +906,7 @@ def write_league(name, lg, out, docs):
 def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--track", help="build only this track (file stem)")
-    ap.add_argument("--out", default=str(CART / "assets" / "gen"))
+    ap.add_argument("--out", default=str(OUT))
     ap.add_argument("--docs", default=str(CART / "docs"), help="where the previews and tile sheets go")
     args = ap.parse_args()
     out, docs = Path(args.out), Path(args.docs)
@@ -752,8 +940,8 @@ def main():
         if unpack_map(packed) != tmap.tobytes():
             errs.append(f"{trk.name}: packed map does not round-trip")
         files = {out / f"{trk.name}_map.bin": packed,
-                 out / f"{trk.name}_attr.bin": ts.attr.tobytes(),
-                 out / f"{trk.name}_center.bin": center_bytes(trk)}
+                 out / f"{trk.name}_center.bin": center_bytes(trk),
+                 out / f"{trk.name}_feat.bin": hazard_bytes(trk)}
         for p, d in files.items():
             p.write_bytes(d)
             sizes[p] = len(d)
@@ -761,6 +949,7 @@ def main():
         clear = validate(trk, tmap, ts, errs)
         hills = validate_hills(trk, errs)
         crates = validate_crates(trk, tmap, ts, errs)
+        validate_hazards(trk, tmap, ts, surf, errs)
         counts = np.bincount(ts.attr[tmap].ravel(), minlength=11)
         r, rx, ry, rseg = min_radius(trk)
         print(f"track {trk.name}: lap {trk.length:.0f} px, {len(trk.pts)} control points, "
@@ -771,6 +960,9 @@ def main():
         if crates:
             rows = sorted(trk.crate_rows)
             print(f"  crate rows (flag bit 2) at samples {', '.join(map(str, rows))}: {len(crates)} crates")
+        for kind, jm, o, e0, e1 in trk.hazards:
+            print(f"  {'vent' if kind == K_BLAST else 'sweeper'} at sample ~{int(jm * NSAMP // len(trk.dx))}: "
+                  f"({e0[0]:.0f},{e0[1]:.0f}) -> ({e1[0]:.0f},{e1[1]:.0f}), " + ", ".join(f"{k} {v}" for k, v in o.items()))
         print("  segment lengths: " + " ".join(f"{b - a:.0f}" for a, b in zip(trk.seg_start, trk.seg_start[1:])))
         print("  tiles per attribute: " + ", ".join(f"{ATTR_NAMES[i]} {c}" for i, c in enumerate(counts) if c))
         print(f"  start ({trk.dx[0]:.0f},{trk.dy[0]:.0f}) heading {trk.turn[0]}; sector1 sample 85 at "
@@ -782,18 +974,21 @@ def main():
             errs.append(f"{trk.name}: map uses tile {tmap.max()}, over the {NTILES}-tile set")
         if r < 30:
             errs.append(f"{trk.name}: corner radius {r:.0f} px at ({rx:.0f},{ry:.0f}) under 30 px (the autopilot needs ~30)")
-    expect = {"tiles": NTILES * 64, "pal": 512, "horizon": 12352, "attr": NTILES, "center": 2048}
+    expect = {"pal": 512, "attr": NTILES, "center": 256 * 6}
     packed_total = 0
     for p, n in sorted(sizes.items()):
         kind = p.stem.rsplit("_", 1)[1]
-        if kind == "map":
+        if kind in ("map", "tiles", "horizon"):
             packed_total += n
             if n >= 8192:
-                errs.append(f"{p.name}: packed map is {n} bytes, budget under 8192")
+                errs.append(f"{p.name}: packed {kind} is {n} bytes, budget under 8192")
+        elif kind == "feat":
+            if n % HAZARD_RECORD:
+                errs.append(f"{p.name}: {n} bytes, not whole {HAZARD_RECORD}-byte records")
         elif expect[kind] != n:
             errs.append(f"{p.name}: {n} bytes, expected {expect[kind]}")
         print(f"  {p.relative_to(CART) if p.is_relative_to(CART) else p}: {n} bytes")
-    print(f"  packed maps: {packed_total} bytes")
+    print(f"  packed maps and league art: {packed_total} bytes")
     for e in errs:
         print("ERROR:", e, file=sys.stderr)
     sys.exit(1 if errs else 0)

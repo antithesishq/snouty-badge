@@ -16,6 +16,16 @@
 //! lines (`KERNEL PANIC > KIDDIE`), `swap` the RACE CONDITION glitch; the
 //! KERNEL PANIC packet trails ghosts; the followed car's roulette landing
 //! shows the pickup's name, and a ZERO-DAY on it flashes the screen.
+//!
+//! M3 (GARBAGE COLLECTION, hazards): `mark` gives the feed's MARKED and
+//! TAGGED lines, a `TAGGED!` tag over the newly marked car and the bar
+//! notes on the badge that drives it (`gc_note`); `collect` starts a claw
+//! (`claws`: the GC claw lowers over the car, closes and lifts it out,
+//! drawn by sprites.zig from what is kept here, since the World has taken
+//! the car out of the race) and the feed's `GC: freed KIDDIE`, and keeps
+//! the sweep it went out at for the results; `blast` puffs at a vent's
+//! mouth; `hazard_hit` sparks, flashes the armor bar and names the hazard
+//! in the feed. The attract demo reads `panic_target` to cut its camera.
 const cart = @import("cart-api");
 const fixed = @import("fixed.zig");
 const tuning = @import("tuning.zig");
@@ -24,6 +34,7 @@ const camera = @import("camera.zig");
 const sprites = @import("sprites.zig");
 const sim = @import("sim.zig");
 const font = @import("font.zig");
+const track = @import("track.zig");
 
 const no_car = world.no_car;
 
@@ -47,8 +58,9 @@ pub const Particle = struct {
     dx: i8 = 0,
     dy: i8 = 0,
 };
-const texts = [_][]const u8{ "<honey>", "</honey>", "<honey/>", "QUACK" };
+const texts = [_][]const u8{ "<honey>", "</honey>", "<honey/>", "QUACK", "TAGGED!" };
 const text_quack: u8 = 3;
+const text_tagged: u8 = 4;
 pub const particle_count = 48;
 pub var particles: [particle_count]Particle = @splat(.{});
 var next_particle: usize = 0;
@@ -93,10 +105,26 @@ pub const ack_ticks: u8 = 30;
 /// The followed car's own wreck message (WRECKED BY SYSADMIN, ZERO-DAY).
 pub const wreck_note_ticks: u8 = 90;
 
-/// A wreck line (`pickup == .none`, not `swap`), or a pickup line
-/// (`KERNEL PANIC > KIDDIE`: `pickup` hit `victim`), or a RACE CONDITION
-/// swap (`killer <> victim`). Wreck lines are not overwritten by the others.
-pub const Feed = struct { ticks: u8 = 0, killer: u8 = no_car, victim: u8 = 0, cause: world.Wreck = .none, pickup: world.Pickup = .none, swap: bool = false };
+/// What a feed line says. `wreck`: `KILLER > VICTIM` (or the victim and
+/// the cause); `pickup`: `KERNEL PANIC > KIDDIE` (`pickup` hit `victim`);
+/// `swap`: a RACE CONDITION, `killer <> victim`; M3: `marked` (a sweep
+/// marked `victim`), `tagged` (`killer` passed the mark to `victim`),
+/// `freed` (`GC: freed VICTIM`), `hazard` (`VENT > VICTIM`). Wreck, mark
+/// and collect lines are not overwritten by pickup, swap and hazard lines.
+pub const FeedKind = enum(u8) { wreck, pickup, swap, marked, tagged, freed, hazard };
+pub const Feed = struct {
+    ticks: u8 = 0,
+    kind: FeedKind = .wreck,
+    killer: u8 = no_car,
+    victim: u8 = 0,
+    cause: world.Wreck = .none,
+    pickup: world.Pickup = .none,
+    hazard: world.HazardKind = .none,
+
+    fn minor(f: *const Feed) bool {
+        return f.kind == .pickup or f.kind == .swap or f.kind == .hazard;
+    }
+};
 pub var feed: Feed = .{};
 /// `wrecked`: the racer's wrecked line (the followed car made the kill),
 /// else their taunt (they wrecked the followed car).
@@ -130,6 +158,56 @@ pub var verified: u8 = 0;
 var prev_captcha: u8 = 0;
 /// Who sent the KERNEL PANIC that hit the followed car (the stop code).
 pub var panic_source: u8 = no_car;
+/// The car the last KERNEL PANIC struck (main.zig's attract camera cuts to
+/// it for the blue screen, takes it and puts back `no_car`).
+pub var panic_target: u8 = no_car;
+pub var panic_from: u8 = no_car;
+
+// --- GARBAGE COLLECTION (M3) ---------------------------------------------------------
+
+/// The bar note on the badge whose car a `mark` or `collect` concerns:
+/// a sweep marked it, a tag passed the mark to it, it passed the mark on,
+/// it was collected.
+pub const GcNote = enum(u8) { none, marked, tagged, passed, collected };
+pub var gc_note: GcNote = .none;
+pub var gc_note_ticks: u8 = 0;
+pub const gc_note_show: u8 = 90;
+
+/// The claw lifting a collected car out (SPEC 8.2): lowered for
+/// `claw_down` ticks, closed until `claw_grab`, then lifting until
+/// `claw_ticks`. The car is out of the World's race, so its racer, place
+/// and heading are kept here.
+pub const Claw = struct {
+    car: u8 = no_car,
+    racer: u8 = 0,
+    wrecked: bool = false,
+    heading: fixed.Turn = 0,
+    x: i32 = 0,
+    y: i32 = 0,
+    age: u8 = 0,
+};
+pub const claw_down: u8 = 24;
+pub const claw_grab: u8 = 34;
+pub const claw_ticks: u8 = 90;
+pub var claws: [2]Claw = @splat(.{});
+var next_claw: usize = 0;
+/// Per car: the sweep it was collected at (0 = still running) and how
+/// (the results' GC table).
+pub var freed_sweep: [world.car_count]u8 = @splat(0);
+pub var freed_cause: [world.car_count]world.GcCause = @splat(.sweep);
+
+/// Hazards: ticks each slot has been `active` (a vent's blast grows from
+/// its mouth and thins before it stops), for sprites.zig.
+pub var blast_age: [world.hazard_max]u16 = @splat(0);
+var prev_hazard: [world.hazard_max]world.HazardState = @splat(.idle);
+
+/// A claw is still busy with car `i`.
+pub fn claw_on(i: u8) bool {
+    for (&claws) |*k| {
+        if (k.car == i and k.age < claw_ticks) return true;
+    }
+    return false;
+}
 
 /// The event cursor: the next seq this badge has not shown.
 var last_seq: u16 = 0;
@@ -155,6 +233,13 @@ pub fn begin(w: *const world.World) void {
     verified = 0;
     prev_captcha = 0;
     panic_source = no_car;
+    panic_target = no_car;
+    gc_note = .none;
+    gc_note_ticks = 0;
+    claws = @splat(.{});
+    freed_sweep = @splat(0);
+    blast_age = @splat(0);
+    prev_hazard = @splat(.idle);
     last_seq = w.event_seq;
     for (&w.cars, 0..) |*c, i| prev_ammo[i] = c.ammo_front;
 }
@@ -171,6 +256,16 @@ pub fn tick(w: *const world.World, follow: u8, frame: u32) void {
     if (frame % 3 == 0) {
         for (&w.projs) |*pr| {
             if (pr.kind == .panic) spawn(.ghost, pr.x, pr.y, 5, 16);
+        }
+    }
+    // Hazards: the blast clocks, and steam wisps from a vent about to fire.
+    for (track.hazard_specs[0..track.hazard_n], 0..) |*h, k| {
+        const hz = &w.hazards[k];
+        blast_age[k] = if (hz.state == .active and prev_hazard[k] == .active) blast_age[k] +| 1 else 0;
+        prev_hazard[k] = hz.state;
+        if (h.kind == .blast and hz.state == .warn and frame % 4 == 0) {
+            const d: i32 = @intCast(4 + (frame / 4) % 3 * 6);
+            spawn(.smoke, (h.x0 << fixed.Q) +% h.ux * d, (h.y0 << fixed.Q) +% h.uy * d, 2, 10);
         }
     }
     const me = &w.cars[follow % world.car_count];
@@ -193,7 +288,8 @@ fn age_all() void {
             .smoke, .black_smoke => {
                 if (p.age % 2 == 0) p.lift += 1;
             },
-            .pop, .text => p.lift += 1,
+            .pop => p.lift += 1,
+            .text => p.lift += if (p.size == text_tagged) @as(i16, @intFromBool(p.age % 2 == 0)) else 1,
             .duck => p.lift += @max(0, 4 - @as(i16, p.age / 6)),
             else => {},
         }
@@ -211,6 +307,10 @@ fn age_all() void {
     glitch -|= 1;
     captcha_fail -|= 1;
     verified -|= 1;
+    gc_note_ticks -|= 1;
+    for (&claws) |*k| {
+        if (k.car != no_car and k.age < claw_ticks) k.age += 1;
+    }
 }
 
 fn px_q(v: u16) i32 {
@@ -262,7 +362,7 @@ fn on_event(w: *const world.World, e: *const world.Event, follow: u8) void {
             const v = &w.cars[e.a];
             const cause = wreck_cause(e.c);
             // The sim's own `explode` (radius 24) follows for the blast.
-            feed = .{ .ticks = feed_ticks, .killer = e.b, .victim = e.a, .cause = cause };
+            feed = .{ .ticks = feed_ticks, .kind = .wreck, .killer = e.b, .victim = e.a, .cause = cause };
             if (e.a == follow) {
                 shake = wreck_shake;
                 // A fall shows the sim's own SEGMENT FAULT message.
@@ -306,7 +406,70 @@ fn on_event(w: *const world.World, e: *const world.Event, follow: u8) void {
             spawn(.spark, w.cars[e.a].x, w.cars[e.a].y, 6, 16);
             spawn(.spark, w.cars[e.b].x, w.cars[e.b].y, 6, 16);
             if (e.a == follow or e.b == follow) glitch = glitch_ticks;
-            pickup_feed(.race_condition, e.a, e.b, true);
+            minor_feed(.{ .ticks = feed_ticks, .kind = .swap, .killer = e.a, .victim = e.b });
+    } else if (kind == .mark) {
+            on_mark(w, e, follow);
+    } else if (kind == .collect) {
+            on_collect(w, e, follow);
+    } else if (kind == .blast) {
+            // A vent starts firing: a burst at its mouth (the Sweeper's
+            // crossing shows in its beacon).
+            if (e.b == @intFromEnum(world.HazardKind.blast)) spawn(.explosion, px_q(e.x), px_q(e.y), 0, 22);
+    } else if (kind == .hazard_hit) {
+            if (!valid_car(e.b)) return;
+            const x = px_q(e.x);
+            const y = px_q(e.y);
+            spawn(.spark, x, y, 6, 16);
+            spawn(.explosion, x, y, 0, 14);
+            if (e.b == follow) {
+                armor_flash = 12;
+                shake = 8;
+            }
+            const hk: world.HazardKind = if (e.a < track.hazard_n) track.hazard_specs[e.a].kind else .none;
+            minor_feed(.{ .ticks = feed_ticks, .kind = .hazard, .victim = e.b, .hazard = hk });
+    }
+}
+
+/// A `mark`: the feed line, `TAGGED!` over a tagged car, the bar notes.
+fn on_mark(w: *const world.World, e: *const world.Event, follow: u8) void {
+    if (!valid_car(e.a)) return;
+    const tag = e.c == @intFromEnum(world.GcCause.tag) and valid_car(e.b);
+    const c = &w.cars[e.a];
+    if (tag) {
+        feed = .{ .ticks = feed_ticks, .kind = .tagged, .killer = e.b, .victim = e.a };
+        spawn_text(c.x, c.y, text_tagged, 0, 0);
+        spawn(.spark, c.x, c.y, 8, 16);
+    } else {
+        feed = .{ .ticks = feed_ticks, .kind = .marked, .victim = e.a };
+    }
+    if (e.a == follow) {
+        gc_note = if (tag) .tagged else .marked;
+        gc_note_ticks = gc_note_show;
+    } else if (tag and e.b == follow) {
+        gc_note = .passed;
+        gc_note_ticks = gc_note_show;
+    }
+}
+
+/// A `collect`: the claw, the feed line, the results' record.
+fn on_collect(w: *const world.World, e: *const world.Event, follow: u8) void {
+    if (!valid_car(e.a)) return;
+    const c = &w.cars[e.a];
+    claws[next_claw] = .{
+        .car = e.a,
+        .racer = c.racer,
+        .wrecked = c.wreck != .none,
+        .heading = c.heading,
+        .x = px_q(e.x),
+        .y = px_q(e.y),
+    };
+    next_claw = (next_claw + 1) % claws.len;
+    feed = .{ .ticks = feed_ticks, .kind = .freed, .victim = e.a };
+    freed_sweep[e.a] = @max(1, w.gc.sweeps);
+    freed_cause[e.a] = if (e.c <= @intFromEnum(world.GcCause.wreck)) @enumFromInt(e.c) else .sweep;
+    if (e.a == follow) {
+        gc_note = .collected;
+        gc_note_ticks = gc_note_show;
     }
 }
 
@@ -315,10 +478,15 @@ fn pickup_of(v: u8) world.Pickup {
 }
 
 /// A pickup feed line, unless a wreck line is showing.
-fn pickup_feed(p: world.Pickup, a: u8, victim: u8, swap: bool) void {
-    if (!valid_car(victim)) return;
-    if (feed.ticks > 0 and feed.pickup == .none and !feed.swap) return;
-    feed = .{ .ticks = feed_ticks, .killer = a, .victim = victim, .pickup = p, .swap = swap };
+fn pickup_feed(p: world.Pickup, a: u8, victim: u8) void {
+    minor_feed(.{ .ticks = feed_ticks, .kind = .pickup, .killer = a, .victim = victim, .pickup = p });
+}
+
+/// A pickup, swap or hazard line, unless a wreck, mark or collect line is showing.
+fn minor_feed(f: Feed) void {
+    if (!valid_car(f.victim)) return;
+    if (feed.ticks > 0 and !feed.minor()) return;
+    feed = f;
 }
 
 fn on_use(w: *const world.World, e: *const world.Event, follow: u8) void {
@@ -340,18 +508,20 @@ fn on_effect(w: *const world.World, e: *const world.Event, follow: u8) void {
     switch (p) {
         .kernel_panic => {
             if (e.b == follow) panic_source = e.a;
+            panic_target = e.b;
+            panic_from = e.a;
             spawn(.spark, x, y, 8, 18);
             spawn(.ghost, x, y, 6, 24);
-            pickup_feed(p, e.a, e.b, false);
+            pickup_feed(p, e.a, e.b);
         },
         .bit_flip => {
             spawn(.ray, x, y, 0, 12);
             spawn(.spark, x, y, 4, 14);
-            pickup_feed(p, e.a, e.b, false);
+            pickup_feed(p, e.a, e.b);
         },
         .deadlock, .ddos, .spaghetti => {
             spawn(.spark, x, y, 5, 12);
-            pickup_feed(p, e.a, e.b, false);
+            pickup_feed(p, e.a, e.b);
         },
         .honeypot => {
             // The fake crate bursts into `<honey>` tags.
@@ -359,7 +529,7 @@ fn on_effect(w: *const world.World, e: *const world.Event, follow: u8) void {
             spawn_text(x, y, 0, -3, 2);
             spawn_text(x, y, 1, 3, 1);
             spawn_text(x, y, 2, 0, -3);
-            pickup_feed(p, e.a, e.b, false);
+            pickup_feed(p, e.a, e.b);
         },
         .duck => {
             // The duck took the hit: it tumbles up, QUACK.
@@ -445,7 +615,7 @@ pub fn draw_particle(i: usize, p: camera.Projected) void {
         .text => {
             const str = texts[pt.size % texts.len];
             if (pt.age > 30 and pt.age % 2 == 0) return;
-            const color: cart.Pixel = if (pt.size == text_quack) honey_white else honey_orange;
+            const color: cart.Pixel = if (pt.size == text_quack) honey_white else if (pt.size == text_tagged) (if (pt.age % 4 < 2) tagged_red else honey_white) else honey_orange;
             font.draw(str, p.sx - @as(i32, @intCast(str.len * 4)), bottom - 8, color, honey_shadow);
         },
         .ray => draw_ray(p.sx, bottom, pt.age),
@@ -453,6 +623,7 @@ pub fn draw_particle(i: usize, p: camera.Projected) void {
 }
 
 const honey_orange: cart.Pixel = .from_color(.rgb(0xF59A3C));
+const tagged_red: cart.Pixel = .from_color(.rgb(0xE83838));
 const honey_white: cart.Pixel = .from_color(.rgb(0xFCFBF9));
 const honey_shadow: cart.Pixel = .from_color(.rgb(0x16031B));
 const ray_core: cart.Pixel = .from_color(.rgb(0xFFFFFF));
