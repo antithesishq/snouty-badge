@@ -77,16 +77,18 @@ DM_CARPET, DM_DECK_LINE, DM_DECK = 13, 14, 15
 # Road variants (attribute surface) in the pack slots.
 CARPET, CARPET_MOTIF, CARPET_WORN = 28, 29, 30
 FOOD_A, FOOD_B, FOOD_STAIN = 31, 89, 90
-DECK, DECK_SEAM_V, DECK_SEAM_H, DECK_SEAM_X, DECK_OIL = 91, 124, 125, 126, 127
+DECK, DECK_JOINT, DECK_DASH, DECK_DASH_Y, DECK_OIL = 91, 124, 125, 126, 127
 
-SHADOW_TILES, STRIPE_TILES = {}, ()
+SHADOW_TILES, STRIPE_TILES = {}, (DECK_DASH, DECK_DASH_Y)
+# Centerline dashes per floor (the generator's `centerline yes`).
+CENTER_LINES = {"deck": (DECK_DASH, DECK_DASH_Y)}
 ROAD_VARIANTS = {
     "terrazzo": {},
     "carpet": {SURF: CARPET, SURF_SEAM_V: CARPET, SURF_SEAM_H: CARPET, SURF_SEAM_X: CARPET_MOTIF,
                SURF_DOT: CARPET_MOTIF, RUT: CARPET_WORN, RUT + 1: CARPET_WORN},
     "food": {SURF: FOOD_A, SURF_SEAM_X: FOOD_A, SURF_SEAM_V: FOOD_B, SURF_SEAM_H: FOOD_B,
              SURF_DOT: FOOD_A, RUT: FOOD_STAIN, RUT + 1: FOOD_STAIN},
-    "deck": {SURF: DECK, SURF_SEAM_V: DECK_SEAM_V, SURF_SEAM_H: DECK_SEAM_H, SURF_SEAM_X: DECK_SEAM_X,
+    "deck": {SURF: DECK, SURF_SEAM_V: DECK, SURF_SEAM_H: DECK, SURF_SEAM_X: DECK_JOINT,
              SURF_DOT: DECK, RUT: DECK_OIL, RUT + 1: DECK_OIL},
 }
 
@@ -271,11 +273,11 @@ def paint_tiles(P):
             P["stain"] if math.hypot(x - 4, y - 4) < 2.4 + 0.6 * math.sin(x + 2 * y) else P["food_a"])))
     dk = lambda x, y, s: P["deck_dk"] if hash01(x, y, s) < 0.08 else P["deck_hi"]  # noqa: E731
     ts.put(DECK, "parking deck", A_SURF, grid(lambda x, y: dk(x, y, 41)))
-    ts.put(DECK_SEAM_V, "parking deck joint left", A_SURF, grid(lambda x, y: P["deck_dk"] if x == 0 else dk(x, y, 42)))
-    ts.put(DECK_SEAM_H, "parking deck stripe top", A_SURF, grid(
-        lambda x, y: P["deck_yel"] if y == 0 and x % 4 < 3 else dk(x, y, 43)))
-    ts.put(DECK_SEAM_X, "parking deck joint corner", A_SURF, grid(
-        lambda x, y: P["deck_yel"] if y == 0 and x % 4 < 3 else (P["deck_dk"] if x == 0 else dk(x, y, 44))))
+    ts.put(DECK_JOINT, "parking deck slab joint", A_SURF, grid(
+        lambda x, y: P["deck_dk"] if (x == 0 or y == 0) else dk(x, y, 42)))
+    dash = grid(lambda x, y: P["deck_yel"] if 3 <= y <= 4 else dk(x, y, 43))
+    ts.put(DECK_DASH, "parking deck lane dash (travel x)", A_SURF, dash)
+    ts.put(DECK_DASH_Y, "parking deck lane dash (travel y)", A_SURF, dash.T.copy())
     ts.put(DECK_OIL, "parking deck oil stain", A_SURF, grid(
         lambda x, y: P["oil"] if math.hypot(x - 3.5, y - 4) < 2.6 + 0.7 * math.sin(x * 1.7) else dk(x, y, 45)))
     for i in range(NTILES):
@@ -681,3 +683,82 @@ MOVER_CELL = PROP["robot"]
 
 def draw_props():
     return [fn() for fn in PROPS]
+
+
+# ------------------------------------------------------------ the arena
+import pack_arena as PA  # noqa: E402
+
+
+class FoodCourtArena(PA.PackArena):
+    """The Food Court (SPEC 19.9): the first non-brown arena. The pit is the
+    dry fountain (the wishing well: coins and dead phones), the stalled
+    escalators are its four kickers, kiosk and planter islands sit at the
+    diagonals, and the scrubber circles the old carousel corner (NE). Lit by
+    neon and rack LEDs under the skylight. 16 nav nodes (a 1.7 KB blob) so
+    the slot keeps room for four props cells."""
+    name, stem, background = "THE FOOD COURT", "the_food_court", "food"
+
+    def __init__(self):
+        n = PA.ARENA
+        k = np.full((n, n), PA.FLOOR, np.uint8)
+        for x0 in (14, 60):            # kiosk and planter islands
+            for y0 in (14, 60):
+                k[y0:y0 + 14, x0:x0 + 14] = PA.SOLID
+        for y in range(n):             # the fountain: a round dry basin
+            for x in range(n):
+                if math.hypot(x - 43.5, y - 43.5) <= 8.6:
+                    k[y, x] = PA.PIT
+        self.kind = k
+        self.ramps = []
+        self.kickers = [(41, 34, 46, 35, 1), (41, 52, 46, 53, 3), (34, 41, 35, 46, 0), (52, 41, 53, 46, 2)]
+        self.bays = [(0, 0), (82, 82)]
+        self.spawns = [(30, 80, 3), (56, 80, 3), (5, 30, 0), (5, 56, 0), (81, 30, 2), (81, 56, 2)]
+        self.pads = [(44, 4), (43, 83), (4, 43), (83, 44), (44, 24), (43, 63), (24, 43), (63, 44)]
+        J, B = 2, 1
+        self.set_nodes([
+            ("bay_nw", 3, 3, B), ("c_ne", 80, 7, 0), ("c_sw", 7, 80, 0), ("bay_se", 84, 84, B),
+            ("n", 44, 7, 0), ("s", 43, 80, 0), ("w", 7, 43, 0), ("e", 80, 44, 0),
+            ("i_nw", 31, 31, 0), ("i_ne", 56, 31, 0), ("i_sw", 31, 56, 0), ("i_se", 56, 56, 0),
+            ("pn", 44, 24, J), ("ps", 43, 63, J), ("pw", 24, 43, J), ("pe", 63, 44, J),
+        ], [("pn", "ps"), ("ps", "pn"), ("pw", "pe"), ("pe", "pw")])
+        # The scrubber's round of the carousel corner: diagonally across the
+        # NE ring, from a service door in the north rim to one in the east.
+        self.mover = dict(a=(63, -3), b=(91, 25), period=840, warn=60, phase=200, damage=40, push=64,
+                          size=16, speed=40)
+        w = PA.rel_world
+        self.props = [("palm", *w(17, 17)), ("kiosk", *w(24, 24)), ("palm", *w(70, 17)), ("neon", *w(63, 24)),
+                      ("kiosk", *w(17, 70)), ("palm", *w(24, 63)), ("palm", *w(70, 70)), ("neon", *w(63, 63)),
+                      ("neon", *w(44, -4)), ("neon", *w(43, 91)), ("palm", *w(-4, 20)), ("palm", *w(91, 66))]
+
+    def floor(self, tmap, big, rng):
+        """Food-court tile in the plaza round the fountain (inside the
+        islands' ring), terrazzo on the outer ring; the scrubber's polished
+        route across the carousel corner."""
+        O = PA.O
+        for ty in range(128):
+            for tx in range(128):
+                x, y = tx - O, ty - O
+                if 14 <= x < 74 and 14 <= y < 74 and tmap[ty, tx] in ROAD_VARIANTS["food"]:
+                    tmap[ty, tx] = ROAD_VARIANTS["food"][tmap[ty, tx]]
+        (ax, ay), (bx, by) = self.mover["a"], self.mover["b"]
+        for i in range(200):
+            t = i / 199
+            x, y = ax + (bx - ax) * t, ay + (by - ay) * t
+            for d in (-1, 0, 1):
+                tx, ty = O + int(round(x)) + d, O + int(round(y))
+                if 0 <= tx < 128 and 0 <= ty < 128 and tmap[ty, tx] in (SURF, SURF_SEAM_V, SURF_SEAM_H, SURF_SEAM_X, SURF_DOT, RUT, RUT + 1):
+                    tmap[ty, tx] = SWEEP_LANE
+
+    def post(self, tmap):
+        """Service doors where the scrubber's route meets the rim."""
+        O = PA.O
+        (ax, ay), (bx, by) = self.mover["a"], self.mover["b"]
+        for i in range(300):
+            t = i / 299
+            tx, ty = O + int(round(ax + (bx - ax) * t)), O + int(round(ay + (by - ay) * t))
+            for yy, xx in ((ty, tx), (ty, tx + 1), (ty + 1, tx)):
+                if 48 <= tmap[yy, xx] < 64 or 96 <= tmap[yy, xx] < 100:
+                    tmap[yy, xx] = SWEEP_GATE
+
+
+ARENA = FoodCourtArena

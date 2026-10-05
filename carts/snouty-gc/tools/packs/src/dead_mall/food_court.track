@@ -19,20 +19,24 @@ pit_band 11                        # the atrium is open from balcony to balcony
  640  170   50     crust           # ceiling tiles hold the floor here
  780  135   50
  890  220   48
- 880  380   46                     # weaving between the tables
- 780  470   44
- 800  600   44
- 900  700   46
+ 890  360   46                     # weaving between the tables
+ 760  410   44
+ 640  510   44
+ 720  620   44     crates
+ 880  640   46
+ 910  760   46
  860  860   50
  700  895   52     ramp            # the stalled escalators: jump them
  460  895   52
- 300  880   50     crates
+ 300  880   50
  180  780   48     vent:left,phase=60   # the overloaded breaker
- 150  600   50     open:right      # the west balcony, the atrium on the right
- 160  400   50     open:right
- 190  250   52     bay:left
+ 150  620   50     open:right      # the west balcony, the atrium on the right
+ 400  570   48     open:right      # out along the balcony's bay over the atrium
+ 420  390   48     open:right
+ 170  340   50
+ 160  230   52     bay:left
 props palm,kiosk seg 1 side left gap 70 off 22
-props kiosk,vending seg 5 side both gap 70 off 24
-props palm,neon seg 9 side left gap 80 off 22
-props vending,palm seg 12 side left gap 70 off 22
+props kiosk,vending seg 6 side both gap 70 off 24
+props palm,neon seg 11 side left gap 80 off 22
+props vending,palm seg 14 side left gap 70 off 22
 props neon seg 3 side left gap 60 off 22

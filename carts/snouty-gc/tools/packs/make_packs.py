@@ -30,6 +30,8 @@ words, stripped before the rasterizer sees them:
                              a row of props along segment i, `off` px beyond
                              the road's edge (default 20), every `gap` px;
                              kinds cycle; a spot on or near road is skipped
+  furrow <half> <x y> <x y>..  a trench (pit tiles) along the polyline, painted
+                             only over the wallpaper beyond the walls (cosmetic)
   features: crust[,len=N]    a band of crust (SPEC 19.4) across the road at
                              the segment's middle, N px either side (12)
             shadow[,len=N]   a wing shadow band across the road (cosmetic)
@@ -88,6 +90,7 @@ class Source:
         self.order, self.floor, self.bg, self.centerline = 99, None, None, False
         self.props_explicit, self.props_rows = [], []
         self.my = {}               # control point index -> {feature: opts}
+        self.furrows = []          # (half width, [(x, y), ...]) scorched trenches beyond the road
         keep = []
         idx = 0
         for ln, raw in enumerate(path.read_text().splitlines(), 1):
@@ -108,6 +111,9 @@ class Source:
                 self.centerline = w[1] == "yes"
             elif w[0] == "prop":
                 self.props_explicit.append((w[1], float(w[2]), float(w[3]), 0, ln))
+            elif w[0] == "furrow":
+                v = [float(t) for t in w[2:]]
+                self.furrows.append((float(w[1]), list(zip(v[0::2], v[1::2]))))
             elif w[0] == "solid":
                 self.props_explicit.append((w[1], float(w[2]), float(w[3]), int(w[4]), ln))
             elif w[0] == "props":
@@ -153,6 +159,14 @@ def band_tiles(trk, jm, lo, hi, cand, nj):
         if lo < along <= hi and abs(across) <= trk.dhalf[jm] + 10 and abs(trk.arc_dist(j * trk.ds, jm * trk.ds)) < 64:
             out.append((ty, tx))
     return out
+
+
+def seg_dist(px, py, a, b):
+    ax, ay = a
+    bx, by = b
+    dx, dy = bx - ax, by - ay
+    t = max(0.0, min(1.0, ((px - ax) * dx + (py - ay) * dy) / max(dx * dx + dy * dy, 1e-9)))
+    return math.hypot(px - (ax + t * dx), py - (ay + t * dy))
 
 
 def seg_mid_dense(trk, i):
@@ -225,6 +239,16 @@ def build_one(pack, mod, ts, src, errs, out, review, report):
             crusts.append(dict(seg=i, tiles=[[int(x), int(y)] for y, x in cells],
                                x0=min(xs) * 8, y0=min(ys) * 8, x1=max(xs) * 8 + 8, y1=max(ys) * 8 + 8,
                                sample=int(jm * 256 // nd)))
+    # Furrows: pit tiles over the wallpaper (tiles 1..15) along polylines.
+    for half, pts in src.furrows:
+        for ty in range(128):
+            for tx in range(128):
+                if not 1 <= tmap[ty, tx] <= 15:
+                    continue
+                px, py = tx * 8 + 4, ty * 8 + 4
+                d = min(seg_dist(px, py, a, b) for a, b in zip(pts, pts[1:]))
+                if d <= half:
+                    tmap[ty, tx] = C.PIT if d <= half - 8 else getattr(mod, "FURROW_LIP", C.PIT)
     # Validation: build_tracks' checks on the final map.
     clear = bt.validate(trk, tmap, ts, errs)
     hills = bt.validate_hills(trk, errs)
@@ -457,6 +481,8 @@ def build_pack(name, errs, review=None, report=True):
             file, data, rep = bp.build(root)
             gcp = root / f"{file}.GCP"
             gcp.write_bytes(data)
+            # The host tests and previews embed a copy (never the badge cart).
+            (C.CART / "cart" / "src" / "gen" / "packs" / f"{file}.GCP").write_bytes(data)
             if report:
                 print("\n".join(rep))
         except bp.PackError as e:
@@ -469,7 +495,8 @@ def build_pack(name, errs, review=None, report=True):
         rd = Path(review)
         rd.mkdir(parents=True, exist_ok=True)
         for res in results + ([arena] if arena else []):
-            preview(res, ts, rd / f"{name}_{res['stem']}_map.png")
+            if res is not arena:
+                preview(res, ts, rd / f"{name}_{res['stem']}_map.png")
             fr, lab = (pack_arena.mock_frames(res, ts, hz, cells) if res is arena else mock_frames(res, ts, hz, cells))
             C.grid_of(fr, 4, 2, lab, f"{mod.TITLE}: {res['name']} (Mode 7 mock)").save(rd / f"{name}_{res['stem']}_mock.png")
     return dict(mod=mod, ts=ts, results=results, arena=arena, gcp=gcp)

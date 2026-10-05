@@ -1,0 +1,34 @@
+# Mothball Mile: The Boneyard, track 1 (SPEC 19.5). A fast loop down the
+# airliner rows on the old runway, under the wings (their shadows across
+# the concrete), past an engine the AIs forgot to shut down (jet blast
+# across the east taxiway) and a loose cowling rolling over the south
+# runway, then through the infield kink by the tail fins and home.
+name MOTHBALL MILE
+order 1
+floor runway
+centerline yes
+league boneyard
+width 58
+# x    y    half   features
+ 240  140   60                     # start line, heading east
+ 520  120   60     shadow          # under the first row's wings
+ 800  140   60     crates
+ 905  270   56
+ 905  520   56     shadow
+ 890  740   56     vent:left,period=300,warn=50   # a turbine still spinning
+ 800  890   58
+ 560  905   60     sweeper,period=720,speed=40,size=16   # the loose cowling
+ 330  895   60     crates
+ 200  800   56
+ 260  640   54
+ 500  625   54     shadow
+ 670  470   54
+ 510  350   54
+ 300  380   56     bay:right
+ 150  330   56
+ 150  220   58
+props tail,engine seg 1 side left gap 70 off 26
+props tail,gear seg 4 side right gap 80 off 26
+props engine,wingtip seg 8 side both gap 90 off 26
+props tail seg 12 side left gap 80 off 26
+props gear,tail seg 14 side left gap 80 off 26

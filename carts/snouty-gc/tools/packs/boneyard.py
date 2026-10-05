@@ -61,6 +61,7 @@ PAL = Palette([
 
 # Background tiles (1..15, attribute off).
 BY_SAND, BY_RIPPLE, BY_SAND_DK, BY_SCRUB, BY_TYRE, BY_PANEL, BY_RIDGE = 1, 2, 3, 4, 5, 6, 7
+FURROW_LIP = 7      # the furrow's scorched lip reuses the ridge slot (see paint_tiles)
 BY_ENGINE = 8       # 8..11 2x2 bagged engine lying in the sand, top-down
 BY_WING = 12        # 12..15 2x2 wing panel with a roundel
 # Road slots (attribute surface).
@@ -103,9 +104,8 @@ def paint_tiles(P):
         lambda x, y: P["tyre"] if 1.6 < math.hypot(x - 3.5, y - 3.5) < 3.3 else s(x, y, 5)))
     ts.put(BY_PANEL, "rivet panel debris", A_OFF, grid(
         lambda x, y: (P["alu_dk"] if (x + y) % 3 == 0 and y in (1, 5) else P["alu"]) if 1 <= x <= 6 and 1 <= y <= 5 else s(x, y, 6)))
-    ts.put(BY_RIDGE, "drift ridge", A_OFF, grid(
-        lambda x, y: P["sand_lt"] if abs(y - 3 - 1.4 * math.sin(x * 0.8)) < 1 else (
-            P["sand_dk"] if abs(y - 4.5 - 1.4 * math.sin(x * 0.8)) < 0.8 else s(x, y, 7))))
+    ts.put(BY_RIDGE, "scorched sand (the furrow's lip)", A_OFF, grid(
+        lambda x, y: P["scorch"] if hash01(x // 2, y // 2, 7) < 0.45 else (P["scorch_hi"] if hash01(x, y, 8) < 0.5 else P["lip_dk"])))
     eng = np.zeros((16, 16), np.uint8)
     for y in range(16):
         for x in range(16):
@@ -276,8 +276,7 @@ def block_desert(block, rng):
         for tx in range(n):
             if avail[ty, tx]:
                 r = rng.random()
-                block[ty, tx] = BY_SCRUB if r < 0.03 else BY_TYRE if r < 0.04 else BY_PANEL if r < 0.055 else (
-                    BY_RIDGE if r < 0.075 else block[ty, tx])
+                block[ty, tx] = BY_SCRUB if r < 0.03 else BY_TYRE if r < 0.04 else BY_PANEL if r < 0.055 else block[ty, tx]
 
 
 def background(kind="desert"):
@@ -557,3 +556,67 @@ MOVER_CELL = PROP["cowling"]
 
 def draw_props():
     return [fn() for fn in PROPS]
+
+
+# ------------------------------------------------------------ the arena
+import pack_arena as PA  # noqa: E402
+
+
+class Hangar18Arena(PA.PackArena):
+    """Hangar 18 (SPEC 19.9): a collapsed hangar round a crashed saucer
+    nobody ever explained. The saucer lies sunk in its crater in the
+    middle (the pit); its rim is a ring ramp, kickers along all four faces;
+    the fallen roof and wreckage make the corner islands; broken wings lie
+    across the east and west lanes as ramps over the gaps they tore in the
+    floor (gap jumps); the loose cowling rolls along the north lane. 20 nav
+    nodes (a 2 KB blob): room for four props cells."""
+    name, stem, background = "HANGAR 18", "hangar_18", "desert"
+    GAP_ROWS = (41, 46)    # the wing gaps across the side lanes: rows 41..45
+
+    def __init__(self):
+        n = PA.ARENA
+        k = np.full((n, n), PA.FLOOR, np.uint8)
+        for x0 in (14, 60):            # fallen roof and wreckage
+            for y0 in (14, 60):
+                k[y0:y0 + 14, x0:x0 + 14] = PA.SOLID
+        k[36:52, 36:52] = PA.PIT       # the saucer's crater
+        g0, g1 = self.GAP_ROWS
+        self.ramps = []
+        for x0, x1 in ((0, 13), (74, 87)):
+            k[g0:g1, x0:x1 + 1] = PA.PIT
+            self.ramps.append((x0, g0 - 2, x1, g0 - 1, 1))   # a wing, facing S, north of the gap
+            self.ramps.append((x0, g1, x1, g1 + 1, 3))       # facing N, south of it
+        self.kind = k
+        # The saucer's rim: kickers along the whole of each crater face.
+        self.kickers = [(36, 34, 51, 35, 1), (36, 52, 51, 53, 3), (34, 36, 35, 51, 0), (52, 36, 53, 51, 2)]
+        self.bays = [(0, 0), (82, 82)]
+        self.spawns = [(30, 80, 3), (56, 80, 3), (5, 20, 0), (5, 64, 0), (81, 20, 2), (81, 64, 2)]
+        self.pads = [(44, 4), (43, 83), (4, 30), (83, 57), (44, 24), (43, 63), (24, 43), (63, 44)]
+        J, B = 2, 1
+        self.set_nodes([
+            ("bay_nw", 3, 3, B), ("c_ne", 80, 7, 0), ("c_sw", 7, 80, 0), ("bay_se", 84, 84, B),
+            ("n", 44, 7, 0), ("s", 43, 80, 0),
+            ("w_a", 7, 29, J), ("w_b", 7, 58, J), ("e_a", 80, 29, J), ("e_b", 80, 58, J),
+            ("i_nw", 31, 31, 0), ("i_ne", 56, 31, 0), ("i_sw", 31, 56, 0), ("i_se", 56, 56, 0),
+            ("pn", 44, 24, J), ("ps", 43, 63, J), ("pw", 24, 43, J), ("pe", 63, 44, J),
+        ], [("pn", "ps"), ("ps", "pn"), ("pw", "pe"), ("pe", "pw"),
+            ("w_a", "w_b"), ("w_b", "w_a"), ("e_a", "e_b"), ("e_b", "e_a")])
+        self.sweep_row = 7
+        self.sweeper = dict(period=1200, warn=60, phase=300, damage=50, push=64, size=16, speed=56)
+        w = PA.rel_world
+        self.props = [("dish", *w(20, 20)), ("engine", *w(66, 18)), ("wingtip", *w(68, 70)), ("engine", *w(19, 68)),
+                      ("dish", *w(-4, 44)), ("wingtip", *w(92, 40)), ("engine", *w(30, -4)), ("dish", *w(60, 92)),
+                      ("wingtip", *w(24, 24)), ("engine", *w(63, 63))]
+
+    def post(self, tmap):
+        """The saucer in its crater: hull panels where the pit is deepest
+        (attribute off either way), a ring of scorch round its rim."""
+        O = PA.O
+        for ty in range(O + 36, O + 52):
+            for tx in range(O + 36, O + 52):
+                r = math.hypot(tx - O - 43.5, ty - O - 43.5)
+                if GAP <= tmap[ty, tx] < GAP + 16 and r < 6.0:
+                    tmap[ty, tx] = BY_PANEL
+
+
+ARENA = Hangar18Arena
