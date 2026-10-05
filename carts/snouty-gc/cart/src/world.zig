@@ -452,6 +452,9 @@ pub const Car = struct {
     safe: u8 = 0,
     /// The hunter AI's waypoint (hunt.zig; internal, `no_node` for none).
     nav: u8 = 0xFF,
+    /// Battle damage is scaled (`tuning.battle_damage_pct`): the hundredths
+    /// of a point carried to the next hit (internal).
+    dmg_frac: u8 = 0,
 };
 
 pub const Phase = enum(u8) { countdown, racing, finished };

@@ -30,16 +30,20 @@ Files (track.zig `Track` fields):
   sandbox_feat.bin    hazard records (the Sweeper; build_tracks.py format)
   sandbox_arena.bin   the arena blob (track.zig `parse_arena`), little endian:
       header 8 bytes: spawn_n, pad_n, node_n, cell_shift (5: 32 px cells),
-                      grid (32 cells a side), 3 reserved zero bytes
+                      grid (32 cells a side), 1 (the ground table is there),
+                      2 reserved zero bytes
       spawn_n x 6:    x u16, y u16 (world px, the pad's centre), heading u16
                       (turn units, facing into the arena)
       pad_n x 4:      x u16, y u16: an RMA crate pad's centre
       node_n x 6:     x u16, y u16, jump u8 (the node this one jumps to over a
                       kicker or ramp, 0xFF none), flags u8 (bit 0 a service
-                      bay, bit 1 a jump approach)
+                      bay, bit 1 a jump approach, bits 4..7 the jump's
+                      run-up speed in 1/4 px/tick, 0 = any)
       node_n^2:       next hop: next[from * node_n + to] is the node after
                       `from` on the shortest path to `to` (`to` itself when
                       adjacent, 0xFF when `from == to`)
+      node_n^2:       the same over the ground only (no jump edges): the
+                      way a car too slow for a jump takes
       grid^2:         cells[cy * grid + cx]: the node to head for from that
                       32 px cell (the nearest with a clear ground line), 0xFF
                       outside the arena
@@ -88,8 +92,11 @@ O, ARENA = 22, 88
 HALF_LEN, HALF_WID = 12, 6
 RAMP_TICKS, KICKER_TICKS = 40, 64
 NAV_MAX, CELL_SHIFT, GRID = 48, 5, 32
+# A jump approach's recorded run-up speed: the generator's clean speed plus
+# this, px/tick (the hunter takes the ground way when slower).
+JUMP_MARGIN = 0.2
 # The corner gap jumps' pits, tiles across the lane's travel.
-GAP_W = 7
+GAP_W = 5
 SPAWN_MAX, PAD_MAX = 8, 16
 FLAG_BAY, FLAG_JUMP = 1, 2
 # The Sweeper (build_tracks.py's record): along the north straight.
@@ -140,7 +147,7 @@ class Arena:
         self.kickers = [(41, 34, 46, 35, 1), (41, 52, 46, 53, 3), (34, 41, 35, 46, 0), (52, 41, 53, 46, 2)]
         self.kind = k
         # Service bays (6x6 tiles) in the NW and SE corners.
-        self.bays = [(2, 2), (80, 80)]
+        self.bays = [(0, 0), (82, 82)]
         # Spawn pads (2x2 tiles, top-left rel tile, direction facing in):
         # two on the south straight, two each on the west and east
         # straights, each facing a gap into a plaza; none on the north
@@ -156,24 +163,21 @@ class Arena:
 
         def add(name, x, y, flags=0):
             nodes[name] = (x, y, flags)
-        # Outer ring: corners, straights.
-        add("nw", 7, 7)
-        add("ne", 80, 7)
-        add("se", 80, 80)
-        add("sw", 7, 80)
+        # Outer ring straights (the corners are the gap jumps' far ends).
         add("n1", 31, 7)
         add("n2", 56, 7)
         add("s1", 31, 80)
         add("s2", 56, 80)
-        # Gap jumps: approach nodes either side (each jumps to the other).
-        add("wn_a", 7, 9, FLAG_JUMP)
-        add("wn_b", 7, 30, FLAG_JUMP)
-        add("ws_a", 7, 57, FLAG_JUMP)
-        add("ws_b", 7, 78, FLAG_JUMP)
-        add("en_a", 80, 9, FLAG_JUMP)
-        add("en_b", 80, 30, FLAG_JUMP)
-        add("es_a", 80, 57, FLAG_JUMP)
-        add("es_b", 80, 78, FLAG_JUMP)
+        # Gap jumps: approach nodes either side, 10 tiles of run-up from the
+        # ramp (each jumps to the other).
+        add("wn_a", 8, 4, FLAG_JUMP)
+        add("wn_b", 8, 34, FLAG_JUMP)
+        add("ws_a", 8, 53, FLAG_JUMP)
+        add("ws_b", 8, 83, FLAG_JUMP)
+        add("en_a", 79, 4, FLAG_JUMP)
+        add("en_b", 79, 34, FLAG_JUMP)
+        add("es_a", 79, 53, FLAG_JUMP)
+        add("es_b", 79, 83, FLAG_JUMP)
         # Wall kicker approaches on the ring (jump into the plazas).
         add("nk", 44, 3, FLAG_JUMP)
         add("sk", 43, 84, FLAG_JUMP)
@@ -199,8 +203,8 @@ class Arena:
         add("pw", 24, 43, FLAG_JUMP)
         add("pe", 63, 44, FLAG_JUMP)
         # Service bays.
-        add("bay_nw", 5, 5, FLAG_BAY)
-        add("bay_se", 82, 82, FLAG_BAY)
+        add("bay_nw", 3, 3, FLAG_BAY)
+        add("bay_se", 84, 84, FLAG_BAY)
         self.node_names = list(nodes)
         self.nodes = [nodes[n] for n in self.node_names]
         ix = {n: i for i, n in enumerate(self.node_names)}
@@ -310,15 +314,16 @@ def node_px(ar, i):
     return rel_px(x, y)
 
 
-def build_graph(ar, attr, errs):
-    """Edge weights (dict (i, j) -> px), the all-pairs next hop and distances."""
+def build_graph(ar, attr, errs, jumps=True):
+    """Edge weights (dict (i, j) -> px), the all-pairs next hop and distances
+    (with the jump edges, or over the ground only)."""
     n = len(ar.nodes)
     w = {}
     for i in range(n):
         for j in range(n):
             if i != j and los(attr, node_px(ar, i), node_px(ar, j)):
                 w[i, j] = math.dist(node_px(ar, i), node_px(ar, j))
-    for a, b in ar.jumps.items():
+    for a, b in (ar.jumps.items() if jumps else ()):
         w[a, b] = math.dist(node_px(ar, a), node_px(ar, b))
     INF = 1e18
     dist = np.full((n, n), INF)
@@ -337,7 +342,7 @@ def build_graph(ar, attr, errs):
     for i in range(n):
         for j in range(n):
             if i != j and dist[i, j] >= INF:
-                errs.append(f"nav: node {ar.node_names[i]} cannot reach {ar.node_names[j]}")
+                errs.append(f"nav: node {ar.node_names[i]} cannot reach {ar.node_names[j]}{'' if jumps else ' on the ground'}")
                 return w, nxt, dist
     return w, nxt, dist
 
@@ -475,9 +480,9 @@ def sweeper_record(ar):
     return rec, travel
 
 
-def arena_blob(ar, nxt, cells):
+def arena_blob(ar, nxt, gnd, cells, speeds):
     n = len(ar.nodes)
-    out = bytearray([len(ar.spawns), len(ar.pads), n, CELL_SHIFT, GRID, 0, 0, 0])
+    out = bytearray([len(ar.spawns), len(ar.pads), n, CELL_SHIFT, GRID, 1, 0, 0])
     for x, y, d in ar.spawns:
         px, py = corner_px(x + 1, y + 1)
         out += np.array([px, py, d * 16384], "<u2").tobytes()
@@ -486,8 +491,15 @@ def arena_blob(ar, nxt, cells):
         out += np.array([int(px), int(py)], "<u2").tobytes()
     for i, (x, y, f) in enumerate(ar.nodes):
         px, py = rel_px(x, y)
-        out += np.array([int(px), int(py)], "<u2").tobytes() + bytes([ar.jumps.get(i, 0xFF), f])
+        # A jump approach's run-up speed in the flags' high nibble, 1/4
+        # px/tick: the speed from which every run-up clears, plus a margin;
+        # 0 for a jump with no pit under it.
+        need = 0
+        if i in ar.jumps and speeds.get((i, ar.jumps[i])) and speeds[(i, ar.jumps[i])] > 0.6:
+            need = min(15, math.ceil((speeds[(i, ar.jumps[i])] + JUMP_MARGIN) * 4))
+        out += np.array([int(px), int(py)], "<u2").tobytes() + bytes([ar.jumps.get(i, 0xFF), f | need << 4])
     out += bytes(int(v) & 0xFF for v in nxt.ravel())
+    out += bytes(int(v) & 0xFF for v in gnd.ravel())
     out += cells.tobytes()
     return bytes(out)
 
@@ -545,6 +557,7 @@ def build(out: Path, docs: Path, errs: list, quiet=False):
     if np.isin(attr[ring], list(DRIVABLE)).any():
         errs.append("drivable floor outside the play area")
     w, nxt, dist = build_graph(ar, attr, errs)
+    _, gnd, _ = build_graph(ar, attr, errs, jumps=False)
     cells = build_cells(ar, attr, errs)
     speeds = check_jumps(ar, attr, tmap, errs)
     feat, travel = sweeper_record(ar)
@@ -555,7 +568,7 @@ def build(out: Path, docs: Path, errs: list, quiet=False):
         errs.append("arena map does not round-trip")
     if len(packed) >= 8192:
         errs.append(f"arena map packed to {len(packed)} bytes, budget under 8192")
-    blob = arena_blob(ar, nxt, cells)
+    blob = arena_blob(ar, nxt, gnd, cells, speeds)
     files = {out / f"{NAME}_map.bin": packed, out / f"{NAME}_center.bin": center_bytes(),
              out / f"{NAME}_feat.bin": feat, out / f"{NAME}_arena.bin": blob}
     for p, d in files.items():
@@ -568,7 +581,7 @@ def build(out: Path, docs: Path, errs: list, quiet=False):
         print("  jump minimum speeds (px/tick): " + ", ".join(
             f"{ar.node_names[a]}>{ar.node_names[b]} {v}" for (a, b), v in sorted(speeds.items())))
         print(f"  sweeper crossing {travel} ticks of a {SWEEPER['period']}-tick period")
-        print(f"  arena blob {len(blob)} bytes (nav {len(ar.nodes) * 6 + len(ar.nodes) ** 2 + GRID * GRID})")
+        print(f"  arena blob {len(blob)} bytes (nav {len(ar.nodes) * 6 + 2 * len(ar.nodes) ** 2 + GRID * GRID})")
     return {p: len(d) for p, d in files.items()}
 
 

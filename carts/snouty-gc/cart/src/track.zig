@@ -260,14 +260,17 @@ pub const hazard_record = 20;
 //
 // The arena blob (tools/build_arena.py writes it), little endian:
 //   header 8 bytes: spawn_n, pad_n, node_n, cell_shift (32 px cells: 5),
-//                   grid (cells a side: 32), 3 zero bytes
+//                   grid (cells a side: 32), 1 (the ground table is
+//                   there), 2 zero bytes
 //   spawn_n x 6:    x u16, y u16 (world px, the pad's centre), heading u16
 //   pad_n x 4:      x u16, y u16 (an RMA crate pad's centre)
 //   node_n x 6:     x u16, y u16, jump u8 (the node this one jumps to over
 //                   a kicker or jump, `no_node` none), flags u8 (`node_bay`,
-//                   `node_jump`)
+//                   `node_jump`; bits 4..7 the jump's run-up speed in 1/4
+//                   px/tick, `Node.need`)
 //   node_n^2:       next hop, next[from * node_n + to] (`no_node` when from
 //                   == to)
+//   node_n^2:       the same over the ground only (no jump edges)
 //   grid^2:         cells[cy * grid + cx], the node to head for from that
 //                   cell (the nearest with a clear ground line), `no_node`
 //                   outside the arena
@@ -281,7 +284,17 @@ pub const node_bay: u8 = 1;
 pub const node_jump: u8 = 2;
 
 pub const Spawn = struct { x: u16 = 0, y: u16 = 0, heading: u16 = 0 };
-pub const Node = struct { x: u16 = 0, y: u16 = 0, jump: u8 = no_node, flags: u8 = 0 };
+pub const Node = struct {
+    x: u16 = 0,
+    y: u16 = 0,
+    jump: u8 = no_node,
+    flags: u8 = 0,
+
+    /// The run-up speed this node's jump needs, Q16 px/tick (0: any).
+    pub fn need(self: Node) i32 {
+        return @as(i32, self.flags >> 4) << (fixed.Q - 2);
+    }
+};
 
 /// The selected arena's data (filled by `select`, like `crate_spots`; empty
 /// for a race track). The hunter AI and the KERNEL PANIC packet route over
@@ -292,8 +305,10 @@ pub const Arena = struct {
     spawns: [spawn_max]Spawn = @splat(.{}),
     node_n: u8 = 0,
     nodes: [nav_max]Node = @splat(.{}),
-    /// The next-hop table and the cell grid (slices of the track data).
+    /// The next-hop tables (with the jumps, and over the ground only) and
+    /// the cell grid (slices of the track data).
     next: []const u8 = &.{},
+    ground: []const u8 = &.{},
     cells: []const u8 = &.{},
     cell_shift: u5 = 5,
     grid: u8 = 0,
@@ -314,6 +329,12 @@ pub const Arena = struct {
     pub fn hop(self: *const Arena, from: u8, to: u8) u8 {
         if (from >= self.node_n or to >= self.node_n) return no_node;
         return self.next[@as(usize, from) * self.node_n + to];
+    }
+
+    /// `hop` over the ground only (no jump edges).
+    pub fn ground_hop(self: *const Arena, from: u8, to: u8) u8 {
+        if (from >= self.node_n or to >= self.node_n) return no_node;
+        return self.ground[@as(usize, from) * self.node_n + to];
     }
 };
 pub var arena: Arena = .{};
@@ -337,7 +358,7 @@ pub fn parse_arena(t: *const Track, out: *Arena, pads: *[world.crate_max]CrateSp
         }
     }.u;
     var at: usize = 8;
-    if (b.len < at + sn * 6 + pn * 4 + nn * 6 + nn * nn + grid * grid) return false;
+    if (b[5] != 1 or b.len < at + sn * 6 + pn * 4 + nn * 6 + 2 * nn * nn + grid * grid) return false;
     for (0..sn) |k| {
         out.spawns[k] = .{ .x = rd(b, at), .y = rd(b, at + 2), .heading = rd(b, at + 4) };
         at += 6;
@@ -353,6 +374,8 @@ pub fn parse_arena(t: *const Track, out: *Arena, pads: *[world.crate_max]CrateSp
     out.spawn_n = @intCast(sn);
     out.node_n = @intCast(nn);
     out.next = b[at..][0 .. nn * nn];
+    at += nn * nn;
+    out.ground = b[at..][0 .. nn * nn];
     at += nn * nn;
     out.cells = b[at..][0 .. grid * grid];
     out.grid = @intCast(grid);
