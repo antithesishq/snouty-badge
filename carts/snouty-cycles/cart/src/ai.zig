@@ -7,14 +7,20 @@
 //! - T0 WANDER: a 1-3 cell lookahead, random turns, dodges a wall ahead
 //!   only most of the time.
 //! - T1 AVOID: a capped flood fill per move; most space wins.
-//! - T2 TERRITORY: per move, a multi-source BFS Voronoi from every head
-//!   (cells and edges, 0.055 / 0.194), the 3x3 cut-cell table to split a
-//!   move's space into chambers, a bonus for claiming the prey's path, and
-//!   once separated a parity-bounded, wall-hugging fill.
-//! - T3 SEARCH: iterative-deepening alpha-beta against the nearest rival
-//!   (paranoid, others treated as walls), Voronoi leaves in a 32 x 32
-//!   window; once separated, a depth-first fill search with
-//!   parity-bounded chamber leaves.
+//! - T2 TERRITORY: a Voronoi split per move. One BFS from every other head
+//!   (the others' distance field), then per move a BFS of the cells this
+//!   program reaches strictly first, scored 0.055 per cell + 0.194 per
+//!   edge (a1k0n's fit); the 3x3 cut-cell table splits a move into
+//!   chambers (only the best counts); the prey's cells it takes count
+//!   twice, plus a bonus for claiming the prey's road. Once every move's
+//!   territory is complete and touches no one it is alone: a
+//!   parity-bounded, wall-hugging fill, braking while a rival's room is
+//!   bigger. Sudden death: closing rings are walls, rooms count only the
+//!   cells it can ride before their ring closes.
+//! - T3 SEARCH: T2 with a longer view, plus iterative-deepening
+//!   alpha-beta against the nearest rival (paranoid, others are walls) on
+//!   a 32 x 32 bitboard window as a tactical check, and a depth-first
+//!   fill search with parity-bounded chamber leaves once alone.
 //!
 //! Timing (PLAN M1 Track A item 2): a program decides once per cell. T2
 //! and T3 think on the first tick in a new cell, or later if this tick's
@@ -26,10 +32,13 @@
 //! miss its boundary.
 //!
 //! Budgets are work units, never time: one unit per cell a fill or BFS
-//! takes off its queue and per search node. Each decision gets
+//! takes off its queue, per search node and per bitboard row step (about
+//! 0.5 us each on the badge, calibrated). Each decision gets
 //! `tuning.decision_units[tier]`; all programs deciding on one World tick
-//! share `tuning.tick_pool`. A search that runs out keeps the deepest
-//! finished iteration; with none, the tier falls back to T1's answer.
+//! share `tuning.tick_pool`. Passes degrade as units run short (a field
+//! or territory BFS stops at its share and counts as truncated; a search
+//! keeps the deepest finished iteration); when a tick's pool is spent, T1
+//! stands in with a small fill.
 //!
 //! Determinism: the only randomness is the brain's own xorshift, advanced
 //! only by its decisions, and every decision is a function of the Brain
@@ -107,8 +116,9 @@ pub const tuning = struct {
     pub const cut_penalty: i32 = 200;
     /// A move into the cell another head is about to enter (T2, T3 root).
     pub const race_score: i32 = 1 << 22;
-    /// Endgame: per free neighbour of the move's cell (hug the walls).
-    pub const hug_weight: i32 = 20;
+    /// Endgame: a cell of room outweighs this many free neighbours of the
+    /// move's cell (fewer: hug the walls).
+    pub const hug_weight: i32 = 64;
     /// Separated: per cell of parity-bounded space difference (T3 leaves).
     pub const sep_weight: i32 = 256;
 
@@ -124,9 +134,7 @@ pub const tuning = struct {
     /// Layers a T3 leaf's window Voronoi runs (vision 0).
     pub const leaf_reach: u32 = 10;
 
-    // T3 SEARCH.
-    /// The window side for Voronoi leaves.
-    pub const window: u8 = 32;
+    // T3 SEARCH (the window is 32 x 32: `bb_rows`).
     /// A rival is searched against when both head offsets are at most this.
     pub const search_range: u8 = 18;
     /// Deepest alpha-beta iteration (move pairs) and endgame fill depth.
@@ -246,16 +254,17 @@ pub fn preset(tier: Tier, level: u8) Knobs {
         // Hunts: aggression and vision grow with the level.
         .territory => .{
             .tier = .territory,
-            .aggression = ([4]u8{ 3, 5, 7, 8 })[l],
-            .vision = ([4]u8{ 20, 30, 0, 0 })[l],
-            .mistake_permille = ([4]u16{ 8, 4, 0, 0 })[l],
-            .reaction = ([4]u8{ 1, 1, 0, 0 })[l],
+            .aggression = ([4]u8{ 4, 6, 8, 8 })[l],
+            .vision = ([4]u8{ 28, 30, 0, 0 })[l],
+            .mistake_permille = ([4]u16{ 6, 3, 1, 0 })[l],
+            .reaction = ([4]u8{ 1, 0, 0, 0 })[l],
         },
-        // Hard: deeper search with the level.
+        // Hard: a longer view and a deeper search with the level.
         .search => .{
             .tier = .search,
+            .vision = ([4]u8{ 40, 0, 0, 0 })[l],
             .depth_cap = ([4]u8{ 1, 2, 3, 0 })[l],
-            .mistake_permille = ([4]u16{ 4, 0, 0, 0 })[l],
+            .mistake_permille = ([4]u16{ 3, 1, 0, 0 })[l],
         },
     };
 }
@@ -1107,7 +1116,7 @@ fn t2_move(b: *Brain, w: *const sim.World, i: usize, g: *const Grid) Err!T2 {
             space = @min(space, left);
         }
         if (m.contact or m.truncated) alone = false;
-        const e = @as(i32, @intCast(space)) * 64 - @as(i32, @intCast(free4(g, t)));
+        const e = hug_score(space, free4(g, t));
         if (e > best_e) {
             best_e = e;
             eg = .{ .dir = d, .alone = true, .space = space };
@@ -1127,6 +1136,12 @@ fn t2_move(b: *Brain, w: *const sim.World, i: usize, g: *const Grid) Err!T2 {
     if (best_s == std.math.minInt(i32)) return .{ .dir = avoid(b, w, i) };
     if (alone) return eg;
     return .{ .dir = best };
+}
+
+/// Endgame move score: room first, then the fewest free neighbours (hug
+/// the walls, the classic fill).
+fn hug_score(space: u32, free: u32) i32 {
+    return @as(i32, @intCast(space)) * tuning.hug_weight - @as(i32, @intCast(free));
 }
 
 /// Aggression: cells 2..4 ahead of the prey's head that the move claims.
@@ -1169,7 +1184,7 @@ fn endgame_greedy(w: *const sim.World, i: usize, g: *const Grid) Err!?Greedy {
         const space = try chamber_space(g, t, @intCast(@max(@divTrunc(units_left, 4), 0)));
         gens[k] = m_gen;
         any = true;
-        const s = @as(i32, @intCast(space)) * 64 - @as(i32, @intCast(free4(g, t)));
+        const s = hug_score(space, free4(g, t));
         if (s > best_s) {
             best_s = s;
             best = .{ .dir = d, .space = space };
@@ -1197,8 +1212,8 @@ fn others_filled(w: *const sim.World, i: usize) u32 {
     return n;
 }
 
-/// Just walled off (the field is complete): remember the biggest rival
-/// room for the brake.
+/// Just walled off (every move's territory complete and touching no
+/// one): remember the biggest rival room for the brake.
 fn note_alone(b: *Brain, w: *const sim.World, i: usize) void {
     var rival: u32 = 0;
     for (field.cells) |n| rival = @max(rival, n);
@@ -1246,8 +1261,10 @@ fn race_hold(b: *const Brain, w: *const sim.World, i: usize) Hold {
 
 // ---------------------------------------------------------------- T3
 
-/// T3 SEARCH: alone, the fill search; with a rival in range, alpha-beta
-/// on a 32 x 32 bitboard window; else T2's move.
+/// T3 SEARCH: T2's move with a longer view, checked by alpha-beta against
+/// a rival in range on a 32 x 32 bitboard window (a forced win is taken;
+/// a move that loses or draws by force is swapped for the search's best);
+/// alone, the fill search.
 fn search(b: *Brain, w: *const sim.World, i: usize) Err!Plan {
     sd_clock(w);
     const g = view(w);
@@ -1266,7 +1283,7 @@ fn search(b: *Brain, w: *const sim.World, i: usize) Err!Plan {
     const hold = race_hold(b, w, i);
     const r = pick_rival(b, w, i) orelse return .{ .dir = t2d, .hold = hold };
     bb_setup(g, w, i, r);
-    bb.reach = if (b.vision != 0) b.vision else tuning.leaf_reach;
+    bb.reach = if (b.vision != 0) @min(b.vision, tuning.leaf_reach) else tuning.leaf_reach;
     const c = &w.cycles[i];
     var order: [4]sim.Dir = .{ c.dir, c.dir.ccw(), c.dir.cw(), c.dir.opposite() };
     for (order[1..], 1..) |d, k| {
