@@ -21,10 +21,15 @@ NTILES = 128        # tiles per league (SPEC 13.2): 128 x 64 bytes = 8 KB
 
 # Tile attributes (attr.bin values; cart/src/track.zig Attr).
 # Zero's names in brackets: wall (rail), coolant (throttled), bay (cold
-# aisle), vent (hot spot), ramp (hop). 3 (Zero's overclock pad) is reserved.
-A_OFF, A_SURF, A_WALL, A_RESERVED, A_COOLANT, A_BAY, A_VENT, A_RAMP, A_START, A_SEC1, A_SEC2 = range(11)
-ATTR_NAMES = ["off", "surface", "wall", "reserved", "coolant", "bay", "vent", "ramp", "start", "sector1", "sector2"]
-DRIVABLE = {A_SURF, A_COOLANT, A_BAY, A_VENT, A_RAMP, A_START, A_SEC1, A_SEC2}
+# aisle), vent (hot spot), ramp (hop). M6 (the BATTLE arena): 3 (Zero's
+# overclock pad) is the kicker, a long one-way ramp, and 11 the jump, a
+# one-way ramp of a race ramp's air time; both launch only a car moving the
+# way the tile faces (track.zig Attr, tuning.kicker_ticks).
+# M7 (track packs, docs/PACKS.md): 12 is breakable crust, drivable until
+# its region breaks, then a pit (track.zig Attr.crust; tiles CRUST..+2).
+A_OFF, A_SURF, A_WALL, A_KICKER, A_COOLANT, A_BAY, A_VENT, A_RAMP, A_START, A_SEC1, A_SEC2, A_JUMP, A_CRUST = range(13)
+ATTR_NAMES = ["off", "surface", "wall", "kicker", "coolant", "bay", "vent", "ramp", "start", "sector1", "sector2", "jump", "crust"]
+DRIVABLE = {A_SURF, A_COOLANT, A_BAY, A_VENT, A_RAMP, A_START, A_SEC1, A_SEC2, A_KICKER, A_JUMP, A_CRUST}
 # Centerline flag bits, also the segment feature names (`wall` is implied:
 # a segment without `open` has walls; the bit is set in the centerline).
 FLAG_BITS = {"wall": 0, "open": 1, "coolant": 3, "bay": 4, "vent": 5, "ramp": 6, "hill": 7}
@@ -53,6 +58,19 @@ SWEEP_GATE = 87     # + axis: its hazard-striped gate in the wall (attr wall)
 PIPE = 89           # inside an outflow pipe: steel plate (attr surface)
 PIPE_RIB = 90       # + axis: a pipe rib across the travel (attr surface)
 PIT = 120           # the pit beyond an open edge (attr off): void with a faint glint
+# M7 track packs (docs/PACKS.md): breakable crust, pinned for every pack,
+# attr crust: CRUST intact, CRUST + 1 cracked (about to break), CRUST + 2
+# broken (looks like a pit). The cart swaps the three in its map copy as a
+# region's state changes; the sim reads only the attribute and the World.
+CRUST = 121
+# Free for a pack's own floors (attr of its choice, docs/PACKS.md): 28..31,
+# 89..91 (the Runoff's pipe floor in the built-ins), 124..127.
+# M6 BATTLE arena pieces (the Dumps only; tools/build_arena.py; the race maps
+# never use these indices).
+PAD_SPAWN = 23      # + direction (0 E, 1 S, 2 W, 3 N): a spawn pad, a chevron facing in (attr surface)
+PAD_CRATE = 27      # an RMA crate pad (attr surface)
+KICKER = 64         # + direction: the bit bucket's kicker, a long one-way ramp (attr kicker)
+JUMP = 92           # + direction: a one-way ramp (gap jumps, wall kickers; attr jump)
 N_, E_, S_, W_ = 1, 2, 4, 8
 
 
@@ -389,7 +407,47 @@ def paint_dumps_tiles(P):
     ts.put(SURF_SEAM_H, "board road trace top", A_SURF, grid(lambda x, y: fs if y == 0 else fl))
     ts.put(SURF_SEAM_X, "board road trace corner", A_SURF, grid(lambda x, y: fs if x == 0 or y == 0 else fl))
     paint_track_pieces(ts, P)
+    paint_arena_pieces(ts, P)
     return ts
+
+
+def paint_arena_pieces(ts, P):
+    """M6: The Sandbox's pieces in the Dumps set (SPEC 8.3): the kicker (a
+    ramp plate in hazard stripes with a double arrow), the spawn pad (a
+    dark plate with a chevron facing in) and the RMA crate pad (a framed
+    square)."""
+    fl = P["floor"]
+
+    def kicker(x, y):   # east-pointing: stripes on the rims, two lit chevrons
+        if y in (0, 7):
+            return P["wall_a"] if ((x + y) >> 1) & 1 else P["wall_b"]
+        ch = (abs(y - 3.5) + x) % 4
+        if 1 <= x <= 6 and ch < 1.2:
+            return P["ramp_arrow"]
+        return P["ramp_hi"] if x in (0, 7) else P["ramp"]
+    for k in range(4):
+        ts.put(KICKER + k, f"kicker {'ESWN'[k]}", A_KICKER, rot(grid(kicker), k))
+
+    def jump(x, y):     # east-pointing: the race ramp's plate, one bright chevron
+        if y in (0, 7):
+            return P["wall_a"] if (x >> 1) & 1 else P["wall_b"]
+        if 2 <= x <= 6 and abs(abs(y - 3.5) - (6 - x)) < 0.8:
+            return P["ramp_arrow"]
+        return P["ramp_hi"] if x % 3 == 0 else P["ramp"]
+    for k in range(4):
+        ts.put(JUMP + k, f"jump {'ESWN'[k]}", A_JUMP, rot(grid(jump), k))
+
+    def spawn(x, y):    # east-pointing chevron on a dark plate
+        if x in (0, 7) or y in (0, 7):
+            return P["bay_floor"]
+        if abs(y - 3.5) + abs(x - 3.5) < 1.6 + (x - 2) * 0.0 and x >= 3:
+            return P["bay_hi"]
+        return P["bay_stripe"] if abs(y - 3.5) <= x - 2.5 and x <= 5 and abs(y - 3.5) >= x - 4.5 else P["bay_floor"]
+    for k in range(4):
+        ts.put(PAD_SPAWN + k, f"spawn pad {'ESWN'[k]}", A_SURF, rot(grid(spawn), k))
+    ts.put(PAD_CRATE, "RMA crate pad", A_SURF, grid(
+        lambda x, y: P["lane_dot"] if (x in (0, 7) or y in (0, 7)) and (x + y) % 3 else (
+            P["floor_seam"] if x in (1, 6) or y in (1, 6) else fl)))
 
 
 WALL_P = 32         # background wallpaper period in tiles (256 world px)

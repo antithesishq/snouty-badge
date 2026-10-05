@@ -1,0 +1,38 @@
+# Parking Structure: Dead Mall, track 3 (SPEC 19.7). The roof deck at
+# night, the lot lights still on their timer: gap jumps between the ramps
+# on the north and south runs (miss one and you drop a level), the east
+# side open to the drop, rain on the deck through the broken canopy (a
+# slick), a sparking lot-light panel on the west wall, then down the
+# levels through the middle of the deck and back to the line.
+name PARKING DECK
+order 3
+floor deck
+background deck
+centerline yes
+league dead_mall
+width 50
+# x    y    half   features
+ 300  135   54                     # start line, heading east
+ 500  130   54     ramp            # the north gap jump
+ 740  130   54
+ 880  200   52     open:left       # the east edge: the drop on the left
+ 900  420   52     open:left
+ 890  620   50     coolant         # rain on the deck
+ 850  820   50
+ 700  895   52     ramp            # the south gap jump
+ 480  895   52     crates
+ 280  895   52
+ 150  800   50
+ 140  620   48     vent:right,phase=90   # the lot-light panel sparks
+ 250  500   46
+ 500  520   46     crates          # down through the middle levels
+ 640  440   44
+ 560  330   44
+ 380  330   46     bay:right
+ 230  330   48
+ 150  260   50
+ 170  170   52
+props cart,neon seg 3 side left gap 110 off 30
+props robot,cart seg 6 side right gap 80 off 22
+props neon,vending seg 13 side both gap 90 off 22
+props cart seg 10 side left gap 70 off 22

@@ -1,19 +1,29 @@
 //! Two-badge lockstep for Snouty GC (SPEC 7, docs/NET.md): GC's names over
 //! the shared lib/lockstep.zig (root docs/LOCKSTEP.md), which was extracted
 //! from this file's M4 version (net_m4.zig, kept for the wire-compatibility
-//! test). With one rules byte, 3-bit racer picks, delay 2 and version 0,
-//! lockstep's wire is byte-identical to M4's (net_compat_test.zig), so this
-//! cart links with an M4 badge.
+//! test).
 //!
-//! What is GC's here: the rules byte (track, crews, mode), the pick byte
-//! (racer, 7 = none), the World setup, the hand-over (the partner's car to
-//! its AI), Start as the pause bit and no pausing a finished race.
-//! Everything else (lobby, input packets, stalls, checks) is lockstep's.
-//! No cart API, no clock (main passes `now`), no floats.
+//! M6 (LINK BATTLE, SPEC 8.3): the host's rules are five bytes (mode,
+//! track or arena, CREWS, LIVES, TIME) in lockstep's paged SETUP
+//! (docs/LOCKSTEP.md 4.3), and the game's protocol version is 1
+//! (`Game.version`). An M4 to M5.1 badge (version 0, one rules byte) and
+//! this one see each other as WRONG VERSION (or, for M4, which ignores
+//! the version, as a lobby partner that never answers): they never race,
+//! so they never desync. `GameV0` keeps the M5.1 wire (one rules byte,
+//! version 0) for net_compat_test.zig, which proves it is still M4's byte
+//! for byte and that v0 and v1 badges never start a race.
+//!
+//! What is GC's here: the rules bytes (mode, track, crews, lives, time),
+//! the pick byte (racer, 7 = none), the World setup, the hand-over (the
+//! partner's car to its AI), Start as the pause bit and no pausing a
+//! finished race. Everything else (lobby, input packets, stalls, checks)
+//! is lockstep's. No cart API, no clock (main passes `now`), no floats.
 const std = @import("std");
 const lockstep = @import("lockstep");
 const world = @import("world.zig");
 const sim = @import("sim.zig");
+const tuning = @import("tuning.zig");
+const track = @import("track.zig");
 
 /// The HELLO `app` byte of Snouty GC (link.Badge.init(.., app_id, ..)).
 pub const app_id: u8 = lockstep.apps.gc;
@@ -43,36 +53,98 @@ pub const no_racer: u8 = 0xFF;
 /// The pick value for no racer (3 bits on the wire).
 const none_pick: u8 = 7;
 
-/// What the host chooses (SPEC 7.3). `crews` is the AI count (4, 2 or 0);
-/// on the wire: track bits 0-3, crews bits 4-6, mode bit 7 (gc).
+/// What the host chooses (SPEC 7.3, 8.3). `mode` is LINK RACE (`race`),
+/// LINK GC (`gc`) or LINK BATTLE (`battle`); `track` indexes
+/// `track.tracks`, or in battle `track.arenas`; `crews` is the AI count
+/// (4, 2 or 0); `lives` (1, 3, 5, 9; 0 INF) and `minutes` (2, 3, 5; 0
+/// NONE) are battle's and ride along in every mode.
+///
+/// On the wire (version 2, M7, `encode`): eight bytes, mode (0 race, 1
+/// gc, 2 battle), track, crews, lives, minutes, then the pack's link id
+/// (24 bits, little endian; `pack.Pack.id`) when `track` is a pack's
+/// (`track.pack_base` + its track: the drive pack with that id, loaded at
+/// GO); lockstep's paged SETUP keeps them off the SLIP bytes. Version 1
+/// (`encode_v1`, M6): the first five. Version 0 (`encode_v0`, M4 to
+/// M5.1): one byte, track bits 0-3, crews bits 4-6, mode bit 7 (gc).
 pub const Rules = struct {
     mode: world.Mode = .race,
     track: u8 = 0,
     crews: u8 = 4,
+    lives: u8 = 3,
+    minutes: u8 = 3,
+    /// M7: the pack's link id when `track >= track.pack_base`, else 0.
+    pack: u32 = 0,
 
-    pub fn encode(r: Rules) u8 {
+    pub const len = 8;
+    pub const len_v1 = 5;
+
+    pub fn encode(r: Rules) [len]u8 {
+        const v1 = r.encode_v1();
+        const id = r.pack & 0xFFFFFF;
+        return v1 ++ [3]u8{ @truncate(id), @truncate(id >> 8), @truncate(id >> 16) };
+    }
+
+    /// The M6 rules (version 1): the first five bytes.
+    pub fn encode_v1(r: Rules) [len_v1]u8 {
+        const m: u8 = switch (r.mode) {
+            .gc => 1,
+            .battle => 2,
+            else => 0,
+        };
+        return .{ m, r.track, @min(r.crews, 7), r.lives, r.minutes };
+    }
+    pub fn decode_v1(b: [len_v1]u8) Rules {
+        return decode(b ++ [3]u8{ 0, 0, 0 });
+    }
+
+    /// Any bytes decode to rules the cart can run (an unknown mode is a
+    /// race, a value off the menus' rows its default), so a partner build
+    /// with other rows cannot reset the World into something odd; both
+    /// badges decode the same bytes, so they still agree.
+    pub fn decode(b: [len]u8) Rules {
+        return .{
+            .mode = switch (b[0]) {
+                1 => .gc,
+                2 => .battle,
+                else => .race,
+            },
+            .track = b[1],
+            .crews = @min(b[2], 7),
+            .lives = if (std.mem.indexOfScalar(u8, &tuning.battle_lives_opts, b[3]) != null) b[3] else 3,
+            .minutes = if (std.mem.indexOfScalar(u8, &tuning.battle_minutes_opts, b[4]) != null) b[4] else 3,
+            .pack = @as(u32, b[5]) | @as(u32, b[6]) << 8 | @as(u32, b[7]) << 16,
+        };
+    }
+
+    /// The M4 to M5.1 rules byte (LINK RACE and LINK GC only).
+    pub fn encode_v0(r: Rules) u8 {
         const gc: u8 = @intFromBool(r.mode == .gc);
         return (r.track & 0x0F) | (@as(u8, @min(r.crews, 7)) << 4) | (gc << 7);
     }
-    pub fn decode(b: u8) Rules {
+    pub fn decode_v0(b: u8) Rules {
         return .{ .track = b & 0x0F, .crews = (b >> 4) & 7, .mode = if (b & 0x80 != 0) .gc else .race };
     }
 };
 
-/// A badge's racer choice: on the wire racer bits 0-2 (7 = none), ready bit 7.
+/// A badge's racer choice: on the wire racer bits 0-2 (7 = none), ready
+/// bit 7; M7 (version 2) bit 3 `lacks`: this badge does not have the
+/// pack the rules name (the host cannot GO: PARTNER LACKS PACK).
 pub const Pick = struct {
     racer: u8 = no_racer,
     ready: bool = false,
+    lacks: bool = false,
 
     pub fn encode(p: Pick) u8 {
         const r: u8 = if (p.racer < world.car_count) p.racer else none_pick;
-        return r | (@as(u8, @intFromBool(p.ready)) << 7);
+        return r | (@as(u8, @intFromBool(p.lacks)) << 3) | (@as(u8, @intFromBool(p.ready)) << 7);
     }
     pub fn decode(b: u8) Pick {
         const r = b & 7;
-        return .{ .racer = if (r < world.car_count) r else no_racer, .ready = b & 0x80 != 0 };
+        return .{ .racer = if (r < world.car_count) r else no_racer, .ready = b & 0x80 != 0, .lacks = b & 8 != 0 };
     }
 };
+/// The pick bit `lacks` (version 2).
+pub const lacks_bit: u8 = 8;
 
 /// The agreed race (GO): id, rules, the two humans' racers in slot order
 /// (0 = host, 1 = guest) and the seed both derive from the link nonces.
@@ -83,20 +155,42 @@ pub const Race = struct {
     seed: u32 = 1,
 };
 
+/// The World setup of an agreed race (both badges compute the same).
+pub fn setup_of(r: Race) world.Setup {
+    const battle = r.rules.mode == .battle;
+    const n: u8 = @intCast(if (battle) track.arenas.len else track.tracks.len);
+    var s: world.Setup = .{
+        // M7: a pack's track stays as it is (the loaded pack track).
+        .track = if (r.rules.track >= track.pack_base) r.rules.track else r.rules.track % n,
+        .seed = r.seed,
+        .humans = r.racers,
+        .mode = r.rules.mode,
+        .crews = r.rules.crews,
+    };
+    if (battle) {
+        s.lives = r.rules.lives;
+        s.minutes = r.rules.minutes;
+    }
+    return s;
+}
+
 /// 32-bit hash of every World field by reflection (lockstep.hash_fields:
 /// padding is never read, so equal Worlds hash equal on both badges).
 pub fn world_hash(w: *const world.World) u32 {
     return lockstep.hash_fields(world.World, w);
 }
 
-/// GC as lockstep's game (docs/LOCKSTEP.md section 1).
+/// GC as lockstep's game (docs/LOCKSTEP.md section 1): version 2, eight
+/// rules bytes (M7: the pack id) and 4-bit picks (the `lacks` bit); M6's
+/// version 1 is `GameV1`, M5.1's version 0 `GameV0` (tests only).
 pub const Game = struct {
     pub const World = world.World;
-    pub const rules_len = 1;
+    pub const rules_len = Rules.len;
+    pub const version: u4 = 2;
     pub const input_delay: u32 = net_input_delay;
     pub const check_every: u32 = net_check_every;
     pub const pause_bit: ?u8 = start_bit;
-    pub const pick_bits: u8 = 3;
+    pub const pick_bits: u8 = 4;
 
     pub fn simulate(w: *world.World, in: [2]u8) void {
         sim.simulate(w, in);
@@ -110,14 +204,54 @@ pub const Game = struct {
             if (c.human == slot) c.human = world.no_human;
         }
     }
-    /// Both humans on real racers, and different ones.
+    /// Both humans on real racers, and different ones; M7: neither lacks
+    /// the rules' pack.
     pub fn picks_ok(host: u8, guest: u8) bool {
+        if ((host | guest) & lacks_bit != 0) return false;
+        return picks_ok_v1(host, guest);
+    }
+    fn picks_ok_v1(host: u8, guest: u8) bool {
         return host < world.car_count and guest < world.car_count and host != guest;
     }
     /// A finished race is never paused.
     pub fn can_pause(w: *const world.World) bool {
         return w.phase != .finished;
     }
+};
+
+/// The M4 to M5.1 game (version 0, one rules byte: LINK RACE and LINK GC):
+/// its wire is M4's byte for byte (net_compat_test.zig). Not used by the
+/// cart; the tests run it against M4 and against `Game`.
+pub const GameV0 = struct {
+    pub const World = world.World;
+    pub const rules_len = 1;
+    pub const version: u4 = 0;
+    pub const input_delay = Game.input_delay;
+    pub const check_every = Game.check_every;
+    pub const pause_bit = Game.pause_bit;
+    pub const pick_bits: u8 = 3;
+    pub const simulate = Game.simulate;
+    pub const hash = Game.hash;
+    pub const hand_over = Game.hand_over;
+    pub const picks_ok = Game.picks_ok_v1;
+    pub const can_pause = Game.can_pause;
+};
+
+/// The M6 game (version 1, five rules bytes, 3-bit picks: no packs), for
+/// net_compat_test.zig: a v1 and a v2 badge see wrong_version, never race.
+pub const GameV1 = struct {
+    pub const World = world.World;
+    pub const rules_len = Rules.len_v1;
+    pub const version: u4 = 1;
+    pub const input_delay = Game.input_delay;
+    pub const check_every = Game.check_every;
+    pub const pause_bit = Game.pause_bit;
+    pub const pick_bits: u8 = 3;
+    pub const simulate = Game.simulate;
+    pub const hash = Game.hash;
+    pub const hand_over = Game.hand_over;
+    pub const picks_ok = Game.picks_ok_v1;
+    pub const can_pause = Game.can_pause;
 };
 const net_input_delay = input_delay;
 const net_check_every = check_every;
@@ -170,19 +304,39 @@ pub const Resume = struct {
     }
 };
 
+/// GC's lockstep over link type `L` (the cart's: version 1).
 pub fn Net(comptime L: type) type {
+    return NetOf(L, Game);
+}
+
+/// The same over game `G` (`Game`, or `GameV0` in the compatibility tests).
+pub fn NetOf(comptime L: type, comptime G: type) type {
     return struct {
         const Self = @This();
-        pub const Ls = lockstep.Lockstep(L, Game);
+        pub const Ls = lockstep.Lockstep(L, G);
+        const v0 = G.rules_len == 1;
+        const v1 = G.rules_len == Rules.len_v1;
+        const packs = G.pick_bits > 3;
+
+        fn encode(r: Rules) Ls.Rules {
+            return if (v0) .{r.encode_v0()} else if (v1) r.encode_v1() else r.encode();
+        }
+        fn decode(b: Ls.Rules) Rules {
+            return if (v0) Rules.decode_v0(b[0]) else if (v1) Rules.decode_v1(b) else Rules.decode(b);
+        }
 
         /// The lockstep (its `link`, `role`, `left`, `paused`, `stats`).
         ls: Ls,
+        /// M7: does this badge have the pack rules name (and can load it)?
+        /// main.zig sets `pack_rows.has_rules`; null: always (the tests'
+        /// default, and every built-in track).
+        has: ?*const fn (Rules) bool = null,
 
         /// `link` = `link.Badge.init(.{}, net.app_id, cart.rand())`.
         pub fn init(l: L) Self {
             var n: Self = .{ .ls = Ls.init(l) };
             // M4's host offered the default Rules before any set_rules.
-            n.ls.offer = .{(Rules{}).encode()};
+            n.ls.offer = encode(.{});
             return n;
         }
 
@@ -216,7 +370,7 @@ pub fn Net(comptime L: type) type {
         /// The agreed race (valid from `take_started`).
         pub fn race(self: *const Self) Race {
             const r = &self.ls.race;
-            return .{ .id = r.id, .rules = Rules.decode(r.rules[0]), .racers = r.picks, .seed = r.seed };
+            return .{ .id = r.id, .rules = decode(r.rules), .racers = r.picks, .seed = r.seed };
         }
 
         /// The car this badge drives (car i is racer i), once racing.
@@ -233,13 +387,13 @@ pub fn Net(comptime L: type) type {
 
         /// Host: the rules to offer (ignored on the guest).
         pub fn set_rules(self: *Self, r: Rules) void {
-            self.ls.set_rules(.{r.encode()});
+            self.ls.set_rules(encode(r));
         }
 
         /// The rules on show: the host's own, or what the guest last heard.
         pub fn rules(self: *const Self) ?Rules {
             const r = self.ls.rules() orelse return null;
-            return Rules.decode(r[0]);
+            return decode(r);
         }
 
         /// This badge's racer and ready flag (both badges). The select greys
@@ -247,7 +401,26 @@ pub fn Net(comptime L: type) type {
         /// guest picks another).
         pub fn set_pick(self: *Self, racer: u8, ready: bool) void {
             const ok = racer < world.car_count;
-            self.ls.set_pick(if (ok) racer else none_pick, ready and ok);
+            const lack: u8 = if (packs and self.lacks()) lacks_bit else 0;
+            self.ls.set_pick((if (ok) racer else none_pick) | lack, ready and ok);
+        }
+
+        /// M7: the rules name a pack track this badge cannot race. A
+        /// guest that has not heard the rules yet cannot say it has them
+        /// (so a ready mark from before the rules never lets the host GO).
+        pub fn lacks(self: *const Self) bool {
+            const f = self.has orelse return false;
+            const r = self.rules() orelse return self.ls.role == .guest;
+            if (r.track < track.pack_base) return false;
+            return !f(r);
+        }
+
+        /// M7, host: the partner said it lacks the rules' pack (on a pack
+        /// track; a guest still hearing the rules is not shown as lacking).
+        pub fn partner_lacks(self: *const Self) bool {
+            const p = self.peer_pick() orelse return false;
+            const r = self.rules() orelse return false;
+            return p.lacks and r.track >= track.pack_base;
         }
 
         /// The partner's last PICK this lobby (null until heard).
@@ -277,16 +450,10 @@ pub fn Net(comptime L: type) type {
             return self.ls.take_started();
         }
 
-        /// The agreed setup for `sim.reset`, CREWS included (L3).
+        /// The agreed setup for `sim.reset`, CREWS included (L3); M6 LINK
+        /// BATTLE: the arena, LIVES and TIME.
         pub fn world_setup(self: *const Self) world.Setup {
-            const r = self.race();
-            return .{
-                .track = r.rules.track,
-                .seed = r.seed,
-                .humans = r.racers,
-                .mode = r.rules.mode,
-                .crews = r.rules.crews,
-            };
+            return setup_of(self.race());
         }
 
         /// Leave the race: back to the lobby, the partner hears QUIT.

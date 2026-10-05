@@ -4,3 +4,8 @@ budget_ms = 16.7
 frames = 600
 script = "carts/snouty-gc/tools/scripts/m0_race.json"
 note = "M3: Start, Start, A, A through the splash, title, main menu and racer select into a Quick Race on Landfill Loop (race from frame 20), then the autopilot's recorded drive (tools/record_script.py): the six-car grid start and the first corners (PLAN.md M0 status)"
+# M7: the cart scans the badge drive when the select opens, so every run
+# maps a drive: an empty one by default (no packs: the built-in tracks
+# only). The pack benches pass --romfs carts/snouty-gc/cart/src/gen/packs/drive_packs.img
+# (DEADMALL, BONEYARD, TEST) with --poke gc_pack=1|2|3 --poke gc_pack_row=R.
+romfs = "carts/snouty-gc/cart/src/gen/packs/drive_empty.img"

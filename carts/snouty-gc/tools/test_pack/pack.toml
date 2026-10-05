@@ -1,0 +1,34 @@
+# The test pack (tools/test_pack/make.py writes the .bin files next to a
+# copy of this file, then runs tools/build_pack.py's build): the Dumps art
+# with Landfill Loop, a crust variant and The Sandbox. docs/PACKS.md.
+file = "TEST"
+name = "TEST PACK"
+league = "TEST DUMPS"
+
+[props]
+sheet = "props.png"
+cell = [32, 48]
+count = 4
+
+[[track]]
+id = "landfill"
+name = "LANDFILL TEST"
+laps = 3
+# [cell, x, y, radius]: monitor stacks and cooling towers beyond the top
+# straight's north wall, cones on its south side, one solid sign on the
+# road's north edge.
+props = [
+  [0, 340, 52, 0], [1, 420, 44, 0], [0, 500, 50, 0], [1, 600, 56, 0],
+  [2, 380, 200, 0], [2, 470, 200, 0], [3, 520, 80, 6],
+]
+
+[[track]]
+id = "crust"
+name = "CRUST LOOP"
+laps = 3
+props = [[2, 392, 200, 0], [2, 432, 200, 0]]
+
+[[arena]]
+id = "sandbox"
+name = "TEST SANDBOX"
+props = [[1, 300, 300, 0], [3, 400, 220, 0]]

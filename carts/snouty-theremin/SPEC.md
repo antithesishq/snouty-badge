@@ -43,7 +43,8 @@ The bottom line rotates hints for the current source every 2.5 s.
 Settings menu rows: LAYOUT (1 HAND, 2 HAND), WAVE (SINE, TRI, SAW, SQR),
 SCALE (FREE, CHROM, MAJOR, PENTA), SNAP (SOFT, HARD), KEY (C..B), OCTAVE
 (the range's bottom note: the key in octave 2..5), PITCH HAND (RIGHT,
-LEFT). Defaults: 1 HAND, SINE, PENTA (friendly for passers-by at the show; FREE is the true theremin), SOFT, C, octave 3 (C3..C6), RIGHT.
+LEFT), MIRROR (OFF, ON: the grid left/right, for a breakout held the
+other way round on its cable). Defaults: 1 HAND, SINE, PENTA (friendly for passers-by at the show; FREE is the true theremin), SOFT, C, octave 3 (C3..C6), RIGHT.
 
 Sound boots ON: the cart is an instrument (docs/TOF.md deferred
 question 1; one line in main.zig flips it). Select mutes; the status bar
@@ -73,10 +74,15 @@ always shows SOUND or a red MUTED. `-Dsound` does not apply to this cart.
   Only the nearest target of a zone is used (the far one is the ceiling).
 - Screen cells: `tof_types.Orientation.index(col, row)` maps the device's
   zones to the screen as the player sees it (flip_x, flip_y, transpose:
-  the breakout's mounting, docs/TOF.md deferred question 2; a constant in
-  main.zig until M0's photos decide it).
+  the breakout's mounting, docs/TOF.md deferred question 2; MIRROR in
+  the menu sets flip_x).
 - 1 HAND: the closest valid zone of all nine plays pitch; volume is fixed
-  (full).
+  (full). The grid's highlight is where the hand is, not that zone
+  (M1.2): lib/tof_pose.zig's coverage-weighted centroid (wide map
+  geometry, 41x52 deg), drawn as a dot, and the cell under it with 0.15
+  cells of hysteresis (`hands.track`). Over a hand most zones read about
+  the same distance, so the closest one jumps between fingertips,
+  knuckles and forearm and did not follow the hand sideways on the badge.
 - 2 HAND: the screen's right column plays pitch, the left column volume (a
   classic theremin's pitch antenna is on the right); PITCH HAND LEFT
   swaps them. The middle column is ignored (it sees both hands' edges).

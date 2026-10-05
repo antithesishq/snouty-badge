@@ -1,0 +1,44 @@
+# Calving Front: Cold Storage, track 2 (SPEC 19.8). Under the glacier face:
+# along the foot of the ice cliff, where blocks calve off and slide across
+# the road (two movers on the face's timer, drawn as ice pinnacles), a
+# jump across a crevasse on the east run, a meltwater channel (slick) at
+# the bottom, up a long sweep of glare ice the glacier's melt has
+# polished, round the serac field, and over the west crevasse and its
+# channel to the line.
+name CALVING FRONT
+order 2
+floor snow
+background glacier
+league cold_storage
+width 52
+# x    y    half   features
+ 260  150   56     sweeper,period=780,speed=40,size=16,phase=0     # start line, heading east; a block calves off the face
+ 500  140   56     sweeper,period=780,speed=40,size=16,phase=390   # and another
+ 740  150   56
+ 880  230   52
+ 905  380   50     ramp            # the east crevasse: jump it
+ 905  600   50
+ 880  790   52     coolant         # a meltwater channel
+ 740  890   54     crates
+ 600  840   50     drift,p=100     # up the polished glare ice
+ 560  680   48     drift,p=100
+ 540  480   48
+ 450  340   48
+ 330  390   48
+ 300  560   50
+ 330  730   50     crates
+ 240  880   52
+ 120  820   52
+ 110  640   50     ramp            # the west crevasse
+ 110  420   50     coolant         # its meltwater
+ 150  250   54
+# Props: seracs at the foot of the face, radar and turbines on the
+# moraine, the colony sign by the serac field.
+props pinnacle seg 0 side left gap 60 off 24
+props pinnacle seg 2 side left gap 60 off 24
+props turbine,radar seg 5 side right gap 90 off 26
+props pinnacle,crane seg 8 side right gap 80 off 24
+props pinnacle seg 12 side right gap 70 off 22
+props turbine seg 16 side left gap 90 off 26
+prop sign 430 560
+prop penguin 446 640

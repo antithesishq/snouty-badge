@@ -16,6 +16,21 @@ zig build check-float -Dcart=snouty-theremin
 badge-bench/bench.sh zig-out/firmware/snouty-theremin.elf
 ```
 
+## M1.2: the highlight follows the hand (2026-10-05)
+
+Adrian on the badge: distance (pitch) is clearly audible, but moving the
+hand sideways did not move the grid's highlight from square to square
+consistently. The highlight was the closest zone, which over a hand is
+whichever of fingertips, knuckles or forearm happens to be nearest. Now
+it is lib/tof_pose.zig's coverage-weighted centroid (an Estimator with
+the wide map's 41x52 deg geometry), a dot plus the cell under it with
+hysteresis (`hands.track`; host test: a tilted, noisy synthetic hand
+sweeping across the wide map walks the cell left, middle, right and
+never back). Pitch still comes from the closest zone (unchanged sound).
+New menu row MIRROR (flip_x) for a breakout held the other way round; it
+restarts the pose's background. Bench unchanged: stick 0.93 ms worst,
+`-Dtof-fake` 3.65 ms worst, 0 audio underruns.
+
 ## M1: the theremin (built 2026-10-05)
 
 Contract (docs/TOF.md M1, the lead's brief):

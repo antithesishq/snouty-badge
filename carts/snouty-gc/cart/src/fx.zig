@@ -26,6 +26,12 @@
 //! the sweep it went out at for the results; `blast` puffs at a vent's
 //! mouth; `hazard_hit` sparks, flashes the armor bar and names the hazard
 //! in the feed. The attract demo reads `panic_target` to cut its camera.
+//!
+//! M6 (BATTLE, `KILL -9`): `eliminated` gives the feed's `SNOUTY kill -9
+//! KIDDIE`; `out` the claw on the hulk of a car out of lives and `REAPED`;
+//! `stack_smash` sparks, `SMASH!` over the victim, the feed's `SMASHED`
+//! line and the STACK SMASH! pop on either car's badge; `clean_landing`
+//! the CLEAN LANDING pop on the lander's badge (`stunt`).
 const std = @import("std");
 const cart = @import("cart-api");
 const fixed = @import("fixed.zig");
@@ -59,10 +65,11 @@ pub const Particle = struct {
     dx: i8 = 0,
     dy: i8 = 0,
 };
-const texts = [_][]const u8{ "<honey>", "</honey>", "<honey/>", "QUACK", "TAGGED!", "+10" };
+const texts = [_][]const u8{ "<honey>", "</honey>", "<honey/>", "QUACK", "TAGGED!", "+10", "SMASH!" };
 const text_quack: u8 = 3;
 const text_tagged: u8 = 4;
 const text_chip: u8 = 5;
+const text_smash: u8 = 6;
 pub const particle_count = 48;
 pub var particles: [particle_count]Particle = @splat(.{});
 var next_particle: usize = 0;
@@ -113,7 +120,11 @@ pub const wreck_note_ticks: u8 = 90;
 /// marked `victim`), `tagged` (`killer` passed the mark to `victim`),
 /// `freed` (`GC: freed VICTIM`), `hazard` (`VENT > VICTIM`). Wreck, mark
 /// and collect lines are not overwritten by pickup, swap and hazard lines.
-pub const FeedKind = enum(u8) { wreck, pickup, swap, marked, tagged, freed, hazard };
+/// M6: `kill9` (`killer kill -9 victim`, a battle elimination; `reaped`
+/// set when it took the victim's last life), `reaped` (`VICTIM REAPED`:
+/// out of lives with nobody credited), `smash` (`killer SMASHED victim`,
+/// a STACK SMASH, minor).
+pub const FeedKind = enum(u8) { wreck, pickup, swap, marked, tagged, freed, hazard, kill9, reaped, smash };
 pub const Feed = struct {
     ticks: u8 = 0,
     kind: FeedKind = .wreck,
@@ -122,9 +133,11 @@ pub const Feed = struct {
     cause: world.Wreck = .none,
     pickup: world.Pickup = .none,
     hazard: world.HazardKind = .none,
+    /// kill9: that was the victim's last life (the claw comes for it).
+    reaped: bool = false,
 
     fn minor(f: *const Feed) bool {
-        return f.kind == .pickup or f.kind == .swap or f.kind == .hazard;
+        return f.kind == .pickup or f.kind == .swap or f.kind == .hazard or f.kind == .smash;
     }
 };
 pub var feed: Feed = .{};
@@ -198,6 +211,13 @@ var next_claw: usize = 0;
 pub var freed_sweep: [world.car_count]u8 = @splat(0);
 pub var freed_cause: [world.car_count]world.GcCause = @splat(.sweep);
 
+/// M6: a stunt pop on this badge's car (the HUD's bar): it landed a STACK
+/// SMASH, was smashed, or made a CLEAN LANDING.
+pub const StuntKind = enum(u8) { none, smash, smashed, landing };
+pub const Stunt = struct { kind: StuntKind = .none, ticks: u8 = 0 };
+pub var stunt: Stunt = .{};
+pub const stunt_show: u8 = 50;
+
 /// Hazards: ticks each slot has been `active` (a vent's blast grows from
 /// its mouth and thins before it stops), for sprites.zig.
 pub var blast_age: [world.hazard_max]u16 = @splat(0);
@@ -218,6 +238,7 @@ var prev_ammo: [world.car_count]u8 = @splat(0);
 /// At race start (and after a restart): forget everything, start the
 /// cursor at the World's current seq.
 pub fn begin(w: *const world.World) void {
+    track.crust_look(&w.hazards);
     particles = @splat(.{});
     beams = @splat(.{});
     acks = @splat(.{});
@@ -238,6 +259,7 @@ pub fn begin(w: *const world.World) void {
     panic_target = no_car;
     gc_note = .none;
     gc_note_ticks = 0;
+    stunt = .{};
     claws = @splat(.{});
     freed_sweep = @splat(0);
     blast_age = @splat(0);
@@ -260,6 +282,8 @@ pub fn tick(w: *const world.World, follow: u8, frame: u32) void {
             if (pr.kind == .panic) spawn(.ghost, pr.x, pr.y, 5, 16);
         }
     }
+    // M7: breakable crust shows its state (the map copy's crust tiles).
+    track.crust_look(&w.hazards);
     // Hazards: the blast clocks, and steam wisps from a vent about to fire.
     for (track.hazard_specs[0..track.hazard_n], 0..) |*h, k| {
         const hz = &w.hazards[k];
@@ -310,6 +334,7 @@ fn age_all() void {
     captcha_fail -|= 1;
     verified -|= 1;
     gc_note_ticks -|= 1;
+    stunt.ticks -|= 1;
     for (&claws) |*k| {
         if (k.car != no_car and k.age < claw_ticks) k.age += 1;
     }
@@ -418,10 +443,36 @@ fn on_event(w: *const world.World, e: *const world.Event, follow: u8) void {
         on_mark(w, e, follow);
     } else if (kind == .collect) {
         on_collect(w, e, follow);
+    } else if (kind == .eliminated) {
+        // `SNOUTY kill -9 KIDDIE` over the wreck line the same tick wrote.
+        if (!valid_car(e.a) or !valid_car(e.b)) return;
+        feed = .{ .ticks = feed_ticks, .kind = .kill9, .killer = e.a, .victim = e.b };
+    } else if (kind == .out) {
+        on_out(w, e);
+    } else if (kind == .stack_smash) {
+        if (!valid_car(e.a) or !valid_car(e.b)) return;
+        const x = px_q(e.x);
+        const y = px_q(e.y);
+        spawn(.explosion, x, y, 0, 14);
+        spawn(.spark, x, y, 8, 16);
+        spawn_text(x, y, text_smash, 0, 0);
+        if (e.a == follow) stunt = .{ .kind = .smash, .ticks = stunt_show };
+        if (e.b == follow) {
+            stunt = .{ .kind = .smashed, .ticks = stunt_show };
+            shake = 8;
+            armor_flash = 12;
+        }
+        minor_feed(.{ .ticks = feed_ticks, .kind = .smash, .killer = e.a, .victim = e.b });
+    } else if (kind == .clean_landing) {
+        if (!valid_car(e.a)) return;
+        if (e.a == follow) stunt = .{ .kind = .landing, .ticks = stunt_show };
+        spawn(.spark, px_q(e.x), px_q(e.y), 2, 10);
     } else if (kind == .blast) {
         // A vent starts firing: a burst at its mouth (the Sweeper's
         // crossing shows in its beacon).
         if (e.b == @backingInt(world.HazardKind.blast)) spawn(.explosion, px_q(e.x), px_q(e.y), 0, 22);
+        // M7: a crust region gives way: dust over its middle.
+        if (e.b == @backingInt(world.HazardKind.crust)) spawn(.smoke, px_q(e.x), px_q(e.y), 0, 24);
     } else if (kind == .hazard_hit) {
         if (!valid_car(e.b)) return;
         const x = px_q(e.x);
@@ -477,6 +528,29 @@ fn on_collect(w: *const world.World, e: *const world.Event, follow: u8) void {
     if (e.a == follow) {
         gc_note = .collected;
         gc_note_ticks = gc_note_show;
+    }
+}
+
+/// M6 `out`: a car is out of lives. The GC claw takes its hulk (SPEC 8.3:
+/// "reaped"); the feed's kill -9 line for it says so, or `VICTIM REAPED`
+/// when nobody was credited.
+fn on_out(w: *const world.World, e: *const world.Event) void {
+    if (!valid_car(e.a)) return;
+    const c = &w.cars[e.a];
+    claws[next_claw] = .{
+        .car = e.a,
+        .racer = c.racer,
+        .wrecked = true,
+        .heading = c.heading,
+        .x = px_q(e.x),
+        .y = px_q(e.y),
+    };
+    next_claw = (next_claw + 1) % claws.len;
+    if (feed.ticks > 0 and feed.kind == .kill9 and feed.victim == e.a) {
+        feed.reaped = true;
+        feed.ticks = feed_ticks;
+    } else {
+        feed = .{ .ticks = feed_ticks, .kind = .reaped, .victim = e.a };
     }
 }
 
@@ -622,7 +696,7 @@ pub fn draw_particle(i: usize, p: camera.Projected) void {
         .text => {
             const str = texts[pt.size % texts.len];
             if (pt.age > 30 and pt.age % 2 == 0) return;
-            const color: cart.Pixel = if (pt.size == text_quack) honey_white else if (pt.size == text_tagged) (if (pt.age % 4 < 2) tagged_red else honey_white) else if (pt.size == text_chip) chip_green else honey_orange;
+            const color: cart.Pixel = if (pt.size == text_quack) honey_white else if (pt.size == text_tagged or pt.size == text_smash) (if (pt.age % 4 < 2) tagged_red else honey_white) else if (pt.size == text_chip) chip_green else honey_orange;
             // M5: kept whole on screen (TAGGED! over a car at the edge was
             // cut off), 2 px from either side.
             const wpx: i32 = @intCast(str.len * 8);

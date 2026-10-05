@@ -1,0 +1,42 @@
+# Anchor Store: Dead Mall, track 1 (SPEC 19.7). A loop through the gutted
+# department store: the long menswear aisle (mannequins still in rows),
+# down the east side past the rack rows rolled into the fitting rooms,
+# the perfume hall at the bottom where the runaway scrubber still crosses
+# on its route, then up into the store's middle and round the escalator
+# well before the line. Department-store carpet underfoot; the cleaners'
+# wet floor never dried on the east aisle.
+# Control point 0 is the start line; features on point i apply to the
+# segment from point i to i+1; a segment without `open` has walls.
+name ANCHOR STORE
+order 1
+floor carpet
+background store
+league dead_mall
+width 50
+# x    y    half   features
+ 250  140   54                     # start line, heading east
+ 520  125   54     crates          # menswear aisle: four crates
+ 790  140   52
+ 900  270   48
+ 905  480   46     coolant         # east aisle: wet floor
+ 875  690   46
+ 780  860   50
+ 560  900   52     sweeper,period=660,speed=36   # the perfume hall: the scrubber's route
+ 380  895   52
+ 260  800   48
+ 300  650   46
+ 470  610   46                     # through the store's middle
+ 690  570   46
+ 730  410   44
+ 580  330   44     crates          # round the escalator well
+ 400  380   46
+ 270  460   46     bay:right       # past the stock room: the service bay
+ 150  390   48
+ 140  250   50
+# Props: mannequin rows beyond the menswear aisle's walls, racks down the
+# east side, a neon sign at the corners, carts and palms by the hall.
+props mannequin seg 1 side both gap 64 off 22
+props rack seg 4 side right gap 70 off 22
+props neon,palm seg 6 side both gap 90 off 24
+props cart,palm seg 8 side left gap 80 off 22
+props rack seg 12 side left gap 80 off 22

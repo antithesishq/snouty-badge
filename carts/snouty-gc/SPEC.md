@@ -1219,3 +1219,9 @@ the rest. The four planned:
   non-brown arena; it moves into M7 with The Boneyard. **Cold Storage**
   (19.8) is set in Antarctica, among AI halls on the last ice and sea,
   with The Moon Pool as its arena; it goes into M9 with The Seabed.
+- 2026-10-05: M7 built (PLAN M7 status). The RAM went another way than
+  19.2: no separate slot; a pack's tiles, horizon and map load into the
+  built-in leagues' slots and every other section is read in place from
+  the drive (PLAN L94, L100). Packs are 128 tiles, up to 96 KB, six listed.
+  Link matching is by a 24-bit id of the pack's names and contents (`net`
+  version 2); a partner without the pack blocks GO with PARTNER LACKS PACK.

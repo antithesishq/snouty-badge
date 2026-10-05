@@ -62,6 +62,20 @@ pub fn chain_anchor(w: *const World, i: usize) Point {
         const o = &w.cars[c.chain % world.car_count];
         return .{ .x = o.x, .y = o.y };
     }
+    // BATTLE: no track edge; the chain's post is the nearest waypoint.
+    if (w.mode == .battle and track.arena.node_n > 0) {
+        var best: track.Node = track.arena.nodes[0];
+        var best_d: i32 = std.math.maxInt(i32);
+        for (track.arena.nodes[0..track.arena.node_n]) |n| {
+            const dx = wrap_px((c.x >> fixed.Q) - @as(i32, n.x));
+            const dy = wrap_px((c.y >> fixed.Q) - @as(i32, n.y));
+            if (dx * dx + dy * dy < best_d) {
+                best_d = dx * dx + dy * dy;
+                best = n;
+            }
+        }
+        return .{ .x = @as(i32, best.x) << fixed.Q, .y = @as(i32, best.y) << fixed.Q };
+    }
     const s = sim.track_of(w).sample(c.progress);
     const rx = -fixed.sin(s.tangent);
     const ry = fixed.cos(s.tangent);
@@ -111,7 +125,9 @@ pub fn roll_pickup(w: *World, rank: u8, zero_day_ok: bool) Pickup {
             pool[n] = .captcha;
             pool[n + 1] = .sudo;
             n += 2;
-            if (r >= 5 and zero_day_ok) {
+            // ZERO-DAY: the back two places; in BATTLE the bottom two of the
+            // standings, however many started (SPEC 8.3).
+            if (zero_day_ok and (if (w.mode == .battle) @as(u32, rank) + 1 >= standing_count(w) else r >= 5)) {
                 pool[n] = .zero_day;
                 n += 1;
             }
@@ -133,9 +149,44 @@ fn pickable(w: *const World, o: *const Car, observe: bool) bool {
     return racing(w, o) and !(observe and (o.heisen > 0 or o.sudo > 0));
 }
 
+/// Cars in the BATTLE standings (rank > 0: on the grid, in or out).
+fn standing_count(w: *const World) u32 {
+    var n: u32 = 0;
+    for (&w.cars) |*c| n += @intFromBool(c.rank > 0);
+    return n;
+}
+
+/// "Ahead" in a BATTLE arena (SPEC 8.3): the nearest car within `range` px
+/// inside the user's front 90-degree cone, else the nearest car.
+fn ahead_arena(w: *const World, i: usize, range: i32, observe: bool, skip: u8) u8 {
+    const c = &w.cars[i];
+    var cone: u8 = no_car;
+    var any: u8 = no_car;
+    var cone_d: i64 = std.math.maxInt(i64);
+    var any_d: i64 = std.math.maxInt(i64);
+    const lim: i64 = if (range >= 1 << 15) std.math.maxInt(i64) else @as(i64, range) * range;
+    for (&w.cars, 0..) |*o, j| {
+        if (j == i or j == skip or !pickable(w, o, observe)) continue;
+        const r = weapons.rel(c, o);
+        const d: i64 = r.d2;
+        if (d > lim) continue;
+        if (d < any_d) {
+            any_d = d;
+            any = @intCast(j);
+        }
+        if (r.along > 0 and @abs(r.lat) <= r.along and d < cone_d) {
+            cone_d = d;
+            cone = @intCast(j);
+        }
+    }
+    return if (cone != no_car) cone else any;
+}
+
 /// The nearest car ahead of car `i` in race progress within `range` px
-/// (`maxInt` for any), skipping `skip`; `no_car` when there is none.
+/// (`maxInt` for any), skipping `skip`; `no_car` when there is none. In
+/// BATTLE: `ahead_arena`.
 pub fn ahead(w: *const World, i: usize, range: i32, observe: bool, skip: u8) u8 {
+    if (w.mode == .battle) return ahead_arena(w, i, range, observe, skip);
     const me = sim.progress_px(w, &w.cars[i]);
     var best: u8 = no_car;
     var best_d: i32 = range;
@@ -250,7 +301,7 @@ pub fn control(w: *World, i: usize, in: Input) void {
             if (c.captcha_done == c.captcha_lit) c.captcha = 1;
         } else c.captcha_done = 0;
     }
-    if (b_edge and c.pickup != .none and c.roll_ticks == 0 and c.frozen == 0) use(w, i, in.down);
+    if (b_edge and c.pickup != .none and c.roll_ticks == 0 and c.frozen == 0 and c.safe == 0) use(w, i, in.down);
 }
 
 // --- Using a pickup ----------------------------------------------------------------------
@@ -398,13 +449,25 @@ pub fn use(w: *World, i: usize, back: bool) void {
         .kernel_panic => {
             // The car in 1st, or 2nd when the user is 1st: the best-ranked
             // racing car other than the user.
+            // BATTLE: the kill leader, or 2nd when the user leads (the
+            // standings are the ranks), along the navigation field.
             var t: u8 = no_car;
             for (&w.cars, 0..) |*o, j| {
                 if (j == i or !racing(w, o)) continue;
                 if (t == no_car or o.rank < w.cars[t].rank) t = @intCast(j);
             }
             emit_use_at(w, me, p, t);
-            if (t != no_car) {
+            if (t != no_car and w.mode == .battle) {
+                const slot = weapons.proj_slot(w);
+                slot.* = .{
+                    .x = c.x,
+                    .y = c.y,
+                    .kind = .panic,
+                    .owner = me,
+                    .target = t,
+                    .seg = track.arena.cell_node(c.x >> fixed.Q, c.y >> fixed.Q),
+                };
+            } else if (t != no_car) {
                 const back_run = sim.progress_px(w, &w.cars[t]) < sim.progress_px(w, c);
                 const slot = weapons.proj_slot(w);
                 slot.* = .{
@@ -610,6 +673,7 @@ pub fn update_packet(w: *World, p: *world.Projectile) void {
         p.* = .{};
         return;
     }
+    if (w.mode == .battle) return arena_packet(w, p, ti);
     const hittable = t.hop == 0 and t.immune == 0 and t.heisen == 0;
     const back = p.ttl == 1;
     // How far the target is ahead of the packet along its run, in samples;
@@ -635,6 +699,33 @@ pub fn update_packet(w: *World, p: *world.Projectile) void {
     const s = sim.track_of(w).sample(p.seg);
     if (step_toward(&p.x, &p.y, &p.vx, &p.vy, @as(i32, s.x) << fixed.Q, @as(i32, s.y) << fixed.Q, tuning.panic_speed)) {
         p.seg = if (back) p.seg -% 1 else p.seg +% 1;
+    }
+}
+
+/// The KERNEL PANIC packet in a BATTLE arena (SPEC 8.3): from waypoint to
+/// waypoint along the navigation field (`seg` is the node it runs to)
+/// toward the target's node, then straight onto the target; it waits by a
+/// target it cannot touch.
+fn arena_packet(w: *World, p: *world.Projectile, ti: usize) void {
+    const t = &w.cars[ti];
+    const a = &track.arena;
+    const hittable = t.hop == 0 and t.immune == 0 and t.heisen == 0;
+    const goal = a.cell_node(t.x >> fixed.Q, t.y >> fixed.Q);
+    const dx = dpx(p.x, t.x);
+    const dy = dpx(p.y, t.y);
+    const near = dx * dx + dy * dy <= tuning.panic_home * tuning.panic_home;
+    if (near or p.seg >= a.node_n or goal == track.no_node or p.seg == goal) {
+        if (!hittable) return;
+        if (step_toward(&p.x, &p.y, &p.vx, &p.vy, t.x, t.y, tuning.panic_speed)) {
+            const owner = p.owner;
+            p.* = .{};
+            panic_hit(w, owner, ti);
+        }
+        return;
+    }
+    const n = a.nodes[p.seg];
+    if (step_toward(&p.x, &p.y, &p.vx, &p.vy, @as(i32, n.x) << fixed.Q, @as(i32, n.y) << fixed.Q, tuning.panic_speed)) {
+        p.seg = a.hop(p.seg, goal);
     }
 }
 

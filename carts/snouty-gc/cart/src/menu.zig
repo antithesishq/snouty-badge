@@ -2,7 +2,7 @@
 //! Menus and screens (SPEC 8.1): the splash (Snouty's eyepatched portrait,
 //! M1), the title (M3: SNOUTY GCP / GARBAGE COLLECTION / PRIX over the
 //! Dumps horizon, the six portraits along the bottom, PRESS START), the main
-//! menu (M3: QUICK RACE, GARBAGE COLLECTION, M5 CIRCUIT, PICKUPS
+//! menu (M3: QUICK RACE, GARBAGE COLLECTION, M6 BATTLE, M5 CIRCUIT, PICKUPS
 //! (pickup_page.zig), LINK (M4; greyed in the simulator), SOUND)
 //! and the vertical list the pause menu uses. Zero's league and track
 //! pickers and the Grand Prix standings are gone; the racer select is
@@ -106,10 +106,10 @@ pub fn draw_title(frame: u32) void {
 
 // --- The main menu (SPEC 8.1) -------------------------------------------------------
 
-/// Main menu rows, in order (SPEC 8.1; M6 adds BATTLE after GARBAGE
-/// COLLECTION, SPEC 8.3: `menu_text.layout` already fits 7).
-pub const Item = enum(u8) { quick, gc, circuit, pickups, link, sound };
-pub const item_count = 6;
+/// Main menu rows, in order (SPEC 8.1; M6 BATTLE after GARBAGE
+/// COLLECTION, SPEC 8.3: `menu_text.layout`'s 7 rows).
+pub const Item = enum(u8) { quick, gc, battle, circuit, pickups, link, sound };
+pub const item_count = 7;
 
 const panel = cart.DisplayColor.rgb(0x2A1E34);
 const panel_hi = cart.DisplayColor.rgb(0x4A2440);
@@ -118,11 +118,6 @@ const lay = menu_text.layout;
 comptime {
     if (item_count > lay.max_rows) @compileError("main menu: more rows than menu_text.layout fits");
 }
-
-/// Preview only (wasm `debug_menu_battle`): draw the menu with a made-up
-/// BATTLE row after GARBAGE COLLECTION, the 7-row layout M6 will need. The
-/// cursor still walks the 6 real rows.
-pub var preview_battle: bool = false;
 
 /// The menu over the live floor: the title lockup over the horizon, the
 /// rows centred on the longest (GARBAGE COLLECTION: 144 px, so no room for
@@ -145,16 +140,13 @@ pub fn draw_main(list: *const List, sound_on: bool, link_ok: bool, link_note: u3
         labels[n] = switch (it) {
             .quick => "QUICK RACE",
             .gc => "GARBAGE COLLECTION",
+            .battle => "BATTLE",
             .circuit => "CIRCUIT",
             .pickups => "PICKUPS",
             .link => "LINK",
             .sound => if (sound_on) "SOUND: ON" else "SOUND: OFF",
         };
         n += 1;
-        if (cart.is_wasm and preview_battle and it == .gc) {
-            labels[n] = "BATTLE";
-            n += 1;
-        }
     }
     const rows: i32 = @intCast(n);
     const py = lay.panel_y(rows);
@@ -172,6 +164,7 @@ pub fn draw_main(list: *const List, sound_on: bool, link_ok: bool, link_note: u3
     const about = switch (@as(Item, @fromBackingInt(@intCast(list.cursor)))) {
         .quick => menu_text.quick,
         .gc => menu_text.gc,
+        .battle => menu_text.battle,
         .circuit => menu_text.circuit,
         .pickups => menu_text.pickups,
         .link => if (link_ok) menu_text.link else menu_text.no_link,

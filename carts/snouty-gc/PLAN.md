@@ -1701,6 +1701,789 @@ then origin/main (lockstep `wants_pump`, bf037753).
   the stack (M5: 50,408 by the sum).
 - `docs/preview_pickups.gif` re-recorded with the new menu (three Downs).
 
+## M6 Battle (KILL -9)
+
+Goal: SPEC 8.3 and 16 M6 (decision 16). A BATTLE round on The Sandbox:
+six cars (or fewer by CREWS) with lives, scored on eliminations, ending by
+lives or by time; the hunter AI; LINK BATTLE over the shared lockstep.
+Lead: the M6 coordinator. Two Opus tracks after the M6.0 interface
+commit, with disjoint files. Branch base: `gc/present` = origin/main
+edd1ab92 (M0 to M5.1 merged, tag `snouty-gc/m5.1`).
+
+### M6.0 Interface (Track A, committed before the tracks split)
+
+Same contract as M1.0 to M5.0: only `sim.simulate` writes the World;
+rendering reads the World, `track`'s caches and the event ring (its own
+cursor) and never writes. Battle is additive: the race modes, their
+replays and fingerprints are unchanged (`check.sh` pins the four input
+scripts, `career_test.zig` the seeded races).
+
+- **`world.Mode.battle`** and the options on **`world.Setup`**: `lives`
+  (1, 3, 5, 9; **0 = INF**; default 3) and `minutes` (2, 3, 5; **0 =
+  NONE**; default 3; NONE with INF lives is read as 3). The menus offer
+  `tuning.battle_lives_opts` and `tuning.battle_minutes_opts` (SPEC 8.3's
+  rows, in order). `Setup.track` indexes **`track.arenas`** in battle
+  (The Sandbox is 0; M7's pack arenas join after it), `track.tracks`
+  otherwise; `sim.track_of(w)` picks the table by `w.mode`. `Setup.crews`
+  keeps its meaning (AI cars on the grid: 5..1 single player, 4/2/0 link).
+- **`World.battle`** (`world.Battle`): `lives` (each car's at the start,
+  0 = INF), `limit` (the round in ticks, 0 = none), `refill` (ticks until
+  the next ammo and burst refill: counts down from
+  `tuning.battle_refill` = 1200; the HUD sweep is `refill /
+  battle_refill`), `out` (bit i: car i is out of lives), `leader` (the
+  kill leader: most eliminations, ties to the better rank; `no_car` until
+  someone scores), `end` (`world.BattleEnd`: `none`, `lives` = one car
+  left, `time`). The round clock is `w.tick` (ticks since GO): time left =
+  `limit - tick`.
+- **`Car.lives`** (left; meaningless with INF), **`Car.kills`** = the
+  car's eliminations (the existing last-hit credit within
+  `tuning.credit_ticks` = 180; a wreck with no hit scores nobody),
+  **`Car.safe`** (SAFE MODE ticks left, 90 after a battle respawn: the car
+  blinks, cannot be hit (`immune` runs with it) and cannot fire, ram,
+  smash or use a pickup), **`Car.nav`** (the hunter's waypoint, internal).
+  An out car is `active = false` with its bit in `battle.out`, its `rank`
+  its final standing and `finish_tick` the tick it went out. At the end
+  every car still in gets `finished` and `finish_tick`, ranks are final
+  and `phase` is `finished`.
+- **Ranks in battle** are the standings: eliminations, then lives left
+  (INF: fewer wrecks), then time survived, ties to the lower index. The
+  pickup odds read them (SPEC 8.3).
+- **Events** (`EventKind` gains four): `eliminated` (a = the killer, b =
+  the victim, c = the killer's eliminations now; x, y the victim: the
+  `kill -9 KIDDIE` feed); `out` (a = the car, b = the cars still in after
+  it, c = 0; x, y the hulk: the claw comes down there; its standing is its
+  `rank`, which keeps moving with the others' scores until the end);
+  `stack_smash` (a = the car
+  that landed, b = the car under it, c = damage; x, y the victim);
+  `clean_landing` (a = the car, b = its burst charges now). The `wreck`
+  and `respawn` events are unchanged.
+- **Arena data** (`track.Track.arena`, a blob; empty on a race track):
+  spawn pads (x, y, heading), crate pads (x, y), and the navigation field
+  (a 32x32 grid of 32 px cells, each the waypoint to head for; up to
+  `track.nav_max` waypoints with flags `bay` / `jump`, and an all-pairs
+  next-hop table). `track.select` unpacks it into the caches
+  `track.arena` (`Arena`: `spawns[0..spawn_n]`, `nodes[0..node_n]`,
+  `next`, `cells`, `bays`), and the crate pads into `track.crate_spots`
+  as the race rows are. The format is documented in `track.zig` and
+  `tools/build_arena.py`. The arena also has a ring centerline (256
+  samples) so the race code that reads one keeps working; battle never
+  ranks or respawns by it.
+- **Tile attributes `kicker`** (3, was Zero's unused `reserved`) and
+  **`jump`** (11): the arena's one-way ramps. They launch only a car
+  moving the way the tile faces (`track.facing(tile)`), so a landing on
+  the far side's ramp does not relaunch; `kicker` flies
+  `tuning.kicker_ticks` (64: the bit bucket), `jump` a race ramp's 40 (the
+  corner gaps, the wall kickers). New Dumps tiles at unused indices:
+  `KICKER` 64 + direction, `JUMP` 92 + direction, `PAD_SPAWN` 23 +
+  direction, `PAD_CRATE` 27; the race maps do not use them. The touchdown
+  tick reads the floor in battle (a landing in a pit or on a wall is
+  resolved on the tick the stunt is scored).
+- **World cap** 2,560 -> **2,624 B** (`tuning.world_cap`; World 2,572 B,
+  `Car` 120 B).
+- **Debug exports** (wasm, main.zig; the simulator fakes): `debug_start_battle:N`
+  (a round on The Sandbox with the select's racer, N lives (0 INF), 3 min),
+  `debug_battle_minutes:M` (the next round's TIME, 0 NONE),
+  `debug_battle_crews:K`; reads `debug_battle_lives:i`,
+  `debug_battle_elims:i`, `debug_battle_safe:i`, `debug_battle_left`
+  (ticks left, 0xFFFFFFFF none), `debug_battle_refill`,
+  `debug_battle_out`, `debug_battle_leader`, `debug_battle_end`; fakes
+  `debug_battle_set_lives:(car | lives << 8)`, `debug_battle_kill:(victim
+  | killer << 8)` (a credited wreck; killer 255 = none), `debug_battle_clock:T`
+  (T ticks left). badge-bench `--poke gc_battle=1`: an AI-driven battle on
+  The Sandbox at boot (SNOUTY on the autopilot, 3 lives, 3 min);
+  `gc_battle=2`: the render stress scene placed in the arena.
+- Stubs: The Sandbox loads (`track.sandbox`, `track.arenas`) and
+  `battle.zig` (the rules) compiles; main.zig's `Mode.battle` (debug_mode
+  5) runs a round from `debug_start_battle` with race visuals. Track B
+  replaces that flow.
+
+### Track A: battle simulation (lead's agent, worktree /home/exedev/snouty-badge-gc-present, branch gc/present)
+
+Owns `world.zig`, `sim.zig`, `weapons.zig`, `pickups.zig`, `hazards.zig`,
+`gc_mode.zig`, `ai.zig`, `tuning.zig`, `racers.zig` (gameplay), `track.zig`,
+new `battle.zig` (rules) and `hunt.zig` (the hunter AI),
+`tools/build_tracks.py`, `tools/leagues.py`, new `tools/build_arena.py`,
+`cart/src/tracks/`, `cart/src/gen/tracks/`, the sim tests (`sim_test`,
+`weapons_test`, `pickups_test`, `content_test`, `career_test`, new
+`battle_test.zig`), `host_tests.zig`, `tools/check.sh` (the `tracks`,
+golden and `bench` steps; Track B adds its preview runs only inside the
+`# --- M6 Track B previews` block), the battle bench scripts
+(`tools/scripts/m6_*.json`), PLAN "M6 status" Track A paragraph.
+
+1. **The Sandbox** (`tools/build_arena.py`, run by `build_tracks.py` so
+   the `tracks` gate covers it): a walled 704 px square in the Dumps
+   tileset. The bit bucket (a 128 px pit in the middle) with a kicker on
+   each side; four wall-ringed scrap islands at the diagonals; fences
+   between the outer ring and the four plazas with a wall kicker on each
+   side of the ring that jumps the fence; gap jumps (ramp pairs) near
+   the corners on the west and east straights; 8 crate pads (one per
+   lane: the four ring straights, the four plazas); 2 service bays in
+   the NW and SE corners at half the repair rate; 6 spawn pads on the
+   rim facing in; the Sweeper along the north straight on its timer; the
+   navigation field with jump edges over the kickers.
+2. **Rules** (`battle.zig`): lives, respawn at the pad farthest from the
+   nearest enemy, SAFE MODE 90 ticks, eliminations by last hit within
+   180 ticks, no-hit wrecks score nobody, out of lives = out, the round
+   end by lives or time, the standings.
+3. **Refills** every 1200 ticks (ammo and burst charges).
+4. **Stunts**: STACK SMASH (40 damage on landing on a car, a ram bounce,
+   the hit counts), CLEAN LANDING (a ramp landing clear of walls gives a
+   burst charge back).
+5. **Pickups**: "ahead" = the nearest car in the front 90-degree cone,
+   else the nearest car; KERNEL PANIC homes on the kill leader (2nd if the
+   user leads) along the navigation field; ZERO-DAY only for the bottom
+   two of the standings, once per round; the odds use the standings.
+6. **The hunter AI** (`hunt.zig`, called by `ai.drive` in battle): target
+   by crew (nearest, biased to the human and the kill leader by crew),
+   nav-field steering with the jumps, fire in the cone, rear drops when
+   chased, retreat to a bay below 30% armor, around the Sweeper.
+7. **Tests** (`battle_test.zig`): the arena's data, a scenario per rule,
+   a soak of 5-AI rounds ending by lives and by time, AI eliminations
+   against each other, a determinism replay, the jumps; the bench script
+   `m6_battle.json` (`--poke gc_battle=1`) and the arena stress
+   (`--poke gc_battle=2`), plain and `--lcd`, worst under 8 ms.
+8. Balance errs dangerous; rounds about 2 to 3 minutes at 3 lives.
+
+### Track B: battle presentation and link (Opus agent, worktree /home/exedev/snouty-badge-gc-battle-ui, branch gc/battle-ui off the M6.0 commit)
+
+Owns `main.zig`, `menu.zig`, `menu_text.zig`, `select.zig`, `hud.zig`,
+`render.zig`, `sprites.zig`, `fx.zig`, `results.zig`, `standings.zig`,
+`stress.zig`, `camera.zig`, `link_ui.zig`, `net.zig`, `net_test.zig`,
+`net_compat_test.zig`, `panel_text_test.zig`, `roster_text.zig`, new
+`battle_ui_test.zig` (registered in `host_tests.zig` by M6.0), the art
+(`tools/draw_art.py`, `tools/art/`, `assets/gen/art/`, `ASSETS.md`),
+`docs/RUNNING.md`, `docs/NET.md`, `docs/LINK_PLAY.md`, the previews and
+GIFs, the `# --- M6 Track B previews` block of `check.sh`, and PLAN "M6
+status" Track B paragraph. Merge `origin/gc/present` in as Track A pushes.
+
+1. **Menu**: BATTLE after GARBAGE COLLECTION (`menu_text.layout` fits 7
+   rows), its hint line.
+2. **Battle setup**: LIVES (1/3/5/9/INF), TIME (2/3/5 min/NONE; NONE not
+   offered with INF), CREWS (5..1 AI cars) after the racer select; the
+   `KILL -9` title card ("no cleanup handler, no appeal").
+3. **Battle HUD**: lives pips, eliminations, the clock, the ammo bar's
+   refill sweep (`battle.refill`), SAFE MODE blink (`Car.safe`), the
+   whole-arena minimap (the map, cars, crate pads), the `kill -9 KIDDIE`
+   feed (`eliminated`), STACK SMASH and CLEAN LANDING notices, the claw on
+   the last life (`out`), the spectate camera (the kill leader's) once
+   out.
+4. **Results**: battle standings (eliminations, lives, time survived),
+   the winner's card.
+5. **LINK BATTLE** in the lobby: `rules_len` 5 and `G.version` 1 through
+   `lib/lockstep`'s paged SETUP (docs/LOCKSTEP.md 4.3, 4.7): mode, the
+   arena, CREWS 4/2/0, LIVES, TIME; an older GCP build sees WRONG
+   VERSION, never a desync. `net_test`: link battles in sync to the end,
+   lossless and with 1% loss.
+6. Docs (RUNNING.md, NET.md, LINK_PLAY.md), `docs/preview_m6.gif`.
+
+### M6 gate
+
+`tools/check.sh` PASS at the merged head; the four race scripts and the
+seeded races replay unchanged; the 5-AI soak ends by lives and by time
+and the AIs score eliminations; the virtual-cable link battle stays in
+sync to its end (lossless and 1%); the arena bench and stress worst under
+8 ms (calibrated, plain and `--lcd`); RAM free reported (47,624 B at
+M5.1); deferred questions from L52.
+
+GIFs (`docs/preview_m6.gif`, Track B): the menu's BATTLE row, the setup
+screen, the `KILL -9` card, a round with the HUD, a jump over the bit
+bucket, a STACK SMASH, `kill -9` in the feed, SAFE MODE blinking, the claw
+on a last life, the spectate camera, the clock running out, the results.
+Track A records `docs/m6_sandbox.png` (the arena map with its pads and
+navigation field) from the generator.
+
+### M6 status
+
+**Track A (battle simulation), 2026-10-05, branch `gc/present`.** M6.0
+interface 3a112fbd; then the hunter, pickups and damage (2ff29e5b), the
+rule scenarios and `Car.air` (fb56feed), the lead-approved `car_lift`
+fix in sprites.zig (18abaaae: a kicker hop outlasts `tuning.ramp_ticks`
+and crashed the ReleaseSmall bench), the kicker air test (704ed99c), this
+status.
+
+- **The Sandbox** (`tools/build_arena.py`, run by `build_tracks.py`, so
+  the `tracks` gate covers it; `docs/m6_sandbox.png`,
+  `docs/sandbox_preview.png` with the nodes and edges): a walled 704 px
+  square at tile 22 in the Dumps tileset. The bit bucket is a 128 px pit
+  with a 64-tick kicker on each side (clean from 2.2 px/tick, a crawl
+  falls in). Four wall-ringed scrap islands sit at the diagonals (a
+  landing on one is a fall). Fences separate the outer ring from the four
+  plazas, with a 40-tick wall kicker on each ring straight that jumps the
+  fence. Gap jumps (5-tile pits with a jump each side) cross the west and
+  east straights near the corners (clean from 1.4 px/tick). There are 8
+  crate pads (one per lane), 2 bays (NW, SE corners, 1 armor / 8 ticks),
+  6 spawn pads facing in (none on the north straight), and the Sweeper on
+  the north straight (period 1200, 2 px/tick). The nav field has 34 nodes,
+  260 ground edges and 16 jump edges, two next-hop tables (with the jumps,
+  and ground only for a car too slow for its run-up) and a 32x32 grid of
+  32 px cells. The arena blob is 3,616 B; with the map (2,338), the ring
+  centerline (1,536) and the Sweeper record (20), the arena adds 7.5 KB.
+  New Dumps tiles: `KICKER` 64+d, `JUMP` 92+d, `PAD_SPAWN` 23+d,
+  `PAD_CRATE` 27. The arena's ramps are one-way (attributes `kicker`, `jump`).
+- **Rules** (`battle.zig`): lives (INF never out), eliminations by the
+  existing last-hit credit (180 ticks, falls included), no-hit wrecks
+  score nobody. A respawn goes to the pad farthest from the nearest
+  enemy, in SAFE MODE for 90 ticks (immune; no fire, rams, smash or
+  pickup use). Out of lives = out (`active = false`, `out` event). The
+  round ends by lives or time. Standings go by eliminations, then lives
+  (INF: fewer wrecks), then time survived. A full ammo and BURST refill
+  comes every 1200 ticks, and the kill leader is tracked. STACK SMASH (40
+  and a bounce, a credited hit) and CLEAN LANDING (+1 BURST) happen on the
+  touchdown tick.
+- **Pickups**: "ahead" is the nearest car in the 90-degree front cone,
+  else the nearest (the race ranges as Euclidean px). KERNEL PANIC runs
+  node to node to the kill leader's cell (2nd if the user leads).
+  ZERO-DAY rolls only for the bottom two of the standings, once a round.
+  DEADLOCK's wall chain anchors on the nearest node.
+- **Hunter** (`hunt.zig`): the target is the nearest car with per-crew
+  bias to the human, the kill leader, the hurt and the aimed-at; with
+  nobody to hunt it goes to the nearest crate. It chases on a clear ground
+  line and otherwise follows its waypoint (`Car.nav`, kept by
+  `update_nav`). A jump leg is committed only at the run-up speed. In a
+  dogfight it extends out instead of circling, swings off nose-to-nose
+  stalls, and steers off pits and stray ramps. It escapes the Sweeper and
+  retreats to a bay below its crew's armor share (KIDDIE never, LEGACY
+  20%, ROOTKIT 40%, the rest 30%; it holds to 80%). It fires and drops
+  with the race habits (`ai.arm`), and its LANCE charges when a car is in
+  the cone.
+- **Balance**: battle damage is 18% of the race's
+  (`tuning.battle_damage_pct`, with the fraction carried per car in
+  `Car.dmg_frac`). **Soak** (8 rounds, 3 lives, TIME NONE, SNOUTY on the
+  autopilot plus 5 hunters): all end by lives, **mean 126 s** (59 to 178
+  s), 113 eliminations (79 AI on AI) over 133 wrecks, 68 of them falls
+  (most credited: pushed into a pit; about 15% of wrecks score nobody),
+  1 car slow for 600 ticks (holding at a bay). INF lives, 2 min: 3 of 3
+  end by time at 7,200 ticks with 15 to 26 eliminations.
+- **Tests**: 168 pass (M5.1 had 148; 18 in `battle_test.zig`, 1 in
+  `battle.zig`, the Track B placeholder). The race goldens are unchanged
+  (`career_test`, and `check.sh`'s four scripts).
+- **Bench** (calibrated, `--lcd` identical, mean / worst ms): the new
+  `m6_battle` (`--poke gc_battle=1`, 3,600 frames: SNOUTY on the
+  autopilot among five hunters) **3.35 / 5.24**, the arena stress
+  (`--poke gc_battle=2`) **4.71 / 5.94**; unchanged: `m0_race` 3.63 /
+  5.20, stress 4.99 / 6.14, `m2_race` 3.56 / 5.20, `m3_outflow_race` 3.62
+  / 5.75, `m3_gc_race` 3.47 / 5.65, `m5_circuit_race` 3.49 / 4.63,
+  `m5_cards` 1.75 / 5.40, probe stress 5.10 / 6.27, probe GC 3.54 / 5.75.
+  `check.sh` **PASS** (all steps; `zig build test` passed for every cart).
+- **RAM**: `size -A` .text 179,584 + .data 8,088 + .bss 52,472 (+ 1,912
+  exidx/extab) = 242,056 B: **about 32,000 B free** (M5.1: 47,624). The
+  arena data is 7.5 KB of it, the hunter and rules about 7 KB of code. World
+  2,572 B (cap raised to 2,624, `tuning.world_cap`), `Car` 120 B.
+
+
+**Track B (presentation and LINK BATTLE), 2026-10-05, branch
+`gc/battle-ui`** (worktree `/home/exedev/snouty-badge-gc-battle-ui`, off
+the M6.0 commit 3a112fbd; `origin/gc/present` merged up to f4c0eceb,
+Track A's finished head). The BATTLE presentation and LINK BATTLE are in;
+PLAN's Track B list is done. Decisions L80-L93.
+
+- **Flow**: the menu's BATTLE row (third, `ARENA, MOST KILLS`), the racer
+  select (`A  TO THE ARENA`), the setup over the arena's floor (arena,
+  LIVES 1/3/5/9/INF, TIME 2/3/5/NONE with NONE skipped on INF, CREWS 5..1,
+  FIGHT!; `battle_ui.zig`, words and rows in `battle_text.zig`), the
+  `KILL -9` card over the countdown's READY and 3, the round, pause
+  (RESUME / RESTART / QUIT / SOUND), the winner card and standings.
+  Screen 12 is the setup.
+- **HUD**: ELIM, the clock (last 10 s blinking; TIME NONE counts up), the
+  standing, lives pips (INF), the refill sweep, the whole-arena minimap
+  (one draw path with the race minimap at an arena scale), feed lines
+  `kill -9` / `REAPED` / `SMASHED` and `SMASH!`, bar pops STACK SMASH! /
+  STACK SMASHED / CLEAN LANDING, SAFE MODE, TIME UP / LAST ONE STANDING,
+  the GC claw on a last life, `REAPED` and the kill leader's camera once
+  out. Results: TOP KILLER / LAST PROCESS UP and the standings (ELIM,
+  `LIVES n`, `WRECKS n`, `OUT m:ss`) with the half portraits.
+- **LINK BATTLE**: the lobby's mode row cycles LINK RACE / LINK GC / LINK
+  BATTLE; LINK BATTLE shows the arena and LIVES / TIME rows (six rows),
+  the link select its rules. `net.Game` is version 1 with five rules bytes
+  (mode, track or arena, CREWS, LIVES, TIME) in lockstep's paged SETUP;
+  `net.GameV0` keeps the M5.1 wire for the compat tests (L84).
+- **Tests**: **182 pass** at the merged head (`zig build test-gc`, the
+  binary run directly). Track B's: `battle_ui_test.zig` (10: panel
+  widths, setup rows, the card's window, the clock, standings lines, the
+  winner title, the lobby's rows and changes, the agreed setup),
+  `net_test` (the wire test with LINK BATTLE's bytes and junk decoding;
+  the five bytes reaching the guest through 1% loss; 6 seeded LINK BATTLE
+  rounds in sync every tick to their end, clean: 31,530 ticks, 0.35% of
+  packets lost to the FIFO model, at most 13 frames in a row without a
+  tick; 6 with 1% byte loss: 40,286 ticks, 8.6% lost, at most 17 in a
+  row), `net_compat_test` (v0 still M4's bytes; the cart's v1 against M4;
+  v0 against v1 either side, both cables, clean and 1%: both
+  `wrong_version`, no DATA packet, never racing). Two harness fixes (L92).
+- **check.sh PASS** at the merged head (test via test-gc as before).
+  Track B's previews: the 7-row menu to the setup (B back, LIVES INF,
+  TIME 2) and a round; LINK BATTLE in the made-up lobby and select, WRONG
+  VERSION; a last life (`debug_battle_kill`), the claw, the kill leader's
+  camera, pause and resume, the round to its results; the arena stress.
+  The menu-dependent runs outside the block moved by one Down (L91).
+  Golden checksums unchanged.
+- **Bench** (calibrated, `--lcd` identical, mean / worst ms): `m6_battle`
+  (`--poke gc_battle=1`, 3,600 frames, the battle HUD on Track A's
+  hunter) 3.43 / 5.27; arena stress with the battle HUD's stress (`--poke
+  gc_battle=2`) 4.85 / 6.13; the race benches as before (`m0_race` 3.62 /
+  5.19, stress 4.99 / 6.14; probe stress 5.10 / 6.26, probe GC 3.55 /
+  5.64; the rest within 0.05 ms of Track A's). The
+  first merged bench found a ReleaseSmall crash in `sprites.car_lift` (a
+  kicker's 64-tick hop); Track A fixed it with `Car.air` (18abaaae).
+- **RAM**: `size -A` .text 185,640 + .data 8,104 + .bss 52,428 (+ 2,008
+  exidx/extab) = 248,180 B; **25,908 B free** from the end of .bss to the
+  stack (Track A's head alone: 32,008; M5.1: 47,624), so Track B costs
+  6,100 B. Two size fixes on the way: `hud.fill_rect` is one out-of-line
+  body (its generic `w`/`h` had made a copy per call shape: 1.8 KB
+  across the cart), the winner cards share their own-place and taunt
+  lines, and the arena and race minimaps one draw path.
+- `docs/preview_m6.gif` (463 frames, 50 ms, every third update: real
+  time; `tools/m6_gif.py cut 344`): the title, the menu's BATTLE row, the
+  select, the setup (TIME 2, LIVES 5), the KILL -9 card and countdown,
+  a STACK SMASH, a CLEAN LANDING over the bit bucket, kill -9 lines, a
+  wreck and the respawn in SAFE MODE, the claw on SNOUTY's last life and
+  the kill leader's camera, TIME UP, the winner card and the standings.
+- **On two badges**: never run; `docs/LINK_PLAY.md` items 10 and 11 are
+  the LINK BATTLE and version checks.
+
+
+## M7 Track packs
+
+Goal: SPEC 19 and 16 M7 (decision 15). Track packs, `NAME.GCP` files on
+the badge drive, each a league with 1 to 4 race tracks and at most one
+BATTLE arena, show after the built-in tracks in QUICK RACE's and GARBAGE
+COLLECTION's track rows and after The Sandbox in BATTLE's arena row, and
+race and battle from the drive, in a link race too. Then the first two
+packs, **Dead Mall** (19.7, its arena The Food Court) and **The Boneyard**
+(19.5, Hangar 18). Lead: the M7 coordinator. Branch base: `gc/present` =
+origin/main 894b1b76 (M0 to M6 merged, tag `snouty-gc/m6`).
+
+RAM is the constraint: 25,908 B free at M6, so SPEC 19.2's separate 32 KB
+slot does not fit. A pack loads into the slots the built-in leagues use
+(the 8 KB tile slot, the 12 KB horizon slot, the 16 KB map buffer: one
+floor-loop path); every other section is read in place from the drive's
+flash window (L100). Packs are 128 tiles; 256-tile sets are refused. The
+lead's budget for the loader, picker, props and crust is 8 KB in all (the
+saves branch takes another 5,128 B).
+
+### M7.0 Interface (Track A, committed before Track B's packs land)
+
+- **The format**: `docs/PACKS.md` (the binary layout version 1, the
+  source layout, the tile slots, the props sheet, the hazards, the checks,
+  the RAM budget, how to copy a pack onto a badge) and
+  `cart/src/pack_format.zig` (`version` 1, the header, league block and
+  track records as `Directory`, `parse`, `budget`, `Refusal` and its
+  menu lines).
+- **`tools/build_pack.py DIR`**: packages a pack directory (`pack.toml`
+  plus the built-in-format `.bin` files build_tracks.py / build_arena.py
+  write, plus `props.png`) into `<file>.GCP`, checking every section as
+  the cart does; `--info FILE` prints a pack. `tools/build_arena.py`'s
+  `build` takes a pack's `Arena` subclass, league and name (the Sandbox's
+  output is unchanged).
+- **Tiles**: the shared 128-tile layout of `tools/leagues.py`; attribute 12
+  `crust` and tiles 121 (intact), 122 (cracked), 123 (broken) pinned;
+  28..31, 89..91, 124..127 free for a pack's own floors.
+- **Props**: one sheet per pack, up to 16 cells of one size (even width
+  <= 32, height <= 48), 15 colours plus the key; records `[cell, x, y,
+  radius]` per track (<= 24; radius > 0 is solid). A mover may use a props
+  cell as its sprite (feat byte 0 bits 4..7 = cell + 1).
+- **Hazard kinds**: blast (vent), mover (Sweeper), crust (new), slick
+  (attribute coolant), pit (attribute off); turret stays reserved and a
+  pack with one is refused (`NEEDS NEWER CART`).
+- **The test pack** `cart/src/gen/packs/TEST.GCP` (`tools/test_pack/make.py`):
+  the Dumps art with LANDFILL TEST (Landfill Loop with props), CRUST LOOP
+  (a crust band across the top straight, the Sweeper drawn with a props
+  cell) and TEST SANDBOX; 27.5 KB.
+
+### Track A: format, loader, engine (lead's agent, worktree /home/exedev/snouty-badge-gc-present, branch gc/present)
+
+Owns `pack_format.zig`, new `pack.zig` (drive scan, background CRC,
+loader into the slots), new `pack_ui.zig` (the picker rows' entries and
+lines), `track.zig`, `world.zig`, `sim.zig`, `hazards.zig` (crust),
+`ai.zig`, `sprites.zig` (props), `net.zig`, `net_test.zig`,
+`net_compat_test.zig` (pack matching), `select.zig` and `battle_ui.zig`
+(the track and arena rows' pack entries), small hooks in `main.zig`
+(kept localized: another session adds career saves there), `build.zig`
+(romfs, `-Dgc-pack`), `tools/build_pack.py`, `tools/build_tracks.py`,
+`tools/build_arena.py`, `tools/leagues.py`, `tools/test_pack/**`,
+`cart/src/gen/packs/**`, `pack_test.zig` (registered in `host_tests.zig`),
+`docs/PACKS.md`, `tools/check.sh`, the bench toml and drive image, PLAN
+"M7 status" Track A.
+
+1. **Loader**: `.GCP` files found on the drive by `romfs` when the menus
+   open (header and directory, then the CRC a few KB a frame); loaded at
+   race start into the tile and horizon slots, the map buffer and the pack
+   slot; a pack track is `track.pack_track`, an arena `track.pack_arena`,
+   through the same `League`/`Track` slices as a built-in.
+2. **Refusals** with a message, never a crash (`PACK DAMAGED`, `NOT A
+   PACK`, `PACK TOO NEW`, `PACK TOO BIG`, `NEEDS NEWER CART`); host tests
+   fuzz the parser and loader with truncated and bit-flipped packs.
+3. **Props**: billboards through the cars' scaled blit and depth list
+   (under the 64-object cap), solid ones as walls in the sim.
+4. **Breakable crust** in the sim (`hazards.zig`): a region cracks on the
+   first touch, breaks `warn` ticks later, stays a pit for `period` ticks.
+5. **Picker**: packs after the built-in tracks in the QUICK RACE and GC
+   track rows and after The Sandbox in BATTLE's arena row; CIRCUIT stays
+   built-in (L-question).
+6. **Link matching**: the rules carry the pack (name and CRC); the host
+   cannot pick a pack its partner lacks (`PARTNER LACKS PACK`). The wire
+   change, if any, bumps `net.Game.version` with the compat tests kept
+   honest; `lib/lockstep.zig` is not edited.
+7. **Simulator and host**: `-Dgc-pack=FILE` embeds one pack in the wasm
+   as its drive; host tests read TEST.GCP and drive images through
+   `romfs`. A virtual-cable link race on the test pack stays in sync.
+8. **Bench**: a pack track with props and a stress scene under 8 ms worst
+   (calibrated, plain and `--lcd`), from a drive image.
+
+### Track B: pack content (Opus agent, worktree /home/exedev/snouty-badge-gc-packs, branch gc/packs)
+
+Owns `tools/packs/**` (the packs' generators: a `LEAGUES` entry per pack
+registered at run time, the `.track` sources, the arenas as
+`build_arena.Arena` subclasses, the art painters), `assets/packs/**` (each
+pack's directory: `pack.toml`, the `.bin` files, `props.png`, the built
+`.GCP`), the pack content tests (`tools/packs/test_*.py`, and
+`cart/src/pack_content_test.zig`, registered by `pack_test.zig`), the
+pack previews under `docs/packs/`, and PLAN "M7 status" Track B. It does
+not edit build_tracks.py, build_arena.py or leagues.py: generalisations
+it needs are requests to Track A.
+
+1. **Dead Mall** (SPEC 19.7): palette, tileset, horizon, props; Anchor
+   Store, Food Court, Parking Structure; the arena The Food Court (19.9).
+2. **The Boneyard** (19.5): Mothball Mile, Wing Row, Reentry Field; the
+   arena Hangar 18.
+3. Each track passes build_tracks.py's validator and build_pack.py; each
+   is completable by the autopilot and every arena's hunters score
+   eliminations (Track A's loader in the host tests).
+
+### M7 gate
+
+`tools/check.sh` PASS at the merged head; the four pinned race scripts
+and the seeded races replay unchanged; the built-in tracks race with no
+pack on the drive; the test pack and both content packs race and battle
+from a drive image (host tests, preview, bench); corrupt, foreign,
+truncated, too-new and too-big packs are refused with their message (the
+fuzz tests); a link race on a pack stays in sync on the virtual cable, a
+partner without the pack sees `PARTNER LACKS PACK`; a pack track's bench
+and stress worst under 8 ms; RAM free reported (25,908 B at M6);
+deferred questions from L94.
+
+### M7 status
+
+**Track A (format, loader, engine), 2026-10-05, branch `gc/present`.**
+Commits: the M7.0 interface 4b07184d (docs/PACKS.md, pack_format.zig,
+build_pack.py, the test pack, crust tiles, build_arena taking a pack's
+arena), the mover-cell budget fix 961854ac, the loader with props and crust
+d8733f04, the menus' pack rows and link version 2 47663830, Track B's packs
+merged 8b584b77, the pack host tests 2b04aea5, the RAM pass ede5016d, then
+check.sh, the previews, `docs/preview_m7.gif` and these docs. Decisions
+L94 to L111.
+
+- **Loader** (`pack.zig`): the drive's root scanned by 8.3 entries when
+  the select, BATTLE's setup or the LINK lobby opens; each file's directory
+  parsed (`pack_format.parse`); the CRC 4 KB a frame in those screens'
+  frames only (never in a race, never beside a save); a second scan keeps
+  verdicts. `load` unpacks the tiles, horizon and map into the built-in
+  slots with bounds-checked decoding and reads every other section in
+  place from the drive (L100); `track.pack_track` / `pack_league` then run
+  through the same slices as a built-in track (`Setup.track = pack_base +
+  k`), and `track.select` reloads them after a built-in track used the
+  slots. Refusals: NOT A PACK, PACK TOO NEW, PACK DAMAGED, PACK TOO BIG,
+  NEEDS NEWER CART (a turret), RECOPY PACK (a split file), each a row with
+  the file's name in the track row, never pickable.
+- **Engine**: props in the depth list at a car sprite's scale (the 64 cap,
+  farthest first), solid ones a wall circle in the sim; breakable crust in
+  `hazards.zig` (crack on touch, break after `warn`, a pit for `period`,
+  heal), shown by swapping tiles 121..123 in the map copy, a fall when all
+  four corners are on it, respawns never on it; a mover drawn with a props
+  cell.
+- **Picker** (`pack_rows.zig`): built-in tracks then pack tracks (TRACK
+  n/N to two digits) in QUICK RACE and GC, The Sandbox then pack arenas in
+  BATTLE's setup; the panel shows a pack track's name, league, laps,
+  hazards (BREAKABLE CRUST, MOVER) and outline. CIRCUIT stays built-in
+  (L102).
+- **Link** (`net.zig` version 2): the rules carry the pack's 24-bit id
+  after v1's five bytes; picks are 4 bits, bit 3 `lacks` (computed by
+  loading the pack when the rules arrive), so the host cannot GO and reads
+  PARTNER LACKS PACK; a badge that still fails at GO leaves (the other
+  races on with the AI). `net.GameV1` keeps M6's wire for
+  net_compat_test: v1 and v2 see wrong_version both ways; M4 and v0
+  likewise. lib/lockstep.zig untouched.
+- **Simulator**: `-Dgc-pack=FILE[,FILE]` builds a FAT image of the packs
+  (tools/make_romfs.py) into the wasm as its drive; the default wasm has
+  none. A 16 KB by-value copy of the map buffer (`for (track.map_ram)`)
+  overflowed the simulator's 14.7 KB stack on every load (and took half the
+  badge's); fixed with `&`.
+- **Tests**: 207 pass (`zig build test-gc`, the binary run directly; M6
+  had 182). `pack_test.zig`: the test pack and the content packs load and
+  race (3 laps with the autopilot, a built-in race after unchanged), the
+  drive scan's refusals and rows, RECOPY PACK, truncated packs, 600
+  bit-flipped packs (587 refused by the CRC; with the CRC made good 269
+  loaded and ran 400 ticks, 331 refused), scrambled sections, crust, a solid
+  prop; `net_test`: link races, GC and battles on the test pack in sync
+  (clean and 1%), a partner lacking the pack, a pack failing at GO;
+  `net_compat_test` v1 vs v2; `tools/test_build_pack.py` (5). Track B's
+  `pack_content_test.zig` passes too.
+- **Bench** (calibrated, mean / worst ms; `--lcd` identical; f20 = every
+  drive read costs 20 cycles): ANCHOR STORE (21 props in 6 cells, the
+  scrubber) 3.54 / 5.08, f20 3.72 / 5.29; REENTRY FIELD (the busiest pack
+  map) 3.52 / 5.92, f20 3.68 / 6.11; the stress scene on ANCHOR STORE 4.79
+  / 6.09, f20 4.80 / 6.11; THE FOOD COURT battle 3.41 / 5.78, f20 3.52 /
+  5.95; HANGAR 18 3.43 / 4.63. The built-in benches as at M6 (m0_race 3.65
+  / 5.22, stress 5.02 / 6.17, m6_battle 3.46 / 5.31, probe stress 5.13 /
+  6.29).
+- **RAM**: `size -A` .text 194,920 + .data 8,300 + .bss 52,040 (+ 2,380
+  exidx/extab): **16,312 B free** (M6: 25,908), so M7 costs 9,596 B after
+  the RAM pass (14,776 free before it). The pass: a 64-byte nibble CRC for
+  std's table, no z copy in the depth list (896 B), the cluster table on
+  the stack, an 8.3 scan instead of romfs.find, props read from the track
+  data, arena checks inside track.parse_arena, a 96 KB cap and 6 listed
+  packs.
+- **check.sh PASS** (every step; `zig build test` fails only in other
+  carts' runners in this worktree, Boy's missing test ROMs, so test-gc
+  decides). New: the packs' rebuild checks in `tracks`, three pack
+  previews (the picker's 14 rows, ANCHOR STORE to the results, a battle in
+  Hangar 18), six pack benches.
+- `docs/preview_m7.gif` (251 frames, 100 ms): the picker through every
+  pack track to ANCHOR STORE and its race, REENTRY FIELD (the crust, the
+  furrow), THE FOOD COURT battle.
+- **On a badge**: never run. Copy DEADMALL.GCP and BONEYARD.GCP to the
+  drive (docs/PACKS.md); check the in-place reads' cost with props in view
+  (L109).
+
+**Track B (pack content, branch gc/packs).** Both packs are built,
+packaged and host-tested. `tools/packs/make_packs.py` runs the built-in
+rasterizer (build_tracks.py) with a `LEAGUES` entry per pack registered at
+run time, and runs build_arena.py with a `PackArena` subclass per pack
+(`tools/packs/pack_arena.py`). It post-processes each map (per-track road
+floors, centerline dashes, wing shadows, sand drifts, the furrow, crust
+bands), sets the movers' sprite cell, and places props from the track
+sources (`tools/packs/src/<pack>/*.track`). Then it writes
+`assets/packs/<pack>/` (the `.bin` set, `props.png`, a generated
+`pack.toml`), runs build_pack.py into `<FILE>.GCP`, and copies the result
+to `cart/src/gen/packs/` for the host tests (never the badge cart). All
+art is drawn in code (`tools/packs/dead_mall.py`, `boneyard.py`): a
+palette, the shared 128-tile layout with the pack's own floors in the free
+slots and the crust tiles 121..123, a two-layer horizon, and a props sheet
+of 8 cells of 32x48 (15 colours).
+
+- **DEADMALL.GCP**, 30,100 B: ANCHOR STORE (carpet; mannequin rows and
+  racks; the scrubber mover, wet floor), FOOD COURT (food-court tile; the
+  atrium as an open edge, the stalled-escalator ramp, a ceiling-tile crust
+  band, a sparking breaker), PARKING DECK (the roof deck; two gap-jump
+  ramps, an open edge, rain slick, a sparking lot-light panel). Arena: THE
+  FOOD COURT (the dry fountain with four escalator kickers, kiosk and
+  planter islands, escalator gap jumps across the side lanes, the scrubber
+  circling the carousel corner).
+- **BONEYARD.GCP**, 33,104 B: MOTHBALL MILE (runway; wing shadows, jet
+  blast, the loose cowling), WING ROW (taxiway; three passes with pinch
+  points under the tails, two jet blasts, drifts), REENTRY FIELD (a ramp
+  off the shuttle's wing, the furrow as an open edge and as crust, the
+  booster forest, the station-ring turn). Arena: HANGAR 18 (the saucer in
+  its crater with its rim as a ring of kickers, wings as gap jumps across
+  the side lanes, roof-sheet islands, the cowling on the north lane).
+- **Tests** (`cart/src/pack_content_test.zig`, through `pack.load_bytes`;
+  `tools/packs/test_packs.py` for determinism and the files):
+  - The autopilot finishes 3 laps on every track with no fall (combat
+    off) on WORKSTATION, MAINFRAME and THIN CLIENT. SNOUTY's finish ticks:
+    Anchor Store 4,888, Food Court 5,645, Parking Deck 4,954, Mothball
+    Mile 4,984, Wing Row 6,151, Reentry Field 5,244.
+  - Six AI crews in a combat race finish 3 laps on every track (3 seeds
+    each, by ticks 6,700 to 8,770). Nobody is stuck (slowest stall 127
+    ticks). 0 to 1 falls a race.
+  - Both arenas' navigation fields reach every node from every pad, with
+    and without the jumps.
+  - Six seeded 3-life rounds per arena all end by lives. THE FOOD COURT
+    averages 144 s a round with 70 AI-on-AI eliminations; HANGAR 18
+    averages 176 s with 60 (The Sandbox: 126 s, 79).
+  - A pack race is deterministic.
+- `tools/check.sh` passes at the merged head (build, test, float,
+  tracks, preview, bench).
+
+
+## M9 More packs (The Seabed, Cold Storage)
+
+SPEC 16 M9, 19.6 and 19.8. Two content packs on the M7 format
+(`docs/PACKS.md`, format v1, link v2), with no engine change planned:
+each has three tracks and one arena, and is built the way M7 Track B
+built Dead Mall and The Boneyard (`tools/packs/`, `assets/packs/<pack>/`,
+the `.track` sources, a `pack_arena` subclass, `build_pack.py`).
+
+- **Track S: The Seabed** (Opus agent, worktree
+  /home/exedev/snouty-badge-gc-seabed, branch gc/seabed off 20772c22). It owns:
+  - `tools/packs/seabed.py` and `tools/packs/src/seabed/`;
+  - `assets/packs/seabed/` (`SEABED.GCP`) and `docs/packs/seabed/`;
+  - `cart/src/seabed_test.zig`.
+  - Tracks: Shipbreaker Shoals, Whalefall, Cable Trench. Arena: The Drain.
+- **Track C: Cold Storage** (Opus agent, worktree
+  /home/exedev/snouty-badge-gc-cold, branch gc/cold off 20772c22). It owns:
+  - `tools/packs/cold_storage.py` and `tools/packs/src/cold_storage/`;
+  - `assets/packs/cold_storage/` (`COLDSTOR.GCP`) and `docs/packs/cold_storage/`;
+  - `cart/src/cold_storage_test.zig`.
+  - Tracks: Intake Shelf, Calving Front, Erebus Grid. Arena: The Moon Pool.
+- **Shared one-liners** (each track adds its own line; the lead merges):
+  - `PACK_NAMES` in `tools/packs/make_packs.py`;
+  - the test import in `host_tests.zig`;
+  - the copy in `cart/src/gen/packs/`;
+  - check.sh's content-pack drive image and its previews and benches, if those
+    list packs by name.
+  - Shared helpers (`common.py`, `pack_arena.py`) are read-only to both. A
+    helper either track needs goes in its own module.
+- **Gate (each track, then the lead after merging both):**
+  - the pack builds byte-identically and `tools/check.sh` passes;
+  - the autopilot runs 3 laps on every track on three chassis with no fall;
+  - 6 AI crews finish every track;
+  - the arena's navigation field reaches every pad;
+  - 6 arena rounds end by lives with AI-on-AI eliminations;
+  - the drive keeps room for all four packs (each pack is under 96 KB, the
+    picker lists 6);
+  - contact sheets reviewed by the lead.
+- Deferred questions: The Seabed from L150, Cold Storage from L170.
+
+### M9 status
+
+**Track S (The Seabed), 2026-10-05, branch `gc/seabed`.** SEABED.GCP is
+built, packaged and host-tested, with no engine or format change.
+`tools/packs/seabed.py` holds the league: the palette, the tileset, the
+background painters with their overlays, the horizon, the props and the
+arena. Its track sources are in `tools/packs/src/seabed/`. It runs through
+make_packs.py, which got one new line in `PACK_NAMES`.
+
+- **The look**: a dried ocean floor, cooler and greyer than The
+  Boneyard, with rust as the accent.
+  - **Floors**: three road floors, one per track. Grey sand is the
+    default, and the shared pieces sit on it. The salt pan has polygon
+    cracks: a 16 px network over four tiles. The trench floor is dark
+    silt, with the cable surfacing along the line.
+  - **Off the road**: pale salt flats, grey sand with dead coral, and
+    whale skeletons drawn top-down in bone.
+  - **Walls**: rusted hull plates with a salt-crusted rim.
+  - **Hazard tiles**: tide pools are brine. The salt crust is a pale
+    blue crust over brine. The steam vents are cyan fissures, fed by the
+    cable's ruptured repeaters in the wall.
+  - **Horizon**: wrecks heeled over in rust, the container ship's
+    spilled stacks, and the toppled oil rig with its red beacon. Behind
+    them are a pale sky and the long dry shelf, with a dead city on top.
+  - **Props**: 8 cells of 32x48 in 15 colours: whale rib left, whale rib
+    right, ship bow, anchor, submarine sail with its periscope, container
+    (also the slide's sprite), barnacled buoy, and the cable's broken
+    end.
+- **SEABED.GCP**, 33,132 B: hazard mask 0x76, i.e. blast, mover, crust,
+  slick and pit.
+  - **SHIPBREAK SHOALS** (sand, 3,613 px a lap): the north reach under
+    the bows and their shadow, tide pools in a wreck's scour, then the
+    container maze. The maze is five chicanes between stacks spilled
+    across the salt, with a container slide on the south reach. Two hulls
+    lie on their sides in the infield.
+  - **WHALEFALL** (salt pan, 3,755 px, the fastest): three skeletons,
+    each a row of rib arches (a left and a right rib every 36 px) with
+    its shadow across the road. Then dead coral rubble, tide pools, and a
+    salt crust on the south reach.
+  - **CABLE TRENCH** (silt with the cable, 3,505 px): a steam vent on the
+    north reach, the trench's deep open on the right, and a loop down the
+    trench floor. A ramp crosses the break, with the cable's two broken
+    ends either side. A second vent fires on the west climb, and a salt
+    crust lies on the shelf. Off the road, the cable runs along the
+    deep's lip and goes down into it.
+  - **Arena THE DRAIN**: the funnel bowl is drawn as rings of salt, sand
+    and silt around the drain, with four hatch-cover kickers over it.
+    Wreckage islands stand at the diagonals, with whale ribs on their
+    corners as the gates. The trawlers' decks are gap jumps across the
+    side lanes, each with a trawler's bow on the rim beside it. Containers
+    slide down the north lane and across the SW corner. The graph is 18
+    nodes and 8 jumps, a 1,856 B blob.
+- **Tests** (`cart/src/seabed_test.zig`, imported by host_tests.zig;
+  `zig build test-gc` with the binary run directly: 213 pass):
+  - **Autopilot**: it finishes 3 laps on every track with no fall, on
+    WORKSTATION, MAINFRAME and THIN CLIENT. SNOUTY finishes Shoals at tick
+    5,395, Whalefall at 5,231 and Cable Trench at 5,368.
+  - **Six AI crews** (3 seeds a track) all finish:
+    - Shoals by ticks 7,666 to 8,321;
+    - Whalefall by 6,856 to 8,194;
+    - Cable Trench by 7,307 to 7,837.
+
+    Nobody is stuck (the longest stall is 102 ticks) and there are no
+    falls. Hazard hits are 1 to 9 a race on the tracks with vents or the
+    slide.
+  - **Navigation**: The Drain's field reaches every node from every
+    pad, with and without the jumps.
+  - **Rounds**: six seeded 3-life rounds all end by lives. They run
+    from 68 to 166 s, a mean of 129 s, with 64 AI-on-AI eliminations in
+    all.
+  - **Determinism**: a pack race on CABLE TRENCH replays the same.
+- **Shared one-liners**:
+  - `PACK_NAMES`;
+  - the host_tests import;
+  - `cart/src/gen/packs/SEABED.GCP`.
+
+  SEABED.GCP also joined the content-pack drive image (`drive_packs.img`
+  from tools/test_pack/make.py's shelf, check.sh's copy) and the picker
+  preview's `-Dgc-pack` (L159).
+- `tools/check.sh` passes. The contact sheets are in docs/packs/seabed/
+  (`*_contact.png`, half scale). The deferred questions start at L150.
+
+**Track C (Cold Storage), 2026-10-05, branch `gc/cold`.** COLDSTOR.GCP
+(COLD STORAGE, SPEC 19.8), 33,664 B, built by `tools/packs/make_packs.py`
+from `tools/packs/cold_storage.py` (palette, tiles, four wallpapers, the
+horizon, 8 props, the arena) and `tools/packs/src/cold_storage/*.track`,
+with no engine or format change. Decisions L170 to L176.
+
+- **Art** (drawn in code, final): packed-snow road with tyre ruts and
+  orange marker dots, orange and navy hazard barriers in front of a
+  snowbank, the shelf's white edge and blue ice cliff over black water;
+  basalt road with orange dashes (EREBUS GRID); glare ice (pale cyan with
+  long diagonal glints, attribute coolant), meltwater channels, the
+  intake pipe's ribbed floor, a grated walkway, thin sea ice (crust,
+  121..123: dark translucent ice, white cracks, then the sea). Wallpapers:
+  the shelf (snow, sastrugi, hall domes), the glacier (blue ice,
+  crevasses, serac rubble), basalt (ash, snow patches, fumaroles), the
+  halls (steel deck, lit skylight domes). Horizon: ice cliffs over the
+  open sea, a wind farm on a snow ridge, Erebus with its snow tongues,
+  crater glow and plume, the geothermal plant, server domes lit from
+  inside, red beacons blinking; the back layer is the polar twilight
+  with stars and the aurora's green curtains and magenta fringe. Props
+  (32x48, 15 colours): intake pipe mouth, pylon, wind turbine, ice
+  pinnacle (also the calving block), radar dome, frozen crane, the
+  PENGUIN COLONY sign, the emperor penguin. White, cyan, navy, black and
+  orange: nothing like Dead Mall's pastels or the Boneyard's sand.
+- **INTAKE SHELF** (lap 3,644 px): the shelf's edge with the sea on the
+  left (an open edge, the water out to the map's edge) on glare ice,
+  down the intake pipe, into the halls (grated walkway, glare up the
+  aisle, a steam vent), across the frozen inlet on thin ice (crust, water
+  both sides). **CALVING FRONT** (3,620 px): two ice blocks sliding off
+  the glacier face across the start straight (movers), the east and west
+  crevasse jumps (ramps), two meltwater channels, a glare-ice climb.
+  **EREBUS GRID** (3,718 px): the rim road and the flank (a hill run),
+  a fumarole's steam, the switchbacks through the plant (grated deck,
+  steam vent) and the switchyard (two arc flashes between the pylon
+  rows). 16 to 19 props a track, all off the floor.
+- **THE MOON POOL**: black water in the middle, the whole floor glare
+  ice, four ice kickers at the pool, a ring of four steam vents firing
+  out from its rim one after another, the intake shafts across the side
+  lanes as gap jumps, the pipe housings as the four islands; the Food
+  Court's 18-node graph and pads, a 1,856 B blob, 12 props.
+- **Tests** (`cart/src/cold_storage_test.zig`, registered in
+  host_tests.zig; 213 tests pass, the binary run directly):
+  - the autopilot finishes 3 laps with no fall on WORKSTATION, MAINFRAME
+    and THIN CLIENT: INTAKE SHELF at ticks 5,034 / 6,124 / 4,690, CALVING
+    FRONT 5,084 / 6,352 / 4,853, EREBUS GRID 5,335 / 6,599 / 4,663;
+  - six AI crews finish every track (3 seeds each, by ticks 6,823 to
+    8,202; 19 to 31 wrecks, 0 or 1 falls, the crevasses; stuck at most
+    140 ticks); a dev soak of 8 seeds a track found the one hairpin pin
+    (L170) and nothing after the fix;
+  - the arena's navigation field reaches every node from every pad,
+    with and without the jumps;
+  - six 3-life rounds end by lives: 93 to 196 s (mean 135), 12 to 15
+    eliminations a round, 61 AI-on-AI in all, 4 to 10 falls a round;
+  - an INTAKE SHELF race replays identically.
+- **Registrations**: `PACK_NAMES`, the host_tests import, the copy in
+  `cart/src/gen/packs/`, the content drive image (check.sh's copy and
+  tools/test_pack/make.py's shelf, `drive_packs.img` rebuilt, pack_test's
+  counts: L176), `tools/packs/test_packs.py`'s list.
+- `tools/check.sh` PASS (build, test, float, tracks with the three
+  content packs byte-identical, preview, bench). Cold Storage benches
+  from `drive_packs.img` (calibrated, mean / worst ms, the autopilot,
+  f20 = every drive read costs 20 cycles): INTAKE SHELF f20 3.66 / 5.29,
+  CALVING FRONT f20 3.74 / 5.74 and `--lcd` 3.58 / 5.31, EREBUS GRID
+  f20 3.83 / 5.44, the stress scene on CALVING FRONT f20 4.82 / 6.11,
+  a MOON POOL battle f20 3.53 / 4.99 and `--lcd` 3.42 / 4.91; run by
+  hand (rows 12 to 14, arena row 3), not added to check.sh.
+- Contact sheets (the map plus 8 Mode 7 mock frames, half scale):
+  `docs/packs/cold_storage/*_contact.png`.
+
 ## Deferred questions
 
 SPEC 17 holds the design defaults. Taken during M0 (Track A):
@@ -2272,3 +3055,367 @@ L50. **RESUME on both badges at once**: pause is a toggle, so if the
 L51. **Lobby pumping**: GC's lobby and link select loop only while
     `wants_pump()`; searching and a settled lobby pump once a frame (as
     lockstep's doc says is enough). Untested on two badges.
+
+Taken during M6 (Track A, battle simulation):
+
+L52. **The Sandbox's size**: 704 px square (88 tiles), so a car crosses it
+    in about 4 s. The bit bucket is 128 px, about a fifth of the arena
+    rather than SPEC 8.3's quarter. A 64-tick kicker jump from 2.2 px/tick
+    clears that, and a quarter-arena pit could not be jumped by a
+    MAINFRAME (2.7 px/tick top).
+L53. **One-way ramps**: the arena's ramps are new attributes, `kicker` (3,
+    64 ticks) and `jump` (11, 40 ticks), and they launch only a car moving
+    the way the tile faces. Opposite kickers across a pit would otherwise
+    relaunch every landing. Race ramps are unchanged.
+L54. **Thrust in the air** stays as in the races: a car launched slowly
+    speeds up in flight, so a crawl can sometimes clear a 5-tile corner
+    gap. Only the bit bucket reliably swallows a slow car.
+L55. **Battle damage** is 18% of the race's, with the fraction carried per
+    car. STACK SMASH is its own 40. At full race damage, rounds at 3
+    lives lasted about 30 s; at 18% they average about 2 minutes, still
+    dangerous.
+L56. **Eliminations** are `Car.kills`: the race's last-hit credit within
+    180 ticks, so a car knocked into a pit scores for whoever hit it.
+    About half the wrecks are falls, and most of those are credited.
+L57. **SAFE MODE** runs with the race's respawn immunity (the car cannot
+    fall either), and it also blocks rams, STACK SMASH and pickup use.
+L58. **Out of lives**: the car leaves the round at once (`active = false`,
+    so its hulk does not block), and the claw is the presentation's. The
+    `out` event's b is the number of cars still in. An out car's standing
+    is its `rank`, which can still move until the end.
+L59. **Standings with INF lives**: eliminations, then fewer wrecks, then
+    time survived. The kill leader's ties go to the better rank.
+L60. **KERNEL PANIC with nobody scored** targets rank 1 of the standings,
+    which is the tie order then.
+L61. **ZERO-DAY's bottom two** are the two worst ranks of the cars that
+    started (out ones included). CREWS changes how many that is.
+L62. **"Ahead" ranges** in an arena are the race's progress ranges taken
+    as straight-line px: BIT FLIP and DEADLOCK 400, RACE CONDITION 300.
+    DEADLOCK's one-car wall chain anchors on the nearest waypoint.
+L63. **Refill** gives every car in the round full ammo and BURST charges
+    every 1200 ticks (wrecked cars included), on one clock for all.
+L64. **Spawn pads**: two each on the south, west and east straights, none
+    on the north straight (the Sweeper's path). Each faces a fence gap
+    into a plaza.
+L65. **The navigation field** is 3.6 KB, not SPEC's estimated 1 KB: 34
+    nodes, two next-hop tables (with jumps, and ground only for a car too
+    slow for the run-up) and 1 KB of cells. The hunter keeps one waypoint
+    byte per car (`Car.nav`, bit 7 for a committed jump leg).
+L66. **Hunter characters**: a target bias in px per crew (SYSADMIN 260 to
+    the human, BOTNET 260 to the kill leader, KIDDIE 120 to the human),
+    plus a pull toward hurt targets and the one already aimed at. Retreat
+    shares are KIDDIE never, LEGACY 20%, ROOTKIT 40% and the rest 30%;
+    a retreating car holds at the bay to 80%. With nobody to hunt, it goes
+    to the nearest crate.
+L67. **The arena's Sweeper** runs gate to gate along the north straight,
+    with a 1200-tick period at 2 px/tick. KIDDIE ignores it, as on the
+    tracks.
+L68. **RAM**: the arena and the hunter cost about 15 KB of the window, so
+    about 32 KB is free for Track B and M7.
+
+Taken during M6 (Track B, BATTLE presentation and LINK BATTLE):
+
+L80. **Battle flow**: menu BATTLE, then the racer select (SPEC 8.1: the
+    select is the first screen of every mode; no track row, `A  TO THE
+    ARENA`), then the setup screen (arena, LIVES, TIME, CREWS, FIGHT!)
+    over the arena's own floor, then the round. The setup's cursor starts
+    on FIGHT!, so A, A from the select fights with the last rules; A or
+    Start on any row fights, B goes back to the select. Pause QUIT and the
+    results go back to the select (then the setup). The options are kept
+    for the session (`battle_ui.opts`; default 3 lives, 3 min, 5 AI).
+L81. **The KILL -9 card** is drawn over the countdown's READY and 3 steps
+    (100 ticks: `$ kill -9 -1` typing itself, KILL -9 at 2x, `no cleanup
+    handler` / `no appeal`, the arena, the rules), then 2, 1, GO show as
+    in a race. Render only, the same on both badges of a link battle: no
+    single-player hold before the countdown, so nothing waits on it.
+L82. **Battle HUD layout**: `ELIM n` replaces `LAP n/N` top left (cyan for
+    the kill leader); the clock is centred (time left as M:SS rounded up,
+    blinking coral in the last 10 s; with TIME NONE the time played in
+    grey); the standing (1ST..6TH) sits right of the clock in grey (cyan
+    when first); the lives are pips under ELIM on a dark plate (green,
+    coral blinking on the last life; `INF` in grey), 5 px apart, 4 px past
+    five lives so nine stay left of `FETCHING...`. The speed reading stays.
+    The refill sweep is a 1 px line between the front and rear ammo rows,
+    filling to the refill and flashing white as it lands.
+L83. **Arena minimap**: 32x32 at the race minimap's place, over the
+    arena's bounds (the tiles that are not `off`, squared), one kind a
+    pixel from the unpacked map at the round's start: wall (a wall tile
+    anywhere in the cell), pit (most of the cell open), bay, ramp, floor
+    (checkerboard, the race shows through). Waiting crates 1 px yellow,
+    the Sweeper 2x2 orange, every car in the round 2x2 in its livery (the
+    followed one white on top), a wrecked car blinks, one in SAFE MODE
+    flickers, the kill leader has a cyan ring.
+L84. **Compat tests after the version bump**: `net.Game` is version 1 with
+    five rules bytes; `net.GameV0` keeps the M5.1 game (one byte, version
+    0) through the same `NetOf(L, G)` wrapper, and `net_compat_test`
+    proves GameV0 is still M4's wire byte for byte and races an M4 badge
+    in sync. New: the cart's v1 never races an M4 badge (M4 waits in its
+    lobby), and a v0 (M5.1) and a v1 badge, either side, both cable kinds,
+    clean and 1% loss, are both `wrong_version` and send no DATA packet
+    for 10 s. The old test of a made-up `GameV1` against M4 now runs the
+    real `net.Game`.
+L85. **The five rules bytes**: mode (0 race, 1 gc, 2 battle), track (or
+    arena), CREWS, LIVES, TIME, in every mode (a race carries the battle
+    defaults, unused). `Rules.decode` maps bytes off the menus' rows to
+    their defaults (an unknown mode is a race), so both badges always
+    build a round they can run; `setup_of` wraps the track index into the
+    table the mode uses.
+L86. **LINK lobby**: the mode row cycles LINK RACE, LINK GC, LINK BATTLE.
+    Into LINK BATTLE the track row becomes the arena (THE SANDBOX, index
+    0) and LIVES and TIME rows appear (six rows 11 px apart, the title 4 px
+    higher); back out, the race track the host had returns. CREWS stays
+    4 / 2 / 0. The link select's panel reads the arena with `CREWS n` at
+    the right and `3 LIVES, 3 MIN` under it. `debug_link_mode` puts the
+    made-up (simulator) lobby on LINK BATTLE.
+L87. **Feed and pops**: an `eliminated` line (`SNOUTY kill -9 KIDDIE`,
+    two rows when wider than the screen) replaces the wreck line the same
+    tick wrote; on a last life (`out`) the victim's name flashes red, and
+    a last life nobody was credited with reads `KIDDIE REAPED`. A STACK
+    SMASH is a minor feed line (`SNOUTY SMASHED KIDDIE`) with `SMASH!`
+    rising over the victim. The bar pops are the badge's own car's:
+    `STACK SMASH!` (it landed one), `STACK SMASHED` (it was under one),
+    `CLEAN LANDING`; after the wreck note, before SAFE MODE. `SAFE MODE`
+    blinks in the bar while `Car.safe` runs (the sprite blinks with the
+    respawn immunity it already had). The round's end reads `TIME UP` or
+    `LAST ONE STANDING` on every badge.
+L88. **Out of lives**: the claw takes the hulk where it went out (the GC
+    claw, `fx.claws`); `REAPED` sits where the armor bar was; once the
+    claw is done the camera rides with the kill leader (the best-ranked
+    car still in while nobody has scored), changing car at most every 2 s.
+L89. **Results**: the winner card is the standings' first, titled `TOP
+    KILLER`, or `LAST PROCESS UP` when the round ended by lives and it is
+    the car left (eliminations rank first, so the top killer can be out
+    of lives; then the card's end line names the car left, `LAST UP:
+    BOTNET`, else `TIME UP`); its eliminations, lives (or wrecks with INF,
+    or `OUT m:ss`), taunt, the player's own standing. The standings: the half portrait, name and
+    `LIVES n` / `WRECKS n` / `OUT m:ss` (time survived), the eliminations
+    under an `ELIM` heading at the right.
+L90. **Debug paths**: the made-up BATTLE row (`debug_menu_battle`,
+    `menu.preview_battle`) is gone with the real row, and check.sh's
+    `menu7` run with it. `debug_start_battle`, `debug_battle_minutes`,
+    `debug_battle_crews` and `debug_battle_kill` return a value so a
+    preview's `--call-at` can use them. New: `debug_link_mode`,
+    `debug_lobby_rules`, `debug_setup_row`, `debug_battle_arena`,
+    `debug_battle_stress`, `debug_me_out`, `debug_safe`, `debug_stunt`.
+L91. **check.sh outside Track B's block**: the BATTLE row moved the rows
+    the `menu`, `pickups`, `link` and `circuit` previews press through
+    (one more Down each, the header comment says so), and
+    `tools/scripts/m5_circuit_race.json` got one more Down (A at 18): the
+    circuit bench runs the same race as before. Track A owns those lines;
+    the edit is the minimum the menu change forces.
+L92. **net_test harness**: two M4-era fragilities that the v1 seeds hit
+    are fixed in the scripted humans, not the netcode: a random Select tap
+    on a frame that holds Start (the OS chord; `submit` clears both, so a
+    held Start showed two edges) is dropped, and the desync test also
+    flips a PRNG bit (a respawn can put a car back on its pad and erase a
+    one-pixel change before the next check).
+L93. **Arena stress** (`--poke gc_battle=2`, `debug_battle_stress`): the
+    render stress scene keeps BATTLE rules in an arena (so its HUD is the
+    one stressed) and adds a `kill -9` line every 90 frames (every other
+    one a last life with its claw), a STACK SMASH and a CLEAN LANDING on
+    SNOUTY in turn, a rival in SAFE MODE, the kill leader, moving lives,
+    eliminations and refill, and the clock in its last 10 s.
+L94. **Pack RAM**: no separate 32 KB slot (25,908 B free at M6). A pack
+    loads into the built-in slots (tiles, horizon, map); 128-tile packs
+    only: a 256-tile set would need another 8 KB and is refused. (The
+    M7.0 commit's 8 KB pack slot is gone: L100.)
+L95. **Pack source** (the lead's call, 2026-10-05): a pack directory holds
+    the built-in `.bin` set (build_tracks.py's rasterizer with a per-pack
+    league) plus `props.png` and `pack.toml`; build_pack.py only packages
+    and checks. No new track source format.
+L96. **Crust**: tiles 121 / 122 / 123 (intact, cracked, broken), attribute
+    12. A crust feat record is a whole-tile rectangle; the first touch of a
+    car on the ground cracks it, it breaks `warn` ticks later (default 12)
+    and stays broken `period` ticks (300); a car on the ground on a broken
+    crust tile falls as into a pit. The cart swaps the three tiles in its
+    map copy for the look; the sim reads only the attribute and the World.
+L97. **Turrets** stay reserved: a pack with a turret record is refused
+    (`NEEDS NEWER CART`) instead of racing with a dead turret.
+L98. **Props**: one sheet per pack, cells of one size (even width <= 32,
+    height <= 48), <= 16 cells, 15 colours and a key; <= 24 props per track;
+    radius > 0 is a solid circle. A mover's sprite may be a props cell
+    (feat byte 0 bits 4..7 = cell + 1), so packs need no hazards sheet.
+L99. **CRC** covers bytes 64 to the end (SPEC 19.1's "CRC32 of the rest");
+    the header is checked field by field (reserved bytes zero, the size
+    field equal to the directory entry's), and names show unknown bytes as
+    `?`. Packs are capped at 96 KB and the picker lists at most 6 (L105).
+L100. **In-place sections**: with 8 KB for all of M7 (code included) there
+    is no room for a RAM copy of a pack's palette, attributes, centerline,
+    feat, props, arena blob and props cells, so they are read where they
+    lie in the drive's flash window (the emulators read their ROMs so; only
+    the props cells are read per pixel, a few small billboards a frame).
+    Each must be one run of clusters, else `RECOPY PACK`; there is no
+    per-track props budget any more (6 cells of 32x48 on a race track and
+    3 to 4 in an arena are fine, as are 16). Risk: a host writing to the
+    drive mid-race (as with the emulators).
+L101. **A pack track in the World** is `Setup.track` / `World.track` from
+    `track.pack_base` (0x80) up: "the loaded pack track" plus its index in
+    the pack. Which pack is the loader's and the link rules' (the 24-bit
+    id), not the World's, so the World and its checksums are unchanged.
+L102. **Rows**: a pack still checking or refused takes one race row
+    showing its file name and reason (not pickable); the arena row lists
+    only raceable packs. When a CRC finishes the rows grow, so the cursor
+    may land on another row. CIRCUIT stays on the built-in leagues: a
+    pack as a CIRCUIT league is for Adrian (deferred).
+L103. **Link**: version 2 (eight rules bytes, 4-bit picks). A guest that
+    has not heard the rules counts as lacking (so an early ready never lets
+    the host GO). The guest's `lacks` loads the pack (cached), so a damaged
+    or split pack is caught before GO; if a load still fails at GO that
+    badge leaves the race and returns to the lobby, and the other races on
+    with the AI (PEER LEFT).
+L104. **Crust**: a car falls only with all four footprint corners on broken
+    crust (or off the track), as at a pit edge; the AI has no crust sense
+    yet (a band across the whole road takes the AI behind the leader down
+    when it breaks). Track B's bands follow PACKS.md's warn rule.
+L105. **Six packs listed, 96 KB cap** (RAM): the first six `.GCP` files of
+    the drive's directory.
+L106. **8.3 names only**: the scan reads the root's 8.3 entries (a long
+    name a host writes is ignored; the pack's menu name is in its header).
+L107. **Solid props**: a circle of `radius` that pushes a car on the ground
+    out and costs it speed and wall damage; airborne cars fly over; the AI
+    does not steer round props (the packs put solid props off the line).
+L108. **A pack mover's sprite**: its props cell at car scale with a shadow,
+    no beacon (the Sweeper keeps its own art and beacon).
+L109. **In-place reads on the badge**: props cells are read per pixel from
+    the drive's flash; the bench's flat 20 cycles a read costs 0.2 ms. The
+    XIP cache is not modelled: check on hardware with props in view.
+L110. **The simulator's drive** needs python3 at build time, only with
+    `-Dgc-pack` (tools/make_romfs.py builds the image).
+L111. **Load cost in menus**: moving the select's cursor onto a pack track
+    loads it there (36 KB unpacked, a few ms in that menu frame); the race
+    start then finds it loaded. Not benched (one long menu frame).
+L130. **Track B: per-track floors.** A pack has one tileset, so each track
+    picks a road floor by remapping the rasterizer's road tiles (SURF, the
+    seams, the dot, the ruts) onto the free slots 28..31, 89..91, 124..127
+    (`ROAD_VARIANTS`). Dead Mall: terrazzo (the arena's outer ring), carpet,
+    food-court tile, parking deck. The Boneyard: runway, taxiway. The
+    wallpaper beyond the walls is chosen per track the same way
+    (`background`).
+L131. **Crust numbers.** The bands are 16 px across the road with `warn`
+    24, not docs/PACKS.md's default 12. A 24 px car takes about 16 ticks to
+    cross a 16 px band at 2.5 px/tick, so with 12 the car that cracked the
+    band fell through its own crack. The test caught it on FOOD COURT.
+    The next car, about a second behind, still drops.
+L132. **Props are decoration.** Every race-track prop stands off the
+    drivable floor (the generator checks a 10 px footprint), so the AI
+    needs no new sense. No solid props are placed: one on the road would
+    be a wall the centerline driver doesn't steer round. Solid props stay
+    available (`solid kind x y radius` in a track source).
+L133. **Movers share a props cell.** Dead Mall's 8 cells hold the 8 props
+    of the brief, so the runaway scrubber's sprite is the security robot's
+    cell (drawn as a maintenance bot with a scrubber skirt). In THE FOOD
+    COURT the "carousel" is the scrubber's diagonal round of the NE corner
+    (a mover between two service doors), not a turning ride. SPEC 19.7's
+    stalled-escalator prop and wet-floor cone are not in the sheet: the
+    escalators are ramp and kicker tiles, and the wet floor is a slick tile.
+L134. **PARKING DECK** is the menu name of SPEC's Parking Structure: 17
+    characters don't fit the 16-character name field. Its horizon is the
+    pack's atrium, since the pack has one horizon.
+L135. **Arena graphs.** THE FOOD COURT and HANGAR 18 keep the Sandbox's
+    4 islands, its 6 spawn and 8 crate pads, and its pit with four kickers,
+    but drop its fences. Each adds one gap jump per side lane: 18 nodes, 8
+    one-way jumps, a 1.9 KB blob. The first FOOD COURT, with only the
+    fountain's kickers, ran rounds of 176 to over 480 s; the gap jumps
+    brought them to 99 to 191 s.
+L136. **The furrow and the saucer are floor art.** The Reentry Field's
+    furrow is pit tiles painted over the wallpaper along a polyline (with
+    a scorched lip), passing under the crust band. Hangar 18's saucer is
+    hull plates over the crater's pit tiles. Both keep their attributes,
+    so the sim sees an ordinary pit.
+
+Taken during M9 (Track S, The Seabed):
+
+L150. **SHIPBREAK SHOALS** is the menu name of SPEC's Shipbreaker Shoals:
+    18 characters don't fit the 16-character name field.
+L151. **Floors and slots.** The default road (the shared pieces' floor: pit
+    lips, seams, the slide's lane) is grey sand; the salt pan's 16 px
+    crack network takes four slots (28, 29, 30, 125: SEAM_X, SEAM_H,
+    SEAM_V, SURF of the rasterizer's 2x2 rhythm; the dot and the ruts use
+    the SURF quarter), the trench silt two, the cable dashes two, the
+    shadows two (sand, salt). So `drift` has one tile (dead coral rubble:
+    DRIFT = DRIFT_HEAVY).
+L152. **Crust that bites.** The bands follow Track B's 16 px with `warn`
+    24 (L131): the band cracks and shows the brine, but a 24 px car
+    crossing straight is never wholly on it, so the soaks see no falls (as
+    M7's packs: 0 to 1). A 32 px band (len 16, warn 40) took 9 to 13 falls
+    a six-AI race and dropped the autopilot behind an AI that cracked it,
+    which fails the no-fall gate. A crust that swallows cars needs an AI
+    crust sense or a looser gate (for the lead).
+L153. **The cable.** It surfaces through the trench silt along the whole
+    lap (`centerline yes` with cable tiles); the break is the ramp's gap,
+    with the two broken-end props either side of the road. Off the road it
+    is a band of armour tiles (seabed.TRENCH_CABLE) along the deep's lip,
+    diving into the deep (a `furrow`, cosmetic pit tiles).
+L154. **Rib arches.** A billboard can't span the road (cells <= 32 px,
+    props kept 10 px off the floor), so a gate is a left and a right rib
+    (mirrored cells, each curving in over the road) facing each other
+    across it, every 36 px along a straight, with a shadow band across the
+    road. In the arena the ribs stand on the islands' corners either side
+    of each way into the bowl.
+L155. **Overlays per background kind.** A background painter only sees the
+    free tiles, so the container maze (stacks two deep with salt alleys in
+    seabed.SHOALS_MAZE), the hulls on their sides (SHOALS_HULLS) and the
+    trench's cable are hard-coded in world px in seabed.py for the track
+    that uses that kind; the wallpaper keeps 2 containers a block.
+L156. **The Drain's islands are square.** Islands with their corners
+    knocked off made rounds of 103 to 323 s (a 178 to 179 s mean, with or
+    without the second slide); square ones with the second container slide
+    run 68 to 166 s (129 s). So the Food Court's footprint and graph stay,
+    and the bowl, the islands' hull plating and the trawlers' bows carry
+    the look. The arena has no steam vent
+    (pack_arena writes movers only).
+L157. **Steam vents read cyan**: white steam would vanish on the salt and
+    sand; the fissure and the repeater glow cyan-white.
+L158. **Contact sheets** in docs/packs/seabed/*_contact.png are halved
+    (256-colour) copies of `make_packs.py --pack seabed --review DIR`'s
+    sheets; a plain make_packs.py run leaves them as they are.
+L159. **The drive image.** SEABED.GCP joined drive_packs.img (the shelf in
+    tools/test_pack/make.py, check.sh's copy) and the picker preview's
+    `-Dgc-pack`, after BONEYARD and before TEST. That moved pack_test.zig's
+    drive test (4 packs, 6 + 3 + 3 + 3 + 2 race rows, 5 arena rows) and the
+    picker preview (17 rows; Left wraps to row 16, twice more to SEABED's
+    CABLE TRENCH, row 14, still pack_base + 2). The benches' rows (6, 11,
+    arena 2) are unchanged. tools/packs/test_packs.py's header check still
+    lists the M7 packs only (its digest and check.sh's rebuild loop cover
+    SEABED). Cold Storage adds itself the same way, after SEABED.
+
+L170. **Cold Storage: glare ice is the `drift` word.** make_packs.py's
+    `drift,p=100` repaints every plain road tile of a segment with the
+    pack's DRIFT tiles, and Cold Storage's DRIFT and DRIFT_HEAVY (124, 125)
+    are glare ice with attribute coolant (grip 0.97), so a whole section is
+    slick with no new generator word. The crates stay off it (they need
+    plain floor). Glare runs sit on straights and gentle bends: on a
+    hairpin a MAINFRAME on ice slid into the island's tip and stayed
+    pinned there for 1,453 ticks (CALVING FRONT, seed 1), so no glare run
+    reaches a hairpin. The AI has no ice sense (L104 likewise for crust).
+L171. **Cold Storage: one look for both blasts.** The steam vents and the
+    switchyard's arc flashes are the same timed blast (the engine's flame
+    then steam puff); the pack's one tileset gives them one orange
+    outflow grate and one wall vent. The grated walkway is the `shadow`
+    word's band (SHADOW_TILES = the grate), cosmetic, attribute surface.
+L172. **The Moon Pool's ring of vents** is four blast records the arena's
+    `post` hook appends to its feat file (pack_arena.py takes a mover but
+    no blast, and reads the file back after `post`). It has no Sweeper
+    and no mover: the ring takes all four hazard slots. pack_arena's
+    report line says "4 mover(s)" because it counts every record.
+L173. **The calving block is the ice pinnacle's cell.** common.py
+    validates at most 8 props cells and the brief has 8 props, so the
+    mover shares the pinnacle (L133's rule), drawn as a faceted serac.
+L174. **The open sea** off Intake Shelf is the open edge's pit band
+    (`pit_band 8`) plus a `furrow` along the top of the map (pit tiles
+    over the wallpaper, no lip tile), so the water runs to the map's edge.
+    The frozen inlet is an `open` segment (water both sides) with the
+    crust band across it.
+L175. **The Moon Pool's floor** is glare ice everywhere but the crate
+    pads' 3x3 grates (build_arena wants plain floor round a pad), the
+    spawn pads, the two bays and the vents' lanes (attribute vent: grip).
+    The Food Court's graph (18 nodes, 8 one-way jumps) and pads are kept;
+    the pool is its fountain's circle. Rounds end by lives in 93 to 196 s
+    (mean 135); 4 to 10 of a round's 16 or 17 wrecks are falls (the pool
+    and the shafts), most with a recent hit, so they still score.
+L176. **The content drive image** (`drive_packs.img`, tools/test_pack/make.py
+    and check.sh's copy) holds COLDSTOR.GCP after BONEYARD: its tracks are
+    rows 12 to 14 and its arena row 3, so TEST moves to rows 15, 16 and
+    arena 4; pack_test.zig's counts follow (4 packs, 17 rows, 5 arenas).
+    The `-Dgc-pack` preview wasm and the benches keep their rows (DEADMALL
+    and BONEYARD come first). The Seabed adds its line beside it.

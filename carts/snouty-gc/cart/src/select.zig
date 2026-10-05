@@ -20,6 +20,8 @@ const input = @import("input.zig");
 const sound = @import("sound.zig");
 const net = @import("net.zig");
 const link_ui = @import("link_ui.zig");
+const battle_text = @import("battle_text.zig");
+const pack_rows = @import("pack_rows.zig");
 
 /// The racer and track shown (main.zig reads them on a pick).
 pub var racer: u8 = racers.snouty;
@@ -36,6 +38,9 @@ pub const Action = enum { none, pick, back };
 /// M5: the CIRCUIT's select (SPEC 8.1: the pick is kept for the whole
 /// Prix): no track row (the leagues set the tracks), `A ENTER THE PRIX`.
 pub var circuit: bool = false;
+/// M6: BATTLE's select: no track row either (the setup screen after it
+/// picks the arena), `A  TO THE ARENA`.
+pub var battle: bool = false;
 
 /// M4: the link race's select (SPEC 7.3), set by main.zig every frame
 /// (null: single player). No track row (the host's lobby picks it); A
@@ -50,6 +55,9 @@ pub const Link = struct {
     /// Host: both are ready on different racers (A starts the race).
     can_go: bool = false,
     rules: ?net.Rules = null,
+    /// M7: this badge lacks the rules' pack; (host) the partner does.
+    lacks: bool = false,
+    partner_lacks: bool = false,
 };
 pub var link: ?Link = null;
 
@@ -62,17 +70,29 @@ pub fn taken(r: u8) bool {
 
 pub fn enter(r: u8, t: u8, gc: bool) void {
     racer = r % racers.count;
-    track_index = t % @as(u8, @intCast(track.tracks.len));
+    track_index = t % pack_rows.race_count();
     row = 0;
     frames = 0;
     gc_mode = gc;
-    hud.init_minimap(track.tracks[track_index]);
+    show_track();
+}
+
+/// M7: the track row's track (a pack's is loaded to show it; null for a
+/// pack that cannot be raced).
+pub fn shown() ?*const track.Track {
+    return pack_rows.track_of(pack_rows.race_row(track_index), false);
+}
+
+fn show_track() void {
+    if (shown()) |t| hud.init_minimap(t);
 }
 
 /// One frame of input.
 pub fn update() Action {
     frames +%= 1;
     if (input.pressed(.a) or input.pressed(.start)) {
+        // M7: a pack that cannot be raced is not picked.
+        if (link == null and !circuit and !battle and shown() == null) return .none;
         sound.menu_confirm();
         return .pick;
     }
@@ -80,7 +100,7 @@ pub fn update() Action {
     if (link) |l| {
         // A ready badge keeps its racer; B takes the mark back.
         if (l.ready) return .none;
-    } else if (input.pressed(.down) and row == 0 and !circuit) {
+    } else if (input.pressed(.down) and row == 0 and !circuit and !battle) {
         row = 1;
         sound.menu_move();
     }
@@ -95,9 +115,9 @@ pub fn update() Action {
             racer = @intCast(@mod(@as(i32, racer) + step, racers.count));
             frames = 0;
         } else {
-            const n: i32 = @intCast(track.tracks.len);
+            const n: i32 = pack_rows.race_count();
             track_index = @intCast(@mod(@as(i32, track_index) + step, n));
-            hud.init_minimap(track.tracks[track_index]);
+            show_track();
         }
     }
     return .none;
@@ -187,24 +207,49 @@ pub fn draw(frame: u32) void {
     plain(">", 148, 116, arrow);
     if (circuit) {
         plain("A ENTER THE PRIX", 16, 116, dim);
+    } else if (battle) {
+        plain("A  TO THE ARENA", 80 - 60, 116, dim);
     } else if (row == 0) {
         // "A PICK  vTRACK" centred: 14 cells, the arrow drawn in cell 8.
         plain("A PICK", 24, 116, dim);
         hud.down_arrow(90, 117, dim);
         plain("TRACK", 96, 116, dim);
     } else {
-        // "TRACK n/N", centred.
-        var buf: [9]u8 = "TRACK 1/1".*;
-        buf[6] = '1' + track_index;
-        buf[8] = '0' + @as(u8, @intCast(track.tracks.len));
-        plain(&buf, 80 - 36, 116, hud.cyan);
+        // "TRACK n/N", centred (M7: two digits with packs).
+        var buf: [11]u8 = undefined;
+        const line = track_count(&buf, track_index + 1, pack_rows.race_count());
+        plain(line, 80 - @as(i32, @intCast(line.len * 4)), 116, hud.cyan);
     }
 }
 
 /// The track row's panel in the bio's place: the track's name, league,
 /// the mode's rule and the hazards on it, its outline on the right.
+pub fn track_count(buf: *[11]u8, i: u8, n: u8) []const u8 {
+    @memcpy(buf[0..6], "TRACK ");
+    var k: usize = 6;
+    for ([2]u8{ i, n }, 0..) |v, j| {
+        if (v >= 10) {
+            buf[k] = '0' + v / 10;
+            k += 1;
+        }
+        buf[k] = '0' + v % 10;
+        k += 1;
+        if (j == 0) {
+            buf[k] = '/';
+            k += 1;
+        }
+    }
+    return buf[0..k];
+}
+
 fn draw_track_panel() void {
-    const t = track.tracks[track_index];
+    const t = shown() orelse {
+        // M7: a pack that cannot be raced: its file and why.
+        const r = pack_rows.race_row(track_index);
+        plain(pack_rows.note(r), 4, 79, dim);
+        plain(pack_rows.reason(r), 4, 88, hud.coral);
+        return;
+    };
     plain(t.name, 4, 79, hud.cyan);
     plain(t.league.name, 4, 88, dim);
     if (gc_mode) {
@@ -219,11 +264,17 @@ fn draw_track_panel() void {
     const n = track.parse_hazards(t, &specs);
     var vents = false;
     var movers = false;
+    var crust = false;
     for (specs[0..n]) |*h| {
         vents = vents or h.kind == .blast;
         movers = movers or h.kind == .mover;
+        crust = crust or h.kind == .crust;
     }
-    const hz: []const u8 = if (vents and movers) "VENTS, SWEEPER" else if (vents) "EXHAUST VENTS" else if (movers) "THE SWEEPER" else "";
+    // Built-in leagues name their own hazards (the Runoff's vents, the
+    // Dumps' Sweeper); a pack's are named by kind.
+    const hz: []const u8 = if (t == &track.pack_track)
+        (if (vents and movers and crust) "MIXED HAZARDS" else if (vents and movers) "BLASTS, MOVERS" else if (vents and crust) "BLASTS, CRUST" else if (movers and crust) "MOVERS, CRUST" else if (vents) "BLASTS" else if (movers) "MOVERS" else if (crust) "BREAKABLE CRUST" else "")
+    else if (vents and movers) "VENTS, SWEEPER" else if (vents) "EXHAUST VENTS" else if (movers and crust) "MOVER, CRUST" else if (movers) "THE SWEEPER" else if (crust) "BREAKABLE CRUST" else "";
     plain(hz, 4, 106, hud.coral);
     hud.draw_outline(122, 79, ink);
 }
@@ -231,8 +282,16 @@ fn draw_track_panel() void {
 /// Link select (M4): the bio's place shows the host's rules, the
 /// partner's pick and this badge's mark; the bottom row the next press.
 fn draw_link_panel(l: *const Link, frame: u32) void {
-    if (l.rules) |ru| {
-        plain(track.tracks[ru.track % track.tracks.len].name, 4, 79, hud.cyan);
+    if (l.rules) |ru| if (ru.mode == .battle) {
+        // LINK BATTLE: the arena and CREWS, then LIVES and TIME.
+        plain(battle_text.place_name(ru), 4, 79, hud.cyan);
+        var cb: [7]u8 = "CREWS 4".*;
+        cb[6] = '0' + @as(u8, @min(ru.crews, 9));
+        plain(&cb, 156 - 56, 79, dim);
+        var rb: [24]u8 = undefined;
+        plain(battle_text.rules_line(&rb, ru.lives, ru.minutes), 4, 88, dim);
+    } else {
+        plain(pack_rows.place_name(false, ru.track, ru.pack), 4, 79, hud.cyan);
         var buf: [18]u8 = undefined;
         const mode = link_ui.mode_name(ru.mode);
         @memcpy(buf[0..mode.len], mode);
@@ -240,7 +299,11 @@ fn draw_link_panel(l: *const Link, frame: u32) void {
         buf[mode.len + 8] = '0' + @as(u8, @min(ru.crews, 9));
         plain(buf[0 .. mode.len + 9], 4, 88, dim);
     } else plain("WAITING FOR HOST", 4, 79, dim);
-    if (l.peer) |p| link_ui.peer_line(p, 97) else plain("PEER: PICKING", 4, 97, dim);
+    if (l.partner_lacks) {
+        plain("PARTNER LACKS PACK", 4, 97, hud.coral);
+    } else if (l.lacks) {
+        plain("YOU LACK THE PACK", 4, 97, hud.coral);
+    } else if (l.peer) |p| link_ui.peer_line(p, 97) else plain("PEER: PICKING", 4, 97, dim);
     plain("YOU", 4, 106, dim);
     plain(racers.roster[racer].name, 44, 106, hud.livery(racer));
     if (l.ready) plain("READY", 156 - 40, 106, hud.green);

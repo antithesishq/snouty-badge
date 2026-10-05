@@ -25,6 +25,8 @@ const weapons = @import("weapons.zig");
 const pickups = @import("pickups.zig");
 const hazards = @import("hazards.zig");
 const gc_mode = @import("gc_mode.zig");
+const battle = @import("battle.zig");
+const hunt = @import("hunt.zig");
 
 const World = world.World;
 const Car = world.Car;
@@ -32,8 +34,18 @@ const Input = world.Input;
 
 const world_mask: i32 = (1024 << fixed.Q) - 1;
 
+/// The track (or in BATTLE the arena) the World runs on.
 pub fn track_of(w: *const World) *const track.Track {
-    return track.tracks[w.track % track.tracks.len];
+    return table_of(w.mode, w.track);
+}
+
+/// `Setup.track` / `World.track` indexes `track.arenas` in battle,
+/// `track.tracks` otherwise.
+pub fn table_of(mode: world.Mode, i: u8) *const track.Track {
+    // M7: the loaded pack track or arena (pack.zig).
+    if (i >= track.pack_base) return &track.pack_track;
+    if (mode == .battle) return track.arenas[i % track.arenas.len];
+    return track.tracks[i % track.tracks.len];
 }
 
 /// A new race from a shared setup (SPEC 7.3): car i is racer i with its
@@ -41,7 +53,7 @@ pub fn track_of(w: *const World) *const track.Track {
 /// columns behind the start line, AI cars in front in an order shuffled
 /// from the seed, humans at the back. Deterministic.
 pub fn reset(w: *World, setup: world.Setup) void {
-    const t = track.tracks[setup.track % track.tracks.len];
+    const t = table_of(setup.mode, setup.track);
     track.select(t);
     w.* = .{};
     w.track = setup.track;
@@ -57,6 +69,7 @@ pub fn reset(w: *World, setup: world.Setup) void {
         w.hazards[k] = .{ .kind = h.kind, .timer = h.phase % h.period, .x = h.x0 << fixed.Q, .y = h.y0 << fixed.Q };
     }
     w.chips_on = setup.chips;
+    if (setup.mode == .battle) battle.init(w, setup);
     for (&w.cars, 0..) |*c, i| {
         c.* = .{ .racer = @intCast(i) };
         equip(c, setup.loadouts[i]);
@@ -92,6 +105,12 @@ pub fn reset(w: *World, setup: world.Setup) void {
             order[n] = @intCast(i);
             n += 1;
         }
+    }
+    // BATTLE: the cars start on the arena's spawn pads.
+    if (setup.mode == .battle) {
+        battle.place(w, order[0..n]);
+        update_ranks(w);
+        return;
     }
     for (order[0..n], 0..) |ci, slot| {
         const c = &w.cars[ci];
@@ -238,6 +257,7 @@ pub fn simulate(w: *World, inputs: [2]u8) void {
             pickups.update(w);
             if (w.chips_on) update_chips(w);
             update_ranks(w);
+            battle.update(w);
             gc_mode.update(w);
             gc_mode.script(w);
             // The lock and the AI aim for the next tick (what the reticle
@@ -245,6 +265,8 @@ pub fn simulate(w: *World, inputs: [2]u8) void {
             for (0..world.car_count) |i| {
                 weapons.update_lock(w, i);
                 ai.update_aim(w, i);
+                // BATTLE: the hunter's waypoint (hunt.zig).
+                if (w.mode == .battle) hunt.update_nav(w, i);
             }
             check_finished(w);
         },
@@ -313,6 +335,7 @@ fn step_car(w: *World, i: usize, in: Input) void {
         return;
     }
     if (c.immune > 0) c.immune -= 1;
+    if (c.safe > 0) c.safe -= 1;
     if (c.burst > 0) c.burst -= 1;
     if (c.rot_ticks > 0) c.rot_ticks -= 1;
     // BURST (Up): the press edge, a charge left, none running.
@@ -322,6 +345,8 @@ fn step_car(w: *World, i: usize, in: Input) void {
     }
     const in_air = c.hop > 0;
     if (in_air) c.hop -= 1;
+    // BATTLE's stunts (SPEC 8.3) on the tick the car touches down.
+    const landing = in_air and c.hop == 0 and w.mode == .battle;
 
     const hx = fixed.cos(c.heading);
     const hy = fixed.sin(c.heading);
@@ -385,8 +410,45 @@ fn step_car(w: *World, i: usize, in: Input) void {
     c.y = (c.y +% c.vy) & world_mask;
     c.on_coolant = false;
     c.on_bay = false;
-    if (!in_air) resolve_tiles(w, i, old_x, old_y);
-    if (c.wreck == .none) update_progress(w, i);
+    // The touchdown tick reads the floor too in battle, so a landing in a
+    // pit or on a wall is resolved on the tick the stunt is scored.
+    const wall = if (!in_air or landing) resolve_tiles(w, i, old_x, old_y) else false;
+    if (track.prop_reach > 0 and !in_air and c.wreck == .none) prop_contact(w, i);
+    if (landing) land(w, i, wall);
+    if (c.wreck == .none and w.mode != .battle) update_progress(w, i);
+}
+
+/// BATTLE's stunts on touching down (SPEC 8.3). STACK SMASH: landing on a
+/// car on the ground deals it `tuning.smash_damage` and a ram bounce away
+/// from the lander, a hit that counts for the elimination. CLEAN LANDING:
+/// a landing clear of the walls (and of a pit: the car is still up) gives
+/// back one burst charge. A car in SAFE MODE smashes nobody.
+fn land(w: *World, i: usize, wall: bool) void {
+    const c = &w.cars[i];
+    if (c.wreck != .none or !c.active) return;
+    var smashed = false;
+    if (c.safe == 0) {
+        const reach: i32 = 2 * tuning.car_radius;
+        for (&w.cars, 0..) |*o, j| {
+            if (j == i or !can_collide(o) or o.immune > 0) continue;
+            const dx = wrap_px((o.x - c.x) >> fixed.Q);
+            const dy = wrap_px((o.y - c.y) >> fixed.Q);
+            const d2 = dx * dx + dy * dy;
+            if (d2 >= reach * reach) continue;
+            const n = normal_of(dx << 8, dy << 8, d2 << 16);
+            o.vx += fixed.mul(n.nx, tuning.smash_bounce);
+            o.vy += fixed.mul(n.ny, tuning.smash_bounce);
+            o.shake = 8;
+            weapons.emit(w, .stack_smash, @intCast(i), @intCast(j), tuning.smash_damage, o.x, o.y);
+            hurt(w, j, @intCast(i), @divTrunc(@as(i32, tuning.smash_damage) * 100 + tuning.battle_damage_pct - 1, tuning.battle_damage_pct), true);
+            smashed = true;
+        }
+    }
+    if (smashed or wall) return;
+    if (c.burst_charges < c.burst_max) {
+        c.burst_charges += 1;
+        weapons.emit(w, .clean_landing, @intCast(i), c.burst_charges, 0, c.x, c.y);
+    }
 }
 
 /// Corner offsets of the 24x12 footprint for a heading, world px (not Q16).
@@ -407,7 +469,8 @@ fn corners(c: *const Car) [4][2]i32 {
 
 /// Tile attributes under the corners: walls push back and reflect, a fully
 /// off-track footprint is a fall into the pit, features flag the car.
-fn resolve_tiles(w: *World, i: usize, old_x: i32, old_y: i32) void {
+/// True when a corner was in a wall.
+fn resolve_tiles(w: *World, i: usize, old_x: i32, old_y: i32) bool {
     const c = &w.cars[i];
     const t = track_of(w);
     const cs = corners(c);
@@ -418,7 +481,8 @@ fn resolve_tiles(w: *World, i: usize, old_x: i32, old_y: i32) void {
     for (cs) |k| {
         const px = (c.x >> fixed.Q) + k[0];
         const py = (c.y >> fixed.Q) + k[1];
-        switch (t.attr_at(px, py)) {
+        const attr = t.attr_at(px, py);
+        switch (attr) {
             .off => off_count += 1,
             .wall => {
                 wall_hit = true;
@@ -439,8 +503,22 @@ fn resolve_tiles(w: *World, i: usize, old_x: i32, old_y: i32) void {
             },
             .coolant => c.on_coolant = true,
             .bay => c.on_bay = true,
+            // M7: breakable crust is floor until its region breaks.
+            .crust => if (hazards.crust_broken(w, px, py)) {
+                off_count += 1;
+            },
             .ramp => if (c.hop == 0) {
                 c.hop = tuning.ramp_ticks;
+                c.air = tuning.ramp_ticks;
+            },
+            // The arena's one-way ramps (M6): only a car moving the way the
+            // tile faces takes off.
+            .kicker, .jump => if (c.hop == 0) {
+                const f = track.facing(t.tile_at(px, py));
+                if (f[0] * c.vx + f[1] * c.vy > 0) {
+                    c.hop = if (attr == .kicker) tuning.kicker_ticks else tuning.ramp_ticks;
+                    c.air = c.hop;
+                }
             },
             else => {},
         }
@@ -479,6 +557,7 @@ fn resolve_tiles(w: *World, i: usize, old_x: i32, old_y: i32) void {
         }
     }
     if (off_count == 4 and c.immune == 0 and c.wreck == .none) wreck(w, i, .fall);
+    return wall_hit;
 }
 
 /// Wall (and hulk) impact damage for a normal speed into it, Q16.
@@ -505,8 +584,20 @@ pub fn damage(w: *World, victim: usize, attacker: u8, amount: i32) void {
 /// `damage`, where `weapon` says whether a landed hit by `attacker` counts
 /// as a weapon hit (GARBAGE COLLECTION's tag passes the mark on; rams do
 /// not).
-fn hurt(w: *World, victim: usize, attacker: u8, amount: i32, weapon: bool) void {
-    if (!w.combat or amount <= 0) return;
+fn hurt(w: *World, victim: usize, attacker: u8, amount_in: i32, weapon: bool) void {
+    if (!w.combat or amount_in <= 0) return;
+    // BATTLE scales the race's damage, carrying the fraction in the car
+    // (`Car.dmg_frac`, hundredths) so a 4-point PING is not rounded up.
+    var amount = amount_in;
+    if (w.mode == .battle) {
+        const c = &w.cars[victim];
+        const total = amount_in * tuning.battle_damage_pct + c.dmg_frac;
+        amount = @divTrunc(total, 100);
+        if (amount <= 0 or !c.active or c.wreck != .none or c.immune > 0 or c.finished or c.sudo > 0) {
+            if (c.active and c.wreck == .none and c.immune == 0 and c.sudo == 0) c.dmg_frac = @intCast(@min(total, 99));
+            if (amount <= 0) return;
+        } else c.dmg_frac = @intCast(@mod(total, 100));
+    }
     const c = &w.cars[victim];
     // ECC (PLATING L3) corrects single-bit errors: small hits do nothing.
     if (c.ecc and amount <= tuning.ecc_ignore) return;
@@ -570,6 +661,8 @@ pub fn wreck(w: *World, i: usize, cause: world.Wreck) void {
     }, tuning.message_ticks);
     // GARBAGE COLLECTION: a wreck while marked is a collection.
     gc_mode.on_wreck(w, i);
+    // BATTLE: the elimination, a life, out of lives.
+    if (w.mode == .battle) battle.on_wreck(w, i, killer);
 }
 
 /// After the WATCHDOG delay: back on the centerline sample nearest the
@@ -577,10 +670,11 @@ pub fn wreck(w: *World, i: usize, cause: world.Wreck) void {
 /// fell into a ramp pit comes back before the ramp), facing along it,
 /// stopped, immune.
 fn respawn(w: *World, i: usize) void {
+    if (w.mode == .battle) return battle.respawn(w, i);
     const c = &w.cars[i];
     const t = track_of(w);
     var k: u8 = 0;
-    while (k < 32 and t.attr_at(t.sample(c.progress).x, t.sample(c.progress).y) == .off) : (k += 1) c.progress -%= 1;
+    while (k < 32 and pit_at(w, t, t.sample(c.progress).x, t.sample(c.progress).y)) : (k += 1) c.progress -%= 1;
     const s = t.sample(c.progress);
     c.x = @as(i32, s.x) << fixed.Q;
     c.y = @as(i32, s.y) << fixed.Q;
@@ -593,6 +687,46 @@ fn respawn(w: *World, i: usize) void {
     // Full armor, kept ammo (SPEC 5.3).
     c.armor = c.armor_max;
     weapons.emit(w, .respawn, @intCast(i), 0, 0, c.x, c.y);
+}
+
+/// No floor at world px (x, y): off-track, or (M7) broken crust.
+pub fn pit_at(w: *const World, t: *const track.Track, x: i32, y: i32) bool {
+    return switch (t.attr_at(x, y)) {
+        .off => true,
+        .crust => hazards.crust_broken(w, x, y),
+        else => false,
+    };
+}
+
+/// M7, the solid props (SPEC 19.3): a car on the ground whose centre comes
+/// within a prop's radius plus `tuning.car_radius` is pushed out of it and
+/// loses its speed into it as at a wall (with the wall's damage).
+fn prop_contact(w: *World, i: usize) void {
+    const c = &w.cars[i];
+    for (0..track.prop_n) |pk| {
+        const pr = track.prop(pk);
+        if (pr.radius == 0) continue;
+        const reach: i32 = @as(i32, pr.radius) + tuning.car_radius;
+        const dx = wrap_px((c.x >> fixed.Q) - @as(i32, pr.x));
+        const dy = wrap_px((c.y >> fixed.Q) - @as(i32, pr.y));
+        if (@abs(dx) >= reach or @abs(dy) >= reach) continue;
+        const d2 = dx * dx + dy * dy;
+        if (d2 >= reach * reach) continue;
+        const d: i32 = @intCast(fixed.isqrt(@intCast(d2)));
+        // Unit normal from the prop to the car (Q16; east when the car sits
+        // on the prop's centre).
+        const nx: i32 = if (d == 0) fixed.one else @divTrunc(dx << fixed.Q, d);
+        const ny: i32 = if (d == 0) 0 else @divTrunc(dy << fixed.Q, d);
+        nudge(w, c, nx * (reach - d), ny * (reach - d));
+        const vn = fixed.mul(c.vx, nx) + fixed.mul(c.vy, ny);
+        if (vn >= 0) continue;
+        const k = fixed.mul(vn, (256 + tuning.wall_restitution) << 8);
+        c.vx = fixed.mul(c.vx - fixed.mul(k, nx), tuning.wall_speed_keep);
+        c.vy = fixed.mul(c.vy - fixed.mul(k, ny), tuning.wall_speed_keep);
+        c.shake = 4;
+        const dmg = wall_damage(-vn);
+        damage(w, i, world.no_car, if (c.prefetch > 0) dmg >> 1 else dmg);
+    }
 }
 
 /// Squared distance from the car to sample i, in world px^2 (wrapping).
@@ -702,7 +836,7 @@ fn update_chips(w: *World) void {
 /// (attract, tests), when the leader has; in GARBAGE COLLECTION when one
 /// car is left.
 fn check_finished(w: *World) void {
-    if (w.phase != .racing) return;
+    if (w.phase != .racing or w.mode == .battle) return;
     if (w.mode == .gc) {
         if (w.gc.survivor != world.no_car) w.phase = .finished;
         return;
@@ -865,8 +999,9 @@ fn contact(w: *World, ia: usize, ib: usize, dx8: i32, dy8: i32, d2: i32) void {
             a.vx -= fixed.mul(nx, tuning.sudo_bounce);
             a.vy -= fixed.mul(ny, tuning.sudo_bounce);
         }
-        hurt(w, ib, @intCast(ia), to_b, false);
-        hurt(w, ia, @intCast(ib), to_a, false);
+        // SAFE MODE (BATTLE): a car that cannot be hit cannot ram either.
+        hurt(w, ib, @intCast(ia), if (a.safe > 0) 0 else to_b, false);
+        hurt(w, ia, @intCast(ib), if (b.safe > 0) 0 else to_a, false);
     }
 }
 
@@ -907,7 +1042,11 @@ pub fn fine_progress(w: *const World, c: *const Car) i32 {
 /// The car's last stretch: its last lap, or in GARBAGE COLLECTION the
 /// final three cars (the AI saves its last-lap pickups for it).
 pub fn last_lap(w: *const World, c: *const Car) bool {
-    return if (w.mode == .gc) gc_mode.active_count(w) <= 3 else c.lap + 1 >= w.laps;
+    return switch (w.mode) {
+        .gc => gc_mode.active_count(w) <= 3,
+        .battle => battle.final_stretch(w, c),
+        .race, .attract => c.lap + 1 >= w.laps,
+    };
 }
 
 /// Progress in world px along the centerline (the rubber band's measure).
@@ -920,6 +1059,7 @@ pub fn progress_px(w: *const World, c: *const Car) i32 {
 /// collected car's (GARBAGE COLLECTION: its place when it went out); the
 /// cars still running rank 1..n among themselves.
 pub fn update_ranks(w: *World) void {
+    if (w.mode == .battle) return battle.update_ranks(w);
     var fine: [world.car_count]i32 = undefined;
     for (&w.cars, 0..) |*c, i| fine[i] = if (c.finished or !c.active) 0 else fine_progress(w, c);
     for (&w.cars, 0..) |*c, i| {

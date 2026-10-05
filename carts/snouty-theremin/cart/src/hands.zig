@@ -88,6 +88,39 @@ pub fn read(frame: *const Frame, cfg: Config) Hands {
     return h;
 }
 
+/// Where the hand is over the grid, for the one-hand highlight: from
+/// lib/tof_pose.zig's coverage-weighted centroid, which moves square to
+/// square with the hand. The closest zone (`pitch_cell`) does not: over a
+/// hand most zones read about the same distance, so it jumps between
+/// fingertips, knuckles and the forearm whichever way the hand goes.
+pub const Track = struct {
+    /// The screen cell under the hand (row * 3 + col), null: no hand.
+    cell: ?u4 = null,
+    /// Continuous position, -1..1 at the outer cells' centres; y up.
+    x: f32 = 0,
+    y: f32 = 0,
+};
+
+/// How far past a cell edge (in cells) the hand must go before the
+/// highlight moves: no flicker while the hand rests on a boundary.
+pub const track_margin: f32 = 0.15;
+
+pub fn track(prev: Track, present: bool, x: f32, y: f32) Track {
+    if (!present) return .{};
+    const col = track_axis(if (prev.cell) |c| c % 3 else null, x);
+    // Rows count down the screen; y is up.
+    const row = track_axis(if (prev.cell) |c| c / 3 else null, -y);
+    return .{ .cell = @as(u4, row) * 3 + col, .x = x, .y = y };
+}
+
+fn track_axis(prev: ?u4, v: f32) u2 {
+    if (prev) |p| {
+        const centre: f32 = @floatFromInt(@as(i32, p) - 1);
+        if (@abs(v - centre) < 0.5 + track_margin) return @intCast(p);
+    }
+    return if (v < -0.5) 0 else if (v > 0.5) 2 else 1;
+}
+
 // ---- Host tests ----
 
 const std = @import("std");
@@ -152,4 +185,54 @@ test "hands: transpose turns rows into columns" {
     const h = read(&f, .{ .layout = .two_hand, .pitch_left = true, .orientation = .{ .transpose = true } });
     try testing.expectEqual(@as(?u16, 140), h.pitch_mm);
     try testing.expectEqual(@as(?u16, null), h.volume_mm);
+}
+
+test "hands: the track follows the centroid across cells, with hysteresis" {
+    var t = track(.{}, true, 0, 0);
+    try testing.expectEqual(@as(?u4, 4), t.cell);
+    // Just past the edge: stays in the centre cell.
+    t = track(t, true, 0.6, 0);
+    try testing.expectEqual(@as(?u4, 4), t.cell);
+    // Well past it: the right cell, and back needs the same margin.
+    t = track(t, true, 0.7, 0);
+    try testing.expectEqual(@as(?u4, 5), t.cell);
+    t = track(t, true, 0.4, 0);
+    try testing.expectEqual(@as(?u4, 5), t.cell);
+    t = track(t, true, 0.3, 0);
+    try testing.expectEqual(@as(?u4, 4), t.cell);
+    // y is up: the top row is row 0. Beyond the grid clamps to the edge.
+    t = track(t, true, -2, 1.5);
+    try testing.expectEqual(@as(?u4, 0), t.cell);
+    // No hand: no cell; a fresh hand takes the plain nearest cell.
+    t = track(t, false, 0, 0);
+    try testing.expectEqual(@as(?u4, null), t.cell);
+    try testing.expectEqual(@as(?u4, 8), track(t, true, 0.55, -0.55).cell);
+}
+
+test "hands: a hand sweeping across the wide map walks the track left to right" {
+    const tof = @import("tof");
+    var est: tof.pose.Estimator = .{ .config = .{ .fov_x_deg = 41, .fov_y_deg = 52, .max_mm = 650, .min_confidence = 8 } };
+    // A flat hand 25 cm up, a little tilted, with the sensor's ~2 mm noise:
+    // the closest zone is a coin toss, the centroid is not.
+    var scene: tof.synth.Scene = .{ .fov_x_deg = 41, .fov_y_deg = 52, .noise_mm = 3 };
+    var seed: u32 = 7;
+    var t: Track = .{};
+    var last_col: u4 = 0;
+    var cols: u8 = 0;
+    const n = 90;
+    for (0..n) |i| {
+        const s: f32 = @as(f32, @floatFromInt(i)) / (n - 1);
+        scene.hand = .{ .x_mm = -140 + 280 * s, .z_mm = 250, .pitch = 0.2 };
+        var f: Frame = .{ .seq = @intCast(i), .time_us = 1_000_000 + @as(u64, i) * 33_333 };
+        tof.synth.render(&scene, .{}, &f, null, &seed);
+        const p = est.update(&f, null, .{});
+        t = track(t, p.present, p.x, p.y);
+        const c = t.cell orelse continue;
+        try testing.expectEqual(@as(u4, 1), c / 3);
+        try testing.expect(c % 3 >= last_col);
+        if (c % 3 != last_col or cols == 0) cols += 1;
+        last_col = c % 3;
+    }
+    try testing.expectEqual(@as(u4, 2), last_col);
+    try testing.expectEqual(@as(u8, 3), cols);
 }

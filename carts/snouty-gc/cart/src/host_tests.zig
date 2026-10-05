@@ -25,4 +25,15 @@ test {
     _ = @import("career_test.zig");
     _ = @import("panel_text_test.zig");
     _ = @import("net_compat_test.zig");
+    // M6 BATTLE: the rules and the hunter (Track A), the presentation (Track B).
+    _ = @import("battle.zig");
+    _ = @import("hunt.zig");
+    _ = @import("battle_test.zig");
+    _ = @import("battle_ui_test.zig");
+    // M7 track packs: every pack module's tests (pack_test.zig imports them).
+    _ = @import("pack_test.zig");
+    // M9 Track S: The Seabed pack.
+    _ = @import("seabed_test.zig");
+    // M9 more packs: Cold Storage (Track C).
+    _ = @import("cold_storage_test.zig");
 }

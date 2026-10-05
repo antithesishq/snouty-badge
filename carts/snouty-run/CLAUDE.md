@@ -73,7 +73,7 @@ roughly 48-64 px tall reads well from a lanyard.
 
 ## Building
 
-Zig `0.17.0-dev.1936+5a625d5f3` (upstream's pin) is installed at
+Zig `0.17.0` (the release) is installed at
 `~/.local/bin/zig`; `export PATH="$HOME/.local/bin:$PATH"`.
 
 Commands in this file run from this cart's directory (`carts/snouty-run/`)

@@ -31,8 +31,11 @@ pub const Attr = enum(u8) {
     surface = 1,
     /// Wreckage wall (Zero's rail).
     wall = 2,
-    /// Zero's overclock pad; no GC tile uses it.
-    reserved = 3,
+    /// M6, the BATTLE arena: a kicker, a long one-way ramp
+    /// (`tuning.kicker_ticks` airborne; Zero's unused overclock pad value).
+    /// Like `jump` it launches only a car moving the way the tile faces
+    /// (`facing`).
+    kicker = 3,
     /// Coolant: grip falls to 0.97 (Zero's throttled zone).
     coolant = 4,
     /// Service bay: repairs armor from M2 (Zero's cold aisle).
@@ -44,8 +47,35 @@ pub const Attr = enum(u8) {
     start = 8,
     sector1 = 9,
     sector2 = 10,
+    /// M6, the BATTLE arena: a one-way ramp of a race ramp's air time (the
+    /// gap jumps and the wall kickers).
+    jump = 11,
+    /// M7 (track packs, docs/PACKS.md): breakable crust, tiles
+    /// `crust_tile` .. + 2. Drivable until its region (a crust hazard)
+    /// breaks; then a car on the ground over it falls, as into a pit.
+    crust = 12,
     _,
 };
+
+/// The crust tiles (intact, cracked, broken; all attribute `crust`).
+pub const crust_tile: u8 = 121;
+
+/// Tile indices of the arena's one-way ramps (tools/leagues.py KICKER,
+/// JUMP): base + direction (0 E, 1 S, 2 W, 3 N).
+pub const kicker_tile: u8 = 64;
+pub const jump_tile: u8 = 92;
+
+/// The way a `kicker` or `jump` tile faces, from its tile index: a unit
+/// vector in whole px (x, y), y down.
+pub fn facing(tile: u8) [2]i32 {
+    const base = if (tile >= jump_tile) jump_tile else kicker_tile;
+    return switch ((tile -% base) & 3) {
+        0 => .{ 1, 0 },
+        1 => .{ 0, 1 },
+        2 => .{ -1, 0 },
+        else => .{ 0, -1 },
+    };
+}
 
 /// A league's art. The tiles and the horizon are stored packed (the map
 /// format, `unpack`) and unpacked into one shared RAM slot (`art_tiles`,
@@ -118,6 +148,18 @@ pub const Track = struct {
     /// `world.hazard_max`; `parse_hazards`): the generic kinds of SPEC
     /// 19.4 with this track's numbers. Empty for a track without hazards.
     feat: []const u8 = &.{},
+    /// M6: a BATTLE arena's blob (`parse_arena`: spawn pads, crate pads,
+    /// the navigation field); empty for a race track. An arena's `center`
+    /// is a ring round its outer lanes for the race code that reads one;
+    /// battle never ranks or respawns by it.
+    arena: []const u8 = &.{},
+    /// M7: scenery props, `prop_record` bytes each (cell, radius, x u16,
+    /// y u16; `prop`); empty for the built-in tracks. `cell` indexes
+    /// `sheet`'s strip.
+    props: []const u8 = &.{},
+    /// M7: the props sheet (a pack's cells this track uses, as one strip),
+    /// null for a track without one.
+    sheet: ?*const PropSheet = null,
 
     /// Sample i (wrapping). Stored in 6 bytes (M3, the RAM budget): a u32
     /// with x in bits 0..9, y in 10..19 and the tangent's top 12 bits in
@@ -148,6 +190,83 @@ pub const Track = struct {
         return @fromBackingInt(self.attr[self.tile_at(wx, wy) & (tile_count - 1)]);
     }
 };
+
+/// M7: a props sheet in RAM (pack.zig fills it): `cells` cells of
+/// `cell_w` x `cell_h` side by side in one strip `cells * cell_w` px wide,
+/// 4 bpp, the left pixel in the low nibble (sprites.zig `Sheet`), and its
+/// 16-entry RGB565 palette (entry 0 transparent).
+pub const PropSheet = struct {
+    bytes: []const u8 = &.{},
+    cells: u8 = 0,
+    cell_w: u8 = 0,
+    cell_h: u8 = 0,
+    pal: []const u8 = &.{},
+};
+
+/// A scenery prop (SPEC 19.3) as the sim and the depth list read it: its
+/// foot at (x, y) world px, a solid circle of `radius` px (0: decoration),
+/// drawn with `cell` of the track's `sheet`.
+pub const Prop = struct { x: u16 = 0, y: u16 = 0, cell: u8 = 0, radius: u8 = 0 };
+pub const prop_max = 24;
+pub const prop_record = 6;
+/// The selected track's props: `prop(k)` for k < `prop_n` (set by
+/// `select`; read from `current.props`, no copy: RAM, PLAN M7).
+pub var prop_n: u8 = 0;
+/// The largest solid radius among them (0: none; the sim skips the test).
+pub var prop_reach: u8 = 0;
+
+pub fn prop(k: usize) Prop {
+    const b = current.props[k * prop_record ..][0..prop_record];
+    return .{ .cell = b[0], .radius = b[1], .x = std.mem.readInt(u16, b[2..4], .little) & 1023, .y = std.mem.readInt(u16, b[4..6], .little) & 1023 };
+}
+
+// --- M7 track packs (docs/PACKS.md): the loaded pack track ----------------
+//
+// A pack track runs through the same `League` / `Track` slices as a
+// built-in one: pack.zig loads its art into `art_tiles` / `art_horizon`,
+// its map into `map_ram`, and everything else into its own slot, then
+// points `pack_league` and `pack_track` at them. `Setup.track` and
+// `World.track` values from `pack_base` up mean "the loaded pack track"
+// (`sim.table_of`); which pack and track is the loader's (and the link
+// rules'), not the World's.
+
+pub const pack_base: u8 = 0x80;
+pub var pack_league: League = .{ .name = "", .tiles_packed = &.{}, .horizon_packed = &.{}, .pal = @embedFile("gen/tracks/dumps_pal.bin") };
+pub var pack_track: Track = .{ .name = "", .league = &pack_league, .map_packed = &.{}, .attr = dumps_attr, .center = @embedFile("gen/tracks/landfill_loop_center.bin") };
+/// The track whose map is in `map_ram` (null: none, or a failed load).
+pub var map_owner: ?*const Track = null;
+/// pack.zig: unpack the loaded pack track's art and map into the slots
+/// again (after a built-in track used them); false if the drive no longer
+/// gives the same pack.
+pub var pack_reload: ?*const fn () bool = null;
+
+/// M7, breakable crust: show each crust region as its World state says
+/// (render side, once a frame: intact `crust_tile`, cracked + 1, broken
+/// + 2). Rewrites only crust tiles in `map_ram`, which all share the
+/// attribute `crust`, so nothing the sim reads changes.
+pub fn crust_look(states: []const world.Hazard) void {
+    for (hazard_specs[0..hazard_n], 0..) |*h, k| {
+        if (h.kind != .crust or k >= states.len) continue;
+        const want: u8 = crust_tile + switch (states[k].state) {
+            .idle => @as(u8, 0),
+            .warn => 1,
+            .active => 2,
+        };
+        if (crust_shown[k] == want) continue;
+        crust_shown[k] = want;
+        const x0: usize = @intCast(@max(0, h.x0) >> 3);
+        const y0: usize = @intCast(@max(0, h.y0) >> 3);
+        const x1: usize = @min(map_side, @as(usize, @intCast(@max(0, h.x1))) >> 3);
+        const y1: usize = @min(map_side, @as(usize, @intCast(@max(0, h.y1))) >> 3);
+        var y = y0;
+        while (y < y1) : (y += 1) {
+            for (map_ram[y * map_side + x0 .. y * map_side + @max(x0, x1)]) |*v| {
+                if (v.* >= crust_tile and v.* < crust_tile + 3) v.* = want;
+            }
+        }
+    }
+}
+var crust_shown: [world.hazard_max]u8 = @splat(0);
 
 /// The selected track's unpacked map, map[y][x] (filled by `select`).
 pub var map_ram: [map_side * map_side]u8 = undefined;
@@ -197,11 +316,18 @@ pub var chip_n: u8 = 0;
 ///   `travel` ticks (derived); a car within `size + car_radius` of it while
 ///   it crosses takes `damage` once a crossing and a shove of `push` away
 ///   from it plus the mover's own velocity.
-/// - `turret`, `crust`: reserved (decoded, never run).
+/// - `crust` (M7): a breakable crust region, the whole-tile rectangle (x0,
+///   y0) to (x1, y1) (exclusive). The first touch of a car on the ground
+///   on one of its crust tiles cracks it; `warn` ticks later it breaks and
+///   stays broken `period` ticks, a pit for the cars on it (hazards.zig).
+/// - `turret`: reserved (decoded, never run; a pack with one is refused).
 ///
 /// `phase` is the cycle tick at GO, so hazards on one track can be staggered.
 pub const HazardSpec = struct {
     kind: world.HazardKind = .none,
+    /// M7: a mover drawn with its track's props cell `sprite - 1` (feat
+    /// byte 0 bits 4..7; 0: the cart's Sweeper).
+    sprite: u8 = 0,
     warn: u16 = 0,
     size: i32 = 0,
     damage: u8 = 0,
@@ -228,6 +354,137 @@ pub const HazardSpec = struct {
 /// tools/build_tracks.py `hazard_bytes` writes them and checks the cycles fit.
 pub const hazard_record = 20;
 
+// --- BATTLE arenas (M6, SPEC 8.3) ----------------------------------------------
+//
+// The arena blob (tools/build_arena.py writes it), little endian:
+//   header 8 bytes: spawn_n, pad_n, node_n, cell_shift (32 px cells: 5),
+//                   grid (cells a side: 32), 1 (the ground table is
+//                   there), 2 zero bytes
+//   spawn_n x 6:    x u16, y u16 (world px, the pad's centre), heading u16
+//   pad_n x 4:      x u16, y u16 (an RMA crate pad's centre)
+//   node_n x 6:     x u16, y u16, jump u8 (the node this one jumps to over
+//                   a kicker or jump, `no_node` none), flags u8 (`node_bay`,
+//                   `node_jump`; bits 4..7 the jump's run-up speed in 1/4
+//                   px/tick, `Node.need`)
+//   node_n^2:       next hop, next[from * node_n + to] (`no_node` when from
+//                   == to)
+//   node_n^2:       the same over the ground only (no jump edges)
+//   grid^2:         cells[cy * grid + cx], the node to head for from that
+//                   cell (the nearest with a clear ground line), `no_node`
+//                   outside the arena
+
+/// Navigation nodes an arena may have, spawn pads, and "no node".
+pub const nav_max = 48;
+pub const spawn_max = 8;
+pub const no_node: u8 = 0xFF;
+/// Node flags: a service bay; the approach to a jump (`Node.jump`).
+pub const node_bay: u8 = 1;
+pub const node_jump: u8 = 2;
+
+pub const Spawn = struct { x: u16 = 0, y: u16 = 0, heading: u16 = 0 };
+pub const Node = struct {
+    x: u16 = 0,
+    y: u16 = 0,
+    jump: u8 = no_node,
+    flags: u8 = 0,
+
+    /// The run-up speed this node's jump needs, Q16 px/tick (0: any).
+    pub fn need(self: Node) i32 {
+        return @as(i32, self.flags >> 4) << (fixed.Q - 2);
+    }
+};
+
+/// The selected arena's data (filled by `select`, like `crate_spots`; empty
+/// for a race track). The hunter AI and the KERNEL PANIC packet route over
+/// the nodes: from node a toward node b the next node is `hop(a, b)`; a
+/// world point's node to head for is `cell_node(x, y)`.
+pub const Arena = struct {
+    spawn_n: u8 = 0,
+    spawns: [spawn_max]Spawn = @splat(.{}),
+    node_n: u8 = 0,
+    nodes: [nav_max]Node = @splat(.{}),
+    /// The next-hop tables (with the jumps, and over the ground only) and
+    /// the cell grid (slices of the track data).
+    next: []const u8 = &.{},
+    ground: []const u8 = &.{},
+    cells: []const u8 = &.{},
+    cell_shift: u5 = 5,
+    grid: u8 = 0,
+
+    /// The node to head for from world px (x, y) (wrapping), `no_node`
+    /// outside the arena or with no arena.
+    pub fn cell_node(self: *const Arena, x: i32, y: i32) u8 {
+        if (self.grid == 0) return no_node;
+        const g: i32 = self.grid;
+        const cx = (x & 1023) >> self.cell_shift;
+        const cy = (y & 1023) >> self.cell_shift;
+        if (cx >= g or cy >= g) return no_node;
+        return self.cells[@intCast(cy * g + cx)];
+    }
+
+    /// The node after `from` on the way to `to` (`to` when adjacent,
+    /// `no_node` when from == to or either is out of range).
+    pub fn hop(self: *const Arena, from: u8, to: u8) u8 {
+        if (from >= self.node_n or to >= self.node_n) return no_node;
+        return self.next[@as(usize, from) * self.node_n + to];
+    }
+
+    /// `hop` over the ground only (no jump edges).
+    pub fn ground_hop(self: *const Arena, from: u8, to: u8) u8 {
+        if (from >= self.node_n or to >= self.node_n) return no_node;
+        return self.ground[@as(usize, from) * self.node_n + to];
+    }
+};
+pub var arena: Arena = .{};
+
+/// Decode `t.arena` into `out` and its crate pads into `pads[0..pad_n]`;
+/// false for a track without one (or a blob shorter than its header says,
+/// or with more nodes or spawns than the caches hold: the generator keeps
+/// within them).
+pub fn parse_arena(t: *const Track, out: *Arena, pads: *[world.crate_max]CrateSpot, pad_n: *u8) bool {
+    out.* = .{};
+    const b = t.arena;
+    if (b.len < 8) return false;
+    const sn: usize = b[0];
+    const pn: usize = b[1];
+    const nn: usize = b[2];
+    const grid: usize = b[4];
+    if (sn > spawn_max or pn > world.crate_max or nn > nav_max) return false;
+    const rd = struct {
+        fn u(bytes: []const u8, at: usize) u16 {
+            return std.mem.readInt(u16, bytes[at..][0..2], .little);
+        }
+    }.u;
+    var at: usize = 8;
+    if (b[5] != 1 or b.len < at + sn * 6 + pn * 4 + nn * 6 + 2 * nn * nn + grid * grid) return false;
+    for (0..sn) |k| {
+        out.spawns[k] = .{ .x = rd(b, at), .y = rd(b, at + 2), .heading = rd(b, at + 4) };
+        at += 6;
+    }
+    for (0..pn) |k| {
+        pads[k] = .{ .x = rd(b, at), .y = rd(b, at + 2) };
+        at += 4;
+    }
+    for (0..nn) |k| {
+        out.nodes[k] = .{ .x = rd(b, at), .y = rd(b, at + 2), .jump = b[at + 4], .flags = b[at + 5] };
+        at += 6;
+    }
+    // M7 (packs): every table entry and jump names a node, or none.
+    for (b[at .. at + 2 * nn * nn + grid * grid]) |v| if (v != no_node and v >= nn) return false;
+    for (out.nodes[0..nn]) |nd| if (nd.jump != no_node and nd.jump >= nn) return false;
+    out.spawn_n = @intCast(sn);
+    out.node_n = @intCast(nn);
+    out.next = b[at..][0 .. nn * nn];
+    at += nn * nn;
+    out.ground = b[at..][0 .. nn * nn];
+    at += nn * nn;
+    out.cells = b[at..][0 .. grid * grid];
+    out.grid = @intCast(grid);
+    out.cell_shift = @intCast(@min(b[3], 10));
+    pad_n.* = @intCast(pn);
+    return true;
+}
+
 /// The selected track's hazards, `hazard_specs[0..hazard_n]`, drive
 /// `World.hazards[0..hazard_n]` (filled by `select`, like `crate_spots`).
 pub var hazard_specs: [world.hazard_max]HazardSpec = @splat(.{});
@@ -245,7 +502,8 @@ pub fn parse_hazards(t: *const Track, out: *[world.hazard_max]HazardSpec) u8 {
             }
         }.u;
         var h = HazardSpec{
-            .kind = if (b[0] <= @backingInt(world.HazardKind.crust)) @fromBackingInt(b[0]) else .none,
+            .kind = if (b[0] & 15 <= @backingInt(world.HazardKind.crust)) @fromBackingInt(b[0] & 15) else .none,
+            .sprite = b[0] >> 4,
             .warn = b[1],
             .size = b[2],
             .damage = b[3],
@@ -283,12 +541,33 @@ inline fn wrap_px(d: i32) i32 {
 /// lookup on `t` and before `render.set_track(t)`; ~16 K byte copies
 /// (~36 K when the league changes).
 pub fn select(t: *const Track) void {
-    load_art(t.league);
-    unpack_map(t.map_packed, &map_ram);
-    crate_n = find_crates(t, &crate_spots);
+    if (t.map_packed.len > 0) {
+        load_art(t.league);
+        unpack_map(t.map_packed, &map_ram);
+    } else if (map_owner != t or art_league != t.league) {
+        // M7: the pack track, its art and map overwritten since it loaded.
+        const ok = if (pack_reload) |f| f() else false;
+        if (!ok) blank();
+    }
+    map_owner = t;
+    crust_shown = @splat(0);
+    prop_n = @intCast(@min(prop_max, t.props.len / prop_record));
+    prop_reach = 0;
+    current = t;
+    for (0..prop_n) |k| prop_reach = @max(prop_reach, prop(k).radius);
+    // An arena's crates sit on its pads; a race track's in its rows.
+    if (!parse_arena(t, &arena, &crate_spots, &crate_n)) crate_n = find_crates(t, &crate_spots);
     chip_n = find_chips(t, &chip_spots);
     hazard_n = parse_hazards(t, &hazard_specs);
     current = t;
+}
+
+/// A pack track whose art could not be reloaded: plain background (tile 1,
+/// attribute off) under a dark tile set, so nothing reads stale indices.
+fn blank() void {
+    @memset(&map_ram, 1);
+    @memset(&art_tiles, 1);
+    art_league = null;
 }
 
 /// The crate spawns of `t`: a row at every sample flagged `flag_crates`,
@@ -471,6 +750,23 @@ pub const coolant_basin = Track{
     .center = @embedFile("gen/tracks/coolant_basin_center.bin"),
     .feat = @embedFile("gen/tracks/coolant_basin_feat.bin"),
 };
+
+/// M6: The Sandbox, the BATTLE arena (SPEC 8.3): the Dumps' tileset,
+/// tools/build_arena.py.
+pub const sandbox = Track{
+    .name = "THE SANDBOX",
+    .league = &dumps,
+    .laps = 0,
+    .map_packed = @embedFile("gen/tracks/sandbox_map.bin"),
+    .attr = dumps_attr,
+    .center = @embedFile("gen/tracks/sandbox_center.bin"),
+    .feat = @embedFile("gen/tracks/sandbox_feat.bin"),
+    .arena = @embedFile("gen/tracks/sandbox_arena.bin"),
+};
+
+/// M6: the BATTLE arenas (`Setup.track` indexes this in battle; M7's pack
+/// arenas join after The Sandbox).
+pub const arenas = [_]*const Track{&sandbox};
 
 /// Every track in menu rotation order (league by league, SPEC 3.2);
 /// `World.track` and `Setup.track` index this table. The menus read

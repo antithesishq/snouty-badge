@@ -6,6 +6,8 @@
 //! for up to `layout.max_rows` rows.
 pub const quick = "3 LAPS, SIX RACERS";
 pub const gc = "LAST CAR LEFT WINS";
+/// M6, BATTLE (`KILL -9`, SPEC 8.3).
+pub const battle = "ARENA, MOST KILLS";
 pub const circuit = "2 PRIX, A GARAGE";
 pub const pickups = "WHAT CRATES GIVE";
 pub const link = "2 BADGES, 1 CABLE";
@@ -17,7 +19,7 @@ pub const footer = "A SELECT  B BACK";
 pub const title_a = "A  QUICK RACE";
 
 /// Every line above (the host test walks it).
-pub const all = [_][]const u8{ quick, gc, circuit, pickups, link, no_link, sound, footer, title_a };
+pub const all = [_][]const u8{ quick, gc, battle, circuit, pickups, link, no_link, sound, footer, title_a };
 
 /// The main menu's geometry, top to bottom (y in px):
 /// - the title lockup (SNOUTY 1x, GCP 2x) from `title_y`; its ink and drop
@@ -26,8 +28,8 @@ pub const all = [_][]const u8{ quick, gc, circuit, pickups, link, no_link, sound
 ///   bar_y - 2`: rows `pitch` apart, each with an 11 px highlight bar;
 /// - the hint bar from `bar_y` to the bottom edge: the line about the row
 ///   (`hint_y`) and the footer (`footer_y`).
-/// Built for `max_rows` = 7 (M6 adds BATTLE after GARBAGE COLLECTION,
-/// SPEC 8.3); the cart ships 6. The host test checks nothing overlaps.
+/// Built for `max_rows` = 7: M6 added BATTLE after GARBAGE COLLECTION
+/// (SPEC 8.3), so the cart ships 7. The host test checks nothing overlaps.
 pub const layout = struct {
     pub const max_rows = 7;
     pub const title_y: i32 = 3;

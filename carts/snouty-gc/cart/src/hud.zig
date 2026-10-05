@@ -22,6 +22,16 @@
 //! PASSED, COLLECTED); a badge watching another car (the attract demo, a
 //! collected player) gets the watched racer's name instead of its own
 //! speed, ammo and pickup caption, and the attract demo `PRESS START`.
+//!
+//! M6 (BATTLE, `KILL -9`, SPEC 8.3): `ELIM n` top left, the round clock in
+//! the middle (blinking coral in its last 10 s; counting up grey with TIME
+//! NONE), the standing beside it, the lives as pips under ELIM (`INF`),
+//! the ammo and BURST refill sweep between the front and rear rows, the
+//! whole arena on the minimap (walls, the pits, the bays, the crate pads'
+//! crates, every car, the kill leader ringed), the feed's `kill -9` /
+//! `REAPED` / `SMASHED` lines, the bar's SAFE MODE blink, STACK SMASH! /
+//! CLEAN LANDING pops and the round's end, and `REAPED` bottom left once
+//! the claw has taken this badge's car (then the kill leader's view).
 const std = @import("std");
 const cart = @import("cart-api");
 const fixed = @import("fixed.zig");
@@ -37,6 +47,7 @@ const fx = @import("fx.zig");
 const assets = @import("assets");
 const gc_mode = @import("gc_mode.zig");
 const render = @import("render.zig");
+const battle_text = @import("battle_text.zig");
 
 /// M4 link race: pump the link between the HUD's passes (render.band_hook,
 /// null outside a link race; docs/NET.md section 3).
@@ -152,6 +163,11 @@ pub fn draw_outline(x0: i32, y0: i32, color: cart.DisplayColor) void {
 pub fn init_minimap(t: *const track.Track) void {
     const size = minimap_size;
     @memset(&minimap_buf, 0);
+    arena_map = t.arena.len > 0 and track.current == t;
+    if (arena_map) return init_arena_map(t);
+    arena_x0 = 0;
+    arena_y0 = 0;
+    arena_span = 1024;
     for (0..256) |i| {
         const a = t.sample(i);
         const b = t.sample((i + 1) & 255);
@@ -166,34 +182,137 @@ pub fn init_minimap(t: *const track.Track) void {
     }
 }
 
+// --- BATTLE's minimap (M6): the whole arena ------------------------------------------
+
+/// The minimap shows an arena (`init_minimap` of a track with arena data,
+/// once `track.select` has unpacked its map): `minimap_buf` holds a cell
+/// kind per pixel over the arena's bounds (`arena_x0`, `arena_y0`, `arena_span`
+/// world px a side) instead of the centerline's outline.
+var arena_map: bool = false;
+var arena_x0: i32 = 0;
+var arena_y0: i32 = 0;
+var arena_span: i32 = 1024;
+const cell_floor: u8 = 0;
+const cell_wall: u8 = 1;
+const cell_pit: u8 = 2;
+const cell_bay: u8 = 3;
+const cell_ramp: u8 = 4;
+
+/// The arena's bounds (the tiles that are not `off`, squared up) and a
+/// kind per minimap pixel: a wall anywhere in its cell wins, then a pit
+/// (an `off` tile inside the bounds), a bay, a ramp, else floor. Runs once
+/// a round (128 x 128 tiles), from the unpacked map.
+fn init_arena_map(t: *const track.Track) void {
+    const side: i32 = track.map_side;
+    var lo_x: i32 = side;
+    var lo_y: i32 = side;
+    var hi_x: i32 = -1;
+    var hi_y: i32 = -1;
+    var ty: i32 = 0;
+    while (ty < side) : (ty += 1) {
+        var tx: i32 = 0;
+        while (tx < side) : (tx += 1) {
+            if (t.attr_at(tx * 8, ty * 8) == .off) continue;
+            lo_x = @min(lo_x, tx);
+            lo_y = @min(lo_y, ty);
+            hi_x = @max(hi_x, tx);
+            hi_y = @max(hi_y, ty);
+        }
+    }
+    if (hi_x < 0) {
+        lo_x = 0;
+        lo_y = 0;
+        hi_x = side - 1;
+        hi_y = side - 1;
+    }
+    const span_t = @max(hi_x - lo_x, hi_y - lo_y) + 1;
+    arena_span = span_t * 8;
+    arena_x0 = (lo_x + hi_x + 1) * 4 - @divTrunc(arena_span, 2);
+    arena_y0 = (lo_y + hi_y + 1) * 4 - @divTrunc(arena_span, 2);
+    for (0..32) |my| {
+        for (0..32) |mx| {
+            // The world px this minimap pixel covers.
+            const x0 = arena_x0 + @divTrunc(@as(i32, @intCast(mx)) * arena_span, minimap_size);
+            const x1 = arena_x0 + @divTrunc(@as(i32, @intCast(mx + 1)) * arena_span, minimap_size);
+            const y0 = arena_y0 + @divTrunc(@as(i32, @intCast(my)) * arena_span, minimap_size);
+            const y1 = arena_y0 + @divTrunc(@as(i32, @intCast(my + 1)) * arena_span, minimap_size);
+            var kind: u8 = cell_floor;
+            var pit_n: u32 = 0;
+            var n: u32 = 0;
+            var y = y0;
+            while (y < y1) : (y += 8) {
+                var x = x0;
+                while (x < x1) : (x += 8) {
+                    n += 1;
+                    switch (t.attr_at(x, y)) {
+                        .wall => kind = cell_wall,
+                        .off => pit_n += 1,
+                        .bay => if (kind == cell_floor) {
+                            kind = cell_bay;
+                        },
+                        .kicker, .jump, .ramp => if (kind == cell_floor) {
+                            kind = cell_ramp;
+                        },
+                        else => {},
+                    }
+                }
+            }
+            // A pit when most of the cell is open (a wall's edge wins).
+            if (kind != cell_wall and pit_n * 2 > n) kind = cell_pit;
+            minimap_buf[my * 32 + mx] = kind;
+        }
+    }
+}
+
+/// A world point on the arena minimap (clamped to its 32 px).
+fn arena_dot(x: i32, y: i32) [2]i32 {
+    const px = @divTrunc(((x >> fixed.Q) - arena_x0) * minimap_size, arena_span);
+    const py = @divTrunc(((y >> fixed.Q) - arena_y0) * minimap_size, arena_span);
+    return .{ std.math.clamp(px, 0, minimap_size - 2), std.math.clamp(py, 0, minimap_size - 2) };
+}
+
+const map_wall = cart.DisplayColor.rgb(0xB8B0C0);
+const map_floor = cart.DisplayColor.rgb(0x1C3A2A);
+const map_bay = cart.DisplayColor.rgb(0x2E7A4A);
+const map_ramp = cart.DisplayColor.rgb(0x9A7A2A);
+
+/// The minimap, bottom right: the outline (a race track's centerline in
+/// white) or the arena's cells (M6), each over a checkerboard so the floor
+/// shows through; the Sweeper on its run (2x2 orange); in an arena the
+/// crates waiting on their pads (1 px yellow, SPEC 10); then the cars in
+/// their liveries, the followed one last in white on top. A wrecked car
+/// blinks, the MARKED car blinks red (GARBAGE COLLECTION), one in SAFE
+/// MODE flickers and the kill leader wears a cyan ring (BATTLE).
 fn draw_minimap(w: *const world.World, follow: u8, frame: u32) void {
     const size = minimap_size;
     const x0: i32 = 160 - size - margin;
     const y0: i32 = 128 - size - margin;
-    const line: cart.Pixel = .from_color(white);
-    const bg: cart.Pixel = .from_color(anti_black);
+    const px = if (arena_map)
+        [5]cart.Pixel{ .from_color(map_floor), .from_color(map_wall), .from_color(anti_black), .from_color(map_bay), .from_color(map_ramp) }
+    else
+        [5]cart.Pixel{ .from_color(anti_black), .from_color(white), .from_color(white), .from_color(white), .from_color(white) };
     for (0..@intCast(size)) |x| {
         const col = &cart.framebuffer[@intCast(x0 + @as(i32, @intCast(x)))];
         for (0..@intCast(size)) |y| {
-            // Dim checkerboard background so the floor shows through.
-            if (minimap_buf[y * 32 + x] != 0) {
-                col[@intCast(y0 + @as(i32, @intCast(y)))] = line;
-            } else if (((x + y) & 1) == 0) {
-                col[@intCast(y0 + @as(i32, @intCast(y)))] = bg;
-            }
+            const k = minimap_buf[y * 32 + x];
+            if (k == cell_floor and ((x + y) & 1) == 1) continue;
+            col[@intCast(y0 + @as(i32, @intCast(y)))] = px[@min(k, 4)];
         }
     }
-    // A Sweeper on its run, as a 2x2 orange block (M3).
+    if (arena_map) {
+        for (track.crate_spots[0..track.crate_n], 0..) |spot, k| {
+            if (w.crates[k] != 0) continue;
+            const d = arena_dot(@as(i32, spot.x) << fixed.Q, @as(i32, spot.y) << fixed.Q);
+            cart.framebuffer[@intCast(x0 + d[0])][@intCast(y0 + d[1])] = .from_color(yellow);
+        }
+    }
     for (track.hazard_specs[0..track.hazard_n], 0..) |*h, k| {
         if (h.kind != .mover) continue;
         const hz = &w.hazards[k];
         if (hz.state == .idle and (frame / 16) % 2 == 1) continue;
-        const mx = x0 + @divTrunc((hz.x >> fixed.Q) * size, 1024);
-        const my = y0 + @divTrunc((hz.y >> fixed.Q) * size, 1024);
-        cart.rect(.{ .x = @min(mx, x0 + size - 2), .y = @min(my, y0 + size - 2), .width = 2, .height = 2, .fill_color = orange });
+        const d = arena_dot(hz.x, hz.y);
+        fill_rect(x0 + d[0], y0 + d[1], 2, 2, orange);
     }
-    // Cars in livery colours, the followed car last (white, on top); a
-    // wrecked car blinks; the MARKED car blinks red (GARBAGE COLLECTION).
     var k: usize = 0;
     while (k <= world.car_count) : (k += 1) {
         const i: usize = if (k == world.car_count) follow else k;
@@ -201,14 +320,17 @@ fn draw_minimap(w: *const world.World, follow: u8, frame: u32) void {
         const c = &w.cars[i % world.car_count];
         if (!c.active) continue;
         if (c.wreck != .none and (frame / 8) % 2 == 1) continue;
-        const mx = x0 + @divTrunc((c.x >> fixed.Q) * size, 1024);
-        const my = y0 + @divTrunc((c.y >> fixed.Q) * size, 1024);
+        if (c.safe > 0 and (frame / 3) % 2 == 1) continue;
+        const d = arena_dot(c.x, c.y);
         var color: cart.DisplayColor = if (i == follow) white else livery(c.racer);
         if (i == w.gc.marked) {
             if ((frame / 6) % 2 == 1) continue;
             color = red;
         }
-        cart.rect(.{ .x = @min(mx, x0 + size - 2), .y = @min(my, y0 + size - 2), .width = 2, .height = 2, .fill_color = color });
+        if (i == w.battle.leader and (frame / 10) % 2 == 0) {
+            cart.rect(.{ .x = x0 + d[0] - 1, .y = y0 + d[1] - 1, .width = 4, .height = 4, .stroke_color = cyan });
+        }
+        fill_rect(x0 + d[0], y0 + d[1], 2, 2, color);
     }
 }
 
@@ -245,7 +367,9 @@ pub fn draw(w: *const world.World, follow: u8, o: Options) void {
     pump();
     // Top row: LAP n/N (GARBAGE COLLECTION: SWEEP n) left, the rank in the
     // middle, the pickup box right.
-    if (w.mode == .gc) {
+    if (w.mode == .battle) {
+        draw_battle_top(w, c, o.frame);
+    } else if (w.mode == .gc) {
         draw_sweep(w);
     } else {
         const laps: u8 = @max(1, @min(9, w.laps));
@@ -254,7 +378,7 @@ pub fn draw(w: *const world.World, follow: u8, o: Options) void {
         lap_buf[6] = '0' + laps;
         text(&lap_buf, margin, top_y, white);
     }
-    if (c.active) text(rank_text(c.rank), 80 - 12, top_y, if (c.rank == 1) cyan else white);
+    if (c.active and w.mode != .battle) text(rank_text(c.rank), 80 - 12, top_y, if (c.rank == 1) cyan else white);
     draw_pickup_box(c, follow, o.frame, o.look_back or o.spectate);
     if (o.look_back) centered("BEHIND", behind_y, coral);
     if (o.spectate and c.active) centered(name_of(c.racer), behind_y, livery(c.racer));
@@ -265,14 +389,14 @@ pub fn draw(w: *const world.World, follow: u8, o: Options) void {
     if (o.collected) {
         // Bottom left, where the badge's own armor bar was (the watched
         // car's MARKED tag sits higher).
-        text("COLLECTED", margin, 116, coral);
+        text(if (w.mode == .battle) battle_text.reaped else "COLLECTED", margin, 116, coral);
     } else if (!o.spectate) {
         draw_bottom_left(w, c, follow, o.frame);
     }
     pump();
     draw_minimap(w, follow, o.frame);
     pump();
-    if (!draw_message(w, c, o.spectate) and o.press_start and (o.frame / 30) % 2 == 0) centered("PRESS START", bar_y + 4, white);
+    if (!draw_message(w, c, o.spectate, o.frame) and o.press_start and (o.frame / 30) % 2 == 0) centered("PRESS START", bar_y + 4, white);
     if (c.bit_flip > 0 and c.wreck == .none) draw_bit_flip(o.frame);
     if (captcha_up(c)) {
         pump();
@@ -400,6 +524,26 @@ fn draw_feed() bool {
             left_color = cyan;
             mid = " freed ";
         },
+        // M6: `SNOUTY kill -9 KIDDIE` (the victim red once reaped),
+        // `KIDDIE REAPED`, `SNOUTY SMASHED KIDDIE`.
+        .kill9 => {
+            left = if (f.killer < world.car_count) name_of(f.killer) else "";
+            left_color = livery(f.killer);
+            mid = battle_text.feed_kill;
+            if (f.reaped and (f.ticks / 6) % 2 == 0) right_color = red;
+        },
+        .reaped => {
+            left = victim;
+            left_color = livery(f.victim);
+            mid = " ";
+            right = battle_text.reaped;
+            right_color = red;
+        },
+        .smash => {
+            left = if (f.killer < world.car_count) name_of(f.killer) else "";
+            left_color = livery(f.killer);
+            mid = battle_text.feed_smash;
+        },
         .wreck => if (f.cause == .zero_day) {
             left = "ZERO-DAY";
             left_color = coral;
@@ -433,6 +577,43 @@ fn draw_feed() bool {
     x += @as(i32, @intCast(mid.len)) * 8;
     text(right, x, feed_y, right_color);
     return false;
+}
+
+/// BATTLE's top rows: `ELIM n` (cyan for the kill leader) top left, the
+/// lives under it as pips (lit = left; coral on the last one; `INF`), the
+/// round clock centred (time left, blinking coral in the last 10 s; with
+/// TIME NONE the time played, grey) and the standing right of it.
+fn draw_battle_top(w: *const world.World, c: *const world.Car, frame: u32) void {
+    const b = &w.battle;
+    var eb: [8]u8 = undefined;
+    const lead = b.leader < world.car_count and &w.cars[b.leader] == c;
+    text(battle_text.elims_label(&eb, c.kills), margin, top_y, if (lead) cyan else white);
+    if (b.lives == 0) {
+        text("INF", margin, top_y + 9, grey);
+    } else if (c.active) {
+        // On a dark plate: green pips vanish on the arena's green floor.
+        // Nine pips pack 4 px apart so they stay left of the roulette's
+        // FETCHING... (x 48).
+        const pitch: i32 = if (b.lives > 5) 4 else 5;
+        fill_rect(margin - 1, top_y + 9, @as(i32, @min(b.lives, 9)) * pitch + 1, 8, anti_black);
+        var k: u8 = 0;
+        while (k < b.lives and k < 9) : (k += 1) {
+            const lit = k < c.lives;
+            const color = if (!lit) dim else if (c.lives == 1) (if ((frame / 10) % 2 == 0) coral else red) else green;
+            fill_rect(margin + @as(i32, k) * pitch, top_y + 10, 3, 6, color);
+        }
+    }
+    var cb: [5]u8 = undefined;
+    if (b.limit != 0) {
+        const left: u32 = b.limit -| w.tick;
+        const last = left <= 600 and w.phase == .racing;
+        const str = battle_text.clock(&cb, left);
+        if (!(last and (frame / 15) % 2 == 1)) text(str, 80 - @as(i32, @intCast(str.len * 4)), top_y, if (last) coral else white);
+    } else {
+        const str = battle_text.clock(&cb, w.tick);
+        text(str, 80 - @as(i32, @intCast(str.len * 4)), top_y, grey);
+    }
+    if (c.active) text(rank_text(c.rank), 104, top_y, if (c.rank == 1) cyan else grey);
 }
 
 /// GARBAGE COLLECTION's top left: `SWEEP n` (the next sweep point, from
@@ -519,6 +700,17 @@ fn draw_bottom_left(w: *const world.World, c: *const world.Car, follow: u8, fram
             .flat = if (lit) null else if (burning) @as(?cart.Pixel, .from_color(white)) else .from_color(dim),
         });
     }
+    // BATTLE: no laps, so the ammo and BURST charges refill on a clock
+    // (SPEC 8.3): a sweep between the rows filling to the refill, white
+    // for a moment when it lands.
+    if (w.mode == .battle and w.phase == .racing) {
+        const total: u32 = tuning.battle_refill;
+        const left: u32 = @min(w.battle.refill, total);
+        const fill: u32 = (total - left) * 40 / total;
+        const fresh = left > total - 30;
+        fill_rect(margin, rear_y - 2, 40, 1, dim);
+        if (fresh) fill_rect(margin, rear_y - 2, 40, 1, if ((frame / 3) % 2 == 0) white else cyan) else if (fill > 0) fill_rect(margin, rear_y - 2, fill, 1, cyan);
+    }
     // Rear: Down+A and a pip per drop left.
     down_arrow(margin, rear_y + 1, liv);
     text("A", margin + 6, rear_y, liv);
@@ -553,12 +745,17 @@ fn message_text(msg: world.Message) []const u8 {
 /// The bar: the followed car's wreck note first, then a GARBAGE
 /// COLLECTION note, then its own message, else the shared one
 /// (countdown). Returns whether it drew. Spectating, only the shared one.
-fn draw_message(w: *const world.World, c: *const world.Car, spectate: bool) bool {
+fn draw_message(w: *const world.World, c: *const world.Car, spectate: bool, frame: u32) bool {
     var buf: [20]u8 = undefined;
     var str: []const u8 = "";
     var color = white;
     const note = &fx.wreck_note;
-    if (spectate) {
+    const battle_end = w.mode == .battle and w.phase == .finished;
+    if (battle_end) {
+        // BATTLE: the round's end, on every badge.
+        str = battle_text.end_note(w.battle.end);
+        color = if ((frame / 8) % 2 == 0) cyan else white;
+    } else if (spectate) {
         if (w.msg == .none) return false;
         str = message_text(w.msg);
     } else if (fx.gc_note_ticks > 0 and fx.gc_note != .none and fx.gc_note != .collected) {
@@ -585,6 +782,25 @@ fn draw_message(w: *const world.World, c: *const world.Car, spectate: bool) bool
         } else {
             str = "WRECKED";
         }
+    } else if (fx.stunt.ticks > 0 and fx.stunt.kind != .none) {
+        // M6 stunts: a STACK SMASH landed or taken, a CLEAN LANDING.
+        str = switch (fx.stunt.kind) {
+            .smash => battle_text.stack_smash,
+            .smashed => battle_text.smashed,
+            .landing => battle_text.clean_landing,
+            .none => "",
+        };
+        const pop = fx.stunt.ticks > fx.stunt_show - 6 and (fx.stunt.ticks % 2 == 0);
+        color = if (pop) white else switch (fx.stunt.kind) {
+            .smash => yellow,
+            .smashed => coral,
+            else => green,
+        };
+    } else if (c.safe > 0 and c.wreck == .none and c.msg == .none) {
+        // SAFE MODE after a battle respawn: blinking while it lasts.
+        if ((c.safe / 8) % 2 == 1) return false;
+        str = battle_text.safe_mode;
+        color = cyan;
     } else if (fx.verified > 0 and c.msg == .none) {
         // A CAPTCHA solved before the wait ran out.
         str = "HUMAN VERIFIED";
@@ -677,12 +893,17 @@ const captcha_wait: u32 = 120;
 
 /// A filled rectangle written straight into the framebuffer, clipped
 /// (M3: the API's `rect` was 9% of a stress frame under ReleaseSmall).
-pub fn fill_rect(x: i32, y: i32, w: anytype, h: anytype, color: cart.DisplayColor) void {
-    const px: cart.Pixel = .from_color(color);
+/// M6: one out-of-line body for every caller (the generic `w` and `h`
+/// made an instantiation per call shape: about 1 KB of copies).
+pub inline fn fill_rect(x: i32, y: i32, w: anytype, h: anytype, color: cart.DisplayColor) void {
+    fill_px(x, y, @intCast(w), @intCast(h), .from_color(color));
+}
+
+noinline fn fill_px(x: i32, y: i32, w: i32, h: i32, px: cart.Pixel) void {
     const xa: i32 = @max(0, x);
-    const xb: i32 = @min(160, x + @as(i32, @intCast(w)));
+    const xb: i32 = @min(160, x + w);
     const ya: usize = @intCast(@max(0, y));
-    const yb: i32 = @min(128, y + @as(i32, @intCast(h)));
+    const yb: i32 = @min(128, y + h);
     if (xa >= xb or @as(i32, @intCast(ya)) >= yb) return;
     const n: usize = @intCast(yb - @as(i32, @intCast(ya)));
     var cx = xa;
