@@ -193,6 +193,9 @@ pub const Md = struct {
     /// hardware). Field by field so no console-sized temporary is built.
     /// Keeps `rom` and `line_sink`.
     pub fn reset(md: *Md) void {
+        // The small structs' padding bytes too: `state_hash` and the undo
+        // records see `Small` as bytes, and some resets go field by field.
+        inline for (.{ &md.cpu, &md.io, &md.ports, &md.z80, &md.arbiter, &md.psg, &md.ym }) |f| @memset(std.mem.asBytes(f), 0);
         @memset(&md.work_ram, 0);
         md.vdp.reset();
         md.io = .{};
@@ -546,6 +549,34 @@ pub const Md = struct {
         md.tone_cache = md.pick_tone();
     }
 
+    /// A 32-bit hash of the whole console state (docs/MULTIPLAYER.md): `Small`
+    /// plus work RAM, VRAM, cartridge SRAM and Z80 RAM, for a lockstep
+    /// session's desync check. What is not state is left out: the 68000's
+    /// fetch window (a pointer into this console's ROM or work RAM) and the
+    /// VDP's sprite-table cache (derived from VRAM, rebuilt lazily by the
+    /// renderer). Equal on two consoles of the same build stepped with the
+    /// same pads from the same ROM (tests/mp_determinism.zig). About 154 KB
+    /// of reads: on the badge roughly a millisecond, so once every few
+    /// dozen frames, not every frame.
+    pub fn state_hash(md: *const Md) u32 {
+        var s: Small = undefined;
+        md.save_small(&s);
+        s.cpu.win_ptr = @ptrCast(&no_window);
+        s.cpu.win_base = 0;
+        s.cpu.win_len = 0;
+        @memset(&s.vdp.spr_cache, 0);
+        @memset(&s.vdp.spr_band, @splat(0));
+        s.vdp.spr_count = 0;
+        s.vdp.spr_dirty = false;
+        var h: u32 = 0x811C9DC5;
+        h = hash_bytes(h, std.mem.asBytes(&s));
+        h = hash_bytes(h, &md.work_ram);
+        h = hash_bytes(h, &md.vdp.vram);
+        h = hash_bytes(h, &md.sram);
+        h = hash_bytes(h, &md.z80_ram);
+        return h;
+    }
+
     /// Draw the 128 badge rows of the current state through `line_sink`
     /// without stepping (the scrubber's parked picture): every line with a
     /// row renders with the registers as they are now. The state is left
@@ -618,6 +649,18 @@ pub const Md = struct {
         md.tone_cache = md.pick_tone();
     }
 };
+
+/// `state_hash`'s stand-in for the fetch window pointer.
+const no_window = [2]u8{ 0, 0 };
+
+/// Mix `b` into `h` a little-endian word at a time (the tail byte-wise).
+fn hash_bytes(h0: u32, b: []const u8) u32 {
+    var h = h0;
+    var i: usize = 0;
+    while (i + 4 <= b.len) : (i += 4) h = std.math.rotl(u32, h ^ std.mem.readInt(u32, b[i..][0..4], .little), 5) *% 0x9E3779B1;
+    while (i < b.len) : (i += 1) h = (h ^ b[i]) *% 0x01000193;
+    return h ^ h >> 16;
+}
 
 inline fn sext16(v: u16) u32 {
     return @bitCast(@as(i32, @as(i16, @bitCast(v))));

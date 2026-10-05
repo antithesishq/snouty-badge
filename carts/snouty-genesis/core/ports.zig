@@ -104,7 +104,8 @@ pub const PollHook = struct {
     func: *const fn (ctx: *anyopaque) void,
 };
 
-/// Lines between `poll_hook` calls (a call at lines 0, 64, 128 and 192).
+/// Lines between `poll_hook` calls: five a frame, at the start of lines 0,
+/// 64, 128, 192 and 256 (every 3.5 ms or so of a 20-29 ms badge update).
 pub const poll_lines: u32 = 64;
 
 /// `Md.setup`: configuration, not console state; kept by `Md.reset`.

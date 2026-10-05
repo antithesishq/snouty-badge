@@ -52,6 +52,7 @@ const golden_mini_state: u64 = 0x1E1A9DB657441517;
 
 test {
     _ = @import("sound_synth.zig");
+    _ = @import("mp_bomberman.zig");
 }
 
 test "ram: the variant has no Z80 core, no Z80 RAM and no scrubber" {
