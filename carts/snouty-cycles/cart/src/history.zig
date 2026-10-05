@@ -447,8 +447,7 @@ const Run = struct {
 
     /// The player: a T1 that slips now and then, boosts and brakes at
     /// random (random inputs alone crash in a second; this rides on into
-    /// sudden death). Its decide runs before the programs' as the game's
-    /// does, so the shared AI pool sees the same order on a replay.
+    /// sudden death).
     fn player_input(r: *Run, w: *const sim.World) sim.Input {
         var in = ai.decide(&r.brains[0], w, 0);
         const x = r.rnd.below(100);
@@ -458,13 +457,15 @@ const Run = struct {
         return in;
     }
 
-    fn step(r: *Run, w: *sim.World, player: sim.Input, decide0: bool) void {
+    /// One tick as the game steps it: the programs decide first, then
+    /// the player (live, or the logged input on a replay). Returns the
+    /// player's input.
+    fn step(r: *Run, w: *sim.World, logged: ?sim.Input) sim.Input {
         var in: [sim.max_cycles]sim.Input = @splat(.idle);
-        // The game calls decide for an autopilot player too: keep the order.
-        if (decide0) _ = ai.decide(&r.brains[0], w, 0);
-        in[0] = player;
         for (1..w.cfg.n_cycles) |i| in[i] = ai.decide(&r.brains[i], w, i);
+        in[0] = logged orelse r.player_input(w);
         w.step(in);
+        return in[0];
     }
 };
 var run: Run = undefined;
@@ -517,9 +518,8 @@ fn rewind_round(cfg: sim.Config, seed: u32, crash: u32, back: u32) !bool {
     while (w.tick < crash) {
         if (w.tick == target) at_target = w.*;
         if (w.result != .running) return false;
-        const in = run.player_input(w);
-        run.inputs[w.tick + 1] = in;
-        run.step(w, in, false);
+        const in = run.step(w, null);
+        run.inputs[w.tick] = in;
         score +%= w.tick;
         h.record(w, in, &run.brains, score);
     }
@@ -552,8 +552,7 @@ fn rewind_round(cfg: sim.Config, seed: u32, crash: u32, back: u32) !bool {
     const k0 = h.restore(w, &run.brains, &replay_score).?;
     try testing.expect(k0 <= target and target - k0 < tuning.keyframe_every);
     while (w.tick < target) {
-        const in = h.input_at(w.tick + 1);
-        run.step(w, in, true);
+        const in = run.step(w, h.input_at(w.tick + 1));
         replay_score +%= w.tick;
         h.record(w, in, &run.brains, replay_score);
     }
@@ -566,12 +565,12 @@ fn rewind_round(cfg: sim.Config, seed: u32, crash: u32, back: u32) !bool {
     // Onwards with the original inputs: the same World at the crash, and
     // the same Brains.
     while (w.tick < crash) {
-        const in = run.inputs[w.tick + 1];
-        run.step(w, in, true);
+        const in = run.step(w, run.inputs[w.tick + 1]);
         h.record(w, in, &run.brains, 0);
     }
     try expect_same(&at_end, w);
-    try testing.expect(std.meta.eql(kept_brains, run.brains));
+    // The programs' Brains too (the player's does not decide on a replay).
+    try testing.expect(std.meta.eql(kept_brains[1..].*, run.brains[1..].*));
     return true;
 }
 
@@ -611,8 +610,7 @@ fn restore_and_replay(h: *History, w: *sim.World) !void {
 
 fn replay_to(h: *History, w: *sim.World, t: u32) void {
     while (w.tick < t) {
-        const in = h.input_at(w.tick + 1);
-        run.step(w, in, true);
+        const in = run.step(w, h.input_at(w.tick + 1));
         h.record(w, in, &run.brains, 0);
     }
 }
@@ -628,8 +626,7 @@ test "rewind: a second crash right after a rewind (older keyframes gone)" {
     try testing.expectEqual(@as(u32, 880), w.tick);
     run.rnd = .init(99);
     for (0..10) |_| {
-        const in = run.player_input(w);
-        run.step(w, in, false);
+        const in = run.step(w, null);
         h.record(w, in, &run.brains, 0);
     }
     at_end = w.*;
