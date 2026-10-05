@@ -26,6 +26,7 @@ const pickups = @import("pickups.zig");
 const hazards = @import("hazards.zig");
 const gc_mode = @import("gc_mode.zig");
 const battle = @import("battle.zig");
+const hunt = @import("hunt.zig");
 
 const World = world.World;
 const Car = world.Car;
@@ -262,6 +263,8 @@ pub fn simulate(w: *World, inputs: [2]u8) void {
             for (0..world.car_count) |i| {
                 weapons.update_lock(w, i);
                 ai.update_aim(w, i);
+                // BATTLE: the hunter's waypoint (hunt.zig).
+                if (w.mode == .battle) hunt.update_nav(w, i);
             }
             check_finished(w);
         },
@@ -434,7 +437,7 @@ fn land(w: *World, i: usize, wall: bool) void {
             o.vy += fixed.mul(n.ny, tuning.smash_bounce);
             o.shake = 8;
             weapons.emit(w, .stack_smash, @intCast(i), @intCast(j), tuning.smash_damage, o.x, o.y);
-            hurt(w, j, @intCast(i), tuning.smash_damage, true);
+            hurt(w, j, @intCast(i), @divTrunc(@as(i32, tuning.smash_damage) * 100 + tuning.battle_damage_pct - 1, tuning.battle_damage_pct), true);
             smashed = true;
         }
     }
@@ -570,8 +573,20 @@ pub fn damage(w: *World, victim: usize, attacker: u8, amount: i32) void {
 /// `damage`, where `weapon` says whether a landed hit by `attacker` counts
 /// as a weapon hit (GARBAGE COLLECTION's tag passes the mark on; rams do
 /// not).
-fn hurt(w: *World, victim: usize, attacker: u8, amount: i32, weapon: bool) void {
-    if (!w.combat or amount <= 0) return;
+fn hurt(w: *World, victim: usize, attacker: u8, amount_in: i32, weapon: bool) void {
+    if (!w.combat or amount_in <= 0) return;
+    // BATTLE scales the race's damage, carrying the fraction in the car
+    // (`Car.dmg_frac`, hundredths) so a 4-point PING is not rounded up.
+    var amount = amount_in;
+    if (w.mode == .battle) {
+        const c = &w.cars[victim];
+        const total = amount_in * tuning.battle_damage_pct + c.dmg_frac;
+        amount = @divTrunc(total, 100);
+        if (amount <= 0 or !c.active or c.wreck != .none or c.immune > 0 or c.finished or c.sudo > 0) {
+            if (c.active and c.wreck == .none and c.immune == 0 and c.sudo == 0) c.dmg_frac = @intCast(@min(total, 99));
+            if (amount <= 0) return;
+        } else c.dmg_frac = @intCast(@mod(total, 100));
+    }
     const c = &w.cars[victim];
     // ECC (PLATING L3) corrects single-bit errors: small hits do nothing.
     if (c.ecc and amount <= tuning.ecc_ignore) return;

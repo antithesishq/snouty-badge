@@ -72,3 +72,63 @@ test "a battle round starts on the spawn pads with lives, the clock and the refi
     for (0..600) |_| sim.simulate(&w, .{ ai.drive(&w, racers.snouty).byte(), 0 });
     try expect(w.phase == .racing);
 }
+
+/// One round with the autopilot on SNOUTY (car 0 is human slot 0) and
+/// five AI hunters; returns its stats.
+const Stats = struct { ticks: u32 = 0, end: world.BattleEnd = .none, elims: u32 = 0, wrecks: u32 = 0, falls: u32 = 0, ai_on_ai: u32 = 0, smash: u32 = 0, clean: u32 = 0, stuck: u32 = 0 };
+
+fn play(lives: u8, minutes: u8, seed: u32, max_ticks: u32) Stats {
+    var w = new_round(lives, minutes, seed, racers.snouty);
+    run_countdown(&w);
+    var st: Stats = .{};
+    var seq = w.event_seq;
+    var slow: [world.car_count]u32 = @splat(0);
+    while (w.phase == .racing and w.tick < max_ticks) {
+        sim.simulate(&w, .{ ai.drive(&w, racers.snouty).byte(), 0 });
+        while (seq != w.event_seq) : (seq +%= 1) {
+            const e = w.events[seq % world.event_count];
+            switch (e.kind) {
+                .eliminated => {
+                    st.elims += 1;
+                    if (e.a != racers.snouty and e.b != racers.snouty) st.ai_on_ai += 1;
+                },
+                .wreck => {
+                    st.wrecks += 1;
+                    if (e.c == @backingInt(world.Wreck.fall)) st.falls += 1;
+                },
+                .stack_smash => st.smash += 1,
+                .clean_landing => st.clean += 1,
+                else => {},
+            }
+        }
+        for (&w.cars, 0..) |*c, i| {
+            if (!c.active or c.wreck != .none or sim.speed(c) > fixed.one / 4) {
+                slow[i] = 0;
+            } else {
+                slow[i] += 1;
+                if (slow[i] == 600) st.stuck += 1;
+            }
+        }
+    }
+    st.ticks = w.tick;
+    st.end = w.battle.end;
+    return st;
+}
+
+test "soak: 5-AI rounds at 3 lives end by lives, with eliminations among the AIs" {
+    var total: Stats = .{};
+    const n = 8;
+    for (0..n) |k| {
+        const st = play(3, 0, 1000 + @as(u32, @intCast(k)) * 7919, 60 * 60 * 8);
+        std.debug.print("\nbattle 3 lives seed {d}: {d} ticks ({d} s), end {s}, {d} elims ({d} AI on AI), {d} wrecks ({d} falls), {d} smashes, {d} clean landings, {d} stuck", .{ k, st.ticks, st.ticks / 60, @tagName(st.end), st.elims, st.ai_on_ai, st.wrecks, st.falls, st.smash, st.clean, st.stuck });
+        try expectEqual(world.BattleEnd.lives, st.end);
+        total.ticks += st.ticks;
+        total.elims += st.elims;
+        total.ai_on_ai += st.ai_on_ai;
+        total.wrecks += st.wrecks;
+        total.falls += st.falls;
+        total.stuck += st.stuck;
+    }
+    std.debug.print("\nbattle soak: mean {d} s a round, {d} elims, {d} AI on AI, {d} wrecks, {d} falls, {d} stuck\n", .{ total.ticks / n / 60, total.elims, total.ai_on_ai, total.wrecks, total.falls, total.stuck });
+    try expect(total.ai_on_ai > 0);
+}

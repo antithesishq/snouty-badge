@@ -311,6 +311,9 @@ pub fn arm(w: *const World, i: usize, cr: *const Crew, b: *Input, curve: i32) vo
             if (c.charge > 0) {
                 const fire_now = c.charge >= tuning.lance_charge and c.aim_ticks >= cr.reaction;
                 b.a = !(fire_now or braking);
+            } else if (!braking and c.ammo_front > 0 and c.fire_cd == 0 and w.mode == .battle) {
+                // BATTLE: charge with a car in the cone.
+                b.a = c.aim != no_car;
             } else if (!braking and c.ammo_front > 0 and c.fire_cd == 0) {
                 // Charge only on a straight.
                 const t = sim.track_of(w);
