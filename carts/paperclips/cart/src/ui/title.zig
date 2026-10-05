@@ -1,7 +1,8 @@
 //! The title screen: the original's paperclip box (gen/title.*, written by
 //! tools/gen_title.py), the credit, "Press A", and after a prestige the
 //! universe / sim level line. The code Up Up Down Down Left Right Left
-//! Right B A (app.zig) unlocks the CHEATS page.
+//! Right B A (app.zig) unlocks the CHEATS page. With a saved game (the
+//! patched OS, saves.zig) CONTINUE / NEW GAME replaces "Press A".
 const cart = @import("cart-api");
 const app_mod = @import("app.zig");
 const draw = @import("draw.zig");
@@ -47,10 +48,20 @@ pub fn screen(app: *app_mod.App) void {
     if (app.cheats and app.cheat_flash < 120) {
         _ = draw.text("CHEATS", 118, 100, .black);
         _ = draw.text("ON", 130, 109, .black);
+    } else if (app.title_menu()) {
+        menu(app);
     } else if (blink) {
         _ = draw.text("Press A", 112, 104, .black);
     }
-    if (app.playing and (app.game.prestige_u > 0 or app.game.prestige_s > 0)) {
+    if (!app.playing) {
+        const note: ?[]const u8 = switch (app.saver.found) {
+            .old_version => "SAVE FROM OLDER VERSION",
+            .damaged => "SAVE DAMAGED",
+            else => null,
+        };
+        if (note) |n| _ = draw.text(n, 1, 119, .black);
+    }
+    if ((app.playing or app.title_menu()) and (app.game.prestige_u > 0 or app.game.prestige_s > 0)) {
         var bu: [24]u8 = undefined;
         var bs: [24]u8 = undefined;
         const u = numfmt.int(&bu, app.game.prestige_u);
@@ -60,4 +71,16 @@ pub fn screen(app: *app_mod.App) void {
         x = draw.text(" / Sim Level: ", x, 119, .black);
         _ = draw.text(s, x, 119, .black);
     }
+}
+
+/// CONTINUE / NEW GAME, or the NEW GAME confirmation, right of the box.
+fn menu(app: *app_mod.App) void {
+    if (app.confirm_new) {
+        _ = draw.text("OVERWRITE?", 99, 100, .black);
+        _ = draw.text("A:YES B:NO", 99, 109, .black);
+        return;
+    }
+    _ = draw.text("CONTINUE", 110, 100, .black);
+    _ = draw.text("NEW GAME", 110, 109, .black);
+    _ = draw.text(">", 103, if (app.title_sel == 0) 100 else 109, .black);
 }

@@ -34,11 +34,12 @@ Directory `carts/paperclips`, binary `paperclips`, menu title
   numbers (section 3). Look: the original's, black text on white, plain
   and spare.
 - **Left out:** the Threnody audio (the badge speaker is off for every
-  cart), save/load slots and autosave (the badge OS has no cart save
-  storage: `read_flash`/`write_flash_page` are stubs, in upstream too, so
-  a game lasts while the cart runs; prestige lasts for the session),
-  Google Analytics (already gone), the browser's "Are you sure" reset
-  dialog. Revisit saves if the OS gains a save region.
+  cart), the original's three save slots, Google Analytics (already
+  gone), the browser's "Are you sure" reset dialog. On the organizers' OS
+  a game lasts while the cart runs (no cart save storage). On the patched
+  OS with cart saves (branch `saves/m1`) the cart keeps one saved game
+  with autosave, CONTINUE on the title and a save on "Exit cart"
+  (docs/RUNNING.md section 9).
 
 ## 2. Hardware fit
 

@@ -45,10 +45,26 @@ pub fn add(b: *Build, sycl_badge_dep: *Build.Dependency, opts: common.Options) v
             .root_source_file = b.path(dir ++ "cart/src/ui/tests.zig"),
             .target = b.graph.host,
             .optimize = .Debug,
-            .imports = &.{.{ .name = "game", .module = game_module(b, b.graph.host, .Debug) }},
+            .imports = &.{
+                .{ .name = "game", .module = game_module(b, b.graph.host, .Debug) },
+                .{ .name = "save", .module = save_module(b) },
+            },
         }),
     });
     opts.test_step.dependOn(&b.addRunArtifact(ui_tests).step);
+
+    // The saved game (cart/src/game/snapshot_tests.zig): the autoplayer to
+    // stage 3 with a save, load and compare at checkpoints. ReleaseSafe:
+    // hours of virtual game time.
+    const snapshot_tests = b.addTest(.{
+        .filters = if (opts.test_filter) |f| &.{f} else &.{},
+        .root_module = b.createModule(.{
+            .root_source_file = b.path(dir ++ "cart/src/game/snapshot_tests.zig"),
+            .target = b.graph.host,
+            .optimize = .ReleaseSafe,
+        }),
+    });
+    opts.test_step.dependOn(&b.addRunArtifact(snapshot_tests).step);
 
     // `zig build paperclips-oracle`: the oracle's Zig side (tools/oracle_runner.zig,
     // track O) on the host, installed as zig-out/bin/paperclips-oracle.
@@ -65,6 +81,12 @@ pub fn add(b: *Build, sycl_badge_dep: *Build.Dependency, opts: common.Options) v
     oracle_step.dependOn(&b.addInstallArtifact(oracle, .{}).step);
 }
 
+/// lib/save.zig: cart saves (the badge OS's 0x2C messages; a fake on the
+/// host, nothing in wasm).
+fn save_module(b: *Build) *Build.Module {
+    return b.createModule(.{ .root_source_file = b.path("lib/save.zig") });
+}
+
 fn game_module(b: *Build, target: Build.ResolvedTarget, optimize: std.builtin.OptimizeMode) *Build.Module {
     return b.createModule(.{
         .root_source_file = b.path(game_root),
@@ -78,4 +100,5 @@ fn build_cart_modules(b: *Build, cart: *Build.Module, cart_api: *Build.Module, s
     _ = cart_api;
     _ = step;
     cart.addImport("game", b.createModule(.{ .root_source_file = b.path(game_root) }));
+    cart.addImport("save", save_module(b));
 }

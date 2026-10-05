@@ -56,11 +56,17 @@ tools/check.sh preview bench   # just those steps
 | `bench` | badge-bench, calibrated: a prepared late stage-1 game on each stage-1 page (`--poke paperclips_bench=1..6`), a stage-2 game (7), a live stage-3 battle on COMBAT (8) and SPACE (9), a new game (10): worst `busy ms` <= 10 (`BENCH_MAX_MS`), mean <= 5 (`BENCH_MEAN_MS`); 8 and 9 worst <= 20 / mean <= 8, 10 worst <= 30 / mean <= 8 (live battles move every ship in exact soft f64; see `tools/check.sh`) |
 | `size` | `size -A`: `.text` + `.data` + `.bss` (+ unwind tables) <= 200 KB (`SIZE_MAX_KB`) |
 
+badge-bench serves cart saves by default, so the Start press in
+`bench.json` saves the game once (section 9): that frame, ~116 ms with
+the modelled flash, is printed apart and not held to the limits.
+
 ## 4. Flash it
 
 Copy `zig-out/firmware/paperclips.uf2` to the badge as the root
 [`docs/INSTALL.md`](../../../docs/INSTALL.md) describes. A game lasts while
-the cart runs: the badge OS has no save storage for carts.
+the cart runs on the organizers' OS. On the patched OS with cart saves
+(branch `saves/m1` only) the game is saved and continues after a power
+cycle: section 9.
 
 ## 5. Controls
 
@@ -187,3 +193,66 @@ instead of the title; 7 is a prepared stage-2 game on the SWARM page, 8 and
 soft-float self-test (`cart/src/game/softfloat_arm.zig` against the Zig
 routines); `paperclips_seed` fixes the game's seed (the badge otherwise
 mixes the microsecond clock in).
+
+## 9. Saves
+
+Saves need the patched badge OS (sycl-badge branch `cart-saves`; the root
+[`docs/SAVES.md`](../../../docs/SAVES.md) says how to flash it). On the
+organizers' firmware, in the web simulator and in the wasm previews the
+cart is exactly the one without saves: no menu, no marks, nothing
+written. It finds out once per boot, on the title's second frame (250 ms
+while the title is on screen, on stock firmware).
+
+- **One key, `paperclips/game`:** the whole game (`cart/src/game/snapshot.zig`):
+  the `Game` struct's bytes with the dead state zeroed (timers and log
+  slots not in use, battle ships nothing can read), LZ-compressed, behind
+  a 20-byte header (magic `UPCS`, format version, a hash of `Game`'s
+  layout, the image size, a checksum). A load continues bit for bit where
+  the save left off: the RNG, the timers' phases, the log, a battle in
+  progress. This is more than the original's `save()` keeps (it restarts
+  the canvas battle and its timers on load).
+- **Size:** one 4 KB block for the whole of stages 1 to 3 (1.3 KB after a
+  minute, 2.3 KB with projects, 3.0-3.5 KB in space, seed 2026). The
+  first seconds of a game (the opening skirmish, 400 live ships) take
+  ~12 KB; a stage-3 battle at its first frame with a full log, the
+  largest, 17.6 KB (the cart's buffer is 22 KB). A save costs (blocks + 1)
+  x 55 ms: 110 ms almost always.
+- **The title:** with a saved game, `CONTINUE` / `NEW GAME` (Up/Down, A).
+  NEW GAME asks `OVERWRITE? A:YES B:NO`; the old save stays until the new
+  game's first save. A finished game's universe and sim levels carry into
+  the new game (the original keeps its savePrestige apart too). A save
+  from another build of the port shows `SAVE FROM OLDER VERSION` and A
+  starts a new game; damaged data shows `SAVE DAMAGED`.
+- **When it saves:** every 60 s of play, every 5 minutes once nobody has
+  pressed a button for 5 minutes (an idle game left running); on opening
+  the message log (Start); on the OS's settings "Exit cart". The original
+  autosaves every 25 s into the browser's free localStorage; here each
+  save freezes the cart ~110 ms and erases a directory block every cart
+  shares, hence the minute (knobs in `cart/src/ui/saves.zig`).
+  A timer or log save waits while a battle is live (both sides have
+  ships, the slow frames), for at most 30 s. The frame before the write
+  shows `SAVING` top right, and that frame stays on screen while the cart
+  is parked; the game clock skips the stall. Exit saves at once (the OS
+  shows its own "Saving...").
+- **Errors:** `RateLimited` (the OS's 8 + 1 per 10 s) is retried at the
+  next save; anything else shows `SAVE FAILED: ...` across the top once
+  for 3 s, and later saves keep trying.
+
+Tests: `cart/src/game/snapshot_tests.zig` (the autoplayer from the first
+second to stage 3; at nine checkpoints it saves, loads into a fresh
+`Game`, runs the original, the loaded copy and a never-saved copy on with
+the same bot and compares every field; the LZ codec; refused versions and
+damage) and the `saves:` tests in `cart/src/ui/tests.zig` (lib/save.zig's
+fake: autosave timing, the mark, the log and battle rules, CONTINUE and
+NEW GAME, prestige, the exit hook, errors, stock firmware).
+
+badge-bench (`--saves FILE.json` keeps the store between runs):
+
+```sh
+B=../../badge-bench/bench.sh; E=../../zig-out/firmware/paperclips.elf
+$B $E --poke paperclips_bench=1 --script tools/scripts/bench.json --frames 400 --saves /tmp/pc.json  # Start saves: [save 110 ms]
+$B $E --saves /tmp/pc.json --press A:20-21 --frames 60 --png 5    # the title: CONTINUE
+$B $E --poke paperclips_bench=8 --frames 300 --exit-at 200        # Exit cart mid-battle: [save 165 ms]
+$B $E --poke paperclips_bench=1 --frames 400 --no-saves           # stock firmware: the 250 ms probe, nothing else
+```
+
