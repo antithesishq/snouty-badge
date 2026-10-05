@@ -13,6 +13,8 @@ const levels = @import("levels.zig");
 
 comptime {
     cart.export_start_code();
+    // The badge's word-at-a-time memcpy (the cart builds ReleaseSmall).
+    _ = @import("mem.zig");
 }
 
 /// Pixel sink for the renderer: the cart framebuffer plus the OS dirty rect.

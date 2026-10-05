@@ -292,12 +292,18 @@ not bring back tail cells SNAKE cleared or gap cells (empty once left,
   `ai.reset_pool()`); the game replays `input_at(t)` to `target`. After
   the game changes the autopilot at the landing it calls `resave`.
 - **Determinism contract**: a replay is exact because the World depends
-  only on the Brains, the rules and the player's inputs. The autopilot
-  decides before the programs and spends the shared AI pool (M1's
-  order), so a replay re-runs its decision (`step_world(..., logged)`);
-  a human player never touches the pool. Anything else that changes a
-  program's or the World's behaviour must be in the World, a Brain or
-  `Aux`.
+  only on the Brains, the rules and the player's inputs. The programs
+  decide first and alone share the per-tick AI pool (`ai.decide`); the
+  autopilot decides after them with `ai.decide_apart`, from a pool of
+  its own (`ai.tuning.apart_pool`, capped at `apart_cap` less what the
+  programs spent on that tick), so nothing it does reaches a program
+  and the programs play the same for you and for the bot (M2.1; until
+  M2 the autopilot went first and drained the programs' pool). A
+  replay (`step_world(..., logged)`) puts the logged input in and runs
+  only the programs, for you and the autopilot alike; the autopilot's
+  Brain is not replayed, and the landing gives it a new one
+  (`finish_rewind`). Anything else that changes a program's or the
+  World's behaviour must be in the World, a Brain or `Aux`.
 - **Game flow** (`game.State` appended: 10 frozen, 11 rewind, 12
   options, 13 skirmish_setup, 14 round_over, 15 match_over): your derez
   with a snapshot -> `frozen` (20 ticks) -> `rewind` (retract
@@ -315,7 +321,7 @@ not bring back tail cells SNAKE cleared or gap cells (empty once left,
   pub for this). The banner box is never tinted.
 - Banner lines go through `add_line` (noinline) and the cold game
   functions are `noinline`: ReleaseFast inlining of them cost ~7 KB of
-  .text in a RAM cart.
+  .text in a RAM cart (the cart is ReleaseSmall since M2.1).
 
 ## Rendering rules that are easy to break
 
@@ -352,6 +358,15 @@ not bring back tail cells SNAKE cleared or gap cells (empty once left,
 - RAM cart only. M0: `.text` 40 KB, `.bss` 77 KB (World 38 KB, AI fill
   scratch 19 KB, banner overlay 19 KB). M2 (track R): `.text` ~103 KB,
   `.bss` ~140 KB (History 46 KB more), ~243 KB of the ~275 KB window.
+  M2.1: the cart builds **ReleaseSmall** (`build.zig`): `.text` 58 KB,
+  ~198 KB in all, 74 KB free. compiler_rt's ReleaseSmall `memcpy` copies
+  bytes, so `cart/src/mem.zig` exports a word-wise `memcpy`/`memset`
+  (and the `__aeabi_*` entry points) for the badge build: without it
+  the API's copy-forward present costs 2.6 ms a frame. Hot render
+  helpers (`put_cell`, `dim565`, the raster targets) and the T3
+  endgame's per-node helpers (`hug_order`, `free4_t`) are `inline`; a
+  new per-pixel, per-cell or per-node helper on a hot path wants the
+  same (AI units are calibrated against inlined code).
 - No audio, neopixels off (never written). The OS owns Start+Select and
   the joystick click; the cart ignores Start and Select while both are
   held.

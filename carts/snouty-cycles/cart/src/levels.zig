@@ -35,19 +35,27 @@ fn p(tier: ai.Tier, preset: u8) Program {
 /// SPEC 6's table. Layouts (`layouts.zig`: 1 PILLARS, 2 BARS, 3 CROSS,
 /// 4 RING, 5 LANES, 6 CORNERS, 7 CHECKER, 8 COLUMNS) from level 5 on, on
 /// every other level; the ASM duel stays open.
+///
+/// Presets tuned with the ladder bot (`tools/ladder_bot.mjs`, the T3
+/// autopilot with its own AI pool since M2.1): every level clears on at
+/// least 4 of seeds 1-5 and 7 of seeds 6-15, and the derezzes it costs
+/// rise from ~0 (BASIC..LISP) through ~0.1-0.6 (C..JAVA) and ~0.8
+/// (RUST, ASM, ZIG) to ~1.3 (PROD, the hardest) over 80 seeds (PLAN.md
+/// status, M2.1). The bot is about as strong as a full T2, so the
+/// programs here are softened ones (`ai.preset`'s levels 0..2).
 pub const table = [count]Level{
     .{ .name = "BASIC", .programs = &.{p(.wander, 1)} },
     .{ .name = "COBOL", .programs = &.{ p(.wander, 2), p(.wander, 2) } },
     .{ .name = "PASCAL", .programs = &.{p(.avoid, 1)} },
-    .{ .name = "FORTRAN", .programs = &.{ p(.avoid, 2), p(.avoid, 2) } },
-    .{ .name = "LISP", .programs = &.{ p(.avoid, 3), p(.avoid, 3), p(.avoid, 3) }, .layout = 1 },
-    .{ .name = "C", .programs = &.{p(.territory, 0)} },
-    .{ .name = "C++", .programs = &.{ p(.territory, 0), p(.territory, 0) }, .layout = 2 },
-    .{ .name = "JAVA", .programs = &.{ p(.territory, 2), p(.avoid, 3), p(.avoid, 3) } },
+    .{ .name = "FORTRAN", .programs = &.{ p(.avoid, 1), p(.avoid, 1) } },
+    .{ .name = "LISP", .programs = &.{ p(.avoid, 1), p(.avoid, 1), p(.avoid, 1) }, .layout = 1 },
+    .{ .name = "C", .programs = &.{p(.territory, 1)} },
+    .{ .name = "C++", .programs = &.{ p(.territory, 1), p(.territory, 1) }, .layout = 2 },
+    .{ .name = "JAVA", .programs = &.{ p(.territory, 2), p(.avoid, 1), p(.avoid, 1) } },
     .{ .name = "RUST", .programs = &.{ p(.territory, 2), p(.territory, 1) }, .speed_pct = 110, .layout = 3 },
     .{ .name = "ASM", .programs = &.{p(.search, 1)} },
-    .{ .name = "ZIG", .programs = &.{ p(.search, 2), p(.territory, 3) }, .layout = 4 },
-    .{ .name = "PROD", .programs = &.{ p(.search, 3), p(.territory, 3), p(.territory, 3) }, .layout = 6 },
+    .{ .name = "ZIG", .programs = &.{ p(.search, 0), p(.territory, 1) }, .layout = 4 },
+    .{ .name = "PROD", .programs = &.{ p(.search, 0), p(.territory, 2), p(.territory, 0) }, .layout = 6 },
 };
 
 /// Layouts the ladder cycles through on later loops: 1..8 of

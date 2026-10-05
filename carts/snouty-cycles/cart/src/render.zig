@@ -88,7 +88,7 @@ fn mix24(a: u24, b: u24, t: u32) u24 {
 }
 
 /// A 565 colour at about 30%: the banner's dimmed arena.
-pub fn dim565(c: u16) u16 {
+pub inline fn dim565(c: u16) u16 {
     const r = (c & 31) * 5 / 16;
     const g = ((c >> 5) & 63) * 5 / 16;
     const b = (c >> 11) * 5 / 16;
@@ -943,7 +943,7 @@ pub fn Renderer(comptime S: type) type {
         const OverlayTarget = struct {
             self: *Self,
             clip: Rect,
-            fn set(t: OverlayTarget, x: i32, y: i32, v: u8) void {
+            inline fn set(t: OverlayTarget, x: i32, y: i32, v: u8) void {
                 if (x < t.clip.x0 or x >= t.clip.x1 or y < t.clip.y0 or y >= t.clip.y1) return;
                 t.self.ov[@intCast(x)][@intCast(y - arena_y)] = v;
             }
@@ -951,7 +951,7 @@ pub fn Renderer(comptime S: type) type {
 
         const ScreenTarget = struct {
             clip: Rect,
-            fn set(t: ScreenTarget, x: i32, y: i32, c: u16) void {
+            inline fn set(t: ScreenTarget, x: i32, y: i32, c: u16) void {
                 if (x < t.clip.x0 or x >= t.clip.x1 or y < t.clip.y0 or y >= t.clip.y1) return;
                 S.put(@intCast(x), @intCast(y), c);
             }
@@ -1015,7 +1015,7 @@ pub fn Renderer(comptime S: type) type {
 
         /// Writes the four pixels of cell (x, y), through the banner if the
         /// cell is in its box. No mark.
-        fn put_cell(self: *const Self, w: *const sim.World, x: u8, y: u8) void {
+        inline fn put_cell(self: *const Self, w: *const sim.World, x: u8, y: u8) void {
             const px: u32 = 2 * @as(u32, x);
             const py: u32 = arena_y + 2 * @as(u32, y);
             var c = cell_colors(w, x, y);
