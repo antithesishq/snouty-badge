@@ -100,3 +100,34 @@ test "every visible page builds within the row and text limits" {
         try std.testing.expect(arena.n < arena.buf.len);
     }
 }
+
+test "held A repeats on buy rows: 0.4 s, then 8 per second" {
+    const app = fresh();
+    press(app, .{ .a = true });
+    for (0..3) |_| G.act(app.game, .cheat_money);
+    app.update(.{});
+    // Down to Marketing (Make Paperclip -> price -> Marketing).
+    press(app, .{ .down = true });
+    press(app, .{ .down = true });
+    const row = app.rows.slice()[app.cursor_ix[0]];
+    try std.testing.expectEqualStrings("Marketing", row.left);
+    const lvl0 = app.game.marketing_lvl;
+    // One second held: the press, then repeats from frame 25 on.
+    for (0..60) |_| app.update(.{ .a = true });
+    app.update(.{});
+    const bought = app.game.marketing_lvl - lvl0;
+    try std.testing.expect(bought >= 5 and bought <= 7);
+}
+
+test "a page that appears gets a news mark; Select goes there" {
+    const app = fresh();
+    press(app, .{ .a = true });
+    try std.testing.expect(!app.any_news());
+    // Enough money shows the AutoClippers row (manufacturing news).
+    G.act(app.game, .cheat_money);
+    for (0..20) |_| app.update(.{});
+    try std.testing.expect(app.news[@intFromEnum(pages.Page.manufacturing)]);
+    press(app, .{ .select = true });
+    try std.testing.expectEqual(pages.Page.manufacturing, app.page);
+    try std.testing.expect(!app.news[@intFromEnum(pages.Page.manufacturing)]);
+}
