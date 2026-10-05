@@ -53,6 +53,8 @@ pub const boot = @import("boot.zig");
 pub const audio = @import("audio.zig");
 pub const uart = @import("uart.zig");
 pub const comlynx = @import("comlynx.zig");
+/// The in-process bus for host tests and tools (not used by the cart).
+pub const comlynx_virtual = @import("comlynx_virtual.zig");
 
 pub const Cart = cart.Cart;
 

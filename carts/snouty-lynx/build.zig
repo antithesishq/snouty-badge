@@ -171,6 +171,28 @@ pub fn add(b: *Build, sycl_badge_dep: *Build.Dependency, opts: common.Options) v
     run_rom_run.addPassthruArgs();
     run_rom_run.has_side_effects = true;
     b.step("run-lynx", "Run a Lynx ROM headless (snouty-lynx tools/run_rom.zig)").dependOn(&run_rom_run.step);
+
+    const run_link = b.addExecutable(.{
+        .name = "run-lynx-link",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path(dir ++ "tools/run_link.zig"),
+            .target = b.graph.host,
+            .optimize = .ReleaseFast,
+            .imports = &.{
+                .{ .name = "core", .module = core_fast },
+                .{ .name = "runner", .module = b.createModule(.{
+                    .root_source_file = b.path(dir ++ "tests/runner.zig"),
+                    .target = b.graph.host,
+                    .optimize = .ReleaseFast,
+                    .imports = &.{.{ .name = "core", .module = core_fast }},
+                }) },
+            },
+        }),
+    });
+    const run_link_run = b.addRunArtifact(run_link);
+    run_link_run.addPassthruArgs();
+    run_link_run.has_side_effects = true;
+    b.step("run-lynx-link", "Run Lynx consoles on a virtual ComLynx bus (snouty-lynx tools/run_link.zig)").dependOn(&run_link_run.step);
 }
 
 /// `-Dlynx-rom` as given: `~/x.lnx` (expanded here, the shell leaves `=~`
