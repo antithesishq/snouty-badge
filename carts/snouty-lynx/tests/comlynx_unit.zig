@@ -396,7 +396,8 @@ test "comlynx: token ring of 4 and 8 consoles, interrupt and polling receivers, 
     try expect(r.per_s >= 55);
 }
 
-test "comlynx: token ring latency table (printed; docs/COMLYNX.md section 5)" {
+test "comlynx: token ring latency table (printed with COMLYNX_TABLE=1; docs/COMLYNX.md section 5)" {
+    if (std.testing.environ.getPosix("COMLYNX_TABLE") == null) return error.SkipZigTest;
     const lat_ms = [_]u32{ 0, 1, 2, 5, 10, 20, 30, 40, 50 };
     std.debug.print("\ncomlynx ring: messages/s on console 0 | errors | watchdog regenerations\n", .{});
     for ([_]u8{ 4, 8 }) |n| {
@@ -411,4 +412,52 @@ test "comlynx: token ring latency table (printed; docs/COMLYNX.md section 5)" {
             }
         }
     }
+}
+
+// ---------------------------------------------------------------------------
+// drhelius's lynx-tests UART carts (hardware-measured; tests/roms/lynx-tests,
+// fetched by tools/fetch_test_roms.sh, skipped when absent)
+
+var lt_buf: [64 * 1024]u8 = undefined;
+var lt_controls: [300]u16 = @splat(0);
+
+/// The result screen of `name` on a console with a lone port (nothing else
+/// on the wire), as `zig build run-lynx -- <rom> - 300 <dir> --uart`.
+fn lone_hash(comptime name: []const u8) !u64 {
+    const file = files.read_cart_file("tests/roms/lynx-tests/" ++ name ++ ".lnx", &lt_buf) orelse return error.SkipZigTest;
+    const cart = switch (runner.cart_from_file(file)) {
+        .ok => |x| x,
+        .refused => return error.TestUnexpectedResult,
+    };
+    var run = runner.Run.init(&c0, cart, &lt_controls);
+    c0.attach_link(&p0);
+    defer c0.attach_link(null);
+    var h: u64 = 0;
+    while (!run.done()) h = run.step().hash;
+    return h;
+}
+
+test "comlynx: lynx-tests uart, uart2, uart3 on a lone console (every row but uart TXRDY FULL 9600)" {
+    // Reviewed 2026-10-05 (docs/COMLYNX.md section 4): uart2 and uart3 all
+    // PASS; uart all but TXRDY FULL (row 4, the 9,600 baud sample one
+    // 64 us tick short: $11 for $12/$13).
+    try expectEqual(@as(u64, 0x17FEB9A54FCE887F), try lone_hash("uart"));
+    try expectEqual(@as(u64, 0xAE784EE5DFC633DD), try lone_hash("uart2"));
+    try expectEqual(@as(u64, 0x365C91EEA5B7A13F), try lone_hash("uart3"));
+}
+
+test "comlynx: lynx-tests uart4 on two consoles over the wire (every row on both)" {
+    const file = files.read_cart_file("tests/roms/lynx-tests/uart4.lnx", &lt_buf) orelse return error.SkipZigTest;
+    const lay = core.cart.parse(file, @intCast(file.len));
+    c0.init_in_place(core.Cart.from_slice(&lay, file));
+    c1.init_in_place(core.Cart.from_slice(&lay, file));
+    const cs = [_]*Lynx{ &c0, &c1 };
+    bus2.init(.{ .mode = .wire }, &cs);
+    defer bus2.deinit();
+    // Switched on 7 frames apart (run-lynx-link's default --stagger).
+    bus2.power_on_at(1, 7);
+    for (0..900) |_| bus2.step_frame(&.{ 0, 0 });
+    // Reviewed 2026-10-05: MASTER and SLAVE, every row PASS.
+    try expectEqual(@as(u64, 0xB0E860945F079DC8), runner.frame_hash(c0.frame()));
+    try expectEqual(@as(u64, 0xFFB4522B2DE143A6), runner.frame_hash(c1.frame()));
 }
