@@ -1679,6 +1679,38 @@ players in the death messages, the lobby leader being Player 1.
 - Size: Match 1,820 B (+256), World 3,196 B; .text 127,184 + .data 7,944.
 - Gates: tools/check.sh (with test-stein) passes, 5 new arsenal tests.
 
+### M9.3 Motion tracker (2026-10-05)
+
+Adrian: "make it easier to find other players in deathmatch ... a simple
+motion tracker", as a match rule, default on. Render-only: every badge
+already simulates every player, so the tracker sends nothing and cannot
+desync; the World, its hash and `match.G.version` (2) stay as they are.
+
+- **Rule.** `Rules.radar` (default true), the lobby's RADAR ON/OFF. Wire:
+  byte 0 bit 6 set = OFF, so the default byte is M9.2's and a 9.2 badge
+  on the other end plays the same match (it just draws no tracker).
+  Cable lobby: a fourth rules row. Party lobby: RADAR on the left of the
+  fourth line for everyone; the host's DELAY moves to its right (AUTO n
+  or DELAY n) and the manual-delay suggestion moves to the hint line
+  (AUTO: n) while the cursor is on DELAY.
+- **Who shows.** A living rival (any slot but yours, teammates included)
+  that moved or fired (`Match.shots` went up) in the last 2 s. Standing
+  still hides you; turning in place does not count. Render-side memory
+  per slot (last position, last shot count, quiet ticks), updated once
+  per stepped tick from the matches' `on_tick`; reset at match start.
+- **Look.** A 23 px disc in the view's bottom-left corner (x 2..24,
+  y 80..102; the weapon starts at x 56), the view darkened inside it,
+  a steel rim, you as a white dot with a forward tick, up = facing.
+  Scale 1 px per cell, range 11 cells. A pulse ring grows from the
+  centre once a second; a rival is detected when the pulse passes its
+  distance and its blip (2x2, its slot or team colour) stays at the
+  detected place, fading over the second (2x2, then 1 px, then gone).
+  Hidden while you are dead and with RADAR OFF.
+- Files: `render/tracker.zig` (new), `match.zig` (Rules), `deathmatch.zig`,
+  `party.zig`, SPEC 19/20, RUNNING.md previews.
+- Gates: tools/check.sh (test-stein incl. a Rules test, tracker host
+  test), bench_m8 under 12 ms, size under 140 KiB, preview PNGs.
+
 ## Status
 
 M8.1 status (2026-10-05): the OS transport shipped (fork main 8ca6da6;
