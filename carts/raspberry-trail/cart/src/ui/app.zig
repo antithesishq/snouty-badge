@@ -184,6 +184,76 @@ pub fn outcome_text(o: Outcome) []const u8 {
     };
 }
 
+/// A printed line's outline: leading spaces, length and last character.
+const Shape = struct { lead: usize, len: usize, last: u8 };
+
+fn shape(t: []const u8) Shape {
+    var lead: usize = 0;
+    while (lead < t.len and t[lead] == ' ') lead += 1;
+    var end = t.len;
+    while (end > lead and t[end - 1] == ' ') end -= 1;
+    return .{ .lead = lead, .len = end, .last = if (end > lead) t[end - 1] else 0 };
+}
+
+/// Reflows the listing's printed lines into paragraphs for the narrow
+/// screen: the original broke its sentences at 50-60 columns ("...THE
+/// BETTER YOU CLAIM YOU ARE, THE" / "FASTER YOU'LL HAVE TO BE..."), which
+/// would leave ragged rows at 26. A line joins the one before it when they
+/// have the same tag, the one before does not end a sentence, and it was
+/// either long (the original wrapped it) or this one is indented as a
+/// continuation (8+ spaces, the instructions' item list). Short lines stay
+/// apart ("RUGGED MOUNTAINS" / "THE GOING GETS SLOW").
+pub const Para = struct {
+    buf: [512]u8 = undefined,
+    len: usize = 0,
+    tag: G.Tag = .plain,
+    lead: usize = 0,
+    last: Shape = .{ .lead = 0, .len = 0, .last = 0 },
+    hang: bool = false,
+    active: bool = false,
+
+    pub const join_min_len = 50;
+    pub const continuation_lead = 8;
+
+    fn add(p: *Para, t: []const u8) void {
+        const n = @min(t.len, p.buf.len - p.len);
+        @memcpy(p.buf[p.len .. p.len + n], t[0..n]);
+        p.len += n;
+    }
+
+    pub fn begin(p: *Para, tag: G.Tag, t: []const u8, sh: Shape) void {
+        p.* = .{ .tag = tag, .lead = sh.lead, .last = sh, .active = true };
+        p.add(t[0..sh.len]);
+    }
+
+    pub fn join(p: *Para, tag: G.Tag, t: []const u8, sh: Shape) bool {
+        if (!p.active or tag != p.tag) return false;
+        switch (p.last.last) {
+            '.', '!', '?', ':' => return false,
+            else => {},
+        }
+        if (p.last.len < join_min_len and sh.lead < continuation_lead) return false;
+        if (p.len + 1 + sh.len - sh.lead > p.buf.len) return false;
+        p.add(" ");
+        p.add(t[sh.lead..sh.len]);
+        if (sh.lead >= continuation_lead) p.hang = true;
+        p.last = sh;
+        return true;
+    }
+
+    pub fn flush(p: *Para, lg: *log_mod.Log) void {
+        if (!p.active) return;
+        p.active = false;
+        const style: log_mod.Style = switch (p.tag) {
+            .warning, .death => .warn,
+            .arrival => .good,
+            else => .ink,
+        };
+        const al: log_mod.Align = if (p.tag == .letter and p.lead >= continuation_lead) .center else if (p.hang) .hang else .left;
+        _ = lg.line(p.buf[0..p.len], style, al);
+    }
+};
+
 fn default_seed() u64 {
     return 1;
 }
@@ -481,16 +551,27 @@ pub const App = struct {
         app.copy_hud();
         const lg = app.log;
         app.batch_start = lg.total;
+        var para: Para = .{};
         for (app.game.printed()) |ln| {
             switch (ln.tag) {
-                .question, .mileage, .status_header, .status_values => {},
-                .date => lg.rule(),
-                .warning, .death => _ = lg.line(ln.text, .warn, .indent),
-                .arrival => _ = lg.line(ln.text, .good, .indent),
-                .letter => _ = lg.line(ln.text, .ink, .center),
-                else => _ = lg.line(ln.text, .ink, .indent),
+                .question, .mileage, .status_header, .status_values => para.flush(lg),
+                .date => {
+                    para.flush(lg);
+                    lg.rule(ln.text);
+                },
+                else => {
+                    const sh = shape(ln.text);
+                    if (sh.len == 0) {
+                        para.flush(lg);
+                        lg.gap();
+                    } else if (!para.join(ln.tag, ln.text, sh)) {
+                        para.flush(lg);
+                        para.begin(ln.tag, ln.text, sh);
+                    }
+                },
             }
         }
+        para.flush(lg);
         // A rule can land before the first new row: it belongs to the batch.
         app.batch_end = lg.total;
         app.batch_start = @max(@min(app.batch_start, app.batch_end), lg.oldest());
@@ -509,8 +590,12 @@ pub const App = struct {
             app.enter_prompt();
             return;
         }
+        // Each later page repeats the last text row of the one before, so
+        // a sentence split across pages keeps its context.
         const room_more = L.height - L.footer_h - L.log_top;
-        app.view_end = lg.fit_from(app.seen, app.batch_end, room_more);
+        var from = app.seen;
+        if (from > app.batch_start and lg.get(from - 1).kind == .text) from -= 1;
+        app.view_end = @max(lg.fit_from(from, app.batch_end, room_more), app.seen + 1);
         app.set_phase(.more);
     }
 

@@ -134,8 +134,14 @@ fn draw_row(r: *const log_mod.Row, y: i32) void {
     switch (r.kind) {
         .gap => {},
         .rule => {
-            var x: i32 = 50;
-            while (x < L.width - 50) : (x += 4) draw.fill_rect(x, y + 3, 2, 1, .tan);
+            // -- APRIL 12 1847 --
+            const w = font.width(r.len);
+            const lx = @divTrunc(L.width - w, 2);
+            _ = draw.text(r.str(), lx, y + 2, .faded);
+            var x: i32 = 6;
+            while (x < lx - 6) : (x += 4) draw.fill_rect(x, y + 5, 2, 1, .tan);
+            x = lx + w + 6;
+            while (x < L.width - 6) : (x += 4) draw.fill_rect(x, y + 5, 2, 1, .tan);
         },
         .text => {
             const c: draw.Color = switch (r.style) {

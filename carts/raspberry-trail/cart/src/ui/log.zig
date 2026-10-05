@@ -16,8 +16,8 @@ pub const Kind = enum(u8) {
     text,
     /// A paragraph break.
     gap,
-    /// A thin rule where a new turn's date was printed (the HUD shows the
-    /// date itself).
+    /// A divider where a new turn's date was printed: the date, small,
+    /// between two dashed lines (the HUD shows the current date).
     rule,
 };
 
@@ -34,7 +34,7 @@ pub const Style = enum(u8) {
 /// Row heights in pixels.
 pub const text_h: i32 = 9;
 pub const gap_h: i32 = 4;
-pub const rule_h: i32 = 7;
+pub const rule_h: i32 = 10;
 
 pub const Row = struct {
     kind: Kind = .text,
@@ -57,7 +57,11 @@ pub const Row = struct {
     }
 };
 
-pub const Align = enum { left, indent, center };
+/// `.hang`: the first row at the margin, the rest two columns in (a
+/// paragraph whose printed lines were indented after the first, like the
+/// instructions' item list). `.center`: each row centred (the letters'
+/// signatures).
+pub const Align = enum { left, hang, center };
 
 pub const Log = struct {
     rows: [cap]Row = undefined,
@@ -93,12 +97,16 @@ pub const Log = struct {
         if (l.total > 0) l.gap_pending = true;
     }
 
-    pub fn rule(l: *Log) void {
+    /// A turn divider labelled `label` (replaces a pending paragraph break).
+    pub fn rule(l: *Log, label: []const u8) void {
         l.gap_pending = false;
-        if (l.total == 0) return;
         if (l.last_kind() == .gap) l.total -= 1;
-        if (l.last_kind() == .rule) return;
-        l.append(.{ .kind = .rule });
+        var r: Row = .{ .kind = .rule };
+        var buf: [64]u8 = undefined;
+        const sq = text.squeeze(label, &buf);
+        r.len = @intCast(@min(sq.text.len, cols));
+        @memcpy(r.buf[0..r.len], sq.text[0..r.len]);
+        l.append(r);
     }
 
     fn flush_gap(l: *Log) void {
@@ -107,30 +115,44 @@ pub const Log = struct {
         if (l.last_kind()) |k| if (k == .text) l.append(.{ .kind = .gap });
     }
 
-    /// Appends one printed line, word-wrapped. Lines that started with
-    /// spaces are indented (`.indent`) or centred (`.center`, the letters'
-    /// signatures). Returns the number of rows added.
+    /// Appends a printed line (or a paragraph of them), word-wrapped at
+    /// 26 columns, runs of spaces squeezed. Returns the number of rows added.
     pub fn line(l: *Log, src: []const u8, style: Style, al: Align) u32 {
-        var buf: [256]u8 = undefined;
+        var buf: [512]u8 = undefined;
         const sq = text.squeeze(src, &buf);
         if (sq.text.len == 0) {
             l.gap();
             return 0;
         }
         l.flush_gap();
-        const indented = al == .indent and sq.lead > 0;
-        const width: usize = if (indented) cols - 2 else cols;
-        var spans: [16]text.Span = undefined;
-        const n = @min(text.wrap(sq.text, width, &spans), spans.len);
-        for (spans[0..n]) |sp| {
+        var spans: [24]text.Span = undefined;
+        var n: usize = 0;
+        if (al == .hang) {
+            // The first row at full width, the rest two columns narrower.
+            var first: [1]text.Span = undefined;
+            _ = text.wrap(sq.text, cols, &first);
+            spans[0] = first[0];
+            const rest_at: usize = first[0].end;
+            const m = @min(text.wrap(sq.text[rest_at..], cols - 2, spans[1..]), spans.len - 1);
+            for (spans[1 .. 1 + m]) |*sp| {
+                sp.start += @intCast(rest_at);
+                sp.end += @intCast(rest_at);
+            }
+            n = 1 + m;
+        } else {
+            n = @min(text.wrap(sq.text, cols, &spans), spans.len);
+        }
+        for (spans[0..n], 0..) |sp, k| {
             var r: Row = .{ .style = style };
             const s = sq.text[sp.start..sp.end];
             r.len = @intCast(@min(s.len, cols));
             @memcpy(r.buf[0..r.len], s[0..r.len]);
-            if (indented) r.x = 2 * font.cell_w;
-            if (al == .center and sq.lead > 0) {
-                const w = font.width(r.len);
-                r.x = @intCast(@max(0, @divTrunc(160 - w, 2)));
+            switch (al) {
+                .left => {},
+                .hang => if (k > 0) {
+                    r.x = 2 * font.cell_w;
+                },
+                .center => r.x = @intCast(@max(0, @divTrunc(160 - 4 - font.width(r.len), 2))),
             }
             l.append(r);
         }
@@ -158,28 +180,32 @@ pub const Log = struct {
     }
 };
 
-test "log: wrap, indent, gaps" {
+test "log: wrap, hanging indent, gaps, rules" {
     var l: Log = .{};
-    try std.testing.expectEqual(@as(u32, 3), l.line("THIS PROGRAM SIMULATES A TRIP OVER THE OREGON TRAIL FROM", .ink, .indent));
+    try std.testing.expectEqual(@as(u32, 3), l.line("THIS PROGRAM SIMULATES A TRIP OVER THE OREGON TRAIL FROM", .ink, .left));
     l.gap();
     l.gap();
-    _ = l.line("", .ink, .indent);
-    _ = l.line("     OXEN - YOU CAN SPEND $200-$300 ON YOUR TEAM", .ink, .indent);
-    // Three rows, one gap (not three), then the indented line (24 columns).
+    _ = l.line("", .ink, .left);
+    _ = l.line("     OXEN - YOU CAN SPEND $200-$300 ON YOUR TEAM THE MORE YOU SPEND", .ink, .hang);
+    // Three rows, one gap (not three), then the paragraph: 26 columns,
+    // then 24 indented.
     try std.testing.expectEqual(Kind.gap, l.get(3).kind);
     try std.testing.expectEqualStrings("OXEN - YOU CAN SPEND", l.get(4).str());
-    try std.testing.expectEqual(@as(u8, 12), l.get(4).x);
+    try std.testing.expectEqual(@as(u8, 0), l.get(4).x);
     try std.testing.expectEqualStrings("$200-$300 ON YOUR TEAM", l.get(5).str());
-    try std.testing.expectEqual(@as(u32, 6), l.total);
+    try std.testing.expectEqual(@as(u8, 12), l.get(5).x);
+    try std.testing.expectEqualStrings("THE MORE YOU SPEND", l.get(6).str());
+    try std.testing.expectEqual(@as(u32, 7), l.total);
     // A trailing gap is not stored.
     l.gap();
-    try std.testing.expectEqual(@as(u32, 6), l.total);
-    try std.testing.expectEqual(@as(i32, 3 * 9 + 4 + 2 * 9), l.height(0, 6));
-    // A rule replaces a pending gap and never doubles.
-    l.rule();
-    l.rule();
     try std.testing.expectEqual(@as(u32, 7), l.total);
-    try std.testing.expectEqual(Kind.rule, l.get(6).kind);
+    try std.testing.expectEqual(@as(i32, 3 * 9 + 4 + 3 * 9), l.height(0, 7));
+    // A rule replaces a pending gap and carries its label.
+    l.gap();
+    l.rule("MONDAY APRIL 12 1847");
+    try std.testing.expectEqual(@as(u32, 8), l.total);
+    try std.testing.expectEqual(Kind.rule, l.get(7).kind);
+    try std.testing.expectEqualStrings("MONDAY APRIL 12 1847", l.get(7).str());
 }
 
 test "log: the ring keeps the last cap rows" {

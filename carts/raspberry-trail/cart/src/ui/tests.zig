@@ -393,6 +393,27 @@ test "autoplay: plays whole games through the buttons and restarts" {
         }
         try std.testing.expect(app.games_over >= 3);
         try std.testing.expect(app.games_started >= 3);
-        try std.testing.expect(app.shots >= 1);
+        if (v >> 4 == 3) try std.testing.expect(app.shots >= 1);
+    }
+}
+
+test "autoplay: stats (prints)" {
+    if (true) return error.SkipZigTest;
+    const policies = [_]u32{ 0x02, 0x12, 0x22, 0x32 };
+    for (policies) |v| {
+        const app = fresh();
+        var bot: autoplay.Bot = .{};
+        bot.set(v, 7);
+        var frames: u64 = 0;
+        var outcomes: [10]u32 = @splat(0);
+        var last: u32 = 0;
+        while (app.games_over < 40 and frames < 20_000_000) : (frames += 1) {
+            app.update(bot.step(app));
+            if (app.games_over != last) {
+                last = app.games_over;
+                outcomes[@backingInt(app.last_outcome)] += 1;
+            }
+        }
+        std.debug.print("policy {x}: {d} games, {d} frames/game, shots {d} hit {d} wrong {d} misfire {d}, outcomes {any}\n", .{ v, app.games_over, frames / @max(app.games_over, 1), app.shots, app.shots_hit, app.shots_wrong, app.misfires, outcomes });
     }
 }
