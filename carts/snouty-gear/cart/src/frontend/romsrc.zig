@@ -2,7 +2,8 @@
 //! section 11), plus the one-line report the screen shows.
 //!
 //! Badge build with `rom.source == .drive`: open the FAT12 volume at
-//! `romfs.base_addr`, take the first `.gg`/`.sms` file, map its clusters,
+//! `romfs.base_addr`, then the extra drive when the firmware has one
+//! (`romfs.Image.extra`), take the first `.gg`/`.sms` file, map its clusters,
 //! CRC it and build the core's bank table: a direct flash pointer for each
 //! 16 KB bank that is one contiguous run (`Mapped.chunk`), the per-cluster
 //! `Mapped.read` path for the rest. Any error, or no file, means no ROM:
@@ -72,12 +73,23 @@ pub fn select() ?core.Rom {
 }
 
 fn from_drive() ?core.Rom {
-    const vol = romfs.Volume.open_badge() catch |e| return none(@errorName(e));
-    const n = vol.find(&.{ "gg", "sms" }, &entries);
+    // The badge drive first, then the extra drive. The badge drive's error
+    // is reported only when neither has a ROM.
+    var badge_err: ?[]const u8 = null;
+    var n: usize = 0;
+    var d: u8 = 0;
+    while (d < romfs.drive_count and n < entries.len) : (d += 1) {
+        const v = romfs.Volume.open_drive(d) catch |err| {
+            if (d == 0) badge_err = @errorName(err);
+            continue;
+        };
+        n += v.find(&.{ "gg", "sms" }, entries[n..]);
+    }
     drive_matches = @intCast(n);
-    if (n == 0) return none("no .gg/.sms file");
+    if (n == 0) return none(badge_err orelse "no .gg/.sms file");
     const e = entries[0];
     drive_entry = e;
+    const vol = romfs.Volume.open_drive(e.drive) catch |err| return none(@errorName(err));
     mapped = vol.map(e, &clusters) catch |err| return none(@errorName(err));
     crc = mapped.crc32();
 

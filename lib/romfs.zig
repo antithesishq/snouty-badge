@@ -5,10 +5,13 @@
 //!
 //! The volume is the super-floppy the OS formats
 //! (sycl-badge/src/os/loader/storage.zig): boot sector at sector 0, 512-byte
-//! sectors, 1 sector per cluster, 32 root entries, "FAT12   ". The reader is
-//! read-only over an `Image`: the badge passes `Image.badge()` (the
-//! `base_addr` XIP flash window, `size` bytes), host tests an image in
-//! memory. The boot sector's geometry is checked against the image's extent
+//! sectors, 1 sector per cluster, 32 root entries (128 on the extra drive),
+//! "FAT12   ". The reader is read-only over an `Image`: the badge passes
+//! `Image.badge()` (the `base_addr` XIP flash window, `size` bytes), host
+//! tests an image in memory. Firmware with external flash support (the
+//! sycl-badge ext-flash branch) adds a second drive, "SYCLEXTRA", on the
+//! badge's 2 MB external chip: `Image.extra()`, and `Image.drive(i)` for
+//! pickers that list both. The boot sector's geometry is checked against the image's extent
 //! before any directory or data access, so a corrupt or foreign boot sector
 //! is `BadGeometry`, never a read outside the volume (review INF01). It only
 //! touches the boot sector, the root directory, the FAT entries of the
@@ -27,8 +30,27 @@ pub const size: usize = 1280 * 1024;
 pub const sector_size: usize = 512;
 /// Upper bound on the clusters of any file on the volume; a caller's cluster
 /// table of this many `u16` (5 KB) maps every file that fits the drive. A
-/// file needs ceil(file size / 512) entries (a 512 KB ROM: 1024).
+/// file needs ceil(file size / 512) entries (a 512 KB ROM: 1024). Files on
+/// the extra drive larger than this (1280 KB) report TooManyClusters.
 pub const max_clusters: usize = size / sector_size;
+
+/// The extra drive: QMI window 1 (cached XIP alias of the external chip) and
+/// the fixed size the ext-flash OS formats it to (storage.zig EXT_VOLUME_SIZE).
+pub const extra_base_addr: usize = 0x11000000;
+pub const extra_size: usize = 1792 * 1024;
+/// Number of drives `Image.drive` knows: 0 the badge drive, 1 the extra drive.
+pub const drive_count: u8 = 2;
+
+/// Cart IPC block (sycl-badge os_abi.zig, base 0x20020000), read directly so
+/// carts need no SDK bump: os_flags bit 1 is set by ext-flash firmware when
+/// the chip is mapped, and ext_flash_size is its size in bytes. Older
+/// firmware zeroes both (init_cart_ipc_data clears the block).
+const ipc_os_flags_addr: usize = 0x20020000 + 0x150EA;
+const ipc_os_flag_ext_flash: u16 = 1 << 1;
+const ipc_ext_flash_size_addr: usize = 0x20020000 + 0x150F4;
+
+/// Largest cluster count the reader accepts on any volume (FAT12's limit).
+const fat12_max_clusters: u32 = 4084;
 
 /// NoVolume: no 0xAA55 boot sector signature (erased flash, zeros), or an
 /// image shorter than one sector.
@@ -51,6 +73,8 @@ pub const Entry = struct {
     size: u32 = 0,
     /// First data cluster (2..), 0 for an empty file.
     first_cluster: u16 = 0,
+    /// The `Volume.drive` it was found on (0 badge drive, 1 extra drive).
+    drive: u8 = 0,
 
     /// The name as a slice.
     pub fn slice(self: *const Entry) []const u8 {
@@ -88,6 +112,26 @@ pub const Image = struct {
     /// The badge drive: the OS romfs region, `size` bytes at `base_addr`.
     pub fn badge() Image {
         return whole(@as([*]const u8, @ptrFromInt(base_addr))[0..size]);
+    }
+
+    /// The extra drive on the external flash, or null when the OS doesn't map
+    /// it (stock firmware, no chip). Badge only: reads the cart IPC block.
+    pub fn extra() ?Image {
+        const flags: *const volatile u16 = @ptrFromInt(ipc_os_flags_addr);
+        if (flags.* & ipc_os_flag_ext_flash == 0) return null;
+        const chip: *const volatile u32 = @ptrFromInt(ipc_ext_flash_size_addr);
+        if (chip.* < extra_size) return null;
+        return whole(@as([*]const u8, @ptrFromInt(extra_base_addr))[0..extra_size]);
+    }
+
+    /// Drive `index` (0 badge, 1 extra), or null when it isn't there.
+    /// Badge only.
+    pub fn drive(index: u8) ?Image {
+        return switch (index) {
+            0 => badge(),
+            1 => extra(),
+            else => null,
+        };
     }
 
     /// A whole volume in memory: the boot sector may claim at most
@@ -129,7 +173,8 @@ fn geometry(img: Image) Error!Geometry {
     var total: u32 = rd16(base, 19);
     if (total == 0) total = rd32(base, 32);
     const fat_sectors: u32 = rd16(base, 22);
-    if (root_entries != 32) return error.BadGeometry;
+    // The OS formats 32 root entries on the badge drive, 128 on the extra one.
+    if (root_entries != 32 and root_entries != 128) return error.BadGeometry;
     if (!std.mem.eql(u8, base[54..62], "FAT12   ")) return error.BadGeometry;
     if (reserved == 0 or fats == 0 or fat_sectors == 0) return error.BadGeometry;
     const root_start = reserved + fats * fat_sectors;
@@ -146,7 +191,7 @@ fn geometry(img: Image) Error!Geometry {
     // ones; FAT12 tops out at 4084 clusters.
     const fat_capacity = fat_sectors * ss * 2 / 3;
     if (clusters + 2 > fat_capacity) return error.BadGeometry;
-    if (clusters > 4084) return error.BadGeometry;
+    if (clusters > fat12_max_clusters) return error.BadGeometry;
     return .{
         .fat_start = reserved,
         .root_start = root_start,
@@ -191,6 +236,9 @@ fn ext_matches(name: []const u8, exts: []const []const u8) bool {
 pub const Volume = struct {
     /// The volume's bytes, boot sector first: `Image.badge()` on the badge.
     image: Image,
+    /// Copied into every `Entry` that `find` reports, so a picker listing
+    /// several drives can reopen the right one (`open_drive(entry.drive)`).
+    drive: u8 = 0,
 
     /// Checks the boot sector: signature 0xAA55 (else NoVolume), 512-byte
     /// sectors, 1 sector per cluster, 32 root entries, "FAT12   ", a FAT
@@ -205,6 +253,13 @@ pub const Volume = struct {
     /// The badge drive (`Image.badge()`).
     pub fn open_badge() Error!Volume {
         return open(Image.badge());
+    }
+
+    /// Drive `index` (`Image.drive`), NoVolume when it isn't there. Badge only.
+    pub fn open_drive(index: u8) Error!Volume {
+        var v = try open(Image.drive(index) orelse return error.NoVolume);
+        v.drive = index;
+        return v;
     }
 
     /// Scans the root directory in order for files whose extension (after
@@ -306,6 +361,7 @@ pub const Volume = struct {
             o.name_len = @intCast(keep);
             o.size = rd32(e, 28);
             o.first_cluster = rd16(e, 26);
+            o.drive = self.drive;
             count += 1;
         }
         return count;
@@ -325,7 +381,7 @@ pub const Volume = struct {
         if (need > clusters.len) return error.TooManyClusters;
         if (need > g.clusters) return error.BadChain;
         const fat = base + g.fat_start * sector_size;
-        var seen = std.mem.zeroes([max_clusters / 8 + 1]u8);
+        var seen = std.mem.zeroes([(fat12_max_clusters + 2) / 8 + 1]u8);
         // Highest cluster number on the volume, and in the image's bytes
         // (the same for a whole image: `geometry` checked it fits).
         const present: u64 = self.image.bytes.len / ss;

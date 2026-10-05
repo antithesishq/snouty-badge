@@ -154,3 +154,26 @@ does:
 The core's bank/block pointer table is the same in both paths, so
 switching is a build option (`-D<cart>-rom-source=drive|embed|pack`), not
 a code change.
+
+## 8. The extra drive (ext-flash firmware)
+
+The SYCL badge v2 carries a second, 2 MB QSPI flash chip (U8) that stock
+firmware never enables. The `ext-flash` branch of our sycl-badge clone maps
+it at `0x11000000` (QMI window 1) and shows it over USB as a second drive,
+"SYCLEXTRA": the same FAT12 layout, 1792 KB, 128 root entries. The rest of
+the chip is a cart-writable area. That firmware sets `os_flags` bit 1 in the
+cart IPC block (`0x200350EA`) and the chip size at `0x200350F4`; older
+firmware clears both.
+
+`lib/romfs.zig` reads the IPC words directly, so no SDK bump is needed:
+`Image.extra()` is null on stock firmware, and `Image.drive(i)` /
+`Volume.open_drive(i)` cover drive 0 (badge) and 1 (extra). Each
+`Entry.drive` records where a file came from. Boy, Gear, Lynx and Genesis
+list the badge drive first, then the extra drive, in one picker (Gear still
+runs the first file). The OS menu lists only `.uf2` carts from the extra
+drive, never ROMs.
+
+Limits: one cluster table (`max_clusters`, 1280 KB) per cart, so a file on
+the extra drive larger than that reports `TooManyClusters`. Window 1 reads
+are serial 0Bh at 50 MHz, slower than the badge drive's quad reads on a
+cache miss.
