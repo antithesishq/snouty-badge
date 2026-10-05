@@ -55,7 +55,7 @@ On top of it a small go-back-N channel: byte 0 of every reliable packet is
 at most 7 packets are unacknowledged (with the bare acks this stays within
 the link's 8-packet queue); a gap makes the receiver send one NAK (resend
 from its ack at once); no ack for 12 ms makes the sender resend the
-window; 25 such timeouts in a row restart the link (a new session on both
+window; 80 such timeouts in a row (about 1 s) restart the link (a new session on both
 badges, which resets the channel). A one-byte packet is a bare ack or NAK.
 
 | Type | Body | When |

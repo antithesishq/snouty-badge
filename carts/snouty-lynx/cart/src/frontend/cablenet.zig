@@ -74,8 +74,10 @@ pub const window = 7;
 /// an ack is late by a few ms at most (the gap between its pump's end and
 /// its next update, or a slice of a slow frame).
 pub const rto_us: u64 = 12_000;
-/// Timeouts in a row before the link restarts (~1 s).
-pub const give_up = 25;
+/// Timeouts in a row before the link restarts: `give_up * rto_us`, about
+/// 1 s without an ack while data waits, so a hiccup on the partner (a
+/// slow frame, the OS settings box) never ends a linked game.
+pub const give_up = 80;
 /// Badge frames between GO and the guest's restart.
 pub const stagger_frames = 7;
 
