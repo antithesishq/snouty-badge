@@ -452,6 +452,11 @@ pub const Car = struct {
     safe: u8 = 0,
     /// The hunter AI's waypoint (hunt.zig; internal, `no_node` for none).
     nav: u8 = 0xFF,
+    /// M6: the length in ticks of the current (or last) jump: `hop` counts
+    /// down from it. A race ramp's is `tuning.ramp_ticks`; the arena's
+    /// kickers fly `tuning.kicker_ticks`, so the sprite's arc must read
+    /// this, not the constant.
+    air: u8 = tuning.ramp_ticks,
     /// Battle damage is scaled (`tuning.battle_damage_pct`): the hundredths
     /// of a point carried to the next hit (internal).
     dmg_frac: u8 = 0,
