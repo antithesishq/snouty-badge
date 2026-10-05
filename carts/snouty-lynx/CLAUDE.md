@@ -33,7 +33,12 @@ CLAUDE.md and docs have the longer explanations.
   page-mode stream, `CartPort`. `cart.zig`: the cart as 256 block pointers
   and the `.lnx`/headerless parser. `undo.zig`: the scrubber's undo-record
   ring (copy-on-first-write 64 B blocks, swapped to step; docs/SCRUB.md). `boot.zig`: the post-boot state from
-  the public write-ups (docs/BOOT.md). PLAN.md "Frozen for M1" is the
+  the public write-ups (docs/BOOT.md). `uart.zig`: Mikey's UART (state
+  `Mikey.uart`), running only with a ComLynx port attached
+  (`Lynx.attach_link`; else the M1 stub); `comlynx.zig`: the port (frames
+  sent, frames on the wire); `comlynx_virtual.zig`: 2-8 consoles on one
+  bus for host tests (docs/COMLYNX.md). `step_frame` = `begin_frame` +
+  `finish_frame`, `run_to` slices a frame. PLAN.md "Frozen for M1" is the
   interface contract between these files.
 - `cart/src/` — the badge frontend. `main.zig` exports `start()`/`update()`,
   the wasm shims and exports, the state machine (splash -> running | pick | help, running <-> menu,
@@ -47,8 +52,11 @@ CLAUDE.md and docs have the longer explanations.
   `debug` (step timing, FPS), `text` (Snouty Gear's fast font, verbatim),
   `menu` (the
   frozen-frame menu: Resume, Buttons swap, Sound, Press Option 2, Restart
-  Pause+Opt1, Debug overlay, Reset, Pick ROM, About; PLAN.md M2), `picker`
-  (the drive file list, restarts into the chosen file), `rewind` (the time
+  Pause+Opt1, Debug overlay, Reset, Pick ROM, Party, About; PLAN.md M2, M6), `picker`
+  (the drive file list, restarts into the chosen file), `linkport` (the
+  linked mode, the cart serial port and lobby client), `lynxnet`
+  (ComLynx over lib/party.zig), `party` (the PARTY lobby screen; the
+  menu's Party row; docs/COMLYNX.md section 10), `rewind` (the time
   scrubber over `core.undo`: arena from the linker symbols, M3), `tuning`
   (stack guard, wasm arena, the fast-forward knobs), `strip` (the status strip), `audio` (M5:
   `audio_out` into the streaming ring of `lib/stream_audio.zig`, rate
@@ -67,7 +75,10 @@ CLAUDE.md and docs have the longer explanations.
   firmware's 512-sample reads), `input_unit.zig` (frontend/input.zig with
   the SDK's cart-api for `Controls`: menu hold, held-back tap, fast
   forward, chorded rewind), `ff_determinism.zig` (fast-forward stepping
-  equals 1x). `tools/check_chord_rewind.sh`: the chorded rewind and the
+  equals 1x), `comlynx_unit.zig` / `comlynx_warbirds.zig` /
+  `comlynx_party.zig` (the UART, lynx-tests uart1-4, cc65 token rings in
+  `tests/comlynx/`, Warbirds from `~/roms/lynx/` on the virtual bus and
+  the lobby model). `tools/check_chord_rewind.sh`: the chorded rewind and the
   menu scrubber land on the same frame and play on identically (wasm). `tests/roms/` is gitignored.
 - `roms/` — `raycast.lnx` (shipped, Apache-2.0, `LICENSE-raycast.txt`,
   `docs/ROM_CANDIDATES.md`) and `placeholder.lnx` (576 B,
@@ -77,6 +88,10 @@ CLAUDE.md and docs have the longer explanations.
 - `tools/` — `run_rom.zig` (`zig build run-lynx -- <rom> <script|-> <updates>
   <outdir>`: headless run, frame images and hashes, `--wav` sound,
   docs/RUNNING.md 2a),
+  `run_link.zig` (`zig build run-lynx-link`: N consoles on the virtual
+  ComLynx bus), `comlynx_sweep.py` (the latency sweep),
+  `make_comlynx_roms.sh` (cc65 test carts), `lynx_e2e.zig` / `lynx_e2e.sh`
+  (Warbirds through the real `badge lobby`, ports 27500-27549),
   `fetch_test_roms.sh`, `romcheck.py`, `bootrom_crosscheck.py` (needs
   Adrian's local boot ROM, never in the repo), `make_placeholder_rom.py`,
   `scripts/*.json` (preview and badge-bench input). Shared tools

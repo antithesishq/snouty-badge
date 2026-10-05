@@ -790,6 +790,28 @@ regression against origin/main e21702ce (numbers in the status).
 
 ## Status
 
+- 2026-10-05: M6 ComLynx built on `lynx/comlynx` (not merged; the
+  coordinator merges it into `party`). docs/COMLYNX.md has it all. The
+  real UART (core/uart.zig) reproduces every lynx-tests uart, uart2,
+  uart3 and (two consoles) uart4 row but uart's TXRDY FULL at 9,600 baud;
+  unlinked the M1 stub is unchanged (golden hashes and rows identical).
+  The virtual bus (wire / relay / timestamped) runs Warbirds (Adrian's
+  dump) on 2-4 consoles into the networked game: its own echo must be
+  local (fails from 0.75-1 ms of echo delay), remote latency tolerated
+  ~50 ms with 2 players, ~25 with 3, ~12 with 4. cc65 token rings (4, 8
+  consoles, interrupt and polling) clean to 10 ms. Network step on
+  lib/party.zig: frontend/lynxnet.zig ('F' frames with time and 9th bit,
+  READY, GO to 0xFE; relay or T + D modes), the PARTY screen (menu row
+  Party, Snoutenstein's lobby flow), cart_serial's Badge rings; tests on
+  party_virtual (2 badges relay, 4 at T + 25, a leaver) and the real
+  relay (tools/lynx_e2e.sh: 2 relay, 2 / 4 at T + 25, 4 with a rejoin
+  and an unplug; real relay p99 3.6-4.7 ms on localhost). Bench (busy
+  ms mean / p95 / worst, origin/main -> final): m3_scrub 6.17 / 9.49 /
+  10.76 -> 6.18 / 9.50 / 10.78, m2_play 6.75 / 9.02 / 10.27 -> 6.76 /
+  9.03 / 10.28, hd_drive 8.86 / 11.82 / 15.56 -> 8.86 / 11.82 / 15.55. RAM cart
+  .text 105,772 -> 126,888 B, scrub arena 73,324 -> 47,740 B. No
+  hardware run; 4-player timestamped play at D under ~25 ms needs
+  sub-frame heartbeats (docs/COMLYNX.md section 11).
 - 2026-10-04: Chorded rewind done on `emu-ff-lynx` (Left during the
   fast-forward hold; "Chorded rewind" at the end of this file).
 - 2026-10-04: Fast forward done on `emu-ff-lynx` (Select double tap and
