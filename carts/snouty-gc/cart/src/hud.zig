@@ -506,8 +506,13 @@ fn draw_bottom_left(w: *const world.World, c: *const world.Car, follow: u8, fram
     const digits: []const u8 = if (c.ammo_front >= 100) ammo_buf[0..] else if (c.ammo_front >= 10) ammo_buf[1..] else ammo_buf[2..];
     text(digits, margin + 10, front_y, if (c.ammo_front == 0) coral else white);
     var k: u8 = 0;
-    while (k < @max(tuning.burst_per_lap, c.burst_charges) and k < 2) : (k += 1) {
-        const x = margin + 34 + @as(i32, k) * 11;
+    // M5 BURST BUFFER: up to 4 bolts, packed closer past 2 (the car's
+    // sprite starts at x 64).
+    const bolts = @max(c.burst_max, c.burst_charges);
+    const step: i32 = if (bolts > 2) 6 else 11;
+    const x0: i32 = if (bolts > 2) margin + 30 else margin + 34;
+    while (k < bolts and k < 4) : (k += 1) {
+        const x = x0 + @as(i32, k) * step;
         const lit = k < c.burst_charges;
         const burning = c.burst > 0 and k == c.burst_charges and (frame / 3) % 2 == 0;
         sprites.blit_at(&sprites.icons, sprites.i_burst, x, front_y - 2, .{

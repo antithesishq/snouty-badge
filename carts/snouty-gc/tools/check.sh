@@ -41,6 +41,19 @@
 #              the menu), the made-up LINK screens (debug_link_view) open the
 #              lobby and the link select, and a Quick Race after them is a
 #              single-player race (debug_linked 0).
+#            - M5: the M0-M4 input scripts (m0_race, m2_race, m3_gc_race,
+#              m3_outflow_race; 3,000 updates each) replay to the World
+#              checksums recorded at M4 (debug_world_sum): the garage, the
+#              chips and the career changed nothing outside the CIRCUIT;
+#            - M5: A on the title opens the Quick Race select, A races (two
+#              presses, SPEC 8.1);
+#            - M5 CIRCUIT: Start, Start, Down x2, A (CIRCUIT), A (SNOUTY) is
+#              the garage; 2,000 CYCLES given, FRONT L2 and PLATING L1
+#              bought (1,100 left); Start races the Dumps' first track with
+#              the autopilot to the results, A A the standings (race 1
+#              booked, CYCLES earned), A the garage; then made-up results
+#              (debug_prix_skip) close the Dumps (the league card, the
+#              Runoff unlock card), the Runoff, and reach the end card.
 #   bench    badge-bench (calibrated) on badge-bench/carts/snouty-gc.toml,
 #            once plain and once with --lcd, and the render stress scene
 #            (--poke gc_stress=1, tools/scripts/m1_render_stress.json) plain
@@ -48,8 +61,11 @@
 #            autopilot race with pickups in play), m3_outflow_race.json
 #            (1,500 frames on Outflow Canyon, the busiest track) and
 #            m3_gc_race.json (3,600 frames of a GARBAGE COLLECTION race on
-#            Monitor Dunes: marks, claws, the Sweeper), each plain and
-#            --lcd: worst `busy ms` <= BENCH_MAX_MS (default 8, SPEC
+#            Monitor Dunes: marks, claws, the Sweeper), M5's
+#            m5_circuit_race.json (3,000 frames: the menus, the garage, a
+#            CIRCUIT race with chips and the AIs' loadouts) and m5_cards.json
+#            (--poke gc_cards=1: garage purchases, the standings, the league,
+#            unlock and end cards), each plain and --lcd: worst `busy ms` <= BENCH_MAX_MS (default 8, SPEC
 #            13.1), no crash, no neopixel warning. M4: the stress scene and
 #            m3_gc_race.json once more with `--poke gc_pump_probe=1` (every
 #            link pump point runs, the link searching: a link race's draw
@@ -144,6 +160,13 @@ if want preview; then
     a=$(grep -o 'debug_world_sum=[-0-9]*' "$out/replay.txt")
     b=$(grep -o 'debug_world_sum=[-0-9]*' "$out/autopilot.txt")
     if [ -n "$a" ] && [ "$a" = "$b" ]; then echo "ok   m0_race.json replays the autopilot's race ($a)"; else echo "FAIL m0_race.json replay '$a' != autopilot '$b'"; st=1; fi
+    # M5: the M0-M4 scripts' World checksums at update 2,999, as recorded at M4.
+    for g in m0_race:1125151687 m2_race:1116132432 m3_gc_race:-1540294026 m3_outflow_race:69064753; do
+        n=${g%%:*}
+        run_preview "golden_$n" --frames 3000 --script "$here/scripts/$n.json" --expect "debug_world_sum == ${g##*:}" \
+            --dump-exports debug_world_sum > /dev/null || { echo "FAIL $n.json no longer replays to ${g##*:}"; st=1; continue; }
+        echo "ok   $n.json replays to its M4 checksum ${g##*:}"
+    done
     run_preview race --frames 9000 --call debug_start_race:0 --call debug_set_autopilot:1 \
         --until 'debug_screen == 5' --expect 'debug_screen == 5' --expect 'debug_lap == 3' \
         --expect 'debug_phase == 2' --expect 'debug_world_size < 2560' \
@@ -155,8 +178,8 @@ if want preview; then
         --press A:80-80 --press LEFT:90-90 --press A:100-100 --at '95 debug_select_racer == 5' \
         --expect 'debug_screen == 3' --expect 'debug_mode == 0' --expect 'debug_follow == 5' \
         --dump-exports debug_screen,debug_follow || st=1
-    run_preview menu --frames 80 --press START:2-2 --press START:10-10 --press DOWN:14-14,DOWN:16-16 --press A:20-20 \
-        --at '30 debug_screen == 6' --press UP:32-32 --press A:40-40 --at '50 debug_screen == 2' --press A:60-60 \
+    run_preview menu --frames 80 --press START:2-2 --press START:10-10 --press DOWN:14-14,DOWN:16-16,DOWN:18-18 --press A:20-20 \
+        --at '30 debug_screen == 6' --press UP:32-32,UP:34-34 --press A:40-40 --at '50 debug_screen == 2' --press A:60-60 \
         --expect 'debug_screen == 3' --expect 'debug_mode == 3' --dump-exports debug_screen,debug_mode || st=1
     run_preview gc --frames 9000 --call debug_start_gc:0 --call debug_set_autopilot:1 --until 'debug_screen == 5' \
         --expect 'debug_screen == 5' --expect 'debug_alive == 1' --expect 'debug_gc_survivor < 6' \
@@ -166,12 +189,25 @@ if want preview; then
         --call-at '1413 debug_effect:1' --press A:1307-1307,A:1312-1312,A:1332-1332,A:1337-1337 \
         --at '1301 debug_captcha > 100' --at '1360 debug_captcha == 0' --at '1420 debug_frozen > 60' \
         --at '1480 debug_forks >= 2' --dump-exports debug_forks || st=1
-    run_preview link --frames 200 --press START:2-2 --press START:10-10 --press DOWN:14-14,DOWN:16-16 --press A:20-20 \
+    run_preview link --frames 200 --press START:2-2 --press START:10-10 --press DOWN:14-14,DOWN:16-16,DOWN:18-18 --press A:20-20 \
         --at '30 debug_screen == 6' --at '30 debug_link_state == 0' --call-at '40 debug_link_view:2' --at '50 debug_screen == 7' \
         --press RIGHT:60-60 --call-at '70 debug_link_view:5' --at '80 debug_screen == 2' --press A:90-90 \
         --call-at '100 debug_link_view:0' --at '110 debug_screen == 7' --press B:120-120 --at '130 debug_screen == 6' \
-        --press UP:140-140,UP:142-142 --press A:150-150 --press A:170-170 \
+        --press UP:140-140,UP:142-142,UP:144-144 --press A:150-150 --press A:170-170 \
         --expect 'debug_screen == 3' --expect 'debug_linked == 0' --dump-exports debug_screen,debug_linked || st=1
+    run_preview quick2 --frames 60 --press START:2-2 --press A:10-10 --at '15 debug_screen == 2' --press A:30-30 \
+        --expect 'debug_screen == 3' --expect 'debug_mode == 0' --dump-exports debug_screen,debug_mode || st=1
+    run_preview circuit --frames 7700 --call debug_set_autopilot:1 \
+        --press START:2-2 --press START:10-10 --press DOWN:12-12,DOWN:14-14 --press A:16-16 --press A:22-22 --call-at '26 debug_prix_give:2000' \
+        --press A:30-30 --press DOWN:34-34,DOWN:36-36 --press A:40-40 --press START:50-50 \
+        --at '24 debug_screen == 8' --at '45 debug_prix_cycles == 1100' --at '60 debug_mode == 4' --at '7303 debug_screen == 5' \
+        --press A:7320-7320,A:7340-7340,A:7370-7370,A:7410-7410,A:7450-7450,A:7480-7480,A:7510-7510,A:7550-7550,A:7590-7590,A:7630-7630,A:7660-7660 \
+        --at '7350 debug_screen == 9' --at '7350 debug_prix_race == 1' --at '7350 debug_prix_cycles > 1100' --at '7380 debug_screen == 8' \
+        --call-at '7390 debug_prix_skip:1' --call-at '7430 debug_prix_skip:1' --at '7460 debug_screen == 10' --at '7460 debug_card == 0' \
+        --at '7490 debug_card == 1' --at '7490 debug_prix_league == 1' --at '7520 debug_screen == 8' \
+        --call-at '7530 debug_prix_skip:1' --call-at '7570 debug_prix_skip:1' --call-at '7610 debug_prix_skip:1' \
+        --expect 'debug_screen == 10' --expect 'debug_card == 2' --expect 'debug_prix_done == 1' \
+        --dump-exports debug_screen,debug_card,debug_prix_cycles || st=1
     run_preview stress --frames 200 --call debug_stress:1 --expect 'debug_mode == 2' --expect 'debug_drawn == 64' \
         --expect 'debug_gathered > 64' --dump-exports debug_drawn,debug_gathered || st=1
     result preview "$st"
@@ -205,6 +241,16 @@ if want bench; then
     p9=$!
     "$bench" "$elf" --json --lcd "${m3g[@]}" --out "$out/bench-m3-gc-lcd" > "$out/bench-m3-gc-lcd.txt" 2>&1 &
     p10=$!
+    m5c=(--frames 3000 --script "$here/scripts/m5_circuit_race.json")
+    "$bench" "$elf" --json "${m5c[@]}" --out "$out/bench-m5-circuit" > "$out/bench-m5-circuit.txt" 2>&1 &
+    p13=$!
+    "$bench" "$elf" --json --lcd "${m5c[@]}" --out "$out/bench-m5-circuit-lcd" > "$out/bench-m5-circuit-lcd.txt" 2>&1 &
+    p14=$!
+    m5k=(--frames 600 --poke gc_cards=1 --script "$here/scripts/m5_cards.json")
+    "$bench" "$elf" --json "${m5k[@]}" --out "$out/bench-m5-cards" > "$out/bench-m5-cards.txt" 2>&1 &
+    p15=$!
+    "$bench" "$elf" --json --lcd "${m5k[@]}" --out "$out/bench-m5-cards-lcd" > "$out/bench-m5-cards-lcd.txt" 2>&1 &
+    p16=$!
     probe=(--poke gc_pump_probe=1)
     "$bench" "$elf" --json "${probe[@]}" "${stress[@]}" --out "$out/bench-probe-stress" > "$out/bench-probe-stress.txt" 2>&1 &
     p11=$!
@@ -223,10 +269,16 @@ if want bench; then
     wait $p8 || st=1
     wait $p9 || st=1
     wait $p10 || st=1
+    wait $p13 || st=1
+    wait $p14 || st=1
+    wait $p15 || st=1
+    wait $p16 || st=1
     for j in "$out/bench/bench.json" "$out/bench-lcd/bench.json" "$out/bench-stress/bench.json" "$out/bench-stress-lcd/bench.json" \
              "$out/bench-m2/bench.json" "$out/bench-m2-lcd/bench.json" \
              "$out/bench-m3-outflow/bench.json" "$out/bench-m3-outflow-lcd/bench.json" \
              "$out/bench-m3-gc/bench.json" "$out/bench-m3-gc-lcd/bench.json" \
+             "$out/bench-m5-circuit/bench.json" "$out/bench-m5-circuit-lcd/bench.json" \
+             "$out/bench-m5-cards/bench.json" "$out/bench-m5-cards-lcd/bench.json" \
              "$out/bench-probe-stress/bench.json" "$out/bench-probe-gc/bench.json"; do
         [ -f "$j" ] || { echo "FAIL no $j"; st=1; continue; }
         python3 - "$j" "$max_ms" <<'EOF' || st=1

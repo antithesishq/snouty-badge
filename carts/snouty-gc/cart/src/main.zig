@@ -10,7 +10,9 @@
 //! every track, GARBAGE COLLECTION (a collected player watches the leader),
 //! and the attract demo's camera cuts on a rotating track. M4: LINK (the
 //! lobby, the shared racer select, LINK RACE and LINK GC over `net.zig`'s
-//! lockstep, docs/NET.md section 3). The World lives here; `sim.simulate(&w, inputs)`
+//! lockstep, docs/NET.md section 3). M5: the CIRCUIT (the SNOUTY GCP:
+//! `prix`, career.zig; the garage, standings and cards), A on the title
+//! for a Quick Race. The World lives here; `sim.simulate(&w, inputs)`
 //! advances it and everything else only reads it. `follow` (which car this
 //! badge draws and hears), the camera, the effects and the HUD notices
 //! (fx.zig, from the World's event ring) are render-side state, never in
@@ -39,6 +41,9 @@ const stress = @import("stress.zig");
 const link = @import("link");
 const net = @import("net.zig");
 const link_ui = @import("link_ui.zig");
+const career = @import("career.zig");
+const garage = @import("garage.zig");
+const standings = @import("standings.zig");
 
 comptime {
     cart.export_start_code();
@@ -46,15 +51,26 @@ comptime {
 
 /// Screens (SPEC 8.1; the numbers are debug_screen's, `menu` came in M3,
 /// `lobby` (the LINK screen) in M4; the link race's racer select is
-/// `select` with `select.link` set).
-pub const Screen = enum(u8) { splash, title, select, race, pause, results, menu, lobby };
+/// `select` with `select.link` set; M5 the CIRCUIT's `garage`,
+/// `standings` and `card` (the league, unlock and end cards)).
+pub const Screen = enum(u8) { splash, title, select, race, pause, results, menu, lobby, garage, standings, card };
 var screen: Screen = .splash;
 /// Why the race runs: a Quick Race, the attract demo, the render stress
-/// scene, or GARBAGE COLLECTION (M3; the numbers are debug_mode's).
-const Mode = enum(u8) { quick, attract, stress, gc };
+/// scene, GARBAGE COLLECTION (M3), a CIRCUIT race (M5; race rules, the
+/// garage's loadouts, chips on). The numbers are debug_mode's.
+const Mode = enum(u8) { quick, attract, stress, gc, circuit };
 var mode: Mode = .quick;
-/// The mode the main menu picked (quick or gc): the select races it.
+/// The mode the main menu picked (quick, gc or circuit): the select races it.
 var race_mode: Mode = .quick;
+
+/// M5: the CIRCUIT (the SNOUTY GCP), kept in RAM for the session (no
+/// saves, SPEC 17.6): CIRCUIT in the main menu resumes it at the garage
+/// until its end card.
+var prix: career.Career = career.Career.init(racers.snouty);
+var prix_on: bool = false;
+/// Which card the `card` screen shows.
+const Card = enum(u8) { league, unlock, end };
+var card: Card = .league;
 
 /// The race. Only `sim` writes it.
 var w: world.World = .{};
@@ -73,6 +89,11 @@ var results_card: u8 = 0;
 /// The render stress scene (stress.zig): badge-bench `--poke gc_stress=1`
 /// starts it at boot; the wasm `debug_stress` export too.
 export var gc_stress: u8 = 0;
+/// M5: badge-bench `--poke gc_cards=1` (tools/scripts/m5_cards.json): a
+/// SNOUTY GCP with 5,000 CYCLES in the garage at boot, where Start books a
+/// made-up 1st place instead of racing, so a script walks the garage, the
+/// standings and every card.
+export var gc_cards: u8 = 0;
 /// Race seed: a new one per race from the frame counter (any value works;
 /// the link race of M4 shares one between the badges).
 var seed: u32 = 0x5EED_6C00;
@@ -166,6 +187,10 @@ pub fn start() void {
     backdrop();
     go(.splash);
     if (gc_stress != 0) start_stress();
+    if (gc_cards != 0) {
+        debug_start_circuit(racers.snouty);
+        prix.cycles = 5000;
+    }
 }
 
 fn start_stress() void {
@@ -208,9 +233,11 @@ fn new_race(m: Mode, t: u8) void {
     var setup = world.Setup{ .track = t, .seed = seed, .mode = switch (m) {
         .gc => .gc,
         .attract => .attract,
-        .quick, .stress => .race,
+        .quick, .stress, .circuit => .race,
     } };
     if (m == .quick or m == .gc) setup.humans[0] = player_racer;
+    // The CIRCUIT: the league's track, every car's loadout, chips on.
+    if (m == .circuit) setup = prix.setup(seed);
     begin_race(m, setup, player_racer);
 }
 
@@ -252,6 +279,9 @@ pub fn update() void {
         .pause => pause_frame(),
         .results => results_frame(),
         .menu => menu_frame(),
+        .garage => garage_frame(),
+        .standings => standings_frame(),
+        .card => card_frame(),
     }
     engine_cue();
     render_us = @truncate(cart.micros_since_boot() - t0);
@@ -280,6 +310,13 @@ fn title_frame() void {
     if (input.pressed(.start)) {
         sound.menu_confirm();
         to_menu();
+    } else if (input.pressed(.a)) {
+        // M5: A goes straight to the Quick Race select (SPEC 8.1: two
+        // presses from the title to a race); Start opens the menu.
+        sound.menu_confirm();
+        race_mode = .quick;
+        to_select();
+        select.draw(frame);
     } else if (any_pressed()) {
         screen_frames = 0;
     } else if (screen_frames >= attract_after) {
@@ -312,6 +349,16 @@ fn menu_frame() void {
             .quick, .gc => |it| {
                 sound.menu_confirm();
                 race_mode = if (it == .gc) .gc else .quick;
+                to_select();
+                select.draw(frame);
+                return;
+            },
+            // M5: the SNOUTY GCP: a Prix under way resumes in the garage,
+            // else the racer select starts one.
+            .circuit => {
+                sound.menu_confirm();
+                if (prix_on and !prix.done) return to_garage();
+                race_mode = .circuit;
                 to_select();
                 select.draw(frame);
                 return;
@@ -353,6 +400,7 @@ fn toggle_sound() void {
 
 fn to_select() void {
     select.link = null;
+    select.circuit = race_mode == .circuit;
     select.enter(player_racer, player_track, race_mode == .gc);
     go(.select);
 }
@@ -363,6 +411,12 @@ fn select_frame() void {
     switch (select.update()) {
         .pick => {
             player_racer = select.racer;
+            if (race_mode == .circuit) {
+                // A new SNOUTY GCP with the racer picked.
+                prix = career.Career.init(player_racer);
+                prix_on = true;
+                return to_garage();
+            }
             player_track = select.track_index;
             new_race(race_mode, player_track);
             // The track's art and map were just unpacked (a few ms):
@@ -459,7 +513,7 @@ fn race_frame() void {
 
     // One tick. The human slot 0 is this badge's buttons (or the autopilot).
     var inputs = [2]u8{ 0, 0 };
-    if (mode == .quick or mode == .gc) {
+    if (mode == .quick or mode == .gc or mode == .circuit) {
         inputs[0] = if (autopilot) ai.drive(&w, me).byte() else input.race_byte();
         if (autopilot and autopilot_mix) {
             const pad = world.Input.of(input.race_byte());
@@ -625,6 +679,8 @@ fn pause_frame() void {
             1 => new_race(mode, w.track),
             2 => {
                 autopilot = false;
+                // A CIRCUIT race quit is not booked: back to the garage.
+                if (mode == .circuit) return to_garage();
                 to_select();
             },
             else => toggle_sound(),
@@ -647,11 +703,107 @@ fn results_frame() void {
         } else if (linked) {
             // Both badges go back to the lobby; a rematch starts there.
             return leave_link();
+        } else if (mode == .circuit) {
+            // M5: the race is booked (CYCLES, points), then the standings.
+            _ = prix.finish_race(&w);
+            go(.standings);
+            return standings.draw_standings(&prix, screen_frames);
         } else {
             to_select();
         }
     }
     if (linked) pump_loop(null);
+}
+
+// --- The CIRCUIT (M5: SPEC 8.2, 9) ---------------------------------------------------
+
+fn to_garage() void {
+    garage.enter(&prix);
+    go(.garage);
+    garage.draw(&prix, frame);
+}
+
+/// The garage (garage.zig): purchases, then Start / A on RACE: the AIs
+/// shop on their plans and the league's next race starts.
+fn garage_frame() void {
+    switch (garage.update(&prix)) {
+        .race => {
+            if (gc_cards != 0) {
+                _ = debug_prix_skip(1);
+                return standings.draw_standings(&prix, screen_frames);
+            }
+            prix.ai_shop();
+            new_race(.circuit, prix.track_index());
+            // The track was just unpacked: the garage shows once more.
+            garage.draw(&prix, frame);
+            return;
+        },
+        .back => {
+            to_menu();
+            draw_backdrop();
+            menu.draw_main(&main_list, sound.enabled, link_ok(), link_note, frame);
+            return;
+        },
+        .none => {},
+    }
+    garage.draw(&prix, frame);
+}
+
+/// The standings after a CIRCUIT race; A: the garage, or after a league's
+/// third race the league card.
+fn standings_frame() void {
+    standings.draw_standings(&prix, screen_frames);
+    if (!(input.pressed(.a) or input.pressed(.start))) return;
+    sound.menu_confirm();
+    if (prix.league_over()) {
+        _ = prix.close_league();
+        card = .league;
+        go(.card);
+        return standings.draw_league(&prix, screen_frames);
+    }
+    to_garage();
+}
+
+/// The league card, then the unlock card over the new league's floor (or
+/// the end card after the last), then the garage; a failed league goes
+/// back to the garage to try it again.
+fn card_frame() void {
+    switch (card) {
+        .league => standings.draw_league(&prix, screen_frames),
+        .unlock => {
+            draw_backdrop();
+            standings.draw_unlock(&prix, screen_frames);
+        },
+        .end => standings.draw_end(&prix, screen_frames),
+    }
+    if (!(input.pressed(.a) or input.pressed(.start)) or screen_frames < 20) return;
+    sound.menu_confirm();
+    switch (card) {
+        .league => if (prix.unlocked) {
+            card = .unlock;
+            show_league(prix.league);
+            go(.card);
+        } else if (prix.done) {
+            card = .end;
+            go(.card);
+        } else to_garage(),
+        .unlock => to_garage(),
+        .end => {
+            prix_on = false;
+            backdrop();
+            to_menu();
+        },
+    }
+}
+
+/// The backdrop over league `l`'s first track (the unlock card).
+fn show_league(l: u8) void {
+    const t = track.tracks[(l * track.tracks_per_league) % track.tracks.len];
+    track.select(t);
+    render.set_track(t);
+    camera.init(512 << fixed.Q, 512 << fixed.Q, camera.cam.yaw);
+    camera.cam.height = 96;
+    render.hills_on = false;
 }
 
 // --- Link (M4: SPEC 7, docs/NET.md section 3) ---------------------------------------
@@ -1100,7 +1252,9 @@ comptime {
             "debug_start_gc",       "debug_start_attract", "debug_gc_marked",      "debug_gc_sweeps",
             "debug_gc_collected",   "debug_gc_survivor",   "debug_alive",          "debug_hazard_state",
             "debug_me",             "debug_link_view",     "debug_link_notice",    "debug_link_state",
-            "debug_linked",
+            "debug_linked",         "debug_start_circuit", "debug_prix_skip",      "debug_prix_cycles",
+            "debug_prix_give",      "debug_prix_league",   "debug_prix_race",      "debug_prix_done",
+            "debug_card",           "debug_garage_row",
         }) |name| @export(&@field(@This(), name), .{ .name = name });
     }
 }
@@ -1150,11 +1304,13 @@ fn debug_rank() callconv(.c) u32 {
     return w.cars[follow].rank;
 }
 /// 0 splash, 1 title, 2 racer select, 3 race, 4 pause, 5 results, 6 the
-/// main menu, 7 the LINK lobby.
+/// main menu, 7 the LINK lobby; M5: 8 the garage, 9 the standings, 10 a
+/// CIRCUIT card (`debug_card`).
 fn debug_screen() callconv(.c) u32 {
     return @backingInt(screen);
 }
-/// 0 quick race, 1 attract, 2 the render stress scene.
+/// 0 quick race, 1 attract, 2 the render stress scene, 3 GARBAGE
+/// COLLECTION, 4 a CIRCUIT race.
 fn debug_mode() callconv(.c) u32 {
     return @backingInt(mode);
 }
@@ -1281,6 +1437,62 @@ fn debug_link_state() callconv(.c) u32 {
 }
 fn debug_linked() callconv(.c) u32 {
     return @intFromBool(linked);
+}
+/// M5: --call debug_start_circuit:R skips the menus into a new SNOUTY GCP
+/// with racer R, in the garage.
+fn debug_start_circuit(r: u32) callconv(.c) void {
+    player_racer = @intCast(r % racers.count);
+    race_mode = .circuit;
+    prix = career.Career.init(player_racer);
+    prix_on = true;
+    to_garage();
+}
+/// Books the next CIRCUIT race as if the player finished `place` (1..6;
+/// the others in racer order, no kills or chips) and shows the standings
+/// (preview hook: the league and end cards without driving six races).
+fn debug_prix_skip(place: u32) callconv(.c) u32 {
+    if (!prix_on) return 0;
+    var fw: world.World = .{};
+    const p: u8 = @intCast(@max(1, @min(place, racers.count)));
+    var next: u8 = 1;
+    for (&fw.cars, 0..) |*c, i| {
+        c.racer = @intCast(i);
+        if (i == prix.racer) {
+            c.rank = p;
+            continue;
+        }
+        if (next == p) next += 1;
+        c.rank = next;
+        next += 1;
+    }
+    _ = prix.finish_race(&fw);
+    go(.standings);
+    return prix.race;
+}
+/// The CIRCUIT: the wallet, give it CYCLES (preview hook), the league and
+/// race, the end reached; the card shown (0 league, 1 unlock, 2 end);
+/// the garage's row.
+fn debug_prix_cycles() callconv(.c) u32 {
+    return prix.cycles;
+}
+fn debug_prix_give(v: u32) callconv(.c) u32 {
+    prix.cycles += v;
+    return prix.cycles;
+}
+fn debug_prix_league() callconv(.c) u32 {
+    return prix.league;
+}
+fn debug_prix_race() callconv(.c) u32 {
+    return prix.race;
+}
+fn debug_prix_done() callconv(.c) u32 {
+    return @intFromBool(prix.done);
+}
+fn debug_card() callconv(.c) u32 {
+    return @backingInt(card);
+}
+fn debug_garage_row() callconv(.c) u32 {
+    return garage.cursor;
 }
 /// --call debug_stress:1 starts the render stress scene (stress.zig).
 fn debug_stress(v: u32) callconv(.c) void {

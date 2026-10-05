@@ -158,6 +158,7 @@ pub const i_panic = 6;
 pub const i_sudo = 7;
 pub const i_captcha = 8;
 pub const i_honey = 9;
+pub const i_chip = 10;
 /// pickups.png cells: 0..15 the pickups in `world.Pickup` order, then these.
 pub const p_blank = 16;
 pub const p_crate = 17;
@@ -285,7 +286,7 @@ pub const draw_cap = 64;
 /// sort key keeps the list index in 8 bits.
 const gather_cap = 224;
 
-const Kind = enum(u8) { car, proj, drop, wall, particle, crate, drone, duck, claw, mover, vent };
+const Kind = enum(u8) { car, proj, drop, wall, particle, crate, drone, duck, claw, mover, vent, chip };
 const Entry = struct {
     z: i32,
     p: camera.Projected,
@@ -375,6 +376,14 @@ pub fn draw_world(w: *const world.World, v: View) void {
         const p = visible(@as(i32, spot.x) << fixed.Q, @as(i32, spot.y) << fixed.Q) orelse continue;
         push(.crate, k, 0, p);
     }
+    // M5: the cycle chips still on the floor (the CIRCUIT).
+    if (w.chips_on) {
+        for (track.chip_spots[0..track.chip_n], 0..) |spot, k| {
+            if (w.chips & (@as(u32, 1) << @intCast(k)) != 0) continue;
+            const p = visible(@as(i32, spot.x) << fixed.Q, @as(i32, spot.y) << fixed.Q) orelse continue;
+            push(.chip, k, 0, p);
+        }
+    }
     for (&w.drones, 0..) |*d, i| {
         if (d.state == .none) continue;
         const p = visible(d.x, d.y) orelse continue;
@@ -458,6 +467,7 @@ pub fn draw_world(w: *const world.World, v: View) void {
             .claw => draw_claw(&fx.claws[e.index], e.p),
             .mover => draw_mover(w, e.index, e.p, v.frame),
             .vent => draw_vent(e.index, e.sub, e.p, v.frame),
+            .chip => draw_chip(e.index, e.p, v.frame),
         }
     }
 }
@@ -796,6 +806,13 @@ const fork_every: u16 = 60;
 fn draw_crate(k: usize, p: camera.Projected, frame: u32) void {
     const bob: i32 = @intFromBool((frame / 16 + k) % 2 == 0);
     blit(&pickups, p_crate, p.sx, p.sy + 1 - bob, p.scale, .{});
+}
+
+/// A cycle chip (M5): the `hud.png` chip cell hovering over the floor,
+/// bobbing, a trail's chips out of step.
+fn draw_chip(k: usize, p: camera.Projected, frame: u32) void {
+    const bob: i32 = @intFromBool((frame / 12 + k) % 2 == 0);
+    blit(&icons, i_chip, p.sx, p.sy - lift_px(2, p) - bob, p.scale * 3 / 2, .{});
 }
 
 /// A DDOS drone: the 4x4 red quad at 2x, hovering and buzzing.

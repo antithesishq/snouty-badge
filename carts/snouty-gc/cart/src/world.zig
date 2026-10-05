@@ -205,7 +205,7 @@ pub const hazard_max = 4;
 /// Render-facing log of what happened (kill feed, ACK, taunts, beams,
 /// explosions). The sim appends; rendering keeps its own cursor (`seq`)
 /// and never writes. A ring, so the World stays plain data.
-pub const EventKind = enum(u8) { none, hit, wreck, lance, explode, respawn, roll, use, effect, swap, mark, collect, blast, hazard_hit };
+pub const EventKind = enum(u8) { none, hit, wreck, lance, explode, respawn, roll, use, effect, swap, mark, collect, blast, hazard_hit, chip };
 pub const Event = struct {
     /// Monotonic event number (World.event_seq at append).
     seq: u16 = 0,
@@ -227,7 +227,8 @@ pub const Event = struct {
     /// x, y = the car (the claw comes down there). blast: hazard index,
     /// `HazardKind`, 0 (a vent starts firing, the Sweeper starts crossing;
     /// x, y = the vent mouth or the mover). hazard_hit: hazard index, car,
-    /// damage (x, y = the car).
+    /// damage (x, y = the car). M5: chip: the car, the chip index (x, y =
+    /// the chip; a cycle chip taken, worth 10 CYCLES in the career).
     a: u8 = 0,
     b: u8 = 0,
     c: u8 = 0,
@@ -298,9 +299,16 @@ pub const Car = struct {
     armor: u8 = 100,
     front: Front = .ping,
     rear: Rear = .leak,
-    /// Upgrade levels 1..3 (M5 garage; 1 until then).
+    /// Weapon levels 1..3 (M5 garage, `Loadout`): front L2 +25% ammo, L3
+    /// also +25% damage; rear L2 +1 ammo, L3 also +25% effect.
     front_level: u8 = 1,
     rear_level: u8 = 1,
+    /// M5 garage (`Loadout`, SPEC 9.2): PLATING L3 = ECC (a hit of
+    /// `tuning.ecc_ignore` or less is ignored); BURST charges a lap (BURST
+    /// BUFFER); the WATCHDOG delay, ticks, from a wreck to the respawn.
+    ecc: bool = false,
+    burst_max: u8 = tuning.burst_per_lap,
+    watchdog: u8 = tuning.watchdog_ticks,
     /// Ammo left this lap; refilled on the start line.
     ammo_front: u8 = 0,
     ammo_rear: u8 = 0,
@@ -320,9 +328,12 @@ pub const Car = struct {
     /// A and the Down+A chord last tick (press edges).
     a_was: bool = false,
     rear_was: bool = false,
-    /// Race tallies for the results screen.
+    /// Race tallies for the results screen (and the career's CYCLES:
+    /// `kills` are the last-hit wrecks credited, `chips` the cycle chips
+    /// taken, M5).
     kills: u8 = 0,
     wrecks: u8 = 0,
+    chips: u8 = 0,
     /// Race position 1..6; final once the car has `finished`.
     rank: u8 = 0,
     /// The car's own message (FINAL LAP, the finish, a wreck), shown on the
@@ -396,6 +407,30 @@ pub const Car = struct {
 
 pub const Phase = enum(u8) { countdown, racing, finished };
 
+/// A car's garage upgrades (SPEC 9.2, M5), applied by `sim.reset`. The
+/// defaults are the racer's stock car (SPEC 4.1, 4.2): every race outside
+/// the CIRCUIT, LINK included, runs on them.
+pub const Loadout = struct {
+    /// The guns: null = the racer's own (racers.zig), else a swap.
+    front: ?Front = null,
+    rear: ?Rear = null,
+    /// Weapon levels 1..3.
+    front_level: u8 = 1,
+    rear_level: u8 = 1,
+    /// PLATING (armor +30 a level; L3 = ECC), CLOCK (top speed +4% a
+    /// level), TRACTION (grip +0.03 a level), BURST BUFFER (BURST charges a
+    /// lap 1..4), WATCHDOG (respawn delay 120 / 90 / 60 / 40): levels 0..3.
+    plating: u8 = 0,
+    clock: u8 = 0,
+    traction: u8 = 0,
+    burst: u8 = 0,
+    watchdog: u8 = 0,
+};
+
+/// Cycle chips per track (M5; `track.chip_spots`, one bit of
+/// `World.chips` each).
+pub const chip_max = 24;
+
 /// What both badges agree on before a race (SPEC 7.3): track, seed and the
 /// racers the two humans drive (`no_human` for an empty slot).
 pub const Setup = struct {
@@ -411,6 +446,11 @@ pub const Setup = struct {
     /// off the grid (`active = false` from the reset, rank 0). The default
     /// keeps every AI car (single player).
     crews: u8 = car_count,
+    /// M5: each car's garage upgrades (index = car = racer); the default
+    /// is the stock car.
+    loadouts: [car_count]Loadout = @splat(.{}),
+    /// M5: cycle chips on the floor (the CIRCUIT only).
+    chips: bool = false,
 };
 
 pub const World = struct {
@@ -452,4 +492,11 @@ pub const World = struct {
     scripted: bool = false,
     gc: Gc = .{},
     hazards: [hazard_max]Hazard = @splat(.{}),
+    /// M5: cycle chips (Setup.chips): bit k set while chip k
+    /// (`track.chip_spots[k]`) is taken; every taken chip comes back each
+    /// `tuning.chip_respawn` ticks (`chip_clock`), so the back of the field
+    /// finds some too.
+    chips_on: bool = false,
+    chip_clock: u8 = 0,
+    chips: u32 = 0,
 };
