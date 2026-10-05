@@ -313,7 +313,7 @@ Owns a new `net.zig`, the link states in `game.zig`, `main.zig`, the
 link wiring in `build.zig` (`lib/link.zig` import), HUD and banner text
 in `render.zig`, `tools/check.sh` (a `link` step), and docs.
 
-1. **Lockstep (`net.zig`).** The packet is tick, the inputs for t, t-1 and
+1. **Lockstep (`net.zig`, built on the shared `lib/lockstep.zig` since 2026-10-05).** The packet is tick, the inputs for t, t-1 and
    t-2, and the World CRC byte: at most 5 DATA bytes, SLIP escapes
    counted. Input delay is 3 ticks; a stall shows WAITING.
    - **A lost packet** is covered by the redundant inputs, and resent if
@@ -545,6 +545,36 @@ in `render.zig`, `tools/check.sh` (a `link` step), and docs.
     gates the three WRAP runs (`BENCH_WRAP_OPTIONS`, default "16 28").
   - Gate `tools/check.sh`: PASS on every step (79 host tests; `--lcd`
     equal on 1440 frames).
+
+- 2026-10-05: **M3 done** (tag `snouty-cycles/m3`): LINK DUEL. The lead
+  merged Track L (cycles/m3-link 36ac913e) after M2.1.
+  - **How it is built.** LINK DUEL runs on the shared `lib/lockstep.zig`
+    (lockstep/v1, from Snouty GC's net, owned by the link session) instead
+    of the cart-local core this plan asked for. Adrian wants link
+    multiplayer shared across carts.
+    - `cart/src/net.zig` is the adapter: `World` = `game.Game`,
+      rules 4 bytes, delay 3, app id 'C'.
+    - The lead switched its pump-until-14 ms loop to lockstep's
+      `wants_pump()`, which covers a race or a handshake.
+    - The cart builds the link and lockstep modules ReleaseSmall.
+  - Gate `tools/check.sh`: PASS on every step, including the new `link`
+    step. That is 86 host tests in all.
+  - The link host gate runs two Games on `lib/link_virtual.zig`:
+    - Clean: 50 rounds, 5,353 hashes compared, 0 mismatched.
+    - About 5% packet loss and 0-4 ms delay: 50 rounds, 0 mismatched,
+      1-1.5% of frames stalled.
+    - A corrupted World: NO CONTEST on both badges, then a new race in sync.
+    - Unplugging hands the cycle to a T2 program, then PEER LEFT, then the menu.
+  - badge-bench, calibrated busy ms, worst:
+    - toml 10.90, level 12 7.19, SKIRMISH 8.26, WRAP SKIRMISH 11.67,
+      demo duel 9.34.
+    - The link with no cable costs +0.006 to +0.009 ms a frame.
+    - `--lcd` is equal on every frame.
+  - ELF `.text` 72,168, `.data` 176, `.bss` 141,352: 213,696 of 274,176 B,
+    leaving about 59 KB free.
+  - **Hardware check open.** It needs two badges with working UART headers
+    and a JST-SH 3-pin cable; see docs/RUNNING.md section 9. Adrian's badge
+    header is faulty. `rx_dma` stays off until the link session verifies it.
 
 ## Deferred questions for Adrian
 
