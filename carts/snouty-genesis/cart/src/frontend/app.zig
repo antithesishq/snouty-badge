@@ -21,6 +21,34 @@ const help = @import("help.zig");
 pub const rewind = @import("rewind.zig");
 const tuning = @import("tuning.zig");
 const hint = @import("hint");
+const link = @import("link");
+pub const linkplay = @import("linkplay");
+const link_lobby = @import("link_lobby.zig");
+
+// ---- Link cable play (docs/MULTIPLAYER.md section 8) ----
+
+/// The two-player session over the link cable: lib/lockstep.zig with the
+/// console as its World (frontend/linkplay.zig). A static, started in
+/// `start` (the link idles in its search until a cable and a partner
+/// appear; `.unavailable` in the simulator).
+pub const Net = linkplay.Session(link.Badge);
+pub var net: Net = undefined;
+/// A link race drives the console.
+pub inline fn linked() bool {
+    return net.racing;
+}
+/// "PARTNER LEFT" band (updates to go).
+var left_notice: u32 = 0;
+/// Microseconds the last link tick (its two Genesis frames) took: how long
+/// an update may wait for the partner's pad before giving up the tick.
+var last_tick_us: u64 = 25_000;
+
+/// `Md.setup.poll_hook`: pump the link inside a long frame (the receive
+/// FIFO holds one input packet; a frame is 10-15 ms).
+fn poll_net(_: *anyopaque) void {
+    net.pump(cart.micros_since_boot());
+}
+var poll_ctx: u8 = 0;
 
 /// The console (~137 KB), a static initialised in place: never build it on
 /// the stack (32 KB on the badge, 14.7 KB in wasm).
@@ -32,7 +60,7 @@ const frames_per_update = core.tunables.render_every;
 /// 0 splash, 1 running, 2 menu, 3 pick (drive picker), 4 help (no ROM on
 /// the drive: frontend/help.zig, never left). `pick` and `help` only happen
 /// in drive builds.
-pub const State = enum(u32) { splash = 0, running = 1, menu = 2, pick = 3, help = 4 };
+pub const State = enum(u32) { splash = 0, running = 1, menu = 2, pick = 3, help = 4, link = 6 };
 pub var state: State = .splash;
 /// Where the splash leads: `running` (the ROM was chosen in `start`),
 /// `pick` or `help`.
@@ -71,6 +99,7 @@ pub noinline fn start() void {
     // menu reads "Scrub: no memory".
     _ = rewind.init();
     romsrc.scan();
+    net.init(link.Badge.init(.{}, linkplay.app_id, cart.rand()), &md);
     choose_rom();
 }
 
@@ -101,11 +130,19 @@ fn begin(src: core.RomSource) void {
     video.apply(&md);
     have_md = true;
     rewind.reset(&md);
+    // What a link race with this ROM plugs in: a second pad, or the
+    // game's own multitap. The pump inside frames keeps the link answered.
+    net.kind = linkplay.race_kind(md.setup.cfg.kind);
+    md.setup.poll_hook = .{ .ctx = &poll_ctx, .func = &poll_net };
 }
 
 pub noinline fn update() void {
     controls_state.poll(read_controls());
     const t0 = cart.micros_since_boot();
+    // The link every update (lobby messages, keepalives); a race GO sent
+    // or heard resets the console and runs it as the race.
+    net.pump(t0);
+    if (have_md and net.take_start()) start_race();
     debug.frame_tick(t0);
     switch (state) {
         .splash => splash_update(t0),
@@ -115,7 +152,100 @@ pub noinline fn update() void {
         // help screen out of the wasm and embed builds.
         .pick => if (romsrc.use_drive) pick_update(t0),
         .help => if (romsrc.use_drive) help.draw(),
+        .link => link_update(t0),
     }
+    // The vsync wait is the one stretch nobody reads the receive FIFO:
+    // pump to near the end of the 33 ms update while a race runs or the
+    // link handshakes (root docs/LOCKSTEP.md section 3.1).
+    while (net.ls.wants_pump()) {
+        const now = cart.micros_since_boot();
+        if (now -% t0 >= tuning.link_pump_until_us or cart.is_wasm) break;
+        net.pump(now);
+    }
+}
+
+/// One link screen update (frontend/link_lobby.zig); B goes back to the
+/// game.
+fn link_update(t0: u64) void {
+    // The game waits under the screen: no frames, no sound.
+    audio.silence();
+    romsrc.crc_tick();
+    switch (link_lobby.update(&net, live_edge(), t0)) {
+        .stay => {},
+        .back => {
+            controls_state.suppress_held();
+            state = .running;
+        },
+    }
+}
+
+/// A race started (the console was reset for it): play it.
+fn start_race() void {
+    video.apply(&md);
+    // No history while linked (the scrubber is off; `end_race` starts it
+    // again): the console's undo hooks stay idle.
+    if (rewind.available) core.undo.disable();
+    menu.link_racing = true;
+    left_notice = 0;
+    link_lobby.last_end = .none;
+    if (state == .menu) menu.close();
+    controls_state.suppress_held();
+    state = .running;
+}
+
+/// The race is over on this badge (a desync, the partner left, or Leave):
+/// the console plays on locally with pad 2 released; a desync shows the
+/// link screen.
+fn end_race(why: link_lobby.End) void {
+    net.leave(cart.micros_since_boot());
+    menu.link_racing = false;
+    // A history that mixes linked and local play cannot replay.
+    rewind.reset(&md);
+    link_lobby.last_end = why;
+    if (why == .partner_left) left_notice = 60;
+    if (why == .desync) {
+        if (state == .menu) menu.close();
+        controls_state.suppress_held();
+        net.want = true;
+        state = .link;
+    }
+}
+
+/// A link update's tick: submit this badge's pad and step the tick (its
+/// two Genesis frames, the second rendered when `render`), waiting for the
+/// partner's pad while the tick still fits the update; a rendered tick
+/// that did not come shows the last frame again. True when it ran.
+fn link_tick(pad: u16, t1: u64, render: bool) bool {
+    net.submit(t1, pad);
+    var t = cart.micros_since_boot();
+    var ok = net.step(render);
+    const wait_us = tuning.link_pump_until_us -| @min(last_tick_us, tuning.link_pump_until_us);
+    while (!ok) {
+        if (t -% t1 >= wait_us or cart.is_wasm) break;
+        net.pump(t);
+        t = cart.micros_since_boot();
+        ok = net.step(render);
+    }
+    if (ok) last_tick_us = cart.micros_since_boot() -% t;
+    if (render and !ok) video.keep_last_frame();
+    return ok;
+}
+
+/// After a race update: its end, the waiting band.
+fn link_after() void {
+    switch (net.ls.state()) {
+        .desync => end_race(.desync),
+        .peer_left => end_race(.partner_left),
+        .waiting => draw_band("WAITING FOR PARTNER"),
+        else => {},
+    }
+}
+
+/// A one-line band across the middle of the screen (the party cart's).
+fn draw_band(msg: []const u8) void {
+    cart.rect(.{ .x = 0, .y = 58, .width = cart.screen_width, .height = 11, .fill_color = menu.band_color });
+    const n: i32 = @intCast(@min(msg.len, 20));
+    text.draw(msg[0..@intCast(n)], @divTrunc(@as(i32, cart.screen_width) - 8 * n, 2), 60, menu.title_color, menu.band_color);
 }
 
 /// One splash update (frontend/splash.zig); any button skips it. When it
@@ -181,11 +311,16 @@ fn run_update(t1: u64) void {
         return;
     }
 
+    // A link race: fast forward, the chorded rewind and the scrubber are
+    // off (they would step or rewind this badge alone).
+    const link_on = linked();
+    const fast = in.fast and !link_on;
+
     // Chorded rewind (Left during fast forward): the game stays frozen
     // under the menu's scrub bar and Left/Right step time as in the menu;
     // letting go of Select resumes as the menu does (input.zig suppressed
     // the held buttons) and steps this update.
-    switch (in.rewind) {
+    switch (if (link_on) .off else in.rewind) {
         .enter, .on => {
             if (in.rewind == .enter) {
                 play_hint.stop();
@@ -210,37 +345,20 @@ fn run_update(t1: u64) void {
     // drops the records ahead.
     rewind.resume_if_parked(&md);
     var sound_buf: audio.UpdateBuf = undefined;
-    audio.before_frames(&md, &sound_buf, in.fast);
-    // The frames before the last run without the line sink (Genesis frames
-    // render only on the last of an update, at 1x too) and, while fast
-    // forwarding, without sound. Fast forward steps them until
-    // `tuning.ff_max_frames`, or until the time so far plus the dearest
-    // unrendered frame and the last rendered one would pass
-    // `tuning.ff_budget_us`; never fewer than the 1x pair.
-    var n: u32 = 1;
-    const max: u32 = if (in.fast) tuning.ff_max_frames else frames_per_update;
-    var skip_us: u64 = last_skip_us;
-    var t = t1;
-    while (n < max) : (n += 1) {
-        if (n >= frames_per_update and !cart.is_wasm and t -% t1 + skip_us + last_frame_us > tuning.ff_budget_us) break;
-        md.step_frame(in.pad, false);
-        rewind.record_frame(&md);
-        const now = cart.micros_since_boot();
-        last_skip_us = now -% t;
-        skip_us = @max(skip_us, last_skip_us);
-        t = now;
+    audio.before_frames(&md, &sound_buf, fast);
+    var n: u32 = frames_per_update;
+    if (link_on) {
+        // One lockstep tick: both frames with the tick's two pads, or
+        // none (the partner's pad is late: the last frame again).
+        if (!link_tick(in.pad, t1, true)) n = 0;
+    } else {
+        n = local_frames(in.pad, fast, t1);
     }
     frames_stepped = n;
     debug.frames_per_update = n;
-    const t_last = cart.micros_since_boot();
-    md.step_frame(in.pad, true);
-    rewind.record_frame(&md);
-    // The drive ROM's CRC32, 8 KB per update (a no-op once known).
-    romsrc.crc_tick();
     const t2 = cart.micros_since_boot();
-    last_frame_us = t2 -% t_last;
 
-    audio.update(&md, in.fast);
+    audio.update(&md, fast or n == 0);
     video.finish_frame();
     debug.record(@truncate(t2 -% t1));
     if (debug.enabled) romsrc.draw_report();
@@ -251,7 +369,43 @@ fn run_update(t1: u64) void {
         const s = if (play_hint.left >= play_hint_updates) hint.hold_select else menu.fast_hint;
         hint.draw_strip(cart, text.draw, s, cart.screen_height - hint.strip_h, menu.title_color, menu.band_color);
     }
-    if (in.fast) draw_fast(n);
+    if (fast) draw_fast(n);
+    if (link_on) link_after();
+    if (left_notice > 0) {
+        left_notice -= 1;
+        draw_band("PARTNER LEFT");
+    }
+}
+
+/// The update's frames played alone: the frames before the last run
+/// without the line sink (Genesis frames render only on the last of an
+/// update, at 1x too) and, while fast forwarding, without sound. Fast
+/// forward steps them until `tuning.ff_max_frames`, or until the time so
+/// far plus the dearest unrendered frame and the last rendered one would
+/// pass `tuning.ff_budget_us`; never fewer than the 1x pair. Returns the
+/// frames stepped.
+fn local_frames(pad: u16, fast: bool, t1: u64) u32 {
+    var n: u32 = 1;
+    const max: u32 = if (fast) tuning.ff_max_frames else frames_per_update;
+    var skip_us: u64 = last_skip_us;
+    var t = t1;
+    while (n < max) : (n += 1) {
+        if (n >= frames_per_update and !cart.is_wasm and t -% t1 + skip_us + last_frame_us > tuning.ff_budget_us) break;
+        md.step_frame(pad, false);
+        rewind.record_frame(&md);
+        const now = cart.micros_since_boot();
+        last_skip_us = now -% t;
+        skip_us = @max(skip_us, last_skip_us);
+        t = now;
+    }
+    const t_last = cart.micros_since_boot();
+    md.step_frame(pad, true);
+    rewind.record_frame(&md);
+    // The drive ROM's CRC32, 8 KB per update (a no-op once known; a link
+    // race starts only once it is known).
+    romsrc.crc_tick();
+    last_frame_us = cart.micros_since_boot() -% t_last;
+    return n;
 }
 
 /// The chorded rewind is showing (the `debug_chord_rewind` export).
@@ -281,6 +435,16 @@ comptime {
 /// One menu update over the frozen frame; the core is not stepped.
 fn menu_update() void {
     audio.silence();
+    // A link race goes on under the menu (a released pad, nothing drawn):
+    // stopping would stall the partner.
+    if (linked()) {
+        var sound_buf: audio.UpdateBuf = undefined;
+        audio.before_frames(&md, &sound_buf, true);
+        _ = link_tick(0, cart.micros_since_boot(), false);
+        audio.update(&md, true);
+        link_after();
+        if (state != .menu) return;
+    }
     switch (menu.update(&md, live_edge())) {
         .stay => {},
         .resume_game => {
@@ -296,6 +460,19 @@ fn menu_update() void {
             audio.silence();
             picker.reset();
             state = .pick;
+        },
+        .link => {
+            menu.close();
+            controls_state.suppress_held();
+            link_lobby.last_end = .none;
+            state = .link;
+        },
+        .leave_link => {
+            end_race(.left);
+            menu.close();
+            controls_state.suppress_held();
+            video.apply(&md);
+            state = .running;
         },
     }
 }

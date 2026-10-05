@@ -171,6 +171,20 @@ pub fn blank(c: u16) void {
 
 /// Called once per update after the rendered frame. With no rows emitted
 /// the back buffer still holds an old frame, so blank it.
+/// Put the last presented frame back into the frame being drawn (the
+/// cart runs in `.no_copy_full_frame`, so the back buffer holds an older
+/// one): for an update that stepped no rendered frame (a party race
+/// waiting for a peer). Nothing to do in wasm, which never presents.
+pub fn keep_last_frame() void {
+    if (cart.is_wasm) return;
+    const n = cart.screen_width * cart.screen_height / 2;
+    const src: *const [n]u32 = @ptrCast(cart.frontbuffer);
+    const dst: *[n]u32 = @ptrCast(cart.framebuffer);
+    @memcpy(dst, src);
+    // A whole frame is there: `finish_frame` must not blank it.
+    rows_this_frame = cart.screen_height;
+}
+
 pub fn finish_frame() void {
     if (rows_this_frame == 0) blank(0);
     last_frame_lines = rows_this_frame;

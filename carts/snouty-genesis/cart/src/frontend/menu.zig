@@ -73,9 +73,17 @@ pub const Result = enum {
     resume_game,
     /// Close, suppress held buttons, `picker.reset()`, enter the picker.
     pick_rom,
+    /// Close and show the link screen (docs/MULTIPLAYER.md section 8).
+    link,
+    /// Leave the running link race; the game goes on locally.
+    leave_link,
 };
 
-const Item = enum { resume_game, buttons, scale, smooth, sound, debug, reset, pick_rom, about };
+/// A link race drives the console (app.zig sets it): Reset and Pick ROM
+/// hide, the scrubber is off, the Link row leaves the race.
+pub var link_racing: bool = false;
+
+const Item = enum { resume_game, link, buttons, scale, smooth, sound, debug, reset, pick_rom, about };
 const item_count = @typeInfo(Item).@"enum".field_names.len;
 
 /// The Pick ROM row exists only for a drive build that found candidates;
@@ -86,7 +94,11 @@ fn pick_available() bool {
 
 fn visible(item: Item) bool {
     return switch (item) {
-        .pick_rom => pick_available(),
+        .pick_rom => pick_available() and !link_racing,
+        .reset => !link_racing,
+        // The tenth row takes the scrub line's place: the RAM cart has no
+        // scrubber; with one (XIP cart, simulator) only while Pick ROM hides.
+        .link => !rewind.available or !pick_available() or link_racing,
         // The RAM cart has no sound (no Z80) and no scrubber (PLAN.md M5).
         .sound => audio.available,
         else => true,
@@ -189,6 +201,7 @@ pub fn update(md: *core.Md, e: input.Edge) Result {
                     return .resume_game;
                 },
                 .pick_rom => return .pick_rom,
+                .link => return if (link_racing) .leave_link else .link,
                 .about => showing_about = true,
                 else => adjust(1),
             }
@@ -212,7 +225,7 @@ fn move(d: i2) void {
 fn is_setting(item: Item) bool {
     return switch (item) {
         .buttons, .scale, .smooth, .sound, .debug => true,
-        .resume_game, .reset, .pick_rom, .about => false,
+        .resume_game, .link, .reset, .pick_rom, .about => false,
     };
 }
 
@@ -230,7 +243,7 @@ fn left_right(md: *core.Md, e: input.Edge) void {
         if (e.pressed(.left)) adjust(-1) else if (e.pressed(.right)) adjust(1);
         return;
     }
-    if (!rewind.available) return;
+    if (!rewind.available or link_racing) return;
     const d = repeat.step(e);
     if (d != 0) on_scrub(md, d);
 }
@@ -244,7 +257,7 @@ fn adjust(d: i2) void {
         .smooth => video.smooth = !video.smooth,
         .sound => audio.enabled = !audio.enabled,
         .debug => debug.enabled = !debug.enabled,
-        .resume_game, .reset, .pick_rom, .about => {},
+        .resume_game, .link, .reset, .pick_rom, .about => {},
     }
 }
 
@@ -270,7 +283,10 @@ const first_row_y = panel_y + 2;
 /// The panel's bottom line (y 110): "B: back" on About, "Scrub: ..." on
 /// the rows, or on Resume the rewind hint (`hint.resume_line`). Fixed
 /// below the ninth row even when Pick ROM is hidden.
-pub const scrub_line_y = first_row_y + item_count * row_h;
+pub const scrub_line_y = first_row_y + base_rows * row_h;
+/// Rows above the scrub line: every row but one (Link and Pick ROM never
+/// show together where the line exists, `visible`).
+const base_rows = item_count - 1;
 /// The footer (y 119): how to leave the menu (`hint.back`), taking turns
 /// every 2 s with how to fast forward (`fast_hint`) and to rewind from it
 /// (`rewind_hint`, scrubber builds).
@@ -305,6 +321,7 @@ const back_hint = "B: back";
 fn label(item: Item) []const u8 {
     return switch (item) {
         .resume_game => "Resume",
+        .link => if (link_racing) "Link: leave" else "Link: 2 players",
         .buttons => input.layout.label(),
         .scale => if (video.scale == .squeeze) "Scale: Squeeze" else "Scale: Crop",
         .smooth => if (video.smooth) "Smooth H40: On" else "Smooth H40: Off",
@@ -359,7 +376,7 @@ fn draw(md: *const core.Md) void {
         }
         y += row_h;
     }
-    if (rewind.available) draw_scrub_line(&buf);
+    if (rewind.available and !link_racing) draw_scrub_line(&buf);
     const footer = footers[(updates_open -% 1) / footer_turn % footers.len];
     text.draw(footer, text_x, footer_y, dim_color, panel_color);
 }
@@ -565,6 +582,7 @@ comptime {
     check_width("Scale: Squeeze", panel_cols);
     check_width("Smooth H40: Off", panel_cols);
     check_width("Debug overlay: Off", panel_cols);
+    check_width("Link: 2 players", panel_cols);
     check_width("Version " ++ version, panel_cols);
     check_width("Source: embedded", panel_cols);
     check_width("Region JUE SRAM", panel_cols);

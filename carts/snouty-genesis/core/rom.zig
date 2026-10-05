@@ -163,20 +163,39 @@ pub fn parse_header(src: *const RomSource) Header {
     copy(src, 0x100, &h.system);
     copy(src, 0x120, &h.domestic);
     copy(src, 0x150, &h.overseas);
-    h.checksum = read16(src, 0x18E);
-    h.rom_start = read32(src, 0x1A0);
-    h.rom_end = read32(src, 0x1A4);
-    h.has_sram = read8(src, 0x1B0) == 'R' and read8(src, 0x1B1) == 'A';
-    h.sram_kind = read8(src, 0x1B2);
-    h.sram_eeprom = read8(src, 0x1B3) == 0x40;
-    h.sram_start = read32(src, 0x1B4);
-    h.sram_end = read32(src, 0x1B8);
+    h.checksum = @truncate(header_be(src, 0x18E, 2));
+    h.rom_start = header_be(src, 0x1A0, 4);
+    h.rom_end = header_be(src, 0x1A4, 4);
+    h.has_sram = header_byte(src, 0x1B0) == 'R' and header_byte(src, 0x1B1) == 'A';
+    h.sram_kind = header_byte(src, 0x1B2);
+    h.sram_eeprom = header_byte(src, 0x1B3) == 0x40;
+    h.sram_start = header_be(src, 0x1B4, 4);
+    h.sram_end = header_be(src, 0x1B8, 4);
     copy(src, 0x1F0, &h.region);
     return h;
 }
 
+// Not unrolled or inlined: the header is read once per ROM (power-on, the
+// About page) and the RAM cart pays for its code in RAM (an unrolled
+// `read8` per byte was 2.2 KB). The same bytes as `read8`/`read16`/`read32`.
+
+/// Big-endian `n` bytes at `at`.
+fn header_be(src: *const RomSource, at: u32, n: u32) u32 {
+    var v: u32 = 0;
+    var i: u32 = 0;
+    while (i < n) : (i += 1) v = v << 8 | header_byte(src, at + i);
+    return v;
+}
+
 fn copy(src: *const RomSource, at: u32, out: []u8) void {
-    for (out, 0..) |*c, i| c.* = read8(src, at + @as(u32, @intCast(i)));
+    var n: usize = out.len;
+    std.mem.doNotOptimizeAway(&n);
+    var i: usize = 0;
+    while (i < n) : (i += 1) out[i] = header_byte(src, at + @as(u32, @intCast(i)));
+}
+
+noinline fn header_byte(src: *const RomSource, a: u32) u8 {
+    return read8(src, a);
 }
 
 /// `s` without trailing spaces and NULs (header text fields).
