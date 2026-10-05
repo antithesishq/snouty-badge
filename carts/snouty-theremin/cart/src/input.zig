@@ -1,10 +1,8 @@
 //! Where hand readings come from (SPEC section 3).
 //!
-//! THE SENSOR INTEGRATION POINT is `sensor_frame` below: the TMF8820
-//! driver (lib/tof.zig, docs/TOF.md M0) is not on this branch yet, so it
-//! returns null and the cart plays from the stick. Wiring the driver is
-//! that one function plus its module import in ../../build.zig
-//! (`add_modules`); nothing else in the cart changes.
+//! `sensor_frame` below is the TMF8820 (sensor.zig: lib/tof.zig on the
+//! Qwiic port); it returns null until the sensor measures, and always in
+//! the simulator and the host tests.
 //!
 //! `Input.poll` picks the source each update: the sensor as soon as a
 //! frame arrives, back to the stick after `sensor_timeout` updates
@@ -12,20 +10,15 @@
 //! (`fake` != 0: badge-bench pokes and the wasm debug export) produces
 //! choreographed frames through the same path, so the sensor UI and code
 //! run in the simulator and the bench.
-const tof_types = @import("tof_types");
+const tof_types = @import("tof").types;
+const sensor = @import("sensor.zig");
 const pitch = @import("pitch.zig");
 pub const Frame = tof_types.Frame;
 
-/// Return a sensor frame that is new since the last call, or null (none
-/// yet, no sensor, or the driver is still booting). Called once per
-/// update with `micros_since_boot`; this is where the driver's
-/// `poll(now_us)` goes, e.g.
-///
-///     tof_state.poll(now_us);
-///     return tof_state.take_frame();   // null unless a new one landed
+/// The sensor's latest frame, or null (none yet, no sensor, or the driver
+/// is still booting). Called once per update with `micros_since_boot`.
 pub fn sensor_frame(now_us: u64) ?Frame {
-    _ = now_us;
-    return null;
+    return sensor.frame(now_us);
 }
 
 pub const Source = enum(u1) { stick, sensor };

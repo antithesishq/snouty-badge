@@ -30,7 +30,7 @@ Outputs: `zig-out/firmware/snouty-theremin.uf2` (the badge, a RAM cart,
 
 ## 3. Play
 
-- **On a badge with the breakout** (once the driver is wired, PLAN.md):
+- **On a badge with the breakout** (Qwiic port, docs/TOF.md section 5):
   hold a hand 5 to 50 cm over the sensor; closer is higher. Left/Right
   pick 1 HAND or 2 HAND (2 HAND: right side pitch, left side volume;
   PITCH HAND in the menu swaps them). Up/Down move the octave.

@@ -27,11 +27,12 @@ its design and milestone status.
   cycles against AI programs),
   `paperclips` (a port of Universal Paperclips, with the authors'
   permission), `raspberry-trail` (The Raspberry Trail: a faithful port of
-  the 1978 MECC BASIC listing of the wagon-trail game), `snouty-theremin`
-  (a theremin played by hand over the TMF8820 time-of-flight sensor, or the
-  stick; docs/TOF.md M1), `snouty-morph` (a demoscene mesh that follows and
-  deforms with your hand over the same sensor; `lib/tof_pose.zig` is the
-  hand pose from its 3x3 zones, docs/TOF.md M3).
+  the 1978 MECC BASIC listing of the wagon-trail game), `snouty-sense` (the
+  time-of-flight probe: a TMF8820 on the Qwiic port; `lib/tof.zig` is the
+  driver, docs/TOF.md), `snouty-theremin` (a theremin played by hand over
+  the sensor, or the stick; docs/TOF.md M1), `snouty-morph` (a demoscene
+  mesh that follows and deforms with your hand over the same sensor;
+  `lib/tof_pose.zig` is the hand pose from its 3x3 zones, docs/TOF.md M3).
 - `build.zig`, `build.zig.zon`, `build/common.zig` — the one Zig package.
   Shared options (`-Dcart`, `-Dcart-mode`, `-Ddebug_overlay`, `-Dsound`, `-Drom`, ...)
   and the shared `test` and `check-float` steps are declared here and passed

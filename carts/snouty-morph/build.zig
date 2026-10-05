@@ -17,6 +17,8 @@ pub fn add(b: *Build, sycl_badge_dep: *Build.Dependency, opts: common.Options) v
     options.addOption(bool, "debug_overlay", opts.debug_overlay);
     // -Dsound: the initial value of the sound toggle (docs/SOUND.md).
     options.addOption(bool, "sound", opts.sound);
+    // -Dtof-fake=true: the driver runs against its model (badge-bench).
+    options.addOption(bool, "tof_fake", opts.tof_fake);
     build_options = options;
 
     os_cart.add(b, sycl_badge_dep, .{
@@ -38,7 +40,8 @@ pub fn add(b: *Build, sycl_badge_dep: *Build.Dependency, opts: common.Options) v
         .target = b.graph.host,
         .optimize = .Debug,
         .imports = &.{
-            .{ .name = "tof_pose", .module = tof_pose_module(b) },
+            .{ .name = "tof", .module = tof_module(b) },
+            .{ .name = "build_options", .module = options.createModule() },
         },
     }) });
     opts.test_step.dependOn(&b.addRunArtifact(tests).step);
@@ -46,17 +49,18 @@ pub fn add(b: *Build, sycl_badge_dep: *Build.Dependency, opts: common.Options) v
 
 var build_options: ?*Build.Step.Options = null;
 
-/// lib/tof_pose.zig, which also carries lib/tof_types.zig (`types`) and
-/// lib/tof_synth.zig (`synth`): one module, so the Frame type is one type.
-fn tof_pose_module(b: *Build) *Build.Module {
-    return b.createModule(.{ .root_source_file = b.path("lib/tof_pose.zig") });
+/// lib/tof.zig: the driver, which also carries lib/tof_types.zig (`types`),
+/// lib/tof_pose.zig (`pose`) and lib/tof_synth.zig (`synth`): one module,
+/// so the Frame type is one type.
+fn tof_module(b: *Build) *Build.Module {
+    return b.createModule(.{ .root_source_file = b.path("lib/tof.zig") });
 }
 
 fn build_cart_modules(b: *Build, cart: *Build.Module, cart_api: *Build.Module, step: *Build.Step) void {
     _ = cart_api;
     _ = step;
     if (build_options) |o| cart.addImport("build_options", o.createModule());
-    cart.addImport("tof_pose", tof_pose_module(b));
+    cart.addImport("tof", tof_module(b));
     // Sound on the newer firmware: tones and a drone rendered into the streaming ring.
     cart.addImport("tone_stream", b.createModule(.{ .root_source_file = b.path("lib/tone_stream.zig") }));
 }

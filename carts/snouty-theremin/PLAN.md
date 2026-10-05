@@ -24,7 +24,8 @@ Contract (docs/TOF.md M1, the lead's brief):
    build.zig entry, root CLAUDE.md cart list, badge-bench toml, wasm shims.
 2. Input behind one integration point, `input.zig` `sensor_frame`, built
    against `lib/tof_types.zig` only (lib/tof.zig is the other track's);
-   returns null until wired. Stick fallback; automatic switch to the sensor
+   wired to lib/tof.zig in M1.1 (`sensor.zig`, wide SPAD map 6; bench
+   with `-Dtof-fake=true`: worst 3.65 ms, no underruns). Stick fallback; automatic switch to the sensor
    when frames arrive.
 3. Layouts ONE-HAND and TWO-HAND with orientation and handedness.
 4. Pitch mapping (3 octaves, exponential in distance), median + glide,

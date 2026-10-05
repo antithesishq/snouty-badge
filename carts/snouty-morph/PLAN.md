@@ -89,8 +89,11 @@ polish. First full bench: worst 12.57 ms (25 % of cycles in software
 - Gate: `zig build`, `zig build test` (exit 0; fresh worktrees need
   carts/snouty-boy/tests/roms copied in), `zig build check-float` (this
   cart included).
-- Not done: no sensor wired (`sensor.zig` returns null; the lead wires
-  lib/tof.zig), no hardware run, sound unheard on a badge.
+- Not done: no hardware run, sound unheard on a badge.
+- M1.1 (tag snouty-morph/m1.1): `sensor.zig` runs lib/tof.zig (normal
+  SPAD map, no histogram dumps); the cart imports one `tof` module that
+  carries the driver, `types`, `pose` and `synth`. Bench with
+  `-Dtof-fake=true`: worst 54 % of the budget.
 
 ## Deferred questions (defaults taken)
 

@@ -12,7 +12,7 @@
 //! Everything downstream (body.zig) sees one `Hand`. No cart API here, so
 //! the host tests drive it directly.
 const std = @import("std");
-const tof_pose = @import("tof_pose");
+const tof_pose = @import("tof").pose;
 const config = @import("config.zig");
 const math = @import("math.zig");
 const sensor = @import("sensor.zig");

@@ -15,7 +15,7 @@
 //! simulator, which has no streaming audio, the simulator's `tone` import
 //! is re-struck every update at the voice's pitch (docs/RUNNING.md).
 const cart = @import("cart-api");
-const tof_types = @import("tof_types");
+const tof_types = @import("tof").types;
 const pitch = @import("pitch.zig");
 const hands = @import("hands.zig");
 const play = @import("play.zig");
