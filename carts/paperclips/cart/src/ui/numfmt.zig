@@ -14,6 +14,12 @@ const suffixes = [_][]const u8{ "", "k", "M", "B", "T", "Qa", "Qi", "Sx", "Sp", 
 
 /// Unsigned integer with thousands separators: 1234567 -> "1,234,567".
 pub fn commas_u(buf: []u8, v: u64) []const u8 {
+    // u32 arithmetic when it fits: u64 division is a library call on the badge.
+    if (v <= std.math.maxInt(u32)) return commas_t(u32, buf, @intCast(v));
+    return commas_t(u64, buf, v);
+}
+
+fn commas_t(comptime T: type, buf: []u8, v: T) []const u8 {
     var tmp: [32]u8 = undefined;
     var n: usize = 0;
     var x = v;
@@ -52,6 +58,11 @@ pub fn int(buf: []u8, v: f64) []const u8 {
 
 /// Unsigned integer printed plainly (no separators).
 pub fn plain_u(buf: []u8, v: u64) []const u8 {
+    if (v <= std.math.maxInt(u32)) return plain_t(u32, buf, @intCast(v));
+    return plain_t(u64, buf, v);
+}
+
+fn plain_t(comptime T: type, buf: []u8, v: T) []const u8 {
     var tmp: [24]u8 = undefined;
     var n: usize = 0;
     var x = v;
