@@ -15,6 +15,7 @@
 //! the Sweeper with its beacon, a firing vent's blast along its lane, and
 //! a warning vent's lane edges among the floor lines. Draw only: reads the
 //! World, the camera and fx's render-side state, never writes the World.
+const std = @import("std");
 const cart = @import("cart-api");
 const gfx = @import("gfx");
 const fixed = @import("fixed.zig");
@@ -286,7 +287,7 @@ pub const draw_cap = 64;
 /// sort key keeps the list index in 8 bits.
 const gather_cap = 224;
 
-const Kind = enum(u8) { car, proj, drop, wall, particle, crate, drone, duck, claw, mover, vent, chip };
+const Kind = enum(u8) { car, proj, drop, wall, particle, crate, drone, duck, claw, mover, vent, chip, prop };
 const Entry = struct {
     z: i32,
     p: camera.Projected,
@@ -400,6 +401,13 @@ pub fn draw_world(w: *const world.World, v: View) void {
         const p = visible(pt.x, pt.y) orelse continue;
         push(.particle, i, 0, p);
     }
+    // M7: the track's scenery props (SPEC 19.3).
+    if (track.current.sheet != null) {
+        for (track.props[0..track.prop_n], 0..) |pr, k| {
+            const p = visible(@as(i32, pr.x) << fixed.Q, @as(i32, pr.y) << fixed.Q) orelse continue;
+            push(.prop, k, 0, p);
+        }
+    }
     // M3: the claws and the track hazards.
     for (&fx.claws, 0..) |*k, i| {
         if (k.car == world.no_car or k.age >= fx.claw_ticks) continue;
@@ -468,6 +476,7 @@ pub fn draw_world(w: *const world.World, v: View) void {
             .mover => draw_mover(w, e.index, e.p, v.frame),
             .vent => draw_vent(e.index, e.sub, e.p, v.frame),
             .chip => draw_chip(e.index, e.p, v.frame),
+            .prop => draw_prop(track.props[e.index].cell, e.p),
         }
     }
 }
@@ -654,6 +663,11 @@ const beacon_hot: cart.Pixel = .from_color(.rgb(0xFFF0B0));
 fn draw_mover(w: *const world.World, k: usize, p: camera.Projected, frame: u32) void {
     const h = &track.hazard_specs[k];
     const hz = &w.hazards[k];
+    // M7: a pack's mover drawn with one of its props cells.
+    if (h.sprite != 0 and prop_sheet.cell_w != 0) {
+        blit(&shadow, 0, p.sx, p.sy, p.scale, .{ .skip_odd = true });
+        return draw_prop(h.sprite - 1, p);
+    }
     var heading = fixed.atan2(@intCast(h.uy >> 8), @intCast(h.ux >> 8));
     if (hz.leg == 1) heading +%= 32768;
     const d = fixed.turn_diff(camera.cam.yaw, heading);
@@ -690,6 +704,37 @@ fn draw_mover(w: *const world.World, k: usize, p: camera.Projected, frame: u32) 
         fill(x0 + bw, y0 + 1, 1, @max(1, bh - 1), beacon_amber);
         fill(x0, y0 - 1, bw, 1, beacon_amber);
     }
+}
+
+// --- M7 props (SPEC 19.3) -------------------------------------------------------
+
+/// The loaded track's props sheet as a `Sheet` (`set_props`); cell_w 0
+/// when the track has none.
+var prop_sheet: Sheet = .{ .bytes = undefined, .width = 0, .cell_w = 0, .cell_h = 0, .pal = &prop_pal, .blue = &prop_pal, .gold = &prop_pal };
+var prop_pal: Palette = @splat(.from_color(.{ .r = 0, .g = 0, .b = 0 }));
+
+/// Point the props sheet at track `t`'s (render.set_track calls it).
+pub fn set_props(t: *const track.Track) void {
+    const s = t.sheet orelse {
+        prop_sheet.cell_w = 0;
+        return;
+    };
+    for (&prop_pal, 0..) |*px, i| {
+        const v = std.mem.readInt(u16, s.pal[i * 2 ..][0..2], .little);
+        px.* = .from_color(.{ .r = @intCast(v >> 11), .g = @intCast((v >> 5) & 63), .b = @intCast(v & 31) });
+    }
+    // The cells stacked in one column (as the pack file holds them).
+    prop_sheet = .{ .bytes = s.bytes.ptr, .width = s.cell_w, .cell_w = s.cell_w, .cell_h = s.cell_h, .pal = &prop_pal, .blue = &prop_pal, .gold = &prop_pal };
+    prop_cells = s.cells;
+}
+var prop_cells: u8 = 0;
+
+/// A prop standing on its foot, scaled like a car's sprite.
+fn draw_prop(cell: u8, p: camera.Projected) void {
+    if (prop_sheet.cell_w == 0 or cell >= prop_cells) return;
+    const dw: i32 = scaled(prop_sheet.cell_w, p.scale);
+    const dh: i32 = scaled(prop_sheet.cell_h, p.scale);
+    blit_rect(&prop_sheet, 0, @as(u32, cell) * prop_sheet.cell_h, prop_sheet.cell_w, prop_sheet.cell_h, p.sx - @divTrunc(dw, 2), p.sy - dh, dw, dh, .{});
 }
 
 /// Flat pixels, clipped to the screen.

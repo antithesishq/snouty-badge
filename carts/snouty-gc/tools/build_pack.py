@@ -13,8 +13,7 @@ table; paths relative to DIR). The default output is DIR/<file>.GCP.
 
 The script checks every section the way the cart does (cart/src/
 pack_format.zig and pack.zig: sizes, the packed streams, tile indices, the
-centerline, feat kinds, the arena blob, the props, each track's RAM slot
-budget), derives the header's hazard mask from the feat records and the
+centerline, feat kinds, the arena blob, the props), derives the header's hazard mask from the feat records and the
 maps' attributes, lays the sections out 4-byte aligned, writes the CRC and
 exits non-zero on any failure. Deterministic: the same inputs give the same
 bytes. Python 3.11+ (tomllib), numpy, Pillow.
@@ -47,9 +46,6 @@ NAME_LEN = 16
 PAL, TILES, HORIZON, ATTR, MAP, CENTER = 512, NTILES * 64, 12352, NTILES, 128 * 128, 256 * 6
 FEAT_RECORD, FEAT_MAX, PROP_RECORD, PROP_MAX = 20, 4, 6, 24
 CELL_W_MAX, CELL_H_MAX, CELL_MAX = 32, 48, 16
-SLOT_BYTES = 8192
-SLOT_FIXED = PAL + ATTR + CENTER + FEAT_MAX * FEAT_RECORD + PROP_MAX * PROP_RECORD
-SLOT_FREE = SLOT_BYTES - SLOT_FIXED
 # Hazard kinds (world.zig HazardKind) and the mask bits (pack_format.zig).
 K_BLAST, K_MOVER, K_TURRET, K_CRUST = 1, 2, 3, 4
 HAS_SLICK, HAS_PIT = 1 << 5, 1 << 6
@@ -226,8 +222,8 @@ def load_props(dirp, cfg):
 
 
 def cells_used(props, feat):
-    """The props cells a track loads into the slot (pack.zig, pack_format
-    `budget`): its props' cells and its movers' sprite cells, each once."""
+    """The props cells a track uses (pack_format `cells_used`): its props'
+    cells and its movers' sprite cells."""
     used = {int(p[0]) for p in props}
     for r in range(len(feat) // FEAT_RECORD):
         sp = feat[r * FEAT_RECORD] >> 4
@@ -315,16 +311,14 @@ def build(dirp: Path):
         if kind == 1:
             check_arena(blob, what)
         props = props_bytes(t.get("props", []), cn, what)
-        need = len(blob) + len(cells_used(t.get("props", []), feat)) * cell_bytes
-        if need > SLOT_FREE:
-            raise PackError(f"{what}: arena blob {len(blob)} + props cells {need - len(blob)} = {need} bytes, over the slot's {SLOT_FREE}")
+        used = cells_used(t.get("props", []), feat)
         laps = 0 if kind == 1 else int(t.get("laps", 3))
         if kind == 0 and not 1 <= laps <= 9:
             raise PackError(f"{what}: laps {laps} (1..9)")
         recs.append(dict(name=name16(t["name"], f"{tid} name"), laps=laps, kind=kind,
                          secs=[mp, center, feat, blob, props]))
         report.append(f"  {'arena' if kind else 'track'} {t['name']}: map {len(mp)}, feat {len(feat) // FEAT_RECORD}, "
-                      f"arena {len(blob)}, props {len(props) // PROP_RECORD}, slot {need} of {SLOT_FREE} B")
+                      f"arena {len(blob)}, props {len(props) // PROP_RECORD} using {len(used)} cells")
     if mask & ~RUNS:
         raise PackError("a turret: this cart does not run turrets (pack_format.zig `runs`)")
     # Layout: directory, then the sections 4-byte aligned.

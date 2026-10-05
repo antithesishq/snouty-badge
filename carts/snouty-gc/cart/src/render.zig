@@ -10,6 +10,7 @@ const tuning = @import("tuning.zig");
 const track = @import("track.zig");
 const camera = @import("camera.zig");
 const hills = @import("hills.zig");
+const sprites = @import("sprites.zig");
 
 pub const horizon_y: i32 = tuning.horizon_y;
 /// First floor row.
@@ -85,6 +86,8 @@ fn color565(v: u16) cart.DisplayColor {
 }
 
 pub fn set_track(t: *const track.Track) void {
+    // M7: the track's props sheet (a pack's), for the depth list.
+    sprites.set_props(t);
     league = t.league;
     tiles_art = league.tiles.ptr;
     horizon_art = league.horizon.ptr;

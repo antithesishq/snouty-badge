@@ -42,14 +42,6 @@ pub const cell_w_max = 32;
 pub const cell_h_max = 48;
 pub const cell_max = 16;
 
-/// The pack slot (`pack.zig`): everything of a loaded track that is not
-/// the tiles, the horizon or the map (those go to the built-in leagues'
-/// slots). Fixed part: palette, attributes, centerline, feat, props.
-pub const slot_bytes = 8192;
-pub const slot_fixed = pal_bytes + attr_bytes + center_bytes + feat_max * feat_record + prop_max * prop_record;
-/// Per track: arena blob + the props cells it places, at most this.
-pub const slot_free = slot_bytes - slot_fixed;
-
 /// Breakable crust tiles (attribute `crust`): intact, cracked, broken.
 pub const crust_tile: u8 = 121;
 
@@ -74,7 +66,7 @@ pub const Refusal = enum(u8) {
     /// A bad header field, a section out of bounds or of the wrong length,
     /// the CRC, or a section's contents (checked at load).
     damaged,
-    /// Over `file_max`, or a track over the slot budget.
+    /// Over `file_max`.
     too_big,
     /// A hazard kind this cart does not run (a turret, or an unknown bit).
     needs_newer_cart,
@@ -82,6 +74,9 @@ pub const Refusal = enum(u8) {
     checking,
     /// The drive's FAT chain for the file is broken.
     bad_file,
+    /// A section the cart reads in place is split over clusters that are
+    /// not one run (the file was copied onto a drive with gaps).
+    fragmented,
 
     pub fn text(r: Refusal) []const u8 {
         return switch (r) {
@@ -93,6 +88,7 @@ pub const Refusal = enum(u8) {
             .needs_newer_cart => "NEEDS NEWER CART",
             .checking => "CHECKING PACK",
             .bad_file => "PACK DAMAGED",
+            .fragmented => "RECOPY PACK",
         };
     }
 };
@@ -181,9 +177,8 @@ fn zero(b: []const u8) bool {
 /// drive's directory entry). Checks everything that does not need the
 /// sections' contents: magic, version, counts, the file size field, every
 /// section's bounds, alignment and length, the props cells, the hazard
-/// mask, the size cap and each track's slot budget (with its props
-/// records' count; the cells it uses are counted at load). The CRC is the
-/// caller's (`crc` is the header's value).
+/// mask and the size cap. The CRC is the caller's (`crc` is the header's
+/// value).
 pub fn parse(head: []const u8, size: u32, out: *Directory) Refusal {
     out.* = .{};
     if (head.len < 4 or !std.mem.eql(u8, head[0..4], magic)) return .not_a_pack;
@@ -255,24 +250,15 @@ pub fn parse(head: []const u8, size: u32, out: *Directory) Refusal {
         if (t.feat.len % feat_record != 0 or t.feat.len > feat_max * feat_record) return .damaged;
         if (t.props.len % prop_record != 0 or t.props.len > prop_max * prop_record) return .damaged;
         if (t.props.len != 0 and out.cell_n == 0) return .damaged;
-        // The arena blob alone may not overflow the slot (the cells it
-        // uses are counted at load, `budget`).
-        if (t.arena.len > slot_free) return .too_big;
     }
+    _ = rd16;
     return .ok;
 }
 
-/// The slot bytes track `k` needs beyond the fixed part: its arena blob
-/// and one cell for each distinct props cell its props records (`props`)
-/// and its movers' sprites (`feat`, byte 0 bits 4..7 = cell + 1) use, the
-/// cells the loader copies. `null` when a record names a cell past
-/// `cell_n`.
-pub fn budget(d: *const Directory, k: usize, props: []const u8, feat: []const u8) ?u32 {
-    const used = cells_used(d, props, feat) orelse return null;
-    return d.tracks[k].arena.len + @popCount(used) * d.cell_bytes();
-}
-
-/// The cells a track loads (bit c = cell c): its props' and its movers'.
+/// The props cells a track uses (bit c = cell c): its props records'
+/// (`props`) and its movers' sprites (`feat`, byte 0 bits 4..7 = cell +
+/// 1); null when one names a cell past `cell_n`, or a sprite sits on a
+/// record that is not a mover.
 pub fn cells_used(d: *const Directory, props: []const u8, feat: []const u8) ?u32 {
     var used: u32 = 0;
     var i: usize = 0;
@@ -311,29 +297,20 @@ test "a header-sized buffer of junk is refused, never parsed" {
     try std.testing.expectEqual(Refusal.damaged, parse(&b, dir_max, &d));
 }
 
-test "the budget counts a mover's sprite cell with the props' cells, once" {
-    var d: Directory = .{ .cell_w = 32, .cell_h = 48, .cell_n = 8, .track_n = 1 };
-    d.tracks[0].arena.len = slot_free - 7 * 768 + 1;
-    // Props on cells 0..5, the mover on cell 6: seven cells, one byte over.
+test "props cells: the props' and the movers' cells, a sprite past the sheet or off a mover refused" {
+    const d: Directory = .{ .cell_w = 32, .cell_h = 48, .cell_n = 8, .track_n = 1 };
     var props: [6 * prop_record]u8 = @splat(0);
     for (0..6) |c| props[c * prop_record] = @intCast(c);
     var feat: [feat_record]u8 = @splat(0);
     feat[0] = 2 | (7 << 4);
-    try std.testing.expectEqual(@as(?u32, slot_free + 1), budget(&d, 0, &props, &feat));
-    // The mover on a cell the props use already: six cells, under.
-    feat[0] = 2 | (1 << 4);
-    try std.testing.expectEqual(@as(?u32, slot_free + 1 - 768), budget(&d, 0, &props, &feat));
-    // A sprite past the sheet, or on a kind other than a mover, is damage.
+    try std.testing.expectEqual(@as(?u32, 0x7F), cells_used(&d, &props, &feat));
     feat[0] = 2 | (9 << 4);
-    try std.testing.expectEqual(@as(?u32, null), budget(&d, 0, &props, &feat));
+    try std.testing.expectEqual(@as(?u32, null), cells_used(&d, &props, &feat));
     feat[0] = 1 | (1 << 4);
-    try std.testing.expectEqual(@as(?u32, null), budget(&d, 0, &props, &feat));
-}
-
-test "slot arithmetic" {
-    try std.testing.expectEqual(@as(usize, 2400), slot_fixed);
-    try std.testing.expectEqual(@as(usize, 5792), slot_free);
-    _ = rd16;
+    try std.testing.expectEqual(@as(?u32, null), cells_used(&d, &props, &feat));
+    props[0] = 8;
+    feat[0] = 2;
+    try std.testing.expectEqual(@as(?u32, null), cells_used(&d, &props, &feat));
 }
 
 test "the committed test pack parses, and its CRC matches" {

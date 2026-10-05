@@ -3,10 +3,8 @@
 
     python3 tools/test_build_pack.py        (from the cart directory)
 
-The test pack builds; the slot budget counts a mover's sprite cell with the
-props' cells (a track just over budget only through its mover's cell is
-refused, the same cell among its props is fine); crust tiles without a
-record, a turret and a bad name are refused.
+The test pack builds; a mover's sprite cell must be inside the sheet;
+crust tiles without a record, a turret and a bad name are refused.
 """
 import struct
 import sys
@@ -47,15 +45,14 @@ class BuildPack(unittest.TestCase):
         self.assertEqual(file, "TEST")
         self.assertEqual(data, (HERE.parent / "cart/src/gen/packs/TEST.GCP").read_bytes())
 
-    def test_mover_cell_counts_toward_the_budget(self):
-        # The arena: a 3,616 B blob leaves 2,176 B, two 768 B cells. Its
-        # props use cells 1 and 3; a Sweeper drawn with cell 0 makes three.
-        self.sprite("sandbox_feat.bin", 0)
-        with self.assertRaisesRegex(build_pack.PackError, "over the slot"):
-            build_pack.build(self.d)
-        # Drawn with cell 3, one its props use already: two cells, fits.
+    def test_mover_sprite_cell_inside_the_sheet(self):
+        # The test pack has 4 cells: a Sweeper drawn with cell 3 builds,
+        # with cell 4 it is refused; a sprite on a blast is refused too.
         self.sprite("sandbox_feat.bin", 3)
         build_pack.build(self.d)
+        self.sprite("sandbox_feat.bin", 4)
+        with self.assertRaisesRegex(build_pack.PackError, "sprite cell"):
+            build_pack.build(self.d)
 
     def test_crust_tiles_need_a_record(self):
         f = (self.d / "crust_feat.bin").read_bytes()
