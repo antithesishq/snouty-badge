@@ -476,8 +476,78 @@ in `render.zig`, `tools/check.sh` (a `link` step), and docs.
     faces programs at full strength; with the programs deciding first,
     PROD cleared 0 of 10 seeds. M2.1 fixes the bot and the RAM headroom.
 
+- 2026-10-05: **M2.1 Track F done** on `cycles/m21-fair` (not merged, not
+  tagged; the lead integrates).
+  - **Separate AI pools.** The programs decide first and share the
+    per-tick pool alone; the autopilot decides after them with
+    `ai.decide_apart`, from its own pool (`apart_pool` = 10,000) capped at
+    `apart_cap` (11,000) less what the programs spent that tick, so a
+    frame's AI work stays bounded and the bot defers past busy ticks. A
+    replay puts the logged input in and runs only the programs (the
+    autopilot's Brain is not replayed; the landing gives it a new one),
+    so rewinds stay exact and cost what a human's do. `history.zig`
+    untouched; its test model still decides the player first, which is
+    a valid exactness check either way. Cart `CLAUDE.md`'s determinism
+    contract is updated.
+  - **Finding:** the bot (T3, full strength) is about as strong as a full
+    T2; a lone T2 at the old preset 1 beat it 1 time in 4. And with no
+    mistakes a round between programs plays the same on every seed (most
+    ASM seeds derezzed the bot at the same tick). So the ladder now uses
+    softened presets, and every softened preset slips 1-3% of its
+    decisions (seed variety; slips barely change strength). The steep
+    knob is the reaction delay (T2 turning a cell late loses most of its
+    bite), then vision.
+  - **Presets** (`ai.preset`, level 3 unchanged): T1 mistakes 12/8/4/0.
+    T2 vision 20/28/28/full, reaction 2/1/0/0, aggression 4/6/4/8,
+    mistakes 20/12/12/0. T3 vision 40/40/full/full, depth 1/1/2/full,
+    mistakes 15/30/10/0, reaction 1/0/0/0.
+  - **Table:** FORTRAN 2x T1 L1, LISP 3x T1 L1, C T2 L1, C++ 2x T2 L1,
+    JAVA T2 L2 + 2x T1 L1, RUST T2 L2 + T2 L1 (1.1x), ASM T3 L1, ZIG
+    T3 L0 + T2 L1, PROD T3 L0 + T2 L2 + T2 L0; BASIC, COBOL, PASCAL,
+    layouts and speeds unchanged. SKIRMISH (preset 2) is softer too.
+  - **Ladder bot** (gate now 4/5 of seeds 1-5 and 7/10 of seeds 6-15):
+
+    | Level | 1-5 | 6-15 | derezzes (1-15) | rewinds (1-15) | derezzes (80 seeds) | clears (80) |
+    |---|---|---|---|---|---|---|
+    | BASIC | 5 | 10 | 0.13 | 0.13 | 0.03 | 80 |
+    | COBOL | 5 | 10 | 0 | 0 | 0 | 80 |
+    | PASCAL | 5 | 10 | 0 | 0 | 0 | 80 |
+    | FORTRAN | 5 | 10 | 0 | 0 | 0.04 | 80 |
+    | LISP | 5 | 10 | 0 | 0 | 0.14 | 79 |
+    | C | 4 | 10 | 0.40 | 0.33 | 0.12 | 79 |
+    | C++ | 5 | 10 | 0.27 | 0.27 | 0.41 | 77 |
+    | JAVA | 5 | 9 | 0.47 | 0.40 | 0.56 | 73 |
+    | RUST | 4 | 9 | 0.53 | 0.40 | 0.85 | 72 |
+    | ASM | 4 | 8 | 0.80 | 0.60 | 0.80 | 69 |
+    | ZIG | 5 | 9 | 0.87 | 0.80 | 0.71 | 72 |
+    | PROD | 4 | 10 | 0.93 | 0.87 | 1.26 | 64 |
+
+    A dumped run counts its 4 derezzes. PROD is the hardest on both
+    measures. Options 28 (WRAP+GAPS+SNAKE, not gated): every level passes
+    but ASM (5/5 + 6/10); derezzes 0.20 0.13 0.33 0.47 0.60 0.27 0.87 1.07
+    1.20 2.00 1.33 1.47.
+  - **RAM.** The cart builds ReleaseSmall: `.text` 58,072, `.data` 176,
+    `.bss` 140,188 = 198,436 B, **75,740 B free** of the 274,176 B window
+    (was 8,592), so M3's ~18.5 KB leaves ~57 KB. `.bss` not shrunk (no
+    need). ReleaseSmall alone made frames 2-3 ms slower: compiler_rt's
+    ReleaseSmall `memcpy` copies bytes (2.6 ms a frame in the API's
+    copy-forward present), so `cart/src/mem.zig` exports word-wise
+    `memcpy`/`memset` and the `__aeabi_*` entry points (one import line
+    in `main.zig`); `put_cell`, `dim565`, the raster targets (render.zig)
+    and the T3 endgame's `hug_order`/`free4_t` are `inline` again.
+  - **Bench** (calibrated busy ms, worst, 3600 frames): toml 10.82 (frame
+    0, the title's full repaint plus first decisions: 10.70; L's
+    all-ReleaseSmall build had it at 15.2-15.9 before the memcpy fix),
+    level 1 6.17, level 6 7.43, level 12 7.45, SKIRMISH 3 ASM 8.37, level
+    12 WRAP 10.55, level 12 WRAP+GAPS+SNAKE 9.49, WRAP SKIRMISH 3 ASM
+    11.55 (a round-over banner plus a T3 endgame search). `apart_cap`
+    12,000 put the WRAP runs at 12.4-12.8. `check.sh bench` now runs and
+    gates the three WRAP runs (`BENCH_WRAP_OPTIONS`, default "16 28").
+  - Gate `tools/check.sh`: PASS on every step (79 host tests; `--lcd`
+    equal on 1440 frames).
+
 ## Deferred questions for Adrian
 
 See SPEC section 14. None block the build.
 
-- **Difficulty curve (M1).** The T3 ladder bot finds ASM, ZIG and PROD easier than C++, JAVA and RUST: two hunting T2 programs gang up, and a lone T3 does not. A human may feel it the other way round. Default: keep the table and tune it after a badge play test.
+- **Difficulty curve (M2.1).** Retuned against the honest bot (its own AI pool): the derezzes it costs rise from ~0 (BASIC..LISP) to ~0.9-1.3 at PROD, the hardest, and every level clears on 4 of seeds 1-5 and 7 of 6-15. The bot is about as strong as a full T2, so the ladder's programs are softened presets; a booth player is likely weaker than the bot, so the upper levels may still feel hard. Default: keep this table and tune `ai.preset`'s knobs after a badge play test.

@@ -321,7 +321,7 @@ not bring back tail cells SNAKE cleared or gap cells (empty once left,
   pub for this). The banner box is never tinted.
 - Banner lines go through `add_line` (noinline) and the cold game
   functions are `noinline`: ReleaseFast inlining of them cost ~7 KB of
-  .text in a RAM cart.
+  .text in a RAM cart (the cart is ReleaseSmall since M2.1).
 
 ## Rendering rules that are easy to break
 
@@ -358,6 +358,15 @@ not bring back tail cells SNAKE cleared or gap cells (empty once left,
 - RAM cart only. M0: `.text` 40 KB, `.bss` 77 KB (World 38 KB, AI fill
   scratch 19 KB, banner overlay 19 KB). M2 (track R): `.text` ~103 KB,
   `.bss` ~140 KB (History 46 KB more), ~243 KB of the ~275 KB window.
+  M2.1: the cart builds **ReleaseSmall** (`build.zig`): `.text` 58 KB,
+  ~198 KB in all, 74 KB free. compiler_rt's ReleaseSmall `memcpy` copies
+  bytes, so `cart/src/mem.zig` exports a word-wise `memcpy`/`memset`
+  (and the `__aeabi_*` entry points) for the badge build: without it
+  the API's copy-forward present costs 2.6 ms a frame. Hot render
+  helpers (`put_cell`, `dim565`, the raster targets) and the T3
+  endgame's per-node helpers (`hug_order`, `free4_t`) are `inline`; a
+  new per-pixel, per-cell or per-node helper on a hot path wants the
+  same (AI units are calibrated against inlined code).
 - No audio, neopixels off (never written). The OS owns Start+Select and
   the joystick click; the cart ignores Start and Select while both are
   held.
