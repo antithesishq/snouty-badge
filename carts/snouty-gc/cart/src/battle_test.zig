@@ -325,6 +325,14 @@ test "ammo and burst charges refill every 1200 ticks" {
     try expectEqual(tuning.battle_refill, w.battle.refill);
 }
 
+/// Park car `i` on the SE service bay, held there (frozen), out of the way.
+fn park(w: *World, i: usize) void {
+    for (track.arena.nodes[0..track.arena.node_n]) |n| {
+        if (n.flags & track.node_bay != 0 and n.x > 512) put(w, i, n.x, n.y, 0, 0);
+    }
+    w.cars[i].frozen = 255;
+}
+
 /// An open spot of floor: the north plaza's middle.
 fn plaza(w: *const World) [2]i32 {
     _ = w;
@@ -377,8 +385,10 @@ test "the bit bucket: a kicker at speed jumps it, a crawl falls in" {
         const span = @abs(@as(i32, l.y) - n.y) + @abs(@as(i32, l.x) - n.x);
         for ([2]bool{ true, false }) |fast| {
             if (!fast and span < 250) continue;
-            var w = quiet(0b000001);
+            // Car 1 parked in a bay corner keeps the round running.
+            var w = quiet(0b000011);
             w.combat = false;
+            park(&w, 1);
             const v: i32 = if (fast) sim.top_of(&w.cars[0]) else fixed.one;
             // The crawl starts 50 px down the run-up (clear of the Sweeper).
             const run: i32 = if (fast) 0 else 50;
@@ -392,6 +402,8 @@ test "the bit bucket: a kicker at speed jumps it, a crawl falls in" {
                 if (w.cars[0].wreck == .fall) fell = true;
             }
             try expectEqual(!fast, fell);
+            // At speed it is down on the far side, past the pit.
+            if (fast) try expect(@abs((w.cars[0].x >> fixed.Q) - n.x) + @abs((w.cars[0].y >> fixed.Q) - n.y) > span / 2);
         }
         jumps += 1;
     }
@@ -485,4 +497,27 @@ test "battle determinism: the same setup twice is the same round; a copy runs on
         sim.simulate(&c, .{ ai.drive(&c, racers.kiddie).byte(), 0 });
     }
     try expect(sim.worlds_equal(&a, &c));
+}
+
+test "a kicker hop flies tuning.kicker_ticks and Car.air covers it (the sprite's arc never runs negative)" {
+    const a = &track.arena;
+    var w = quiet(0b000011);
+    w.combat = false;
+    park(&w, 1);
+    for (a.nodes[0..a.node_n]) |n| {
+        if (n.jump == track.no_node or n.need() < tuning.hunt_jump_speed) continue;
+        const l = a.nodes[n.jump];
+        put(&w, 0, n.x, n.y, fixed.atan2(@as(i32, l.y) - n.y, @as(i32, l.x) - n.x), sim.top_of(&w.cars[0]));
+        w.cars[0].human = 0;
+        break;
+    }
+    var flew: u8 = 0;
+    for (0..200) |_| {
+        sim.simulate(&w, .{ 0, 0 });
+        const c = &w.cars[0];
+        try expect(c.hop <= c.air);
+        flew = @max(flew, c.hop);
+    }
+    try expect(flew > tuning.ramp_ticks);
+    try expectEqual(tuning.kicker_ticks, w.cars[0].air);
 }
