@@ -4,7 +4,7 @@
 //! the shared module lands. build.zig maps the `lockstep` import here.
 const std = @import("std");
 
-pub const State = enum(u8) { offline, searching, wrong_cart, lobby, racing, waiting, peer_left, desync };
+pub const State = enum(u8) { offline, searching, wrong_cart, wrong_version, lobby, racing, waiting, peer_left, desync };
 pub const Left = enum(u8) { none, unplugged, restarted, quit };
 pub const Role = enum(u8) { none, host, guest };
 

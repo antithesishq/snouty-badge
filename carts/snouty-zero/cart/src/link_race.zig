@@ -96,6 +96,11 @@ pub const G = struct {
     pub fn picks_ok(host: u8, guest: u8) bool {
         return host < pick_count and guest < pick_count;
     }
+
+    /// A finished race is never paused (each badge then runs it on alone).
+    pub fn can_pause(w: *const world.World) bool {
+        return w.phase != .finished;
+    }
 };
 
 /// The World for an agreed race: the host's track, the host's human in

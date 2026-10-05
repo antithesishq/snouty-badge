@@ -224,17 +224,19 @@ fn draw_machine(m: *const world.Machine, index: u8, p: camera.Projected) void {
         // The Anteater has only the rear views (lean and hop).
         const frame: u32 = if (m.hop > 0) 3 else if (m.steer < 0) 1 else if (m.steer > 0) 2 else 0;
         blit_scaled(gfx.anteater, 40, 24, frame, p.sx, p.sy - lift_px, p.scale, &anteater_pal, opts);
-    } else if (index == world.view) {
-        // A rival's machine from the machine select: its livery, leaning
-        // into the steer with the rear-quarter views.
-        const frame: u32 = if (m.steer < 0) 1 else if (m.steer > 0) 2 else 0;
-        blit_scaled(gfx.machine, 32, 16, frame, p.sx, p.sy - lift_px, p.scale, &livery_pals[livery_of(pick)], opts);
     } else {
-        // Yaw view from the heading relative to the camera (the other
-        // human's pick in its livery).
-        const d = fixed.turn_diff(camera.cam.yaw, m.heading);
-        const ad = @abs(d);
-        const frame: u32 = if (ad < 5000) 0 else if (ad < 20000) (if (d < 0) 1 else 2) else (if (d < 0) 3 else 4);
+        var frame: u32 = undefined;
+        if (index == world.view) {
+            // A rival's machine from the machine select: its livery,
+            // leaning into the steer with the rear-quarter views.
+            frame = if (m.steer < 0) 1 else if (m.steer > 0) 2 else 0;
+        } else {
+            // Yaw view from the heading relative to the camera.
+            const d = fixed.turn_diff(camera.cam.yaw, m.heading);
+            const ad = @abs(d);
+            frame = if (ad < 5000) 0 else if (ad < 20000) (if (d < 0) 1 else 2) else (if (d < 0) 3 else 4);
+        }
+        // A human's pick in its livery (the other human's too).
         const livery = if (slot != null) livery_of(pick) else livery_of(index);
         blit_scaled(gfx.machine, 32, 16, frame, p.sx, p.sy - lift_px, p.scale, &livery_pals[livery], opts);
     }

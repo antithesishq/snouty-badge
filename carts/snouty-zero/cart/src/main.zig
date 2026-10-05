@@ -1194,8 +1194,11 @@ fn debug_machine() callconv(.c) u32 {
 /// ready, 7 no link. The lobby's controls work on it (the host's track
 /// and machine rows, A ready); 0 back to the real one.
 fn debug_link_view(k: u32) callconv(.c) u32 {
-    fake_view = k;
     if (screen != .lobby) open_lobby();
+    fake_view = k;
+    link_ready = false;
+    // As `debug_link_race` drives them: the host the menu's machine, the guest BACKPROP.
+    link_pick = if (k == 3 or k == 6) 3 else sim.player_character;
     return k;
 }
 /// --call debug_link_race:K starts a made-up two-human link race in the
@@ -1226,8 +1229,8 @@ fn debug_link_notice(k: u32) callconv(.c) u32 {
     fake_notice = k;
     return k;
 }
-/// lockstep.State: 0 offline (the simulator), 1 searching, 2 wrong cart,
-/// 3 lobby, 4 racing, 5 waiting, 6 peer left, 7 desync; 0xFF before
+/// lockstep.State: 0 offline (the simulator), 1 searching, 2 wrong cart, 3 wrong version,
+/// 4 lobby, 5 racing, 6 waiting, 7 peer left, 8 desync; 0xFF before
 /// LINK RACE first opened.
 fn debug_link_state() callconv(.c) u32 {
     return if (lnk_started) @backingInt(lnk.state()) else 0xFF;

@@ -79,6 +79,13 @@ pub fn draw_lobby(v: *const View, cursor: u8, frame: u32) void {
             hud.centered("ON THE OTHER BADGE", 76, grey);
             return hud.centered("B BACK", 114, hud.dim);
         },
+        .wrong_version => {
+            hud.centered("WRONG VERSION", 40, hud.coral);
+            hud.centered("THE OTHER BADGE RUNS", 58, grey);
+            hud.centered("ANOTHER SNOUTY ZERO:", 70, grey);
+            hud.centered("FLASH BOTH FROM MAIN", 82, grey);
+            return hud.centered("B BACK", 114, hud.dim);
+        },
         else => {
             // Searching (or a race state the lobby never shows).
             hud.centered("PLUG IN THE CABLE", 34, hud.white);
