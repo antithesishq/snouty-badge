@@ -13,7 +13,8 @@ authoritative table is `SPEC.md` section 3.
 
 | Where | Badge | Simulator | Does |
 |---|---|---|---|
-| Title | A | Z or K | Start the campaign |
+| Title | Joystick up / down | Up / Down or W / S | Pick PLAY or DEATHMATCH (greyed in the simulator: NO LINK IN SIMULATOR) |
+| Title | A | Z or K | PLAY: start the campaign; DEATHMATCH: the two-badge lobby (section 7) |
 | Title | B / Start | X or J / Enter or Y | Start the imported E1M1 / the test level |
 | Title | Select | Backspace or T | Sound on/off; the cart boots silent ([docs/SOUND.md](../../../docs/SOUND.md)) |
 | Title | (leave it 10 s) | | Attract demo; any button or the joystick returns to the title |
@@ -26,6 +27,9 @@ authoritative table is `SPEC.md` section 3.
 | Playing | Start | Enter or Y | Pause; the pause screen lists these controls; Start again resumes |
 | Dead (red, frozen) | Hold B | Hold X or J | Rewind, the only way on (always at least 3 s) |
 | Level clear / victory | A or Start | Z or K / Enter or Y | Next card |
+| Deathmatch lobby | A / Start / B | (badge only) | Ready / the host goes once both are ready / back to the title; the host's Up/Down and Left/Right set the rules |
+| Deathmatch | Hold B + Left / Right | (badge only) | Strafe (no rewind in a match); everything else as Playing; Start pauses both badges, B in the pause leaves (a forfeit) |
+| Deathmatch results | A or Start | (badge only) | Back to the lobby |
 | Anywhere | Hold Start + Select 0.5 s | (none) | Badge OS stops the cart and returns to its cart list (newer OS firmware: opens its settings box; A on "Exit cart" leaves) |
 | Anywhere | Joystick click | Shift | Badge OS FPS overlay; the cart ignores it |
 | Simulator only | | Escape | Simulator menu (Continue, Save/Load state, Reset cart, ...); it freezes the cart and is not the badge OS |
@@ -335,3 +339,51 @@ Install it as in [docs/INSTALL.md](../../../docs/INSTALL.md): copy
 `zig-out/firmware/snoutenstein.uf2` (at the repository root) onto the badge's
 `SYCLBADGE` drive, eject, and pick it in the badge menu. Start+Select
 returns to the menu.
+
+## 7. Deathmatch (two badges, M7)
+
+Two badges, each running this cart, joined by a JST-SH 3-pin cable
+between their UART headers (J4; crossed or straight both work, root
+[docs/LINK.md](../../../docs/LINK.md)). SPEC.md section 19 has the rules.
+
+**Hardware check (two badges):**
+
+1. Flash `snoutenstein.uf2` on both badges and start Snoutenstein on both.
+2. Plug the cable into both UART headers.
+3. On both title screens: Down to DEATHMATCH, A. Both lobbies leave PLUG
+   IN THE CABLE within a second or two; one says YOU HOST: PICK RULES,
+   the other GUEST: HOST PICKS. A badge running another link cart shows
+   WRONG CART: and its name.
+4. On the host: Up/Down picks ARENA, FRAGS or BUGS, Left/Right changes
+   it; the guest's screen follows.
+5. A on both: YOU and THEM read READY on both screens; the host shows
+   START: FIGHT.
+6. Host Start: both badges start the match at once, each from its own
+   player. Frag each other: the other badge is the Coral-shirted rival
+   Snouty, it flashes white on a hit, six zapper hits frag, both HUDs
+   count YOU / THEM, the banners agree (YOU FRAGGED THEM here is FRAGGED
+   BY THEM there). Hold B with Left/Right to strafe.
+7. Start on either badge pauses both; Start again resumes both.
+8. First to the frag limit: both show the results (YOU WIN on one, YOU
+   LOSE on the other, the same frags and shots). A goes back to the lobby
+   on each.
+9. Optional: pull the cable mid-match: the other badge ends with YOU
+   WIN: FORFEIT and PEER LEFT. A DESYNC band would be a bug (report the
+   arena and roughly when).
+
+**Without a second badge** (simulator, previews, bench) a local match
+stands in: the debug exports `debug_dm_local:R` (the pad on player 0, a
+bot on player 1), `debug_dm_bots:R` (two bots), `debug_dm_view:S` (show
+player S) and `debug_dm_lobby:K` (the lobby as 1 host, 2 guest,
+3 searching, 4 wrong cart; 0 is the real NO LINK screen). R is the rules
+byte: arena bits 0-1 (0 Server Room, 1 Build Farm), frag index bits 2-3
+(5, 10, 15, 20), bugs bit 4.
+
+```
+node ../../tools/preview.mjs ../../zig-out/bin/snoutenstein.wasm --frames 600 --every 6 \
+  --out out/dm --call debug_dm_bots:16 --dump-exports debug_dm_frags,debug_dm_tick
+```
+
+The bench has no cable either: `tools/bench_m7.sh` pokes
+`stein_dm_bench` (rules byte + 1) so a bot-vs-bot match runs from the
+first update, on both arenas with BUGS ON.

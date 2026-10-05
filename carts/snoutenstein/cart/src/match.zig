@@ -117,6 +117,35 @@ pub fn buttons_of(x: u8) Buttons {
     };
 }
 
+/// The game side of the two-badge lockstep (lib/lockstep.zig): the World,
+/// the agreed rules as one byte (`Rules`), no picks beyond the ready flag.
+/// Pure, so the host tests run it over the virtual cable.
+pub const G = struct {
+    pub const World = match_world;
+    pub const rules_len = 1;
+    pub const input_delay: u32 = 2;
+    pub const check_every: u32 = 32;
+    /// Start toggles the pause on both badges on the same tick.
+    pub const pause_bit: ?u8 = bit_start;
+    /// No racer-style picks: only the ready flag (pick 0).
+    pub const pick_bits: u8 = 0;
+    pub fn picks_ok(_: u8, _: u8) bool {
+        return true;
+    }
+    pub fn simulate(w: *match_world, in: [2]u8) void {
+        step(w, &levels.all[w.gs.level], .{ buttons_of(in[0]), buttons_of(in[1]) });
+    }
+    pub fn hash(w: *const match_world) u32 {
+        return world_hash(w);
+    }
+    /// The partner left mid-match: a forfeit win for the one who stayed.
+    pub fn hand_over(w: *match_world, slot: u1) void {
+        forfeit(w, slot);
+    }
+};
+const match_world = World;
+const world_hash = hash;
+
 pub fn arena_level(arena: u8) *const Level {
     return &levels.all[levels.arena_indices[arena]];
 }
@@ -796,6 +825,24 @@ test "both arenas run a long random match with bugs, the same twice" {
         }
         try testing.expectEqual(hs[0], hs[1]);
     }
+}
+
+test "G: the lockstep's simulate is step on the arena, hand_over a forfeit" {
+    var a: World = undefined;
+    var b: World = undefined;
+    init_rules(&a, .{ .arena = 1, .bugs = true }, 3);
+    b = a;
+    for (0..200) |i| {
+        const x: u8 = @truncate(i *% 37);
+        G.simulate(&a, .{ x & 0x3F, (x >> 1) & 0x3F });
+        step(&b, arena_level(1), .{ buttons_of(x & 0x3F), buttons_of((x >> 1) & 0x3F) });
+    }
+    try testing.expectEqual(G.hash(&a), G.hash(&b));
+    try testing.expectEqual(@as(u32, 200), a.gs.tick);
+    G.hand_over(&a, 1);
+    try testing.expect(a.m.over and a.m.forfeit);
+    try testing.expectEqual(@as(u8, 0), a.m.winner);
+    try testing.expectEqual(@as(?u8, bit_start), G.pause_bit);
 }
 
 test "the same inputs give the same World, whatever was in memory" {

@@ -33,32 +33,7 @@ const fmt = hud.fmt;
 /// The HELLO app byte of Snoutenstein (the partner's `app_name`).
 pub const app_id: u8 = 'S';
 
-/// The game side of the lockstep (lib/lockstep.zig): the World is
-/// match.World, the agreed rules one byte (`match.Rules`), no picks.
-pub const G = struct {
-    pub const World = match.World;
-    pub const rules_len = 1;
-    pub const input_delay: u32 = 2;
-    pub const check_every: u32 = 32;
-    /// Start toggles the pause on both badges on the same tick.
-    pub const pause_bit: ?u8 = match.bit_start;
-    /// No racer-style picks: only the ready flag (pick 0).
-    pub const pick_bits: u8 = 0;
-    pub fn picks_ok(_: u8, _: u8) bool {
-        return true;
-    }
-    pub fn simulate(w: *World, in: [2]u8) void {
-        match.step(w, &levels.all[w.gs.level], .{ match.buttons_of(in[0]), match.buttons_of(in[1]) });
-    }
-    pub fn hash(w: *const World) u32 {
-        return match.hash(w);
-    }
-    /// The partner left mid-match: a forfeit win for the one who stayed.
-    pub fn hand_over(w: *World, slot: u1) void {
-        match.forfeit(w, slot);
-    }
-};
-
+pub const G = match.G;
 pub const Net = lockstep.Lockstep(link.Badge, G);
 
 /// Pump the link until this far into the frame while the lockstep is busy
@@ -257,7 +232,7 @@ fn draw_rules(v: LobbyView) void {
     } else if (host) {
         centered("A: READY", 104, hud.anti_white);
     } else {
-        centered("A: READY  HOST STARTS", 104, hud.anti_white);
+        centered("A: READY  HOST GOES", 104, hud.anti_white);
     }
 }
 
