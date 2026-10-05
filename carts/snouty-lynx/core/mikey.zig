@@ -641,6 +641,7 @@ pub const Mikey = struct {
         if (m.timer_event != ticks_never) m.timer_event -|= d;
         if (m.aud_event != ticks_never) m.aud_event -|= d;
         if (m.uart_event != ticks_never) m.uart_event -|= d;
+        if (m.uart.on) uart.rebase(m, d);
         audio.rebase(m, d);
         m.dma_next -|= d;
         m.dma_line_end -|= d;

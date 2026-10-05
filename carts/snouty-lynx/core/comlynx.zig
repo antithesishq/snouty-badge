@@ -30,8 +30,14 @@
 //! allocator, no clock, no randomness.
 const std = @import("std");
 
-/// "No time" (an open break's end, an empty schedule).
+/// "No time" on the bus's clock (64-bit, `Lynx.time()` scale).
 pub const never: u64 = std.math.maxInt(u64);
+
+/// A console's own clock for the frames on its wire: Mikey's 32-bit ticks
+/// (`Lynx.ticks` scale, rebased with it: `Port.rebase`), so the UART does
+/// no 64-bit arithmetic. `tick_never`: an open break's end.
+pub const Tick = u32;
+pub const tick_never: Tick = std.math.maxInt(Tick);
 
 /// Bits of an 11-bit frame on the wire, LSB first: start (0), data 0-7,
 /// the 9th bit, stop (1).
@@ -79,9 +85,9 @@ pub fn wire_bits(data: u8, ninth: bool) u16 {
 
 /// One frame (or break span) on a console's wire.
 pub const WireFrame = struct {
-    start: u64,
+    start: Tick,
     /// First tick after it (a frame: start + 11 bits; an open break: never).
-    end: u64,
+    end: Tick,
     bit_ticks: u32,
     /// `wire_bits` (unused for a break).
     bits: u16,
@@ -89,7 +95,7 @@ pub const WireFrame = struct {
     is_break: bool,
 
     /// Its level at tick `t` (1 outside it).
-    pub fn level(f: *const WireFrame, t: u64) u1 {
+    pub fn level(f: *const WireFrame, t: Tick) u1 {
         if (t < f.start or t >= f.end) return 1;
         if (f.is_break) return 0;
         const i = (t - f.start) / f.bit_ticks;
@@ -97,19 +103,19 @@ pub const WireFrame = struct {
     }
 
     /// The first tick at or after `t` (and inside it) where it is low.
-    pub fn first_low(f: *const WireFrame, t: u64) u64 {
+    pub fn first_low(f: *const WireFrame, t: Tick) Tick {
         const from = @max(t, f.start);
-        if (from >= f.end) return never;
+        if (from >= f.end) return tick_never;
         if (f.is_break) return from;
         var i = (from - f.start) / f.bit_ticks;
         while (i < frame_bits) : (i += 1) {
             if ((f.bits >> @intCast(i)) & 1 == 0) return @max(from, f.start + i * f.bit_ticks);
         }
-        return never;
+        return tick_never;
     }
 
     /// The end of the low run it has at `t` (it is low at `t`).
-    pub fn low_until(f: *const WireFrame, t: u64) u64 {
+    pub fn low_until(f: *const WireFrame, t: Tick) Tick {
         if (f.is_break) return f.end;
         var i = (t - f.start) / f.bit_ticks;
         while (i < frame_bits and (f.bits >> @intCast(i)) & 1 == 0) i += 1;
@@ -139,7 +145,7 @@ pub const Port = struct {
     wire_len: u32 = 0,
     /// Per sender (id mod 16): the end of its last frame on this wire, so
     /// frames delivered late keep their spacing instead of piling up.
-    src_end: [16]u64 = @splat(0),
+    src_end: [16]Tick = @splat(0),
 
     // Counters (diagnostics; the tests read them).
     /// Frames the UART put on the wire / frames dropped because `out` was
@@ -177,7 +183,7 @@ pub const Port = struct {
     }
 
     /// The UART side: a frame went on the wire.
-    pub fn push_out(p: *Port, f: TxFrame) void {
+    pub noinline fn push_out(p: *Port, f: TxFrame) void {
         p.sent +%= 1;
         if (p.out_len == out_cap) {
             p.out_dropped +%= 1;
@@ -188,7 +194,7 @@ pub const Port = struct {
     }
 
     /// Put a frame on the wire in start order. False when the wire is full.
-    pub fn insert(p: *Port, f: WireFrame) bool {
+    pub noinline fn insert(p: *Port, f: WireFrame) bool {
         if (p.wire_len == wire_cap) {
             p.wire_dropped +%= 1;
             return false;
@@ -201,14 +207,24 @@ pub const Port = struct {
     }
 
     /// Close an open break of `src` at `t`.
-    pub fn close_break(p: *Port, src: u8, t: u64) void {
+    pub fn close_break(p: *Port, src: u8, t: Tick) void {
         for (p.wire[0..p.wire_len]) |*f| {
-            if (f.is_break and f.src == src and f.end == never) f.end = @max(t, f.start);
+            if (f.is_break and f.src == src and f.end == tick_never) f.end = @max(t, f.start);
         }
     }
 
+    /// Move every tick on the wire back by `d` (`Lynx.rebase`; frames end
+    /// in the future, so nothing goes below 0 but an old `src_end`).
+    pub fn rebase(p: *Port, d: Tick) void {
+        for (p.wire[0..p.wire_len]) |*f| {
+            f.start -|= d;
+            if (f.end != tick_never) f.end -|= d;
+        }
+        for (&p.src_end) |*e| e.* -|= d;
+    }
+
     /// Drop the frames over before `t` (the receiver will not look back).
-    pub fn prune(p: *Port, t: u64) void {
+    pub noinline fn prune(p: *Port, t: Tick) void {
         var k: u32 = 0;
         for (p.wire[0..p.wire_len]) |f| {
             if (f.end > t) {
@@ -220,7 +236,7 @@ pub const Port = struct {
     }
 
     /// The wire's level at `t`: the AND of every frame on it.
-    pub fn level(p: *const Port, t: u64) u1 {
+    pub noinline fn level(p: *const Port, t: Tick) u1 {
         for (p.wire[0..p.wire_len]) |*f| {
             if (f.start > t) break;
             if (f.level(t) == 0) return 0;
@@ -230,8 +246,8 @@ pub const Port = struct {
 
     /// The first tick at or after `t` where the wire is low (never if no
     /// frame on it goes low).
-    pub fn first_low(p: *const Port, t: u64) u64 {
-        var best = never;
+    pub noinline fn first_low(p: *const Port, t: Tick) Tick {
+        var best = tick_never;
         for (p.wire[0..p.wire_len]) |*f| {
             if (f.start >= best) break;
             best = @min(best, f.first_low(t));
@@ -240,7 +256,7 @@ pub const Port = struct {
     }
 
     /// The first tick at or after `t` where the wire is high.
-    pub fn first_high(p: *const Port, t: u64) u64 {
+    pub noinline fn first_high(p: *const Port, t: Tick) Tick {
         var at = t;
         while (true) {
             var moved = false;
@@ -251,12 +267,12 @@ pub const Port = struct {
                     moved = true;
                 }
             }
-            if (!moved or at == never) return at;
+            if (!moved or at == tick_never) return at;
         }
     }
 
     /// Did a frame from another console (than `self`) overlap [a, b]?
-    pub fn remote_in(p: *const Port, self: u8, a: u64, b: u64) bool {
+    pub noinline fn remote_in(p: *const Port, self: u8, a: Tick, b: Tick) bool {
         for (p.wire[0..p.wire_len]) |*f| {
             if (f.start > b) break;
             if (f.src != self and f.end > a) return true;
@@ -274,13 +290,13 @@ test "comlynx: wire bits and levels" {
     try std.testing.expectEqual(@as(u1, 0), p.level(1000));
     try std.testing.expectEqual(@as(u1, 1), p.level(1016)); // d0 = 1
     try std.testing.expectEqual(@as(u1, 0), p.level(1032)); // d1 = 0
-    try std.testing.expectEqual(@as(u64, 1000), p.first_low(0));
-    try std.testing.expectEqual(@as(u64, 1032), p.first_low(1016));
-    try std.testing.expectEqual(@as(u64, 1016), p.first_high(1000));
+    try std.testing.expectEqual(@as(Tick, 1000), p.first_low(0));
+    try std.testing.expectEqual(@as(Tick, 1032), p.first_low(1016));
+    try std.testing.expectEqual(@as(Tick, 1016), p.first_high(1000));
     // A second frame ANDed in.
     _ = p.insert(.{ .start = 1008, .end = 1008 + 11 * 16, .bit_ticks = 16, .bits = wire_bits(0xFF, true), .src = 2, .is_break = false });
     try std.testing.expectEqual(@as(u1, 0), p.level(1016)); // its start bit
-    try std.testing.expectEqual(@as(u64, 1024), p.first_high(1000));
+    try std.testing.expectEqual(@as(Tick, 1024), p.first_high(1000));
     p.prune(1200);
     try std.testing.expectEqual(@as(u32, 0), p.wire_len);
 }

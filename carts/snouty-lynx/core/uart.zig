@@ -72,7 +72,8 @@ const comlynx = @import("comlynx.zig");
 const lynx_mod = @import("lynx.zig");
 
 const Mikey = mikey_mod.Mikey;
-const never = comlynx.never;
+const Tick = mikey_mod.Tick;
+const never = mikey_mod.ticks_never;
 
 /// SERCTL write bits.
 pub const Ctl = struct {
@@ -102,14 +103,14 @@ pub const St = struct {
 /// A second frame landing within this long of the one before (unread)
 /// replaces it when both are the console's own echo (Gearlynx's fit of
 /// lynx-tests uart2/uart3: "the changeover sits near 800us of gap").
-pub const rx_hold_ticks: u64 = 800 * 16;
+pub const rx_hold_ticks: Tick = 800 * 16;
 
 /// Bit edges a held byte waits after TXBRK is released (Gearlynx's fit).
 pub const brk_release_edges: u8 = 3;
 
 /// MTEST0 bit 4: the UART clocked at 1 MBd.
 pub const mtest0_turbo: u8 = 0x10;
-pub const turbo_bit_ticks: u64 = 16;
+pub const turbo_bit_ticks: Tick = 16;
 
 pub const Uart = struct {
     /// A port is attached: the UART runs (else the stub in mikey.zig).
@@ -139,11 +140,11 @@ pub const Uart = struct {
     tx_ready: bool = true,
     tx_empty: bool = true,
 
-    // The bit clock (absolute ticks, `Lynx.time()` scale).
+    // The bit clock (Mikey's ticks, rebased with it: `rebase`).
     /// The next bit edge, or never (timer 4 stopped, linked, one-shot).
-    next_bit: u64 = never,
+    next_bit: Tick = never,
     /// Ticks per bit (0: no clock yet).
-    bit_ticks: u64 = 0,
+    bit_ticks: Tick = 0,
     /// Timer-4 underflows since the last bit edge (a linked timer 4; and
     /// the phase carried across a timer-4 reprogramming).
     presc: u8 = 0,
@@ -159,12 +160,12 @@ pub const Uart = struct {
     flags: u8 = 0,
     overrun: bool = false,
     /// The receiver looks for a start bit at or after this tick.
-    rx_armed: u64 = 0,
+    rx_armed: Tick = 0,
     /// Falling edge of the frame being received, or never.
-    rx_start: u64 = never,
-    rx_bit_ticks: u64 = 0,
+    rx_start: Tick = never,
+    rx_bit_ticks: Tick = 0,
     /// When the last frame was latched (the 800 us rule).
-    rx_last: u64 = 0,
+    rx_last: Tick = 0,
     /// The newest queue entry is the console's own echo.
     rx_last_own: bool = false,
 };
@@ -180,9 +181,9 @@ fn port_of(m: *Mikey) *comlynx.Port {
     return lynx_of(m).link.?;
 }
 
-/// Mikey's `now` on the absolute clock.
-fn abs_now(m: *Mikey) u64 {
-    return lynx_of(m).tick_base + m.now;
+/// A tick of Mikey's clock on the bus's (`Lynx.time()` scale).
+fn abs(m: *Mikey, t: Tick) u64 {
+    return lynx_of(m).tick_base + t;
 }
 
 // ---------------------------------------------------------------------------
@@ -218,7 +219,7 @@ pub fn write_ctl(m: *Mikey, v: u8) void {
     const u = &m.uart;
     const was = u.ctl;
     u.ctl = v & ~Ctl.reseterr;
-    const now = abs_now(m);
+    const now = m.now;
     if (v & Ctl.reseterr != 0) {
         u.flags &= St.parbit;
         u.overrun = false;
@@ -229,7 +230,7 @@ pub fn write_ctl(m: *Mikey, v: u8) void {
     const on_wire = brk and v & Ctl.txopen != 0;
     const was_on_wire = was_brk and was & Ctl.txopen != 0;
     if (on_wire != was_on_wire) {
-        p.push_out(.{ .time = now, .bit_ticks = @intCast(u.bit_ticks), .data = 0, .ninth = false, .kind = if (on_wire) .break_on else .break_off });
+        p.push_out(.{ .time = abs(m, now), .bit_ticks = u.bit_ticks, .data = 0, .ninth = false, .kind = if (on_wire) .break_on else .break_off });
     }
     if (brk) {
         u.tx_empty = false;
@@ -254,7 +255,7 @@ pub fn write_data(m: *Mikey, v: u8) void {
     sync(m);
     const u = &m.uart;
     if (!u.active and u.ctl & Ctl.txbrk == 0 and !u.hold_valid) {
-        skip_idle_edges(u, abs_now(m));
+        skip_idle_edges(u, m.now);
         begin(u, v);
         u.lead = 1;
         u.ready_wait = 2;
@@ -289,7 +290,7 @@ pub fn before_clock_change(m: *Mikey) void {
     if (u.next_bit == never or u.bit_ticks == 0 or turbo(m)) return;
     const t = &m.timers[4];
     const per = t4_period(t);
-    const nu = abs_next_underflow(m);
+    const nu = next_underflow(m);
     if (nu == never or per == 0) return;
     // Underflows still to come up to and including the next edge.
     const left = (u.next_bit - nu) / per + 1;
@@ -307,12 +308,11 @@ pub fn after_clock_change(m: *Mikey) void {
 pub fn t4_borrow(m: *Mikey, at: mikey_mod.Tick) void {
     const u = &m.uart;
     if (!u.on or turbo(m) or !m.timers[4].linked()) return;
-    const t_abs = lynx_of(m).tick_base + at;
     u.presc += 1;
     if (u.presc < 8) return;
     u.presc = 0;
-    catch_up(m, t_abs, false);
-    tx_edge(m, t_abs);
+    catch_up(m, at, false);
+    tx_edge(m, at);
     relevel(m);
 }
 
@@ -320,21 +320,19 @@ fn turbo(m: *const Mikey) bool {
     return m.regs[mikey_mod.Reg.mtest0] & mtest0_turbo != 0;
 }
 
-fn t4_period(t: *const mikey_mod.Timer) u64 {
-    return (@as(u64, t.backup) + 1) << t.shift();
+fn t4_period(t: *const mikey_mod.Timer) Tick {
+    return (@as(Tick, t.backup) + 1) << t.shift();
 }
 
-/// Timer 4's next underflow after now (absolute), or never.
-fn abs_next_underflow(m: *Mikey) u64 {
-    const e = m.next_underflow(4);
-    if (e == mikey_mod.ticks_never) return never;
-    return lynx_of(m).tick_base + e;
+/// Timer 4's next underflow after now, or never.
+fn next_underflow(m: *Mikey) Tick {
+    return m.next_underflow(4);
 }
 
 /// `next_bit` and `bit_ticks` from timer 4 as it is set now.
-fn clock_resync(m: *Mikey) void {
+noinline fn clock_resync(m: *Mikey) void {
     const u = &m.uart;
-    const now = abs_now(m);
+    const now = m.now;
     if (turbo(m)) {
         u.bit_ticks = turbo_bit_ticks;
         u.next_bit = (now / turbo_bit_ticks + 1) * turbo_bit_ticks;
@@ -345,18 +343,18 @@ fn clock_resync(m: *Mikey) void {
         // Clocked by timer 2's borrows (`t4_borrow`); the bit time for the
         // frames' records is unknown: take the line time x 8.
         const t0 = &m.timers[0];
-        u.bit_ticks = 8 * ((@as(u64, t0.backup) + 1) << t0.shift()) * (@as(u64, m.timers[2].backup) + 1) * (@as(u64, t.backup) + 1);
+        u.bit_ticks = 8 * ((@as(Tick, t0.backup) + 1) << t0.shift()) * (@as(Tick, m.timers[2].backup) + 1) * (@as(Tick, t.backup) + 1);
         u.next_bit = never;
         return;
     }
     const per = t4_period(t);
     u.bit_ticks = 8 * per;
-    const nu = abs_next_underflow(m);
+    const nu = next_underflow(m);
     if (nu == never) {
         u.next_bit = never;
         return;
     }
-    const k: u64 = 7 - @as(u64, u.presc);
+    const k: Tick = 7 - @as(Tick, u.presc);
     if (t.ctla & mikey_mod.Ctla.reload != 0) {
         u.next_bit = nu + k * per;
     } else {
@@ -366,7 +364,7 @@ fn clock_resync(m: *Mikey) void {
 
 /// Move `next_bit` past `now` over edges at which nothing happens (an idle
 /// transmitter: none of its counters run).
-fn skip_idle_edges(u: *Uart, now: u64) void {
+fn skip_idle_edges(u: *Uart, now: Tick) void {
     if (u.next_bit == never or u.next_bit > now or u.bit_ticks == 0) return;
     const n = (now - u.next_bit) / u.bit_ticks + 1;
     u.next_bit += n * u.bit_ticks;
@@ -388,7 +386,7 @@ fn advance_edge(m: *Mikey) void {
 /// Bring the UART up to Mikey's `now`.
 pub fn sync(m: *Mikey) void {
     if (!m.uart.on) return;
-    catch_up(m, abs_now(m), true);
+    catch_up(m, m.now, true);
 }
 
 /// The UART's Mikey event at `at` (Mikey's clock).
@@ -407,7 +405,7 @@ fn tx_busy(u: *const Uart) bool {
 /// Every transmitter edge and receiver step up to `t`, in time order.
 /// `edges`: the closed-form bit edges run too (false for a linked timer 4,
 /// whose edges come from `t4_borrow`).
-fn catch_up(m: *Mikey, t: u64, edges: bool) void {
+noinline fn catch_up(m: *Mikey, t: Tick, edges: bool) void {
     const u = &m.uart;
     while (true) {
         const te = if (edges and tx_busy(u) and u.ctl & Ctl.txbrk == 0) u.next_bit else never;
@@ -451,7 +449,7 @@ fn begin(u: *Uart, data: u8) void {
 }
 
 /// Start the held byte at edge `e`: its start bit goes out now.
-fn begin_held(m: *Mikey, e: u64) void {
+fn begin_held(m: *Mikey, e: Tick) void {
     const u = &m.uart;
     begin(u, u.hold);
     u.hold_valid = false;
@@ -461,19 +459,19 @@ fn begin_held(m: *Mikey, e: u64) void {
 }
 
 /// The frame in the shifter goes on the wire at `s`.
-fn put_on_wire(m: *Mikey, s: u64) void {
+noinline fn put_on_wire(m: *Mikey, s: Tick) void {
     const u = &m.uart;
     const p = port_of(m);
-    const bt: u32 = @intCast(@min(u.bit_ticks, std.math.maxInt(u32)));
+    const bt = u.bit_ticks;
     if (u.ctl & Ctl.txopen != 0) {
-        p.push_out(.{ .time = s, .bit_ticks = bt, .data = u.shift, .ninth = u.ninth, .kind = .frame });
+        p.push_out(.{ .time = abs(m, s), .bit_ticks = bt, .data = u.shift, .ninth = u.ninth, .kind = .frame });
     } else {
         p.sent +%= 1;
     }
     if (p.echo == .local and bt != 0) {
         _ = p.insert(.{
             .start = s,
-            .end = s + comlynx.frame_bits * @as(u64, bt),
+            .end = s + comlynx.frame_bits * bt,
             .bit_ticks = bt,
             .bits = comlynx.wire_bits(u.shift, u.ninth),
             .src = p.id,
@@ -483,7 +481,7 @@ fn put_on_wire(m: *Mikey, s: u64) void {
 }
 
 /// One bit edge of the transmitter at `e`.
-fn tx_edge(m: *Mikey, e: u64) void {
+noinline fn tx_edge(m: *Mikey, e: Tick) void {
     const u = &m.uart;
     if (u.ctl & Ctl.txbrk != 0) {
         u.tx_empty = false;
@@ -537,7 +535,7 @@ fn tx_edge(m: *Mikey, e: u64) void {
 
 /// The receiver's next step time (a start to take or a frame to latch),
 /// or never.
-fn rx_next(m: *Mikey) u64 {
+noinline fn rx_next(m: *Mikey) Tick {
     const u = &m.uart;
     if (u.ctl & Ctl.txbrk != 0) return never;
     if (u.rx_start != never) return u.rx_start + 10 * u.rx_bit_ticks + u.rx_bit_ticks / 2;
@@ -551,7 +549,7 @@ fn rx_next(m: *Mikey) u64 {
     return p.first_low(a);
 }
 
-fn rx_step(m: *Mikey, t: u64) void {
+noinline fn rx_step(m: *Mikey, t: Tick) void {
     const u = &m.uart;
     const p = port_of(m);
     if (u.rx_start == never) {
@@ -576,7 +574,7 @@ fn rx_step(m: *Mikey, t: u64) void {
     const s = u.rx_start;
     const b = u.rx_bit_ticks;
     var data: u8 = 0;
-    var k: u64 = 1;
+    var k: Tick = 1;
     while (k <= 8) : (k += 1) {
         data |= @as(u8, p.level(s + k * b + b / 2)) << @intCast(k - 1);
     }
@@ -599,7 +597,7 @@ fn rx_step(m: *Mikey, t: u64) void {
     u.rx_armed = t;
 }
 
-fn push(m: *Mikey, data: u8, fl: u8, own: bool, t: u64) void {
+noinline fn push(m: *Mikey, data: u8, fl: u8, own: bool, t: Tick) void {
     const u = &m.uart;
     const p = port_of(m);
     p.latched +%= 1;
@@ -639,15 +637,15 @@ fn relevel(m: *Mikey) void {
     if (level(&m.uart)) m.intset |= 0x10;
 }
 
-/// The next tick at which the level could rise (absolute), or never.
-fn next_rise(m: *Mikey) u64 {
+/// The next tick at which the level could rise, or never.
+noinline fn next_rise(m: *Mikey) Tick {
     const u = &m.uart;
     if (level(u)) return never;
     var best = never;
     const nb = u.next_bit;
     const bt = u.bit_ticks;
     const edge_k = struct {
-        fn at(n: u64, b: u64, k: u64) u64 {
+        fn at(n: Tick, b: Tick, k: Tick) Tick {
             if (n == never) return never;
             return n + (@max(k, 1) - 1) * b;
         }
@@ -658,7 +656,7 @@ fn next_rise(m: *Mikey) u64 {
             if (u.ready_wait > 0) {
                 best = @min(best, edge_k(nb, bt, u.ready_wait));
             } else if (u.hold_valid) {
-                best = @min(best, edge_k(nb, bt, @as(u64, u.lead) + comlynx.frame_bits - u.bit));
+                best = @min(best, edge_k(nb, bt, @as(Tick, u.lead) + comlynx.frame_bits - u.bit));
             }
         } else if (u.hold_valid) {
             best = @min(best, edge_k(nb, bt, u.ready_wait));
@@ -684,8 +682,7 @@ fn next_rise(m: *Mikey) u64 {
 /// schedule.
 pub fn resched(m: *Mikey) void {
     const t = next_rise(m);
-    const l = lynx_of(m);
-    m.uart_event = if (t == never) mikey_mod.ticks_never else @intCast(@max(t, l.tick_base + m.now) - l.tick_base);
+    m.uart_event = if (t == never) never else @max(t, m.now);
     m.reschedule();
 }
 
@@ -698,10 +695,20 @@ pub fn attach(m: *Mikey) void {
     m.uart = .{ .on = true };
     m.serctl = 0;
     m.uart.ctl = stub_ctl & ~Ctl.reseterr;
-    m.uart.rx_armed = abs_now(m);
+    m.uart.rx_armed = m.now;
     clock_resync(m);
     relevel(m);
     resched(m);
+}
+
+/// Mikey's clock moves back by `d` (`Mikey.rebase`; the port's wire is
+/// rebased by `Lynx.rebase`).
+pub fn rebase(m: *Mikey, d: Tick) void {
+    const u = &m.uart;
+    if (u.next_bit != never) u.next_bit -|= d;
+    if (u.rx_start != never) u.rx_start -|= d;
+    u.rx_armed -|= d;
+    u.rx_last -|= d;
 }
 
 /// The port went away: back to the stub (TXINTEN carried over).

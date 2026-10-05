@@ -360,11 +360,15 @@ pub const Lynx = struct {
         const p = l.link orelse return null;
         bus.sync_mikey(l);
         uart.sync(&l.mikey);
-        const now = l.tick_base + l.mikey.now;
-        const late = now -| f.start;
-        // Late frames move to now, after the sender's frame before.
-        const start = if (f.kind == .break_off) @max(f.start, now) else @max(f.start, now, p.src_end[f.src & 15]);
-        if (f.kind == .frame) p.src_end[f.src & 15] = start + comlynx.frame_bits * @as(u64, f.bit_ticks);
+        const now = l.mikey.now;
+        const late = l.tick_base + now -| f.start;
+        // On this console's 32-bit clock (a frame further ahead than that
+        // is a broken bus). Late frames move to now, after the sender's
+        // frame before.
+        const ahead = f.start -| (l.tick_base + now);
+        const due: comlynx.Tick = now + @as(comlynx.Tick, @intCast(@min(ahead, 1 << 30)));
+        const start = if (f.kind == .break_off) due else @max(due, p.src_end[f.src & 15]);
+        if (f.kind == .frame) p.src_end[f.src & 15] = start + comlynx.frame_bits * f.bit_ticks;
         p.delivered +%= 1;
         if (late > 0) {
             p.late +%= 1;
@@ -373,13 +377,13 @@ pub const Lynx = struct {
         switch (f.kind) {
             .frame => if (!p.insert(.{
                 .start = start,
-                .end = start + comlynx.frame_bits * @as(u64, f.bit_ticks),
+                .end = start + comlynx.frame_bits * f.bit_ticks,
                 .bit_ticks = f.bit_ticks,
                 .bits = comlynx.wire_bits(f.data, f.ninth),
                 .src = f.src,
                 .is_break = false,
             })) return null,
-            .break_on => if (!p.insert(.{ .start = start, .end = comlynx.never, .bit_ticks = f.bit_ticks, .bits = 0, .src = f.src, .is_break = true })) return null,
+            .break_on => if (!p.insert(.{ .start = start, .end = comlynx.tick_never, .bit_ticks = f.bit_ticks, .bits = 0, .src = f.src, .is_break = true })) return null,
             .break_off => p.close_break(f.src, start),
         }
         uart.resched(&l.mikey);
@@ -401,6 +405,7 @@ pub const Lynx = struct {
         l.frame_end -= d;
         l.mikey.rebase(d);
         l.suzy.rebase(d);
+        if (l.link) |p| p.rebase(d);
     }
 
     /// 16 MHz ticks since reset.
