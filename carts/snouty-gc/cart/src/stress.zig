@@ -122,8 +122,10 @@ pub fn fill(w: *World, follow: u8) void {
     w.cars[r3].swap_with = @intCast(r5);
     w.cars[r1].heisen = 240;
     me.duck = 600;
-    // M3: GARBAGE COLLECTION's mark on a rival, and the hazards.
-    w.mode = .gc;
+    // M3: GARBAGE COLLECTION's mark on a rival, and the hazards (M6: an
+    // arena keeps its BATTLE rules, so its HUD is the one under stress;
+    // the MARKED outline is drawn all the same).
+    if (w.mode != .battle) w.mode = .gc;
     w.gc.marked = @intCast((follow + 2 + 1) % world.car_count);
     track.hazard_n = 3;
     track.hazard_specs[0] = across(.mover, 200, 18);

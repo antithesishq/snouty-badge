@@ -625,12 +625,15 @@ fn draw_battle_top(w: *const world.World, c: *const world.Car, frame: u32) void 
         text("INF", margin, top_y + 9, grey);
     } else if (c.active) {
         // On a dark plate: green pips vanish on the arena's green floor.
-        fill_rect(margin - 1, top_y + 9, @as(i32, @min(b.lives, 9)) * 5 + 1, 8, anti_black);
+        // Nine pips pack 4 px apart so they stay left of the roulette's
+        // FETCHING... (x 48).
+        const pitch: i32 = if (b.lives > 5) 4 else 5;
+        fill_rect(margin - 1, top_y + 9, @as(i32, @min(b.lives, 9)) * pitch + 1, 8, anti_black);
         var k: u8 = 0;
         while (k < b.lives and k < 9) : (k += 1) {
             const lit = k < c.lives;
             const color = if (!lit) dim else if (c.lives == 1) (if ((frame / 10) % 2 == 0) coral else red) else green;
-            fill_rect(margin + @as(i32, k) * 5, top_y + 10, 3, 6, color);
+            fill_rect(margin + @as(i32, k) * pitch, top_y + 10, 3, 6, color);
         }
     }
     var cb: [5]u8 = undefined;

@@ -21,7 +21,18 @@ here: every forked file names its Zero source and commit on its first line.
   `tuning.link_pump_until_us`), `linked`, the gap probe
   (`gc_pump_probe`). M5: the CIRCUIT (`prix`, a `career.Career`; the
   `garage`, `standings` and `card` screens, `Mode.circuit`), A on the
-  title for a Quick Race, the `gc_cards` bench poke.
+  title for a Quick Race, the `gc_cards` bench poke. M6: BATTLE
+  (`Mode.battle`: the menu row, the select, the `setup` screen over the
+  arena's floor, `new_race(.battle, arena)` from `battle_ui.opts`, the
+  KILL -9 card over the countdown, the kill leader's camera once out,
+  LINK BATTLE from the lobby), the `gc_battle` bench poke.
+- `battle_ui.zig` (M6): BATTLE's setup screen (arena, LIVES, TIME, CREWS,
+  FIGHT!; `opts` is the next round's) and the `KILL -9` card.
+  `battle_text.zig` (M6, no cart API, host-tested in
+  `battle_ui_test.zig`): BATTLE's words, the setup rows and their
+  cycling (TIME NONE never with INF), the clock, the standings lines, and
+  the LINK lobby's rows and rule changes for LINK RACE / LINK GC / LINK
+  BATTLE (`lobby_rows`, `lobby_change`).
 - `career.zig` (M5): the CIRCUIT (the SNOUTY GCP, SPEC 8.2, 9): leagues,
   points, CYCLES booked from a finished World (place, `kills`, `chips`,
   league wins) outside `simulate`, the garage's offers, prices and
@@ -33,13 +44,17 @@ here: every forked file names its Zero source and commit on its first line.
 - `net.zig` (M4): GC's lockstep (`Net(L)`: lobby, `step`, pause,
   peer-left hand-over, desync check, `world_hash`), since the conversion
   GC's names over the shared `lib/lockstep.zig` (root `docs/LOCKSTEP.md`;
-  `net.Game` is GC as lockstep's game); `docs/NET.md` is its protocol and
-  how main drives it. `net_m4.zig` is the M4 original, test only, for
-  `net_compat_test.zig` (the wire stays byte-identical to M4). `net.Resume`
+  `net.Game` is GC as lockstep's game: since M6 version 1 with five
+  rules bytes, mode / track or arena / CREWS / LIVES / TIME, in the paged
+  SETUP; `net.GameV0` the M5.1 one-byte game, tests only); `docs/NET.md`
+  is its protocol and how main drives it. `net_m4.zig` is the M4
+  original, test only, for `net_compat_test.zig` (GameV0's wire stays
+  byte-identical to M4; v0 and v1 badges never race). `net.Resume`
   is the pause menu's RESUME (Start held until `paused` is off: `submit`
   drops bytes while `step` stalls); main's pump loop runs while
   `wants_pump()` (a race, or the link handshaking).
-  `link_ui.zig` (M4): the LINK lobby screen, the race notices (`WAITING
+  `link_ui.zig` (M4): the LINK lobby screen (M6: LINK BATTLE's arena,
+  LIVES and TIME rows, six rows 11 px apart), the race notices (`WAITING
   FOR PEER`, `PEER LEFT, AI DRIVING`), the `DESYNC` band. A link race
   pumps the link through the draw via `render.band_hook` /
   `render.pump_at` (render, sprites, hud call it; null outside a link
@@ -102,8 +117,9 @@ here: every forked file names its Zero source and commit on its first line.
   hazard hits, the KERNEL PANIC victim the attract camera cuts to.
 - `select.zig` (the racer select, SPEC 8.1; M3 the track row's panel;
   M4 `select.link`: the link select's `TAKEN`, ready marks and rules panel),
-  `menu.zig` (splash, title, main menu, the pause list; its hint lines and
-  the menu's geometry, built for M6's 7 rows, in `menu_text.zig`), `pickup_page.zig` (the menu's PICKUPS page: the
+  `menu.zig` (splash, title, main menu with M6's BATTLE row: 7 rows, the
+  pause list; its hint lines and the menu's geometry in `menu_text.zig`),
+  `pickup_page.zig` (the menu's PICKUPS page: the
   pickups' icons by tier, a cursor, what each does; screen `pickups`) and
   `pickup_text.zig` (that page's words and grid moves, host-tested; keep
   them true to `pickups.zig` and `tuning.zig` when a pickup changes),
@@ -114,8 +130,11 @@ here: every forked file names its Zero source and commit on its first line.
 - `render.zig` (row-loop floor, horizon, fog, BIT FLIP's row jitter),
   `camera.zig` (follow, look back, culling projection), `hills.zig`,
   `hud.zig` (also the pickup box and the gags: blue screen, CAPTCHA,
-  BIT FLIP, DDOS; M3 `SWEEP n`, MARKED tags, the spectator view),
-  `font.zig`, `results.zig` (M3 the survivor card and GC table),
+  BIT FLIP, DDOS; M3 `SWEEP n`, MARKED tags, the spectator view; M6 the
+  battle HUD: ELIM, the clock, lives pips, the refill sweep, the
+  whole-arena minimap, SAFE MODE, the stunt pops),
+  `font.zig`, `results.zig` (M3 the survivor card and GC table; M6
+  BATTLE's winner card and standings),
   `sound.zig` + `engine.zig` (Zero's tones and drone), `input.zig` (edges,
   the Start+Select chord mask, `race_byte`).
 - Host tests: `host_tests.zig` root, `sim_test.zig` (determinism, laps,
@@ -129,7 +148,9 @@ here: every forked file names its Zero source and commit on its first line.
   panel: 18 characters; the menu's layout fits 7 rows; the page's grid,
   cursor and odds lines), `net_test.zig`
   (M4: two `Net`s and Worlds on `lib/link_virtual.zig`: link races in
-  sync, loss, unplug, desync, pause, quit and rematch, CREWS),
+  sync, loss, unplug, desync, pause, quit and rematch, CREWS; M6 LINK
+  BATTLE rounds in sync to their end, clean and 1% loss),
+  `battle_ui_test.zig` (M6: BATTLE's text, rows, clock, standings, lobby),
   `career_test.zig` (M5: the M0-M4 races' recorded fingerprints, each
   upgrade, ECC, chips, CYCLES, the garage, the AI plans, a full-circuit
   soak to the end card), tests in
@@ -174,3 +195,9 @@ Sweeper sheet `hazards.png`).
   input scripts' `debug_world_sum` and `career_test.zig` the seeded
   races' fingerprints. Upgrades and chips reach the World only through
   `Setup` (`loadouts`, `chips`); LINK keeps the defaults.
+- M6: the link protocol is version 1 (`net.Game.version`); change it
+  again whenever the rules bytes, the input bits or what `simulate` does
+  with them change (root `docs/LOCKSTEP.md` 4.7). The KILL -9 card and
+  every other battle screen are render-only: nothing waits on them in a
+  link battle. Menu changes move the rows check.sh's previews and
+  `m5_circuit_race.json` press through (BATTLE is the third row).

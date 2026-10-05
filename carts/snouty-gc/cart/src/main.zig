@@ -1661,17 +1661,22 @@ fn debug_stunt() callconv(.c) u32 {
 /// --call debug_start_battle:N: a BATTLE round on The Sandbox with the
 /// select's racer, N lives (0 INF), the TIME and CREWS set below (default
 /// 3 min, every AI car).
-fn debug_start_battle(n: u32) callconv(.c) void {
+/// Returns the lives set (so a preview's --call-at can start one late,
+/// on another seed).
+fn debug_start_battle(n: u32) callconv(.c) u32 {
     battle_ui.opts.lives = @intCast(n & 0xFF);
     race_mode = .battle;
     new_race(.battle, 0);
+    return battle_ui.opts.lives;
 }
 /// The next round's TIME in minutes (0 NONE) and AI cars (CREWS).
-fn debug_battle_minutes(m: u32) callconv(.c) void {
+fn debug_battle_minutes(m: u32) callconv(.c) u32 {
     battle_ui.opts.minutes = @intCast(m & 0xFF);
+    return m;
 }
-fn debug_battle_crews(k: u32) callconv(.c) void {
+fn debug_battle_crews(k: u32) callconv(.c) u32 {
     battle_ui.opts.crews = @intCast(k & 0xFF);
+    return k;
 }
 /// Car i's lives, eliminations and SAFE MODE ticks.
 fn debug_battle_lives(i: u32) callconv(.c) u32 {
