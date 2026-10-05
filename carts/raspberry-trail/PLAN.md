@@ -99,6 +99,12 @@ interface is its own `art.zig` (L and U do not touch it). U calls it in M2.
   tombstone and arrival scenes, help on Start, credits, sound through
   tone_stream (off by default). Gate green: bench worst 3.27 ms / mean
   1.70 ms busy (hunting with sound), size 108.1 KB. docs/preview_m2.gif.
+- 2026-10-05: lead merged all four tracks into trail/m1 and re-ran
+  `tools/check.sh` there: every step PASS (oracle 27/27 scripts + 2000
+  fuzz games, coverage 229/230 PRINT lines with JULY arrival allowlisted;
+  bench worst 3.27 / mean 1.70 ms busy; 108.0 KB). Tags
+  raspberry-trail/m1 (5bfc9fcb, text UI) and raspberry-trail/m2; merged
+  to main.
 
 ## Deferred questions (defaults taken)
 
