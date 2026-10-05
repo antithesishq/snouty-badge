@@ -276,6 +276,81 @@ The `Config` fields `wrap`, `snake_len` and `gaps` exist but are inert. Make eac
 - Turn every modifier on in R's rewind test and the options.
 - Run the full gate and the ladder bot, tag `snouty-cycles/m2`, merge to main, push.
 
+## M2.1 and M3: a fair ladder, then the link duel (two Opus tracks in parallel)
+
+Both tracks start from `cycles/m0` at the M2 merge. Track F merges first.
+
+### Track F: fairness and headroom
+
+Owns `ai.zig`, the `levels.zig` table, `tools/ladder_bot.mjs`, the cart's
+`build.zig`, and only the autopilot/pool call order in `game.zig`.
+
+1. **Separate AI pools.** The programs get the same AI pool whether a
+   human or the autopilot plays: the autopilot draws from a pool of its
+   own (or decides after the programs). The bot then measures what a
+   human faces. Keep rewind exactness: `history`'s replay rule and its
+   tests must still hold, so update `CLAUDE.md`'s determinism contract.
+2. **Retune the ladder** so the honest bot (T3 autopilot) clears every
+   level on at least 4 of 5 seeds with snapshots, and on at least 7 of 10
+   on seeds 6-15.
+   - The curve rises: no later level is clearly easier than an earlier one.
+     Report rewinds used per level as the measure.
+   - Prefer preset knobs (reaction, mistakes, vision) over swapping tiers,
+     and keep PROD the hardest.
+   - Report the options-28 ladder; it is not gated.
+3. **RAM headroom** for M3: at least 24 KB free under the ~268 KB window
+   (`.text`+`.data`+`.bss`).
+   - Try ReleaseSmall for the cart (snouty-gc did this), then put hot
+     functions back to speed if needed.
+   - Shrink `.bss` where it is slack.
+   - The bench gate stays at 12 ms worst, including the WRAP runs
+     (options 16 and 28 at level 12, and a WRAP SKIRMISH with 3 ASM programs).
+4. Run `tools/check.sh` green, then record the status here.
+
+### Track L: link duel (SPEC 10)
+
+Owns a new `net.zig`, the link states in `game.zig`, `main.zig`, the
+link wiring in `build.zig` (`lib/link.zig` import), HUD and banner text
+in `render.zig`, `tools/check.sh` (a `link` step), and docs.
+
+1. **Lockstep (`net.zig`).** The packet is tick, the inputs for t, t-1 and
+   t-2, and the World CRC byte: at most 5 DATA bytes, SLIP escapes
+   counted. Input delay is 3 ticks; a stall shows WAITING.
+   - **A lost packet** is covered by the redundant inputs, and resent if
+     a gap is longer.
+   - **A CRC mismatch** ends the round as NO CONTEST and the next round
+     resyncs from a fresh seed.
+   - **The partner leaving** (session change, or disconnected for more than
+     2 s): a T2 program takes their cycle until the round ends, then the menu.
+2. **Match flow.**
+   - LINK DUEL in the menu, then a waiting screen (searching, handshake,
+     connected).
+   - The lower nonce is host. The host picks arena, speed and options
+     (SKIRMISH's setup) and sends the seed and config; the guest sees them.
+   - First to 3 rounds, no snapshots, rematch or menu.
+   - Each badge draws itself as cycle 0 colours (blue, you), the
+     partner orange. The sim indices stay host = 0 so both Worlds are equal.
+3. **Polling.** `l.poll` at the top of `update` and between the sim and
+   render (the 8-byte FIFO, docs/LINK.md section 2).
+   - The bench runs with no cable: the link must cost under 0.3 ms a frame
+     there.
+   - The wasm build has the link `.unavailable`: LINK DUEL shows NO LINK
+     IN SIMULATOR.
+4. **The gate** (`check.sh link`, host test):
+   - Two Games on `lib/link_virtual.zig` play 50 rounds with random inputs
+     and random modifiers, and no desync.
+   - Then with 5% packet loss and random delay: still no desync, or a
+     clean NO CONTEST and recovery.
+   - Unplug in mid-round hands over to the AI.
+5. Write the hardware check for Adrian in RUNNING.md: two badges, the
+   UART cable, the snouty-link cart first.
+
+### Integration (lead)
+
+- Merge F, then L. Run the full gate plus `check.sh link`.
+- Tag `snouty-cycles/m2.1` after F and `snouty-cycles/m3` after L.
+- Merge each to main and push.
+
 ## Status
 
 - 2026-10-04: SPEC written from the prior-art research (SPEC section 1). M0 started.
