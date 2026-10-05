@@ -21,11 +21,18 @@ its design and milestone status.
   `snouty-maze`, `snouty-gear`, `snouty-genesis`, `snouty-lynx`,
   `snouty-flyover`, `demosnout`, `snouty-zero` (XIP only), `snouty-pipes`, `siwoo` (a name
   badge: demosnout's head plus a chrome name), `snouty-link` (the link-cable
-  test; `lib/link.zig` is the badge-to-badge link, docs/LINK.md), `snouty-gc` (a
-  combat racer forked from snouty-zero's engine), `snouty-cycles` (Tron light
+  test; `lib/link.zig` is the badge-to-badge link, docs/LINK.md), `snouty-gc` (Snouty GCP
+  (Snouty Garbage Collection Prix), a combat racer forked from
+  snouty-zero's engine), `snouty-cycles` (Tron light
   cycles against AI programs),
   `paperclips` (a port of Universal Paperclips, with the authors'
-  permission).
+  permission), `raspberry-trail` (The Raspberry Trail: a faithful port of
+  the 1978 MECC BASIC listing of the wagon-trail game), `snouty-sense` (the
+  time-of-flight probe: a TMF8820 on the Qwiic port; `lib/tof.zig` is the
+  driver, docs/TOF.md), `snouty-theremin` (a theremin played by hand over
+  the sensor, or the stick; docs/TOF.md M1), `snouty-morph` (a demoscene
+  mesh that follows and deforms with your hand over the same sensor;
+  `lib/tof_pose.zig` is the hand pose from its 3x3 zones, docs/TOF.md M3).
 - `build.zig`, `build.zig.zon`, `build/common.zig` — the one Zig package.
   Shared options (`-Dcart`, `-Dcart-mode`, `-Ddebug_overlay`, `-Dsound`, `-Drom`, ...)
   and the shared `test` and `check-float` steps are declared here and passed
@@ -110,7 +117,7 @@ Reference carts: `sycl-badge/showcase/carts/dvd` (simplest asset pipeline),
 zig build                      # every cart, from the repository root
 zig build -Dcart=snouty-maze   # one cart
 zig build test                 # every cart's host tests and lib/'s
-zig build check-float          # soft-float check (reflections, maze, flyover, demosnout, zero, gc)
+zig build check-float          # soft-float check (reflections, maze, flyover, demosnout, zero, gc, morph)
 ```
 
 Outputs `zig-out/firmware/<binary>.uf2`, `.elf` and `zig-out/bin/<binary>.wasm`

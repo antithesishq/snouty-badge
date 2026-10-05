@@ -56,19 +56,10 @@ pub fn reset(w: *World, setup: world.Setup) void {
     for (track.hazard_specs[0..track.hazard_n], 0..) |*h, k| {
         w.hazards[k] = .{ .kind = h.kind, .timer = h.phase % h.period, .x = h.x0 << fixed.Q, .y = h.y0 << fixed.Q };
     }
+    w.chips_on = setup.chips;
     for (&w.cars, 0..) |*c, i| {
-        const ch = racers.chassis_of(@intCast(i));
-        c.* = .{
-            .racer = @intCast(i),
-            .top_q8 = ch.top_q8,
-            .accel_q8 = ch.accel_q8,
-            .grip_q8 = ch.grip_q8,
-            .mass_q8 = ch.mass_q8,
-            .armor_max = ch.armor,
-            .armor = ch.armor,
-            .front = racers.roster[i].front,
-            .rear = racers.roster[i].rear,
-        };
+        c.* = .{ .racer = @intCast(i) };
+        equip(c, setup.loadouts[i]);
         weapons.refill(c);
         for (setup.humans, 0..) |r, slot| {
             if (r == i) c.human = @intCast(slot);
@@ -90,6 +81,11 @@ pub fn reset(w: *World, setup: world.Setup) void {
         const j = w.rng % @as(u32, @intCast(k + 1));
         std.mem.swap(u8, &order[k], &order[j]);
     }
+    // CREWS (M4): the AI cars past the first `setup.crews` of the shuffle
+    // stay off the grid; the humans move up behind the ones kept.
+    const keep = @min(n, setup.crews);
+    for (order[keep..n]) |ci| w.cars[ci].active = false;
+    n = keep;
     for (0..2) |slot| {
         for (w.cars, 0..) |c, i| {
             if (c.human != slot) continue;
@@ -97,7 +93,7 @@ pub fn reset(w: *World, setup: world.Setup) void {
             n += 1;
         }
     }
-    for (order, 0..) |ci, slot| {
+    for (order[0..n], 0..) |ci, slot| {
         const c = &w.cars[ci];
         const row: i32 = @intCast(slot / 2);
         const side: i32 = if (slot % 2 == 0) -tuning.grid_side else tuning.grid_side;
@@ -106,6 +102,29 @@ pub fn reset(w: *World, setup: world.Setup) void {
         c.progress = nearest_sample(t, c, 0);
     }
     update_ranks(w);
+}
+
+/// The car's chassis (SPEC 4.2) and its garage upgrades (SPEC 9.2, M5):
+/// the stock `Loadout` gives the stock car exactly.
+pub fn equip(c: *Car, lo: world.Loadout) void {
+    const ch = racers.chassis_of(c.racer);
+    const stock = racers.roster[c.racer % racers.count];
+    const top = @min(lo.clock, tuning.level_max);
+    const plating = @min(lo.plating, tuning.level_max);
+    c.top_q8 = @intCast(@as(u32, ch.top_q8) * (100 + tuning.clock_pct * top) / 100);
+    c.accel_q8 = ch.accel_q8;
+    c.grip_q8 = ch.grip_q8 + tuning.traction_q8 * @min(lo.traction, tuning.level_max);
+    c.mass_q8 = ch.mass_q8;
+    c.armor_max = ch.armor + tuning.plating_armor * plating;
+    c.armor = c.armor_max;
+    c.ecc = plating >= tuning.plating_ecc;
+    c.burst_max = tuning.burst_per_lap + @min(lo.burst, tuning.level_max);
+    c.burst_charges = c.burst_max;
+    c.watchdog = tuning.watchdog_levels[@min(lo.watchdog, tuning.level_max)];
+    c.front = lo.front orelse stock.front;
+    c.rear = lo.rear orelse stock.rear;
+    c.front_level = std.math.clamp(lo.front_level, 1, tuning.level_max);
+    c.rear_level = std.math.clamp(lo.rear_level, 1, tuning.level_max);
 }
 
 const LinePoint = struct { x: i32, y: i32, tangent: fixed.Turn };
@@ -217,6 +236,7 @@ pub fn simulate(w: *World, inputs: [2]u8) void {
             hazards.update(w);
             weapons.update(w);
             pickups.update(w);
+            if (w.chips_on) update_chips(w);
             update_ranks(w);
             gc_mode.update(w);
             gc_mode.script(w);
@@ -488,6 +508,8 @@ pub fn damage(w: *World, victim: usize, attacker: u8, amount: i32) void {
 fn hurt(w: *World, victim: usize, attacker: u8, amount: i32, weapon: bool) void {
     if (!w.combat or amount <= 0) return;
     const c = &w.cars[victim];
+    // ECC (PLATING L3) corrects single-bit errors: small hits do nothing.
+    if (c.ecc and amount <= tuning.ecc_ignore) return;
     if (!c.active or c.wreck != .none or c.immune > 0 or c.finished or c.sudo > 0) return;
     const dmg: u8 = @intCast(@min(amount, 255));
     if (attacker != world.no_car and attacker != victim) {
@@ -506,10 +528,11 @@ fn hurt(w: *World, victim: usize, attacker: u8, amount: i32, weapon: bool) void 
 }
 
 /// A wrecked car (armor or ZERO-DAY, not a fall) is a burning hulk that
-/// blocks like a wall for the first `hulk_ticks` of its WATCHDOG delay.
+/// blocks like a wall for the first `hulk_ticks` of its WATCHDOG delay (all
+/// of a shorter one: WATCHDOG L2 and L3).
 pub fn is_hulk(c: *const Car) bool {
     return c.active and (c.wreck == .armor or c.wreck == .zero_day) and
-        c.wreck_ticks > tuning.watchdog_ticks - tuning.hulk_ticks;
+        @as(i32, c.wreck_ticks) > @as(i32, c.watchdog) - tuning.hulk_ticks;
 }
 
 /// Wreck a car (SPEC 5.3): it stops and is out for the WATCHDOG delay,
@@ -521,7 +544,7 @@ pub fn wreck(w: *World, i: usize, cause: world.Wreck) void {
     const killer: u8 = if (c.last_hit_by != world.no_car and c.last_hit_by != i and
         c.last_hit_ticks < tuning.credit_ticks) c.last_hit_by else world.no_car;
     c.wreck = cause;
-    c.wreck_ticks = tuning.watchdog_ticks;
+    c.wreck_ticks = c.watchdog;
     c.vx = 0;
     c.vy = 0;
     c.hop = 0;
@@ -627,7 +650,7 @@ fn update_progress(w: *World, i: usize) void {
                 if (c.best_lap == 0 or lap_time < c.best_lap) c.best_lap = lap_time;
                 c.lap_start = w.tick;
                 c.lap += 1;
-                c.burst_charges = tuning.burst_per_lap;
+                c.burst_charges = c.burst_max;
                 // Ammo refills on the line (SPEC 6).
                 weapons.refill(c);
                 // GARBAGE COLLECTION has no lap limit: the sweeps end it.
@@ -644,6 +667,34 @@ fn update_progress(w: *World, i: usize) void {
     } else if (backward) {
         // Driving backwards over the line: no credit, and a forward recrossing needs the sectors again.
         if (new > old and (new - old) > 128) c.sectors = 0;
+    }
+}
+
+/// Cycle chips (M5, SPEC 9.1): a car on the ground and in the race takes
+/// a chip its centre comes within `tuning.chip_touch` of (`Car.chips`, a
+/// `chip` event); every taken chip comes back each `tuning.chip_respawn`
+/// ticks. Only with `World.chips_on` (the CIRCUIT).
+fn update_chips(w: *World) void {
+    w.chip_clock +%= 1;
+    if (w.chip_clock >= tuning.chip_respawn) {
+        w.chip_clock = 0;
+        w.chips = 0;
+    }
+    const r2 = tuning.chip_touch * tuning.chip_touch;
+    for (&w.cars, 0..) |*c, i| {
+        if (!c.active or c.wreck != .none or c.hop != 0 or c.finished) continue;
+        const cx = c.x >> fixed.Q;
+        const cy = c.y >> fixed.Q;
+        for (track.chip_spots[0..track.chip_n], 0..) |sp, k| {
+            const bit = @as(u32, 1) << @intCast(k);
+            if (w.chips & bit != 0) continue;
+            const dx = wrap_px(cx - @as(i32, sp.x));
+            const dy = wrap_px(cy - @as(i32, sp.y));
+            if (dx * dx + dy * dy > r2) continue;
+            w.chips |= bit;
+            c.chips +|= 1;
+            weapons.emit(w, .chip, @intCast(i), @intCast(k), 0, @as(i32, sp.x) << fixed.Q, @as(i32, sp.y) << fixed.Q);
+        }
     }
 }
 

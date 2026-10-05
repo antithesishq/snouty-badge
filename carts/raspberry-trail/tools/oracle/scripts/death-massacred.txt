@@ -1,0 +1,35 @@
+seed 1
+# Death: few bullets and hostile riders: YOU RAN OUT OF BULLETS AND
+# GOT MASSACRED BY THE RIDERS.
+# goal: outcome massacred; ends: E massacred
+# written by mkscripts.py (scenario 'death-massacred')
+# 190 need instructions?
+NO
+# 760 marksman (1-5)
+3
+# 860 oxen $
+250
+# 940 food $
+200
+# 990 ammunition $
+2
+# 1040 clothing $
+100
+# 1090 misc. supplies $
+100
+# 2180 (1) hunt (2) continue
+2
+# 2770 eat (1) poorly (2) moderately (3) well
+2
+# 2100 (1) fort (2) hunt (3) continue
+3
+# 2770 eat (1) poorly (2) moderately (3) well
+2
+# 3000 riders: (1) run (2) attack (3) continue (4) circle
+1
+# 5220 minister?
+NO
+# 5240 fancy funeral?
+NO
+# 5260 inform next of kin?
+YES

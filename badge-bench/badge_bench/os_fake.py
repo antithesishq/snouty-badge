@@ -23,6 +23,9 @@ Memory map served to the cart:
                           (writes ignored, SIO GPIO_IN reads 0, so the link
                           stays searching; RESET_DONE reads done, PIO2 FSTAT
                           reads its FIFOs empty)
+  0x40090000 page         I2C0: lib/i2c_rp2350.zig's controller with nothing
+                          on the Qwiic port (I2C0Fake: every address NACKs,
+                          so the time-of-flight driver sees "absent" at once)
 
 Anything else is unmapped, and an access to it is a crash.
 """
@@ -69,6 +72,7 @@ SIO_GPIO_IN = 0x004
 SIO_GPIO_WRITES = (0x018, 0x020, 0x038, 0x040)   # GPIO_OUT_SET/CLR, GPIO_OE_SET/CLR
 RESETS_BASE, IO_BANK0_BASE, PADS_BANK0_BASE = 0x40020000, 0x40028000, 0x40038000
 PIO2_BASE = 0x50400000
+I2C0_BASE = 0x40090000
 PIO_FSTAT_EMPTY = 0x0F000F00                     # TXEMPTY and RXEMPTY, all four SMs
 
 # ---- mailbox (os/ipc/mailbox.zig MessageType)
@@ -87,6 +91,66 @@ BUTTONS = {'START': 1 << 0, 'SELECT': 1 << 1, 'A': 1 << 2, 'B': 1 << 3, 'CLICK':
 
 LIGHT_LEVEL = 0x800     # mid-scale ambient light
 BATTERY_LEVEL = 0xFFF   # full battery
+
+
+class I2C0Fake:
+    """RP2350 I2C0 (DW_apb_i2c) with no device on the bus: a data command
+    written while enabled raises TX_ABRT with ABRT_7B_ADDR_NOACK and
+    STOP_DET at once, as a NACKed address does; reading IC_CLR_TX_ABRT,
+    IC_CLR_STOP_DET or IC_CLR_INTR clears them. FIFOs read empty and
+    never full; other registers read back what was written."""
+    IC_DATA_CMD, IC_INTR_STAT, IC_RAW_INTR_STAT = 0x10, 0x2C, 0x34
+    IC_CLR_INTR, IC_CLR_TX_ABRT, IC_CLR_STOP_DET = 0x40, 0x54, 0x60
+    IC_ENABLE, IC_STATUS, IC_TXFLR, IC_RXFLR = 0x6C, 0x70, 0x74, 0x78
+    IC_TX_ABRT_SOURCE, IC_ENABLE_STATUS, IC_COMP_TYPE = 0x80, 0x9C, 0xFC
+    TX_EMPTY, TX_ABRT, STOP_DET = 1 << 4, 1 << 6, 1 << 9
+    STATUS_TFNF_TFE = 0x06
+    ABRT_7B_ADDR_NOACK = 1
+
+    def __init__(self):
+        self.regs = {}
+        self.enabled = 0
+        self.abort = False
+        self.stop_det = False
+        self.nacks = 0
+
+    def read(self, uc, off, size, _):
+        if off == self.IC_RAW_INTR_STAT:
+            return self.TX_EMPTY | (self.TX_ABRT if self.abort else 0) | (self.STOP_DET if self.stop_det else 0)
+        if off == self.IC_INTR_STAT:
+            return 0                     # everything masked
+        if off == self.IC_TX_ABRT_SOURCE:
+            return self.ABRT_7B_ADDR_NOACK if self.abort else 0
+        if off == self.IC_CLR_TX_ABRT:
+            self.abort = False
+            return 1
+        if off == self.IC_CLR_STOP_DET:
+            self.stop_det = False
+            return 0
+        if off == self.IC_CLR_INTR:
+            self.abort = self.stop_det = False
+            return 0
+        if off == self.IC_STATUS:
+            return self.STATUS_TFNF_TFE
+        if off in (self.IC_TXFLR, self.IC_RXFLR, self.IC_DATA_CMD):
+            return 0
+        if off == self.IC_ENABLE:
+            return self.enabled
+        if off == self.IC_ENABLE_STATUS:
+            return self.enabled & 1
+        if off == self.IC_COMP_TYPE:
+            return 0x44570140
+        return self.regs.get(off, 0)
+
+    def write(self, uc, off, size, value, _):
+        if off == self.IC_ENABLE:
+            self.enabled = value & 1     # ABORT (bit 1) completes at once
+        elif off == self.IC_DATA_CMD:
+            if self.enabled and not self.abort:
+                self.abort = self.stop_det = True
+                self.nacks += 1
+        else:
+            self.regs[off] = value
 
 
 class FakeOS:
@@ -119,6 +183,9 @@ class FakeOS:
         mu.mmio_map(IO_BANK0_BASE, 0x1000, lambda uc, off, size, _: 0, None, nop_write, None)
         mu.mmio_map(PADS_BANK0_BASE, 0x1000, lambda uc, off, size, _: 0, None, nop_write, None)
         mu.mmio_map(PIO2_BASE, 0x1000, lambda uc, off, size, _: PIO_FSTAT_EMPTY if off == 0x4 else 0, None, nop_write, None)
+        # lib/i2c_rp2350.zig, nothing on the Qwiic port: expected traffic too.
+        self.i2c0 = I2C0Fake()
+        mu.mmio_map(I2C0_BASE, 0x1000, self.i2c0.read, None, self.i2c0.write, None)
 
     # ------------------------------------------------------------ shared memory
     def init_ipc(self):

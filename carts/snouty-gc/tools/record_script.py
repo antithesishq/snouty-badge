@@ -27,9 +27,16 @@ ROOT = CART.parent.parent
 NAMES = ["UP", "DOWN", "LEFT", "RIGHT", "A", "B"]
 
 
-def menus(track: int, gc: bool) -> list:
-    """The presses from boot to the race (main menu, select, track row)."""
+def menus(track: int, gc: bool, circuit: bool = False) -> list:
+    """The presses from boot to the race (main menu, select, track row; or
+    M5's CIRCUIT: Down twice to CIRCUIT, A, A on SNOUTY into the garage,
+    Start there races the Dumps' first track)."""
     ev = [{"from": 2, "to": 2, "hold": ["START"]}, {"from": 10, "to": 10, "hold": ["START"]}]
+    if circuit:
+        ev += [{"from": 12, "to": 12, "hold": ["DOWN"]}, {"from": 14, "to": 14, "hold": ["DOWN"]},
+               {"from": 16, "to": 16, "hold": ["A"]}, {"from": 22, "to": 22, "hold": ["A"]},
+               {"from": 30, "to": 30, "hold": ["START"]}]
+        return ev
     if gc:
         ev.append({"from": 12, "to": 12, "hold": ["DOWN"]})
     ev.append({"from": 14, "to": 14, "hold": ["A"]})
@@ -54,8 +61,9 @@ def main():
     ap.add_argument("--out", default=str(CART / "tools" / "scripts" / "m0_race.json"))
     ap.add_argument("--track", type=int, default=0, help="track index (the select's track row)")
     ap.add_argument("--gc", action="store_true", help="GARBAGE COLLECTION instead of QUICK RACE")
+    ap.add_argument("--circuit", action="store_true", help="M5: the CIRCUIT's first race (from the garage)")
     args = ap.parse_args()
-    presses = menus(args.track, args.gc)
+    presses = menus(args.track, args.gc, args.circuit)
     go = presses[-1]["from"]
     with tempfile.TemporaryDirectory() as tmp:
         menus_json = Path(tmp) / "menus.json"

@@ -10,4 +10,6 @@ test {
     _ = @import("ai.zig");
     _ = @import("history.zig");
     _ = @import("engine.zig");
+    _ = @import("link_race.zig");
+    _ = @import("link_race_test.zig");
 }

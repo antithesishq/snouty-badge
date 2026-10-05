@@ -1,0 +1,134 @@
+seed 1
+# Instructions, a marksman claim above 5 (line 790 makes it 0), and
+# every invalid opening purchase: NOT ENOUGH and TOO MUCH for the oxen,
+# IMPOSSIBLE for each item, then YOU OVERSPENT and buying again.
+# goal: lines 790 880 910 960 1010 1060 1110 1150; ends: E arrived
+# written by mkscripts.py (scenario 'instructions-invalid-purchases')
+# 190 need instructions?
+YES
+# 760 marksman (1-5)
+7
+# 860 oxen $
+150
+# 860 oxen $
+-20
+# 860 oxen $
+301
+# 860 oxen $
+1000
+# 860 oxen $
+250
+# 940 food $
+-1
+# 940 food $
+200
+# 990 ammunition $
+-5
+# 990 ammunition $
+100
+# 1040 clothing $
+-100
+# 1040 clothing $
+100
+# 1090 misc. supplies $
+-1
+# 1090 misc. supplies $
+150
+# 860 oxen $
+260
+# 940 food $
+120
+# 990 ammunition $
+80
+# 1040 clothing $
+80
+# 1090 misc. supplies $
+100
+# 2180 (1) hunt (2) continue
+2
+# 2770 eat (1) poorly (2) moderately (3) well
+2
+# 2100 (1) fort (2) hunt (3) continue
+3
+# 2770 eat (1) poorly (2) moderately (3) well
+2
+# 3000 riders: (1) run (2) attack (3) continue (4) circle
+1
+# 2180 (1) hunt (2) continue
+1
+# 6220 shot: TYPE BANG (hunt)
+SHOOT 1 1.12
+# 2770 eat (1) poorly (2) moderately (3) well
+2
+# 2100 (1) fort (2) hunt (3) continue
+2
+# 6220 shot: TYPE BANG (hunt)
+SHOOT 1 0.71
+# 2770 eat (1) poorly (2) moderately (3) well
+2
+# 2180 (1) hunt (2) continue
+2
+# 2770 eat (1) poorly (2) moderately (3) well
+2
+# 2100 (1) fort (2) hunt (3) continue
+2
+# 6220 shot: TYPE BANG (hunt)
+SHOOT 1 1.45
+# 2770 eat (1) poorly (2) moderately (3) well
+2
+# 2180 (1) hunt (2) continue
+1
+# 6220 shot: TYPE POW (hunt)
+SHOOT 1 0.72
+# 2770 eat (1) poorly (2) moderately (3) well
+2
+# 2100 (1) fort (2) hunt (3) continue
+2
+# 6220 shot: TYPE WHAM (hunt)
+SHOOT 1 1.44
+# 2770 eat (1) poorly (2) moderately (3) well
+2
+# 2180 (1) hunt (2) continue
+1
+# 6220 shot: TYPE POW (hunt)
+SHOOT 1 1.04
+# 2770 eat (1) poorly (2) moderately (3) well
+2
+# 6220 shot: TYPE POW (wild animals)
+SHOOT 1 0.57
+# 2100 (1) fort (2) hunt (3) continue
+2
+# 6220 shot: TYPE WHAM (hunt)
+SHOOT 1 0.74
+# 2770 eat (1) poorly (2) moderately (3) well
+2
+# 2180 (1) hunt (2) continue
+2
+# 2770 eat (1) poorly (2) moderately (3) well
+2
+# 2100 (1) fort (2) hunt (3) continue
+2
+# 6220 shot: TYPE BANG (hunt)
+SHOOT 1 0.63
+# 2770 eat (1) poorly (2) moderately (3) well
+2
+# 2180 (1) hunt (2) continue
+1
+# 6220 shot: TYPE BLAM (hunt)
+SHOOT 1 0.44
+# 2770 eat (1) poorly (2) moderately (3) well
+2
+# 6220 shot: TYPE BANG (wild animals)
+SHOOT 1 0.51
+# 2100 (1) fort (2) hunt (3) continue
+2
+# 6220 shot: TYPE WHAM (hunt)
+SHOOT 1 0.61
+# 2770 eat (1) poorly (2) moderately (3) well
+2
+# 2180 (1) hunt (2) continue
+1
+# 6220 shot: TYPE BLAM (hunt)
+SHOOT 1 1.10
+# 2770 eat (1) poorly (2) moderately (3) well
+2

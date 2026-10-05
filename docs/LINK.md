@@ -75,11 +75,17 @@ both orientations that counts fights and lost bytes.
   0xC0 or 0xDB byte in it. If more than 8 wire bytes arrive between two
   polls, bytes are lost and the CRC drops that packet. So keep packets short
   (n <= 5 is always safe), poll at least once per frame, and poll in a loop
-  while waiting for the partner. A DMA receive ring would lift the limit
-  and is safe on every firmware since March 2026 (the pinned a6ce19f too):
-  the OS aborts cart DMA channels 3-15 when a cart stops, by either exit
-  path (`reset_after_cart`). It is an optional extra, not built yet; the
-  games never depend on it (Adrian: occasional loss is fine).
+  while waiting for the partner.
+- **Optional DMA receive ring.** `link.rp2350.rx_dma = 11` (any cart
+  channel, 3-15) before the link locks, or followed by `restart`, makes
+  a DMA channel copy every received byte into a 256-byte ring, so nothing
+  is lost however long the cart goes between polls. It is safe on every
+  firmware since March 2026 (the pinned a6ce19f too): the OS aborts cart
+  DMA channels 3-15 when a cart stops, by either exit path
+  (`reset_after_cart`); on older firmware the channel would keep writing
+  into the next cart's RAM. Off by default, and no game depends on it
+  (Adrian: occasional loss is fine, no firmware update required). The
+  test cart's Up switches it.
 - **Delivery is best effort.** A dropped packet is gone (`stats`
   counts CRC errors and framing errors). Lockstep games resend or carry
   enough state to recover.
@@ -97,7 +103,7 @@ both orientations that counts fights and lost bytes.
 
 ## 3. Plan
 
-### M0: the link and a test cart (done, hardware check open)
+### M0: the link and a test cart (done, verified on hardware)
 
 - `lib/link.zig`, `lib/link_rp2350.zig`, `lib/link_virtual.zig`,
   `lib/tests/link_unit.zig` (in `zig build test`).
@@ -105,6 +111,10 @@ both orientations that counts fights and lost bytes.
   cable orientation, partner app/version/session, round trip, received
   and lost packets, CRC and framing errors, and both badges' buttons.
 - badge-bench fakes the link registers with no cable plugged in.
+- Added after M1: Up switches the receiver between the PIO FIFO and the
+  DMA ring (`F`/`D` on the MODE line, `FIFO`/`DMA` on the CABLE line).
+  **Hardware check:** connected, LOST should stop rising with DMA on both
+  badges; it rises now and then with FIFO.
 
 Status 2026-10-04: host tests pass for both cable kinds over 200 seeds
 each, at 1 ms and at frame-rate polling (worst connect 0.08 s crossed,
@@ -137,7 +147,7 @@ CONNECTED, the cable kind, RTT around 100-300 us, RX climbing about 60 a
 second, LOST and CRC at 0, and each badge lighting the other's buttons.
 If it stays SEARCHING, note PIN1/PIN3 on both screens and the cable kind.
 
-### M1: Game Boy link cable in Snouty Boy (done, hardware check open)
+### M1: Game Boy link cable in Snouty Boy (done, verified on hardware)
 
 - `carts/snouty-boy/core/serial.zig`: byte-level cable. The master's
   internal-clock transfer sends a request (SB, sequence number) and keeps
@@ -171,9 +181,29 @@ Start, Right to 2PLAYER, then Start on one badge first (it becomes the
 master) and on the other; both reach MARIO VS. LUIGI and play the same
 pieces. Pulling the cable shows "Link cable unplugged".
 
-### M2: two-player Snouty Zero, M3: Snoutenstein deathmatch
+**Hardware, 2026-10-05 (show day).** Adrian played a full 2-player Tetris
+game between two badges over the probe kit's JST-SH cable: works.
 
-Lockstep: each badge sends its inputs for frame N, both step the same
-deterministic simulation, and a per-frame checksum catches desync. In
-Zero the partner takes a rival's slot; in Snoutenstein the partner is a
-sprite in an arena map, with rewind off.
+### Lockstep games: `lib/lockstep.zig` (tag lockstep/v1)
+
+Two-badge lockstep shared by every link game, extracted from Snouty GC's
+M4 net code (verified on two badges, `snouty-gc/m4-hw`): lobby, input
+exchange, desync check, pause, peer-left hand-over, version check. One
+rules byte is byte-identical to GC M4; 2-8 bytes use a paged SETUP.
+`docs/LOCKSTEP.md` is the guide (API, the game's `G`, protocol, pump
+policy, common screen wording, app ids). Users: Snouty GC (`net.zig`,
+wrapper on branch `link/gc-lockstep` under GC's review), Snouty Cycles
+(link duel, in progress), Snouty Zero, Snoutenstein.
+
+### M2: two-player Snouty Zero (done, hardware check open)
+
+LINK RACE in the main menu (tag `snouty-zero/m6`; `carts/snouty-zero`
+PLAN M6, RUNNING section 9): the host picks the track, both pick a
+machine, the guest drives a rival's slot; pause together, no rewind, the
+AI takes over a machine whose badge leaves.
+
+### M3: Snoutenstein deathmatch (done, hardware check open)
+
+DEATHMATCH on the title (tag `snoutenstein/m7`; `carts/snoutenstein`
+PLAN M7, RUNNING section 7): Server Room or Build Farm DM, frag limit,
+bugs on/off; B + Left/Right strafes; a partner leaving is a forfeit win.

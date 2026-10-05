@@ -18,6 +18,8 @@ const sprites = @import("sprites.zig");
 const hud = @import("hud.zig");
 const input = @import("input.zig");
 const sound = @import("sound.zig");
+const net = @import("net.zig");
+const link_ui = @import("link_ui.zig");
 
 /// The racer and track shown (main.zig reads them on a pick).
 pub var racer: u8 = racers.snouty;
@@ -30,6 +32,33 @@ var gc_mode: bool = false;
 var frames: u32 = 0;
 
 pub const Action = enum { none, pick, back };
+
+/// M5: the CIRCUIT's select (SPEC 8.1: the pick is kept for the whole
+/// Prix): no track row (the leagues set the tracks), `A ENTER THE PRIX`.
+pub var circuit: bool = false;
+
+/// M4: the link race's select (SPEC 7.3), set by main.zig every frame
+/// (null: single player). No track row (the host's lobby picks it); A
+/// marks this badge ready on a racer the partner has not taken, and the
+/// panel under the stats shows the rules, the partner's pick and both
+/// ready marks.
+pub const Link = struct {
+    host: bool = false,
+    ready: bool = false,
+    /// The partner's pick (null: not heard since the lobby began).
+    peer: ?net.Pick = null,
+    /// Host: both are ready on different racers (A starts the race).
+    can_go: bool = false,
+    rules: ?net.Rules = null,
+};
+pub var link: ?Link = null;
+
+/// The racer `r` is the partner's, ready: not for this badge.
+pub fn taken(r: u8) bool {
+    const l = link orelse return false;
+    const p = l.peer orelse return false;
+    return p.ready and p.racer == r;
+}
 
 pub fn enter(r: u8, t: u8, gc: bool) void {
     racer = r % racers.count;
@@ -48,7 +77,10 @@ pub fn update() Action {
         return .pick;
     }
     if (input.pressed(.b)) return .back;
-    if (input.pressed(.down) and row == 0) {
+    if (link) |l| {
+        // A ready badge keeps its racer; B takes the mark back.
+        if (l.ready) return .none;
+    } else if (input.pressed(.down) and row == 0 and !circuit) {
         row = 1;
         sound.menu_move();
     }
@@ -83,16 +115,16 @@ fn plain(str: []const u8, x: i32, y: i32, color: cart.DisplayColor) void {
 
 /// Turntable (SPEC 8.1, 5 yaws): rear, quarter right, side right and back,
 /// then the mirrored side, 20 frames a view, starting on the quarter view.
-const turntable = [8]struct { cell: u8, flip: bool }{
+pub const turntable = [8]struct { cell: u8, flip: bool }{
     .{ .cell = sprites.car_quarter, .flip = false }, .{ .cell = sprites.car_side, .flip = false },
     .{ .cell = sprites.car_quarter, .flip = false }, .{ .cell = sprites.car_rear, .flip = false },
     .{ .cell = sprites.car_quarter, .flip = true },  .{ .cell = sprites.car_side, .flip = true },
     .{ .cell = sprites.car_quarter, .flip = true },  .{ .cell = sprites.car_rear, .flip = false },
 };
-const view_frames: u32 = 20;
+pub const view_frames: u32 = 20;
 
 /// The plinth under the turntable: an ellipse of radii (rx, ry) by spans.
-fn plinth(cx: i32, cy: i32, rx: i32, ry: i32, color: cart.DisplayColor) void {
+pub fn plinth(cx: i32, cy: i32, rx: i32, ry: i32, color: cart.DisplayColor) void {
     var dy: i32 = -ry;
     while (dy <= ry) : (dy += 1) {
         // Half width at this row: rx * sqrt(1 - (dy/ry)^2), integer.
@@ -113,6 +145,10 @@ pub fn draw(frame: u32) void {
     // Portrait in a livery frame.
     hud.fill_rect(4, 4, 50, 50, liv);
     sprites.blit_at(&sprites.portraits[r], 0, 5, 5, .{});
+    if (taken(r)) {
+        hud.fill_rect(5, 24, 48, 11, hud.anti_black);
+        plain("TAKEN", 9, 26, hud.coral);
+    }
     // Name and car.
     plain(ro.name, 58, 5, liv);
     plain(ro.car, 58, 15, ink);
@@ -138,6 +174,7 @@ pub fn draw(frame: u32) void {
     plain("A", 11, 66, liv);
     plain(roster_text.rear_name(ro.rear), 24, 66, ink);
     hud.fill_rect(4, 76, 152, 1, rule);
+    if (link) |*l| return draw_link_panel(l, frame);
     if (row == 1) {
         draw_track_panel();
     } else {
@@ -148,7 +185,9 @@ pub fn draw(frame: u32) void {
     const arrow = if (row == 0) (if (blink) ink else dim) else (if (blink) hud.cyan else dim);
     plain("<", 4, 116, arrow);
     plain(">", 148, 116, arrow);
-    if (row == 0) {
+    if (circuit) {
+        plain("A ENTER THE PRIX", 16, 116, dim);
+    } else if (row == 0) {
         // "A PICK  vTRACK" centred: 14 cells, the arrow drawn in cell 8.
         plain("A PICK", 24, 116, dim);
         hud.down_arrow(90, 117, dim);
@@ -187,4 +226,35 @@ fn draw_track_panel() void {
     const hz: []const u8 = if (vents and movers) "VENTS, SWEEPER" else if (vents) "EXHAUST VENTS" else if (movers) "THE SWEEPER" else "";
     plain(hz, 4, 106, hud.coral);
     hud.draw_outline(122, 79, ink);
+}
+
+/// Link select (M4): the bio's place shows the host's rules, the
+/// partner's pick and this badge's mark; the bottom row the next press.
+fn draw_link_panel(l: *const Link, frame: u32) void {
+    if (l.rules) |ru| {
+        plain(track.tracks[ru.track % track.tracks.len].name, 4, 79, hud.cyan);
+        var buf: [18]u8 = undefined;
+        const mode = link_ui.mode_name(ru.mode);
+        @memcpy(buf[0..mode.len], mode);
+        @memcpy(buf[mode.len..][0..9], ", CREWS 4");
+        buf[mode.len + 8] = '0' + @as(u8, @min(ru.crews, 9));
+        plain(buf[0 .. mode.len + 9], 4, 88, dim);
+    } else plain("WAITING FOR HOST", 4, 79, dim);
+    if (l.peer) |p| link_ui.peer_line(p, 97) else plain("PEER: PICKING", 4, 97, dim);
+    plain("YOU", 4, 106, dim);
+    plain(racers.roster[racer].name, 44, 106, hud.livery(racer));
+    if (l.ready) plain("READY", 156 - 40, 106, hud.green);
+    const blink = (frame / 20) % 2 == 0;
+    const arrow = if (l.ready) rule else if (blink) ink else dim;
+    plain("<", 4, 116, arrow);
+    plain(">", 148, 116, arrow);
+    const prompt: []const u8, const color = if (!l.ready)
+        (if (taken(racer)) .{ "TAKEN", hud.coral } else .{ "A READY", ink })
+    else if (l.can_go)
+        .{ "A START", if (blink) hud.cyan else ink }
+    else if (l.host)
+        .{ "WAITING", dim }
+    else
+        .{ "HOST STARTS", dim };
+    plain(prompt, 80 - @as(i32, @intCast(prompt.len * 4)), 116, color);
 }

@@ -1,0 +1,47 @@
+seed 1
+# No ammunition: TOUGH---YOU NEED MORE BULLETS from the hunt-or-continue
+# menu (line 2240, which asks again) and from the fort menu (line 2550, which
+# goes back to line 2080 and asks the fort question again without flipping
+# the fort flag X1).
+# goal: lines 2240 2550; ends: E massacred
+# written by mkscripts.py (scenario 'hunt-without-bullets')
+# 190 need instructions?
+NO
+# 760 marksman (1-5)
+2
+# 860 oxen $
+220
+# 940 food $
+300
+# 990 ammunition $
+0
+# 1040 clothing $
+100
+# 1090 misc. supplies $
+80
+# 2180 (1) hunt (2) continue
+1
+# 2180 (1) hunt (2) continue
+1
+# 2180 (1) hunt (2) continue
+2
+# 2770 eat (1) poorly (2) moderately (3) well
+2
+# 2100 (1) fort (2) hunt (3) continue
+2
+# 2100 (1) fort (2) hunt (3) continue
+2
+# 2100 (1) fort (2) hunt (3) continue
+3
+# 2770 eat (1) poorly (2) moderately (3) well
+2
+# 3000 riders: (1) run (2) attack (3) continue (4) circle
+2
+# 6220 shot: TYPE WHAM (riders attack)
+SHOOT 1 0.47
+# 5220 minister?
+NO
+# 5240 fancy funeral?
+YES
+# 5260 inform next of kin?
+YES

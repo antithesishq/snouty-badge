@@ -177,6 +177,12 @@ pub const CrateSpot = struct { x: u16, y: u16 };
 pub var crate_spots: [world.crate_max]CrateSpot = undefined;
 pub var crate_n: u8 = 0;
 
+/// M5: the selected track's cycle chips (SPEC 9.1), world px, in
+/// centerline order (filled by `select`, like `crate_spots`): bit k of
+/// `World.chips` is `chip_spots[k]`.
+pub var chip_spots: [world.chip_max]CrateSpot = undefined;
+pub var chip_n: u8 = 0;
+
 /// A track hazard as the sim runs it (SPEC 19.4), decoded from one
 /// `Track.feat` record (all positions world px, speeds Q16 px/tick):
 ///
@@ -280,6 +286,7 @@ pub fn select(t: *const Track) void {
     load_art(t.league);
     unpack_map(t.map_packed, &map_ram);
     crate_n = find_crates(t, &crate_spots);
+    chip_n = find_chips(t, &chip_spots);
     hazard_n = parse_hazards(t, &hazard_specs);
     current = t;
 }
@@ -307,6 +314,45 @@ pub fn find_crates(t: *const Track, out: *[world.crate_max]CrateSpot) u8 {
         }
     }
     return @intCast(n);
+}
+
+/// The cycle chips of `t` (needs its map in `map_ram`: call from
+/// `select`): `tuning.chip_trails` trails of `chip_per_trail` chips along
+/// the line, each trail left of the centre, on it, or right of it in turn
+/// (`chip_lat_pct` of the half width); a chip that would sit on anything
+/// but plain road moves to the centerline, and is dropped if that is not
+/// road either.
+pub fn find_chips(t: *const Track, out: *[world.chip_max]CrateSpot) u8 {
+    var n: usize = 0;
+    const sides = [3]i32{ -1, 0, 1 };
+    for (0..tuning.chip_trails) |trail| {
+        const side = sides[trail % 3];
+        for (0..tuning.chip_per_trail) |k| {
+            if (n >= out.len) return @intCast(n);
+            const s = t.sample(tuning.chip_first + trail * tuning.chip_every + k * tuning.chip_gap);
+            const lat = @divTrunc(side * @as(i32, s.half) * tuning.chip_lat_pct, 100);
+            const rx = -fixed.sin(s.tangent);
+            const ry = fixed.cos(s.tangent);
+            var x = (@as(i32, s.x) + ((rx * lat) >> fixed.Q)) & 1023;
+            var y = (@as(i32, s.y) + ((ry * lat) >> fixed.Q)) & 1023;
+            if (!chip_floor(t.attr_at(x, y))) {
+                x = s.x;
+                y = s.y;
+                if (!chip_floor(t.attr_at(x, y))) continue;
+            }
+            out[n] = .{ .x = @intCast(x), .y = @intCast(y) };
+            n += 1;
+        }
+    }
+    return @intCast(n);
+}
+
+/// Floor a chip may lie on: road, the start and sector lines, a bay.
+fn chip_floor(a: Attr) bool {
+    return switch (a) {
+        .surface, .start, .sector1, .sector2, .bay => true,
+        else => false,
+    };
 }
 
 /// Unpack a packed map stream (PLAN.md "Generated data formats",

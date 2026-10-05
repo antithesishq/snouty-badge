@@ -26,6 +26,7 @@
 //! the sweep it went out at for the results; `blast` puffs at a vent's
 //! mouth; `hazard_hit` sparks, flashes the armor bar and names the hazard
 //! in the feed. The attract demo reads `panic_target` to cut its camera.
+const std = @import("std");
 const cart = @import("cart-api");
 const fixed = @import("fixed.zig");
 const tuning = @import("tuning.zig");
@@ -58,9 +59,10 @@ pub const Particle = struct {
     dx: i8 = 0,
     dy: i8 = 0,
 };
-const texts = [_][]const u8{ "<honey>", "</honey>", "<honey/>", "QUACK", "TAGGED!" };
+const texts = [_][]const u8{ "<honey>", "</honey>", "<honey/>", "QUACK", "TAGGED!", "+10" };
 const text_quack: u8 = 3;
 const text_tagged: u8 = 4;
+const text_chip: u8 = 5;
 pub const particle_count = 48;
 pub var particles: [particle_count]Particle = @splat(.{});
 var next_particle: usize = 0;
@@ -348,92 +350,97 @@ fn wreck_cause(c: u8) world.Wreck {
 /// pickups) are simply ignored here until they get a look.
 fn on_event(w: *const world.World, e: *const world.Event, follow: u8) void {
     const kind = e.kind;
-    if (kind == .hit) {
-            if (!valid_car(e.b)) return;
-            const v = &w.cars[e.b];
-            spawn(.spark, v.x, v.y, 6, 12);
-            if (e.a == follow and e.b != follow) {
-                acks[next_ack] = .{ .car = e.b, .ticks = ack_ticks };
-                next_ack = (next_ack + 1) % acks.len;
-            }
-            if (e.b == follow) armor_flash = 12;
+    if (kind == .chip) {
+        // M5: a cycle chip taken: a pop, and `+10` over it for this
+        // badge's own car (10 CYCLES in the career).
+        spawn(.spark, px_q(e.x), px_q(e.y), 3, 8);
+        if (e.a == follow) spawn_text(px_q(e.x), px_q(e.y), text_chip, 0, 0);
+    } else if (kind == .hit) {
+        if (!valid_car(e.b)) return;
+        const v = &w.cars[e.b];
+        spawn(.spark, v.x, v.y, 6, 12);
+        if (e.a == follow and e.b != follow) {
+            acks[next_ack] = .{ .car = e.b, .ticks = ack_ticks };
+            next_ack = (next_ack + 1) % acks.len;
+        }
+        if (e.b == follow) armor_flash = 12;
     } else if (kind == .wreck) {
-            if (!valid_car(e.a)) return;
-            const v = &w.cars[e.a];
-            const cause = wreck_cause(e.c);
-            // The sim's own `explode` (radius 24) follows for the blast.
-            feed = .{ .ticks = feed_ticks, .kind = .wreck, .killer = e.b, .victim = e.a, .cause = cause };
-            if (e.a == follow) {
-                shake = wreck_shake;
-                // A fall shows the sim's own SEGMENT FAULT message.
-                if (cause != .fall) wreck_note = .{ .ticks = wreck_note_ticks, .killer = e.b, .cause = cause };
-                if (valid_car(e.b) and e.b != follow) popup = .{ .ticks = popup_ticks, .racer = w.cars[e.b].racer, .wrecked = false };
-            } else if (e.b == follow) {
-                popup = .{ .ticks = popup_ticks, .racer = v.racer, .wrecked = true };
-            }
+        if (!valid_car(e.a)) return;
+        const v = &w.cars[e.a];
+        const cause = wreck_cause(e.c);
+        // The sim's own `explode` (radius 24) follows for the blast.
+        feed = .{ .ticks = feed_ticks, .kind = .wreck, .killer = e.b, .victim = e.a, .cause = cause };
+        if (e.a == follow) {
+            shake = wreck_shake;
+            // A fall shows the sim's own SEGMENT FAULT message.
+            if (cause != .fall) wreck_note = .{ .ticks = wreck_note_ticks, .killer = e.b, .cause = cause };
+            if (valid_car(e.b) and e.b != follow) popup = .{ .ticks = popup_ticks, .racer = w.cars[e.b].racer, .wrecked = false };
+        } else if (e.b == follow) {
+            popup = .{ .ticks = popup_ticks, .racer = v.racer, .wrecked = true };
+        }
     } else if (kind == .lance) {
-            if (!valid_car(e.a)) return;
-            beams[next_beam] = .{ .owner = e.a, .x = px_q(e.x), .y = px_q(e.y), .age = 0 };
-            next_beam = (next_beam + 1) % beams.len;
-            if (valid_car(e.b)) {
-                const t = &w.cars[e.b];
-                spawn(.spark, t.x, t.y, 6, 14);
-            }
+        if (!valid_car(e.a)) return;
+        beams[next_beam] = .{ .owner = e.a, .x = px_q(e.x), .y = px_q(e.y), .age = 0 };
+        next_beam = (next_beam + 1) % beams.len;
+        if (valid_car(e.b)) {
+            const t = &w.cars[e.b];
+            spawn(.spark, t.x, t.y, 6, 14);
+        }
     } else if (kind == .explode) {
-            const x = px_q(e.x);
-            const y = px_q(e.y);
-            // Radius 0 is a projectile dying on a wall: a spark.
-            if (e.b == 0) spawn(.spark, x, y, 4, 10) else spawn(.explosion, x, y, 0, @intCast(@min(255, @as(u32, e.b) * 3 / 2 + 8)));
+        const x = px_q(e.x);
+        const y = px_q(e.y);
+        // Radius 0 is a projectile dying on a wall: a spark.
+        if (e.b == 0) spawn(.spark, x, y, 4, 10) else spawn(.explosion, x, y, 0, @intCast(@min(255, @as(u32, e.b) * 3 / 2 + 8)));
     } else if (kind == .respawn) {
-            if (!valid_car(e.a)) return;
-            const c = &w.cars[e.a];
-            // Respawn flicker: a ring of sparks where the car comes back.
-            var k: u16 = 0;
-            while (k < 4) : (k += 1) {
-                const a: fixed.Turn = k *% 16384 +% 8192;
-                spawn(.spark, c.x +% fixed.cos(a) * 10, c.y +% fixed.sin(a) * 10, 4, 12);
-            }
+        if (!valid_car(e.a)) return;
+        const c = &w.cars[e.a];
+        // Respawn flicker: a ring of sparks where the car comes back.
+        var k: u16 = 0;
+        while (k < 4) : (k += 1) {
+            const a: fixed.Turn = k *% 16384 +% 8192;
+            spawn(.spark, c.x +% fixed.cos(a) * 10, c.y +% fixed.sin(a) * 10, 4, 12);
+        }
     } else if (kind == .roll) {
-            // A crate taken: it pops up and away with a spark.
-            spawn(.pop, px_q(e.x), px_q(e.y), 0, 16);
-            spawn(.spark, px_q(e.x), px_q(e.y), 6, 14);
+        // A crate taken: it pops up and away with a spark.
+        spawn(.pop, px_q(e.x), px_q(e.y), 0, 16);
+        spawn(.spark, px_q(e.x), px_q(e.y), 6, 14);
     } else if (kind == .use) {
-            on_use(w, e, follow);
+        on_use(w, e, follow);
     } else if (kind == .effect) {
-            on_effect(w, e, follow);
+        on_effect(w, e, follow);
     } else if (kind == .swap) {
-            if (!valid_car(e.a) or !valid_car(e.b)) return;
-            spawn(.spark, w.cars[e.a].x, w.cars[e.a].y, 6, 16);
-            spawn(.spark, w.cars[e.b].x, w.cars[e.b].y, 6, 16);
-            if (e.a == follow or e.b == follow) glitch = glitch_ticks;
-            minor_feed(.{ .ticks = feed_ticks, .kind = .swap, .killer = e.a, .victim = e.b });
+        if (!valid_car(e.a) or !valid_car(e.b)) return;
+        spawn(.spark, w.cars[e.a].x, w.cars[e.a].y, 6, 16);
+        spawn(.spark, w.cars[e.b].x, w.cars[e.b].y, 6, 16);
+        if (e.a == follow or e.b == follow) glitch = glitch_ticks;
+        minor_feed(.{ .ticks = feed_ticks, .kind = .swap, .killer = e.a, .victim = e.b });
     } else if (kind == .mark) {
-            on_mark(w, e, follow);
+        on_mark(w, e, follow);
     } else if (kind == .collect) {
-            on_collect(w, e, follow);
+        on_collect(w, e, follow);
     } else if (kind == .blast) {
-            // A vent starts firing: a burst at its mouth (the Sweeper's
-            // crossing shows in its beacon).
-            if (e.b == @intFromEnum(world.HazardKind.blast)) spawn(.explosion, px_q(e.x), px_q(e.y), 0, 22);
+        // A vent starts firing: a burst at its mouth (the Sweeper's
+        // crossing shows in its beacon).
+        if (e.b == @backingInt(world.HazardKind.blast)) spawn(.explosion, px_q(e.x), px_q(e.y), 0, 22);
     } else if (kind == .hazard_hit) {
-            if (!valid_car(e.b)) return;
-            const x = px_q(e.x);
-            const y = px_q(e.y);
-            spawn(.spark, x, y, 6, 16);
-            spawn(.explosion, x, y, 0, 14);
-            if (e.b == follow) {
-                armor_flash = 12;
-                shake = 8;
-            }
-            const hk: world.HazardKind = if (e.a < track.hazard_n) track.hazard_specs[e.a].kind else .none;
-            minor_feed(.{ .ticks = feed_ticks, .kind = .hazard, .victim = e.b, .hazard = hk });
+        if (!valid_car(e.b)) return;
+        const x = px_q(e.x);
+        const y = px_q(e.y);
+        spawn(.spark, x, y, 6, 16);
+        spawn(.explosion, x, y, 0, 14);
+        if (e.b == follow) {
+            armor_flash = 12;
+            shake = 8;
+        }
+        const hk: world.HazardKind = if (e.a < track.hazard_n) track.hazard_specs[e.a].kind else .none;
+        minor_feed(.{ .ticks = feed_ticks, .kind = .hazard, .victim = e.b, .hazard = hk });
     }
 }
 
 /// A `mark`: the feed line, `TAGGED!` over a tagged car, the bar notes.
 fn on_mark(w: *const world.World, e: *const world.Event, follow: u8) void {
     if (!valid_car(e.a)) return;
-    const tag = e.c == @intFromEnum(world.GcCause.tag) and valid_car(e.b);
+    const tag = e.c == @backingInt(world.GcCause.tag) and valid_car(e.b);
     const c = &w.cars[e.a];
     if (tag) {
         feed = .{ .ticks = feed_ticks, .kind = .tagged, .killer = e.b, .victim = e.a };
@@ -466,7 +473,7 @@ fn on_collect(w: *const world.World, e: *const world.Event, follow: u8) void {
     next_claw = (next_claw + 1) % claws.len;
     feed = .{ .ticks = feed_ticks, .kind = .freed, .victim = e.a };
     freed_sweep[e.a] = @max(1, w.gc.sweeps);
-    freed_cause[e.a] = if (e.c <= @intFromEnum(world.GcCause.wreck)) @enumFromInt(e.c) else .sweep;
+    freed_cause[e.a] = if (e.c <= @backingInt(world.GcCause.wreck)) @fromBackingInt(@intCast(e.c)) else .sweep;
     if (e.a == follow) {
         gc_note = .collected;
         gc_note_ticks = gc_note_show;
@@ -474,7 +481,7 @@ fn on_collect(w: *const world.World, e: *const world.Event, follow: u8) void {
 }
 
 fn pickup_of(v: u8) world.Pickup {
-    return if (v <= @intFromEnum(world.Pickup.prompt_injection)) @enumFromInt(v) else .none;
+    return if (v <= @backingInt(world.Pickup.prompt_injection)) @fromBackingInt(@intCast(v)) else .none;
 }
 
 /// A pickup feed line, unless a wreck line is showing.
@@ -615,8 +622,12 @@ pub fn draw_particle(i: usize, p: camera.Projected) void {
         .text => {
             const str = texts[pt.size % texts.len];
             if (pt.age > 30 and pt.age % 2 == 0) return;
-            const color: cart.Pixel = if (pt.size == text_quack) honey_white else if (pt.size == text_tagged) (if (pt.age % 4 < 2) tagged_red else honey_white) else honey_orange;
-            font.draw(str, p.sx - @as(i32, @intCast(str.len * 4)), bottom - 8, color, honey_shadow);
+            const color: cart.Pixel = if (pt.size == text_quack) honey_white else if (pt.size == text_tagged) (if (pt.age % 4 < 2) tagged_red else honey_white) else if (pt.size == text_chip) chip_green else honey_orange;
+            // M5: kept whole on screen (TAGGED! over a car at the edge was
+            // cut off), 2 px from either side.
+            const wpx: i32 = @intCast(str.len * 8);
+            const x = std.math.clamp(p.sx - @divTrunc(wpx, 2), 2, 158 - wpx);
+            font.draw(str, x, bottom - 8, color, honey_shadow);
         },
         .ray => draw_ray(p.sx, bottom, pt.age),
     }
@@ -624,6 +635,7 @@ pub fn draw_particle(i: usize, p: camera.Projected) void {
 
 const honey_orange: cart.Pixel = .from_color(.rgb(0xF59A3C));
 const tagged_red: cart.Pixel = .from_color(.rgb(0xE83838));
+const chip_green: cart.Pixel = .from_color(.rgb(0x4CE070));
 const honey_white: cart.Pixel = .from_color(.rgb(0xFCFBF9));
 const honey_shadow: cart.Pixel = .from_color(.rgb(0x16031B));
 const ray_core: cart.Pixel = .from_color(.rgb(0xFFFFFF));

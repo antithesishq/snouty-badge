@@ -106,11 +106,11 @@ pub fn rgb_pixel(r: u32, g: u32, b: u32) cart.Pixel {
 // walls so both move together.
 
 /// Sprite sheets in palette order; enemies map by `@intFromEnum(kind)`.
-pub const SpriteSheet = enum(u8) { gnat = 0, wasp, beetle, spider, boss, pickups, projectiles };
-pub const sprite_sheet_count = 7;
+pub const SpriteSheet = enum(u8) { gnat = 0, wasp, beetle, spider, boss, pickups, projectiles, rival };
+pub const sprite_sheet_count = 8;
 pub const SpriteTint = enum(u8) { normal = 0, rewind = 1, hurt = 2 };
 pub const sprite_tint_count = 3;
-/// `sprite_pal[sheet][tint][index]`, 7 x 3 x 16 x 2 = 672 bytes.
+/// `sprite_pal[sheet][tint][index]`, 8 x 3 x 16 x 2 = 768 bytes.
 pub var sprite_pal: [sprite_sheet_count][sprite_tint_count][16]cart.Pixel = undefined;
 
 /// Tint for sprites from `view.shade_override`: null/0..3 normal, 4 rewind, 5 hurt.
@@ -131,6 +131,7 @@ pub fn init_sprites() void {
     build_sprite_palette(.boss, gfx.bug_boss.colors);
     build_sprite_palette(.pickups, gfx.pickups.colors);
     build_sprite_palette(.projectiles, gfx.projectiles.colors);
+    build_sprite_palette(.rival, gfx.rival.colors);
 }
 
 fn build_sprite_palette(sheet: SpriteSheet, colors: anytype) void {

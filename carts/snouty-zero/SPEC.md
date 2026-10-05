@@ -368,6 +368,65 @@ The splash is a Snouty face, not the Iris mark (that is for emulators).
 Best lap per track is kept in RAM only; there is no save to flash (keep
 the cart simple; a decision for Adrian, section 17).
 
+### 8.1 Link race: two badges (M6)
+
+Two badges joined by a JST-SH 3-pin cable on their UART headers (root
+`docs/LINK.md`) race each other on one track, the rest of the field
+around them. The shared `lib/lockstep.zig` runs it (root
+`docs/LOCKSTEP.md`): both badges hold the same World and exchange only
+the two humans' input bytes, so every machine, crash and knockout is the
+same on both screens. Zero's link app id is `Z`.
+
+```
+Menu: Quick Race | Grand Prix | Link Race | Machine | Sound
+Link Race -> Lobby (cable state, host / guest, track, machine, ready)
+Lobby: the host's Start (both ready) -> Countdown -> Race -> Results -> Lobby
+Race: Start pauses both badges (Resume | Quit | Sound)
+```
+
+- **Menu.** LINK RACE sits between GRAND PRIX and MACHINE. In the
+  simulator (no link) it is greyed and the line under the menu says
+  `NO LINK IN SIMULATOR`. Solo play never starts the link: it starts
+  when LINK RACE first opens.
+- **Lobby.** Without a partner: `PLUG IN THE CABLE` (searching), or
+  `WRONG CART: <name>` when the other badge runs another link cart, or
+  `WRONG VERSION`. Connected, the badge with the higher link nonce is the
+  **host**. The host's TRACK row picks any track of any league (Up/Down
+  a row, Left/Right a value); the guest sees the host's track live. Both
+  pick a machine on the MACHINE row (the machine select's five,
+  `ai.player_machines`; both may pick the same one) and press A to
+  ready (B takes the mark back, B again leaves for the menu). The host's
+  `START: GO` appears once both are ready.
+- **Race.** One 3-lap race on that track with the usual rivals and
+  traffic, except that the host's human drives machine 0 and the
+  guest's machine 1 (ARGMAX's slot, so three named rivals race), side by
+  side on the back grid row. Each badge follows and shows the HUD for its
+  own machine; the other human's machine is drawn in its pick's livery
+  (the Anteater has rear views only) and is a cyan dot on the minimap.
+  Thermal, Overclock, collisions and knockouts work as in solo play, and
+  a knockout counts for whichever human did it (5.5; humans are never
+  knocked out). Rivals rubber-band to the leading human. The input byte
+  is A, B, Up, Down, Left, Right, Start (bits 0-6).
+- **No rewind.** No hold-B rewind, crash auto-rewind, scrub or attract
+  in a link race: a crash is the hit-stop and the centerline reset that
+  rivals get (the snapshot bar is hidden). B does nothing.
+- **Pause.** Start is the lockstep's pause bit: both badges pause on the
+  tick the press lands; RESUME (or B, or Start again) on either badge
+  resumes both. QUIT leaves the race for the lobby.
+- **Finish.** The race ends when both humans have finished. A badge
+  whose human is home shows its results 2.5 s later while the partner
+  may still be racing (the lockstep keeps running underneath, the
+  partner's row updates). The results show both humans (YOU, PEER):
+  place, time, best lap, knockouts. No Grand Prix points. A returns to
+  the lobby for a rematch.
+- **Partner gone.** Cable out, the other badge restarted or quit:
+  `PEER LEFT, AI DRIVING` and the AI drives the partner's machine to the
+  finish (it still counts as the partner's in the results, `PEER (AI)`).
+  A partner whose bytes are late shows `WAITING FOR PEER`.
+- **Desync.** If the two Worlds ever differ (a World hash every 32
+  ticks), the race ends on both badges with a `DESYNC: RACE ENDED` band
+  on the results, then the lobby.
+
 ## 9. Audio
 
 The toggle only. With sound on: a countdown beep, the `DEPLOY` tone, a
@@ -513,6 +572,11 @@ disjoint files where a milestone splits.
 - **M5 Stretch** (pick with Adrian): the Core league (3 tracks, art,
   haze); a machine select (drive a rival's character); best laps saved
   to badge flash.
+- **M6 Link race** (2026-10-05, Adrian): two badges race each other over
+  the link cable in lockstep (section 8.1). Done when: the two-badge host
+  tests (a race in sync to the finish under byte loss, peer left, desync,
+  pause) pass, the solo bench holds M5.5's worst frame, and a preview
+  shows the lobby and the race from both badges.
 
 ## 17. Decisions (taken by default, 2026-10-01)
 

@@ -26,30 +26,50 @@ const world_mask: i32 = (1024 << fixed.Q) - 1;
 /// Meta-state set by the menu before `reset`.
 pub var player_character: u8 = 0;
 
+/// A solo race: the player in machine 0 on `player_character`.
 pub fn reset(t: *const track.Track, count: u8) void {
+    reset_humans(t, count, .{ world.player, world.no_human }, .{ player_character, 0 });
+}
+
+/// A link race (M6): the host's human in machine 0, the guest's in
+/// machine 1 (a rival's slot), side by side in the back grid row.
+pub fn reset_link(t: *const track.Track, picks: [2]u8) void {
+    reset_humans(t, world.machine_count, .{ world.player, world.guest }, picks);
+}
+
+fn reset_humans(t: *const track.Track, count: u8, humans: [2]u8, picks: [2]u8) void {
     current = t;
     track.select(t);
     world.w = .{};
+    world.w.humans = humans;
+    world.w.picks = .{ picks[0] % @as(u8, ai.player_machines.len), picks[1] % @as(u8, ai.player_machines.len) };
     world.w.active_count = count;
     world.w.countdown = 4 * tuning.countdown_step;
-    world.w.msg = .provisioning;
-    world.w.msg_ticks = @intCast(tuning.countdown_step);
+    world.w.msg = @splat(.provisioning);
+    world.w.msg_ticks = @splat(@intCast(tuning.countdown_step));
     world.w.lap_px = @intCast(lap_length(t));
     const n: usize = count;
-    const rivals: usize = @min(n, tuning.traffic_first) -| 1;
+    const ranked: usize = @min(n, tuning.traffic_first);
+    var human_n: usize = 0;
+    for (0..ranked) |i| human_n += @intFromBool(world.w.slot_of(i) != null);
+    const rivals: usize = ranked - human_n;
+    var rival_k: usize = 0;
     for (0..n) |i| {
         const m = &world.w.machines[i];
         m.* = .{};
         if (i < tuning.traffic_first) {
             // Grid: rival k (0-based) in row k / 2, column left/right; the
-            // player one row behind the last rival row, in the middle.
+            // player one row behind the last rival row, in the middle (two
+            // humans: side by side there, the host on the left).
             var row: i32 = undefined;
             var side: i32 = 0;
-            if (i == world.player) {
+            if (world.w.slot_of(i)) |s| {
                 row = @intCast((rivals + 1) / 2);
+                if (human_n > 1) side = if (s == 0) -tuning.grid_side else tuning.grid_side;
             } else {
-                row = @intCast((i - 1) / 2);
-                side = if ((i - 1) % 2 == 0) -tuning.grid_side else tuning.grid_side;
+                row = @intCast(rival_k / 2);
+                side = if (rival_k % 2 == 0) -tuning.grid_side else tuning.grid_side;
+                rival_k += 1;
             }
             const p = line_point_behind(t, tuning.grid_first_row + row * tuning.grid_row_gap);
             place(m, p, side, 0);
@@ -65,9 +85,9 @@ pub fn reset(t: *const track.Track, count: u8) void {
             m.progress = si;
             m.thermal = tuning.traffic_thermal;
         }
-        m.active = true;
+        m.f.active = true;
     }
-    for (n..world.machine_count) |i| world.w.machines[i].active = false;
+    for (n..world.machine_count) |i| world.w.machines[i].f.active = false;
     update_ranks();
 }
 
@@ -128,33 +148,61 @@ inline fn wrap_px(d: i32) i32 {
     return ((d + 512) & 1023) - 512;
 }
 
-/// Simulate one tick with the player's buttons. Rivals drive themselves.
+/// Simulate one solo tick with the player's buttons. Rivals drive themselves.
 pub fn simulate(buttons: Buttons) void {
+    simulate_humans(.{ buttons, .{} });
+}
+
+/// One tick of the World `w` (M6, the lockstep's `simulate`): the same
+/// tick as `simulate_humans`, on any World (swapped through `world.w`, so
+/// two badges' Worlds can run side by side in the host tests).
+pub fn simulate_world(w: *W, inputs: [2]Buttons) void {
+    if (w == &world.w) return simulate_humans(inputs);
+    const saved = world.w;
+    world.w = w.*;
+    simulate_humans(inputs);
+    w.* = world.w;
+    world.w = saved;
+}
+
+/// Simulate one tick with each human slot's buttons (`World.humans`;
+/// slot 1 is unused solo). Rivals and traffic drive themselves, and so
+/// does a human's machine once it has finished or its partner left.
+pub fn simulate_humans(inputs: [2]Buttons) void {
     var w = &world.w;
     w.rng = step_rng(w.rng);
-    if (w.msg_ticks > 0) {
-        w.msg_ticks -= 1;
-        if (w.msg_ticks == 0) w.msg = .none;
+    for (&w.msg, &w.msg_ticks) |*msg, *ticks| {
+        if (ticks.* > 0) {
+            ticks.* -= 1;
+            if (ticks.* == 0) msg.* = .none;
+        }
     }
     switch (w.phase) {
         .countdown => {
             w.countdown -= 1;
             const step = tuning.countdown_step;
-            if (w.countdown == 3 * step) set_msg(.three, step) else if (w.countdown == 2 * step) set_msg(.two, step) else if (w.countdown == step) set_msg(.one, step) else if (w.countdown == 0) {
+            if (w.countdown == 3 * step) set_msg_all(.three, step) else if (w.countdown == 2 * step) set_msg_all(.two, step) else if (w.countdown == step) set_msg_all(.one, step) else if (w.countdown == 0) {
                 w.phase = .racing;
-                set_msg(.deploy, tuning.message_ticks);
+                set_msg_all(.deploy, tuning.message_ticks);
             }
-            // Machines sit still; the player may lean. Up held through
+            // Machines sit still; the humans may lean. Up held through
             // DEPLOY does not fire an Overclock on the first tick.
-            w.machines[0].steer = steer_of(buttons);
-            w.machines[0].up_was = buttons.up;
+            for (w.humans, 0..) |h, s| {
+                if (h == world.no_human) continue;
+                const b: Buttons = if (w.ai_drives[s]) .{} else inputs[s];
+                w.machines[h].steer = steer_of(b);
+                w.machines[h].f.up_was = b.up;
+            }
         },
         .racing, .finished => {
             w.tick +%= 1;
             for (0..w.active_count) |i| {
                 const m = &w.machines[i];
-                if (!m.active) continue;
-                const b: Buttons = if (i == world.player and w.phase == .racing) buttons else ai.drive(m, i);
+                if (!m.f.active) continue;
+                var b: Buttons = undefined;
+                if (w.slot_of(i)) |s| {
+                    b = if (!m.f.finished and !w.ai_drives[s]) inputs[s] else ai.drive_human(m, i);
+                } else b = ai.drive(m, i);
                 step_machine(m, b, i);
             }
             collide_all();
@@ -163,9 +211,37 @@ pub fn simulate(buttons: Buttons) void {
     }
 }
 
-fn set_msg(msg: world.Message, ticks: u32) void {
-    world.w.msg = msg;
-    world.w.msg_ticks = @intCast(ticks);
+/// The message bar of human slot `s`.
+fn set_msg(s: u1, msg: world.Message, ticks: u32) void {
+    world.w.msg[s] = msg;
+    world.w.msg_ticks[s] = @intCast(ticks);
+}
+
+fn set_msg_all(msg: world.Message, ticks: u32) void {
+    set_msg(0, msg, ticks);
+    set_msg(1, msg, ticks);
+}
+
+/// The machine select character of human slot `s`.
+fn human_char(s: u1) *const ai.Character {
+    return &ai.player_machines[world.w.picks[s] % ai.player_machines.len];
+}
+
+/// The physics of machine `i`: a human's pick, or the AI character.
+fn char_of(i: usize) *const ai.Character {
+    return if (world.w.slot_of(i)) |s| human_char(s) else ai.character(i);
+}
+
+fn index_of(m: *const Machine) usize {
+    return (@intFromPtr(m) - @intFromPtr(&world.w.machines[0])) / @sizeOf(Machine);
+}
+
+/// Every human's machine has finished (the race phase ends).
+fn humans_finished() bool {
+    for (world.w.humans) |h| {
+        if (h != world.no_human and !world.w.machines[h].f.finished) return false;
+    }
+    return true;
 }
 
 fn step_rng(s: u32) u32 {
@@ -190,19 +266,14 @@ pub fn speed(m: *const Machine) i32 {
 }
 
 /// Physics for one machine (SPEC 5.1 steps 1..5).
-/// The player's physics: the handling of the machine picked in the menu.
-fn player_char() *const ai.Character {
-    return &ai.player_machines[player_character % ai.player_machines.len];
-}
-
 fn step_machine(m: *Machine, b: Buttons, index: usize) void {
-    const up_edge = b.up and !m.up_was;
-    m.up_was = b.up;
+    const up_edge = b.up and !m.f.up_was;
+    m.f.up_was = b.up;
     if (m.hitstop > 0) {
         m.hitstop -= 1;
         if (m.hitstop == 0) {
             // A knockout leaves the race after its wreck (SPEC 5.5).
-            if (m.ko) m.active = false else recover(m);
+            if (m.f.ko) m.f.active = false else recover(m);
         }
         return;
     }
@@ -216,8 +287,9 @@ fn step_machine(m: *Machine, b: Buttons, index: usize) void {
         m.thermal = @intCast(@max(1, @as(i32, m.thermal) - tuning.thermal_overclock));
         m.boost = tuning.overclock_ticks;
     }
-    // The player drives the selected machine; rivals and traffic use their character.
-    const c: *const ai.Character = if (index == world.player) player_char() else ai.character(index);
+    // A human drives the selected machine; rivals and traffic use their character.
+    const human = world.w.slot_of(index) != null;
+    const c = char_of(index);
     const in_air = m.hop > 0;
     if (in_air) m.hop -= 1;
 
@@ -227,7 +299,7 @@ fn step_machine(m: *Machine, b: Buttons, index: usize) void {
     m.steer = steer_of(b);
 
     // 1. Thrust and brake.
-    if (b.a and (!m.finished or index != world.player)) {
+    if (b.a and (!m.f.finished or !human)) {
         var a = tuning.accel;
         if (c.top_q8 != 256) a = (a * c.top_q8) >> 8;
         if (m.boost > 0) a = @divTrunc(a * tuning.overclock_thrust, 256);
@@ -242,7 +314,7 @@ fn step_machine(m: *Machine, b: Buttons, index: usize) void {
     const keep = if (m.boost > 0) tuning.drag_keep_overclock else tuning.drag_keep;
     m.vx = fixed.mul(m.vx, keep);
     m.vy = fixed.mul(m.vy, keep);
-    if (m.on_throttled) {
+    if (m.f.on_throttled) {
         m.vx = fixed.mul(m.vx, tuning.throttled_keep);
         m.vy = fixed.mul(m.vy, tuning.throttled_keep);
     }
@@ -251,7 +323,7 @@ fn step_machine(m: *Machine, b: Buttons, index: usize) void {
         const along = fixed.mul(m.vx, hx) + fixed.mul(m.vy, hy);
         var lat = fixed.mul(m.vx, -hy) + fixed.mul(m.vy, hx);
         const tight = b.down and m.steer != 0;
-        var g = if (m.on_throttled) tuning.grip_throttled else if (tight) tuning.grip_tight else tuning.grip;
+        var g = if (m.f.on_throttled) tuning.grip_throttled else if (tight) tuning.grip_tight else tuning.grip;
         if (c.grip_q8 != 256) g = fixed.one - (((fixed.one - g) * c.grip_q8) >> 8);
         lat = fixed.mul(lat, g);
         m.vx = fixed.mul(along, hx) + fixed.mul(lat, -hy);
@@ -277,8 +349,8 @@ fn step_machine(m: *Machine, b: Buttons, index: usize) void {
     const old_y = m.y;
     m.x = (m.x +% m.vx) & world_mask;
     m.y = (m.y +% m.vy) & world_mask;
-    m.on_throttled = false;
-    m.on_cold = false;
+    m.f.on_throttled = false;
+    m.f.on_cold = false;
     if (!in_air) resolve_tiles(m, old_x, old_y);
     update_progress(m, index);
 }
@@ -330,8 +402,8 @@ fn resolve_tiles(m: *Machine, old_x: i32, old_y: i32) void {
                     ny -= @as(i32, std.math.sign(c[1]));
                 }
             },
-            .throttled => m.on_throttled = true,
-            .cold => m.on_cold = true,
+            .throttled => m.f.on_throttled = true,
+            .cold => m.f.on_cold = true,
             .pad => if (m.boost < tuning.pad_ticks) {
                 m.boost = tuning.pad_ticks;
             },
@@ -376,7 +448,7 @@ fn resolve_tiles(m: *Machine, old_x: i32, old_y: i32) void {
         }
     }
     if (off_count == 4) crash(m, .fall);
-    if (m.on_cold) m.thermal = @intCast(@min(tuning.thermal_max, @as(i32, m.thermal) + tuning.thermal_cold_refill));
+    if (m.f.on_cold) m.thermal = @intCast(@min(tuning.thermal_max, @as(i32, m.thermal) + tuning.thermal_cold_refill));
     if (m.thermal <= 0 and m.crash == .none) {
         m.thermal = 0;
         crash(m, .meltdown);
@@ -391,27 +463,30 @@ fn any_rail(m: *const Machine) bool {
 }
 
 /// Start the hit-stop; M3 turns this into the rewind decision. Another
-/// machine the player hit within the credit window, still racing, is
+/// machine a human hit within the credit window, still racing, is
 /// knocked out instead (SPEC 5.5): it wrecks through the hit-stop and
-/// leaves the race.
+/// leaves the race. Humans are never knocked out.
 pub fn crash(m: *Machine, cause: world.Crash) void {
     const w = &world.w;
     m.crash = cause;
     m.hitstop = tuning.hitstop_ticks;
     m.vx = 0;
     m.vy = 0;
-    const p = &w.machines[world.player];
-    if (m != p and m.hit_by_player > 0 and !m.finished and !m.ko) {
-        m.ko = true;
+    const index = index_of(m);
+    const slot = w.slot_of(index);
+    if (slot == null and m.hit_by_player > 0 and !m.f.finished and !m.f.ko) {
+        m.f.ko = true;
         m.boost = 0;
-        w.kos +|= 1;
-        if (p.crash == .none) {
-            w.msg_who = @intCast((@intFromPtr(m) - @intFromPtr(p)) / @sizeOf(Machine));
-            set_msg(.ko, tuning.message_ticks);
+        const s: u1 = @intCast(m.hit_by & 1);
+        w.kos[s] +|= 1;
+        const h = w.humans[s];
+        if (h != world.no_human and w.machines[h].crash == .none) {
+            w.msg_who[s] = @intCast(index);
+            set_msg(s, .ko, tuning.message_ticks);
         }
     }
-    if (m == p) {
-        set_msg(switch (cause) {
+    if (slot) |s| {
+        set_msg(s, switch (cause) {
             .fall => .fall,
             .meltdown => .meltdown,
             .collision => .collision,
@@ -477,20 +552,23 @@ fn update_progress(m: *Machine, index: usize) void {
         if (old < 170 and new >= 170 and (m.sectors & 1) != 0) m.sectors |= 2;
         if (new < old) {
             // Crossed the start line forward.
-            if (m.sectors == 3 and !m.finished and index < tuning.traffic_first) {
-                const lap_time = world.w.tick -% m.lap_start;
+            if (m.sectors == 3 and !m.f.finished and index < tuning.traffic_first) {
+                const now16: u16 = @truncate(world.w.tick);
+                const lap_time = now16 -% m.lap_start;
                 if (m.best_lap == 0 or lap_time < m.best_lap) m.best_lap = lap_time;
-                m.lap_start = world.w.tick;
+                m.lap_start = now16;
                 m.lap += 1;
-                if (index == world.player) {
-                    if (m.lap == tuning.laps - 1) set_msg(.final_lap, tuning.message_ticks);
+                const slot = world.w.slot_of(index);
+                if (slot) |s| {
+                    if (m.lap == tuning.laps - 1) set_msg(s, .final_lap, tuning.message_ticks);
                 }
                 if (m.lap >= tuning.laps) {
-                    m.finished = true;
-                    m.finish_tick = world.w.tick;
-                    if (index == world.player) {
-                        world.w.phase = .finished;
-                        set_msg(.committed, 120);
+                    m.f.finished = true;
+                    m.finish_tick = @intCast(@min(world.w.tick, 0xFFFF));
+                    if (slot) |s| {
+                        // The race ends when every human has finished.
+                        if (humans_finished()) world.w.phase = .finished;
+                        set_msg(s, .committed, 120);
                     }
                 }
             }
@@ -505,7 +583,7 @@ fn update_progress(m: *Machine, index: usize) void {
 // --- Machine against machine (SPEC 5.3) --------------------------------------
 
 fn can_collide(m: *const Machine) bool {
-    return m.active and m.hitstop == 0 and m.hop == 0 and m.crash == .none;
+    return m.f.active and m.hitstop == 0 and m.hop == 0 and m.crash == .none;
 }
 
 /// Circles of radius `machine_radius`: push apart by half the penetration
@@ -561,27 +639,43 @@ fn contact(a: *Machine, ia: usize, b: *Machine, ib: usize, dx8: i32, dy8: i32, d
     const vnb = fixed.mul(b.vx, nx) + fixed.mul(b.vy, ny);
     const closing = vna - vnb;
     if (closing <= 0) return;
-    // The player is always `a` (index 0 comes first): any push credits a
-    // later crash of `b` to the player (SPEC 5.5).
-    if (ia == world.player) b.hit_by_player = tuning.ko_credit_ticks;
+    // Any push by a human credits a later crash of the other machine to
+    // that human (SPEC 5.5). Solo, the player is always `a` (index 0
+    // comes first); in a link race either side can be a human.
+    const sa = world.w.slot_of(ia);
+    const sb = world.w.slot_of(ib);
+    if (sa) |s| {
+        b.hit_by_player = tuning.ko_credit_ticks;
+        b.hit_by = s;
+    }
+    if (sb) |s| {
+        a.hit_by_player = tuning.ko_credit_ticks;
+        a.hit_by = s;
+    }
     const dv = (closing * tuning.collision_exchange) >> 8;
     a.vx -= fixed.mul(nx, dv);
     a.vy -= fixed.mul(ny, dv);
     b.vx += fixed.mul(nx, dv);
     b.vy += fixed.mul(ny, dv);
     if (closing < tuning.collision_min_speed) return;
-    const ca: *const ai.Character = if (ia == world.player) player_char() else ai.character(ia);
-    const cb: *const ai.Character = if (ib == world.player) player_char() else ai.character(ib);
-    // Ram damage on `b` when the player's own speed into it is at least
-    // `b`'s share of the closing speed.
-    var ram: i32 = 0;
-    if (ia == world.player and vna >= -vnb) {
-        ram = (closing * tuning.ram_damage_per_px) >> fixed.Q;
-        if (a.boost > 0) ram = (ram * tuning.ram_overclock_q8) >> 8;
+    const ca = char_of(ia);
+    const cb = char_of(ib);
+    // Ram damage on the other machine when a human's own speed into it is
+    // at least the other's share of the closing speed.
+    var ram_b: i32 = 0;
+    if (sa != null and vna >= -vnb) {
+        ram_b = (closing * tuning.ram_damage_per_px) >> fixed.Q;
+        if (a.boost > 0) ram_b = (ram_b * tuning.ram_overclock_q8) >> 8;
     }
-    hit(a, ca, 0);
-    hit(b, cb, ram);
-    if (ia == world.player and closing >= tuning.collision_crash_speed) crash(a, .collision);
+    var ram_a: i32 = 0;
+    if (sb != null and -vnb >= vna) {
+        ram_a = (closing * tuning.ram_damage_per_px) >> fixed.Q;
+        if (b.boost > 0) ram_a = (ram_a * tuning.ram_overclock_q8) >> 8;
+    }
+    hit(a, ca, ram_a);
+    hit(b, cb, ram_b);
+    if (sa != null and closing >= tuning.collision_crash_speed) crash(a, .collision);
+    if (sb != null and closing >= tuning.collision_crash_speed) crash(b, .collision);
     for ([2]*Machine{ a, b }) |m| {
         if (m.thermal <= 0 and m.crash == .none) {
             m.thermal = 0;
@@ -647,10 +741,10 @@ fn update_ranks() void {
     const w = &world.w;
     const n: usize = @min(w.active_count, tuning.ranked_count);
     var fine: [tuning.ranked_count]i32 = undefined;
-    for (0..n) |i| fine[i] = if (w.machines[i].finished) 0 else fine_progress(&w.machines[i]);
+    for (0..n) |i| fine[i] = if (w.machines[i].f.finished) 0 else fine_progress(&w.machines[i]);
     for (0..n) |i| {
         const m = &w.machines[i];
-        if (!m.active) {
+        if (!m.f.active) {
             m.rank = 0;
             continue;
         }
@@ -658,11 +752,11 @@ fn update_ranks() void {
         for (0..n) |j| {
             if (j == i) continue;
             const o = &w.machines[j];
-            if (!o.active) continue;
-            const ahead = if (o.finished and m.finished)
+            if (!o.f.active) continue;
+            const ahead = if (o.f.finished and m.f.finished)
                 o.finish_tick < m.finish_tick or (o.finish_tick == m.finish_tick and j < i)
-            else if (o.finished != m.finished)
-                o.finished
+            else if (o.f.finished != m.f.finished)
+                o.f.finished
             else
                 fine[j] > fine[i] or (fine[j] == fine[i] and j < i);
             if (ahead) r += 1;
@@ -793,7 +887,7 @@ fn ranks_are_permutation() bool {
     var seen: u8 = 0;
     var live: u3 = 0;
     for (world.w.machines[0..tuning.ranked_count]) |m| {
-        if (!m.active) {
+        if (!m.f.active) {
             if (m.rank != 0) return false;
             continue;
         }
@@ -810,7 +904,7 @@ test "grid and traffic placement" {
     const ms = &world.w.machines;
     // Nobody overlaps; everyone on a drivable tile.
     for (0..world.machine_count) |i| {
-        try std.testing.expect(ms[i].active);
+        try std.testing.expect(ms[i].f.active);
         const a = current.attr_at(ms[i].x >> fixed.Q, ms[i].y >> fixed.Q);
         try std.testing.expect(a != .off and a != .rail);
         for (i + 1..world.machine_count) |j| {
@@ -878,10 +972,10 @@ test "every committed track is completable with the field present" {
         }
         const p = &world.w.machines[0];
         var rivals_done: u32 = 0;
-        for (world.w.machines[1..tuning.traffic_first]) |r| rivals_done += @intFromBool(r.finished);
+        for (world.w.machines[1..tuning.traffic_first]) |r| rivals_done += @intFromBool(r.f.finished);
         if (report_race) {
             std.debug.print("\n{s}: finish {d} ticks, best lap {d}, rank {d}, crashes {d} (collision {d}), thermal {d}, rivals finished {d}\n", .{ t.name, p.finish_tick, p.best_lap, p.rank, crashes, collision_crashes, p.thermal, rivals_done });
-            for (world.w.machines[1..tuning.traffic_first], 1..) |r, i| std.debug.print("  rival {d}: lap {d} rank {d} finished {} at {d} thermal {d} best {d}\n", .{ i, r.lap, r.rank, r.finished, r.finish_tick, r.thermal, r.best_lap });
+            for (world.w.machines[1..tuning.traffic_first], 1..) |r, i| std.debug.print("  rival {d}: lap {d} rank {d} finished {} at {d} thermal {d} best {d}\n", .{ i, r.lap, r.rank, r.f.finished, r.finish_tick, r.thermal, r.best_lap });
         }
         try std.testing.expectEqual(world.Phase.finished, world.w.phase);
         try std.testing.expectEqual(tuning.laps, p.lap);
@@ -893,11 +987,11 @@ test "every committed track is completable with the field present" {
         while (more < 60 * 60) : (more += 1) {
             simulate(.{});
             var done = true;
-            for (world.w.machines[1..tuning.traffic_first]) |r| done = done and (r.finished or !r.active);
+            for (world.w.machines[1..tuning.traffic_first]) |r| done = done and (r.f.finished or !r.f.active);
             if (done) break;
         }
         // A rival the autopilot happened to knock out (SPEC 5.5) is out.
-        for (world.w.machines[1..tuning.traffic_first]) |r| try std.testing.expect(r.finished or !r.active);
+        for (world.w.machines[1..tuning.traffic_first]) |r| try std.testing.expect(r.f.finished or !r.f.active);
         try std.testing.expect(ranks_are_permutation());
     }
 }
@@ -961,9 +1055,9 @@ test "machines that overlap head-on are pushed apart and lose thermal" {
     o.* = .{ .x = (@as(i32, s.x) + 8) << fixed.Q, .y = @as(i32, s.y) << fixed.Q, .vx = -2 * fixed.one, .progress = 60 };
     collide_all();
     try std.testing.expectEqual(@as(i16, 0), o.thermal); // 1000 - 2 * (60 + 800), melted down
-    try std.testing.expect(o.ko);
+    try std.testing.expect(o.f.ko);
     try std.testing.expectEqual(world.Crash.collision, p.crash);
-    try std.testing.expectEqual(world.Message.collision, world.w.msg);
+    try std.testing.expectEqual(world.Message.collision, world.w.msg[0]);
 }
 
 test "Overclock on the Up press edge" {
@@ -1051,14 +1145,14 @@ test "a credited meltdown knocks a rival out of the race" {
     const u = line_up(2, 19, 236000, 129792);
     u.v.thermal = 100;
     collide_all();
-    try std.testing.expect(u.v.ko);
+    try std.testing.expect(u.v.f.ko);
     try std.testing.expectEqual(world.Crash.meltdown, u.v.crash);
-    try std.testing.expectEqual(@as(u8, 1), world.w.kos);
-    try std.testing.expectEqual(world.Message.ko, world.w.msg);
-    try std.testing.expectEqual(@as(u8, 2), world.w.msg_who);
+    try std.testing.expectEqual(@as(u8, 1), world.w.kos[0]);
+    try std.testing.expectEqual(world.Message.ko, world.w.msg[0]);
+    try std.testing.expectEqual(@as(u8, 2), world.w.msg_who[0]);
     // It wrecks through the hit-stop, then is gone: no rank, no contact.
     for (0..tuning.hitstop_ticks + 1) |_| simulate(.{});
-    try std.testing.expect(!u.v.active);
+    try std.testing.expect(!u.v.f.active);
     try std.testing.expectEqual(@as(u8, 0), u.v.rank);
     try std.testing.expect(ranks_are_permutation());
     try std.testing.expect(u.p.rank <= 4);
@@ -1069,25 +1163,25 @@ test "an uncredited crash still recovers; credit runs out" {
     run_countdown();
     const r = &world.w.machines[3];
     crash(r, .meltdown);
-    try std.testing.expect(!r.ko);
+    try std.testing.expect(!r.f.ko);
     for (0..tuning.hitstop_ticks + 1) |_| simulate(.{});
-    try std.testing.expect(r.active);
+    try std.testing.expect(r.f.active);
     try std.testing.expectEqual(world.Crash.none, r.crash);
     // Hit by the player, then left alone past the window.
     r.hit_by_player = tuning.ko_credit_ticks;
     for (0..tuning.ko_credit_ticks) |_| simulate(.{});
     crash(r, .fall);
-    try std.testing.expect(!r.ko);
+    try std.testing.expect(!r.f.ko);
     // A credited fall knocks out; a finished machine never is.
     const f = &world.w.machines[4];
     f.hit_by_player = 10;
     crash(f, .fall);
-    try std.testing.expect(f.ko);
+    try std.testing.expect(f.f.ko);
     const g = &world.w.machines[1];
     g.hit_by_player = 10;
-    g.finished = true;
+    g.f.finished = true;
     crash(g, .fall);
-    try std.testing.expect(!g.ko);
+    try std.testing.expect(!g.f.ko);
 }
 
 /// Test driver: the autopilot, but when a live machine is ahead within 70
@@ -1099,7 +1193,7 @@ fn ram_drive(m: *const Machine) Buttons {
     var best: i32 = 70;
     var target: ?*const Machine = null;
     for (world.w.machines[1..world.w.active_count]) |*o| {
-        if (!o.active or o.ko or o.hop != 0) continue;
+        if (!o.f.active or o.f.ko or o.hop != 0) continue;
         const dx = wrap_px((o.x - m.x) >> fixed.Q);
         const dy = wrap_px((o.y - m.y) >> fixed.Q);
         const along = (dx * hx + dy * hy) >> fixed.Q;
@@ -1116,7 +1210,7 @@ fn ram_drive(m: *const Machine) Buttons {
         b.right = err > 300;
         b.a = true;
         b.down = false;
-        b.up = !m.up_was and m.boost == 0 and m.thermal > 450;
+        b.up = !m.f.up_was and m.boost == 0 and m.thermal > 450;
     }
     return b;
 }
@@ -1128,9 +1222,180 @@ test "ramming the field knocks machines out, deterministically" {
     const snap = world.w;
     for (0..1800) |_| simulate(ram_drive(&world.w.machines[0]));
     const end_a = world.w;
-    try std.testing.expect(end_a.kos >= 2);
+    try std.testing.expect(end_a.kos[0] >= 2);
     try std.testing.expect(ranks_are_permutation());
     world.w = snap;
     for (0..1800) |_| simulate(ram_drive(&world.w.machines[0]));
     try std.testing.expect(worlds_equal(&end_a, &world.w));
+}
+
+// --- Two humans (M6, the link race) -------------------------------------------
+
+/// A scripted human on machine `i`: the autopilot with taps of its own
+/// (lean, brake, Overclock) from `seed`, so the two humans differ.
+fn human_drive(i: usize, t: u32, seed: u32) Buttons {
+    var b = ai.drive_human(&world.w.machines[i], i);
+    const r = step_rng((t *% 2_654_435_761 +% seed) | 1);
+    if (r % 53 == 0) b.left = !b.left;
+    if (r % 71 == 0) b.right = !b.right;
+    if (r % 97 == 0) b.up = true;
+    if (r % 131 == 0) b.down = true;
+    return b;
+}
+
+fn human_inputs(t: u32) [2]Buttons {
+    return .{ human_drive(world.w.humans[0], t, 7), human_drive(world.w.humans[1], t, 1234) };
+}
+
+test "link grid: both humans on the back row, side by side, the field placed" {
+    for (track.tracks) |t| {
+        reset_link(t, .{ 0, 3 });
+        const ms = &world.w.machines;
+        try std.testing.expectEqual(@as(?u1, 0), world.w.slot_of(world.player));
+        try std.testing.expectEqual(@as(?u1, 1), world.w.slot_of(world.guest));
+        try std.testing.expectEqual(@as(?u1, null), world.w.slot_of(2));
+        for (0..world.machine_count) |i| {
+            try std.testing.expect(ms[i].f.active);
+            const a = current.attr_at(ms[i].x >> fixed.Q, ms[i].y >> fixed.Q);
+            try std.testing.expect(a != .off and a != .rail);
+            for (i + 1..world.machine_count) |j| {
+                const dx = wrap_px((ms[j].x >> fixed.Q) - (ms[i].x >> fixed.Q));
+                const dy = wrap_px((ms[j].y >> fixed.Q) - (ms[i].y >> fixed.Q));
+                try std.testing.expect(dx * dx + dy * dy >= 4 * tuning.machine_radius * tuning.machine_radius);
+            }
+        }
+        // The humans start 4th and 5th, level with each other along the line.
+        try std.testing.expect(ms[0].rank >= 4 and ms[1].rank >= 4);
+        try std.testing.expect(ranks_are_permutation());
+        try std.testing.expect(@abs(fine_progress(&ms[0]) - fine_progress(&ms[1])) < 256);
+    }
+}
+
+test "solo: slot 1's buttons never reach the World" {
+    reset(&track.cold_aisle, world.machine_count);
+    const start = world.w;
+    for (0..900) |k| simulate(human_drive(0, @intCast(k), 7));
+    const end_a = world.w;
+    world.w = start;
+    for (0..900) |k| simulate_humans(.{ human_drive(0, @intCast(k), 7), .{ .a = true, .left = (k & 8) != 0, .up = true } });
+    try std.testing.expect(worlds_equal(&end_a, &world.w));
+}
+
+test "two humans: deterministic, and simulate_world matches the live World" {
+    reset_link(&track.substation_sprint, .{ 1, 2 });
+    for (0..400) |k| simulate_humans(human_inputs(@intCast(k)));
+    const snap = world.w;
+    for (0..1500) |k| simulate_humans(human_inputs(@intCast(400 + k)));
+    const end_a = world.w;
+    // Again from the snapshot, through a detached World.
+    var other = snap;
+    world.w = .{};
+    for (0..1500) |k| {
+        const saved = world.w;
+        world.w = other;
+        const in = human_inputs(@intCast(400 + k));
+        world.w = saved;
+        simulate_world(&other, in);
+    }
+    try std.testing.expect(worlds_equal(&end_a, &other));
+    // The global World was left alone meanwhile.
+    try std.testing.expect(worlds_equal(&W{}, &world.w));
+    // And the humans really did drive differently.
+    try std.testing.expect(end_a.machines[0].x != end_a.machines[1].x or end_a.machines[0].y != end_a.machines[1].y);
+}
+
+test "two humans race to the finish; the race ends when both have" {
+    reset_link(&track.cold_aisle, .{ 0, 1 });
+    var ticks: u32 = 0;
+    var first_done: ?u32 = null;
+    while (world.w.phase != .finished and ticks < 60 * 150) : (ticks += 1) {
+        simulate_humans(human_inputs(ticks));
+        const done = @as(u8, @intFromBool(world.w.machines[0].f.finished)) + @intFromBool(world.w.machines[1].f.finished);
+        if (done == 1 and first_done == null) {
+            first_done = ticks;
+            // One human home: the race goes on, and only that human's bar says so.
+            try std.testing.expectEqual(world.Phase.racing, world.w.phase);
+            const s: usize = if (world.w.machines[0].f.finished) 0 else 1;
+            try std.testing.expectEqual(world.Message.committed, world.w.msg[s]);
+            try std.testing.expect(world.w.msg[s ^ 1] != .committed);
+        }
+        if (ticks % 100 == 0) try std.testing.expect(ranks_are_permutation());
+    }
+    try std.testing.expectEqual(world.Phase.finished, world.w.phase);
+    for (world.w.machines[0..2]) |m| {
+        try std.testing.expect(m.f.finished);
+        try std.testing.expectEqual(tuning.laps, m.lap);
+        try std.testing.expect(m.rank >= 1 and m.rank <= 5);
+    }
+    try std.testing.expect(world.w.machines[0].rank != world.w.machines[1].rank);
+}
+
+test "a human's knockout is credited to that human" {
+    // The guest rams machine 3 from behind; machine 0 sits elsewhere.
+    reset_link(&track.cold_aisle, .{ 0, 0 });
+    run_countdown();
+    const s = current.sample(60);
+    const g = &world.w.machines[world.guest];
+    const v = &world.w.machines[3];
+    g.* = .{ .x = (@as(i32, s.x) - 19) << fixed.Q, .y = @as(i32, s.y) << fixed.Q, .vx = 236000, .progress = 60 };
+    v.* = .{ .x = @as(i32, s.x) << fixed.Q, .y = @as(i32, s.y) << fixed.Q, .vx = 129792, .progress = 60, .thermal = 100 };
+    collide_all();
+    try std.testing.expect(v.f.ko);
+    try std.testing.expectEqual(@as(u8, 1), v.hit_by);
+    try std.testing.expectEqual([2]u8{ 0, 1 }, world.w.kos);
+    try std.testing.expectEqual(world.Message.ko, world.w.msg[1]);
+    try std.testing.expect(world.w.msg[0] != .ko);
+    try std.testing.expectEqual(@as(u8, 3), world.w.msg_who[1]);
+    // The host's own knockout goes to the host.
+    const w4 = &world.w.machines[4];
+    w4.hit_by_player = 10;
+    w4.hit_by = 0;
+    crash(w4, .fall);
+    try std.testing.expectEqual([2]u8{ 1, 1 }, world.w.kos);
+}
+
+test "humans ram each other alike and are never knocked out" {
+    reset_link(&track.cold_aisle, .{ 0, 0 });
+    run_countdown();
+    const s = current.sample(60);
+    const h = &world.w.machines[world.player];
+    const g = &world.w.machines[world.guest];
+    // Head-on at 1 px/tick each: the same damage on both (60 + the ram).
+    h.* = .{ .x = (@as(i32, s.x) - 8) << fixed.Q, .y = @as(i32, s.y) << fixed.Q, .vx = fixed.one, .progress = 60 };
+    g.* = .{ .x = (@as(i32, s.x) + 8) << fixed.Q, .y = @as(i32, s.y) << fixed.Q, .vx = -fixed.one, .heading = 32768, .progress = 60 };
+    collide_all();
+    try std.testing.expectEqual(h.thermal, g.thermal);
+    try std.testing.expectEqual(@as(i16, 1000 - 60 - 400), g.thermal);
+    // A meltdown with the other human's credit is a crash, not a knockout.
+    g.thermal = 0;
+    g.hit_by_player = 50;
+    g.hit_by = 0;
+    crash(g, .meltdown);
+    try std.testing.expect(!g.f.ko);
+    try std.testing.expectEqual(world.Message.meltdown, world.w.msg[1]);
+    for (0..tuning.hitstop_ticks + 1) |_| simulate_humans(.{ .{}, .{} });
+    try std.testing.expect(g.f.active);
+    try std.testing.expectEqual(world.Crash.none, g.crash);
+}
+
+test "a human handed to the AI drives on to the finish" {
+    reset_link(&track.rack_row_7, .{ 4, 2 });
+    var ticks: u32 = 0;
+    while (ticks < 900) : (ticks += 1) simulate_humans(human_inputs(ticks));
+    // The guest's partner leaves: its machine goes to the AI, and its
+    // byte is ignored from then on.
+    world.w.ai_drives[1] = true;
+    while (world.w.phase != .finished and ticks < 60 * 150) : (ticks += 1) {
+        simulate_humans(.{ human_drive(0, ticks, 7), .{ .left = true, .down = true } });
+    }
+    try std.testing.expectEqual(world.Phase.finished, world.w.phase);
+    try std.testing.expect(world.w.machines[1].f.finished);
+    try std.testing.expect(world.w.machines[1].f.active);
+    // Still the guest's: its pick, its slot.
+    try std.testing.expectEqual(@as(?u1, 1), world.w.slot_of(world.guest));
+    try std.testing.expectEqual(@as(u8, 2), world.w.picks[1]);
+}
+
+test "the World with two humans stays under the keyframe bound" {
+    try std.testing.expect(@sizeOf(W) <= 640);
 }

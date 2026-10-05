@@ -610,6 +610,125 @@ wreck in the headless preview.
   about 15 KB free below the stack. `zig build test` (all carts) and
   check-float pass.
 
+## M6 Link race (two badges)
+
+2026-10-05. Adrian asked for two-player Snouty Zero over the badge link
+cable (root `docs/LINK.md` M2; the Game Boy link in Snouty Boy is verified
+on two badges). Lockstep comes from the shared `lib/lockstep.zig`
+(extracted from Snouty GC's M4 net code, also used by Snouty Cycles; root
+`docs/LOCKSTEP.md`). Zero's app id is 'Z'. Defaults taken:
+
+- **Menu.** A LINK RACE row in the main menu. In the simulator it is
+  greyed, "NO LINK IN SIMULATOR". The lockstep's common wording is
+  "PLUG IN THE CABLE", "WRONG CART: <name>", "WAITING FOR PEER" and
+  "PEER LEFT, AI DRIVING".
+- **Lobby.** The host (higher link nonce) picks the track: any track of
+  any league, one rules byte. Both pick a machine (`ai.player_machines`,
+  3 bits; both may pick the same one) and ready up. The host's Start goes.
+  The guest sees the host's track live.
+- **Race.** One race on that track: the usual rivals and traffic, with the
+  host's human in machine 0 and the guest's in machine 1 (a rival slot),
+  side by side in the back grid row. Each badge follows and shows the HUD
+  for its own machine. KOs, overclock and thermal work as in solo play,
+  and credit goes to whichever human did it. The results show both
+  humans' places and times. No GP points. A then returns both badges to
+  the lobby.
+- **Lockstep.** The input byte has A, B, Up, Down, Left, Right and Start
+  (bits 0-6, never 0xC0/0xDB). Start is the lockstep pause bit, so both
+  badges pause on the same tick. There is no rewind, scrub or attract in
+  a link race. The hash is `lockstep.hash_fields` over the World. If the
+  partner leaves, the AI drives its machine to the finish. A desync ends
+  the race with a DESYNC band, then the lobby.
+- **Pumping.** At the top of `update`, then loop to 14 ms into the frame
+  while `busy()`. Zero's worst frame is 4.8 ms, so no in-draw hooks.
+  Solo play never touches the link (it starts when LINK RACE opens), so
+  solo frames are unchanged.
+
+Work, one track:
+
+- `world.zig`, `sim.zig`: a second human. `World.humans: [2]u8` holds
+  machine indices, or none. `simulate(w, inputs: [2]Buttons-or-byte)`
+  stays pure. Every `world.player` use that means "a human" or "the
+  credited human" becomes per-human. The renderer, HUD, camera and sound
+  take a `view` machine index instead of the constant. Solo play is
+  bit-identical: existing tests, rewind and history unchanged, keyframe
+  World still under 640 B.
+- `net` glue (`link_race.zig`): `Lockstep(link.Badge, G)` with G = Zero's
+  World/simulate/hash/hand_over, the lobby screens and the race loop as
+  in `docs/LOCKSTEP.md`.
+- Host tests: two Worlds over `lib/link_virtual.zig` with loss race a
+  whole track to the finish in sync; peer left (AI takes over, both
+  finish); desync detected; pause on the same tick; solo determinism and
+  the old tests unchanged.
+
+Done when `zig build`, `zig build test` and `zig build check-float` pass,
+the solo bench worst frame stays within M5.5 (4.81 ms), RAM still fits,
+and a preview shows the lobby (debug view) and a two-human race from each
+badge's view.
+
+### M6 status
+
+- 2026-10-05: built on branch `zero/m6` over `lib/lockstep.zig`
+  (link/lockstep 362658b0, merged in); hardware check pending (RUNNING.md
+  section 9). SPEC 8.1 is the design as built.
+- **Sim.** `World.humans` (machine per input slot, `no_human` solo),
+  `World.picks`, `World.ai_drives` (the partner left), per-human message
+  bars, KO counts and KO credit (`Machine.hit_by`); `simulate_humans` and
+  `simulate_world` (any World, swapped through `world.w`; the lockstep's
+  `G.simulate`), `reset_link` (the guest in machine 1, both humans side by
+  side on the back row). A human's crash in a link race is the sim's own
+  hit-stop and centerline reset. The race ends when every human has
+  finished; rivals rubber-band to the leading human; ram damage and
+  collision crashes work for either human. Machine is 40 bytes (bools in
+  one packed `f`, finish / best-lap / lap-start ticks u16, saturating at
+  18 minutes), the World 468 bytes (was 600 with two humans, 592 at M5.5).
+- **Solo is bit-identical.** Every pixel checksum and race export of the
+  M5.5 wasm matches frame by frame through the bench script, a hold-B
+  rewind plus forced crash, two forced knockouts, the attract demo, a
+  machine select race, `m2_player.json` and two whole autopilot races
+  (Cold Aisle, Exhaust Ridge). Only the main menu's pixels differ (the
+  LINK RACE row), and `m3_menus.json`'s Down Down A now lands on LINK
+  RACE instead of MACHINE.
+- **Host tests** (`zig build test -Dcart=snouty-zero`: 44, all pass):
+  the solo ones unchanged; two-human ones in `sim.zig` (link grid on all
+  nine tracks, slot 1's buttons ignored solo, two-human determinism
+  through a detached World, both humans to the finish, per-human KO
+  credit, humans ram each other alike and are never knocked out, the AI
+  hand-over, the 640-byte bound); `link_race.zig` (the byte never 0xC0 /
+  0xDB, the agreed World, the hash); `link_race_test.zig`, two badges on
+  the virtual cable with the 8-byte FIFO, drift and missed vsyncs: 2
+  clean races (12,679 ticks, 88 of 25,472 frames without a tick, at most
+  2 in a row) and 4 with 1% byte loss (24,180 ticks, 3,413 CRC drops, 882
+  of 49,291 frames without a tick, at most 8 in a row) equal at every
+  tick to both finishes; unplugged mid-race, both `peer_left` 33 ms later
+  and both finish with the AI on the other machine; a World changed on
+  one badge, desync on both within 30 ticks; Start pauses both on the
+  same tick and the other badge's Start resumes both, in sync to the
+  finish; lobby roles, WRONG CART, offline, the host's track reaching the
+  guest, a shared machine pick. Whole repo `zig build test` and
+  `zig build check-float` pass.
+- **Bench** (`m3_bench.json`, 1700 frames, solo): **mean 2.08 ms, worst
+  4.80 ms** (M5.5: 2.08 / 4.81). Solo never starts the link. badge-bench
+  has no connected-partner fake, so a link race frame is not benched: it
+  pumps to 14 ms by design, and its own work (one input packet out, the
+  World hash every 32 ticks, about 300 field mixes) is small next to the
+  4.8 ms solo frame.
+- **RAM.** The real lockstep made the link race code live in the badge
+  build and overflowed the stack reserve by 4.1 KB. Cuts: the lockstep
+  and link modules build ReleaseSmall, the Machine compaction above
+  (every World byte is 44 bytes of keyframes and window cache), a
+  bit-packed minimap outline, the made-up link screens simulator-only.
+  RAM ELF `size -A`: .text 217,468 + .data 5,180 + .bss 45,804 B (M5.5:
+  199,604 + 5,300 + 53,952), **4.6 KB free below the 32 KB stack**
+  (M5.5: about 15 KB). The XIP ELF's .text is 217,860 B of the 256 KB
+  window.
+- **Preview** `docs/preview_m6.gif`: the made-up lobbies (searching, the
+  host changing the track and readying, START: GO, the guest's view of
+  the host's track and both ready), one Exhaust Ridge race from the
+  host's view and then from the guest's (a WAITING FOR PEER notice
+  shown), the guest's results with both humans. Recipe: RUNNING.md
+  section 9.
+
 ## Hand-off
 
 All milestones are built, tested and on `origin/main` (tags
@@ -658,3 +777,10 @@ decisions taken by default.
    field; the knobs are `tuning.ram_damage_per_px` (200),
    `ram_overclock_q8` (1.5x), `ko_credit_ticks` (120) and
    `traffic_thermal` (400). A rewind brings knocked-out machines back.
+10. (M6) The guest takes ARGMAX's slot (machine 1), so a link race has
+   three named rivals; rivals rubber-band to the leading human; a badge
+   whose human is home shows its results 2.5 s later while the partner
+   may still race (the lockstep keeps running underneath); B does nothing
+   in a link race and a crash is the centerline reset; the results show
+   place, time, best lap and KOs for both, no GP points. LINK RACE sits
+   between GRAND PRIX and MACHINE in the main menu.

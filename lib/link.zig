@@ -148,6 +148,11 @@ pub fn Link(comptime Port: type) type {
         /// The cart's id, sent in HELLO so a partner can tell which cart it
         /// is talking to (`partner_app`).
         app: u8,
+        /// The cart's own protocol version, sent in the high nibble of
+        /// HELLO's version byte (the low nibble is `protocol_version`); 0
+        /// sends exactly `protocol_version`, as before it existed.
+        /// lib/lockstep.zig sets it from `G.version`.
+        app_version: u4 = 0,
         state: State,
         mode: Mode = .normal,
         rng: u32,
@@ -167,7 +172,9 @@ pub fn Link(comptime Port: type) type {
         nonce: u16 = 0,
         partner_nonce: u16 = 0,
 
-        // What the partner told us in its last HELLO.
+        // What the partner told us in its last HELLO. `partner_version` is
+        // the raw byte: its app version in the high nibble, the link's
+        // `protocol_version` in the low one.
         partner_mode: Mode = .normal,
         partner_app: u8 = 0,
         partner_version: u8 = 0,
@@ -358,8 +365,8 @@ pub fn Link(comptime Port: type) type {
             // line: until then it may be driving our transmit wire.
             if (self.state == .handshake and !self.port.read(self.tx_pin().other())) return;
             self.send_packet(now, .hello, &.{
-                @intFromBool(need_reply), @backingInt(self.mode),     self.app,
-                protocol_version,         @truncate(self.nonce >> 8), @truncate(self.nonce),
+                @intFromBool(need_reply),                            @backingInt(self.mode),     self.app,
+                protocol_version | (@as(u8, self.app_version) << 4), @truncate(self.nonce >> 8), @truncate(self.nonce),
             });
         }
 

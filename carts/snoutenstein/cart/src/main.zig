@@ -4,7 +4,8 @@
 //! frozen, B rewinds) / paused; playing -> intermission -> next level ->
 //! victory; the title idles into the recorded demo (attract mode, PLAN.md
 //! M5) which any pad press takes over. Rewind semantics: PLAN.md M4; the
-//! core is rewind.zig.
+//! core is rewind.zig. The title's DEATHMATCH entry hands every frame to
+//! deathmatch.zig (M7, two badges over the link cable) until it backs out.
 const std = @import("std");
 const builtin = @import("builtin");
 const cart = @import("cart-api");
@@ -20,12 +21,14 @@ const blit = @import("render/blit.zig");
 const audio = @import("audio.zig");
 const rewind = @import("rewind.zig");
 const demo = @import("demo.zig");
+const deathmatch = @import("deathmatch.zig");
+const match = @import("match.zig");
 
 comptime {
     cart.export_start_code();
 }
 
-pub const Mode = enum(u32) { title = 0, playing = 1, paused = 2, intermission = 3, victory = 4, dead = 5, rewinding = 6 };
+pub const Mode = enum(u32) { title = 0, playing = 1, paused = 2, intermission = 3, victory = 4, dead = 5, rewinding = 6, deathmatch = 7 };
 
 // Level indices come from levels.zig once the campaign levels land (M3
 // track C); until then everything maps onto the levels that exist.
@@ -87,6 +90,16 @@ var title_ticks: u32 = 0;
 var demo_ticks: u32 = 0;
 var demo_dead: u32 = 0;
 var demo_result: hud.DemoResult = .none;
+/// Title menu row: 0 PLAY, 1 DEATHMATCH (M7).
+var title_cursor: u8 = 0;
+/// The link cable exists on the badge, not in the simulator.
+const has_link = !cart.is_wasm;
+
+/// badge-bench (`--poke stein_dm_bench=N`): N > 0 starts a local
+/// deathmatch at the first update, both players driven by bot.zig, on the
+/// rules byte N - 1 (`match.Rules`). There is no cable in the bench.
+export var stein_dm_bench: u8 = 0;
+var bench_started = false;
 
 pub fn start() void {
     cart.set_vsync_enabled(1000.0 / 60.0);
@@ -99,6 +112,19 @@ pub fn update() void {
     const pad: state.Buttons = @bitCast(@as(u16, @bitCast(read_controls())));
     defer prev_pad = pad;
     tick_total += 1;
+
+    if (stein_dm_bench != 0 and !bench_started) {
+        bench_started = true;
+        deathmatch.view_slot = 0;
+        deathmatch.start_local(match.Rules.decode(stein_dm_bench - 1), .{ true, true }, 1);
+        mode = .deathmatch;
+    }
+    if (mode == .deathmatch) {
+        if (!deathmatch.update(pad, cart.micros_since_boot())) to_title();
+        prev_in = pad;
+        if (cart.is_wasm) present_wasm();
+        return;
+    }
 
     // Which input drives this tick: the pad, or the demo log. Any button
     // edge on the pad ends the demo and goes back to the title; the press
@@ -123,7 +149,7 @@ pub fn update() void {
     prev_in = in;
 
     switch (mode) {
-        .title => hud.draw_title(tick_total, audio.enabled, demo_result),
+        .title => hud.draw_title(tick_total, audio.enabled, demo_result, .{ .cursor = title_cursor, .link = has_link }),
         .playing, .paused, .dead, .rewinding => {
             const rw = mode == .rewinding;
             const shown: *const state.GameState = if (rw) rewind.current() else &game;
@@ -144,6 +170,7 @@ pub fn update() void {
         },
         .intermission => hud.draw_intermission(&game, level.name, @intCast(level.enemies.len), card_ticks),
         .victory => hud.draw_victory(&game, card_ticks),
+        .deathmatch => {},
     }
 
     if (cart.is_wasm) present_wasm();
@@ -153,13 +180,23 @@ pub fn update() void {
 fn run_mode(b: state.Buttons) void {
     switch (mode) {
         .title => {
-            // A: campaign. B: the imported E1M1. Start: the test level (the
-            // scripted runs use it). Select: sound (SPEC.md section 3).
-            // Nothing for `attract_after` ticks: the recorded demo.
+            // A: the menu row (PLAY: the campaign; DEATHMATCH: the lobby,
+            // badge only). Up/Down: the row. B: the imported E1M1. Start:
+            // the test level (the scripted runs use it). Select: sound
+            // (SPEC.md section 3). Nothing for `attract_after` ticks: the
+            // recorded demo.
             title_ticks += 1;
             entry_loadout = null;
-            if (pressed(b, .a)) {
-                new_game(0);
+            if (pressed(b, .up) or pressed(b, .down)) {
+                title_cursor = if (pressed(b, .down)) 1 else 0;
+                title_ticks = 0;
+            } else if (pressed(b, .a)) {
+                if (title_cursor == 0) {
+                    new_game(0);
+                } else if (has_link) {
+                    deathmatch.enter();
+                    mode = .deathmatch;
+                }
             } else if (pressed(b, .b)) {
                 new_game(e1m1_index);
             } else if (pressed(b, .start)) {
@@ -237,6 +274,7 @@ fn run_mode(b: state.Buttons) void {
             card_ticks += 1;
             if (card_ticks >= victory_max or (card_ticks >= card_min and (pressed(b, .a) or pressed(b, .start)))) to_title();
         },
+        .deathmatch => {},
     }
 }
 
@@ -385,7 +423,82 @@ comptime {
         @export(&debug_title_ticks, .{ .name = "debug_title_ticks" });
         @export(&debug_start_demo, .{ .name = "debug_start_demo" });
         @export(&debug_new_game_seeded, .{ .name = "debug_new_game_seeded" });
+        @export(&debug_dm_local, .{ .name = "debug_dm_local" });
+        @export(&debug_dm_bots, .{ .name = "debug_dm_bots" });
+        @export(&debug_dm_view, .{ .name = "debug_dm_view" });
+        @export(&debug_dm_lobby, .{ .name = "debug_dm_lobby" });
+        @export(&debug_dm_screen, .{ .name = "debug_dm_screen" });
+        @export(&debug_dm_frags, .{ .name = "debug_dm_frags" });
+        @export(&debug_dm_over, .{ .name = "debug_dm_over" });
+        @export(&debug_dm_winner, .{ .name = "debug_dm_winner" });
+        @export(&debug_dm_tick, .{ .name = "debug_dm_tick" });
+        @export(&debug_dm_hash, .{ .name = "debug_dm_hash" });
+        @export(&debug_dm_hp, .{ .name = "debug_dm_hp" });
+        @export(&debug_title_cursor, .{ .name = "debug_title_cursor" });
     }
+}
+
+// Deathmatch previews (M7): no cable in the simulator, so these run a
+// local match (the pad drives the viewed player, bot.zig the other) or
+// draw a made-up lobby.
+
+/// Setup call: a local match on rules byte `r` (`match.Rules`), the pad
+/// on player 0, a bot on player 1.
+fn debug_dm_local(r: u32) callconv(.c) void {
+    deathmatch.view_slot = 0;
+    deathmatch.start_local(match.Rules.decode(@truncate(r)), .{ false, true }, 1);
+    mode = .deathmatch;
+}
+/// Setup call: a local match with both players on bots.
+fn debug_dm_bots(r: u32) callconv(.c) void {
+    deathmatch.view_slot = 0;
+    deathmatch.start_local(match.Rules.decode(@truncate(r)), .{ true, true }, 1);
+    mode = .deathmatch;
+}
+/// Show (and, if it is not a bot, drive) player `slot`.
+fn debug_dm_view(slot: u32) callconv(.c) void {
+    deathmatch.view_slot = @intCast(slot & 1);
+}
+/// Setup call: the lobby, drawn as 0 the simulator really shows (NO LINK),
+/// 1 the host with both ready, 2 the guest, 3 searching, 4 wrong cart.
+fn debug_dm_lobby(kind: u32) callconv(.c) void {
+    deathmatch.enter();
+    const r: match.Rules = .{ .arena = 0, .frags = 1, .bugs = true };
+    deathmatch.fake_lobby = switch (kind) {
+        1 => .{ .st = .lobby, .role = .host, .rules = r, .ready = true, .peer_ready = true, .can_go = true },
+        2 => .{ .st = .lobby, .role = .guest, .rules = r, .ready = false, .peer_ready = true },
+        3 => .{ .st = .searching },
+        4 => .{ .st = .wrong_cart, .partner = 'G' },
+        else => null,
+    };
+    mode = .deathmatch;
+}
+fn debug_dm_screen() callconv(.c) u32 {
+    return if (mode == .deathmatch) @backingInt(deathmatch.screen) else 0xFF;
+}
+/// Frags, player 0 in the low half and player 1 in the high half (i16 each).
+fn debug_dm_frags() callconv(.c) u32 {
+    const f = deathmatch.world.m.frags;
+    return @as(u32, @as(u16, @bitCast(f[0]))) | @as(u32, @as(u16, @bitCast(f[1]))) << 16;
+}
+fn debug_dm_over() callconv(.c) u32 {
+    return @intFromBool(deathmatch.world.m.over);
+}
+fn debug_dm_winner() callconv(.c) u32 {
+    return deathmatch.world.m.winner;
+}
+fn debug_dm_tick() callconv(.c) u32 {
+    return deathmatch.world.gs.tick;
+}
+fn debug_dm_hash() callconv(.c) u32 {
+    return match.hash(&deathmatch.world);
+}
+/// HP of the viewed player.
+fn debug_dm_hp() callconv(.c) u32 {
+    return @bitCast(@as(i32, deathmatch.world.m.players[deathmatch.view_slot].hp));
+}
+fn debug_title_cursor() callconv(.c) u32 {
+    return title_cursor;
 }
 fn debug_mode() callconv(.c) u32 {
     return @backingInt(mode);

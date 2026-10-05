@@ -102,12 +102,34 @@ pub fn add(b: *Build, sycl_badge_dep: *Build.Dependency, opts: common.Options) v
         .optimize = .Debug,
     });
     tests_mod.addImport("assets", assets_module(b));
+    tests_mod.addImport("lockstep", lockstep_module(b, null));
+    tests_mod.addImport("link_host", link_host_module(b));
     const tests = b.addTest(.{ .root_module = tests_mod });
     opts.test_step.dependOn(&b.addRunArtifact(tests).step);
 }
 
 var build_options: ?*Build.Step.Options = null;
 var build_options_xip: ?*Build.Step.Options = null;
+
+/// The host tests' link (link_race_test.zig): lib/link.zig and its
+/// virtual cable (lib/link_virtual.zig imports link.zig by path) copied
+/// side by side under one root, `link_host.link` and `link_host.virtual`
+/// (as snouty-gc's build does).
+fn link_host_module(b: *Build) *Build.Module {
+    const wf = b.addWriteFiles();
+    for ([_][]const u8{ "link.zig", "link_rp2350.zig", "link_virtual.zig" }) |f| {
+        _ = wf.addCopyFile(b.path(b.fmt("lib/{s}", .{f})), f);
+    }
+    const root = wf.add("link_host.zig", "pub const link = @import(\"link.zig\");\npub const virtual = @import(\"link_virtual.zig\");\n");
+    return b.createModule(.{ .root_source_file = root });
+}
+
+/// The shared two-badge lockstep (M6, root docs/LOCKSTEP.md).
+/// The cart builds it (and the link) ReleaseSmall: they run a few times a
+/// frame at most, and the RAM cart needs the bytes (PLAN M6 status).
+fn lockstep_module(b: *Build, optimize: ?std.builtin.OptimizeMode) *Build.Module {
+    return b.createModule(.{ .root_source_file = b.path("lib/lockstep.zig"), .optimize = optimize });
+}
 
 /// One entry per sprite sheet in assets/gen/ (drawn by tools/prepare_assets.py;
 /// ASSETS.md has the manifest). `bits` is palette bits per pixel (4 = up to 15
@@ -151,6 +173,9 @@ fn build_cart_modules(b: *Build, cart: *Build.Module, cart_api: *Build.Module, s
     cart.addImport("assets", assets_module(b));
     // Sound on the newer firmware: tone2 rendered into the streaming ring.
     cart.addImport("tone_stream", b.createModule(.{ .root_source_file = b.path("lib/tone_stream.zig") }));
+    // The badge-to-badge link (docs/LINK.md) under the lockstep (M6 link race).
+    cart.addImport("link", b.createModule(.{ .root_source_file = b.path("lib/link.zig"), .optimize = .ReleaseSmall }));
+    cart.addImport("lockstep", lockstep_module(b, .ReleaseSmall));
 
     // The `gfx` module: the PNGs in `images` through the per-cart converter
     // (snouty-maze / snouty-bugs pattern), generated at build time.

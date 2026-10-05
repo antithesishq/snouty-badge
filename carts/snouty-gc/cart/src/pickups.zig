@@ -80,8 +80,8 @@ pub fn chain_anchor(w: *const World, i: usize) Point {
 pub const Tier = enum(u8) { a, b, c };
 
 pub fn tier_of(p: Pickup) Tier {
-    const v = @intFromEnum(p);
-    return if (v <= @intFromEnum(Pickup.spaghetti)) .a else if (v <= @intFromEnum(Pickup.race_condition)) .b else .c;
+    const v = @backingInt(p);
+    return if (v <= @backingInt(Pickup.spaghetti)) .a else if (v <= @backingInt(Pickup.race_condition)) .b else .c;
 }
 
 /// One roll for a car at `rank` (1..6): a tier by the rank's odds, then a
@@ -260,7 +260,7 @@ fn emit_at(w: *World, kind: world.EventKind, a: u8, b: u8, c: u8, o: *const Car)
 }
 
 fn effect(w: *World, src: u8, j: usize, p: Pickup) void {
-    emit_at(w, .effect, src, @intCast(j), @intFromEnum(p), &w.cars[j]);
+    emit_at(w, .effect, src, @intCast(j), @backingInt(p), &w.cars[j]);
 }
 
 /// Is the point at (x, y) Q16 on floor a drop may lie on (not a wall, not
@@ -297,23 +297,23 @@ pub fn use(w: *World, i: usize, back: bool) void {
     c.pickup = .none;
     const me: u8 = @intCast(i);
     switch (p) {
-        .none, .prompt_injection => emit_at(w, .use, me, @intFromEnum(p), no_car, c),
+        .none, .prompt_injection => emit_at(w, .use, me, @backingInt(p), no_car, c),
         .prefetch => {
             // An instant kick along the heading, then the raised top speed.
             c.prefetch = tuning.prefetch_ticks;
             c.vx += fixed.mul(fixed.cos(c.heading), tuning.prefetch_kick);
             c.vy += fixed.mul(fixed.sin(c.heading), tuning.prefetch_kick);
-            emit_at(w, .use, me, @intFromEnum(p), no_car, c);
+            emit_at(w, .use, me, @backingInt(p), no_car, c);
         },
         .duck => {
             c.duck = tuning.duck_ticks;
-            emit_at(w, .use, me, @intFromEnum(p), no_car, c);
+            emit_at(w, .use, me, @backingInt(p), no_car, c);
         },
         .hot_patch => {
             c.patch = tuning.patch_ticks;
             c.bit_flip = 0;
             unchain(w, i);
-            emit_at(w, .use, me, @intFromEnum(p), no_car, c);
+            emit_at(w, .use, me, @backingInt(p), no_car, c);
         },
         .honeypot, .spaghetti, .fork_bomb => {
             const kind: world.DropKind = switch (p) {
@@ -323,7 +323,7 @@ pub fn use(w: *World, i: usize, back: bool) void {
             };
             const fwd = !back and p != .fork_bomb;
             const d = place(w, i, kind, if (fwd) tuning.throw_dist else -tuning.drop_behind);
-            weapons.emit(w, .use, me, @intFromEnum(p), no_car, d.x, d.y);
+            weapons.emit(w, .use, me, @backingInt(p), no_car, d.x, d.y);
         },
         .bit_flip => {
             const t = ahead(w, i, tuning.ahead_range, true, no_car);
@@ -382,7 +382,7 @@ pub fn use(w: *World, i: usize, back: bool) void {
             for (&w.drones) |*d| {
                 if (d.target == i) d.state = .none;
             }
-            emit_at(w, .use, me, @intFromEnum(p), no_car, c);
+            emit_at(w, .use, me, @backingInt(p), no_car, c);
         },
         .race_condition => {
             const t = ahead(w, i, tuning.race_range, true, no_car);
@@ -419,7 +419,7 @@ pub fn use(w: *World, i: usize, back: bool) void {
             }
         },
         .captcha => {
-            emit_at(w, .use, me, @intFromEnum(p), no_car, c);
+            emit_at(w, .use, me, @backingInt(p), no_car, c);
             for (&w.cars, 0..) |*o, j| {
                 if (j == i or !racing(w, o) or o.sudo > 0) continue;
                 start_captcha(w, j);
@@ -427,7 +427,7 @@ pub fn use(w: *World, i: usize, back: bool) void {
         },
         .sudo => {
             c.sudo = tuning.sudo_ticks;
-            emit_at(w, .use, me, @intFromEnum(p), no_car, c);
+            emit_at(w, .use, me, @backingInt(p), no_car, c);
         },
         .zero_day => {
             // Through armor, RUBBER DUCK, HEISENBUG and root.
@@ -448,7 +448,7 @@ pub fn use(w: *World, i: usize, back: bool) void {
 
 fn emit_use_at(w: *World, me: u8, p: Pickup, t: u8) void {
     const at = if (t != no_car) &w.cars[t] else &w.cars[me];
-    emit_at(w, .use, me, @intFromEnum(p), t, at);
+    emit_at(w, .use, me, @backingInt(p), t, at);
 }
 
 fn pop_duck(w: *World, src: u8, j: usize) void {
@@ -782,7 +782,7 @@ fn update_crates(w: *World) void {
             c.pickup = roll_pickup(w, c.rank, !c.zero_day_used);
             if (c.pickup == .zero_day) c.zero_day_used = true;
             c.roll_ticks = tuning.roll_ticks;
-            weapons.emit(w, .roll, @intCast(i), @intFromEnum(c.pickup), @intCast(k), @as(i32, s.x) << fixed.Q, @as(i32, s.y) << fixed.Q);
+            weapons.emit(w, .roll, @intCast(i), @backingInt(c.pickup), @intCast(k), @as(i32, s.x) << fixed.Q, @as(i32, s.y) << fixed.Q);
             break;
         }
     }

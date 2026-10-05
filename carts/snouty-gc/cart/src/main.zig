@@ -8,7 +8,11 @@
 //! demo, and the render stress scene (stress.zig). M3: the main menu
 //! (QUICK RACE, GARBAGE COLLECTION, LINK greyed, SOUND), the track row over
 //! every track, GARBAGE COLLECTION (a collected player watches the leader),
-//! and the attract demo's camera cuts on a rotating track. The World lives here; `sim.simulate(&w, inputs)`
+//! and the attract demo's camera cuts on a rotating track. M4: LINK (the
+//! lobby, the shared racer select, LINK RACE and LINK GC over `net.zig`'s
+//! lockstep, docs/NET.md section 3). M5: the CIRCUIT (the SNOUTY GCP:
+//! `prix`, career.zig; the garage, standings and cards), A on the title
+//! for a Quick Race. The World lives here; `sim.simulate(&w, inputs)`
 //! advances it and everything else only reads it. `follow` (which car this
 //! badge draws and hears), the camera, the effects and the HUD notices
 //! (fx.zig, from the World's event ring) are render-side state, never in
@@ -34,20 +38,41 @@ const hills = @import("hills.zig");
 const fx = @import("fx.zig");
 const select = @import("select.zig");
 const stress = @import("stress.zig");
+const link = @import("link");
+const net = @import("net.zig");
+const link_ui = @import("link_ui.zig");
+const career = @import("career.zig");
+const garage = @import("garage.zig");
+const standings = @import("standings.zig");
+const pickup_page = @import("pickup_page.zig");
 
 comptime {
     cart.export_start_code();
 }
 
-/// Screens (SPEC 8.1; the numbers are debug_screen's, `menu` came in M3).
-pub const Screen = enum(u8) { splash, title, select, race, pause, results, menu };
+/// Screens (SPEC 8.1; the numbers are debug_screen's, `menu` came in M3,
+/// `lobby` (the LINK screen) in M4; the link race's racer select is
+/// `select` with `select.link` set; M5 the CIRCUIT's `garage`,
+/// `standings` and `card` (the league, unlock and end cards); `pickups`
+/// (the menu's PICKUPS page) came with gc/menu-fix after them).
+pub const Screen = enum(u8) { splash, title, select, race, pause, results, menu, lobby, garage, standings, card, pickups };
 var screen: Screen = .splash;
 /// Why the race runs: a Quick Race, the attract demo, the render stress
-/// scene, or GARBAGE COLLECTION (M3; the numbers are debug_mode's).
-const Mode = enum(u8) { quick, attract, stress, gc };
+/// scene, GARBAGE COLLECTION (M3), a CIRCUIT race (M5; race rules, the
+/// garage's loadouts, chips on). The numbers are debug_mode's.
+const Mode = enum(u8) { quick, attract, stress, gc, circuit };
 var mode: Mode = .quick;
-/// The mode the main menu picked (quick or gc): the select races it.
+/// The mode the main menu picked (quick, gc or circuit): the select races it.
 var race_mode: Mode = .quick;
+
+/// M5: the CIRCUIT (the SNOUTY GCP), kept in RAM for the session (no
+/// saves, SPEC 17.6): CIRCUIT in the main menu resumes it at the garage
+/// until its end card.
+var prix: career.Career = career.Career.init(racers.snouty);
+var prix_on: bool = false;
+/// Which card the `card` screen shows.
+const Card = enum(u8) { league, unlock, end };
+var card: Card = .league;
 
 /// The race. Only `sim` writes it.
 var w: world.World = .{};
@@ -66,6 +91,11 @@ var results_card: u8 = 0;
 /// The render stress scene (stress.zig): badge-bench `--poke gc_stress=1`
 /// starts it at boot; the wasm `debug_stress` export too.
 export var gc_stress: u8 = 0;
+/// M5: badge-bench `--poke gc_cards=1` (tools/scripts/m5_cards.json): a
+/// SNOUTY GCP with 5,000 CYCLES in the garage at boot, where Start books a
+/// made-up 1st place instead of racing, so a script walks the garage, the
+/// standings and every card.
+export var gc_cards: u8 = 0;
 /// Race seed: a new one per race from the frame counter (any value works;
 /// the link race of M4 shares one between the badges).
 var seed: u32 = 0x5EED_6C00;
@@ -107,12 +137,62 @@ var last_msg: world.Message = .none;
 var last_input: u8 = 0;
 var finish_note: u32 = 0;
 
+// --- Link (M4, docs/NET.md) ------------------------------------------------------
+
+const Net = net.Net(link.Badge);
+/// The race byte's Start bit (world.Input bit 6).
+const start_bit: u8 = 0x40;
+/// The link and its lockstep. Pumped on the LINK screens and through a
+/// link race only: single player never touches it.
+var lnk: Net = undefined;
+/// This race runs over the link (LINK RACE / LINK GC): from the GO to
+/// `leave` (QUIT, the results, a desync).
+var linked: bool = false;
+/// The lobby: the host's row and the rules it offers (kept between races).
+var lobby_cursor: u8 = 0;
+var lobby_rules: net.Rules = .{};
+/// The link select: this badge is ready on its racer.
+var link_ready: bool = false;
+/// Pause: RESUME (or B) holds Start in the race byte until `paused` turns
+/// off (net.Resume: a byte `submit` drops while `step` stalls must not
+/// lose the edge). It sees every byte submitted in a link race.
+var resume_hold: net.Resume = .{};
+/// Frames `PEER LEFT, AI DRIVING` stays up; set once per race.
+var left_note: u32 = 0;
+var left_shown: bool = false;
+/// The race ended in a desync (the results say so).
+var desynced: bool = false;
+/// The top of this update (us): the pump loop runs until
+/// `tuning.link_pump_until_us` after it.
+var frame_t0: u64 = 0;
+/// Pump instrumentation: the last pump of this frame, the worst gap
+/// between two pumps inside a race frame (top of update to the last pump
+/// after the HUD), and the race's frames without a tick. badge-bench
+/// `--poke gc_pump_probe=1` runs the pump points in a single-player race
+/// too (no partner) and traces the worst gap as it grows (PLAN M4 status).
+export var gc_pump_probe: u8 = 0;
+var last_pump: u64 = 0;
+var pump_gap_worst: u32 = 0;
+var race_waits: u32 = 0;
+/// The probe's sink for the per-tick lockstep work it runs (world_hash,
+/// encode_input), so the optimizer keeps it.
+export var gc_probe_sink: u32 = 0;
+/// Debug (wasm, where the link is offline): a made-up lobby or select
+/// (`debug_link_view`) and race notice (`debug_link_notice`).
+var fake_view: u8 = 0;
+var fake_notice: u8 = 0;
+
 pub fn start() void {
     cart.set_vsync_enabled(1000.0 / 60.0);
     cart.set_double_buffer_mode(.no_copy_full_frame);
+    lnk = Net.init(link.Badge.init(.{}, net.app_id, cart.rand()));
     backdrop();
     go(.splash);
     if (gc_stress != 0) start_stress();
+    if (gc_cards != 0) {
+        debug_start_circuit(racers.snouty);
+        prix.cycles = 5000;
+    }
 }
 
 fn start_stress() void {
@@ -144,27 +224,35 @@ fn to_title() void {
 }
 
 fn to_menu() void {
-    if (screen != .title) backdrop();
+    if (screen != .title and screen != .lobby) backdrop();
     link_note = 0;
     go(.menu);
 }
 
 fn new_race(m: Mode, t: u8) void {
-    mode = m;
+    linked = false;
     seed = seed *% 1103515245 +% 12345 +% frame;
     var setup = world.Setup{ .track = t, .seed = seed, .mode = switch (m) {
         .gc => .gc,
         .attract => .attract,
-        .quick, .stress => .race,
+        .quick, .stress, .circuit => .race,
     } };
     if (m == .quick or m == .gc) setup.humans[0] = player_racer;
+    // The CIRCUIT: the league's track, every car's loadout, chips on.
+    if (m == .circuit) setup = prix.setup(seed);
+    begin_race(m, setup, player_racer);
+}
+
+/// Reset the World from `setup` and start drawing the race from car `car`.
+fn begin_race(m: Mode, setup: world.Setup, car: u8) void {
+    mode = m;
     sim.reset(&w, setup);
     const tr = sim.track_of(&w);
     render.set_track(tr);
     hud.init_minimap(tr);
     hills.init(tr, w.lap_px);
     render.hills_on = true;
-    me = player_racer;
+    me = car;
     follow = me;
     cut_frames = 0;
     hold_frames = 0;
@@ -181,7 +269,11 @@ pub fn update() void {
     defer sound.update();
     input.update(read_controls());
     const t0 = cart.micros_since_boot();
+    frame_t0 = t0;
+    // The floor bands pump the link in a link race (and in the probe).
+    render.band_hook = if (linked or (gc_pump_probe != 0 and screen == .race)) &pump else null;
     switch (screen) {
+        .lobby => lobby_frame(),
         .splash => splash_frame(),
         .title => title_frame(),
         .select => select_frame(),
@@ -189,6 +281,10 @@ pub fn update() void {
         .pause => pause_frame(),
         .results => results_frame(),
         .menu => menu_frame(),
+        .garage => garage_frame(),
+        .standings => standings_frame(),
+        .card => card_frame(),
+        .pickups => pickups_frame(),
     }
     engine_cue();
     render_us = @truncate(cart.micros_since_boot() - t0);
@@ -217,6 +313,13 @@ fn title_frame() void {
     if (input.pressed(.start)) {
         sound.menu_confirm();
         to_menu();
+    } else if (input.pressed(.a)) {
+        // M5: A goes straight to the Quick Race select (SPEC 8.1: two
+        // presses from the title to a race); Start opens the menu.
+        sound.menu_confirm();
+        race_mode = .quick;
+        to_select();
+        select.draw(frame);
     } else if (any_pressed()) {
         screen_frames = 0;
     } else if (screen_frames >= attract_after) {
@@ -245,7 +348,7 @@ fn menu_frame() void {
         return;
     }
     if (input.pressed(.a) or input.pressed(.start)) {
-        switch (@as(menu.Item, @enumFromInt(main_list.cursor))) {
+        switch (@as(menu.Item, @fromBackingInt(@intCast(main_list.cursor)))) {
             .quick, .gc => |it| {
                 sound.menu_confirm();
                 race_mode = if (it == .gc) .gc else .quick;
@@ -253,15 +356,52 @@ fn menu_frame() void {
                 select.draw(frame);
                 return;
             },
-            // M4: the link cable. Until then the row only says so.
-            .link => link_note = 48,
+            // M5: the SNOUTY GCP: a Prix under way resumes in the garage,
+            // else the racer select starts one.
+            .circuit => {
+                sound.menu_confirm();
+                if (prix_on and !prix.done) return to_garage();
+                race_mode = .circuit;
+                to_select();
+                select.draw(frame);
+                return;
+            },
+            // The PICKUPS reference page (pickup_page.zig).
+            .pickups => {
+                sound.menu_confirm();
+                go(.pickups);
+                pickup_page.draw(frame);
+                return;
+            },
+            // M4: the link cable (greyed in the simulator: it only says so).
+            .link => if (link_ok()) {
+                sound.menu_confirm();
+                to_lobby();
+                draw_backdrop();
+                link_ui.draw_lobby(&lobby_view(), lobby_cursor, frame);
+                return;
+            } else {
+                link_note = 48;
+            },
             .sound => {
                 toggle_sound();
                 sound.menu_confirm();
             },
         }
     }
-    menu.draw_main(&main_list, sound.enabled, link_note, frame);
+    menu.draw_main(&main_list, sound.enabled, link_ok(), link_note, frame);
+}
+
+/// The menu's PICKUPS page (pickup_page.zig): the arrows browse, B goes
+/// back to the menu on its PICKUPS row.
+fn pickups_frame() void {
+    if (pickup_page.update() == .back) {
+        to_menu();
+        draw_backdrop();
+        menu.draw_main(&main_list, sound.enabled, link_ok(), link_note, frame);
+        return;
+    }
+    pickup_page.draw(frame);
 }
 
 fn menu_nav(list: *menu.List) void {
@@ -281,15 +421,24 @@ fn toggle_sound() void {
 }
 
 fn to_select() void {
+    select.link = null;
+    select.circuit = race_mode == .circuit;
     select.enter(player_racer, player_track, race_mode == .gc);
     go(.select);
 }
 
 /// The racer select (select.zig): A picks and starts a Quick Race.
 fn select_frame() void {
+    if (select.link != null) return link_select_frame();
     switch (select.update()) {
         .pick => {
             player_racer = select.racer;
+            if (race_mode == .circuit) {
+                // A new SNOUTY GCP with the racer picked.
+                prix = career.Career.init(player_racer);
+                prix_on = true;
+                return to_garage();
+            }
             player_track = select.track_index;
             new_race(race_mode, player_track);
             // The track's art and map were just unpacked (a few ms):
@@ -300,7 +449,7 @@ fn select_frame() void {
         .back => {
             to_menu();
             draw_backdrop();
-            menu.draw_main(&main_list, sound.enabled, link_note, frame);
+            menu.draw_main(&main_list, sound.enabled, link_ok(), link_note, frame);
             return;
         },
         .none => {},
@@ -337,9 +486,11 @@ fn draw_race(look: bool) void {
         sprites.car_screen = @splat(.{});
     } else {
         sprites.draw_floor_lines(&w, frame);
+        pump_point(.lines);
         sprites.draw_world(&w, .{ .follow = follow, .look_back = look, .frame = frame });
         fx.draw_beams(&w);
     }
+    pump_point(.sprites);
     hud.draw(&w, follow, .{
         .frame = frame,
         .look_back = look,
@@ -348,6 +499,7 @@ fn draw_race(look: bool) void {
         .press_start = mode == .attract,
     });
     hud.draw_after(frame);
+    pump_point(.after);
     camera.cam = saved;
     hills.backward = false;
 }
@@ -359,6 +511,8 @@ fn looking_back() bool {
 }
 
 fn race_frame() void {
+    if (linked) return link_race_frame();
+    if (gc_pump_probe != 0) pump_top();
     if (mode == .attract) {
         if (any_pressed()) {
             to_title();
@@ -369,8 +523,9 @@ fn race_frame() void {
     } else if (mode == .stress) {
         stress.step(&w, follow, screen_frames);
         fx.tick(&w, follow, frame);
+        pump_point(.sim);
         draw_race(looking_back());
-        return;
+        return probe_end();
     } else if (input.pressed(.start) and w.phase != .finished) {
         pause_list = .{ .count = 4 };
         go(.pause);
@@ -380,7 +535,7 @@ fn race_frame() void {
 
     // One tick. The human slot 0 is this badge's buttons (or the autopilot).
     var inputs = [2]u8{ 0, 0 };
-    if (mode == .quick or mode == .gc) {
+    if (mode == .quick or mode == .gc or mode == .circuit) {
         inputs[0] = if (autopilot) ai.drive(&w, me).byte() else input.race_byte();
         if (autopilot and autopilot_mix) {
             const pad = world.Input.of(input.race_byte());
@@ -403,6 +558,7 @@ fn race_frame() void {
         else => {},
     }
     sound_cues();
+    pump_point(.sim);
     if (w.phase == .finished) {
         finished_frames += 1;
         if (finished_frames >= results_after or (mode != .attract and input.pressed(.start))) {
@@ -417,6 +573,8 @@ fn race_frame() void {
         }
     }
     draw_race(looking_back());
+    if (cart.is_wasm and fake_notice != 0) link_ui.draw_notice(@fromBackingInt(@intCast(fake_notice % 3)), .unplugged, frame);
+    probe_end();
 }
 
 /// The camera jumps to car `i` on the next drawn frame.
@@ -526,6 +684,7 @@ fn engine_cue() void {
 // --- Pause and results -------------------------------------------------------------
 
 fn pause_frame() void {
+    if (linked) return link_pause_frame();
     draw_race(false);
     hud.fill_rect(24, 30, 112, 70, hud.anti_black);
     menu_nav(&pause_list);
@@ -542,6 +701,8 @@ fn pause_frame() void {
             1 => new_race(mode, w.track),
             2 => {
                 autopilot = false;
+                // A CIRCUIT race quit is not booked: back to the garage.
+                if (mode == .circuit) return to_garage();
                 to_select();
             },
             else => toggle_sound(),
@@ -552,15 +713,526 @@ fn pause_frame() void {
 /// Results: the winner's card, then the field; then the racer select
 /// for the next race.
 fn results_frame() void {
+    // A link race keeps pumping: the partner may still need a late tick
+    // of ours (the link resends it).
+    if (linked) pump_top();
     if (results_card == 0) results.draw_winner(&w, me, screen_frames) else results.draw_table(&w, me, screen_frames);
+    if (desynced) link_ui.draw_desync(frame);
     if (input.pressed(.start) or input.pressed(.a)) {
         sound.menu_confirm();
         if (results_card == 0) {
             results_card = 1;
+        } else if (linked) {
+            // Both badges go back to the lobby; a rematch starts there.
+            return leave_link();
+        } else if (mode == .circuit) {
+            // M5: the race is booked (CYCLES, points), then the standings.
+            _ = prix.finish_race(&w);
+            go(.standings);
+            return standings.draw_standings(&prix, screen_frames);
         } else {
             to_select();
         }
     }
+    if (linked) pump_loop(null);
+}
+
+// --- The CIRCUIT (M5: SPEC 8.2, 9) ---------------------------------------------------
+
+fn to_garage() void {
+    garage.enter(&prix);
+    go(.garage);
+    garage.draw(&prix, frame);
+}
+
+/// The garage (garage.zig): purchases, then Start / A on RACE: the AIs
+/// shop on their plans and the league's next race starts.
+fn garage_frame() void {
+    switch (garage.update(&prix)) {
+        .race => {
+            if (gc_cards != 0) {
+                _ = debug_prix_skip(1);
+                return standings.draw_standings(&prix, screen_frames);
+            }
+            prix.ai_shop();
+            new_race(.circuit, prix.track_index());
+            // The track was just unpacked: the garage shows once more.
+            garage.draw(&prix, frame);
+            return;
+        },
+        .back => {
+            to_menu();
+            draw_backdrop();
+            menu.draw_main(&main_list, sound.enabled, link_ok(), link_note, frame);
+            return;
+        },
+        .none => {},
+    }
+    garage.draw(&prix, frame);
+}
+
+/// The standings after a CIRCUIT race; A: the garage, or after a league's
+/// third race the league card.
+fn standings_frame() void {
+    standings.draw_standings(&prix, screen_frames);
+    if (!(input.pressed(.a) or input.pressed(.start))) return;
+    sound.menu_confirm();
+    if (prix.league_over()) {
+        _ = prix.close_league();
+        card = .league;
+        go(.card);
+        return standings.draw_league(&prix, screen_frames);
+    }
+    to_garage();
+}
+
+/// The league card, then the unlock card over the new league's floor (or
+/// the end card after the last), then the garage; a failed league goes
+/// back to the garage to try it again.
+fn card_frame() void {
+    switch (card) {
+        .league => standings.draw_league(&prix, screen_frames),
+        .unlock => {
+            draw_backdrop();
+            standings.draw_unlock(&prix, screen_frames);
+        },
+        .end => standings.draw_end(&prix, screen_frames),
+    }
+    if (!(input.pressed(.a) or input.pressed(.start)) or screen_frames < 20) return;
+    sound.menu_confirm();
+    switch (card) {
+        .league => if (prix.unlocked) {
+            card = .unlock;
+            show_league(prix.league);
+            go(.card);
+        } else if (prix.done) {
+            card = .end;
+            go(.card);
+        } else to_garage(),
+        .unlock => to_garage(),
+        .end => {
+            prix_on = false;
+            backdrop();
+            to_menu();
+        },
+    }
+}
+
+/// The backdrop over league `l`'s first track (the unlock card).
+fn show_league(l: u8) void {
+    const t = track.tracks[(l * track.tracks_per_league) % track.tracks.len];
+    track.select(t);
+    render.set_track(t);
+    camera.init(512 << fixed.Q, 512 << fixed.Q, camera.cam.yaw);
+    camera.cam.height = 96;
+    render.hills_on = false;
+}
+
+// --- Link (M4: SPEC 7, docs/NET.md section 3) ---------------------------------------
+
+/// LINK can run: a badge (the simulator's link is `.unavailable`).
+fn link_ok() bool {
+    return lnk.state() != .offline;
+}
+
+/// The top of a link frame: pump, and start timing the gaps between pumps.
+fn pump_top() void {
+    const now = cart.micros_since_boot();
+    last_pump = now;
+    render.site = .top;
+    lnk.pump(now);
+}
+
+/// A pump point inside the frame (the floor bands call it through
+/// `render.band_hook`): run the link, record the gap since the last one.
+fn pump() void {
+    const now = cart.micros_since_boot();
+    const gap: u32 = @truncate(now -% last_pump);
+    if (gap > pump_gap_worst) pump_gap_worst = gap;
+    if (gc_pump_probe != 0) {
+        const k = @backingInt(render.site);
+        probe_gaps[k] = @max(probe_gaps[k], gap);
+    }
+    last_pump = now;
+    lnk.pump(now);
+}
+
+/// The pump points between the race's sprite and HUD passes.
+fn pump_point(at: render.Site) void {
+    render.pump_at(at);
+}
+
+/// The probe's worst gap ending at each kind of pump point
+/// (`render.Site`: the top of update, after the tick (the World's step
+/// and the effects), the horizon's columns, the floor's
+/// rows, the floor lines, the sprites, the HUD's passes, after the HUD).
+var probe_gaps: [8]u32 = @splat(0);
+
+/// Every 120 frames from frame 10 (the first frames unpack the track):
+/// the worst gap at each pump point so far, then start again.
+fn trace_gaps() void {
+    if (frame < 10) {
+        probe_gaps = @splat(0);
+        return;
+    }
+    if ((frame - 10) % 120 != 119) return;
+    // The OS trace buffer holds 128 bytes.
+    var buf: [8 + 6 * probe_gaps.len]u8 = undefined;
+    @memcpy(buf[0..8], "gc gaps:");
+    for (probe_gaps, 0..) |g, k| hud.put_uint(buf[8 + 6 * k ..][0..6], @min(g, 99_999), ' ');
+    cart.trace(&buf);
+    probe_gaps = @splat(0);
+}
+
+/// The probe (badge-bench `--poke gc_pump_probe=1`, single player): the
+/// per-frame lockstep work that needs no partner, so the bench counts its
+/// cost: an input packet's encoding every frame, the World hash every
+/// 32nd tick.
+fn probe_end() void {
+    if (gc_pump_probe == 0) return;
+    trace_gaps();
+    const p = net.encode_input(w.tick, .{ last_input, 0, 0 }, @truncate(w.tick));
+    gc_probe_sink +%= p[0];
+    if (w.tick % net.check_every == 0) gc_probe_sink +%= net.world_hash(&w);
+}
+
+/// After drawing, while a race runs or the link handshakes
+/// (`lnk.wants_pump()`; the lobby and the link select call it too, as a
+/// HELLO overflows the receive FIFO): keep pumping until
+/// `tuning.link_pump_until_us` into the frame (the vsync wait is the one
+/// stretch where nothing reads the receive FIFO), retrying a stalled step
+/// (`ticked`, null: no race). Searching and a settled lobby pump once a
+/// frame at the top only.
+fn pump_loop(ticked: ?*bool) void {
+    if (cart.is_wasm) return;
+    while (lnk.wants_pump() and cart.micros_since_boot() -% frame_t0 < tuning.link_pump_until_us) {
+        lnk.pump(cart.micros_since_boot());
+        const t = ticked orelse continue;
+        if (!t.* and w.phase != .finished) {
+            t.* = lnk.step(&w);
+            if (t.* and !lnk.ls.paused) after_tick();
+        }
+    }
+}
+
+/// What the lobby shows: the link's, or the made-up one of `debug_link_view`.
+fn lobby_view() link_ui.View {
+    if (cart.is_wasm and fake_view != 0) return fake_lobby();
+    return .{
+        .state = lnk.state(),
+        .role = lnk.ls.role,
+        .cable = @backingInt(lnk.ls.link.cable()),
+        .rules = lnk.rules(),
+        .peer = lnk.peer_pick(),
+    };
+}
+
+fn to_lobby() void {
+    if (screen != .menu and screen != .title) backdrop();
+    select.link = null;
+    link_ready = false;
+    go(.lobby);
+}
+
+/// The LINK screen (SPEC 7.3): the cable state until a partner running
+/// Snouty GC answers, then the host's rules (Up/Down a row, Left/Right
+/// its value; the guest sees them), A to the racer select, B back to the
+/// main menu (the link stops being pumped; the partner sees it gone 2 s
+/// later).
+fn lobby_frame() void {
+    pump_top();
+    if (lnk.take_started()) return start_link_race();
+    draw_backdrop();
+    const v = lobby_view();
+    if (input.pressed(.b)) {
+        lnk.set_pick(player_racer, false);
+        to_menu();
+        menu.draw_main(&main_list, sound.enabled, link_ok(), link_note, frame);
+        return;
+    }
+    if (v.state == .lobby) {
+        if (v.role == .host) {
+            if (input.pressed(.up)) {
+                lobby_cursor = if (lobby_cursor == 0) link_ui.row_count - 1 else lobby_cursor - 1;
+                sound.menu_move();
+            }
+            if (input.pressed(.down)) {
+                lobby_cursor = (lobby_cursor + 1) % link_ui.row_count;
+                sound.menu_move();
+            }
+            const step: i32 = @as(i32, @intFromBool(input.pressed(.right))) - @as(i32, @intFromBool(input.pressed(.left)));
+            if (step != 0 and lobby_cursor != @backingInt(link_ui.Row.racer)) {
+                sound.menu_move();
+                change_rule(step);
+            }
+            lnk.set_rules(lobby_rules);
+        }
+        lnk.set_pick(player_racer, false);
+        if (input.pressed(.a) or input.pressed(.start)) {
+            sound.menu_confirm();
+            to_link_select();
+            select.draw(frame);
+            return pump_loop(null);
+        }
+    }
+    link_ui.draw_lobby(&v, lobby_cursor, frame);
+    pump_loop(null);
+}
+
+/// Host: Left/Right on a rules row.
+fn change_rule(step: i32) void {
+    switch (@as(link_ui.Row, @fromBackingInt(@intCast(lobby_cursor)))) {
+        .mode => lobby_rules.mode = if (lobby_rules.mode == .gc) .race else .gc,
+        .track => {
+            const nt: i32 = @intCast(track.tracks.len);
+            lobby_rules.track = @intCast(@mod(@as(i32, lobby_rules.track) + step, nt));
+        },
+        .crews => {
+            var k: usize = 0;
+            for (link_ui.crew_steps, 0..) |c, i| {
+                if (c == lobby_rules.crews) k = i;
+            }
+            const len: i32 = link_ui.crew_steps.len;
+            lobby_rules.crews = link_ui.crew_steps[@intCast(@mod(@as(i32, @intCast(k)) + step, len))];
+        },
+        .racer => {},
+    }
+}
+
+fn link_info() select.Link {
+    if (cart.is_wasm and fake_view != 0) return fake_select();
+    return .{
+        .host = lnk.ls.role == .host,
+        .ready = link_ready,
+        .peer = lnk.peer_pick(),
+        .can_go = lnk.can_go(),
+        .rules = lnk.rules(),
+    };
+}
+
+fn to_link_select() void {
+    select.enter(player_racer, player_track, false);
+    link_ready = false;
+    select.link = link_info();
+    go(.select);
+}
+
+/// The shared racer select (SPEC 7.3): Left/Right a racer, A ready on one
+/// the partner has not taken (greyed `TAKEN`), B takes the mark back (or
+/// goes back to the lobby). The host's A with both ready starts the race
+/// on both badges; on a clash the guest's mark goes (the host's pick wins).
+fn link_select_frame() void {
+    pump_top();
+    const fake = cart.is_wasm and fake_view != 0;
+    if (lnk.take_started()) {
+        select.draw(frame);
+        return start_link_race();
+    }
+    if (!fake and lnk.state() != .lobby) {
+        // The cable went or the partner left the lobby: the LINK screen
+        // shows why.
+        link_ready = false;
+        to_lobby();
+        draw_backdrop();
+        return link_ui.draw_lobby(&lobby_view(), lobby_cursor, frame);
+    }
+    select.link = link_info();
+    if (link_ready and !select.link.?.host and select.taken(select.racer)) link_ready = false;
+    select.link.?.ready = link_ready;
+    switch (select.update()) {
+        .pick => {
+            if (!link_ready) {
+                if (!select.taken(select.racer)) link_ready = true;
+            } else if (lnk.ls.role == .host and lnk.can_go()) {
+                player_racer = select.racer;
+                _ = lnk.go(cart.micros_since_boot());
+            }
+        },
+        .back => if (link_ready) {
+            link_ready = false;
+        } else {
+            lnk.set_pick(select.racer, false);
+            to_lobby();
+            draw_backdrop();
+            return link_ui.draw_lobby(&lobby_view(), lobby_cursor, frame);
+        },
+        .none => {},
+    }
+    lnk.set_pick(select.racer, link_ready);
+    select.link = link_info();
+    select.draw(frame);
+    if (lnk.take_started()) return start_link_race();
+    pump_loop(null);
+}
+
+/// Both badges, once per race (`take_started`): the World from the agreed
+/// setup, this badge's car followed. The track was just unpacked, so the
+/// race draws from the next frame (as a Quick Race's pick frame).
+fn start_link_race() void {
+    const s = lnk.world_setup();
+    select.link = null;
+    linked = true;
+    link_ready = false;
+    desynced = false;
+    left_note = 0;
+    left_shown = false;
+    resume_hold = .{};
+    race_waits = 0;
+    pump_gap_worst = 0;
+    autopilot = false;
+    player_racer = lnk.local_car();
+    player_track = s.track;
+    race_mode = if (s.mode == .gc) .gc else .quick;
+    begin_race(race_mode, s, lnk.local_car());
+}
+
+/// The byte this badge drives its car with (the autopilot's in tests).
+fn link_byte() u8 {
+    return if (autopilot) ai.drive(&w, me).byte() else input.race_byte();
+}
+
+/// What a tick that ran the World brings on the badge (as a Quick Race's
+/// frame after `simulate`): effects, the GC camera, the sound cues.
+fn after_tick() void {
+    fx.tick(&w, me, frame);
+    if (mode == .gc) watch_leader();
+    sound_cues();
+}
+
+/// A link race frame (docs/NET.md section 3): pump, submit this frame's
+/// buttons, step one tick if both bytes are here, draw (the floor bands
+/// pump), then pump and retry until 14 ms into the frame. Once the World
+/// is finished no input reaches it (finished humans drive on their AI), so
+/// each badge runs it on alone until its results.
+fn link_race_frame() void {
+    pump_top();
+    resume_hold.settle(lnk.ls.paused);
+    if (lnk.state() == .desync) return end_desync();
+    if (lnk.ls.paused and w.phase != .finished) {
+        pause_list = .{ .count = 3 };
+        go(.pause);
+        return link_pause_frame();
+    }
+    var ticked = false;
+    if (w.phase == .finished) {
+        sim.simulate(&w, .{ 0, 0 });
+        ticked = true;
+        after_tick();
+    } else {
+        const byte = link_byte();
+        last_input = byte;
+        resume_hold.took(byte, lnk.submit(cart.micros_since_boot(), byte));
+        ticked = lnk.step(&w);
+        if (ticked and !lnk.ls.paused) after_tick();
+    }
+    pump_point(.sim);
+    if (w.phase == .finished) {
+        finished_frames += 1;
+        if (finished_frames >= results_after or input.pressed(.start)) {
+            results_card = 0;
+            go(.results);
+        }
+    }
+    draw_race(looking_back());
+    link_notices();
+    pump_loop(&ticked);
+    if (!ticked) race_waits += 1;
+}
+
+/// WAITING FOR PEER while the partner's bytes are late; PEER LEFT, AI
+/// DRIVING for a while once it has gone (not after the finish).
+fn link_notices() void {
+    const st = lnk.state();
+    if (st == .peer_left and !left_shown) {
+        left_shown = true;
+        if (w.phase != .finished) left_note = tuning.link_left_note;
+    }
+    const k: link_ui.Notice = if (st == .waiting) .waiting else if (left_note > 0) .peer_left else .none;
+    left_note -|= 1;
+    link_ui.draw_notice(k, lnk.ls.left, frame);
+}
+
+/// The shared pause (L6): either badge's Start paused both on one tick.
+/// Only Start reaches the race while paused (it resumes both); RESUME or
+/// B holds Start until `paused` turns off (net.Resume: one edge, never
+/// lost to a dropped byte); QUIT leaves (the partner's AI takes this car).
+/// The lockstep ticks run on, without the World.
+fn link_pause_frame() void {
+    pump_top();
+    resume_hold.settle(lnk.ls.paused);
+    if (lnk.state() == .desync) return end_desync();
+    const byte = resume_hold.byte(input.race_byte() & start_bit);
+    resume_hold.took(byte, lnk.submit(cart.micros_since_boot(), byte));
+    var ticked = lnk.step(&w);
+    if (ticked and !lnk.ls.paused) after_tick();
+    draw_race(false);
+    hud.fill_rect(24, 30, 112, 70, hud.anti_black);
+    menu_nav(&pause_list);
+    const sound_item: []const u8 = if (sound.enabled) "SOUND: ON" else "SOUND: OFF";
+    menu.draw_list("PAUSED", &.{ "RESUME", "QUIT", sound_item }, &pause_list, 34);
+    if (input.pressed(.b)) resume_hold.request();
+    if (input.pressed(.a)) {
+        sound.menu_confirm();
+        switch (pause_list.cursor) {
+            0 => resume_hold.request(),
+            1 => return leave_link(),
+            else => toggle_sound(),
+        }
+    }
+    if (!lnk.ls.paused) go(.race);
+    link_notices();
+    pump_loop(&ticked);
+}
+
+/// A desync (the Worlds' hashes differ; `step` has stopped): the results
+/// with `DESYNC` over them, then the lobby.
+fn end_desync() void {
+    desynced = true;
+    results_card = 0;
+    go(.results);
+    results.draw_winner(&w, me, screen_frames);
+    link_ui.draw_desync(frame);
+}
+
+/// Leave the link race (QUIT, the results, after a desync): the partner
+/// hears it (its AI takes this car if it still races), back to the lobby.
+fn leave_link() void {
+    lnk.leave(cart.micros_since_boot());
+    linked = false;
+    desynced = false;
+    render.band_hook = null;
+    to_lobby();
+    draw_backdrop();
+    link_ui.draw_lobby(&lobby_view(), lobby_cursor, frame);
+}
+
+/// `debug_link_view` k: 1 searching, 2 the host's lobby, 3 the guest's,
+/// 4 another cart, 5 the host's select with both ready (A START), 6 the
+/// guest's select on the host's racer (TAKEN), 7 another GC version.
+fn fake_lobby() link_ui.View {
+    return switch (fake_view) {
+        1 => .{ .state = .searching },
+        4 => .{ .state = .wrong_cart },
+        7 => .{ .state = .wrong_version },
+        else => .{
+            .state = .lobby,
+            .role = if (fake_view == 3 or fake_view == 6) .guest else .host,
+            .cable = if (fake_view == 3) 2 else 1,
+            .rules = lobby_rules,
+            .peer = .{ .racer = racers.kiddie, .ready = fake_view >= 5 },
+        },
+    };
+}
+
+fn fake_select() select.Link {
+    const host = fake_view != 6;
+    return .{
+        .host = host,
+        .ready = link_ready,
+        .peer = .{ .racer = if (host) racers.kiddie else racers.snouty, .ready = true },
+        .can_go = host and link_ready and select.racer != racers.kiddie,
+        .rules = lobby_rules,
+    };
 }
 
 // --- Overlay and debug --------------------------------------------------------------
@@ -570,27 +1242,39 @@ fn draw_overlay() void {
     var buf: [8]u8 = "      us".*;
     hud.put_uint(buf[0..6], @min(render_us, 999_999), ' ');
     hud.text(&buf, 160 - 8 * @as(i32, buf.len) - 4, 14, hud.white);
+    if (!linked) return;
+    // Link race: frames without a tick, link CRC drops, the worst gap
+    // between two pumps (us) this race.
+    var l: [19]u8 = "W     C     G      ".*;
+    hud.put_uint(l[1..5], @min(race_waits, 9999), ' ');
+    hud.put_uint(l[7..11], @min(lnk.ls.link.stats.crc_errors, 9999), ' ');
+    hud.put_uint(l[13..19], @min(pump_gap_worst, 999_999), ' ');
+    hud.text(&l, 4, 24, hud.white);
 }
 
 // Debug exports for the headless harness (wasm only).
 comptime {
     if (cart.is_wasm) {
         for (.{
-            "debug_frame",      "debug_render_us",  "debug_pixel_checksum", "debug_px",
-            "debug_py",         "debug_heading",    "debug_speed",          "debug_lap",
-            "debug_progress",   "debug_phase",      "debug_tick",           "debug_rank",
-            "debug_screen",     "debug_mode",       "debug_follow",         "debug_best_lap",
-            "debug_wrecks",     "debug_burst",      "debug_sound",          "debug_world_size",
-            "debug_world_sum",  "debug_car_px",     "debug_car_py",         "debug_car_lap",
-            "debug_car_rank",   "debug_car_racer",  "debug_car_human",      "debug_set_autopilot",
-            "debug_start_race", "debug_tile_under", "debug_input",
-            "debug_stress",     "debug_drawn",      "debug_gathered",       "debug_select_racer",
-            "debug_event_seq",  "debug_car_armor",  "debug_results_card",   "debug_give_pickup",
-            "debug_roll_pickup", "debug_effect",    "debug_pickup",         "debug_frozen",
-            "debug_captcha",    "debug_captcha_cursor", "debug_captcha_lit", "debug_forks",
-            "debug_give_ahead", "debug_start_gc",   "debug_start_attract", "debug_gc_marked",
-            "debug_gc_sweeps",  "debug_gc_collected", "debug_gc_survivor", "debug_alive",
-            "debug_hazard_state", "debug_me",
+            "debug_frame",          "debug_render_us",     "debug_pixel_checksum", "debug_px",
+            "debug_py",             "debug_heading",       "debug_speed",          "debug_lap",
+            "debug_progress",       "debug_phase",         "debug_tick",           "debug_rank",
+            "debug_screen",         "debug_mode",          "debug_follow",         "debug_best_lap",
+            "debug_wrecks",         "debug_burst",         "debug_sound",          "debug_world_size",
+            "debug_world_sum",      "debug_car_px",        "debug_car_py",         "debug_car_lap",
+            "debug_car_rank",       "debug_car_racer",     "debug_car_human",      "debug_set_autopilot",
+            "debug_start_race",     "debug_tile_under",    "debug_input",          "debug_stress",
+            "debug_drawn",          "debug_gathered",      "debug_select_racer",   "debug_event_seq",
+            "debug_car_armor",      "debug_results_card",  "debug_give_pickup",    "debug_roll_pickup",
+            "debug_effect",         "debug_pickup",        "debug_frozen",         "debug_captcha",
+            "debug_captcha_cursor", "debug_captcha_lit",   "debug_forks",          "debug_give_ahead",
+            "debug_start_gc",       "debug_start_attract", "debug_gc_marked",      "debug_gc_sweeps",
+            "debug_gc_collected",   "debug_gc_survivor",   "debug_alive",          "debug_hazard_state",
+            "debug_me",             "debug_link_view",     "debug_link_notice",    "debug_link_state",
+            "debug_linked",         "debug_start_circuit", "debug_prix_skip",      "debug_prix_cycles",
+            "debug_prix_give",      "debug_prix_league",   "debug_prix_race",      "debug_prix_done",
+            "debug_card",           "debug_garage_row",    "debug_pickup_cursor",  "debug_menu_battle",
+            "debug_menu_row",
         }) |name| @export(&@field(@This(), name), .{ .name = name });
     }
 }
@@ -639,11 +1323,14 @@ fn debug_tick() callconv(.c) u32 {
 fn debug_rank() callconv(.c) u32 {
     return w.cars[follow].rank;
 }
-/// 0 splash, 1 title, 2 racer select, 3 race, 4 pause, 5 results.
+/// 0 splash, 1 title, 2 racer select, 3 race, 4 pause, 5 results, 6 the
+/// main menu, 7 the LINK lobby; M5: 8 the garage, 9 the standings, 10 a
+/// CIRCUIT card (`debug_card`); 11 the PICKUPS page.
 fn debug_screen() callconv(.c) u32 {
     return @backingInt(screen);
 }
-/// 0 quick race, 1 attract, 2 the render stress scene.
+/// 0 quick race, 1 attract, 2 the render stress scene, 3 GARBAGE
+/// COLLECTION, 4 a CIRCUIT race.
 fn debug_mode() callconv(.c) u32 {
     return @backingInt(mode);
 }
@@ -738,12 +1425,95 @@ fn debug_alive() callconv(.c) u32 {
 /// idle, 1 warn, 2 active) + 4 * kind (1 blast, 2 mover).
 fn debug_hazard_state() callconv(.c) u32 {
     var v: u32 = 0;
-    for (w.hazards, 0..) |hz, k| v |= (@as(u32, @intFromEnum(hz.state)) + 4 * @as(u32, @intFromEnum(hz.kind))) << @intCast(4 * k);
+    for (w.hazards, 0..) |hz, k| v |= (@as(u32, @backingInt(hz.state)) + 4 * @as(u32, @backingInt(hz.kind))) << @intCast(4 * k);
     return v;
 }
 /// The player's car.
 fn debug_me() callconv(.c) u32 {
     return me;
+}
+/// --call debug_link_view:K shows a made-up LINK screen (the simulator's
+/// link is offline): 1 searching, 2 the host's lobby, 3 the guest's, 4
+/// another cart, 5 the host's racer select with both ready, 6 the guest's
+/// select on the host's racer, 7 another Snouty GCP version (WRONG
+/// VERSION); 0 back to the real one.
+fn debug_link_view(k: u32) callconv(.c) u32 {
+    fake_view = @intCast(k % 8);
+    if (fake_view == 0) return 0;
+    if (fake_view == 5 or fake_view == 6) {
+        to_link_select();
+        if (fake_view == 6) select.racer = racers.snouty;
+    } else to_lobby();
+    return fake_view;
+}
+/// --call debug_link_notice:K draws a link race notice over a single-player
+/// race: 1 WAITING FOR PEER, 2 PEER LEFT, AI DRIVING (cable out); 0 off.
+fn debug_link_notice(k: u32) callconv(.c) u32 {
+    fake_notice = @intCast(k % 3);
+    return fake_notice;
+}
+/// net.State: 0 offline (the simulator), 1 searching, ... (net.zig).
+fn debug_link_state() callconv(.c) u32 {
+    return @backingInt(lnk.state());
+}
+fn debug_linked() callconv(.c) u32 {
+    return @intFromBool(linked);
+}
+/// M5: --call debug_start_circuit:R skips the menus into a new SNOUTY GCP
+/// with racer R, in the garage.
+fn debug_start_circuit(r: u32) callconv(.c) void {
+    player_racer = @intCast(r % racers.count);
+    race_mode = .circuit;
+    prix = career.Career.init(player_racer);
+    prix_on = true;
+    to_garage();
+}
+/// Books the next CIRCUIT race as if the player finished `place` (1..6;
+/// the others in racer order, no kills or chips) and shows the standings
+/// (preview hook: the league and end cards without driving six races).
+fn debug_prix_skip(place: u32) callconv(.c) u32 {
+    if (!prix_on) return 0;
+    var fw: world.World = .{};
+    const p: u8 = @intCast(@max(1, @min(place, racers.count)));
+    var next: u8 = 1;
+    for (&fw.cars, 0..) |*c, i| {
+        c.racer = @intCast(i);
+        if (i == prix.racer) {
+            c.rank = p;
+            continue;
+        }
+        if (next == p) next += 1;
+        c.rank = next;
+        next += 1;
+    }
+    _ = prix.finish_race(&fw);
+    go(.standings);
+    return prix.race;
+}
+/// The CIRCUIT: the wallet, give it CYCLES (preview hook), the league and
+/// race, the end reached; the card shown (0 league, 1 unlock, 2 end);
+/// the garage's row.
+fn debug_prix_cycles() callconv(.c) u32 {
+    return prix.cycles;
+}
+fn debug_prix_give(v: u32) callconv(.c) u32 {
+    prix.cycles += v;
+    return prix.cycles;
+}
+fn debug_prix_league() callconv(.c) u32 {
+    return prix.league;
+}
+fn debug_prix_race() callconv(.c) u32 {
+    return prix.race;
+}
+fn debug_prix_done() callconv(.c) u32 {
+    return @intFromBool(prix.done);
+}
+fn debug_card() callconv(.c) u32 {
+    return @backingInt(card);
+}
+fn debug_garage_row() callconv(.c) u32 {
+    return garage.cursor;
 }
 /// --call debug_stress:1 starts the render stress scene (stress.zig).
 fn debug_stress(v: u32) callconv(.c) void {
@@ -756,6 +1526,19 @@ fn debug_drawn() callconv(.c) u32 {
 }
 fn debug_gathered() callconv(.c) u32 {
     return sprites.last_gathered;
+}
+/// --call debug_menu_battle:1 draws the main menu with a made-up BATTLE
+/// row (the 7-row layout M6 needs; menu.preview_battle), 0 without.
+fn debug_menu_battle(v: u32) callconv(.c) void {
+    menu.preview_battle = v != 0;
+}
+/// The main menu's cursor (a menu.Item value).
+fn debug_menu_row() callconv(.c) u32 {
+    return main_list.cursor;
+}
+/// The PICKUPS page's cursor (a world.Pickup value).
+fn debug_pickup_cursor() callconv(.c) u32 {
+    return pickup_page.cursor;
 }
 /// The racer the select shows.
 fn debug_select_racer() callconv(.c) u32 {
@@ -778,9 +1561,9 @@ fn debug_results_card() callconv(.c) u32 {
 /// order) in the followed car's slot.
 fn debug_give_pickup(p: u32) callconv(.c) u32 {
     const c = &w.cars[follow];
-    c.pickup = if (p <= @intFromEnum(world.Pickup.prompt_injection)) @enumFromInt(p) else .none;
+    c.pickup = if (p <= @backingInt(world.Pickup.prompt_injection)) @fromBackingInt(@intCast(p)) else .none;
     c.roll_ticks = 0;
-    return @intFromEnum(c.pickup);
+    return @backingInt(c.pickup);
 }
 /// The same with the 45-tick roulette in front of it.
 fn debug_roll_pickup(p: u32) callconv(.c) u32 {
@@ -795,9 +1578,9 @@ fn debug_roll_pickup(p: u32) callconv(.c) u32 {
 /// 16 a crate pop, 17 a rival's FORK BOMB 8 samples ahead).
 fn debug_effect(k: u32) callconv(.c) u32 {
     const e = k & 0xFF;
-    if (e > @intFromEnum(stress.Effect.fork_ahead)) return 0;
+    if (e > @backingInt(stress.Effect.fork_ahead)) return 0;
     const car: usize = if (k >> 8 == 0) follow else ((k >> 8) - 1) % world.car_count;
-    stress.force_effect(&w, car, @enumFromInt(e));
+    stress.force_effect(&w, car, @fromBackingInt(@intCast(e)));
     return e;
 }
 /// Pickup P to the nearest car ahead of the followed one (its AI uses it
@@ -805,13 +1588,13 @@ fn debug_effect(k: u32) callconv(.c) u32 {
 fn debug_give_ahead(p: u32) callconv(.c) u32 {
     const j = stress.car_ahead(&w, follow, 300) orelse return 0;
     const c = &w.cars[j];
-    c.pickup = if (p <= @intFromEnum(world.Pickup.prompt_injection)) @enumFromInt(p) else .none;
+    c.pickup = if (p <= @backingInt(world.Pickup.prompt_injection)) @fromBackingInt(@intCast(p)) else .none;
     c.roll_ticks = 0;
     return @as(u32, @intCast(j)) + 1;
 }
 /// Followed car: the held pickup (16 = none).
 fn debug_pickup() callconv(.c) u32 {
-    return @intFromEnum(w.cars[follow].pickup);
+    return @backingInt(w.cars[follow].pickup);
 }
 fn debug_frozen() callconv(.c) u32 {
     return w.cars[follow].frozen;
