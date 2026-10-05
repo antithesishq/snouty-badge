@@ -9,7 +9,11 @@
 //! culled when there are more; before it, the floor lines (DEADLOCK
 //! chains, duck tethers, SPAGHETTI strands). Car states (M2): HEISENBUG
 //! flicker, SUDO's gold flash, the KERNEL PANIC blue, RACE CONDITION
-//! tearing, the PREFETCH flame, the HONEYPOT spin. Draw only: reads the
+//! tearing, the PREFETCH flame, the HONEYPOT spin. M3: the MARKED car's
+//! red outline, the GC claw lifting a collected car out (fx.zig keeps
+//! it), and the track hazards (`World.hazards` with `track.hazard_specs`):
+//! the Sweeper with its beacon, a firing vent's blast along its lane, and
+//! a warning vent's lane edges among the floor lines. Draw only: reads the
 //! World, the camera and fx's render-side state, never writes the World.
 const cart = @import("cart-api");
 const gfx = @import("gfx");
@@ -108,6 +112,11 @@ pub const icons = sheet(gfx.hud, 12, 12);
 /// Zero's engine sheets: the car shadow and the BURST flame (ASSETS_ENGINE.md).
 pub const shadow = sheet(gfx.shadow, 32, 6);
 pub const exhaust = sheet(gfx.exhaust, 16, 16);
+/// M3: the GC claw (open, closed) and the Sweeper (ASSETS.md).
+pub const claw = sheet(gfx.claw, 24, 32);
+pub const hazard_art = sheet(gfx.hazards, 48, 32);
+pub const h_end = 0;
+pub const h_side = 2;
 
 /// Car sheet cells (ASSETS.md).
 pub const car_rear = 0;
@@ -259,7 +268,7 @@ pub const draw_cap = 64;
 /// sort key keeps the list index in 8 bits.
 const gather_cap = 224;
 
-const Kind = enum(u8) { car, proj, drop, wall, particle, crate, drone, duck };
+const Kind = enum(u8) { car, proj, drop, wall, particle, crate, drone, duck, claw, mover, vent };
 const Entry = struct {
     z: i32,
     p: camera.Projected,
@@ -365,6 +374,39 @@ pub fn draw_world(w: *const world.World, v: View) void {
         const p = visible(pt.x, pt.y) orelse continue;
         push(.particle, i, 0, p);
     }
+    // M3: the claws and the track hazards.
+    for (&fx.claws, 0..) |*k, i| {
+        if (k.car == world.no_car or k.age >= fx.claw_ticks) continue;
+        const p = visible(k.x, k.y) orelse continue;
+        push(.claw, i, 0, p);
+    }
+    for (track.hazard_specs[0..track.hazard_n], 0..) |*h, k| {
+        const hz = &w.hazards[k];
+        switch (h.kind) {
+            .mover => {
+                const p = visible(hz.x, hz.y) orelse continue;
+                push(.mover, k, 0, p);
+            },
+            .blast => {
+                if (hz.state != .active) continue;
+                // The blast reaches out from the mouth over its first ticks.
+                const age: i32 = @intCast(fx.blast_age[k]);
+                const reach = @min(h.len, @divTrunc(h.len * (age + 1), vent_grow));
+                var d: i32 = vent_step / 2;
+                var seg: usize = 0;
+                while (d <= reach and seg < 24) : ({
+                    d += vent_step;
+                    seg += 1;
+                }) {
+                    const x = (h.x0 << fixed.Q) +% h.ux * d;
+                    const y = (h.y0 << fixed.Q) +% h.uy * d;
+                    const p = visible(x, y) orelse continue;
+                    push(.vent, k, seg, p);
+                }
+            },
+            .none, .turret, .crust => {},
+        }
+    }
     last_gathered = @intCast(count);
     // Insertion sort, far first (the list is mostly in pool order, so small).
     var i: usize = 1;
@@ -385,7 +427,7 @@ pub fn draw_world(w: *const world.World, v: View) void {
             continue;
         }
         switch (e.kind) {
-            .car => draw_car(&w.cars[e.index], e.index, e.index == v.follow, e.p, v.frame),
+            .car => draw_car(&w.cars[e.index], e.index, e.index == v.follow, e.index == w.gc.marked, e.p, v.frame),
             .proj => draw_proj(&w.projs[e.index], e.p, v.frame),
             .drop => draw_drop(&w.drops[e.index], e.p, v.frame),
             .wall => draw_wall(e.p, e.sub, v.frame),
@@ -393,6 +435,9 @@ pub fn draw_world(w: *const world.World, v: View) void {
             .crate => draw_crate(e.index, e.p, v.frame),
             .drone => draw_drone(e.index, e.p, v.frame),
             .duck => draw_duck(&w.cars[e.index], e.p, v.frame),
+            .claw => draw_claw(&fx.claws[e.index], e.p),
+            .mover => draw_mover(w, e.index, e.p, v.frame),
+            .vent => draw_vent(e.index, e.sub, e.p, v.frame),
         }
     }
 }
@@ -439,7 +484,7 @@ const tear_slices = 4;
 const tear_shift = [8]i32{ 3, -2, 0, -4, 2, 4, -3, 1 };
 const tear_px: cart.Pixel = .from_color(.rgb(0xFF40C0));
 
-fn draw_car(c: *const world.Car, index: usize, followed: bool, p: camera.Projected, frame: u32) void {
+fn draw_car(c: *const world.Car, index: usize, followed: bool, marked: bool, p: camera.Projected, frame: u32) void {
     // HEISENBUG (SPEC 6.3): unobservable, drawn on odd frames only.
     if (c.heisen > 0 and c.wreck == .none and frame & 1 == 0) return;
     const sheet_ = &cars[c.racer % cars.len];
@@ -495,8 +540,163 @@ fn draw_car(c: *const world.Car, index: usize, followed: bool, p: camera.Project
         if ((frame / period) % 2 == 0) o.flat = if (c.charge >= 30) lance_full_px else glow_px;
     }
     if (c.swap_ticks > 0) return draw_torn(sheet_, vc.cell, p.sx, body_bottom, p.scale, o, frame +% @as(u32, @intCast(index)) * 3);
+    // GARBAGE COLLECTION: the MARKED car in a red outline (the sprite
+    // flat red one pixel out each way, the car over it).
+    if (marked) {
+        var ro = o;
+        ro.flat = if ((frame / 8) % 2 == 0) marked_px else marked_dark_px;
+        blit(sheet_, vc.cell, p.sx - 1, body_bottom, p.scale, ro);
+        blit(sheet_, vc.cell, p.sx + 1, body_bottom, p.scale, ro);
+        blit(sheet_, vc.cell, p.sx, body_bottom - 1, p.scale, ro);
+        blit(sheet_, vc.cell, p.sx, body_bottom + 1, p.scale, ro);
+    }
     blit(sheet_, vc.cell, p.sx, body_bottom, p.scale, o);
 }
+
+const marked_px: cart.Pixel = .from_color(.rgb(0xFF2828));
+const marked_dark_px: cart.Pixel = .from_color(.rgb(0xB01818));
+
+// --- GARBAGE COLLECTION's claw (SPEC 8.2) ------------------------------------------
+
+const cable_px: cart.Pixel = .from_color(.rgb(0x9A9EAA));
+const cable_dark_px: cart.Pixel = .from_color(.rgb(0x2A2830));
+
+/// The claw comes down from the top of the screen over the collected car
+/// (`fx.claw_down` ticks), closes on it (until `fx.claw_grab`), then lifts
+/// it out of the frame, the cable trailing to the top edge.
+fn draw_claw(k: *const fx.Claw, p: camera.Projected) void {
+    const sheet_ = &cars[k.racer % cars.len];
+    const body_h = scaled(16, p.scale);
+    const floor_bottom = p.sy - scaled(tuning.ride_height, p.scale);
+    // Lifted px: 0 until the grab, then accelerating up.
+    const age: i32 = k.age;
+    const lift: i32 = if (age <= fx.claw_grab) 0 else @divTrunc((age - fx.claw_grab) * (age - fx.claw_grab) * 3, 20);
+    const car_bottom = floor_bottom - lift;
+    // The claw: 30 sprite px wide at the car's scale, its prongs (rows
+    // 19..31 of 32) around the top half of the car.
+    const cw = scaled(30, p.scale);
+    const ch = scaled(40, p.scale);
+    const grip_bottom = car_bottom - @divTrunc(body_h, 3);
+    var claw_bottom = grip_bottom;
+    if (age < fx.claw_down) {
+        // Eased down from above the screen.
+        const t: i32 = fx.claw_down - age;
+        claw_bottom = grip_bottom - @divTrunc((grip_bottom + 8) * t * t, @as(i32, fx.claw_down) * fx.claw_down);
+    }
+    const claw_top = claw_bottom - ch;
+    // Shadow stays on the floor while the car is low.
+    if (lift < 24) blit(&shadow, 0, p.sx, p.sy, p.scale, .{ .skip_odd = true });
+    // The car, flashing white as the claw bites.
+    if (age >= fx.claw_down) {
+        const vc = if (k.wrecked) ViewCell{ .cell = car_wreck, .flip = false } else view_of(k.heading, car_rear, car_quarter, car_side);
+        const bite = age >= fx.claw_down and age < fx.claw_down + 4;
+        blit(sheet_, vc.cell, p.sx, car_bottom, p.scale, .{ .flip = vc.flip, .flat = if (bite) white_px else null });
+    } else {
+        const vc = if (k.wrecked) ViewCell{ .cell = car_wreck, .flip = false } else view_of(k.heading, car_rear, car_quarter, car_side);
+        blit(sheet_, vc.cell, p.sx, car_bottom, p.scale, .{ .flip = vc.flip });
+    }
+    // The cable from the top edge to the hoist.
+    if (claw_top > 0) {
+        const cx = p.sx;
+        var y: i32 = 0;
+        while (y < claw_top and y < render.screen_h) : (y += 1) {
+            if (cx >= 0 and cx < render.screen_w) cart.framebuffer[@intCast(cx)][@intCast(y)] = cable_px;
+            if (cx + 1 >= 0 and cx + 1 < render.screen_w) cart.framebuffer[@intCast(cx + 1)][@intCast(y)] = cable_dark_px;
+        }
+    }
+    const cell: u32 = if (age >= fx.claw_down) 1 else 0;
+    blit_sized(&claw, cell, p.sx + 1, claw_bottom, cw, ch, .{});
+}
+
+// --- Track hazards (SPEC 3.3, 19.4) ---------------------------------------------------
+
+/// A firing vent's blast: a puff every `vent_step` world px along the
+/// lane, reaching the far end over `vent_grow` ticks.
+pub const vent_step: i32 = 12;
+const vent_grow: i32 = 6;
+const beacon_amber: cart.Pixel = .from_color(.rgb(0xFFB020));
+const beacon_hot: cart.Pixel = .from_color(.rgb(0xFFF0B0));
+
+/// The Sweeper: its end or side view by its travel against the camera,
+/// treads and brushes turning while it warns and crosses, the roof beacon
+/// flashing amber during the warning and steady while it crosses.
+fn draw_mover(w: *const world.World, k: usize, p: camera.Projected, frame: u32) void {
+    const h = &track.hazard_specs[k];
+    const hz = &w.hazards[k];
+    var heading = fixed.atan2(@intCast(h.uy >> 8), @intCast(h.ux >> 8));
+    if (hz.leg == 1) heading +%= 32768;
+    const d = fixed.turn_diff(camera.cam.yaw, heading);
+    const ad = @abs(d);
+    const side = ad >= 6144 and ad < 26624;
+    const running = hz.state != .idle;
+    const phase: u32 = if (running) (frame / 3) % 2 else 0;
+    const cell: u32 = (if (side) @as(u32, h_side) else h_end) + phase;
+    // The body is 2 * size + 8 world px wide (the hit radius plus its brushes).
+    const dw = @divTrunc((2 * h.size + 8) * tuning.focal, @max(p.zf, 1));
+    const dh = @divTrunc(dw * 32, 48);
+    if (dw < 2) return;
+    blit_sized(&shadow, 0, p.sx, p.sy + @divTrunc(dh, 10), dw, @max(1, @divTrunc(dw, 6)), .{ .skip_odd = true });
+    const bottom = p.sy + @divTrunc(dh, 12);
+    const flip = side and d < 0;
+    blit_sized(&hazard_art, cell, p.sx, bottom, dw, dh, .{ .flip = flip });
+    // The beacon (ASSETS.md: 4x3 cell px at (22, 1) end, (17, 1) side).
+    const lit = switch (hz.state) {
+        .idle => false,
+        .warn => (frame / 6) % 2 == 0,
+        .active => (frame / 3) % 4 != 0,
+    };
+    if (!lit) return;
+    var bx: i32 = if (side) 17 else 22;
+    if (flip) bx = 48 - bx - 4;
+    const x0 = p.sx - @divTrunc(dw, 2) + @divTrunc(bx * dw, 48);
+    const y0 = bottom - dh + @divTrunc(dh, 32);
+    const bw = @max(1, @divTrunc(4 * dw, 48));
+    const bh = @max(1, @divTrunc(3 * dh, 32));
+    fill(x0, y0, bw, bh, if (hz.state == .warn and (frame / 3) % 2 == 0) beacon_hot else beacon_amber);
+    // A glow ring a pixel out.
+    if (bw >= 2) {
+        fill(x0 - 1, y0 + 1, 1, @max(1, bh - 1), beacon_amber);
+        fill(x0 + bw, y0 + 1, 1, @max(1, bh - 1), beacon_amber);
+        fill(x0, y0 - 1, bw, 1, beacon_amber);
+    }
+}
+
+/// Flat pixels, clipped to the screen.
+fn fill(x0: i32, y0: i32, w_: i32, h_: i32, px: cart.Pixel) void {
+    const xa = @max(0, x0);
+    const xb = @min(render.screen_w, x0 + w_);
+    const ya = @max(0, y0);
+    const yb = @min(render.screen_h, y0 + h_);
+    var x = xa;
+    while (x < xb) : (x += 1) {
+        const col = &cart.framebuffer[@intCast(x)];
+        var y = ya;
+        while (y < yb) : (y += 1) col[@intCast(y)] = px;
+    }
+}
+
+/// One puff of a firing vent's blast: flame near the mouth, steam further
+/// out, rising and thinning in its last ticks.
+fn draw_vent(k: usize, seg: u8, p: camera.Projected, frame: u32) void {
+    const h = &track.hazard_specs[k];
+    const age: u32 = fx.blast_age[k];
+    const width = 2 * h.size + 10;
+    const dw = @divTrunc(width * tuning.focal, @max(p.zf, 1));
+    if (dw < 2) return;
+    const along: i32 = @as(i32, seg) * vent_step;
+    const near = along * 5 < h.len * 2;
+    const fading = age + 6 >= h.on;
+    if (near) {
+        const flame: u32 = f_flame + ((frame / 3 + seg) % 2);
+        blit_sized(&effects, flame, p.sx, p.sy + @divTrunc(dw, 12), dw, dw, .{ .skip_odd = fading });
+    } else {
+        const rise = lift_px(@intCast(@min(age, 20) / 2), p);
+        const cell: u32 = f_smoke + @as(u32, @intFromBool(age >= 12));
+        blit_sized(&effects, cell, p.sx, p.sy - rise, dw, dw, .{ .skip_odd = fading or (seg + frame) % 3 == 0, .flat = steam_px });
+    }
+}
+
+const steam_px: cart.Pixel = .from_color(.rgb(0xE8F4F8));
 
 /// RACE CONDITION (SPEC 6.3): the sprite torn into shifted bands, one band
 /// flat magenta on alternate frames.
@@ -599,6 +799,8 @@ const chain_dark: cart.Pixel = .from_color(.rgb(0x505060));
 const tether_px: cart.Pixel = .from_color(.rgb(0xE8E0C0));
 const strand_a: cart.Pixel = .from_color(.rgb(0xF0D040));
 const strand_b: cart.Pixel = .from_color(.rgb(0x9A7A20));
+const warn_a: cart.Pixel = .from_color(.rgb(0xFF9A20));
+const warn_b: cart.Pixel = .from_color(.rgb(0xFF9A20));
 
 /// Chains, tethers and strands lie under the cars: the depth list draws
 /// the cars over their ends. Lifted `lift` world px, through `steps`
@@ -607,6 +809,20 @@ const strand_b: cart.Pixel = .from_color(.rgb(0x9A7A20));
 const LineStyle = struct { a: cart.Pixel, b: cart.Pixel, lift: i32, steps: i32, wave: i32 = 0, links: bool = false, thick: bool = false };
 
 pub fn draw_floor_lines(w: *const world.World, frame: u32) void {
+    // M3: a vent about to fire marks its lane edges, blinking.
+    for (track.hazard_specs[0..track.hazard_n], 0..) |*h, k| {
+        if (h.kind != .blast or w.hazards[k].state != .warn or (frame / 5) % 2 == 1) continue;
+        const ax = h.x0 << fixed.Q;
+        const ay = h.y0 << fixed.Q;
+        const bx = ax +% h.ux * h.len;
+        const by = ay +% h.uy * h.len;
+        // Across the lane: (-uy, ux), size px each way.
+        const ox = -h.uy * h.size;
+        const oy = h.ux * h.size;
+        const st = LineStyle{ .a = warn_a, .b = warn_b, .lift = 0, .steps = 6, .links = true };
+        world_line(ax +% ox, ay +% oy, bx +% ox, by +% oy, st, frame);
+        world_line(ax -% ox, ay -% oy, bx -% ox, by -% oy, st, frame);
+    }
     for (&w.cars, 0..) |*c, i| {
         if (!c.active or c.wreck != .none) continue;
         // DEADLOCK: one chain per pair (the lower index draws it), or to the wall.

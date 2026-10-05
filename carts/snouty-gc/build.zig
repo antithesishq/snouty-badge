@@ -38,7 +38,7 @@ pub fn add(b: *Build, sycl_badge_dep: *Build.Dependency, opts: common.Options) v
     os_cart.add(b, sycl_badge_dep, .{
         .mode = opts.cart_mode,
         .name = "snouty-gc",
-        .optimize = .ReleaseFast,
+        .optimize = .ReleaseSmall,
         .root_source_file = b.path(dir ++ "cart/src/main.zig"),
         .custom_builder = &build_cart_modules,
     });
@@ -95,6 +95,7 @@ const images = [_]Image{
     .{ .file = "art/fx.png", .bits = 4, .transparent = true },
     .{ .file = "art/claw.png", .bits = 4, .transparent = true },
     .{ .file = "art/hud.png", .bits = 4, .transparent = true },
+    .{ .file = "art/hazards.png", .bits = 4, .transparent = true },
 };
 
 /// The `assets` module: a generated assets.zig with one `@embedFile` per

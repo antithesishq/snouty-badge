@@ -10,7 +10,8 @@ labelled) and docs/art_select_mock.png (the racer select screen at 3x for
 all six racers, bios in the cart's 8x8 font). Deterministic; Pillow only.
 Every sheet is validated and the run exits non-zero on any violation.
 
-Modules under tools/art/: raster (the canvas), portraits, cars, items.
+Modules under tools/art/: raster (the canvas), portraits, cars, items,
+hazards (M3: the Sweeper).
 """
 from __future__ import annotations
 
@@ -22,7 +23,7 @@ from PIL import Image, ImageDraw, ImageFont
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from art import cars, items, portraits  # noqa: E402
+from art import cars, hazards, items, portraits  # noqa: E402
 from art.raster import KEY, Canvas, Font8  # noqa: E402
 
 CART = Path(__file__).resolve().parent.parent
@@ -60,6 +61,7 @@ def manifest() -> list[Sheet]:
         Sheet("fx.png", 24, 24, len(items.FX_CELLS), items.draw_fx, "effects"),
         Sheet("claw.png", 24, 32, 2, items.draw_claw, "GC claw (open, closed)"),
         Sheet("hud.png", 12, 12, len(items.HUD), items.draw_hud, "HUD bits"),
+        Sheet("hazards.png", 48, 32, len(hazards.HAZARD_CELLS), hazards.draw_hazards, "track hazards: the Sweeper"),
     ]
     return sheets
 

@@ -3,10 +3,12 @@
 //! the design, PLAN.md the milestone contract.
 //!
 //! M1: splash (Snouty's eyepatched portrait), title, the racer select
-//! (select.zig: Start, A is a Quick Race), a 6-car combat race on Landfill
-//! Loop with the picked racer against the other five, pause, results
-//! (winner card, then the field), the attract demo, and the render stress
-//! scene (stress.zig). The World lives here; `sim.simulate(&w, inputs)`
+//! (select.zig), a 6-car combat race with the picked racer against the
+//! other five, pause, results (winner card, then the field), the attract
+//! demo, and the render stress scene (stress.zig). M3: the main menu
+//! (QUICK RACE, GARBAGE COLLECTION, LINK greyed, SOUND), the track row over
+//! every track, GARBAGE COLLECTION (a collected player watches the leader),
+//! and the attract demo's camera cuts on a rotating track. The World lives here; `sim.simulate(&w, inputs)`
 //! advances it and everything else only reads it. `follow` (which car this
 //! badge draws and hears), the camera, the effects and the HUD notices
 //! (fx.zig, from the World's event ring) are render-side state, never in
@@ -37,17 +39,24 @@ comptime {
     cart.export_start_code();
 }
 
-/// Screens (SPEC 8.1, M1 subset; the numbers are debug_screen's).
-pub const Screen = enum(u8) { splash, title, select, race, pause, results };
+/// Screens (SPEC 8.1; the numbers are debug_screen's, `menu` came in M3).
+pub const Screen = enum(u8) { splash, title, select, race, pause, results, menu };
 var screen: Screen = .splash;
-/// Why the race runs: a Quick Race, the attract demo, or the render stress scene.
-const Mode = enum(u8) { quick, attract, stress };
+/// Why the race runs: a Quick Race, the attract demo, the render stress
+/// scene, or GARBAGE COLLECTION (M3; the numbers are debug_mode's).
+const Mode = enum(u8) { quick, attract, stress, gc };
 var mode: Mode = .quick;
+/// The mode the main menu picked (quick or gc): the select races it.
+var race_mode: Mode = .quick;
 
 /// The race. Only `sim` writes it.
 var w: world.World = .{};
 /// The car this badge draws, follows with the camera and hears (render-side).
+/// The player's own car, except in the attract demo (the camera cuts) and
+/// once GARBAGE COLLECTION has collected the player (the leader's camera).
 var follow: u8 = racers.snouty;
+/// The player's car (car i is racer i, so the picked racer's index).
+var me: u8 = racers.snouty;
 /// The racer the player drives (the racer select sets it).
 var player_racer: u8 = racers.snouty;
 /// The track the select's track row shows.
@@ -74,6 +83,20 @@ pub var autopilot: bool = false;
 var autopilot_mix: bool = false;
 
 var pause_list = menu.List{ .count = 4 };
+var main_list = menu.List{ .count = menu.item_count };
+/// Frames NO LINK YET flashes after A on LINK.
+var link_note: u32 = 0;
+/// The attract demo's track, the next one each time (SPEC 8.2).
+var attract_track: u8 = 0;
+/// Attract: frames on the current car, and the car the camera holds on
+/// while a scripted KERNEL PANIC flies at it and blue-screens it.
+var cut_frames: u32 = 0;
+const cut_every: u32 = 300;
+var hold_frames: u32 = 0;
+const panic_hold: u32 = 150;
+/// A collected player watches the leader: frames on the current leader
+/// (the camera changes car at most this often).
+const watch_min: u32 = 120;
 /// Title idle frames before the attract demo starts (10 s).
 const attract_after: u32 = 600;
 /// Frames since the race finished (results follow).
@@ -87,10 +110,7 @@ var finish_note: u32 = 0;
 pub fn start() void {
     cart.set_vsync_enabled(1000.0 / 60.0);
     cart.set_double_buffer_mode(.no_copy_full_frame);
-    track.select(track.tracks[0]);
-    render.set_track(track.tracks[0]);
-    camera.init(512 << fixed.Q, 512 << fixed.Q, 0);
-    camera.cam.height = 96;
+    backdrop();
     go(.splash);
     if (gc_stress != 0) start_stress();
 }
@@ -107,18 +127,47 @@ fn go(s: Screen) void {
     screen_frames = 0;
 }
 
+/// The title and menu backdrop: Landfill Loop's floor under the Dumps
+/// horizon, the camera high over the middle of the map, turning.
+fn backdrop() void {
+    const t = track.tracks[0];
+    track.select(t);
+    render.set_track(t);
+    camera.init(512 << fixed.Q, 512 << fixed.Q, camera.cam.yaw);
+    camera.cam.height = 96;
+    render.hills_on = false;
+}
+
+fn to_title() void {
+    backdrop();
+    go(.title);
+}
+
+fn to_menu() void {
+    if (screen != .title) backdrop();
+    link_note = 0;
+    go(.menu);
+}
+
 fn new_race(m: Mode, t: u8) void {
     mode = m;
     seed = seed *% 1103515245 +% 12345 +% frame;
-    var setup = world.Setup{ .track = t, .seed = seed };
-    if (m == .quick) setup.humans[0] = player_racer;
+    var setup = world.Setup{ .track = t, .seed = seed, .mode = switch (m) {
+        .gc => .gc,
+        .attract => .attract,
+        .quick, .stress => .race,
+    } };
+    if (m == .quick or m == .gc) setup.humans[0] = player_racer;
     sim.reset(&w, setup);
     const tr = sim.track_of(&w);
     render.set_track(tr);
     hud.init_minimap(tr);
     hills.init(tr, w.lap_px);
     render.hills_on = true;
-    follow = player_racer;
+    me = player_racer;
+    follow = me;
+    cut_frames = 0;
+    hold_frames = 0;
     fx.begin(&w);
     const c = &w.cars[follow];
     camera.follow(c.x, c.y, c.heading, true);
@@ -139,6 +188,7 @@ pub fn update() void {
         .race => race_frame(),
         .pause => pause_frame(),
         .results => results_frame(),
+        .menu => menu_frame(),
     }
     engine_cue();
     render_us = @truncate(cart.micros_since_boot() - t0);
@@ -162,17 +212,56 @@ fn splash_frame() void {
 
 /// Title over a slowly turning view of the Dumps; 10 s idle starts the attract demo.
 fn title_frame() void {
+    draw_backdrop();
+    menu.draw_title(screen_frames);
+    if (input.pressed(.start)) {
+        sound.menu_confirm();
+        to_menu();
+    } else if (any_pressed()) {
+        screen_frames = 0;
+    } else if (screen_frames >= attract_after) {
+        const t = attract_track;
+        attract_track = @intCast((attract_track + 1) % track.tracks.len);
+        new_race(.attract, t);
+    }
+}
+
+fn draw_backdrop() void {
     render.hills_on = false;
     render.frame = frame;
     camera.cam.yaw +%= 24;
     render.draw();
-    menu.draw_title(screen_frames);
-    if (input.pressed(.start)) {
-        sound.menu_confirm();
-        to_select();
-    } else if (any_pressed()) {
-        screen_frames = 0;
-    } else if (screen_frames >= attract_after) new_race(.attract, 0);
+}
+
+/// The main menu (SPEC 8.1): Up/Down, A or Start picks, B back to the title.
+fn menu_frame() void {
+    link_note -|= 1;
+    draw_backdrop();
+    menu_nav(&main_list);
+    if (input.pressed(.b)) {
+        to_title();
+        draw_backdrop();
+        menu.draw_title(screen_frames);
+        return;
+    }
+    if (input.pressed(.a) or input.pressed(.start)) {
+        switch (@as(menu.Item, @enumFromInt(main_list.cursor))) {
+            .quick, .gc => |it| {
+                sound.menu_confirm();
+                race_mode = if (it == .gc) .gc else .quick;
+                to_select();
+                select.draw(frame);
+                return;
+            },
+            // M4: the link cable. Until then the row only says so.
+            .link => link_note = 48,
+            .sound => {
+                toggle_sound();
+                sound.menu_confirm();
+            },
+        }
+    }
+    menu.draw_main(&main_list, sound.enabled, link_note, frame);
 }
 
 fn menu_nav(list: *menu.List) void {
@@ -192,7 +281,7 @@ fn toggle_sound() void {
 }
 
 fn to_select() void {
-    select.enter(player_racer, player_track);
+    select.enter(player_racer, player_track, race_mode == .gc);
     go(.select);
 }
 
@@ -202,12 +291,14 @@ fn select_frame() void {
         .pick => {
             player_racer = select.racer;
             player_track = select.track_index;
-            new_race(.quick, player_track);
+            new_race(race_mode, player_track);
             draw_race(false);
             return;
         },
         .back => {
-            go(.title);
+            to_menu();
+            draw_backdrop();
+            menu.draw_main(&main_list, sound.enabled, link_note, frame);
             return;
         },
         .none => {},
@@ -222,9 +313,11 @@ fn select_frame() void {
 /// (SPEC 5.1, 10), so the follow camera keeps easing underneath.
 fn draw_race(look: bool) void {
     const c = &w.cars[follow];
-    camera.follow(c.x, c.y, c.heading, false);
+    camera.follow(c.x, c.y, c.heading, snap_camera);
+    snap_camera = false;
     hills.base_progress = c.progress;
-    render.shake = @max(c.shake, fx.shake);
+    const watching = spectating();
+    render.shake = if (watching) c.shake else @max(c.shake, fx.shake);
     render.frame = frame;
     // KERNEL PANIC on this badge's car: the blue screen instead of the race.
     if (hud.bluescreen_on(c)) return hud.draw_bluescreen(&w, follow);
@@ -238,7 +331,13 @@ fn draw_race(look: bool) void {
     sprites.draw_floor_lines(&w, frame);
     sprites.draw_world(&w, .{ .follow = follow, .look_back = look, .frame = frame });
     fx.draw_beams(&w);
-    hud.draw(&w, follow, .{ .frame = frame, .look_back = look });
+    hud.draw(&w, follow, .{
+        .frame = frame,
+        .look_back = look,
+        .spectate = watching,
+        .collected = mode == .gc and !w.cars[me].active,
+        .press_start = mode == .attract,
+    });
     hud.draw_after(frame);
     camera.cam = saved;
     hills.backward = false;
@@ -247,13 +346,15 @@ fn draw_race(look: bool) void {
 /// Look back: Select held in a race this badge drives (the input mask
 /// already hides Select while Start is held too).
 fn looking_back() bool {
-    return mode != .attract and input.held(.select);
+    return !spectating() and input.held(.select);
 }
 
 fn race_frame() void {
     if (mode == .attract) {
         if (any_pressed()) {
-            go(.title);
+            to_title();
+            draw_backdrop();
+            menu.draw_title(screen_frames);
             return;
         }
     } else if (mode == .stress) {
@@ -270,12 +371,12 @@ fn race_frame() void {
 
     // One tick. The human slot 0 is this badge's buttons (or the autopilot).
     var inputs = [2]u8{ 0, 0 };
-    if (mode == .quick) {
-        inputs[0] = if (autopilot) ai.drive(&w, follow).byte() else input.race_byte();
+    if (mode == .quick or mode == .gc) {
+        inputs[0] = if (autopilot) ai.drive(&w, me).byte() else input.race_byte();
         if (autopilot and autopilot_mix) {
             const pad = world.Input.of(input.race_byte());
             var in = world.Input.of(inputs[0]);
-            if (w.cars[follow].captcha > 0) in.a = false;
+            if (w.cars[me].captcha > 0) in.a = false;
             in.a = in.a or pad.a;
             in.b = in.b or pad.b;
             in.select = in.select or pad.select;
@@ -284,13 +385,22 @@ fn race_frame() void {
     }
     last_input = inputs[0];
     sim.simulate(&w, inputs);
-    fx.tick(&w, follow, frame);
+    // The notices are the player's own (a collected player sees none of
+    // the leader's); the attract demo's follow its camera.
+    fx.tick(&w, if (mode == .attract) follow else me, frame);
+    switch (mode) {
+        .attract => attract_camera(),
+        .gc => watch_leader(),
+        else => {},
+    }
     sound_cues();
     if (w.phase == .finished) {
         finished_frames += 1;
-        if (finished_frames >= results_after or (mode == .quick and input.pressed(.start))) {
+        if (finished_frames >= results_after or (mode != .attract and input.pressed(.start))) {
             if (mode == .attract) {
-                go(.title);
+                to_title();
+                draw_backdrop();
+                menu.draw_title(screen_frames);
                 return;
             }
             results_card = 0;
@@ -298,6 +408,71 @@ fn race_frame() void {
         }
     }
     draw_race(looking_back());
+}
+
+/// The camera jumps to car `i` on the next drawn frame.
+var snap_camera: bool = false;
+
+fn cut_to(i: u8) void {
+    if (i == follow) return;
+    follow = i;
+    snap_camera = true;
+}
+
+/// Attract (SPEC 8.2): the camera cuts to the next car still running every
+/// `cut_every` frames, and to a car a KERNEL PANIC strikes (the scripted
+/// one in lap 2, or any other), holding on it while the blue screen and
+/// the freeze run.
+fn attract_camera() void {
+    if (fx.panic_target < world.car_count and w.cars[fx.panic_target].frozen_by == .panic) {
+        // The panic was handled by fx.tick this frame (it set the panic
+        // source for this car's blue screen only if it was followed).
+        fx.panic_source = fx.panic_from;
+        cut_to(fx.panic_target);
+        fx.panic_target = world.no_car;
+        hold_frames = panic_hold;
+        cut_frames = 0;
+    }
+    fx.panic_target = world.no_car;
+    if (hold_frames > 0) {
+        hold_frames -= 1;
+        return;
+    }
+    cut_frames += 1;
+    if (cut_frames < cut_every) return;
+    cut_frames = 0;
+    var k: u8 = 1;
+    while (k < world.car_count) : (k += 1) {
+        const i: u8 = (follow + k) % world.car_count;
+        const c = &w.cars[i];
+        if (c.active and c.wreck == .none) return cut_to(i);
+    }
+}
+
+/// GARBAGE COLLECTION: once the claw has lifted the player's car out, the
+/// camera rides with the leader (SPEC 8.2), changing car at most every
+/// `watch_min` frames.
+fn watch_leader() void {
+    if (w.cars[me].active or fx.claw_on(me)) {
+        follow = me;
+        cut_frames = watch_min;
+        return;
+    }
+    cut_frames +|= 1;
+    var lead: u8 = world.no_car;
+    for (&w.cars, 0..) |*c, i| {
+        if (c.active and (lead == world.no_car or c.rank < w.cars[lead].rank)) lead = @intCast(i);
+    }
+    if (lead == world.no_car or lead == follow) return;
+    if (follow == me or !w.cars[follow].active or cut_frames >= watch_min) {
+        cut_to(lead);
+        cut_frames = 0;
+    }
+}
+
+/// This badge is watching another car: the attract demo, or a collected player.
+fn spectating() bool {
+    return mode == .attract or follow != me;
 }
 
 /// Tones on message changes and wall hits (Zero SPEC 9), for the followed car.
@@ -327,7 +502,7 @@ fn sound_cues() void {
 /// else, while wrecked and in the attract demo.
 fn engine_cue() void {
     const c = &w.cars[follow];
-    if (screen != .race or mode == .attract or c.wreck != .none) return sound.engine_off();
+    if (screen != .race or spectating() or c.wreck != .none) return sound.engine_off();
     sound.engine(.{
         .speed = sim.speed(c),
         .throttle = !input.held(.down) and !c.finished,
@@ -368,7 +543,7 @@ fn pause_frame() void {
 /// Results: the winner's card, then the field; then the racer select
 /// for the next race.
 fn results_frame() void {
-    if (results_card == 0) results.draw_winner(&w, follow, screen_frames) else results.draw_table(&w, follow, screen_frames);
+    if (results_card == 0) results.draw_winner(&w, me, screen_frames) else results.draw_table(&w, me, screen_frames);
     if (input.pressed(.start) or input.pressed(.a)) {
         sound.menu_confirm();
         if (results_card == 0) {
@@ -404,7 +579,9 @@ comptime {
             "debug_event_seq",  "debug_car_armor",  "debug_results_card",   "debug_give_pickup",
             "debug_roll_pickup", "debug_effect",    "debug_pickup",         "debug_frozen",
             "debug_captcha",    "debug_captcha_cursor", "debug_captcha_lit", "debug_forks",
-            "debug_give_ahead",
+            "debug_give_ahead", "debug_start_gc",   "debug_start_attract", "debug_gc_marked",
+            "debug_gc_sweeps",  "debug_gc_collected", "debug_gc_survivor", "debug_alive",
+            "debug_hazard_state", "debug_me",
         }) |name| @export(&@field(@This(), name), .{ .name = name });
     }
 }
@@ -519,6 +696,45 @@ fn debug_set_autopilot(v: u32) callconv(.c) void {
 /// --call debug_start_race:N skips the splash and menus into a Quick Race on track N.
 fn debug_start_race(n: u32) callconv(.c) void {
     new_race(.quick, @intCast(n % track.tracks.len));
+}
+/// --call debug_start_gc:N: a GARBAGE COLLECTION race on track N.
+fn debug_start_gc(n: u32) callconv(.c) void {
+    race_mode = .gc;
+    new_race(.gc, @intCast(n % track.tracks.len));
+}
+/// --call debug_start_attract:N: the attract demo on track N.
+fn debug_start_attract(n: u32) callconv(.c) void {
+    new_race(.attract, @intCast(n % track.tracks.len));
+}
+/// GARBAGE COLLECTION: the marked car (255 none), sweeps, collected bits,
+/// the survivor (255 none), the cars still running.
+fn debug_gc_marked() callconv(.c) u32 {
+    return w.gc.marked;
+}
+fn debug_gc_sweeps() callconv(.c) u32 {
+    return w.gc.sweeps;
+}
+fn debug_gc_collected() callconv(.c) u32 {
+    return w.gc.collected;
+}
+fn debug_gc_survivor() callconv(.c) u32 {
+    return w.gc.survivor;
+}
+fn debug_alive() callconv(.c) u32 {
+    var n: u32 = 0;
+    for (&w.cars) |*c| n += @intFromBool(c.active);
+    return n;
+}
+/// The hazards' states, a hex digit per slot (slot 0 lowest): state (0
+/// idle, 1 warn, 2 active) + 4 * kind (1 blast, 2 mover).
+fn debug_hazard_state() callconv(.c) u32 {
+    var v: u32 = 0;
+    for (w.hazards, 0..) |hz, k| v |= (@as(u32, @intFromEnum(hz.state)) + 4 * @as(u32, @intFromEnum(hz.kind))) << @intCast(4 * k);
+    return v;
+}
+/// The player's car.
+fn debug_me() callconv(.c) u32 {
+    return me;
 }
 /// --call debug_stress:1 starts the render stress scene (stress.zig).
 fn debug_stress(v: u32) callconv(.c) void {

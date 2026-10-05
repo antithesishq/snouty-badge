@@ -14,6 +14,15 @@
 //! BIT FLIP (blinking mirrored, the floor's row jitter is render.zig's),
 //! the CAPTCHA mini-game, DDOS's stuttering speed, the ZERO-DAY flash and
 //! the RACE CONDITION glitch.
+//!
+//! M3: `LAP n/N` from `World.laps`; GARBAGE COLLECTION shows `SWEEP n`
+//! with a bar filling as the leader nears the next sweep point, `MARKED`
+//! over the marked car (blinking red on the minimap), the feed's MARKED,
+//! TAGGED and `GC: freed` lines, the bar notes (MARKED, TAGGED, MARK
+//! PASSED, COLLECTED); a badge watching another car (the attract demo, a
+//! collected player) gets the watched racer's name instead of its own
+//! speed, ammo and pickup caption, and the attract demo `PRESS START`.
+const std = @import("std");
 const cart = @import("cart-api");
 const fixed = @import("fixed.zig");
 const tuning = @import("tuning.zig");
@@ -26,6 +35,7 @@ const font = @import("font.zig");
 const sprites = @import("sprites.zig");
 const fx = @import("fx.zig");
 const assets = @import("assets");
+const gc_mode = @import("gc_mode.zig");
 
 pub const white = cart.DisplayColor.rgb(0xFCFBF9);
 pub const coral = cart.DisplayColor.rgb(0xF18271);
@@ -120,6 +130,18 @@ pub fn down_arrow(x: i32, y: i32, color: cart.DisplayColor) void {
 const minimap_size: i32 = 32;
 var minimap_buf: [32 * 32]u8 = undefined;
 
+/// The track outline of the last `init_minimap`, 32x32 at (x, y) (the
+/// select's track row).
+pub fn draw_outline(x0: i32, y0: i32, color: cart.DisplayColor) void {
+    const px: cart.Pixel = .from_color(color);
+    for (0..32) |x| {
+        const col = &cart.framebuffer[@intCast(x0 + @as(i32, @intCast(x)))];
+        for (0..32) |y| {
+            if (minimap_buf[y * 32 + x] != 0) col[@intCast(y0 + @as(i32, @intCast(y)))] = px;
+        }
+    }
+}
+
 pub fn init_minimap(t: *const track.Track) void {
     const size = minimap_size;
     @memset(&minimap_buf, 0);
@@ -154,8 +176,17 @@ fn draw_minimap(w: *const world.World, follow: u8, frame: u32) void {
             }
         }
     }
+    // A Sweeper on its run, as a 2x2 orange block (M3).
+    for (track.hazard_specs[0..track.hazard_n], 0..) |*h, k| {
+        if (h.kind != .mover) continue;
+        const hz = &w.hazards[k];
+        if (hz.state == .idle and (frame / 16) % 2 == 1) continue;
+        const mx = x0 + @divTrunc((hz.x >> fixed.Q) * size, 1024);
+        const my = y0 + @divTrunc((hz.y >> fixed.Q) * size, 1024);
+        cart.rect(.{ .x = @min(mx, x0 + size - 2), .y = @min(my, y0 + size - 2), .width = 2, .height = 2, .fill_color = orange });
+    }
     // Cars in livery colours, the followed car last (white, on top); a
-    // wrecked car blinks.
+    // wrecked car blinks; the MARKED car blinks red (GARBAGE COLLECTION).
     var k: usize = 0;
     while (k <= world.car_count) : (k += 1) {
         const i: usize = if (k == world.car_count) follow else k;
@@ -165,7 +196,11 @@ fn draw_minimap(w: *const world.World, follow: u8, frame: u32) void {
         if (c.wreck != .none and (frame / 8) % 2 == 1) continue;
         const mx = x0 + @divTrunc((c.x >> fixed.Q) * size, 1024);
         const my = y0 + @divTrunc((c.y >> fixed.Q) * size, 1024);
-        const color: cart.DisplayColor = if (i == follow) white else livery(c.racer);
+        var color: cart.DisplayColor = if (i == follow) white else livery(c.racer);
+        if (i == w.gc.marked) {
+            if ((frame / 6) % 2 == 1) continue;
+            color = red;
+        }
         cart.rect(.{ .x = @min(mx, x0 + size - 2), .y = @min(my, y0 + size - 2), .width = 2, .height = 2, .fill_color = color });
     }
 }
@@ -186,6 +221,13 @@ pub const Options = struct {
     frame: u32 = 0,
     /// Select held: `BEHIND` over the horizon.
     look_back: bool = false,
+    /// This badge watches `follow` (the attract demo, a collected player):
+    /// the racer's name instead of the speed, ammo and pickup caption.
+    spectate: bool = false,
+    /// GARBAGE COLLECTION collected this badge's player.
+    collected: bool = false,
+    /// The attract demo: `PRESS START` blinks.
+    press_start: bool = false,
 };
 
 /// The race HUD for car `follow`. Call after the sprites (it reads where
@@ -193,19 +235,30 @@ pub const Options = struct {
 pub fn draw(w: *const world.World, follow: u8, o: Options) void {
     const c = &w.cars[follow % world.car_count];
     draw_markers(w, c, follow, o.frame);
-    // Top row: LAP n/3 left, the rank in the middle, the pickup box right.
-    var lap_buf: [7]u8 = "LAP 1/3".*;
-    lap_buf[4] = '1' + @as(u8, @min(c.lap, tuning.laps - 1));
-    lap_buf[6] = '0' + @as(u8, tuning.laps);
-    text(&lap_buf, margin, top_y, white);
-    text(rank_text(c.rank), 80 - 12, top_y, if (c.rank == 1) cyan else white);
-    draw_pickup_box(c, follow, o.frame, o.look_back);
+    // Top row: LAP n/N (GARBAGE COLLECTION: SWEEP n) left, the rank in the
+    // middle, the pickup box right.
+    if (w.mode == .gc) {
+        draw_sweep(w);
+    } else {
+        const laps: u8 = @max(1, @min(9, w.laps));
+        var lap_buf: [7]u8 = "LAP 1/3".*;
+        lap_buf[4] = '1' + @as(u8, @min(c.lap, laps - 1));
+        lap_buf[6] = '0' + laps;
+        text(&lap_buf, margin, top_y, white);
+    }
+    if (c.active) text(rank_text(c.rank), 80 - 12, top_y, if (c.rank == 1) cyan else white);
+    draw_pickup_box(c, follow, o.frame, o.look_back or o.spectate);
     if (o.look_back) centered("BEHIND", behind_y, coral);
+    if (o.spectate and c.active) centered(name_of(c.racer), behind_y, livery(c.racer));
     const two_line = draw_feed();
-    draw_popup(if (two_line) 9 else 0);
-    draw_bottom_left(w, c, follow, o.frame);
+    if (!o.spectate) draw_popup(if (two_line) 9 else 0);
+    if (o.collected) {
+        text("COLLECTED", margin, speed_y, coral);
+    } else if (!o.spectate) {
+        draw_bottom_left(w, c, follow, o.frame);
+    }
     draw_minimap(w, follow, o.frame);
-    draw_message(w, c);
+    if (!draw_message(w, c, o.spectate) and o.press_start and (o.frame / 30) % 2 == 0) centered("PRESS START", bar_y + 4, white);
     if (c.bit_flip > 0 and c.wreck == .none) draw_bit_flip(o.frame);
     if (c.captcha > 0 and c.human != world.no_human and c.wreck == .none) draw_captcha(c, o.frame);
 }
@@ -244,6 +297,15 @@ fn draw_pickup_box(c: *const world.Car, follow: u8, frame: u32, look_back: bool)
 
 /// `ACK` over cars the followed car hit, and the SPEAR PHISH reticle on its lock.
 fn draw_markers(w: *const world.World, c: *const world.Car, follow_index: usize, frame: u32) void {
+    // GARBAGE COLLECTION: `MARKED` over the marked car, red and white.
+    var tag_up: i32 = 0;
+    if (w.gc.marked < world.car_count) {
+        const s = sprites.car_screen[w.gc.marked];
+        if (s.visible) {
+            const y = s.top - 11;
+            text("MARKED", s.sx - 24, y, if ((frame / 8) % 2 == 0) red else white);
+        }
+    }
     for (&fx.acks) |*a| {
         if (a.ticks == 0) continue;
         const s = sprites.car_screen[a.car % world.car_count];
@@ -259,7 +321,9 @@ fn draw_markers(w: *const world.World, c: *const world.Car, follow_index: usize,
         if (!s.visible) continue;
         const own_game = i == follow_index and o.human != world.no_human;
         const tag: u32 = if (o.frozen > 0 and o.frozen_by == .panic) sprites.i_panic else if (o.captcha > 0 and !own_game) sprites.i_captcha else if (o.sudo > 0) sprites.i_sudo else continue;
-        sprites.blit_at(&sprites.icons, tag, s.sx - 6, s.top - 13, .{});
+        // Over the MARKED tag when there is one.
+        tag_up = if (i == w.gc.marked) 10 else 0;
+        sprites.blit_at(&sprites.icons, tag, s.sx - 6, s.top - 13 - tag_up, .{});
     }
     if (c.lock < world.car_count and c.wreck == .none) {
         const s = sprites.car_screen[c.lock];
@@ -272,9 +336,11 @@ fn draw_markers(w: *const world.World, c: *const world.Car, follow_index: usize,
 
 /// Kill feed (SPEC 5.3): `KILLER > VICTIM` in their livery colours, or
 /// the victim and the cause for an uncredited wreck. M2: pickup lines
-/// (`KERNEL PANIC > KIDDIE`) and RACE CONDITION swaps (`SNOUTY <> KIDDIE`);
-/// a line wider than the screen breaks after the `>` into two rows.
-/// Returns whether it took two rows (the pop-up moves down).
+/// (`KERNEL PANIC > KIDDIE`) and RACE CONDITION swaps (`SNOUTY <> KIDDIE`).
+/// M3: `KIDDIE MARKED`, `LEGACY TAGGED KIDDIE`, `GC: freed KIDDIE` and
+/// hazard hits (`VENT > KIDDIE`). A line wider than the screen breaks
+/// after the middle word into two rows. Returns whether it took two rows
+/// (the pop-up moves down).
 fn draw_feed() bool {
     const f = &fx.feed;
     if (f.ticks == 0) return false;
@@ -284,34 +350,60 @@ fn draw_feed() bool {
     var right: []const u8 = victim;
     var right_color = livery(f.victim);
     var mid: []const u8 = " > ";
-    if (f.swap) {
-        left = if (f.killer < world.car_count) name_of(f.killer) else "";
-        left_color = livery(f.killer);
-        mid = " <> ";
-    } else if (f.pickup != .none) {
-        left = roster_text.pickup_name(f.pickup);
-        left_color = coral;
-    } else if (f.cause == .zero_day) {
-        left = "ZERO-DAY";
-        left_color = coral;
-    } else if (f.killer < world.car_count) {
-        left = name_of(f.killer);
-        left_color = livery(f.killer);
-    } else {
-        left = victim;
-        left_color = livery(f.victim);
-        mid = " ";
-        right = if (f.cause == .fall) "SEGFAULT" else "WRECKED";
-        right_color = coral;
+    switch (f.kind) {
+        .swap => {
+            left = if (f.killer < world.car_count) name_of(f.killer) else "";
+            left_color = livery(f.killer);
+            mid = " <> ";
+        },
+        .pickup => {
+            left = roster_text.pickup_name(f.pickup);
+            left_color = coral;
+        },
+        .hazard => {
+            left = if (f.hazard == .mover) "SWEEPER" else "VENT";
+            left_color = orange;
+        },
+        .marked => {
+            left = victim;
+            left_color = livery(f.victim);
+            mid = " ";
+            right = "MARKED";
+            right_color = red;
+        },
+        .tagged => {
+            left = if (f.killer < world.car_count) name_of(f.killer) else "";
+            left_color = livery(f.killer);
+            mid = " TAGGED ";
+        },
+        .freed => {
+            left = "GC:";
+            left_color = cyan;
+            mid = " freed ";
+        },
+        .wreck => if (f.cause == .zero_day) {
+            left = "ZERO-DAY";
+            left_color = coral;
+        } else if (f.killer < world.car_count) {
+            left = name_of(f.killer);
+            left_color = livery(f.killer);
+        } else {
+            left = victim;
+            left_color = livery(f.victim);
+            mid = " ";
+            right = if (f.cause == .fall) "SEGFAULT" else "WRECKED";
+            right_color = coral;
+        },
     }
     const len: i32 = @intCast(left.len + mid.len + right.len);
     if (len * 8 > 160 - 2 * margin) {
         // Two rows: `KERNEL PANIC >` and the victim under it.
-        const l1: i32 = @intCast(left.len + 2);
+        const m = mid[0 .. mid.len - 1];
+        const l1: i32 = @intCast(left.len + m.len);
         var x: i32 = 80 - l1 * 4;
         text(left, x, feed_y, left_color);
         x += @as(i32, @intCast(left.len)) * 8;
-        text(" >", x, feed_y, white);
+        text(m, x, feed_y, white);
         text(right, 80 - @as(i32, @intCast(right.len * 4)), feed_y + 9, right_color);
         return true;
     }
@@ -322,6 +414,33 @@ fn draw_feed() bool {
     x += @as(i32, @intCast(mid.len)) * 8;
     text(right, x, feed_y, right_color);
     return false;
+}
+
+/// GARBAGE COLLECTION's top left: `SWEEP n` (the next sweep point, from
+/// 1) and under it a 40 px bar filling as the race leader nears it.
+fn draw_sweep(w: *const world.World) void {
+    var buf: [8]u8 = "SWEEP 1 ".*;
+    // The next sweep point; once a survivor is left, the last one.
+    const next: u32 = if (w.gc.survivor != world.no_car) w.gc.sweeps else @as(u32, w.gc.sweeps) + 1;
+    const n: u8 = @intCast(@max(1, @min(next, 99)));
+    var len: usize = 7;
+    if (n >= 10) {
+        buf[6] = '0' + n / 10;
+        buf[7] = '0' + n % 10;
+        len = 8;
+    } else buf[6] = '0' + n;
+    text(buf[0..len], margin, top_y, if (w.gc.survivor != world.no_car) grey else white);
+    if (w.gc.survivor != world.no_car) return;
+    var lead: i32 = std.math.minInt(i32);
+    for (&w.cars) |*o| {
+        if (o.active) lead = @max(lead, sim.fine_progress(w, o));
+    }
+    const to = gc_mode.sweep_at(w.gc.sweeps);
+    const from = if (w.gc.sweeps == 0) 0 else gc_mode.sweep_at(w.gc.sweeps - 1);
+    const span = @max(1, to - from);
+    const fill: i32 = @max(0, @min(40, @divTrunc((lead - from) * 40, span)));
+    cart.rect(.{ .x = margin, .y = top_y + 9, .width = 40, .height = 2, .fill_color = dim });
+    if (fill > 0) cart.rect(.{ .x = margin, .y = top_y + 9, .width = @intCast(fill), .height = 2, .fill_color = if (fill > 32) red else coral });
 }
 
 /// Taunt pop-up (SPEC 5.3, 10): the racer's half-scale portrait in a
@@ -407,14 +526,29 @@ fn message_text(msg: world.Message) []const u8 {
     return "";
 }
 
-/// The bar: the followed car's wreck note first, then its own message,
-/// else the shared one (countdown).
-fn draw_message(w: *const world.World, c: *const world.Car) void {
+/// The bar: the followed car's wreck note first, then a GARBAGE
+/// COLLECTION note, then its own message, else the shared one
+/// (countdown). Returns whether it drew. Spectating, only the shared one.
+fn draw_message(w: *const world.World, c: *const world.Car, spectate: bool) bool {
     var buf: [20]u8 = undefined;
     var str: []const u8 = "";
     var color = white;
     const note = &fx.wreck_note;
-    if (note.ticks > 0) {
+    if (spectate) {
+        if (w.msg == .none) return false;
+        str = message_text(w.msg);
+    } else if (fx.gc_note_ticks > 0 and fx.gc_note != .none and fx.gc_note != .collected) {
+        str = switch (fx.gc_note) {
+            .none => "",
+            .marked => "MARKED! TAG SOMEONE",
+            .tagged => "TAGGED! PASS IT ON",
+            .passed => "MARK PASSED",
+            // The claw is lifting the car out: the label says it, the bar
+            // would hide the lift.
+            .collected => "",
+        };
+        color = if (fx.gc_note == .passed) green else red;
+    } else if (note.ticks > 0) {
         color = coral;
         if (note.cause == .zero_day) {
             str = "ZERO-DAY";
@@ -433,13 +567,14 @@ fn draw_message(w: *const world.World, c: *const world.Car) void {
         color = green;
     } else {
         const msg = if (c.msg != .none) c.msg else w.msg;
-        if (msg == .none) return;
+        if (msg == .none) return false;
         str = message_text(msg);
         color = if (msg == .fall) coral else if (msg == .go or msg == .finished) cyan else white;
     }
-    if (str.len == 0) return;
+    if (str.len == 0) return false;
     cart.rect(.{ .x = 0, .y = bar_y, .width = cart.screen_width, .height = bar_h, .fill_color = anti_black });
     centered(str, bar_y + 4, color);
+    return true;
 }
 
 // --- The gags on the followed car's badge (SPEC 6.3, 10) -----------------------------
@@ -456,7 +591,7 @@ const glyphs: *const [96 * 8]u8 = assets.font[0 .. 96 * 8];
 
 /// `str` in the 8x8 font, each glyph `scale` x `scale` px a pixel, or
 /// mirrored left to right (`mirror`), no shadow.
-fn glyph_text(str: []const u8, x: i32, y: i32, scale: i32, mirror: bool, color: cart.DisplayColor) void {
+pub fn glyph_text(str: []const u8, x: i32, y: i32, scale: i32, mirror: bool, color: cart.DisplayColor) void {
     var cx = x;
     for (0..str.len) |n| {
         // A mirror image reads right to left too.
@@ -516,7 +651,7 @@ const tick_blue = cart.DisplayColor.rgb(0x1A73E8);
 /// Seconds of the human's longest wait (the sim frees the car at 120).
 const captcha_wait: u32 = 120;
 
-fn fill_rect(x: i32, y: i32, w: i32, h: i32, color: cart.DisplayColor) void {
+pub fn fill_rect(x: i32, y: i32, w: i32, h: i32, color: cart.DisplayColor) void {
     cart.rect(.{ .x = x, .y = y, .width = @intCast(w), .height = @intCast(h), .fill_color = color });
 }
 
