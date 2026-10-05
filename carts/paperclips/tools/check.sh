@@ -20,7 +20,15 @@
 #   bench    badge-bench, calibrated: a prepared late stage-1 game
 #            (--poke paperclips_bench=N, N = 1..6 for the six stage-1 pages)
 #            with tools/scripts/bench.json; every run's worst `busy ms`
-#            <= BENCH_MAX_MS (default 10) and mean <= BENCH_MEAN_MS (default 5)
+#            <= BENCH_MAX_MS (default 10) and mean <= BENCH_MEAN_MS (default 5).
+#            7 is a stage-2 game, 8/9 a live 200-vs-200 stage-3 battle
+#            (COMBAT / SPACE page), 10 a new game with its opening battle.
+#            A live battle must move every ship in exact soft f64 (the
+#            positions feed the dice the oracle compares), about 7 ms a
+#            combat step, two steps in one frame in eight: 8 and 9 are held
+#            to worst 20 / mean 8, 10 (the title screen's first seconds) to
+#            worst 30 / mean 8. Accepted 2026-10-05: the badge clock follows
+#            real time, so only the frame rate dips, never the game speed.
 #   size     size -A of the ELF: .text + .data + .bss (and the ARM unwind
 #            tables) <= SIZE_MAX_KB (default 200)
 #
@@ -128,7 +136,9 @@ if want bench; then
         for n in 1 2 3 4 5 6 7 8 9 10; do
             j="$out/bench/page$n/bench.json"
             [ -f "$j" ] || { status=1; echo "FAIL page$n: no bench.json"; continue; }
-            python3 - "$j" "$max_ms" "$mean_ms" "page$n" <<'PY' || status=1
+            lim="$max_ms"; mlim="$mean_ms"
+            case "$n" in 8|9) lim=20; mlim=8 ;; 10) lim=30; mlim=8 ;; esac
+            python3 - "$j" "$lim" "$mlim" "page$n" <<'PY' || status=1
 import json, sys
 j = json.load(open(sys.argv[1]))
 lim, mean_lim, name = float(sys.argv[2]), float(sys.argv[3]), sys.argv[4]

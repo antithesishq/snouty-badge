@@ -109,8 +109,36 @@ listed without telling U and O through the lead.
 ## Status
 
 - 2026-10-04: SPEC + PLAN written; tracks L, U, O starting.
+- 2026-10-05: **M1 and M2 done together** (tag paperclips/m2; paperclips/m1
+  on the same commit). The whole game runs on the badge: stage 1, stage 2,
+  stage 3, combat, the ending, credits and session prestige; CHEATS page
+  behind the title code. `tools/check.sh` PASS:
+  - oracle: all 6 scripts MATCH the original JS at every checkpoint
+    (short, stage1, stage1b, deep = the whole game to the credits in
+    10.2 h virtual, prestige = the next universe, misc = cheats and edge
+    clicks). Math is bit-exact with V8 (`game/jsmath.zig` ports V8's
+    pow/sin/log), number printing exact (`game/fmt.zig`, 1.1M cases).
+  - autoplayer (seed 2026): HypnoDrones 7,880 s, space 12,748 s, credits
+    25,891 s virtual; 8 more seeds all reach the credits.
+  - badge-bench busy ms (mean / worst): stage-1 pages 2.1-2.6 / 2.6-3.2,
+    stage 2 2.30 / 2.82, live stage-3 battle 7.25 / 17.95 (COMBAT page)
+    and 5.35 / 16.48 (SPACE), new game's opening battle 6.37 / 28.17.
+    Battles must move every ship in exact soft f64 (their positions feed
+    the dice), so those three have their own limits (20 / 8, 30 / 8); the
+    badge clock follows real time, so only the frame rate dips. Own
+    soft-float add/mul/compare (`game/softfloat*.zig`, bit-exact, ~68
+    cycles an add vs compiler_rt's ~155).
+  - size 172.2 KB (ReleaseSmall).
 
 ## Deferred questions (defaults taken)
+
+- Battle frames: kept exact (16-28 ms worst during live stage-3 battles
+  and the first seconds of a game). Options if they bother on hardware:
+  the RP2350's double-precision coprocessor (DCP) for f64 add/mul (not
+  modelled by badge-bench), or single-precision drift for the finished
+  battle's flock on the COMBAT page (picture only, mean 7.25 -> ~5 ms).
+- After the credits the original offers nothing more; leave through the
+  OS chord (Start+Select).
 
 - Saves: none (no OS save region). Default: session only.
 - Hold-to-repeat on buy rows (0.4 s, 8/s); none on Make Paperclip.

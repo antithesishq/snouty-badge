@@ -53,7 +53,7 @@ tools/check.sh preview bench   # just those steps
 | `gen` | the committed generated files match their generators (`gen_font.py`, `gen_title.py`, `gen_scripts.py`, each `--check`) |
 | `oracle` | builds the oracle runner and runs track O's comparison against the original JS (`tools/compare.mjs`) |
 | `preview` | headless wasm runs: a 10-minute bot (`tools/scripts/soak.json`) without a trap, the cheat code (`cheats.json`), and the tour (`tour.json`) as PNGs in `out/check/tour/` to look at |
-| `bench` | badge-bench, calibrated, on a prepared late stage-1 game, once per stage-1 page (`--poke paperclips_bench=1..6`): worst `busy ms` <= 10 (`BENCH_MAX_MS`), mean <= 5 (`BENCH_MEAN_MS`) |
+| `bench` | badge-bench, calibrated: a prepared late stage-1 game on each stage-1 page (`--poke paperclips_bench=1..6`), a stage-2 game (7), a live stage-3 battle on COMBAT (8) and SPACE (9), a new game (10): worst `busy ms` <= 10 (`BENCH_MAX_MS`), mean <= 5 (`BENCH_MEAN_MS`); 8 and 9 worst <= 20 / mean <= 8, 10 worst <= 30 / mean <= 8 (live battles move every ship in exact soft f64; see `tools/check.sh`) |
 | `size` | `size -A`: `.text` + `.data` + `.bss` (+ unwind tables) <= 200 KB (`SIZE_MAX_KB`) |
 
 ## 4. Flash it
@@ -180,6 +180,10 @@ Debug exports (wasm only): `debug_frame`, `debug_screen` (0 title, 1 game,
     --poke paperclips_seed=7 --script tools/scripts/bench.json --frames 400 --symbols
 ```
 
-`paperclips_bench=N` starts in the prepared game on stage-1 page N instead
-of the title; `paperclips_seed` fixes the game's seed (the badge otherwise
+`paperclips_bench=N` starts in the prepared game on stage-1 page N (1..6)
+instead of the title; 7 is a prepared stage-2 game on the SWARM page, 8 and
+9 a 200-vs-200 stage-3 battle on the COMBAT and SPACE pages
+(`cart/src/game/prepare.zig`), 10 a new game from its first frame, 99 the
+soft-float self-test (`cart/src/game/softfloat_arm.zig` against the Zig
+routines); `paperclips_seed` fixes the game's seed (the badge otherwise
 mixes the microsecond clock in).
