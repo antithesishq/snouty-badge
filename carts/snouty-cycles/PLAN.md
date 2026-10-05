@@ -276,7 +276,33 @@ Each new rule is behind its `Config` flag, and every constant is in `tuning`.
 - `cell_colors` and `bare_floor` read empty cells' neighbours without
   bounds checks (the rim guarantees them); WRAP (M2) must change both and
   `World.next_cell`.
+- 2026-10-05: **M1 done** (tag `snouty-cycles/m1`). Tracks S (rules), P (game) and
+  A (programs) merged into `cycles/m0` and integrated by the lead.
+  - Integration:
+    - P's `compat.brain` shim became `brain()` = `ai.Brain.from(ai.preset(tier, level 0..3), seed)`.
+    - Ladder presets moved to A's 0..3 scale (A's suggested table). The attract uses 4x T2 L3; the autopilot T3 L3.
+    - `ladder` was added to `check.sh`'s default steps.
+  - **Tuning by the lead:** C++ cleared 2 of 5 and RUST 0 of 5 on A's table, so the table was changed:
+    - C++ is now 2x T2 L0 (was L1).
+    - RUST is now T2 L2 + T2 L1 (was 2x T2 L3).
+    - Both now clear 10 of 10 seeds while costing the bot about a life each.
+  - Gate `tools/check.sh`: PASS on all steps (build, test, float, font, cycle, bench, lcd, ladder).
+  - badge-bench, calibrated busy ms (worst):
+    - Toml run: 9.39 at frame 0 (the title's full repaint plus four T2 first decisions).
+    - Level 1: 5.68. Level 6: 7.05. Level 12: 7.13. Means 1.2-2.0.
+    - `--lcd` equal on 1440 frames.
+  - Ladder bot (autopilot T3 L3, seeds 1-5): every level 5 of 5. Levels 4, 7, 8 and 9 cost lives; 10-12 cost none.
+  - ELF `.text` 85,312, `.data` 168, `.bss` 94,188: about 180 KB of the ~275 KB RAM window.
+  - **M1 Track A numbers** (referenced from `ai.zig`):
+    - T2 averages 2,650 work units per decision (about 1.7 ms), capped at 6,000.
+    - T3 averages 5,950 units (about 3.3 ms), capped at 8,000.
+    - `tick_pool` is 10,000 units per tick, with 2,000 kept for programs deciding on their last tick. A unit is about 0.5-0.6 us.
+    - Fallback to T1 happens in about 0.1% of decisions.
+    - 1v1 tournaments (40 rounds): T1 v T0 33-6-1, T2 v T1 33-7, T3 v T2 22-18 (23-16-1 on layouts), T3 v T1 36-4.
+    - Attract worst frames: 3x T3 6.95 ms, 4x T2 7.12, 4x T3 7.52. AI scratch is 34.9 KB.
 
 ## Deferred questions for Adrian
 
 See SPEC section 14. None block the build.
+
+- **Difficulty curve (M1).** The T3 ladder bot finds ASM, ZIG and PROD easier than C++, JAVA and RUST: two hunting T2 programs gang up, and a lone T3 does not. A human may feel it the other way round. Default: keep the table and tune it after a badge play test.

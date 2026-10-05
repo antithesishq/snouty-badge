@@ -59,7 +59,7 @@ max_ms="${BENCH_MAX_MS:-12}"
 levels="${BENCH_LEVELS-1 6 12}"
 bench_seed="${BENCH_SEED:-2}"
 
-all=(build test float font cycle bench lcd)
+all=(build test float font cycle bench lcd ladder)
 extra=(ladder)
 steps=("$@")
 [ ${#steps[@]} -eq 0 ] && steps=("${all[@]}")

@@ -7,7 +7,7 @@ const std = @import("std");
 const sim = @import("sim.zig");
 const ai = @import("ai.zig");
 
-/// One program on a level: its tier and the `ai.preset` level its knobs
+/// One program on a level: its tier and the `ai.preset` level (0..3) its knobs
 /// come from (reaction, mistakes, vision).
 pub const Program = struct {
     tier: ai.Tier,
@@ -38,16 +38,16 @@ fn p(tier: ai.Tier, preset: u8) Program {
 pub const table = [count]Level{
     .{ .name = "BASIC", .programs = &.{p(.wander, 1)} },
     .{ .name = "COBOL", .programs = &.{ p(.wander, 2), p(.wander, 2) } },
-    .{ .name = "PASCAL", .programs = &.{p(.avoid, 3)} },
-    .{ .name = "FORTRAN", .programs = &.{ p(.avoid, 4), p(.avoid, 4) } },
-    .{ .name = "LISP", .programs = &.{ p(.avoid, 5), p(.avoid, 5), p(.avoid, 5) }, .layout = 1 },
-    .{ .name = "C", .programs = &.{p(.territory, 6)} },
-    .{ .name = "C++", .programs = &.{ p(.territory, 7), p(.territory, 7) }, .layout = 2 },
-    .{ .name = "JAVA", .programs = &.{ p(.territory, 8), p(.avoid, 8), p(.avoid, 8) } },
-    .{ .name = "RUST", .programs = &.{ p(.territory, 9), p(.territory, 9) }, .speed_pct = 110, .layout = 3 },
-    .{ .name = "ASM", .programs = &.{p(.search, 10)} },
-    .{ .name = "ZIG", .programs = &.{ p(.search, 11), p(.territory, 11) }, .layout = 4 },
-    .{ .name = "PROD", .programs = &.{ p(.search, 12), p(.territory, 12), p(.territory, 12) }, .layout = 6 },
+    .{ .name = "PASCAL", .programs = &.{p(.avoid, 1)} },
+    .{ .name = "FORTRAN", .programs = &.{ p(.avoid, 2), p(.avoid, 2) } },
+    .{ .name = "LISP", .programs = &.{ p(.avoid, 3), p(.avoid, 3), p(.avoid, 3) }, .layout = 1 },
+    .{ .name = "C", .programs = &.{p(.territory, 0)} },
+    .{ .name = "C++", .programs = &.{ p(.territory, 0), p(.territory, 0) }, .layout = 2 },
+    .{ .name = "JAVA", .programs = &.{ p(.territory, 2), p(.avoid, 3), p(.avoid, 3) } },
+    .{ .name = "RUST", .programs = &.{ p(.territory, 2), p(.territory, 1) }, .speed_pct = 110, .layout = 3 },
+    .{ .name = "ASM", .programs = &.{p(.search, 1)} },
+    .{ .name = "ZIG", .programs = &.{ p(.search, 2), p(.territory, 3) }, .layout = 4 },
+    .{ .name = "PROD", .programs = &.{ p(.search, 3), p(.territory, 3), p(.territory, 3) }, .layout = 6 },
 };
 
 /// Layouts the ladder cycles through on later loops: 1..8 of

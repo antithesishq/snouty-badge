@@ -89,7 +89,7 @@ pub const tuning = struct {
     /// Autopilot 2's chance of a random move per decision (per mille).
     pub const sloppy_permille: u16 = 80;
     /// The `ai.preset` level the autopilot's brain uses (the strongest).
-    pub const autopilot_preset: u8 = 12;
+    pub const autopilot_preset: u8 = 3;
 };
 
 pub const colors = struct {
@@ -104,22 +104,11 @@ pub const colors = struct {
     pub const select = render.rgb(0xFFE870);
 };
 
-/// TODO(lead): Track A's `ai.preset(tier, level)` (a Brain's knobs per
-/// ladder level). Until it is merged a plain `Brain.init(tier, seed)`
-/// stands in. After the A merge this picks `preset` up on its own if it
-/// returns an `ai.Brain`; any other shape stops the build here.
-const compat = struct {
-    fn brain(tier: ai.Tier, level: u8, seed: u32) ai.Brain {
-        if (comptime @hasDecl(ai, "preset")) {
-            if (comptime @typeInfo(@TypeOf(ai.preset)).@"fn".return_type.? != ai.Brain)
-                @compileError("ai.preset returns something other than ai.Brain: adapt game.compat.brain");
-            var b = ai.preset(tier, level);
-            b.rng = .init(seed);
-            return b;
-        }
-        return .init(tier, seed);
-    }
-};
+/// A program's Brain: `ai.preset` knobs (tier, level 0..3) and its own
+/// rng stream.
+fn brain(tier: ai.Tier, level: u8, seed: u32) ai.Brain {
+    return .from(ai.preset(tier, level), seed);
+}
 
 /// The title menu (SKIRMISH and OPTIONS are M2: shown greyed, skipped).
 pub const MenuItem = enum(u8) { ladder, skirmish, options, howto };
@@ -165,7 +154,7 @@ pub const Game = struct {
     attract_end: u32,
     /// 0: the player drives. 1: T1 drives the player (debug_autopilot,
     /// badge-bench). 2: T1 with `tuning.sloppy_permille` random moves.
-    /// 3: T3 SEARCH (the ladder bot; plays T1 until Track A lands).
+    /// 3: T3 SEARCH (the ladder bot).
     autopilot: u8,
     seeds: rng.Xorshift,
     brains: [sim.max_cycles]ai.Brain,
@@ -210,8 +199,8 @@ pub const Game = struct {
             .layout = @intCast(g.attract_rounds % (levels.layouts_used + 1)),
         }, s);
         g.attract_rounds += 1;
-        // T2 programs once Track A lands (until then they play T1).
-        for (&g.brains, 0..) |*b, i| b.* = compat.brain(.territory, 6, rng.mix(s, @intCast(i)));
+        // Four T2 programs at their strongest preset.
+        for (&g.brains, 0..) |*b, i| b.* = brain(.territory, 3, rng.mix(s, @intCast(i)));
         g.sudden_death_tick = 0;
         g.repaint = true;
     }
@@ -238,8 +227,8 @@ pub const Game = struct {
         const r = levels.get(g.level);
         const s = g.seeds.next();
         g.world.init(r.config(), s);
-        g.brains[0] = compat.brain(g.autopilot_tier(), tuning.autopilot_preset, rng.mix(s, 0));
-        for (r.programs(), 1..) |p, i| g.brains[i] = compat.brain(p.tier, p.preset, rng.mix(s, @intCast(i)));
+        g.brains[0] = brain(g.autopilot_tier(), tuning.autopilot_preset, rng.mix(s, 0));
+        for (r.programs(), 1..) |p, i| g.brains[i] = brain(p.tier, p.preset, rng.mix(s, @intCast(i)));
         g.state = if (intro) .intro else .countdown;
         g.timer = 0;
         g.crash = .none;
@@ -392,7 +381,7 @@ pub const Game = struct {
         if (player and w.cycles[0].state == .alive) {
             if (g.autopilot != 0) {
                 const b = &g.brains[0];
-                if (b.tier != g.autopilot_tier()) b.* = compat.brain(g.autopilot_tier(), tuning.autopilot_preset, b.rng.state);
+                if (b.tier != g.autopilot_tier()) b.* = brain(g.autopilot_tier(), tuning.autopilot_preset, b.rng.state);
                 if (g.autopilot == 2) b.mistake_permille = tuning.sloppy_permille;
                 in[0] = ai.decide(b, w, 0);
             } else {
@@ -849,8 +838,8 @@ test "a derez costs a life and retries the level; none left is CORE DUMPED" {
 
 test "autopilot clears BASIC: tally, a life back, the next level" {
     const g = &tg;
-    // Until Track A lands BASIC's program plays T1 like the autopilot, so
-    // some seeds lose: look for a clear over a few.
+    // The autopilot is T1 here and can lose to BASIC's wanderer on a
+    // seed: look for a clear over a few.
     var cleared = false;
     var seed: u32 = 1;
     while (!cleared and seed <= 12) : (seed += 1) {
