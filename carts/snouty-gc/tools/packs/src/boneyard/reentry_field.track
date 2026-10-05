@@ -1,0 +1,41 @@
+# Reentry Field: The Boneyard, track 3 (SPEC 19.5). The spacecraft end of
+# the yard: off the shuttle's wing (a ramp over its broken wing root),
+# down the east side along the scorched reentry furrow (an open edge:
+# leave the road and you fall into it), through the booster forest
+# standing nose-down in the sand, back across the furrow on its crust of
+# fused sand (the car behind falls through), and round the fallen
+# station ring, a long banked turn, to the line.
+name REENTRY FIELD
+order 3
+floor runway
+league boneyard
+width 54
+pit_band 6
+# x    y    half   features
+ 260  140   58                     # start line, heading east
+ 500  125   58     ramp            # off the shuttle's wing
+ 740  130   56
+ 880  230   54
+ 900  420   52     open:right      # the furrow on the right
+ 800  540   50
+ 600  520   48     drift           # into the booster forest
+ 470  420   48
+ 340  480   48
+ 400  620   48
+ 600  735   50     crates
+ 790  745   52
+ 885  775   52
+ 890  870   52
+ 780  910   52
+ 520  895   52     crust           # across the furrow on its fused crust
+ 300  880   54     crates
+ 150  780   56                     # the station ring: a long banked turn
+ 105  600   56
+ 120  420   56     bay:left
+ 175  250   58
+furrow 30 400 1030 410 900 520 815 700 805 790 640 850 470
+props nose,booster seg 1 side left gap 80 off 26
+props booster seg 6 side both gap 50 off 24
+props booster,dish seg 8 side both gap 60 off 24
+props dish,wingtip seg 16 side left gap 90 off 26
+props booster seg 14 side left gap 70 off 26
