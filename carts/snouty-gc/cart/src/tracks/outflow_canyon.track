@@ -1,0 +1,37 @@
+# Outflow Canyon: the Runoff, track 2 (SPEC 3.2). Tight and walled: a
+# narrow road wound between the outflow pipes, through a long pipe tunnel
+# (ribbed steel underfoot), and past two exhaust vents in the narrows,
+# where there is no room to go round a firing vent: wait for it. Crate
+# rows on the two wider straights, a service bay lane before the line.
+# Control point 0 is the start line; features on point i apply to the
+# segment from point i to i+1; a segment without `open` has walls.
+league runoff
+width 46
+# x    y    half   features
+ 250  140   50                     # start line, heading east
+ 460  130   50     crates          # top straight: three crates
+ 630  145   46
+ 725  190   44
+ 735  270   44
+ 650  305   44     pipe            # the pipe tunnel, west
+ 480  300   44     pipe
+ 370  305   44
+ 300  335   44
+ 300  415   44
+ 370  450   44
+ 560  445   44     vent:right      # the narrows east: a vent from the right
+ 720  440   44
+ 850  470   46
+ 890  600   46
+ 865  720   44
+ 860  835   46
+ 760  895   48
+ 610  880   48                     # bottom straight west
+ 520  790   44     vent:left,phase=120   # the dip: a second vent from the left
+ 420  790   44
+ 340  880   46
+ 220  875   46
+ 130  760   46     crates          # west side: three crates
+ 130  520   46     bay:right       # west side north: the service bay lane
+ 140  300   48
+ 170  180   50

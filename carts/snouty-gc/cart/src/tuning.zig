@@ -253,6 +253,8 @@ pub const ai_drop_wide_lat: i32 = 40;
 /// heading change over the next 8 samples exceeds this, with any car
 /// within `ai_drop_behind`.
 pub const ai_drop_corner: i32 = 9000;
+/// AIs drop nothing for the first ticks after GO (the grid start).
+pub const ai_drop_grace: u32 = 240;
 /// A LANCE crew starts charging only when the curvature over the burst
 /// window ahead is under this.
 pub const ai_lance_straight: i32 = 8000;
@@ -363,6 +365,9 @@ pub const race_ticks: u8 = 6;
 /// within `panic_home` px; 40 damage and 90 ticks frozen.
 pub const panic_speed: i32 = 2 * top_speed;
 pub const panic_home: i32 = 64;
+/// The packet counts its target as reached when it is at most this many
+/// samples behind the packet's next sample.
+pub const panic_passed: u8 = 16;
 pub const panic_dmg: u8 = 40;
 pub const panic_freeze: u8 = 90;
 /// CAPTCHA: every other car held to 10% until solved; a human's board has
@@ -394,3 +399,36 @@ pub const ai_throw_max: i32 = 140;
 pub const ai_throw_lat: i32 = 24;
 /// BIT FLIP: of every 32 ticks the AI steers the wrong way for this many.
 pub const ai_flip_lag: u8 = 6;
+
+// --- Track hazards, service bays, modes (SPEC 3.3, 8.2, 19.4), M3 ------------
+// The hazards' own numbers (period, damage, push, size, speed) are track
+// data (tools/build_tracks.py VENT_DEFAULTS, SWEEPER_DEFAULTS: SPEC 3.3's
+// 240-tick vent firing 30 ticks for 20 and a shove; the Sweeper's 60 and a
+// shove), so a track pack can set its own.
+
+/// A car is in a firing vent's lane when its centre is within the lane's
+/// half width plus this (half a car's width).
+pub const hazard_reach: i32 = half_wid;
+/// Service bay (SPEC 3.3): 1 armor every `bay_every` ticks on a bay tile.
+pub const bay_every: u32 = 4;
+/// GARBAGE COLLECTION: the marked car may pass the mark on (tag) only
+/// after carrying it this long, so two cars side by side cannot bat it
+/// back and forth every PING volley.
+pub const gc_tag_grace: u16 = 45;
+/// Attract: the scripted KERNEL PANIC packet is launched when the leader
+/// reaches this sample of lap 2, this many samples (about 14 px each)
+/// behind it on the line.
+pub const attract_panic_sample: i32 = 48;
+pub const attract_panic_behind: u8 = 12;
+/// AI hazard sense (SPEC 3.3 "AIs avoid an active blast or mover where
+/// they can"): look this far ahead along the heading; keep this much
+/// clearance (px) from a mover's body and this many ticks from a vent's
+/// firing; never plan slower than `ai_hazard_min_q8` of the top speed
+/// (it brakes to a stop only right at the lane).
+pub const ai_hazard_ahead: i32 = 150;
+pub const ai_hazard_clear: i32 = 14;
+pub const ai_hazard_margin: u32 = 6;
+pub const ai_hazard_min_q8: i32 = 40;
+/// Braking distance per px/tick of speed to shed (the brake takes about
+/// 4% a tick against the throttle).
+pub const ai_hazard_brake_px: i32 = 20;

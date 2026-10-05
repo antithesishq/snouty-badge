@@ -3,4 +3,4 @@
 budget_ms = 16.7
 frames = 600
 script = "carts/snouty-gc/tools/scripts/m0_race.json"
-note = "M0: Start, Start, A through the splash, title and menu into a Quick Race on Landfill Loop (race from frame 21, GO at 221), then the autopilot's recorded drive (tools/record_script.py): the six-car grid start and the first corners (PLAN.md M0 status)"
+note = "M3: Start, Start, A, A through the splash, title, main menu and racer select into a Quick Race on Landfill Loop (race from frame 20), then the autopilot's recorded drive (tools/record_script.py): the six-car grid start and the first corners (PLAN.md M0 status)"

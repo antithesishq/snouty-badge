@@ -85,20 +85,28 @@ pub fn sample_px() i32 {
     return (lap_px << fixed.Q) >> 8;
 }
 
+/// `fixed.div` for the short distances here: a 32-bit divide (one
+/// instruction) while `a << 16` fits, else the 64-bit one (M3: under
+/// ReleaseSmall the 64-bit library divide was 5% of a stress frame).
+inline fn div_px(a: i32, b: i32) i32 {
+    if (a > -32768 and a < 32768) return @divTrunc(a << fixed.Q, b);
+    return fixed.div(a, b);
+}
+
 /// Height at distance `z` world px ahead of the camera (which sits
 /// `cam_behind` behind the followed car), relative to the floor under the camera.
 pub noinline fn height_ahead(z: i32, cam_behind: i32) i32 {
     if (!any) return 0;
     const spx = sample_px();
     if (spx == 0) return 0;
-    var ahead_samples = fixed.div(z - cam_behind, spx >> fixed.Q);
+    var ahead_samples = div_px(z - cam_behind, spx >> fixed.Q);
     // Look back: the camera sits ahead of the car facing back down the track.
     if (backward) ahead_samples = -ahead_samples;
     // The floor under the camera changes only with the base sample (M1:
     // the sprite list projects up to 192 points a frame).
     const key: u32 = @as(u32, base_progress) | @as(u32, @intFromBool(backward)) << 8 | @as(u32, @intCast(cam_behind & 0xFFFF)) << 9 | @as(u32, @intCast(spx & 0x7F)) << 25;
     if (key != cam_key) {
-        var cam_samples = fixed.div(-cam_behind, spx >> fixed.Q);
+        var cam_samples = div_px(-cam_behind, spx >> fixed.Q);
         if (backward) cam_samples = -cam_samples;
         cam_h = height_at(cam_samples);
         cam_key = key;

@@ -4,10 +4,11 @@
 //! car turning on its yaw cells over a plinth, the SPD/ARM/DMG bars, the
 //! front weapon (A) and the rear weapon (Down+A), the 4-line bio, and the
 //! cycling row along the bottom. Left/Right cycle the six racers; Down
-//! moves to the track row (Left/Right change the track: one for now), Up
-//! back; A (or Start) on either row starts the race with the racer shown,
-//! so a Quick Race is Start, A from the title (SPEC 8.1); B goes back.
-//! Everything is drawn 4 px clear of the edges.
+//! moves to the track row (M3: Left/Right cycle every track in
+//! `track.tracks`, and the bio's place shows the track: name, league, the
+//! mode's rule, its hazards and its outline), Up back; A (or Start) on
+//! either row starts the race with the racer shown; B goes back to the
+//! menu. Everything is drawn 4 px clear of the edges.
 const cart = @import("cart-api");
 const world = @import("world.zig");
 const racers = @import("racers.zig");
@@ -23,16 +24,20 @@ pub var racer: u8 = racers.snouty;
 pub var track_index: u8 = 0;
 /// 0 the racer row, 1 the track row.
 var row: u8 = 0;
+/// The mode the race will be (the track panel names its rule).
+var gc_mode: bool = false;
 /// Frames since the racer last changed (the turntable).
 var frames: u32 = 0;
 
 pub const Action = enum { none, pick, back };
 
-pub fn enter(r: u8, t: u8) void {
+pub fn enter(r: u8, t: u8, gc: bool) void {
     racer = r % racers.count;
     track_index = t % @as(u8, @intCast(track.tracks.len));
     row = 0;
     frames = 0;
+    gc_mode = gc;
+    hud.init_minimap(track.tracks[track_index]);
 }
 
 /// One frame of input.
@@ -60,6 +65,7 @@ pub fn update() Action {
         } else {
             const n: i32 = @intCast(track.tracks.len);
             track_index = @intCast(@mod(@as(i32, track_index) + step, n));
+            hud.init_minimap(track.tracks[track_index]);
         }
     }
     return .none;
@@ -93,7 +99,7 @@ fn plinth(cx: i32, cy: i32, rx: i32, ry: i32, color: cart.DisplayColor) void {
         const t = ry * ry - dy * dy;
         var hw: i32 = 0;
         while ((hw + 1) * (hw + 1) * ry * ry <= t * rx * rx) hw += 1;
-        cart.rect(.{ .x = cx - hw, .y = cy + dy, .width = @intCast(2 * hw + 1), .height = 1, .fill_color = color });
+        hud.fill_rect(cx - hw, cy + dy, 2 * hw + 1, 1, color);
     }
 }
 
@@ -103,9 +109,9 @@ pub fn draw(frame: u32) void {
     const txt = roster_text.roster[r];
     const st = roster_text.stats[r];
     const liv = hud.livery(r);
-    cart.rect(.{ .x = 0, .y = 0, .width = 160, .height = 128, .fill_color = bg });
+    hud.fill_rect(0, 0, 160, 128, bg);
     // Portrait in a livery frame.
-    cart.rect(.{ .x = 4, .y = 4, .width = 50, .height = 50, .fill_color = liv });
+    hud.fill_rect(4, 4, 50, 50, liv);
     sprites.blit_at(&sprites.portraits[r], 0, 5, 5, .{});
     // Name and car.
     plain(ro.name, 58, 5, liv);
@@ -122,7 +128,7 @@ pub fn draw(frame: u32) void {
         plain(lab, 96, y, dim);
         var j: i32 = 0;
         while (j < 8) : (j += 1) {
-            cart.rect(.{ .x = 121 + j * 4, .y = y + 1, .width = 3, .height = 6, .fill_color = if (j < val) liv else rule });
+            hud.fill_rect(121 + j * 4, y + 1, 3, 6, if (j < val) liv else rule);
         }
     }
     // Weapons: A fires the front gun, Down+A drops the rear one.
@@ -131,8 +137,12 @@ pub fn draw(frame: u32) void {
     hud.down_arrow(4, 67, liv);
     plain("A", 11, 66, liv);
     plain(roster_text.rear_name(ro.rear), 24, 66, ink);
-    cart.rect(.{ .x = 4, .y = 76, .width = 152, .height = 1, .fill_color = rule });
-    for (txt.bio, 0..) |line, k| plain(line, 4, 79 + @as(i32, @intCast(k)) * 9, ink);
+    hud.fill_rect(4, 76, 152, 1, rule);
+    if (row == 1) {
+        draw_track_panel();
+    } else {
+        for (txt.bio, 0..) |line, k| plain(line, 4, 79 + @as(i32, @intCast(k)) * 9, ink);
+    }
     // The cycling row: racers (A PICK, Down for the track) or the track.
     const blink = (frame / 20) % 2 == 0;
     const arrow = if (row == 0) (if (blink) ink else dim) else (if (blink) hud.cyan else dim);
@@ -144,7 +154,37 @@ pub fn draw(frame: u32) void {
         hud.down_arrow(90, 117, dim);
         plain("TRACK", 96, 116, dim);
     } else {
-        const name = track.tracks[track_index].name;
-        plain(name, 80 - @as(i32, @intCast(name.len * 4)), 116, hud.cyan);
+        // "TRACK n/N", centred.
+        var buf: [9]u8 = "TRACK 1/1".*;
+        buf[6] = '1' + track_index;
+        buf[8] = '0' + @as(u8, @intCast(track.tracks.len));
+        plain(&buf, 80 - 36, 116, hud.cyan);
     }
+}
+
+/// The track row's panel in the bio's place: the track's name, league,
+/// the mode's rule and the hazards on it, its outline on the right.
+fn draw_track_panel() void {
+    const t = track.tracks[track_index];
+    plain(t.name, 4, 79, hud.cyan);
+    plain(t.league.name, 4, 88, dim);
+    if (gc_mode) {
+        plain("MARK AND SWEEP", 4, 97, ink);
+    } else {
+        var laps: [6]u8 = "3 LAPS".*;
+        laps[0] = '0' + @as(u8, @min(9, t.laps));
+        plain(&laps, 4, 97, ink);
+    }
+    // The hazards from its feature records (SPEC 3.3, 19.4).
+    var specs: [world.hazard_max]track.HazardSpec = undefined;
+    const n = track.parse_hazards(t, &specs);
+    var vents = false;
+    var movers = false;
+    for (specs[0..n]) |*h| {
+        vents = vents or h.kind == .blast;
+        movers = movers or h.kind == .mover;
+    }
+    const hz: []const u8 = if (vents and movers) "VENTS, SWEEPER" else if (vents) "EXHAUST VENTS" else if (movers) "THE SWEEPER" else "";
+    plain(hz, 4, 106, hud.coral);
+    hud.draw_outline(122, 79, ink);
 }

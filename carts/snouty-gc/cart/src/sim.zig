@@ -4,7 +4,9 @@
 //! contacts, laps and sectors, rank, the countdown; from M1 armor, damage
 //! and kill credit, ramming, wall damage, hulks, and the weapons
 //! (`weapons.zig`) and AI aim (`ai.zig`) it drives; from M2 the pickups
-//! (`pickups.zig`: crates, rolls, status effects).
+//! (`pickups.zig`: crates, rolls, status effects); from M3 the track
+//! hazards and service bays (`hazards.zig`) and the race rules of
+//! GARBAGE COLLECTION and attract (`gc_mode.zig`).
 //!
 //! `simulate(w, inputs)` is a pure function of `(World, inputs)`: no cart
 //! API, no clock, no floats, no globals written (the M4 lockstep rests on
@@ -21,6 +23,8 @@ const racers = @import("racers.zig");
 const ai = @import("ai.zig");
 const weapons = @import("weapons.zig");
 const pickups = @import("pickups.zig");
+const hazards = @import("hazards.zig");
+const gc_mode = @import("gc_mode.zig");
 
 const World = world.World;
 const Car = world.Car;
@@ -197,8 +201,9 @@ pub fn simulate(w: *World, inputs: [2]u8) void {
             w.tick +%= 1;
             // All inputs first (the AI reads the world as it was at the top
             // of the tick, whatever the car order), then the moves.
-            var ins: [world.car_count]Input = undefined;
+            var ins: [world.car_count]Input = @splat(.{});
             for (&w.cars, 0..) |*c, i| {
+                if (!c.active) continue;
                 ins[i] = if (c.human < 2 and !c.finished) .of(inputs[c.human]) else ai.drive(w, i);
             }
             for (&w.cars, 0..) |*c, i| {
@@ -209,9 +214,12 @@ pub fn simulate(w: *World, inputs: [2]u8) void {
                 weapons.fire(w, i, in);
             }
             collide_all(w);
+            hazards.update(w);
             weapons.update(w);
             pickups.update(w);
             update_ranks(w);
+            gc_mode.update(w);
+            gc_mode.script(w);
             // The lock and the AI aim for the next tick (what the reticle
             // shows is what the next A fires at).
             for (0..world.car_count) |i| {
@@ -471,6 +479,13 @@ fn any_wall(t: *const track.Track, c: *const Car) bool {
 /// starts the kill-credit window. Wrecked, immune (respawn), root (SUDO)
 /// and finished cars take none, and nothing is dealt with combat off.
 pub fn damage(w: *World, victim: usize, attacker: u8, amount: i32) void {
+    hurt(w, victim, attacker, amount, true);
+}
+
+/// `damage`, where `weapon` says whether a landed hit by `attacker` counts
+/// as a weapon hit (GARBAGE COLLECTION's tag passes the mark on; rams do
+/// not).
+fn hurt(w: *World, victim: usize, attacker: u8, amount: i32, weapon: bool) void {
     if (!w.combat or amount <= 0) return;
     const c = &w.cars[victim];
     if (!c.active or c.wreck != .none or c.immune > 0 or c.finished or c.sudo > 0) return;
@@ -478,6 +493,7 @@ pub fn damage(w: *World, victim: usize, attacker: u8, amount: i32) void {
     if (attacker != world.no_car and attacker != victim) {
         c.last_hit_by = attacker;
         c.last_hit_ticks = 0;
+        if (weapon) gc_mode.on_hit(w, attacker, victim);
     }
     if (c.hit_flash == 0 or dmg >= tuning.hit_event_min) {
         weapons.emit(w, .hit, attacker, @intCast(victim), dmg, c.x, c.y);
@@ -529,6 +545,8 @@ pub fn wreck(w: *World, i: usize, cause: world.Wreck) void {
         // The presentation reads armor and ZERO-DAY wrecks from the event.
         .none, .armor, .zero_day => .none,
     }, tuning.message_ticks);
+    // GARBAGE COLLECTION: a wreck while marked is a collection.
+    gc_mode.on_wreck(w, i);
 }
 
 /// After the WATCHDOG delay: back on the centerline sample nearest the
@@ -612,8 +630,10 @@ fn update_progress(w: *World, i: usize) void {
                 c.burst_charges = tuning.burst_per_lap;
                 // Ammo refills on the line (SPEC 6).
                 weapons.refill(c);
-                if (c.lap == tuning.laps - 1) car_msg(c, .final_lap, tuning.message_ticks);
-                if (c.lap >= tuning.laps) {
+                // GARBAGE COLLECTION has no lap limit: the sweeps end it.
+                const gc = w.mode == .gc;
+                if (!gc and c.lap == w.laps - 1) car_msg(c, .final_lap, tuning.message_ticks);
+                if (!gc and c.lap >= w.laps) {
                     c.finished = true;
                     c.finish_tick = w.tick;
                     car_msg(c, .finished, 120);
@@ -628,9 +648,14 @@ fn update_progress(w: *World, i: usize) void {
 }
 
 /// The race is over when every human has finished, or, in an AI-only race
-/// (attract, tests), when the leader has.
+/// (attract, tests), when the leader has; in GARBAGE COLLECTION when one
+/// car is left.
 fn check_finished(w: *World) void {
     if (w.phase != .racing) return;
+    if (w.mode == .gc) {
+        if (w.gc.survivor != world.no_car) w.phase = .finished;
+        return;
+    }
     var humans: u32 = 0;
     var humans_done: u32 = 0;
     var any_done = false;
@@ -691,7 +716,7 @@ pub fn collide_all(w: *World) void {
 /// Move a car by (dx, dy) Q16 unless that puts a corner in a wall: a
 /// contact never shoves a car through a wreckage wall onto the next leg
 /// (the velocity exchange still parts them).
-fn nudge(w: *const World, c: *Car, dx: i32, dy: i32) void {
+pub fn nudge(w: *const World, c: *Car, dx: i32, dy: i32) void {
     const ox = c.x;
     const oy = c.y;
     c.x = (c.x +% dx) & world_mask;
@@ -789,8 +814,8 @@ fn contact(w: *World, ia: usize, ib: usize, dx8: i32, dy8: i32, d2: i32) void {
             a.vx -= fixed.mul(nx, tuning.sudo_bounce);
             a.vy -= fixed.mul(ny, tuning.sudo_bounce);
         }
-        damage(w, ib, @intCast(ia), to_b);
-        damage(w, ia, @intCast(ib), to_a);
+        hurt(w, ib, @intCast(ia), to_b, false);
+        hurt(w, ia, @intCast(ib), to_a, false);
     }
 }
 
@@ -828,19 +853,27 @@ pub fn fine_progress(w: *const World, c: *const Car) i32 {
     return lap * 65536 + @as(i32, @intCast(base)) * 256 + frac;
 }
 
+/// The car's last stretch: its last lap, or in GARBAGE COLLECTION the
+/// final three cars (the AI saves its last-lap pickups for it).
+pub fn last_lap(w: *const World, c: *const Car) bool {
+    return if (w.mode == .gc) gc_mode.active_count(w) <= 3 else c.lap + 1 >= w.laps;
+}
+
 /// Progress in world px along the centerline (the rubber band's measure).
 pub fn progress_px(w: *const World, c: *const Car) i32 {
     return @intCast((@as(i64, fine_progress(w, c)) * w.lap_px) >> 16);
 }
 
 /// Ranks 1..6: finished cars first in finish order, then by fine progress,
-/// ties to the lower index. A finished car's rank is final.
-fn update_ranks(w: *World) void {
+/// ties to the lower index. A finished car's rank is final, and so is a
+/// collected car's (GARBAGE COLLECTION: its place when it went out); the
+/// cars still running rank 1..n among themselves.
+pub fn update_ranks(w: *World) void {
     var fine: [world.car_count]i32 = undefined;
-    for (&w.cars, 0..) |*c, i| fine[i] = if (c.finished) 0 else fine_progress(w, c);
+    for (&w.cars, 0..) |*c, i| fine[i] = if (c.finished or !c.active) 0 else fine_progress(w, c);
     for (&w.cars, 0..) |*c, i| {
         if (!c.active) {
-            c.rank = 0;
+            if (w.gc.collected & (@as(u8, 1) << @intCast(i)) == 0) c.rank = 0;
             continue;
         }
         var r: u8 = 1;

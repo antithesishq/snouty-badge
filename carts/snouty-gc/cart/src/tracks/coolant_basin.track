@@ -1,0 +1,34 @@
+# Coolant Basin: the Runoff, track 3 (SPEC 3.2). Round the old cooling
+# basin, now dry pits of brine: the road runs along its rims with no
+# walls on the basin side (leave it and you drop in, SEGMENT FAULT), out
+# along a causeway into the middle and back, jumping a drained channel
+# off a ramp on the way out. Coolant still seeps across the bends (slick:
+# 0.97 grip) and a vent guards the top straight.
+# Control point 0 is the start line; features on point i apply to the
+# segment from point i to i+1; a segment without `open` has walls.
+league runoff
+width 58
+pit_band 11                        # the basins are pits from rim to rim
+# x    y    half   features
+ 280  140   62                     # start line, heading east
+ 470  130   62     vent:right,phase=60   # top straight: a vent from the right
+ 640  130   62     crates
+ 800  160   60     coolant         # coolant seeps across the north-east bend
+ 890  300   58     open:right      # east rim, south: the basin on the right
+ 885  520   58     open:right
+ 850  740   58     coolant         # the south-east bend, slick
+ 740  880   58
+ 640  860   56
+ 600  740   54     open:right      # the causeway out, north: basin on the right
+ 600  520   54     crates
+ 590  390   54
+ 500  320   54                     # round the end of the causeway
+ 410  390   54     ramp            # the causeway back, south: the ramp over the channel
+ 400  600   54     open:right
+ 400  760   54
+ 330  870   58     coolant         # the south-west bend, slick
+ 200  860   58
+ 130  740   58     open:right      # west rim, north: the basin on the right
+ 130  500   58     bay:left        # the service bay on the outside lane
+ 140  290   60
+ 180  170   62

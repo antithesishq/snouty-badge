@@ -60,6 +60,7 @@ The script also writes two review images:
 | `fx.png` | 24x24 | 11 | 3,168 | |
 | `claw.png` | 24x32 | 2 | 768 | |
 | `hud.png` | 12x12 | 10 | 720 | |
+| `hazards.png` (M3) | 48x32 | 4 | 3,072 | the Sweeper, 13 colours |
 
 The art totals about 22.6 KB of `.rodata` (portraits 6.9 KB, cars 7.7
 KB, the rest 8.0 KB), against SPEC 13.2's 7 + 9 + 8 = 24 KB.
@@ -240,6 +241,23 @@ cart numbers pickups in table order:
 | 7 | sudo_tag | SUDO `#` over a rooted car |
 | 8 | captcha_tag | the CAPTCHA grid over a stopped car |
 | 9 | honey_tag | an orange `?` (for any marker that wants one) |
+
+#### `hazards.png` (M3 Track B): 192x32, 4 cells of 48x32
+
+`tools/art/hazards.py`. The Dumps' Sweeper (SPEC 3.3): a huge
+maintenance crawler of the Hyperscalers, white hull, hazard stripes, a
+red scanner slit, status LEDs, a roof beacon, treads.
+
+| Cell | What |
+|---|---|
+| 0, 1 | end view (from behind or ahead: the crawler is the same both ways), the brush bar's bristles in two phases |
+| 2, 3 | side view, facing right (mirror for left), the brush drum ahead of the cab in two phases |
+
+The roof beacon is drawn dark; the cart lights it with flat pixels at
+cell px (22, 1) in the end view and (17, 1) in the side view (4x3, scaled
+with the sprite): flashing amber while the hazard warns, steady while it
+crosses. The exhaust vents need no sheet: their lane telegraph is drawn
+in code and the blast uses `fx.png`'s flames and smoke.
 
 The SPEC 10 drawn-in-code items stay in code: the blue screen, the
 CAPTCHA mini-game grid, `MARKED`, `BEHIND` and the kill feed (all text

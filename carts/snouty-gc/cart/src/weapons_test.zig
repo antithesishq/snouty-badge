@@ -1019,6 +1019,8 @@ test "AI target preference: BOTNET goes for the leader, SYSADMIN for the human" 
 
 test "AI drops on a car close behind on its line; LEGACY's fire wall goes wide" {
     var w = arena();
+    // Past the grid truce (M3: no AI drops for the first ticks after GO).
+    w.tick = tuning.ai_drop_grace;
     const f = clear_frame(&w, 60);
     const k = put(&w, racers.kiddie, f, 0, 0, 0);
     _ = put(&w, 0, f, -60, 4, 0);

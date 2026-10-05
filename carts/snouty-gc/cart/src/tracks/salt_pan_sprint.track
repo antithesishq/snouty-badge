@@ -1,0 +1,31 @@
+# Salt Pan Sprint: the Runoff, track 1 (SPEC 3.2). Flat out across the
+# dry cooling lake: long straights on graded brine mud between outflow
+# pipes, a C round the pan with a long tongue into its middle. Exhaust
+# vents fire across the inner straights and the bottom straight on a
+# 4-second timer (20 damage and a sideways shove): read the glow and time
+# your run. A coolant slick on the east bend, a service bay lane on the
+# west side.
+# Control point 0 is the start line; features on point i apply to the
+# segment from point i to i+1; a segment without `open` has walls.
+league runoff
+width 62
+# x    y    half   features
+ 300  140   64                     # start line, heading east
+ 560  130   64     crates          # top straight: four crates
+ 800  150   62
+ 890  260   62     coolant         # a coolant slick on the east bend
+ 820  390   60
+ 620  395   60     vent:left       # the tongue, going west: a vent
+ 440  400   60
+ 360  490   60
+ 440  590   60
+ 640  600   60     vent:right,phase=120  # back east: the second vent, half a cycle on
+ 820  620   62     crates
+ 890  760   62
+ 800  880   64
+ 560  880   64     vent:left,phase=60    # bottom straight west: the third vent
+ 330  880   64     crates
+ 160  860   62
+ 120  700   62     bay:right       # west side: the service bay lane
+ 120  420   62
+ 150  220   64

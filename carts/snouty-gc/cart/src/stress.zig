@@ -10,7 +10,12 @@
 //! RMA crates in two rows, the 8 DDOS drones round a rival, a DEADLOCK
 //! chain, a RUBBER DUCK, a SPAGHETTI strand, SUDO, KERNEL PANIC, RACE
 //! CONDITION and HEISENBUG cars, and on SNOUTY in turn (150 frames each)
-//! the CAPTCHA board, BIT FLIP, DDOS, then the roulette. The view sweeps
+//! the CAPTCHA board, BIT FLIP, DDOS, then the roulette. M3 adds the
+//! hazards (a Sweeper crossing 200 px ahead and two vents across the road
+//! at 100 and 300 px firing 30 frames of every 40: the scene's own specs,
+//! a debug write of the track's hazard cache like the crates) and
+//! GARBAGE COLLECTION's MARKED car, a `TAGGED!` every 90 frames and a
+//! claw lifting a car out every 90 frames. The view sweeps
 //! +-14 degrees so the list changes every frame. main.zig runs it
 //! instead of `sim.simulate` when `gc_stress` is set (badge-bench
 //! `--poke gc_stress=1`, or the wasm `debug_stress` export).
@@ -110,7 +115,39 @@ pub fn fill(w: *World, follow: u8) void {
     w.cars[r3].swap_with = @intCast(r5);
     w.cars[r1].heisen = 240;
     me.duck = 600;
+    // M3: GARBAGE COLLECTION's mark on a rival, and the hazards.
+    w.mode = .gc;
+    w.gc.marked = @intCast((follow + 2 + 1) % world.car_count);
+    track.hazard_n = 3;
+    track.hazard_specs[0] = across(.mover, 200, 18);
+    track.hazard_specs[1] = across(.blast, 100, 10);
+    track.hazard_specs[2] = across(.blast, 300, 10);
+    track.hazard_specs[3] = .{};
+    for (track.hazard_specs[0..3], 0..) |*h, j| w.hazards[j] = .{ .kind = h.kind, .x = h.x0 << fixed.Q, .y = h.y0 << fixed.Q };
     step(w, follow, 0);
+}
+
+/// A hazard spec across the road `d` px ahead, from 60 px left to 60 px right.
+fn across(kind: world.HazardKind, d: i32, size: i32) track.HazardSpec {
+    const a = ahead(d, -60);
+    const b = ahead(d, 60);
+    return .{
+        .kind = kind,
+        .warn = 40,
+        .size = size,
+        .damage = 20,
+        .x0 = (a[0] >> fixed.Q) & 1023,
+        .y0 = (a[1] >> fixed.Q) & 1023,
+        .x1 = (b[0] >> fixed.Q) & 1023,
+        .y1 = (b[1] >> fixed.Q) & 1023,
+        .period = 240,
+        .on = 30,
+        .speed = 2 << fixed.Q,
+        .len = 120,
+        .ux = -fixed.sin(base_heading),
+        .uy = fixed.cos(base_heading),
+        .travel = 60,
+    };
 }
 
 /// One frame of the scene (replaces `sim.simulate`).
@@ -178,6 +215,27 @@ pub fn step(w: *World, follow: u8, frame: u32) void {
     if (frame % 90 == 45) {
         const victim: u8 = (follow + 5) % world.car_count;
         weapons.emit(w, .wreck, victim, follow, @backingInt(world.Wreck.armor), w.cars[victim].x, w.cars[victim].y);
+    }
+    // M3: the Sweeper shuttles across (2 px a frame), the vents fire 30
+    // frames of every 40; a claw takes a car and a tag passes the mark
+    // every 90 frames (the scene keeps the car: it is a render test).
+    const run: i32 = @intCast(frame % 120);
+    const lat: i32 = if (run < 60) -60 + run * 2 else 60 - (run - 60) * 2;
+    const sw = ahead(200, lat);
+    w.hazards[0] = .{ .kind = .mover, .state = .active, .leg = @intFromBool(run >= 60), .x = sw[0], .y = sw[1] };
+    for (1..3) |k| {
+        w.hazards[k].state = if (frame % 40 < 30) .active else .warn;
+    }
+    if (frame % 90 == 20) {
+        const taken: u8 = (follow + 4) % world.car_count;
+        const at = ahead(140, 30);
+        weapons.emit(w, .collect, taken, 6, @backingInt(world.GcCause.sweep), at[0], at[1]);
+    }
+    if (frame % 90 == 65) {
+        const tagger = w.gc.marked;
+        const tagged: u8 = if (tagger == (follow + 3) % world.car_count) (follow + 1) % world.car_count else (follow + 3) % world.car_count;
+        w.gc.marked = tagged;
+        weapons.emit(w, .mark, tagged, tagger, @backingInt(world.GcCause.tag), w.cars[tagged].x, w.cars[tagged].y);
     }
 }
 

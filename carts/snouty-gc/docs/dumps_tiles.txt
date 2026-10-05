@@ -66,6 +66,14 @@
  78  sector 1 seam (travel y)           9 sector1
  79  sector 2 seam (travel x)           10 sector2
  80  sector 2 seam (travel y)           10 sector2
+ 81  vent lane (travel x)               6 vent
+ 82  vent lane (travel y)               6 vent
+ 83  vent mouth (travel x)              2 wall
+ 84  vent mouth (travel y)              2 wall
+ 85  Sweeper crossing (travel x)        1 surface
+ 86  Sweeper crossing (travel y)        1 surface
+ 87  Sweeper gate (travel x)            2 wall
+ 88  Sweeper gate (travel y)            2 wall
  96  wreckage corner NE                 2 wall
  97  wreckage corner SE                 2 wall
  98  wreckage corner SW                 2 wall
@@ -90,4 +98,5 @@
 117  pit mask 1101                      0 off
 118  pit mask 1110                      0 off
 119  pit mask 1111                      0 off
+120  pit beyond an open edge            0 off
 # unnamed indices (of 128) hold a copy of tile 1, attribute 0

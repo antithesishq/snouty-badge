@@ -38,6 +38,31 @@ drones, RUBBER DUCKs on tethers, DEADLOCK chains, SUDO's gold flash and
 `#`, HEISENBUG's flicker, the HONEYPOT spin, the kill feed's pickup lines
 (`KERNEL PANIC > KIDDIE`).
 
+M3 (content and flow, SPEC 3, 8): six tracks over two leagues (the
+Dumps: Landfill Loop, Monitor Dunes, Cathode Flats, each with the
+Sweeper; the Runoff: Salt Pan Sprint, Outflow Canyon, Coolant Basin, with
+exhaust vents). The title (SNOUTY GC over the Dumps horizon, the six
+portraits along the bottom, PRESS START; 10 s idle starts the attract
+demo) leads to the **main menu**: QUICK RACE, GARBAGE COLLECTION, LINK
+(greyed, `NO LINK YET` until M4), SOUND. A picks, B goes back. Then the
+racer select; Down to the track row, where Left/Right cycle the six
+tracks and the panel shows the track's name, league, the mode's rule,
+its hazards and its outline. **GARBAGE COLLECTION**: `SWEEP n` top left
+with a bar filling as the leader nears the next sweep point, the MARKED
+car in a red outline with `MARKED` over it (blinking red on the
+minimap), `TAGGED!` when a hit passes the mark on, and at each sweep the
+claw comes down from the top of the screen, closes on the collected car
+and lifts it out (`GC: freed KIDDIE`). Collected yourself, you watch the
+leader (`COLLECTED` bottom left). The survivor screen reads `LAST PROCESS
+RUNNING`; the field is ranked in collection order (`SURVIVOR`, `SWEEP
+n`, `WRECKED`). **Hazards**: the Sweeper, a huge crawler with a roof
+beacon (flashing while it warns, steady while it crosses); a vent marks
+its lane with blinking dashes and puffs steam before a blast of flame and
+steam across the road. **Attract**: an AI race on the next track each
+time, the camera cutting between cars every 5 s and onto a car a KERNEL
+PANIC freezes (the blue screen), `PRESS START` blinking; any button goes
+back to the title.
+
 Controls at M1 (SPEC 5.1):
 
 | Input | Race |
@@ -48,7 +73,7 @@ Controls at M1 (SPEC 5.1):
 | A | front weapon (hold to auto-fire PING, hold and release for FIBER LANCE, SPEAR PHISH fires on its lock) |
 | Down + A | rear weapon (drop behind); does not brake |
 | Up | BURST: +35% top speed for 1 s, one charge per lap (the bolt by the ammo) |
-| B | use the held pickup; Down+B drops it behind (HONEYPOT, SPAGHETTI); B backs out of the select |
+| B | use the held pickup; Down+B drops it behind (HONEYPOT, SPAGHETTI); B backs out of the select and the menu |
 | Select (hold) | look back: the camera turns round, `BEHIND` over the horizon |
 | Start | pause (Resume, Restart, Quit, Sound) |
 
@@ -150,14 +175,41 @@ python3 ../../tools/make_gif.py out/m2/ docs/preview_m2.gif --scale 2 --ms 33
 The lit squares come from the world PRNG at the call, so the A frames
 were read off a dry run's `--sample debug_captcha_cursor,debug_captcha_lit`.
 
-Input scripts in `tools/scripts/`:
+The M3 preview (`docs/preview_m3.gif`) is cut from four runs: the menu
+flow (title, main menu, GARBAGE COLLECTION, the select's track row up to
+Cathode Flats), a GARBAGE COLLECTION race on Cathode Flats with the
+autopilot (the Sweeper crossing, LEGACY marked at the first sweep, SNOUTY
+marked, SNOUTY's tag passing the mark to ROOTKIT, the claw lifting SNOUTY
+out at the fourth sweep and the leader's camera after it, the last
+collection, the survivor card and the table), a Quick Race on Salt Pan
+Sprint (a vent firing across the road) and the attract demo's blue screen:
 
-- `m0_race.json` (600 frames): Start at 2 (splash), Start at 10 (title), A
-  at 20 (QUICK RACE), then the autopilot's own drive recorded frame by frame
-  by `tools/record_script.py` (the race seed comes from the frame counter,
-  so the replay is the same race). The badge-bench default. Start at 10
-  opens the racer select on SNOUTY and A at 20 races him, so the M0 script
-  still drives the same flow.
+```sh
+node ../../tools/preview.mjs ../../zig-out/bin/snouty-gc.wasm --frames 300 --every 3 \
+    --press START:2-2 --press START:90-90 --press DOWN:130-130 --press A:160-160 \
+    --press DOWN:200-200 --press RIGHT:220-220,RIGHT:240-240 --press A:285-285 --out out/m3menu/
+node ../../tools/preview.mjs ../../zig-out/bin/snouty-gc.wasm --frames 6080 --every 3 \
+    --call debug_start_gc:2 --call debug_set_autopilot:1 --press A:5990-5990 --out out/g2/
+node ../../tools/preview.mjs ../../zig-out/bin/snouty-gc.wasm --frames 2400 --every 3 --start-skip 300 \
+    --call debug_start_race:3 --call debug_set_autopilot:1 --out out/vent/
+node ../../tools/preview.mjs ../../zig-out/bin/snouty-gc.wasm --frames 3600 --every 3 --start-skip 3420 \
+    --press START:2-2 --out out/att/
+```
+
+then frames 30..297 of `m3menu`, 930..1005, 1320..1350, 1854..1890,
+2124..2175, 3849..3966, 5763..5790, 5916..5970 and 5994..6075 of `g2`,
+1239..1296 of `vent` and 3459..3561 of `att` (every third) copied in
+that order into one directory and `make_gif.py --scale 2 --ms 50`.
+
+Input scripts in `tools/scripts/` (`tools/record_script.py [--track N]
+[--gc] --frames F --out ...` records the autopilot's drive through the M3
+menus: Start at 2, Start at 10, Down at 12 for GARBAGE COLLECTION, A at
+14, then Down at 16 and Right every 2 frames for the track, A 4 frames
+later; the race seed comes from the frame counter, so the replay is the
+same race):
+
+- `m0_race.json` (600 frames): a Quick Race on Landfill Loop (A, A at 14
+  and 20), the autopilot's drive. The badge-bench default.
 - `m1_render_stress.json` (600 frames, with `--poke gc_stress=1`): the
   render stress scene, Select (look back) held at 400..460. Since M2 the
   scene also has crates, drones, FORK BOMBs, a chain, ducks and the car
@@ -165,6 +217,12 @@ Input scripts in `tools/scripts/`:
   board, BIT FLIP, DDOS, the roulette).
 - `m2_race.json` (3,000 frames): `record_script.py --frames 3000`, an
   autopilot race with pickups in play (the gate benches it).
+- `m3_outflow_race.json` (1,500 frames): `--track 4`, Outflow Canyon,
+  the busiest track (Track A's, re-recorded on the M3 menus).
+- `m3_gc_race.json` (3,600 frames): `--gc --track 1`, a GARBAGE
+  COLLECTION race on Monitor Dunes (marks, two collections, SNOUTY
+  collected and watching, the Sweeper). The stress scene (since M3) also
+  has a Sweeper, two firing vents, a MARKED car, tags and claws.
 
 Debug exports (zero-argument wasm functions for `--dump-exports`,
 `--expect`, `--at`, `--until`):
@@ -173,8 +231,11 @@ Debug exports (zero-argument wasm functions for `--dump-exports`,
 |---|---|
 | `debug_frame`, `debug_render_us` | frames since start; render time (0 in wasm) |
 | `debug_pixel_checksum` | sum of all framebuffer words |
-| `debug_screen` | 0 splash, 1 title, 2 racer select, 3 race, 4 pause, 5 results |
-| `debug_mode` | 0 quick race, 1 attract, 2 the render stress scene |
+| `debug_screen` | 0 splash, 1 title, 2 racer select, 3 race, 4 pause, 5 results, 6 main menu |
+| `debug_mode` | 0 quick race, 1 attract, 2 the render stress scene, 3 GARBAGE COLLECTION |
+| `debug_me` | the player's car (`debug_follow` differs in the attract demo and once a GC race has collected the player) |
+| `debug_gc_marked`, `debug_gc_sweeps`, `debug_gc_collected`, `debug_gc_survivor`, `debug_alive` | GARBAGE COLLECTION: the marked car (255 none), sweeps passed, collected bits, the survivor (255 none), cars still running |
+| `debug_hazard_state` | a hex digit per hazard slot (slot 0 lowest): state (0 idle, 1 warn, 2 active) + 4 * kind (1 vent, 2 Sweeper) |
 | `debug_select_racer`, `debug_results_card` | the racer the select shows; results card (0 winner, 1 field) |
 | `debug_drawn`, `debug_gathered` | objects the depth list drew (cap 64) / gathered last frame |
 | `debug_event_seq` | the World's next event seq |
@@ -187,6 +248,7 @@ Debug exports (zero-argument wasm functions for `--dump-exports`,
 | `debug_input` | the race byte human slot 0 got on the last tick |
 | `debug_world_size`, `debug_world_sum` | `@sizeOf(World)`; a fingerprint of the world |
 | `debug_car_px(i)`, `debug_car_py(i)`, `debug_car_lap(i)`, `debug_car_rank(i)`, `debug_car_racer(i)`, `debug_car_human(i)`, `debug_car_armor(i)` | car i (one-argument exports) |
+| `debug_start_gc(n)`, `debug_start_attract(n)` | setup calls: a GARBAGE COLLECTION race (the player SNOUTY) or the attract demo on track n |
 | `debug_set_autopilot(v)`, `debug_start_race(n)`, `debug_stress(v)` | setup calls (`--call NAME:ARG`): the autopilot drives the player (v = 2: the pad's A, B and Select join it, and the pad alone plays a CAPTCHA board); skip to a Quick Race on track n; v = 1 starts the render stress scene (stress.zig: the World's pools filled without the sim) |
 | `debug_give_pickup(p)`, `debug_roll_pickup(p)`, `debug_give_ahead(p)` | M2 preview hooks (`--call-at "T NAME:P"`, P in SPEC 6.3 order: 0 PREFETCH .. 14 ZERO-DAY): pickup P into the followed car's slot, the same behind the 45-tick roulette, or to the nearest car ahead (its AI uses it) |
 | `debug_effect(k)` | M2 preview hook: `stress.Effect` k & 255 on the followed car (or car (k >> 8) - 1): 1 KERNEL PANIC, 2 BIT FLIP, 3 CAPTCHA, 4 DDOS, 5 DEADLOCK, 6 HEISENBUG, 7 SUDO, 8 RACE CONDITION, 9 SPAGHETTI, 10 RUBBER DUCK, 11 PREFETCH, 12 HONEYPOT spin, 13 ZERO-DAY, 14 duck pop, 15 HOT PATCH, 16 crate pop, 17 a rival's FORK BOMB ahead. These write the World (debug only); the sim runs the state on |
@@ -209,6 +271,9 @@ badge-bench/bench.sh zig-out/firmware/snouty-gc.elf --lcd --png 100
 # the render stress scene (six cars, every projectile and drop slot, explosions)
 badge-bench/bench.sh zig-out/firmware/snouty-gc.elf --symbols --poke gc_stress=1 \
     --script carts/snouty-gc/tools/scripts/m1_render_stress.json
+# M3: Outflow Canyon, and a GARBAGE COLLECTION race
+badge-bench/bench.sh zig-out/firmware/snouty-gc.elf --frames 1500 --script carts/snouty-gc/tools/scripts/m3_outflow_race.json
+badge-bench/bench.sh zig-out/firmware/snouty-gc.elf --frames 3600 --script carts/snouty-gc/tools/scripts/m3_gc_race.json
 ```
 
 `gc_stress` is an exported global the cart reads in `start()`.
@@ -218,8 +283,8 @@ Read the `busy ms` column. Milestone numbers are in `PLAN.md`.
 ## 6. Regenerating the data
 
 ```sh
-python3 tools/build_tracks.py     # Dumps tileset, palette, horizon, Landfill Loop -> assets/gen/, previews -> docs/
-python3 tools/record_script.py    # tools/scripts/m0_race.json from the autopilot (after a build)
+python3 tools/build_tracks.py     # leagues and tracks -> cart/src/gen/tracks/, previews -> docs/
+python3 tools/record_script.py    # tools/scripts/m0_race.json from the autopilot (after a build; --track, --gc)
 python3 tools/gen_sin.py          # cart/src/gen/sin.zig
 python3 tools/gen_font.py         # assets/gen/font.bin from the SDK font
 ```
