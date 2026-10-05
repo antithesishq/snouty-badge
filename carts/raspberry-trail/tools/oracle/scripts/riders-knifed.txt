@@ -1,0 +1,73 @@
+seed 1
+# Attacking hostile riders with a slow shot: LOUSY SHOT---YOU GOT
+# KNIFED, then the doctor's bill.
+# goal: lines 3180 1970; ends: E starved
+# written by mkscripts.py (scenario 'riders-knifed')
+# 190 need instructions?
+YES
+# 760 marksman (1-5)
+3
+# 860 oxen $
+250
+# 940 food $
+150
+# 990 ammunition $
+60
+# 1040 clothing $
+90
+# 1090 misc. supplies $
+100
+# 2180 (1) hunt (2) continue
+2
+# 2770 eat (1) poorly (2) moderately (3) well
+2
+# 2100 (1) fort (2) hunt (3) continue
+3
+# 2770 eat (1) poorly (2) moderately (3) well
+2
+# 3000 riders: (1) run (2) attack (3) continue (4) circle
+2
+# 6220 shot: TYPE WHAM (riders attack)
+SHOOT 1 6.93
+# 2180 (1) hunt (2) continue
+2
+# 2770 eat (1) poorly (2) moderately (3) well
+2
+# 2100 (1) fort (2) hunt (3) continue
+1
+# 2330 fort: food $ (cash 30)
+3
+# 2330 fort: ammunition $ (cash 27)
+3
+# 2330 fort: clothing $ (cash 24)
+3
+# 2330 fort: misc. supplies $ (cash 21)
+2
+# 2770 eat (1) poorly (2) moderately (3) well
+2
+# 2180 (1) hunt (2) continue
+2
+# 2770 eat (1) poorly (2) moderately (3) well
+2
+# 2100 (1) fort (2) hunt (3) continue
+1
+# 2330 fort: food $ (cash 19)
+2
+# 2330 fort: ammunition $ (cash 17)
+2
+# 2330 fort: clothing $ (cash 15)
+1
+# 2330 fort: misc. supplies $ (cash 14)
+1
+# 2770 eat (1) poorly (2) moderately (3) well
+2
+# 2180 (1) hunt (2) continue
+1
+# 6220 shot: TYPE BLAM (hunt)
+SHOOT 1 8.92
+# 5220 minister?
+NO
+# 5240 fancy funeral?
+YES
+# 5260 inform next of kin?
+NO
