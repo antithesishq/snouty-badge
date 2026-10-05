@@ -50,8 +50,15 @@ pub const Attr = enum(u8) {
     /// M6, the BATTLE arena: a one-way ramp of a race ramp's air time (the
     /// gap jumps and the wall kickers).
     jump = 11,
+    /// M7 (track packs, docs/PACKS.md): breakable crust, tiles
+    /// `crust_tile` .. + 2. Drivable until its region (a crust hazard)
+    /// breaks; then a car on the ground over it falls, as into a pit.
+    crust = 12,
     _,
 };
+
+/// The crust tiles (intact, cracked, broken; all attribute `crust`).
+pub const crust_tile: u8 = 121;
 
 /// Tile indices of the arena's one-way ramps (tools/leagues.py KICKER,
 /// JUMP): base + direction (0 E, 1 S, 2 W, 3 N).
@@ -146,6 +153,13 @@ pub const Track = struct {
     /// is a ring round its outer lanes for the race code that reads one;
     /// battle never ranks or respawns by it.
     arena: []const u8 = &.{},
+    /// M7: scenery props, `prop_record` bytes each (cell, radius, x u16,
+    /// y u16; `prop`); empty for the built-in tracks. `cell` indexes
+    /// `sheet`'s strip.
+    props: []const u8 = &.{},
+    /// M7: the props sheet (a pack's cells this track uses, as one strip),
+    /// null for a track without one.
+    sheet: ?*const PropSheet = null,
 
     /// Sample i (wrapping). Stored in 6 bytes (M3, the RAM budget): a u32
     /// with x in bits 0..9, y in 10..19 and the tangent's top 12 bits in
@@ -176,6 +190,83 @@ pub const Track = struct {
         return @fromBackingInt(self.attr[self.tile_at(wx, wy) & (tile_count - 1)]);
     }
 };
+
+/// M7: a props sheet in RAM (pack.zig fills it): `cells` cells of
+/// `cell_w` x `cell_h` side by side in one strip `cells * cell_w` px wide,
+/// 4 bpp, the left pixel in the low nibble (sprites.zig `Sheet`), and its
+/// 16-entry RGB565 palette (entry 0 transparent).
+pub const PropSheet = struct {
+    bytes: []const u8 = &.{},
+    cells: u8 = 0,
+    cell_w: u8 = 0,
+    cell_h: u8 = 0,
+    pal: []const u8 = &.{},
+};
+
+/// A scenery prop (SPEC 19.3) as the sim and the depth list read it: its
+/// foot at (x, y) world px, a solid circle of `radius` px (0: decoration),
+/// drawn with `cell` of the track's `sheet`.
+pub const Prop = struct { x: u16 = 0, y: u16 = 0, cell: u8 = 0, radius: u8 = 0 };
+pub const prop_max = 24;
+pub const prop_record = 6;
+/// The selected track's props: `prop(k)` for k < `prop_n` (set by
+/// `select`; read from `current.props`, no copy: RAM, PLAN M7).
+pub var prop_n: u8 = 0;
+/// The largest solid radius among them (0: none; the sim skips the test).
+pub var prop_reach: u8 = 0;
+
+pub fn prop(k: usize) Prop {
+    const b = current.props[k * prop_record ..][0..prop_record];
+    return .{ .cell = b[0], .radius = b[1], .x = std.mem.readInt(u16, b[2..4], .little) & 1023, .y = std.mem.readInt(u16, b[4..6], .little) & 1023 };
+}
+
+// --- M7 track packs (docs/PACKS.md): the loaded pack track ----------------
+//
+// A pack track runs through the same `League` / `Track` slices as a
+// built-in one: pack.zig loads its art into `art_tiles` / `art_horizon`,
+// its map into `map_ram`, and everything else into its own slot, then
+// points `pack_league` and `pack_track` at them. `Setup.track` and
+// `World.track` values from `pack_base` up mean "the loaded pack track"
+// (`sim.table_of`); which pack and track is the loader's (and the link
+// rules'), not the World's.
+
+pub const pack_base: u8 = 0x80;
+pub var pack_league: League = .{ .name = "", .tiles_packed = &.{}, .horizon_packed = &.{}, .pal = @embedFile("gen/tracks/dumps_pal.bin") };
+pub var pack_track: Track = .{ .name = "", .league = &pack_league, .map_packed = &.{}, .attr = dumps_attr, .center = @embedFile("gen/tracks/landfill_loop_center.bin") };
+/// The track whose map is in `map_ram` (null: none, or a failed load).
+pub var map_owner: ?*const Track = null;
+/// pack.zig: unpack the loaded pack track's art and map into the slots
+/// again (after a built-in track used them); false if the drive no longer
+/// gives the same pack.
+pub var pack_reload: ?*const fn () bool = null;
+
+/// M7, breakable crust: show each crust region as its World state says
+/// (render side, once a frame: intact `crust_tile`, cracked + 1, broken
+/// + 2). Rewrites only crust tiles in `map_ram`, which all share the
+/// attribute `crust`, so nothing the sim reads changes.
+pub fn crust_look(states: []const world.Hazard) void {
+    for (hazard_specs[0..hazard_n], 0..) |*h, k| {
+        if (h.kind != .crust or k >= states.len) continue;
+        const want: u8 = crust_tile + switch (states[k].state) {
+            .idle => @as(u8, 0),
+            .warn => 1,
+            .active => 2,
+        };
+        if (crust_shown[k] == want) continue;
+        crust_shown[k] = want;
+        const x0: usize = @intCast(@max(0, h.x0) >> 3);
+        const y0: usize = @intCast(@max(0, h.y0) >> 3);
+        const x1: usize = @min(map_side, @as(usize, @intCast(@max(0, h.x1))) >> 3);
+        const y1: usize = @min(map_side, @as(usize, @intCast(@max(0, h.y1))) >> 3);
+        var y = y0;
+        while (y < y1) : (y += 1) {
+            for (map_ram[y * map_side + x0 .. y * map_side + @max(x0, x1)]) |*v| {
+                if (v.* >= crust_tile and v.* < crust_tile + 3) v.* = want;
+            }
+        }
+    }
+}
+var crust_shown: [world.hazard_max]u8 = @splat(0);
 
 /// The selected track's unpacked map, map[y][x] (filled by `select`).
 pub var map_ram: [map_side * map_side]u8 = undefined;
@@ -225,11 +316,18 @@ pub var chip_n: u8 = 0;
 ///   `travel` ticks (derived); a car within `size + car_radius` of it while
 ///   it crosses takes `damage` once a crossing and a shove of `push` away
 ///   from it plus the mover's own velocity.
-/// - `turret`, `crust`: reserved (decoded, never run).
+/// - `crust` (M7): a breakable crust region, the whole-tile rectangle (x0,
+///   y0) to (x1, y1) (exclusive). The first touch of a car on the ground
+///   on one of its crust tiles cracks it; `warn` ticks later it breaks and
+///   stays broken `period` ticks, a pit for the cars on it (hazards.zig).
+/// - `turret`: reserved (decoded, never run; a pack with one is refused).
 ///
 /// `phase` is the cycle tick at GO, so hazards on one track can be staggered.
 pub const HazardSpec = struct {
     kind: world.HazardKind = .none,
+    /// M7: a mover drawn with its track's props cell `sprite - 1` (feat
+    /// byte 0 bits 4..7; 0: the cart's Sweeper).
+    sprite: u8 = 0,
     warn: u16 = 0,
     size: i32 = 0,
     damage: u8 = 0,
@@ -371,6 +469,9 @@ pub fn parse_arena(t: *const Track, out: *Arena, pads: *[world.crate_max]CrateSp
         out.nodes[k] = .{ .x = rd(b, at), .y = rd(b, at + 2), .jump = b[at + 4], .flags = b[at + 5] };
         at += 6;
     }
+    // M7 (packs): every table entry and jump names a node, or none.
+    for (b[at .. at + 2 * nn * nn + grid * grid]) |v| if (v != no_node and v >= nn) return false;
+    for (out.nodes[0..nn]) |nd| if (nd.jump != no_node and nd.jump >= nn) return false;
     out.spawn_n = @intCast(sn);
     out.node_n = @intCast(nn);
     out.next = b[at..][0 .. nn * nn];
@@ -401,7 +502,8 @@ pub fn parse_hazards(t: *const Track, out: *[world.hazard_max]HazardSpec) u8 {
             }
         }.u;
         var h = HazardSpec{
-            .kind = if (b[0] <= @backingInt(world.HazardKind.crust)) @fromBackingInt(b[0]) else .none,
+            .kind = if (b[0] & 15 <= @backingInt(world.HazardKind.crust)) @fromBackingInt(b[0] & 15) else .none,
+            .sprite = b[0] >> 4,
             .warn = b[1],
             .size = b[2],
             .damage = b[3],
@@ -439,13 +541,33 @@ inline fn wrap_px(d: i32) i32 {
 /// lookup on `t` and before `render.set_track(t)`; ~16 K byte copies
 /// (~36 K when the league changes).
 pub fn select(t: *const Track) void {
-    load_art(t.league);
-    unpack_map(t.map_packed, &map_ram);
+    if (t.map_packed.len > 0) {
+        load_art(t.league);
+        unpack_map(t.map_packed, &map_ram);
+    } else if (map_owner != t or art_league != t.league) {
+        // M7: the pack track, its art and map overwritten since it loaded.
+        const ok = if (pack_reload) |f| f() else false;
+        if (!ok) blank();
+    }
+    map_owner = t;
+    crust_shown = @splat(0);
+    prop_n = @intCast(@min(prop_max, t.props.len / prop_record));
+    prop_reach = 0;
+    current = t;
+    for (0..prop_n) |k| prop_reach = @max(prop_reach, prop(k).radius);
     // An arena's crates sit on its pads; a race track's in its rows.
     if (!parse_arena(t, &arena, &crate_spots, &crate_n)) crate_n = find_crates(t, &crate_spots);
     chip_n = find_chips(t, &chip_spots);
     hazard_n = parse_hazards(t, &hazard_specs);
     current = t;
+}
+
+/// A pack track whose art could not be reloaded: plain background (tile 1,
+/// attribute off) under a dark tile set, so nothing reads stale indices.
+fn blank() void {
+    @memset(&map_ram, 1);
+    @memset(&art_tiles, 1);
+    art_league = null;
 }
 
 /// The crate spawns of `t`: a row at every sample flagged `flag_crates`,

@@ -11,6 +11,7 @@ const tuning = @import("tuning.zig");
 const world = @import("world.zig");
 const net = @import("net.zig");
 const track = @import("track.zig");
+const pack_rows = @import("pack_rows.zig");
 
 // --- The single-player setup screen (battle_ui.zig) ---------------------------------
 
@@ -313,12 +314,14 @@ pub fn lobby_change(rules: *net.Rules, r: LobbyRow, step: i32, race_track: *u8) 
                 rules.track = 0;
             } else if (was == .battle and rules.mode != .battle) {
                 rules.track = race_track.*;
+                // M7: a pack race track comes back only with its pack.
+                if (pack_rows.row_of(false, rules.track, rules.pack) == null) {
+                    rules.track = 0;
+                    rules.pack = 0;
+                }
             }
         },
-        .track => {
-            const n: i32 = @intCast(if (rules.mode == .battle) track.arenas.len else track.tracks.len);
-            rules.track = @intCast(@mod(@as(i32, rules.track) + step, n));
-        },
+        .track => pack_rows.cycle(rules, step),
         .crews => rules.crews = next_crews(&crew_steps_link, rules.crews, step),
         .lives => {
             rules.lives = next_lives(rules.lives, step);
@@ -331,8 +334,7 @@ pub fn lobby_change(rules: *net.Rules, r: LobbyRow, step: i32, race_track: *u8) 
 
 /// The track or arena name the rules name.
 pub fn place_name(rules: net.Rules) []const u8 {
-    if (rules.mode == .battle) return track.arenas[rules.track % track.arenas.len].name;
-    return track.tracks[rules.track % track.tracks.len].name;
+    return pack_rows.place_name(rules.mode == .battle, rules.track, rules.pack);
 }
 
 /// Every fixed line above that sits in a 152 px panel (the host test).

@@ -28,6 +28,9 @@ pub fn add(b: *Build, sycl_badge_dep: *Build.Dependency, opts: common.Options) v
     // -Dsound: the initial value of the sound toggle (docs/SOUND.md).
     options.addOption(bool, "sound", opts.sound);
     build_options = options;
+    // M7: -Dgc-pack=FILE[,FILE...] gives the simulator (wasm) a drive with
+    // those track packs (docs/PACKS.md); the badge reads its real drive.
+    gc_pack = b.option([]const u8, "gc-pack", "snouty-gc: .GCP files for the simulator's drive (comma-separated)");
 
     os_cart.add(b, sycl_badge_dep, .{
         .mode = opts.cart_mode,
@@ -53,6 +56,7 @@ pub fn add(b: *Build, sycl_badge_dep: *Build.Dependency, opts: common.Options) v
     tests_mod.addImport("lockstep", lockstep_module(b));
     // Cart saves (root docs/SAVES.md; career_save.zig): lib/save.zig's host fake.
     tests_mod.addImport("save", b.createModule(.{ .root_source_file = b.path("lib/save.zig") }));
+    tests_mod.addImport("romfs", romfs_module(b));
     const tests = b.addTest(.{ .root_module = tests_mod });
     opts.test_step.dependOn(&b.addRunArtifact(tests).step);
     // `zig build test-gc`: this cart's host tests alone (the shared `test`
@@ -62,6 +66,33 @@ pub fn add(b: *Build, sycl_badge_dep: *Build.Dependency, opts: common.Options) v
 }
 
 var build_options: ?*Build.Step.Options = null;
+var gc_pack: ?[]const u8 = null;
+
+/// lib/romfs.zig, the drive reader (M7 track packs).
+fn romfs_module(b: *Build) *Build.Module {
+    return b.createModule(.{ .root_source_file = b.path("lib/romfs.zig") });
+}
+
+/// M7: `gc_drive.image`, the simulator's drive: a FAT12 image of the
+/// `-Dgc-pack` files made by tools/make_romfs.py, or empty (no drive) by
+/// default. Only main.zig's wasm path reads it, so the badge cart embeds
+/// nothing.
+fn drive_module(b: *Build) *Build.Module {
+    const wf = b.addWriteFiles();
+    if (gc_pack) |list| {
+        const mk = b.addSystemCommand(&.{"python3"});
+        mk.addFileArg(b.path("tools/make_romfs.py"));
+        const img = mk.addOutputFileArg("drive.img");
+        var it = std.mem.tokenizeScalar(u8, list, ',');
+        while (it.next()) |f| mk.addFileArg(.{ .cwd_relative = f });
+        mk.addArg("--truncate");
+        _ = wf.addCopyFile(img, "drive.img");
+        const src = wf.add("gc_drive.zig", "pub const image: []const u8 = @embedFile(\"drive.img\");\n");
+        return b.createModule(.{ .root_source_file = src });
+    }
+    const src = wf.add("gc_drive.zig", "pub const image: []const u8 = &.{};\n");
+    return b.createModule(.{ .root_source_file = src });
+}
 
 /// lib/lockstep.zig imports only std (it is generic over the link), so one
 /// module serves the cart and the host tests.
@@ -143,6 +174,9 @@ fn build_cart_modules(b: *Build, cart: *Build.Module, cart_api: *Build.Module, s
     cart.addImport("lockstep", lockstep_module(b));
     // Cart saves (root docs/SAVES.md): the CIRCUIT's `gcp/career`, career_save.zig.
     cart.addImport("save", b.createModule(.{ .root_source_file = b.path("lib/save.zig") }));
+    // M7 track packs: the drive reader, and the simulator's drive image.
+    cart.addImport("romfs", romfs_module(b));
+    cart.addImport("gc_drive", drive_module(b));
 
     // The `gfx` module: the PNGs in `images` through the per-cart converter
     // (snouty-maze / snouty-bugs pattern), generated at build time.

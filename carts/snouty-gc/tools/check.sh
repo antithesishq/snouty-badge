@@ -13,7 +13,10 @@
 #   float    zig build check-float -Dcart=snouty-gc (no soft-float or libm)
 #   tracks   tools/build_tracks.py into a temp dir: byte-identical to the
 #            committed cart/src/gen/tracks/*.bin (generator deterministic,
-#            data current)
+#            data current); M7: tools/test_pack/make.py rebuilds TEST.GCP
+#            and the drive images, build_pack.py every assets/packs/*/ to
+#            its committed .GCP (and the copy in cart/src/gen/packs),
+#            tools/test_build_pack.py and tools/packs/test_packs.py pass
 #   preview  headless preview.mjs runs on the wasm:
 #            - tools/scripts/m0_race.json replayed equals the autopilot's own
 #              drive (debug_world_sum): input scripts reproduce a race;
@@ -76,7 +79,11 @@
 #              then pause and resume, and the round to its results card
 #              and standings;
 #            - M6: the arena stress scene with the battle HUD's stress
-#              (debug_battle_stress) runs 300 frames.
+#              (debug_battle_stress) runs 300 frames;
+#            - M7: a wasm with the content packs on its simulator drive
+#              (-Dgc-pack): the picker's 14 track rows (REENTRY FIELD picked
+#              and raced), ANCHOR STORE to the results with the autopilot, a
+#              BATTLE round in Hangar 18.
 #   bench    badge-bench (calibrated) on badge-bench/carts/snouty-gc.toml,
 #            once plain and once with --lcd, and the render stress scene
 #            (--poke gc_stress=1, tools/scripts/m1_render_stress.json) plain
@@ -97,6 +104,12 @@
 #            link pump point runs, the link searching: a link race's draw
 #            cost) under the same limit, and the worst gap between two pumps
 #            by site from their traces (informational, PLAN M4 status).
+#            M7: from the content packs' drive image (--romfs
+#            drive_packs.img), ANCHOR STORE (its props) and REENTRY FIELD
+#            (the busiest pack map) raced by the autopilot and the stress
+#            scene on ANCHOR STORE, plain, --lcd and with every drive read
+#            costing 20 cycles (--flash-read-cycles 20), under the same limit.
+#            Every run maps a drive (the toml's drive_empty.img by default).
 #
 # Output under out/check (gitignored). Exit 0 when every step passes, else 1.
 set -uo pipefail
@@ -164,6 +177,30 @@ if want tracks; then
         cmp -s "$f" "$cart/cart/src/gen/tracks/$(basename "$f")" || { echo "differs: $(basename "$f")"; st=1; }
     done
     [ "$st" = 0 ] && echo "$(ls "$tmp"/*.bin | wc -l) files byte-identical"
+    # M7 track packs: the test pack and its drive images rebuild byte for
+    # byte (the content packs' copies beside them feed drive_packs.img);
+    # every pack directory under assets/packs/ rebuilds its committed .GCP
+    # and its copy in cart/src/gen/packs; build_pack.py's own tests; Track
+    # B's pack checks (tools/packs/test_packs.py: its generator current).
+    gp="$cart/cart/src/gen/packs"
+    mkdir -p "$tmp/packs"
+    cp "$gp"/DEADMALL.GCP "$gp"/BONEYARD.GCP "$tmp/packs/" 2>/dev/null
+    python3 "$here/test_pack/make.py" --out "$tmp/packs/TEST.GCP" > "$out/packs.txt" 2>&1 || st=1
+    for f in TEST.GCP drive_test.img drive_frag.img drive_empty.img drive_packs.img; do
+        cmp -s "$tmp/packs/$f" "$gp/$f" || { echo "differs: gen/packs/$f"; st=1; }
+    done
+    for d in "$cart"/assets/packs/*/; do
+        [ -f "$d/pack.toml" ] || continue
+        python3 "$here/build_pack.py" "$d" --out "$tmp/packs/built.GCP" --quiet || { st=1; continue; }
+        g=$(ls "$d"*.GCP 2>/dev/null | head -1)
+        cmp -s "$tmp/packs/built.GCP" "$g" || { echo "differs: $g"; st=1; }
+        cmp -s "$tmp/packs/built.GCP" "$gp/$(basename "$g")" || { echo "differs: gen/packs/$(basename "$g")"; st=1; }
+    done
+    python3 "$here/test_build_pack.py" > "$out/test_build_pack.txt" 2>&1 || { echo "FAIL tools/test_build_pack.py"; st=1; }
+    if [ -f "$here/packs/test_packs.py" ]; then
+        python3 "$here/packs/test_packs.py" > "$out/test_packs.txt" 2>&1 || { echo "FAIL tools/packs/test_packs.py"; st=1; }
+    fi
+    [ "$st" = 0 ] && echo "packs: TEST.GCP, the drive images and $(ls -d "$cart"/assets/packs/*/ | wc -l) content packs rebuild byte-identical; pack tool tests pass"
     result tracks "$st"
 fi
 
@@ -274,6 +311,29 @@ if want preview; then
     run_preview battle_stress --frames 300 --call debug_battle_stress --expect 'debug_mode == 2' --expect 'debug_drawn > 30' \
         --dump-exports debug_drawn,debug_gathered || st=1
     # --- end of the M6 Track B previews.
+    # --- M7 track packs: a wasm whose simulator drive holds the content packs
+    # and the test pack (-Dgc-pack), rows 6.. are pack tracks (DEADMALL's
+    # three, BONEYARD's three, TEST's two), arena rows 1.. the packs' arenas.
+    gp="$cart/cart/src/gen/packs"
+    (cd "$root" && zig build -Dcart=snouty-gc -Dgc-pack="$gp/DEADMALL.GCP,$gp/BONEYARD.GCP,$gp/TEST.GCP" --prefix "$out/packwasm") || st=1
+    pw="$out/packwasm/bin/snouty-gc.wasm"
+    pack_preview() { local w0="$wasm"; wasm="$pw"; run_preview "$@"; local r=$?; wasm="$w0"; return $r; }
+    # The picker: QUICK RACE's select (its frames run the packs' CRCs: all
+    # 14 rows are raceable by frame 60), Down to the track row, Left wraps to
+    # the last row (TEST's CRUST LOOP, row 13), Left twice more to BONEYARD's
+    # REENTRY FIELD (row 11), A races it on the pack track (pack_base + 2).
+    pack_preview pack_picker --frames 160 --call debug_pack_count --press START:2-2 --press START:10-10 --press A:14-14 \
+        --at '18 debug_screen == 2' --at '60 debug_pack_rows == 14' --press DOWN:30-30 --press LEFT:70-70 \
+        --at '74 debug_select_track == 13' --press LEFT:80-80,LEFT:90-90 --at '94 debug_select_track == 11' \
+        --press A:100-100 --at '104 debug_screen == 3' --at '104 debug_world_track == 130' \
+        --expect 'debug_screen == 3' --dump-exports debug_screen,debug_world_track,debug_pack_rows || st=1
+    # ANCHOR STORE (Dead Mall, its props and scrubber) to the results with the autopilot.
+    pack_preview pack_anchor --frames 9000 --call debug_pack_count --call debug_start_pack:6 --at '1 debug_world_track == 128' \
+        --until 'debug_screen == 5' --expect 'debug_screen == 5' --dump-exports debug_tick,debug_world_track,debug_drawn || st=1
+    # A BATTLE round in Hangar 18 (The Boneyard's arena, row 2) runs.
+    pack_preview pack_arena --frames 900 --call debug_pack_count --call debug_pack_arena:2 --expect 'debug_mode == 5' \
+        --expect 'debug_world_track == 131' --expect 'debug_tick > 600' --dump-exports debug_mode,debug_world_track,debug_tick || st=1
+    # --- end of the M7 pack previews.
     run_preview stress --frames 200 --call debug_stress:1 --expect 'debug_mode == 2' --expect 'debug_drawn == 64' \
         --expect 'debug_gathered > 64' --dump-exports debug_drawn,debug_gathered || st=1
     result preview "$st"
@@ -327,6 +387,25 @@ if want bench; then
     p19=$!
     "$bench" "$elf" --json --lcd "${m6s[@]}" --out "$out/bench-m6-stress-lcd" > "$out/bench-m6-stress-lcd.txt" 2>&1 &
     p20=$!
+    # M7: pack tracks from the drive (drive_packs.img): ANCHOR STORE (21
+    # props, the scrubber drawn with a props cell) and REENTRY FIELD (the
+    # busiest pack map) raced by the autopilot, each also with every drive
+    # load costing 20 cycles (--flash-read-cycles: the props cells and the
+    # sim's tables are read in place, PLAN L100), and the stress scene on
+    # ANCHOR STORE; plain and --lcd.
+    pk=(--romfs "$cart/cart/src/gen/packs/drive_packs.img")
+    "$bench" "$elf" --json "${pk[@]}" --frames 3000 --poke gc_pack=1 --poke gc_pack_row=6 --out "$out/bench-m7-anchor" > "$out/bench-m7-anchor.txt" 2>&1 &
+    p21=$!
+    "$bench" "$elf" --json --lcd "${pk[@]}" --frames 3000 --poke gc_pack=1 --poke gc_pack_row=6 --flash-read-cycles 20 --out "$out/bench-m7-anchor-lcd-f20" > "$out/bench-m7-anchor-lcd-f20.txt" 2>&1 &
+    p22=$!
+    "$bench" "$elf" --json "${pk[@]}" --frames 3000 --poke gc_pack=1 --poke gc_pack_row=11 --flash-read-cycles 20 --out "$out/bench-m7-reentry-f20" > "$out/bench-m7-reentry-f20.txt" 2>&1 &
+    p23=$!
+    "$bench" "$elf" --json --lcd "${pk[@]}" --frames 3000 --poke gc_pack=1 --poke gc_pack_row=11 --out "$out/bench-m7-reentry-lcd" > "$out/bench-m7-reentry-lcd.txt" 2>&1 &
+    p24=$!
+    "$bench" "$elf" --json "${pk[@]}" --frames 300 --poke gc_pack=2 --poke gc_pack_row=6 --flash-read-cycles 20 --out "$out/bench-m7-stress-f20" > "$out/bench-m7-stress-f20.txt" 2>&1 &
+    p25=$!
+    "$bench" "$elf" --json --lcd "${pk[@]}" --frames 300 --poke gc_pack=2 --poke gc_pack_row=6 --out "$out/bench-m7-stress-lcd" > "$out/bench-m7-stress-lcd.txt" 2>&1 &
+    p26=$!
     probe=(--poke gc_pump_probe=1)
     "$bench" "$elf" --json "${probe[@]}" "${stress[@]}" --out "$out/bench-probe-stress" > "$out/bench-probe-stress.txt" 2>&1 &
     p11=$!
@@ -353,6 +432,7 @@ if want bench; then
     wait $p18 || st=1
     wait $p19 || st=1
     wait $p20 || st=1
+    for p in $p21 $p22 $p23 $p24 $p25 $p26; do wait "$p" || st=1; done
     for j in "$out/bench/bench.json" "$out/bench-lcd/bench.json" "$out/bench-stress/bench.json" "$out/bench-stress-lcd/bench.json" \
              "$out/bench-m2/bench.json" "$out/bench-m2-lcd/bench.json" \
              "$out/bench-m3-outflow/bench.json" "$out/bench-m3-outflow-lcd/bench.json" \
@@ -361,7 +441,10 @@ if want bench; then
              "$out/bench-m5-cards/bench.json" "$out/bench-m5-cards-lcd/bench.json" \
              "$out/bench-m6-battle/bench.json" "$out/bench-m6-battle-lcd/bench.json" \
              "$out/bench-m6-stress/bench.json" "$out/bench-m6-stress-lcd/bench.json" \
-             "$out/bench-probe-stress/bench.json" "$out/bench-probe-gc/bench.json"; do
+             "$out/bench-probe-stress/bench.json" "$out/bench-probe-gc/bench.json" \
+             "$out/bench-m7-anchor/bench.json" "$out/bench-m7-anchor-lcd-f20/bench.json" \
+             "$out/bench-m7-reentry-f20/bench.json" "$out/bench-m7-reentry-lcd/bench.json" \
+             "$out/bench-m7-stress-f20/bench.json" "$out/bench-m7-stress-lcd/bench.json"; do
         [ -f "$j" ] || { echo "FAIL no $j"; st=1; continue; }
         python3 - "$j" "$max_ms" <<'EOF' || st=1
 import json, sys

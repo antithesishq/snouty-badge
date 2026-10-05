@@ -1,0 +1,38 @@
+# Wing Row: The Boneyard, track 2 (SPEC 19.5). Tight weaving down the
+# parked bomber rows on the old taxiway: three passes, each a pinch point
+# under the tails (narrow, in their shadows), two jet blasts across the
+# narrows where there is no room to go round, sand drifted over the
+# road, then back up the west side past the service bay.
+name WING ROW
+order 2
+floor taxiway
+centerline yes
+league boneyard
+width 44
+# x    y    half   features
+ 200  140   50                     # start line, heading east
+ 450  130   48     shadow          # under the first bomber's wing
+ 700  150   46     crates
+ 860  190   44
+ 870  310   42
+ 720  345   38     shadow          # pinch under the tails
+ 500  330   38
+ 330  370   42
+ 330  480   44     drift
+ 500  520   44     vent:right,period=300,warn=50
+ 700  500   42
+ 860  560   42
+ 870  690   42
+ 700  730   38     shadow          # second pinch
+ 480  710   38     vent:left,period=300,warn=50,phase=150
+ 340  770   42
+ 290  880   46     crates
+ 170  875   46
+ 125  700   46     drift
+ 130  420   48     bay:left
+ 150  240   50
+props tail,gear seg 1 side left gap 70 off 24
+props tail seg 5 side both gap 70 off 24
+props engine,gear seg 9 side right gap 90 off 24
+props tail seg 13 side both gap 70 off 24
+props wingtip,engine seg 18 side left gap 90 off 24

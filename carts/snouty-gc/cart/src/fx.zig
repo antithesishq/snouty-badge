@@ -238,6 +238,7 @@ var prev_ammo: [world.car_count]u8 = @splat(0);
 /// At race start (and after a restart): forget everything, start the
 /// cursor at the World's current seq.
 pub fn begin(w: *const world.World) void {
+    track.crust_look(&w.hazards);
     particles = @splat(.{});
     beams = @splat(.{});
     acks = @splat(.{});
@@ -281,6 +282,8 @@ pub fn tick(w: *const world.World, follow: u8, frame: u32) void {
             if (pr.kind == .panic) spawn(.ghost, pr.x, pr.y, 5, 16);
         }
     }
+    // M7: breakable crust shows its state (the map copy's crust tiles).
+    track.crust_look(&w.hazards);
     // Hazards: the blast clocks, and steam wisps from a vent about to fire.
     for (track.hazard_specs[0..track.hazard_n], 0..) |*h, k| {
         const hz = &w.hazards[k];
@@ -468,6 +471,8 @@ fn on_event(w: *const world.World, e: *const world.Event, follow: u8) void {
         // A vent starts firing: a burst at its mouth (the Sweeper's
         // crossing shows in its beacon).
         if (e.b == @backingInt(world.HazardKind.blast)) spawn(.explosion, px_q(e.x), px_q(e.y), 0, 22);
+        // M7: a crust region gives way: dust over its middle.
+        if (e.b == @backingInt(world.HazardKind.crust)) spawn(.smoke, px_q(e.x), px_q(e.y), 0, 24);
     } else if (kind == .hazard_hit) {
         if (!valid_car(e.b)) return;
         const x = px_q(e.x);

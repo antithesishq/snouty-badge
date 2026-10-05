@@ -7,6 +7,18 @@
 const cart = @import("cart-api");
 const tuning = @import("tuning.zig");
 const track = @import("track.zig");
+const pack_rows = @import("pack_rows.zig");
+
+/// M7: the arena row's arena (The Sandbox, or a pack's, loaded to show it;
+/// The Sandbox if the pack cannot be loaded).
+pub fn arena() *const track.Track {
+    const n = pack_rows.arena_count();
+    if (opts.arena >= n) opts.arena = 0;
+    return pack_rows.track_of(pack_rows.arena_row(opts.arena), true) orelse blk: {
+        opts.arena = 0;
+        break :blk track.arenas[0];
+    };
+}
 const hud = @import("hud.zig");
 const input = @import("input.zig");
 const sound = @import("sound.zig");
@@ -44,7 +56,7 @@ pub fn update() Action {
     const step: i32 = @as(i32, @intFromBool(input.pressed(.right))) - @as(i32, @intFromBool(input.pressed(.left)));
     if (step != 0 and cursor != @backingInt(text.Row.fight)) {
         sound.menu_move();
-        text.change(&opts, @fromBackingInt(cursor), step, track.arenas.len);
+        text.change(&opts, @fromBackingInt(cursor), step, pack_rows.arena_count());
     }
     return .none;
 }
@@ -63,7 +75,7 @@ pub fn draw(frame: u32) void {
     cart.rect(.{ .x = 4, .y = py, .width = 152, .height = @intCast(lay.panel_h(rows)), .fill_color = panel, .stroke_color = hud.dim });
     var b: [5][16]u8 = undefined;
     const labels = [text.row_count][]const u8{
-        track.arenas[opts.arena % track.arenas.len].name,
+        arena().name,
         text.lives_label(&b[1], opts.lives),
         text.time_label(&b[2], opts.minutes),
         text.crews_label(&b[3], opts.crews),

@@ -218,9 +218,13 @@ class Arena:
         assert len(self.nodes) <= NAV_MAX
 
 
-def tiles_of(ar):
-    """The 128x128 tile map and its attribute map."""
-    ts = LEAGUES[LEAGUE]["tiles"](LEAGUES[LEAGUE]["pal"])
+def tiles_of(ar, league=LEAGUE, name=NAME):
+    """The 128x128 tile map and its attribute map. `league` is a LEAGUES
+    key (M7: a pack registers its own entry first); `ar.sweeper` None means
+    no Sweeper lane; `ar.paint(tmap, big, rng)`, if the arena has it, paints
+    its own floor pieces after the pads and before the walls (M7 packs)."""
+    lg = LEAGUES[league]
+    ts = lg["tiles"](lg["pal"])
     k = ar.kind
     n = ARENA
     # Map-sized kind grid: everything outside the play area is solid.
@@ -230,7 +234,7 @@ def tiles_of(ar):
     tmap = np.zeros((MAPN, MAPN), np.uint8)
     # Floor: the board road with its 16 px seam rhythm, solder dots every
     # 32 px, a few cable ruts.
-    rng = random.Random(zlib.crc32(NAME.encode()))
+    rng = random.Random(zlib.crc32(name.encode()))
     for ty, tx in np.argwhere(floor):
         v, h = tx % 2 == 0, ty % 2 == 0
         tmap[ty, tx] = SURF_SEAM_X if v and h else SURF_SEAM_V if v else SURF_SEAM_H if h else SURF
@@ -254,9 +258,12 @@ def tiles_of(ar):
     # The Sweeper's lane: the striped crossing along the north straight
     # (cosmetic, attribute surface), and its gates in the rim.
     sy = ar.sweep_row
-    for x in range(0, n):
+    sweeper = getattr(ar, "sweeper", SWEEPER) is not None
+    for x in range(0, n) if sweeper else ():
         if tmap[O + sy, O + x] in (SURF, SURF_SEAM_V, SURF_SEAM_H, SURF_SEAM_X, SURF_DOT, RUT, RUT + 1):
             tmap[O + sy, O + x] = SWEEP_LANE
+    if hasattr(ar, "paint"):
+        ar.paint(tmap, big, rng)
     # Walls (rim, island edges, fences) by the 4-neighbour drivable mask;
     # pits by theirs (GAP + mask of drivable neighbours).
     drivable = np.isin(ts.attr[tmap], list(DRIVABLE)) & (big != SOLID) & (big != PIT) & (big != FENCE)
@@ -280,13 +287,13 @@ def tiles_of(ar):
     for ty, tx in np.argwhere(big == PIT):
         tmap[ty, tx] = GAP + m4[ty, tx]
     # Sweeper gates in the rim at both ends of its lane.
-    for x in (O - 1, O + n):
+    for x in (O - 1, O + n) if sweeper else ():
         tmap[O + sy, x] = SWEEP_GATE
     # Everything else: the Dumps wallpaper (scrap islands and beyond).
     free = (big == SOLID) & ~wall
-    for x in (O - 1, O + n):
+    for x in (O - 1, O + n) if sweeper else ():
         free[O + sy, x] = False
-    LEAGUES[LEAGUE]["background"](tmap, free, rng)
+    lg["background"](tmap, free, rng)
     return ts, tmap
 
 
@@ -472,7 +479,9 @@ def sweeper_record(ar):
     y = rel_px(0, ar.sweep_row)[1]
     x0 = corner_px(-3, 0)[0]
     x1 = corner_px(ARENA + 3, 0)[0]
-    o = SWEEPER
+    o = getattr(ar, "sweeper", SWEEPER)
+    if o is None:
+        return b"", 0
     rec = bytes([bt.K_MOVER, o["warn"], o["size"], o["damage"]])
     rec += np.array([int(x0), int(y), int(x1), int(y), o["period"], 0, o["phase"] % o["period"]], "<u2").tobytes()
     rec += bytes([o["push"], o["speed"]])
@@ -528,12 +537,20 @@ def write_preview(ar, tmap, ts, w, cells, path, path1):
     img.save(path, optimize=False)
 
 
-def build(out: Path, docs: Path, errs: list, quiet=False):
+def build(out: Path, docs: Path, errs: list, quiet=False, ar=None, league=LEAGUE, name=NAME):
     """Write the arena's files into `out` (and its previews into `docs`);
-    append any validation failure to `errs`. Returns {path: size}."""
-    ar = Arena()
-    ar.sweep_row = 7
-    ts, tmap = tiles_of(ar)
+    append any validation failure to `errs`. Returns {path: size}.
+
+    M7 track packs: a pack's arena passes its own `ar` (an `Arena` subclass
+    whose __init__ sets kind, ramps, kickers, bays, spawns, pads, the nav
+    nodes and jumps, `sweep_row`, and `sweeper`: a dict like SWEEPER or
+    None), its `league` (a LEAGUES key it registered) and its `name` (the
+    file stem). The play area stays ARENA tiles square at tile O."""
+    if ar is None:
+        ar = Arena()
+        ar.sweep_row = 7
+    sw = getattr(ar, "sweeper", SWEEPER)
+    ts, tmap = tiles_of(ar, league, name)
     attr = ts.attr[tmap]
     # Validation: spawns, pads and nodes on plain floor; the play area closed.
     for x, y, d in ar.spawns:
@@ -561,7 +578,7 @@ def build(out: Path, docs: Path, errs: list, quiet=False):
     cells = build_cells(ar, attr, errs)
     speeds = check_jumps(ar, attr, tmap, errs)
     feat, travel = sweeper_record(ar)
-    if travel + SWEEPER["warn"] >= SWEEPER["period"] // 2:
+    if sw is not None and travel + sw["warn"] >= sw["period"] // 2:
         errs.append(f"sweeper: crossing {travel} + warn must be under half the period")
     packed = bt.pack_map(tmap.tobytes())
     if bt.unpack_map(packed) != tmap.tobytes():
@@ -569,18 +586,20 @@ def build(out: Path, docs: Path, errs: list, quiet=False):
     if len(packed) >= 8192:
         errs.append(f"arena map packed to {len(packed)} bytes, budget under 8192")
     blob = arena_blob(ar, nxt, gnd, cells, speeds)
-    files = {out / f"{NAME}_map.bin": packed, out / f"{NAME}_center.bin": center_bytes(),
-             out / f"{NAME}_feat.bin": feat, out / f"{NAME}_arena.bin": blob}
+    files = {out / f"{name}_map.bin": packed, out / f"{name}_center.bin": center_bytes(),
+             out / f"{name}_feat.bin": feat, out / f"{name}_arena.bin": blob}
     for p, d in files.items():
         p.write_bytes(d)
-    write_preview(ar, tmap, ts, w, cells, docs / f"{NAME}_preview.png", docs / "m6_sandbox.png")
+    write_preview(ar, tmap, ts, w, cells, docs / f"{name}_preview.png",
+                  docs / ("m6_sandbox.png" if name == NAME else f"{name}_map.png"))
     if not quiet:
         ground = sum(1 for e in w if ar.jumps.get(e[0]) != e[1])
-        print(f"arena {NAME}: {ARENA * T} px square at tile {O}, {len(ar.nodes)} nav nodes, "
+        print(f"arena {name}: {ARENA * T} px square at tile {O}, {len(ar.nodes)} nav nodes, "
               f"{ground} ground edges, {len(ar.jumps)} jumps, {len(ar.spawns)} spawn pads, {len(ar.pads)} crate pads")
         print("  jump minimum speeds (px/tick): " + ", ".join(
             f"{ar.node_names[a]}>{ar.node_names[b]} {v}" for (a, b), v in sorted(speeds.items())))
-        print(f"  sweeper crossing {travel} ticks of a {SWEEPER['period']}-tick period")
+        if sw is not None:
+            print(f"  sweeper crossing {travel} ticks of a {sw['period']}-tick period")
         print(f"  arena blob {len(blob)} bytes (nav {len(ar.nodes) * 6 + 2 * len(ar.nodes) ** 2 + GRID * GRID})")
     return {p: len(d) for p, d in files.items()}
 

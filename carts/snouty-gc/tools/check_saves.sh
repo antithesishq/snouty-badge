@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Snouty GCP cart saves gate (branch saves/gcp; docs/RUNNING.md "7. Saves").
+# Snouty GCP cart saves gate (branch saves/gcp; docs/RUNNING.md "8. Saves").
 # Run after tools/check.sh build (or `zig build -Dcart=snouty-gc`): the
 # host tests are in `zig build test-gc` (career_save_test.zig); this runs
 # badge-bench three times on the RAM ELF and checks what the saves OS saw:
