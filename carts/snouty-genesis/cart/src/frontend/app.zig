@@ -19,6 +19,7 @@ const splash = @import("splash.zig");
 const picker = @import("picker.zig");
 const help = @import("help.zig");
 pub const rewind = @import("rewind.zig");
+pub const players = @import("players.zig");
 const tuning = @import("tuning.zig");
 const hint = @import("hint");
 
@@ -105,6 +106,8 @@ fn begin(src: core.RomSource) void {
 
 pub noinline fn update() void {
     controls_state.poll(read_controls());
+    // A network source drains its receive ring here (and inside frames).
+    players.poll();
     const t0 = cart.micros_since_boot();
     debug.frame_tick(t0);
     switch (state) {
@@ -169,6 +172,9 @@ fn start_running(t0: u64) void {
 
 fn run_update(t1: u64) void {
     const in = controls_state.game_frame();
+    // Fast forward and the chorded rewind are local-only (players.zig).
+    const fast = in.fast and !players.networked;
+    const rewind_in: @TypeOf(in.rewind) = if (players.networked) .off else in.rewind;
     if (in.open_menu) {
         play_hint.stop();
         menu_opens += 1;
@@ -176,7 +182,7 @@ fn run_update(t1: u64) void {
         audio.silence();
         // A Left/Right held over from the game must not scrub.
         controls_state.suppress_held();
-        menu.open();
+        menu.open(&md);
         _ = menu.update(&md, live_edge());
         return;
     }
@@ -185,9 +191,9 @@ fn run_update(t1: u64) void {
     // under the menu's scrub bar and Left/Right step time as in the menu;
     // letting go of Select resumes as the menu does (input.zig suppressed
     // the held buttons) and steps this update.
-    switch (in.rewind) {
+    switch (rewind_in) {
         .enter, .on => {
-            if (in.rewind == .enter) {
+            if (rewind_in == .enter) {
                 play_hint.stop();
                 menu.freeze_frame();
             }
@@ -210,7 +216,7 @@ fn run_update(t1: u64) void {
     // drops the records ahead.
     rewind.resume_if_parked(&md);
     var sound_buf: audio.UpdateBuf = undefined;
-    audio.before_frames(&md, &sound_buf, in.fast);
+    audio.before_frames(&md, &sound_buf, fast);
     // The frames before the last run without the line sink (Genesis frames
     // render only on the last of an update, at 1x too) and, while fast
     // forwarding, without sound. Fast forward steps them until
@@ -218,12 +224,16 @@ fn run_update(t1: u64) void {
     // unrendered frame and the last rendered one would pass
     // `tuning.ff_budget_us`; never fewer than the 1x pair.
     var n: u32 = 1;
-    const max: u32 = if (in.fast) tuning.ff_max_frames else frames_per_update;
+    const max: u32 = if (fast) tuning.ff_max_frames else frames_per_update;
+    // Every pad for the update's frames (players.zig: the badge is player
+    // 1 with the local source, the others released).
+    var pads: core.Pads = undefined;
+    _ = players.next_frame(in.pad, &pads);
     var skip_us: u64 = last_skip_us;
     var t = t1;
     while (n < max) : (n += 1) {
         if (n >= frames_per_update and !cart.is_wasm and t -% t1 + skip_us + last_frame_us > tuning.ff_budget_us) break;
-        md.step_frame(in.pad, false);
+        md.step_frame_pads(&pads, false);
         rewind.record_frame(&md);
         const now = cart.micros_since_boot();
         last_skip_us = now -% t;
@@ -233,14 +243,14 @@ fn run_update(t1: u64) void {
     frames_stepped = n;
     debug.frames_per_update = n;
     const t_last = cart.micros_since_boot();
-    md.step_frame(in.pad, true);
+    md.step_frame_pads(&pads, true);
     rewind.record_frame(&md);
     // The drive ROM's CRC32, 8 KB per update (a no-op once known).
     romsrc.crc_tick();
     const t2 = cart.micros_since_boot();
     last_frame_us = t2 -% t_last;
 
-    audio.update(&md, in.fast);
+    audio.update(&md, fast);
     video.finish_frame();
     debug.record(@truncate(t2 -% t1));
     if (debug.enabled) romsrc.draw_report();
@@ -251,7 +261,7 @@ fn run_update(t1: u64) void {
         const s = if (play_hint.left >= play_hint_updates) hint.hold_select else menu.fast_hint;
         hint.draw_strip(cart, text.draw, s, cart.screen_height - hint.strip_h, menu.title_color, menu.band_color);
     }
-    if (in.fast) draw_fast(n);
+    if (fast) draw_fast(n);
 }
 
 /// The chorded rewind is showing (the `debug_chord_rewind` export).

@@ -19,7 +19,11 @@
 //!
 //! Keys: Up/Down move (wrapping), A chooses, B or a Select tap (a press that
 //! began inside the menu) resumes. Left/Right or A cycle a setting row
-//! (Buttons, Scale, Smooth H40, Sound, Debug overlay). A Scale or Smooth
+//! (Buttons, Scale, Smooth H40, Sound, Debug overlay). On the Reset row
+//! Left/Right pick what the reset plugs in (docs/MULTIPLAYER.md: one pad,
+//! two pads, a Team Player on port 1, 2 or both, the 4 Way Play, a
+//! J-Cart; it opens on what is plugged in now, the ROM's own choice at
+//! first) and A resets with it: games look for their multitap at power on. A Scale or Smooth
 //! H40 change takes effect on the first frame after resuming (app.zig
 //! calls `video.apply` whenever the menu closes) or on the next scrub step,
 //! which redraws the whole screen.
@@ -28,8 +32,8 @@
 //! and no scrubbing (`rewind.available`); the rest as in the XIP cart.
 //!
 //! Time scrubber (SPEC.md 5 and 10, frontend/rewind.zig), Gear's UI. On
-//! every row that is not a setting (Resume, where the menu opens, Reset,
-//! Pick ROM, About) Left/Right step time back/forward one record (0.5 s),
+//! every row that is not a setting (Resume, where the menu opens, Pick
+//! ROM, About; not Reset, whose Left/Right pick the peripheral) Left/Right step time back/forward one record (0.5 s),
 //! repeating 4 times a second while held; a Left/Right held over from the
 //! game does nothing (app.zig suppresses held buttons on open, and the
 //! repeat only starts from a press). The panel's bottom line
@@ -94,6 +98,9 @@ fn visible(item: Item) bool {
 }
 
 var cursor: Item = .resume_game;
+/// What the Reset row resets into (core/ports.zig), set to the console's
+/// on `open`.
+var reset_kind: core.ports.Kind = .pad1;
 var showing_about: bool = false;
 /// After a scrub step the panel would hide the restored frame, so only the
 /// scrub bar is drawn until Up/Down/A.
@@ -125,7 +132,8 @@ var updates_open: u32 = 0;
 /// Enter the menu. Called in the update the Select hold threshold is
 /// reached, before anything is drawn; the caller then calls `update` once
 /// in the same update.
-pub fn open() void {
+pub fn open(md: *const core.Md) void {
+    reset_kind = md.setup.cfg.kind;
     showing_about = false;
     scrub_view = false;
     select_armed = false;
@@ -182,7 +190,9 @@ pub fn update(md: *core.Md, e: input.Edge) Result {
                     // `Md.reset` writes the memories directly, past the
                     // undo hooks: forget the history. app.zig re-applies
                     // the scale on resume too (Vdp.reset puts line_mode
-                    // back to squeeze).
+                    // back to squeeze). A new peripheral starts empty of
+                    // 6-button and absent pads.
+                    if (md.setup.cfg.kind != reset_kind) md.setup.cfg = .{ .kind = reset_kind };
                     md.reset();
                     rewind.reset(md);
                     video.apply(md);
@@ -225,6 +235,14 @@ fn on_scrub(md: *core.Md, dir: i2) void {
 /// Left/Right: cycle a setting on a setting row, else scrub with
 /// auto-repeat. The repeat starts only from a press in the menu.
 fn left_right(md: *core.Md, e: input.Edge) void {
+    if (cursor == .reset) {
+        repeat.stop();
+        const n = core.ports.Kind.count;
+        const i: u32 = @backingInt(reset_kind);
+        if (e.pressed(.left)) reset_kind = @fromBackingInt(@intCast((i + n - 1) % n));
+        if (e.pressed(.right)) reset_kind = @fromBackingInt(@intCast((i + 1) % n));
+        return;
+    }
     if (is_setting(cursor)) {
         repeat.stop();
         if (e.pressed(.left)) adjust(-1) else if (e.pressed(.right)) adjust(1);
@@ -301,6 +319,16 @@ const title = "SNOUTY GENESIS";
 const tagline_1 = "verified by";
 const tagline_2 = "deterministic replay";
 const back_hint = "B: back";
+/// The Reset row per `core.ports.Kind`.
+const reset_labels = [core.ports.Kind.count][]const u8{
+    "Reset: 1 pad",
+    "Reset: 2 pads",
+    "Reset: Tap in 1",
+    "Reset: Tap in 2",
+    "Reset: Taps 1+2",
+    "Reset: 4 Way Play",
+    "Reset: J-Cart",
+};
 
 fn label(item: Item) []const u8 {
     return switch (item) {
@@ -310,7 +338,7 @@ fn label(item: Item) []const u8 {
         .smooth => if (video.smooth) "Smooth H40: On" else "Smooth H40: Off",
         .sound => if (audio.enabled) "Sound: On" else "Sound: Off",
         .debug => if (debug.enabled) "Debug overlay: On" else "Debug overlay: Off",
-        .reset => "Reset",
+        .reset => reset_labels[@backingInt(reset_kind)],
         .pick_rom => "Pick ROM",
         .about => "About",
     };
@@ -565,6 +593,8 @@ comptime {
     check_width("Scale: Squeeze", panel_cols);
     check_width("Smooth H40: Off", panel_cols);
     check_width("Debug overlay: Off", panel_cols);
+    check_width("Reset: 4 Way Play", panel_cols);
+    check_width("Reset: Taps 1+2", panel_cols);
     check_width("Version " ++ version, panel_cols);
     check_width("Source: embedded", panel_cols);
     check_width("Region JUE SRAM", panel_cols);
