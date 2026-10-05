@@ -28,7 +28,8 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 CART = HERE.parent.parent
 OUTS = [CART / "assets" / "packs", CART / "docs" / "packs"]
-GCPS = {"DEADMALL": ("DEAD MALL", 3, 1), "BONEYARD": ("THE BONEYARD", 3, 1)}
+GCPS = {"DEADMALL": ("DEAD MALL", 3, 1), "BONEYARD": ("THE BONEYARD", 3, 1), "SEABED": ("THE SEABED", 3, 1), "COLDSTOR": ("COLD STORAGE", 3, 1)}
+DIRS = {"DEADMALL": "dead_mall", "BONEYARD": "boneyard", "SEABED": "seabed", "COLDSTOR": "cold_storage"}
 
 
 def digest():
@@ -69,7 +70,7 @@ def main():
         if size > 64 * 1024:
             fails.append(f"{f}.GCP: {size} bytes, over the 64 KB Track B aims for")
         print(f"{f}.GCP: {size} bytes, {tn} tracks + {an} arena, hazards {mask:#04x}, crc {crc:08x}")
-        same = (CART / "assets" / "packs" / ("dead_mall" if f == "DEADMALL" else "boneyard") / f"{f}.GCP").read_bytes()
+        same = (CART / "assets" / "packs" / DIRS[f] / f"{f}.GCP").read_bytes()
         if same != b:
             fails.append(f"{f}.GCP: the assets/packs and cart/src/gen/packs copies differ")
     for f in fails:

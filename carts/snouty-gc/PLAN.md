@@ -2415,6 +2415,75 @@ make_packs.py, which got one new line in `PACK_NAMES`.
 - `tools/check.sh` passes. The contact sheets are in docs/packs/seabed/
   (`*_contact.png`, half scale). The deferred questions start at L150.
 
+**Track C (Cold Storage), 2026-10-05, branch `gc/cold`.** COLDSTOR.GCP
+(COLD STORAGE, SPEC 19.8), 33,664 B, built by `tools/packs/make_packs.py`
+from `tools/packs/cold_storage.py` (palette, tiles, four wallpapers, the
+horizon, 8 props, the arena) and `tools/packs/src/cold_storage/*.track`,
+with no engine or format change. Decisions L170 to L176.
+
+- **Art** (drawn in code, final): packed-snow road with tyre ruts and
+  orange marker dots, orange and navy hazard barriers in front of a
+  snowbank, the shelf's white edge and blue ice cliff over black water;
+  basalt road with orange dashes (EREBUS GRID); glare ice (pale cyan with
+  long diagonal glints, attribute coolant), meltwater channels, the
+  intake pipe's ribbed floor, a grated walkway, thin sea ice (crust,
+  121..123: dark translucent ice, white cracks, then the sea). Wallpapers:
+  the shelf (snow, sastrugi, hall domes), the glacier (blue ice,
+  crevasses, serac rubble), basalt (ash, snow patches, fumaroles), the
+  halls (steel deck, lit skylight domes). Horizon: ice cliffs over the
+  open sea, a wind farm on a snow ridge, Erebus with its snow tongues,
+  crater glow and plume, the geothermal plant, server domes lit from
+  inside, red beacons blinking; the back layer is the polar twilight
+  with stars and the aurora's green curtains and magenta fringe. Props
+  (32x48, 15 colours): intake pipe mouth, pylon, wind turbine, ice
+  pinnacle (also the calving block), radar dome, frozen crane, the
+  PENGUIN COLONY sign, the emperor penguin. White, cyan, navy, black and
+  orange: nothing like Dead Mall's pastels or the Boneyard's sand.
+- **INTAKE SHELF** (lap 3,644 px): the shelf's edge with the sea on the
+  left (an open edge, the water out to the map's edge) on glare ice,
+  down the intake pipe, into the halls (grated walkway, glare up the
+  aisle, a steam vent), across the frozen inlet on thin ice (crust, water
+  both sides). **CALVING FRONT** (3,620 px): two ice blocks sliding off
+  the glacier face across the start straight (movers), the east and west
+  crevasse jumps (ramps), two meltwater channels, a glare-ice climb.
+  **EREBUS GRID** (3,718 px): the rim road and the flank (a hill run),
+  a fumarole's steam, the switchbacks through the plant (grated deck,
+  steam vent) and the switchyard (two arc flashes between the pylon
+  rows). 16 to 19 props a track, all off the floor.
+- **THE MOON POOL**: black water in the middle, the whole floor glare
+  ice, four ice kickers at the pool, a ring of four steam vents firing
+  out from its rim one after another, the intake shafts across the side
+  lanes as gap jumps, the pipe housings as the four islands; the Food
+  Court's 18-node graph and pads, a 1,856 B blob, 12 props.
+- **Tests** (`cart/src/cold_storage_test.zig`, registered in
+  host_tests.zig; 213 tests pass, the binary run directly):
+  - the autopilot finishes 3 laps with no fall on WORKSTATION, MAINFRAME
+    and THIN CLIENT: INTAKE SHELF at ticks 5,034 / 6,124 / 4,690, CALVING
+    FRONT 5,084 / 6,352 / 4,853, EREBUS GRID 5,335 / 6,599 / 4,663;
+  - six AI crews finish every track (3 seeds each, by ticks 6,823 to
+    8,202; 19 to 31 wrecks, 0 or 1 falls, the crevasses; stuck at most
+    140 ticks); a dev soak of 8 seeds a track found the one hairpin pin
+    (L170) and nothing after the fix;
+  - the arena's navigation field reaches every node from every pad,
+    with and without the jumps;
+  - six 3-life rounds end by lives: 93 to 196 s (mean 135), 12 to 15
+    eliminations a round, 61 AI-on-AI in all, 4 to 10 falls a round;
+  - an INTAKE SHELF race replays identically.
+- **Registrations**: `PACK_NAMES`, the host_tests import, the copy in
+  `cart/src/gen/packs/`, the content drive image (check.sh's copy and
+  tools/test_pack/make.py's shelf, `drive_packs.img` rebuilt, pack_test's
+  counts: L176), `tools/packs/test_packs.py`'s list.
+- `tools/check.sh` PASS (build, test, float, tracks with the three
+  content packs byte-identical, preview, bench). Cold Storage benches
+  from `drive_packs.img` (calibrated, mean / worst ms, the autopilot,
+  f20 = every drive read costs 20 cycles): INTAKE SHELF f20 3.66 / 5.29,
+  CALVING FRONT f20 3.74 / 5.74 and `--lcd` 3.58 / 5.31, EREBUS GRID
+  f20 3.83 / 5.44, the stress scene on CALVING FRONT f20 4.82 / 6.11,
+  a MOON POOL battle f20 3.53 / 4.99 and `--lcd` 3.42 / 4.91; run by
+  hand (rows 12 to 14, arena row 3), not added to check.sh.
+- Contact sheets (the map plus 8 Mode 7 mock frames, half scale):
+  `docs/packs/cold_storage/*_contact.png`.
+
 ## Deferred questions
 
 SPEC 17 holds the design defaults. Taken during M0 (Track A):
@@ -3309,3 +3378,44 @@ L159. **The drive image.** SEABED.GCP joined drive_packs.img (the shelf in
     arena 2) are unchanged. tools/packs/test_packs.py's header check still
     lists the M7 packs only (its digest and check.sh's rebuild loop cover
     SEABED). Cold Storage adds itself the same way, after SEABED.
+
+L170. **Cold Storage: glare ice is the `drift` word.** make_packs.py's
+    `drift,p=100` repaints every plain road tile of a segment with the
+    pack's DRIFT tiles, and Cold Storage's DRIFT and DRIFT_HEAVY (124, 125)
+    are glare ice with attribute coolant (grip 0.97), so a whole section is
+    slick with no new generator word. The crates stay off it (they need
+    plain floor). Glare runs sit on straights and gentle bends: on a
+    hairpin a MAINFRAME on ice slid into the island's tip and stayed
+    pinned there for 1,453 ticks (CALVING FRONT, seed 1), so no glare run
+    reaches a hairpin. The AI has no ice sense (L104 likewise for crust).
+L171. **Cold Storage: one look for both blasts.** The steam vents and the
+    switchyard's arc flashes are the same timed blast (the engine's flame
+    then steam puff); the pack's one tileset gives them one orange
+    outflow grate and one wall vent. The grated walkway is the `shadow`
+    word's band (SHADOW_TILES = the grate), cosmetic, attribute surface.
+L172. **The Moon Pool's ring of vents** is four blast records the arena's
+    `post` hook appends to its feat file (pack_arena.py takes a mover but
+    no blast, and reads the file back after `post`). It has no Sweeper
+    and no mover: the ring takes all four hazard slots. pack_arena's
+    report line says "4 mover(s)" because it counts every record.
+L173. **The calving block is the ice pinnacle's cell.** common.py
+    validates at most 8 props cells and the brief has 8 props, so the
+    mover shares the pinnacle (L133's rule), drawn as a faceted serac.
+L174. **The open sea** off Intake Shelf is the open edge's pit band
+    (`pit_band 8`) plus a `furrow` along the top of the map (pit tiles
+    over the wallpaper, no lip tile), so the water runs to the map's edge.
+    The frozen inlet is an `open` segment (water both sides) with the
+    crust band across it.
+L175. **The Moon Pool's floor** is glare ice everywhere but the crate
+    pads' 3x3 grates (build_arena wants plain floor round a pad), the
+    spawn pads, the two bays and the vents' lanes (attribute vent: grip).
+    The Food Court's graph (18 nodes, 8 one-way jumps) and pads are kept;
+    the pool is its fountain's circle. Rounds end by lives in 93 to 196 s
+    (mean 135); 4 to 10 of a round's 16 or 17 wrecks are falls (the pool
+    and the shafts), most with a recent hit, so they still score.
+L176. **The content drive image** (`drive_packs.img`, tools/test_pack/make.py
+    and check.sh's copy) holds COLDSTOR.GCP after BONEYARD: its tracks are
+    rows 12 to 14 and its arena row 3, so TEST moves to rows 15, 16 and
+    arena 4; pack_test.zig's counts follow (4 packs, 17 rows, 5 arenas).
+    The `-Dgc-pack` preview wasm and the benches keep their rows (DEADMALL
+    and BONEYARD come first). The Seabed adds its line beside it.

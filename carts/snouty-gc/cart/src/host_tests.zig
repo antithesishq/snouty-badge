@@ -34,4 +34,6 @@ test {
     _ = @import("pack_test.zig");
     // M9 Track S: The Seabed pack.
     _ = @import("seabed_test.zig");
+    // M9 more packs: Cold Storage (Track C).
+    _ = @import("cold_storage_test.zig");
 }

@@ -1,0 +1,45 @@
+# Erebus Grid: Cold Storage, track 3 (SPEC 19.8). The volcano: along the
+# rim road and down the east flank (a long rise and dip), along the foot
+# past the fumaroles (a steam vent), then up the switchbacks through the
+# geothermal plant (its grated deck, a steam vent) into the switchyard,
+# where arcs flash between the pylons across the road (two blasts on the
+# yard's timer), and back down to the line. Black rock, ash, orange dashes.
+name EREBUS GRID
+order 3
+floor rock
+background basalt
+centerline yes
+league cold_storage
+width 50
+# x    y    half   features
+ 280  150   54                     # start line, heading east
+ 520  140   54     crates
+ 760  150   52
+ 890  240   50
+ 910  420   48     hill            # over the flank
+ 900  640   48
+ 860  820   50
+ 700  890   50     crates
+ 480  890   50     vent:right,period=300,warn=50,phase=100   # a fumarole's steam
+ 300  890   50
+ 150  850   52
+ 110  760   50
+ 180  690   48
+ 400  700   46     shadow,len=30   # the plant's grated deck
+ 580  700   46     vent:left,period=280,warn=50   # its steam vent
+ 720  680   46
+ 760  590   46
+ 680  520   46
+ 520  520   46     vent:right,period=240,warn=45,phase=60    # arc flash between the pylons
+ 380  520   46     vent:left,period=240,warn=45,phase=180    # and again
+ 260  470   48
+ 220  350   50
+ 220  230   52
+# Props: the switchyard's pylons, the plant's pipes and crane, radar on
+# the rim, turbines on the ridge.
+props pylon seg 17 side both gap 60 off 22
+props pylon seg 18 side both gap 60 off 22
+props pipe,crane seg 13 side right gap 80 off 24
+props radar,turbine seg 1 side left gap 90 off 26
+props turbine seg 4 side right gap 90 off 26
+props pipe seg 8 side left gap 90 off 24

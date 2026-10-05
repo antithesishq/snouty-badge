@@ -370,11 +370,11 @@ test "the content packs from a drive image: every track and arena loads" {
     defer pack.forget();
     pack.scan(romfs.Image.truncated_test(@embedFile("gen/packs/drive_packs.img")));
     pack.check_all();
-    try expectEqual(@as(u8, 4), pack.count);
+    try expectEqual(@as(u8, 5), pack.count);
     for (pack.packs[0..pack.count], 0..) |*p, i| {
         try expectEqual(fmt.Refusal.ok, p.status);
         for (0..p.track_n + p.arena_n) |k| try expectEqual(fmt.Refusal.ok, pack.load(@intCast(i), @intCast(k)));
     }
-    try expectEqual(@as(u8, 6 + 3 + 3 + 3 + 2), pack_rows.race_count());
-    try expectEqual(@as(u8, 5), pack_rows.arena_count());
+    try expectEqual(@as(u8, 6 + 3 + 3 + 3 + 3 + 2), pack_rows.race_count());
+    try expectEqual(@as(u8, 6), pack_rows.arena_count());
 }
