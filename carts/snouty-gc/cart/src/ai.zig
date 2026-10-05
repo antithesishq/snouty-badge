@@ -9,7 +9,8 @@
 //! Physics multipliers moved out of the characters into the cars' chassis
 //! (SPEC 4.2); a `Crew` here is how a racer drives and fights (SPEC 4.3,
 //! 6.5): target preference, reaction delay, aim noise, when to drop, and
-//! LEGACY's ramming, ROOTKIT's stalking. Pickups are M2.
+//! LEGACY's ramming, ROOTKIT's stalking, and from M2 the pickup policy
+//! (SPEC 4.3, 6.5 item 3: when to press B, and how long a CAPTCHA takes).
 //!
 //! `drive` reads the World only. The one piece of AI state, the aim and
 //! its reaction counter (`Car.aim`, `aim_ticks`), is kept by `sim` through
@@ -21,6 +22,7 @@ const world = @import("world.zig");
 const track = @import("track.zig");
 const sim = @import("sim.zig");
 const weapons = @import("weapons.zig");
+const pickups = @import("pickups.zig");
 
 const World = world.World;
 const Car = world.Car;
@@ -73,24 +75,34 @@ pub const Crew = struct {
     rammer: bool = false,
     /// Sit behind the aimed-at car instead of passing it (ROOTKIT).
     stalk: bool = false,
+    /// Pickups (SPEC 4.3, 6.5). Use every pickup the tick the roulette
+    /// stops (KIDDIE); otherwise each waits for its trigger (`want_use`).
+    pickup_now: bool = false,
+    /// Save HEISENBUG and RACE CONDITION for the last lap (ROOTKIT).
+    save_last_lap: bool = false,
+    /// Save KERNEL PANIC and DDOS for whoever is 1st (BOTNET).
+    save_for_leader: bool = false,
+    /// Ticks this crew takes to "solve" a CAPTCHA (SPEC 6.3: 60 to 120,
+    /// KIDDIE slowest).
+    captcha_solve: u8 = 90,
 };
 
 /// Per racer, SPEC 4.1 order. Driving style only, for M0; M1 widens these
 /// into SPEC 4.3's crews. SNOUTY is also the autopilot (attract, tests).
 pub const crews = [6]Crew{
     // SNOUTY: patient, the line; waits for a lock, mines the corners.
-    .{ .reaction = 12, .jitter = 2, .drop_corners = true },
+    .{ .reaction = 12, .jitter = 2, .drop_corners = true, .captcha_solve = 75 },
     // LEGACY: slow, holds its line, pushes; rams anything beside it,
     // walls of fire for anyone behind.
-    .{ .lane = -10, .min_speed_pct = 66, .full_brake_turn = 12000, .avoid = false, .reaction = 4, .jitter = 10, .rammer = true, .drop_wide = true },
+    .{ .lane = -10, .min_speed_pct = 66, .full_brake_turn = 12000, .avoid = false, .reaction = 4, .jitter = 10, .rammer = true, .drop_wide = true, .captcha_solve = 100 },
     // KIDDIE: fast in, slides; sprays at anything the moment it is there.
-    .{ .lane = 10, .min_speed_pct = 78, .slide_turn = 2400, .reaction = 1, .jitter = 14 },
+    .{ .lane = 10, .min_speed_pct = 78, .slide_turn = 2400, .reaction = 1, .jitter = 14, .pickup_now = true, .captcha_solve = 120 },
     // SYSADMIN: clean lines, long snipes, hunts the humans first.
-    .{ .lookahead = 7, .min_speed_pct = 76, .reaction = 6, .jitter = 2, .target = .human },
+    .{ .lookahead = 7, .min_speed_pct = 76, .reaction = 6, .jitter = 2, .target = .human, .captcha_solve = 60 },
     // ROOTKIT: drifts across the lane, sits behind its mark and snipes.
-    .{ .lane = 6, .wander_px = 14, .wander_rate = 65536 / 300, .reaction = 8, .jitter = 4, .stalk = true },
+    .{ .lane = 6, .wander_px = 14, .wander_rate = 65536 / 300, .reaction = 8, .jitter = 4, .stalk = true, .save_last_lap = true, .captcha_solve = 80 },
     // BOTNET: a committee at the wheel; always goes for the leader.
-    .{ .lane = -6, .wander_px = 20, .wander_rate = 65536 / 200, .speed_pct = 245, .reaction = 6, .jitter = 8, .target = .leader },
+    .{ .lane = -6, .wander_px = 20, .wander_rate = 65536 / 200, .speed_pct = 245, .reaction = 6, .jitter = 8, .target = .leader, .save_for_leader = true, .captcha_solve = 110 },
 };
 
 pub fn crew_of(c: *const Car) *const Crew {
@@ -189,7 +201,89 @@ fn drive_crew(w: *const World, i: usize, cr: *const Crew) Input {
         b.up = true;
     }
     if (fight) arm(w, i, cr, &b, curve);
+    if (fight) switch (want_use(w, i, cr, curve)) {
+        .no => {},
+        .forward => {
+            b.b = true;
+            b.down = false;
+        },
+        .back => {
+            b.b = true;
+            b.down = true;
+            b.a = false;
+        },
+    };
+    // BIT FLIP: the crew steers against the flip, late: for the first
+    // `ai_flip_lag` ticks of every 32 its hands follow the old habit, so it
+    // weaves on the line (SPEC 6.3).
+    if (c.bit_flip > 0 and c.bit_flip % 32 >= tuning.ai_flip_lag) {
+        const l = b.left;
+        b.left = b.right;
+        b.right = l;
+    }
     return b;
+}
+
+const Use = enum { no, forward, back };
+
+/// When to press B (SPEC 4.3, 6.5 item 3): KIDDIE at once; everyone else
+/// on the pickup's trigger. Tier C at once, except BOTNET's KERNEL PANIC
+/// and DDOS (only at the leader) and ROOTKIT's last-lap HEISENBUG and RACE
+/// CONDITION.
+fn want_use(w: *const World, i: usize, cr: *const Crew, curve: i32) Use {
+    const c = &w.cars[i];
+    if (c.pickup == .none or c.roll_ticks > 0 or c.b_was or c.frozen > 0) return .no;
+    const last_lap = c.lap + 1 >= tuning.laps;
+    const behind = car_behind(w, i, tuning.ai_drop_behind, tuning.ai_drop_lat * 2);
+    if (cr.pickup_now) {
+        return if ((c.pickup == .honeypot or c.pickup == .spaghetti) and behind) .back else .forward;
+    }
+    const yes = switch (c.pickup) {
+        .none => false,
+        .prefetch => c.burst == 0 and curve < cr.burst_curve,
+        .honeypot, .spaghetti => {
+            if (behind) return .back;
+            return if (car_ahead_on_line(w, i)) .forward else .no;
+        },
+        .duck => pickups.threatened(w, i),
+        .hot_patch => @as(u32, c.armor) * 100 < @as(u32, c.armor_max) * tuning.ai_patch_pct or c.bit_flip > 0 or c.chain_ticks > 0,
+        .fork_bomb => {
+            return if (car_behind(w, i, tuning.ai_fork_behind, std.math.maxInt(i32))) .back else .no;
+        },
+        .bit_flip, .deadlock => pickups.ahead(w, i, tuning.ahead_range, true, no_car) != no_car,
+        .ddos => blk: {
+            const t = pickups.ahead(w, i, std.math.maxInt(i32), true, no_car);
+            break :blk t != no_car and (!cr.save_for_leader or w.cars[t].rank == 1);
+        },
+        .heisenbug => !cr.save_last_lap or last_lap,
+        .race_condition => last_lap and pickups.ahead(w, i, tuning.ai_race_px, true, no_car) != no_car,
+        .kernel_panic => !cr.save_for_leader or c.rank != 1,
+        .captcha, .sudo, .prompt_injection => true,
+        .zero_day => pickups.ahead(w, i, std.math.maxInt(i32), false, no_car) != no_car,
+    };
+    return if (yes) .forward else .no;
+}
+
+/// A car on the ground within `dist` px behind and `lat` px of the line.
+fn car_behind(w: *const World, i: usize, dist: i32, lat: i32) bool {
+    const c = &w.cars[i];
+    for (&w.cars, 0..) |*o, j| {
+        if (j == i or !weapons.targetable(o) or o.hop != 0 or o.heisen > 0) continue;
+        const r = weapons.rel(c, o);
+        if (r.along < 0 and r.along >= -dist and @abs(r.lat) <= lat) return true;
+    }
+    return false;
+}
+
+/// A car ahead in a thrown HONEYPOT's or SPAGHETTI's landing zone.
+fn car_ahead_on_line(w: *const World, i: usize) bool {
+    const c = &w.cars[i];
+    for (&w.cars, 0..) |*o, j| {
+        if (j == i or !weapons.targetable(o) or o.heisen > 0) continue;
+        const r = weapons.rel(c, o);
+        if (r.along >= tuning.ai_throw_min and r.along <= tuning.ai_throw_max and @abs(r.lat) <= tuning.ai_throw_lat) return true;
+    }
+    return false;
 }
 
 /// Fire and drop (SPEC 6.5) on top of the driving input `b`. The rear
@@ -225,7 +319,7 @@ fn want_drop(w: *const World, i: usize, cr: *const Crew, curve: i32) bool {
     const c = &w.cars[i];
     const lat_lim = if (cr.drop_wide) tuning.ai_drop_wide_lat else tuning.ai_drop_lat;
     for (&w.cars, 0..) |*o, j| {
-        if (j == i or !weapons.targetable(o) or o.hop != 0) continue;
+        if (j == i or !weapons.targetable(o) or o.hop != 0 or o.heisen > 0) continue;
         const r = weapons.rel(c, o);
         if (r.along >= 0 or r.along < -tuning.ai_drop_behind) continue;
         if (@abs(r.lat) <= lat_lim) return true;
@@ -241,7 +335,7 @@ fn pick_target(w: *const World, i: usize, cr: *const Crew, jit: i32) u8 {
     var best: u8 = no_car;
     var best_key: i32 = std.math.maxInt(i32);
     for (&w.cars, 0..) |*o, j| {
-        if (j == i or !weapons.targetable(o) or o.hop != 0 or o.immune != 0) continue;
+        if (j == i or !weapons.targetable(o) or o.hop != 0 or o.immune != 0 or o.heisen > 0) continue;
         const r = weapons.rel(c, o);
         if (r.along <= 0) continue;
         const reach: i32, const half: i32 = switch (c.front) {
@@ -305,7 +399,7 @@ fn ram(w: *const World, i: usize, lane: *i32) void {
     const own = own_lateral(w, c);
     const room = own.half - tuning.avoid_margin;
     for (&w.cars, 0..) |*o, j| {
-        if (j == i or !weapons.targetable(o) or o.hop != 0 or o.immune != 0) continue;
+        if (j == i or !weapons.targetable(o) or o.hop != 0 or o.immune != 0 or o.heisen > 0) continue;
         const r = weapons.rel(c, o);
         if (@abs(r.along) > tuning.ai_ram_along or @abs(r.lat) > tuning.ai_ram_lat) continue;
         lane.* = std.math.clamp(own.lat + r.lat * 2, -room, room);
@@ -374,7 +468,7 @@ fn avoid(w: *const World, i: usize, lane: *i32, block_spd: *i32) void {
     var nearest: i32 = tuning.avoid_ahead;
     for (&w.cars, 0..) |*o, j| {
         if (j == i) continue;
-        if (!o.active or o.hop != 0 or o.wreck != .none) continue;
+        if (!o.active or o.hop != 0 or o.wreck != .none or o.heisen > 0) continue;
         const dx = wrap_px((o.x - c.x) >> fixed.Q);
         const dy = wrap_px((o.y - c.y) >> fixed.Q);
         if (@abs(dx) >= tuning.avoid_ahead or @abs(dy) >= tuning.avoid_ahead) continue;

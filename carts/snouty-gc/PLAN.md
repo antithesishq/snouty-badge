@@ -535,6 +535,67 @@ Goal: RMA crates on the track, the roulette, rank-weighted rolls and the
 15 non-league pickups of SPEC 6.3 with their gags, AI pickup policies
 (SPEC 6.5 item 3). PROMPT INJECTION waits for the Perimeter league.
 
+### M2.0 Interface (Track A, committed before the pickup behaviour)
+
+Same contract as M1.0: only `sim.simulate` writes these; rendering reads
+the World, the pools and the event ring (its own `seq` cursor) and never
+writes. Nothing was renamed or removed; `proj_count` went 48 -> 40 (the
+M1 soak peaked at 21; the new `Projectile.seg` byte made a slot 20 B) and
+`drop_count` 32 -> 40 (room for a FORK BOMB's 8). World 2,436 B (Car 112),
+under the 2,560 cap.
+
+- **`world.Pickup`**: SPEC 6.3 table order, `prefetch = 0` ..
+  `prompt_injection = 15`, `none = 16`, so `@intFromEnum(p)` is the
+  `pickups.png` cell and `none` is the roulette blank (cell 16). Tiers:
+  A `prefetch`..`spaghetti`, B `fork_bomb`..`race_condition`, C
+  `kernel_panic`..`zero_day`. `prompt_injection` never rolls on the Dumps.
+- **Car** (timers in ticks, 0 = off): `pickup` (held; while `roll_ticks
+  > 0` it is the roulette's hidden result: draw `FETCHING...`, B does
+  nothing), `roll_ticks` (45 at a crate), `zero_day_used`, `b_was`;
+  `prefetch` (boost), `duck` (u16, RUBBER DUCK on its tether), `patch`
+  (HOT PATCH repairing), `tangle` (SPAGHETTI: held to 40%) then `strand`
+  (dragging a cable strand, -10%), `spin` (HONEYPOT spin-out), `bit_flip`
+  (Left/Right swapped: the HUD blink and the 1 px jitter on a human's
+  badge), `chain` + `chain_ticks` (DEADLOCK: chained to car `chain`, or to
+  the nearest wall when `chain == no_car`), `heisen` (HEISENBUG: draw on
+  odd frames only), `frozen` + `frozen_by` (`Freeze.panic`: KERNEL PANIC;
+  the blue screen is the first 30 of its 90 ticks, i.e. `frozen > 60`),
+  `captcha` (ticks until freed) with the mini-game `captcha_cursor`
+  (0..8, row-major 3x3), `captcha_lit` and `captcha_done` (9-bit cell
+  masks: traffic lights, cleared), `sudo` (u16, root: the `#`),
+  `swap_with` + `swap_ticks` (RACE CONDITION tearing on both cars, then
+  the swap).
+- **Projectiles**: `ProjKind.panic`, the KERNEL PANIC packet (`target` =
+  the car it runs to; `seg` = the centerline sample it runs toward and
+  `ttl` = its direction, both internal; velocity gives its heading).
+- **Drops**: `DropKind.fork` (one `&`; `size`/`dir` internal), `honeypot`
+  (the fake crate: alternate `pickups.png` cells 18/19 on odd frames),
+  `spaghetti` (the 24 px tangle, flat).
+- **DDOS drones**: `World.drones: [8]Drone` (`state` none/flying/orbit,
+  x/y Q16, `owner`, `target`, `ttl`, `angle`); the target's speed reading
+  stutters while any drone orbits it.
+- **Crates**: positions come from the track: `track.crate_spots[0..
+  track.crate_n]` (world px, filled by `track.select` from the centerline
+  samples flagged `track.flag_crates`); `World.crates[k]` is spawn k's
+  respawn timer, 0 = the crate is there (draw `pickups.png` cell 17).
+- **Events** (`EventKind` gains `roll`, `use`, `effect`, `swap`; see the
+  field comments in `world.zig`): `roll` (car, rolled pickup, crate index;
+  x, y the crate) when a car takes a crate; `use` (user, pickup, target or
+  `no_car`; x, y where it lands or strikes) when B uses one; `effect`
+  (source or `no_car`, affected car, pickup; x, y the affected car) for a
+  one-off impact: KERNEL PANIC hit, BIT FLIP strike, DEADLOCK chain (one per
+  chained car), DDOS swarm arrival, HONEYPOT burst (`<honey>` tags),
+  SPAGHETTI tangle, RUBBER DUCK popped (affected = the duck's owner),
+  ZERO-DAY (plus its `wreck` event, cause `zero_day`); `swap` (the two
+  cars) the tick a RACE CONDITION trades them. A shot-down drone or a drop
+  destroyed by SUDO is an `explode` of radius 0 (a spark); a FORK BOMB hit
+  is an `explode` of radius 8.
+- **Render-side helpers** (pure reads, in `pickups.zig`, both returning
+  a `pickups.Point` {x, y} in Q16): `duck_pos(c)` (the duck's world
+  position behind its car), and `chain_anchor(w, i)` (the far end of car
+  i's chain: the partner, or the nearest track edge for a wall chain).
+  Also usable: `pickups.tier_of(p)`, `pickups.drones_live(w)`.
+
 ### Track A: pickup simulation (Opus agent, worktree /home/exedev/snouty-badge-gc, branch gc/spec; starts while M1 Track B is still running)
 
 Owns what M1 Track A owned (`world.zig`, `sim.zig`, `weapons.zig`,
@@ -585,14 +646,56 @@ track `.bin`s for the crate rows. It must not edit M1 Track B's files
    commits with the `Co-Authored-By: Claude Opus 5.5
    <noreply@anthropic.com>` line, push gc/spec. No tag, no merge.
 
-### Track B: pickup presentation (after M1 is tagged)
+### Track B: pickup presentation (Opus agent, worktree /home/exedev/snouty-badge-gc-present, branch gc/present)
 
-HUD pickup box and roulette, crates and the pickup world objects
-(duck, `&` bombs, drones, packet, honeypot, spaghetti, chains), the human
-gags (KERNEL PANIC blue screen, BIT FLIP blink and jitter, the CAPTCHA
-grid you play, spaghetti strand, tearing for RACE CONDITION, HEISENBUG
-flicker, SUDO `#`), and the preview GIF with FORK BOMB, KERNEL PANIC on
-the player and a CAPTCHA solve. Written in detail when M1 lands.
+M1 is tagged (`snouty-gc/m1`, on main c010781f). `gc/present` has merged
+the M2.0 interface (b55a19bf), so the build fails until the two `sprites.zig`
+switches handle the new projectile and drop kinds: that is the first fix.
+Track B owns the same files as M1 Track B (`main.zig`, `select.zig`,
+`roster_text.zig`, `fx.zig`, `hud.zig`, `sprites.zig`, `camera.zig`,
+`menu.zig`, `results.zig`, `stress.zig`, `render.zig` hooks, `hills.zig`,
+`build.zig`, `tools/scripts/`, `docs/`), and never edits Track A's
+(`world.zig`, `sim.zig`, `weapons.zig`, `pickups.zig`, `ai.zig`,
+`tuning.zig`, `racers.zig`, `track.zig`, the tests, `build_tracks.py`,
+the `.track` files). It renders only from the M2.0 interface and merges
+`gc/spec` in again whenever Track A pushes behaviour.
+
+1. **HUD pickup box** (top right): the held pickup's `pickups.png` cell,
+   the roulette while `roll_ticks > 0` (cycling cells, caption
+   `FETCHING...`, landing on the hidden result at 0), blank when empty.
+2. **World objects** in the depth list: crates (cell 17, hidden while the
+   respawn timer runs), the HONEYPOT crate (cells 18/19), FORK BOMB `&`,
+   SPAGHETTI tangle (flat), the KERNEL PANIC packet, DDOS drones, the
+   RUBBER DUCK at `pickups.duck_pos`, DEADLOCK chain lines to
+   `pickups.chain_anchor`, the cable strand behind a stranded car.
+3. **Car states**: HEISENBUG drawn on odd frames only, SUDO's `#` above
+   the car and a flashing palette, KERNEL PANIC frozen car tinted blue with
+   `:(` above it, CAPTCHA grid glyph over each captcha'd AI, RACE CONDITION
+   tearing (row-offset slices of the sprite) on both cars during
+   `swap_ticks`, the PREFETCH boost flame, the HONEYPOT spin.
+4. **The human gags** on the followed car's badge only: the KERNEL PANIC
+   blue screen while `frozen > 60` (full screen, `:(` and `YOUR RIG RAN
+   INTO A PROBLEM`, about 30 ticks), BIT FLIP (the HUD blinks `BIT FLIP`
+   with a mirrored arrow, plus a 1 px per-row floor jitter), the **CAPTCHA
+   mini-game** (a 48x48 3x3 grid centred over the floor from
+   `captcha_lit`, `captcha_done` and `captcha_cursor`, with traffic lights
+   in the lit cells, the cursor sweeping, cleared cells ticked, and the
+   caption `SELECT ALL SQUARES WITH TRAFFIC LIGHTS` wrapped to fit, then
+   `PRESS A`), DDOS (the speed reading stutters), and the pickup kill-feed
+   lines (`ZERO-DAY`, `KERNEL PANIC > KIDDIE`).
+5. **Effects** from `roll`, `use`, `effect` and `swap` events: the crate
+   pop, the honey `<honey>` tags burst, the duck pop, the ZERO-DAY flash,
+   the swap glitch. A short `use` caption over the user is optional.
+6. **Stress scene** extended with pickup objects (8 drones, 8 fork bombs,
+   chains, packet, crates); the stress bench stays under 8 ms worst.
+7. **Previews**: `docs/preview_m2.gif` showing a FORK BOMB growing, a
+   KERNEL PANIC on the player (blue screen), and a CAPTCHA solve. Add
+   debug exports that force a pickup into the followed car's slot and an
+   effect onto it, so the preview script can show each gag
+   deterministically (render-side debug hooks only; the sim stays pure).
+8. Gate green in the worktree, commits with the `Co-Authored-By: Claude
+   Opus 5.5 <noreply@anthropic.com>` line, push `gc/present`. The lead
+   merges both branches.
 
 ### M2 gate
 
@@ -601,6 +704,276 @@ Gate green; pickup scenario tests and the soak pass; stress bench under
 `snouty-gc/m2`; merged to main.
 
 ### M2 status
+
+- 2026-10-04: **Track A (pickup simulation) DONE** on `gc/spec`: the
+  M2.0 interface (b55a19bf, above) and the behaviour (cc7f56b0). New
+  `pickups.zig` (rolls, crates, the 15 pickups, statuses, the KERNEL PANIC
+  packet, DDOS drones, FORK BOMB forking) and `pickups_test.zig`; hooks in
+  `sim.zig` (the race byte through `pickups.filter`, thrust and speed
+  limits in the driving step, `control` for B and the CAPTCHA board before
+  the weapons, `pickups.update` after them; SUDO in `damage` and the ram,
+  HEISENBUG in the contacts, `on_wreck`, PREFETCH's wall damage),
+  `weapons.zig` (the packet, drones shot down, the duck, root clearing
+  drops, the new drop kinds, HEISENBUG breaking locks and homing),
+  `ai.zig` (`want_use` per crew, the BIT FLIP weave, everyone ignores a
+  HEISENBUG car). Crates: a `crates` feature word in `.track` sets
+  centerline flag bit 2 on the sample nearest the segment middle;
+  `track.find_crates` (run by `select`) puts 4 crates 20 px apart where
+  the half width is at least 56, else 3. Landfill Loop has three rows (top
+  straight 4, middle straight 3, after the switchback 3: 10 crates), the
+  generator validates every crate on plain road and draws them in
+  `docs/landfill_loop_preview.png`. No new asset file, so `build.zig` is
+  untouched. Every number is in `tuning.zig` ("Pickups" and "AI pickups").
+- Tests (`zig build test-gc`): **77 pass** (51 before). Roll odds over
+  40,000 seeded rolls per rank: every tier within 0.3 points of SPEC 6.4
+  (gate 1.5), uniform within a tier (gate 15%), no KERNEL PANIC for 1st,
+  no ZERO-DAY for 1st..4th or twice a race. Crates (rows from the track,
+  the roulette, B waiting for it, respawn at 180, a full car drives
+  through, airborne cars pass over). A scenario per pickup: PREFETCH
+  (+40%, the kick, wall damage halved), HONEYPOT (throw 60 px, drop
+  behind, owner spared, 30 and a spin), RUBBER DUCK (first hit from behind,
+  draws SPEAR PHISH, front shots still hurt, 600 ticks), HOT PATCH (40 over
+  60 ticks, capped, clears BIT FLIP and DEADLOCK), SPAGHETTI (40% for 60,
+  then -10% for 180), FORK BOMB (1, 2, 4, 8 at ticks 60, 120, 180, none at
+  481, spread 60 px across the road on floor, 15 a hit), BIT FLIP (range,
+  mirrored steering, 180 ticks), DEADLOCK (pair at 30%, the pull, freed on
+  touch or at 150, lone car to the wall with its anchor on the edge), DDOS
+  (8 drones arrive, orbit, 96 damage in 6 pulses, -20%, shot down by
+  PING), HEISENBUG (lock and homing lost, AI aim ignores it, drops and cars
+  pass through), RACE CONDITION (exactly two cars swap after 6 ticks; out
+  of range nothing; across the start line the laps stay whole), KERNEL
+  PANIC (runs 220 px in 30..50 ticks, 40 and 90 frozen, frozen car does not
+  move, from 1st it runs back to 2nd, root shrugs it off), CAPTCHA (10%,
+  each AI frees at its crew's tick, KIDDIE last; the human board solved in
+  under 50 ticks, a wrong press clears it, 120 ticks unsolved; A on the
+  board never fires), SUDO (no damage, a ram deals 40 and bounces, drops
+  cleared untriggered, 300 ticks), ZERO-DAY (through duck, HEISENBUG and
+  root, credited), a wreck clearing statuses. AI policies (KIDDIE at once,
+  SYSADMIN's patch and duck triggers, ROOTKIT's last lap, BOTNET's leader,
+  HONEYPOT and FORK BOMB behind, RACE CONDITION on the last lap within
+  60 px). Determinism with pickups (a race twice, two worlds interleaved
+  with humans pressing B and A).
+- **Soak with pickups** (20 seeded races, half with SNOUTY on the
+  autopilot as a human; the M1 combat soak also runs with crates now):
+  all finish in 6,845 to 7,796 ticks; longest no-progress run **305
+  ticks** (gate 600); pools peak at 18 of 40 shots, 38 of 40 drops (the
+  oldest is reused), 8 of 8 drones; 469 wrecks (23 a race, M1 19). Every
+  pickup rolled and used: rolls 14 (ZERO-DAY) to 59 (DDOS), uses 14 to 53;
+  RACE CONDITION is the most held (48 rolled, 28 used: its trigger is the
+  last lap within 60 px). The autopiloted SNOUTY finishes 2nd to 5th with
+  4 to 5 wrecks a race. The autopilot's Quick Race in the wasm takes
+  7,245 ticks (M1 about 6,200).
+- **`@sizeOf(World)` = 2,436 B** (Car 112; cap 2,560 kept).
+- Gate: `tools/check.sh` green on `gc/spec` (build, test via test-gc,
+  check-float, tracks, preview, bench). Bench on the re-recorded
+  `m0_race.json` (600 frames, combat and pickups on): **mean 3.10 ms,
+  worst 3.93 ms** (frame 20, the race start), `--lcd` identical;
+  `sim.simulate` 2.8% of cycles. RAM ELF on `gc/spec` (M0 menus, no M1
+  presentation): `.text` 117,420, `.data` 7,068, `.bss` 23,884. The
+  stress scene with pickups is Track B's.
+- Outside Track A's files, for the gate: `tools/check.sh` (the
+  autopilot Quick Race gets 9,000 frames, was 6,000) and
+  `tools/scripts/m0_race.json` re-recorded with `tools/record_script.py`
+  (recorded on `gc/spec`'s M0 menu flow: re-record it again after the
+  integration with the M1 select). `host_tests.zig` lists the new files.
+- 2026-10-05: **Track B (pickup presentation) DONE** on `gc/present`
+  (M1 Track B plus `gc/spec` merged in up to 46281911; not merged back,
+  not tagged). The two `sprites.zig` switches handle the M2.0 kinds.
+  **World objects** in the depth list: RMA crates (cell 17, bobbing,
+  hidden while their timer runs), the HONEYPOT crate (18/19 on odd
+  frames), FORK BOMB `&`s at 2x that swell and flash orange in the 12
+  ticks before each fork, SPAGHETTI tangles (flat decal), the KERNEL
+  PANIC packet (2x, ghosts trailing), DDOS drones (2x, buzzing) and RUBBER
+  DUCKs at `pickups.duck_pos`; before the list, the floor lines: DEADLOCK
+  chains to `chain_anchor` (dashed two-colour links), duck tethers and the
+  swaying SPAGHETTI strand. **Car states**: HEISENBUG on odd frames only,
+  SUDO's gold palette flashing with `#` over the car, KERNEL PANIC's blue
+  palette with `:(` over it, the CAPTCHA tag over captcha'd cars (not over
+  a followed human, who plays it), RACE CONDITION tearing (four shifted
+  bands, one magenta) on both cars, PREFETCH's twin flames, the HONEYPOT
+  spin (the view steps round the car). The tints are luma-mapped palettes
+  per sheet built at comptime (`Blit.pal`). **HUD**: the pickup box shows
+  the held icon, the roulette while `roll_ticks > 0` (a decelerating reel
+  of random cells, never the hidden result, caption `FETCHING...`), then
+  the pickup's name for 60 ticks; pickup feed lines (`KERNEL PANIC >
+  KIDDIE`, two rows when wider than the screen) and `SNOUTY <> KIDDIE` for
+  a swap. **Gags** on the followed car's badge: the KERNEL PANIC blue
+  screen while `frozen > 60` (full frame instead of the race: `:(` at 3x,
+  `YOUR RIG RAN INTO A PROBLEM AND NEEDS TO RESTART.`, `NN% COMPLETE`, a
+  fake QR, `STOP CODE: KERNEL_PANIC` and the sender as `KIDDIE.SYS`),
+  BIT FLIP (`<R BIT FLIP L>` blinking between itself and its mirror image,
+  each floor row jittering 0 or 1 px), the CAPTCHA card (a reCAPTCHA
+  header, the 3x3 grid of road photos with traffic lights in the lit
+  cells, the sweeping cursor, ticked cells, the wait bar, `PRESS A`, `TRY
+  AGAIN` after a miss, `HUMAN VERIFIED` in the bar on a solve), DDOS (the
+  speed reads real, real, `503`, blank), the ZERO-DAY flash (white, then a
+  red frame) and red dart, the RACE CONDITION screen glitch. **Effects**:
+  crate pops, `<honey>` `</honey>` `<honey/>` tags flying out of a
+  HONEYPOT, the popped duck tumbling up with `QUACK`, BIT FLIP's cosmic ray
+  from the top of the screen, sparks for the rest. No `use` caption.
+  **Stress scene** (stress.zig): 8 crates in two rows, the 8 drones round
+  a rival (then SNOUTY), 8 FORK BOMBs, a HONEYPOT, a tangle, a KERNEL
+  PANIC packet, a chain, ducks, a strand, SUDO, panic, tearing and
+  HEISENBUG cars, and SNOUTY's CAPTCHA board, BIT FLIP, DDOS and roulette
+  in turn; 152 objects gathered, 64 drawn. **Preview hooks** (wasm only,
+  documented in RUNNING.md): `debug_give_pickup`, `debug_roll_pickup`,
+  `debug_give_ahead`, `debug_effect` (`stress.force_effect`: 17 gags),
+  readers for the CAPTCHA board, frozen ticks and forks; autopilot mode 2
+  lets the pad's A and B through (the pad alone plays a CAPTCHA).
+- Track B bench (calibrated): stress (`m1_render_stress.json`, 600
+  frames) **mean 5.26 ms, worst 6.34 ms** (frame 61, p95 6.17; M1 4.72 /
+  5.13); `m0_race.json` mean 3.73, worst 5.04 (frame 285); new
+  `tools/scripts/m2_race.json` (3,000 frames of an autopilot race with
+  pickups, `record_script.py --frames 3000`) **mean 3.55, worst 5.11**
+  (frame 2742); every `--lcd` run identical. The blue screen frame skips
+  the floor, so it is the cheapest race frame. RAM ELF `size -A`: **.text
+  178,232 + .data 7,152 + .bss 30,780** (+ 860 exidx/extab/descriptor) =
+  217,024 B: **57,152 B (56 KB) free** under the 274,176 B window (M1
+  Track B 173,708; Track A's pickups and this track together +43 KB).
+  `tools/check.sh` green: also a gag preview (the GIF's run: the CAPTCHA
+  solved by its A presses, the blue screen at frozen > 60, the `&` ahead
+  forked) and the `m2_race.json` bench plain and `--lcd`. `m0_race.json`
+  re-recorded on the select flow comes out byte-identical, so it stays.
+  `docs/preview_m2.gif`: from frame 1300 of an autopilot race, a CAPTCHA
+  on SNOUTY (a miss, `TRY AGAIN`, the solve, `HUMAN VERIFIED`), the
+  roulette landing a FORK BOMB, a rival's `&` ahead, the KERNEL PANIC blue
+  screen, SNOUTY frozen blue while the `&` forks into 2 and 4, and the
+  drive into them. Deferred questions 44 to 54.
+
+## M3 Content and flow
+
+Goal: six tracks over two leagues with their hazards, GARBAGE COLLECTION
+mode, and the full flow (splash, title, attract, menus, pause, results).
+SPEC 3.2, 3.3, 8 and 19.4 (hazard kinds are generic from the start, so
+the M7 track packs can reuse them).
+
+### M3.0 Interface (Track A, committed before the content and modes)
+
+Same contract as M1.0 and M2.0: only `sim.simulate` writes these;
+rendering reads the World, `track`'s caches and the event ring (its own
+`seq` cursor) and never writes. Nothing was renamed or removed. World
+2,508 B (cap 2,560 kept).
+
+- **`world.Mode`** `race`, `gc`, `attract` and **`Setup.mode`** (default
+  `race`), copied to **`World.mode`** by `sim.reset`. `attract` is race
+  rules plus the scripted KERNEL PANIC on the leader in lap 2 (the sim
+  hands it out, `World.scripted` once done), so main.zig's attract demo
+  only has to pass `.mode = .attract`.
+- **`World.laps`**: the laps to run, from the track (`track.Track.laps`, 3
+  on every built-in track). The HUD's `LAP n/3` should read it, not
+  `tuning.laps`. GARBAGE COLLECTION has no lap limit.
+- **`World.gc`** (`world.Gc`): `marked` (the MARKED car or `no_car`),
+  `mark_ticks` (since the mark was set or passed), `sweeps` (sweep points
+  the leader has passed), `collected` (bit i = car i), `survivor` (the
+  winner once one car is left, else `no_car`). A collected car has
+  `active = false` (so every pool, lock and the minimap skip it), keeps
+  its `rank` as its final place (6th for the first one out), and its
+  bit in `gc.collected`. The survivor gets `finished`, `finish_tick` and
+  rank 1, and the phase goes `finished`. Sweep points: the sector 2 line
+  (sample 170) and the start line, as the race leader passes them.
+- **`World.hazards[world.hazard_max = 4]`** (`world.Hazard`): `kind`
+  (`HazardKind`: `none`, `blast`, `mover`, `turret` and `crust` reserved),
+  `state` (`idle`, `warn` = the telegraph before it acts, `active` = it
+  hurts), `timer` (ticks into its cycle), `x`/`y` (Q16: a mover's current
+  position; a blast's mouth), `hit` (cars hit this firing / crossing),
+  `leg` (mover: 0 going A to B, 1 coming back). Slot k is driven by
+  **`track.hazard_specs[k]`** (`track.HazardSpec`, `k < track.hazard_n`,
+  filled by `track.select` from the track's `feat` records, like
+  `crate_spots`): kind, `warn`, `size` (blast: half width of its lane;
+  mover: body radius), `damage`, `x0,y0` (blast mouth / mover end A),
+  `x1,y1` (lane end / mover end B), `period`, `on` (blast firing ticks),
+  `phase`, `push`, `speed`, and derived `len`, `ux`/`uy` (unit A to B,
+  Q16), `travel` (mover crossing ticks). Draw a vent's lane from the mouth
+  along (`ux`, `uy`) for `len` px, `size` px either side; a mover as a
+  body of radius `size` at (`x`, `y`). The record layout is
+  `track.hazard_record` (20 bytes, documented in track.zig and
+  tools/build_tracks.py); the M7 packs reuse it.
+- **Service bay**: the tile attribute `bay` (as M0); a car on it
+  (`Car.on_bay`) gets 1 armor every 4 ticks. The generator can paint a
+  whole segment or one lane of it (`bay:left`, `bay:right`).
+- **Events** (`EventKind` gains `mark`, `collect`, `blast`,
+  `hazard_hit`; `world.GcCause` sweep / tag / wreck): `mark` (newly marked
+  car, the tagger or `no_car` for a sweep, cause), `collect` (car, final
+  place, cause sweep or wreck; x, y the car: the claw comes down there),
+  `blast` (hazard index, kind; a vent starts firing or the Sweeper starts
+  crossing; x, y the mouth or the mover), `hazard_hit` (hazard index,
+  car, damage; x, y the car).
+- **Track table** for the menus: `track.tracks` in rotation order (name,
+  `league.name`, `laps`), `track.leagues` in CIRCUIT order.
+
+### Track A: content and mode simulation (Opus agent, worktree /home/exedev/snouty-badge-gc, branch gc/spec; runs while M2 Track B finishes)
+
+Owns what M2 Track A owned (`world.zig`, `sim.zig`, `weapons.zig`,
+`pickups.zig`, `ai.zig`, `tuning.zig`, `racers.zig` gameplay, `track.zig`
+data accessors, the tests, `tools/build_tracks.py`, `tools/leagues.py`,
+`cart/src/tracks/*.track`, the generated track and league `.bin`s), plus
+new `hazards.zig`, `gc_mode.zig` and their tests. It must not edit the
+presentation files (see M2 Track B). `render.zig` reads the league slices
+already. If the Runoff league needs a renderer change, write it down for
+Track B.
+
+1. **M3.0 interface first** (own commit, documented under "M3.0
+   Interface"): `Setup.mode` (race, gc) and the World fields for GC state:
+   the marked car, sweep count, collected flags, survivor, events `mark`
+   and `collect`. Also the hazard state in the World (`hazards: [N]Hazard`
+   with kind, phase timer, mover position) and the hazard kinds of SPEC
+   19.4 (timed blast, crossing mover, turret reserved for the Perimeter,
+   breakable crust reserved for M7), with their track-data layout. The
+   service bay is a tile attribute. Events: `blast` (hazard fires) and
+   `hazard_hit`.
+2. **Hazards** (generic, parameterised by the track file): the Dumps
+   **Sweeper** (a crossing mover: path, speed, size, 60 damage and a
+   shove), the Runoff **exhaust vent** (a timed blast: position,
+   direction, width, period 240, 30 ticks on, 20 damage and a push), and
+   the **service bay** (repairs 1 armor per 4 ticks). AIs avoid an active
+   blast or mover where they can.
+3. **The Runoff league** in `tools/leagues.py`: a 128-tile set (cracked
+   salt pan, teal coolant puddles, pipe-tunnel walls, outflow mouths,
+   salt-crust edges), the two-layer horizon (cooling towers over a
+   cracked horizon), palette, fog. Read SPEC 3.2. The look must read
+   clearly at speed: a calm background texture and a clear track edge.
+   (M0's Dumps sand shimmered. Calm the Dumps background a little too,
+   if it is cheap.)
+4. **Five new tracks** (SPEC 3.2 names): Dumps: **Monitor Dunes** (hills,
+   a Sweeper lane), **Cathode Flats** (fast, wide, pits); Runoff: **Salt
+   Pan Sprint** (fast oval-ish with vents), **Outflow Canyon** (tight,
+   walls, a pipe tunnel, vents), **Coolant Basin** (coolant slicks, a
+   ramp over the basin). Each has crate rows, at least one hazard, a
+   service bay on most, and its own character. Add a Sweeper to Landfill
+   Loop if it fits. Every track passes the completable test (combat off)
+   and the combat soak.
+5. **GARBAGE COLLECTION mode** (SPEC 8.2, mark and sweep): a sweep point
+   at the sector 2 line and the start line. The last car is MARKED, and
+   any weapon hit by the marked car on another car passes the mark on.
+   At the next sweep point the marked car is COLLECTED (`active = false`,
+   a `collect` event) and the new last car is marked. A wreck while
+   marked is an immediate collection. The last car running wins. A soak:
+   20 seeded GC races each end with exactly one car.
+6. **Track rotation data** for the menus: a table of the six tracks with
+   name, league and lap count.
+7. Tests, gate green, World under the cap (raise it with a reason if
+   needed), bench worst under 8 ms on the busiest new track (record a
+   race script there), PLAN "M3 status" Track A paragraph and deferred
+   questions, commits with the `Co-Authored-By: Claude Opus 5.5
+   <noreply@anthropic.com>` line, push gc/spec. No tag, no merge.
+
+### Track B: flow and mode presentation (after M2 is integrated)
+
+The menu (QUICK RACE | GARBAGE COLLECTION | LINK greyed | Sound), the
+track row over six tracks, GC visuals (the MARKED tag and red outline,
+the claw lifting a car out, `GC: freed KIDDIE`, the survivor screen, a
+collected human watching the leader), the hazards drawn (Sweeper sprite,
+vent blast), the Runoff horizon if it needs renderer work, the title, and
+attract with the scripted KERNEL PANIC on the leader in lap 2, plus pause
+and results for GC. Written in detail when M2 lands.
+
+### M3 gate
+
+Gate green; all six tracks completable; the GC soak ends with one car;
+bench under 8 ms; `docs/preview_m3.gif`; tag `snouty-gc/m3`; merged to
+main.
+
+### M3 status
 
 (empty)
 
@@ -714,3 +1087,108 @@ Taken during M1 (Track B, presentation):
     sim's `explode` radius 24 follows it); explosions are drawn 1.5 x
     radius + 8 world px across; the muzzle flash keys on `ammo_front`
     dropping.
+
+Taken during M2 (Track A, pickup simulation):
+
+32. **Crate rows** are a centerline flag (bit 2) on one sample, not a new
+    data file, so `build.zig` needs no new asset. 4 crates 20 px apart on
+    road at least 56 px half width, else 3; their touch radius (16) makes a
+    row cover the lane, as Mario Kart's item rows. Three rows on Landfill
+    Loop (SPEC asks two at least). A car that holds a pickup drives through
+    a crate and leaves it; airborne cars pass over. The service bay stays
+    unbuilt (not in the M2 contract; M3 with the other track features).
+33. **The roll happens at the crate** (SPEC: "at the moment of contact");
+    the result sits hidden in `Car.pickup` while `roll_ticks` runs. ZERO-DAY
+    counts as used when it is rolled.
+34. **"Ahead" means race progress** (`sim.progress_px`), for BIT FLIP and
+    DEADLOCK (within 400 px), RACE CONDITION (300), DDOS and ZERO-DAY (any
+    distance). A pickup with no target is spent for nothing (a human's
+    whiff); the AIs wait for a target, except KIDDIE.
+35. **What HEISENBUG and SUDO shield**. HEISENBUG: no lock, homing and
+    drones let go, the AI ignores the car (aim, drops, rams, passing),
+    BIT FLIP / DEADLOCK / DDOS / RACE CONDITION cannot pick it, the KERNEL
+    PANIC packet waits behind it, it passes through cars, hulks and drops
+    (bomb blasts too); plain shots and the LANCE still hit (they aim, not
+    observe); it still takes crates. SUDO: no damage of any kind, and no
+    status from a rival's pickup (not picked by BIT FLIP, DEADLOCK, DDOS,
+    RACE CONDITION; exempt from CAPTCHA; the packet and drones fizzle on
+    it). **ZERO-DAY goes through everything**, root included (a zero-day
+    beats root). Falls still wreck a root car.
+36. **RUBBER DUCK**: "the first hit from behind" is a shot or LANCE beam
+    whose source is behind the car's heading; a SPEAR PHISH is drawn to the
+    duck from any side and pops it; DDOS drones arriving at a ducked car pop
+    the duck and the whole swarm disperses; BIT FLIP pops it instead of
+    flipping. The KERNEL PANIC packet is not a homing weapon in SPEC's list,
+    so the duck does not stop it.
+37. **KERNEL PANIC** targets the best-ranked racing car other than the user
+    (so 2nd when the user is 1st) and runs backward along the line when that
+    car is behind; it homes once within 64 px or past the target's sample,
+    and fizzles if the target wrecks or finishes. A packet has no life limit.
+38. **Status numbers SPEC leaves open**: HONEYPOT spin 30 ticks (heading
+    about a full turn, speed x0.92 a tick, no steering); thrown items land
+    60 px ahead, pulled back to the nearest floor; pickup drops clear after
+    30 s; SPAGHETTI touch radius 18 and it is used up by the first car; FORK
+    BOMB children drift 24, 12, 6 px apart over 30 ticks after each fork,
+    touch radius 14, a car can set off two at once; DEADLOCK's chain pulls
+    the pair together at 0.08 px/tick^2 so "until they touch" happens; DDOS
+    drones fly at 7 px/tick through walls, orbit at 16 px, 1 HP against any
+    shot; PREFETCH also kicks +1 px/tick on use ("instant"); HOT PATCH +2
+    armor every 3 ticks; SUDO's bounce 1.5 px/tick.
+39. **CAPTCHA board**: three lit cells of nine, the cursor steps a cell
+    every 5 ticks (a sweep in 45, so a clean solve takes up to about 45);
+    A on a lit cell clears it, A on an unlit cell clears the board (so
+    mashing does not solve it); the solving press does not fire; A never
+    fires while the board is up. AI solve ticks: SYSADMIN 60, SNOUTY 75,
+    ROOTKIT 80, LEGACY 100, BOTNET 110, KIDDIE 120. Root cars are exempt.
+40. **RACE CONDITION swaps the place in the race** (sample, sectors and
+    laps) with the position, so no lap is gained or lost overall across the
+    start line; a pending swap is cancelled if either car wrecks.
+41. **A wreck clears every pickup status** (and ends a chain or pending
+    swap for the partner, disperses drones on it); the held pickup and a
+    running roulette survive, as ammo does.
+42. **AI triggers SPEC leaves open**: PREFETCH on a straight; HONEYPOT
+    and SPAGHETTI dropped on a car within 120 px behind on the line, thrown
+    at one 30..140 px ahead; FORK BOMB with any car within 200 px behind;
+    BIT FLIP, DEADLOCK, DDOS, ZERO-DAY when a target exists; HEISENBUG at
+    once (ROOTKIT: last lap); the AI does not shoot drones on purpose. Under
+    BIT FLIP an AI steers the wrong way 6 ticks of every 32 (the weave).
+43. **Pools**: shots 48 -> 40 and drops 32 -> 40 to keep the World under
+    its cap with the new fields (2,436 B); the KERNEL PANIC packet is the
+    last shot slot to be reused.
+
+Taken during M2 (Track B, pickup presentation):
+
+44. **Roulette caption** `FETCHING...` sits right-aligned against the box
+    on the row under the rank (BEHIND's row; hidden while looking back);
+    the reel shows random cells, never the hidden result, and the landed
+    pickup's name replaces the caption for 60 ticks.
+45. **Feed lines**: KERNEL PANIC, BIT FLIP, DEADLOCK, DDOS, HONEYPOT and
+    SPAGHETTI hits read `PICKUP > VICTIM`, a swap `A <> B`; a wreck line is
+    never overwritten by them. `KERNEL PANIC > SYSADMIN` is 23 characters
+    and the 8x8 font fits 19, so a long line breaks after the `>` into two
+    rows and the pop-up moves down 9 px.
+46. **Which badge gets a gag**: the blue screen, BIT FLIP, DDOS, the
+    ZERO-DAY flash and the glitch follow whatever car the badge follows
+    (the attract demo shows them too); the CAPTCHA board only when that car
+    is a human's (an AI gets the tag).
+47. **The CAPTCHA card** is x 4..156, y 25..124 (a three-line header, so
+    the grid's centre is y 85, not the floor's 80) and covers the bottom
+    HUD while it is up; `TRY AGAIN` after a miss, `HUMAN VERIFIED` in the
+    bar on a solve (not after the 120-tick timeout).
+48. **The blue screen** replaces the frame (no floor, no HUD) for its 30
+    ticks and names the sender as a driver file (`KIDDIE.SYS`).
+49. **Tints**: KERNEL PANIC blue and SUDO gold are luma-mapped palettes
+    (comptime, every sheet: about 1.3 KB); SUDO flashes gold every 4
+    frames, the hit flash keeps flat white.
+50. **HEISENBUG** flickers every car on it, the badge's own included.
+51. **DDOS stutter**: the speed reading cycles real, real, `503` (coral),
+    blank, 5 frames each, while any drone orbits the car.
+52. **ZERO-DAY flash** only on the user's and the victim's badges (2 white
+    frames, then a red frame for 6); everyone sees the red dart.
+53. **FORK BOMB telegraph** assumes the sim forks at ages that are
+    multiples of 60 (`fork_every` is repeated in sprites.zig as a render
+    constant).
+54. **Debug writes**: the preview hooks and the stress scene write the
+    World (and the stress scene the track's crate cache, rebuilt by the
+    next race); they are wasm exports or the `gc_stress` poke only, never
+    reached in play.

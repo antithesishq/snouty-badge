@@ -267,3 +267,130 @@ pub const ai_ram_along: i32 = 24;
 pub const ai_ram_lat: i32 = 34;
 /// A `stalk` crew (ROOTKIT) sits behind a target ahead within this range.
 pub const ai_stalk_range: i32 = 110;
+
+// --- Pickups (SPEC 6.3, 6.4), M2 ---------------------------------------------
+
+/// RMA crate rows (SPEC 3.3): crates `crate_gap` px apart across the track,
+/// 4 in a row where the sample's half width is at least `crate_row4_half`,
+/// else 3. A car whose centre comes within `crate_touch` px of a crate
+/// takes it; it respawns `crate_respawn` ticks later.
+pub const crate_gap: i32 = 20;
+pub const crate_row4_half: u8 = 56;
+pub const crate_touch: i32 = car_radius + 6;
+pub const crate_respawn: u8 = 180;
+/// RUBBER DUCK: bobs this far behind its car on the tether, world px.
+pub const duck_behind: i32 = 18;
+/// The roulette (`FETCHING...`) runs this long before the pickup is usable.
+pub const roll_ticks: u8 = 45;
+/// Tier odds A, B, C in percent by rank 1..6 (SPEC 6.4).
+pub const roll_odds = [6][3]u8{
+    .{ 80, 20, 0 },
+    .{ 50, 45, 5 },
+    .{ 30, 55, 15 },
+    .{ 20, 55, 25 },
+    .{ 10, 50, 40 },
+    .{ 5, 40, 55 },
+};
+/// HONEYPOT and SPAGHETTI fly this far ahead when thrown (B); Down+B drops
+/// them behind like a rear weapon.
+pub const throw_dist: i32 = 60;
+/// Pickup drops left untouched clear after 30 s (SPEC silent, as the bombs).
+pub const pickup_drop_life: u16 = 1800;
+/// PREFETCH: +40% top speed (thrust x1.40) for 90 ticks; wall damage halved.
+pub const prefetch_ticks: u8 = 90;
+pub const prefetch_q8: i32 = 358;
+/// PREFETCH is instant: a kick of 1 px/tick along the heading on use.
+pub const prefetch_kick: i32 = 1 << 16;
+/// HONEYPOT: touching the fake crate deals 30 and spins the car for 30
+/// ticks (no steering, the heading turns about a full circle, speed bleeds).
+pub const honeypot_dmg: u8 = 30;
+pub const spin_ticks: u8 = 30;
+pub const spin_rate: u16 = 2200;
+pub const spin_keep: i32 = 60293; // 0.92 a tick
+/// RUBBER DUCK on its tether for 600 ticks.
+pub const duck_ticks: u16 = 600;
+/// HOT PATCH: 40 armor over 60 ticks, `patch_step` every `patch_every`.
+pub const patch_ticks: u8 = 60;
+pub const patch_every: u8 = 3;
+pub const patch_step: u8 = 2;
+/// SPAGHETTI CODE: a 24 px tangle (radius 12); a car whose centre comes
+/// within the radius + its half width is held to 40% for 60 ticks, then
+/// drags a strand for 180 ticks at -10% top speed.
+pub const spaghetti_touch: i32 = 12 + half_wid;
+pub const tangle_ticks: u8 = 60;
+pub const tangle_pct: i32 = 40;
+pub const strand_ticks: u8 = 180;
+pub const strand_q8: i32 = 230;
+/// FORK BOMB: every 60 ticks each `&` forks in two, `fork_gens` times
+/// (1, 2, 4, 8); the pair drift apart across the track over `fork_drift`
+/// ticks, `fork_spread >> (generation - 1)` px each; 15 a hit on contact
+/// (centre within `fork_touch`), gone at age 480.
+pub const fork_every: u16 = 60;
+pub const fork_gens: u8 = 3;
+pub const fork_drift: i32 = 30;
+pub const fork_spread: i32 = 24;
+pub const fork_touch: i32 = car_radius + 4;
+pub const fork_dmg: u8 = 15;
+pub const fork_blast: u8 = 8;
+pub const fork_life: u16 = 480;
+/// BIT FLIP and DEADLOCK reach the nearest car(s) ahead within this much
+/// race progress, px.
+pub const ahead_range: i32 = 400;
+pub const bit_flip_ticks: u8 = 180;
+/// DEADLOCK: speed held to 30% for 150 ticks or until the pair touch; the
+/// chain pulls them together at 0.08 px/tick^2.
+pub const deadlock_ticks: u8 = 150;
+pub const deadlock_pct: i32 = 30;
+pub const chain_pull: i32 = 5243;
+/// DDOS: 8 drones fly at 7 px/tick to the nearest car ahead, then orbit it
+/// (radius 16 px, 8/256 of a turn a tick) for 180 ticks: 2 damage a drone
+/// every 30, top speed -20%. A shot within its radius + 3 px downs one.
+pub const ddos_ticks: u8 = 180;
+pub const ddos_every: u8 = 30;
+pub const ddos_dmg: u8 = 2;
+pub const ddos_q8: i32 = 205;
+pub const drone_speed: i32 = 7 << 16;
+pub const drone_orbit: i32 = 16;
+pub const drone_spin: u8 = 8;
+pub const drone_radius: i32 = 3;
+/// HEISENBUG: unobservable for 240 ticks.
+pub const heisen_ticks: u8 = 240;
+/// RACE CONDITION: the next car ahead within 300 px of progress; 6 ticks of
+/// tearing, then the swap.
+pub const race_range: i32 = 300;
+pub const race_ticks: u8 = 6;
+/// KERNEL PANIC: the packet runs at twice the top speed and homes once
+/// within `panic_home` px; 40 damage and 90 ticks frozen.
+pub const panic_speed: i32 = 2 * top_speed;
+pub const panic_home: i32 = 64;
+pub const panic_dmg: u8 = 40;
+pub const panic_freeze: u8 = 90;
+/// CAPTCHA: every other car held to 10% until solved; a human's board has
+/// `captcha_lights` lit cells of nine and frees after 120 ticks at the
+/// latest; the cursor steps a cell every `captcha_step` ticks (a sweep in
+/// 45). AIs wait their crew's `captcha_solve` ticks.
+pub const captcha_human: u8 = 120;
+pub const captcha_lights: u32 = 3;
+pub const captcha_step: u8 = 5;
+pub const captcha_pct: i32 = 10;
+/// SUDO: root for 300 ticks: no damage, +20% top speed, a ram deals 40 and
+/// bounces the victim away at 1.5 px/tick.
+pub const sudo_ticks: u16 = 300;
+pub const sudo_q8: i32 = 307;
+pub const sudo_ram: u8 = 40;
+pub const sudo_bounce: i32 = 98304;
+
+// --- AI pickups (SPEC 4.3, 6.5 item 3) ---------------------------------------
+
+/// HOT PATCH below this armor percent; RACE CONDITION within this many px
+/// of the next car on the last lap; FORK BOMB with a car this far behind;
+/// HONEYPOT / SPAGHETTI thrown at a car this far ahead and this close to
+/// the line.
+pub const ai_patch_pct: u32 = 40;
+pub const ai_race_px: i32 = 60;
+pub const ai_fork_behind: i32 = 200;
+pub const ai_throw_min: i32 = 30;
+pub const ai_throw_max: i32 = 140;
+pub const ai_throw_lat: i32 = 24;
+/// BIT FLIP: of every 32 ticks the AI steers the wrong way for this many.
+pub const ai_flip_lag: u8 = 6;

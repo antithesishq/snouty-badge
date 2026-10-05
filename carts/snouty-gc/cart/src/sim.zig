@@ -3,7 +3,8 @@
 //! tile attributes under the footprint, walls, wrecks and respawn, car
 //! contacts, laps and sectors, rank, the countdown; from M1 armor, damage
 //! and kill credit, ramming, wall damage, hulks, and the weapons
-//! (`weapons.zig`) and AI aim (`ai.zig`) it drives.
+//! (`weapons.zig`) and AI aim (`ai.zig`) it drives; from M2 the pickups
+//! (`pickups.zig`: crates, rolls, status effects).
 //!
 //! `simulate(w, inputs)` is a pure function of `(World, inputs)`: no cart
 //! API, no clock, no floats, no globals written (the M4 lockstep rests on
@@ -19,6 +20,7 @@ const world = @import("world.zig");
 const racers = @import("racers.zig");
 const ai = @import("ai.zig");
 const weapons = @import("weapons.zig");
+const pickups = @import("pickups.zig");
 
 const World = world.World;
 const Car = world.Car;
@@ -45,6 +47,11 @@ pub fn reset(w: *World, setup: world.Setup) void {
     w.msg = .ready;
     w.msg_ticks = @intCast(tuning.countdown_step);
     w.lap_px = @intCast(lap_length(t));
+    w.mode = setup.mode;
+    w.laps = t.laps;
+    for (track.hazard_specs[0..track.hazard_n], 0..) |*h, k| {
+        w.hazards[k] = .{ .kind = h.kind, .timer = h.phase % h.period, .x = h.x0 << fixed.Q, .y = h.y0 << fixed.Q };
+    }
     for (&w.cars, 0..) |*c, i| {
         const ch = racers.chassis_of(@intCast(i));
         c.* = .{
@@ -196,11 +203,14 @@ pub fn simulate(w: *World, inputs: [2]u8) void {
             }
             for (&w.cars, 0..) |*c, i| {
                 if (!c.active) continue;
-                step_car(w, i, ins[i]);
-                weapons.fire(w, i, ins[i]);
+                const in = pickups.filter(w, i, ins[i]);
+                step_car(w, i, in);
+                pickups.control(w, i, in);
+                weapons.fire(w, i, in);
             }
             collide_all(w);
             weapons.update(w);
+            pickups.update(w);
             update_ranks(w);
             // The lock and the AI aim for the next tick (what the reticle
             // shows is what the next A fires at).
@@ -297,6 +307,7 @@ fn step_car(w: *World, i: usize, in: Input) void {
     // 1. Thrust, always on while racing (auto-throttle), and the brake.
     var a = thrust_of(c);
     if (c.burst > 0) a = (a * tuning.burst_thrust_q8) >> 8;
+    a = (a * pickups.thrust_q8(w, i)) >> 8;
     c.vx += fixed.mul(hx, a);
     c.vy += fixed.mul(hy, a);
     if (braking) {
@@ -336,6 +347,9 @@ fn step_car(w: *World, i: usize, in: Input) void {
             c.heading +%= @bitCast(@as(i16, @intCast(d)));
         }
     }
+    // Pickups: the HONEYPOT spin, and speed held down by a freeze, a
+    // CAPTCHA, a DEADLOCK chain or a SPAGHETTI tangle.
+    pickups.limit(c);
     // 5. Move, then the floor under the four corners.
     const old_x = c.x;
     const old_y = c.y;
@@ -431,7 +445,9 @@ fn resolve_tiles(w: *World, i: usize, old_x: i32, old_y: i32) void {
             c.shake = 4;
             // Impact speed along the unit normal (diagonal: |vn| x sqrt 2).
             const impact = if (diagonal) fixed.mul(-vn, 92682) else -vn;
-            damage(w, i, world.no_car, wall_damage(impact));
+            // PREFETCH halves wall damage.
+            const dmg = wall_damage(impact);
+            damage(w, i, world.no_car, if (c.prefetch > 0) dmg >> 1 else dmg);
         }
     }
     if (off_count == 4 and c.immune == 0 and c.wreck == .none) wreck(w, i, .fall);
@@ -452,12 +468,12 @@ fn any_wall(t: *const track.Track, c: *const Car) bool {
 
 /// Damage (SPEC 5.3): armor falls by `amount`; at 0 the car is wrecked.
 /// `attacker` is the car responsible or `no_car` (a wall); a rival's hit
-/// starts the kill-credit window. Wrecked, immune (respawn) and finished
-/// cars take none, and nothing is dealt with combat off.
+/// starts the kill-credit window. Wrecked, immune (respawn), root (SUDO)
+/// and finished cars take none, and nothing is dealt with combat off.
 pub fn damage(w: *World, victim: usize, attacker: u8, amount: i32) void {
     if (!w.combat or amount <= 0) return;
     const c = &w.cars[victim];
-    if (!c.active or c.wreck != .none or c.immune > 0 or c.finished) return;
+    if (!c.active or c.wreck != .none or c.immune > 0 or c.finished or c.sudo > 0) return;
     const dmg: u8 = @intCast(@min(amount, 255));
     if (attacker != world.no_car and attacker != victim) {
         c.last_hit_by = attacker;
@@ -500,6 +516,7 @@ pub fn wreck(w: *World, i: usize, cause: world.Wreck) void {
     c.rot_ticks = 0;
     c.on_leak = false;
     c.last_hit_by = world.no_car;
+    pickups.on_wreck(w, i);
     c.wrecks +|= 1;
     if (killer != world.no_car) w.cars[killer].kills +|= 1;
     weapons.emit(w, .wreck, @intCast(i), killer, @backingInt(cause), c.x, c.y);
@@ -628,8 +645,9 @@ fn check_finished(w: *World) void {
 
 // --- Car against car (Zero SPEC 5.3, GC SPEC 5.3) ------------------------------
 
+/// A HEISENBUG car passes through cars (and hulks).
 fn can_collide(c: *const Car) bool {
-    return c.active and c.hop == 0 and c.wreck == .none;
+    return c.active and c.hop == 0 and c.wreck == .none and c.heisen == 0;
 }
 
 /// Circles of radius `car_radius`: push apart by half the penetration
@@ -652,6 +670,7 @@ pub fn collide_all(w: *World) void {
             const b_hulk = is_hulk(b);
             if (!can_collide(b) and !b_hulk) continue;
             if (a_hulk and b_hulk) continue;
+            if (a.heisen > 0 or b.heisen > 0) continue;
             const dx = ((b.x -% a.x +% half) & world_mask) - half;
             const dy = ((b.y -% a.y +% half) & world_mask) - half;
             if (dx >= reach or dx <= -reach or dy >= reach or dy <= -reach) continue;
@@ -735,6 +754,8 @@ fn contact(w: *World, ia: usize, ib: usize, dx8: i32, dy8: i32, d2: i32) void {
     const py = fixed.mul(ny, push);
     nudge(w, a, -px, -py);
     nudge(w, b, px, py);
+    // A DEADLOCK pair that touches goes free.
+    pickups.touched(w, ia, ib);
     // Closing speed along the normal.
     const vna = fixed.mul(a.vx, nx) + fixed.mul(a.vy, ny);
     const vnb = fixed.mul(b.vx, nx) + fixed.mul(b.vy, ny);
@@ -757,8 +778,17 @@ fn contact(w: *World, ia: usize, ib: usize, dx8: i32, dy8: i32, d2: i32) void {
     }
     // Ramming: each car rams the other (SPEC 5.3).
     if (closing >= tuning.ram_min_speed) {
-        const to_b = ram_damage(a, b, closing, nx, ny);
-        const to_a = ram_damage(b, a, closing, -nx, -ny);
+        // SUDO: a root car's ram deals 40 and bounces the victim away.
+        const to_b = if (a.sudo > 0) tuning.sudo_ram else ram_damage(a, b, closing, nx, ny);
+        const to_a = if (b.sudo > 0) tuning.sudo_ram else ram_damage(b, a, closing, -nx, -ny);
+        if (a.sudo > 0 and b.sudo == 0) {
+            b.vx += fixed.mul(nx, tuning.sudo_bounce);
+            b.vy += fixed.mul(ny, tuning.sudo_bounce);
+        }
+        if (b.sudo > 0 and a.sudo == 0) {
+            a.vx -= fixed.mul(nx, tuning.sudo_bounce);
+            a.vy -= fixed.mul(ny, tuning.sudo_bounce);
+        }
         damage(w, ib, @intCast(ia), to_b);
         damage(w, ia, @intCast(ib), to_a);
     }

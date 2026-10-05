@@ -69,6 +69,9 @@ var screen_frames: u32 = 0;
 var render_us: u32 = 0;
 /// The autopilot drives the player (`debug_set_autopilot`).
 pub var autopilot: bool = false;
+/// `debug_set_autopilot:2`: the pad's A and B join the autopilot's byte,
+/// and the pad alone plays a CAPTCHA board (preview scripts use pickups).
+var autopilot_mix: bool = false;
 
 var pause_list = menu.List{ .count = 4 };
 /// Title idle frames before the attract demo starts (10 s).
@@ -223,15 +226,20 @@ fn draw_race(look: bool) void {
     hills.base_progress = c.progress;
     render.shake = @max(c.shake, fx.shake);
     render.frame = frame;
+    // KERNEL PANIC on this badge's car: the blue screen instead of the race.
+    if (hud.bluescreen_on(c)) return hud.draw_bluescreen(&w, follow);
     const saved = camera.cam;
     if (look) {
         camera.look_back(c.x, c.y);
         hills.backward = true;
     }
+    render.row_jitter = c.bit_flip > 0 and c.wreck == .none;
     render.draw();
+    sprites.draw_floor_lines(&w, frame);
     sprites.draw_world(&w, .{ .follow = follow, .look_back = look, .frame = frame });
     fx.draw_beams(&w);
     hud.draw(&w, follow, .{ .frame = frame, .look_back = look });
+    hud.draw_after(frame);
     camera.cam = saved;
     hills.backward = false;
 }
@@ -264,6 +272,15 @@ fn race_frame() void {
     var inputs = [2]u8{ 0, 0 };
     if (mode == .quick) {
         inputs[0] = if (autopilot) ai.drive(&w, follow).byte() else input.race_byte();
+        if (autopilot and autopilot_mix) {
+            const pad = world.Input.of(input.race_byte());
+            var in = world.Input.of(inputs[0]);
+            if (w.cars[follow].captcha > 0) in.a = false;
+            in.a = in.a or pad.a;
+            in.b = in.b or pad.b;
+            in.select = in.select or pad.select;
+            inputs[0] = in.byte();
+        }
     }
     last_input = inputs[0];
     sim.simulate(&w, inputs);
@@ -384,7 +401,10 @@ comptime {
             "debug_car_rank",   "debug_car_racer",  "debug_car_human",      "debug_set_autopilot",
             "debug_start_race", "debug_tile_under", "debug_input",
             "debug_stress",     "debug_drawn",      "debug_gathered",       "debug_select_racer",
-            "debug_event_seq",  "debug_car_armor",  "debug_results_card",
+            "debug_event_seq",  "debug_car_armor",  "debug_results_card",   "debug_give_pickup",
+            "debug_roll_pickup", "debug_effect",    "debug_pickup",         "debug_frozen",
+            "debug_captcha",    "debug_captcha_cursor", "debug_captcha_lit", "debug_forks",
+            "debug_give_ahead",
         }) |name| @export(&@field(@This(), name), .{ .name = name });
     }
 }
@@ -489,9 +509,12 @@ fn debug_car_racer(i: u32) callconv(.c) u32 {
 fn debug_car_human(i: u32) callconv(.c) u32 {
     return w.cars[i % world.car_count].human;
 }
-/// --call debug_set_autopilot:1 hands the player's car to the autopilot.
+/// --call debug_set_autopilot:1 hands the player's car to the autopilot;
+/// 2 also lets the pad's A, B and Select through (and the pad alone plays
+/// a CAPTCHA board).
 fn debug_set_autopilot(v: u32) callconv(.c) void {
     autopilot = v != 0;
+    autopilot_mix = v == 2;
 }
 /// --call debug_start_race:N skips the splash and menus into a Quick Race on track N.
 fn debug_start_race(n: u32) callconv(.c) void {
@@ -523,6 +546,66 @@ fn debug_car_armor(i: u32) callconv(.c) u32 {
 /// Results: 0 the winner's card, 1 the field.
 fn debug_results_card() callconv(.c) u32 {
     return results_card;
+}
+/// M2 preview hooks (debug paths like `debug_stress`: they write the
+/// World so a script can show a gag on a chosen frame; the sim runs on).
+/// --call-at "T debug_give_pickup:P" puts pickup P (world.Pickup, SPEC 6.3
+/// order) in the followed car's slot.
+fn debug_give_pickup(p: u32) callconv(.c) u32 {
+    const c = &w.cars[follow];
+    c.pickup = if (p <= @intFromEnum(world.Pickup.prompt_injection)) @enumFromInt(p) else .none;
+    c.roll_ticks = 0;
+    return @intFromEnum(c.pickup);
+}
+/// The same with the 45-tick roulette in front of it.
+fn debug_roll_pickup(p: u32) callconv(.c) u32 {
+    const r = debug_give_pickup(p);
+    w.cars[follow].roll_ticks = 45;
+    return r;
+}
+/// stress.Effect `k & 0xFF` on car `(k >> 8) - 1`, or the followed car when
+/// `k >> 8` is 0 (1 KERNEL PANIC, 2 BIT FLIP, 3 CAPTCHA, 4 DDOS, 5 DEADLOCK,
+/// 6 HEISENBUG, 7 SUDO, 8 RACE CONDITION, 9 SPAGHETTI, 10 RUBBER DUCK,
+/// 11 PREFETCH, 12 HONEYPOT spin, 13 ZERO-DAY, 14 duck pop, 15 HOT PATCH,
+/// 16 a crate pop, 17 a rival's FORK BOMB 8 samples ahead).
+fn debug_effect(k: u32) callconv(.c) u32 {
+    const e = k & 0xFF;
+    if (e > @intFromEnum(stress.Effect.fork_ahead)) return 0;
+    const car: usize = if (k >> 8 == 0) follow else ((k >> 8) - 1) % world.car_count;
+    stress.force_effect(&w, car, @enumFromInt(e));
+    return e;
+}
+/// Pickup P to the nearest car ahead of the followed one (its AI uses it
+/// by its policy); returns that car + 1, or 0 for none within 300 px.
+fn debug_give_ahead(p: u32) callconv(.c) u32 {
+    const j = stress.car_ahead(&w, follow, 300) orelse return 0;
+    const c = &w.cars[j];
+    c.pickup = if (p <= @intFromEnum(world.Pickup.prompt_injection)) @enumFromInt(p) else .none;
+    c.roll_ticks = 0;
+    return @as(u32, @intCast(j)) + 1;
+}
+/// Followed car: the held pickup (16 = none).
+fn debug_pickup() callconv(.c) u32 {
+    return @intFromEnum(w.cars[follow].pickup);
+}
+fn debug_frozen() callconv(.c) u32 {
+    return w.cars[follow].frozen;
+}
+/// Followed car's CAPTCHA: ticks left, the cursor cell, the lit cells.
+fn debug_captcha() callconv(.c) u32 {
+    return w.cars[follow].captcha;
+}
+fn debug_captcha_cursor() callconv(.c) u32 {
+    return w.cars[follow].captcha_cursor;
+}
+fn debug_captcha_lit() callconv(.c) u32 {
+    return w.cars[follow].captcha_lit;
+}
+/// Live FORK BOMB `&`s.
+fn debug_forks() callconv(.c) u32 {
+    var n: u32 = 0;
+    for (&w.drops) |*d| n += @intFromBool(d.kind == .fork);
+    return n;
 }
 /// The race byte of human slot 0 on the last tick (records the autopilot's
 /// drive into an input script: tools/record_script.py).

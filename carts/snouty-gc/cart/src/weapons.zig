@@ -10,6 +10,7 @@ const fixed = @import("fixed.zig");
 const tuning = @import("tuning.zig");
 const world = @import("world.zig");
 const sim = @import("sim.zig");
+const pickups = @import("pickups.zig");
 
 const World = world.World;
 const Car = world.Car;
@@ -94,7 +95,9 @@ pub fn fire(w: *World, i: usize, in: Input) void {
     c.rear_was = rear_chord;
     if (c.fire_cd > 0) c.fire_cd -= 1;
     if (c.rear_cd > 0) c.rear_cd -= 1;
-    if (!armed(w, c)) {
+    // Frozen (KERNEL PANIC) and CAPTCHA cars do not fire (A plays the
+    // CAPTCHA board).
+    if (!armed(w, c) or c.frozen > 0 or c.captcha > 0) {
         c.charge = 0;
         return;
     }
@@ -124,18 +127,24 @@ pub fn fire(w: *World, i: usize, in: Input) void {
     }
 }
 
-/// A free projectile slot, or the one closest to expiry.
-fn proj_slot(w: *World) *Projectile {
+/// A free projectile slot, or the one closest to expiry (a KERNEL PANIC
+/// packet, which has no expiry, last).
+pub fn proj_slot(w: *World) *Projectile {
     var best: usize = 0;
+    var best_ttl: u16 = 0xFFFF;
     for (&w.projs, 0..) |*p, k| {
         if (p.kind == .none) return p;
-        if (p.ttl < w.projs[best].ttl) best = k;
+        const ttl: u16 = if (p.kind == .panic) 0x100 else p.ttl;
+        if (ttl < best_ttl) {
+            best = k;
+            best_ttl = ttl;
+        }
     }
     return &w.projs[best];
 }
 
 /// A free drop slot, or the oldest drop.
-fn drop_slot(w: *World) *Drop {
+pub fn drop_slot(w: *World) *Drop {
     var best: usize = 0;
     for (&w.drops, 0..) |*d, k| {
         if (d.kind == .none) return d;
@@ -237,7 +246,7 @@ fn fire_lance(w: *World, i: usize) void {
     var hit: u8 = no_car;
     if (best != no_car and w.cars[best].wreck == .none) hit = best;
     emit(w, .lance, @intCast(i), hit, @intCast(@min(len, 255)), c.x +% hx * len, c.y +% hy * len);
-    if (hit != no_car) sim.damage(w, hit, @intCast(i), tuning.lance_dmg);
+    if (hit != no_car and !pickups.duck_takes(w, @intCast(i), hit, c.x, c.y, false)) sim.damage(w, hit, @intCast(i), tuning.lance_dmg);
 }
 
 /// SPEAR PHISH lock (SPEC 6.1): the nearest targetable car in the 24-degree
@@ -249,7 +258,7 @@ pub fn update_lock(w: *World, i: usize) void {
     if (c.front != .phish or !armed(w, c)) return;
     var best_d2: i32 = tuning.phish_range * tuning.phish_range + 1;
     for (&w.cars, 0..) |*o, j| {
-        if (j == i or !targetable(o)) continue;
+        if (j == i or !targetable(o) or o.heisen > 0) continue;
         const r = rel(c, o);
         if (r.along <= 0 or r.d2 >= best_d2) continue;
         if (@abs(r.lat) * 256 > r.along * tuning.phish_spread_q8) continue;
@@ -291,7 +300,7 @@ fn drop_rear(w: *World, i: usize) void {
 /// Can drop `d` touch car `j` (airborne cars skip drops, SPEC 3.3; a fresh
 /// drop spares its owner)?
 fn drop_touches(d: *const Drop, j: usize, o: *const Car) bool {
-    if (!touchable(o)) return false;
+    if (!touchable(o) or !pickups.drop_touch(o)) return false;
     return !(j == d.owner and d.age < tuning.drop_owner_grace);
 }
 
@@ -307,7 +316,7 @@ fn blast(w: *World, d: *const Drop) void {
     emit(w, .explode, no_car, @intCast(tuning.bomb_blast), 0, d.x, d.y);
     const r2 = tuning.bomb_blast * tuning.bomb_blast;
     for (&w.cars, 0..) |*o, j| {
-        if (!touchable(o)) continue;
+        if (!touchable(o) or !pickups.drop_touch(o)) continue;
         const dx = dpx(d.x, o.x);
         const dy = dpx(d.y, o.y);
         const d2 = dx * dx + dy * dy;
@@ -319,6 +328,12 @@ fn blast(w: *World, d: *const Drop) void {
         }
         sim.damage(w, j, d.owner, tuning.bomb_dmg);
     }
+}
+
+/// A root (SUDO) car touched drop `d`: destroyed without triggering.
+fn root_clears(w: *World, d: *Drop) void {
+    emit(w, .explode, no_car, 0, 0, d.x, d.y);
+    d.* = .{};
 }
 
 fn update_drops(w: *World) void {
@@ -338,6 +353,10 @@ fn update_drops(w: *World) void {
                 const r2 = @as(i32, d.size) * d.size;
                 for (&w.cars, 0..) |*o, j| {
                     if (!drop_touches(d, j, o) or dist2_to(d, o) > r2) continue;
+                    if (o.sudo > 0) {
+                        root_clears(w, d);
+                        break;
+                    }
                     o.on_leak = true;
                     const kick: i32 = @as(i32, @intCast(rand(w) % (2 * tuning.leak_yaw + 1))) - @as(i32, tuning.leak_yaw);
                     o.heading +%= turn_of(kick);
@@ -351,6 +370,10 @@ fn update_drops(w: *World) void {
                 if (d.age < tuning.bomb_arm) continue;
                 for (&w.cars, 0..) |*o, j| {
                     if (!drop_touches(d, j, o) or dist2_to(d, o) > tuning.bomb_trigger * tuning.bomb_trigger) continue;
+                    if (o.sudo > 0) {
+                        root_clears(w, d);
+                        break;
+                    }
                     const copy = d.*;
                     d.* = .{};
                     blast(w, &copy);
@@ -364,6 +387,10 @@ fn update_drops(w: *World) void {
                 }
                 for (&w.cars, 0..) |*o, j| {
                     if (!drop_touches(d, j, o) or dist2_to(d, o) > tuning.rot_hit * tuning.rot_hit) continue;
+                    if (o.sudo > 0) {
+                        root_clears(w, d);
+                        break;
+                    }
                     o.rot_ticks = tuning.rot_ticks;
                     const owner = d.owner;
                     d.* = .{};
@@ -386,7 +413,29 @@ fn update_drops(w: *World) void {
                     const along = (dx * hx + dy * hy) >> fixed.Q;
                     const lat = (dx * -hy + dy * hx) >> fixed.Q;
                     if (@abs(along) > tuning.firewall_depth or @abs(lat) > @as(i32, d.size) + 4) continue;
+                    if (o.sudo > 0) {
+                        root_clears(w, d);
+                        break;
+                    }
                     sim.damage(w, j, d.owner, tuning.firewall_dmg);
+                }
+            },
+            .fork, .honeypot, .spaghetti => {
+                const life = if (d.kind == .fork) tuning.fork_life else tuning.pickup_drop_life;
+                if (d.age >= life) {
+                    d.* = .{};
+                    continue;
+                }
+                if (d.kind == .fork) pickups.drift_fork(w, d);
+                const r: i32 = switch (d.kind) {
+                    .fork => tuning.fork_touch,
+                    .honeypot => tuning.crate_touch,
+                    else => tuning.spaghetti_touch,
+                };
+                for (&w.cars, 0..) |*o, j| {
+                    if (!drop_touches(d, j, o) or dist2_to(d, o) > r * r) continue;
+                    pickups.hit_drop(w, d, j);
+                    break;
                 }
             },
         }
@@ -399,11 +448,13 @@ fn update_drops(w: *World) void {
 /// `phish_turn` a tick (the sine table steps 256 turns).
 fn home(w: *const World, p: *Projectile) void {
     const t = &w.cars[p.target % world.car_count];
-    if (!targetable(t)) {
+    if (!targetable(t) or t.heisen > 0) {
         p.target = no_car;
         return;
     }
-    const want = fixed.atan2(dpx(p.y, t.y), dpx(p.x, t.x));
+    // A RUBBER DUCK draws homing weapons (SPEC 6.3).
+    const aim: pickups.Point = if (t.duck > 0) pickups.duck_pos(t) else .{ .x = t.x, .y = t.y };
+    const want = fixed.atan2(dpx(p.y, aim.y), dpx(p.x, aim.x));
     const have = fixed.atan2(p.vy, p.vx);
     const d = std.math.clamp(fixed.turn_diff(have, want), -tuning.phish_turn, tuning.phish_turn);
     const cs = fixed.cos(turn_of(d));
@@ -445,9 +496,17 @@ fn update_projs(w: *World) void {
     const t = sim.track_of(w);
     for (&w.projs) |*p| {
         if (p.kind == .none) continue;
+        if (p.kind == .panic) {
+            pickups.update_packet(w, p);
+            continue;
+        }
         if (p.kind == .phish and p.target != no_car) home(w, p);
         const ox = p.x;
         const oy = p.y;
+        if (pickups.shoot_drone(w, p, ox, oy)) {
+            p.* = .{};
+            continue;
+        }
         p.x = (p.x +% (@as(i32, p.vx) << 8)) & world_mask;
         p.y = (p.y +% (@as(i32, p.vy) << 8)) & world_mask;
         const j = first_hit(w, p, ox, oy);
@@ -455,11 +514,12 @@ fn update_projs(w: *World) void {
             const o = &w.cars[j];
             const shot = p.*;
             p.* = .{};
-            if (o.wreck != .none) {
-                // A hulk: the shot sparks on it.
+            if (o.wreck != .none or o.sudo > 0) {
+                // A hulk or a root car: the shot sparks on it.
                 emit(w, .explode, no_car, 0, 0, shot.x, shot.y);
                 continue;
             }
+            if (pickups.duck_takes(w, shot.owner, j, ox, oy, shot.kind == .phish)) continue;
             switch (shot.kind) {
                 .none => {},
                 .ping => sim.damage(w, j, shot.owner, tuning.ping_dmg),
@@ -477,6 +537,7 @@ fn update_projs(w: *World) void {
                     emit(w, .explode, j, 12, 0, shot.x, shot.y);
                     sim.damage(w, j, shot.owner, tuning.phish_dmg);
                 },
+                .panic => unreachable,
             }
             continue;
         }
