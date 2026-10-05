@@ -38,6 +38,7 @@ The badge file is `zig-out/firmware/<binary>.uf2`:
 | demosnout | `demosnout.uf2` | |
 | snouty-zero | `snouty-zero.uf2` | the default build also writes `snouty-zero-xip.uf2` (the same game executing from flash, for a hardware comparison) |
 | snouty-pipes | `snouty-pipes.uf2` | |
+| snouty-pong | `snouty-pong.uf2` | two badges and a link cable ([its README](../carts/snouty-pong/README.md)) |
 | paperclips | `paperclips.uf2` | Universal Paperclips; a game lasts while the cart runs (no saves) |
 | raspberry-trail | `raspberry-trail.uf2` | The Raspberry Trail; a game lasts while the cart runs (no saves) |
 | snouty-theremin | `snouty-theremin.uf2` | the theremin; plays from the time-of-flight breakout on the Qwiic port, or the stick without it ([TOF.md](TOF.md)); boots with sound on |

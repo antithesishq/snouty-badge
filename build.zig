@@ -25,6 +25,7 @@ const carts = [_]Cart{
     .{ .dir = "snouty-pipes", .binary = "snouty-pipes", .add = &@import("carts/snouty-pipes/build.zig").add },
     .{ .dir = "snouty-link", .binary = "snouty-link", .add = &@import("carts/snouty-link/build.zig").add },
     .{ .dir = "snouty-cycles", .binary = "snouty-cycles", .add = &@import("carts/snouty-cycles/build.zig").add },
+    .{ .dir = "snouty-pong", .binary = "snouty-pong", .add = &@import("carts/snouty-pong/build.zig").add },
     .{ .dir = "paperclips", .binary = "paperclips", .add = &@import("carts/paperclips/build.zig").add },
     .{ .dir = "raspberry-trail", .binary = "raspberry-trail", .add = &@import("carts/raspberry-trail/build.zig").add },
     .{ .dir = "snouty-sense", .binary = "snouty-sense", .add = &@import("carts/snouty-sense/build.zig").add },
