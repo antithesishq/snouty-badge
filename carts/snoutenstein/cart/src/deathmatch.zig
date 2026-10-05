@@ -223,7 +223,7 @@ pub fn draw_lobby(v: LobbyView) void {
 
 fn draw_rules(v: LobbyView) void {
     const host = v.role == .host;
-    centered(if (host) "YOU HOST: PICK RULES" else "GUEST: HOST PICKS", 20, hud.iris);
+    centered(if (host) "YOU: P1, PICK RULES" else "YOU: P2, P1 PICKS", 20, hud.iris);
     const labels = [3][]const u8{ "ARENA", "FRAGS", "BUGS" };
     var buf: [16]u8 = undefined;
     for (labels, 0..) |label, i| {
@@ -247,7 +247,7 @@ fn draw_rules(v: LobbyView) void {
     } else if (host) {
         centered("A: READY", 104, hud.anti_white);
     } else {
-        centered("A: READY  HOST GOES", 104, hud.anti_white);
+        centered("A: READY  P1 GOES", 104, hud.anti_white);
     }
 }
 
@@ -402,19 +402,28 @@ pub fn draw_dead(m: *const state.Match, me: usize) void {
     band(fmt(&buf, "RESPAWN IN {d}", .{(@as(u32, m.dead[me]) + 59) / 60}), 46, hud.anti_white);
 }
 
-/// The latest death, from this badge's side, for `banner_ticks`.
+/// The latest death, from this badge's side, for `banner_ticks`, naming
+/// the other badge by its player number (the host is PLAYER 1):
+/// "DELETED BY PLAYER 1", "YOU DELETED PLAYER 2".
 fn draw_banner() void {
     const m = &world.m;
     if (m.kill_tick == state.no_shot or world.gs.tick -% m.kill_tick > banner_ticks) return;
     const me: u8 = view_slot;
+    var buf: [24]u8 = undefined;
+    const them: u8 = (me ^ 1) + 1;
+    if (m.victim != me and m.killer == m.victim) {
+        // 21 characters: one more than the screen's 20, so two lines.
+        cart.rect(.{ .x = 0, .y = 20, .width = 160, .height = 22, .fill_color = hud.anti_black });
+        centered(fmt(&buf, "PLAYER {d}", .{them}), 22, hud.coral);
+        centered("SELF-DELETED", 32, hud.coral);
+        return;
+    }
     const msg: []const u8 = if (m.victim == me)
-        (if (m.killer == me) "SELF-DELETED -1" else if (m.killer == me ^ 1) "DELETED BY THEM" else "EATEN BY BUGS")
+        (if (m.killer == me) "SELF-DELETED -1" else if (m.killer == me ^ 1) fmt(&buf, "DELETED BY PLAYER {d}", .{them}) else "EATEN BY BUGS")
     else if (m.killer == me)
-        "YOU DELETED THEM"
-    else if (m.killer == m.victim)
-        "THEY SELF-DELETED"
+        fmt(&buf, "YOU DELETED PLAYER {d}", .{them})
     else
-        "BUGS GOT THEM";
+        fmt(&buf, "BUGS GOT PLAYER {d}", .{them});
     band(msg, 22, if (m.killer == me and m.victim != me) hud.green else hud.coral);
 }
 

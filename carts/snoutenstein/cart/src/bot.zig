@@ -13,8 +13,8 @@
 //! Without a target it walks, turning away from walls (which way changes
 //! every 1.5 s) and every few seconds toward the nearest foe's bearing;
 //! holding only the starting zapper and swatter it instead heads for the
-//! nearest present weapon pad: straight at it when in sight, else homing
-//! on its bearing now and then. Cost per bot per tick: at most `look` + 1
+//! nearest present weapon pad or dropped weapon: straight at it when in
+//! sight, else homing on its bearing now and then. Cost per bot per tick: at most `look` + 1
 //! rays (16 bots on Data Hall stay inside the bench gate).
 const std = @import("std");
 const fixed = @import("fixed.zig");
@@ -165,7 +165,7 @@ pub fn think(w: *const match.World, level: *const levels.Level, slot: usize) But
         return b;
     }
     // Only the starting zapper and swatter: head for the nearest present
-    // weapon pad, straight at it if it is in sight (one ray), else its
+    // weapon pad or dropped weapon, straight at it if it is in sight (one ray), else its
     // bearing in the wander's homing phase below. Never the Debugger: the
     // bots do not know where the secret walls are.
     var home = false;
@@ -186,6 +186,19 @@ pub fn think(w: *const match.World, level: *const levels.Level, slot: usize) But
                 best_d2 = d2;
                 hx = px;
                 hy = py;
+            }
+        }
+        // Dropped weapons too, but not a dropped zapper (everyone has it).
+        for (m.drops) |dr| {
+            if (dr.timer == 0 or dr.owner == slot or dr.weapon == @backingInt(state.Weapon.zapper)) continue;
+            const dx: i64 = dr.x - me.x;
+            const dy: i64 = dr.y - me.y;
+            const d2 = dx * dx + dy * dy;
+            if (d2 < best_d2) {
+                home = true;
+                best_d2 = d2;
+                hx = dr.x;
+                hy = dr.y;
             }
         }
         if (home and sim.line_of_sight(&w.gs, level, me.x, me.y, hx, hy)) {

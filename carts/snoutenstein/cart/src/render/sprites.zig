@@ -192,7 +192,10 @@ pub fn draw(s: *const state.GameState, level: *const levels.Level, px: f32, py: 
         if (!present) continue;
         cam.add(wx, wy, 0.5, .pickups, @backingInt(p.kind), .bottom, false);
     }
-    if (dm) |m| add_shots(cam, m);
+    if (dm) |m| {
+        add_shots(cam, m);
+        add_drops(cam, m);
+    }
 
     const alt: u8 = @intCast((s.tick >> 2) & 1);
     for (s.projectiles) |p| {
@@ -448,6 +451,26 @@ fn add_shots(cam: Cam, m: *const state.Match) void {
             },
             else => {},
         }
+    }
+}
+
+/// Dropped weapons: the pickup the weapon's own pad or ammo uses, blinking
+/// for its last `arsenal.drop_blink` ticks.
+fn add_drops(cam: Cam, m: *const state.Match) void {
+    for (m.drops) |d| {
+        if (d.timer == 0 or (d.timer < arsenal.drop_blink and d.timer & 8 == 0)) continue;
+        const x = fixed.to_f32(d.x);
+        const y = fixed.to_f32(d.y);
+        const kind: levels.PickupKind = switch (d.weapon) {
+            @backingInt(state.Weapon.zapper) => .charge,
+            @backingInt(state.Weapon.spray) => .spray_can,
+            @backingInt(state.Weapon.debugger) => .debugger,
+            else => {
+                cam.add_art(x, y, 0.5, fx.weapon_art(d.weapon, d.timer), .bottom, false);
+                continue;
+            },
+        };
+        cam.add(x, y, 0.5, .pickups, @backingInt(kind), .bottom, false);
     }
 }
 

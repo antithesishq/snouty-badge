@@ -611,8 +611,10 @@ what was built.
 - **View.** Each badge renders its own player; the other is the rival
   billboard (`rival.png`: front, sides, back, down; all white on a hit).
   The HUD's right block shows YOU n over THEM n instead of keys and the
-  meter; a banner names each death (YOU FRAGGED THEM, FRAGGED BY THEM,
-  SELF-FRAG -1, EATEN BY BUGS, ...).
+  meter; a banner names each death by player number, the host being
+  PLAYER 1 (YOU DELETED PLAYER 2, DELETED BY PLAYER 1, SELF-DELETED -1,
+  EATEN BY BUGS, ...). M9.2: the weapon in a dying player's hand stays
+  on the floor with its ammo for 30 s for the other to take.
 - **Off in a match.** Rewind, keyframes and the meter, the attract demo,
   level progression.
 - **End.** The results: YOU WIN / YOU LOSE / DRAW, frags, shots and
@@ -705,7 +707,7 @@ lockstep (`lib/lockstep_n.zig`, root `docs/LOCKSTEP_N.md`; game id
 - **Arenas.** Server Room (6 spawns), Build Farm DM (8), Data Hall (48x48,
   16 spawns, M8 track C). The M7 cable lobby offers Data Hall too, and
   `match.G.version` is 1 so an M7 build on the other end of a cable
-  shows WRONG VERSION.
+  shows WRONG VERSION (2 since M9.2's dropped weapons).
 - **Levels.** `Level.cells` holds the drawn width x height only (it was a
   64x64 array per level): 22 KB less flash, which the party code needed
   to stay in the 140 KB budget; `Level.cell` returns the same values as

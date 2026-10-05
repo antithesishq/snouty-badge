@@ -3,6 +3,7 @@
 //! and the results table. Everything reads a `*const state.Match`, the
 //! slot this badge shows (`me`) and the lobby's names by slot (`names`;
 //! empty or short = "P1".."P16"). Colours and ordering: slots.zig.
+const std = @import("std");
 const cart = @import("cart-api");
 const state = @import("../state.zig");
 const hud = @import("hud.zig");
@@ -69,10 +70,11 @@ fn small_signed(v: i16, x1: i32, y: i32, c: cart.DisplayColor) void {
 // ---------------------------------------------------------------- kill feed
 
 /// The latest death as one line at the top of the view for `feed_ticks`:
-/// "YOU DELETED P7" (you did it), "P7 DELETED YOU", "P7 DELETED P3",
+/// "YOU DELETED PLAYER 7" (you did it), "DELETED BY PLAYER 7", "P7 DELETED P3",
 /// "P3 SELF-DELETED", "BUGS GOT P3", and "SELF-DELETED -1" / "EATEN BY
 /// BUGS" for you (M9: "DELETED" was "FRAGGED"; the score is still
-/// FRAGS). Names in their slot colours. `tick` = the World's tick.
+/// FRAGS). Names in their slot colours (a roster name instead of
+/// "PLAYER 7" when the lobby gave one). `tick` = the World's tick.
 pub fn draw_kill_feed(m: *const Match, me: usize, names: []const []const u8, tick: u32) void {
     if (m.kill_tick == state.no_shot or tick -% m.kill_tick >= feed_ticks) return;
     if (m.victim >= max_players) return;
@@ -84,14 +86,14 @@ pub fn draw_kill_feed(m: *const Match, me: usize, names: []const []const u8, tic
         if (k == me) {
             line.add("SELF-DELETED -1", hud.coral);
         } else if (by_player) {
-            line.name(m, names, k);
-            line.add(" DELETED YOU", hud.coral);
+            line.add("DELETED BY ", hud.coral);
+            line.player(m, names, k);
         } else {
             line.add("EATEN BY BUGS", hud.coral);
         }
     } else if (k == me) {
         line.add("YOU DELETED ", hud.green);
-        line.name(m, names, v);
+        line.player(m, names, v);
     } else if (k == v) {
         line.name(m, names, v);
         line.add(" SELF-DELETED", hud.grey);
@@ -130,6 +132,16 @@ const Line = struct {
         var buf: [4]u8 = undefined;
         const s = slots.name(names, slot, &buf);
         l.add(s[0..@min(s.len, 5)], slots.slot_color(m, slot));
+    }
+
+    /// `name`, but "PLAYER n" for a slot without a roster name when the
+    /// line has room for it.
+    fn player(l: *Line, m: *const Match, names: []const []const u8, slot: usize) void {
+        var buf: [12]u8 = undefined;
+        const s = std.fmt.bufPrint(&buf, "PLAYER {d}", .{slot + 1}) catch unreachable;
+        const named = slot < names.len and names[slot].len > 0;
+        if (named or l.len + s.len > l.str.len) return l.name(m, names, slot);
+        l.add(s, slots.slot_color(m, slot));
     }
 
     fn draw(l: *const Line, y: i32) void {

@@ -174,8 +174,8 @@ pub const G = struct {
     pub const check_every: u32 = 32;
     /// 1 since M8: the World grew to 16 slots (and the lobby offers Data
     /// Hall), so an M7 build on the other end of the cable shows WRONG
-    /// VERSION instead of a desync.
-    pub const version: u4 = 1;
+    /// VERSION instead of a desync. 2 since M9.2: dropped weapons.
+    pub const version: u4 = 2;
     /// Start toggles the pause on both badges on the same tick.
     pub const pause_bit: ?u8 = bit_start;
     /// No racer-style picks: the lobby sends pick 0 with the ready flag
@@ -564,6 +564,7 @@ pub fn step_n(w: *World, level: *const Level, in_raw: *const [max_players]Button
     }
     if (died) check_over(m);
     tick_pickups(w, level);
+    arsenal.tick_drops(m);
     for (order[0..n]) |i| m.players[i].prev = in[i];
     s.tick +%= 1;
     s.player = m.players[first_present(m)];
@@ -659,6 +660,7 @@ fn move(w: *World, level: *const Level, i: usize, b: Buttons) void {
         }
         state.take_pickup(s, k);
     }
+    arsenal.take_drops(m, i);
 }
 
 /// The nearest living player to (x, y); the lowest slot on a tie, the
@@ -726,6 +728,7 @@ fn die(w: *World, i: usize) void {
     m.deaths[i] +%= 1;
     m.players[i].frozen = 0;
     m.gc_spin[i] = 0;
+    arsenal.drop_weapon(m, i);
     const k = m.last_hit[i];
     if (k == i) {
         m.frags[i] -= 1;

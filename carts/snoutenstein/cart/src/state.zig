@@ -146,6 +146,9 @@ pub const max_match_pickups = 32;
 /// The deathmatch projectile pool (M9: fork bombs, rockets, explosions),
 /// kept in Match so GameState.projectiles (the campaign pool) never grows.
 pub const max_dm_shots = 32;
+/// Weapons dropped by dying players lying on the floor at once (the
+/// oldest goes first when a seventeenth falls).
+pub const max_drops = 16;
 /// `Match.last_hit` / `killer`: who did it. 0..15 are the player slots.
 pub const by_bug: u8 = 0xFE;
 pub const no_one: u8 = 0xFF;
@@ -225,6 +228,9 @@ pub const Match = struct {
     pad_item: [max_match_pickups]u8 = @splat(0),
     /// Flying fork bombs and rockets, and explosions (display only).
     dm_shots: [max_dm_shots]DmShot = @splat(.{}),
+    /// Dropped weapons (`arsenal.drop_weapon`): a dead player's weapon
+    /// with its ammo, there for anyone to take.
+    drops: [max_drops]Drop = @splat(.{}),
 
     pub fn is_present(m: *const Match, slot: usize) bool {
         return (m.present >> @intCast(slot)) & 1 == 1;
@@ -258,7 +264,21 @@ comptime {
     assert_no_padding(GameState);
     assert_no_padding(Match);
     assert_no_padding(DmShot);
+    assert_no_padding(Drop);
 }
+
+/// One entry of `Match.drops`: `timer` 0 = free, else the ticks until it
+/// vanishes; `weapon` a `Weapon`, `ammo` what the dead player had left,
+/// `owner` that player's slot (the one who cannot take it back).
+pub const Drop = struct {
+    x: Fixed = 0,
+    y: Fixed = 0,
+    timer: u16 = 0,
+    weapon: u8 = 0,
+    ammo: u8 = 0,
+    owner: u8 = 0,
+    _pad: [3]u8 = @splat(0),
+};
 
 pub fn pickup_present(s: *const GameState, i: usize) bool {
     return (s.pickups[i / 32] >> @intCast(i % 32)) & 1 == 1;

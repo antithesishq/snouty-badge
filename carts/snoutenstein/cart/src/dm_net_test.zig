@@ -489,6 +489,7 @@ test "deathmatch over the cable: RAM" {
     // M8: state.Match holds 16 players (PLAN.md M8 "How many players"),
     // World 2,188 bytes; M7's two-player Match kept it under 2,048. M9's
     // arsenal (ammo per slot, pad items, the 32-entry DmShot pool that keeps
-    // GameState.projectiles unchanged) adds 752: World 2,940.
-    try std.testing.expect(@sizeOf(World) < 3072);
+    // GameState.projectiles unchanged) adds 752: World 2,940. M9.2's 16
+    // dropped weapons add 256: World 3,196.
+    try std.testing.expect(@sizeOf(World) < 3328);
 }

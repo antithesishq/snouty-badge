@@ -1,7 +1,7 @@
 //! Host tests of the M9 deathmatch arsenal (`arsenal.zig` wired into
 //! `match.zig`): each weapon frags at its tuned rate, self-damage, pads
-//! and their timers, Select cycling, the respawn loss, and a 16-bot match
-//! that runs the same twice. Mini-levels are parsed at run time.
+//! and their timers, Select cycling, the respawn loss, dropped weapons,
+//! and a 16-bot match that runs the same twice. Mini-levels are parsed at run time.
 const std = @import("std");
 const fixed = @import("fixed.zig");
 const state = @import("state.zig");
@@ -372,6 +372,112 @@ test "a respawn loses the arsenal" {
     try testing.expectEqual(@as(u8, 0), w.m.owned[1]);
     try testing.expectEqual(@as(u8, 0), w.m.ammo_fuzzer[1]);
     try testing.expectEqual(state.Weapon.zapper, w.m.players[1].weapon);
+}
+
+/// Kills slot `i` where it stands (no frag credit) and steps once.
+fn kill(w: *World, L: *const Level, i: usize) void {
+    w.m.players[i].hp = 0;
+    match.step(w, L, idle);
+}
+
+test "a death drops the weapon in hand with its ammo; a foe walking over it gets it" {
+    var st: level_parse.Parsed = undefined;
+    var w: World = undefined;
+    const L = try new_world(&w, &st, hall_src, false);
+    arm(&w, 1, .fuzzer);
+    w.m.ammo_fuzzer[1] = 37;
+    put(&w.m.players[1], 6.5, 2.5);
+    kill(&w, &L, 1);
+    const d = w.m.drops[0];
+    try testing.expectEqual(arsenal.drop_ticks - 1, d.timer);
+    try testing.expectEqual(@backingInt(state.Weapon.fuzzer), d.weapon);
+    try testing.expectEqual(@as(u8, 37), d.ammo);
+    try testing.expectEqual(@as(u8, 1), d.owner);
+    try testing.expectEqual(fixed.from_float(6.5), d.x);
+    // Just out of reach: nothing; within it: the FUZZER, selected, 37 rounds.
+    put(&w.m.players[0], 6.0, 2.5);
+    match.step(&w, &L, idle);
+    try testing.expect(w.m.drops[0].timer > 0);
+    put(&w.m.players[0], 6.1, 2.5);
+    match.step(&w, &L, idle);
+    try testing.expectEqual(@as(u16, 0), w.m.drops[0].timer);
+    try testing.expect(w.m.owned[0] & arsenal.owned_bit(.fuzzer) != 0);
+    try testing.expectEqual(@as(u8, 37), w.m.ammo_fuzzer[0]);
+    try testing.expectEqual(state.Weapon.fuzzer, w.m.players[0].weapon);
+}
+
+test "a dropped weapon you have adds its ammo up to the cap, no reselect" {
+    var st: level_parse.Parsed = undefined;
+    var w: World = undefined;
+    const L = try new_world(&w, &st, hall_src, false);
+    arm(&w, 0, .ship_it);
+    w.m.ammo_rocket[0] = arsenal.max_rocket - 3;
+    w.m.players[0].weapon = .zapper;
+    arm(&w, 1, .ship_it);
+    w.m.ammo_rocket[1] = 5;
+    put(&w.m.players[1], 6.5, 2.5);
+    kill(&w, &L, 1);
+    put(&w.m.players[0], 6.5, 2.5);
+    match.step(&w, &L, idle);
+    try testing.expectEqual(arsenal.max_rocket, w.m.ammo_rocket[0]);
+    try testing.expectEqual(state.Weapon.zapper, w.m.players[0].weapon);
+    // A dropped zapper goes into the zapper pool everyone has.
+    while (w.m.dead[1] > 0) match.step(&w, &L, idle);
+    w.m.players[1].ammo_zapper = 23;
+    put(&w.m.players[1], 6.5, 3.5);
+    kill(&w, &L, 1);
+    w.m.players[0].ammo_zapper = 40;
+    put(&w.m.players[0], 6.5, 3.5);
+    match.step(&w, &L, idle);
+    try testing.expectEqual(@as(u8, 63), w.m.players[0].ammo_zapper);
+}
+
+test "the swatter and an empty weapon drop nothing; the GC drops without ammo" {
+    var st: level_parse.Parsed = undefined;
+    var w: World = undefined;
+    const L = try new_world(&w, &st, hall_src, false);
+    w.m.players[1].weapon = .swatter;
+    kill(&w, &L, 1);
+    while (w.m.dead[1] > 0) match.step(&w, &L, idle);
+    arm(&w, 1, .fork_bomb);
+    w.m.ammo_bomb[1] = 0;
+    kill(&w, &L, 1);
+    for (w.m.drops) |d| try testing.expectEqual(@as(u16, 0), d.timer);
+    while (w.m.dead[1] > 0) match.step(&w, &L, idle);
+    arm(&w, 1, .gc);
+    kill(&w, &L, 1);
+    try testing.expectEqual(@backingInt(state.Weapon.gc), w.m.drops[0].weapon);
+}
+
+test "your own drop stays for the others, and vanishes after 30 s" {
+    var st: level_parse.Parsed = undefined;
+    var w: World = undefined;
+    const L = try new_world(&w, &st, hall_src, false);
+    arm(&w, 1, .fuzzer);
+    kill(&w, &L, 1);
+    while (w.m.dead[1] > 0) match.step(&w, &L, idle);
+    const d = w.m.drops[0];
+    w.m.players[1].x = d.x;
+    w.m.players[1].y = d.y;
+    match.step(&w, &L, idle);
+    try testing.expectEqual(@as(u8, 0), w.m.owned[1]);
+    try testing.expect(w.m.drops[0].timer > 0);
+    run(&w, &L, idle, w.m.drops[0].timer - 1);
+    try testing.expectEqual(@as(u16, 1), w.m.drops[0].timer);
+    match.step(&w, &L, idle);
+    try testing.expectEqual(@as(u16, 0), w.m.drops[0].timer);
+}
+
+test "a full drop pool replaces the drop closest to vanishing" {
+    var st: level_parse.Parsed = undefined;
+    var w: World = undefined;
+    const L = try new_world(&w, &st, hall_src, false);
+    for (&w.m.drops, 0..) |*d, k| d.* = .{ .timer = @intCast(500 + k), .weapon = @backingInt(state.Weapon.zapper), .ammo = 1, .owner = 1 };
+    w.m.drops[9].timer = 100;
+    put(&w.m.players[1], 6.5, 2.5);
+    kill(&w, &L, 1);
+    try testing.expectEqual(@as(u8, 40), w.m.drops[9].ammo);
+    try testing.expectEqual(arsenal.drop_ticks - 1, w.m.drops[9].timer);
 }
 
 test "16 armed players (8 bots, 8 random) in every arena: the same World twice" {

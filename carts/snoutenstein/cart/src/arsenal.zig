@@ -20,6 +20,9 @@
 //! - GARBAGE COLLECTOR (hold melee): hold A to spin up, then shreds the
 //!   nearest foe in front every `gc_rate` ticks; slows walking while spinning.
 //!
+//! Drops: a dying player's weapon in hand stays on the floor with its
+//! ammo (`drop_weapon`) for anyone to walk over (`take_drops`).
+//!
 //! Pads: legend `@` (`PickupKind.pad`) shows `Match.pad_item[k]`; taking it
 //! gives the weapon (or its ammo), the pad comes back after `pad_respawn`
 //! with the next weapon of `rotation`. The Debugger `&` in an arena is
@@ -162,14 +165,80 @@ pub fn take_pad(w: *match.World, i: usize, k: usize) u16 {
     if (item < 4) {
         sim.apply_pickup(p, .spray_can);
     } else {
-        const wp: Weapon = @fromBackingInt(@intCast(item));
-        const bit = owned_bit(wp);
-        if (m.owned[i] & bit == 0) p.weapon = wp;
-        m.owned[i] |= bit;
-        const a = ammo_ref(m, i, wp);
-        a.* = @min(max_ammo[item - 4], @as(u16, a.*) + pickup_ammo[item - 4]);
+        give(m, i, @fromBackingInt(@intCast(item)), pickup_ammo[item - 4]);
     }
     return pad_respawn;
+}
+
+/// Slot `i` gets weapon `wp` with `a` ammo: added to its pool (up to the
+/// cap) if it has the weapon already, else the weapon, selected. The
+/// zapper everyone has; the Garbage Collector has no ammo.
+fn give(m: *Match, i: usize, wp: Weapon, a: u8) void {
+    const p = &m.players[i];
+    switch (wp) {
+        .swatter => {},
+        .zapper => p.ammo_zapper = @min(sim.max_zapper, @as(u16, p.ammo_zapper) + a),
+        .spray => {
+            p.ammo_spray = @min(sim.max_spray, @as(u16, p.ammo_spray) + a);
+            if (!p.has_spray) p.weapon = .spray;
+            p.has_spray = true;
+        },
+        .debugger => {
+            p.ammo_debugger = @min(sim.max_debugger, @as(u16, p.ammo_debugger) + a);
+            if (!p.has_debugger) p.weapon = .debugger;
+            p.has_debugger = true;
+        },
+        else => {
+            const n = @backingInt(wp);
+            const bit = owned_bit(wp);
+            if (m.owned[i] & bit == 0) p.weapon = wp;
+            m.owned[i] |= bit;
+            const r = ammo_ref(m, i, wp);
+            r.* = @min(max_ammo[n - 4], @as(u16, r.*) + a);
+        },
+    }
+}
+
+// ---------------------------------------------------------------- drops
+
+/// A dropped weapon lies there 30 s, blinking for the last `drop_blink`.
+pub const drop_ticks: u16 = 1800;
+pub const drop_blink: u16 = 180;
+/// A living player this close to a drop's centre takes it.
+pub const drop_reach: Fixed = fixed.from_float(0.5);
+
+/// At slot `i`'s death (before the respawn resets the loadout): the
+/// weapon in hand falls where the player stood, with the ammo it had, for
+/// the others to take (the swatter, and a weapon with no ammo left, fall
+/// as nothing; the Garbage Collector needs none). It takes a free `Match.drops` entry, or
+/// the one closest to vanishing.
+pub fn drop_weapon(m: *Match, i: usize) void {
+    const p = &m.players[i];
+    const wp = p.weapon;
+    if (wp == .swatter) return;
+    const a: u8 = ammo(m, i) orelse 0;
+    if (a == 0 and wp != .gc) return;
+    var k: usize = 0;
+    for (m.drops, 0..) |d, j| {
+        if (d.timer < m.drops[k].timer) k = j;
+    }
+    m.drops[k] = .{ .x = p.x, .y = p.y, .timer = drop_ticks, .weapon = @backingInt(wp), .ammo = a, .owner = @intCast(i) };
+}
+
+/// Slot `i` (alive, after its move) takes every drop within `drop_reach`
+/// but its own.
+pub fn take_drops(m: *Match, i: usize) void {
+    const p = &m.players[i];
+    for (&m.drops) |*d| {
+        if (d.timer == 0 or d.owner == i or !near(p.x, p.y, d.x, d.y, drop_reach)) continue;
+        give(m, i, @fromBackingInt(@intCast(d.weapon)), d.ammo);
+        d.* = .{};
+    }
+}
+
+/// Once a tick: drops age and vanish.
+pub fn tick_drops(m: *Match) void {
+    for (&m.drops) |*d| d.timer -|= 1;
 }
 
 /// Respawn ticks of an arena pickup of `kind` (pad, Debugger, the rest).

@@ -1651,6 +1651,34 @@ docs/m9_{warp,pads,views,blast,death}.png.
   has no grace, so there is no warp-in at the start.
 - View models read small (zapper-sized).
 
+### M9.2 Dropped weapons and player numbers (2026-10-05)
+
+Adrian, after a play test: "drop your current weapon on death so the
+other player can pick it up (with whatever ammo count it currently has,
+if you already have the weapon it adds to your ammo pool)", and name the
+players in the death messages, the lobby leader being Player 1.
+
+- **Drops.** `arsenal.drop_weapon` at death: the weapon in hand with its
+  ammo lands where the player died (`Match.drops`, 16 entries; a full
+  pool replaces the one closest to vanishing). Any other living player
+  within 0.5 cells takes it (`take_drops`, after the move): a weapon
+  they lack comes with its ammo and is selected (as a pad); one they
+  have adds the ammo up to the cap. The dead player cannot take their
+  own drop back. It lies 30 s, blinking for the last 3. The swatter and
+  an empty weapon drop nothing; the Garbage Collector drops without
+  ammo; a zapper drop feeds the zapper pool. Drawn with the pad/pickup
+  art; bots holding only starter weapons home on drops too (not zappers).
+- **Messages.** Cable deathmatch: DELETED BY PLAYER 1, YOU DELETED
+  PLAYER 2, BUGS GOT PLAYER 2, and PLAYER 2 / SELF-DELETED on two lines
+  (21 characters, one more than a row holds). Slot 0 = the host = P1;
+  the lobby says YOU: P1, PICK RULES / YOU: P2, P1 PICKS. The party kill
+  feed: DELETED BY PLAYER 7 / YOU DELETED PLAYER 7 (P10 and up where
+  the row is full; roster names win).
+- `match.G.version` 2: a 9.1 badge on the other end shows WRONG
+  VERSION. GN's game id stays SNOUTDM1 (no party has shipped).
+- Size: Match 1,820 B (+256), World 3,196 B; .text 127,184 + .data 7,944.
+- Gates: tools/check.sh (with test-stein) passes, 5 new arsenal tests.
+
 ## Status
 
 M8.1 status (2026-10-05): the OS transport shipped (fork main 8ca6da6;

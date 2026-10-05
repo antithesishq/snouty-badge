@@ -354,8 +354,8 @@ between their UART headers (J4; crossed or straight both work, root
 1. Flash `snoutenstein.uf2` on both badges and start Snoutenstein on both.
 2. Plug the cable into both UART headers.
 3. On both title screens: Down to DEATHMATCH, A. Both lobbies leave PLUG
-   IN THE CABLE within a second or two; one says YOU HOST: PICK RULES,
-   the other GUEST: HOST PICKS. A badge running another link cart shows
+   IN THE CABLE within a second or two; one says YOU: P1, PICK RULES,
+   the other YOU: P2, P1 PICKS. A badge running another link cart shows
    WRONG CART: and its name.
 4. On the host: Up/Down picks ARENA, FRAGS or BUGS, Left/Right changes
    it; the guest's screen follows.
@@ -364,8 +364,10 @@ between their UART headers (J4; crossed or straight both work, root
 6. Host Start: both badges start the match at once, each from its own
    player. Frag each other: the other badge is the Coral-shirted rival
    Snouty, it flashes white on a hit, six zapper hits frag, both HUDs
-   count YOU / THEM, the banners agree (YOU FRAGGED THEM here is FRAGGED
-   BY THEM there). Hold B with Left/Right to strafe.
+   count YOU / THEM, the banners agree (YOU DELETED PLAYER 2 here is
+   DELETED BY PLAYER 1 there). The dead player's weapon stays where they
+   fell: walk over it to take it (its ammo adds to yours if you have
+   it). Hold B with Left/Right to strafe.
 7. Start on either badge pauses both; Start again resumes both.
 8. First to the frag limit: both show the results (YOU WIN on one, YOU
    LOSE on the other, the same frags and shots). A goes back to the lobby
