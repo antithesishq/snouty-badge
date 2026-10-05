@@ -162,7 +162,9 @@ fn rows(app: *App) void {
     var line: usize = 0;
     for (list, 0..) |*r, i| {
         defer line += r.lines;
-        if (line + r.lines <= scroll) continue;
+        // Rows scrolled partly out at the top are left out (they would
+        // draw over the tab bar).
+        if (line < scroll) continue;
         if (line >= scroll + area) break;
         // A tall row that does not fit waits for the scroll (unless it is
         // the first one shown).

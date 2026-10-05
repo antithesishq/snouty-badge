@@ -48,7 +48,7 @@ pub fn screen(app: *app_mod.App) void {
         _ = draw.text("CHEATS", 118, 100, .black);
         _ = draw.text("ON", 130, 109, .black);
     } else if (blink) {
-        _ = draw.text(if (app.playing) "A: back" else "Press A", 112, 104, .black);
+        _ = draw.text("Press A", 112, 104, .black);
     }
     if (app.playing and (app.game.prestige_u > 0 or app.game.prestige_s > 0)) {
         var bu: [24]u8 = undefined;

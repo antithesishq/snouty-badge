@@ -465,6 +465,15 @@ pub const App = struct {
         // Show the rows after the last selectable one when the cursor is
         // near the end (readouts below a button).
         if (total > area and s > total - area) s = total - area;
+        // Start at a row boundary: a tall row cut at the top is not drawn.
+        var at: usize = 0;
+        for (rows) |*r| {
+            if (at < s and s < at + r.lines) {
+                if (at + r.lines <= top) s = at + r.lines else s = at;
+                break;
+            }
+            at += r.lines;
+        }
         app.scroll[pi] = @intCast(s);
     }
 

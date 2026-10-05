@@ -139,7 +139,31 @@ def cheats():
     return s
 
 
-SCRIPTS = {"cheats.json": cheats, "tour.json": tour, "soak.json": soak, "bench.json": bench}
+def gif():
+    """The review GIF (docs/RUNNING.md section 7): the tour, then the
+    stages through debug_autoplay calls made at fixed frames
+    (gif_calls below), a walk over each stage's pages."""
+    s = tour()
+    # 980: stage 2 (debug_autoplay:9000 at 990), walk the pages.
+    s.t = 1000
+    for _ in range(7):
+        s.tap("RIGHT")
+        s.wait(34)
+    # 1300: stage 3 (debug_autoplay:11000 at 1290).
+    s.t = 1310
+    for _ in range(9):
+        s.tap("RIGHT")
+        s.wait(34)
+    # 1660: the end (debug_autoplay:8000 at 1650), the log.
+    s.t = 1700
+    s.tap("START")
+    s.wait(60)
+    s.tap("START")
+    s.wait(30)
+    return s
+
+
+SCRIPTS = {"gif.json": gif, "cheats.json": cheats, "tour.json": tour, "soak.json": soak, "bench.json": bench}
 
 
 def render(fn):
