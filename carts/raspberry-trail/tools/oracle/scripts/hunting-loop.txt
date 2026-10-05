@@ -1,0 +1,119 @@
+seed 1
+# Hunting every turn with fast, slow and wrong-word shots: the big
+# one (B1 <= 1), a nice shot, and missing.
+# goal: lines 2660 2620 2710; ends: E arrived
+# written by mkscripts.py (scenario 'hunting-loop')
+# 190 need instructions?
+NO
+# 760 marksman (1-5)
+1
+# 860 oxen $
+250
+# 940 food $
+60
+# 990 ammunition $
+200
+# 1040 clothing $
+90
+# 1090 misc. supplies $
+100
+# 2180 (1) hunt (2) continue
+1
+# 6220 shot: TYPE BLAM (hunt)
+SHOOT 1 1.76
+# 2770 eat (1) poorly (2) moderately (3) well
+2
+# 2100 (1) fort (2) hunt (3) continue
+2
+# 6220 shot: TYPE BANG (hunt)
+SHOOT 1 2.64
+# 2770 eat (1) poorly (2) moderately (3) well
+2
+# 2180 (1) hunt (2) continue
+1
+# 6220 shot: TYPE POW (hunt)
+SHOOT 1 1.75
+# 2770 eat (1) poorly (2) moderately (3) well
+2
+# 2100 (1) fort (2) hunt (3) continue
+2
+# 6220 shot: TYPE BLAM (hunt)
+SHOOT 1 2.51
+# 2770 eat (1) poorly (2) moderately (3) well
+2
+# 2180 (1) hunt (2) continue
+1
+# 6220 shot: TYPE BANG (hunt)
+SHOOT 1 0.69
+# 2770 eat (1) poorly (2) moderately (3) well
+2
+# 2100 (1) fort (2) hunt (3) continue
+2
+# 6220 shot: TYPE BANG (hunt)
+SHOOT 1 3.18
+# 2770 eat (1) poorly (2) moderately (3) well
+2
+# 2180 (1) hunt (2) continue
+1
+# 6220 shot: TYPE POW (hunt)
+SHOOT 1 2.11
+# 2770 eat (1) poorly (2) moderately (3) well
+2
+# 2100 (1) fort (2) hunt (3) continue
+2
+# 6220 shot: TYPE POW (hunt)
+SHOOT 1 2.51
+# 2770 eat (1) poorly (2) moderately (3) well
+2
+# 2180 (1) hunt (2) continue
+1
+# 6220 shot: TYPE WHAM (hunt)
+SHOOT 1 3.29
+# 2770 eat (1) poorly (2) moderately (3) well
+2
+# 2100 (1) fort (2) hunt (3) continue
+2
+# 6220 shot: TYPE POW (hunt)
+SHOOT 1 2.93
+# 2770 eat (1) poorly (2) moderately (3) well
+2
+# 2180 (1) hunt (2) continue
+1
+# 6220 shot: TYPE BANG (hunt)
+SHOOT 1 3.42
+# 2770 eat (1) poorly (2) moderately (3) well
+2
+# 2100 (1) fort (2) hunt (3) continue
+2
+# 6220 shot: TYPE BANG (hunt)
+SHOOT 1 2.57
+# 2770 eat (1) poorly (2) moderately (3) well
+2
+# 2180 (1) hunt (2) continue
+1
+# 6220 shot: TYPE POW (hunt)
+SHOOT 1 0.55
+# 2770 eat (1) poorly (2) moderately (3) well
+2
+# 2100 (1) fort (2) hunt (3) continue
+2
+# 6220 shot: TYPE BANG (hunt)
+SHOOT 1 1.28
+# 2770 eat (1) poorly (2) moderately (3) well
+2
+# 2180 (1) hunt (2) continue
+1
+# 6220 shot: TYPE BANG (hunt)
+SHOOT 1 0.46
+# 2770 eat (1) poorly (2) moderately (3) well
+2
+# 3000 riders: (1) run (2) attack (3) continue (4) circle
+1
+# 6220 shot: TYPE BLAM (wild animals)
+SHOOT 1 0.32
+# 2100 (1) fort (2) hunt (3) continue
+2
+# 6220 shot: TYPE BANG (hunt)
+SHOOT 1 0.65
+# 2770 eat (1) poorly (2) moderately (3) well
+2

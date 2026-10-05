@@ -1,0 +1,93 @@
+seed 528
+# Death by no medicine after an injury (K8=1): YOU DIED OF INJURIES
+# (line 5160).
+# goal: outcome no_medicine; lines 5160; ends: E no_medicine
+# written by mkscripts.py (scenario 'death-no-medicine-injured')
+# 190 need instructions?
+NO
+# 760 marksman (1-5)
+3
+# 860 oxen $
+250
+# 940 food $
+150
+# 990 ammunition $
+50
+# 1040 clothing $
+100
+# 1090 misc. supplies $
+6
+# 2180 (1) hunt (2) continue
+1
+# 6220 shot: TYPE BLAM (hunt)
+SHOOT 0 1.81
+# 2770 eat (1) poorly (2) moderately (3) well
+2
+# 2100 (1) fort (2) hunt (3) continue
+1
+# 2330 fort: food $ (cash 144)
+18
+# 2330 fort: ammunition $ (cash 126)
+15
+# 2330 fort: clothing $ (cash 111)
+13
+# 2330 fort: misc. supplies $ (cash 98)
+12
+# 2770 eat (1) poorly (2) moderately (3) well
+2
+# 2180 (1) hunt (2) continue
+2
+# 2770 eat (1) poorly (2) moderately (3) well
+2
+# 6220 shot: TYPE POW (bandits)
+SHOOT 0 1.18
+# 2100 (1) fort (2) hunt (3) continue
+1
+# 2330 fort: food $ (cash 66)
+8
+# 2330 fort: ammunition $ (cash 58)
+7
+# 2330 fort: clothing $ (cash 51)
+6
+# 2330 fort: misc. supplies $ (cash 45)
+5
+# 2770 eat (1) poorly (2) moderately (3) well
+2
+# 2180 (1) hunt (2) continue
+1
+# 6220 shot: TYPE BANG (hunt)
+SHOOT 0 1.06
+# 2770 eat (1) poorly (2) moderately (3) well
+2
+# 2100 (1) fort (2) hunt (3) continue
+3
+# 2770 eat (1) poorly (2) moderately (3) well
+2
+# 2180 (1) hunt (2) continue
+1
+# 6220 shot: TYPE POW (hunt)
+SHOOT 0 1.33
+# 2770 eat (1) poorly (2) moderately (3) well
+2
+# 2100 (1) fort (2) hunt (3) continue
+2
+# 6220 shot: TYPE POW (hunt)
+SHOOT 0 1.01
+# 2770 eat (1) poorly (2) moderately (3) well
+2
+# 2770 eat (1) poorly (2) moderately (3) well
+2
+# 2770 eat (1) poorly (2) moderately (3) well
+2
+# 2770 eat (1) poorly (2) moderately (3) well
+1
+# 3000 riders: (1) run (2) attack (3) continue (4) circle
+2
+# 6220 shot: TYPE WHAM (riders attack)
+SHOOT 0 1.30
+# 5220 minister?
+NO
+# 5240 fancy funeral?
+NO
+# 5260 inform next of kin?
+NO

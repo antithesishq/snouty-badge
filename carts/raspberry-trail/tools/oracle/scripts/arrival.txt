@@ -1,0 +1,88 @@
+seed 8
+# A full trip: buying well, hunting when food runs low, and arriving
+# at Oregon City (the final-turn fraction, the weekday and the date, the
+# closing table and President Polk's letter).
+# goal: outcome arrived; lines 4970 2020; ends: E arrived
+# written by mkscripts.py (scenario 'arrival')
+# 190 need instructions?
+YES
+# 760 marksman (1-5)
+2
+# 860 oxen $
+300
+# 940 food $
+200
+# 990 ammunition $
+60
+# 1040 clothing $
+100
+# 1090 misc. supplies $
+40
+# 2180 (1) hunt (2) continue
+2
+# 2770 eat (1) poorly (2) moderately (3) well
+3
+# 2100 (1) fort (2) hunt (3) continue
+3
+# 2770 eat (1) poorly (2) moderately (3) well
+2
+# 2180 (1) hunt (2) continue
+2
+# 2770 eat (1) poorly (2) moderately (3) well
+2
+# 2100 (1) fort (2) hunt (3) continue
+3
+# 2770 eat (1) poorly (2) moderately (3) well
+3
+# 2180 (1) hunt (2) continue
+1
+# 6220 shot: TYPE BLAM (hunt)
+SHOOT 1 0.77
+# 2770 eat (1) poorly (2) moderately (3) well
+2
+# 2100 (1) fort (2) hunt (3) continue
+3
+# 2770 eat (1) poorly (2) moderately (3) well
+3
+# 2180 (1) hunt (2) continue
+2
+# 2770 eat (1) poorly (2) moderately (3) well
+2
+# 2100 (1) fort (2) hunt (3) continue
+2
+# 6220 shot: TYPE WHAM (hunt)
+SHOOT 1 1.50
+# 2770 eat (1) poorly (2) moderately (3) well
+3
+# 2180 (1) hunt (2) continue
+2
+# 2770 eat (1) poorly (2) moderately (3) well
+2
+# 2100 (1) fort (2) hunt (3) continue
+2
+# 6220 shot: TYPE POW (hunt)
+SHOOT 1 0.66
+# 2770 eat (1) poorly (2) moderately (3) well
+2
+# 2180 (1) hunt (2) continue
+1
+# 6220 shot: TYPE BANG (hunt)
+SHOOT 1 0.53
+# 2770 eat (1) poorly (2) moderately (3) well
+3
+# 6220 shot: TYPE BLAM (bandits)
+SHOOT 1 1.29
+# 2100 (1) fort (2) hunt (3) continue
+2
+# 6220 shot: TYPE POW (hunt)
+SHOOT 1 1.38
+# 2770 eat (1) poorly (2) moderately (3) well
+3
+# 6220 shot: TYPE WHAM (wild animals)
+SHOOT 1 1.21
+# 2180 (1) hunt (2) continue
+1
+# 6220 shot: TYPE BANG (hunt)
+SHOOT 1 0.90
+# 2770 eat (1) poorly (2) moderately (3) well
+3

@@ -1,0 +1,49 @@
+seed 1
+# Death: almost no miscellaneous supplies, then illness:
+# YOU RAN OUT OF MEDICAL SUPPLIES, YOU DIED OF PNEUMONIA.
+# goal: outcome no_medicine; lines 5140; ends: E no_medicine
+# written by mkscripts.py (scenario 'death-no-medicine')
+# 190 need instructions?
+NO
+# 760 marksman (1-5)
+3
+# 860 oxen $
+250
+# 940 food $
+200
+# 990 ammunition $
+50
+# 1040 clothing $
+100
+# 1090 misc. supplies $
+2
+# 2180 (1) hunt (2) continue
+1
+# 6220 shot: TYPE BLAM (hunt)
+SHOOT 1 1.15
+# 2770 eat (1) poorly (2) moderately (3) well
+1
+# 2100 (1) fort (2) hunt (3) continue
+3
+# 2770 eat (1) poorly (2) moderately (3) well
+1
+# 2180 (1) hunt (2) continue
+1
+# 6220 shot: TYPE BANG (hunt)
+SHOOT 1 0.71
+# 2770 eat (1) poorly (2) moderately (3) well
+1
+# 2100 (1) fort (2) hunt (3) continue
+3
+# 2770 eat (1) poorly (2) moderately (3) well
+1
+# 2180 (1) hunt (2) continue
+2
+# 2770 eat (1) poorly (2) moderately (3) well
+1
+# 5220 minister?
+NO
+# 5240 fancy funeral?
+YES
+# 5260 inform next of kin?
+NO
