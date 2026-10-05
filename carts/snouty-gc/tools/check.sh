@@ -81,7 +81,7 @@
 #            - M6: the arena stress scene with the battle HUD's stress
 #              (debug_battle_stress) runs 300 frames;
 #            - M7: a wasm with the content packs on its simulator drive
-#              (-Dgc-pack): the picker's 14 track rows (REENTRY FIELD picked
+#              (-Dgc-pack): the picker's 17 track rows (CABLE TRENCH picked
 #              and raced), ANCHOR STORE to the results with the autopilot, a
 #              BATTLE round in Hangar 18.
 #   bench    badge-bench (calibrated) on badge-bench/carts/snouty-gc.toml,
@@ -184,7 +184,7 @@ if want tracks; then
     # B's pack checks (tools/packs/test_packs.py: its generator current).
     gp="$cart/cart/src/gen/packs"
     mkdir -p "$tmp/packs"
-    cp "$gp"/DEADMALL.GCP "$gp"/BONEYARD.GCP "$tmp/packs/" 2>/dev/null
+    cp "$gp"/DEADMALL.GCP "$gp"/BONEYARD.GCP "$gp"/SEABED.GCP "$tmp/packs/" 2>/dev/null
     python3 "$here/test_pack/make.py" --out "$tmp/packs/TEST.GCP" > "$out/packs.txt" 2>&1 || st=1
     for f in TEST.GCP drive_test.img drive_frag.img drive_empty.img drive_packs.img; do
         cmp -s "$tmp/packs/$f" "$gp/$f" || { echo "differs: gen/packs/$f"; st=1; }
@@ -313,18 +313,19 @@ if want preview; then
     # --- end of the M6 Track B previews.
     # --- M7 track packs: a wasm whose simulator drive holds the content packs
     # and the test pack (-Dgc-pack), rows 6.. are pack tracks (DEADMALL's
-    # three, BONEYARD's three, TEST's two), arena rows 1.. the packs' arenas.
+    # three, BONEYARD's three, SEABED's three, TEST's two), arena rows 1..
+    # the packs' arenas.
     gp="$cart/cart/src/gen/packs"
-    (cd "$root" && zig build -Dcart=snouty-gc -Dgc-pack="$gp/DEADMALL.GCP,$gp/BONEYARD.GCP,$gp/TEST.GCP" --prefix "$out/packwasm") || st=1
+    (cd "$root" && zig build -Dcart=snouty-gc -Dgc-pack="$gp/DEADMALL.GCP,$gp/BONEYARD.GCP,$gp/SEABED.GCP,$gp/TEST.GCP" --prefix "$out/packwasm") || st=1
     pw="$out/packwasm/bin/snouty-gc.wasm"
     pack_preview() { local w0="$wasm"; wasm="$pw"; run_preview "$@"; local r=$?; wasm="$w0"; return $r; }
     # The picker: QUICK RACE's select (its frames run the packs' CRCs: all
-    # 14 rows are raceable by frame 60), Down to the track row, Left wraps to
-    # the last row (TEST's CRUST LOOP, row 13), Left twice more to BONEYARD's
-    # REENTRY FIELD (row 11), A races it on the pack track (pack_base + 2).
+    # 17 rows are raceable by frame 60), Down to the track row, Left wraps to
+    # the last row (TEST's CRUST LOOP, row 16), Left twice more to SEABED's
+    # CABLE TRENCH (row 14), A races it on the pack track (pack_base + 2).
     pack_preview pack_picker --frames 160 --call debug_pack_count --press START:2-2 --press START:10-10 --press A:14-14 \
-        --at '18 debug_screen == 2' --at '60 debug_pack_rows == 14' --press DOWN:30-30 --press LEFT:70-70 \
-        --at '74 debug_select_track == 13' --press LEFT:80-80,LEFT:90-90 --at '94 debug_select_track == 11' \
+        --at '18 debug_screen == 2' --at '60 debug_pack_rows == 17' --press DOWN:30-30 --press LEFT:70-70 \
+        --at '74 debug_select_track == 16' --press LEFT:80-80,LEFT:90-90 --at '94 debug_select_track == 14' \
         --press A:100-100 --at '104 debug_screen == 3' --at '104 debug_world_track == 130' \
         --expect 'debug_screen == 3' --dump-exports debug_screen,debug_world_track,debug_pack_rows || st=1
     # ANCHOR STORE (Dead Mall, its props and scrubber) to the results with the autopilot.
