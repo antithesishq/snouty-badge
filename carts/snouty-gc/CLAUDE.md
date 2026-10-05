@@ -86,6 +86,14 @@ here: every forked file names its Zero source and commit on its first line.
 - `gc_mode.zig` (M3): GARBAGE COLLECTION's mark and sweep (sweeps as the
   leader passes sector 2 and the line, tags on weapon hits, collections,
   the survivor) and the attract demo's scripted KERNEL PANIC.
+- `battle.zig` (M6): BATTLE's rules (SPEC 8.3): lives, eliminations,
+  the respawn pad, SAFE MODE, out of lives, the round's end, the
+  standings, the refill clock, the kill leader; part of `simulate`.
+  `hunt.zig` (M6): the arena hunter `ai.drive` hands battle to (target
+  per crew, the navigation field `track.arena`, jump legs, the bay
+  retreat); `update_nav` keeps `Car.nav`. The arena (The Sandbox,
+  `track.arenas`) comes from `tools/build_arena.py`, which
+  `build_tracks.py` runs.
 - `ai.zig`: the centerline driver per racer `Crew` with its combat
   character (aim, reaction, drops; `update_aim` is called by `sim`) and
   pickup policy (`want_use`, CAPTCHA solve ticks), the hazard sense
