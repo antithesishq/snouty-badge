@@ -16,4 +16,6 @@ test {
     _ = @import("tests/tof_unit.zig");
     _ = @import("lockstep.zig");
     _ = @import("tests/lockstep_unit.zig");
+    _ = @import("save.zig");
+    _ = @import("tests/save_unit.zig");
 }
