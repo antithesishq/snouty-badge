@@ -2,6 +2,8 @@
 //! datacenter. SPEC.md is the design, PLAN.md the milestone contract.
 //! M3: splash, title, attract, menus, Quick Race and Grand Prix, the hold-B
 //! rewind and the crash auto-rewind on the snapshot bar, pause, sound.
+//! M6: LINK RACE, two badges in lockstep over the link cable (the lobby,
+//! the link race loop, its pause and results; `link_race.zig`).
 const std = @import("std");
 const cart = @import("cart-api");
 const build_options = @import("build_options");
@@ -21,16 +23,21 @@ const history = @import("history.zig");
 const menu = @import("menu.zig");
 const sound = @import("sound.zig");
 const hills = @import("hills.zig");
+const link = @import("link");
+const lockstep = @import("lockstep");
+const link_race = @import("link_race.zig");
+const link_ui = @import("link_ui.zig");
 
 comptime {
     cart.export_start_code();
 }
 
 /// Screens (SPEC 8).
-pub const Screen = enum(u8) { splash, title, main_menu, league_pick, track_pick, race, pause, results, standings };
+pub const Screen = enum(u8) { splash, title, main_menu, league_pick, track_pick, race, pause, results, standings, lobby };
 var screen: Screen = .splash;
-/// Why the race runs: a Quick Race, a Grand Prix round, or the attract demo.
-const Mode = enum { quick, gp, attract };
+/// Why the race runs: a Quick Race, a Grand Prix round, the attract demo,
+/// or a link race (M6).
+const Mode = enum { quick, gp, attract, link };
 var mode: Mode = .quick;
 
 /// Frames since start(); one frame is one update() at 60 Hz.
@@ -45,7 +52,7 @@ pub var autopilot: bool = false;
 var free_cam: bool = false;
 
 // Menus.
-var main_list = menu.List{ .count = 4 };
+var main_list = menu.List{ .count = 5 };
 var league_list = menu.List{ .count = track.leagues.len };
 var track_list = menu.List{ .count = 3 };
 var pause_list = menu.List{ .count = 4 };
@@ -83,6 +90,39 @@ var attract_b: u32 = 0;
 
 pub const race_machines: u8 = 11;
 
+// Link race (M6, link_race.zig). The link starts when LINK RACE opens and
+// is pumped only on its screens and through a link race: solo play never
+// touches it.
+const Net = lockstep.Lockstep(link.Badge, link_race.G);
+var lnk: Net = undefined;
+var lnk_started: bool = false;
+/// A link race runs (from the GO to leaving the results); `fake_link`: a
+/// made-up one in the simulator (`debug_link_race`), no lockstep behind it.
+var linked: bool = false;
+var fake_link: bool = false;
+/// The lobby: the host's row and track, this badge's machine and mark.
+var lobby_cursor: u8 = 0;
+var lobby_track: u8 = 0;
+var link_pick: u8 = 0;
+var link_ready: bool = false;
+/// The race ended on a desync; the PEER LEFT notice's frames left (shown once).
+var desynced: bool = false;
+var left_note: u32 = 0;
+var left_shown: bool = false;
+/// Pause RESUME: send a Start edge (a frame without Start first if needed).
+var resume_pending: bool = false;
+var last_byte: u8 = 0;
+/// Frames of the link race without a lockstep tick (debug_link_waits).
+var link_waits: u32 = 0;
+/// The time at the top of this update (the pump loop runs to 14 ms past it).
+var frame_t0: u64 = 0;
+/// Debug (wasm, where the link is offline): a made-up lobby
+/// (`debug_link_view`) and race notice (`debug_link_notice`).
+var fake_view: u32 = 0;
+var fake_notice: u32 = 0;
+/// The main menu's note under LINK RACE in the simulator (frames left).
+var link_note: u32 = 0;
+
 pub fn start() void {
     cart.set_vsync_enabled(1000.0 / 60.0);
     cart.set_double_buffer_mode(.no_copy_full_frame);
@@ -103,13 +143,24 @@ fn current_track() *const track.Track {
     return track.leagues[picked_league].tracks[picked_track];
 }
 
-fn new_race(t: *const track.Track) void {
+/// The track's floor, minimap and hills for a race on it.
+fn prepare_race(t: *const track.Track) void {
     render.set_track(t);
     hud.init_minimap(t);
     hills.init(t);
     render.hills_on = true;
+}
+
+fn new_race(t: *const track.Track) void {
+    prepare_race(t);
     sim.reset(t, race_machines);
     world.view = world.player;
+    begin_race();
+}
+
+/// The race meta-state for a World just reset (solo or link).
+fn begin_race() void {
+    hud.show_snapshot = !linked;
     history.reset();
     sprites.reset_effects();
     const p = &world.w.machines[world.view];
@@ -138,6 +189,7 @@ pub fn update() void {
     input.update(read_controls());
     history.replay_calls = 0;
     const t0 = cart.micros_since_boot();
+    frame_t0 = t0;
     switch (screen) {
         .splash => splash_frame(),
         .title => title_frame(),
@@ -146,6 +198,7 @@ pub fn update() void {
         .pause => pause_frame(),
         .results => results_frame(),
         .standings => standings_frame(),
+        .lobby => lobby_frame(),
     }
     engine_cue();
     render_us = @truncate(cart.micros_since_boot() - t0);
@@ -211,21 +264,28 @@ fn menu_frame() void {
     camera.cam.yaw +%= 8;
     render.draw();
     // The main menu's box runs one line longer for the machine's handling blurb.
-    cart.rect(.{ .x = 0, .y = 28, .width = 160, .height = if (screen == .main_menu) 84 else 72, .fill_color = hud.anti_black });
+    cart.rect(.{ .x = 0, .y = 28, .width = 160, .height = if (screen == .main_menu) 96 else 72, .fill_color = hud.anti_black });
     switch (screen) {
         .main_menu => {
             menu_nav(&main_list);
             const sound_item: []const u8 = if (sound.enabled) "SOUND: ON" else "SOUND: OFF";
             const machine_item = menu.machine_items[sim.player_character];
-            menu.draw_list("SNOUTY ZERO", &.{ "QUICK RACE", "GRAND PRIX", machine_item, sound_item }, &main_list, 36);
-            hud.centered(menu.machine_blurbs[sim.player_character], 100, hud.orange);
+            // LINK RACE is greyed where there is no link (the simulator).
+            const no_link = !link_possible();
+            menu.draw_list_dim("SNOUTY ZERO", &.{ "QUICK RACE", "GRAND PRIX", "LINK RACE", machine_item, sound_item }, &main_list, 36, if (no_link) @as(?usize, 2) else null);
+            link_note -|= 1;
+            if (main_list.cursor == 2) {
+                if (no_link) {
+                    hud.centered("NO LINK IN SIMULATOR", 112, if (link_note > 0) hud.coral else hud.dim);
+                } else hud.centered("TWO BADGES, ONE CABLE", 112, hud.orange);
+            } else hud.centered(menu.machine_blurbs[sim.player_character], 112, hud.orange);
             // The machine row cycles with Left/Right too.
-            if (main_list.cursor == 2 and (input.pressed(.right) or input.pressed(.left))) {
+            if (main_list.cursor == 3 and (input.pressed(.right) or input.pressed(.left))) {
                 sim.player_character = @intCast((sim.player_character + (if (input.pressed(.right)) @as(u8, 1) else 4)) % 5);
                 sound.menu_move();
             }
             if (input.pressed(.a) or input.pressed(.start)) {
-                sound.menu_confirm();
+                if (main_list.cursor != 2 or !no_link) sound.menu_confirm();
                 switch (main_list.cursor) {
                     0 => {
                         mode = .quick;
@@ -235,7 +295,10 @@ fn menu_frame() void {
                         mode = .gp;
                         go(.league_pick);
                     },
-                    2 => sim.player_character = (sim.player_character + 1) % 5,
+                    2 => if (no_link) {
+                        link_note = 60;
+                    } else open_lobby(),
+                    3 => sim.player_character = (sim.player_character + 1) % 5,
                     else => {
                         sound.enabled = !sound.enabled;
                         if (!sound.enabled) sound.stop();
@@ -321,6 +384,7 @@ fn resume_live() void {
 }
 
 fn race_frame() void {
+    if (linked) return link_race_frame();
     const w = &world.w;
     const p = &w.machines[world.view];
 
@@ -490,6 +554,7 @@ fn engine_cue() void {
 // --- Pause -----------------------------------------------------------------------
 
 fn pause_frame() void {
+    if (linked) return link_pause_frame();
     draw_race();
     cart.rect(.{ .x = 24, .y = 30, .width = 112, .height = 70, .fill_color = hud.anti_black });
     menu_nav(&pause_list);
@@ -519,6 +584,7 @@ fn pause_frame() void {
 // --- Results and Grand Prix -------------------------------------------------------
 
 fn results_frame() void {
+    if (linked) return link_results_frame();
     results.draw(screen_frames);
     if (input.pressed(.start) or input.pressed(.a)) {
         sound.menu_confirm();
@@ -554,6 +620,364 @@ fn standings_frame() void {
             new_race(current_track());
         }
     }
+}
+
+// --- Link race (M6: link_race.zig, PLAN "M6 Link race") ------------------------------
+
+/// LINK RACE can run: a badge (the simulator has no link).
+fn link_possible() bool {
+    return !cart.is_wasm;
+}
+
+/// LINK RACE from the main menu: the link starts on its first opening
+/// (solo play never touches it), then the lobby.
+fn open_lobby() void {
+    if (!lnk_started) {
+        lnk = Net.init(link.Badge.init(.{}, link_race.app_id, cart.rand()));
+        lnk_started = true;
+    }
+    link_pick = sim.player_character;
+    link_ready = false;
+    go(.lobby);
+}
+
+/// The top of a link frame: run the link.
+fn pump_top() void {
+    if (lnk_started and !fake_link) lnk.pump(cart.micros_since_boot());
+}
+
+/// After drawing, while a race runs: keep pumping until
+/// `tuning.link_pump_until_us` into the frame (the vsync wait is the one
+/// stretch where nothing reads the receive FIFO), retrying a stalled step
+/// (`ticked`; null when there is nothing to retry).
+fn pump_loop(ticked: ?*bool) void {
+    if (cart.is_wasm or fake_link or !lnk_started) return;
+    while (lnk.busy() and cart.micros_since_boot() -% frame_t0 < tuning.link_pump_until_us) {
+        lnk.pump(cart.micros_since_boot());
+        const t = ticked orelse continue;
+        if (!t.* and world.w.phase != .finished) {
+            t.* = lnk.step(&world.w);
+            if (t.* and !lnk.paused and screen != .results) after_tick();
+        }
+    }
+}
+
+/// What the lobby shows: the link's, or the made-up one of `debug_link_view`.
+fn lobby_view() link_ui.View {
+    if (fake_view != 0) return fake_lobby();
+    const host = lnk.role == .host;
+    const r = lnk.rules();
+    return .{
+        .state = lnk.state(),
+        .role = lnk.role,
+        .cable = @backingInt(lnk.link.cable()),
+        .partner_app = lnk.link.partner_app,
+        .track = if (host) lobby_track else if (r) |x| x[0] else null,
+        .pick = link_pick,
+        .ready = link_ready,
+        .peer_pick = lnk.peer_pick(),
+        .peer_ready = lnk.peer_ready(),
+        .can_go = lnk.can_go(),
+    };
+}
+
+/// The LINK RACE lobby (SPEC 8.1): the cable state until a partner
+/// running Snouty Zero answers, then the host's TRACK row (Up/Down a row,
+/// Left/Right its value; the guest sees it live), the MACHINE row, A
+/// ready, B takes the mark back or leaves for the main menu (the link
+/// stops being pumped; the partner sees it gone 2 s later), the host's
+/// Start goes once both are ready.
+fn lobby_frame() void {
+    pump_top();
+    if (lnk.take_started()) return start_link_race();
+    render.hills_on = false;
+    render.frame = frame;
+    camera.cam.yaw +%= 8;
+    render.draw();
+    var v = lobby_view();
+    if (input.pressed(.b)) {
+        if (link_ready) {
+            link_ready = false;
+        } else {
+            lnk.set_pick(link_pick, false);
+            fake_view = 0;
+            go(.main_menu);
+            return;
+        }
+    }
+    if (v.state == .lobby) {
+        const host = v.role == .host;
+        if (host and (input.pressed(.up) or input.pressed(.down))) {
+            lobby_cursor = (lobby_cursor + 1) % link_ui.row_count;
+            sound.menu_move();
+        }
+        const on_track = host and lobby_cursor == @backingInt(link_ui.Row.track);
+        const step: i32 = @as(i32, @intFromBool(input.pressed(.right))) - @as(i32, @intFromBool(input.pressed(.left)));
+        if (step != 0) {
+            if (on_track) {
+                const n: i32 = @intCast(track.tracks.len);
+                lobby_track = @intCast(@mod(@as(i32, lobby_track) + step, n));
+                sound.menu_move();
+            } else if (!link_ready) {
+                link_pick = @intCast(@mod(@as(i32, link_pick) + step, link_race.pick_count));
+                sound.menu_move();
+            }
+        }
+        if (input.pressed(.a) and !link_ready) {
+            link_ready = true;
+            sound.menu_confirm();
+        }
+        if (host) lnk.set_rules(.{lobby_track});
+        lnk.set_pick(link_pick, link_ready);
+        if (host and input.pressed(.start) and !input.held(.select) and lnk.can_go()) {
+            sound.menu_confirm();
+            _ = lnk.go(cart.micros_since_boot());
+        }
+        v = lobby_view();
+    }
+    link_ui.draw_lobby(&v, lobby_cursor, frame);
+    if (lnk.take_started()) return start_link_race();
+}
+
+/// Both badges, once per race (`take_started`): the World from the agreed
+/// track, picks and seed, this badge's machine followed.
+fn start_link_race() void {
+    const rules = lnk.rules() orelse [1]u8{lobby_track};
+    prepare_race(link_race.track_of(rules));
+    link_race.reset(&world.w, rules, lnk.picks(), lnk.seed());
+    world.view = link_race.machine_of(lnk.local_slot());
+    fake_link = false;
+    begin_link_race();
+}
+
+fn begin_link_race() void {
+    mode = .link;
+    linked = true;
+    link_ready = false;
+    desynced = false;
+    left_note = 0;
+    left_shown = false;
+    resume_pending = false;
+    last_byte = 0;
+    link_waits = 0;
+    begin_race();
+}
+
+/// This badge's input byte: the buttons (the autopilot's in previews);
+/// nothing once its machine has finished (no Start reaches the race then,
+/// so a finished badge never pauses its partner).
+fn link_byte() u8 {
+    const m = &world.w.machines[world.view];
+    if (m.finished) return 0;
+    if (autopilot) return link_race.byte_of(ai.drive_human(m, world.view));
+    return link_race.byte_of(@bitCast(@as(u16, @bitCast(input.current))));
+}
+
+/// What a tick that ran the World brings on the badge (as a solo frame
+/// after `simulate`): effects and the sound cues.
+fn after_tick() void {
+    sprites.tick_effects();
+    sound_cues();
+}
+
+/// `debug_link_race`: both humans' bytes without a lockstep. With the
+/// autopilot on, slot 0 drives plainly and slot 1 with taps whichever
+/// machine is viewed, so the two views show the same race.
+fn fake_tick() void {
+    const w = &world.w;
+    const me: u1 = if (world.view == world.guest) 1 else 0;
+    var in: [2]world.Buttons = undefined;
+    for (0..2) |k| {
+        const s: u1 = @intCast(k);
+        const h = w.humans[s];
+        var b = ai.drive_human(&w.machines[h], h);
+        if (s == 1) {
+            var r = w.tick *% 2_654_435_761 +% 77;
+            r ^= r >> 15;
+            if (r % 53 == 0) b.left = !b.left;
+            if (r % 89 == 0) b.right = !b.right;
+        }
+        if (s == me and !autopilot) b = link_race.buttons_of(link_byte());
+        in[s] = b;
+    }
+    sim.simulate_humans(in);
+}
+
+/// A link race frame (docs/LOCKSTEP.md): pump, submit this frame's byte,
+/// step one tick if both bytes are here, draw, then pump and retry until
+/// 14 ms into the frame. Once the World is finished no input reaches it
+/// (finished humans drive on their AI), so each badge runs it on alone.
+fn link_race_frame() void {
+    const w = &world.w;
+    pump_top();
+    if (!fake_link and lnk.state() == .desync) return end_desync();
+    if (fake_link and fake_notice == 3) return end_desync();
+    const me = &w.machines[world.view];
+    if (!fake_link and lnk.paused and !me.finished) {
+        pause_list = .{ .count = 3 };
+        go(.pause);
+        return link_pause_frame();
+    }
+    var ticked = false;
+    if (w.phase == .finished) {
+        sim.simulate_humans(.{ .{}, .{} });
+        ticked = true;
+        after_tick();
+    } else if (fake_link) {
+        fake_tick();
+        ticked = true;
+        after_tick();
+    } else {
+        const byte = link_byte();
+        lnk.submit(cart.micros_since_boot(), byte);
+        last_byte = byte;
+        ticked = lnk.step(w);
+        if (ticked and !lnk.paused) after_tick();
+    }
+    // This badge's human home: its results follow (the race may go on
+    // for the partner; the results keep the lockstep running).
+    if (me.finished) {
+        finished_ticks += 1;
+        if (finished_ticks >= results_after or input.pressed(.start)) go(.results);
+    }
+    draw_race();
+    link_notices();
+    pump_loop(&ticked);
+    if (!ticked) link_waits += 1;
+}
+
+/// WAITING FOR PEER while the partner's bytes are late; PEER LEFT, AI
+/// DRIVING for a while once it has gone (not if its machine had finished).
+fn link_notices() void {
+    if (fake_link) return link_ui.draw_notice(switch (fake_notice) {
+        1 => .waiting,
+        2 => .peer_left,
+        else => .none,
+    }, .unplugged, frame);
+    const st = lnk.state();
+    if (st == .peer_left and !left_shown) {
+        left_shown = true;
+        const peer = world.w.humans[lnk.local_slot() ^ 1];
+        if (peer != world.no_human and !world.w.machines[peer].finished) left_note = tuning.link_left_note;
+    }
+    const k: link_ui.Notice = if (st == .waiting) .waiting else if (left_note > 0) .peer_left else .none;
+    left_note -|= 1;
+    link_ui.draw_notice(k, lnk.left, frame);
+    if (lnk.paused and screen == .race) hud.centered("PEER PAUSED", 20, hud.white);
+}
+
+/// The shared pause: either badge's Start paused both on one tick. Only
+/// Start reaches the race while paused (it resumes both); RESUME or B
+/// sends a Start edge; QUIT leaves (the partner's AI takes this machine).
+/// The lockstep's ticks run on, without the World.
+fn link_pause_frame() void {
+    pump_top();
+    if (lnk.state() == .desync) return end_desync();
+    var byte = link_byte() & link_race.bit_start;
+    if (resume_pending) {
+        if (last_byte & link_race.bit_start != 0) {
+            byte = 0;
+        } else {
+            byte = link_race.bit_start;
+            resume_pending = false;
+        }
+    }
+    lnk.submit(cart.micros_since_boot(), byte);
+    last_byte = byte;
+    var ticked = lnk.step(&world.w);
+    if (ticked and !lnk.paused) after_tick();
+    draw_race();
+    cart.rect(.{ .x = 24, .y = 30, .width = 112, .height = 58, .fill_color = hud.anti_black });
+    menu_nav(&pause_list);
+    const sound_item: []const u8 = if (sound.enabled) "SOUND: ON" else "SOUND: OFF";
+    menu.draw_list("PAUSED", &.{ "RESUME", "QUIT", sound_item }, &pause_list, 34);
+    if (input.pressed(.b)) resume_pending = true;
+    if (input.pressed(.a)) {
+        sound.menu_confirm();
+        switch (pause_list.cursor) {
+            0 => resume_pending = true,
+            1 => return leave_link(),
+            else => {
+                sound.enabled = !sound.enabled;
+                if (!sound.enabled) sound.stop();
+            },
+        }
+    }
+    if (!lnk.paused) go(.race);
+    link_notices();
+    pump_loop(&ticked);
+}
+
+/// The link results: both humans. The lockstep keeps running underneath
+/// while the partner still races (its row updates); A goes back to the
+/// lobby on this badge (the partner, if still racing, sees PEER LEFT with
+/// this badge's machine already home).
+fn link_results_frame() void {
+    const w = &world.w;
+    pump_top();
+    var ticked = true;
+    if (w.phase != .finished and !desynced) {
+        if (fake_link) {
+            fake_tick();
+        } else if (lnk.state() == .desync) {
+            desynced = true;
+        } else {
+            lnk.submit(cart.micros_since_boot(), 0);
+            ticked = lnk.step(w);
+        }
+    }
+    results.draw_link(screen_frames, if (world.view == world.guest) 1 else 0, desynced);
+    if (input.pressed(.a) or (input.pressed(.start) and !input.held(.select))) {
+        sound.menu_confirm();
+        return leave_link();
+    }
+    pump_loop(&ticked);
+}
+
+/// A desync (the Worlds' hashes differ; `step` has stopped): the results
+/// with DESYNC over them, then the lobby.
+fn end_desync() void {
+    desynced = true;
+    go(.results);
+    results.draw_link(screen_frames, if (world.view == world.guest) 1 else 0, true);
+}
+
+/// Leave the link race (QUIT, the results, after a desync): the partner
+/// hears it (its AI takes this machine if it still races), back to the
+/// lobby.
+fn leave_link() void {
+    if (!fake_link) lnk.leave(cart.micros_since_boot());
+    linked = false;
+    fake_link = false;
+    fake_notice = 0;
+    desynced = false;
+    link_ready = false;
+    world.view = world.player;
+    hud.show_snapshot = true;
+    go(.lobby);
+}
+
+/// `debug_link_view` k: 1 searching, 2 the host's lobby, 3 the guest's,
+/// 4 another cart, 5 the host with both ready (START: GO), 6 the guest
+/// ready, 7 no link (the simulator's own state).
+fn fake_lobby() link_ui.View {
+    const host = fake_view != 3 and fake_view != 6;
+    return switch (fake_view) {
+        1 => .{ .state = .searching },
+        4 => .{ .state = .wrong_cart, .partner_app = 'G' },
+        7 => .{ .state = .offline },
+        else => .{
+            .state = .lobby,
+            .role = if (host) .host else .guest,
+            .cable = if (host) 1 else 2,
+            .track = lobby_track,
+            .pick = link_pick,
+            .ready = link_ready or fake_view >= 5,
+            .peer_pick = if (host) 3 else 0,
+            .peer_ready = fake_view >= 5,
+            .can_go = host and fake_view >= 5,
+        },
+    };
 }
 
 // --- Overlay and debug --------------------------------------------------------------
@@ -629,6 +1053,14 @@ comptime {
         @export(&debug_replay_max, .{ .name = "debug_replay_max" });
         @export(&debug_set_machine, .{ .name = "debug_set_machine" });
         @export(&debug_machine, .{ .name = "debug_machine" });
+        @export(&debug_link_view, .{ .name = "debug_link_view" });
+        @export(&debug_link_race, .{ .name = "debug_link_race" });
+        @export(&debug_link_notice, .{ .name = "debug_link_notice" });
+        @export(&debug_link_state, .{ .name = "debug_link_state" });
+        @export(&debug_linked, .{ .name = "debug_linked" });
+        @export(&debug_view, .{ .name = "debug_view" });
+        @export(&debug_link_waits, .{ .name = "debug_link_waits" });
+        @export(&debug_human_lap, .{ .name = "debug_human_lap" });
     }
 }
 
@@ -755,6 +1187,65 @@ fn debug_set_machine(n: u32) callconv(.c) void {
 }
 fn debug_machine() callconv(.c) u32 {
     return sim.player_character;
+}
+/// --call debug_link_view:K shows a made-up LINK RACE lobby (the
+/// simulator's link is offline): 1 searching, 2 the host's lobby, 3 the
+/// guest's, 4 another cart, 5 the host with both ready, 6 the guest
+/// ready, 7 no link. The lobby's controls work on it (the host's track
+/// and machine rows, A ready); 0 back to the real one.
+fn debug_link_view(k: u32) callconv(.c) u32 {
+    fake_view = k;
+    if (screen != .lobby) open_lobby();
+    return k;
+}
+/// --call debug_link_race:K starts a made-up two-human link race in the
+/// simulator (no lockstep: both humans' bytes are made here), K bit 0 =
+/// the view (0 the host's machine 0, 1 the guest's machine 1), K >> 1 =
+/// the track (`track.tracks` order). The host drives the Anteater, the
+/// guest BACKPROP. With `debug_set_autopilot:1` both views show the same
+/// race. Its results show both humans, A to the (made-up) lobby.
+fn debug_link_race(k: u32) callconv(.c) u32 {
+    if (!lnk_started) {
+        lnk = Net.init(link.Badge.init(.{}, link_race.app_id, cart.rand()));
+        lnk_started = true;
+    }
+    if (fake_view == 0) fake_view = 2;
+    lobby_track = @intCast((k >> 1) % track.tracks.len);
+    const rules = [1]u8{lobby_track};
+    prepare_race(link_race.track_of(rules));
+    link_race.reset(&world.w, rules, .{ sim.player_character, 3 }, 0x5EED_0001);
+    world.view = link_race.machine_of(@intCast(k & 1));
+    fake_link = true;
+    begin_link_race();
+    return world.view;
+}
+/// --call-at T debug_link_notice:K over a made-up link race: 1 WAITING
+/// FOR PEER, 2 PEER LEFT, AI DRIVING, 3 a desync (the results with the
+/// DESYNC band), 0 none.
+fn debug_link_notice(k: u32) callconv(.c) u32 {
+    fake_notice = k;
+    return k;
+}
+/// lockstep.State: 0 offline (the simulator), 1 searching, 2 wrong cart,
+/// 3 lobby, 4 racing, 5 waiting, 6 peer left, 7 desync; 0xFF before
+/// LINK RACE first opened.
+fn debug_link_state() callconv(.c) u32 {
+    return if (lnk_started) @backingInt(lnk.state()) else 0xFF;
+}
+fn debug_linked() callconv(.c) u32 {
+    return @as(u32, @intFromBool(linked)) | (@as(u32, @intFromBool(fake_link)) << 1);
+}
+/// The machine the camera and HUD follow (0 solo and the host, 1 the guest).
+fn debug_view() callconv(.c) u32 {
+    return world.view;
+}
+fn debug_link_waits() callconv(.c) u32 {
+    return link_waits;
+}
+/// Laps of human slot s's machine (0xFF without one).
+fn debug_human_lap(s: u32) callconv(.c) u32 {
+    const h = world.w.humans[s & 1];
+    return if (h == world.no_human) 0xFF else world.w.machines[h].lap;
 }
 /// Keyframe rebuilds (the slow restore path) since the race started.
 fn debug_rebuilds() callconv(.c) u32 {

@@ -143,6 +143,8 @@ fn rank_text(rank: u8) []const u8 {
 pub var snapshot_ticks: u32 = 0;
 pub var snapshot_max: u32 = 180;
 pub var rewinding: bool = false;
+/// The snapshot bar is drawn (not in a link race: no rewind there).
+pub var show_snapshot: bool = true;
 
 /// Every other scanline black over the whole frame (the rewind dim).
 pub fn dim_scanlines() void {
@@ -176,8 +178,10 @@ pub fn draw() void {
     // Overclock ready mark beside the bar when the bar can pay for one.
     if (m.thermal >= tuning.thermal_overclock_min and m.boost == 0) text("OC", margin + 42, 110, cyan);
     // The snapshot bar (cyan) under the thermal bar; `<<` blinks while rewinding.
-    draw_bar(margin, 118, @intCast(snapshot_ticks), @intCast(snapshot_max), cyan);
-    if (rewinding and (w.tick / 4) % 2 == 0) text("<<", margin + 42, 116, cyan);
+    if (show_snapshot) {
+        draw_bar(margin, 118, @intCast(snapshot_ticks), @intCast(snapshot_max), cyan);
+        if (rewinding and (w.tick / 4) % 2 == 0) text("<<", margin + 42, 116, cyan);
+    }
     draw_minimap();
     draw_message();
 }
