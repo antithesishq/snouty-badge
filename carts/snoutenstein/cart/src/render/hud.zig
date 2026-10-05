@@ -75,7 +75,8 @@ pub fn draw_bar(s: *const state.GameState) void {
 
     // x 32..63: ammo icon + count (swatter: a dash).
     switch (p.weapon) {
-        .swatter => text_in("-", ammo_x, 32, mid_y, grey),
+        .swatter, .gc => text_in("-", ammo_x, 32, mid_y, grey),
+        .fuzzer, .fork_bomb, .ship_it => text_in("?", ammo_x, 32, mid_y, grey), // M9: Track B
         .zapper, .spray, .debugger => {
             const icon: u32, const n: u8 = switch (p.weapon) {
                 .zapper => .{ icon_zapper, p.ammo_zapper },

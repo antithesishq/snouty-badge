@@ -26,6 +26,7 @@ fn has_ammo(p: *const state.Player) bool {
         .zapper => p.ammo_zapper > 0,
         .spray => p.ammo_spray > 0,
         .debugger => p.ammo_debugger > 0,
+        .fuzzer, .fork_bomb, .ship_it, .gc => false, // M9: Track C
     };
 }
 

@@ -1455,6 +1455,137 @@ hardware check.
   badges; the default delay and stall-drop time from that; the feel of
   16 in Data Hall.
 
+## M9 Deathmatch arsenal (planned 2026-10-05, branch stein/dm-arsenal off stein/mp 29c30ce7)
+
+Adrian's request, 2026-10-05:
+"replace the 'fragged' message with 'Deleted' and replace the fall-over dead
+animation with a blue cyber warp-out. Also, mix up the deathmatch maps with
+more weapons that spawn in rotation around fix points with respawn delay
+after pickup a-la quake. Add an automatic weapon, a thrown grenade with
+time'd explosion, a rocket launcher, and a button-hold melee weapon,
+sticking to theme with them all. The best gun in the singleplayer (the one
+you get near the end / from a hidden secret) should be hidden behind a
+secret wall and have a longer respawn delay."
+
+Deathmatch only (M7 cable, M8 party, bots). The campaign stays bit-identical:
+GameState 1,376 B, `state.Player` unchanged, campaign demo hash and DEMO OK
+unchanged, campaign bench unchanged. Built on top of M8 (stein/mp), handed
+to the M8 session (exedev-64 [5dbf8e]), which merges it into stein/mp and
+then `party`. It reaches main when party does.
+
+### The arsenal (defaults, names open to Adrian)
+
+Damage to players is in bug units times `pvp_scale` (6), as for the
+existing weapons; 100 HP.
+
+| # | Weapon | Fires | Ammo |
+|---|---|---|---|
+| 0 | Swatter | as now (tap melee) | none |
+| 1 | Zapper | as now | 40 at spawn |
+| 2 | Bug spray | as now | spray cans |
+| 3 | Debugger | as now (splash bolt). Best gun: one pad behind a secret wall per arena, 60 s respawn | cartridges |
+| 4 | **FUZZER** (automatic) | hold A: a hitscan shot every 5 ticks (12/s), +-4 deg jitter from the World PRNG, 1 dmg (6 HP) | 50 per pickup, max 150 |
+| 5 | **FORK BOMB** (thrown grenade) | A throws it 0.12 cells/tick, slows with friction, bounces off walls and doors, explodes after a 90-tick fuse (it blinks faster as it runs out) for up to 15 dmg (90 HP) falling off to 0 at 2 cells; hurts the thrower too | 2 per pickup, max 6 |
+| 6 | **SHIP IT** (rocket launcher) | a rocket at 0.25 cells/tick, explodes on a wall, door or body for up to 16 dmg (96 HP) direct, splash falloff to 0 at 1.75 cells; hurts the shooter; 50-tick cooldown | 5 per pickup, max 20 |
+| 7 | **GARBAGE COLLECTOR** (hold melee) | hold A: spins up for 15 ticks, then every 4 ticks shreds the nearest foe within 1.0 cell in front for 2 dmg (12 HP); walking is 30% slower while it spins; releasing A spins it down | none (the pickup is the weapon) |
+
+Naming: Fuzzer and Fork Bomb are software-testing jokes in the same family as
+the bugs cart's crates; "Ship it" is the rocket (deploy straight to prod);
+Garbage Collector deletes what nothing references any more (and nods to the
+GCP racer). Kill feed: "DELETED BY <name>", "YOU DELETED <name>",
+"SELF-DELETED -1", "EATEN BY BUGS" stays. The score column stays "FRAGS".
+
+Weapon switching stays Select (cycles owned weapons with ammo, now up to
+8). Nothing is displaced: A fires every weapon (tap or hold).
+
+### Weapon pads (Quake-style rotation)
+
+- New legend `@` = a weapon pad. Each pad shows one weapon at a time from
+  the rotation FUZZER, FORK BOMB, SHIP IT, GARBAGE COLLECTOR, BUG SPRAY,
+  starting at (pad index) mod 5, so neighbouring pads differ. Walking over
+  it takes the weapon (or its ammo if already owned); the pad stays empty
+  for 15 s (900 ticks) and then shows the next weapon in its rotation.
+  Deterministic, World-only.
+- The existing `$` spray cans in DM arenas become `@` pads; hotfixes `+`
+  and charges `%` stay fixed (20 s as now).
+- The Debugger: `&` in a DM arena is the Debugger pad, never rotates,
+  respawns after 60 s (3,600 ticks). Every DM arena hides it behind a
+  secret wall `X` (bump to open, stays open for the match).
+- Pads per arena: Server Room 5 `@` + 1 hidden `&`; Build Farm DM 6 `@` +
+  1 hidden `&`; Data Hall 10 `@` + 2 hidden `&` (north and south recesses
+  get `X` faces). Spawn counts unchanged (6 / 8 / 16), check_level passes.
+
+### Death: the blue cyber warp-out
+
+- Rival view: instead of the fall-over sprite (rival cell 4), the dead
+  player's standing sprite dissolves in a blue warp over ~0.6 s: rows tint
+  to cyan/blue, slice into horizontal scanlines that shear sideways and
+  stretch upward, collapse into a thin vertical beam, then a few rising
+  blue pixels and gone. A short reverse (beam opening into the player) on
+  respawn during the first 20 ticks of spawn grace = warp-in.
+- Own view: the dead view turns blue (not red/dark) with a scanline
+  dissolve sweeping the view, "DELETED" banner, then "RESPAWN IN n".
+- Render-only, driven by `Match.dead[i]` / `grace` countdowns, no new state.
+
+### State (constraints from the M8 owner)
+
+- `state.Weapon` gains fuzzer=4, fork_bomb=5, ship_it=6, gc=7 (still u8).
+- Per-slot arrays in `state.Match` (padding-free, hashed raw): ammo_fuzzer,
+  ammo_bomb, ammo_rocket [16]u8; owned [16]u8 (bit per new weapon);
+  gc_spin [16]u8; pad_item [32]u8 (current weapon on each pickup slot).
+- DM projectile pool in Match (GameState.projectiles is the campaign pool
+  and must not grow): 32 entries of {x, y, vx, vy: Fixed; kind, ttl/fuse,
+  owner, flags: u8} = 640 B. Budget about 1 KB of Match growth total;
+  dm_net_test's World < 2560 assert raised with a reason if needed.
+- Rules byte 1 bits 2-7 are free; not used by default (the arsenal is
+  always on in DM).
+- match.G.version stays 1 (nothing at 1 has shipped); match.GN unchanged.
+
+### Tracks (Opus agents, one shared worktree, disjoint files, no commits)
+
+Lead pre-work (done): state.zig additions (Match 812 -> 1,564 B, World
+2,940; size asserts in match_party_test / dm_net_test raised), levels
+`PickupKind.pad` + legend `@`, new `arsenal.zig` with the constants and
+function signatures (stubs), new weapon arms in the exhaustive switches.
+Baseline (`size -A`, 29c30ce7): .text 128,852 + .data 7,944, .bss 107,200.
+
+- **Track A, sim** (`arsenal.zig`, `match.zig`, `projectiles.zig` only if
+  shared helpers are needed; campaign code paths untouched): DM weapon fire
+  (fuzzer, fork bomb, ship it, GC hold), the DM projectile pool, splash and
+  frag credit, pad rotation and timers, Debugger 60 s, select cycling over
+  owned weapons, host tests (each weapon frags as tuned, self-damage,
+  rotation order, Debugger timer, determinism of a 16-bot match).
+- **Track B, render** (`render/sprites.zig`, `render/weapon.zig`,
+  `render/hud.zig`, new `render/fx.zig`): pad and pickup sprites for the 4
+  new weapons, flying fork bomb / rocket / explosion sprites, first-person
+  view models for the 4 new weapons (GC spinning while held), HUD ammo for
+  the new weapons, the warp-out / warp-in and the blue death view.
+  Code-drawn, small (code size is the binding budget).
+- **Track C, levels + bot** (`level_parse.zig` `@`, the three DM .txt,
+  gen.zig via tools/gen_levels.sh, `bot.zig`): pads and secret Debugger
+  alcoves, bots that pick weapons by range (GC and swatter close, ship it
+  mid, fuzzer/zapper any, fork bomb when a foe is around a corner or
+  close), walk to visible pads when unarmed.
+- **Lead after**: kill feed text "DELETED" (deathmatch.zig /
+  render/scoreboard.zig, after M8 integration), check.sh + scripted runs,
+  bench_m8.sh (<12 ms worst with 16 bots), campaign bench unchanged,
+  size report, preview GIF, SPEC/PLAN status, hand-off to [5dbf8e].
+
+### Gates
+
+zig build test-stein (incl. dm_net_test, match_party_test),
+carts/snoutenstein/tools/check.sh, tools/party_e2e.sh, campaign demo hash
+unchanged, bench_m8.sh < 12 ms worst, campaign bench unchanged, .text
+reported against the 140 KB budget (and the real RAM ceiling) with
+options if over.
+
+### Deferred questions (defaults taken)
+
+1. Weapon names and numbers above.
+2. Secret walls stay open once found (as in the campaign).
+3. The rotation is the same in every arena; no lobby toggle for the arsenal.
+4. "FRAGS" stays the score name; only the kill messages say DELETED.
+
 ## Status
 
 - 2026-09-26: M0 scaffold committed. M1 plan written; four tracks launched.

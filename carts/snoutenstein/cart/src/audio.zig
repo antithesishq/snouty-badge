@@ -268,6 +268,7 @@ pub fn tick(s: *const state.GameState, level: *const levels.Level) void {
             .zapper => .zapper,
             .spray => .spray,
             .debugger => .debugger,
+            .fuzzer, .fork_bomb, .ship_it, .gc => null, // M9: deathmatch only
         } else null;
         if (ev) |e| play(e);
 

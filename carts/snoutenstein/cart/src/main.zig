@@ -657,6 +657,7 @@ fn debug_ammo() callconv(.c) u32 {
         .zapper => game.player.ammo_zapper,
         .spray => game.player.ammo_spray,
         .debugger => game.player.ammo_debugger,
+        .fuzzer, .fork_bomb, .ship_it, .gc => 0, // M9: deathmatch only
     };
 }
 fn debug_level() callconv(.c) u32 {

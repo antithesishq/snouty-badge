@@ -102,6 +102,11 @@ pub fn fire_rate(w: state.Weapon) u8 {
         .zapper => 12,
         .spray => 36,
         .debugger => 48,
+        // M9 deathmatch arsenal (`arsenal.zig` fires them).
+        .fuzzer => 5,
+        .fork_bomb => 40,
+        .ship_it => 50,
+        .gc => 4,
     };
 }
 
@@ -367,6 +372,8 @@ pub fn apply_pickup(p: *state.Player, kind: levels.PickupKind) void {
                 p.weapon = .debugger;
             }
         },
+        // M9: weapon pads are deathmatch only (`arsenal.take_pad`).
+        .pad => {},
     }
 }
 
@@ -461,6 +468,8 @@ fn has_ammo(p: *const state.Player, w: state.Weapon) bool {
         .zapper => p.ammo_zapper > 0,
         .spray => p.has_spray and p.ammo_spray > 0,
         .debugger => p.has_debugger and p.ammo_debugger > 0,
+        // M9 arsenal: never in the campaign (`arsenal.zig` cycles them in a match).
+        .fuzzer, .fork_bomb, .ship_it, .gc => false,
     };
 }
 
@@ -473,7 +482,7 @@ fn next_weapon(p: *const state.Player) state.Weapon {
             .swatter => .zapper,
             .zapper => .spray,
             .spray => .debugger,
-            .debugger => .swatter,
+            .debugger, .fuzzer, .fork_bomb, .ship_it, .gc => .swatter,
         };
         if (has_ammo(p, w)) return w;
     }
@@ -547,6 +556,8 @@ pub fn update_weapon(s: *GameState, level: *const Level, b: state.Buttons, shot:
             s.last_shot = s.tick;
             _ = projectiles.spawn_tagged(s, p.x, p.y, p.angle, projectiles.kind_debug, if (shot) |r| r.tag else 0);
         },
+        // M9 arsenal: `arsenal.update` fires these in a match.
+        .fuzzer, .fork_bomb, .ship_it, .gc => return,
     }
     if (shot) |r| r.fired = true;
     p.fire_cooldown = fire_rate(p.weapon);

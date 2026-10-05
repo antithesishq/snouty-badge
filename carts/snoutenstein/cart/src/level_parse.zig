@@ -129,7 +129,7 @@ pub fn parse(out: *Parsed, src: []const u8, default_wall: u8) Error!void {
                     };
                     if (x + 1 < width) x += 1; // the arrow cell is floor
                 },
-                'c', 'i', 'g', '+', '%', '$', '*', '&' => {
+                'c', 'i', 'g', '+', '%', '$', '*', '&', '@' => {
                     if (out.pickup_count >= state.max_pickups) return error.TooManyPickups;
                     const kind: PickupKind = switch (ch) {
                         'c' => .key_coral,
@@ -139,6 +139,7 @@ pub fn parse(out: *Parsed, src: []const u8, default_wall: u8) Error!void {
                         '%' => .charge,
                         '$' => .spray_can,
                         '*' => .battery,
+                        '@' => .pad,
                         else => .debugger,
                     };
                     out.pickups[out.pickup_count] = .{ .x = xb, .y = yb, .kind = kind };
@@ -324,7 +325,7 @@ test "levels/gen.zig matches the .txt sources" {
 test "parse errors" {
     var p: Parsed = undefined;
     try testing.expectError(error.TwoStarts, parse(&p, "1111\n1S>1\n1S>1\n1111\n", 0));
-    try testing.expectError(error.UnknownChar, parse(&p, "1111\n1S>1\n1.@1\n1111\n", 0));
+    try testing.expectError(error.UnknownChar, parse(&p, "1111\n1S>1\n1.~1\n1111\n", 0));
     try testing.expectError(error.NoStart, parse(&p, "1111\n1..1\n1111\n", 0));
     try testing.expectError(error.BadStartArrow, parse(&p, "11111\n1S..1\n11111\n", 0));
 }
