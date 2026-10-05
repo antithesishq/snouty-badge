@@ -21,7 +21,9 @@ pub const tile_count = 128;
 pub const tiles_bytes = tile_count * 64;
 pub const pal_bytes = 256 * 2;
 pub const horizon_bytes = 12352;
-pub const center_bytes = 256 * 8;
+/// 256 centerline samples x `sample_bytes`.
+pub const sample_bytes = 6;
+pub const center_bytes = 256 * sample_bytes;
 
 /// Tile attributes (attr.bin values; tools/leagues.py A_*).
 pub const Attr = enum(u8) {
@@ -45,14 +47,27 @@ pub const Attr = enum(u8) {
     _,
 };
 
+/// A league's art. The tiles and the horizon are stored packed (the map
+/// format, `unpack`) and unpacked into one shared RAM slot (`art_tiles`,
+/// `art_horizon`) when a track of the league is selected, which is the
+/// track-pack design of SPEC 19.2 (one RAM slot, the renderer reading
+/// through the same slices) and saves about 12 KB of the RAM cart over
+/// two raw leagues (M3). `tiles` and `horizon` are the slot: they hold
+/// this league's art only after `select` (or `load_art`) ran for it, so
+/// call `track.select(t)` before `render.set_track(t)`.
 pub const League = struct {
     name: []const u8,
-    /// `tile_count` tiles x 64 bytes, each 8x8 row-major palette indices.
-    tiles: []const u8,
+    /// Packed `tiles` and `horizon` (tools/build_tracks.py).
+    tiles_packed: []const u8,
+    horizon_packed: []const u8,
+    /// `tile_count` tiles x 64 bytes, each 8x8 row-major palette indices
+    /// (the RAM slot).
+    tiles: []const u8 = &art_tiles,
     /// 256 x u16 RGB565 little-endian; entry 0 is the fog colour.
     pal: []const u8,
-    /// Front 512x32 4 bpp, back 256x32 4 bpp, front palette 16 x u16, back palette 16 x u16.
-    horizon: []const u8,
+    /// Front 512x32 4 bpp, back 256x32 4 bpp, front palette 16 x u16, back
+    /// palette 16 x u16 (the RAM slot).
+    horizon: []const u8 = &art_horizon,
 
     pub fn pal_rgb565(self: *const League, i: usize) u16 {
         return std.mem.readInt(u16, self.pal[i * 2 ..][0..2], .little);
@@ -97,21 +112,26 @@ pub const Track = struct {
     map_packed: []const u8,
     /// `tile_count` attributes, one per tile index.
     attr: []const u8,
-    /// 256 centerline samples x 8 bytes.
+    /// 256 centerline samples x `sample_bytes` (`sample`).
     center: []const u8,
     /// Hazard records (`hazard_record` bytes each, at most
     /// `world.hazard_max`; `parse_hazards`): the generic kinds of SPEC
     /// 19.4 with this track's numbers. Empty for a track without hazards.
     feat: []const u8 = &.{},
 
+    /// Sample i (wrapping). Stored in 6 bytes (M3, the RAM budget): a u32
+    /// with x in bits 0..9, y in 10..19 and the tangent's top 12 bits in
+    /// 20..31 (so the tangent is a multiple of 16 turn units), then half
+    /// and flags.
     pub fn sample(self: *const Track, i: usize) Sample {
-        const b = self.center[(i & 255) * 8 ..][0..8];
+        const b = self.center[(i & 255) * sample_bytes ..][0..sample_bytes];
+        const v = std.mem.readInt(u32, b[0..4], .little);
         return .{
-            .x = std.mem.readInt(u16, b[0..2], .little),
-            .y = std.mem.readInt(u16, b[2..4], .little),
-            .tangent = std.mem.readInt(u16, b[4..6], .little),
-            .half = b[6],
-            .flags = b[7],
+            .x = @intCast(v & 1023),
+            .y = @intCast((v >> 10) & 1023),
+            .tangent = @intCast((v >> 20) << 4),
+            .half = b[4],
+            .flags = b[5],
         };
     }
 
@@ -131,6 +151,20 @@ pub const Track = struct {
 
 /// The selected track's unpacked map, map[y][x] (filled by `select`).
 pub var map_ram: [map_side * map_side]u8 = undefined;
+/// The RAM slot for the active league's art (`League.tiles`, `.horizon`)
+/// and the league whose art it holds.
+pub var art_tiles: [tiles_bytes]u8 = undefined;
+pub var art_horizon: [horizon_bytes]u8 = undefined;
+pub var art_league: ?*const League = null;
+
+/// Unpack `l`'s tiles and horizon into the RAM slot unless they are there
+/// already (~20 K byte copies when the league changes).
+pub fn load_art(l: *const League) void {
+    if (art_league == l) return;
+    unpack(l.tiles_packed, &art_tiles);
+    unpack(l.horizon_packed, &art_horizon);
+    art_league = l;
+}
 /// The track whose map is in `map_ram`. Meaningful once `select` has run.
 pub var current: *const Track = &landfill_loop;
 
@@ -237,10 +271,13 @@ inline fn wrap_px(d: i32) i32 {
     return ((d + 512) & 1023) - 512;
 }
 
-/// Unpack `t`'s map into `map_ram`, find its crate spawns and hazards and
+/// Load `t`'s league art into the RAM slot (when the league changes),
+/// unpack its map into `map_ram`, find its crate spawns and hazards and
 /// make it `current`. Call at race start (sim.reset), before any tile
-/// lookup on `t`; ~16 K byte copies.
+/// lookup on `t` and before `render.set_track(t)`; ~16 K byte copies
+/// (~36 K when the league changes).
 pub fn select(t: *const Track) void {
+    load_art(t.league);
     unpack_map(t.map_packed, &map_ram);
     crate_n = find_crates(t, &crate_spots);
     hazard_n = parse_hazards(t, &hazard_specs);
@@ -283,6 +320,11 @@ pub fn find_crates(t: *const Track, out: *[world.crate_max]CrateSpot) u8 {
 /// The stream is generator output checked by the tests; a malformed one is
 /// caught by safety checks in Debug builds only.
 pub fn unpack_map(src: []const u8, dst: *[map_side * map_side]u8) void {
+    unpack(src, dst);
+}
+
+/// `unpack_map` for any output length (the league art too).
+pub fn unpack(src: []const u8, dst: []u8) void {
     var i: usize = 0;
     var o: usize = 0;
     while (o < dst.len) {
@@ -315,16 +357,16 @@ pub fn unpack_map(src: []const u8, dst: *[map_side * map_side]u8) void {
 
 pub const dumps = League{
     .name = "THE DUMPS",
-    .tiles = @embedFile("gen/tracks/dumps_tiles.bin"),
+    .tiles_packed = @embedFile("gen/tracks/dumps_tiles.bin"),
     .pal = @embedFile("gen/tracks/dumps_pal.bin"),
-    .horizon = @embedFile("gen/tracks/dumps_horizon.bin"),
+    .horizon_packed = @embedFile("gen/tracks/dumps_horizon.bin"),
 };
 
 pub const runoff = League{
     .name = "THE RUNOFF",
-    .tiles = @embedFile("gen/tracks/runoff_tiles.bin"),
+    .tiles_packed = @embedFile("gen/tracks/runoff_tiles.bin"),
     .pal = @embedFile("gen/tracks/runoff_pal.bin"),
-    .horizon = @embedFile("gen/tracks/runoff_horizon.bin"),
+    .horizon_packed = @embedFile("gen/tracks/runoff_horizon.bin"),
 };
 
 const dumps_attr = @embedFile("gen/tracks/dumps_attr.bin");
@@ -399,6 +441,7 @@ pub const leagues = [_]*const League{ &dumps, &runoff };
 pub const tracks_per_league = 3;
 
 fn expect_league_well_formed(l: *const League) !void {
+    load_art(l);
     try std.testing.expectEqual(@as(usize, tiles_bytes), l.tiles.len);
     try std.testing.expectEqual(@as(usize, pal_bytes), l.pal.len);
     try std.testing.expectEqual(@as(usize, horizon_bytes), l.horizon.len);
@@ -427,7 +470,25 @@ test "every track and league is well formed" {
     for (tracks) |t| {
         try expect_league_well_formed(t.league);
         try expect_track_well_formed(t);
+        // select loaded the track's league art into the slot.
+        try std.testing.expect(art_league == t.league);
     }
+}
+
+test "league art: the slot holds the selected league's, unpacked from its packed bytes" {
+    select(&salt_pan_sprint);
+    const runoff_first = art_tiles[tiles_bytes - 64 ..][0..64].*;
+    const runoff_pal_entry = runoff.horizon_front_pal(15);
+    select(&landfill_loop);
+    try std.testing.expect(art_league == &dumps);
+    try std.testing.expect(dumps.horizon_front_pal(15) != runoff_pal_entry or !std.mem.eql(u8, &runoff_first, art_tiles[tiles_bytes - 64 ..][0..64]));
+    // The same league twice does not unpack again (the slot is a cache).
+    art_tiles[0] = 0xEE;
+    select(&monitor_dunes);
+    try std.testing.expectEqual(@as(u8, 0xEE), art_tiles[0]);
+    art_league = null;
+    select(&monitor_dunes);
+    try std.testing.expect(art_tiles[0] != 0xEE);
 }
 
 test "attribute lookups at known points of Landfill Loop" {

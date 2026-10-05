@@ -321,6 +321,9 @@ fn arm(w: *const World, i: usize, cr: *const Crew, b: *Input, curve: i32) void {
 /// A car behind on the line (SPEC 6.5), or, for a `drop_corners` crew, any
 /// car behind going into a corner.
 fn want_drop(w: *const World, i: usize, cr: *const Crew, curve: i32) bool {
+    // No mines on the grid: the field leaves the line first (M3: BOTNET's
+    // BIT ROT wrecked the human on the back row by tick 94 every race).
+    if (w.tick < tuning.ai_drop_grace) return false;
     const c = &w.cars[i];
     const lat_lim = if (cr.drop_wide) tuning.ai_drop_wide_lat else tuning.ai_drop_lat;
     for (&w.cars, 0..) |*o, j| {

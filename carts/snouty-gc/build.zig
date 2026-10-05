@@ -11,17 +11,11 @@ const common = @import("../../build/common.zig");
 /// This cart's directory, relative to the repository root that build.zig runs from.
 const dir = "carts/snouty-gc/";
 
-/// Generated data files embedded by the `assets` module (PLAN.md "Generated
-/// data formats"). Each becomes `assets.<name>: []const u8`. The
-/// `<track>_map.bin` files are packed (`track.unpack_map`).
+/// Generated data files embedded by the `assets` module. Each becomes
+/// `assets.<name>: []const u8`. Since M3 the league and track data live in
+/// cart/src/gen/tracks/, embedded by track.zig itself.
 const data_files = [_][]const u8{
     "font.bin",
-    "dumps_tiles.bin",
-    "dumps_pal.bin",
-    "dumps_horizon.bin",
-    "landfill_loop_map.bin",
-    "landfill_loop_attr.bin",
-    "landfill_loop_center.bin",
 };
 
 /// The RAM cart is the shipped artifact (XIP is a no-go on SYCL hardware,

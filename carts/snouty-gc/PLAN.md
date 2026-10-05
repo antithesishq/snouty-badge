@@ -1011,7 +1011,141 @@ main.
 
 ### M3 status
 
-(empty)
+- 2026-10-05: **Track A (content and mode simulation) DONE** on
+  `gc/spec`: the M3.0 interface (999ee5fc, above), the content and modes
+  (e8710a72), the RAM fit (323e4d38) and the attract and packet fixes
+  (ee1d5c38). New `hazards.zig` (the generic hazards and the service
+  bays), `gc_mode.zig` (mark and sweep, attract's script),
+  `content_test.zig`; the Runoff league in `tools/leagues.py`; five new
+  `.track` files; hooks in `sim.zig` (hazards after the contacts, the GC
+  rules after the ranks, `damage` tags only on weapon hits, `wreck`
+  collects a marked car, no lap limit in GC), `ai.zig` (`dodge_hazards`),
+  `pickups.zig` (ZERO-DAY tags; the packet fix), `track.zig` (track
+  table, hazard specs, the league art slot). Every number is in
+  `tuning.zig` ("Track hazards, service bays, modes") or, for each
+  hazard, in its track's data.
+- **Tracks** (lap px from the generator; the SNOUTY autopilot's 3 laps
+  with combat off, ticks, and its best lap):
+
+  | # | Track | League | Lap | 3 laps (best lap) | Crates | Hazards | Bay |
+  |---|---|---|---|---|---|---|---|
+  | 0 | LANDFILL LOOP | Dumps | 3,666 | 5,121 (1,624 = 27 s) | 10 | Sweeper past the ramp landing | west, right lane |
+  | 1 | MONITOR DUNES | Dumps | 3,646 | 5,484 (1,800) | 12 | Sweeper on the bottom straight | west, left lane |
+  | 2 | CATHODE FLATS | Dumps | 3,644 | 5,207 (1,681) | 12 | Sweeper on the east side | west, right lane |
+  | 3 | SALT PAN SPRINT | Runoff | 3,622 | 5,039 (1,641) | 12 | 3 vents (phases 0, 120, 60) | west, right lane |
+  | 4 | OUTFLOW CANYON | Runoff | 3,630 | 5,671 (1,854 = 31 s) | 6 | 2 vents in the narrows | west, right lane |
+  | 5 | COOLANT BASIN | Runoff | 3,613 | 5,005 (1,615) | 7 | vent on the top straight | west, left lane |
+
+  Characters: Monitor Dunes two dune runs (hills) and flowing bends;
+  Cathode Flats wide (half 60 to 70) with open pit edges on the start
+  straight (both sides), the east side and the M's notch, a ramp over a
+  pit; Salt Pan Sprint a fast C with a long tongue; Outflow Canyon narrow
+  (half 44) with a ribbed pipe tunnel and two vents where there is no
+  room to go round; Coolant Basin round two brine-pit basins (open on the
+  basin side, `pit_band 11`), a causeway with a ramp over a channel,
+  three coolant bands. Map previews `docs/<track>_preview.png` (vent
+  lanes orange from the mouth, Sweeper paths yellow with their parking
+  circles, crates white), in-cart views `docs/m3_tracks_race.png` (the
+  six tracks at four moments of an autopilot race, rendered with
+  gc/present's M2 presentation merged in a scratch worktree; hazards are
+  not drawn yet), `docs/runoff_tiles.png`, `docs/runoff_horizon.png`.
+- **The Runoff**: a pale polygon-cracked salt pan with brine pools,
+  stains and drain grates (calm on purpose), a dark graded-mud road with
+  tyre seams, rust-orange outflow pipes as walls (a pipe painter for
+  `paint_track_pieces`), salt-crust lips over teal-black brine pits,
+  ribbed pipe floor for tunnels; horizon of hyperboloid cooling towers
+  with steam plumes and blinking red rim LEDs (front entry 15) over a
+  flat salt horizon, the far datacenter halls in a hazy sky. The Dumps
+  sand is calmer (2x2 grains, lower contrast, fewer glints). Open edges
+  now drop into a drawn pit band in both leagues.
+- **Hazards** (SPEC 3.3, 19.4; generic, numbers in the `feat` records):
+  vents fire for 30 of 240 ticks after 40 of warning: 20 damage once a
+  firing and a 1.75 px/tick shove along the lane; the Sweeper (radius 18,
+  1.25 px/tick, period 600) waits, warns 60, crosses in about 160 ticks:
+  60 damage once a crossing, a 2 px/tick shove plus its own velocity, and
+  it pushes cars out of its body. Airborne cars pass over both. Service
+  bays repair 1 armor every 4 ticks. The AI reads the cycles: it slows to
+  reach a vent as the firing ends and passes behind the Sweeper (or
+  slows); KIDDIE ignores both (`heed_hazards`).
+- **GARBAGE COLLECTION** as specified (M3.0 above): the GC soak (20
+  seeded 6-AI races, every track) **ends with exactly one car every
+  time**, 5 collections each, in 4,811 to 6,488 ticks (mean 5,508, about
+  92 s), 0 to 6 tags a race, no car stuck over 600 ticks, pools within
+  caps. A GC race with the autopilot as the human ends only on one car.
+- **Attract**: `.mode = .attract` launches a KERNEL PANIC packet at the
+  leader in lap 2 (12 samples behind it, "fired" by the best-placed car
+  behind it: a `use` event); the leader is frozen in 6 of 6 seeded runs,
+  55 to 295 ticks later.
+- **Tests** (`zig build test-gc`): **97 pass** (77 before). New: hazard
+  cycles (blast and mover phases, the record decode), every track well
+  formed with hazards, crates and a bay, a vent hitting a parked car once
+  a firing with its shove and events (and not beside the lane, airborne),
+  the Sweeper hitting a stalled car once a crossing and pushing it out,
+  the bay repair rate, the AI waiting for a vent from 8 to 12 samples
+  out (KIDDIE hit every time), a combat soak on **every** track (4 seeded
+  races each: all finish, longest no-progress run 260 ticks, pools within
+  caps), the GC rules (first sweep marks the last car, the next collects
+  it, the grace, tags by weapon hit not by ram, a wreck while marked, the
+  survivor and the places 1 to 6), the GC soak, GC with a human,
+  attract, the packet over half a lap, determinism (a GC race twice, two
+  GC worlds interleaved with two humans on random inputs), the human
+  autopilot finishing a full combat race on every track (3 seeds each:
+  2.7 to 5.3 armor wrecks a race, as M2's 4 to 5).
+- **`@sizeOf(World)` = 2,508 B** (cap 2,560 kept).
+- **RAM**: gc/spec alone `.text` 141,780 + `.data` 7,356 + `.bss` 44,436
+  (+ 808 exidx/extab) = 194,380 B, 78 KB free. **Merged with gc/present
+  (4c7e2458, M2 presentation) in a scratch worktree: `.text` 202,920 +
+  `.data` 7,440 + `.bss` 51,332 + 948 = 262,640 B, only 11.3 KB free**
+  under the 274,176 B window less the 32 KB stack. The first merge
+  overflowed by about 1.4 KB, hence 323e4d38: the league tiles and
+  horizons are stored packed and unpacked into one RAM slot when the
+  league changes (SPEC 19.2's pack slot pulled forward; the renderer reads
+  the same slices), the backgrounds repeat a 32-tile wallpaper (packed
+  maps 3.4 to 4.3 KB, were 5.2 to 6.0), centerline samples take 6 bytes.
+  All league and track data is 30.7 KB packed. M4 (net) and M5 (garage,
+  career) need room: see deferred question 56.
+- **Bench**: gc/spec gate (`m0_race.json` re-recorded, 600 frames): mean
+  3.21 ms, worst 3.78 ms (frame 20, the race start), `--lcd` identical.
+  The busiest new track, integrated build: `tools/scripts/m3_outflow_race.json`
+  (1,500 frames: Start, Start, Down, Right x4, A at frame 26 on the
+  merged select's track row, then the autopilot's recorded drive round
+  Outflow Canyon's pipe tunnel and vents): **mean 3.14 ms, worst 5.26 ms**
+  (frame 26, the race start: the Runoff art and the map unpacked, ~36 K
+  byte copies), p95 3.95, `--lcd` identical. The script replays only on
+  the merged flow.
+- Gate: `tools/check.sh` green on `gc/spec` (build, test via test-gc,
+  check-float, tracks: 26 generated files byte-identical, preview, bench).
+- **For Track B** (presentation; nothing in main.zig is needed from me):
+  - **Data moved**: the league and track `.bin`s are in
+    `cart/src/gen/tracks/`, embedded by `track.zig`. Please drop the six
+    `dumps_*` / `landfill_loop_*` entries from `build.zig`'s `data_files`
+    and `git rm` those `assets/gen/` copies (stale, unreferenced).
+  - **League art slot**: `League.tiles`/`.horizon` are a RAM slot filled
+    by `track.select(t)` (or `track.load_art(league)`); call one before
+    `render.set_track(t)` on any screen that draws a floor or horizon
+    (the title over the Dumps: `track.select(&track.landfill_loop)`, as
+    `start()` already does).
+  - Draw the **Sweeper** at `World.hazards[k]` (`kind == .mover`; `x`,
+    `y`; body radius `track.hazard_specs[k].size` = 18 world px, so about
+    a 40 px sprite at the car's scale; `state` `warn` = beacons flashing
+    at its parking spot, `active` = crawling along `leg` 0 (A to B) or 1;
+    `blast` event when it starts). Its gates in the walls and the striped
+    crossing are floor tiles already.
+  - Draw the **vents**: mouth at `x0, y0` (a grille tile in the wall
+    already), lane along (`ux`, `uy`) for `len` px, `size` px either side
+    (a scorched grate band is painted); `warn` = glow or smoke at the
+    mouth, `active` = flame or steam along the lane; `blast` event when it
+    fires, `hazard_hit` (hazard, car, damage) for sparks and a hit note.
+  - **GC**: `World.gc` and the `mark` / `collect` events (M3.0 above);
+    a collected car is `!active` (hide it after the claw), its `rank` is
+    its place; the survivor `finished` with rank 1 and the phase
+    `finished`. `GC: freed X` on `collect`, `TAGGED!` on a `mark` with
+    cause `tag`.
+  - **Runoff**: no renderer change needed (the horizon's front entry 15
+    is the towers' red LEDs, blinking with Zero's swap; pale fog).
+  - HUD `LAP n/N` from `World.laps`; attract passes `.mode = .attract`;
+    GC `.mode = .gc`. `m0_race.json` was re-recorded on gc/spec's M0 menu
+    flow (Start, Start, A): re-record after the M3 menu lands.
 
 ## Deferred questions
 
@@ -1228,3 +1362,72 @@ Taken during M2 (Track B, pickup presentation):
     World (and the stress scene the track's crate cache, rebuilt by the
     next race); they are wasm exports or the `gc_stress` poke only, never
     reached in play.
+
+Taken during M3 (Track A, content and mode simulation; numbered 36 to 50
+on gc/spec, renumbered 55 to 69 at the merge with M2 Track B's 44 to 54):
+
+55. **Track data lives in `cart/src/gen/tracks/`**, embedded by
+    `track.zig` with `@embedFile`, because `build.zig` (whose `assets`
+    list a new track would need) is the presentation track's file; a new
+    track is now a `.track` file, a generator run and a line in
+    `track.tracks`. The stale `assets/gen` copies wait for build.zig.
+56. **RAM is the binding constraint**: merged with the M2 presentation
+    the cart has 11.3 KB left. Track A already packed the league art into
+    one RAM slot, made the backgrounds a 32-tile wallpaper and shrank the
+    samples. Further room, in order of cost: build the cart
+    `ReleaseSmall` for the sim only, or mark the big sim paths noinline
+    (`sim.simulate` is 32 KB with everything inlined); drop unused tile
+    slots (a 128-tile set holds ~100 tiles; the renderer reads 8 bpp);
+    the art sheets; the Perimeter league as a pack (SPEC 19). M4 and M5
+    should measure before adding.
+57. **Hazard numbers SPEC leaves open**: vent warning 40 ticks, lane half
+    width 10 px plus half a car, the shove 1.75 px/tick along the lane,
+    damage once a firing per car; Sweeper radius 18 px, 1.25 px/tick,
+    period 600 (10 s), warning 60, damage once a crossing, a 2 px/tick
+    shove plus its velocity, cars pushed out of its body (not into
+    walls). Airborne cars pass over both; HEISENBUG does not hide a car
+    from them (the machines are not looking); SUDO and respawn immunity
+    stop the damage, not the shove.
+58. **Hazard placement**: one per segment feature word, across the track
+    at the segment's middle on the 45-degree snapped tangent, walls
+    required on that segment; options per hazard in the `.track` word
+    (`vent:right,phase=120`). Turrets and crust stay reserved.
+59. **Service bays are lanes** (`bay:left` / `bay:right`, or the whole
+    segment), 1 armor every 4 ticks (SPEC), nothing with combat off.
+60. **AI hazard sense** reads the hazards' clocks exactly (no jitter);
+    waiting for a vent costs about a second. KIDDIE ignores hazards
+    ("read none of the docs"): about a third of all hazard hits in the
+    soaks are KIDDIE's.
+61. **GC sweep points** follow the race leader over the sector 2 line
+    and the start line (SPEC's "half lap": the sectors split the lap in
+    thirds, so the sweeps come at 2/3 and 3/3 of each lap); the first only
+    marks, so six cars take six sweeps, the leader's third lap.
+62. **GC tags**: any weapon hit by the marked car on a car still in the
+    race passes the mark (shots, the LANCE, drops it laid, damaging
+    pickups, ZERO-DAY), never rams or hazards, and only after the mark has
+    been carried 45 ticks (no instant tag-back). A tagging hit that wrecks
+    its victim collects the victim at once (the mark passed first).
+63. **GC details**: a collected car keeps its drops and shots in play;
+    there is no lap limit and no FINAL LAP; the AI's last-lap saves fire
+    once three cars are left; crate rolls use the rank among the cars
+    left (3rd of 3 rolls as 3rd, not 6th).
+64. **Attract's KERNEL PANIC** is launched on the line 12 samples behind
+    the leader at lap 2 sample 48, credited to the best-placed car behind
+    it, rather than handed to a car as a pickup (from the back of a
+    strung-out AI field the packet took 10 s or more and often fizzled on
+    a wrecked leader). It froze the leader in 6 of 6 seeded runs.
+65. **KERNEL PANIC packet fix** (an M2 bug): a target more than half a lap
+    ahead read as already passed, and the packet parked on the line until
+    the target lapped round to it.
+66. **AI grid truce**: no AI rear drops for 240 ticks after GO. BOTNET's
+    BIT ROT wrecked the human on the back row by tick 94 in every race.
+    The human autopilot is still wrecked 2.7 to 5.3 times a race (M2's
+    balance, left for Adrian's play test).
+67. **Pits are drawn**: off-track tiles within `pit_band` tiles (4, or 11
+    on Coolant Basin to fill its basins) of an open edge are void, so a
+    drop reads as one; walls in the Runoff are rust-orange pipes so the
+    edge reads against both the pale pan and the dark road.
+68. **Laps**: every built-in track runs 3 (`Track.laps`, `World.laps`).
+69. **Cathode Flats' open start straight** costs the AI field about 4
+    falls a race (dangerous by design; wall it if the play test says so).
+

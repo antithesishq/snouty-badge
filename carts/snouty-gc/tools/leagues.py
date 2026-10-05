@@ -392,43 +392,73 @@ def paint_dumps_tiles(P):
     return ts
 
 
-def paint_dumps_background(tmap, free, rng):
-    """Fill free (off-track, not edge) tiles: sand with ripples and glints,
+WALL_P = 32         # background wallpaper period in tiles (256 world px)
+
+
+def wallpaper(tmap, free, rng, paint_block, objects, plain):
+    """Fill the free tiles from one WALL_P x WALL_P block of background
+    (painted once by `paint_block(block, rng)`), repeated over the map. The
+    repeat (every 256 world px, under the fog) costs almost nothing in the
+    packed map, where per-tile noise cost about 3 KB a track (M3, the RAM
+    budget). A 2x2 object (`objects`: base tile ids) cut by the track is
+    dropped to the `plain` tile, so no half monitor sits by a wall."""
+    block = np.zeros((WALL_P, WALL_P), np.uint8)
+    paint_block(block, rng)
+    tiled = np.tile(block, (MAPN // WALL_P, MAPN // WALL_P))
+    tmap[free] = tiled[free]
+    for ty, tx in np.argwhere(free):
+        v = int(tmap[ty, tx])
+        for base in objects:
+            if base <= v < base + 4:
+                k = v - base
+                y0, x0 = ty - k // 2, tx - k % 2
+                ok = 0 <= y0 and 0 <= x0 and y0 + 2 <= MAPN and x0 + 2 <= MAPN and free[y0:y0 + 2, x0:x0 + 2].all()
+                if not ok:
+                    tmap[ty, tx] = plain
+
+
+def dumps_block(block, rng):
+    """One wallpaper block of the Dumps: sand with ripples and glints,
     scattered shards, keys, cables and board scrap, 2x2 monitors and heaps."""
-    for ty in range(MAPN):
-        for tx in range(MAPN):
-            if free[ty, tx]:
-                r = rng.random()
-                tmap[ty, tx] = DU_SAND_LT if r < 0.08 else DU_GLINT if r < 0.11 else DU_SAND
-    avail = free.copy()
+    n = block.shape[0]
+    for ty in range(n):
+        for tx in range(n):
+            r = rng.random()
+            block[ty, tx] = DU_SAND_LT if r < 0.08 else DU_GLINT if r < 0.11 else DU_SAND
+    avail = np.ones_like(block, bool)
 
     def fits(x, y, w, h):
-        return 0 <= x and 0 <= y and x + w <= MAPN and y + h <= MAPN and avail[y:y + h, x:x + w].all()
+        return 0 <= x and 0 <= y and x + w <= n and y + h <= n and avail[y:y + h, x:x + w].all()
 
-    for _ in range(70):  # monitor piles: heaps with monitors on and around them
+    for _ in range(5):  # monitor piles: heaps with monitors on and around them
         for _try in range(200):
-            x, y = rng.randrange(MAPN - 2), rng.randrange(MAPN - 2)
+            x, y = rng.randrange(n - 2), rng.randrange(n - 2)
             if fits(x, y, 2, 2):
-                tmap[y:y + 2, x:x + 2] = np.array([[DU_HEAP, DU_HEAP + 1], [DU_HEAP + 2, DU_HEAP + 3]])
+                block[y:y + 2, x:x + 2] = np.array([[DU_HEAP, DU_HEAP + 1], [DU_HEAP + 2, DU_HEAP + 3]])
                 avail[y:y + 2, x:x + 2] = False
                 for dx, dy in ((2, 0), (-2, 1), (1, 2), (0, -2)):
                     if rng.random() < 0.45 and fits(x + dx, y + dy, 2, 2):
                         xx, yy = x + dx, y + dy
-                        tmap[yy:yy + 2, xx:xx + 2] = np.array([[DU_MON, DU_MON + 1], [DU_MON + 2, DU_MON + 3]])
+                        block[yy:yy + 2, xx:xx + 2] = np.array([[DU_MON, DU_MON + 1], [DU_MON + 2, DU_MON + 3]])
                         avail[yy:yy + 2, xx:xx + 2] = False
                 break
-    for ty in range(MAPN):
-        for tx in range(MAPN):
+    for ty in range(n):
+        for tx in range(n):
             if avail[ty, tx]:
                 r = rng.random()
                 if r < 0.03:
-                    tmap[ty, tx] = DU_SHARDS
+                    block[ty, tx] = DU_SHARDS
                 elif r < 0.05:
-                    tmap[ty, tx] = DU_CABLE
+                    block[ty, tx] = DU_CABLE
                 elif r < 0.065:
-                    tmap[ty, tx] = DU_KEYS
+                    block[ty, tx] = DU_KEYS
                 elif r < 0.08:
-                    tmap[ty, tx] = DU_BOARD
+                    block[ty, tx] = DU_BOARD
+
+
+def paint_dumps_background(tmap, free, rng):
+    """Fill free (off-track, not edge) tiles with the Dumps wallpaper."""
+    wallpaper(tmap, free, rng, dumps_block, (DU_MON, DU_HEAP), DU_SAND)
 
 
 def paint_dumps_horizon(fog, rng):
@@ -620,34 +650,39 @@ def paint_runoff_tiles(P):
     return ts
 
 
-def paint_runoff_background(tmap, free, rng):
-    """Fill free tiles: the salt pan of polygon cracks (two 16x16 cells mixed
-    per 2x2 block), crust ridges, mineral stains, drain grates and 2x2 brine
-    pools."""
-    for by in range(0, MAPN, 2):
-        for bx in range(0, MAPN, 2):
+def runoff_block(block, rng):
+    """One wallpaper block of the Runoff: the salt pan of polygon cracks
+    (two 16x16 cells mixed per 2x2 block), crust ridges, mineral stains,
+    drain grates and 2x2 brine pools."""
+    n = block.shape[0]
+    for by in range(0, n, 2):
+        for bx in range(0, n, 2):
             base = RU_CRACK_B if rng.random() < 0.35 else RU_CRACK_A
             for k, (dy, dx) in enumerate(((0, 0), (0, 1), (1, 0), (1, 1))):
-                if free[by + dy, bx + dx]:
-                    tmap[by + dy, bx + dx] = base + k
-    avail = free.copy()
-    for _ in range(60):
+                block[by + dy, bx + dx] = base + k
+    avail = np.ones_like(block, bool)
+    for _ in range(4):
         for _try in range(200):
-            x, y = rng.randrange(MAPN - 2), rng.randrange(MAPN - 2)
+            x, y = rng.randrange(n - 2), rng.randrange(n - 2)
             if avail[y:y + 2, x:x + 2].all():
-                tmap[y:y + 2, x:x + 2] = np.array([[RU_POOL, RU_POOL + 1], [RU_POOL + 2, RU_POOL + 3]])
+                block[y:y + 2, x:x + 2] = np.array([[RU_POOL, RU_POOL + 1], [RU_POOL + 2, RU_POOL + 3]])
                 avail[max(0, y - 1):y + 3, max(0, x - 1):x + 3] = False
                 break
-    for ty in range(MAPN):
-        for tx in range(MAPN):
+    for ty in range(n):
+        for tx in range(n):
             if avail[ty, tx]:
                 r = rng.random()
                 if r < 0.025:
-                    tmap[ty, tx] = RU_CRUST
+                    block[ty, tx] = RU_CRUST
                 elif r < 0.04:
-                    tmap[ty, tx] = RU_STAIN
+                    block[ty, tx] = RU_STAIN
                 elif r < 0.046:
-                    tmap[ty, tx] = RU_GRATE
+                    block[ty, tx] = RU_GRATE
+
+
+def paint_runoff_background(tmap, free, rng):
+    """Fill free tiles with the Runoff wallpaper."""
+    wallpaper(tmap, free, rng, runoff_block, (RU_POOL,), RU_CRACK_A)
 
 
 def paint_runoff_horizon(fog, rng):
