@@ -16,20 +16,38 @@ comptime {
 }
 
 /// Pixel sink for the renderer: the cart framebuffer plus the OS dirty rect.
-/// While the round rewinds (`game.Game.tint`) the arena outside the
-/// banner goes through `tint`: the renderer draws as always and every
-/// pixel it puts comes out tinted (the game repaints the screen whole
-/// when the tint comes and goes).
+///
+/// While the round rewinds, the arena rows above `tint_end` (outside the
+/// banner) are tinted. Every renderer primitive marks its rect right
+/// after writing it, so `mark_dirty` tints the rect it is given in place:
+/// `put` stays a plain store (a check per pixel there cost 2 ms on a full
+/// repaint, it stops the renderer's cell loop from inlining). The only
+/// pixels a mark covers that were not just written are a head sprite's
+/// four corners, tinted twice for the frame the head is there.
 const Screen = struct {
     pub inline fn put(x: u32, y: u32, c: u16) void {
-        const out = if (y < tint_end and y >= render.arena_y and !in_box(x, y)) tint(c, y) else c;
-        cart.framebuffer[x][y] = .from_color(@bitCast(out));
+        cart.framebuffer[x][y] = .from_color(@bitCast(c));
     }
     pub fn mark_dirty(r: render.Rect) void {
         if (r.is_empty()) return;
+        if (r.y0 < tint_end and r.y1 > render.arena_y) tint_rect(r);
         cart.mark_dirty_rect(r.x0, r.y0, @as(i32, r.x1) - r.x0, @as(i32, r.y1) - r.y0);
     }
 };
+
+/// Tints the arena pixels of r above `tint_end`, outside the banner.
+noinline fn tint_rect(r: render.Rect) void {
+    const y_end = @min(@as(u32, r.y1), tint_end);
+    var x: u32 = r.x0;
+    while (x < r.x1) : (x += 1) {
+        var y: u32 = @max(@as(u32, r.y0), render.arena_y);
+        while (y < y_end) : (y += 1) {
+            if (in_box(x, y)) continue;
+            const px = &cart.framebuffer[x][y];
+            px.* = .from_color(@bitCast(tint(@bitCast(px.to_color()), y)));
+        }
+    }
+}
 const R = render.Renderer(Screen);
 
 /// Pixel rows above this are tinted (arena_y: none).
@@ -151,7 +169,7 @@ fn draw_wipe_line(y: u8) void {
     // Not through the banner's rows (stubs beside the box look broken).
     if (y >= tint_box.y0 and y < tint_box.y1) return;
     for (0..render.screen_w) |x| cart.framebuffer[x][y] = .from_color(@bitCast(wipe_color));
-    Screen.mark_dirty(.{ .x0 = 0, .y0 = y, .x1 = render.screen_w, .y1 = y + 1 });
+    cart.mark_dirty_rect(0, y, render.screen_w, 1);
     wipe_line = y;
 }
 

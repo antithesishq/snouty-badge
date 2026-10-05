@@ -19,8 +19,9 @@ cart API, build wiring); this file adds the cart's specifics.
   `main.zig` `start`/`update`, the wasm shims, the debug exports and the
   badge-bench hooks; `rng.zig` xorshift streams; `font8.zig` the OS 8x8
   font (generated, do not edit); `host_tests.zig` the root for `zig build
-  test`. M1 adds `levels.zig` (the ladder, block layouts), M2
-  `history.zig` (keyframes, rewind).
+  test`. M1 adds `levels.zig` (the ladder, block layouts; M2 its
+  `Options` and SKIRMISH's config), M2 `history.zig` (keyframes, the
+  input log, retract and restore).
 - `tools/` — `check.sh` (the whole gate), `gen_font.py` (writes
   `cart/src/font8.zig` from `sycl-badge/src/font.zig`), `scripts/` (input
   scripts; `bench_m0.json` is badge-bench's). The headless runner
@@ -29,8 +30,8 @@ cart API, build wiring); this file adds the cart's specifics.
 - `docs/` — `RUNNING.md` (pull, build, simulator, flash, previews, gate,
   debug exports), milestone GIFs.
 - `../../badge-bench/carts/snouty-cycles.toml` — badge-bench defaults
-  (1800 frames, autopilot poked on: title, A, a round, a crash, the next
-  round).
+  (3600 frames, autopilot poked on: title, A, the ladder, a forced
+  derez and rewind at World tick 900).
 
 ## Interfaces (for the M1 tracks)
 
@@ -200,6 +201,57 @@ true, .layout = n }`.
   grows the renderer repaints that ring's strip itself, so layout blocks
   already on it turn red too.
 
+### M2 time travel and modes (track R: `history.zig`, `game.zig`, `levels.zig`, `main.zig`)
+
+- **`history.History`** (~46 KB, inside `game.Game`): `start(w, brains,
+  aux)` at a round's tick 0; `record(w, input, brains, aux)` after every
+  ladder play step and every replayed one (the player's input, each
+  cycle's trail-log head/tail moves, a journal of `cleared`/`block`
+  cells, a keyframe every 30 ticks: 8 kept, 4 s). A keyframe is
+  `Rewindable` (World fields copied by name: tick, result, winner,
+  timed_out, sudden_death_ring, grid, cycles), the four Brains and the
+  game's `Aux` (score, the autopilot's tier deadline). `not_keyframed`
+  lists the rest of World with the reason; a test fails if a World field
+  is in neither: **a new World field a rewind needs goes into
+  `Rewindable` (same name and type), nothing else**. The trail logs are
+  not copied: a step only writes at `log_head` and fades/clears only
+  move `log_tail`, so restoring the heads in `cycles` restores them; a
+  rule that rewrote an old log entry would break this (the exactness
+  tests catch it).
+- **A rewind**: `plan(now, back)` / `plan_exact(t)` / `plan_start()` set
+  `target`; `retract(w, n)` undoes n ticks of the World in place for the
+  screen (newest trail cells pop, journaled cells go back, heads slide
+  back, a cycle that rides again gets a `crash` event with `Crash.none`)
+  and leaves events like a step; `restore(w, brains, aux)` puts the
+  keyframe at or before `target` back (forgets later keyframes, calls
+  `ai.reset_pool()`); the game replays `input_at(t)` to `target`. After
+  the game changes the autopilot at the landing it calls `resave`.
+- **Determinism contract**: a replay is exact because the World depends
+  only on the Brains, the rules and the player's inputs. The autopilot
+  decides before the programs and spends the shared AI pool (M1's
+  order), so a replay re-runs its decision (`step_world(..., logged)`);
+  a human player never touches the pool. Anything else that changes a
+  program's or the World's behaviour must be in the World, a Brain or
+  `Aux`.
+- **Game flow** (`game.State` appended: 10 frozen, 11 rewind, 12
+  options, 13 skirmish_setup, 14 round_over, 15 match_over): your derez
+  with a snapshot -> `frozen` (20 ticks) -> `rewind` (retract
+  `retract_step` ticks a frame, ~40 frames; then restore + replay with
+  `hold_frame` set, which main honours by not drawing) -> `countdown`
+  with `resuming` (2-1, then RUN away from you). A derez within 3 s of
+  the last landing restarts the round (`restart_round`: same seed and
+  Brains). `g.snapshots` replaces M1's lives (HARDCORE: 0); `g.mode`
+  ladder / skirmish; `g.opts` (`levels.Options`) apply through
+  `Options.apply(cfg)`; SKIRMISH is `g.sk` (`levels.skirmish_config`).
+- **The tint** is main's: `g.tinted()` rows from the arena top; main's
+  `Screen.mark_dirty` tints each rect the renderer marks (`put` stays a
+  plain store: a per-pixel check costs 2 ms on a full repaint) and
+  repaints the rows the wipe reaches with `Renderer.repaint_rect` (made
+  pub for this). The banner box is never tinted.
+- Banner lines go through `add_line` (noinline) and the cold game
+  functions are `noinline`: ReleaseFast inlining of them cost ~7 KB of
+  .text in a RAM cart.
+
 ## Rendering rules that are easy to break
 
 - **Mark every write.** `.copy_forward` sends only the marked dirty rect
@@ -233,7 +285,8 @@ true, .layout = n }`.
 - Screen 160x128 RGB565, column-major `cart.framebuffer[x][y]`. The arena
   is y 8..127 (80 x 60 cells of 2x2 px), the HUD y 0..7.
 - RAM cart only. M0: `.text` 40 KB, `.bss` 77 KB (World 38 KB, AI fill
-  scratch 19 KB, banner overlay 19 KB).
+  scratch 19 KB, banner overlay 19 KB). M2 (track R): `.text` ~103 KB,
+  `.bss` ~140 KB (History 46 KB more), ~243 KB of the ~275 KB window.
 - No audio, neopixels off (never written). The OS owns Start+Select and
   the joystick click; the cart ignores Start and Select while both are
   held.
