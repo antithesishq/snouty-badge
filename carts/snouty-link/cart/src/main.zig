@@ -14,7 +14,9 @@
 //! loopback self test of the PIO UART on each header pin (no cable
 //! needed): OK, or N<bytes back> E<edges seen> <first bytes> P<pcs>.
 //! B switches the UART between 1 Mbaud and 115200 (for a Raspberry Pi
-//! Debug Probe and a serial terminal, docs/LINK.md).
+//! Debug Probe and a serial terminal, docs/LINK.md). Up switches the
+//! receiver between the PIO FIFO and the optional DMA ring (FIFO/DMA on
+//! the MODE and CABLE lines): compare LOST with each.
 const cart = @import("cart-api");
 const link = @import("link");
 
@@ -26,6 +28,8 @@ comptime {
 const app_id: u8 = 'L';
 /// Keep polling the link until this long after the frame started (us).
 const pump_until_us: u64 = 12_000;
+/// The cart DMA channel for the optional receive ring (Up toggles it).
+const dma_channel: u4 = 11;
 
 const bg = cart.DisplayColor.rgb(0x101820);
 const fg = cart.DisplayColor.rgb(0xE0E8F0);
@@ -49,6 +53,7 @@ var tests: [2]link.rp2350.SelfTest = undefined;
 var tested = false;
 var a_was_down = false;
 var b_was_down = false;
+var up_was_down = false;
 var select_was_down = false;
 /// SELECT: the register page instead of the link page.
 var show_regs = false;
@@ -82,6 +87,13 @@ pub fn update() void {
         l.restart(cart.micros_since_boot());
     }
     b_was_down = b_down;
+
+    // Up: receive through the DMA ring (channel 11) or the bare PIO FIFO.
+    if (mine.up and !up_was_down and l.state != .unavailable) {
+        link.rp2350.rx_dma = if (link.rp2350.rx_dma == null) dma_channel else null;
+        l.restart(cart.micros_since_boot());
+    }
+    up_was_down = mine.up;
 
     const select_down = mine.select and !mine.start;
     if (select_down and !select_was_down) show_regs = !show_regs;
@@ -164,6 +176,7 @@ fn draw(mine: u16) void {
             say(0, 1, "MODE", dim);
             say(6, 1, if (l.mode == .normal) "TX PIN1" else "TX PIN3", fg);
             say(15, 1, if (link.rp2350.baud == link.baud) "1M" else "115K", warn);
+            say(19, 1, if (link.rp2350.rx_dma == null) "F" else "D", warn);
             say(0, 2, "PIN1", dim);
             say(5, 2, level(l.port.read(.a)), fg);
             say(9, 2, "PIN3", dim);
@@ -184,6 +197,7 @@ fn draw(mine: u16) void {
         .connected => {
             say(0, 1, "CABLE", dim);
             say(6, 1, if (l.cable() == .crossed) "CROSSED" else "STRAIGHT", fg);
+            say(16, 1, if (link.rp2350.rx_dma == null) "FIFO" else "DMA", warn);
             say(0, 2, "PEER", dim);
             say(6, 2, fmt(&buf, "{c} V{d} S{d}", .{ printable(l.partner_app), l.partner_version, l.session }), fg);
             say(0, 3, "RTT", dim);

@@ -50,6 +50,13 @@
 //! The scratch (stamps, queue, cell info, the search grid) is module
 //! state too and never carries anything from one decision to the next,
 //! so `ai` is not reentrant but is replayable.
+//!
+//! M2 modifiers: SNAKE and GAPS only change the grid, which the programs
+//! read as it is. WRAP (no rim) changes the topology: every neighbour step
+//! wraps (`nb`; the BFS loops are specialised at compile time so the rim
+//! arena pays nothing), distances between heads are the short way round,
+//! and T3's 32 x 32 window wraps too. `wrapping` is set from the World at
+//! every entry point.
 const std = @import("std");
 const sim = @import("sim.zig");
 const rng = @import("rng.zig");
@@ -301,6 +308,7 @@ pub var stats: Stats = .{};
 pub fn decide(b: *Brain, w: *const sim.World, i: usize) sim.Input {
     const c = &w.cycles[i];
     if (c.state != .alive or w.result != .running) return .idle;
+    use_world(w);
     sync_pool(w);
     var press: ?sim.Dir = null;
     if (c.stalled) {
@@ -500,6 +508,7 @@ fn dodge(b: *Brain, w: *const sim.World, i: usize) sim.Dir {
 /// view: closing sudden-death rings count as walls, unless every move is
 /// into one).
 pub fn avoid(b: *Brain, w: *const sim.World, i: usize) sim.Dir {
+    use_world(w);
     return avoid_capped(b, w, i, tuning.fill_cap);
 }
 
@@ -550,6 +559,7 @@ fn race_risk(w: *const sim.World, i: usize, t: [2]u8) bool {
 }
 
 pub fn open_neighbours(w: *const sim.World, x: u8, y: u8) u32 {
+    use_world(w);
     return free4(&w.grid, sim.index(x, y));
 }
 
@@ -558,9 +568,55 @@ pub fn open_neighbours(w: *const sim.World, x: u8, y: u8) u32 {
 const Grid = [sim.cells]u8;
 
 /// Neighbour offsets in `Dir` order (up, right, down, left), as wrapping
-/// u16 adds. A non-wall cell is never on the rim, so its four neighbours
-/// are inside the grid.
+/// u16 adds. With a rim a non-wall cell is never on it, so its four
+/// neighbours are inside the grid.
 const off = [4]u16{ 0 -% @as(u16, sim.grid_w), 1, sim.grid_w, 0 -% @as(u16, 1) };
+
+/// The World's topology for this decision: WRAP (no rim, edges wrap).
+var wrapping: bool = false;
+
+fn use_world(w: *const sim.World) void {
+    wrapping = w.cfg.wrap;
+}
+
+/// Neighbour k (`Dir` order) of cell `at`: the plain offset with a rim,
+/// round the edges in WRAP (`wr`, comptime so the hot loops specialise).
+inline fn nb(comptime wr: bool, at: u16, comptime k: usize) u16 {
+    if (!wr) return at +% off[k];
+    const W = sim.grid_w;
+    return switch (k) {
+        0 => if (at < W) at + (sim.cells - W) else at - W,
+        1 => if (at % W == W - 1) at + 1 - W else at + 1,
+        2 => if (at >= sim.cells - W) at - (sim.cells - W) else at + W,
+        3 => if (at % W == 0) at + W - 1 else at - 1,
+        else => unreachable,
+    };
+}
+
+/// `nb` with k known at run time.
+inline fn nbk(comptime wr: bool, at: u16, k: usize) u16 {
+    if (!wr) return at +% off[k];
+    return switch (k) {
+        inline 0...3 => |kk| nb(true, at, kk),
+        else => unreachable,
+    };
+}
+
+/// `nb` for the current World, k known at run time (cold paths).
+fn nbr(at: u16, k: usize) u16 {
+    return if (wrapping) nbk(true, at, k) else nbk(false, at, k);
+}
+
+/// Signed offset from a to b along an axis of `size` cells: the short way
+/// round in WRAP.
+fn delta(a: u8, b: u8, size: u8) i32 {
+    var d: i32 = @as(i32, b) - a;
+    if (wrapping) {
+        const half: i32 = size / 2;
+        if (d > half) d -= size else if (d < -half) d += size;
+    }
+    return d;
+}
 
 // Scratch, 33.6 KB: the BFS queue (9.6), the others' distance field
 // (stamp, distance, owner: 14.4), the deciding program's own stamps (4.8)
@@ -597,14 +653,14 @@ fn next_mgen() u8 {
     return m_gen;
 }
 
-/// The sudden-death ring that starts closing within `sd_lookahead` ticks
-/// (0: none).
+/// The sudden-death stage that starts closing within `sd_lookahead` ticks
+/// (0: none). Stage k closes ring k, or k - 1 in WRAP.
 fn danger_ring(w: *const sim.World) u8 {
     if (!w.cfg.sudden_death) return 0;
     const t = w.tick + tuning.sd_lookahead;
     if (t < sim.tuning.sudden_death_ticks) return 0;
     const k = (t - sim.tuning.sudden_death_ticks) / sim.tuning.sudden_death_period + 1;
-    return @intCast(@min(k, sim.tuning.sudden_death_rings));
+    return @intCast(@min(k, w.sd_stages()));
 }
 
 /// The grid programs plan on: the World's, or while sudden death closes
@@ -621,9 +677,10 @@ fn copy_view(w: *const sim.World) void {
     units_left -= sim.cells / 64;
     const k = danger_ring(w);
     if (k == 0) return;
-    // Rings further out are laid already.
-    var r: u32 = if (k > 2) k - 2 else 1;
-    while (r <= k) : (r += 1) {
+    // Stages further out are laid already.
+    var st: u32 = if (k > 2) k - 2 else 1;
+    while (st <= k) : (st += 1) {
+        const r = st - 1 + w.sd_first_ring();
         const x1 = sim.grid_w - 1 - r;
         const y1 = sim.grid_h - 1 - r;
         for (r..x1 + 1) |x| {
@@ -649,14 +706,19 @@ inline fn wall(g: *const Grid, n: u16) bool {
 }
 
 fn free4(g: *const Grid, at: u16) u32 {
+    return if (wrapping) free4_t(true, g, at) else free4_t(false, g, at);
+}
+
+fn free4_t(comptime wr: bool, g: *const Grid, at: u16) u32 {
     var n: u32 = 0;
-    inline for (off) |o| n += @intFromBool(!wall(g, at +% o));
+    inline for (0..4) |k| n += @intFromBool(!wall(g, nb(wr, at, k)));
     return n;
 }
 
 /// Empty cells reachable from empty cell (x, y), itself included, counted
 /// up to `cap`.
 pub fn flood(w: *const sim.World, x: u8, y: u8, cap: u32) u32 {
+    use_world(w);
     const saved = units_left;
     units_left = unbudgeted;
     defer units_left = saved;
@@ -666,6 +728,10 @@ pub fn flood(w: *const sim.World, x: u8, y: u8, cap: u32) u32 {
 /// The flood behind `flood` and T1: cells reachable from empty cell
 /// `start` within `reach` steps, up to `cap`. Charges its cells.
 fn fill(g: *const Grid, start: u16, cap: u32, reach: u32) u32 {
+    return if (wrapping) fill_t(true, g, start, cap, reach) else fill_t(false, g, start, cap, reach);
+}
+
+fn fill_t(comptime wr: bool, g: *const Grid, start: u16, cap: u32, reach: u32) u32 {
     const gn = next_mgen();
     m_stamp[start] = gn;
     queue[0] = start;
@@ -680,8 +746,8 @@ fn fill(g: *const Grid, start: u16, cap: u32, reach: u32) u32 {
             if (layer >= reach) break;
         }
         const at = queue[head];
-        inline for (off) |o| {
-            const n = at +% o;
+        inline for (0..4) |k| {
+            const n = nb(wr, at, k);
             if (m_stamp[n] != gn and !wall(g, n)) {
                 m_stamp[n] = gn;
                 queue[tail] = n;
@@ -707,9 +773,21 @@ const ring8 = [8]u16{
     0 -% @as(u16, sim.grid_w), 0 -% @as(u16, sim.grid_w - 1), 1,                sim.grid_w + 1,
     sim.grid_w,                sim.grid_w - 1,                0 -% @as(u16, 1), 0 -% @as(u16, sim.grid_w + 1),
 };
+/// The same ring as (dx, dy), for WRAP.
+const ring8_xy = [8][2]i8{ .{ 0, -1 }, .{ 1, -1 }, .{ 1, 0 }, .{ 1, 1 }, .{ 0, 1 }, .{ -1, 1 }, .{ -1, 0 }, .{ -1, -1 } };
 
 fn ring_mask(g: *const Grid, at: u16) u8 {
     var m: u8 = 0;
+    if (wrapping) {
+        const x: i32 = at % sim.grid_w;
+        const y: i32 = at / sim.grid_w;
+        for (ring8_xy, 0..) |d, k| {
+            const nx: u32 = @intCast(@mod(x + d[0], sim.grid_w));
+            const ny: u32 = @intCast(@mod(y + d[1], sim.grid_h));
+            if (!wall(g, sim.index(nx, ny))) m |= @as(u8, 1) << @intCast(k);
+        }
+        return m;
+    }
     for (ring8, 0..) |o, k| {
         if (!wall(g, at +% o)) m |= @as(u8, 1) << @intCast(k);
     }
@@ -738,6 +816,10 @@ var field: struct {
 } = .{};
 
 fn others_field(g: *const Grid, w: *const sim.World, i: usize, reach: u32) Err!void {
+    return if (wrapping) others_field_t(true, g, w, i, reach) else others_field_t(false, g, w, i, reach);
+}
+
+fn others_field_t(comptime wr: bool, g: *const Grid, w: *const sim.World, i: usize, reach: u32) Err!void {
     const gn = next_ogen();
     field = .{ .gen = gn };
     var tail: u32 = 0;
@@ -768,8 +850,8 @@ fn others_field(g: *const Grid, w: *const sim.World, i: usize, reach: u32) Err!v
         const at = queue[head];
         const own = o_own[at];
         const nd: u8 = @intCast(@min(layer + 1, 255));
-        inline for (off) |o| {
-            const n = at +% o;
+        inline for (0..4) |k| {
+            const n = nb(wr, at, k);
             if (!wall(g, n)) {
                 if (o_stamp[n] != gn) {
                     o_stamp[n] = gn;
@@ -823,6 +905,10 @@ const Mine = struct {
 /// (stamped `gn`); stops at cells the others reach as early. Charges a
 /// unit per cell.
 fn region(g: *const Grid, start: u16, layer0: u32, prey: u8, reach: u32, cap: u32, gn: u8, m: *Mine) Err!void {
+    return if (wrapping) region_t(true, g, start, layer0, prey, reach, cap, gn, m) else region_t(false, g, start, layer0, prey, reach, cap, gn, m);
+}
+
+fn region_t(comptime wr: bool, g: *const Grid, start: u16, layer0: u32, prey: u8, reach: u32, cap: u32, gn: u8, m: *Mine) Err!void {
     if (units_left < tuning.min_pass) return error.OutOfBudget;
     m_stamp[start] = gn;
     queue[0] = start;
@@ -848,8 +934,8 @@ fn region(g: *const Grid, start: u16, layer0: u32, prey: u8, reach: u32, cap: u3
         const at = queue[head];
         const nd = layer + 1;
         var free: u32 = 0;
-        inline for (off) |o| {
-            const n = at +% o;
+        inline for (0..4) |k| {
+            const n = nb(wr, at, k);
             if (!wall(g, n)) {
                 free += 1;
                 const s = m_stamp[n] & ~touched;
@@ -887,30 +973,33 @@ fn region(g: *const Grid, start: u16, layer0: u32, prey: u8, reach: u32, cap: u3
 }
 
 /// Sudden death, per decision (`sd_clock`): whether it is near enough to
-/// matter, the tick and the round's base speed.
-var sd: struct { on: bool = false, now: u32 = 0, speed: u32 = 0 } = .{};
+/// matter, the tick, the round's base speed and the first ring it closes
+/// (1, or 0 in WRAP).
+var sd: struct { on: bool = false, now: u32 = 0, speed: u32 = 0, first: u8 = 1 } = .{};
 
 fn sd_clock(w: *const sim.World) void {
     sd = .{
         .on = w.cfg.sudden_death and w.tick + tuning.sd_horizon >= sim.tuning.sudden_death_ticks,
         .now = w.tick,
         .speed = w.base_speed(),
+        .first = w.sd_first_ring(),
     };
 }
 
+/// The sudden-death stage at which cell `at` closes (0: the rim, never).
 fn ring_idx(at: u16) u32 {
     const y = at / sim.grid_w;
-    return sim.ring_of(at - y * sim.grid_w, y);
+    return sim.ring_of(at - y * sim.grid_w, y) + 1 - sd.first;
 }
 
-/// The innermost sudden-death ring among `cells`.
+/// The innermost sudden-death stage among `cells`.
 fn deepest(cells: []const u16) u32 {
     var d: u32 = 0;
     for (cells) |at| d = @max(d, ring_idx(at));
     return d;
 }
 
-/// Cells a cycle at base speed rides through before ring `d` is swept
+/// Cells a cycle at base speed rides through before stage `d` is swept
 /// (half-way through its second): how much of a room near the rim is
 /// any use.
 fn cells_until_close(d: u32) u32 {
@@ -936,13 +1025,17 @@ fn score_of(cells: u32, edges: u32) i32 {
 /// neighbours' regions, each bounded by the checkerboard. Unbounded by
 /// vision (once separated a program knows its room). Charges its cells.
 fn chamber_space(g: *const Grid, at: u16, cap: u32) Err!u32 {
+    return if (wrapping) chamber_space_t(true, g, at, cap) else chamber_space_t(false, g, at, cap);
+}
+
+fn chamber_space_t(comptime wr: bool, g: *const Grid, at: u16, cap: u32) Err!u32 {
     const gn = next_mgen();
     m_stamp[at] = gn;
     const lim: u32 = @intCast(@max(units_left, 0));
     var used: u32 = 0;
     var best: u32 = 0;
-    inline for (off) |o| {
-        const s = at +% o;
+    inline for (0..4) |k0| {
+        const s = nb(wr, at, k0);
         if (!wall(g, s) and m_stamp[s] != gn) {
             m_stamp[s] = gn;
             queue[0] = s;
@@ -964,8 +1057,8 @@ fn chamber_space(g: *const Grid, at: u16, cap: u32) Err!u32 {
                 }
                 odd += layer & 1;
                 const q = queue[head];
-                inline for (off) |o2| {
-                    const n = q +% o2;
+                inline for (0..4) |k| {
+                    const n = nb(wr, q, k);
                     if (m_stamp[n] != gn and !wall(g, n)) {
                         m_stamp[n] = gn;
                         queue[tail] = n;
@@ -1001,8 +1094,8 @@ fn nearest(w: *const sim.World, i: usize, range: u8) ?usize {
     var best_d: u32 = 0xFFFF;
     for (w.cycles[0..w.cfg.n_cycles], 0..) |o, j| {
         if (j == i or o.state != .alive) continue;
-        const dx = @abs(@as(i32, o.x) - c.x);
-        const dy = @abs(@as(i32, o.y) - c.y);
+        const dx = @abs(delta(c.x, o.x, sim.grid_w));
+        const dy = @abs(delta(c.y, o.y, sim.grid_h));
         if (dx > range or dy > range) continue;
         if (dx + dy < best_d) {
             best_d = dx + dy;
@@ -1084,8 +1177,8 @@ fn t2_move(b: *Brain, w: *const sim.World, i: usize, g: *const Grid) Err!T2 {
             m_stamp[t] = gn;
             var best_m: Mine = .{};
             var best_ms: i32 = -1;
-            inline for (off) |o| {
-                const s = t +% o;
+            for (0..4) |k| {
+                const s = nbr(t, k);
                 if (!wall(g, s) and m_stamp[s] & ~touched != gn) {
                     if (2 < other_dist(s)) {
                         var cm: Mine = .{};
@@ -1194,8 +1287,8 @@ fn endgame_greedy(w: *const sim.World, i: usize, g: *const Grid) Err!?Greedy {
     for (w.cycles[0..w.cfg.n_cycles], 0..) |o, j| {
         if (j == i or o.state != .alive) continue;
         const h = sim.index(o.x, o.y);
-        inline for (off) |of| {
-            const n = h +% of;
+        for (0..4) |k| {
+            const n = nbr(h, k);
             const st = m_stamp[n];
             if (!wall(g, n) and st != 0 and (st == gens[0] or st == gens[1] or st == gens[2])) return null;
         }
@@ -1249,8 +1342,8 @@ fn race_hold(b: *const Brain, w: *const sim.World, i: usize) Hold {
     const c = &w.cycles[i];
     const o = &w.cycles[p];
     if (o.dir != c.dir) return .none;
-    const ax: i32 = @as(i32, c.x) - o.x;
-    const ay: i32 = @as(i32, c.y) - o.y;
+    const ax: i32 = delta(o.x, c.x, sim.grid_w);
+    const ay: i32 = delta(o.y, c.y, sim.grid_h);
     // Along and across the shared heading.
     const along: i32 = ax * c.dir.dx() + ay * c.dir.dy();
     const side: u32 = @abs(ax * c.dir.dy() - ay * c.dir.dx());
@@ -1318,7 +1411,7 @@ fn pick_rival(b: *const Brain, w: *const sim.World, i: usize) ?usize {
     const c = &w.cycles[i];
     if (b.prey < sim.max_cycles and b.prey != i) {
         const o = &w.cycles[b.prey];
-        if (o.state == .alive and @abs(@as(i32, o.x) - c.x) <= tuning.search_range and @abs(@as(i32, o.y) - c.y) <= tuning.search_range) return b.prey;
+        if (o.state == .alive and @abs(delta(c.x, o.x, sim.grid_w)) <= tuning.search_range and @abs(delta(c.y, o.y, sim.grid_h)) <= tuning.search_range) return b.prey;
     }
     return nearest(w, i, tuning.search_range);
 }
@@ -1346,24 +1439,46 @@ var bb: struct {
 const checker: u32 = 0x5555_5555;
 
 /// Builds the window centred between the two heads, clamped to the
-/// arena, from the planning grid, with the other heads' next cells walled
-/// (paranoid: they go straight).
+/// arena (in WRAP it wraps round the edges instead: window column x is
+/// arena column (x0 + x) mod 80), from the planning grid, with the other
+/// heads' next cells walled (paranoid: they go straight). The window's
+/// own edge is a wall to the search.
 fn bb_setup(g: *const Grid, w: *const sim.World, i: usize, r: usize) void {
     const c = &w.cycles[i];
     const o = &w.cycles[r];
     const half = bb_rows / 2;
-    const mx = (@as(u32, c.x) + o.x) / 2;
-    const my = (@as(u32, c.y) + o.y) / 2;
-    const x0: u32 = @min(mx -| half, sim.grid_w - 32);
-    const y0: u32 = @min(my -| half, sim.grid_h - bb_rows);
+    var x0: u32 = undefined;
+    var y0: u32 = undefined;
+    if (wrapping) {
+        // Centred between the heads the short way round.
+        const mx: i32 = @as(i32, c.x) + @divTrunc(delta(c.x, o.x, sim.grid_w), 2);
+        const my: i32 = @as(i32, c.y) + @divTrunc(delta(c.y, o.y, sim.grid_h), 2);
+        x0 = @intCast(@mod(mx - half, sim.grid_w));
+        y0 = @intCast(@mod(my - half, sim.grid_h));
+    } else {
+        const mx = (@as(u32, c.x) + o.x) / 2;
+        const my = (@as(u32, c.y) + o.y) / 2;
+        x0 = @min(mx -| half, sim.grid_w - 32);
+        y0 = @min(my -| half, sim.grid_h - bb_rows);
+    }
     bb.x0 = x0;
     bb.y0 = y0;
     bb.free = @splat(0);
     for (0..bb_rows) |y| {
         var row: u32 = 0;
-        const base = sim.index(x0, y0 + y);
-        for (0..32) |x| {
-            if (!wall(g, @intCast(base + x))) row |= @as(u32, 1) << @intCast(x);
+        if (wrapping) {
+            const gy = (y0 + y) % sim.grid_h;
+            var gx = x0;
+            for (0..32) |x| {
+                if (!wall(g, sim.index(gx, gy))) row |= @as(u32, 1) << @intCast(x);
+                gx += 1;
+                if (gx == sim.grid_w) gx = 0;
+            }
+        } else {
+            const base = sim.index(x0, y0 + y);
+            for (0..32) |x| {
+                if (!wall(g, @intCast(base + x))) row |= @as(u32, 1) << @intCast(x);
+            }
         }
         bb.free[y + 1] = row;
     }
@@ -1373,17 +1488,29 @@ fn bb_setup(g: *const Grid, w: *const sim.World, i: usize, r: usize) void {
         const n = w.next_cell(oc.x, oc.y, w.planned_dir(j));
         bb_clear_abs(n[0], n[1]);
     }
-    bb.mx = @intCast(c.x - x0);
-    bb.my = @intCast(c.y - y0 + 1);
-    bb.rx = @intCast(o.x - x0);
-    bb.ry = @intCast(o.y - y0 + 1);
-    // Row 1 is y0: colour of (x0, y0) decides which bits are colour 0.
+    bb.mx = @intCast(win_x(c.x));
+    bb.my = @intCast(win_y(c.y) + 1);
+    bb.rx = @intCast(win_x(o.x));
+    bb.ry = @intCast(win_y(o.y) + 1);
+    // Row 1 is y0: colour of (x0, y0) decides which bits are colour 0 (the
+    // arena's sides are even, so the colours agree across a WRAP edge).
     bb.even_row = if ((x0 + y0) & 1 == 0) checker else ~checker;
 }
 
+/// Arena column x as a window column (32 or more: outside the window).
+fn win_x(x: u8) u32 {
+    return (@as(u32, x) + sim.grid_w - bb.x0) % sim.grid_w;
+}
+/// Arena row y as an unpadded window row (`bb_rows` or more: outside).
+fn win_y(y: u8) u32 {
+    return (@as(u32, y) + sim.grid_h - bb.y0) % sim.grid_h;
+}
+
 fn bb_clear_abs(x: u8, y: u8) void {
-    if (x < bb.x0 or x >= bb.x0 + 32 or y < bb.y0 or y >= bb.y0 + bb_rows) return;
-    bb.free[y - bb.y0 + 1] &= ~(@as(u32, 1) << @intCast(x - bb.x0));
+    const wx = win_x(x);
+    const wy = win_y(y);
+    if (wx >= 32 or wy >= bb_rows) return;
+    bb.free[wy + 1] &= ~(@as(u32, 1) << @intCast(wx));
 }
 
 inline fn bb_free(x: u8, y: u8) bool {
@@ -1652,20 +1779,24 @@ fn colour_at(x: u8, y: u8) u1 {
 /// parity-bounded chamber leaves; moves tried hugging walls first, so
 /// ties go to the wall. Out of units: the deepest finished answer.
 fn fill_search(w: *const sim.World, i: usize, first: sim.Dir) sim.Dir {
+    return if (wrapping) fill_search_t(true, w, i, first) else fill_search_t(false, w, i, first);
+}
+
+fn fill_search_t(comptime wr: bool, w: *const sim.World, i: usize, first: sim.Dir) sim.Dir {
     const c = &w.cycles[i];
     copy_view(w);
     const at = sim.index(c.x, c.y);
     var order: [4]u8 = undefined;
-    const n = hug_order(at, &order);
+    const n = hug_order(wr, at, &order);
     var best = first;
     var depth: u8 = 2;
     while (depth <= tuning.max_fill_depth) : (depth += 1) {
         var bv: i32 = -1;
         var bd: ?u8 = null;
         for (order[0..n]) |k| {
-            const m = at +% off[k];
+            const m = nbk(wr, at, k);
             work[m] = mark_me;
-            const v = fill_dfs(m, depth - 1) catch {
+            const v = fill_dfs(wr, m, depth - 1) catch {
                 work[m] = sim.empty;
                 return best;
             };
@@ -1687,15 +1818,16 @@ fn fill_search(w: *const sim.World, i: usize, first: sim.Dir) sim.Dir {
 const mark_me: u8 = 0x44;
 
 /// Free neighbours of `at`, fewest free neighbours of their own first.
-fn hug_order(at: u16, out: *[4]u8) usize {
+fn hug_order(comptime wr: bool, at: u16, out: *[4]u8) usize {
     var n: usize = 0;
     var key: [4]u32 = undefined;
-    for (off, 0..) |o, k| {
-        const m = at +% o;
-        if (wall(&work, m)) continue;
-        out[n] = @intCast(k);
-        key[n] = free4(&work, m);
-        n += 1;
+    inline for (0..4) |k| {
+        const m = nb(wr, at, k);
+        if (!wall(&work, m)) {
+            out[n] = @intCast(k);
+            key[n] = free4_t(wr, &work, m);
+            n += 1;
+        }
     }
     // Insertion sort, stable.
     var a: usize = 1;
@@ -1709,18 +1841,18 @@ fn hug_order(at: u16, out: *[4]u8) usize {
     return n;
 }
 
-fn fill_dfs(at: u16, depth: u8) Err!i32 {
+fn fill_dfs(comptime wr: bool, at: u16, depth: u8) Err!i32 {
     units_left -= 1;
     if (units_left < 0) return error.OutOfBudget;
-    if (depth == 0) return 1 + @as(i32, @intCast(try chamber_space(&work, at, 0xFFFF_FFFF)));
+    if (depth == 0) return 1 + @as(i32, @intCast(try chamber_space_t(wr, &work, at, 0xFFFF_FFFF)));
     var order: [4]u8 = undefined;
-    const n = hug_order(at, &order);
+    const n = hug_order(wr, at, &order);
     var best: i32 = 1;
     for (order[0..n]) |k| {
-        const m = at +% off[k];
+        const m = nbk(wr, at, k);
         work[m] = mark_me;
         defer work[m] = sim.empty;
-        best = @max(best, 1 + try fill_dfs(m, depth - 1));
+        best = @max(best, 1 + try fill_dfs(wr, m, depth - 1));
     }
     return best;
 }
@@ -2120,4 +2252,198 @@ test "T0 crashes on its own; T1 and up do not, alone in the arena" {
         }
     }
     try testing.expect(t0_crashes >= 2);
+}
+
+// ------------------------------------------------------------- M2 tests
+
+/// The ladder's rules with the M2 modifiers `mods` (bit 0 WRAP, bit 1
+/// GAPS, bit 2 SNAKE).
+fn mods_cfg(n: u8, layout: u8, mods: u32) sim.Config {
+    var cfg = ladder_cfg(n, layout);
+    cfg.wrap = mods & 1 != 0;
+    cfg.gaps = mods & 2 != 0;
+    cfg.snake_len = if (mods & 4 != 0) sim.tuning.snake_len else 0;
+    return cfg;
+}
+
+test "M2: T1 and up do not crash alone with any modifier mix" {
+    const w = &tw[0];
+    for (1..8) |mods| {
+        for (0..3) |r| {
+            for ([_]Tier{ .avoid, .territory, .search }) |tier| {
+                var cfg = mods_cfg(1, @intCast(r * 3), @intCast(mods));
+                cfg.sudden_death = false;
+                cfg.round_cap = 60 * 60;
+                w.init(cfg, @intCast(r + 1));
+                var b = Brain.from(preset(tier, 3), @intCast(r + 5));
+                for (0..1200) |_| {
+                    var in: [sim.max_cycles]sim.Input = @splat(.idle);
+                    in[0] = decide(&b, w, 0);
+                    w.step(in);
+                }
+                if (w.cycles[0].state != .alive) std.debug.print("mods {d} layout {d} {s}: {s} at {d},{d} tick {d}\n", .{ mods, r * 3, @tagName(tier), w.cycles[0].crash.name(), w.cycles[0].x, w.cycles[0].y, w.cycles[0].died_tick });
+                try testing.expectEqual(sim.State.alive, w.cycles[0].state);
+            }
+        }
+    }
+}
+
+test "M2: flood and the T3 window wrap round the edges in WRAP" {
+    const w = &tw[0];
+    w.init(.{ .n_cycles = 1, .wrap = true }, 1);
+    // A 4 x 3 room straddling the top-left corner: x 78..1, y 58..0,
+    // walled by blocks at x 77 and 2, y 57 and 1.
+    const xs = [_]u8{ 77, 78, 79, 0, 1, 2 };
+    const ys = [_]u8{ 57, 58, 59, 0, 1 };
+    for (xs) |x| {
+        w.grid[sim.index(x, 57)] = sim.block;
+        w.grid[sim.index(x, 1)] = sim.block;
+    }
+    for (ys) |y| {
+        w.grid[sim.index(77, y)] = sim.block;
+        w.grid[sim.index(2, y)] = sim.block;
+    }
+    try testing.expectEqual(@as(u32, 12), flood(w, 0, 0, 300));
+    try testing.expectEqual(@as(u32, 12), flood(w, 78, 58, 300));
+    // T3's window between heads on either side of the left edge: both
+    // inside it, at their short-way-round distance.
+    w.init(.{ .n_cycles = 2, .wrap = true }, 1);
+    w.cycles[0].x = 2;
+    w.cycles[0].y = 30;
+    w.cycles[1].x = 76;
+    w.cycles[1].y = 33;
+    use_world(w);
+    bb_setup(&w.grid, w, 0, 1);
+    try testing.expectEqual(@as(i32, 6), @as(i32, bb.mx) - bb.rx);
+    try testing.expectEqual(@as(i32, -3), @as(i32, bb.my) - bb.ry);
+    try testing.expect(bb.mx < 32 and bb.rx < 32);
+    try testing.expectEqual(@as(?usize, 1), nearest(w, 0, tuning.search_range));
+    use_world(&tw[1]);
+}
+
+test "M2: decisions stay a function of the World and Brain, and a mid-round replay is exact, with modifiers" {
+    const a = &tw[0];
+    const b = &tw[1];
+    var ba: [4]Brain = undefined;
+    var bb2: [4]Brain = undefined;
+    for (1..8) |mods| {
+        const seed = rng.mix(17, @intCast(mods));
+        a.init(mods_cfg(4, @intCast(mods % 9), @intCast(mods)), seed);
+        b.* = a.*;
+        mixed_brains(seed, &ba);
+        bb2 = ba;
+        reset_pool();
+        // Run a while, copy World and Brains (a keyframe), run on logging
+        // hashes, then restore the copy and replay.
+        var log: [300]u32 = undefined;
+        var t: u32 = 0;
+        var kb: [4]Brain = undefined;
+        const key: u32 = 400;
+        while (a.result == .running and t < key + log.len) : (t += 1) {
+            if (t == key) {
+                b.* = a.*;
+                kb = ba;
+            }
+            var in: [sim.max_cycles]sim.Input = @splat(.idle);
+            for (0..4) |i| in[i] = decide(&ba[i], a, i);
+            a.step(in);
+            if (t >= key) log[t - key] = a.hash();
+        }
+        if (t <= key) continue;
+        reset_pool();
+        var u: u32 = key;
+        while (u < t) : (u += 1) {
+            var in: [sim.max_cycles]sim.Input = @splat(.idle);
+            for (0..4) |i| in[i] = decide(&kb[i], b, i);
+            b.step(in);
+            try testing.expectEqual(log[u - key], b.hash());
+        }
+        try testing.expect(sim.World.same_state(a, b));
+        try testing.expect(std.meta.eql(ba, kb));
+    }
+}
+
+test "M2: budgets hold in WRAP (work units)" {
+    const w = &tw[0];
+    var br: [4]Brain = undefined;
+    stats = .{};
+    for (0..3) |r| {
+        const seed = rng.mix(41, @intCast(r));
+        w.init(mods_cfg(4, @intCast(r * 3), 1 | @as(u32, @intCast(r)) << 1), seed);
+        for (&br, 0..) |*b, i| b.* = .from(preset(if (i == 3) .territory else .search, 3), rng.mix(seed, @intCast(i)));
+        reset_pool();
+        while (w.result == .running) {
+            var in: [sim.max_cycles]sim.Input = @splat(.idle);
+            for (0..4) |i| in[i] = decide(&br[i], w, i);
+            w.step(in);
+        }
+    }
+    try testing.expect(stats.max_units[2] <= tuning.decision_units[2] + tuning.overrun);
+    try testing.expect(stats.max_units[3] <= tuning.decision_units[3] + tuning.overrun);
+    try testing.expect(stats.max_tick_units <= tuning.tick_pool + tuning.overrun);
+    try testing.expect(stats.fallbacks * 50 < stats.decisions[2] + stats.decisions[3]);
+}
+
+// 40 rounds (20 seeds, both sides) of T2 against T1 with WRAP, GAPS and
+// SNAKE in turn (every mix but none); draws count half. Release builds
+// print the scores and play T3 against T2 too.
+test "M2 tournament: T2 > T1 with the modifiers on" {
+    const full = @import("builtin").mode != .debug;
+    const n: u32 = if (full) 42 else 28;
+    const open = [_]u8{0};
+    var sum: Score = .{};
+    var mods: u32 = 1;
+    while (mods < 8) : (mods += 1) {
+        const s = duel_mods(preset(.territory, 3), preset(.avoid, 3), n / 7, &open, 20 + mods, mods);
+        sum.wins += s.wins;
+        sum.losses += s.losses;
+        sum.draws += s.draws;
+        sum.ticks += s.ticks;
+        if (full) {
+            var name: [32]u8 = undefined;
+            show(std.fmt.bufPrint(&name, "T2 v T1, mods {d}", .{mods}) catch "?", s);
+        }
+    }
+    if (full) {
+        show("T2 v T1, all mixes", sum);
+        var t32: Score = .{};
+        mods = 1;
+        while (mods < 8) : (mods += 1) {
+            const s = duel_mods(preset(.search, 3), preset(.territory, 3), 6, &open, 40 + mods, mods);
+            t32.wins += s.wins;
+            t32.losses += s.losses;
+            t32.draws += s.draws;
+            t32.ticks += s.ticks;
+        }
+        show("T3 v T2, all mixes", t32);
+    }
+    try testing.expect(points2(sum) > n);
+}
+
+/// `duel` with the modifiers `mods` on.
+fn duel_mods(ka: Knobs, kb: Knobs, rounds: u32, layouts_used: []const u8, seed0: u32, mods: u32) Score {
+    const w = &tw[0];
+    var s: Score = .{};
+    for (0..rounds) |r| {
+        const seed = rng.mix(seed0, @intCast(r / 2));
+        const a_slot = r & 1;
+        w.init(mods_cfg(2, layouts_used[(r / 2) % layouts_used.len], mods), seed);
+        var br: [2]Brain = undefined;
+        br[a_slot] = .from(ka, rng.mix(seed, 0));
+        br[1 - a_slot] = .from(kb, rng.mix(seed, 1));
+        reset_pool();
+        var dice = rng.Xorshift.init(rng.mix(seed, 7));
+        const opening = 60 + dice.below(120);
+        var opener = opening_brains(seed);
+        while (w.result == .running) {
+            var in: [sim.max_cycles]sim.Input = @splat(.idle);
+            for (0..2) |i| in[i] = if (w.tick < opening) decide(&opener[i], w, i) else decide(&br[i], w, i);
+            w.step(in);
+        }
+        s.ticks += w.tick;
+        if (w.result == .won) {
+            if (w.winner == a_slot) s.wins += 1 else s.losses += 1;
+        } else s.draws += 1;
+    }
+    return s;
 }

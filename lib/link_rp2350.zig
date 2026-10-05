@@ -13,7 +13,8 @@
 //!
 //! The PIO keeps running after the cart exits (no exit hook): the transmit
 //! pin stays idle-high and received bytes sit in the FIFO; the next cart to
-//! use the link resets PIO2.
+//! use the link resets PIO2. The optional DMA receive ring (`rx_dma`) is
+//! aborted by the OS at cart exit.
 const std = @import("std");
 const builtin = @import("builtin");
 const link = @import("link.zig");
@@ -32,6 +33,16 @@ pub const clk_sys_hz: u32 = 150_000_000;
 /// test cart switches to 115200 for a Raspberry Pi Debug Probe and a
 /// serial terminal. Takes effect at the next lock (link `restart`).
 pub var baud: u32 = link.baud;
+
+/// Optional DMA receive ring: a cart DMA channel (3-15; the OS keeps 0-2
+/// and aborts 3-15 whenever a cart stops, by either exit path, on every
+/// firmware since March 2026) that copies each received byte into a
+/// 256-byte ring, so a badge busy drawing loses nothing however long it
+/// goes between polls. Null (the default): bytes wait in the 8-entry PIO
+/// FIFO, which every game must tolerate anyway. Set it before the link
+/// locks (or call the link's `restart`); a cart that sets it must not use
+/// that channel itself.
+pub var rx_dma: ?u4 = null;
 
 const gpio_a: u5 = 28;
 const gpio_b: u5 = 29;
@@ -95,6 +106,57 @@ const rx_program = [_]u16{ 0x2020, 0xEA27, 0x4001, 0x0646, 0x00CC, 0xC014, 0x20A
 const rx_offset = 4;
 const rx_wrap_top = rx_offset + rx_program.len - 1;
 
+const dma_base: u32 = 0x50000000;
+const dma_read_addr = 0x00;
+const dma_write_addr = 0x04;
+const dma_trans_count = 0x08;
+const dma_ctrl_trig = 0x0C;
+const dma_chan_abort = dma_base + 0x464;
+/// TRANS_COUNT MODE = ENDLESS: the channel never finishes.
+const dma_endless: u32 = 0xF << 28;
+/// DREQ_PIO2_RX1: paced by state machine 1's receive FIFO.
+const dreq_pio2_rx1: u32 = 21;
+
+/// The ring the DMA channel writes (RING_SIZE wraps the write address at
+/// 256 bytes, so it must be 256-aligned).
+var ring: [256]u8 align(256) = undefined;
+/// The next ring byte to read; the DMA's write address is the head.
+var ring_tail: u8 = 0;
+/// The channel running for the current lock (`rx_dma` at `start`).
+var dma_on: ?u4 = null;
+
+fn dma_ch(ch: u4, off: u32) *volatile u32 {
+    return reg(dma_base + 0x40 * @as(u32, ch) + off);
+}
+
+fn dma_stop() void {
+    const ch = dma_on orelse return;
+    dma_on = null;
+    const bit = @as(u32, 1) << ch;
+    reg(dma_chan_abort).* = bit;
+    while (reg(dma_chan_abort).* & bit != 0) {}
+}
+
+/// Byte reads of the RX FIFO's top byte (the receiver shifts right, so
+/// the byte is in bits 24-31), one per DREQ, into the ring.
+fn dma_start(ch: u4) void {
+    // Abort whatever the channel was doing (nothing, normally: the OS
+    // aborts cart channels at every cart exit).
+    dma_on = ch;
+    dma_stop();
+    dma_ch(ch, dma_read_addr).* = pio_rxf1 + 3;
+    dma_ch(ch, dma_write_addr).* = @intFromPtr(&ring);
+    dma_ch(ch, dma_trans_count).* = dma_endless | 1;
+    ring_tail = 0;
+    dma_on = ch;
+    // WRITE_ADDR moves on only once a write completes, so `get` never reads
+    // a ring byte before it lands.
+    // EN, DATA_SIZE byte, INCR_WRITE, ring on the write side of 2^8
+    // bytes, CHAIN_TO itself (no chaining), TREQ PIO2 RX1. Writing
+    // CTRL_TRIG starts it.
+    dma_ch(ch, dma_ctrl_trig).* = 1 | 1 << 6 | 1 << 12 | 8 << 8 | @as(u32, ch) << 13 | dreq_pio2_rx1 << 17;
+}
+
 fn reg(addr: u32) *volatile u32 {
     return @ptrFromInt(addr);
 }
@@ -118,6 +180,7 @@ pub const Rp2350 = struct {
         const d = gpio(drive);
         const l = gpio(drive.other());
         reg(pio_ctrl).* = 0; // state machines off
+        dma_stop();
         reg(sio_gpio_out_set).* = @as(u32, 1) << d;
         reg(sio_gpio_oe_set).* = @as(u32, 1) << d;
         reg(sio_gpio_oe_clr).* = @as(u32, 1) << l;
@@ -172,6 +235,13 @@ fn put(byte: u8) bool {
 }
 
 fn get() ?u8 {
+    if (dma_on) |ch| {
+        const head: u8 = @truncate(dma_ch(ch, dma_write_addr).* -% @intFromPtr(&ring));
+        if (head == ring_tail) return null;
+        const byte = @as(*volatile u8, &ring[ring_tail]).*;
+        ring_tail +%= 1;
+        return byte;
+    }
     if (reg(pio_fstat).* & fstat_rxempty_sm1 != 0) return null;
     return @truncate(reg(pio_rxf1).* >> 24);
 }
@@ -179,6 +249,7 @@ fn get() ?u8 {
 /// The UART: transmit on GPIO `t`, receive on GPIO `r` (the same pin for
 /// the self test).
 fn start(t: u32, r: u32) void {
+    dma_stop();
     reg(resets_reset + alias_set).* = reset_pio2;
     reg(resets_reset + alias_clr).* = reset_pio2;
     while (reg(resets_reset_done).* & reset_pio2 == 0) {}
@@ -208,6 +279,7 @@ fn start(t: u32, r: u32) void {
     reg(sm1 + sm_instr).* = rx_offset; // jmp 4
 
     reg(pio_irq).* = 0xFF;
+    if (rx_dma) |ch| if (ch >= 3) dma_start(ch);
     reg(pio_ctrl).* = 0x3 << 8 | 0x3 << 4; // restart clock dividers and SMs
     reg(pio_ctrl).* = 0x3; // enable SM0 and SM1
 
@@ -233,6 +305,8 @@ pub const Regs = struct {
     status: [2]u32,
     ctrl_pins: [2]u32,
     pads: [2]u32,
+    /// The DMA receive ring's channel, if one runs.
+    dma: ?u4,
 };
 
 pub fn regs() Regs {
@@ -248,6 +322,7 @@ pub fn regs() Regs {
         .status = .{ reg(io_bank0_base + 8 * @as(u32, gpio_a)).*, reg(io_bank0_base + 8 * @as(u32, gpio_b)).* },
         .ctrl_pins = .{ reg(io_bank0_base + 8 * @as(u32, gpio_a) + 4).*, reg(io_bank0_base + 8 * @as(u32, gpio_b) + 4).* },
         .pads = .{ reg(pads_bank0_base + 4 + 4 * @as(u32, gpio_a)).*, reg(pads_bank0_base + 4 + 4 * @as(u32, gpio_b)).* },
+        .dma = dma_on,
     };
 }
 
