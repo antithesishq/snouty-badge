@@ -1,7 +1,7 @@
 //! Cart saves: small named blobs (battery RAM, progress, high scores) kept
 //! by the badge OS in internal flash, across cart switches, power-off and
 //! OS updates. Needs the patched SYCL OS (sycl-badge branch `cart-saves`,
-//! its SAVES_PLAN.md is the ABI v1 spec); on stock firmware `supported()`
+//! its fork/CART_SAVES_PLAN.md is the ABI v1 spec); on stock firmware `supported()`
 //! is false and every call returns `error.Unsupported`, so a cart must hide
 //! its Save entries then. docs/SAVES.md is the user guide.
 //!
@@ -34,7 +34,7 @@
 //! all: the saves OS refuses XIP UF2s.
 //!
 //! Cost: `write` and `delete` block. Modelled (badge-bench) and expected
-//! (SAVES_PLAN.md, datasheet typical) cost is (ceil(len / 4096) + 1) x
+//! (CART_SAVES_PLAN.md, datasheet typical) cost is (ceil(len / 4096) + 1) x
 //! 55 ms: each 4 KB data block plus one directory block; a 1 KB save is
 //! ~0.1 s, 32 KB ~0.5 s, 64 KB ~0.9 s. A write whose bytes equal the
 //! stored blob returns at once and costs no flash. The OS rate limits
@@ -89,7 +89,7 @@ const is_badge = builtin.os.tag == .freestanding and (builtin.cpu.arch.isThumb()
 
 pub const backend: Backend = if (is_badge) .badge else if (builtin.cpu.arch.isWasm()) .none else .fake;
 
-// ---- ABI v1 (SAVES_PLAN.md "ABI v1", frozen) ----
+// ---- ABI v1 (CART_CART_SAVES_PLAN.md "ABI v1", frozen) ----
 
 pub const abi = struct {
     pub const msg_type: u32 = 0x2C;
@@ -436,7 +436,7 @@ const badge = struct {
 
 // ---- Host fake: the OS store's semantics in memory ----
 
-/// The host backend and its test hooks. Semantics follow SAVES_PLAN.md
+/// The host backend and its test hooks. Semantics follow CART_SAVES_PLAN.md
 /// and the OS store (sycl-badge cart-saves src/os/system/save_store.zig),
 /// as badge-bench's store does: 62 data blocks of 4 KB of which every
 /// commit leaves 16 free (a new key or a growing overwrite that would

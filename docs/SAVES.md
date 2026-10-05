@@ -12,8 +12,9 @@ needs a patched OS.
 ## 1. It needs the patched OS
 
 Saves are a feature of a patched SYCL OS: sycl-badge branch `cart-saves`
-(local repo `/home/exedev/sycl-badge-saves`). Its `SAVES_PLAN.md` is the
-frozen ABI v1 spec, store format and hardware test. Flash the OS UF2
+(in the SYCL badge fork: `feature/cart-saves`). Its `fork/CART_SAVES_PLAN.md`
+is the frozen ABI v1 spec, store format and hardware test, and
+`fork/CART_SAVES.md` the cart author's guide. Flash the OS UF2
 built from that repo (`sycl-os-saves.uf2`: BOOT_SEL + RESET, then copy it
 to the RP2350 drive). Keep the organizers' OS UF2 so you can go back.
 That OS refuses XIP carts. Only RAM carts run on it.
@@ -92,7 +93,7 @@ Keys are 1..32 bytes, so shorten long titles. The OS does not enforce the
 
 `write` and `delete` block. The cart is parked inside the call, with
 interrupts masked, while the OS erases and programs flash. Expected cost
-(SAVES_PLAN.md, datasheet typical, still to be measured on a badge) is
+(CART_SAVES_PLAN.md, datasheet typical, still to be measured on a badge) is
 **(ceil(len / 4096) + 1) x 55 ms**: each 4 KB data block plus one
 directory block. That is ~0.1 s for 1 KB, ~0.5 s for 32 KB and ~0.9 s for
 64 KB. A delete costs one directory block (~55 ms). badge-bench charges
@@ -166,5 +167,5 @@ forgets the word when the cart stops.
   (badge-bench/README.md "Cart saves").
   `badge-bench/tests/test_saves.py` runs lib/save.zig's badge backend,
   built for the M33, against the bench's service.
-- On the badge: SAVES_PLAN.md "Hardware test" (the OS repo's save-test
+- On the badge: CART_SAVES_PLAN.md "Hardware test" (the OS repo's save-test
   cart).

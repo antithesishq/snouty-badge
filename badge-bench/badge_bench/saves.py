@@ -1,4 +1,4 @@
-"""The patched OS's cart saves (sycl-badge branch cart-saves, SAVES_PLAN.md
+"""The patched OS's cart saves (sycl-badge branch cart-saves, fork/CART_SAVES_PLAN.md
 ABI v1), served to the cart: the mailbox word 0x2C carries
 (request address - 0x20000000) / 4 of a 64-byte SaveRequest in cart RAM;
 the OS validates it, works and answers through the struct only (status,
@@ -22,7 +22,7 @@ behind a host binary, say) without touching the request side:
 Flash time: a write that changes the blob costs (ceil(len / 4096) + 1) x
 55 ms (each 4 KB data block erased, programmed and verified, plus one
 directory block), a delete 55 ms (the directory block), anything else (probe, read, stat, list, exit_watch,
-an unchanged write, a refused request) 0. SAVES_PLAN.md: ~45 ms erase +
+an unchanged write, a refused request) 0. CART_SAVES_PLAN.md: ~45 ms erase +
 ~10 ms program per 4 KB, datasheet typical, to measure on hardware.
 """
 import base64
@@ -53,7 +53,7 @@ LIST_SIZE = struct.calcsize(LIST_FMT)
 # Process RAM the OS accepts for the struct and for buf..buf+len.
 RAM_LO, RAM_HI = 0x20020000, 0x20080000
 
-# Store format (SAVES_PLAN.md "Store format", save_store.zig): 64 blocks of
+# Store format (CART_CART_SAVES_PLAN.md "Store format", save_store.zig): 64 blocks of
 # 4 KB, two of them directory copies. Every commit leaves RESERVE_BLOCKS data
 # blocks free so any overwrite finds room for its new copy: 46 usable blocks
 # (184 KB) and, a key taking at least one block, 46 keys. The directory has

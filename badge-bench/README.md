@@ -150,7 +150,7 @@ about. `--wav FILE.wav` writes the mixed stream. Unit tests:
 
 ## Cart saves
 
-The patched SYCL OS (sycl-badge branch `cart-saves`, its SAVES_PLAN.md
+The patched SYCL OS (sycl-badge branch `cart-saves`, its fork/CART_SAVES_PLAN.md
 is the ABI v1 spec; `lib/save.zig` is the cart side, root
 `docs/SAVES.md`) stores small blobs for carts. A cart fills a 64-byte
 `SaveRequest` in its RAM and sends the FIFO word `(0x2C << 24) |
