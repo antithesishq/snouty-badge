@@ -27,8 +27,10 @@ fn solo(seed: u32) world.Setup {
 test "World size (a CRC over it every 32 ticks must stay cheap)" {
     std.debug.print("\n@sizeOf(World) = {d} bytes, @sizeOf(Car) = {d}\n", .{ @sizeOf(World), @sizeOf(world.Car) });
     // M1 pools (48 shots, 32 drops, 16 events) put it near 2 KB; no rewind
-    // keeps copies of it, so the cap only bounds the M4 CRC cost.
-    try std.testing.expect(@sizeOf(World) <= 2560);
+    // keeps copies of it, so the cap only bounds the M4 CRC cost. M6
+    // raised it from 2,560 to 2,624 for BATTLE (lives, SAFE MODE and the
+    // hunter's waypoint per car, `World.battle`: 2,572 B).
+    try std.testing.expect(@sizeOf(World) <= tuning.world_cap);
 }
 
 test "simulate twice from one state is equal" {

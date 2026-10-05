@@ -33,11 +33,13 @@ Outputs: `zig-out/firmware/snouty-theremin.uf2` (the badge, a RAM cart,
 - **On a badge with the breakout** (Qwiic port, docs/TOF.md section 5):
   hold a hand 5 to 50 cm over the sensor; closer is higher. Left/Right
   pick 1 HAND or 2 HAND (2 HAND: right side pitch, left side volume;
-  PITCH HAND in the menu swaps them). Up/Down move the octave.
+  PITCH HAND in the menu swaps them). Up/Down move the octave. In 1 HAND
+  the dot and the cyan square on the grid follow the hand across the
+  sensor; if they move the opposite way to your hand, set MIRROR ON.
 - **Without the breakout** (and in the simulator): Up/Down tap through the
   scale and glide when held; Left/Right hold the note.
 - A waveform, B scale, Start the settings menu (layout, wave, scale,
-  snap, key, octave, pitch hand), Select mute. Sound is ON at boot.
+  snap, key, octave, pitch hand, mirror), Select mute. Sound is ON at boot.
 
 ## 4. Simulator
 

@@ -146,7 +146,40 @@ pub const Freeze = enum(u8) { none, panic };
 /// sweep (no lap limit; the last car running wins; `World.gc`). `attract`:
 /// race rules plus the scripted KERNEL PANIC on the leader in lap 2
 /// (SPEC 8.2 Attract), so the AI-only demo always shows a blue screen.
-pub const Mode = enum(u8) { race, gc, attract };
+/// `battle` (M6): BATTLE, `KILL -9` (SPEC 8.3): an arena round scored on
+/// eliminations with lives (`World.battle`); `Setup.track` indexes
+/// `track.arenas`.
+pub const Mode = enum(u8) { race, gc, attract, battle };
+
+/// Why a BATTLE round ended (SPEC 8.3): `lives` = one car has lives left,
+/// `time` = the clock ran out.
+pub const BattleEnd = enum(u8) { none, lives, time };
+
+/// BATTLE state (SPEC 8.3, M6). The round clock is `World.tick` (ticks
+/// since GO): time left is `limit - tick`. Each car's lives are
+/// `Car.lives`, its eliminations `Car.kills` (the last-hit credit within
+/// `tuning.credit_ticks`), its SAFE MODE `Car.safe`. A car out of lives
+/// leaves the round (`active = false`, its bit in `out`, its `rank` its
+/// final standing, `finish_tick` the tick it went out). At the end every
+/// car still in gets `finished` and `finish_tick`, the ranks are final and
+/// the phase is `finished`.
+pub const Battle = struct {
+    /// Lives each car starts with; 0 = INF (nobody is ever out).
+    lives: u8 = 0,
+    /// The round's length in ticks; 0 = no limit (TIME NONE).
+    limit: u16 = 0,
+    /// Ticks until the next ammo and burst refill (counts down from
+    /// `tuning.battle_refill`; the HUD's sweep is refill / battle_refill).
+    refill: u16 = 0,
+    /// Cars out of lives (reaped by the claw), bit i = car i.
+    out: u8 = 0,
+    /// The kill leader: most eliminations, ties to the better rank;
+    /// `no_car` while nobody has scored. KERNEL PANIC homes on it, and an
+    /// out human watches it.
+    leader: u8 = no_car,
+    /// Why the round ended (`none` while it runs).
+    end: BattleEnd = .none,
+};
 
 /// GARBAGE COLLECTION state (SPEC 8.2, M3). Sweep points are the sector 2
 /// line and the start line, passed by the race leader: sweep k (from 0)
@@ -205,7 +238,7 @@ pub const hazard_max = 4;
 /// Render-facing log of what happened (kill feed, ACK, taunts, beams,
 /// explosions). The sim appends; rendering keeps its own cursor (`seq`)
 /// and never writes. A ring, so the World stays plain data.
-pub const EventKind = enum(u8) { none, hit, wreck, lance, explode, respawn, roll, use, effect, swap, mark, collect, blast, hazard_hit, chip };
+pub const EventKind = enum(u8) { none, hit, wreck, lance, explode, respawn, roll, use, effect, swap, mark, collect, blast, hazard_hit, chip, eliminated, out, stack_smash, clean_landing };
 pub const Event = struct {
     /// Monotonic event number (World.event_seq at append).
     seq: u16 = 0,
@@ -229,6 +262,12 @@ pub const Event = struct {
     /// x, y = the vent mouth or the mover). hazard_hit: hazard index, car,
     /// damage (x, y = the car). M5: chip: the car, the chip index (x, y =
     /// the chip; a cycle chip taken, worth 10 CYCLES in the career).
+    /// M6 (BATTLE): eliminated: the killer, the victim, the killer's
+    /// eliminations now (x, y = the victim: the `kill -9 KIDDIE` feed).
+    /// out: the car out of lives, its final standing, 0 (x, y = the hulk:
+    /// the claw comes down there). stack_smash: the car that landed, the
+    /// car under it, damage (x, y = the victim). clean_landing: the car,
+    /// its burst charges now (x, y = the car).
     a: u8 = 0,
     b: u8 = 0,
     c: u8 = 0,
@@ -403,6 +442,24 @@ pub const Car = struct {
     /// two cars trade places (set on both cars).
     swap_with: u8 = no_car,
     swap_ticks: u8 = 0,
+
+    // --- BATTLE (M6, SPEC 8.3). Eliminations are `kills`.
+    /// Lives left (from `World.battle.lives`; unused with INF lives).
+    lives: u8 = 0,
+    /// SAFE MODE after a battle respawn: ticks left. The car blinks, cannot
+    /// be hit (`immune` runs alongside it) and cannot fire, ram, smash or
+    /// use a pickup.
+    safe: u8 = 0,
+    /// The hunter AI's waypoint (hunt.zig; internal, `no_node` for none).
+    nav: u8 = 0xFF,
+    /// M6: the length in ticks of the current (or last) jump: `hop` counts
+    /// down from it. A race ramp's is `tuning.ramp_ticks`; the arena's
+    /// kickers fly `tuning.kicker_ticks`, so the sprite's arc must read
+    /// this, not the constant.
+    air: u8 = tuning.ramp_ticks,
+    /// Battle damage is scaled (`tuning.battle_damage_pct`): the hundredths
+    /// of a point carried to the next hit (internal).
+    dmg_frac: u8 = 0,
 };
 
 pub const Phase = enum(u8) { countdown, racing, finished };
@@ -451,6 +508,13 @@ pub const Setup = struct {
     loadouts: [car_count]Loadout = @splat(.{}),
     /// M5: cycle chips on the floor (the CIRCUIT only).
     chips: bool = false,
+    /// M6, BATTLE (SPEC 8.3): lives per car (1, 3, 5, 9; 0 = INF) and the
+    /// round's TIME in minutes (2, 3, 5; 0 = NONE, read as 3 with INF
+    /// lives). The menus offer `tuning.battle_lives_opts` and
+    /// `tuning.battle_minutes_opts`. In battle `track` indexes
+    /// `track.arenas`.
+    lives: u8 = 3,
+    minutes: u8 = 3,
 };
 
 pub const World = struct {
@@ -499,4 +563,6 @@ pub const World = struct {
     chips_on: bool = false,
     chip_clock: u8 = 0,
     chips: u32 = 0,
+    /// M6: BATTLE's state (`mode == .battle` only; zero otherwise).
+    battle: Battle = .{},
 };

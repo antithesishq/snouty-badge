@@ -16,6 +16,7 @@
 //! is re-struck every update at the voice's pitch (docs/RUNNING.md).
 const cart = @import("cart-api");
 const tof_types = @import("tof").types;
+const tof_pose = @import("tof").pose;
 const pitch = @import("pitch.zig");
 const hands = @import("hands.zig");
 const play = @import("play.zig");
@@ -34,9 +35,17 @@ var v: voice.Voice = .{};
 var feeder: audio.Feeder = .{};
 var in: input.Input = .{};
 var last_hands: hands.Hands = .{};
-/// The breakout's mounting (docs/TOF.md deferred question 2: decided from
-/// the M0 hardware photos).
-const orientation: tof_types.Orientation = .{};
+/// The breakout's mounting (docs/TOF.md deferred question 2); the MIRROR
+/// menu row flips it left/right.
+fn orientation() tof_types.Orientation {
+    return .{ .flip_x = settings.mirror };
+}
+/// The hand's place over the grid (hands.Track) from lib/tof_pose.zig,
+/// with the wide map's (spad_map 6) field of view and hands.Config's
+/// distance window.
+const pose_config: tof_pose.Config = .{ .fov_x_deg = 41, .fov_y_deg = 52, .max_mm = 650, .min_confidence = 8 };
+var pose_est: tof_pose.Estimator = .{ .config = pose_config };
+var track: hands.Track = .{};
 
 var muted = false;
 var menu_open = false;
@@ -64,7 +73,9 @@ pub fn update() void {
     buttons(c);
 
     if (in.poll(cart.micros_since_boot(), tick)) |f| {
-        last_hands = hands.read(&f, .{ .layout = settings.layout, .orientation = orientation, .pitch_left = settings.pitch_left });
+        last_hands = hands.read(&f, .{ .layout = settings.layout, .orientation = orientation(), .pitch_left = settings.pitch_left });
+        const p = pose_est.update(&f, null, orientation());
+        track = hands.track(track, p.present, p.x, p.y);
         player.sensor(last_hands, settings);
     }
     if (in.source == .stick) {
@@ -89,6 +100,7 @@ pub fn update() void {
         .out = out,
         .v = &v,
         .hands = last_hands,
+        .track = track,
         .source = in.source,
         .muted = muted,
         .stick_mm = player.map.distance(settings.low(), out.cents),
@@ -168,7 +180,13 @@ fn change(row: u8, d: i2) void {
             const o: i32 = @as(i32, settings.octave) + d;
             settings.octave = @intCast(@min(@max(o, play.Settings.min_octave), play.Settings.max_octave));
         },
-        else => settings.pitch_left = !settings.pitch_left,
+        6 => settings.pitch_left = !settings.pitch_left,
+        else => {
+            settings.mirror = !settings.mirror;
+            // The background it learned is per screen cell: start over.
+            pose_est = .{ .config = pose_config };
+            track = .{};
+        },
     }
 }
 

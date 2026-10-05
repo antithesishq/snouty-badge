@@ -1,7 +1,8 @@
 //! New for Snouty GC (M4 Track B): what the link race shows (SPEC 7.3,
 //! docs/NET.md section 3). The LINK lobby over the live floor (the cable
 //! state while searching, host or guest, the host's MODE / TRACK / CREWS
-//! rows and the guest's read-only view of them, the partner's pick), the
+//! rows, M6 LINK BATTLE's ARENA / LIVES / TIME, and the guest's read-only
+//! view of them, the partner's pick), the
 //! notices over a link race (WAITING FOR PEER, PEER LEFT, AI DRIVING) and
 //! the DESYNC band on the results. Draw only: main.zig owns `net` and
 //! hands this module a `View` each frame (so a debug export can show a
@@ -12,6 +13,7 @@ const world = @import("world.zig");
 const track = @import("track.zig");
 const hud = @import("hud.zig");
 const menu = @import("menu.zig");
+const battle_text = @import("battle_text.zig");
 
 /// What the lobby shows.
 pub const View = struct {
@@ -25,18 +27,19 @@ pub const View = struct {
     peer: ?net.Pick = null,
 };
 
-/// Lobby rows: MODE, TRACK, CREWS (the host's), then the racer select.
-pub const Row = enum(u8) { mode, track, crews, racer };
-pub const row_count = 4;
+/// Lobby rows (battle_text.LobbyRow): MODE, TRACK (the ARENA in LINK
+/// BATTLE), CREWS, LIVES and TIME (LINK BATTLE only; the host's), then the
+/// racer select.
+pub const Row = battle_text.LobbyRow;
 
 /// CREWS choices (SPEC 7.1): AI racers on the grid.
-pub const crew_steps = [_]u8{ 4, 2, 0 };
+pub const crew_steps = battle_text.crew_steps_link;
 
 const panel = cart.DisplayColor.rgb(0x2A1E34);
 const panel_hi = cart.DisplayColor.rgb(0x4A2440);
 
 pub fn mode_name(m: world.Mode) []const u8 {
-    return if (m == .gc) "LINK GC" else "LINK RACE";
+    return battle_text.mode_name(m);
 }
 
 fn crews_text(buf: *[9]u8, crews: u8) []const u8 {
@@ -48,11 +51,16 @@ fn crews_text(buf: *[9]u8, crews: u8) []const u8 {
 /// The lobby: the title at 2x, a panel with the rows (or the cable state
 /// while there is no partner), the role, cable, partner and prompt lines
 /// under it. `cursor` is the host's row; the guest's is always RACER.
-pub fn draw_lobby(v: *const View, cursor: u8, frame: u32) void {
-    menu.big_title(8);
-    const y0: i32 = 36;
-    const pitch: i32 = 13;
-    cart.rect(.{ .x = 4, .y = y0 - 3, .width = 152, .height = 4 * pitch + 5, .fill_color = panel, .stroke_color = hud.dim });
+/// LINK BATTLE's six rows sit 11 px apart under the title moved up 4 px
+/// (the four rows of LINK RACE and LINK GC keep M4's 13 px).
+pub fn draw_lobby(v: *const View, cursor: Row, frame: u32) void {
+    var rows: [6]Row = undefined;
+    const n = battle_text.lobby_rows(if (v.state == .lobby and v.rules != null) v.rules.?.mode else .race, &rows);
+    const six = n > 4;
+    menu.big_title(if (six) 4 else 8);
+    const y0: i32 = if (six) 26 else 36;
+    const pitch: i32 = if (six) 11 else 13;
+    cart.rect(.{ .x = 4, .y = y0 - 3, .width = 152, .height = @intCast(4 * pitch + 5 + if (six) 2 * pitch else 0), .fill_color = panel, .stroke_color = hud.dim });
     hud.fill_rect(4, 92, 152, 32, hud.anti_black);
     switch (v.state) {
         .lobby => {},
@@ -92,23 +100,27 @@ pub fn draw_lobby(v: *const View, cursor: u8, frame: u32) void {
         },
     }
     const host = v.role == .host;
-    const sel: u8 = if (host) cursor else @backingInt(Row.racer);
+    const sel: Row = if (host) cursor else .racer;
     var cb: [9]u8 = undefined;
+    var lb: [16]u8 = undefined;
+    var tb: [16]u8 = undefined;
     const r = v.rules;
-    const items = [row_count][]const u8{
-        if (r) |x| mode_name(x.mode) else "MODE: ...",
-        if (r) |x| track.tracks[x.track % track.tracks.len].name else "TRACK: ...",
-        if (r) |x| crews_text(&cb, x.crews) else "CREWS: ...",
-        "PICK A RACER",
-    };
-    for (items, 0..) |item, i| {
+    for (rows[0..n], 0..) |row, i| {
+        const item: []const u8 = switch (row) {
+            .mode => if (r) |x| mode_name(x.mode) else "MODE: ...",
+            .track => if (r) |x| battle_text.place_name(x) else "TRACK: ...",
+            .crews => if (r) |x| crews_text(&cb, x.crews) else "CREWS: ...",
+            .lives => if (r) |x| battle_text.lives_label(&lb, x.lives) else "",
+            .time => if (r) |x| battle_text.time_label(&tb, x.minutes) else "",
+            .racer => "PICK A RACER",
+        };
         const y = y0 + @as(i32, @intCast(i)) * pitch;
-        const on = i == sel;
+        const on = row == sel;
         if (on) hud.fill_rect(6, y - 2, 148, 11, panel_hi);
-        const color = if (on) hud.coral else if (host or i == @backingInt(Row.racer)) hud.white else hud.grey;
+        const color = if (on) hud.coral else if (host or row == .racer) hud.white else hud.grey;
         hud.centered(item, y, color);
         // The host changes the rules with Left / Right on its row.
-        if (on and host and i != @backingInt(Row.racer)) {
+        if (on and host and row != .racer) {
             hud.text("<", 8, y, hud.coral);
             hud.text(">", 144, y, hud.coral);
         }

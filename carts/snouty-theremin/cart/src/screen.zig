@@ -2,6 +2,7 @@
 //! (.no_copy_full_frame): status bar, note name and cents meter, Snouty,
 //! the zone grid, the scope, the hand bars, the settings line and a
 //! rotating hint line; the settings menu on top when open.
+const std = @import("std");
 const gfx = @import("gfx.zig");
 const pitch = @import("pitch.zig");
 const play = @import("play.zig");
@@ -14,6 +15,8 @@ pub const View = struct {
     out: play.Output,
     v: *const voice.Voice,
     hands: hands.Hands,
+    /// One-hand: where the hand is over the grid (the highlight).
+    track: hands.Track,
     source: input.Source,
     muted: bool,
     /// The stick's stand-in pitch-hand height (mm), for the bar.
@@ -225,10 +228,17 @@ fn zone_grid(w: View) void {
         return;
     }
     switch (w.settings.layout) {
-        .one_hand => if (w.hands.pitch_cell) |pc| {
-            const x = x0 + @as(i32, pc % 3) * (cell + 1);
-            const y = y0 + @as(i32, pc / 3) * (cell + 1);
+        .one_hand => if (w.track.cell) |tc| {
+            const x = x0 + @as(i32, tc % 3) * (cell + 1);
+            const y = y0 + @as(i32, tc / 3) * (cell + 1);
             gfx.frame(x - 1, y - 1, cell + 2, cell + 2, gfx.rgb(cyan));
+            // The centroid itself, between cell centres as the hand moves.
+            const cell_px: f32 = cell + 1;
+            const dx = std.math.clamp(w.track.x, -1.4, 1.4) + 1.5;
+            const dy = 1.5 - std.math.clamp(w.track.y, -1.4, 1.4);
+            const px = x0 + @as(i32, @intFromFloat(dx * cell_px + 0.5)) - 2;
+            const py = y0 + @as(i32, @intFromFloat(dy * cell_px + 0.5)) - 2;
+            gfx.fill(px, py, 3, 3, gfx.rgb(ink));
         },
         .two_hand => {
             const px = x0 + @as(i32, w.hands.pitch_col) * (cell + 1);
@@ -350,13 +360,13 @@ fn hint_line(w: View) void {
     _ = gfx.text(s, @divTrunc(gfx.W - gfx.text_width(s), 2), 118, gfx.rgb(dim));
 }
 
-pub const menu_rows = [_][]const u8{ "LAYOUT", "WAVE", "SCALE", "SNAP", "KEY", "OCTAVE", "PITCH HAND" };
+pub const menu_rows = [_][]const u8{ "LAYOUT", "WAVE", "SCALE", "SNAP", "KEY", "OCTAVE", "PITCH HAND", "MIRROR" };
 
 fn menu(w: View) void {
     const x0: i32 = 10;
     const y0: i32 = 16;
     const mw: i32 = 140;
-    const mh: i32 = 96;
+    const mh: i32 = 106;
     gfx.fill(x0, y0, mw, mh, gfx.rgb(0x101626));
     gfx.frame(x0, y0, mw, mh, gfx.rgb(cyan));
     _ = gfx.text("SETTINGS", x0 + 46, y0 + 4, gfx.rgb(cyan));
@@ -374,7 +384,8 @@ fn menu(w: View) void {
             3 => s.snap.label(),
             4 => pitch.pitch_class_name(s.root),
             5 => pitch.note_name(@divTrunc(s.low(), 100), &b),
-            else => if (s.pitch_left) "LEFT" else "RIGHT",
+            6 => if (s.pitch_left) "LEFT" else "RIGHT",
+            else => if (s.mirror) "ON" else "OFF",
         };
         const vx = x0 + mw - 12 - gfx.text_width(val);
         _ = gfx.text(val, vx, y, gfx.rgb(if (sel) amber else ink));

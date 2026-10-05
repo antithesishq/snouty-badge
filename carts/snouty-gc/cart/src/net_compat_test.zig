@@ -1,15 +1,23 @@
 //! Wire compatibility of net.zig (GC's names over lib/lockstep.zig) with
 //! the M4 net.zig verified on two badges (net_m4.zig, from 90683be4, tag
-//! snouty-gc/m4-hw):
+//! snouty-gc/m4-hw).
 //!
-//! - the same scripted lobby, two races, pause, quit, a rematch and a
-//!   desync, run once on two M4 stacks and once on two new ones over the
-//!   virtual cable (same seeds, inputs, byte loss and FIFO model), puts the
-//!   exact same bytes on the wire from each badge, and every message kind
-//!   (SETUP, PICK, GO, QUIT, DESYNC, input) occurs in it;
-//! - an M4 badge and a new one race in sync to the finish, either hosting;
-//! - a version-1 GC (lockstep's `G.version`) sends an M4 badge nothing:
-//!   the M4 badge waits in its lobby, the new one says wrong_version.
+//! M6 moved the cart to version 1 (LINK BATTLE's five rules bytes in
+//! lockstep's paged SETUP), so the cart's own `net.Net` no longer speaks
+//! M4's wire, by design. What these tests hold now (PLAN M6 status, L84):
+//!
+//! - `net.GameV0` (the M5.1 game: one rules byte, version 0, the same
+//!   code path through `net.NetOf`) still puts the exact same bytes on the
+//!   wire as M4 in the scripted lobby, two races, pause, quit, a rematch
+//!   and a desync (same seeds, inputs, byte loss and FIFO model), with
+//!   every message kind (SETUP, PICK, GO, QUIT, DESYNC, input) in it: the
+//!   shared lockstep and GC's wrapper did not drift;
+//! - an M4 badge and a v0 one race in sync to the finish, either hosting;
+//! - the cart's version-1 GC sends an M4 badge nothing: the M4 badge waits
+//!   in its lobby, the new one says wrong_version;
+//! - a v0 badge (M5.1) and a v1 badge (this build) both say
+//!   wrong_version, send no lobby or control message and never start a
+//!   race, under loss, on both cable kinds, for 10 s of play.
 const std = @import("std");
 const host = @import("link_host");
 const link = host.link;
@@ -80,13 +88,17 @@ const Port = struct {
 
 const L = link.Link(Port);
 const Old = net_m4.Net(L);
-const New = net.Net(L);
+/// The M5.1 stack: version 0, one rules byte.
+const New = net.NetOf(L, net.GameV0);
+/// This build's stack: version 1, five rules bytes.
+const V1 = net.Net(L);
 
 /// The struct holding role / tick / paused: M4's Net itself, the lockstep
-/// inside the new one.
+/// inside the new ones.
 fn core(n: anytype) switch (@TypeOf(n)) {
     *Old => *Old,
     *New => *New.Ls,
+    *V1 => *V1.Ls,
     else => unreachable,
 } {
     return if (@TypeOf(n) == *Old) n else &n.ls;
@@ -153,7 +165,7 @@ fn Badge(comptime N: type) type {
             const c = core(n);
             n.pump(now);
             if (n.state() == .lobby) {
-                n.set_rules(if (N == Old) net_m4.Rules.decode(rules.encode()) else rules);
+                n.set_rules(if (N == Old) net_m4.Rules.decode(rules.encode_v0()) else rules);
                 n.set_pick(pick, true);
                 if (c.role == .host and n.can_go()) _ = n.go(now);
             }
@@ -298,6 +310,8 @@ const Kinds = struct {
     quit: u32 = 0,
     desync: u32 = 0,
     input: u32 = 0,
+    /// Every DATA packet (any kind byte, paged SETUP and GO included).
+    data: u32 = 0,
 
     fn of(bytes: []const u8) Kinds {
         var k: Kinds = .{};
@@ -308,6 +322,7 @@ const Kinds = struct {
             if (b == 0xC0) {
                 if (len >= 3 and frame[0] == @backingInt(link.Kind.data)) {
                     const payload = frame[1 .. len - 1];
+                    k.data += 1;
                     if (payload.len == net.input_len) k.input += 1 else switch (payload[0]) {
                         0xA1 => k.setup += 1,
                         0xA2 => k.pick += 1,
@@ -391,30 +406,14 @@ test "net compat: an M4 badge and a converted one race in sync, either hosting" 
     }
 }
 
-/// GC with `G.version = 1`: every other decl as net.Game.
-const GameV1 = struct {
-    pub const World = net.Game.World;
-    pub const rules_len = net.Game.rules_len;
-    pub const input_delay = net.Game.input_delay;
-    pub const check_every = net.Game.check_every;
-    pub const pause_bit = net.Game.pause_bit;
-    pub const pick_bits = net.Game.pick_bits;
-    pub const simulate = net.Game.simulate;
-    pub const hash = net.Game.hash;
-    pub const hand_over = net.Game.hand_over;
-    pub const picks_ok = net.Game.picks_ok;
-    pub const can_pause = net.Game.can_pause;
-    pub const version: u4 = 1;
-};
-
-test "net compat: a version-1 GC and an M4 badge never race" {
-    const V1 = lockstep.Lockstep(L, GameV1);
+test "net compat: the cart's version-1 GC and an M4 badge never race" {
+    const Ls1 = lockstep.Lockstep(L, net.Game);
     for ([_]u32{ 1, 2, 3, 4 }) |seed| {
         var cable: virtual.Cable = .{ .kind = if (seed % 2 == 0) .straight else .crossed };
         var wire: Wire = .{};
         defer for (&wire.tx) |*t| t.deinit(std.testing.allocator);
         var old = Old.init(L.init(.{ .inner = cable.port(0), .wire = &wire }, net.app_id, seed *% 2_654_435_761 +% 1));
-        var new = V1.init(L.init(.{ .inner = cable.port(1), .wire = &wire }, net.app_id, seed *% 40_503 +% 7));
+        var new = Ls1.init(L.init(.{ .inner = cable.port(1), .wire = &wire }, net.app_id, seed *% 40_503 +% 7));
         var now: u64 = 1_000_000;
         while (now < 6_000_000) : (now += 16_667) {
             old.pump(now);
@@ -432,5 +431,28 @@ test "net compat: a version-1 GC and an M4 badge never race" {
         try std.testing.expectEqual(lockstep.State.wrong_version, new.state());
         try std.testing.expectEqual(@as(u32, 0), new.stats.control_sent);
         try std.testing.expectEqual(@as(u8, 0x11), old.link.partner_version);
+    }
+}
+
+test "net compat: an M5.1 badge (v0) and this build (v1) never race, never desync" {
+    inline for (.{ .{ New, V1 }, .{ V1, New } }) |pair| {
+        const D = Duo(pair[0], pair[1]);
+        var seed: u32 = 1;
+        while (seed <= 6) : (seed += 1) {
+            var d: D = undefined;
+            d.init(seed, if (seed % 2 == 0) .straight else .crossed, if (seed % 3 == 0) 10_000 else 0);
+            defer d.deinit();
+            // Each side's host would offer a LINK BATTLE (v1) or a race (v0).
+            d.rules = .{ .mode = .battle, .lives = 5, .minutes = 2 };
+            d.run_for(10_000_000);
+            for ([2]lockstep.State{ d.b0.net.state(), d.b1.net.state() }) |st| try std.testing.expectEqual(lockstep.State.wrong_version, st);
+            try std.testing.expect(!d.b0.racing and !d.b1.racing);
+            try std.testing.expectEqual(@as(u32, 0), core(&d.b0.net).stats.control_sent);
+            try std.testing.expectEqual(@as(u32, 0), core(&d.b1.net).stats.control_sent);
+            try std.testing.expectEqual(@as(u32, 0), core(&d.b0.net).stats.inputs_sent);
+            const k0 = Kinds.of(d.wire.tx[0].items);
+            const k1 = Kinds.of(d.wire.tx[1].items);
+            try std.testing.expectEqual(@as(u32, 0), k0.data + k1.data);
+        }
     }
 }

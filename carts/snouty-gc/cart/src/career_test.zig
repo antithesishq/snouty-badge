@@ -71,7 +71,7 @@ test "M5 changes nothing outside the CIRCUIT: the M0-M4 races replay to their re
 }
 
 test "World stays under its cap with the M5 fields" {
-    try expect(@sizeOf(World) <= 2560);
+    try expect(@sizeOf(World) <= tuning.world_cap);
 }
 
 // --- Upgrades in the sim (SPEC 9.2) ------------------------------------------------

@@ -104,6 +104,40 @@ booked). The Prix lives in RAM: switching the badge off loses it. The
 BURST pips show up to four bolts (BURST BUFFER), and `TAGGED!` no longer
 runs off the screen edge.
 
+M6 (BATTLE, `KILL -9`, SPEC 8.3): the main menu's third row is
+**BATTLE** (`ARENA, MOST KILLS`). It opens the racer select (no track
+row: `A  TO THE ARENA`), then the **setup** over the arena's own floor:
+the arena (`THE SANDBOX`), `LIVES: 1 / 3 / 5 / 9 / INF`, `TIME: 2 / 3 / 5
+MIN / NONE` (NONE is skipped with INF lives), `CREWS: 5..1 AI`, and
+`FIGHT!`; Up/Down a row, Left/Right its value, A (or Start) on any row
+fights, B goes back to the select. The **KILL -9** card (`$ kill -9 -1`
+typing itself, `no cleanup handler` / `no appeal`, the arena and the
+rules) covers the countdown's first two steps; `2`, `1`, `GO` follow. The
+battle HUD: `ELIM n` top left (cyan for the kill leader), the lives as
+pips under it (coral on the last; `INF`), the round clock in the middle
+(time left, blinking coral in the last 10 s; with TIME NONE the time
+played in grey), the standing beside it; a sweep between the front and
+rear ammo rows fills to the next ammo and BURST refill; the minimap is
+the whole arena (walls, the bit bucket and the gap pits, bays, ramps,
+waiting crates, the Sweeper, every car, the kill leader ringed cyan).
+The feed reads `SNOUTY kill -9 KIDDIE` for an elimination (the victim
+flashing red when it was its last life), `KIDDIE REAPED` for a last life
+nobody was credited with, `SNOUTY SMASHED KIDDIE` for a STACK SMASH
+(`SMASH!` rises over the victim). The bar: `SAFE MODE` blinking after a
+respawn (the car blinks too), `STACK SMASH!` / `STACK SMASHED` /
+`CLEAN LANDING` pops, and at the end `TIME UP` or `LAST ONE STANDING`.
+On a last life the GC claw lifts the hulk out; once yours is gone,
+`REAPED` sits bottom left and the camera rides with the kill leader (its
+name under the clock). Results: the winner card (`TOP KILLER`, or `LAST
+PROCESS UP` when the lives ran out; eliminations, lives or wrecks, the
+taunt, how it ended, your own standing), then the **standings** by
+eliminations, lives and time survived (`LIVES 2`, `WRECKS 3` with INF,
+`OUT 1:42`). Pause works as in a race (RESTART is a new round with the
+same rules; QUIT goes back to the select). **LINK BATTLE**: the LINK
+lobby's mode row also offers it, with the arena and LIVES / TIME rows
+(`docs/LINK_PLAY.md`); the link protocol is version 1, so an M5.1 badge
+and this one show `WRONG VERSION`.
+
 Controls at M1 (SPEC 5.1):
 
 | Input | Race |
@@ -304,6 +338,22 @@ node ../../tools/preview.mjs ../../zig-out/bin/snouty-gc.wasm --frames 1010 --ev
 python3 ../../tools/make_gif.py out/pickups/ docs/preview_pickups.gif --scale 2 --ms 50
 ```
 
+The M6 preview (`docs/preview_m6.gif`, every third update at 50 ms, so
+real time) is one run cut by `tools/m6_gif.py`: the title, the menu's
+BATTLE row, the racer select (`A  TO THE ARENA`), the setup (TIME to 2
+MIN, LIVES to 5), FIGHT!, the KILL -9 card and the countdown, then
+SNOUTY on the autopilot: a STACK SMASH, a CLEAN LANDING, a kill -9 line,
+a wreck and the respawn in SAFE MODE, the last life (the claw, REAPED)
+and the kill leader's camera, the clock running out (TIME UP), the
+winner card and the standings. The FIGHT press's frame picks the seed;
+`scan` lists what each round has, `cut` records one (fight at frame
+344 for the committed GIF):
+
+```sh
+python3 tools/m6_gif.py scan 320 360 4
+python3 tools/m6_gif.py cut 344 out/m6gif docs/preview_m6.gif
+```
+
 Input scripts in `tools/scripts/` (`tools/record_script.py [--track N]
 [--gc] [--circuit] --frames F --out ...` records the autopilot's drive through the M3
 menus: Start at 2, Start at 10, Down at 12 for GARBAGE COLLECTION, A at
@@ -326,8 +376,8 @@ same race):
   COLLECTION race on Monitor Dunes (marks, two collections, SNOUTY
   collected and watching, the Sweeper).
 - `m5_circuit_race.json` (3,000 frames, M5): `--circuit`, Start, Start,
-  Down, Down, A (CIRCUIT), A (SNOUTY), the garage, Start at 30: the
-  Dumps' first CIRCUIT race with chips.
+  Down x3 (M6: BATTLE is the third row now), A (CIRCUIT), A (SNOUTY),
+  the garage, Start at 30: the Dumps' first CIRCUIT race with chips.
 - `m5_cards.json` (600 frames, with `--poke gc_cards=1`, M5): the garage
   with 5,000 CYCLES at boot, three purchases, then Start (which books a
   made-up 1st place under the poke) and A through the standings, the
@@ -341,12 +391,19 @@ Debug exports (zero-argument wasm functions for `--dump-exports`,
 |---|---|
 | `debug_frame`, `debug_render_us` | frames since start; render time (0 in wasm) |
 | `debug_pixel_checksum` | sum of all framebuffer words |
-| `debug_screen` | 0 splash, 1 title, 2 racer select, 3 race, 4 pause, 5 results, 6 main menu, 7 LINK lobby, 8 garage, 9 standings, 10 CIRCUIT card, 11 PICKUPS page |
-| `debug_menu_row` | the main menu's cursor (0 QUICK RACE, 1 GARBAGE COLLECTION, 2 CIRCUIT, 3 PICKUPS, 4 LINK, 5 SOUND) |
-| `debug_menu_battle(v)` | 1: draw the main menu with a made-up BATTLE row after GARBAGE COLLECTION (the 7-row layout M6 needs; the cursor still walks the six real rows), 0: without |
+| `debug_screen` | 0 splash, 1 title, 2 racer select, 3 race, 4 pause, 5 results, 6 main menu, 7 LINK lobby, 8 garage, 9 standings, 10 CIRCUIT card, 11 PICKUPS page, 12 BATTLE's setup (M6) |
+| `debug_menu_row` | the main menu's cursor (0 QUICK RACE, 1 GARBAGE COLLECTION, 2 BATTLE, 3 CIRCUIT, 4 PICKUPS, 5 LINK, 6 SOUND) |
 | `debug_link_view(k)` | a made-up LINK screen (the simulator's link is offline): 1 searching, 2 the host's lobby, 3 the guest's, 4 WRONG CART, 5 the host's select with both ready, 6 the guest's select (TAKEN), 7 WRONG VERSION; 0 the real one |
+| `debug_link_mode(m)`, `debug_lobby_rules` | M6: the lobby's mode (0 LINK RACE, 1 LINK GC, 2 LINK BATTLE) for the made-up lobby; its rules as mode \| track << 4 \| crews << 8 \| lives << 16 \| minutes << 24 |
+| `debug_start_battle(n)`, `debug_battle_minutes(m)`, `debug_battle_crews(k)` | M6 setup calls (they return their value, so `--call-at` works too): a BATTLE round on The Sandbox with the select's racer and n lives (0 INF); the next round's TIME (0 NONE) and AI cars |
+| `debug_setup_row`, `debug_battle_arena` | M6: the setup's cursor (0 arena, 1 LIVES, 2 TIME, 3 CREWS, 4 FIGHT!), the arena picked |
+| `debug_battle_left`, `debug_battle_refill`, `debug_battle_out`, `debug_battle_leader`, `debug_battle_end` | M6: ticks left on the clock (-1 with TIME NONE), ticks to the next refill, out-of-lives bits, the kill leader (255 none), why it ended (0 running, 1 lives, 2 time) |
+| `debug_battle_lives(i)`, `debug_battle_elims(i)`, `debug_battle_safe(i)` | M6: car i's lives, eliminations, SAFE MODE ticks |
+| `debug_me_out`, `debug_safe`, `debug_stunt` | M6: the player is out of lives; the followed car's SAFE MODE ticks; the bar's stunt pop (kind * 256 + ticks: 1 STACK SMASH, 2 smashed, 3 CLEAN LANDING) |
+| `debug_battle_set_lives(v)`, `debug_battle_kill(v)`, `debug_battle_clock(t)` | M6 preview hooks (debug writes of the World): car \| lives << 8 sets a car's lives; victim \| killer << 8 wrecks the victim with the killer credited (255 nobody; returns 1 when it did); t ticks left on the clock |
+| `debug_battle_stress` | M6: the render stress scene in the arena with the battle HUD's stress (badge-bench `--poke gc_battle=2`) |
 | `debug_pickup_cursor` | the PICKUPS page's cursor (`world.Pickup`: 0 PREFETCH .. 14 ZERO-DAY) |
-| `debug_mode` | 0 quick race, 1 attract, 2 the render stress scene, 3 GARBAGE COLLECTION |
+| `debug_mode` | 0 quick race, 1 attract, 2 the render stress scene, 3 GARBAGE COLLECTION, 4 a CIRCUIT race, 5 BATTLE (M6) |
 | `debug_me` | the player's car (`debug_follow` differs in the attract demo and once a GC race has collected the player) |
 | `debug_gc_marked`, `debug_gc_sweeps`, `debug_gc_collected`, `debug_gc_survivor`, `debug_alive` | GARBAGE COLLECTION: the marked car (255 none), sweeps passed, collected bits, the survivor (255 none), cars still running |
 | `debug_hazard_state` | a hex digit per hazard slot (slot 0 lowest): state (0 idle, 1 warn, 2 active) + 4 * kind (1 vent, 2 Sweeper) |
@@ -393,9 +450,13 @@ badge-bench/bench.sh zig-out/firmware/snouty-gc.elf --frames 3600 --script carts
 # M5: a CIRCUIT race from the menus and the garage; the garage, standings and every card
 badge-bench/bench.sh zig-out/firmware/snouty-gc.elf --frames 3000 --script carts/snouty-gc/tools/scripts/m5_circuit_race.json
 badge-bench/bench.sh zig-out/firmware/snouty-gc.elf --frames 600 --poke gc_cards=1 --script carts/snouty-gc/tools/scripts/m5_cards.json
+# M6: a BATTLE round on The Sandbox (SNOUTY on the autopilot, 3 lives, 3 min), and the
+# arena stress scene with the battle HUD at its busiest (kill -9 lines, claws, stunt pops, SAFE MODE)
+badge-bench/bench.sh zig-out/firmware/snouty-gc.elf --frames 3600 --poke gc_battle=1
+badge-bench/bench.sh zig-out/firmware/snouty-gc.elf --frames 300 --poke gc_battle=2
 ```
 
-`gc_stress` and `gc_cards` (M5) are exported globals the cart reads in `start()`.
+`gc_stress`, `gc_cards` (M5) and `gc_battle` (M6) are exported globals the cart reads in `start()`.
 
 Read the `busy ms` column. Milestone numbers are in `PLAN.md`.
 
@@ -412,3 +473,63 @@ The engine sheets left from Zero (`assets/gen/shadow.png`, and
 `exhaust.png`, Zero's `fx.png` renamed) are described in
 `../ASSETS_ENGINE.md`; the art track's sheets (`python3
 tools/draw_art.py`) are in `assets/gen/art/` (`../ASSETS.md`).
+
+## 7. Saves (branch `saves/gcp`)
+
+With the patched badge OS that stores cart saves (sycl-badge branch
+`cart-saves`, root `docs/SAVES.md`), the SNOUTY GCP survives switching the
+badge off. On stock firmware, in the web simulator and in wasm builds
+nothing of this shows: the cart is the one described above.
+
+- **What is kept**: one key, `gcp/career` (181 bytes, one 4 KB store
+  block): the whole `career.Career` (racer, league and next race, open
+  leagues, tries, the wallet, every racer's league points, loadout, CYCLES
+  earned and spent, each AI's place in its plan, the circuit totals, the
+  last race's award, the last league's outcome). Quick Race, GARBAGE
+  COLLECTION, BATTLE, LINK and the SOUND toggle keep nothing. Format and
+  rules: `cart/src/career_save.zig`.
+- **When it saves**: when a race is booked (A on the results' field
+  table, as the standings come up), when B leaves the garage for the menu,
+  and when the settings box's **Exit cart** is picked (the OS waits for
+  the cart). Each time only if the career changed since the last save, so
+  B in and out of the garage costs nothing. A `SAVING` mark top right
+  holds the screen for the ~110 ms the badge is parked. Never mid-race,
+  and never during a LINK session (lobby, link select, link race). Leaving
+  the end card deletes the save (the circuit is over). Garage purchases
+  are saved by the next save point; switching off between buying and the
+  race result undoes them (with the CYCLES refunded).
+- **CIRCUIT in the main menu** opens `CONTINUE CAREER` / `NEW CAREER`
+  when there is a career (saved, or in this session). CONTINUE picks it
+  up in the garage (or on the standings, if the badge went off after a
+  league's third race; A then closes the league as before). NEW CAREER
+  asks first (`NO, KEEP IT` / `YES, START OVER`, NO under the cursor),
+  then opens the racer select; the old save is replaced at the new
+  career's first save point. Up/Down, A or Start, B back. Without saves
+  CIRCUIT works as before (straight to the garage while a Prix is on).
+- **A save it cannot use** (another build's format: `OLD SAVE: UNUSABLE`;
+  a bad checksum or field: `SAVE IS DAMAGED`) leaves NEW CAREER alone on
+  the chooser; the new career's first save replaces it.
+- **Errors**: the store's rate limit (8 commits, then one per 10 s) is
+  retried quietly at the next save point; any other failure shows once in
+  a red line at the top (`SAVE: NO SPACE`, `SAVE: FLASH ERROR`, ...), off
+  the race.
+- **The probe**: the cart asks the OS once, on its second frame (the
+  splash or the title). Stock firmware never answers, so that frame takes
+  250 ms; nothing moves on the splash then.
+
+Host tests: `cart/src/career_save_test.zig` (in `zig build test-gc`)
+against lib/save.zig's fake store. Bench (the recorded CIRCUIT race to its
+standings, `tools/scripts/saves_circuit_race.json`):
+
+```sh
+badge-bench/bench.sh zig-out/firmware/snouty-gc.elf --frames 6100 \
+    --script carts/snouty-gc/tools/scripts/saves_circuit_race.json --saves /tmp/gcp.json
+# the next boot: CIRCUIT, CONTINUE CAREER, the garage; then Exit cart
+badge-bench/bench.sh zig-out/firmware/snouty-gc.elf --frames 120 \
+    --script carts/snouty-gc/tools/scripts/saves_continue.json --saves /tmp/gcp.json --exit-at 100
+# stock firmware: the same race, no save request answered, no SAVING
+badge-bench/bench.sh zig-out/firmware/snouty-gc.elf --frames 6100 \
+    --script carts/snouty-gc/tools/scripts/saves_circuit_race.json --no-saves
+```
+
+`tools/check_saves.sh` runs those three and checks the results.

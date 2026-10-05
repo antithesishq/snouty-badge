@@ -24,6 +24,7 @@ const sim = @import("sim.zig");
 const weapons = @import("weapons.zig");
 const pickups = @import("pickups.zig");
 const hazards = @import("hazards.zig");
+const hunt = @import("hunt.zig");
 
 const World = world.World;
 const Car = world.Car;
@@ -158,6 +159,8 @@ pub fn rubber_permille(w: *const World, c: *const Car) i32 {
 }
 
 pub fn drive_crew(w: *const World, i: usize, cr: *const Crew) Input {
+    // BATTLE (M6): the hunter over the arena's navigation field.
+    if (w.mode == .battle) return hunt.drive(w, i, cr);
     var b: Input = .{};
     const c = &w.cars[i];
     const t = sim.track_of(w);
@@ -229,13 +232,13 @@ pub fn drive_crew(w: *const World, i: usize, cr: *const Crew) Input {
     return b;
 }
 
-const Use = enum { no, forward, back };
+pub const Use = enum { no, forward, back };
 
 /// When to press B (SPEC 4.3, 6.5 item 3): KIDDIE at once; everyone else
 /// on the pickup's trigger. Tier C at once, except BOTNET's KERNEL PANIC
 /// and DDOS (only at the leader) and ROOTKIT's last-lap HEISENBUG and RACE
 /// CONDITION.
-fn want_use(w: *const World, i: usize, cr: *const Crew, curve: i32) Use {
+pub fn want_use(w: *const World, i: usize, cr: *const Crew, curve: i32) Use {
     const c = &w.cars[i];
     if (c.pickup == .none or c.roll_ticks > 0 or c.b_was or c.frozen > 0) return .no;
     const last_lap = sim.last_lap(w, c);
@@ -295,7 +298,7 @@ fn car_ahead_on_line(w: *const World, i: usize) bool {
 /// weapon is Down+A on a press edge; the front weapon is A without Down,
 /// so a tick that brakes does not fire (the brake wins, except that a held
 /// LANCE is let go: fired if charged, fizzled if not).
-fn arm(w: *const World, i: usize, cr: *const Crew, b: *Input, curve: i32) void {
+pub fn arm(w: *const World, i: usize, cr: *const Crew, b: *Input, curve: i32) void {
     const c = &w.cars[i];
     if (c.ammo_rear > 0 and c.rear_cd == 0 and !c.rear_was and want_drop(w, i, cr, curve)) {
         b.down = true;
@@ -308,6 +311,9 @@ fn arm(w: *const World, i: usize, cr: *const Crew, b: *Input, curve: i32) void {
             if (c.charge > 0) {
                 const fire_now = c.charge >= tuning.lance_charge and c.aim_ticks >= cr.reaction;
                 b.a = !(fire_now or braking);
+            } else if (!braking and c.ammo_front > 0 and c.fire_cd == 0 and w.mode == .battle) {
+                // BATTLE: charge with a car in the cone.
+                b.a = c.aim != no_car;
             } else if (!braking and c.ammo_front > 0 and c.fire_cd == 0) {
                 // Charge only on a straight.
                 const t = sim.track_of(w);

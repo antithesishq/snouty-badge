@@ -1,4 +1,10 @@
 [
   { "from": 300, "to": 301, "hold": ["RIGHT"] },
-  { "from": 600, "to": 601, "hold": ["RIGHT"] }
+  { "from": 600, "to": 601, "hold": ["RIGHT"] },
+  { "from": 660, "to": 661, "hold": ["A"] },
+  { "from": 900, "to": 901, "hold": ["RIGHT"] },
+  { "from": 1100, "to": 1101, "hold": ["SELECT"] },
+  { "from": 1200, "to": 1201, "hold": ["A"] },
+  { "from": 1350, "to": 1351, "hold": ["A"] },
+  { "from": 1500, "to": 1501, "hold": ["RIGHT"] }
 ]

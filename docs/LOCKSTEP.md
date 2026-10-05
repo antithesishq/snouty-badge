@@ -6,7 +6,9 @@ hold the same World and step it with the same pair of input bytes, one
 byte per human per tick; nothing else crosses the cable during a race.
 It came out of Snouty GC's M4 net code (`carts/snouty-gc/cart/src/net.zig`
 at 90683be4, verified on two badges as tag `snouty-gc/m4-hw`) and is
-shared by Snouty GC, Snouty Cycles and Snouty Zero.
+shared by Snouty GC, Snouty Cycles and Snouty Zero. New to it? Start
+with `carts/snouty-pong` (README.md there): the smallest game on it,
+written as a walkthrough.
 
 The rule a game keeps: `G.simulate(w, inputs)` is pure in `(World,
 inputs)`. No clock, no `cart.rand`, no render state, only the agreed
@@ -358,6 +360,7 @@ The app-id registry (`lockstep.apps`, `lockstep.app_name`):
 | `'C'` | Snouty Cycles | `SNOUTY CYCLES` |
 | `'Z'` | Snouty Zero | `SNOUTY ZERO` |
 | `'S'` | Snoutenstein | `SNOUTENSTEIN` |
+| `'P'` | Snouty Pong (the example game, `carts/snouty-pong`) | `SNOUTY PONG` |
 
 Anything else is `ANOTHER CART`. A new cart takes a free letter and adds
 it to both tables.

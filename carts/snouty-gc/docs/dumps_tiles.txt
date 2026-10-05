@@ -21,6 +21,11 @@
  20  board road trace corner            1 surface
  21  cable ruts (travel x)              1 surface
  22  cable ruts (travel y)              1 surface
+ 23  spawn pad E                        1 surface
+ 24  spawn pad S                        1 surface
+ 25  spawn pad W                        1 surface
+ 26  spawn pad N                        1 surface
+ 27  RMA crate pad                      1 surface
  32  pit lip mask 0000                  1 surface
  33  pit lip mask 0001                  1 surface
  34  pit lip mask 0010                  1 surface
@@ -53,6 +58,10 @@
  61  wreckage wall mask 1101            2 wall
  62  wreckage wall mask 1110            2 wall
  63  wreckage wall mask 1111            2 wall
+ 64  kicker E                           3 kicker
+ 65  kicker S                           3 kicker
+ 66  kicker W                           3 kicker
+ 67  kicker N                           3 kicker
  68  coolant puddle                     4 coolant
  69  service bay stripes (travel x)     5 bay
  70  service bay stripes (travel y)     5 bay
@@ -74,6 +83,10 @@
  86  Sweeper crossing (travel y)        1 surface
  87  Sweeper gate (travel x)            2 wall
  88  Sweeper gate (travel y)            2 wall
+ 92  jump E                             11 jump
+ 93  jump S                             11 jump
+ 94  jump W                             11 jump
+ 95  jump N                             11 jump
  96  wreckage corner NE                 2 wall
  97  wreckage corner SE                 2 wall
  98  wreckage corner SW                 2 wall

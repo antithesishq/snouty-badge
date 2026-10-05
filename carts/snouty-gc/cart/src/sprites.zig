@@ -476,8 +476,9 @@ pub fn draw_world(w: *const world.World, v: View) void {
 fn car_lift(c: *const world.Car) i32 {
     var lift: i32 = tuning.ride_height;
     if (c.hop > 0) {
-        const elapsed: i32 = @as(i32, tuning.ramp_ticks) - @as(i32, c.hop);
-        const a: fixed.Turn = @intCast(@divTrunc(elapsed * 32768, tuning.ramp_ticks));
+        // The jump's own length (M6: a kicker flies longer than a ramp).
+        const elapsed: i32 = @max(0, @as(i32, c.air) - @as(i32, c.hop));
+        const a: fixed.Turn = @intCast(@min(32767, @divTrunc(elapsed * 32768, @max(1, @as(i32, c.air)))));
         lift += (fixed.sin(a) * hop_height) >> fixed.Q;
     }
     return lift;
