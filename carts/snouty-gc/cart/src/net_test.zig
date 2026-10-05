@@ -13,6 +13,7 @@ const ai = @import("ai.zig");
 const net = @import("net.zig");
 const racers = @import("racers.zig");
 const gc_mode = @import("gc_mode.zig");
+const tuning = @import("tuning.zig");
 
 const World = world.World;
 
@@ -196,6 +197,11 @@ const Badge = struct {
         if (r % 89 == 0) in.select = true;
         if (r % 113 == 0) in.left = !in.left;
         if (b.press_start_at != 0 and b.frames >= b.press_start_at and b.frames < b.press_start_at + 3) in.start = true;
+        // Start with a random Select tap is the OS chord: `submit` clears
+        // both, so a held Start would show two edges (pause, unpause).
+        // A player pausing does not press Select with it (M6: the v1 seeds
+        // hit this in the RESUME test).
+        if (in.start) in.select = false;
         return in.byte();
     }
 };
@@ -352,7 +358,14 @@ const Duo = struct {
             b.pause_offs += 1;
         }
         if (n.ls.tick <= max_ticks) logs[b.side][n.ls.tick] = net.world_hash(&b.w);
-        if (b.mutate_at != 0 and n.ls.tick == b.mutate_at) b.w.cars[3].x +%= 1 << 16;
+        if (b.mutate_at != 0 and n.ls.tick == b.mutate_at) {
+            // Car 3 a pixel over, and the PRNG: a hulk's respawn puts the
+            // car back on its pad, which can erase the pixel before the
+            // next check (M6: a v1 seed did), the PRNG change stays.
+            b.w.cars[3].x +%= 1 << 16;
+            b.w.rng ^= 0x10;
+            if (b.w.rng == 0) b.w.rng = 1;
+        }
     }
 
     fn both(d: *Duo, s: net.State) bool {
@@ -511,6 +524,19 @@ test "wire formats: rules, picks" {
     try std.testing.expect(std.meta.eql(r, net.Rules.decode(r.encode())));
     const r0 = net.Rules{};
     try std.testing.expect(std.meta.eql(r0, net.Rules.decode(r0.encode())));
+    // M6: LINK BATTLE's five bytes, every LIVES and TIME row.
+    for (tuning.battle_lives_opts) |l| for (tuning.battle_minutes_opts) |m| {
+        const rb = net.Rules{ .mode = .battle, .track = 0, .crews = 0, .lives = l, .minutes = m };
+        try std.testing.expect(std.meta.eql(rb, net.Rules.decode(rb.encode())));
+    };
+    // Bytes off the rows decode to the defaults; an unknown mode is a race.
+    const junk = net.Rules.decode(.{ 9, 1, 200, 4, 7 });
+    try std.testing.expectEqual(world.Mode.race, junk.mode);
+    try std.testing.expectEqual(@as(u8, 3), junk.lives);
+    try std.testing.expectEqual(@as(u8, 3), junk.minutes);
+    try std.testing.expectEqual(@as(u8, 7), junk.crews);
+    // The M5.1 byte still round-trips race and GC rules.
+    try std.testing.expect(std.meta.eql(r, net.Rules.decode_v0(r.encode_v0())));
     const p = net.Pick{ .racer = 4, .ready = true };
     try std.testing.expect(std.meta.eql(p, net.Pick.decode(p.encode())));
     try std.testing.expectEqual(net.no_racer, net.Pick.decode((net.Pick{}).encode()).racer);

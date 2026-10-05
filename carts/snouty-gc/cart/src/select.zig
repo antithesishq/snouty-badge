@@ -20,6 +20,7 @@ const input = @import("input.zig");
 const sound = @import("sound.zig");
 const net = @import("net.zig");
 const link_ui = @import("link_ui.zig");
+const battle_text = @import("battle_text.zig");
 
 /// The racer and track shown (main.zig reads them on a pick).
 pub var racer: u8 = racers.snouty;
@@ -36,6 +37,9 @@ pub const Action = enum { none, pick, back };
 /// M5: the CIRCUIT's select (SPEC 8.1: the pick is kept for the whole
 /// Prix): no track row (the leagues set the tracks), `A ENTER THE PRIX`.
 pub var circuit: bool = false;
+/// M6: BATTLE's select: no track row either (the setup screen after it
+/// picks the arena), `A  TO THE ARENA`.
+pub var battle: bool = false;
 
 /// M4: the link race's select (SPEC 7.3), set by main.zig every frame
 /// (null: single player). No track row (the host's lobby picks it); A
@@ -80,7 +84,7 @@ pub fn update() Action {
     if (link) |l| {
         // A ready badge keeps its racer; B takes the mark back.
         if (l.ready) return .none;
-    } else if (input.pressed(.down) and row == 0 and !circuit) {
+    } else if (input.pressed(.down) and row == 0 and !circuit and !battle) {
         row = 1;
         sound.menu_move();
     }
@@ -187,6 +191,8 @@ pub fn draw(frame: u32) void {
     plain(">", 148, 116, arrow);
     if (circuit) {
         plain("A ENTER THE PRIX", 16, 116, dim);
+    } else if (battle) {
+        plain("A  TO THE ARENA", 80 - 60, 116, dim);
     } else if (row == 0) {
         // "A PICK  vTRACK" centred: 14 cells, the arrow drawn in cell 8.
         plain("A PICK", 24, 116, dim);
@@ -231,7 +237,15 @@ fn draw_track_panel() void {
 /// Link select (M4): the bio's place shows the host's rules, the
 /// partner's pick and this badge's mark; the bottom row the next press.
 fn draw_link_panel(l: *const Link, frame: u32) void {
-    if (l.rules) |ru| {
+    if (l.rules) |ru| if (ru.mode == .battle) {
+        // LINK BATTLE: the arena and CREWS, then LIVES and TIME.
+        plain(battle_text.place_name(ru), 4, 79, hud.cyan);
+        var cb: [7]u8 = "CREWS 4".*;
+        cb[6] = '0' + @as(u8, @min(ru.crews, 9));
+        plain(&cb, 156 - 56, 79, dim);
+        var rb: [24]u8 = undefined;
+        plain(battle_text.rules_line(&rb, ru.lives, ru.minutes), 4, 88, dim);
+    } else {
         plain(track.tracks[ru.track % track.tracks.len].name, 4, 79, hud.cyan);
         var buf: [18]u8 = undefined;
         const mode = link_ui.mode_name(ru.mode);

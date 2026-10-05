@@ -45,6 +45,8 @@ const career = @import("career.zig");
 const garage = @import("garage.zig");
 const standings = @import("standings.zig");
 const pickup_page = @import("pickup_page.zig");
+const battle_ui = @import("battle_ui.zig");
+const battle_text = @import("battle_text.zig");
 
 comptime {
     cart.export_start_code();
@@ -54,8 +56,9 @@ comptime {
 /// `lobby` (the LINK screen) in M4; the link race's racer select is
 /// `select` with `select.link` set; M5 the CIRCUIT's `garage`,
 /// `standings` and `card` (the league, unlock and end cards); `pickups`
-/// (the menu's PICKUPS page) came with gc/menu-fix after them).
-pub const Screen = enum(u8) { splash, title, select, race, pause, results, menu, lobby, garage, standings, card, pickups };
+/// (the menu's PICKUPS page) came with gc/menu-fix after them; M6
+/// `setup`, BATTLE's setup screen after the racer select).
+pub const Screen = enum(u8) { splash, title, select, race, pause, results, menu, lobby, garage, standings, card, pickups, setup };
 var screen: Screen = .splash;
 /// Why the race runs: a Quick Race, the attract demo, the render stress
 /// scene, GARBAGE COLLECTION (M3), a CIRCUIT race (M5; race rules, the
@@ -63,7 +66,8 @@ var screen: Screen = .splash;
 /// numbers are debug_mode's.
 const Mode = enum(u8) { quick, attract, stress, gc, circuit, battle };
 var mode: Mode = .quick;
-/// The mode the main menu picked (quick, gc or circuit): the select races it.
+/// The mode the main menu picked (quick, gc, circuit or battle): the select
+/// races it (battle through the setup screen).
 var race_mode: Mode = .quick;
 
 /// M5: the CIRCUIT (the SNOUTY GCP), kept in RAM for the session (no
@@ -101,12 +105,10 @@ export var gc_cards: u8 = 0;
 /// boot with SNOUTY on the autopilot (3 lives, 3 min); `gc_battle=2`: the
 /// render stress scene (stress.zig) placed in the arena.
 export var gc_battle: u8 = 0;
-/// M6: the next BATTLE round's options (Track B's setup screen sets them;
-/// the wasm `debug_start_battle` / `debug_battle_minutes` /
-/// `debug_battle_crews` too): lives (0 INF), TIME minutes (0 NONE), AI cars.
-var battle_lives: u8 = 3;
-var battle_minutes: u8 = 3;
-var battle_crews: u8 = world.car_count;
+/// M6: the next BATTLE round's options are `battle_ui.opts` (the setup
+/// screen sets them; the wasm `debug_start_battle` / `debug_battle_minutes`
+/// / `debug_battle_crews` too): the arena, lives (0 INF), TIME minutes (0
+/// NONE), AI cars.
 /// Race seed: a new one per race from the frame counter (any value works;
 /// the link race of M4 shares one between the badges).
 var seed: u32 = 0x5EED_6C00;
@@ -159,9 +161,11 @@ var lnk: Net = undefined;
 /// This race runs over the link (LINK RACE / LINK GC): from the GO to
 /// `leave` (QUIT, the results, a desync).
 var linked: bool = false;
-/// The lobby: the host's row and the rules it offers (kept between races).
-var lobby_cursor: u8 = 0;
+/// The lobby: the host's row and the rules it offers (kept between races);
+/// the race track to go back to when the host leaves LINK BATTLE.
+var lobby_cursor: battle_text.LobbyRow = .mode;
 var lobby_rules: net.Rules = .{};
+var lobby_race_track: u8 = 0;
 /// The link select: this badge is ready on its racer.
 var link_ready: bool = false;
 /// Pause: RESUME (or B) holds Start in the race byte until `paused` turns
@@ -204,6 +208,9 @@ pub fn start() void {
         autopilot = true;
         new_race(.battle, 0);
     } else if (gc_battle == 2) {
+        // The arena stress scene with BATTLE's HUD at its busiest
+        // (stress.zig's battle events: kill -9 lines, claws, stunts, SAFE
+        // MODE, the refill sweep).
         new_race(.battle, 0);
         mode = .stress;
         stress.fill(&w, follow);
@@ -260,9 +267,11 @@ fn new_race(m: Mode, t: u8) void {
     } };
     if (m == .quick or m == .gc or m == .battle) setup.humans[0] = player_racer;
     if (m == .battle) {
-        setup.lives = battle_lives;
-        setup.minutes = battle_minutes;
-        setup.crews = battle_crews;
+        const o = battle_ui.opts;
+        setup.track = o.arena % @as(u8, @intCast(track.arenas.len));
+        setup.lives = o.lives;
+        setup.minutes = o.minutes;
+        setup.crews = o.crews;
     }
     // The CIRCUIT: the league's track, every car's loadout, chips on.
     if (m == .circuit) setup = prix.setup(seed);
@@ -311,6 +320,7 @@ pub fn update() void {
         .standings => standings_frame(),
         .card => card_frame(),
         .pickups => pickups_frame(),
+        .setup => setup_frame(),
     }
     engine_cue();
     render_us = @truncate(cart.micros_since_boot() - t0);
@@ -375,9 +385,13 @@ fn menu_frame() void {
     }
     if (input.pressed(.a) or input.pressed(.start)) {
         switch (@as(menu.Item, @fromBackingInt(@intCast(main_list.cursor)))) {
-            .quick, .gc => |it| {
+            .quick, .gc, .battle => |it| {
                 sound.menu_confirm();
-                race_mode = if (it == .gc) .gc else .quick;
+                race_mode = switch (it) {
+                    .gc => .gc,
+                    .battle => .battle,
+                    else => .quick,
+                };
                 to_select();
                 select.draw(frame);
                 return;
@@ -449,6 +463,7 @@ fn toggle_sound() void {
 fn to_select() void {
     select.link = null;
     select.circuit = race_mode == .circuit;
+    select.battle = race_mode == .battle;
     select.enter(player_racer, player_track, race_mode == .gc);
     go(.select);
 }
@@ -465,6 +480,7 @@ fn select_frame() void {
                 prix_on = true;
                 return to_garage();
             }
+            if (race_mode == .battle) return to_setup();
             player_track = select.track_index;
             new_race(race_mode, player_track);
             // The track's art and map were just unpacked (a few ms):
@@ -481,6 +497,52 @@ fn select_frame() void {
         .none => {},
     }
     select.draw(frame);
+}
+
+// --- BATTLE's setup (M6, SPEC 8.3) -----------------------------------------------
+
+/// The setup over the arena's floor: the camera high over its middle,
+/// turning, as the menu's backdrop over Landfill Loop.
+fn arena_backdrop() void {
+    const t = track.arenas[battle_ui.opts.arena % track.arenas.len];
+    track.select(t);
+    render.set_track(t);
+    camera.init(528 << fixed.Q, 528 << fixed.Q, camera.cam.yaw);
+    camera.cam.height = 96;
+    render.hills_on = false;
+}
+
+fn to_setup() void {
+    battle_ui.enter();
+    arena_backdrop();
+    go(.setup);
+    draw_backdrop();
+    battle_ui.draw(frame);
+}
+
+/// BATTLE's setup (battle_ui.zig): A fights on the arena and rules shown,
+/// B goes back to the racer select.
+fn setup_frame() void {
+    const arena = battle_ui.opts.arena;
+    switch (battle_ui.update()) {
+        .start => {
+            new_race(.battle, battle_ui.opts.arena);
+            // The arena was unpacked for the backdrop; the round draws
+            // from the next frame.
+            draw_backdrop();
+            battle_ui.draw(frame);
+            return;
+        },
+        .back => {
+            to_select();
+            select.draw(frame);
+            return;
+        },
+        .none => {},
+    }
+    if (battle_ui.opts.arena != arena) arena_backdrop();
+    draw_backdrop();
+    battle_ui.draw(frame);
 }
 
 // --- Race ------------------------------------------------------------------------
@@ -525,6 +587,10 @@ fn draw_race(look: bool) void {
         .press_start = mode == .attract,
     });
     hud.draw_after(frame);
+    // BATTLE: the KILL -9 card over the countdown's READY and 3.
+    if (w.mode == .battle and w.phase == .countdown and battle_text.card_up(w.countdown)) {
+        battle_ui.draw_card(w.countdown, sim.track_of(&w).name, w.battle.lives, if (w.battle.limit == 0) 0 else @intCast(w.battle.limit / tuning.battle_minute), frame);
+    }
     pump_point(.after);
     camera.cam = saved;
     hills.backward = false;
@@ -981,17 +1047,17 @@ fn lobby_frame() void {
     if (v.state == .lobby) {
         if (v.role == .host) {
             if (input.pressed(.up)) {
-                lobby_cursor = if (lobby_cursor == 0) link_ui.row_count - 1 else lobby_cursor - 1;
+                lobby_cursor = battle_text.lobby_move(lobby_cursor, -1, lobby_rules.mode);
                 sound.menu_move();
             }
             if (input.pressed(.down)) {
-                lobby_cursor = (lobby_cursor + 1) % link_ui.row_count;
+                lobby_cursor = battle_text.lobby_move(lobby_cursor, 1, lobby_rules.mode);
                 sound.menu_move();
             }
             const step: i32 = @as(i32, @intFromBool(input.pressed(.right))) - @as(i32, @intFromBool(input.pressed(.left)));
-            if (step != 0 and lobby_cursor != @backingInt(link_ui.Row.racer)) {
+            if (step != 0 and lobby_cursor != .racer) {
                 sound.menu_move();
-                change_rule(step);
+                battle_text.lobby_change(&lobby_rules, lobby_cursor, step, &lobby_race_track);
             }
             lnk.set_rules(lobby_rules);
         }
@@ -1005,26 +1071,6 @@ fn lobby_frame() void {
     }
     link_ui.draw_lobby(&v, lobby_cursor, frame);
     pump_loop(null);
-}
-
-/// Host: Left/Right on a rules row.
-fn change_rule(step: i32) void {
-    switch (@as(link_ui.Row, @fromBackingInt(@intCast(lobby_cursor)))) {
-        .mode => lobby_rules.mode = if (lobby_rules.mode == .gc) .race else .gc,
-        .track => {
-            const nt: i32 = @intCast(track.tracks.len);
-            lobby_rules.track = @intCast(@mod(@as(i32, lobby_rules.track) + step, nt));
-        },
-        .crews => {
-            var k: usize = 0;
-            for (link_ui.crew_steps, 0..) |c, i| {
-                if (c == lobby_rules.crews) k = i;
-            }
-            const len: i32 = link_ui.crew_steps.len;
-            lobby_rules.crews = link_ui.crew_steps[@intCast(@mod(@as(i32, @intCast(k)) + step, len))];
-        },
-        .racer => {},
-    }
 }
 
 fn link_info() select.Link {
@@ -1110,7 +1156,11 @@ fn start_link_race() void {
     autopilot = false;
     player_racer = lnk.local_car();
     player_track = s.track;
-    race_mode = if (s.mode == .gc) .gc else .quick;
+    race_mode = switch (s.mode) {
+        .gc => .gc,
+        .battle => .battle,
+        else => .quick,
+    };
     begin_race(race_mode, s, lnk.local_car());
 }
 
@@ -1123,7 +1173,7 @@ fn link_byte() u8 {
 /// frame after `simulate`): effects, the GC camera, the sound cues.
 fn after_tick() void {
     fx.tick(&w, me, frame);
-    if (mode == .gc) watch_leader();
+    if (mode == .gc or mode == .battle) watch_leader();
     sound_cues();
 }
 
@@ -1301,11 +1351,12 @@ comptime {
             "debug_me",             "debug_link_view",     "debug_link_notice",    "debug_link_state",
             "debug_linked",         "debug_start_circuit", "debug_prix_skip",      "debug_prix_cycles",
             "debug_prix_give",      "debug_prix_league",   "debug_prix_race",      "debug_prix_done",
-            "debug_card",           "debug_garage_row",    "debug_pickup_cursor",  "debug_menu_battle",
+            "debug_card",           "debug_garage_row",    "debug_pickup_cursor",  "debug_link_mode",
             "debug_menu_row",       "debug_start_battle",  "debug_battle_minutes", "debug_battle_crews",
             "debug_battle_lives",   "debug_battle_elims",  "debug_battle_safe",    "debug_battle_left",
             "debug_battle_refill",  "debug_battle_out",    "debug_battle_leader",  "debug_battle_end",
             "debug_battle_set_lives", "debug_battle_kill", "debug_battle_clock",
+            "debug_setup_row",      "debug_battle_arena",  "debug_stunt",          "debug_safe",
         }) |name| @export(&@field(@This(), name), .{ .name = name });
     }
 }
@@ -1356,7 +1407,7 @@ fn debug_rank() callconv(.c) u32 {
 }
 /// 0 splash, 1 title, 2 racer select, 3 race, 4 pause, 5 results, 6 the
 /// main menu, 7 the LINK lobby; M5: 8 the garage, 9 the standings, 10 a
-/// CIRCUIT card (`debug_card`); 11 the PICKUPS page.
+/// CIRCUIT card (`debug_card`); 11 the PICKUPS page; M6: 12 BATTLE's setup.
 fn debug_screen() callconv(.c) u32 {
     return @backingInt(screen);
 }
@@ -1558,10 +1609,31 @@ fn debug_drawn() callconv(.c) u32 {
 fn debug_gathered() callconv(.c) u32 {
     return sprites.last_gathered;
 }
-/// --call debug_menu_battle:1 draws the main menu with a made-up BATTLE
-/// row (the 7-row layout M6 needs; menu.preview_battle), 0 without.
-fn debug_menu_battle(v: u32) callconv(.c) void {
-    menu.preview_battle = v != 0;
+/// --call debug_link_mode:M sets the lobby's mode (0 LINK RACE, 1 LINK
+/// GC, 2 LINK BATTLE) for the made-up LINK screens (`debug_link_view`):
+/// the simulator has no partner to host for.
+fn debug_link_mode(m: u32) callconv(.c) u32 {
+    const want = battle_text.link_modes[m % battle_text.link_modes.len];
+    while (lobby_rules.mode != want) battle_text.lobby_change(&lobby_rules, .mode, 1, &lobby_race_track);
+    return @backingInt(lobby_rules.mode);
+}
+/// BATTLE's setup: the row under the cursor (battle_text.Row) and the
+/// arena picked.
+fn debug_setup_row() callconv(.c) u32 {
+    return battle_ui.cursor;
+}
+fn debug_battle_arena() callconv(.c) u32 {
+    return battle_ui.opts.arena;
+}
+/// The followed car's SAFE MODE ticks.
+fn debug_safe() callconv(.c) u32 {
+    return w.cars[follow].safe;
+}
+/// The stunt pop on this badge's bar: kind (fx.StuntKind: 1 STACK SMASH, 2
+/// smashed, 3 CLEAN LANDING) * 256 + ticks left; 0 none.
+fn debug_stunt() callconv(.c) u32 {
+    if (fx.stunt.ticks == 0) return 0;
+    return @as(u32, @backingInt(fx.stunt.kind)) * 256 + fx.stunt.ticks;
 }
 /// The main menu's cursor (a menu.Item value).
 // --- M6 BATTLE (wasm debug: the simulator's fakes for Track B) ---------------------
@@ -1570,16 +1642,16 @@ fn debug_menu_battle(v: u32) callconv(.c) void {
 /// select's racer, N lives (0 INF), the TIME and CREWS set below (default
 /// 3 min, every AI car).
 fn debug_start_battle(n: u32) callconv(.c) void {
-    battle_lives = @intCast(n & 0xFF);
+    battle_ui.opts.lives = @intCast(n & 0xFF);
     race_mode = .battle;
     new_race(.battle, 0);
 }
 /// The next round's TIME in minutes (0 NONE) and AI cars (CREWS).
 fn debug_battle_minutes(m: u32) callconv(.c) void {
-    battle_minutes = @intCast(m & 0xFF);
+    battle_ui.opts.minutes = @intCast(m & 0xFF);
 }
 fn debug_battle_crews(k: u32) callconv(.c) void {
-    battle_crews = @intCast(k & 0xFF);
+    battle_ui.opts.crews = @intCast(k & 0xFF);
 }
 /// Car i's lives, eliminations and SAFE MODE ticks.
 fn debug_battle_lives(i: u32) callconv(.c) u32 {

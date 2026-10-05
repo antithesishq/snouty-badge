@@ -8,7 +8,12 @@
 //! COLLECTION's survivor card (`LAST PROCESS RUNNING`, the winner's full
 //! portrait and taunt, the sweeps survived) and its table in collection
 //! order (a collected car's rank is its place), each row saying at which
-//! sweep the car was freed or that it went out wrecked. Draw only.
+//! sweep the car was freed or that it went out wrecked. M6: BATTLE's
+//! winner card (TOP KILLER, or LAST PROCESS UP when lives ended it: the
+//! full portrait, eliminations, lives or wrecks, the taunt, how the round
+//! ended, the player's own standing) and its standings (eliminations, then
+//! lives, then time survived: `LIVES 2`, `WRECKS 3`, `OUT 1:42`), each row
+//! with the half portrait. Draw only.
 const cart = @import("cart-api");
 const world = @import("world.zig");
 const racers = @import("racers.zig");
@@ -16,6 +21,7 @@ const roster_text = @import("roster_text.zig");
 const sprites = @import("sprites.zig");
 const hud = @import("hud.zig");
 const fx = @import("fx.zig");
+const battle_text = @import("battle_text.zig");
 
 const panel = cart.DisplayColor.rgb(0x2A2236);
 
@@ -64,6 +70,7 @@ fn put(out: []u8, v: u8) usize {
 /// Winner's card.
 pub fn draw_winner(w: *const world.World, follow: u8, frame: u32) void {
     if (w.mode == .gc) return draw_survivor(w, follow, frame);
+    if (w.mode == .battle) return draw_battle_winner(w, follow, frame);
     hud.fill_rect(0, 0, 160, 128, hud.anti_black);
     const wi = car_of_rank(w, 1) orelse follow;
     const win = &w.cars[wi];
@@ -154,9 +161,69 @@ fn draw_survivor(w: *const world.World, follow: u8, frame: u32) void {
     if ((frame / 30) % 2 == 0) hud.centered("A", 116, hud.coral);
 }
 
+/// BATTLE (SPEC 8.3): the standings' first, full portrait; TOP KILLER (or
+/// LAST PROCESS UP when the others ran out of lives); eliminations, lives
+/// or wrecks; the taunt; how the round ended; the player's own standing.
+fn draw_battle_winner(w: *const world.World, follow: u8, frame: u32) void {
+    hud.fill_rect(0, 0, 160, 128, hud.anti_black);
+    const wi = car_of_rank(w, 1) orelse follow;
+    const win = &w.cars[wi];
+    const r = win.racer % racers.count;
+    const liv = hud.livery(r);
+    hud.centered(battle_text.winner_title(w.battle.end), 4, if ((frame / 20) % 2 == 0) hud.cyan else hud.white);
+    hud.fill_rect(4, 16, 50, 50, liv);
+    sprites.blit_at(&sprites.portraits[r], 0, 5, 17, .{});
+    hud.text(racers.roster[r].name, 60, 18, liv);
+    hud.text(racers.roster[r].car, 60, 28, hud.white);
+    var eb: [8]u8 = undefined;
+    hud.text(battle_text.elims_label(&eb, win.kills), 60, 42, hud.coral);
+    var lb: [16]u8 = undefined;
+    hud.text(battle_text.standing_line(&lb, w, wi), 60, 52, hud.grey);
+    quote(r, 72);
+    hud.centered(battle_text.end_note(w.battle.end), 92, hud.dim);
+    const me = &w.cars[follow % world.car_count];
+    if (wi != follow and me.rank > 0) {
+        var line: [16]u8 = undefined;
+        const name = racers.roster[me.racer % racers.count].name;
+        @memcpy(line[0..name.len], name);
+        line[name.len] = ' ';
+        @memcpy(line[name.len + 1 ..][0..3], hud.rank_text(me.rank));
+        hud.centered(line[0 .. name.len + 4], 104, hud.livery(me.racer));
+    }
+    if ((frame / 30) % 2 == 0) hud.centered("A", 116, hud.coral);
+}
+
+/// BATTLE's standings: by rank (eliminations, lives, time survived), each
+/// row the half portrait, the name, then `LIVES n`, `WRECKS n` or `OUT
+/// m:ss`, and the eliminations at the right under an `ELIM` heading.
+fn draw_battle_table(w: *const world.World, follow: u8) void {
+    hud.fill_rect(0, 0, 160, 128, hud.anti_black);
+    hud.centered("STANDINGS", 4, hud.cyan);
+    hud.text("ELIM", 156 - 32, 4, hud.grey);
+    var r: u8 = 1;
+    while (r <= world.car_count) : (r += 1) {
+        const i = car_of_rank(w, r) orelse continue;
+        const c = &w.cars[i];
+        const racer = c.racer % racers.count;
+        const y: i32 = 14 + @as(i32, r - 1) * 18;
+        if (i == follow) hud.fill_rect(4, y - 1, 152, 18, panel);
+        var pos: [1]u8 = .{'0' + r};
+        hud.text(&pos, 4, y + 4, if (r == 1) hud.cyan else hud.white);
+        sprites.blit_rect(&sprites.portraits[racer], 0, 8, 48, 32, 14, y, 24, 16, .{});
+        hud.text(racers.roster[racer].name, 42, y, hud.livery(racer));
+        var eb: [2]u8 = undefined;
+        const e = eb[0..battle_text.put(&eb, c.kills)];
+        hud.text(e, 156 - @as(i32, @intCast(e.len)) * 8, y + 4, if (c.kills > 0) hud.coral else hud.grey);
+        var lb: [16]u8 = undefined;
+        const out = w.battle.out & (@as(u8, 1) << @intCast(i)) != 0;
+        hud.text(battle_text.standing_line(&lb, w, i), 42, y + 9, if (out) hud.red else hud.white);
+    }
+}
+
 /// The field by rank.
 pub fn draw_table(w: *const world.World, follow: u8, frame: u32) void {
     _ = frame;
+    if (w.mode == .battle) return draw_battle_table(w, follow);
     hud.fill_rect(0, 0, 160, 128, hud.anti_black);
     hud.centered("RESULTS", 4, hud.cyan);
     var r: u8 = 1;
