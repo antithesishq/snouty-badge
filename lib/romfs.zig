@@ -42,12 +42,13 @@ pub const extra_size: usize = 1792 * 1024;
 pub const drive_count: u8 = 2;
 
 /// Cart IPC block (sycl-badge os_abi.zig, base 0x20020000), read directly so
-/// carts need no SDK bump: os_flags bit 1 is set by ext-flash firmware when
-/// the chip is mapped, and ext_flash_size is its size in bytes. Older
-/// firmware zeroes both (init_cart_ipc_data clears the block).
+/// carts need no SDK bump: os_flags bit 2 is set by ext-flash firmware when
+/// the chip is mapped, and the u16 at 0x200350F8 is its size in KB. Older
+/// firmware zeroes both (init_cart_ipc_data clears the block). Bit 1 and
+/// 0x200350F4 belong to the cart-serial fork.
 const ipc_os_flags_addr: usize = 0x20020000 + 0x150EA;
-const ipc_os_flag_ext_flash: u16 = 1 << 1;
-const ipc_ext_flash_size_addr: usize = 0x20020000 + 0x150F4;
+const ipc_os_flag_ext_flash: u16 = 1 << 2;
+const ipc_ext_flash_size_kb_addr: usize = 0x20020000 + 0x150F8;
 
 /// Largest cluster count the reader accepts on any volume (FAT12's limit).
 const fat12_max_clusters: u32 = 4084;
@@ -119,8 +120,8 @@ pub const Image = struct {
     pub fn extra() ?Image {
         const flags: *const volatile u16 = @ptrFromInt(ipc_os_flags_addr);
         if (flags.* & ipc_os_flag_ext_flash == 0) return null;
-        const chip: *const volatile u32 = @ptrFromInt(ipc_ext_flash_size_addr);
-        if (chip.* < extra_size) return null;
+        const chip_kb: *const volatile u16 = @ptrFromInt(ipc_ext_flash_size_kb_addr);
+        if (@as(usize, chip_kb.*) * 1024 < extra_size) return null;
         return whole(@as([*]const u8, @ptrFromInt(extra_base_addr))[0..extra_size]);
     }
 
