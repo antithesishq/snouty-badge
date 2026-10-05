@@ -2,8 +2,11 @@
 //! copied from Snouty Genesis's frontend/menu.zig (itself Snouty Gear's)
 //! with the Lynx rows: Resume, Buttons (A/B swap), Sound (M5; not in the
 //! wasm build), Press Option 2, Restart (Pause + Option 1), Debug overlay,
-//! Reset, Pick ROM (a drive with several playable files) and About; 8 px
-//! rows as Genesis M4 (nine rows, the bottom line and the footer). Gear's
+//! Reset, Pick ROM (a drive with several playable files), Link cable (the
+//! LINK screen, frontend/cable_screen.zig; "Leave link" while linked; not
+//! in the wasm build) and About; 8 px rows as Genesis M4 (nine rows, the
+//! bottom line and the footer: when Sound, Pick ROM and Link cable all
+//! show, the Debug overlay row gives way). Gear's
 //! M5 shared frontend has not landed: this is a copy, to be extracted with
 //! the others. Opened by holding Select for 500 ms (frontend/input.zig),
 //! drawn over the frozen game frame; the core is not stepped while it is
@@ -67,10 +70,11 @@ const input = @import("input.zig");
 const romsrc = @import("romsrc.zig");
 const text = @import("text.zig");
 const rewind = @import("rewind.zig");
+const cable = @import("cable.zig");
 const audio = @import("audio.zig");
 const hint = @import("hint");
 
-pub const version = "0.5.0-m5";
+pub const version = "0.7.0-m7";
 
 /// The title the menu band and the status strip show.
 pub const title = "SNOUTY LYNX";
@@ -82,6 +86,8 @@ pub const Result = enum {
     resume_game,
     /// Close, suppress held buttons, `picker.reset()`, enter the picker.
     pick_rom,
+    /// Close and open the LINK screen (frontend/cable_screen.zig).
+    link_cable,
 };
 
 /// Pad bits (`core.Pad`) main.zig ORs into the game pad while
@@ -105,8 +111,11 @@ const footer_turn = 120;
 /// Menu updates since `open`, for the footer's turns.
 var updates_open: u32 = 0;
 
-const Item = enum { resume_game, buttons, sound, opt2, restart, debug, reset, pick_rom, about };
+const Item = enum { resume_game, buttons, sound, opt2, restart, debug, reset, pick_rom, link_cable, about };
 const item_count = @typeInfo(Item).@"enum".field_names.len;
+/// Rows the panel holds: at most this many items are visible at once
+/// (the Debug overlay row gives way in the one case all ten would show).
+const panel_rows = 9;
 
 /// The Pick ROM row exists only when the drive has more than one playable
 /// file; otherwise it is skipped (not greyed) by `move` and `draw`.
@@ -119,6 +128,10 @@ fn visible(item: Item) bool {
         .pick_rom => pick_available(),
         // The pinned simulator has no streaming audio.
         .sound => !cart.is_wasm,
+        // The simulator has no link port.
+        .link_cable => cable.available(),
+        // Ten rows (Sound and Pick ROM and Link cable): the developer's row goes.
+        .debug => cart.is_wasm or !pick_available(),
         else => true,
     };
 }
@@ -207,9 +220,17 @@ pub fn update(l: *core.Lynx, e: input.Edge) Result {
                     // history.
                     @call(.never_inline, core.Lynx.init_in_place, .{ l, l.cart });
                     rewind.reset(l);
+                    cable.after_boot(l);
                     return .resume_game;
                 },
                 .pick_rom => return .pick_rom,
+                .link_cable => {
+                    if (cable.linked) {
+                        cable.close(l);
+                        return .resume_game;
+                    }
+                    return .link_cable;
+                },
                 .about => showing_about = true,
                 .buttons, .sound, .debug => adjust(l),
             }
@@ -291,7 +312,7 @@ const first_row_y = panel_y + 2;
 /// The panel's bottom line (y 110): "B: back" on About, "Scrub: ..." on
 /// the rows. Fixed below the ninth row even when Pick ROM or Sound is
 /// hidden.
-pub const scrub_line_y = first_row_y + item_count * row_h;
+pub const scrub_line_y = first_row_y + panel_rows * row_h;
 /// The footer under it (y 119): how to leave the menu (`hint.back`), in
 /// turns with `fast_hint`.
 const footer_y = scrub_line_y + 9;
@@ -301,7 +322,7 @@ const footer_y = scrub_line_y + 9;
 const bar_h = 10;
 const bar_y = panel_y + panel_h - bar_h;
 /// About lines above the bottom line.
-const about_lines = item_count;
+const about_lines = panel_rows;
 
 /// Characters of the 8 px font across the screen (title band).
 const screen_cols = cart.screen_width / 8;
@@ -335,6 +356,7 @@ fn label(item: Item) []const u8 {
         .debug => if (debug.enabled) "Debug overlay: On" else "Debug overlay: Off",
         .reset => "Reset",
         .pick_rom => "Pick ROM",
+        .link_cable => if (cable.linked) "Leave link" else "Link cable",
         .about => "About",
     };
 }
@@ -384,9 +406,11 @@ fn draw(l: *const core.Lynx) void {
     }
     const has_memory = rewind.capacity_slots() != 0;
     const live = has_memory and rewind.history_frames() != 0;
-    const bottom = hint.resume_line(cursor == .resume_game, has_memory, rewind.depth_frames(), rewind.history_frames()) orelse scrub_text(&buf);
+    // Linked (frontend/cable.zig) the scrubber's arena holds the port.
+    const bottom = if (cable.linked) linked_line else hint.resume_line(cursor == .resume_game, has_memory, rewind.depth_frames(), rewind.history_frames()) orelse scrub_text(&buf);
     text.draw(bottom, text_x, scrub_line_y, if (live) row_color else dim_color, panel_color);
-    const footer = footers[(updates_open -% 1) / footer_turn % footers.len];
+    // Linked, fast forward and the chorded rewind are off: no hints for them.
+    const footer = if (cable.linked) hint.back else footers[(updates_open -% 1) / footer_turn % footers.len];
     text.draw(footer, text_x, footer_y, dim_color, panel_color);
 }
 
@@ -410,6 +434,7 @@ fn scrub_text(buf: *[24]u8) []const u8 {
 }
 
 const no_memory = "Scrub: no memory";
+const linked_line = "Linked: no rewind";
 
 /// "Scrub: live / 3.5s" or "Scrub: -1.5 / 3.5s"; from 10 s on whole
 /// seconds ("Scrub: -12 / 32s"), so it stays within 18 characters (the
@@ -592,6 +617,9 @@ comptime {
     check_width(fast_hint, panel_cols);
     check_width(rewind_hint, panel_cols);
     check_width(no_memory, panel_cols);
+    check_width(linked_line, panel_cols);
+    check_width("Link cable", panel_cols);
+    check_width("Leave link", panel_cols);
     check_width("Scrub: -9.9 / 9.9s", panel_cols);
     check_width("Scrub: live / 9.9s", panel_cols);
     check_width("Scrub: -99 / 99s", panel_cols);

@@ -116,6 +116,17 @@ pub fn add(b: *Build, sycl_badge_dep: *Build.Dependency, opts: common.Options) v
             }) },
         },
     });
+    // ComLynx over the link cable (frontend/cablenet.zig, docs/CABLE.md):
+    // the protocol needs no cart-api; the tests drive it over
+    // lib/link_virtual.zig.
+    const cablenet_host = b.createModule(.{
+        .root_source_file = b.path(dir ++ "cart/src/frontend/cablenet.zig"),
+        .target = b.graph.host,
+        .optimize = test_optimize,
+        .imports = &.{
+            .{ .name = "core", .module = core_host },
+        },
+    });
     const tests = b.addTest(.{
         .name = "snouty-lynx-tests",
         .filters = if (opts.test_filter) |f| &.{f} else &.{},
@@ -130,6 +141,8 @@ pub fn add(b: *Build, sycl_badge_dep: *Build.Dependency, opts: common.Options) v
                 .{ .name = "stream_audio", .module = stream_host },
                 .{ .name = "frontend_audio", .module = audio_host },
                 .{ .name = "input", .module = input_host },
+                .{ .name = "cablenet", .module = cablenet_host },
+                .{ .name = "link_host", .module = link_host_module(b) },
             },
         }),
     });
@@ -195,6 +208,19 @@ pub fn add(b: *Build, sycl_badge_dep: *Build.Dependency, opts: common.Options) v
     b.step("run-lynx-link", "Run Lynx consoles on a virtual ComLynx bus (snouty-lynx tools/run_link.zig)").dependOn(&run_link_run.step);
 }
 
+/// lib/link.zig and its virtual cable copied under one root, as
+/// `link_host.link` and `link_host.virtual` (link_virtual.zig imports
+/// link.zig by path, and a file can belong to only one module): Snouty
+/// Pong's helper.
+fn link_host_module(b: *Build) *Build.Module {
+    const wf = b.addWriteFiles();
+    inline for (.{ "link.zig", "link_rp2350.zig", "link_virtual.zig" }) |f| {
+        _ = wf.addCopyFile(b.path("lib/" ++ f), f);
+    }
+    const root = wf.add("link_host.zig", "pub const link = @import(\"link.zig\");\npub const virtual = @import(\"link_virtual.zig\");\n");
+    return b.createModule(.{ .root_source_file = root });
+}
+
 /// `-Dlynx-rom` as given: `~/x.lnx` (expanded here, the shell leaves `=~`
 /// alone), an absolute path, or a path relative to the repository root.
 /// No option: roms/placeholder.lnx. No filesystem probe: this Zig caches
@@ -234,6 +260,10 @@ fn build_cart_modules(b: *Build, cart: *Build.Module, cart_api: *Build.Module, s
     // The new firmware's streaming-audio ring (M5 sound, frontend/audio.zig).
     cart.addImport("stream_audio", b.createModule(.{ .root_source_file = b.path("lib/stream_audio.zig") }));
     cart.addImport("build_options", build_options.?.createModule());
+    // ComLynx on the link cable (frontend/cable.zig, docs/CABLE.md): the
+    // badge-to-badge link and the app names its LINK screen shows.
+    cart.addImport("link", b.createModule(.{ .root_source_file = b.path("lib/link.zig") }));
+    cart.addImport("lockstep", b.createModule(.{ .root_source_file = b.path("lib/lockstep.zig") }));
     cart.addImport("drive", b.createModule(.{
         .root_source_file = b.path(dir ++ "cart/src/frontend/drive.zig"),
         .imports = &.{
