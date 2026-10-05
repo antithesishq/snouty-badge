@@ -325,9 +325,9 @@ pub fn place_name(rules: net.Rules) []const u8 {
 
 /// Every fixed line above that sits in a 152 px panel (the host test).
 pub const panel_lines = [_][]const u8{
-    title,         footer,      time_inf_note, card_prompt, card_line1,    card_line2,
-    safe_mode,     stack_smash, smashed,       clean_landing, time_up,     last_standing,
-    reaped,        "LINK BATTLE", "LINK RACE", "LINK GC",
+    title,     footer,        time_inf_note, card_prompt,   card_line1, card_line2,
+    safe_mode, stack_smash,   smashed,       clean_landing, time_up,    last_standing,
+    reaped,    "LINK BATTLE", "LINK RACE",   "LINK GC",
 };
 
 test {
