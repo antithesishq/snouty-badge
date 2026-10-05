@@ -429,7 +429,7 @@ Host tests drive two simulations through `lib/link_virtual.zig` (12).
 ```
 Splash (2 s, eyepatched Snouty portrait, SNOUTY GC / GARBAGE COLLECTION)
   -> Title ("Press Start"; 10 s idle -> Attract)
-  -> Menu: QUICK RACE | GARBAGE COLLECTION | CIRCUIT | LINK | Sound: off
+  -> Menu: QUICK RACE | GARBAGE COLLECTION | BATTLE | CIRCUIT | LINK | Sound: off
   -> Racer select (every mode) -> Countdown -> Race -> Results
 ```
 
@@ -462,8 +462,11 @@ the track, which defaults to the next in rotation).
   upgrade on their own plans. Beating the last league ends on a text
   card: *"You reached the fence. The Hyperscalers did not notice."* State
   lives in RAM for the session (decision 6).
-- **LINK**: LINK RACE (Quick Race rules) or LINK GC (Garbage Collection
-  rules) against the badge on the other end of the cable (section 7).
+- **BATTLE** (`KILL -9`): an arena brawl scored on eliminations, with a
+  lives limit (section 8.3).
+- **LINK**: LINK RACE (Quick Race rules), LINK GC (Garbage Collection
+  rules) or LINK BATTLE (8.3) against the badge on the other end of the
+  cable (section 7).
 - **Attract**: an AI-only race that a passer-by can watch, Snouty
   included. A scripted `KERNEL PANIC` hits the leader in lap 2, because a
   blue screen is what makes people stop at the booth.
@@ -473,6 +476,98 @@ the track, which defaults to the next in rotation).
 - **Results**: rank, time, best lap, kills, wrecks and CYCLES earned, each
   row with the racer's portrait at half scale. The winner's portrait is
   shown full size with their taunt.
+
+### 8.3 BATTLE: `KILL -9`
+
+Adrian, 2026-10-05: a battle mode like Mario Kart's. The cars drive round
+a stunt arena with ramps, and the score is eliminations. The number of
+lives is an option. The mode's title card reads **`KILL -9`** ("no
+cleanup handler, no appeal"). The menu row says BATTLE so that a
+passer-by knows what it is.
+
+**The arena: THE SANDBOX.** The Hyperscalers' old proving ground for
+autonomous vehicles. They moved on and left the ramps. It is drawn in the
+Dumps tileset and palette, so it costs no second tileset. It is one
+square map in the existing map buffer, walled all round with wreckage.
+Its features are the ones in 3.3:
+
+- **The bit bucket**: an open pit in the middle, about a quarter of the
+  arena wide. Kickers face it from all four sides, so a car at speed jumps
+  it. A car that falls short is wrecked (`SEGMENT FAULT`).
+- **Kickers and gap jumps**: ramp pairs facing each other over smaller
+  pits near the corners, and single kickers on the long sides that launch
+  a car over a wall into the next lane.
+- **Crate pads**: eight RMA crate spawns, one per lane, each respawning
+  180 ticks after it is taken.
+- **Service bays**: two small bays in opposite corners. They repair at
+  half the track rate, so a camper still loses.
+- **The Sweeper** crosses the arena on its timer, as on the Dumps tracks.
+- **Spawn pads**: six on the rim, facing in.
+
+**Rules.**
+
+| Option | Values | Default |
+|---|---|---|
+| LIVES | 1, 3, 5, 9, `INF` | 3 |
+| TIME | 2, 3, 5 min, NONE | 3 min (NONE is not offered with `INF` lives) |
+| CREWS | 5, 4, 3, 2, 1 AI cars (link: 4, 2, 0) | every slot filled |
+
+- **Lives.** Every wreck costs a life. A wrecked car with lives left
+  respawns after its WATCHDOG delay (9.2), at the spawn pad farthest from
+  the nearest enemy. It then has 90 ticks of **SAFE MODE**: it blinks,
+  cannot be hit and cannot fire.
+- **Eliminations.** The car that wrecks you scores one elimination. That
+  is the car that hit you last within 180 ticks, using the existing
+  `last_hit_by` and `last_hit_ticks`. A wreck with no recent hit (the
+  pit, a wall, the Sweeper) costs a life and scores for nobody. The feed
+  reads `kill -9 KIDDIE`.
+- **Out of lives.** The GC claw lifts the hulk out ("reaped"). A human
+  who is out watches from the kill leader's camera.
+- **The end.** The round ends when one car has lives left or the time
+  runs out. Ranking is by eliminations, then lives left, then time
+  survived. With `INF` lives it is a pure elimination count against the
+  clock.
+- **No laps, so timers replace them.** Ammo and burst charges refill in
+  full every 1200 ticks (20 s), shown as a sweep on the ammo bar. Pickup
+  roll odds (6.4) use the battle standings in place of race rank.
+- **"Ahead" in an arena.** Pickups that target "the car ahead" (BIT FLIP,
+  DEADLOCK, DDOS, RACE CONDITION, ZERO-DAY) target the nearest car inside
+  a 90-degree front cone, else the nearest car. KERNEL PANIC homes on the
+  kill leader (2nd if the user is the leader) along the arena's
+  navigation field instead of a centerline. ZERO-DAY rolls only for the
+  bottom two of the standings, once per car per round.
+
+**Stunts.** Ramps already launch a car for 40 ticks, and projectiles and
+drops pass under it (3.3), so jumping is also dodging. Two additions:
+
+- **STACK SMASH**: landing on another car deals it 40 damage plus a ram
+  bounce. It counts as a hit for the elimination.
+- **CLEAN LANDING**: landing from a ramp without hitting a wall refills
+  one burst charge, so stunts feed the next chase.
+
+**AI.** Battle needs a hunter, not a centerline follower:
+
+- Each crew picks a target by preference: the nearest car, with a bias to
+  the human and to the kill leader by crew.
+- It steers by a coarse navigation field over the arena (built by the
+  generator, about 1 KB), which knows the ramps across the pits.
+- It fires inside the weapon cone (6.5).
+- It drops rear weapons when chased, and retreats to a service bay below
+  30% armor.
+
+All of this is deterministic and in the sim, so it holds in a link
+battle.
+
+**Link.** LINK BATTLE runs over the same lockstep. The host also picks
+LIVES and TIME, which need more SETUP bytes than the u8 rules that
+LINK RACE and LINK GC use. Either the shared `lib/lockstep.zig` paged
+SETUP (the one Cycles uses) carries them, or they are packed into spare
+bits. Older GCP builds must see a WRONG VERSION screen, never a desync.
+
+**Cost.** The arena reuses the track slot and the map buffer. The World
+gains lives, eliminations and safe-mode ticks per car, the round timer and
+the refill timer (about 30 B). The navigation field is about 1 KB of
+`.rodata`.
 
 ## 9. Economy and garage (career)
 
@@ -752,17 +847,32 @@ Merge to main as soon as a milestone is badge-ready.
   reactions, AI upgrade plans, standings, the league unlock; bench profile
   and fast paths; a balance pass that errs dangerous. **Done when:** a full
   two-league circuit is playable start to finish.
-- **M6 Stretch** (pick with Adrian): the Perimeter league (sentries,
-  PROMPT INJECTION, the ending card), built in behind the RAM cut in
-  13.2, or as the first track pack once M7 exists; a `KILL
-  -9` arena battle mode (one open Mode 7 arena, pickups only, last car
-  running, best on two badges); rewind back for single-player (17.7); a
-  Tufty port (on the `tufty` branch, as the other carts were).
+- **M6 Battle** (Adrian, 2026-10-05): `KILL -9` (8.3). It covers:
+  - the arena, The Sandbox, with its generator, pits and kickers;
+  - lives, eliminations, SAFE MODE, the claw on the last life and the
+    round end;
+  - the LIVES, TIME and CREWS options;
+  - timer refills, STACK SMASH and CLEAN LANDING;
+  - battle meanings for the "ahead" pickups;
+  - the hunter AI over the navigation field;
+  - a battle HUD with lives pips, eliminations and the clock, plus a
+    whole-arena minimap and the battle results;
+  - LINK BATTLE.
+
+  **Done when:** a BATTLE round with five AI ends by lives and by time,
+  the AI scores eliminations against each other and the player, the
+  virtual-cable link battle stays in sync to its end (lossless and 1%
+  loss), and the stress scene in the arena is under budget.
+- **M8 Stretch** (pick with Adrian): the Perimeter league (sentries,
+  PROMPT INJECTION, the ending card), built in behind the RAM cut in 13.2
+  or as a track pack once M7 exists; rewind back for single-player
+  (17.7); a Tufty port (on the `tufty` branch, as the other carts were).
 - **M7 Track packs** (future goal, Adrian 2026-10-04): section 19. The
   pack format and loader, scenery props, `tools/build_pack.py`, the pack
   picker, link-race pack matching, then **The Boneyard** and **The
   Seabed** as the first two packs (three tracks each). **Done when:** a
   pack copied onto the badge drive shows in the league picker and races,
+  a pack's arena (19.7) shows in the BATTLE arena picker,
   the built-in leagues still work with no pack present, and a corrupt or
   foreign pack is refused with a message, never a crash.
 
@@ -803,6 +913,12 @@ Merge to main as soon as a milestone is badge-ready.
     Behaviour (hazards, pickups) stays in the cart, and a pack picks from
     the hazard kinds the cart knows. Read from the drive, copied into one
     RAM slot at race start. Files are `NAME.GCP` (FAT 8.3).
+16. **BATTLE** (8.3): menu row BATTLE, title card `KILL -9`, arena The
+    Sandbox in the Dumps tileset. LIVES default 3 (1/3/5/9/INF), TIME
+    default 3 min. Eliminations go by last hit within 180 ticks, and a
+    wreck with no hit scores for nobody. Ammo and burst refill every 20 s.
+    90 ticks of SAFE MODE after a respawn. STACK SMASH and CLEAN LANDING
+    are the stunt rules.
 
 ## 18. Facts to check in M0
 
@@ -967,6 +1083,19 @@ across the plain.
   Trench** (following the severed cable down into the trench, with a
   ramp across the break).
 
+### 19.7 Arenas in packs
+
+A pack may also carry one battle arena: a square map with its spawn pads,
+crate pads, kickers and navigation field, drawn in the pack's tileset. It
+shows in the BATTLE arena picker after The Sandbox. The first two:
+
+- **The Boneyard: Hangar 18.** A collapsed hangar round a crashed saucer
+  that nobody ever explained. Kickers off the broken wings, and the
+  saucer's rim is a ring ramp.
+- **The Seabed: The Drain.** The plughole the ocean went down: a huge
+  funnel bowl with the pit at its heart, rib arches from a whale skeleton
+  for gates, and a listing trawler to jump off.
+
 ## Status
 
 - 2026-10-04: first draft (ee52bffc). Same day, revised to Adrian's
@@ -975,3 +1104,6 @@ across the plain.
   Build approved; `PLAN.md` comes with M0.
 - 2026-10-04: track packs added as a future goal (section 19, M7) with
   The Boneyard and The Seabed as the first two packs.
+- 2026-10-05: BATTLE (`KILL -9`) added as M6 (8.3): a stunt arena (The
+  Sandbox), eliminations, and a lives limit as an option. The old M6
+  stretch becomes M8. Packs may carry an arena (19.7).
