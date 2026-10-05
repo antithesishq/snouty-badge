@@ -776,6 +776,69 @@ Gate green; pickup scenario tests and the soak pass; stress bench under
   `tools/scripts/m0_race.json` re-recorded with `tools/record_script.py`
   (recorded on `gc/spec`'s M0 menu flow: re-record it again after the
   integration with the M1 select). `host_tests.zig` lists the new files.
+- 2026-10-05: **Track B (pickup presentation) DONE** on `gc/present`
+  (M1 Track B plus `gc/spec` merged in up to 46281911; not merged back,
+  not tagged). The two `sprites.zig` switches handle the M2.0 kinds.
+  **World objects** in the depth list: RMA crates (cell 17, bobbing,
+  hidden while their timer runs), the HONEYPOT crate (18/19 on odd
+  frames), FORK BOMB `&`s at 2x that swell and flash orange in the 12
+  ticks before each fork, SPAGHETTI tangles (flat decal), the KERNEL
+  PANIC packet (2x, ghosts trailing), DDOS drones (2x, buzzing) and RUBBER
+  DUCKs at `pickups.duck_pos`; before the list, the floor lines: DEADLOCK
+  chains to `chain_anchor` (dashed two-colour links), duck tethers and the
+  swaying SPAGHETTI strand. **Car states**: HEISENBUG on odd frames only,
+  SUDO's gold palette flashing with `#` over the car, KERNEL PANIC's blue
+  palette with `:(` over it, the CAPTCHA tag over captcha'd cars (not over
+  a followed human, who plays it), RACE CONDITION tearing (four shifted
+  bands, one magenta) on both cars, PREFETCH's twin flames, the HONEYPOT
+  spin (the view steps round the car). The tints are luma-mapped palettes
+  per sheet built at comptime (`Blit.pal`). **HUD**: the pickup box shows
+  the held icon, the roulette while `roll_ticks > 0` (a decelerating reel
+  of random cells, never the hidden result, caption `FETCHING...`), then
+  the pickup's name for 60 ticks; pickup feed lines (`KERNEL PANIC >
+  KIDDIE`, two rows when wider than the screen) and `SNOUTY <> KIDDIE` for
+  a swap. **Gags** on the followed car's badge: the KERNEL PANIC blue
+  screen while `frozen > 60` (full frame instead of the race: `:(` at 3x,
+  `YOUR RIG RAN INTO A PROBLEM AND NEEDS TO RESTART.`, `NN% COMPLETE`, a
+  fake QR, `STOP CODE: KERNEL_PANIC` and the sender as `KIDDIE.SYS`),
+  BIT FLIP (`<R BIT FLIP L>` blinking between itself and its mirror image,
+  each floor row jittering 0 or 1 px), the CAPTCHA card (a reCAPTCHA
+  header, the 3x3 grid of road photos with traffic lights in the lit
+  cells, the sweeping cursor, ticked cells, the wait bar, `PRESS A`, `TRY
+  AGAIN` after a miss, `HUMAN VERIFIED` in the bar on a solve), DDOS (the
+  speed reads real, real, `503`, blank), the ZERO-DAY flash (white, then a
+  red frame) and red dart, the RACE CONDITION screen glitch. **Effects**:
+  crate pops, `<honey>` `</honey>` `<honey/>` tags flying out of a
+  HONEYPOT, the popped duck tumbling up with `QUACK`, BIT FLIP's cosmic ray
+  from the top of the screen, sparks for the rest. No `use` caption.
+  **Stress scene** (stress.zig): 8 crates in two rows, the 8 drones round
+  a rival (then SNOUTY), 8 FORK BOMBs, a HONEYPOT, a tangle, a KERNEL
+  PANIC packet, a chain, ducks, a strand, SUDO, panic, tearing and
+  HEISENBUG cars, and SNOUTY's CAPTCHA board, BIT FLIP, DDOS and roulette
+  in turn; 152 objects gathered, 64 drawn. **Preview hooks** (wasm only,
+  documented in RUNNING.md): `debug_give_pickup`, `debug_roll_pickup`,
+  `debug_give_ahead`, `debug_effect` (`stress.force_effect`: 17 gags),
+  readers for the CAPTCHA board, frozen ticks and forks; autopilot mode 2
+  lets the pad's A and B through (the pad alone plays a CAPTCHA).
+- Track B bench (calibrated): stress (`m1_render_stress.json`, 600
+  frames) **mean 5.26 ms, worst 6.34 ms** (frame 61, p95 6.17; M1 4.72 /
+  5.13); `m0_race.json` mean 3.73, worst 5.04 (frame 285); new
+  `tools/scripts/m2_race.json` (3,000 frames of an autopilot race with
+  pickups, `record_script.py --frames 3000`) **mean 3.55, worst 5.11**
+  (frame 2742); every `--lcd` run identical. The blue screen frame skips
+  the floor, so it is the cheapest race frame. RAM ELF `size -A`: **.text
+  178,232 + .data 7,152 + .bss 30,780** (+ 860 exidx/extab/descriptor) =
+  217,024 B: **57,152 B (56 KB) free** under the 274,176 B window (M1
+  Track B 173,708; Track A's pickups and this track together +43 KB).
+  `tools/check.sh` green: also a gag preview (the GIF's run: the CAPTCHA
+  solved by its A presses, the blue screen at frozen > 60, the `&` ahead
+  forked) and the `m2_race.json` bench plain and `--lcd`. `m0_race.json`
+  re-recorded on the select flow comes out byte-identical, so it stays.
+  `docs/preview_m2.gif`: from frame 1300 of an autopilot race, a CAPTCHA
+  on SNOUTY (a miss, `TRY AGAIN`, the solve, `HUMAN VERIFIED`), the
+  roulette landing a FORK BOMB, a rival's `&` ahead, the KERNEL PANIC blue
+  screen, SNOUTY frozen blue while the `&` forks into 2 and 4, and the
+  drive into them. Deferred questions 44 to 54.
 
 ## Deferred questions
 
@@ -955,3 +1018,40 @@ Taken during M2 (Track A, pickup simulation):
 43. **Pools**: shots 48 -> 40 and drops 32 -> 40 to keep the World under
     its cap with the new fields (2,436 B); the KERNEL PANIC packet is the
     last shot slot to be reused.
+
+Taken during M2 (Track B, pickup presentation):
+
+44. **Roulette caption** `FETCHING...` sits right-aligned against the box
+    on the row under the rank (BEHIND's row; hidden while looking back);
+    the reel shows random cells, never the hidden result, and the landed
+    pickup's name replaces the caption for 60 ticks.
+45. **Feed lines**: KERNEL PANIC, BIT FLIP, DEADLOCK, DDOS, HONEYPOT and
+    SPAGHETTI hits read `PICKUP > VICTIM`, a swap `A <> B`; a wreck line is
+    never overwritten by them. `KERNEL PANIC > SYSADMIN` is 23 characters
+    and the 8x8 font fits 19, so a long line breaks after the `>` into two
+    rows and the pop-up moves down 9 px.
+46. **Which badge gets a gag**: the blue screen, BIT FLIP, DDOS, the
+    ZERO-DAY flash and the glitch follow whatever car the badge follows
+    (the attract demo shows them too); the CAPTCHA board only when that car
+    is a human's (an AI gets the tag).
+47. **The CAPTCHA card** is x 4..156, y 25..124 (a three-line header, so
+    the grid's centre is y 85, not the floor's 80) and covers the bottom
+    HUD while it is up; `TRY AGAIN` after a miss, `HUMAN VERIFIED` in the
+    bar on a solve (not after the 120-tick timeout).
+48. **The blue screen** replaces the frame (no floor, no HUD) for its 30
+    ticks and names the sender as a driver file (`KIDDIE.SYS`).
+49. **Tints**: KERNEL PANIC blue and SUDO gold are luma-mapped palettes
+    (comptime, every sheet: about 1.3 KB); SUDO flashes gold every 4
+    frames, the hit flash keeps flat white.
+50. **HEISENBUG** flickers every car on it, the badge's own included.
+51. **DDOS stutter**: the speed reading cycles real, real, `503` (coral),
+    blank, 5 frames each, while any drone orbits the car.
+52. **ZERO-DAY flash** only on the user's and the victim's badges (2 white
+    frames, then a red frame for 6); everyone sees the red dart.
+53. **FORK BOMB telegraph** assumes the sim forks at ages that are
+    multiples of 60 (`fork_every` is repeated in sprites.zig as a render
+    constant).
+54. **Debug writes**: the preview hooks and the stress scene write the
+    World (and the stress scene the track's crate cache, rebuilt by the
+    next race); they are wasm exports or the `gc_stress` poke only, never
+    reached in play.

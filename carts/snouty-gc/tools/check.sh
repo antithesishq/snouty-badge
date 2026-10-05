@@ -25,11 +25,15 @@
 #            - the racer select (M1): Start, Right x3 shows SYSADMIN, B goes
 #              back to the title, Start, Left picks BOTNET and A races it;
 #            - the render stress scene (debug_stress) fills the depth list
-#              past its cap: 64 objects drawn of more gathered.
+#              past its cap: 64 objects drawn of more gathered;
+#            - the M2 gags (docs/preview_m2.gif's run): a CAPTCHA forced on
+#              SNOUTY is solved by A presses on its lit cells, a KERNEL PANIC
+#              shows the blue screen (frozen > 60), a FORK BOMB ahead forks.
 #   bench    badge-bench (calibrated) on badge-bench/carts/snouty-gc.toml,
 #            once plain and once with --lcd, and the render stress scene
 #            (--poke gc_stress=1, tools/scripts/m1_render_stress.json) plain
-#            and --lcd: worst `busy ms` <= BENCH_MAX_MS (default 8, SPEC
+#            and --lcd, and tools/scripts/m2_race.json (3,000 frames of an
+#            autopilot race with pickups in play) plain and --lcd: worst `busy ms` <= BENCH_MAX_MS (default 8, SPEC
 #            13.1), no crash, no neopixel warning.
 #
 # Output under out/check (gitignored). Exit 0 when every step passes, else 1.
@@ -131,6 +135,11 @@ if want preview; then
         --press START:80-80 --press LEFT:90-90 --press A:100-100 --at '95 debug_select_racer == 5' \
         --expect 'debug_screen == 3' --expect 'debug_follow == 5' \
         --dump-exports debug_screen,debug_follow || st=1
+    run_preview gags --frames 1500 --call debug_start_race:0 --call debug_set_autopilot:2 \
+        --call-at '1300 debug_effect:3' --call-at '1360 debug_roll_pickup:5' --call-at '1410 debug_effect:17' \
+        --call-at '1413 debug_effect:1' --press A:1307-1307,A:1312-1312,A:1317-1317,A:1332-1332,A:1352-1352 \
+        --at '1301 debug_captcha > 100' --at '1360 debug_captcha == 0' --at '1420 debug_frozen > 60' \
+        --at '1480 debug_forks >= 2' --dump-exports debug_forks || st=1
     run_preview stress --frames 120 --call debug_stress:1 --expect 'debug_mode == 2' --expect 'debug_drawn == 64' \
         --expect 'debug_gathered > 64' --dump-exports debug_drawn,debug_gathered || st=1
     result preview "$st"
@@ -149,12 +158,20 @@ if want bench; then
     p3=$!
     "$bench" "$elf" --json --lcd "${stress[@]}" --out "$out/bench-stress-lcd" > "$out/bench-stress-lcd.txt" 2>&1 &
     p4=$!
+    m2=(--frames 3000 --script "$here/scripts/m2_race.json")
+    "$bench" "$elf" --json "${m2[@]}" --out "$out/bench-m2" > "$out/bench-m2.txt" 2>&1 &
+    p5=$!
+    "$bench" "$elf" --json --lcd "${m2[@]}" --out "$out/bench-m2-lcd" > "$out/bench-m2-lcd.txt" 2>&1 &
+    p6=$!
     st=0
     wait $p1 || st=1
     wait $p2 || st=1
     wait $p3 || st=1
     wait $p4 || st=1
-    for j in "$out/bench/bench.json" "$out/bench-lcd/bench.json" "$out/bench-stress/bench.json" "$out/bench-stress-lcd/bench.json"; do
+    wait $p5 || st=1
+    wait $p6 || st=1
+    for j in "$out/bench/bench.json" "$out/bench-lcd/bench.json" "$out/bench-stress/bench.json" "$out/bench-stress-lcd/bench.json" \
+             "$out/bench-m2/bench.json" "$out/bench-m2-lcd/bench.json"; do
         [ -f "$j" ] || { echo "FAIL no $j"; st=1; continue; }
         python3 - "$j" "$max_ms" <<'EOF' || st=1
 import json, sys

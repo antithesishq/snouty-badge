@@ -125,6 +125,9 @@ var prev_roll: u8 = 0;
 /// The CAPTCHA board was cleared by a miss (A on an unlit cell): `TRY AGAIN`.
 pub var captcha_fail: u8 = 0;
 var prev_done: u16 = 0;
+/// The followed car solved its CAPTCHA (freed before the wait ran out).
+pub var verified: u8 = 0;
+var prev_captcha: u8 = 0;
 /// Who sent the KERNEL PANIC that hit the followed car (the stop code).
 pub var panic_source: u8 = no_car;
 
@@ -149,6 +152,8 @@ pub fn begin(w: *const world.World) void {
     prev_roll = 0;
     captcha_fail = 0;
     prev_done = 0;
+    verified = 0;
+    prev_captcha = 0;
     panic_source = no_car;
     last_seq = w.event_seq;
     for (&w.cars, 0..) |*c, i| prev_ammo[i] = c.ammo_front;
@@ -172,6 +177,9 @@ pub fn tick(w: *const world.World, follow: u8, frame: u32) void {
     if (prev_roll > 0 and me.roll_ticks == 0 and me.pickup != .none) land_ticks = land_show;
     prev_roll = me.roll_ticks;
     if (me.captcha > 0 and prev_done != 0 and me.captcha_done == 0) captcha_fail = 30;
+    if (me.captcha_done != 0) captcha_fail = 0;
+    if (prev_captcha > 1 and me.captcha == 0 and me.wreck == .none and me.human != world.no_human) verified = 45;
+    prev_captcha = me.captcha;
     prev_done = if (me.captcha > 0) me.captcha_done else 0;
 }
 
@@ -202,6 +210,7 @@ fn age_all() void {
     zero_flash -|= 1;
     glitch -|= 1;
     captcha_fail -|= 1;
+    verified -|= 1;
 }
 
 fn px_q(v: u16) i32 {

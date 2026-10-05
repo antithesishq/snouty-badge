@@ -421,6 +421,7 @@ fn view_of(heading: fixed.Turn, rear: u8, quarter: u8, side: u8) ViewCell {
 }
 
 const white_px: cart.Pixel = .from_color(.rgb(0xFCFBF9));
+const fork_flash_px: cart.Pixel = .from_color(.rgb(0xFF6A3C));
 const glow_px: cart.Pixel = .from_color(.rgb(0x8EF0FF));
 const lance_full_px: cart.Pixel = .from_color(.rgb(0xFFFFFF));
 
@@ -558,9 +559,9 @@ fn draw_drop(d: *const world.Drop, p: camera.Projected, frame: u32) void {
             // forks (every 60, SPEC 6.3), so the split reads.
             const phase = d.age % fork_every;
             const swell = phase >= fork_every - 12;
-            const sc: u32 = if (swell) p.scale * 3 / 2 + p.scale * (phase - (fork_every - 12)) / 24 else p.scale * 3 / 2;
+            const sc: u32 = if (swell) p.scale * 2 + p.scale * (phase - (fork_every - 12)) / 16 else p.scale * 2;
             const flash = swell and (frame / 2) % 2 == 0;
-            blit(&weapons, w_fork, p.sx, p.sy + 1, sc, .{ .flat = if (flash) white_px else null });
+            blit(&weapons, w_fork, p.sx, p.sy + 1, sc, .{ .flat = if (flash) fork_flash_px else null });
         },
         // The fake RMA crate: the `?` frame on odd frames (ASSETS.md 18/19).
         .honeypot => blit(&pickups, if (frame & 1 == 1) p_honeypot_q else p_honeypot, p.sx, p.sy + 1, p.scale, .{}),
@@ -577,10 +578,10 @@ fn draw_crate(k: usize, p: camera.Projected, frame: u32) void {
     blit(&pickups, p_crate, p.sx, p.sy + 1 - bob, p.scale, .{});
 }
 
-/// A DDOS drone: the 4x4 red quad at 1.5x, hovering and buzzing.
+/// A DDOS drone: the 4x4 red quad at 2x, hovering and buzzing.
 fn draw_drone(i: usize, p: camera.Projected, frame: u32) void {
     const buzz: i32 = @intCast((frame + i * 3) % 3);
-    blit(&weapons, w_drone, p.sx + buzz - 1, p.sy - lift_px(9, p) + @as(i32, @intFromBool(buzz == 1)), p.scale * 3 / 2, .{});
+    blit(&weapons, w_drone, p.sx + buzz - 1, p.sy - lift_px(9, p) + @as(i32, @intFromBool(buzz == 1)), p.scale * 2, .{});
 }
 
 /// A RUBBER DUCK on its tether behind its car: the side view, facing the

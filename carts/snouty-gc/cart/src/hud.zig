@@ -427,6 +427,10 @@ fn draw_message(w: *const world.World, c: *const world.Car) void {
         } else {
             str = "WRECKED";
         }
+    } else if (fx.verified > 0 and c.msg == .none) {
+        // A CAPTCHA solved before the wait ran out.
+        str = "HUMAN VERIFIED";
+        color = green;
     } else {
         const msg = if (c.msg != .none) c.msg else w.msg;
         if (msg == .none) return;
@@ -454,7 +458,9 @@ const glyphs: *const [96 * 8]u8 = assets.font[0 .. 96 * 8];
 /// mirrored left to right (`mirror`), no shadow.
 fn glyph_text(str: []const u8, x: i32, y: i32, scale: i32, mirror: bool, color: cart.DisplayColor) void {
     var cx = x;
-    for (str) |ch| {
+    for (0..str.len) |n| {
+        // A mirror image reads right to left too.
+        const ch = if (mirror) str[str.len - 1 - n] else str[n];
         defer cx += 8 * scale;
         const code: usize = if (ch < 32 or ch > 127) '?' - 32 else ch - 32;
         const g = glyphs[code * 8 ..][0..8];
@@ -469,7 +475,7 @@ fn glyph_text(str: []const u8, x: i32, y: i32, scale: i32, mirror: bool, color: 
     }
 }
 
-const flip_y: i32 = 80;
+const flip_y: i32 = 78;
 const purple = cart.DisplayColor.rgb(0xB070FF);
 
 /// BIT FLIP: `BIT FLIP` blinking between itself and its mirror image,
@@ -478,16 +484,16 @@ const purple = cart.DisplayColor.rgb(0xB070FF);
 fn draw_bit_flip(frame: u32) void {
     const mirrored = (frame / 8) % 2 == 1;
     const x0: i32 = 80 - 4 * 14;
-    cart.rect(.{ .x = x0 - 2, .y = flip_y - 2, .width = 14 * 8 + 3, .height = 12, .fill_color = anti_black });
+    cart.rect(.{ .x = x0 - 2, .y = flip_y - 1, .width = 14 * 8 + 3, .height = 10, .fill_color = anti_black });
     text("<R", x0, flip_y, white);
     glyph_text("BIT FLIP", x0 + 24, flip_y, 1, mirrored, if (mirrored) purple else cyan);
     text("L>", x0 + 96, flip_y, white);
 }
 
 // The CAPTCHA mini-game: a reCAPTCHA card over the floor.
-const cap_x: i32 = 16;
+const cap_x: i32 = margin;
 const cap_y: i32 = 25;
-const cap_w: i32 = 128;
+const cap_w: i32 = 160 - 2 * margin;
 const cap_h: i32 = 99;
 const cap_cell: i32 = 16;
 /// The 3x3 grid (1 px gutters), centred on x 80.
@@ -524,8 +530,8 @@ fn draw_captcha(c: *const world.Car, frame: u32) void {
     fill_rect(cap_x + 1, cap_y + 1, cap_w - 2, cap_h - 2, cap_card);
     // The header: SELECT ALL / SQUARES WITH / TRAFFIC LIGHTS.
     fill_rect(cap_x + 3, cap_y + 3, cap_w - 6, 28, cap_blue);
-    font.draw("SELECT ALL SQUARES", 80 - 72, cap_y + 5, .from_color(white), null);
-    font.draw("WITH", 80 - 16, cap_y + 13, .from_color(white), null);
+    font.draw("SELECT ALL", 80 - 40, cap_y + 5, .from_color(white), null);
+    font.draw("SQUARES WITH", 80 - 48, cap_y + 13, .from_color(white), null);
     font.draw("TRAFFIC LIGHTS", 80 - 56, cap_y + 21, .from_color(white), .from_color(anti_black));
     // The grid on a dark gutter.
     fill_rect(grid_x, grid_y, 3 * cap_cell + 4, 3 * cap_cell + 4, white);
