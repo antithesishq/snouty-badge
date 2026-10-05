@@ -2018,10 +2018,10 @@ PLAN's Track B list is done. Decisions L80-L93.
   Golden checksums unchanged.
 - **Bench** (calibrated, `--lcd` identical, mean / worst ms): `m6_battle`
   (`--poke gc_battle=1`, 3,600 frames, the battle HUD on Track A's
-  hunter) 3.43 / 5.28; arena stress with the battle HUD's stress (`--poke
-  gc_battle=2`) 4.88 / 6.15; the race benches as before (`m0_race` 3.64 /
-  5.21, stress 5.00 / 6.15, `m3_gc_race` 3.47 / 5.66, `m5_circuit_race`
-  3.50 / 4.64, `m5_cards` 1.75 / 5.41; probe stress 5.11 / 6.28). The
+  hunter) 3.43 / 5.27; arena stress with the battle HUD's stress (`--poke
+  gc_battle=2`) 4.85 / 6.13; the race benches as before (`m0_race` 3.62 /
+  5.19, stress 4.99 / 6.14; probe stress 5.10 / 6.26, probe GC 3.55 /
+  5.64; the rest within 0.05 ms of Track A's). The
   first merged bench found a ReleaseSmall crash in `sprites.car_lift` (a
   kicker's 64-tick hop); Track A fixed it with `Car.air` (18abaaae).
 - **RAM**: `size -A` .text 185,640 + .data 8,104 + .bss 52,428 (+ 2,008
