@@ -30,6 +30,7 @@ const carts = [_]Cart{
     .{ .dir = "snouty-sense", .binary = "snouty-sense", .add = &@import("carts/snouty-sense/build.zig").add },
     .{ .dir = "snouty-theremin", .binary = "snouty-theremin", .add = &@import("carts/snouty-theremin/build.zig").add },
     .{ .dir = "snouty-morph", .binary = "snouty-morph", .add = &@import("carts/snouty-morph/build.zig").add },
+    .{ .dir = "snouty-shader", .binary = "snouty-shader", .add = &@import("carts/snouty-shader/build.zig").add },
     .{ .dir = "badge-calibrate", .binary = "badge-calibrate", .add = &@import("badge-bench/calibrate/build.zig").add },
 };
 
@@ -40,9 +41,9 @@ pub fn build(b: *Build) void {
 
     const opts = common.Options{
         .cart_mode = b.option(common.CartMode, "cart-mode", "ram (default): the usual RAM cart; xip: execute in place from the 256 KB cart flash window (<binary>-xip.uf2); both") orelse .ram,
-        .debug_overlay = b.option(bool, "debug_overlay", "Draw render timing on screen (snouty-reflections, snouty-maze, demosnout, snouty-zero, snouty-flyover, snouty-morph); start the emulators (snouty-boy, snouty-gear, snouty-genesis) with their debug overlay on") orelse false,
+        .debug_overlay = b.option(bool, "debug_overlay", "Draw render timing on screen (snouty-reflections, snouty-maze, demosnout, snouty-zero, snouty-flyover, snouty-morph, snouty-shader); start the emulators (snouty-boy, snouty-gear, snouty-genesis) with their debug overlay on") orelse false,
         .neopixels = b.option(bool, "neopixels", "Let carts light the neopixels (snoutenstein, snouty-maze, snouty-boy). Default off: the LEDs are painfully bright on hardware, see docs/NEOPIXELS.md") orelse false,
-        .sound = b.option(bool, "sound", "Start every cart with sound on (snoutenstein, snouty-boy, snouty-gear, snouty-genesis, snouty-zero, snouty-morph). Default off: carts boot silent and their menu item or button turns sound on, see docs/SOUND.md") orelse false,
+        .sound = b.option(bool, "sound", "Start every cart with sound on (snoutenstein, snouty-boy, snouty-gear, snouty-genesis, snouty-zero, snouty-morph, snouty-shader). Default off: carts boot silent and their menu item or button turns sound on, see docs/SOUND.md") orelse false,
         .rom = b.option([]const u8, "rom", "snouty-boy: Game Boy ROM for the simulator and -Drom-source=embed builds (default carts/snouty-boy/tests/roms/dmg-acid2.gb, or roms/2048.gb when that is absent); the default badge build embeds none"),
         .cart_optimize = b.option(std.builtin.OptimizeMode, "cart-optimize", "snouty-boy: optimize mode for the cart (default fast; its SPEC.md section 8)") orelse .fast,
         .test_optimize = b.option(std.builtin.OptimizeMode, "test-optimize", "snouty-boy: optimize mode for host tests (default safe)") orelse .safe,
@@ -54,7 +55,7 @@ pub fn build(b: *Build) void {
         .md_rom_source = b.option(common.MdRomSource, "md-rom-source", "snouty-genesis: drive (default; a .gen/.md/.bin file on the badge drive, no ROM in the cart) or embed") orelse .drive,
         .lynx_rom = b.option([]const u8, "lynx-rom", "snouty-lynx: Lynx ROM for the simulator and -Dlynx-rom-source=embed builds, .lnx (headered) or headerless (default carts/snouty-lynx/roms/raycast.lnx); the default badge build embeds none"),
         .lynx_rom_source = b.option(common.RomSource, "lynx-rom-source", "snouty-lynx: drive (default; a .lnx/.lyx file on the badge drive, no ROM in the cart), embed, pack (not built yet)") orelse .drive,
-        .tof_fake = b.option(bool, "tof-fake", "snouty-sense: on the badge, use the virtual TMF8820 (lib/tof_virtual.zig) instead of I2C0, for badge-bench; the simulator always uses it (docs/TOF.md)") orelse false,
+        .tof_fake = b.option(bool, "tof-fake", "snouty-sense, snouty-theremin, snouty-morph, snouty-shader: on the badge, use the virtual TMF8820 (lib/tof_virtual.zig) instead of I2C0, for badge-bench; the simulator always uses it (docs/TOF.md)") orelse false,
         .only = only,
         .test_step = b.step("test", "Run every cart's host tests"),
         .check_float_step = b.step("check-float", "Fail if any cart ELF contains soft-float or libm routines"),
