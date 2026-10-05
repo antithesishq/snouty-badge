@@ -346,6 +346,16 @@ pub const HazardSpec = struct {
     ux: i32 = 0,
     uy: i32 = 0,
     travel: u16 = 0,
+    /// Derived for a crust region (M9.1, `crust_shape`, from the map at
+    /// `select`): the centerline sample nearest its middle, and the extent
+    /// of its crust tiles in that sample's frame, px: `along_lo` ..
+    /// `along_hi` down the track, `lat_lo` .. `lat_hi` across it (right of
+    /// travel positive). The AI's crust sense reads them.
+    sample: u8 = 0,
+    along_lo: i16 = 0,
+    along_hi: i16 = 0,
+    lat_lo: i16 = 0,
+    lat_hi: i16 = 0,
 };
 
 /// Bytes per `Track.feat` record (little endian): kind u8, warn u8, size
@@ -489,6 +499,8 @@ pub fn parse_arena(t: *const Track, out: *Arena, pads: *[world.crate_max]CrateSp
 /// `World.hazards[0..hazard_n]` (filled by `select`, like `crate_spots`).
 pub var hazard_specs: [world.hazard_max]HazardSpec = @splat(.{});
 pub var hazard_n: u8 = 0;
+/// M9.1: how many of them are crust regions (0 on every built-in track).
+pub var crust_n: u8 = 0;
 
 /// Decode `t.feat` into `out`; returns the count (at most
 /// `world.hazard_max`; a short trailing record is ignored).
@@ -559,7 +571,59 @@ pub fn select(t: *const Track) void {
     if (!parse_arena(t, &arena, &crate_spots, &crate_n)) crate_n = find_crates(t, &crate_spots);
     chip_n = find_chips(t, &chip_spots);
     hazard_n = parse_hazards(t, &hazard_specs);
+    crust_n = 0;
+    for (hazard_specs[0..hazard_n]) |*h| {
+        if (h.kind != .crust) continue;
+        crust_shape(t, h);
+        crust_n += 1;
+    }
     current = t;
+}
+
+/// M9.1: a crust region's place on the line (`HazardSpec.sample` and its
+/// extents), from its crust tiles in `map_ram` (call from `select`, after
+/// the map is unpacked). Pure in the track data.
+noinline fn crust_shape(t: *const Track, h: *HazardSpec) void {
+    const mx = (h.x0 + h.x1) >> 1;
+    const my = (h.y0 + h.y1) >> 1;
+    var best: i32 = std.math.maxInt(i32);
+    for (0..256) |i| {
+        const s = t.sample(i);
+        const dx = wrap_px(@as(i32, s.x) - mx);
+        const dy = wrap_px(@as(i32, s.y) - my);
+        const d = dx * dx + dy * dy;
+        if (d < best) {
+            best = d;
+            h.sample = @intCast(i);
+        }
+    }
+    const s = t.sample(h.sample);
+    const sx = fixed.cos(s.tangent);
+    const sy = fixed.sin(s.tangent);
+    var a_lo: i32 = std.math.maxInt(i16);
+    var a_hi: i32 = std.math.minInt(i16);
+    var l_lo: i32 = std.math.maxInt(i16);
+    var l_hi: i32 = std.math.minInt(i16);
+    var ty = h.y0 >> 3;
+    while (ty < (h.y1 + 7) >> 3) : (ty += 1) {
+        var tx = h.x0 >> 3;
+        while (tx < (h.x1 + 7) >> 3) : (tx += 1) {
+            if (t.attr_at(tx << 3, ty << 3) != .crust) continue;
+            const ox = wrap_px((tx << 3) + 4 - @as(i32, s.x));
+            const oy = wrap_px((ty << 3) + 4 - @as(i32, s.y));
+            const along = (ox * sx + oy * sy) >> fixed.Q;
+            const lat = (ox * -sy + oy * sx) >> fixed.Q;
+            a_lo = @min(a_lo, along - 4);
+            a_hi = @max(a_hi, along + 4);
+            l_lo = @min(l_lo, lat - 4);
+            l_hi = @max(l_hi, lat + 4);
+        }
+    }
+    if (a_lo > a_hi) return; // no crust tiles: the AI never sees it
+    h.along_lo = @intCast(a_lo);
+    h.along_hi = @intCast(a_hi);
+    h.lat_lo = @intCast(l_lo);
+    h.lat_hi = @intCast(l_hi);
 }
 
 /// A pack track whose art could not be reloaded: plain background (tile 1,

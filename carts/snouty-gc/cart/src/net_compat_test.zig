@@ -13,13 +13,14 @@
 //!   every message kind (SETUP, PICK, GO, QUIT, DESYNC, input) in it: the
 //!   shared lockstep and GC's wrapper did not drift;
 //! - an M4 badge and a v0 one race in sync to the finish, either hosting;
-//! - the cart's GC (version 2 since M7: the pack id in eight rules bytes,
-//!   4-bit picks) sends an M4 badge nothing: the M4 badge waits in its
-//!   lobby, the new one says wrong_version;
-//! - a v0 badge (M5.1) and a v1 badge (M6, `net.GameV1`), and a v1 badge
-//!   and a v2 badge (this build), both say wrong_version, send no lobby or
-//!   control message and never start a race, under loss, on both cable
-//!   kinds, for 10 s of play.
+//! - the cart's GC (version 3 since M9.1: M7's pack id in eight rules
+//!   bytes, 4-bit picks, and crust that bites in `simulate`) sends an M4
+//!   badge nothing: the M4 badge waits in its lobby, the new one says
+//!   wrong_version;
+//! - a v0 badge (M5.1) and a v1 badge (M6, `net.GameV1`), a v1 badge and a
+//!   v2 badge (M7 to M9, `net.GameV2`), and a v2 badge and a v3 badge (this
+//!   build) all say wrong_version, send no lobby or control message and
+//!   never start a race, under loss, on both cable kinds, for 10 s of play.
 const std = @import("std");
 const host = @import("link_host");
 const link = host.link;
@@ -94,8 +95,10 @@ const Old = net_m4.Net(L);
 const New = net.NetOf(L, net.GameV0);
 /// The M6 stack: version 1, five rules bytes.
 const V1 = net.NetOf(L, net.GameV1);
-/// This build's stack (M7): version 2, eight rules bytes, 4-bit picks.
-const V2 = net.Net(L);
+/// The M7 to M9 stack: version 2, eight rules bytes, 4-bit picks.
+const V2 = net.NetOf(L, net.GameV2);
+/// This build's stack (M9.1): version 3, V2's wire, the crust that bites.
+const V3 = net.Net(L);
 
 /// The struct holding role / tick / paused: M4's Net itself, the lockstep
 /// inside the new ones.
@@ -104,6 +107,7 @@ fn core(n: anytype) switch (@TypeOf(n)) {
     *New => *New.Ls,
     *V1 => *V1.Ls,
     *V2 => *V2.Ls,
+    *V3 => *V3.Ls,
     else => unreachable,
 } {
     return if (@TypeOf(n) == *Old) n else &n.ls;
@@ -411,7 +415,7 @@ test "net compat: an M4 badge and a converted one race in sync, either hosting" 
     }
 }
 
-test "net compat: the cart's version-2 GC and an M4 badge never race" {
+test "net compat: the cart's version-3 GC and an M4 badge never race" {
     const Ls1 = lockstep.Lockstep(L, net.Game);
     for ([_]u32{ 1, 2, 3, 4 }) |seed| {
         var cable: virtual.Cable = .{ .kind = if (seed % 2 == 0) .straight else .crossed };
@@ -435,7 +439,7 @@ test "net compat: the cart's version-2 GC and an M4 badge never race" {
         try std.testing.expect(old.peer_pick == null);
         try std.testing.expectEqual(lockstep.State.wrong_version, new.state());
         try std.testing.expectEqual(@as(u32, 0), new.stats.control_sent);
-        try std.testing.expectEqual(@as(u8, 0x21), old.link.partner_version);
+        try std.testing.expectEqual(@as(u8, 0x31), old.link.partner_version);
     }
 }
 
@@ -462,8 +466,29 @@ test "net compat: an M5.1 badge (v0) and this build (v1) never race, never desyn
     }
 }
 
-test "net compat (M7): an M6 badge (v1) and this build (v2) never race, never desync" {
+test "net compat (M7): an M6 badge (v1) and an M7 badge (v2) never race, never desync" {
     inline for (.{ .{ V1, V2 }, .{ V2, V1 } }) |pair| {
+        const D = Duo(pair[0], pair[1]);
+        var seed: u32 = 1;
+        while (seed <= 6) : (seed += 1) {
+            var d: D = undefined;
+            d.init(seed, if (seed % 2 == 0) .straight else .crossed, if (seed % 3 == 0) 10_000 else 0);
+            defer d.deinit();
+            d.rules = .{ .mode = .battle, .lives = 5, .minutes = 2 };
+            d.run_for(10_000_000);
+            for ([2]lockstep.State{ d.b0.net.state(), d.b1.net.state() }) |st| try std.testing.expectEqual(lockstep.State.wrong_version, st);
+            try std.testing.expect(!d.b0.racing and !d.b1.racing);
+            try std.testing.expectEqual(@as(u32, 0), core(&d.b0.net).stats.control_sent);
+            try std.testing.expectEqual(@as(u32, 0), core(&d.b1.net).stats.control_sent);
+            const k0 = Kinds.of(d.wire.tx[0].items);
+            const k1 = Kinds.of(d.wire.tx[1].items);
+            try std.testing.expectEqual(@as(u32, 0), k0.data + k1.data);
+        }
+    }
+}
+
+test "net compat (M9.1): an M7 badge (v2) and this build (v3) never race, never desync" {
+    inline for (.{ .{ V2, V3 }, .{ V3, V2 } }) |pair| {
         const D = Duo(pair[0], pair[1]);
         var seed: u32 = 1;
         while (seed <= 6) : (seed += 1) {

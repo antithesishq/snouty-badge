@@ -14,6 +14,12 @@ git diff --exit-code -- cart/src/levels/gen.zig || { echo "check: cart/src/level
 # The dormant LED path (docs/NEOPIXELS.md) must keep compiling; build it
 # first so the default build below is what lands in zig-out/.
 (cd "$repo" && zig build -Dcart=snoutenstein -Dneopixels=true)
+# The PARTY row (-Dstein_party=true, the fork firmware's cart serial port)
+# must keep compiling whatever the default; keep its wasm for the M8 title
+# check below.
+mkdir -p out
+(cd "$repo" && zig build -Dcart=snoutenstein -Dstein_party=true)
+cp "$repo/zig-out/bin/snoutenstein.wasm" out/snoutenstein-party.wasm
 (cd "$repo" && zig build -Dcart=snoutenstein)
 size -A "$repo/zig-out/firmware/snoutenstein.elf" | grep -E "^\.text|^\.data|^\.bss"
 zig test cart/src/sim.zig
@@ -143,14 +149,21 @@ node ../../tools/preview.mjs $W --frames 40 --quiet --out out/m7_title --script 
 node ../../tools/preview.mjs $W --frames 15000 --quiet --out out/m7_local --call debug_dm_bots:0 \
   --dump-exports debug_dm_screen,debug_dm_over,debug_dm_frags,debug_dm_tick --until "debug_dm_screen == 2" \
   --expect "debug_dm_over == 1" --expect "debug_dm_screen == 2"
-# M8 party: on the title, Down twice selects PARTY, greyed in the simulator
-# (NEEDS PARTY FIRMWARE; A does nothing), Down wraps to PLAY and A starts
-# the campaign. A local 16-bot party match (no network in the simulator)
-# on Data Hall, FFA, 5 frags, bugs on, with the scoreboard held, plays to
-# the frag limit and the results; then 16 bots in 4 teams to 10 team frags.
-node ../../tools/preview.mjs $W --frames 40 --quiet --out out/m8_title --script tools/scripts/m8_title.json \
+# M8 party (the -Dstein_party=true build): on the title, Down twice
+# selects PARTY, greyed in the simulator (NEEDS PARTY FIRMWARE; A does
+# nothing), Down wraps to PLAY and A starts the campaign. Without
+# -Dstein_party there is no PARTY row: Down twice wraps to PLAY and A
+# starts the campaign. A local 16-bot party match (no network in the
+# simulator) on Data Hall, FFA, 5 frags, bugs on, with the scoreboard
+# held, plays to the frag limit and the results; then 16 bots in 4 teams
+# to 10 team frags.
+node ../../tools/preview.mjs out/snoutenstein-party.wasm --frames 40 --quiet --out out/m8_title --script tools/scripts/m8_title.json \
   --dump-exports debug_mode,debug_title_cursor,debug_level \
   --at "10 debug_title_cursor == 2" --at "19 debug_mode == 0" --at "20 debug_title_cursor == 0" \
+  --expect "debug_mode == 1" --expect "debug_level == 0"
+node ../../tools/preview.mjs $W --frames 40 --quiet --out out/m8_title_noparty --script tools/scripts/m8_title.json \
+  --dump-exports debug_mode,debug_title_cursor,debug_level \
+  --at "10 debug_title_cursor == 0" --at "16 debug_mode == 1" \
   --expect "debug_mode == 1" --expect "debug_level == 0"
 node ../../tools/preview.mjs $W --frames 20000 --quiet --out out/m8_local --call debug_party_bots:$((0x12)) --script tools/scripts/m8_local.json \
   --dump-exports debug_party_screen,debug_dm_over,debug_dm_winner,debug_party_present,debug_party_top,debug_dm_tick --at "330 debug_party_screen == 1" \

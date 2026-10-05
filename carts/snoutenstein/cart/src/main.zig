@@ -26,6 +26,7 @@ const demo = @import("demo.zig");
 const deathmatch = @import("deathmatch.zig");
 const party = @import("party.zig");
 const match = @import("match.zig");
+const build_options = @import("build_options");
 
 comptime {
     cart.export_start_code();
@@ -216,7 +217,7 @@ fn run_mode(b: state.Buttons) void {
                 } else if (title_cursor == 1 and has_link) {
                     deathmatch.enter();
                     mode = .deathmatch;
-                } else if (title_cursor == 2 and party_ok()) {
+                } else if (build_options.party and title_cursor == 2 and party_ok()) {
                     party.enter();
                     mode = .party;
                 }
@@ -302,8 +303,10 @@ fn run_mode(b: state.Buttons) void {
 }
 
 /// The firmware serves the cart serial port (never in the simulator).
+/// Without -Dstein_party the PARTY row does not exist and the lobby is
+/// compiled out.
 fn party_ok() bool {
-    return !cart.is_wasm and party.supported();
+    if (comptime !build_options.party) return false else return !cart.is_wasm and party.supported();
 }
 
 /// A local party match of bots (`stein_party_bench`'s and

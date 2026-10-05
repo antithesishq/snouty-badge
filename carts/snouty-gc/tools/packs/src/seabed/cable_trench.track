@@ -30,7 +30,7 @@ pit_band 8
  320  900   52     crates
  170  780   50     vent:right,period=300,warn=50,phase=150
  150  600   50
- 270  460   48     crust           # the shelf's salt crust
+ 270  460   48     crust,lo=-10    # the shelf's salt crust; rock on the inside
  180  330   50
  150  220   52
 furrow 26 850 470 720 420 600 400 480 360 380 320

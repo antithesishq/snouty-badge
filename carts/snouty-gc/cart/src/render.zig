@@ -23,16 +23,18 @@ var fog: [4][256]cart.Pixel = undefined;
 /// Per row: which fog bank (pointer), the row distance z and the lateral
 /// scale (world px per screen px), both Q16.16. Rebuilt when the camera
 /// height changes.
-var row_fog: [128]*const [256]cart.Pixel = undefined;
-var row_z: [128]i32 = undefined;
-var row_scale: [128]i32 = undefined;
+/// (M9.1: the floor rows only, indexed `y - floor_y0`: 924 B of RAM.)
+const rows: usize = 128 - floor_y0;
+var row_fog: [rows]*const [256]cart.Pixel = undefined;
+var row_z: [rows]i32 = undefined;
+var row_scale: [rows]i32 = undefined;
 var rows_height: i32 = -1;
 
 /// Per-frame row tables: start point and per-pixel step in world space.
-var row_x0: [128]i32 = undefined;
-var row_y0: [128]i32 = undefined;
-var row_dx: [128]i32 = undefined;
-var row_dy: [128]i32 = undefined;
+var row_x0: [rows]i32 = undefined;
+var row_y0: [rows]i32 = undefined;
+var row_dx: [rows]i32 = undefined;
+var row_dy: [rows]i32 = undefined;
 
 /// Horizon strip palettes as pixels.
 var front_pal: [16]cart.Pixel = undefined;
@@ -129,7 +131,7 @@ fn bank_of(zi: i32) usize {
 fn build_rows_hills(height: i32) void {
     rows_height = -1; // always rebuilt
     const far: i32 = (height * tuning.focal) << fixed.Q;
-    for (floor_y0..128) |y| row_z[y] = far;
+    for (floor_y0..128) |y| row_z[y - floor_y0] = far;
     var z: i32 = @divTrunc(height * tuning.focal, 95); // the bottom row's flat distance
     var y_min: i32 = 128; // lowest projected row reached so far (rows above are still open)
     var steps: u32 = 0;
@@ -140,16 +142,16 @@ fn build_rows_hills(height: i32) void {
         if (y < y_min) {
             // Fill every open row from y_min - 1 down to y with this z.
             var r = y_min - 1;
-            while (r >= y and r >= @as(i32, @intCast(floor_y0))) : (r -= 1) row_z[@intCast(r)] = z * fixed.one;
+            while (r >= y and r >= @as(i32, @intCast(floor_y0))) : (r -= 1) row_z[@as(usize, @intCast(r)) - floor_y0] = z * fixed.one;
             y_min = y;
             if (y_min <= @as(i32, @intCast(floor_y0))) break;
         }
         z += @max(1, z >> 4);
     }
     for (floor_y0..128) |y| {
-        const zq = row_z[y];
-        row_scale[y] = @divTrunc(zq, tuning.focal);
-        row_fog[y] = &fog[bank_of(zq >> fixed.Q)];
+        const zq = row_z[y - floor_y0];
+        row_scale[y - floor_y0] = @divTrunc(zq, tuning.focal);
+        row_fog[y - floor_y0] = &fog[bank_of(zq >> fixed.Q)];
     }
 }
 
@@ -160,20 +162,20 @@ fn build_rows(height: i32) void {
     for (floor_y0..128) |y| {
         const dy: i32 = @as(i32, @intCast(y)) - horizon_y;
         const z = fixed.div(height * tuning.focal, dy);
-        row_z[y] = z;
-        row_scale[y] = fixed.div(height, dy);
+        row_z[y - floor_y0] = z;
+        row_scale[y - floor_y0] = fixed.div(height, dy);
         const zi = z >> fixed.Q;
         const bank: usize = if (zi >= tuning.fog_z[2]) 3 else if (zi >= tuning.fog_z[1]) 2 else if (zi >= tuning.fog_z[0]) 1 else 0;
-        row_fog[y] = &fog[bank];
+        row_fog[y - floor_y0] = &fog[bank];
     }
 }
 
 /// Distance of floor row y, world px (Q16.16); for sprite scaling.
 pub fn z_of_row(y: usize) i32 {
-    return row_z[y];
+    return row_z[y - floor_y0];
 }
 pub fn scale_of_row(y: usize) i32 {
-    return row_scale[y];
+    return row_scale[y - floor_y0];
 }
 
 /// Whole frame: horizon strip, horizon row, floor.
@@ -222,18 +224,18 @@ fn draw_floor(cam: camera.Cam) void {
     // Shake: the whole floor slides one screen pixel sideways on alternate ticks.
     const jit: i32 = jitter();
     for (floor_y0..128) |y| {
-        const z = row_z[y];
-        const sc = row_scale[y];
+        const z = row_z[y - floor_y0];
+        const sc = row_scale[y - floor_y0];
         // forward * z, right * scale (right = (-sin, cos))
         const fx = fixed.mul(c, z);
         const fy = fixed.mul(s, z);
         const rx = fixed.mul(-s, sc);
         const ry = fixed.mul(c, sc);
         const rj: i32 = if (row_jitter) @intCast(((y *% 0x45 +% frame *% 0x1D) >> 3) & 1) else 0;
-        row_x0[y] = cam.x +% fx -% rx * (half_w + jit + rj);
-        row_y0[y] = cam.y +% fy -% ry * (half_w + jit + rj);
-        row_dx[y] = rx;
-        row_dy[y] = ry;
+        row_x0[y - floor_y0] = cam.x +% fx -% rx * (half_w + jit + rj);
+        row_y0[y - floor_y0] = cam.y +% fy -% ry * (half_w + jit + rj);
+        row_dx[y - floor_y0] = rx;
+        row_dy[y - floor_y0] = ry;
     }
     floor_rows();
 }
@@ -246,11 +248,11 @@ fn floor_rows() void {
     var y: usize = floor_y0;
     while (y < 128) : (y += 1) {
         if (y % tuning.link_pump_rows == 0) pump_at(.floor);
-        var wx: u32 = @bitCast(row_x0[y]);
-        var wy: u32 = @bitCast(row_y0[y]);
-        const dx: u32 = @bitCast(row_dx[y]);
-        const dy: u32 = @bitCast(row_dy[y]);
-        const pal = row_fog[y];
+        var wx: u32 = @bitCast(row_x0[y - floor_y0]);
+        var wy: u32 = @bitCast(row_y0[y - floor_y0]);
+        const dx: u32 = @bitCast(row_dx[y - floor_y0]);
+        const dy: u32 = @bitCast(row_dy[y - floor_y0]);
+        const pal = row_fog[y - floor_y0];
         var x: usize = 0;
         while (x < @as(usize, @intCast(screen_w))) : (x += 1) {
             const t: usize = map[((wy >> 19) & 127) << 7 | ((wx >> 19) & 127)];
@@ -265,5 +267,5 @@ fn floor_rows() void {
 /// World point under screen pixel (x, y) on the floor, Q16.16 (for tests
 /// and the sprite placement check). Valid after draw().
 pub fn floor_world(x: i32, y: usize) struct { x: i32, y: i32 } {
-    return .{ .x = row_x0[y] +% x *% row_dx[y], .y = row_y0[y] +% x *% row_dy[y] };
+    return .{ .x = row_x0[y - floor_y0] +% x *% row_dx[y - floor_y0], .y = row_y0[y - floor_y0] +% x *% row_dy[y - floor_y0] };
 }

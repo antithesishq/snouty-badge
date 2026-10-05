@@ -94,7 +94,8 @@ here: every forked file names its Zero source and commit on its first line.
   by `sim` and `weapons`. Render helpers `duck_pos`, `chain_anchor`.
 - `hazards.zig` (M3): the generic track hazards (a timed blast = the
   Runoff's exhaust vents, a crossing mover = the Dumps' Sweeper; turret
-  and crust reserved) driven by `track.hazard_specs`, and the service
+  reserved; M7 breakable crust, M9.1 its fall rule) driven by
+  `track.hazard_specs`, and the service
   bays; part of `simulate`. `hazards.at(spec, tick)` is the pure cycle.
 - `gc_mode.zig` (M3): GARBAGE COLLECTION's mark and sweep (sweeps as the
   leader passes sector 2 and the line, tags on weapon hits, collections,
@@ -110,8 +111,9 @@ here: every forked file names its Zero source and commit on its first line.
 - `ai.zig`: the centerline driver per racer `Crew` with its combat
   character (aim, reaction, drops; `update_aim` is called by `sim`) and
   pickup policy (`want_use`, CAPTCHA solve ticks), the hazard sense
-  (`dodge_hazards`: wait for a firing vent, pass behind the Sweeper);
-  also the autopilot.
+  (`dodge_hazards`: wait for a firing vent, pass behind the Sweeper; M9.1
+  `dodge_crust`: round a broken band, or slow until it heals); also the
+  autopilot.
 - `racers.zig`: roster (names, cars, chassis, placeholder liveries).
 - `tuning.zig`: every constant (driving, chassis multipliers, AI).
 - `track.zig`: runtime `League`/`Track` structs of slices (the built-in
@@ -224,6 +226,16 @@ Sweeper sheet `hazards.png`).
   RAM: 16,312 B free at M7 (keep it at 16 KB or more; the saves branch
   takes 5,128). Never iterate a big global array by value (`for
   (track.map_ram)` copies 16 KB onto the stack): use `&`.
+- M9.1 (crust that bites, docs/PACKS.md): the link protocol is version
+  3, M7's wire with M9.1's crust rule in `simulate` (`net.GameV2` keeps
+  version 2 for net_compat_test: v2 and v3 never race). The fall rule (the
+  car's centre over broken crust; the cars crossing when it broke get
+  across, `Hazard.hit`) and the AI's `dodge_crust` act only where a track
+  has crust (`track.crust_n`), so the built-in tracks, the pinned race
+  checksums and every arena are unchanged. The content gates are
+  `pack_content_test.zig`'s `autopilot_gate` (3 laps on three chassis, at
+  most `autopilot_falls_max` falls) and `six_ai_gate`; seabed_test and
+  cold_storage_test call them.
 - M6: the link protocol is version 1 (`net.Game.version`); change it
   again whenever the rules bytes, the input bits or what `simulate` does
   with them change (root `docs/LOCKSTEP.md` 4.7). The KILL -9 card and

@@ -3,15 +3,20 @@
 //! tools/packs/make_packs.py; host tests only, the badge cart embeds no
 //! pack) through `pack.load_bytes` and runs it in the sim:
 //!
-//! - every race track is completable: the autopilot drives 3 laps with no
-//!   fall, combat off, on three chassis (SNOUTY, LEGACY's MAINFRAME,
-//!   KIDDIE's THIN CLIENT) as sim_test does for the built-in tracks;
+//! - every race track is completable: the autopilot drives 3 laps, combat
+//!   off, on three chassis (SNOUTY, LEGACY's MAINFRAME, KIDDIE's THIN
+//!   CLIENT) as sim_test does for the built-in tracks, with at most
+//!   `autopilot_falls_max` falls a race (M9.1: the crust bites the car
+//!   behind; before it, no fall at all);
 //! - six AI crews in a full combat race all finish their 3 laps (crust,
 //!   movers, blasts and props live), nobody stuck;
 //! - every arena: the navigation field reaches every node from every crate
 //!   pad and spawn pad's cell, and seeded 3-life rounds of five hunters
 //!   plus the autopilot end by lives with AI-on-AI eliminations, as
 //!   battle_test does for The Sandbox.
+//!
+//! `autopilot_gate`, `six_ai_gate` and `Tally` are shared with
+//! seabed_test.zig and cold_storage_test.zig (M9.1).
 //!
 //! Registered by pack_test.zig. Owned by Track B (PLAN M7).
 const std = @import("std");
@@ -65,83 +70,123 @@ test "pack content: both packs load, with their tracks, arena and league names" 
     }
 }
 
-test "pack content: every race track is completable by the autopilot, 3 laps, no fall (combat off)" {
+// --- The race gates, shared with seabed_test.zig and cold_storage_test.zig ------
+
+/// M9.1: the most falls the autopilot may take in one 3-lap race on a pack
+/// track (combat off, the five AI crews racing ahead of it and cracking
+/// the crust: a band that bites can take the car behind them). PLAN L182.
+pub const autopilot_falls_max: u32 = 2;
+
+/// What a race's events added up to.
+pub const Tally = struct {
+    wrecks: u32 = 0,
+    falls: u32 = 0,
+    /// Falls with the car's centre on a crust tile: broken crust took it.
+    crust: u32 = 0,
+    hazard_hits: u32 = 0,
+    /// Car `only`'s share (no_car: every car's).
+    only: u8 = world.no_car,
+
+    fn add(t: *Tally, w: *const World, e: world.Event) void {
+        switch (e.kind) {
+            .wreck => {
+                if (t.only != world.no_car and e.a != t.only) return;
+                t.wrecks += 1;
+                if (e.c != @backingInt(world.Wreck.fall)) return;
+                t.falls += 1;
+                if (sim.track_of(w).attr_at(e.x, e.y) == .crust) t.crust += 1;
+            },
+            .hazard_hit => t.hazard_hits += 1,
+            else => {},
+        }
+    }
+
+    /// Every event since `seq.*`.
+    pub fn read(t: *Tally, w: *const World, seq: *u16) void {
+        while (seq.* != w.event_seq) : (seq.* +%= 1) t.add(w, w.events[seq.* % world.event_count]);
+    }
+};
+
+/// Every race track of pack `c` is completable by the autopilot: 3 laps,
+/// combat off, on three chassis (SNOUTY, LEGACY's MAINFRAME, KIDDIE's THIN
+/// CLIENT, each driven by its racer's crew as the cart's autopilot is), at
+/// most `autopilot_falls_max` falls a race. `c` is a test's `Content`.
+pub fn autopilot_gate(c: anytype) !void {
     const limit: u32 = 60 * 50 * @as(u32, tuning.laps);
-    for (contents) |c| {
-        for (0..c.tracks) |k| {
-            for ([_]u8{ racers.snouty, racers.legacy, racers.kiddie }) |racer| {
-                try load(c, @intCast(k));
-                var w: World = undefined;
-                sim.reset(&w, .{ .track = track.pack_base, .seed = 1, .humans = .{ racer, world.no_human }, .combat = false });
-                run_countdown(&w);
-                var wrecks: u32 = 0;
-                var was = world.Wreck.none;
-                var ticks: u32 = 0;
-                while (w.phase != .finished and ticks < limit) : (ticks += 1) {
-                    sim.simulate(&w, .{ ai.drive(&w, racer).byte(), 0 });
-                    const car = &w.cars[racer];
-                    if (car.wreck != .none and was == .none) wrecks += 1;
-                    was = car.wreck;
-                }
-                const car = &w.cars[racer];
-                if (report) std.debug.print("\npack {s} {s} racer {d}: finished {} at tick {d}, best lap {d}, wrecks {d}", .{ c.file, c.names[k], racer, car.finished, car.finish_tick, car.best_lap, wrecks });
-                try expect(car.finished);
-                try expectEqual(@as(u32, 0), wrecks);
+    for (0..c.tracks) |k| {
+        for ([_]u8{ racers.snouty, racers.legacy, racers.kiddie }) |racer| {
+            try expectEqual(fmt.Refusal.ok, pack.load_bytes(c.bytes, @intCast(k)));
+            var w: World = undefined;
+            sim.reset(&w, .{ .track = track.pack_base, .seed = 1, .humans = .{ racer, world.no_human }, .combat = false });
+            run_countdown(&w);
+            var tl = Tally{ .only = racer };
+            var seq = w.event_seq;
+            var ticks: u32 = 0;
+            while (w.phase != .finished and ticks < limit) : (ticks += 1) {
+                sim.simulate(&w, .{ ai.drive(&w, racer).byte(), 0 });
+                tl.read(&w, &seq);
             }
+            const car = &w.cars[racer];
+            if (report) std.debug.print("\npack {s} {s} racer {d}: finished {} at tick {d}, best lap {d}, wrecks {d}, falls {d} (crust {d})", .{ c.file, c.names[k], racer, car.finished, car.finish_tick, car.best_lap, tl.wrecks, tl.falls, tl.crust });
+            try expect(car.finished);
+            try expect(tl.falls <= autopilot_falls_max);
         }
     }
 }
 
-test "pack content: six AI crews in a combat race all finish 3 laps on every track" {
-    for (contents) |c| {
-        for (0..c.tracks) |k| {
-            for (0..3) |s| {
-                try load(c, @intCast(k));
-                var w: World = undefined;
-                sim.reset(&w, .{ .track = track.pack_base, .seed = @intCast(0xC0DE + s * 7919 + k), .humans = .{ world.no_human, world.no_human } });
-                run_countdown(&w);
-                var wrecks: u32 = 0;
-                var falls: u32 = 0;
-                var hazard_hits: u32 = 0;
-                var seq = w.event_seq;
-                var slow: [world.car_count]u32 = @splat(0);
-                var max_slow: u32 = 0;
-                var ticks: u32 = 0;
-                var all = false;
-                while (!all and ticks < 60 * 300) : (ticks += 1) {
-                    sim.simulate(&w, .{ 0, 0 });
-                    while (seq != w.event_seq) : (seq +%= 1) {
-                        const e = w.events[seq % world.event_count];
-                        switch (e.kind) {
-                            .wreck => {
-                                wrecks += 1;
-                                if (e.c == @backingInt(world.Wreck.fall)) falls += 1;
-                            },
-                            .hazard_hit => hazard_hits += 1,
-                            else => {},
-                        }
-                    }
-                    all = true;
-                    for (&w.cars, 0..) |*car, i| {
-                        all = all and (!car.active or car.finished);
-                        if (car.finished or car.wreck != .none or sim.speed(car) > fixed.one / 4) {
-                            slow[i] = 0;
-                        } else {
-                            slow[i] += 1;
-                            max_slow = @max(max_slow, slow[i]);
-                        }
+/// Six AI crews in a full combat race all finish their 3 laps on every
+/// race track of pack `c` (3 seeds a track), nobody stuck. Returns the
+/// crust falls in all.
+pub fn six_ai_gate(c: anytype) !u32 {
+    var crust: u32 = 0;
+    for (0..c.tracks) |k| {
+        for (0..3) |s| {
+            try expectEqual(fmt.Refusal.ok, pack.load_bytes(c.bytes, @intCast(k)));
+            var w: World = undefined;
+            sim.reset(&w, .{ .track = track.pack_base, .seed = @intCast(0xC0DE + s * 7919 + k), .humans = .{ world.no_human, world.no_human } });
+            run_countdown(&w);
+            var tl = Tally{};
+            var seq = w.event_seq;
+            var slow: [world.car_count]u32 = @splat(0);
+            var max_slow: u32 = 0;
+            var ticks: u32 = 0;
+            var all = false;
+            while (!all and ticks < 60 * 300) : (ticks += 1) {
+                sim.simulate(&w, .{ 0, 0 });
+                tl.read(&w, &seq);
+                all = true;
+                for (&w.cars, 0..) |*car, i| {
+                    all = all and (!car.active or car.finished);
+                    if (car.finished or car.wreck != .none or sim.speed(car) > fixed.one / 4) {
+                        slow[i] = 0;
+                    } else {
+                        slow[i] += 1;
+                        max_slow = @max(max_slow, slow[i]);
                     }
                 }
-                var best: u32 = std.math.maxInt(u32);
-                for (w.cars) |car| {
-                    if (car.best_lap > 0) best = @min(best, car.best_lap);
-                }
-                if (report) std.debug.print("\npack {s} {s} 6-AI seed {d}: all finished {} by tick {d}, best lap {d}, wrecks {d} (falls {d}), hazard hits {d}, stuck max {d}", .{ c.file, c.names[k], s, all, ticks, best, wrecks, falls, hazard_hits, max_slow });
-                try expect(all);
-                try expect(max_slow <= 600);
             }
+            var best: u32 = std.math.maxInt(u32);
+            for (w.cars) |car| {
+                if (car.best_lap > 0) best = @min(best, car.best_lap);
+            }
+            if (report) std.debug.print("\npack {s} {s} 6-AI seed {d}: all finished {} by tick {d}, best lap {d}, wrecks {d} (falls {d}, crust {d}), hazard hits {d}, stuck max {d}", .{ c.file, c.names[k], s, all, ticks, best, tl.wrecks, tl.falls, tl.crust, tl.hazard_hits, max_slow });
+            try expect(all);
+            try expect(max_slow <= 600);
+            crust += tl.crust;
         }
     }
+    return crust;
+}
+
+test "pack content: every race track is completable by the autopilot, 3 laps, at most autopilot_falls_max falls (combat off)" {
+    for (contents) |c| try autopilot_gate(c);
+}
+
+test "pack content: six AI crews in a combat race all finish 3 laps on every track" {
+    var crust: u32 = 0;
+    for (contents) |c| crust += try six_ai_gate(c);
+    // FOOD COURT's ceiling tiles and REENTRY FIELD's furrow crust bite.
+    try expect(crust > 0);
 }
 
 test "pack content: every arena's navigation field reaches every node from every pad" {

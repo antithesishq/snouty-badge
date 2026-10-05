@@ -154,17 +154,47 @@ phase u16, push u8, speed u8 (1/32 px/tick). Up to 4 per track.
 in world px (x1, y1 exclusive; whole tiles); `warn` the ticks from the
 first touch of a car on the ground (its centre on a crust tile of the
 region) to the break, while the cracked tile shows; `period` the ticks it
-stays broken (300 is a good value), then it heals. While broken, a car on
-the ground whose four footprint corners are all on broken crust (or off
-the track) falls, as into a pit (a wreck; kill credit as for a pit).
-Airborne cars never touch it. size, damage, on, phase, push and speed
-are 0.
+stays broken, then it heals. size, damage, on, phase, push and speed are
+0.
 
-`warn` must let the car that cracked the region get off it: at least
-(band depth along the travel + 24 px of car) / its slowest speed there,
-in px per tick. A 16 px band crossed at 1.7 px/tick needs 24 ticks; use
-24 or more (Track B's packs and the test pack use 24; 12 let the cracking
-car fall through its own crack, PLAN L131).
+**The rule (M9.1, link version 3).** While a region is broken, a car on
+the ground falls in (a wreck; kill credit as for a pit) when its
+**centre** is over one of the region's crust tiles, or when its four
+footprint corners are all on broken crust or off the track (the pit
+edge's rule). The cars whose centres were on the region at the moment it
+broke are crossing it: they get across, as long as they keep moving at
+0.5 px/tick or more (a car parked on it goes through), until their centre
+leaves the region's rectangle. So the car that cracked a band is never
+taken by its own crack; the car behind, driving onto the hole, is.
+Airborne cars (off a ramp or kicker) never touch it; one that lands on
+the hole falls in. A respawn never puts a car on broken crust.
+
+**The AI** reads a band on its line (sample ahead of the car, its crust
+tiles' extent across the road) and steers through the road beside the
+hole, or, when the band leaves no way round, slows to get there as it
+heals. It predicts a crack's break from its clock and drives on over a
+crack it will cross before the break. KIDDIE sees holes late and cracks
+not at all; LEGACY goes round a crack even when it would beat the break.
+
+**Minimums** (`tools/packs/make_packs.py` checks the first; Track B's
+packs and the test pack keep all three):
+
+- `warn` at least (band depth along the travel + 24 px of car) / 1.7
+  px/tick, so the crack shows while the car that made it is still on it
+  and the next car sees the crack before the hole: 30 for a 24 px band
+  (the packs' default, `len=12`), 24 for 16 px.
+- A band 24 px deep or more reads at speed in Mode 7; 16 px is a sliver
+  a car crosses in five ticks.
+- Leave a way round: a band over part of the road (`lo=`/`hi=` in a
+  track source). The AI takes the gap when the hole's edge plus 10 px is
+  still 16 px inside the road's edge (a gap of 26 px or more); the
+  content packs' FOOD COURT, REENTRY FIELD, WHALEFALL and CABLE TRENCH
+  leave one side solid, INTAKE SHELF a lane down both sides. With the auto-throttle no car can
+  stop (the brake holds 0.69 px/tick), so a band across the whole road
+  must heal before a car that sees it and brakes gets there: `period`
+  120 or less (the test pack's CRUST LOOP). 300 (5 s) suits a band with a
+  way round: every car within 5 s behind the one that broke it meets the
+  hole.
 
 ## Binary format, version 1
 

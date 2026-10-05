@@ -293,8 +293,8 @@ test "breakable crust: a touch cracks it, it breaks `warn` ticks later, a car on
     var k: usize = 0;
     while (track.hazard_specs[k].kind != .crust) k += 1;
     const h = track.hazard_specs[k];
-    try expectEqual(@as(u16, 24), h.warn);
-    try expectEqual(@as(u16, 300), h.period);
+    try expectEqual(@as(u16, 30), h.warn);
+    try expectEqual(@as(u16, 120), h.period);
     const mx = @divTrunc(h.x0 + h.x1, 2);
     const my = @divTrunc(h.y0 + h.y1, 2);
     try expectEqual(track.Attr.crust, track.pack_track.attr_at(mx, my));
@@ -310,7 +310,7 @@ test "breakable crust: a touch cracks it, it breaks `warn` ticks later, a car on
     // The look: the map copy shows the cracked tile, the sim does not care.
     track.crust_look(&w.hazards);
     try expectEqual(track.crust_tile + 1, track.pack_track.tile_at(mx, my));
-    // It breaks: the car still on it (all four corners) falls.
+    // It breaks: the car still on it, parked (not crossing), falls.
     var fell = false;
     for (0..4) |_| {
         w.cars[racers.legacy].vx = 0;
@@ -337,6 +337,156 @@ test "breakable crust: a touch cracks it, it breaks `warn` ticks later, a car on
     try expect(!hazards.crust_broken(&w, mx, my));
     track.crust_look(&w.hazards);
     try expectEqual(track.crust_tile, track.pack_track.tile_at(mx, my));
+}
+
+// --- M9.1: crust that bites -----------------------------------------------------
+
+/// The loaded track's first crust region.
+fn crust_k() usize {
+    var k: usize = 0;
+    while (track.hazard_specs[k].kind != .crust) k += 1;
+    return k;
+}
+
+/// World px of (along, lat) in crust region `h`'s frame (its sample).
+fn band_point(h: *const track.HazardSpec, along: i32, lat: i32) [2]i32 {
+    const s = track.pack_track.sample(h.sample);
+    const sx = fixed.cos(s.tangent);
+    const sy = fixed.sin(s.tangent);
+    return .{ @as(i32, s.x) + ((sx * along - sy * lat) >> fixed.Q), @as(i32, s.y) + ((sy * along + sx * lat) >> fixed.Q) };
+}
+
+/// Car `i` at (along, lat) in the band's frame, heading down the track at
+/// `speed` (Q16 px/tick).
+fn place(w: *World, i: usize, h: *const track.HazardSpec, along: i32, lat: i32, speed: i32) void {
+    const p = band_point(h, along, lat);
+    const tangent = track.pack_track.sample(h.sample).tangent;
+    park(w, i, p[0], p[1], tangent);
+    w.cars[i].vx = fixed.mul(fixed.cos(tangent), speed);
+    w.cars[i].vy = fixed.mul(fixed.sin(tangent), speed);
+}
+
+/// Car `i` on the centerline `back` samples before the band's, heading
+/// along it at `speed`.
+fn place_on_line(w: *World, i: usize, h: *const track.HazardSpec, back: u8, speed: i32) void {
+    const k = h.sample -% back;
+    const s = track.pack_track.sample(k);
+    park(w, i, s.x, s.y, s.tangent);
+    w.cars[i].progress = k;
+    w.cars[i].vx = fixed.mul(fixed.cos(s.tangent), speed);
+    w.cars[i].vy = fixed.mul(fixed.sin(s.tangent), speed);
+}
+
+/// The car's position along the band's frame, px.
+fn along_of(w: *const World, i: usize, h: *const track.HazardSpec) i32 {
+    const s = track.pack_track.sample(h.sample);
+    const c = &w.cars[i];
+    const ox = (((c.x >> fixed.Q) - @as(i32, s.x) + 512) & 1023) - 512;
+    const oy = (((c.y >> fixed.Q) - @as(i32, s.y) + 512) & 1023) - 512;
+    return (ox * fixed.cos(s.tangent) + oy * fixed.sin(s.tangent)) >> fixed.Q;
+}
+
+fn break_now(w: *World, k: usize) void {
+    w.hazards[k].state = .active;
+    w.hazards[k].timer = 0;
+    w.hazards[k].hit = 0;
+}
+
+test "crust bites: a car driven onto a broken band falls in; one crossing as it breaks gets across; one in the air flies over" {
+    defer pack.forget();
+    try expectEqual(fmt.Refusal.ok, pack.load_bytes(test_pack, k_crust));
+    const car = racers.legacy;
+    var w = quiet_world(car);
+    const k = crust_k();
+    const h = &track.hazard_specs[k];
+    // CRUST LOOP's band spans the road, 24 px deep: no deeper than a car is
+    // long, so the old four-corner rule never took a car crossing it.
+    try expectEqual(@as(i32, 24), h.x1 - h.x0);
+    // Broken; the car (no input: straight on at 2.5 px/tick) drives onto it.
+    break_now(&w, k);
+    place(&w, car, h, @as(i32, h.along_lo) - 60, 0, 5 << 15);
+    var n: u32 = 0;
+    while (w.cars[car].wreck == .none and n < 60) : (n += 1) sim.simulate(&w, .{ 0, 0 });
+    try expectEqual(world.Wreck.fall, w.cars[car].wreck);
+    const c = &w.cars[car];
+    try expectEqual(track.Attr.crust, track.pack_track.attr_at(c.x >> fixed.Q, c.y >> fixed.Q));
+    // The centre over the hole, not the whole car: it went in at its near edge.
+    try expect(along_of(&w, car, h) < @as(i32, h.along_lo) + 8);
+    // Cracked and about to break with the car's centre already on it,
+    // crossing at 2 px/tick: it gets across.
+    w = quiet_world(car);
+    w.hazards[k].state = .warn;
+    w.hazards[k].timer = h.warn - 3;
+    place(&w, car, h, @as(i32, h.along_lo) + 3, 0, 2 << 16);
+    n = 0;
+    while (along_of(&w, car, h) < @as(i32, h.along_hi) + 16 and n < 60) : (n += 1) {
+        sim.simulate(&w, .{ 0, 0 });
+        try expectEqual(world.Wreck.none, w.cars[car].wreck);
+    }
+    try expectEqual(world.HazardState.active, w.hazards[k].state);
+    try expect(n < 60);
+    // The next car onto it, right behind, goes in.
+    place(&w, car, h, @as(i32, h.along_lo) - 30, 0, 5 << 15);
+    n = 0;
+    while (w.cars[car].wreck == .none and n < 60) : (n += 1) sim.simulate(&w, .{ 0, 0 });
+    try expectEqual(world.Wreck.fall, w.cars[car].wreck);
+    // Off a ramp's hop over the broken band: no fall, it lands beyond.
+    w = quiet_world(car);
+    break_now(&w, k);
+    place(&w, car, h, @as(i32, h.along_lo) - 20, 0, 5 << 15);
+    w.cars[car].hop = 40;
+    w.cars[car].air = 40;
+    n = 0;
+    while (n < 60) : (n += 1) {
+        sim.simulate(&w, .{ 0, 0 });
+        try expectEqual(world.Wreck.none, w.cars[car].wreck);
+    }
+    try expect(along_of(&w, car, h) > @as(i32, h.along_hi) + 30);
+}
+
+test "the AI's crust sense: it steers round a broken band it can see (a crew blind to crust goes in), and waits for one across the road" {
+    defer pack.forget();
+    // FOOD COURT (Dead Mall): the ceiling-tile band leaves the balcony side
+    // solid.
+    const dead_mall = @embedFile("gen/packs/DEADMALL.GCP");
+    const car = racers.snouty;
+    var blind = ai.crews[car];
+    blind.crust_sight = 0;
+    for ([_]bool{ true, false }) |sees| {
+        try expectEqual(fmt.Refusal.ok, pack.load_bytes(dead_mall, 1));
+        var w = quiet_world(car);
+        const k = crust_k();
+        const h = &track.hazard_specs[k];
+        const room = @as(i32, track.pack_track.sample(h.sample).half) - tuning.avoid_margin;
+        try expect(h.lat_lo - tuning.ai_crust_clear >= -room); // a way round on the left
+        break_now(&w, k);
+        place_on_line(&w, car, h, 9, 5 << 15);
+        var n: u32 = 0;
+        while (w.cars[car].wreck == .none and along_of(&w, car, h) < @as(i32, h.along_hi) + 16 and n < 200) : (n += 1) {
+            const in = if (sees) ai.drive(&w, car) else ai.drive_crew(&w, car, &blind);
+            sim.simulate(&w, .{ in.byte(), 0 });
+        }
+        try expectEqual(if (sees) world.Wreck.none else world.Wreck.fall, w.cars[car].wreck);
+        try expect(n < 200);
+    }
+    // CRUST LOOP's band spans the road: the AI slows and gets there as it
+    // heals (it cracks it again and gets across), never in.
+    try expectEqual(fmt.Refusal.ok, pack.load_bytes(test_pack, k_crust));
+    var w = quiet_world(car);
+    const k = crust_k();
+    const h = &track.hazard_specs[k];
+    break_now(&w, k);
+    place_on_line(&w, car, h, 11, 5 << 15);
+    var slowest: i32 = std.math.maxInt(i32);
+    var n: u32 = 0;
+    while (along_of(&w, car, h) < @as(i32, h.along_hi) + 16 and n < 600) : (n += 1) {
+        sim.simulate(&w, .{ ai.drive(&w, car).byte(), 0 });
+        try expectEqual(world.Wreck.none, w.cars[car].wreck);
+        slowest = @min(slowest, sim.speed(&w.cars[car]));
+    }
+    try expect(n < 600);
+    try expect(n >= h.period); // it waited for the heal
+    try expect(slowest < fixed.one);
 }
 
 test "a solid prop is a wall: a car driven into it stops at its edge; decorations are not" {

@@ -2484,6 +2484,98 @@ with no engine or format change. Decisions L170 to L176.
 - Contact sheets (the map plus 8 Mode 7 mock frames, half scale):
   `docs/packs/cold_storage/*_contact.png`.
 
+## M9.1 Crust that bites
+
+Breakable crust (SPEC 19.4, docs/PACKS.md, M7) never swallowed a car: the
+fall rule wanted all four footprint corners on broken crust, the bands
+were 16 px deep and a car is 24 px long (L104, L131, L152). M9.1 makes it
+the hazard SPEC means: a car that crosses cracking crust is fine, a car
+that drives onto it after it breaks falls in (SEGMENT FAULT), and the car
+behind the one that cracked it is the one in danger. Lead's agent,
+worktree /home/exedev/snouty-badge-gc-present, branch `gc/present` off
+origin/main (M0 to M9 merged, tag `snouty-gc/m9`).
+
+- **Fall rule** (`sim.resolve_tiles`, `hazards.crust_takes`): the car's
+  centre over broken crust, or the four corners as before; the cars on the
+  region when it breaks get across; airborne cars never fall (L180).
+- **AI crust sense** (`ai.dodge_crust`, modelled on `dodge_hazards`): round
+  a broken or about-to-break band on the line when the road leaves a way,
+  else slow until it heals; KIDDIE careless, LEGACY cautious (L181).
+- **Bands**: rebuilt through make_packs.py (new `lo`, `hi`, `period`
+  options, defaults len 12, warn 30) and tools/test_pack/make.py (L183,
+  L184).
+- **Gates**: "the autopilot never falls" becomes "the autopilot finishes 3
+  laps on three chassis with at most 2 falls a race" (L182); a test where
+  broken crust swallows a car, and one where the AI goes round a band it
+  can see (and waits for one across the road); the pinned M4 checksums,
+  every built-in test and every arena soak unchanged.
+- **Link** version 3 (L186). Docs: docs/PACKS.md's crust rule and
+  minimums, CLAUDE.md's gate notes.
+
+### M9.1 status
+
+**2026-10-05, branch `gc/present`** (on origin/main b4c9ebbf, the Zig
+0.17.0 switch). Decisions L180 to L187.
+
+- **Fall rule**: the car's centre over broken crust (or the four corners,
+  as at a pit edge); the cars on a region when it breaks get across while
+  they move (`Hazard.hit`); airborne cars never fall (L180).
+- **AI**: `ai.dodge_crust` for every crew and the autopilot: steer for the
+  road beside a broken or about-to-break band on the line, or slow until a
+  band across the road heals; SNOUTY and most crews see 130 px, LEGACY
+  170 px and goes round cracks it would beat, KIDDIE 72 px and holes only
+  (L181). Deterministic, inside `simulate`, only where a track has crust.
+- **Bands** (make_packs.py `crust,lo=,hi=,period=`, defaults len 12, warn
+  30, period 300): 24 px deep with a way round on all five content bands
+  (L183); CRUST LOOP (the test pack) keeps its full-width band at warn 30,
+  period 120 (L184). Rebuilt: DEADMALL, BONEYARD, SEABED and COLDSTOR.GCP
+  (assets/packs and cart/src/gen/packs), TEST.GCP and the drive images;
+  only the bands' tiles, records and the map previews changed.
+- **Falls** (autopilot = SNOUTY / LEGACY's MAINFRAME / KIDDIE's THIN
+  CLIENT, 3 laps, combat off, behind five AI crews; six-AI = 3 seeded
+  combat races; falls of any kind, crust in brackets):
+
+  | Track | autopilot M9 | autopilot M9.1 | six-AI M9 | six-AI M9.1 |
+  |---|---|---|---|---|
+  | FOOD COURT | 0 / 0 / 0 | 0 / 0 / 1 (1) | 1, 0, 1 | 1 (1), 0, 0 |
+  | REENTRY FIELD | 0 / 0 / 0 | 0 / 0 / 0 | 1, 0, 0 | 2 (1), 1 (1), 0 |
+  | WHALEFALL | 0 / 0 / 0 | 0 / 0 / 0 | 0, 0, 0 | 1 (1), 1 (1), 1 (1) |
+  | CABLE TRENCH | 0 / 0 / 0 | 0 / 0 / 0 | 0, 0, 0 | 0, 0, 0 |
+  | INTAKE SHELF | 0 / 0 / 0 | 0 / 0 / 0 | 0, 0, 0 | 2 (2), 2 (2), 1 (1) |
+
+  At M9 no fall was the crust's (the open edges and the furrow took
+  those; L152). The tracks without crust race exactly as at M9. The
+  autopilot's finishes moved by up to 217 ticks on the crust tracks (FOOD
+  COURT SNOUTY 5,645 to 5,862: the way round). The first cut of the AI
+  sense (a lane offset only, CABLE TRENCH's gap on the bend's outside,
+  no sense once the leader had finished) let the bands take up to 14
+  cars a six-AI race and KIDDIE's autopilot 3.
+- **Tests**: 222 pass (`zig build test-gc`, the binary run directly; M9
+  had 219). New: `pack_test.zig` "crust bites" (a car driven onto a
+  broken band falls in at its near edge; a car crossing as it breaks gets
+  across and the next one onto it falls; one in the air flies over) and
+  "the AI's crust sense" (SNOUTY goes round FOOD COURT's broken band from
+  9 samples back where a crew blind to crust goes in; on CRUST LOOP it
+  slows, waits out the heal and crosses); net_compat_test v2 vs v3. The
+  content tests' gate is now `autopilot_gate` (at most 2 falls a race,
+  L182) and `six_ai_gate` (crust falls counted; each test file asserts its
+  pack's crust took a car). The four pinned race checksums, every
+  built-in test and every arena soak (all end by lives, the same rounds
+  as at M9) are unchanged.
+- **Link**: version 3 (L186); docs/NET.md, CLAUDE.md's gate notes.
+- **Bench** (calibrated, mean / worst ms, plain = `--lcd`): m0_race 3.66 / 5.23 (M9: 3.65 /
+  5.22), stress 5.03 / 6.17 (5.02 / 6.17), m3_outflow 3.65 / 5.66
+  (same), m3_gc 3.51 / 5.57, m6_battle 3.46 / 5.32, probe stress 5.14 /
+  6.30; ANCHOR STORE 3.55 / 5.09, REENTRY FIELD f20 3.66 / 6.13, the
+  pack stress scene f20 4.80 / 6.11. Unchanged within 0.01 ms (the depth
+  list's 16-bit entries); every run under 8 ms.
+- **RAM**: `size -A` .text 196,496 + .data 8,332 + .bss 49,480 (+ 2,420
+  exidx/extab): **17,224 B free** (M9: 16,120; M7: 16,312), after the RAM
+  pass (L187) that paid for the crust code's 1.5 KB.
+- **check.sh PASS** (every step).
+- **On a badge**: never run. Copy the four rebuilt .GCP files over the old
+  ones: a pack from before M9.1 still races, with its old 16 px bands.
+
 ## Deferred questions
 
 SPEC 17 holds the design defaults. Taken during M0 (Track A):
@@ -3419,3 +3511,80 @@ L176. **The content drive image** (`drive_packs.img`, tools/test_pack/make.py
     arena 4; pack_test.zig's counts follow (4 packs, 17 rows, 5 arenas).
     The `-Dgc-pack` preview wasm and the benches keep their rows (DEADMALL
     and BONEYARD come first). The Seabed adds its line beside it.
+
+Taken during M9.1 (crust that bites):
+
+L180. **The fall rule: the car's centre.** A car on the ground falls when
+    its centre is over broken crust (or, as before, when all four corners
+    are on broken crust or off the track). Two corners would take a car
+    whose front wheels clip a hole's edge, so a car steering round a hole
+    would need half a car of clearance more and a human would feel robbed
+    by a pixel; the centre is "the car's weight over the hole", reads the
+    same way on screen (the car's middle on the dark tiles), and bites any
+    band at least as deep as a tick's travel (4 px). The cars whose centre
+    is on the region when it breaks are crossing it (`Hazard.hit`, unused
+    by crust before) and get across while they move at 0.5 px/tick or more
+    and stay in its rectangle, so SPEC's "a car that crosses cracking crust
+    is fine" holds whatever the warn; a parked car goes through (the M7
+    test of it stands). Airborne cars never touch it; a landing on the
+    hole is a fall.
+L181. **The AI's crust sense** (`ai.dodge_crust`, every crew and the
+    autopilot): a band within `crust_sight` px on the line (its centerline
+    sample at most 16 samples ahead), broken, or cracked and due to break
+    before the car gets there (from its clock), and with the crew's lane
+    between its crust tiles' lateral extent (`HazardSpec.lat_lo`/`lat_hi`,
+    derived from the map at `track.select`, as `sample` and `along_lo`/
+    `along_hi` are). The car then steers for a point 10 px past the hole's
+    edge on the side nearer its lane, at the band's near edge and then
+    beyond its far edge, straight there when the way is floor (three
+    points checked), else by its lane (round a bend: aiming straight put
+    LEGACY into CABLE TRENCH's inside wall). With no gap it slows to arrive
+    as the band heals. It keeps the sense after the race is decided (the
+    phase `finished` of an AI-only race), unlike the vent sense, since the
+    built-in tracks have no crust. Crews: SNOUTY and the rest 130 px;
+    LEGACY 170 px and wary (round a crack it would beat); KIDDIE 72 px and
+    blind to cracks (holes only). KIDDIE at 56 px fell 3 times a race on
+    WHALEFALL as the autopilot's THIN CLIENT.
+L182. **The gate: N = 2.** The autopilot (each chassis' own crew, as in the
+    cart's autopilot) finishes 3 laps on every pack track with at most 2
+    falls, combat off, behind five AI crews that crack the bands. Measured:
+    0 everywhere but FOOD COURT on KIDDIE's THIN CLIENT (1). N = 2 leaves a
+    fall of headroom for a retune; 3 would let a careless crew fall every
+    lap. The six-AI soaks print crust falls apart from all falls, and each
+    content test file asserts the crust took a car somewhere in its pack.
+L183. **Bands.** 24 px deep (`len=12`, the new default) and broken for 300
+    ticks, `warn` 30 (the documented minimum (24 + 24) / 1.7 = 29); each
+    leaves a way round with `lo=`/`hi=` (new crust options, with `period=`):
+    FOOD COURT from 14 px left of the line to the right edge (the balcony
+    side solid), REENTRY FIELD from the left edge to 14 px right (solid on
+    the right), WHALEFALL from 28 px left to the right edge, CABLE TRENCH
+    from 10 px left to the outside edge (the cars come into it from the
+    inside of the bend: the hole on the inside put the gap 78 px away and
+    took 13 cars a race), INTAKE SHELF a hole 32 px wide mid-channel with
+    a lane each side. The tiles and look are the packs' own; only the
+    bands' tiles, the records, the maps and the GCPs changed.
+L184. **A band across the whole road** cannot be waited out: with the
+    auto-throttle the brake holds 0.69 px/tick, so a car 130 px off goes in
+    within 200 ticks. docs/PACKS.md asks such a band to heal in 120 ticks or
+    less; the test pack's CRUST LOOP (the one full-width band, the AI's
+    slow-down test) is now warn 30, period 120 (was 24, 300). No content
+    pack has one.
+L185. **"Or take the ramp"**: no pack puts a ramp before a band, and the
+    AI already takes a ramp on its line, so there is no ramp choice in
+    `dodge_crust`; an airborne car never falls (tested).
+L186. **Link version 3** (root docs/LOCKSTEP.md 4.7): the wire is M7's, but
+    `simulate` on a pack track is not, so a v2 and a v3 badge would desync
+    on a crust track. `net.GameV2` keeps version 2 for net_compat_test (v2
+    and v3 see wrong_version both ways); an M4 badge now reads 0x31.
+L187. **The RAM pass.** The crust code costs about 1.5 KB (the AI's sense
+    0.75, the band geometry at `select` 0.43, the fall rule 0.3), which
+    would have left 14,512 B free (M9: 16,120). Two render-side tables
+    paid it back, neither read by `simulate`: the floor's per-row tables
+    hold the 95 floor rows only (`render.rows`, indexed `y - floor_y0`:
+    768 B), and the depth list's entries keep the projection in 16-bit
+    fields (`sprites.Entry`, 20 to 12 B: 1,792 B; `project_cull` bounds
+    every field). Both bench the same as before. Two 4-bit minimap cells a
+    byte (512 B more) cost 0.13 ms on Outflow Canyon's worst frame and
+    were left out. A version that wrote the band geometry into the crust record's
+    spare bytes from tools/build_pack.py was dropped: a pack copied before
+    M9.1 would have raced with an AI blind to its crust.

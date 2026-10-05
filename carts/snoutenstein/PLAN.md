@@ -1594,7 +1594,20 @@ options if over.
 ### M9 status (2026-10-05)
 
 Done on branch stein/dm-arsenal and handed to the M8 session for
-stein/mp / party. It stays off main with the rest of the party work.
+stein/mp / party.
+
+**M9.1 (2026-10-05): on main.** Adrian: the arsenal needs no OS change and
+works in the two-badge cable deathmatch, so it goes to main. Main carries
+the M8 N-player core (16-slot Match, Data Hall, scoreboard) and M9; only
+the PARTY lobby needs the fork firmware, and `-Dstein_party` (default off
+on main, on for the `party` branch) compiles it out: no PARTY row, no
+os_flags probe, no lockstep_n or cart serial code in the ELF (checked: no
+0x200350F4 literal). The local party match of bots stays, for bench_m8.sh
+and the m8 previews. check.sh builds both and checks both title menus.
+match.G.version is 1 (M7 on main was 0), so an older main badge on the
+cable shows WRONG VERSION. Main size: .text 126,020 + .data 7,944 =
+130.8 KiB, .bss 101,184 (under the 140 KiB budget; the party build is
+141.7 KiB).
 
 **Commits**
 - c8b02d63: lead pre-work.

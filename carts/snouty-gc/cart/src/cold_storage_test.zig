@@ -4,9 +4,10 @@
 //! only, the badge cart embeds no pack) through `pack.load_bytes` and runs
 //! it in the sim:
 //!
-//! - every race track is completable: the autopilot drives 3 laps with no
-//!   fall, combat off, on three chassis (SNOUTY, LEGACY's MAINFRAME,
-//!   KIDDIE's THIN CLIENT) as sim_test does for the built-in tracks;
+//! - every race track is completable: the autopilot drives 3 laps, combat
+//!   off, on three chassis (SNOUTY, LEGACY's MAINFRAME, KIDDIE's THIN
+//!   CLIENT), at most `autopilot_falls_max` falls a race (M9.1; the gates
+//!   are pack_content_test.zig's `autopilot_gate` and `six_ai_gate`);
 //! - six AI crews in a full combat race all finish their 3 laps (crust,
 //!   movers, blasts and props live), nobody stuck;
 //! - every arena: the navigation field reaches every node from every crate
@@ -27,6 +28,8 @@ const ai = @import("ai.zig");
 const racers = @import("racers.zig");
 const pack = @import("pack.zig");
 const fmt = @import("pack_format.zig");
+/// M9.1: the race gates (pack_content_test.zig).
+const gates = @import("pack_content_test.zig");
 
 const World = world.World;
 const expect = std.testing.expect;
@@ -67,83 +70,14 @@ test "cold storage: the pack loads, with its tracks, arena and league name" {
     }
 }
 
-test "cold storage: every race track is completable by the autopilot, 3 laps, no fall (combat off)" {
-    const limit: u32 = 60 * 50 * @as(u32, tuning.laps);
-    for (contents) |c| {
-        for (0..c.tracks) |k| {
-            for ([_]u8{ racers.snouty, racers.legacy, racers.kiddie }) |racer| {
-                try load(c, @intCast(k));
-                var w: World = undefined;
-                sim.reset(&w, .{ .track = track.pack_base, .seed = 1, .humans = .{ racer, world.no_human }, .combat = false });
-                run_countdown(&w);
-                var wrecks: u32 = 0;
-                var was = world.Wreck.none;
-                var ticks: u32 = 0;
-                while (w.phase != .finished and ticks < limit) : (ticks += 1) {
-                    sim.simulate(&w, .{ ai.drive(&w, racer).byte(), 0 });
-                    const car = &w.cars[racer];
-                    if (car.wreck != .none and was == .none) wrecks += 1;
-                    was = car.wreck;
-                }
-                const car = &w.cars[racer];
-                if (report) std.debug.print("\npack {s} {s} racer {d}: finished {} at tick {d}, best lap {d}, wrecks {d}", .{ c.file, c.names[k], racer, car.finished, car.finish_tick, car.best_lap, wrecks });
-                try expect(car.finished);
-                try expectEqual(@as(u32, 0), wrecks);
-            }
-        }
-    }
+test "cold storage: every race track is completable by the autopilot, 3 laps, at most autopilot_falls_max falls (combat off)" {
+    for (contents) |c| try gates.autopilot_gate(c);
 }
 
 test "cold storage: six AI crews in a combat race all finish 3 laps on every track" {
-    for (contents) |c| {
-        for (0..c.tracks) |k| {
-            for (0..3) |s| {
-                try load(c, @intCast(k));
-                var w: World = undefined;
-                sim.reset(&w, .{ .track = track.pack_base, .seed = @intCast(0xC0DE + s * 7919 + k), .humans = .{ world.no_human, world.no_human } });
-                run_countdown(&w);
-                var wrecks: u32 = 0;
-                var falls: u32 = 0;
-                var hazard_hits: u32 = 0;
-                var seq = w.event_seq;
-                var slow: [world.car_count]u32 = @splat(0);
-                var max_slow: u32 = 0;
-                var ticks: u32 = 0;
-                var all = false;
-                while (!all and ticks < 60 * 300) : (ticks += 1) {
-                    sim.simulate(&w, .{ 0, 0 });
-                    while (seq != w.event_seq) : (seq +%= 1) {
-                        const e = w.events[seq % world.event_count];
-                        switch (e.kind) {
-                            .wreck => {
-                                wrecks += 1;
-                                if (e.c == @backingInt(world.Wreck.fall)) falls += 1;
-                            },
-                            .hazard_hit => hazard_hits += 1,
-                            else => {},
-                        }
-                    }
-                    all = true;
-                    for (&w.cars, 0..) |*car, i| {
-                        all = all and (!car.active or car.finished);
-                        if (car.finished or car.wreck != .none or sim.speed(car) > fixed.one / 4) {
-                            slow[i] = 0;
-                        } else {
-                            slow[i] += 1;
-                            max_slow = @max(max_slow, slow[i]);
-                        }
-                    }
-                }
-                var best: u32 = std.math.maxInt(u32);
-                for (w.cars) |car| {
-                    if (car.best_lap > 0) best = @min(best, car.best_lap);
-                }
-                if (report) std.debug.print("\npack {s} {s} 6-AI seed {d}: all finished {} by tick {d}, best lap {d}, wrecks {d} (falls {d}), hazard hits {d}, stuck max {d}", .{ c.file, c.names[k], s, all, ticks, best, wrecks, falls, hazard_hits, max_slow });
-                try expect(all);
-                try expect(max_slow <= 600);
-            }
-        }
-    }
+    var crust: u32 = 0;
+    for (contents) |c| crust += try gates.six_ai_gate(c);
+    try expect(crust > 0);
 }
 
 test "cold storage: every arena's navigation field reaches every node from every pad" {

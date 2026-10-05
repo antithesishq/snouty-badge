@@ -32,16 +32,20 @@ words, stripped before the rasterizer sees them:
                              kinds cycle; a spot on or near road is skipped
   furrow <half> <x y> <x y>..  a trench (pit tiles) along the polyline, painted
                              only over the wallpaper beyond the walls (cosmetic)
-  features: crust[,len=N,warn=W]  a band of crust (SPEC 19.4) across the road at
-                             the segment's middle, N px either side (8), breaking
-                             W ticks after the first touch (24)
+  features: crust[,len=N,warn=W,period=P,lo=A,hi=B]  a band of crust (SPEC 19.4)
+                             across the road at the segment's middle, N px either
+                             side (12), breaking W ticks after the first touch
+                             (30) and broken for P ticks (300); only the road
+                             tiles from A to B px off the centerline (right of
+                             travel positive; default all of the road), so a
+                             band can leave a way round its hole
             shadow[,len=N]   a wing shadow band across the road (cosmetic)
             drift[,p=N]      sand drifts over N% of the segment's road (cosmetic)
 
 Row and `prop` props are decorative and kept off the drivable floor; a
 `solid` prop must sit off the racing line (the validator checks that its
 circle leaves the centerline 24 px clear). A crust band is written as a
-crust record (docs/PACKS.md: warn 24, period 300, its tiles' rectangle); a
+crust record (docs/PACKS.md: warn 30 and period 300 unless the source says, its tiles' rectangle); a
 `sweeper` mover's record names the pack's MOVER_CELL as its sprite. Everything is deterministic (seeded from crc32
 of the names); the script validates and exits non-zero on any failure.
 """
@@ -69,14 +73,14 @@ from leagues import A_SURF, DRIVABLE, ATTR_NAMES  # noqa: E402
 
 PACK_NAMES = ("dead_mall", "boneyard", "seabed", "cold_storage")
 MY_FEATS = ("crust", "shadow", "drift")
-CRUST_LEN, SHADOW_LEN = 8, 14
+CRUST_LEN, SHADOW_LEN = 12, 14
 PROP_OFF, PROP_CLEAR = 20, 10     # default offset beyond the road edge; footprint radius kept off road
-# The crust record (docs/PACKS.md): the cart's default warn is 12 ticks, but
-# a car's 24 px footprint takes (band + 24) / speed ticks to cross, about
-# 16 ticks over a 16 px band at 2.5 px/tick, so the car that cracks it would
-# fall through its own crack. 24 ticks gets the cracking car across down to
-# 1.7 px/tick while the next car (about 60 ticks behind) still drops.
-CRUST_WARN, CRUST_PIT_TICKS = 24, 300
+# The crust record (docs/PACKS.md): warn at least (band depth + 24 px of
+# car) / 1.7 px/tick, so the crack shows while the car that made it is still
+# crossing (M9.1: that car gets across whatever the warn; the warn is the
+# next car's notice). A 24 px band (len 12) needs 29: 30 ticks. Broken for
+# 300 ticks, so every car within 5 s behind meets the hole.
+CRUST_WARN, CRUST_PIT_TICKS = 30, 300
 K_CRUST = 4                       # world.HazardKind.crust
 PROPS_MAX = 24                    # docs/PACKS.md: props records per track
 
@@ -233,8 +237,14 @@ def build_one(pack, mod, ts, src, errs, out, review, report):
         if "crust" in mine:
             ln = mine["crust"].get("len", CRUST_LEN)
             warn = mine["crust"].get("warn", CRUST_WARN)
+            period = mine["crust"].get("period", CRUST_PIT_TICKS)
+            lat_lo, lat_hi = mine["crust"].get("lo", -999), mine["crust"].get("hi", 999)
+            if warn * 17 < (2 * ln + 24) * 10:
+                errs.append(f"{src.stem}: crust warn {warn} under (depth {2 * ln} + 24) / 1.7 px/tick")
             cells = []
             for q in band_tiles(trk, jm, -ln, ln, surf_list, nj):
+                if not lat_lo <= lateral[q] <= lat_hi:
+                    continue
                 if tmap[q] in plain or tmap[q] in getattr(mod, "STRIPE_TILES", ()):
                     tmap[q] = C.CRUST
                     cells.append(q)
@@ -244,7 +254,7 @@ def build_one(pack, mod, ts, src, errs, out, review, report):
             ys, xs = zip(*cells)
             crusts.append(dict(seg=i, tiles=[[int(x), int(y)] for y, x in cells],
                                x0=min(xs) * 8, y0=min(ys) * 8, x1=max(xs) * 8 + 8, y1=max(ys) * 8 + 8,
-                               sample=int(jm * 256 // nd), warn=warn))
+                               sample=int(jm * 256 // nd), warn=warn, period=period))
     # Furrows: pit tiles over the wallpaper (tiles 1..15) along polylines.
     for half, pts in src.furrows:
         for ty in range(128):
@@ -308,11 +318,12 @@ def mover_sprites(feat, cell):
 
 def crust_bytes(crusts):
     """Crust records (docs/PACKS.md, kind 4): the band's whole-tile
-    rectangle (x1, y1 exclusive), warn (CRUST_WARN unless the source says), period 300, the rest 0."""
+    rectangle (x1, y1 exclusive), warn and period (CRUST_WARN and
+    CRUST_PIT_TICKS unless the source says), the rest 0."""
     out = bytearray()
     for c in crusts:
         out += bytes([K_CRUST, c["warn"], 0, 0])
-        out += np.array([c["x0"], c["y0"], c["x1"], c["y1"], CRUST_PIT_TICKS, 0, 0], "<u2").tobytes()
+        out += np.array([c["x0"], c["y0"], c["x1"], c["y1"], c["period"], 0, 0], "<u2").tobytes()
         out += bytes([0, 0])
     return bytes(out)
 

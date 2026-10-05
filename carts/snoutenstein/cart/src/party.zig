@@ -27,6 +27,7 @@ const std = @import("std");
 const cart = @import("cart-api");
 const lockstep_n = @import("lockstep_n");
 const cart_serial = @import("cart_serial");
+const build_options = @import("build_options");
 const state = @import("state.zig");
 const levels = @import("levels.zig");
 const sim = @import("sim.zig");
@@ -65,6 +66,16 @@ pub const Screen = enum(u8) { lobby = 0, match = 1, results = 2, dropped = 3 };
 pub var screen: Screen = .lobby;
 var pt: Party = undefined;
 var pt_up = false;
+/// The port is open. Never without -Dstein_party (main): there is no
+/// PARTY row, so the lockstep and the cart serial port are compiled out
+/// and only the local match (the bench, the previews) remains.
+inline fn port_up() bool {
+    return build_options.party and pt_up;
+}
+/// No lockstep under the match: bots and the pad only.
+inline fn is_local() bool {
+    return !build_options.party or local;
+}
 /// The match World is M7's (one mode runs at a time).
 const world = &deathmatch.world;
 /// The slot this badge shows (its lobby id; in a local match any slot).
@@ -185,7 +196,7 @@ fn pump_rest(t0: u64) void {
 // ---------------------------------------------------------------- lobby
 
 fn lobby_frame(pad: Buttons, t0: u64) bool {
-    const real = fake == null and pt_up;
+    const real = fake == null and port_up();
     if (real) pt.pump(t0);
     if (pressed(pad, "b")) {
         if (real) pt.exit(t0);
@@ -325,7 +336,7 @@ pub const LobbyView = struct {
 };
 
 fn lobby_view() LobbyView {
-    if (!pt_up) return .{ .st = .unsupported };
+    if (!port_up()) return .{ .st = .unsupported };
     var v: LobbyView = .{ .st = pt.state() };
     if (v.st != .lobby) return v;
     v.me = pt.local_slot();
@@ -489,7 +500,7 @@ fn local_step(pad: Buttons) void {
 
 fn match_frame(pad: Buttons, t0: u64) bool {
     var ticked = false;
-    if (local) {
+    if (is_local()) {
         local_step(pad);
         ticked = true;
     } else {
@@ -505,7 +516,7 @@ fn match_frame(pad: Buttons, t0: u64) bool {
     }
     if (ticked) on_tick();
     draw_match(pad);
-    if (!local) {
+    if (!is_local()) {
         while (pt.wants_pump()) {
             const now = cart.micros_since_boot();
             if (now -% t0 >= pump_until_us) break;
@@ -547,7 +558,7 @@ fn on_tick() void {
     // A human left (or was dropped): the notice names the slot.
     const gone = world.m.bots & ~prev_bots;
     prev_bots = world.m.bots;
-    if (gone != 0 and !local) {
+    if (gone != 0 and !is_local()) {
         notice_slot = @ctz(gone);
         notice_left = notice_frames;
     }
@@ -579,7 +590,7 @@ pub fn draw_match(pad: Buttons) void {
         band(fmt(&buf, "{s} LEFT: BOT", .{slots.name(names(), notice_slot, &nbuf)}), 14, hud.iris);
     }
     if (pad.select) scoreboard.draw_scoreboard(m, me, names());
-    if (!local) {
+    if (!is_local()) {
         if (pt.paused) deathmatch.draw_pause();
         switch (pt.state()) {
             .waiting => band("WAITING FOR PLAYERS", 60, hud.iris),
@@ -593,16 +604,16 @@ pub fn draw_match(pad: Buttons) void {
 
 fn dropped_frame(pad: Buttons, t0: u64) bool {
     results_frames += 1;
-    if (!local) pt.pump(t0);
+    if (!is_local()) pt.pump(t0);
     cart.rect(.{ .x = 0, .y = 0, .width = 160, .height = 128, .fill_color = hud.anti_black });
     band("YOU WERE DROPPED", 46, hud.coral);
     centered("TOO LONG SILENT", 62, hud.grey);
     centered("A: BACK TO LOBBY", 110, hud.anti_white);
     if (results_frames >= dropped_frames or (results_frames >= results_min and pressed(pad, "a"))) {
-        if (!local) return leave_race(t0);
+        if (!is_local()) return leave_race(t0);
         screen = .lobby;
     }
-    if (!local) pump_rest(t0);
+    if (!is_local()) pump_rest(t0);
     return true;
 }
 
@@ -610,16 +621,16 @@ fn dropped_frame(pad: Buttons, t0: u64) bool {
 
 fn results_frame(pad: Buttons, t0: u64) bool {
     results_frames += 1;
-    if (!local) {
+    if (!is_local()) {
         // Keep feeding the others until we leave (they may need a late tick).
         pt.pump(t0);
         pt.submit(t0, 0);
         _ = pt.step(world);
     }
     draw_results();
-    if (!local) pump_rest(t0);
+    if (!is_local()) pump_rest(t0);
     if (results_frames >= results_min and (pressed(pad, "a") or pressed(pad, "start"))) {
-        if (!local) return leave_race(t0);
+        if (!is_local()) return leave_race(t0);
         local = false;
         screen = .lobby;
     }

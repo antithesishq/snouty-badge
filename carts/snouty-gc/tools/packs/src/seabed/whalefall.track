@@ -26,7 +26,7 @@ width 60
  870  780   56
  890  870   56
  760  910   58
- 480  900   58     crust           # salt crust over brine
+ 480  900   58     crust,lo=-28    # salt crust over brine; firm salt on the left
  240  900   58     crates
  130  760   58
  130  520   58     shadow,len=10   # the third skeleton up the west side

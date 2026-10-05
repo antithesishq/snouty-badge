@@ -288,12 +288,22 @@ pub const draw_cap = 64;
 const gather_cap = 224;
 
 const Kind = enum(u8) { car, proj, drop, wall, particle, crate, drone, duck, claw, mover, vent, chip, prop };
-/// (M7: no copy of `p.zf` beside it: 4 B an entry, 896 B of RAM.)
+/// (M7: no copy of `p.zf` beside it: 4 B an entry, 896 B of RAM. M9.1:
+/// the projection in 16 bits a field, 1,792 B more: `project_cull` keeps
+/// |sx - 80| under 80 + 32 * 95 / 8, sy under 32 + 64 * 128 / 8, zf in 8
+/// .. 6000 and the scale under 256 * 95 / 8.)
 const Entry = struct {
-    p: camera.Projected,
+    sx: i16,
+    sy: i16,
+    zf: i16,
+    scale: u16,
     kind: Kind,
     index: u8,
     sub: u8,
+
+    fn proj(e: *const Entry) camera.Projected {
+        return .{ .sx = e.sx, .sy = e.sy, .zf = e.zf, .scale = e.scale };
+    }
 };
 var list: [gather_cap]Entry = undefined;
 /// Sort keys: distance << 8 | list index (distance is under max_sprite_z,
@@ -321,7 +331,7 @@ pub const View = struct {
 
 inline fn push(kind: Kind, index: usize, sub: usize, p: camera.Projected) void {
     if (count >= gather_cap) return;
-    list[count] = .{ .p = p, .kind = kind, .index = @intCast(index), .sub = @intCast(sub) };
+    list[count] = .{ .sx = @intCast(p.sx), .sy = @intCast(p.sy), .zf = @intCast(p.zf), .scale = @intCast(p.scale), .kind = kind, .index = @intCast(index), .sub = @intCast(sub) };
     keys[count] = (@as(u32, @intCast(@max(p.zf, 0))) << 8) | @as(u32, @intCast(count));
     count += 1;
 }
@@ -464,20 +474,21 @@ pub fn draw_world(w: *const world.World, v: View) void {
         }
         // M4 link race: pump the link between objects (docs/NET.md).
         if (k != 0) render.pump_at(.sprites);
+        const p = e.proj();
         switch (e.kind) {
-            .car => draw_car(&w.cars[e.index], e.index, e.index == v.follow, e.index == w.gc.marked, e.p, v.frame),
-            .proj => draw_proj(&w.projs[e.index], e.p, v.frame),
-            .drop => draw_drop(&w.drops[e.index], e.p, v.frame),
-            .wall => draw_wall(e.p, e.sub, v.frame),
-            .particle => fx.draw_particle(e.index, e.p),
-            .crate => draw_crate(e.index, e.p, v.frame),
-            .drone => draw_drone(e.index, e.p, v.frame),
-            .duck => draw_duck(&w.cars[e.index], e.p, v.frame),
-            .claw => draw_claw(&fx.claws[e.index], e.p),
-            .mover => draw_mover(w, e.index, e.p, v.frame),
-            .vent => draw_vent(e.index, e.sub, e.p, v.frame),
-            .chip => draw_chip(e.index, e.p, v.frame),
-            .prop => draw_prop(track.prop(e.index).cell, e.p),
+            .car => draw_car(&w.cars[e.index], e.index, e.index == v.follow, e.index == w.gc.marked, p, v.frame),
+            .proj => draw_proj(&w.projs[e.index], p, v.frame),
+            .drop => draw_drop(&w.drops[e.index], p, v.frame),
+            .wall => draw_wall(p, e.sub, v.frame),
+            .particle => fx.draw_particle(e.index, p),
+            .crate => draw_crate(e.index, p, v.frame),
+            .drone => draw_drone(e.index, p, v.frame),
+            .duck => draw_duck(&w.cars[e.index], p, v.frame),
+            .claw => draw_claw(&fx.claws[e.index], p),
+            .mover => draw_mover(w, e.index, p, v.frame),
+            .vent => draw_vent(e.index, e.sub, p, v.frame),
+            .chip => draw_chip(e.index, p, v.frame),
+            .prop => draw_prop(track.prop(e.index).cell, p),
         }
     }
 }

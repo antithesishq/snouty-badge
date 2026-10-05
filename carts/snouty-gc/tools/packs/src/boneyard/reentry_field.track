@@ -27,7 +27,7 @@ pit_band 6
  885  775   52
  890  870   52
  780  910   52
- 520  895   52     crust           # across the furrow on its fused crust
+ 520  895   52     crust,hi=14     # across the furrow on its fused crust; solid on the right
  300  880   54     crates
  150  780   56                     # the station ring: a long banked turn
  105  600   56
