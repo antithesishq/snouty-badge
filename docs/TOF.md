@@ -30,7 +30,8 @@ shared library, the plan, and the hardware checks Adrian runs.
   measurement, up to 9 zones). The SPAD array is 18x10; one SPAD covers
   2.4 deg (x) by 5.6 deg (y); every zone needs at least two adjacent
   SPADs; changing the mask invalidates the crosstalk calibration. This is
-  the route to a finer still depth image (M2).
+  the route to a finer still depth image (M2: `lib/tof_spad.zig`, the
+  DEPTH page).
 
 ## 2. How the badge talks to it
 
@@ -98,6 +99,13 @@ shared library, the plan, and the hardware checks Adrian runs.
   Nth transaction, stuck busy, bootloader rejecting chunks, a RAM image
   that does not start, no active-range commands).
 - `lib/tof_firmware.bin` (+ `.NOTICE.md`): the 2476-byte RAM application.
+- M2: `lib/tof_spad.zig` (the user SPAD mask, the datasheet's rules as
+  a validator, the SPAD page encoder / decoder, the depth-photo layouts),
+  `Tof.set_user_mask` (validate, then write and verify the page; frames
+  carry `frame_mask_gen`; `stats.mask_*`, `spad_mismatch`, `spad_diff`),
+  `lib/tof_scene.zig` (the model's SPAD-level scene, used for results
+  under spad_map_id 14: a tilted wall, a floor, a box, a slowly drifting
+  ball, dead SPADs) and `lib/tof_depth.zig` (the slow-scan depth photo).
 
 ### Protocol as implemented, and where each detail comes from
 
@@ -124,6 +132,18 @@ The hardware check (section 5) confirms the C-only items.
 | Histograms: 30 subpackets (rid 0x81, number 0x24, payload 0x80 at 0x25, data 0x27..0xA6) = 5 TDCs x 256 bins x 3 byte planes, LSB plane first | DS 8.8 (subpacket registers, payload always 0x80) + C (`decode_histogram_msg`: 5 TDCs, 256 bins, plane order) |
 | Each TDC's 256 bins = two channels of 128: subpacket n is channel n % 10, byte plane n / 10; channel 0 the reference SPAD | Inferred (C has 2 channels per TDC, DS has 10 channels of 128 bins); confirm on HIST: channel 0 should show one huge peak at a low bin |
 | The sensor publishes the next subpacket after the host clears INT bit 3; the result follows the last one | Inferred from the C's multi-packet loop (clear, then wait for the tid to change). The driver reads first and clears after, and files subpackets by their number |
+| **M2, user SPAD masks** (`lib/tof_spad.zig`, `Tof.set_user_mask`) | |
+| spad_map_id 14 = one measurement of up to 9 zones from a user mask; at most 18x10; enable mask and channel map the same size; channel 0 (reference) unused; mask plus offset within 18x12, offsets in Q1 (+-2 = one SPAD); at least two adjacent SPADs per used channel; no row with channel 1 and channel 8 or 9; at least one channel of each pair 2/3, 4/5, 6/7, 8/9 | DS 7.4.1 (the validator checks all of them before anything is sent) |
+| SPAD page: command 0x17 loads it, cid 0x17 in 0x20; enable mask 0x24..0x41, channel map 0x42..0x8C, x/y offset 0x8D/0x8E, x/y size 0x8F/0x90; committed with WRITE_CONFIG 0x15 | DS 8.6 + CMD_STAT 0x17 |
+| Inside the page: one 24-bit LE enable word per row (bit x = column x); one 32-bit LE word per column at 0x42 + 4x with the SPAD's channel bits at yIdx, 10 + yIdx, 20 + yIdx; channels 8 / 9 stored as 0 / 1 with the row's bit set in the 24-bit select word at 0x8A (so a row cannot hold 1 and 8/9: 1 would read as 9) | C (`encode_spad_config_msg`, `tmf8x2x_config_page_SPAD.h`); DS gives only the first / last addresses |
+| Order: stop, common page with spad_map_id 14 written first, then load / write / commit the SPAD page, then MEASURE; a further mask while on map 14 only rewrites the SPAD page | C (`set_spad_config` refuses unless the common page already has 14) + DS status 0x0A (SPAD page ignored while a pre-defined map is selected). DIAG `ERR cmd_status R150A` would mean the order is wrong |
+| Read back after writing: load 0x17 again, compare the decoded mask | DS 7.4.1 ("read back the masks for verification"). A difference is counted (MASK `RB`, first difference `D....`), not fatal |
+| Register row yIdx 0 is drawn as the top row, bit 0 as the left column | Inferred (the C fills yIdx 0 from its `y = ysize - 1`; which way that faces is not documented). The DEPTH photo with a hand in a known corner confirms it |
+| Channel c reports in result triplet c - 1 (zone c) | Inferred (same layout as the pre-defined 3x3 maps) |
+| The mask sits on whole SPADs: 18 - xsize + x_offset_2 and 12 - ysize + y_offset_2 even | Inferred; the driver refuses half-SPAD placements (its own layouts are all 18x10 without offset) |
+| "Adjacent" means sharing an edge | Inferred (DS: "can be in any direction"); diagonal pairs are refused |
+| The first frame after MEASURE is already measured with the new mask | Inferred (`Scan.settle` = 0 frames dropped; raise it if the photo shows the previous layout's values) |
+| A user mask has no crosstalk calibration (the driver loads none for any map) | DS 7.3 / 7.4.1: changing the mask invalidates it. Expect short-range crosstalk in the photo's near pixels |
 
 ### Timings (from the model, which runs the real driver; 60 Hz polls)
 
@@ -191,6 +211,18 @@ commands 40 us).
   from SPAD pairs, cycling layouts host-side), false colour plus a
   spinning point cloud. Needs hardware to prove mask switch time, dead
   SPADs and calibration.
+- Status 2026-10-05: built on branch `tof/m2` against the model, nothing
+  run on hardware (section 5 steps 8 and 9 are its check). Driver:
+  `set_user_mask` with the page written, committed and read back; the
+  model implements the page and rejects broken ones; host tests cover
+  the validator, the encoding, the read-back, switch timing and a whole
+  photo against the SPAD scene. Model numbers (60 Hz polls, 400 kHz,
+  exposure N = 2 frames per layout): a mask switch takes 99 ms (the
+  first, from map 1, 119 ms; at 1 MHz 133 / 166 ms, where every command
+  waits a poll), a 9x10 photo 1.33 s (67 pixels/s), 17x10 2.67 s (63
+  pixels/s); N = 1: 1.0 s, N = 4: 2.0 s. The real chip's command and
+  measurement-start latencies decide the real numbers.
+  carts/snouty-sense/PLAN.md has the bench numbers.
 
 ### M3: Snouty Morph (`snouty-morph`)
 
@@ -228,8 +260,9 @@ zig build -Dcart=snouty-sense      # zig-out/firmware/snouty-sense.uf2
 Flash `snouty-sense.uf2` the usual way, plug the breakout into the
 badge's Qwiic port (the cable can go in before or after the cart
 starts; unplugging and replugging while it runs is fine and part of the
-test), and start the cart. Left / Right switch pages (LIVE, HIST, DIAG;
-the three dots top right show which).
+test), and start the cart. Left / Right switch pages (LIVE, HIST, EYES,
+DEPTH, DIAG; the five dots top right show which; Left from LIVE goes
+straight to DIAG).
 
 1. **Boot.** Within about half a second LIVE should show "STARTING
    SENSOR", a firmware progress bar, then the 3x3 grid. If it stays on
@@ -314,8 +347,64 @@ Send the photos of LIVE (hand in a corner + which corner), HIST CH0 and
 CH5, and DIAG after boot, after the 1 MHz reload, and of anything that
 went wrong.
 
+**M2 addendum** (steps 1-7 first: the orientation from step 2 also
+orients EYES and DEPTH).
+
+8. **EYES.** Right from HIST. Nine tiles laid out like LIVE's grid, one
+   per zone: distance left to right (ticks above each tile every metre,
+   up to 2.5 m), time downwards (a new row per histogram set, a few a
+   second). Each tile should show a grey band at the left (crosstalk,
+   near bin 15), a dim blue noise floor, and a bright vertical line per
+   object (the wall or ceiling), with white (first object) and yellow
+   (second) dots on it; ticks above each tile at 1 m and 2 m. Move a hand from 40 cm to 10 cm over one zone:
+   its line should slant to the left in that tile. **Photograph EYES
+   with your hand held still about 30 cm over one corner zone** (B
+   freezes the waterfall, HOLD in red; B again resumes) and say which
+   corner. A turns the sound on (SND): the tile with the nearest object
+   is outlined in blue and plays; pitch rises as the hand comes closer
+   (880 Hz at 8 cm, 110 Hz at 1.2 m), and the timbre changes with where
+   the peaks sit. Up / Down pick a fixed zone (Z1..Z9, or ZA = auto).
+   Say whether the sound is clean or crackles.
+9. **DEPTH.** Right from EYES. The cart now measures through user SPAD
+   masks: each "shot" lights nine SPAD pairs (outlined in white on the
+   photo) and the 9x10 photo fills in shot by shot, then starts over;
+   the side panel shows the shot, a progress bar, the last photo's time
+   and pixels per second (the badge's own numbers; MODEL appears only
+   on the simulator or a fake build), the exposure N (Up / Down: frames
+   per shot) and the size (Select: the fine pass, 17x10). A cycles
+   PHOTO / CLOUD (the same pixels as a spinning point cloud) / MASK.
+   What proves the user-mask path works:
+   - DIAG-style errors: on MASK, no red error line; `WR` (pages
+     written) goes up by one per shot; `G a/b` turns green (frames come
+     with the newest mask); `RB0` (every read-back matched; `RB` > 0
+     with `D....` = the first difference: `FF0n` a size or offset, else
+     row and column); `RJ0`. **Photograph MASK** after ~10 s. If DEPTH
+     stays on "STARTING SENSOR" or shows `ERR cmd_status`, photograph
+     DIAG: `R150A` = the SPAD page was ignored (write order), `R1502` =
+     page rejected (encoding), `R1702`/`R1706` = command 0x17 not
+     accepted, `bad_rid` at `spad_check` = the page did not load.
+   - The picture: point the badge at a flat wall about 1 m away: the
+     photo should be one smooth colour (green-blue) with maybe a slight
+     gradient; then hold a hand 30 cm away in the top-left of the view:
+     an orange blob in the photo's top-left (if it comes out mirrored
+     or upside down relative to LIVE, the row / column inference in
+     section 3 is wrong: say which). Hatched pixels (an X) had no
+     object in any frame of their shot: a pair of dead SPADs or out of
+     range; dotted ones low confidence. **Photograph PHOTO** for both
+     scenes, and CLOUD once.
+   - Timing: note `SW..MS` (the last mask switch), `MX..MS` (worst)
+     and the photo's seconds and PX/S at N = 2 (model: 99 ms, 1.33 s,
+     67 PX/S at 400 kHz).
+   Leaving DEPTH goes back to the normal SPAD map (LIVE should look as
+   before).
+
 ## 6. Deferred questions
 
 1. Theremin boots with sound on (it is an instrument) instead of the
    repo's boot-silent rule; Select mutes. Flip if Adrian prefers silent.
 2. Default zone orientation: decided from the M0 hardware photos.
+3. M2: which way the SPAD page's rows and columns face (section 3,
+   inferred), and whether the first frame after a mask switch is clean
+   (`Scan.settle`): from the step 9 photos.
+4. M2: EYES boots silent like every other cart (A turns the sound on,
+   `-Dsound=true` starts with it on), unlike the theremin.

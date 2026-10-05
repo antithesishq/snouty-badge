@@ -10,11 +10,24 @@ const common = @import("../../build/common.zig");
 const dir = "carts/snouty-sense/";
 
 /// The time-of-flight probe cart: lib/tof.zig on the Qwiic port
-/// (docs/TOF.md). Its host tests are lib/'s (lib/tests/tof_unit.zig).
+/// (docs/TOF.md). The driver's host tests are lib/'s
+/// (lib/tests/tof_unit.zig); the cart's own (the EYES voice) are
+/// cart/src/host_tests.zig.
 pub fn add(b: *Build, sycl_badge_dep: *Build.Dependency, opts: common.Options) void {
     const options = b.addOptions();
     options.addOption(bool, "tof_fake", opts.tof_fake);
+    // -Dsound: the initial value of the EYES sound toggle (docs/SOUND.md).
+    options.addOption(bool, "sound", opts.sound);
     build_options = options;
+
+    const tests_mod = b.createModule(.{
+        .root_source_file = b.path(dir ++ "cart/src/host_tests.zig"),
+        .target = b.graph.host,
+        .optimize = .Debug,
+    });
+    tests_mod.addImport("stream_audio", b.createModule(.{ .root_source_file = b.path("lib/stream_audio.zig") }));
+    const tests = b.addTest(.{ .root_module = tests_mod });
+    opts.test_step.dependOn(&b.addRunArtifact(tests).step);
 
     os_cart.add(b, sycl_badge_dep, .{
         .mode = opts.cart_mode,
@@ -32,4 +45,5 @@ fn add_modules(b: *Build, cart: *Build.Module, cart_api: *Build.Module, step: *B
     _ = step;
     if (build_options) |o| cart.addImport("build_options", o.createModule());
     cart.addImport("tof", b.createModule(.{ .root_source_file = b.path("lib/tof.zig") }));
+    cart.addImport("stream_audio", b.createModule(.{ .root_source_file = b.path("lib/stream_audio.zig") }));
 }

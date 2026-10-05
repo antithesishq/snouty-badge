@@ -43,6 +43,14 @@
 //!   host acknowledges each subpacket by clearing the interrupt, and the
 //!   sensor then publishes the next (tid changes); the result follows the
 //!   last subpacket.
+//! - User SPAD masks (M2, `set_user_mask`, lib/tof_spad.zig): checked
+//!   against the datasheet's rules before anything is sent; then stop,
+//!   the common page with spad_map_id 14 (as the ams driver orders it),
+//!   command 0x17 loads the SPAD page (cid 0x17), the page 0x24..0x90 is
+//!   written and committed with WRITE_CONFIG, loaded again and read back
+//!   (ams recommends verifying), then MEASURE. A further mask while
+//!   measuring on map 14 skips the common page. Frames carry the mask
+//!   generation they were measured with (`frame_mask_gen`).
 //! - Clock correction (the ams driver's clock_skew_correction, scaling
 //!   distances by the host/sensor clock ratio, typically under 1 %) is not
 //!   done.
@@ -54,6 +62,10 @@ pub const virtual = @import("tof_virtual.zig");
 /// here so a cart that uses the driver and the pose gets one `types`.
 pub const pose = @import("tof_pose.zig");
 pub const synth = @import("tof_synth.zig");
+/// User SPAD masks (M2), the model's SPAD-level scene and the depth photo.
+pub const spad = @import("tof_spad.zig");
+pub const scene = @import("tof_scene.zig");
+pub const depth = @import("tof_depth.zig");
 
 const Frame = types.Frame;
 const Histograms = types.Histograms;
@@ -210,6 +222,11 @@ pub const Step = enum(u8) {
     retry,
     first_frame,
     hist_set,
+    spad_load,
+    spad_check,
+    spad_write,
+    spad_reload,
+    spad_verify,
 
     pub fn name(s: Step) []const u8 {
         return @tagName(s);
@@ -310,6 +327,19 @@ pub const Stats = struct {
     downloads: u32 = 0,
     max_spent_us: u32 = 0,
     last_spent_us: u32 = 0,
+    /// User SPAD masks: pages written, masks refused by the validator
+    /// (never sent), read-backs that differed from what was written.
+    mask_writes: u32 = 0,
+    mask_rejects: u32 = 0,
+    spad_mismatch: u32 = 0,
+    /// The last read-back difference (tof_spad.diff: 0xFF0n a size or
+    /// offset, else row << 8 | column; 0xFFFF the page did not load).
+    spad_diff: u16 = 0,
+    /// Time from `set_user_mask` to the first frame measured with it:
+    /// the last one and the worst.
+    mask_switch_us: u32 = 0,
+    mask_switch_max_us: u32 = 0,
+    mask_switches: u32 = 0,
 };
 
 pub const log_len = 16;
@@ -384,6 +414,23 @@ pub fn Tof(comptime Bus: type) type {
         t0: u64 = 0,
         spent: u32 = 0,
 
+        // ---- user SPAD mask (spad_map_id 14) ----
+        /// The mask spad_map_id 14 uses; generation 1 is the default 3x3.
+        mask: spad.Mask = spad.grid_3x3(),
+        mask_gen: u32 = 1,
+        /// `mask` changed since it was last written.
+        mask_dirty: bool = false,
+        /// Read the SPAD page back after writing it (ams's advice).
+        verify_mask: bool = true,
+        written_gen: u32 = 0,
+        active_gen: u32 = 0,
+        /// The mask generation the latest frame was measured with (0: a
+        /// pre-defined SPAD map).
+        frame_mask_gen: u32 = 0,
+        /// The last mask the validator refused.
+        mask_problem: ?spad.Problem = null,
+        switch_t0: ?u64 = null,
+
         pub fn init(bus: Bus) Self {
             return .{ .bus = bus };
         }
@@ -429,6 +476,34 @@ pub fn Tof(comptime Bus: type) type {
             }
         }
 
+        /// Measure with a user SPAD mask (spad_map_id 14): checked against
+        /// the datasheet's rules first (the problem is returned and nothing
+        /// is sent), then written on the next polls. Keeps the rest of the
+        /// configuration; `configure` with another `spad_map` goes back.
+        pub fn set_user_mask(self: *Self, m: *const spad.Mask) ?spad.Problem {
+            if (spad.validate(m)) |p| {
+                self.stats.mask_rejects += 1;
+                self.mask_problem = p;
+                return p;
+            }
+            self.mask = m.*;
+            self.mask_gen +%= 1;
+            if (self.mask_gen == 0) self.mask_gen = 1;
+            self.mask_dirty = true;
+            self.switch_t0 = self.now();
+            var c = self.pending orelse self.config;
+            if (c.spad_map != spad.map_id) {
+                c.spad_map = spad.map_id;
+                self.configure(c);
+            }
+            return null;
+        }
+
+        /// The mask generation measuring now (0: a pre-defined map).
+        pub fn active_mask_gen(self: *const Self) u32 {
+            return self.active_gen;
+        }
+
         /// Start over from the probe (keeps a running application, so it
         /// is quick: use after changing the bus speed).
         pub fn restart(self: *Self) void {
@@ -445,7 +520,10 @@ pub fn Tof(comptime Bus: type) type {
             self.force_reset = true;
         }
 
-        pub fn poll(self: *Self, now_us: u64) void {
+        /// Not inlined: once per update is plenty, and inlining the state
+        /// machine into a cart's update changed snouty-morph's float code
+        /// generation (+0.12 ms a frame in badge-bench) when M2 grew it.
+        pub noinline fn poll(self: *Self, now_us: u64) void {
             if (@hasDecl(Bus, "sync")) self.bus.sync(now_us);
             self.t0 = now_us;
             self.spent = 0;
@@ -910,13 +988,64 @@ pub fn Tof(comptime Bus: type) type {
                     w[0] = reg.period_ms;
                     @memcpy(w[1..], self.page[0 .. w.len - 1]);
                     try self.write(&w);
-                    self.start_cmd(cmd.write_config, .measure_start);
+                    self.start_cmd(cmd.write_config, .spad_load);
+                },
+                .spad_load => {
+                    if (self.config.spad_map != spad.map_id) {
+                        self.step = .measure_start;
+                        return true;
+                    }
+                    self.start_cmd(spad.cmd_load, .spad_check);
+                },
+                .spad_check => {
+                    var b: [4]u8 = undefined;
+                    try self.read(reg.config_result, &b);
+                    if (b[0] != spad.cid) {
+                        self.fail(.bad_rid, b[0]);
+                        return false;
+                    }
+                    self.step = .spad_write;
+                },
+                .spad_write => {
+                    var w: [1 + spad.page_len]u8 = undefined;
+                    w[0] = spad.reg.enable;
+                    spad.encode(&self.mask, w[1..]);
+                    try self.write(&w);
+                    self.written_gen = self.mask_gen;
+                    self.mask_dirty = false;
+                    self.stats.mask_writes += 1;
+                    self.note(.spad_write, @truncate(self.written_gen));
+                    self.start_cmd(cmd.write_config, if (self.verify_mask) .spad_reload else .measure_start);
+                },
+                .spad_reload => {
+                    self.buf_pos = 0;
+                    self.start_cmd(spad.cmd_load, .spad_verify);
+                },
+                .spad_verify => {
+                    const len = spad.reg.y_size + 1 - reg.config_result;
+                    const n = self.read_chunk(len - self.buf_pos);
+                    if (n == 0) return false;
+                    try self.read(@intCast(reg.config_result + self.buf_pos), self.buf[self.buf_pos..][0..n]);
+                    self.buf_pos += @intCast(n);
+                    if (self.buf_pos < len) return true;
+                    self.buf_pos = 0;
+                    const d: ?u16 = if (self.buf[0] != spad.cid) 0xFFFF else blk: {
+                        const back = spad.decode(self.buf[spad.reg.enable - reg.config_result ..][0..spad.page_len]);
+                        break :blk spad.diff(&self.mask, &back.mask);
+                    };
+                    if (d) |v| {
+                        self.stats.spad_mismatch += 1;
+                        self.stats.spad_diff = v;
+                    }
+                    self.note(.spad_verify, d orelse 0);
+                    self.step = .measure_start;
                 },
                 .measure_start => {
                     try self.write(&.{ reg.int_status, 0xFF });
                     self.start_cmd(cmd.measure, .running_enter);
                 },
                 .running_enter => {
+                    self.active_gen = if (self.config.spad_map == spad.map_id) self.written_gen else 0;
                     self.state = .measuring;
                     self.attempt = 0;
                     self.last_frame_us = self.now();
@@ -934,6 +1063,12 @@ pub fn Tof(comptime Bus: type) type {
                         self.pending = null;
                         self.state = .configuring;
                         self.start_cmd(cmd.stop, .set_range);
+                        return true;
+                    }
+                    if (self.mask_dirty and self.config.spad_map == spad.map_id) {
+                        // A new mask on map 14: stop, SPAD page, start.
+                        self.state = .configuring;
+                        self.start_cmd(cmd.stop, .spad_load);
                         return true;
                     }
                     const period: u64 = @max(timing.frame_timeout_ms, 4 * @as(u64, self.config.period_ms));
@@ -1106,6 +1241,14 @@ pub fn Tof(comptime Bus: type) type {
             var mid = false;
             for (9..18) |i| mid = mid or triplet(b, i).confidence != 0;
             if (mid) self.stats.mid_triplets += 1;
+            self.frame_mask_gen = self.active_gen;
+            if (self.switch_t0) |t| if (self.active_gen == self.mask_gen) {
+                const us: u32 = @intCast(@min(self.now() -| t, std.math.maxInt(u32)));
+                self.stats.mask_switch_us = us;
+                self.stats.mask_switch_max_us = @max(self.stats.mask_switch_max_us, us);
+                self.stats.mask_switches += 1;
+                self.switch_t0 = null;
+            };
             if (!self.frame_logged) self.note(.first_frame, num);
             self.frame_logged = true;
             self.stats.frames += 1;
