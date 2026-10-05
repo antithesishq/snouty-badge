@@ -4,7 +4,7 @@
 //! and in GHOST a greetings scroller along the bottom.
 const std = @import("std");
 const cart = @import("cart-api");
-const tof_pose = @import("tof_pose");
+const tof_pose = @import("tof").pose;
 const hand = @import("hand.zig");
 const math = @import("math.zig");
 const text = @import("text.zig");

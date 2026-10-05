@@ -50,6 +50,10 @@ const std = @import("std");
 pub const types = @import("tof_types.zig");
 pub const i2c = @import("i2c_rp2350.zig");
 pub const virtual = @import("tof_virtual.zig");
+/// The hand pose from a frame (lib/tof_pose.zig) and its synthetic frames,
+/// here so a cart that uses the driver and the pose gets one `types`.
+pub const pose = @import("tof_pose.zig");
+pub const synth = @import("tof_synth.zig");
 
 const Frame = types.Frame;
 const Histograms = types.Histograms;

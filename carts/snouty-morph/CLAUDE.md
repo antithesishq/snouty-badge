@@ -14,7 +14,7 @@ notes.
   deformation strengths, sources). Tune here.
 - `cart/src/hand.zig`: the virtual hand from the sensor, the stick or the
   ghost; `sensor.zig` is the single integration point with the driver
-  (`sensor_frame()`, null until lib/tof.zig is wired, see its header).
+  (`sensor_frame()`: lib/tof.zig on the badge, null in the simulator).
 - `cart/src/body.zig`: the 6DoF follow and the deformation springs
   (REACH, JELLY, TWIST, SHOCKWAVE) -> `Params`.
 - `cart/src/mesh.zig`: the four generated meshes (`head_mesh.zig` is

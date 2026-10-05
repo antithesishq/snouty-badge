@@ -55,7 +55,8 @@ always shows SOUND or a red MUTED. `-Dsound` does not apply to this cart.
 
 - `sensor_frame(now_us)` is the one integration point with the TMF8820
   driver (lib/tof.zig, M0): it returns a frame new since the last call, or
-  null. Until the driver is wired it returns null.
+  null. `sensor.zig` polls lib/tof.zig (null in the simulator and the
+  host tests, which have no sensor).
 - The sensor becomes the source as soon as a frame arrives; the stick takes
   over again after 1.5 s (90 updates) without one. The status bar shows
   SENSOR (green) or STICK (amber, "NO SENSOR").

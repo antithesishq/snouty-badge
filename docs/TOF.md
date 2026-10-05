@@ -176,9 +176,11 @@ commands 40 us).
   the mute state is shown on screen (deferred question 1).
 - Status 2026-10-05: built on branch `tof/theremin` against
   `lib/tof_types.zig` only; `carts/snouty-theremin/cart/src/input.zig`
-  `sensor_frame` is the one place lib/tof.zig plugs in (it returns null
-  until then, so the stick plays). carts/snouty-theremin/PLAN.md has the
-  bench numbers and the cart's own questions.
+  `sensor_frame` is the one place lib/tof.zig plugs in. Merged to main
+  with the stick only, then wired to the driver (`cart/src/sensor.zig`,
+  wide SPAD map 6 for two hands; tag snouty-theremin/m1.1).
+  carts/snouty-theremin/PLAN.md has the bench numbers and the cart's own
+  questions.
 
 ### M2: Sensor Eyes and the depth photo (`snouty-sense` pages)
 

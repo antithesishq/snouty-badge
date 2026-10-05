@@ -40,8 +40,8 @@ Top-left shows the source: GHOST (attract: a scripted hand through
 synthetic sensor frames and the real estimator), STICK (6 s after the last
 input it hands back to the ghost) or HAND (the sensor). Top-right is the
 3x3 zone map (hand coverage per zone) for GHOST and HAND. Without the
-breakout (or until `cart/src/sensor.zig` is wired to lib/tof.zig) the
-cart runs GHOST and STICK only.
+breakout (and always in the simulator) the cart runs GHOST and STICK only;
+`cart/src/sensor.zig` runs lib/tof.zig on the badge.
 
 ## 3. Simulator
 
