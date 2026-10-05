@@ -138,14 +138,74 @@ pub const drone_count = 8;
 /// RMA crate spawns per track (rows of 3 or 4, `track.crate_spots`).
 pub const crate_max = 16;
 
-/// Why a car is frozen in place (`Car.frozen`): KERNEL PANIC (M2); GC's
-/// claw may add a cause in M3.
+/// Why a car is frozen in place (`Car.frozen`): KERNEL PANIC (M2).
 pub const Freeze = enum(u8) { none, panic };
+
+/// Race rules (SPEC 8.2), chosen in the shared setup. `race`: QUICK RACE
+/// (laps, first past the line wins). `gc`: GARBAGE COLLECTION, mark and
+/// sweep (no lap limit; the last car running wins; `World.gc`). `attract`:
+/// race rules plus the scripted KERNEL PANIC on the leader in lap 2
+/// (SPEC 8.2 Attract), so the AI-only demo always shows a blue screen.
+pub const Mode = enum(u8) { race, gc, attract };
+
+/// GARBAGE COLLECTION state (SPEC 8.2, M3). Sweep points are the sector 2
+/// line and the start line, passed by the race leader: sweep k (from 0)
+/// is at sample 170 of lap k / 2 for even k and the start of lap
+/// (k + 1) / 2 for odd k. At each sweep the MARKED car (if any) is
+/// collected, then the new last car is marked. The marked car passes the
+/// mark on by landing a weapon hit on another car (not a ram), once
+/// `mark_ticks` has run `tuning.gc_tag_grace`; a wreck while marked is an
+/// immediate collection. A collected car leaves the race (`active =
+/// false`) and keeps its `rank` as its final place.
+pub const Gc = struct {
+    /// The MARKED car, or `no_car`.
+    marked: u8 = no_car,
+    /// Ticks since the mark was set or passed on (tag grace; saturates).
+    mark_ticks: u16 = 0,
+    /// Sweep points the leader has passed.
+    sweeps: u8 = 0,
+    /// Collected cars, bit i = car i.
+    collected: u8 = 0,
+    /// The last car running (the winner) once decided, else `no_car`.
+    survivor: u8 = no_car,
+};
+
+/// Track hazards (SPEC 3.3, 19.4, M3): generic kinds parameterised by the
+/// track data (`track.HazardSpec`, one per World slot), so a data-only
+/// track pack (M7) can place them with its own numbers and art. `blast`:
+/// a timed blast across the track (the Runoff's exhaust vents). `mover`:
+/// a crossing mover shuttling between two points (the Dumps' Sweeper).
+/// `turret` (the Perimeter's sentries) and `crust` (M7's breakable crust)
+/// are reserved: the data may carry them, the sim leaves them idle.
+pub const HazardKind = enum(u8) { none, blast, mover, turret, crust };
+/// Where a hazard is in its cycle: `idle` (harmless), `warn` (the telegraph
+/// before it acts: a vent spooling up, the Sweeper's beacons; still
+/// harmless), `active` (a vent firing, the Sweeper crossing: it hurts).
+pub const HazardState = enum(u8) { idle, warn, active };
+pub const Hazard = struct {
+    /// Mover: its position, Q16.16 world px (wrapping like cars); blast:
+    /// the vent mouth (spec x0, y0), constant.
+    x: i32 = 0,
+    y: i32 = 0,
+    /// Ticks into the cycle (0 .. spec period - 1), from the spec phase at
+    /// reset.
+    timer: u16 = 0,
+    kind: HazardKind = .none,
+    state: HazardState = .idle,
+    /// Cars already hit in this active phase, bit i = car i (a hazard hits
+    /// a car once per firing / crossing).
+    hit: u8 = 0,
+    /// Mover: 0 while going from end A to end B (or waiting at A), 1 the
+    /// way back. Blast: 0.
+    leg: u8 = 0,
+};
+/// Hazards per track (`track.hazard_n` of them in use).
+pub const hazard_max = 4;
 
 /// Render-facing log of what happened (kill feed, ACK, taunts, beams,
 /// explosions). The sim appends; rendering keeps its own cursor (`seq`)
 /// and never writes. A ring, so the World stays plain data.
-pub const EventKind = enum(u8) { none, hit, wreck, lance, explode, respawn, roll, use, effect, swap };
+pub const EventKind = enum(u8) { none, hit, wreck, lance, explode, respawn, roll, use, effect, swap, mark, collect, blast, hazard_hit };
 pub const Event = struct {
     /// Monotonic event number (World.event_seq at append).
     seq: u16 = 0,
@@ -161,6 +221,13 @@ pub const Event = struct {
     /// strike, DEADLOCK chain, DDOS arrival, HONEYPOT burst, SPAGHETTI
     /// tangle, RUBBER DUCK popped (affected = the duck's owner), ZERO-DAY).
     /// swap: the two cars of a RACE CONDITION, the tick they trade places.
+    /// M3: mark: the newly MARKED car, the car that passed it on (a tag) or
+    /// `no_car` (a sweep marked it), cause (`GcCause`). collect: the
+    /// collected car, its final place, cause (`GcCause`: sweep or wreck);
+    /// x, y = the car (the claw comes down there). blast: hazard index,
+    /// `HazardKind`, 0 (a vent starts firing, the Sweeper starts crossing;
+    /// x, y = the vent mouth or the mover). hazard_hit: hazard index, car,
+    /// damage (x, y = the car).
     a: u8 = 0,
     b: u8 = 0,
     c: u8 = 0,
@@ -169,6 +236,8 @@ pub const Event = struct {
     y: u16 = 0,
 };
 pub const event_count = 16;
+/// Why a `mark` or `collect` event happened (its `c`).
+pub const GcCause = enum(u8) { sweep, tag, wreck };
 
 /// "No car" in a car-index field.
 pub const no_car: u8 = 0xFF;
@@ -211,8 +280,8 @@ pub const Car = struct {
     /// On a coolant / service-bay tile this tick.
     on_coolant: bool = false,
     on_bay: bool = false,
-    /// In the race (false only for a car not on the grid; M3's GC mode
-    /// takes collected cars out).
+    /// In the race (false for a car not on the grid, and for a car GARBAGE
+    /// COLLECTION has collected: `World.gc.collected` tells them apart).
     active: bool = true,
     finished: bool = false,
     /// Race time at the finish, ticks.
@@ -335,6 +404,8 @@ pub const Setup = struct {
     humans: [2]u8 = .{ no_human, no_human },
     /// Weapons and damage on (false only for the completable tests).
     combat: bool = true,
+    /// Race rules (M3): QUICK RACE, GARBAGE COLLECTION or the attract demo.
+    mode: Mode = .race,
 };
 
 pub const World = struct {
@@ -366,4 +437,14 @@ pub const World = struct {
     crates: [crate_max]u8 = @splat(0),
     /// DDOS drones.
     drones: [drone_count]Drone = @splat(.{}),
+    /// M3: the race rules (Setup.mode), the laps to run (the track's,
+    /// `track.Track.laps`; GARBAGE COLLECTION has no lap limit and ignores
+    /// it), the GC state, and the track hazards (`track.hazard_specs[k]`
+    /// drives slot k; slots past `track.hazard_n` stay `.none`).
+    mode: Mode = .race,
+    laps: u8 = tuning.laps,
+    /// Attract: the scripted KERNEL PANIC has been handed out.
+    scripted: bool = false,
+    gc: Gc = .{},
+    hazards: [hazard_max]Hazard = @splat(.{}),
 };

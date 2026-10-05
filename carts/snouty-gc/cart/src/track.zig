@@ -91,6 +91,8 @@ pub const Sample = struct {
 pub const Track = struct {
     name: []const u8,
     league: *const League,
+    /// Laps of a QUICK RACE here (the menus' track table; `World.laps`).
+    laps: u8 = tuning.laps,
     /// The packed 128x128 map (`unpack_map` gives map[y][x]); read it through
     /// `select` + `map_ram`, never directly.
     map_packed: []const u8,
@@ -98,6 +100,10 @@ pub const Track = struct {
     attr: []const u8,
     /// 256 centerline samples x 8 bytes.
     center: []const u8,
+    /// Hazard records (`hazard_record` bytes each, at most
+    /// `world.hazard_max`; `parse_hazards`): the generic kinds of SPEC
+    /// 19.4 with this track's numbers. Empty for a track without hazards.
+    feat: []const u8 = &.{},
 
     pub fn sample(self: *const Track, i: usize) Sample {
         const b = self.center[(i & 255) * 8 ..][0..8];
@@ -138,12 +144,107 @@ pub const CrateSpot = struct { x: u16, y: u16 };
 pub var crate_spots: [world.crate_max]CrateSpot = undefined;
 pub var crate_n: u8 = 0;
 
-/// Unpack `t`'s map into `map_ram`, find its crate spawns and make it
-/// `current`. Call at race start (sim.reset), before any tile lookup on
-/// `t`; ~16 K byte copies.
+/// A track hazard as the sim runs it (SPEC 19.4), decoded from one
+/// `Track.feat` record (all positions world px, speeds Q16 px/tick):
+///
+/// - `blast` (exhaust vent): a lane from the mouth (x0, y0) to (x1, y1),
+///   `size` px either side of it. The cycle of `period` ticks is idle, then
+///   `warn` ticks of warning, then `on` ticks firing; a car whose centre is
+///   in the lane while it fires takes `damage` once a firing and a shove of
+///   `push` along the lane.
+/// - `mover` (the Sweeper): a body of radius `size` shuttling between end A
+///   (x0, y0) and end B (x1, y1) at `speed`. Each half of the `period` waits
+///   at one end, warns for `warn` ticks, then crosses to the other end in
+///   `travel` ticks (derived); a car within `size + car_radius` of it while
+///   it crosses takes `damage` once a crossing and a shove of `push` away
+///   from it plus the mover's own velocity.
+/// - `turret`, `crust`: reserved (decoded, never run).
+///
+/// `phase` is the cycle tick at GO, so hazards on one track can be staggered.
+pub const HazardSpec = struct {
+    kind: world.HazardKind = .none,
+    warn: u16 = 0,
+    size: i32 = 0,
+    damage: u8 = 0,
+    x0: i32 = 0,
+    y0: i32 = 0,
+    x1: i32 = 0,
+    y1: i32 = 0,
+    period: u16 = 1,
+    on: u16 = 0,
+    phase: u16 = 0,
+    push: i32 = 0,
+    speed: i32 = 0,
+    /// Derived: the length from end A (the mouth) to end B in px, the unit
+    /// direction A -> B (Q16), and for a mover the crossing time in ticks.
+    len: i32 = 0,
+    ux: i32 = 0,
+    uy: i32 = 0,
+    travel: u16 = 0,
+};
+
+/// Bytes per `Track.feat` record (little endian): kind u8, warn u8, size
+/// u8, damage u8, x0 u16, y0 u16, x1 u16, y1 u16, period u16, on u16,
+/// phase u16, push u8 (1/32 px/tick), speed u8 (1/32 px/tick).
+/// tools/build_tracks.py `hazard_bytes` writes them and checks the cycles fit.
+pub const hazard_record = 20;
+
+/// The selected track's hazards, `hazard_specs[0..hazard_n]`, drive
+/// `World.hazards[0..hazard_n]` (filled by `select`, like `crate_spots`).
+pub var hazard_specs: [world.hazard_max]HazardSpec = @splat(.{});
+pub var hazard_n: u8 = 0;
+
+/// Decode `t.feat` into `out`; returns the count (at most
+/// `world.hazard_max`; a short trailing record is ignored).
+pub fn parse_hazards(t: *const Track, out: *[world.hazard_max]HazardSpec) u8 {
+    var n: usize = 0;
+    while (n < out.len and (n + 1) * hazard_record <= t.feat.len) : (n += 1) {
+        const b = t.feat[n * hazard_record ..][0..hazard_record];
+        const rd = struct {
+            fn u(bytes: []const u8, at: usize) u16 {
+                return std.mem.readInt(u16, bytes[at..][0..2], .little);
+            }
+        }.u;
+        var h = HazardSpec{
+            .kind = if (b[0] <= @backingInt(world.HazardKind.crust)) @fromBackingInt(b[0]) else .none,
+            .warn = b[1],
+            .size = b[2],
+            .damage = b[3],
+            .x0 = rd(b, 4),
+            .y0 = rd(b, 6),
+            .x1 = rd(b, 8),
+            .y1 = rd(b, 10),
+            .period = @max(1, rd(b, 12)),
+            .on = rd(b, 14),
+            .phase = rd(b, 16),
+            .push = @as(i32, b[18]) << (fixed.Q - 5),
+            .speed = @as(i32, b[19]) << (fixed.Q - 5),
+        };
+        const dx = wrap_px(h.x1 - h.x0);
+        const dy = wrap_px(h.y1 - h.y0);
+        h.len = @intCast(fixed.isqrt(@intCast(dx * dx + dy * dy)));
+        if (h.len > 0) {
+            h.ux = @divTrunc(dx << fixed.Q, h.len);
+            h.uy = @divTrunc(dy << fixed.Q, h.len);
+        }
+        if (h.speed > 0) h.travel = @intCast(@min(65535, @divTrunc((h.len << fixed.Q) + h.speed - 1, h.speed)));
+        out[n] = h;
+    }
+    for (out[n..]) |*h| h.* = .{};
+    return @intCast(n);
+}
+
+inline fn wrap_px(d: i32) i32 {
+    return ((d + 512) & 1023) - 512;
+}
+
+/// Unpack `t`'s map into `map_ram`, find its crate spawns and hazards and
+/// make it `current`. Call at race start (sim.reset), before any tile
+/// lookup on `t`; ~16 K byte copies.
 pub fn select(t: *const Track) void {
     unpack_map(t.map_packed, &map_ram);
     crate_n = find_crates(t, &crate_spots);
+    hazard_n = parse_hazards(t, &hazard_specs);
     current = t;
 }
 
@@ -224,8 +325,13 @@ pub const landfill_loop = Track{
     .center = assets.landfill_loop_center,
 };
 
-/// Every track; `World.track` indexes this table.
+/// Every track in menu rotation order (league by league, SPEC 3.2);
+/// `World.track` and `Setup.track` index this table. The menus read
+/// `name`, `league.name` and `laps` from it.
 pub const tracks = [_]*const Track{&landfill_loop};
+
+/// The built-in leagues in order (CIRCUIT plays them in this order).
+pub const leagues = [_]*const League{&dumps};
 
 fn expect_league_well_formed(l: *const League) !void {
     try std.testing.expectEqual(@as(usize, tiles_bytes), l.tiles.len);

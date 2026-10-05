@@ -47,6 +47,11 @@ pub fn reset(w: *World, setup: world.Setup) void {
     w.msg = .ready;
     w.msg_ticks = @intCast(tuning.countdown_step);
     w.lap_px = @intCast(lap_length(t));
+    w.mode = setup.mode;
+    w.laps = t.laps;
+    for (track.hazard_specs[0..track.hazard_n], 0..) |*h, k| {
+        w.hazards[k] = .{ .kind = h.kind, .timer = h.phase % h.period, .x = h.x0 << fixed.Q, .y = h.y0 << fixed.Q };
+    }
     for (&w.cars, 0..) |*c, i| {
         const ch = racers.chassis_of(@intCast(i));
         c.* = .{

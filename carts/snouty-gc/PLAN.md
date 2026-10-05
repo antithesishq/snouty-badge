@@ -675,6 +675,60 @@ mode, and the full flow (splash, title, attract, menus, pause, results).
 SPEC 3.2, 3.3, 8 and 19.4 (hazard kinds are generic from the start, so
 the M7 track packs can reuse them).
 
+### M3.0 Interface (Track A, committed before the content and modes)
+
+Same contract as M1.0 and M2.0: only `sim.simulate` writes these;
+rendering reads the World, `track`'s caches and the event ring (its own
+`seq` cursor) and never writes. Nothing was renamed or removed. World
+2,508 B (cap 2,560 kept).
+
+- **`world.Mode`** `race`, `gc`, `attract` and **`Setup.mode`** (default
+  `race`), copied to **`World.mode`** by `sim.reset`. `attract` is race
+  rules plus the scripted KERNEL PANIC on the leader in lap 2 (the sim
+  hands it out, `World.scripted` once done), so main.zig's attract demo
+  only has to pass `.mode = .attract`.
+- **`World.laps`**: the laps to run, from the track (`track.Track.laps`, 3
+  on every built-in track). The HUD's `LAP n/3` should read it, not
+  `tuning.laps`. GARBAGE COLLECTION has no lap limit.
+- **`World.gc`** (`world.Gc`): `marked` (the MARKED car or `no_car`),
+  `mark_ticks` (since the mark was set or passed), `sweeps` (sweep points
+  the leader has passed), `collected` (bit i = car i), `survivor` (the
+  winner once one car is left, else `no_car`). A collected car has
+  `active = false` (so every pool, lock and the minimap skip it), keeps
+  its `rank` as its final place (6th for the first one out), and its
+  bit in `gc.collected`. The survivor gets `finished`, `finish_tick` and
+  rank 1, and the phase goes `finished`. Sweep points: the sector 2 line
+  (sample 170) and the start line, as the race leader passes them.
+- **`World.hazards[world.hazard_max = 4]`** (`world.Hazard`): `kind`
+  (`HazardKind`: `none`, `blast`, `mover`, `turret` and `crust` reserved),
+  `state` (`idle`, `warn` = the telegraph before it acts, `active` = it
+  hurts), `timer` (ticks into its cycle), `x`/`y` (Q16: a mover's current
+  position; a blast's mouth), `hit` (cars hit this firing / crossing),
+  `leg` (mover: 0 going A to B, 1 coming back). Slot k is driven by
+  **`track.hazard_specs[k]`** (`track.HazardSpec`, `k < track.hazard_n`,
+  filled by `track.select` from the track's `feat` records, like
+  `crate_spots`): kind, `warn`, `size` (blast: half width of its lane;
+  mover: body radius), `damage`, `x0,y0` (blast mouth / mover end A),
+  `x1,y1` (lane end / mover end B), `period`, `on` (blast firing ticks),
+  `phase`, `push`, `speed`, and derived `len`, `ux`/`uy` (unit A to B,
+  Q16), `travel` (mover crossing ticks). Draw a vent's lane from the mouth
+  along (`ux`, `uy`) for `len` px, `size` px either side; a mover as a
+  body of radius `size` at (`x`, `y`). The record layout is
+  `track.hazard_record` (20 bytes, documented in track.zig and
+  tools/build_tracks.py); the M7 packs reuse it.
+- **Service bay**: the tile attribute `bay` (as M0); a car on it
+  (`Car.on_bay`) gets 1 armor every 4 ticks. The generator can paint a
+  whole segment or one lane of it (`bay:left`, `bay:right`).
+- **Events** (`EventKind` gains `mark`, `collect`, `blast`,
+  `hazard_hit`; `world.GcCause` sweep / tag / wreck): `mark` (newly marked
+  car, the tagger or `no_car` for a sweep, cause), `collect` (car, final
+  place, cause sweep or wreck; x, y the car: the claw comes down there),
+  `blast` (hazard index, kind; a vent starts firing or the Sweeper starts
+  crossing; x, y the mouth or the mover), `hazard_hit` (hazard index,
+  car, damage; x, y the car).
+- **Track table** for the menus: `track.tracks` in rotation order (name,
+  `league.name`, `laps`), `track.leagues` in CIRCUIT order.
+
 ### Track A: content and mode simulation (Opus agent, worktree /home/exedev/snouty-badge-gc, branch gc/spec; runs while M2 Track B finishes)
 
 Owns what M2 Track A owned (`world.zig`, `sim.zig`, `weapons.zig`,
