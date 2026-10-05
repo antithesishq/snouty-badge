@@ -70,8 +70,7 @@ fn credits() void {
     var y: i32 = 17;
     y = paragraph("AFTER THE OREGON TRAIL (1971) BY DON RAWITSCH, BILL HEINEMANN AND PAUL DILLENBERGER.", y, 8, .ink) + 3;
     y = paragraph("BASIC LISTING: MECC, 1978, CREATIVE COMPUTING MAY-JUNE 1978.", y, 8, .ink) + 3;
-    y = paragraph("TRANSCRIPTION: GITHUB.COM/ CLINTMOYER/OREGON-TRAIL (PUBLIC DOMAIN).", y, 8, .ink) + 3;
-    _ = paragraph("PORTED TO THE SYCL BADGE'S RP2350 IN 2026.", y, 8, .faded);
+    _ = paragraph("TRANSCRIPTION: GITHUB.COM/ CLINTMOYER/OREGON-TRAIL (PUBLIC DOMAIN).", y, 8, .ink);
     draw.fill_rect(0, L.height - 11, L.width, 11, .shade);
     draw.hline(0, L.height - 11, L.width, .rasp);
     _ = draw.text_right("A: BACK", L.width - 2, L.height - 8, .rasp_ink);
