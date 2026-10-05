@@ -253,6 +253,8 @@ pub const ai_drop_wide_lat: i32 = 40;
 /// heading change over the next 8 samples exceeds this, with any car
 /// within `ai_drop_behind`.
 pub const ai_drop_corner: i32 = 9000;
+/// AIs drop nothing for the first ticks after GO (the grid start).
+pub const ai_drop_grace: u32 = 240;
 /// A LANCE crew starts charging only when the curvature over the burst
 /// window ahead is under this.
 pub const ai_lance_straight: i32 = 8000;
@@ -363,6 +365,9 @@ pub const race_ticks: u8 = 6;
 /// within `panic_home` px; 40 damage and 90 ticks frozen.
 pub const panic_speed: i32 = 2 * top_speed;
 pub const panic_home: i32 = 64;
+/// The packet counts its target as reached when it is at most this many
+/// samples behind the packet's next sample.
+pub const panic_passed: u8 = 16;
 pub const panic_dmg: u8 = 40;
 pub const panic_freeze: u8 = 90;
 /// CAPTCHA: every other car held to 10% until solved; a human's board has
@@ -410,9 +415,11 @@ pub const bay_every: u32 = 4;
 /// after carrying it this long, so two cars side by side cannot bat it
 /// back and forth every PING volley.
 pub const gc_tag_grace: u16 = 45;
-/// Attract: the scripted KERNEL PANIC is handed to the last car when the
-/// leader reaches this sample of lap 2.
+/// Attract: the scripted KERNEL PANIC packet is launched when the leader
+/// reaches this sample of lap 2, this many samples (about 14 px each)
+/// behind it on the line.
 pub const attract_panic_sample: i32 = 48;
+pub const attract_panic_behind: u8 = 12;
 /// AI hazard sense (SPEC 3.3 "AIs avoid an active blast or mover where
 /// they can"): look this far ahead along the heading; keep this much
 /// clearance (px) from a mover's body and this many ticks from a vent's

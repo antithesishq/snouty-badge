@@ -115,30 +115,49 @@ fn collect(w: *World, i: u8, cause: world.GcCause) void {
     }
 }
 
-/// Attract (SPEC 8.2): once the leader is a quarter of the way into lap 2,
-/// the best-placed car behind it that is still racing gets a KERNEL PANIC,
-/// which every crew fires at once; the packet then runs to the leader. (From
-/// the back of the field it took 6 to 10 s to get there, and the leader was
-/// often wrecked first and the packet fizzled.) Called each racing tick.
+/// Attract (SPEC 8.2): when the leader is `tuning.attract_panic_sample`
+/// samples into lap 2, a KERNEL PANIC packet is launched at it on the
+/// centerline `tuning.attract_panic_behind` samples behind it, as fired by
+/// the best-placed car behind it still racing (a `use` event from that car,
+/// so the feed reads like a real one). Handing that car the pickup instead
+/// left the packet a lap of strung-out field to cross, and the leader was
+/// often wrecked before it arrived. Called each racing tick.
 pub fn script(w: *World) void {
     if (w.mode != .attract or w.scripted or w.phase != .racing) return;
     var lead: i32 = std.math.minInt(i32);
-    for (&w.cars) |*c| {
-        if (c.active) lead = @max(lead, sim.fine_progress(w, c));
+    var leader: u8 = no_car;
+    for (&w.cars, 0..) |*c, i| {
+        if (!c.active) continue;
+        const p = sim.fine_progress(w, c);
+        if (p > lead) {
+            lead = p;
+            leader = @intCast(i);
+        }
     }
     if (lead < 65536 + tuning.attract_panic_sample * 256) return;
-    var pick: u8 = no_car;
+    const l = &w.cars[leader];
+    if (l.wreck != .none or l.finished) return;
+    var from: u8 = no_car;
     var best: u8 = 255;
     for (&w.cars, 0..) |*c, i| {
-        if (!c.active or c.wreck != .none or c.finished or c.frozen > 0 or c.rank < 2 or c.rank >= best) continue;
+        if (i == leader or !c.active or c.wreck != .none or c.finished or c.rank >= best) continue;
         best = c.rank;
-        pick = @intCast(i);
+        from = @intCast(i);
     }
-    if (pick == no_car) return;
-    const c = &w.cars[pick];
-    c.pickup = .kernel_panic;
-    c.roll_ticks = 0;
-    c.b_was = false;
+    if (from == no_car) return;
+    const seg = l.progress -% tuning.attract_panic_behind;
+    const s = sim.track_of(w).sample(seg);
+    const slot = weapons.proj_slot(w);
+    slot.* = .{
+        .x = @as(i32, s.x) << fixed.Q,
+        .y = @as(i32, s.y) << fixed.Q,
+        .kind = .panic,
+        .owner = from,
+        .target = leader,
+        .seg = seg +% 1,
+        .ttl = 0,
+    };
+    weapons.emit(w, .use, from, @backingInt(world.Pickup.kernel_panic), leader, slot.x, slot.y);
     w.scripted = true;
 }
 

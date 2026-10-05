@@ -546,48 +546,67 @@ test "GC with a human: the race ends only when one car is left" {
 
 // --- Attract -----------------------------------------------------------------------------
 
-test "attract: the car behind the leader gets a KERNEL PANIC in lap 2 and the leader is frozen by it" {
+test "attract: a KERNEL PANIC is launched at the leader in lap 2 and freezes it" {
     var hits: u32 = 0;
     for (0..6) |s| {
         var w: World = undefined;
         sim.reset(&w, .{ .track = @intCast(s), .seed = @intCast(1000 + s), .mode = .attract });
         run_countdown(&w);
         var ticks: u32 = 0;
-        var before: [world.car_count]world.Pickup = undefined;
-        while (ticks < 60 * 60 and !w.scripted) : (ticks += 1) {
-            for (w.cars, 0..) |c, i| before[i] = c.pickup;
+        var tl = Tally{ .seq = w.event_seq };
+        var seq = w.event_seq;
+        var use: ?world.Event = null;
+        while (ticks < 60 * 90 and !w.scripted) : (ticks += 1) {
             sim.simulate(&w, .{ 0, 0 });
-        }
-        try expect(w.scripted);
-        // Handed out in lap 2 (the leader's), to the best-placed car behind
-        // the leader still racing (ahead of it only wrecked cars).
-        var lead_lap: u8 = 0;
-        var holder: u8 = no_car;
-        for (w.cars, 0..) |c, i| {
-            lead_lap = @max(lead_lap, c.lap);
-            if (c.pickup == .kernel_panic and before[i] != .kernel_panic) holder = @intCast(i);
-        }
-        if (report) std.debug.print("\nattract {d}: lead lap {d} holder {d} rank {d}", .{ s, lead_lap, holder, if (holder != no_car) w.cars[holder].rank else 0 });
-        try expectEqual(@as(u8, 1), lead_lap);
-        // (A car that already held a KERNEL PANIC may have been the one.)
-        if (holder != no_car) {
-            try expect(w.cars[holder].rank >= 2);
-            for (w.cars) |c| {
-                if (c.rank > 1 and c.rank < w.cars[holder].rank) try expect(c.wreck != .none or c.frozen > 0 or c.finished);
+            while (seq != w.event_seq) : (seq +%= 1) {
+                const e = w.events[seq % world.event_count];
+                if (e.kind == .use and e.b == @backingInt(world.Pickup.kernel_panic)) use = e;
             }
         }
-        // Within 5 s a car near the front is frozen by a KERNEL PANIC.
+        tl.scan(&w);
+        try expect(w.scripted);
+        // In lap 2 (the leader's), fired "by" a car behind it at it.
+        const e = use orelse return error.TestUnexpectedResult;
+        const leader = e.c;
+        try expectEqual(@as(u8, 1), w.cars[leader].lap);
+        try expectEqual(@as(u8, 1), w.cars[leader].rank);
+        try expect(e.a != leader and w.cars[e.a].rank > 1);
         var panicked = false;
         var n: u32 = 0;
         while (n < 300 and !panicked) : (n += 1) {
             sim.simulate(&w, .{ 0, 0 });
-            for (w.cars) |c| panicked = panicked or (c.frozen_by == .panic and c.rank <= 2);
+            panicked = w.cars[leader].frozen_by == .panic;
         }
-        if (report) std.debug.print("\nattract {d}: scripted at tick {d}, panicked {} after {d}", .{ s, ticks, panicked, n });
+        if (report) std.debug.print("\nattract {d}: launched at tick {d}, the leader frozen {} after {d}", .{ s, ticks, panicked, n });
         if (panicked) hits += 1;
     }
-    // The packet can miss (its target wrecks first); most runs land it.
-    try expect(hits >= 4);
+    // A leader wrecked or airborne at the wrong moment can dodge it.
+    try expect(hits >= 5);
+}
+
+test "a KERNEL PANIC packet more than half a lap behind its target runs on to it" {
+    var w = arena(&track.landfill_loop, &.{ racers.snouty, racers.legacy }, true);
+    const t = &w.cars[racers.legacy];
+    const user = &w.cars[racers.snouty];
+    const s0 = sim.track_of(&w).sample(20);
+    park(&w, user, s0.x, s0.y, s0.tangent);
+    const s1 = sim.track_of(&w).sample(180);
+    park(&w, t, s1.x, s1.y, s1.tangent);
+    user.lap = 1;
+    t.lap = 1;
+    sim.update_ranks(&w);
+    user.pickup = .kernel_panic;
+    var n: u32 = 0;
+    while (n < 900 and t.frozen_by != .panic) : (n += 1) {
+        t.vx = 0;
+        t.vy = 0;
+        user.vx = 0;
+        user.vy = 0;
+        sim.simulate(&w, .{ (Input{ .b = n == 0, .down = true }).byte(), 0 });
+    }
+    try expectEqual(world.Freeze.panic, t.frozen_by);
+    // 160 samples of about 14 px at twice the top speed: well under 900.
+    try expect(n < 600);
 }
 
 // --- Determinism ------------------------------------------------------------------------

@@ -612,8 +612,12 @@ pub fn update_packet(w: *World, p: *world.Projectile) void {
     }
     const hittable = t.hop == 0 and t.immune == 0 and t.heisen == 0;
     const back = p.ttl == 1;
-    const gap: i8 = @bitCast(t.progress -% p.seg);
-    const reached = if (back) gap >= 0 else gap <= 0;
+    // How far the target is ahead of the packet along its run, in samples;
+    // "reached" when the packet is on it or just past it. (An i8 of the
+    // difference read a target more than half a lap ahead as passed, and
+    // the packet parked on the line until the target lapped round to it.)
+    const ahead_d: u8 = if (back) p.seg -% t.progress else t.progress -% p.seg;
+    const reached = ahead_d == 0 or @as(u16, ahead_d) + tuning.panic_passed >= 256;
     const near = blk: {
         const dx = dpx(p.x, t.x);
         const dy = dpx(p.y, t.y);
