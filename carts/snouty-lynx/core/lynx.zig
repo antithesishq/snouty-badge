@@ -51,6 +51,8 @@ pub const suzy = @import("suzy.zig");
 pub const undo = @import("undo.zig");
 pub const boot = @import("boot.zig");
 pub const audio = @import("audio.zig");
+pub const uart = @import("uart.zig");
+pub const comlynx = @import("comlynx.zig");
 
 pub const Cart = cart.Cart;
 
@@ -188,11 +190,16 @@ pub const Lynx = struct {
     /// Fill `audio_out` in `step_frame` (the frontend clears it while the
     /// sound is off; the channels run either way: they are CPU-visible).
     audio_render: bool,
+    /// The ComLynx port (core/comlynx.zig) while linked, else null (the
+    /// UART is then the M1 stub). Owned by the bus; not console state (the
+    /// scrubber is off while linked).
+    link: ?*comlynx.Port,
 
     /// Set up in place (the console is ~75 KB: never build one on the
     /// stack, 32 KB on the badge).
     pub fn init_in_place(l: *Lynx, c: Cart) void {
         l.cart = c;
+        l.link = null;
         l.idle_sleep = false;
         l.audio_render = true;
         l.reset();
@@ -218,6 +225,8 @@ pub const Lynx = struct {
         l.rom_resets = 0;
         l.display = .{};
         l.cpu = .{};
+        // The clock restarts: frames queued either way are meaningless.
+        if (l.link) |p| p.clear();
         l.reboot(false);
     }
 
@@ -237,6 +246,7 @@ pub const Lynx = struct {
             l.mikey.reset(l.ticks);
         }
         l.mikey.audio.in_console = true;
+        if (l.link != null) uart.attach(&l.mikey);
         l.suzy.reset();
         l.port = .{};
         l.fetch_cost = bus.Ticks.fetch_full;
@@ -268,6 +278,15 @@ pub const Lynx = struct {
 
     /// One badge frame of Lynx time.
     pub fn step_frame(l: *Lynx, pad: u16) void {
+        l.begin_frame(pad);
+        l.finish_frame();
+    }
+
+    /// `step_frame` in pieces, for consoles run side by side on a ComLynx
+    /// bus (core/comlynx_virtual.zig): `begin_frame`, any number of
+    /// `run_to` (time slices within the frame, in order), `finish_frame`.
+    /// The same steps as `step_frame` whatever the slices.
+    pub fn begin_frame(l: *Lynx, pad: u16) void {
         l.pad = pad;
         l.frame_frac += frame_frac_num;
         var n = ticks_per_frame;
@@ -278,11 +297,91 @@ pub const Lynx = struct {
         if (l.ticks >= rebase_at) l.rebase();
         audio.begin_frame(&l.mikey, l.frame_end, n);
         l.frame_end += n;
+    }
+
+    /// Run the frame begun by `begin_frame` until the absolute time `t`
+    /// (`time()` scale), at most to the frame's end. The run stops after
+    /// the instruction (or sprite run) that reaches `t`, so it may end a
+    /// little past it.
+    pub fn run_to(l: *Lynx, t: u64) void {
+        const end = l.frame_end;
+        if (t <= l.tick_base) return;
+        const rel = t - l.tick_base;
+        if (rel < end) l.frame_end = @intCast(rel);
+        while (l.ticks < l.frame_end) {
+            if (l.halted or l.sleeping) l.step_one() else l.run_cpu(false);
+        }
+        l.frame_end = end;
+    }
+
+    /// The rest of the frame begun by `begin_frame`.
+    pub fn finish_frame(l: *Lynx) void {
         while (l.ticks < l.frame_end) {
             if (l.halted or l.sleeping) l.step_one() else l.run_cpu(false);
         }
         audio.end_frame(&l.mikey, l.frame_end);
         l.frame_count +%= 1;
+    }
+
+    /// Absolute time at which the current frame ends (after `begin_frame`).
+    pub fn frame_end_time(l: *const Lynx) u64 {
+        return l.tick_base + l.frame_end;
+    }
+
+    // ---- ComLynx (core/comlynx.zig, core/uart.zig) ----
+
+    /// Attach a ComLynx port (the real UART takes over from the stub,
+    /// idle, its queues empty) or detach it (null: back to the stub).
+    pub fn attach_link(l: *Lynx, p: ?*comlynx.Port) void {
+        bus.sync_mikey(l);
+        if (l.link != null) uart.detach(&l.mikey);
+        l.link = p;
+        if (p) |q| {
+            q.clear();
+            uart.attach(&l.mikey);
+        }
+    }
+
+    /// Catch the UART up to now: every frame it sent until now is in the
+    /// port's `out`. The bus's pump point.
+    pub fn link_sync(l: *Lynx) void {
+        if (l.link == null) return;
+        bus.sync_mikey(l);
+        uart.sync(&l.mikey);
+        uart.resched(&l.mikey);
+    }
+
+    /// Put a frame on this console's wire. A start already past is moved
+    /// to now; returns the ticks it was late (0 if on time). False-y
+    /// result (null) when no port is attached or the wire is full.
+    pub fn link_deliver(l: *Lynx, f: comlynx.RxFrame) ?u64 {
+        const p = l.link orelse return null;
+        bus.sync_mikey(l);
+        uart.sync(&l.mikey);
+        const now = l.tick_base + l.mikey.now;
+        const late = now -| f.start;
+        // Late frames move to now, after the sender's frame before.
+        const start = if (f.kind == .break_off) @max(f.start, now) else @max(f.start, now, p.src_end[f.src & 15]);
+        if (f.kind == .frame) p.src_end[f.src & 15] = start + comlynx.frame_bits * @as(u64, f.bit_ticks);
+        p.delivered +%= 1;
+        if (late > 0) {
+            p.late +%= 1;
+            p.late_ticks +%= late;
+        }
+        switch (f.kind) {
+            .frame => if (!p.insert(.{
+                .start = start,
+                .end = start + comlynx.frame_bits * @as(u64, f.bit_ticks),
+                .bit_ticks = f.bit_ticks,
+                .bits = comlynx.wire_bits(f.data, f.ninth),
+                .src = f.src,
+                .is_break = false,
+            })) return null,
+            .break_on => if (!p.insert(.{ .start = start, .end = comlynx.never, .bit_ticks = f.bit_ticks, .bits = 0, .src = f.src, .is_break = true })) return null,
+            .break_off => p.close_break(f.src, start),
+        }
+        uart.resched(&l.mikey);
+        return late;
     }
 
     /// `ticks` past this at a frame start: `rebase`.
@@ -681,7 +780,7 @@ pub const Lynx = struct {
     };
 
     /// The `Lynx` fields `Small` leaves out on purpose (see `Small`).
-    pub const small_excluded = [_][]const u8{ "ram", "cart", "display", "idle_sleep", "audio_out", "audio_render" };
+    pub const small_excluded = [_][]const u8{ "ram", "cart", "display", "idle_sleep", "audio_out", "audio_render", "link" };
 
     pub fn save_small(l: *const Lynx, out: *Small) void {
         @memset(std.mem.asBytes(out), 0);
