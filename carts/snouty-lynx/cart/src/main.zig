@@ -64,6 +64,7 @@ const splash = @import("frontend/splash.zig");
 const picker = @import("frontend/picker.zig");
 const strip = @import("frontend/strip.zig");
 const rewind = @import("frontend/rewind.zig");
+const linkport = @import("frontend/linkport.zig");
 const audio = @import("frontend/audio.zig");
 const tuning = @import("frontend/tuning.zig");
 const hint = @import("hint");
@@ -176,6 +177,7 @@ fn live_edge() input.Edge {
 pub fn boot(c: core.Cart) void {
     @call(.never_inline, core.Lynx.init_in_place, .{ &lynx, c });
     rewind.reset(&lynx);
+    linkport.after_boot(&lynx);
 }
 
 /// One picker update (drive builds). A choice restarts the core on that
@@ -218,14 +220,19 @@ fn run_frame(t1: u64) void {
         return;
     }
 
+    // Linked (ComLynx, frontend/linkport.zig): no fast forward and no
+    // chorded rewind, the other consoles would fall behind.
+    const fast = in.fast and !linkport.linked;
+    const rewind_phase: input.Rewind = if (linkport.linked) .off else in.rewind;
+
     // Chorded rewind (Left during fast forward): the game stays frozen
     // under the menu's scrub bar and Left/Right step time as in the menu;
     // letting go of Select resumes as the menu does (input.zig suppressed
     // the held buttons) and steps this frame. Nothing is stepped
     // meanwhile, so `update` ramps the sound out (`stepped` stays false).
-    switch (in.rewind) {
+    switch (rewind_phase) {
         .enter, .on => {
-            if (in.rewind == .enter) {
+            if (rewind_phase == .enter) {
                 play_hint.stop();
                 menu.freeze_frame();
                 // The last presented frame carries the `>>` indicator:
@@ -254,7 +261,8 @@ fn run_frame(t1: u64) void {
     // display conversion, no strip) and none renders sound; the console
     // steps exactly as at 1x (tests/ff_determinism.zig).
     var n: u32 = 1;
-    if (in.fast) {
+    linkport.before_frame(&lynx);
+    if (fast) {
         lynx.audio_render = false;
         var slowest: u64 = last_frame_us;
         var t = t1;
@@ -274,19 +282,20 @@ fn run_frame(t1: u64) void {
 
     const t_last = cart.micros_since_boot();
     step(in.pad);
+    linkport.after_frame(&lynx);
     const t2 = cart.micros_since_boot();
     last_frame_us = t2 -% t_last;
     debug.record(@truncate(t2 -% t1));
     // While fast the stream ramps out (as in the menu) and resumes, primed,
     // on the first 1x frame.
-    if (!in.fast) {
+    if (!fast) {
         audio.frame(&lynx);
         stepped = true;
     }
 
     video.show(lynx.frame());
     strip.draw(&lynx);
-    if (in.fast) draw_fast(n);
+    if (fast) draw_fast(n);
     // Over the strip's last line (the ROM detail), so no picture is hidden.
     // A press held over from the splash or picker is suppressed, not fresh.
     if (play_hint.tick(live_edge().any_pressed())) {

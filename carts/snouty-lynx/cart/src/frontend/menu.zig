@@ -67,6 +67,7 @@ const input = @import("input.zig");
 const romsrc = @import("romsrc.zig");
 const text = @import("text.zig");
 const rewind = @import("rewind.zig");
+const linkport = @import("linkport.zig");
 const audio = @import("audio.zig");
 const hint = @import("hint");
 
@@ -207,6 +208,7 @@ pub fn update(l: *core.Lynx, e: input.Edge) Result {
                     // history.
                     @call(.never_inline, core.Lynx.init_in_place, .{ l, l.cart });
                     rewind.reset(l);
+                    linkport.after_boot(l);
                     return .resume_game;
                 },
                 .pick_rom => return .pick_rom,
