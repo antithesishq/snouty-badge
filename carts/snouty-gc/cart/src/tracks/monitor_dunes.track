@@ -1,0 +1,31 @@
+# Monitor Dunes: the Dumps, track 2 (SPEC 3.2). The landfill's dune sea:
+# long flowing bends over swells of crushed CRT glass (hill runs), down
+# the east side, then the bottom straight where the Sweeper crosses (a
+# maintenance crawler shuttling between gates in the walls; a crossing
+# deals 60 and a shove: go behind it), and back up through the inner
+# dunes. A service bay down the west side's left lane.
+# Control point 0 is the start line; features on point i apply to the
+# segment from point i to i+1; a segment without `open` has walls.
+league dumps
+width 60
+# x    y    half   features
+ 240  130   62                     # start line, heading east
+ 480  125   62     crates          # top straight: four crates
+ 710  150   60
+ 870  240   58     hill            # the east dunes
+ 900  400   58     hill
+ 840  560   58
+ 900  720   58
+ 820  860   60
+ 620  860   62     sweeper         # bottom straight west: the Sweeper's lane
+ 420  860   62     crates
+ 240  840   58     hill            # the inner dunes
+ 150  710   56     hill
+ 270  600   56
+ 520  610   56
+ 650  480   56     crates
+ 560  330   56
+ 380  330   56
+ 250  420   58     bay:left        # west side: the service bay lane
+ 125  320   58
+ 140  190   60

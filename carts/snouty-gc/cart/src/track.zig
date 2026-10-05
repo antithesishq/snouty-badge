@@ -3,7 +3,7 @@
 //! at run time. No comptime decoding.
 //!
 //! A `League` and a `Track` are runtime structs of slices: the built-in
-//! ones point at the embedded `assets` files, and a track pack loaded into
+//! ones point at the embedded `gen/tracks/` files, and a track pack loaded into
 //! a RAM buffer later (SPEC 19) can fill the same structs. Nothing selects
 //! art at comptime: `select(t)` unpacks the track about to be raced into
 //! the one RAM buffer `map_ram` (16 KB) and sets `current`; the renderer
@@ -11,7 +11,6 @@
 //! lookup (`Track.tile_at`/`attr_at`, the floor renderer) reads `map_ram`,
 //! so `select` must have run for the track being looked at.
 const std = @import("std");
-const assets = @import("assets");
 const fixed = @import("fixed.zig");
 const tuning = @import("tuning.zig");
 const world = @import("world.zig");
@@ -309,29 +308,95 @@ pub fn unpack_map(src: []const u8, dst: *[map_side * map_side]u8) void {
 }
 
 // --- The built-in leagues and tracks (embedded) -----------------------------
+//
+// tools/build_tracks.py writes the data into cart/src/gen/tracks/ (since
+// M3: embedded here with @embedFile, so a new track needs no build.zig
+// entry; plain byte slices, no comptime decoding, the Mac OOM rule).
 
 pub const dumps = League{
     .name = "THE DUMPS",
-    .tiles = assets.dumps_tiles,
-    .pal = assets.dumps_pal,
-    .horizon = assets.dumps_horizon,
+    .tiles = @embedFile("gen/tracks/dumps_tiles.bin"),
+    .pal = @embedFile("gen/tracks/dumps_pal.bin"),
+    .horizon = @embedFile("gen/tracks/dumps_horizon.bin"),
 };
+
+pub const runoff = League{
+    .name = "THE RUNOFF",
+    .tiles = @embedFile("gen/tracks/runoff_tiles.bin"),
+    .pal = @embedFile("gen/tracks/runoff_pal.bin"),
+    .horizon = @embedFile("gen/tracks/runoff_horizon.bin"),
+};
+
+const dumps_attr = @embedFile("gen/tracks/dumps_attr.bin");
+const runoff_attr = @embedFile("gen/tracks/runoff_attr.bin");
 
 pub const landfill_loop = Track{
     .name = "LANDFILL LOOP",
     .league = &dumps,
-    .map_packed = assets.landfill_loop_map,
-    .attr = assets.landfill_loop_attr,
-    .center = assets.landfill_loop_center,
+    .map_packed = @embedFile("gen/tracks/landfill_loop_map.bin"),
+    .attr = dumps_attr,
+    .center = @embedFile("gen/tracks/landfill_loop_center.bin"),
+    .feat = @embedFile("gen/tracks/landfill_loop_feat.bin"),
+};
+
+pub const monitor_dunes = Track{
+    .name = "MONITOR DUNES",
+    .league = &dumps,
+    .map_packed = @embedFile("gen/tracks/monitor_dunes_map.bin"),
+    .attr = dumps_attr,
+    .center = @embedFile("gen/tracks/monitor_dunes_center.bin"),
+    .feat = @embedFile("gen/tracks/monitor_dunes_feat.bin"),
+};
+
+pub const cathode_flats = Track{
+    .name = "CATHODE FLATS",
+    .league = &dumps,
+    .map_packed = @embedFile("gen/tracks/cathode_flats_map.bin"),
+    .attr = dumps_attr,
+    .center = @embedFile("gen/tracks/cathode_flats_center.bin"),
+    .feat = @embedFile("gen/tracks/cathode_flats_feat.bin"),
+};
+
+pub const salt_pan_sprint = Track{
+    .name = "SALT PAN SPRINT",
+    .league = &runoff,
+    .map_packed = @embedFile("gen/tracks/salt_pan_sprint_map.bin"),
+    .attr = runoff_attr,
+    .center = @embedFile("gen/tracks/salt_pan_sprint_center.bin"),
+    .feat = @embedFile("gen/tracks/salt_pan_sprint_feat.bin"),
+};
+
+pub const outflow_canyon = Track{
+    .name = "OUTFLOW CANYON",
+    .league = &runoff,
+    .map_packed = @embedFile("gen/tracks/outflow_canyon_map.bin"),
+    .attr = runoff_attr,
+    .center = @embedFile("gen/tracks/outflow_canyon_center.bin"),
+    .feat = @embedFile("gen/tracks/outflow_canyon_feat.bin"),
+};
+
+pub const coolant_basin = Track{
+    .name = "COOLANT BASIN",
+    .league = &runoff,
+    .map_packed = @embedFile("gen/tracks/coolant_basin_map.bin"),
+    .attr = runoff_attr,
+    .center = @embedFile("gen/tracks/coolant_basin_center.bin"),
+    .feat = @embedFile("gen/tracks/coolant_basin_feat.bin"),
 };
 
 /// Every track in menu rotation order (league by league, SPEC 3.2);
 /// `World.track` and `Setup.track` index this table. The menus read
 /// `name`, `league.name` and `laps` from it.
-pub const tracks = [_]*const Track{&landfill_loop};
+pub const tracks = [_]*const Track{
+    &landfill_loop,   &monitor_dunes,  &cathode_flats,
+    &salt_pan_sprint, &outflow_canyon, &coolant_basin,
+};
 
-/// The built-in leagues in order (CIRCUIT plays them in this order).
-pub const leagues = [_]*const League{&dumps};
+/// The built-in leagues in order (CIRCUIT plays them in this order); each
+/// league's tracks are the `tracks_per_league` entries of `tracks` from
+/// its index times that.
+pub const leagues = [_]*const League{ &dumps, &runoff };
+pub const tracks_per_league = 3;
 
 fn expect_league_well_formed(l: *const League) !void {
     try std.testing.expectEqual(@as(usize, tiles_bytes), l.tiles.len);

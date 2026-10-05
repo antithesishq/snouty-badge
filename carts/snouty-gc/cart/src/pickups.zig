@@ -21,6 +21,7 @@ const tuning = @import("tuning.zig");
 const world = @import("world.zig");
 const track = @import("track.zig");
 const sim = @import("sim.zig");
+const gc_mode = @import("gc_mode.zig");
 const weapons = @import("weapons.zig");
 const ai = @import("ai.zig");
 
@@ -437,6 +438,8 @@ pub fn use(w: *World, i: usize, back: bool) void {
                 effect(w, me, t, p);
                 o.last_hit_by = me;
                 o.last_hit_ticks = 0;
+                // A weapon hit for GARBAGE COLLECTION's tag.
+                gc_mode.on_hit(w, me, t);
                 sim.wreck(w, t, .zero_day);
             }
         },
@@ -849,7 +852,7 @@ fn swap(w: *World, i: usize, j: usize) void {
         std.mem.swap(@TypeOf(@field(a.*, f)), &@field(a.*, f), &@field(b.*, f));
     }
     for ([2]*Car{ a, b }, [2]u8{ la, lb }) |c, old| {
-        if (c.lap > old and c.lap == tuning.laps - 1) {
+        if (c.lap > old and c.lap == w.laps - 1 and w.mode != .gc) {
             c.msg = .final_lap;
             c.msg_ticks = tuning.message_ticks;
         }

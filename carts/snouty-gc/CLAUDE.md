@@ -27,15 +27,26 @@ here: every forked file names its Zero source and commit on its first line.
   the 15 pickups (SPEC 6.3) and their status effects, the KERNEL PANIC
   packet, DDOS drones, FORK BOMB forking; part of `simulate`, hooked in
   by `sim` and `weapons`. Render helpers `duck_pos`, `chain_anchor`.
+- `hazards.zig` (M3): the generic track hazards (a timed blast = the
+  Runoff's exhaust vents, a crossing mover = the Dumps' Sweeper; turret
+  and crust reserved) driven by `track.hazard_specs`, and the service
+  bays; part of `simulate`. `hazards.at(spec, tick)` is the pure cycle.
+- `gc_mode.zig` (M3): GARBAGE COLLECTION's mark and sweep (sweeps as the
+  leader passes sector 2 and the line, tags on weapon hits, collections,
+  the survivor) and the attract demo's scripted KERNEL PANIC.
 - `ai.zig`: the centerline driver per racer `Crew` with its combat
   character (aim, reaction, drops; `update_aim` is called by `sim`) and
-  pickup policy (`want_use`, CAPTCHA solve ticks); also the autopilot.
+  pickup policy (`want_use`, CAPTCHA solve ticks), the hazard sense
+  (`dodge_hazards`: wait for a firing vent, pass behind the Sweeper);
+  also the autopilot.
 - `racers.zig`: roster (names, cars, chassis, placeholder liveries).
 - `tuning.zig`: every constant (driving, chassis multipliers, AI).
 - `track.zig`: runtime `League`/`Track` structs of slices (the built-in
-  ones embed `assets`; a pack in RAM can fill them later, SPEC 19), the map
-  unpacker, `map_ram`, and the crate spawns `crate_spots` (from the
-  centerline samples flagged `flag_crates`, the `.track` word `crates`).
+  ones embed `gen/tracks/`; a pack in RAM can fill them later, SPEC 19),
+  the track table (`tracks`, `leagues`), the map unpacker, `map_ram`, the
+  crate spawns `crate_spots` (from the centerline samples flagged
+  `flag_crates`, the `.track` word `crates`) and the hazard specs
+  `hazard_specs` (from the track's `feat` records).
 - `sprites.zig`: the runtime `Sheet` (every 4-bit art sheet, with blue
   and gold car tints), one blit with separate width and height (flat
   decals), the race's depth list (cars, projectiles, drops, crates,
@@ -60,15 +71,20 @@ here: every forked file names its Zero source and commit on its first line.
   completable with combat off, chassis), `weapons_test.zig` (a scenario
   per weapon on a frozen arena, ramming, wrecks, hulks, kill credit, AI
   combat, the 20-race combat soak), `pickups_test.zig` (roll odds,
-  crates, a scenario per pickup, AI policies, the pickup soak), tests in
-  `track.zig`, `fixed.zig`, `engine.zig`.
+  crates, a scenario per pickup, AI policies, the pickup soak),
+  `content_test.zig` (M3: hazards, bays, the AI's hazard sense, every
+  track's soak, GARBAGE COLLECTION and its soak, attract), tests in
+  `track.zig`, `hazards.zig`, `gc_mode.zig`, `fixed.zig`, `engine.zig`.
 
 ## Data
 
-`assets/gen/*.bin` come from `tools/build_tracks.py` (+ `tools/leagues.py`)
-and `cart/src/tracks/*.track`, committed; they reach the cart through the
-`assets` module `build.zig` generates (one `@embedFile` per file, no
-comptime decoding: the Mac OOM rule). Tilesets are 128 tiles. Engine
+The league and track data (`cart/src/gen/tracks/*.bin`) come from
+`tools/build_tracks.py` (+ `tools/leagues.py`) and `cart/src/tracks/*.track`,
+committed; since M3 `track.zig` embeds them with `@embedFile` (plain
+slices, no comptime decoding: the Mac OOM rule), so a new track needs no
+`build.zig` entry. `assets/gen/*.bin` (the font, and until build.zig drops
+them the M0 copies of the Dumps and Landfill Loop files) reach the cart
+through the `assets` module `build.zig` generates. Tilesets are 128 tiles. Engine
 sprites: `ASSETS_ENGINE.md`. The art track owns `tools/draw_art.py`,
 `assets/gen/art/` and `ASSETS.md`.
 

@@ -12,7 +12,8 @@
 #            step says which (other carts' runners are not this cart's gate)
 #   float    zig build check-float -Dcart=snouty-gc (no soft-float or libm)
 #   tracks   tools/build_tracks.py into a temp dir: byte-identical to the
-#            committed assets/gen/*.bin (generator deterministic, data current)
+#            committed cart/src/gen/tracks/*.bin (generator deterministic,
+#            data current)
 #   preview  headless preview.mjs runs on the wasm:
 #            - tools/scripts/m0_race.json replayed equals the autopilot's own
 #              drive (debug_world_sum): input scripts reproduce a race;
@@ -99,7 +100,7 @@ if want tracks; then
     st=0
     python3 "$here/build_tracks.py" --out "$tmp" --docs "$tmp/docs" > "$out/tracks.txt" 2>&1 || st=1
     for f in "$tmp"/*.bin; do
-        cmp -s "$f" "$cart/assets/gen/$(basename "$f")" || { echo "differs: $(basename "$f")"; st=1; }
+        cmp -s "$f" "$cart/cart/src/gen/tracks/$(basename "$f")" || { echo "differs: $(basename "$f")"; st=1; }
     done
     [ "$st" = 0 ] && echo "$(ls "$tmp"/*.bin | wc -l) files byte-identical"
     result tracks "$st"
