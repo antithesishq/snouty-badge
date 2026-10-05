@@ -27,6 +27,14 @@ pub const stocks = @import("stocks.zig");
 pub const strategy = @import("strategy.zig");
 /// The heuristic autoplayer (tests, scripts, benchmarks).
 pub const bot = @import("bot.zig");
+/// Heavy stage-2/3 states set up directly (benchmarks, previews).
+pub const prepare = @import("prepare.zig");
+/// IEEE f64 add/mul/compare for the badge (exported as __aeabi_* there).
+pub const softfloat = @import("softfloat.zig");
+
+comptime {
+    _ = softfloat; // its exports (badge builds only)
+}
 
 pub const P = projects.P;
 pub const InvestStrat = stocks.InvestStrat;
@@ -261,7 +269,7 @@ pub const Game = struct {
     /// registers them anew, the clock goes on).
     load_ms: u64 = 0,
     rng: rng_mod.Rng = rng_mod.Rng.init(1),
-    timers: [32]Timer = undefined,
+    timers: [32]Timer,
     timers_len: u8 = 0,
     /// Bumped by every restart (project 200/201/217, RESET): the page
     /// reload of the original. The UI can go back to the title.
@@ -280,8 +288,8 @@ pub const Game = struct {
     restart_pending: bool = false,
 
     // ---- messages (console) ----
-    msg_buf: [msg_buf_len]u8 = undefined,
-    msg_entries: [msg_max]MsgEntry = undefined,
+    msg_buf: [msg_buf_len]u8,
+    msg_entries: [msg_max]MsgEntry,
     msg_first: u16 = 0, // oldest entry index in the ring
     msg_len: u16 = 0,
     msg_write: u16 = 0,
@@ -313,7 +321,7 @@ pub const Game = struct {
     clips_sold: f64 = 0,
     avg_rev: f64 = 0,
     income: f64 = 0,
-    income_tracker: [11]f64 = undefined,
+    income_tracker: [11]f64,
     income_tracker_len: u8 = 1,
     ticks: f64 = 0,
     marketing: f64 = 1,
@@ -591,10 +599,14 @@ pub const Game = struct {
     probe_trust_cost: f64 = 0, // init: Math.floor(Math.pow(probeTrust+1, 1.47)*200)
 
     // ---- combat.js ----
-    ships: [combat.max_ships]combat.Ship = undefined,
+    ships: [combat.max_ships]combat.Ship,
     num_ships: u16 = 0,
     num_left_ships: u16 = 0,
     num_right_ships: u16 = 0,
+    /// Set by the UI: false while it does not draw the battle field. Ships
+    /// of a finished battle then stand still (combat.update); live battles
+    /// always run, their dice are the game's.
+    ships_observed: bool = true,
     battle_left_ships: u16 = 200,
     battle_right_ships: u16 = 200,
     battle_death_threshold: f64 = 0.5,
@@ -637,7 +649,7 @@ pub const Game = struct {
     proj_hidden: [projects.count]bool = @splat(false),
     proj_gen: [projects.count]u16 = @splat(0),
     /// `activeProjects` in display order, indices into projects.defs.
-    active: [projects.count]u8 = undefined,
+    active: [projects.count]u8,
     active_len: u8 = 0,
     /// Project 215 writes standardOps into 216's priceTag.
     p216_ops: f64 = 0,
@@ -735,9 +747,19 @@ pub const Game = struct {
 
 /// The page load: globals, projects, combat ships, timers. Prestige is 0.
 pub fn init(g: *Game, seed: u64) void {
-    g.* = .{};
+    set_defaults(g);
     g.rng = rng_mod.Rng.init(seed);
     load(g);
+}
+
+/// Every field to its default, in place: `g.* = .{}` would keep a 25 KB
+/// copy of the default Game in the firmware. The big buffers (ships,
+/// messages, timers) have no default; the code fills them before reading.
+fn set_defaults(g: *Game) void {
+    const info = @typeInfo(Game).@"struct";
+    inline for (info.field_names, info.field_types, info.field_attrs) |name, T, attrs| {
+        if (comptime attrs.defaultValue(T)) |v| @field(g, name) = v;
+    }
 }
 
 /// Everything the page load does after the variable defaults; a reload
@@ -788,7 +810,7 @@ fn restart(g: *Game) void {
     const n = g.restarts;
     const now = g.now_ms;
     const count = g.msg_count;
-    g.* = .{};
+    set_defaults(g);
     g.rng = r;
     g.prestige_u = if (save) pu else 0;
     g.prestige_s = if (save) ps else 0;
@@ -2320,7 +2342,7 @@ fn milestone_check(g: *Game) void {
 // ===========================================================================
 // Stage 2: factories, drones, power, swarm.
 
-fn update_upgrades(g: *Game) void {
+pub fn update_upgrades(g: *Game) void {
     var nfup: f64 = 0;
     var ndup: f64 = 0;
     if (g.max_factory_level < 10) {
@@ -2406,7 +2428,7 @@ fn sum_pow(start: f64, n: u32, e: f64, mul: f64) f64 {
     return s;
 }
 
-fn update_drone_prices(g: *Game) void {
+pub fn update_drone_prices(g: *Game) void {
     // The JS recomputes 1110 pow() per kind; the 10 and 100 sums are
     // prefixes of the 1000 one, accumulated in the same order, so one
     // pass gives bit-identical results.
@@ -2576,7 +2598,7 @@ fn entertain_swarm(g: *Game) void {
     g.boredom_msg = 0;
 }
 
-fn update_pow_prices(g: *Game) void {
+pub fn update_pow_prices(g: *Game) void {
     g.p10f = sum_pow(g.farm_level + 1, 10, 2.78, 100000000);
     g.p100f = sum_pow(g.farm_level + 1, 100, 2.78, 100000000);
     g.p10b = sum_pow(g.battery_level + 1, 10, 2.54, 10000000);

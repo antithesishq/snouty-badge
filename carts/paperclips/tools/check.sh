@@ -102,7 +102,7 @@ if want preview; then
 fi
 
 if want bench; then
-    step "bench: badge-bench (calibrated) on a prepared game, pages 1..6"
+    step "bench: badge-bench (calibrated): stage-1 pages 1..6, stage 2 (7), stage 3 battle on COMBAT (8) and SPACE (9), the game-start skirmish (10)"
     if [ ! -f "$elf" ]; then
         echo "check: no $elf (run the build step)"
         result bench 1
@@ -111,16 +111,21 @@ if want bench; then
         mkdir -p "$out/bench"
         "$bench" --help > /dev/null 2>&1   # create the venv once before the parallel runs
         pids=()
-        for n in 1 2 3 4 5 6; do
+        # 1..6 press through the stage-1 pages (scripts/bench.json); 7..10
+        # are prepared stage-2/3 states (game/prepare.zig) and a new game,
+        # left to run (main.zig bench_setup).
+        for n in 1 2 3 4 5 6 7 8 9 10; do
+            script=()
+            [ "$n" -le 6 ] && script=(--script "$here/scripts/bench.json")
             "$bench" "$elf" --no-config --poke paperclips_bench=$n --poke paperclips_seed=7 \
-                --script "$here/scripts/bench.json" --frames 400 --json --symbols \
+                "${script[@]}" --frames 400 --json --symbols \
                 --out "$out/bench/page$n" > "$out/bench/page$n.txt" 2>&1 &
             pids+=($!)
         done
         status=0
         for p in "${pids[@]}"; do wait "$p" || status=1; done
         [ "$status" = 0 ] || echo "check: a badge-bench run failed (crash, hang or setup error); see $out/bench/*.txt"
-        for n in 1 2 3 4 5 6; do
+        for n in 1 2 3 4 5 6 7 8 9 10; do
             j="$out/bench/page$n/bench.json"
             [ -f "$j" ] || { status=1; echo "FAIL page$n: no bench.json"; continue; }
             python3 - "$j" "$max_ms" "$mean_ms" "page$n" <<'PY' || status=1

@@ -20,7 +20,10 @@ var app: app_mod.App = .{};
 
 /// badge-bench hook (firmware only, 0 on the badge): `--poke
 /// paperclips_bench=N` starts in a prepared game instead of the title
-/// (see bench_setup) so a run measures the late stage-1 pages.
+/// (see bench_setup): 1..6 the late stage-1 pages, 7 stage 2 (SWARM),
+/// 8 stage 3 with a 200 vs 200 battle on the COMBAT page, 9 the same
+/// battle seen from the SPACE page, 10 a new game from its first frame
+/// (the game-start skirmish of combat.zig runs during the first seconds).
 var bench: u32 = 0;
 /// `--poke paperclips_seed=N`: the game's seed (else the clock's).
 var bench_seed: u32 = 0;
@@ -36,6 +39,7 @@ comptime {
 }
 
 pub fn start() void {
+    if (!cart.is_wasm and bench == 99) return soft_float_self_test();
     cart.set_vsync_enabled(1000.0 / 60.0);
     // update() redraws every pixel.
     cart.set_double_buffer_mode(.no_copy_full_frame);
@@ -44,6 +48,23 @@ pub fn start() void {
     app.init(seed);
     if (bench != 0) bench_setup(bench);
     app.frozen = bench_flags & 1 != 0;
+}
+
+/// `--poke paperclips_bench=99`: the badge's f64 routines (game/softfloat*.zig)
+/// against their integer reference on 1,000,000 operand pairs; the result
+/// comes out as a trace line ("softfloat self-test: N cases, M bad").
+fn soft_float_self_test() void {
+    const n: u32 = 1_000_000;
+    const bad = G.softfloat.self_test(n, bench_seed);
+    var buf: [64]u8 = undefined;
+    cart.trace(std.fmt.bufPrint(&buf, "softfloat self-test: {d} cases, {d} bad", .{ n, bad }) catch "softfloat self-test: ?");
+    const names = [_][]const u8{ "add", "sub", "mul", "lt", "floor" };
+    for (names, 0..) |name, k| {
+        if (G.softfloat.test_bad[k] == 0) continue;
+        const f = G.softfloat.test_first[k];
+        var line: [160]u8 = undefined;
+        cart.trace(std.fmt.bufPrint(&line, "  {s}: {d} bad, first a={x} b={x} got={x} want={x}", .{ name, G.softfloat.test_bad[k], f[0], f[1], f[2], f[3] }) catch "?");
+    }
 }
 
 /// Badge builds: cart.rand() reads 0 on the RP2350, so the seed comes
@@ -60,8 +81,35 @@ fn clock_mix() u64 {
     return if (h == 0) 1 else h;
 }
 
+/// Hardware: the game clock follows real time (micros_since_boot), so a
+/// slow frame does not slow the game; whole milliseconds, the remainder
+/// carried, one step at most `max_step_ms` (a stall loses time rather
+/// than freezing the badge to catch up). Wasm, previews and badge-bench
+/// keep the UI's fixed 17, 17, 16 ms cadence (deterministic runs).
+const real_time_clock = !cart.is_wasm;
+const max_step_ms: u64 = 250;
+var clock_last_us: u64 = 0;
+var clock_carry_us: u64 = 0;
+
+fn real_time_step() void {
+    const now = cart.micros_since_boot();
+    if (clock_last_us == 0 or now < clock_last_us) clock_last_us = now;
+    clock_carry_us += now - clock_last_us;
+    clock_last_us = now;
+    var ms = clock_carry_us / 1000;
+    clock_carry_us -= ms * 1000;
+    if (ms > max_step_ms) ms = max_step_ms;
+    if (ms > 0 and app.playing and !app.at_wall()) G.advance_ms(app.game, @intCast(ms));
+}
+
 pub fn update() void {
     const c = read_controls();
+    // The battle field moves only while drawn (game/combat.zig).
+    app.game.ships_observed = app.screen == .game and app.page == .combat;
+    if (real_time_clock and bench == 0) {
+        app.frozen = true; // app.tick derives the UI state; the clock is ours
+        real_time_step();
+    }
     app.update(.{
         .start = c.start,
         .select = c.select,
@@ -81,6 +129,21 @@ pub fn update() void {
 fn bench_setup(n: u32) void {
     app.cheats = true;
     app.new_game();
+    if (n == 10) {
+        app.update(.{});
+        return;
+    }
+    if (n >= 7) {
+        G.prepare.prepare(app.game, if (n == 7) 2 else 3);
+        app.update(.{});
+        app.page = switch (n) {
+            7 => .swarm,
+            8 => .combat,
+            else => .space,
+        };
+        app.rebuild();
+        return;
+    }
     debug_prepare(40, 100);
     app.update(.{}); // the first tick: the pages exist from here
     var page: u32 = 1;
@@ -99,7 +162,7 @@ fn debug_prepare(steps: u32, step_ms: u32) void {
         while (app.game.wire < 2000 and G.enabled(app.game, .buy_wire)) G.act(app.game, .buy_wire);
         for (app.game.active[0..app.game.active_len]) |p| {
             // Not the HypnoDrones: the bench wants stage 1.
-            if (p == @intFromEnum(G.P.p35)) continue;
+            if (p == @backingInt(G.P.p35)) continue;
             if (G.enabled(app.game, .{ .buy_project = p })) {
                 G.act(app.game, .{ .buy_project = p });
                 break;
@@ -144,13 +207,13 @@ fn debug_frame() callconv(.c) u32 {
     return app.frame;
 }
 fn debug_screen() callconv(.c) u32 {
-    return @intFromEnum(app.screen);
+    return @backingInt(app.screen);
 }
 fn debug_page() callconv(.c) u32 {
-    return @intFromEnum(app.page);
+    return @backingInt(app.page);
 }
 fn debug_cursor() callconv(.c) u32 {
-    return app.cursor_ix[@intFromEnum(app.page)];
+    return app.cursor_ix[@backingInt(app.page)];
 }
 fn debug_rows() callconv(.c) u32 {
     return @intCast(app.rows.n);
@@ -209,7 +272,7 @@ fn debug_advance(ms: u32) callconv(.c) u32 {
 }
 fn debug_go_page(p: u32) callconv(.c) u32 {
     if (p >= app_mod.pages_count) return 0;
-    app.page = @enumFromInt(@as(u8, @intCast(p)));
+    app.page = @fromBackingInt(@intCast(@as(u8, @intCast(p))));
     app.rebuild();
     return 1;
 }

@@ -126,7 +126,7 @@ fn write_f64(w: *std.Io.Writer, x: f64) !void {
 
 // Fields not dumped: RNG state (u64 beyond 2^53), internal buffers, the
 // 400 combat ships (num_* counts are dumped).
-const skip_fields = [_][]const u8{ "rng", "timeouts", "msg_buf", "msg_entries", "ships" };
+const skip_fields = [_][]const u8{ "rng", "timers", "msg_buf", "msg_entries", "ships", "income_tracker" };
 
 fn skipped(comptime name: []const u8) bool {
     @setEvalBranchQuota(20000);

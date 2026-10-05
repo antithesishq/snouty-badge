@@ -125,14 +125,16 @@ fn update_grid(g: *Game, gr: *Grid) void {
     const n: usize = g.num_ships;
     for (g.ships[0..n]) |*p| {
         if (!p.alive) continue;
-        var gx: f64 = @floor(p.x * inv_grid_w);
-        var gy: f64 = @floor(p.y * inv_grid_h);
+        // Ships stay in [0, 310] x [0, 150] (the walls clamp them), so
+        // truncation is the JS Math.floor; clamped as integers.
+        var gx: i32 = @intFromFloat(p.x * inv_grid_w);
+        var gy: i32 = @intFromFloat(p.y * inv_grid_h);
         if (gx < 0) gx = 0;
         if (gy < 0) gy = 0;
         if (gx > grid_w - 1) gx = grid_w - 1;
         if (gy > grid_h - 1) gy = grid_h - 1;
-        p.gx = @intFromFloat(gx);
-        p.gy = @intFromFloat(gy);
+        p.gx = @intCast(gx);
+        p.gy = @intCast(gy);
         count[@as(usize, @intCast(p.gy)) * grid_w + @as(usize, @intCast(p.gx))] += 1;
     }
     var acc: u16 = 0;
@@ -177,6 +179,8 @@ fn move_single_ship(g: *Game, gr: *const Grid, i: usize, cx: f64, cy: f64) void 
                     }
                     p.vx += o.vx * 0.01;
                     p.vy += o.vy * 0.01;
+                    // Itself: v - (x - x) * 0.1 is v - +0, exactly v.
+                    if (oi == i) continue;
                     p.vx -= (o.x - p.x) * 0.1;
                     p.vy -= (o.y - p.y) * 0.1;
                 } else {
@@ -188,24 +192,42 @@ fn move_single_ship(g: *Game, gr: *const Grid, i: usize, cx: f64, cy: f64) void 
             }
         }
     }
-    if (@abs(p.vx) > max_speed) p.vx = if (p.vx < 0) -max_speed else max_speed;
-    if (@abs(p.vy) > max_speed) p.vy = if (p.vy < 0) -max_speed else max_speed;
+    // The compares below are on the bit patterns (exact for these finite
+    // values; a soft-float compare costs ~35 cycles on the badge).
+    if (abs_gt(p.vx, max_speed)) p.vx = if (neg(p.vx)) -max_speed else max_speed;
+    if (abs_gt(p.vy, max_speed)) p.vy = if (neg(p.vy)) -max_speed else max_speed;
     p.x += p.vx;
     p.y += p.vy;
-    if (p.x > width) {
+    if (abs_gt(p.x, width) and !neg(p.x)) {
         p.x = width;
         p.vx = -max_speed;
-    } else if (p.x < 0) {
+    } else if (neg(p.x)) {
         p.x = 0;
         p.vx = max_speed;
     }
-    if (p.y > height) {
+    if (abs_gt(p.y, height) and !neg(p.y)) {
         p.y = height;
         p.vy = -max_speed;
-    } else if (p.y < 0) {
+    } else if (neg(p.y)) {
         p.y = 0;
         p.vy = max_speed;
     }
+}
+
+const sign_bit: u64 = 1 << 63;
+const inf_bits: u64 = 0x7ff0000000000000;
+
+/// |x| > c for a positive constant c (false for NaN, like the compare).
+inline fn abs_gt(x: f64, c: f64) bool {
+    const m = @as(u64, @bitCast(x)) & ~sign_bit;
+    return m > @as(u64, @bitCast(c)) and m <= inf_bits;
+}
+
+/// x < 0 (false for -0 and NaN, like the compare).
+inline fn neg(x: f64) bool {
+    const b: u64 = @bitCast(x);
+    const m = b & ~sign_bit;
+    return (b & sign_bit) != 0 and m != 0 and m <= inf_bits;
 }
 
 fn move_ships(g: *Game, gr: *const Grid) void {
@@ -253,14 +275,18 @@ fn do_combat(g: *Game, gr: *const Grid) void {
                     if (p.team == 0) nl += 1 else nr += 1;
                 }
                 if (nl == 0 or nr == 0) continue;
+                // The JS works these out per ship; same values per cell.
+                const left_odds = (nr / nl) * 0.5;
+                const right_odds = (nl / nr) * 0.5;
+                const right_base = g.probe_combat * 0.1;
                 for (cell) |si| {
                     const p = &g.ships[si];
                     var roll: f64 = undefined;
                     if (p.team == 0) {
-                        roll = g.rand() * dx * ((nr / nl) * 0.5);
+                        roll = g.rand() * dx * left_odds;
                         g.battle_death_threshold = g.battle_death_threshold + ooda;
                     } else {
-                        roll = ((g.rand() * px) + (g.probe_combat * 0.1)) * ((nl / nr) * 0.5);
+                        roll = ((g.rand() * px) + right_base) * right_odds;
                     }
                     if (roll > g.battle_death_threshold) {
                         p.alive = false;
@@ -330,7 +356,20 @@ fn end_battle(g: *Game) void {
 }
 
 /// The 16 ms `Update` interval: ClearFrame, UpdateGrid, MoveShips, DoCombat.
+///
+/// With one side gone no cell holds both teams: no dice, so the ships'
+/// movement changes nothing but their drawing, and the next battle starts
+/// from fresh ships (`battle_restart`). Then they only move while someone
+/// can see them: the canvas shows (`panels.battle_canvas_div`) and the UI
+/// says it draws them (`ships_observed`). Without that the opening
+/// skirmish's 200 survivors would cost ~12 ms of soft-float a frame on
+/// the badge for the whole game.
 pub fn update(g: *Game) void {
+    const lone = g.num_left_ships == 0 or g.num_right_ships == 0;
+    if (lone and !(g.panels.battle_canvas_div and g.ships_observed)) {
+        check_for_battle_end(g); // all DoCombat does without a contested cell
+        return;
+    }
     var gr: Grid = undefined;
     update_grid(g, &gr);
     move_ships(g, &gr);
@@ -355,7 +394,7 @@ fn generate_battle_name(g: *Game) BattleName {
     return n;
 }
 
-fn create_battle(g: *Game) void {
+pub fn create_battle(g: *Game) void {
     g.unit_size = 0;
     if (g.drifter_count >= g.probe_count) {
         g.unit_size = g.probe_count / 100;
