@@ -88,32 +88,27 @@ pub fn draw_winner(w: *const world.World, follow: u8, frame: u32) void {
     }
     var kbuf: [8]u8 = undefined;
     hud.text(tally(&kbuf, win.kills, win.wrecks), 60, 52, hud.grey);
-    // The taunt, in quotes, wrapped at 17 characters.
-    const taunt = roster_text.roster[r].taunt;
-    var q: [24]u8 = undefined;
-    q[0] = '"';
-    @memcpy(q[1..][0..taunt.len], taunt);
-    q[taunt.len + 1] = '"';
-    const quoted = q[0 .. taunt.len + 2];
-    const k = roster_text.wrap(quoted, 19);
-    hud.centered(quoted[0..k], 74, hud.white);
-    if (k < quoted.len) hud.centered(quoted[k + 1 ..], 84, hud.white);
+    // The taunt, in quotes, wrapped at 19 characters.
+    quote(r, 74);
     // The followed car's own result.
     const me = &w.cars[follow % world.car_count];
-    if (wi != follow) {
-        var line: [16]u8 = undefined;
-        const name = racers.roster[me.racer % racers.count].name;
-        @memcpy(line[0..name.len], name);
-        line[name.len] = ' ';
-        @memcpy(line[name.len + 1 ..][0..3], hud.rank_text(me.rank));
-        hud.centered(line[0 .. name.len + 4], 98, hud.livery(me.racer));
-    }
+    if (wi != follow) own_line(me, 98);
     if (me.best_lap > 0) {
         var best: [16]u8 = "BEST LAP        ".*;
         hud.format_clock(best[9..16], me.best_lap);
         hud.centered(&best, 108, hud.grey);
     }
     if ((frame / 30) % 2 == 0) hud.centered("A", 118, hud.coral);
+}
+
+/// The followed car's own place under a winner card (`SNOUTY 4TH`).
+fn own_line(me: *const world.Car, y: i32) void {
+    var line: [16]u8 = undefined;
+    const name = racers.roster[me.racer % racers.count].name;
+    @memcpy(line[0..name.len], name);
+    line[name.len] = ' ';
+    @memcpy(line[name.len + 1 ..][0..3], hud.rank_text(me.rank));
+    hud.centered(line[0 .. name.len + 4], y, hud.livery(me.racer));
 }
 
 /// The taunt in quotes, wrapped at 19, centred on rows y and y + 9.
@@ -150,14 +145,7 @@ fn draw_survivor(w: *const world.World, follow: u8, frame: u32) void {
     hud.text(tally(&kbuf, win.kills, win.wrecks), 60, 60, hud.grey);
     quote(r, 80);
     const me = &w.cars[follow % world.car_count];
-    if (wi != follow) {
-        var line: [16]u8 = undefined;
-        const name = racers.roster[me.racer % racers.count].name;
-        @memcpy(line[0..name.len], name);
-        line[name.len] = ' ';
-        @memcpy(line[name.len + 1 ..][0..3], hud.rank_text(me.rank));
-        hud.centered(line[0 .. name.len + 4], 102, hud.livery(me.racer));
-    }
+    if (wi != follow) own_line(me, 102);
     if ((frame / 30) % 2 == 0) hud.centered("A", 116, hud.coral);
 }
 
@@ -183,14 +171,7 @@ fn draw_battle_winner(w: *const world.World, follow: u8, frame: u32) void {
     var nb: [24]u8 = undefined;
     hud.centered(battle_text.end_line(&nb, w, &hud.name_of), 92, hud.grey);
     const me = &w.cars[follow % world.car_count];
-    if (wi != follow and me.rank > 0) {
-        var line: [16]u8 = undefined;
-        const name = racers.roster[me.racer % racers.count].name;
-        @memcpy(line[0..name.len], name);
-        line[name.len] = ' ';
-        @memcpy(line[name.len + 1 ..][0..3], hud.rank_text(me.rank));
-        hud.centered(line[0 .. name.len + 4], 104, hud.livery(me.racer));
-    }
+    if (wi != follow and me.rank > 0) own_line(me, 104);
     if ((frame / 30) % 2 == 0) hud.centered("A", 116, hud.coral);
 }
 

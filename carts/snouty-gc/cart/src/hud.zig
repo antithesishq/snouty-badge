@@ -165,6 +165,9 @@ pub fn init_minimap(t: *const track.Track) void {
     @memset(&minimap_buf, 0);
     arena_map = t.arena.len > 0 and track.current == t;
     if (arena_map) return init_arena_map(t);
+    arena_x0 = 0;
+    arena_y0 = 0;
+    arena_span = 1024;
     for (0..256) |i| {
         const a = t.sample(i);
         const b = t.sample((i + 1) & 255);
@@ -273,27 +276,36 @@ const map_floor = cart.DisplayColor.rgb(0x1C3A2A);
 const map_bay = cart.DisplayColor.rgb(0x2E7A4A);
 const map_ramp = cart.DisplayColor.rgb(0x9A7A2A);
 
-fn draw_arena_minimap(w: *const world.World, follow: u8, frame: u32) void {
+/// The minimap, bottom right: the outline (a race track's centerline in
+/// white) or the arena's cells (M6), each over a checkerboard so the floor
+/// shows through; the Sweeper on its run (2x2 orange); in an arena the
+/// crates waiting on their pads (1 px yellow, SPEC 10); then the cars in
+/// their liveries, the followed one last in white on top. A wrecked car
+/// blinks, the MARKED car blinks red (GARBAGE COLLECTION), one in SAFE
+/// MODE flickers and the kill leader wears a cyan ring (BATTLE).
+fn draw_minimap(w: *const world.World, follow: u8, frame: u32) void {
     const size = minimap_size;
     const x0: i32 = 160 - size - margin;
     const y0: i32 = 128 - size - margin;
-    const px = [5]cart.Pixel{ .from_color(map_floor), .from_color(map_wall), .from_color(anti_black), .from_color(map_bay), .from_color(map_ramp) };
+    const px = if (arena_map)
+        [5]cart.Pixel{ .from_color(map_floor), .from_color(map_wall), .from_color(anti_black), .from_color(map_bay), .from_color(map_ramp) }
+    else
+        [5]cart.Pixel{ .from_color(anti_black), .from_color(white), .from_color(white), .from_color(white), .from_color(white) };
     for (0..@intCast(size)) |x| {
         const col = &cart.framebuffer[@intCast(x0 + @as(i32, @intCast(x)))];
         for (0..@intCast(size)) |y| {
             const k = minimap_buf[y * 32 + x];
-            // The floor on a checkerboard so the race shows through.
             if (k == cell_floor and ((x + y) & 1) == 1) continue;
             col[@intCast(y0 + @as(i32, @intCast(y)))] = px[@min(k, 4)];
         }
     }
-    // The crates waiting on their pads, 1 px yellow (SPEC 10).
-    for (track.crate_spots[0..track.crate_n], 0..) |spot, k| {
-        if (w.crates[k] != 0) continue;
-        const d = arena_dot(@as(i32, spot.x) << fixed.Q, @as(i32, spot.y) << fixed.Q);
-        cart.framebuffer[@intCast(x0 + d[0])][@intCast(y0 + d[1])] = .from_color(yellow);
+    if (arena_map) {
+        for (track.crate_spots[0..track.crate_n], 0..) |spot, k| {
+            if (w.crates[k] != 0) continue;
+            const d = arena_dot(@as(i32, spot.x) << fixed.Q, @as(i32, spot.y) << fixed.Q);
+            cart.framebuffer[@intCast(x0 + d[0])][@intCast(y0 + d[1])] = .from_color(yellow);
+        }
     }
-    // The Sweeper on its run.
     for (track.hazard_specs[0..track.hazard_n], 0..) |*h, k| {
         if (h.kind != .mover) continue;
         const hz = &w.hazards[k];
@@ -301,9 +313,6 @@ fn draw_arena_minimap(w: *const world.World, follow: u8, frame: u32) void {
         const d = arena_dot(hz.x, hz.y);
         fill_rect(x0 + d[0], y0 + d[1], 2, 2, orange);
     }
-    // Every car in the round in its livery, the followed one last in
-    // white; a wrecked car blinks, one in SAFE MODE flickers, the kill
-    // leader wears a cyan ring.
     var k: usize = 0;
     while (k <= world.car_count) : (k += 1) {
         const i: usize = if (k == world.car_count) follow else k;
@@ -313,57 +322,15 @@ fn draw_arena_minimap(w: *const world.World, follow: u8, frame: u32) void {
         if (c.wreck != .none and (frame / 8) % 2 == 1) continue;
         if (c.safe > 0 and (frame / 3) % 2 == 1) continue;
         const d = arena_dot(c.x, c.y);
-        if (i == w.battle.leader and (frame / 10) % 2 == 0) {
-            cart.rect(.{ .x = x0 + d[0] - 1, .y = y0 + d[1] - 1, .width = 4, .height = 4, .stroke_color = cyan });
-        }
-        fill_rect(x0 + d[0], y0 + d[1], 2, 2, if (i == follow) white else livery(c.racer));
-    }
-}
-
-fn draw_minimap(w: *const world.World, follow: u8, frame: u32) void {
-    if (arena_map) return draw_arena_minimap(w, follow, frame);
-    const size = minimap_size;
-    const x0: i32 = 160 - size - margin;
-    const y0: i32 = 128 - size - margin;
-    const line: cart.Pixel = .from_color(white);
-    const bg: cart.Pixel = .from_color(anti_black);
-    for (0..@intCast(size)) |x| {
-        const col = &cart.framebuffer[@intCast(x0 + @as(i32, @intCast(x)))];
-        for (0..@intCast(size)) |y| {
-            // Dim checkerboard background so the floor shows through.
-            if (minimap_buf[y * 32 + x] != 0) {
-                col[@intCast(y0 + @as(i32, @intCast(y)))] = line;
-            } else if (((x + y) & 1) == 0) {
-                col[@intCast(y0 + @as(i32, @intCast(y)))] = bg;
-            }
-        }
-    }
-    // A Sweeper on its run, as a 2x2 orange block (M3).
-    for (track.hazard_specs[0..track.hazard_n], 0..) |*h, k| {
-        if (h.kind != .mover) continue;
-        const hz = &w.hazards[k];
-        if (hz.state == .idle and (frame / 16) % 2 == 1) continue;
-        const mx = x0 + @divTrunc((hz.x >> fixed.Q) * size, 1024);
-        const my = y0 + @divTrunc((hz.y >> fixed.Q) * size, 1024);
-        cart.rect(.{ .x = @min(mx, x0 + size - 2), .y = @min(my, y0 + size - 2), .width = 2, .height = 2, .fill_color = orange });
-    }
-    // Cars in livery colours, the followed car last (white, on top); a
-    // wrecked car blinks; the MARKED car blinks red (GARBAGE COLLECTION).
-    var k: usize = 0;
-    while (k <= world.car_count) : (k += 1) {
-        const i: usize = if (k == world.car_count) follow else k;
-        if (k < world.car_count and k == follow) continue;
-        const c = &w.cars[i % world.car_count];
-        if (!c.active) continue;
-        if (c.wreck != .none and (frame / 8) % 2 == 1) continue;
-        const mx = x0 + @divTrunc((c.x >> fixed.Q) * size, 1024);
-        const my = y0 + @divTrunc((c.y >> fixed.Q) * size, 1024);
         var color: cart.DisplayColor = if (i == follow) white else livery(c.racer);
         if (i == w.gc.marked) {
             if ((frame / 6) % 2 == 1) continue;
             color = red;
         }
-        cart.rect(.{ .x = @min(mx, x0 + size - 2), .y = @min(my, y0 + size - 2), .width = 2, .height = 2, .fill_color = color });
+        if (i == w.battle.leader and (frame / 10) % 2 == 0) {
+            cart.rect(.{ .x = x0 + d[0] - 1, .y = y0 + d[1] - 1, .width = 4, .height = 4, .stroke_color = cyan });
+        }
+        fill_rect(x0 + d[0], y0 + d[1], 2, 2, color);
     }
 }
 
@@ -926,12 +893,17 @@ const captcha_wait: u32 = 120;
 
 /// A filled rectangle written straight into the framebuffer, clipped
 /// (M3: the API's `rect` was 9% of a stress frame under ReleaseSmall).
-pub fn fill_rect(x: i32, y: i32, w: anytype, h: anytype, color: cart.DisplayColor) void {
-    const px: cart.Pixel = .from_color(color);
+/// M6: one out-of-line body for every caller (the generic `w` and `h`
+/// made an instantiation per call shape: about 1 KB of copies).
+pub inline fn fill_rect(x: i32, y: i32, w: anytype, h: anytype, color: cart.DisplayColor) void {
+    fill_px(x, y, @intCast(w), @intCast(h), .from_color(color));
+}
+
+noinline fn fill_px(x: i32, y: i32, w: i32, h: i32, px: cart.Pixel) void {
     const xa: i32 = @max(0, x);
-    const xb: i32 = @min(160, x + @as(i32, @intCast(w)));
+    const xb: i32 = @min(160, x + w);
     const ya: usize = @intCast(@max(0, y));
-    const yb: i32 = @min(128, y + @as(i32, @intCast(h)));
+    const yb: i32 = @min(128, y + h);
     if (xa >= xb or @as(i32, @intCast(ya)) >= yb) return;
     const n: usize = @intCast(yb - @as(i32, @intCast(ya)));
     var cx = xa;
