@@ -4,6 +4,7 @@
 //!
 //! Badge build with `rom.source == .drive`: `scan` opens the FAT12 volume at
 //! `romfs.base_addr` (the OS `romfs` flash region that the USB drive shows),
+//! then the extra drive when the firmware has one (`romfs.Image.extra`),
 //! lists up to `max_candidates` `.gb`/`.gbc` files and checks each header;
 //! `select` maps the chosen file's cluster chain and hands the core a
 //! `core.Rom` built from one flash pointer per 512-byte sector, so the ROM is
@@ -102,19 +103,29 @@ pub fn scan() void {
 }
 
 fn scan_drive() void {
-    const vol = romfs.Volume.open_badge() catch |e| {
-        scan_failure = @errorName(e);
-        return;
-    };
-    var entries: [max_candidates]romfs.Entry = undefined;
-    candidate_count = @min(vol.find(&.{ "gb", "gbc" }, &entries), max_candidates);
-    if (candidate_count == 0) scan_failure = "no ROM file";
-    for (entries[0..candidate_count], candidates[0..candidate_count]) |e, *c| {
-        c.* = .{ .entry = e };
-        check(&vol, c);
-        if (c.playable) playable_count += 1;
+    // The badge drive's error is the one to show; a missing extra drive is
+    // normal (stock firmware).
+    var badge_err: ?[]const u8 = null;
+    var d: u8 = 0;
+    while (d < romfs.drive_count and candidate_count < max_candidates) : (d += 1) {
+        const vol = romfs.Volume.open_drive(d) catch |e| {
+            if (d == 0) badge_err = @errorName(e);
+            continue;
+        };
+        var entries: [max_candidates]romfs.Entry = undefined;
+        const n = vol.find(&.{ "gb", "gbc" }, entries[0 .. max_candidates - candidate_count]);
+        for (entries[0..n], candidates[candidate_count..][0..n]) |e, *c| {
+            c.* = .{ .entry = e };
+            check(&vol, c);
+            if (c.playable) playable_count += 1;
+        }
+        candidate_count += n;
     }
-    if (candidate_count != 0 and playable_count == 0) scan_failure = "none playable";
+    if (candidate_count == 0) {
+        scan_failure = badge_err orelse "no ROM file";
+    } else if (playable_count == 0) {
+        scan_failure = "none playable";
+    }
 }
 
 /// Validate one file by its header (Pan Docs "The Cartridge Header"). Size
@@ -165,7 +176,7 @@ fn default_drive() ?core.Rom {
 pub fn select(i: usize) ?core.Rom {
     if (i >= candidate_count or !candidates[i].playable) return none("not playable");
     const c = &candidates[i];
-    const vol = romfs.Volume.open_badge() catch |e| return none(@errorName(e));
+    const vol = romfs.Volume.open_drive(c.entry.drive) catch |e| return none(@errorName(e));
     const m = vol.map(c.entry, &clusters) catch |e| return none(@errorName(e));
     const size: u32 = @min(m.size, core.rom_mod.max_bytes);
     const n: usize = (size + romfs.sector_size - 1) / romfs.sector_size;

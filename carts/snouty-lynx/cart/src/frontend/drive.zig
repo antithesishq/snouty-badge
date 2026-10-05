@@ -7,8 +7,9 @@
 //!
 //! A module root (`@import("drive")`) imported by romsrc.zig and by the
 //! host tests (tests/drive_unit.zig): it sees only `core` and `romfs`, no
-//! cart-api. The badge passes `romfs.Image.badge()` as `image`, the tests
-//! a fixture image in memory (`romfs.Image.truncated_test`).
+//! cart-api. The badge passes `romfs.Image.badge()` as `image` (and `add`s
+//! the extra drive, `romfs.Image.extra()`, on firmware that has one), the
+//! tests a fixture image in memory (`romfs.Image.truncated_test`).
 //!
 //! The caller owns the cluster table (`romfs.max_clusters` u16, 5 KB) and
 //! the `Source`: `scan` reuses the table for every file, `open` fills it
@@ -73,14 +74,20 @@ pub fn scan(image: romfs.Image, clusters: []u16) Scan {
     var s: Scan = undefined;
     s.count = 0;
     s.playable_count = 0;
-    s.err = null;
-    const vol = romfs.Volume.open(image) catch |e| {
-        s.err = e;
-        return s;
-    };
+    s.err = add(&s, image, 0, clusters);
+    return s;
+}
+
+/// Append another drive's Lynx files to `s` (up to `max_candidates` in
+/// all), their entries tagged `drive` so the caller opens each from
+/// `romfs.Image.drive(c.entry.drive)`. Returns the volume's error, adding
+/// nothing, when it does not open.
+pub fn add(s: *Scan, image: romfs.Image, drive: u8, clusters: []u16) ?romfs.Error {
+    var vol = romfs.Volume.open(image) catch |e| return e;
+    vol.drive = drive;
     var entries: [max_candidates]romfs.Entry = undefined;
-    const n = vol.find(&extensions, &entries);
-    for (entries[0..n], s.candidates[0..n]) |e, *c| {
+    const n = vol.find(&extensions, entries[0 .. max_candidates - s.count]);
+    for (entries[0..n], s.candidates[s.count..][0..n]) |e, *c| {
         c.* = .{ .entry = e };
         const m = vol.map(e, clusters) catch |err| {
             c.map_err = err;
@@ -89,8 +96,8 @@ pub fn scan(image: romfs.Image, clusters: []u16) Scan {
         c.layout = layout_of(&m);
         if (c.layout.verdict == .ok) s.playable_count += 1;
     }
-    s.count = @intCast(n);
-    return s;
+    s.count += @intCast(n);
+    return null;
 }
 
 /// `core.cart.parse` of a mapped file.
