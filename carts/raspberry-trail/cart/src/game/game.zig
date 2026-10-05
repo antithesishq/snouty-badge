@@ -251,6 +251,9 @@ pub const Game = struct {
     line_tag: Tag = .plain,
     /// `hud.date_text` storage for the arrival date ("AUGUST 3 1847").
     hud_date: [24]u8 = undefined,
+    /// Tests: RND(-1) values to return before the generator's (consumed
+    /// one per draw). Empty in play.
+    rnd_script: []const f64 = &.{},
 
     pub fn printed(g: *const Game) []const Line {
         return g.lines[0..g.n_lines];
@@ -292,6 +295,18 @@ pub fn answer(g: *Game, a: Answer) void {
 pub fn answer_value(g: *Game, x: f64) void {
     std.debug.assert(g.prompt.kind == .number or g.prompt.kind == .choice);
     resume_with(g, .{ .num = x });
+}
+
+/// Tests and bench setups: clears the output and runs the listing from
+/// `line`, which must be one of the port's jump targets (a prong of `run`,
+/// e.g. 1230 a new turn, 1750 the turn's status, 2720 the eating check,
+/// 3550 the events, 4710 the mountains, 6300 an illness), with `g.v` as
+/// the caller left it, to the next INPUT or STOP.
+pub fn run_at(g: *Game, line: u16) void {
+    g.n_lines = 0;
+    g.text_len = 0;
+    g.line_open = false;
+    run(g, line, null);
 }
 
 /// Appends a printed line (helper for the engine).
@@ -414,6 +429,11 @@ fn resume_with(g: *Game, in: In) void {
 
 fn rnd(g: *Game) f64 {
     g.draws += 1;
+    if (g.rnd_script.len > 0) {
+        const x = g.rnd_script[0];
+        g.rnd_script = g.rnd_script[1..];
+        return x;
+    }
     return g.rng.rnd();
 }
 
