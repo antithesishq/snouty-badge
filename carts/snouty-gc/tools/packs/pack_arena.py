@@ -16,8 +16,7 @@ extras applied after build_arena wrote its files:
 The mover records (the Sweeper row, `mover`) name the pack's MOVER_CELL as
 their sprite. Validation: build_arena's (every pad and node on floor, the
 graph connected with and without jumps, the jumps clean at speed and
-falling short at a crawl), the mover's cycle, the props off the floor,
-and the slot budget (blob + props cells + mover cell).
+falling short at a crawl), the mover's cycle, the props off the floor.
 """
 from __future__ import annotations
 
@@ -120,14 +119,11 @@ def build(mod, pack, ts, root, rev, errs, report):
         props.append(dict(kind=kind, cell=mod.PROP[kind], x=int(x), y=int(y), radius=0))
     blob = (root / f"{ar.stem}_arena.bin").read_bytes()
     cells = {p["cell"] for p in props} | ({mod.MOVER_CELL} if movers else set())
-    need = len(blob) + len(cells) * C.PROP_W * C.PROP_H // 2
-    if need > 5792:
-        errs.append(f"{ar.stem}: arena blob {len(blob)} + {len(cells)} cells = {need} B, over 5792")
     if len(props) > 24:
         errs.append(f"{ar.stem}: {len(props)} props, over 24")
     if report:
         print(f"  arena {ar.stem} ({ar.name}): blob {len(blob)} B, {len(props)} props in {len(cells)} cells "
-              f"(slot {need} of 5792 B), {movers} mover(s), map {len(packed)} B")
+              f"{movers} mover(s), map {len(packed)} B")
     return dict(stem=ar.stem, name=ar.name, tmap=tmap, props=props, ar=ar, crusts=[], trk=None,
                 files={p.name: n for p, n in sizes.items()})
 

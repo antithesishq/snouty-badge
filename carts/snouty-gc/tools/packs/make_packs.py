@@ -79,7 +79,6 @@ PROP_OFF, PROP_CLEAR = 20, 10     # default offset beyond the road edge; footpri
 CRUST_WARN, CRUST_PIT_TICKS = 24, 300
 K_CRUST = 4                       # world.HazardKind.crust
 PROPS_MAX = 24                    # docs/PACKS.md: props records per track
-SLOT_FREE, CELL_BYTES = 5792, C.PROP_W * C.PROP_H // 2   # the pack slot after the fixed parts
 
 
 def load_pack(name):
@@ -289,14 +288,11 @@ def build_one(pack, mod, ts, src, errs, out, review, report):
     for n, d in files.items():
         (out / n).write_bytes(d)
     cells_used = {p["cell"] for p in props} | ({mod.MOVER_CELL} if any(k == bt.K_MOVER for k, *_ in trk.hazards) else set())
-    need = len(cells_used) * CELL_BYTES
-    if need > SLOT_FREE:
-        errs.append(f"{src.stem}: {len(cells_used)} props cells ({need} B) over the slot's {SLOT_FREE}")
     if report:
         print(f"track {src.stem} ({src.name}): lap {trk.length:.0f} px, floor {variant}, clearance {clear:.0f}, "
               f"min radius {r:.0f}, {len(trk.hops)} ramp pit(s), {len(crates)} crates, "
-              f"{len(trk.hazards)} hazards, {len(crusts)} crust bands, {len(props)} props in {len(cells_used)} cells "
-              f"(slot {need} of {SLOT_FREE} B), map {len(packed)} B")
+              f"{len(trk.hazards)} hazards, {len(crusts)} crust bands, {len(props)} props in {len(cells_used)} cells, "
+              f"map {len(packed)} B")
     return dict(trk=trk, tmap=tmap, props=props, crusts=crusts, files=files, name=src.name, stem=src.stem,
                 laps=3, hazards=[(k, jm) for k, jm, *_ in trk.hazards])
 

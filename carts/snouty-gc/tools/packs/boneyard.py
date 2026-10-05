@@ -568,8 +568,8 @@ class Hangar18Arena(PA.PackArena):
     middle (the pit); its rim is a ring ramp, kickers along all four faces;
     the fallen roof and wreckage make the corner islands; broken wings lie
     across the east and west lanes as ramps over the gaps they tore in the
-    floor (gap jumps); the loose cowling rolls along the north lane. 20 nav
-    nodes (a 2 KB blob): room for four props cells."""
+    floor (gap jumps); the loose cowling rolls along the north lane. 18 nav
+    nodes (a 1.9 KB blob)."""
     name, stem, background = "HANGAR 18", "hangar_18", "desert"
     GAP_ROWS = (41, 46)    # the wing gaps across the side lanes: rows 41..45
 

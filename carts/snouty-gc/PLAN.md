@@ -2163,6 +2163,55 @@ deferred questions from L94.
 
 ### M7 status
 
+**Track B (pack content, branch gc/packs).** Both packs are built,
+packaged and host-tested. `tools/packs/make_packs.py` runs the built-in
+rasterizer (build_tracks.py) with a `LEAGUES` entry per pack registered at
+run time, and runs build_arena.py with a `PackArena` subclass per pack
+(`tools/packs/pack_arena.py`). It post-processes each map (per-track road
+floors, centerline dashes, wing shadows, sand drifts, the furrow, crust
+bands), sets the movers' sprite cell, and places props from the track
+sources (`tools/packs/src/<pack>/*.track`). Then it writes
+`assets/packs/<pack>/` (the `.bin` set, `props.png`, a generated
+`pack.toml`), runs build_pack.py into `<FILE>.GCP`, and copies the result
+to `cart/src/gen/packs/` for the host tests (never the badge cart). All
+art is drawn in code (`tools/packs/dead_mall.py`, `boneyard.py`): a
+palette, the shared 128-tile layout with the pack's own floors in the free
+slots and the crust tiles 121..123, a two-layer horizon, and a props sheet
+of 8 cells of 32x48 (15 colours).
+
+- **DEADMALL.GCP**, 30,100 B: ANCHOR STORE (carpet; mannequin rows and
+  racks; the scrubber mover, wet floor), FOOD COURT (food-court tile; the
+  atrium as an open edge, the stalled-escalator ramp, a ceiling-tile crust
+  band, a sparking breaker), PARKING DECK (the roof deck; two gap-jump
+  ramps, an open edge, rain slick, a sparking lot-light panel). Arena: THE
+  FOOD COURT (the dry fountain with four escalator kickers, kiosk and
+  planter islands, escalator gap jumps across the side lanes, the scrubber
+  circling the carousel corner).
+- **BONEYARD.GCP**, 33,104 B: MOTHBALL MILE (runway; wing shadows, jet
+  blast, the loose cowling), WING ROW (taxiway; three passes with pinch
+  points under the tails, two jet blasts, drifts), REENTRY FIELD (a ramp
+  off the shuttle's wing, the furrow as an open edge and as crust, the
+  booster forest, the station-ring turn). Arena: HANGAR 18 (the saucer in
+  its crater with its rim as a ring of kickers, wings as gap jumps across
+  the side lanes, roof-sheet islands, the cowling on the north lane).
+- **Tests** (`cart/src/pack_content_test.zig`, through `pack.load_bytes`;
+  `tools/packs/test_packs.py` for determinism and the files):
+  - The autopilot finishes 3 laps on every track with no fall (combat
+    off) on WORKSTATION, MAINFRAME and THIN CLIENT. SNOUTY's finish ticks:
+    Anchor Store 4,888, Food Court 5,645, Parking Deck 4,954, Mothball
+    Mile 4,984, Wing Row 6,151, Reentry Field 5,244.
+  - Six AI crews in a combat race finish 3 laps on every track (3 seeds
+    each, by ticks 6,700 to 8,770). Nobody is stuck (slowest stall 127
+    ticks). 0 to 1 falls a race.
+  - Both arenas' navigation fields reach every node from every pad, with
+    and without the jumps.
+  - Six seeded 3-life rounds per arena all end by lives. THE FOOD COURT
+    averages 144 s a round with 70 AI-on-AI eliminations; HANGAR 18
+    averages 176 s with 60 (The Sandbox: 126 s, 79).
+  - A pack race is deterministic.
+- `tools/check.sh` passes at the merged head (build, test, float,
+  tracks, preview, bench).
+
 
 ## Deferred questions
 
@@ -2928,3 +2977,41 @@ L100. **In-place sections**: with 8 KB for all of M7 (code included) there
     per-track props budget any more (6 cells of 32x48 on a race track and
     3 to 4 in an arena are fine, as are 16). Risk: a host writing to the
     drive mid-race (as with the emulators).
+L130. **Track B: per-track floors.** A pack has one tileset, so each track
+    picks a road floor by remapping the rasterizer's road tiles (SURF, the
+    seams, the dot, the ruts) onto the free slots 28..31, 89..91, 124..127
+    (`ROAD_VARIANTS`). Dead Mall: terrazzo (the arena's outer ring), carpet,
+    food-court tile, parking deck. The Boneyard: runway, taxiway. The
+    wallpaper beyond the walls is chosen per track the same way
+    (`background`).
+L131. **Crust numbers.** The bands are 16 px across the road with `warn`
+    24, not docs/PACKS.md's default 12. A 24 px car takes about 16 ticks to
+    cross a 16 px band at 2.5 px/tick, so with 12 the car that cracked the
+    band fell through its own crack. The test caught it on FOOD COURT.
+    The next car, about a second behind, still drops.
+L132. **Props are decoration.** Every race-track prop stands off the
+    drivable floor (the generator checks a 10 px footprint), so the AI
+    needs no new sense. No solid props are placed: one on the road would
+    be a wall the centerline driver doesn't steer round. Solid props stay
+    available (`solid kind x y radius` in a track source).
+L133. **Movers share a props cell.** Dead Mall's 8 cells hold the 8 props
+    of the brief, so the runaway scrubber's sprite is the security robot's
+    cell (drawn as a maintenance bot with a scrubber skirt). In THE FOOD
+    COURT the "carousel" is the scrubber's diagonal round of the NE corner
+    (a mover between two service doors), not a turning ride. SPEC 19.7's
+    stalled-escalator prop and wet-floor cone are not in the sheet: the
+    escalators are ramp and kicker tiles, and the wet floor is a slick tile.
+L134. **PARKING DECK** is the menu name of SPEC's Parking Structure: 17
+    characters don't fit the 16-character name field. Its horizon is the
+    pack's atrium, since the pack has one horizon.
+L135. **Arena graphs.** THE FOOD COURT and HANGAR 18 keep the Sandbox's
+    4 islands, its 6 spawn and 8 crate pads, and its pit with four kickers,
+    but drop its fences. Each adds one gap jump per side lane: 18 nodes, 8
+    one-way jumps, a 1.9 KB blob. The first FOOD COURT, with only the
+    fountain's kickers, ran rounds of 176 to over 480 s; the gap jumps
+    brought them to 99 to 191 s.
+L136. **The furrow and the saucer are floor art.** The Reentry Field's
+    furrow is pit tiles painted over the wallpaper along a polyline (with
+    a scorched lip), passing under the crust band. Hangar 18's saucer is
+    hull plates over the crater's pit tiles. Both keep their attributes,
+    so the sim sees an ordinary pit.

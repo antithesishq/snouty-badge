@@ -695,8 +695,8 @@ class FoodCourtArena(PA.PackArena):
     escalators are its four kickers, kiosk and planter islands sit at the
     diagonals, and the scrubber circles the old carousel corner (NE). Lit by
     neon and rack LEDs under the skylight. More stalled escalators cross the
-    side lanes over light wells (gap jumps). 18 nav nodes (a 1.9 KB blob) so
-    the slot keeps room for four props cells."""
+    side lanes over light wells (gap jumps). 18 nav nodes (a 1.9 KB blob):
+    the Sandbox's layout without its fences, one gap jump a side lane."""
     name, stem, background = "THE FOOD COURT", "the_food_court", "food"
 
     def __init__(self):
