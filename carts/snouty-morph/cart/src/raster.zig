@@ -33,18 +33,22 @@ const Edge = struct {
     y: i32,
     step: i32,
 
+    /// In f32 (one divide on the FPU instead of a software 64-bit one);
+    /// a pure function of (p, q, x0), so two triangles sharing an edge
+    /// still step it identically.
     fn init(p: Point, q: Point, x0: i32) Edge {
-        const dx: i64 = q.x - p.x; // > 0 by the caller
-        const dy: i64 = q.y - p.y;
-        const xc: i64 = @as(i64, x0) * 16 + 8 - p.x;
-        const y = (@as(i64, p.y) << 12) + @divFloor((xc * dy) << 12, dx);
-        const step = @divFloor(dy << 16, dx);
-        return .{ .y = clamp_i32(y), .step = clamp_i32(step) };
+        const dx: f32 = @floatFromInt(q.x - p.x); // > 0 by the caller
+        const dy: f32 = @floatFromInt(q.y - p.y);
+        const slope = dy / dx;
+        const xc: f32 = @floatFromInt(x0 * 16 + 8 - p.x);
+        const y = @as(f32, @floatFromInt(p.y)) * 4096.0 + xc * slope * 4096.0;
+        const step = slope * 65536.0;
+        return .{ .y = clamp_f(y), .step = clamp_f(step) };
     }
 };
 
-inline fn clamp_i32(v: i64) i32 {
-    return @intCast(std.math.clamp(v, -(1 << 30), 1 << 30));
+inline fn clamp_f(v: f32) i32 {
+    return @intFromFloat(std.math.clamp(v, -1073741824.0, 1073741824.0));
 }
 
 inline fn col_ceil(x: i32) i32 {
@@ -110,9 +114,9 @@ pub fn fill_gouraud(fb: anytype, a: Point, b: Point, c: Point, la: f32, lb: f32,
         .flat = ramp[0],
         .gouraud = true,
         .a = a,
-        .la = @intFromFloat(la * 65536.0),
-        .gx = @intFromFloat(std.math.clamp(gx, -lim, lim)),
-        .gy = @intFromFloat(std.math.clamp(gy, -lim, lim)),
+        .la = @as(i32, @intFromFloat(la * 65536.0)),
+        .gx = @as(i32, @intFromFloat(std.math.clamp(gx, -lim, lim))),
+        .gy = @as(i32, @intFromFloat(std.math.clamp(gy, -lim, lim))),
         .ramp = ramp,
     });
 }

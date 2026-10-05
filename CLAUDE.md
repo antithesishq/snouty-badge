@@ -25,7 +25,9 @@ its design and milestone status.
   combat racer forked from snouty-zero's engine), `snouty-cycles` (Tron light
   cycles against AI programs),
   `paperclips` (a port of Universal Paperclips, with the authors'
-  permission).
+  permission), `snouty-morph` (a demoscene mesh that follows and deforms
+  with your hand over the TMF8820 time-of-flight sensor; `lib/tof_pose.zig`
+  is the hand pose from its 3x3 zones, docs/TOF.md).
 - `build.zig`, `build.zig.zon`, `build/common.zig` — the one Zig package.
   Shared options (`-Dcart`, `-Dcart-mode`, `-Ddebug_overlay`, `-Dsound`, `-Drom`, ...)
   and the shared `test` and `check-float` steps are declared here and passed
@@ -110,7 +112,7 @@ Reference carts: `sycl-badge/showcase/carts/dvd` (simplest asset pipeline),
 zig build                      # every cart, from the repository root
 zig build -Dcart=snouty-maze   # one cart
 zig build test                 # every cart's host tests and lib/'s
-zig build check-float          # soft-float check (reflections, maze, flyover, demosnout, zero, gc)
+zig build check-float          # soft-float check (reflections, maze, flyover, demosnout, zero, gc, morph)
 ```
 
 Outputs `zig-out/firmware/<binary>.uf2`, `.elf` and `zig-out/bin/<binary>.wasm`

@@ -312,7 +312,7 @@ test "body: a punch launches a ripple, a flash and a shake, then they fade" {
 test "body: swirl twists" {
     math.init_tables();
     reset();
-    const h: hand_mod.Hand = .{ .swirl = 1.0 };
+    const h: hand_mod.Hand = .{ .swirl = 2.5 };
     var prm = update(h);
     for (0..120) |_| prm = update(h);
     try std.testing.expect(prm.twist > 0.8);

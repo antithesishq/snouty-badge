@@ -48,7 +48,7 @@ pub const travel_x: f32 = 1.8;
 pub const travel_y: f32 = 1.3;
 pub const follow_gain: f32 = 0.6;
 /// Depth travel: hand z 1 (near) brings the mesh this much closer.
-pub const travel_z: f32 = 1.1;
+pub const travel_z: f32 = 0.9;
 /// Follow spring (rad/s; critically damped).
 pub const follow_omega: f32 = 9.0;
 /// Hand tilt to mesh tilt.
