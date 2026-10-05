@@ -99,6 +99,7 @@ class Result:
         self.audio = None       # audio.Consumer.summary() once the cart started streaming
         self.audio_frames = []  # (frame, queued at its end, consumed, underrun) once started
         self.audio_stream = None  # the mixed samples (keep_audio)
+        self.stack = None       # --stack: dict peak, free_ram, limit (bytes / address)
 
 
 def poke_value(elf, spec):
@@ -118,7 +119,7 @@ def poke_value(elf, spec):
 
 def run(elf, frames, controls, pokes=(), seed=1, png_every=0, max_frame_ms=1000.0,
         on_trace=None, log=None, flash_cycles=0, romfs=None, flash_read_cycles=0, lcd=False,
-        keep_audio=False):
+        keep_audio=False, stack=False):
     """Emulate `frames` updates. controls: list of u16 per frame.
 
     A RAM cart (cart_ram.ld) is loaded into SRAM and started at _start with
@@ -330,6 +331,14 @@ def run(elf, frames, controls, pokes=(), seed=1, png_every=0, max_frame_ms=1000.
         b0, b1 = elf.syms['__bss_start__'][0], elf.syms['__bss_end__'][0]
         if b1 > b0:
             mu.mem_write(b0, bytes(b1 - b0))
+    # --stack: paint the RAM cart's free RAM (above .bss, below the stack
+    # top) and find the lowest byte the run changed: the stack's high-water
+    # mark, assuming nothing else uses that RAM (true for a cart without a
+    # heap or arena; a cart that lends that RAM out reads larger).
+    paint = None
+    if stack and not res.xip and '__bss_end__' in elf.syms:
+        paint = (elf.syms['__bss_end__'][0] + 7) & ~7
+        mu.mem_write(paint, STACK_PAINT * (OS.STACK_TOP - paint))
     fake.init_ipc()
     fake.set_controls(0)
     for name, addr, width, v in pokes:
@@ -461,10 +470,18 @@ def run(elf, frames, controls, pokes=(), seed=1, png_every=0, max_frame_ms=1000.
         if audio.bad:
             res.warnings.append(f"audio ring words out of range in {audio.bad} mixes (first "
                                 f"{audio.bad_detail}); mixed as silence, tail untouched")
+    if paint is not None:
+        m = bytes(mu.mem_read(paint, OS.STACK_TOP - paint))
+        low = len(m) - len(m.lstrip(STACK_PAINT))
+        res.stack = dict(peak=OS.STACK_TOP - (paint + low), free_ram=OS.STACK_TOP - paint,
+                         limit=elf.syms.get('__stack_limit__', (None,))[0])
     w = neopixel_warning(res.frames)
     if w:
         res.warnings.append(w)
     return res
+
+
+STACK_PAINT = b'\xa5'
 
 
 def neopixel_warning(frames):

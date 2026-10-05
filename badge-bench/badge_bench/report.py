@@ -217,6 +217,11 @@ def text(meta, res, st, hot, every, top, show_symbols):
         L.append(f"volume: {len(res.volumes)} CART_VOLUME messages, last {res.volumes[-1][1]:.2f}")
     if res.audio:
         L.extend(audio_lines(res.audio))
+    if res.stack:
+        sk = res.stack
+        lim = (f", the linker reserves {OS.STACK_TOP - sk['limit']:,}" if sk['limit'] else "")
+        L.append(f"stack: peak {sk['peak']:,} bytes below the stack top over the run (start-up "
+                 f"included){lim}; {sk['free_ram']:,} bytes from .bss end to the stack top")
     if res.traces:
         L.append(f"traces: {len(res.traces)} CART_TRACE messages (see above / --json)")
     if res.unknown_msgs:
