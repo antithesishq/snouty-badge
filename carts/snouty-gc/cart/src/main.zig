@@ -39,15 +39,16 @@ const stress = @import("stress.zig");
 const link = @import("link");
 const net = @import("net.zig");
 const link_ui = @import("link_ui.zig");
+const pickup_page = @import("pickup_page.zig");
 
 comptime {
     cart.export_start_code();
 }
 
 /// Screens (SPEC 8.1; the numbers are debug_screen's, `menu` came in M3,
-/// `lobby` (the LINK screen) in M4; the link race's racer select is
-/// `select` with `select.link` set).
-pub const Screen = enum(u8) { splash, title, select, race, pause, results, menu, lobby };
+/// `lobby` (the LINK screen) in M4, `pickups` (the menu's PICKUPS page)
+/// after it; the link race's racer select is `select` with `select.link` set).
+pub const Screen = enum(u8) { splash, title, select, race, pause, results, menu, lobby, pickups };
 var screen: Screen = .splash;
 /// Why the race runs: a Quick Race, the attract demo, the render stress
 /// scene, or GARBAGE COLLECTION (M3; the numbers are debug_mode's).
@@ -252,6 +253,7 @@ pub fn update() void {
         .pause => pause_frame(),
         .results => results_frame(),
         .menu => menu_frame(),
+        .pickups => pickups_frame(),
     }
     engine_cue();
     render_us = @truncate(cart.micros_since_boot() - t0);
@@ -330,9 +332,27 @@ fn menu_frame() void {
                 toggle_sound();
                 sound.menu_confirm();
             },
+            .pickups => {
+                sound.menu_confirm();
+                go(.pickups);
+                pickup_page.draw(frame);
+                return;
+            },
         }
     }
     menu.draw_main(&main_list, sound.enabled, link_ok(), link_note, frame);
+}
+
+/// The menu's PICKUPS page (pickup_page.zig): the arrows browse, B goes
+/// back to the menu on its PICKUPS row.
+fn pickups_frame() void {
+    if (pickup_page.update() == .back) {
+        to_menu();
+        draw_backdrop();
+        menu.draw_main(&main_list, sound.enabled, link_ok(), link_note, frame);
+        return;
+    }
+    pickup_page.draw(frame);
 }
 
 fn menu_nav(list: *menu.List) void {
@@ -1100,7 +1120,7 @@ comptime {
             "debug_start_gc",       "debug_start_attract", "debug_gc_marked",      "debug_gc_sweeps",
             "debug_gc_collected",   "debug_gc_survivor",   "debug_alive",          "debug_hazard_state",
             "debug_me",             "debug_link_view",     "debug_link_notice",    "debug_link_state",
-            "debug_linked",
+            "debug_linked",         "debug_pickup_cursor",
         }) |name| @export(&@field(@This(), name), .{ .name = name });
     }
 }
@@ -1150,7 +1170,7 @@ fn debug_rank() callconv(.c) u32 {
     return w.cars[follow].rank;
 }
 /// 0 splash, 1 title, 2 racer select, 3 race, 4 pause, 5 results, 6 the
-/// main menu, 7 the LINK lobby.
+/// main menu, 7 the LINK lobby, 8 the PICKUPS page.
 fn debug_screen() callconv(.c) u32 {
     return @backingInt(screen);
 }
@@ -1293,6 +1313,10 @@ fn debug_drawn() callconv(.c) u32 {
 }
 fn debug_gathered() callconv(.c) u32 {
     return sprites.last_gathered;
+}
+/// The PICKUPS page's cursor (a world.Pickup value).
+fn debug_pickup_cursor() callconv(.c) u32 {
+    return pickup_page.cursor;
 }
 /// The racer the select shows.
 fn debug_select_racer() callconv(.c) u32 {

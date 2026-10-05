@@ -43,8 +43,13 @@ Dumps: Landfill Loop, Monitor Dunes, Cathode Flats, each with the
 Sweeper; the Runoff: Salt Pan Sprint, Outflow Canyon, Coolant Basin, with
 exhaust vents). The title (SNOUTY GC over the Dumps horizon, the six
 portraits along the bottom, PRESS START; 10 s idle starts the attract
-demo) leads to the **main menu**: QUICK RACE, GARBAGE COLLECTION, LINK
-(M4, below), SOUND. A picks, B goes back. Then the
+demo) leads to the **main menu**: QUICK RACE, GARBAGE COLLECTION,
+PICKUPS, LINK (M4, below), SOUND. A picks, B goes back. **PICKUPS** is a
+reference page: the 15 pickups' icons in a grid, a row per roll tier
+(Up/Down/Left/Right move the coral cursor and wrap), and under it the
+pickup's name, three lines on what it does and one on who tends to roll
+it; B goes back to the menu, and the cursor stays where it was until the
+cart stops. Then the
 racer select; Down to the track row, where Left/Right cycle the six
 tracks and the panel shows the track's name, league, the mode's rule,
 its hazards and its outline. **GARBAGE COLLECTION**: `SWEEP n` top left
@@ -219,7 +224,7 @@ a taken racer), then a Quick Race with the link notices forced over it
 
 ```sh
 node ../../tools/preview.mjs ../../zig-out/bin/snouty-gc.wasm --frames 470 --every 2 --start-skip 12 \
-    --press START:2-2 --press START:10-10 --press DOWN:14-14,DOWN:16-16 --press A:24-24 \
+    --press START:2-2 --press START:10-10 --press DOWN:14-14,DOWN:16-16,DOWN:18-18 --press A:24-24 \
     --call-at "75 debug_link_view:1" --call-at "130 debug_link_view:2" \
     --press RIGHT:150-150 --press DOWN:165-165 --press RIGHT:175-175,RIGHT:185-185 --press DOWN:200-200 \
     --press RIGHT:210-210 --press DOWN:225-225 --call-at "245 debug_link_view:3" --call-at "295 debug_link_view:4" \
@@ -230,12 +235,25 @@ node ../../tools/preview.mjs ../../zig-out/bin/snouty-gc.wasm --frames 560 --eve
 ```
 
 then `out/m4a` and `out/m4b` frames in that order into one directory and
-`make_gif.py --scale 2 --ms 50`. The pump-gap probe in badge-bench (from
+`make_gif.py --scale 2 --ms 50` (recorded before PICKUPS joined the
+menu, with two Downs to LINK). The pump-gap probe in badge-bench (from
 the repository root): `badge-bench/bench.sh zig-out/firmware/snouty-gc.elf
 --json --poke gc_pump_probe=1 --frames 3600 --script
 carts/snouty-gc/tools/scripts/m3_gc_race.json` (the `gc gaps:` traces in
 `bench.json`: the worst gap ending at each site, us: top, after the
 tick, horizon, floor, floor lines, sprites, HUD, after the HUD).
+
+The PICKUPS page preview (`docs/preview_pickups.gif`): the menu, Down
+twice and A, then the cursor walks all 15 pickups a second each, and B:
+
+```sh
+node ../../tools/preview.mjs ../../zig-out/bin/snouty-gc.wasm --frames 1010 --every 3 --start-skip 15 \
+    --press START:2-2 --press START:10-10 --press DOWN:30-30,DOWN:45-45 --press A:70-70 \
+    --press RIGHT:120-120,RIGHT:180-180,RIGHT:240-240,RIGHT:300-300,DOWN:360-360,LEFT:420-420,LEFT:480-480 \
+    --press LEFT:540-540,LEFT:600-600,LEFT:660-660,DOWN:720-720,LEFT:780-780,LEFT:840-840,LEFT:900-900 \
+    --press B:960-960 --out out/pickups/
+python3 ../../tools/make_gif.py out/pickups/ docs/preview_pickups.gif --scale 2 --ms 50
+```
 
 Input scripts in `tools/scripts/` (`tools/record_script.py [--track N]
 [--gc] --frames F --out ...` records the autopilot's drive through the M3
@@ -267,7 +285,8 @@ Debug exports (zero-argument wasm functions for `--dump-exports`,
 |---|---|
 | `debug_frame`, `debug_render_us` | frames since start; render time (0 in wasm) |
 | `debug_pixel_checksum` | sum of all framebuffer words |
-| `debug_screen` | 0 splash, 1 title, 2 racer select, 3 race, 4 pause, 5 results, 6 main menu |
+| `debug_screen` | 0 splash, 1 title, 2 racer select, 3 race, 4 pause, 5 results, 6 main menu, 7 LINK lobby, 8 PICKUPS page |
+| `debug_pickup_cursor` | the PICKUPS page's cursor (`world.Pickup`: 0 PREFETCH .. 14 ZERO-DAY) |
 | `debug_mode` | 0 quick race, 1 attract, 2 the render stress scene, 3 GARBAGE COLLECTION |
 | `debug_me` | the player's car (`debug_follow` differs in the attract demo and once a GC race has collected the player) |
 | `debug_gc_marked`, `debug_gc_sweeps`, `debug_gc_collected`, `debug_gc_survivor`, `debug_alive` | GARBAGE COLLECTION: the marked car (255 none), sweeps passed, collected bits, the survivor (255 none), cars still running |

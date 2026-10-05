@@ -21,4 +21,5 @@ test {
     _ = @import("gc_mode.zig");
     _ = @import("content_test.zig");
     _ = @import("net_test.zig");
+    _ = @import("panel_text_test.zig");
 }

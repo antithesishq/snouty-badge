@@ -26,8 +26,10 @@
 #            - the racer select (M1, M3 flow): Start, Start, A (QUICK RACE)
 #              opens it, Right x3 shows SYSADMIN, B goes back to the main
 #              menu, A, Left picks BOTNET and A races it;
-#            - the main menu (M3): Down, Down, A on LINK stays on the menu,
-#              Up, A opens GARBAGE COLLECTION's select, A races a GC race;
+#            - the main menu (M3): Down x3, A on LINK stays on the menu,
+#              Up x2, A opens GARBAGE COLLECTION's select, A races a GC race;
+#            - the PICKUPS page: Down x2, A on PICKUPS opens it, the arrows
+#              walk all 15 cells (wrapping), B goes back to the menu;
 #            - a GARBAGE COLLECTION race with the autopilot reaches the
 #              results with one car left;
 #            - the render stress scene (debug_stress) fills the depth list
@@ -155,9 +157,17 @@ if want preview; then
         --press A:80-80 --press LEFT:90-90 --press A:100-100 --at '95 debug_select_racer == 5' \
         --expect 'debug_screen == 3' --expect 'debug_mode == 0' --expect 'debug_follow == 5' \
         --dump-exports debug_screen,debug_follow || st=1
-    run_preview menu --frames 80 --press START:2-2 --press START:10-10 --press DOWN:14-14,DOWN:16-16 --press A:20-20 \
-        --at '30 debug_screen == 6' --press UP:32-32 --press A:40-40 --at '50 debug_screen == 2' --press A:60-60 \
+    run_preview menu --frames 80 --press START:2-2 --press START:10-10 --press DOWN:14-14,DOWN:16-16,DOWN:18-18 --press A:20-20 \
+        --at '30 debug_screen == 6' --press UP:32-32,UP:34-34 --press A:40-40 --at '50 debug_screen == 2' --press A:60-60 \
         --expect 'debug_screen == 3' --expect 'debug_mode == 3' --dump-exports debug_screen,debug_mode || st=1
+    run_preview pickups --frames 200 --press START:2-2 --press START:10-10 --press DOWN:14-14,DOWN:16-16 --press A:20-20 \
+        --at '25 debug_screen == 8' --at '25 debug_pickup_cursor == 0' \
+        --press RIGHT:30-30,RIGHT:34-34,RIGHT:38-38,RIGHT:42-42,DOWN:46-46,LEFT:50-50,LEFT:54-54,LEFT:58-58,LEFT:62-62 \
+        --press LEFT:66-66,DOWN:70-70,LEFT:74-74,LEFT:78-78,LEFT:82-82 \
+        --at '44 debug_pickup_cursor == 4' --at '48 debug_pickup_cursor == 9' --at '68 debug_pickup_cursor == 10' \
+        --at '72 debug_pickup_cursor == 14' --at '84 debug_pickup_cursor == 11' --press UP:90-90 --at '92 debug_pickup_cursor == 5' \
+        --press B:100-100 --at '105 debug_screen == 6' --press A:120-120 --at '125 debug_pickup_cursor == 5' \
+        --expect 'debug_screen == 8' --dump-exports debug_screen,debug_pickup_cursor || st=1
     run_preview gc --frames 9000 --call debug_start_gc:0 --call debug_set_autopilot:1 --until 'debug_screen == 5' \
         --expect 'debug_screen == 5' --expect 'debug_alive == 1' --expect 'debug_gc_survivor < 6' \
         --dump-exports debug_tick,debug_gc_sweeps,debug_gc_survivor || st=1
@@ -166,11 +176,11 @@ if want preview; then
         --call-at '1413 debug_effect:1' --press A:1307-1307,A:1312-1312,A:1332-1332,A:1337-1337 \
         --at '1301 debug_captcha > 100' --at '1360 debug_captcha == 0' --at '1420 debug_frozen > 60' \
         --at '1480 debug_forks >= 2' --dump-exports debug_forks || st=1
-    run_preview link --frames 200 --press START:2-2 --press START:10-10 --press DOWN:14-14,DOWN:16-16 --press A:20-20 \
+    run_preview link --frames 200 --press START:2-2 --press START:10-10 --press DOWN:14-14,DOWN:16-16,DOWN:18-18 --press A:20-20 \
         --at '30 debug_screen == 6' --at '30 debug_link_state == 0' --call-at '40 debug_link_view:2' --at '50 debug_screen == 7' \
         --press RIGHT:60-60 --call-at '70 debug_link_view:5' --at '80 debug_screen == 2' --press A:90-90 \
         --call-at '100 debug_link_view:0' --at '110 debug_screen == 7' --press B:120-120 --at '130 debug_screen == 6' \
-        --press UP:140-140,UP:142-142 --press A:150-150 --press A:170-170 \
+        --press UP:140-140,UP:142-142,UP:144-144 --press A:150-150 --press A:170-170 \
         --expect 'debug_screen == 3' --expect 'debug_linked == 0' --dump-exports debug_screen,debug_linked || st=1
     run_preview stress --frames 200 --call debug_stress:1 --expect 'debug_mode == 2' --expect 'debug_drawn == 64' \
         --expect 'debug_gathered > 64' --dump-exports debug_drawn,debug_gathered || st=1

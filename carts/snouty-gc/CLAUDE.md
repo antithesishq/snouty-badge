@@ -80,7 +80,12 @@ here: every forked file names its Zero source and commit on its first line.
   hazard hits, the KERNEL PANIC victim the attract camera cuts to.
 - `select.zig` (the racer select, SPEC 8.1; M3 the track row's panel;
   M4 `select.link`: the link select's `TAKEN`, ready marks and rules panel),
-  `menu.zig` (splash, title, main menu, the pause list), `roster_text.zig` (bios,
+  `menu.zig` (splash, title, main menu, the pause list; its hint lines in
+  `menu_text.zig`), `pickup_page.zig` (the menu's PICKUPS page: the
+  pickups' icons by tier, a cursor, what each does; screen `pickups`) and
+  `pickup_text.zig` (that page's words and grid moves, host-tested; keep
+  them true to `pickups.zig` and `tuning.zig` when a pickup changes),
+  `roster_text.zig` (bios,
   taunts, wrecked lines, weapon and pickup names, HUD liveries, stat
   bars), `stress.zig` (the render stress scene: `gc_stress` /
   `debug_stress`; `force_effect` behind the wasm `debug_effect`).
@@ -97,7 +102,9 @@ here: every forked file names its Zero source and commit on its first line.
   combat, the 20-race combat soak), `pickups_test.zig` (roll odds,
   crates, a scenario per pickup, AI policies, the pickup soak),
   `content_test.zig` (M3: hazards, bays, the AI's hazard sense, every
-  track's soak, GARBAGE COLLECTION and its soak, attract), `net_test.zig`
+  track's soak, GARBAGE COLLECTION and its soak, attract),
+  `panel_text_test.zig` (every menu hint and PICKUPS line fits the 152 px
+  panel: 18 characters; the page's grid, cursor and odds lines), `net_test.zig`
   (M4: two `Net`s and Worlds on `lib/link_virtual.zig`: link races in
   sync, loss, unplug, desync, pause, quit and rematch, CREWS), tests in
   `track.zig`, `hazards.zig`, `gc_mode.zig`, `fixed.zig`, `engine.zig`.
