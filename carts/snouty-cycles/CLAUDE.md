@@ -243,7 +243,15 @@ true`, HARDCORE `rubber = 4` (nothing else in sim), SPEED `speed_pct`.
   round. `ai.wrapping` is set from the World in `decide`, `avoid`,
   `flood` and `open_neighbours`.
 - `hash()`/`same_state` cover the new Cycle fields (`same_state`
-  compares whole Cycles).
+  compares whole Cycles). No new `World` field: the three new fields are
+  plain `Cycle` state (keyframed with the Cycle).
+- **Cost** (calibrated badge-bench worst / mean busy ms, autopilot T3,
+  seed 2, measured with a temporary modifier poke): no modifiers L1 5.63,
+  L6 6.84, L12 6.88 (M1: 5.68 / 7.05 / 7.13; play is pixel-identical);
+  WRAP L1 7.31, L6 9.44, L12 10.37 / 3.83 mean, attract frame 0 10.88;
+  WRAP + GAPS + SNAKE L1 7.57, L6 8.80, L12 9.50 / 4.67 mean. WRAP costs
+  more because the BFS passes, no longer stopped by a rim, run nearer
+  their unit caps (the caps hold: `ai` host test "budgets hold in WRAP").
 
 **What a rewind keyframe must hold (Track R)**: the grid (gap clears and
 SNAKE pops change it), each `Cycle` whole (now with `gap_rng`, `gap_in`,
