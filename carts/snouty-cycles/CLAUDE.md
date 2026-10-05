@@ -292,12 +292,18 @@ not bring back tail cells SNAKE cleared or gap cells (empty once left,
   `ai.reset_pool()`); the game replays `input_at(t)` to `target`. After
   the game changes the autopilot at the landing it calls `resave`.
 - **Determinism contract**: a replay is exact because the World depends
-  only on the Brains, the rules and the player's inputs. The autopilot
-  decides before the programs and spends the shared AI pool (M1's
-  order), so a replay re-runs its decision (`step_world(..., logged)`);
-  a human player never touches the pool. Anything else that changes a
-  program's or the World's behaviour must be in the World, a Brain or
-  `Aux`.
+  only on the Brains, the rules and the player's inputs. The programs
+  decide first and alone share the per-tick AI pool (`ai.decide`); the
+  autopilot decides after them with `ai.decide_apart`, from a pool of
+  its own (`ai.tuning.apart_pool`, capped at `apart_cap` less what the
+  programs spent on that tick), so nothing it does reaches a program
+  and the programs play the same for you and for the bot (M2.1; until
+  M2 the autopilot went first and drained the programs' pool). A
+  replay (`step_world(..., logged)`) puts the logged input in and runs
+  only the programs, for you and the autopilot alike; the autopilot's
+  Brain is not replayed, and the landing gives it a new one
+  (`finish_rewind`). Anything else that changes a program's or the
+  World's behaviour must be in the World, a Brain or `Aux`.
 - **Game flow** (`game.State` appended: 10 frozen, 11 rewind, 12
   options, 13 skirmish_setup, 14 round_over, 15 match_over): your derez
   with a snapshot -> `frozen` (20 ticks) -> `rewind` (retract

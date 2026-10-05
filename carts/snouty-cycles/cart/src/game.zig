@@ -716,24 +716,29 @@ pub const Game = struct {
     /// replay logged; `player` false once you have derezzed) and the
     /// programs. Returns the player's input (the history logs it).
     ///
-    /// The autopilot decides first and spends the AI's shared per-tick
-    /// pool before the programs (M1's order, which the ladder bot was
-    /// tuned with), so on a replay it decides again, from its keyframed
-    /// Brain and `autopilot_alt_until`, to leave the programs the same
-    /// pool; its answer equals the logged input. A human player never
-    /// touches the pool, so a replay of yours runs the programs alone.
+    /// The programs decide first and share the AI's per-tick pool alone:
+    /// the autopilot decides after them from a pool of its own
+    /// (`ai.decide_apart`), so the programs play the same whether you or
+    /// the autopilot ride (the ladder bot measures what a human faces).
+    /// On a replay the logged input goes in and the autopilot does not
+    /// decide: nothing it does reaches the World or the programs, and the
+    /// landing gives it a new Brain (`finish_rewind`), so a replay costs
+    /// what yours does.
     fn step_world(g: *Game, held: Buttons, pressed: Buttons, player: bool, logged: ?sim.Input) sim.Input {
         const w = &g.world;
         var in: [sim.max_cycles]sim.Input = @splat(.idle);
+        for (1..w.cfg.n_cycles) |i| in[i] = ai.decide(&g.brains[i], w, i);
         if (player and w.cycles[0].state == .alive) {
-            if (g.autopilot != 0) {
+            if (logged) |l| {
+                in[0] = l;
+            } else if (g.autopilot != 0) {
                 const b = &g.brains[0];
                 const tier = g.autopilot_tier();
                 if (b.tier != tier) b.* = brain(tier, tuning.autopilot_preset, b.rng.state);
                 if (g.autopilot == 2) b.mistake_permille = tuning.sloppy_permille;
                 if (w.tick < g.autopilot_alt_until) b.mistake_permille = tuning.alt_slip_permille;
-                in[0] = ai.decide(b, w, 0);
-            } else if (logged == null) {
+                in[0] = ai.decide_apart(b, w, 0);
+            } else {
                 if (dpad(pressed)) |d| {
                     in[0].press = .of(d);
                 } else if (g.resume_press) |d| {
@@ -743,9 +748,7 @@ pub const Game = struct {
                 in[0].boost = held.a;
                 in[0].brake = held.b;
             }
-            if (logged) |l| in[0] = l;
         }
-        for (1..w.cfg.n_cycles) |i| in[i] = ai.decide(&g.brains[i], w, i);
         w.step(in);
         if (g.sudden_death_tick == 0 and w.sudden_death_ring != 0) g.sudden_death_tick = w.tick;
         return in[0];

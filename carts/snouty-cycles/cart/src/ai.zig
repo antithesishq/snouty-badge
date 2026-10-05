@@ -92,6 +92,14 @@ pub const tuning = struct {
     /// Work units all programs on one World tick share (calibrated with
     /// badge-bench: PLAN.md status, M1 Track A).
     pub const tick_pool: i32 = 10000;
+    /// `decide_apart` (the autopilot riding for you): a pool of its own
+    /// each tick, as big as the programs' (so a T3 thinks early on a
+    /// quiet tick), but never more than `apart_cap` less what the
+    /// programs spent on that tick: a frame's AI work stays bounded, and
+    /// on a busy tick it defers to its last one like a program does.
+    /// 12000 keeps the bench's WRAP runs under 10.5 ms (PLAN M2.1 status).
+    pub const apart_pool: i32 = tick_pool;
+    pub const apart_cap: i32 = 12000;
     /// A decision starts before its last tick only if this many units of
     /// the pool would be left for programs whose last tick it is.
     pub const due_reserve: i32 = 2000;
@@ -340,6 +348,26 @@ pub fn decide(b: *Brain, w: *const sim.World, i: usize) sim.Input {
 /// keyframe, before the first `decide`).
 pub fn reset_pool() void {
     pool_world = null;
+}
+
+/// `decide` for a cycle that is not one of the programs (the autopilot):
+/// call it after every program's `decide` for the tick. It spends a pool
+/// of its own (`tuning.apart_pool`, less whatever the programs left
+/// short of `tuning.apart_cap`), so the programs play the same whether
+/// you or the autopilot ride, and nothing it does reaches them.
+pub fn decide_apart(b: *Brain, w: *const sim.World, i: usize) sim.Input {
+    const fresh = pool_world != w or pool_tick != w.tick;
+    const spent = if (fresh) 0 else tuning.tick_pool - pool_left;
+    const saved = .{ pool_world, pool_tick, pool_left };
+    defer {
+        pool_world = saved[0];
+        pool_tick = saved[1];
+        pool_left = saved[2];
+    }
+    pool_world = w;
+    pool_tick = w.tick;
+    pool_left = @min(tuning.apart_pool, tuning.apart_cap - spent);
+    return decide(b, w, i);
 }
 
 var pool_world: ?*const sim.World = null;
