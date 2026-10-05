@@ -30,9 +30,12 @@ here: every forked file names its Zero source and commit on its first line.
   `garage.zig` (the garage screen: portrait, turntable, slots, prices,
   the racers' reactions), `standings.zig` (the standings, league, unlock
   and end cards).
-- `net.zig` (M4): the lockstep over `lib/link.zig` (`Net(L)`: lobby,
-  input rings, packets, `step`, pause, peer-left hand-over, desync check,
-  `world_hash`); `docs/NET.md` is its protocol and how main drives it.
+- `net.zig` (M4): GC's lockstep (`Net(L)`: lobby, `step`, pause,
+  peer-left hand-over, desync check, `world_hash`), since the conversion
+  GC's names over the shared `lib/lockstep.zig` (root `docs/LOCKSTEP.md`;
+  `net.Game` is GC as lockstep's game); `docs/NET.md` is its protocol and
+  how main drives it. `net_m4.zig` is the M4 original, test only, for
+  `net_compat_test.zig` (the wire stays byte-identical to M4).
   `link_ui.zig` (M4): the LINK lobby screen, the race notices (`WAITING
   FOR PEER`, `PEER LEFT, AI DRIVING`), the `DESYNC` band. A link race
   pumps the link through the draw via `render.band_hook` /

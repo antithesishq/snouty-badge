@@ -16,14 +16,20 @@ tick with the same pair. Nothing else reaches `simulate`: no clock, no
 
 | File | What |
 |---|---|
-| `cart/src/net.zig` | `Net(L)`: lobby, input rings, packets, `step`, pause, peer-left hand-over, desync check, `world_hash` |
+| `cart/src/net.zig` | `Net(L)`: GC's names (`Rules`, `Pick`, `Race`, `world_setup`, `world_hash`, ...) over the shared `lib/lockstep.zig` (root `docs/LOCKSTEP.md`); `net.Game` is GC as lockstep's game: rules byte, racer picks, Start as the pause bit, the hand-over |
 | `cart/src/net_test.zig` | two `Net` + two `World`s on a `lib/link_virtual.zig` cable with byte loss and the 8-byte FIFO |
-| `carts/snouty-gc/build.zig` | `link` import for the cart module; `link_host` (link.zig + link_virtual.zig copied under one root) for the tests |
+| `cart/src/net_m4.zig` | test only: the M4 net.zig (90683be4, tag `snouty-gc/m4-hw`) verbatim |
+| `cart/src/net_compat_test.zig` | the wire is byte-identical to M4 (one scripted session on both stacks), an M4 badge and a converted one race in sync, a version-1 GC never races an M4 one |
+| `carts/snouty-gc/build.zig` | `link` and `lockstep` imports for the cart module; `link_host` (link.zig + link_virtual.zig copied under one root) and `lockstep` for the tests |
 
-`Net` is generic over the link: `net.Net(link.Badge)` in the cart
-(PIO2 on the badge, `.unavailable` in the wasm simulator), and a
-`link.Link(...)` over the virtual cable in the tests. It owns the link
-by value (`n.link`).
+Since the conversion (after M4) the lockstep itself lives in
+`lib/lockstep.zig`, extracted from M4's net.zig; this file still
+describes GC's protocol, which with one rules byte is lockstep's GC form
+unchanged. `Net` is generic over the link: `net.Net(link.Badge)` in the
+cart (PIO2 on the badge, `.unavailable` in the wasm simulator), and a
+`link.Link(...)` over the virtual cable in the tests. It owns the
+lockstep by value (`n.ls`), and the lockstep owns the link (`n.ls.link`);
+`n.ls.role`, `n.ls.left`, `n.ls.paused` and `n.ls.stats` are its fields.
 
 ## 2. Protocol
 
@@ -172,7 +178,8 @@ n = Net.init(link.Badge.init(.{}, net.app_id, cart.rand()));
 
 `n.state()` is one of `offline` (simulator: LINK shows `NO LINK IN
 SIMULATOR`, greyed), `searching` (`PLUG IN THE CABLE`), `wrong_cart`,
-`lobby`, `racing`, `waiting`, `peer_left`, `desync`.
+`wrong_version` (since the lockstep conversion: `WRONG VERSION / UPDATE
+BOTH BADGES`; the wasm `debug_link_view:7` fakes it), `lobby`, `racing`, `waiting`, `peer_left`, `desync`.
 
 **Pump** (`n.pump(cart.micros_since_boot())`) wherever LINK is in use:
 the lobby, the race, pause, results. Pump points in a race frame:

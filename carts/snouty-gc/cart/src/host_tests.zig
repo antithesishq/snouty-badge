@@ -24,4 +24,5 @@ test {
     _ = @import("career.zig");
     _ = @import("career_test.zig");
     _ = @import("panel_text_test.zig");
+    _ = @import("net_compat_test.zig");
 }

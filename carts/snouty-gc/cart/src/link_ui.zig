@@ -70,6 +70,13 @@ pub fn draw_lobby(v: *const View, cursor: u8, frame: u32) void {
             hud.centered("THEN LINK ON IT", 96, hud.grey);
             return hud.centered("B BACK", 116, hud.dim);
         },
+        .wrong_version => {
+            // The other badge runs another Snouty GC version (lockstep's
+            // G.version; docs/LOCKSTEP.md 4.7).
+            hud.centered("WRONG VERSION", y0, hud.coral);
+            hud.centered("UPDATE BOTH BADGES", y0 + pitch, hud.white);
+            return hud.centered("B BACK", 116, hud.dim);
+        },
         else => {
             // Searching (or a race state the lobby never shows).
             hud.centered("PLUG IN THE CABLE", y0, hud.white);

@@ -344,6 +344,7 @@ Debug exports (zero-argument wasm functions for `--dump-exports`,
 | `debug_screen` | 0 splash, 1 title, 2 racer select, 3 race, 4 pause, 5 results, 6 main menu, 7 LINK lobby, 8 garage, 9 standings, 10 CIRCUIT card, 11 PICKUPS page |
 | `debug_menu_row` | the main menu's cursor (0 QUICK RACE, 1 GARBAGE COLLECTION, 2 CIRCUIT, 3 PICKUPS, 4 LINK, 5 SOUND) |
 | `debug_menu_battle(v)` | 1: draw the main menu with a made-up BATTLE row after GARBAGE COLLECTION (the 7-row layout M6 needs; the cursor still walks the six real rows), 0: without |
+| `debug_link_view(k)` | a made-up LINK screen (the simulator's link is offline): 1 searching, 2 the host's lobby, 3 the guest's, 4 WRONG CART, 5 the host's select with both ready, 6 the guest's select (TAKEN), 7 WRONG VERSION; 0 the real one |
 | `debug_pickup_cursor` | the PICKUPS page's cursor (`world.Pickup`: 0 PREFETCH .. 14 ZERO-DAY) |
 | `debug_mode` | 0 quick race, 1 attract, 2 the render stress scene, 3 GARBAGE COLLECTION |
 | `debug_me` | the player's car (`debug_follow` differs in the attract demo and once a GC race has collected the player) |
