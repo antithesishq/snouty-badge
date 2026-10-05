@@ -377,6 +377,30 @@ The `Config` fields `wrap`, `snake_len` and `gaps` exist but are inert. Make eac
     - 1v1 tournaments (40 rounds): T1 v T0 33-6-1, T2 v T1 33-7, T3 v T2 22-18 (23-16-1 on layouts), T3 v T1 36-4.
     - Attract worst frames: 3x T3 6.95 ms, 4x T2 7.12, 4x T3 7.52. AI scratch is 34.9 KB.
 
+- 2026-10-05: **M2 done** (tag `snouty-cycles/m2`). The lead merged Track O
+  (modifiers), then Track R (rewind, SKIRMISH, OPTIONS), then R's fix for
+  the merge (`daf09a4d`: retract journals GAPS clears, so it undoes them
+  exactly).
+  - The only merge conflict was the cart `CLAUDE.md`; both sections are kept.
+    `levels.Options.snake_len` now reads `sim.tuning.snake_len`.
+  - Gate `tools/check.sh`: PASS on every step. That is 79 host tests,
+    including rewind exactness under SNAKE, GAPS and WRAP, alone and together.
+  - badge-bench, calibrated busy ms, worst:
+    - Default runs: toml 9.60 at frame 0, level 1 5.63, level 6 5.49,
+      level 12 6.90, SKIRMISH with 3 ASM programs 7.87. `--lcd` is equal.
+    - WRAP+GAPS+SNAKE: level 12 9.51, level 6 8.80.
+    - WRAP SKIRMISH, 3 ASM programs: 10.19.
+  - Ladder bot, options 0: every level passes; levels 4, 8 and 9 are 4 of 5.
+  - Ladder bot, options 28 (WRAP+GAPS+SNAKE): JAVA 3/5, RUST 3/5, ZIG 1/5,
+    the rest pass. The modifiers are an opt-in challenge, so this is not a gate.
+  - ELF `.text` 125,220, `.data` 176, `.bss` 140,188: about 259 KB of the
+    ~268 KB RAM window (307 KB less the 32 KB stack). Only ~8 KB is left
+    before M3's link code.
+  - **Finding from Track R:** M1's ladder bot ran its autopilot before
+    the programs, so it took most of each tick's shared AI pool. A human
+    faces programs at full strength; with the programs deciding first,
+    PROD cleared 0 of 10 seeds. M2.1 fixes the bot and the RAM headroom.
+
 ## Deferred questions for Adrian
 
 See SPEC section 14. None block the build.
