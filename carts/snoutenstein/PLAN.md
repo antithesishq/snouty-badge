@@ -1585,6 +1585,58 @@ options if over.
 2. Secret walls stay open once found (as in the campaign).
 3. The rotation is the same in every arena; no lobby toggle for the arsenal.
 4. "FRAGS" stays the score name; only the kill messages say DELETED.
+5. Code size: .text+.data is 145,100 B (141.7 KiB), 1.7 KiB over the
+   self-imposed 140 KiB budget (.bss 109,200 of 120 KB). Default: the
+   budget is raised to 144 KiB for M9. The real ceiling is the 275 KB of
+   the RAM window left after the 32 KB stack, and text+data+bss is 254 KB.
+   The alternative is trimming about 2 KB of effects and view-model detail.
+
+### M9 status (2026-10-05)
+
+Done on branch stein/dm-arsenal and handed to the M8 session for
+stein/mp / party. It stays off main with the rest of the party work.
+
+**Commits**
+- c8b02d63: lead pre-work.
+- 99b13a29: tracks A, B and C.
+- 5a96cbbc: M8.1 (stein/mp 82458a3b) merged in.
+
+**Tuning and arenas**
+- Track A raised the FUZZER to 2 dmg (12 HP a hit, 9 hits, about 0.67 s);
+  at 1 dmg it out-damaged nothing. Rockets live 96 ticks.
+- Arenas: Server Room grew one row (28x21) and has 5 pads and an `X`
+  closet at (21,18). Build Farm DM has 6 pads, the `&` behind the
+  campaign's own `X` (11,19), and two new doors in column 3, so every room
+  is on a loop. Data Hall has 10 pads and `X` closets at (23,5) and
+  (24,42), symmetric. check_level.py knows `@` and checks that each arena
+  `&` is reachable only through an `X`.
+- Bots choose weapons by range (GC within 2.5 cells, held while closing;
+  SHIP IT from 2.25; a fork bomb now and then at 2-4.5), walk to visible
+  pads when holding only the starting weapons, and never go for a Debugger.
+
+**Gates**
+- zig build test-stein: 126 tests, 14 new in arsenal_test.zig.
+- tools/check.sh passes, including DEMO OK and the demo hash (campaign
+  unchanged; Track B compared campaign frames pixel for pixel). The
+  m7_local window is now 15,000 frames: 2-bot matches run up to ~10.6k
+  ticks both before and after M9.
+- tools/party_e2e.sh (2, 4, 8 and 16 badges, plus the events run) passes
+  over the real relay with World 2,940 B.
+
+**Bench**
+- bench_m8 worst 6.50 ms (Server Room, 16 bots) and 5.90 ms (Data Hall).
+- Campaign m4_rewind worst 5.73 ms (5.72 before).
+
+**Size:** .text 137,156 + .data 7,944, .bss 109,200 (see deferred 5).
+
+**Previews:** docs/preview_m9.gif (an 8-bot local match) and
+docs/m9_{warp,pads,views,blast,death}.png.
+
+**Open**
+- Hardware play test.
+- The warp-in is not seen in a preview yet; the first spawn of a match
+  has no grace, so there is no warp-in at the start.
+- View models read small (zapper-sized).
 
 ## Status
 

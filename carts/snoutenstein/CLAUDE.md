@@ -24,7 +24,10 @@ CLAUDE.md files have the long explanations, this one summarises.
   bots-only match; cart-api), `render/scoreboard.zig` and
   `render/slots.zig` (rank line, kill feed, tables, slot colours);
   `match_party_test.zig` and `party_net_test.zig` (badges on the relay
-  model, lib/party_virtual.zig) are its host tests. `Level.cells` is the
+  model, lib/party_virtual.zig) are its host tests. Arsenal (M9):
+  `arsenal.zig` (the deathmatch-only weapons 4-7, weapon pads `@`, the
+  `Match.dm_shots` pool; pure) with `arsenal_test.zig`; `render/fx.zig`
+  (pad/shot/blast art, the blue death view; the warp-out is in sprites.zig). `Level.cells` is the
   packed width x height (read it through `Level.cell`).
 - `cart/src/render/` — raycaster, textures, sprites, HUD (cart-api users);
   `cart/src/audio.zig` — tone2 (and the dormant neopixel effects), driven
