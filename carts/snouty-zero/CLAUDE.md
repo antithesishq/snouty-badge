@@ -19,6 +19,14 @@ before changing anything. The repository-wide rules are in the root
   cache, the rewind), `sprites.zig` (scaled blit, machines, effects),
   `hud.zig`, `font.zig`, `menu.zig`, `results.zig`, `sound.zig`, `engine.zig`,
   `hills.zig` (height profile from flag bit 7).
+- M6 link race: `link_race.zig` (Zero's game `G` for the shared
+  `lib/lockstep.zig`, the input byte, the agreed World; no cart API),
+  `link_ui.zig` (lobby screens and race notices), `link_race_test.zig`
+  (two badges on a virtual cable). `World.humans` maps the two input
+  slots to machines (solo: slot 0 only); `world.view` is the machine
+  this badge's camera, HUD and sound follow. Solo play must stay
+  bit-identical when the sim changes (compare pixel checksums against
+  the previous wasm frame by frame).
 
 ## Data
 

@@ -6,7 +6,6 @@ const gfx = @import("gfx");
 const fixed = @import("fixed.zig");
 const tuning = @import("tuning.zig");
 const world = @import("world.zig");
-const sim = @import("sim.zig");
 const camera = @import("camera.zig");
 const render = @import("render.zig");
 
@@ -144,7 +143,7 @@ pub fn tick_effects() void {
         if (m.shake > 0 and prev_shake[i] == 0) spawn_spark(m.x, m.y);
         prev_shake[i] = m.shake;
         // A wreck (SPEC 5.5) throws a spark every 2 ticks, scattered by the countdown.
-        if (m.active and m.ko and m.hitstop % 2 == 0) {
+        if (m.f.active and m.f.ko and m.hitstop % 2 == 0) {
             const k: i32 = m.hitstop;
             spawn_spark(m.x + (((k * 5) & 15) - 8) * fixed.one, m.y + (((k * 3) & 15) - 8) * fixed.one);
         }
@@ -180,7 +179,7 @@ pub fn draw_machines() void {
     var list: [world.machine_count]Entry = undefined;
     var n: usize = 0;
     for (world.w.machines[0..world.w.active_count], 0..) |*m, i| {
-        if (!m.active) continue;
+        if (!m.f.active) continue;
         const p = camera.project(m.x, m.y) orelse continue;
         if (p.sy < tuning.horizon_y + 2) continue;
         list[n] = .{ .index = @intCast(i), .p = p };
@@ -215,22 +214,30 @@ fn draw_machine(m: *const world.Machine, index: u8, p: camera.Projected) void {
         blit_scaled(gfx.fx, 16, 16, fl, p.sx, p.sy - lift_px + 6, p.scale, &fx_pal, .{});
     }
     // A wreck flickers: hidden every other 2 ticks, white the rest.
-    if (m.ko and (m.hitstop / 2) % 2 == 0) return;
-    const flash = (m.immune > 0 and (m.immune / 2) % 2 == 0 and m.crash == .none) or m.ko;
+    if (m.f.ko and (m.hitstop / 2) % 2 == 0) return;
+    const flash = (m.immune > 0 and (m.immune / 2) % 2 == 0 and m.crash == .none) or m.f.ko;
     const opts = BlitOpts{ .flat = if (flash) @as(?cart.Pixel, .from_color(.rgb(0xFCFBF9))) else null };
-    if (index == world.player and sim.player_character == 0) {
+    // A human's machine is its machine select pick (M5; two in a link race).
+    const slot = world.w.slot_of(index);
+    const pick: usize = if (slot) |s| world.w.picks[s] else 0;
+    if (slot != null and pick == 0) {
+        // The Anteater has only the rear views (lean and hop).
         const frame: u32 = if (m.hop > 0) 3 else if (m.steer < 0) 1 else if (m.steer > 0) 2 else 0;
         blit_scaled(gfx.anteater, 40, 24, frame, p.sx, p.sy - lift_px, p.scale, &anteater_pal, opts);
-    } else if (index == world.player) {
-        // A rival's machine from the machine select: its livery, leaning
-        // into the steer with the rear-quarter views.
-        const frame: u32 = if (m.steer < 0) 1 else if (m.steer > 0) 2 else 0;
-        blit_scaled(gfx.machine, 32, 16, frame, p.sx, p.sy - lift_px, p.scale, &livery_pals[livery_of(sim.player_character)], opts);
     } else {
-        // Yaw view from the heading relative to the camera.
-        const d = fixed.turn_diff(camera.cam.yaw, m.heading);
-        const ad = @abs(d);
-        const frame: u32 = if (ad < 5000) 0 else if (ad < 20000) (if (d < 0) 1 else 2) else (if (d < 0) 3 else 4);
-        blit_scaled(gfx.machine, 32, 16, frame, p.sx, p.sy - lift_px, p.scale, &livery_pals[livery_of(index)], opts);
+        var frame: u32 = undefined;
+        if (index == world.view) {
+            // A rival's machine from the machine select: its livery,
+            // leaning into the steer with the rear-quarter views.
+            frame = if (m.steer < 0) 1 else if (m.steer > 0) 2 else 0;
+        } else {
+            // Yaw view from the heading relative to the camera.
+            const d = fixed.turn_diff(camera.cam.yaw, m.heading);
+            const ad = @abs(d);
+            frame = if (ad < 5000) 0 else if (ad < 20000) (if (d < 0) 1 else 2) else (if (d < 0) 3 else 4);
+        }
+        // A human's pick in its livery (the other human's too).
+        const livery = if (slot != null) livery_of(pick) else livery_of(index);
+        blit_scaled(gfx.machine, 32, 16, frame, p.sx, p.sy - lift_px, p.scale, &livery_pals[livery], opts);
     }
 }

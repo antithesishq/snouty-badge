@@ -141,3 +141,12 @@ pub const auto_rewind_ticks: u32 = 120;
 pub const auto_rewind_per_frame: u32 = 4;
 /// Window-cache prefill: replay ticks per rewind frame (history.zig).
 pub const prefill_per_frame: u32 = 8;
+
+// --- Link race (M6) ------------------------------------------------------------
+
+/// While a link race runs, keep pumping the link until this far into the
+/// frame (the vsync wait is the one stretch where nothing reads the 8-byte
+/// receive FIFO), as Snouty Boy and Snouty GC do.
+pub const link_pump_until_us: u64 = 14_000;
+/// Frames the PEER LEFT, AI DRIVING notice stays up.
+pub const link_left_note: u32 = 180;

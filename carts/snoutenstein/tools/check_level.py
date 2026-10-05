@@ -17,6 +17,10 @@ Exit status 1 if any pickup, enemy or the exit is unreachable (or a
 structural error), except for files named wolf_* (imported maps have
 secrets) and test.txt (the debug fixture locks two keys behind their own
 doors), which only print.
+
+Deathmatch arenas (M7) are the levels with spawn points (P): they need no
+S (the first P is the start), no exit and no keys, and at least four
+spawns, every one reachable.
 """
 import os
 import sys
@@ -28,6 +32,8 @@ PICKUPS = {"c": "key_coral", "i": "key_iris", "g": "key_gold", "+": "hotfix",
            "%": "charge", "$": "spray_can", "*": "battery", "&": "debugger"}
 ENEMIES = {"a": "gnat", "w": "wasp", "b": "beetle", "s": "spider", "H": "boss"}
 ARROWS = "><v^"
+SPAWN = "P"
+MIN_SPAWNS = 4
 MAX_ENEMIES, MAX_DOORS, MAX_PICKUPS = 40, 64, 256
 SOFT_MAX_ENEMIES = 25
 
@@ -57,11 +63,15 @@ def parse(text):
                     x += 1
             x += 1
     if start is None:
+        for y, row in enumerate(grid):
+            if SPAWN in row and start is None:
+                start = (row.index(SPAWN), y, ">")
+    if start is None:
         raise ValueError("no start")
     for y, row in enumerate(grid):
         for x, ch in enumerate(row):
             if ch not in WALLS and ch not in DOORS and ch not in PICKUPS \
-                    and ch not in ENEMIES and ch not in ".S":
+                    and ch not in ENEMIES and ch not in ".S" + SPAWN:
                 raise ValueError(f"unknown char {ch!r} at {x},{y}")
     return grid, width, len(grid), start
 
@@ -109,6 +119,15 @@ def check(path):
         if ahead in WALLS or ahead in DOORS:
             errors.append(f"start at {sx},{sy} faces {ahead!r}, not floor")
 
+    spawns = [(x, y) for y in range(h) for x in range(w) if grid[y][x] == SPAWN]
+    arena = bool(spawns)
+    if arena:
+        if len(spawns) < MIN_SPAWNS:
+            errors.append(f"arena has {len(spawns)} spawns < {MIN_SPAWNS}")
+        for ch in "cigCIGE":
+            if counts.get(ch):
+                errors.append(f"arena has {ch!r} (no keys, locks or exit in deathmatch)")
+
     # Key-aware flood fill.
     keys = set()
     seen = set()
@@ -148,7 +167,7 @@ def check(path):
             if ch == "E":
                 exits += 1
                 exit_ok = exit_ok or (x, y) in seen
-            if (ch in PICKUPS or ch in ENEMIES or ch in DOORS) and (x, y) not in seen:
+            if (ch in PICKUPS or ch in ENEMIES or ch in DOORS or ch == SPAWN) and (x, y) not in seen:
                 unreachable.append(f"{ch}@{x},{y}")
     floor_total = sum(1 for y in range(h) for x in range(w) if grid[y][x] not in WALLS)
     floor_seen = len(seen)
@@ -162,17 +181,20 @@ def check(path):
     print(f"  textures {sorted(textures)}" + ("" if textures >= set(range(1, 9)) else
           f" (missing {sorted(set(range(1, 9)) - textures)})"))
     print(f"  key order: {', '.join(order) or '-'}")
-    print(f"  reachable {floor_seen}/{floor_total} open cells; exit "
-          f"{'reachable' if exit_ok else 'NOT reachable'}")
+    if arena:
+        print(f"  arena: {len(spawns)} spawns; reachable {floor_seen}/{floor_total} open cells")
+    else:
+        print(f"  reachable {floor_seen}/{floor_total} open cells; exit "
+              f"{'reachable' if exit_ok else 'NOT reachable'}")
     if n_enemies > SOFT_MAX_ENEMIES:
         print(f"  note: {n_enemies} enemies > {SOFT_MAX_ENEMIES} (soft cap)")
     if unreachable:
         print(f"  unreachable: {' '.join(unreachable)}")
     for e in errors:
         print(f"  error: {e}")
-    if exits == 0:
+    if exits == 0 and not arena:
         errors.append("no exit")
-    bad = bool(errors) or bool([u for u in unreachable if u[0] not in DOORS]) or not exit_ok
+    bad = bool(errors) or bool([u for u in unreachable if u[0] not in DOORS]) or not (exit_ok or arena)
     if bad and lenient:
         print("  (lenient: wolf_* import or test fixture; reported, not failed)")
         return True

@@ -63,13 +63,15 @@ pub fn format_clock(out: *[7]u8, ticks: u32) void {
 /// centerline into 1-bit buffers at 32 and 48 px (Select toggles), the
 /// machines as 2x2 dots (traffic 1x1), bottom-right.
 const minimap_sizes = [2]u8{ 32, 48 };
-var minimap_buf: [2][48 * 48]u8 = undefined;
+/// One bit per pixel, a column per entry (rows 0-31 in word 0, 32-47 in
+/// word 1): 768 bytes instead of a byte a pixel (M6 needed the cart RAM).
+var minimap_buf: [2][48][2]u32 = undefined;
 pub var minimap_large: bool = false;
 
 pub fn init_minimap(t: *const track.Track) void {
     for (minimap_sizes, 0..) |size, k| {
         const buf = &minimap_buf[k];
-        @memset(buf, 0);
+        buf.* = @splat(.{ 0, 0 });
         // Half-width stroke: plot each sample and the point one step toward the next.
         for (0..256) |i| {
             const a = t.sample(i);
@@ -80,7 +82,7 @@ pub fn init_minimap(t: *const track.Track) void {
                 const y = (@as(i32, a.y) * (4 - @as(i32, @intCast(step))) + @as(i32, b.y) * @as(i32, @intCast(step))) >> 2;
                 const mx: usize = @intCast(@divTrunc(x * size, 1024));
                 const my: usize = @intCast(@divTrunc(y * size, 1024));
-                buf[my * 48 + mx] = 1;
+                buf[mx][my >> 5] |= @as(u32, 1) << @intCast(my & 31);
             }
         }
     }
@@ -96,8 +98,9 @@ fn draw_minimap() void {
     const bg: cart.Pixel = .from_color(anti_black);
     for (0..@intCast(size)) |x| {
         const col = &cart.framebuffer[@intCast(x0 + @as(i32, @intCast(x)))];
+        const bits = &buf[x];
         for (0..@intCast(size)) |y| {
-            const on = buf[y * 48 + x] != 0;
+            const on = (bits[y >> 5] >> @intCast(y & 31)) & 1 != 0;
             // Dim checkerboard background so the floor shows through.
             if (on) {
                 col[@intCast(y0 + @as(i32, @intCast(y)))] = line;
@@ -106,19 +109,26 @@ fn draw_minimap() void {
             }
         }
     }
-    // Machines: traffic first (grey 1x1), rivals (2x2 livery), player (2x2 white) on top.
+    // Machines: traffic first (grey 1x1), rivals (2x2 livery), the other
+    // human (2x2 cyan), the viewed machine (2x2 white) on top.
+    const view: usize = world.view;
     const w = &world.w;
     var i: usize = w.active_count;
     while (i > 0) {
         i -= 1;
-        const m = &w.machines[i];
-        if (!m.active) continue;
-        const mx = x0 + @divTrunc((m.x >> fixed.Q) * size, 1024);
-        const my = y0 + @divTrunc((m.y >> fixed.Q) * size, 1024);
-        const color: cart.DisplayColor = if (i == world.player) white else .rgb(sprites.livery_rgb[sprites.livery_of(i)]);
-        const d: u32 = if (i >= 5) 1 else 2;
-        cart.rect(.{ .x = mx, .y = my, .width = d, .height = d, .fill_color = color });
+        if (i == view) continue;
+        minimap_dot(w, i, x0, y0, size, if (w.slot_of(i) != null) cyan else .rgb(sprites.livery_rgb[sprites.livery_of(i)]));
     }
+    if (view < w.active_count) minimap_dot(w, view, x0, y0, size, white);
+}
+
+fn minimap_dot(w: *const world.World, i: usize, x0: i32, y0: i32, size: i32, color: cart.DisplayColor) void {
+    const m = &w.machines[i];
+    if (!m.f.active) return;
+    const mx = x0 + @divTrunc((m.x >> fixed.Q) * size, 1024);
+    const my = y0 + @divTrunc((m.y >> fixed.Q) * size, 1024);
+    const d: u32 = if (i >= 5) 1 else 2;
+    cart.rect(.{ .x = mx, .y = my, .width = d, .height = d, .fill_color = color });
 }
 
 fn rank_text(rank: u8) []const u8 {
@@ -136,6 +146,8 @@ fn rank_text(rank: u8) []const u8 {
 pub var snapshot_ticks: u32 = 0;
 pub var snapshot_max: u32 = 180;
 pub var rewinding: bool = false;
+/// The snapshot bar is drawn (not in a link race: no rewind there).
+pub var show_snapshot: bool = true;
 
 /// Every other scanline black over the whole frame (the rewind dim).
 pub fn dim_scanlines() void {
@@ -148,7 +160,7 @@ pub fn dim_scanlines() void {
 
 pub fn draw() void {
     const w = &world.w;
-    const m = &w.machines[world.player];
+    const m = &w.machines[world.view];
     // Top-right: rank (only with rivals in the race), its shadow inside the margin.
     if (w.active_count > 1) text(rank_text(m.rank), 160 - margin - 25, margin, if (m.rank == 1) cyan else white);
     // Top-left: LAP n/3.
@@ -158,7 +170,7 @@ pub fn draw() void {
     text(&lap_buf, margin, margin, white);
     // Top-centre (x 66..122; the lap text ends at 60, the rank starts at 131): the race clock.
     var clock: [7]u8 = undefined;
-    format_clock(&clock, if (m.finished) m.finish_tick else w.tick);
+    format_clock(&clock, if (m.f.finished) m.finish_tick else w.tick);
     text(&clock, 66, margin, white);
     // Bottom-left: speed in Tb/s, then the thermal bar.
     var spd_buf: [8]u8 = "   0Tb/s".*;
@@ -169,8 +181,10 @@ pub fn draw() void {
     // Overclock ready mark beside the bar when the bar can pay for one.
     if (m.thermal >= tuning.thermal_overclock_min and m.boost == 0) text("OC", margin + 42, 110, cyan);
     // The snapshot bar (cyan) under the thermal bar; `<<` blinks while rewinding.
-    draw_bar(margin, 118, @intCast(snapshot_ticks), @intCast(snapshot_max), cyan);
-    if (rewinding and (w.tick / 4) % 2 == 0) text("<<", margin + 42, 116, cyan);
+    if (show_snapshot) {
+        draw_bar(margin, 118, @intCast(snapshot_ticks), @intCast(snapshot_max), cyan);
+        if (rewinding and (w.tick / 4) % 2 == 0) text("<<", margin + 42, 116, cyan);
+    }
     draw_minimap();
     draw_message();
 }
@@ -186,7 +200,7 @@ pub fn draw_bar(x: i32, y: i32, value: i32, max: i32, color: cart.DisplayColor) 
 /// (menu.names), traffic as batch jobs.
 const ko_text = [5][]const u8{ "", "ARGMAX KILLED", "DROPOUT KILLED", "BACKPROP KILLED", "OVERFIT KILLED" };
 
-fn message_text(msg: world.Message) []const u8 {
+fn message_text(msg: world.Message, who: u8) []const u8 {
     return switch (msg) {
         .none => "",
         .provisioning => "PROVISIONING",
@@ -200,15 +214,18 @@ fn message_text(msg: world.Message) []const u8 {
         .meltdown => "THERMAL SHUTDOWN",
         .collision => "COLLISION",
         .killed => "JOB KILLED",
-        .ko => if (world.w.msg_who < ko_text.len) ko_text[world.w.msg_who] else "BATCH KILLED",
+        .ko => if (who < ko_text.len) ko_text[who] else "BATCH KILLED",
     };
 }
 
+/// The message bar of the viewed machine's human (slot 0 for any other).
 fn draw_message() void {
     const w = &world.w;
-    if (w.msg == .none) return;
-    const str = message_text(w.msg);
-    const color = switch (w.msg) {
+    const s: usize = w.slot_of(world.view) orelse 0;
+    const msg = w.msg[s];
+    if (msg == .none) return;
+    const str = message_text(msg, w.msg_who[s]);
+    const color = switch (msg) {
         .fall, .meltdown, .collision, .killed => coral,
         .deploy, .committed, .ko => cyan,
         else => white,

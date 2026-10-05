@@ -184,9 +184,26 @@ pieces. Pulling the cable shows "Link cable unplugged".
 **Hardware, 2026-10-05 (show day).** Adrian played a full 2-player Tetris
 game between two badges over the probe kit's JST-SH cable: works.
 
-### M2: two-player Snouty Zero, M3: Snoutenstein deathmatch
+### Lockstep games: `lib/lockstep.zig` (tag lockstep/v1)
 
-Lockstep: each badge sends its inputs for frame N, both step the same
-deterministic simulation, and a per-frame checksum catches desync. In
-Zero the partner takes a rival's slot; in Snoutenstein the partner is a
-sprite in an arena map, with rewind off.
+Two-badge lockstep shared by every link game, extracted from Snouty GC's
+M4 net code (verified on two badges, `snouty-gc/m4-hw`): lobby, input
+exchange, desync check, pause, peer-left hand-over, version check. One
+rules byte is byte-identical to GC M4; 2-8 bytes use a paged SETUP.
+`docs/LOCKSTEP.md` is the guide (API, the game's `G`, protocol, pump
+policy, common screen wording, app ids). Users: Snouty GC (`net.zig`,
+wrapper on branch `link/gc-lockstep` under GC's review), Snouty Cycles
+(link duel, in progress), Snouty Zero, Snoutenstein.
+
+### M2: two-player Snouty Zero (done, hardware check open)
+
+LINK RACE in the main menu (tag `snouty-zero/m6`; `carts/snouty-zero`
+PLAN M6, RUNNING section 9): the host picks the track, both pick a
+machine, the guest drives a rival's slot; pause together, no rewind, the
+AI takes over a machine whose badge leaves.
+
+### M3: Snoutenstein deathmatch (done, hardware check open)
+
+DEATHMATCH on the title (tag `snoutenstein/m7`; `carts/snoutenstein`
+PLAN M7, RUNNING section 7): Server Room or Build Farm DM, frag limit,
+bugs on/off; B + Left/Right strafes; a partner leaving is a forfeit win.
