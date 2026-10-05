@@ -62,6 +62,8 @@ pub const Hold = enum(u2) { none, boost, brake };
 pub const tuning = struct {
     /// T1's flood fill stops counting here (SPEC 5).
     pub const fill_cap: u32 = 300;
+    /// ... and when it stands in for T2/T3 on a tick whose pool is spent.
+    pub const stand_in_cap: u32 = 100;
     /// A move into the cell another head is about to enter (a likely RACE
     /// CONDITION) counts its space divided by this (T1).
     pub const race_penalty: u32 = 4;
@@ -73,10 +75,19 @@ pub const tuning = struct {
 
     /// Work units all programs on one World tick share (calibrated with
     /// badge-bench: PLAN.md status, M1 Track A).
-    pub const tick_pool: i32 = 12000;
+    pub const tick_pool: i32 = 10000;
+    /// A decision starts before its last tick only if this many units of
+    /// the pool would be left for programs whose last tick it is.
+    pub const due_reserve: i32 = 2000;
+    /// A territory pass with fewer units left than this gives up (T1
+    /// stands in): its answer would be noise.
+    pub const min_pass: i32 = 100;
+    /// How far a pass may run past its units: the BFS checks its budget
+    /// once per layer.
+    pub const overrun: u32 = 1200;
     /// Units one decision may use, per tier (T0 and T1 are not budgeted:
     /// a T1 decision is at most 3 x `fill_cap` plus 3 cells).
-    pub const decision_units = [4]i32{ 0, 0, 8000, 10000 };
+    pub const decision_units = [4]i32{ 0, 0, 6000, 8000 };
 
     // T0 WANDER defaults (full strength; presets soften them).
     pub const wander_look: u8 = 3;
@@ -363,7 +374,7 @@ fn think(b: *Brain, w: *const sim.World, i: usize, due: bool) void {
                 plan.dir = c.dir;
             } else {
                 const need = tuning.decision_units[@backingInt(b.tier)];
-                if (!due and pool_left < need) {
+                if (!due and pool_left - need < tuning.due_reserve) {
                     stats.deferred += 1;
                     return;
                 }
@@ -379,7 +390,7 @@ fn think(b: *Brain, w: *const sim.World, i: usize, due: bool) void {
                     stats.fallbacks += 1;
                     stats.tier_fallbacks[@backingInt(b.tier)] += 1;
                     if (budget < need) stats.short_fallbacks += 1;
-                    plan.dir = charged(unbudgeted, .avoid, avoid, .{ b, w, i });
+                    plan.dir = stand_in(b, w, i);
                 }
             }
         },
@@ -421,7 +432,7 @@ fn commit(b: *Brain, w: *const sim.World, i: usize) sim.Dir {
     if (b.tier == .territory or b.tier == .search) {
         const t = w.next_cell(c.x, c.y, d);
         if (sim.is_wall(w.at(t[0], t[1])) or race_risk(w, i, t)) {
-            d = charged(unbudgeted, .avoid, avoid, .{ b, w, i });
+            d = stand_in(b, w, i);
         }
     }
     if (d != c.dir) b.cooldown = b.reaction;
@@ -434,7 +445,7 @@ fn rescue(b: *Brain, w: *const sim.World, i: usize) ?sim.Dir {
     const d = if (b.tier == .wander)
         (if (b.rng.chance(b.dodge_permille)) dodge(b, w, i) else c.dir)
     else
-        charged(unbudgeted, .avoid, avoid, .{ b, w, i });
+        stand_in(b, w, i);
     const t = w.next_cell(c.x, c.y, d);
     if (sim.is_wall(w.at(t[0], t[1]))) return null;
     return d;
@@ -480,12 +491,24 @@ fn dodge(b: *Brain, w: *const sim.World, i: usize) sim.Dir {
 /// view: closing sudden-death rings count as walls, unless every move is
 /// into one).
 pub fn avoid(b: *Brain, w: *const sim.World, i: usize) sim.Dir {
-    const g = view(w);
-    if (avoid_on(b, w, i, g)) |d| return d;
-    return avoid_on(b, w, i, &w.grid) orelse w.cycles[i].dir;
+    return avoid_capped(b, w, i, tuning.fill_cap);
 }
 
-fn avoid_on(b: *Brain, w: *const sim.World, i: usize, g: *const Grid) ?sim.Dir {
+fn avoid_capped(b: *Brain, w: *const sim.World, i: usize, cap: u32) sim.Dir {
+    const g = view(w);
+    if (avoid_on(b, w, i, g, cap)) |d| return d;
+    return avoid_on(b, w, i, &w.grid, cap) orelse w.cycles[i].dir;
+}
+
+/// T1's answer standing in for a T2/T3 plan (out of units, a plan whose
+/// cell was taken, a rubber stall): with a smaller fill once this tick's
+/// pool is spent, so a crowded tick stays bounded.
+fn stand_in(b: *Brain, w: *const sim.World, i: usize) sim.Dir {
+    const cap = if (pool_left > 0) tuning.fill_cap else tuning.stand_in_cap;
+    return charged(unbudgeted, .avoid, avoid_capped, .{ b, w, i, cap });
+}
+
+fn avoid_on(b: *Brain, w: *const sim.World, i: usize, g: *const Grid, cap: u32) ?sim.Dir {
     const c = &w.cycles[i];
     const cands = [3]sim.Dir{ c.dir, c.dir.ccw(), c.dir.cw() };
     const reach: u32 = if (b.vision != 0) b.vision else 0xFFFF;
@@ -494,7 +517,7 @@ fn avoid_on(b: *Brain, w: *const sim.World, i: usize, g: *const Grid) ?sim.Dir {
     for (cands, 0..) |d, k| {
         const t = w.next_cell(c.x, c.y, d);
         if (wall(g, sim.index(t[0], t[1]))) continue;
-        var space = fill(g, sim.index(t[0], t[1]), tuning.fill_cap, reach);
+        var space = fill(g, sim.index(t[0], t[1]), cap, reach);
         if (race_risk(w, i, t)) space /= tuning.race_penalty;
         const open = free4(g, sim.index(t[0], t[1]));
         // Priority: space, then straight, then open neighbours, then a coin.
@@ -791,6 +814,7 @@ const Mine = struct {
 /// (stamped `gn`); stops at cells the others reach as early. Charges a
 /// unit per cell.
 fn region(g: *const Grid, start: u16, layer0: u32, prey: u8, reach: u32, cap: u32, gn: u8, m: *Mine) Err!void {
+    if (units_left < tuning.min_pass) return error.OutOfBudget;
     m_stamp[start] = gn;
     queue[0] = start;
     const og = field.gen;
@@ -807,13 +831,9 @@ fn region(g: *const Grid, start: u16, layer0: u32, prey: u8, reach: u32, cap: u3
         if (head == seg) {
             layer += 1;
             seg = tail;
-            if (layer - layer0 > reach or head >= cap) {
+            if (layer - layer0 > reach or head >= @min(cap, lim)) {
                 m.truncated = true;
                 break;
-            }
-            if (head > lim) {
-                units_left -= @intCast(head);
-                return error.OutOfBudget;
             }
         }
         const at = queue[head];
@@ -906,7 +926,7 @@ fn score_of(cells: u32, edges: u32) i32 {
 /// cells a path can still fill: the best chamber among its free
 /// neighbours' regions, each bounded by the checkerboard. Unbounded by
 /// vision (once separated a program knows its room). Charges its cells.
-fn chamber_space(g: *const Grid, at: u16) Err!u32 {
+fn chamber_space(g: *const Grid, at: u16, cap: u32) Err!u32 {
     const gn = next_mgen();
     m_stamp[at] = gn;
     const lim: u32 = @intCast(@max(units_left, 0));
@@ -926,6 +946,8 @@ fn chamber_space(g: *const Grid, at: u16) Err!u32 {
                 if (head == seg) {
                     layer += 1;
                     seg = tail;
+                    // A room bigger than `cap` is big enough: count it so far.
+                    if (head >= cap) break;
                     if (used + head > lim) {
                         units_left -= @intCast(used + head);
                         return error.OutOfBudget;
@@ -943,10 +965,10 @@ fn chamber_space(g: *const Grid, at: u16) Err!u32 {
                 }
             }
             used += head;
-            var v = parity_bound(tail - odd, odd);
+            var v = parity_bound(head - odd, odd);
             if (sd.on) {
-                v = @min(v, cells_until_close(deepest(queue[0..tail])));
-                used += tail / 4;
+                v = @min(v, cells_until_close(deepest(queue[0..head])));
+                used += head / 4;
             }
             best = @max(best, v);
         }
@@ -1144,7 +1166,7 @@ fn endgame_greedy(w: *const sim.World, i: usize, g: *const Grid) Err!?Greedy {
         const t2 = w.next_cell(c.x, c.y, d);
         const t = sim.index(t2[0], t2[1]);
         if (wall(g, t)) continue;
-        const space = try chamber_space(g, t);
+        const space = try chamber_space(g, t, @intCast(@max(@divTrunc(units_left, 4), 0)));
         gens[k] = m_gen;
         any = true;
         const s = @as(i32, @intCast(space)) * 64 - @as(i32, @intCast(free4(g, t)));
@@ -1673,7 +1695,7 @@ fn hug_order(at: u16, out: *[4]u8) usize {
 fn fill_dfs(at: u16, depth: u8) Err!i32 {
     units_left -= 1;
     if (units_left < 0) return error.OutOfBudget;
-    if (depth == 0) return 1 + @as(i32, @intCast(try chamber_space(&work, at)));
+    if (depth == 0) return 1 + @as(i32, @intCast(try chamber_space(&work, at, 0xFFFF_FFFF)));
     var order: [4]u8 = undefined;
     const n = hug_order(at, &order);
     var best: i32 = 1;
@@ -1807,11 +1829,22 @@ fn ladder_cfg(n: u8, layout: u8) sim.Config {
     return .{ .n_cycles = n, .grinding = true, .rubber = sim.tuning.rubber_max, .energy = true, .sudden_death = true, .layout = layout };
 }
 
+/// The opening's drivers: T1 slipping a quarter of the time, the same
+/// for both sides of a seed.
+fn opening_brains(seed: u32) [2]Brain {
+    var o: [2]Brain = undefined;
+    for (&o, 0..) |*b, i| {
+        b.* = .init(.avoid, rng.mix(seed, @intCast(10 + i)));
+        b.mistake_permille = 250;
+    }
+    return o;
+}
+
 /// `rounds` 1v1 rounds of a against b on the ladder's rules: each seed
 /// twice with the sides swapped (equal programs score evenly), layouts
-/// from `layouts_used` in turn, and a random opening of a few turns (the
-/// same dice for both sides) so rounds between deterministic programs
-/// differ.
+/// from `layouts_used` in turn, and a random opening (1 to 3 s of a
+/// slipping T1, the same for both sides of a seed) so rounds between
+/// deterministic programs differ.
 fn duel(ka: Knobs, kb: Knobs, rounds: u32, layouts_used: []const u8, seed0: u32) Score {
     const w = &tw[0];
     var s: Score = .{};
@@ -1824,20 +1857,11 @@ fn duel(ka: Knobs, kb: Knobs, rounds: u32, layouts_used: []const u8, seed0: u32)
         br[1 - a_slot] = .from(kb, rng.mix(seed, 1));
         reset_pool();
         var dice = rng.Xorshift.init(rng.mix(seed, 7));
-        const opening = 30 + dice.below(150);
+        const opening = 60 + dice.below(120);
+        var opener = opening_brains(seed);
         while (w.result == .running) {
             var in: [sim.max_cycles]sim.Input = @splat(.idle);
-            for (0..2) |i| in[i] = decide(&br[i], w, i);
-            if (w.tick < opening) {
-                for (0..2) |i| {
-                    const c = &w.cycles[i];
-                    in[i] = .idle;
-                    if (dice.chance(60)) {
-                        const d = if (dice.below(2) == 0) c.dir.cw() else c.dir.ccw();
-                        if (w.free_run(c.x, c.y, d, 4) == 4) in[i].press = .of(d);
-                    }
-                }
-            }
+            for (0..2) |i| in[i] = if (w.tick < opening) decide(&opener[i], w, i) else decide(&br[i], w, i);
             w.step(in);
         }
         s.ticks += w.tick;
@@ -1884,4 +1908,199 @@ test "tournament: T1 > T0, T2 > T1, T3 >= T2, one on one" {
     try testing.expect(points2(t10) > n);
     try testing.expect(points2(t21) > n);
     try testing.expect(points2(t32) >= n);
+}
+
+/// A mixed field of programs: T3, T2, T1 and T0 presets.
+fn mixed_brains(seed: u32, out: *[4]Brain) void {
+    const ks = [4]Knobs{ preset(.search, 3), preset(.territory, 3), preset(.avoid, 3), preset(.wander, 3) };
+    for (out, 0..) |*b, i| b.* = .from(ks[i], rng.mix(seed, @intCast(i)));
+}
+
+test "decisions are a function of the World and the Brain (interleaved Worlds agree)" {
+    const a = &tw[0];
+    const b = &tw[1];
+    var ba: [4]Brain = undefined;
+    var bb2: [4]Brain = undefined;
+    var rounds: u32 = 0;
+    var seed: u32 = 11;
+    while (rounds < 3) : (rounds += 1) {
+        seed = rng.mix(seed, 1);
+        a.init(ladder_cfg(4, @intCast(rounds * 3 % 9)), seed);
+        b.init(ladder_cfg(4, @intCast(rounds * 3 % 9)), seed);
+        mixed_brains(seed, &ba);
+        bb2 = ba;
+        while (a.result == .running) {
+            // Interleaved: each World's calls see a fresh pool all the same.
+            var ia: [sim.max_cycles]sim.Input = @splat(.idle);
+            var ib: [sim.max_cycles]sim.Input = @splat(.idle);
+            for (0..4) |i| {
+                ia[i] = decide(&ba[i], a, i);
+                ib[i] = decide(&bb2[i], b, i);
+            }
+            try testing.expectEqual(ia, ib);
+            a.step(ia);
+            b.step(ib);
+            try testing.expect(sim.World.same_state(a, b));
+            try testing.expect(std.meta.eql(ba, bb2));
+        }
+    }
+}
+
+test "a replay from a mid-round copy of the World and Brains is exact (M2 keyframes)" {
+    const w = &tw[0];
+    const k = &tw[1];
+    var br: [4]Brain = undefined;
+    w.init(ladder_cfg(4, 1), 77);
+    mixed_brains(77, &br);
+    var kb: [4]Brain = undefined;
+    var log: [400]u32 = undefined;
+    const key_tick: u32 = 600;
+    var t: u32 = 0;
+    while (w.result == .running and t < key_tick + log.len) : (t += 1) {
+        if (t == key_tick) {
+            k.* = w.*;
+            kb = br;
+        }
+        var in: [sim.max_cycles]sim.Input = @splat(.idle);
+        for (0..4) |i| in[i] = decide(&br[i], w, i);
+        w.step(in);
+        if (t >= key_tick) log[t - key_tick] = w.hash();
+    }
+    try testing.expect(t > key_tick);
+    // Something else runs in between (another World's decisions).
+    var other: [4]Brain = undefined;
+    mixed_brains(5, &other);
+    w.init(ladder_cfg(4, 0), 5);
+    for (0..50) |_| {
+        var in: [sim.max_cycles]sim.Input = @splat(.idle);
+        for (0..4) |i| in[i] = decide(&other[i], w, i);
+        w.step(in);
+    }
+    // Restore and replay.
+    w.* = k.*;
+    br = kb;
+    reset_pool();
+    var u: u32 = key_tick;
+    while (u < t) : (u += 1) {
+        var in: [sim.max_cycles]sim.Input = @splat(.idle);
+        for (0..4) |i| in[i] = decide(&br[i], w, i);
+        w.step(in);
+        try testing.expectEqual(log[u - key_tick], w.hash());
+    }
+}
+
+test "budgets: per decision and per World tick (work units)" {
+    const w = &tw[0];
+    var br: [4]Brain = undefined;
+    stats = .{};
+    for (0..4) |r| {
+        const seed = rng.mix(31, @intCast(r));
+        w.init(ladder_cfg(4, @intCast(r * 2)), seed);
+        // Three T3s and a T2: the heaviest field the ladder can bring.
+        for (&br, 0..) |*b, i| b.* = .from(preset(if (i == 3) .territory else .search, 3), rng.mix(seed, @intCast(i)));
+        reset_pool();
+        while (w.result == .running) {
+            var in: [sim.max_cycles]sim.Input = @splat(.idle);
+            for (0..4) |i| in[i] = decide(&br[i], w, i);
+            w.step(in);
+        }
+    }
+    // A pass overruns its units by at most one BFS layer; T1 answers
+    // (fallbacks, the press-time re-check) are not budgeted but small.
+    try testing.expect(stats.max_units[2] <= tuning.decision_units[2] + tuning.overrun);
+    try testing.expect(stats.max_units[3] <= tuning.decision_units[3] + tuning.overrun);
+    try testing.expect(stats.max_tick_units <= tuning.tick_pool + tuning.overrun);
+    try testing.expect(stats.decisions[3] > 1000);
+    // Almost every decision is the tier's own.
+    try testing.expect(stats.fallbacks * 50 < stats.decisions[2] + stats.decisions[3]);
+}
+
+test "the cut-cell table matches its definition" {
+    for (0..256) |mm| {
+        const m: u8 = @intCast(mm);
+        // Free side neighbours (bits 0, 2, 4, 6) joined through a free corner.
+        var parent: [8]u8 = .{ 0, 1, 2, 3, 4, 5, 6, 7 };
+        const S = struct {
+            fn find(p: *[8]u8, a: u8) u8 {
+                var x = a;
+                while (p[x] != x) x = p[x];
+                return x;
+            }
+        };
+        for (0..4) |k| {
+            const a: u8 = @intCast(2 * k);
+            const b2: u8 = @intCast((2 * k + 2) % 8);
+            const corner: u3 = @intCast(2 * k + 1);
+            if (m >> @intCast(a) & 1 != 0 and m >> @intCast(b2) & 1 != 0 and m >> corner & 1 != 0) {
+                parent[S.find(&parent, a)] = S.find(&parent, b2);
+            }
+        }
+        var roots: u8 = 0;
+        var groups: u32 = 0;
+        for (0..4) |k| {
+            const a: u8 = @intCast(2 * k);
+            if (m >> @intCast(a) & 1 == 0) continue;
+            const r = S.find(&parent, a);
+            if (roots >> @intCast(r) & 1 == 0) {
+                roots |= @as(u8, 1) << @intCast(r);
+                groups += 1;
+            }
+        }
+        const want = groups > 1;
+        const got = (cut_table[m >> 5] >> @intCast(m & 31)) & 1 != 0;
+        try testing.expectEqual(want, got);
+    }
+}
+
+test "rubber: a program stalled at a wall that appears turns out of it" {
+    const w = &tw[0];
+    var cfg = ladder_cfg(1, 0);
+    cfg.sudden_death = false;
+    for ([_]Tier{ .avoid, .territory, .search }) |tier| {
+        w.init(cfg, 3);
+        var b = Brain.from(preset(tier, 3), 9);
+        const c = &w.cycles[0];
+        // Run until a plan for straight on is pressed, then wall the cell
+        // ahead as the boundary comes (another cycle cutting in).
+        var t: u32 = 0;
+        var walled = false;
+        while (t < 200 and c.state == .alive) : (t += 1) {
+            var in: [sim.max_cycles]sim.Input = @splat(.idle);
+            in[0] = decide(&b, w, 0);
+            if (!walled and t > 20 and w.will_step(0) and c.queued == 0 and in[0].press == .none) {
+                const n = w.next_cell(c.x, c.y, c.dir);
+                w.grid[sim.index(n[0], n[1])] = sim.block;
+                walled = true;
+            }
+            w.step(in);
+        }
+        try testing.expect(walled);
+        try testing.expectEqual(sim.State.alive, c.state);
+    }
+}
+
+test "T0 crashes on its own; T1 and up do not, alone in the arena" {
+    const w = &tw[0];
+    var cfg = ladder_cfg(1, 0);
+    cfg.sudden_death = false;
+    cfg.round_cap = 60 * 60;
+    var t0_crashes: u32 = 0;
+    for (0..8) |r| {
+        for ([_]Tier{ .wander, .avoid, .territory, .search }) |tier| {
+            w.init(cfg, @intCast(r + 1));
+            var b = Brain.from(preset(tier, if (tier == .wander) 0 else 3), @intCast(r + 5));
+            // 20 s, about 320 cells.
+            for (0..1200) |_| {
+                var in: [sim.max_cycles]sim.Input = @splat(.idle);
+                in[0] = decide(&b, w, 0);
+                w.step(in);
+            }
+            if (tier == .wander) {
+                if (w.cycles[0].state != .alive) t0_crashes += 1;
+            } else {
+                try testing.expectEqual(sim.State.alive, w.cycles[0].state);
+            }
+        }
+    }
+    try testing.expect(t0_crashes >= 2);
 }
