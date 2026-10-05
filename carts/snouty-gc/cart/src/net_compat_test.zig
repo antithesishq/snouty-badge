@@ -170,7 +170,7 @@ fn Badge(comptime N: type) type {
                     n.pump(now);
                     return;
                 }
-                n.submit(now, b.script_byte());
+                _ = n.submit(now, b.script_byte());
                 b.stepped = false;
                 b.try_step();
             } else b.stepped = true;

@@ -149,13 +149,25 @@ const Badge = struct {
 
     /// This frame's tick has run (or there is nothing to run).
     stepped: bool = true,
-    /// main.zig's pause (M4 Track B): while `paused` only the Start bit
-    /// is submitted, and RESUME (picked on frame `resume_frame`) sends a
-    /// Start edge: nothing for a frame if the last byte held Start.
+    /// main.zig's pause (M4 Track B, net.Resume since the integration):
+    /// while `paused` only the Start bit is submitted, and RESUME (picked
+    /// on frame `resume_frame`, or with `resume_on_stall` on the first
+    /// paused frame whose byte `submit` will drop) holds Start until
+    /// `paused` turns off.
     main_pause: bool = false,
     resume_frame: u64 = 0,
-    resume_pending: bool = false,
-    last_byte: u8 = 0,
+    resume_on_stall: bool = false,
+    hold: net.Resume = .{},
+    /// RESUME requests made; how many of them had their first held Start
+    /// byte dropped (M4's one-frame edge would have been lost: the race
+    /// stays paused); held Start bytes dropped in all.
+    resumes: u32 = 0,
+    first_dropped: u32 = 0,
+    held_dropped: u32 = 0,
+    first_held: bool = false,
+    /// `paused` turned on / off this many times.
+    pause_ons: u32 = 0,
+    pause_offs: u32 = 0,
 
     fn done(b: *const Badge) bool {
         return b.stop_at_finish and b.w.phase == .finished;
@@ -287,21 +299,37 @@ const Duo = struct {
                 return;
             }
             var byte = b.script_byte();
-            if (b.main_pause and n.ls.paused) {
-                byte &= 0x40;
-                if (b.resume_frame != 0 and b.frames >= b.resume_frame) {
-                    b.resume_pending = true;
-                    b.resume_frame = 0;
-                }
-                if (b.resume_pending) {
-                    if (b.last_byte & 0x40 != 0) byte = 0 else {
-                        byte = 0x40;
-                        b.resume_pending = false;
-                    }
+            var picked = false;
+            if (b.main_pause) {
+                // As main.zig: settle at the top of the frame, the paused
+                // frame's byte from the hold, RESUME picked after it.
+                b.hold.settle(n.ls.paused);
+                if (n.ls.paused) {
+                    byte = b.hold.byte(byte & 0x40);
+                    const full = n.ls.local_hi >= n.ls.tick + net.input_delay + 1;
+                    if (b.resume_frame != 0 and b.frames >= b.resume_frame) picked = true;
+                    if (b.resume_on_stall and full and !b.hold.pending) picked = true;
                 }
             }
-            b.last_byte = byte;
-            n.submit(d.now, byte);
+            const kept = n.submit(d.now, byte);
+            if (b.main_pause) {
+                if (b.hold.pending and byte & 0x40 != 0) {
+                    if (!kept) b.held_dropped += 1;
+                    if (b.first_held and !kept) b.first_dropped += 1;
+                    b.first_held = false;
+                }
+                b.hold.took(byte, kept);
+            }
+            if (picked) {
+                // main.zig picks RESUME after the frame's submit, so its
+                // first held byte goes out next frame (a stall often lasts
+                // several frames: `resume_on_stall` picks inside one).
+                b.hold.request();
+                b.resume_frame = 0;
+                b.resume_on_stall = false;
+                b.resumes += 1;
+                b.first_held = true;
+            }
             b.stepped = false;
             d.try_step(b);
         } else b.stepped = true;
@@ -315,8 +343,14 @@ const Duo = struct {
         const was_paused = n.ls.paused;
         if (!n.step(&b.w)) return;
         b.stepped = true;
-        if (n.ls.paused and !was_paused) b.pause_on = n.ls.tick - 1;
-        if (!n.ls.paused and was_paused) b.pause_off = n.ls.tick - 1;
+        if (n.ls.paused and !was_paused) {
+            b.pause_on = n.ls.tick - 1;
+            b.pause_ons += 1;
+        }
+        if (!n.ls.paused and was_paused) {
+            b.pause_off = n.ls.tick - 1;
+            b.pause_offs += 1;
+        }
         if (n.ls.tick <= max_ticks) logs[b.side][n.ls.tick] = net.world_hash(&b.w);
         if (b.mutate_at != 0 and n.ls.tick == b.mutate_at) b.w.cars[3].x +%= 1 << 16;
     }
@@ -724,6 +758,101 @@ test "main's pause: menu presses masked, RESUME's injected Start edge resumes bo
     try d.run(400_000_000, {}, done_finished);
     try std.testing.expect(sim.worlds_equal(&d.b[0].w, &d.b[1].w));
     _ = try expect_logs_equal(&d);
+}
+
+test "RESUME under 1% byte loss: the held Start resumes both on one tick, once, every time" {
+    // main.zig's pause through net.Resume, without the 14 ms waiting loop
+    // (more stalls, so more dropped bytes). 24 pauses, each badge pausing
+    // and each resuming in turn; RESUME is picked inside a stall, so the
+    // first held Start byte is often dropped, the case where M4's one
+    // frame edge was lost and the race stayed paused.
+    var d: Duo = undefined;
+    d.init(.{ .seed = 21, .loss_ppm = 10_000 });
+    for (&d.b) |*b| b.main_pause = true;
+    try d.run(20_000_000, {}, done_started);
+    try d.run(60_000_000, @as(u32, 300), done_tick);
+    const Count = struct {
+        fn ons(dd: *Duo, n: [2]u32) bool {
+            return dd.b[0].pause_ons > n[0] and dd.b[1].pause_ons > n[1];
+        }
+        fn offs(dd: *Duo, n: [2]u32) bool {
+            return dd.b[0].pause_offs > n[0] and dd.b[1].pause_offs > n[1];
+        }
+    };
+    const cycles = 24;
+    var worst_frames: u64 = 0;
+    for (0..cycles) |k| {
+        const pauser = &d.b[k % 2];
+        const resumer = &d.b[(k / 2) % 2];
+        const ons = [2]u32{ d.b[0].pause_ons, d.b[1].pause_ons };
+        const offs = [2]u32{ d.b[0].pause_offs, d.b[1].pause_offs };
+        pauser.press_start_at = pauser.frames + 1;
+        try d.run(5_000_000, ons, Count.ons);
+        try std.testing.expectEqual(d.b[0].pause_on.?, d.b[1].pause_on.?);
+        d.run_for(300_000);
+        resumer.resume_on_stall = true;
+        const picked_from = resumer.frames;
+        try d.run(60_000_000, offs, Count.offs);
+        worst_frames = @max(worst_frames, resumer.frames - picked_from);
+        try std.testing.expectEqual(d.b[0].pause_off.?, d.b[1].pause_off.?);
+        try std.testing.expect(d.b[0].pause_off.? > d.b[0].pause_on.?);
+        // Holding never toggles twice: still running a second later, one
+        // on and one off each.
+        d.run_for(1_000_000);
+        for (&d.b, 0..) |*b, i| {
+            try std.testing.expect(!b.net.ls.paused);
+            try std.testing.expectEqual(ons[i] + 1, b.pause_ons);
+            try std.testing.expectEqual(offs[i] + 1, b.pause_offs);
+            try std.testing.expect(!b.hold.pending);
+        }
+    }
+    const resumes = d.b[0].resumes + d.b[1].resumes;
+    const first = d.b[0].first_dropped + d.b[1].first_dropped;
+    const held = d.b[0].held_dropped + d.b[1].held_dropped;
+    if (report) std.debug.print("\nRESUME under 1% loss: {d} resumes, {d} with the first held Start dropped ({d} held bytes dropped), all resumed; worst {d} frames from the pick to both unpaused\n", .{ resumes, first, held, worst_frames });
+    try std.testing.expectEqual(@as(u32, cycles), resumes);
+    // The case M4 lost happened, and the hold carried it.
+    try std.testing.expect(first >= 3);
+    try d.run(400_000_000, {}, done_finished);
+    try std.testing.expect(sim.worlds_equal(&d.b[0].w, &d.b[1].w));
+    _ = try expect_logs_equal(&d);
+}
+
+test "net.Resume: one edge in the kept bytes, armed by a kept byte without Start" {
+    const start: u8 = 0x40;
+    var r: net.Resume = .{};
+    // Idle: the pad goes through; a kept Start is remembered.
+    try std.testing.expectEqual(start, r.byte(start));
+    r.took(start, true);
+    // RESUME while the last kept byte has Start: nothing until a byte
+    // without Start is kept (a dropped one does not arm).
+    r.request();
+    try std.testing.expectEqual(@as(u8, 0), r.byte(start));
+    r.took(0, false);
+    try std.testing.expectEqual(@as(u8, 0), r.byte(start));
+    r.took(0, true);
+    // Armed: Start on every byte, dropped or kept, until paused is off.
+    var kept_starts: u32 = 0;
+    for (0..6) |i| {
+        const b = r.byte(0);
+        try std.testing.expectEqual(start, b);
+        const kept = i % 3 != 0;
+        if (kept) kept_starts += 1;
+        r.took(b, kept);
+        r.settle(true);
+    }
+    try std.testing.expect(kept_starts > 0);
+    r.settle(false);
+    try std.testing.expect(!r.pending);
+    try std.testing.expectEqual(@as(u8, 0), r.byte(0));
+    // Start+Select (the OS chord) is kept without either bit: no Start.
+    r.took(0xC0, true);
+    try std.testing.expect(!r.last_start);
+    // Paused already off when RESUME is picked: the next settle ends it
+    // before any byte goes out.
+    r.request();
+    r.settle(false);
+    try std.testing.expectEqual(@as(u8, 0), r.byte(0));
 }
 
 test "quit mid-race: the other badge races on with the AI, then a rematch" {

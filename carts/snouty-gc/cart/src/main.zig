@@ -153,10 +153,10 @@ var lobby_cursor: u8 = 0;
 var lobby_rules: net.Rules = .{};
 /// The link select: this badge is ready on its racer.
 var link_ready: bool = false;
-/// Pause: RESUME (or B) was picked; a Start edge goes out in the byte.
-var resume_pending: bool = false;
-/// The race byte submitted last frame.
-var last_byte: u8 = 0;
+/// Pause: RESUME (or B) holds Start in the race byte until `paused` turns
+/// off (net.Resume: a byte `submit` drops while `step` stalls must not
+/// lose the edge). It sees every byte submitted in a link race.
+var resume_hold: net.Resume = .{};
 /// Frames `PEER LEFT, AI DRIVING` stays up; set once per race.
 var left_note: u32 = 0;
 var left_shown: bool = false;
@@ -1072,8 +1072,7 @@ fn start_link_race() void {
     desynced = false;
     left_note = 0;
     left_shown = false;
-    resume_pending = false;
-    last_byte = 0;
+    resume_hold = .{};
     race_waits = 0;
     pump_gap_worst = 0;
     autopilot = false;
@@ -1103,6 +1102,7 @@ fn after_tick() void {
 /// each badge runs it on alone until its results.
 fn link_race_frame() void {
     pump_top();
+    resume_hold.settle(lnk.ls.paused);
     if (lnk.state() == .desync) return end_desync();
     if (lnk.ls.paused and w.phase != .finished) {
         pause_list = .{ .count = 3 };
@@ -1117,8 +1117,7 @@ fn link_race_frame() void {
     } else {
         const byte = link_byte();
         last_input = byte;
-        lnk.submit(cart.micros_since_boot(), byte);
-        last_byte = byte;
+        resume_hold.took(byte, lnk.submit(cart.micros_since_boot(), byte));
         ticked = lnk.step(&w);
         if (ticked and !lnk.ls.paused) after_tick();
     }
@@ -1151,22 +1150,15 @@ fn link_notices() void {
 
 /// The shared pause (L6): either badge's Start paused both on one tick.
 /// Only Start reaches the race while paused (it resumes both); RESUME or
-/// B sends a Start edge; QUIT leaves (the partner's AI takes this car).
+/// B holds Start until `paused` turns off (net.Resume: one edge, never
+/// lost to a dropped byte); QUIT leaves (the partner's AI takes this car).
 /// The lockstep ticks run on, without the World.
 fn link_pause_frame() void {
     pump_top();
+    resume_hold.settle(lnk.ls.paused);
     if (lnk.state() == .desync) return end_desync();
-    var byte = input.race_byte() & start_bit;
-    if (resume_pending) {
-        if (last_byte & start_bit != 0) {
-            byte = 0;
-        } else {
-            byte = start_bit;
-            resume_pending = false;
-        }
-    }
-    lnk.submit(cart.micros_since_boot(), byte);
-    last_byte = byte;
+    const byte = resume_hold.byte(input.race_byte() & start_bit);
+    resume_hold.took(byte, lnk.submit(cart.micros_since_boot(), byte));
     var ticked = lnk.step(&w);
     if (ticked and !lnk.ls.paused) after_tick();
     draw_race(false);
@@ -1174,11 +1166,11 @@ fn link_pause_frame() void {
     menu_nav(&pause_list);
     const sound_item: []const u8 = if (sound.enabled) "SOUND: ON" else "SOUND: OFF";
     menu.draw_list("PAUSED", &.{ "RESUME", "QUIT", sound_item }, &pause_list, 34);
-    if (input.pressed(.b)) resume_pending = true;
+    if (input.pressed(.b)) resume_hold.request();
     if (input.pressed(.a)) {
         sound.menu_confirm();
         switch (pause_list.cursor) {
-            0 => resume_pending = true,
+            0 => resume_hold.request(),
             1 => return leave_link(),
             else => toggle_sound(),
         }

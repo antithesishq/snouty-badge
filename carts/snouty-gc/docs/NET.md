@@ -220,9 +220,8 @@ reset.
 ```zig
 n.pump(now);
 var byte = input.race_byte();
-if (n.paused) byte &= 0x40; // menu presses stay out of the race; Start resumes
-if (resume_chosen) byte |= 0x40; // RESUME in the pause menu: a Start edge
-n.submit(now, byte);
+if (n.paused) byte = hold.byte(byte & 0x40); // only Start; RESUME holds it (net.Resume)
+hold.took(byte, n.submit(now, byte)); // submit says whether it kept the byte
 var ticked = n.step(&w);
 // draw (pumping at the bands); then, until ~14 ms into the frame:
 while (micros_into_frame() < 14_000) {
@@ -240,8 +239,11 @@ switch (n.state()) {
 - One successful `step` per frame, never two (the World must run at
   the frame rate; the partner's buffer is only 3 ticks deep).
 - `n.paused` (both badges agree on it) shows the pause menu; the World
-  does not move while it is set. `RESUME` = submit a byte with Start for
-  one frame after a frame without it; `QUIT` = `n.leave(now)`.
+  does not move while it is set. `RESUME` = `net.Resume`: hold Start on
+  every byte until `n.paused` turns off, after one kept byte without it
+  (`submit` drops a byte while `step` is stalled, so a one-frame edge
+  could be lost and the race stayed paused; found at the lockstep
+  conversion, fixed at the integration); `QUIT` = `n.leave(now)`.
 - After the race finishes, keep pumping and submitting (the partner may
   still need a late tick of ours) until the results are dismissed, then
   `n.leave(now)`. The partner sees `peer_left` (`.quit`) when it is still
@@ -276,8 +278,9 @@ switch (n.state()) {
   partner already left for its results never waits. The Net stays in
   `racing` and keeps resending the last window until `leave`.
 - Pause: `n.paused` opens the pause list (RESUME, QUIT, SOUND); only the
-  Start bit is submitted; RESUME and B send a Start edge (a frame without
-  Start first if Start is still held); QUIT is `leave`.
+  Start bit is submitted; RESUME and B hold Start until `paused` is off
+  (`net.Resume`, since the integration; a kept byte without Start first
+  if the last kept one had it); QUIT is `leave`.
 - `DESYNC` ends on the results with a `DESYNC: RACE ENDED` band; the
   results' last A is `leave`, back to the lobby.
 - Simulator: LINK greyed, `NO LINK IN SIMULATOR`; `debug_link_view` and

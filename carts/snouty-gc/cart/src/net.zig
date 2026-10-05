@@ -122,6 +122,54 @@ pub const Game = struct {
 const net_input_delay = input_delay;
 const net_check_every = check_every;
 
+/// RESUME in the link pause menu (main.zig's `link_pause_frame`; net_test
+/// drives the same code): the Start edge the cart sends for the player.
+/// `step` toggles `paused` on a Start edge between two bytes it runs, and
+/// `submit` drops a frame's byte while `step` is stalled, so an edge sent
+/// for one frame can be lost and the race stays paused. Instead Start is
+/// held on every byte until `paused` turns off (`settle`), after one kept
+/// byte without Start if the last kept byte had it (the player's own
+/// Start may still be down). That gives exactly one rising edge in the
+/// bytes kept: holding never toggles twice. If the partner resumes first,
+/// the hold ends and, unless a held Start was already kept, sends no edge.
+pub const Resume = struct {
+    /// RESUME (or B) was picked and `paused` has not turned off yet.
+    pending: bool = false,
+    /// Since `pending` began a byte without Start was kept (or the last
+    /// kept byte had none): the next kept Start is an edge.
+    armed: bool = false,
+    /// The last byte `submit` kept had Start.
+    last_start: bool = false,
+
+    /// RESUME picked (again picks are no-ops while one is pending).
+    pub fn request(r: *Resume) void {
+        if (r.pending) return;
+        r.pending = true;
+        r.armed = !r.last_start;
+    }
+
+    /// The byte to submit this frame: `pad` (the player's buttons) unless
+    /// a resume is pending, then nothing until armed and Start after.
+    pub fn byte(r: *const Resume, pad: u8) u8 {
+        if (!r.pending) return pad;
+        return if (r.armed) start_bit else 0;
+    }
+
+    /// After every `submit` of a race or pause frame: the byte offered and
+    /// whether it was kept.
+    pub fn took(r: *Resume, b: u8, kept: bool) void {
+        if (!kept) return;
+        r.last_start = sanitize(b) & start_bit != 0;
+        if (r.pending and !r.last_start) r.armed = true;
+    }
+
+    /// After the frame's `step`s: once `paused` is off (this edge or the
+    /// partner's landed, or the race can no longer pause) the hold ends.
+    pub fn settle(r: *Resume, paused: bool) void {
+        if (!paused) r.pending = false;
+    }
+};
+
 pub fn Net(comptime L: type) type {
     return struct {
         const Self = @This();
@@ -242,8 +290,13 @@ pub fn Net(comptime L: type) type {
         // ---- racing --------------------------------------------------------
 
         /// This frame's race byte, once a frame (docs/NET.md section 3).
-        pub fn submit(self: *Self, now: u64, byte: u8) void {
+        /// False: the byte was dropped (the local ring is full while
+        /// `step` is stalled; nothing is sent for it). `Resume` needs to
+        /// know: the pause edge is taken against the last byte kept.
+        pub fn submit(self: *Self, now: u64, byte: u8) bool {
+            const before = self.ls.local_hi;
             self.ls.submit(now, byte);
+            return self.ls.local_hi != before;
         }
 
         /// The next lockstep tick if both inputs are here (at most one
