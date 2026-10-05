@@ -32,15 +32,16 @@ words, stripped before the rasterizer sees them:
                              kinds cycle; a spot on or near road is skipped
   furrow <half> <x y> <x y>..  a trench (pit tiles) along the polyline, painted
                              only over the wallpaper beyond the walls (cosmetic)
-  features: crust[,len=N]    a band of crust (SPEC 19.4) across the road at
-                             the segment's middle, N px either side (12)
+  features: crust[,len=N,warn=W]  a band of crust (SPEC 19.4) across the road at
+                             the segment's middle, N px either side (8), breaking
+                             W ticks after the first touch (24)
             shadow[,len=N]   a wing shadow band across the road (cosmetic)
             drift[,p=N]      sand drifts over N% of the segment's road (cosmetic)
 
 Row and `prop` props are decorative and kept off the drivable floor; a
 `solid` prop must sit off the racing line (the validator checks that its
 circle leaves the centerline 24 px clear). A crust band is written as a
-crust record (docs/PACKS.md: warn 12, period 300, its tiles' rectangle); a
+crust record (docs/PACKS.md: warn 24, period 300, its tiles' rectangle); a
 `sweeper` mover's record names the pack's MOVER_CELL as its sprite. Everything is deterministic (seeded from crc32
 of the names); the script validates and exits non-zero on any failure.
 """
@@ -68,9 +69,14 @@ from leagues import A_SURF, DRIVABLE, ATTR_NAMES  # noqa: E402
 
 PACK_NAMES = ("dead_mall", "boneyard")
 MY_FEATS = ("crust", "shadow", "drift")
-CRUST_LEN, SHADOW_LEN = 12, 14
+CRUST_LEN, SHADOW_LEN = 8, 14
 PROP_OFF, PROP_CLEAR = 20, 10     # default offset beyond the road edge; footprint radius kept off road
-CRUST_WARN, CRUST_PIT_TICKS = 12, 300   # docs/PACKS.md crust record
+# The crust record (docs/PACKS.md): the cart's default warn is 12 ticks, but
+# a car's 24 px footprint takes (band + 24) / speed ticks to cross, about
+# 16 ticks over a 16 px band at 2.5 px/tick, so the car that cracks it would
+# fall through its own crack. 24 ticks gets the cracking car across down to
+# 1.7 px/tick while the next car (about 60 ticks behind) still drops.
+CRUST_WARN, CRUST_PIT_TICKS = 24, 300
 K_CRUST = 4                       # world.HazardKind.crust
 PROPS_MAX = 24                    # docs/PACKS.md: props records per track
 SLOT_FREE, CELL_BYTES = 5792, C.PROP_W * C.PROP_H // 2   # the pack slot after the fixed parts
@@ -227,6 +233,7 @@ def build_one(pack, mod, ts, src, errs, out, review, report):
                         tmap[q] = mod.DRIFT_HEAVY if h < pct * 0.3 else mod.DRIFT
         if "crust" in mine:
             ln = mine["crust"].get("len", CRUST_LEN)
+            warn = mine["crust"].get("warn", CRUST_WARN)
             cells = []
             for q in band_tiles(trk, jm, -ln, ln, surf_list, nj):
                 if tmap[q] in plain or tmap[q] in getattr(mod, "STRIPE_TILES", ()):
@@ -238,7 +245,7 @@ def build_one(pack, mod, ts, src, errs, out, review, report):
             ys, xs = zip(*cells)
             crusts.append(dict(seg=i, tiles=[[int(x), int(y)] for y, x in cells],
                                x0=min(xs) * 8, y0=min(ys) * 8, x1=max(xs) * 8 + 8, y1=max(ys) * 8 + 8,
-                               sample=int(jm * 256 // nd)))
+                               sample=int(jm * 256 // nd), warn=warn))
     # Furrows: pit tiles over the wallpaper (tiles 1..15) along polylines.
     for half, pts in src.furrows:
         for ty in range(128):
@@ -305,10 +312,10 @@ def mover_sprites(feat, cell):
 
 def crust_bytes(crusts):
     """Crust records (docs/PACKS.md, kind 4): the band's whole-tile
-    rectangle (x1, y1 exclusive), warn 12, period 300, the rest 0."""
+    rectangle (x1, y1 exclusive), warn (CRUST_WARN unless the source says), period 300, the rest 0."""
     out = bytearray()
     for c in crusts:
-        out += bytes([K_CRUST, CRUST_WARN, 0, 0])
+        out += bytes([K_CRUST, c["warn"], 0, 0])
         out += np.array([c["x0"], c["y0"], c["x1"], c["y1"], CRUST_PIT_TICKS, 0, 0], "<u2").tobytes()
         out += bytes([0, 0])
     return bytes(out)
