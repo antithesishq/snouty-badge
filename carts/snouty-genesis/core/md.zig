@@ -1,7 +1,7 @@
 //! Snouty Genesis core: the whole Sega Genesis (Mega Drive, NTSC model 1)
 //! in one struct, badge-agnostic. No cart-api, no floats, no allocator, no
-//! clock, no randomness: the only input is the pad word given to
-//! `step_frame`. SPEC.md sections 3, 7, 10; PLAN.md "Frozen for M1:
+//! clock, no randomness: the only input is the pad words given to
+//! `step_frame_pads` (docs/MULTIPLAYER.md). SPEC.md sections 3, 7, 10; PLAN.md "Frozen for M1:
 //! core/md.zig" is the interface contract.
 //!
 //! `step_frame` is the frame loop of the PLAN.md timing contract: 262
@@ -29,6 +29,7 @@ pub const rom = @import("rom.zig");
 pub const tunables = @import("tunables.zig");
 pub const undo = @import("undo.zig");
 pub const sound = @import("sound.zig");
+pub const ports = @import("ports.zig");
 
 pub const RomSource = rom.RomSource;
 pub const LineSink = vdp.LineSink;
@@ -39,11 +40,18 @@ pub const Z80 = z80bus.Cpu;
 /// (the 68000 reads the stub's RAM as 0, core/z80bus.zig).
 pub const z80_ram_size: usize = if (tunables.z80_enabled) 0x2000 else 0;
 
+/// Pad words per frame (`step_frame_pads`, core/ports.zig): pad 1 first.
+pub const max_pads = ports.max_pads;
+pub const Pads = ports.Pads;
+
 pub const out_w = vdp.out_w;
 pub const out_h = vdp.out_h;
 
 /// Pad word fed to `step_frame`: bit set = pressed (SPEC.md section 5).
-/// Three-button pad; the frontend maps the badge's buttons onto it.
+/// Bits 0-7 are the three-button pad (the frontend maps the badge's
+/// buttons onto them; one byte per player on the wire, docs/MULTIPLAYER.md),
+/// bits 8-11 a 6-button pad's extra buttons, which only a Team Player
+/// reports (`ports.Config.six`).
 pub const Pad = struct {
     pub const up: u16 = 1 << 0;
     pub const down: u16 = 1 << 1;
@@ -53,7 +61,14 @@ pub const Pad = struct {
     pub const b: u16 = 1 << 5;
     pub const c: u16 = 1 << 6;
     pub const start: u16 = 1 << 7;
+    pub const x: u16 = 1 << 8;
+    pub const y: u16 = 1 << 9;
+    pub const z: u16 = 1 << 10;
+    pub const mode: u16 = 1 << 11;
 };
+
+pub const PollHook = ports.PollHook;
+pub const poll_lines = ports.poll_lines;
 
 /// The one voice the badge plays (SPEC.md section 9): frequency in Hz and
 /// loudness, 0 quietest audible .. 15 loudest (a PSG channel's is
@@ -96,8 +111,15 @@ pub const Md = struct {
     /// taken out of the 68000's budget by the frame loop.
     dma_stall: u32 = 0,
     io: Io align(4) = .{},
-    /// Current pad (`Pad` bits), set by `step_frame`.
-    pad: u16 align(4) = 0,
+    /// Multiplayer (core/ports.zig, docs/MULTIPLAYER.md): this frame's pads
+    /// and the Team Player / J-Cart protocol state (console state). Two
+    /// fields here, where `pad` was: placed after the big arrays or split
+    /// into more fields, this Zig's auto layout stopped following the
+    /// declaration order and moved hot fields past 4 KB.
+    ports: ports.State align(4) = .{},
+    /// What is plugged in, lockstep mode and the poll hook: configuration,
+    /// kept by `reset` (`ports.Setup`).
+    setup: ports.Setup align(4) = .{},
 
     // ---- Z80 side ----
     z80: Z80 align(4) = .{},
@@ -131,7 +153,8 @@ pub const Md = struct {
     /// An address `skip_wait_loop` found is not a wait loop head (not
     /// console state: it only saves looking again).
     not_wait_loop: u32 align(4) = 0xFFFF_FFFF,
-    /// The SRAM range the header declares (derived from `rom` by `reset`).
+    /// The SRAM range the header declares (derived from `rom` by `reset`),
+    /// or the J-Cart register (`setup.cfg`).
     sram_map: rom.SramMap = .{},
     /// The streamed sound's renderer (core/sound.zig; the RAM cart only,
     /// a zero-size field elsewhere), set by the frontend; not console state.
@@ -158,6 +181,7 @@ pub const Md = struct {
     pub fn init_in_place(md: *Md, src: RomSource) void {
         md.rom = src;
         md.line_sink = null;
+        md.setup = .{ .cfg = ports.detect(&src) };
         if (sound.enabled) md.snd = null;
         md.reset();
     }
@@ -172,11 +196,17 @@ pub const Md = struct {
         @memset(&md.work_ram, 0);
         md.vdp.reset();
         md.io = .{};
-        md.pad = 0;
+        md.ports = .{};
         @memset(&md.sram, 0);
         const h = rom.parse_header(&md.rom);
         md.sram_map = if (md.rom.size >= rom.header_end) rom.sram_map(&h) else .{};
         md.sram_active = if (md.sram_map.present() and md.rom.size <= md.sram_map.lo) md.sram_map else .{};
+        if (md.setup.cfg.kind == .jcart) {
+            // The J-Cart register takes the SRAM window (ports.zig).
+            md.sram_map = ports.jcart_map();
+            md.sram_active = md.sram_map;
+            ports.jcart_refresh(md);
+        }
         md.dma_stall = 0;
         md.not_wait_loop = 0xFFFF_FFFF;
         md.m68k_share = 0;
@@ -197,11 +227,23 @@ pub const Md = struct {
         if (sound.active(md)) |s| s.resync(md);
     }
 
-    /// One Genesis frame (262 lines). `pad` is held for the whole frame;
-    /// `render` false skips all line rendering (the first frame of a 60/30
-    /// pair).
+    /// One Genesis frame (262 lines) with pad 1 = `pad` and every other pad
+    /// released (`step_frame_pads`).
     pub fn step_frame(md: *Md, pad: u16, render: bool) void {
-        md.pad = pad;
+        var p: Pads = @splat(0);
+        p[0] = pad;
+        md.step_frame_pads(&p, render);
+    }
+
+    /// One Genesis frame (262 lines). `pads` are held for the whole frame
+    /// (which ones a game can read depends on `setup.cfg`); `render` false
+    /// skips all line rendering (the first frame of a 60/30 pair). The
+    /// console state after it is a function of the state before and of
+    /// `pads` only (docs/MULTIPLAYER.md; with `setup.lockstep` set, whatever the
+    /// frontend renders).
+    pub noinline fn step_frame_pads(md: *Md, pads: *const Pads, render: bool) void {
+        md.ports.pads = pads.*;
+        if (md.setup.cfg.kind == .jcart) ports.jcart_refresh(md);
         const sink: ?LineSink = if (render) md.line_sink else null;
         var b = md.bus_for();
         var zb = md.z80bus_for();
@@ -210,7 +252,8 @@ pub const Md = struct {
         if (sound.active(md)) |s| s.begin_frame();
         var line: u32 = 0;
         while (line < vdp.lines_per_frame) : (line += 1) {
-            if (sink) |s| if (md.vdp.row_for_line(@intCast(line))) |row| md.vdp.render_line(row, s);
+            if (sink) |s| if (md.vdp.row_for_line(@intCast(line))) |row| md.render_row(row, s);
+            if (line % poll_lines == 0) if (md.setup.poll_hook) |h| h.func(h.ctx);
             if (line == vdp.vint_line) md.z80_int = true;
             md.run_m68k(&b, line_share(line, scaled_frame));
             md.run_z80(&zb);
@@ -222,6 +265,16 @@ pub const Md = struct {
         md.frame_count +%= 1;
         md.tone_cache = md.pick_tone();
         if (sound.active(md)) |s| s.end_frame(md);
+    }
+
+    /// Render the current line as badge row `row`. In lockstep the sticky
+    /// sprite bits the renderer sets are dropped, so rendering leaves the
+    /// console state alone.
+    inline fn render_row(md: *Md, row: u8, s: LineSink) void {
+        // One call site: the RAM cart inlines `render_line` here.
+        const st = md.vdp.status;
+        md.vdp.render_line(row, s);
+        if (md.setup.lockstep) md.vdp.status = st;
     }
 
     /// 68000 cycles of line `line` when the frame has `total`: the frame's
@@ -432,7 +485,7 @@ pub const Md = struct {
         work_ram: [0x10000]u8,
         vdp: vdp.Vdp,
         io: Io,
-        pad: u16,
+        ports: ports.State,
         sram: [rom.sram_max]u8,
         sram_active: rom.SramMap,
         dma_stall: u32,
@@ -462,7 +515,7 @@ pub const Md = struct {
         cpu: Cpu,
         vdp: vdp.Vdp.Small,
         io: Io,
-        pad: u16,
+        ports: ports.State,
         sram_active: rom.SramMap,
         dma_stall: u32,
         z80: Z80,
@@ -527,7 +580,7 @@ pub const Md = struct {
         out.work_ram = md.work_ram;
         out.vdp = md.vdp;
         out.io = md.io;
-        out.pad = md.pad;
+        out.ports = md.ports;
         out.sram = md.sram;
         out.sram_active = md.sram_active;
         out.dma_stall = md.dma_stall;
@@ -548,7 +601,7 @@ pub const Md = struct {
         md.work_ram = k.work_ram;
         md.vdp = k.vdp;
         md.io = k.io;
-        md.pad = k.pad;
+        md.ports = k.ports;
         md.sram = k.sram;
         md.sram_active = k.sram_active;
         md.dma_stall = k.dma_stall;

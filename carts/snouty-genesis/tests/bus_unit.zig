@@ -106,7 +106,7 @@ test "bus: 3-button pad TH select protocol on port 1" {
     const md = try new_md(&rom_buf);
     defer std.testing.allocator.destroy(md);
     var b = md.bus_for();
-    md.pad = Pad.up | Pad.right | Pad.b | Pad.a | Pad.start;
+    md.ports.pads[0] = Pad.up | Pad.right | Pad.b | Pad.a | Pad.start;
 
     // TH as input (control 0): pulled high, `1 TH C B R L D U` active low.
     // Pressed U, R, B: bits 0, 3, 4 low.
@@ -126,7 +126,7 @@ test "bus: 3-button pad TH select protocol on port 1" {
     try expectEqual(@as(u16, 0x6666), b.read16(0xA10002));
 
     // Nothing pressed.
-    md.pad = 0;
+    md.ports.pads[0] = 0;
     try expectEqual(@as(u8, 0x7F), b.read8(0xA10003));
     b.write8(0xA10003, 0x00);
     try expectEqual(@as(u8, 0x33), b.read8(0xA10003));

@@ -137,7 +137,7 @@ fn debug_state() callconv(.c) u32 {
 /// Pad word the core was last stepped with (`core.Pad` bits).
 fn debug_pad() callconv(.c) u32 {
     if (!app.have_md) return 0;
-    return app.md.pad;
+    return app.md.ports.pads[0];
 }
 /// 0 none, 1 embedded, 2 drive contiguous, 3 drive fragmented.
 fn debug_rom_source() callconv(.c) u32 {

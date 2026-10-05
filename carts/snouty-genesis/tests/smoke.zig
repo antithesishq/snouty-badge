@@ -113,7 +113,7 @@ test "md: keyframe round trip" {
     md.restore(k);
     try std.testing.expectEqual(@as(u8, 0xAA), md.work_ram[5]);
     try std.testing.expectEqual(@as(u32, 1), md.frame_count);
-    try std.testing.expectEqual(core.Pad.right, md.pad);
+    try std.testing.expectEqual(core.Pad.right, md.ports.pads[0]);
 }
 
 test "rom: contiguous and clustered sources read the same bytes" {
