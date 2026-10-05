@@ -27,6 +27,7 @@ const carts = [_]Cart{
     .{ .dir = "snouty-cycles", .binary = "snouty-cycles", .add = &@import("carts/snouty-cycles/build.zig").add },
     .{ .dir = "paperclips", .binary = "paperclips", .add = &@import("carts/paperclips/build.zig").add },
     .{ .dir = "raspberry-trail", .binary = "raspberry-trail", .add = &@import("carts/raspberry-trail/build.zig").add },
+    .{ .dir = "snouty-theremin", .binary = "snouty-theremin", .add = &@import("carts/snouty-theremin/build.zig").add },
     .{ .dir = "badge-calibrate", .binary = "badge-calibrate", .add = &@import("badge-bench/calibrate/build.zig").add },
 };
 
