@@ -1,4 +1,8 @@
-# Snouty GC: Mode 7 combat racer spec
+# Snouty GCP (Snouty Garbage Collection Prix): Mode 7 combat racer spec
+
+The cart was called Snouty GC until 2026-10-05; the directory, binary,
+build steps and tags keep `snouty-gc`, and "Snouty GC" below means the
+same game.
 
 Owner: Adrian Hatch (Antithesis). Target: SYCL Badge V2, 160x128 RGB565, 60 Hz.
 A new cart in this repository: a Mode 7 combat racer in the line of
@@ -427,7 +431,7 @@ Host tests drive two simulations through `lib/link_virtual.zig` (12).
 ### 8.1 Flow
 
 ```
-Splash (2 s, eyepatched Snouty portrait, SNOUTY GC / GARBAGE COLLECTION)
+Splash (2 s, eyepatched Snouty portrait, SNOUTY GCP / GARBAGE COLLECTION / PRIX)
   -> Title ("Press Start"; 10 s idle -> Attract)
   -> Menu: QUICK RACE | GARBAGE COLLECTION | CIRCUIT | LINK | Sound: off
   -> Racer select (every mode) -> Countdown -> Race -> Results
@@ -768,8 +772,9 @@ Merge to main as soon as a milestone is badge-ready.
 
 ## 17. Decisions (taken by default, 2026-10-04)
 
-1. **Name**: `snouty-gc`, title **SNOUTY GC**, subtitle `GARBAGE
-   COLLECTION`.
+1. **Name**: `snouty-gc`, title **SNOUTY GCP** (Snouty Garbage
+   Collection Prix; was SNOUTY GC until 2026-10-05), subtitle `GARBAGE
+   COLLECTION` over `PRIX`.
 2. **Controls**: auto-throttle, A front fire, Down+A rear, B pickup, Up
    burst, hold Select to look back. The alternative is A throttle, B fire,
    Up pickup, with rear weapons as pickups only: closer to Mario Kart, but

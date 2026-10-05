@@ -1,7 +1,9 @@
-# Snouty GC (cart notes)
+# Snouty GCP (cart notes)
 
-Mode 7 combat racer (subtitle GARBAGE COLLECTION) forked by copy from the
-Snouty Zero engine. `SPEC.md` is the design, `PLAN.md` the milestone
+Snouty GCP (Snouty Garbage Collection Prix; the cart, binary and tags
+stay `snouty-gc`): a Mode 7 combat racer forked by copy from the Snouty
+Zero engine. GARBAGE COLLECTION is still the name of its elimination
+mode. `SPEC.md` is the design, `PLAN.md` the milestone
 contract and status; read both before changing anything. The repository
 rules are in the root `CLAUDE.md`. Never edit `carts/snouty-zero/` from
 here: every forked file names its Zero source and commit on its first line.

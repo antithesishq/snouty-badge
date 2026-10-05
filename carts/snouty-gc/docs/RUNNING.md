@@ -1,7 +1,7 @@
-# Running the Snouty GC cart
+# Running the Snouty GCP cart
 
-Snouty GC (`snouty-gc`, subtitle GARBAGE COLLECTION) is a SYCL Badge V2
-cart: a Mode 7 combat racer on the Snouty Zero engine (`../SPEC.md`). 60 fps
+Snouty GCP (Snouty Garbage Collection Prix; the cart and binary are
+`snouty-gc`) is a SYCL Badge V2 cart: a Mode 7 combat racer on the Snouty Zero engine (`../SPEC.md`). 60 fps
 (`cart.set_vsync_enabled(1000.0 / 60.0)`), one `update()` per frame.
 
 M1 (guns and racers) on top of the M0 fork (Zero's floor, horizon, fog,
@@ -41,8 +41,8 @@ drones, RUBBER DUCKs on tethers, DEADLOCK chains, SUDO's gold flash and
 M3 (content and flow, SPEC 3, 8): six tracks over two leagues (the
 Dumps: Landfill Loop, Monitor Dunes, Cathode Flats, each with the
 Sweeper; the Runoff: Salt Pan Sprint, Outflow Canyon, Coolant Basin, with
-exhaust vents). The title (SNOUTY GC over the Dumps horizon, the six
-portraits along the bottom, PRESS START; 10 s idle starts the attract
+exhaust vents). The title (SNOUTY GCP, GARBAGE COLLECTION PRIX over the
+Dumps horizon, the six portraits along the bottom, PRESS START; 10 s idle starts the attract
 demo) leads to the **main menu**: QUICK RACE, GARBAGE COLLECTION,
 PICKUPS, LINK (M4, below), SOUND. A picks, B goes back. **PICKUPS** is a
 reference page: the 15 pickups' icons in a grid, a row per roll tier

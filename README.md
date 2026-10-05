@@ -50,6 +50,7 @@ have run on a badge.
 | `snouty-flyover` | `snouty-flyover` | voxel flyover through a landscape of data structures | M4.1 done | RAM | locked to 30 fps | not yet |
 | `demosnout` | `demosnout` | demoscene production, 114 s loop | M3 done | RAM | silent by design | not yet |
 | `snouty-zero` | `snouty-zero` | F-Zero style Mode 7 hover racer | M5.1 done | RAM, plus XIP built by default | none known | not yet |
+| `snouty-gc` | `snouty-gc` | Snouty GCP (Snouty Garbage Collection Prix): Mode 7 combat racer on the Snouty Zero engine, six armed racers, joke pickups (a PICKUPS page in the menu explains them), the GARBAGE COLLECTION elimination mode, two-badge LINK races | M4 done | RAM (ReleaseSmall) | none known | link play verified on two badges 2026-10-05 |
 | `snouty-pipes` | `snouty-pipes` | Windows 3D Pipes screensaver: ray-cast pipes drawn incrementally, teapot easter egg, orbit, B nametag, steer mode game with rewind | M3 done | RAM | none known | not yet |
 | `paperclips` | `paperclips` | Universal Paperclips by Frank Lantz & Bennett Foddy (ported with permission): the whole incremental game, number for number, as pages of rows | M2 done (whole game) | RAM | no saves (the OS has no cart save region) | not yet |
 | `siwoo` | `siwoo` | name badge for Siwoo Yoon: demosnout's Snouty head over "SIWOO YOON" in chrome | done | RAM | made for the Tufty 2350 (Supabase Select badge); see its SPEC.md | not yet |

@@ -21,8 +21,9 @@ its design and milestone status.
   `snouty-maze`, `snouty-gear`, `snouty-genesis`, `snouty-lynx`,
   `snouty-flyover`, `demosnout`, `snouty-zero` (XIP only), `snouty-pipes`, `siwoo` (a name
   badge: demosnout's head plus a chrome name), `snouty-link` (the link-cable
-  test; `lib/link.zig` is the badge-to-badge link, docs/LINK.md), `snouty-gc` (a
-  combat racer forked from snouty-zero's engine), `snouty-cycles` (Tron light
+  test; `lib/link.zig` is the badge-to-badge link, docs/LINK.md), `snouty-gc` (Snouty GCP
+  (Snouty Garbage Collection Prix), a combat racer forked from
+  snouty-zero's engine), `snouty-cycles` (Tron light
   cycles against AI programs),
   `paperclips` (a port of Universal Paperclips, with the authors'
   permission).

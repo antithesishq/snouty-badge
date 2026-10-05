@@ -1,7 +1,7 @@
 //! Forked from snouty-zero/cart/src/menu.zig at f8f6962.
 //! Menus and screens (SPEC 8.1): the splash (Snouty's eyepatched portrait,
-//! M1), the title (M3: SNOUTY GC / GARBAGE COLLECTION over the Dumps
-//! horizon, the six portraits along the bottom, PRESS START), the main
+//! M1), the title (M3: SNOUTY GCP / GARBAGE COLLECTION / PRIX over the
+//! Dumps horizon, the six portraits along the bottom, PRESS START), the main
 //! menu (M3: QUICK RACE, GARBAGE COLLECTION, PICKUPS (pickup_page.zig),
 //! LINK (M4; greyed in the simulator), SOUND)
 //! and the vertical list the pause menu uses. Zero's league and track
@@ -14,8 +14,14 @@ const sprites = @import("sprites.zig");
 const racers = @import("racers.zig");
 const menu_text = @import("menu_text.zig");
 
-pub const title_str = "SNOUTY GC";
+/// The game is Snouty GCP, short for Snouty Garbage Collection Prix. The
+/// title lockup is SNOUTY small and GCP big (`lockup`): SNOUTY GCP at 2x
+/// is the whole 160 px.
+pub const title_str = "SNOUTY GCP";
 pub const subtitle = "GARBAGE COLLECTION";
+pub const subtitle_2 = "PRIX";
+const hero = "GCP";
+const small = "SNOUTY";
 
 /// Vertical list cursor.
 pub const List = struct {
@@ -35,21 +41,40 @@ pub fn clear() void {
 }
 
 /// Splash (SPEC 8.1): Snouty's eyepatched portrait at 2x in his livery
-/// frame, the title and subtitle under it.
+/// frame, the title and the two subtitle lines under it.
 pub fn draw_splash(frame: u32) void {
     clear();
-    hud.fill_rect(31, 4, 98, 98, hud.livery(0));
-    sprites.blit_cell(&sprites.portraits[0], 0, 32, 5, 96, 96, .{});
-    hud.centered(title_str, 104, hud.white);
-    hud.text(title_str, 80 - @as(i32, title_str.len) * 4 + 1, 104, hud.white); // bold
-    if (frame > 30) hud.centered(subtitle, 115, hud.coral);
+    hud.fill_rect(31, 1, 98, 98, hud.livery(0));
+    sprites.blit_cell(&sprites.portraits[0], 0, 32, 2, 96, 96, .{});
+    hud.centered(title_str, 101, hud.white);
+    hud.text(title_str, 80 - @as(i32, title_str.len) * 4 + 1, 101, hud.white); // bold
+    if (frame > 30) {
+        hud.centered(subtitle, 110, hud.coral);
+        hud.centered(subtitle_2, 119, hud.coral);
+    }
 }
 
-/// SNOUTY GC at 2x with a coral drop, centred, top row at `y`.
+/// The title lockup, centred, top row at `y`: SNOUTY at 1x sitting on the
+/// baseline of GCP at `scale`x, each white with a coral drop. The glyphs
+/// use 7 of their 8 columns, so the ink is 47 + 6 + 23 * scale px wide.
+/// `plate`: an Anti-Black plate behind SNOUTY (over the live floor, where
+/// 1x text alone gets lost in the scenery).
+pub fn lockup(y: i32, scale: i32, plate: bool) void {
+    const gap: i32 = 6;
+    const small_w: i32 = @as(i32, small.len) * 8 - 1;
+    const x: i32 = 80 - @divTrunc(small_w + gap + 23 * scale, 2);
+    const sy = y + 8 * scale - 8;
+    if (plate) hud.fill_rect(x - 2, sy - 2, small_w + 5, 12, hud.anti_black);
+    hud.glyph_text(small, x + 1, sy + 1, 1, false, hud.coral);
+    hud.glyph_text(small, x, sy, 1, false, hud.white);
+    const hx = x + small_w + gap;
+    hud.glyph_text(hero, hx + scale, y + scale, scale, false, hud.coral);
+    hud.glyph_text(hero, hx, y, scale, false, hud.white);
+}
+
+/// The lockup with GCP at 2x (the menu and the LINK lobby), top row at `y`.
 pub fn big_title(y: i32) void {
-    const x: i32 = 80 - @as(i32, title_str.len) * 8;
-    hud.glyph_text(title_str, x + 2, y + 2, 2, false, hud.coral);
-    hud.glyph_text(title_str, x, y, 2, false, hud.white);
+    lockup(y, 2, true);
 }
 
 /// Portrait row (title): six half-scale portraits 25 px apart, a livery
@@ -61,10 +86,11 @@ const row_y: i32 = 96;
 /// the top): the title band, PRESS START blinking, and the six racers'
 /// portraits along the bottom, one stepping up at a time.
 pub fn draw_title(frame: u32) void {
-    hud.fill_rect(0, 34, 160, 56, hud.anti_black);
-    big_title(38);
-    hud.centered(subtitle, 60, hud.coral);
-    if ((frame / 30) % 2 == 0) hud.centered("PRESS START", 76, hud.white);
+    hud.fill_rect(0, 30, 160, 64, hud.anti_black);
+    lockup(33, 3, false);
+    hud.centered(subtitle, 63, hud.coral);
+    hud.centered(subtitle_2, 72, hud.coral);
+    if ((frame / 30) % 2 == 0) hud.centered("PRESS START", 84, hud.white);
     const lit: u32 = (frame / 45) % racers.count;
     for (0..racers.count) |k| {
         const x = row_x0 + @as(i32, @intCast(k)) * 25;
