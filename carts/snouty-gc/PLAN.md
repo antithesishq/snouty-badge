@@ -957,15 +957,51 @@ Track B.
    questions, commits with the `Co-Authored-By: Claude Opus 5.5
    <noreply@anthropic.com>` line, push gc/spec. No tag, no merge.
 
-### Track B: flow and mode presentation (after M2 is integrated)
+### Track B: flow and mode presentation (Opus agent, worktree /home/exedev/snouty-badge-gc-present, branch gc/present)
 
-The menu (QUICK RACE | GARBAGE COLLECTION | LINK greyed | Sound), the
-track row over six tracks, GC visuals (the MARKED tag and red outline,
-the claw lifting a car out, `GC: freed KIDDIE`, the survivor screen, a
-collected human watching the leader), the hazards drawn (Sweeper sprite,
-vent blast), the Runoff horizon if it needs renderer work, the title, and
-attract with the scripted KERNEL PANIC on the leader in lap 2, plus pause
-and results for GC. Written in detail when M2 lands.
+M2 is tagged and on main (`snouty-gc/m2`, main 20e2172a). `gc/present`
+has the M3.0 interface (999ee5fc). Track A is still building the tracks,
+hazards and GC rules on `gc/spec`: merge `origin/gc/spec` in as it pushes.
+Track B owns the M2 Track B files plus `tools/draw_art.py`, `tools/art/`,
+`assets/gen/art/` and `ASSETS.md` (new art sheets: hazards), and never
+edits Track A's files.
+
+1. **Menu** after the title (SPEC 8.1): QUICK RACE | GARBAGE COLLECTION |
+   LINK (greyed, `NO LINK YET` until M4) | SOUND. Then racer select, then
+   the track row over the six tracks from Track A's rotation table (name
+   and league; a track not yet built is skipped), then the countdown.
+   Pause keeps Resume, Restart, Quit, Sound. The HUD's `LAP n/N` reads
+   `World.laps`, and GC shows `SWEEP n` instead of laps.
+2. **GC visuals**: the MARKED car gets a red outline and a `MARKED` tag
+   over the sprite (blinking on the minimap); a `mark` event passing the
+   mark flashes `TAGGED!`; a `collect` event lowers the claw (`claw.png`)
+   from the top of the screen over that car, closes it and lifts the car
+   out, with `GC: freed KIDDIE` in the feed. A collected human watches the
+   race from the leader's camera with `COLLECTED` on screen. The survivor
+   screen shows the winner's full portrait and taunt and `LAST PROCESS
+   RUNNING`. Results for GC rank by collection order.
+3. **Hazards drawn** from `World.hazards` and `track.hazard_specs`: the
+   Sweeper (a new code-drawn sprite sheet in `draw_art.py`: a huge
+   maintenance crawler with brushes and a warning light, a few frames,
+   seen from behind and the side), its warning (light flashing during
+   `warn`), the exhaust vent (the lane telegraphed during `warn`, a heat
+   blast of flame or steam along it during `active`), sparks on
+   `hazard_hit`. Read Track A's notes in PLAN "M3 status" when it lands.
+   If the Runoff horizon or palette needs anything from the renderer,
+   do it.
+4. **Title screen**: SNOUTY GC / GARBAGE COLLECTION over the Dumps
+   horizon with the six portraits along the bottom, then `PRESS START`.
+   It goes to attract after 10 s idle.
+5. **Attract**: an AI-only race with `.mode = .attract` (the sim scripts
+   the lap 2 KERNEL PANIC on the leader), the camera cutting between
+   cars every few seconds, `PRESS START` blinking, any button back to the
+   title. Rotate the track each time.
+6. Previews (`docs/preview_m3.gif`: the menu, a GC race with a mark, a
+   tag and a claw, the survivor screen, a vent and a Sweeper, the attract
+   blue screen), bench (add a GC race script, plain and `--lcd`, under 8
+   ms worst), gate green, PLAN "M3 status" Track B paragraph and deferred
+   questions, commits with the `Co-Authored-By: Claude Opus 5.5
+   <noreply@anthropic.com>` line, push `gc/present`. No tag, no merge.
 
 ### M3 gate
 
