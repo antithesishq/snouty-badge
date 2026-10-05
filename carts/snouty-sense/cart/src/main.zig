@@ -95,7 +95,8 @@ var ticks: u64 = 0;
 var prev_bits: u16 = 0;
 
 // EYES
-var eyes: eyes_mod.Eyes = .{};
+/// Set in start() (its defaults are not zero: `.data` otherwise).
+var eyes: eyes_mod.Eyes = undefined;
 var pal: eyes_mod.Palettes = .{};
 /// The sound zone: 0 = the zone with the nearest object, 1..9 a zone.
 var eyes_zone: u8 = 0;
@@ -127,6 +128,8 @@ pub fn start() void {
     cart.set_double_buffer_mode(.no_copy_full_frame);
     sensor = tof.open(fake, i2c.speeds[speed_i]);
     pal.init();
+    eyes.reset();
+    eyes.hold = false;
     apply_config();
 }
 

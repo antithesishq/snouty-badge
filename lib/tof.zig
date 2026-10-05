@@ -520,7 +520,10 @@ pub fn Tof(comptime Bus: type) type {
             self.force_reset = true;
         }
 
-        pub fn poll(self: *Self, now_us: u64) void {
+        /// Not inlined: once per update is plenty, and inlining the state
+        /// machine into a cart's update changed snouty-morph's float code
+        /// generation (+0.12 ms a frame in badge-bench) when M2 grew it.
+        pub noinline fn poll(self: *Self, now_us: u64) void {
             if (@hasDecl(Bus, "sync")) self.bus.sync(now_us);
             self.t0 = now_us;
             self.spent = 0;

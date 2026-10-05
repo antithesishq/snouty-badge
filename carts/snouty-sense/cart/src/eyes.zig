@@ -37,8 +37,17 @@ pub const Eyes = struct {
     last_seq: ?u32 = null,
     hold: bool = false,
 
+    /// Empty waterfall (field by field: no 15 KB temporary on the stack).
     pub fn reset(e: *Eyes) void {
-        e.* = .{ .hold = e.hold };
+        for (&e.hist) |*t| for (t) |*r| @memset(r, 0);
+        for (&e.near, &e.far) |*n, *f| {
+            @memset(n, none);
+            @memset(f, none);
+        }
+        @memset(&e.ref, 0);
+        e.head = 0;
+        e.sets = 0;
+        e.last_seq = null;
     }
 
     /// A histogram set (with its frame, if the driver has one): a new row
