@@ -13,9 +13,12 @@
 //! kinds and kill credit, derez with the fade, trail logs and the round
 //! clock. M1 adds grinding, rubber, the energy bar, sudden death and the
 //! block layouts (`layouts.zig`), each behind its `Config` flag (all off by
-//! default, so a bare `Config` plays M0's rules).
+//! default, so a bare `Config` plays M0's rules). M2 adds the OPTIONS
+//! modifiers (SPEC 6), also behind `Config`: SNAKE trails (`snake_len`),
+//! Achtung GAPS (`gaps`) and Surround WRAP (`wrap`).
 const std = @import("std");
 const layouts = @import("layouts.zig");
+const rng = @import("rng.zig");
 
 pub const grid_w = 80;
 pub const grid_h = 60;
@@ -92,6 +95,16 @@ pub const tuning = struct {
     pub const sudden_death_rings: u8 = @min(grid_w, grid_h) / 2 - 1;
     // M1 layouts: the start cell and this many cells ahead stay free.
     pub const start_clear: u8 = 5;
+
+    // M2 modifiers (SPEC 6 OPTIONS).
+    /// SNAKE: `Config.snake_len` when TRAILS is SNAKE (Armagetron's
+    /// WALLS_LENGTH): a live trail keeps its newest this many cells.
+    pub const snake_len: u16 = 200;
+    /// GAPS: after `gap_every_min` + 0..`gap_every_spread` painted cells
+    /// (40..80) a cycle leaves `gap_cells` cells without wall.
+    pub const gap_every_min: u8 = 40;
+    pub const gap_every_spread: u8 = 41;
+    pub const gap_cells: u8 = 3;
 };
 
 /// Trail log ring per cycle (cell indices). A round's live trail is far
@@ -99,6 +112,12 @@ pub const tuning = struct {
 /// play; if it ever did, the oldest cells would simply stay walls.
 pub const log_cap = 4096;
 const log_mask = log_cap - 1;
+/// GAPS: a log entry with this bit is a gap cell. The cell is painted
+/// while the head is on it and cleared (a `cleared` event) on the step
+/// that leaves it; popping the entry later (SNAKE, fade) never clears it,
+/// unless it is the head a dead cycle crashed on. Entries are written once
+/// and never changed (the logs stay append-only rings for M2's rewind).
+pub const log_gap: u16 = 0x8000;
 
 /// Events per step; more set `events_lost` and the renderer repaints all.
 pub const max_events = 48;
@@ -254,6 +273,12 @@ pub const Cycle = struct {
     /// live trail, oldest first (`World.log_at`).
     log_head: u32 = 0,
     log_tail: u32 = 0,
+    /// M2 GAPS: the cycle's own stream (seeded from `World.seed`, advanced
+    /// once per gap), painted cells until the next gap, gap cells still to
+    /// lay. All 0 without `cfg.gaps`.
+    gap_rng: rng.Xorshift = .{ .state = 0 },
+    gap_in: u8 = 0,
+    gap_left: u8 = 0,
 
     pub fn live(c: *const Cycle) bool {
         return c.state == .alive;
@@ -281,7 +306,10 @@ pub const Config = struct {
     energy: bool = false,
     sudden_death: bool = false,
     layout: u8 = 0,
-    /// M2 modifiers.
+    /// M2 modifiers (SPEC 6 OPTIONS). `wrap`: no rim, the edges wrap
+    /// (Surround). `snake_len`: 0 = FULL trails, else SNAKE (a live trail
+    /// keeps its newest `snake_len` cells; `tuning.snake_len` = 200).
+    /// `gaps`: Achtung gaps every 40..80 cells.
     wrap: bool = false,
     snake_len: u16 = 0,
     gaps: bool = false,
@@ -344,8 +372,9 @@ pub inline fn trail_owner(v: u8) ?u8 {
     return if (t >= 1 and t <= max_cycles) t - 1 else null;
 }
 
-/// The sudden-death ring of interior cell (x, y): its distance to the
-/// rim (1 = next to the rim, up to `tuning.sudden_death_rings`); 0 on the rim.
+/// The ring of cell (x, y): its distance to the screen edge (0 = the rim
+/// ring, 1 = next to it, up to `tuning.sudden_death_rings`). Sudden death
+/// closes ring 1 first, or ring 0 in WRAP (`World.sd_stage_of`).
 pub fn ring_of(x: u32, y: u32) u8 {
     return @intCast(@min(@min(x, y), @min(grid_w - 1 - x, grid_h - 1 - y)));
 }
@@ -407,13 +436,16 @@ pub const World = struct {
         w.events_lost = false;
         w.sudden_death_ring = 0;
         @memset(&w.grid, empty);
-        for (0..grid_w) |x| {
-            w.grid[index(x, 0)] = rim;
-            w.grid[index(x, grid_h - 1)] = rim;
-        }
-        for (0..grid_h) |y| {
-            w.grid[index(0, y)] = rim;
-            w.grid[index(grid_w - 1, y)] = rim;
+        // WRAP: no rim, the edges wrap (`next_cell`).
+        if (!cfg.wrap) {
+            for (0..grid_w) |x| {
+                w.grid[index(x, 0)] = rim;
+                w.grid[index(x, grid_h - 1)] = rim;
+            }
+            for (0..grid_h) |y| {
+                w.grid[index(0, y)] = rim;
+                w.grid[index(grid_w - 1, y)] = rim;
+            }
         }
         w.draw_layout(cfg.layout);
         for (&w.cycles, 0..) |*c, i| {
@@ -427,6 +459,10 @@ pub const World = struct {
             c.speed = w.base_speed();
             c.rubber = cfg.rubber;
             c.energy = tuning.energy_max;
+            if (cfg.gaps) {
+                c.gap_rng = .init(rng.mix(seed, 0x6A70 + @as(u32, @intCast(i))));
+                c.gap_in = gap_interval(c);
+            }
             w.grid[index(s.x, s.y)] = @intCast(i + 1);
             w.logs[i][0] = index(s.x, s.y);
             c.log_head = 1;
@@ -437,10 +473,12 @@ pub const World = struct {
     /// both centre lines, then clears every start cell and the
     /// `tuning.start_clear` cells ahead of it (all four starts, used or not).
     fn draw_layout(w: *World, i: u8) void {
+        // Inside the rim, or anywhere in WRAP (no layout reaches the edge).
+        const lo: usize = if (w.cfg.wrap) 0 else 1;
         for (layouts.get(i).rects) |r| {
             for (r.y..@as(usize, r.y) + r.h) |y| {
                 for (r.x..@as(usize, r.x) + r.w) |x| {
-                    if (x < 1 or x > grid_w - 2 or y < 1 or y > grid_h - 2) continue;
+                    if (x < lo or x > grid_w - 1 - lo or y < lo or y > grid_h - 1 - lo) continue;
                     w.grid[index(x, y)] = block;
                     w.grid[index(grid_w - 1 - x, y)] = block;
                     w.grid[index(x, grid_h - 1 - y)] = block;
@@ -484,23 +522,44 @@ pub const World = struct {
     /// red): a block cell in a ring that has started closing.
     pub fn is_sudden_death_block(w: *const World, x: u32, y: u32) bool {
         if (w.sudden_death_ring == 0 or w.at(x, y) & ~fx_bit != block) return false;
-        const r = ring_of(x, y);
+        const r = w.sd_stage_of(x, y);
         return r >= 1 and r <= w.sudden_death_ring;
+    }
+
+    /// The ring sudden death closes first: 1 (next to the rim), or 0 (the
+    /// old rim ring, the screen edge) in WRAP.
+    pub fn sd_first_ring(w: *const World) u8 {
+        return if (w.cfg.wrap) 0 else 1;
+    }
+
+    /// Sudden-death stages: 29, or 30 in WRAP (ring 0 first). Stage k
+    /// closes ring `k - 1 + sd_first_ring()` over the 60 ticks from
+    /// `tuning.sudden_death_ticks + (k - 1) * 60`; `sudden_death_ring` is
+    /// the stage. Every round ends by tick 3540 (3600 in WRAP).
+    pub fn sd_stages(w: *const World) u8 {
+        return tuning.sudden_death_rings + 1 - w.sd_first_ring();
+    }
+
+    /// The stage at which cell (x, y)'s ring closes (0: never, the rim).
+    pub fn sd_stage_of(w: *const World, x: u32, y: u32) u8 {
+        return ring_of(x, y) + 1 - w.sd_first_ring();
     }
 
     pub inline fn at(w: *const World, x: u32, y: u32) u8 {
         return w.grid[index(x, y)];
     }
 
-    /// The cell one step from (x, y) heading `d`. Cycles never stand on the
-    /// rim, so this stays inside the grid. (M2 WRAP opens the rim and
-    /// wraps here.)
+    /// The cell one step from (x, y) heading `d`. Without WRAP cycles
+    /// never stand on the rim, so this stays inside the grid; in WRAP it
+    /// wraps around the edges (Surround).
     pub fn next_cell(w: *const World, x: u8, y: u8, d: Dir) [2]u8 {
-        _ = w;
-        return .{
-            @intCast(@as(i16, x) + d.dx()),
-            @intCast(@as(i16, y) + d.dy()),
-        };
+        var nx: i16 = @as(i16, x) + d.dx();
+        var ny: i16 = @as(i16, y) + d.dy();
+        if (w.cfg.wrap) {
+            if (nx < 0) nx += grid_w else if (nx >= grid_w) nx -= grid_w;
+            if (ny < 0) ny += grid_h else if (ny >= grid_h) ny -= grid_h;
+        }
+        return .{ @intCast(nx), @intCast(ny) };
     }
 
     /// Empty cells in a straight line from (x, y) heading `d`, up to `n`.
@@ -517,16 +576,25 @@ pub const World = struct {
         return k;
     }
 
-    /// The k-th newest cell of cycle i's live trail (0 = the head), or null.
+    /// The k-th newest cell of cycle i's live trail (0 = the head), or
+    /// null. A gap cell (`log_gap_at`) is in the log but empty in the grid
+    /// once the head has left it.
     pub fn log_at(w: *const World, i: usize, k: u32) ?u16 {
         const c = &w.cycles[i];
         if (k >= c.trail_len()) return null;
-        return w.logs[i][(c.log_head - 1 - k) & log_mask];
+        return w.logs[i][(c.log_head - 1 - k) & log_mask] & ~log_gap;
+    }
+
+    /// True if the k-th newest log entry of cycle i is a gap cell (GAPS).
+    pub fn log_gap_at(w: *const World, i: usize, k: u32) bool {
+        const c = &w.cycles[i];
+        if (k >= c.trail_len()) return false;
+        return w.logs[i][(c.log_head - 1 - k) & log_mask] & log_gap != 0;
     }
 
     /// The k-th oldest cell of cycle i's live trail (0 = the tail).
     pub fn log_from_tail(w: *const World, i: usize, k: u32) u16 {
-        return w.logs[i][(w.cycles[i].log_tail + k) & log_mask];
+        return w.logs[i][(w.cycles[i].log_tail + k) & log_mask] & ~log_gap;
     }
 
     /// The heading cycle i will have once its queued turns apply.
@@ -753,8 +821,8 @@ pub const World = struct {
                 w.emit(.{ .kind = .grind, .cycle = @intCast(i), .x = n1[0], .y = n1[1], .a = @backingInt(side) });
                 continue;
             }
-            // Rim and blocks shield; an empty cell is inside the rim, so
-            // the cell beyond it is in the grid.
+            // Rim and blocks shield; an empty cell is inside the rim (or
+            // WRAP wraps), so the cell beyond it is in the grid.
             if (v1 != empty) continue;
             const n2 = w.next_cell(n1[0], n1[1], side);
             if (trail_owner(w.at(n2[0], n2[1])) != null) c.grind = @max(c.grind, 1);
@@ -777,18 +845,20 @@ pub const World = struct {
         }
     }
 
-    /// Sudden death (SPEC 4): ring k is laid over `sudden_death_period`
-    /// ticks by two sweeps, clockwise from opposite corners (symmetric
-    /// under a half turn, like the starts). An empty cell becomes a block
-    /// (a `block` event, a = k); trail and blocks stay. A cycle whose head
-    /// is on a swept cell derezzes (ACCESS VIOLATION). At most 6 cells a tick.
+    /// Sudden death (SPEC 4): stage k lays ring `k - 1 + sd_first_ring()`
+    /// (k itself, or k - 1 in WRAP) over `sudden_death_period` ticks by two
+    /// sweeps, clockwise from opposite corners (symmetric under a half
+    /// turn, like the starts). An empty cell becomes a block (a `block`
+    /// event, a = k); trail and blocks stay. A cycle whose head is on a
+    /// swept cell derezzes (ACCESS VIOLATION). At most 6 cells a tick.
     fn sudden_death(w: *World) void {
         if (w.tick < tuning.sudden_death_ticks) return;
         const e = w.tick - tuning.sudden_death_ticks;
         const k = e / tuning.sudden_death_period + 1;
-        if (k > tuning.sudden_death_rings) return;
-        const ring: u8 = @intCast(k);
-        w.sudden_death_ring = ring;
+        if (k > w.sd_stages()) return;
+        const stage: u8 = @intCast(k);
+        w.sudden_death_ring = stage;
+        const ring: u8 = stage - 1 + w.sd_first_ring();
         const o = e % tuning.sudden_death_period;
         const half = ring_half(ring);
         const s0 = o * half / tuning.sudden_death_period;
@@ -799,7 +869,7 @@ pub const World = struct {
                 const idx = index(cell[0], cell[1]);
                 if (w.grid[idx] & ~fx_bit == empty) {
                     w.grid[idx] = block;
-                    w.emit(.{ .kind = .block, .x = cell[0], .y = cell[1], .a = ring });
+                    w.emit(.{ .kind = .block, .x = cell[0], .y = cell[1], .a = stage });
                 }
                 for (0..w.cfg.n_cycles) |j| {
                     const c = &w.cycles[j];
@@ -872,15 +942,64 @@ pub const World = struct {
                 continue;
             }
             const t = target[i] orelse continue;
+            // GAPS: the cell being left was a gap: it goes now.
+            const left = w.logs[i][(c.log_head - 1) & log_mask];
+            if (left & log_gap != 0) w.clear_cell(i, left & ~log_gap);
             c.x = t[0];
             c.y = t[1];
             const at_idx = index(t[0], t[1]);
             w.grid[at_idx] = @intCast(i + 1);
-            w.logs[i][c.log_head & log_mask] = at_idx;
+            const entry = if (w.enter_gap(c)) at_idx | log_gap else at_idx;
+            w.logs[i][c.log_head & log_mask] = entry;
             c.log_head += 1;
             if (c.log_head - c.log_tail > log_cap) c.log_tail = c.log_head - log_cap;
             w.emit(.{ .kind = .painted, .cycle = @intCast(i), .x = t[0], .y = t[1] });
+            // SNAKE: the trail keeps its newest `snake_len` cells.
+            if (w.cfg.snake_len != 0) {
+                while (c.trail_len() > w.cfg.snake_len) w.pop_tail(i);
+            }
         }
+    }
+
+    /// GAPS: whether the cell cycle c just entered is a gap cell (and
+    /// counts down to the next gap).
+    fn enter_gap(w: *const World, c: *Cycle) bool {
+        if (!w.cfg.gaps) return false;
+        if (c.gap_left != 0) {
+            c.gap_left -= 1;
+            return true;
+        }
+        if (c.gap_in > 1) {
+            c.gap_in -= 1;
+            return false;
+        }
+        c.gap_left = tuning.gap_cells;
+        c.gap_in = gap_interval(c);
+        return false;
+    }
+
+    /// Painted cells before the next gap: 40..80 from the cycle's stream.
+    fn gap_interval(c: *Cycle) u8 {
+        return tuning.gap_every_min + @as(u8, @intCast(c.gap_rng.below(tuning.gap_every_spread)));
+    }
+
+    /// Empties cell `idx` if cycle i's trail is on it (a `cleared` event).
+    fn clear_cell(w: *World, i: usize, idx: u16) void {
+        if (trail_owner(w.grid[idx]) != @as(u8, @intCast(i))) return;
+        w.grid[idx] = empty;
+        w.emit(.{ .kind = .cleared, .x = @intCast(idx % grid_w), .y = @intCast(idx / grid_w) });
+    }
+
+    /// Drops cycle i's oldest log entry and clears its cell. A gap entry's
+    /// cell was cleared when the head left it, so it is left alone (it may
+    /// be wall again: a newer entry's), unless it is the last entry: the
+    /// head a dead cycle crashed on.
+    fn pop_tail(w: *World, i: usize) void {
+        const c = &w.cycles[i];
+        const e = w.logs[i][c.log_tail & log_mask];
+        c.log_tail += 1;
+        if (e & log_gap != 0 and c.log_tail != c.log_head) return;
+        w.clear_cell(i, e & ~log_gap);
     }
 
     fn kill(w: *World, i: usize, kind: Crash, by: u8) void {
@@ -900,14 +1019,7 @@ pub const World = struct {
         const c = &w.cycles[i];
         if (w.tick - c.died_tick < tuning.wall_stay) return;
         var k: u32 = 0;
-        while (k < tuning.fade_rate and c.log_tail != c.log_head) : (k += 1) {
-            const idx = w.logs[i][c.log_tail & log_mask];
-            c.log_tail += 1;
-            if (trail_owner(w.grid[idx]) == @as(u8, @intCast(i))) {
-                w.grid[idx] = empty;
-                w.emit(.{ .kind = .cleared, .x = @intCast(idx % grid_w), .y = @intCast(idx / grid_w) });
-            }
-        }
+        while (k < tuning.fade_rate and c.log_tail != c.log_head) : (k += 1) w.pop_tail(i);
         if (c.log_tail == c.log_head) c.state = .dead;
     }
 
@@ -963,6 +1075,9 @@ pub const World = struct {
             H.int(&h, c.killer);
             H.int(&h, c.log_head);
             H.int(&h, c.log_tail);
+            H.int(&h, c.gap_rng.state);
+            H.int(&h, c.gap_in);
+            H.int(&h, c.gap_left);
             var k = c.log_tail;
             while (k != c.log_head) : (k += 1) H.int(&h, w.logs[i][k & log_mask]);
         }
@@ -1113,21 +1228,21 @@ test "U-turn: turns toward the free side, then reverses, never into a wall" {
 
 test "U-turn never crashes when one side is free, from any spot" {
     const w = &tw[0];
-    var rng = @import("rng.zig").Xorshift.init(7);
+    var r = rng.Xorshift.init(7);
     var tries: u32 = 0;
     while (tries < 300) : (tries += 1) {
         w.init(.{ .n_cycles = 1 }, 1);
         const c = &w.cycles[0];
         // A random interior position and heading, random clutter.
         w.grid[index(c.x, c.y)] = empty;
-        c.x = @intCast(2 + rng.below(76));
-        c.y = @intCast(2 + rng.below(56));
-        c.dir = @fromBackingInt(@intCast(rng.below(4)));
+        c.x = @intCast(2 + r.below(76));
+        c.y = @intCast(2 + r.below(56));
+        c.dir = @fromBackingInt(@intCast(r.below(4)));
         w.grid[index(c.x, c.y)] = 1;
         w.logs[0][0] = index(c.x, c.y);
         for (0..200) |_| {
-            const x = 1 + rng.below(78);
-            const y = 1 + rng.below(58);
+            const x = 1 + r.below(78);
+            const y = 1 + r.below(58);
             if (x != c.x or y != c.y) w.grid[index(x, y)] = block;
         }
         const side_free = w.free_run(c.x, c.y, c.dir.cw(), 1) + w.free_run(c.x, c.y, c.dir.ccw(), 1) > 0;
@@ -1599,7 +1714,7 @@ test "ring cells: every interior cell once, half-turn pairs" {
 
 /// A test driver: at each cell boundary (and during a stall) keep the
 /// heading unless a side has a longer free run; random A and B.
-fn drive(w: *const World, i: usize, r: *@import("rng.zig").Xorshift) Input {
+fn drive(w: *const World, i: usize, r: *rng.Xorshift) Input {
     var in: Input = .{ .boost = r.below(6) == 0, .brake = r.below(12) == 0 };
     const c = &w.cycles[i];
     if (!w.will_step(i)) return in;
@@ -1619,7 +1734,7 @@ fn drive(w: *const World, i: usize, r: *@import("rng.zig").Xorshift) Input {
 
 test "sudden death: rounds always end before 1800 + 60 x 30 ticks" {
     const w = &tw[0];
-    var r = @import("rng.zig").Xorshift.init(99);
+    var r = rng.Xorshift.init(99);
     var long_rounds: u32 = 0;
     for (0..24) |round| {
         w.init(.{
@@ -1647,7 +1762,7 @@ test "sudden death: rounds always end before 1800 + 60 x 30 ticks" {
 
 test "will_step is exact and ticks_to_step agrees, with grinding, energy and rubber" {
     const w = &tw[0];
-    var r = @import("rng.zig").Xorshift.init(5);
+    var r = rng.Xorshift.init(5);
     w.init(.{ .n_cycles = 4, .grinding = true, .rubber = 12, .energy = true, .sudden_death = true }, 3);
     while (w.result == .running) {
         var in = idle_inputs();
@@ -1679,7 +1794,7 @@ test "will_step is exact and ticks_to_step agrees, with grinding, energy and rub
 test "determinism: two Worlds stay identical for 5000 ticks with every M1 flag" {
     const a = &tw[0];
     const b = &tw[1];
-    var r = @import("rng.zig").Xorshift.init(1234);
+    var r = rng.Xorshift.init(1234);
     var round: u32 = 0;
     var ended: u32 = 0;
     var t: u32 = 0;
@@ -1784,4 +1899,413 @@ test "layouts: in bounds, symmetric, start lines free, arena connected" {
     }
     // Out of range is the open arena.
     try testing.expectEqual(@as(usize, 0), layouts.get(200).rects.len);
+}
+
+// ------------------------------------------------------------- M2 tests
+
+/// The trail invariant: a cell holds cycle i's trail exactly when a live
+/// log entry of i names it and is not a gap, or is i's newest entry (the
+/// head, painted even on a gap cell). Nothing else holds trail.
+fn check_trails(w: *const World) !void {
+    var want: [cells]u8 = @splat(empty);
+    for (w.cycles, 0..) |c, i| {
+        var k = c.log_tail;
+        while (k != c.log_head) : (k += 1) {
+            const e = w.logs[i][k & log_mask];
+            if (e & log_gap == 0 or k + 1 == c.log_head) want[e & ~log_gap] = @intCast(i + 1);
+        }
+    }
+    for (w.grid, want, 0..) |v, wv, at| {
+        const got: u8 = if (trail_owner(v)) |o| o + 1 else empty;
+        if (got != wv) {
+            std.debug.print("cell ({d},{d}) holds {d}, the logs say {d}\n", .{ at % grid_w, at / grid_w, got, wv });
+            return error.TestExpectedEqual;
+        }
+    }
+}
+
+test "WRAP: no rim, next_cell wraps every edge, a lone cycle rides through the edge" {
+    const w = &tw[0];
+    w.init(.{ .n_cycles = 1, .wrap = true }, 1);
+    for (w.grid, 0..) |v, at| {
+        if (at != index(w.cycles[0].x, w.cycles[0].y)) try testing.expectEqual(empty, v);
+    }
+    try testing.expectEqual([2]u8{ 0, 5 }, w.next_cell(79, 5, .right));
+    try testing.expectEqual([2]u8{ 79, 5 }, w.next_cell(0, 5, .left));
+    try testing.expectEqual([2]u8{ 7, 59 }, w.next_cell(7, 0, .up));
+    try testing.expectEqual([2]u8{ 7, 0 }, w.next_cell(7, 59, .down));
+    try testing.expectEqual([2]u8{ 8, 5 }, w.next_cell(7, 5, .right));
+    // Off the right edge and back in on the left; 80 cells later it meets
+    // its own trail (SEGFAULT, not OUT OF BOUNDS).
+    const c = &w.cycles[0];
+    const x0 = c.x;
+    var wrapped = false;
+    while (c.state == .alive and w.tick < 600) {
+        w.step(idle_inputs());
+        if (c.x < x0) wrapped = true;
+    }
+    try testing.expect(wrapped);
+    try testing.expectEqual(Crash.segfault, c.crash);
+    try testing.expectEqual(@as(u32, grid_w), c.trail_len());
+    // A U-turn on the top edge goes over it.
+    w.init(.{ .n_cycles = 1, .wrap = true }, 1);
+    w.grid[index(c.x, c.y)] = empty;
+    c.y = 0;
+    w.grid[index(c.x, 0)] = 1;
+    w.logs[0][0] = index(c.x, 0);
+    var in = idle_inputs();
+    in[0] = press(.up);
+    step_to_next_cell(w, in, 0, 10);
+    try testing.expectEqual(@as(u8, grid_h - 1), c.y);
+    try testing.expectEqual(State.alive, c.state);
+}
+
+test "WRAP: grinding and the U-turn look across the edge" {
+    const w = &tw[0];
+    const c = &w.cycles[0];
+    w.init(.{ .n_cycles = 1, .wrap = true, .grinding = true }, 1);
+    w.grid[index(c.x, c.y)] = empty;
+    c.y = 0;
+    w.grid[index(c.x, 0)] = 1;
+    w.logs[0][0] = index(c.x, 0);
+    // A trail on the bottom row is beside a head on the top row.
+    trail_row(w, grid_h - 1, 1);
+    w.step(idle_inputs());
+    try testing.expectEqual(@as(u8, 2), c.grind);
+}
+
+test "WRAP sudden death: the old rim ring closes first, 30 stages, the arena fills" {
+    const w = &tw[0];
+    w.init(.{ .n_cycles = 2, .sudden_death = true, .wrap = true }, 1);
+    try testing.expectEqual(@as(u8, 30), w.sd_stages());
+    try testing.expectEqual(@as(u8, 1), w.sd_stage_of(0, 30));
+    try testing.expectEqual(@as(u8, 2), w.sd_stage_of(1, 30));
+    // A head on the screen edge.
+    const c = &w.cycles[0];
+    w.grid[index(c.x, c.y)] = empty;
+    c.x = 0;
+    c.y = 30;
+    c.dir = .up;
+    w.grid[index(0, 30)] = 1;
+    w.logs[0][0] = index(0, 30);
+    w.tick = tuning.sudden_death_ticks - 1;
+    var blocks: u32 = 0;
+    for (0..tuning.sudden_death_period) |_| {
+        w.tick += 1;
+        w.n_events = 0;
+        w.sudden_death();
+        try testing.expectEqual(@as(u8, 1), w.sudden_death_ring);
+        try testing.expect(w.n_events <= 7);
+        for (w.events[0..w.n_events]) |e| {
+            if (e.kind != .block) continue;
+            blocks += 1;
+            try testing.expectEqual(@as(u8, 1), e.a);
+            try testing.expectEqual(@as(u8, 0), ring_of(e.x, e.y));
+            try testing.expect(w.is_sudden_death_block(e.x, e.y));
+        }
+    }
+    // Ring 0 has 2 * (80 + 60) - 4 = 276 cells, one of them the head.
+    try testing.expectEqual(@as(u32, 276 - 1), blocks);
+    try testing.expectEqual(Crash.access_violation, c.crash);
+    try testing.expect(!w.is_sudden_death_block(1, 30));
+    while (w.tick < tuning.sudden_death_ticks + 30 * tuning.sudden_death_period) {
+        w.tick += 1;
+        w.n_events = 0;
+        w.sudden_death();
+    }
+    try testing.expectEqual(@as(u8, 30), w.sudden_death_ring);
+    for (w.grid) |v| try testing.expect(is_wall(v));
+}
+
+test "WRAP: rounds with sudden death end before 1800 + 60 x 30 ticks" {
+    const w = &tw[0];
+    var r = rng.Xorshift.init(98);
+    for (0..12) |round| {
+        w.init(.{
+            .n_cycles = @intCast(2 + round % 3),
+            .grinding = true,
+            .rubber = 12,
+            .energy = true,
+            .sudden_death = true,
+            .wrap = true,
+            .layout = @intCast(round % layouts.count),
+        }, @intCast(round));
+        while (w.result == .running) {
+            var in = idle_inputs();
+            for (0..w.cfg.n_cycles) |i| in[i] = drive(w, i, &r);
+            w.step(in);
+            try testing.expect(w.tick < tuning.sudden_death_ticks + 30 * tuning.sudden_death_period);
+        }
+    }
+}
+
+test "SNAKE: the trail keeps its newest snake_len cells, one cleared per step" {
+    const w = &tw[0];
+    w.init(.{ .n_cycles = 1, .snake_len = 10 }, 1);
+    const c = &w.cycles[0];
+    var cleared: u32 = 0;
+    var painted: u32 = 0;
+    for (0..300) |_| {
+        w.step(idle_inputs());
+        var step_cleared: u32 = 0;
+        for (w.events[0..w.n_events]) |e| {
+            if (e.kind == .painted) painted += 1;
+            if (e.kind == .cleared) step_cleared += 1;
+        }
+        try testing.expect(step_cleared <= 1);
+        cleared += step_cleared;
+        try testing.expect(c.trail_len() <= 10);
+        try check_trails(w);
+        if (c.state != .alive) break;
+    }
+    // A lone snake never meets itself: it crosses the arena to the rim.
+    try testing.expectEqual(Crash.out_of_bounds, c.crash);
+    try testing.expectEqual(painted + 1 - 10, cleared);
+    var n: u32 = 0;
+    for (w.grid) |v| n += @intFromBool(trail_owner(v) != null);
+    try testing.expectEqual(@as(u32, 10), n);
+    // In WRAP a snake shorter than a lap rides on and on (the tail clears
+    // after the collision check, so 79 cells chase each other forever);
+    // one cell longer meets its own tail.
+    w.init(.{ .n_cycles = 1, .snake_len = grid_w - 1, .wrap = true }, 1);
+    for (0..3000) |_| w.step(idle_inputs());
+    try testing.expectEqual(State.alive, c.state);
+    try testing.expectEqual(@as(u32, grid_w - 1), c.trail_len());
+    w.init(.{ .n_cycles = 1, .snake_len = grid_w, .wrap = true }, 1);
+    for (0..3000) |_| w.step(idle_inputs());
+    try testing.expectEqual(Crash.segfault, c.crash);
+}
+
+test "SNAKE: a dead snake fades as usual and leaves nothing" {
+    const w = &tw[0];
+    w.init(.{ .n_cycles = 2, .snake_len = 30 }, 1);
+    while (w.cycles[0].state != .dead and w.tick < 2000) {
+        w.step(idle_inputs());
+        try check_trails(w);
+    }
+    try testing.expectEqual(State.dead, w.cycles[0].state);
+    for (w.grid) |v| try testing.expect(trail_owner(v) != 0);
+}
+
+test "GAPS: 3 cells without wall every 40-80 cells, the head still a wall" {
+    const w = &tw[0];
+    const c = &w.cycles[0];
+    w.init(.{ .n_cycles = 1, .gaps = true, .wrap = true, .snake_len = 0 }, 7);
+    try testing.expect(c.gap_in >= 40 and c.gap_in <= 80);
+    // Ride wrapping rows, a staircase: down one row before each wall.
+    var gap_starts: [16]u32 = undefined;
+    var n_gaps: u32 = 0;
+    var run: u32 = 0;
+    var last_painted: u32 = 0;
+    var cleared: u32 = 0;
+    while (w.tick < 3000 and c.state == .alive) {
+        var in = idle_inputs();
+        if (c.dir == .right and w.will_step(0) and w.free_run(c.x, c.y, .right, 1) == 0) in[0] = press(.down);
+        if (c.dir == .down and w.will_step(0)) in[0] = press(.right);
+        const head0 = c.log_head;
+        w.step(in);
+        try check_trails(w);
+        // The head's cell is always a wall, gap or not.
+        try testing.expectEqual(@as(u8, 1), w.at(c.x, c.y));
+        for (w.events[0..w.n_events]) |e| cleared += @intFromBool(e.kind == .cleared);
+        if (c.log_head == head0) continue;
+        // A new cell: track runs of gap cells (the previous cell's mark).
+        if (c.trail_len() >= 2 and w.log_gap_at(0, 1)) {
+            if (run == 0 and n_gaps < gap_starts.len) {
+                gap_starts[n_gaps] = c.log_head - 2;
+                n_gaps += 1;
+            }
+            run += 1;
+            // Left behind: plain floor.
+            const g = w.log_at(0, 1).?;
+            try testing.expectEqual(empty, w.grid[g]);
+        } else if (run != 0) {
+            try testing.expectEqual(@as(u32, tuning.gap_cells), run);
+            run = 0;
+            last_painted = c.log_head;
+        }
+    }
+    try testing.expectEqual(State.alive, c.state);
+    try testing.expect(n_gaps >= 4);
+    try testing.expectEqual(n_gaps * tuning.gap_cells, cleared + run);
+    // Between gaps: 40..80 painted cells.
+    for (1..@min(n_gaps, gap_starts.len)) |k| {
+        const between = gap_starts[k] - gap_starts[k - 1] - tuning.gap_cells;
+        try testing.expect(between >= tuning.gap_every_min and between <= tuning.gap_every_min + tuning.gap_every_spread - 1);
+    }
+    // Off without the flag.
+    w.init(.{ .n_cycles = 1, .wrap = true }, 7);
+    for (0..1000) |_| {
+        w.step(idle_inputs());
+        try testing.expect(!w.log_gap_at(0, 0));
+    }
+}
+
+test "GAPS: another cycle rides through a gap; a crash on a gap cell fades clean" {
+    const w = &tw[0];
+    const a = &w.cycles[0];
+    const b = &w.cycles[1];
+    w.init(.{ .n_cycles = 2, .gaps = true }, 3);
+    // Cycle 0 crosses x = 30..70 on row 20: 20 painted cells, then a gap
+    // at x = 51..53.
+    w.grid[index(a.x, a.y)] = empty;
+    w.grid[index(b.x, b.y)] = empty;
+    a.* = .{ .x = 30, .y = 20, .dir = .right, .state = .alive, .speed = w.base_speed(), .log_head = 1, .gap_in = 20, .gap_rng = .init(5) };
+    w.grid[index(30, 20)] = 1;
+    w.logs[0][0] = index(30, 20);
+    // Cycle 1 heads up column 51 from below, timed to arrive after.
+    b.* = .{ .x = 51, .y = 45, .dir = .up, .state = .alive, .speed = w.base_speed(), .log_head = 1, .gap_in = 200 };
+    w.grid[index(51, 45)] = 2;
+    w.logs[1][0] = index(51, 45);
+    while (a.x < 54) {
+        w.step(idle_inputs());
+        try check_trails(w);
+    }
+    for (51..54) |x| try testing.expectEqual(empty, w.at(@intCast(x), 20));
+    try testing.expectEqual(@as(u8, 1), w.at(50, 20));
+    try testing.expectEqual(@as(u8, 1), w.at(54, 20));
+    while (b.y > 15 and b.state == .alive) {
+        w.step(idle_inputs());
+        try check_trails(w);
+    }
+    try testing.expectEqual(State.alive, b.state);
+    try testing.expectEqual(@as(u8, 2), w.at(51, 20));
+
+    // A head that crashes while on a gap cell: its cell stays a wall until
+    // the fade, which then clears it with the rest.
+    w.init(.{ .n_cycles = 2, .gaps = true }, 3);
+    w.grid[index(a.x, a.y)] = empty;
+    a.* = .{ .x = 30, .y = 20, .dir = .right, .state = .alive, .speed = w.base_speed(), .log_head = 1, .gap_in = 5, .gap_rng = .init(5) };
+    w.grid[index(30, 20)] = 1;
+    w.logs[0][0] = index(30, 20);
+    // A block right after the first gap cell (x = 36).
+    w.grid[index(37, 20)] = block;
+    while (a.state == .alive) {
+        w.step(idle_inputs());
+        try check_trails(w);
+    }
+    try testing.expectEqual(@as(u8, 36), a.x);
+    try testing.expect(w.log_gap_at(0, 0));
+    try testing.expectEqual(@as(u8, 1), w.at(36, 20));
+    while (a.state == .dying) {
+        w.step(idle_inputs());
+        try check_trails(w);
+    }
+    for (w.grid) |v| try testing.expect(trail_owner(v) != 0);
+}
+
+test "GAPS and SNAKE: riding back through your own gap keeps the new wall" {
+    const w = &tw[0];
+    const c = &w.cycles[0];
+    // Cells 31..35 painted, a gap at 36..38, on to x = 45, then down two,
+    // left to x = 37 and up through the gap cell (37, 20) while its old
+    // gap entry is still in the log. The 25-cell snake pops that entry
+    // later: it must not clear the new wall on the cell.
+    w.init(.{ .n_cycles = 1, .gaps = true, .snake_len = 25 }, 3);
+    w.grid[index(c.x, c.y)] = empty;
+    c.* = .{ .x = 30, .y = 20, .dir = .right, .state = .alive, .speed = w.base_speed(), .log_head = 1, .gap_in = 5, .gap_rng = .init(5) };
+    w.grid[index(30, 20)] = 1;
+    w.logs[0][0] = index(30, 20);
+    const Way = struct { x: u8, y: u8, d: Dir };
+    const ways = [_]Way{ .{ .x = 45, .y = 20, .d = .down }, .{ .x = 45, .y = 22, .d = .left }, .{ .x = 37, .y = 22, .d = .up } };
+    var reentered = false;
+    while (c.y > 5 and c.state == .alive) {
+        var in = idle_inputs();
+        for (ways) |wp| {
+            if (c.x == wp.x and c.y == wp.y and c.dir != wp.d) in[0] = press(wp.d);
+        }
+        w.step(in);
+        try check_trails(w);
+        if (c.x == 37 and c.y == 20 and c.dir == .up) {
+            reentered = true;
+            try testing.expect(!w.log_gap_at(0, 0));
+        }
+    }
+    try testing.expect(reentered);
+    try testing.expectEqual(State.alive, c.state);
+    // The old entry is gone, the new wall stays.
+    try testing.expect(c.log_tail > 7);
+    try testing.expectEqual(@as(u8, 1), w.at(37, 20));
+    for (36..39) |x| {
+        if (x != 37) try testing.expectEqual(empty, w.at(@intCast(x), 20));
+    }
+}
+
+test "layouts in WRAP: no rim, the same blocks, the arena connected across the edges" {
+    const w = &tw[0];
+    for (0..layouts.count) |li| {
+        w.init(.{ .n_cycles = 4, .layout = @intCast(li), .wrap = true }, 1);
+        var open: u32 = 0;
+        var reached: u32 = 0;
+        var seen: [cells]bool = @splat(false);
+        var queue: [cells]u16 = undefined;
+        var head: usize = 0;
+        var tail: usize = 1;
+        queue[0] = index(w.cycles[0].x, w.cycles[0].y);
+        seen[queue[0]] = true;
+        while (head < tail) : (head += 1) {
+            const at_i = queue[head];
+            reached += 1;
+            for ([4]Dir{ .up, .right, .down, .left }) |d| {
+                const nc = w.next_cell(@intCast(at_i % grid_w), @intCast(at_i / grid_w), d);
+                const n = index(nc[0], nc[1]);
+                if (seen[n] or (is_wall(w.grid[n]) and trail_owner(w.grid[n]) == null)) continue;
+                seen[n] = true;
+                queue[tail] = n;
+                tail += 1;
+            }
+        }
+        for (w.grid) |v| open += @intFromBool(!is_wall(v) or trail_owner(v) != null);
+        try testing.expectEqual(open, reached);
+        try testing.expectEqual(empty, w.at(0, 0));
+    }
+}
+
+test "determinism: two Worlds stay identical for 10000 ticks with random M2 modifiers" {
+    const a = &tw[0];
+    const b = &tw[1];
+    var r = rng.Xorshift.init(4321);
+    var round: u32 = 0;
+    var ended: u32 = 0;
+    var seen_mods: u8 = 0;
+    var t: u32 = 0;
+    while (t < 10000) : (t += 1) {
+        ended = if (a.result == .running) 0 else ended + 1;
+        if (t == 0 or ended == 90) {
+            const mods = r.below(8);
+            const sd = r.below(3) == 0;
+            seen_mods |= @as(u8, 1) << @intCast(mods);
+            const cfg: Config = .{
+                .n_cycles = @intCast(2 + round % 3),
+                .grinding = true,
+                .rubber = if (r.below(2) == 0) 12 else 4,
+                .energy = true,
+                .sudden_death = sd,
+                .round_cap = 400,
+                .layout = @intCast(r.below(layouts.count)),
+                .speed_pct = @intCast(([3]u16{ 80, 100, 125 })[r.below(3)]),
+                .wrap = mods & 1 != 0,
+                .gaps = mods & 2 != 0,
+                .snake_len = if (mods & 4 != 0) tuning.snake_len else 0,
+            };
+            a.init(cfg, round * 7 + 1);
+            b.init(cfg, round * 7 + 1);
+            round += 1;
+        }
+        var in = idle_inputs();
+        for (0..max_cycles) |i| {
+            in[i] = drive(a, i, &r);
+            if (r.below(40) == 0) in[i].press = @fromBackingInt(@as(u3, @intCast(1 + r.below(4))));
+        }
+        a.step(in);
+        b.step(in);
+        try testing.expect(World.same_state(a, b));
+        try testing.expect(std.mem.eql(u8, std.mem.asBytes(&a.grid), std.mem.asBytes(&b.grid)));
+        try testing.expectEqual(a.hash(), b.hash());
+        try testing.expectEqual(a.n_events, b.n_events);
+        for (a.events[0..a.n_events], b.events[0..b.n_events]) |ea, eb| try testing.expect(std.meta.eql(ea, eb));
+        try check_trails(a);
+    }
+    try testing.expect(round > 8);
+    try testing.expect(@popCount(seen_mods) >= 6);
 }
