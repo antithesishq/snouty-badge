@@ -1,20 +1,28 @@
-//! Deathmatch rules (M7, SPEC.md section 19): two players in one arena,
-//! one tick at a time from both players' input bytes. Pure over `World`,
-//! fixed point only, no cart-api, no clock: both badges run it in lockstep
-//! (`lib/lockstep.zig`, glue in `deathmatch.zig`) and must stay bit-equal.
+//! Deathmatch rules (M7 two badges, M8 up to 16 players; SPEC.md section
+//! 19): every present player in one arena, one tick at a time from each
+//! slot's input byte. Pure over `World`, fixed point only, no cart-api, no
+//! clock: every badge runs it in lockstep (`lib/lockstep.zig` for the
+//! two-badge cable, `lib/lockstep_n.zig` for a party; glue in
+//! `deathmatch.zig`) and must stay bit-equal.
 //!
 //! `World` is the campaign's GameState (doors, bugs, projectiles, pickup
-//! bits, the PRNG) plus `state.Match` (the two players, frags, timers).
-//! The campaign code works on `GameState.player`, so `step` swaps each
+//! bits, the PRNG) plus `state.Match` (the players, frags, teams, timers).
+//! The campaign code works on `GameState.player`, so `step_n` swaps each
 //! player into that slot in turn: movement, pickups, the weapon, and each
-//! bug's tick against the player it targets (the nearer living one). The
+//! bug's tick against the player it targets (the nearest living one). The
 //! campaign path (`sim.step`) is untouched by all of this.
 //!
-//! Tick order: hurt flashes, death views and respawns; movement and
-//! pickups (the first mover alternates by tick parity); doors; bugs
-//! (BUGS ON); projectiles; both weapons from the same positions, their
-//! damage applied after both fired (a double frag is possible); deaths,
-//! frags and the frag limit; pickup timers.
+//! Tick order: bot inputs (from the World as the tick starts); hurt
+//! flashes, death views and respawns; movement and pickups; doors; bugs
+//! (BUGS ON); projectiles; every weapon from the same positions, their
+//! damage applied after all fired (a double frag is possible); deaths,
+//! frags and the frag limit; pickup timers. Wherever the present players
+//! go one after another (respawns, movement, weapon damage), the order
+//! starts at present player `tick mod count` and wraps, so no slot is
+//! always first.
+//!
+//! The M7 two-badge path is `step` / `init_rules` / `G`: the same core with
+//! slots 0 and 1 present. A party uses `step_n` / `init_n` / `GN`.
 const std = @import("std");
 const fixed = @import("fixed.zig");
 const state = @import("state.zig");
@@ -22,6 +30,8 @@ const levels = @import("levels.zig");
 const sim = @import("sim.zig");
 const ai = @import("ai.zig");
 const projectiles = @import("projectiles.zig");
+const bot = @import("bot.zig");
+const arsenal = @import("arsenal.zig");
 
 const Fixed = fixed.Fixed;
 const GameState = state.GameState;
@@ -29,6 +39,8 @@ const Match = state.Match;
 const Player = state.Player;
 const Buttons = state.Buttons;
 const Level = levels.Level;
+
+pub const max_players = state.max_players;
 
 pub const World = struct {
     gs: GameState,
@@ -59,31 +71,65 @@ pub const bug_respawn: u16 = 1200;
 pub const bug_respawn_clear: Fixed = fixed.from_int(4);
 /// Players never walk closer than this (centre to centre) to each other.
 pub const body: Fixed = 2 * sim.radius;
-/// The lobby's FRAGS row.
-pub const frag_limits = [4]u8{ 5, 10, 15, 20 };
+/// The lobby's FRAGS row (M7 offered the first four).
+pub const frag_limits = [5]u8{ 5, 10, 15, 20, 25 };
+/// The lobby's TEAMS row: FFA, 2 teams, 4 teams (`Match.teams`).
+pub const team_modes = [3]u8{ 0, 2, 4 };
 
 // ---------------------------------------------------------------- rules and input
 
-/// The host's lobby choice, one byte on the wire: arena bits 0-1, frag
-/// limit index bits 2-3, bugs bit 4.
+/// The host's lobby choice. On the wire (`encode2`, 2 bytes; the M7 cable
+/// sends byte 0 alone, `encode`):
+///
+/// - byte 0: bits 0-1 arena, bits 2-3 frag index bits 0-1, bit 4 bugs,
+///   bit 5 frag index bit 2 (index 4 = 25 frags; M7 never set it), bits
+///   6-7 zero. For M7's values this is M7's byte unchanged.
+/// - byte 1: bits 0-1 team mode index (`team_modes`: 0 FFA, 1 two
+///   teams, 2 four teams), bits 2-7 reserved (zero).
+///
+/// The input delay is not a rule: LockstepN carries it in its GO message.
+/// Out-of-range fields decode to the defaults (arena 0, FFA; a frag index
+/// past the table to the last entry).
 pub const Rules = struct {
     arena: u8 = 0,
+    /// Index into `frag_limits`.
     frags: u8 = 1,
     bugs: bool = false,
+    /// 0 (FFA), 2 or 4.
+    teams: u8 = 0,
 
     pub fn encode(r: Rules) u8 {
-        return (r.arena & 3) | ((r.frags & 3) << 2) | (@as(u8, @intFromBool(r.bugs)) << 4);
+        return (r.arena & 3) | ((r.frags & 3) << 2) | (@as(u8, @intFromBool(r.bugs)) << 4) | (((r.frags >> 2) & 1) << 5);
     }
     pub fn decode(b: u8) Rules {
         const a = b & 3;
-        return .{ .arena = if (a < levels.arena_indices.len) a else 0, .frags = (b >> 2) & 3, .bugs = b & 0x10 != 0 };
+        const f: u8 = ((b >> 2) & 3) | (((b >> 5) & 1) << 2);
+        return .{
+            .arena = if (a < levels.arena_indices.len) a else 0,
+            .frags = @min(f, frag_limits.len - 1),
+            .bugs = b & 0x10 != 0,
+        };
+    }
+    pub fn encode2(r: Rules) [2]u8 {
+        const t: u8 = switch (r.teams) {
+            2 => 1,
+            4 => 2,
+            else => 0,
+        };
+        return .{ r.encode(), t };
+    }
+    pub fn decode2(b: [2]u8) Rules {
+        var r = decode(b[0]);
+        const t = b[1] & 3;
+        r.teams = if (t < team_modes.len) team_modes[t] else 0;
+        return r;
     }
     pub fn frag_limit(r: Rules) u8 {
-        return frag_limits[r.frags & 3];
+        return frag_limits[@min(r.frags, frag_limits.len - 1)];
     }
 };
 
-/// The input byte both badges exchange: Up, Down, Left, Right, A, B,
+/// The input byte the badges exchange: Up, Down, Left, Right, A, B,
 /// Start, Select from bit 0. Start and Select never come together (the OS
 /// chord; the lockstep's sanitize clears both), so a byte is never 0xC0
 /// or 0xDB. Start is the lockstep's pause bit; the sim ignores it.
@@ -118,13 +164,18 @@ pub fn buttons_of(x: u8) Buttons {
 }
 
 /// The game side of the two-badge lockstep (lib/lockstep.zig): the World,
-/// the agreed rules as one byte (`Rules`), no picks beyond the ready flag.
-/// Pure, so the host tests run it over the virtual cable.
+/// the agreed rules as one byte (`Rules.encode`), no picks beyond the
+/// ready flag. A thin adapter over the N-player core with slots 0 and 1
+/// present. Pure, so the host tests run it over the virtual cable.
 pub const G = struct {
     pub const World = match_world;
     pub const rules_len = 1;
     pub const input_delay: u32 = 2;
     pub const check_every: u32 = 32;
+    /// 1 since M8: the World grew to 16 slots (and the lobby offers Data
+    /// Hall), so an M7 build on the other end of the cable shows WRONG
+    /// VERSION instead of a desync.
+    pub const version: u4 = 1;
     /// Start toggles the pause on both badges on the same tick.
     pub const pause_bit: ?u8 = bit_start;
     /// No racer-style picks: the lobby sends pick 0 with the ready flag
@@ -139,13 +190,76 @@ pub const G = struct {
     pub fn hash(w: *const match_world) u32 {
         return world_hash(w);
     }
-    /// The partner left mid-match: a forfeit win for the one who stayed.
+    /// The partner left mid-match: a forfeit win for the one who stayed
+    /// (`hand_over` with one human left).
     pub fn hand_over(w: *match_world, slot: u1) void {
-        forfeit(w, slot);
+        match_hand_over(w, slot);
+    }
+};
+
+/// The game side of the party lockstep (`lib/lockstep_n.zig`, LockstepN):
+/// up to 16 slots, one input byte each per tick, the rules as 2 bytes
+/// (`Rules.encode2`). The lead wires it; LockstepN may read any of these.
+pub const GN = struct {
+    pub const World = match_world;
+    pub const game_id = "SNOUTDM1";
+    pub const max_players = state.max_players;
+    /// Arena, frag limit, bugs, teams (`Rules.encode2`). The input delay
+    /// is LockstepN's (its GO message), not a rule.
+    pub const rules_len = 2;
+    /// The default input delay in ticks (one laptop: 3 is plenty, docs/
+    /// LOCKSTEP_N.md section 6); the host's lobby may pick another.
+    pub const input_delay: u32 = 3;
+    pub const check_every: u32 = 32;
+    pub const pause_bit: ?u8 = bit_start;
+    pub fn can_pause(w: *const match_world) bool {
+        return !w.m.over;
+    }
+    /// Each lobby pick is 0 in FFA, else the player's team + 1 (`team_of`).
+    /// A team match needs players on at least two teams.
+    pub fn picks_ok(picks: *const [16]u8, mask: u16) bool {
+        var seen: u8 = 0;
+        for (0..16) |i| {
+            if ((mask >> @intCast(i)) & 1 == 0 or picks[i] == 0) continue;
+            seen |= @as(u8, 1) << @intCast((picks[i] - 1) & 3);
+        }
+        return seen == 0 or @popCount(seen) >= 2;
+    }
+    /// The teams GO's picks give (`start`'s `team`; `init_n` takes it mod
+    /// the team count): pick - 1, or the slot for a pick of 0.
+    pub fn team_of(picks: *const [16]u8) [state.max_players]u8 {
+        var t: [state.max_players]u8 = undefined;
+        for (0..state.max_players) |i| t[i] = if (picks[i] == 0) @intCast(i) else picks[i] - 1;
+        return t;
+    }
+    /// A fresh match from the lobby: the rules bytes, the slots in it, each
+    /// slot's team (ignored in FFA; null = slot mod team count) and the GO
+    /// seed.
+    pub fn start(w: *match_world, rules: [rules_len]u8, present: u16, team: ?*const [state.max_players]u8, seed: u32) void {
+        init_party(w, Rules.decode2(rules), present, team, seed);
+    }
+    /// One tick: `in[slot]` for every slot of `present` (the others, and
+    /// slots handed over to bots, are ignored).
+    pub fn simulate(w: *match_world, in: *const [state.max_players]u8, present: u16) void {
+        var b: [state.max_players]Buttons = @splat(.{});
+        for (0..state.max_players) |i| {
+            if ((present >> @intCast(i)) & 1 == 1) b[i] = buttons_of(in[i]);
+        }
+        step_n(w, &levels.all[w.gs.level], &b);
+    }
+    pub fn hash(w: *const match_world) u32 {
+        return world_hash(w);
+    }
+    /// A leaver (or a dropped badge): bot.zig plays the slot from this
+    /// tick on, its frags stay; one human (or one team's humans) left
+    /// ends the match as a forfeit.
+    pub fn hand_over(w: *match_world, slot: u8) void {
+        match_hand_over(w, slot);
     }
 };
 const match_world = World;
 const world_hash = hash;
+const match_hand_over = hand_over;
 
 pub fn arena_level(arena: u8) *const Level {
     return &levels.all[levels.arena_indices[arena]];
@@ -153,29 +267,74 @@ pub fn arena_level(arena: u8) *const Level {
 
 // ---------------------------------------------------------------- setup
 
-/// A fresh match on `level` (`levels.all[level_index]`): the campaign's
-/// `sim.init` for doors, pickups and bugs (cleared when BUGS is off),
-/// player 0 on the first spawn, player 1 on the spawn farthest from it.
+/// A fresh two-player match (M7: slots 0 and 1) on `level`
+/// (`levels.all[level_index]`).
 pub fn init(w: *World, level: *const Level, level_index: u8, rules: Rules, seed: u32) void {
+    init_n(w, level, level_index, rules, 0b11, null, seed);
+}
+
+/// A fresh match for the slots in `present` on `level`: the campaign's
+/// `sim.init` for doors, pickups and bugs (cleared when BUGS is off). In a
+/// team mode `team[slot] % teams` is each slot's team (null: slot mod team
+/// count). Start positions: the present slots in order are dealt over the
+/// spawns from a seeded offset, spread by a stride of spawns / players
+/// (so two players on six spawns start three apart); once every spawn is
+/// taken, the rest go where a respawn would (`pick_spawn`).
+pub fn init_n(w: *World, level: *const Level, level_index: u8, rules: Rules, present: u16, team: ?*const [max_players]u8, seed: u32) void {
     std.debug.assert(level.pickups.len <= state.max_match_pickups);
+    std.debug.assert(present != 0);
     sim.init(&w.gs, level, level_index, seed);
     if (!rules.bugs) {
         for (&w.gs.enemies) |*e| e.* = .{};
     }
-    const sp0 = spawn_at(level, 0);
+    const absent: Player = .{ .x = 0, .y = 0, .angle = 0, .hp = 0, .ammo_zapper = 0, .rewind_meter = 0 };
     w.m = .{
-        .players = .{ fresh(sp0), fresh(sp0) },
+        .players = @splat(absent),
+        .present = present,
+        .teams = rules.teams,
         .arena = rules.arena,
         .frag_limit = rules.frag_limit(),
         .bugs = rules.bugs,
     };
-    w.m.players[1] = fresh(farthest_spawn(level, w.m.players[0].x, w.m.players[0].y));
-    w.gs.player = w.m.players[0];
+    const m = &w.m;
+    if (m.teams != 0) {
+        for (0..max_players) |i| {
+            const t: u8 = if (team) |tt| tt[i] else @intCast(i);
+            m.team[i] = t % m.teams;
+        }
+    }
+    const n: u32 = @popCount(present);
+    const ns: u32 = @intCast(spawn_count(level));
+    const stride: u32 = if (n < ns) ns / n else 1;
+    const offset: u32 = mix(seed) % ns;
+    var k: u32 = 0;
+    for (0..max_players) |i| {
+        if (!m.is_present(i)) continue;
+        const sp = if (k < ns) spawn_at(level, (offset + k * stride) % ns) else pick_spawn(level, m, i);
+        m.players[i] = fresh(sp);
+        k += 1;
+    }
+    arsenal.init(m, level);
+    w.gs.player = m.players[first_present(m)];
 }
 
-/// `init` from the lobby's rules (the arena picks the level).
+/// `init` from the lobby's rules (the arena picks the level): the M7
+/// two-player match.
 pub fn init_rules(w: *World, rules: Rules, seed: u32) void {
     init(w, arena_level(rules.arena), levels.arena_indices[rules.arena], rules, seed);
+}
+
+/// `init_n` from the lobby's rules: a party match.
+pub fn init_party(w: *World, rules: Rules, present: u16, team: ?*const [max_players]u8, seed: u32) void {
+    init_n(w, arena_level(rules.arena), levels.arena_indices[rules.arena], rules, present, team, seed);
+}
+
+fn mix(a: u32) u32 {
+    var x = a *% 0x9E37_79B9;
+    x ^= x >> 16;
+    x *%= 0x85EB_CA6B;
+    x ^= x >> 13;
+    return x;
 }
 
 fn fresh(sp: levels.Spawn) Player {
@@ -196,13 +355,17 @@ fn spawn_at(level: *const Level, i: usize) levels.Spawn {
     return level.spawns[i];
 }
 
+fn spawn_centre(sp: levels.Spawn) [2]Fixed {
+    return .{ fixed.from_int(sp.x) + fixed.half, fixed.from_int(sp.y) + fixed.half };
+}
+
 /// The spawn whose centre is farthest from (x, y); the first wins a tie.
 pub fn farthest_spawn(level: *const Level, x: Fixed, y: Fixed) levels.Spawn {
     var best: usize = 0;
     var best_d: i64 = -1;
     for (0..spawn_count(level)) |i| {
-        const sp = spawn_at(level, i);
-        const d = dist2(fixed.from_int(sp.x) + fixed.half - x, fixed.from_int(sp.y) + fixed.half - y);
+        const c = spawn_centre(spawn_at(level, i));
+        const d = dist2(c[0] - x, c[1] - y);
         if (d > best_d) {
             best = i;
             best_d = d;
@@ -211,13 +374,70 @@ pub fn farthest_spawn(level: *const Level, x: Fixed, y: Fixed) levels.Spawn {
     return spawn_at(level, best);
 }
 
-/// The other badge left (the lockstep's hand-over): the match ends, the
-/// player who stayed wins by forfeit.
+/// Where slot `me` (re)spawns: the spawn whose distance to the nearest
+/// living foe is largest (any spawn when no foe lives), skipping spawns a
+/// living player stands on (within `body`) unless all are; ties go to the
+/// lowest index.
+pub fn pick_spawn(level: *const Level, m: *const Match, me: usize) levels.Spawn {
+    const ns = spawn_count(level);
+    var best: usize = 0;
+    var best_d: i64 = -1;
+    var best_any: usize = 0;
+    var best_any_d: i64 = -1;
+    for (0..ns) |k| {
+        const c = spawn_centre(spawn_at(level, k));
+        var near_foe: i64 = std.math.maxInt(i64);
+        var taken = false;
+        for (0..max_players) |j| {
+            if (j == me or !m.alive(j)) continue;
+            const d = dist2(m.players[j].x - c[0], m.players[j].y - c[1]);
+            if (d < sq(body)) taken = true;
+            if (m.foes(me, j) and d < near_foe) near_foe = d;
+        }
+        if (near_foe > best_any_d) {
+            best_any = k;
+            best_any_d = near_foe;
+        }
+        if (!taken and near_foe > best_d) {
+            best = k;
+            best_d = near_foe;
+        }
+    }
+    return spawn_at(level, if (best_d >= 0) best else best_any);
+}
+
+/// A leaver (the lockstep's hand-over): bot.zig plays `slot` from now on
+/// (its frags stay). When one human is left, or (team modes) every human
+/// left is on one team, the match ends as a forfeit win for them.
+pub fn hand_over(w: *World, slot: usize) void {
+    const m = &w.m;
+    if (m.over or slot >= max_players or !m.is_present(slot) or m.is_bot(slot)) return;
+    m.bots |= @as(u16, 1) << @intCast(slot);
+    const humans = m.present & ~m.bots;
+    if (humans == 0) {
+        finish(m, state.no_one, true);
+        return;
+    }
+    const h0: usize = @ctz(humans);
+    if (m.teams == 0) {
+        if (@popCount(humans) == 1) finish(m, @intCast(h0), true);
+        return;
+    }
+    for (0..max_players) |i| {
+        if ((humans >> @intCast(i)) & 1 == 1 and m.team[i] != m.team[h0]) return;
+    }
+    finish(m, state.team_win | m.team[h0], true);
+}
+
+/// M7's name for the two-badge hand-over: `gone` left, the other wins.
 pub fn forfeit(w: *World, gone: u1) void {
-    if (w.m.over) return;
-    w.m.over = true;
-    w.m.forfeit = true;
-    w.m.winner = gone ^ 1;
+    hand_over(w, gone);
+}
+
+fn finish(m: *Match, winner: u8, by_forfeit: bool) void {
+    m.over = true;
+    m.forfeit = by_forfeit;
+    m.winner = winner;
 }
 
 /// FNV-1a over the raw World (no padding anywhere, state.zig asserts it).
@@ -230,7 +450,7 @@ pub fn hash(w: *const World) u32 {
     return h;
 }
 
-/// `rival.png` cell for the other player `r` seen from `viewer`: 0 front
+/// `rival.png` cell for another player `r` seen from `viewer`: 0 front
 /// (it faces the viewer, within 45 degrees), 1 its right side (it faces
 /// screen right), 2 back, 3 left side, 4 down (the death view).
 pub fn rival_cell(viewer: *const Player, r: *const Player, dead: bool) u8 {
@@ -244,63 +464,109 @@ pub fn rival_cell(viewer: *const Player, r: *const Player, dead: bool) u8 {
 }
 
 pub fn alive(m: *const Match, slot: usize) bool {
-    return m.dead[slot] == 0 and m.players[slot].hp > 0;
+    return m.alive(slot);
+}
+
+fn first_present(m: *const Match) usize {
+    return @ctz(m.present);
+}
+
+/// The present slots in this tick's order: from present player `tick mod
+/// count`, wrapping. Returns the count.
+fn tick_order(m: *const Match, tick: u32, out: *[max_players]u8) usize {
+    var all: [max_players]u8 = undefined;
+    var n: usize = 0;
+    for (0..max_players) |i| {
+        if (!m.is_present(i)) continue;
+        all[n] = @intCast(i);
+        n += 1;
+    }
+    if (n == 0) return 0;
+    const first = tick % @as(u32, @intCast(n));
+    for (0..n) |k| out[k] = all[(first + k) % n];
+    return n;
 }
 
 // ---------------------------------------------------------------- step
 
-/// One tick. `in[0]` is the host's buttons, `in[1]` the guest's. A
-/// finished match takes no input and does not move.
+/// One two-player tick (M7): `in[0]` is the host's buttons, `in[1]` the
+/// guest's. A finished match takes no input and does not move.
 pub fn step(w: *World, level: *const Level, in: [2]Buttons) void {
+    var all: [max_players]Buttons = @splat(.{});
+    all[0] = in[0];
+    all[1] = in[1];
+    step_n(w, level, &all);
+}
+
+/// One tick: `in[slot]` for each present human slot; bot slots
+/// (`Match.bots`) get bot.zig's input instead, absent slots are ignored.
+pub fn step_n(w: *World, level: *const Level, in_raw: *const [max_players]Buttons) void {
     const s = &w.gs;
     const m = &w.m;
     if (m.over) return;
+    var in = in_raw.*;
+    if (m.bots != 0) {
+        for (0..max_players) |i| {
+            if (m.is_bot(i) and m.is_present(i)) in[i] = bot.think(w, level, i);
+        }
+    }
+    var order: [max_players]u8 = undefined;
+    const n = tick_order(m, s.tick, &order);
     s.last_locked = 0;
     for (&m.hurt) |*h| h.* -|= 1;
-    for (0..2) |i| {
+    for (order[0..n]) |i| {
         if (m.dead[i] == 0) continue;
         m.dead[i] -= 1;
-        if (m.dead[i] == 0) respawn(w, level, @intCast(i));
+        if (m.dead[i] == 0) respawn(w, level, i);
     }
 
-    const first: u1 = @truncate(s.tick);
-    move(w, level, first, in[first]);
-    move(w, level, first ^ 1, in[first ^ 1]);
+    for (order[0..n]) |i| move(w, level, i, in[i]);
 
-    s.player = m.players[0];
-    sim.update_doors(s, level, &m.players[1]);
+    doors(w, level);
     if (m.bugs) bugs(w, level);
     projectiles.update_match(s, level, m, pvp_scale);
+    // M9: fork bombs and rockets; their blasts' deaths count this tick.
+    arsenal.step_shots(w, level);
 
-    // Both weapons from the same positions; damage lands after both fired.
-    var rivals: [2]sim.Rival = undefined;
-    for (0..2) |i| {
-        const o = &m.players[i ^ 1];
-        rivals[i] = .{ .x = o.x, .y = o.y, .alive = alive(m, i ^ 1), .tag = @intCast(i + 1) };
-        if (!alive(m, i)) continue;
+    // Every weapon from the same positions; damage lands after all fired.
+    var pending: [max_players][max_players]i16 = @splat(@splat(0));
+    for (order[0..n]) |i| {
+        if (!m.alive(i)) continue;
+        var rivals: [max_players]sim.Rival = undefined;
+        var nr: usize = 0;
+        for (0..max_players) |j| {
+            if (!m.foes(i, j) or !m.alive(j)) continue;
+            rivals[nr] = .{ .x = m.players[j].x, .y = m.players[j].y, .alive = true, .slot = @intCast(j) };
+            nr += 1;
+        }
+        var shot: sim.Shot = .{ .rivals = rivals[0..nr], .tag = i + 1 };
         swap_in(w, i);
-        sim.update_weapon(s, level, in[i], &rivals[i]);
+        arsenal.update(w, level, i, in[i], &shot);
         swap_out(w, i);
-        if (rivals[i].fired) m.shots[i] +%= 1;
+        if (shot.fired) m.shots[i] +%= 1;
+        for (rivals[0..nr]) |r| pending[i][r.slot] = r.damage;
     }
-    for (0..2) |i| {
-        const d = rivals[i].damage;
-        if (d > 0 and sim.damage_slot(m, @intCast(i ^ 1), d * pvp_scale, @intCast(i))) m.hits[i] +%= 1;
+    for (order[0..n]) |i| {
+        var hit = false;
+        for (0..max_players) |j| {
+            const d = pending[i][j];
+            if (d > 0 and sim.damage_slot(m, j, d * pvp_scale, i)) hit = true;
+        }
+        if (hit) m.hits[i] +%= 1;
     }
 
     var died = false;
-    for (0..2) |i| {
-        if (m.dead[i] == 0 and m.players[i].hp <= 0) {
-            die(w, @intCast(i));
+    for (0..max_players) |i| {
+        if (m.is_present(i) and m.dead[i] == 0 and m.players[i].hp <= 0) {
+            die(w, i);
             died = true;
         }
     }
     if (died) check_over(m);
     tick_pickups(w, level);
-    m.players[0].prev = in[0];
-    m.players[1].prev = in[1];
+    for (order[0..n]) |i| m.players[i].prev = in[i];
     s.tick +%= 1;
-    s.player = m.players[0];
+    s.player = m.players[first_present(m)];
     s.hurt = 0;
 }
 
@@ -314,12 +580,27 @@ fn swap_out(w: *World, i: usize) void {
     w.m.hurt[i] = w.gs.hurt;
 }
 
-/// Turn or strafe (B held), walk, keep clear of the other player, then
+/// Doors stay open while any present player (a body too) stands in them.
+fn doors(w: *World, level: *const Level) void {
+    const m = &w.m;
+    const p0 = first_present(m);
+    var others: [max_players]Player = undefined;
+    var n: usize = 0;
+    for (p0 + 1..max_players) |i| {
+        if (!m.is_present(i)) continue;
+        others[n] = m.players[i];
+        n += 1;
+    }
+    w.gs.player = m.players[p0];
+    sim.update_doors(&w.gs, level, others[0..n]);
+}
+
+/// Turn or strafe (B held), walk, keep clear of the other players, then
 /// the pickups under the player.
-fn move(w: *World, level: *const Level, i: u1, b: Buttons) void {
+fn move(w: *World, level: *const Level, i: usize, b: Buttons) void {
     const s = &w.gs;
     const m = &w.m;
-    if (!alive(m, i)) return;
+    if (!m.alive(i)) return;
     swap_in(w, i);
     const p = &s.player;
     if (p.grace > 0) p.grace -= 1;
@@ -334,6 +615,10 @@ fn move(w: *World, level: *const Level, i: u1, b: Buttons) void {
     }
     if (b.up) fwd = sim.walk_speed;
     if (b.down) fwd = -sim.back_speed;
+    // A spinning Garbage Collector slows every direction (exact 1.0 otherwise).
+    const scale = arsenal.walk_scale(m, i);
+    fwd = fixed.mul(fwd, scale);
+    side = fixed.mul(side, scale);
     if (p.frozen > 0) {
         p.frozen -= 1;
         fwd = 0;
@@ -346,35 +631,50 @@ fn move(w: *World, level: *const Level, i: u1, b: Buttons) void {
         const x0 = p.x;
         const y0 = p.y;
         _ = sim.move_circle(s, level, &p.x, &p.y, fixed.mul(c, fwd) - fixed.mul(sn, side), fixed.mul(sn, fwd) + fixed.mul(c, side), sim.radius, .player);
-        const o = &m.players[i ^ 1];
-        if (alive(m, i ^ 1)) {
+        // A step that ends inside another living player's body and closer
+        // than before is undone (stepping apart is always allowed).
+        for (0..max_players) |j| {
+            if (j == i or !m.alive(j)) continue;
+            const o = &m.players[j];
             const now = dist2(p.x - o.x, p.y - o.y);
             if (now < sq(body) and now < dist2(x0 - o.x, y0 - o.y)) {
                 p.x = x0;
                 p.y = y0;
+                break;
             }
         }
     }
+    swap_out(w, i);
+    // Pickups work on the slot itself (`arsenal.take_pad` reads the Match).
     const cx = fixed.to_int(p.x);
     const cy = fixed.to_int(p.y);
-    const n = @min(level.pickups.len, state.max_match_pickups);
-    for (level.pickups[0..n], 0..) |pk, k| {
+    const np = @min(level.pickups.len, state.max_match_pickups);
+    for (level.pickups[0..np], 0..) |pk, k| {
         if (pk.x != cx or pk.y != cy or !state.pickup_present(s, k)) continue;
-        sim.apply_pickup(p, pk.kind);
+        if (pk.kind == .pad) {
+            m.pickup_timer[k] = arsenal.take_pad(w, i, k);
+        } else {
+            sim.apply_pickup(&m.players[i], pk.kind);
+            m.pickup_timer[k] = arsenal.respawn_ticks(pk.kind);
+        }
         state.take_pickup(s, k);
-        m.pickup_timer[k] = pickup_respawn;
     }
-    swap_out(w, i);
 }
 
-/// The nearer living player to (x, y); player 0 on a tie or when neither lives.
+/// The nearest living player to (x, y); the lowest slot on a tie, the
+/// first present slot when none lives.
 fn target(m: *const Match, x: Fixed, y: Fixed) usize {
-    const a0 = alive(m, 0);
-    const a1 = alive(m, 1);
-    if (a0 != a1) return if (a0) 0 else 1;
-    const d0 = dist2(m.players[0].x - x, m.players[0].y - y);
-    const d1 = dist2(m.players[1].x - x, m.players[1].y - y);
-    return if (d1 < d0) 1 else 0;
+    var best: usize = first_present(m);
+    var best_d: i64 = std.math.maxInt(i64);
+    for (0..max_players) |i| {
+        if (!m.alive(i)) continue;
+        const d = dist2(m.players[i].x - x, m.players[i].y - y);
+        if (d < best_d) {
+            best = i;
+            best_d = d;
+        }
+    }
+    return best;
 }
 
 /// BUGS ON: each bug's tick against its target; dead bugs respawn after
@@ -412,53 +712,72 @@ fn bugs(w: *World, level: *const Level) void {
 }
 
 fn clear_of_players(m: *const Match, x: Fixed, y: Fixed) bool {
-    for (0..2) |i| {
-        if (alive(m, i) and dist2(m.players[i].x - x, m.players[i].y - y) < sq(bug_respawn_clear)) return false;
+    for (0..max_players) |i| {
+        if (m.alive(i) and dist2(m.players[i].x - x, m.players[i].y - y) < sq(bug_respawn_clear)) return false;
     }
     return true;
 }
 
 /// At 0 HP: the death view, and the frag to whoever hurt the player last
-/// (-1 for a self-frag, nothing for a bug).
-fn die(w: *World, i: u1) void {
+/// (-1 for a self-frag, nothing for a bug); team frags follow.
+fn die(w: *World, i: usize) void {
     const m = &w.m;
     m.dead[i] = death_ticks;
     m.deaths[i] +%= 1;
     m.players[i].frozen = 0;
+    m.gc_spin[i] = 0;
     const k = m.last_hit[i];
     if (k == i) {
         m.frags[i] -= 1;
-    } else if (k == i ^ 1) {
+        if (m.teams != 0) m.team_frags[m.team[i]] -= 1;
+    } else if (k < max_players and m.foes(k, i)) {
         m.frags[k] += 1;
+        if (m.teams != 0) m.team_frags[m.team[k]] += 1;
     }
-    m.victim = i;
+    m.victim = @intCast(i);
     m.killer = k;
     m.kill_tick = w.gs.tick;
 }
 
+/// The frag limit: per player in FFA, per team in team modes. The top
+/// score at or past it wins; a shared top score is a draw.
 fn check_over(m: *Match) void {
     const lim: i16 = m.frag_limit;
-    const r0 = m.frags[0] >= lim;
-    const r1 = m.frags[1] >= lim;
-    if (!r0 and !r1) return;
-    m.over = true;
-    if (r0 and r1) {
-        m.winner = if (m.frags[0] > m.frags[1]) 0 else if (m.frags[1] > m.frags[0]) 1 else state.no_one;
+    var top: i16 = std.math.minInt(i16);
+    var who: u8 = state.no_one;
+    var shared = false;
+    if (m.teams == 0) {
+        for (0..max_players) |i| {
+            if (!m.is_present(i)) continue;
+            consider(m.frags[i], @intCast(i), &top, &who, &shared);
+        }
     } else {
-        m.winner = if (r0) 0 else 1;
+        for (0..m.teams) |t| consider(m.team_frags[t], state.team_win | @as(u8, @intCast(t)), &top, &who, &shared);
+    }
+    if (top < lim) return;
+    finish(m, if (shared) state.no_one else who, false);
+}
+
+fn consider(score: i16, id: u8, top: *i16, who: *u8, shared: *bool) void {
+    if (score > top.*) {
+        top.* = score;
+        who.* = id;
+        shared.* = false;
+    } else if (score == top.*) {
+        shared.* = true;
     }
 }
 
-/// After the death view: full HP and the starting loadout at the spawn
-/// farthest from the other player, with a moment of spawn protection.
-fn respawn(w: *World, level: *const Level, i: u1) void {
+/// After the death view: full HP and the starting loadout at `pick_spawn`,
+/// with a moment of spawn protection.
+fn respawn(w: *World, level: *const Level, i: usize) void {
     const m = &w.m;
-    const o = &m.players[i ^ 1];
     const prev = m.players[i].prev;
-    m.players[i] = fresh(farthest_spawn(level, o.x, o.y));
+    m.players[i] = fresh(pick_spawn(level, m, i));
     m.players[i].prev = prev;
     m.players[i].grace = spawn_grace;
     m.last_hit[i] = state.no_one;
+    arsenal.reset_slot(m, i);
 }
 
 fn tick_pickups(w: *World, level: *const Level) void {
@@ -796,13 +1115,14 @@ test "a double frag at the limit is a draw" {
     const L = try hall(&st);
     var w: World = undefined;
     new_world(&w, &L, false);
-    w.m.frags = .{ 4, 4 };
+    w.m.frags[0] = 4;
+    w.m.frags[1] = 4;
     w.m.players[0].hp = 18;
     w.m.players[1].hp = 18;
     step(&w, &L, .{ .{ .a = true }, .{ .a = true } });
     try testing.expect(w.m.over);
     try testing.expectEqual(state.no_one, w.m.winner);
-    try testing.expectEqual([2]i16{ 5, 5 }, w.m.frags);
+    try testing.expectEqual([2]i16{ 5, 5 }, w.m.frags[0..2].*);
 }
 
 test "both arenas run a long random match with bugs, the same twice" {

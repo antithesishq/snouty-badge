@@ -7,6 +7,8 @@
 //! loop is `column[y] = pal[tex_column[ty >> 16]]`.
 const cart = @import("cart-api");
 const gfx = @import("gfx");
+const slots = @import("slots.zig");
+const fx = @import("fx.zig");
 
 pub const tex_size = 32;
 pub const wall_count = 8;
@@ -29,14 +31,17 @@ pub const Set = enum(u8) {
     dimmer = 3,
     rewind = 4,
     hurt = 5,
+    /// Deathmatch (M9): the blue cyber death view.
+    warp = 6,
 };
-pub const set_count = 6;
+pub const set_count = 7;
 pub const Palette = [32]cart.Pixel;
 /// `shade[set][palette index]`.
 pub var shade: [set_count]Palette = undefined;
 
 const iris_rgb = [3]u32{ 0x8E, 0x42, 0xDE };
 const hurt_rgb = [3]u32{ 0xFF, 0x30, 0x20 };
+const warp_rgb = [3]u32{ 0x30, 0xA0, 0xFF };
 
 pub fn init() void {
     unpack(gfx.walls, wall_count, 0, 0);
@@ -78,6 +83,7 @@ fn build_palettes(colors: anytype, base: usize) void {
         const lum = (r * 77 + g * 150 + b * 29) >> 8;
         shade[4][base + i] = tint(r, g, b, lum, iris_rgb);
         shade[5][base + i] = tint(r, g, b, lum, hurt_rgb);
+        shade[6][base + i] = tint(r, g, b, lum, warp_rgb);
     }
 }
 
@@ -85,7 +91,7 @@ fn px(r: u32, g: u32, b: u32, scale: u32) cart.Pixel {
     return rgb_pixel((r * scale) >> 8, (g * scale) >> 8, (b * scale) >> 8);
 }
 
-fn tint(r: u32, g: u32, b: u32, lum: u32, t: [3]u32) cart.Pixel {
+pub fn tint(r: u32, g: u32, b: u32, lum: u32, t: [3]u32) cart.Pixel {
     // 40 % original, 60 % luminance-scaled tint (tint at lum 255 is 1.4x t, clamped).
     const tr: u32 = @min(255, lum * t[0] * 7 / (5 * 255));
     const tg: u32 = @min(255, lum * t[1] * 7 / (5 * 255));
@@ -101,24 +107,27 @@ pub fn rgb_pixel(r: u32, g: u32, b: u32) cart.Pixel {
 }
 
 // Sprite palettes (PLAN.md M2 track A). One 16-entry table per sprite
-// sheet and tint; sprites are not distance-shaded, so only three sets:
-// normal, rewind (Iris) and hurt (red), built with the same `tint` as the
+// sheet and tint; sprites are not distance-shaded, so four sets:
+// normal, rewind (Iris), hurt (red) and warp (M9 blue), built with the same `tint` as the
 // walls so both move together.
 
 /// Sprite sheets in palette order; enemies map by `@intFromEnum(kind)`.
 pub const SpriteSheet = enum(u8) { gnat = 0, wasp, beetle, spider, boss, pickups, projectiles, rival };
 pub const sprite_sheet_count = 8;
-pub const SpriteTint = enum(u8) { normal = 0, rewind = 1, hurt = 2 };
-pub const sprite_tint_count = 3;
-/// `sprite_pal[sheet][tint][index]`, 8 x 3 x 16 x 2 = 768 bytes.
+pub const SpriteTint = enum(u8) { normal = 0, rewind = 1, hurt = 2, warp = 3 };
+pub const sprite_tint_count = 4;
+/// The tint colours by `SpriteTint` (normal: none), for fx.zig's palette.
+pub const tints = [sprite_tint_count - 1][3]u32{ iris_rgb, hurt_rgb, warp_rgb };
+/// `sprite_pal[sheet][tint][index]`, 8 x 4 x 16 x 2 = 1 KB.
 pub var sprite_pal: [sprite_sheet_count][sprite_tint_count][16]cart.Pixel = undefined;
 
-/// Tint for sprites from `view.shade_override`: null/0..3 normal, 4 rewind, 5 hurt.
+/// Tint for sprites from `view.shade_override`: null/0..3 normal, 4 rewind, 5 hurt, 6 warp.
 pub fn sprite_tint(override: ?u8) SpriteTint {
     const o = override orelse return .normal;
     return switch (o) {
         4 => .rewind,
         5 => .hurt,
+        6 => .warp,
         else => .normal,
     };
 }
@@ -132,6 +141,57 @@ pub fn init_sprites() void {
     build_sprite_palette(.pickups, gfx.pickups.colors);
     build_sprite_palette(.projectiles, gfx.projectiles.colors);
     build_sprite_palette(.rival, gfx.rival.colors);
+    build_rival_palettes();
+    fx.init();
+}
+
+/// Party deathmatch (M8): the rival sheet's palette once per shirt colour
+/// (`slots.shirts`), with the Coral shirt and its dark-red folds swapped
+/// for that colour, in the same four tints; `rival_pal[shirt][tint]`,
+/// 16 x 4 x 16 x 2 = 2 KB. Shirt 0 is the sheet's own palette, so the
+/// M7 rival looks exactly as before. Built once at start: a tinted rival
+/// costs the blit nothing extra (a different palette pointer).
+pub var rival_pal: [slots.shirts.len][sprite_tint_count][16]cart.Pixel = undefined;
+/// The rival palette index of the lit shirt colour (the head number's ink).
+pub var rival_shirt_index: usize = 1;
+
+fn build_rival_palettes() void {
+    const colors = gfx.rival.colors;
+    // The shirt's two palette entries: the ones nearest Coral and its shade.
+    const lit_i = nearest(colors, slots.shirts[0].lit);
+    rival_shirt_index = lit_i;
+    const shade_i = nearest(colors, slots.shirts[0].shade);
+    for (&rival_pal, slots.shirts, 0..) |*p, shirt, k| {
+        p.* = sprite_pal[@backingInt(SpriteSheet.rival)];
+        if (k == 0) continue;
+        for ([2]usize{ lit_i, shade_i }, [2]u24{ shirt.lit, shirt.shade }) |i, rgb| {
+            const r: u32 = rgb >> 16;
+            const g: u32 = (rgb >> 8) & 0xFF;
+            const b: u32 = rgb & 0xFF;
+            const lum = (r * 77 + g * 150 + b * 29) >> 8;
+            p[0][i] = px(r, g, b, 256);
+            p[1][i] = tint(r, g, b, lum, iris_rgb);
+            p[2][i] = tint(r, g, b, lum, hurt_rgb);
+            p[3][i] = tint(r, g, b, lum, warp_rgb);
+        }
+    }
+}
+
+fn nearest(colors: anytype, rgb: u24) usize {
+    var best: usize = 1;
+    var best_d: u32 = 0xFFFF_FFFF;
+    for (colors, 0..) |c, i| {
+        if (i == 0) continue; // transparent
+        const dr: i32 = @as(i32, @intCast(@as(u32, c.r) * 255 / 31)) - @as(i32, rgb >> 16);
+        const dg: i32 = @as(i32, @intCast(@as(u32, c.g) * 255 / 63)) - @as(i32, (rgb >> 8) & 0xFF);
+        const db: i32 = @as(i32, @intCast(@as(u32, c.b) * 255 / 31)) - @as(i32, rgb & 0xFF);
+        const d: u32 = @intCast(dr * dr + dg * dg + db * db);
+        if (d < best_d) {
+            best_d = d;
+            best = i;
+        }
+    }
+    return best;
 }
 
 fn build_sprite_palette(sheet: SpriteSheet, colors: anytype) void {
@@ -146,5 +206,6 @@ fn build_sprite_palette(sheet: SpriteSheet, colors: anytype) void {
         p[0][i] = px(r, g, b, 256);
         p[1][i] = tint(r, g, b, lum, iris_rgb);
         p[2][i] = tint(r, g, b, lum, hurt_rgb);
+        p[3][i] = tint(r, g, b, lum, warp_rgb);
     }
 }
