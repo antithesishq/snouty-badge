@@ -496,6 +496,11 @@ mix; bump the last character when a game's wire changes):
 | Id | Cart |
 |---|---|
 | `SNOUTDM1` | Snoutenstein party deathmatch |
+| `SNGENRM1` | Snouty Genesis party, RAM cart (Z80 stub); `carts/snouty-genesis/docs/MULTIPLAYER.md` |
+| `SNGENFL1` | Snouty Genesis party, XIP / simulator build (real Z80): a different machine, so it never shares a room with `SNGENRM1` |
+| `LX` + 6 hex digits | Snouty Lynx ComLynx: `LX` and the low 24 bits of the ROM's CRC32, so only consoles on the same ROM meet (`carts/snouty-lynx/docs/COMLYNX.md`) |
+
+New ids: 8 ASCII bytes; never start one with `LX` (the Lynx range).
 
 ## 9. Genesis 4P and other carts
 
