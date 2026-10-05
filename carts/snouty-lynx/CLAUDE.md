@@ -113,7 +113,9 @@ from the repository root only.
   XIP one is the scrubber's hope, docs/SCRUB.md) and `zig-out/bin/snouty-lynx.wasm`. `-Dlynx-rom=PATH` (repo-relative,
   absolute or `~/x.lnx`; no cart-relative form, the build never probes the
   filesystem), `-Dlynx-rom-source=drive|embed|pack` (`pack`, SPEC.md 13.1,
-  is not built: it prints a note and builds `drive`), `-Dcart-optimize=`.
+  is not built: it prints a note and builds `drive`), `-Dlynx-link=false`
+  (no link cable: `frontend/cable.zig` `enabled`, docs/CABLE.md section 4;
+  on by default), `-Dcart-optimize=`.
 - Generated `rom` module: `data`, `name`, `source` (`.drive`/`.embed`).
   Drive badge builds must not reference `rom.data` (romsrc.zig keeps every
   use behind `!use_drive`), so the ROM's bytes stay out of the UF2.

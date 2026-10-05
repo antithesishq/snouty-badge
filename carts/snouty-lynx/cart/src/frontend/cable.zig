@@ -20,6 +20,13 @@
 //! Between frames the cart keeps reading and answering the cable (`pump`)
 //! until `tuning.link_pump_until_us` into the update, so acks come back
 //! within a pump rather than a frame.
+//!
+//! `-Dlynx-link=false` (`enabled` false) leaves all of it out: every entry
+//! point below returns at once on a comptime-known branch, so the link
+//! driver, the protocol and the LINK screen are never analysed and the
+//! scrub arena keeps their ~17 KB (docs/CABLE.md "Build option"). The
+//! core's UART (core/uart.zig) stays: it is shared byte for byte with the
+//! party branch and costs ~6 KB.
 const cart = @import("cart-api");
 const core = @import("core");
 const link = @import("link");
@@ -27,6 +34,10 @@ const cablenet = @import("cablenet.zig");
 const rewind = @import("rewind.zig");
 const tuning = @import("tuning.zig");
 const debug = @import("debug.zig");
+const build_options = @import("build_options");
+
+/// The link cable is built in (`-Dlynx-link`, on by default).
+pub const enabled = build_options.link;
 
 const Port = core.comlynx.Port;
 
@@ -57,6 +68,7 @@ pub var no_memory = false;
 
 /// The badge has the link hardware (false in the wasm simulator).
 pub fn available() bool {
+    if (!enabled) return false;
     return link.rp2350.Port.available;
 }
 
@@ -67,6 +79,7 @@ fn now() u64 {
 /// The LINK screen opens for the ROM with CRC `crc`: start (or restart)
 /// the link, so the partner sees a fresh session.
 pub noinline fn enter(crc: u32) void {
+    if (!enabled) return;
     if (!up) {
         link.rp2350.rx_dma = dma_channel;
         lk = link.Badge.init(.{}, cablenet.app_id, cart.rand());
@@ -80,7 +93,7 @@ pub noinline fn enter(crc: u32) void {
 /// Leave the LINK screen or the link: say so to the partner, the stub
 /// again, the scrubber back.
 pub fn close(l: *core.Lynx) void {
-    if (!open) return;
+    if (!enabled or !open) return;
     net.leave(now, l);
     open = false;
     sync(l);
@@ -105,7 +118,7 @@ fn show(s: []const u8) void {
 /// Before the frame's step. True when GO restarted the console linked
 /// (main.zig enters play).
 pub fn before_frame(l: *core.Lynx) bool {
-    if (!open) return false;
+    if (!enabled or !open) return false;
     const restart = net.before_frame(now(), l);
     if (restart) {
         if (rewind.lend(@sizeOf(Port))) |mem| {
@@ -124,7 +137,7 @@ pub fn before_frame(l: *core.Lynx) bool {
 
 /// After the frame (stepped or not): what the UART sent goes out.
 pub fn after_frame(l: *core.Lynx) void {
-    if (!open) return;
+    if (!enabled or !open) return;
     net.after_frame(now(), l);
     sync(l);
 }
@@ -132,24 +145,27 @@ pub fn after_frame(l: *core.Lynx) void {
 /// One linked game frame (main.zig `step`), in `tuning.link_slices`
 /// pieces with the cable serviced between them.
 pub noinline fn step_frame(l: *core.Lynx, pad: u16) void {
+    if (!enabled) return l.step_frame(pad);
     net.step_frame(now, l, pad, tuning.link_slices);
 }
 
 /// At the end of the update, while linked: keep reading and answering the
 /// cable until `tuning.link_pump_until_us` after `update_us`.
 pub noinline fn pump(l: *core.Lynx, update_us: u64) void {
-    if (!linked) return;
+    if (!enabled or !linked) return;
     while (now() -% update_us < tuning.link_pump_until_us and net.linked) net.service(now(), l);
     sync(l);
 }
 
 /// After a boot while linked (the menu's Reset): attach the port again.
 pub fn after_boot(l: *core.Lynx) void {
+    if (!enabled) return;
     if (linked) if (net.port) |p| l.attach_link(p);
 }
 
 /// The LINK screen's view of the cable.
 pub fn status() cablenet.Status {
+    if (!enabled) return .unavailable;
     if (!up) return if (available()) .searching else .unavailable;
     return net.status();
 }

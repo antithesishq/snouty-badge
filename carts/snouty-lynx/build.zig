@@ -46,6 +46,9 @@ pub fn add(b: *Build, sycl_badge_dep: *Build.Dependency, opts: common.Options) v
     // toggles it (docs/SOUND.md).
     const options = b.addOptions();
     options.addOption(bool, "sound", opts.sound);
+    // -Dlynx-link=false leaves the link cable out (frontend/cable.zig
+    // `enabled`, docs/CABLE.md): no Link cable row, a larger scrub arena.
+    options.addOption(bool, "link", opts.lynx_link);
     build_options = options;
 
     os_cart.add(b, sycl_badge_dep, .{

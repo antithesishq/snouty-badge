@@ -143,7 +143,8 @@ pub fn update() void {
         .running => run_frame(t0),
         .help => draw_help(),
         .menu => menu_frame(),
-        .cable => cable_frame(t0),
+        // -Dlynx-link=false: no Link cable row, so never the LINK screen.
+        .cable => if (cable.enabled) cable_frame(t0),
         // Only a drive build gets here; the check keeps the picker out of
         // the wasm and embed builds.
         .pick => if (romsrc.use_drive) pick_frame(t0),
@@ -210,7 +211,7 @@ fn menu_frame() void {
             picker.from_menu = true;
             enter(.pick, cart.micros_since_boot());
         },
-        .link_cable => {
+        .link_cable => if (cable.enabled) {
             cable_screen.enter();
             menu.close();
             enter(.cable, cart.micros_since_boot());

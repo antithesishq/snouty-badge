@@ -144,6 +144,25 @@ no cable): m3_scrub 6.17 / 9.49 / 10.76 -> 6.18 / 9.50 / 10.78, m2_play
 adds three slice stops (a `link_sync` and a cable service each, tens of
 microseconds) and the update pumps the cable until 14 ms by design.
 
+### Build option: `-Dlynx-link=false`
+
+The cable is on by default (Adrian, 2026-10-05). `-Dlynx-link=false`
+builds the cart without it: `frontend/cable.zig` `enabled` is false, every
+entry point returns on a comptime-known branch, so the link driver, the
+protocol and the LINK screen are never compiled in; the menu has no Link
+cable row and the Debug overlay row is back. The core's UART stays (it is
+byte-identical with the party branch). RAM cart after merging origin/main
+(b8bd26c8):
+
+| | `-Dlynx-link=true` (default) | `-Dlynx-link=false` |
+|---|---|---|
+| .text | 127,996 | 112,308 |
+| .bss | 93,596 | 92,580 |
+| scrub arena | 48,996 | 66,292 |
+| RAM UF2 | 449,536 | 415,232 |
+
+m3_scrub busy ms 6.18 / 9.50 / 10.78 in both, 0 frames over.
+
 ## 5. Hardware check
 
 Two badges with this build and the same 2-player ComLynx ROM on both

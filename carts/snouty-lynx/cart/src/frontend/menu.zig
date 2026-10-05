@@ -131,7 +131,7 @@ fn visible(item: Item) bool {
         // The simulator has no link port.
         .link_cable => cable.available(),
         // Ten rows (Sound and Pick ROM and Link cable): the developer's row goes.
-        .debug => cart.is_wasm or !pick_available(),
+        .debug => cart.is_wasm or !pick_available() or !cable.available(),
         else => true,
     };
 }

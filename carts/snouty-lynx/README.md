@@ -73,7 +73,9 @@ menu does.
 | About                    | Version, file, header title and maker, size, source, CRC |
 
 With Sound, Pick ROM and Link cable all showing, the Debug overlay row
-gives way (nine rows fit).
+gives way (nine rows fit). `-Dlynx-link=false` builds the cart without
+the link cable: no Link cable row, ~17 KB more scrub history
+(docs/CABLE.md section 4).
 
 Link cable (M7, docs/CABLE.md). Two badges joined by the link cable on
 their UART headers, the same `.lnx` on both drives: open the menu's Link
