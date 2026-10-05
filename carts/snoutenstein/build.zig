@@ -72,6 +72,8 @@ fn build_cart_assets(b: *Build, cart: *Build.Module, cart_api: *Build.Module, st
     if (build_options) |o| cart.addImport("build_options", o.createModule());
     // Sound on the newer firmware: tone2 rendered into the streaming ring.
     cart.addImport("tone_stream", b.createModule(.{ .root_source_file = b.path("lib/tone_stream.zig") }));
+    // Deathmatch (M7): the badge-to-badge link cable (root docs/LINK.md).
+    cart.addImport("link", b.createModule(.{ .root_source_file = b.path("lib/link.zig") }));
     const convert = b.addExecutable(.{
         .name = "convert_gfx",
         .root_module = b.createModule(.{
