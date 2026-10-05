@@ -48,6 +48,7 @@ pub const apps = struct {
     pub const zero: u8 = 'Z';
     pub const snoutenstein: u8 = 'S';
     pub const pong: u8 = 'P';
+    pub const lynx: u8 = 'X';
     pub const genesis: u8 = 'M';
 };
 
@@ -61,6 +62,7 @@ pub fn app_name(id: u8) []const u8 {
         apps.zero => "SNOUTY ZERO",
         apps.snoutenstein => "SNOUTENSTEIN",
         apps.pong => "SNOUTY PONG",
+        apps.lynx => "SNOUTY LYNX",
         apps.genesis => "SNOUTY GENESIS",
         else => "ANOTHER CART",
     };

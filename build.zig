@@ -56,6 +56,7 @@ pub fn build(b: *Build) void {
         .md_rom_source = b.option(common.MdRomSource, "md-rom-source", "snouty-genesis: drive (default; a .gen/.md/.bin file on the badge drive, no ROM in the cart) or embed") orelse .drive,
         .lynx_rom = b.option([]const u8, "lynx-rom", "snouty-lynx: Lynx ROM for the simulator and -Dlynx-rom-source=embed builds, .lnx (headered) or headerless (default carts/snouty-lynx/roms/raycast.lnx); the default badge build embeds none"),
         .lynx_rom_source = b.option(common.RomSource, "lynx-rom-source", "snouty-lynx: drive (default; a .lnx/.lyx file on the badge drive, no ROM in the cart), embed, pack (not built yet)") orelse .drive,
+        .lynx_link = b.option(bool, "lynx-link", "snouty-lynx: two-player ComLynx over the link cable (default true); false leaves the cable code out for a larger rewind history") orelse true,
         .tof_fake = b.option(bool, "tof-fake", "snouty-sense, snouty-theremin, snouty-morph, snouty-shader: on the badge, use the virtual TMF8820 (lib/tof_virtual.zig) instead of I2C0, for badge-bench; the simulator always uses it (docs/TOF.md)") orelse false,
         .only = only,
         .test_step = b.step("test", "Run every cart's host tests"),
@@ -78,6 +79,25 @@ pub fn build(b: *Build) void {
         }),
     });
     opts.test_step.dependOn(&b.addRunArtifact(lib_tests).step);
+
+    // The party lockstep over the real `badge lobby` (tools/party_e2e.sh,
+    // docs/LOCKSTEP_N.md): a host program, never part of a cart build or
+    // of the default install.
+    const party_e2e = b.addExecutable(.{
+        .name = "party_e2e",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("tools/party_e2e/main.zig"),
+            .target = b.graph.host,
+            .optimize = .ReleaseSafe,
+            .link_libc = true,
+            .imports = &.{
+                .{ .name = "lockstep_n", .module = b.createModule(.{ .root_source_file = b.path("lib/lockstep_n.zig") }) },
+                .{ .name = "stein", .module = b.createModule(.{ .root_source_file = b.path("carts/snoutenstein/cart/src/party_host.zig") }) },
+            },
+        }),
+    });
+    b.step("party-e2e", "Build zig-out/bin/party_e2e (N badges over the real badge lobby; run tools/party_e2e.sh)")
+        .dependOn(&b.addInstallArtifact(party_e2e, .{}).step);
 }
 
 fn listed(list: []const u8, c: Cart) bool {

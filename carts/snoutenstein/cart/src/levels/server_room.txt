@@ -1,28 +1,32 @@
 # Server Room (deathmatch arena, M7): a rack hall (pillars 6, a central
 # rack block) between two side rooms behind cable walls (2), each joined
 # to the hall by two doors, and two outer corridors joining the side rooms
-# through brick gaps (3), so every room is on at least two loops. Two
-# weapon alcoves in the Iris murals (5): the spray can off the north
-# corridor, the Debugger off the south one. No keys, no exit. P = spawn
+# through brick gaps (3), so every room is on at least two loops. M9
+# arsenal: five weapon pads (@, the rotating arsenal): the Iris mural
+# alcoves off the north and south corridors, one in each side room and
+# one beside the central rack block. The Debugger (&) hides in a one-cell
+# closet behind a secret wall (X, looks like the mural) in the south
+# corridor's mural, under the east side room. No keys, no exit. P = spawn
 # (six); the bugs only play with BUGS ON.
 # Legend: SPEC.md section 6. Lines starting with # are comments.
 1111111111111111111111111111
-1555555555555$.5555555555551
+1555555555555@.5555555555551
 1P.........a..............P1
 1.......%..................1
 133.333333D333333D333333.331
 1.....2..............2.....1
-1.%...2......+.......2.....1
+1.%...2......+.......2.@...1
 1.....D..6.....w..6..D.a...1
 1.....2..............2.....1
 1..P..2.....1111.....2.....1
-1.....2.....1111.....2..P..1
+1.....2.....1111@....2..P..1
 1.....2..............2.....1
 1...a.D..6........6..D.....1
-1.....2.......+....b.2...%.1
+1...@.2.......+....b.2...%.1
 1.....2..............2.....1
 133.333333D333333D333333.331
 1..................%.......1
 1P..............a.........P1
-1555555555555.&5555555555551
+1555555555555.@555555X555551
+111111111111111111111&111111
 1111111111111111111111111111

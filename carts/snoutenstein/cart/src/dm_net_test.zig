@@ -289,7 +289,9 @@ const Duo = struct {
         if (n.paused and !was_paused) b.pause_on = n.tick - 1;
         if (!n.paused and was_paused) b.pause_off = n.tick - 1;
         if (n.tick <= max_ticks) logs[b.side][n.tick] = match.G.hash(&b.w);
-        if (b.mutate_at != 0 and n.tick == b.mutate_at) b.w.m.players[1].x +%= 1;
+        // A counter nothing rewrites (a position change is undone by a
+        // respawn when player 1 happens to be in its death view: M9 bots).
+        if (b.mutate_at != 0 and n.tick == b.mutate_at) b.w.m.deaths[1] +%= 1;
     }
 
     fn both(d: *Duo, s: lockstep.State) bool {
@@ -484,5 +486,9 @@ test "deathmatch over the cable: Start pauses and resumes both badges on the sam
 
 test "deathmatch over the cable: RAM" {
     if (report) std.debug.print("\n@sizeOf(Lockstep(link, match.G)) = {d} bytes (link {d}), match.World = {d} bytes\n", .{ @sizeOf(LS), @sizeOf(L), @sizeOf(World) });
-    try std.testing.expect(@sizeOf(World) < 2048);
+    // M8: state.Match holds 16 players (PLAN.md M8 "How many players"),
+    // World 2,188 bytes; M7's two-player Match kept it under 2,048. M9's
+    // arsenal (ammo per slot, pad items, the 32-entry DmShot pool that keeps
+    // GameState.projectiles unchanged) adds 752: World 2,940.
+    try std.testing.expect(@sizeOf(World) < 3072);
 }

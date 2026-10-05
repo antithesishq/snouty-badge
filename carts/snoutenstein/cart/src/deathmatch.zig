@@ -24,7 +24,10 @@ const view = @import("render/view.zig");
 const sprites = @import("render/sprites.zig");
 const weapon = @import("render/weapon.zig");
 const hud = @import("render/hud.zig");
+const fx = @import("render/fx.zig");
+const arsenal = @import("arsenal.zig");
 const audio = @import("audio.zig");
+const textures = @import("render/textures.zig");
 
 const Buttons = state.Buttons;
 const centered = hud.centered;
@@ -342,21 +345,15 @@ pub fn draw_match(pad: Buttons) void {
     sprites.rival = .{
         .x = fixed.to_f32(o.x),
         .y = fixed.to_f32(o.y),
-        .cell = match.rival_cell(&shown.player, o, m.dead[other] > 0),
+        .cell = match.rival_cell(&shown.player, o, false),
         .white = m.hurt[other] + 2 > sim.hurt_ticks,
+        .warp = sprites.warp_of(m, other),
     };
-    view.shade_override = if (dead or shown.hurt > 0) 5 else null;
-    view.draw(&shown, arena());
+    draw_view(m, me, &shown, pad);
     sprites.rival = null;
-    sprites.show_enemies = true;
-    if (!dead) weapon.draw(&shown, pad.up or pad.down or (pad.b and (pad.left or pad.right)));
-    hud.draw_bar(&shown);
     hud.draw_frags(m.frags[me], m.frags[other]);
     draw_banner();
-    if (dead) {
-        var buf: [16]u8 = undefined;
-        band(fmt(&buf, "RESPAWN IN {d}", .{(@as(u32, m.dead[me]) + 59) / 60}), 46, hud.anti_white);
-    }
+    if (dead) draw_dead(m, me);
     if (local == null) {
         if (net.paused) draw_pause();
         switch (net.state()) {
@@ -367,28 +364,66 @@ pub fn draw_match(pad: Buttons) void {
     }
 }
 
+/// The 3D view, weapon and status bar of a match from slot `me` (M7 and
+/// M8; the rivals are set by the caller): the arsenal's pads and shots,
+/// the shown slot's GC spin and arsenal ammo, and while dead (M9) the
+/// view in the blue warp tint with the scanline dissolve.
+pub fn draw_view(m: *const state.Match, me: usize, shown: *const state.GameState, pad: Buttons) void {
+    const dead = m.dead[me] > 0;
+    view.shade_override = if (dead) @backingInt(textures.Set.warp) else if (shown.hurt > 0) 5 else null;
+    sprites.dm = m;
+    view.draw(shown, arena());
+    sprites.dm = null;
+    sprites.show_enemies = true;
+    if (dead) {
+        fx.death_view(match.death_ticks -| m.dead[me]);
+    } else {
+        weapon.gc_spin = m.gc_spin[me];
+        weapon.draw(shown, pad.up or pad.down or (pad.b and (pad.left or pad.right)));
+    }
+    hud.dm_ammo = arsenal.ammo(m, me);
+    hud.draw_bar(shown);
+    hud.dm_ammo = null;
+}
+
+/// "DELETED" (M9) while the warp-out plays, flickering in cyan over a
+/// coral ghost, then "RESPAWN IN n".
+const deleted_ticks: u32 = 50;
+pub fn draw_dead(m: *const state.Match, me: usize) void {
+    const t: u32 = match.death_ticks -| m.dead[me];
+    if (t < deleted_ticks) {
+        cart.rect(.{ .x = 0, .y = 44, .width = 160, .height = 12, .fill_color = hud.anti_black });
+        const j: i32 = if (t < 20) @as(i32, @intCast(fx.noise() % 3)) - 1 else 0;
+        cart.text(.{ .str = "DELETED", .x = 51 + j, .y = 46, .text_color = hud.coral });
+        cart.text(.{ .str = "DELETED", .x = 52 + j, .y = 46, .text_color = .rgb(0x6FE8FF) });
+        return;
+    }
+    var buf: [16]u8 = undefined;
+    band(fmt(&buf, "RESPAWN IN {d}", .{(@as(u32, m.dead[me]) + 59) / 60}), 46, hud.anti_white);
+}
+
 /// The latest death, from this badge's side, for `banner_ticks`.
 fn draw_banner() void {
     const m = &world.m;
     if (m.kill_tick == state.no_shot or world.gs.tick -% m.kill_tick > banner_ticks) return;
     const me: u8 = view_slot;
     const msg: []const u8 = if (m.victim == me)
-        (if (m.killer == me) "SELF-FRAG -1" else if (m.killer == me ^ 1) "FRAGGED BY THEM" else "EATEN BY BUGS")
+        (if (m.killer == me) "SELF-DELETED -1" else if (m.killer == me ^ 1) "DELETED BY THEM" else "EATEN BY BUGS")
     else if (m.killer == me)
-        "YOU FRAGGED THEM"
+        "YOU DELETED THEM"
     else if (m.killer == m.victim)
-        "THEY SELF-FRAGGED"
+        "THEY SELF-DELETED"
     else
         "BUGS GOT THEM";
     band(msg, 22, if (m.killer == me and m.victim != me) hud.green else hud.coral);
 }
 
-fn band(str: []const u8, y: i32, color: cart.DisplayColor) void {
+pub fn band(str: []const u8, y: i32, color: cart.DisplayColor) void {
     cart.rect(.{ .x = 0, .y = y - 2, .width = 160, .height = 12, .fill_color = hud.anti_black });
     centered(str, y, color);
 }
 
-fn draw_pause() void {
+pub fn draw_pause() void {
     cart.rect(.{ .x = 16, .y = 30, .width = 128, .height = 44, .fill_color = hud.anti_black, .stroke_color = hud.grey });
     centered("PAUSED", 36, hud.anti_white);
     centered("START: RESUME", 50, hud.grey);

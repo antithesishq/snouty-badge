@@ -78,3 +78,26 @@ test "drive: no playable file, no volume" {
     try testing.expectEqual(@as(?romfs.Error, error.NoVolume), n.err);
     try testing.expectEqual(@as(u32, 0), n.count);
 }
+
+test "drive: add appends a second drive's files tagged with its index" {
+    // No badge volume at all, ROMs on the extra drive only.
+    var blank: [2048]u8 = @splat(0);
+    var s = drive.scan(.whole(&blank), &clusters);
+    try testing.expectEqual(@as(?romfs.Error, error.NoVolume), s.err);
+    try testing.expect(drive.add(&s, .truncated_test(drive_img), 1, &clusters) == null);
+    try testing.expectEqual(@as(u32, 4), s.count);
+    try testing.expectEqual(@as(u32, 3), s.playable_count);
+    for (s.candidates[0..s.count]) |*c| try testing.expectEqual(@as(u8, 1), c.entry.drive);
+    const c = try drive.open(.truncated_test(drive_img), try find(&s, "GAME.LNX"), &clusters, &src);
+    try testing.expectEqual(@as(u32, 1), c.direct_blocks());
+
+    // Both drives: the badge drive's files first, the list capped at
+    // max_candidates.
+    s = drive.scan(.truncated_test(drive_img), &clusters);
+    try testing.expect(drive.add(&s, .truncated_test(drive_img), 1, &clusters) == null);
+    try testing.expectEqual(@as(u32, 8), s.count);
+    try testing.expectEqual(@as(u8, 0), s.candidates[3].entry.drive);
+    try testing.expectEqual(@as(u8, 1), s.candidates[4].entry.drive);
+    try testing.expect(drive.add(&s, .truncated_test(drive_img), 1, &clusters) == null);
+    try testing.expectEqual(@as(u32, drive.max_candidates), s.count);
+}

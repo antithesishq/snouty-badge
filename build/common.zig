@@ -50,6 +50,10 @@ pub const Options = struct {
     /// its badge build gets the ROM (carts/snouty-lynx/SPEC.md section 7).
     lynx_rom: ?[]const u8,
     lynx_rom_source: RomSource,
+    /// -Dlynx-link=false: snouty-lynx without the link cable (no Link cable
+    /// row, the cable code left out, the scrubber's arena ~17 KB larger;
+    /// carts/snouty-lynx/docs/CABLE.md). On by default.
+    lynx_link: bool,
     /// -Dtof-fake: time-of-flight carts (snouty-sense) talk to the
     /// register-level TMF8820 model (lib/tof_virtual.zig) on the badge
     /// instead of I2C0, so badge-bench measures the whole data path. The

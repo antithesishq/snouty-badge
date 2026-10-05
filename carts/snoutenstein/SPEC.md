@@ -627,6 +627,94 @@ what was built.
   lockstep is busy; the worst play frame is far under that, so there are
   no in-draw pump points.
 
+## 20. Party deathmatch (M8, up to 16 badges)
+
+Adrian, 2026-10-05: "support as many [players] up to [16] as are
+technically feasible and reasonable." Up to 16 badges, each plugged into
+one laptop by USB, play one match in deterministic lockstep through the
+laptop's `badge lobby` relay: the fork firmware's cart serial port
+(`lib/cart_serial.zig`, the ring ABI spoken directly from the pinned
+SDK), lobby protocol v1 (`lib/party.zig`) and the shared N-player
+lockstep (`lib/lockstep_n.zig`, root `docs/LOCKSTEP_N.md`; game id
+`SNOUTDM1`). PLAN.md M8 is the contract; this is what was built.
+
+- **Way in.** The title menu has a third row, PARTY. It is greyed with
+  NEEDS PARTY FIRMWARE when `os_flags` bit 1 is clear (stock firmware,
+  and always in the web simulator and badge-bench). A opens the party
+  screen, which opens the port and joins the room the first time (the
+  campaign and the M7 cable never touch it): START BADGE LOBBY / ON THE
+  LAPTOP while no `badge lobby` has the port open, JOINING..., then the
+  lobby. B leaves the room and goes back to the title. Everyone is
+  "SNOUTY" in the roster (no text entry); the slot colours and numbers
+  tell players apart. DEATHMATCH (section 19) is unchanged beside it.
+- **Lobby.** One screen: PARTY, HOST (on the host), n/16; the rules on
+  three lines (ARENA; FRAGS and BUGS; TEAMS and your team) plus DELAY on
+  the host; the roster in two columns of eight in id order (slot colour,
+  or the team's, the name, a green tick when ready; your row
+  highlighted, a player on another cart version in Coral); a status line
+  (A: READY, READY: HOST STARTS, START: GO!, n READY, NEED 2, NEED 2
+  TEAMS, WAITING FOR HOST, MATCH IN PROGRESS) and the hint line. The host
+  (the lowest id) moves a cursor over ARENA, FRAGS (5, 10, 15, 20, 25),
+  BUGS, TEAMS (FFA, 2, 4), its own team and DELAY with Up/Down and
+  changes it with Left/Right. ARENA follows the head count
+  (`levels.suggest_arena`: Server Room up to 6, Build Farm up to 8, Data
+  Hall beyond) until the host changes it, and turns Coral when the room
+  holds more players than the arena was built for. DELAY is AUTO (the
+  lockstep's `suggested_delay`, from everyone's round trips to the
+  relay; 3 ticks on one laptop) or 2, 3, 4, 6, 8, 12 ticks, with the
+  suggestion shown beside a manual value. In a team match each player
+  picks a team with Left/Right before readying (default: slot mod team
+  count). A toggles ready; START: GO! needs two ready players, on two
+  teams in a team match (`match.GN.picks_ok`). A badge that joins while
+  the room races waits with MATCH IN PROGRESS and is in the next GO.
+- **Wire.** Rules are 2 bytes (`match.Rules.encode2`: byte 0 is M7's
+  byte plus bit 5 for 25 frags; byte 1 the team mode). Each player's
+  pick is 0 in FFA, else its team + 1; GO's picks give the teams
+  (`match.GN.team_of`). The input byte is M7's. The delay travels in
+  GO, default 3.
+- **Match.** `match.GN.start` builds the World from GO (rules,
+  participants, teams, seed); `simulate` is `match.step_n` over the
+  16 bytes; `hash` the World's FNV-1a; `hand_over` puts bot.zig on a
+  leaver's slot from the tick after its last input, the same tick on
+  every badge, its frags kept. The frame pumps at the top of `update`,
+  submits the byte, steps, draws from this badge's slot, then pumps in a
+  loop to 14 ms into the frame while the lockstep wants it (stepping
+  there if the top could not), so the receive ring is drained every
+  frame. Rivals are tinted by slot (by team in team modes) with the slot
+  number over heads nearer than 6 cells; the status bar's right block
+  shows the rank (#3/12) and frags, and TOP (or 2ND when you lead), or
+  the team totals; one kill-feed line at the top (FRAGGED P7, P7
+  FRAGGED YOU, ...); "P7 LEFT: BOT" when a human leaves; hold Select for
+  the scoreboard (Select still cycles weapons). Start pauses everyone;
+  B in the pause leaves (a bot takes the slot). WAITING FOR PLAYERS when
+  no input arrived for 0.5 s; a DESYNC band and the results on a hash
+  mismatch; YOU WERE DROPPED (silent for 3 s while the others waited)
+  goes back to the lobby; a lost relay goes back to the lobby screen.
+- **End.** At the frag limit (per player in FFA, per team in team
+  modes), or when one human (or one team's humans) is left: a forfeit.
+  The results: YOU WIN (: FORFEIT), NAME WINS, RED TEAM WINS, DRAW or
+  DESYNC: STOPPED, then the table. A (or Start) after a second leaves
+  the race and returns to the lobby; until then the badge keeps
+  submitting so the others never wait on it.
+- **Tables.** Up to 10 players: one column with 9 px rows (place,
+  swatch, name, frags, deaths, accuracy). More: two columns of eight
+  with 11 px rows (place in 3x5 digits, swatch, five letters of the
+  name, frags) and your place, deaths and accuracy on a line under them
+  (16 rows of the 8x8 font on a 7 px pitch overlapped). In team modes
+  the team totals head both, your team underlined.
+- **Arenas.** Server Room (6 spawns), Build Farm DM (8), Data Hall (48x48,
+  16 spawns, M8 track C). The M7 cable lobby offers Data Hall too, and
+  `match.G.version` is 1 so an M7 build on the other end of a cable
+  shows WRONG VERSION.
+- **Levels.** `Level.cells` holds the drawn width x height only (it was a
+  64x64 array per level): 22 KB less flash, which the party code needed
+  to stay in the 140 KB budget; `Level.cell` returns the same values as
+  before everywhere.
+- **Without the network.** A local match (bot.zig on every slot, one
+  tick a frame) stands in for the previews (`debug_party_bots`,
+  `debug_party_view`, `debug_party_names`, `debug_party_lobby`) and the
+  bench (`stein_party_bench`); RUNNING.md section 8.
+
 ## Status
 
 - 2026-09-26: spec drafted, nothing built yet. Same day: level grid set
