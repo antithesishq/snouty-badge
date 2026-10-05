@@ -1293,13 +1293,54 @@ No `main.zig`, no menus, no rendering: that is Track B after M3 lands.
    Claude Opus 5.5 <noreply@anthropic.com>` line; push `gc/net`. No tag,
    no merge.
 
-### Track B: link integration (after M3 and the RAM diet)
+### Track B: link integration (Opus agent, worktree /home/exedev/snouty-badge-gc-present, branch gc/present)
 
-Menus (LINK: cable state, host/guest, mode, track, crews; the shared racer
-select with one racer greyed per side), the race loop driving `net`
-(pump points in the frame, the WAITING overlay, PEER LEFT, DESYNC), each
-badge following its own car, simulator `NO LINK IN SIMULATOR`, a bench
-of the worst poll gap, and the hand-off on how to cable two badges.
+M3 is on main (tag `snouty-gc/m3`, main ed6e920d). The cart builds
+ReleaseSmall (75 KB of RAM free, deferred question 71), which serves as
+the RAM diet. `gc/present` merged `gc/net` (Track A, 5343564a) and is now
+the one integration branch: `gc/spec` and `gc/net` are retired. Track B
+owns every file in the cart.
+
+1. **Fix first**: `net_test` "GC mode link race in sync to its end"
+   fails after the merge (L4: written before M3's GC rules). Make it end
+   on the GC survivor.
+2. **Crews** (L3): add `Setup.crews` (4, 2 or 0 AI racers; the unused
+   racer cars are left off the grid, `active = false` from the reset, on
+   both badges) and carry it through `net.world_setup()`.
+3. **The LINK menu** (SPEC 7.3): cable state while searching (`PLUG IN
+   THE CABLE`, `SEARCHING...`, `WRONG CART` for another cart's link), host
+   or guest. The host picks mode (LINK RACE | LINK GC), track and crews,
+   and the guest sees them read-only. Then the shared racer select, with
+   the peer's racer greyed and a ready mark for each side. The host's A
+   starts both. In the simulator, LINK stays greyed with `NO LINK IN
+   SIMULATOR` (state offline).
+4. **The race loop over `net`** as docs/NET.md section 3 says: `submit`,
+   `step` (one tick per frame), pump points at the top of update, between
+   floor bands in `render.zig` (every 16 rows) and between the sprite and
+   HUD passes, the waiting loop with `WAITING FOR PEER` after 30 frames,
+   `PEER LEFT, AI DRIVING`, `DESYNC` ending the race to results, pause
+   and quit from either badge, and each badge following its own car with
+   its own gags. Results return both badges to the lobby, with a rematch
+   from there.
+5. **Bench the poll gap**: add an instrumentation export (worst
+   microseconds between two `pump` calls in a race frame) and a link-race
+   bench script with a fake connected peer if badge-bench allows (see
+   `badge-bench` docs and the snouty-link cart's bench toml for the
+   no-cable fake). Otherwise bench a single-player race with the pump
+   points in place and report the worst gap from the frame structure. The
+   goal is a gap shorter than one packet's wire time (about 80 us) at
+   the floor-band level. If that is not reachable, say what is.
+6. **Hand-off docs**: `docs/LINK_PLAY.md`, which says how to cable two
+   badges (JST-SH 3-pin to 3-pin on the UART headers, either
+   orientation; docs/LINK.md), flash both, and start a LINK RACE. Also
+   the cart CLAUDE.md module list (net.zig).
+7. Gate green (check.sh including the net tests), bench under 8 ms worst
+   with the pump points in, RAM recorded, `docs/preview_m4.gif` (the
+   LINK menu in the simulator, which is offline, plus a host-test-driven
+   or debug-forced view of the lobby and of WAITING / PEER LEFT if
+   practical), PLAN "M4 status" Track B paragraph, deferred questions
+   numbered `L15` on, commits with the `Co-Authored-By: Claude Opus 5.5
+   <noreply@anthropic.com>` line, push `gc/present`. No tag, no merge.
 
 ### M4 status
 
