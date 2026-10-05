@@ -630,3 +630,11 @@ disjoint files.
   unchanged XIP cart (sections 7, 9, 13; PLAN.md "M5 RAM cart"). It has
   no Z80 (the stub, now with Z80 RAM reading 0), no sound, no scrubber;
   the 68000, the VDP and the timing are the XIP cart's.
+- 2026-10-05 (multiplayer, branch `genesis/mp4`, on the shared `party`
+  branch, not main): section 5's "6-button pad out of scope" holds for
+  the badge's own pad, but the core now takes 8 pad words per frame and
+  models the Team Player (3- and 6-button pads behind it), the EA 4 Way
+  Play and the J-Cart, picked per game from the header; a third binary,
+  the party cart, plays Genesis games in lockstep over the fork
+  firmware's cart serial port. docs/MULTIPLAYER.md, PLAN.md
+  "Multiplayer".
