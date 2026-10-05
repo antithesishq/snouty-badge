@@ -1,0 +1,38 @@
+# Food Court: Dead Mall, track 2 (SPEC 19.7). Round the atrium on the
+# mezzanine: along the north balcony, where the ceiling tiles of the level
+# below are all that hold the floor up (a crust band: the car behind
+# falls through), down the east side weaving between the food-court
+# tables, under the giant dead pretzel sign, jumping the stalled
+# escalators on the south side, past a breaker the racks overloaded (a
+# sparking panel), and up the west balcony with nothing between the road
+# and the atrium (an open edge: leave the road and you drop a floor).
+name FOOD COURT
+order 2
+floor food
+background food
+league dead_mall
+width 50
+pit_band 11                        # the atrium is open from balcony to balcony
+# x    y    half   features
+ 260  150   54                     # start line, heading east
+ 470  135   54     crates          # the north balcony
+ 640  170   50     crust           # ceiling tiles hold the floor here
+ 780  135   50
+ 890  220   48
+ 880  380   46                     # weaving between the tables
+ 780  470   44
+ 800  600   44
+ 900  700   46
+ 860  860   50
+ 700  895   52     ramp            # the stalled escalators: jump them
+ 460  895   52
+ 300  880   50     crates
+ 180  780   48     vent:left,phase=60   # the overloaded breaker
+ 150  600   50     open:right      # the west balcony, the atrium on the right
+ 160  400   50     open:right
+ 190  250   52     bay:left
+props palm,kiosk seg 1 side left gap 70 off 22
+props kiosk,vending seg 5 side both gap 70 off 24
+props palm,neon seg 9 side left gap 80 off 22
+props vending,palm seg 12 side left gap 70 off 22
+props neon seg 3 side left gap 60 off 22
