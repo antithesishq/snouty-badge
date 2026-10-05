@@ -312,3 +312,63 @@ test "romfs: constants match the OS layout" {
     // The fixture boot sector says 2560 sectors, as the OS formats 1280 KB.
     try testing.expectEqual(@as(u16, 2560), std.mem.readInt(u16, waternet_img[19..21], .little));
 }
+
+/// An extra-drive-sized image (the ext-flash OS's "SYCLEXTRA" volume).
+var extra_sized: [romfs.extra_size]u8 = undefined;
+
+test "romfs: the extra drive geometry (128 root entries, 3584 sectors) opens and maps high clusters" {
+    // The boot sector storage.zig formats for the extra drive: 1 reserved
+    // sector, 2 FATs of 11 sectors, 128 root entries (8 sectors).
+    @memset(&extra_sized, 0);
+    const bs = extra_sized[0..512];
+    std.mem.writeInt(u16, bs[510..512], 0xaa55, .little);
+    std.mem.writeInt(u16, bs[11..13], 512, .little);
+    bs[13] = 1;
+    std.mem.writeInt(u16, bs[14..16], 1, .little);
+    bs[16] = 2;
+    std.mem.writeInt(u16, bs[17..19], 128, .little);
+    std.mem.writeInt(u16, bs[19..21], 3584, .little);
+    bs[21] = 0xF8;
+    std.mem.writeInt(u16, bs[22..24], 11, .little);
+    @memcpy(bs[54..62], "FAT12   ");
+
+    // One 1000-byte file in clusters 3000 -> 3001, past the badge drive's
+    // 2560 sectors.
+    const fat = extra_sized[512..];
+    const setFat = struct {
+        fn f(t: []u8, cluster: u32, val: u16) void {
+            const off = cluster + cluster / 2;
+            if (cluster & 1 == 0) {
+                t[off] = @truncate(val);
+                t[off + 1] = (t[off + 1] & 0xF0) | @as(u8, @truncate(val >> 8));
+            } else {
+                t[off] = (t[off] & 0x0F) | @as(u8, @truncate(val << 4));
+                t[off + 1] = @truncate(val >> 4);
+            }
+        }
+    }.f;
+    setFat(fat, 3000, 3001);
+    setFat(fat, 3001, 0xFFF);
+    const root = extra_sized[(1 + 2 * 11) * 512 ..];
+    @memcpy(root[0..11], "GAME    LNX");
+    root[11] = 0x20;
+    std.mem.writeInt(u16, root[26..28], 3000, .little);
+    std.mem.writeInt(u32, root[28..32], 1000, .little);
+    const extra_data: usize = (1 + 2 * 11 + 8) * 512;
+    extra_sized[extra_data + (3000 - 2) * 512] = 0x42;
+    extra_sized[extra_data + (3001 - 2) * 512 + 487] = 0x43;
+
+    var v = try romfs.Volume.open(.whole(&extra_sized));
+    v.drive = 1;
+    var out: [2]romfs.Entry = undefined;
+    try testing.expectEqual(@as(usize, 1), v.find(&.{"lnx"}, &out));
+    try testing.expectEqualStrings("GAME.LNX", out[0].slice());
+    try testing.expectEqual(@as(u8, 1), out[0].drive);
+    var table: [romfs.max_clusters]u16 = undefined;
+    const m = try v.map(out[0], &table);
+    try testing.expectEqual(@as(u8, 0x42), m.read(0));
+    try testing.expectEqual(@as(u8, 0x43), m.read(999));
+    try testing.expect(m.contiguous() != null);
+    // Not in a badge-drive-sized image.
+    try testing.expectError(error.BadGeometry, romfs.Volume.open(.whole(extra_sized[0..romfs.size])));
+}

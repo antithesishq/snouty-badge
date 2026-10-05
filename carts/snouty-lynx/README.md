@@ -79,7 +79,19 @@ menu does.
 | Debug overlay: Off       | The strip shows fps, step times, instructions, Suzy pixels, and with sound on the audio queue and underruns ("q1470/0") in place of the ROM name |
 | Reset                    | Power on again (the boot reruns)                       |
 | Pick ROM                 | The drive's ROM list (only with two or more playable files) |
+| Link cable               | The LINK screen: two badges on the link cable play a ComLynx game (docs/CABLE.md); "Leave link" while linked; not in the simulator |
 | About                    | Version, file, header title and maker, size, source, CRC |
+
+With Sound, Pick ROM and Link cable all showing, the Debug overlay row
+gives way (nine rows fit). `-Dlynx-link=false` builds the cart without
+the link cable: no Link cable row, ~17 KB more scrub history
+(docs/CABLE.md section 4).
+
+Link cable (M7, docs/CABLE.md). Two badges joined by the link cable on
+their UART headers, the same `.lnx` on both drives: open the menu's Link
+cable on both, press A on both, and both games restart linked: a
+two-player ComLynx game (Warbirds and the others in docs/COMLYNX.md
+section 8). While linked there is no fast forward, rewind or scrubbing.
 
 Sound (M5). The badges' new OS firmware (sycl-badge upstream from
 "Streaming Audio, v1 Mixer") plays a ring of 44.1 kHz samples the cart

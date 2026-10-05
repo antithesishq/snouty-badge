@@ -29,4 +29,5 @@ test {
     _ = @import("comlynx_unit.zig");
     _ = @import("comlynx_warbirds.zig");
     _ = @import("comlynx_party.zig");
+    _ = @import("comlynx_cable.zig");
 }

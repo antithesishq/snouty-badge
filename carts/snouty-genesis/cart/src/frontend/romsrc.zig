@@ -86,9 +86,10 @@ pub fn report() []const u8 {
 var clusters: [if (@import("build_options").party) 1024 else if (core.tunables.tight_ram) 1536 else romfs.max_clusters]u16 = undefined;
 var mapped: romfs.Mapped = undefined;
 
-/// The drive: `romfs.size` bytes at `romfs.base_addr`.
-fn drive_base() romfs.Image {
-    return romfs.Image.badge();
+/// Drive `index`: 0 the badge drive (`romfs.size` bytes at
+/// `romfs.base_addr`), 1 the extra drive on ext-flash firmware.
+fn drive_image(index: u8) ?romfs.Image {
+    return romfs.Image.drive(index);
 }
 
 /// List the drive's ROM files into `scan_result`, and set `no_rom` when
@@ -96,10 +97,12 @@ fn drive_base() romfs.Image {
 /// `start()` (a no-op in builds that do not read the drive).
 pub fn scan() void {
     if (!use_drive) return;
-    scan_result = drive.scan(drive_base(), &clusters);
+    scan_result = drive.scan(drive_image(0).?, &clusters);
+    if (drive_image(1)) |extra| _ = drive.add(&scan_result, extra, 1, &clusters);
     candidate_count = scan_result.count;
     playable_count = scan_result.playable_count;
-    no_rom = if (scan_result.err) |e| @errorName(e) else if (candidate_count == 0) "no .gen/.md/.bin files" else null;
+    // The badge drive's error matters only when the extra one had nothing.
+    no_rom = if (candidate_count != 0) null else if (scan_result.err) |e| @errorName(e) else "no .gen/.md/.bin files";
 }
 
 /// The candidates of the last `scan` (empty in builds without the drive).
@@ -117,7 +120,8 @@ pub fn select(i: usize) ?core.RomSource {
     if (!use_drive) @compileError("select: drive builds only");
     if (i >= candidate_count or !scan_result.candidates[i].playable()) return refuse(i, "not playable");
     const c = &scan_result.candidates[i];
-    mapped = drive.open(drive_base(), c, &clusters) catch |err| return refuse(i, @errorName(err));
+    const image = drive_image(c.entry.drive) orelse return refuse(i, "NoVolume");
+    mapped = drive.open(image, c, &clusters) catch |err| return refuse(i, @errorName(err));
     crc_state = romfs.Mapped.Crc.init();
     crc = 0;
     crc_known = false;

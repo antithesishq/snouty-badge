@@ -90,14 +90,20 @@ pub fn scan(image: romfs.Image, clusters: []u16) Scan {
     var s: Scan = undefined;
     s.count = 0;
     s.playable_count = 0;
-    s.err = null;
-    const vol = romfs.Volume.open(image) catch |e| {
-        s.err = e;
-        return s;
-    };
+    s.err = add(&s, image, 0, clusters);
+    return s;
+}
+
+/// Append another drive's ROM files to `s` (up to `max_candidates` in all),
+/// their entries tagged `drive` so the caller opens each from
+/// `romfs.Image.drive(c.entry.drive)`. Returns the volume's error, adding
+/// nothing, when it does not open.
+pub fn add(s: *Scan, image: romfs.Image, drive: u8, clusters: []u16) ?romfs.Error {
+    var vol = romfs.Volume.open(image) catch |e| return e;
+    vol.drive = drive;
     var entries: [max_candidates]romfs.Entry = undefined;
-    const n = vol.find(&extensions, &entries);
-    for (entries[0..n], s.candidates[0..n]) |e, *c| {
+    const n = vol.find(&extensions, entries[0 .. max_candidates - s.count]);
+    for (entries[0..n], s.candidates[s.count..][0..n]) |e, *c| {
         c.* = .{ .entry = e, .size = e.size };
         const m = vol.map(e, clusters) catch |err| {
             c.map_err = err;
@@ -109,8 +115,8 @@ pub fn scan(image: romfs.Image, clusters: []u16) Scan {
         c.name_len = header_name(&src, &c.name_buf);
         s.playable_count += 1;
     }
-    s.count = @intCast(n);
-    return s;
+    s.count += @intCast(n);
+    return null;
 }
 
 /// Map a candidate from `scan` for running (fills `clusters`).

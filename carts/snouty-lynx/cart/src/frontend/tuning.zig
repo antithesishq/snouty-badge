@@ -50,3 +50,15 @@ pub const ff_periods = 2;
 /// within it: Gear's rule, with its 3.7 ms of headroom for the picture,
 /// the strip, the present and a dearer frame.
 pub const ff_budget_us = ff_periods * 16_667 - 3_700;
+
+// ---- Link cable (frontend/cable.zig, docs/CABLE.md) ----
+
+/// While linked the cart keeps reading and answering the cable until this
+/// long after the update began (Snouty Boy's figure): acks return within
+/// a pump instead of a frame. Unlinked nothing pumps.
+pub const link_pump_until_us = 14_000;
+
+/// While linked a game frame steps in this many slices with the cable
+/// serviced after each (`Lynx.run_to`): a ComLynx frame waits at most a
+/// slice before it leaves, not a whole frame (docs/CABLE.md "Timing").
+pub const link_slices = 4;

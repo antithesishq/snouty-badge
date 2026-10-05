@@ -66,6 +66,8 @@ const strip = @import("frontend/strip.zig");
 const rewind = @import("frontend/rewind.zig");
 const linkport = @import("frontend/linkport.zig");
 const party = @import("frontend/party.zig");
+const cable = @import("frontend/cable.zig");
+const cable_screen = @import("frontend/cable_screen.zig");
 const audio = @import("frontend/audio.zig");
 const tuning = @import("frontend/tuning.zig");
 const hint = @import("hint");
@@ -80,9 +82,10 @@ var lynx: core.Lynx = undefined;
 
 /// 0 splash, 1 running, 2 menu, 3 pick (drive picker), 4 help (no usable
 /// ROM on the drive: the no-ROM screen, the core is never stepped), 5 the
-/// PARTY lobby (frontend/party.zig, from the menu). `pick` and `help`
-/// only happen in drive builds.
-pub const State = enum(u32) { splash = 0, running = 1, menu = 2, pick = 3, help = 4, party = 5 };
+/// PARTY lobby (frontend/party.zig, from the menu), 6 the LINK screen
+/// (frontend/cable_screen.zig, from the menu). `pick` and `help` only
+/// happen in drive builds.
+pub const State = enum(u32) { splash = 0, running = 1, menu = 2, pick = 3, help = 4, party = 5, cable = 6 };
 var state: State = .splash;
 /// Where the splash leads (`romsrc.select`'s choice).
 var after_splash: State = .running;
@@ -144,12 +147,16 @@ pub fn update() void {
         .help => draw_help(),
         .menu => menu_frame(),
         .party => party_frame(t0),
+        // -Dlynx-link=false: no Link cable row, so never the LINK screen.
+        .cable => if (cable.enabled) cable_frame(t0),
         // Only a drive build gets here; the check keeps the picker out of
         // the wasm and embed builds.
         .pick => if (romsrc.use_drive) pick_frame(t0),
     }
     // The game stopped (menu, scrub, picker): one ramp to silence.
     if (!stepped) audio.stop();
+    // Linked: answer the cable until late in the update (frontend/cable.zig).
+    cable.pump(&lynx, t0);
 
     if (cart.is_wasm) present_wasm();
 }
@@ -163,7 +170,7 @@ fn enter(next: State, t0: u64) void {
         .running => run_frame(t0),
         .help => draw_help(),
         .pick => if (romsrc.use_drive) pick_frame(t0),
-        .splash, .menu, .party => {},
+        .splash, .menu, .party, .cable => {},
     }
 }
 
@@ -181,6 +188,7 @@ pub fn boot(c: core.Cart) void {
     @call(.never_inline, core.Lynx.init_in_place, .{ &lynx, c });
     rewind.reset(&lynx);
     linkport.after_boot(&lynx);
+    cable.after_boot(&lynx);
 }
 
 /// One picker update (drive builds). A choice restarts the core on that
@@ -201,6 +209,9 @@ fn menu_frame() void {
             enter(.running, cart.micros_since_boot());
         },
         .pick_rom => {
+            // Another ROM is another game: off the link first.
+            cable.close(&lynx);
+            linkport.close(&lynx);
             menu.close();
             picker.reset();
             picker.from_menu = true;
@@ -210,9 +221,28 @@ fn menu_frame() void {
             menu.close();
             enter(.party, cart.micros_since_boot());
         },
+        .link_cable => if (cable.enabled) {
+            cable_screen.enter();
+            menu.close();
+            enter(.cable, cart.micros_since_boot());
+        },
     }
-    // Linked, the game runs on behind the menu (the others do not wait).
-    if (state == .menu and linkport.linked) linked_background_frame();
+    // Linked (the USB party or the link cable), the game runs on behind
+    // the menu (the others do not wait).
+    if (state == .menu and (linkport.linked or cable.linked)) linked_background_frame();
+}
+
+/// The LINK screen: B goes back to the menu; GO restarts the game linked.
+noinline fn cable_frame(t0: u64) void {
+    switch (cable_screen.update(&lynx, live_edge())) {
+        .stay => {},
+        .back => {
+            state = .menu;
+            menu.open();
+            _ = menu.update(&lynx, live_edge());
+        },
+        .started => enter(.running, t0),
+    }
 }
 
 /// The lobby: B goes back to the menu; GO restarts the game linked.
@@ -229,9 +259,11 @@ fn party_frame(t0: u64) void {
 }
 
 /// One game frame behind the menu while linked (no input, not shown).
-fn linked_background_frame() void {
+noinline fn linked_background_frame() void {
     _ = linkport.before_frame(&lynx);
+    _ = cable.before_frame(&lynx);
     if (linkport.can_step(&lynx)) step(0);
+    cable.after_frame(&lynx);
     linkport.after_frame(&lynx);
 }
 
@@ -249,10 +281,11 @@ fn run_frame(t1: u64) void {
         return;
     }
 
-    // Linked (ComLynx, frontend/linkport.zig): no fast forward and no
-    // chorded rewind, the other consoles would fall behind.
-    const fast = in.fast and !linkport.linked;
-    const rewind_phase: input.Rewind = if (linkport.linked) .off else in.rewind;
+    // Linked (ComLynx over the USB party, frontend/linkport.zig, or the
+    // link cable, frontend/cable.zig): no fast forward and no chorded
+    // rewind, the other consoles would fall behind.
+    const fast = in.fast and !linkport.linked and !cable.linked;
+    const rewind_phase: input.Rewind = if (linkport.linked or cable.linked) .off else in.rewind;
 
     // Chorded rewind (Left during fast forward): the game stays frozen
     // under the menu's scrub bar and Left/Right step time as in the menu;
@@ -291,6 +324,7 @@ fn run_frame(t1: u64) void {
     // steps exactly as at 1x (tests/ff_determinism.zig).
     var n: u32 = 1;
     _ = linkport.before_frame(&lynx);
+    _ = cable.before_frame(&lynx);
     // Timestamped mode: the peers' heartbeats are behind; this frame
     // waits (the picture and sound hold).
     if (!linkport.can_step(&lynx)) {
@@ -319,6 +353,7 @@ fn run_frame(t1: u64) void {
 
     const t_last = cart.micros_since_boot();
     step(in.pad);
+    cable.after_frame(&lynx);
     linkport.after_frame(&lynx);
     const t2 = cart.micros_since_boot();
     last_frame_us = t2 -% t_last;
@@ -338,6 +373,10 @@ fn run_frame(t1: u64) void {
     if (play_hint.tick(live_edge().any_pressed())) {
         const s = if (play_hint.left >= 2 * play_hint_updates) hint.hold_select else if (play_hint.left >= play_hint_updates) menu.fast_hint else menu.rewind_hint;
         hint.draw_strip(cart, text.draw, s, cart.screen_height - hint.strip_h, strip.accent, strip.bg);
+    } else if (cable.note_left > 0) {
+        // "Link cable: linked", "Partner left link", "Link cable out".
+        cable.note_left -= 1;
+        hint.draw_strip(cart, text.draw, cable.note, cart.screen_height - hint.strip_h, strip.accent, strip.bg);
     }
 }
 
@@ -352,7 +391,7 @@ fn step(pad: u16) void {
         menu.hold_frames_left -= 1;
         p |= menu.hold_pad;
     }
-    lynx.step_frame(p);
+    if (cable.linked) cable.step_frame(&lynx, p) else lynx.step_frame(p);
     rewind.record_frame(&lynx);
     debug.record_core(lynx.instr_count(), lynx.pixels_drawn());
 }
@@ -466,7 +505,8 @@ comptime {
 fn debug_frame_count() callconv(.c) u32 {
     return lynx.frame_count;
 }
-/// Frontend state: 0 splash, 1 running, 2 menu, 3 picker, 4 no-ROM help.
+/// Frontend state: 0 splash, 1 running, 2 menu, 3 picker, 4 no-ROM help,
+/// 5 LINK screen.
 fn debug_state() callconv(.c) u32 {
     return @backingInt(state);
 }

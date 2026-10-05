@@ -38,7 +38,9 @@ CLAUDE.md and docs have the longer explanations.
   (`Lynx.attach_link`; else the M1 stub); `comlynx.zig`: the port (frames
   sent, frames on the wire); `comlynx_virtual.zig`: 2-8 consoles on one
   bus for host tests (docs/COMLYNX.md). `step_frame` = `begin_frame` +
-  `finish_frame`, `run_to` slices a frame. PLAN.md "Frozen for M1" is the
+  `finish_frame`, `run_to` slices a frame. These and their tests came from
+  the `party` branch byte for byte: keep them identical there and here.
+  PLAN.md "Frozen for M1" is the
   interface contract between these files.
 - `cart/src/` — the badge frontend. `main.zig` exports `start()`/`update()`,
   the wasm shims and exports, the state machine (splash -> running | pick | help, running <-> menu,
@@ -52,11 +54,18 @@ CLAUDE.md and docs have the longer explanations.
   `debug` (step timing, FPS), `text` (Snouty Gear's fast font, verbatim),
   `menu` (the
   frozen-frame menu: Resume, Buttons swap, Sound, Press Option 2, Restart
-  Pause+Opt1, Debug overlay, Reset, Pick ROM, Party, About; PLAN.md M2, M6), `picker`
+  Pause+Opt1, Debug overlay, Reset, Pick ROM, Party or Link cable (one
+  row: Party on the cart-serial firmware, else Link cable), About; PLAN.md
+  M2, M6, M7), `picker`
   (the drive file list, restarts into the chosen file), `linkport` (the
   linked mode, the cart serial port and lobby client), `lynxnet`
   (ComLynx over lib/party.zig), `party` (the PARTY lobby screen; the
-  menu's Party row; docs/COMLYNX.md section 10), `rewind` (the time
+  menu's Party row; docs/COMLYNX.md section 10), `cable` (ComLynx
+  on the link cable: `link.Badge` with app id 'X' and the DMA ring, the
+  linked mode, the port lent from the scrub arena, the pump), `cablenet`
+  (the cable protocol, generic over the link, no cart-api, host-tested),
+  `cable_screen` (the LINK screen; the menu's Link cable row;
+  docs/CABLE.md), `rewind` (the time
   scrubber over `core.undo`: arena from the linker symbols, M3), `tuning`
   (stack guard, wasm arena, the fast-forward knobs), `strip` (the status strip), `audio` (M5:
   `audio_out` into the streaming ring of `lib/stream_audio.zig`, rate
@@ -78,7 +87,9 @@ CLAUDE.md and docs have the longer explanations.
   equals 1x), `comlynx_unit.zig` / `comlynx_warbirds.zig` /
   `comlynx_party.zig` (the UART, lynx-tests uart1-4, cc65 token rings in
   `tests/comlynx/`, Warbirds from `~/roms/lynx/` on the virtual bus and
-  the lobby model). `tools/check_chord_rewind.sh`: the chorded rewind and the
+  the lobby model), `comlynx_cable.zig` (two Lynxes on
+  lib/link_virtual.zig through frontend/cablenet.zig: handshake, ring,
+  loss, Warbirds). `tools/check_chord_rewind.sh`: the chorded rewind and the
   menu scrubber land on the same frame and play on identically (wasm). `tests/roms/` is gitignored.
 - `roms/` — `raycast.lnx` (shipped, Apache-2.0, `LICENSE-raycast.txt`,
   `docs/ROM_CANDIDATES.md`) and `placeholder.lnx` (576 B,
@@ -108,7 +119,9 @@ from the repository root only.
   XIP one is the scrubber's hope, docs/SCRUB.md) and `zig-out/bin/snouty-lynx.wasm`. `-Dlynx-rom=PATH` (repo-relative,
   absolute or `~/x.lnx`; no cart-relative form, the build never probes the
   filesystem), `-Dlynx-rom-source=drive|embed|pack` (`pack`, SPEC.md 13.1,
-  is not built: it prints a note and builds `drive`), `-Dcart-optimize=`.
+  is not built: it prints a note and builds `drive`), `-Dlynx-link=false`
+  (no link cable: `frontend/cable.zig` `enabled`, docs/CABLE.md section 4;
+  on by default), `-Dcart-optimize=`.
 - Generated `rom` module: `data`, `name`, `source` (`.drive`/`.embed`).
   Drive badge builds must not reference `rom.data` (romsrc.zig keeps every
   use behind `!use_drive`), so the ROM's bytes stay out of the UF2.
@@ -124,6 +137,9 @@ from the repository root only.
   light (Adrian's Mac runs out of memory on heavy comptime): tables from
   host generators or runtime init.
 - The console is ~66 KB: a static, `init_in_place`, never by value.
+- Link cable (docs/CABLE.md): the link runs only from the LINK screen
+  until the link ends; unlinked play never touches the pins or the arena.
+  While linked no fast forward, chorded rewind or scrubbing.
 - Neopixels: never written (docs/NEOPIXELS.md; `debug_led_max` must read 0).
   Sound (M5, the one cart with sound since the 2026-09-30 "no audio" call,
   PLAN.md "M5 Sound: contract"): only through the new firmware's streaming

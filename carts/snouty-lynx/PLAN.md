@@ -812,6 +812,43 @@ regression against origin/main e21702ce (numbers in the status).
   .text 105,772 -> 126,888 B, scrub arena 73,324 -> 47,740 B. No
   hardware run; 4-player timestamped play at D under ~25 ms needs
   sub-frame heartbeats (docs/COMLYNX.md section 11).
+
+## M7 Link cable: contract
+
+Written 2026-10-05 (Adrian: "Can we bring 2 player link cable multiplayer
+support to Lynx and Genesis on main?"). Branch `lynx/link` (worktree
+`/home/exedev/snouty-badge-lynx-link`), reviewed and merged by the party
+branch's ComLynx author. Numbered M7: the party branch's PLAN.md has M6
+ComLynx (the UART and the virtual bus, which this milestone brings to main
+unchanged). docs/CABLE.md is the long form.
+
+1. The ComLynx core from `party` byte for byte (core/uart.zig,
+   comlynx.zig, comlynx_virtual.zig, the lynx.zig / mikey.zig hunks,
+   frontend/rewind.zig `lend` / `take_back`, tests comlynx_unit /
+   comlynx_warbirds, tests/comlynx/ring.*, tools run_link / sweep /
+   make_comlynx_roms, docs/COMLYNX.md); none of the party transport.
+2. `frontend/cablenet.zig`: the cable protocol (go-back-N over 12-byte
+   link packets, hello with the ROM CRC, GO with the power-on stagger,
+   leave, ComLynx batches with offsets and the 9th bit), relay delivery,
+   echo local; `frontend/cable.zig` (link.Badge 'X', DMA ring, lend the
+   port at GO, slices, pump), `frontend/cable_screen.zig` (LINK screen),
+   menu row Link cable / Leave link.
+3. Linked: no fast forward, chorded rewind or scrubbing; the game runs
+   behind the menu; partner leaving, session change or cable out end it.
+4. Tests on lib/link_virtual.zig with the badge's schedule: handshake,
+   ring, frame counts through loss, Warbirds.
+
+## Status
+
+- 2026-10-05: M7 Link cable built on `lynx/link` (docs/CABLE.md). Two
+  host Lynxes on the virtual cable: token ring 120 msg/s clean, every
+  frame delivered through 0.5% byte loss, Warbirds (local dump) finds 2
+  players and reaches the cockpit crossed, straight and with loss. Unlinked
+  bench unchanged (m3_scrub 6.17 / 9.49 / 10.76 -> 6.18 / 9.50 / 10.78,
+  m2_play 6.97 / 9.09 / 10.34 -> 6.98 / 9.11 / 10.36). RAM cart .text
+  105,772 -> 127,772 B, scrub arena 73,324 -> 49,252 B (a third less
+  history unlinked). Hardware check open (docs/CABLE.md section 5).
+
 - 2026-10-04: Chorded rewind done on `emu-ff-lynx` (Left during the
   fast-forward hold; "Chorded rewind" at the end of this file).
 - 2026-10-04: Fast forward done on `emu-ff-lynx` (Select double tap and
