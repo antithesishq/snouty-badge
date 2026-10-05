@@ -13,7 +13,7 @@
 //!   the renderer, like a step. It is the picture only: exact for the grid
 //!   and heads when the journal is complete, but nothing relies on it.
 //! - `restore` + replay is the exact part: the keyframe at or before the
-//!   target tick T goes back into the World (and the Brains and score into
+//!   target tick T goes back into the World (and the Brains and `Aux` into
 //!   the game), then the game replays the logged inputs up to T with the
 //!   same programs (`input_at`). The programs are deterministic (ai.zig:
 //!   a Brain's own rng, decisions a function of World and Brain, the shared
@@ -21,7 +21,7 @@
 //!   the round had (host tests below).
 //!
 //! What a keyframe holds is `Rewindable`, copied field by field by name
-//! from the World, plus the Brains and the game's score: about 5.2 KB.
+//! from the World, plus the Brains and the game's `Aux`: about 5.2 KB.
 //! The World's 32 KB of trail logs are left out: they are append-only
 //! rings (a step writes at `log_head`; a fade or a SNAKE clear only moves
 //! `log_tail`), so restoring each cycle's head and tail (in `cycles`)
@@ -75,12 +75,19 @@ pub const Rewindable = struct {
 /// `events_lost` are each step's output (refilled by the replay's steps).
 pub const not_keyframed = [_][]const u8{ "cfg", "seed", "logs", "events", "n_events", "events_lost" };
 
+/// The game's own state a keyframe restores with the World (after the
+/// tick: the replay goes on from it).
+pub const Aux = struct {
+    score: u32 = 0,
+    /// The autopilot's tier deadline (game.zig).
+    alt_until: u32 = 0,
+};
+
 pub const Keyframe = struct {
     valid: bool,
     world: Rewindable,
     brains: [sim.max_cycles]ai.Brain,
-    /// The game's score after this tick (the replay re-scores from it).
-    score: u32,
+    aux: Aux,
 };
 
 /// A trail log entry's cell (bits above are free for marks).
@@ -109,14 +116,14 @@ pub const History = struct {
     target: u32,
 
     /// A round starts (tick 0): forgets everything, keyframes tick 0.
-    pub fn start(h: *History, w: *const sim.World, brains: *const [sim.max_cycles]ai.Brain, score: u32) void {
+    pub fn start(h: *History, w: *const sim.World, brains: *const [sim.max_cycles]ai.Brain, aux: Aux) void {
         for (&h.keys) |*k| k.valid = false;
         // A stamp no tick within a round has (tick 0 is never stepped to).
         @memset(&h.stamp, 0xFFFF);
         h.jpos = 0;
         h.target = 0;
         h.sync(w);
-        h.save(w, brains, score);
+        h.save(w, brains, aux);
     }
 
     fn sync(h: *History, w: *const sim.World) void {
@@ -128,9 +135,9 @@ pub const History = struct {
 
     /// After every play step (and every replayed one): the player's input
     /// that made `w.tick`, the step's moves and journal, and a keyframe
-    /// on every `keyframe_every`-th tick. `brains` and `score` as they are
+    /// on every `keyframe_every`-th tick. `brains` and `aux` as they are
     /// after the step.
-    pub fn record(h: *History, w: *const sim.World, input: sim.Input, brains: *const [sim.max_cycles]ai.Brain, score: u32) void {
+    pub fn record(h: *History, w: *const sim.World, input: sim.Input, brains: *const [sim.max_cycles]ai.Brain, aux: Aux) void {
         const t = w.tick;
         const s = t % tuning.ticks;
         h.stamp[s] = @truncate(t);
@@ -159,7 +166,7 @@ pub const History = struct {
             n += 1;
         }
         h.jcount[s] = n;
-        if (t % tuning.keyframe_every == 0) h.save(w, brains, score);
+        if (t % tuning.keyframe_every == 0) h.save(w, brains, aux);
     }
 
     /// The trail value a cleared cell had: the cycle whose log tail moved
@@ -177,12 +184,19 @@ pub const History = struct {
         return null;
     }
 
-    fn save(h: *History, w: *const sim.World, brains: *const [sim.max_cycles]ai.Brain, score: u32) void {
+    /// After the game changed its own state at a rewind's landing (the
+    /// autopilot): keyframes the landing again if it is a keyframe tick,
+    /// so a later restore from it sees the change.
+    pub fn resave(h: *History, w: *const sim.World, brains: *const [sim.max_cycles]ai.Brain, aux: Aux) void {
+        if (w.tick % tuning.keyframe_every == 0) h.save(w, brains, aux);
+    }
+
+    fn save(h: *History, w: *const sim.World, brains: *const [sim.max_cycles]ai.Brain, aux: Aux) void {
         const k = &h.keys[(w.tick / tuning.keyframe_every) % tuning.keyframes];
         k.valid = true;
         inline for (@typeInfo(Rewindable).@"struct".field_names) |name| @field(k.world, name) = @field(w, name);
         k.brains = brains.*;
-        k.score = score;
+        k.aux = aux;
     }
 
     fn key_at(h: *const History, t: u32) ?*const Keyframe {
@@ -214,6 +228,20 @@ pub const History = struct {
         return t;
     }
 
+    /// `plan` without the fallback: `want` if a keyframe at or before it
+    /// is kept (sets `target`), else null.
+    pub fn plan_exact(h: *History, want: u32) ?u32 {
+        if (h.key_at(want / tuning.keyframe_every * tuning.keyframe_every) == null) return null;
+        h.target = want;
+        return want;
+    }
+
+    /// Sets `target` to the round's start (the caller restarts the round
+    /// itself when no keyframe of tick 0 is kept: `restore` returns null).
+    pub fn plan_start(h: *History) void {
+        h.target = 0;
+    }
+
     /// The player's input of the step that made tick t (replays read it).
     pub fn input_at(h: *const History, t: u32) sim.Input {
         std.debug.assert(h.has_record(t));
@@ -221,15 +249,15 @@ pub const History = struct {
     }
 
     /// Puts the keyframe at or before `target` back into the World, the
-    /// Brains and the score, forgets the keyframes after it (another
+    /// Brains and the game's `Aux`, forgets the keyframes after it (another
     /// timeline) and the AI's per-tick pool. Returns the keyframe's tick:
     /// the caller replays from there to `target` (`input_at`, `record`).
-    pub fn restore(h: *History, w: *sim.World, brains: *[sim.max_cycles]ai.Brain, score: *u32) ?u32 {
+    pub fn restore(h: *History, w: *sim.World, brains: *[sim.max_cycles]ai.Brain, aux: *Aux) ?u32 {
         const k0 = h.target / tuning.keyframe_every * tuning.keyframe_every;
         const k = h.key_at(k0) orelse return null;
         inline for (@typeInfo(Rewindable).@"struct".field_names) |name| @field(w, name) = @field(k.world, name);
         brains.* = k.brains;
-        score.* = k.score;
+        aux.* = k.aux;
         w.n_events = 0;
         w.events_lost = false;
         for (&h.keys) |*o| {
@@ -461,13 +489,19 @@ const Run = struct {
         return in;
     }
 
-    /// One tick as the game steps it: the programs decide first, then
-    /// the player (live, or the logged input on a replay). Returns the
-    /// player's input.
+    /// One tick as the game steps it with the autopilot: the player
+    /// first (live, or on a replay its Brain decides again, for the AI
+    /// pool, and the logged input goes in), then the programs. Returns
+    /// the player's input.
     fn step(r: *Run, w: *sim.World, logged: ?sim.Input) sim.Input {
         var in: [sim.max_cycles]sim.Input = @splat(.idle);
+        if (logged) |l| {
+            if (w.cycles[0].state == .alive) _ = ai.decide(&r.brains[0], w, 0);
+            in[0] = l;
+        } else if (w.cycles[0].state == .alive) {
+            in[0] = r.player_input(w);
+        }
         for (1..w.cfg.n_cycles) |i| in[i] = ai.decide(&r.brains[i], w, i);
-        in[0] = logged orelse r.player_input(w);
         w.step(in);
         return in[0];
     }
@@ -517,7 +551,7 @@ fn rewind_round(cfg: sim.Config, seed: u32, crash: u32, back: u32) !bool {
     for (1..sim.max_cycles) |i| run.brains[i] = .from(ai.preset(tiers[(seed + i) % 3], 2), rng.mix(seed, @intCast(i)));
     ai.reset_pool();
     var score: u32 = seed;
-    h.start(w, &run.brains, score);
+    h.start(w, &run.brains, .{ .score = score });
     const target = crash -| back;
     while (w.tick < crash) {
         if (w.tick == target) at_target = w.*;
@@ -525,7 +559,7 @@ fn rewind_round(cfg: sim.Config, seed: u32, crash: u32, back: u32) !bool {
         const in = run.step(w, null);
         run.inputs[w.tick] = in;
         score +%= w.tick;
-        h.record(w, in, &run.brains, score);
+        h.record(w, in, &run.brains, .{ .score = score });
     }
     at_end = w.*;
     const kept_brains = run.brains;
@@ -552,13 +586,14 @@ fn rewind_round(cfg: sim.Config, seed: u32, crash: u32, back: u32) !bool {
     }
 
     // Exact: the keyframe, then the replay.
-    var replay_score: u32 = 0;
-    const k0 = h.restore(w, &run.brains, &replay_score).?;
+    var aux: Aux = .{};
+    const k0 = h.restore(w, &run.brains, &aux).?;
+    var replay_score = aux.score;
     try testing.expect(k0 <= target and target - k0 < tuning.keyframe_every);
     while (w.tick < target) {
         const in = run.step(w, h.input_at(w.tick + 1));
         replay_score +%= w.tick;
-        h.record(w, in, &run.brains, replay_score);
+        h.record(w, in, &run.brains, .{ .score = replay_score });
     }
     try expect_same(&at_target, w);
     // The game's score came back with it.
@@ -570,11 +605,11 @@ fn rewind_round(cfg: sim.Config, seed: u32, crash: u32, back: u32) !bool {
     // the same Brains.
     while (w.tick < crash) {
         const in = run.step(w, run.inputs[w.tick + 1]);
-        h.record(w, in, &run.brains, 0);
+        h.record(w, in, &run.brains, .{});
     }
     try expect_same(&at_end, w);
-    // The programs' Brains too (the player's does not decide on a replay).
-    try testing.expect(std.meta.eql(kept_brains[1..].*, run.brains[1..].*));
+    // The Brains too.
+    try testing.expect(std.meta.eql(kept_brains, run.brains));
     return true;
 }
 
@@ -607,15 +642,15 @@ test "rewind: any distance a keyframe covers, odd ticks, every config" {
 /// Restore after a retraction and replay the logged inputs to `target`.
 fn restore_and_replay(h: *History, w: *sim.World) !void {
     while (!h.retract(w, tuning.retract_per_frame).done) {}
-    var sc: u32 = 0;
-    _ = h.restore(w, &run.brains, &sc) orelse return error.NoKeyframe;
+    var aux: Aux = .{};
+    _ = h.restore(w, &run.brains, &aux) orelse return error.NoKeyframe;
     replay_to(h, w, h.target);
 }
 
 fn replay_to(h: *History, w: *sim.World, t: u32) void {
     while (w.tick < t) {
         const in = run.step(w, h.input_at(w.tick + 1));
-        h.record(w, in, &run.brains, 0);
+        h.record(w, in, &run.brains, .{});
     }
 }
 
@@ -631,7 +666,7 @@ test "rewind: a second crash right after a rewind (older keyframes gone)" {
     run.rnd = .init(99);
     for (0..10) |_| {
         const in = run.step(w, null);
-        h.record(w, in, &run.brains, 0);
+        h.record(w, in, &run.brains, .{});
     }
     at_end = w.*;
     // 2 s back is tick 770, whose keyframe (750) went with 990: the

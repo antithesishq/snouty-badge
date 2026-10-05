@@ -104,9 +104,27 @@ pub const tuning = struct {
     /// The tint wipes down the arena this many pixel rows a frame as a
     /// rewind starts (a full tinted repaint at once costs ~10 ms).
     pub const wipe_rows: u8 = 20;
+    /// A longer rewind retracts faster: about this many frames at most.
+    pub const retract_frames: u32 = 40;
+    /// A crash within `escalate_window` ticks of resuming means that
+    /// landing was already lost (a Tron endgame is decided seconds before
+    /// the crash): this rewind lands `escalate_ticks` before it, which is
+    /// usually past the kept keyframes, so the round starts over (the
+    /// same round: same seed, same programs). The window must pass a 2 s
+    /// rewind plus a keyframe gap: a replay then never crosses the last
+    /// landing, where the autopilot changed (`finish_rewind`).
+    pub const escalate_window: u32 = 180;
+    pub const escalate_ticks: u32 = 120;
+    comptime {
+        std.debug.assert(escalate_window > history.tuning.rewind_ticks + history.tuning.keyframe_every);
+    }
     /// After a rewind the autopilot (the ladder bot, the bench) rides as
-    /// T2 this long, or it would make the same moves into the same crash.
+    /// `alt_tier` this long with random moves `alt_slip_permille` of its
+    /// decisions (a new stream per rewind), or it would make the same
+    /// moves into the same crash, retry after retry.
     pub const autopilot_alt_ticks: u32 = 300;
+    pub const alt_tier: ai.Tier = .avoid;
+    pub const alt_slip_permille: u16 = 80;
     /// LEVEL CLEAR: the tally; A moves on after `clear_min_ticks`.
     pub const clear_ticks: u32 = 210;
     pub const clear_min_ticks: u32 = 60;
@@ -280,6 +298,11 @@ pub const Game = struct {
     run_cy: u8,
     /// Rewind: the banner's vertical centre (away from your crash).
     rewind_cy: u8,
+    /// The World tick the last rewind of this round resumed on (0: none).
+    last_resume: u32,
+    /// Ticks undone per frame while retracting (3x; faster for a long
+    /// way back, so the picture takes about the same time).
+    retract_step: u32,
     /// Main skips drawing this frame (the replay runs on a World the
     /// screen must not follow).
     hold_frame: bool,
@@ -337,6 +360,7 @@ pub const Game = struct {
         g.run_cy = default_cy;
         g.hold_frame = false;
         g.tint_rows = 0;
+        g.last_resume = 0;
         g.autopilot_alt_until = 0;
         g.sudden_death_tick = 0;
     }
@@ -375,7 +399,7 @@ pub const Game = struct {
     }
 
     fn autopilot_tier(g: *const Game) ai.Tier {
-        if (g.world.tick < g.autopilot_alt_until) return .territory;
+        if (g.world.tick < g.autopilot_alt_until) return tuning.alt_tier;
         return if (g.autopilot == 3) .search else .avoid;
     }
 
@@ -386,8 +410,7 @@ pub const Game = struct {
         const s = g.seeds.next();
         g.clear_round_flags();
         init_world(&g.world, g.opts.apply(r.config()), s);
-        g.brains[0] = brain(g.autopilot_tier(), tuning.autopilot_preset, rng.mix(s, 0));
-        for (r.programs(), 1..) |p, i| g.brains[i] = brain(p.tier, p.preset, rng.mix(s, @intCast(i)));
+        g.level_brains(s);
         g.state = if (intro) .intro else .countdown;
         g.timer = 0;
         g.crash = .none;
@@ -395,7 +418,34 @@ pub const Game = struct {
         g.score_level_start = g.score;
         g.rounds += 1;
         g.repaint = true;
-        g.history.start(&g.world, &g.brains, g.score);
+        g.history.start(&g.world, &g.brains, g.aux());
+    }
+
+    /// What a keyframe keeps of the game: the score and the autopilot's
+    /// tier deadline (its decisions spend the AI pool: a replay must make
+    /// them again exactly).
+    fn aux(g: *const Game) history.Aux {
+        return .{ .score = g.score, .alt_until = g.autopilot_alt_until };
+    }
+
+    /// The level's Brains for a round seeded `s` (start_level, and the
+    /// exact restart of the round on a rewind to its start).
+    fn level_brains(g: *Game, s: u32) void {
+        g.brains[0] = brain(g.autopilot_tier(), tuning.autopilot_preset, rng.mix(s, 0));
+        for (g.round().programs(), 1..) |p, i| g.brains[i] = brain(p.tier, p.preset, rng.mix(s, @intCast(i)));
+    }
+
+    /// The round exactly as it started: same seed, same Brains, the
+    /// level's starting score (a rewind to tick 0 once its keyframe is gone).
+    fn restart_round(g: *Game) void {
+        const cfg = g.world.cfg;
+        const s = g.world.seed;
+        init_world(&g.world, cfg, s);
+        g.level_brains(s);
+        g.score = g.score_level_start;
+        g.sudden_death_tick = 0;
+        g.history.start(&g.world, &g.brains, g.aux());
+        ai.reset_pool();
     }
 
     pub fn round(g: *const Game) levels.Round {
@@ -662,29 +712,28 @@ pub const Game = struct {
         }
     }
 
-    /// One World tick with the programs and the player (you, the
-    /// autopilot, or the input a replay logged; `player` false once you
-    /// have derezzed). Returns the player's input (the history logs it).
+    /// One World tick with the player (you, the autopilot, or the input a
+    /// replay logged; `player` false once you have derezzed) and the
+    /// programs. Returns the player's input (the history logs it).
     ///
-    /// The programs decide first: they share the AI's per-tick work pool,
-    /// and an autopilot deciding before them would make their moves depend
-    /// on its Brain. This way the World is a function of the programs'
-    /// Brains and your inputs alone, so a replay of the logged inputs is
-    /// exact whatever the autopilot does (it is changed after a rewind).
+    /// The autopilot decides first and spends the AI's shared per-tick
+    /// pool before the programs (M1's order, which the ladder bot was
+    /// tuned with), so on a replay it decides again, from its keyframed
+    /// Brain and `autopilot_alt_until`, to leave the programs the same
+    /// pool; its answer equals the logged input. A human player never
+    /// touches the pool, so a replay of yours runs the programs alone.
     fn step_world(g: *Game, held: Buttons, pressed: Buttons, player: bool, logged: ?sim.Input) sim.Input {
         const w = &g.world;
         var in: [sim.max_cycles]sim.Input = @splat(.idle);
-        for (1..w.cfg.n_cycles) |i| in[i] = ai.decide(&g.brains[i], w, i);
         if (player and w.cycles[0].state == .alive) {
-            if (logged) |l| {
-                in[0] = l;
-            } else if (g.autopilot != 0) {
+            if (g.autopilot != 0) {
                 const b = &g.brains[0];
                 const tier = g.autopilot_tier();
                 if (b.tier != tier) b.* = brain(tier, tuning.autopilot_preset, b.rng.state);
                 if (g.autopilot == 2) b.mistake_permille = tuning.sloppy_permille;
+                if (w.tick < g.autopilot_alt_until) b.mistake_permille = tuning.alt_slip_permille;
                 in[0] = ai.decide(b, w, 0);
-            } else {
+            } else if (logged == null) {
                 if (dpad(pressed)) |d| {
                     in[0].press = .of(d);
                 } else if (g.resume_press) |d| {
@@ -694,7 +743,9 @@ pub const Game = struct {
                 in[0].boost = held.a;
                 in[0].brake = held.b;
             }
+            if (logged) |l| in[0] = l;
         }
+        for (1..w.cfg.n_cycles) |i| in[i] = ai.decide(&g.brains[i], w, i);
         w.step(in);
         if (g.sudden_death_tick == 0 and w.sudden_death_ring != 0) g.sudden_death_tick = w.tick;
         return in[0];
@@ -705,7 +756,7 @@ pub const Game = struct {
     fn play_tick(g: *Game, held: Buttons, pressed: Buttons) void {
         const in0 = g.step_world(held, pressed, true, null);
         g.score_step();
-        if (g.mode == .ladder) g.history.record(&g.world, in0, &g.brains, g.score);
+        if (g.mode == .ladder) g.history.record(&g.world, in0, &g.brains, g.aux());
         const w = &g.world;
         if (g.crash_at != 0 and w.tick >= g.crash_at and g.mode == .ladder and w.cycles[0].state == .alive) {
             g.crash_at = 0;
@@ -774,13 +825,28 @@ pub const Game = struct {
         }
     }
 
+    /// Where this rewind lands (sets `history.target`): 2 s back (SPEC 6;
+    /// the oldest kept keyframe if a recent rewind dropped the ones
+    /// before). A crash soon after the last resume (`escalate_window`)
+    /// means that landing was a lost cause: this one lands
+    /// `escalate_ticks` before it, or, once the keyframes do not reach
+    /// that far, at the round's start.
+    fn plan_rewind(g: *Game) void {
+        const h = &g.history;
+        const now = g.world.tick;
+        if (g.last_resume != 0 and now < g.last_resume + tuning.escalate_window) {
+            if (h.plan_exact(g.last_resume -| tuning.escalate_ticks) == null) h.plan_start();
+            return;
+        }
+        if (h.plan(now, history.tuning.rewind_ticks) == null) h.plan_start();
+    }
+
     /// Time stood still long enough: start running backwards.
     noinline fn begin_rewind(g: *Game) void {
-        if (g.history.plan(g.world.tick, history.tuning.rewind_ticks) == null) {
-            // No keyframe kept (never expected): the level again.
-            g.snapshots -= 1;
-            return g.start_level(false);
-        }
+        g.plan_rewind();
+        // The retraction shows at most the ticks the history kept.
+        const span = @min(g.world.tick - g.history.target, history.tuning.ticks - 1);
+        g.retract_step = @max(history.tuning.retract_per_frame, (span + tuning.retract_frames - 1) / tuning.retract_frames);
         g.snapshots -= 1;
         g.rewinds += 1;
         g.replaying = false;
@@ -796,7 +862,7 @@ pub const Game = struct {
         const w = &g.world;
         if (!g.replaying) {
             g.tint_rows = @min(render.screen_h - render.arena_y, g.tint_rows + tuning.wipe_rows);
-            const r = g.history.retract(w, history.tuning.retract_per_frame);
+            const r = g.history.retract(w, g.retract_step);
             if (r.done) {
                 g.replaying = true;
                 g.restored = false;
@@ -807,7 +873,13 @@ pub const Game = struct {
         // to the target, as many ticks a frame as the AI budget allows.
         g.hold_frame = true;
         if (!g.restored) {
-            if (g.history.restore(w, &g.brains, &g.score) == null) return g.start_level(false);
+            var kept: history.Aux = undefined;
+            if (g.history.restore(w, &g.brains, &kept)) |_| {
+                g.score = kept.score;
+                g.autopilot_alt_until = kept.alt_until;
+            } else {
+                g.restart_round();
+            }
             g.restored = true;
             if (g.sudden_death_tick > w.tick) g.sudden_death_tick = 0;
         }
@@ -816,7 +888,7 @@ pub const Game = struct {
         while (w.tick < g.history.target and n < tuning.replay_max_ticks) : (n += 1) {
             const in0 = g.step_world(.{}, .{}, true, g.history.input_at(w.tick + 1));
             g.score_step();
-            g.history.record(w, in0, &g.brains, g.score);
+            g.history.record(w, in0, &g.brains, g.aux());
             if (ai_units() - units0 + pool_units > tuning.replay_units) break;
         }
         if (w.tick < g.history.target) return;
@@ -829,12 +901,16 @@ pub const Game = struct {
         g.tint_rows = 0;
         g.repaint = true;
         g.resuming = true;
+        // Tick 0 is a landing too (0 means none).
+        g.last_resume = @max(g.world.tick, 1);
         g.resume_press = null;
         if (g.autopilot != 0) {
             // The autopilot would ride into the same crash: another tier
-            // for a while and a new stream for its slips.
+            // for a while and a new stream for its slips (and the landing's
+            // keyframe must know, for a replay from it).
             g.autopilot_alt_until = g.world.tick + tuning.autopilot_alt_ticks;
             g.brains[0] = brain(g.autopilot_tier(), tuning.autopilot_preset, rng.mix(g.brains[0].rng.state, g.rewinds));
+            g.history.resave(&g.world, &g.brains, g.aux());
         }
         g.goto(.countdown);
     }
@@ -1212,6 +1288,7 @@ pub const Game = struct {
             // Away from where you ride on.
             b.cy = g.away_from_player();
             var buf: [20]u8 = undefined;
+            if (g.world.tick == 0) add_line(&b, "FROM THE TOP", 1, colors.text);
             add_line(&b, snapshots_line(&buf, g.snapshots), 1, colors.rewind);
         } else if (g.mode == .skirmish) {
             var buf: [20]u8 = undefined;
@@ -1663,6 +1740,47 @@ test "a rewind lands on the exact World 2 s before the crash (hash and score)" {
         if (try check_rewind(g, @intCast(11 + k), c.level, c.crash, c.opts)) done += 1;
     }
     try testing.expect(done >= 6);
+}
+
+test "a quick second derez lands further back, exactly; past the keyframes, the round's start" {
+    const g = &tg;
+    var cases: u32 = 0;
+    for ([_]u32{ 5, 9, 12 }) |level| {
+        g.init(level * 7);
+        g.autopilot = 3;
+        g.new_game(level);
+        try testing.expect(run_until(g, .play, 400));
+        hashes[0] = g.world.hash();
+        // The straight run's hashes, to tick 1000, then a derez.
+        while (g.state == .play and g.world.tick < 1000) {
+            g.update(.{}, .{});
+            hashes[g.world.tick] = g.world.hash();
+        }
+        if (g.state != .play) continue;
+        g.force_crash();
+        try testing.expect(run_until(g, .play, 400));
+        const first = g.world.tick;
+        try testing.expectEqual(@as(u32, 880), first);
+        try testing.expectEqual(hashes[first], g.world.hash());
+        // A second derez 1 s later: the landing was lost; 2 s before it
+        // (760) is past the kept keyframes (780..990), so the round
+        // starts over, exactly as it began.
+        idle(g, 60);
+        if (g.state != .play) continue;
+        g.force_crash();
+        try testing.expect(run_until(g, .countdown, 400));
+        try testing.expectEqual(@as(u32, 0), g.world.tick);
+        try testing.expectEqual(hashes[0], g.world.hash());
+        try testing.expectEqual(@as(u8, 1), g.snapshots);
+        // The countdown says so.
+        var found = false;
+        if (g.view().banner) |b| {
+            for (b.lines[0..b.n]) |l| found = found or std.mem.eql(u8, l.str(), "FROM THE TOP");
+        }
+        try testing.expect(found);
+        cases += 1;
+    }
+    try testing.expect(cases >= 2);
 }
 
 test "derezzes use the snapshots, then CORE DUMPED; a clear gives one back" {
