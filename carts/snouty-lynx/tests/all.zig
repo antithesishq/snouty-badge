@@ -28,4 +28,5 @@ test {
     _ = @import("ff_determinism.zig");
     _ = @import("comlynx_unit.zig");
     _ = @import("comlynx_warbirds.zig");
+    _ = @import("comlynx_party.zig");
 }

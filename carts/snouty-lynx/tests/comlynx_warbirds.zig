@@ -22,7 +22,7 @@ var consoles: [4]Lynx = undefined;
 var bus: virt.VirtualBus = undefined;
 
 /// The RGB (4 bits each) of pixel (x, y) of the shown frame.
-fn rgb(l: *const Lynx, x: usize, y: usize) [3]u8 {
+pub fn rgb(l: *const Lynx, x: usize, y: usize) [3]u8 {
     const f = l.frame();
     const b = f.pixels[y * 80 + x / 2];
     const pen = if (x & 1 == 0) b >> 4 else b & 0xF;
@@ -30,14 +30,14 @@ fn rgb(l: *const Lynx, x: usize, y: usize) [3]u8 {
 }
 
 /// The cockpit: the top wing (rows 0-3) is red (13, 0, 0) at both edges.
-fn cockpit(l: *const Lynx) bool {
+pub fn cockpit(l: *const Lynx) bool {
     const w = [3]u8{ 13, 0, 0 };
     return std.mem.eql(u8, &rgb(l, 0, 1), &w) and std.mem.eql(u8, &rgb(l, 159, 1), &w);
 }
 
 /// The title's "N PLAYERS" (orange, (15, 4, 0)) in the bottom right: the
 /// pixel count of its first glyph (the digit), or 0 when absent.
-fn players_glyph(l: *const Lynx) u32 {
+pub fn players_glyph(l: *const Lynx) u32 {
     const o = [3]u8{ 15, 4, 0 };
     var x0: usize = 160;
     for (88..102) |y| for (90..160) |x| {

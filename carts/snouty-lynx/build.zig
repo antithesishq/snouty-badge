@@ -116,6 +116,22 @@ pub fn add(b: *Build, sycl_badge_dep: *Build.Dependency, opts: common.Options) v
             }) },
         },
     });
+    // The ComLynx network step (frontend/lynxnet.zig over lib/party.zig;
+    // host-tested on lib/party_virtual.zig, docs/COMLYNX.md section 10):
+    // the party libs as one module (party_virtual.zig imports party.zig).
+    const party_host = b.createModule(.{
+        .root_source_file = b.path("lib/party_host.zig"),
+        .target = b.graph.host,
+        .optimize = test_optimize,
+    });
+    const lynxnet_host = b.createModule(.{
+        .root_source_file = b.path(dir ++ "cart/src/frontend/lynxnet.zig"),
+        .target = b.graph.host,
+        .optimize = test_optimize,
+        .imports = &.{
+            .{ .name = "core", .module = core_host },
+        },
+    });
     const tests = b.addTest(.{
         .name = "snouty-lynx-tests",
         .filters = if (opts.test_filter) |f| &.{f} else &.{},
@@ -130,6 +146,8 @@ pub fn add(b: *Build, sycl_badge_dep: *Build.Dependency, opts: common.Options) v
                 .{ .name = "stream_audio", .module = stream_host },
                 .{ .name = "frontend_audio", .module = audio_host },
                 .{ .name = "input", .module = input_host },
+                .{ .name = "party_host", .module = party_host },
+                .{ .name = "lynxnet", .module = lynxnet_host },
             },
         }),
     });
