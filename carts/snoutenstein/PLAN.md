@@ -1384,7 +1384,94 @@ and protocol against what merged, run 2 then 16 simulators on one
 `badge lobby`, then badges (RUNNING.md hardware check), tune the input
 delay and the stall-drop time.
 
-## Status
+M8 status (2026-10-05, branch `stein/mp`, integration track; not
+committed by the track): tracks A to C landed earlier (a1888fe7,
+a3b11f64); the lead's list is built. SPEC.md section 20 is what was
+built; RUNNING.md section 8 has the setup and the 2-then-N-badge
+hardware check.
+
+- **Cart.** `party.zig`: the PARTY title row (greyed NEEDS PARTY
+  FIRMWARE without `os_flags` bit 1), `LockstepN(cart_serial.Badge(.{}),
+  match.GN)` opened on the first entry, the N-slot lobby (roster in two
+  columns of eight, host rules with the arena preselected by head count,
+  frags 5-25, bugs, FFA/2/4 teams, DELAY AUTO from `suggested_delay` or
+  a host override, team picks with Left/Right, MATCH IN PROGRESS), the
+  match frame (pump, submit, step, draw from the local slot with Track
+  C's rivals/rank/kill feed/scoreboard, pump to 14 ms; leaver notice,
+  pause, WAITING FOR PLAYERS, DESYNC, YOU WERE DROPPED, relay lost ->
+  lobby screen), the results. `match.GN` gained `input_delay` (3),
+  `picks_ok` (two teams) and `team_of` (pick = team + 1); `match.G.version`
+  = 1. The match World is M7's (`deathmatch.world`, one mode at a time).
+  `deathmatch.band`/`draw_pause` are pub for it.
+- **Scoreboard legibility.** More than 10 players: two columns of eight
+  at an 11 px pitch (3x5-digit place, swatch, five letters, frags) and a
+  "#7/16  3 DTH  57%" line for you; up to 10: one column at 9 px with
+  deaths and accuracy (labels NAME FRG DTH ACC, columns moved so 100%
+  no longer touches the deaths). Same for the results.
+  `docs/m8_scoreboard.png` (16 FFA grid; 10 one column) and
+  `docs/m8_results.png` (16 FFA; 4 teams of 10) regenerated.
+- **Flash (deviation).** The party code took .text from 131.8 to 151.3
+  KB (lockstep_n 6.7 KB, the lobby client 1.3 KB, Track C's HUD now
+  linked 3.6 KB, the screens), over the 140 KB budget. Fixed without
+  cutting anything: `Level.cells` is now the packed width x height
+  (`[]const u8`, it was `[64][64]u8` per level), 22.1 KB less;
+  `gen_levels.zig` writes it, `level_parse.Parsed` keeps a packed copy for
+  tests, `Level.cell` returns the same values everywhere (checked cell by
+  cell against the old gen.zig) and is cheaper (10.3 cycles a call, was
+  14.3: one unsigned compare per axis against the level's size).
+- **RAM** (`size -A`): .text 129,004 + .data 7,944 = 136,948 (133.7 KB of
+  140; was 139,752 at a3b11f64), .bss 107,136 (104.6 KB of 120; was
+  98,592: the LockstepN 2,568, the port rings 5,160, names and lobby
+  state).
+- **Bench** (calibrated, busy ms; `tools/bench_m8.sh`, 1,200 frames, no
+  network so no pump): 16 bots Data Hall BUGS ON worst 7.54 (frame 364),
+  mean 3.98; 16 bots Server Room BUGS ON (six spawns, crowded) worst
+  5.46, mean 3.66. Campaign: Build Farm opening worst 3.50, mean 2.50
+  (was 3.52 / 2.52, the cheaper `Level.cell`); attract worst 10.24 at
+  frame 1,102 (was 10.31). M7 Server Room 2 bots worst 4.72, mean 2.71
+  (was 4.68 / 2.76).
+- **Tests.** `zig build test-stein` 111 (was 107): `party_net_test.zig`
+  puts badges, each a LockstepN over `match.GN` on a virtual port, on
+  lib/party_virtual.zig's relay (1 ms latency, 1.5 ms jitter, own 60 Hz
+  frames): 4 badges Server Room with bugs to 5 frags in sync (3,226
+  ticks), 6 badges in 2 teams from their picks to 10 team frags (9,896
+  ticks), the two-team GO rule, 16 badges on Data Hall with one leaving
+  at tick 400 (a bot on the same tick on all 15, 1,500 ticks in sync).
+  Frames without a tick 0.25-0.46%. `zig build test` (repo) 718/720 (2
+  skipped), `zig build` and `tools/check.sh` pass (new: `m8_title.json`,
+  a 16-bot FFA match with the scoreboard held via `m8_local.json` to 5
+  frags, 16 bots in 4 teams to 10). DEMO OK, the M7 cable tests and the
+  campaign scripts unchanged.
+- **Preview.** `docs/preview_m8.gif`: title with PARTY, the host lobby
+  (9 players, Data Hall preselected), a guest of 16 in 4 teams, a late
+  joiner, a 16-bot Data Hall match from slots 1, 6 and 12, the
+  scoreboard, the results.
+- **Other deviations.** No name entry: everyone is SNOUTY (the slot
+  colour and number tell them apart); the guest does not see the delay
+  until GO; the web simulator cannot join a party (our wasm build has no
+  serial socket; `tools/party_e2e` is M8.1's end-to-end path); the
+  bench numbers have no lockstep pump (no network in the bench).
+- **Open (M8.1 / hardware)**: RUNNING.md section 8 on 2, then 4-16
+  badges; the default delay and stall-drop time from that; the feel of
+  16 in Data Hall.
+
+M8.1 status (2026-10-05): the OS transport shipped (fork main 8ca6da6;
+frames.py and lobby.py unchanged at b994d04) and every assumption above
+was confirmed by the OS session (ordering, lossless, rejoin = a ROSTER
+without then with, ABI frozen; relay p99 5.4 ms at 16 x 60 Hz).
+Checked against the real thing: byte vectors from frames.py in
+`lib/tests/party_unit.zig` (137 lib tests); fixes: HELLO re-sent every
+2 s while joining (pyserial flushes input on DTR, so a first HELLO can
+vanish), the COBS trailing 0x01 after a full block, relay-model details;
+`cart_serial.zig` already met the OS ring checks (asserts added).
+`tools/party_e2e.sh` (`zig build party-e2e`, pyserial) runs N host badges
+on fake simulator ports through the real `badge lobby`: 2, 4, 8 and 16
+badges in sync on match.GN with bots (16 on Data Hall: 0.10% frames
+without a tick, input latency p50 0.16 / p99 4.7 ms), and an events run
+(unplug, rejoin, relay reconnect, freeze) where every leaver became a
+bot on the same tick on all badges. Open: the badge hardware check;
+relay-side, a stopped TCP simulator is not removed (kernel socket
+buffer; reported to the OS session).
 
 - 2026-09-26: M0 scaffold committed. M1 plan written; four tracks launched.
 - 2026-09-26: M1 done and tagged `m1`. All four tracks landed as planned.
@@ -1593,3 +1680,9 @@ render check). check.sh now reads the demo level from the data file.
 - 2026-10-05: M8 party deathmatch (up to 16 badges) planned; the OS
   transport is in progress elsewhere; three tracks launched on the
   transport-free parts (branch `stein/mp`).
+- 2026-10-05: M8 integrated on `stein/mp` (numbers under "M8 status"):
+  PARTY on the title, the 16-slot lobby, the party match frame and
+  results over `lib/lockstep_n.zig`, two-column scoreboard and results,
+  levels packed to fit the flash budget, `party_net_test.zig`,
+  `tools/bench_m8.sh`, `docs/preview_m8.gif`. Next: M8.1 and the badge
+  check (RUNNING.md section 8).

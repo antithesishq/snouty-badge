@@ -17,7 +17,15 @@ CLAUDE.md files have the long explanations, this one summarises.
   badges): `match.zig` (the rules; `match.World` = GameState plus
   `state.Match`, and `match.G` for the lockstep) and `bot.zig` (the
   stand-in player for tests, previews and the bench), both pure;
-  `deathmatch.zig` (lobby, match frame, results; cart-api).
+  `deathmatch.zig` (lobby, match frame, results; cart-api). Party
+  deathmatch (M8, up to 16 badges over USB and the laptop's `badge
+  lobby`): `match.GN` (the N-player game for `lib/lockstep_n.zig`),
+  `party.zig` (the PARTY lobby, match frame, results and the local
+  bots-only match; cart-api), `render/scoreboard.zig` and
+  `render/slots.zig` (rank line, kill feed, tables, slot colours);
+  `match_party_test.zig` and `party_net_test.zig` (badges on the relay
+  model, lib/party_virtual.zig) are its host tests. `Level.cells` is the
+  packed width x height (read it through `Level.cell`).
 - `cart/src/render/` — raycaster, textures, sprites, HUD (cart-api users);
   `cart/src/audio.zig` — tone2 (and the dormant neopixel effects), driven
   by diffing GameState.

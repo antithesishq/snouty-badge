@@ -13,8 +13,8 @@ authoritative table is `SPEC.md` section 3.
 
 | Where | Badge | Simulator | Does |
 |---|---|---|---|
-| Title | Joystick up / down | Up / Down or W / S | Pick PLAY or DEATHMATCH (greyed in the simulator: NO LINK IN SIMULATOR) |
-| Title | A | Z or K | PLAY: start the campaign; DEATHMATCH: the two-badge lobby (section 7) |
+| Title | Joystick up / down | Up / Down or W / S | Pick PLAY, DEATHMATCH or PARTY (both greyed in the simulator: NO LINK IN SIMULATOR, NEEDS PARTY FIRMWARE) |
+| Title | A | Z or K | PLAY: start the campaign; DEATHMATCH: the two-badge lobby (section 7); PARTY: the party lobby (section 8) |
 | Title | B / Start | X or J / Enter or Y | Start the imported E1M1 / the test level |
 | Title | Select | Backspace or T | Sound on/off; the cart boots silent ([docs/SOUND.md](../../../docs/SOUND.md)) |
 | Title | (leave it 10 s) | | Attract demo; any button or the joystick returns to the title |
@@ -30,6 +30,9 @@ authoritative table is `SPEC.md` section 3.
 | Deathmatch lobby | A / Start / B | (badge only) | Ready / the host goes once both are ready / back to the title; the host's Up/Down and Left/Right set the rules |
 | Deathmatch | Hold B + Left / Right | (badge only) | Strafe (no rewind in a match); everything else as Playing; Start pauses both badges, B in the pause leaves (a forfeit) |
 | Deathmatch results | A or Start | (badge only) | Back to the lobby |
+| Party lobby | A / Start / B | (badge only) | Ready / the host goes / back to the title (leaves the room); the host's Up/Down and Left/Right set the rules; Left/Right picks your team in a team match (before ready) |
+| Party match | as Deathmatch, plus hold Select | (badge only) | The scoreboard (Select still cycles weapons); Start pauses everyone, B in the pause leaves (a bot takes your slot) |
+| Party results | A or Start | (badge only) | Back to the lobby |
 | Anywhere | Hold Start + Select 0.5 s | (none) | Badge OS stops the cart and returns to its cart list (newer OS firmware: opens its settings box; A on "Exit cart" leaves) |
 | Anywhere | Joystick click | Shift | Badge OS FPS overlay; the cart ignores it |
 | Simulator only | | Escape | Simulator menu (Continue, Save/Load state, Reset cart, ...); it freezes the cart and is not the badge OS |
@@ -387,3 +390,100 @@ node ../../tools/preview.mjs ../../zig-out/bin/snoutenstein.wasm --frames 600 --
 The bench has no cable either: `tools/bench_m7.sh` pokes
 `stein_dm_bench` (rules byte + 1) so a bot-vs-bot match runs from the
 first update, on both arenas with BUGS ON.
+
+## 8. Party deathmatch (up to 16 badges, M8)
+
+Up to 16 badges, each plugged into one laptop by USB, play one deathmatch
+in lockstep through the laptop's `badge lobby` relay (root
+[docs/LOCKSTEP_N.md](../../../docs/LOCKSTEP_N.md)). It needs the **fork
+firmware** (`/home/exedev/sycl-badge-fork`, branch `main`): its cart
+serial port is what the cart talks to. On stock firmware the title's
+PARTY entry is greyed with NEEDS PARTY FIRMWARE (always so in the web
+simulator and badge-bench: our wasm build does not speak the fork
+simulator's serial socket). SPEC.md section 20 has the rules.
+
+**Set up the laptop and the badges:**
+
+```
+cd /home/exedev/sycl-badge-fork && zig build          # zig-out/firmware/sycl-os-kernel.uf2
+python3 tools/badge/badge.py flash zig-out/firmware/sycl-os-kernel.uf2 --all
+# this repo, from the root:
+zig build -Dcart=snoutenstein
+python3 /home/exedev/sycl-badge-fork/tools/badge/badge.py install zig-out/firmware/snoutenstein.uf2 --all
+python3 /home/exedev/sycl-badge-fork/tools/badge/badge.py lobby   # leave it running
+```
+
+Carts survive a firmware flash; `badge list` shows every badge and its
+ports. A powered hub helps beyond four badges. Everyone is "SNOUTY" in
+the roster (the badge has no text entry): the slot colour and number
+tell players apart.
+
+**On each badge:** title, Down twice to PARTY, A. The screen says START
+BADGE LOBBY ON THE LAPTOP until `badge lobby` has the port open, then
+JOINING... and the lobby: the room count (n/16), the rules, the roster
+(two columns of eight: slot colour, name, a green tick when ready, your
+own row highlighted, a Coral name on another cart version). The lowest
+id hosts (HOST in the header): Up/Down picks ARENA (preselected for the
+head count: Server Room up to 6, Build Farm up to 8, Data Hall beyond;
+Coral when the room is over its size), FRAGS (5 to 25), BUGS, TEAMS
+(FFA, 2, 4), your TEAM (team modes) and DELAY (AUTO = the suggestion
+from everyone's round trips to the relay, or 2 to 12 ticks; the
+suggestion stays visible beside a manual value), Left/Right changes it.
+In a team match everyone picks a team with Left/Right before readying.
+A readies; the host's START: GO! appears once two or more are ready
+(two teams in a team match) and Start goes. A badge that joins during a
+match sees MATCH IN PROGRESS and plays the next one.
+
+**Hardware check, two badges first:**
+
+1. Both on the fork firmware with this cart, `badge lobby` running. Both
+   PARTY screens leave START BADGE LOBBY within a second; one shows HOST,
+   the roster lists 2/16 on both.
+2. Host changes each rule; the guest's screen follows within a frame or
+   two. TEAMS 2: each badge's Left/Right moves its own swatch between
+   RED and BLUE on both screens.
+3. A on both, host Start: both start at once, each from its own slot. The
+   other badge is a tinted rival with its slot number over its head
+   within 6 cells; the HUD shows #rank/2 and TOP; the kill feed line at
+   the top agrees on both badges (FRAGGED P2 here is P1 FRAGGED YOU
+   there).
+4. Hold Select: the scoreboard on both, same numbers.
+5. Start on either pauses both; Start resumes. B in the pause on one:
+   it returns to its lobby, and the other ends with YOU WIN: FORFEIT
+   (one human left; with three or more a bot takes the leaver's slot,
+   "P2 LEFT: BOT", and the match goes on, still paused until someone
+   presses Start).
+6. Unplug one badge's USB mid-match: the other hands the slot over on
+   the same tick and ends as above; the unplugged badge (on battery) goes
+   back to START BADGE LOBBY when its port closes.
+7. A DESYNC band is a bug: note the arena, the head count and roughly
+   when. YOU WERE DROPPED (a badge silent for 3 s while the others
+   waited) should not happen with badges that keep running; report it
+   with what that badge was doing.
+
+**Then N badges (4, 8, 16):** as above with everyone in; watch for
+WAITING FOR PLAYERS lasting more than a moment (the relay or one badge
+cannot keep up: try DELAY 4 or 6), Data Hall preselected beyond 8
+players, and the 16-row scoreboard (two columns). Report the worst
+stutter and the delay that felt right; M8.1 tunes the default delay and
+the stall-drop time from that.
+
+**Without the network** (simulator, previews, bench) a local match of
+bots stands in, one tick a frame: `debug_party_bots:V` (V: rules byte 0
+in bits 0-7, as section 7's R plus bit 5 = 25 frags; team mode in bits
+8-9, 0 FFA, 1 two teams, 2 four teams; players in bits 16-20, 0 = 16;
+the shown slot in bits 24-27), `debug_party_view:S` (show slot S, also
+with `--call-at`), `debug_party_names:1` (sample names instead of
+P1..P16) and `debug_party_lobby:K` (the lobby as 1 a host of 9, 2 a
+guest of 16 in 4 teams, 3 a late joiner, 4 no laptop lobby, 5 joining;
+0 is the real NEEDS PARTY FIRMWARE screen). Hold Select for the
+scoreboard.
+
+```
+node ../../tools/preview.mjs ../../zig-out/bin/snoutenstein.wasm --frames 1200 --every 6 --out out/party \
+  --call debug_party_names:1 --call debug_party_bots:$((0x16)) --call-at "600 debug_party_view:5"
+```
+
+The bench pokes `stein_party_bench` (the same V with bit 31 set):
+`tools/bench_m8.sh` runs 16 bots on Data Hall and on Server Room, BUGS
+ON.

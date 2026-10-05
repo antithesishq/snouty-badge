@@ -1,8 +1,9 @@
 //! Lobby protocol v1 client (the cart side of `badge lobby`), generic over
 //! a cart serial port (`lib/cart_serial.zig`: `Badge(.{})` on the badge,
 //! `Virtual(.{})` in host tests). The protocol is the fork firmware's
-//! (`/home/exedev/sycl-badge-fork` branch `feature/cart-serial` at 13ffec9,
-//! `fork/CART_SERIAL.md` section "Lobby protocol v1"); this is our own
+//! (`/home/exedev/sycl-badge-fork` main at 8ca6da6, `fork/CART_SERIAL.md`
+//! section "Lobby protocol v1"; byte vectors from its `tools/badge/badge/
+//! frames.py` in lib/tests/party_unit.zig); this is our own
 //! implementation of it for carts on the pinned SDK, which has no
 //! `cart.lobby`. docs/LOCKSTEP_N.md.
 //!
@@ -22,6 +23,9 @@
 const std = @import("std");
 
 pub const version: u8 = 1;
+/// HELLO again after this long without a WELCOME (`Client.retry_hello`;
+/// the fork's `cart.lobby` uses the same 2 s).
+pub const hello_retry_us: u64 = 2_000_000;
 /// The longest frame body (type + payload).
 pub const max_body: usize = 250;
 /// The longest SEND / DATA data.
@@ -89,7 +93,7 @@ pub fn cobs_encode(src: []const u8, dst: []u8) usize {
     var code_at: usize = 0;
     var out: usize = 1;
     var code: u8 = 1;
-    for (src, 0..) |b, i| {
+    for (src) |b| {
         if (b == 0) {
             dst[code_at] = code;
             code_at = out;
@@ -102,8 +106,9 @@ pub fn cobs_encode(src: []const u8, dst: []u8) usize {
         code += 1;
         if (code == 0xFF) {
             dst[code_at] = code;
-            // A full block at the very end needs no empty block after it.
-            if (i + 1 == src.len) return out;
+            // As the references (frames.py, the fork's lobby.zig): a full
+            // block at the very end is still followed by a block code
+            // (0x01), where the Wikipedia examples stop. Both decode alike.
             code_at = out;
             out += 1;
             code = 1;
@@ -312,6 +317,19 @@ pub fn Client(comptime P: type) type {
             self.want_join = true;
             self.leave_due = false;
             if (self.was_connected) self.hello_due = true;
+            _ = self.flush_control();
+        }
+
+        /// HELLO again while still waiting for WELCOME (the caller's clock:
+        /// LockstepN every `hello_retry_us`, as the fork's own client does).
+        /// A HELLO can be lost: a host that opens a serial port flushes its
+        /// input right after raising DTR (pyserial does), and a HELLO the
+        /// cart sent at once is gone, so nothing would ever answer. Should
+        /// the first one have arrived, the relay takes the second as a
+        /// rejoin (a leave, then a join).
+        pub fn retry_hello(self: *Self) void {
+            if (self.state() != .joining or self.hello_due) return;
+            self.hello_due = true;
             _ = self.flush_control();
         }
 

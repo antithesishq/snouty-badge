@@ -24,6 +24,8 @@ pub const Error = error{ TooManyRows, RowTooWide, TooManyDoors, TooManyPickups, 
 
 pub const Parsed = struct {
     cells: [size][size]u8,
+    /// `cells` packed to width x height (`level` points `Level.cells` here).
+    packed_cells: [size * size]u8,
     width: u8,
     height: u8,
     start_x: u8,
@@ -180,6 +182,7 @@ pub fn parse(out: *Parsed, src: []const u8, default_wall: u8) Error!void {
     }
     out.width = @intCast(width);
     out.height = @intCast(height);
+    for (0..height) |y| @memcpy(out.packed_cells[y * width ..][0..width], out.cells[y][0..width]);
     for (out.spawns[0..out.spawn_count]) |*sp| sp.angle = open_facing(&out.cells, sp.x, sp.y);
     if (spawn_start) start_angle = out.spawns[0].angle;
     out.start_x = start_x.?;
@@ -216,7 +219,7 @@ pub fn level(p: *const Parsed, name: []const u8) levels.Level {
         .name = name,
         .width = p.width,
         .height = p.height,
-        .cells = p.cells,
+        .cells = p.packed_cells[0 .. @as(usize, p.width) * p.height],
         .start_x = p.start_x,
         .start_y = p.start_y,
         .start_angle = p.start_angle,
@@ -261,7 +264,7 @@ fn expect_same(want: *const levels.Level, got: *const levels.Level) !void {
     try testing.expectEqualStrings(want.name, got.name);
     try testing.expectEqual(want.width, got.width);
     try testing.expectEqual(want.height, got.height);
-    try testing.expect(std.mem.eql(u8, std.mem.asBytes(&want.cells), std.mem.asBytes(&got.cells)));
+    try testing.expectEqualSlices(u8, want.cells, got.cells);
     try testing.expectEqual(want.start_x, got.start_x);
     try testing.expectEqual(want.start_y, got.start_y);
     try testing.expectEqual(want.start_angle, got.start_angle);
@@ -283,6 +286,7 @@ test "levels/gen.zig matches the .txt sources" {
         .{ .name = "wolf_e1m1", .src = @embedFile("levels/wolf_e1m1.txt") },
         .{ .name = "server_room", .src = @embedFile("levels/server_room.txt") },
         .{ .name = "build_farm_dm", .src = @embedFile("levels/build_farm_dm.txt") },
+        .{ .name = "data_hall", .src = @embedFile("levels/data_hall.txt") },
     };
     for (sources, 0..) |e, i| {
         const l = try parse_level(&p, e.name, e.src, 0);
@@ -300,6 +304,19 @@ test "levels/gen.zig matches the .txt sources" {
     }
     try testing.expectEqualStrings("server_room", levels.all[levels.arena_indices[0]].name);
     try testing.expectEqualStrings("build_farm_dm", levels.all[levels.arena_indices[1]].name);
+    try testing.expectEqualStrings("data_hall", levels.all[levels.arena_indices[2]].name);
+    // Each arena has a spawn per suggested player (M8), at most four
+    // arenas (two bits of `match.Rules`), and the suggestion fits.
+    try testing.expectEqual(levels.arena_indices.len, levels.arena_names.len);
+    try testing.expectEqual(levels.arena_indices.len, levels.arena_max_players.len);
+    try testing.expect(levels.arena_indices.len <= 4);
+    for (levels.arena_indices, levels.arena_max_players) |ai, n| {
+        try testing.expect(levels.all[ai].spawns.len >= n);
+    }
+    try testing.expectEqual(@as(u8, 0), levels.suggest_arena(2));
+    try testing.expectEqual(@as(u8, 0), levels.suggest_arena(6));
+    try testing.expectEqual(@as(u8, 1), levels.suggest_arena(7));
+    try testing.expectEqual(@as(u8, 2), levels.suggest_arena(16));
     try testing.expectEqualStrings("test", levels.all[levels.test_index].name);
     try testing.expectEqualStrings("wolf_e1m1", levels.all[levels.e1m1_index].name);
 }

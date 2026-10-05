@@ -231,6 +231,8 @@ pub fn LockstepN(comptime B: type, comptime G: type) type {
         rtt_samples: [4]u32 = @splat(0),
         rtt_i: u8 = 0,
         last_ping: u64 = 0,
+        /// Since when the client waits for WELCOME (HELLO retries).
+        joining_since: u64 = 0,
 
         // ---- the race ----
         race: Race = .{},
@@ -294,6 +296,12 @@ pub fn LockstepN(comptime B: type, comptime G: type) type {
             self.stats.pumps +%= 1;
             while (self.client.poll()) |ev| self.on_event(ev);
             self.follow_client();
+            if (self.client.state() != .joining) {
+                self.joining_since = now;
+            } else if (now -% self.joining_since >= party.hello_retry_us) {
+                self.client.retry_hello();
+                self.joining_since = now;
+            }
             if (self.phase == .racing) self.watch_stalls();
             if (self.phase == .lobby and self.client.state() == .joined and now -% self.last_ping >= timing.ping_every) {
                 if (self.client.ping(@truncate(now))) self.last_ping = now;

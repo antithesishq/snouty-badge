@@ -39,6 +39,8 @@ pub fn add(b: *Build, sycl_badge_dep: *Build.Dependency, opts: common.Options) v
     // M7: two badges over the virtual cable (cart/src/dm_net_test.zig).
     tests_mod.addImport("lockstep", lockstep_module(b));
     tests_mod.addImport("link_host", link_host_module(b));
+    // M8: badges on a model of `badge lobby` (cart/src/party_net_test.zig).
+    tests_mod.addImport("party_lib", party_lib_module(b));
     const tests = b.addTest(.{ .root_module = tests_mod });
     opts.test_step.dependOn(&b.addRunArtifact(tests).step);
     // `zig build test-stein`: this cart's host tests alone.
@@ -62,6 +64,19 @@ fn link_host_module(b: *Build) *Build.Module {
         _ = wf.addCopyFile(b.path(b.fmt("lib/{s}", .{f})), f);
     }
     const root = wf.add("link_host.zig", "pub const link = @import(\"link.zig\");\npub const virtual = @import(\"link_virtual.zig\");\n");
+    return b.createModule(.{ .root_source_file = root });
+}
+
+/// The host tests' party stack: lib/lockstep_n.zig, lib/party.zig,
+/// lib/cart_serial.zig and the relay model lib/party_virtual.zig copied
+/// side by side under one root (party.zig is imported by two of them, and
+/// a file can belong to only one module).
+fn party_lib_module(b: *Build) *Build.Module {
+    const wf = b.addWriteFiles();
+    for ([_][]const u8{ "lockstep_n.zig", "party.zig", "cart_serial.zig", "party_virtual.zig" }) |f| {
+        _ = wf.addCopyFile(b.path(b.fmt("lib/{s}", .{f})), f);
+    }
+    const root = wf.add("party_lib.zig", "pub const lockstep_n = @import(\"lockstep_n.zig\");\npub const cart_serial = @import(\"cart_serial.zig\");\npub const party_virtual = @import(\"party_virtual.zig\");\n");
     return b.createModule(.{ .root_source_file = root });
 }
 
@@ -102,6 +117,11 @@ fn build_cart_assets(b: *Build, cart: *Build.Module, cart_api: *Build.Module, st
     // under the shared two-badge lockstep (root docs/LOCKSTEP.md).
     cart.addImport("link", b.createModule(.{ .root_source_file = b.path("lib/link.zig") }));
     cart.addImport("lockstep", lockstep_module(b));
+    // Party deathmatch (M8): the fork firmware's cart serial port and the
+    // N-player lockstep over `badge lobby` (root docs/LOCKSTEP_N.md);
+    // lockstep_n.zig reaches lib/party.zig itself.
+    cart.addImport("lockstep_n", b.createModule(.{ .root_source_file = b.path("lib/lockstep_n.zig") }));
+    cart.addImport("cart_serial", b.createModule(.{ .root_source_file = b.path("lib/cart_serial.zig") }));
     const convert = b.addExecutable(.{
         .name = "convert_gfx",
         .root_module = b.createModule(.{

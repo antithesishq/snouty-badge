@@ -383,12 +383,12 @@ fn draw_banner() void {
     band(msg, 22, if (m.killer == me and m.victim != me) hud.green else hud.coral);
 }
 
-fn band(str: []const u8, y: i32, color: cart.DisplayColor) void {
+pub fn band(str: []const u8, y: i32, color: cart.DisplayColor) void {
     cart.rect(.{ .x = 0, .y = y - 2, .width = 160, .height = 12, .fill_color = hud.anti_black });
     centered(str, y, color);
 }
 
-fn draw_pause() void {
+pub fn draw_pause() void {
     cart.rect(.{ .x = 16, .y = 30, .width = 128, .height = 44, .fill_color = hud.anti_black, .stroke_color = hud.grey });
     centered("PAUSED", 36, hud.anti_white);
     centered("START: RESUME", 50, hud.grey);

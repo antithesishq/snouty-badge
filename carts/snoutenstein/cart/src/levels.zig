@@ -4,7 +4,8 @@
 //! deliberately no comptime parsing here: it made the macOS compiler run out
 //! of memory. Tests build mini-levels with `level_parse.parse_level`.
 //!
-//! Cell encoding (`Level.cells[y][x]`, row-major, y down):
+//! Cell encoding (`Level.cell(x, y)`; `cells` holds the drawn width x
+//! height, row-major, y down; everything outside is wall):
 //!   0         floor
 //!   1..8      wall, texture index cell-1 in walls.png
 //!   64..127   door number (cell - 64) into `Level.doors`
@@ -44,7 +45,9 @@ pub const Level = struct {
     name: []const u8,
     width: u8,
     height: u8,
-    cells: [size][size]u8,
+    /// `width * height` cells, row-major (M8: packed instead of a 64x64
+    /// array per level, 22 KB less flash for the party code).
+    cells: []const u8,
     start_x: u8,
     start_y: u8,
     start_angle: fixed.Angle,
@@ -56,9 +59,15 @@ pub const Level = struct {
     /// Texture (0-based) used for '#'.
     default_wall: u8,
 
+    /// Outside the drawn width x height: `default_wall + 1` inside the 64x64
+    /// grid, 1 beyond it (as when `cells` was the whole grid).
     pub fn cell(self: *const Level, x: i32, y: i32) u8 {
-        if (x < 0 or y < 0 or x >= size or y >= size) return 1;
-        return self.cells[@intCast(y)][@intCast(x)];
+        // Negative coordinates wrap to huge unsigned ones: one compare each.
+        const ux: u32 = @bitCast(x);
+        const uy: u32 = @bitCast(y);
+        // Height first: the width then stays in one register for the index.
+        if (uy < self.height and ux < self.width) return self.cells[uy * self.width + ux];
+        return if (ux < size and uy < size) self.default_wall + 1 else 1;
     }
     pub fn is_wall(c: u8) bool {
         return c >= 1 and c < door_base;
@@ -75,9 +84,23 @@ pub const Level = struct {
 pub const campaign_len = 3;
 pub const test_index = 3;
 pub const e1m1_index = 4;
-/// Deathmatch arenas (M7), in the order of the lobby's ARENA row.
-pub const arena_indices = [_]u8{ 5, 6 };
-pub const arena_names = [_][]const u8{ "SERVER ROOM", "BUILD FARM" };
+/// Deathmatch arenas (M7, Data Hall M8), in the order of the lobby's ARENA
+/// row. `match.Rules.arena` has two bits: at most four arenas.
+pub const arena_indices = [_]u8{ 5, 6, 7 };
+pub const arena_names = [_][]const u8{ "SERVER ROOM", "BUILD FARM", "DATA HALL" };
+/// The head count each arena is built for (its spawn count): the party
+/// lobby suggests the smallest arena that fits the players (`suggest_arena`),
+/// and the host may still pick any.
+pub const arena_max_players = [_]u8{ 6, 8, 16 };
+
+/// The arena (index into `arena_indices`) suggested for `players`: the
+/// first whose suggested maximum fits, else the biggest.
+pub fn suggest_arena(players: u8) u8 {
+    for (arena_max_players, 0..) |m, i| {
+        if (players <= m) return @intCast(i);
+    }
+    return arena_max_players.len - 1;
+}
 
 /// Generated from `levels/*.txt`; order is the manifest in `gen_levels.zig`.
 pub const all = @import("levels/gen.zig").all;

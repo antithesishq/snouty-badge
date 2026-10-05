@@ -8,7 +8,7 @@ cd "$(dirname "$0")/.."
 repo="../.."
 # Levels: every level solvable, and the generated data file matching the .txt sources.
 python3 tools/check_level.py cart/src/levels/build_farm.txt cart/src/levels/staging.txt cart/src/levels/production.txt cart/src/levels/test.txt cart/src/levels/wolf_e1m1.txt \
-  cart/src/levels/server_room.txt cart/src/levels/build_farm_dm.txt
+  cart/src/levels/server_room.txt cart/src/levels/build_farm_dm.txt cart/src/levels/data_hall.txt
 tools/gen_levels.sh
 git diff --exit-code -- cart/src/levels/gen.zig || { echo "check: cart/src/levels/gen.zig is stale; commit the regenerated file"; exit 1; }
 # The dormant LED path (docs/NEOPIXELS.md) must keep compiling; build it
@@ -23,7 +23,8 @@ zig test cart/src/rewind.zig
 zig test cart/src/demo.zig
 zig test cart/src/match.zig
 # Everything above plus the two-badge lockstep over the virtual cable
-# (cart/src/dm_net_test.zig needs the build's lockstep and link imports).
+# (cart/src/dm_net_test.zig needs the build's lockstep and link imports)
+# and party badges on the relay model (cart/src/party_net_test.zig).
 (cd "$repo" && zig build test-stein)
 W="$repo/zig-out/bin/snoutenstein.wasm"
 # M1: walk the long corridor, doors, pause.
@@ -142,4 +143,19 @@ node ../../tools/preview.mjs $W --frames 40 --quiet --out out/m7_title --script 
 node ../../tools/preview.mjs $W --frames 9000 --quiet --out out/m7_local --call debug_dm_bots:0 \
   --dump-exports debug_dm_screen,debug_dm_over,debug_dm_frags,debug_dm_tick --until "debug_dm_screen == 2" \
   --expect "debug_dm_over == 1" --expect "debug_dm_screen == 2"
+# M8 party: on the title, Down twice selects PARTY, greyed in the simulator
+# (NEEDS PARTY FIRMWARE; A does nothing), Down wraps to PLAY and A starts
+# the campaign. A local 16-bot party match (no network in the simulator)
+# on Data Hall, FFA, 5 frags, bugs on, with the scoreboard held, plays to
+# the frag limit and the results; then 16 bots in 4 teams to 10 team frags.
+node ../../tools/preview.mjs $W --frames 40 --quiet --out out/m8_title --script tools/scripts/m8_title.json \
+  --dump-exports debug_mode,debug_title_cursor,debug_level \
+  --at "10 debug_title_cursor == 2" --at "19 debug_mode == 0" --at "20 debug_title_cursor == 0" \
+  --expect "debug_mode == 1" --expect "debug_level == 0"
+node ../../tools/preview.mjs $W --frames 20000 --quiet --out out/m8_local --call debug_party_bots:$((0x12)) --script tools/scripts/m8_local.json \
+  --dump-exports debug_party_screen,debug_dm_over,debug_dm_winner,debug_party_present,debug_party_top,debug_dm_tick --at "330 debug_party_screen == 1" \
+  --until "debug_party_screen == 2" --expect "debug_dm_over == 1" --expect "debug_party_present == 65535" --expect "debug_party_top >= 5" --expect "debug_dm_winner < 16"
+node ../../tools/preview.mjs $W --frames 20000 --quiet --out out/m8_teams --call debug_party_bots:$((0x16 | 2 << 8)) \
+  --dump-exports debug_party_screen,debug_dm_over,debug_dm_winner,debug_party_top,debug_dm_tick \
+  --until "debug_party_screen == 2" --expect "debug_dm_over == 1" --expect "debug_dm_winner >= 128"
 echo "check: all passed"
