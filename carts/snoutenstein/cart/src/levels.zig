@@ -75,9 +75,23 @@ pub const Level = struct {
 pub const campaign_len = 3;
 pub const test_index = 3;
 pub const e1m1_index = 4;
-/// Deathmatch arenas (M7), in the order of the lobby's ARENA row.
-pub const arena_indices = [_]u8{ 5, 6 };
-pub const arena_names = [_][]const u8{ "SERVER ROOM", "BUILD FARM" };
+/// Deathmatch arenas (M7, Data Hall M8), in the order of the lobby's ARENA
+/// row. `match.Rules.arena` has two bits: at most four arenas.
+pub const arena_indices = [_]u8{ 5, 6, 7 };
+pub const arena_names = [_][]const u8{ "SERVER ROOM", "BUILD FARM", "DATA HALL" };
+/// The head count each arena is built for (its spawn count): the party
+/// lobby suggests the smallest arena that fits the players (`suggest_arena`),
+/// and the host may still pick any.
+pub const arena_max_players = [_]u8{ 6, 8, 16 };
+
+/// The arena (index into `arena_indices`) suggested for `players`: the
+/// first whose suggested maximum fits, else the biggest.
+pub fn suggest_arena(players: u8) u8 {
+    for (arena_max_players, 0..) |m, i| {
+        if (players <= m) return @intCast(i);
+    }
+    return arena_max_players.len - 1;
+}
 
 /// Generated from `levels/*.txt`; order is the manifest in `gen_levels.zig`.
 pub const all = @import("levels/gen.zig").all;

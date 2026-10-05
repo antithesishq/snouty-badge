@@ -10,6 +10,8 @@ test {
     _ = @import("rewind.zig");
     _ = @import("demo.zig");
     _ = @import("match.zig");
+    // M8: the N-player core (16 slots, teams, hand-over).
+    _ = @import("match_party_test.zig");
     // M7: two badges over the virtual cable (needs the build's `lockstep`
     // and `link_host` imports, so only `zig build test` runs it).
     _ = @import("dm_net_test.zig");

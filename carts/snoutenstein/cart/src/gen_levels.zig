@@ -20,6 +20,8 @@ const manifest = [_]Entry{
     // Deathmatch arenas (M7), `levels.arena_indices`.
     .{ .name = "server_room", .file = "server_room.txt", .default_wall = 0 },
     .{ .name = "build_farm_dm", .file = "build_farm_dm.txt", .default_wall = 0 },
+    // M8: the 16-player arena.
+    .{ .name = "data_hall", .file = "data_hall.txt", .default_wall = 0 },
 };
 
 var io_mem: std.Io.Threaded = .init_single_threaded;

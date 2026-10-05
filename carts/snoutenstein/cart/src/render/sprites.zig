@@ -19,6 +19,9 @@ const fixed = @import("../fixed.zig");
 const view = @import("view.zig");
 const raycast = @import("raycast.zig");
 const textures = @import("textures.zig");
+const slots = @import("slots.zig");
+const match = @import("../match.zig");
+const sim = @import("../sim.zig");
 
 /// Sprites that drew at least one column last frame (for `debug_sprites`).
 pub var drawn: u32 = 0;
@@ -43,6 +46,10 @@ const Entry = struct {
     cell: u8,
     anchor: Anchor,
     white: bool,
+    /// Rivals only: `slots.shirts` index (the shirt remap) and the slot
+    /// number over the head (1..16, 0 = none).
+    shirt: u8 = 0,
+    label: u8 = 0,
 };
 
 /// Visible sprites this frame, `scratch[0..count]`. Render-only .bss.
@@ -71,9 +78,44 @@ pub const spider_range: f32 = 6.0;
 /// Deathmatch (M7): the other player's billboard (`rival.png` cell 0-4,
 /// all white for the hit flash), null in the campaign; and whether the
 /// bugs are drawn at all (BUGS OFF leaves their slots empty).
-pub const Rival = struct { x: f32, y: f32, cell: u8, white: bool };
+/// M8: `shirt` tints it (`slots.shirts`, 0 = the M7 Coral) and `label`
+/// floats that number (the slot + 1; 0 = none) over the head when nearer
+/// than `label_range`.
+pub const Rival = struct { x: f32, y: f32, cell: u8, white: bool, shirt: u8 = 0, label: u8 = 0 };
 pub var rival: ?Rival = null;
 pub var show_enemies: bool = true;
+/// Party deathmatch (M8): every other player, `rivals[0..rival_count]`
+/// (`set_rivals` fills it; `clear_rivals` after the frame, so the
+/// campaign never draws one).
+pub var rivals: [state.max_players - 1]Rival = undefined;
+pub var rival_count: usize = 0;
+/// Slot numbers float over heads nearer than this (cells).
+pub const label_range: f32 = 6.0;
+
+/// The rivals as `viewer` (slot `me`) sees them: every other present
+/// slot, alive or lying dead (no number then), tinted by `slots.shirt_of`
+/// and flashing white for two ticks after a hit, as M7's rival.
+pub fn set_rivals(m: *const state.Match, me: usize, viewer: *const state.Player) void {
+    rival_count = 0;
+    for (0..state.max_players) |o| {
+        if (o == me or !m.is_present(o)) continue;
+        const r = &m.players[o];
+        const dead = m.dead[o] > 0;
+        rivals[rival_count] = .{
+            .x = fixed.to_f32(r.x),
+            .y = fixed.to_f32(r.y),
+            .cell = match.rival_cell(viewer, r, dead),
+            .white = m.hurt[o] + 2 > sim.hurt_ticks,
+            .shirt = slots.shirt_of(m, o),
+            .label = if (dead) 0 else @intCast(o + 1),
+        };
+        rival_count += 1;
+    }
+}
+
+pub fn clear_rivals() void {
+    rival_count = 0;
+}
 
 pub fn draw(s: *const state.GameState, level: *const levels.Level, px: f32, py: f32, dx: f32, dy: f32) void {
     count = 0;
@@ -121,7 +163,8 @@ pub fn draw(s: *const state.GameState, level: *const levels.Level, px: f32, py: 
         cam.add(fixed.to_f32(p.x), fixed.to_f32(p.y), size, .projectiles, cell, .centre, false);
     }
 
-    if (rival) |r| cam.add(r.x, r.y, 1.0, .rival, r.cell, .bottom, r.white);
+    if (rival) |r| cam.add_rival(r);
+    for (rivals[0..rival_count]) |r| cam.add_rival(r);
 
     // Back to front: insertion sort by z, farthest first.
     var i: usize = 1;
@@ -135,7 +178,7 @@ pub fn draw(s: *const state.GameState, level: *const levels.Level, px: f32, py: 
     const pals = &textures.sprite_pal;
     const tint = @backingInt(textures.sprite_tint(view.shade_override));
     for (scratch[0..count]) |*e| {
-        const pal = &pals[@backingInt(e.sheet)][tint];
+        const pal = if (e.sheet == .rival) &textures.rival_pal[e.shirt][tint] else &pals[@backingInt(e.sheet)][tint];
         const any = switch (e.sheet) {
             .gnat => blit(gfx.bug_gnat, 32, e, pal),
             .wasp => blit(gfx.bug_wasp, 32, e, pal),
@@ -147,7 +190,27 @@ pub fn draw(s: *const state.GameState, level: *const levels.Level, px: f32, py: 
             .rival => blit(gfx.rival, 32, e, pal),
         };
         if (any) drawn += 1;
+        if (any and e.label != 0 and e.z < label_range) draw_label(e, tint);
     }
+}
+
+/// The slot number over a rival's head: 3x5 digits in its shirt colour
+/// on an Anti-black tag, its bottom 2 px above the head (row 2 of the
+/// 32-texel cell), clipped by the same per-column depth test.
+fn draw_label(e: *const Entry, tint: u8) void {
+    const zh: f32 = @as(f32, @floatFromInt(view.view_h)) / e.z;
+    const head = horizon + zh * 0.5 - zh * e.size + zh * e.size * (2.0 / 32.0);
+    const w = slots.small_width(e.label) + 2;
+    const x = pix_start(e.sx) - @divTrunc(w, 2);
+    const y = @max(0, pix_start(head) - 9);
+    const fg = textures.rival_pal[e.shirt][tint][textures.rival_shirt_index];
+    slots.small_number(e.label, x, y, fg, label_bg, e.z, in_front);
+}
+
+const label_bg: cart.Pixel = .from_color(.rgb(0x16031B)); // Anti-black
+
+fn in_front(z: f32, x: usize) bool {
+    return x < view.view_w and z < view.depth[x];
 }
 
 const Cam = struct {
@@ -159,6 +222,16 @@ const Cam = struct {
     /// Camera transform and culling; appends to `scratch`, replacing the
     /// farthest entry when full (and dropping the new one if it is farther).
     fn add(c: Cam, wx: f32, wy: f32, size: f32, sheet: textures.SpriteSheet, cell: u8, anchor: Anchor, is_white: bool) void {
+        c.add_entry(wx, wy, .{ .z = 0, .sx = 0, .size = size, .sheet = sheet, .cell = cell, .anchor = anchor, .white = is_white });
+    }
+
+    fn add_rival(c: Cam, r: Rival) void {
+        c.add_entry(r.x, r.y, .{ .z = 0, .sx = 0, .size = 1.0, .sheet = .rival, .cell = r.cell, .anchor = .bottom, .white = r.white, .shirt = @min(r.shirt, slots.shirts.len - 1), .label = r.label });
+    }
+
+    /// `proto` with its z and sx filled in from the world position.
+    fn add_entry(c: Cam, wx: f32, wy: f32, proto: Entry) void {
+        const size = proto.size;
         const rx = wx - c.px;
         const ry = wy - c.py;
         const z = rx * c.dx + ry * c.dy;
@@ -170,7 +243,9 @@ const Cam = struct {
         const sx = half_w * (1.0 + lateral * inv_z * (1.0 / tan_half_fov));
         const w = @as(f32, @floatFromInt(view.view_h)) * size * inv_z;
         if (sx + w * 0.5 <= 0 or sx - w * 0.5 >= half_w * 2) return;
-        const e: Entry = .{ .z = z, .sx = sx, .size = size, .sheet = sheet, .cell = cell, .anchor = anchor, .white = is_white };
+        var e = proto;
+        e.z = z;
+        e.sx = sx;
         if (count < max_visible) {
             scratch[count] = e;
             count += 1;

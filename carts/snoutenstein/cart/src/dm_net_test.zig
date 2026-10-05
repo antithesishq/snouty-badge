@@ -484,5 +484,7 @@ test "deathmatch over the cable: Start pauses and resumes both badges on the sam
 
 test "deathmatch over the cable: RAM" {
     if (report) std.debug.print("\n@sizeOf(Lockstep(link, match.G)) = {d} bytes (link {d}), match.World = {d} bytes\n", .{ @sizeOf(LS), @sizeOf(L), @sizeOf(World) });
-    try std.testing.expect(@sizeOf(World) < 2048);
+    // M8: state.Match holds 16 players (PLAN.md M8 "How many players"),
+    // World 2,188 bytes; M7's two-player Match kept it under 2,048.
+    try std.testing.expect(@sizeOf(World) < 2560);
 }

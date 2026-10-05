@@ -283,6 +283,7 @@ test "levels/gen.zig matches the .txt sources" {
         .{ .name = "wolf_e1m1", .src = @embedFile("levels/wolf_e1m1.txt") },
         .{ .name = "server_room", .src = @embedFile("levels/server_room.txt") },
         .{ .name = "build_farm_dm", .src = @embedFile("levels/build_farm_dm.txt") },
+        .{ .name = "data_hall", .src = @embedFile("levels/data_hall.txt") },
     };
     for (sources, 0..) |e, i| {
         const l = try parse_level(&p, e.name, e.src, 0);
@@ -300,6 +301,19 @@ test "levels/gen.zig matches the .txt sources" {
     }
     try testing.expectEqualStrings("server_room", levels.all[levels.arena_indices[0]].name);
     try testing.expectEqualStrings("build_farm_dm", levels.all[levels.arena_indices[1]].name);
+    try testing.expectEqualStrings("data_hall", levels.all[levels.arena_indices[2]].name);
+    // Each arena has a spawn per suggested player (M8), at most four
+    // arenas (two bits of `match.Rules`), and the suggestion fits.
+    try testing.expectEqual(levels.arena_indices.len, levels.arena_names.len);
+    try testing.expectEqual(levels.arena_indices.len, levels.arena_max_players.len);
+    try testing.expect(levels.arena_indices.len <= 4);
+    for (levels.arena_indices, levels.arena_max_players) |ai, n| {
+        try testing.expect(levels.all[ai].spawns.len >= n);
+    }
+    try testing.expectEqual(@as(u8, 0), levels.suggest_arena(2));
+    try testing.expectEqual(@as(u8, 0), levels.suggest_arena(6));
+    try testing.expectEqual(@as(u8, 1), levels.suggest_arena(7));
+    try testing.expectEqual(@as(u8, 2), levels.suggest_arena(16));
     try testing.expectEqualStrings("test", levels.all[levels.test_index].name);
     try testing.expectEqualStrings("wolf_e1m1", levels.all[levels.e1m1_index].name);
 }
