@@ -65,6 +65,7 @@ const picker = @import("frontend/picker.zig");
 const strip = @import("frontend/strip.zig");
 const rewind = @import("frontend/rewind.zig");
 const linkport = @import("frontend/linkport.zig");
+const party = @import("frontend/party.zig");
 const audio = @import("frontend/audio.zig");
 const tuning = @import("frontend/tuning.zig");
 const hint = @import("hint");
@@ -78,9 +79,10 @@ comptime {
 var lynx: core.Lynx = undefined;
 
 /// 0 splash, 1 running, 2 menu, 3 pick (drive picker), 4 help (no usable
-/// ROM on the drive: the no-ROM screen, the core is never stepped). `pick`
-/// and `help` only happen in drive builds.
-pub const State = enum(u32) { splash = 0, running = 1, menu = 2, pick = 3, help = 4 };
+/// ROM on the drive: the no-ROM screen, the core is never stepped), 5 the
+/// PARTY lobby (frontend/party.zig, from the menu). `pick` and `help`
+/// only happen in drive builds.
+pub const State = enum(u32) { splash = 0, running = 1, menu = 2, pick = 3, help = 4, party = 5 };
 var state: State = .splash;
 /// Where the splash leads (`romsrc.select`'s choice).
 var after_splash: State = .running;
@@ -141,6 +143,7 @@ pub fn update() void {
         .running => run_frame(t0),
         .help => draw_help(),
         .menu => menu_frame(),
+        .party => party_frame(t0),
         // Only a drive build gets here; the check keeps the picker out of
         // the wasm and embed builds.
         .pick => if (romsrc.use_drive) pick_frame(t0),
@@ -160,7 +163,7 @@ fn enter(next: State, t0: u64) void {
         .running => run_frame(t0),
         .help => draw_help(),
         .pick => if (romsrc.use_drive) pick_frame(t0),
-        .splash, .menu => {},
+        .splash, .menu, .party => {},
     }
 }
 
@@ -203,7 +206,33 @@ fn menu_frame() void {
             picker.from_menu = true;
             enter(.pick, cart.micros_since_boot());
         },
+        .party => if (party.enter()) {
+            menu.close();
+            enter(.party, cart.micros_since_boot());
+        },
     }
+    // Linked, the game runs on behind the menu (the others do not wait).
+    if (state == .menu and linkport.linked) linked_background_frame();
+}
+
+/// The lobby: B goes back to the menu; GO restarts the game linked.
+fn party_frame(t0: u64) void {
+    switch (party.update(&lynx, live_edge())) {
+        .stay => {},
+        .back => {
+            state = .menu;
+            menu.open();
+            _ = menu.update(&lynx, live_edge());
+        },
+        .started => enter(.running, t0),
+    }
+}
+
+/// One game frame behind the menu while linked (no input, not shown).
+fn linked_background_frame() void {
+    _ = linkport.before_frame(&lynx);
+    if (linkport.can_step(&lynx)) step(0);
+    linkport.after_frame(&lynx);
 }
 
 fn run_frame(t1: u64) void {
@@ -261,7 +290,15 @@ fn run_frame(t1: u64) void {
     // display conversion, no strip) and none renders sound; the console
     // steps exactly as at 1x (tests/ff_determinism.zig).
     var n: u32 = 1;
-    linkport.before_frame(&lynx);
+    _ = linkport.before_frame(&lynx);
+    // Timestamped mode: the peers' heartbeats are behind; this frame
+    // waits (the picture and sound hold).
+    if (!linkport.can_step(&lynx)) {
+        linkport.after_frame(&lynx);
+        video.show(lynx.frame());
+        strip.draw(&lynx);
+        return;
+    }
     if (fast) {
         lynx.audio_render = false;
         var slowest: u64 = last_frame_us;

@@ -83,6 +83,8 @@ pub const Result = enum {
     resume_game,
     /// Close, suppress held buttons, `picker.reset()`, enter the picker.
     pick_rom,
+    /// Close and open the PARTY screen (frontend/party.zig).
+    party,
 };
 
 /// Pad bits (`core.Pad`) main.zig ORs into the game pad while
@@ -106,8 +108,11 @@ const footer_turn = 120;
 /// Menu updates since `open`, for the footer's turns.
 var updates_open: u32 = 0;
 
-const Item = enum { resume_game, buttons, sound, opt2, restart, debug, reset, pick_rom, about };
+const Item = enum { resume_game, buttons, sound, opt2, restart, debug, reset, pick_rom, party, about };
 const item_count = @typeInfo(Item).@"enum".field_names.len;
+/// Rows the panel holds: at most this many items are visible at once
+/// (the Debug overlay row gives way in the one case all ten would show).
+const panel_rows = 9;
 
 /// The Pick ROM row exists only when the drive has more than one playable
 /// file; otherwise it is skipped (not greyed) by `move` and `draw`.
@@ -120,6 +125,8 @@ fn visible(item: Item) bool {
         .pick_rom => pick_available(),
         // The pinned simulator has no streaming audio.
         .sound => !cart.is_wasm,
+        // Ten rows (Sound and Pick ROM and Party): the developer's row goes.
+        .debug => cart.is_wasm or !pick_available(),
         else => true,
     };
 }
@@ -212,6 +219,13 @@ pub fn update(l: *core.Lynx, e: input.Edge) Result {
                     return .resume_game;
                 },
                 .pick_rom => return .pick_rom,
+                .party => {
+                    if (linkport.linked) {
+                        linkport.close(l);
+                        return .resume_game;
+                    }
+                    return .party;
+                },
                 .about => showing_about = true,
                 .buttons, .sound, .debug => adjust(l),
             }
@@ -293,7 +307,7 @@ const first_row_y = panel_y + 2;
 /// The panel's bottom line (y 110): "B: back" on About, "Scrub: ..." on
 /// the rows. Fixed below the ninth row even when Pick ROM or Sound is
 /// hidden.
-pub const scrub_line_y = first_row_y + item_count * row_h;
+pub const scrub_line_y = first_row_y + panel_rows * row_h;
 /// The footer under it (y 119): how to leave the menu (`hint.back`), in
 /// turns with `fast_hint`.
 const footer_y = scrub_line_y + 9;
@@ -303,7 +317,7 @@ const footer_y = scrub_line_y + 9;
 const bar_h = 10;
 const bar_y = panel_y + panel_h - bar_h;
 /// About lines above the bottom line.
-const about_lines = item_count;
+const about_lines = panel_rows;
 
 /// Characters of the 8 px font across the screen (title band).
 const screen_cols = cart.screen_width / 8;
@@ -337,6 +351,7 @@ fn label(item: Item) []const u8 {
         .debug => if (debug.enabled) "Debug overlay: On" else "Debug overlay: Off",
         .reset => "Reset",
         .pick_rom => "Pick ROM",
+        .party => if (linkport.linked) "Leave party" else "Party: ComLynx",
         .about => "About",
     };
 }

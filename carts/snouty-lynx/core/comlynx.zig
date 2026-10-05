@@ -182,6 +182,17 @@ pub const Port = struct {
         return f;
     }
 
+    /// The bus side: the i-th oldest frame not yet taken (i < out_len),
+    /// and dropping the n oldest (after sending them).
+    pub fn peek(p: *const Port, i: u32) TxFrame {
+        return p.out[(p.out_head + i) % out_cap];
+    }
+    pub fn drop(p: *Port, n: u32) void {
+        const k = @min(n, p.out_len);
+        p.out_head = (p.out_head + k) % out_cap;
+        p.out_len -= k;
+    }
+
     /// The UART side: a frame went on the wire.
     pub noinline fn push_out(p: *Port, f: TxFrame) void {
         p.sent +%= 1;

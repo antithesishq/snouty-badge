@@ -252,6 +252,10 @@ fn build_cart_modules(b: *Build, cart: *Build.Module, cart_api: *Build.Module, s
     // The new firmware's streaming-audio ring (M5 sound, frontend/audio.zig).
     cart.addImport("stream_audio", b.createModule(.{ .root_source_file = b.path("lib/stream_audio.zig") }));
     cart.addImport("build_options", build_options.?.createModule());
+    // ComLynx play over the fork firmware's cart serial port and the
+    // laptop lobby (frontend/linkport.zig, docs/COMLYNX.md section 10).
+    cart.addImport("cart_serial", b.createModule(.{ .root_source_file = b.path("lib/cart_serial.zig") }));
+    cart.addImport("party", b.createModule(.{ .root_source_file = b.path("lib/party.zig") }));
     cart.addImport("drive", b.createModule(.{
         .root_source_file = b.path(dir ++ "cart/src/frontend/drive.zig"),
         .imports = &.{

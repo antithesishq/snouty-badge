@@ -132,9 +132,6 @@ pub fn Net(comptime Client: type) type {
         /// Each peer's last heartbeat in link ticks (null: none yet).
         peer_time: [party.max_players]?u64 = @splat(null),
         seq: u8 = 0,
-        /// Frames the UART sent that did not fit in a message yet.
-        pend: [comlynx.out_cap]comlynx.TxFrame = undefined,
-        pend_len: u32 = 0,
         ready_left: u8 = 0,
         stats: Stats = .{},
 
@@ -251,26 +248,21 @@ pub fn Net(comptime Client: type) type {
         pub fn after_frame(self: *Self, l: *Lynx) void {
             if (!self.linked) return;
             if (self.attached) l.link_sync();
-            while (self.attached) {
-                const f = self.port.take() orelse break;
-                if (self.pend_len == self.pend.len) break;
-                self.pend[self.pend_len] = f;
-                self.pend_len += 1;
-            }
             const t_end = self.link_now(l);
-            var first: u32 = 0;
+            // Messages of at most `max_entries` frames, straight from the
+            // port's queue; what does not fit in the ring waits there for
+            // the next frame, in order.
+            var fs: [max_entries]comlynx.TxFrame = undefined;
             while (true) {
-                const n = @min(self.pend_len - first, max_entries);
-                if (!self.send_frames(t_end, self.pend[first..][0..n])) {
+                const n = @min(self.port.out_len, max_entries);
+                for (0..n) |i| fs[i] = self.port.peek(@intCast(i));
+                if (!self.send_frames(t_end, fs[0..n])) {
                     self.stats.tx_full += 1;
                     break;
                 }
-                first += n;
-                if (first == self.pend_len) break;
+                self.port.drop(n);
+                if (self.port.out_len == 0) break;
             }
-            // Keep what did not go (next frame, in order).
-            std.mem.copyForwards(comlynx.TxFrame, self.pend[0 .. self.pend_len - first], self.pend[first..self.pend_len]);
-            self.pend_len -= first;
         }
 
         fn send_frames(self: *Self, t_end: u64, fs: []const comlynx.TxFrame) bool {
@@ -398,10 +390,10 @@ pub fn Net(comptime Client: type) type {
         fn start_link(self: *Self, l: *Lynx, d_ms: u8) void {
             self.mode = if (d_ms == 0) .relay else .timestamped;
             self.d_ticks = @as(u64, d_ms) * 1000 * tick_per_us;
+            self.port.* = .{ .id = self.me() orelse 0, .echo = .local };
             self.link_base = 0;
             self.t0 = l.time();
             self.peer_time = @splat(null);
-            self.pend_len = 0;
             self.linked = true;
             self.attached = false;
             self.restart_in = stagger_frames * @as(u32, self.me() orelse 0);
