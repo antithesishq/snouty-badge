@@ -21,8 +21,9 @@ pub const track_max = 4;
 pub const arena_max = 1;
 /// The directory: header, league block, the track records.
 pub const dir_max = header_bytes + league_bytes + (track_max + arena_max) * record_bytes;
-/// Largest pack file (256 drive clusters: `pack.zig`'s cluster table).
-pub const file_max: u32 = 128 * 1024;
+/// Largest pack file (192 drive clusters: `pack.zig`'s cluster table; a
+/// three-track pack with an arena is 25 to 35 KB).
+pub const file_max: u32 = 96 * 1024;
 pub const name_len = 16;
 
 /// Section sizes (the built-in leagues' and tracks', track.zig).

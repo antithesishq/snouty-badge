@@ -246,8 +246,7 @@ fn draw_track_panel() void {
     const t = shown() orelse {
         // M7: a pack that cannot be raced: its file and why.
         const r = pack_rows.race_row(track_index);
-        var nb: [18]u8 = undefined;
-        plain(pack_rows.note(r, &nb), 4, 79, dim);
+        plain(pack_rows.note(r), 4, 79, dim);
         plain(pack_rows.reason(r), 4, 88, hud.coral);
         return;
     };

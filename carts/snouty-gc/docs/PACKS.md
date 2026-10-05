@@ -27,7 +27,7 @@ with Landfill Loop and The Sandbox, to prove the path.
 5. A bad file is listed with a reason and cannot be picked: `PACK
    DAMAGED` (CRC or a section fails its checks), `NOT A PACK` (no `GCPK`
    magic), `PACK TOO NEW` (a format version this cart does not know),
-   `PACK TOO BIG` (over the 128 KB cap), `NEEDS NEWER CART` (a hazard kind
+   `PACK TOO BIG` (over the 96 KB cap), `NEEDS NEWER CART` (a hazard kind
    this cart does not run), `RECOPY PACK` (the file is split over the
    drive: see RAM below). Copy it again or rebuild it.
 
@@ -35,7 +35,7 @@ Link play: both badges need the same pack (same name and CRC). The host
 cannot pick a pack track its partner lacks: its rules row reads `PARTNER
 LACKS PACK`.
 
-Up to 8 `.GCP` files are listed; the drive holds 1,280 KB, and a pack is
+Up to 6 `.GCP` files are listed (the first 6 in the drive's directory); the drive holds 1,280 KB, and a pack is
 about 40 to 80 KB.
 
 ## Pack source layout (what `tools/build_pack.py` reads)
@@ -217,7 +217,7 @@ The **arena blob** is `track.zig` `parse_arena`'s (tools/build_arena.py).
 At the scan (menu open): the magic (`NOT A PACK`), the version (`PACK
 TOO NEW`), the header (counts, cell size, reserved bytes zero, the file
 size equal to the directory entry's) and every section's bounds and
-length (`PACK DAMAGED`), the size cap of 128 KB (`PACK TOO BIG`), the
+length (`PACK DAMAGED`), the size cap of 96 KB (`PACK TOO BIG`), the
 hazard mask (`NEEDS NEWER CART`); then
 the CRC in the background, a few KB a frame (`PACK DAMAGED`). A pack is
 pickable once its CRC is in. At load: each packed stream must decode to

@@ -90,20 +90,12 @@ pub fn setup_track(r: Row) u8 {
     };
 }
 
-/// A refused row's line, `NAME.GCP: PACK DAMAGED` cut to `out`.
-pub fn note(r: Row, out: []u8) []const u8 {
-    const pi = switch (r) {
-        .refused => |p| p,
-        else => return "",
+/// A refused row's file name (`NAME.GCP`).
+pub fn note(r: Row) []const u8 {
+    return switch (r) {
+        .refused => |p| pack.packs[p].file_name(),
+        else => "",
     };
-    const p = &pack.packs[pi];
-    var n: usize = 0;
-    for (p.file_name()) |c| {
-        if (n >= out.len) break;
-        out[n] = c;
-        n += 1;
-    }
-    return out[0..n];
 }
 
 /// Why a refused row cannot be raced.
@@ -145,9 +137,17 @@ pub fn index_of(battle: bool, r: Row) u8 {
     var i: u8 = 0;
     while (i < n) : (i += 1) {
         const x = if (battle) arena_row(i) else race_row(i);
-        if (std.meta.eql(x, r)) return i;
+        if (same(x, r)) return i;
     }
     return 0;
+}
+
+fn same(a: Row, b: Row) bool {
+    return switch (a) {
+        .builtin => |x| b == .builtin and b.builtin == x,
+        .pack => |x| b == .pack and b.pack.p == x.p and b.pack.k == x.k,
+        .refused => |x| b == .refused and b.refused == x,
+    };
 }
 
 /// The name of the track a link rules name, if this badge has it.

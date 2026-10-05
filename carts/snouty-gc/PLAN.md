@@ -2967,7 +2967,7 @@ L98. **Props**: one sheet per pack, cells of one size (even width <= 32,
 L99. **CRC** covers bytes 64 to the end (SPEC 19.1's "CRC32 of the rest");
     the header is checked field by field (reserved bytes zero, the size
     field equal to the directory entry's), and names show unknown bytes as
-    `?`. Packs are capped at 128 KB and the picker lists at most 8.
+    `?`. Packs are capped at 96 KB and the picker lists at most 6 (L105).
 L100. **In-place sections**: with 8 KB for all of M7 (code included) there
     is no room for a RAM copy of a pack's palette, attributes, centerline,
     feat, props, arena blob and props cells, so they are read where they

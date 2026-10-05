@@ -231,31 +231,32 @@ pub fn start() void {
 
 // --- M7 track packs -----------------------------------------------------------------
 
-/// badge-bench `--poke gc_pack=N` (a drive image with TEST.GCP, or any
-/// pack, via --romfs): at boot the drive is scanned and checked, then
-/// 1: a Quick Race on the first pack's first track with SNOUTY on the
-/// autopilot; 2: the render stress scene there; 3: a BATTLE round on its
-/// arena (the autopilot, 3 lives, 3 min).
+/// badge-bench `--poke gc_pack=M --poke gc_pack_row=R` (with a drive
+/// image holding packs, `--romfs`): at boot the drive is scanned and its
+/// CRCs run, then M = 1: a Quick Race on race row R (the first pack track
+/// is row 6) with SNOUTY on the autopilot; 2: the render stress scene on
+/// that row; 3: a BATTLE round on arena row R (1: the first pack's arena),
+/// the autopilot, 3 lives, 3 min.
 export var gc_pack: u8 = 0;
+export var gc_pack_row: u8 = track.tracks.len;
 
 fn start_pack_bench() void {
     packs_scan();
     pack.check_all();
-    const base: u8 = track.tracks.len;
     switch (gc_pack) {
         1 => {
             autopilot = true;
-            new_race(.quick, base);
+            new_race(.quick, gc_pack_row);
         },
         2 => {
-            new_race(.quick, base);
+            new_race(.quick, gc_pack_row);
             mode = .stress;
             stress.fill(&w, follow);
             fx.begin(&w);
         },
         else => {
             autopilot = true;
-            battle_ui.opts.arena = track.arenas.len;
+            battle_ui.opts.arena = gc_pack_row;
             new_race(.battle, 0);
         },
     }

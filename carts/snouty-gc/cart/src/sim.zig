@@ -703,7 +703,8 @@ pub fn pit_at(w: *const World, t: *const track.Track, x: i32, y: i32) bool {
 /// loses its speed into it as at a wall (with the wall's damage).
 fn prop_contact(w: *World, i: usize) void {
     const c = &w.cars[i];
-    for (track.props[0..track.prop_n]) |pr| {
+    for (0..track.prop_n) |pk| {
+        const pr = track.prop(pk);
         if (pr.radius == 0) continue;
         const reach: i32 = @as(i32, pr.radius) + tuning.car_radius;
         const dx = wrap_px((c.x >> fixed.Q) - @as(i32, pr.x));
@@ -712,10 +713,10 @@ fn prop_contact(w: *World, i: usize) void {
         const d2 = dx * dx + dy * dy;
         if (d2 >= reach * reach) continue;
         const d: i32 = @intCast(fixed.isqrt(@intCast(d2)));
-        // Unit normal from the prop to the car (Q16; straight back along
-        // the car's travel when it sits on the prop's centre).
-        const nx: i32 = if (d == 0) -fixed.cos(c.heading) else @divTrunc(dx << fixed.Q, d);
-        const ny: i32 = if (d == 0) -fixed.sin(c.heading) else @divTrunc(dy << fixed.Q, d);
+        // Unit normal from the prop to the car (Q16; east when the car sits
+        // on the prop's centre).
+        const nx: i32 = if (d == 0) fixed.one else @divTrunc(dx << fixed.Q, d);
+        const ny: i32 = if (d == 0) 0 else @divTrunc(dy << fixed.Q, d);
         nudge(w, c, nx * (reach - d), ny * (reach - d));
         const vn = fixed.mul(c.vx, nx) + fixed.mul(c.vy, ny);
         if (vn >= 0) continue;

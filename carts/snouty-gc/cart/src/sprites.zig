@@ -403,7 +403,8 @@ pub fn draw_world(w: *const world.World, v: View) void {
     }
     // M7: the track's scenery props (SPEC 19.3).
     if (track.current.sheet != null) {
-        for (track.props[0..track.prop_n], 0..) |pr, k| {
+        for (0..track.prop_n) |k| {
+            const pr = track.prop(k);
             const p = visible(@as(i32, pr.x) << fixed.Q, @as(i32, pr.y) << fixed.Q) orelse continue;
             push(.prop, k, 0, p);
         }
@@ -476,7 +477,7 @@ pub fn draw_world(w: *const world.World, v: View) void {
             .mover => draw_mover(w, e.index, e.p, v.frame),
             .vent => draw_vent(e.index, e.sub, e.p, v.frame),
             .chip => draw_chip(e.index, e.p, v.frame),
-            .prop => draw_prop(track.props[e.index].cell, e.p),
+            .prop => draw_prop(track.prop(e.index).cell, e.p),
         }
     }
 }

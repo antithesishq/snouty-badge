@@ -153,8 +153,8 @@ pub const Track = struct {
     /// is a ring round its outer lanes for the race code that reads one;
     /// battle never ranks or respawns by it.
     arena: []const u8 = &.{},
-    /// M7: scenery props, `prop_record` bytes each (cell, radius, x, y;
-    /// `parse_props`); empty for the built-in tracks. `cell` indexes
+    /// M7: scenery props, `prop_record` bytes each (cell, radius, x u16,
+    /// y u16; `prop`); empty for the built-in tracks. `cell` indexes
     /// `sheet`'s strip.
     props: []const u8 = &.{},
     /// M7: the props sheet (a pack's cells this track uses, as one strip),
@@ -209,20 +209,15 @@ pub const PropSheet = struct {
 pub const Prop = struct { x: u16 = 0, y: u16 = 0, cell: u8 = 0, radius: u8 = 0 };
 pub const prop_max = 24;
 pub const prop_record = 6;
-/// The selected track's props (filled by `select`, like `crate_spots`).
-pub var props: [prop_max]Prop = @splat(.{});
+/// The selected track's props: `prop(k)` for k < `prop_n` (set by
+/// `select`; read from `current.props`, no copy: RAM, PLAN M7).
 pub var prop_n: u8 = 0;
 /// The largest solid radius among them (0: none; the sim skips the test).
 pub var prop_reach: u8 = 0;
 
-/// Decode `t.props` into `out`; returns the count.
-pub fn parse_props(t: *const Track, out: *[prop_max]Prop) u8 {
-    var n: usize = 0;
-    while (n < out.len and (n + 1) * prop_record <= t.props.len) : (n += 1) {
-        const b = t.props[n * prop_record ..][0..prop_record];
-        out[n] = .{ .cell = b[0], .radius = b[1], .x = std.mem.readInt(u16, b[2..4], .little) & 1023, .y = std.mem.readInt(u16, b[4..6], .little) & 1023 };
-    }
-    return @intCast(n);
+pub fn prop(k: usize) Prop {
+    const b = current.props[k * prop_record ..][0..prop_record];
+    return .{ .cell = b[0], .radius = b[1], .x = std.mem.readInt(u16, b[2..4], .little) & 1023, .y = std.mem.readInt(u16, b[4..6], .little) & 1023 };
 }
 
 // --- M7 track packs (docs/PACKS.md): the loaded pack track ----------------
@@ -474,6 +469,9 @@ pub fn parse_arena(t: *const Track, out: *Arena, pads: *[world.crate_max]CrateSp
         out.nodes[k] = .{ .x = rd(b, at), .y = rd(b, at + 2), .jump = b[at + 4], .flags = b[at + 5] };
         at += 6;
     }
+    // M7 (packs): every table entry and jump names a node, or none.
+    for (b[at .. at + 2 * nn * nn + grid * grid]) |v| if (v != no_node and v >= nn) return false;
+    for (out.nodes[0..nn]) |nd| if (nd.jump != no_node and nd.jump >= nn) return false;
     out.spawn_n = @intCast(sn);
     out.node_n = @intCast(nn);
     out.next = b[at..][0 .. nn * nn];
@@ -553,9 +551,10 @@ pub fn select(t: *const Track) void {
     }
     map_owner = t;
     crust_shown = @splat(0);
-    prop_n = parse_props(t, &props);
+    prop_n = @intCast(@min(prop_max, t.props.len / prop_record));
     prop_reach = 0;
-    for (props[0..prop_n]) |pr| prop_reach = @max(prop_reach, pr.radius);
+    current = t;
+    for (0..prop_n) |k| prop_reach = @max(prop_reach, prop(k).radius);
     // An arena's crates sit on its pads; a race track's in its rows.
     if (!parse_arena(t, &arena, &crate_spots, &crate_n)) crate_n = find_crates(t, &crate_spots);
     chip_n = find_chips(t, &chip_spots);

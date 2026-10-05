@@ -28,7 +28,7 @@ const world = @import("world.zig");
 
 pub const Refusal = fmt.Refusal;
 /// `.GCP` files listed at most.
-pub const max_packs = 8;
+pub const max_packs = 6;
 /// CRC bytes hashed per `tick`.
 pub const crc_step: u32 = 4096;
 
@@ -59,12 +59,14 @@ pub const Pack = struct {
     }
 };
 
-pub var packs: [max_packs]Pack = @splat(.{});
+pub var packs: [max_packs]Pack = undefined;
 pub var count: u8 = 0;
 /// The volume `scan` read (null: none yet, or no drive).
 var image: ?romfs.Image = null;
-/// One file's cluster chain (the CRC job and the loader take turns).
-var clusters: [fmt.file_max / romfs.sector_size]u16 = undefined;
+/// One file's cluster chain, on the caller's stack (RAM, PLAN M7): a
+/// `Mapped` reads through it, so it lives as long as the mapping is used;
+/// the loader keeps only pointers into the drive after it returns.
+const Clusters = [fmt.file_max / romfs.sector_size]u16;
 /// The background CRC: the pack being hashed and how far.
 var job_at: u32 = 0;
 var job_crc: u32 = 0xFFFFFFFF;
@@ -130,7 +132,7 @@ pub fn unpack_checked(m: *const romfs.Mapped, s: fmt.Section, dst: []u8) bool {
 
 /// A mapping of `b` as if it were a contiguous file on a drive (the
 /// cluster table filled with consecutive clusters).
-fn map_bytes(b: []const u8) ?romfs.Mapped {
+fn map_bytes(b: []const u8, clusters: *Clusters) ?romfs.Mapped {
     if (b.len == 0 or b.len > fmt.file_max) return null;
     const n = (b.len + romfs.sector_size - 1) / romfs.sector_size;
     for (clusters[0..n], 0..) |*c, i| c.* = @intCast(i + 2);
@@ -138,12 +140,12 @@ fn map_bytes(b: []const u8) ?romfs.Mapped {
 }
 
 /// Map pack `i`'s file again (its FAT chain into `clusters`).
-fn map_pack(i: usize) ?romfs.Mapped {
-    if (bytes_src) |b| return map_bytes(b);
+fn map_pack(i: usize, clusters: *Clusters) ?romfs.Mapped {
+    if (bytes_src) |b| return map_bytes(b, clusters);
     const img = image orelse return null;
     const vol = romfs.Volume.open(img) catch return null;
     const p = &packs[i];
-    return vol.map(.{ .size = p.size, .first_cluster = p.cluster }, &clusters) catch null;
+    return vol.map(.{ .size = p.size, .first_cluster = p.cluster }, clusters) catch null;
 }
 
 /// The first `dir_max` bytes (or the whole file) and its parsed directory.
@@ -183,6 +185,32 @@ test "crc_update is zlib's CRC-32" {
 
 // --- The drive scan and the background CRC -----------------------------------
 
+/// The root directory's `.GCP` files by their 8.3 entries (a pack has an
+/// 8.3 name, docs/PACKS.md): a lighter `romfs.Volume.find` without the
+/// long-name assembly (RAM, PLAN M7). The boot sector was checked by
+/// `Volume.open`, which also bounds the root directory inside the image.
+fn find_gcp(img: romfs.Image, out: *[max_packs]romfs.Entry) usize {
+    const b = img.bytes;
+    const root = (@as(usize, std.mem.readInt(u16, b[14..16], .little)) + @as(usize, b[16]) * std.mem.readInt(u16, b[22..24], .little)) * romfs.sector_size;
+    var n: usize = 0;
+    var i: usize = 0;
+    while (i < 32 and n < out.len) : (i += 1) {
+        const e = b[root + i * 32 ..][0..32];
+        if (e[0] == 0) break;
+        if (e[0] == 0xE5 or e[11] & 0x18 != 0 or e[11] & 0x3F == 0x0F) continue;
+        if ((e[8] | 0x20) != 'g' or (e[9] | 0x20) != 'c' or (e[10] | 0x20) != 'p') continue;
+        const o = &out[n];
+        var k: u8 = 0;
+        while (k < 8 and e[k] != ' ') : (k += 1) o.name[k] = e[k];
+        @memcpy(o.name[k..][0..4], ".GCP");
+        o.name_len = k + 4;
+        o.size = std.mem.readInt(u32, e[28..32], .little);
+        o.first_cluster = std.mem.readInt(u16, e[26..28], .little);
+        n += 1;
+    }
+    return n;
+}
+
 /// List and check the `.GCP` files on `img` (header and directory now, the
 /// CRC through `tick`). A file listed by the last scan with the same
 /// cluster, size and header CRC keeps its verdict (no second CRC).
@@ -196,7 +224,7 @@ pub fn scan(img: romfs.Image) void {
     job_pack = 0xFF;
     const vol = romfs.Volume.open(img) catch return;
     var ents: [max_packs]romfs.Entry = undefined;
-    const n = vol.find(&.{"gcp"}, &ents);
+    const n = find_gcp(img, &ents);
     for (ents[0..n]) |e| {
         const p = &packs[count];
         p.* = .{ .cluster = e.first_cluster, .size = e.size };
@@ -204,7 +232,8 @@ pub fn scan(img: romfs.Image) void {
         @memcpy(p.file[0..nl], e.name[0..nl]);
         p.file_len = @intCast(nl);
         count += 1;
-        const m = vol.map(e, &clusters) catch {
+        var cl: Clusters = undefined;
+        const m = vol.map(e, &cl) catch {
             p.status = if (e.size > fmt.file_max) .too_big else .bad_file;
             continue;
         };
@@ -241,7 +270,8 @@ pub fn tick() bool {
         job_at = fmt.header_bytes;
         job_crc = 0xFFFFFFFF;
     }
-    const m = map_pack(i) orelse {
+    var cl: Clusters = undefined;
+    const m = map_pack(i, &cl) orelse {
         p.status = .bad_file;
         job_pack = 0xFF;
         return true;
@@ -336,7 +366,8 @@ pub fn load_bytes(b: []const u8, k: u8) Refusal {
     image = null;
     count = 1;
     packs[0] = .{ .size = @intCast(@min(b.len, std.math.maxInt(u32))) };
-    const m = map_bytes(b) orelse {
+    var cl: Clusters = undefined;
+    const m = map_bytes(b, &cl) orelse {
         packs[0].status = if (b.len > fmt.file_max) .too_big else .not_a_pack;
         fail();
         return packs[0].status;
@@ -374,7 +405,8 @@ fn in_place(m: *const romfs.Mapped, sec: fmt.Section) ?[]const u8 {
 }
 
 fn load_mapped(i: u8, k: u8) Refusal {
-    const m = map_pack(i) orelse return .bad_file;
+    var cl: Clusters = undefined;
+    const m = map_pack(i, &cl) orelse return .bad_file;
     var d: fmt.Directory = undefined;
     const r = read_dir(&m, &d);
     if (r != .ok) return r;
@@ -386,7 +418,7 @@ fn load_mapped(i: u8, k: u8) Refusal {
     if (!unpack_checked(&m, d.tiles, &track.art_tiles)) return .damaged;
     if (!unpack_checked(&m, d.horizon, &track.art_horizon)) return .damaged;
     if (!unpack_checked(&m, rec.map, &track.map_ram)) return .damaged;
-    for (track.map_ram) |v| if (v >= track.tile_count) return .damaged;
+    for (&track.map_ram) |v| if (v >= track.tile_count) return .damaged;
     // Everything else is read where it lies on the drive (RAM is short:
     // PLAN M7, L100), so each section must be one run of clusters.
     const pal = in_place(&m, d.pal) orelse return .fragmented;
@@ -398,23 +430,13 @@ fn load_mapped(i: u8, k: u8) Refusal {
     const cells = in_place(&m, d.cells) orelse return .fragmented;
     const cell_pal = in_place(&m, d.cell_pal) orelse return .fragmented;
     for (attr) |a| if (a > @backingInt(track.Attr.crust)) return .damaged;
-    // Feat kinds: in the header's mask; a turret is not run; a sprite only
-    // on a mover, inside the sheet; crust in whole tiles inside the map,
-    // its tiles carrying the crust attribute.
+    // A turret is not run (a pack with one is for a newer cart); any other
+    // odd kind or number is harmless (track.parse_hazards reads unknown
+    // kinds as none and periods as at least 1; crust_look clamps its
+    // rectangle to the map).
     var f: usize = 0;
     while (f < feat.len) : (f += fmt.feat_record) {
-        const kind = feat[f] & 15;
-        if (kind == 0 or kind > @backingInt(world.HazardKind.crust)) return .damaged;
-        if (kind == @backingInt(world.HazardKind.turret)) return .needs_newer_cart;
-        if (d.hazards & (@as(u8, 1) << @intCast(kind)) == 0) return .damaged;
-        if (std.mem.readInt(u16, feat[f + 12 ..][0..2], .little) == 0) return .damaged;
-        if (kind != @backingInt(world.HazardKind.crust)) continue;
-        const x0 = std.mem.readInt(u16, feat[f + 4 ..][0..2], .little);
-        const y0 = std.mem.readInt(u16, feat[f + 6 ..][0..2], .little);
-        const x1 = std.mem.readInt(u16, feat[f + 8 ..][0..2], .little);
-        const y1 = std.mem.readInt(u16, feat[f + 10 ..][0..2], .little);
-        if (x0 >= x1 or y0 >= y1 or x1 > 1024 or y1 > 1024) return .damaged;
-        if (attr[track.crust_tile] != @backingInt(track.Attr.crust)) return .damaged;
+        if (feat[f] & 15 == @backingInt(world.HazardKind.turret)) return .needs_newer_cart;
     }
     _ = fmt.cells_used(&d, props, feat) orelse return .damaged;
     // The props sheet: the pack's cells stacked as one column (each cell
@@ -440,20 +462,15 @@ fn load_mapped(i: u8, k: u8) Refusal {
         .props = props,
         .sheet = if (d.cell_n > 0) &sheet else null,
     };
-    // The arena blob must parse (spawns, nodes, tables in range).
-    if (rec.kind == .arena) {
-        var a: track.Arena = .{};
-        var pads: [world.crate_max]track.CrateSpot = undefined;
-        var pn: u8 = 0;
-        if (!track.parse_arena(&track.pack_track, &a, &pads, &pn) or a.spawn_n == 0) return .damaged;
-        for (a.next) |v| if (v != track.no_node and v >= a.node_n) return .damaged;
-        for (a.ground) |v| if (v != track.no_node and v >= a.node_n) return .damaged;
-        for (a.cells) |v| if (v != track.no_node and v >= a.node_n) return .damaged;
-        for (a.nodes[0..a.node_n]) |nd| if (nd.jump != track.no_node and nd.jump >= a.node_n) return .damaged;
-    }
     track.art_league = &track.pack_league;
     track.map_owner = &track.pack_track;
     if (!center_ok(&track.pack_track, rec.kind == .race)) return .damaged;
+    // The arena blob must parse, every table entry a node (track.select
+    // decodes it into track.arena, as the race start will).
+    if (rec.kind == .arena) {
+        track.select(&track.pack_track);
+        if (track.arena.spawn_n == 0) return .damaged;
+    }
     loaded = .{ .pack = i, .k = k, .id = packs[i].id };
     track.pack_reload = &reload;
     return .ok;

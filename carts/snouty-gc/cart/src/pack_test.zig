@@ -345,7 +345,8 @@ test "a solid prop is a wall: a car driven into it stops at its edge; decoration
     var w = quiet_world(racers.kiddie);
     var solid: track.Prop = .{};
     var deco: track.Prop = .{};
-    for (track.props[0..track.prop_n]) |p| {
+    for (0..track.prop_n) |pk| {
+        const p = track.prop(pk);
         if (p.radius > 0) solid = p else if (deco.x == 0 and p.y > 150) deco = p;
     }
     try expect(solid.radius == 6);
@@ -363,4 +364,17 @@ test "a solid prop is a wall: a car driven into it stops at its edge; decoration
     try expect(min_d >= reach - 2);
     // A decoration (a cone off the south edge) does nothing to a car.
     try expect(deco.radius == 0);
+}
+
+test "the content packs from a drive image: every track and arena loads" {
+    defer pack.forget();
+    pack.scan(romfs.Image.truncated_test(@embedFile("gen/packs/drive_packs.img")));
+    pack.check_all();
+    try expectEqual(@as(u8, 3), pack.count);
+    for (pack.packs[0..pack.count], 0..) |*p, i| {
+        try expectEqual(fmt.Refusal.ok, p.status);
+        for (0..p.track_n + p.arena_n) |k| try expectEqual(fmt.Refusal.ok, pack.load(@intCast(i), @intCast(k)));
+    }
+    try expectEqual(@as(u8, 6 + 3 + 3 + 2), pack_rows.race_count());
+    try expectEqual(@as(u8, 4), pack_rows.arena_count());
 }
