@@ -8,6 +8,7 @@ const state = @import("../state.zig");
 const blit = @import("blit.zig");
 const portrait = @import("portrait.zig");
 const fx = @import("fx.zig");
+const build_options = @import("build_options");
 
 pub const bar_y: i32 = 104;
 pub const bar_h: u32 = 24;
@@ -144,9 +145,9 @@ pub const DemoResult = enum(u8) { none = 0, ok = 1, desync = 2 };
 /// `badge lobby`); Up/Down moves `cursor`. Without link hardware (the
 /// simulator) DEATHMATCH is greyed with "NO LINK IN SIMULATOR" under the
 /// menu while selected; without the party firmware PARTY is greyed with
-/// "NEEDS PARTY FIRMWARE".
+/// "NEEDS PARTY FIRMWARE". Without -Dstein_party there is no PARTY row.
 pub const TitleMenu = struct { cursor: u8 = 0, link: bool = true, party: bool = true };
-pub const title_items = 3;
+pub const title_items: u8 = if (build_options.party) 3 else 2;
 
 pub fn draw_title(tick_n: u32, sound_on: bool, demo_result: DemoResult, menu: TitleMenu) void {
     cart.rect(.{ .x = 0, .y = 0, .width = 160, .height = 128, .fill_color = anti_black });
@@ -159,9 +160,9 @@ pub fn draw_title(tick_n: u32, sound_on: bool, demo_result: DemoResult, menu: Ti
     centered("powered by", 57, iris);
     centered("deterministic replay", 66, iris);
     const blink = (tick_n / 30) % 2 == 0;
-    const items = [title_items][]const u8{ "PLAY", "DEATHMATCH", "PARTY" };
-    const ok = [title_items]bool{ true, menu.link, menu.party };
-    for (items, 0..) |item, i| {
+    const items = [3][]const u8{ "PLAY", "DEATHMATCH", "PARTY" };
+    const ok = [3]bool{ true, menu.link, menu.party };
+    for (items[0..title_items], 0..) |item, i| {
         const y: i32 = 76 + 9 * @as(i32, @intCast(i));
         const on = menu.cursor == i;
         const color = if (!ok[i]) steel else if (on) anti_white else grey;

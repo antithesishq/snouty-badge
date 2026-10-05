@@ -18,6 +18,12 @@ pub fn add(b: *Build, sycl_badge_dep: *Build.Dependency, opts: common.Options) v
     // -Dsound=true starts with sound on; off by default, Select on the title
     // toggles it (docs/SOUND.md).
     options.addOption(bool, "sound", opts.sound);
+    // -Dstein_party=true: the title's PARTY row (M8, up to 16 badges through
+    // `badge lobby`), which needs the fork firmware's cart serial port. Off
+    // on main until that OS change ships: main carts run on stock firmware,
+    // so the lobby and its os_flags probe are compiled out. The local party
+    // match of bots (bench_m8.sh, the m8 previews) is there either way.
+    options.addOption(bool, "party", b.option(bool, "stein_party", "snoutenstein: the PARTY row (needs the fork firmware's cart serial port); default off") orelse false);
     build_options = options;
 
     os_cart.add(b, sycl_badge_dep, .{

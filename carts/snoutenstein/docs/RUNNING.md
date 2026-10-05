@@ -13,7 +13,7 @@ authoritative table is `SPEC.md` section 3.
 
 | Where | Badge | Simulator | Does |
 |---|---|---|---|
-| Title | Joystick up / down | Up / Down or W / S | Pick PLAY, DEATHMATCH or PARTY (both greyed in the simulator: NO LINK IN SIMULATOR, NEEDS PARTY FIRMWARE) |
+| Title | Joystick up / down | Up / Down or W / S | Pick PLAY, DEATHMATCH or PARTY (both greyed in the simulator: NO LINK IN SIMULATOR, NEEDS PARTY FIRMWARE; PARTY only in `-Dstein_party=true` builds) |
 | Title | A | Z or K | PLAY: start the campaign; DEATHMATCH: the two-badge lobby (section 7); PARTY: the party lobby (section 8) |
 | Title | B / Start | X or J / Enter or Y | Start the imported E1M1 / the test level |
 | Title | Select | Backspace or T | Sound on/off; the cart boots silent ([docs/SOUND.md](../../../docs/SOUND.md)) |
@@ -400,7 +400,9 @@ firmware** (`/home/exedev/sycl-badge-fork`, branch `main`): its cart
 serial port is what the cart talks to. On stock firmware the title's
 PARTY entry is greyed with NEEDS PARTY FIRMWARE (always so in the web
 simulator and badge-bench: our wasm build does not speak the fork
-simulator's serial socket). SPEC.md section 20 has the rules.
+simulator's serial socket). The row exists only in builds with
+`-Dstein_party=true` (the `party` branch's default; main leaves it out
+until the fork's cart serial port ships). SPEC.md section 20 has the rules.
 
 **Set up the laptop and the badges:**
 
