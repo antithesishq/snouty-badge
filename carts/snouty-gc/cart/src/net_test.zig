@@ -236,13 +236,13 @@ const Duo = struct {
         const points = d.pump_points();
         while (!done(d, ctx)) {
             if (d.now > end) {
-                if (report) for (&d.b) |*b| std.debug.print("timeout: side {d} role {t} state {t} tick {d} local_hi {d} remote_hi {d} peer_need {d} peer_top {d} w.phase {t} racing {}\n", .{ b.side, b.net.role, b.net.state(), b.net.tick, b.net.local_hi, b.net.remote_hi, b.net.peer_need, b.net.peer_top, b.w.phase, b.racing });
+                if (report) for (&d.b) |*b| std.debug.print("timeout: side {d} role {t} state {t} tick {d} local_hi {d} remote_hi {d} peer_need {d} peer_top {d} w.phase {t} racing {}\n", .{ b.side, b.net.ls.role, b.net.state(), b.net.ls.tick, b.net.ls.local_hi, b.net.ls.remote_hi, b.net.ls.peer_need, b.net.ls.peer_top, b.w.phase, b.racing });
                 return error.Timeout;
             }
             const i: usize = if (d.b[0].next_time() <= d.b[1].next_time()) 0 else 1;
             const b = &d.b[i];
             d.now = b.next_time();
-            d.wire.fifo = d.b[0].net.link.connected() and d.b[1].net.link.connected();
+            d.wire.fifo = d.b[0].net.ls.link.connected() and d.b[1].net.ls.link.connected();
             if (b.point == 0) d.frame(b) else {
                 b.net.pump(d.now);
                 // main's waiting loop: retry a stalled step while pumping.
@@ -271,7 +271,7 @@ const Duo = struct {
         if (d.opts.auto_lobby and n.state() == .lobby) {
             n.set_rules(d.opts.rules);
             n.set_pick(d.opts.picks[b.side], true);
-            if (n.role == .host and n.can_go()) _ = n.go(d.now);
+            if (n.ls.role == .host and n.can_go()) _ = n.go(d.now);
         }
         if (n.take_started()) {
             sim.reset(&b.w, n.world_setup());
@@ -280,14 +280,14 @@ const Duo = struct {
         }
         const st = n.state();
         if (b.racing and (st == .racing or st == .waiting or st == .peer_left)) {
-            if (b.leave_at != 0 and n.tick >= b.leave_at) {
+            if (b.leave_at != 0 and n.ls.tick >= b.leave_at) {
                 n.leave(d.now);
                 b.racing = false;
                 n.pump(d.now);
                 return;
             }
             var byte = b.script_byte();
-            if (b.main_pause and n.paused) {
+            if (b.main_pause and n.ls.paused) {
                 byte &= 0x40;
                 if (b.resume_frame != 0 and b.frames >= b.resume_frame) {
                     b.resume_pending = true;
@@ -312,13 +312,13 @@ const Duo = struct {
     fn try_step(_: *Duo, b: *Badge) void {
         const n = &b.net;
         if (!b.racing or b.done()) return;
-        const was_paused = n.paused;
+        const was_paused = n.ls.paused;
         if (!n.step(&b.w)) return;
         b.stepped = true;
-        if (n.paused and !was_paused) b.pause_on = n.tick - 1;
-        if (!n.paused and was_paused) b.pause_off = n.tick - 1;
-        if (n.tick <= max_ticks) logs[b.side][n.tick] = net.world_hash(&b.w);
-        if (b.mutate_at != 0 and n.tick == b.mutate_at) b.w.cars[3].x +%= 1 << 16;
+        if (n.ls.paused and !was_paused) b.pause_on = n.ls.tick - 1;
+        if (!n.ls.paused and was_paused) b.pause_off = n.ls.tick - 1;
+        if (n.ls.tick <= max_ticks) logs[b.side][n.ls.tick] = net.world_hash(&b.w);
+        if (b.mutate_at != 0 and n.ls.tick == b.mutate_at) b.w.cars[3].x +%= 1 << 16;
     }
 
     fn both(d: *Duo, s: net.State) bool {
@@ -336,12 +336,12 @@ fn done_finished(d: *Duo, _: void) bool {
     return d.b[0].w.phase == .finished and d.b[1].w.phase == .finished;
 }
 fn done_tick(d: *Duo, t: u32) bool {
-    return d.b[0].net.tick >= t and d.b[1].net.tick >= t;
+    return d.b[0].net.ls.tick >= t and d.b[1].net.ls.tick >= t;
 }
 
 /// Both badges logged the same World hash at every tick both reached.
 fn expect_logs_equal(d: *const Duo) !u32 {
-    const upto = @min(@min(d.b[0].net.tick, d.b[1].net.tick), max_ticks);
+    const upto = @min(@min(d.b[0].net.ls.tick, d.b[1].net.ls.tick), max_ticks);
     var t: u32 = 0;
     while (t <= upto) : (t += 1) {
         if (logs[0][t] != logs[1][t]) {
@@ -370,16 +370,16 @@ const Tally = struct {
 
     fn add(t: *Tally, d: *const Duo) void {
         t.races += 1;
-        t.ticks += d.b[0].net.tick;
+        t.ticks += d.b[0].net.ls.tick;
         for (&d.b) |*b| {
-            t.sent += b.net.stats.inputs_sent;
-            t.recv += b.net.stats.inputs_recv;
-            t.stale += b.net.stats.inputs_stale;
-            t.old_windows += b.net.stats.old_windows;
+            t.sent += b.net.ls.stats.inputs_sent;
+            t.recv += b.net.ls.stats.inputs_recv;
+            t.stale += b.net.ls.stats.inputs_stale;
+            t.old_windows += b.net.ls.stats.old_windows;
             t.wait_max = @max(t.wait_max, b.wait_max);
             t.wait_frames += b.wait_frames;
-            t.checks += b.net.stats.checks_ok;
-            t.crc += b.net.link.stats.crc_errors;
+            t.checks += b.net.ls.stats.checks_ok;
+            t.crc += b.net.ls.link.stats.crc_errors;
             t.frames += b.frames;
         }
         t.overflow += d.wire.overflow;
@@ -403,12 +403,12 @@ fn synced_race(opts: Opts, tally: *Tally) !void {
     var d: Duo = undefined;
     d.init(opts);
     try d.run(20_000_000, {}, done_started);
-    try std.testing.expectEqual(d.b[0].net.race.seed, d.b[1].net.race.seed);
+    try std.testing.expectEqual(d.b[0].net.race().seed, d.b[1].net.race().seed);
     try std.testing.expect(std.meta.eql(d.b[0].net.world_setup(), d.b[1].net.world_setup()));
     // CREWS: the two humans and that many AI cars on the grid (L3).
     for (&d.b) |*b| try std.testing.expectEqual(2 + @min(opts.rules.crews, world.car_count - 2), gc_mode.active_count(&b.w));
     try d.run(400_000_000, {}, done_finished);
-    try std.testing.expectEqual(d.b[0].net.tick, d.b[1].net.tick);
+    try std.testing.expectEqual(d.b[0].net.ls.tick, d.b[1].net.ls.tick);
     try std.testing.expect(sim.worlds_equal(&d.b[0].w, &d.b[1].w));
     _ = try expect_logs_equal(&d);
     try std.testing.expectEqual(net.State.racing, d.b[0].net.state());
@@ -506,9 +506,9 @@ test "lobby: the higher nonce hosts, on both cable kinds; another cart is told a
         try d.run(10_000_000, {}, done_lobby);
         const a = &d.b[0].net;
         const b = &d.b[1].net;
-        try std.testing.expect(a.role != .none and b.role != .none and a.role != b.role);
-        const host_side: usize = if (a.role == .host) 0 else 1;
-        try std.testing.expect(d.b[host_side].net.link.nonce > d.b[host_side ^ 1].net.link.nonce);
+        try std.testing.expect(a.ls.role != .none and b.ls.role != .none and a.ls.role != b.ls.role);
+        const host_side: usize = if (a.ls.role == .host) 0 else 1;
+        try std.testing.expect(d.b[host_side].net.ls.link.nonce > d.b[host_side ^ 1].net.ls.link.nonce);
         try std.testing.expect(a.local_slot() != b.local_slot());
     }
     var d: Duo = undefined;
@@ -529,7 +529,7 @@ test "lobby: rules reach the guest, a racer clash blocks GO, GO under heavy loss
     var d: Duo = undefined;
     d.init(.{ .seed = 77, .auto_lobby = false, .loss_ppm = 50_000 });
     try d.run(20_000_000, {}, done_lobby);
-    const hs: usize = if (d.b[0].net.role == .host) 0 else 1;
+    const hs: usize = if (d.b[0].net.ls.role == .host) 0 else 1;
     const h = &d.b[hs].net;
     const g = &d.b[hs ^ 1].net;
     const rules = net.Rules{ .mode = .gc, .track = 0, .crews = 2 };
@@ -556,7 +556,7 @@ test "lobby: rules reach the guest, a racer clash blocks GO, GO under heavy loss
     try d.run(5_000_000, hs, Can.f);
     try std.testing.expect(h.go(d.now));
     try d.run(20_000_000, {}, done_started);
-    try std.testing.expectEqual(@as(u8, 1), g.race.id);
+    try std.testing.expectEqual(@as(u8, 1), g.race().id);
     try std.testing.expect(std.meta.eql(h.world_setup(), g.world_setup()));
     try std.testing.expectEqual(world.Mode.gc, g.world_setup().mode);
     try std.testing.expectEqual([2]u8{ racers.legacy, racers.botnet }, g.world_setup().humans);
@@ -627,9 +627,9 @@ test "unplugging mid-race: both sides hand the other car to the AI and finish" {
     if (report) std.debug.print("\nunplug: both peer_left after {d} ms\n", .{(d.now - t0) / 1000});
     try d.run(400_000_000, {}, done_finished);
     for (&d.b) |*b| {
-        try std.testing.expectEqual(net.Left.unplugged, b.net.left);
-        const other: u8 = b.net.race.racers[b.net.local_slot() ^ 1];
-        try std.testing.expectEqual(@as(?u8, other), b.net.handed_over);
+        try std.testing.expectEqual(net.Left.unplugged, b.net.ls.left);
+        const other: u8 = b.net.race().racers[b.net.local_slot() ^ 1];
+        try std.testing.expectEqual(@as(?u8, other), b.net.handed_over());
         try std.testing.expectEqual(world.no_human, b.w.cars[other].human);
         try std.testing.expectEqual(@as(u8, b.net.local_slot()), b.w.cars[b.net.local_car()].human);
         try std.testing.expect(b.w.cars[b.net.local_car()].finished);
@@ -648,17 +648,17 @@ test "a World changed on one badge is a desync on both within 64 ticks" {
                 return dd.both(.desync);
             }
         }.f) catch |e| {
-            for (&d.b) |*b| std.debug.print("side {d}: state {t} tick {d} local_hi {d} remote_hi {d} desync_tick {d} w.phase {t}\n", .{ b.side, b.net.state(), b.net.tick, b.net.local_hi, b.net.remote_hi, b.net.desync_tick, b.w.phase });
+            for (&d.b) |*b| std.debug.print("side {d}: state {t} tick {d} local_hi {d} remote_hi {d} desync_tick {d} w.phase {t}\n", .{ b.side, b.net.state(), b.net.ls.tick, b.net.ls.local_hi, b.net.ls.remote_hi, b.net.ls.desync_tick, b.w.phase });
             return e;
         };
         for (&d.b) |*b| {
-            const late = b.net.desync_tick - at;
+            const late = b.net.ls.desync_tick - at;
             worst = @max(worst, late);
-            try std.testing.expect(b.net.desync_tick > at and late <= 64);
+            try std.testing.expect(b.net.ls.desync_tick > at and late <= 64);
             // step stops on desync.
-            const t = b.net.tick;
+            const t = b.net.ls.tick;
             try std.testing.expect(!b.net.step(&b.w));
-            try std.testing.expectEqual(t, b.net.tick);
+            try std.testing.expectEqual(t, b.net.ls.tick);
         }
     }
     if (report) std.debug.print("\ndesync: found on both badges at most {d} ticks after the change\n", .{worst});
@@ -672,7 +672,7 @@ test "Start pauses both badges on the same tick, the other's Start resumes" {
     d.b[0].press_start_at = d.b[0].frames + 1;
     const On = struct {
         fn f(dd: *Duo, _: void) bool {
-            return dd.b[0].pause_on != null and dd.b[1].pause_on != null and dd.b[0].net.tick > dd.b[0].pause_on.? + 60 and dd.b[1].net.tick > dd.b[1].pause_on.? + 60;
+            return dd.b[0].pause_on != null and dd.b[1].pause_on != null and dd.b[0].net.ls.tick > dd.b[0].pause_on.? + 60 and dd.b[1].net.ls.tick > dd.b[1].pause_on.? + 60;
         }
     };
     try d.run(10_000_000, {}, On.f);
@@ -681,7 +681,7 @@ test "Start pauses both badges on the same tick, the other's Start resumes" {
     const wt = d.b[0].w.tick;
     d.run_for(1_000_000);
     try std.testing.expectEqual(wt, d.b[0].w.tick);
-    try std.testing.expect(d.b[0].net.paused and d.b[1].net.paused);
+    try std.testing.expect(d.b[0].net.ls.paused and d.b[1].net.ls.paused);
     d.b[1].press_start_at = d.b[1].frames + 1;
     const Off = struct {
         fn f(dd: *Duo, _: void) bool {
@@ -739,7 +739,7 @@ test "quit mid-race: the other badge races on with the AI, then a rematch" {
     };
     try d.run(60_000_000, {}, Q.f);
     const stay = &d.b[0];
-    try std.testing.expectEqual(net.Left.quit, stay.net.left);
+    try std.testing.expectEqual(net.Left.quit, stay.net.ls.left);
     // The stayer finishes alone (it no longer waits for anyone).
     const Fin = struct {
         fn f(dd: *Duo, _: void) bool {
@@ -747,20 +747,20 @@ test "quit mid-race: the other badge races on with the AI, then a rematch" {
         }
     };
     try d.run(400_000_000, {}, Fin.f);
-    try std.testing.expectEqual(@as(?u8, racers.botnet), stay.net.handed_over);
+    try std.testing.expectEqual(@as(?u8, racers.botnet), stay.net.handed_over());
     try std.testing.expectEqual(world.no_human, stay.w.cars[racers.botnet].human);
     // Then it leaves too and both are in the lobby: race 2 starts in sync
     // with a new seed.
-    const seed1 = stay.net.race.seed;
+    const seed1 = stay.net.race().seed;
     d.b[quitter].leave_at = 0;
     stay.racing = false;
     stay.net.leave(d.now);
     d.b[0].racing = false;
     d.b[1].racing = false;
     try d.run(20_000_000, {}, done_started);
-    try std.testing.expectEqual(@as(u8, 2), d.b[0].net.race.id);
-    try std.testing.expectEqual(@as(u8, 2), d.b[1].net.race.id);
-    try std.testing.expect(d.b[0].net.race.seed != seed1);
+    try std.testing.expectEqual(@as(u8, 2), d.b[0].net.race().id);
+    try std.testing.expectEqual(@as(u8, 2), d.b[1].net.race().id);
+    try std.testing.expect(d.b[0].net.race().seed != seed1);
     try d.run(60_000_000, @as(u32, 900), done_tick);
     _ = try expect_logs_equal(&d);
 }
@@ -775,24 +775,24 @@ test "pump cost: port calls and packets per pump, idle and racing" {
     try d.run(10_000_000, {}, done_lobby);
     // Idle lobby: 2 s.
     const g0 = d.wire.gets;
-    const p0 = d.b[0].net.stats.pumps + d.b[1].net.stats.pumps;
-    const c0 = d.b[0].net.stats.control_recv + d.b[1].net.stats.control_recv;
+    const p0 = d.b[0].net.ls.stats.pumps + d.b[1].net.ls.stats.pumps;
+    const c0 = d.b[0].net.ls.stats.control_recv + d.b[1].net.ls.stats.control_recv;
     d.run_for(2_000_000);
-    const idle_pumps = d.b[0].net.stats.pumps + d.b[1].net.stats.pumps - p0;
+    const idle_pumps = d.b[0].net.ls.stats.pumps + d.b[1].net.ls.stats.pumps - p0;
     const idle_gets = d.wire.gets - g0;
-    const idle_msgs = d.b[0].net.stats.control_recv + d.b[1].net.stats.control_recv - c0;
+    const idle_msgs = d.b[0].net.ls.stats.control_recv + d.b[1].net.ls.stats.control_recv - c0;
     // Racing: 30 s.
     d.opts.auto_lobby = true;
     try d.run(20_000_000, {}, done_started);
     const g1 = d.wire.gets;
     const puts1 = d.wire.puts;
-    const p1 = d.b[0].net.stats.pumps + d.b[1].net.stats.pumps;
-    const r1 = d.b[0].net.stats.inputs_recv + d.b[1].net.stats.inputs_recv;
+    const p1 = d.b[0].net.ls.stats.pumps + d.b[1].net.ls.stats.pumps;
+    const r1 = d.b[0].net.ls.stats.inputs_recv + d.b[1].net.ls.stats.inputs_recv;
     try d.run(60_000_000, @as(u32, 1800), done_tick);
-    const race_pumps = d.b[0].net.stats.pumps + d.b[1].net.stats.pumps - p1;
+    const race_pumps = d.b[0].net.ls.stats.pumps + d.b[1].net.ls.stats.pumps - p1;
     const race_gets = d.wire.gets - g1;
     const race_puts = d.wire.puts - puts1;
-    const race_pkts = d.b[0].net.stats.inputs_recv + d.b[1].net.stats.inputs_recv - r1;
+    const race_pkts = d.b[0].net.ls.stats.inputs_recv + d.b[1].net.ls.stats.inputs_recv - r1;
     if (report) std.debug.print(
         "\npump cost: lobby {d} pumps, {d} uart_get calls ({d} per pump), {d} control messages; race {d} pumps, {d} uart_get ({d}.{d:0>2} per pump), {d} uart_put, {d} input packets in ({d} per 100 pumps)\n",
         .{ idle_pumps, idle_gets, idle_gets / @max(idle_pumps, 1), idle_msgs, race_pumps, race_gets, race_gets / @max(race_pumps, 1), (race_gets * 100 / @max(race_pumps, 1)) % 100, race_puts, race_pkts, race_pkts * 100 / @max(race_pumps, 1) },

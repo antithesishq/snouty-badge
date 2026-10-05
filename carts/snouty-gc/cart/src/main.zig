@@ -732,7 +732,7 @@ fn pump_loop(ticked: ?*bool) void {
         const t = ticked orelse continue;
         if (!t.* and w.phase != .finished) {
             t.* = lnk.step(&w);
-            if (t.* and !lnk.paused) after_tick();
+            if (t.* and !lnk.ls.paused) after_tick();
         }
     }
 }
@@ -742,10 +742,10 @@ fn lobby_view() link_ui.View {
     if (cart.is_wasm and fake_view != 0) return fake_lobby();
     return .{
         .state = lnk.state(),
-        .role = lnk.role,
-        .cable = @backingInt(lnk.link.cable()),
+        .role = lnk.ls.role,
+        .cable = @backingInt(lnk.ls.link.cable()),
         .rules = lnk.rules(),
-        .peer = lnk.peer_pick,
+        .peer = lnk.peer_pick(),
     };
 }
 
@@ -824,9 +824,9 @@ fn change_rule(step: i32) void {
 fn link_info() select.Link {
     if (cart.is_wasm and fake_view != 0) return fake_select();
     return .{
-        .host = lnk.role == .host,
+        .host = lnk.ls.role == .host,
         .ready = link_ready,
-        .peer = lnk.peer_pick,
+        .peer = lnk.peer_pick(),
         .can_go = lnk.can_go(),
         .rules = lnk.rules(),
     };
@@ -865,7 +865,7 @@ fn link_select_frame() void {
         .pick => {
             if (!link_ready) {
                 if (!select.taken(select.racer)) link_ready = true;
-            } else if (lnk.role == .host and lnk.can_go()) {
+            } else if (lnk.ls.role == .host and lnk.can_go()) {
                 player_racer = select.racer;
                 _ = lnk.go(cart.micros_since_boot());
             }
@@ -930,7 +930,7 @@ fn after_tick() void {
 fn link_race_frame() void {
     pump_top();
     if (lnk.state() == .desync) return end_desync();
-    if (lnk.paused and w.phase != .finished) {
+    if (lnk.ls.paused and w.phase != .finished) {
         pause_list = .{ .count = 3 };
         go(.pause);
         return link_pause_frame();
@@ -946,7 +946,7 @@ fn link_race_frame() void {
         lnk.submit(cart.micros_since_boot(), byte);
         last_byte = byte;
         ticked = lnk.step(&w);
-        if (ticked and !lnk.paused) after_tick();
+        if (ticked and !lnk.ls.paused) after_tick();
     }
     pump_point(.sim);
     if (w.phase == .finished) {
@@ -972,7 +972,7 @@ fn link_notices() void {
     }
     const k: link_ui.Notice = if (st == .waiting) .waiting else if (left_note > 0) .peer_left else .none;
     left_note -|= 1;
-    link_ui.draw_notice(k, lnk.left, frame);
+    link_ui.draw_notice(k, lnk.ls.left, frame);
 }
 
 /// The shared pause (L6): either badge's Start paused both on one tick.
@@ -994,7 +994,7 @@ fn link_pause_frame() void {
     lnk.submit(cart.micros_since_boot(), byte);
     last_byte = byte;
     var ticked = lnk.step(&w);
-    if (ticked and !lnk.paused) after_tick();
+    if (ticked and !lnk.ls.paused) after_tick();
     draw_race(false);
     hud.fill_rect(24, 30, 112, 70, hud.anti_black);
     menu_nav(&pause_list);
@@ -1009,7 +1009,7 @@ fn link_pause_frame() void {
             else => toggle_sound(),
         }
     }
-    if (!lnk.paused) go(.race);
+    if (!lnk.ls.paused) go(.race);
     link_notices();
     pump_loop(&ticked);
 }
@@ -1076,7 +1076,7 @@ fn draw_overlay() void {
     // between two pumps (us) this race.
     var l: [19]u8 = "W     C     G      ".*;
     hud.put_uint(l[1..5], @min(race_waits, 9999), ' ');
-    hud.put_uint(l[7..11], @min(lnk.link.stats.crc_errors, 9999), ' ');
+    hud.put_uint(l[7..11], @min(lnk.ls.link.stats.crc_errors, 9999), ' ');
     hud.put_uint(l[13..19], @min(pump_gap_worst, 999_999), ' ');
     hud.text(&l, 4, 24, hud.white);
 }
