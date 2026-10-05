@@ -59,8 +59,9 @@
 #           duel (the T2 program in the partner's slot) plays to round 3;
 #           badge-bench with no cable: the link costs < LINK_MAX_MS (0.3) a
 #           frame (mean busy ms with and without the snouty_cycles_link_off
-#           poke, on the toml run and on LINK DUEL's cable screen), and the
-#           demo duel holds BENCH_MAX_MS.
+#           poke, on the toml run and on LINK DUEL's cable screen; their
+#           worst frames are shown, the bench step gates them), and a demo
+#           duel (PILLARS, the autopilot against T2) holds BENCH_MAX_MS.
 #
 # Output under out/ (gitignored). Exit 0 when every step passes, else 1
 # (the failing steps are listed at the end).
@@ -332,7 +333,9 @@ def load(n):
 for run in ("toml", "cable"):
     on, off = load(run + "_on"), load(run + "_off")
     d = on["mean_ms"] - off["mean_ms"]
-    good = d < lim and on["max_ms"] <= worst_lim
+    # The worst frame of these runs is the title / cable screen's first
+    # (the attract's full repaint), the bench step's business: shown only.
+    good = d < lim
     ok &= good
     print("%s link cost [%s, no cable]: mean busy %.3f ms with the link, %.3f without: %+.3f ms a frame (limit %.2f); worst %.2f / %.2f"
           % ("ok  " if good else "FAIL", run, on["mean_ms"], off["mean_ms"], d, lim, on["max_ms"], off["max_ms"]))
