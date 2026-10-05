@@ -243,7 +243,9 @@ const Builder = struct {
     }
 
     fn readout(b: *Builder, n: u16, left: []const u8, right: []const u8) void {
-        b.out.add(.{ .kind = .text, .id = b.id(n), .left = left, .right = right });
+        // Too long for one line (numberCruncher's words): two lines.
+        const two = left.len > 0 and left.len + 1 + right.len > note_cols;
+        b.out.add(.{ .kind = .text, .id = b.id(n), .left = left, .right = right, .lines = if (two) 2 else 1 });
     }
 
     fn button(b: *Builder, n: u16, left: []const u8, right: []const u8, act: G.Action, repeat: bool) void {
@@ -499,11 +501,11 @@ const Builder = struct {
         const pn = &g.panels;
         if (pn.drone_upgrade_display) b.readout(0, "Next Upgrade at", b.join(&.{ b.loc(g.next_drone_upgrade), " Drones" }));
         b.readout(1, "Avail. Matter", b.join(&.{ b.crunch(g.available_matter, 2), " g" }));
-        if (pn.mdps_div) b.readout(2, "", b.join(&.{ "(", b.crunch(g.disp_mdps, 2), " g per sec)" }));
+        if (pn.mdps_div) b.readout(2, "", b.join(&.{ "(", b.crunch(g.disp_mdps, 2), " g/sec)" }));
         b.readout(3, "Acq. Matter", b.join(&.{ b.crunch(g.acquired_matter, 2), " g" }));
-        b.readout(4, "", b.join(&.{ "(", b.crunch(g.disp_maps, 2), " g per sec)" }));
+        b.readout(4, "", b.join(&.{ "(", b.crunch(g.disp_maps, 2), " g/sec)" }));
         b.readout(5, "Wire", b.join(&.{ b.crunch(g.wire, 2), " in" }));
-        b.readout(6, "", b.join(&.{ "(", b.crunch(g.disp_wpps, 2), " in per sec)" }));
+        b.readout(6, "", b.join(&.{ "(", b.crunch(g.disp_wpps, 2), " in/sec)" }));
         if (pn.harvester_div) {
             b.button(7, "Harvester Drone", b.loc(g.harvester_level), .{ .make_harvester = 1 }, true);
             b.button(8, "  Harvesters +10", "", .{ .make_harvester = 10 }, true);

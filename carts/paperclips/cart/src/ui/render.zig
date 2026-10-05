@@ -28,8 +28,7 @@ pub fn frame(app: *App) void {
 
 fn game_screen(app: *App) void {
     draw.clear(.white);
-    header(app.game);
-    status_line(app);
+    if (header(app.game) < 3) status_line(app);
     tab_bar(app);
     rows(app);
     ticker(app);
@@ -37,7 +36,7 @@ fn game_screen(app: *App) void {
 
 // -- header: "Paperclips: n", big while it fits --------------------------
 
-fn header(g: *const G.Game) void {
+fn header(g: *const G.Game) usize {
     var buf: [96]u8 = undefined;
     const n = G.clips_text(g, &buf);
     const label = "Paperclips:";
@@ -46,21 +45,56 @@ fn header(g: *const G.Game) void {
     if (label_w + 6 + big_w <= draw.width - 2) {
         _ = draw.text(label, 2, 5, .black);
         _ = draw.text_px(n, draw.width - 1 - big_w, 0, draw.width, draw.px(.black), 2);
-    } else if (big_w <= draw.width - 2) {
-        _ = draw.text_px(n, @divTrunc(draw.width - big_w, 2), 0, draw.width, draw.px(.black), 2);
-    } else if (n.len <= L.cols - 1) {
-        _ = draw.text(label, 2, 0, .black);
-        _ = draw.text_right(n, L.right_x, 8, .black);
-    } else {
-        // Longer than a line (stage 3 and the ending): the digits in two
-        // lines under no label, split at a comma.
-        var cut = n.len - (L.cols - 1);
-        while (cut < n.len and n[cut] != ',') cut += 1;
-        cut = @min(cut + 1, n.len);
-        if (cut > L.cols) cut = n.len - (L.cols - 1);
-        _ = draw.text_right(n[0..cut], L.right_x, 0, .black);
-        _ = draw.text_right(n[cut..], L.right_x, 8, .black);
+        return 2;
     }
+    if (big_w <= draw.width - 2) {
+        _ = draw.text_px(n, @divTrunc(draw.width - big_w, 2), 0, draw.width, draw.px(.black), 2);
+        return 2;
+    }
+    // Three lines of digits would push out the status line: the
+    // original's crunched form instead ("75.8 duodecillion", its tooltip),
+    // except in the ending, where the long count is the point.
+    if (n.len > L.cols + (L.cols - 12) and g.milestone_flag < 15) {
+        _ = draw.text(label, 2, 0, .black);
+        var cb: [64]u8 = undefined;
+        const c = std.mem.trimEnd(u8, G.fmt.number_cruncher(&cb, g.clips, 1), " ");
+        _ = draw.text_right(c, L.right_x, 8, .black);
+        return 2;
+    }
+    // Small type: the label, then the digits right-aligned, broken after
+    // commas into lines of at most 26 characters (the first beside the
+    // label), up to three lines.
+    // Past 66 characters (the ending's 71) the label gives way.
+    const labelled = n.len <= 2 * L.cols + (L.cols - 12);
+    if (labelled) _ = draw.text(label, 2, 0, .black);
+    const first_room: usize = if (labelled) L.cols - 12 else L.cols;
+    var lines: [3][]const u8 = undefined;
+    var count: usize = 0;
+    var end = n.len;
+    // Fill lines from the end so the last lines are full.
+    while (end > 0 and count < 3) {
+        const room: usize = if (count == 2 or end <= first_room) first_room else L.cols;
+        var start = end - @min(end, room);
+        if (start > 0) {
+            // Start just after a comma.
+            while (start < end and n[start - 1] != ',') start += 1;
+        }
+        if (start == end) start = end - @min(end, room);
+        lines[count] = n[start..end];
+        count += 1;
+        end = start;
+    }
+    if (count < 2) {
+        _ = draw.text_right(lines[0], L.right_x, 0, .black);
+        return 2;
+    }
+    // lines[] is last-first: the first drawn line shares the label's row.
+    var k: usize = 0;
+    while (k < count) : (k += 1) {
+        const line = lines[count - 1 - k];
+        _ = draw.text_right(line, L.right_x, @as(i32, @intCast(k)) * 8, .black);
+    }
+    return @max(2, count);
 }
 
 fn status_line(app: *App) void {
@@ -109,6 +143,9 @@ fn rows(app: *App) void {
         defer line += r.lines;
         if (line + r.lines <= scroll) continue;
         if (line >= scroll + area) break;
+        // A tall row that does not fit waits for the scroll (unless it is
+        // the first one shown).
+        if (line + r.lines > scroll + area and line > scroll) break;
         const y = L.rows_y + @as(i32, @intCast(line - scroll)) * L.row_h;
         row(app, r, y, i == cursor and list.len > 0);
     }
@@ -145,7 +182,12 @@ fn row(app: *App, r: *const pages.Row, y: i32, selected: bool) void {
                 _ = draw.text(r.left[sp.start..sp.end], L.text_x, y + @as(i32, @intCast(k)) * L.row_h, fg);
             }
         },
-        .text => {
+        .text => if (r.lines == 2) {
+            // Label and value do not fit side by side: the value goes on
+            // a second line, right-aligned.
+            _ = draw.text_clip(r.left, L.text_x, y, L.right_x, fg);
+            _ = draw.text_right(r.right, L.right_x, y + L.row_h, fg);
+        } else {
             const right_w = if (r.right.len > 0) font.width(r.right.len) + 6 else 0;
             if (r.strong and !selected) draw.fill_rect(0, y - 1, draw.width, L.row_h, .face);
             _ = draw.text_clip(r.left, L.text_x, y, L.right_x - right_w, fg);
@@ -298,17 +340,18 @@ fn footer(app: *App, r: *const pages.Row) void {
     const top = L.rows_y + @as(i32, @intCast(app.list_lines())) * L.row_h;
     draw.hline(0, top + 1, draw.width, .grey);
     if (r.detail.len == 0) return;
+    const lines = app.footer_text_lines();
     var spans: [12]text.Span = undefined;
     const n = text.wrap(r.detail, L.cols, &spans);
     const shown = @min(n, spans.len);
     var first: usize = 0;
-    if (shown > L.footer_lines) {
+    if (shown > lines) {
         // Step down a line at a time, pause at the end, start over.
-        const steps = shown - L.footer_lines + 2;
-        const s = (app.footer_frames / app_mod.knobs.footer_step_frames) % steps;
-        first = @min(s, shown - L.footer_lines);
+        const steps = shown - lines + 2;
+        const st = (app.footer_frames / app_mod.knobs.footer_step_frames) % steps;
+        first = @min(st, shown - lines);
     }
-    for (0..L.footer_lines) |k| {
+    for (0..lines) |k| {
         const li = first + k;
         if (li >= shown) break;
         const sp = spans[li];
@@ -407,7 +450,7 @@ fn hypno(app: *App) void {
 
 fn wall(app: *App) void {
     draw.clear(.white);
-    header(app.game);
+    _ = header(app.game);
     draw.hline(0, 20, draw.width, .grey);
     draw.text_center("Release the HypnoDrones:", 34, .black);
     draw.text_center("stage 1 complete.", 44, .black);

@@ -428,18 +428,23 @@ pub const App = struct {
     /// The rows area's height in lines, less the footer when the selected
     /// row has a detail to show.
     pub fn list_lines(app: *const App) usize {
-        const rows = app.rows.slice();
-        const pi = @intFromEnum(app.page);
-        if (rows.len > 0 and app.page_has_details()) {
-            _ = pi;
-            return layout.rows_visible - layout.footer_lines - 1;
-        }
-        return layout.rows_visible;
+        const n = app.footer_text_lines();
+        if (n == 0) return layout.rows_visible;
+        return layout.rows_visible - n - 1;
     }
 
-    pub fn page_has_details(app: *const App) bool {
-        for (app.rows.slice()) |*r| if (r.detail.len > 0) return true;
-        return false;
+    /// Lines of the footer (the selected row's detail: a project's cost
+    /// and description, a tooltip), 0 when it has none.
+    pub fn footer_text_lines(app: *const App) usize {
+        const rows = app.rows.slice();
+        if (rows.len == 0) return 0;
+        const r = &rows[@min(app.cursor_ix[@intFromEnum(app.page)], rows.len - 1)];
+        if (r.detail.len == 0) return 0;
+        // A page of projects keeps the full footer so the list does not
+        // jump as the cursor moves between short and long descriptions.
+        if (r.kind == .project) return layout.footer_lines;
+        var spans: [8]text.Span = undefined;
+        return @min(layout.footer_lines, @max(1, text.wrap(r.detail, layout.cols, &spans)));
     }
 
     /// Scrolls so the cursor row is on screen; and the cursor stays on the

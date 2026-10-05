@@ -134,6 +134,8 @@ comptime {
         @export(&debug_advance, .{ .name = "debug_advance" });
         @export(&debug_go_page, .{ .name = "debug_go_page" });
         @export(&debug_cheat, .{ .name = "debug_cheat" });
+        @export(&debug_autoplay, .{ .name = "debug_autoplay" });
+        @export(&debug_stage, .{ .name = "debug_stage" });
         @export(&cart_framebuffer_address, .{ .name = "cart_framebuffer_address" });
     }
 }
@@ -220,6 +222,28 @@ fn debug_cheat(n: u32) callconv(.c) u32 {
     app.rebuild();
     return 1;
 }
+var bot: G.bot.Bot = .{};
+
+/// Lets the game's autoplayer (game/bot.zig) play `seconds` of virtual
+/// time, a step every 100 ms: previews of stage 2, stage 3 and the end.
+fn debug_autoplay(seconds: u32) callconv(.c) u32 {
+    if (!app.playing) app.new_game();
+    var k: u32 = 0;
+    while (k < seconds * 10) : (k += 1) {
+        bot.step(app.game);
+        G.advance_ms(app.game, 100);
+    }
+    app.update(.{});
+    return 1;
+}
+
+/// 1 humans (stage 1), 2 the swarm (stage 2), 3 space (stage 3).
+fn debug_stage() callconv(.c) u32 {
+    if (!app.playing) return 0;
+    if (app.game.human_flag == 1) return 1;
+    return if (app.game.space_flag == 1) 3 else 2;
+}
+
 fn cart_framebuffer_address() callconv(.c) usize {
     return @intFromPtr(cart.framebuffer);
 }
