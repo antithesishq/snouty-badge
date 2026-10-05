@@ -144,7 +144,7 @@ pub const colors = struct {
     pub const rim_glow = rgb(mix24(floor_rgb, rim_rgb, 48));
     /// WRAP: the open screen edge, a dim dashed line on the outer pixels
     /// of the edge cells (4 px on, 4 px off).
-    pub const edge_dash = rgb(mix24(floor_rgb, rim_rgb, 120));
+    pub const edge_dash = rgb(mix24(floor_rgb, rim_rgb, 190));
     pub const block_glow = rgb(mix24(floor_rgb, block_rgb, 64));
 
     /// Sudden death's closing ring (SPEC 8: red).
