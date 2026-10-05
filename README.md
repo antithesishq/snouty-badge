@@ -90,7 +90,8 @@ Other directories:
 
 All from the repository root; prerequisites, the Zig install command and
 the clone are in [docs/RUNNING.md](docs/RUNNING.md) sections 1 and 2.
-Zig `0.17.0-dev.1936+5a625d5f3` exactly, as pinned by upstream.
+Zig `0.17.0` (the release; the older pinned nightly no longer builds the
+microzig this repository uses).
 
 ```sh
 zig build                        # every cart

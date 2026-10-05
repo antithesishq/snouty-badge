@@ -2377,6 +2377,196 @@ of 8 cells of 32x48 (15 colours).
   tracks, preview, bench).
 
 
+## M9 More packs (The Seabed, Cold Storage)
+
+SPEC 16 M9, 19.6 and 19.8. Two content packs on the M7 format
+(`docs/PACKS.md`, format v1, link v2), with no engine change planned:
+each has three tracks and one arena, and is built the way M7 Track B
+built Dead Mall and The Boneyard (`tools/packs/`, `assets/packs/<pack>/`,
+the `.track` sources, a `pack_arena` subclass, `build_pack.py`).
+
+- **Track S: The Seabed** (Opus agent, worktree
+  /home/exedev/snouty-badge-gc-seabed, branch gc/seabed off 20772c22). It owns:
+  - `tools/packs/seabed.py` and `tools/packs/src/seabed/`;
+  - `assets/packs/seabed/` (`SEABED.GCP`) and `docs/packs/seabed/`;
+  - `cart/src/seabed_test.zig`.
+  - Tracks: Shipbreaker Shoals, Whalefall, Cable Trench. Arena: The Drain.
+- **Track C: Cold Storage** (Opus agent, worktree
+  /home/exedev/snouty-badge-gc-cold, branch gc/cold off 20772c22). It owns:
+  - `tools/packs/cold_storage.py` and `tools/packs/src/cold_storage/`;
+  - `assets/packs/cold_storage/` (`COLDSTOR.GCP`) and `docs/packs/cold_storage/`;
+  - `cart/src/cold_storage_test.zig`.
+  - Tracks: Intake Shelf, Calving Front, Erebus Grid. Arena: The Moon Pool.
+- **Shared one-liners** (each track adds its own line; the lead merges):
+  - `PACK_NAMES` in `tools/packs/make_packs.py`;
+  - the test import in `host_tests.zig`;
+  - the copy in `cart/src/gen/packs/`;
+  - check.sh's content-pack drive image and its previews and benches, if those
+    list packs by name.
+  - Shared helpers (`common.py`, `pack_arena.py`) are read-only to both. A
+    helper either track needs goes in its own module.
+- **Gate (each track, then the lead after merging both):**
+  - the pack builds byte-identically and `tools/check.sh` passes;
+  - the autopilot runs 3 laps on every track on three chassis with no fall;
+  - 6 AI crews finish every track;
+  - the arena's navigation field reaches every pad;
+  - 6 arena rounds end by lives with AI-on-AI eliminations;
+  - the drive keeps room for all four packs (each pack is under 96 KB, the
+    picker lists 6);
+  - contact sheets reviewed by the lead.
+- Deferred questions: The Seabed from L150, Cold Storage from L170.
+
+### M9 status
+
+**Track S (The Seabed), 2026-10-05, branch `gc/seabed`.** SEABED.GCP is
+built, packaged and host-tested, with no engine or format change.
+`tools/packs/seabed.py` holds the league: the palette, the tileset, the
+background painters with their overlays, the horizon, the props and the
+arena. Its track sources are in `tools/packs/src/seabed/`. It runs through
+make_packs.py, which got one new line in `PACK_NAMES`.
+
+- **The look**: a dried ocean floor, cooler and greyer than The
+  Boneyard, with rust as the accent.
+  - **Floors**: three road floors, one per track. Grey sand is the
+    default, and the shared pieces sit on it. The salt pan has polygon
+    cracks: a 16 px network over four tiles. The trench floor is dark
+    silt, with the cable surfacing along the line.
+  - **Off the road**: pale salt flats, grey sand with dead coral, and
+    whale skeletons drawn top-down in bone.
+  - **Walls**: rusted hull plates with a salt-crusted rim.
+  - **Hazard tiles**: tide pools are brine. The salt crust is a pale
+    blue crust over brine. The steam vents are cyan fissures, fed by the
+    cable's ruptured repeaters in the wall.
+  - **Horizon**: wrecks heeled over in rust, the container ship's
+    spilled stacks, and the toppled oil rig with its red beacon. Behind
+    them are a pale sky and the long dry shelf, with a dead city on top.
+  - **Props**: 8 cells of 32x48 in 15 colours: whale rib left, whale rib
+    right, ship bow, anchor, submarine sail with its periscope, container
+    (also the slide's sprite), barnacled buoy, and the cable's broken
+    end.
+- **SEABED.GCP**, 33,132 B: hazard mask 0x76, i.e. blast, mover, crust,
+  slick and pit.
+  - **SHIPBREAK SHOALS** (sand, 3,613 px a lap): the north reach under
+    the bows and their shadow, tide pools in a wreck's scour, then the
+    container maze. The maze is five chicanes between stacks spilled
+    across the salt, with a container slide on the south reach. Two hulls
+    lie on their sides in the infield.
+  - **WHALEFALL** (salt pan, 3,755 px, the fastest): three skeletons,
+    each a row of rib arches (a left and a right rib every 36 px) with
+    its shadow across the road. Then dead coral rubble, tide pools, and a
+    salt crust on the south reach.
+  - **CABLE TRENCH** (silt with the cable, 3,505 px): a steam vent on the
+    north reach, the trench's deep open on the right, and a loop down the
+    trench floor. A ramp crosses the break, with the cable's two broken
+    ends either side. A second vent fires on the west climb, and a salt
+    crust lies on the shelf. Off the road, the cable runs along the
+    deep's lip and goes down into it.
+  - **Arena THE DRAIN**: the funnel bowl is drawn as rings of salt, sand
+    and silt around the drain, with four hatch-cover kickers over it.
+    Wreckage islands stand at the diagonals, with whale ribs on their
+    corners as the gates. The trawlers' decks are gap jumps across the
+    side lanes, each with a trawler's bow on the rim beside it. Containers
+    slide down the north lane and across the SW corner. The graph is 18
+    nodes and 8 jumps, a 1,856 B blob.
+- **Tests** (`cart/src/seabed_test.zig`, imported by host_tests.zig;
+  `zig build test-gc` with the binary run directly: 213 pass):
+  - **Autopilot**: it finishes 3 laps on every track with no fall, on
+    WORKSTATION, MAINFRAME and THIN CLIENT. SNOUTY finishes Shoals at tick
+    5,395, Whalefall at 5,231 and Cable Trench at 5,368.
+  - **Six AI crews** (3 seeds a track) all finish:
+    - Shoals by ticks 7,666 to 8,321;
+    - Whalefall by 6,856 to 8,194;
+    - Cable Trench by 7,307 to 7,837.
+
+    Nobody is stuck (the longest stall is 102 ticks) and there are no
+    falls. Hazard hits are 1 to 9 a race on the tracks with vents or the
+    slide.
+  - **Navigation**: The Drain's field reaches every node from every
+    pad, with and without the jumps.
+  - **Rounds**: six seeded 3-life rounds all end by lives. They run
+    from 68 to 166 s, a mean of 129 s, with 64 AI-on-AI eliminations in
+    all.
+  - **Determinism**: a pack race on CABLE TRENCH replays the same.
+- **Shared one-liners**:
+  - `PACK_NAMES`;
+  - the host_tests import;
+  - `cart/src/gen/packs/SEABED.GCP`.
+
+  SEABED.GCP also joined the content-pack drive image (`drive_packs.img`
+  from tools/test_pack/make.py's shelf, check.sh's copy) and the picker
+  preview's `-Dgc-pack` (L159).
+- `tools/check.sh` passes. The contact sheets are in docs/packs/seabed/
+  (`*_contact.png`, half scale). The deferred questions start at L150.
+
+**Track C (Cold Storage), 2026-10-05, branch `gc/cold`.** COLDSTOR.GCP
+(COLD STORAGE, SPEC 19.8), 33,664 B, built by `tools/packs/make_packs.py`
+from `tools/packs/cold_storage.py` (palette, tiles, four wallpapers, the
+horizon, 8 props, the arena) and `tools/packs/src/cold_storage/*.track`,
+with no engine or format change. Decisions L170 to L176.
+
+- **Art** (drawn in code, final): packed-snow road with tyre ruts and
+  orange marker dots, orange and navy hazard barriers in front of a
+  snowbank, the shelf's white edge and blue ice cliff over black water;
+  basalt road with orange dashes (EREBUS GRID); glare ice (pale cyan with
+  long diagonal glints, attribute coolant), meltwater channels, the
+  intake pipe's ribbed floor, a grated walkway, thin sea ice (crust,
+  121..123: dark translucent ice, white cracks, then the sea). Wallpapers:
+  the shelf (snow, sastrugi, hall domes), the glacier (blue ice,
+  crevasses, serac rubble), basalt (ash, snow patches, fumaroles), the
+  halls (steel deck, lit skylight domes). Horizon: ice cliffs over the
+  open sea, a wind farm on a snow ridge, Erebus with its snow tongues,
+  crater glow and plume, the geothermal plant, server domes lit from
+  inside, red beacons blinking; the back layer is the polar twilight
+  with stars and the aurora's green curtains and magenta fringe. Props
+  (32x48, 15 colours): intake pipe mouth, pylon, wind turbine, ice
+  pinnacle (also the calving block), radar dome, frozen crane, the
+  PENGUIN COLONY sign, the emperor penguin. White, cyan, navy, black and
+  orange: nothing like Dead Mall's pastels or the Boneyard's sand.
+- **INTAKE SHELF** (lap 3,644 px): the shelf's edge with the sea on the
+  left (an open edge, the water out to the map's edge) on glare ice,
+  down the intake pipe, into the halls (grated walkway, glare up the
+  aisle, a steam vent), across the frozen inlet on thin ice (crust, water
+  both sides). **CALVING FRONT** (3,620 px): two ice blocks sliding off
+  the glacier face across the start straight (movers), the east and west
+  crevasse jumps (ramps), two meltwater channels, a glare-ice climb.
+  **EREBUS GRID** (3,718 px): the rim road and the flank (a hill run),
+  a fumarole's steam, the switchbacks through the plant (grated deck,
+  steam vent) and the switchyard (two arc flashes between the pylon
+  rows). 16 to 19 props a track, all off the floor.
+- **THE MOON POOL**: black water in the middle, the whole floor glare
+  ice, four ice kickers at the pool, a ring of four steam vents firing
+  out from its rim one after another, the intake shafts across the side
+  lanes as gap jumps, the pipe housings as the four islands; the Food
+  Court's 18-node graph and pads, a 1,856 B blob, 12 props.
+- **Tests** (`cart/src/cold_storage_test.zig`, registered in
+  host_tests.zig; 213 tests pass, the binary run directly):
+  - the autopilot finishes 3 laps with no fall on WORKSTATION, MAINFRAME
+    and THIN CLIENT: INTAKE SHELF at ticks 5,034 / 6,124 / 4,690, CALVING
+    FRONT 5,084 / 6,352 / 4,853, EREBUS GRID 5,335 / 6,599 / 4,663;
+  - six AI crews finish every track (3 seeds each, by ticks 6,823 to
+    8,202; 19 to 31 wrecks, 0 or 1 falls, the crevasses; stuck at most
+    140 ticks); a dev soak of 8 seeds a track found the one hairpin pin
+    (L170) and nothing after the fix;
+  - the arena's navigation field reaches every node from every pad,
+    with and without the jumps;
+  - six 3-life rounds end by lives: 93 to 196 s (mean 135), 12 to 15
+    eliminations a round, 61 AI-on-AI in all, 4 to 10 falls a round;
+  - an INTAKE SHELF race replays identically.
+- **Registrations**: `PACK_NAMES`, the host_tests import, the copy in
+  `cart/src/gen/packs/`, the content drive image (check.sh's copy and
+  tools/test_pack/make.py's shelf, `drive_packs.img` rebuilt, pack_test's
+  counts: L176), `tools/packs/test_packs.py`'s list.
+- `tools/check.sh` PASS (build, test, float, tracks with the three
+  content packs byte-identical, preview, bench). Cold Storage benches
+  from `drive_packs.img` (calibrated, mean / worst ms, the autopilot,
+  f20 = every drive read costs 20 cycles): INTAKE SHELF f20 3.66 / 5.29,
+  CALVING FRONT f20 3.74 / 5.74 and `--lcd` 3.58 / 5.31, EREBUS GRID
+  f20 3.83 / 5.44, the stress scene on CALVING FRONT f20 4.82 / 6.11,
+  a MOON POOL battle f20 3.53 / 4.99 and `--lcd` 3.42 / 4.91; run by
+  hand (rows 12 to 14, arena row 3), not added to check.sh.
+- Contact sheets (the map plus 8 Mode 7 mock frames, half scale):
+  `docs/packs/cold_storage/*_contact.png`.
+
 ## Deferred questions
 
 SPEC 17 holds the design defaults. Taken during M0 (Track A):
@@ -3218,3 +3408,100 @@ L136. **The furrow and the saucer are floor art.** The Reentry Field's
     a scorched lip), passing under the crust band. Hangar 18's saucer is
     hull plates over the crater's pit tiles. Both keep their attributes,
     so the sim sees an ordinary pit.
+
+Taken during M9 (Track S, The Seabed):
+
+L150. **SHIPBREAK SHOALS** is the menu name of SPEC's Shipbreaker Shoals:
+    18 characters don't fit the 16-character name field.
+L151. **Floors and slots.** The default road (the shared pieces' floor: pit
+    lips, seams, the slide's lane) is grey sand; the salt pan's 16 px
+    crack network takes four slots (28, 29, 30, 125: SEAM_X, SEAM_H,
+    SEAM_V, SURF of the rasterizer's 2x2 rhythm; the dot and the ruts use
+    the SURF quarter), the trench silt two, the cable dashes two, the
+    shadows two (sand, salt). So `drift` has one tile (dead coral rubble:
+    DRIFT = DRIFT_HEAVY).
+L152. **Crust that bites.** The bands follow Track B's 16 px with `warn`
+    24 (L131): the band cracks and shows the brine, but a 24 px car
+    crossing straight is never wholly on it, so the soaks see no falls (as
+    M7's packs: 0 to 1). A 32 px band (len 16, warn 40) took 9 to 13 falls
+    a six-AI race and dropped the autopilot behind an AI that cracked it,
+    which fails the no-fall gate. A crust that swallows cars needs an AI
+    crust sense or a looser gate (for the lead).
+L153. **The cable.** It surfaces through the trench silt along the whole
+    lap (`centerline yes` with cable tiles); the break is the ramp's gap,
+    with the two broken-end props either side of the road. Off the road it
+    is a band of armour tiles (seabed.TRENCH_CABLE) along the deep's lip,
+    diving into the deep (a `furrow`, cosmetic pit tiles).
+L154. **Rib arches.** A billboard can't span the road (cells <= 32 px,
+    props kept 10 px off the floor), so a gate is a left and a right rib
+    (mirrored cells, each curving in over the road) facing each other
+    across it, every 36 px along a straight, with a shadow band across the
+    road. In the arena the ribs stand on the islands' corners either side
+    of each way into the bowl.
+L155. **Overlays per background kind.** A background painter only sees the
+    free tiles, so the container maze (stacks two deep with salt alleys in
+    seabed.SHOALS_MAZE), the hulls on their sides (SHOALS_HULLS) and the
+    trench's cable are hard-coded in world px in seabed.py for the track
+    that uses that kind; the wallpaper keeps 2 containers a block.
+L156. **The Drain's islands are square.** Islands with their corners
+    knocked off made rounds of 103 to 323 s (a 178 to 179 s mean, with or
+    without the second slide); square ones with the second container slide
+    run 68 to 166 s (129 s). So the Food Court's footprint and graph stay,
+    and the bowl, the islands' hull plating and the trawlers' bows carry
+    the look. The arena has no steam vent
+    (pack_arena writes movers only).
+L157. **Steam vents read cyan**: white steam would vanish on the salt and
+    sand; the fissure and the repeater glow cyan-white.
+L158. **Contact sheets** in docs/packs/seabed/*_contact.png are halved
+    (256-colour) copies of `make_packs.py --pack seabed --review DIR`'s
+    sheets; a plain make_packs.py run leaves them as they are.
+L159. **The drive image.** SEABED.GCP joined drive_packs.img (the shelf in
+    tools/test_pack/make.py, check.sh's copy) and the picker preview's
+    `-Dgc-pack`, after BONEYARD and before TEST. That moved pack_test.zig's
+    drive test (4 packs, 6 + 3 + 3 + 3 + 2 race rows, 5 arena rows) and the
+    picker preview (17 rows; Left wraps to row 16, twice more to SEABED's
+    CABLE TRENCH, row 14, still pack_base + 2). The benches' rows (6, 11,
+    arena 2) are unchanged. tools/packs/test_packs.py's header check still
+    lists the M7 packs only (its digest and check.sh's rebuild loop cover
+    SEABED). Cold Storage adds itself the same way, after SEABED.
+
+L170. **Cold Storage: glare ice is the `drift` word.** make_packs.py's
+    `drift,p=100` repaints every plain road tile of a segment with the
+    pack's DRIFT tiles, and Cold Storage's DRIFT and DRIFT_HEAVY (124, 125)
+    are glare ice with attribute coolant (grip 0.97), so a whole section is
+    slick with no new generator word. The crates stay off it (they need
+    plain floor). Glare runs sit on straights and gentle bends: on a
+    hairpin a MAINFRAME on ice slid into the island's tip and stayed
+    pinned there for 1,453 ticks (CALVING FRONT, seed 1), so no glare run
+    reaches a hairpin. The AI has no ice sense (L104 likewise for crust).
+L171. **Cold Storage: one look for both blasts.** The steam vents and the
+    switchyard's arc flashes are the same timed blast (the engine's flame
+    then steam puff); the pack's one tileset gives them one orange
+    outflow grate and one wall vent. The grated walkway is the `shadow`
+    word's band (SHADOW_TILES = the grate), cosmetic, attribute surface.
+L172. **The Moon Pool's ring of vents** is four blast records the arena's
+    `post` hook appends to its feat file (pack_arena.py takes a mover but
+    no blast, and reads the file back after `post`). It has no Sweeper
+    and no mover: the ring takes all four hazard slots. pack_arena's
+    report line says "4 mover(s)" because it counts every record.
+L173. **The calving block is the ice pinnacle's cell.** common.py
+    validates at most 8 props cells and the brief has 8 props, so the
+    mover shares the pinnacle (L133's rule), drawn as a faceted serac.
+L174. **The open sea** off Intake Shelf is the open edge's pit band
+    (`pit_band 8`) plus a `furrow` along the top of the map (pit tiles
+    over the wallpaper, no lip tile), so the water runs to the map's edge.
+    The frozen inlet is an `open` segment (water both sides) with the
+    crust band across it.
+L175. **The Moon Pool's floor** is glare ice everywhere but the crate
+    pads' 3x3 grates (build_arena wants plain floor round a pad), the
+    spawn pads, the two bays and the vents' lanes (attribute vent: grip).
+    The Food Court's graph (18 nodes, 8 one-way jumps) and pads are kept;
+    the pool is its fountain's circle. Rounds end by lives in 93 to 196 s
+    (mean 135); 4 to 10 of a round's 16 or 17 wrecks are falls (the pool
+    and the shafts), most with a recent hit, so they still score.
+L176. **The content drive image** (`drive_packs.img`, tools/test_pack/make.py
+    and check.sh's copy) holds COLDSTOR.GCP after BONEYARD: its tracks are
+    rows 12 to 14 and its arena row 3, so TEST moves to rows 15, 16 and
+    arena 4; pack_test.zig's counts follow (4 packs, 17 rows, 5 arenas).
+    The `-Dgc-pack` preview wasm and the benches keep their rows (DEADMALL
+    and BONEYARD come first). The Seabed adds its line beside it.

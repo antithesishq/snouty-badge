@@ -1,0 +1,39 @@
+# Whalefall: The Seabed, track 2 (SPEC 19.6). A high-speed run over the
+# salt pan through a line of whale skeletons: their ribs stand either side
+# of the road as arches (gates), their shadows across the salt. Down the
+# east side under the second skeleton, the long S through the coral field,
+# the tide pools at the bottom of the bend, a salt crust over a brine pool
+# on the south reach (the car behind falls through), and up the west side
+# under the third.
+name WHALEFALL
+order 2
+floor salt
+background flats
+league seabed
+width 60
+# x    y    half   features
+ 200  140   60     shadow,len=10   # start line, heading east; the first skeleton
+ 520  120   60
+ 820  150   60     crates
+ 910  300   58     shadow,len=10   # the second skeleton down the east side
+ 880  480   56
+ 720  560   56
+ 560  500   56
+ 400  560   56     drift,p=40      # dead coral
+ 380  680   56
+ 540  740   56
+ 740  720   56     coolant         # tide pools
+ 870  780   56
+ 890  870   56
+ 760  910   58
+ 480  900   58     crust           # salt crust over brine
+ 240  900   58     crates
+ 130  760   58
+ 130  520   58     shadow,len=10   # the third skeleton up the west side
+ 140  300   60
+props rib_l seg 0 side left gap 36 off 12
+props rib_r seg 0 side right gap 36 off 12
+props rib_l seg 3 side left gap 36 off 12
+props rib_r seg 3 side right gap 36 off 12
+props rib_l seg 17 side left gap 36 off 12
+props rib_r seg 17 side right gap 36 off 12

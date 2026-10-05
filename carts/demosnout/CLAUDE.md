@@ -33,7 +33,7 @@ owns Start+Select and the stick click. No audio, no neopixels.
 
 ## Building
 
-Zig `0.17.0-dev.1936+5a625d5f3` at `~/.local/bin/zig`
+Zig `0.17.0` at `~/.local/bin/zig`
 (`export PATH="$HOME/.local/bin:$PATH"`). From the repository root:
 `zig build -Dcart=demosnout` (outputs `zig-out/firmware/demosnout.{uf2,elf}`,
 `zig-out/bin/demosnout.wasm`), `zig build test`, `zig build check-float`.

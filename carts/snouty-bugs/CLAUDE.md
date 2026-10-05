@@ -59,7 +59,7 @@ sizes and frame counts are in SPEC.md section 12 / ASSETS.md section 7.
 
 ## Building
 
-Zig `0.17.0-dev.1936+5a625d5f3` at `~/.local/bin/zig`
+Zig `0.17.0` at `~/.local/bin/zig`
 (`export PATH="$HOME/.local/bin:$PATH"`). Commands in this file run from this
 cart's directory (`carts/snouty-bugs/`) unless noted; `zig build` runs from the
 repository root, two levels up. There `zig build -Dcart=snouty-bugs` (or plain

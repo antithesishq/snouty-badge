@@ -8,7 +8,7 @@ root (`../..`), and its outputs are in the root `zig-out/`.
 
 ## 1. Prerequisites
 
-Zig `0.17.0-dev.1936+5a625d5f3`, Node.js 20+, Python 3 (with Pillow for
+Zig `0.17.0`, Node.js 20+, Python 3 (with Pillow for
 GIFs): see [`docs/RUNNING.md`](../../../docs/RUNNING.md) at the
 repository root. For the real sensor: an r2 (production) SYCL badge, the
 breakout and a Qwiic cable.

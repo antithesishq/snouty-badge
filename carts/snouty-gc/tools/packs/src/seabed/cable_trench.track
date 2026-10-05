@@ -1,0 +1,42 @@
+# Cable Trench: The Seabed, track 3 (SPEC 19.6). Down into the trench
+# along the severed cable, the old internet's backbone, surfacing through
+# the silt all the way round: steam from a ruptured repeater across the
+# north reach, the trench's deep open on the right down the east side
+# (leave the road and you fall), a loop down through the trench floor, a
+# ramp across the break where the cable snapped, a second repeater venting
+# on the west climb, a salt crust on the shelf at the top.
+name CABLE TRENCH
+order 3
+floor silt
+background trench
+centerline yes
+league seabed
+width 50
+pit_band 8
+# x    y    half   features
+ 220  140   54                     # start line, heading east
+ 480  130   54     crates
+ 740  150   52     vent:left,period=300,warn=50   # a ruptured repeater
+ 890  260   50
+ 900  440   48     open:right      # the trench's deep on the right
+ 800  560   46
+ 640  510   46
+ 480  620   46
+ 560  720   46
+ 760  700   46
+ 880  800   48
+ 780  910   50     ramp            # across the break
+ 540  910   52
+ 320  900   52     crates
+ 170  780   50     vent:right,period=300,warn=50,phase=150
+ 150  600   50
+ 270  460   48     crust           # the shelf's salt crust
+ 180  330   50
+ 150  220   52
+furrow 26 850 470 720 420 600 400 480 360 380 320
+# the cable's two broken ends, either side of the road at the break
+prop cable_end 642 834
+prop cable_end 626 986
+props periscope,buoy seg 1 side left gap 90 off 26
+props container,anchor seg 14 side left gap 90 off 22
+props periscope seg 7 side left gap 80 off 24

@@ -15,9 +15,9 @@ REPO_BRANCH=${REPO_BRANCH:-main}
 PREFIX=/opt/badge-station
 ETC=/etc/badge-station
 LIB=/var/lib/badge-station/library
-ZIG_VERSION=0.17.0-dev.1936+5a625d5f3
+ZIG_VERSION=0.17.0
 ZIG_TARBALL=zig-aarch64-linux-$ZIG_VERSION.tar.xz
-ZIG_URLS=("https://ziglang.org/builds/$ZIG_TARBALL"
+ZIG_URLS=("https://ziglang.org/download/$ZIG_VERSION/$ZIG_TARBALL"
           "https://pkg.machengine.org/zig/$ZIG_TARBALL")
 
 BUILD_TOOLS=0

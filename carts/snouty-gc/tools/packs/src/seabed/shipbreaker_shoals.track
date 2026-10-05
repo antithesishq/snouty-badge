@@ -1,0 +1,41 @@
+# Shipbreaker Shoals: The Seabed, track 1 (SPEC 19.6). A loop round the
+# listing wrecks on the old shoals: along the north reach under the bows
+# (their shadows across the sand), down the east side through the tide
+# pools left in a wreck's scour, then into the container-stack maze the
+# container ship spilled (chicanes between the stacks, a container sliding
+# off a listing stack across the lane), out along the south reach and back
+# up the west side past the service bay.
+name SHIPBREAK SHOALS
+order 1
+floor sand
+background shoals
+league seabed
+width 52
+# x    y    half   features
+ 180  140   54                     # start line, heading east
+ 440  120   54     crates
+ 700  140   52     shadow,len=20   # under a wreck's bow
+ 880  200   50
+ 910  360   48     coolant         # tide pools in the scour
+ 860  500   46
+ 700  520   42                     # into the container maze
+ 540  560   42
+ 460  660   42
+ 560  740   42
+ 720  700   42
+ 860  760   44
+ 880  880   46
+ 700  920   46
+ 480  905   48     sweeper,period=720,speed=44,size=16   # a container slides off the stack
+ 300  900   50     crates
+ 160  800   52
+ 140  600   52
+ 260  470   50     bay:right
+ 160  330   52
+ 140  230   54
+props bow,anchor seg 1 side left gap 90 off 26
+props bow,buoy seg 3 side right gap 80 off 24
+props container seg 6 side both gap 60 off 20
+props container,buoy seg 9 side both gap 70 off 20
+props anchor,bow seg 16 side left gap 90 off 26
+props buoy seg 19 side left gap 80 off 24
