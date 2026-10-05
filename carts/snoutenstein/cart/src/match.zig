@@ -127,10 +127,11 @@ pub const G = struct {
     pub const check_every: u32 = 32;
     /// Start toggles the pause on both badges on the same tick.
     pub const pause_bit: ?u8 = bit_start;
-    /// No racer-style picks: only the ready flag (pick 0).
-    pub const pick_bits: u8 = 0;
-    pub fn picks_ok(_: u8, _: u8) bool {
-        return true;
+    /// No racer-style picks: the lobby sends pick 0 with the ready flag
+    /// (pick_bits and picks_ok keep their defaults).
+    /// A finished match does not pause (the results take Start).
+    pub fn can_pause(w: *const match_world) bool {
+        return !w.m.over;
     }
     pub fn simulate(w: *match_world, in: [2]u8) void {
         step(w, &levels.all[w.gs.level], .{ buttons_of(in[0]), buttons_of(in[1]) });

@@ -13,7 +13,7 @@
 const std = @import("std");
 const cart = @import("cart-api");
 const link = @import("link");
-const lockstep = @import("lockstep_stub.zig");
+const lockstep = @import("lockstep");
 const fixed = @import("fixed.zig");
 const state = @import("state.zig");
 const levels = @import("levels.zig");
@@ -31,7 +31,7 @@ const centered = hud.centered;
 const fmt = hud.fmt;
 
 /// The HELLO app byte of Snoutenstein (the partner's `app_name`).
-pub const app_id: u8 = 'S';
+pub const app_id: u8 = lockstep.apps.snoutenstein;
 
 pub const G = match.G;
 pub const Net = lockstep.Lockstep(link.Badge, G);
@@ -201,7 +201,14 @@ pub fn draw_lobby(v: LobbyView) void {
             centered("WRONG CART:", 46, hud.coral);
             centered(lockstep.app_name(v.partner), 58, hud.anti_white);
         },
-        else => draw_rules(v),
+        .wrong_version => {
+            centered("WRONG VERSION:", 46, hud.coral);
+            centered("UPDATE BOTH BADGES", 58, hud.anti_white);
+        },
+        .lobby => draw_rules(v),
+        // A match ended (results left) but the lockstep is not back in
+        // the lobby yet: the next frame is.
+        else => {},
     }
     centered("B: BACK", 118, hud.grey);
 }

@@ -31,12 +31,38 @@ pub fn add(b: *Build, sycl_badge_dep: *Build.Dependency, opts: common.Options) v
     // `zig build test` (shared step): the pure sim/levels/parser/rewind/demo
     // suites (cart/src/host_tests.zig), the same ones tools/check.sh runs.
     // The generated-source freshness checks stay in check.sh (read-only, git).
-    const tests = b.addTest(.{ .root_module = b.createModule(.{
+    const tests_mod = b.createModule(.{
         .root_source_file = b.path(dir ++ "cart/src/host_tests.zig"),
         .target = b.graph.host,
         .optimize = .Debug,
-    }) });
+    });
+    // M7: two badges over the virtual cable (cart/src/dm_net_test.zig).
+    tests_mod.addImport("lockstep", lockstep_module(b));
+    tests_mod.addImport("link_host", link_host_module(b));
+    const tests = b.addTest(.{ .root_module = tests_mod });
     opts.test_step.dependOn(&b.addRunArtifact(tests).step);
+    // `zig build test-stein`: this cart's host tests alone.
+    const own = b.step("test-stein", "Run snoutenstein's host tests only");
+    own.dependOn(&b.addRunArtifact(tests).step);
+}
+
+/// The shared two-badge lockstep (root docs/LOCKSTEP.md); it imports only
+/// std (the link type is a parameter).
+fn lockstep_module(b: *Build) *Build.Module {
+    return b.createModule(.{ .root_source_file = b.path("lib/lockstep.zig") });
+}
+
+/// The host tests' link: lib/link.zig and its virtual cable
+/// (lib/link_virtual.zig imports link.zig by path) copied side by side
+/// under one root, `link_host.link` and `link_host.virtual`, as Snouty GC
+/// does (a file can belong to only one module).
+fn link_host_module(b: *Build) *Build.Module {
+    const wf = b.addWriteFiles();
+    for ([_][]const u8{ "link.zig", "link_rp2350.zig", "link_virtual.zig" }) |f| {
+        _ = wf.addCopyFile(b.path(b.fmt("lib/{s}", .{f})), f);
+    }
+    const root = wf.add("link_host.zig", "pub const link = @import(\"link.zig\");\npub const virtual = @import(\"link_virtual.zig\");\n");
+    return b.createModule(.{ .root_source_file = root });
 }
 
 var build_options: ?*Build.Step.Options = null;
@@ -72,8 +98,10 @@ fn build_cart_assets(b: *Build, cart: *Build.Module, cart_api: *Build.Module, st
     if (build_options) |o| cart.addImport("build_options", o.createModule());
     // Sound on the newer firmware: tone2 rendered into the streaming ring.
     cart.addImport("tone_stream", b.createModule(.{ .root_source_file = b.path("lib/tone_stream.zig") }));
-    // Deathmatch (M7): the badge-to-badge link cable (root docs/LINK.md).
+    // Deathmatch (M7): the badge-to-badge link cable (root docs/LINK.md)
+    // under the shared two-badge lockstep (root docs/LOCKSTEP.md).
     cart.addImport("link", b.createModule(.{ .root_source_file = b.path("lib/link.zig") }));
+    cart.addImport("lockstep", lockstep_module(b));
     const convert = b.addExecutable(.{
         .name = "convert_gfx",
         .root_module = b.createModule(.{

@@ -22,6 +22,9 @@ zig test cart/src/level_parse.zig
 zig test cart/src/rewind.zig
 zig test cart/src/demo.zig
 zig test cart/src/match.zig
+# Everything above plus the two-badge lockstep over the virtual cable
+# (cart/src/dm_net_test.zig needs the build's lockstep and link imports).
+(cd "$repo" && zig build test-stein)
 W="$repo/zig-out/bin/snoutenstein.wasm"
 # M1: walk the long corridor, doors, pause.
 node ../../tools/preview.mjs $W --frames 2160 --every 8 --out out/walk \
