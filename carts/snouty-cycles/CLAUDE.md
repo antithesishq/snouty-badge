@@ -165,6 +165,41 @@ true, .layout = n }`.
 - `hash()`/`same_state` also cover `rubber_tick`, `stalled`, `grind` and
   `sudden_death_ring`.
 
+### M1 game (track P: `game.zig`, `render.zig`, `levels.zig`, `main.zig`)
+
+- **`levels.zig`**: `table` (SPEC 6's twelve levels: name, programs as
+  `{ tier, preset }`, `speed_pct`, `layout` index into `layouts.zig`,
+  `sudden_death`), `get(n)` for ladder position n (1-based, loops after
+  PROD at +10% speed, layouts shift per loop) returning a `Round` with
+  `config()` (every M1 rule on), `number()`, `name()`, `programs()`.
+- **`game.State`** (`debug_state`): title, menu, howto, intro, countdown,
+  play, derez (your crash or time up; the World runs on), clear (tally,
+  a life back up to 3), game_over (CORE DUMPED), paused (RESUME /
+  RESTART LEVEL / QUIT). `g.new_game(n)` starts the ladder at n
+  (`debug_set_level`, the `snouty_cycles_level` poke); `g.level`,
+  `g.lives`, `g.score`, `g.high` (session, RAM only). Autopilot 3 = T3.
+  Brains come from `game.compat.brain(tier, preset, seed)`: `ai.preset`
+  once Track A lands (it must return an `ai.Brain`), `Brain.init` before.
+- **`render.View`** adds `tags` (bit i: cycle i's crash gets a small name
+  tag for 30 ticks). **`render.Hud`** is drawn in the 4x5 `font5` at y
+  2..6, 2 px from every edge: `left`, `right`, `energy` (null hides the
+  bar), `bar_mode` (0 ride, 1 boost, 2 brake), `lives`/`max_lives` pips.
+  Banners take up to 8 lines and stay 2 px inside the screen; lines of up
+  to 18 characters at scale 1 (9 at scale 2) fit (`Banner.fits`).
+- **Effects** (`render.fx`): a pool of 96 dots (grind sparks from `grind`
+  events, 1..3 a tick, 4..8 ticks; stall sparks from `stall`; a 16-dot
+  derez burst per crash, 40 ticks, 2x2 while hot) and per-cycle crash
+  tags (never over a banner). They age once per World tick (they freeze
+  with pause), take their randomness from the World's seed and tick, are
+  redrawn every frame and erased with `repaint_rect`; `full_repaint`
+  draws them from the same state (the render test copies them into its
+  fresh renderer). `invalidate` drops them (a new scene). A stalled head
+  flickers red.
+- **Sudden death** draws blocks on rings 1..`sudden_death_ring` red (odd
+  rings brighter: stripes) with a red floor glow; when the ring count
+  grows the renderer repaints that ring's strip itself, so layout blocks
+  already on it turn red too.
+
 ## Rendering rules that are easy to break
 
 - **Mark every write.** `.copy_forward` sends only the marked dirty rect
