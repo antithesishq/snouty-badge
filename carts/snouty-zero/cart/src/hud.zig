@@ -63,13 +63,15 @@ pub fn format_clock(out: *[7]u8, ticks: u32) void {
 /// centerline into 1-bit buffers at 32 and 48 px (Select toggles), the
 /// machines as 2x2 dots (traffic 1x1), bottom-right.
 const minimap_sizes = [2]u8{ 32, 48 };
-var minimap_buf: [2][48 * 48]u8 = undefined;
+/// One bit per pixel, a column per entry (rows 0-31 in word 0, 32-47 in
+/// word 1): 768 bytes instead of a byte a pixel (M6 needed the cart RAM).
+var minimap_buf: [2][48][2]u32 = undefined;
 pub var minimap_large: bool = false;
 
 pub fn init_minimap(t: *const track.Track) void {
     for (minimap_sizes, 0..) |size, k| {
         const buf = &minimap_buf[k];
-        @memset(buf, 0);
+        buf.* = @splat(.{ 0, 0 });
         // Half-width stroke: plot each sample and the point one step toward the next.
         for (0..256) |i| {
             const a = t.sample(i);
@@ -80,7 +82,7 @@ pub fn init_minimap(t: *const track.Track) void {
                 const y = (@as(i32, a.y) * (4 - @as(i32, @intCast(step))) + @as(i32, b.y) * @as(i32, @intCast(step))) >> 2;
                 const mx: usize = @intCast(@divTrunc(x * size, 1024));
                 const my: usize = @intCast(@divTrunc(y * size, 1024));
-                buf[my * 48 + mx] = 1;
+                buf[mx][my >> 5] |= @as(u32, 1) << @intCast(my & 31);
             }
         }
     }
@@ -96,8 +98,9 @@ fn draw_minimap() void {
     const bg: cart.Pixel = .from_color(anti_black);
     for (0..@intCast(size)) |x| {
         const col = &cart.framebuffer[@intCast(x0 + @as(i32, @intCast(x)))];
+        const bits = &buf[x];
         for (0..@intCast(size)) |y| {
-            const on = buf[y * 48 + x] != 0;
+            const on = (bits[y >> 5] >> @intCast(y & 31)) & 1 != 0;
             // Dim checkerboard background so the floor shows through.
             if (on) {
                 col[@intCast(y0 + @as(i32, @intCast(y)))] = line;
@@ -121,7 +124,7 @@ fn draw_minimap() void {
 
 fn minimap_dot(w: *const world.World, i: usize, x0: i32, y0: i32, size: i32, color: cart.DisplayColor) void {
     const m = &w.machines[i];
-    if (!m.active) return;
+    if (!m.f.active) return;
     const mx = x0 + @divTrunc((m.x >> fixed.Q) * size, 1024);
     const my = y0 + @divTrunc((m.y >> fixed.Q) * size, 1024);
     const d: u32 = if (i >= 5) 1 else 2;
@@ -167,7 +170,7 @@ pub fn draw() void {
     text(&lap_buf, margin, margin, white);
     // Top-centre (x 66..122; the lap text ends at 60, the rank starts at 131): the race clock.
     var clock: [7]u8 = undefined;
-    format_clock(&clock, if (m.finished) m.finish_tick else w.tick);
+    format_clock(&clock, if (m.f.finished) m.finish_tick else w.tick);
     text(&clock, 66, margin, white);
     // Bottom-left: speed in Tb/s, then the thermal bar.
     var spd_buf: [8]u8 = "   0Tb/s".*;

@@ -100,6 +100,9 @@ var lnk_started: bool = false;
 /// made-up one in the simulator (`debug_link_race`), no lockstep behind it.
 var linked: bool = false;
 var fake_link: bool = false;
+/// The made-up link screens exist only in the simulator (the badge build
+/// drops their code: cart RAM is tight).
+const fake_ok = cart.is_wasm;
 /// The lobby: the host's row and track, this badge's machine and mark.
 var lobby_cursor: u8 = 0;
 var lobby_track: u8 = 0;
@@ -394,7 +397,7 @@ fn race_frame() void {
             go(.title);
             return;
         }
-    } else if (input.pressed(.start) and p.active and w.phase != .finished and hitstop_left == 0 and auto_left == 0) {
+    } else if (input.pressed(.start) and p.f.active and w.phase != .finished and hitstop_left == 0 and auto_left == 0) {
         pause_list = .{ .count = 4 };
         go(.pause);
         draw_race();
@@ -411,7 +414,7 @@ fn race_frame() void {
                 auto_left = tuning.auto_rewind_ticks;
                 results.rewinds += 1;
             } else {
-                p.active = false;
+                p.f.active = false;
                 w.msg[0] = .killed;
                 w.msg_ticks[0] = 255;
                 killed_left = 60;
@@ -465,7 +468,7 @@ fn race_frame() void {
     sprites.tick_effects();
 
     // Crash start: freeze for the hit-stop (the sim's own reset path is for rivals).
-    if (p.crash != .none and p.active) {
+    if (p.crash != .none and p.f.active) {
         crashes += 1;
         hitstop_left = tuning.hitstop_ticks;
     }
@@ -538,13 +541,13 @@ fn sound_cues() void {
 fn engine_cue() void {
     const w = &world.w;
     const p = &w.machines[world.view];
-    if (screen != .race or mode == .attract or hitstop_left > 0 or killed_left > 0 or !p.active) return sound.engine_off();
+    if (screen != .race or mode == .attract or hitstop_left > 0 or killed_left > 0 or !p.f.active) return sound.engine_off();
     sound.engine(.{
         .speed = sim.speed(p),
-        .throttle = (input.held(.a) or autopilot) and !p.finished,
+        .throttle = (input.held(.a) or autopilot) and !p.f.finished,
         .boost = p.boost > 0,
         .air = p.hop > 0,
-        .rough = p.on_throttled,
+        .rough = p.f.on_throttled,
         .grid = w.phase == .countdown,
         .rewind = rewinding or auto_left > 0,
         .frame = frame,
@@ -603,7 +606,7 @@ fn award_points() void {
     const w = &world.w;
     for (0..5) |i| {
         const m = &w.machines[i];
-        const r: usize = if (i == 0 and !m.active) 0 else m.rank;
+        const r: usize = if (i == 0 and !m.f.active) 0 else m.rank;
         gp.points[i] += menu.points_for_rank[@min(r, 5)];
     }
 }
@@ -664,7 +667,7 @@ fn pump_loop(ticked: ?*bool) void {
 
 /// What the lobby shows: the link's, or the made-up one of `debug_link_view`.
 fn lobby_view() link_ui.View {
-    if (fake_view != 0) return fake_lobby();
+    if (fake_ok and fake_view != 0) return fake_lobby();
     const host = lnk.role == .host;
     const r = lnk.rules();
     return .{
@@ -768,7 +771,7 @@ fn begin_link_race() void {
 /// so a finished badge never pauses its partner).
 fn link_byte() u8 {
     const m = &world.w.machines[world.view];
-    if (m.finished) return 0;
+    if (m.f.finished) return 0;
     if (autopilot) return link_race.byte_of(ai.drive_human(m, world.view));
     return link_race.byte_of(@bitCast(@as(u16, @bitCast(input.current))));
 }
@@ -811,9 +814,9 @@ fn link_race_frame() void {
     const w = &world.w;
     pump_top();
     if (!fake_link and lnk.state() == .desync) return end_desync();
-    if (fake_link and fake_notice == 3) return end_desync();
+    if (fake_ok and fake_link and fake_notice == 3) return end_desync();
     const me = &w.machines[world.view];
-    if (!fake_link and lnk.paused and !me.finished) {
+    if (!fake_link and lnk.paused and !me.f.finished) {
         pause_list = .{ .count = 3 };
         go(.pause);
         return link_pause_frame();
@@ -823,7 +826,7 @@ fn link_race_frame() void {
         sim.simulate_humans(.{ .{}, .{} });
         ticked = true;
         after_tick();
-    } else if (fake_link) {
+    } else if (fake_ok and fake_link) {
         fake_tick();
         ticked = true;
         after_tick();
@@ -836,7 +839,7 @@ fn link_race_frame() void {
     }
     // This badge's human home: its results follow (the race may go on
     // for the partner; the results keep the lockstep running).
-    if (me.finished) {
+    if (me.f.finished) {
         finished_ticks += 1;
         if (finished_ticks >= results_after or input.pressed(.start)) go(.results);
     }
@@ -849,7 +852,7 @@ fn link_race_frame() void {
 /// WAITING FOR PEER while the partner's bytes are late; PEER LEFT, AI
 /// DRIVING for a while once it has gone (not if its machine had finished).
 fn link_notices() void {
-    if (fake_link) return link_ui.draw_notice(switch (fake_notice) {
+    if (fake_ok and fake_link) return link_ui.draw_notice(switch (fake_notice) {
         1 => .waiting,
         2 => .peer_left,
         else => .none,
@@ -858,7 +861,7 @@ fn link_notices() void {
     if (st == .peer_left and !left_shown) {
         left_shown = true;
         const peer = world.w.humans[lnk.local_slot() ^ 1];
-        if (peer != world.no_human and !world.w.machines[peer].finished) left_note = tuning.link_left_note;
+        if (peer != world.no_human and !world.w.machines[peer].f.finished) left_note = tuning.link_left_note;
     }
     const k: link_ui.Notice = if (st == .waiting) .waiting else if (left_note > 0) .peer_left else .none;
     left_note -|= 1;
@@ -917,7 +920,7 @@ fn link_results_frame() void {
     pump_top();
     var ticked = true;
     if (w.phase != .finished and !desynced) {
-        if (fake_link) {
+        if (fake_ok and fake_link) {
             fake_tick();
         } else if (lnk.state() == .desync) {
             desynced = true;
@@ -1148,7 +1151,7 @@ fn debug_start_race(n: u32) callconv(.c) void {
 /// FAULT) on the next frame, for scripting the crash auto-rewind.
 fn debug_force_crash() callconv(.c) u32 {
     const p = &world.w.machines[world.view];
-    if (p.active and p.crash == .none and screen == .race) sim.crash(p, .fall);
+    if (p.f.active and p.crash == .none and screen == .race) sim.crash(p, .fall);
     return world.w.tick;
 }
 /// --call-at T debug_force_ko: the live rival or batch job nearest the
@@ -1161,7 +1164,7 @@ fn debug_force_ko() callconv(.c) u32 {
     var best: u32 = 0;
     var best_d: i64 = std.math.maxInt(i64);
     for (w.machines[1..w.active_count], 1..) |*m, i| {
-        if (!m.active or m.crash != .none or m.finished) continue;
+        if (!m.f.active or m.crash != .none or m.f.finished) continue;
         const dx: i64 = ((((m.x -% p.x) >> fixed.Q) + 512) & 1023) - 512;
         const dy: i64 = ((((m.y -% p.y) >> fixed.Q) + 512) & 1023) - 512;
         if (dx * dx + dy * dy < best_d) {
@@ -1297,7 +1300,7 @@ fn debug_rewinding() callconv(.c) u32 {
     return @intFromBool(rewinding);
 }
 fn debug_active() callconv(.c) u32 {
-    return @intFromBool(world.w.machines[world.view].active);
+    return @intFromBool(world.w.machines[world.view].f.active);
 }
 fn debug_sound() callconv(.c) u32 {
     return @intFromBool(sound.enabled);

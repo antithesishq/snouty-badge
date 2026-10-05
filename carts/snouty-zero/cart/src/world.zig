@@ -31,6 +31,21 @@ pub const no_human: u8 = 0xFF;
 /// Why a machine crashed (the message bar names it).
 pub const Crash = enum(u8) { none, fall, meltdown, collision };
 
+pub const Flags = packed struct(u8) {
+    /// Set when the machine is on a throttled / cold tile this tick.
+    on_throttled: bool = false,
+    on_cold: bool = false,
+    /// Alive and racing; false after a retire (M3) or a knockout.
+    active: bool = true,
+    finished: bool = false,
+    /// Knocked out (SPEC 5.5): wrecking through the hit-stop, then out of
+    /// the race (`active` false) instead of the centerline reset.
+    ko: bool = false,
+    /// Up held last tick: Overclock fires on the press edge (SPEC 4).
+    up_was: bool = false,
+    _pad: u2 = 0,
+};
+
 pub const Machine = struct {
     /// World position, Q16.16, wrapping at 1024.
     x: i32 = 0,
@@ -53,29 +68,22 @@ pub const Machine = struct {
     shake: u8 = 0,
     /// Steering input this tick (-1, 0, 1) for the lean frame; set by simulate.
     steer: i8 = 0,
-    /// Set when the machine is on a throttled / cold tile this tick.
-    on_throttled: bool = false,
-    on_cold: bool = false,
-    /// Alive and racing; false after a retire (M3).
-    active: bool = true,
-    finished: bool = false,
-    /// Race time at the finish, ticks.
-    finish_tick: u32 = 0,
-    /// Best lap and the tick the current lap started.
-    best_lap: u32 = 0,
-    lap_start: u32 = 0,
+    /// The machine's bools, one byte (M6: every byte of a Machine is 44
+    /// bytes of history, and the link race needed the cart RAM).
+    f: Flags = .{},
+    /// Race time at the finish, ticks (saturating at 65535, 18 minutes).
+    finish_tick: u16 = 0,
+    /// Best lap, and the race tick the current lap started (low 16 bits:
+    /// a lap time is the wrapping difference).
+    best_lap: u16 = 0,
+    lap_start: u16 = 0,
     /// Crash in progress (hit-stop countdown) and its cause.
     crash: Crash = .none,
     hitstop: u8 = 0,
-    /// Knocked out (SPEC 5.5): wrecking through the hit-stop, then out of
-    /// the race (`active` false) instead of the centerline reset.
-    ko: bool = false,
     /// Ticks left in which a crash counts as a human's doing (set by a
     /// damaging contact with a human), and which human (input slot).
     hit_by_player: u8 = 0,
     hit_by: u8 = 0,
-    /// Up held last tick: Overclock fires on the press edge (SPEC 4).
-    up_was: bool = false,
     /// Race position 1..5 for the player and rivals (0 for traffic and
     /// inactive machines); final for a machine once it has `finished`.
     rank: u8 = 0,

@@ -227,9 +227,9 @@ fn drive_index(m: *const world.Machine, c: *const Character, i: usize) world.But
     if (@abs(err) > c.tight_turn and spd > @divTrunc(tuning.top_speed, 4)) b.down = true;
     // Overclock on a straight: a fresh press (edge) with thermal to spare.
     // The near window is already summed; scan the rest only when it is straight.
-    if (c.overclock_ahead and m.boost == 0 and !m.up_was and
+    if (c.overclock_ahead and m.boost == 0 and !m.f.up_was and
         m.thermal >= c.overclock_reserve + tuning.thermal_overclock and
-        world.w.phase != .countdown and !m.finished and curve < c.overclock_curve and
+        world.w.phase != .countdown and !m.f.finished and curve < c.overclock_curve and
         curve + curvature(@as(usize, m.progress) + c.curve_ahead, c.overclock_window - c.curve_ahead) < c.overclock_curve)
     {
         b.up = true;
@@ -255,7 +255,7 @@ fn avoid(m: *const world.Machine, i: usize, lane: *i32, block_spd: *i32) void {
     for (0..n) |j| {
         if (j == i) continue;
         const o = &world.w.machines[j];
-        if (!o.active or o.hop != 0) continue;
+        if (!o.f.active or o.hop != 0) continue;
         const dx = wrap_px((o.x - m.x) >> fixed.Q);
         const dy = wrap_px((o.y - m.y) >> fixed.Q);
         if (@abs(dx) >= tuning.avoid_ahead or @abs(dy) >= tuning.avoid_ahead) continue;

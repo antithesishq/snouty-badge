@@ -143,7 +143,7 @@ pub fn tick_effects() void {
         if (m.shake > 0 and prev_shake[i] == 0) spawn_spark(m.x, m.y);
         prev_shake[i] = m.shake;
         // A wreck (SPEC 5.5) throws a spark every 2 ticks, scattered by the countdown.
-        if (m.active and m.ko and m.hitstop % 2 == 0) {
+        if (m.f.active and m.f.ko and m.hitstop % 2 == 0) {
             const k: i32 = m.hitstop;
             spawn_spark(m.x + (((k * 5) & 15) - 8) * fixed.one, m.y + (((k * 3) & 15) - 8) * fixed.one);
         }
@@ -179,7 +179,7 @@ pub fn draw_machines() void {
     var list: [world.machine_count]Entry = undefined;
     var n: usize = 0;
     for (world.w.machines[0..world.w.active_count], 0..) |*m, i| {
-        if (!m.active) continue;
+        if (!m.f.active) continue;
         const p = camera.project(m.x, m.y) orelse continue;
         if (p.sy < tuning.horizon_y + 2) continue;
         list[n] = .{ .index = @intCast(i), .p = p };
@@ -214,8 +214,8 @@ fn draw_machine(m: *const world.Machine, index: u8, p: camera.Projected) void {
         blit_scaled(gfx.fx, 16, 16, fl, p.sx, p.sy - lift_px + 6, p.scale, &fx_pal, .{});
     }
     // A wreck flickers: hidden every other 2 ticks, white the rest.
-    if (m.ko and (m.hitstop / 2) % 2 == 0) return;
-    const flash = (m.immune > 0 and (m.immune / 2) % 2 == 0 and m.crash == .none) or m.ko;
+    if (m.f.ko and (m.hitstop / 2) % 2 == 0) return;
+    const flash = (m.immune > 0 and (m.immune / 2) % 2 == 0 and m.crash == .none) or m.f.ko;
     const opts = BlitOpts{ .flat = if (flash) @as(?cart.Pixel, .from_color(.rgb(0xFCFBF9))) else null };
     // A human's machine is its machine select pick (M5; two in a link race).
     const slot = world.w.slot_of(index);
