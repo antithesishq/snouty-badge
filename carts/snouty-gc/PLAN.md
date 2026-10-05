@@ -1588,6 +1588,73 @@ purchases with reactions, standings, the league unlock, the end card);
 PLAN "M5 status"; deferred questions L28 on. The lead tags
 `snouty-gc/m5` and merges.
 
+### M5 status
+
+**2026-10-05, branch `gc/present`.** The SNOUTY GCP (CIRCUIT) is playable
+from the main menu to the end card; the polish list is done. Commits:
+the plan (9e86ef55), the sim side (f0b7e09e), the screens and polish
+(54bc7ebd), chips every 4 s and the docs (4e8845d8), this status.
+
+- **M5.0 as planned** (`world.Loadout`, `Setup.loadouts`, `Setup.chips`,
+  `Car.ecc` / `burst_max` / `watchdog` / `chips`, `World.chips_on` /
+  `chip_clock` / `chips`, event `chip`; L34 changed the chips' return to
+  every 240 ticks). **World 2,540 B** (cap 2,560 kept), `Car` 116 B. The
+  stock setup is the M0-M4 car: `career_test.zig` replays five seeded
+  4,000-tick races (race on tracks 0, 3, 4, GC on 1, attract on 5) to
+  fingerprints recorded at 90683be4, with the default and with an
+  explicit stock `Loadout`; `check.sh` pins the four input scripts at
+  update 2,999 (`m0_race` 1,125,151,687, `m2_race` 1,116,132,432,
+  `m3_gc_race` -1,540,294,026, `m3_outflow_race` 69,064,753: as at M4).
+- **Career** (`career.zig`): CYCLES 1000/600/400/250/150/100 by place,
+  150 a credited wreck, 10 a chip, 1500 a league win; points 9/6/4/3/2/1;
+  top 3 opens the Runoff, the Runoff's top 3 ends the Prix; SPEC 9.2's
+  prices; AI plans per racer (LEGACY never CLOCK, KIDDIE never PLATING)
+  on 75% of the player's garage spending (L35).
+- **Screens**: CIRCUIT in the menu, the select's `A ENTER THE PRIX`, the
+  garage (`garage.zig`) with 60 reaction lines, the standings, league,
+  unlock and end cards (`standings.zig`), chips on the floor (a new
+  `hud.png` cell, `+10` pops), four BURST bolts, `TAGGED!` clamped on
+  screen, A on the title to the Quick Race select (two presses).
+- **Tests** (`zig build test-gc`: **137 pass**, 21 new in
+  `career_test.zig`): the golden races, each upgrade (PLATING to 230 on a
+  MAINFRAME, ECC ignoring 1..4 with no kill credit, PING L3 chipping ECC
+  in a frozen scenario, CLOCK, TRACTION, BURST BUFFER 1..4 refilled on
+  the line, WATCHDOG 120/90/60/40 with the hulk, weapon levels and swaps,
+  LOGIC BOMB L3 44), chips (20+ on every track, all on the floor, the
+  autopilot takes some, one event each, they come back, none without
+  `Setup.chips`), CYCLES and points, a league won / failed / cleared,
+  standings ties, the garage's prices, poor and maxed, every reaction
+  fitting two rows, the plans' rules, plans deterministic and rising
+  with the player's spending, and the **circuit soak**: the autopilot
+  (SNOUTY's AI) drives SNOUTY and KIDDIE through whole Prix to the end
+  card, buying the cheapest level it can before each race (12 races each,
+  two failed leagues; about 4.8 wrecks a race; L37 has the other racers).
+- **check.sh**: the golden replays, the title shortcut, a CIRCUIT run
+  (menus, garage, two purchases, a real race to the standings, then
+  made-up results to the league, unlock and end cards), two new benches.
+  **PASS** (test via test-gc: another cart's runner fails in `zig build
+  test`, as before).
+- **Bench** (calibrated; `--lcd` identical, mean / worst ms): `m0_race`
+  3.65 / 5.22; stress 5.02 / **6.17**; `m2_race` 3.58 / 5.22;
+  `m3_outflow_race` 3.64 / 5.71; `m3_gc_race` 3.49 / 5.67; new
+  `m5_circuit_race` 3.51 / 4.66 (the garage, then a CIRCUIT race with
+  chips and upgraded AIs); new `m5_cards` 1.75 / 5.43 (the unlock card's
+  A frame: its floor plus the garage drawn over it). Probe: stress 5.17 /
+  6.34, GC 3.59 / 5.80. The one fast path: the end card's chain-link
+  fence by columns (6.39 -> under 4 ms on that card).
+- **RAM**: `size -A` **.text 162,188 + .data 7,688 + .bss 52,144** (+
+  1,728 exidx/extab + descriptor) = 223,768 B, **50,408 B (49 KB) free**
+  (M4: 62,752).
+- `docs/preview_m5.gif` (644 frames, 60 ms): the menu's CIRCUIT row, the
+  select, the garage (SPEAR PHISH L2 and SNOUTY's line, PING shown as an
+  800 swap, PLATING L1 and L2, then `NO CYCLES. I'LL GO HUNT SOME.`), a
+  CIRCUIT race with chips, the real results and standings (4th, 8 kills,
+  8 chips: +1,530), then made-up results: the Dumps PRIX WON card, NEW
+  PRIX UNLOCKED over the Runoff, the Runoff's card and the end card.
+- **On a badge**: never run. Check the garage's text and pips at 1:1, the
+  chips' readability at speed, that a human can clear the Dumps (L37), the
+  title's A, and the menu's five rows.
+
 ## Deferred questions
 
 SPEC 17 holds the design defaults. Taken during M0 (Track A):
