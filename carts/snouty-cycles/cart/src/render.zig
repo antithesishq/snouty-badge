@@ -142,6 +142,9 @@ pub const colors = struct {
         break :blk t;
     };
     pub const rim_glow = rgb(mix24(floor_rgb, rim_rgb, 48));
+    /// WRAP: the open screen edge, a dim dashed line on the outer pixels
+    /// of the edge cells (4 px on, 4 px off).
+    pub const edge_dash = rgb(mix24(floor_rgb, rim_rgb, 190));
     pub const block_glow = rgb(mix24(floor_rgb, block_rgb, 64));
 
     /// Sudden death's closing ring (SPEC 8: red).
@@ -322,7 +325,7 @@ pub fn Renderer(comptime S: type) type {
         /// The World tick whose events were applied.
         last_tick: u32 = 0xFFFF_FFFF,
         need_full: bool = true,
-        /// Sudden-death rings drawn red so far.
+        /// Sudden-death stages drawn red so far (`World.sudden_death_ring`).
         sd_drawn: u32 = 0,
         /// Transient effects: sparks and derez particles, crash tags.
         /// Redrawn every frame and erased by repainting their cells.
@@ -541,7 +544,8 @@ pub fn Renderer(comptime S: type) type {
         }
 
         /// Sudden death: rings drawn red as they close in, whatever events
-        /// the rules sent (a block already on the ring turns red too).
+        /// the rules sent (a block already on the ring turns red too). The
+        /// count is in stages (stage k closes ring k, or k - 1 in WRAP).
         fn update_rings(self: *Self, w: *const sim.World) void {
             const now = @as(u32, w.sudden_death_ring);
             if (now < self.sd_drawn) {
@@ -555,18 +559,25 @@ pub fn Renderer(comptime S: type) type {
             }
         }
 
-        /// Ring r (cells at distance r from the screen edge) and the rings
-        /// beside it, whose floor glow follows it.
-        fn repaint_ring(self: *Self, w: *const sim.World, r: u32) void {
-            if (r == 0 or r >= sim.grid_h / 2) return;
-            // Cells x in [a, xe), y in [a, ye): the ring and one cell to each side.
-            const a: u8 = @intCast(r - 1);
-            const xe: u8 = @intCast(sim.grid_w + 1 - r);
-            const ye: u8 = @intCast(sim.grid_h + 1 - r);
-            self.repaint_cells(w, a, a, xe, a + 3);
-            self.repaint_cells(w, a, ye - 3, xe, ye);
-            self.repaint_cells(w, a, a, a + 3, ye);
-            self.repaint_cells(w, xe - 3, a, xe, ye);
+        /// The ring sudden-death stage `stage` closes (cells at distance
+        /// r from the screen edge) and the rings beside it, whose floor
+        /// glow follows it.
+        fn repaint_ring(self: *Self, w: *const sim.World, stage: u32) void {
+            if (stage == 0) return;
+            const r = stage - 1 + w.sd_first_ring();
+            if (r >= sim.grid_h / 2) return;
+            // Cells x in [a, xe), y in [a, ye): the ring and one cell to
+            // each side (none outside the screen for ring 0).
+            const a: u8 = @intCast(r -| 1);
+            const b: u8 = @intCast(r + 2);
+            const xe: u8 = @intCast(@min(sim.grid_w, sim.grid_w + 1 - r));
+            const ye: u8 = @intCast(@min(sim.grid_h, sim.grid_h + 1 - r));
+            const xb: u8 = @intCast(sim.grid_w - 2 - r);
+            const yb: u8 = @intCast(sim.grid_h - 2 - r);
+            self.repaint_cells(w, a, a, xe, b);
+            self.repaint_cells(w, a, yb, xe, ye);
+            self.repaint_cells(w, a, a, b, ye);
+            self.repaint_cells(w, xb, a, xe, ye);
         }
 
         // ------------------------------------------------ heads
@@ -1092,29 +1103,36 @@ const floor_column = blk: {
     break :blk c;
 };
 
-/// True if cell (x, y) draws as the bare floor: empty, no wall beside it.
+/// True on the screen edge's cells (the rim, or WRAP's open edge).
+inline fn on_edge(x: u8, y: u8) bool {
+    return x == 0 or y == 0 or x == sim.grid_w - 1 or y == sim.grid_h - 1;
+}
+
+/// True if cell (x, y) draws as the bare floor: empty, not on the edge
+/// (WRAP's dashed border), no wall beside it.
 fn bare_floor(w: *const sim.World, x: u8, y: u8) bool {
     const i = sim.index(x, y);
-    if (w.grid[i] != sim.empty) return false;
+    // With a rim an empty cell is never on the edge.
+    if (w.grid[i] != sim.empty or (w.cfg.wrap and on_edge(x, y))) return false;
     return w.grid[i - sim.grid_w] | w.grid[i + sim.grid_w] | w.grid[i - 1] | w.grid[i + 1] == 0;
 }
 
-/// The glow a wall value casts on the floor next to it, or null. `sd`
-/// is the sudden-death ring count; (x, y) is the wall's cell.
-inline fn glow_of(v: u8, sd: u32, x: u32, y: u32) ?u16 {
+/// The glow a wall value casts on the floor next to it, or null. (x, y)
+/// is the wall's cell (only read for a wall).
+inline fn glow_of(w: *const sim.World, v: u8, x: u32, y: u32) ?u16 {
     const t = v & ~sim.fx_bit;
     if (t == sim.empty) return null;
     if (sim.trail_owner(t)) |o| return colors.glow[o];
     if (t == sim.rim) return colors.rim_glow;
-    return if (in_death_ring(sd, x, y)) colors.death_glow else colors.block_glow;
+    return if (in_death_ring(w, x, y)) colors.death_glow else colors.block_glow;
 }
 
 /// True if a block at (x, y) belongs to sudden death's closing rings
-/// (rings 1..sd): drawn red, not layout blue.
-inline fn in_death_ring(sd: u32, x: u32, y: u32) bool {
-    if (sd == 0) return false;
-    const r = sim.ring_of(x, y);
-    return r >= 1 and r <= sd;
+/// (stages 1..`sudden_death_ring`): drawn red, not layout blue.
+inline fn in_death_ring(w: *const sim.World, x: u32, y: u32) bool {
+    if (w.sudden_death_ring == 0) return false;
+    const r = w.sd_stage_of(x, y);
+    return r >= 1 and r <= w.sudden_death_ring;
 }
 
 /// The 4x5 HUD and tag font: rows top to bottom, bit 3 the left column.
@@ -1193,22 +1211,36 @@ pub fn cell_colors(w: *const sim.World, x: u8, y: u8) [4]u16 {
     const v = w.grid[i] & ~sim.fx_bit;
     if (v == sim.empty) {
         var c = floor_cells[@as(u32, @intFromBool(x & 3 == 0)) * 2 + @intFromBool(y & 3 == 0)];
-        // Glow on the pixels that face a wall (interior cells only have
-        // in-grid neighbours; the rim is never empty).
-        const nu = w.grid[i - sim.grid_w];
-        const nd = w.grid[i + sim.grid_w];
-        const nl = w.grid[i - 1];
-        const nr = w.grid[i + 1];
-        if (nu | nd | nl | nr == 0) return c;
-        const sd = @as(u32, w.sudden_death_ring);
-        const up = glow_of(nu, sd, x, y - 1);
-        const down = glow_of(nd, sd, x, y + 1);
-        const left = glow_of(nl, sd, x - 1, y);
-        const right = glow_of(nr, sd, x + 1, y);
+        // Glow on the pixels that face a wall. An empty cell on the screen
+        // edge (only in WRAP: no rim) has no glow from beyond the edge.
+        const edge = w.cfg.wrap and on_edge(x, y);
+        var nu: u8 = sim.empty;
+        var nd: u8 = sim.empty;
+        var nl: u8 = sim.empty;
+        var nr: u8 = sim.empty;
+        if (!edge) {
+            nu = w.grid[i - sim.grid_w];
+            nd = w.grid[i + sim.grid_w];
+            nl = w.grid[i - 1];
+            nr = w.grid[i + 1];
+            if (nu | nd | nl | nr == 0) return c;
+        } else {
+            if (y > 0) nu = w.grid[i - sim.grid_w];
+            if (y < sim.grid_h - 1) nd = w.grid[i + sim.grid_w];
+            if (x > 0) nl = w.grid[i - 1];
+            if (x < sim.grid_w - 1) nr = w.grid[i + 1];
+        }
+        const xx: u32 = x;
+        const yy: u32 = y;
+        const up = glow_of(w, nu, xx, yy -% 1);
+        const down = glow_of(w, nd, xx, yy + 1);
+        const left = glow_of(w, nl, xx -% 1, yy);
+        const right = glow_of(w, nr, xx + 1, yy);
         if (left orelse up) |g| c[0] = g;
         if (right orelse up) |g| c[1] = g;
         if (left orelse down) |g| c[2] = g;
         if (right orelse down) |g| c[3] = g;
+        if (edge) edge_dashes(&c, x, y);
         return c;
     }
     if (sim.trail_owner(v)) |o| {
@@ -1247,8 +1279,32 @@ pub fn cell_colors(w: *const sim.World, x: u8, y: u8) [4]u16 {
     }
     // Sudden death: solid red, alternate rings a shade darker, so the
     // closing rings read as stripes.
-    if (in_death_ring(@as(u32, w.sudden_death_ring), x, y)) return @splat(if (sim.ring_of(x, y) & 1 != 0) colors.death else colors.death_dark);
+    if (in_death_ring(w, x, y)) return @splat(if (w.sd_stage_of(x, y) & 1 != 0) colors.death else colors.death_dark);
     return .{ colors.block_hi, colors.block, colors.block, colors.block };
+}
+
+/// WRAP's open edge: dashes on the outer pixels of an empty edge cell,
+/// 4 px on and 4 px off along each side (corners get both).
+fn edge_dashes(c: *[4]u16, x: u8, y: u8) void {
+    const d = colors.edge_dash;
+    if ((x >> 1) & 1 == 0) {
+        if (y == 0) {
+            c[0] = d;
+            c[1] = d;
+        } else if (y == sim.grid_h - 1) {
+            c[2] = d;
+            c[3] = d;
+        }
+    }
+    if ((y >> 1) & 1 == 0) {
+        if (x == 0) {
+            c[0] = d;
+            c[2] = d;
+        } else if (x == sim.grid_w - 1) {
+            c[1] = d;
+            c[3] = d;
+        }
+    }
 }
 
 // ---------------------------------------------------------------- tests
@@ -1302,9 +1358,27 @@ var test_fresh: Renderer(TestScreen) = .{};
 var tref: sim.World = undefined;
 
 test "every put is inside a marked rect, and incremental frames match a full repaint" {
+    _ = try check_frames(.{ .n_cycles = 4 }, 11, 2400);
+}
+
+test "the same with WRAP, GAPS and SNAKE (and sudden death closing the open edge)" {
+    _ = try check_frames(.{ .n_cycles = 4, .wrap = true, .gaps = true, .snake_len = 60 }, 11, 2400);
+    _ = try check_frames(.{ .n_cycles = 4, .wrap = true, .gaps = true, .snake_len = sim.tuning.snake_len, .rubber = sim.tuning.rubber_max, .grinding = true, .energy = true, .layout = 4 }, 12, 2400);
+    // Alone, so the round runs into sudden death: in WRAP the first ring
+    // is the screen edge.
+    const wrap_sd = try check_frames(.{ .n_cycles = 1, .wrap = true, .gaps = true, .snake_len = sim.tuning.snake_len, .sudden_death = true, .rubber = sim.tuning.rubber_max, .layout = 1 }, 12, 3700);
+    try testing.expect(wrap_sd >= 3);
+    const sd = try check_frames(.{ .n_cycles = 1, .gaps = true, .snake_len = 30, .sudden_death = true, .rubber = sim.tuning.rubber_max, .layout = 2 }, 13, 3700);
+    try testing.expect(sd >= 3);
+}
+
+/// Plays `ticks` ticks of T1 programs (cycle 0 slipping) under `cfg`,
+/// checking every put is marked and, every 25 ticks, that the screen
+/// equals a fresh full repaint. Returns the last sudden-death stage seen.
+fn check_frames(cfg: sim.Config, seed: u32, ticks: u32) !u8 {
     const ai = @import("ai.zig");
     const w = &tworld;
-    w.init(.{ .n_cycles = 4 }, 11);
+    w.init(cfg, seed);
     var brains: [4]ai.Brain = undefined;
     for (&brains, 0..) |*b, i| b.* = .init(.avoid, @intCast(i + 1));
     const r = &test_r;
@@ -1316,11 +1390,12 @@ test "every put is inside a marked rect, and incremental frames match a full rep
     try testing.expectEqual(@as(u32, 0), TestScreen.unmarked());
     var t: u32 = 0;
     var compared: u32 = 0;
-    while (t < 2400) : (t += 1) {
+    while (t < ticks) : (t += 1) {
         var in: [sim.max_cycles]sim.Input = @splat(.idle);
         // Cycle 0 drives badly now and then, so crashes and fades happen.
-        for (0..4) |i| in[i] = ai.decide(&brains[i], w, i);
-        if (t % 97 == 0) in[0] = .{ .press = sim.Press.of(@fromBackingInt(@intCast(t % 4))) };
+        for (0..cfg.n_cycles) |i| in[i] = ai.decide(&brains[i], w, i);
+        // (Alone, it plays well: the round runs into sudden death.)
+        if (t % 97 == 0 and cfg.n_cycles > 1) in[0] = .{ .press = sim.Press.of(@fromBackingInt(@intCast(t % 4))) };
         w.step(in);
         // A banner comes and goes, the HUD changes.
         view.banner = null;
@@ -1341,13 +1416,13 @@ test "every put is inside a marked rect, and incremental frames match a full rep
         // Synthetic grind and stall sparks (Track S's events), beside the
         // derez bursts and crash tags the real crash events make.
         if (t % 3 == 0) {
-            for (0..4) |i| r.spawn_grind(w, @intCast(i), 0, 0, w.cycles[i].dir.cw());
+            for (0..cfg.n_cycles) |i| r.spawn_grind(w, @intCast(i), 0, 0, w.cycles[i].dir.cw());
         }
-        if (t % 7 == 0) r.spawn_stall(w, @intCast(t / 7 % 4));
+        if (t % 7 == 0) r.spawn_stall(w, @intCast(t / 7 % cfg.n_cycles));
         TestScreen.new_frame();
         r.frame(w, view);
         try testing.expectEqual(@as(u32, 0), TestScreen.unmarked());
-        if (w.result != .running and w.alive_count() == 0) break;
+        if (w.result != .running and w.alive_count() == 0 and w.cycles[0].state == .dead) break;
         // Every 25 ticks: the incremental screen equals a fresh repaint.
         if (t % 25 == 12) {
             const saved = TestScreen.px;
@@ -1367,6 +1442,7 @@ test "every put is inside a marked rect, and incremental frames match a full rep
         }
     }
     try testing.expect(compared > 6);
+    return w.sudden_death_ring;
 }
 
 test "block events repaint their cells, marked, equal to a full repaint" {
