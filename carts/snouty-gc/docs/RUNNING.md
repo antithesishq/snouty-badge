@@ -338,6 +338,22 @@ node ../../tools/preview.mjs ../../zig-out/bin/snouty-gc.wasm --frames 1010 --ev
 python3 ../../tools/make_gif.py out/pickups/ docs/preview_pickups.gif --scale 2 --ms 50
 ```
 
+The M6 preview (`docs/preview_m6.gif`, every third update at 50 ms, so
+real time) is one run cut by `tools/m6_gif.py`: the title, the menu's
+BATTLE row, the racer select (`A  TO THE ARENA`), the setup (TIME to 2
+MIN, LIVES to 5), FIGHT!, the KILL -9 card and the countdown, then
+SNOUTY on the autopilot: a STACK SMASH, a CLEAN LANDING, a kill -9 line,
+a wreck and the respawn in SAFE MODE, the last life (the claw, REAPED)
+and the kill leader's camera, the clock running out (TIME UP), the
+winner card and the standings. The FIGHT press's frame picks the seed;
+`scan` lists what each round has, `cut` records one (fight at frame
+344 for the committed GIF):
+
+```sh
+python3 tools/m6_gif.py scan 320 360 4
+python3 tools/m6_gif.py cut 344 out/m6gif docs/preview_m6.gif
+```
+
 Input scripts in `tools/scripts/` (`tools/record_script.py [--track N]
 [--gc] [--circuit] --frames F --out ...` records the autopilot's drive through the M3
 menus: Start at 2, Start at 10, Down at 12 for GARBAGE COLLECTION, A at

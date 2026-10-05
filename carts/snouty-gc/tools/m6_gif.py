@@ -81,26 +81,27 @@ def cut(a, outdir, gif):
     ticks, v = run(a, res + 200, raw, every=1, extra=extra)
     keep = []
 
-    def span(lo, hi, every=2):
+    def span(lo, hi, every=3):
         keep.extend(range(max(0, lo), hi, every))
 
-    span(0, 30, 3)            # splash / title
-    span(30, a + 1, 2)        # menu, BATTLE row, select, setup
-    span(a + 1, a + 215, 2)   # the KILL -9 card and the countdown
-    span(a + 215, a + 300, 3) # the first seconds of the round
+    # Every third update (real time at 50 ms a frame), menus quicker.
+    span(0, 30, 6)            # splash / title
+    span(30, a + 1, 4)        # menu, BATTLE row, select, setup
+    span(a + 1, a + 215)      # the KILL -9 card and the countdown
+    span(a + 215, a + 300)    # the first seconds of the round
     for t, k in e["stunt"][:3]:
-        span(t - 24, t + 40, 2)
-    for t in e["kill"][:2]:
-        span(t - 30, t + 30, 2)
+        span(t - 24, t + 40)  # STACK SMASH / CLEAN LANDING
+    for t in e["kill"][:1]:
+        span(t - 30, t + 30)  # kill -9 in the feed
     if e["safe"]:
         t = e["safe"][0]
-        span(t - 60, t + 60, 2)
+        span(t - 60, t + 60)  # a wreck, the respawn, SAFE MODE
     if e["out"]:
-        span(e["out"] - 40, e["out"] + 130, 2)
-        span(e["out"] + 200, e["out"] + 320, 3)
-    span(e["end"] - 120, e["end"] + 40, 2)
-    span(res, res + 60, 3)
-    span(res + 101, res + 200, 3)
+        span(e["out"] - 40, e["out"] + 130)   # the last life: the claw
+        span(e["out"] + 200, e["out"] + 290)  # the kill leader's camera
+    span(e["end"] - 100, e["end"] + 40)       # the clock runs out
+    span(res, res + 60, 4)                    # the winner card
+    span(res + 101, res + 200, 4)             # the standings
     keep = sorted(set(keep))
     shutil.rmtree(outdir, ignore_errors=True)
     os.makedirs(outdir)
