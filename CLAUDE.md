@@ -25,7 +25,8 @@ its design and milestone status.
   combat racer forked from snouty-zero's engine), `snouty-cycles` (Tron light
   cycles against AI programs),
   `paperclips` (a port of Universal Paperclips, with the authors'
-  permission).
+  permission), `snouty-sense` (the time-of-flight probe: a TMF8820 on the
+  Qwiic port; `lib/tof.zig` is the driver, docs/TOF.md).
 - `build.zig`, `build.zig.zon`, `build/common.zig` — the one Zig package.
   Shared options (`-Dcart`, `-Dcart-mode`, `-Ddebug_overlay`, `-Dsound`, `-Drom`, ...)
   and the shared `test` and `check-float` steps are declared here and passed

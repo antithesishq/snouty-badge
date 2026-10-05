@@ -50,6 +50,11 @@ pub const Options = struct {
     /// its badge build gets the ROM (carts/snouty-lynx/SPEC.md section 7).
     lynx_rom: ?[]const u8,
     lynx_rom_source: RomSource,
+    /// -Dtof-fake: time-of-flight carts (snouty-sense) talk to the
+    /// register-level TMF8820 model (lib/tof_virtual.zig) on the badge
+    /// instead of I2C0, so badge-bench measures the whole data path. The
+    /// simulator build always uses the model (docs/TOF.md).
+    tof_fake: bool,
     /// -Dcart as given (null: every cart is built). snouty-genesis builds
     /// only as an XIP cart: named here without -Dcart-mode=xip it stops the
     /// build, in an all-carts build it builds XIP regardless.

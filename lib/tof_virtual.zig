@@ -525,6 +525,7 @@ pub var shared: Model = .{};
 pub const Bus = struct {
     model: *Model,
     hz: u32 = i2c.default_hz,
+    stats: i2c.Stats = .{},
 
     pub fn default(hz: u32) Bus {
         return .{ .model = &shared, .hz = hz };
@@ -551,11 +552,31 @@ pub const Bus = struct {
     }
 
     pub fn write_read(b: *Bus, addr: u7, w: []const u8, r: []u8) Error!void {
-        b.model.t_us += i2c.cost_us(b.hz, w.len, r.len);
+        const cost = i2c.cost_us(b.hz, w.len, r.len);
+        // On the badge (-Dtof-fake=true) take as long as the real bus
+        // would, so badge-bench's update times include the wire time.
+        if (i2c.is_badge) spin_us(cost);
+        b.model.t_us += cost;
         b.model.advance();
-        return b.model.transact(addr, w, r);
+        b.stats.transactions += 1;
+        b.model.transact(addr, w, r) catch |e| {
+            switch (e) {
+                error.AddrNack => b.stats.addr_nacks += 1,
+                error.DataNack => b.stats.data_nacks += 1,
+                error.Timeout => b.stats.timeouts += 1,
+                error.ArbLost => b.stats.arb_lost += 1,
+                error.Abort => b.stats.aborts += 1,
+            }
+            return e;
+        };
     }
 };
+
+fn spin_us(us: u32) void {
+    const timerawl: *volatile u32 = @ptrFromInt(0x400B0028);
+    const t0 = timerawl.*;
+    while (timerawl.* -% t0 < us) {}
+}
 
 // ---- the scene ----
 

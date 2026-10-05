@@ -333,6 +333,9 @@ pub const Rp2350 = struct {
         reg(ic_tar).* = addr;
         _ = reg(ic_clr_intr).*;
         reg(ic_enable).* = 1;
+        // Nothing stale in the receive FIFO (disabling flushes it; bounded anyway).
+        var stale: u8 = 0;
+        while (reg(ic_rxflr).* > 0 and stale < fifo_depth) : (stale += 1) _ = reg(ic_data_cmd).*;
 
         var issued: usize = 0;
         var got: usize = 0;

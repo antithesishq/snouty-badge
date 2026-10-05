@@ -788,7 +788,11 @@ pub fn Tof(comptime Bus: type) type {
                     };
                     self.info.enable = b[0];
                     if (b[0] & 0x40 != 0) {
+                        // The ams driver waits another 10 ms after
+                        // cpu_ready for the application to settle.
                         self.step = .app_check;
+                        self.wait_ms(timing.app_start_wait_ms);
+                        return false;
                     } else if (self.past_deadline()) {
                         self.fail(.app_timeout, b[0]);
                         return false;

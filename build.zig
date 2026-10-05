@@ -26,6 +26,7 @@ const carts = [_]Cart{
     .{ .dir = "snouty-link", .binary = "snouty-link", .add = &@import("carts/snouty-link/build.zig").add },
     .{ .dir = "snouty-cycles", .binary = "snouty-cycles", .add = &@import("carts/snouty-cycles/build.zig").add },
     .{ .dir = "paperclips", .binary = "paperclips", .add = &@import("carts/paperclips/build.zig").add },
+    .{ .dir = "snouty-sense", .binary = "snouty-sense", .add = &@import("carts/snouty-sense/build.zig").add },
     .{ .dir = "badge-calibrate", .binary = "badge-calibrate", .add = &@import("badge-bench/calibrate/build.zig").add },
 };
 
@@ -50,6 +51,7 @@ pub fn build(b: *Build) void {
         .md_rom_source = b.option(common.MdRomSource, "md-rom-source", "snouty-genesis: drive (default; a .gen/.md/.bin file on the badge drive, no ROM in the cart) or embed") orelse .drive,
         .lynx_rom = b.option([]const u8, "lynx-rom", "snouty-lynx: Lynx ROM for the simulator and -Dlynx-rom-source=embed builds, .lnx (headered) or headerless (default carts/snouty-lynx/roms/raycast.lnx); the default badge build embeds none"),
         .lynx_rom_source = b.option(common.RomSource, "lynx-rom-source", "snouty-lynx: drive (default; a .lnx/.lyx file on the badge drive, no ROM in the cart), embed, pack (not built yet)") orelse .drive,
+        .tof_fake = b.option(bool, "tof-fake", "snouty-sense: on the badge, use the virtual TMF8820 (lib/tof_virtual.zig) instead of I2C0, for badge-bench; the simulator always uses it (docs/TOF.md)") orelse false,
         .only = only,
         .test_step = b.step("test", "Run every cart's host tests"),
         .check_float_step = b.step("check-float", "Fail if any cart ELF contains soft-float or libm routines"),
