@@ -1588,6 +1588,24 @@ options if over.
 
 ## Status
 
+M8.1 status (2026-10-05): the OS transport shipped (fork main 8ca6da6;
+frames.py and lobby.py unchanged at b994d04) and every assumption above
+was confirmed by the OS session (ordering, lossless, rejoin = a ROSTER
+without then with, ABI frozen; relay p99 5.4 ms at 16 x 60 Hz).
+Checked against the real thing: byte vectors from frames.py in
+`lib/tests/party_unit.zig` (137 lib tests); fixes: HELLO re-sent every
+2 s while joining (pyserial flushes input on DTR, so a first HELLO can
+vanish), the COBS trailing 0x01 after a full block, relay-model details;
+`cart_serial.zig` already met the OS ring checks (asserts added).
+`tools/party_e2e.sh` (`zig build party-e2e`, pyserial) runs N host badges
+on fake simulator ports through the real `badge lobby`: 2, 4, 8 and 16
+badges in sync on match.GN with bots (16 on Data Hall: 0.10% frames
+without a tick, input latency p50 0.16 / p99 4.7 ms), and an events run
+(unplug, rejoin, relay reconnect, freeze) where every leaver became a
+bot on the same tick on all badges. Open: the badge hardware check;
+relay-side, a stopped TCP simulator is not removed (kernel socket
+buffer; reported to the OS session).
+
 - 2026-09-26: M0 scaffold committed. M1 plan written; four tracks launched.
 - 2026-09-26: M1 done and tagged `m1`. All four tracks landed as planned.
   ELF text 30.6 KB, bss 15.1 KB (13.3 KB unpacked textures). GameState is

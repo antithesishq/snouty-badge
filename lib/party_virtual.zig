@@ -1,22 +1,24 @@
 //! A model of the laptop's `badge lobby` relay and the badges' USB, for
 //! host tests of lib/party.zig and lib/lockstep_n.zig. It follows lobby
-//! protocol v1 as `fork/CART_SERIAL.md` states it (sycl-badge-fork branch
-//! `feature/cart-serial` at 13ffec9; `tools/badge/badge/lobby.py` did not
-//! exist yet when this was written, so the spec text is the reference):
+//! protocol v1 as `fork/CART_SERIAL.md` states it and the reference relay
+//! does it (sycl-badge-fork main 8ca6da6, `tools/badge/badge/lobby.py`;
+//! the real relay end to end: tools/party_e2e, docs/LOCKSTEP_N.md):
 //!
 //! - rooms per game id: a new player goes to the first room with the same
 //!   game and a free slot, else a new room; a room's size is its first
-//!   member's `max_players` (0 = 16, capped at 16); player ids are the
-//!   lowest free one;
+//!   member's `max_players` (0 = 16, else clamped to 2..16); rooms are
+//!   numbered from 1; player ids are the lowest free one;
 //! - WELCOME to the new player, then ROSTER to everyone in the room, after
-//!   every join and leave; a HELLO from a player in a room is a rejoin (it
-//!   leaves first);
+//!   every join and leave; a HELLO from a player in a room is a rejoin: it
+//!   leaves first (ROSTER without it to the others), then joins afresh, so
+//!   it may land in another room or id; a HELLO of another version leaves
+//!   too, then gets ERROR 1;
 //! - SEND to an id, to 0xFF (everyone else) or 0xFE (everyone, the sender
 //!   included) becomes DATA, one frame at a time: each frame is queued to
 //!   every recipient before the next frame is looked at (one order per
 //!   room); a SEND to an absent id is dropped; PING -> PONG; SEND or LEAVE
-//!   before WELCOME -> ERROR 3; a short message -> ERROR 4; another
-//!   version -> ERROR 1; unknown types are ignored;
+//!   before WELCOME -> ERROR 3; a short message, or SEND data over 240
+//!   bytes -> ERROR 4; unknown types are ignored;
 //! - no silent loss: a connected player's queue is never trimmed; a player
 //!   whose cart stopped reading is removed (ROSTER to the others, port
 //!   closed) when more than `stuck_limit` (64 KiB) has waited for it for
@@ -403,12 +405,14 @@ pub const Relay = struct {
         switch (b[0]) {
             party.T.hello => {
                 if (b.len < 23) return r.send_error(i, party.Err.malformed, "BAD HELLO", t);
-                if (b[1] != party.version) return r.send_error(i, party.Err.unsupported_version, "VERSION", t);
+                // As lobby.py: a rejoin (or a HELLO of another version)
+                // leaves the old room first.
                 r.leave_room(i, t);
+                if (b[1] != party.version) return r.send_error(i, party.Err.unsupported_version, "VERSION", t);
                 r.join(i, b[2..10].*, b[10..22].*, b[22], t);
             },
             party.T.send => {
-                if (b.len < 2) return r.send_error(i, party.Err.malformed, "BAD SEND", t);
+                if (b.len < 2 or b.len - 2 > party.max_data) return r.send_error(i, party.Err.malformed, "BAD SEND", t);
                 const room_i = p.room orelse return r.send_error(i, party.Err.not_joined, "NOT JOINED", t);
                 const room = &r.rooms[room_i];
                 var d: [party.max_body]u8 = undefined;
@@ -473,7 +477,8 @@ pub const Relay = struct {
         p.room = @intCast(k);
         p.id = id;
         p.name = name;
-        r.queue(i, &.{ party.T.welcome, party.version, id, @intCast(k), room.size }, t);
+        // Room numbers start at 1 (lobby.py).
+        r.queue(i, &.{ party.T.welcome, party.version, id, @intCast(k + 1), room.size }, t);
         r.send_roster(k, t);
     }
 

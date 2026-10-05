@@ -137,6 +137,34 @@ pub noinline fn show(l: *core.Lynx) void {
     cart.mark_dirty_rect(0, 0, cart.screen_width, cart.screen_height);
 }
 
+// ---- Lending the arena (frontend/linkport.zig) ----
+
+/// While linked (ComLynx) the scrubber is off and its arena holds the
+/// link's port: a rewound console would leave the others behind, and the
+/// port's queues should not cost the scrub history any RAM when unlinked.
+var lent: bool = false;
+
+/// Turn the scrubber off and hand out `n` bytes of its arena (8-aligned),
+/// or null when it is smaller.
+pub fn lend(n: usize) ?[]align(8) u8 {
+    if (lent) return null;
+    const lo = std.mem.alignForward(usize, @intFromPtr(arena.ptr), 8);
+    if (arena.len < n + (lo - @intFromPtr(arena.ptr))) return null;
+    ready = false;
+    undo.disable();
+    lent = true;
+    debug.core_moved();
+    return @as([*]align(8) u8, @ptrFromInt(lo))[0..n];
+}
+
+/// The arena back: the scrubber starts again with an empty history.
+pub fn take_back(l: *core.Lynx) void {
+    if (!lent) return;
+    lent = false;
+    _ = init();
+    reset(l);
+}
+
 /// Frames behind live (0 live).
 pub fn depth_frames() u32 {
     return if (ready) undo.depth_frames() else 0;

@@ -116,6 +116,22 @@ pub fn add(b: *Build, sycl_badge_dep: *Build.Dependency, opts: common.Options) v
             }) },
         },
     });
+    // The ComLynx network step (frontend/lynxnet.zig over lib/party.zig;
+    // host-tested on lib/party_virtual.zig, docs/COMLYNX.md section 10):
+    // the party libs as one module (party_virtual.zig imports party.zig).
+    const party_host = b.createModule(.{
+        .root_source_file = b.path("lib/party_host.zig"),
+        .target = b.graph.host,
+        .optimize = test_optimize,
+    });
+    const lynxnet_host = b.createModule(.{
+        .root_source_file = b.path(dir ++ "cart/src/frontend/lynxnet.zig"),
+        .target = b.graph.host,
+        .optimize = test_optimize,
+        .imports = &.{
+            .{ .name = "core", .module = core_host },
+        },
+    });
     const tests = b.addTest(.{
         .name = "snouty-lynx-tests",
         .filters = if (opts.test_filter) |f| &.{f} else &.{},
@@ -130,6 +146,8 @@ pub fn add(b: *Build, sycl_badge_dep: *Build.Dependency, opts: common.Options) v
                 .{ .name = "stream_audio", .module = stream_host },
                 .{ .name = "frontend_audio", .module = audio_host },
                 .{ .name = "input", .module = input_host },
+                .{ .name = "party_host", .module = party_host },
+                .{ .name = "lynxnet", .module = lynxnet_host },
             },
         }),
     });
@@ -171,6 +189,55 @@ pub fn add(b: *Build, sycl_badge_dep: *Build.Dependency, opts: common.Options) v
     run_rom_run.addPassthruArgs();
     run_rom_run.has_side_effects = true;
     b.step("run-lynx", "Run a Lynx ROM headless (snouty-lynx tools/run_rom.zig)").dependOn(&run_rom_run.step);
+
+    const run_link = b.addExecutable(.{
+        .name = "run-lynx-link",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path(dir ++ "tools/run_link.zig"),
+            .target = b.graph.host,
+            .optimize = .ReleaseFast,
+            .imports = &.{
+                .{ .name = "core", .module = core_fast },
+                .{ .name = "runner", .module = b.createModule(.{
+                    .root_source_file = b.path(dir ++ "tests/runner.zig"),
+                    .target = b.graph.host,
+                    .optimize = .ReleaseFast,
+                    .imports = &.{.{ .name = "core", .module = core_fast }},
+                }) },
+            },
+        }),
+    });
+    const run_link_run = b.addRunArtifact(run_link);
+    run_link_run.addPassthruArgs();
+    run_link_run.has_side_effects = true;
+    b.step("run-lynx-link", "Run Lynx consoles on a virtual ComLynx bus (snouty-lynx tools/run_link.zig)").dependOn(&run_link_run.step);
+
+    // Warbirds over the real `badge lobby` (tools/lynx_e2e.sh,
+    // docs/COMLYNX.md section 10): a host program, not in the default
+    // install.
+    const lynx_e2e = b.addExecutable(.{
+        .name = "lynx_e2e",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path(dir ++ "tools/lynx_e2e.zig"),
+            .target = b.graph.host,
+            .optimize = .ReleaseFast,
+            .link_libc = true,
+            .imports = &.{
+                .{ .name = "core", .module = core_fast },
+                .{ .name = "party", .module = b.createModule(.{ .root_source_file = b.path("lib/party.zig") }) },
+                .{ .name = "lynxnet", .module = b.createModule(.{
+                    .root_source_file = b.path(dir ++ "cart/src/frontend/lynxnet.zig"),
+                    .imports = &.{.{ .name = "core", .module = core_fast }},
+                }) },
+                .{ .name = "runner", .module = b.createModule(.{
+                    .root_source_file = b.path(dir ++ "tests/runner.zig"),
+                    .imports = &.{.{ .name = "core", .module = core_fast }},
+                }) },
+            },
+        }),
+    });
+    b.step("lynx-e2e", "Build zig-out/bin/lynx_e2e (Warbirds over the real badge lobby; run carts/snouty-lynx/tools/lynx_e2e.sh)")
+        .dependOn(&b.addInstallArtifact(lynx_e2e, .{}).step);
 }
 
 /// `-Dlynx-rom` as given: `~/x.lnx` (expanded here, the shell leaves `=~`
@@ -212,6 +279,10 @@ fn build_cart_modules(b: *Build, cart: *Build.Module, cart_api: *Build.Module, s
     // The new firmware's streaming-audio ring (M5 sound, frontend/audio.zig).
     cart.addImport("stream_audio", b.createModule(.{ .root_source_file = b.path("lib/stream_audio.zig") }));
     cart.addImport("build_options", build_options.?.createModule());
+    // ComLynx play over the fork firmware's cart serial port and the
+    // laptop lobby (frontend/linkport.zig, docs/COMLYNX.md section 10).
+    cart.addImport("cart_serial", b.createModule(.{ .root_source_file = b.path("lib/cart_serial.zig") }));
+    cart.addImport("party", b.createModule(.{ .root_source_file = b.path("lib/party.zig") }));
     cart.addImport("drive", b.createModule(.{
         .root_source_file = b.path(dir ++ "cart/src/frontend/drive.zig"),
         .imports = &.{
