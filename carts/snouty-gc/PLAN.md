@@ -977,6 +977,77 @@ main.
 
 (empty)
 
+## M4 Link
+
+Goal: two badges joined by the link cable race in one field (SPEC 7),
+deterministic lockstep over `lib/link.zig` (docs/LINK.md), LINK RACE and
+LINK GC, waiting, peer-left, and the desync check.
+
+### Track A: lockstep core (Opus agent, worktree /home/exedev/snouty-badge-gc-net, branch gc/net off main 20e2172a)
+
+Built and host-tested off main (which has `lib/link.zig` and the M2 sim)
+while M3 finishes on `gc/spec` and `gc/present`. It touches only new files
+plus the smallest wiring, so the lead's integration merge stays easy.
+Owns new `cart/src/net.zig`, new `cart/src/net_test.zig`, the
+`host_tests.zig` import line, the `link` import in `build.zig` (one
+line for the cart module and its test module), and new `docs/NET.md`.
+No `main.zig`, no menus, no rendering: that is Track B after M3 lands.
+
+1. **`net.zig`, generic over the link type** (`Net(comptime L: type)`,
+   with `L` = `link.Badge` on the badge, a `link.Link(link_virtual...)` in
+   tests, and a null link in wasm), so the same code runs in the cart and
+   in host tests. Entry points for main.zig: `init`, `pump(now)` (polls
+   the link; call it often), a setup state machine (`host` = the higher
+   HELLO nonce, `SETUP`, `PICK`, `GO` messages with a kind byte, SPEC 7.3),
+   `ready_for(tick)` / `inputs_for(tick) ?[2]u8`, `submit_local(tick,
+   byte)`, `state()` (searching, connected, setup, racing, waiting,
+   peer_left, desync), and the slot this badge drives.
+2. **Lockstep** (SPEC 7.2): input delay 2 ticks; each input packet is 5
+   payload bytes (tick low byte, inputs for t, t-1, t-2, one check byte),
+   so a whole packet fits the 8-entry RX FIFO. Lost packets are covered
+   by the repeats, with no retransmit protocol. The badge advances tick t
+   only with both inputs for t. WAITING shows after 30 frames without
+   them. When the link reports the peer gone (state not `.connected`, or
+   the `session` changed), `peer_left` hands the peer's car to the AI
+   (a `Car.human = no_human` change made through a function the sim
+   exposes or a documented field write before the next `simulate`;
+   coordinate by writing it down in PLAN).
+3. **Desync check**: a CRC8 over the `World` bytes every 32 ticks, sent a
+   byte at a time in the check byte. A mismatch is `desync`.
+4. **Pause and quit** travel in the input byte (Start), so they are part
+   of the lockstep. Quit is a setup message.
+5. **Host tests** (`net_test.zig`): two `Net` + two Worlds on a
+   `link_virtual` cable; 10 seeded link races with scripted inputs on
+   both ends, World bytes equal on both every tick; the same with 1%
+   injected byte loss (still in sync, finishes); unplugging mid-race
+   gives `peer_left` and the race finishes with the AI driving; a forced
+   World mutation on one side gives `desync` within 64 ticks; a GC-mode
+   link race to one survivor. Read `lib/link_virtual.zig` and
+   `lib/tests/link_unit.zig` for how the virtual cable runs.
+6. **Bench note**: measure the cost of `pump` with an idle and a busy link
+   in the host (cycles are not available; report the operation counts).
+   The real poll-gap measurement is Track B's, on the badge-bench.
+7. `docs/NET.md`: the protocol (message kinds, byte layouts, timing), how
+   main.zig drives it frame by frame (pump points: top of update, between
+   floor bands, in the waiting loop), and what Track B must build.
+8. Gate: `zig build test-gc` passes including the net tests, `zig build
+   -Dcart=snouty-gc` builds, check-float passes. PLAN "M4 status" Track
+   A paragraph and deferred questions; commits with the `Co-Authored-By:
+   Claude Opus 5.5 <noreply@anthropic.com>` line; push `gc/net`. No tag,
+   no merge.
+
+### Track B: link integration (after M3 and the RAM diet)
+
+Menus (LINK: cable state, host/guest, mode, track, crews; the shared racer
+select with one racer greyed per side), the race loop driving `net`
+(pump points in the frame, the WAITING overlay, PEER LEFT, DESYNC), each
+badge following its own car, simulator `NO LINK IN SIMULATOR`, a bench
+of the worst poll gap, and the hand-off on how to cable two badges.
+
+### M4 status
+
+(empty)
+
 ## Deferred questions
 
 SPEC 17 holds the design defaults. Taken during M0 (Track A):
