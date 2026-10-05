@@ -247,6 +247,48 @@ pub fn add(b: *Build, sycl_badge_dep: *Build.Dependency, opts: common.Options) v
     test_genesis.dependOn(&run.step);
     test_genesis.dependOn(&ram_run.step);
 
+    // The party cart's lockstep over the real `badge lobby`
+    // (tools/party_e2e.sh, docs/MULTIPLAYER.md): a host program with the
+    // full core (ReleaseFast: four consoles at several times real time).
+    {
+        const fast_opts = variant_options(b, false, false, full).createModule();
+        const z80_fast = b.createModule(.{ .root_source_file = b.path(gear_core ++ "z80.zig"), .target = b.graph.host, .optimize = .ReleaseFast });
+        const core_fast = b.createModule(.{
+            .root_source_file = b.path(dir ++ "core/md.zig"),
+            .target = b.graph.host,
+            .optimize = .ReleaseFast,
+            .imports = &.{ .{ .name = "z80", .module = z80_fast }, .{ .name = "build_options", .module = fast_opts } },
+        });
+        const party_fast = party_lib_module(b, .ReleaseSafe, b.graph.host);
+        const e2e = b.addExecutable(.{
+            .name = "party_e2e_genesis",
+            .root_module = b.createModule(.{
+                .root_source_file = b.path(dir ++ "tools/party_e2e/main.zig"),
+                .target = b.graph.host,
+                .optimize = .ReleaseSafe,
+                .link_libc = true,
+                .imports = &.{
+                    .{ .name = "core", .module = core_fast },
+                    .{ .name = "party_lib", .module = party_fast },
+                    .{ .name = "players", .module = b.createModule(.{
+                        .root_source_file = b.path(dir ++ "cart/src/frontend/players.zig"),
+                        .target = b.graph.host,
+                        .optimize = .ReleaseSafe,
+                        .imports = &.{ .{ .name = "core", .module = core_fast }, .{ .name = "party_lib", .module = party_fast } },
+                    }) },
+                    .{ .name = "bomber", .module = b.createModule(.{
+                        .root_source_file = b.path(dir ++ "tests/mp_bomberman.zig"),
+                        .target = b.graph.host,
+                        .optimize = .ReleaseSafe,
+                        .imports = &.{.{ .name = "core", .module = core_fast }},
+                    }) },
+                },
+            }),
+        });
+        b.step("party-e2e-genesis", "Build zig-out/bin/party_e2e_genesis (Genesis party over the real badge lobby; run carts/snouty-genesis/tools/party_e2e.sh)")
+            .dependOn(&b.addInstallArtifact(e2e, .{}).step);
+    }
+
     // Strict 68000 oracle gate (not part of `test`): SingleStepTests with
     // SNOUTY_FIXTURES=required, so absent fixtures fail instead of
     // skipping. No fetch here: tools/fetch_test_roms.sh first.
