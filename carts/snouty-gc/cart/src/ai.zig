@@ -90,6 +90,13 @@ pub const Crew = struct {
     /// Time the vents and go behind the Sweeper (M3, SPEC 3.3). KIDDIE
     /// never read the docs and drives straight through.
     heed_hazards: bool = true,
+    /// Breakable crust (M9.1): how far ahead, px, the crew reads a broken
+    /// or cracking band on its line (0: never); whether it reads a crack's
+    /// timer (else it sees only holes); whether it goes round cracking
+    /// crust it would get across before the break (LEGACY's caution).
+    crust_sight: i16 = 130,
+    crust_cracks: bool = true,
+    crust_wary: bool = false,
 };
 
 /// Per racer, SPEC 4.1 order. Driving style only, for M0; M1 widens these
@@ -98,10 +105,11 @@ pub const crews = [6]Crew{
     // SNOUTY: patient, the line; waits for a lock, mines the corners.
     .{ .reaction = 12, .jitter = 2, .drop_corners = true, .captcha_solve = 75 },
     // LEGACY: slow, holds its line, pushes; rams anything beside it,
-    // walls of fire for anyone behind.
-    .{ .lane = -10, .min_speed_pct = 66, .full_brake_turn = 12000, .avoid = false, .reaction = 4, .jitter = 10, .rammer = true, .drop_wide = true, .captcha_solve = 100 },
-    // KIDDIE: fast in, slides; sprays at anything the moment it is there.
-    .{ .lane = 10, .min_speed_pct = 78, .slide_turn = 2400, .reaction = 1, .jitter = 14, .pickup_now = true, .captcha_solve = 120, .heed_hazards = false },
+    // walls of fire for anyone behind; never trusts cracking crust.
+    .{ .lane = -10, .min_speed_pct = 66, .full_brake_turn = 12000, .avoid = false, .reaction = 4, .jitter = 10, .rammer = true, .drop_wide = true, .captcha_solve = 100, .crust_sight = 170, .crust_wary = true },
+    // KIDDIE: fast in, slides; sprays at anything the moment it is there;
+    // sees a hole in the crust late and a crack not at all.
+    .{ .lane = 10, .min_speed_pct = 78, .slide_turn = 2400, .reaction = 1, .jitter = 14, .pickup_now = true, .captcha_solve = 120, .heed_hazards = false, .crust_sight = 72, .crust_cracks = false },
     // SYSADMIN: clean lines, long snipes, hunts the humans first.
     .{ .lookahead = 7, .min_speed_pct = 76, .reaction = 6, .jitter = 2, .target = .human, .captcha_solve = 60 },
     // ROOTKIT: drifts across the lane, sits behind its mark and snipes.
@@ -174,10 +182,17 @@ pub fn drive_crew(w: *const World, i: usize, cr: *const Crew) Input {
     if (fight and cr.rammer) ram(w, i, &lane);
     if (w.combat) dodge_firewalls(w, i, &lane);
     if (cr.heed_hazards and w.phase == .racing) dodge_hazards(w, i, &lane, &block_spd);
+    // Crust (a pack's) breaks after the line too: the cars still racing to
+    // it once the race is decided keep their crust sense.
+    const crust_aim = if (track.crust_n > 0 and w.phase != .countdown) dodge_crust(w, i, cr, &lane, &block_spd) else null;
     const tx = fixed.cos(target.tangent);
     const ty = fixed.sin(target.tangent);
-    const gx = @as(i32, target.x) + ((-ty * lane) >> fixed.Q);
-    const gy = @as(i32, target.y) + ((tx * lane) >> fixed.Q);
+    var gx = @as(i32, target.x) + ((-ty * lane) >> fixed.Q);
+    var gy = @as(i32, target.y) + ((tx * lane) >> fixed.Q);
+    if (crust_aim) |p| {
+        gx = p[0];
+        gy = p[1];
+    }
     var dx = gx - (c.x >> fixed.Q);
     var dy = gy - (c.y >> fixed.Q);
     dx = wrap_px(dx);
@@ -548,6 +563,98 @@ fn dodge_hazards(w: *const World, i: usize, lane: *i32, block_spd: *i32) void {
             }
         }
     }
+}
+
+/// Breakable crust ahead (M9.1, SPEC 19.4): a band on the crew's line
+/// (`lane`, its offset there) that will be broken when the car gets there,
+/// from the band's clock (a cracked band breaks `warn` ticks after the
+/// touch and heals `period` ticks later). When the road leaves a way past
+/// its crust tiles, the point to steer for instead of the line's: the gap
+/// at the band's near edge, then beyond its far edge. When the band spans
+/// the road, slow to arrive as it heals. A car that would get onto a
+/// cracked band before it breaks drives on (it gets across), unless the
+/// crew is wary.
+fn dodge_crust(w: *const World, i: usize, cr: *const Crew, lane_io: *i32, block_spd: *i32) ?[2]i32 {
+    const lane = lane_io.*;
+    if (cr.crust_sight == 0) return null;
+    const c = &w.cars[i];
+    if (c.wreck != .none or c.hop != 0) return null;
+    const t = sim.track_of(w);
+    const spd = sim.speed(c);
+    const top = sim.top_of(c);
+    var aim: ?[2]i32 = null;
+    for (track.hazard_specs[0..track.hazard_n], 0..) |*h, k| {
+        if (h.kind != .crust or h.lat_lo >= h.lat_hi) continue;
+        const hz = &w.hazards[k];
+        if (hz.state == .idle or (hz.state == .warn and !cr.crust_cracks)) continue;
+        // On this stretch of the line, the band ahead or under the car.
+        if (h.sample -% c.progress > tuning.ai_crust_samples and c.progress -% h.sample > 2) continue;
+        // The car in the band's frame (its sample's tangent and right).
+        const s = t.sample(h.sample);
+        const sx = fixed.cos(s.tangent);
+        const sy = fixed.sin(s.tangent);
+        const ox = wrap_px((c.x >> fixed.Q) - @as(i32, s.x));
+        const oy = wrap_px((c.y >> fixed.Q) - @as(i32, s.y));
+        const along = (ox * sx + oy * sy) >> fixed.Q;
+        if (along > h.along_hi) continue; // past it
+        const dist = @as(i32, h.along_lo) - along;
+        if (dist > cr.crust_sight) continue;
+        // When the band is a hole, ticks from now: [open_at, shut_at).
+        var open_at: u32 = 0;
+        var shut_at: u32 = h.period -| hz.timer;
+        if (hz.state == .warn) {
+            open_at = h.warn -| hz.timer;
+            shut_at = open_at + h.period;
+        }
+        const v = @max(spd, top >> 2);
+        const eta: u32 = if (dist > 0) @intCast(@divTrunc(dist << fixed.Q, v)) else 0;
+        if (dist > 0 and !cr.crust_wary and eta + tuning.ai_crust_margin < open_at) continue;
+        if (eta > shut_at + tuning.ai_crust_margin) continue;
+        const left = @as(i32, h.lat_lo) - tuning.ai_crust_clear;
+        const right = @as(i32, h.lat_hi) + tuning.ai_crust_clear;
+        if (lane <= left or lane >= right) continue; // the line misses it
+        // Round it: the side of its crust nearer the line, if the road has room.
+        const room = @as(i32, s.half) - tuning.avoid_margin;
+        const left_ok = left >= -room;
+        const right_ok = right <= room;
+        if (left_ok or right_ok) {
+            const lat = if (left_ok and (!right_ok or lane - left <= right - lane)) left else right;
+            const at: i32 = if (dist > tuning.ai_crust_near) h.along_lo else @as(i32, h.along_hi) + tuning.ai_crust_near;
+            const p = [2]i32{ @as(i32, s.x) + ((sx * at - sy * lat) >> fixed.Q), @as(i32, s.y) + ((sy * at + sx * lat) >> fixed.Q) };
+            // Straight for the gap when the way there is floor; round a bend
+            // (a wall between), hold the lane that leads to it.
+            if (open_way(t, c.x >> fixed.Q, c.y >> fixed.Q, p)) {
+                aim = p;
+            } else lane_io.* = lat;
+            continue;
+        }
+        // It spans the road: get there as it heals, less the brake's
+        // distance (it stops short of the band at worst).
+        if (dist <= 0) continue;
+        const wait: i32 = @intCast(shut_at + tuning.ai_crust_margin);
+        var want = @divTrunc(dist << fixed.Q, wait);
+        if (spd > want) {
+            const braking = ((spd - want) * tuning.ai_hazard_brake_px) >> fixed.Q;
+            want = @divTrunc(@max(0, dist - 4 - braking) << fixed.Q, wait);
+        }
+        block_spd.* = @min(block_spd.*, want);
+    }
+    return aim;
+}
+
+/// Floor (no wall, no pit) at a quarter, half and three quarters of the way
+/// from (x, y) to `p`, world px.
+fn open_way(t: *const track.Track, x: i32, y: i32, p: [2]i32) bool {
+    const dx = wrap_px(p[0] - x);
+    const dy = wrap_px(p[1] - y);
+    var k: i32 = 1;
+    while (k < 4) : (k += 1) {
+        switch (t.attr_at(x + @divTrunc(dx * k, 4), y + @divTrunc(dy * k, 4))) {
+            .wall, .off => return false,
+            else => {},
+        }
+    }
+    return true;
 }
 
 /// Pass a slower car ahead: aim at a lane beside it, on the side with room

@@ -16,7 +16,7 @@ pit_band 11                        # the atrium is open from balcony to balcony
 # x    y    half   features
  260  150   54                     # start line, heading east
  470  135   54     crates          # the north balcony
- 640  170   50     crust           # ceiling tiles hold the floor here
+ 640  170   50     crust,lo=-14    # ceiling tiles hold the floor here; the balcony side is solid
  780  135   50
  890  220   48
  890  360   46                     # weaving between the tables

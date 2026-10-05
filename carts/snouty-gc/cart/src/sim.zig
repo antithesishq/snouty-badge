@@ -503,8 +503,9 @@ fn resolve_tiles(w: *World, i: usize, old_x: i32, old_y: i32) bool {
             },
             .coolant => c.on_coolant = true,
             .bay => c.on_bay = true,
-            // M7: breakable crust is floor until its region breaks.
-            .crust => if (hazards.crust_broken(w, px, py)) {
+            // M7: breakable crust is floor until its region breaks (and
+            // for a car crossing it when it broke, M9.1).
+            .crust => if (hazards.crust_takes(w, i, px, py)) {
                 off_count += 1;
             },
             .ramp => if (c.hop == 0) {
@@ -556,7 +557,13 @@ fn resolve_tiles(w: *World, i: usize, old_x: i32, old_y: i32) bool {
             damage(w, i, world.no_car, if (c.prefetch > 0) dmg >> 1 else dmg);
         }
     }
-    if (off_count == 4 and c.immune == 0 and c.wreck == .none) wreck(w, i, .fall);
+    // A fall: the whole footprint off the floor, as at a pit edge; or (M9.1)
+    // the car's centre over broken crust, so a car that drives onto a hole
+    // in a band goes in (a band is shallower than a car is long).
+    const cx = c.x >> fixed.Q;
+    const cy = c.y >> fixed.Q;
+    const swallowed = t.attr_at(cx, cy) == .crust and hazards.crust_takes(w, i, cx, cy);
+    if ((off_count == 4 or swallowed) and c.immune == 0 and c.wreck == .none) wreck(w, i, .fall);
     return wall_hit;
 }
 

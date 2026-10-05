@@ -11,7 +11,9 @@
 //! the version, as a lobby partner that never answers): they never race,
 //! so they never desync. `GameV0` keeps the M5.1 wire (one rules byte,
 //! version 0) for net_compat_test.zig, which proves it is still M4's byte
-//! for byte and that v0 and v1 badges never start a race.
+//! for byte and that v0 and v1 badges never start a race. M7 is version 2
+//! (the pack id, eight rules bytes), M9.1 version 3 (the same wire, crust
+//! that bites in `simulate`); `GameV1` and `GameV2` stay for the tests.
 //!
 //! What is GC's here: the rules bytes (mode, track, crews, lives, time),
 //! the pick byte (racer, 7 = none), the World setup, the hand-over (the
@@ -180,13 +182,15 @@ pub fn world_hash(w: *const world.World) u32 {
     return lockstep.hash_fields(world.World, w);
 }
 
-/// GC as lockstep's game (docs/LOCKSTEP.md section 1): version 2, eight
-/// rules bytes (M7: the pack id) and 4-bit picks (the `lacks` bit); M6's
-/// version 1 is `GameV1`, M5.1's version 0 `GameV0` (tests only).
+/// GC as lockstep's game (docs/LOCKSTEP.md section 1): version 3 (M9.1:
+/// crust that bites, so `simulate` on a pack track is not M7's), eight
+/// rules bytes (M7: the pack id) and 4-bit picks (the `lacks` bit); M7's
+/// version 2 is `GameV2`, M6's version 1 `GameV1`, M5.1's version 0
+/// `GameV0` (tests only).
 pub const Game = struct {
     pub const World = world.World;
     pub const rules_len = Rules.len;
-    pub const version: u4 = 2;
+    pub const version: u4 = 3;
     pub const input_delay: u32 = net_input_delay;
     pub const check_every: u32 = net_check_every;
     pub const pause_bit: ?u8 = start_bit;
@@ -251,6 +255,23 @@ pub const GameV1 = struct {
     pub const hash = Game.hash;
     pub const hand_over = Game.hand_over;
     pub const picks_ok = Game.picks_ok_v1;
+    pub const can_pause = Game.can_pause;
+};
+/// The M7 to M9 game (version 2: the same wire as `Game`, M7's crust rule
+/// in `simulate`), for net_compat_test.zig: a v2 and a v3 badge see
+/// wrong_version, never race (their pack races would desync).
+pub const GameV2 = struct {
+    pub const World = world.World;
+    pub const rules_len = Game.rules_len;
+    pub const version: u4 = 2;
+    pub const input_delay = Game.input_delay;
+    pub const check_every = Game.check_every;
+    pub const pause_bit = Game.pause_bit;
+    pub const pick_bits = Game.pick_bits;
+    pub const simulate = Game.simulate;
+    pub const hash = Game.hash;
+    pub const hand_over = Game.hand_over;
+    pub const picks_ok = Game.picks_ok;
     pub const can_pause = Game.can_pause;
 };
 const net_input_delay = input_delay;

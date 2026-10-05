@@ -35,7 +35,7 @@ pit_band 8                         # the sea and the inlet are wide water
  210  890   54
  115  820   54
  110  640   50
- 115  480   50     open crust      # across the frozen inlet on thin sea ice
+ 115  480   50     open crust,lo=-16,hi=16   # across the frozen inlet: thin sea ice mid-channel
  130  330   52
  180  210   54
 # The open sea along the top of the map, beyond the shelf's edge.
