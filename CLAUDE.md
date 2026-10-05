@@ -33,6 +33,9 @@ its design and milestone status.
   the sensor, or the stick; docs/TOF.md M1), `snouty-morph` (a demoscene
   mesh that follows and deforms with your hand over the same sensor;
   `lib/tof_pose.zig` is the hand pose from its 3x3 zones, docs/TOF.md M3).
+- `lib/save.zig` — cart saves (branch `saves/m1` only): the ABI v1 client
+  for the patched OS of sycl-badge branch `cart-saves`, with a host fake;
+  carts hide Save on stock firmware (`docs/SAVES.md`).
 - `build.zig`, `build.zig.zon`, `build/common.zig` — the one Zig package.
   Shared options (`-Dcart`, `-Dcart-mode`, `-Ddebug_overlay`, `-Dsound`, `-Drom`, ...)
   and the shared `test` and `check-float` steps are declared here and passed
