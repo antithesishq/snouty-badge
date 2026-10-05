@@ -1894,7 +1894,82 @@ navigation field) from the generator.
 
 ### M6 status
 
-(Filled in by the tracks.)
+**Track A (battle simulation), 2026-10-05, branch `gc/present`.** M6.0
+interface 3a112fbd; then the hunter, pickups and damage (2ff29e5b), the
+rule scenarios and `Car.air` (fb56feed), the lead-approved `car_lift`
+fix in sprites.zig (18abaaae: a kicker hop outlasts `tuning.ramp_ticks`
+and crashed the ReleaseSmall bench), the kicker air test (704ed99c), this
+status.
+
+- **The Sandbox** (`tools/build_arena.py`, run by `build_tracks.py`, so
+  the `tracks` gate covers it; `docs/m6_sandbox.png`,
+  `docs/sandbox_preview.png` with the nodes and edges): a walled 704 px
+  square at tile 22 in the Dumps tileset. The bit bucket is a 128 px pit
+  with a 64-tick kicker on each side (clean from 2.2 px/tick, a crawl
+  falls in). Four wall-ringed scrap islands sit at the diagonals (a
+  landing on one is a fall). Fences separate the outer ring from the four
+  plazas, with a 40-tick wall kicker on each ring straight that jumps the
+  fence. Gap jumps (5-tile pits with a jump each side) cross the west and
+  east straights near the corners (clean from 1.4 px/tick). There are 8
+  crate pads (one per lane), 2 bays (NW, SE corners, 1 armor / 8 ticks),
+  6 spawn pads facing in (none on the north straight), and the Sweeper on
+  the north straight (period 1200, 2 px/tick). The nav field has 34 nodes,
+  260 ground edges and 16 jump edges, two next-hop tables (with the jumps,
+  and ground only for a car too slow for its run-up) and a 32x32 grid of
+  32 px cells. The arena blob is 3,616 B; with the map (2,338), the ring
+  centerline (1,536) and the Sweeper record (20), the arena adds 7.5 KB.
+  New Dumps tiles: `KICKER` 64+d, `JUMP` 92+d, `PAD_SPAWN` 23+d,
+  `PAD_CRATE` 27. The arena's ramps are one-way (attributes `kicker`, `jump`).
+- **Rules** (`battle.zig`): lives (INF never out), eliminations by the
+  existing last-hit credit (180 ticks, falls included), no-hit wrecks
+  score nobody. A respawn goes to the pad farthest from the nearest
+  enemy, in SAFE MODE for 90 ticks (immune; no fire, rams, smash or
+  pickup use). Out of lives = out (`active = false`, `out` event). The
+  round ends by lives or time. Standings go by eliminations, then lives
+  (INF: fewer wrecks), then time survived. A full ammo and BURST refill
+  comes every 1200 ticks, and the kill leader is tracked. STACK SMASH (40
+  and a bounce, a credited hit) and CLEAN LANDING (+1 BURST) happen on the
+  touchdown tick.
+- **Pickups**: "ahead" is the nearest car in the 90-degree front cone,
+  else the nearest (the race ranges as Euclidean px). KERNEL PANIC runs
+  node to node to the kill leader's cell (2nd if the user leads).
+  ZERO-DAY rolls only for the bottom two of the standings, once a round.
+  DEADLOCK's wall chain anchors on the nearest node.
+- **Hunter** (`hunt.zig`): the target is the nearest car with per-crew
+  bias to the human, the kill leader, the hurt and the aimed-at; with
+  nobody to hunt it goes to the nearest crate. It chases on a clear ground
+  line and otherwise follows its waypoint (`Car.nav`, kept by
+  `update_nav`). A jump leg is committed only at the run-up speed. In a
+  dogfight it extends out instead of circling, swings off nose-to-nose
+  stalls, and steers off pits and stray ramps. It escapes the Sweeper and
+  retreats to a bay below its crew's armor share (KIDDIE never, LEGACY
+  20%, ROOTKIT 40%, the rest 30%; it holds to 80%). It fires and drops
+  with the race habits (`ai.arm`), and its LANCE charges when a car is in
+  the cone.
+- **Balance**: battle damage is 18% of the race's
+  (`tuning.battle_damage_pct`, with the fraction carried per car in
+  `Car.dmg_frac`). **Soak** (8 rounds, 3 lives, TIME NONE, SNOUTY on the
+  autopilot plus 5 hunters): all end by lives, **mean 126 s** (59 to 178
+  s), 113 eliminations (79 AI on AI) over 133 wrecks, 68 of them falls
+  (most credited: pushed into a pit; about 15% of wrecks score nobody),
+  1 car slow for 600 ticks (holding at a bay). INF lives, 2 min: 3 of 3
+  end by time at 7,200 ticks with 15 to 26 eliminations.
+- **Tests**: 168 pass (M5.1 had 148; 18 in `battle_test.zig`, 1 in
+  `battle.zig`, the Track B placeholder). The race goldens are unchanged
+  (`career_test`, and `check.sh`'s four scripts).
+- **Bench** (calibrated, `--lcd` identical, mean / worst ms): the new
+  `m6_battle` (`--poke gc_battle=1`, 3,600 frames: SNOUTY on the
+  autopilot among five hunters) **3.35 / 5.24**, the arena stress
+  (`--poke gc_battle=2`) **4.71 / 5.94**; unchanged: `m0_race` 3.63 /
+  5.20, stress 4.99 / 6.14, `m2_race` 3.56 / 5.20, `m3_outflow_race` 3.62
+  / 5.75, `m3_gc_race` 3.47 / 5.65, `m5_circuit_race` 3.49 / 4.63,
+  `m5_cards` 1.75 / 5.40, probe stress 5.10 / 6.27, probe GC 3.54 / 5.75.
+  `check.sh` **PASS** (all steps; `zig build test` passed for every cart).
+- **RAM**: `size -A` .text 179,584 + .data 8,088 + .bss 52,472 (+ 1,912
+  exidx/extab) = 242,056 B: **about 32,000 B free** (M5.1: 47,624). The
+  arena data is 7.5 KB of it, the hunter and rules about 7 KB of code. World
+  2,572 B (cap raised to 2,624, `tuning.world_cap`), `Car` 120 B.
+
 
 ## Deferred questions
 
@@ -2467,3 +2542,60 @@ L50. **RESUME on both badges at once**: pause is a toggle, so if the
 L51. **Lobby pumping**: GC's lobby and link select loop only while
     `wants_pump()`; searching and a settled lobby pump once a frame (as
     lockstep's doc says is enough). Untested on two badges.
+
+Taken during M6 (Track A, battle simulation):
+
+L52. **The Sandbox's size**: 704 px square (88 tiles), so a car crosses it
+    in about 4 s. The bit bucket is 128 px, about a fifth of the arena
+    rather than SPEC 8.3's quarter. A 64-tick kicker jump from 2.2 px/tick
+    clears that, and a quarter-arena pit could not be jumped by a
+    MAINFRAME (2.7 px/tick top).
+L53. **One-way ramps**: the arena's ramps are new attributes, `kicker` (3,
+    64 ticks) and `jump` (11, 40 ticks), and they launch only a car moving
+    the way the tile faces. Opposite kickers across a pit would otherwise
+    relaunch every landing. Race ramps are unchanged.
+L54. **Thrust in the air** stays as in the races: a car launched slowly
+    speeds up in flight, so a crawl can sometimes clear a 5-tile corner
+    gap. Only the bit bucket reliably swallows a slow car.
+L55. **Battle damage** is 18% of the race's, with the fraction carried per
+    car. STACK SMASH is its own 40. At full race damage, rounds at 3
+    lives lasted about 30 s; at 18% they average about 2 minutes, still
+    dangerous.
+L56. **Eliminations** are `Car.kills`: the race's last-hit credit within
+    180 ticks, so a car knocked into a pit scores for whoever hit it.
+    About half the wrecks are falls, and most of those are credited.
+L57. **SAFE MODE** runs with the race's respawn immunity (the car cannot
+    fall either), and it also blocks rams, STACK SMASH and pickup use.
+L58. **Out of lives**: the car leaves the round at once (`active = false`,
+    so its hulk does not block), and the claw is the presentation's. The
+    `out` event's b is the number of cars still in. An out car's standing
+    is its `rank`, which can still move until the end.
+L59. **Standings with INF lives**: eliminations, then fewer wrecks, then
+    time survived. The kill leader's ties go to the better rank.
+L60. **KERNEL PANIC with nobody scored** targets rank 1 of the standings,
+    which is the tie order then.
+L61. **ZERO-DAY's bottom two** are the two worst ranks of the cars that
+    started (out ones included). CREWS changes how many that is.
+L62. **"Ahead" ranges** in an arena are the race's progress ranges taken
+    as straight-line px: BIT FLIP and DEADLOCK 400, RACE CONDITION 300.
+    DEADLOCK's one-car wall chain anchors on the nearest waypoint.
+L63. **Refill** gives every car in the round full ammo and BURST charges
+    every 1200 ticks (wrecked cars included), on one clock for all.
+L64. **Spawn pads**: two each on the south, west and east straights, none
+    on the north straight (the Sweeper's path). Each faces a fence gap
+    into a plaza.
+L65. **The navigation field** is 3.6 KB, not SPEC's estimated 1 KB: 34
+    nodes, two next-hop tables (with jumps, and ground only for a car too
+    slow for the run-up) and 1 KB of cells. The hunter keeps one waypoint
+    byte per car (`Car.nav`, bit 7 for a committed jump leg).
+L66. **Hunter characters**: a target bias in px per crew (SYSADMIN 260 to
+    the human, BOTNET 260 to the kill leader, KIDDIE 120 to the human),
+    plus a pull toward hurt targets and the one already aimed at. Retreat
+    shares are KIDDIE never, LEGACY 20%, ROOTKIT 40% and the rest 30%;
+    a retreating car holds at the bay to 80%. With nobody to hunt, it goes
+    to the nearest crate.
+L67. **The arena's Sweeper** runs gate to gate along the north straight,
+    with a 1200-tick period at 2 px/tick. KIDDIE ignores it, as on the
+    tracks.
+L68. **RAM**: the arena and the hunter cost about 15 KB of the window, so
+    about 32 KB is free for Track B and M7.
