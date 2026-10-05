@@ -270,7 +270,11 @@ fn draw_track_panel() void {
         movers = movers or h.kind == .mover;
         crust = crust or h.kind == .crust;
     }
-    const hz: []const u8 = if (vents and movers) "VENTS, SWEEPER" else if (vents) "EXHAUST VENTS" else if (movers and crust) "MOVER, CRUST" else if (movers) "THE SWEEPER" else if (crust) "BREAKABLE CRUST" else "";
+    // Built-in leagues name their own hazards (the Runoff's vents, the
+    // Dumps' Sweeper); a pack's are named by kind.
+    const hz: []const u8 = if (t == &track.pack_track)
+        (if (vents and movers and crust) "MIXED HAZARDS" else if (vents and movers) "BLASTS, MOVERS" else if (vents and crust) "BLASTS, CRUST" else if (movers and crust) "MOVERS, CRUST" else if (vents) "BLASTS" else if (movers) "MOVERS" else if (crust) "BREAKABLE CRUST" else "")
+    else if (vents and movers) "VENTS, SWEEPER" else if (vents) "EXHAUST VENTS" else if (movers and crust) "MOVER, CRUST" else if (movers) "THE SWEEPER" else if (crust) "BREAKABLE CRUST" else "";
     plain(hz, 4, 106, hud.coral);
     hud.draw_outline(122, 79, ink);
 }
