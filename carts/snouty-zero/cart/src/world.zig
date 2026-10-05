@@ -21,7 +21,12 @@ pub const Buttons = packed struct(u16) {
 };
 
 pub const machine_count = 11;
+/// The solo player's machine, and the host's in a link race (M6).
 pub const player = 0;
+/// The guest's machine in a link race (a rival's slot, M6).
+pub const guest = 1;
+/// `World.humans` entry for an input slot nobody drives.
+pub const no_human: u8 = 0xFF;
 
 /// Why a machine crashed (the message bar names it).
 pub const Crash = enum(u8) { none, fall, meltdown, collision };
@@ -65,9 +70,10 @@ pub const Machine = struct {
     /// Knocked out (SPEC 5.5): wrecking through the hit-stop, then out of
     /// the race (`active` false) instead of the centerline reset.
     ko: bool = false,
-    /// Ticks left in which a crash counts as the player's doing (set by a
-    /// damaging contact with the player).
+    /// Ticks left in which a crash counts as a human's doing (set by a
+    /// damaging contact with a human), and which human (input slot).
     hit_by_player: u8 = 0,
+    hit_by: u8 = 0,
     /// Up held last tick: Overclock fires on the press edge (SPEC 4).
     up_was: bool = false,
     /// Race position 1..5 for the player and rivals (0 for traffic and
@@ -85,20 +91,42 @@ pub const World = struct {
     countdown: u16 = 0,
     phase: Phase = .countdown,
     rng: u32 = 0x1234_5678,
-    /// Message bar: kind and ticks left.
-    msg: Message = .none,
-    msg_ticks: u8 = 0,
+    /// The machine each human input slot drives (`simulate`'s inputs[s]),
+    /// or `no_human`: slot 0 is the solo player (and the link host), slot 1
+    /// the link guest (M6).
+    humans: [2]u8 = .{ player, no_human },
+    /// Each human's machine select pick (`ai.player_machines` index).
+    picks: [2]u8 = .{ 0, 0 },
+    /// The human's partner left (link race): the AI drives that machine on
+    /// to the finish; it still counts as that human's in the results.
+    ai_drives: [2]bool = .{ false, false },
+    /// Message bar per human slot: kind and ticks left (the countdown goes
+    /// to both; crashes, laps, the finish and knockouts to the human
+    /// concerned).
+    msg: [2]Message = .{ .none, .none },
+    msg_ticks: [2]u8 = .{ 0, 0 },
     /// Number of machines racing (1 in M1 solo, 11 with rivals and traffic).
     active_count: u8 = 1,
     /// Lap length in world px along the centerline (set by sim.reset from
     /// the track; progress in px for the rubber band).
     lap_px: u16 = 0,
-    /// Machines the player knocked out this race (SPEC 5.5).
-    kos: u8 = 0,
-    /// The machine a `.ko` message names.
-    msg_who: u8 = 0,
+    /// Machines each human knocked out this race (SPEC 5.5).
+    kos: [2]u8 = .{ 0, 0 },
+    /// The machine a `.ko` message names, per human slot.
+    msg_who: [2]u8 = .{ 0, 0 },
+
+    /// The input slot driving machine `i`, or null for the AI's machines.
+    pub fn slot_of(self: *const World, i: usize) ?u1 {
+        if (self.humans[0] == i) return 0;
+        if (self.humans[1] == i) return 1;
+        return null;
+    }
 };
 
 pub const Message = enum(u8) { none, provisioning, three, two, one, deploy, final_lap, committed, fall, meltdown, collision, killed, ko };
 
 pub var w: World = .{};
+
+/// The machine this badge's camera, HUD and sound follow (meta-state, not
+/// in the World): the player solo, this badge's human in a link race.
+pub var view: u8 = player;

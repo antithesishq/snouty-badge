@@ -109,9 +109,10 @@ fn new_race(t: *const track.Track) void {
     hills.init(t);
     render.hills_on = true;
     sim.reset(t, race_machines);
+    world.view = world.player;
     history.reset();
     sprites.reset_effects();
-    const p = &world.w.machines[world.player];
+    const p = &world.w.machines[world.view];
     camera.follow(p.x, p.y, p.heading, true);
     snapshot = tuning.snapshot_max;
     snapshot_refill = 0;
@@ -285,7 +286,7 @@ fn menu_frame() void {
 /// Draw the race scene from the current world: floor, machines, then
 /// (during a rewind) the scanline dim, then the HUD on top so it stays legible.
 fn draw_race() void {
-    const p = &world.w.machines[world.player];
+    const p = &world.w.machines[world.view];
     if (free_cam) camera.free_fly() else camera.follow(p.x, p.y, p.heading, false);
     render.shake = p.shake;
     render.frame = frame;
@@ -310,18 +311,18 @@ fn rewind_by(ticks: u32) bool {
 /// a later restore never replays across this edit.
 fn resume_live() void {
     rewinding = false;
-    const p = &world.w.machines[world.player];
+    const p = &world.w.machines[world.view];
     p.immune = tuning.immune_ticks;
     p.crash = .none;
     p.hitstop = 0;
-    world.w.msg = .none;
-    world.w.msg_ticks = 0;
+    world.w.msg[0] = .none;
+    world.w.msg_ticks[0] = 0;
     history.checkpoint();
 }
 
 fn race_frame() void {
     const w = &world.w;
-    const p = &w.machines[world.player];
+    const p = &w.machines[world.view];
 
     if (mode == .attract) {
         if (any_pressed()) {
@@ -347,8 +348,8 @@ fn race_frame() void {
                 results.rewinds += 1;
             } else {
                 p.active = false;
-                w.msg = .killed;
-                w.msg_ticks = 255;
+                w.msg[0] = .killed;
+                w.msg_ticks[0] = 255;
                 killed_left = 60;
             }
         }
@@ -438,9 +439,10 @@ fn rewind_possible() bool {
 /// Tones on message changes and rail hits (SPEC 9).
 fn sound_cues() void {
     const w = &world.w;
-    const p = &w.machines[world.player];
-    if (w.msg != last_msg) {
-        switch (w.msg) {
+    const p = &w.machines[world.view];
+    const msg = w.msg[w.slot_of(world.view) orelse 0];
+    if (msg != last_msg) {
+        switch (msg) {
             .three, .two, .one => sound.countdown_beep(),
             .deploy => sound.deploy(),
             .committed => {
@@ -453,7 +455,7 @@ fn sound_cues() void {
             },
             else => {},
         }
-        last_msg = w.msg;
+        last_msg = msg;
     }
     if (finish_note > 0) {
         finish_note -= 1;
@@ -471,7 +473,7 @@ fn sound_cues() void {
 /// attract demo.
 fn engine_cue() void {
     const w = &world.w;
-    const p = &w.machines[world.player];
+    const p = &w.machines[world.view];
     if (screen != .race or mode == .attract or hitstop_left > 0 or killed_left > 0 or !p.active) return sound.engine_off();
     sound.engine(.{
         .speed = sim.speed(p),
@@ -650,27 +652,27 @@ fn debug_cam_height() callconv(.c) u32 {
 }
 /// Attribute of the tile under the player.
 fn debug_tile_under() callconv(.c) u32 {
-    const p = &world.w.machines[world.player];
+    const p = &world.w.machines[world.view];
     return @backingInt(sim.current.attr_at(p.x >> fixed.Q, p.y >> fixed.Q));
 }
 fn debug_px() callconv(.c) u32 {
-    return @bitCast(world.w.machines[world.player].x >> fixed.Q);
+    return @bitCast(world.w.machines[world.view].x >> fixed.Q);
 }
 fn debug_py() callconv(.c) u32 {
-    return @bitCast(world.w.machines[world.player].y >> fixed.Q);
+    return @bitCast(world.w.machines[world.view].y >> fixed.Q);
 }
 fn debug_heading() callconv(.c) u32 {
-    return world.w.machines[world.player].heading;
+    return world.w.machines[world.view].heading;
 }
 /// Player speed in 1/100 px per tick.
 fn debug_speed() callconv(.c) u32 {
-    return @bitCast((sim.speed(&world.w.machines[world.player]) * 100) >> fixed.Q);
+    return @bitCast((sim.speed(&world.w.machines[world.view]) * 100) >> fixed.Q);
 }
 fn debug_lap() callconv(.c) u32 {
-    return world.w.machines[world.player].lap;
+    return world.w.machines[world.view].lap;
 }
 fn debug_progress() callconv(.c) u32 {
-    return world.w.machines[world.player].progress;
+    return world.w.machines[world.view].progress;
 }
 /// 0 countdown, 1 racing, 2 finished.
 fn debug_phase() callconv(.c) u32 {
@@ -680,7 +682,7 @@ fn debug_tick() callconv(.c) u32 {
     return world.w.tick;
 }
 fn debug_thermal() callconv(.c) u32 {
-    return @bitCast(@as(i32, world.w.machines[world.player].thermal));
+    return @bitCast(@as(i32, world.w.machines[world.view].thermal));
 }
 fn debug_crashes() callconv(.c) u32 {
     return crashes;
@@ -713,7 +715,7 @@ fn debug_start_race(n: u32) callconv(.c) void {
 /// --call-at T debug_force_crash: the player falls off the track (SEGMENT
 /// FAULT) on the next frame, for scripting the crash auto-rewind.
 fn debug_force_crash() callconv(.c) u32 {
-    const p = &world.w.machines[world.player];
+    const p = &world.w.machines[world.view];
     if (p.active and p.crash == .none and screen == .race) sim.crash(p, .fall);
     return world.w.tick;
 }
@@ -722,7 +724,7 @@ fn debug_force_crash() callconv(.c) u32 {
 /// (SPEC 5.5) for scripting the wreck. Returns its index, 0 if none.
 fn debug_force_ko() callconv(.c) u32 {
     const w = &world.w;
-    const p = &w.machines[world.player];
+    const p = &w.machines[world.view];
     if (screen != .race) return 0;
     var best: u32 = 0;
     var best_d: i64 = std.math.maxInt(i64);
@@ -744,11 +746,12 @@ fn debug_force_ko() callconv(.c) u32 {
 }
 /// Machines the player knocked out this race (SPEC 5.5).
 fn debug_kos() callconv(.c) u32 {
-    return world.w.kos;
+    return world.w.kos[0];
 }
 /// --call debug_set_machine:N picks the player's physics character (0 SNOUTY, 1..4 the rivals').
 fn debug_set_machine(n: u32) callconv(.c) void {
     sim.player_character = @intCast(n % 5);
+    world.w.picks[0] = sim.player_character;
 }
 fn debug_machine() callconv(.c) u32 {
     return sim.player_character;
@@ -766,7 +769,7 @@ fn debug_replay_max() callconv(.c) u32 {
 }
 /// Player rank 1..5 (0 before the first tick or when retired).
 fn debug_rank() callconv(.c) u32 {
-    return world.w.machines[world.player].rank;
+    return world.w.machines[world.view].rank;
 }
 /// Screen: 0 splash, 1 title, 2 main menu, 3 league pick, 4 track pick, 5 race, 6 pause, 7 results, 8 standings.
 fn debug_screen() callconv(.c) u32 {
@@ -782,7 +785,7 @@ fn debug_machine_lap(i: u32) callconv(.c) u32 {
     return world.w.machines[i % world.machine_count].lap;
 }
 fn debug_best_lap() callconv(.c) u32 {
-    return world.w.machines[world.player].best_lap;
+    return world.w.machines[world.view].best_lap;
 }
 /// Snapshot bar in ticks (0..180).
 fn debug_snapshot() callconv(.c) u32 {
@@ -800,7 +803,7 @@ fn debug_rewinding() callconv(.c) u32 {
     return @intFromBool(rewinding);
 }
 fn debug_active() callconv(.c) u32 {
-    return @intFromBool(world.w.machines[world.player].active);
+    return @intFromBool(world.w.machines[world.view].active);
 }
 fn debug_sound() callconv(.c) u32 {
     return @intFromBool(sound.enabled);

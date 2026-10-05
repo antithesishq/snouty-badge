@@ -49,9 +49,9 @@ pub fn draw(frame: u32) void {
     hud.text("REWINDS", 24, 70, hud.white);
     hud.text(&n, 88, 70, hud.white);
     var kos: [3]u8 = "  0".*;
-    put_uint(&kos, world.w.kos);
+    put_uint(&kos, world.w.kos[0]);
     hud.text("KOS", 24, 82, hud.white);
-    hud.text(&kos, 88, 82, if (world.w.kos > 0) hud.cyan else hud.white);
+    hud.text(&kos, 88, 82, if (world.w.kos[0] > 0) hud.cyan else hud.white);
     var pct: [4]u8 = "  0%".*;
     put_uint(pct[0..3], @intCast(@divTrunc(@as(i32, @max(0, m.thermal)) * 100, tuning.thermal_max)));
     hud.text("THERMAL", 24, 94, hud.white);

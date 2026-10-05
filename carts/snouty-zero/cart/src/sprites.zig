@@ -6,7 +6,6 @@ const gfx = @import("gfx");
 const fixed = @import("fixed.zig");
 const tuning = @import("tuning.zig");
 const world = @import("world.zig");
-const sim = @import("sim.zig");
 const camera = @import("camera.zig");
 const render = @import("render.zig");
 
@@ -218,19 +217,25 @@ fn draw_machine(m: *const world.Machine, index: u8, p: camera.Projected) void {
     if (m.ko and (m.hitstop / 2) % 2 == 0) return;
     const flash = (m.immune > 0 and (m.immune / 2) % 2 == 0 and m.crash == .none) or m.ko;
     const opts = BlitOpts{ .flat = if (flash) @as(?cart.Pixel, .from_color(.rgb(0xFCFBF9))) else null };
-    if (index == world.player and sim.player_character == 0) {
+    // A human's machine is its machine select pick (M5; two in a link race).
+    const slot = world.w.slot_of(index);
+    const pick: usize = if (slot) |s| world.w.picks[s] else 0;
+    if (slot != null and pick == 0) {
+        // The Anteater has only the rear views (lean and hop).
         const frame: u32 = if (m.hop > 0) 3 else if (m.steer < 0) 1 else if (m.steer > 0) 2 else 0;
         blit_scaled(gfx.anteater, 40, 24, frame, p.sx, p.sy - lift_px, p.scale, &anteater_pal, opts);
-    } else if (index == world.player) {
+    } else if (index == world.view) {
         // A rival's machine from the machine select: its livery, leaning
         // into the steer with the rear-quarter views.
         const frame: u32 = if (m.steer < 0) 1 else if (m.steer > 0) 2 else 0;
-        blit_scaled(gfx.machine, 32, 16, frame, p.sx, p.sy - lift_px, p.scale, &livery_pals[livery_of(sim.player_character)], opts);
+        blit_scaled(gfx.machine, 32, 16, frame, p.sx, p.sy - lift_px, p.scale, &livery_pals[livery_of(pick)], opts);
     } else {
-        // Yaw view from the heading relative to the camera.
+        // Yaw view from the heading relative to the camera (the other
+        // human's pick in its livery).
         const d = fixed.turn_diff(camera.cam.yaw, m.heading);
         const ad = @abs(d);
         const frame: u32 = if (ad < 5000) 0 else if (ad < 20000) (if (d < 0) 1 else 2) else (if (d < 0) 3 else 4);
-        blit_scaled(gfx.machine, 32, 16, frame, p.sx, p.sy - lift_px, p.scale, &livery_pals[livery_of(index)], opts);
+        const livery = if (slot != null) livery_of(pick) else livery_of(index);
+        blit_scaled(gfx.machine, 32, 16, frame, p.sx, p.sy - lift_px, p.scale, &livery_pals[livery], opts);
     }
 }

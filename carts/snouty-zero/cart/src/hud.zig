@@ -106,19 +106,26 @@ fn draw_minimap() void {
             }
         }
     }
-    // Machines: traffic first (grey 1x1), rivals (2x2 livery), player (2x2 white) on top.
+    // Machines: traffic first (grey 1x1), rivals (2x2 livery), the other
+    // human (2x2 cyan), the viewed machine (2x2 white) on top.
+    const view: usize = world.view;
     const w = &world.w;
     var i: usize = w.active_count;
     while (i > 0) {
         i -= 1;
-        const m = &w.machines[i];
-        if (!m.active) continue;
-        const mx = x0 + @divTrunc((m.x >> fixed.Q) * size, 1024);
-        const my = y0 + @divTrunc((m.y >> fixed.Q) * size, 1024);
-        const color: cart.DisplayColor = if (i == world.player) white else .rgb(sprites.livery_rgb[sprites.livery_of(i)]);
-        const d: u32 = if (i >= 5) 1 else 2;
-        cart.rect(.{ .x = mx, .y = my, .width = d, .height = d, .fill_color = color });
+        if (i == view) continue;
+        minimap_dot(w, i, x0, y0, size, if (w.slot_of(i) != null) cyan else .rgb(sprites.livery_rgb[sprites.livery_of(i)]));
     }
+    if (view < w.active_count) minimap_dot(w, view, x0, y0, size, white);
+}
+
+fn minimap_dot(w: *const world.World, i: usize, x0: i32, y0: i32, size: i32, color: cart.DisplayColor) void {
+    const m = &w.machines[i];
+    if (!m.active) return;
+    const mx = x0 + @divTrunc((m.x >> fixed.Q) * size, 1024);
+    const my = y0 + @divTrunc((m.y >> fixed.Q) * size, 1024);
+    const d: u32 = if (i >= 5) 1 else 2;
+    cart.rect(.{ .x = mx, .y = my, .width = d, .height = d, .fill_color = color });
 }
 
 fn rank_text(rank: u8) []const u8 {
@@ -148,7 +155,7 @@ pub fn dim_scanlines() void {
 
 pub fn draw() void {
     const w = &world.w;
-    const m = &w.machines[world.player];
+    const m = &w.machines[world.view];
     // Top-right: rank (only with rivals in the race), its shadow inside the margin.
     if (w.active_count > 1) text(rank_text(m.rank), 160 - margin - 25, margin, if (m.rank == 1) cyan else white);
     // Top-left: LAP n/3.
@@ -186,7 +193,7 @@ pub fn draw_bar(x: i32, y: i32, value: i32, max: i32, color: cart.DisplayColor) 
 /// (menu.names), traffic as batch jobs.
 const ko_text = [5][]const u8{ "", "ARGMAX KILLED", "DROPOUT KILLED", "BACKPROP KILLED", "OVERFIT KILLED" };
 
-fn message_text(msg: world.Message) []const u8 {
+fn message_text(msg: world.Message, who: u8) []const u8 {
     return switch (msg) {
         .none => "",
         .provisioning => "PROVISIONING",
@@ -200,15 +207,18 @@ fn message_text(msg: world.Message) []const u8 {
         .meltdown => "THERMAL SHUTDOWN",
         .collision => "COLLISION",
         .killed => "JOB KILLED",
-        .ko => if (world.w.msg_who < ko_text.len) ko_text[world.w.msg_who] else "BATCH KILLED",
+        .ko => if (who < ko_text.len) ko_text[who] else "BATCH KILLED",
     };
 }
 
+/// The message bar of the viewed machine's human (slot 0 for any other).
 fn draw_message() void {
     const w = &world.w;
-    if (w.msg == .none) return;
-    const str = message_text(w.msg);
-    const color = switch (w.msg) {
+    const s: usize = w.slot_of(world.view) orelse 0;
+    const msg = w.msg[s];
+    if (msg == .none) return;
+    const str = message_text(msg, w.msg_who[s]);
+    const color = switch (msg) {
         .fall, .meltdown, .collision, .killed => coral,
         .deploy, .committed, .ko => cyan,
         else => white,
