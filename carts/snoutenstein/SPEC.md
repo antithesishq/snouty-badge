@@ -54,7 +54,9 @@ pitch, so the badge can say so on the title screen.
 | Select         | Toggle sound         | Next weapon (skips empty ones)              | (nothing)                 |
 | Start          | Start game           | Pause / unpause                             | (nothing)                 |
 
-Tank controls, no strafe (open question, section 17). Turn 2.5 degrees per
+Tank controls, no strafe (open question, section 17). Deathmatch (section
+19) differs: the title's Up/Down pick PLAY or DEATHMATCH, B has no rewind
+there and hold B with Left/Right strafes. Turn 2.5 degrees per
 tick (150 deg/s). Walk 0.045 cells per tick (2.7 cells/s), back at 0.03.
 Player is a circle of radius 0.25 cells; collision is axis-separated so you
 slide along walls. Doors open when you walk into them; no "use" button.
@@ -545,6 +547,85 @@ Level grid 64x64 with Wolf3D import (section 6.1): yes.
    themselves are never committed.
 10. One walk speed everywhere for now; revisit after playing an imported
     level on hardware.
+
+## 19. Deathmatch (M7, two badges)
+
+Adrian, 2026-10-04: "deathmatch for snoutenstein". Two badges joined by a
+cable on their UART headers (root `docs/LINK.md`) play the same match in
+deterministic lockstep (the shared `lib/lockstep.zig`, root
+`docs/LOCKSTEP.md`; app id `'S'`). PLAN.md M7 is the contract; this is
+what was built.
+
+- **Way in.** The title is a two-row menu, PLAY and DEATHMATCH (Up/Down,
+  A). In the simulator DEATHMATCH is greyed with NO LINK IN SIMULATOR.
+  The link is started only on entering the lobby; the campaign never
+  touches it.
+- **Lobby.** PLUG IN THE CABLE while searching, WRONG CART: and the
+  partner's cart name, else the rules. The host (the higher link nonce,
+  input slot 0) sets ARENA (Server Room, Build Farm), FRAGS (5, 10, 15,
+  20) and BUGS (on, off) with Up/Down and Left/Right; the guest sees
+  them live. A toggles ready on both; with both ready the host's Start
+  goes. B goes back to the title. The rules travel as one byte
+  (`match.Rules`: arena bits 0-1, frag index 2-3, bugs bit 4); the seed
+  comes from the lockstep.
+- **The World.** `match.World` = the campaign's `GameState` plus
+  `state.Match` (both players, frags, deaths, shots, hits, death views,
+  hurt flashes, who hit whom last, the last kill, the rules, per-pickup
+  and per-bug respawn timers; 236 bytes, padding-free). GameState is
+  untouched, so the campaign, its hash, the demo and the rewind pools
+  (51 copies) are exactly as before. `GameState.player` is a scratch
+  slot in a match: `match.step` swaps each player into it so the
+  campaign's movement, doors, pickups, weapons and bug code run on it
+  unchanged.
+- **Input.** One byte per player per tick: Up, Down, Left, Right, A, B,
+  Start, Select from bit 0; Start and Select never together (the OS
+  chord; the lockstep's sanitize clears both), so never 0xC0 or 0xDB.
+  Start is the lockstep's pause bit (both badges pause on the same tick);
+  the sim ignores it.
+- **Players.** Same movement, doors, pickups and weapons as the campaign.
+  B has no rewind: hold B and Left/Right strafes (0.035 cells a tick).
+  Players cannot walk through each other (0.5 cells apart). The
+  swatter, zapper and spray test the other player like an enemy whose
+  hit radius is the player radius (0.25); a Debugger bolt bursts on it
+  too and its burst hurts every player in range, its owner included.
+  Damage to a player is the bug damage times 6: zapper 18 (six hits from
+  full HP), spray pellet 12, swatter 24, burst 72. Weapons fire from the
+  same tick's positions and their damage lands after both fired, so a
+  double frag can happen. Bugs (BUGS ON) target the nearer living player.
+- **Frags.** At 0 HP: a 2 s death view (red, RESPAWN IN n, the body on
+  the floor in the other view), then a respawn at the spawn point
+  farthest from the other player with full HP, the zapper and 40
+  charges, and 1 s of spawn protection (HP blinks Iris). The last player
+  to hurt the victim gets +1; a self-frag (own burst) is -1; a bug kill
+  scores nobody. Taken pickups come back 20 s later; dead bugs too, once
+  no player is within 4 cells of their cell. The first to the frag limit
+  wins; both at once is a draw.
+- **Arenas.** Spawn points are the legend char `P` (at least four per
+  arena; the parser faces each down its longest open run). Server Room
+  (`levels/server_room.txt`): a rack hall with pillars and a rack block
+  between two side rooms, two doors each, outer corridors closing the
+  loops, the spray can and the Debugger in two dead-end alcoves. Build
+  Farm DM (`levels/build_farm_dm.txt`): Build Farm with the Coral door
+  plain, the exit walled up and a Debugger where the key was. Both have
+  six spawns and a few bugs.
+- **View.** Each badge renders its own player; the other is the rival
+  billboard (`rival.png`: front, sides, back, down; all white on a hit).
+  The HUD's right block shows YOU n over THEM n instead of keys and the
+  meter; a banner names each death (YOU FRAGGED THEM, FRAGGED BY THEM,
+  SELF-FRAG -1, EATEN BY BUGS, ...).
+- **Off in a match.** Rewind, keyframes and the meter, the attract demo,
+  level progression.
+- **End.** The results: YOU WIN / YOU LOSE / DRAW, frags, shots and
+  accuracy each. The partner leaving mid-match (cable out, cart
+  restarted, its pause B) is a forfeit win with a PEER LEFT band; a
+  desync stops the match with a DESYNC band. A (or Start) goes back to
+  the lobby. Paused, B leaves the match.
+- **Lockstep.** `match.G` is the game side: `simulate` = `match.step`,
+  `hash` = FNV-1a over the raw World, `hand_over` = the forfeit,
+  `rules_len` 1, `input_delay` 2. The frame pumps the link at the top of
+  `update`, then keeps pumping until 14 ms into the frame while the
+  lockstep is busy; the worst play frame is far under that, so there are
+  no in-draw pump points.
 
 ## Status
 

@@ -13,7 +13,11 @@ CLAUDE.md files have the long explanations, this one summarises.
 - `cart/src/main.zig` — entry, top-level modes, wasm shims, debug exports.
 - `cart/src/fixed.zig`, `state.zig`, `sim.zig`, `ai.zig`, `projectiles.zig`,
   `rewind.zig`, `levels.zig` — the simulation. Pure Zig, no cart-api import,
-  `zig test cart/src/<file>.zig` runs on the host.
+  `zig test cart/src/<file>.zig` runs on the host. Deathmatch (M7, two
+  badges): `match.zig` (the rules; `match.World` = GameState plus
+  `state.Match`, and `match.G` for the lockstep) and `bot.zig` (the
+  stand-in player for tests, previews and the bench), both pure;
+  `deathmatch.zig` (lobby, match frame, results; cart-api).
 - `cart/src/render/` — raycaster, textures, sprites, HUD (cart-api users);
   `cart/src/audio.zig` — tone2 (and the dormant neopixel effects), driven
   by diffing GameState.
@@ -69,7 +73,8 @@ coworker's badge shows the LEDs unusably bright even at 1%).
   (`convert_gfx`, `gen_levels`) or a runtime check, never a big comptime
   loop. Adrian builds on a Mac, so this is a hard rule.
 - Levels: `#`/`1`-`8` walls, `.` floor, `D C I G E` doors, `X` secret door, `S>` start with
-  facing, `c i g + % $ *` pickups, `a w b s H` enemies (a = gnat).
+  facing, `c i g + % $ * &` pickups, `a w b s H` enemies (a = gnat), `P`
+  deathmatch spawn (arenas only, M7).
 
 ## Building and previewing
 
