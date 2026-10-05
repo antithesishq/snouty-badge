@@ -48,3 +48,5 @@ carts/snouty-genesis/tests/roms/
 # this exception BELOW the *.lnx pattern: the last matching line wins.
 !carts/snouty-lynx/roms/raycast.lnx
 !carts/snouty-lynx/roms/placeholder.lnx
+# Our cc65 ComLynx test carts (carts/snouty-lynx/tools/make_comlynx_roms.sh).
+!carts/snouty-lynx/tests/comlynx/*.lnx

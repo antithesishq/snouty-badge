@@ -73,6 +73,12 @@ pub const Config = struct {
     slice: u32 = 1600,
     batch: Batch = .frame,
     seed: u64 = 0x5EED_C0DE,
+    /// Where a console hears its own frames: null = the mode's own
+    /// (`.wire` local, `.relay` and `.timestamped` through the bus);
+    /// `.local` in the other modes = the sender's UART echoes at once and
+    /// the bus delivers only to the others (docs/COMLYNX.md: Warbirds
+    /// needs it).
+    echo: ?comlynx.Echo = null,
 };
 
 pub const Stats = struct {
@@ -185,14 +191,18 @@ pub const VirtualBus = struct {
             b.last_tx[i] = 0;
             b.start_frame[i] = 0;
             b.offset[i] = 0;
-            b.on[i] = false;
+            b.on[i] = true;
             for (0..max_consoles) |j| b.last_due[i][j] = 0;
         }
         for (consoles, 0..) |l, i| {
             b.consoles[i] = l;
-            b.ports[i] = .{ .id = @intCast(i), .echo = if (cfg.mode == .wire) .local else .bus };
+            b.ports[i] = .{ .id = @intCast(i), .echo = b.echo() };
             l.attach_link(&b.ports[i]);
         }
+    }
+
+    fn echo(b: *const VirtualBus) comlynx.Echo {
+        return b.cfg.echo orelse if (b.cfg.mode == .wire) .local else .bus;
     }
 
     fn rand(b: *VirtualBus, max: u64) u64 {
@@ -209,6 +219,7 @@ pub const VirtualBus = struct {
     /// freshly reset (its clock at 0) and is not stepped before that.
     pub fn power_on_at(b: *VirtualBus, i: usize, frame: u32) void {
         b.start_frame[i] = frame;
+        b.on[i] = frame == 0;
     }
 
     /// One badge frame for every console that is on, `pads[i]` the pad
@@ -310,7 +321,10 @@ pub const VirtualBus = struct {
     }
 
     fn route_timestamped(b: *VirtualBus, src: u8, f: TxFrame) void {
-        for (0..b.n) |d| b.enqueue(d, f.time + b.cfg.delay, rx(src, f));
+        for (0..b.n) |d| {
+            if (d == src and b.echo() == .local) continue;
+            b.enqueue(d, f.time + b.cfg.delay, rx(src, f));
+        }
     }
 
     fn add_to_batch(b: *VirtualBus, src: u8, f: TxFrame) void {
@@ -370,6 +384,7 @@ pub const VirtualBus = struct {
             b.uploads[k] = b.uploads[b.uploads_len - 1];
             b.uploads_len -= 1;
             for (0..b.n) |d| {
+                if (d == u.src and b.echo() == .local) continue;
                 const base = u.arrive + b.cfg.latency - b.cfg.latency / 2 + b.rand(b.cfg.jitter - b.cfg.jitter / 2);
                 const t0 = u.frames[0].time;
                 var open_break = false;

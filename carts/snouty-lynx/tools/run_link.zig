@@ -5,7 +5,7 @@
 //!         [--mode wire|relay|timestamped] [--latency-us N] [--jitter-us N]
 //!         [--delay-us N] [--slice-us N] [--batch frame|burst|slice]
 //!         [--script I FILE] [--rom I FILE] [--every N] [--at U,U,...]
-//!         [--quiet] [--seed N] [--stagger F]
+//!         [--quiet] [--seed N] [--stagger F] [--echo local|bus]
 //!
 //! from the repository root. Every console runs `<rom>` (or `--rom I` its
 //! own) with its own input script (`--script I`, console I, 0-based; the
@@ -31,7 +31,7 @@ var ppm_buf: [runner.ppm_size]u8 = undefined;
 var bus: virt.VirtualBus = undefined;
 
 fn usage() noreturn {
-    std.debug.print("usage: zig build run-lynx-link -- <rom> <consoles> <updates> <outdir> [--mode wire|relay|timestamped] [--latency-us N] [--jitter-us N] [--delay-us N] [--slice-us N] [--batch frame|burst|slice] [--script I FILE] [--rom I FILE] [--every N] [--at U,U,...] [--quiet] [--seed N]\n", .{});
+    std.debug.print("usage: zig build run-lynx-link -- <rom> <consoles> <updates> <outdir> [--mode wire|relay|timestamped] [--latency-us N] [--jitter-us N] [--delay-us N] [--slice-us N] [--batch frame|burst|slice] [--script I FILE] [--rom I FILE] [--every N] [--at U,U,...] [--quiet] [--seed N] [--stagger F] [--echo local|bus]\n", .{});
     std.process.exit(2);
 }
 
@@ -64,6 +64,8 @@ pub fn main(init: std.process.Init.Minimal) !void {
     while (args.next()) |a| {
         if (std.mem.eql(u8, a, "--mode")) {
             cfg.mode = std.meta.stringToEnum(virt.Mode, args.next() orelse usage()) orelse usage();
+        } else if (std.mem.eql(u8, a, "--echo")) {
+            cfg.echo = std.meta.stringToEnum(core.comlynx.Echo, args.next() orelse usage()) orelse usage();
         } else if (std.mem.eql(u8, a, "--batch")) {
             cfg.batch = std.meta.stringToEnum(virt.Batch, args.next() orelse usage()) orelse usage();
         } else if (std.mem.eql(u8, a, "--latency-us")) {
@@ -117,8 +119,8 @@ pub fn main(init: std.process.Init.Minimal) !void {
     }
     bus.init(cfg, ptrs[0..n]);
     for (0..n) |i| bus.power_on_at(i, stagger * @as(u32, @intCast(i)));
-    std.debug.print("run-lynx-link: {d} consoles, mode {s}, latency {d} us, jitter {d} us, delay {d} us, slice {d} us, batch {s}\n", .{
-        n, @tagName(cfg.mode), cfg.latency / 16, cfg.jitter / 16, cfg.delay / 16, cfg.slice / 16, @tagName(cfg.batch),
+    std.debug.print("run-lynx-link: {d} consoles, mode {s}, echo {s}, latency {d} us, jitter {d} us, delay {d} us, slice {d} us, batch {s}\n", .{
+        n, @tagName(cfg.mode), @tagName(bus.ports[0].echo), cfg.latency / 16, cfg.jitter / 16, cfg.delay / 16, cfg.slice / 16, @tagName(cfg.batch),
     });
 
     var out_buf: [4096]u8 = undefined;
