@@ -93,7 +93,7 @@ tombstone ink or grey_d.
 | `title_bg` | 160x128 | 1 | 15 | 1843 | Title background: sunset prairie, mountains, trail ruts |
 | `title_wagon` | 90x36 | 2 | 10 | 1482 | Title sprite: the wagon and two oxen, wheels and legs in 2 frames |
 | `title_logo` | 116x40 | 1 | 7 | 985 | Title words THE RASPBERRY TRAIL, raspberry and cream woodtype |
-| `strip_wagon` | 12x9 | 2 | 5 | 102 | Trail strip wagon icon facing right, 2 wheel frames |
+| `strip_wagon` | 12x9 | 2 | 6 | 115 | Trail strip wagon icon facing right, 2 wheel frames |
 | `mark_start` | 7x9 | 1 | 3 | 31 | Trail strip marker: Independence (a signpost) |
 | `mark_pass` | 11x9 | 1 | 3 | 46 | Trail strip marker: South Pass (a grassy saddle, no snow) |
 | `mark_mountains` | 11x9 | 1 | 3 | 44 | Trail strip marker: Blue Mountains (snowy blue peaks) |
@@ -108,7 +108,7 @@ tombstone ink or grey_d.
 | `v_wagon_breaks` | 64x40 | 1 | 12 | 452 | Vignette: wagon breakdown, the front wheel off and broken |
 | `v_ox_injured` | 64x40 | 1 | 11 | 410 | Vignette: an injured ox lying down, a bandaged leg |
 | `v_ox_wanders` | 64x40 | 1 | 11 | 370 | Vignette: an ox wanders off; an empty yoke and a question mark |
-| `v_daughter_arm` | 64x40 | 1 | 10 | 704 | Vignette: a broken arm in a white sling (no gore) |
+| `v_daughter_arm` | 64x40 | 1 | 10 | 708 | Vignette: a broken arm in a white sling (no gore) |
 | `v_son_lost` | 64x40 | 2 | 11 | 1060 | Vignette: searching for the lost son at night, lantern and footprints |
 | `v_bad_water` | 64x40 | 1 | 12 | 746 | Vignette: a murky pond with bubbles and a warning sign |
 | `v_heavy_rain` | 64x40 | 2 | 12 | 1062 | Vignette: heavy rain over the wagon, 2 frames |
@@ -133,12 +133,12 @@ tombstone ink or grey_d.
 | `shoot_riders` | 160x80 | 1 | 9 | 1596 | Shooting scene: riders charging out of the sunset |
 | `shoot_bandits` | 160x80 | 1 | 12 | 1082 | Shooting scene: bandits behind the rocks at night |
 | `shoot_animals` | 160x80 | 1 | 8 | 1056 | Shooting scene: wild animals, wolves at dusk |
-| `muzzle_flash` | 18x18 | 2 | 3 | 138 | Shot sprite: muzzle flash, 2 frames |
+| `muzzle_flash` | 18x18 | 2 | 3 | 140 | Shot sprite: muzzle flash, 2 frames |
 | `mark_hit` | 17x17 | 1 | 4 | 131 | Shot result: a hit, raspberry starburst |
 | `mark_miss` | 18x14 | 1 | 5 | 76 | Shot result: a miss, a puff of dust |
 | `tombstone` | 160x96 | 1 | 15 | 1239 | Death: a tombstone on the prairie at dusk; the UI writes the cause on it |
 | `arrival` | 160x96 | 1 | 15 | 1437 | Arrival: Oregon City, cabins by the river under Mt Hood |
-| total | | | | 29591 | |
+| total | | | | 29610 | |
 
 Vignettes are 64x40 postcards with a 1 px ink frame and clipped corners,
 so they sit on the cream paper as they are. The `shoot_*` scenes are

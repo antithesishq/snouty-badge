@@ -235,6 +235,13 @@ class Canvas:
                 self.p[y][x] = c
 
 
+def iround(v):
+    """Rounds half up after snapping to 1e-6, so trig results that land on
+    .5 (sin 30 deg * 11) round the same with every libm (--check must match
+    on every machine)."""
+    return int(math.floor(round(v, 6) + 0.5))
+
+
 def rect(x0, y0, x1, y1):
     return {(x, y) for y in range(y0, y1 + 1) for x in range(x0, x1 + 1)}
 
@@ -261,6 +268,7 @@ def line(x0, y0, x1, y1):
 def poly(pts):
     """Filled polygon, pixel centres inside (even-odd)."""
     out = set()
+    pts = [(round(x, 6), round(y, 6)) for x, y in pts]  # libm-proof (see iround)
     ys = [p[1] for p in pts]
     n = len(pts)
     for y in range(int(math.floor(min(ys))), int(math.ceil(max(ys))) + 1):
@@ -390,8 +398,8 @@ def wheel(cv, cx, cy, r, spoke_phase=0, rim=INK, spoke=BROWN_D, hub=WOOD_L):
     n = 4
     for k in range(n):
         a = math.pi * k / n + spoke_phase * math.pi / (2 * n)
-        ex, ey = round(cx + math.cos(a) * (r - 1)), round(cy + math.sin(a) * (r - 1))
-        fx, fy = round(cx - math.cos(a) * (r - 1)), round(cy - math.sin(a) * (r - 1))
+        ex, ey = iround(cx + math.cos(a) * (r - 1)), iround(cy + math.sin(a) * (r - 1))
+        fx, fy = iround(cx - math.cos(a) * (r - 1)), iround(cy - math.sin(a) * (r - 1))
         cv.fill(line(ex, ey, fx, fy) & inner, spoke)
     cv.px(cx, cy, hub)
 
@@ -578,12 +586,13 @@ def p_title_logo():
 # ---- trail strip
 
 WAGON_ICON = """
-...kkkkkk...
-..kpppppkk..
-.kpwppppppk.
-.kppppppppk.
-kkkkkkkkkkkk
-.bbbbbbbbbb.
+kk.......kk.
+krkkkkkkkrk.
+.krrwrrrrk..
+.krrrrrrrk..
+.kpppppppk..
+kkkkkkkkkkk.
+.bbbbbbbbbbk
 """
 
 
@@ -592,7 +601,7 @@ def p_strip_wagon():
     frames = []
     for f in range(2):
         cv = Canvas(12, 9)
-        cv.sprite(0, 0, WAGON_ICON, {"k": INK, "p": RASP, "w": RASP_P, "b": BROWN})
+        cv.sprite(0, 0, WAGON_ICON, {"k": INK, "r": RASP, "p": RASP_D, "w": RASP_P, "b": BROWN})
         for wx in (2, 9):
             if f == 0:
                 cv.sprite(wx - 1, 6, "kgk\ngkg\nkgk", {"k": INK, "g": GREY_L})
@@ -869,8 +878,8 @@ def p_v_daughter_arm():
     cv.fill(border(ellipse(37, 9, 59, 31)), WOOD)
     for a in range(0, 180, 30):
         r = math.radians(a)
-        cv.line(48 + round(math.cos(r) * 11), 20 + round(math.sin(r) * 11),
-                48 - round(math.cos(r) * 11), 20 - round(math.sin(r) * 11), WOOD_L)
+        cv.line(48 + iround(math.cos(r) * 11), 20 + iround(math.sin(r) * 11),
+                48 - iround(math.cos(r) * 11), 20 - iround(math.sin(r) * 11), WOOD_L)
     cv.disk(48, 20, 2, BROWN)
     # a girl in a bonnet and calico dress
     f = Canvas(VW, VH)
@@ -1730,8 +1739,8 @@ def p_tombstone():
     cv.fill(border(ellipse(116, 58, 138, 84)) | border(ellipse(117, 59, 137, 83)), WOOD)
     for a in (20, 80, 140):
         rr = math.radians(a)
-        cv.line(127 + round(math.cos(rr) * 10), 71 + round(math.sin(rr) * 11),
-                127 - round(math.cos(rr) * 6), 71 - round(math.sin(rr) * 6), BROWN)
+        cv.line(127 + iround(math.cos(rr) * 10), 71 + iround(math.sin(rr) * 11),
+                127 - iround(math.cos(rr) * 6), 71 - iround(math.sin(rr) * 6), BROWN)
     cv.disk(127, 71, 1, BROWN)
     cv.fill(rect(130, 56, 140, 66) & border(ellipse(116, 58, 138, 84)), PINE if False else DUSK_P)
     tx, ty, tw, th = LAYOUT["tomb_text"] = (x0 + 6, y0 + 30, x1 - x0 - 11, 40)

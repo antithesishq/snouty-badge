@@ -9,8 +9,8 @@ pub const checks = [_]Check{
     .{ .opaque_px = 1639, .sum = 3450010317 }, // title_wagon
     .{ .opaque_px = 1633, .sum = 3254546308 }, // title_wagon
     .{ .opaque_px = 1830, .sum = 1513491336 }, // title_logo
-    .{ .opaque_px = 74, .sum = 61620500 }, // strip_wagon
-    .{ .opaque_px = 74, .sum = 68528184 }, // strip_wagon
+    .{ .opaque_px = 76, .sum = 62535995 }, // strip_wagon
+    .{ .opaque_px = 76, .sum = 69443679 }, // strip_wagon
     .{ .opaque_px = 33, .sum = 8460520 }, // mark_start
     .{ .opaque_px = 88, .sum = 58367304 }, // mark_pass
     .{ .opaque_px = 71, .sum = 126925228 }, // mark_mountains
@@ -37,7 +37,7 @@ pub const checks = [_]Check{
     .{ .opaque_px = 2556, .sum = 1601277813 }, // v_wagon_breaks
     .{ .opaque_px = 2556, .sum = 1627915065 }, // v_ox_injured
     .{ .opaque_px = 2556, .sum = 3727724472 }, // v_ox_wanders
-    .{ .opaque_px = 2556, .sum = 495984577 }, // v_daughter_arm
+    .{ .opaque_px = 2556, .sum = 482055617 }, // v_daughter_arm
     .{ .opaque_px = 2556, .sum = 2323811180 }, // v_son_lost
     .{ .opaque_px = 2556, .sum = 1446309823 }, // v_son_lost
     .{ .opaque_px = 2556, .sum = 4292285036 }, // v_bad_water
@@ -68,7 +68,7 @@ pub const checks = [_]Check{
     .{ .opaque_px = 12800, .sum = 1690738271 }, // shoot_riders
     .{ .opaque_px = 12800, .sum = 710841726 }, // shoot_bandits
     .{ .opaque_px = 12800, .sum = 1119195958 }, // shoot_animals
-    .{ .opaque_px = 90, .sum = 337594923 }, // muzzle_flash
+    .{ .opaque_px = 92, .sum = 338713425 }, // muzzle_flash
     .{ .opaque_px = 53, .sum = 164754684 }, // muzzle_flash
     .{ .opaque_px = 161, .sum = 511564640 }, // mark_hit
     .{ .opaque_px = 167, .sum = 1037550005 }, // mark_miss
@@ -98,16 +98,16 @@ pub const samples = [_]Sample{
     .{ .pic = 2, .frame = 0, .x = 58, .y = 20, .c = 0x4053 },
     .{ .pic = 2, .frame = 0, .x = 38, .y = 26, .c = 0xAE9C },
     .{ .pic = 2, .frame = 0, .x = 87, .y = 10, .c = 0x8ABE },
-    .{ .pic = 3, .frame = 0, .x = 0, .y = 0, .c = null },
+    .{ .pic = 3, .frame = 0, .x = 0, .y = 0, .c = 0x10A3 },
     .{ .pic = 3, .frame = 0, .x = 11, .y = 8, .c = null },
-    .{ .pic = 3, .frame = 0, .x = 6, .y = 4, .c = 0x10A3 },
-    .{ .pic = 3, .frame = 0, .x = 4, .y = 6, .c = null },
-    .{ .pic = 3, .frame = 0, .x = 9, .y = 2, .c = 0x585C },
-    .{ .pic = 3, .frame = 1, .x = 0, .y = 0, .c = null },
+    .{ .pic = 3, .frame = 0, .x = 6, .y = 4, .c = 0x4053 },
+    .{ .pic = 3, .frame = 0, .x = 4, .y = 6, .c = 0x2A4D },
+    .{ .pic = 3, .frame = 0, .x = 9, .y = 2, .c = 0x10A3 },
+    .{ .pic = 3, .frame = 1, .x = 0, .y = 0, .c = 0x10A3 },
     .{ .pic = 3, .frame = 1, .x = 11, .y = 8, .c = null },
-    .{ .pic = 3, .frame = 1, .x = 6, .y = 4, .c = 0x10A3 },
-    .{ .pic = 3, .frame = 1, .x = 4, .y = 6, .c = null },
-    .{ .pic = 3, .frame = 1, .x = 9, .y = 2, .c = 0x585C },
+    .{ .pic = 3, .frame = 1, .x = 6, .y = 4, .c = 0x4053 },
+    .{ .pic = 3, .frame = 1, .x = 4, .y = 6, .c = 0x2A4D },
+    .{ .pic = 3, .frame = 1, .x = 9, .y = 2, .c = 0x10A3 },
     .{ .pic = 4, .frame = 0, .x = 0, .y = 0, .c = 0x10A3 },
     .{ .pic = 4, .frame = 0, .x = 6, .y = 8, .c = null },
     .{ .pic = 4, .frame = 0, .x = 3, .y = 4, .c = 0x3B94 },

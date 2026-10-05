@@ -62,51 +62,51 @@ pub const infos = [_]Info{
     .{ .w = 160, .h = 128, .frames = 1, .frame = 0, .pal = 0, .colors = 16 }, // title_bg
     .{ .w = 90, .h = 36, .frames = 2, .frame = 1, .pal = 16, .colors = 11 }, // title_wagon
     .{ .w = 116, .h = 40, .frames = 1, .frame = 3, .pal = 27, .colors = 8 }, // title_logo
-    .{ .w = 12, .h = 9, .frames = 2, .frame = 4, .pal = 35, .colors = 6 }, // strip_wagon
-    .{ .w = 7, .h = 9, .frames = 1, .frame = 6, .pal = 41, .colors = 4 }, // mark_start
-    .{ .w = 11, .h = 9, .frames = 1, .frame = 7, .pal = 45, .colors = 4 }, // mark_pass
-    .{ .w = 11, .h = 9, .frames = 1, .frame = 8, .pal = 49, .colors = 4 }, // mark_mountains
-    .{ .w = 9, .h = 9, .frames = 1, .frame = 9, .pal = 53, .colors = 4 }, // mark_fort
-    .{ .w = 11, .h = 9, .frames = 1, .frame = 10, .pal = 57, .colors = 5 }, // mark_city
-    .{ .w = 14, .h = 14, .frames = 3, .frame = 11, .pal = 62, .colors = 6 }, // btn_up
-    .{ .w = 14, .h = 14, .frames = 3, .frame = 14, .pal = 68, .colors = 6 }, // btn_down
-    .{ .w = 14, .h = 14, .frames = 3, .frame = 17, .pal = 74, .colors = 6 }, // btn_left
-    .{ .w = 14, .h = 14, .frames = 3, .frame = 20, .pal = 80, .colors = 6 }, // btn_right
-    .{ .w = 14, .h = 14, .frames = 3, .frame = 23, .pal = 86, .colors = 6 }, // btn_a
-    .{ .w = 14, .h = 14, .frames = 3, .frame = 26, .pal = 92, .colors = 6 }, // btn_b
-    .{ .w = 64, .h = 40, .frames = 1, .frame = 29, .pal = 98, .colors = 13 }, // v_wagon_breaks
-    .{ .w = 64, .h = 40, .frames = 1, .frame = 30, .pal = 111, .colors = 12 }, // v_ox_injured
-    .{ .w = 64, .h = 40, .frames = 1, .frame = 31, .pal = 123, .colors = 12 }, // v_ox_wanders
-    .{ .w = 64, .h = 40, .frames = 1, .frame = 32, .pal = 135, .colors = 11 }, // v_daughter_arm
-    .{ .w = 64, .h = 40, .frames = 2, .frame = 33, .pal = 146, .colors = 12 }, // v_son_lost
-    .{ .w = 64, .h = 40, .frames = 1, .frame = 35, .pal = 158, .colors = 13 }, // v_bad_water
-    .{ .w = 64, .h = 40, .frames = 2, .frame = 36, .pal = 171, .colors = 13 }, // v_heavy_rain
-    .{ .w = 64, .h = 40, .frames = 2, .frame = 38, .pal = 184, .colors = 13 }, // v_hail
-    .{ .w = 64, .h = 40, .frames = 2, .frame = 40, .pal = 197, .colors = 14 }, // v_fire
-    .{ .w = 64, .h = 40, .frames = 1, .frame = 42, .pal = 211, .colors = 6 }, // v_fog
-    .{ .w = 64, .h = 40, .frames = 1, .frame = 43, .pal = 217, .colors = 12 }, // v_snake
-    .{ .w = 64, .h = 40, .frames = 2, .frame = 44, .pal = 229, .colors = 13 }, // v_river
-    .{ .w = 64, .h = 40, .frames = 1, .frame = 46, .pal = 242, .colors = 8 }, // v_wild_animals
-    .{ .w = 64, .h = 40, .frames = 1, .frame = 47, .pal = 250, .colors = 7 }, // v_cold
-    .{ .w = 64, .h = 40, .frames = 2, .frame = 48, .pal = 257, .colors = 11 }, // v_blizzard
-    .{ .w = 64, .h = 40, .frames = 1, .frame = 50, .pal = 268, .colors = 10 }, // v_mountains
-    .{ .w = 64, .h = 40, .frames = 1, .frame = 51, .pal = 278, .colors = 13 }, // v_fort
-    .{ .w = 64, .h = 40, .frames = 1, .frame = 52, .pal = 291, .colors = 9 }, // v_riders
-    .{ .w = 64, .h = 40, .frames = 1, .frame = 53, .pal = 300, .colors = 9 }, // v_bandits
-    .{ .w = 64, .h = 40, .frames = 1, .frame = 54, .pal = 309, .colors = 11 }, // v_illness
-    .{ .w = 64, .h = 40, .frames = 1, .frame = 55, .pal = 320, .colors = 13 }, // v_helpful_food
-    .{ .w = 64, .h = 40, .frames = 1, .frame = 56, .pal = 333, .colors = 9 }, // v_hunt_result
-    .{ .w = 64, .h = 40, .frames = 1, .frame = 57, .pal = 342, .colors = 11 }, // v_south_pass
-    .{ .w = 64, .h = 40, .frames = 1, .frame = 58, .pal = 353, .colors = 11 }, // v_doctor
-    .{ .w = 160, .h = 80, .frames = 1, .frame = 59, .pal = 364, .colors = 14 }, // shoot_hunt
-    .{ .w = 160, .h = 80, .frames = 1, .frame = 60, .pal = 378, .colors = 10 }, // shoot_riders
-    .{ .w = 160, .h = 80, .frames = 1, .frame = 61, .pal = 388, .colors = 13 }, // shoot_bandits
-    .{ .w = 160, .h = 80, .frames = 1, .frame = 62, .pal = 401, .colors = 9 }, // shoot_animals
-    .{ .w = 18, .h = 18, .frames = 2, .frame = 63, .pal = 410, .colors = 4 }, // muzzle_flash
-    .{ .w = 17, .h = 17, .frames = 1, .frame = 65, .pal = 414, .colors = 5 }, // mark_hit
-    .{ .w = 18, .h = 14, .frames = 1, .frame = 66, .pal = 419, .colors = 6 }, // mark_miss
-    .{ .w = 160, .h = 96, .frames = 1, .frame = 67, .pal = 425, .colors = 16 }, // tombstone
-    .{ .w = 160, .h = 96, .frames = 1, .frame = 68, .pal = 441, .colors = 16 }, // arrival
+    .{ .w = 12, .h = 9, .frames = 2, .frame = 4, .pal = 35, .colors = 7 }, // strip_wagon
+    .{ .w = 7, .h = 9, .frames = 1, .frame = 6, .pal = 42, .colors = 4 }, // mark_start
+    .{ .w = 11, .h = 9, .frames = 1, .frame = 7, .pal = 46, .colors = 4 }, // mark_pass
+    .{ .w = 11, .h = 9, .frames = 1, .frame = 8, .pal = 50, .colors = 4 }, // mark_mountains
+    .{ .w = 9, .h = 9, .frames = 1, .frame = 9, .pal = 54, .colors = 4 }, // mark_fort
+    .{ .w = 11, .h = 9, .frames = 1, .frame = 10, .pal = 58, .colors = 5 }, // mark_city
+    .{ .w = 14, .h = 14, .frames = 3, .frame = 11, .pal = 63, .colors = 6 }, // btn_up
+    .{ .w = 14, .h = 14, .frames = 3, .frame = 14, .pal = 69, .colors = 6 }, // btn_down
+    .{ .w = 14, .h = 14, .frames = 3, .frame = 17, .pal = 75, .colors = 6 }, // btn_left
+    .{ .w = 14, .h = 14, .frames = 3, .frame = 20, .pal = 81, .colors = 6 }, // btn_right
+    .{ .w = 14, .h = 14, .frames = 3, .frame = 23, .pal = 87, .colors = 6 }, // btn_a
+    .{ .w = 14, .h = 14, .frames = 3, .frame = 26, .pal = 93, .colors = 6 }, // btn_b
+    .{ .w = 64, .h = 40, .frames = 1, .frame = 29, .pal = 99, .colors = 13 }, // v_wagon_breaks
+    .{ .w = 64, .h = 40, .frames = 1, .frame = 30, .pal = 112, .colors = 12 }, // v_ox_injured
+    .{ .w = 64, .h = 40, .frames = 1, .frame = 31, .pal = 124, .colors = 12 }, // v_ox_wanders
+    .{ .w = 64, .h = 40, .frames = 1, .frame = 32, .pal = 136, .colors = 11 }, // v_daughter_arm
+    .{ .w = 64, .h = 40, .frames = 2, .frame = 33, .pal = 147, .colors = 12 }, // v_son_lost
+    .{ .w = 64, .h = 40, .frames = 1, .frame = 35, .pal = 159, .colors = 13 }, // v_bad_water
+    .{ .w = 64, .h = 40, .frames = 2, .frame = 36, .pal = 172, .colors = 13 }, // v_heavy_rain
+    .{ .w = 64, .h = 40, .frames = 2, .frame = 38, .pal = 185, .colors = 13 }, // v_hail
+    .{ .w = 64, .h = 40, .frames = 2, .frame = 40, .pal = 198, .colors = 14 }, // v_fire
+    .{ .w = 64, .h = 40, .frames = 1, .frame = 42, .pal = 212, .colors = 6 }, // v_fog
+    .{ .w = 64, .h = 40, .frames = 1, .frame = 43, .pal = 218, .colors = 12 }, // v_snake
+    .{ .w = 64, .h = 40, .frames = 2, .frame = 44, .pal = 230, .colors = 13 }, // v_river
+    .{ .w = 64, .h = 40, .frames = 1, .frame = 46, .pal = 243, .colors = 8 }, // v_wild_animals
+    .{ .w = 64, .h = 40, .frames = 1, .frame = 47, .pal = 251, .colors = 7 }, // v_cold
+    .{ .w = 64, .h = 40, .frames = 2, .frame = 48, .pal = 258, .colors = 11 }, // v_blizzard
+    .{ .w = 64, .h = 40, .frames = 1, .frame = 50, .pal = 269, .colors = 10 }, // v_mountains
+    .{ .w = 64, .h = 40, .frames = 1, .frame = 51, .pal = 279, .colors = 13 }, // v_fort
+    .{ .w = 64, .h = 40, .frames = 1, .frame = 52, .pal = 292, .colors = 9 }, // v_riders
+    .{ .w = 64, .h = 40, .frames = 1, .frame = 53, .pal = 301, .colors = 9 }, // v_bandits
+    .{ .w = 64, .h = 40, .frames = 1, .frame = 54, .pal = 310, .colors = 11 }, // v_illness
+    .{ .w = 64, .h = 40, .frames = 1, .frame = 55, .pal = 321, .colors = 13 }, // v_helpful_food
+    .{ .w = 64, .h = 40, .frames = 1, .frame = 56, .pal = 334, .colors = 9 }, // v_hunt_result
+    .{ .w = 64, .h = 40, .frames = 1, .frame = 57, .pal = 343, .colors = 11 }, // v_south_pass
+    .{ .w = 64, .h = 40, .frames = 1, .frame = 58, .pal = 354, .colors = 11 }, // v_doctor
+    .{ .w = 160, .h = 80, .frames = 1, .frame = 59, .pal = 365, .colors = 14 }, // shoot_hunt
+    .{ .w = 160, .h = 80, .frames = 1, .frame = 60, .pal = 379, .colors = 10 }, // shoot_riders
+    .{ .w = 160, .h = 80, .frames = 1, .frame = 61, .pal = 389, .colors = 13 }, // shoot_bandits
+    .{ .w = 160, .h = 80, .frames = 1, .frame = 62, .pal = 402, .colors = 9 }, // shoot_animals
+    .{ .w = 18, .h = 18, .frames = 2, .frame = 63, .pal = 411, .colors = 4 }, // muzzle_flash
+    .{ .w = 17, .h = 17, .frames = 1, .frame = 65, .pal = 415, .colors = 5 }, // mark_hit
+    .{ .w = 18, .h = 14, .frames = 1, .frame = 66, .pal = 420, .colors = 6 }, // mark_miss
+    .{ .w = 160, .h = 96, .frames = 1, .frame = 67, .pal = 426, .colors = 16 }, // tombstone
+    .{ .w = 160, .h = 96, .frames = 1, .frame = 68, .pal = 442, .colors = 16 }, // arrival
 };
 
 pub const frames = [_]Frame{
@@ -114,71 +114,71 @@ pub const frames = [_]Frame{
     .{ .off = 1811, .len = 724, .rle = true },
     .{ .off = 2535, .len = 736, .rle = true },
     .{ .off = 3271, .len = 969, .rle = true },
-    .{ .off = 4240, .len = 45, .rle = true },
-    .{ .off = 4285, .len = 45, .rle = true },
-    .{ .off = 4330, .len = 23, .rle = true },
-    .{ .off = 4353, .len = 38, .rle = true },
-    .{ .off = 4391, .len = 36, .rle = true },
-    .{ .off = 4427, .len = 32, .rle = true },
-    .{ .off = 4459, .len = 50, .rle = false },
-    .{ .off = 4509, .len = 63, .rle = true },
-    .{ .off = 4572, .len = 63, .rle = true },
-    .{ .off = 4635, .len = 61, .rle = true },
-    .{ .off = 4696, .len = 63, .rle = true },
-    .{ .off = 4759, .len = 63, .rle = true },
-    .{ .off = 4822, .len = 61, .rle = true },
-    .{ .off = 4883, .len = 63, .rle = true },
-    .{ .off = 4946, .len = 63, .rle = true },
-    .{ .off = 5009, .len = 61, .rle = true },
-    .{ .off = 5070, .len = 63, .rle = true },
-    .{ .off = 5133, .len = 63, .rle = true },
-    .{ .off = 5196, .len = 61, .rle = true },
-    .{ .off = 5257, .len = 73, .rle = true },
-    .{ .off = 5330, .len = 73, .rle = true },
-    .{ .off = 5403, .len = 71, .rle = true },
-    .{ .off = 5474, .len = 71, .rle = true },
-    .{ .off = 5545, .len = 71, .rle = true },
-    .{ .off = 5616, .len = 69, .rle = true },
-    .{ .off = 5685, .len = 426, .rle = true },
-    .{ .off = 6111, .len = 386, .rle = true },
-    .{ .off = 6497, .len = 346, .rle = true },
-    .{ .off = 6843, .len = 682, .rle = true },
-    .{ .off = 7525, .len = 518, .rle = true },
-    .{ .off = 8043, .len = 518, .rle = true },
-    .{ .off = 8561, .len = 720, .rle = true },
-    .{ .off = 9281, .len = 519, .rle = true },
-    .{ .off = 9800, .len = 517, .rle = true },
-    .{ .off = 10317, .len = 460, .rle = true },
-    .{ .off = 10777, .len = 475, .rle = true },
-    .{ .off = 11252, .len = 569, .rle = true },
-    .{ .off = 11821, .len = 601, .rle = true },
-    .{ .off = 12422, .len = 871, .rle = true },
-    .{ .off = 13293, .len = 492, .rle = true },
-    .{ .off = 13785, .len = 442, .rle = true },
-    .{ .off = 14227, .len = 443, .rle = true },
-    .{ .off = 14670, .len = 281, .rle = true },
-    .{ .off = 14951, .len = 494, .rle = true },
-    .{ .off = 15445, .len = 390, .rle = true },
-    .{ .off = 15835, .len = 399, .rle = true },
-    .{ .off = 16234, .len = 521, .rle = true },
-    .{ .off = 16755, .len = 813, .rle = true },
-    .{ .off = 17568, .len = 490, .rle = true },
-    .{ .off = 18058, .len = 498, .rle = true },
-    .{ .off = 18556, .len = 427, .rle = true },
-    .{ .off = 18983, .len = 704, .rle = true },
-    .{ .off = 19687, .len = 414, .rle = true },
-    .{ .off = 20101, .len = 343, .rle = true },
-    .{ .off = 20444, .len = 374, .rle = true },
-    .{ .off = 20818, .len = 1262, .rle = true },
-    .{ .off = 22080, .len = 1576, .rle = true },
-    .{ .off = 23656, .len = 1056, .rle = true },
-    .{ .off = 24712, .len = 1038, .rle = true },
-    .{ .off = 25750, .len = 83, .rle = true },
-    .{ .off = 25833, .len = 47, .rle = true },
-    .{ .off = 25880, .len = 121, .rle = true },
-    .{ .off = 26001, .len = 64, .rle = true },
-    .{ .off = 26065, .len = 1207, .rle = true },
-    .{ .off = 27272, .len = 1405, .rle = true },
+    .{ .off = 4240, .len = 50, .rle = true },
+    .{ .off = 4290, .len = 51, .rle = true },
+    .{ .off = 4341, .len = 23, .rle = true },
+    .{ .off = 4364, .len = 38, .rle = true },
+    .{ .off = 4402, .len = 36, .rle = true },
+    .{ .off = 4438, .len = 32, .rle = true },
+    .{ .off = 4470, .len = 50, .rle = false },
+    .{ .off = 4520, .len = 63, .rle = true },
+    .{ .off = 4583, .len = 63, .rle = true },
+    .{ .off = 4646, .len = 61, .rle = true },
+    .{ .off = 4707, .len = 63, .rle = true },
+    .{ .off = 4770, .len = 63, .rle = true },
+    .{ .off = 4833, .len = 61, .rle = true },
+    .{ .off = 4894, .len = 63, .rle = true },
+    .{ .off = 4957, .len = 63, .rle = true },
+    .{ .off = 5020, .len = 61, .rle = true },
+    .{ .off = 5081, .len = 63, .rle = true },
+    .{ .off = 5144, .len = 63, .rle = true },
+    .{ .off = 5207, .len = 61, .rle = true },
+    .{ .off = 5268, .len = 73, .rle = true },
+    .{ .off = 5341, .len = 73, .rle = true },
+    .{ .off = 5414, .len = 71, .rle = true },
+    .{ .off = 5485, .len = 71, .rle = true },
+    .{ .off = 5556, .len = 71, .rle = true },
+    .{ .off = 5627, .len = 69, .rle = true },
+    .{ .off = 5696, .len = 426, .rle = true },
+    .{ .off = 6122, .len = 386, .rle = true },
+    .{ .off = 6508, .len = 346, .rle = true },
+    .{ .off = 6854, .len = 686, .rle = true },
+    .{ .off = 7540, .len = 518, .rle = true },
+    .{ .off = 8058, .len = 518, .rle = true },
+    .{ .off = 8576, .len = 720, .rle = true },
+    .{ .off = 9296, .len = 519, .rle = true },
+    .{ .off = 9815, .len = 517, .rle = true },
+    .{ .off = 10332, .len = 460, .rle = true },
+    .{ .off = 10792, .len = 475, .rle = true },
+    .{ .off = 11267, .len = 569, .rle = true },
+    .{ .off = 11836, .len = 601, .rle = true },
+    .{ .off = 12437, .len = 871, .rle = true },
+    .{ .off = 13308, .len = 492, .rle = true },
+    .{ .off = 13800, .len = 442, .rle = true },
+    .{ .off = 14242, .len = 443, .rle = true },
+    .{ .off = 14685, .len = 281, .rle = true },
+    .{ .off = 14966, .len = 494, .rle = true },
+    .{ .off = 15460, .len = 390, .rle = true },
+    .{ .off = 15850, .len = 399, .rle = true },
+    .{ .off = 16249, .len = 521, .rle = true },
+    .{ .off = 16770, .len = 813, .rle = true },
+    .{ .off = 17583, .len = 490, .rle = true },
+    .{ .off = 18073, .len = 498, .rle = true },
+    .{ .off = 18571, .len = 427, .rle = true },
+    .{ .off = 18998, .len = 704, .rle = true },
+    .{ .off = 19702, .len = 414, .rle = true },
+    .{ .off = 20116, .len = 343, .rle = true },
+    .{ .off = 20459, .len = 374, .rle = true },
+    .{ .off = 20833, .len = 1262, .rle = true },
+    .{ .off = 22095, .len = 1576, .rle = true },
+    .{ .off = 23671, .len = 1056, .rle = true },
+    .{ .off = 24727, .len = 1038, .rle = true },
+    .{ .off = 25765, .len = 85, .rle = true },
+    .{ .off = 25850, .len = 47, .rle = true },
+    .{ .off = 25897, .len = 121, .rle = true },
+    .{ .off = 26018, .len = 64, .rle = true },
+    .{ .off = 26082, .len = 1207, .rle = true },
+    .{ .off = 27289, .len = 1405, .rle = true },
 };
 
 /// Index 0 of each picture's palette is transparent; its slot holds 0 and is
@@ -187,7 +187,7 @@ pub const palette = [_]u16{
     0x0000, 0x5967, 0x7A4D, 0x7B5D, 0x6EBE, 0xF7FF, 0xB495, 0x3CDE, 0x9B4F, 0x5DB9, 0x6D19, 0x2CC9, 0x5611, 0x1B45, 0x2A43, 0x585C, // title_bg
     0x0000, 0x10A3, 0x4053, 0x8ABE, 0x585C, 0xAE9C, 0x3B94, 0x2A4D, 0x2147, 0xD75E, 0x6D19, // title_wagon
     0x0000, 0x10A3, 0xD75E, 0x8ABE, 0x4053, 0x585C, 0xF7FF, 0xAE9C, // title_logo
-    0x0000, 0x10A3, 0x585C, 0xC53F, 0x2A4D, 0xA5B7, // strip_wagon
+    0x0000, 0x10A3, 0x585C, 0xC53F, 0x4053, 0xA5B7, 0x2A4D, // strip_wagon
     0x0000, 0x10A3, 0xD75E, 0x3B94, // mark_start
     0x0000, 0x10A3, 0x2CC9, 0x6D19, // mark_pass
     0x0000, 0x10A3, 0xF7FF, 0xB3E7, // mark_mountains
@@ -293,4 +293,4 @@ pub const master = struct {
     pub const storm_l: u16 = 0xA4B1; // #8A94A6
 };
 
-pub const data: *const [28677]u8 = @embedFile("art.bin");
+pub const data: *const [28694]u8 = @embedFile("art.bin");
