@@ -56,9 +56,15 @@ pub const State = enum(u8) {
     round_over,
     /// SKIRMISH: the match card.
     match_over,
+    /// LINK DUEL: the cable screen and the lobby (the host's setup, the
+    /// guest's view of it). The duel itself runs in countdown, play,
+    /// round_over and match_over with `mode` link.
+    link_lobby,
+    /// LINK DUEL: PEER LEFT or NO CONTEST, then the menu or the next round.
+    link_notice,
 };
 
-pub const Mode = enum(u8) { ladder, skirmish };
+pub const Mode = enum(u8) { ladder, skirmish, link };
 
 /// Buttons, held or newly pressed this tick.
 pub const Buttons = packed struct(u8) {
@@ -189,8 +195,9 @@ fn brain(tier: ai.Tier, level: u8, seed: u32) ai.Brain {
     return .from(ai.preset(tier, level), seed);
 }
 
-pub const MenuItem = enum(u8) { ladder, skirmish, options, howto };
-const menu_text = [4][]const u8{ "GRID LADDER", "SKIRMISH   ", "OPTIONS    ", "HOW TO PLAY" };
+pub const MenuItem = enum(u8) { ladder, skirmish, link, options, howto };
+const menu_text = [5][]const u8{ "GRID LADDER", "SKIRMISH   ", "LINK DUEL  ", "OPTIONS    ", "HOW TO PLAY" };
+const menu_items: u8 = menu_text.len;
 
 pub const PauseItem = enum(u8) { resume_play, restart, quit };
 
@@ -234,6 +241,145 @@ pub const Skirmish = struct {
         return null;
     }
 };
+
+// ------------------------------------------------------------ LINK DUEL
+
+/// LINK DUEL's input byte (one per lockstep tick, net.zig): `sim.Input`'s
+/// low 5 bits (the press, A = boost, B = brake) and Start as the
+/// lockstep's pause bit. Never 0xC0 or 0xDB (at most 0x3F).
+pub const link_pause_bit: u8 = 0x20;
+const link_input_mask: u8 = 0x1F;
+/// The host's rules (the lobby's SETUP, GO's digest): arena, speed, the
+/// modifier bits, and the match byte (first-to-N in bits 0-1, the host's
+/// and the guest's round wins in bits 2-3 and 4-5: a NO CONTEST's new race
+/// carries on from them).
+pub const link_rules_len = 4;
+pub const LinkRules = [link_rules_len]u8;
+
+/// What net.zig reports of the lockstep (its `state()`).
+pub const LinkStatus = enum(u8) { offline, searching, wrong_cart, lobby, racing, waiting, peer_left, desync };
+
+/// The host's setup rows.
+pub const LinkRow = enum(u8) { arena, speed, trails, gaps, wrap, hardcore, first_to, start };
+
+pub const LinkNotice = enum(u8) { none, peer_left, no_contest };
+
+/// LINK DUEL: what net.zig tells the game each frame, what the game asks of
+/// it, the host's setup, and the match. The match fields change only in
+/// `duel_tick` (agreed on both badges); `duel_hash` covers them.
+pub const Link = struct {
+    // From the lockstep (net.zig `begin`), every frame.
+    status: LinkStatus = .offline,
+    host: bool = false,
+    partner_app: u8 = 0,
+    /// This badge's input slot (0 host, 1 guest; the sim's cycle index).
+    slot: u1 = 0,
+    /// The lockstep's pause (a Start edge of either player, agreed).
+    paused: bool = false,
+    can_go: bool = false,
+    /// Guest: the host's rules, once heard.
+    heard: ?LinkRules = null,
+    // To the lockstep (net.zig `end`).
+    byte: u8 = 0,
+    /// In the lobby screen, ready to start (the lobby's PICK).
+    ready: bool = false,
+    want_go: bool = false,
+    want_leave: bool = false,
+    // The host's setup.
+    row: LinkRow = .start,
+    layout: u8 = 0,
+    opts: levels.Options = .{},
+    first_to: u8 = 3,
+    // The match (agreed).
+    seed: u32 = 0,
+    /// Rounds started in this race (round seeds), rounds of this match.
+    serial: u32 = 0,
+    round: u32 = 0,
+    wins: [2]u8 = .{ 0, 0 },
+    winner: u8 = sim.no_cycle,
+    rematch: [2]bool = .{ false, false },
+    prev_in: [2]u8 = .{ 0, 0 },
+    /// The slot the T2 program rides since the partner left.
+    ai_slot: ?u1 = null,
+    brain: ai.Brain = undefined,
+    // Local.
+    /// A NO CONTEST happened: the next race carries the match on.
+    resync: bool = false,
+    notice: LinkNotice = .none,
+    /// Pause menu: 0 RESUME, 1 LEAVE DUEL.
+    pause_sel: u1 = 0,
+    /// The last d-pad press, sent until a tick carries it back (a press
+    /// on a stalled frame is not lost; pressing the planned heading again
+    /// does nothing).
+    press: sim.Press = .none,
+    press_frames: u8 = 0,
+    /// Simulator and badge-bench: a duel against the T2 program with no
+    /// partner (the duel screens without a cable).
+    demo: bool = false,
+    /// Counters for tests and the hand-back: rounds decided, NO CONTESTs.
+    rounds_done: u32 = 0,
+    no_contests: u32 = 0,
+
+    pub fn rules(lk: *const Link) LinkRules {
+        const o = lk.opts;
+        const mods: u8 = @as(u8, @intFromBool(o.snake)) | @as(u8, @intFromBool(o.gaps)) << 1 |
+            @as(u8, @intFromBool(o.wrap)) << 2 | @as(u8, @intFromBool(o.hardcore)) << 3;
+        const match: u8 = (lk.first_to & 3) | (lk.wins[0] & 3) << 2 | (lk.wins[1] & 3) << 4;
+        return .{ lk.layout, @backingInt(o.speed), mods, match };
+    }
+
+    /// Takes the host's rules (both badges at the race start; the guest's
+    /// lobby view).
+    pub fn set_rules(lk: *Link, r: LinkRules) void {
+        lk.layout = @min(r[0], layouts.count - 1);
+        lk.opts = .{
+            .speed = @fromBackingInt(@min(r[1], 2)),
+            .snake = r[2] & 1 != 0,
+            .gaps = r[2] & 2 != 0,
+            .wrap = r[2] & 4 != 0,
+            .hardcore = r[2] & 8 != 0,
+        };
+        lk.first_to = std.math.clamp(r[3] & 3, 1, 3);
+        lk.wins = .{ (r[3] >> 2) & 3, (r[3] >> 4) & 3 };
+    }
+
+    fn match_winner(lk: *const Link) ?u1 {
+        if (lk.wins[0] >= lk.first_to) return 0;
+        if (lk.wins[1] >= lk.first_to) return 1;
+        return null;
+    }
+
+    fn in_race(lk: *const Link) bool {
+        return switch (lk.status) {
+            .racing, .waiting, .peer_left => true,
+            else => false,
+        };
+    }
+};
+
+/// LINK DUEL timing (frames for the local screens, ticks for the duel's).
+pub const link_tuning = struct {
+    /// PEER LEFT / NO CONTEST stay up this long (A goes on sooner).
+    pub const notice_frames: u32 = 150;
+    pub const notice_min_frames: u32 = 40;
+    /// A press is re-sent this many frames at most.
+    pub const press_frames: u8 = 8;
+    /// The partner's program after it left: tier and preset.
+    pub const ai_tier: ai.Tier = .territory;
+    pub const ai_preset: u8 = 2;
+};
+
+/// The partner's cart by its link app id (WRONG CART).
+fn cart_name(app: u8) []const u8 {
+    return switch (app) {
+        'B' => "SNOUTY BOY",
+        'G' => "SNOUTY GC",
+        'L' => "SNOUTY LINK",
+        'Z' => "SNOUTY ZERO",
+        'S' => "SNOUTENSTEIN",
+        else => "ANOTHER CART",
+    };
+}
 
 pub const Game = struct {
     state: State,
@@ -317,6 +463,8 @@ pub const Game = struct {
     /// Set when the screen must be repainted whole (new World, new scene);
     /// main.zig clears it after telling the renderer.
     repaint: bool,
+    /// LINK DUEL (net.zig drives it).
+    lk: Link,
     world: sim.World,
     history: history.History,
 
@@ -331,6 +479,7 @@ pub const Game = struct {
         g.sk = .{};
         g.option_row = .speed;
         g.crash_at = 0;
+        g.lk = .{};
         g.to_title();
     }
 
@@ -494,6 +643,7 @@ pub const Game = struct {
             pressed.select = false;
         }
         g.hold_frame = false;
+        if (g.mode == .link) return g.update_link(held, pressed);
         g.ticks +%= 1;
         g.timer += 1;
         switch (g.state) {
@@ -578,6 +728,8 @@ pub const Game = struct {
                 if (g.timer >= tuning.game_over_idle_ticks) g.to_title();
             },
             .paused => g.update_pause(pressed),
+            // Only in LINK DUEL (update_link).
+            .link_lobby, .link_notice => {},
         }
     }
 
@@ -596,7 +748,7 @@ pub const Game = struct {
     noinline fn update_menu(g: *Game, p: Buttons) void {
         if (p.up or p.down) {
             const i: u8 = @backingInt(g.menu_sel);
-            g.menu_sel = @fromBackingInt(if (p.down) (i + 1) % 4 else (i + 3) % 4);
+            g.menu_sel = @fromBackingInt(if (p.down) (i + 1) % menu_items else (i + menu_items - 1) % menu_items);
             g.timer = 0;
         }
         if (p.a or p.start) {
@@ -606,6 +758,7 @@ pub const Game = struct {
                     g.sk.row = .start;
                     g.goto(.skirmish_setup);
                 },
+                .link => g.enter_link(),
                 .options => {
                     g.option_row = .speed;
                     g.goto(.options);
@@ -683,11 +836,11 @@ pub const Game = struct {
                     g.score = g.score_level_start;
                     g.start_level(false);
                 },
-                .skirmish => g.new_match(),
+                .skirmish, .link => g.new_match(),
             },
             .quit => switch (g.mode) {
                 .ladder => g.end_game(true),
-                .skirmish => g.to_menu(.skirmish),
+                .skirmish, .link => g.to_menu(.skirmish),
             },
         };
     }
@@ -774,7 +927,7 @@ pub const Game = struct {
                     return g.goto(.derez);
                 }
             },
-            .skirmish => if (w.result != .running) g.round_end(),
+            .skirmish, .link => if (w.result != .running) g.round_end(),
         }
     }
 
@@ -804,7 +957,7 @@ pub const Game = struct {
                 if (g.timed_out) return g.start_level(false);
                 g.end_game(false);
             },
-            .skirmish => {
+            .skirmish, .link => {
                 const w = &g.world;
                 if (w.result != .running) {
                     // Decided: the fades go on under the banner a moment.
@@ -962,7 +1115,7 @@ pub const Game = struct {
                         g.score += tuning.self_crash_points;
                     }
                 },
-                .skirmish => {
+                .skirmish, .link => {
                     for (w.cycles, 0..) |c, i| {
                         if (c.state == .alive) g.sk.points[i] += 1;
                     }
@@ -972,10 +1125,534 @@ pub const Game = struct {
         if (g.mode == .skirmish) g.score = g.sk.points[0];
     }
 
+    // ------------------------------------------------------------ LINK DUEL
+
+    /// LINK DUEL from the menu: the cable screen, then the lobby (net.zig
+    /// reports the link in `lk.status` every frame).
+    pub noinline fn enter_link(g: *Game) void {
+        g.mode = .link;
+        g.lk.resync = false;
+        g.lk.notice = .none;
+        g.lk.demo = false;
+        g.lk.ai_slot = null;
+        g.lk.row = .start;
+        g.goto(.link_lobby);
+    }
+
+    /// The duel is on: the lockstep steps it (`duel_tick`) and gets this
+    /// badge's byte every frame.
+    pub fn duel_running(g: *const Game) bool {
+        if (g.mode != .link) return false;
+        return switch (g.state) {
+            .countdown, .play, .round_over, .match_over => true,
+            else => false,
+        };
+    }
+
+    /// A frame in LINK DUEL. Nothing here changes the duel's agreed state:
+    /// only `duel_tick` does (the lockstep calls it with both bytes).
+    noinline fn update_link(g: *Game, held: Buttons, p: Buttons) void {
+        const lk = &g.lk;
+        g.ticks +%= 1;
+        lk.byte = 0;
+        switch (g.state) {
+            .link_lobby => {
+                g.timer += 1;
+                g.run_attract();
+                g.update_lobby(p);
+            },
+            .link_notice => {
+                g.timer += 1;
+                if (lk.notice == .no_contest) g.world.step(@splat(.idle));
+                if (g.timer >= link_tuning.notice_frames or (p.a and g.timer >= link_tuning.notice_min_frames)) {
+                    // Out of the race now (after a desync the lockstep
+                    // kept telling the partner while the notice was up).
+                    lk.want_leave = true;
+                    // NO CONTEST: the next race carries the match on, if
+                    // the partner is still there.
+                    const there = switch (lk.status) {
+                        .lobby, .desync, .racing, .waiting => true,
+                        else => false,
+                    };
+                    if (lk.notice == .no_contest and there) {
+                        lk.resync = true;
+                        lk.notice = .none;
+                        g.start_attract();
+                        return g.goto(.link_lobby);
+                    }
+                    return g.to_menu(.link);
+                }
+            },
+            else => g.update_duel_frame(held, p),
+        }
+    }
+
+    /// The lobby: the host's rows (Up/Down, Left/Right or A; START or the
+    /// Start button begins), the guest's view; B or Select back to the menu.
+    noinline fn update_lobby(g: *Game, p: Buttons) void {
+        const lk = &g.lk;
+        lk.ready = lk.status == .lobby;
+        // A new partner (or none) starts a new match.
+        if (lk.status == .searching or lk.status == .wrong_cart) lk.resync = false;
+        if (p.b or p.select) return g.to_menu(.link);
+        if (lk.status != .lobby or !lk.host) return;
+        if (lk.resync) {
+            // A NO CONTEST: the next round as soon as the guest is back.
+            if (lk.can_go) lk.want_go = true;
+            return;
+        }
+        const n: u8 = @typeInfo(LinkRow).@"enum".field_names.len;
+        if (p.up or p.down) {
+            const i: u8 = @backingInt(lk.row);
+            lk.row = @fromBackingInt(if (p.down) (i + 1) % n else (i + n - 1) % n);
+        }
+        if (p.start or (p.a and lk.row == .start)) {
+            if (lk.can_go) {
+                lk.wins = .{ 0, 0 };
+                lk.want_go = true;
+            }
+            return;
+        }
+        if (p.left or p.right or p.a) {
+            const back = p.left;
+            const o = &lk.opts;
+            switch (lk.row) {
+                .arena => lk.layout = step_in(lk.layout, 0, layouts.count - 1, back),
+                .speed => o.speed = cycle_speed(o.speed, back),
+                .trails => o.snake = !o.snake,
+                .gaps => o.gaps = !o.gaps,
+                .wrap => o.wrap = !o.wrap,
+                .hardcore => o.hardcore = !o.hardcore,
+                .first_to => lk.first_to = step_in(lk.first_to, 1, 3, back),
+                .start => {},
+            }
+        }
+    }
+
+    /// A duel frame: leave on a desync or a gone partner, the pause menu,
+    /// the match card's B, else this frame's byte.
+    noinline fn update_duel_frame(g: *Game, held: Buttons, p: Buttons) void {
+        const lk = &g.lk;
+        if (!lk.demo) {
+            switch (lk.status) {
+                .desync => return g.link_notice(.no_contest),
+                // Gone in mid-round: the program rides its cycle to the
+                // round's end (duel_tick ends it there); else at once.
+                .peer_left => if (g.state == .match_over) return g.link_notice(.peer_left),
+                .racing, .waiting => {},
+                // The race is gone without a word (it should not be).
+                else => return g.link_notice(.peer_left),
+            }
+        }
+        if (lk.paused) {
+            if (p.up or p.down) lk.pause_sel ^= 1;
+            if (p.a and lk.pause_sel == 1) {
+                lk.want_leave = true;
+                return g.to_menu(.link);
+            }
+            // RESUME: a Start edge of ours (agreed when its tick runs).
+            if (p.start or p.b or p.a) lk.byte = link_pause_bit;
+            return;
+        }
+        if (g.state == .match_over and g.timer >= tuning.game_over_min_ticks and (p.b or p.select)) {
+            lk.want_leave = true;
+            return g.to_menu(.link);
+        }
+        if (dpad(p)) |d| {
+            lk.press = .of(d);
+            lk.press_frames = link_tuning.press_frames;
+        }
+        var in: sim.Input = .{ .boost = held.a, .brake = held.b };
+        if (lk.press_frames > 0) {
+            lk.press_frames -= 1;
+            in.press = lk.press;
+        }
+        if (g.autopilot != 0 and g.state == .play and g.world.cycles[lk.slot].state == .alive) {
+            in = ai.decide(&g.brains[0], &g.world, lk.slot);
+        }
+        lk.byte = @as(u8, @bitCast(in)) & link_input_mask;
+        if (p.start) {
+            lk.pause_sel = 0;
+            lk.byte |= link_pause_bit;
+        }
+        if (lk.demo) g.duel_tick(if (lk.slot == 0) .{ lk.byte, 0 } else .{ 0, lk.byte });
+    }
+
+    noinline fn link_notice(g: *Game, kind: LinkNotice) void {
+        const lk = &g.lk;
+        lk.notice = kind;
+        // A desync stays in the lockstep while the notice is up, so the
+        // partner hears DESYNC (not a QUIT that would read as PEER LEFT).
+        lk.want_leave = kind == .peer_left;
+        lk.ai_slot = null;
+        lk.press_frames = 0;
+        if (kind == .no_contest) lk.no_contests += 1;
+        g.goto(.link_notice);
+    }
+
+    /// The race starts (both badges, net.zig on `take_started`): the
+    /// agreed seed and rules, this badge's slot.
+    pub noinline fn duel_begin(g: *Game, seed: u32, r: LinkRules, slot: u1) void {
+        const lk = &g.lk;
+        lk.seed = seed;
+        lk.slot = slot;
+        lk.set_rules(r);
+        lk.serial = 0;
+        if (!lk.resync) lk.round = 0;
+        lk.resync = false;
+        lk.ai_slot = null;
+        lk.prev_in = .{ 0, 0 };
+        lk.rematch = .{ false, false };
+        lk.notice = .none;
+        lk.press_frames = 0;
+        g.mode = .link;
+        g.brains[0] = brain(.search, tuning.autopilot_preset, rng.mix(seed, 0xB07));
+        g.duel_next_round();
+    }
+
+    /// A demo duel with no partner (simulator previews, badge-bench): you
+    /// against the T2 program in slot 1, from the setup in `lk`.
+    pub noinline fn duel_demo(g: *Game, seed: u32) void {
+        g.enter_link();
+        g.lk.status = .racing;
+        g.duel_begin(seed, g.lk.rules(), 0);
+        g.lk.demo = true;
+        g.duel_hand_over(1);
+    }
+
+    fn duel_next_round(g: *Game) void {
+        const lk = &g.lk;
+        lk.serial += 1;
+        lk.round += 1;
+        lk.winner = sim.no_cycle;
+        g.clear_round_flags();
+        init_world(&g.world, levels.skirmish_config(1, lk.layout, lk.opts), rng.mix(lk.seed, lk.serial));
+        g.state = .countdown;
+        g.timer = 0;
+        g.repaint = true;
+    }
+
+    /// One agreed tick of the duel (lockstep `simulate`): `in[s]` is slot
+    /// s's byte. The only place the duel's state changes, so both badges'
+    /// Games stay equal (`duel_hash`).
+    pub fn duel_tick(g: *Game, in: [2]u8) void {
+        const lk = &g.lk;
+        var ins: [sim.max_cycles]sim.Input = @splat(.idle);
+        ins[0] = @bitCast(in[0] & link_input_mask);
+        ins[1] = @bitCast(in[1] & link_input_mask);
+        const a_bit: u8 = 0x08;
+        const a_edge = [2]bool{ in[0] & ~lk.prev_in[0] & a_bit != 0, in[1] & ~lk.prev_in[1] & a_bit != 0 };
+        lk.prev_in = in;
+        // Our press is in: stop re-sending it.
+        if (ins[lk.slot].press == lk.press) lk.press_frames = 0;
+        const w = &g.world;
+        switch (g.state) {
+            .countdown => {
+                for (0..2) |s| {
+                    if (ins[s].press.dir()) |d| w.set_heading(s, d);
+                }
+                g.timer += 1;
+                if (g.timer >= tuning.countdown_ticks) g.goto(.play);
+            },
+            .play => {
+                if (lk.ai_slot) |s| ins[s] = ai.decide(&lk.brain, w, s);
+                w.step(ins);
+                g.timer += 1;
+                if (g.sudden_death_tick == 0 and w.sudden_death_ring != 0) g.sudden_death_tick = w.tick;
+                if (w.result != .running) {
+                    lk.winner = if (w.result == .won) w.winner else sim.no_cycle;
+                    if (lk.winner < 2) lk.wins[lk.winner] += 1;
+                    lk.rounds_done += 1;
+                    g.goto(.round_over);
+                }
+            },
+            .round_over => {
+                w.step(@splat(.idle));
+                g.timer += 1;
+                if (g.timer >= tuning.round_over_ticks) {
+                    if (lk.ai_slot != null and !lk.demo) return g.link_notice(.peer_left);
+                    if (lk.match_winner() != null) {
+                        lk.rematch = .{ false, false };
+                        return g.goto(.match_over);
+                    }
+                    g.duel_next_round();
+                }
+            },
+            .match_over => {
+                w.step(@splat(.idle));
+                g.timer += 1;
+                if (g.timer >= tuning.game_over_min_ticks) {
+                    for (0..2) |s| {
+                        if (a_edge[s]) lk.rematch[s] = true;
+                    }
+                    // The demo's program always wants another (and the
+                    // demo rides on by itself after a while).
+                    if (lk.demo) {
+                        lk.rematch[lk.slot ^ 1] = true;
+                        if (g.timer >= 2 * tuning.game_over_min_ticks) lk.rematch[lk.slot] = true;
+                    }
+                }
+                if (lk.rematch[0] and lk.rematch[1]) {
+                    lk.wins = .{ 0, 0 };
+                    lk.round = 0;
+                    g.duel_next_round();
+                }
+            },
+            else => {},
+        }
+    }
+
+    /// The lockstep's desync check: the World and the duel's agreed state.
+    pub fn duel_hash(g: *const Game) u32 {
+        const lk = &g.lk;
+        var h = g.world.hash();
+        h = rng.mix(h, @as(u32, @backingInt(g.state)) << 24 | g.timer);
+        h = rng.mix(h, lk.serial << 16 | @as(u32, lk.wins[0]) << 8 | lk.wins[1]);
+        return rng.mix(h, @as(u32, @intFromBool(lk.rematch[0])) | @as(u32, @intFromBool(lk.rematch[1])) << 1);
+    }
+
+    /// The partner left (lockstep `hand_over`): a T2 program rides its
+    /// cycle to the round's end.
+    pub fn duel_hand_over(g: *Game, slot: u1) void {
+        const lk = &g.lk;
+        lk.ai_slot = slot;
+        lk.brain = brain(link_tuning.ai_tier, link_tuning.ai_preset, rng.mix(lk.seed, 0x7E2));
+    }
+
+    // ------------------------------------------------------------ LINK DUEL view
+
+    /// LINK DUEL's screens. Your cycle (the sim's slot `lk.slot`) is drawn
+    /// in the player's colour and the partner's in orange on both badges
+    /// (`View.swap` on the guest).
+    noinline fn link_view(g: *const Game) render.View {
+        const lk = &g.lk;
+        var v: render.View = .{};
+        const blink_on = (g.ticks / tuning.blink_ticks) % 2 == 0;
+        switch (g.state) {
+            .link_lobby => {
+                v.hud.left = .of("LINK DUEL", 1, colors.dim);
+                if (lk.status == .lobby) v.hud.right = .of(if (lk.host) "HOST" else "GUEST", 1, colors.dim);
+                v.banner = g.lobby_banner(blink_on);
+                return v;
+            },
+            .link_notice => {
+                v.swap = lk.slot == 1;
+                g.link_hud(&v);
+                var b: render.Banner = .{};
+                if (lk.notice == .no_contest) {
+                    add_line(&b, "NO", 2, colors.warn);
+                    add_line(&b, "CONTEST", 2, colors.warn);
+                    add_line(&b, "BADGES DISAGREE", 1, colors.text);
+                    add_line(&b, "NEXT ROUND", 1, colors.dim);
+                    add_line(&b, "WITH A NEW SEED", 1, colors.dim);
+                } else {
+                    add_line(&b, "PEER LEFT", 2, colors.lose);
+                    add_line(&b, "BACK TO THE MENU", 1, colors.text);
+                }
+                v.banner = b;
+                return v;
+            },
+            else => {},
+        }
+        v.swap = lk.slot == 1;
+        g.link_hud(&v);
+        switch (g.state) {
+            .countdown => {
+                var b: render.Banner = .{};
+                const n = 3 - @min(2, g.timer / tuning.count_step_ticks);
+                const digit = [1]u8{'0' + @as(u8, @intCast(n))};
+                add_line(&b, &digit, 3, colors.warn);
+                var buf: [20]u8 = undefined;
+                var k = copy(&buf, "ROUND ");
+                k += decimal(buf[k..], lk.round, 1);
+                add_line(&b, buf[0..k], 1, colors.text);
+                v.banner = b;
+            },
+            .play => {
+                if (g.timer < tuning.run_banner_ticks) {
+                    var b: render.Banner = .{};
+                    add_line(&b, "RUN", 2, colors.win);
+                    v.banner = b;
+                } else if (g.sudden_death_tick != 0 and g.world.tick - g.sudden_death_tick < tuning.sudden_death_banner_ticks) {
+                    var b: render.Banner = .{ .cy = 40 };
+                    const on = (g.world.tick / 8) % 2 == 0;
+                    add_line(&b, "SUDDEN", 2, if (on) colors.lose else colors.warn);
+                    add_line(&b, "DEATH", 2, if (on) colors.lose else colors.warn);
+                    v.banner = b;
+                } else if (lk.ai_slot != null and !lk.demo) {
+                    var b: render.Banner = .{ .cy = 18 };
+                    add_line(&b, "PEER LEFT AI RIDES", 1, colors.warn);
+                    v.banner = b;
+                }
+            },
+            .round_over, .match_over => v.banner = g.duel_card(g.state == .match_over, blink_on),
+            else => {},
+        }
+        if (lk.paused) {
+            var b: render.Banner = .{};
+            add_line(&b, "PAUSED", 2, colors.text);
+            add_line(&b, "", 1, colors.text);
+            const items = [2][]const u8{ "RESUME    ", "LEAVE DUEL" };
+            for (items, 0..) |t, i| {
+                const sel = i == lk.pause_sel;
+                var buf: [20]u8 = undefined;
+                add_line(&b, cursor_line(&buf, sel, t), 1, if (sel) colors.select else colors.text);
+            }
+            v.banner = b;
+        } else if (lk.status == .waiting) {
+            var b: render.Banner = .{ .cy = 18 };
+            add_line(&b, "WAITING FOR PEER", 1, if (blink_on) colors.warn else colors.text);
+            v.banner = b;
+        }
+        return v;
+    }
+
+    /// Round, your wins as pips, your energy, the partner's wins.
+    noinline fn link_hud(g: *const Game, v: *render.View) void {
+        const lk = &g.lk;
+        var buf: [20]u8 = undefined;
+        var n = copy(&buf, "ROUND ");
+        n += decimal(buf[n..], lk.round, 1);
+        v.hud.left = .of(buf[0..n], 1, colors.text);
+        var rb: [20]u8 = undefined;
+        n = copy(&rb, "PEER ");
+        n += decimal(rb[n..], lk.wins[lk.slot ^ 1], 1);
+        v.hud.right = .of(rb[0..n], 1, colors.cycle[1]);
+        v.hud.lives = lk.wins[lk.slot];
+        v.hud.max_lives = lk.first_to;
+        const me = &g.world.cycles[lk.slot];
+        v.hud.energy = if (me.state == .alive) me.energy else 0;
+        v.hud.bar_mode = if (me.state != .alive) 0 else if (me.boost) 1 else if (me.brake) 2 else 0;
+    }
+
+    /// "YOU 2  PEER 1" in the two colours' place: one line.
+    fn add_duel_score(g: *const Game, b: *render.Banner) void {
+        const lk = &g.lk;
+        var buf: [20]u8 = undefined;
+        var n = copy(&buf, "YOU ");
+        n += decimal(buf[n..], lk.wins[lk.slot], 1);
+        n += copy(buf[n..], "  PEER ");
+        n += decimal(buf[n..], lk.wins[lk.slot ^ 1], 1);
+        add_line(b, buf[0..n], 1, colors.text);
+    }
+
+    /// The round's result, or the match card.
+    noinline fn duel_card(g: *const Game, match: bool, blink_on: bool) render.Banner {
+        const lk = &g.lk;
+        var b: render.Banner = .{};
+        const w: u8 = if (match) (if (lk.match_winner()) |m| m else sim.no_cycle) else lk.winner;
+        if (w == sim.no_cycle) {
+            add_line(&b, "DRAW", 2, colors.warn);
+            add_line(&b, "NOBODY RIDES ON", 1, colors.dim);
+        } else if (w == lk.slot) {
+            add_line(&b, "YOU WIN", 2, colors.cycle[0]);
+            add_line(&b, if (match) "THE MATCH" else "THE ROUND", 1, colors.text);
+        } else {
+            add_line(&b, "PEER WINS", 2, colors.cycle[1]);
+            add_line(&b, if (match) "THE MATCH" else "THE ROUND", 1, colors.text);
+        }
+        g.add_duel_score(&b);
+        if (!match) {
+            var buf: [20]u8 = undefined;
+            var n = copy(&buf, "FIRST TO ");
+            n += decimal(buf[n..], lk.first_to, 1);
+            add_line(&b, buf[0..n], 1, colors.dim);
+        } else if (g.timer >= tuning.game_over_min_ticks) {
+            if (lk.rematch[lk.slot]) {
+                add_line(&b, "WAITING FOR PEER", 1, colors.dim);
+            } else {
+                add_line(&b, "A REMATCH  B MENU", 1, if (blink_on) colors.title_a else colors.text);
+            }
+            if (lk.rematch[lk.slot ^ 1]) add_line(&b, "PEER WANTS MORE", 1, colors.cycle[1]);
+        }
+        return b;
+    }
+
+    /// The cable screen, the host's setup, the guest's view of it.
+    noinline fn lobby_banner(g: *const Game, blink_on: bool) render.Banner {
+        const lk = &g.lk;
+        var b: render.Banner = .{};
+        switch (lk.status) {
+            .offline => {
+                add_line(&b, "LINK DUEL", 2, colors.title_a);
+                add_line(&b, "NO LINK IN", 1, colors.warn);
+                add_line(&b, "SIMULATOR", 1, colors.warn);
+                add_line(&b, "", 1, colors.text);
+                add_line(&b, "B BACK", 1, colors.dim);
+            },
+            .wrong_cart => {
+                add_line(&b, "WRONG", 2, colors.lose);
+                add_line(&b, "CART", 2, colors.lose);
+                add_line(&b, cart_name(lk.partner_app), 1, colors.text);
+                add_line(&b, "", 1, colors.text);
+                add_line(&b, "START SNOUTY", 1, colors.dim);
+                add_line(&b, "CYCLES ON BOTH", 1, colors.dim);
+                add_line(&b, "B BACK", 1, colors.dim);
+            },
+            .lobby => {
+                if (lk.resync) {
+                    add_line(&b, "NO", 2, colors.warn);
+                    add_line(&b, "CONTEST", 2, colors.warn);
+                    add_line(&b, "NEXT ROUND", 1, colors.text);
+                    add_line(&b, "WITH A NEW SEED", 1, colors.dim);
+                    add_line(&b, "B LEAVE", 1, colors.dim);
+                } else if (lk.host) {
+                    g.setup_rows(&b, true, lk.rules());
+                    const can = lk.can_go;
+                    var buf: [20]u8 = undefined;
+                    const sel = lk.row == .start;
+                    const t = if (can) "START" else "WAITING FOR PEER";
+                    add_line(&b, cursor_line(&buf, sel, t), 1, if (!can) colors.dim else if (sel) colors.select else colors.win);
+                } else if (lk.heard) |r| {
+                    g.setup_rows(&b, false, r);
+                    add_line(&b, "HOST PICKS", 1, if (blink_on) colors.title_b else colors.text);
+                } else {
+                    add_line(&b, "LINK DUEL", 2, colors.title_a);
+                    add_line(&b, "CONNECTED", 1, colors.win);
+                    add_line(&b, "HOST PICKS", 1, colors.text);
+                }
+            },
+            // searching, or a race on the way in or out
+            else => {
+                add_line(&b, "LINK DUEL", 2, colors.title_a);
+                add_line(&b, "PLUG IN THE CABLE", 1, colors.text);
+                add_line(&b, "UART TO UART", 1, colors.dim);
+                add_line(&b, "SEARCHING", 1, if (blink_on) colors.warn else colors.grey);
+                add_line(&b, "", 1, colors.text);
+                add_line(&b, "B BACK", 1, colors.dim);
+            },
+        }
+        return b;
+    }
+
+    /// The setup's seven rows from rules `r`: the host's with its cursor,
+    /// the guest's without.
+    noinline fn setup_rows(g: *const Game, b: *render.Banner, cursor: bool, r: LinkRules) void {
+        var shown: Link = .{};
+        shown.set_rules(r);
+        const o = shown.opts;
+        var nb: [2]u8 = undefined;
+        const rows = [_]struct { k: []const u8, v: []const u8 }{
+            .{ .k = "ARENA", .v = layouts.get(shown.layout).name },
+            .{ .k = "SPEED", .v = o.speed.name() },
+            .{ .k = "TRAILS", .v = if (o.snake) "SNAKE" else "FULL" },
+            .{ .k = "GAPS", .v = on_off(o.gaps) },
+            .{ .k = "WRAP", .v = on_off(o.wrap) },
+            .{ .k = "HARDCORE", .v = on_off(o.hardcore) },
+            .{ .k = "FIRST TO", .v = nb[0..decimal(&nb, shown.first_to, 1)] },
+        };
+        for (rows, 0..) |row, i| {
+            const sel = cursor and i == @backingInt(g.lk.row);
+            var buf: [20]u8 = undefined;
+            add_line(b, row_line(&buf, sel, row.k, row.v), 1, if (sel) colors.select else colors.text);
+        }
+    }
+
     // ------------------------------------------------------------ view
 
     /// What to draw besides the World.
     pub noinline fn view(g: *const Game) render.View {
+        if (g.mode == .link) return g.link_view();
         var v: render.View = .{};
         const blink_on = (g.ticks / tuning.blink_ticks) % 2 == 0;
         switch (g.state) {
@@ -1089,6 +1766,7 @@ pub const Game = struct {
                 g.hud(&v);
                 v.banner = g.standings_banner(true, blink_on);
             },
+            .link_lobby, .link_notice => {},
             .paused => {
                 g.hud(&v);
                 var b: render.Banner = .{};
@@ -1142,7 +1820,7 @@ pub const Game = struct {
                 v.hud.lives = g.snapshots;
                 v.hud.max_lives = if (g.opts.hardcore) 0 else tuning.max_snapshots;
             },
-            .skirmish => {
+            .skirmish, .link => {
                 n = copy(&buf, "ROUND ");
                 n += decimal(buf[n..], g.sk.round, 1);
                 v.hud.left = .of(buf[0..n], 1, colors.text);
@@ -1330,7 +2008,7 @@ pub const Game = struct {
         g.crash_lines(&b);
         switch (g.mode) {
             .ladder => add_line(&b, if (g.opts.hardcore) "HARDCORE NO REWIND" else "NO SNAPSHOTS LEFT", 1, colors.warn),
-            .skirmish => add_line(&b, "PROGRAMS RIDE ON", 1, colors.dim),
+            .skirmish, .link => add_line(&b, "PROGRAMS RIDE ON", 1, colors.dim),
         }
         return b;
     }
@@ -1602,7 +2280,7 @@ test "title, menu, GRID LADDER: intro, countdown, play" {
     try testing.expectEqual(State.play, g.state);
 }
 
-test "the menu: four items, B goes back; HOW TO PLAY, OPTIONS, SKIRMISH and back" {
+test "the menu: five items, B goes back; HOW TO PLAY, OPTIONS, SKIRMISH, LINK DUEL and back" {
     const g = &tg;
     g.init(2);
     tap(g, press_a);
@@ -1620,6 +2298,14 @@ test "the menu: four items, B goes back; HOW TO PLAY, OPTIONS, SKIRMISH and back
     try testing.expectEqual(State.skirmish_setup, g.state);
     tap(g, .{ .b = true });
     try testing.expectEqual(State.menu, g.state);
+    tap(g, .{ .down = true });
+    try testing.expectEqual(MenuItem.link, g.menu_sel);
+    tap(g, press_a);
+    try testing.expectEqual(State.link_lobby, g.state);
+    try testing.expectEqual(Mode.link, g.mode);
+    tap(g, .{ .b = true });
+    try testing.expectEqual(State.menu, g.state);
+    try testing.expectEqual(MenuItem.link, g.menu_sel);
     tap(g, .{ .down = true });
     try testing.expectEqual(MenuItem.options, g.menu_sel);
     tap(g, press_a);
@@ -2070,4 +2756,84 @@ test "every banner fits inside the 2 px screen margin" {
     try check_view(g);
     g.timer = tuning.derez_ticks;
     try check_view(g);
+}
+
+test "LINK DUEL: every screen's banner fits; the lobby, a demo duel to the match card" {
+    const g = &tg;
+    g.init(31);
+    g.enter_link();
+    const lk = &g.lk;
+    for (std.enums.values(LinkStatus)) |st| {
+        lk.status = st;
+        for ([_]bool{ false, true }) |host| {
+            lk.host = host;
+            lk.heard = null;
+            try check_view(g);
+            lk.heard = lk.rules();
+            lk.can_go = host;
+            try check_view(g);
+            lk.resync = true;
+            try check_view(g);
+            lk.resync = false;
+            for ([_]u8{ 'B', 'G', 'X' }) |app| {
+                lk.partner_app = app;
+                try check_view(g);
+            }
+        }
+    }
+    // The host's rows change the rules; the guest decodes them back.
+    lk.status = .lobby;
+    lk.host = true;
+    lk.can_go = true;
+    tap(g, .{ .down = true }); // START -> ARENA
+    try testing.expectEqual(LinkRow.arena, lk.row);
+    tap(g, .{ .right = true });
+    tap(g, .{ .down = true });
+    tap(g, .{ .right = true }); // FAST
+    for (0..4) |_| {
+        tap(g, .{ .down = true });
+        tap(g, press_a);
+    }
+    tap(g, .{ .down = true });
+    tap(g, .{ .left = true }); // FIRST TO 2
+    var copy_lk: Link = .{};
+    copy_lk.set_rules(lk.rules());
+    try testing.expectEqual(@as(u8, 1), copy_lk.layout);
+    try testing.expect(std.meta.eql(copy_lk.opts, levels.Options{ .speed = .fast, .snake = true, .gaps = true, .wrap = true, .hardcore = true }));
+    try testing.expectEqual(@as(u8, 2), copy_lk.first_to);
+    try check_view(g);
+    // START asks the lockstep to go.
+    tap(g, .{ .start = true });
+    try testing.expect(lk.want_go);
+    lk.want_go = false;
+    // A demo duel (the partner's slot ridden by T2) to the match card.
+    g.autopilot = 3;
+    g.duel_demo(77);
+    try testing.expectEqual(Mode.link, g.mode);
+    try testing.expectEqual(@as(u8, 2), g.world.cfg.n_cycles);
+    var t: u32 = 0;
+    var seen_round_over = false;
+    while (g.state != .match_over and t < 60 * 60 * 30) : (t += 1) {
+        g.update(.{}, .{});
+        if (g.state == .round_over) seen_round_over = true;
+        if (t % 97 == 0) try check_view(g);
+    }
+    try testing.expect(seen_round_over);
+    try testing.expectEqual(State.match_over, g.state);
+    try testing.expect(lk.wins[0] == lk.first_to or lk.wins[1] == lk.first_to);
+    g.timer = tuning.game_over_min_ticks;
+    try check_view(g);
+    lk.paused = true;
+    try check_view(g);
+    lk.paused = false;
+    lk.status = .waiting;
+    try check_view(g);
+    // The guest's view: colours swapped.
+    lk.slot = 1;
+    try testing.expect(g.view().swap);
+    for ([_]LinkNotice{ .peer_left, .no_contest }) |k| {
+        lk.notice = k;
+        g.state = .link_notice;
+        try check_view(g);
+    }
 }
