@@ -225,6 +225,17 @@ def load_props(dirp, cfg):
     return w, h, n, bytes(cells), palb
 
 
+def cells_used(props, feat):
+    """The props cells a track loads into the slot (pack.zig, pack_format
+    `budget`): its props' cells and its movers' sprite cells, each once."""
+    used = {int(p[0]) for p in props}
+    for r in range(len(feat) // FEAT_RECORD):
+        sp = feat[r * FEAT_RECORD] >> 4
+        if sp and feat[r * FEAT_RECORD] & 15 == K_MOVER:
+            used.add(sp - 1)
+    return used
+
+
 def props_bytes(entries, cell_n, what):
     out = bytearray()
     if len(entries) > PROP_MAX:
@@ -304,7 +315,7 @@ def build(dirp: Path):
         if kind == 1:
             check_arena(blob, what)
         props = props_bytes(t.get("props", []), cn, what)
-        need = len(blob) + len({p[0] for p in t.get("props", [])}) * cell_bytes
+        need = len(blob) + len(cells_used(t.get("props", []), feat)) * cell_bytes
         if need > SLOT_FREE:
             raise PackError(f"{what}: arena blob {len(blob)} + props cells {need - len(blob)} = {need} bytes, over the slot's {SLOT_FREE}")
         laps = 0 if kind == 1 else int(t.get("laps", 3))

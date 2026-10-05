@@ -262,21 +262,32 @@ pub fn parse(head: []const u8, size: u32, out: *Directory) Refusal {
     return .ok;
 }
 
-/// The slot bytes track `k` needs beyond the fixed part: its arena blob and
-/// one cell per distinct props cell in `props` (its props records, read by
-/// the caller). `null` when a record names a cell past `cell_n`.
-pub fn budget(d: *const Directory, k: usize, props: []const u8) ?u32 {
+/// The slot bytes track `k` needs beyond the fixed part: its arena blob
+/// and one cell for each distinct props cell its props records (`props`)
+/// and its movers' sprites (`feat`, byte 0 bits 4..7 = cell + 1) use, the
+/// cells the loader copies. `null` when a record names a cell past
+/// `cell_n`.
+pub fn budget(d: *const Directory, k: usize, props: []const u8, feat: []const u8) ?u32 {
+    const used = cells_used(d, props, feat) orelse return null;
+    return d.tracks[k].arena.len + @popCount(used) * d.cell_bytes();
+}
+
+/// The cells a track loads (bit c = cell c): its props' and its movers'.
+pub fn cells_used(d: *const Directory, props: []const u8, feat: []const u8) ?u32 {
     var used: u32 = 0;
-    var n: u32 = 0;
     var i: usize = 0;
     while (i + prop_record <= props.len) : (i += prop_record) {
-        const c = props[i];
-        if (c >= d.cell_n) return null;
-        const bit = @as(u32, 1) << @intCast(c);
-        if (used & bit == 0) n += 1;
-        used |= bit;
+        if (props[i] >= d.cell_n) return null;
+        used |= @as(u32, 1) << @intCast(props[i]);
     }
-    return d.tracks[k].arena.len + n * d.cell_bytes();
+    i = 0;
+    while (i + feat_record <= feat.len) : (i += feat_record) {
+        const sp = feat[i] >> 4;
+        if (sp == 0) continue;
+        if (feat[i] & 15 != 2 or sp - 1 >= d.cell_n) return null;
+        used |= @as(u32, 1) << @intCast(sp - 1);
+    }
+    return used;
 }
 
 /// A name field as shown: trailing spaces and zeros cut, anything outside
@@ -298,6 +309,25 @@ test "a header-sized buffer of junk is refused, never parsed" {
     try std.testing.expectEqual(Refusal.too_new, parse(&b, dir_max, &d));
     b[4] = 0;
     try std.testing.expectEqual(Refusal.damaged, parse(&b, dir_max, &d));
+}
+
+test "the budget counts a mover's sprite cell with the props' cells, once" {
+    var d: Directory = .{ .cell_w = 32, .cell_h = 48, .cell_n = 8, .track_n = 1 };
+    d.tracks[0].arena.len = slot_free - 7 * 768 + 1;
+    // Props on cells 0..5, the mover on cell 6: seven cells, one byte over.
+    var props: [6 * prop_record]u8 = @splat(0);
+    for (0..6) |c| props[c * prop_record] = @intCast(c);
+    var feat: [feat_record]u8 = @splat(0);
+    feat[0] = 2 | (7 << 4);
+    try std.testing.expectEqual(@as(?u32, slot_free + 1), budget(&d, 0, &props, &feat));
+    // The mover on a cell the props use already: six cells, under.
+    feat[0] = 2 | (1 << 4);
+    try std.testing.expectEqual(@as(?u32, slot_free + 1 - 768), budget(&d, 0, &props, &feat));
+    // A sprite past the sheet, or on a kind other than a mover, is damage.
+    feat[0] = 2 | (9 << 4);
+    try std.testing.expectEqual(@as(?u32, null), budget(&d, 0, &props, &feat));
+    feat[0] = 1 | (1 << 4);
+    try std.testing.expectEqual(@as(?u32, null), budget(&d, 0, &props, &feat));
 }
 
 test "slot arithmetic" {

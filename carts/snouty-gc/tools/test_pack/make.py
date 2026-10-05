@@ -105,38 +105,42 @@ def crust_map(packed):
     return p, min(ys) * 8, (max(ys) + 1) * 8
 
 
+def stage(d):
+    """Write the test pack's directory (pack.toml, the .bin files,
+    props.png) into `d`."""
+    for f in ("dumps_pal", "dumps_horizon"):
+        shutil.copy(GEN / f"{f}.bin", d / f"{f.split('_')[1]}.bin")
+    tiles = crust_tiles(bt.unpack_map((GEN / "dumps_tiles.bin").read_bytes(), 8192))
+    (d / "tiles.bin").write_bytes(bt.pack_map(tiles))
+    attr = bytearray((GEN / "dumps_attr.bin").read_bytes())
+    attr[CRUST:CRUST + 3] = bytes([A_CRUST] * 3)
+    (d / "attr.bin").write_bytes(bytes(attr))
+    for kind in ("map", "center", "feat"):
+        shutil.copy(GEN / f"landfill_loop_{kind}.bin", d / f"landfill_{kind}.bin")
+    for kind in ("map", "center", "feat", "arena"):
+        shutil.copy(GEN / f"sandbox_{kind}.bin", d / f"sandbox_{kind}.bin")
+    cmap, y0, y1 = crust_map((GEN / "landfill_loop_map.bin").read_bytes())
+    (d / "crust_map.bin").write_bytes(cmap)
+    shutil.copy(GEN / "landfill_loop_center.bin", d / "crust_center.bin")
+    # Landfill Loop's Sweeper, drawn with props cell 0 (the monitor stack:
+    # the mover's sprite is cell + 1 in the kind byte's high nibble), then
+    # the crust band: break 12 ticks after the first touch, broken for 300.
+    feat = bytearray((GEN / "landfill_loop_feat.bin").read_bytes())
+    feat[0] = (feat[0] & 15) | (1 << 4)
+    feat += bytes([4, 12, 0, 0]) + struct.pack("<7H", CRUST_X0, y0, CRUST_X1, y1, 300, 0, 0) + bytes([0, 0])
+    (d / "crust_feat.bin").write_bytes(bytes(feat))
+    draw_props(HERE / "props.png")
+    shutil.copy(HERE / "props.png", d / "props.png")
+    shutil.copy(HERE / "pack.toml", d / "pack.toml")
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--out", default=str(OUT))
     a = ap.parse_args()
     with tempfile.TemporaryDirectory() as tmp:
-        d = Path(tmp)
-        for f in ("dumps_pal", "dumps_horizon"):
-            shutil.copy(GEN / f"{f}.bin", d / f"{f.split('_')[1]}.bin")
-        tiles = crust_tiles(bt.unpack_map((GEN / "dumps_tiles.bin").read_bytes(), 8192))
-        (d / "tiles.bin").write_bytes(bt.pack_map(tiles))
-        attr = bytearray((GEN / "dumps_attr.bin").read_bytes())
-        attr[CRUST:CRUST + 3] = bytes([A_CRUST] * 3)
-        (d / "attr.bin").write_bytes(bytes(attr))
-        for kind in ("map", "center", "feat"):
-            shutil.copy(GEN / f"landfill_loop_{kind}.bin", d / f"landfill_{kind}.bin")
-        for kind in ("map", "center", "feat", "arena"):
-            shutil.copy(GEN / f"sandbox_{kind}.bin", d / f"sandbox_{kind}.bin")
-        cmap, y0, y1 = crust_map((GEN / "landfill_loop_map.bin").read_bytes())
-        (d / "crust_map.bin").write_bytes(cmap)
-        shutil.copy(GEN / "landfill_loop_center.bin", d / "crust_center.bin")
-        # Landfill Loop's Sweeper, drawn with props cell 0 (the monitor
-        # stack: the mover's sprite is cell + 1 in the kind byte's high
-        # nibble), then the crust band: break 12 ticks after the first
-        # touch, broken for 300.
-        feat = bytearray((GEN / "landfill_loop_feat.bin").read_bytes())
-        feat[0] = (feat[0] & 15) | (1 << 4)
-        feat += bytes([4, 12, 0, 0]) + struct.pack("<7H", CRUST_X0, y0, CRUST_X1, y1, 300, 0, 0) + bytes([0, 0])
-        (d / "crust_feat.bin").write_bytes(bytes(feat))
-        draw_props(HERE / "props.png")
-        shutil.copy(HERE / "props.png", d / "props.png")
-        shutil.copy(HERE / "pack.toml", d / "pack.toml")
-        file, data, report = build_pack.build(d)
+        stage(Path(tmp))
+        file, data, report = build_pack.build(Path(tmp))
     Path(a.out).write_bytes(data)
     print("\n".join(report))
     print(f"  wrote {a.out}")
