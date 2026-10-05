@@ -117,10 +117,12 @@ pub const Selection = struct { cart: core.Cart, next: Choice };
 /// Choose the ROM. Call once from `start()`.
 pub fn select() Selection {
     if (!use_drive) return .{ .cart = embedded(), .next = .run };
-    const base = romfs.Image.badge();
-    scanned = drive.scan(base, &clusters);
+    scanned = drive.scan(romfs.Image.badge(), &clusters);
+    // The extra drive (ext-flash firmware); stock firmware has none.
+    if (romfs.Image.extra()) |extra| _ = drive.add(&scanned, extra, 1, &clusters);
     scanned_ok = true;
-    if (scanned.err) |e| return no_rom(@errorName(e), null);
+    // The badge drive's error matters only when the extra one had nothing.
+    if (scanned.count == 0) if (scanned.err) |e| return no_rom(@errorName(e), null);
     const i = scanned.first_playable() orelse
         return if (scanned.count > 0) no_rom(null, &scanned.candidates[0]) else no_rom("no .lnx/.lyx file", null);
     const c = open(i) orelse return .{ .cart = .empty(&layout), .next = .help };
@@ -134,8 +136,11 @@ pub fn select() Selection {
 /// longer maps gives null, no ROM with the reason: the caller shows the
 /// no-ROM screen (the old Cart's cluster table may be overwritten).
 pub noinline fn open(i: usize) ?core.Cart {
-    const base = romfs.Image.badge();
     const cand = &scanned.candidates[i];
+    const base = romfs.Image.drive(cand.entry.drive) orelse {
+        _ = no_rom("NoVolume", null);
+        return null;
+    };
     const c = drive.open(base, cand, &clusters, &source) catch |e| {
         _ = no_rom(@errorName(e), null);
         return null;

@@ -179,12 +179,14 @@ fn burst_enemies(s: *GameState, x: Fixed, y: Fixed) void {
 
 // ---------------------------------------------------------------- deathmatch
 
-/// Deathmatch (M7): `update` for a match (`match.step`), where the players
-/// live in `m`, not in `s.player`. Enemy shots hit either player (the
-/// first in slot order within `hit_radius`). A Debugger bolt (owner
-/// `aux[0] - 1`) also bursts on the other player, and its burst hurts every
-/// living player within `burst_radius`, the owner too (a self-frag counts),
-/// by `burst_damage * pvp_scale`, credited to the owner.
+/// Deathmatch (M7, M8): `update` for a match (`match.step`), where the
+/// players live in `m`, not in `s.player`. Enemy shots hit any living
+/// player (the first in slot order within `hit_radius`). A Debugger bolt
+/// (owner `aux[0] - 1`) also bursts on a living foe of its owner, and its
+/// burst hurts every living player within `burst_radius` but the owner's
+/// teammates, the owner too (a self-frag counts), by `burst_damage *
+/// pvp_scale`, credited to the owner; one hit for the owner's accuracy
+/// however many foes it hurt.
 pub fn update_match(s: *GameState, level: *const Level, m: *state.Match, pvp_scale: i16) void {
     for (&s.projectiles) |*p| {
         switch (p.kind) {
@@ -199,7 +201,7 @@ pub fn update_match(s: *GameState, level: *const Level, m: *state.Match, pvp_sca
 }
 
 fn player_alive(m: *const state.Match, slot: usize) bool {
-    return m.dead[slot] == 0 and m.players[slot].hp > 0;
+    return m.alive(slot);
 }
 
 fn near(x: Fixed, y: Fixed, px: Fixed, py: Fixed, r_sq: i64) bool {
@@ -215,10 +217,10 @@ fn update_enemy_shot_match(s: *GameState, level: *const Level, m: *state.Match, 
         p.* = .{};
         return true;
     }
-    for (0..2) |slot| {
+    for (0..state.max_players) |slot| {
         const pl = &m.players[slot];
         if (!player_alive(m, slot) or !near(p.x, p.y, pl.x, pl.y, hit_radius_sq)) continue;
-        const sl: u1 = @intCast(slot);
+        const sl = slot;
         if (p.kind == kind_web) {
             _ = sim.damage_slot(m, sl, web_damage, state.by_bug);
             if (pl.grace == 0) pl.frozen = web_freeze_ticks;
@@ -245,9 +247,10 @@ fn update_debug_match(s: *GameState, level: *const Level, m: *state.Match, p: *s
         if (sim.living(e) and near(e.x, e.y, p.x, p.y, debug_trigger_sq)) trigger = true;
     }
     const owner = p.aux[0] -% 1;
-    for (0..2) |slot| {
+    for (0..state.max_players) |slot| {
         const pl = &m.players[slot];
-        if (slot != owner and player_alive(m, slot) and near(pl.x, pl.y, p.x, p.y, debug_trigger_sq)) trigger = true;
+        const foe = owner >= state.max_players or m.foes(owner, slot);
+        if (foe and slot != owner and player_alive(m, slot) and near(pl.x, pl.y, p.x, p.y, debug_trigger_sq)) trigger = true;
     }
     if (!trigger) return false;
     burst_match(s, m, p, p.x, p.y, pvp_scale);
@@ -257,14 +260,16 @@ fn update_debug_match(s: *GameState, level: *const Level, m: *state.Match, p: *s
 fn burst_match(s: *GameState, m: *state.Match, p: *state.Projectile, x: Fixed, y: Fixed, pvp_scale: i16) void {
     burst_enemies(s, x, y);
     const owner = p.aux[0] -% 1;
-    const by: u8 = if (owner < 2) owner else state.by_bug;
-    for (0..2) |slot| {
+    const by: u8 = if (owner < state.max_players) owner else state.by_bug;
+    var hit = false;
+    for (0..state.max_players) |slot| {
         const pl = &m.players[slot];
         if (!player_alive(m, slot) or !near(pl.x, pl.y, x, y, burst_radius_sq)) continue;
-        if (sim.damage_slot(m, @intCast(slot), burst_damage * pvp_scale, by) and owner < 2 and slot != owner) {
-            m.hits[owner] +%= 1;
-        }
+        // No friendly fire: the owner's teammates are spared (the owner is not).
+        if (owner < state.max_players and slot != owner and !m.foes(owner, slot)) continue;
+        if (sim.damage_slot(m, slot, burst_damage * pvp_scale, by) and owner < state.max_players and slot != owner) hit = true;
     }
+    if (hit) m.hits[owner] +%= 1;
     p.* = .{ .x = x, .y = y, .kind = kind_burst, .ttl = burst_ticks };
 }
 

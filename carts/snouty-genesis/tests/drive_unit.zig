@@ -183,3 +183,24 @@ test "drive: the incremental CRC of the fragmented and contiguous files matches 
     try testing.expectEqual(@as(u32, 0), crc_in_steps(&empty, 8192, &steps));
     try testing.expectEqual(@as(u32, 1), steps);
 }
+
+test "drive: add appends a second drive's files tagged with its index" {
+    // No badge volume at all, ROMs on the extra drive only.
+    var blank: [2048]u8 = @splat(0);
+    var s = drive.scan(.whole(&blank), &clusters);
+    try testing.expectEqual(@as(?romfs.Error, error.NoVolume), s.err);
+    try testing.expect(drive.add(&s, .truncated_test(drive_img), 1, &clusters) == null);
+    try testing.expectEqual(@as(u32, 4), s.count);
+    try testing.expectEqual(@as(u32, 2), s.playable_count);
+    for (s.candidates[0..s.count]) |*c| try testing.expectEqual(@as(u8, 1), c.entry.drive);
+    const m = try drive.open(.truncated_test(drive_img), try find(&s, "TEST.GEN"), &clusters);
+    try testing.expectEqual(test_rom_crc, m.crc32());
+
+    // Both drives: the badge drive's files first.
+    s = drive.scan(.truncated_test(none_img), &clusters);
+    try testing.expect(drive.add(&s, .truncated_test(drive_img), 1, &clusters) == null);
+    try testing.expectEqual(@as(u32, 5), s.count);
+    try testing.expectEqual(@as(u8, 0), s.candidates[0].entry.drive);
+    try testing.expectEqual(@as(u8, 1), s.candidates[1].entry.drive);
+    try testing.expectEqual(@as(?usize, 1), s.first_playable());
+}
