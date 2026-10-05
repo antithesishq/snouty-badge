@@ -15,14 +15,6 @@ const bar_y = hud.bar_y;
 
 /// The kill feed shows the latest death this long (ticks, 2 s).
 pub const feed_ticks: u32 = 120;
-/// Table rows are 8 px (the font's height plus a gap) when they fit, else
-/// 7 px (glyphs touching, every other row on a stripe): 16 rows of 7 fit
-/// under two header lines.
-pub const row_h: i32 = 7;
-
-fn row_height(n: i32, y0: i32) i32 {
-    return if (y0 + 8 * n <= 128) 8 else row_h;
-}
 
 // ---------------------------------------------------------------- rank line
 
@@ -152,41 +144,56 @@ const Line = struct {
 
 // ---------------------------------------------------------------- tables
 
+/// Up to this many players the tables are one column of 8 px rows with
+/// deaths and accuracy; more go into two columns of eight (place, swatch,
+/// name, frags) with your own deaths and accuracy on a line under them.
+/// (16 rows of 8x8 text on a 7 px pitch overlapped, M8 review.)
+pub const one_column_max: u8 = 10;
+/// Row pitch of the two-column grid.
+const grid_pitch: i32 = 11;
+const grid_rows: usize = 8;
+/// Row pitch of the one-column table (8 px glyphs, 1 px apart).
+const row_pitch: i32 = 9;
+
 /// Hold Select in a match: every present player, best first (grouped by
 /// team, best team first, in team modes), over the view and the bar.
-/// Line 1: "FRAGS TO n" (FFA) or the team totals; line 2: the column
-/// labels; then 7 px rows: place, colour swatch, name (bots in steel),
-/// frags, deaths, accuracy. Your row is highlighted.
+/// Line 1: "FRAGS TO n" (FFA) or the team totals; then the table (one
+/// column with the labels, or the two-column grid and your line).
 pub fn draw_scoreboard(m: *const Match, me: usize, names: []const []const u8) void {
     const n: i32 = slots.present_count(m);
-    cart.rect(.{ .x = 0, .y = 0, .width = 160, .height = @intCast(@min(128, 16 + n * row_height(n, 16))), .fill_color = hud.anti_black });
+    const wide = n > one_column_max;
+    cart.rect(.{ .x = 0, .y = 0, .width = 160, .height = if (wide) 128 else @intCast(18 + n * row_pitch), .fill_color = hud.anti_black });
     if (m.teams != 0) {
         draw_team_totals(m, me, 0);
     } else {
         var buf: [16]u8 = undefined;
         hud.centered(fmt(&buf, "FRAGS TO {d}", .{m.frag_limit}), 0, hud.iris);
     }
+    if (wide) {
+        _ = draw_you(m, me, draw_grid(m, me, names, 12) + 4);
+        return;
+    }
     draw_labels(8);
-    _ = draw_rows(m, me, names, 16);
+    _ = draw_rows(m, me, names, 17);
 }
 
 /// The results' table under the lead's title line: in team modes the team
-/// totals first, then the column labels and the rows as the scoreboard.
-/// Starts at `y0` (8 leaves the top line for the title); with 16 players
-/// in a team mode the labels give way so the rows fit. Returns the y
-/// under the last row (room left for "PRESS A" when it is <= 120).
+/// totals first, then the table as the scoreboard's. Starts at `y0` (8
+/// leaves the top line for the title). Returns the y under the table
+/// (room left for "PRESS A" when it is <= 120).
 pub fn draw_results_table(m: *const Match, me: usize, names: []const []const u8, y0: i32) i32 {
     const n: i32 = slots.present_count(m);
     var y = y0;
     if (m.teams != 0) {
-        draw_team_totals(m, me, y);
-        y += 8;
+        draw_team_totals(m, me, y + 1);
+        y += 10;
     }
-    if (y + 8 + n * row_h <= 128) {
-        draw_labels(y);
-        y += 8;
+    if (n > one_column_max) {
+        y = draw_grid(m, me, names, y + 1);
+        return draw_you(m, me, y + 2);
     }
-    return draw_rows(m, me, names, y);
+    draw_labels(y);
+    return draw_rows(m, me, names, y + 9);
 }
 
 /// The team totals across the line, best team first, each in its colour:
@@ -204,7 +211,7 @@ fn draw_team_totals(m: *const Match, me: usize, y: i32) void {
         const label = if (nt <= 2) slots.team_names[t] else slots.team_names[t][0..1];
         cart.text(.{ .str = label, .x = x0 + 2, .y = y, .text_color = c });
         hud.text_right(hud.signed(&buf, m.team_frags[t]), x0 + cell - 4, y, c);
-        if (m.team[me] == t) cart.rect(.{ .x = x0 + 2, .y = y + 7, .width = @intCast(cell - 6), .height = 1, .fill_color = c });
+        if (m.team[me] == t) cart.rect(.{ .x = x0 + 2, .y = y + 8, .width = @intCast(cell - 6), .height = 1, .fill_color = c });
     }
 }
 
@@ -212,42 +219,89 @@ fn draw_team_totals(m: *const Match, me: usize, y: i32) void {
 const col_place: i32 = 15;
 const col_swatch: i32 = 18;
 const col_name: i32 = 25;
-const col_frags: i32 = 100;
-const col_deaths: i32 = 127;
+const col_frags: i32 = 94;
+const col_deaths: i32 = 121;
 const col_acc: i32 = 159;
 
 fn draw_labels(y: i32) void {
-    cart.text(.{ .str = "PLAYER", .x = col_name, .y = y, .text_color = hud.steel });
+    cart.text(.{ .str = "NAME", .x = col_name, .y = y, .text_color = hud.steel });
     hud.text_right("FRG", col_frags, y, hud.steel);
     hud.text_right("DTH", col_deaths, y, hud.steel);
     hud.text_right("ACC", col_acc, y, hud.steel);
 }
 
+/// The stripe under a row: yours highlighted, every other one dark.
+fn row_fill(mine: bool, row: usize) ?cart.DisplayColor {
+    if (mine) return hud.steel;
+    if (row % 2 == 1) return hud.trough;
+    return null;
+}
+
+/// One column, `row_pitch` rows: place, swatch, name, frags, deaths,
+/// accuracy.
 fn draw_rows(m: *const Match, me: usize, names: []const []const u8, y0: i32) i32 {
     var order: [max_players]u8 = undefined;
     const n = slots.sorted(m, &order);
-    const rh = row_height(n, y0);
     var y = y0;
     var buf: [8]u8 = undefined;
     var nbuf: [4]u8 = undefined;
     for (order[0..n], 0..) |slot, row| {
-        if (y + row_h > 128) break;
+        if (y + 8 > 128) break;
         const mine = slot == me;
-        // Every other row on a dark stripe: the 7 px rows touch.
-        if (mine or row % 2 == 1) cart.rect(.{ .x = 0, .y = y, .width = 160, .height = @intCast(rh), .fill_color = if (mine) hud.steel else hud.trough });
+        if (row_fill(mine, row)) |c| cart.rect(.{ .x = 0, .y = y - 1, .width = 160, .height = row_pitch, .fill_color = c });
         const ink = if (mine) hud.anti_white else hud.grey;
         // Place by frags among everyone (ties share it); in team modes the
         // rows go by team, so the swatch says it all.
         if (m.teams == 0) hud.text_right(fmt(&buf, "{d}", .{slots.rank_of(m, slot)}), col_place, y, ink);
         cart.rect(.{ .x = col_swatch, .y = y + 1, .width = 5, .height = 5, .fill_color = slots.slot_color(m, slot) });
-        const name_ink = if (mine) hud.anti_white else if (m.is_bot(slot)) hud.steel else hud.anti_white;
+        const name_ink = if (!mine and m.is_bot(slot)) hud.steel else hud.anti_white;
         cart.text(.{ .str = slots.name(names, slot, &nbuf), .x = col_name, .y = y, .text_color = name_ink });
         hud.text_right(hud.signed(&buf, m.frags[slot]), col_frags, y, hud.anti_white);
         hud.text_right(fmt(&buf, "{d}", .{m.deaths[slot]}), col_deaths, y, ink);
         hud.text_right(fmt(&buf, "{d}%", .{accuracy(m, slot)}), col_acc, y, ink);
-        y += rh;
+        y += row_pitch;
     }
     return y;
+}
+
+/// Two columns of eight, best first down the left column then the right:
+/// place (3x5 digits, FFA only), swatch, name (5 characters, 4 when the
+/// frags need three), frags. Returns the y under the grid.
+fn draw_grid(m: *const Match, me: usize, names: []const []const u8, y0: i32) i32 {
+    var order: [max_players]u8 = undefined;
+    const n = slots.sorted(m, &order);
+    var buf: [8]u8 = undefined;
+    var nbuf: [4]u8 = undefined;
+    for (order[0..n], 0..) |slot, k| {
+        const col: i32 = @intCast(k / grid_rows);
+        const row = k % grid_rows;
+        const x0 = 80 * col;
+        const y = y0 + grid_pitch * @as(i32, @intCast(row));
+        const mine = slot == me;
+        const fill = row_fill(mine, row);
+        if (fill) |c| cart.rect(.{ .x = x0, .y = y - 1, .width = 80, .height = @intCast(grid_pitch - 1), .fill_color = c });
+        const bg = fill orelse hud.anti_black;
+        if (m.teams == 0) {
+            const r = slots.rank_of(m, slot);
+            slots.small_number_flat(r, x0 + 10 - slots.small_width(r), y, .from_color(if (mine) hud.anti_white else hud.grey), .from_color(bg));
+        }
+        cart.rect(.{ .x = x0 + 12, .y = y + 1, .width = 5, .height = 5, .fill_color = slots.slot_color(m, slot) });
+        const frags = hud.signed(&buf, m.frags[slot]);
+        const nm = slots.name(names, slot, &nbuf);
+        const keep: usize = if (frags.len > 2) 4 else 5;
+        const name_ink = if (!mine and m.is_bot(slot)) hud.steel else hud.anti_white;
+        cart.text(.{ .str = nm[0..@min(nm.len, keep)], .x = x0 + 19, .y = y, .text_color = name_ink });
+        hud.text_right(frags, x0 + 78, y, hud.anti_white);
+    }
+    return y0 + grid_pitch * @as(i32, @intCast(@min(n, grid_rows)));
+}
+
+/// Under the grid: your place, deaths and accuracy (the grid has room for
+/// frags only). Returns the y under the line.
+fn draw_you(m: *const Match, me: usize, y: i32) i32 {
+    var buf: [24]u8 = undefined;
+    hud.centered(fmt(&buf, "#{d}/{d}  {d} DTH  {d}%", .{ slots.rank_of(m, me), slots.present_count(m), m.deaths[me], accuracy(m, me) }), y, slots.slot_color(m, me));
+    return y + 8;
 }
 
 /// Shots that hit a player, in percent of shots fired.

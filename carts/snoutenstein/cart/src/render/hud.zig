@@ -121,10 +121,14 @@ pub const DemoResult = enum(u8) { none = 0, ok = 1, desync = 2 };
 
 /// `demo_result`: "DEMO OK" (grey) or "DEMO DESYNC" (Coral) at the top
 /// left once a demo has replayed its whole log; nothing for `.none`.
-/// The title menu (M7): PLAY (the campaign) and DEATHMATCH, Up/Down
-/// moves `cursor`. Without link hardware (the simulator) DEATHMATCH is
-/// greyed and "NO LINK IN SIMULATOR" shows under it while selected.
-pub const TitleMenu = struct { cursor: u8 = 0, link: bool = true };
+/// The title menu (M7, M8): PLAY (the campaign), DEATHMATCH (two badges
+/// on the link cable) and PARTY (up to 16 badges through the laptop's
+/// `badge lobby`); Up/Down moves `cursor`. Without link hardware (the
+/// simulator) DEATHMATCH is greyed with "NO LINK IN SIMULATOR" under the
+/// menu while selected; without the party firmware PARTY is greyed with
+/// "NEEDS PARTY FIRMWARE".
+pub const TitleMenu = struct { cursor: u8 = 0, link: bool = true, party: bool = true };
+pub const title_items = 3;
 
 pub fn draw_title(tick_n: u32, sound_on: bool, demo_result: DemoResult, menu: TitleMenu) void {
     cart.rect(.{ .x = 0, .y = 0, .width = 160, .height = 128, .fill_color = anti_black });
@@ -133,25 +137,28 @@ pub fn draw_title(tick_n: u32, sound_on: bool, demo_result: DemoResult, menu: Ti
         .ok => cart.text(.{ .str = "DEMO OK", .x = 2, .y = 2, .text_color = grey }),
         .desync => cart.text(.{ .str = "DEMO DESYNC", .x = 2, .y = 2, .text_color = coral }),
     }
-    blit.cell(gfx.title, 128, 40, 0, 16, 16, .{});
-    centered("powered by", 62, iris);
-    centered("deterministic replay", 72, iris);
+    blit.cell(gfx.title, 128, 40, 0, 16, 14, .{});
+    centered("powered by", 57, iris);
+    centered("deterministic replay", 66, iris);
     const blink = (tick_n / 30) % 2 == 0;
-    const items = [2][]const u8{ "PLAY", "DEATHMATCH" };
+    const items = [title_items][]const u8{ "PLAY", "DEATHMATCH", "PARTY" };
+    const ok = [title_items]bool{ true, menu.link, menu.party };
     for (items, 0..) |item, i| {
-        const y: i32 = 82 + 10 * @as(i32, @intCast(i));
+        const y: i32 = 76 + 9 * @as(i32, @intCast(i));
         const on = menu.cursor == i;
-        const greyed = i == 1 and !menu.link;
-        const color = if (greyed) steel else if (on) anti_white else grey;
+        const color = if (!ok[i]) steel else if (on) anti_white else grey;
         centered(item, y, color);
         if (on and blink) {
             const x: i32 = 80 - @as(i32, @intCast(item.len * 4)) - 12;
             cart.text(.{ .str = ">", .x = x, .y = y, .text_color = coral });
         }
     }
-    if (menu.cursor == 1 and !menu.link) centered("NO LINK IN SIMULATOR", 102, grey);
-    centered(if (sound_on) "SELECT: SOUND ON" else "SELECT: SOUND OFF", 110, grey);
-    centered("B: E1M1  START: TEST", 120, grey);
+    if (menu.cursor < title_items and !ok[menu.cursor]) {
+        centered(if (menu.cursor == 1) "NO LINK IN SIMULATOR" else "NEEDS PARTY FIRMWARE", 104, grey);
+    } else {
+        centered(if (sound_on) "SELECT: SOUND ON" else "SELECT: SOUND OFF", 104, grey);
+    }
+    centered("B: E1M1  START: TEST", 116, grey);
 }
 
 /// Deathmatch (M7): frags in the bar's right block (x 96..159) instead of

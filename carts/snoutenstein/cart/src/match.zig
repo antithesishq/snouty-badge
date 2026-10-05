@@ -171,6 +171,10 @@ pub const G = struct {
     pub const rules_len = 1;
     pub const input_delay: u32 = 2;
     pub const check_every: u32 = 32;
+    /// 1 since M8: the World grew to 16 slots (and the lobby offers Data
+    /// Hall), so an M7 build on the other end of the cable shows WRONG
+    /// VERSION instead of a desync.
+    pub const version: u4 = 1;
     /// Start toggles the pause on both badges on the same tick.
     pub const pause_bit: ?u8 = bit_start;
     /// No racer-style picks: the lobby sends pick 0 with the ready flag
@@ -202,10 +206,30 @@ pub const GN = struct {
     /// Arena, frag limit, bugs, teams (`Rules.encode2`). The input delay
     /// is LockstepN's (its GO message), not a rule.
     pub const rules_len = 2;
+    /// The default input delay in ticks (one laptop: 3 is plenty, docs/
+    /// LOCKSTEP_N.md section 6); the host's lobby may pick another.
+    pub const input_delay: u32 = 3;
     pub const check_every: u32 = 32;
     pub const pause_bit: ?u8 = bit_start;
     pub fn can_pause(w: *const match_world) bool {
         return !w.m.over;
+    }
+    /// Each lobby pick is 0 in FFA, else the player's team + 1 (`team_of`).
+    /// A team match needs players on at least two teams.
+    pub fn picks_ok(picks: *const [16]u8, mask: u16) bool {
+        var seen: u8 = 0;
+        for (0..16) |i| {
+            if ((mask >> @intCast(i)) & 1 == 0 or picks[i] == 0) continue;
+            seen |= @as(u8, 1) << @intCast((picks[i] - 1) & 3);
+        }
+        return seen == 0 or @popCount(seen) >= 2;
+    }
+    /// The teams GO's picks give (`start`'s `team`; `init_n` takes it mod
+    /// the team count): pick - 1, or the slot for a pick of 0.
+    pub fn team_of(picks: *const [16]u8) [state.max_players]u8 {
+        var t: [state.max_players]u8 = undefined;
+        for (0..state.max_players) |i| t[i] = if (picks[i] == 0) @intCast(i) else picks[i] - 1;
+        return t;
     }
     /// A fresh match from the lobby: the rules bytes, the slots in it, each
     /// slot's team (ignored in FFA; null = slot mod team count) and the GO

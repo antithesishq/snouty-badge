@@ -15,4 +15,7 @@ test {
     // M7: two badges over the virtual cable (needs the build's `lockstep`
     // and `link_host` imports, so only `zig build test` runs it).
     _ = @import("dm_net_test.zig");
+    // M8: party badges through a model of `badge lobby` (the build's
+    // `party_lib` import, so only `zig build test` runs it).
+    _ = @import("party_net_test.zig");
 }

@@ -24,6 +24,8 @@ pub const Error = error{ TooManyRows, RowTooWide, TooManyDoors, TooManyPickups, 
 
 pub const Parsed = struct {
     cells: [size][size]u8,
+    /// `cells` packed to width x height (`level` points `Level.cells` here).
+    packed_cells: [size * size]u8,
     width: u8,
     height: u8,
     start_x: u8,
@@ -180,6 +182,7 @@ pub fn parse(out: *Parsed, src: []const u8, default_wall: u8) Error!void {
     }
     out.width = @intCast(width);
     out.height = @intCast(height);
+    for (0..height) |y| @memcpy(out.packed_cells[y * width ..][0..width], out.cells[y][0..width]);
     for (out.spawns[0..out.spawn_count]) |*sp| sp.angle = open_facing(&out.cells, sp.x, sp.y);
     if (spawn_start) start_angle = out.spawns[0].angle;
     out.start_x = start_x.?;
@@ -216,7 +219,7 @@ pub fn level(p: *const Parsed, name: []const u8) levels.Level {
         .name = name,
         .width = p.width,
         .height = p.height,
-        .cells = p.cells,
+        .cells = p.packed_cells[0 .. @as(usize, p.width) * p.height],
         .start_x = p.start_x,
         .start_y = p.start_y,
         .start_angle = p.start_angle,
@@ -261,7 +264,7 @@ fn expect_same(want: *const levels.Level, got: *const levels.Level) !void {
     try testing.expectEqualStrings(want.name, got.name);
     try testing.expectEqual(want.width, got.width);
     try testing.expectEqual(want.height, got.height);
-    try testing.expect(std.mem.eql(u8, std.mem.asBytes(&want.cells), std.mem.asBytes(&got.cells)));
+    try testing.expectEqualSlices(u8, want.cells, got.cells);
     try testing.expectEqual(want.start_x, got.start_x);
     try testing.expectEqual(want.start_y, got.start_y);
     try testing.expectEqual(want.start_angle, got.start_angle);
