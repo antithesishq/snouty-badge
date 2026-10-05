@@ -5,7 +5,8 @@
 #
 #   tools/check.sh                 # every step, in this order
 #   tools/check.sh cycle bench     # only the named steps
-#   BENCH_SEEDS="1 2 3" tools/check.sh bench   # timing seeds
+#   BENCH_LEVELS="1 6" tools/check.sh bench    # ladder levels to time
+#   tools/check.sh ladder          # the ladder bot (not in the default list)
 #
 # Steps:
 #   build   zig build -Dcart=snouty-cycles (ELF, UF2, wasm) at the repository root
@@ -13,22 +14,32 @@
 #   float   zig build check-float -Dcart=snouty-cycles (no soft-float or libm)
 #   font    tools/gen_font.py --check (cart/src/font8.zig matches the OS font)
 #   cycle   headless runs of the wasm (../../tools/preview.mjs) on the debug
-#           exports: autopilot with slips (debug_autopilot 2) reaches round 3;
-#           the same seed twice gives the same World hash and screen; with no
-#           input after A the player's round still ends (round 2 starts).
+#           exports: from the title (A opens the menu, A starts GRID LADDER)
+#           the slipping autopilot (debug_autopilot 2) plays 3 attempts;
+#           the same seed twice gives the same World hash and screen; with
+#           no input in the ladder your first life still ends (sudden death
+#           ends every round by tick 3540); debug_set_level 12 starts PROD.
 #   bench   badge-bench, calibrated, with badge-bench/carts/snouty-cycles.toml
-#           (1800 frames: the title over the attract round, A at 60, then
-#           autopilot rounds: countdown, play, crash, round over, next round):
-#           worst `busy ms` frame <= BENCH_MAX_MS (default 12, SPEC section
-#           12), no crash or hang; plus one timing-only run per seed in
-#           BENCH_SEEDS (default 2..6: other rounds; command-line pokes
-#           replace the toml's, so the autopilot poke is repeated).
-#   lcd     the same run twice, PNG every 5th frame: with --lcd (what the
-#           badge's LCD gets: only each present's dirty rect) and without
-#           (the framebuffer). Every pair must be identical. The cart draws
-#           incrementally in .copy_forward, so a pixel written without
-#           mark_dirty_rect never reaches the badge's screen while the
-#           simulator, which shows the whole framebuffer, looks right.
+#           (3600 frames: the title over the attract round, A at 60 opens
+#           the menu, A at 90 starts the ladder; level 1 on autopilot 3:
+#           intro, countdown, play, sudden death or a clear), plus ladder
+#           levels 1, 6 and 12 (BENCH_LEVELS) poked straight in
+#           (snouty_cycles_level) for 3600 frames each, so sudden death,
+#           layouts and three programs are in the timing: worst `busy ms`
+#           frame <= BENCH_MAX_MS (default 12, SPEC section 12) in every
+#           run, no crash or hang. BENCH_SEED (default 2) seeds the level
+#           runs; command-line pokes replace the toml's, so the autopilot
+#           poke is repeated.
+#   lcd     the toml run and the level-12 run twice each, PNG every 5th
+#           frame: with --lcd (what the badge's LCD gets: only each
+#           present's dirty rect) and without (the framebuffer). Every pair
+#           must be identical. The cart draws incrementally in
+#           .copy_forward, so a pixel written without mark_dirty_rect never
+#           reaches the badge's screen while the simulator, which shows the
+#           whole framebuffer, looks right.
+#   ladder  (not in the default list until Track A's tiers land) the
+#           content gate: tools/ladder_bot.mjs, autopilot 3, every level
+#           1..12 cleared within 3 lives on at least 4 of 5 seeds.
 #
 # Output under out/ (gitignored). Exit 0 when every step passes, else 1
 # (the failing steps are listed at the end).
@@ -45,9 +56,11 @@ preview="$root/tools/preview.mjs"
 bench="$root/badge-bench/bench.sh"
 out="$cart/out/check"
 max_ms="${BENCH_MAX_MS:-12}"
-seeds="${BENCH_SEEDS-2 3 4 5 6}"
+levels="${BENCH_LEVELS-1 6 12}"
+bench_seed="${BENCH_SEED:-2}"
 
 all=(build test float font cycle bench lcd)
+extra=(ladder)
 steps=("$@")
 [ ${#steps[@]} -eq 0 ] && steps=("${all[@]}")
 failed=()
@@ -58,8 +71,8 @@ result() { # name status
     if [ "$2" = 0 ]; then echo "-- $1: PASS"; else echo "-- $1: FAIL"; failed+=("$1"); fi
 }
 for s in "${steps[@]}"; do
-    case " ${all[*]} " in *" $s "*) ;;
-        *) echo "check: unknown step '$s' (${all[*]})" >&2; exit 2 ;;
+    case " ${all[*]} ${extra[*]} " in *" $s "*) ;;
+        *) echo "check: unknown step '$s' (${all[*]} ${extra[*]})" >&2; exit 2 ;;
     esac
 done
 
@@ -84,18 +97,18 @@ if want cycle; then
     step "cycle: headless runs on the debug exports"
     status=0
     mkdir -p "$out/cycle"
-    # 1. Rounds loop: autopilot with slips reaches round 3.
-    node "$preview" "$wasm" --frames 20000 --every 100000 --out "$out/cycle/rounds" \
-        --call debug_autopilot:2 --press A:60-61 \
+    # 1. The ladder loops: the slipping autopilot plays 3 attempts.
+    node "$preview" "$wasm" --frames 30000 --every 100000 --out "$out/cycle/rounds" \
+        --call debug_autopilot:2 --press A:60-61 --press A:90-91 \
         --until "debug_round >= 3" --expect "debug_round >= 3" \
-        --dump-exports debug_tick,debug_wins,debug_losses,debug_score 2>&1 | grep -E "exports|expect|until|FAIL" \
+        --dump-exports debug_tick,debug_level,debug_lives,debug_wins,debug_losses,debug_score 2>&1 | grep -E "exports|expect|until|FAIL" \
         || true
     [ "${PIPESTATUS[0]}" = 0 ] || status=1
     # 2. Determinism: the same seed and inputs twice, same World and screen.
     for run in a b; do
         node "$preview" "$wasm" --frames 3000 --every 100000 --out "$out/cycle/det_$run" \
-            --call debug_autopilot:2 --press A:60-61 \
-            --dump-exports debug_world_hash,debug_pixel_checksum,debug_round > /dev/null 2>&1 || status=1
+            --call debug_autopilot:2 --press A:60-61 --press A:90-91 \
+            --dump-exports debug_world_hash,debug_pixel_checksum,debug_round,debug_score > /dev/null 2>&1 || status=1
     done
     if python3 - "$out/cycle/det_a/frames.json" "$out/cycle/det_b/frames.json" <<'PYEOF'
 import json, sys
@@ -104,15 +117,19 @@ print("     determinism:", a, "==" if a == b else "!=", b)
 sys.exit(0 if a == b else 1)
 PYEOF
     then :; else status=1; fi
-    # 3. No input after A: the player's first round still ends.
-    node "$preview" "$wasm" --frames 1500 --every 100000 --out "$out/cycle/idle" \
-        --press A:60-61 --expect "debug_round >= 2" 2>&1 | grep -E "exports|expect|FAIL" || true
+    # 3. No input in the ladder: your first life still ends.
+    node "$preview" "$wasm" --frames 4500 --every 100000 --out "$out/cycle/idle" \
+        --press A:60-61 --press A:90-91 --until "debug_round >= 2" --expect "debug_round >= 2" 2>&1 | grep -E "exports|PASS|FAIL" || true
+    [ "${PIPESTATUS[0]}" = 0 ] || status=1
+    # 4. debug_set_level jumps into the ladder: PROD, four cycles, 3 lives.
+    node "$preview" "$wasm" --frames 300 --every 100000 --out "$out/cycle/level" \
+        --call debug_set_level:12 --expect "debug_level == 12" --expect "debug_lives == 3" --expect "debug_alive_mask == 15" 2>&1 | grep -E "PASS|FAIL" || true
     [ "${PIPESTATUS[0]}" = 0 ] || status=1
     result cycle "$status"
 fi
 
 # bench + lcd: the --lcd run doubles as the timing run (--lcd only changes
-# what the PNGs show); the framebuffer run and the extra seeds run beside it.
+# what the PNGs show); the framebuffer runs and the ladder levels run beside it.
 if want bench || want lcd; then
     step "bench + lcd: badge-bench (calibrated) $(basename "$elf")"
     if [ ! -f "$elf" ]; then
@@ -122,6 +139,7 @@ if want bench || want lcd; then
     else
         rm -rf "$out/bench"
         mkdir -p "$out/bench"
+        lcd_pairs=("fb:lcd")
         # Create badge-bench's venv once before the parallel runs (several
         # first runs at once race on pip and leave a broken venv).
         "$bench" --help > /dev/null 2>&1
@@ -132,12 +150,22 @@ if want bench || want lcd; then
             "$bench" "$elf" --png 5 --out "$out/bench/fb" > "$out/bench/fb.txt" 2>&1 &
             pids+=($!)
         fi
-        if want bench; then
-            for s in $seeds; do
-                "$bench" "$elf" --json --seed "$s" --poke snouty_cycles_autopilot=2 --poke "snouty_cycles_seed=$s" --out "$out/bench/seed$s" > "$out/bench/seed$s.txt" 2>&1 &
+        for l in $levels; do
+            lcd_flags=()
+            # The last level's run doubles as the second lcd comparison.
+            [ "$l" = "${levels##* }" ] && want lcd && lcd_flags=(--lcd --png 5)
+            if want bench || [ ${#lcd_flags[@]} -gt 0 ]; then
+                "$bench" "$elf" --json "${lcd_flags[@]}" --seed "$bench_seed" --poke snouty_cycles_autopilot=3 \
+                    --poke "snouty_cycles_seed=$bench_seed" --poke "snouty_cycles_level=$l" --out "$out/bench/level$l" > "$out/bench/level$l.txt" 2>&1 &
                 pids+=($!)
-            done
-        fi
+            fi
+            if [ ${#lcd_flags[@]} -gt 0 ]; then
+                "$bench" "$elf" --png 5 --seed "$bench_seed" --poke snouty_cycles_autopilot=3 \
+                    --poke "snouty_cycles_seed=$bench_seed" --poke "snouty_cycles_level=$l" --out "$out/bench/fb$l" > "$out/bench/fb$l.txt" 2>&1 &
+                pids+=($!)
+                lcd_pairs+=("fb$l:level$l")
+            fi
+        done
         bench_status=0
         for p in "${pids[@]}"; do wait "$p" || bench_status=1; done
         grep -E "^badge-bench:|^  frames|^calibrat|^  (busy|idle) ms|^verdict|warning" "$out/bench/lcd.txt" | head -12
@@ -145,7 +173,7 @@ if want bench || want lcd; then
         if want bench; then
             status=$bench_status
             [ "$status" = 0 ] || echo "check: a badge-bench run failed (crash, hang or setup error); see $out/bench/*.txt"
-            for j in "$out/bench/lcd/bench.json" "$out/bench"/seed*/bench.json; do
+            for j in "$out/bench/lcd/bench.json" "$out/bench"/level*/bench.json; do
                 [ -f "$j" ] || continue
                 python3 - "$j" "$max_ms" <<'PYEOF' || status=1
 import json, sys
@@ -168,20 +196,29 @@ PYEOF
         if want lcd; then
             status=0
             n=0
-            for f in "$out/bench/fb"/frame_*.png; do
-                [ -f "$f" ] || { status=1; echo "check: no framebuffer PNGs"; break; }
-                g="$out/bench/lcd/$(basename "$f")"
-                n=$((n + 1))
-                if ! cmp -s "$f" "$g"; then
-                    echo "FAIL $(basename "$f"): the modelled LCD differs from the framebuffer (a write without mark_dirty_rect?)"
-                    status=1
-                fi
+            for pair in "${lcd_pairs[@]}"; do
+                fb="${pair%%:*}"; lc="${pair##*:}"
+                for f in "$out/bench/$fb"/frame_*.png; do
+                    [ -f "$f" ] || { status=1; echo "check: no framebuffer PNGs in $fb"; break; }
+                    g="$out/bench/$lc/$(basename "$f")"
+                    n=$((n + 1))
+                    if ! cmp -s "$f" "$g"; then
+                        echo "FAIL $lc/$(basename "$f"): the modelled LCD differs from the framebuffer (a write without mark_dirty_rect?)"
+                        status=1
+                    fi
+                done
             done
             echo "     $n frames compared"
             [ "$status" = 0 ] && echo "ok   the modelled LCD equals the framebuffer in every frame"
             result lcd "$status"
         fi
     fi
+fi
+
+if want ladder; then
+    step "ladder: tools/ladder_bot.mjs (autopilot 3, levels 1..12, 4 of 5 seeds)"
+    mkdir -p "$out"
+    node "$here/ladder_bot.mjs" --wasm "$wasm" --json "$out/ladder.json"; result ladder $?
 fi
 
 echo

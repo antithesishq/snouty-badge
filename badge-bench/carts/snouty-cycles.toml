@@ -1,6 +1,6 @@
 # snouty-cycles: Tron light cycles, 60 fps, .copy_forward, incremental drawing.
 budget_ms = 16.7
-frames = 1800
-script = "carts/snouty-cycles/tools/scripts/bench_m0.json"
-pokes = ["snouty_cycles_autopilot=2"]
-note = "M0: the title over a 4-program attract round (0..59), A at 60, then you (T1 autopilot with slips) against one T1 program: countdown, play, your crash (~1426), the round-over banner while the wall fades, the next round (~1576); carts/snouty-cycles/tools/check.sh gates on worst busy ms <= 12 and --lcd == framebuffer"
+frames = 3600
+script = "carts/snouty-cycles/tools/scripts/bench_m1.json"
+pokes = ["snouty_cycles_autopilot=3"]
+note = "M1: the title over a 4-program attract round (0..59), A at 60 opens the menu, A at 90 starts GRID LADDER; level 1 (BASIC) with the autopilot (3 = T3) driving you: intro, countdown, play to sudden death at 30 s or a clear, the next level. tools/check.sh bench adds ladder levels 1, 6 and 12 (--poke snouty_cycles_level=N) and gates on worst busy ms <= 12 and --lcd == framebuffer"
