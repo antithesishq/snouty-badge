@@ -95,6 +95,9 @@ pub const reg = struct {
     /// Undocumented in DS000693; the ams driver writes 0x80 here to reset
     /// the CPU (tmf882x_mode_cpu_reset).
     pub const reset = 0xF0;
+    /// Undocumented; bit 6 is the PLL. The ams driver clears it before a
+    /// CPU reset (tmf882x_mode_cpu_reset).
+    pub const pll = 0xEC;
 };
 
 pub const bl = struct {
@@ -151,6 +154,8 @@ pub const timing = struct {
     pub const frame_timeout_ms = 1000;
     pub const hist_set_ms = 2000;
     pub const reset_wait_ms = 10;
+    /// Standby cycle (last resort): time between PON 0 and PON 1.
+    pub const standby_ms = 10;
     /// Immediate re-reads of a busy status within one poll.
     pub const busy_spins = 3;
 };
@@ -188,6 +193,10 @@ pub const State = enum {
 pub const Step = enum(u8) {
     probe,
     reset,
+    reset_pll,
+    reset_pll_off,
+    standby_off,
+    standby_on,
     reset_cpu,
     pon,
     wait_ready,
@@ -198,6 +207,7 @@ pub const Step = enum(u8) {
     bl_write,
     bl_status,
     bl_remap_ps,
+    bl_clear_ps,
     bl_remap,
     app_wait,
     app_check,
@@ -329,6 +339,8 @@ pub const Stats = struct {
     last_spent_us: u32 = 0,
     /// User SPAD masks: pages written, masks refused by the validator
     /// (never sent), read-backs that differed from what was written.
+    /// CPU resets and standby cycles forced while waiting for cpu_ready.
+    rescues: u32 = 0,
     mask_writes: u32 = 0,
     mask_rejects: u32 = 0,
     spad_mismatch: u32 = 0,
@@ -373,6 +385,11 @@ pub fn Tof(comptime Bus: type) type {
         step: Step = .probe,
         info: Info = .{},
         err: LastError = .{},
+        /// The error that started the current run of failures (the
+        /// cause; `err` is the latest, often a symptom of the recovery).
+        first_err: LastError = .{},
+        /// Failures since the sensor last measured.
+        fail_streak: u16 = 0,
         stats: Stats = .{},
         log: [log_len]LogEntry = @splat(.{}),
         log_count: u32 = 0,
@@ -401,8 +418,11 @@ pub fn Tof(comptime Bus: type) type {
         spins: u8 = 0,
         attempt: u8 = 0,
         force_reset: bool = false,
-        ps_written: bool = false,
+        /// This attempt's escalations while the CPU would not come up:
+        /// 1 after a forced CPU reset, 2 after a standby cycle.
+        rescue: u8 = 0,
         pending_n: u8 = 0,
+        pll_reg: u8 = 0,
         download_start: u64 = 0,
         last_frame_us: u64 = 0,
         last_num: ?u8 = null,
@@ -605,6 +625,8 @@ pub fn Tof(comptime Bus: type) type {
 
         fn fail(self: *Self, code: ErrCode, raw: u32) void {
             self.err = .{ .code = code, .step = self.step, .raw = raw, .time_us = self.now() };
+            if (self.fail_streak == 0) self.first_err = self.err;
+            self.fail_streak +|= 1;
             self.note(self.step, @truncate(raw | 0x8000));
             switch (code) {
                 .cpu_timeout, .app_timeout, .bad_appid, .app_not_started, .frame_timeout => self.force_reset = true,
@@ -615,8 +637,31 @@ pub fn Tof(comptime Bus: type) type {
             self.goto_probe(timing.error_retry_ms);
         }
 
+        /// The CPU did not come up in time (`raw`: ENABLE, 0xFF if it did
+        /// not answer). As the ams driver does, force a CPU reset once;
+        /// then try a standby cycle; then give up for this attempt.
+        fn rescue_cpu(self: *Self, raw: u8) void {
+            self.note(.wait_ready, @as(u16, raw) | 0x4000);
+            switch (self.rescue) {
+                0 => {
+                    self.rescue = 1;
+                    self.step = .reset;
+                },
+                1 => {
+                    self.rescue = 2;
+                    self.step = .standby_off;
+                },
+                else => {
+                    self.fail(.cpu_timeout, raw);
+                    return;
+                },
+            }
+            self.stats.rescues += 1;
+        }
+
         fn goto_probe(self: *Self, wait: u32) void {
             self.step = .probe;
+            self.rescue = 0;
             self.wait_until = 0;
             if (wait > 0) self.wait_ms(wait);
             self.last_num = null;
@@ -704,9 +749,40 @@ pub fn Tof(comptime Bus: type) type {
                     self.step = if (self.force_reset) .reset else .pon;
                 },
                 .reset => {
-                    // powerup_select = 1 (bootloader, stay awake), PON.
+                    // The ams driver's CPU reset (tmf882x_mode_cpu_reset):
+                    // powerup_select = 1 (bootloader, stay awake) with PON,
+                    // the PLL off, then 0xF0 = 0x80. powerup_select lives
+                    // in an always-on domain, so this also clears a 2
+                    // ("start the RAM application") left by anything else.
                     try self.write(&.{ reg.enable, (self.info.enable & ~@as(u8, 0x30)) | 0x10 | 0x01 });
+                    self.step = .reset_pll;
+                },
+                .reset_pll => {
+                    var b: [1]u8 = undefined;
+                    try self.read(reg.pll, &b);
+                    self.pll_reg = b[0];
+                    self.step = .reset_pll_off;
+                },
+                .reset_pll_off => {
+                    try self.write(&.{ reg.pll, self.pll_reg & ~@as(u8, 0x40) });
                     self.step = .reset_cpu;
+                },
+                .standby_off => {
+                    // Last resort when a CPU reset did not bring it up:
+                    // ask for standby (PON 0, powerup_select 1), then PON
+                    // 0 -> 1 restarts the oscillator and the bootloader
+                    // resets (DS000693 8.2.3).
+                    try self.write(&.{ reg.enable, 0x10 });
+                    self.note(.standby_off, 0);
+                    self.step = .standby_on;
+                    self.wait_ms(timing.standby_ms);
+                },
+                .standby_on => {
+                    try self.write(&.{ reg.enable, 0x11 });
+                    self.info.enable = 0x11;
+                    self.step = .wait_ready;
+                    self.set_deadline(timing.cpu_ready_ms);
+                    self.wait_ms(timing.reset_wait_ms);
                 },
                 .reset_cpu => {
                     try self.write(&.{ reg.reset, 0x80 });
@@ -735,7 +811,7 @@ pub fn Tof(comptime Bus: type) type {
                             self.wait_ms(1);
                             return false;
                         } else {
-                            self.fail(.cpu_timeout, 0xFF);
+                            self.rescue_cpu(0xFF);
                             return false;
                         },
                         else => {
@@ -747,7 +823,7 @@ pub fn Tof(comptime Bus: type) type {
                     if (b[0] & 0x40 != 0) {
                         self.step = .read_id;
                     } else if (self.past_deadline()) {
-                        self.fail(.cpu_timeout, b[0]);
+                        self.rescue_cpu(b[0]);
                         return false;
                     } else if (b[0] & 0x01 == 0) {
                         self.step = .pon;
@@ -782,7 +858,6 @@ pub fn Tof(comptime Bus: type) type {
                             self.download_start = self.now();
                             self.fw_pos = 0;
                             self.pending_n = 0;
-                            self.ps_written = false;
                             self.stats.downloads += 1;
                             self.step = .bl_init;
                         },
@@ -836,14 +911,19 @@ pub fn Tof(comptime Bus: type) type {
                     }
                 },
                 .bl_remap_ps => {
-                    // Every other attempt, first set powerup_select = 2 as
-                    // DS000693 8.9.5 asks (the ams driver does not); the
-                    // DIAG log shows which variant worked.
-                    if (self.attempt & 1 == 1 and !self.ps_written) {
-                        try self.write(&.{ reg.enable, 0x21 });
-                        self.ps_written = true;
-                        self.note(.bl_remap_ps, 0x21);
-                    }
+                    // Remap as the ams driver does, never with
+                    // powerup_select = 2 (DS000693 8.9.5 suggests it, but
+                    // it survives resets and standby, and on a badge a
+                    // later reset then hung with ENABLE 0x21). Clear a 2
+                    // left by an older build of this driver.
+                    var b: [1]u8 = undefined;
+                    try self.read(reg.enable, &b);
+                    self.info.enable = b[0];
+                    self.step = if ((b[0] >> 4) & 3 == 2) .bl_clear_ps else .bl_remap;
+                },
+                .bl_clear_ps => {
+                    try self.write(&.{ reg.enable, (self.info.enable & ~@as(u8, 0x30)) | 0x10 | 0x01 });
+                    self.note(.bl_clear_ps, self.info.enable);
                     self.step = .bl_remap;
                 },
                 .bl_remap => {
@@ -1048,6 +1128,7 @@ pub fn Tof(comptime Bus: type) type {
                     self.active_gen = if (self.config.spad_map == spad.map_id) self.written_gen else 0;
                     self.state = .measuring;
                     self.attempt = 0;
+                    self.fail_streak = 0;
                     self.last_frame_us = self.now();
                     self.last_num = null;
                     self.hist_mask = 0;

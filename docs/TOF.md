@@ -119,10 +119,11 @@ The hardware check (section 5) confirms the C-only items.
 | Wake: write PON, wait for cpu_ready (C polls every 3 ms, up to 10 tries) | DS + C |
 | Bootloader commands from 0x08: `cmd, size, data, csum`, csum = ~(cmd + size + data); status busy while >= 0x10 | DS 8.9 + C |
 | DOWNLOAD_INIT seed 0x29, ADDR_RAM 0x0000 (the image's 0x00200000 as a 16-bit pointer), W_RAM up to 128 bytes, RAMREMAP_RESET with no status read | C (`bin_fwdl`) |
-| Set powerup_select = 2 before RAMREMAP_RESET | DS 8.9.5 only; the C does not. The driver alternates: odd attempts write it (the log shows `bl_remap_ps`) |
+| Never set powerup_select = 2 before RAMREMAP_RESET (DS 8.9.5 suggests it; the C does not) | Hardware, 2026-10-05: M0-M2 wrote it on every other retry; it lives in the always-on domain, and a later reset left the chip hung with ENABLE 0x21 (`cpu_timeout @wait_ready R0021`, retrying forever). The driver now remaps as the C does and clears a 2 it finds (`bl_clear_ps` in the log) |
 | Bootloader status reply carries a checksum (`status + size + csum = 0xFF`) | C checks it only for replies with data; not in DS. Counted (`CK` on DIAG), not fatal |
 | 10 ms after RAMREMAP and again after cpu_ready before using the application | C (`tmf882x_wait_for_cpu_startup`) |
-| CPU reset: powerup_select = 1, then 0x80 to 0xF0 (the C also clears bit 6 of 0xEC first; skipped) | C only (`tmf882x_mode_cpu_reset`); register 0xF0 is undocumented in DS |
+| CPU reset: powerup_select = 1, bit 6 of 0xEC (PLL) cleared, then 0x80 to 0xF0 | C only (`tmf882x_mode_cpu_reset`); 0xEC and 0xF0 are undocumented in DS. The PLL step was skipped until 2026-10-05 |
+| cpu_ready not set by the deadline: force one CPU reset (as the C's `tmf882x_wait_for_cpu_ready` does), then a standby cycle (PON 0, 10 ms, PON 1 with powerup_select 1: the bootloader resets on PON 0 -> 1, DS 8.2.3), then fail and retry | C + DS 8.2.3; `stats.rescues` (DIAG `RS`) counts them |
 | CMD_STAT 0x08 busy while >= 0x10; 0 OK, 1 accepted; STOP 0xFF, MEASURE 0x10, LOAD_CONFIG_PAGE_COMMON 0x16, WRITE_CONFIG_PAGE 0x15 | DS 8.3 + C |
 | Configuration page at 0x24: period, kilo-iterations, SPAD map 0x34, HIST_DUMP 0x39; edited in place, written back | DS 8.5 + C |
 | Short range: commands 0x6E / 0x6F to CMD_STAT, register ACTIVE_RANGE 0x19 reports 0x6E / 0x6F (0 = not supported) | DS 8.3.11 gives the register values; the commands are from memory of later ams drivers, unverified. A failure is noted, not fatal |
