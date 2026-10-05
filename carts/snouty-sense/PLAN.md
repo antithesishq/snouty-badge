@@ -3,6 +3,37 @@
 The time-of-flight probe cart and the driver under it (docs/TOF.md
 section 4). SPEC.md has the design, docs/RUNNING.md how to build and run.
 
+## M2.2: histogram pages on hardware (2026-10-05)
+
+With M2.1 the sensor recovered, and HIST/EYES showed what was really
+wrong: `ERR frame_timeout` every few seconds, EYES filling its waterfall a
+few lines at a time, and DIAG `ERR bad_rid @read_cfg R0010` after leaving
+HIST. The driver read a dump over ~30 updates (~0.5 s) while the sensor
+measured every 33 ms. The model held each measurement until the host
+finished a dump; the real sensor evidently abandons the dump (and its
+result) when the next measurement falls due. New model faults
+`hist_overrun` and `late_result_us` reproduce both (0 results and 0 sets
+in 10 s on the old driver; bad_rid on leaving HIST).
+
+- With histograms on, the ranging period becomes `Tof.hist_period_ms()`:
+  long enough to read a whole dump at the bus speed and the poll budget
+  (HIST/EYES budget now 12 ms: 3 subpackets an update; 255 ms = ~4 sets
+  a second at 400 kHz, 127 ms = ~7 at 1 MHz, ~1.3 s at 100 kHz).
+- The next subpacket is awaited on its TID (1 byte) with immediate
+  re-reads, as the C does, instead of re-reading the whole packet a poll
+  later.
+- A stall with histograms on first clears every interrupt and resyncs
+  (DIAG `ST`); only a second one restarts the sensor.
+- After STOP the driver clears all interrupts, and a configuration page
+  that reads back as a result is loaded again (DIAG `CR`, up to 3 times).
+- DIAG: new row `RS ST CR P..MS` (rescues, stalls, config reloads, the
+  ranging period in use); the step log shows 3 entries.
+- Bench (`-Dtof-fake`, calibrated, 1800 frames, bench.json): worst 14.86
+  ms (EYES with sound, frame 660: three subpackets on the bus that
+  update), mean 6.03, p95 14.32, 0 frames over 16.7 ms. Tight but only on
+  the histogram pages; lower `budget_hist_us` to 8000 (2 subpackets an
+  update, ~2.8 sets a second at 400 kHz) if a badge drops frames there.
+
 ## M2.1: recovery fix from the first badge run (2026-10-05)
 
 On Adrian's badge snouty-sense measured on LIVE, then (with a hand over

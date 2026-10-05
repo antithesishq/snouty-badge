@@ -71,6 +71,15 @@ pub const Fault = struct {
     /// A CPU reset (0xF0) with the PLL still on (0xEC bit 6) hangs: the
     /// ams driver always turns it off first.
     reset_needs_pll_off: bool = false,
+    /// A measurement falling due during a histogram dump abandons the dump
+    /// (its result is never published) and starts the new one, instead of
+    /// waiting for the host. What a badge showed: a host slower than the
+    /// ranging period got histogram scraps and no results at all.
+    hist_overrun: bool = false,
+    /// STOP during a histogram dump still publishes that measurement's
+    /// result this long later (0: off), over whatever page is in 0x20 by
+    /// then (a badge read rid 0x10 where the common page should be).
+    late_result_us: u32 = 0,
 };
 
 pub const timing = struct {
@@ -96,6 +105,9 @@ pub const Stats = struct {
     remaps: u32 = 0,
     /// RAMREMAP_RESET issued with powerup_select = 2 set.
     remaps_ps2: u32 = 0,
+    /// Histogram dumps abandoned for the next measurement (hist_overrun).
+    hist_abandoned: u32 = 0,
+    late_results: u32 = 0,
     boots: u32 = 0,
     /// SPAD pages accepted, rejected (rules broken), ignored (map not 14).
     spad_writes: u32 = 0,
@@ -157,6 +169,8 @@ pub const Model = struct {
     user_valid: bool = false,
     measuring: bool = false,
     next_meas_at: u64 = 0,
+    /// Fault.late_result: when the stopped measurement's result lands.
+    late_result_at: ?u64 = null,
     result_num: u8 = 0,
     tid: u8 = 0,
     /// Next subpacket to publish when the host clears the current one
@@ -260,13 +274,24 @@ pub const Model = struct {
     /// Time-driven events up to `t_us`.
     fn advance(m: *Model) void {
         if (m.mode == .booting and m.t_us >= m.ready_at) m.enter(m.boot_target);
+        if (m.late_result_at) |t| if (m.t_us >= t) {
+            m.late_result_at = null;
+            if (m.mode == .app) {
+                m.publish_result();
+                m.stats.late_results += 1;
+            }
+        };
         if (m.mode == .app and m.measuring) {
             const period = m.period_us();
             if (m.t_us > m.next_meas_at + 10 * period) m.next_meas_at = m.t_us;
             while (m.measuring and m.t_us >= m.next_meas_at) {
                 // A histogram dump in progress, or (with dumps on) a result
                 // the host has not acknowledged, holds the next measurement.
-                if (m.hist_next != null) break;
+                if (m.hist_next != null) {
+                    if (!m.fault.hist_overrun) break;
+                    m.stats.hist_abandoned += 1;
+                    m.hist_next = null;
+                }
                 if (m.hist_dump and m.int_status & tof.int_result != 0) break;
                 m.measure(m.next_meas_at);
                 m.next_meas_at += period;
@@ -587,6 +612,7 @@ pub const Model = struct {
                 m.cmd_status = 1;
             },
             tof.cmd.stop => {
+                if (m.fault.late_result_us != 0 and m.hist_next != null) m.late_result_at = m.t_us + m.fault.late_result_us;
                 m.measuring = false;
                 m.hist_next = null;
             },

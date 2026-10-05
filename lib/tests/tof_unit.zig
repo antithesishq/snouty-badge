@@ -194,13 +194,65 @@ test "histograms decode: 10 channels x 128 bins, matching the model" {
 test "histograms on the HIST budget keep a usable rate at 400 kHz" {
     var rig: Rig = undefined;
     rig.init(400_000);
-    rig.drv.budget_us = 6000;
+    rig.drv.budget_us = 12_000;
     rig.drv.configure(.{ .histograms = true });
     _ = try rig.run_until_state(.measuring, 3_000_000);
+    // The period is lengthened so a dump fits: ~4 Hz at 400 kHz.
+    try std.testing.expect(rig.drv.period_ms >= 200 and rig.drv.period_ms <= 300);
     const sets0 = rig.drv.stats.hist_sets;
     try rig.run(2_000_000);
     // At least 3 sets a second.
     try std.testing.expect(rig.drv.stats.hist_sets - sets0 >= 6);
+}
+
+/// The HIST page as the badge ran it: histograms at 400 kHz on the
+/// cart's 33 ms period, with a sensor that abandons a dump when the next
+/// measurement falls due (Fault.hist_overrun).
+fn hist_overrun_rig(rig: *Rig, hz: u32) !void {
+    rig.init(hz);
+    rig.model.fault.hist_overrun = true;
+    rig.drv.budget_us = 12_000;
+    rig.drv.configure(.{ .histograms = true, .period_ms = 33 });
+    _ = try rig.run_until_state(.measuring, 3_000_000);
+}
+
+test "histograms on a sensor that overruns slow hosts: results and sets keep coming, no restarts" {
+    for ([_]u32{ 400_000, 1_000_000, 100_000 }) |hz| {
+        var rig: Rig = undefined;
+        try hist_overrun_rig(&rig, hz);
+        const f0 = rig.drv.stats.frames;
+        const s0 = rig.drv.stats.hist_sets;
+        const boots0 = rig.drv.stats.boots;
+        try rig.run(10_000_000);
+        errdefer std.debug.print("{d} Hz: frames {d} sets {d} boots {d} abandoned {d} err {s}\n", .{
+            hz,                           rig.drv.stats.frames - f0,      rig.drv.stats.hist_sets - s0,
+            rig.drv.stats.boots - boots0, rig.model.stats.hist_abandoned, rig.drv.err.code.name(),
+        });
+        try std.testing.expectEqual(tof.State.measuring, rig.drv.state);
+        try std.testing.expectEqual(boots0, rig.drv.stats.boots);
+        // A steady rate: 3+ a second from 400 kHz, ~0.6 at 100 kHz.
+        const want: u32 = if (hz >= 400_000) 30 else 5;
+        try std.testing.expect(rig.drv.stats.frames - f0 >= want);
+        try std.testing.expect(rig.drv.stats.hist_sets - s0 >= want);
+        try std.testing.expectEqual(@as(u32, 0), rig.model.stats.hist_abandoned);
+    }
+}
+
+test "leaving the histogram pages mid-dump reconfigures cleanly (no bad_rid)" {
+    var rig: Rig = undefined;
+    try hist_overrun_rig(&rig, 400_000);
+    var i: u32 = 0;
+    while (i < 12) : (i += 1) {
+        // The stopped measurement's result lands at a different moment
+        // each time, over the page the driver is about to read.
+        rig.model.fault.late_result_us = 300 + 1700 * (i % 6);
+        // Partway into a dump, every time at a different point.
+        try rig.run(40_000 + 23_000 * @as(u64, i));
+        rig.drv.configure(.{ .histograms = i % 2 == 1, .period_ms = 33 });
+        _ = try rig.run_until_state(.measuring, 2_000_000);
+        try std.testing.expectEqual(tof.ErrCode.none, rig.drv.err.code);
+    }
+    try std.testing.expect(rig.model.stats.late_results > 0);
 }
 
 test "configure stops, reconfigures and restarts the sensor" {

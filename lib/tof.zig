@@ -153,6 +153,9 @@ pub const timing = struct {
     /// means the sensor stopped or lost power: start over.
     pub const frame_timeout_ms = 1000;
     pub const hist_set_ms = 2000;
+    /// The update interval the histogram period is planned for (carts
+    /// poll once per 60 Hz update).
+    pub const poll_ms = 17;
     pub const reset_wait_ms = 10;
     /// Standby cycle (last resort): time between PON 0 and PON 1.
     pub const standby_ms = 10;
@@ -208,6 +211,8 @@ pub const Step = enum(u8) {
     bl_status,
     bl_remap_ps,
     bl_clear_ps,
+    stop_drain,
+    hist_tid,
     bl_remap,
     app_wait,
     app_check,
@@ -326,6 +331,12 @@ pub const Stats = struct {
     i2c_errors: u32 = 0,
     hist_sets: u32 = 0,
     hist_errors: u32 = 0,
+    /// No result for the frame timeout with histograms on: resynced (all
+    /// interrupts cleared) instead of restarting, once per run.
+    stalls: u32 = 0,
+    /// The configuration page read back as something else (a result)
+    /// and was loaded again.
+    cfg_retries: u32 = 0,
     /// Bootloader status replies whose checksum did not add up (the
     /// datasheet does not say replies carry one; counted, not fatal).
     bl_csum_mismatch: u32 = 0,
@@ -425,6 +436,12 @@ pub fn Tof(comptime Bus: type) type {
         pll_reg: u8 = 0,
         download_start: u64 = 0,
         last_frame_us: u64 = 0,
+        /// The ranging period actually written (`Config.period_ms`, or
+        /// longer with histograms: see `hist_period_ms`).
+        period_ms: u16 = 33,
+        stalled: bool = false,
+        drain_next: Step = .set_range,
+        cfg_tries: u8 = 0,
         last_num: ?u8 = null,
         frame_logged: bool = false,
         buf: [packet_len]u8 = undefined,
@@ -1046,17 +1063,31 @@ pub fn Tof(comptime Bus: type) type {
                     var b: [0x3C - 0x20]u8 = undefined;
                     try self.read(reg.config_result, &b);
                     if (b[0] != rid.common) {
+                        // A result or histogram published around the STOP
+                        // (a badge read rid 0x10 here): clear the
+                        // interrupts and load the page again.
+                        if (self.cfg_tries < 3) {
+                            self.cfg_tries += 1;
+                            self.stats.cfg_retries += 1;
+                            self.note(.read_cfg, b[0]);
+                            self.drain_next = .set_range;
+                            self.step = .stop_drain;
+                            self.wait_ms(2);
+                            return false;
+                        }
                         self.fail(.bad_rid, b[0]);
                         return false;
                     }
+                    self.cfg_tries = 0;
                     self.page = b[4..].*;
                     const p = &self.page;
                     self.info.default_period_ms = le16(p[0..2]);
                     self.info.default_iterations_k = le16(p[2..4]);
                     self.info.default_spad_map = p[reg.spad_map_id - 0x24];
                     const c = self.config;
-                    p[0] = @truncate(c.period_ms);
-                    p[1] = @truncate(c.period_ms >> 8);
+                    self.period_ms = if (c.histograms) @max(c.period_ms, self.hist_period_ms()) else c.period_ms;
+                    p[0] = @truncate(self.period_ms);
+                    p[1] = @truncate(self.period_ms >> 8);
                     p[2] = @truncate(c.iterations_k);
                     p[3] = @truncate(c.iterations_k >> 8);
                     p[reg.spad_map_id - 0x24] = c.spad_map;
@@ -1143,18 +1174,32 @@ pub fn Tof(comptime Bus: type) type {
                         self.config = p;
                         self.pending = null;
                         self.state = .configuring;
-                        self.start_cmd(cmd.stop, .set_range);
+                        self.drain_next = .set_range;
+                        self.start_cmd(cmd.stop, .stop_drain);
                         return true;
                     }
                     if (self.mask_dirty and self.config.spad_map == spad.map_id) {
                         // A new mask on map 14: stop, SPAD page, start.
                         self.state = .configuring;
-                        self.start_cmd(cmd.stop, .spad_load);
+                        self.drain_next = .spad_load;
+                        self.start_cmd(cmd.stop, .stop_drain);
                         return true;
                     }
-                    const period: u64 = @max(timing.frame_timeout_ms, 4 * @as(u64, self.config.period_ms));
+                    const period: u64 = @max(timing.frame_timeout_ms, 4 * @as(u64, self.period_ms));
                     const limit = if (self.config.histograms) @max(period, timing.hist_set_ms) else period;
                     if (self.now() > self.last_frame_us + limit * 1000) {
+                        if (self.config.histograms and !self.stalled) {
+                            // Lost step with the dump (a sensor that
+                            // moved on): clear everything and pick up the
+                            // next set rather than reboot.
+                            self.stalled = true;
+                            self.stats.stalls += 1;
+                            self.note(.run, 0x5700);
+                            self.drain_next = .run;
+                            self.step = .stop_drain;
+                            self.last_frame_us = self.now();
+                            return true;
+                        }
                         self.fail(.frame_timeout, 0);
                         return false;
                     }
@@ -1213,12 +1258,41 @@ pub fn Tof(comptime Bus: type) type {
                 },
                 .hist_clear => {
                     try self.write(&.{ reg.int_status, int_hist });
-                    self.step = .read_hist;
+                    self.step = .hist_tid;
                     if (self.hist_mask == (1 << hist_packets) - 1) {
                         self.hist_mask = 0;
                         self.last_packet_tid = null;
                         self.step = .run;
                     }
+                },
+                .hist_tid => {
+                    // The next subpacket follows the acknowledgement within
+                    // microseconds (the ams driver re-reads at once): wait
+                    // for its TID on one byte, not the whole packet.
+                    var b: [1]u8 = undefined;
+                    try self.read(reg.tid, &b);
+                    if (self.last_packet_tid) |t| if (t == b[0]) {
+                        if (self.now() > self.hist_start_us + @as(u64, timing.hist_set_ms) * 1000) {
+                            self.drop_hist_set();
+                            return true;
+                        }
+                        if (self.busy()) return true;
+                        self.wait_us(500);
+                        return false;
+                    };
+                    self.buf_pos = 0;
+                    self.step = .read_hist;
+                },
+                .stop_drain => {
+                    // After STOP (or a stall): acknowledge whatever the
+                    // sensor published so it neither holds the page nor
+                    // waits on us.
+                    try self.write(&.{ reg.int_status, 0xFF });
+                    self.hist_mask = 0;
+                    self.hist_ready = false;
+                    self.last_packet_tid = null;
+                    self.buf_pos = 0;
+                    self.step = self.drain_next;
                 },
                 .retry, .first_frame, .hist_set => self.step = .probe,
             }
@@ -1235,6 +1309,25 @@ pub fn Tof(comptime Bus: type) type {
             try self.write(w[0 .. 4 + data.len]);
             self.step = .bl_status;
             self.set_deadline(timing.bl_busy_ms);
+        }
+
+        /// The shortest ranging period with histogram dumps on that lets
+        /// this driver read a whole dump (30 subpackets and the result)
+        /// before the next measurement, at the bus speed and per-poll
+        /// budget in use. A sensor that falls due mid-dump abandons it and
+        /// its result (a badge at 400 kHz and 33 ms got no results), so a
+        /// short period is lengthened to this.
+        pub fn hist_period_ms(self: *const Self) u16 {
+            const hz = self.bus.speed_hz();
+            const pkt: u64 = i2c.cost_us(hz, 1, packet_len) + i2c.cost_us(hz, 2, 0) + i2c.cost_us(hz, 1, 1) + 3 * i2c.overhead_us;
+            const budget: u64 = @max(self.budget_us, 1000);
+            const polls: u64 = if (pkt <= budget)
+                (hist_packets + budget / pkt - 1) / (budget / pkt)
+            else
+                hist_packets * ((pkt + budget - 1) / budget);
+            // + the result and a poll of slack, then 25 % margin.
+            const ms = (polls + 2) * timing.poll_ms * 5 / 4;
+            return @intCast(std.math.clamp(ms, 33, 3000));
         }
 
         fn drop_hist_set(self: *Self) void {
@@ -1334,6 +1427,7 @@ pub fn Tof(comptime Bus: type) type {
             self.frame_logged = true;
             self.stats.frames += 1;
             self.last_frame_us = self.now();
+            self.stalled = false;
             if (self.hist_ready) {
                 const work = &self.hist[self.front ^ 1];
                 work.seq = f.seq;

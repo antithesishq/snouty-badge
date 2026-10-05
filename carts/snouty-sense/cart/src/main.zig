@@ -55,7 +55,12 @@ const Sensor = tof.Sensor(fake);
 /// and EYES (histogram subpackets; a few sets a second at 400 kHz) and
 /// DEPTH (the SPAD page write and read-back in one update each).
 const budget_live_us = 3000;
-const budget_hist_us = 6000;
+/// HIST and EYES: 3 subpackets an update at 400 kHz. The driver
+/// lengthens the ranging period so a whole dump fits (Tof.hist_period_ms:
+/// ~4 sets a second at 400 kHz, ~7 at 1 MHz).
+const budget_hist_us = 12_000;
+/// DEPTH: no histograms, mask switches.
+const budget_depth_us = 6000;
 /// Bus scan addresses per update while the scan is on screen (a NACKed
 /// address costs ~40 us at 400 kHz).
 const scan_per_update = 8;
@@ -189,7 +194,8 @@ fn show_status_screen() bool {
 fn apply_config() void {
     const hz = i2c.speeds[speed_i];
     sensor.budget_us = switch (page) {
-        .hist, .eyes, .depth => budget_hist_us,
+        .hist, .eyes => budget_hist_us,
+        .depth => budget_depth_us,
         else => budget_live_us,
     };
     sensor.configure(.{
@@ -554,15 +560,18 @@ fn draw_diag() void {
     }), if (ln.sda and ln.scl) fg else bad);
     say(0, 7, fmt(&buf, "AB{X:0>8} TO{d} RC{d}", .{ st.last_abort, st.timeouts, st.recoveries }), fg);
     draw_bus_scan(0, 8);
-    say(0, 9, fmt(&buf, "FR{d} MS{d} TN{d} CK{d} RS{d}", .{ d.stats.frames, d.stats.missed, d.stats.torn, d.stats.bl_csum_mismatch, d.stats.rescues }), fg);
+    say(0, 9, fmt(&buf, "FR{d} MS{d} TN{d} CK{d}", .{ d.stats.frames, d.stats.missed, d.stats.torn, d.stats.bl_csum_mismatch }), fg);
     say(0, 10, fmt(&buf, "POLL{d}.{d}/{d}.{d}MS MT{d}", .{
         poll_us / 1000, poll_us / 100 % 10, poll_max_us / 1000, poll_max_us / 100 % 10, d.stats.mid_triplets,
     }), fg);
 
-    var log_buf: [4]tof.LogEntry = undefined;
+    // Recoveries: CPU rescues, histogram stalls resynced, config page
+    // reloads, and the ranging period in use (longer with histograms).
+    say(0, 11, fmt(&buf, "RS{d} ST{d} CR{d} P{d}MS", .{ d.stats.rescues, d.stats.stalls, d.stats.cfg_retries, d.period_ms }), fg);
+    var log_buf: [3]tof.LogEntry = undefined;
     for (d.recent_log(&log_buf), 0..) |l, i| {
         const ms = l.time_us / 1000 % 100_000;
-        say(0, 11 + @as(i32, @intCast(i)), fmt(&buf, "{d:0>5} {s: <9} {X:0>4}", .{ ms, trim(l.step.name(), 9), l.status }), if (l.status & 0x8000 != 0) bad else dim);
+        say(0, 12 + @as(i32, @intCast(i)), fmt(&buf, "{d:0>5} {s: <9} {X:0>4}", .{ ms, trim(l.step.name(), 9), l.status }), if (l.status & 0x8000 != 0) bad else dim);
     }
     say(0, 15, "A:SPEED B:RELOAD", dim);
 }
