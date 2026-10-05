@@ -1,11 +1,11 @@
 //! The fork firmware's cart serial port (the "SYCL Badge Cart Serial" USB
-//! port, `/home/exedev/sycl-badge-fork` branch `feature/cart-serial`,
-//! `fork/CART_SERIAL.md` section "Cart ABI (for other SDKs)"), spoken
-//! directly: our carts build against the pinned SDK, which has no
-//! `cart.serial`. docs/LOCKSTEP_N.md; the lobby protocol on top is
-//! lib/party.zig.
+//! port, `/home/exedev/sycl-badge-fork` main 8ca6da6, `fork/CART_SERIAL.md`
+//! section "Cart ABI (for other SDKs)", `src/os/cart/os_abi.zig`, served by
+//! `src/os/system/cart_serial.zig`), spoken directly: our carts build
+//! against the pinned SDK, which has no `cart.serial`. docs/LOCKSTEP_N.md;
+//! the lobby protocol on top is lib/party.zig.
 //!
-//! The ABI (frozen by the OS session, 2026-10-05):
+//! The ABI (shipped in the fork's main 8ca6da6, 2026-10-05):
 //! - `ipc_data.os_flags` (u16 at 0x200350EA) bit 1 = cart serial supported.
 //!   Stock firmware leaves it 0.
 //! - `ipc_data.cart_serial` (u32 at 0x200350F4) = the address of a
@@ -18,6 +18,17 @@
 //! - rx (host -> cart) is lossless: when it is full the OS stops taking USB
 //!   data and the host blocks. tx bytes are discarded while no host program
 //!   has the port open (status bit 0 clear).
+//! - What the OS checks on every pass (`validate`), ignoring a struct that
+//!   fails: the struct address 4-byte aligned; the magic; each capacity a
+//!   power of two >= 64; the 40-byte struct and both rings entirely inside
+//!   cart RAM (0x20035100-0x20080000); neither ring overlapping the struct
+//!   or the other ring. `Storage` meets all of it by construction (comptime
+//!   asserts below) and `Badge.open` checks the RAM range at run time.
+//! - The struct and the rings must stay where they are: right after the
+//!   cart stores 0 the OS may still finish the pass it is in, writing
+//!   `rx_write`, `tx_read`, `status` and rx bytes. So `Badge` keeps them in
+//!   static memory, and opening again after `close` never rewrites the
+//!   OS's indices (only the very first open fills the struct).
 //!
 //! `Badge(.{})` is the port carts use (static rings, 4 KiB in and 1 KiB
 //! out by default; on a host build every call is a no-op and `supported`
@@ -41,6 +52,18 @@ pub const cart_serial_address: usize = 0x200350F4;
 /// `status` bits, written by the OS only.
 pub const status_host_open: u32 = 1 << 0;
 pub const status_attached: u32 = 1 << 1;
+
+/// Cart RAM as the OS validates it (`ipc_data` + 0x15100 up to the end of
+/// process RAM; the pinned SDK's cart_ram.ld links .data/.bss there).
+pub const cart_ram_start: u32 = 0x20035100;
+pub const cart_ram_end: u32 = 0x20080000;
+/// The OS's smallest ring.
+pub const min_capacity: u32 = 64;
+
+/// `[addr, addr + len)` lies inside cart RAM.
+pub fn in_cart_ram(addr: usize, len: usize) bool {
+    return addr >= cart_ram_start and addr <= cart_ram_end and len <= cart_ram_end - addr;
+}
 
 /// The OS's `CartSerialRings` (os_abi.zig), 40 bytes, little-endian. The
 /// buffer addresses are u32 here (the badge's pointers), so the host tests
@@ -82,7 +105,7 @@ pub const Options = struct {
 };
 
 fn valid_size(n: u32) bool {
-    return n >= 64 and n & (n - 1) == 0;
+    return n >= min_capacity and n & (n - 1) == 0;
 }
 
 inline fn dmb() void {
@@ -101,11 +124,21 @@ pub fn Storage(comptime rx_size: u32, comptime tx_size: u32) type {
         rx: [rx_size]u8,
         tx: [tx_size]u8,
 
+        comptime {
+            // The OS's checks: a 4-byte aligned struct, the rings after it
+            // and after each other, never overlapping.
+            std.debug.assert(@alignOf(Self) >= 4);
+            std.debug.assert(@offsetOf(Self, "rx") == @sizeOf(CartSerialRings));
+            std.debug.assert(@offsetOf(Self, "tx") == @offsetOf(Self, "rx") + rx_size);
+            std.debug.assert(@sizeOf(Self) <= cart_ram_end - cart_ram_start);
+        }
+
         fn h(s: *Self) *volatile CartSerialRings {
             return &s.hdr;
         }
 
-        /// Fill the header with zeroed indices (before publishing it).
+        /// Fill the header with zeroed indices (before publishing it the
+        /// first time: the OS has never seen it, so no pass can race this).
         pub fn reset(s: *Self) void {
             s.h().* = .{
                 .rx_buf = @truncate(@intFromPtr(&s.rx)),
@@ -113,6 +146,14 @@ pub fn Storage(comptime rx_size: u32, comptime tx_size: u32) type {
                 .tx_buf = @truncate(@intFromPtr(&s.tx)),
                 .tx_cap = tx_size,
             };
+        }
+
+        /// Opening again after a close: the OS may still be finishing a
+        /// pass over this struct, so its indices (`rx_write`, `tx_read`)
+        /// are left alone; unread input is skipped from the cart's side.
+        pub fn reopen(s: *Self) void {
+            const r = s.h();
+            r.rx_read = r.rx_write;
         }
 
         // ---- the cart side ----
@@ -201,6 +242,9 @@ pub fn Badge(comptime opts: Options) type {
         const Self = @This();
         const S = Storage(opts.rx_size, opts.tx_size);
         var store: S = undefined;
+        /// The struct was filled and published once (static: zeroed with
+        /// .bss at cart start).
+        var filled: bool = false;
 
         fn os_flags() *volatile u16 {
             return @ptrFromInt(os_flags_address);
@@ -218,19 +262,24 @@ pub fn Badge(comptime opts: Options) type {
             return os_flags().* & os_flag_supported != 0;
         }
 
-        /// Publish the rings (zeroed indices). False without firmware
-        /// support. Opening an open port does nothing.
+        /// Publish the rings (zeroed indices the first time). False without
+        /// firmware support, or if the linker put the rings outside cart
+        /// RAM (the OS would ignore them). Opening an open port does nothing.
         pub fn open(self: *Self) bool {
             if (!self.supported()) return false;
             if (slot().* == mine()) return true;
-            store.reset();
+            if (!in_cart_ram(@intFromPtr(&store), @sizeOf(S))) return false;
+            if (filled) store.reopen() else store.reset();
+            filled = true;
+            // The struct before its address.
             dmb();
             slot().* = mine();
             return true;
         }
 
-        /// Unpublish (queued bytes both ways are dropped). The OS also
-        /// detaches at cart exit.
+        /// Unpublish (unread input is skipped at the next `open`). The OS
+        /// also detaches at cart exit. The rings stay static: the OS may
+        /// finish its current pass over them after this store.
         pub fn close(_: *Self) void {
             if (comptime !is_badge) return;
             slot().* = 0;
@@ -347,6 +396,36 @@ pub fn Virtual(comptime opts: Options) type {
 test "CartSerialRings layout" {
     try std.testing.expectEqual(@as(usize, 40), @sizeOf(CartSerialRings));
     try std.testing.expectEqual(@as(usize, 0), @sizeOf(Badge(.{})));
+    // The OS reads the struct as ten u32 words in this order
+    // (sycl-badge-fork src/os/system/cart_serial.zig `Word`).
+    const names = [_][]const u8{ "magic", "rx_buf", "rx_cap", "rx_write", "rx_read", "tx_buf", "tx_cap", "tx_write", "tx_read", "status" };
+    inline for (names, 0..) |n, i| try std.testing.expectEqual(4 * i, @offsetOf(CartSerialRings, n));
+    try std.testing.expectEqual(@as(u32, 0x53455231), magic);
+    try std.testing.expectEqual(@as(usize, 0x200350F4), cart_serial_address);
+    try std.testing.expectEqual(@as(usize, 0x200350EA), os_flags_address);
+    const S = Storage(4096, 1024);
+    try std.testing.expectEqual(@as(usize, 40 + 4096 + 1024), @sizeOf(S));
+    try std.testing.expect(@alignOf(S) >= 4);
+}
+
+test "cart RAM range as the OS checks it" {
+    try std.testing.expect(in_cart_ram(0x20035100, 40));
+    try std.testing.expect(in_cart_ram(0x20080000 - 64, 64));
+    try std.testing.expect(!in_cart_ram(0x20080000 - 63, 64));
+    try std.testing.expect(!in_cart_ram(0x200350F0, 40)); // the IPC block
+    try std.testing.expect(!in_cart_ram(0x20080000, 1));
+}
+
+test "reopen keeps the OS's indices, skips unread input" {
+    var s: Storage(64, 64) = undefined;
+    s.reset();
+    _ = s.os_put("abc");
+    s.hdr.tx_read = 5;
+    s.hdr.tx_write = 5;
+    s.reopen();
+    try std.testing.expectEqual(@as(u32, 3), s.hdr.rx_write);
+    try std.testing.expectEqual(@as(u32, 0), s.available());
+    try std.testing.expectEqual(@as(u32, 5), s.hdr.tx_read);
 }
 
 test "free-running indices wrap at 2^32, not at the capacity" {
