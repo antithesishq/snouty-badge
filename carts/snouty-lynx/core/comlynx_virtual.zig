@@ -73,6 +73,11 @@ pub const Config = struct {
     slice: u32 = 1600,
     batch: Batch = .frame,
     seed: u64 = 0x5EED_C0DE,
+    /// Deliveries are handed to a console this far ahead of their time
+    /// (they wait on its wire), so a console that ran past the slice end
+    /// (an instruction, or a whole sprite run: up to ~4 ms) still gets
+    /// them on time. 4 ms.
+    lookahead: u64 = 4 * 16_000,
     /// Where a console hears its own frames: null = the mode's own
     /// (`.wire` local, `.relay` and `.timestamped` through the bus);
     /// `.local` in the other modes = the sender's UART echoes at once and
@@ -274,7 +279,7 @@ pub const VirtualBus = struct {
             }
         }
         if (b.cfg.mode == .relay) b.relay(t, frame_end);
-        const horizon = t + b.cfg.slice;
+        const horizon = t + b.cfg.slice + b.cfg.lookahead;
         for (0..b.n) |i| {
             const q = &b.queues[i];
             while (q.len > 0 and q.at(0).due < horizon) {

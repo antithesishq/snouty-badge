@@ -128,7 +128,7 @@ pub const WireFrame = struct {
 /// `wire` what is due on this console's wire (the bus delivers a frame
 /// shortly before it is due, not a whole latency ahead).
 pub const out_cap = 128;
-pub const wire_cap = 64;
+pub const wire_cap = 96;
 
 pub const Echo = enum(u8) { local, bus };
 
