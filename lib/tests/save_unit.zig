@@ -101,62 +101,73 @@ test "save: rate limit refills one token per 10 s" {
     }
 }
 
-test "save: space accounting is copy-on-write" {
+test "save: space accounting keeps a 16-block reserve" {
     fake.reset();
     fake.setRateLimit(false);
     var blob: [save.max_blob]u8 = @splat(0xA5);
     const s0 = try save.stat();
-    try std.testing.expectEqual(@as(u32, 62 * 4096), s0.free_bytes);
-    try std.testing.expectEqual(@as(u32, 64 * 4096), s0.region_bytes);
+    try std.testing.expectEqual(@as(u32, 46 * 4096), s0.free_bytes);
+    try std.testing.expectEqual(@as(u32, 62 * 4096), s0.region_bytes);
+    try std.testing.expectEqual(@as(u32, 46), s0.max_entries);
     try std.testing.expectEqual(@as(u32, 1), s0.version);
-    // 3 x 16 blocks = 48 of 62; 14 left.
+    // 2 x 16 blocks: 30 of 62 free, 14 of them usable by a new key.
     try save.write("b0", &blob);
     try save.write("b1", &blob);
-    try save.write("b2", &blob);
     try std.testing.expectEqual(@as(u32, 14 * 4096), (try save.stat()).free_bytes);
-    // Rewriting a 16-block blob needs 16 free blocks while the old copy exists.
+    // A new key of 15 blocks would leave 15 < 16 free; 14 fits exactly.
+    try std.testing.expectError(error.NoSpace, save.write("b2", blob[0 .. 15 * 4096]));
+    try save.write("b2", blob[0 .. 14 * 4096]);
+    try std.testing.expectEqual(@as(u32, 0), (try save.stat()).free_bytes);
+    // At the reserve, a changed same-size overwrite still works (its new
+    // copy goes into the reserve, the old copy's blocks come back).
     blob[0] = 1;
-    try std.testing.expectError(error.NoSpace, save.write("b0", &blob));
-    // 14 blocks fit, and the old 16 come back afterwards.
-    try save.write("b0", blob[0 .. 14 * 4096]);
-    try std.testing.expectEqual(@as(u32, 16 * 4096), (try save.stat()).free_bytes);
+    try save.write("b0", &blob);
+    try std.testing.expectEqual(@as(u32, 0), (try save.stat()).free_bytes);
+    // Growing at the reserve does not; shrinking does and frees blocks.
+    try std.testing.expectError(error.NoSpace, save.write("b2", blob[0 .. 15 * 4096]));
+    try save.write("b2", blob[0..10]);
+    try std.testing.expectEqual(@as(u32, 13 * 4096), (try save.stat()).free_bytes);
     var out: [save.max_blob]u8 = undefined;
-    try std.testing.expectEqual(@as(usize, 14 * 4096), try save.read("b0", &out));
+    try std.testing.expectEqual(@as(usize, save.max_blob), try save.read("b0", &out));
     try std.testing.expectEqual(@as(u8, 1), out[0]);
-    try std.testing.expectEqual(@as(u8, 0xA5), out[14 * 4096 - 1]);
+    try std.testing.expectEqual(@as(u8, 0xA5), out[save.max_blob - 1]);
     try std.testing.expectEqual(@as(usize, save.max_blob), try save.read("b1", &out));
     try std.testing.expect(std.mem.allEqual(u8, &out, 0xA5));
+    try std.testing.expectEqual(@as(usize, 10), try save.read("b2", &out));
 }
 
-test "save: 62 one-block keys fill the store (the 63-key limit is unreachable)" {
+test "save: at most 46 keys, overwrites still work there" {
     fake.reset();
     fake.setRateLimit(false);
     var key: [8]u8 = undefined;
-    for (0..63) |i| {
+    for (0..46) |i| {
         const k = std.fmt.bufPrint(&key, "k/{d}", .{i}) catch unreachable;
-        save.write(k, "x") catch |e| {
-            // 62 data blocks: the 63rd one-block key has no block left.
-            try std.testing.expectEqual(@as(usize, 62), i);
-            try std.testing.expectEqual(error.NoSpace, e);
-            break;
-        };
+        try save.write(k, "x");
     }
-    try std.testing.expectEqual(@as(u32, 62), (try save.stat()).entries);
-    try std.testing.expectEqual(@as(u32, 0), (try save.stat()).free_bytes);
+    const st = try save.stat();
+    try std.testing.expectEqual(@as(u32, 46), st.entries);
+    try std.testing.expectEqual(@as(u32, 0), st.free_bytes);
     try std.testing.expectError(error.NoSpace, save.write("k/new", "y"));
+    try save.write("k/0", "changed");
+    var b: [8]u8 = undefined;
+    try std.testing.expectEqual(@as(usize, 7), try save.read("k/0", &b));
+    try save.delete("k/1");
+    try save.write("k/new", "y");
 }
 
-test "save: list" {
+test "save: list returns the rows written" {
     fake.reset();
     try save.write("boy/TETRIS/1234", "abc");
     try save.write("paperclips/game", "defg");
     var rows: [1]save.ListEntry = undefined;
-    try std.testing.expectEqual(@as(usize, 2), try save.list(&rows));
+    try std.testing.expectEqual(@as(usize, 1), try save.list(&rows));
     try std.testing.expectEqualStrings("boy/TETRIS/1234", rows[0].name());
     try std.testing.expectEqual(@as(u32, 3), rows[0].size);
     var all: [4]save.ListEntry = undefined;
     try std.testing.expectEqual(@as(usize, 2), try save.list(&all));
     try std.testing.expectEqualStrings("paperclips/game", all[1].name());
+    try std.testing.expectEqual(@as(usize, 0), try save.list(all[0..0]));
+    try std.testing.expectEqual(@as(u32, 2), (try save.stat()).entries);
 }
 
 test "save: exit hook" {

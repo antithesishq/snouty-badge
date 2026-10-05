@@ -162,10 +162,15 @@ is the ABI v1 spec; `lib/save.zig` is the cart side, root
   blob 1..64 KB) and answers `probe` (version 1), `read`, `write`,
   `delete`, `stat`, `list` and `exit_watch` with the plan's status codes.
 - `MemoryStore` / `FileStore` (`--saves`) hold the blobs with the store's
-  rules: 62 data blocks of 4 KB, 63 keys, a write needs ceil(len/4096)
-  free blocks while the old copy still exists (copy-on-write), a write of
+  rules, matching the OS's `save_store.zig` (check order, stat, list): 62
+  data blocks of 4 KB of which every commit leaves 16 free (a new key or a
+  growing overwrite that would leave fewer gets `no_space`; 46 blocks =
+  184 KB and 46 keys usable), a write needs ceil(len/4096) free blocks
+  while the old copy still exists (copy-on-write), a write of
   the bytes already stored is `ok` and touches nothing, commits take a
-  token from a bucket of 8 refilled one per 10 s of wall time. The store
+  token from a bucket of 8 refilled one per 10 s of wall time (refusals
+  take none). `stat` reports `region_bytes` = 62 x 4 KB and `free_bytes` =
+  what a new key could take; `list` answers the rows it wrote. The store
   is behind a small `Store` interface so the OS's own store logic can
   replace it.
 - Flash time: a commit charges the cart (ceil(len/4096) + 1) x 55 ms for
