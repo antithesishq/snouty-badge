@@ -25,7 +25,7 @@ const link = @import("link");
 pub const linkplay = @import("linkplay");
 const link_lobby = @import("link_lobby.zig");
 
-// ---- Link cable play (docs/MULTIPLAYER.md section 8) ----
+// ---- Link cable play (docs/LINK_PLAY.md) ----
 
 /// The two-player session over the link cable: lib/lockstep.zig with the
 /// console as its World (frontend/linkplay.zig). A static, started in

@@ -1,4 +1,4 @@
-//! Two-player link play (docs/MULTIPLAYER.md section 8): two badges, each
+//! Two-player link play (docs/LINK_PLAY.md): two badges, each
 //! a real console (the full core) and a `linkplay.Session` over a
 //! lib/link_virtual.zig cable, on a shared microsecond clock with their own
 //! 30 Hz updates (one a little slower, an occasional doubled update). The

@@ -39,7 +39,7 @@ pub const ff_max_frames = 8;
 /// Fast forward never steps fewer than the 1x pair.
 pub const ff_budget_us = 28_000;
 
-/// A link race (docs/MULTIPLAYER.md section 8): the update pumps the link
+/// A link race (docs/LINK_PLAY.md): the update pumps the link
 /// until this long after it began (the vsync wait between updates would
 /// otherwise leave the receive FIFO unread), and waits for the partner's
 /// pad only while the tick (its last cost) still ends before it.

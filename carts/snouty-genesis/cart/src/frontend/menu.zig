@@ -73,7 +73,7 @@ pub const Result = enum {
     resume_game,
     /// Close, suppress held buttons, `picker.reset()`, enter the picker.
     pick_rom,
-    /// Close and show the link screen (docs/MULTIPLAYER.md section 8).
+    /// Close and show the link screen (docs/LINK_PLAY.md).
     link,
     /// Leave the running link race; the game goes on locally.
     leave_link,

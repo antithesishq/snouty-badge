@@ -455,7 +455,7 @@ fn build_cart_modules(b: *Build, cart: *Build.Module, cart_api: *Build.Module, s
             .{ .name = "core", .module = core },
         },
     });
-    // Two-player link play (docs/MULTIPLAYER.md section 8): the link
+    // Two-player link play (docs/LINK_PLAY.md): the link
     // cable, the lockstep and the session over them (cart-api-free, so
     // the host tests share it).
     const lockstep = b.createModule(.{ .root_source_file = b.path("lib/lockstep.zig"), .optimize = modes.cold });

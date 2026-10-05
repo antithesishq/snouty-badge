@@ -1,4 +1,4 @@
-//! Two-player link cable play (docs/MULTIPLAYER.md section 8): two badges
+//! Two-player link cable play (docs/LINK_PLAY.md): two badges
 //! joined by the link cable (root docs/LINK.md) run one Genesis in
 //! deterministic lockstep over lib/lockstep.zig (root docs/LOCKSTEP.md).
 //! Only the pads cross the cable: one byte per badge per tick. The host

@@ -122,6 +122,12 @@ is late; a menu item remaps the three (for example A on
 badge A, C on the tap) per ROM. Section 18 item 5. Start+Select and the
 joystick click are OS-owned as always. The 6-button pad is out of scope.
 
+Two players (2026-10-05, docs/LINK_PLAY.md): the menu's second row,
+Link: 2 players, joins two badges on the link cable; each badge's pad
+(after its own Buttons layout) is pad 1 on the host and pad 2 on the
+guest. In a race fast forward and the chorded rewind are off and the menu
+leaves the game running.
+
 ## 6. Screen mapping
 
 - **H40 (320 wide)**: badge column `x` shows Genesis column `2x`. Only

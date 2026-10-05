@@ -38,7 +38,10 @@ ownership and interface contract.
   XIP cart: `Md.tone()` -> `tone2` on change; the wasm build drives the
   simulator's `tone` import itself, see the file), debug
   (overlay), text (fast font), romsrc (drive or embedded ROM, the report
-  line), picker, help (the no-ROM screen).
+  line), picker, help (the no-ROM screen), linkplay (module `linkplay`:
+  two-player link cable play, the `G` of `lib/lockstep.zig` over the
+  console, cart-api-free) and link_lobby (the link screen);
+  docs/LINK_PLAY.md.
 - `tests/` — host tests, entry `tests/all.zig`. `tests/roms/` is
   gitignored; Track R's `tools/fetch_test_roms.sh` fills it.
 - `roms/` — Track R's shipped test ROM `snouty-test.bin` and its licence.
@@ -47,12 +50,16 @@ ownership and interface contract.
   Shared tools (`preview.mjs`, `serve-cart.mjs`, `make_gif.py`,
   `make_romfs.py`) are in `../../tools/`.
 - `../../lib/romfs.zig` — the FAT12 drive reader, imported as `romfs`.
+- `core/ports.zig` (what is plugged into the pad ports: one pad, two,
+  Team Player, 4 Way Play, J-Cart; `Md.step_frame_pads`, `Md.state_hash`,
+  lockstep mode, the poll hook) came byte-identical from branch `party`
+  (its docs/MULTIPLAYER.md); keep it identical until party merges.
 
 ## Target hardware (SYCL Badge V2)
 
 - RP2354B Cortex-M33 at 150 MHz, Core 1 runs the cart. Two carts (M5): the
   **RAM cart** `snouty-genesis` (no Z80, no scrubber; code, data and state
-  in the 307 KB RAM window, 32 KB of it stack) and the **XIP cart**
+  in the 307 KB RAM window, 20 KB of it stack) and the **XIP cart**
   `snouty-genesis-xip`, everything: code and read-only data (the
   embedded ROM too in an embed build) in the 256 KB cart flash window,
   `.data`/`.bss` in the RAM window. Both read the drive ROM by pointer from the XIP flash window
@@ -66,6 +73,9 @@ ownership and interface contract.
   500 ms = emulator menu (M2); Select tap then hold = fast forward (root
   docs/FAST_FORWARD.md, `tuning.ff_*`), then Left = chorded rewind (scrubber
   builds only: `input.chord_rewind`). Neopixels are never written (root docs/NEOPIXELS.md).
+  The menu's second row, Link: 2 players, opens the link screen
+  (docs/LINK_PLAY.md); in a race fast forward, the chorded rewind and the
+  scrubber are off.
 
 ## Building
 
@@ -88,7 +98,11 @@ only (it calls this cart's `build.zig` `pub fn add`).
   ELF's `__bss_end__` under `__stack_limit__` (`arm-none-eabi-nm`): 4 KB to
   spare until the sound took most of it (PLAN.md "Sound on the new
   firmware"; the update's sample buffer lives on the stack in
-  `run_update`).
+  `run_update`). Since link play the RAM cart links with
+  `cart/cart_ram.ld` (the SDK's script, 20 KB of stack instead of 32 KB;
+  3.4 KB free): the stack peaks at 5.9 KB (`badge-bench/bench.sh ...
+  --stack`); re-measure after adding stack use (docs/LINK_PLAY.md
+  section 4).
 - Module layout: `cart/src/main.zig` (root: exports, wasm shims) imports
   `app` (`cart/src/frontend/app.zig`: the state machine, rooted in
   `frontend/`, so every frontend file but `video.zig` and `drive.zig`

@@ -9,7 +9,7 @@
  * The cart's stack peaks at about 6 KB (badge-bench --stack over Sonic 1
  * with sound, fast forward, the menu, About and the link screen; a link
  * race adds the state hash's 1.7 KB copy, not nested in a frame):
- * docs/MULTIPLAYER.md section 8 and PLAN.md "Link cable play". Nothing on
+ * docs/LINK_PLAY.md and PLAN.md "Link cable play". Nothing on
  * core 1 checks the boundary (the OS sets no stack limit for the cart):
  * the reservation is this file's ASSERT only. Re-measure before raising
  * the cart's stack use.

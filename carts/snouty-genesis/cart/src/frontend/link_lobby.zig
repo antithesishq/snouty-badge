@@ -1,4 +1,4 @@
-//! The link screen (docs/MULTIPLAYER.md section 8): two badges on the link
+//! The link screen (docs/LINK_PLAY.md): two badges on the link
 //! cable agree on a race here. The party lobby's colours, band and wording
 //! (frontend/lobby.zig on branch `party`) where they fit, the cable
 //! screens' shared wording (root docs/LOCKSTEP.md section 6) for the link

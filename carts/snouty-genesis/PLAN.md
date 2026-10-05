@@ -1552,3 +1552,36 @@ during fast forward stays game input and nothing else changes.
 - Sizes: RAM cart `__bss_end__` 0x2007710c -> 0x20077130 (3,792 B left).
 - Deviations: chord-less RAM cart (above). `docs/ff_2026-10-04.png` gains
   a third row (the chord: `>>4x`, entry, after four steps, resumed).
+
+## Link cable play (2026-10-05)
+
+Adrian: two-player link cable multiplayer for Genesis on main (Lynx in
+parallel by another session). Branch `genesis/link` (worktree
+`/home/exedev/snouty-badge-genesis-link`), coordinated by exedev-64
+[5dbf8e], reviewed and merged by exedev-64 [01b6e6] (the party Genesis
+author). Design, numbers and the hardware check: docs/LINK_PLAY.md.
+
+- Core from branch `party` (byte-identical): `core/ports.zig`,
+  `ports_table.zig`, `Md.step_frame_pads`, `Md.state_hash`, lockstep
+  mode, the poll hook, the out-of-line I/O paths, their tests.
+- `frontend/linkplay.zig` (the lockstep `G`: World = the console, tick =
+  update = two Genesis frames, delay 2, 6-byte rules: ROM CRC32,
+  peripheral, build variant; wire byte with Up/Down on bits 6/7; app id
+  'M', version 1), `frontend/link_lobby.zig` (the link screen), app.zig
+  glue (poll hook pump, wait budget, tail pump to 31 ms, race start and
+  end), menu row Link: 2 players / Link: leave.
+- RAM: `rom.parse_header` no longer unrolls (-1.7 KB of code); the RAM cart links
+  with `cart/cart_ram.ld` (20 KB stack, `badge-bench --stack` peak
+  5,860 B). `__bss_end__` 3,408 B under `__stack_limit__` (main: 3,776 B
+  with 32 KB of stack; party core alone: 1,256 B). `.text` 114,444 ->
+  125,196, `.bss` 154,184 -> 155,184, UF2 542,208 -> 567,296.
+- Tests: `tests/link_play.zig` on both cores (clean cable, 1% loss, cable
+  out, Leave + rematch, desync, wrong ROM, other build, guest backing
+  out, wrong cart); genesis 247 tests (2 skipped), lib 113.
+- badge-bench, solo play unchanged: test ROM 8.75/24.28 -> 8.74/24.03,
+  Miniplanets 15.11/23.43 -> 15.04/23.66, Sonic 1 with sound
+  19.68/32.58 -> 19.59/32.39 (mean/max busy ms). A race adds the state
+  hash, 0.93 ms once a second.
+- Open: the two-badge hardware check (docs/LINK_PLAY.md section 8);
+  no two-player ROM verified (none on the VM; Mega Bomberman is 1 MB and
+  does not fit the RAM cart's drive).

@@ -22,6 +22,10 @@ the 68000) has its music without the Z80's DAC drums, and Z80-driven
 games such as Miniplanets stay silent. Sound is off at boot; the menu's
 Sound row turns it on. PLAN.md "Sound on the new firmware".
 
+Two players (2026-10-05): two badges joined by the link cable run one
+game in lockstep, host on pad 1, guest on pad 2 (menu row Link: 2
+players; docs/LINK_PLAY.md).
+
 Status: M4 (perf) done; history in PLAN.md. M3 added the time scrubber,
 M4 drive ROMs at contiguous speed even when fragmented and Smooth H40 on
 by default. Up to M2: the 68000, VDP, Z80 sound side and the one tone voice run
@@ -42,3 +46,4 @@ scrubbing came in M3 (`docs/m3_scrub.gif`). `docs/m2_splash_menu.gif`, `docs/m2_
 - `docs/RUNNING.md`: build options, tests, preview, bench, the ROM on the drive.
 - `SPEC.md`: design. `PLAN.md`: current milestone contract.
 - `docs/ROM_STREAMING.md`: why a ROM can be read from the drive in place.
+- `docs/LINK_PLAY.md`: two players over the link cable, and its hardware check.
