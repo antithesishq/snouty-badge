@@ -2294,6 +2294,47 @@ of 8 cells of 32x48 (15 colours).
   tracks, preview, bench).
 
 
+## M9 More packs (The Seabed, Cold Storage)
+
+SPEC 16 M9, 19.6 and 19.8. Two content packs on the M7 format
+(`docs/PACKS.md`, format v1, link v2), with no engine change planned:
+each has three tracks and one arena, and is built the way M7 Track B
+built Dead Mall and The Boneyard (`tools/packs/`, `assets/packs/<pack>/`,
+the `.track` sources, a `pack_arena` subclass, `build_pack.py`).
+
+- **Track S: The Seabed** (Opus agent, worktree
+  /home/exedev/snouty-badge-gc-seabed, branch gc/seabed off 20772c22). It owns:
+  - `tools/packs/seabed.py` and `tools/packs/src/seabed/`;
+  - `assets/packs/seabed/` (`SEABED.GCP`) and `docs/packs/seabed/`;
+  - `cart/src/seabed_test.zig`.
+  - Tracks: Shipbreaker Shoals, Whalefall, Cable Trench. Arena: The Drain.
+- **Track C: Cold Storage** (Opus agent, worktree
+  /home/exedev/snouty-badge-gc-cold, branch gc/cold off 20772c22). It owns:
+  - `tools/packs/cold_storage.py` and `tools/packs/src/cold_storage/`;
+  - `assets/packs/cold_storage/` (`COLDSTOR.GCP`) and `docs/packs/cold_storage/`;
+  - `cart/src/cold_storage_test.zig`.
+  - Tracks: Intake Shelf, Calving Front, Erebus Grid. Arena: The Moon Pool.
+- **Shared one-liners** (each track adds its own line; the lead merges):
+  - `PACK_NAMES` in `tools/packs/make_packs.py`;
+  - the test import in `host_tests.zig`;
+  - the copy in `cart/src/gen/packs/`;
+  - check.sh's content-pack drive image and its previews and benches, if those
+    list packs by name.
+  - Shared helpers (`common.py`, `pack_arena.py`) are read-only to both. A
+    helper either track needs goes in its own module.
+- **Gate (each track, then the lead after merging both):**
+  - the pack builds byte-identically and `tools/check.sh` passes;
+  - the autopilot runs 3 laps on every track on three chassis with no fall;
+  - 6 AI crews finish every track;
+  - the arena's navigation field reaches every pad;
+  - 6 arena rounds end by lives with AI-on-AI eliminations;
+  - the drive keeps room for all four packs (each pack is under 96 KB, the
+    picker lists 6);
+  - contact sheets reviewed by the lead.
+- Deferred questions: The Seabed from L150, Cold Storage from L170.
+
+### M9 status
+
 ## Deferred questions
 
 SPEC 17 holds the design defaults. Taken during M0 (Track A):
