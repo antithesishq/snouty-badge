@@ -303,7 +303,7 @@ noinline fn io_read(md: *const Md, r: u4) u8 {
     };
 }
 
-fn io_write(md: *Md, r: u4, v: u8) void {
+noinline fn io_write(md: *Md, r: u4, v: u8) void {
     switch (r) {
         1, 2, 3 => md.io.data[r - 1] = v,
         4, 5, 6 => md.io.ctrl[r - 4] = v,

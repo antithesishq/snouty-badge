@@ -85,9 +85,12 @@ only (it calls this cart's `build.zig` `pub fn add`).
 - `zig build -Dcart=snouty-genesis` (`-Dcart-mode=ram`, the default, or
   `both`) → `zig-out/firmware/snouty-genesis.uf2`/`.elf` (RAM cart) and
   `snouty-genesis-xip.uf2`/`.elf` (XIP cart), `zig-out/bin/snouty-genesis.wasm`
-  (built from the XIP cart's modules: Z80 and scrubber). `-Dcart-mode=xip`
+  (built from the XIP cart's modules: Z80 and scrubber), plus the party
+  cart `snouty-genesis-party.uf2`/`.elf` (the RAM cart with the lobby and
+  LockstepN instead of the sound, docs/MULTIPLAYER.md section 5) and its
+  wasm. `-Dcart-mode=xip`
   builds the XIP cart and the wasm only. The variants differ only through
-  `build_options` (`z80`, `scrub`, `synth`, `sound`; the core imports it too:
+  `build_options` (`z80`, `scrub`, `synth`, `party`, `sound`; the core imports it too:
   `tunables.z80_enabled`, `undo.enabled`, `sound.enabled` = the RAM
   cart's FM + PSG synthesis, `tunables.fm_rate_div` its FM rate) and module optimize modes (RAM
   cart: `app`, `drive`, `romfs`, `rom`, `iris`, `hint` and cart-api
@@ -121,6 +124,11 @@ only (it calls this cart's `build.zig` `pub fn add`).
   from anything else (a file's existence, an environment variable) is
   frozen at the first configure and silently reused; M0 lost an hour to a
   placeholder ROM chosen that way. Decide from options only.
+- The party stack (lib/lockstep_n.zig, party.zig, cart_serial.zig,
+  party_virtual.zig) comes in as one generated `party_lib` module of copied
+  files (party.zig is imported by two of them). Party end to end over
+  the real relay: `carts/snouty-genesis/tools/party_e2e.sh` (ports
+  27400-27449, needs pyserial and the fork checkout).
 - `zig build test-genesis -Dcart=snouty-genesis` → this
   cart's host tests only (`snouty-genesis-tests` for the full core,
   `snouty-genesis-ram-tests` for the RAM cart's, `tests/ram_variant.zig`); `zig build test` → every built cart's (plus

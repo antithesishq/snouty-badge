@@ -3,13 +3,16 @@
 Every badge runs the same Genesis console in deterministic lockstep and
 only the pads cross the wire: one byte per player per Genesis frame.
 This file is what the cart side has (peripherals, the per-frame pads, the
-determinism guarantees, the input-source seam) and what it needs from the
-transport (section 6). The N-player lockstep itself is
+determinism guarantees, the input-source seam, the party cart) and what it
+needs from the transport (section 7). The N-player lockstep itself is
 `lib/lockstep_n.zig` (docs/LOCKSTEP_N.md at the root, branch `party`);
 the cable lockstep `lib/lockstep.zig` (2 players) is untouched.
 
-Status 2026-10-05 (branch `genesis/mp4`): peripherals, determinism and the
-local seam built and host-tested; no transport wired yet (section 5).
+Status 2026-10-05 (branch `genesis/mp4`, merged with `party`):
+peripherals, determinism, the seam and the party cart
+`snouty-genesis-party` built; host-tested on the relay model and end to
+end over the real `badge lobby` (section 6). Never run on a badge: the
+party firmware (fork main 8ca6da6) is untested on hardware.
 
 ## 1. What is built
 
@@ -60,13 +63,13 @@ local seam built and host-tested; no transport wired yet (section 5).
   Displaced: Left/Right on the Reset row used to scrub (XIP cart and
   simulator only; the RAM cart has no scrubber). `docs/mp_menu_reset.png`.
 - **Lockstep mode** (`Md.setup.lockstep`) and the **poll hook**
-  (`Md.setup.poll_hook`), section 3 and 6.
+  (`Md.setup.poll_hook`), sections 3 and 7.
 - **`Md.state_hash()`**: 32 bits over the whole console (`Md.Small` plus
   work RAM, VRAM, cartridge SRAM and Z80 RAM) minus what is not state
   (the 68000's fetch-window pointer, the VDP's sprite cache). About 154 KB
   of reads (an estimated 1-1.5 ms on the badge), so for a periodic desync
   check (`check_every` 32 ticks), not every frame.
-- **The input-source seam** (`cart/src/frontend/players.zig`, section 5).
+- **The input-source seam and the party cart** (`cart/src/frontend/players.zig`, `lobby.zig`, `snouty-genesis-party`, section 5).
 
 ## 2. Peripheral table
 
@@ -103,7 +106,7 @@ Bruce Lee Story, Yuu Yuu Hakusho: Makyou Toitsusen, NBA Action '94 and
 FIFA International Soccer (one release), FIFA Soccer 96, NBA Live 96 and
 97, NBA Showdown '94. All of them also play on 3-button pads; Yuu Yuu
 Hakusho (a fighting game) is the one that loses most without X Y Z. A
-6-button player needs two bytes per frame (section 6); the badge has no
+6-button player needs two bytes per frame (section 7); the badge has no
 spare buttons for them anyway.
 
 **What fits on a badge today.** The RAM cart (the show firmware's) plays
@@ -143,8 +146,8 @@ Audit (what could leak, and what was done):
 | Background CRC32, the drive scan | Frontend only, read the ROM, never the console. |
 | Sound (synthesis on/off, fast forward silence) | Reads the chips (`*const Md`); never writes the console. |
 | `not_wait_loop` hint, the sprite cache | Not state: the skip is exact either way, the cache is rebuilt from VRAM. Excluded from the hash. |
-| Wall clock, `cart.rand`, fast forward budget | Frontend only. Fast forward changes how many frames an update steps, never what a frame does; it must be off in a session anyway (section 6). |
-| Build variant | The RAM cart (Z80 stub) and the XIP cart / simulator (Z80) are different machines: every badge of a session must run the same variant (section 6). |
+| Wall clock, `cart.rand`, fast forward budget | Frontend only. Fast forward changes how many frames an update steps, never what a frame does; it must be off in a session anyway (section 7). |
+| Build variant | The RAM cart (Z80 stub) and the XIP cart / simulator (Z80) are different machines: every badge of a session must run the same variant (section 7). |
 
 ## 4. Tests
 
@@ -172,38 +175,110 @@ Team Player plus a pad; 512 KB, the one that fits on the badge drive), a
 NHL '94 (4 Way Play), Micro Machines 2 or Military (J-Cart), and
 Pete Sampras Tennis (J-Cart, not in the table: checks the override).
 
-## 5. The input-source seam
+## 5. The input-source seam and the party session
 
-`cart/src/frontend/players.zig`:
+`cart/src/frontend/players.zig` (module `players`, cart-api-free, so the
+host tests and the e2e harness run it):
 
-- `next_frame(local_pad, &pads) bool`: the pads for the next Genesis frame.
-  Today's only source, `local`, puts the badge's mapped pad on
-  `local_player` (player 1) and releases the rest; it is always ready.
-  app.zig's `run_update` steps every frame of the update with these pads.
-- `pads_from_slots(in: *const [16]u8, present: u16, &pads)`: slot s's byte
-  is pad s; a slot not present is a released pad (not an unplugged one).
-  This is the body of a LockstepN `G.simulate(w, in, present)`.
+- `local_pads(local_pad, &pads)`: the local source; the badge's mapped pad
+  on `local_player` (player 1), the rest released. app.zig's `run_update`
+  steps every frame of the update with these pads.
 - `wire_byte(pad) u8`: the byte a badge sends: the Genesis 3-button pad
   after this badge's own button layout (`U D L R A B C Start` = `core.Pad`
   bits 0-7), so a receiver needs nobody's settings.
-- `networked` (comptime false today): fast forward and the chorded rewind
-  are already gated on it in app.zig; the menu's Reset, Pick ROM and
-  scrubbing must be too when a network source lands.
-- `poll()`: the receive-ring drain, called at the top of every update;
-  `Md.setup.poll_hook` calls into the transport five times inside every
-  frame (lines 0, 64, 128, 192, 256: about every 3.5 ms of a 20-29 ms
-  update). Both are no-ops until a network source exists, and the hook is
-  a null test per 64 lines when not installed.
+- `pads_from_slots(in, present, pad_of, &pads)`: slot s's byte on pad
+  `pad_of[s]`; a slot not present is a released pad (not an unplugged one).
+- `Game`: LockstepN's `G`. World = the console, a "render this tick" flag
+  and `pad_of` (the race's participants are pads 1-n in slot order, so a
+  room with ids 0, 2 and 5 still plays pads 1-3); `simulate` =
+  `pads_from_slots` + `step_frame_pads`; `hash` = `Md.state_hash`;
+  `hand_over` releases nothing in the console (the slot leaves `present`)
+  and records the slot; `rules_len` 5 = ROM CRC32 (4 bytes LE) + the
+  `ports.Kind`; `input_delay` 3 by default, the host's runtime choice
+  1-30 (GO carries it); `stall_drop_ms` 3000 (silence counts from a slot's
+  last frame, so a 29 ms tick never trips it); `min_players` 2;
+  `send_every` 1; `pick_bits` 1 (the pick is unused).
+  `Game.start(w, rules, participants)` resets the console with the
+  agreed peripheral and lockstep on.
+- `Session(Port)`: LockstepN over a port plus what the frontend needs:
+  `lobby(now, start)` (the host offers its ROM's CRC32 and peripheral;
+  everyone readies only when the offered CRC is its own; `start` = the
+  host's GO), `submit(now, byte)`, `step(render)`, `leave(now)`.
+- Game ids (HELLO): `SNGENRM1` for the RAM-window carts (Z80 stub) and
+  `SNGENFL1` for the full core (XIP cart, simulator, host tools): the two
+  are different machines and never share a room. Not yet in
+  docs/LOCKSTEP_N.md section 8's table (that file is the party session's).
 
-A LockstepN adapter (left for when `lib/lockstep_n.zig` is on main):
-`G.World` = the console plus "render this tick" (the last frame of an
-update renders), `simulate` = `pads_from_slots` + `step_frame_pads`,
-`hash` = `state_hash`, `hand_over` = nothing (an absent slot already reads
-released), `rules_len` = 5 (ROM CRC32, 4 bytes, plus the `ports.Kind`),
-`stall_drop_ms` = 3000 (silence counts from a slot's last frame, so a 29
-ms tick never trips it), `input_delay` runtime (GO carries it, 1-30).
+### The party cart (`snouty-genesis-party`)
 
-## 6. Transport requirements (for the USB / party session)
+A third binary next to the RAM and XIP carts (`zig build
+-Dcart=snouty-genesis`, RAM mode; not built by `-Dcart-mode=xip`): the RAM
+cart's modules with `build_options.party`. It links lib/cart_serial.zig's
+`Badge(.{ .rx_size = 2048, .tx_size = 512 })` (static rings at
+`ipc_data.cart_serial` 0x200350F4, pinned SDK) and LockstepN. On stock
+firmware the lobby says NEEDS PARTY FIRMWARE; the game plays as on the
+RAM cart.
+
+RAM: the party stack does not fit beside the RAM cart's sound synthesis
+(the RAM cart has 1 KB left below its stack), so the party cart has no
+sound, 4 KB of cartridge SRAM (RAM cart 8 KB) and a 512 KB drive
+cluster table (RAM cart 768 KB: Genesis ROMs come in 512 KB and 1 MB).
+Its `__bss_end__` leaves 3,144 B below `__stack_limit__`. What the party
+stack costs there (ReleaseSmall): LockstepN 5.8 KB of code and 2.6 KB of
+state, the client 0.5 KB, the port's rings and header 2.6 KB, the
+frontend glue (`net_ticks`, the lobby) about 3 KB.
+
+Flow (Snoutenstein's lobby, carts/snoutenstein/cart/src/party.zig, so
+the two feel alike; `docs/mp_party_lobby.png` is the simulator, which has
+no transport):
+
+- Menu row **Party** (the tenth row, in the scrub line's place: party
+  builds have no scrubber) opens the lobby: PARTY, the game's name, then
+  NEEDS PARTY FIRMWARE / START BADGE LOBBY ON THE LAPTOP / JOINING..., or
+  the room: the ROM check (CHECKING ROM... until the CRC32 is done, ROM:
+  SAME AS HOST, WRONG ROM), PADS (the host's peripheral), DELAY (the
+  host's Left/Right: AUTO = `suggested_delay()`, or 1-30), up to six
+  roster lines (P1 NAME YOU / HOST, a tick when ready), DESYNC or YOU WERE
+  DROPPED after a race that ended so, and the status line: A: READY,
+  READY: HOST STARTS, START: GO!, n READY, NEED 2, WAITING FOR HOST, NEEDS
+  THE HOST'S ROM, MATCH IN PROGRESS. A toggles ready, the host's Start
+  sends GO, B leaves the room and goes back to the game.
+- GO resets every console with the host's peripheral and lockstep on and
+  installs the poll hook; the game runs as the race. Each update submits
+  the badge's mapped pad for two ticks and steps them, pumping up to 14 ms
+  into the update while a peer is late; a rendered tick that did not come
+  shows the last frame again. WAITING FOR PLAYERS after 0.5 s without a
+  tick, P3 LEFT for 2 s when a player is handed over, DESYNC and YOU WERE
+  DROPPED end the race into the lobby.
+- In a race fast forward and the chorded rewind are off; the menu opens
+  but the race goes on under it (a released pad), Reset and Pick ROM hide
+  and the Party row reads **Party: leave** (the game then plays on
+  locally, lockstep off).
+
+## 6. Party tests
+
+- `tests/mp_party.zig` (relay model, lib/party_virtual.zig, 1 ms latency
+  and up to 1.5 ms jitter each way): four badges with the cart's ring
+  sizes join, the host GOes, they play Mega Bomberman through the menus
+  to the 4-human battle (badge 1 drives the menu script, then each badge
+  walks its own bomber out of its corner); badge 3's updates take 60 ms
+  (30 ms per Genesis frame) all along; badge 4 leaves mid-battle; the
+  console pumps the port five times a frame from inside LockstepN's step.
+  Every badge logs the same state hash after every tick to tick 4300, the
+  leaver's pad is released on the same tick everywhere, and the run equals
+  a single console fed every player's pads directly.
+- `tools/party_e2e.sh` (end to end over the fork's real `badge lobby
+  --no-usb --sim`, ports 27400-27449; `zig build party-e2e-genesis
+  -Dcart=snouty-genesis` builds the harness, tools/party_e2e/main.zig,
+  whose simulator side is the root tools/party_e2e's): four badges at 4x,
+  Mega Bomberman to the battle; badge 4 leaves at tick 4100, badge 3 says
+  HELLO again on its link at 4300 (the relay's rejoin: a leave and a fresh
+  join); both pads released on the same tick on every racer, both badges
+  back in the lobby with MATCH IN PROGRESS, every badge the same console
+  hash at every tick to 4500 (402 hash checks), no desync. 6.35 bytes out
+  and 18.25 in per tick per racer. Needs pyserial and the fork checkout.
+
+## 7. Transport requirements (for the USB / party session)
 
 - **Bytes per player per frame**: 1 (`wire_byte`, all 8 bits used, no
   reserved values). One tick = one Genesis frame (60 Hz of game time).
@@ -217,12 +292,13 @@ ms tick never trips it), `input_delay` runtime (GO carries it, 1-30).
   INPUT frame per update) would halve the relay's frame rate at no extra
   delay for us.
 - **Draining**: the relay removes a player whose cart stops reading. The
-  cart drains at the top of every update and five times inside every
-  Genesis frame (`Md.setup.poll_hook`), so the longest gap is about 4 ms
-  of emulation. A receive ring of 2 KiB (about 13 frames of small traffic)
-  or LockstepN's default 4 KiB is plenty at that rate. Keep the
-  `CartSerialRings` struct and both rings static (never on the stack: the
-  OS may finish a pass after the cart stores 0).
+  party cart drains at the top of every update, in the pump loop to 14 ms
+  and five times inside every Genesis frame (`Md.setup.poll_hook`), so
+  the longest gap is about 4 ms of emulation. Its receive ring is 2 KiB
+  (about 13 frames of small traffic, 100 ticks of a 4-badge race), the
+  transmit ring 512 B (a whole lobby frame). The `CartSerialRings` header
+  and both rings are static (`cart_serial.Badge`), 4-byte aligned, power
+  of two sizes, inside cart RAM.
 - **Input delay**: a runtime lobby value (GO carries it), never comptime
   here. How it should feel in Mega Bomberman (estimates from the game's
   grid movement, not measured on a badge): each tick of delay is 16.7 ms on
@@ -233,13 +309,12 @@ ms tick never trips it), `input_delay` runtime (GO carries it, 1-30).
   fun. One laptop needs 3 (docs/LOCKSTEP_N.md section 6); a network lobby
   should start from `suggested_delay()`.
 - **ROM identity in the join**: every badge must run the same ROM bytes,
-  the same build variant and the same peripheral. Carry in the host's
-  rules: the ROM CRC32 (the cart computes it in the background, 8 KB per
-  update: `romsrc.crc_tick`, 2 s for 512 KB, 4 s for 1 MB; a join must
-  wait for it), the
-  `ports.Kind` (one byte; plus `six`/`absent` masks if ever used), and
-  the variant (RAM cart without Z80 vs XIP/simulator with: put it in the
-  game id or `G.version`). A guest whose CRC differs must not ready.
+  the same build variant and the same peripheral. The host's rules carry
+  the ROM CRC32 (the cart computes it in the background, 8 KB per update:
+  `romsrc.crc_tick`, 2 s for 512 KB; the lobby shows CHECKING ROM... and
+  cannot ready until then) and the `ports.Kind`; the variant is in the
+  game id (`SNGENRM1` / `SNGENFL1`). A guest whose CRC differs cannot
+  ready (WRONG ROM).
 - **Start**: all badges reset the console with the agreed `setup.cfg` and
   `setup.lockstep = true` at tick 0 (cartridge SRAM is in RAM and starts
   zeroed, so nothing badge-local survives).
@@ -247,11 +322,14 @@ ms tick never trips it), `input_delay` runtime (GO carries it, 1-30).
   tick on every badge (`present` bit clear): the game keeps their
   character standing still; it does not see a pad unplugged (that would
   confuse games that only detect pads at boot). A rejoin (LEAVE plus a new
-  HELLO) is a new player in the lobby, never mid-game.
+  HELLO) is a leave plus a new player in the lobby, never mid-game
+  (checked end to end).
 - **Disabled while networked**: fast forward, the scrubber and the
   chorded rewind (they would step or rewind one badge alone), the menu's
   Reset and Pick ROM, and pausing the console from the menu (the menu
-  must not stop the badge from consuming ticks; a pause has to be the
-  session's pause bit). Sound may run (it never writes the console).
+  must not stop the badge from consuming ticks; a pause would have to be
+  the session's pause bit, unused: no Genesis button is free for it).
+  The party cart has no sound (RAM, section 5); sound would be safe (it
+  never writes the console).
 - **Desync check**: `state_hash()` reads about 154 KB (estimate: 1-1.5 ms
   on the badge, not benched); every 32 ticks is fine, every tick is not.

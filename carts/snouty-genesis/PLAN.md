@@ -1552,3 +1552,87 @@ during fast forward stays game input and nothing else changes.
 - Sizes: RAM cart `__bss_end__` 0x2007710c -> 0x20077130 (3,792 B left).
 - Deviations: chord-less RAM cart (above). `docs/ff_2026-10-04.png` gains
   a third row (the chord: `>>4x`, entry, after four steps, resumed).
+
+## Multiplayer (2026-10-05)
+
+Branch `genesis/mp4` (worktree `/home/exedev/snouty-badge-genesis-mp4`),
+merged with `origin/party` (the shared N-player libs); not on main: all
+4+ player work stays on the shared `party` branch until the party OS
+change ships. docs/MULTIPLAYER.md has the design, the peripheral table,
+the determinism audit, the tests and the transport requirements.
+
+Built:
+
+- Core: `step_frame_pads` (8 pad words; `step_frame(pad)` = pad 1),
+  `core/ports.zig` (one pad, two pads, Team Player on port 1, 2 or both,
+  EA 4 Way Play, J-Cart; 6-button pads behind a Team Player), the
+  generated header table `core/ports_table.zig` (61 rows from Sega Retro
+  header dumps; Mega Bomberman verified) with a `4`-in-device-field
+  fallback, `Md.setup` (peripheral, lockstep mode, poll hook),
+  `Md.state_hash`. Defaults byte-identical in behaviour: `golden` and
+  `golden-mini` unchanged.
+- Determinism: two differently set up consoles (garbage memory,
+  scattered drive clusters, render pattern, crop / Smooth H40, a poll
+  hook) agree after every frame on four ROMs. Leaks found and fixed: the
+  YM2612's tail padding (Md.reset now zeroes the small structs), the
+  renderer's sticky sprite bits (dropped in lockstep mode).
+- Frontend: the Reset row picks the peripheral (Left/Right; displaced:
+  scrubbing on that row), `players.zig` (the seam and the LockstepN G and
+  Session), the party cart `snouty-genesis-party` with the lobby
+  (`lobby.zig`, Snoutenstein's flow) and lockstep races.
+- Tests: `ports_unit` (15), `mp_determinism` (6, both cores),
+  `mp_bomberman` (both cores), `mp_party` (relay model), and the e2e over
+  the real `badge lobby` (`tools/party_e2e.sh`, ports 27400-27449).
+
+Sizes (`size -A`; RAM window carts' `__stack_limit__` 0x20078000):
+
+| ELF | `.text` | `.bss` | `__bss_end__` | left | UF2 |
+|---|---:|---:|---:|---:|---:|
+| RAM cart, origin/main | 114,432 | 154,184 | 0x20077130 | 3,792 | 542,208 |
+| RAM cart, genesis/mp4 | 117,060 | 154,216 | 0x20077C08 | 1,016 | 547,840 |
+| party cart (new) | 121,544 | 147,184 | 0x200773B8 | 3,144 | 543,232 |
+| XIP cart, origin/main | 217,016 | 170,136 | | | 437,248 |
+| XIP cart, genesis/mp4 | 217,152 | 170,192 | | | 437,760 |
+
+The RAM cart's code grew 2.6 KB: the peripherals cost ~1 KB, the rest is
+LLVM inlining more of the 68000 core into the frame loop once the port
+writes went out of line, which is what brought the speed back (below).
+
+badge-bench (calibrated busy ms, mean / worst, 0 updates over 33.3 ms in
+every run; scripts as in "Sound on the new firmware" and M5):
+
+| Run | origin/main | genesis/mp4 |
+|---|---|---|
+| RAM cart, test ROM (`m2_play`, 156) | 8.75 / 24.28 | 8.76 / 24.29 |
+| RAM cart, Miniplanets (`m2_mini300`, 336) | 15.11 / 23.43 | 15.12 / 23.57 |
+| RAM cart, Sonic 1 (`snd_sonic1`, 900) | 16.64 / 26.85 | 16.69 / 26.92 |
+| XIP cart, test ROM | 9.12 / 26.36 | 9.08 / 26.03 |
+| XIP cart, Miniplanets | 20.67 / 29.02 | 20.54 / 29.00 |
+| party cart (not networked), test ROM | | 8.82 / 24.61 |
+| party cart, Miniplanets | | 15.37 / 24.48 |
+| party cart, Sonic 1 | | 16.94 / 27.50 |
+
+On the way: with the I/O read and write paths inlined into the bus's,
+the RAM cart's Miniplanets ran 15.36 / 24.67 (LLVM inlined less of the
+68000 into the frame loop); `io_read`, `io_write` and the J-Cart write out
+of line restore it. A party race's cost (two ticks, the pumps, a hash
+every 32 ticks) is not benched: badge-bench has no cart serial port.
+
+Open:
+
+- Hardware: nothing ran on a badge (the party firmware is untested on
+  hardware too). Check the RAM cart's Mega-Bomberman-class games once a
+  ROM fits (below), the party cart on the fork firmware with 2-4 badges,
+  the WAITING FOR PLAYERS rate at delay 3, the state hash's cost (1-1.5
+  ms estimated).
+- Drive room: of the table's games only Columns III (512 KB) fits on a
+  badge drive beside a cart UF2; Mega Bomberman and most others are 1-2
+  MB (the RAM cart's cluster table also stops at 768 KB, the party
+  cart's at 512 KB). The external 2 MB flash would change that.
+- The party cart is silent (the RAM window cannot hold the sound and
+  the party stack). Shrinking LockstepN's slots to 8 for this cart (a
+  lib option) or moving the hot core to flash would make room.
+- ROMs to supply for the unverified peripheral paths: MULTIPLAYER.md
+  section 4.
+- `lockstep_n.games` (docs/LOCKSTEP_N.md section 8) lacks SNGENRM1 /
+  SNGENFL1 (the party session owns that file).
