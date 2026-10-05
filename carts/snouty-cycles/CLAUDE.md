@@ -200,6 +200,63 @@ true, .layout = n }`.
   grows the renderer repaints that ring's strip itself, so layout blocks
   already on it turn red too.
 
+### M2 modifiers (track O: `sim.zig`, `layouts.zig`, `render.zig`, `ai.zig`)
+
+The OPTIONS modifiers (SPEC 6) are `Config` fields, all off in a bare
+`Config`. The game sets them: TRAILS SNAKE `snake_len =
+sim.tuning.snake_len` (200; FULL = 0), GAPS `gaps = true`, WRAP `wrap =
+true`, HARDCORE `rubber = 4` (nothing else in sim), SPEED `speed_pct`.
+
+- **WRAP** (`cfg.wrap`): `init` draws no rim and `next_cell` wraps every
+  edge, so turns, the U-turn, grinding and the AI all see a torus. Layouts
+  are the same blocks (none reaches the edge). Sudden death closes the old
+  rim ring first: **`sudden_death_ring` is now a stage**, stage k closes
+  ring `k - 1 + w.sd_first_ring()` (first ring 1, or 0 in WRAP),
+  `w.sd_stages()` is 29 (30 in WRAP), `w.sd_stage_of(x, y)` is a cell's
+  stage, `block` events carry a = the stage; WRAP rounds end by tick 3600
+  (3540 otherwise). The renderer gives an empty edge cell a dim dashed
+  outer line (`colors.edge_dash`, 4 px on, 4 px off) and reads glow
+  neighbours with bounds checks (no glow across the edge).
+- **SNAKE** (`cfg.snake_len` > 0): after a cycle paints its new cell,
+  its trail log keeps the newest `snake_len` entries: one tail pop per
+  step, a `cleared` event when the popped cell is still its trail. The
+  pop comes after the collision check, so a cycle entering that tail
+  cell on the same tick still crashes. A dead cycle fades as before.
+- **GAPS** (`cfg.gaps`): new `Cycle` fields `gap_rng` (xorshift seeded
+  `rng.mix(seed, 0x6A70 + i)` in `init`, advanced once per gap),
+  `gap_in` (painted cells to the next gap, 40..80) and `gap_left` (gap
+  cells still to lay, `tuning.gap_cells` = 3). A gap cell is painted
+  while the head is on it (head collisions still happen) and its log
+  entry carries `sim.log_gap` (bit 15); the step that leaves it clears
+  the cell (a `cleared` event). Popping a gap entry later (SNAKE, fade)
+  clears nothing, unless it is the last entry (the head a dead cycle
+  crashed on), so riding back over your own old gap keeps the new wall.
+  `log_at`/`log_from_tail` return the cell with the bit masked;
+  `w.log_gap_at(i, k)` tells a gap entry (k-th newest).
+- **Events**: SNAKE and GAPS add up to one `cleared` per cycle per step
+  each (8 a tick at most).
+- **AI**: SNAKE and GAPS only change the grid. For WRAP `ai.zig` steps
+  neighbours with `nb(wr, at, k)`, specialised at compile time in the
+  four hot BFS loops (`fill`, `others_field`, `region`, `chamber_space`),
+  so the rim arena runs the M1 code (M1 tournament scores unchanged);
+  head distances, the race hold and T3's 32 x 32 window go the short way
+  round. `ai.wrapping` is set from the World in `decide`, `avoid`,
+  `flood` and `open_neighbours`.
+- `hash()`/`same_state` cover the new Cycle fields (`same_state`
+  compares whole Cycles).
+
+**What a rewind keyframe must hold (Track R)**: the grid (gap clears and
+SNAKE pops change it), each `Cycle` whole (now with `gap_rng`, `gap_in`,
+`gap_left`, and `log_head`/`log_tail`), and the World scalars as before.
+Log entries are written once, gap bit included, and never changed; SNAKE
+pops and fades only advance `log_tail`. So restoring `log_head` and
+`log_tail` brings the trail back exactly, as long as the ring has not
+overwritten the restored tail's entries (`log_head - restored log_tail <=
+log_cap` = 4096 cells; a round is far shorter). Gaps take nothing from
+`World.seed` after `init`. A retraction drawn by popping log heads will
+not bring back tail cells SNAKE cleared or gap cells (empty once left,
+`log_gap_at`); the restore's full repaint shows the true picture.
+
 ## Rendering rules that are easy to break
 
 - **Mark every write.** `.copy_forward` sends only the marked dirty rect
@@ -221,9 +278,9 @@ true, .layout = n }`.
   colour-only change repaints just those lines (the title's blink).
 - **Order per frame**: erase heads, set the banner, apply the World's
   events (once per World tick), draw heads, the HUD if it changed.
-- `cell_colors` reads an empty cell's four neighbours without bounds
-  checks: the rim guarantees them. M2's WRAP (no rim) must change that
-  and `World.next_cell`.
+- `cell_colors` reads an empty cell's four neighbours with bounds checks
+  (WRAP has no rim, so an empty cell can sit on the screen edge), and
+  `bare_floor` never counts an edge cell as bare floor (WRAP's dashes).
 
 ## Target hardware (SYCL Badge V2)
 
