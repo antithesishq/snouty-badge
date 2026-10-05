@@ -75,11 +75,17 @@ both orientations that counts fights and lost bytes.
   0xC0 or 0xDB byte in it. If more than 8 wire bytes arrive between two
   polls, bytes are lost and the CRC drops that packet. So keep packets short
   (n <= 5 is always safe), poll at least once per frame, and poll in a loop
-  while waiting for the partner. A DMA receive ring would lift the limit
-  and is safe on every firmware since March 2026 (the pinned a6ce19f too):
-  the OS aborts cart DMA channels 3-15 when a cart stops, by either exit
-  path (`reset_after_cart`). It is an optional extra, not built yet; the
-  games never depend on it (Adrian: occasional loss is fine).
+  while waiting for the partner.
+- **Optional DMA receive ring.** `link.rp2350.rx_dma = 11` (any cart
+  channel, 3-15) before the link locks, or followed by `restart`, makes
+  a DMA channel copy every received byte into a 256-byte ring, so nothing
+  is lost however long the cart goes between polls. It is safe on every
+  firmware since March 2026 (the pinned a6ce19f too): the OS aborts cart
+  DMA channels 3-15 when a cart stops, by either exit path
+  (`reset_after_cart`); on older firmware the channel would keep writing
+  into the next cart's RAM. Off by default, and no game depends on it
+  (Adrian: occasional loss is fine, no firmware update required). The
+  test cart's Up switches it.
 - **Delivery is best effort.** A dropped packet is gone (`stats`
   counts CRC errors and framing errors). Lockstep games resend or carry
   enough state to recover.
@@ -97,7 +103,7 @@ both orientations that counts fights and lost bytes.
 
 ## 3. Plan
 
-### M0: the link and a test cart (done, hardware check open)
+### M0: the link and a test cart (done, verified on hardware)
 
 - `lib/link.zig`, `lib/link_rp2350.zig`, `lib/link_virtual.zig`,
   `lib/tests/link_unit.zig` (in `zig build test`).
@@ -105,6 +111,10 @@ both orientations that counts fights and lost bytes.
   cable orientation, partner app/version/session, round trip, received
   and lost packets, CRC and framing errors, and both badges' buttons.
 - badge-bench fakes the link registers with no cable plugged in.
+- Added after M1: Up switches the receiver between the PIO FIFO and the
+  DMA ring (`F`/`D` on the MODE line, `FIFO`/`DMA` on the CABLE line).
+  **Hardware check:** connected, LOST should stop rising with DMA on both
+  badges; it rises now and then with FIFO.
 
 Status 2026-10-04: host tests pass for both cable kinds over 200 seeds
 each, at 1 ms and at frame-rate polling (worst connect 0.08 s crossed,
@@ -137,7 +147,7 @@ CONNECTED, the cable kind, RTT around 100-300 us, RX climbing about 60 a
 second, LOST and CRC at 0, and each badge lighting the other's buttons.
 If it stays SEARCHING, note PIN1/PIN3 on both screens and the cable kind.
 
-### M1: Game Boy link cable in Snouty Boy (done, hardware check open)
+### M1: Game Boy link cable in Snouty Boy (done, verified on hardware)
 
 - `carts/snouty-boy/core/serial.zig`: byte-level cable. The master's
   internal-clock transfer sends a request (SB, sequence number) and keeps
@@ -170,6 +180,9 @@ drive, UART headers joined. "Link cable connected" shows on both; on each,
 Start, Right to 2PLAYER, then Start on one badge first (it becomes the
 master) and on the other; both reach MARIO VS. LUIGI and play the same
 pieces. Pulling the cable shows "Link cable unplugged".
+
+**Hardware, 2026-10-05 (show day).** Adrian played a full 2-player Tetris
+game between two badges over the probe kit's JST-SH cable: works.
 
 ### M2: two-player Snouty Zero, M3: Snoutenstein deathmatch
 

@@ -1,0 +1,7 @@
+# PRINT lines (and outcomes) of reference/oregon.bas that no game can reach,
+# each with the reason. fuzz.py fails if any other PRINT line or outcome goes
+# unreached over its set, or if a line listed here is reached.
+# Format: <line> <reason>   or   outcome:<name> <reason>
+
+5720 Arrival in JULY needs D3*14+F9 <= 124, i.e. 2040 miles within 9 turns and M2 > ~1812 after 8. A turn adds at most 200+(300-220)/5+10*RND < 226 miles (line 2860) and only riders add more (+20 hostile run costing A-40, +15 friendly run costing A-10, both lowering every later turn's (A-220)/5): even riders on 8 turns, every RND near 1, no mountain, blizzard or event loss give at most ~1877 after 8 turns, which needs every one of those near-zero-probability draws at once (well under 1e-20).
+outcome:pneumonia 5120 with K8=0 is reached only from 5080 (no_doctor_money) and 5110 (no_medicine), which decide the outcome first; the only other way in, 4400 (the wolves), sets K8=1 (injuries). Line 5140 (PNEUMONIA) is still printed on those paths.

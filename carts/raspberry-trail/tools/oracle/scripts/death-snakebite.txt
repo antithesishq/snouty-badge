@@ -1,0 +1,61 @@
+seed 2
+# Death: bitten with too few supplies: YOU DIE OF SNAKEBITE SINCE
+# YOU HAVE NO MEDICINE.
+# goal: outcome snakebite; ends: E snakebite
+# written by mkscripts.py (scenario 'death-snakebite')
+# 190 need instructions?
+NO
+# 760 marksman (1-5)
+3
+# 860 oxen $
+250
+# 940 food $
+200
+# 990 ammunition $
+50
+# 1040 clothing $
+100
+# 1090 misc. supplies $
+3
+# 2180 (1) hunt (2) continue
+2
+# 2770 eat (1) poorly (2) moderately (3) well
+3
+# 2100 (1) fort (2) hunt (3) continue
+1
+# 2330 fort: food $ (cash 97)
+12
+# 2330 fort: ammunition $ (cash 85)
+10
+# 2330 fort: clothing $ (cash 75)
+9
+# 2330 fort: misc. supplies $ (cash 66)
+8
+# 2770 eat (1) poorly (2) moderately (3) well
+3
+# 2180 (1) hunt (2) continue
+2
+# 2770 eat (1) poorly (2) moderately (3) well
+3
+# 2100 (1) fort (2) hunt (3) continue
+1
+# 2330 fort: food $ (cash 58)
+7
+# 2330 fort: ammunition $ (cash 51)
+6
+# 2330 fort: clothing $ (cash 45)
+5
+# 2330 fort: misc. supplies $ (cash 40)
+5
+# 2770 eat (1) poorly (2) moderately (3) well
+3
+# 2180 (1) hunt (2) continue
+2
+# 2770 eat (1) poorly (2) moderately (3) well
+3
+# 5220 minister?
+NO
+# 5240 fancy funeral?
+YES
+# 5260 inform next of kin?
+YES

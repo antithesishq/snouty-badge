@@ -1,0 +1,46 @@
+seed 1
+# Death: YOU RAN OUT OF FOOD AND STARVED TO DEATH.
+# goal: outcome starved; ends: E starved
+# written by mkscripts.py (scenario 'death-starved')
+# 190 need instructions?
+NO
+# 760 marksman (1-5)
+3
+# 860 oxen $
+300
+# 940 food $
+40
+# 990 ammunition $
+50
+# 1040 clothing $
+100
+# 1090 misc. supplies $
+100
+# 2180 (1) hunt (2) continue
+2
+# 2770 eat (1) poorly (2) moderately (3) well
+3
+# 2100 (1) fort (2) hunt (3) continue
+1
+# 2330 fort: food $ (cash 110)
+13
+# 2330 fort: ammunition $ (cash 97)
+12
+# 2330 fort: clothing $ (cash 85)
+10
+# 2330 fort: misc. supplies $ (cash 75)
+9
+# 2770 eat (1) poorly (2) moderately (3) well
+3
+# 3000 riders: (1) run (2) attack (3) continue (4) circle
+2
+# 6220 shot: TYPE WHAM (riders attack)
+SHOOT 1 0.78
+# 2180 (1) hunt (2) continue
+2
+# 5220 minister?
+NO
+# 5240 fancy funeral?
+NO
+# 5260 inform next of kin?
+NO

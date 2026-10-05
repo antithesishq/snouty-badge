@@ -9,4 +9,6 @@ test {
     _ = @import("link.zig");
     _ = @import("tests/romfs_unit.zig");
     _ = @import("tests/link_unit.zig");
+    _ = @import("lockstep.zig");
+    _ = @import("tests/lockstep_unit.zig");
 }

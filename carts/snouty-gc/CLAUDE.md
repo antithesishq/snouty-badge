@@ -9,15 +9,27 @@ here: every forked file names its Zero source and commit on its first line.
 ## Modules (`cart/src/`)
 
 - `main.zig`: `start`, `update`, the state machine (splash, title, main
-  menu, select, race, pause, results), the `World` instance, the
-  render-side `follow` (which car this badge draws and hears: the
-  player's `me`, or in the attract demo the camera's cuts, or the leader
-  once GARBAGE COLLECTION has collected the player), wasm shims, debug
-  exports.
+  menu, select, race, pause, results; M4 the LINK `lobby`), the `World`
+  instance, the render-side `follow` (which car this badge draws and
+  hears: the player's `me`, or in the attract demo the camera's cuts, or
+  the leader once GARBAGE COLLECTION has collected the player), wasm
+  shims, debug exports. M4: the link (`lnk`, a `net.Net(link.Badge)`),
+  the lobby and link select frames, the link race and pause frames
+  (submit, one `step` a frame, the pump points, the pump loop to
+  `tuning.link_pump_until_us`), `linked`, the gap probe
+  (`gc_pump_probe`).
+- `net.zig` (M4): the lockstep over `lib/link.zig` (`Net(L)`: lobby,
+  input rings, packets, `step`, pause, peer-left hand-over, desync check,
+  `world_hash`); `docs/NET.md` is its protocol and how main drives it.
+  `link_ui.zig` (M4): the LINK lobby screen, the race notices (`WAITING
+  FOR PEER`, `PEER LEFT, AI DRIVING`), the `DESYNC` band. A link race
+  pumps the link through the draw via `render.band_hook` /
+  `render.pump_at` (render, sprites, hud call it; null outside a link
+  race).
 - `world.zig`: the plain `World` (6 `Car`s, clock, PRNG, countdown, track
   index; no pointers), `Input` (the race byte: bit 0 up, 1 down, 2 left,
   3 right, 4 A, 5 B, 6 Start, 7 Select), `Setup` (track, seed, the two
-  humans' racers).
+  humans' racers, mode, M4 `crews`: AI cars past it stay off the grid).
 - `sim.zig`: `reset(w, setup)` and `simulate(w, inputs: [2]u8)`, pure in
   `(World, inputs)`: auto-throttle driving, walls, armor and `damage`,
   wrecks with kill credit, hulks and the WATCHDOG respawn, contacts and
@@ -66,7 +78,8 @@ here: every forked file names its Zero source and commit on its first line.
   here because the World takes a collected car out), each collected car's
   sweep for the results, the vents' blast clocks and warning steam,
   hazard hits, the KERNEL PANIC victim the attract camera cuts to.
-- `select.zig` (the racer select, SPEC 8.1; M3 the track row's panel),
+- `select.zig` (the racer select, SPEC 8.1; M3 the track row's panel;
+  M4 `select.link`: the link select's `TAKEN`, ready marks and rules panel),
   `menu.zig` (splash, title, main menu, the pause list), `roster_text.zig` (bios,
   taunts, wrecked lines, weapon and pickup names, HUD liveries, stat
   bars), `stress.zig` (the render stress scene: `gc_stress` /
@@ -84,7 +97,9 @@ here: every forked file names its Zero source and commit on its first line.
   combat, the 20-race combat soak), `pickups_test.zig` (roll odds,
   crates, a scenario per pickup, AI policies, the pickup soak),
   `content_test.zig` (M3: hazards, bays, the AI's hazard sense, every
-  track's soak, GARBAGE COLLECTION and its soak, attract), tests in
+  track's soak, GARBAGE COLLECTION and its soak, attract), `net_test.zig`
+  (M4: two `Net`s and Worlds on `lib/link_virtual.zig`: link races in
+  sync, loss, unplug, desync, pause, quit and rematch, CREWS), tests in
   `track.zig`, `hazards.zig`, `gc_mode.zig`, `fixed.zig`, `engine.zig`.
 
 ## Data
@@ -117,3 +132,8 @@ Sweeper sheet `hazards.png`).
   `simulate` may read the clock, `cart.rand`, floats or render state.
 - Never bind the joystick click; react to neither Start nor Select while
   both are held. No neopixel code; sound off at boot with a toggle.
+- M4: only the agreed input bytes and the agreed setup reach `simulate`
+  in a link race; single player never touches the link, and the input
+  scripts' World checksums (`check.sh` preview) must not change. The
+  link race is host-tested only (`net_test.zig`); `docs/LINK_PLAY.md`
+  has the two-badge check.

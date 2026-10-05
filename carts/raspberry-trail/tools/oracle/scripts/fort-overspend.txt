@@ -1,0 +1,112 @@
+seed 1
+# Fort stops: spending more than the cash left (YOU DON'T HAVE THAT
+# MUCH, YOU MISS YOUR CHANCE), a negative amount (skips the cash check but
+# still adds 2/3 of it to the item), and normal purchases.
+# goal: lines 2290 2370 2375; ends: E arrived
+# written by mkscripts.py (scenario 'fort-overspend')
+# 190 need instructions?
+NO
+# 760 marksman (1-5)
+3
+# 860 oxen $
+240
+# 940 food $
+120
+# 990 ammunition $
+50
+# 1040 clothing $
+60
+# 1090 misc. supplies $
+80
+# 2180 (1) hunt (2) continue
+1
+# 6220 shot: TYPE BLAM (hunt)
+SHOOT 1 1.34
+# 2770 eat (1) poorly (2) moderately (3) well
+2
+# 2100 (1) fort (2) hunt (3) continue
+1
+# 2330 fort: food $ (cash 150)
+500
+# 2330 fort: ammunition $ (cash 150)
+-30
+# 2330 fort: clothing $ (cash 150)
+40
+# 2330 fort: misc. supplies $ (cash 110)
+10
+# 2770 eat (1) poorly (2) moderately (3) well
+2
+# 2180 (1) hunt (2) continue
+2
+# 2770 eat (1) poorly (2) moderately (3) well
+2
+# 2100 (1) fort (2) hunt (3) continue
+1
+# 2330 fort: food $ (cash 100)
+20
+# 2330 fort: ammunition $ (cash 80)
+20
+# 2330 fort: clothing $ (cash 60)
+999
+# 2330 fort: misc. supplies $ (cash 60)
+5
+# 2770 eat (1) poorly (2) moderately (3) well
+2
+# 2180 (1) hunt (2) continue
+2
+# 2770 eat (1) poorly (2) moderately (3) well
+2
+# 2100 (1) fort (2) hunt (3) continue
+3
+# 2770 eat (1) poorly (2) moderately (3) well
+2
+# 2180 (1) hunt (2) continue
+1
+# 6220 shot: TYPE BLAM (hunt)
+SHOOT 1 1.21
+# 2770 eat (1) poorly (2) moderately (3) well
+2
+# 2100 (1) fort (2) hunt (3) continue
+2
+# 6220 shot: TYPE BLAM (hunt)
+SHOOT 1 0.48
+# 2770 eat (1) poorly (2) moderately (3) well
+2
+# 2180 (1) hunt (2) continue
+2
+# 2770 eat (1) poorly (2) moderately (3) well
+2
+# 2100 (1) fort (2) hunt (3) continue
+3
+# 2770 eat (1) poorly (2) moderately (3) well
+2
+# 2180 (1) hunt (2) continue
+1
+# 6220 shot: TYPE BLAM (hunt)
+SHOOT 1 0.65
+# 2770 eat (1) poorly (2) moderately (3) well
+2
+# 6220 shot: TYPE BLAM (wild animals)
+SHOOT 1 1.29
+# 2100 (1) fort (2) hunt (3) continue
+3
+# 2770 eat (1) poorly (2) moderately (3) well
+2
+# 2180 (1) hunt (2) continue
+1
+# 6220 shot: TYPE BANG (hunt)
+SHOOT 1 0.64
+# 2770 eat (1) poorly (2) moderately (3) well
+2
+# 6220 shot: TYPE BLAM (wild animals)
+SHOOT 1 0.86
+# 2100 (1) fort (2) hunt (3) continue
+2
+# 6220 shot: TYPE BANG (hunt)
+SHOOT 1 0.51
+# 2770 eat (1) poorly (2) moderately (3) well
+2
+# 2180 (1) hunt (2) continue
+2
+# 2770 eat (1) poorly (2) moderately (3) well
+2

@@ -49,6 +49,7 @@ pub fn add(b: *Build, sycl_badge_dep: *Build.Dependency, opts: common.Options) v
         .optimize = .Debug,
     });
     tests_mod.addImport("assets", assets_module(b));
+    tests_mod.addImport("link_host", link_host_module(b));
     const tests = b.addTest(.{ .root_module = tests_mod });
     opts.test_step.dependOn(&b.addRunArtifact(tests).step);
     // `zig build test-gc`: this cart's host tests alone (the shared `test`
@@ -58,6 +59,20 @@ pub fn add(b: *Build, sycl_badge_dep: *Build.Dependency, opts: common.Options) v
 }
 
 var build_options: ?*Build.Step.Options = null;
+
+/// The host tests' link: lib/link.zig and its virtual cable
+/// (lib/link_virtual.zig, which imports link.zig by path) copied side by
+/// side under one root, `link_host.link` and `link_host.virtual` (a file
+/// can belong to only one module, so the cart's `link` module cannot be
+/// shared with the virtual cable).
+fn link_host_module(b: *Build) *Build.Module {
+    const wf = b.addWriteFiles();
+    for ([_][]const u8{ "link.zig", "link_rp2350.zig", "link_virtual.zig" }) |f| {
+        _ = wf.addCopyFile(b.path(b.fmt("lib/{s}", .{f})), f);
+    }
+    const root = wf.add("link_host.zig", "pub const link = @import(\"link.zig\");\npub const virtual = @import(\"link_virtual.zig\");\n");
+    return b.createModule(.{ .root_source_file = root });
+}
 
 /// One entry per sprite sheet in assets/gen/ (ASSETS_ENGINE.md has the
 /// manifest). `bits` is palette bits per pixel (4 = up to 15 colours +
@@ -113,6 +128,8 @@ fn build_cart_modules(b: *Build, cart: *Build.Module, cart_api: *Build.Module, s
     cart.addImport("assets", assets_module(b));
     // Sound on the newer firmware: tone2 rendered into the streaming ring.
     cart.addImport("tone_stream", b.createModule(.{ .root_source_file = b.path("lib/tone_stream.zig") }));
+    // The badge-to-badge link (docs/LINK.md) under net.zig's lockstep (docs/NET.md).
+    cart.addImport("link", b.createModule(.{ .root_source_file = b.path("lib/link.zig") }));
 
     // The `gfx` module: the PNGs in `images` through the per-cart converter
     // (snouty-maze / snouty-bugs pattern), generated at build time.

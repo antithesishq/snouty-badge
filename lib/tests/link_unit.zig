@@ -167,3 +167,12 @@ test "the null port never runs" {
     try std.testing.expectEqual(link.State.unavailable, l.state);
     try std.testing.expect(!l.send(1000, &.{1}));
 }
+
+test "the app version rides in HELLO's high nibble; 0 sends protocol_version alone" {
+    var pair: Pair = undefined;
+    pair.init(.crossed, 21);
+    pair.a.app_version = 3;
+    _ = try pair.run_until_connected(10_000_000, 1_000);
+    try std.testing.expectEqual(@as(u8, 0x30) | link.protocol_version, pair.b.partner_version);
+    try std.testing.expectEqual(link.protocol_version, pair.a.partner_version);
+}

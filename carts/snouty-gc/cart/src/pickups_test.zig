@@ -177,8 +177,8 @@ test "roll odds: tiers by rank within 1.5 points of SPEC 6.4, uniform in a tier,
         var each: [17]u32 = @splat(0);
         for (0..n) |_| {
             const p = pickups.roll_pickup(&w, @intCast(r), true);
-            tiers[@intFromEnum(pickups.tier_of(p))] += 1;
-            each[@intFromEnum(p)] += 1;
+            tiers[@backingInt(pickups.tier_of(p))] += 1;
+            each[@backingInt(p)] += 1;
         }
         const odds = tuning.roll_odds[r - 1];
         for (0..3) |t| {
@@ -186,10 +186,10 @@ test "roll odds: tiers by rank within 1.5 points of SPEC 6.4, uniform in a tier,
             if (report) std.debug.print("\nrank {d} tier {d}: {d} per mille (table {d}0)", .{ r, t, pct1000, odds[t] });
             try expect(@abs(@as(i32, @intCast(pct1000)) - @as(i32, odds[t]) * 10) <= 15);
         }
-        if (r == 1) try expectEqual(@as(u32, 0), each[@intFromEnum(Pickup.kernel_panic)]);
-        if (r < 5) try expectEqual(@as(u32, 0), each[@intFromEnum(Pickup.zero_day)]);
-        if (r >= 5) try expect(each[@intFromEnum(Pickup.zero_day)] > 0);
-        try expectEqual(@as(u32, 0), each[@intFromEnum(Pickup.prompt_injection)]);
+        if (r == 1) try expectEqual(@as(u32, 0), each[@backingInt(Pickup.kernel_panic)]);
+        if (r < 5) try expectEqual(@as(u32, 0), each[@backingInt(Pickup.zero_day)]);
+        if (r >= 5) try expect(each[@backingInt(Pickup.zero_day)] > 0);
+        try expectEqual(@as(u32, 0), each[@backingInt(Pickup.prompt_injection)]);
         // Uniform within tier A (5) and B (6): each within 15% of its share.
         for (0..11) |k| {
             const share = tiers[if (k < 5) 0 else 1] / @as(u32, if (k < 5) 5 else 6);
@@ -233,7 +233,7 @@ test "a crate starts the 45-tick roulette by rank; B waits for it; the crate is 
     var e: world.Event = .{};
     try expectEqual(@as(u32, 1), count(&w, seq, .roll, &e));
     try expectEqual(@as(u8, 0), e.a);
-    try expectEqual(@intFromEnum(c.pickup), e.b);
+    try expectEqual(@backingInt(c.pickup), e.b);
     // B during the roulette does nothing.
     const held = c.pickup;
     press_b(&w, 0, false);
@@ -352,7 +352,7 @@ test "HONEYPOT: B throws it 60 px ahead, Down+B drops it behind; touching it dea
     try expectEqual(tuning.spin_ticks - 1, v.spin);
     var e: world.Event = .{};
     try expectEqual(@as(u32, 1), count(&w, seq2, .effect, &e));
-    try expectEqual(@intFromEnum(Pickup.honeypot), e.c);
+    try expectEqual(@backingInt(Pickup.honeypot), e.c);
     try expectEqual(@as(u32, 0), drops_of(&w, .honeypot));
     // Spinning: no steering gets through.
     try expect(!pickups.filter(&w, 1, .{ .left = true }).left);
@@ -382,7 +382,7 @@ test "RUBBER DUCK: takes the first hit from behind and draws SPEAR PHISH; shots 
     for (0..30) |_| tick(&w, .{}, .{});
     var e: world.Event = .{};
     try expectEqual(@as(u32, 1), count(&w, seq, .effect, &e));
-    try expectEqual(@intFromEnum(Pickup.duck), e.c);
+    try expectEqual(@backingInt(Pickup.duck), e.c);
     try expectEqual(@as(u8, 1), e.b);
     try expectEqual(@as(u16, 0), d.duck);
     // The twin pellet behind it hit (the duck took only the first).
@@ -463,7 +463,7 @@ test "SPAGHETTI CODE: a car through the tangle crawls at 40% for 60 ticks, then 
     try expectEqual(@as(u32, 0), drops_of(&w, .spaghetti));
     var e: world.Event = .{};
     try expectEqual(@as(u32, 1), count(&w, seq, .effect, &e));
-    try expectEqual(@intFromEnum(Pickup.spaghetti), e.c);
+    try expectEqual(@backingInt(Pickup.spaghetti), e.c);
     try expect(v.tangle > 0 and v.strand == tuning.strand_ticks);
     v.vx = fixed.mul(fixed.cos(v.heading), sim.top_of(v));
     v.vy = fixed.mul(fixed.sin(v.heading), sim.top_of(v));
@@ -548,7 +548,7 @@ test "BIT FLIP: the nearest car ahead within 400 px steers mirrored for 180 tick
     try expect(v.bit_flip > tuning.bit_flip_ticks - 3);
     var e: world.Event = .{};
     try expectEqual(@as(u32, 1), count(&w, seq, .effect, &e));
-    try expectEqual(@intFromEnum(Pickup.bit_flip), e.c);
+    try expectEqual(@backingInt(Pickup.bit_flip), e.c);
     const in = pickups.filter(&w, 1, .{ .left = true });
     try expect(in.right and !in.left);
     // Driven: Left turns the car right.
@@ -633,7 +633,7 @@ test "DDOS: 8 drones swarm the car ahead, orbit 180 ticks for 2 each every 30, s
     try expect(arrived < 40);
     var e: world.Event = .{};
     try expectEqual(@as(u32, 1), count(&w, seq, .effect, &e));
-    try expectEqual(@intFromEnum(Pickup.ddos), e.c);
+    try expectEqual(@backingInt(Pickup.ddos), e.c);
     try expectEqual(tuning.ddos_q8, pickups.thrust_q8(&w, 1));
     for (&w.drones) |*d| try expect(px_dist(d.x, d.y, v.x, v.y) <= tuning.drone_orbit + 8);
     const armor = v.armor;
@@ -798,7 +798,7 @@ test "KERNEL PANIC: the packet runs the centerline to 1st: 40 and 90 ticks froze
     try expectEqual(world.Freeze.panic, v.frozen_by);
     var e: world.Event = .{};
     try expectEqual(@as(u32, 1), count(&w, seq, .effect, &e));
-    try expectEqual(@intFromEnum(Pickup.kernel_panic), e.c);
+    try expectEqual(@backingInt(Pickup.kernel_panic), e.c);
     try expectEqual(@as(u8, 1), e.b);
     // Frozen: no input gets through and the car does not move.
     try expectEqual(@as(u8, 0), pickups.filter(&w, 1, .{ .left = true, .a = true, .b = true }).byte());
@@ -941,7 +941,7 @@ test "ZERO-DAY: wrecks the nearest car ahead outright, through armor, duck, HEIS
     var e: world.Event = .{};
     try expectEqual(@as(u32, 1), count(&w, seq, .wreck, &e));
     try expectEqual(@as(u8, 0), e.b);
-    try expectEqual(@intFromEnum(world.Wreck.zero_day), e.c);
+    try expectEqual(@backingInt(world.Wreck.zero_day), e.c);
     try expectEqual(@as(u32, 1), count(&w, seq, .effect, null));
     // Statuses are gone with the wreck.
     try expectEqual(@as(u16, 0), v.duck);
@@ -1086,7 +1086,7 @@ fn soak_race(seed: u32, setup_humans: [2]u8, limit: u32, out: ?*World) Soak {
             switch (e.kind) {
                 .roll => {
                     r.rolls[e.b] += 1;
-                    if (e.b == @intFromEnum(Pickup.zero_day)) r.zero_days[e.a] += 1;
+                    if (e.b == @backingInt(Pickup.zero_day)) r.zero_days[e.a] += 1;
                 },
                 .use => r.uses[e.b] += 1,
                 else => {},
@@ -1151,13 +1151,13 @@ test "chaos soak with pickups: 20 seeded races finish, nobody stuck over 600 tic
     }
     if (report) {
         std.debug.print("\npsoak total: wrecks {d}, longest race {d} ticks, stuck max {d}\n", .{ wrecks, max_ticks, max_stuck });
-        for (0..16) |p| std.debug.print("  {s:16} rolled {d:4} used {d:4}\n", .{ @tagName(@as(Pickup, @enumFromInt(p))), rolls[p], uses[p] });
+        for (0..16) |p| std.debug.print("  {s:16} rolled {d:4} used {d:4}\n", .{ @tagName(@as(Pickup, @fromBackingInt(@intCast(p)))), rolls[p], uses[p] });
     }
     for (0..15) |p| {
         try expect(rolls[p] > 0);
         try expect(uses[p] > 0);
     }
-    try expectEqual(@as(u32, 0), rolls[@intFromEnum(Pickup.prompt_injection)]);
+    try expectEqual(@as(u32, 0), rolls[@backingInt(Pickup.prompt_injection)]);
 }
 
 test "pickups are deterministic: the same seeded race twice, and two worlds interleaved with humans pressing B and A" {

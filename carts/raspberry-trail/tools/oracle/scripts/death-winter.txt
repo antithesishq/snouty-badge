@@ -1,0 +1,178 @@
+seed 88
+# Death: still on the trail at turn 20 (MONDAY YOU HAVE BEEN ON THE
+# TRAIL TOO LONG, the blizzard of winter). Cheap oxen, hunting or a fort
+# every turn.
+# goal: outcome winter; lines 1650 1670; ends: E winter
+# written by mkscripts.py (scenario 'death-winter')
+# 190 need instructions?
+NO
+# 760 marksman (1-5)
+1
+# 860 oxen $
+200
+# 940 food $
+120
+# 990 ammunition $
+150
+# 1040 clothing $
+80
+# 1090 misc. supplies $
+110
+# 2180 (1) hunt (2) continue
+1
+# 6220 shot: TYPE BANG (hunt)
+SHOOT 1 0.17
+# 2770 eat (1) poorly (2) moderately (3) well
+2
+# 2100 (1) fort (2) hunt (3) continue
+2
+# 6220 shot: TYPE WHAM (hunt)
+SHOOT 1 0.32
+# 2770 eat (1) poorly (2) moderately (3) well
+3
+# 2180 (1) hunt (2) continue
+1
+# 6220 shot: TYPE POW (hunt)
+SHOOT 1 0.25
+# 2770 eat (1) poorly (2) moderately (3) well
+3
+# 2100 (1) fort (2) hunt (3) continue
+2
+# 6220 shot: TYPE WHAM (hunt)
+SHOOT 1 0.92
+# 2770 eat (1) poorly (2) moderately (3) well
+2
+# 6220 shot: TYPE POW (wild animals)
+SHOOT 1 0.89
+# 2180 (1) hunt (2) continue
+1
+# 6220 shot: TYPE BANG (hunt)
+SHOOT 1 0.50
+# 2770 eat (1) poorly (2) moderately (3) well
+3
+# 2100 (1) fort (2) hunt (3) continue
+2
+# 6220 shot: TYPE POW (hunt)
+SHOOT 1 0.91
+# 2770 eat (1) poorly (2) moderately (3) well
+3
+# 2180 (1) hunt (2) continue
+1
+# 6220 shot: TYPE WHAM (hunt)
+SHOOT 1 0.38
+# 2770 eat (1) poorly (2) moderately (3) well
+3
+# 2100 (1) fort (2) hunt (3) continue
+1
+# 2330 fort: food $ (cash 40)
+3
+# 2330 fort: ammunition $ (cash 37)
+2
+# 2330 fort: clothing $ (cash 35)
+2
+# 2330 fort: misc. supplies $ (cash 33)
+2
+# 2770 eat (1) poorly (2) moderately (3) well
+2
+# 2180 (1) hunt (2) continue
+1
+# 6220 shot: TYPE BANG (hunt)
+SHOOT 1 0.90
+# 2770 eat (1) poorly (2) moderately (3) well
+3
+# 6220 shot: TYPE BANG (wild animals)
+SHOOT 1 0.42
+# 2100 (1) fort (2) hunt (3) continue
+1
+# 2330 fort: food $ (cash 31)
+2
+# 2330 fort: ammunition $ (cash 29)
+2
+# 2330 fort: clothing $ (cash 27)
+2
+# 2330 fort: misc. supplies $ (cash 25)
+1
+# 2770 eat (1) poorly (2) moderately (3) well
+3
+# 3000 riders: (1) run (2) attack (3) continue (4) circle
+1
+# 2180 (1) hunt (2) continue
+1
+# 6220 shot: TYPE WHAM (hunt)
+SHOOT 1 0.77
+# 2770 eat (1) poorly (2) moderately (3) well
+3
+# 2100 (1) fort (2) hunt (3) continue
+2
+# 6220 shot: TYPE POW (hunt)
+SHOOT 1 0.24
+# 2770 eat (1) poorly (2) moderately (3) well
+2
+# 2180 (1) hunt (2) continue
+1
+# 6220 shot: TYPE BLAM (hunt)
+SHOOT 1 0.47
+# 2770 eat (1) poorly (2) moderately (3) well
+2
+# 2100 (1) fort (2) hunt (3) continue
+1
+# 2330 fort: food $ (cash 24)
+1
+# 2330 fort: ammunition $ (cash 23)
+1
+# 2330 fort: clothing $ (cash 22)
+1
+# 2330 fort: misc. supplies $ (cash 21)
+1
+# 2770 eat (1) poorly (2) moderately (3) well
+2
+# 2180 (1) hunt (2) continue
+1
+# 6220 shot: TYPE BANG (hunt)
+SHOOT 1 0.10
+# 2770 eat (1) poorly (2) moderately (3) well
+2
+# 2100 (1) fort (2) hunt (3) continue
+2
+# 6220 shot: TYPE WHAM (hunt)
+SHOOT 1 0.66
+# 2770 eat (1) poorly (2) moderately (3) well
+3
+# 2180 (1) hunt (2) continue
+1
+# 6220 shot: TYPE BANG (hunt)
+SHOOT 1 0.80
+# 2770 eat (1) poorly (2) moderately (3) well
+3
+# 2100 (1) fort (2) hunt (3) continue
+1
+# 2330 fort: food $ (cash 20)
+1
+# 2330 fort: ammunition $ (cash 19)
+1
+# 2330 fort: clothing $ (cash 18)
+1
+# 2330 fort: misc. supplies $ (cash 17)
+1
+# 2770 eat (1) poorly (2) moderately (3) well
+3
+# 2180 (1) hunt (2) continue
+1
+# 6220 shot: TYPE BANG (hunt)
+SHOOT 1 0.22
+# 2770 eat (1) poorly (2) moderately (3) well
+2
+# 2100 (1) fort (2) hunt (3) continue
+2
+# 6220 shot: TYPE BLAM (hunt)
+SHOOT 1 0.39
+# 2770 eat (1) poorly (2) moderately (3) well
+2
+# 6220 shot: TYPE WHAM (wild animals)
+SHOOT 1 0.68
+# 5220 minister?
+YES
+# 5240 fancy funeral?
+NO
+# 5260 inform next of kin?
+NO

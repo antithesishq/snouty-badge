@@ -1076,6 +1076,94 @@ pre-work time:
   audio.zig rows); lead main.zig (nothing much: Select handling is in
   sim), scripts, demo re-record, status.
 
+## M7 Deathmatch (two badges, planned 2026-10-05)
+
+Adrian, 2026-10-04: "deathmatch for snoutenstein" over the badge link
+cable (root `docs/LINK.md`; the Game Boy link in Snouty Boy and Snouty
+GC's link race are verified on two badges). Lockstep is the shared
+`lib/lockstep.zig` (root `docs/LOCKSTEP.md`; Snouty GC, Snouty Cycles and
+Snouty Zero use it too). App id 'S'. Defaults taken (Adrian: keep
+building):
+
+- **Menu.** A DEATHMATCH entry on the title. In the simulator it is
+  greyed, "NO LINK IN SIMULATOR". The lockstep's common wording is
+  "PLUG IN THE CABLE", "WRONG CART: <name>", "WAITING FOR PEER" and
+  "PEER LEFT".
+- **Lobby.** The host (higher link nonce) sets the rules: arena, frag
+  limit (5 / 10 / 15 / 20) and BUGS ON/OFF. The guest sees them live.
+  Both ready up (A), then the host's Start goes.
+- **Arenas.** Two:
+  - a new purpose-built arena, "Server Room": loops, pillars, two weapon
+    alcoves, no keys, no exit;
+  - Build Farm as a deathmatch variant (every door unlocked, no exit,
+    keys removed).
+  Spawn points use a new legend char, at least 4 per arena. BUGS ON keeps
+  the arena's bugs (they chase whoever is nearer) and respawns them; OFF
+  has none.
+- **Players.** Two Players in the GameState, with the host's human as
+  player 0. Same movement, doors, pickups and weapons as the campaign.
+  The swatter, zapper and spray hit the other player too, using the
+  enemy hit test against a player-radius target. The Debugger bolt and
+  burst hit them too, and a self-hit from the burst counts. Player
+  damage is the bug-damage scale, tuned so a full-HP kill takes about
+  6 zapper hits.
+- **Frags and respawn.** At 0 HP the player dies: a 2 s death view, then
+  a respawn at the spawn point farthest from the opponent, with full HP
+  and the starting loadout (zapper, 40). The killer gets +1, and a
+  suicide gets -1. Picked-up weapons and ammo respawn 20 s after
+  pickup, with per-pickup timers for the arena's pickups. The match
+  ends at the frag limit, on a results screen (winner, frags each,
+  shots, accuracy). A returns to the lobby.
+- **Controls.** As the campaign, except that B has no rewind: hold B and
+  Left/Right strafes. Start pauses both badges (the lockstep pause bit).
+  The input byte has Up, Down, Left, Right, A, B, Select and Start.
+  Lockstep's sanitize clears Start+Select together, so the byte is never
+  0xC0 or 0xDB.
+- **View.** Each badge renders from its own player. The opponent is a
+  sprite: a code-drawn rival Snouty, a 4-direction billboard with a hit
+  flash, drawn like the bugs. The HUD shows frags, YOU n : n THEM; HP;
+  ammo; and a banner on each kill (FRAGGED / FRAGGED BY).
+- **Off in deathmatch.** Rewind, keyframes and the meter, the attract
+  demo and level progression. The hash is the existing
+  `sim.hash_gameplay` (or `hash`) over the GameState. If the partner
+  leaves, the match ends as a forfeit win with a "PEER LEFT" banner. A
+  desync ends the match with a DESYNC band; both go to the lobby.
+- **Pumping.** At the top of `update`, then loop to 14 ms into the frame
+  while `busy()`. The worst play frame is about 5 ms, so there are no
+  in-draw hooks. The campaign never touches the link.
+
+Work, one track:
+
+- `state.zig`, `sim.zig`, `ai.zig`, `projectiles.zig`: the second player
+  and deathmatch rules behind a `mode` in the GameState. The campaign
+  stays bit-identical: existing tests, demos (DEMO DESYNC check), rewind
+  and the M6.1 death fix unchanged; GameState padding-free; rewind pools
+  sized for the campaign, so deathmatch fields must not grow them, or
+  grow them in a measured way.
+- Arena data: levels text plus `tools/gen_levels.sh`; the generated
+  `gen.zig` is committed (the Mac comptime rule).
+- The rival sprite (code-drawn, the repo's asset way).
+- `deathmatch.zig`: G for the lockstep, the lobby screens, the match loop,
+  results.
+- Host tests:
+  - two GameStates through the lockstep over `lib/link_virtual.zig` with
+    1% byte loss play a scripted match to the frag limit, in sync;
+  - frags, suicide and respawn spot;
+  - pickup respawn;
+  - strafe;
+  - peer left gives a forfeit;
+  - an injected desync is detected;
+  - pause on the same tick;
+  - the campaign unchanged.
+
+Done when:
+- `zig build`, `zig build test` and the cart's `tools/check.sh` pass;
+- the campaign bench is unchanged (Build Farm opening worst 3.5 ms,
+  attract worst 10.3 ms);
+- a deathmatch bench script stays under 12 ms worst;
+- RAM fits;
+- a preview GIF shows the lobby and a match from both views.
+
 ## Status
 
 - 2026-09-26: M0 scaffold committed. M1 plan written; four tracks launched.

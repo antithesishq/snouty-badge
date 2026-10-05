@@ -102,10 +102,12 @@ Track names, in league order:
 - Perimeter: **Fenceline**, **Substation Ruins**, **The Last Mile**.
 
 More leagues come as **track packs**: files copied onto the badge
-drive, loaded at race start (section 19). The first two planned packs
-are **The Boneyard** (an aircraft boneyard full of future aircraft and
-spacecraft wreckage) and **The Seabed** (a dried ocean floor with
-shipwrecks and whale skeletons).
+drive, loaded at race start (section 19). Four packs are planned:
+- **Dead Mall**: a megamall turned datacenter, abandoned as both.
+- **The Boneyard**: an aircraft boneyard full of future aircraft and
+  spacecraft wreckage.
+- **The Seabed**: a dried ocean floor with shipwrecks and whale skeletons.
+- **Cold Storage**: AI compute on the last ice in Antarctica.
 
 ### 3.3 Track features
 
@@ -429,7 +431,7 @@ Host tests drive two simulations through `lib/link_virtual.zig` (12).
 ```
 Splash (2 s, eyepatched Snouty portrait, SNOUTY GC / GARBAGE COLLECTION)
   -> Title ("Press Start"; 10 s idle -> Attract)
-  -> Menu: QUICK RACE | GARBAGE COLLECTION | CIRCUIT | LINK | Sound: off
+  -> Menu: QUICK RACE | GARBAGE COLLECTION | BATTLE | CIRCUIT | LINK | Sound: off
   -> Racer select (every mode) -> Countdown -> Race -> Results
 ```
 
@@ -462,8 +464,11 @@ the track, which defaults to the next in rotation).
   upgrade on their own plans. Beating the last league ends on a text
   card: *"You reached the fence. The Hyperscalers did not notice."* State
   lives in RAM for the session (decision 6).
-- **LINK**: LINK RACE (Quick Race rules) or LINK GC (Garbage Collection
-  rules) against the badge on the other end of the cable (section 7).
+- **BATTLE** (`KILL -9`): an arena brawl scored on eliminations, with a
+  lives limit (section 8.3).
+- **LINK**: LINK RACE (Quick Race rules), LINK GC (Garbage Collection
+  rules) or LINK BATTLE (8.3) against the badge on the other end of the
+  cable (section 7).
 - **Attract**: an AI-only race that a passer-by can watch, Snouty
   included. A scripted `KERNEL PANIC` hits the leader in lap 2, because a
   blue screen is what makes people stop at the booth.
@@ -473,6 +478,98 @@ the track, which defaults to the next in rotation).
 - **Results**: rank, time, best lap, kills, wrecks and CYCLES earned, each
   row with the racer's portrait at half scale. The winner's portrait is
   shown full size with their taunt.
+
+### 8.3 BATTLE: `KILL -9`
+
+Adrian, 2026-10-05: a battle mode like Mario Kart's. The cars drive round
+a stunt arena with ramps, and the score is eliminations. The number of
+lives is an option. The mode's title card reads **`KILL -9`** ("no
+cleanup handler, no appeal"). The menu row says BATTLE so that a
+passer-by knows what it is.
+
+**The arena: THE SANDBOX.** The Hyperscalers' old proving ground for
+autonomous vehicles. They moved on and left the ramps. It is drawn in the
+Dumps tileset and palette, so it costs no second tileset. It is one
+square map in the existing map buffer, walled all round with wreckage.
+Its features are the ones in 3.3:
+
+- **The bit bucket**: an open pit in the middle, about a quarter of the
+  arena wide. Kickers face it from all four sides, so a car at speed jumps
+  it. A car that falls short is wrecked (`SEGMENT FAULT`).
+- **Kickers and gap jumps**: ramp pairs facing each other over smaller
+  pits near the corners, and single kickers on the long sides that launch
+  a car over a wall into the next lane.
+- **Crate pads**: eight RMA crate spawns, one per lane, each respawning
+  180 ticks after it is taken.
+- **Service bays**: two small bays in opposite corners. They repair at
+  half the track rate, so a camper still loses.
+- **The Sweeper** crosses the arena on its timer, as on the Dumps tracks.
+- **Spawn pads**: six on the rim, facing in.
+
+**Rules.**
+
+| Option | Values | Default |
+|---|---|---|
+| LIVES | 1, 3, 5, 9, `INF` | 3 |
+| TIME | 2, 3, 5 min, NONE | 3 min (NONE is not offered with `INF` lives) |
+| CREWS | 5, 4, 3, 2, 1 AI cars (link: 4, 2, 0) | every slot filled |
+
+- **Lives.** Every wreck costs a life. A wrecked car with lives left
+  respawns after its WATCHDOG delay (9.2), at the spawn pad farthest from
+  the nearest enemy. It then has 90 ticks of **SAFE MODE**: it blinks,
+  cannot be hit and cannot fire.
+- **Eliminations.** The car that wrecks you scores one elimination. That
+  is the car that hit you last within 180 ticks, using the existing
+  `last_hit_by` and `last_hit_ticks`. A wreck with no recent hit (the
+  pit, a wall, the Sweeper) costs a life and scores for nobody. The feed
+  reads `kill -9 KIDDIE`.
+- **Out of lives.** The GC claw lifts the hulk out ("reaped"). A human
+  who is out watches from the kill leader's camera.
+- **The end.** The round ends when one car has lives left or the time
+  runs out. Ranking is by eliminations, then lives left, then time
+  survived. With `INF` lives it is a pure elimination count against the
+  clock.
+- **No laps, so timers replace them.** Ammo and burst charges refill in
+  full every 1200 ticks (20 s), shown as a sweep on the ammo bar. Pickup
+  roll odds (6.4) use the battle standings in place of race rank.
+- **"Ahead" in an arena.** Pickups that target "the car ahead" (BIT FLIP,
+  DEADLOCK, DDOS, RACE CONDITION, ZERO-DAY) target the nearest car inside
+  a 90-degree front cone, else the nearest car. KERNEL PANIC homes on the
+  kill leader (2nd if the user is the leader) along the arena's
+  navigation field instead of a centerline. ZERO-DAY rolls only for the
+  bottom two of the standings, once per car per round.
+
+**Stunts.** Ramps already launch a car for 40 ticks, and projectiles and
+drops pass under it (3.3), so jumping is also dodging. Two additions:
+
+- **STACK SMASH**: landing on another car deals it 40 damage plus a ram
+  bounce. It counts as a hit for the elimination.
+- **CLEAN LANDING**: landing from a ramp without hitting a wall refills
+  one burst charge, so stunts feed the next chase.
+
+**AI.** Battle needs a hunter, not a centerline follower:
+
+- Each crew picks a target by preference: the nearest car, with a bias to
+  the human and to the kill leader by crew.
+- It steers by a coarse navigation field over the arena (built by the
+  generator, about 1 KB), which knows the ramps across the pits.
+- It fires inside the weapon cone (6.5).
+- It drops rear weapons when chased, and retreats to a service bay below
+  30% armor.
+
+All of this is deterministic and in the sim, so it holds in a link
+battle.
+
+**Link.** LINK BATTLE runs over the same lockstep. The host also picks
+LIVES and TIME, which need more SETUP bytes than the u8 rules that
+LINK RACE and LINK GC use. Either the shared `lib/lockstep.zig` paged
+SETUP (the one Cycles uses) carries them, or they are packed into spare
+bits. Older GCP builds must see a WRONG VERSION screen, never a desync.
+
+**Cost.** The arena reuses the track slot and the map buffer. The World
+gains lives, eliminations and safe-mode ticks per car, the round timer and
+the refill timer (about 30 B). The navigation field is about 1 KB of
+`.rodata`.
 
 ## 9. Economy and garage (career)
 
@@ -752,19 +849,39 @@ Merge to main as soon as a milestone is badge-ready.
   reactions, AI upgrade plans, standings, the league unlock; bench profile
   and fast paths; a balance pass that errs dangerous. **Done when:** a full
   two-league circuit is playable start to finish.
-- **M6 Stretch** (pick with Adrian): the Perimeter league (sentries,
-  PROMPT INJECTION, the ending card), built in behind the RAM cut in
-  13.2, or as the first track pack once M7 exists; a `KILL
-  -9` arena battle mode (one open Mode 7 arena, pickups only, last car
-  running, best on two badges); rewind back for single-player (17.7); a
-  Tufty port (on the `tufty` branch, as the other carts were).
-- **M7 Track packs** (future goal, Adrian 2026-10-04): section 19. The
-  pack format and loader, scenery props, `tools/build_pack.py`, the pack
-  picker, link-race pack matching, then **The Boneyard** and **The
-  Seabed** as the first two packs (three tracks each). **Done when:** a
+- **M6 Battle** (Adrian, 2026-10-05): `KILL -9` (8.3). It covers:
+  - the arena, The Sandbox, with its generator, pits and kickers;
+  - lives, eliminations, SAFE MODE, the claw on the last life and the
+    round end;
+  - the LIVES, TIME and CREWS options;
+  - timer refills, STACK SMASH and CLEAN LANDING;
+  - battle meanings for the "ahead" pickups;
+  - the hunter AI over the navigation field;
+  - a battle HUD with lives pips, eliminations and the clock, plus a
+    whole-arena minimap and the battle results;
+  - LINK BATTLE.
+
+  **Done when:** a BATTLE round with five AI ends by lives and by time,
+  the AI scores eliminations against each other and the player, the
+  virtual-cable link battle stays in sync to its end (lossless and 1%
+  loss), and the stress scene in the arena is under budget.
+- **M8 Stretch** (pick with Adrian): the Perimeter league (sentries,
+  PROMPT INJECTION, the ending card), built in behind the RAM cut in 13.2
+  or as a track pack once M7 exists; rewind back for single-player
+  (17.7); a Tufty port (on the `tufty` branch, as the other carts were).
+- **M7 Track packs** (Adrian 2026-10-04 and 2026-10-05): section 19.
+  The pack format and loader (tracks and an arena), scenery props,
+  `tools/build_pack.py`, the pack and arena pickers, link pack matching,
+  then **Dead Mall** first (19.7: it brings the first non-brown arena)
+  and **The Boneyard** (19.5). **Done when:** a
   pack copied onto the badge drive shows in the league picker and races,
+  a pack's arena (19.9) shows in the BATTLE arena picker,
   the built-in leagues still work with no pack present, and a corrupt or
   foreign pack is refused with a message, never a crash.
+- **M9 More packs**: **The Seabed** (19.6) and **Cold Storage** (19.8,
+  Antarctica), each with three tracks and an arena. **Done when:** both
+  packs race and battle from the drive, and a link race with a pack on
+  both badges runs in sync.
 
 ## 17. Decisions (taken by default, 2026-10-04)
 
@@ -803,6 +920,12 @@ Merge to main as soon as a milestone is badge-ready.
     Behaviour (hazards, pickups) stays in the cart, and a pack picks from
     the hazard kinds the cart knows. Read from the drive, copied into one
     RAM slot at race start. Files are `NAME.GCP` (FAT 8.3).
+16. **BATTLE** (8.3): menu row BATTLE, title card `KILL -9`, arena The
+    Sandbox in the Dumps tileset. LIVES default 3 (1/3/5/9/INF), TIME
+    default 3 min. Eliminations go by last hit within 180 ticks, and a
+    wreck with no hit scores for nobody. Ammo and burst refill every 20 s.
+    90 ticks of SAFE MODE after a respawn. STACK SMASH and CLEAN LANDING
+    are the stunt rules.
 
 ## 18. Facts to check in M0
 
@@ -837,12 +960,13 @@ league:
 
 | Part | Size | Notes |
 |---|---|---|
-| Header | 64 B | magic `GCPK`, format version, pack name (16 chars), league name, track count, the hazard kinds it uses, CRC32 of the rest |
+| Header | 64 B | magic `GCPK`, format version, pack name (16 chars), league name, track count, arena flag, the hazard kinds it uses, CRC32 of the rest |
 | Palette | 512 B | as the built-in leagues |
 | Tileset | 8 or 16 KB | 128 or 256 tiles of 8x8 at 8 bpp |
 | Horizon | 12 KB | the two-layer strip, as built-in |
 | Props sheet | up to 6 KB | scenery billboards at 4 bpp (19.3) |
 | Per track (1 to 4) | 7 to 10 KB each | name, LZ map, attributes, centerline, features (crates, chips, hazards, props) |
+| Arena (0 or 1) | 6 to 9 KB | name, LZ map, attributes, spawn and crate pads, navigation field, features (19.9) |
 
 A three-track pack is about 50 to 60 KB, so the 1,280 KB drive holds the
 emulator ROMs and a shelf of packs.
@@ -967,6 +1091,113 @@ across the plain.
   Trench** (following the severed cable down into the trench, with a
   ramp across the break).
 
+### 19.7 Dead Mall
+
+*Before the takeover the Hyperscalers bought every dying mall for its
+floor space and its power feed, wheeled racks into the shopfronts and ran
+them hot. Then they built bigger, somewhere else. The escalators
+stopped, and the racks still blink.*
+
+A two-storey megamall turned datacenter, then abandoned as both. It is
+indoors and the first pack that isn't sun, sand and rust. Server racks
+fill the shopfronts behind roll-down grilles. The anchor store is
+gutted, with mannequins still standing in rows. Under the skylight dome
+is a dry fountain full of coins and dead phones.
+
+- **Palette**: pastel terrazzo (teal, salmon, cream), half-lit neon
+  signage in magenta and cyan, green exit signs, rack LEDs in blue and
+  amber, a dim purple night sky through the skylights. No brown.
+- **Floor**: terrazzo with brass inlay lines, food-court tile, carpet in
+  the anchor store, painted deck stripes in the parking structure, and
+  cable trays and floor grilles where racks were rolled in.
+- **Horizon**: the atrium's balconies and shopfronts, a giant dead
+  pretzel sign, the skylight dome, rows of rack lights fading back.
+- **Props**: palm planters, a mannequin, a kiosk cart, a neon shop sign,
+  a server rack, a vending machine, a stalled escalator, an abandoned
+  shopping cart, a security robot slumped against a pillar.
+- **Hazards**:
+  - *runaway scrubber* (crossing mover: a floor-polishing robot still
+    on its route);
+  - *sparking panel* (timed blast from a breaker the racks overloaded);
+  - *wet floor* (slick, signed with a yellow cone prop);
+  - *ceiling tile* (breakable crust: the mezzanine floor gives way to
+    the level below).
+- **Tracks**:
+  - **Anchor Store**: a loop through the department store, between
+    mannequin rows and racks, past the dead perfume counters.
+  - **Food Court**: round the atrium, weaving through tables, under the
+    pretzel sign, and jumping the stalled escalators.
+  - **Parking Structure**: the roof deck at night, with gap jumps
+    between ramps and the lot lights still on a timer.
+
+### 19.8 Cold Storage
+
+*The Hyperscalers moved the hot work south, to the last cold place on
+Earth, where the last open sea still meets the last ice. They pump the
+ocean through the racks and dump the heat back in, and the glaciers are
+going. Humans were not invited. We came for the warm air leaking out of
+the vents.*
+
+Antarctica: AI compute halls dug into the ice shelf, seawater intake
+pipes as wide as tunnels, melting glaciers calving into black water,
+wind farms on the ridges, and a geothermal plant on the volcano's flank
+feeding a humming switchyard. Every surface is ice, steel or black
+volcanic rock.
+
+- **Palette**: white and pale cyan ice, deep navy water, black basalt,
+  hazard orange on the pipes and the plant, and an aurora in green and
+  magenta over a polar twilight sky. Nothing else in the game looks like
+  it.
+- **Floor**: packed snow and glare ice, meltwater channels, grated steel
+  walkways over the pipes, black rock and ash on the volcano, and
+  painted helipad and road markings.
+- **Horizon**: the ice cliffs and the open sea, server domes lit from
+  inside, turbines turning on the ridge, and the volcano with its plume.
+  The aurora rolls in the second horizon layer.
+- **Props**: an intake pipe mouth, a pylon, a wind turbine, an ice
+  pinnacle, a radar dome, a frozen crane, a penguin colony sign (the
+  penguins are gone), and an emperor penguin who did not get the memo.
+- **Hazards**:
+  - *glare ice* (slick, the whole of some sections);
+  - *thin ice* (breakable crust over the sea: through it is a wreck);
+  - *calving* (crossing mover: an ice block slides off the glacier
+    face across the road);
+  - *arc flash* (timed blast at the switchyard);
+  - *steam vent* (timed blast where the warm outflow meets the ice).
+- **Tracks**:
+  - **Intake Shelf**: along the ice shelf's edge, with the sea on one
+    side (an open edge), through an intake pipe and into the server
+    halls.
+  - **Calving Front**: under the glacier face, with ice blocks crossing,
+    meltwater channels and crevasse jumps.
+  - **Erebus Grid**: up the volcano to the geothermal plant and the
+    switchyard, black rock and steam, arc flashes between the pylons.
+
+### 19.9 Arenas in packs
+
+A pack may also carry one battle arena: a square map with its spawn pads,
+crate pads, kickers and navigation field, drawn in the pack's tileset. It
+shows in the BATTLE arena picker after The Sandbox. The arena is what
+gives battle colour: The Sandbox is brown on purpose, so the packs bring
+the rest. The four planned:
+
+- **Dead Mall: The Food Court.** The first non-brown arena, and the
+  first pack built. The pit is the dry fountain (the wishing well).
+  Stalled escalators are the kickers, kiosks and planters make wall
+  islands, and the old carousel turns as a mover in one corner. It's lit
+  by neon and rack LEDs under the skylight.
+- **Cold Storage: The Moon Pool.** A drilled hall in the ice shelf where
+  the intake pipes drop into the sea. The pit is the moon pool itself,
+  black water. The whole floor is glare ice, so every car slides, with
+  ice kickers and a ring of steam vents.
+
+- **The Boneyard: Hangar 18.** A collapsed hangar round a crashed saucer
+  that nobody ever explained. Kickers off the broken wings, and the
+  saucer's rim is a ring ramp.
+- **The Seabed: The Drain.** The plughole the ocean went down: a huge
+  funnel bowl with the pit at its heart, rib arches from a whale skeleton
+  for gates, and a listing trawler to jump off.
+
 ## Status
 
 - 2026-10-04: first draft (ee52bffc). Same day, revised to Adrian's
@@ -975,3 +1206,11 @@ across the plain.
   Build approved; `PLAN.md` comes with M0.
 - 2026-10-04: track packs added as a future goal (section 19, M7) with
   The Boneyard and The Seabed as the first two packs.
+- 2026-10-05: BATTLE (`KILL -9`) added as M6 (8.3): a stunt arena (The
+  Sandbox), eliminations, and a lives limit as an option. The old M6
+  stretch becomes M8. Packs may carry an arena (19.9).
+- 2026-10-05: two more packs. **Dead Mall** (19.7) is a megamall turned
+  datacenter, abandoned as both, with The Food Court as the first
+  non-brown arena; it moves into M7 with The Boneyard. **Cold Storage**
+  (19.8) is set in Antarctica, among AI halls on the last ice and sea,
+  with The Moon Pool as its arena; it goes into M9 with The Seabed.
