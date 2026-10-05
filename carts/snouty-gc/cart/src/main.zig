@@ -59,8 +59,9 @@ pub const Screen = enum(u8) { splash, title, select, race, pause, results, menu,
 var screen: Screen = .splash;
 /// Why the race runs: a Quick Race, the attract demo, the render stress
 /// scene, GARBAGE COLLECTION (M3), a CIRCUIT race (M5; race rules, the
-/// garage's loadouts, chips on). The numbers are debug_mode's.
-const Mode = enum(u8) { quick, attract, stress, gc, circuit };
+/// garage's loadouts, chips on), BATTLE (M6, `KILL -9` on an arena). The
+/// numbers are debug_mode's.
+const Mode = enum(u8) { quick, attract, stress, gc, circuit, battle };
 var mode: Mode = .quick;
 /// The mode the main menu picked (quick, gc or circuit): the select races it.
 var race_mode: Mode = .quick;
@@ -96,6 +97,16 @@ export var gc_stress: u8 = 0;
 /// made-up 1st place instead of racing, so a script walks the garage, the
 /// standings and every card.
 export var gc_cards: u8 = 0;
+/// M6: badge-bench `--poke gc_battle=1`: a BATTLE round on The Sandbox at
+/// boot with SNOUTY on the autopilot (3 lives, 3 min); `gc_battle=2`: the
+/// render stress scene (stress.zig) placed in the arena.
+export var gc_battle: u8 = 0;
+/// M6: the next BATTLE round's options (Track B's setup screen sets them;
+/// the wasm `debug_start_battle` / `debug_battle_minutes` /
+/// `debug_battle_crews` too): lives (0 INF), TIME minutes (0 NONE), AI cars.
+var battle_lives: u8 = 3;
+var battle_minutes: u8 = 3;
+var battle_crews: u8 = world.car_count;
 /// Race seed: a new one per race from the frame counter (any value works;
 /// the link race of M4 shares one between the badges).
 var seed: u32 = 0x5EED_6C00;
@@ -189,6 +200,15 @@ pub fn start() void {
     backdrop();
     go(.splash);
     if (gc_stress != 0) start_stress();
+    if (gc_battle == 1) {
+        autopilot = true;
+        new_race(.battle, 0);
+    } else if (gc_battle == 2) {
+        new_race(.battle, 0);
+        mode = .stress;
+        stress.fill(&w, follow);
+        fx.begin(&w);
+    }
     if (gc_cards != 0) {
         debug_start_circuit(racers.snouty);
         prix.cycles = 5000;
@@ -235,9 +255,15 @@ fn new_race(m: Mode, t: u8) void {
     var setup = world.Setup{ .track = t, .seed = seed, .mode = switch (m) {
         .gc => .gc,
         .attract => .attract,
+        .battle => .battle,
         .quick, .stress, .circuit => .race,
     } };
-    if (m == .quick or m == .gc) setup.humans[0] = player_racer;
+    if (m == .quick or m == .gc or m == .battle) setup.humans[0] = player_racer;
+    if (m == .battle) {
+        setup.lives = battle_lives;
+        setup.minutes = battle_minutes;
+        setup.crews = battle_crews;
+    }
     // The CIRCUIT: the league's track, every car's loadout, chips on.
     if (m == .circuit) setup = prix.setup(seed);
     begin_race(m, setup, player_racer);
@@ -495,7 +521,7 @@ fn draw_race(look: bool) void {
         .frame = frame,
         .look_back = look,
         .spectate = watching,
-        .collected = mode == .gc and !w.cars[me].active,
+        .collected = (mode == .gc or mode == .battle) and !w.cars[me].active,
         .press_start = mode == .attract,
     });
     hud.draw_after(frame);
@@ -535,7 +561,7 @@ fn race_frame() void {
 
     // One tick. The human slot 0 is this badge's buttons (or the autopilot).
     var inputs = [2]u8{ 0, 0 };
-    if (mode == .quick or mode == .gc or mode == .circuit) {
+    if (mode == .quick or mode == .gc or mode == .circuit or mode == .battle) {
         inputs[0] = if (autopilot) ai.drive(&w, me).byte() else input.race_byte();
         if (autopilot and autopilot_mix) {
             const pad = world.Input.of(input.race_byte());
@@ -554,7 +580,7 @@ fn race_frame() void {
     fx.tick(&w, if (mode == .attract) follow else me, frame);
     switch (mode) {
         .attract => attract_camera(),
-        .gc => watch_leader(),
+        .gc, .battle => watch_leader(),
         else => {},
     }
     sound_cues();
@@ -630,6 +656,8 @@ fn watch_leader() void {
     for (&w.cars, 0..) |*c, i| {
         if (c.active and (lead == world.no_car or c.rank < w.cars[lead].rank)) lead = @intCast(i);
     }
+    // BATTLE: an out player watches the kill leader (SPEC 8.3).
+    if (mode == .battle and w.battle.leader != world.no_car and w.cars[w.battle.leader].active) lead = w.battle.leader;
     if (lead == world.no_car or lead == follow) return;
     if (follow == me or !w.cars[follow].active or cut_frames >= watch_min) {
         cut_to(lead);
@@ -1274,7 +1302,10 @@ comptime {
             "debug_linked",         "debug_start_circuit", "debug_prix_skip",      "debug_prix_cycles",
             "debug_prix_give",      "debug_prix_league",   "debug_prix_race",      "debug_prix_done",
             "debug_card",           "debug_garage_row",    "debug_pickup_cursor",  "debug_menu_battle",
-            "debug_menu_row",
+            "debug_menu_row",       "debug_start_battle",  "debug_battle_minutes", "debug_battle_crews",
+            "debug_battle_lives",   "debug_battle_elims",  "debug_battle_safe",    "debug_battle_left",
+            "debug_battle_refill",  "debug_battle_out",    "debug_battle_leader",  "debug_battle_end",
+            "debug_battle_set_lives", "debug_battle_kill", "debug_battle_clock",
         }) |name| @export(&@field(@This(), name), .{ .name = name });
     }
 }
@@ -1533,6 +1564,74 @@ fn debug_menu_battle(v: u32) callconv(.c) void {
     menu.preview_battle = v != 0;
 }
 /// The main menu's cursor (a menu.Item value).
+// --- M6 BATTLE (wasm debug: the simulator's fakes for Track B) ---------------------
+
+/// --call debug_start_battle:N: a BATTLE round on The Sandbox with the
+/// select's racer, N lives (0 INF), the TIME and CREWS set below (default
+/// 3 min, every AI car).
+fn debug_start_battle(n: u32) callconv(.c) void {
+    battle_lives = @intCast(n & 0xFF);
+    race_mode = .battle;
+    new_race(.battle, 0);
+}
+/// The next round's TIME in minutes (0 NONE) and AI cars (CREWS).
+fn debug_battle_minutes(m: u32) callconv(.c) void {
+    battle_minutes = @intCast(m & 0xFF);
+}
+fn debug_battle_crews(k: u32) callconv(.c) void {
+    battle_crews = @intCast(k & 0xFF);
+}
+/// Car i's lives, eliminations and SAFE MODE ticks.
+fn debug_battle_lives(i: u32) callconv(.c) u32 {
+    return w.cars[i % world.car_count].lives;
+}
+fn debug_battle_elims(i: u32) callconv(.c) u32 {
+    return w.cars[i % world.car_count].kills;
+}
+fn debug_battle_safe(i: u32) callconv(.c) u32 {
+    return w.cars[i % world.car_count].safe;
+}
+/// Ticks left on the round's clock (0xFFFFFFFF: TIME NONE).
+fn debug_battle_left() callconv(.c) u32 {
+    if (w.battle.limit == 0) return 0xFFFF_FFFF;
+    return w.battle.limit -| w.tick;
+}
+fn debug_battle_refill() callconv(.c) u32 {
+    return w.battle.refill;
+}
+/// Cars out of lives (bits), the kill leader (255 none), why the round
+/// ended (0 running, 1 lives, 2 time).
+fn debug_battle_out() callconv(.c) u32 {
+    return w.battle.out;
+}
+fn debug_battle_leader() callconv(.c) u32 {
+    return w.battle.leader;
+}
+fn debug_battle_end() callconv(.c) u32 {
+    return @backingInt(w.battle.end);
+}
+/// Fakes (debug writes outside `simulate`, like `debug_effect`):
+/// `car | lives << 8` sets a car's lives; `victim | killer << 8` wrecks
+/// the victim with the killer's hit credited (killer 255: no hit, nobody
+/// scores); T sets the clock to T ticks left.
+fn debug_battle_set_lives(v: u32) callconv(.c) void {
+    w.cars[(v & 0xFF) % world.car_count].lives = @intCast((v >> 8) & 0xFF);
+}
+fn debug_battle_kill(v: u32) callconv(.c) void {
+    const victim = (v & 0xFF) % world.car_count;
+    const killer: u8 = @intCast((v >> 8) & 0xFF);
+    const c = &w.cars[victim];
+    if (!c.active or c.wreck != .none) return;
+    c.last_hit_by = if (killer < world.car_count and killer != victim) killer else world.no_car;
+    c.last_hit_ticks = 0;
+    c.armor = 0;
+    sim.wreck(&w, victim, .armor);
+}
+fn debug_battle_clock(t: u32) callconv(.c) void {
+    if (w.battle.limit == 0) return;
+    w.tick = w.battle.limit -| @as(u16, @intCast(@min(t, w.battle.limit)));
+}
+
 fn debug_menu_row() callconv(.c) u32 {
     return main_list.cursor;
 }

@@ -31,8 +31,11 @@ pub const Attr = enum(u8) {
     surface = 1,
     /// Wreckage wall (Zero's rail).
     wall = 2,
-    /// Zero's overclock pad; no GC tile uses it.
-    reserved = 3,
+    /// M6, the BATTLE arena: a kicker, a long one-way ramp
+    /// (`tuning.kicker_ticks` airborne; Zero's unused overclock pad value).
+    /// Like `jump` it launches only a car moving the way the tile faces
+    /// (`facing`).
+    kicker = 3,
     /// Coolant: grip falls to 0.97 (Zero's throttled zone).
     coolant = 4,
     /// Service bay: repairs armor from M2 (Zero's cold aisle).
@@ -44,8 +47,28 @@ pub const Attr = enum(u8) {
     start = 8,
     sector1 = 9,
     sector2 = 10,
+    /// M6, the BATTLE arena: a one-way ramp of a race ramp's air time (the
+    /// gap jumps and the wall kickers).
+    jump = 11,
     _,
 };
+
+/// Tile indices of the arena's one-way ramps (tools/leagues.py KICKER,
+/// JUMP): base + direction (0 E, 1 S, 2 W, 3 N).
+pub const kicker_tile: u8 = 64;
+pub const jump_tile: u8 = 92;
+
+/// The way a `kicker` or `jump` tile faces, from its tile index: a unit
+/// vector in whole px (x, y), y down.
+pub fn facing(tile: u8) [2]i32 {
+    const base = if (tile >= jump_tile) jump_tile else kicker_tile;
+    return switch ((tile -% base) & 3) {
+        0 => .{ 1, 0 },
+        1 => .{ 0, 1 },
+        2 => .{ -1, 0 },
+        else => .{ 0, -1 },
+    };
+}
 
 /// A league's art. The tiles and the horizon are stored packed (the map
 /// format, `unpack`) and unpacked into one shared RAM slot (`art_tiles`,
@@ -118,6 +141,11 @@ pub const Track = struct {
     /// `world.hazard_max`; `parse_hazards`): the generic kinds of SPEC
     /// 19.4 with this track's numbers. Empty for a track without hazards.
     feat: []const u8 = &.{},
+    /// M6: a BATTLE arena's blob (`parse_arena`: spawn pads, crate pads,
+    /// the navigation field); empty for a race track. An arena's `center`
+    /// is a ring round its outer lanes for the race code that reads one;
+    /// battle never ranks or respawns by it.
+    arena: []const u8 = &.{},
 
     /// Sample i (wrapping). Stored in 6 bytes (M3, the RAM budget): a u32
     /// with x in bits 0..9, y in 10..19 and the tangent's top 12 bits in
@@ -228,6 +256,111 @@ pub const HazardSpec = struct {
 /// tools/build_tracks.py `hazard_bytes` writes them and checks the cycles fit.
 pub const hazard_record = 20;
 
+// --- BATTLE arenas (M6, SPEC 8.3) ----------------------------------------------
+//
+// The arena blob (tools/build_arena.py writes it), little endian:
+//   header 8 bytes: spawn_n, pad_n, node_n, cell_shift (32 px cells: 5),
+//                   grid (cells a side: 32), 3 zero bytes
+//   spawn_n x 6:    x u16, y u16 (world px, the pad's centre), heading u16
+//   pad_n x 4:      x u16, y u16 (an RMA crate pad's centre)
+//   node_n x 6:     x u16, y u16, jump u8 (the node this one jumps to over
+//                   a kicker or jump, `no_node` none), flags u8 (`node_bay`,
+//                   `node_jump`)
+//   node_n^2:       next hop, next[from * node_n + to] (`no_node` when from
+//                   == to)
+//   grid^2:         cells[cy * grid + cx], the node to head for from that
+//                   cell (the nearest with a clear ground line), `no_node`
+//                   outside the arena
+
+/// Navigation nodes an arena may have, spawn pads, and "no node".
+pub const nav_max = 48;
+pub const spawn_max = 8;
+pub const no_node: u8 = 0xFF;
+/// Node flags: a service bay; the approach to a jump (`Node.jump`).
+pub const node_bay: u8 = 1;
+pub const node_jump: u8 = 2;
+
+pub const Spawn = struct { x: u16 = 0, y: u16 = 0, heading: u16 = 0 };
+pub const Node = struct { x: u16 = 0, y: u16 = 0, jump: u8 = no_node, flags: u8 = 0 };
+
+/// The selected arena's data (filled by `select`, like `crate_spots`; empty
+/// for a race track). The hunter AI and the KERNEL PANIC packet route over
+/// the nodes: from node a toward node b the next node is `hop(a, b)`; a
+/// world point's node to head for is `cell_node(x, y)`.
+pub const Arena = struct {
+    spawn_n: u8 = 0,
+    spawns: [spawn_max]Spawn = @splat(.{}),
+    node_n: u8 = 0,
+    nodes: [nav_max]Node = @splat(.{}),
+    /// The next-hop table and the cell grid (slices of the track data).
+    next: []const u8 = &.{},
+    cells: []const u8 = &.{},
+    cell_shift: u5 = 5,
+    grid: u8 = 0,
+
+    /// The node to head for from world px (x, y) (wrapping), `no_node`
+    /// outside the arena or with no arena.
+    pub fn cell_node(self: *const Arena, x: i32, y: i32) u8 {
+        if (self.grid == 0) return no_node;
+        const g: i32 = self.grid;
+        const cx = (x & 1023) >> self.cell_shift;
+        const cy = (y & 1023) >> self.cell_shift;
+        if (cx >= g or cy >= g) return no_node;
+        return self.cells[@intCast(cy * g + cx)];
+    }
+
+    /// The node after `from` on the way to `to` (`to` when adjacent,
+    /// `no_node` when from == to or either is out of range).
+    pub fn hop(self: *const Arena, from: u8, to: u8) u8 {
+        if (from >= self.node_n or to >= self.node_n) return no_node;
+        return self.next[@as(usize, from) * self.node_n + to];
+    }
+};
+pub var arena: Arena = .{};
+
+/// Decode `t.arena` into `out` and its crate pads into `pads[0..pad_n]`;
+/// false for a track without one (or a blob shorter than its header says,
+/// or with more nodes or spawns than the caches hold: the generator keeps
+/// within them).
+pub fn parse_arena(t: *const Track, out: *Arena, pads: *[world.crate_max]CrateSpot, pad_n: *u8) bool {
+    out.* = .{};
+    const b = t.arena;
+    if (b.len < 8) return false;
+    const sn: usize = b[0];
+    const pn: usize = b[1];
+    const nn: usize = b[2];
+    const grid: usize = b[4];
+    if (sn > spawn_max or pn > world.crate_max or nn > nav_max) return false;
+    const rd = struct {
+        fn u(bytes: []const u8, at: usize) u16 {
+            return std.mem.readInt(u16, bytes[at..][0..2], .little);
+        }
+    }.u;
+    var at: usize = 8;
+    if (b.len < at + sn * 6 + pn * 4 + nn * 6 + nn * nn + grid * grid) return false;
+    for (0..sn) |k| {
+        out.spawns[k] = .{ .x = rd(b, at), .y = rd(b, at + 2), .heading = rd(b, at + 4) };
+        at += 6;
+    }
+    for (0..pn) |k| {
+        pads[k] = .{ .x = rd(b, at), .y = rd(b, at + 2) };
+        at += 4;
+    }
+    for (0..nn) |k| {
+        out.nodes[k] = .{ .x = rd(b, at), .y = rd(b, at + 2), .jump = b[at + 4], .flags = b[at + 5] };
+        at += 6;
+    }
+    out.spawn_n = @intCast(sn);
+    out.node_n = @intCast(nn);
+    out.next = b[at..][0 .. nn * nn];
+    at += nn * nn;
+    out.cells = b[at..][0 .. grid * grid];
+    out.grid = @intCast(grid);
+    out.cell_shift = @intCast(@min(b[3], 10));
+    pad_n.* = @intCast(pn);
+    return true;
+}
+
 /// The selected track's hazards, `hazard_specs[0..hazard_n]`, drive
 /// `World.hazards[0..hazard_n]` (filled by `select`, like `crate_spots`).
 pub var hazard_specs: [world.hazard_max]HazardSpec = @splat(.{});
@@ -285,7 +418,8 @@ inline fn wrap_px(d: i32) i32 {
 pub fn select(t: *const Track) void {
     load_art(t.league);
     unpack_map(t.map_packed, &map_ram);
-    crate_n = find_crates(t, &crate_spots);
+    // An arena's crates sit on its pads; a race track's in its rows.
+    if (!parse_arena(t, &arena, &crate_spots, &crate_n)) crate_n = find_crates(t, &crate_spots);
     chip_n = find_chips(t, &chip_spots);
     hazard_n = parse_hazards(t, &hazard_specs);
     current = t;
@@ -471,6 +605,23 @@ pub const coolant_basin = Track{
     .center = @embedFile("gen/tracks/coolant_basin_center.bin"),
     .feat = @embedFile("gen/tracks/coolant_basin_feat.bin"),
 };
+
+/// M6: The Sandbox, the BATTLE arena (SPEC 8.3): the Dumps' tileset,
+/// tools/build_arena.py.
+pub const sandbox = Track{
+    .name = "THE SANDBOX",
+    .league = &dumps,
+    .laps = 0,
+    .map_packed = @embedFile("gen/tracks/sandbox_map.bin"),
+    .attr = dumps_attr,
+    .center = @embedFile("gen/tracks/sandbox_center.bin"),
+    .feat = @embedFile("gen/tracks/sandbox_feat.bin"),
+    .arena = @embedFile("gen/tracks/sandbox_arena.bin"),
+};
+
+/// M6: the BATTLE arenas (`Setup.track` indexes this in battle; M7's pack
+/// arenas join after The Sandbox).
+pub const arenas = [_]*const Track{&sandbox};
 
 /// Every track in menu rotation order (league by league, SPEC 3.2);
 /// `World.track` and `Setup.track` index this table. The menus read

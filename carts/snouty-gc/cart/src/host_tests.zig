@@ -25,4 +25,9 @@ test {
     _ = @import("career_test.zig");
     _ = @import("panel_text_test.zig");
     _ = @import("net_compat_test.zig");
+    // M6 BATTLE: the rules and the hunter (Track A), the presentation (Track B).
+    _ = @import("battle.zig");
+    _ = @import("hunt.zig");
+    _ = @import("battle_test.zig");
+    _ = @import("battle_ui_test.zig");
 }

@@ -250,7 +250,7 @@ pub fn control(w: *World, i: usize, in: Input) void {
             if (c.captcha_done == c.captcha_lit) c.captcha = 1;
         } else c.captcha_done = 0;
     }
-    if (b_edge and c.pickup != .none and c.roll_ticks == 0 and c.frozen == 0) use(w, i, in.down);
+    if (b_edge and c.pickup != .none and c.roll_ticks == 0 and c.frozen == 0 and c.safe == 0) use(w, i, in.down);
 }
 
 // --- Using a pickup ----------------------------------------------------------------------

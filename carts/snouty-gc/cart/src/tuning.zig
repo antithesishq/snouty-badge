@@ -510,3 +510,36 @@ pub const price_watchdog = [3]u16{ 500, 900, 1300 };
 /// racer that keeps winning gets a little stronger still.
 pub const ai_follow_pct: u32 = 75;
 pub const ai_own_pct: u32 = 0;
+
+// --- BATTLE, `KILL -9` (SPEC 8.3), M6: battle.zig, hunt.zig ------------------------
+
+/// The World's size cap (sim_test, career_test, check.sh): it bounds the
+/// lockstep CRC's cost. 2,560 B to M5; M6 raised it for BATTLE's fields
+/// (lives, SAFE MODE and the hunter's waypoint per car, `World.battle`).
+pub const world_cap: usize = 2624;
+
+/// The setup screen's LIVES and TIME rows in order (SPEC 8.3): lives per
+/// car (0 = INF) and the round in minutes (0 = NONE, not offered with INF).
+pub const battle_lives_opts = [5]u8{ 1, 3, 5, 9, 0 };
+pub const battle_minutes_opts = [4]u8{ 2, 3, 5, 0 };
+/// Ticks a minute (the round clock is `World.tick`).
+pub const battle_minute: u16 = 3600;
+/// Ammo and burst charges refill in full every this many ticks (20 s):
+/// battle has no laps.
+pub const battle_refill: u16 = 1200;
+/// SAFE MODE after a battle respawn: ticks the car blinks, cannot be hit
+/// and cannot fire.
+pub const battle_safe: u8 = 90;
+/// The arena's service bays repair at half the track rate: 1 armor every
+/// `battle_bay_every` ticks.
+pub const battle_bay_every: u32 = 8;
+/// The bit bucket's kickers (tile attribute `kicker`): airborne ticks, a
+/// longer jump than a ramp's `ramp_ticks`.
+pub const kicker_ticks: u8 = 64;
+/// STACK SMASH: damage to a car landed on (plus a ram bounce of
+/// `smash_bounce` Q16 px/tick away from the lander).
+pub const smash_damage: u8 = 40;
+pub const smash_bounce: i32 = 1 << 16;
+/// "Ahead" in an arena (SPEC 8.3): the front cone's half angle, as the
+/// cosine (Q16) of 45 degrees.
+pub const battle_cone_cos: i32 = 46341;

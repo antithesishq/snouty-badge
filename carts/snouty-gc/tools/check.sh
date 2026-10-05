@@ -21,7 +21,7 @@
 #              screen with SNOUTY's 3 laps done, combat on (from M1 a car
 #              may be wrecked when the results come up; from M2 pickups make
 #              it about 7,300 ticks, so it gets 9,000 frames), and the World
-#              under the 2,560 B cap of sim_test;
+#              under the cap of sim_test (tuning.world_cap: 2,624 B since M6);
 #            - the attract demo starts after 10 s idle on the title;
 #            - the racer select (M1, M3 flow): Start, Start, A (QUICK RACE)
 #              opens it, Right x3 shows SYSADMIN, B goes back to the main
@@ -61,6 +61,10 @@
 #              booked, CYCLES earned), A the garage; then made-up results
 #              (debug_prix_skip) close the Dumps (the league card, the
 #              Runoff unlock card), the Runoff, and reach the end card.
+#            - M6 (Track A): a BATTLE round on The Sandbox (debug_start_battle,
+#              the autopilot driving SNOUTY) runs to its end by lives or by
+#              time with eliminations scored; Track B's previews follow in
+#              their own block.
 #   bench    badge-bench (calibrated) on badge-bench/carts/snouty-gc.toml,
 #            once plain and once with --lcd, and the render stress scene
 #            (--poke gc_stress=1, tools/scripts/m1_render_stress.json) plain
@@ -72,7 +76,10 @@
 #            m5_circuit_race.json (3,000 frames: the menus, the garage, a
 #            CIRCUIT race with chips and the AIs' loadouts) and m5_cards.json
 #            (--poke gc_cards=1: garage purchases, the standings, the league,
-#            unlock and end cards), each plain and --lcd: worst `busy ms` <= BENCH_MAX_MS (default 8, SPEC
+#            unlock and end cards), M6's BATTLE round (--poke gc_battle=1,
+#            3,600 frames: SNOUTY on the autopilot among five hunters on The
+#            Sandbox) and the arena stress scene (--poke gc_battle=2), each
+#            plain and --lcd: worst `busy ms` <= BENCH_MAX_MS (default 8, SPEC
 #            13.1), no crash, no neopixel warning. M4: the stress scene and
 #            m3_gc_race.json once more with `--poke gc_pump_probe=1` (every
 #            link pump point runs, the link searching: a link race's draw
@@ -176,7 +183,7 @@ if want preview; then
     done
     run_preview race --frames 9000 --call debug_start_race:0 --call debug_set_autopilot:1 \
         --until 'debug_screen == 5' --expect 'debug_screen == 5' --expect 'debug_lap == 3' \
-        --expect 'debug_phase == 2' --expect 'debug_world_size < 2560' \
+        --expect 'debug_phase == 2' --expect 'debug_world_size <= 2624' \
         --dump-exports debug_tick,debug_rank,debug_best_lap,debug_world_size || st=1
     run_preview attract --frames 760 --press START:2-2 --at '700 debug_screen == 3' --at '700 debug_mode == 1' \
         --expect 'debug_follow == 0' --dump-exports debug_screen,debug_mode,debug_tick || st=1
@@ -226,6 +233,12 @@ if want preview; then
         --call-at '7530 debug_prix_skip:1' --call-at '7570 debug_prix_skip:1' --call-at '7610 debug_prix_skip:1' \
         --expect 'debug_screen == 10' --expect 'debug_card == 2' --expect 'debug_prix_done == 1' \
         --dump-exports debug_screen,debug_card,debug_prix_cycles || st=1
+    # --- M6 Track A: a BATTLE round to its end.
+    run_preview battle --frames 12000 --call debug_set_autopilot:1 --call debug_battle_minutes:2 --call debug_start_battle:3 \
+        --until 'debug_battle_end > 0' --expect 'debug_battle_end > 0' --expect 'debug_mode == 5' \
+        --dump-exports debug_tick,debug_battle_end,debug_battle_out,debug_battle_leader || st=1
+    # --- M6 Track B previews (Track B adds its runs here).
+    # --- end of the M6 Track B previews.
     run_preview stress --frames 200 --call debug_stress:1 --expect 'debug_mode == 2' --expect 'debug_drawn == 64' \
         --expect 'debug_gathered > 64' --dump-exports debug_drawn,debug_gathered || st=1
     result preview "$st"
@@ -269,6 +282,16 @@ if want bench; then
     p15=$!
     "$bench" "$elf" --json --lcd "${m5k[@]}" --out "$out/bench-m5-cards-lcd" > "$out/bench-m5-cards-lcd.txt" 2>&1 &
     p16=$!
+    m6b=(--frames 3600 --poke gc_battle=1)
+    "$bench" "$elf" --json "${m6b[@]}" --out "$out/bench-m6-battle" > "$out/bench-m6-battle.txt" 2>&1 &
+    p17=$!
+    "$bench" "$elf" --json --lcd "${m6b[@]}" --out "$out/bench-m6-battle-lcd" > "$out/bench-m6-battle-lcd.txt" 2>&1 &
+    p18=$!
+    m6s=(--frames 300 --poke gc_battle=2)
+    "$bench" "$elf" --json "${m6s[@]}" --out "$out/bench-m6-stress" > "$out/bench-m6-stress.txt" 2>&1 &
+    p19=$!
+    "$bench" "$elf" --json --lcd "${m6s[@]}" --out "$out/bench-m6-stress-lcd" > "$out/bench-m6-stress-lcd.txt" 2>&1 &
+    p20=$!
     probe=(--poke gc_pump_probe=1)
     "$bench" "$elf" --json "${probe[@]}" "${stress[@]}" --out "$out/bench-probe-stress" > "$out/bench-probe-stress.txt" 2>&1 &
     p11=$!
@@ -291,12 +314,18 @@ if want bench; then
     wait $p14 || st=1
     wait $p15 || st=1
     wait $p16 || st=1
+    wait $p17 || st=1
+    wait $p18 || st=1
+    wait $p19 || st=1
+    wait $p20 || st=1
     for j in "$out/bench/bench.json" "$out/bench-lcd/bench.json" "$out/bench-stress/bench.json" "$out/bench-stress-lcd/bench.json" \
              "$out/bench-m2/bench.json" "$out/bench-m2-lcd/bench.json" \
              "$out/bench-m3-outflow/bench.json" "$out/bench-m3-outflow-lcd/bench.json" \
              "$out/bench-m3-gc/bench.json" "$out/bench-m3-gc-lcd/bench.json" \
              "$out/bench-m5-circuit/bench.json" "$out/bench-m5-circuit-lcd/bench.json" \
              "$out/bench-m5-cards/bench.json" "$out/bench-m5-cards-lcd/bench.json" \
+             "$out/bench-m6-battle/bench.json" "$out/bench-m6-battle-lcd/bench.json" \
+             "$out/bench-m6-stress/bench.json" "$out/bench-m6-stress-lcd/bench.json" \
              "$out/bench-probe-stress/bench.json" "$out/bench-probe-gc/bench.json"; do
         [ -f "$j" ] || { echo "FAIL no $j"; st=1; continue; }
         python3 - "$j" "$max_ms" <<'EOF' || st=1
