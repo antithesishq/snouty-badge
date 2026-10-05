@@ -1393,6 +1393,97 @@ import for the cart module and a `link_host` test module in `build.zig`
 - `zig build -Dcart=snouty-gc` and `zig build check-float` pass;
   `zig fmt` clean.
 
+**Track B (link integration), 2026-10-05, branch `gc/present`.** The LINK
+menu, the shared racer select and the link race are in, over Track A's
+`net.zig` as docs/NET.md section 3 says; `docs/NET.md` section 4 lists
+what was built, `docs/LINK_PLAY.md` is the hand-off (cable, flashing,
+playing, the two-badge check).
+
+- **Item 1**: the LINK GC net test ends on the GC survivor (a collected
+  human is out, the survivor finished: L4). **Item 2**: `world.Setup.crews`
+  (default every AI car, so single player's grid is unchanged: a test
+  compares the Worlds); `sim.reset` keeps the first `crews` AI cars of the
+  seed's grid shuffle and leaves the rest off the grid (`active = false`,
+  rank 0, never drawn); `net.world_setup()` carries the host's CREWS (L3).
+- **Item 3, the LINK menu** (`main.lobby_frame`, `link_ui.zig`):
+  `PLUG IN THE CABLE` / `SEARCHING...`, `WRONG CART`, then HOST or GUEST
+  and the cable kind, the host's MODE (LINK RACE / LINK GC), TRACK (six)
+  and CREWS (4 / 2 / 0) rows with Left/Right, the guest's greyed copy
+  (`WAITING FOR HOST` before the first SETUP), the partner's pick. A goes
+  to the shared racer select (`select.link`): the partner's ready racer
+  greyed `TAKEN`, a panel with the rules, `PEER` and `YOU` with their
+  `READY` marks, the bottom row `A READY` / `TAKEN` / `A START` (host,
+  both ready) / `HOST STARTS`; B takes the mark back, then back to the
+  lobby. In the simulator LINK is greyed and A flashes `NO LINK IN /
+  SIMULATOR`.
+- **Item 4, the race** (`main.link_race_frame`): pump at the top, submit
+  the race byte, one `step` (the tick's effects, GC camera and sound
+  after it), draw with the pump points, `WAITING FOR PEER` / `PEER LEFT,
+  AI DRIVING` (3 s, with `CABLE OUT` / `PEER RESTARTED` / `PEER QUIT`),
+  then pump and retry the step until 14 ms into the frame
+  (`tuning.link_pump_until_us`). Each badge follows its own car
+  (`local_car`) with its own gags; LINK GC's collected player watches the
+  leader as in single player. Pause from either badge's Start (RESUME,
+  QUIT, SOUND; only Start reaches the race, RESUME and B send a Start
+  edge); QUIT leaves, the partner's AI takes the car. `DESYNC` goes to
+  the results with a `DESYNC: RACE ENDED` band. After the finish the
+  World runs on locally (L16); the results' last A leaves, both badges
+  are back in the lobby for a rematch (new seed).
+- **Tests** (`zig build test-gc`: **116 pass**, 16 of them net): new
+  `CREWS 2 and 0` (three link races in sync to the end: LINK RACE CREWS 2,
+  CREWS 0 on a straight cable, LINK GC CREWS 2; 2 + crews cars on the
+  grid), `main's pause` (menu presses masked to the Start bit, RESUME's
+  injected edge while Start may still be held, the other badge's pause
+  and resume, in sync to the finish with 0.2% byte loss), sim tests
+  `CREWS` (grid, ranks, a race to the finish with the cars still off)
+  and `after the finish no input reaches the World` (race and GC, 900
+  ticks of random bytes against zeros). The headless preview gains a
+  LINK run (offline in the simulator, the made-up lobby and select, a
+  Quick Race after them is not linked). Single player is unchanged: the
+  M0-M3 input scripts replay to the same World checksums as before this
+  track (`m0_race` 1,125,151,687 at update 2,999, `m2_race` 1,116,132,432,
+  `m3_gc_race` -1,540,294,026, `m3_outflow_race` 69,064,753).
+- **Item 5, the poll gap.** badge-bench has no connected-peer fake (and
+  is not this cart's tool), so `--poke gc_pump_probe=1` runs every pump
+  point in a single-player race with the link searching, plus the
+  per-tick work that needs no partner (`encode_input` each frame,
+  `world_hash` every 32 ticks), and traces the worst gap ending at each
+  kind of pump point every 120 frames (`check.sh` prints them). Worst
+  over the stress scene, `m2_race`, `m3_outflow_race` and `m3_gc_race`
+  (us): **floor 59** (every 3 rows: under one packet's 80 us wire time),
+  horizon 89 (every 16 columns; 279 for the first, after the hills' row
+  tables), floor lines 218, HUD passes 543 (the ZERO-DAY flash's half
+  screen, the CAPTCHA card's halves), the tick 513 (`simulate` and the
+  effects: one stretch, `simulate` stays pure), **one sprite 774** (the
+  Sweeper or a claw close up: a blit is not split). The frame boundary
+  (14 ms to the next frame's top: ~2.7 ms plus `present`) is the longest
+  stretch. None of these loses a packet: in a race the link sends no
+  keepalives (traffic flows) and input packets are at least 12 ms apart,
+  so the FIFO holds every packet whole while the gap stays under 12 ms;
+  the floor-band target (80 us) is met on the floor and the horizon.
+- **Bench** (calibrated; `--lcd` identical): `m0_race` mean 3.65, worst
+  5.22 ms; stress 5.02 / **6.17** (M3 5.12 / 6.15: the CAPTCHA card is
+  now an outline and two halves instead of a full fill under the face,
+  same pixels); `m2_race` 3.58 / 5.22; `m3_outflow_race` 3.64 / 5.66;
+  `m3_gc_race` 3.49 / 5.67. With the probe (every pump point on): stress
+  5.16 / **6.34**, `m3_gc_race` 3.59 / 5.80, `m2_race` 3.69 / 5.38,
+  outflow 3.76 / 5.66: the pump points cost ~0.1-0.15 ms a frame with an
+  idle link. `tools/check.sh` green (build, test via test-gc, float,
+  tracks, preview, bench with the two probe runs).
+- **RAM**: `size -A` **.text 150,312 + .data 7,480 + .bss 52,032** (+
+  1,580 exidx/extab + descriptor) = 211,424 B, **62,752 B (61 KB) free**
+  (M3: 77,024). `Net(link.Badge)` 568 B of the .bss; `world_hash` 1.9 KB
+  and `Net.pump` 1.8 KB of the .text.
+- `docs/preview_m4.gif` (389 frames, 50 ms): the menu (LINK greyed, `NO
+  LINK IN SIMULATOR`), the made-up LINK screens (searching, the host's
+  lobby changing MODE / TRACK / CREWS, the guest's, another cart), the
+  host's select readying LEGACY with KIDDIE ready (`A START`), the
+  guest's on a `TAKEN` racer, then a Quick Race with `WAITING FOR PEER`
+  and `PEER LEFT, AI DRIVING` forced over it. Deferred questions L15 to
+  L27.
+- **Never run on two badges.** `docs/LINK_PLAY.md` section 4 is the
+  hardware check for the show.
+
 ## Deferred questions
 
 SPEC 17 holds the design defaults. Taken during M0 (Track A):
@@ -1807,3 +1898,63 @@ L13. **Nonce tie** (both HELLO nonces equal, 1 in 65536): `Net` restarts
     the link for new nonces rather than inventing a tie-break.
 L14. **WAITING** is `step` failing for 500 ms (30 frames) in a row, so it
     needs main to call `step` every frame of the race.
+
+Taken during M4 (Track B, link integration):
+
+L15. **The link runs only on the LINK screens and in a link race**:
+    start() makes the `Net` (the link does not touch the pins until its
+    first poll); B from the LINK screen stops pumping, and the partner
+    sees `SEARCHING...` 2 s later (its link times out). Single player
+    never pumps it.
+L16. **After the finish each badge runs the World alone** with zero
+    inputs (`sim_test`: no input reaches a finished World, race or GC),
+    without the lockstep or the hash checks; the `Net` stays `racing` and
+    resends its last window until `leave`, so a partner one tick behind
+    still gets it. Without this, a badge whose partner left for its
+    results would wait for bytes that never come.
+L17. **Link pause list**: RESUME, QUIT, SOUND (no RESTART: a restart
+    would need both badges to agree; the rematch is in the lobby). Start
+    resumes whatever the cursor; B and A on RESUME send a Start edge (a
+    frame without Start first if it is still held). Two Starts on
+    different ticks inside the input delay pause and resume again.
+L18. **Lobby**: A on any row opens the racer select (the guest may pick
+    before the rules arrive); the host's rules stay between races; the
+    link select has no track row.
+L19. **TAKEN** is the partner's racer once it is ready (hovering greys
+    nothing); when both are ready on one racer the guest's mark drops
+    (L12).
+L20. **Pump points** (`render.band_hook`, `render.pump_at`): the floor
+    every `tuning.link_pump_rows` (3) rows, the horizon every 16 columns,
+    after the tick, after the floor lines, after gathering the sprites
+    and between drawn sprites, between the HUD's passes, the CAPTCHA
+    card's halves and grid rows, the glitch's bands, the ZERO-DAY flash's
+    halves, after the HUD. `simulate` and a single sprite blit are not
+    split (purity; the blit loops stay hot); section M4 status has the
+    gaps.
+L21. **No connected-peer bench**: badge-bench fakes the link with no
+    cable, so the probe times the pump points with a searching link (one
+    cheap poll) rather than a connected one (about 2 FIFO reads a pump
+    and one packet in and out a frame, NET.md section 5). A peer fake in
+    badge-bench would make the link race benchable.
+L22. **Debug overlay** (`-Ddebug_overlay=true`) in a link race: `W` frames
+    without a tick, `C` the link's CRC drops, `G` the worst gap between
+    two pumps this race (us), under the lap counter (it overlaps the
+    feed; a debug build only).
+L23. **Notices**: `WAITING FOR PEER` / `CHECK THE CABLE` while `step` has
+    waited 0.5 s; `PEER LEFT,` / `AI DRIVING` / the reason for 3 s (21
+    characters do not fit 152 px, so SPEC's one line is two), not after
+    the finish; `DESYNC: RACE ENDED` across the top of both results
+    cards. The main menu's `NO LINK IN SIMULATOR` is two lines for the
+    same reason.
+L24. **CREWS off the grid**: the AI cars kept are the first `crews` of
+    the seed's grid shuffle (so which racers sit out changes per race);
+    the others stay at (0, 0), inactive, rank 0, out of every pool's
+    reach and never drawn; the humans move up behind the cars kept.
+L25. **CAPTCHA card** drawn as a 1 px outline and two halves of the face
+    (the same pixels as the old full fill under the face; it made the
+    stress mean 0.1 ms faster in single player too).
+L26. **A guest that gets GO on the LINK screen** (not in the select)
+    starts the race as well.
+L27. **zig fmt** in this Zig rewrote `@intFromEnum` / `@enumFromInt` to
+    `@backingInt` / `@fromBackingInt` in the cart's files (the first M4
+    Track B commit carries that churn).

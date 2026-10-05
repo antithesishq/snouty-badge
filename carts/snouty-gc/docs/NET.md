@@ -4,7 +4,7 @@
 the link cable (`lib/link.zig`, root `docs/LINK.md`). SPEC section 7 is
 the design and PLAN "M4 Link" the contract. This file covers the
 protocol, how `main.zig` drives it frame by frame, and what the
-integration track (M4 Track B) still has to build.
+integration track (M4 Track B) built.
 
 The idea: both badges hold the same `World`, and `sim.simulate(w,
 inputs)` is pure in `(World, inputs)`. So the badges exchange only the
@@ -244,20 +244,43 @@ switch (n.state()) {
 - Single-player races do not touch `n` (other than pumping it in the
   LINK menu).
 
-## 4. What Track B builds
+## 4. What Track B built (M4 Track B, 2026-10-05)
 
-- The LINK menu: cable state (`searching`, the link's `cable()`),
-  host / guest, the host's mode / track / crews rows, the guest's view of
-  them, the shared racer select with `peer_racer()` greyed (host wins a
-  clash), ready, host Start = `go`.
-- `start_link_race`: reset, crews (L3), follow, render init.
-- The race loop above: pump points in `render.zig` and the frame, the
-  waiting loop, `WAITING FOR PEER`, `PEER LEFT, AI DRIVING`, `DESYNC`,
-  the shared pause and QUIT.
-- Simulator: `NO LINK IN SIMULATOR` (state `offline`).
-- badge-bench: the worst gap between pumps in a race frame, and the cost
-  of `pump` / `step` (`world_hash` every 32nd tick).
-- The hand-off on cabling two badges (root docs/LINK.md section 1).
+- The LINK menu (`main.zig` `lobby_frame`, `link_ui.zig`): cable state
+  (`PLUG IN THE CABLE` / `SEARCHING...`, `WRONG CART`), host / guest and
+  the cable kind, the host's MODE / TRACK / CREWS rows (Up/Down, Left/
+  Right), the guest's read-only view, the partner's pick. The shared
+  racer select is `select.zig` with `select.link` set: the partner's
+  ready racer greyed `TAKEN`, ready marks, the host's A with both ready
+  is `go` (L12: the guest's mark drops on a clash).
+- `start_link_race`: `sim.reset(&w, world_setup())` (CREWS in
+  `world.Setup.crews` now, L3), `me = follow = local_car()`.
+- The race loop as section 3, with the pump points: the top of
+  `update`, after the tick, before the horizon and every 16 of its
+  columns, every `tuning.link_pump_rows` (3) floor rows, after the floor
+  lines, after gathering the sprites and between every two drawn, between
+  the HUD's passes (and the CAPTCHA card's halves and grid rows, the
+  RACE CONDITION glitch's bands), after the HUD; then the loop to 14 ms.
+  `render.band_hook` (main's `pump`) is null outside a link race.
+- **After the finish** (`w.phase == .finished`) the race frame stops
+  stepping and runs `sim.simulate(&w, .{0, 0})` alone: no input reaches a
+  finished World (finished humans drive on their AI; `sim_test` checks
+  it), so both badges stay equal without the lockstep, and a badge whose
+  partner already left for its results never waits. The Net stays in
+  `racing` and keeps resending the last window until `leave`.
+- Pause: `n.paused` opens the pause list (RESUME, QUIT, SOUND); only the
+  Start bit is submitted; RESUME and B send a Start edge (a frame without
+  Start first if Start is still held); QUIT is `leave`.
+- `DESYNC` ends on the results with a `DESYNC: RACE ENDED` band; the
+  results' last A is `leave`, back to the lobby.
+- Simulator: LINK greyed, `NO LINK IN SIMULATOR`; `debug_link_view` and
+  `debug_link_notice` show made-up screens for the preview.
+- badge-bench: no connected-peer fake exists, so `--poke
+  gc_pump_probe=1` runs every pump point in a single-player race (the
+  link searching) plus the per-tick work that needs no partner
+  (`encode_input` a frame, `world_hash` every 32 ticks) and traces the
+  worst gap by site every 120 frames (PLAN M4 status has the numbers).
+- The hand-off: `docs/LINK_PLAY.md`.
 
 ## 5. Numbers (host tests, `zig build test-gc`)
 

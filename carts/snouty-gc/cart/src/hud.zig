@@ -870,7 +870,10 @@ const glitch_bands = 4;
 pub fn draw_after(frame: u32) void {
     if (fx.zero_flash > 0) {
         if (fx.zero_flash > fx.zero_flash_ticks - 2) {
-            fill_rect(0, 0, 160, 128, white);
+            // In two halves: a link race pumps between them.
+            fill_rect(0, 0, 80, 128, white);
+            pump();
+            fill_rect(80, 0, 80, 128, white);
         } else {
             // A red frame round the screen while the flash fades.
             fill_rect(0, 0, 160, 3, red);
@@ -879,6 +882,7 @@ pub fn draw_after(frame: u32) void {
             fill_rect(157, 0, 3, 128, red);
         }
     }
+    pump();
     if (fx.glitch > 0) {
         // Row bands torn sideways, a different set every frame.
         var row: [160]cart.Pixel = undefined;

@@ -110,9 +110,9 @@ Each item says what to look for; note anything else.
    the line under the lap counter reads `W` (frames that waited for the
    other badge), `C` (link CRC drops), `G` (the worst gap between two
    link polls, us). Expected: W in the single digits or tens over a
-   race and no `WAITING FOR PEER`, C low, G under ~2000 (the bench says
-   the worst gap inside a frame is under 1.3 ms: PLAN M4 status). Note
-   the three numbers from both badges.
+   race and no `WAITING FOR PEER`, C at or near 0, G under about 1500
+   (badge-bench puts the worst gap inside a frame at 0.8 ms: one big
+   sprite; PLAN M4 status). Note the three numbers from both badges.
 7. **Peer gone.** Mid-race pull the cable: both show `PEER LEFT, AI
    DRIVING` / `CABLE OUT` within ~0.1 s and race on; the other car keeps
    driving (its AI). Finish, results, LINK screen shows `SEARCHING...`.
@@ -121,7 +121,8 @@ Each item says what to look for; note anything else.
 8. **LINK GC.** A whole LINK GC race with CREWS: 4: marks, tags and
    claws the same on both, one survivor, `LAST PROCESS RUNNING` on both.
 9. **Rematch.** After the results, back on LINK; a second race starts
-   and runs in sync (a different AI grid order than the first).
+   and runs in sync (a new seed: the AI grid order and crate rolls
+   differ from the first).
 
 If it never connects: run `snouty-link.uf2` on both (root
 `docs/LINK.md`, its hardware check) to tell the cable or a header from
