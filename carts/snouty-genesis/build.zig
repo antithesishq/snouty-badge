@@ -48,6 +48,9 @@ const Variant = struct {
     /// only, where the 68000's own writes to the chips are what plays.
     /// The XIP cart and the simulator keep the one-voice `tone` path.
     synth: bool,
+    /// The party lobby and lockstep over the fork firmware's cart serial
+    /// port (docs/MULTIPLAYER.md, root docs/LOCKSTEP_N.md).
+    party: bool = false,
 };
 const full: Variant = .{ .z80 = true, .scrub = true, .synth = false };
 const ram_cart: Variant = .{ .z80 = false, .scrub = false, .synth = true };
@@ -63,6 +66,7 @@ fn variant_options(b: *Build, sound: bool, debug_overlay: bool, v: Variant) *Bui
     options.addOption(bool, "z80", v.z80);
     options.addOption(bool, "scrub", v.scrub);
     options.addOption(bool, "synth", v.synth);
+    options.addOption(bool, "party", v.party);
     return options;
 }
 
@@ -150,6 +154,18 @@ pub fn add(b: *Build, sycl_badge_dep: *Build.Dependency, opts: common.Options) v
             }) },
         },
     });
+    // The input-source seam and the party session (frontend/players.zig),
+    // cart-api-free, over the party stack.
+    const party_host = party_lib_module(b, test_optimize, b.graph.host);
+    const players_host = b.createModule(.{
+        .root_source_file = b.path(dir ++ "cart/src/frontend/players.zig"),
+        .target = b.graph.host,
+        .optimize = test_optimize,
+        .imports = &.{
+            .{ .name = "core", .module = core_host },
+            .{ .name = "party_lib", .module = party_host },
+        },
+    });
     const tests = b.addTest(.{
         .name = "snouty-genesis-tests",
         .filters = if (opts.test_filter) |f| &.{f} else &.{},
@@ -163,6 +179,8 @@ pub fn add(b: *Build, sycl_badge_dep: *Build.Dependency, opts: common.Options) v
                 .{ .name = "romfs", .module = romfs_host },
                 .{ .name = "drive", .module = drive_host },
                 .{ .name = "input", .module = input_host },
+                .{ .name = "players", .module = players_host },
+                .{ .name = "party_lib", .module = party_host },
             },
         }),
     });
@@ -225,6 +243,21 @@ pub fn add(b: *Build, sycl_badge_dep: *Build.Dependency, opts: common.Options) v
     strict_run.setEnvironmentVariable("SNOUTY_FIXTURES", "required");
     strict_run.has_side_effects = true;
     b.step("test-m68k-strict", "Run the snouty-genesis 68000 oracle tests; fail if fixtures are absent").dependOn(&strict_run.step);
+}
+
+/// The party stack (root docs/LOCKSTEP_N.md): lib/lockstep_n.zig,
+/// lib/party.zig, lib/cart_serial.zig and the relay model
+/// lib/party_virtual.zig copied side by side under one root, as
+/// Snoutenstein does (party.zig is imported by two of them, and a file can
+/// belong to only one module). The cart reaches `lockstep_n` and
+/// `cart_serial` through it; only the host tests touch `party_virtual`.
+fn party_lib_module(b: *Build, optimize: ?std.builtin.OptimizeMode, target: ?Build.ResolvedTarget) *Build.Module {
+    const wf = b.addWriteFiles();
+    for ([_][]const u8{ "lockstep_n.zig", "party.zig", "cart_serial.zig", "party_virtual.zig" }) |f| {
+        _ = wf.addCopyFile(b.path(b.fmt("lib/{s}", .{f})), f);
+    }
+    const root = wf.add("party_lib.zig", "pub const lockstep_n = @import(\"lockstep_n.zig\");\npub const cart_serial = @import(\"cart_serial.zig\");\npub const party_virtual = @import(\"party_virtual.zig\");\n");
+    return b.createModule(.{ .root_source_file = root, .optimize = optimize, .target = target });
 }
 
 /// `-Dmd-rom` as given: `~/x.bin` (expanded here, the shell leaves `=~`
@@ -402,6 +435,15 @@ fn build_cart_modules(b: *Build, cart: *Build.Module, cart_api: *Build.Module, s
             .{ .name = "core", .module = core },
         },
     });
+    const party_cart = party_lib_module(b, modes.cold, null);
+    const players = b.createModule(.{
+        .root_source_file = b.path(dir ++ "cart/src/frontend/players.zig"),
+        .optimize = modes.cold,
+        .imports = &.{
+            .{ .name = "core", .module = core },
+            .{ .name = "party_lib", .module = party_cart },
+        },
+    });
     const app = b.createModule(.{
         .root_source_file = b.path(dir ++ "cart/src/frontend/app.zig"),
         .optimize = modes.cold,
@@ -416,6 +458,8 @@ fn build_cart_modules(b: *Build, cart: *Build.Module, cart_api: *Build.Module, s
             .{ .name = "iris", .module = iris },
             .{ .name = "hint", .module = hint },
             .{ .name = "audio_feed", .module = audio_feed },
+            .{ .name = "players", .module = players },
+            .{ .name = "party_lib", .module = party_cart },
         },
     });
     cart.addImport("core", core);

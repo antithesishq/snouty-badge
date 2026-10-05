@@ -25,4 +25,5 @@ test {
     _ = @import("mp_determinism.zig");
     _ = @import("ports_unit.zig");
     _ = @import("mp_bomberman.zig");
+    _ = @import("mp_party.zig");
 }

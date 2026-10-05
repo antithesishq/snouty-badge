@@ -19,7 +19,7 @@ const splash = @import("splash.zig");
 const picker = @import("picker.zig");
 const help = @import("help.zig");
 pub const rewind = @import("rewind.zig");
-pub const players = @import("players.zig");
+pub const players = @import("players");
 const tuning = @import("tuning.zig");
 const hint = @import("hint");
 
@@ -106,8 +106,6 @@ fn begin(src: core.RomSource) void {
 
 pub noinline fn update() void {
     controls_state.poll(read_controls());
-    // A network source drains its receive ring here (and inside frames).
-    players.poll();
     const t0 = cart.micros_since_boot();
     debug.frame_tick(t0);
     switch (state) {
@@ -172,9 +170,8 @@ fn start_running(t0: u64) void {
 
 fn run_update(t1: u64) void {
     const in = controls_state.game_frame();
-    // Fast forward and the chorded rewind are local-only (players.zig).
-    const fast = in.fast and !players.networked;
-    const rewind_in: @TypeOf(in.rewind) = if (players.networked) .off else in.rewind;
+    const fast = in.fast;
+    const rewind_in = in.rewind;
     if (in.open_menu) {
         play_hint.stop();
         menu_opens += 1;
@@ -228,7 +225,7 @@ fn run_update(t1: u64) void {
     // Every pad for the update's frames (players.zig: the badge is player
     // 1 with the local source, the others released).
     var pads: core.Pads = undefined;
-    _ = players.next_frame(in.pad, &pads);
+    players.local_pads(in.pad, &pads);
     var skip_us: u64 = last_skip_us;
     var t = t1;
     while (n < max) : (n += 1) {
