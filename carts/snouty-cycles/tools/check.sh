@@ -31,7 +31,10 @@
 #           (snouty_cycles_level) for 3600 frames each, each with a derez
 #           forced at World tick BENCH_CRASH_AT (1500) so a rewind (freeze,
 #           retraction, replay, repaint) is in the timing, and a SKIRMISH
-#           match of 3 ASM programs (BENCH_SKIRMISH): so sudden death,
+#           match of 3 ASM programs (BENCH_SKIRMISH), and the WRAP runs
+#           (M2.1): level 12 with OPTIONS 16 (WRAP) and 28 (WRAP + GAPS +
+#           SNAKE, BENCH_WRAP_OPTIONS) and the SKIRMISH with WRAP, where the
+#           AI's searches run longest: so sudden death,
 #           layouts, rewinds and three programs are in the timing: worst `busy ms`
 #           frame <= BENCH_MAX_MS (default 12, SPEC section 12) in every
 #           run, no crash or hang. BENCH_SEED (default 2) seeds the level
@@ -46,7 +49,8 @@
 #           whole framebuffer, looks right.
 #   ladder  the content gate: tools/ladder_bot.mjs, autopilot 3, every
 #           level 1..12 cleared with its 3 snapshots (rewinds) on at least
-#           4 of 5 seeds.
+#           4 of seeds 1-5 and 7 of seeds 6-15 (M2.1); it prints the
+#           derezzes per level (the difficulty curve).
 #
 # Output under out/ (gitignored). Exit 0 when every step passes, else 1
 # (the failing steps are listed at the end).
@@ -69,6 +73,9 @@ bench_seed="${BENCH_SEED:-2}"
 crash_at="${BENCH_CRASH_AT:-1500}"
 # The SKIRMISH run: game.Skirmish.from_bits + 1 (15 = 3 ASM programs, OPEN).
 skirmish="${BENCH_SKIRMISH:-15}"
+# The WRAP runs (levels.Options bits): level 12 with each, and the SKIRMISH
+# run with the first.
+wrap_options="${BENCH_WRAP_OPTIONS-16 28}"
 
 all=(build test float font cycle bench lcd ladder)
 extra=(ladder)
@@ -228,6 +235,21 @@ if want bench || want lcd; then
                 --out "$out/bench/skirmish" > "$out/bench/skirmish.txt" 2>&1 &
             pids+=($!)
         fi
+        if want bench; then
+            for o in $wrap_options; do
+                "$bench" "$elf" --json --seed "$bench_seed" --poke snouty_cycles_autopilot=3 \
+                    --poke "snouty_cycles_seed=$bench_seed" --poke snouty_cycles_level=12 --poke "snouty_cycles_crash_at=$crash_at" \
+                    --poke "snouty_cycles_options=$o" --out "$out/bench/wrap12_o$o" > "$out/bench/wrap12_o$o.txt" 2>&1 &
+                pids+=($!)
+            done
+            if [ -n "$skirmish" ] && [ -n "$wrap_options" ]; then
+                o="${wrap_options%% *}"
+                "$bench" "$elf" --json --seed "$bench_seed" --poke snouty_cycles_autopilot=3 \
+                    --poke "snouty_cycles_seed=$bench_seed" --poke "snouty_cycles_skirmish=$skirmish" \
+                    --poke "snouty_cycles_options=$o" --out "$out/bench/wrapskirmish_o$o" > "$out/bench/wrapskirmish_o$o.txt" 2>&1 &
+                pids+=($!)
+            fi
+        fi
         bench_status=0
         for p in "${pids[@]}"; do wait "$p" || bench_status=1; done
         grep -E "^badge-bench:|^  frames|^calibrat|^  (busy|idle) ms|^verdict|warning" "$out/bench/lcd.txt" | head -12
@@ -235,7 +257,8 @@ if want bench || want lcd; then
         if want bench; then
             status=$bench_status
             [ "$status" = 0 ] || echo "check: a badge-bench run failed (crash, hang or setup error); see $out/bench/*.txt"
-            for j in "$out/bench/lcd/bench.json" "$out/bench"/level*/bench.json "$out/bench"/skirmish/bench.json; do
+            for j in "$out/bench/lcd/bench.json" "$out/bench"/level*/bench.json "$out/bench"/skirmish/bench.json \
+                "$out/bench"/wrap*/bench.json; do
                 [ -f "$j" ] || continue
                 python3 - "$j" "$max_ms" <<'PYEOF' || status=1
 import json, sys
@@ -278,7 +301,7 @@ PYEOF
 fi
 
 if want ladder; then
-    step "ladder: tools/ladder_bot.mjs (autopilot 3, levels 1..12, 4 of 5 seeds)"
+    step "ladder: tools/ladder_bot.mjs (autopilot 3, levels 1..12, 4 of seeds 1-5 and 7 of 6-15)"
     mkdir -p "$out"
     node "$here/ladder_bot.mjs" --wasm "$wasm" --json "$out/ladder.json"; result ladder $?
 fi
