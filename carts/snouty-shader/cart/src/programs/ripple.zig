@@ -113,20 +113,31 @@ pub fn render(u: *const U, pal: *const palette.Cosine, out: *surface.Surface) vo
         e.* = palette.pack(palette.at(pal, f + u.t * 0.03 + u.kick), 0.25 + 0.95 * band, u.flash);
     }
 
+    // Emitter-outer per column: each emitter's constants stay in registers
+    // and the |dy| split into two runs walks its distance column with no abs.
+    var acc: [surface.h]i32 = undefined;
     for (0..surface.w) |x| {
-        const col = &out[x];
+        @memset(&acc, 0);
         const xi: i32 = @intCast(x);
-        var dcol: [emitters]*const [surface.h]u16 = undefined;
-        for (0..n) |e| dcol[e] = &dist[@abs(xi - em[e].x)];
-        for (0..surface.h) |y| {
-            const yi: i32 = @intCast(y);
-            var acc: i32 = 0;
-            for (0..n) |e| {
-                const d: i32 = dcol[e][@abs(yi - em[e].y)];
-                const ph: u32 = @bitCast(((d * em[e].k) >> 8) + @as(i32, @bitCast(em[e].ph)));
-                acc += (math.isin(ph) * em[e].a) >> 15;
+        for (em[0..n]) |e| {
+            const dcol = &dist[@abs(xi - e.x)];
+            const k = e.k;
+            const ph: i32 = @bitCast(e.ph);
+            const a = e.a;
+            const ey: usize = @intCast(e.y);
+            // Rows above the emitter: |dy| = ey - y.
+            for (0..ey) |y| {
+                const d: i32 = dcol[ey - y];
+                acc[y] += (math.isin(@bitCast(((d * k) >> 8) + ph)) * a) >> 15;
             }
-            const idx: u32 = @bitCast((acc * norm) >> 8);
+            for (ey..surface.h) |y| {
+                const d: i32 = dcol[y - ey];
+                acc[y] += (math.isin(@bitCast(((d * k) >> 8) + ph)) * a) >> 15;
+            }
+        }
+        const col = &out[x];
+        for (0..surface.h) |y| {
+            const idx: u32 = @bitCast((acc[y] * norm) >> 8);
             col[y] = lut[(idx +% 128) & 255];
         }
     }

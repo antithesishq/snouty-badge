@@ -248,6 +248,7 @@ fn update_stick(s: Stick) void {
     // Lean into the motion: the hand tilts the way it travels.
     hh.roll += (hh.vx * 0.30 - hh.roll) * 0.12;
     hh.pitch += (-hh.vy * 0.25 - hh.pitch) * 0.12;
+    hh.yaw *= 0.97;
     hh.vyaw = 0;
     hh.swirl = hh.x * hh.vy - hh.y * hh.vx;
     hh.punch = s.punch and punch_cool == 0;

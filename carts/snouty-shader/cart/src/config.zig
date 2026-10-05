@@ -26,7 +26,9 @@ pub const hand_timeout = 120;
 pub const field_base: f32 = 0.35;
 /// Per-tick glide of the cell values toward the newest frame (30 Hz sensor).
 pub const field_glide: f32 = 0.3;
-/// Punch flash decay per tick, and the palette kick (turns) per punch.
+/// Punch flash peak (0..1 toward white) and decay per tick, and the
+/// palette kick (turns) per punch.
+pub const flash_peak: f32 = 0.8;
 pub const flash_decay: f32 = 0.88;
 pub const kick_turns: f32 = 0.333;
 /// Per-tick ease of the palette phase toward the kicked target.

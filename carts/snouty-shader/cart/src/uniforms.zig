@@ -80,7 +80,7 @@ pub fn update(param: u8) void {
         u.punch_age = 0;
         u.punch_x = u.hx;
         u.punch_y = u.hy;
-        u.flash = 1.0;
+        u.flash = config.flash_peak;
         kick_target += config.kick_turns;
     }
     u.flash *= config.flash_decay;
@@ -104,7 +104,7 @@ test "uniforms: punch fires the flash and kicks the palette; cells glide" {
     hand_mod.hand.punch = true;
     update(4);
     try t.expectEqual(@as(u32, 0), u.punch_age);
-    try t.expect(u.flash > 0.8);
+    try t.expect(u.flash > 0.6);
     try t.expect(u.cells[4] > 0.2 and u.cells[4] < 0.5);
     hand_mod.hand.punch = false;
     for (0..60) |_| update(4);

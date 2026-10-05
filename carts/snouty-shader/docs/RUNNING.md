@@ -61,13 +61,15 @@ The simulator has no sensor: the ghost plays, B + arrow keys steer.
 ## 5. Headless preview and the GIF
 
 ```sh
-node tools/preview.mjs zig-out/bin/snouty-shader.wasm --frames 2160 --every 4 --out /tmp/shader \
+node tools/preview.mjs zig-out/bin/snouty-shader.wasm --frames 1440 --every 4 --out /tmp/shader \
     --script carts/snouty-shader/tools/scripts/gif_tour.json
-python3 tools/make_gif.py /tmp/shader carts/snouty-shader/docs/preview_tour.gif --scale 2 --ms 66
+python3 tools/make_gif.py /tmp/shader carts/snouty-shader/docs/preview_tour.gif --scale 1 --ms 66
 ```
 
-`docs/preview_tour.gif`: the ghost hand through all six programs (6 s
-each), with the inputs panel and a stick punch in a couple of them.
+`docs/preview_tour.gif` (real time, 1x to keep it near 5 MB): the ghost
+hand through all six programs, 4 s each; INK with the inputs panel, B +
+stick steering and a punch, punches in LAVA and ECHO, a palette change in
+KALEIDO.
 
 Debug exports (wasm): `debug_frame`, `debug_program`,
 `debug_set_program(n)`, `debug_palette`, `debug_param`, `debug_source` (0

@@ -107,23 +107,36 @@ pub fn render(u: *const U, pal: *const palette.Cosine, out: *surface.Surface) vo
         }
     }
     for (0..surface.w) |x| {
+        // Seeds sorted by their column distance: once that alone is past
+        // the second-nearest distance found, no later seed can matter.
         var dxx: [seeds]i32 = undefined;
+        var order: [seeds]u8 = undefined;
         for (0..seeds) |i| {
             const d = @as(i32, @intCast(x * 16 + 8)) - sx[i];
-            dxx[i] = d * d;
+            const v = d * d;
+            var j = i;
+            while (j > 0 and dxx[j - 1] > v) : (j -= 1) {
+                dxx[j] = dxx[j - 1];
+                order[j] = order[j - 1];
+            }
+            dxx[j] = v;
+            order[j] = @intCast(i);
         }
         const col = &out[x];
         for (0..surface.h) |y| {
             var d1: i32 = std.math.maxInt(i32);
             var d2: i32 = std.math.maxInt(i32);
             var id: u32 = 0;
-            for (0..seeds) |i| {
-                const d = dxx[i] + dyy[i][y];
+            for (0..seeds) |j| {
+                const dx = dxx[j];
+                if (dx >= d2) break;
+                const i = order[j];
+                const d = dx + dyy[i][y];
                 if (d < d2) {
                     if (d < d1) {
                         d2 = d1;
                         d1 = d;
-                        id = @intCast(i);
+                        id = i;
                     } else d2 = d;
                 }
             }
