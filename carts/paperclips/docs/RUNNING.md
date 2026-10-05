@@ -139,7 +139,17 @@ Open <http://localhost:1234>. Keys: arrows or WASD (joystick), Z or K
 ```sh
 node ../../tools/preview.mjs ../../zig-out/bin/paperclips.wasm --frames 980 --every 6 \
     --script tools/scripts/tour.json --out out/tour
-python3 ../../tools/make_gif.py out/tour docs/preview_m1.gif --scale 2 --ms 100
+python3 ../../tools/make_gif.py out/tour out/tour.gif --scale 2 --ms 100
+```
+
+The committed `docs/preview_m1.gif` walks every stage: the tour, then
+the autoplayer jumps to stage 2, stage 3 and the end:
+
+```sh
+node ../../tools/preview.mjs ../../zig-out/bin/paperclips.wasm --frames 1800 --every 6 \
+    --script tools/scripts/gif.json --call-at "990 debug_autoplay:9000" \
+    --call-at "1290 debug_autoplay:11000" --call-at "1650 debug_autoplay:8000" --out out/gif
+python3 ../../tools/make_gif.py out/gif docs/preview_m1.gif --scale 2 --ms 100
 ```
 
 Useful: `--call debug_prepare` (a late stage-1 game: two virtual minutes
