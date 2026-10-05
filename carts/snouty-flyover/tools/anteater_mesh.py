@@ -34,6 +34,25 @@ def V(x, y, z, bone=0):
 def T(a, b, c, mat):
     tris.append((a, b, c, MAT_ID[mat]))
 
+def TO(a, b, c, mat, inside):
+    """T with the winding model.zig draws: positive screen area (x right,
+    y down) for a face turned toward the eye, which is the right-handed
+    normal (b - a) x (c - a) pointing out of the solid (the same normal the
+    cart lights). `inside` is a point inside the part next to the face; b and
+    c swap when the normal points toward it. A lathe's own order depends on
+    its basis and on which way its rings run (the tail runs backward, the
+    right foreleg's axis is mirrored), so every face is oriented here; with
+    the order as written most of the body was inside out and the cart drew
+    its far inner walls, seen through the open neck and leg joints."""
+    pa, pb, pc = (verts[i][:3] for i in (a, b, c))
+    e1 = [pb[i] - pa[i] for i in range(3)]
+    e2 = [pc[i] - pa[i] for i in range(3)]
+    n = (e1[1] * e2[2] - e1[2] * e2[1], e1[2] * e2[0] - e1[0] * e2[2], e1[0] * e2[1] - e1[1] * e2[0])
+    out = [(pa[i] + pb[i] + pc[i]) / 3 - inside[i] for i in range(3)]
+    if sum(n[i] * out[i] for i in range(3)) < 0:
+        b, c = c, b
+    T(a, b, c, mat)
+
 def lathe(rings, segs, mat_fn, bone=0, cap_start=None, cap_end=None, phase=0.0):
     """rings: list of (centre(x,y,z), rx, ry, basis(u,v) unit vectors). Returns ring vertex ids.
     Faces wind so the outward normal is right-handed (seen from outside, counter-clockwise)."""
@@ -45,18 +64,20 @@ def lathe(rings, segs, mat_fn, bone=0, cap_start=None, cap_end=None, phase=0.0):
             p = [c[i] + rx * math.cos(a) * u[i] + ry * math.sin(a) * v[i] for i in range(3)]
             ring.append(V(*p, bone))
         ids.append(ring)
+    centres = [c for (c, _, _, _) in rings]
     for r in range(len(ids) - 1):
+        mid = [(centres[r][i] + centres[r + 1][i]) / 2 for i in range(3)]
         for s in range(segs):
             a, b = ids[r][s], ids[r][(s + 1) % segs]
             c2, d = ids[r + 1][s], ids[r + 1][(s + 1) % segs]
             m = mat_fn(r, s)
-            T(a, c2, b, m); T(b, c2, d, m)
+            TO(a, c2, b, m, mid); TO(b, c2, d, m, mid)
     if cap_start is not None:
         cid = V(*cap_start, bone); ring = ids[0]
-        for s in range(segs): T(ring[s], ring[(s + 1) % segs], cid, mat_fn(-1, s))
+        for s in range(segs): TO(ring[s], ring[(s + 1) % segs], cid, mat_fn(-1, s), centres[0])
     if cap_end is not None:
         cid = V(*cap_end, bone); ring = ids[-1]
-        for s in range(segs): T(ring[(s + 1) % segs], ring[s], cid, mat_fn(len(ids) - 1, s))
+        for s in range(segs): TO(ring[(s + 1) % segs], ring[s], cid, mat_fn(len(ids) - 1, s), centres[-1])
     return ids
 
 X, Y = (1, 0, 0), (0, 1, 0)
@@ -73,9 +94,10 @@ def build():
             return 'dark'
         return 'fur'
     lathe(rings, 6, body_mat, cap_start=(0, 0.1, -1.05), phase=0.25)
-    # Head: short cone from the neck.
+    # Head: short cone from the neck, capped at the back: its neck ring sits
+    # above the body's front ring, and the camera behind sees into it.
     head = [((0, 0.3, 0.85), 0.27, 0.24, (X, Y)), ((0, 0.3, 1.2), 0.2, 0.18, (X, Y))]
-    lathe(head, 6, lambda r, s: 'fur', bone=3, phase=0.25)
+    lathe(head, 6, lambda r, s: 'fur', bone=3, cap_start=(0, 0.28, 0.75), phase=0.25)
     # Snout: long, nearly level with a gentle droop, tapering; the tip is pale.
     sn = []
     for k in range(5):

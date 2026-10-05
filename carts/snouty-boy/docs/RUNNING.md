@@ -543,3 +543,15 @@ as zero-wait unless `--flash-read-cycles N` is given), how long finding and
 mapping takes at start (the bench's modelled start-up is 1.5 ms with one
 file), and that the drive still mounts and the OS menu still works with ROM
 files on it.
+
+## 10. Link cable (two badges)
+
+Two badges running Snouty Boy, joined by a 3-pin JST-SH cable between their
+UART headers (either orientation; docs/LINK.md at the root), act as a Game
+Boy link cable. "Link cable connected" shows for two seconds when the other
+badge is found (it must be running Snouty Boy too) and "Link cable
+unplugged" when it goes. While linked, fast forward, the chorded rewind and
+the menu's scrubber are off. Tetris 2-player: on both, Start on the title
+and Right to 2PLAYER; press Start on one badge first (the master), then on
+the other. The host test `tests/link_unit.zig` plays exactly that with two
+consoles when `tests/roms/tetris.gb` is present (your own dump).

@@ -86,7 +86,9 @@ pub const District = struct {
     row: *const fn (seed: u32, ly: i32, h: *[W]u8, c: *[W]u8) void,
     enter: *const fn (seg: Segment) void,
     tick: *const fn (frame: u32, cam_row: i32) void,
-    verb: *const fn () void,
+    /// B: true when the press did something (false while a one-at-a-time
+    /// effect is still running, or with nothing left to act on).
+    verb: *const fn () bool,
 };
 
 fn entry(comptime M: type) District {
@@ -310,7 +312,7 @@ pub fn tick(frame: u32, cam_row: i32, verb: Verb) void {
         live_seg = want;
         info(want.kind).enter(want);
     }
-    if (verb == .player and bus_now != no_segment) info(.bus).verb();
+    if (verb == .player and bus_now != no_segment) count(.bus, info(.bus).verb());
     // Every row of the live district is in the ring from 56 rows before its
     // Bus ends (at depth 256); ticks wait for that, so a tick never finds its
     // rows ungenerated ahead of the camera.
@@ -319,9 +321,17 @@ pub fn tick(frame: u32, cam_row: i32, verb: Verb) void {
     d.tick(frame, cam_row);
     switch (verb) {
         .none => {},
-        .pilot => d.verb(),
-        .player => if (bus_now == no_segment) d.verb(),
+        .pilot => _ = d.verb(),
+        .player => if (bus_now == no_segment) count(live_seg.kind, d.verb()),
     }
+}
+
+/// The player's last B press for debug_b_last: presses so far << 16 | kind
+/// << 8 | 1 when the district took it.
+pub var b_last: u32 = 0;
+
+fn count(kind: Kind, took: bool) void {
+    b_last = ((b_last >> 16) +% 1) << 16 | @as(u32, @backingInt(kind)) << 8 | @intFromBool(took);
 }
 
 /// Regenerate segment s's rows that are still in the ring (its dynamic

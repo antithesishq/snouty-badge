@@ -180,6 +180,7 @@ comptime {
         @export(&debug_stack_depth, .{ .name = "debug_stack_depth" });
         @export(&debug_pipe_state, .{ .name = "debug_pipe_state" });
         @export(&debug_verb_max_cells, .{ .name = "debug_verb_max_cells" });
+        @export(&debug_b_last, .{ .name = "debug_b_last" });
         @export(&debug_sky_flash, .{ .name = "debug_sky_flash" });
         @export(&debug_skips, .{ .name = "debug_skips" });
         @export(&debug_bus_packets, .{ .name = "debug_bus_packets" });
@@ -235,6 +236,11 @@ fn debug_pipe_state() callconv(.c) u32 {
 /// STACK push waves in the low 16 bits, PIPELINE bursts in the high 16.
 fn debug_verb_max_cells() callconv(.c) u32 {
     return @min(stack.max_frame_cells, 0xFFFF) | @as(u32, @min(pipeline.max_frame_cells, 0xFFFF)) << 16;
+}
+/// The player's last B press: presses so far << 16 | district kind << 8 |
+/// 1 when the district took it (world.count).
+fn debug_b_last() callconv(.c) u32 {
+    return world.b_last;
 }
 /// Frames of white sky left (render.sky_flash, set by a STACK overflow).
 fn debug_sky_flash() callconv(.c) u32 {

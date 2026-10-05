@@ -75,9 +75,11 @@ both orientations that counts fights and lost bytes.
   0xC0 or 0xDB byte in it. If more than 8 wire bytes arrive between two
   polls, bytes are lost and the CRC drops that packet. So keep packets short
   (n <= 5 is always safe), poll at least once per frame, and poll in a loop
-  while waiting for the partner. There is no DMA ring on purpose: the
-  pinned OS never aborts cart DMA channels when a cart exits, so an endless
-  receive DMA would keep writing into the next cart's RAM.
+  while waiting for the partner. A DMA receive ring would lift the limit
+  and is safe on every firmware since March 2026 (the pinned a6ce19f too):
+  the OS aborts cart DMA channels 3-15 when a cart stops, by either exit
+  path (`reset_after_cart`). It is an optional extra, not built yet; the
+  games never depend on it (Adrian: occasional loss is fine).
 - **Delivery is best effort.** A dropped packet is gone (`stats`
   counts CRC errors and framing errors). Lockstep games resend or carry
   enough state to recover.
@@ -111,7 +113,23 @@ packet dropped by the CRC; unplug and replug; partner restart; silent
 partner timeout; ping. The PIO programs match microzig's assembler for
 RP2350 word for word. The cart runs in badge-bench (12 ms a frame by
 design: it polls the link until 12 ms into each frame so pings come back
-at wire speed). **Not yet run on a badge.**
+at wire speed).
+
+**Hardware, 2026-10-04 (show day).** Carl's badge: self test OK on both
+pins; with a Raspberry Pi Debug Probe at 115200 the badge locks on the
+probe's line, its HELLOs reach the terminal and 20 typed characters gave
+20 received bytes. Carl's badge and a fresh badge on the probe kit's
+JST-SH cable at 1 Mbaud: CONNECTED, STRAIGHT, each badge shows the
+other's buttons instantly. RTT read ~2.4 ms: the test cart only polls
+after drawing, so that is its own frame schedule (the wire round trip is
+~0.1 ms). About 40 packets LOST, rising occasionally: the 8-byte FIFO
+overflows when a DATA packet and a PONG arrive while the cart draws. Fix
+first in M1 (DMA receive ring on firmware that aborts cart DMA at exit).
+Adrian's own badge: GPIO29 reads high with nothing attached even right
+after being driven low, and PIO never moved GPIO28 (registers all
+correct): treat its UART header as faulty. RP2350-E9: a pull-down input
+can float latched high, so the search probes the listen pin (drive low
+2 us, release, read) before trusting a high.
 
 **Hardware check (Adrian):** flash `snouty-link.uf2` on two badges, join
 the UART headers, start Snouty Link on both. Expected within a second:
@@ -119,14 +137,39 @@ CONNECTED, the cable kind, RTT around 100-300 us, RX climbing about 60 a
 second, LOST and CRC at 0, and each badge lighting the other's buttons.
 If it stays SEARCHING, note PIN1/PIN3 on both screens and the cable kind.
 
-### M1: Game Boy link cable in Snouty Boy (next)
+### M1: Game Boy link cable in Snouty Boy (done, hardware check open)
 
-Replace `carts/snouty-boy/core/serial.zig`'s stub with a byte exchange
-over the link: the side that starts an internal-clock transfer sends its
-SB byte and waits briefly for the partner's; the external-clock side
-answers from its SB as soon as the byte arrives (polled per scanline). The
-time scrubber and fast forward pause while linked. Gate: two Snouty Boy
-cores on the virtual cable play into Tetris 2-player on the host.
+- `carts/snouty-boy/core/serial.zig`: byte-level cable. The master's
+  internal-clock transfer sends a request (SB, sequence number) and keeps
+  the CPU running, as the real shift register does; it completes once the
+  byte time has passed (1024 M-cycles, 32 with the CGB fast clock) and the
+  reply is in, so a late reply only looks like a slow transfer. Resend
+  after ~4 ms, give up with 0xFF after ~0.25 s. The slave answers each
+  request with its SB, completing its own transfer only if one is waiting
+  on the external clock; a repeated request gets the cached reply. The
+  wire is three bytes a message (6 on the wire), within the 8-byte FIFO.
+  `Gb.link` null (no partner): the old stub, unchanged.
+- `cart/src/frontend/linkport.zig`: `link.Badge` with app id 'B'; the core
+  gets the wire only while the partner runs Snouty Boy. Between frames the
+  cart keeps answering until 14 ms into the update
+  (`tuning.link_pump_until_us`). While linked: no fast forward, no chorded
+  rewind, no menu scrubbing, no recording (linked frames cannot replay);
+  the history restarts at plug and unplug. A strip says "Link cable
+  connected" / "unplugged" for 2 s.
+- Tests (`tests/link_unit.zig`): exchange timing, lost requests and
+  replies, a slave that is not waiting, timeout, no-wire stub; two Tetris
+  consoles (your own `tests/roms/tetris.gb`, skipped without it) reach the
+  same 2-player game with identical playfields, also with every 5th
+  message dropped each way. `tests/flow_unit.zig`: linked, the fast
+  forward and rewind gestures do nothing.
+- badge-bench (Tetris from a drive image, no cable): mean 6.91 ms vs 6.95
+  before, worst 11.04 vs 11.12; 2048 3.44 vs 3.41: no cost.
+
+**Hardware check:** two working badges with Snouty Boy and Tetris on the
+drive, UART headers joined. "Link cable connected" shows on both; on each,
+Start, Right to 2PLAYER, then Start on one badge first (it becomes the
+master) and on the other; both reach MARIO VS. LUIGI and play the same
+pieces. Pulling the cable shows "Link cable unplugged".
 
 ### M2: two-player Snouty Zero, M3: Snoutenstein deathmatch
 

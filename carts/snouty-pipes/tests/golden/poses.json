@@ -2,7 +2,7 @@
   { "name": "boot_s1_t1",       "seed": 1, "frames": 1 },
   { "name": "boot_s1_t60",      "seed": 1, "frames": 60 },
   { "name": "grow_s1_t300",     "seed": 1, "frames": 300 },
-  { "name": "grow_s2_t900",     "seed": 2, "frames": 900 },
+  { "name": "grow_s2_t700",     "seed": 2, "frames": 700 },
   { "name": "grow_s3_t1800",    "seed": 3, "frames": 1800 },
   { "name": "dissolve_s1_t231", "seed": 1, "frames": 231, "press": ["A:200-200"] },
   { "name": "scene2_s1_t400",   "seed": 1, "frames": 400, "press": ["A:200-200"] },

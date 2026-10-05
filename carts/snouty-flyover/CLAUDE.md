@@ -61,8 +61,8 @@ lines). The repository-wide notes (hardware, cart API, build wiring) are in
 - Locked 30 fps (decided at M2: the reflection pass doubles the march on
   lake frames); calibrated badge-bench worst frame at most 22 ms (busy ms).
 - Memory: map ring 128 KB at depth 256 (64 KB at 128), fog table 4 KB,
-  code 30-75 KB; M3 gate `.text + .data` under 75 KB, `.bss` under 165 KB
-  (M4.1: 71.5 KB / 161.7 KB); the RAM window is 275 KB.
+  code 30-80 KB; gate `.text + .data` under 80 KB (75 KB until M4.2),
+  `.bss` under 165 KB (M4.2: 78.1 KB / 159.1 KB); the RAM window is 275 KB.
 - Knob cut order if over budget: `z_far`, `lod_mul`, reflections,
   `-Dflyover_depth=128`, cliff shading, fog levels.
 
@@ -84,6 +84,7 @@ node ../../tools/preview.mjs ../../zig-out/bin/snouty-flyover.wasm --frames 2400
 python3 ../../tools/make_gif.py out/ preview.gif --scale 3 --ms 33
 tools/check_render.sh             # twelve frame checksums against tools/render_hashes.txt (--update regenerates)
 tools/check.sh                    # check_render.sh + the 130-skip soak past row 32768 (review G2)
+python3 tools/check_verbs.py      # one B press per segment kind: pixels it changes (M4.2 gate)
 node ../../tools/serve-cart.mjs   # simulator on :2468, see docs/RUNNING.md
 ```
 

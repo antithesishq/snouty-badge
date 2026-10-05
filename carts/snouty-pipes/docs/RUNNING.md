@@ -126,8 +126,10 @@ Select are both held the cart reacts to neither.
 
 The teapot: in mixed mode 1 turn in 300 is a Utah teapot, at most one per
 scene (SPEC section 7). `--call debug_force_teapot` (section 6) makes the
-next turn one. Since M3 no button changes the joint style (B is the
-nametag); it stays mixed.
+next turn one. No button changes the joint style (B is the nametag):
+each screensaver scene picks mixed, elbows only or balls only at random,
+like the original's "Cycle" joint type, so teapots show only in mixed
+scenes.
 
 ## 5. Web simulator
 
@@ -194,7 +196,7 @@ Debug exports (wasm only): `debug_tick`, `debug_state` (0 boot, 1 grow,
 this scene or run, walls not counted), `debug_alive`, `debug_pipes`,
 `debug_view`, `debug_teapots`, `debug_name_strip`, `debug_cmds`,
 `debug_render_us`, `debug_pixel_checksum`, `debug_orbit`, `debug_speed`,
-`debug_joint_style` (always 0 now), `debug_paused`, `debug_history`;
+`debug_joint_style` (this scene's: 0 mixed, 1 elbow, 2 ball), `debug_paused`, `debug_history`;
 nametag: `debug_nametag` (1 while up), `debug_iris_width` (width the strip's
 Iris mark was last drawn at, 24 at rest); steer mode: `debug_steer` (1 in
 states 4..6), `debug_score`, `debug_best`, `debug_rewinds_left`,

@@ -21,7 +21,9 @@ its design and milestone status.
   `snouty-maze`, `snouty-gear`, `snouty-genesis`, `snouty-lynx`,
   `snouty-flyover`, `demosnout`, `snouty-zero` (XIP only), `snouty-pipes`, `siwoo` (a name
   badge: demosnout's head plus a chrome name), `snouty-link` (the link-cable
-  test; `lib/link.zig` is the badge-to-badge link, docs/LINK.md),
+  test; `lib/link.zig` is the badge-to-badge link, docs/LINK.md), `snouty-gc` (a
+  combat racer forked from snouty-zero's engine), `snouty-cycles` (Tron light
+  cycles against AI programs),
   `paperclips` (a port of Universal Paperclips, with the authors'
   permission).
 - `build.zig`, `build.zig.zon`, `build/common.zig` — the one Zig package.
@@ -108,7 +110,7 @@ Reference carts: `sycl-badge/showcase/carts/dvd` (simplest asset pipeline),
 zig build                      # every cart, from the repository root
 zig build -Dcart=snouty-maze   # one cart
 zig build test                 # every cart's host tests and lib/'s
-zig build check-float          # soft-float check (reflections, maze, flyover, demosnout, zero)
+zig build check-float          # soft-float check (reflections, maze, flyover, demosnout, zero, gc)
 ```
 
 Outputs `zig-out/firmware/<binary>.uf2`, `.elf` and `zig-out/bin/<binary>.wasm`

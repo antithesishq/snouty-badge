@@ -30,6 +30,11 @@
 //!   fn search(p, drive: Pin) void        SIO: drive `drive` high, the
 //!                                        other pin an input (pull-down)
 //!   fn read(p, pin: Pin) bool            pin level
+//!   fn probe(p, pin: Pin) bool           searching only: is something
+//!                                        driving this input high? (pulls
+//!                                        it low for a moment first: an
+//!                                        RP2350 pad with its pull-down can
+//!                                        float latched high, erratum E9)
 //!   fn uart_start(p, tx: Pin) void       UART, tx on `tx`, rx on the other
 //!   fn uart_put(p, byte: u8) bool        false: transmit FIFO full
 //!   fn uart_get(p) ?u8
@@ -78,6 +83,9 @@ pub const timing = struct {
     /// Searching: the listen pin must read high at two polls this far apart
     /// (and never low between) before we lock.
     pub const lock_span: u64 = 5_000;
+    /// Searching: at most one probe of the listen pin this often (each one
+    /// briefly pulls against the partner's driver).
+    pub const probe_every: u64 = 1_000;
     /// Handshake: HELLO period, and give up (search again) after this long.
     pub const hello_every: u64 = 20_000;
     pub const handshake_timeout: u64 = 1_500_000;
@@ -115,6 +123,11 @@ pub const Stats = struct {
     framing_errors: u32 = 0,
     /// DATA packets dropped because the receive queue was full.
     queue_drops: u32 = 0,
+    /// Raw bytes out of the UART, before framing.
+    rx_bytes: u32 = 0,
+    /// Times the search locked, and handshakes that then timed out.
+    locks: u32 = 0,
+    handshake_timeouts: u32 = 0,
 };
 
 pub const Packet = struct {
@@ -142,6 +155,7 @@ pub fn Link(comptime Port: type) type {
         // Searching.
         dwell_until: u64 = 0,
         high_since: ?u64 = null,
+        last_probe: u64 = 0,
 
         // Handshake / connected.
         state_since: u64 = 0,
@@ -219,7 +233,10 @@ pub fn Link(comptime Port: type) type {
                 // No line-drop check here: with a straight cable the partner
                 // may still be searching in the mode that leaves our receive
                 // line undriven; it locks within a dwell or two.
-                if (now -% self.state_since >= timing.handshake_timeout) return self.start_search(now);
+                if (now -% self.state_since >= timing.handshake_timeout) {
+                    self.stats.handshake_timeouts += 1;
+                    return self.start_search(now);
+                }
                 if (now -% self.last_hello >= timing.hello_every) {
                     self.last_hello = now;
                     self.send_hello(now, true);
@@ -259,6 +276,12 @@ pub fn Link(comptime Port: type) type {
             self.send_packet(now, .ping, &.{self.ping_id});
         }
 
+        /// Drop the link and search again (after a cart borrowed the pins,
+        /// e.g. the port's self test).
+        pub fn restart(self: *Self, now: u64) void {
+            if (self.state != .unavailable) self.start_search(now);
+        }
+
         // ---- searching ----
 
         fn start_search(self: *Self, now: u64) void {
@@ -280,7 +303,9 @@ pub fn Link(comptime Port: type) type {
 
         fn poll_search(self: *Self, now: u64) void {
             if (self.dwell_until == 0) return self.enter_mode(now, self.mode);
-            if (self.port.read(self.tx_pin().other())) {
+            if (now -% self.last_probe < timing.probe_every) return;
+            self.last_probe = now;
+            if (self.port.probe(self.tx_pin().other())) {
                 const since = self.high_since orelse now;
                 self.high_since = since;
                 if (now -% since >= timing.lock_span) return self.lock(now);
@@ -294,6 +319,7 @@ pub fn Link(comptime Port: type) type {
 
         fn lock(self: *Self, now: u64) void {
             self.port.uart_start(self.tx_pin());
+            self.stats.locks += 1;
             self.state = .handshake;
             self.state_since = now;
             self.last_hello = now -% timing.hello_every;
@@ -332,7 +358,7 @@ pub fn Link(comptime Port: type) type {
             // line: until then it may be driving our transmit wire.
             if (self.state == .handshake and !self.port.read(self.tx_pin().other())) return;
             self.send_packet(now, .hello, &.{
-                @intFromBool(need_reply), @intFromEnum(self.mode),  self.app,
+                @intFromBool(need_reply), @backingInt(self.mode),     self.app,
                 protocol_version,         @truncate(self.nonce >> 8), @truncate(self.nonce),
             });
         }
@@ -341,7 +367,7 @@ pub fn Link(comptime Port: type) type {
             // HELLO opens with END: it flushes whatever half frame the
             // partner picked up while the lines were changing hands.
             if (kind == .hello) self.put(slip_end);
-            const k = @intFromEnum(kind);
+            const k = @backingInt(kind);
             self.put_escaped(k);
             var crc_buf: [1 + max_payload]u8 = undefined;
             crc_buf[0] = k;
@@ -397,6 +423,7 @@ pub fn Link(comptime Port: type) type {
         }
 
         fn parse(self: *Self, now: u64, byte: u8) void {
+            self.stats.rx_bytes += 1;
             if (byte == slip_end) {
                 if (self.frame_overlong) {
                     self.stats.overlong += 1;
@@ -436,7 +463,7 @@ pub fn Link(comptime Port: type) type {
             }
             self.stats.rx_packets += 1;
             self.last_rx = now;
-            switch (@as(Kind, @enumFromInt(f[0]))) {
+            switch (@as(Kind, @fromBackingInt(@intCast(f[0])))) {
                 .hello => {
                     if (body.len < 6) return;
                     const need_reply = body[0] != 0;
@@ -481,13 +508,18 @@ pub fn Link(comptime Port: type) type {
 
 /// The link carts use: PIO2 on the badge, `.unavailable` in the simulator.
 /// `var l = link.Badge.init(.{}, app_id, cart.rand());`
-pub const Badge = Link(@import("link_rp2350.zig").Port);
+pub const Badge = Link(rp2350.Port);
+/// The badge port's own extras: `self_test`, `regs` (diagnostics).
+pub const rp2350 = @import("link_rp2350.zig");
 
 /// The port for builds with no link hardware (the wasm simulator).
 pub const NullPort = struct {
     pub const available = false;
     pub fn search(_: *NullPort, _: Pin) void {}
     pub fn read(_: *NullPort, _: Pin) bool {
+        return false;
+    }
+    pub fn probe(_: *NullPort, _: Pin) bool {
         return false;
     }
     pub fn uart_start(_: *NullPort, _: Pin) void {}

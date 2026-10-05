@@ -49,8 +49,9 @@ pub const Input = struct {
 };
 
 /// How turns are drawn. Mixed is the original's default: elbows with a ball
-/// now and then, and the rare teapot. No button sets it any more (B is the
-/// nametag since M3); tests and `joint_style` still use the others.
+/// now and then, and the rare teapot (mixed scenes only). Each screensaver
+/// scene picks one at random, like the original's "Cycle" joint type
+/// (Adrian, 2026-10-04: no button sets it; B is the nametag since M3).
 pub const JointStyle = enum(u2) { mixed, elbow, ball };
 
 // ---------------------------------------------------------------------------
@@ -150,6 +151,12 @@ pub var teapots: u32 = 0;
 pub var view_index: u32 = 0;
 pub var orbit: i32 = 0;
 pub var joint_style: JointStyle = .mixed;
+/// Each scene draws `joint_style` from `style_rng` (tests turn this off to
+/// pin a style). A separate stream, and `pick_joint` makes the same `r`
+/// draws in every style, so a seed walks, colours and frames its scenes the
+/// same whatever style each scene gets.
+pub var random_style: bool = true;
+var style_rng: rng.Xorshift = rng.Xorshift.init(1);
 pub var speed: u2 = 0;
 pub var paused: bool = false;
 /// The nametag strip is up (B in the screensaver toggles it; it stays
@@ -169,9 +176,10 @@ var cmds: [max_cmds]Cmd = undefined;
 var cmd_len: usize = 0;
 
 /// Restarts from a cleared screen: boot state, scene 1, seed-derived view.
-/// Keeps the speed and joint style the viewer picked.
+/// Keeps the speed the viewer picked.
 pub fn reset(seed: u32) void {
     r = rng.Xorshift.init(seed);
+    style_rng = rng.Xorshift.init(seed ^ 0x5bd1e995);
     life_tick = 0;
     scene = 0;
     hist_head = 0;
@@ -281,6 +289,7 @@ fn begin_scene() void {
     pipes_started = 0;
     orbit = 0;
     scene_start = hist_head;
+    if (random_style) joint_style = @fromBackingInt(@intCast(style_rng.below(3)));
     cam = camera.view(view_index, orbit);
     state = if (life_tick < boot_ticks) .boot else .grow;
 }
@@ -432,14 +441,16 @@ fn pick_joint() grid.Joint {
         force_teapot = false;
         return .teapot;
     }
+    // Both rolls happen in every style so `r` advances the same way
+    // whatever the scene's style (see `random_style`).
+    const teapot_roll = r.below(teapot_odds);
+    const ball_roll = r.below(ball_odds);
     return switch (joint_style) {
         .elbow => .elbow,
         .ball => .ball,
-        .mixed => blk: {
-            const roll = r.below(teapot_odds);
-            if (roll == 0 and !teapot_this_scene) break :blk .teapot;
-            break :blk if (r.below(ball_odds) == 0) .ball else .elbow;
-        },
+        .mixed => if (teapot_roll == 0 and !teapot_this_scene)
+            .teapot
+        else if (ball_roll == 0) .ball else .elbow,
     };
 }
 
@@ -1212,6 +1223,39 @@ test "joint styles: elbow and ball modes draw only their joint" {
     joint_style = .mixed;
 }
 
+test "each scene picks a joint style at random; the style never moves the walk" {
+    var seen: [3]bool = @splat(false);
+    reset(31);
+    run_ticks(boot_ticks + 10); // past BOOT, so each wipe ends in GROW
+    for (0..12) |_| {
+        seen[@backingInt(joint_style)] = true;
+        step(no_input, .{ .a = true });
+        try testing.expect(run_until(.grow, dissolve_ticks + 1));
+    }
+    for (seen) |hit| try testing.expect(hit);
+
+    // Same seed, pinned styles: identical cells apart from the joint kind.
+    var cells: [3][256]u32 = undefined;
+    var counts: [3]u32 = undefined;
+    random_style = false;
+    defer random_style = true;
+    for ([_]JointStyle{ .mixed, .elbow, .ball }, 0..) |js, k| {
+        reset(32);
+        joint_style = js;
+        run_ticks(500);
+        counts[k] = @min(history_count(), 256);
+        for (0..counts[k]) |i| {
+            var p = history_at(@intCast(i));
+            p.joint = .ball;
+            cells[k][i] = @bitCast(p);
+        }
+    }
+    try testing.expectEqual(counts[0], counts[1]);
+    try testing.expectEqual(counts[0], counts[2]);
+    try testing.expectEqualSlices(u32, cells[0][0..counts[0]], cells[1][0..counts[1]]);
+    try testing.expectEqualSlices(u32, cells[0][0..counts[0]], cells[2][0..counts[2]]);
+}
+
 test "living pipes never share a colour" {
     reset(21);
     for (0..2000) |_| {
@@ -1293,9 +1337,10 @@ test "A starts a new scene, Start pauses, B toggles the nametag, Up/Down set spe
     try testing.expect(run_until(.grow, dissolve_ticks + 1));
     try testing.expectEqual(@as(u32, 2), scene);
     try testing.expect(!nametag);
+    const style = joint_style;
     step(no_input, .{ .b = true });
     try testing.expect(nametag and !name_strip());
-    try testing.expectEqual(JointStyle.mixed, joint_style);
+    try testing.expectEqual(style, joint_style);
     step(no_input, .{ .a = true }); // a new scene keeps it
     try testing.expect(run_until(.grow, dissolve_ticks + 1));
     try testing.expect(nametag);
@@ -1630,9 +1675,10 @@ test "a long run: cells unique and in the box, autopilots never silver, filled a
 test "the nametag hides on entering steer and the screensaver's B is the nametag" {
     reset(12);
     run_ticks(130);
+    const style = joint_style;
     step(no_input, .{ .b = true });
     try testing.expect(nametag);
-    try testing.expectEqual(JointStyle.mixed, joint_style);
+    try testing.expectEqual(style, joint_style);
     step(no_input, .{ .right = true }); // an orbit keeps it
     try testing.expect(nametag);
     step(no_input, .{ .select = true });

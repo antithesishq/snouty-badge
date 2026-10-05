@@ -17,6 +17,7 @@ test {
     _ = @import("cgb_acid2.zig");
     _ = @import("kstore_unit.zig");
     _ = @import("serial_unit.zig");
+    _ = @import("link_unit.zig");
     _ = @import("flow_unit.zig");
     _ = @import("sound_unit.zig");
 }

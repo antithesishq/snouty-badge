@@ -733,6 +733,8 @@ Mac before flashing. Tag `snouty-lynx/m5`, merge to main, push.
 
 ## Status
 
+- 2026-10-04: Chorded rewind done on `emu-ff-lynx` (Left during the
+  fast-forward hold; "Chorded rewind" at the end of this file).
 - 2026-10-04: Fast forward done on `emu-ff-lynx` (Select double tap and
   hold; the tap is held back 200 ms; two-period updates, ~1.5x on raycast
   and Hard Drivin'): "Fast forward" at the end of this file.
@@ -1276,6 +1278,7 @@ then press and hold it. Snouty Gear's implementation is the reference
   | Run (updates fast) | busy mean | p95 | max | over | frames per update | effective speed |
   |---|---:|---:|---:|---:|---|---:|
   | raycast, ff_play.json (218) | 25.53 | 30.35 | 30.61 | 0 | 3.24 (3: 166, 4: 52) | 1.62x |
+  | raycast, ff_play.json turning Right, not Left (chorded rewind) | 25.96 | 30.47 | 31.19 | 0 | 3.18 (2: 3, 3: 173, 4: 42) | 1.59x |
   | Hard Drivin' title, hd_ff.json 106-560 (455) | 23.57 | 28.44 | 31.12 | 0 | 2.24 (2: 394, 3: 11, 4: 50) | 1.12x |
   | Hard Drivin' driving, 1306-1790 (485) | 25.92 | 27.66 | 33.44 | 1 | 2.94 (1: 2, 2: 23, 3: 460) | 1.49x |
   | Blue Lightning attract, 106-700 (595) | 23.73 | 29.45 | 32.89 | 0 | 2.51 (2: 377, 3: 130, 4: 88) | 1.26x |
@@ -1298,3 +1301,80 @@ then press and hold it. Snouty Gear's implementation is the reference
 - Not done: the indicator shows halves only (two periods); a game whose
   frames cost over ~14 ms gains nothing (two fit in two periods); the
   hardware numbers are show day's.
+
+### Chorded rewind (2026-10-04, root docs/FAST_FORWARD.md "Chorded rewind")
+
+Snouty Gear's shipped version (e83aaf5b, 89d7976d) mirrored.
+
+- Input (`frontend/input.zig`): a fresh Left press during fast forward
+  (Select held, Start not) turns the rest of the hold into rewind,
+  `GameInput.rewind` `.enter` (with the first step back, `scrub` = -1)
+  then `.on`; `scrub` comes from `input.Repeat` (the menu's auto-repeat,
+  moved here and shared: a press steps at once, then every 15 updates).
+  A Left already held when fast forward starts is not a press, so it
+  does not count. Nothing reaches the game (pad 0); Start holds the
+  position; Select let go gives `.exit` after `suppress_held`. During
+  fast forward Left is masked out of the pad (reserved); Right and the
+  rest reach the game. `State.live_edge` (main.zig's `live_edge` now
+  calls it).
+- main.zig: `.enter` stops the play hint, `menu.freeze_frame()` (factored
+  out of `menu.open`: frontbuffer copy and `.copy_forward`), then redraws
+  the picture and the strip from the console (`video.show`, `strip.draw`,
+  full dirty rect) so the frozen frame does not carry the `>>` indicator
+  (which stays at the picture's top right); `.enter`/`.on` call
+  `rewind.step` on a scrub and `menu.draw_scrub_bar(true)` (factored out
+  of the menu's scrub view; "Rewind: no history" when empty) and step no
+  frame, so `update`'s `!stepped` ramps the sound out; `.exit` calls
+  `menu.close` and steps the frame as the menu's resume does
+  (`resume_if_parked` drops the future, `audio.frame` primes the
+  stream). The menu's `hold_pad` path is untouched: it lives in `step`,
+  which the rewind never calls. The two-period fast-forward update ends
+  where rewind begins: the entry update steps nothing. Export
+  `debug_chord_rewind`. The step is the menu's: one undo record, 60
+  frames (1 s); the first one from live goes back to the open record's
+  start (less than 1 s).
+- Menu resume fix found on the way: `menu.close` now marks the whole
+  screen dirty. On the `--lcd` model the first update after any resume
+  (menu or chord) kept the right end of the scrub bar's frame, which the
+  strip's fill repaints without a dirty rect, for one update (menu
+  update 370, chord 336 before the fix; gone after).
+- Hints: the play strip shows "Hold Select: menu", "2x Sel+hold: fast",
+  "then Left: rewind" (`menu.rewind_hint`), 3 s each; the menu footer
+  rotates "B: back to game", "2x Sel+hold: fast", "then Left: rewind"
+  every 2 s. `docs/ff_2026-10-04.png` redone (3x3: the three play hints,
+  `>>4x`, the chord's first step under the bar, the frame after letting
+  go, the three footers). `tools/scripts/ff_play.json` turns Right, not
+  Left, during its fast forward (Left would rewind).
+- Tests: 8 new `input:` tests (Left enters rewind and steps back at once,
+  no menu; a Left held when fast forward starts does not count and stays
+  reserved until pressed afresh; repeat 5 steps in 61 updates, Right 2
+  in 16; no button reaches the game, Left masked in fast forward; release
+  resumes with held buttons suppressed, no Option 1, menu hold works;
+  Start holds the position; Left with Start does not enter;
+  `suppress_held` ends it). `zig build test-lynx` 146/146.
+  `tools/check_chord_rewind.sh` (wasm; `rewind_menu.json`: Select held
+  300-340, menu at 329, Left at 345 and 352, B at 370;
+  `rewind_chord.json`: tap 300-301, hold 305-335, Left at 310 and 317):
+  both park on game frame 180, resume at 181, and at frame 510 give the
+  same frame count, PC, 16 MHz ticks, instruction, IRQ, sleep, display
+  frame and Suzy pixel counters, scrub history and the same picture rows
+  0..101: exit 0 (a 10-update shorter turn before frame 180 in one
+  script makes it fail, as it should).
+- badge-bench (RAM ELF, drive fixture, `--lcd --png 1`), busy ms:
+
+  | Update | chord | menu |
+  |---|---|---|
+  | enter / open | 2.21 (copy, redraw, first step) | 1.19 (open) |
+  | scrub step | 1.62 | 1.62, 1.62 |
+  | frozen, no step | 0.33 | 0.33 (scrub view), 0.93 (panel) |
+  | resume, then the next | 9.38, 9.15 | 9.38, 9.15 |
+
+  The resumed frames cost the same to 0.01 ms: they are the same frames.
+  Over 16.7 ms: chord 5 (updates 305-309, the two-period fast-forward
+  updates before Left, 23.8-24.9 ms, by design), menu 0; nothing over
+  33.3. `--lcd`: the bar replaces the picture's `>>` at entry (update
+  310), the update after release shows the full game frame with no bar
+  or indicator. 1x unchanged (`snouty-lynx.toml`, m3_scrub 480): 6.17 /
+  p95 9.51 / max 10.76, 0 over, before and after.
+- Sizes (RAM ELF): `.text` 104,964 -> 105,772 (+808), `.bss` +4;
+  `__bss_end__` 0x20065a50 -> 0x20065d94, arena 74,160 -> 73,324 B.

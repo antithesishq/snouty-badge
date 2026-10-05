@@ -54,6 +54,9 @@ pub fn Flow(comptime Ctx: type) type {
         pick_after_splash: bool = false,
         /// Left/Right auto-repeat in the chorded rewind.
         scrub: input.ScrubRepeat = .{},
+        /// A link cable partner is connected: no fast forward, no chorded
+        /// rewind (the partner's game would fall out of step).
+        linked: bool = false,
 
         /// One badge frame with that frame's controls.
         pub fn update(f: *Self, ctx: *Ctx, c: input.Controls) void {
@@ -117,7 +120,7 @@ pub fn Flow(comptime Ctx: type) type {
                 _ = ctx.menu_frame(f.controls.live_edge());
                 return;
             }
-            if (in.rewind) {
+            if (in.rewind and !f.linked) {
                 f.state = .rewind;
                 f.scrub = .{};
                 ctx.rewind_open();
@@ -125,7 +128,7 @@ pub fn Flow(comptime Ctx: type) type {
                 ctx.rewind_frame(f.scrub.update(f.controls.live_edge()));
                 return;
             }
-            ctx.step(in.pad, f.controls.live_edge().any_pressed(), in.fast);
+            ctx.step(in.pad, f.controls.live_edge().any_pressed(), in.fast and !f.linked);
         }
     };
 }

@@ -48,3 +48,8 @@ pub const ff_budget_us = 13_000;
 /// on purpose and may step `2 * ff_max_frames` frames in this many
 /// microseconds, so it still runs faster than 1x.
 pub const ff_slow_budget_us = 28_000;
+
+/// Link cable (frontend/linkport.zig): after the frame, keep answering the
+/// partner until this long after the update began. Leaves the rest of the
+/// 16.7 ms for the present; a frame that runs past it pumps nothing.
+pub const link_pump_until_us = 14_000;
