@@ -92,7 +92,7 @@ if want preview; then
         --dump-exports debug_page,debug_msgs,debug_clips,debug_screen \
         --out "$out/soak" || status=1
     node "$preview" "$wasm" --frames 300 --quiet --script "$here/scripts/cheats.json" \
-        --expect "debug_cheats == 1" --expect "debug_page == 6" \
+        --expect "debug_cheats == 1" --expect "debug_page == 14" \
         --out "$out/cheats" || status=1
     rm -rf "$out/tour"
     node "$preview" "$wasm" --frames 980 --every 10 --script "$here/scripts/tour.json" \

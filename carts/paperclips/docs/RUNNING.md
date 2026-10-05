@@ -91,14 +91,29 @@ creativity, quantum chips and Compute), PROJECTS (the list; the footer
 shows the selected one's cost and description, scrolling when long),
 INVESTMENTS (risk, deposit, withdraw, cash, stocks, the stock table,
 the engine upgrade), STRATEGY (strategy pick, Run, New Tournament,
-AutoTourney, yomi, the payoff grid or the results), CHEATS (below).
+AutoTourney, yomi, the payoff grid or the results; A on a result line
+shows the grid, A on the grid the results: the original's mouse-over),
+CHEATS (below).
 
 Title: A starts. Up Up Down Down Left Right Left Right B A on the title
 unlocks the CHEATS page ("CHEATS ON"), the original mirror's cheat
 buttons, for the session.
 
-M1 ends at "Release the HypnoDrones": the flash plays, then the cart says
-"Stage 2 arrives in M2" and stops the game (Start still opens the log).
+After "Release the HypnoDrones" (the flash plays) the game goes on into
+stage 2: FACTORIES (the stage-2 Manufacturing panel), WIRE (matter,
+harvester and wire drones with their +10/+100/+1k rows), POWER (solar
+farms, batteries), SWARM (status, gifts, the Work/Think slider: A and B
+move it), then stage 3: SPACE (probes launched, lost, drifters), PROBE
+DESIGN (the trust allocation as value rows, the original's tooltips in
+the footer, increase trust / max trust, honor) and COMBAT (the battle
+drawn from the game's ships: probes white, drifters black). Panels vanish
+in the ending as in the original, down to the PAPERCLIPS page with Make
+Paperclip and the final count. A choice of a new universe (the projects
+"The Universe Next Door" / "Within", "Quantum Temporal Reversion") goes
+back to the title, which then shows the universe and sim level.
+
+A build whose `game/game.zig` declares `pub const stage2_ready = false;`
+stops after the HypnoDrones instead, on a "Stage 2 arrives in M2" screen.
 
 ## 6. Web simulator
 
@@ -127,18 +142,26 @@ node ../../tools/preview.mjs ../../zig-out/bin/paperclips.wasm --frames 980 --ev
 python3 ../../tools/make_gif.py out/tour docs/preview_m1.gif --scale 2 --ms 100
 ```
 
-Useful: `--call debug_prepare` (a late stage-1 game: cheats for money and
-trust, then ten virtual minutes of buying), `--call debug_advance:60000`
+Useful: `--call debug_prepare` (a late stage-1 game: two virtual minutes
+in which every second takes the cheats and buys wire, a project and
+machines), `--call debug_advance:60000`
 (run the game clock a minute), `--call debug_unlock_cheats`,
-`--call debug_go_page:3`, `--call debug_cheat:1` (0 clips, 1 money,
-2 trust, 3 ops, 4 creativity, 5 yomi).
+`--call debug_go_page:6`, `--call debug_cheat:1` (0 clips, 1 money,
+2 trust, 3 ops, 4 creativity, 5 yomi), `--call debug_autoplay:9000` (the
+game's autoplayer, `game/bot.zig`, plays that many virtual seconds:
+about 9,000 reach stage 2, 20,000 stage 3, 28,000 the end; a few
+seconds of wall time per 1,000).
 
 Debug exports (wasm only): `debug_frame`, `debug_screen` (0 title, 1 game,
-2 log, 3 the M1 wall), `debug_page` (0 BUSINESS .. 6 CHEATS),
+2 log, 3 the M1 wall), `debug_page` (the `Page` enum of `cart/src/ui/pages.zig`: 0 BUSINESS,
+1 MANUFACTURING, 2 FACTORIES, 3 WIRE, 4 SPACE, 5 COMPUTING, 6 PROJECTS,
+7 INVESTMENTS, 8 STRATEGY, 9 COMBAT, 10 POWER, 11 SWARM, 12 PROBE DESIGN,
+13 PAPERCLIPS (the end), 14 CHEATS),
 `debug_cursor`, `debug_rows`, `debug_clips`, `debug_funds_cents`,
 `debug_presses` (presses that reached the game), `debug_msgs`,
 `debug_news` (bit per page), `debug_cheats`, `debug_human`
-(the original's humanFlag), `cart_framebuffer_address`.
+(the original's humanFlag), `debug_stage` (1, 2, 3),
+`cart_framebuffer_address`.
 
 ## 8. badge-bench
 
