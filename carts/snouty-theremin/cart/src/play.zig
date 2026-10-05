@@ -234,7 +234,7 @@ fn frame(p: *Player, h: hands.Hands, s: Settings) [2]Output {
 
 test "play: a hand starts a note at its pitch, closer is higher" {
     var p: Player = .{};
-    const s: Settings = .{};
+    const s: Settings = .{ .scale = .off };
     _ = frame(&p, hand(null), s);
     try testing.expectEqual(@as(i32, 0), p.out.level);
     const o = frame(&p, hand(270), s);
@@ -254,7 +254,7 @@ test "play: a hand starts a note at its pitch, closer is higher" {
 
 test "play: a dropped frame does not cut the note; an absent hand fades it" {
     var p: Player = .{};
-    const s: Settings = .{};
+    const s: Settings = .{ .scale = .off };
     for (0..5) |_| _ = frame(&p, hand(200), s);
     // One frame without the hand: still sounding.
     const d = frame(&p, hand(null), s);
@@ -272,7 +272,7 @@ test "play: a dropped frame does not cut the note; an absent hand fades it" {
 test "play: the voice fades out with no click when the hand goes" {
     var p: Player = .{};
     var v: voice.Voice = .{};
-    const s: Settings = .{};
+    const s: Settings = .{ .scale = .off };
     var buf: [735]u8 = undefined;
     var prev: ?u8 = null;
     var worst: i32 = 0;
@@ -294,7 +294,7 @@ test "play: the voice fades out with no click when the hand goes" {
 
 test "play: a hand returning after quiet jumps, a quick return glides" {
     var p: Player = .{};
-    const s: Settings = .{};
+    const s: Settings = .{ .scale = .off };
     for (0..4) |_| _ = frame(&p, hand(400), s);
     for (0..absent_grace) |_| _ = frame(&p, hand(null), s);
     // Back at once (well inside jump_after): no jump, it glides up.
@@ -309,7 +309,7 @@ test "play: a hand returning after quiet jumps, a quick return glides" {
 }
 
 test "play: smoothing removes jitter but keeps hand vibrato" {
-    const s: Settings = .{};
+    const s: Settings = .{ .scale = .off };
     // Jitter: +-6 mm of noise on a still hand at 250 mm.
     {
         var p: Player = .{};
@@ -352,7 +352,7 @@ test "play: smoothing removes jitter but keeps hand vibrato" {
 
 test "play: two-hand volume follows the volume hand; one-hand ignores it" {
     var p: Player = .{};
-    var s: Settings = .{ .layout = .two_hand };
+    var s: Settings = .{ .layout = .two_hand, .scale = .off };
     var o: [2]Output = undefined;
     for (0..6) |_| o = frame(&p, .{ .pitch_mm = 200, .volume_mm = 60 }, s);
     try testing.expect(o[1].level < 100);
@@ -417,5 +417,5 @@ test "play: the range follows the key and octave" {
     try testing.expectEqual(@as(Cents, 6000), (Settings{ .octave = 4 }).low());
     try testing.expectEqual(@as(Cents, 6200), step(6000, 1, .{ .scale = .pentatonic }));
     try testing.expectEqual(@as(Cents, 5700), step(6000, -1, .{ .scale = .pentatonic }));
-    try testing.expectEqual(@as(Cents, 6100), step(6020, 1, .{}));
+    try testing.expectEqual(@as(Cents, 6100), step(6020, 1, .{ .scale = .off }));
 }
