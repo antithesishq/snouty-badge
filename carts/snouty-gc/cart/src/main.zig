@@ -1357,7 +1357,7 @@ comptime {
             "debug_battle_refill",    "debug_battle_out",    "debug_battle_leader",  "debug_battle_end",
             "debug_battle_set_lives", "debug_battle_kill",   "debug_battle_clock",   "debug_setup_row",
             "debug_battle_arena",     "debug_stunt",         "debug_safe",           "debug_lobby_rules",
-            "debug_battle_stress",    "debug_me_out",
+            "debug_battle_stress",    "debug_me_out",        "debug_feed",
         }) |name| @export(&@field(@This(), name), .{ .name = name });
     }
 }
@@ -1640,6 +1640,12 @@ fn debug_battle_stress() callconv(.c) void {
     mode = .stress;
     stress.fill(&w, follow);
     fx.begin(&w);
+}
+/// The feed line showing: fx.FeedKind * 256 + ticks left (0 none; 7
+/// kill -9, 8 REAPED, 9 SMASHED), for picking a preview's frames.
+fn debug_feed() callconv(.c) u32 {
+    if (fx.feed.ticks == 0) return 0;
+    return @as(u32, @backingInt(fx.feed.kind)) * 256 + fx.feed.ticks;
 }
 /// BATTLE: the player's car is out of lives (1) or not (0).
 fn debug_me_out() callconv(.c) u32 {
