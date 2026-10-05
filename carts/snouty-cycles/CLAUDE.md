@@ -19,8 +19,9 @@ cart API, build wiring); this file adds the cart's specifics.
   `main.zig` `start`/`update`, the wasm shims, the debug exports and the
   badge-bench hooks; `rng.zig` xorshift streams; `font8.zig` the OS 8x8
   font (generated, do not edit); `host_tests.zig` the root for `zig build
-  test`. M1 adds `levels.zig` (the ladder, block layouts), M2
-  `history.zig` (keyframes, rewind).
+  test`. M1 adds `levels.zig` (the ladder, block layouts; M2 its
+  `Options` and SKIRMISH's config), M2 `history.zig` (keyframes, the
+  input log, retract and restore).
 - `tools/` — `check.sh` (the whole gate), `gen_font.py` (writes
   `cart/src/font8.zig` from `sycl-badge/src/font.zig`), `scripts/` (input
   scripts; `bench_m0.json` is badge-bench's). The headless runner
@@ -29,8 +30,8 @@ cart API, build wiring); this file adds the cart's specifics.
 - `docs/` — `RUNNING.md` (pull, build, simulator, flash, previews, gate,
   debug exports), milestone GIFs.
 - `../../badge-bench/carts/snouty-cycles.toml` — badge-bench defaults
-  (1800 frames, autopilot poked on: title, A, a round, a crash, the next
-  round).
+  (3600 frames, autopilot poked on: title, A, the ladder, a forced
+  derez and rewind at World tick 900).
 
 ## Interfaces (for the M1 tracks)
 
@@ -200,6 +201,122 @@ true, .layout = n }`.
   grows the renderer repaints that ring's strip itself, so layout blocks
   already on it turn red too.
 
+### M2 modifiers (track O: `sim.zig`, `layouts.zig`, `render.zig`, `ai.zig`)
+
+The OPTIONS modifiers (SPEC 6) are `Config` fields, all off in a bare
+`Config`. The game sets them: TRAILS SNAKE `snake_len =
+sim.tuning.snake_len` (200; FULL = 0), GAPS `gaps = true`, WRAP `wrap =
+true`, HARDCORE `rubber = 4` (nothing else in sim), SPEED `speed_pct`.
+
+- **WRAP** (`cfg.wrap`): `init` draws no rim and `next_cell` wraps every
+  edge, so turns, the U-turn, grinding and the AI all see a torus. Layouts
+  are the same blocks (none reaches the edge). Sudden death closes the old
+  rim ring first: **`sudden_death_ring` is now a stage**, stage k closes
+  ring `k - 1 + w.sd_first_ring()` (first ring 1, or 0 in WRAP),
+  `w.sd_stages()` is 29 (30 in WRAP), `w.sd_stage_of(x, y)` is a cell's
+  stage, `block` events carry a = the stage; WRAP rounds end by tick 3600
+  (3540 otherwise). The renderer gives an empty edge cell a dim dashed
+  outer line (`colors.edge_dash`, 4 px on, 4 px off) and reads glow
+  neighbours with bounds checks (no glow across the edge).
+- **SNAKE** (`cfg.snake_len` > 0): after a cycle paints its new cell,
+  its trail log keeps the newest `snake_len` entries: one tail pop per
+  step, a `cleared` event when the popped cell is still its trail. The
+  pop comes after the collision check, so a cycle entering that tail
+  cell on the same tick still crashes. A dead cycle fades as before.
+- **GAPS** (`cfg.gaps`): new `Cycle` fields `gap_rng` (xorshift seeded
+  `rng.mix(seed, 0x6A70 + i)` in `init`, advanced once per gap),
+  `gap_in` (painted cells to the next gap, 40..80) and `gap_left` (gap
+  cells still to lay, `tuning.gap_cells` = 3). A gap cell is painted
+  while the head is on it (head collisions still happen) and its log
+  entry carries `sim.log_gap` (bit 15); the step that leaves it clears
+  the cell (a `cleared` event). Popping a gap entry later (SNAKE, fade)
+  clears nothing, unless it is the last entry (the head a dead cycle
+  crashed on), so riding back over your own old gap keeps the new wall.
+  `log_at`/`log_from_tail` return the cell with the bit masked;
+  `w.log_gap_at(i, k)` tells a gap entry (k-th newest).
+- **Events**: SNAKE and GAPS add up to one `cleared` per cycle per step
+  each (8 a tick at most).
+- **AI**: SNAKE and GAPS only change the grid. For WRAP `ai.zig` steps
+  neighbours with `nb(wr, at, k)`, specialised at compile time in the
+  four hot BFS loops (`fill`, `others_field`, `region`, `chamber_space`),
+  so the rim arena runs the M1 code (M1 tournament scores unchanged);
+  head distances, the race hold and T3's 32 x 32 window go the short way
+  round. `ai.wrapping` is set from the World in `decide`, `avoid`,
+  `flood` and `open_neighbours`.
+- `hash()`/`same_state` cover the new Cycle fields (`same_state`
+  compares whole Cycles). No new `World` field: the three new fields are
+  plain `Cycle` state (keyframed with the Cycle).
+- **Cost** (calibrated badge-bench worst / mean busy ms, autopilot T3,
+  seed 2, measured with a temporary modifier poke): no modifiers L1 5.63,
+  L6 6.84, L12 6.88 (M1: 5.68 / 7.05 / 7.13; play is pixel-identical);
+  WRAP L1 7.31, L6 9.44, L12 10.37 / 3.83 mean, attract frame 0 10.88;
+  WRAP + GAPS + SNAKE L1 7.57, L6 8.80, L12 9.50 / 4.67 mean. WRAP costs
+  more because the BFS passes, no longer stopped by a rim, run nearer
+  their unit caps (the caps hold: `ai` host test "budgets hold in WRAP").
+
+**What a rewind keyframe must hold (Track R)**: the grid (gap clears and
+SNAKE pops change it), each `Cycle` whole (now with `gap_rng`, `gap_in`,
+`gap_left`, and `log_head`/`log_tail`), and the World scalars as before.
+Log entries are written once, gap bit included, and never changed; SNAKE
+pops and fades only advance `log_tail`. So restoring `log_head` and
+`log_tail` brings the trail back exactly, as long as the ring has not
+overwritten the restored tail's entries (`log_head - restored log_tail <=
+log_cap` = 4096 cells; a round is far shorter). Gaps take nothing from
+`World.seed` after `init`. A retraction drawn by popping log heads will
+not bring back tail cells SNAKE cleared or gap cells (empty once left,
+`log_gap_at`); the restore's full repaint shows the true picture.
+
+### M2 time travel and modes (track R: `history.zig`, `game.zig`, `levels.zig`, `main.zig`)
+
+- **`history.History`** (~46 KB, inside `game.Game`): `start(w, brains,
+  aux)` at a round's tick 0; `record(w, input, brains, aux)` after every
+  ladder play step and every replayed one (the player's input, each
+  cycle's trail-log head/tail moves, a journal of `cleared`/`block`
+  cells, a keyframe every 30 ticks: 8 kept, 4 s). A keyframe is
+  `Rewindable` (World fields copied by name: tick, result, winner,
+  timed_out, sudden_death_ring, grid, cycles), the four Brains and the
+  game's `Aux` (score, the autopilot's tier deadline). `not_keyframed`
+  lists the rest of World with the reason; a test fails if a World field
+  is in neither: **a new World field a rewind needs goes into
+  `Rewindable` (same name and type), nothing else**. The trail logs are
+  not copied: a step only writes at `log_head` and fades/clears only
+  move `log_tail`, so restoring the heads in `cycles` restores them; a
+  rule that rewrote an old log entry would break this (the exactness
+  tests catch it).
+- **A rewind**: `plan(now, back)` / `plan_exact(t)` / `plan_start()` set
+  `target`; `retract(w, n)` undoes n ticks of the World in place for the
+  screen (newest trail cells pop, journaled cells go back, heads slide
+  back, a cycle that rides again gets a `crash` event with `Crash.none`)
+  and leaves events like a step; `restore(w, brains, aux)` puts the
+  keyframe at or before `target` back (forgets later keyframes, calls
+  `ai.reset_pool()`); the game replays `input_at(t)` to `target`. After
+  the game changes the autopilot at the landing it calls `resave`.
+- **Determinism contract**: a replay is exact because the World depends
+  only on the Brains, the rules and the player's inputs. The autopilot
+  decides before the programs and spends the shared AI pool (M1's
+  order), so a replay re-runs its decision (`step_world(..., logged)`);
+  a human player never touches the pool. Anything else that changes a
+  program's or the World's behaviour must be in the World, a Brain or
+  `Aux`.
+- **Game flow** (`game.State` appended: 10 frozen, 11 rewind, 12
+  options, 13 skirmish_setup, 14 round_over, 15 match_over): your derez
+  with a snapshot -> `frozen` (20 ticks) -> `rewind` (retract
+  `retract_step` ticks a frame, ~40 frames; then restore + replay with
+  `hold_frame` set, which main honours by not drawing) -> `countdown`
+  with `resuming` (2-1, then RUN away from you). A derez within 3 s of
+  the last landing restarts the round (`restart_round`: same seed and
+  Brains). `g.snapshots` replaces M1's lives (HARDCORE: 0); `g.mode`
+  ladder / skirmish; `g.opts` (`levels.Options`) apply through
+  `Options.apply(cfg)`; SKIRMISH is `g.sk` (`levels.skirmish_config`).
+- **The tint** is main's: `g.tinted()` rows from the arena top; main's
+  `Screen.mark_dirty` tints each rect the renderer marks (`put` stays a
+  plain store: a per-pixel check costs 2 ms on a full repaint) and
+  repaints the rows the wipe reaches with `Renderer.repaint_rect` (made
+  pub for this). The banner box is never tinted.
+- Banner lines go through `add_line` (noinline) and the cold game
+  functions are `noinline`: ReleaseFast inlining of them cost ~7 KB of
+  .text in a RAM cart.
+
 ## Rendering rules that are easy to break
 
 - **Mark every write.** `.copy_forward` sends only the marked dirty rect
@@ -221,9 +338,9 @@ true, .layout = n }`.
   colour-only change repaints just those lines (the title's blink).
 - **Order per frame**: erase heads, set the banner, apply the World's
   events (once per World tick), draw heads, the HUD if it changed.
-- `cell_colors` reads an empty cell's four neighbours without bounds
-  checks: the rim guarantees them. M2's WRAP (no rim) must change that
-  and `World.next_cell`.
+- `cell_colors` reads an empty cell's four neighbours with bounds checks
+  (WRAP has no rim, so an empty cell can sit on the screen edge), and
+  `bare_floor` never counts an edge cell as bare floor (WRAP's dashes).
 
 ## Target hardware (SYCL Badge V2)
 
@@ -233,7 +350,8 @@ true, .layout = n }`.
 - Screen 160x128 RGB565, column-major `cart.framebuffer[x][y]`. The arena
   is y 8..127 (80 x 60 cells of 2x2 px), the HUD y 0..7.
 - RAM cart only. M0: `.text` 40 KB, `.bss` 77 KB (World 38 KB, AI fill
-  scratch 19 KB, banner overlay 19 KB).
+  scratch 19 KB, banner overlay 19 KB). M2 (track R): `.text` ~103 KB,
+  `.bss` ~140 KB (History 46 KB more), ~243 KB of the ~275 KB window.
 - No audio, neopixels off (never written). The OS owns Start+Select and
   the joystick click; the cart ignores Start and Select while both are
   held.

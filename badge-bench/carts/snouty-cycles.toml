@@ -2,5 +2,5 @@
 budget_ms = 16.7
 frames = 3600
 script = "carts/snouty-cycles/tools/scripts/bench_m1.json"
-pokes = ["snouty_cycles_autopilot=3"]
-note = "M1: the title over a 4-program attract round (0..59), A at 60 opens the menu, A at 90 starts GRID LADDER; level 1 (BASIC) with the autopilot (3 = T3) driving you: intro, countdown, play to sudden death at 30 s or a clear, the next level. tools/check.sh bench adds ladder levels 1, 6 and 12 (--poke snouty_cycles_level=N) and gates on worst busy ms <= 12 and --lcd == framebuffer"
+pokes = ["snouty_cycles_autopilot=3", "snouty_cycles_crash_at=900"]
+note = "M2: the title over a 4-program attract round (0..59), A at 60 opens the menu, A at 90 starts GRID LADDER; level 1 (BASIC) with the autopilot (3 = T3) driving you: intro, countdown, play to sudden death at 30 s or a clear, the next level; at World tick 900 of a round (crash_at, once) you derez and the round rewinds 2 s (freeze, retraction, replay, 2-1-RUN). tools/check.sh bench adds ladder levels 1, 6 and 12 (--poke snouty_cycles_level=N) and each with a rewind at tick 1500, and a SKIRMISH of 3 ASM programs, and gates on worst busy ms <= 12 and --lcd == framebuffer"

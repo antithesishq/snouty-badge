@@ -9,22 +9,78 @@ const build_options = @import("build_options");
 const sim = @import("sim.zig");
 const game = @import("game.zig");
 const render = @import("render.zig");
+const levels = @import("levels.zig");
 
 comptime {
     cart.export_start_code();
 }
 
 /// Pixel sink for the renderer: the cart framebuffer plus the OS dirty rect.
+///
+/// While the round rewinds, the arena rows above `tint_end` (outside the
+/// banner) are tinted. Every renderer primitive marks its rect right
+/// after writing it, so `mark_dirty` tints the rect it is given in place:
+/// `put` stays a plain store (a check per pixel there cost 2 ms on a full
+/// repaint, it stops the renderer's cell loop from inlining). The only
+/// pixels a mark covers that were not just written are a head sprite's
+/// four corners, tinted twice for the frame the head is there.
 const Screen = struct {
     pub inline fn put(x: u32, y: u32, c: u16) void {
         cart.framebuffer[x][y] = .from_color(@bitCast(c));
     }
     pub fn mark_dirty(r: render.Rect) void {
         if (r.is_empty()) return;
+        if (r.y0 < tint_end and r.y1 > render.arena_y) tint_rect(r);
         cart.mark_dirty_rect(r.x0, r.y0, @as(i32, r.x1) - r.x0, @as(i32, r.y1) - r.y0);
     }
 };
+
+/// Tints the arena pixels of r above `tint_end`, outside the banner.
+noinline fn tint_rect(r: render.Rect) void {
+    const y_end = @min(@as(u32, r.y1), tint_end);
+    var x: u32 = r.x0;
+    while (x < r.x1) : (x += 1) {
+        var y: u32 = @max(@as(u32, r.y0), render.arena_y);
+        while (y < y_end) : (y += 1) {
+            if (in_box(x, y)) continue;
+            const px = &cart.framebuffer[x][y];
+            px.* = .from_color(@bitCast(tint(@bitCast(px.to_color()), y)));
+        }
+    }
+}
 const R = render.Renderer(Screen);
+
+/// Pixel rows above this are tinted (arena_y: none).
+var tint_end: u32 = render.arena_y;
+/// The bright line at the wipe's front, drawn last frame (erased by
+/// repainting its cells).
+var wipe_line: ?u8 = null;
+const wipe_color = render.rgb(0xB8F4FF);
+/// The banner's box: its text and dimmed arena are not tinted.
+var tint_box: render.Rect = .empty;
+
+inline fn in_box(x: u32, y: u32) bool {
+    const r = tint_box;
+    return x >= r.x0 and x < r.x1 and y >= r.y0 and y < r.y1;
+}
+
+/// The rewind's look: a cold navy cast (red down, darks lifted toward
+/// blue) with every other row at half, like a tape running backwards;
+/// the trails keep their hues. 565 bits in and out (r in the low 5).
+fn tint(c: u16, y: u32) u16 {
+    var cr: u32 = c & 31;
+    var cg: u32 = (c >> 5) & 63;
+    var cb: u32 = c >> 11;
+    cr = cr * 12 / 16;
+    cg = cg * 14 / 16 + 1;
+    cb = @min(31, cb * 14 / 16 + 4);
+    if (y & 1 != 0) {
+        cr /= 2;
+        cg /= 2;
+        cb = cb * 9 / 16;
+    }
+    return @intCast(cr | (cg << 5) | (cb << 11));
+}
 
 /// 38 KB of World inside: a static, never on the stack.
 var g: game.Game = undefined;
@@ -35,6 +91,9 @@ var tick: u32 = 0;
 var render_us: u32 = 0;
 var seed: u32 = 0;
 var autopilot: u8 = 0;
+/// OPTIONS for headless runs and the bench (`levels.Options.bits`), kept
+/// through reseeds like the autopilot.
+var options_bits: u32 = 0;
 
 /// -Ddebug_overlay builds show the render time in the HUD.
 const debug_build = build_options.debug_overlay;
@@ -46,12 +105,19 @@ pub fn start() void {
     cart.set_double_buffer_mode(.copy_forward);
     renderer.reset();
     autopilot = @intCast(@min(bench_autopilot, 3));
+    options_bits = bench_options;
     if (bench_seed != 0) {
         reseed(bench_seed);
     } else {
         reseed(if (clock_seeded) cart.rand() ^ clock_mix() else cart.rand());
     }
-    if (bench_level != 0) g.new_game(bench_level);
+    if (bench_skirmish != 0) {
+        g.sk = .from_bits(bench_skirmish - 1);
+        g.new_match();
+    } else if (bench_level != 0) {
+        g.new_game(bench_level);
+    }
+    g.crash_at = bench_crash_at;
 }
 
 /// badge-bench hooks (firmware only, 0 on the badge): `--poke
@@ -60,14 +126,25 @@ pub fn start() void {
 /// lets the autopilot drive the player (1 T1, 2 T1 with slips, 3 T3),
 /// `--poke snouty_cycles_level=N` skips the title and starts the ladder at
 /// level N (badge-bench/carts/snouty-cycles.toml, tools/check.sh bench).
+/// M2: `snouty_cycles_crash_at=T` derezzes you when a ladder round reaches
+/// World tick T (once: the rewind's frames in the bench),
+/// `snouty_cycles_options=B` sets OPTIONS (`levels.Options.from_bits`),
+/// `snouty_cycles_skirmish=B+1` starts a SKIRMISH match
+/// (`game.Skirmish.from_bits(B)`) instead of the ladder.
 var bench_seed: u32 = 0;
 var bench_autopilot: u32 = 0;
 var bench_level: u32 = 0;
+var bench_crash_at: u32 = 0;
+var bench_options: u32 = 0;
+var bench_skirmish: u32 = 0;
 comptime {
     if (!cart.is_wasm) {
         @export(&bench_seed, .{ .name = "snouty_cycles_seed" });
         @export(&bench_autopilot, .{ .name = "snouty_cycles_autopilot" });
         @export(&bench_level, .{ .name = "snouty_cycles_level" });
+        @export(&bench_crash_at, .{ .name = "snouty_cycles_crash_at" });
+        @export(&bench_options, .{ .name = "snouty_cycles_options" });
+        @export(&bench_skirmish, .{ .name = "snouty_cycles_skirmish" });
     }
 }
 
@@ -87,11 +164,22 @@ fn clock_mix() u32 {
     return h;
 }
 
+/// A bright scanline across the arena at row y (outside the banner).
+fn draw_wipe_line(y: u8) void {
+    // Not through the banner's rows (stubs beside the box look broken).
+    if (y >= tint_box.y0 and y < tint_box.y1) return;
+    for (0..render.screen_w) |x| cart.framebuffer[x][y] = .from_color(@bitCast(wipe_color));
+    cart.mark_dirty_rect(0, y, render.screen_w, 1);
+    wipe_line = y;
+}
+
 fn reseed(s: u32) void {
     seed = s;
     g.init(s);
     g.autopilot = autopilot;
+    g.opts = .from_bits(options_bits);
     renderer.invalidate();
+    wipe_line = null;
 }
 
 fn buttons(c: cart.Controls) game.Buttons {
@@ -114,18 +202,39 @@ pub fn update() void {
     g.update(held, pressed);
 
     const t0 = cart.micros_since_boot();
-    if (g.repaint) {
-        renderer.invalidate();
-        g.repaint = false;
+    // A rewind's replay frames run on a World the screen must not follow:
+    // the last retraction frame stays up (copy_forward keeps it).
+    if (!g.hold_frame) {
+        if (g.repaint) {
+            renderer.invalidate();
+            g.repaint = false;
+        }
+        var v = g.view();
+        if (debug_build) {
+            var buf: [20]u8 = undefined;
+            const n = game.decimal(&buf, render_us, 4);
+            @memcpy(buf[n..][0..2], "us");
+            v.hud.right = .of(buf[0 .. n + 2], 1, game.colors.warn);
+        }
+        tint_box = if (v.banner) |b| b.rect() else .empty;
+        // The tint wiping down: repaint the rows it reached this frame
+        // (and last frame's bright front line).
+        const end = render.arena_y + @as(u32, g.tinted());
+        if (wipe_line) |y| {
+            renderer.repaint_rect(&g.world, .{ .x0 = 0, .y0 = y, .x1 = render.screen_w, .y1 = y + 1 });
+            wipe_line = null;
+        }
+        if (end > tint_end) {
+            const from: u8 = @intCast(tint_end);
+            tint_end = end;
+            renderer.repaint_rect(&g.world, .{ .x0 = 0, .y0 = from, .x1 = render.screen_w, .y1 = @intCast(end) });
+        } else {
+            // Taking it off comes with a full repaint (the game's repaint).
+            tint_end = end;
+        }
+        renderer.frame(&g.world, v);
+        if (g.state == .rewind and tint_end < render.screen_h and tint_end > render.arena_y) draw_wipe_line(@intCast(tint_end - 1));
     }
-    var v = g.view();
-    if (debug_build) {
-        var buf: [20]u8 = undefined;
-        const n = game.decimal(&buf, render_us, 4);
-        @memcpy(buf[n..][0..2], "us");
-        v.hud.right = .of(buf[0 .. n + 2], 1, game.colors.warn);
-    }
-    renderer.frame(&g.world, v);
     render_us = @truncate(cart.micros_since_boot() - t0);
 
     tick +%= 1;
@@ -157,6 +266,15 @@ comptime {
         @export(&debug_sudden_death_ring, .{ .name = "debug_sudden_death_ring" });
         @export(&debug_world_tick, .{ .name = "debug_world_tick" });
         @export(&debug_world_hash, .{ .name = "debug_world_hash" });
+        @export(&debug_snapshots, .{ .name = "debug_snapshots" });
+        @export(&debug_rewinds, .{ .name = "debug_rewinds" });
+        @export(&debug_force_crash, .{ .name = "debug_force_crash" });
+        @export(&debug_crash_at, .{ .name = "debug_crash_at" });
+        @export(&debug_options, .{ .name = "debug_options" });
+        @export(&debug_skirmish, .{ .name = "debug_skirmish" });
+        @export(&debug_mode, .{ .name = "debug_mode" });
+        @export(&debug_match, .{ .name = "debug_match" });
+        @export(&debug_rewind_target, .{ .name = "debug_rewind_target" });
     }
 }
 
@@ -164,7 +282,9 @@ fn debug_tick() callconv(.c) u32 {
     return tick;
 }
 /// game.State: 0 title, 1 menu, 2 howto, 3 intro, 4 countdown, 5 play,
-/// 6 derez, 7 clear, 8 game over, 9 paused.
+/// 6 derez, 7 clear, 8 game over, 9 paused, 10 frozen (your derez, a
+/// snapshot left), 11 rewind, 12 options, 13 SKIRMISH setup, 14 round
+/// over, 15 match over.
 fn debug_state() callconv(.c) u32 {
     return @backingInt(g.state);
 }
@@ -176,14 +296,64 @@ fn debug_round() callconv(.c) u32 {
 fn debug_level() callconv(.c) u32 {
     return g.level;
 }
+/// Snapshots left (M1's lives; the ladder bot reads this name).
 fn debug_lives() callconv(.c) u32 {
-    return g.lives;
+    return g.snapshots;
+}
+fn debug_snapshots() callconv(.c) u32 {
+    return g.snapshots;
+}
+/// Rewinds this game.
+fn debug_rewinds() callconv(.c) u32 {
+    return g.rewinds;
+}
+/// Derezzes you now if a ladder round is in play (a rewind follows when a
+/// snapshot is left). Returns 1 if it did.
+fn debug_force_crash() callconv(.c) u32 {
+    const before = g.state;
+    g.force_crash();
+    return @intFromBool(g.state != before);
+}
+/// Derezzes you when the World reaches tick t in play (once; 0 off).
+fn debug_crash_at(t: u32) callconv(.c) u32 {
+    g.crash_at = t;
+    return t;
+}
+/// Sets OPTIONS (`levels.Options.from_bits`: bits 0-1 speed 0 normal,
+/// 1 slow, 2 fast; 2 SNAKE, 3 GAPS, 4 WRAP, 5 HARDCORE), kept through
+/// reseeds; applies from the next round. Returns the bits.
+fn debug_options(bits: u32) callconv(.c) u32 {
+    options_bits = bits;
+    g.opts = .from_bits(bits);
+    return g.opts.bits();
+}
+/// Starts a SKIRMISH match (`game.Skirmish.from_bits`: bits 0-1
+/// programs - 1, 2-3 tier, 4-7 arena). Returns the programs.
+fn debug_skirmish(bits: u32) callconv(.c) u32 {
+    g.sk = .from_bits(bits);
+    g.new_match();
+    return g.sk.programs;
+}
+/// 0 ladder, 1 SKIRMISH.
+fn debug_mode() callconv(.c) u32 {
+    return @backingInt(g.mode);
+}
+/// SKIRMISH: round wins, 4 bits per cycle (cycle 0 lowest), and your
+/// points above bit 16.
+fn debug_match() callconv(.c) u32 {
+    var v: u32 = 0;
+    for (g.sk.wins, 0..) |w, i| v |= @as(u32, w & 15) << @intCast(4 * i);
+    return v | @as(u32, g.sk.points[0]) << 16;
+}
+/// The World tick the last rewind went back to.
+fn debug_rewind_target() callconv(.c) u32 {
+    return g.history.target;
 }
 /// Session high score.
 fn debug_high() callconv(.c) u32 {
     return g.high;
 }
-/// Starts a new ladder game at position n (3 lives, score 0), skipping
+/// Starts a new ladder game at position n (3 snapshots, score 0), skipping
 /// the title. Returns n.
 fn debug_set_level(n: u32) callconv(.c) u32 {
     g.new_game(n);

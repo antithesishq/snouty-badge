@@ -111,6 +111,96 @@ pub fn get(n: u32) Round {
     };
 }
 
+/// OPTIONS (SPEC 6, PLAN M2 Track R item 4): the session's modifiers,
+/// all off by default, for the ladder and SKIRMISH. RAM only.
+pub const Options = struct {
+    speed: Speed = .normal,
+    /// TRAILS: SNAKE (finite walls) instead of FULL.
+    snake: bool = false,
+    gaps: bool = false,
+    wrap: bool = false,
+    /// Rubber 4 and no snapshots in the ladder.
+    hardcore: bool = false,
+
+    pub const Speed = enum(u8) {
+        normal,
+        slow,
+        fast,
+
+        pub fn pct(s: Speed) u16 {
+            return switch (s) {
+                .normal => 100,
+                .slow => 80,
+                .fast => 125,
+            };
+        }
+        pub fn name(s: Speed) []const u8 {
+            return switch (s) {
+                .normal => "NORMAL",
+                .slow => "SLOW",
+                .fast => "FAST",
+            };
+        }
+    };
+
+    /// SNAKE's wall length (Armagetron's WALLS_LENGTH, SPEC 6).
+    pub const snake_len = sim.tuning.snake_len;
+    pub const hardcore_rubber: u8 = 4;
+
+    /// `cfg` with these options on top: speed scaled, the modifiers set.
+    pub fn apply(o: Options, cfg: sim.Config) sim.Config {
+        var c = cfg;
+        c.speed_pct = @intCast(@as(u32, cfg.speed_pct) * o.speed.pct() / 100);
+        if (o.snake) c.snake_len = snake_len;
+        c.gaps = o.gaps;
+        c.wrap = o.wrap;
+        if (o.hardcore) c.rubber = hardcore_rubber;
+        return c;
+    }
+
+    pub fn is_default(o: Options) bool {
+        return std.meta.eql(o, Options{});
+    }
+
+    /// `debug_options` and the `snouty_cycles_options` poke: bits 0-1
+    /// speed (0 normal, 1 slow, 2 fast), 2 SNAKE, 3 GAPS, 4 WRAP,
+    /// 5 HARDCORE.
+    pub fn from_bits(b: u32) Options {
+        return .{
+            .speed = @fromBackingInt(@intCast(@min(b & 3, 2))),
+            .snake = b & 4 != 0,
+            .gaps = b & 8 != 0,
+            .wrap = b & 16 != 0,
+            .hardcore = b & 32 != 0,
+        };
+    }
+    pub fn bits(o: Options) u32 {
+        return @as(u32, @backingInt(o.speed)) | @as(u32, @intFromBool(o.snake)) << 2 |
+            @as(u32, @intFromBool(o.gaps)) << 3 | @as(u32, @intFromBool(o.wrap)) << 4 |
+            @as(u32, @intFromBool(o.hardcore)) << 5;
+    }
+};
+
+/// SKIRMISH's program tiers, named like the ladder's levels where they
+/// first appear (SPEC 6, PLAN M2 Track R item 3).
+pub const tier_names = [4][]const u8{ "BASIC", "PASCAL", "C", "ASM" };
+pub const skirmish_tiers = [4]ai.Tier{ .wander, .avoid, .territory, .search };
+/// The `ai.preset` level SKIRMISH's programs use.
+pub const skirmish_preset: u8 = 2;
+
+/// A SKIRMISH round: `programs` (1..3) of tier `tier` (0..3) in layout
+/// `layout`, every M1 rule on, then the options.
+pub fn skirmish_config(programs: u8, layout: u8, o: Options) sim.Config {
+    return o.apply(.{
+        .n_cycles = 1 + programs,
+        .grinding = true,
+        .energy = true,
+        .rubber = sim.tuning.rubber_max,
+        .sudden_death = true,
+        .layout = layout,
+    });
+}
+
 // ---------------------------------------------------------------- tests
 
 const testing = std.testing;
@@ -139,4 +229,21 @@ test "the ladder: SPEC 6's twelve levels, then a faster loop" {
         // Names fit the HUD and the intro banner at scale 2.
         try testing.expect(r.name().len <= 8);
     }
+}
+
+test "options: defaults change nothing; each one sets its Config field" {
+    const base = get(6).config();
+    try testing.expect(std.meta.eql(base, (Options{}).apply(base)));
+    const all: Options = .{ .speed = .fast, .snake = true, .gaps = true, .wrap = true, .hardcore = true };
+    const c = all.apply(base);
+    try testing.expectEqual(@as(u16, 125), c.speed_pct);
+    try testing.expectEqual(Options.snake_len, c.snake_len);
+    try testing.expect(c.gaps and c.wrap);
+    try testing.expectEqual(Options.hardcore_rubber, c.rubber);
+    try testing.expectEqual(@as(u16, 88), (Options{ .speed = .slow }).apply(get(9).config()).speed_pct);
+    for (0..64) |b| {
+        const o = Options.from_bits(@intCast(b));
+        if (b & 3 != 3) try testing.expectEqual(@as(u32, @intCast(b)), o.bits());
+    }
+    try testing.expect(!all.is_default() and (Options{}).is_default());
 }
