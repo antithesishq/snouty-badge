@@ -1164,6 +1164,51 @@ Done when:
 - RAM fits;
 - a preview GIF shows the lobby and a match from both views.
 
+M7 status (2026-10-05, branch `stein/m7`, not merged): built as above,
+on `lib/lockstep.zig` (`lockstep/v1`). SPEC.md section 19 is what was
+built; RUNNING.md section 7 has the two-badge hardware check.
+
+- **Sim.** `match.zig`: `World` = the unchanged GameState plus
+  `state.Match` (236 bytes, padding-free); each player is swapped into
+  `GameState.player` in turn. Campaign refactors only (`ai.update_enemy`,
+  `sim.apply_pickup`, an optional second door occupant, an optional
+  `Rival` target for cast/swat, `projectiles.spawn_tagged`): every
+  existing test, DEMO OK and the M6.1 death fix pass unchanged. Rewind
+  pools untouched (GameState still 1,372 bytes).
+- **Numbers taken.** PvP damage = bug damage x 6 (zapper 18: six hits),
+  strafe 0.035 cells/tick, death view 120 ticks, spawn protection 60,
+  pickups and bugs back after 1,200 ticks (bugs once no player is within
+  4 cells), players 0.5 cells apart, rival hit radius = player radius
+  0.25. A bug kill scores nobody (the PLAN said nothing), a double frag
+  at the limit is a draw.
+- **Tests.** `zig build test-stein` 96 (match 77 in the aggregate:
+  13 deathmatch rules tests, spawn parsing, rival cell, G; plus 6 over the
+  virtual cable in `dm_net_test.zig`): 1% byte loss to 5 frags in sync
+  (11,260 ticks, 8.6% of input packets lost, 1.7% of frames without a
+  tick, at most 7 in a row), a clean cable on Build Farm with bugs 3,000
+  ticks in sync, cable out and quit as forfeits, injected desyncs found
+  25-29 ticks later on both, pause and resume on the same tick.
+  `zig build test` (whole repo) 534/537 (3 skipped), `zig build` and
+  `tools/check.sh` pass (check.sh adds the title menu and a bot-vs-bot
+  local match to the frag limit).
+- **Bench** (calibrated, busy ms): Build Farm opening worst 3.52 (was
+  3.51); attract worst 10.31 at frame 1,102 over the first 1,300 frames
+  (was 10.27, same frame); deathmatch (`tools/bench_m7.sh`, two bots,
+  BUGS ON, 1,200 frames each) Server Room worst 4.68, mean 2.76; Build
+  Farm DM worst 3.03, mean 2.72. The bench has no cable, so the lockstep
+  pump (an idle poll) is not in these numbers. The box was at load 50
+  during the runs, hence 1,200 frames.
+- **RAM** (`size -A`): .text 123,748 (was 97,220: +8 KB for the two
+  arenas, +2.5 KB the rival sheet, the rest deathmatch.zig, the lockstep
+  and the link), .data 7,932, .bss 96,288 (was 93,588: the World, the
+  Lockstep's 584 bytes). Inside the 140 KB / 120 KB budgets.
+- **Lockstep API friction**: none blocking. `pick_bits` must stay 1..7,
+  so "no picks" is the default with pick 0; `zig build test` prints
+  "failed command" for test binaries that write to stderr (the summaries)
+  even when they pass, as GC's do.
+- **Open**: the two-badge hardware check (RUNNING.md section 7); feel
+  (damage, strafe speed, respawn time) on the badge.
+
 ## Status
 
 - 2026-09-26: M0 scaffold committed. M1 plan written; four tracks launched.
@@ -1360,3 +1405,13 @@ render check). check.sh now reads the demo level from the data file.
   `rewind.set_meter` (and its same-tick test) are gone; `m5_takeover.json`
   became `m5_interrupt.json` (UP at 700 lands on the title, A at 800
   starts Build Farm at tick 0). Demo data and hash unchanged.
+- 2026-10-05: M7 Deathmatch built on branch `stein/m7` (not merged, not
+  tagged; numbers under "M7 status" above). Two badges over the link
+  cable on `lib/lockstep.zig`: DEATHMATCH on the title (greyed in the
+  simulator), a lobby where the host picks Server Room or Build Farm, 5
+  to 20 frags and bugs, a match rendered from each badge's own player
+  with a code-drawn rival Snouty, frags and kill banners in the HUD,
+  results with accuracy, a forfeit on PEER LEFT, a DESYNC band. Campaign,
+  demo hash and rewind pools unchanged. `docs/preview_m7.gif`: title,
+  host and guest lobby, a frag from player 0's view, one from player
+  1's, the results. Next: the two-badge hardware check (RUNNING.md 7).
