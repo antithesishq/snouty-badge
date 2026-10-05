@@ -971,6 +971,20 @@ HUD = [
         ".....oro....",
         "......o.....",
     ]),
+    ("chip", "M5 cycle chip on the floor: a green die, gold pins, a lit dot", [
+        "............",
+        "..y.y.y.y...",
+        ".oooooooooo.",
+        "yoGGGGGGGGoy",
+        ".oGlGGGGGGo.",
+        "yoGGGooGGGoy",
+        ".oGGGoyGGGo.",
+        "yoGGGGGGGGoy",
+        ".oGGGGGGGwo.",
+        ".oooooooooo.",
+        "..y.y.y.y...",
+        "............",
+    ]),
 ]
 
 

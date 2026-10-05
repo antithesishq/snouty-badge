@@ -21,4 +21,6 @@ test {
     _ = @import("gc_mode.zig");
     _ = @import("content_test.zig");
     _ = @import("net_test.zig");
+    _ = @import("career.zig");
+    _ = @import("career_test.zig");
 }

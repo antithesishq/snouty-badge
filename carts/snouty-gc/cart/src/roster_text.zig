@@ -51,6 +51,94 @@ pub const roster = [count]Text{
     },
 };
 
+/// M5 garage (SPEC 9.2): what a racer says from the portrait when the
+/// player buys something for their car, in `Reaction` order. At most two
+/// rows of 19 characters (`wrap` at 19).
+pub const Reaction = enum(u8) { swap, level, plating, ecc, clock, traction, burst, watchdog, poor, maxed };
+pub const reaction_count = 10;
+pub const Reactions = struct { lines: [reaction_count][]const u8 };
+
+pub const reactions = [count]Reactions{
+    // SNOUTY: the one-eyed bug hunter.
+    .{ .lines = .{
+        "NEW GUN. SAME EYE. STILL HUNTING.",
+        "MORE BITE. THE BUGS WILL KNOW.",
+        "THICKER HIDE. LIKE A REAL ANTEATER.",
+        "ECC. PING ME ALL DAY. CAN'T REPRO.",
+        "FASTER THAN A BUG REPORT.",
+        "GRIP. NO MORE SLIDING INTO PROD.",
+        "MORE BURST. FOR THE LONG CHASE.",
+        "QUICK REBOOT. THE BUGS WON'T WAIT.",
+        "NO CYCLES. I'LL GO HUNT SOME.",
+        "MAXED. LIKE MY SUSPICION.",
+    } },
+    // LEGACY: has declined every update.
+    .{ .lines = .{
+        "NEW GUN? FINE. I'LL HATE IT LATER.",
+        "BIGGER. LIKE THEY MADE IN '74.",
+        "MORE STEEL. NOW YOU'RE TALKING.",
+        "ECC MEMORY. WE HAD THAT IN '78.",
+        "SPEED IS A FAD. ...IT IS NICE.",
+        "NEW TIRES. THE OLD ONES WERE FINE.",
+        "IN MY DAY WE HAD ONE BURST. UPHILL.",
+        "FAST REBOOT? IPL TOOK AN HOUR, KID.",
+        "NO BUDGET. SAME AS EVERY YEAR.",
+        "DONE. NO MORE UPDATES. EVER.",
+    } },
+    // KIDDIE: copied every gun from a forum.
+    .{ .lines = .{
+        "COPIED A NEW ONE OFF A FORUM LOL",
+        "+25% DPS. POG",
+        "ARMOR IS FOR NOOBS. ...OK FINE",
+        "PING CAN'T EVEN TOUCH ME. GG EZ",
+        "OVERCLOCKED! WHAT COULD GO WRONG",
+        "STICKY TIRES. NO MORE LAG!!",
+        "MOAR BOOST. MOAAAR.",
+        "INSTANT RESPAWN. NO NERF PLS",
+        "NO CYCLES?? CAN I JUST PIRATE IT",
+        "MAXED. DEV PLS SEND MORE",
+    } },
+    // SYSADMIN: no sleep, spite and coffee.
+    .{ .lines = .{
+        "CHANGE REQUEST APPROVED. BY ME.",
+        "PATCHED. REBOOT NOT REQUIRED.",
+        "HARDENED. LIKE MY HEART.",
+        "ECC ON. BIT FLIPS ARE NOW WONTFIX.",
+        "MORE CLOCK, LESS SLEEP. FAIR.",
+        "GRIP. FEWER INCIDENT REPORTS.",
+        "BURST CAPACITY PROVISIONED.",
+        "WATCHDOG TUNED. UPTIME IS SACRED.",
+        "NO BUDGET. FILE A TICKET.",
+        "AT CAPACITY. LIKE MY COFFEE CUP.",
+    } },
+    // ROOTKIT: was always in the car.
+    .{ .lines = .{
+        "NOBODY SAW ME CHANGE GUNS.",
+        "DEEPER HOOKS.",
+        "HARDER TO REMOVE.",
+        "SCAN ME ALL YOU LIKE.",
+        "FASTER. QUIETER.",
+        "I LEAVE NO SKID MARKS.",
+        "MORE WAYS OUT.",
+        "REBOOT ME. I WAS STILL HERE.",
+        "I'LL TAKE THE CYCLES LATER.",
+        "FULLY INSTALLED. ...I PERSIST.",
+    } },
+    // BOTNET: fourteen cousins, one bus, a vote on everything.
+    .{ .lines = .{
+        "THE VOTE PASSED, 8 TO 6.",
+        "MORE GUN. WE ALL AGREED. MOSTLY.",
+        "ARMOR. COUSIN TED CAN SLEEP NOW.",
+        "ECC. WE NO LONGER FEEL THE PINGS.",
+        "FASTER! WHO VOTED FOR FASTER?",
+        "GRIP. THE TURNS ARE STILL LATE.",
+        "MORE BOOST. FOR ALL 14 OF US.",
+        "FASTER REBOOTS. WE ARE MANY.",
+        "NOT ENOUGH CYCLES. PASS THE HAT.",
+        "FULL. LIKE THE BUS.",
+    } },
+};
+
 /// Livery colours (0xRRGGBB) for the HUD: distinct on the minimap (purple,
 /// blue, lime, red, green, yellow), and the select's name, frame and bars.
 /// They match the art track's car sheets (ASSETS.md); racers.zig keeps

@@ -446,3 +446,65 @@ pub const link_pump_until_us: u64 = 14_000;
 pub const link_pump_rows: usize = 3;
 /// Frames `PEER LEFT, AI DRIVING` stays up once the partner has gone.
 pub const link_left_note: u32 = 180;
+
+// --- Garage upgrades and cycle chips (SPEC 9.2), M5 ------------------------------
+
+/// PLATING: armor per level; at L3 (ECC) a hit of `ecc_ignore` or less is
+/// ignored ("corrects single-bit errors": PING's 4 cannot chip you).
+pub const plating_armor: u8 = 30;
+pub const plating_ecc: u8 = 3;
+pub const ecc_ignore: i32 = 4;
+/// CLOCK: top speed +4% a level (the chassis' `top_q8`, so thrust and
+/// terminal speed both follow).
+pub const clock_pct: u32 = 4;
+/// TRACTION: grip +0.03 a level (SPEC 4.2's grip multiplier, 1/256: 7.68).
+pub const traction_q8: u16 = 8;
+/// WATCHDOG delay by level (SPEC 9.2: "reboots you faster").
+pub const watchdog_levels = [4]u8{ 120, 90, 60, 40 };
+/// The top level of every garage slot.
+pub const level_max: u8 = 3;
+/// Weapon levels: front L2+ ammo x1.25 and L3 damage x1.25; rear L2+ one
+/// more drop and L3 effect x1.25 (each rounded up: `up25`).
+pub const rear_level_ammo: u8 = 1;
+/// Cycle chips (SPEC 9.1): `chip_trails` trails of `chip_per_trail` chips,
+/// `chip_gap` centerline samples apart, the first trail at sample
+/// `chip_first` and one every `chip_every` samples; each trail sits
+/// `chip_lat_pct` percent of the half width left, centre or right in turn.
+/// A car's centre within `chip_touch` px takes one.
+pub const chip_trails: u8 = 8;
+pub const chip_per_trail: u8 = 3;
+pub const chip_gap: u8 = 2;
+pub const chip_first: u8 = 20;
+pub const chip_every: u8 = 32;
+pub const chip_lat_pct: i32 = 45;
+pub const chip_touch: i32 = car_radius + 3;
+
+// --- CIRCUIT economy (SPEC 8.2, 9.1, 9.2), M5: career.zig ------------------------
+
+/// CYCLES for finishing 1st..6th, for a last-hit wreck, a cycle chip and a
+/// league win.
+pub const cycles_place = [6]u16{ 1000, 600, 400, 250, 150, 100 };
+pub const cycles_kill: u16 = 150;
+pub const cycles_chip: u16 = 10;
+pub const cycles_league: u16 = 1500;
+/// League points for 1st..6th; the top `league_clear` places open the next
+/// league.
+pub const points_place = [6]u8{ 9, 6, 4, 3, 2, 1 };
+pub const league_clear: u8 = 3;
+/// Garage prices (SPEC 9.2): a gun swap, then each level (L2, L3); the
+/// other slots by the level bought (L1, L2, L3).
+pub const price_front_swap: u16 = 800;
+pub const price_front_level = [2]u16{ 400, 800 };
+pub const price_rear_swap: u16 = 600;
+pub const price_rear_level = [2]u16{ 300, 600 };
+pub const price_plating = [3]u16{ 500, 900, 1400 };
+pub const price_clock = [3]u16{ 600, 1000, 1500 };
+pub const price_traction = [3]u16{ 400, 700, 1000 };
+pub const price_burst = [3]u16{ 400, 800, 1200 };
+pub const price_watchdog = [3]u16{ 500, 900, 1300 };
+/// AI upgrade plans: an AI's garage budget is this percentage of what the
+/// player has spent in the garage plus `ai_own_pct` of the CYCLES it has
+/// earned itself, so the field's cars follow the player's (SPEC 9.2) and a
+/// racer that keeps winning gets a little stronger still.
+pub const ai_follow_pct: u32 = 75;
+pub const ai_own_pct: u32 = 0;

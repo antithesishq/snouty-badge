@@ -157,7 +157,7 @@ pub fn rubber_permille(w: *const World, c: *const Car) i32 {
     return 1000 + @max(tuning.rubber_min_permille, @min(tuning.rubber_max_permille, adj));
 }
 
-fn drive_crew(w: *const World, i: usize, cr: *const Crew) Input {
+pub fn drive_crew(w: *const World, i: usize, cr: *const Crew) Input {
     var b: Input = .{};
     const c = &w.cars[i];
     const t = sim.track_of(w);

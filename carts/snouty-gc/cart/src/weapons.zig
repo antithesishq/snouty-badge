@@ -52,10 +52,27 @@ pub fn emit(w: *World, kind: world.EventKind, a: u8, b: u8, c: u8, x: i32, y: i3
     w.event_seq +%= 1;
 }
 
-/// A full lap's ammo for the car's loadout (start line, reset).
+/// A full lap's ammo for the car's loadout (start line, reset): front L2+
+/// +25%, rear L2+ one more (SPEC 9.2).
 pub fn refill(c: *Car) void {
-    c.ammo_front = tuning.front_ammo[@backingInt(c.front)];
-    c.ammo_rear = tuning.rear_ammo[@backingInt(c.rear)];
+    const f = tuning.front_ammo[@backingInt(c.front)];
+    c.ammo_front = if (c.front_level >= 2) up25(f) else f;
+    c.ammo_rear = tuning.rear_ammo[@backingInt(c.rear)] + (if (c.rear_level >= 2) tuning.rear_level_ammo else 0);
+}
+
+/// x 1.25, rounded up (the garage's +25%).
+pub fn up25(x: u8) u8 {
+    return x +| (x + 3) / 4;
+}
+
+/// A front weapon's damage `base` from car `owner`: L3 deals +25%.
+fn front_dmg(w: *const World, owner: u8, base: u8) u8 {
+    return if (owner < world.car_count and w.cars[owner].front_level >= 3) up25(base) else base;
+}
+
+/// A rear weapon's effect `base` (damage, ticks, px) from car `owner`: L3 +25%.
+fn rear_fx(w: *const World, owner: u8, base: u8) u8 {
+    return if (owner < world.car_count and w.cars[owner].rear_level >= 3) up25(base) else base;
 }
 
 /// May this car fire this tick?
@@ -246,7 +263,7 @@ fn fire_lance(w: *World, i: usize) void {
     var hit: u8 = no_car;
     if (best != no_car and w.cars[best].wreck == .none) hit = best;
     emit(w, .lance, @intCast(i), hit, @intCast(@min(len, 255)), c.x +% hx * len, c.y +% hy * len);
-    if (hit != no_car and !pickups.duck_takes(w, @intCast(i), hit, c.x, c.y, false)) sim.damage(w, hit, @intCast(i), tuning.lance_dmg);
+    if (hit != no_car and !pickups.duck_takes(w, @intCast(i), hit, c.x, c.y, false)) sim.damage(w, hit, @intCast(i), front_dmg(w, @intCast(i), tuning.lance_dmg));
 }
 
 /// SPEAR PHISH lock (SPEC 6.1): the nearest targetable car in the 24-degree
@@ -284,7 +301,7 @@ fn drop_rear(w: *World, i: usize) void {
             .y = (by -% hy * tuning.firewall_depth) & world_mask,
             .kind = .firewall,
             .owner = owner,
-            .size = tuning.firewall_half,
+            .size = rear_fx(w, owner, tuning.firewall_half),
             .dir = @intCast(c.heading >> 8),
         },
         .rot => {
@@ -326,7 +343,7 @@ fn blast(w: *World, d: *const Drop) void {
             o.vx += @divTrunc(dx * tuning.bomb_push, dist);
             o.vy += @divTrunc(dy * tuning.bomb_push, dist);
         }
-        sim.damage(w, j, d.owner, tuning.bomb_dmg);
+        sim.damage(w, j, d.owner, rear_fx(w, d.owner, tuning.bomb_dmg));
     }
 }
 
@@ -349,7 +366,8 @@ fn update_drops(w: *World) void {
                     continue;
                 }
                 const g: i32 = @min(d.age, tuning.leak_grow);
-                d.size = @intCast(tuning.leak_r0 + @divTrunc((tuning.leak_r1 - tuning.leak_r0) * g, tuning.leak_grow));
+                const r1: i32 = rear_fx(w, d.owner, @intCast(tuning.leak_r1));
+                d.size = @intCast(tuning.leak_r0 + @divTrunc((r1 - tuning.leak_r0) * g, tuning.leak_grow));
                 const r2 = @as(i32, d.size) * d.size;
                 for (&w.cars, 0..) |*o, j| {
                     if (!drop_touches(d, j, o) or dist2_to(d, o) > r2) continue;
@@ -391,10 +409,10 @@ fn update_drops(w: *World) void {
                         root_clears(w, d);
                         break;
                     }
-                    o.rot_ticks = tuning.rot_ticks;
                     const owner = d.owner;
+                    o.rot_ticks = rear_fx(w, owner, tuning.rot_ticks);
                     d.* = .{};
-                    sim.damage(w, j, owner, tuning.rot_dmg);
+                    sim.damage(w, j, owner, rear_fx(w, owner, tuning.rot_dmg));
                     break;
                 }
             },
@@ -522,7 +540,7 @@ fn update_projs(w: *World) void {
             if (pickups.duck_takes(w, shot.owner, j, ox, oy, shot.kind == .phish)) continue;
             switch (shot.kind) {
                 .none => {},
-                .ping => sim.damage(w, j, shot.owner, tuning.ping_dmg),
+                .ping => sim.damage(w, j, shot.owner, front_dmg(w, shot.owner, tuning.ping_dmg)),
                 .broadcast => {
                     // Knock sideways, away from the pellet's side.
                     const hx = fixed.cos(o.heading);
@@ -531,11 +549,11 @@ fn update_projs(w: *World) void {
                     const k: i32 = if (side >= 0) tuning.broadcast_knock else -tuning.broadcast_knock;
                     o.vx += fixed.mul(-hy, k);
                     o.vy += fixed.mul(hx, k);
-                    sim.damage(w, j, shot.owner, tuning.broadcast_dmg);
+                    sim.damage(w, j, shot.owner, front_dmg(w, shot.owner, tuning.broadcast_dmg));
                 },
                 .phish => {
                     emit(w, .explode, j, 12, 0, shot.x, shot.y);
-                    sim.damage(w, j, shot.owner, tuning.phish_dmg);
+                    sim.damage(w, j, shot.owner, front_dmg(w, shot.owner, tuning.phish_dmg));
                 },
                 .panic => unreachable,
             }
